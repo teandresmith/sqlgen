@@ -100,4 +100,4 @@ jobs:
         run: |
           sha256sum -- * > checksums.txt
           cat checksums.txt
-          gh release upload "$TAG" -- * --repo "${{ github.repository }}" --clobber
+          gh release upload "$TAG" --repo "${{ github.repository }}" --clobber -- *
