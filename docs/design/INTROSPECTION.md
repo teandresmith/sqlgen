@@ -638,20 +638,20 @@ All fourteen were ruled on 2026-10-05, each matching the recommendation. Q1–Q1
 
 | # | Question | Ruling | Lands in |
 |---|---|---|---|
-| Q1 | Generated columns (D4, M1, S1) | **Fix all five gaps in this phase.** PG introspector reads `pg_attribute.attgenerated` and sets `GeneratedExpr` / `GeneratedStorage` instead of `Default`. PG parser learns `GENERATED ALWAYS AS (…) STORED`. MySQL introspector reads `extra` + `generation_expression`. MySQL parser learns `GENERATED ALWAYS AS (…) [VIRTUAL\|STORED]` and the `AS (…)` shorthand. SQLite introspector switches to `PRAGMA table_xinfo` (`hidden` 2 = VIRTUAL, 3 = STORED). | N.5 |
+| Q1 | Generated columns (D4, M1, S1) | **Fix all five gaps in this phase.** PG introspector reads `pg_attribute.attgenerated` and sets `GeneratedExpr` / `GeneratedStorage` instead of `Default`. PG parser learns `GENERATED ALWAYS AS (…) STORED`. MySQL introspector reads `extra` + `generation_expression`. MySQL parser learns `GENERATED ALWAYS AS (…) [VIRTUAL\|STORED]` and the `AS (…)` shorthand. SQLite introspector switches to `PRAGMA table_xinfo` (`hidden` 2 = VIRTUAL, 3 = STORED). | N.3 |
 | Q2 | Exit codes | **Split 4 vs 3.** A typed `*connectionError` (connect, ping, or catalog query) exits 4; every other `parseSchema` error exits 3, in `generate`, `validate` and `loadAndValidate` alike. Settles FIX-243 Q3 as option (b). | N.9 |
-| Q3 | Schema-qualified type names (D1, D6) | **Resolver plus canonical form.** The resolver also registers `schema.name` keys for every enum, set and domain, so either spelling resolves. A bare key is registered only when no other schema has the same name, so two same-named enums can't collide. Both the PG introspector and the PG parser canonicalize: a type in the column's own schema becomes bare; a cross-schema type stays qualified. That keeps the manifest's `sql_type` identical across sources and fixes the latent files-mode bug. | N.2 (introspector, PG parser, and the `cmd/sqlgen/gotype` resolver) |
-| Q4 | Partitioned tables (D3) | **Parent only.** Skip tables with `pg_class.relispartition`. | N.2 |
-| Q5 | Default text (§3.4, M2) | **Normalize to the file parser's form.** <br>• **PG:** catalog text goes through the same `pg_query` deparse the parser uses, catalog-added casts on literals are stripped, and serial / identity columns carry no `Default` (only `AutoIncrement`), as in the parser. <br>• **MySQL:** literals are re-quoted from `column_type` (string, enum, set and temporal literal columns), `DEFAULT_GENERATED` in `extra` marks an expression default, and the result goes through the same `sqlparser.String` form. This also fixes M2's empty-string bug. <br>• **SQLite:** `dflt_value` goes through the same `rsql` `ExprString`. <br>Anything that still can't match becomes a named parity exception (§6.0). | N.2, N.3, N.4 |
+| Q3 | Schema-qualified type names (D1, D6) | **Resolver plus canonical form.** The resolver also registers `schema.name` keys for every enum, set and domain, so either spelling resolves. A bare key is registered only when no other schema has the same name, so two same-named enums can't collide. Both the PG introspector and the PG parser canonicalize: a type in the column's own schema becomes bare; a cross-schema type stays qualified. That keeps the manifest's `sql_type` identical across sources and fixes the latent files-mode bug. | N.4 (introspector, PG parser, and the `cmd/sqlgen/gotype` resolver) |
+| Q4 | Partitioned tables (D3) | **Parent only.** Skip tables with `pg_class.relispartition`. | N.4 |
+| Q5 | Default text (§3.4, M2) | **Normalize to the file parser's form.** <br>• **PG:** catalog text goes through the same `pg_query` deparse the parser uses, catalog-added casts on literals are stripped, and serial / identity columns carry no `Default` (only `AutoIncrement`), as in the parser. <br>• **MySQL:** literals are re-quoted from `column_type` (string, enum, set and temporal literal columns), `DEFAULT_GENERATED` in `extra` marks an expression default, and the result goes through the same `sqlparser.String` form. This also fixes M2's empty-string bug. <br>• **SQLite:** `dflt_value` goes through the same `rsql` `ExprString`. <br>Anything that still can't match becomes a named parity exception (§6.0). | N.4, N.5, N.6 |
 | Q6 | Tracking | **New phase,** run with `/phase` from this doc once it's accepted. | — |
-| Q7 | MySQL CHECK errors (M4) | **Narrow fallback.** Only MySQL error 1109 (unknown table, i.e. a server older than 8.0.16) yields "no CHECKs"; every other error is returned. No PRD minimum version; §6.3 gets a footnote. | N.3 |
-| Q8 | SQLite UNIQUE names (S4) | **Recover from the stored DDL.** Always drop the `origin = 'pk'` index. UNIQUE constraint names come from re-parsing `sqlite_master.sql` (see Q10). | N.4 |
-| Q9 | SQLite virtual tables (S5) | **Skip both, with a warning.** The introspector skips `type = 'virtual'` and `type = 'shadow'` rows from `PRAGMA table_list` (SQLite 3.37+, met by bundled modernc). Both paths append a `schema.Warnings` line naming the virtual table, like the existing `CREATE VIEW` skip. The file parser currently ignores `CREATE VIRTUAL TABLE` without a word (`parser/sqlite/sqlite.go:63-81`). | N.4 |
-| Q10 | SQLite CHECK constraints (S8) | **Re-parse the stored DDL; this is the general SQLite strategy.** The PRAGMAs give the catalog facts (columns, types, nullability, PK membership and order, FKs, indexes, partial predicates). Each table's `CREATE TABLE` text from `sqlite_master.sql`, parsed with the existing `parser/sqlite` parser, gives the declared names, CHECK constraints and expression text. Settles S8 and Q8, and backs up S2. | N.4 |
-| Q11 | Constraint shape and names (X1) | **Canonical shape plus the database's names.** A shared `parser.CanonicalizeConstraints` runs at the end of every parse and every introspection. Every PK, FK, UNIQUE and CHECK exists both as a table `Constraint` and as the column flags (`PrimaryKey`, `Unique`, `FKReference`). UNIQUE / Index `Method` defaults to `btree` on PG and MySQL. CHECK `Columns` lists the referenced columns on every dialect. The parsers give each unnamed constraint the name its database would: <br>• **PG:** `<t>_pkey`, `<t>_<cols>_key`, `<t>_<cols>_fkey`, `<t>_<col>_check`, applying PG's 63-byte truncation and numeric collision suffix (`ChooseConstraintName`) <br>• **MySQL:** `PRIMARY`, `<t>_ibfk_<n>`, `<t>_chk_<n>`, and a UNIQUE named after its first column, with `_2`, `_3` on collision <br>• **SQLite:** declared names only (the stored DDL, Q8 / Q10); an unnamed constraint stays unnamed on both paths <br>The manifest's index names then match the database. This also resolves two FIX-240 backlog lines from 2026-10-02: unnamed UNIQUE listed as `_idx` where PG says `_key`, and the PG parser dropping an inline `CONSTRAINT <name> UNIQUE` name. | N.6 |
-| Q12 | PG typmod spacing (D7) | **No space.** The PG parser's typmod formatting emits `numeric(12,2)`, matching the catalog, MySQL's `decimal(10,2)`, and how users write `overrides.types` keys. | N.2 |
-| Q13 | PG / MySQL CHECK text (D8, M7) | **Normalize to the parser's form and strip implicit casts.** Catalog CHECK and domain-constraint text goes through the same deparser as the file parser (`pg_query` on PG, `sqlparser` on MySQL). Then the casts the database adds implicitly are removed: domain → base type, literal → column type. MySQL backticks and charset introducers are dropped as well. Each removal rule gets its own unit test, and anything left is a named parity exception. | N.2, N.3 |
-| Q14 | PG `PARTITION OF` in the parser (D9) | **Skip with a warning.** The parser skips `CREATE TABLE … PARTITION OF` and appends a `schema.Warnings` line, like `CREATE VIEW` and `CREATE VIRTUAL TABLE` (Q9). The introspector skips `relispartition` tables silently (Q4). Output is identical across sources. | N.2 |
+| Q7 | MySQL CHECK errors (M4) | **Narrow fallback.** Only MySQL error 1109 (unknown table, i.e. a server older than 8.0.16) yields "no CHECKs"; every other error is returned. No PRD minimum version; §6.3 gets a footnote. | N.5 |
+| Q8 | SQLite UNIQUE names (S4) | **Recover from the stored DDL.** Always drop the `origin = 'pk'` index. UNIQUE constraint names come from re-parsing `sqlite_master.sql` (see Q10). | N.6 |
+| Q9 | SQLite virtual tables (S5) | **Skip both, with a warning.** The introspector skips `type = 'virtual'` and `type = 'shadow'` rows from `PRAGMA table_list` (SQLite 3.37+, met by bundled modernc). Both paths append a `schema.Warnings` line naming the virtual table, like the existing `CREATE VIEW` skip. The file parser currently ignores `CREATE VIRTUAL TABLE` without a word (`parser/sqlite/sqlite.go:63-81`). | N.6 |
+| Q10 | SQLite CHECK constraints (S8) | **Re-parse the stored DDL; this is the general SQLite strategy.** The PRAGMAs give the catalog facts (columns, types, nullability, PK membership and order, FKs, indexes, partial predicates). Each table's `CREATE TABLE` text from `sqlite_master.sql`, parsed with the existing `parser/sqlite` parser, gives the declared names, CHECK constraints and expression text. Settles S8 and Q8, and backs up S2. | N.6 |
+| Q11 | Constraint shape and names (X1) | **Canonical shape plus the database's names.** A shared `parser.CanonicalizeConstraints` runs at the end of every parse and every introspection. Every PK, FK, UNIQUE and CHECK exists both as a table `Constraint` and as the column flags (`PrimaryKey`, `Unique`, `FKReference`). UNIQUE / Index `Method` defaults to `btree` on PG and MySQL. CHECK `Columns` lists the referenced columns on every dialect. The parsers give each unnamed constraint the name its database would: <br>• **PG:** `<t>_pkey`, `<t>_<cols>_key`, `<t>_<cols>_fkey`, `<t>_<col>_check`, applying PG's 63-byte truncation and numeric collision suffix (`ChooseConstraintName`) <br>• **MySQL:** `PRIMARY`, `<t>_ibfk_<n>`, `<t>_chk_<n>`, and a UNIQUE named after its first column, with `_2`, `_3` on collision <br>• **SQLite:** declared names only (the stored DDL, Q8 / Q10); an unnamed constraint stays unnamed on both paths <br>The manifest's index names then match the database. This also resolves two FIX-240 backlog lines from 2026-10-02: unnamed UNIQUE listed as `_idx` where PG says `_key`, and the PG parser dropping an inline `CONSTRAINT <name> UNIQUE` name. | N.2 |
+| Q12 | PG typmod spacing (D7) | **No space.** The PG parser's typmod formatting emits `numeric(12,2)`, matching the catalog, MySQL's `decimal(10,2)`, and how users write `overrides.types` keys. | N.4 |
+| Q13 | PG / MySQL CHECK text (D8, M7) | **Normalize to the parser's form and strip implicit casts.** Catalog CHECK and domain-constraint text goes through the same deparser as the file parser (`pg_query` on PG, `sqlparser` on MySQL). Then the casts the database adds implicitly are removed: domain → base type, literal → column type. MySQL backticks and charset introducers are dropped as well. Each removal rule gets its own unit test, and anything left is a named parity exception. | N.4, N.5 |
+| Q14 | PG `PARTITION OF` in the parser (D9) | **Skip with a warning.** The parser skips `CREATE TABLE … PARTITION OF` and appends a `schema.Warnings` line, like `CREATE VIEW` and `CREATE VIRTUAL TABLE` (Q9). The introspector skips `relispartition` tables silently (Q4). Output is identical across sources. | N.4 |
 
 **Module boundaries.** Q5 and Q10 have the introspectors call into `parser/postgres`,
 `parser/mysql` and `parser/sqlite`. All of them are inside the `parser` module, so that's
@@ -662,7 +662,22 @@ code, and it imports nothing new.
 
 ## 11. Sub-item preview
 
-These are provisional; `/phase` produces the authoritative breakdown.
+These are provisional; `/phase` produces the authoritative breakdown. The order puts the
+PRD sync first and the cross-dialect pieces (constraint model, generated columns) before
+the per-dialect expansions that test against them. Closure is `/close-phase`, with no
+sub-item of its own.
+
+**Dependencies:**
+- N.0 blocks everything.
+- N.1 → N.2, N.3 → N.4 / N.5 / N.6 (the three dialects can run in parallel).
+- N.7 → N.8 → N.9 (they can run alongside N.1–N.6).
+- N.10 depends on N.4–N.6, N.8 and N.9.
+
+### N.0 PRD sync
+- No code. Land every §8 edit before any implementation (CLAUDE.md rule 1), as 27.0 and
+  29.0 did.
+- Flip this doc to SYNCED and archive it at phase closure (`/close-phase`).
+- *Blocks every other sub-item.*
 
 ### N.1 Probe, parity harness, and unit tests (all dialects)
 - Add the §6.0 `assertSchemaParity` helper and move the three existing main tests onto it.
@@ -671,34 +686,34 @@ These are provisional; `/phase` produces the authoritative breakdown.
 - Turn the §5 probe DDL into fixtures. The probe has already run and its record is §4.0.
 - Inline fixes for small, isolated defects: D2, M3, M8, S6, S10.
 
-### N.2 PG integration test expansion
-- Add the §6.2 tests and tighten `TestPostgresIntrospect`.
-- Fix D1 and D6 (Q3): canonical type form in the introspector and the PG parser, and
-  qualified keys in the `cmd/sqlgen/gotype` resolver.
-- Fix D3 (Q4) and D9 (Q14), D5, D7 (Q12), and PG default and CHECK normalization (Q5, Q13 / D8).
-
-### N.3 MySQL integration test expansion
-- Add the §6.3 tests and tighten `TestMySQLIntrospect` / `TestMySQLIntrospectViews`.
-- Fix M2 and M9 with MySQL default normalization (Q5), M4 (Q7), M5, M6, and M7 (Q13).
-
-### N.4 SQLite integration test expansion
-- Add the §6.4 tests and tighten `TestSQLiteIntrospect`.
-- Adopt the Q10 strategy: the PRAGMAs plus a re-parse of the stored `CREATE TABLE`.
-- Fix S2, S3, S4 (Q8), S5 with warnings on both paths (Q9), S7, S8 (Q10), S9, S11 on both
-  paths, and S12. SQLite defaults already match (§4.0), so Q5 needs no SQLite change.
-
-### N.5 Generated columns, all dialects
-- Per Q1: the PG and MySQL file parsers, plus all three introspectors.
-- Confirm that the generator's `IsComputed` path excludes the column from create and update
-  inputs on PG and MySQL, as it does on SQLite.
-- Generated-column tests on every path.
-
-### N.6 Canonical constraint model, all dialects
+### N.2 Canonical constraint model, all dialects
 - `parser.CanonicalizeConstraints`, called by all three parsers and all three introspectors
   (Q11 / X1).
 - The DB-default name derivation for PG and MySQL, with unit tests for truncation and
   collision suffixes.
 - Manifest goldens regenerate. Resolve the two FIX-240 backlog lines this covers.
+
+### N.3 Generated columns, all dialects
+- Per Q1: the PG and MySQL file parsers, plus all three introspectors.
+- Confirm that the generator's `IsComputed` path excludes the column from create and update
+  inputs on PG and MySQL, as it does on SQLite.
+- Generated-column tests on every path.
+
+### N.4 PG integration test expansion
+- Add the §6.2 tests and tighten `TestPostgresIntrospect`.
+- Fix D1 and D6 (Q3): canonical type form in the introspector and the PG parser, and
+  qualified keys in the `cmd/sqlgen/gotype` resolver.
+- Fix D3 (Q4) and D9 (Q14), D5, D7 (Q12), and PG default and CHECK normalization (Q5, Q13 / D8).
+
+### N.5 MySQL integration test expansion
+- Add the §6.3 tests and tighten `TestMySQLIntrospect` / `TestMySQLIntrospectViews`.
+- Fix M2 and M9 with MySQL default normalization (Q5), M4 (Q7), M5, M6, and M7 (Q13).
+
+### N.6 SQLite integration test expansion
+- Add the §6.4 tests and tighten `TestSQLiteIntrospect`.
+- Adopt the Q10 strategy: the PRAGMAs plus a re-parse of the stored `CREATE TABLE`.
+- Fix S2, S3, S4 (Q8), S5 with warnings on both paths (Q9), S7, S8 (Q10), S9, S11 on both
+  paths, and S12. SQLite defaults already match (§4.0), so Q5 needs no SQLite change.
 
 ### N.7 Connection string + §4.3 validation
 - `connString`, `TestConnString`, and the config-validation rules (§7.1).
@@ -715,10 +730,6 @@ These are provisional; `/phase` produces the authoritative breakdown.
 
 ### N.10 CLI live-DB test suite
 - The §7.4 tests on all three dialects, including the files-vs-database differential.
-
-### N.11 PRD wording sync + closure
-- The §8 wording edits.
-- Flip this doc to SYNCED.
 
 ---
 
