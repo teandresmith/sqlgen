@@ -36,8 +36,21 @@
 | 27 | Nested Mutations | 14 | 14 | Complete (closed 2026-10-02; design doc `docs/design/archive/NESTED_MUTATIONS.md` SYNCED — superseded by PRD §9.9, with §4.6/§4.8/§4.13/§9.2/§9.5/§13.1/§13.4.1/§22.1/§22.3/§25.1/§26.5.1/§26.5.5/§26.12/§27.7/§28/§29.4/§29.10/§32.5) |
 | 28 | Transaction Connection Lock | 8 | 8 | Complete (closed 2026-09-22; design doc `docs/design/archive/TX_CONNECTION_LOCK.md` SYNCED — superseded by PRD §18.5, with §18.2/§18.4/§18.6/§20.2/§20.5/§9.4a/§9.6/§13.2/§19.1/§29.4.3) |
 | 29 | Generate Every Client Method the Schema Allows | 2 | 2 | Complete (closed 2026-10-03; normative spec PRD §4.6 Operations, with §4.13/§9/§9.8/§9.9.4/§20.2/§23.7/§26.5.1/§26.8/§26.10/§30.4.3; FIX-224 resolved; no sibling design doc) |
+| 30 | Database Introspection — CLI Wiring & Introspector Parity | 11 | 0 | Not Started (broken down 2026-10-05 on branch `feat/introspection`; design doc `docs/design/INTROSPECTION.md` DRAFT, 14 rulings, probe results in its §4.0) |
 
 ## Current Focus
+
+**Phase 30 (Database Introspection — CLI Wiring & Introspector Parity) broken down 2026-10-05.** The breakdown is in `docs/tracker/phase-30.md`: 11 sub-items, 30.0–30.10, with closure via `/close-phase 30`. Work happens on branch `feat/introspection`.
+- **Why.** `input.source: database | both` (PRD §6.1) is unwired, because no `cmd/sqlgen` package imports `parser/introspect`. A live probe on PG 16, MySQL 8.0 and SQLite then confirmed 20 of 22 suspected introspector defects and found 12 more, 9 of them on the file-parser side. Design doc: `docs/design/INTROSPECTION.md`. Its §10 has 14 rulings, all matching the recommendations.
+- **Order.**
+  - **30.0** is the PRD sync and blocks everything else.
+  - **30.1** adds the parity harness and fixtures, plus five inline fixes.
+  - **30.2** is the canonical constraint model.
+  - **30.3** covers generated columns on every dialect.
+  - **30.4 / 30.5 / 30.6** are PG, MySQL and SQLite parity, and can run in parallel.
+  - **30.7 → 30.8 → 30.9** are the connection string, the `parseSchema` wiring and the exit-code split. This chain can run alongside 30.1–30.6.
+  - **30.10** is the live-database CLI suite on all three dialects.
+- **Next:** `/implement 30.0`.
 
 **Docs reorganized for publishing, and three more design docs archived — 2026-10-04.** Design supplements, `IMPLEMENTATION_ORDER.md` and `archive/` moved under `docs/design/`, leaving only `PRD.md` and the consumer docs (`configuration.md`, `cli-manifest.md`) at the top of `docs/`. `NESTED_MUTATIONS.md`, `NESTED_MUTATIONS_EXAMPLES.md` and `TX_CONNECTION_LOCK.md` then moved to `docs/design/archive/` on the 2026-09-16 test: a `SYNCED` design doc for a closed phase (27 and 28) with zero Go citations and zero PRD back-references. `NESTED_MUTATIONS_EXAMPLES.md` is the pre-implementation companion to `NESTED_MUTATIONS.md` and goes with it. Each keeps its original text under a new `ARCHIVED` header that links the superseding PRD section (§9.9, §18.5). `CACHE.md`, `MCP.md`, `MANIFEST.md`, `TENANCY.md` and `IMPLEMENTATION_ORDER.md` stay live for the reasons given under the 2026-09-16 entry; `MUTATION.md`, `SCHEMAFUZZ.md`, `TENANCY_IMPROVEMENTS.md` and `TENANT_SCOPED_REFERENCES.md` describe unbuilt work and are not archive candidates.
 
