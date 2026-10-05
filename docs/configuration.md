@@ -85,12 +85,12 @@ output:
 |-------|------|---------|--------------|-------------|
 | `dialect` | string | `postgres` | `postgres`, `mysql`, `sqlite` | SQL dialect used for parsing. |
 | `source` | string | `files` | `files`, `database`, `both` | Where the schema is read from. |
-| `paths` | []string | `["."]` | — | SQL files or directories to parse. Used when `source` is `files` or `both`. |
+| `paths` | []string | `["."]` | — | SQL files or directories to parse. Used when `source` is `files` or `both`; ignored under `database`, with a warning when set explicitly. |
 | `views` | []string | `[]` | — | Paths to view annotation files or directories. Parsed only as views, never as DDL. |
 | `schema` | string | `*` | — | PostgreSQL only: the schema an unqualified table name or `REFERENCES` target resolves to. `*` resolves to `public`. It does not filter which schemas are parsed; `introspect.schemas` filters introspection. Ignored with a warning on MySQL/SQLite. |
 | `parse_mode` | string | `strict` | `strict`, `merge` | How duplicate table definitions across files are handled. |
 | `connection` | object | — | — | Required when `source` is `database` or `both`. |
-| `introspect` | object | — | — | Schema/table filtering for introspection. |
+| `introspect` | object | — | — | Schema/table filtering for introspection. Ignored with a warning under `source: files`. |
 
 > `dialect` is `postgres` — not `postgresql`. An invalid value fails `sqlgen validate`.
 
@@ -100,7 +100,7 @@ output:
 |-------|------|---------|-------------|
 | `url` | string | — | Full connection URL. Takes precedence over the individual fields below. |
 | `host` | string | — | Required for postgres/mysql when `url` is empty. |
-| `port` | int | — | Required for postgres/mysql when `url` is empty. |
+| `port` | int | `5432` (pg), `3306` (mysql) | Ignored on SQLite. |
 | `user` | string | — | Required for postgres/mysql when `url` is empty. |
 | `password` | string | — | See the environment overrides below. |
 | `database` | string | — | Database name, or the file path for SQLite. Required when `url` is empty. |

@@ -287,11 +287,11 @@ Controls where the schema is read from.
 | `dialect` | `string` | `"postgres"` | `postgres`, `mysql`, `sqlite` | SQL dialect for parsing. |
 | `source` | `string` | `"files"` | `files`, `database`, `both` | Schema source mode. |
 | `schema` | `string` | `"*"` | — | PostgreSQL only: the schema that an unqualified table name, view name or `REFERENCES` target resolves to when parsing SQL files. `"*"` resolves to `public`. It does not filter which schemas are parsed or generated; `introspect.schemas` filters introspection. On MySQL/SQLite a value other than `"*"` is ignored with a warning ([4.13](#413-config-validation-rules)). See [5.5](#55-schema-qualification--table-naming). |
-| `paths` | `[]string` | `["."]` | — | SQL file/directory paths to parse (when source is `files` or `both`). |
+| `paths` | `[]string` | `["."]` | — | SQL file/directory paths to parse (when source is `files` or `both`). Ignored under `source: database`, including the `["."]` default: no file is read. Setting it explicitly there warns ([4.13](#413-config-validation-rules)). |
 | `views` | `[]string` | `[]` | — | Paths to view annotation files or directories containing them. Files here are parsed exclusively as views — not as DDL. See [Section 16.1](#161-annotation-files-file-sourced-views). |
 | `parse_mode` | `string` | `"strict"` | `strict`, `merge` | How duplicate table definitions across files are handled. See [5.6](#56-multi-file-parsing-order). |
 | `connection` | `ConnectionConfig` | — | — | Required when `source` is `database` or `both`. |
-| `introspect` | `IntrospectConfig` | — | — | Schema/table filtering for introspection. |
+| `introspect` | `IntrospectConfig` | — | — | Schema/table filtering for introspection. Has no effect under `source: files`, and setting it there warns ([4.13](#413-config-validation-rules)). |
 
 ### 4.3 ConnectionConfig
 
@@ -299,7 +299,7 @@ Controls where the schema is read from.
 |-------|------|---------|-------------|
 | `url` | `string` | — | Full connection URL. Takes precedence over individual fields. |
 | `host` | `string` | — | Database host. Required for postgres/mysql when `url` is empty. |
-| `port` | `int` | — | Database port. Required for postgres/mysql when `url` is empty. |
+| `port` | `int` | `5432` (pg), `3306` (mysql) | Database port. Ignored on SQLite. |
 | `user` | `string` | — | Username. Required for postgres/mysql when `url` is empty. |
 | `password` | `string` | — | Password. Can be overridden by `SQLGEN_DB_PASSWORD` env var. |
 | `database` | `string` | — | Database name (or SQLite file path). Required when `url` is empty. |
@@ -1128,6 +1128,7 @@ The config is validated immediately after loading, before parsing or generation 
 | **Two claims on one GraphQL type name** | Error (codegen-level) | When the GraphQL surface is generated, two entities resolving to the same GraphQL type name — an enum against a declared scalar, a table against another table, an enum against `PageInfo`, a consumer scalar against a comparator input — is a generation error naming both claimants. Distinct from the Go rule above: the namespaces differ, and a document valid in Go can be invalid in GraphQL (a SQL enum named `duration` gives a legal Go `Duration` beside a `Duration` scalar that gqlparser rejects). Guidance: `enums.<enum>.struct_name`, `tables.<table>.struct_name`, `views.<view>.struct_name`, or rename the `api.graphql.scalars` entry. See [26.4](#graphql-type-name-ownership). |
 | **`exclude_columns` removes all columns** | Warning | If global + table-level `exclude_columns` removes every column from a table, a warning is printed and the table is skipped (no code generated). This is not an error — the consumer may intentionally exclude a table this way. |
 | **`input.schema` on MySQL/SQLite** | Warning | MySQL and SQLite do not support schemas. If `input.schema` is set for these dialects, it is ignored and a warning is printed. |
+| **Input key the source does not read** | Warning | `input.paths` set explicitly under `source: database`, or any `input.introspect` field set under `source: files`, is ignored, and a warning names the key and the source. The `["."]` default for `paths` is not an explicit setting and does not warn. |
 | **Missing `connection` for `database`/`both` source** | Error | `input.connection` is required when `input.source` is `database` or `both`. |
 | **Duplicate `struct_name` overrides** | Error (resolution-level) | Two tables setting the same `struct_name` is one case of the resolved-name collision rule above, which is checked against auto-derived names too: `tables.accounts.struct_name: User` beside a `users` table collides just as surely as two identical overrides. |
 | **A relationship declares both `filter` and `discriminator`** | Error | The two are mutually exclusive on one relationship ([13.4.1](#1341-discriminator--the-structured-form-of-a-polymorphic-edge)). The error names the relationship and both keys. |
@@ -1291,12 +1292,16 @@ Each dialect parser lives in the **parser module** (`github.com/teandresmith/sql
 - IF EXISTS / IF NOT EXISTS: ALTER TABLE IF EXISTS, ADD COLUMN IF NOT EXISTS, DROP COLUMN IF EXISTS, DROP CONSTRAINT IF EXISTS
 - Parses composite type attributes, domain type constraints, enum values
 - Detects auto-increment columns: `serial`/`bigserial`/`smallserial` and `GENERATED { ALWAYS | BY DEFAULT } AS IDENTITY` (SQL-standard identity columns, PostgreSQL 10+)
+- Generated columns: `GENERATED ALWAYS AS (expr) STORED` (PostgreSQL 12+)
+- `CREATE TABLE … PARTITION OF` is skipped with a warning, like `CREATE VIEW`. The partitioned parent (`PARTITION BY`) is the entity; a partition is not
+- Type modifiers are written without a space: `numeric(12,2)`, `varchar(255)`, as the catalog writes them. That is the spelling an `overrides.types` key matches ([7.1](#71-type-resolution-chain))
 - `pg_query_go` links against `libpg_query` via CGO. Building the CLI from source therefore requires a C compiler; the pre-built release binaries do not.
 
 **MySQL** (`vitess/sqlparser`):
 - Parses CREATE TABLE with columns, constraints, indexes, inline comments
 - Inline ENUM values from column type definitions (table-scoped naming: `<table>_<column>_enum`, auto-resolved via `RegisterEnum`)
 - Inline SET values from column type definitions (table-scoped naming: `<table>_<column>_set`, auto-resolved via `RegisterSet`)
+- Generated columns: `GENERATED ALWAYS AS (expr) [VIRTUAL|STORED]` and shorthand `AS (expr)` (5.7+)
 - ALTER TABLE: ADD/DROP/MODIFY COLUMN, ADD/DROP INDEX, ADD/DROP CONSTRAINT, RENAME COLUMN, RENAME TABLE, CHANGE COLUMN
 - Standalone `RENAME TABLE a TO b [, c TO d ...]`, applied pair by pair, left to right
 - No native enum type, composite type, or domain type support
@@ -1308,8 +1313,26 @@ Each dialect parser lives in the **parser module** (`github.com/teandresmith/sql
 - Generated columns: `GENERATED ALWAYS AS (expr) VIRTUAL|STORED` and shorthand `AS (expr)` (3.31+)
 - STRICT tables: recognizes `CREATE TABLE ... STRICT` modifier (3.37+)
 - WITHOUT ROWID tables: recognizes `CREATE TABLE ... WITHOUT ROWID` modifier (3.8.2+)
+- `INTEGER PRIMARY KEY` is auto-increment only when it is a rowid alias. It is not one in a `WITHOUT ROWID` table, nor when declared `INTEGER PRIMARY KEY DESC`; such a key gets no automatic value and the caller supplies it
+- `CREATE VIRTUAL TABLE` (FTS5, R*Tree, …) is skipped with a warning, like `CREATE VIEW`
 - No MODIFY COLUMN, enum, composite, or domain support
 - Type affinity handling (defaults to BLOB)
+
+**Constraints (all dialects).** Every PRIMARY KEY, UNIQUE, FOREIGN KEY and CHECK, whether declared inline on a column or at table level, is a table constraint, and it also sets the column flags (primary key, unique, FK reference). Parsing a `CREATE TABLE` and introspecting the table it creates give the same constraint set, with the same names. An unnamed constraint gets the name its database would assign:
+
+| Dialect | PRIMARY KEY | UNIQUE | FOREIGN KEY | CHECK |
+|---------|-------------|--------|-------------|-------|
+| PostgreSQL | `<table>_pkey` | `<table>_<cols>_key` | `<table>_<cols>_fkey` | `<table>_<col>_check`, or `<table>_check` when the expression references no column or more than one |
+| MySQL | `PRIMARY` | its first column's name, then `_2`, `_3`, … on collision | `<table>_ibfk_<n>` | `<table>_chk_<n>` |
+| SQLite | declared names only | declared names only | declared names only | declared names only |
+
+PostgreSQL names follow its own rules: `<cols>` joins the column names with `_`, a name past 63 bytes is truncated as PostgreSQL truncates it, and a name already taken gets a numeric suffix. On MySQL `<n>` counts from 1 in declaration order, and a PRIMARY KEY is always `PRIMARY`, even when declared with a name. SQLite stores no name for an unnamed constraint, so none is derived; an unnamed SQLite constraint stays unnamed on both paths. A name is fixed when the constraint is created. PostgreSQL keeps it across a later table or column rename, while MySQL renames a `<table>_ibfk_<n>` or `<table>_chk_<n>` name along with its table. A UNIQUE that repeats the primary key or an earlier UNIQUE over the same columns follows the database:
+
+- **PostgreSQL** merges duplicates declared in one `CREATE TABLE` into the first, which takes the first name declared among them. So `id int PRIMARY KEY, CONSTRAINT u UNIQUE (id)` is one primary key named `u`. A duplicate added later by `ALTER TABLE … ADD` is a second constraint, named with the collision suffix.
+- **SQLite** drops a UNIQUE only when an identical index already exists. A rowid-alias `INTEGER PRIMARY KEY` has no index, so a UNIQUE on it is kept.
+- **MySQL** keeps every duplicate.
+
+**Indexes get the database's names too.** SQLite requires every `CREATE INDEX` to be named. On PostgreSQL an unnamed `CREATE INDEX` is `<table>_<cols>_idx`, with the collision suffix. On MySQL an unnamed `KEY` / `INDEX` takes its first column's name, numbered together with the unnamed UNIQUEs (`c`, `c_2`, `c_3`). MySQL also builds an index for a FOREIGN KEY when no existing index starts with the key's columns. That index is named after the constraint when the constraint is named, and after the key's first column otherwise. The MySQL parser adds it as well, so both paths list it. UNIQUE and index `method` defaults to `btree` on PostgreSQL and MySQL, and a CHECK's columns are the columns its expression references.
 
 ### 5.3 Relationship Detection
 
@@ -1500,8 +1523,10 @@ All schema elements (tables, columns, enums, types) are sorted before generation
 | Mode | Behavior |
 |------|----------|
 | `files` | Parse SQL files from `paths` config. Default. |
-| `database` | Connect to live database via `connection` config and introspect schema. |
+| `database` | Connect to live database via `connection` config and introspect schema. `paths` is not read. |
 | `both` | Introspect database first (source of truth), then merge file-based changes on top. See below. |
+
+**Both sources describe a schema the same way.** Introspected column defaults, CHECK expressions and domain constraints are normalized to the form the file parser produces for the same DDL. Catalog text is put through the same deparser the parser uses, and the casts the database adds on its own are removed: a domain cast to its base type, a literal cast to its column's type. MySQL backticks and charset introducers are dropped, and a PostgreSQL `serial` or identity column carries no default, only auto-increment, as when parsed. So `database` and `files` describe a schema identically: the same columns, types, defaults, constraints and constraint names ([5.2](#52-dialect-parsers)), and the same generated code and manifest.
 
 #### `both` Mode — Merge Strategy
 
@@ -1539,16 +1564,22 @@ type Introspector interface {
 
 | Capability | PostgreSQL | MySQL | SQLite |
 |------------|:----------:|:-----:|:------:|
-| Tables & columns | `information_schema` + `pg_catalog` | `information_schema` | `PRAGMA table_list/table_info` |
+| Tables & columns | `information_schema` + `pg_catalog` | `information_schema` | `PRAGMA table_list/table_xinfo` |
 | Primary keys | Yes | Yes | Yes |
 | Foreign keys | Yes | Yes | `PRAGMA foreign_key_list` |
-| Unique constraints | Yes | Yes | Limited |
-| Check constraints | Yes | Yes | Limited |
+| Unique constraints | Yes | Yes | Yes |
+| Check constraints | Yes | Yes¹ | Yes |
 | Enum types | `pg_catalog.pg_enum` | No (inline only) | No |
 | Composite types | `pg_type` + `pg_attribute` | No | No |
 | Domain types | `information_schema.domains` | No | No |
 | Comments | `pg_description` | `information_schema` | No |
 | Multi-schema | Yes | No (single database) | No |
+
+¹ MySQL CHECK introspection needs MySQL 8.0.16 or later. An older server has no CHECK catalog, so it yields no CHECK constraints; any other failure reading CHECKs is an error. sqlgen sets no minimum MySQL version.
+
+- **PostgreSQL partitions.** A partition (`CREATE TABLE … PARTITION OF`) is skipped; only the partitioned parent is introspected, as the parser does ([5.2](#52-dialect-parsers)).
+- **SQLite virtual tables.** Virtual tables (FTS5, R*Tree, …) and the shadow tables behind them are skipped, with a warning naming each virtual table, as the parser does.
+- **SQLite constraint names and CHECK text.** SQLite's PRAGMAs give columns, keys, foreign keys and indexes, but not constraint names or CHECK expressions. Those come from the table's stored `CREATE TABLE` (`sqlite_master.sql`), read with the file parser.
 
 ### 6.4 Filtering
 
@@ -1586,6 +1617,10 @@ A per-column override changes the Go type only — it does not restate what the 
 Steps 1 and 2 are by **column**; steps 3–6 are by **SQL type**. The two per-column forms differ only in whether they can carry an import: `type_map` cannot, so it is limited to builtins, types in the generated package, and the literals sqlgen resolves imports for on its own; `column_map.<col>.type` pairs with `.import` and is the escape hatch for anything external. Naming an unknown package-qualified type in `type_map`, or in `column_map` without an `import`, is a config error rather than a generated file that references a package nothing imports. See ["Column Overrides"](#column-overrides) and ["Type Map"](#type-map).
 
 Only steps 3–6 carry a `nullable:` wrapper variant. A nullable column resolved by step 1 or 2 gets `*T` (or bare `T` when the type is natively nilable). Steps 1 and 2 also resolve a literal as an opaque type: a slice literal (`[]T`) is *not* treated as an array column, so it filters through the scalar comparator rather than `comparator.Slice[T]`. Use `overrides.types` when array semantics matter.
+
+**How steps 3–5 match a SQL type.** The column's SQL type is looked up as written first, then with its modifiers stripped: a `numeric(12,2)` column takes an `overrides.types."numeric(12,2)"` entry when there is one and the `numeric` entry otherwise. PostgreSQL types are written without a space inside the modifiers, by the parser and the introspector alike ([5.2](#52-dialect-parsers)), so `"numeric(12,2)"` is the key to write.
+
+**Enum, SET and domain names.** A column typed by an enum, a SET or a domain resolves when the type is named bare (`status`) or schema-qualified (`billing.status`). The bare name is registered only when no other schema has a type by that name, so two same-named enums in different schemas never collide; each answers to its qualified name. The parser and the introspector write a column's type the same way: bare when the type is in the column's own schema, schema-qualified when it is in another.
 
 ### 7.2 Built-In Type Mappings
 
@@ -2181,7 +2216,7 @@ For MySQL and SQLite, message parsing tests cover known message formats and grac
 - `generate`: correct file output, stale file cleanup in `file_per_table` mode, generated header includes CLI version
 - `completion`: outputs valid shell scripts for bash/zsh/fish/powershell
 - Config discovery: `--config` flag, `sqlgen.yml` then `sqlgen.yaml` fallback, error when neither exists
-- Exit codes: 0 (success), 1 (generation error), 2 (config error), 3 (schema error), 4 (connection error)
+- Exit codes: 0 (success), 1 (generation error), 2 (config error), 3 (schema error), 4 (connection error). 4 means a connection or catalog-query failure only; a schema error exits 3 under every `input.source`, whether it came from a file or the database ([23.9](#239-exit-codes))
 
 ##### Omittable Package Tests (`omittable/`)
 
@@ -11502,8 +11537,8 @@ Two feature areas carry their own governed exceptions to the `_gen.go`-only rule
 | `0` | Success |
 | `1` | Generation error (template failure, file write error) |
 | `2` | Config error (invalid YAML, validation failure) |
-| `3` | Schema error (parse failure, ambiguous table names, constraint violations) |
-| `4` | Connection error (database introspection failed) |
+| `3` | Schema error (parse failure, ambiguous table names, constraint violations), under every `input.source` |
+| `4` | Connection error: connecting to the database, or a catalog query during introspection, failed. Nothing else exits `4` |
 
 ### 23.10 Watch Mode
 
@@ -15480,9 +15515,9 @@ The manifest carries metadata that goes beyond what's expressible in Go types al
 | Field | Where | Source |
 |---|---|---|
 | `comment` | top-level + per-column | `COMMENT ON TABLE` / `COMMENT ON COLUMN`. PG `pg_description` (introspector), MySQL `information_schema` (introspector), file parser test-validated. Empty string when no comment. |
-| `indexes[]` | top-level | All declared indexes (UNIQUE, non-unique, partial, GIN/GIST). Carries `name`, `columns[]`, `unique`, `method`, optional `where` for partial. Includes the PK index when the schema declares a `PRIMARY KEY`. A key declared only through `primary_key.columns` ([8.6](#86-primary-key-strategy)) has no primary-key index, so none is listed for it; a `UNIQUE` that backs it is listed under its own name. An inline column `UNIQUE` (`email text UNIQUE`) declares no name, so it is listed under PostgreSQL's default, `<table>_<column>_key`, on every dialect, as the PK index is `<table>_pkey`. Both are derived labels, not names read back from the database, and can differ from the name the database assigned: PostgreSQL truncates an identifier past 63 bytes, appends a number on a collision (`t_email_key1`), and keeps the original name across a table or column rename, an inline `CONSTRAINT <name> UNIQUE` keeps its declared name, which the label does not read, and MySQL and SQLite name these indexes their own way (`PRIMARY`, `email`, `sqlite_autoindex_<table>_N`). An inline `UNIQUE` is listed even when the same `CREATE TABLE` also declares the column as its single-column `PRIMARY KEY` or a table-level `UNIQUE` over it alone, although PostgreSQL then builds only the one index. |
+| `indexes[]` | top-level | All declared indexes (UNIQUE, non-unique, partial, GIN/GIST). Carries `name`, `columns[]`, `unique`, `method`, optional `where` for partial. Includes the PK index when the schema declares a `PRIMARY KEY`. A key declared only through `primary_key.columns` ([8.6](#86-primary-key-strategy)) has no primary-key index, so none is listed for it; a `UNIQUE` that backs it is listed under its own name. Each index is listed under the name the database assigns, inline or table-level alike ([5.2](#52-dialect-parsers) "Constraints"): a declared name as declared (a MySQL primary key is always `PRIMARY`), and an unnamed constraint or index under the name PostgreSQL or MySQL gives it (`users_pkey`, `users_email_key`, `orders_placed_at_idx`, `PRIMARY`, `email`). The index MySQL builds on its own for a foreign key is listed too. The list is therefore the same under every `input.source`. SQLite is the exception, because it names every constraint index `sqlite_autoindex_<table>_N` itself. On SQLite a declared constraint name is listed, and an unnamed `PRIMARY KEY` or `UNIQUE` takes the label `<table>_pkey` or `<table>_<cols>_key`, where `<cols>` joins the column names with `_`. A `UNIQUE` that repeats the primary key or an earlier `UNIQUE` over the same columns is listed only where the database builds an index for it, by the [5.2](#52-dialect-parsers) rule. On MySQL it is listed under its own name (`email_2`). |
 | `comparator` | per-column | The comparator the generated `<T>Filter` declares for the column, read from the entity's own filter surface rather than re-derived — nullable variant, type parameter and all (`comparator.NullableNumber[int32]`, `comparator.Slice[string]`, `comparator.Opaque[net.IP]`). It is the same value `filter.fields[].type` publishes, minus the leading `*`, so the two agree by construction. **Omitted for a non-filterable column** ([§26.4](#comparator-input-projection) "Non-filterable columns"): a `json[]` / `jsonb[]` column, or a `types.JSON` column on SQLite. Deriving it a second time is what let the field drift — it reported `comparator.Time` for an `interval` column, the non-nullable spelling for every nullable one, and nothing at all for enum / `bytea` / `inet` / `numeric`. |
-| `check` | per-column | Raw CHECK-constraint expression text as written in the DDL. Multi-column CHECKs are flattened onto each participating column. |
+| `check` | per-column | CHECK-constraint expression text, in the file parser's normalized form ([6.1](#61-source-modes)), so it is the same under every `input.source`. Multi-column CHECKs are flattened onto each participating column. |
 | `default_kind` | per-column | One of `literal` (constant value), `function` (e.g., `gen_random_uuid()`, `CURRENT_TIMESTAMP`), `expression` (anything else). Lets consumers distinguish a value the caller must supply from one the database supplies. |
 | `access` + `redacted` | per-column | `access` is the resolved role (`public` / `read_only` / `write_only` / `hidden` / `internal`); `redacted` is `true` for `write_only` / `internal`. Additive optional fields (default `public` / `false`) — omitted rendering is `public`. Tell MCP / AI tooling which columns are server-only and must not be advertised for exposure. `sql_bodies` stay accurate (real server SQL); the `redacted` marker is what suppresses value-surfacing, not SQL rewriting. See [Section 32](#32-column-access-control). |
 | `features.events.{enabled, types[], payload_shape}` | top-level | Populated only when `events.enabled: true` for the entity. |

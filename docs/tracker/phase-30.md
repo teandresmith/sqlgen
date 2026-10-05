@@ -1,6 +1,6 @@
 # Phase 30: Database Introspection — CLI Wiring & Introspector Parity
 
-Status: Not Started
+Status: In Progress
 PRD Sections: 4.2, 4.3, 4.4, 5.2, 6.1, 6.3, 6.4, 7, 8.1.7, 16.2, 30.7
 
 > **Design.** `docs/design/INTROSPECTION.md` (DRAFT 2026-10-05) is the source for every sub-item
@@ -17,28 +17,32 @@ PRD Sections: 4.2, 4.3, 4.4, 5.2, 6.1, 6.3, 6.4, 7, 8.1.7, 16.2, 30.7
 >   to the user (never `t.Skip`).
 > - Adjacent findings go to `docs/tracker/backlog.md` per `/fix` → Findings triage. The queue
 >   freeze is on.
+>
+> - PRD §6.1 says `database` and `files` describe a schema identically. A parity exception
+>   that stays user-visible (a type, default, name or CHECK text that differs by source) must
+>   be written into §6.1 by the sub-item that accepts it.
 
 ## 30.0 PRD sync — introspection, parity rules and the canonical schema model
 
 **PRD Reference:** Sections 4.2, 5.2, 6.1, 6.3, 7, 8.1.7, 30.7
 
-**Status:** Not Started
+**Status:** Complete
 
 ### Tasks
 
-- [ ] §4.2 `paths` row: state that `paths` is ignored under `source: database`, including its
+- [x] §4.2 `paths` row: state that `paths` is ignored under `source: database`, including its
   `["."]` default. State that `input.introspect.*` has no effect under `source: files`.
-- [ ] §5.2 PostgreSQL bullet list:
+- [x] §5.2 PostgreSQL bullet list:
   - add generated columns, `GENERATED ALWAYS AS (expr) STORED` (Q1)
   - add that `CREATE TABLE … PARTITION OF` is skipped with a warning and the partitioned
     parent is the entity (Q14)
   - add that type modifiers are written without a space, as in `numeric(12,2)` (Q12)
-- [ ] §5.2 MySQL bullet list: add generated columns, `GENERATED ALWAYS AS (expr)
+- [x] §5.2 MySQL bullet list: add generated columns, `GENERATED ALWAYS AS (expr)
   [VIRTUAL|STORED]` and the shorthand `AS (expr)` (Q1).
-- [ ] §5.2 SQLite bullet list: add that `CREATE VIRTUAL TABLE` is skipped with a warning, like
+- [x] §5.2 SQLite bullet list: add that `CREATE VIRTUAL TABLE` is skipped with a warning, like
   `CREATE VIEW` (Q9). Add that `INTEGER PRIMARY KEY` is auto-increment only when it is a rowid
   alias, which excludes `WITHOUT ROWID` tables and `INTEGER PRIMARY KEY DESC` (S9 / S11).
-- [ ] §5.2 (all dialects): state the canonical constraint model (Q11).
+- [x] §5.2 (all dialects): state the canonical constraint model (Q11).
   - Every PRIMARY KEY, UNIQUE, FOREIGN KEY and CHECK, inline or table-level, is a table
     constraint and also sets the column flags.
   - An unnamed constraint gets the name its database would assign:
@@ -47,30 +51,30 @@ PRD Sections: 4.2, 4.3, 4.4, 5.2, 6.1, 6.3, 6.4, 7, 8.1.7, 16.2, 30.7
     - MySQL: `PRIMARY`, `<t>_ibfk_<n>`, `<t>_chk_<n>`, and a UNIQUE named after its first
       column, with `_2`, `_3` on collision
     - SQLite: declared names only
-- [ ] §6.1: state that introspected defaults and CHECK / domain-constraint text are normalized to
+- [x] §6.1: state that introspected defaults and CHECK / domain-constraint text are normalized to
   the file parser's form, with catalog-added implicit casts removed (Q5, Q13). State that
   `database` and `files` therefore describe the same schema identically.
-- [ ] §6.3 capability table and notes:
+- [x] §6.3 capability table and notes:
   - PG partitions are skipped; only the partitioned parent is introspected (Q4).
   - SQLite virtual and shadow tables are skipped with a warning (Q9).
   - SQLite "Unique constraints" and "Check constraints" change from "Limited" to "Yes", with a
     note that names and CHECK text come from the stored `CREATE TABLE` (Q8, Q10).
   - Footnote: MySQL CHECK introspection needs 8.0.16+, and an older server yields no CHECKs,
     with no hard minimum version (Q7).
-- [ ] §7 type resolution: an enum, set or domain resolves under its bare name or its
+- [x] §7 type resolution: an enum, set or domain resolves under its bare name or its
   schema-qualified name. A bare key is registered only when no other schema has the same name.
   Both paths write a type in the column's own schema bare, and a cross-schema type qualified (Q3).
-- [ ] §8.1.7 CLI tests, exit-code bullet: 4 means a connection or catalog-query failure only; a
+- [x] §8.1.7 CLI tests, exit-code bullet: 4 means a connection or catalog-query failure only; a
   schema error exits 3 under every `source` (Q2).
-- [ ] §30.7 `indexes[]` row: replace "derived labels … PostgreSQL's default on every dialect"
+- [x] (Superseded for PK / UNIQUE by the Q11 addendum; see the Completion Record.) §30.7 `indexes[]` row: replace "derived labels … PostgreSQL's default on every dialect"
   with the Q11 rule. Names are the ones the database assigns. They are derived per dialect for
   unnamed constraints, and on SQLite only declared names are used, with an unnamed index keeping
   the existing derived label. Keep the sentence about a `primary_key.columns`-only key.
   **Word the SQLite case with the user before landing**, because Q11 leaves the manifest label
   for an unnamed SQLite constraint implicit.
-- [ ] §30.7 `check` row: replace "as written in the DDL" with "in the file parser's normalized
+- [x] §30.7 `check` row: replace "as written in the DDL" with "in the file parser's normalized
   form" (Q13).
-- [ ] Cross-check every edit against design doc §8. Fix `#` anchors that shift.
+- [x] Cross-check every edit against design doc §8. Fix `#` anchors that shift.
 
 ### Acceptance Criteria
 
@@ -82,12 +86,71 @@ PRD Sections: 4.2, 4.3, 4.4, 5.2, 6.1, 6.3, 6.4, 7, 8.1.7, 16.2, 30.7
 
 ### Tests Required
 
-- [ ] None (docs only). `grep` checks for the retired phrasings listed in the acceptance
+- [x] None (docs only). `grep` checks for the retired phrasings listed in the acceptance
   criteria, plus an anchor check of every `](#…)` link touched.
 
 ### Completion Record
 
-_Filled in when complete: files changed, commit references, notes._
+- **Completed:** 2026-10-05 (`/done 30.0`). Docs only; `make check` passed.
+- **Files:** `docs/PRD.md`; `docs/configuration.md`; `docs/design/INTROSPECTION.md` (Q11 addendum in §10);
+  `docs/tracker/phase-30.md` (30.2 and 30.7 tasks carry the addendum).
+- **PRD edits:**
+  - §4.2 `paths` and `introspect` rows.
+  - §5.2: PG generated columns, `PARTITION OF` skip and typmod spelling; MySQL generated columns;
+    SQLite rowid-alias rule and `CREATE VIRTUAL TABLE` skip; a new **Constraints (all
+    dialects)** paragraph with the per-dialect name table.
+  - §6.1: the `database` row, plus a "Both sources describe a schema the same way" paragraph
+    (Q5, Q13).
+  - §6.3: SQLite `table_xinfo`; UNIQUE / CHECK changed to "Yes"; the MySQL CHECK footnote; notes
+    on partitions, virtual tables and SQLite names.
+  - §7.1: override key matching (exact, then modifiers stripped) and enum / SET / domain name
+    resolution (Q3, Q12).
+  - §8.1.7 exit-code bullet.
+  - §30.7 `indexes[]` and `check` rows.
+- **Beyond the task list:**
+  - §23.9's row for exit 4 is reworded to match §8.1.7, so the two tables agree.
+  - The §6.3 SQLite "Tables & columns" cell now names `table_xinfo`, per Q1.
+- **SQLite §30.7 wording, ruled with the user 2026-10-05.** A probe on PG 16, MySQL 8.0 and
+  sqlite3 ran `email UNIQUE` + `UNIQUE(email)`, `id … PRIMARY KEY UNIQUE` and a named
+  `CONSTRAINT named_u UNIQUE(b)`. PG and SQLite collapse the duplicates. MySQL keeps them as
+  `id` and `email_2`, with warning 1831. SQLite names every auto-index `sqlite_autoindex_t_N`,
+  the named one included. Two rulings, both the recommended option:
+  - an unnamed SQLite PK / UNIQUE is listed as `<t>_pkey` / `<t>_<cols>_key`, and the `_idx`
+    label goes
+  - duplicates follow the database, which replaces the old "inline UNIQUE is listed even
+    when…" sentence
+  Both are recorded in the design doc §10 Q11 addendum and threaded into 30.2.
+- **Auto-review round.** `sqlgen-reviewer` found 3 issues and 5 inline fixes, and asked 5
+  questions. A second probe, on the same three engines, settled the factual ones:
+  - PG merges duplicates only within one `CREATE TABLE`, under the first declared name
+    (`id PRIMARY KEY, CONSTRAINT bu UNIQUE(id)` → PK `bu`). `ALTER … ADD` gives `_key1`.
+  - SQLite keeps a UNIQUE on a rowid-alias PK.
+  - PG names a multi-column or no-column CHECK `<t>_check` and an unnamed index `<t>_<cols>_idx`,
+    and keeps derived names across renames.
+  - MySQL numbers unnamed `KEY` and `UNIQUE` together (`c`, `c_2`, `c_3`), builds an implicit FK
+    index (named `fk_named` or `e`), renames `_ibfk_` / `_chk_` with the table, and always names
+    the PK `PRIMARY`.
+
+  The inline fixes were applied: §7.1 "steps 3–5", the PG CHECK name, the scoped duplicate rule,
+  the MySQL `PRIMARY` caveat in §30.7, a rename sentence in §5.2, and a superseded note on the
+  §30.7 task.
+
+  The user ruled on two more, both the recommended option:
+  - plain indexes and MySQL's implicit FK index follow the database (PRD §5.2 "Indexes get the
+    database's names too"; 30.2 tasks)
+  - ignored input keys warn (PRD §4.13 row and §4.2; 30.7 task)
+
+  Reviewer Q5 was auto-accepted: §6.1 stays absolute, and a new phase ground rule makes any
+  remaining exception a PRD edit.
+- **Sync gap found and fixed.** Design doc §7.1 defaults `port` to 5432 / 3306, but PRD §4.3
+  said it was required, and §8 never listed that edit. §4.3 and `docs/configuration.md` now
+  give the default. The `config/schema/v1.json` description is a 30.7 task, since it's code.
+- **Checks:**
+  - The retired phrasings ("as written in the DDL", "PostgreSQL's default … on every dialect",
+    "derived labels", a `Limited` capability cell) are gone. The only `paths` + `database`
+    mentions are the two new "not read" statements.
+  - An anchor scan of every `](#…)` link in the PRD found 0 unresolved.
+  - No heading was renamed, so no anchor shifted.
 
 ---
 
@@ -180,18 +243,41 @@ _Filled in when complete: files changed, commit references, notes._
   - CHECK `Columns` lists the referenced columns on every dialect
 - [ ] Add per-dialect default-name derivation for unnamed constraints.
   - **PG:** PostgreSQL's `ChooseConstraintName` behavior: `<t>_pkey`, `<t>_<cols>_key`,
-    `<t>_<cols>_fkey`, `<t>_<col>_check`, 63-byte truncation (`NAMEDATALEN - 1`), and a numeric
+    `<t>_<cols>_fkey`, `<t>_<col>_check` (`<t>_check` when the CHECK references no column or
+    several), 63-byte truncation (`NAMEDATALEN - 1`), and a numeric
     suffix on collision within the schema.
   - **MySQL:** `PRIMARY`, `<t>_ibfk_<n>`, `<t>_chk_<n>`, and a UNIQUE named after its first
-    column, with `_2`, `_3` on collision.
+    column, with `_2`, `_3` on collision. A PRIMARY KEY is `PRIMARY` even when declared with a
+    name.
   - **SQLite:** names come only from the declaration.
+  - Renames (probed 2026-10-05). PG keeps a derived name across `RENAME TABLE` /
+    `RENAME COLUMN` (`e_pkey`, `e_v_key` on `e2.w`). MySQL 8.0 `RENAME TABLE` renames
+    `q_ibfk_1` → `q2_ibfk_1` and `q_chk_1` → `q2_chk_1`. Each parser matches its database.
+- [ ] Duplicates follow the database (Q11 addendum, design doc §10; PRD §5.2). Probed
+  2026-10-05:
+  - **PG:** merges duplicates within one `CREATE TABLE` into the first, which takes the first
+    declared name. `id int PRIMARY KEY, CONSTRAINT bu UNIQUE(id)` gives a PK named `bu`. A
+    duplicate added by `ALTER TABLE … ADD` is a second constraint (`c_email_key1`).
+  - **SQLite:** drops a UNIQUE only when an identical index exists, so `INTEGER PRIMARY KEY
+    UNIQUE` (a rowid alias) keeps its autoindex.
+  - **MySQL:** keeps everything (`email`, `email_2`).
+- [ ] Unnamed plain indexes get the database's name (Q11 addendum; PRD §5.2 "Indexes get the
+  database's names too"):
+  - PG: `<t>_<cols>_idx`, then `…_idx1`.
+  - MySQL: the first column's name, sharing one counter with unnamed UNIQUE (`c`, `c_2`,
+    `c_3`, probed).
+- [ ] MySQL parser: add the implicit index MySQL builds for an FK that no existing index starts
+  with. It is named after the FK constraint (`fk_named`), or else the FK's first column (`e`),
+  as probed 2026-10-05. Cover it in `TestMySQLIntrospect_TableConstraints`.
 - [ ] Call `CanonicalizeConstraints` at the end of each parser's table construction
   (`parser/postgres`, `parser/mysql`, `parser/sqlite`) and at the end of each introspector's
   per-table pass.
 - [ ] PG parser: keep the declared name of an inline `CONSTRAINT <name> UNIQUE`. It is dropped
   today; FIX-240 backlog line, 2026-10-02.
 - [ ] `cmd/sqlgen/manifest/builder.go` `indexNameOrDerived` / `pkIndexName` (`:954-958`): read the
-  canonical constraint name instead of deriving one, apart from the §30.7 SQLite case 30.0 words.
+  canonical constraint or index name instead of deriving one. On SQLite, an unnamed PRIMARY KEY or
+  UNIQUE is listed as `<t>_pkey` / `<t>_<cols>_key`, inline or table-level alike. The builder's
+  own `_idx` fallback goes (PRD §30.7).
 - [ ] Regenerate the example goldens (`make update-golden-e2e`). Explain every manifest index or
   constraint-name change in the Completion Record. **Only X1-caused changes are expected.**
 - [ ] Delete the two FIX-240 backlog lines this resolves (unnamed UNIQUE `_idx` vs `_key`; the
@@ -213,8 +299,9 @@ _Filled in when complete: files changed, commit references, notes._
 
 - [ ] `TestCanonicalizeConstraints` (table-driven): an inline PK, a table-level PK, a composite
   PK, inline and table-level UNIQUE, an inline `REFERENCES` and a table-level FK, a column CHECK
-  and a table CHECK, each on PG / MySQL / SQLite. Assert the constraint set, the column flags,
-  `Method` and CHECK `Columns`.
+  and a table CHECK, plus a UNIQUE repeating the PK and an inline + table-level UNIQUE on one
+  column, each on PG / MySQL / SQLite. Assert the constraint set, the column flags, `Method` and
+  CHECK `Columns`.
 - [ ] `TestDerivePostgresConstraintName`: every suffix kind, truncation at 63 bytes
   (multi-byte identifiers included), collision suffixes.
 - [ ] `TestDeriveMySQLConstraintName`: `PRIMARY`, `_ibfk_<n>` ordering, `_chk_<n>`,
@@ -498,7 +585,7 @@ _Filled in when complete: files changed, commit references, notes._
 
 ## 30.7 Connection string + PRD §4.3 validation
 
-**PRD Reference:** Sections 4.3
+**PRD Reference:** Sections 4.2, 4.3, 4.13
 
 **Status:** Not Started
 
@@ -516,7 +603,14 @@ _Filled in when complete: files changed, commit references, notes._
 - [ ] `config/validate.go`, next to `validateConnectionRequired` (`:1124`): when `url` is
   empty, `database` is required on every dialect, and `host` and `user` are required on postgres
   and mysql. Report every missing field together. `SQLGEN_DB_URL` (applied at `config.go:1935`)
-  satisfies the rule.
+  satisfies the rule. `port` is not required (PRD §4.3 default, synced in 30.0). Update the
+  `port` description in `cmd/sqlgen/config/schema/v1.json` (`:139`, still "Required for
+  postgres/mysql") to match, and the `paths` / `introspect` descriptions to note the warning.
+- [ ] Ignored input keys warn (PRD §4.13 "Input key the source does not read"; design doc Q11
+  addendum). An explicitly set `input.paths` under `source: database`, or any
+  `input.introspect` field under `source: files`, warns and names the key and the source.
+  Telling an explicit `paths` from the `["."]` default needs presence tracking at YAML decode.
+  An explicit `paths: ["."]` warns; the default does not.
 
 ### Acceptance Criteria
 
@@ -531,6 +625,8 @@ _Filled in when complete: files changed, commit references, notes._
   `ssl_mode` defaults, port defaults, each missing-field error.
 - [ ] Config validation tests: each missing field per dialect; all reported together; `url` set
   skips the rule; `SQLGEN_DB_URL` alone satisfies it.
+- [ ] Ignored-key warning tests: `paths` explicit / defaulted under `database`; `introspect`
+  set / unset under `files`; neither warns under `both`.
 
 ### Completion Record
 

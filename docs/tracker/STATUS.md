@@ -36,7 +36,7 @@
 | 27 | Nested Mutations | 14 | 14 | Complete (closed 2026-10-02; design doc `docs/design/archive/NESTED_MUTATIONS.md` SYNCED — superseded by PRD §9.9, with §4.6/§4.8/§4.13/§9.2/§9.5/§13.1/§13.4.1/§22.1/§22.3/§25.1/§26.5.1/§26.5.5/§26.12/§27.7/§28/§29.4/§29.10/§32.5) |
 | 28 | Transaction Connection Lock | 8 | 8 | Complete (closed 2026-09-22; design doc `docs/design/archive/TX_CONNECTION_LOCK.md` SYNCED — superseded by PRD §18.5, with §18.2/§18.4/§18.6/§20.2/§20.5/§9.4a/§9.6/§13.2/§19.1/§29.4.3) |
 | 29 | Generate Every Client Method the Schema Allows | 2 | 2 | Complete (closed 2026-10-03; normative spec PRD §4.6 Operations, with §4.13/§9/§9.8/§9.9.4/§20.2/§23.7/§26.5.1/§26.8/§26.10/§30.4.3; FIX-224 resolved; no sibling design doc) |
-| 30 | Database Introspection — CLI Wiring & Introspector Parity | 11 | 0 | Not Started (broken down 2026-10-05 on branch `feat/introspection`; design doc `docs/design/INTROSPECTION.md` DRAFT, 14 rulings, probe results in its §4.0) |
+| 30 | Database Introspection — CLI Wiring & Introspector Parity | 11 | 1 | In Progress (broken down 2026-10-05 on branch `feat/introspection`; design doc `docs/design/INTROSPECTION.md` DRAFT, 14 rulings + Q11 addendum, probe results in its §4.0; 30.0 PRD sync complete 2026-10-05) |
 
 ## Current Focus
 
@@ -50,7 +50,8 @@
   - **30.4 / 30.5 / 30.6** are PG, MySQL and SQLite parity, and can run in parallel.
   - **30.7 → 30.8 → 30.9** are the connection string, the `parseSchema` wiring and the exit-code split. This chain can run alongside 30.1–30.6.
   - **30.10** is the live-database CLI suite on all three dialects.
-- **Next:** `/implement 30.0`.
+- **30.0 complete (2026-10-05).** The PRD now states the canonical constraint model, the source-parity normalization, the bare or qualified type names, the exit-4 split and the new §30.7 index and CHECK rows. A Q11 addendum adds four rulings, all probed first: duplicate UNIQUEs follow the database; an unnamed SQLite PK or UNIQUE gets a PG-style manifest label; plain indexes and MySQL's implicit FK index get the database's names; and ignored input keys warn. §4.3 `port` now defaults to 5432 / 3306, a design doc §7.1 decision that §8 missed.
+- **Next:** `/implement 30.1` and `/implement 30.7`. The two chains can run in parallel.
 
 **Docs reorganized for publishing, and three more design docs archived — 2026-10-04.** Design supplements, `IMPLEMENTATION_ORDER.md` and `archive/` moved under `docs/design/`, leaving only `PRD.md` and the consumer docs (`configuration.md`, `cli-manifest.md`) at the top of `docs/`. `NESTED_MUTATIONS.md`, `NESTED_MUTATIONS_EXAMPLES.md` and `TX_CONNECTION_LOCK.md` then moved to `docs/design/archive/` on the 2026-09-16 test: a `SYNCED` design doc for a closed phase (27 and 28) with zero Go citations and zero PRD back-references. `NESTED_MUTATIONS_EXAMPLES.md` is the pre-implementation companion to `NESTED_MUTATIONS.md` and goes with it. Each keeps its original text under a new `ARCHIVED` header that links the superseding PRD section (§9.9, §18.5). `CACHE.md`, `MCP.md`, `MANIFEST.md`, `TENANCY.md` and `IMPLEMENTATION_ORDER.md` stay live for the reasons given under the 2026-09-16 entry; `MUTATION.md`, `SCHEMAFUZZ.md`, `TENANCY_IMPROVEMENTS.md` and `TENANT_SCOPED_REFERENCES.md` describe unbuilt work and are not archive candidates.
 

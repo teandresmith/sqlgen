@@ -648,10 +648,35 @@ All fourteen were ruled on 2026-10-05, each matching the recommendation. Q1–Q1
 | Q8 | SQLite UNIQUE names (S4) | **Recover from the stored DDL.** Always drop the `origin = 'pk'` index. UNIQUE constraint names come from re-parsing `sqlite_master.sql` (see Q10). | N.6 |
 | Q9 | SQLite virtual tables (S5) | **Skip both, with a warning.** The introspector skips `type = 'virtual'` and `type = 'shadow'` rows from `PRAGMA table_list` (SQLite 3.37+, met by bundled modernc). Both paths append a `schema.Warnings` line naming the virtual table, like the existing `CREATE VIEW` skip. The file parser currently ignores `CREATE VIRTUAL TABLE` without a word (`parser/sqlite/sqlite.go:63-81`). | N.6 |
 | Q10 | SQLite CHECK constraints (S8) | **Re-parse the stored DDL; this is the general SQLite strategy.** The PRAGMAs give the catalog facts (columns, types, nullability, PK membership and order, FKs, indexes, partial predicates). Each table's `CREATE TABLE` text from `sqlite_master.sql`, parsed with the existing `parser/sqlite` parser, gives the declared names, CHECK constraints and expression text. Settles S8 and Q8, and backs up S2. | N.6 |
-| Q11 | Constraint shape and names (X1) | **Canonical shape plus the database's names.** A shared `parser.CanonicalizeConstraints` runs at the end of every parse and every introspection. Every PK, FK, UNIQUE and CHECK exists both as a table `Constraint` and as the column flags (`PrimaryKey`, `Unique`, `FKReference`). UNIQUE / Index `Method` defaults to `btree` on PG and MySQL. CHECK `Columns` lists the referenced columns on every dialect. The parsers give each unnamed constraint the name its database would: <br>• **PG:** `<t>_pkey`, `<t>_<cols>_key`, `<t>_<cols>_fkey`, `<t>_<col>_check`, applying PG's 63-byte truncation and numeric collision suffix (`ChooseConstraintName`) <br>• **MySQL:** `PRIMARY`, `<t>_ibfk_<n>`, `<t>_chk_<n>`, and a UNIQUE named after its first column, with `_2`, `_3` on collision <br>• **SQLite:** declared names only (the stored DDL, Q8 / Q10); an unnamed constraint stays unnamed on both paths <br>The manifest's index names then match the database. This also resolves two FIX-240 backlog lines from 2026-10-02: unnamed UNIQUE listed as `_idx` where PG says `_key`, and the PG parser dropping an inline `CONSTRAINT <name> UNIQUE` name. | N.2 |
+| Q11 | Constraint shape and names (X1) | **Canonical shape plus the database's names.** A shared `parser.CanonicalizeConstraints` runs at the end of every parse and every introspection. Every PK, FK, UNIQUE and CHECK exists both as a table `Constraint` and as the column flags (`PrimaryKey`, `Unique`, `FKReference`). UNIQUE / Index `Method` defaults to `btree` on PG and MySQL. CHECK `Columns` lists the referenced columns on every dialect. The parsers give each unnamed constraint the name its database would: <br>• **PG:** `<t>_pkey`, `<t>_<cols>_key`, `<t>_<cols>_fkey`, `<t>_<col>_check` (`<t>_check` when the CHECK references no column or several), applying PG's 63-byte truncation and numeric collision suffix (`ChooseConstraintName`) <br>• **MySQL:** `PRIMARY`, `<t>_ibfk_<n>`, `<t>_chk_<n>`, and a UNIQUE named after its first column, with `_2`, `_3` on collision <br>• **SQLite:** declared names only (the stored DDL, Q8 / Q10); an unnamed constraint stays unnamed on both paths <br>The manifest's index names then match the database. This also resolves two FIX-240 backlog lines from 2026-10-02: unnamed UNIQUE listed as `_idx` where PG says `_key`, and the PG parser dropping an inline `CONSTRAINT <name> UNIQUE` name. | N.2 |
 | Q12 | PG typmod spacing (D7) | **No space.** The PG parser's typmod formatting emits `numeric(12,2)`, matching the catalog, MySQL's `decimal(10,2)`, and how users write `overrides.types` keys. | N.4 |
 | Q13 | PG / MySQL CHECK text (D8, M7) | **Normalize to the parser's form and strip implicit casts.** Catalog CHECK and domain-constraint text goes through the same deparser as the file parser (`pg_query` on PG, `sqlparser` on MySQL). Then the casts the database adds implicitly are removed: domain → base type, literal → column type. MySQL backticks and charset introducers are dropped as well. Each removal rule gets its own unit test, and anything left is a named parity exception. | N.4, N.5 |
 | Q14 | PG `PARTITION OF` in the parser (D9) | **Skip with a warning.** The parser skips `CREATE TABLE … PARTITION OF` and appends a `schema.Warnings` line, like `CREATE VIEW` and `CREATE VIRTUAL TABLE` (Q9). The introspector skips `relispartition` tables silently (Q4). Output is identical across sources. | N.4 |
+
+**Q11 addendum (ruled 2026-10-05, while wording the PRD in 30.0).** A probe ran `email UNIQUE` +
+`UNIQUE(email)`, `id … PRIMARY KEY UNIQUE` and a named `CONSTRAINT named_u UNIQUE(b)`.
+PG 16 and SQLite collapse the duplicates. MySQL 8.0 keeps them (`id`, `email_2`, warning 1831).
+SQLite names every auto-index `sqlite_autoindex_<t>_N`, the named one included. Two rulings
+follow:
+- **Duplicates follow the database.** A UNIQUE that repeats the PK or an earlier UNIQUE over the
+  same columns is dropped on PG and SQLite and kept on MySQL. This replaces the old §30.7 sentence
+  that listed every inline UNIQUE.
+- **Unnamed SQLite manifest label.** An unnamed SQLite PRIMARY KEY or UNIQUE is listed in the
+  manifest as `<t>_pkey` or `<t>_<cols>_key`, inline or table-level alike. The `_idx` label goes.
+  The constraint itself stays unnamed in the schema model.
+- **Refined by a second probe.** PG merges duplicates only within one `CREATE TABLE`, into the
+  first, under the first declared name; `ALTER TABLE … ADD` makes a second constraint
+  (`_key1`). SQLite drops a UNIQUE only when an identical index exists, so a UNIQUE on a
+  rowid-alias `INTEGER PRIMARY KEY` is kept. PG keeps derived names across a rename, and
+  MySQL renames `<t>_ibfk_<n>` / `<t>_chk_<n>` along with the table.
+- **Plain indexes follow the database too** (ruled with the user). An unnamed PG `CREATE INDEX`
+  is `<t>_<cols>_idx`, then `…_idx1`. An unnamed MySQL `KEY` takes its first column's name,
+  sharing one counter with UNIQUE (`c`, `c_2`, `c_3`). MySQL's implicit FK index (for an FK no
+  index starts with) is named after the constraint, or else the FK's first column. The MySQL
+  parser adds that index, so the manifest's "same under every source" stays absolute.
+- **Ignored input keys warn** (ruled with the user, following the PRD §4.13 `input.schema`
+  precedent). An explicitly set `paths` under `source: database`, or any `introspect` field
+  under `source: files`, warns. The `["."]` default does not.
 
 **Module boundaries.** Q5 and Q10 have the introspectors call into `parser/postgres`,
 `parser/mysql` and `parser/sqlite`. All of them are inside the `parser` module, so that's
