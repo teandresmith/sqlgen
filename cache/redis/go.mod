@@ -4,6 +4,7 @@ go 1.27.0
 
 require (
 	github.com/redis/go-redis/v9 v9.15.0
+	github.com/teandresmith/sqlgen v0.1.0
 	github.com/testcontainers/testcontainers-go/modules/redis v0.42.0
 )
 

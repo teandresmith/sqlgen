@@ -2,7 +2,10 @@ module github.com/teandresmith/sqlgen/cache/memory
 
 go 1.27.0
 
-require github.com/maypok86/otter/v2 v2.3.0
+require (
+	github.com/maypok86/otter/v2 v2.3.0
+	github.com/teandresmith/sqlgen v0.1.0
+)
 
 require (
 	github.com/davecgh/go-spew v1.1.1 // indirect

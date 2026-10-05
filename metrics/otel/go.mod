@@ -3,6 +3,7 @@ module github.com/teandresmith/sqlgen/metrics/otel
 go 1.27.0
 
 require (
+	github.com/teandresmith/sqlgen v0.1.0
 	go.opentelemetry.io/otel v1.41.0
 	go.opentelemetry.io/otel/metric v1.41.0
 	go.opentelemetry.io/otel/sdk/metric v1.41.0
