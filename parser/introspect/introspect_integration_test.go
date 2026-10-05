@@ -30,6 +30,104 @@ import (
 	"github.com/teandresmith/sqlgen/parser/sqlite"
 )
 
+// parityException excludes one field from assertSchemaParity. Field names a
+// field of a parser type as "<Type>.<Field>", such as "Column.InlineUnique".
+type parityException struct {
+	Field  string
+	Reason string
+}
+
+// parityExceptions lists, per dialect, the fields no catalog stores, so an
+// introspected schema cannot round-trip them. They are the only differences
+// assertSchemaParity tolerates. A test that needs its own exception declares
+// it beside this table and passes it as ignore, so every exception can be
+// reviewed in one place.
+var parityExceptions = map[string][]parityException{
+	"postgres": {{
+		Field:  "Column.InlineUnique",
+		Reason: "parse provenance: pg_constraint stores `col UNIQUE` and `UNIQUE (col)` identically",
+	}},
+	"mysql": {{
+		Field:  "Column.InlineUnique",
+		Reason: "parse provenance: information_schema stores `col UNIQUE` and `UNIQUE KEY (col)` identically",
+	}},
+	"sqlite": {{
+		Field:  "Column.InlineUnique",
+		Reason: "parse provenance: PRAGMA index_list reports `col UNIQUE` and `UNIQUE (col)` as the same auto-index",
+	}},
+}
+
+// parityFieldTypes maps the type half of a parityException.Field to the type
+// whose field it ignores.
+var parityFieldTypes = map[string]any{
+	"Schema":        parser.Schema{},
+	"Table":         parser.Table{},
+	"Column":        parser.Column{},
+	"FKReference":   parser.FKReference{},
+	"Constraint":    parser.Constraint{},
+	"Enum":          parser.Enum{},
+	"Set":           parser.Set{},
+	"CompositeType": parser.CompositeType{},
+	"Attribute":     parser.Attribute{},
+	"DomainType":    parser.DomainType{},
+	"View":          parser.View{},
+}
+
+// assertSchemaParity compares an introspected schema against the file
+// parser's schema for the same DDL: tables, columns, constraints, enums, sets,
+// composite types, domains and views, in full. The dialect's
+// parityExceptions are the only fields left out, plus any ignore entries. It
+// sorts both schemas in place first.
+func assertSchemaParity(t *testing.T, dialect string, parsed, introspected *parser.Schema, ignore ...parityException) {
+	t.Helper()
+	exceptions, ok := parityExceptions[dialect]
+	if !ok {
+		t.Fatalf("assertSchemaParity: no parity exceptions for dialect %q", dialect)
+	}
+
+	all := slices.Concat(exceptions, ignore)
+	opts := make([]cmp.Option, 0, len(all))
+	for _, e := range all {
+		typeName, field, ok := strings.Cut(e.Field, ".")
+		typ, known := parityFieldTypes[typeName]
+		if !ok || !known || e.Reason == "" {
+			t.Fatalf("assertSchemaParity: malformed parity exception %+v", e)
+		}
+		opts = append(opts, cmpopts.IgnoreFields(typ, field))
+	}
+
+	sortForParity(parsed)
+	sortForParity(introspected)
+	if diff := cmp.Diff(parsed, introspected, opts...); diff != "" {
+		t.Errorf("%s: introspected schema differs from the file parser's (-parsed +introspected):\n%s", dialect, diff)
+	}
+}
+
+// sortForParity orders everything whose order carries no meaning. Columns,
+// constraint columns and enum values keep their order.
+func sortForParity(s *parser.Schema) {
+	s.Sort()
+	slices.Sort(s.Warnings)
+	for i := range s.Tables {
+		sortConstraints(s.Tables[i].Constraints)
+	}
+	for i := range s.DomainTypes {
+		sortConstraints(s.DomainTypes[i].Constraints)
+	}
+}
+
+func sortConstraints(cs []parser.Constraint) {
+	slices.SortFunc(cs, func(a, b parser.Constraint) int {
+		if a.Type != b.Type {
+			return int(a.Type) - int(b.Type)
+		}
+		if c := strings.Compare(a.Name, b.Name); c != 0 {
+			return c
+		}
+		return slices.Compare(a.Columns, b.Columns)
+	})
+}
+
 var (
 	pgConnStr    string
 	mysqlConnStr string
@@ -38,8 +136,10 @@ var (
 
 func TestMain(m *testing.M) {
 	flag.Parse()
+	// The white-box unit tests share this binary, so -short still runs them;
+	// each integration test skips itself through requireDatabases.
 	if testing.Short() {
-		os.Exit(0)
+		os.Exit(m.Run())
 	}
 
 	ctx := context.Background()
@@ -100,6 +200,8 @@ func TestMain(m *testing.M) {
 // --- PostgreSQL integration tests ---
 
 func TestPostgresIntrospect(t *testing.T) {
+	requireDatabases(t)
+
 	ctx := context.Background()
 
 	ddl := `
@@ -176,112 +278,21 @@ func TestPostgresIntrospect(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Introspect() error: %v", err)
 	}
-	introspected.Sort()
 
 	// Parse the same DDL.
 	p := postgres.New("introspect_test")
 	if err := p.Parse("test.sql", []byte(ddl)); err != nil {
 		t.Fatalf("Parse() error: %v", err)
 	}
-	parsed := p.Schema()
-	parsed.Sort()
 
-	// Compare tables.
-	if len(introspected.Tables) != len(parsed.Tables) {
-		t.Fatalf("table count: introspected=%d, parsed=%d", len(introspected.Tables), len(parsed.Tables))
-	}
-
-	for i, want := range parsed.Tables {
-		got := introspected.Tables[i]
-
-		if got.Schema != want.Schema || got.Name != want.Name {
-			t.Errorf("table[%d]: got %s.%s, want %s.%s", i, got.Schema, got.Name, want.Schema, want.Name)
-			continue
-		}
-
-		// Compare columns.
-		if len(got.Columns) != len(want.Columns) {
-			t.Errorf("table %s columns: got %d, want %d", want.Name, len(got.Columns), len(want.Columns))
-			continue
-		}
-
-		for j, wantCol := range want.Columns {
-			gotCol := got.Columns[j]
-			// Default: introspection normalizes default expressions, so the text
-			// differs from the DDL source. InlineUnique: a parse-provenance flag
-			// (inline `col UNIQUE` vs table-level `UNIQUE(col)`) that the DDL
-			// parsers set but introspection cannot reconstruct — Postgres stores
-			// both forms identically in pg_constraint. Neither field is
-			// recoverable from the live catalog, so both are excluded.
-			if diff := cmp.Diff(wantCol, gotCol, cmpopts.IgnoreFields(parser.Column{}, "Default", "InlineUnique")); diff != "" {
-				t.Errorf("table %s column %s mismatch (-want +got):\n%s", want.Name, wantCol.Name, diff)
-			}
-		}
-
-		// Compare comments.
-		if got.Comment != want.Comment {
-			t.Errorf("table %s comment: got %q, want %q", want.Name, got.Comment, want.Comment)
-		}
-
-		// Compare CHECK constraints.
-		wantChecks := filterConstraints(want.Constraints, parser.Check)
-		gotChecks := filterConstraints(got.Constraints, parser.Check)
-		if len(gotChecks) != len(wantChecks) {
-			t.Errorf("table %s CHECK constraints: got %d, want %d", want.Name, len(gotChecks), len(wantChecks))
-		} else {
-			for j, wc := range wantChecks {
-				gc := gotChecks[j]
-				if gc.Name != wc.Name {
-					t.Errorf("table %s CHECK[%d] name: got %q, want %q", want.Name, j, gc.Name, wc.Name)
-				}
-				if gc.CheckExpression == "" {
-					t.Errorf("table %s CHECK %q: introspected expression is empty", want.Name, gc.Name)
-				}
-			}
-		}
-	}
-
-	// Compare enums.
-	if diff := cmp.Diff(parsed.Enums, introspected.Enums); diff != "" {
-		t.Errorf("enums mismatch (-want +got):\n%s", diff)
-	}
-
-	// Compare composite types.
-	if len(introspected.CompositeTypes) != len(parsed.CompositeTypes) {
-		t.Errorf("composite type count: introspected=%d, parsed=%d",
-			len(introspected.CompositeTypes), len(parsed.CompositeTypes))
-	} else {
-		for i, want := range parsed.CompositeTypes {
-			got := introspected.CompositeTypes[i]
-			if got.Name != want.Name || got.Schema != want.Schema {
-				t.Errorf("composite type[%d]: got %s.%s, want %s.%s", i, got.Schema, got.Name, want.Schema, want.Name)
-			}
-			if diff := cmp.Diff(want.Attributes, got.Attributes); diff != "" {
-				t.Errorf("composite type %s attributes mismatch (-want +got):\n%s", want.Name, diff)
-			}
-		}
-	}
-
-	// Compare domain types.
-	if len(introspected.DomainTypes) != len(parsed.DomainTypes) {
-		t.Errorf("domain type count: introspected=%d, parsed=%d",
-			len(introspected.DomainTypes), len(parsed.DomainTypes))
-	} else {
-		for i, want := range parsed.DomainTypes {
-			got := introspected.DomainTypes[i]
-			if got.Name != want.Name || got.Schema != want.Schema {
-				t.Errorf("domain type[%d]: got %s.%s, want %s.%s", i, got.Schema, got.Name, want.Schema, want.Name)
-			}
-			if got.BaseType != want.BaseType {
-				t.Errorf("domain type %s base type: got %q, want %q", want.Name, got.BaseType, want.BaseType)
-			}
-		}
-	}
+	assertSchemaParity(t, "postgres", p.Schema(), introspected)
 }
 
 // --- MySQL integration tests ---
 
 func TestMySQLIntrospect(t *testing.T) {
+	requireDatabases(t)
+
 	ctx := context.Background()
 
 	ddl := `
@@ -330,11 +341,12 @@ func TestMySQLIntrospect(t *testing.T) {
 	defer intro.Close() //nolint:errcheck // test cleanup
 
 	introspected := &parser.Schema{}
-	err = intro.Introspect(ctx, mysqlConnStr, introspected, introspect.IntrospectionOptions{})
+	err = intro.Introspect(ctx, mysqlConnStr, introspected, introspect.IntrospectionOptions{
+		Tables: []string{"users", "posts"},
+	})
 	if err != nil {
 		t.Fatalf("Introspect() error: %v", err)
 	}
-	introspected.Sort()
 
 	// Parse the same DDL.
 	p, err := mysql.New()
@@ -344,86 +356,15 @@ func TestMySQLIntrospect(t *testing.T) {
 	if err := p.Parse("test.sql", []byte(ddl)); err != nil {
 		t.Fatalf("Parse() error: %v", err)
 	}
-	parsed := p.Schema()
-	parsed.Sort()
 
-	// Compare tables.
-	if len(introspected.Tables) != len(parsed.Tables) {
-		t.Fatalf("table count: introspected=%d, parsed=%d", len(introspected.Tables), len(parsed.Tables))
-	}
-
-	for i, want := range parsed.Tables {
-		got := introspected.Tables[i]
-
-		if got.Name != want.Name {
-			t.Errorf("table[%d]: got %q, want %q", i, got.Name, want.Name)
-			continue
-		}
-
-		// Compare column count and key properties.
-		if len(got.Columns) != len(want.Columns) {
-			t.Errorf("table %s columns: got %d, want %d", want.Name, len(got.Columns), len(want.Columns))
-			continue
-		}
-
-		for j, wantCol := range want.Columns {
-			gotCol := got.Columns[j]
-			if gotCol.Name != wantCol.Name {
-				t.Errorf("table %s col[%d] name: got %q, want %q", want.Name, j, gotCol.Name, wantCol.Name)
-			}
-			if gotCol.Type != wantCol.Type {
-				t.Errorf("table %s col %s type: got %q, want %q", want.Name, wantCol.Name, gotCol.Type, wantCol.Type)
-			}
-			if gotCol.Nullable != wantCol.Nullable {
-				t.Errorf("table %s col %s nullable: got %v, want %v", want.Name, wantCol.Name, gotCol.Nullable, wantCol.Nullable)
-			}
-			if gotCol.PrimaryKey != wantCol.PrimaryKey {
-				t.Errorf("table %s col %s pk: got %v, want %v", want.Name, wantCol.Name, gotCol.PrimaryKey, wantCol.PrimaryKey)
-			}
-			if gotCol.AutoIncrement != wantCol.AutoIncrement {
-				t.Errorf("table %s col %s auto_increment: got %v, want %v", want.Name, wantCol.Name, gotCol.AutoIncrement, wantCol.AutoIncrement)
-			}
-		}
-	}
-
-	// Compare enums (MySQL inline enums).
-	if len(introspected.Enums) != len(parsed.Enums) {
-		t.Errorf("enum count: introspected=%d, parsed=%d", len(introspected.Enums), len(parsed.Enums))
-	}
-
-	// Verify CHECK constraint on users table.
-	usersTable := introspected.Tables[1] // sorted: posts, users
-	if usersTable.Name != "users" {
-		// Find it explicitly.
-		for _, tbl := range introspected.Tables {
-			if tbl.Name == "users" {
-				usersTable = tbl
-				break
-			}
-		}
-	}
-	checks := filterConstraints(usersTable.Constraints, parser.Check)
-	if len(checks) == 0 {
-		t.Error("MySQL users table: expected at least 1 CHECK constraint, got 0")
-	} else {
-		found := false
-		for _, c := range checks {
-			if c.Name == "users_age_check" {
-				found = true
-				if c.CheckExpression == "" {
-					t.Error("MySQL CHECK users_age_check: expression is empty")
-				}
-			}
-		}
-		if !found {
-			t.Errorf("MySQL users table: CHECK constraint 'users_age_check' not found in %v", checks)
-		}
-	}
+	assertSchemaParity(t, "mysql", p.Schema(), introspected)
 }
 
 // --- SQLite integration tests ---
 
 func TestSQLiteIntrospect(t *testing.T) {
+	requireDatabases(t)
+
 	ctx := context.Background()
 
 	ddl := `
@@ -467,55 +408,21 @@ func TestSQLiteIntrospect(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Introspect() error: %v", err)
 	}
-	introspected.Sort()
 
 	// Parse the same DDL.
 	p := sqlite.New()
 	if err := p.Parse("test.sql", []byte(ddl)); err != nil {
 		t.Fatalf("Parse() error: %v", err)
 	}
-	parsed := p.Schema()
-	parsed.Sort()
 
-	// Compare tables.
-	if len(introspected.Tables) != len(parsed.Tables) {
-		t.Fatalf("table count: introspected=%d, parsed=%d", len(introspected.Tables), len(parsed.Tables))
-	}
-
-	for i, want := range parsed.Tables {
-		got := introspected.Tables[i]
-
-		if got.Name != want.Name {
-			t.Errorf("table[%d]: got %q, want %q", i, got.Name, want.Name)
-			continue
-		}
-
-		if len(got.Columns) != len(want.Columns) {
-			t.Errorf("table %s columns: got %d, want %d", want.Name, len(got.Columns), len(want.Columns))
-			continue
-		}
-
-		for j, wantCol := range want.Columns {
-			gotCol := got.Columns[j]
-			if gotCol.Name != wantCol.Name {
-				t.Errorf("table %s col[%d] name: got %q, want %q", want.Name, j, gotCol.Name, wantCol.Name)
-			}
-			if gotCol.Nullable != wantCol.Nullable {
-				t.Errorf("table %s col %s nullable: got %v, want %v", want.Name, wantCol.Name, gotCol.Nullable, wantCol.Nullable)
-			}
-			if gotCol.PrimaryKey != wantCol.PrimaryKey {
-				t.Errorf("table %s col %s pk: got %v, want %v", want.Name, wantCol.Name, gotCol.PrimaryKey, wantCol.PrimaryKey)
-			}
-			if gotCol.AutoIncrement != wantCol.AutoIncrement {
-				t.Errorf("table %s col %s auto_increment: got %v, want %v", want.Name, wantCol.Name, gotCol.AutoIncrement, wantCol.AutoIncrement)
-			}
-		}
-	}
+	assertSchemaParity(t, "sqlite", p.Schema(), introspected)
 }
 
 // --- Filtering tests ---
 
 func TestPostgresSchemaFiltering(t *testing.T) {
+	requireDatabases(t)
+
 	ctx := context.Background()
 
 	db, err := sql.Open("pgx", pgConnStr)
@@ -579,6 +486,8 @@ func TestPostgresSchemaFiltering(t *testing.T) {
 }
 
 func TestTableFilteringWithWildcards(t *testing.T) {
+	requireDatabases(t)
+
 	ctx := context.Background()
 
 	// Use SQLite for wildcard table filtering — simplest setup.
@@ -641,6 +550,8 @@ func TestTableFilteringWithWildcards(t *testing.T) {
 // --- Both mode tests ---
 
 func TestBothModeAlterOverlay(t *testing.T) {
+	requireDatabases(t)
+
 	ctx := context.Background()
 
 	// Create a SQLite database with a base table.
@@ -704,6 +615,8 @@ func TestBothModeAlterOverlay(t *testing.T) {
 }
 
 func TestBothModeCreateExisting(t *testing.T) {
+	requireDatabases(t)
+
 	ctx := context.Background()
 
 	// Create a SQLite database with a table.
@@ -752,6 +665,8 @@ func TestBothModeCreateExisting(t *testing.T) {
 }
 
 func TestBothModeColumnConflict(t *testing.T) {
+	requireDatabases(t)
+
 	tmpDir, err := os.MkdirTemp("", "sqlgen_both_conflict")
 	if err != nil {
 		t.Fatalf("creating temp dir: %v", err)
@@ -826,6 +741,8 @@ func TestBothModeColumnConflict(t *testing.T) {
 // --- View introspection tests ---
 
 func TestPostgresIntrospectViews(t *testing.T) {
+	requireDatabases(t)
+
 	ctx := context.Background()
 
 	db, err := sql.Open("pgx", pgConnStr)
@@ -898,6 +815,8 @@ func TestPostgresIntrospectViews(t *testing.T) {
 }
 
 func TestPostgresIntrospectMaterializedViews(t *testing.T) {
+	requireDatabases(t)
+
 	ctx := context.Background()
 
 	db, err := sql.Open("pgx", pgConnStr)
@@ -1043,6 +962,8 @@ func TestPostgresIntrospectMaterializedViews(t *testing.T) {
 }
 
 func TestMySQLIntrospectViews(t *testing.T) {
+	requireDatabases(t)
+
 	ctx := context.Background()
 
 	db, err := sql.Open("mysql", mysqlConnStr)
@@ -1111,6 +1032,8 @@ func TestMySQLIntrospectViews(t *testing.T) {
 }
 
 func TestSQLiteIntrospectViews(t *testing.T) {
+	requireDatabases(t)
+
 	ctx := context.Background()
 
 	dbPath := sqliteDBPath + "_view"
@@ -1167,6 +1090,8 @@ func TestSQLiteIntrospectViews(t *testing.T) {
 // --- Index method + partial-where round-trip tests ---
 
 func TestPostgresIntrospect_IndexMethodAndPartialWhere(t *testing.T) {
+	requireDatabases(t)
+
 	ctx := context.Background()
 
 	db, err := sql.Open("pgx", pgConnStr)
@@ -1243,7 +1168,60 @@ func TestPostgresIntrospect_IndexMethodAndPartialWhere(t *testing.T) {
 	}
 }
 
+func TestMySQLIntrospect_EnumEdgeValues(t *testing.T) {
+	requireDatabases(t)
+
+	ctx := context.Background()
+	ddl := `CREATE TABLE enum_edge (
+		id int PRIMARY KEY,
+		status ENUM('active', 'in,active', 'it''s', '', 'b\\c') NOT NULL
+	)`
+
+	db, err := sql.Open("mysql", mysqlConnStr)
+	if err != nil {
+		t.Fatalf("opening mysql: %v", err)
+	}
+	defer db.Close() //nolint:errcheck // test cleanup
+
+	_, _ = db.ExecContext(ctx, "DROP TABLE IF EXISTS enum_edge")
+	if _, err := db.ExecContext(ctx, ddl); err != nil {
+		t.Fatalf("applying DDL: %v", err)
+	}
+	defer db.ExecContext(ctx, "DROP TABLE IF EXISTS enum_edge") //nolint:errcheck // test cleanup
+
+	intro := introspect.NewMySQLIntrospector()
+	defer intro.Close() //nolint:errcheck // test cleanup
+
+	introspected := &parser.Schema{}
+	if err := intro.Introspect(ctx, mysqlConnStr, introspected, introspect.IntrospectionOptions{
+		Tables: []string{"enum_edge"},
+	}); err != nil {
+		t.Fatalf("Introspect() error: %v", err)
+	}
+
+	p, err := mysql.New()
+	if err != nil {
+		t.Fatalf("creating mysql parser: %v", err)
+	}
+	if err := p.Parse("test.sql", []byte(ddl)); err != nil {
+		t.Fatalf("Parse() error: %v", err)
+	}
+
+	want := []parser.Enum{{
+		Name:   "enum_edge_status_enum",
+		Values: []string{"active", "in,active", "it's", "", `b\c`},
+	}}
+	if diff := cmp.Diff(want, p.Schema().Enums); diff != "" {
+		t.Errorf("parsed enums mismatch (-want +got):\n%s", diff)
+	}
+	if diff := cmp.Diff(want, introspected.Enums); diff != "" {
+		t.Errorf("introspected enums mismatch (-want +got):\n%s", diff)
+	}
+}
+
 func TestMySQLIntrospect_IndexMethod(t *testing.T) {
+	requireDatabases(t)
+
 	ctx := context.Background()
 
 	db, err := sql.Open("mysql", mysqlConnStr)
@@ -1295,6 +1273,8 @@ func TestMySQLIntrospect_IndexMethod(t *testing.T) {
 }
 
 func TestSQLiteIntrospect_PartialUnique(t *testing.T) {
+	requireDatabases(t)
+
 	ctx := context.Background()
 
 	dbPath := sqliteDBPath + "_partial_unique"
@@ -1345,6 +1325,8 @@ func TestSQLiteIntrospect_PartialUnique(t *testing.T) {
 }
 
 func TestMySQLIntrospect_NonUniqueIndex(t *testing.T) {
+	requireDatabases(t)
+
 	ctx := context.Background()
 
 	db, err := sql.Open("mysql", mysqlConnStr)
@@ -1395,6 +1377,8 @@ func TestMySQLIntrospect_NonUniqueIndex(t *testing.T) {
 }
 
 func TestSQLiteIntrospect_NonUniqueIndex(t *testing.T) {
+	requireDatabases(t)
+
 	ctx := context.Background()
 
 	dbPath := sqliteDBPath + "_nonunique_index"
@@ -1459,6 +1443,8 @@ func TestSQLiteIntrospect_NonUniqueIndex(t *testing.T) {
 }
 
 func TestMySQLIntrospect_ForeignKeyBackingIndexParity(t *testing.T) {
+	requireDatabases(t)
+
 	ctx := context.Background()
 
 	// A bare FOREIGN KEY with no explicit KEY: MySQL materializes a backing
@@ -1540,6 +1526,15 @@ func indexColumnLists(table *parser.Table) []string {
 }
 
 // --- Helpers ---
+
+// requireDatabases skips an integration test under -short, when TestMain
+// starts no containers.
+func requireDatabases(t *testing.T) {
+	t.Helper()
+	if testing.Short() {
+		t.Skip("skipping integration test in short mode")
+	}
+}
 
 func findTable(t *testing.T, schema *parser.Schema, name string) *parser.Table {
 	t.Helper()

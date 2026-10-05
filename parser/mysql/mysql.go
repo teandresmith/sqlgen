@@ -252,7 +252,7 @@ func (p *Parser) extractInlineEnumOrSet(tableName string, c *parser.Column, ct *
 	}
 	values := make([]string, len(ct.EnumValues))
 	for i, v := range ct.EnumValues {
-		values[i] = strings.Trim(v, "'")
+		values[i] = decodeEnumValue(v)
 	}
 	typ := strings.ToLower(ct.Type)
 	switch typ {
@@ -264,6 +264,52 @@ func (p *Parser) extractInlineEnumOrSet(tableName string, c *parser.Column, ct *
 		name := tableName + "_" + c.Name + "_set"
 		p.schema.Sets = append(p.schema.Sets, parser.Set{Name: name, Values: values})
 		c.Type = name
+	}
+}
+
+// decodeEnumValue returns the value of one sqlparser EnumValues entry. The
+// parser re-encodes each value as a quoted literal with MySQL backslash
+// escapes ('it\'s', 'b\\c'), so the value is the literal's contents with
+// those escapes undone.
+func decodeEnumValue(lit string) string {
+	if len(lit) >= 2 && lit[0] == '\'' && lit[len(lit)-1] == '\'' {
+		lit = lit[1 : len(lit)-1]
+	}
+	if !strings.Contains(lit, "\\") {
+		return lit
+	}
+	var b strings.Builder
+	for i := 0; i < len(lit); i++ {
+		if lit[i] == '\\' && i+1 < len(lit) {
+			i++
+			b.WriteString(unescapeMySQL(lit[i]))
+			continue
+		}
+		b.WriteByte(lit[i])
+	}
+	return b.String()
+}
+
+// unescapeMySQL returns what the escape sequence \c stands for in a MySQL
+// string literal. \% and \_ keep their backslash, as MySQL does.
+func unescapeMySQL(c byte) string {
+	switch c {
+	case '0':
+		return "\x00"
+	case 'b':
+		return "\b"
+	case 'n':
+		return "\n"
+	case 'r':
+		return "\r"
+	case 't':
+		return "\t"
+	case 'Z':
+		return "\x1a"
+	case '%', '_':
+		return "\\" + string(c)
+	default:
+		return string(c)
 	}
 }
 

@@ -158,38 +158,38 @@ PRD Sections: 4.2, 4.3, 4.4, 5.2, 6.1, 6.3, 6.4, 7, 8.1.7, 16.2, 30.7
 
 **PRD Reference:** Sections 5.2, 6.3 (design doc §6.0, §6.1, §6.3, §6.4)
 
-**Status:** Not Started
+**Status:** Complete
 
 ### Tasks
 
-- [ ] Add `assertSchemaParity(t, dialect, parsed, introspected, ignore ...parityException)` to
+- [x] Add `assertSchemaParity(t, dialect, parsed, introspected, ignore ...parityException)` to
   `parser/introspect/introspect_integration_test.go`.
   - It sorts tables, constraints, enums, sets, composite types, domains and views on both
     sides, then runs a full `cmp.Diff`.
   - `parityException{Field, Reason}` is the only way to exclude a field.
   - All exceptions live in one table at the top of the file, keyed by dialect.
-- [ ] Move `TestPostgresIntrospect`, `TestMySQLIntrospect` and `TestSQLiteIntrospect` onto the
+- [x] Move `TestPostgresIntrospect`, `TestMySQLIntrospect` and `TestSQLiteIntrospect` onto the
   helper.
   - Seed the exception table with only the provenance fields no catalog stores
     (`InlineUnique`).
   - Record every resulting failure in the Completion Record. These are the baseline the later
     sub-items burn down; reference them by defect ID.
-- [ ] Turn the probe DDL from `.claude/prototypes/introspection-probe/zz_probe_test.go` into
+- [x] Turn the probe DDL from `.claude/prototypes/introspection-probe/zz_probe_test.go` into
   per-dialect fixture constants (PG schema `probe_app`/`probe_other`, MySQL tables `m_*`,
   SQLite `s_*`) for 30.2–30.6 to share.
-- [ ] Add unit tests, table-driven and white-box:
+- [x] Add unit tests, table-driven and white-box:
   - `TestNormalizePostgresType`, `TestParsePostgresArray` and `TestExtractCheckExpression` in
     `postgres_test.go`
   - `TestNormalizeMySQLType` and `TestExtractMySQLEnumValues` in a new `mysql_test.go`
   - `TestNormalizeSQLiteType` in `sqlite_test.go`
-- [ ] Fix D2: `extractCheckExpression` handles the `NOT VALID` suffix (`postgres.go:927`).
-- [ ] Fix M3: `extractMySQLEnumValues` respects quoting, so a value containing a comma, a
+- [x] Fix D2: `extractCheckExpression` handles the `NOT VALID` suffix (`postgres.go:927`).
+- [x] Fix M3: `extractMySQLEnumValues` respects quoting, so a value containing a comma, a
   doubled quote (`''`) or an empty value survives (`mysql.go:523`).
-- [ ] Fix M8: the MySQL parser unescapes `''` inside an ENUM/SET value (it produces `it\'s`
+- [x] Fix M8: the MySQL parser unescapes `''` inside an ENUM/SET value (it produces `it\'s`
   today).
-- [ ] Fix S6: `indexPartialWhere` checks `err != nil` (other than `sql.ErrNoRows`) before
+- [x] Fix S6: `indexPartialWhere` checks `err != nil` (other than `sql.ErrNoRows`) before
   `ddl.Valid` (`sqlite.go:483`).
-- [ ] Fix S10: the SQLite parser no longer turns `INTEGER PRIMARY KEY DESC` into a phantom `DESC`
+- [x] Fix S10: the SQLite parser no longer turns `INTEGER PRIMARY KEY DESC` into a phantom `DESC`
   column.
 
 ### Acceptance Criteria
@@ -202,28 +202,121 @@ PRD Sections: 4.2, 4.3, 4.4, 5.2, 6.1, 6.3, 6.4, 7, 8.1.7, 16.2, 30.7
 
 ### Tests Required
 
-- [ ] `TestNormalizePostgresType`: `character varying(255)`, `character(3)`,
+- [x] `TestNormalizePostgresType`: `character varying(255)`, `character(3)`,
   `timestamp(3) without time zone`, `timestamp with time zone`, `time with time zone`, arrays of
   each, `double precision`, `bit varying(8)`, a schema-qualified name, passthrough.
-- [ ] `TestParsePostgresArray`: `{}`, a plain list, a quoted element with a comma or space, an
+- [x] `TestParsePostgresArray`: `{}`, a plain list, a quoted element with a comma or space, an
   escaped quote, a mixed-case quoted identifier.
-- [ ] `TestExtractCheckExpression`: `CHECK ((a > 0))`, compound `AND` / `OR`, a `NOT VALID`
+- [x] `TestExtractCheckExpression`: `CHECK ((a > 0))`, compound `AND` / `OR`, a `NOT VALID`
   suffix (D2), non-CHECK passthrough.
-- [ ] `TestNormalizeMySQLType`: `int`, `int unsigned`, `tinyint(1)`, `bigint(20)`,
+- [x] `TestNormalizeMySQLType`: `int`, `int unsigned`, `tinyint(1)`, `bigint(20)`,
   `decimal(10,2)`, `enum(…)` / `set(…)` → bare, mixed case.
-- [ ] `TestExtractMySQLEnumValues`: a plain list, a value with a comma, `it''s`, an empty value,
+- [x] `TestExtractMySQLEnumValues`: a plain list, a value with a comma, `it''s`, an empty value,
   values with spaces (M3).
-- [ ] `TestMySQLIntrospect_EnumEdgeValues` (integration): `ENUM('active','in,active','it''s','')`
+- [x] `TestMySQLIntrospect_EnumEdgeValues` (integration): `ENUM('active','in,active','it''s','')`
   gives identical values from the parser and the introspector (M3, M8).
-- [ ] `TestNormalizeSQLiteType`: empty → `blob`, case folding, `VARCHAR(255)` / `NUMERIC(10,2)`
+- [x] `TestNormalizeSQLiteType`: empty → `blob`, case folding, `VARCHAR(255)` / `NUMERIC(10,2)`
   passthrough.
-- [ ] SQLite parser test: `id INTEGER PRIMARY KEY DESC, v TEXT` gives exactly two columns (S10).
-- [ ] `indexPartialWhere` error path (S6): code fix only. No DB-level trigger exists (design doc
+- [x] SQLite parser test: `id INTEGER PRIMARY KEY DESC, v TEXT` gives exactly two columns (S10).
+- [x] `indexPartialWhere` error path (S6): code fix only. No DB-level trigger exists (design doc
   §6.4); note that in the Completion Record.
 
 ### Completion Record
 
-_Filled in when complete: files changed, commit references, notes._
+- **Completed:** 2026-10-05 (`/implement 30.1`, `/done 30.1`). `make check` and
+  `make check-examples` passed. The integration suite
+  passes except the three baseline tests below, which fail by design.
+- **Files:**
+  - `parser/introspect/introspect_integration_test.go`: `parityException`, the
+    `parityExceptions` table, `assertSchemaParity`, `requireDatabases`, the three main tests
+    moved onto the helper, and `TestMySQLIntrospect_EnumEdgeValues`
+  - `parser/introspect/parity_fixtures_test.go` (new): `pgParityFixture`,
+    `mysqlParityFixture`, `sqliteParityFixture`, two reset constants, and
+    `TestParityFixtures`, which applies each fixture and parses it statement by statement
+  - `parser/introspect/{postgres,mysql,sqlite}.go` and their `_test.go` files
+    (`mysql_test.go` is new)
+  - `parser/mysql/mysql.go`, `mysql_test.go`: `decodeEnumValue` (M8),
+    `TestInlineEnumEdgeValues`
+  - `parser/sqlite/sqlite.go`, `sqlite_test.go`: `isPrimaryKeySortOrder` (S10),
+    `TestPrimaryKeySortOrder`
+  - `parser/schema.go`: comment fix on `FKReference.Synthetic`
+- **Fail-first evidence (against HEAD):**
+  - **D2:** `extractCheckExpression("CHECK ((v > 0)) NOT VALID")` = `((v > 0)) NOT VALID`.
+    `NO INHERIT` has the same shape (PG 16 measured `CHECK ((s <> ')('::text)) NO INHERIT`),
+    so the fix reads the parenthesized group after CHECK instead of trimming a suffix.
+  - **M3:** `enum('active','in,active')` gave `[active in active]`. `'it''s'` stayed
+    `it''s`, `''` was dropped, and `'b\\c'` stayed escaped.
+  - **M8:** the parser gave `it\'s` and `b\\c`. Vitess re-encodes `EnumValues` with MySQL
+    backslash escapes, so `decodeEnumValue` undoes them (and keeps `\%` / `\_`, as MySQL does).
+  - `TestMySQLIntrospect_EnumEdgeValues` failed on both paths at HEAD.
+  - **S10:** `id INTEGER PRIMARY KEY DESC, v TEXT` gave columns `id`, `DESC`, `v`. `ASC`
+    gave the same. rqlite/sql reads the sort order as a new column. The fix folds it back into
+    the key when only blanks or comments separate it from `KEY`, so `id INTEGER PRIMARY KEY,
+    desc TEXT` keeps its `desc` column.
+  - **S6:** code fix only. No DB-level trigger exists (design doc §6.4).
+- **Probes behind the expectations (2026-10-05):**
+  - MySQL 8.0 `COLUMN_TYPE` for `ENUM('b\\c','it''s','n\nl','t\%u')` is
+    `enum('b\\c','it''s','n\nl','t\\%u')`. A quote is doubled, and a backslash or
+    newline is backslash-escaped.
+  - PG 16 accepts an empty enum label. `array_agg` renders it `""`.
+- **Found and fixed inline:**
+  - **Unit tests never ran under `-short`.** `TestMain` called `os.Exit(0)` before
+    `m.Run()`, and the white-box tests share its binary. So `make check` had never run
+    `TestChooseMatviewPK` or `TestExtractSQLiteIndexWhere`. `TestMain` now runs `m.Run()`, and
+    each integration test calls `requireDatabases(t)`.
+  - **`bit varying(8)`** introspected as `bit varying(8)`, but the PG parser gives `varbit(8)`.
+    `normalizePostgresType` now maps it.
+  - **A trailing empty element** (`{a,""}`, `{""}`) was dropped by `parsePostgresArray`, so an
+    empty last enum label vanished.
+  - **`FKReference.Synthetic` comment.** It said the MySQL and SQLite parsers leave `Column`
+    empty for `REFERENCES t`. Both reject that DDL; the PG parser is the one that leaves it
+    empty.
+- **Baseline: parity failures for later sub-items to burn down.** All three main tests
+  fail on `assertSchemaParity`, seeded with `Column.InlineUnique` only:
+  - `TestPostgresIntrospect`:
+    - X1 (30.2): `posts_pkey`, `users_pkey`, `posts_user_id_fkey` and `users_email_key`
+      (`Method: btree`) appear only when introspected. CHECK `users_age_check` has `Columns`
+      nil when parsed and `[age]` when introspected.
+    - Q5 (30.4): bigserial `Default` is `nextval('…_id_seq'::regclass)` when introspected,
+      empty when parsed.
+    - D8 / Q13 (30.4): CHECK `age > 0` vs `(age > 0)`; domain CHECK `value > 0` vs
+      `(VALUE > 0)`.
+    - **Unowned:** the unnamed domain CHECK is `""` when parsed and `positive_int_check` when
+      introspected. 30.4's tests list "domain CHECK name", but no task derives it. Noted on
+      30.4.
+  - `TestMySQLIntrospect`:
+    - X1 (30.2): `Method` is `""` vs `btree` on `idx_email` and on the FK backing index.
+    - M2 / Q5 (30.5): `status` default `'active'` vs `active`.
+    - M7 / Q13 (30.5): CHECK `age > 0` vs `` (`age` > 0) ``.
+  - `TestSQLiteIntrospect`:
+    - X1 (30.2): the unnamed `posts.user_id` FK constraint appears only when introspected.
+    - S4 / Q8 (30.6): `sqlite_autoindex_users_1` UNIQUE (`Method: btree`) appears only when
+      introspected.
+- **For later sub-items:**
+  - The SQLite parser (rqlite/sql) rejects `REFERENCES t` with no column list, at column and
+    table level alike. 30.6's S3 task and `TestSQLiteIntrospect_ImplicitFKTarget` assume the
+    parser resolves it, so `sqliteParityFixture` leaves that table out. Noted on 30.6 and
+    logged in `backlog.md`.
+  - `isPrimaryKeySortOrder` is where 30.6's S11 parser fix can learn the PK is `DESC`.
+  - `unescapeMySQL` exists in both `parser/mysql` and `parser/introspect`, one private copy
+    each. The two inputs, vitess's encoding and `COLUMN_TYPE`, share MySQL's escape rules.
+- **Auto-review (`sqlgen-reviewer`):** 0 issues and 0 questions. It reproduced the fail-first
+  run for S10 and the recorded baseline in a throwaway worktree. Its inline doc fixes are
+  applied:
+  - test and `sqlite.go` line references in 30.4–30.6, which this diff shifted
+  - the backlog rqlite line, narrowed to the forms that actually fail
+  - design doc §6.0: the `-short` skip now goes through `requireDatabases`
+  - the `parityExceptions` comment
+- **`/verify 30.1` (2026-10-05):** 9/9 requirements PASS, 9/9 tests present, and no FIX logged.
+  An independent reviewer re-confirmed fail-first for M8. It probed the S10 fold with multibyte
+  text, `CONSTRAINT pk PRIMARY KEY DESC`, and constraints after the sort order. Applied:
+  - line references (off by one after the comment edit)
+  - the backlog example, which is now `PRIMARY KEY ASC AUTOINCREMENT`, since sqlite3 rejects
+    `DESC AUTOINCREMENT`
+  - a shorter comment on the fixtures
+  - a multibyte case in `TestPrimaryKeySortOrder`, which fails when the source is indexed by
+    bytes
+  CI's `integration (parser)` job stays red until 30.2 and 30.4–30.6 land.
 
 ---
 
@@ -406,8 +499,12 @@ _Filled in when complete: files changed, commit references, notes._
   - strip implicit casts: domain → base type (`(score)::integer`) and literal → column type
   - normalize keyword case (`VALUE`)
   - each removal rule is a named function with its own unit test
-- [ ] Tighten `TestPostgresIntrospect` (`:102`) through `assertSchemaParity`, with no
-  PG-specific exceptions beyond the 30.1 provenance set.
+- [ ] Tighten `TestPostgresIntrospect` (`:202`) through `assertSchemaParity`, with no
+  PG-specific exceptions beyond the 30.1 provenance set. (30.1 moved it onto the helper.
+  This task makes it pass; its baseline is in the 30.1 Completion Record.)
+- [ ] Unnamed domain CHECK name: the PG parser leaves it `""`, and PG names it
+  `<domain>_check` (`positive_int_check`). Found by the 30.1 baseline. No other task derives it,
+  and the test below asserts it.
 
 ### Acceptance Criteria
 
@@ -476,8 +573,9 @@ _Filled in when complete: files changed, commit references, notes._
   identifiable. Otherwise it registers a view-scoped synthetic type. Never the bare `enum`.
 - [ ] M7 / Q13: normalize `check_clause` through `sqlparser`, dropping backticks and charset
   introducers (`_utf8mb4'x'`) to match the parser's text.
-- [ ] Tighten `TestMySQLIntrospect` (`:284`) and `TestMySQLIntrospectViews` through
-  `assertSchemaParity`.
+- [ ] Tighten `TestMySQLIntrospect` (`:293`) and `TestMySQLIntrospectViews` (`:964`) through
+  `assertSchemaParity`. (30.1 moved `TestMySQLIntrospect` onto the helper; its baseline is
+  in the 30.1 Completion Record.)
 
 ### Acceptance Criteria
 
@@ -521,25 +619,29 @@ _Filled in when complete: files changed, commit references, notes._
   declared constraint names, CHECK constraints and expression text from it. PRAGMAs stay the
   source for columns, types, nullability, PK membership and order, FKs, indexes and partial
   predicates.
-- [ ] S7: replace every Go `%q` PRAGMA argument (`sqlite.go:164,199,272,341,413,565`) with SQL
+- [ ] S7: replace every Go `%q` PRAGMA argument (`sqlite.go:165,200,273,342,414,566`) with SQL
   identifier quoting (double quotes, with embedded `"` doubled).
 - [ ] S2: order composite PK columns by `pk` (the stored `pkCol.order`), not `cid`
-  (`sqlite.go:234`, `:251`).
+  (`sqlite.go:235`, `:252`).
 - [ ] S3: scan `foreign_key_list.to` as `sql.NullString`. A NULL target resolves to the parent's
-  PK column(s), as the parser resolves it (`sqlite.go:295`).
-- [ ] S4 / Q8: drop `origin = 'pk'` indexes from `introspectUniqueConstraints` (`sqlite.go:339`).
+  PK column(s), as the parser resolves it (`sqlite.go:296`). **Measured in 30.1:** the SQLite
+  parser rejects `REFERENCES t` with no column list (rqlite/sql: "expected left paren"), at
+  column and table level, so there is no parser result to match yet. Settle how this test
+  compares before writing it.
+- [ ] S4 / Q8: drop `origin = 'pk'` indexes from `introspectUniqueConstraints` (`sqlite.go:340`).
   Take UNIQUE names from the re-parse, so `sqlite_autoindex_*` never surfaces.
 - [ ] S5 / Q9: skip `type IN ('virtual', 'shadow')` rows from `PRAGMA table_list`. Add a
   `schema.Warnings` line naming each skipped virtual table, on the introspector **and** in the
-  SQLite parser for `CREATE VIRTUAL TABLE` (`parser/sqlite/sqlite.go:63-81`).
+  SQLite parser for `CREATE VIRTUAL TABLE` (`parser/sqlite/sqlite.go:65-83`).
 - [ ] S8 / Q10: CHECK constraints come from the re-parse.
 - [ ] S9 / S11: `AutoIncrement` only for a rowid alias. That means a single `INTEGER PRIMARY KEY`
   column in a rowid table, not `WITHOUT ROWID` and not `DESC`, on the introspector
-  (`sqlite.go:244`) and the parser.
+  (`sqlite.go:245`) and the parser.
 - [ ] S12: set `WithoutRowID` and `Strict` from `PRAGMA table_list` (or the re-parse).
-- [ ] Tighten `TestSQLiteIntrospect` (`:426`) through `assertSchemaParity`. **`Type` is compared;
-  today it is not.**
-- [ ] Turn the three SQLite-only `TestBothMode*` tests (`:643`, `:706`, `:754`) into tables over
+- [ ] Tighten `TestSQLiteIntrospect` (`:365`) through `assertSchemaParity`. **`Type` is compared;
+  today it is not.** (30.1 moved it onto the helper, so `Type` is now compared. This task makes
+  it pass; its baseline is in the 30.1 Completion Record.)
+- [ ] Turn the three SQLite-only `TestBothMode*` tests (`:552`, `:617`, `:667`) into tables over
   all three dialects.
 
 ### Acceptance Criteria

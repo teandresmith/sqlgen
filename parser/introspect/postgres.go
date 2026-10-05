@@ -862,11 +862,13 @@ func normalizePostgresType(ft string) string {
 		suffix = "[]"
 	}
 
-	// Normalize character types.
+	// Normalize character and bit-string types.
 	if rest, ok := strings.CutPrefix(ft, "character varying"); ok {
 		ft = "varchar" + rest
 	} else if rest, ok := strings.CutPrefix(ft, "character"); ok {
 		ft = "char" + rest
+	} else if rest, ok := strings.CutPrefix(ft, "bit varying"); ok {
+		ft = "varbit" + rest
 	}
 
 	// Normalize timestamp/time types.
@@ -915,27 +917,59 @@ func parsePostgresArray(s string) []string {
 			current.WriteRune(ch)
 		}
 	}
-	if current.Len() > 0 {
-		result = append(result, current.String())
-	}
+	// A non-empty body always holds one more element than it has separators,
+	// even when that element is an empty quoted string.
+	result = append(result, current.String())
 
 	return result
 }
 
-// extractCheckExpression extracts the boolean expression from a CHECK
-// constraint definition like "CHECK ((age > 0))".
+// extractCheckExpression extracts the boolean expression from a
+// pg_get_constraintdef CHECK definition like "CHECK ((age > 0))". The
+// expression is the text inside the parentheses that follow CHECK; a trailing
+// NOT VALID or NO INHERIT is not part of it.
 func extractCheckExpression(def string) string {
 	def = strings.TrimSpace(def)
-	if !strings.HasPrefix(def, "CHECK") {
+	rest, ok := strings.CutPrefix(def, "CHECK")
+	if !ok {
 		return def
 	}
-	def = strings.TrimPrefix(def, "CHECK")
-	def = strings.TrimSpace(def)
-	// Remove one layer of outer parentheses.
-	if strings.HasPrefix(def, "(") && strings.HasSuffix(def, ")") {
-		def = def[1 : len(def)-1]
+	rest = strings.TrimSpace(rest)
+	if end := closingParen(rest); end > 0 {
+		return strings.TrimSpace(rest[1:end])
 	}
-	return strings.TrimSpace(def)
+	return rest
+}
+
+// closingParen returns the index of the parenthesis that closes the one at
+// s[0], skipping string literals and quoted identifiers, or -1 when s does not
+// start with a balanced group. pg_get_constraintdef doubles a quote inside
+// either kind, which toggles the quoted state twice and leaves it unchanged.
+func closingParen(s string) int {
+	if !strings.HasPrefix(s, "(") {
+		return -1
+	}
+	depth := 0
+	var quote byte
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		switch {
+		case quote != 0:
+			if c == quote {
+				quote = 0
+			}
+		case c == '\'' || c == '"':
+			quote = c
+		case c == '(':
+			depth++
+		case c == ')':
+			depth--
+			if depth == 0 {
+				return i
+			}
+		}
+	}
+	return -1
 }
 
 // scanCompositeAttributes reads composite type attributes from rows and

@@ -182,6 +182,32 @@ func TestInlineEnumExtraction(t *testing.T) {
 	}
 }
 
+func TestInlineEnumEdgeValues(t *testing.T) {
+	sql := `CREATE TABLE users (
+		status ENUM('active', 'in,active', 'it''s', '', 'b\\c', 't\%u'),
+		perms SET('it''s', 'r w')
+	);`
+
+	p := newParser(t)
+	if err := p.Parse("test.sql", []byte(sql)); err != nil {
+		t.Fatalf("Parse() error: %v", err)
+	}
+
+	schema := p.Schema()
+	if len(schema.Enums) != 1 || len(schema.Sets) != 1 {
+		t.Fatalf("enums = %d, sets = %d, want 1 each", len(schema.Enums), len(schema.Sets))
+	}
+	// MySQL keeps the backslash in \% and \_, so 't\%u' stores t\%u.
+	wantEnum := []string{"active", "in,active", "it's", "", `b\c`, `t\%u`}
+	if diff := cmp.Diff(wantEnum, schema.Enums[0].Values); diff != "" {
+		t.Errorf("enum values mismatch (-want +got):\n%s", diff)
+	}
+	wantSet := []string{"it's", "r w"}
+	if diff := cmp.Diff(wantSet, schema.Sets[0].Values); diff != "" {
+		t.Errorf("set values mismatch (-want +got):\n%s", diff)
+	}
+}
+
 func TestInlineSetExtraction(t *testing.T) {
 	sql := `CREATE TABLE users (
 		id INT PRIMARY KEY AUTO_INCREMENT,

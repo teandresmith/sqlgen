@@ -518,10 +518,11 @@ func normalizeMySQLType(columnType string) string {
 	return lower
 }
 
-// extractMySQLEnumValues extracts enum values from a MySQL COLUMN_TYPE like
-// "enum('active','inactive','pending')".
+// extractMySQLEnumValues extracts enum or set values from a MySQL COLUMN_TYPE
+// like "enum('active','in,active')". COLUMN_TYPE writes each value as a string
+// literal, so a value may hold a comma, a doubled quote or a backslash escape,
+// and may be empty.
 func extractMySQLEnumValues(columnType string) []string {
-	// Find the content between first ( and last ).
 	start := strings.Index(columnType, "(")
 	end := strings.LastIndex(columnType, ")")
 	if start < 0 || end <= start {
@@ -530,12 +531,59 @@ func extractMySQLEnumValues(columnType string) []string {
 	inner := columnType[start+1 : end]
 
 	var values []string
-	for part := range strings.SplitSeq(inner, ",") {
-		v := strings.TrimSpace(part)
-		v = strings.Trim(v, "'")
-		if v != "" {
-			values = append(values, v)
+	for i := 0; i < len(inner); i++ {
+		if inner[i] != '\'' {
+			continue // the comma between two literals
 		}
+		value, next := readMySQLStringLiteral(inner, i)
+		values = append(values, value)
+		i = next
 	}
 	return values
+}
+
+// readMySQLStringLiteral decodes the single-quoted literal that opens at
+// s[open] and returns its value and the index of its closing quote.
+func readMySQLStringLiteral(s string, open int) (string, int) {
+	var b strings.Builder
+	i := open + 1
+	for ; i < len(s); i++ {
+		c := s[i]
+		switch {
+		case c == '\'' && i+1 < len(s) && s[i+1] == '\'':
+			b.WriteByte('\'')
+			i++
+		case c == '\'':
+			return b.String(), i
+		case c == '\\' && i+1 < len(s):
+			i++
+			b.WriteString(unescapeMySQL(s[i]))
+		default:
+			b.WriteByte(c)
+		}
+	}
+	return b.String(), i
+}
+
+// unescapeMySQL returns what the escape sequence \c stands for in a MySQL
+// string literal. \% and \_ keep their backslash, as MySQL does.
+func unescapeMySQL(c byte) string {
+	switch c {
+	case '0':
+		return "\x00"
+	case 'b':
+		return "\b"
+	case 'n':
+		return "\n"
+	case 'r':
+		return "\r"
+	case 't':
+		return "\t"
+	case 'Z':
+		return "\x1a"
+	case '%', '_':
+		return "\\" + string(c)
+	default:
+		return string(c)
+	}
 }

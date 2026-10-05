@@ -46,8 +46,10 @@ func (p *Parser) Parse(filename string, sql []byte) error {
 		return fmt.Errorf("parsing %s: %w", filename, err)
 	}
 
+	// rqlite/sql positions count runes.
+	src := []rune(string(sql))
 	for _, stmt := range stmts {
-		if err := p.processStmt(stmt); err != nil {
+		if err := p.processStmt(stmt, src); err != nil {
 			return fmt.Errorf("parsing %s: %w", filename, err)
 		}
 	}
@@ -60,10 +62,10 @@ func (p *Parser) Schema() *parser.Schema {
 	return p.schema
 }
 
-func (p *Parser) processStmt(stmt rsql.Statement) error {
+func (p *Parser) processStmt(stmt rsql.Statement, src []rune) error {
 	switch s := stmt.(type) {
 	case *rsql.CreateTableStatement:
-		return p.parseCreateTable(s)
+		return p.parseCreateTable(s, src)
 	case *rsql.AlterTableStatement:
 		return p.parseAlterTable(s)
 	case *rsql.DropTableStatement:
@@ -135,7 +137,7 @@ func (p *Parser) parseDropTable(stmt *rsql.DropTableStatement) error {
 
 // --- CREATE TABLE ---
 
-func (p *Parser) parseCreateTable(stmt *rsql.CreateTableStatement) error {
+func (p *Parser) parseCreateTable(stmt *rsql.CreateTableStatement, src []rune) error {
 	tableName := rsql.IdentName(stmt.Name)
 	if _, exists := p.tableIndex[tableName]; exists {
 		if stmt.IfNotExists.IsValid() {
@@ -154,7 +156,14 @@ func (p *Parser) parseCreateTable(stmt *rsql.CreateTableStatement) error {
 	}
 
 	// Parse columns.
-	for _, col := range stmt.Columns {
+	for i, col := range stmt.Columns {
+		if i > 0 && isPrimaryKeySortOrder(stmt.Columns[i-1], col, src) {
+			key := &table.Columns[len(table.Columns)-1]
+			for _, constraint := range col.Constraints {
+				applyColumnConstraint(key, constraint)
+			}
+			continue
+		}
 		c := parseColumn(col, withoutRowID)
 		table.Columns = append(table.Columns, c)
 	}
@@ -173,6 +182,44 @@ func (p *Parser) parseCreateTable(stmt *rsql.CreateTableStatement) error {
 	p.schema.Tables = append(p.schema.Tables, table)
 
 	return nil
+}
+
+// isPrimaryKeySortOrder reports whether col is the ASC or DESC of the column
+// PRIMARY KEY that ends prev. rqlite/sql reads that keyword as the name of a
+// new column, along with any constraints after it. Only blanks and comments
+// can separate it from KEY; after a comma it is a real column named asc or
+// desc.
+func isPrimaryKeySortOrder(prev, col *rsql.ColumnDefinition, src []rune) bool {
+	if col.Name == nil || col.Name.Quoted || col.Type != nil ||
+		(!strings.EqualFold(col.Name.Name, "ASC") && !strings.EqualFold(col.Name.Name, "DESC")) {
+		return false
+	}
+	if len(prev.Constraints) == 0 {
+		return false
+	}
+	pk, ok := prev.Constraints[len(prev.Constraints)-1].(*rsql.PrimaryKeyConstraint)
+	if !ok || pk.Autoincrement.IsValid() {
+		return false
+	}
+	from, to := pk.Key.Offset+len("KEY"), col.Name.NamePos.Offset
+	if from > to || to > len(src) {
+		return false
+	}
+	return onlyBlanksAndComments(string(src[from:to]))
+}
+
+func onlyBlanksAndComments(s string) bool {
+	for s = strings.TrimSpace(s); s != ""; s = strings.TrimSpace(s) {
+		switch {
+		case strings.HasPrefix(s, "--"):
+			_, s, _ = strings.Cut(s, "\n")
+		case strings.HasPrefix(s, "/*"):
+			_, s, _ = strings.Cut(s[2:], "*/")
+		default:
+			return false
+		}
+	}
+	return true
 }
 
 func parseColumn(col *rsql.ColumnDefinition, withoutRowID bool) parser.Column {

@@ -3,6 +3,7 @@ package introspect
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"strings"
 
@@ -480,11 +481,11 @@ func (si *SQLiteIntrospector) indexPartialWhere(ctx context.Context, indexName s
 	err := si.db.QueryRowContext(ctx, `
 		SELECT sql FROM sqlite_master WHERE type = 'index' AND name = ?`,
 		indexName).Scan(&ddl)
-	if err == sql.ErrNoRows || !ddl.Valid {
-		return "", nil
-	}
-	if err != nil {
+	if err != nil && !errors.Is(err, sql.ErrNoRows) {
 		return "", fmt.Errorf("introspect sqlite index sql %s: %w", indexName, err)
+	}
+	if !ddl.Valid {
+		return "", nil
 	}
 	return extractSQLiteIndexWhere(ddl.String), nil
 }

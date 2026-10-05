@@ -365,7 +365,7 @@ and `search_path` are PG-only, and virtual tables are SQLite-only. Those differe
 listed in §6.5.
 
 The tests follow TESTING.md: table-driven, `cmp.Diff`, no assertion libraries, `t.Error`
-over `t.Fatal`, and a `-short` skip through the existing `TestMain`. Each integration test
+over `t.Fatal`, and a `-short` skip through `requireDatabases`. Each integration test
 owns a schema, using the existing `CREATE SCHEMA IF NOT EXISTS` + `DROP … CASCADE` pattern,
 and reuses `findTable`, `findConstraintByName`, `filterConstraints` and `truncate`.
 

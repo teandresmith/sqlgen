@@ -59,3 +59,25 @@ func TestExtractSQLiteIndexWhere(t *testing.T) {
 		})
 	}
 }
+
+func TestNormalizeSQLiteType(t *testing.T) {
+	tests := []struct {
+		name     string
+		typeName string
+		want     string
+	}{
+		{name: "empty is blob", typeName: "", want: "blob"},
+		{name: "case folding", typeName: "INTEGER", want: "integer"},
+		{name: "mixed case", typeName: "Text", want: "text"},
+		{name: "varchar passthrough", typeName: "VARCHAR(255)", want: "varchar(255)"},
+		{name: "numeric passthrough", typeName: "NUMERIC(10,2)", want: "numeric(10,2)"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := normalizeSQLiteType(tt.typeName); got != tt.want {
+				t.Errorf("normalizeSQLiteType(%q) = %q, want %q", tt.typeName, got, tt.want)
+			}
+		})
+	}
+}

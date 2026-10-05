@@ -219,6 +219,83 @@ func TestIntegerPrimaryKeyAutoIncrement(t *testing.T) {
 	}
 }
 
+// SQLite allows a sort order after a column PRIMARY KEY. It belongs to the
+// key, so it must not surface as a column of its own, while a column that is
+// really named desc still parses.
+func TestPrimaryKeySortOrder(t *testing.T) {
+	tests := []struct {
+		name       string
+		sql        string
+		wantCols   []string
+		wantUnique string // a column that must carry the UNIQUE
+	}{
+		{
+			name:     "DESC",
+			sql:      `CREATE TABLE t (id INTEGER PRIMARY KEY DESC, v TEXT);`,
+			wantCols: []string{"id", "v"},
+		},
+		{
+			name:     "ASC",
+			sql:      `CREATE TABLE t (id INTEGER PRIMARY KEY ASC, v TEXT);`,
+			wantCols: []string{"id", "v"},
+		},
+		{
+			name:     "last column",
+			sql:      `CREATE TABLE t (v TEXT, id INTEGER PRIMARY KEY DESC);`,
+			wantCols: []string{"v", "id"},
+		},
+		{
+			// rqlite/sql positions count runes, not bytes.
+			name:     "multibyte text before the key",
+			sql:      "-- café ✓\nCREATE TABLE t (\"é\" TEXT DEFAULT 'ü', id INTEGER PRIMARY KEY DESC, v TEXT);",
+			wantCols: []string{"é", "id", "v"},
+		},
+		{
+			name:     "comment before the sort order",
+			sql:      `CREATE TABLE t (id INTEGER PRIMARY KEY /* a, b */ DESC, v TEXT);`,
+			wantCols: []string{"id", "v"},
+		},
+		{
+			name:       "constraints after the sort order stay on the key column",
+			sql:        `CREATE TABLE t (id INTEGER PRIMARY KEY DESC UNIQUE, v TEXT);`,
+			wantCols:   []string{"id", "v"},
+			wantUnique: "id",
+		},
+		{
+			name:     "column named desc",
+			sql:      `CREATE TABLE t (id INTEGER PRIMARY KEY, desc TEXT);`,
+			wantCols: []string{"id", "desc"},
+		},
+		{
+			name:     "untyped column named desc",
+			sql:      `CREATE TABLE t (id INTEGER PRIMARY KEY, desc);`,
+			wantCols: []string{"id", "desc"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			p := sqlite.New()
+			if err := p.Parse("test.sql", []byte(tt.sql)); err != nil {
+				t.Fatalf("Parse() error: %v", err)
+			}
+			table := p.Schema().Tables[0]
+			got := make([]string, 0, len(table.Columns))
+			for _, c := range table.Columns {
+				got = append(got, c.Name)
+			}
+			if diff := cmp.Diff(tt.wantCols, got); diff != "" {
+				t.Errorf("columns mismatch (-want +got):\n%s", diff)
+			}
+			if tt.wantUnique != "" {
+				if c := parser.ColumnByName(&table, tt.wantUnique); c == nil || !c.Unique {
+					t.Errorf("column %s: want Unique, got %+v", tt.wantUnique, c)
+				}
+			}
+		})
+	}
+}
+
 func TestIntegerPrimaryKeyWithoutRowID(t *testing.T) {
 	sql := `CREATE TABLE settings (
 		key TEXT PRIMARY KEY,
