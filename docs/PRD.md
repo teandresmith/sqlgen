@@ -115,13 +115,13 @@ The code generation binary. Imports the parser module, runtime module, and type 
 
 ```bash
 # Pre-built binary (recommended — no CGO toolchain needed)
-# Download from GitHub Releases for your platform (linux/darwin/windows, amd64/arm64)
+# Download from GitHub Releases for your platform (linux/darwin amd64/arm64, windows amd64)
 
 # From source (requires CGO + C compiler for pg_query_go)
 go install github.com/teandresmith/sqlgen/cmd/sqlgen@latest
 ```
 
-Pre-built binaries are published on every tagged release for Linux, macOS, and Windows across amd64 and arm64 architectures. The `go install` path requires CGO because the PostgreSQL parser (`pg_query_go/v6`) links against `libpg_query`.
+Pre-built binaries are published on every tagged release for Linux and macOS on amd64 and arm64, and for Windows on amd64; Windows on ARM runs the amd64 binary under emulation. The `go install` path requires CGO because the PostgreSQL parser (`pg_query_go/v6`) links against `libpg_query`.
 
 The CLI binary pulls in parser and type-mapping dependencies at build time, but since it is a separate module, these dependencies never appear in the consumer's `go.mod`.
 

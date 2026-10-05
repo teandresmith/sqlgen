@@ -27,14 +27,15 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # Keep in step with probe.yml.
+        # Keep in step with probe.yml. No windows/arm64: the windows-11-arm
+        # runner's only C compiler targets x86-64, so cgo cannot build there.
+        # Windows on ARM runs the amd64 binary under emulation.
         include:
           - { goos: linux, goarch: amd64, runner: ubuntu-latest }
           - { goos: linux, goarch: arm64, runner: ubuntu-24.04-arm }
           - { goos: darwin, goarch: amd64, runner: macos-15-intel }
           - { goos: darwin, goarch: arm64, runner: macos-latest }
           - { goos: windows, goarch: amd64, runner: windows-latest }
-          - { goos: windows, goarch: arm64, runner: windows-11-arm }
     defaults:
       run:
         shell: bash

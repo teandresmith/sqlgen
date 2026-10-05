@@ -26,7 +26,8 @@ Core runtime packages depend only on the Go standard library.
 
 ```bash
 # Pre-built binary (recommended) — download from GitHub Releases
-# for your platform: linux/darwin/windows, amd64/arm64
+# for your platform: linux and macOS (amd64, arm64), windows (amd64;
+# Windows on ARM runs it under emulation)
 
 # From source (requires CGO + a C compiler)
 go install github.com/teandresmith/sqlgen/cmd/sqlgen@latest

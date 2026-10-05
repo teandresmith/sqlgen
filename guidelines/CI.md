@@ -29,7 +29,7 @@
 1. **CI is the single source of truth.** If it passes in CI, it ships. If it fails in CI, it does not. No manual overrides, no "it works on my machine."
 2. **Fast feedback first.** Unit tests and linting run before integration tests. Failures are caught in seconds, not minutes.
 3. **Every module is tested independently.** The three-module split (runtime, parser, CLI) means each module has its own `go.mod` and its own CI test run. A change to the parser module cannot silently break the runtime module.
-4. **Cross-platform binaries.** The CLI ships pre-built binaries for Linux, macOS, and Windows across amd64 and arm64.
+4. **Cross-platform binaries.** The CLI ships pre-built binaries for Linux and macOS on amd64 and arm64, and for Windows on amd64.
 5. **No skipping hooks.** CI runs with the same hooks and checks that developers run locally. No `--no-verify`, no `--skip-ci`.
 
 ---
@@ -66,8 +66,8 @@ The YAML lives in `.github/workflows/`; read it there rather than copying it her
 | `test.yml` | `unit`, then `integration`, per module | `integration` has `needs: unit`. |
 | `examples.yml` | `discover`, then `lint` and `test` per example | `GOWORK: off`, and `paths-ignore` for docs-only changes. |
 | `release-please.yml` | `release-please`, `tag-modules`, then `release` | Calls `release.yml` when a release is created. See [Section 11](#11-automated-release-management). |
-| `release.yml` | `build` per target, then `publish` | Native cgo builds on six runners. Runs when `release-please.yml` calls it, or by hand. |
-| `probe.yml` | `probe` per target | Runs by hand, and on a push to `main` that changes `probe.yml` or `release.yml`. Builds the CLI and runs the parser tests on the six release runners; see [Native Builds](#native-builds). |
+| `release.yml` | `build` per target, then `publish` | Native cgo builds on five runners. Runs when `release-please.yml` calls it, or by hand. |
+| `probe.yml` | `probe` per target | Runs by hand, and on a push to `main` that changes `probe.yml` or `release.yml`. Builds the CLI and runs the parser tests on the five release runners; see [Native Builds](#native-builds). |
 
 Every workflow sets `permissions: contents: read` at the top and widens it per job only where needed (the release and tagging jobs). PR runs cancel when a newer commit lands on the same branch; pushes to `main` never cancel.
 
@@ -580,7 +580,7 @@ Releases are fully automated using [Release Please](https://github.com/googleapi
 3. The release PR auto-updates with each merge — it bumps the version based on commit types and builds the changelog.
 4. When ready to release, a maintainer merges the release PR.
 5. Merging the release PR creates a **Git tag** (`v1.3.0`) and a **GitHub Release** with the generated changelog.
-6. The same `release-please.yml` run tags the other seven modules (`tag-modules`, see [Multi-Module Versioning](#multi-module-versioning)) and then calls the **release workflow**, which builds the CLI on six native runners and attaches the binaries to the GitHub Release. It is called rather than tag-triggered because a tag pushed with `GITHUB_TOKEN` does not start other workflows.
+6. The same `release-please.yml` run tags the other seven modules (`tag-modules`, see [Multi-Module Versioning](#multi-module-versioning)) and then calls the **release workflow**, which builds the CLI on five native runners and attaches the binaries to the GitHub Release. It is called rather than tag-triggered because a tag pushed with `GITHUB_TOKEN` does not start other workflows.
 
 ### Release Please Workflow
 
@@ -633,7 +633,7 @@ Release Please (runs on every push to main)
                           tag-modules (path-prefixed tag per module)
                                 │
                                 ▼
-                          release.yml: build × 6 native runners → publish
+                          release.yml: build × 5 native runners → publish
                                 │
                                 ▼
                           Binaries + checksums.txt attached to the GitHub Release
@@ -665,7 +665,7 @@ The CLI ships pre-built binaries for all major platforms, built by `release.yml`
 |----|--------------|
 | Linux | amd64, arm64 |
 | macOS | amd64 (Intel), arm64 (Apple Silicon) |
-| Windows | amd64, arm64 |
+| Windows | amd64 (Windows on ARM runs it under emulation) |
 
 ### Native Builds
 
@@ -678,9 +678,10 @@ The CLI requires CGO because the PostgreSQL parser (`pg_query_go/v6`) links agai
 | darwin/amd64 | `macos-15-intel` |
 | darwin/arm64 | `macos-latest` |
 | windows/amd64 | `windows-latest` |
-| windows/arm64 | `windows-11-arm` |
 
-`.github/workflows/probe.yml` builds the CLI and runs the parser tests on the same six runners. It runs on its own when a push to `main` changes `probe.yml` or `release.yml`, and by hand before relying on a target. `release.yml` and `probe.yml` list the same runners; change them together.
+There is no windows/arm64 build. The `windows-11-arm` runner's only C compiler is an x86-64 MinGW `gcc`, which cannot assemble the arm64 code cgo needs, so the probe failed there. Building it would take an arm64 toolchain such as llvm-mingw, plus finding out whether libpg_query builds with it.
+
+`.github/workflows/probe.yml` builds the CLI and runs the parser tests on the same five runners. It runs on its own when a push to `main` changes `probe.yml` or `release.yml`, and by hand before relying on a target. `release.yml` and `probe.yml` list the same runners; change them together.
 
 ### Installation Methods
 
@@ -789,7 +790,7 @@ sqlgen diff
 - [ ] No new `depguard` violations (module boundaries intact)
 - [ ] No new `gosec` findings (SQL injection, hardcoded secrets)
 - [ ] Race detector passes on all concurrent code paths
-- [ ] Release binaries build for all 6 platform targets (linux/darwin/windows × amd64/arm64)
+- [ ] Release binaries build for all 5 platform targets (linux/darwin × amd64/arm64, windows/amd64)
 - [ ] Commit messages follow Conventional Commits format
 - [ ] Breaking changes have `BREAKING CHANGE:` footer
 - [ ] `CHANGELOG.md` is not manually edited (managed by Release Please)
