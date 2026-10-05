@@ -1,0 +1,28 @@
+# gqlgen.yml — owned by the consumer, never modified by sqlgen.
+#
+# sqlgen writes its API artifacts (per-table *_gen.graphqls, scalars_gen.go,
+# sqlgenresolver/*) to the root-relative api.graphql.schema_dir / resolver_dir
+# (§26.5.8) — for this example ./models/graph/. The paths below mirror that
+# layout so gqlgen sees the same files sqlgen wrote.
+#
+# At wrapper-invocation time (chained from `sqlgen generate`),
+# sqlgen merges its required `models:` entries (row structs, envelope
+# aliases, scalar bindings) into a temp config; this on-disk file stays
+# byte-equal pre/post.
+
+schema:
+  - "models/graph/*.graphqls"
+
+exec:
+  filename: models/graph/generated_gen.go
+  package: graph
+
+model:
+  filename: models/graph/model/models_gen.go
+  package: model
+
+resolver:
+  layout: follow-schema
+  dir: models/graph
+  package: graph
+  filename_template: "{name}.resolvers.go"

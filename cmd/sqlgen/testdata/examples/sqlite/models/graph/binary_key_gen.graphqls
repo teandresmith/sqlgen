@@ -1,0 +1,79 @@
+"""
+BinaryKey corresponds to the binary_keys table.
+"""
+type BinaryKey {
+  "id"
+  id: Bytes!
+  "name"
+  name: String!
+  "created_at"
+  createdAt: DateTime!
+  "one-to-many relationship with the binary_key_events table."
+  events: [BinaryKeyEvent!]!
+  "one-to-many relationship with the binary_key_events table."
+  binaryKeyEvents: [BinaryKeyEvent!]!
+}
+
+type BinaryKeyConnection {
+  edges:      [BinaryKeyEdge!]!
+  pageInfo:   PageInfo!
+  totalCount: Int!
+}
+
+type BinaryKeyEdge {
+  node:   BinaryKey!
+  cursor: String!
+}
+
+type BinaryKeyListResult {
+  items:      [BinaryKey!]!
+  totalCount: Int!
+  offset:     Int!
+  limit:      Int!
+  hasMore:    Boolean!
+}
+
+input BinaryKeyFilter {
+  name: StringComparator
+  createdAt: TimeComparator
+  binaryKeyEvents: BinaryKeyEventFilter
+  events: BinaryKeyEventFilter
+  and: [BinaryKeyFilter!]
+  or:  [BinaryKeyFilter!]
+}
+
+enum BinaryKeySortField {
+  ID
+  NAME
+  CREATED_AT
+}
+
+input BinaryKeySort {
+  field:     BinaryKeySortField!
+  direction: SortDirection!
+}
+input CreateBinaryKeyInput {
+  id: Bytes!
+  name: String!
+  createdAt: DateTime!
+}
+input UpdateBinaryKeyInput {
+  name: String
+  createdAt: DateTime
+}
+
+extend type Query {
+  binaryKey(id: Bytes!): BinaryKey
+  "Cursor-paginated; ordering is driven by cursor_keys to preserve keyset semantics — pass `sort` to binaryKeyList instead."
+  binaryKeys(filter: BinaryKeyFilter, first: Int, after: String, last: Int, before: String): BinaryKeyConnection!
+  binaryKeyList(filter: BinaryKeyFilter, sort: [BinaryKeySort!], limit: Int, offset: Int): BinaryKeyListResult!
+}
+
+extend type Mutation {
+  createBinaryKey(input: CreateBinaryKeyInput!): BinaryKey!
+  createBinaryKeys(inputs: [CreateBinaryKeyInput!]!): [BinaryKey!]!
+  updateBinaryKey(id: Bytes!, input: UpdateBinaryKeyInput!): BinaryKey!
+  updateBinaryKeys(filter: BinaryKeyFilter!, input: UpdateBinaryKeyInput!): [BinaryKey!]!
+  upsertBinaryKey(input: CreateBinaryKeyInput!): BinaryKey!
+  deleteBinaryKey(id: Bytes!): Boolean!
+}

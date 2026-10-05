@@ -1,0 +1,75 @@
+"""
+ProductTagLabel corresponds to the product_tag_labels table.
+"""
+type ProductTagLabel {
+  "product_id"
+  productID: Int!
+  "tag_name"
+  tagName: ID!
+  "label"
+  label: ID!
+  "description"
+  description: String
+}
+
+type ProductTagLabelConnection {
+  edges:      [ProductTagLabelEdge!]!
+  pageInfo:   PageInfo!
+  totalCount: Int!
+}
+
+type ProductTagLabelEdge {
+  node:   ProductTagLabel!
+  cursor: String!
+}
+
+type ProductTagLabelListResult {
+  items:      [ProductTagLabel!]!
+  totalCount: Int!
+  offset:     Int!
+  limit:      Int!
+  hasMore:    Boolean!
+}
+
+input ProductTagLabelFilter {
+  description: NullableStringComparator
+  and: [ProductTagLabelFilter!]
+  or:  [ProductTagLabelFilter!]
+}
+
+enum ProductTagLabelSortField {
+  PRODUCT_ID
+  TAG_NAME
+  LABEL
+  DESCRIPTION
+}
+
+input ProductTagLabelSort {
+  field:     ProductTagLabelSortField!
+  direction: SortDirection!
+}
+input CreateProductTagLabelInput {
+  productID: Int!
+  tagName: ID!
+  label: ID!
+  description: String
+}
+input UpdateProductTagLabelInput {
+  description: String
+}
+
+extend type Query {
+  productTagLabel(productID: Int!, tagName: ID!, label: ID!): ProductTagLabel
+  "Cursor-paginated; ordering is driven by cursor_keys to preserve keyset semantics — pass `sort` to productTagLabelList instead."
+  productTagLabels(filter: ProductTagLabelFilter, first: Int, after: String, last: Int, before: String): ProductTagLabelConnection!
+  productTagLabelList(filter: ProductTagLabelFilter, sort: [ProductTagLabelSort!], limit: Int, offset: Int): ProductTagLabelListResult!
+}
+
+extend type Mutation {
+  createProductTagLabel(input: CreateProductTagLabelInput!): ProductTagLabel!
+  createProductTagLabels(inputs: [CreateProductTagLabelInput!]!): [ProductTagLabel!]!
+  updateProductTagLabel(productID: Int!, tagName: ID!, label: ID!, input: UpdateProductTagLabelInput!): ProductTagLabel!
+  updateProductTagLabels(filter: ProductTagLabelFilter!, input: UpdateProductTagLabelInput!): [ProductTagLabel!]!
+  upsertProductTagLabel(input: CreateProductTagLabelInput!): ProductTagLabel!
+  deleteProductTagLabel(productID: Int!, tagName: ID!, label: ID!): Boolean!
+}

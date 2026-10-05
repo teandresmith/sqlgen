@@ -1,0 +1,122 @@
+"""
+Product classification categories
+"""
+type Category {
+  "Unique identifier"
+  id: Int!
+  "Category display name"
+  name: String!
+  "Optional long-form description"
+  description: String
+  "one-to-many relationship with the products table."
+  products: [Product!]!
+  "many-to-many relationship with the users table."
+  users: [User!]!
+}
+
+type CategoryConnection {
+  edges:      [CategoryEdge!]!
+  pageInfo:   PageInfo!
+  totalCount: Int!
+}
+
+type CategoryEdge {
+  node:   Category!
+  cursor: String!
+}
+
+type CategoryListResult {
+  items:      [Category!]!
+  totalCount: Int!
+  offset:     Int!
+  limit:      Int!
+  hasMore:    Boolean!
+}
+
+input CategoryFilter {
+  name: StringComparator
+  description: NullableStringComparator
+  products: ProductFilter
+  users: UserFilter
+  and: [CategoryFilter!]
+  or:  [CategoryFilter!]
+}
+
+enum CategorySortField {
+  ID
+  NAME
+  DESCRIPTION
+}
+
+input CategorySort {
+  field:     CategorySortField!
+  direction: SortDirection!
+}
+input CreateCategoryInput {
+  name: String!
+  description: String
+}
+input UpdateCategoryInput {
+  name: String
+  description: String
+}
+
+extend type Query {
+  category(id: Int!): Category
+  "Cursor-paginated; ordering is driven by cursor_keys to preserve keyset semantics — pass `sort` to categoryList instead."
+  categories(filter: CategoryFilter, first: Int, after: String, last: Int, before: String): CategoryConnection!
+  categoryList(filter: CategoryFilter, sort: [CategorySort!], limit: Int, offset: Int): CategoryListResult!
+}
+
+extend type Mutation {
+  createCategory(input: CreateCategoryInput!): Category!
+  createCategories(inputs: [CreateCategoryInput!]!): [Category!]!
+  updateCategory(id: Int!, input: UpdateCategoryInput!): Category!
+  updateCategories(filter: CategoryFilter!, input: UpdateCategoryInput!): [Category!]!
+  upsertCategory(input: CreateCategoryInput!): Category!
+  deleteCategory(id: Int!): Boolean!
+}
+
+input CreateCategoryWithRelatedInput {
+  category: CreateCategoryInput!
+  products: CategoryProductsCreateNested
+}
+
+input UpdateCategoryWithRelatedInput {
+  category: UpdateCategoryInput
+  products: CategoryProductsUpdateNested
+}
+
+input UpsertCategoryWithRelatedInput {
+  category: CreateCategoryInput!
+  products: CategoryProductsUpdateNested
+}
+
+enum CategoryConflictTarget {
+  NAME
+  PK
+}
+
+input CategoryProductsCreateNested {
+  create: [CategoryProductsCreateInput!]
+}
+
+input CategoryProductsUpdateNested {
+  create: [CategoryProductsCreateInput!]
+}
+
+input CategoryProductsCreateInput {
+  title: String!
+  price: Float!
+  weightKg: Float
+  inStock: Boolean!
+  sku: String!
+  attributes: JSON!
+  createdAt: Time!
+}
+
+extend type Mutation {
+  createCategoryWithRelated(input: CreateCategoryWithRelatedInput!): Category!
+  updateCategoryWithRelated(id: Int!, input: UpdateCategoryWithRelatedInput!): Category!
+  upsertCategoryWithRelated(input: UpsertCategoryWithRelatedInput!, conflictTarget: CategoryConflictTarget! = PK): Category!
+}

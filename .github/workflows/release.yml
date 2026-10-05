@@ -1,0 +1,102 @@
+name: Release
+on:
+  # Release Please calls this workflow once the module tags exist.
+  workflow_call:
+    inputs:
+      tag:
+        description: The root release tag (vX.Y.Z)
+        required: true
+        type: string
+  # Re-run a release by hand, e.g. after a failed build.
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: The root release tag (vX.Y.Z)
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  # The CLI links libpg_query through cgo, so each binary is built on a runner
+  # of its own OS and architecture rather than cross-compiled.
+  build:
+    name: build (${{ matrix.goos }}/${{ matrix.goarch }})
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        # Keep in step with probe.yml.
+        include:
+          - { goos: linux, goarch: amd64, runner: ubuntu-latest }
+          - { goos: linux, goarch: arm64, runner: ubuntu-24.04-arm }
+          - { goos: darwin, goarch: amd64, runner: macos-15-intel }
+          - { goos: darwin, goarch: arm64, runner: macos-latest }
+          - { goos: windows, goarch: amd64, runner: windows-latest }
+          - { goos: windows, goarch: arm64, runner: windows-11-arm }
+    defaults:
+      run:
+        shell: bash
+    steps:
+      # The CLI's tag sits on the commit that pins its in-repo dependencies.
+      - uses: actions/checkout@v7
+        with:
+          ref: cmd/sqlgen/${{ inputs.tag }}
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: .tool-versions
+          cache-dependency-path: cmd/sqlgen/go.sum
+      # GOWORK=off builds from the pinned go.mod, the same module graph
+      # `go install …/cmd/sqlgen@vX.Y.Z` resolves. Our own modules come straight
+      # from the repo: their tags were pushed moments ago.
+      - name: Build
+        working-directory: cmd/sqlgen
+        env:
+          TAG: ${{ inputs.tag }}
+          CGO_ENABLED: "1"
+          GOWORK: "off"
+          GONOPROXY: github.com/teandresmith/sqlgen
+        run: |
+          mkdir -p ../../dist
+          go build -trimpath \
+            -ldflags "-s -w -X github.com/teandresmith/sqlgen/cmd/sqlgen/cli.Version=${TAG#v}" \
+            -o "../../dist/sqlgen$(go env GOEXE)" .
+          "../../dist/sqlgen$(go env GOEXE)" --version
+      # Windows' own tar.exe writes zip archives; Git Bash's tar does not.
+      - name: Archive
+        run: |
+          name=sqlgen_${{ matrix.goos }}_${{ matrix.goarch }}
+          cp LICENSE README.md dist/
+          mkdir -p out
+          cd dist
+          if [ "${{ matrix.goos }}" = windows ]; then
+            /c/Windows/System32/tar.exe -a -cf "../out/$name.zip" ./*
+          else
+            tar -czf "../out/$name.tar.gz" ./*
+          fi
+      - uses: actions/upload-artifact@v7
+        with:
+          name: sqlgen_${{ matrix.goos }}_${{ matrix.goarch }}
+          path: out/*
+          if-no-files-found: error
+
+  publish:
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          path: dist
+          merge-multiple: true
+      - name: Attach to the GitHub Release
+        working-directory: dist
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ inputs.tag }}
+        run: |
+          sha256sum -- * > checksums.txt
+          cat checksums.txt
+          gh release upload "$TAG" -- * --repo "${{ github.repository }}" --clobber

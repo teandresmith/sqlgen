@@ -1,0 +1,49 @@
+{{- define "shared/create-input" }}
+
+// Create{{ .StructName }}Input holds the fields for creating a {{ .TableName }} record.
+type Create{{ .StructName }}Input struct {
+{{- range .CreateInputFields }}
+{{- if .Description }}
+	// {{ .FieldName }} - {{ .Description }}
+{{- end }}
+{{- if .Omittable }}
+	{{ .FieldName }} {{ .GoType }} `json:"{{ .JSONTag }},omitzero"`
+{{- else }}
+	{{ .FieldName }} {{ .GoType }} `json:"{{ .JSONTag }}"`
+{{- end }}
+{{- end }}
+}
+{{ end -}}
+
+{{- define "shared/update-input" }}
+
+// Update{{ .StructName }}Input holds the fields for updating a {{ .TableName }} record.
+// All fields use omittable.Value to distinguish "not set" from "set to zero".
+type Update{{ .StructName }}Input struct {
+{{- range .UpdateInputFields }}
+{{- if .Description }}
+	// {{ .FieldName }} - {{ .Description }}
+{{- end }}
+	{{ .FieldName }} {{ .GoType }} `json:"{{ .JSONTag }},omitzero"`
+{{- end }}
+}
+{{ end -}}
+
+{{- define "shared/get-input" }}
+
+// Get{{ structNamePlural .StructName }}Input holds query parameters for retrieving {{ .TableName }} records.
+// Field selection is controlled via CallOptions.FieldOptions, not this struct.
+type Get{{ structNamePlural .StructName }}Input struct {
+	Filter *{{ .StructName }}Filter `json:"filter"`
+	Limit  *int                     `json:"limit"`
+	Offset *int                     `json:"offset"`
+	Sorts  []sql.Sort               `json:"sorts"`
+	// conditions holds additional SQL conditions injected by internal callers
+	// (e.g., Connection keyset conditions). Not part of the public API.
+	conditions []sql.Condition
+	// requiredColumns holds columns an internal caller needs read back even
+	// when FieldOptions narrows the projection (e.g., Connection cursor keys).
+	// Not part of the public API.
+	requiredColumns []string
+}
+{{ end -}}

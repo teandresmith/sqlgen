@@ -1,0 +1,6 @@
+{{- define "shared/field" -}}
+{{- if .Description }}
+	// {{ .FieldName }} - {{ .Description }}
+{{- end }}
+	{{ .FieldName }} {{ .GoType }} `db:"{{ .DBTag }}" json:"{{ .JSONTag }}"`
+{{- end -}}

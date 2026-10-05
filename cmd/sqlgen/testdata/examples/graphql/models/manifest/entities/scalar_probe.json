@@ -1,0 +1,734 @@
+{
+  "kind": "table",
+  "name": "ScalarProbe",
+  "table": "scalar_probes",
+  "schema": "public",
+  "file_prefix": "scalar_probe",
+  "files": [
+    "models_gen.go"
+  ],
+  "comment": "",
+  "indexes": [
+    {
+      "name": "scalar_probes_pkey",
+      "columns": [
+        "id"
+      ],
+      "unique": true,
+      "method": "btree"
+    }
+  ],
+  "pk": {
+    "kind": "single",
+    "columns": [
+      {
+        "name": "id",
+        "go_field": "ID",
+        "go_type": "uuid.UUID"
+      }
+    ]
+  },
+  "features": {
+    "soft_delete": null,
+    "cache": {
+      "ttl_seconds": 3600,
+      "hydration": "eager",
+      "key_pattern": "sqlgen:scalarprobe:{id}",
+      "invalidates_on": [
+        "Create",
+        "Update",
+        "Delete",
+        "SoftDelete",
+        "Restore",
+        "Increment"
+      ]
+    },
+    "events": {
+      "enabled": true,
+      "types": [
+        "ScalarProbeCreated",
+        "ScalarProbeDeleted",
+        "ScalarProbeUpdated"
+      ],
+      "payload_shape": "models.ScalarProbeEvent"
+    },
+    "tenancy": null
+  },
+  "columns": [
+    {
+      "name": "id",
+      "go_field": "ID",
+      "go_type": "uuid.UUID",
+      "db_type": "uuid",
+      "nullable": false,
+      "pk": true,
+      "unique": false,
+      "default": "gen_random_uuid()",
+      "default_kind": "function",
+      "comparator": "comparator.ID",
+      "comment": ""
+    },
+    {
+      "name": "label",
+      "go_field": "Label",
+      "go_type": "string",
+      "db_type": "text",
+      "nullable": false,
+      "pk": false,
+      "unique": false,
+      "comparator": "comparator.String",
+      "comment": ""
+    },
+    {
+      "name": "payload",
+      "go_field": "Payload",
+      "go_type": "[]byte",
+      "db_type": "bytea",
+      "nullable": false,
+      "pk": false,
+      "unique": false,
+      "comparator": "comparator.Opaque[[]byte]",
+      "comment": ""
+    },
+    {
+      "name": "signature",
+      "go_field": "Signature",
+      "go_type": "[]byte",
+      "db_type": "bytea",
+      "nullable": true,
+      "pk": false,
+      "unique": false,
+      "comparator": "comparator.NullableOpaque[[]byte]",
+      "comment": ""
+    },
+    {
+      "name": "dur",
+      "go_field": "Dur",
+      "go_type": "time.Duration",
+      "db_type": "interval",
+      "nullable": false,
+      "pk": false,
+      "unique": false,
+      "comparator": "comparator.Number[time.Duration]",
+      "comment": ""
+    },
+    {
+      "name": "dur_n",
+      "go_field": "DurN",
+      "go_type": "*time.Duration",
+      "db_type": "interval",
+      "nullable": true,
+      "pk": false,
+      "unique": false,
+      "comparator": "comparator.NullableNumber[time.Duration]",
+      "comment": ""
+    },
+    {
+      "name": "addr",
+      "go_field": "Addr",
+      "go_type": "net.IP",
+      "db_type": "inet",
+      "nullable": false,
+      "pk": false,
+      "unique": false,
+      "comparator": "comparator.Opaque[net.IP]",
+      "comment": ""
+    },
+    {
+      "name": "addr_n",
+      "go_field": "AddrN",
+      "go_type": "net.IP",
+      "db_type": "inet",
+      "nullable": true,
+      "pk": false,
+      "unique": false,
+      "comparator": "comparator.NullableOpaque[net.IP]",
+      "comment": ""
+    },
+    {
+      "name": "net_block",
+      "go_field": "NetBlock",
+      "go_type": "net.IPNet",
+      "db_type": "cidr",
+      "nullable": false,
+      "pk": false,
+      "unique": false,
+      "comparator": "comparator.Opaque[net.IPNet]",
+      "comment": ""
+    },
+    {
+      "name": "net_block_n",
+      "go_field": "NetBlockN",
+      "go_type": "*net.IPNet",
+      "db_type": "cidr",
+      "nullable": true,
+      "pk": false,
+      "unique": false,
+      "comparator": "comparator.NullableOpaque[net.IPNet]",
+      "comment": ""
+    },
+    {
+      "name": "mac",
+      "go_field": "MAC",
+      "go_type": "net.HardwareAddr",
+      "db_type": "macaddr",
+      "nullable": false,
+      "pk": false,
+      "unique": false,
+      "comparator": "comparator.Opaque[net.HardwareAddr]",
+      "comment": ""
+    },
+    {
+      "name": "mac_n",
+      "go_field": "MACN",
+      "go_type": "net.HardwareAddr",
+      "db_type": "macaddr",
+      "nullable": true,
+      "pk": false,
+      "unique": false,
+      "comparator": "comparator.NullableOpaque[net.HardwareAddr]",
+      "comment": ""
+    },
+    {
+      "name": "note",
+      "go_field": "Note",
+      "go_type": "sql.NullString",
+      "db_type": "text",
+      "nullable": true,
+      "pk": false,
+      "unique": false,
+      "comparator": "comparator.NullableString",
+      "comment": ""
+    },
+    {
+      "name": "flag",
+      "go_field": "Flag",
+      "go_type": "sql.NullBool",
+      "db_type": "boolean",
+      "nullable": true,
+      "pk": false,
+      "unique": false,
+      "comparator": "comparator.NullableBool",
+      "comment": ""
+    },
+    {
+      "name": "small_count",
+      "go_field": "SmallCount",
+      "go_type": "sql.NullInt16",
+      "db_type": "smallint",
+      "nullable": true,
+      "pk": false,
+      "unique": false,
+      "comparator": "comparator.NullableNumber[int16]",
+      "comment": ""
+    },
+    {
+      "name": "mid_count",
+      "go_field": "MidCount",
+      "go_type": "sql.NullInt32",
+      "db_type": "integer",
+      "nullable": true,
+      "pk": false,
+      "unique": false,
+      "comparator": "comparator.NullableNumber[int32]",
+      "comment": ""
+    },
+    {
+      "name": "big_count",
+      "go_field": "BigCount",
+      "go_type": "sql.NullInt64",
+      "db_type": "bigint",
+      "nullable": true,
+      "pk": false,
+      "unique": false,
+      "comparator": "comparator.NullableNumber[int64]",
+      "comment": ""
+    },
+    {
+      "name": "ratio",
+      "go_field": "Ratio",
+      "go_type": "sql.NullFloat64",
+      "db_type": "double precision",
+      "nullable": true,
+      "pk": false,
+      "unique": false,
+      "comparator": "comparator.NullableNumber[float64]",
+      "comment": ""
+    },
+    {
+      "name": "observed_at",
+      "go_field": "ObservedAt",
+      "go_type": "sql.NullTime",
+      "db_type": "timestamptz",
+      "nullable": true,
+      "pk": false,
+      "unique": false,
+      "comparator": "comparator.NullableTime",
+      "comment": ""
+    },
+    {
+      "name": "created_at",
+      "go_field": "CreatedAt",
+      "go_type": "time.Time",
+      "db_type": "timestamptz",
+      "nullable": false,
+      "pk": false,
+      "unique": false,
+      "default": "current_timestamp",
+      "default_kind": "function",
+      "comparator": "comparator.Time",
+      "comment": ""
+    }
+  ],
+  "relationships": [],
+  "methods": {
+    "query": [
+      {
+        "name": "Get",
+        "params": [
+          {
+            "name": "id",
+            "type": "uuid.UUID"
+          }
+        ],
+        "returns": "*ScalarProbe",
+        "errors": [
+          "ErrNotFound"
+        ],
+        "notes": "Delegates to GetMany with a primary-key filter; returns ErrNotFound when no row matches.",
+        "sql_bodies": {
+          "postgres": "SELECT \"addr\", \"addr_n\", \"big_count\", \"created_at\", \"dur\", \"dur_n\", \"flag\", \"id\", \"label\", \"mac\", \"mac_n\", \"mid_count\", \"net_block\", \"net_block_n\", \"note\", \"observed_at\", \"payload\", \"ratio\", \"signature\", \"small_count\" FROM \"public\".\"scalar_probes\" WHERE \"id\" = $1 LIMIT 1"
+        }
+      },
+      {
+        "name": "GetMany",
+        "params": [
+          {
+            "name": "input",
+            "type": "*GetScalarProbesInput"
+          }
+        ],
+        "returns": "[]*ScalarProbe",
+        "errors": [],
+        "sql_bodies": {
+          "postgres": "SELECT \"addr\", \"addr_n\", \"big_count\", \"created_at\", \"dur\", \"dur_n\", \"flag\", \"id\", \"label\", \"mac\", \"mac_n\", \"mid_count\", \"net_block\", \"net_block_n\", \"note\", \"observed_at\", \"payload\", \"ratio\", \"signature\", \"small_count\" FROM \"public\".\"scalar_probes\" WHERE <filter> ORDER BY <sort> LIMIT <limit>"
+        }
+      },
+      {
+        "name": "Count",
+        "params": [
+          {
+            "name": "filter",
+            "type": "*ScalarProbeFilter"
+          }
+        ],
+        "returns": "int64",
+        "errors": [],
+        "sql_bodies": {
+          "postgres": "SELECT COUNT(*) FROM \"public\".\"scalar_probes\" WHERE <filter>"
+        }
+      },
+      {
+        "name": "Exists",
+        "params": [
+          {
+            "name": "id",
+            "type": "uuid.UUID"
+          }
+        ],
+        "returns": "bool",
+        "errors": [],
+        "sql_bodies": {
+          "postgres": "SELECT EXISTS(SELECT 1 FROM \"public\".\"scalar_probes\" WHERE \"id\" = $1)"
+        }
+      },
+      {
+        "name": "ExistsWhere",
+        "params": [
+          {
+            "name": "filter",
+            "type": "*ScalarProbeFilter"
+          }
+        ],
+        "returns": "bool",
+        "errors": [],
+        "sql_bodies": {
+          "postgres": "SELECT EXISTS(SELECT 1 FROM \"public\".\"scalar_probes\" WHERE <filter>)"
+        }
+      },
+      {
+        "name": "Paginate",
+        "params": [
+          {
+            "name": "input",
+            "type": "PaginateInput[ScalarProbeFilter]"
+          }
+        ],
+        "returns": "*PaginateResult[ScalarProbe]",
+        "errors": [],
+        "notes": "Offset pagination. Issues no statement of its own — composes Count and GetMany, so no sql_bodies entry."
+      },
+      {
+        "name": "Connection",
+        "params": [
+          {
+            "name": "input",
+            "type": "ConnectionInput[ScalarProbeFilter]"
+          }
+        ],
+        "returns": "*Connection[ScalarProbe]",
+        "errors": [
+          "ErrInvalidCursor"
+        ],
+        "notes": "Relay cursor pagination. Issues no statement of its own — composes Count and GetMany, so no sql_bodies entry."
+      },
+      {
+        "name": "Stream",
+        "params": [
+          {
+            "name": "input",
+            "type": "*StreamScalarProbesInput"
+          }
+        ],
+        "returns": "iter.Seq2[*ScalarProbe, error]",
+        "errors": [],
+        "notes": "Scalars only — no relationship loading, cache always bypassed. Errors surface through the iterator's second value.",
+        "sql_bodies": {
+          "postgres": "SELECT \"addr\", \"addr_n\", \"big_count\", \"created_at\", \"dur\", \"dur_n\", \"flag\", \"id\", \"label\", \"mac\", \"mac_n\", \"mid_count\", \"net_block\", \"net_block_n\", \"note\", \"observed_at\", \"payload\", \"ratio\", \"signature\", \"small_count\" FROM \"public\".\"scalar_probes\" WHERE <filter> ORDER BY <sort>"
+        }
+      }
+    ],
+    "mutation": [
+      {
+        "name": "Create",
+        "params": [
+          {
+            "name": "input",
+            "type": "*CreateScalarProbeInput"
+          }
+        ],
+        "returns": "*ScalarProbe",
+        "errors": [
+          "ErrNilInput",
+          "ErrConstraintViolation"
+        ],
+        "sql_bodies": {
+          "postgres": "INSERT INTO \"public\".\"scalar_probes\" (<columns>) VALUES (<values>) RETURNING \"id\""
+        }
+      },
+      {
+        "name": "CreateMany",
+        "params": [
+          {
+            "name": "inputs",
+            "type": "[]*CreateScalarProbeInput"
+          }
+        ],
+        "returns": "[]*ScalarProbe",
+        "errors": [
+          "ErrNilInput",
+          "ErrConstraintViolation"
+        ],
+        "notes": "Batched in generation.batch_size chunks. Earlier chunks are not rolled back on a later failure — wrap in a transaction for atomicity.",
+        "sql_bodies": {
+          "postgres": "INSERT INTO \"public\".\"scalar_probes\" (<columns>) VALUES <values> RETURNING \"id\""
+        }
+      },
+      {
+        "name": "Upsert",
+        "params": [
+          {
+            "name": "input",
+            "type": "*CreateScalarProbeInput"
+          },
+          {
+            "name": "target",
+            "type": "ScalarProbeConflictTarget"
+          }
+        ],
+        "returns": "*ScalarProbe",
+        "errors": [
+          "ErrNilInput",
+          "ErrConstraintViolation"
+        ],
+        "notes": "One method over the generated ScalarProbeConflictTarget enum — the target argument selects the conflict columns at call time.",
+        "sql_bodies": {
+          "postgres": "INSERT INTO \"public\".\"scalar_probes\" (<columns>) VALUES (<values>) ON CONFLICT (<conflict_target>) DO UPDATE SET <excluded> RETURNING \"id\""
+        }
+      },
+      {
+        "name": "UpsertMany",
+        "params": [
+          {
+            "name": "inputs",
+            "type": "[]*CreateScalarProbeInput"
+          },
+          {
+            "name": "target",
+            "type": "ScalarProbeConflictTarget"
+          }
+        ],
+        "returns": "[]*ScalarProbe",
+        "errors": [
+          "ErrNilInput",
+          "ErrConstraintViolation"
+        ],
+        "notes": "Batched in generation.batch_size chunks over the same ScalarProbeConflictTarget enum Upsert takes. Inputs resolving to one target are deduped before the statement is built, last occurrence wins. Earlier chunks are not rolled back on a later failure — wrap in a transaction for atomicity.",
+        "sql_bodies": {
+          "postgres": "INSERT INTO \"public\".\"scalar_probes\" (<columns>) VALUES <values> ON CONFLICT (<conflict_target>) DO UPDATE SET <excluded>"
+        }
+      },
+      {
+        "name": "Update",
+        "params": [
+          {
+            "name": "id",
+            "type": "uuid.UUID"
+          },
+          {
+            "name": "input",
+            "type": "*UpdateScalarProbeInput"
+          }
+        ],
+        "returns": "*ScalarProbe",
+        "errors": [
+          "ErrNotFound",
+          "ErrNilInput",
+          "ErrConstraintViolation"
+        ],
+        "notes": "Only fields where IsSet() reports true reach the SET clause; an input with none set issues no UPDATE and returns the row unchanged.",
+        "sql_bodies": {
+          "postgres": "UPDATE \"public\".\"scalar_probes\" SET <set> WHERE \"id\" = $1"
+        }
+      },
+      {
+        "name": "UpdateMany",
+        "params": [
+          {
+            "name": "items",
+            "type": "[]UpdateScalarProbeItem"
+          }
+        ],
+        "returns": "[]*ScalarProbe",
+        "errors": [
+          "ErrNilInput",
+          "ErrConstraintViolation"
+        ],
+        "notes": "Issues one statement per item. Batched like CreateMany — earlier items are not rolled back on a later failure. A primary key that does not exist is silently skipped, even under strict_updates.",
+        "sql_bodies": {
+          "postgres": "UPDATE \"public\".\"scalar_probes\" SET <set> WHERE \"id\" = $1"
+        }
+      },
+      {
+        "name": "UpdateWhere",
+        "params": [
+          {
+            "name": "filter",
+            "type": "*ScalarProbeFilter"
+          },
+          {
+            "name": "input",
+            "type": "*UpdateScalarProbeInput"
+          }
+        ],
+        "returns": "[]*ScalarProbe",
+        "errors": [
+          "ErrNilInput",
+          "ErrEmptyFilter",
+          "ErrConstraintViolation"
+        ],
+        "notes": "Idempotent — returns an empty slice when no row matches. ErrEmptyFilter when the filter produces no conditions.",
+        "sql_bodies": {
+          "postgres": "UPDATE \"public\".\"scalar_probes\" SET <set> WHERE <filter> RETURNING \"id\""
+        }
+      },
+      {
+        "name": "Increment",
+        "params": [
+          {
+            "name": "id",
+            "type": "uuid.UUID"
+          },
+          {
+            "name": "input",
+            "type": "IncrementInput[ScalarProbeIncrementColumn]"
+          }
+        ],
+        "returns": "",
+        "errors": [
+          "ErrNotFound"
+        ],
+        "notes": "Atomic single-column arithmetic. The column is restricted to the generated ScalarProbeIncrementColumn enum — numeric, and identifying nothing: neither PK, FK, nor the tenant column. A negative amount decrements.",
+        "sql_bodies": {
+          "postgres": "UPDATE \"public\".\"scalar_probes\" SET <column> = <column> + $1 WHERE \"id\" = $2"
+        }
+      },
+      {
+        "name": "HardDelete",
+        "params": [
+          {
+            "name": "id",
+            "type": "uuid.UUID"
+          }
+        ],
+        "returns": "",
+        "errors": [],
+        "notes": "Idempotent — a primary key that does not exist is not an error.",
+        "sql_bodies": {
+          "postgres": "DELETE FROM \"public\".\"scalar_probes\" WHERE \"id\" = $1"
+        }
+      },
+      {
+        "name": "HardDeleteMany",
+        "params": [
+          {
+            "name": "ids",
+            "type": "[]uuid.UUID"
+          }
+        ],
+        "returns": "",
+        "errors": [],
+        "notes": "Idempotent — primary keys that do not exist are not an error.",
+        "sql_bodies": {
+          "postgres": "DELETE FROM \"public\".\"scalar_probes\" WHERE \"id\" IN (<ids>)"
+        }
+      },
+      {
+        "name": "HardDeleteWhere",
+        "params": [
+          {
+            "name": "filter",
+            "type": "*ScalarProbeFilter"
+          }
+        ],
+        "returns": "",
+        "errors": [
+          "ErrEmptyFilter"
+        ],
+        "notes": "Idempotent — no match is not an error. ErrEmptyFilter when the filter produces no conditions.",
+        "sql_bodies": {
+          "postgres": "DELETE FROM \"public\".\"scalar_probes\" WHERE <filter> RETURNING \"id\""
+        }
+      }
+    ]
+  },
+  "filter": {
+    "type": "ScalarProbeFilter",
+    "fields": [
+      {
+        "name": "Addr",
+        "type": "*comparator.Opaque[net.IP]"
+      },
+      {
+        "name": "AddrN",
+        "type": "*comparator.NullableOpaque[net.IP]"
+      },
+      {
+        "name": "BigCount",
+        "type": "*comparator.NullableNumber[int64]"
+      },
+      {
+        "name": "CreatedAt",
+        "type": "*comparator.Time"
+      },
+      {
+        "name": "Dur",
+        "type": "*comparator.Number[time.Duration]"
+      },
+      {
+        "name": "DurN",
+        "type": "*comparator.NullableNumber[time.Duration]"
+      },
+      {
+        "name": "Flag",
+        "type": "*comparator.NullableBool"
+      },
+      {
+        "name": "ID",
+        "type": "*comparator.ID"
+      },
+      {
+        "name": "Label",
+        "type": "*comparator.String"
+      },
+      {
+        "name": "MAC",
+        "type": "*comparator.Opaque[net.HardwareAddr]"
+      },
+      {
+        "name": "MACN",
+        "type": "*comparator.NullableOpaque[net.HardwareAddr]"
+      },
+      {
+        "name": "MidCount",
+        "type": "*comparator.NullableNumber[int32]"
+      },
+      {
+        "name": "NetBlock",
+        "type": "*comparator.Opaque[net.IPNet]"
+      },
+      {
+        "name": "NetBlockN",
+        "type": "*comparator.NullableOpaque[net.IPNet]"
+      },
+      {
+        "name": "Note",
+        "type": "*comparator.NullableString"
+      },
+      {
+        "name": "ObservedAt",
+        "type": "*comparator.NullableTime"
+      },
+      {
+        "name": "Payload",
+        "type": "*comparator.Opaque[[]byte]"
+      },
+      {
+        "name": "Ratio",
+        "type": "*comparator.NullableNumber[float64]"
+      },
+      {
+        "name": "Signature",
+        "type": "*comparator.NullableOpaque[[]byte]"
+      },
+      {
+        "name": "SmallCount",
+        "type": "*comparator.NullableNumber[int16]"
+      },
+      {
+        "name": "And",
+        "type": "[]*ScalarProbeFilter"
+      },
+      {
+        "name": "Or",
+        "type": "[]*ScalarProbeFilter"
+      }
+    ]
+  },
+  "sort": {
+    "type": "ScalarProbeSort",
+    "fields": [
+      "Addr",
+      "AddrN",
+      "BigCount",
+      "CreatedAt",
+      "Dur",
+      "DurN",
+      "Flag",
+      "ID",
+      "Label",
+      "MAC",
+      "MACN",
+      "MidCount",
+      "NetBlock",
+      "NetBlockN",
+      "Note",
+      "ObservedAt",
+      "Payload",
+      "Ratio",
+      "Signature",
+      "SmallCount"
+    ]
+  },
+  "examples": {}
+}

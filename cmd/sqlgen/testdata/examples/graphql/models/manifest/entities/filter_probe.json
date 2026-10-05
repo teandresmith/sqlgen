@@ -1,0 +1,513 @@
+{
+  "kind": "table",
+  "name": "FilterProbe",
+  "table": "filter_probes",
+  "schema": "public",
+  "file_prefix": "filter_probe",
+  "files": [
+    "models_gen.go"
+  ],
+  "comment": "",
+  "indexes": [
+    {
+      "name": "filter_probes_pkey",
+      "columns": [
+        "id"
+      ],
+      "unique": true,
+      "method": "btree"
+    }
+  ],
+  "pk": {
+    "kind": "single",
+    "columns": [
+      {
+        "name": "id",
+        "go_field": "ID",
+        "go_type": "uuid.UUID"
+      }
+    ]
+  },
+  "features": {
+    "soft_delete": null,
+    "cache": {
+      "ttl_seconds": 3600,
+      "hydration": "eager",
+      "key_pattern": "sqlgen:filterprobe:{id}",
+      "invalidates_on": [
+        "Create",
+        "Update",
+        "Delete",
+        "SoftDelete",
+        "Restore",
+        "Increment"
+      ]
+    },
+    "events": {
+      "enabled": true,
+      "types": [
+        "FilterProbeCreated",
+        "FilterProbeDeleted",
+        "FilterProbeUpdated"
+      ],
+      "payload_shape": "models.FilterProbeEvent"
+    },
+    "tenancy": null
+  },
+  "columns": [
+    {
+      "name": "id",
+      "go_field": "ID",
+      "go_type": "uuid.UUID",
+      "db_type": "uuid",
+      "nullable": false,
+      "pk": true,
+      "unique": false,
+      "default": "gen_random_uuid()",
+      "default_kind": "function",
+      "comparator": "comparator.ID",
+      "comment": ""
+    },
+    {
+      "name": "doc",
+      "go_field": "Doc",
+      "go_type": "types.JSON",
+      "db_type": "jsonb",
+      "nullable": false,
+      "pk": false,
+      "unique": false,
+      "default": "'{}'",
+      "default_kind": "literal",
+      "comparator": "comparator.JSONB",
+      "comment": ""
+    },
+    {
+      "name": "tags",
+      "go_field": "Tags",
+      "go_type": "[]string",
+      "db_type": "text[]",
+      "nullable": false,
+      "pk": false,
+      "unique": false,
+      "default": "'{}'",
+      "default_kind": "literal",
+      "comparator": "comparator.Slice[string]",
+      "comment": ""
+    },
+    {
+      "name": "tags_n",
+      "go_field": "TagsN",
+      "go_type": "[]string",
+      "db_type": "text[]",
+      "nullable": true,
+      "pk": false,
+      "unique": false,
+      "comparator": "comparator.NullableSlice[string]",
+      "comment": ""
+    },
+    {
+      "name": "flags",
+      "go_field": "Flags",
+      "go_type": "[]bool",
+      "db_type": "boolean[]",
+      "nullable": false,
+      "pk": false,
+      "unique": false,
+      "default": "'{}'",
+      "default_kind": "literal",
+      "comparator": "comparator.Slice[bool]",
+      "comment": ""
+    },
+    {
+      "name": "weights",
+      "go_field": "Weights",
+      "go_type": "[]float64",
+      "db_type": "double precision[]",
+      "nullable": false,
+      "pk": false,
+      "unique": false,
+      "default": "'{}'",
+      "default_kind": "literal",
+      "comparator": "comparator.Slice[float64]",
+      "comment": ""
+    },
+    {
+      "name": "created_at",
+      "go_field": "CreatedAt",
+      "go_type": "time.Time",
+      "db_type": "timestamptz",
+      "nullable": false,
+      "pk": false,
+      "unique": false,
+      "default": "current_timestamp",
+      "default_kind": "function",
+      "comparator": "comparator.Time",
+      "comment": ""
+    }
+  ],
+  "relationships": [],
+  "methods": {
+    "query": [
+      {
+        "name": "Get",
+        "params": [
+          {
+            "name": "id",
+            "type": "uuid.UUID"
+          }
+        ],
+        "returns": "*FilterProbe",
+        "errors": [
+          "ErrNotFound"
+        ],
+        "notes": "Delegates to GetMany with a primary-key filter; returns ErrNotFound when no row matches.",
+        "sql_bodies": {
+          "postgres": "SELECT \"created_at\", \"doc\", \"flags\", \"id\", \"tags\", \"tags_n\", \"weights\" FROM \"public\".\"filter_probes\" WHERE \"id\" = $1 LIMIT 1"
+        }
+      },
+      {
+        "name": "GetMany",
+        "params": [
+          {
+            "name": "input",
+            "type": "*GetFilterProbesInput"
+          }
+        ],
+        "returns": "[]*FilterProbe",
+        "errors": [],
+        "sql_bodies": {
+          "postgres": "SELECT \"created_at\", \"doc\", \"flags\", \"id\", \"tags\", \"tags_n\", \"weights\" FROM \"public\".\"filter_probes\" WHERE <filter> ORDER BY <sort> LIMIT <limit>"
+        }
+      },
+      {
+        "name": "Count",
+        "params": [
+          {
+            "name": "filter",
+            "type": "*FilterProbeFilter"
+          }
+        ],
+        "returns": "int64",
+        "errors": [],
+        "sql_bodies": {
+          "postgres": "SELECT COUNT(*) FROM \"public\".\"filter_probes\" WHERE <filter>"
+        }
+      },
+      {
+        "name": "Exists",
+        "params": [
+          {
+            "name": "id",
+            "type": "uuid.UUID"
+          }
+        ],
+        "returns": "bool",
+        "errors": [],
+        "sql_bodies": {
+          "postgres": "SELECT EXISTS(SELECT 1 FROM \"public\".\"filter_probes\" WHERE \"id\" = $1)"
+        }
+      },
+      {
+        "name": "ExistsWhere",
+        "params": [
+          {
+            "name": "filter",
+            "type": "*FilterProbeFilter"
+          }
+        ],
+        "returns": "bool",
+        "errors": [],
+        "sql_bodies": {
+          "postgres": "SELECT EXISTS(SELECT 1 FROM \"public\".\"filter_probes\" WHERE <filter>)"
+        }
+      },
+      {
+        "name": "Paginate",
+        "params": [
+          {
+            "name": "input",
+            "type": "PaginateInput[FilterProbeFilter]"
+          }
+        ],
+        "returns": "*PaginateResult[FilterProbe]",
+        "errors": [],
+        "notes": "Offset pagination. Issues no statement of its own — composes Count and GetMany, so no sql_bodies entry."
+      },
+      {
+        "name": "Connection",
+        "params": [
+          {
+            "name": "input",
+            "type": "ConnectionInput[FilterProbeFilter]"
+          }
+        ],
+        "returns": "*Connection[FilterProbe]",
+        "errors": [
+          "ErrInvalidCursor"
+        ],
+        "notes": "Relay cursor pagination. Issues no statement of its own — composes Count and GetMany, so no sql_bodies entry."
+      },
+      {
+        "name": "Stream",
+        "params": [
+          {
+            "name": "input",
+            "type": "*StreamFilterProbesInput"
+          }
+        ],
+        "returns": "iter.Seq2[*FilterProbe, error]",
+        "errors": [],
+        "notes": "Scalars only — no relationship loading, cache always bypassed. Errors surface through the iterator's second value.",
+        "sql_bodies": {
+          "postgres": "SELECT \"created_at\", \"doc\", \"flags\", \"id\", \"tags\", \"tags_n\", \"weights\" FROM \"public\".\"filter_probes\" WHERE <filter> ORDER BY <sort>"
+        }
+      }
+    ],
+    "mutation": [
+      {
+        "name": "Create",
+        "params": [
+          {
+            "name": "input",
+            "type": "*CreateFilterProbeInput"
+          }
+        ],
+        "returns": "*FilterProbe",
+        "errors": [
+          "ErrNilInput",
+          "ErrConstraintViolation"
+        ],
+        "sql_bodies": {
+          "postgres": "INSERT INTO \"public\".\"filter_probes\" (<columns>) VALUES (<values>) RETURNING \"id\""
+        }
+      },
+      {
+        "name": "CreateMany",
+        "params": [
+          {
+            "name": "inputs",
+            "type": "[]*CreateFilterProbeInput"
+          }
+        ],
+        "returns": "[]*FilterProbe",
+        "errors": [
+          "ErrNilInput",
+          "ErrConstraintViolation"
+        ],
+        "notes": "Batched in generation.batch_size chunks. Earlier chunks are not rolled back on a later failure — wrap in a transaction for atomicity.",
+        "sql_bodies": {
+          "postgres": "INSERT INTO \"public\".\"filter_probes\" (<columns>) VALUES <values> RETURNING \"id\""
+        }
+      },
+      {
+        "name": "Upsert",
+        "params": [
+          {
+            "name": "input",
+            "type": "*CreateFilterProbeInput"
+          },
+          {
+            "name": "target",
+            "type": "FilterProbeConflictTarget"
+          }
+        ],
+        "returns": "*FilterProbe",
+        "errors": [
+          "ErrNilInput",
+          "ErrConstraintViolation"
+        ],
+        "notes": "One method over the generated FilterProbeConflictTarget enum — the target argument selects the conflict columns at call time.",
+        "sql_bodies": {
+          "postgres": "INSERT INTO \"public\".\"filter_probes\" (<columns>) VALUES (<values>) ON CONFLICT (<conflict_target>) DO UPDATE SET <excluded> RETURNING \"id\""
+        }
+      },
+      {
+        "name": "UpsertMany",
+        "params": [
+          {
+            "name": "inputs",
+            "type": "[]*CreateFilterProbeInput"
+          },
+          {
+            "name": "target",
+            "type": "FilterProbeConflictTarget"
+          }
+        ],
+        "returns": "[]*FilterProbe",
+        "errors": [
+          "ErrNilInput",
+          "ErrConstraintViolation"
+        ],
+        "notes": "Batched in generation.batch_size chunks over the same FilterProbeConflictTarget enum Upsert takes. Inputs resolving to one target are deduped before the statement is built, last occurrence wins. Earlier chunks are not rolled back on a later failure — wrap in a transaction for atomicity.",
+        "sql_bodies": {
+          "postgres": "INSERT INTO \"public\".\"filter_probes\" (<columns>) VALUES <values> ON CONFLICT (<conflict_target>) DO UPDATE SET <excluded>"
+        }
+      },
+      {
+        "name": "Update",
+        "params": [
+          {
+            "name": "id",
+            "type": "uuid.UUID"
+          },
+          {
+            "name": "input",
+            "type": "*UpdateFilterProbeInput"
+          }
+        ],
+        "returns": "*FilterProbe",
+        "errors": [
+          "ErrNotFound",
+          "ErrNilInput",
+          "ErrConstraintViolation"
+        ],
+        "notes": "Only fields where IsSet() reports true reach the SET clause; an input with none set issues no UPDATE and returns the row unchanged.",
+        "sql_bodies": {
+          "postgres": "UPDATE \"public\".\"filter_probes\" SET <set> WHERE \"id\" = $1"
+        }
+      },
+      {
+        "name": "UpdateMany",
+        "params": [
+          {
+            "name": "items",
+            "type": "[]UpdateFilterProbeItem"
+          }
+        ],
+        "returns": "[]*FilterProbe",
+        "errors": [
+          "ErrNilInput",
+          "ErrConstraintViolation"
+        ],
+        "notes": "Issues one statement per item. Batched like CreateMany — earlier items are not rolled back on a later failure. A primary key that does not exist is silently skipped, even under strict_updates.",
+        "sql_bodies": {
+          "postgres": "UPDATE \"public\".\"filter_probes\" SET <set> WHERE \"id\" = $1"
+        }
+      },
+      {
+        "name": "UpdateWhere",
+        "params": [
+          {
+            "name": "filter",
+            "type": "*FilterProbeFilter"
+          },
+          {
+            "name": "input",
+            "type": "*UpdateFilterProbeInput"
+          }
+        ],
+        "returns": "[]*FilterProbe",
+        "errors": [
+          "ErrNilInput",
+          "ErrEmptyFilter",
+          "ErrConstraintViolation"
+        ],
+        "notes": "Idempotent — returns an empty slice when no row matches. ErrEmptyFilter when the filter produces no conditions.",
+        "sql_bodies": {
+          "postgres": "UPDATE \"public\".\"filter_probes\" SET <set> WHERE <filter> RETURNING \"id\""
+        }
+      },
+      {
+        "name": "HardDelete",
+        "params": [
+          {
+            "name": "id",
+            "type": "uuid.UUID"
+          }
+        ],
+        "returns": "",
+        "errors": [],
+        "notes": "Idempotent — a primary key that does not exist is not an error.",
+        "sql_bodies": {
+          "postgres": "DELETE FROM \"public\".\"filter_probes\" WHERE \"id\" = $1"
+        }
+      },
+      {
+        "name": "HardDeleteMany",
+        "params": [
+          {
+            "name": "ids",
+            "type": "[]uuid.UUID"
+          }
+        ],
+        "returns": "",
+        "errors": [],
+        "notes": "Idempotent — primary keys that do not exist are not an error.",
+        "sql_bodies": {
+          "postgres": "DELETE FROM \"public\".\"filter_probes\" WHERE \"id\" IN (<ids>)"
+        }
+      },
+      {
+        "name": "HardDeleteWhere",
+        "params": [
+          {
+            "name": "filter",
+            "type": "*FilterProbeFilter"
+          }
+        ],
+        "returns": "",
+        "errors": [
+          "ErrEmptyFilter"
+        ],
+        "notes": "Idempotent — no match is not an error. ErrEmptyFilter when the filter produces no conditions.",
+        "sql_bodies": {
+          "postgres": "DELETE FROM \"public\".\"filter_probes\" WHERE <filter> RETURNING \"id\""
+        }
+      }
+    ]
+  },
+  "filter": {
+    "type": "FilterProbeFilter",
+    "fields": [
+      {
+        "name": "CreatedAt",
+        "type": "*comparator.Time"
+      },
+      {
+        "name": "Doc",
+        "type": "*comparator.JSONB"
+      },
+      {
+        "name": "Flags",
+        "type": "*comparator.Slice[bool]"
+      },
+      {
+        "name": "ID",
+        "type": "*comparator.ID"
+      },
+      {
+        "name": "Tags",
+        "type": "*comparator.Slice[string]"
+      },
+      {
+        "name": "TagsN",
+        "type": "*comparator.NullableSlice[string]"
+      },
+      {
+        "name": "Weights",
+        "type": "*comparator.Slice[float64]"
+      },
+      {
+        "name": "And",
+        "type": "[]*FilterProbeFilter"
+      },
+      {
+        "name": "Or",
+        "type": "[]*FilterProbeFilter"
+      }
+    ]
+  },
+  "sort": {
+    "type": "FilterProbeSort",
+    "fields": [
+      "CreatedAt",
+      "Doc",
+      "Flags",
+      "ID",
+      "Tags",
+      "TagsN",
+      "Weights"
+    ]
+  },
+  "examples": {}
+}

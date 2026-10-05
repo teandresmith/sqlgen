@@ -1,0 +1,128 @@
+"""
+NumericWidth corresponds to the numeric_widths table.
+"""
+type NumericWidth {
+  "id"
+  id: UUID!
+  "small"
+  small: Int!
+  "small_n"
+  smallN: Int
+  "ratio"
+  ratio: Float!
+  "ratio_n"
+  ratioN: Float
+  "smalls"
+  smalls: [Int!]!
+  "scores"
+  scores: [Int!]!
+  "bigs"
+  bigs: [Int!]!
+  "ratios"
+  ratios: [Float!]!
+  "scores_n"
+  scoresN: [Int!]
+  "created_at"
+  createdAt: Time!
+}
+
+type NumericWidthConnection {
+  edges:      [NumericWidthEdge!]!
+  pageInfo:   PageInfo!
+  totalCount: Int!
+}
+
+type NumericWidthEdge {
+  node:   NumericWidth!
+  cursor: String!
+}
+
+type NumericWidthListResult {
+  items:      [NumericWidth!]!
+  totalCount: Int!
+  offset:     Int!
+  limit:      Int!
+  hasMore:    Boolean!
+}
+
+input NumericWidthFilter {
+  small: NumericComparator
+  smallN: NullableNumericComparator
+  ratio: NumericComparator
+  ratioN: NullableNumericComparator
+  smalls: IntSliceComparator
+  scores: IntSliceComparator
+  bigs: IntSliceComparator
+  ratios: FloatSliceComparator
+  scoresN: NullableIntSliceComparator
+  createdAt: TimeComparator
+  and: [NumericWidthFilter!]
+  or:  [NumericWidthFilter!]
+}
+
+enum NumericWidthSortField {
+  ID
+  SMALL
+  SMALL_N
+  RATIO
+  RATIO_N
+  SMALLS
+  SCORES
+  BIGS
+  RATIOS
+  SCORES_N
+  CREATED_AT
+}
+
+input NumericWidthSort {
+  field:     NumericWidthSortField!
+  direction: SortDirection!
+}
+input CreateNumericWidthInput {
+  small: Int!
+  smallN: Int
+  ratio: Float!
+  ratioN: Float
+  smalls: [Int!]!
+  scores: [Int!]!
+  bigs: [Int!]!
+  ratios: [Float!]!
+  scoresN: [Int!]
+  createdAt: Time!
+}
+input UpdateNumericWidthInput {
+  small: Int
+  small_inc: Int
+  small_dec: Int
+  smallN: Int
+  smallN_inc: Int
+  smallN_dec: Int
+  ratio: Float
+  ratio_inc: Int
+  ratio_dec: Int
+  ratioN: Float
+  ratioN_inc: Int
+  ratioN_dec: Int
+  smalls: [Int!]
+  scores: [Int!]
+  bigs: [Int!]
+  ratios: [Float!]
+  scoresN: [Int!]
+  createdAt: Time
+}
+
+extend type Query {
+  numericWidth(id: UUID!): NumericWidth
+  "Cursor-paginated; ordering is driven by cursor_keys to preserve keyset semantics — pass `sort` to numericWidthList instead."
+  numericWidths(filter: NumericWidthFilter, first: Int, after: String, last: Int, before: String): NumericWidthConnection!
+  numericWidthList(filter: NumericWidthFilter, sort: [NumericWidthSort!], limit: Int, offset: Int): NumericWidthListResult!
+}
+
+extend type Mutation {
+  createNumericWidth(input: CreateNumericWidthInput!): NumericWidth!
+  createNumericWidths(inputs: [CreateNumericWidthInput!]!): [NumericWidth!]!
+  updateNumericWidth(id: UUID!, input: UpdateNumericWidthInput!): NumericWidth!
+  updateNumericWidths(filter: NumericWidthFilter!, input: UpdateNumericWidthInput!): [NumericWidth!]!
+  upsertNumericWidth(input: CreateNumericWidthInput!): NumericWidth!
+  deleteNumericWidth(id: UUID!): Boolean!
+}

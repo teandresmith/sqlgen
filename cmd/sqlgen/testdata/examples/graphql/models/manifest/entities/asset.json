@@ -1,0 +1,613 @@
+{
+  "kind": "table",
+  "name": "Asset",
+  "table": "assets",
+  "schema": "public",
+  "file_prefix": "asset",
+  "files": [
+    "models_gen.go"
+  ],
+  "comment": "",
+  "indexes": [
+    {
+      "name": "assets_pkey",
+      "columns": [
+        "id"
+      ],
+      "unique": true,
+      "method": "btree"
+    }
+  ],
+  "pk": {
+    "kind": "single",
+    "columns": [
+      {
+        "name": "id",
+        "go_field": "ID",
+        "go_type": "uuid.UUID"
+      }
+    ]
+  },
+  "features": {
+    "soft_delete": null,
+    "cache": {
+      "ttl_seconds": 3600,
+      "hydration": "eager",
+      "key_pattern": "sqlgen:asset:{id}",
+      "invalidates_on": [
+        "Create",
+        "Update",
+        "Delete",
+        "SoftDelete",
+        "Restore",
+        "Increment"
+      ]
+    },
+    "events": {
+      "enabled": true,
+      "types": [
+        "AssetCreated",
+        "AssetDeleted",
+        "AssetUpdated"
+      ],
+      "payload_shape": "models.AssetEvent"
+    },
+    "tenancy": null
+  },
+  "columns": [
+    {
+      "name": "id",
+      "go_field": "ID",
+      "go_type": "uuid.UUID",
+      "db_type": "uuid",
+      "nullable": false,
+      "pk": true,
+      "unique": false,
+      "default": "gen_random_uuid()",
+      "default_kind": "function",
+      "comparator": "comparator.ID",
+      "comment": ""
+    },
+    {
+      "name": "name",
+      "go_field": "Name",
+      "go_type": "string",
+      "db_type": "text",
+      "nullable": false,
+      "pk": false,
+      "unique": false,
+      "comparator": "comparator.String",
+      "comment": ""
+    },
+    {
+      "name": "declared_categories",
+      "go_field": "DeclaredCategories",
+      "go_type": "DocumentEntityTypeEnumSlice",
+      "db_type": "document_entity_type_enum[]",
+      "nullable": false,
+      "pk": false,
+      "unique": false,
+      "default": "'{}'",
+      "default_kind": "literal",
+      "comparator": "comparator.Slice[DocumentEntityTypeEnum]",
+      "comment": ""
+    },
+    {
+      "name": "primary_category",
+      "go_field": "PrimaryCategory",
+      "go_type": "*DocumentEntityTypeEnum",
+      "db_type": "document_entity_type_enum",
+      "nullable": true,
+      "pk": false,
+      "unique": false,
+      "comparator": "comparator.NullableEnum[DocumentEntityTypeEnum]",
+      "comment": ""
+    },
+    {
+      "name": "created_at",
+      "go_field": "CreatedAt",
+      "go_type": "time.Time",
+      "db_type": "timestamptz",
+      "nullable": false,
+      "pk": false,
+      "unique": false,
+      "default": "current_timestamp",
+      "default_kind": "function",
+      "comparator": "comparator.Time",
+      "comment": ""
+    }
+  ],
+  "relationships": [
+    {
+      "name": "Attachments",
+      "kind": "o2m",
+      "target_entity": "Document",
+      "fk": {
+        "table": "documents",
+        "schema": "public",
+        "column": "entity_id"
+      },
+      "filter": "entity_type = 'asset.attachment'"
+    },
+    {
+      "name": "Invoices",
+      "kind": "o2m",
+      "target_entity": "Document",
+      "fk": {
+        "table": "documents",
+        "schema": "public",
+        "column": "entity_id"
+      },
+      "filter": "entity_type = 'asset.invoice'"
+    },
+    {
+      "name": "LinkedAttachments",
+      "kind": "m2m",
+      "target_entity": "Document",
+      "junction": {
+        "table": "asset_document_links",
+        "schema": "public",
+        "local_fk": "asset_id",
+        "target_fk": "document_id"
+      },
+      "filter": "entity_type = 'asset.attachment' AND name LIKE 'link_%'"
+    },
+    {
+      "name": "PhotoAttachments",
+      "kind": "o2m",
+      "target_entity": "Document",
+      "fk": {
+        "table": "documents",
+        "schema": "public",
+        "column": "entity_id"
+      },
+      "filter": "entity_type = 'asset.attachment' AND name LIKE 'photo_%'"
+    },
+    {
+      "name": "PrimaryActiveDocument",
+      "kind": "o2o",
+      "target_entity": "Document",
+      "fk": {
+        "table": "documents",
+        "schema": "public",
+        "column": "entity_id"
+      },
+      "filter": "entity_type = 'asset.primary' AND name LIKE 'site_%'"
+    },
+    {
+      "name": "PrimaryDocument",
+      "kind": "o2o",
+      "target_entity": "Document",
+      "fk": {
+        "table": "documents",
+        "schema": "public",
+        "column": "entity_id"
+      },
+      "filter": "entity_type = 'asset.primary'"
+    },
+    {
+      "name": "documents",
+      "kind": "m2m",
+      "target_entity": "Document",
+      "junction": {
+        "table": "asset_document_links",
+        "schema": "public",
+        "local_fk": "asset_id",
+        "target_fk": "document_id"
+      }
+    }
+  ],
+  "methods": {
+    "query": [
+      {
+        "name": "Get",
+        "params": [
+          {
+            "name": "id",
+            "type": "uuid.UUID"
+          }
+        ],
+        "returns": "*Asset",
+        "errors": [
+          "ErrNotFound"
+        ],
+        "notes": "Delegates to GetMany with a primary-key filter; returns ErrNotFound when no row matches.",
+        "sql_bodies": {
+          "postgres": "SELECT \"created_at\", \"declared_categories\", \"id\", \"name\", \"primary_category\" FROM \"public\".\"assets\" WHERE \"id\" = $1 LIMIT 1"
+        }
+      },
+      {
+        "name": "GetMany",
+        "params": [
+          {
+            "name": "input",
+            "type": "*GetAssetsInput"
+          }
+        ],
+        "returns": "[]*Asset",
+        "errors": [],
+        "sql_bodies": {
+          "postgres": "SELECT \"created_at\", \"declared_categories\", \"id\", \"name\", \"primary_category\" FROM \"public\".\"assets\" WHERE <filter> ORDER BY <sort> LIMIT <limit>"
+        }
+      },
+      {
+        "name": "Count",
+        "params": [
+          {
+            "name": "filter",
+            "type": "*AssetFilter"
+          }
+        ],
+        "returns": "int64",
+        "errors": [],
+        "sql_bodies": {
+          "postgres": "SELECT COUNT(*) FROM \"public\".\"assets\" WHERE <filter>"
+        }
+      },
+      {
+        "name": "Exists",
+        "params": [
+          {
+            "name": "id",
+            "type": "uuid.UUID"
+          }
+        ],
+        "returns": "bool",
+        "errors": [],
+        "sql_bodies": {
+          "postgres": "SELECT EXISTS(SELECT 1 FROM \"public\".\"assets\" WHERE \"id\" = $1)"
+        }
+      },
+      {
+        "name": "ExistsWhere",
+        "params": [
+          {
+            "name": "filter",
+            "type": "*AssetFilter"
+          }
+        ],
+        "returns": "bool",
+        "errors": [],
+        "sql_bodies": {
+          "postgres": "SELECT EXISTS(SELECT 1 FROM \"public\".\"assets\" WHERE <filter>)"
+        }
+      },
+      {
+        "name": "Paginate",
+        "params": [
+          {
+            "name": "input",
+            "type": "PaginateInput[AssetFilter]"
+          }
+        ],
+        "returns": "*PaginateResult[Asset]",
+        "errors": [],
+        "notes": "Offset pagination. Issues no statement of its own — composes Count and GetMany, so no sql_bodies entry."
+      },
+      {
+        "name": "Connection",
+        "params": [
+          {
+            "name": "input",
+            "type": "ConnectionInput[AssetFilter]"
+          }
+        ],
+        "returns": "*Connection[Asset]",
+        "errors": [
+          "ErrInvalidCursor"
+        ],
+        "notes": "Relay cursor pagination. Issues no statement of its own — composes Count and GetMany, so no sql_bodies entry."
+      },
+      {
+        "name": "Stream",
+        "params": [
+          {
+            "name": "input",
+            "type": "*StreamAssetsInput"
+          }
+        ],
+        "returns": "iter.Seq2[*Asset, error]",
+        "errors": [],
+        "notes": "Scalars only — no relationship loading, cache always bypassed. Errors surface through the iterator's second value.",
+        "sql_bodies": {
+          "postgres": "SELECT \"created_at\", \"declared_categories\", \"id\", \"name\", \"primary_category\" FROM \"public\".\"assets\" WHERE <filter> ORDER BY <sort>"
+        }
+      }
+    ],
+    "mutation": [
+      {
+        "name": "Create",
+        "params": [
+          {
+            "name": "input",
+            "type": "*CreateAssetInput"
+          }
+        ],
+        "returns": "*Asset",
+        "errors": [
+          "ErrNilInput",
+          "ErrConstraintViolation"
+        ],
+        "sql_bodies": {
+          "postgres": "INSERT INTO \"public\".\"assets\" (<columns>) VALUES (<values>) RETURNING \"id\""
+        }
+      },
+      {
+        "name": "CreateMany",
+        "params": [
+          {
+            "name": "inputs",
+            "type": "[]*CreateAssetInput"
+          }
+        ],
+        "returns": "[]*Asset",
+        "errors": [
+          "ErrNilInput",
+          "ErrConstraintViolation"
+        ],
+        "notes": "Batched in generation.batch_size chunks. Earlier chunks are not rolled back on a later failure — wrap in a transaction for atomicity.",
+        "sql_bodies": {
+          "postgres": "INSERT INTO \"public\".\"assets\" (<columns>) VALUES <values> RETURNING \"id\""
+        }
+      },
+      {
+        "name": "Upsert",
+        "params": [
+          {
+            "name": "input",
+            "type": "*CreateAssetInput"
+          },
+          {
+            "name": "target",
+            "type": "AssetConflictTarget"
+          }
+        ],
+        "returns": "*Asset",
+        "errors": [
+          "ErrNilInput",
+          "ErrConstraintViolation"
+        ],
+        "notes": "One method over the generated AssetConflictTarget enum — the target argument selects the conflict columns at call time.",
+        "sql_bodies": {
+          "postgres": "INSERT INTO \"public\".\"assets\" (<columns>) VALUES (<values>) ON CONFLICT (<conflict_target>) DO UPDATE SET <excluded> RETURNING \"id\""
+        }
+      },
+      {
+        "name": "UpsertMany",
+        "params": [
+          {
+            "name": "inputs",
+            "type": "[]*CreateAssetInput"
+          },
+          {
+            "name": "target",
+            "type": "AssetConflictTarget"
+          }
+        ],
+        "returns": "[]*Asset",
+        "errors": [
+          "ErrNilInput",
+          "ErrConstraintViolation"
+        ],
+        "notes": "Batched in generation.batch_size chunks over the same AssetConflictTarget enum Upsert takes. Inputs resolving to one target are deduped before the statement is built, last occurrence wins. Earlier chunks are not rolled back on a later failure — wrap in a transaction for atomicity.",
+        "sql_bodies": {
+          "postgres": "INSERT INTO \"public\".\"assets\" (<columns>) VALUES <values> ON CONFLICT (<conflict_target>) DO UPDATE SET <excluded>"
+        }
+      },
+      {
+        "name": "Update",
+        "params": [
+          {
+            "name": "id",
+            "type": "uuid.UUID"
+          },
+          {
+            "name": "input",
+            "type": "*UpdateAssetInput"
+          }
+        ],
+        "returns": "*Asset",
+        "errors": [
+          "ErrNotFound",
+          "ErrNilInput",
+          "ErrConstraintViolation"
+        ],
+        "notes": "Only fields where IsSet() reports true reach the SET clause; an input with none set issues no UPDATE and returns the row unchanged.",
+        "sql_bodies": {
+          "postgres": "UPDATE \"public\".\"assets\" SET <set> WHERE \"id\" = $1"
+        }
+      },
+      {
+        "name": "UpdateMany",
+        "params": [
+          {
+            "name": "items",
+            "type": "[]UpdateAssetItem"
+          }
+        ],
+        "returns": "[]*Asset",
+        "errors": [
+          "ErrNilInput",
+          "ErrConstraintViolation"
+        ],
+        "notes": "Issues one statement per item. Batched like CreateMany — earlier items are not rolled back on a later failure. A primary key that does not exist is silently skipped, even under strict_updates.",
+        "sql_bodies": {
+          "postgres": "UPDATE \"public\".\"assets\" SET <set> WHERE \"id\" = $1"
+        }
+      },
+      {
+        "name": "UpdateWhere",
+        "params": [
+          {
+            "name": "filter",
+            "type": "*AssetFilter"
+          },
+          {
+            "name": "input",
+            "type": "*UpdateAssetInput"
+          }
+        ],
+        "returns": "[]*Asset",
+        "errors": [
+          "ErrNilInput",
+          "ErrEmptyFilter",
+          "ErrConstraintViolation"
+        ],
+        "notes": "Idempotent — returns an empty slice when no row matches. ErrEmptyFilter when the filter produces no conditions.",
+        "sql_bodies": {
+          "postgres": "UPDATE \"public\".\"assets\" SET <set> WHERE <filter> RETURNING \"id\""
+        }
+      },
+      {
+        "name": "HardDelete",
+        "params": [
+          {
+            "name": "id",
+            "type": "uuid.UUID"
+          }
+        ],
+        "returns": "",
+        "errors": [],
+        "notes": "Idempotent — a primary key that does not exist is not an error.",
+        "sql_bodies": {
+          "postgres": "DELETE FROM \"public\".\"assets\" WHERE \"id\" = $1"
+        }
+      },
+      {
+        "name": "HardDeleteMany",
+        "params": [
+          {
+            "name": "ids",
+            "type": "[]uuid.UUID"
+          }
+        ],
+        "returns": "",
+        "errors": [],
+        "notes": "Idempotent — primary keys that do not exist are not an error.",
+        "sql_bodies": {
+          "postgres": "DELETE FROM \"public\".\"assets\" WHERE \"id\" IN (<ids>)"
+        }
+      },
+      {
+        "name": "HardDeleteWhere",
+        "params": [
+          {
+            "name": "filter",
+            "type": "*AssetFilter"
+          }
+        ],
+        "returns": "",
+        "errors": [
+          "ErrEmptyFilter"
+        ],
+        "notes": "Idempotent — no match is not an error. ErrEmptyFilter when the filter produces no conditions.",
+        "sql_bodies": {
+          "postgres": "DELETE FROM \"public\".\"assets\" WHERE <filter> RETURNING \"id\""
+        }
+      },
+      {
+        "name": "CreateWithRelated",
+        "params": [
+          {
+            "name": "input",
+            "type": "*CreateAssetWithRelatedInput"
+          }
+        ],
+        "returns": "*Asset",
+        "errors": [
+          "ErrNilInput",
+          "ErrNotFound",
+          "ErrNestedVerbConflict",
+          "ErrConstraintViolation"
+        ],
+        "notes": "Writes the parent and its nested rows in one transaction — a SAVEPOINT when ctx already holds one. Issues no statement of its own: it composes Create and, per eligible relationship (Attachments, Documents, Invoices, PrimaryDocument), the target's and junction's own client methods, so no sql_bodies entry. Each inner call fires its own hooks, events and cache invalidation under its own op; the nested method has none."
+      },
+      {
+        "name": "UpdateWithRelated",
+        "params": [
+          {
+            "name": "id",
+            "type": "uuid.UUID"
+          },
+          {
+            "name": "input",
+            "type": "*UpdateAssetWithRelatedInput"
+          }
+        ],
+        "returns": "*Asset",
+        "errors": [
+          "ErrNilInput",
+          "ErrNotFound",
+          "ErrNestedVerbConflict",
+          "ErrConstraintViolation"
+        ],
+        "notes": "Writes the parent and its nested rows in one transaction — a SAVEPOINT when ctx already holds one. Issues no statement of its own: it composes Update and, per eligible relationship (Attachments, Documents, Invoices, PrimaryDocument), the target's and junction's own client methods, so no sql_bodies entry. Each inner call fires its own hooks, events and cache invalidation under its own op; the nested method has none."
+      },
+      {
+        "name": "UpsertWithRelated",
+        "params": [
+          {
+            "name": "input",
+            "type": "*UpsertAssetWithRelatedInput"
+          },
+          {
+            "name": "target",
+            "type": "AssetConflictTarget"
+          }
+        ],
+        "returns": "*Asset",
+        "errors": [
+          "ErrNilInput",
+          "ErrNotFound",
+          "ErrNestedVerbConflict",
+          "ErrConstraintViolation"
+        ],
+        "notes": "Writes the parent and its nested rows in one transaction — a SAVEPOINT when ctx already holds one. Issues no statement of its own: it composes Upsert and, per eligible relationship (Attachments, Documents, Invoices, PrimaryDocument), the target's and junction's own client methods, so no sql_bodies entry. Each inner call fires its own hooks, events and cache invalidation under its own op; the nested method has none."
+      }
+    ]
+  },
+  "filter": {
+    "type": "AssetFilter",
+    "fields": [
+      {
+        "name": "CreatedAt",
+        "type": "*comparator.Time"
+      },
+      {
+        "name": "DeclaredCategories",
+        "type": "*comparator.Slice[DocumentEntityTypeEnum]"
+      },
+      {
+        "name": "ID",
+        "type": "*comparator.ID"
+      },
+      {
+        "name": "Name",
+        "type": "*comparator.String"
+      },
+      {
+        "name": "PrimaryCategory",
+        "type": "*comparator.NullableEnum[DocumentEntityTypeEnum]"
+      },
+      {
+        "name": "And",
+        "type": "[]*AssetFilter"
+      },
+      {
+        "name": "Or",
+        "type": "[]*AssetFilter"
+      }
+    ]
+  },
+  "sort": {
+    "type": "AssetSort",
+    "fields": [
+      "CreatedAt",
+      "DeclaredCategories",
+      "ID",
+      "Name",
+      "PrimaryCategory"
+    ]
+  },
+  "examples": {}
+}

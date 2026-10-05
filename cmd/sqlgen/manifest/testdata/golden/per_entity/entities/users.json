@@ -1,0 +1,204 @@
+{
+  "kind": "table",
+  "name": "User",
+  "table": "users",
+  "file_prefix": "users",
+  "files": [
+    "users_gen.go"
+  ],
+  "comment": "Application users. Soft-deleted on account closure.",
+  "indexes": [
+    {
+      "name": "users_pkey",
+      "columns": [
+        "id"
+      ],
+      "unique": true,
+      "method": "btree"
+    },
+    {
+      "name": "users_email_key",
+      "columns": [
+        "email"
+      ],
+      "unique": true,
+      "method": "btree"
+    },
+    {
+      "name": "users_active_idx",
+      "columns": [
+        "id"
+      ],
+      "unique": false,
+      "method": "btree",
+      "where": "deleted_at IS NULL"
+    }
+  ],
+  "pk": {
+    "kind": "single",
+    "columns": [
+      {
+        "name": "id",
+        "go_field": "ID",
+        "go_type": "uuid.UUID"
+      }
+    ]
+  },
+  "features": {
+    "soft_delete": null,
+    "cache": {
+      "ttl_seconds": 30,
+      "hydration": "lazy",
+      "key_pattern": "models:user:{id}",
+      "invalidates_on": [
+        "Create",
+        "Update",
+        "Delete"
+      ]
+    },
+    "events": {
+      "enabled": true,
+      "types": [
+        "created",
+        "updated",
+        "deleted"
+      ],
+      "payload_shape": "models.UserEvent"
+    },
+    "tenancy": null,
+    "audit_columns": [
+      "created_at",
+      "updated_at"
+    ]
+  },
+  "columns": [
+    {
+      "name": "id",
+      "go_field": "ID",
+      "go_type": "uuid.UUID",
+      "db_type": "uuid",
+      "nullable": false,
+      "pk": true,
+      "unique": true,
+      "default": "gen_random_uuid()",
+      "default_kind": "function",
+      "comparator": "comparator.ID",
+      "comment": "Primary key. Server-generated UUIDv7."
+    },
+    {
+      "name": "email",
+      "go_field": "Email",
+      "go_type": "string",
+      "db_type": "text",
+      "nullable": false,
+      "pk": false,
+      "unique": true,
+      "comparator": "comparator.String",
+      "comment": "Login identity. Rendered raw in <table> & lists.",
+      "check": "email <> ''"
+    },
+    {
+      "name": "status",
+      "go_field": "Status",
+      "go_type": "UserStatus",
+      "db_type": "user_status",
+      "nullable": false,
+      "pk": false,
+      "unique": false,
+      "default": "'pending'",
+      "default_kind": "literal",
+      "comparator": "comparator.Enum[UserStatus]",
+      "comment": ""
+    }
+  ],
+  "relationships": [
+    {
+      "name": "Posts",
+      "kind": "o2m",
+      "target_entity": "Post",
+      "fk": {
+        "table": "posts",
+        "column": "author_id"
+      }
+    }
+  ],
+  "methods": {
+    "query": [
+      {
+        "name": "Get",
+        "params": [
+          {
+            "name": "id",
+            "type": "uuid.UUID"
+          }
+        ],
+        "returns": "*User",
+        "errors": [
+          "ErrNotFound"
+        ],
+        "notes": "Delegates to GetMany with a primary-key filter.",
+        "sql_bodies": {
+          "postgres": "SELECT * FROM \"users\" WHERE \"id\" = $1 AND \"deleted_at\" IS NULL LIMIT 1"
+        }
+      }
+    ],
+    "mutation": [
+      {
+        "name": "Create",
+        "params": [
+          {
+            "name": "input",
+            "type": "*CreateUserInput"
+          }
+        ],
+        "returns": "*User",
+        "errors": [
+          "ErrConstraintViolation",
+          "tenancy.ErrMissing",
+          "tenancy.ErrMismatch"
+        ],
+        "sql_bodies": {
+          "postgres": "INSERT INTO \"users\" (<columns>) VALUES (<values>) RETURNING \"id\""
+        }
+      },
+      {
+        "name": "HardDelete",
+        "params": [
+          {
+            "name": "id",
+            "type": "uuid.UUID"
+          }
+        ],
+        "returns": "",
+        "errors": [
+          "tenancy.ErrMissing"
+        ],
+        "notes": "Idempotent — a primary key that does not exist is not an error (§9.5).",
+        "sql_bodies": {
+          "postgres": "DELETE FROM \"users\" WHERE \"id\" = $1"
+        }
+      }
+    ]
+  },
+  "filter": {
+    "type": "UserFilter",
+    "fields": [
+      {
+        "name": "ID",
+        "type": "comparator.ID"
+      },
+      {
+        "name": "Email",
+        "type": "comparator.String"
+      }
+    ]
+  },
+  "sort": {
+    "type": "UserSort",
+    "fields": [
+      "ID",
+      "Email",
+      "CreatedAt"
+    ]
+  }
+}

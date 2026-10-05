@@ -1,0 +1,74 @@
+"""
+OwnerProfile corresponds to the owner_profiles table.
+"""
+type OwnerProfile {
+  "id"
+  id: Int!
+  "owner_id"
+  ownerID: Int!
+  "bio"
+  bio: String
+  "one-to-one relationship with the owners table."
+  owners: Owner
+}
+
+type OwnerProfileConnection {
+  edges:      [OwnerProfileEdge!]!
+  pageInfo:   PageInfo!
+  totalCount: Int!
+}
+
+type OwnerProfileEdge {
+  node:   OwnerProfile!
+  cursor: String!
+}
+
+type OwnerProfileListResult {
+  items:      [OwnerProfile!]!
+  totalCount: Int!
+  offset:     Int!
+  limit:      Int!
+  hasMore:    Boolean!
+}
+
+input OwnerProfileFilter {
+  ownerID: NumericComparator
+  bio: NullableStringComparator
+  and: [OwnerProfileFilter!]
+  or:  [OwnerProfileFilter!]
+}
+
+enum OwnerProfileSortField {
+  ID
+  OWNER_ID
+  BIO
+}
+
+input OwnerProfileSort {
+  field:     OwnerProfileSortField!
+  direction: SortDirection!
+}
+input CreateOwnerProfileInput {
+  ownerID: Int!
+  bio: String
+}
+input UpdateOwnerProfileInput {
+  ownerID: Int
+  bio: String
+}
+
+extend type Query {
+  ownerProfile(id: Int!): OwnerProfile
+  "Cursor-paginated; ordering is driven by cursor_keys to preserve keyset semantics — pass `sort` to ownerProfileList instead."
+  ownerProfiles(filter: OwnerProfileFilter, first: Int, after: String, last: Int, before: String): OwnerProfileConnection!
+  ownerProfileList(filter: OwnerProfileFilter, sort: [OwnerProfileSort!], limit: Int, offset: Int): OwnerProfileListResult!
+}
+
+extend type Mutation {
+  createOwnerProfile(input: CreateOwnerProfileInput!): OwnerProfile!
+  createOwnerProfiles(inputs: [CreateOwnerProfileInput!]!): [OwnerProfile!]!
+  updateOwnerProfile(id: Int!, input: UpdateOwnerProfileInput!): OwnerProfile!
+  updateOwnerProfiles(filter: OwnerProfileFilter!, input: UpdateOwnerProfileInput!): [OwnerProfile!]!
+  upsertOwnerProfile(input: CreateOwnerProfileInput!): OwnerProfile!
+  deleteOwnerProfile(id: Int!): Boolean!
+}

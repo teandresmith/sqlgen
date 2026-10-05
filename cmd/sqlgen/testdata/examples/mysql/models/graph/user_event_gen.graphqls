@@ -1,0 +1,72 @@
+"""
+User activity events; the one nullable-FK child table in this schema
+"""
+type UserEvent {
+  "Unique identifier"
+  id: Int!
+  "Owning user reference; NULL while the event is unparented"
+  userID: Int
+  "What happened"
+  action: String!
+}
+
+type UserEventConnection {
+  edges:      [UserEventEdge!]!
+  pageInfo:   PageInfo!
+  totalCount: Int!
+}
+
+type UserEventEdge {
+  node:   UserEvent!
+  cursor: String!
+}
+
+type UserEventListResult {
+  items:      [UserEvent!]!
+  totalCount: Int!
+  offset:     Int!
+  limit:      Int!
+  hasMore:    Boolean!
+}
+
+input UserEventFilter {
+  userID: NullableNumericComparator
+  action: StringComparator
+  and: [UserEventFilter!]
+  or:  [UserEventFilter!]
+}
+
+enum UserEventSortField {
+  ID
+  USER_ID
+  ACTION
+}
+
+input UserEventSort {
+  field:     UserEventSortField!
+  direction: SortDirection!
+}
+input CreateUserEventInput {
+  userID: Int
+  action: String!
+}
+input UpdateUserEventInput {
+  userID: Int
+  action: String
+}
+
+extend type Query {
+  userEvent(id: Int!): UserEvent
+  "Cursor-paginated; ordering is driven by cursor_keys to preserve keyset semantics — pass `sort` to userEventList instead."
+  userEvents(filter: UserEventFilter, first: Int, after: String, last: Int, before: String): UserEventConnection!
+  userEventList(filter: UserEventFilter, sort: [UserEventSort!], limit: Int, offset: Int): UserEventListResult!
+}
+
+extend type Mutation {
+  createUserEvent(input: CreateUserEventInput!): UserEvent!
+  createUserEvents(inputs: [CreateUserEventInput!]!): [UserEvent!]!
+  updateUserEvent(id: Int!, input: UpdateUserEventInput!): UserEvent!
+  updateUserEvents(filter: UserEventFilter!, input: UpdateUserEventInput!): [UserEvent!]!
+  upsertUserEvent(input: CreateUserEventInput!): UserEvent!
+  deleteUserEvent(id: Int!): Boolean!
+}

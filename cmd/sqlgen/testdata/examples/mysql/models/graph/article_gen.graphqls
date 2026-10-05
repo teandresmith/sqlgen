@@ -1,0 +1,92 @@
+"""
+Blog articles with timestamp soft delete
+"""
+type Article {
+  "Unique identifier"
+  id: Int!
+  "Article title"
+  title: String!
+  "Article body content"
+  body: String
+  "Author name"
+  author: String!
+  "Row creation timestamp"
+  createdAt: Time!
+  "Soft delete timestamp"
+  deletedAt: Time
+}
+
+type ArticleConnection {
+  edges:      [ArticleEdge!]!
+  pageInfo:   PageInfo!
+  totalCount: Int!
+}
+
+type ArticleEdge {
+  node:   Article!
+  cursor: String!
+}
+
+type ArticleListResult {
+  items:      [Article!]!
+  totalCount: Int!
+  offset:     Int!
+  limit:      Int!
+  hasMore:    Boolean!
+}
+
+input ArticleFilter {
+  title: StringComparator
+  body: NullableStringComparator
+  author: StringComparator
+  createdAt: TimeComparator
+  deletedAt: NullableTimeComparator
+  and: [ArticleFilter!]
+  or:  [ArticleFilter!]
+}
+
+enum ArticleSortField {
+  ID
+  TITLE
+  BODY
+  AUTHOR
+  CREATED_AT
+  DELETED_AT
+}
+
+input ArticleSort {
+  field:     ArticleSortField!
+  direction: SortDirection!
+}
+input CreateArticleInput {
+  title: String!
+  body: String
+  author: String!
+  createdAt: Time!
+  deletedAt: Time
+}
+input UpdateArticleInput {
+  title: String
+  body: String
+  author: String
+  createdAt: Time
+  deletedAt: Time
+}
+
+extend type Query {
+  article(id: Int!): Article
+  "Cursor-paginated; ordering is driven by cursor_keys to preserve keyset semantics — pass `sort` to articleList instead."
+  articles(filter: ArticleFilter, first: Int, after: String, last: Int, before: String): ArticleConnection!
+  articleList(filter: ArticleFilter, sort: [ArticleSort!], limit: Int, offset: Int): ArticleListResult!
+}
+
+extend type Mutation {
+  createArticle(input: CreateArticleInput!): Article!
+  createArticles(inputs: [CreateArticleInput!]!): [Article!]!
+  updateArticle(id: Int!, input: UpdateArticleInput!): Article!
+  updateArticles(filter: ArticleFilter!, input: UpdateArticleInput!): [Article!]!
+  upsertArticle(input: CreateArticleInput!): Article!
+  hardDeleteArticle(id: Int!): Boolean!
+  softDeleteArticle(id: Int!): Article
+  restoreArticle(id: Int!): Article
+}

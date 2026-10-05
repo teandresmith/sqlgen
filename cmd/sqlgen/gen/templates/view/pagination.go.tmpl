@@ -1,0 +1,198 @@
+{{- define "view/pagination" -}}
+{{- $singular := .ViewName | toSingular -}}
+{{- $structCamel := .StructName | toCamelCase -}}
+{{- $resultVar := .StructName | structNamePlural | toCamelCase }}
+
+// Paginate returns a page of {{ .ViewName }} with total count for offset-based pagination.
+// A nil filter paginates all {{ .ViewName }}.
+func (c *{{ $structCamel }}Client) Paginate(ctx context.Context, input PaginateInput[{{ .StructName }}Filter], opts ...func(*CallOptions[{{ .StructName }}FieldOptions])) (*PaginateResult[{{ .StructName }}], error) {
+	options := resolveCallOptions(opts)
+	result, err := c.executeQuery(ctx, options.SkipHooks, &hook.QueryContext{
+		Op: hook.OpPaginate, Table: {{ .TableNameConstant }}, Schema: {{ printf "%q" .Schema }},
+		Input: input, CallOptions: options,
+	}, func(ctx context.Context, q *hook.QueryContext) (any, error) {
+		// Internal calls with SkipHooks to prevent nested hook invocation
+		internalOpts := func(o *CallOptions[{{ .StructName }}FieldOptions]) {
+			*o = options
+			o.SkipHooks = true
+		}
+
+{{- if and .Tenancy .Tenancy.Tenanted }}
+
+		// Tenancy: Paginate issues no statement of its own — Count and GetMany
+		// each apply the tenant predicate, and internalOpts
+		// forwards SkipTenancy / Tenant to both. Injecting here as well would
+		// duplicate the predicate.
+{{- end }}
+
+		// Total count (delegates to Count — both are always generated)
+		totalCount, err := c.Count(ctx, input.Filter, internalOpts)
+		if err != nil {
+			return nil, fmt.Errorf("paginate {{ .ViewName }} count: %w", err)
+		}
+
+		// Page data via GetMany (handles FieldOptions)
+		{{ $resultVar }}, err := c.GetMany(ctx, &Get{{ .StructName | structNamePlural }}Input{
+			Filter: input.Filter,
+			Sorts:  input.Sort,
+			Limit:  &input.Limit,
+			Offset: &input.Offset,
+		}, internalOpts)
+		if err != nil {
+			return nil, fmt.Errorf("paginate {{ .ViewName }}: %w", err)
+		}
+
+		return &PaginateResult[{{ .StructName }}]{
+			Items:      {{ $resultVar }},
+			TotalCount: totalCount,
+			Offset:     input.Offset,
+			Limit:      input.Limit,
+			HasMore:    int64(input.Offset+input.Limit) < totalCount,
+		}, nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	return result.(*PaginateResult[{{ .StructName }}]), nil
+}
+{{- if .HasConnection }}
+
+// Connection returns a Relay-style cursor-paginated connection of {{ .ViewName }}.
+// Sort order is determined by cursor_keys — custom sorts are not supported.
+// Use Paginate for custom sort orders.
+func (c *{{ $structCamel }}Client) Connection(ctx context.Context, input ConnectionInput[{{ .StructName }}Filter], opts ...func(*CallOptions[{{ .StructName }}FieldOptions])) (*Connection[{{ .StructName }}], error) {
+	options := resolveCallOptions(opts)
+	result, err := c.executeQuery(ctx, options.SkipHooks, &hook.QueryContext{
+		Op: hook.OpConnection, Table: {{ .TableNameConstant }}, Schema: {{ printf "%q" .Schema }},
+		Input: input, CallOptions: options,
+	}, func(ctx context.Context, q *hook.QueryContext) (any, error) {
+		// Internal calls with SkipHooks to prevent nested hook invocation
+		internalOpts := func(o *CallOptions[{{ .StructName }}FieldOptions]) {
+			*o = options
+			o.SkipHooks = true
+		}
+
+		// Validate: first and last are mutually exclusive
+		if input.First != nil && input.Last != nil {
+			return nil, ErrInvalidCursor
+		}
+
+{{- if and .Tenancy .Tenancy.Tenanted }}
+
+		// Tenancy: as in Paginate, the predicate arrives via Count and GetMany.
+		// GetMany appends it before the keyset conditions below, so the tenant
+		// bind and the cursor binds keep a stable relative order and placeholder
+		// numbering is unaffected: the tenant predicate composes with the
+		// keyset predicate.
+{{- end }}
+
+		// Total count (separate COUNT query — no cursor conditions)
+		totalCount, err := c.Count(ctx, input.Filter, internalOpts)
+		if err != nil {
+			return nil, fmt.Errorf("connection {{ .ViewName }} count: %w", err)
+		}
+
+		// Decode cursors and build keyset conditions
+		var keysetConds []sql.Condition
+		if input.After != nil {
+			cursor, err := decodeCursor(*input.After)
+			if err != nil {
+				return nil, ErrInvalidCursor
+			}
+			keysetConds = append(keysetConds, cursorKeyset(c.dialect, c.cursorKeys, cursor, ">"))
+		}
+		if input.Before != nil {
+			cursor, err := decodeCursor(*input.Before)
+			if err != nil {
+				return nil, ErrInvalidCursor
+			}
+			keysetConds = append(keysetConds, cursorKeyset(c.dialect, c.cursorKeys, cursor, "<"))
+		}
+
+		// Direction and limit
+		limit := c.pageSize
+		ascending := true
+		if input.First != nil {
+			limit = *input.First
+		} else if input.Last != nil {
+			limit = *input.Last
+			ascending = false
+		}
+
+		// Fetch limit+1 rows via GetMany (handles FieldOptions)
+		connLimit := limit + 1
+		{{ $resultVar }}, err := c.GetMany(ctx, &Get{{ .StructName | structNamePlural }}Input{
+			Filter:     input.Filter,
+			Sorts:      cursorSorts(c.cursorKeys, ascending),
+			Limit:      &connLimit,
+			conditions: keysetConds,
+			// Each edge's cursor is encoded from the row it wraps, so the cursor
+			// keys have to survive a narrowed FieldOptions — otherwise the
+			// encoder reads fields the SELECT never filled and every cursor
+			// carries zero values.
+			requiredColumns: c.cursorKeys,
+		}, internalOpts)
+		if err != nil {
+			return nil, fmt.Errorf("connection {{ .ViewName }}: %w", err)
+		}
+
+		// Trim extra row and determine page boundaries
+		hasMore := len({{ $resultVar }}) > limit
+		if hasMore {
+			{{ $resultVar }} = {{ $resultVar }}[:limit]
+		}
+
+		// Backward pagination: reverse for ascending cursor order
+		if !ascending {
+			slices.Reverse({{ $resultVar }})
+		}
+
+		// Build edges with encoded cursors
+		edges := make([]Edge[{{ .StructName }}], len({{ $resultVar }}))
+		for i, row := range {{ $resultVar }} {
+			cursor, err := encode{{ .StructName }}Cursor(c.cursorKeys, row)
+			if err != nil {
+				return nil, err
+			}
+			edges[i] = Edge[{{ .StructName }}]{
+				Node:   row,
+				Cursor: cursor,
+			}
+		}
+
+		pageInfo := PageInfo{
+			HasNextPage:     (ascending && hasMore) || (!ascending && input.Before != nil),
+			HasPreviousPage: (!ascending && hasMore) || (ascending && input.After != nil),
+		}
+		if len(edges) > 0 {
+			pageInfo.StartCursor = &edges[0].Cursor
+			pageInfo.EndCursor = &edges[len(edges)-1].Cursor
+		}
+
+		return &Connection[{{ .StructName }}]{Edges: edges, PageInfo: pageInfo, TotalCount: totalCount}, nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	return result.(*Connection[{{ .StructName }}]), nil
+}
+
+// encode{{ .StructName }}Cursor encodes cursor key values as a base64 JSON string.
+func encode{{ .StructName }}Cursor(keys []string, {{ .VarName }} *{{ .StructName }}) (string, error) {
+	out := make(map[string]any, len(keys))
+	for _, key := range keys {
+		switch key {
+{{- range .Columns }}
+		case {{ printf "%q" .Name }}:
+			out[{{ printf "%q" .Name }}] = {{ $.VarName }}.{{ .FieldName }}
+{{- end }}
+		}
+	}
+	data, err := json.Marshal(out)
+	if err != nil {
+		return "", fmt.Errorf("encode {{ $singular }} cursor: %w", err)
+	}
+	return base64.StdEncoding.EncodeToString(data), nil
+}
+{{- end }}
+{{- end -}}

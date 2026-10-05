@@ -1,0 +1,69 @@
+{{- define "api/sort-translate" -}}
+{{- $ctx := . -}}
+{{- /* gqlgen-emitted <T>Sort / <T>SortField / SortDirection */ -}}
+{{- /* live in the gqlgen `model:` package and are referenced under */ -}}
+{{- /* apiCtx.GqlgenModelAlias. */ -}}
+{{- $gql := $ctx.GqlgenModelAlias -}}
+{{- $gqlPrefix := "" -}}
+{{- if ne $gql "" -}}{{- $gqlPrefix = printf "%s." $gql -}}{{- end }}
+
+// Per-table GraphQL→sql.Sort translators. Each function maps
+// the gqlgen-generated `[]*<Table>Sort` slice into the runtime's
+// `[]sql.Sort` representation, looking up SQL column names through a
+// generated <table>SortFieldToColumn switch.
+//
+// Direction translation is shared across all tables — `directionToSortDirection`
+// maps the gqlgen `SortDirection` enum to `sql.SortDirection`. Switch cases
+// compare on the raw enum string (DESC / ASC) rather than the gqlgen-generated
+// Go const so the generator does not need to mirror gqlgen's PascalCase
+// conventions for enum constants.
+
+// directionToSortDirection maps the gqlgen-generated SortDirection enum to
+// the runtime sql.SortDirection. ASC is the default for any unrecognised
+// value so a missing direction (impossible with a non-null GraphQL field)
+// still produces a usable sort.
+func directionToSortDirection(d {{ $gqlPrefix }}SortDirection) sql.SortDirection {
+	if string(d) == "DESC" {
+		return sql.Desc
+	}
+	return sql.Asc
+}
+
+{{ range $t := $ctx.Tables }}
+{{- if $t.SortFields }}
+// translate{{ $t.StructName }}Sort converts a gqlgen-generated
+// []*{{ $t.SortInputType }} into a []sql.Sort. nil / empty input returns nil
+// so the caller's "no sort" path is preserved.
+func translate{{ $t.StructName }}Sort(in []*{{ $gqlPrefix }}{{ $t.SortInputType }}) []sql.Sort {
+	if len(in) == 0 {
+		return nil
+	}
+	out := make([]sql.Sort, 0, len(in))
+	for _, s := range in {
+		if s == nil {
+			continue
+		}
+		out = append(out, sql.Sort{
+			Column:    {{ toCamelCase $t.StructName }}SortFieldToColumn(s.Field),
+			Direction: directionToSortDirection(s.Direction),
+		})
+	}
+	return out
+}
+
+// {{ toCamelCase $t.StructName }}SortFieldToColumn resolves a gqlgen
+// {{ $t.SortEnumGoType }} value to the SQL column it sorts on. Returns an
+// empty string for unrecognised values so the caller can decide whether to
+// surface a validation error or silently drop the entry.
+func {{ toCamelCase $t.StructName }}SortFieldToColumn(f {{ $gqlPrefix }}{{ $t.SortEnumGoType }}) string {
+	switch string(f) {
+{{- range $sf := $t.SortFields }}
+	case "{{ $sf.EnumValue }}":
+		return "{{ $sf.SQLColumn }}"
+{{- end }}
+	}
+	return ""
+}
+{{ end }}
+{{- end }}
+{{- end -}}

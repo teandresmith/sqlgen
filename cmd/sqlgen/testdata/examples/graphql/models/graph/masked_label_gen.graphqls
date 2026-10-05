@@ -1,0 +1,65 @@
+"""
+MaskedLabel corresponds to the masked_labels table.
+"""
+type MaskedLabel {
+  "id"
+  id: UUID!
+  "label"
+  label: String!
+}
+
+type MaskedLabelConnection {
+  edges:      [MaskedLabelEdge!]!
+  pageInfo:   PageInfo!
+  totalCount: Int!
+}
+
+type MaskedLabelEdge {
+  node:   MaskedLabel!
+  cursor: String!
+}
+
+type MaskedLabelListResult {
+  items:      [MaskedLabel!]!
+  totalCount: Int!
+  offset:     Int!
+  limit:      Int!
+  hasMore:    Boolean!
+}
+
+input MaskedLabelFilter {
+  label: StringComparator
+  and: [MaskedLabelFilter!]
+  or:  [MaskedLabelFilter!]
+}
+
+enum MaskedLabelSortField {
+  ID
+  LABEL
+}
+
+input MaskedLabelSort {
+  field:     MaskedLabelSortField!
+  direction: SortDirection!
+}
+input CreateMaskedLabelInput {
+  label: String!
+}
+input UpdateMaskedLabelInput {
+  label: String
+}
+
+extend type Query {
+  maskedLabel(id: UUID!): MaskedLabel
+  "Cursor-paginated; ordering is driven by cursor_keys to preserve keyset semantics — pass `sort` to maskedLabelList instead."
+  maskedLabels(filter: MaskedLabelFilter, first: Int, after: String, last: Int, before: String): MaskedLabelConnection!
+  maskedLabelList(filter: MaskedLabelFilter, sort: [MaskedLabelSort!], limit: Int, offset: Int): MaskedLabelListResult!
+}
+
+extend type Mutation {
+  createMaskedLabel(input: CreateMaskedLabelInput!): MaskedLabel!
+  createMaskedLabels(inputs: [CreateMaskedLabelInput!]!): [MaskedLabel!]!
+  updateMaskedLabel(id: UUID!, input: UpdateMaskedLabelInput!): MaskedLabel!
+  updateMaskedLabels(filter: MaskedLabelFilter!, input: UpdateMaskedLabelInput!): [MaskedLabel!]!
+  deleteMaskedLabel(id: UUID!): Boolean!
+}

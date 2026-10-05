@@ -1,0 +1,188 @@
+"""
+Asset corresponds to the assets table.
+"""
+type Asset {
+  "id"
+  id: UUID!
+  "name"
+  name: String!
+  "declared_categories"
+  declaredCategories: [DocumentEntityTypeEnum!]!
+  "primary_category"
+  primaryCategory: DocumentEntityTypeEnum
+  "created_at"
+  createdAt: Time!
+  "one-to-many relationship with the documents table."
+  attachments: [Document!]!
+  "one-to-many relationship with the documents table."
+  invoices: [Document!]!
+  "many-to-many relationship with the documents table."
+  linkedAttachments: [Document!]!
+  "one-to-many relationship with the documents table."
+  photoAttachments: [Document!]!
+  "one-to-one relationship with the documents table."
+  primaryActiveDocument: Document
+  "one-to-one relationship with the documents table."
+  primaryDocument: Document
+  "many-to-many relationship with the documents table."
+  documents: [Document!]!
+}
+
+type AssetConnection {
+  edges:      [AssetEdge!]!
+  pageInfo:   PageInfo!
+  totalCount: Int!
+}
+
+type AssetEdge {
+  node:   Asset!
+  cursor: String!
+}
+
+type AssetListResult {
+  items:      [Asset!]!
+  totalCount: Int!
+  offset:     Int!
+  limit:      Int!
+  hasMore:    Boolean!
+}
+
+input AssetFilter {
+  name: StringComparator
+  declaredCategories: DocumentEntityTypeEnumSliceComparator
+  primaryCategory: NullableDocumentEntityTypeEnumComparator
+  createdAt: TimeComparator
+  attachments: DocumentFilter
+  documents: DocumentFilter
+  invoices: DocumentFilter
+  linkedAttachments: DocumentFilter
+  photoAttachments: DocumentFilter
+  and: [AssetFilter!]
+  or:  [AssetFilter!]
+}
+
+enum AssetSortField {
+  ID
+  NAME
+  DECLARED_CATEGORIES
+  PRIMARY_CATEGORY
+  CREATED_AT
+}
+
+input AssetSort {
+  field:     AssetSortField!
+  direction: SortDirection!
+}
+input CreateAssetInput {
+  name: String!
+  declaredCategories: [DocumentEntityTypeEnum!]!
+  primaryCategory: DocumentEntityTypeEnum
+  createdAt: Time!
+}
+input UpdateAssetInput {
+  name: String
+  declaredCategories: [DocumentEntityTypeEnum!]
+  primaryCategory: DocumentEntityTypeEnum
+  createdAt: Time
+}
+
+extend type Query {
+  asset(id: UUID!): Asset
+  "Cursor-paginated; ordering is driven by cursor_keys to preserve keyset semantics — pass `sort` to assetList instead."
+  assets(filter: AssetFilter, first: Int, after: String, last: Int, before: String): AssetConnection!
+  assetList(filter: AssetFilter, sort: [AssetSort!], limit: Int, offset: Int): AssetListResult!
+}
+
+extend type Mutation {
+  createAsset(input: CreateAssetInput!): Asset!
+  createAssets(inputs: [CreateAssetInput!]!): [Asset!]!
+  updateAsset(id: UUID!, input: UpdateAssetInput!): Asset!
+  updateAssets(filter: AssetFilter!, input: UpdateAssetInput!): [Asset!]!
+  upsertAsset(input: CreateAssetInput!): Asset!
+  deleteAsset(id: UUID!): Boolean!
+}
+
+input CreateAssetWithRelatedInput {
+  asset: CreateAssetInput!
+  attachments: AssetAttachmentsCreateNested
+  documents: AssetDocumentsCreateNested
+  invoices: AssetInvoicesCreateNested
+  primaryDocument: AssetPrimaryDocumentCreateNested
+}
+
+input UpdateAssetWithRelatedInput {
+  asset: UpdateAssetInput
+  attachments: AssetAttachmentsUpdateNested
+  documents: AssetDocumentsUpdateNested
+  invoices: AssetInvoicesUpdateNested
+  primaryDocument: AssetPrimaryDocumentUpdateNested
+}
+
+input UpsertAssetWithRelatedInput {
+  asset: CreateAssetInput!
+  attachments: AssetAttachmentsUpdateNested
+  documents: AssetDocumentsUpdateNested
+  invoices: AssetInvoicesUpdateNested
+  primaryDocument: AssetPrimaryDocumentUpdateNested
+}
+
+enum AssetConflictTarget {
+  PK
+}
+
+input AssetAttachmentsCreateNested {
+  create: [AssetAttachmentsCreateInput!]
+}
+
+input AssetAttachmentsUpdateNested {
+  create: [AssetAttachmentsCreateInput!]
+}
+
+input AssetAttachmentsCreateInput {
+  name: String!
+  createdAt: Time!
+}
+
+input AssetDocumentsCreateNested {
+  create: [CreateDocumentInput!]
+  connect: [UUID!]
+}
+
+input AssetDocumentsUpdateNested {
+  clear: Boolean
+  create: [CreateDocumentInput!]
+  connect: [UUID!]
+  disconnect: [UUID!]
+}
+
+input AssetInvoicesCreateNested {
+  create: [AssetInvoicesCreateInput!]
+}
+
+input AssetInvoicesUpdateNested {
+  create: [AssetInvoicesCreateInput!]
+}
+
+input AssetInvoicesCreateInput {
+  name: String!
+  createdAt: Time!
+}
+
+input AssetPrimaryDocumentCreateNested {
+  create: AssetPrimaryDocumentCreateInput
+}
+
+input AssetPrimaryDocumentUpdateNested {
+  create: AssetPrimaryDocumentCreateInput
+}
+
+input AssetPrimaryDocumentCreateInput {
+  name: String!
+  createdAt: Time!
+}
+
+extend type Mutation {
+  createAssetWithRelated(input: CreateAssetWithRelatedInput!): Asset!
+  updateAssetWithRelated(id: UUID!, input: UpdateAssetWithRelatedInput!): Asset!
+  upsertAssetWithRelated(input: UpsertAssetWithRelatedInput!, conflictTarget: AssetConflictTarget! = PK): Asset!
+}

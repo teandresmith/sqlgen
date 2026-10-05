@@ -1,0 +1,145 @@
+"""
+Order corresponds to the orders table.
+"""
+type Order {
+  "id"
+  id: UUID!
+  "user_id"
+  userID: UUID!
+  "total"
+  total: Decimal!
+  "notes"
+  notes: String
+  "created_at"
+  createdAt: Time!
+  "updated_at"
+  updatedAt: Time
+  "deleted_at"
+  deletedAt: Time
+  "one-to-many relationship with the order_items table."
+  orderItems: [OrderItem!]!
+}
+
+type OrderConnection {
+  edges:      [OrderEdge!]!
+  pageInfo:   PageInfo!
+  totalCount: Int!
+}
+
+type OrderEdge {
+  node:   Order!
+  cursor: String!
+}
+
+type OrderListResult {
+  items:      [Order!]!
+  totalCount: Int!
+  offset:     Int!
+  limit:      Int!
+  hasMore:    Boolean!
+}
+
+input OrderFilter {
+  userID: IDComparator
+  total: DecimalComparator
+  notes: NullableStringComparator
+  createdAt: TimeComparator
+  updatedAt: NullableTimeComparator
+  deletedAt: NullableTimeComparator
+  orderItems: OrderItemFilter
+  and: [OrderFilter!]
+  or:  [OrderFilter!]
+}
+
+enum OrderSortField {
+  ID
+  USER_ID
+  TOTAL
+  NOTES
+  CREATED_AT
+  UPDATED_AT
+  DELETED_AT
+}
+
+input OrderSort {
+  field:     OrderSortField!
+  direction: SortDirection!
+}
+input CreateOrderInput {
+  userID: UUID!
+  total: Decimal!
+  notes: String
+  createdAt: Time!
+  updatedAt: Time
+  deletedAt: Time
+}
+input UpdateOrderInput {
+  userID: UUID
+  total: Decimal
+  total_inc: Int
+  total_dec: Int
+  notes: String
+  createdAt: Time
+  updatedAt: Time
+  deletedAt: Time
+}
+
+extend type Query {
+  order(id: UUID!): Order
+  "Cursor-paginated; ordering is driven by cursor_keys to preserve keyset semantics — pass `sort` to orderList instead."
+  orders(filter: OrderFilter, first: Int, after: String, last: Int, before: String): OrderConnection!
+  orderList(filter: OrderFilter, sort: [OrderSort!], limit: Int, offset: Int): OrderListResult!
+}
+
+extend type Mutation {
+  createOrder(input: CreateOrderInput!): Order!
+  createOrders(inputs: [CreateOrderInput!]!): [Order!]!
+  updateOrder(id: UUID!, input: UpdateOrderInput!): Order!
+  updateOrders(filter: OrderFilter!, input: UpdateOrderInput!): [Order!]!
+  upsertOrder(input: CreateOrderInput!): Order!
+  hardDeleteOrder(id: UUID!): Boolean!
+  softDeleteOrder(id: UUID!): Order
+  restoreOrder(id: UUID!): Order
+}
+
+input CreateOrderWithRelatedInput {
+  order: CreateOrderInput!
+  orderItems: OrderOrderItemsCreateNested
+}
+
+input UpdateOrderWithRelatedInput {
+  order: UpdateOrderInput
+  orderItems: OrderOrderItemsUpdateNested
+}
+
+input UpsertOrderWithRelatedInput {
+  order: CreateOrderInput!
+  orderItems: OrderOrderItemsUpdateNested
+}
+
+enum OrderConflictTarget {
+  PK
+}
+
+input OrderOrderItemsCreateNested {
+  create: [OrderOrderItemsCreateInput!]
+}
+
+input OrderOrderItemsUpdateNested {
+  create: [OrderOrderItemsCreateInput!]
+}
+
+input OrderOrderItemsCreateInput {
+  productID: UUID!
+  quantity: Int!
+  unitPrice: Decimal!
+  externalRef: String
+  sourceIP: IPAddr
+  createdAt: Time!
+}
+
+extend type Mutation {
+  createOrderWithRelated(input: CreateOrderWithRelatedInput!): Order!
+  updateOrderWithRelated(id: UUID!, input: UpdateOrderWithRelatedInput!): Order!
+  upsertOrderWithRelated(input: UpsertOrderWithRelatedInput!, conflictTarget: OrderConflictTarget! = PK): Order!
+}

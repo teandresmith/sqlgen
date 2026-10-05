@@ -1,0 +1,166 @@
+scalar Decimal
+scalar Int64
+scalar NullBool
+scalar NullDecimal
+scalar NullFloat64
+scalar NullInt16
+scalar NullInt32
+scalar NullInt64
+scalar NullString
+scalar NullTime
+scalar NullUUID
+scalar Time
+scalar UUID
+
+type Query
+type Mutation
+
+type PageInfo {
+  hasNextPage:     Boolean!
+  hasPreviousPage: Boolean!
+  startCursor:     String
+  endCursor:       String
+}
+
+enum SortDirection {
+  ASC
+  DESC
+}
+
+input StringComparator {
+  eq:         String
+  neq:        String
+  gt:         String
+  gte:        String
+  lt:         String
+  lte:        String
+  contains:   String
+  startsWith: String
+  endsWith:   String
+  like:       String
+  nlike:      String
+  in:         [String!]
+  nin:        [String!]
+}
+
+input NullableStringComparator {
+  eq:         String
+  neq:        String
+  gt:         String
+  gte:        String
+  lt:         String
+  lte:        String
+  contains:   String
+  startsWith: String
+  endsWith:   String
+  like:       String
+  nlike:      String
+  in:         [String!]
+  nin:        [String!]
+  isNull:     Boolean
+}
+
+input NumericComparator {
+  eq:       Float
+  neq:      Float
+  gt:       Float
+  gte:      Float
+  lt:       Float
+  lte:      Float
+  in:       [Float!]
+  nin:      [Float!]
+  between:  NumericRange
+  nbetween: NumericRange
+}
+
+input NumericRange {
+  from: Float!
+  to:   Float!
+}
+
+input NullableNumericComparator {
+  eq:       Float
+  neq:      Float
+  gt:       Float
+  gte:      Float
+  lt:       Float
+  lte:      Float
+  in:       [Float!]
+  nin:      [Float!]
+  between:  NumericRange
+  nbetween: NumericRange
+  isNull:   Boolean
+}
+
+input NullableBooleanComparator {
+  eq:     Boolean
+  neq:    Boolean
+  isNull: Boolean
+}
+
+input TimeComparator {
+  eq:       Time
+  neq:      Time
+  gt:       Time
+  gte:      Time
+  lt:       Time
+  lte:      Time
+  in:       [Time!]
+  nin:      [Time!]
+  between:  TimeRange
+  nbetween: TimeRange
+}
+
+input TimeRange {
+  from: Time!
+  to:   Time!
+}
+
+input NullableTimeComparator {
+  eq:       Time
+  neq:      Time
+  gt:       Time
+  gte:      Time
+  lt:       Time
+  lte:      Time
+  in:       [Time!]
+  nin:      [Time!]
+  between:  TimeRange
+  nbetween: TimeRange
+  isNull:   Boolean
+}
+
+input NullableIDComparator {
+  eq:     ID
+  neq:    ID
+  gt:     ID
+  gte:    ID
+  lt:     ID
+  lte:    ID
+  in:     [ID!]
+  nin:    [ID!]
+  isNull: Boolean
+}
+
+input DecimalComparator {
+  eq:  Decimal
+  neq: Decimal
+  gt:  Decimal
+  gte: Decimal
+  lt:  Decimal
+  lte: Decimal
+  in:  [Decimal!]
+  nin: [Decimal!]
+}
+
+input NullableDecimalComparator {
+  eq:     Decimal
+  neq:    Decimal
+  gt:     Decimal
+  gte:    Decimal
+  lt:     Decimal
+  lte:    Decimal
+  in:     [Decimal!]
+  nin:    [Decimal!]
+  isNull: Boolean
+}

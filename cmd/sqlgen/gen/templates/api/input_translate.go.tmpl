@@ -1,0 +1,304 @@
+{{- define "api/input-translate" -}}
+{{- $ctx := . -}}
+{{- $pkg := $ctx.ModelsPackage -}}
+{{- /* gqlgen-emitted Create<T>Input / Update<T>Input live in the */ -}}
+{{- /* gqlgen `model:` package and are referenced under apiCtx.GqlgenModelAlias. */ -}}
+{{- $sqlgenPkg := $ctx.SqlgenResolverPkgName -}}
+{{- $gql := $ctx.GqlgenModelAlias -}}
+{{- $gqlPrefix := "" -}}
+{{- if ne $gql "" -}}{{- $gqlPrefix = printf "%s." $gql -}}{{- end }}
+
+// Per-table input translators. These bridge the gqlgen-emitted plain-pointer
+// input structs (which live in the gqlgen-emitted model package and are
+// referenced under the `gqlmodel` alias) onto the consumer model's
+// omittable-wrapped Create<Table>Input / Update<Table>Input shapes the
+// unified client accepts. Seed files in this same package call these
+// translators before delegating into r.Q / r.M.
+
+{{ range $t := $ctx.Tables }}
+{{- if and (or $t.Operations.Create $t.Operations.CreateMany $t.Operations.Upsert) $t.HasCreateInput }}
+// translateCreate{{ $t.StructName }}Input maps a gqlgen-generated input value
+// onto the consumer model's Create<Table>Input. The body shape per field
+// depends on (SchemaNullable) × (ModelOmittable) × (ModelInnerIsPointer) ×
+// (CastTo) × (AddressOf) × (PointerCast); see APIInputField doc-comment for
+// the full table. PointerCast is the one branch that cannot be an expression:
+// gqlgen's `*int` and the model's `*int32` do not thread through each other,
+// and Go cannot convert a pointee inline, so the value goes through a local.
+func translateCreate{{ $t.StructName }}Input(in {{ $gqlPrefix }}Create{{ $t.StructName }}Input) *{{ $pkg }}.Create{{ $t.StructName }}Input {
+	out := &{{ $pkg }}.Create{{ $t.StructName }}Input{}
+{{ range $f := $t.CreateInputFields -}}
+{{- template "api/create-input-assign" $f -}}
+{{- end }}
+	return out
+}
+{{- end }}
+
+{{- if and (or $t.Operations.Update $t.Operations.UpdateWhere) $t.HasUpdateInput }}
+// translateUpdate{{ $t.StructName }}Input maps the gqlgen-generated update
+// input onto the consumer model's Update<Table>Input. All fields are
+// omittable in the model; gqlgen emits each field as `*T` regardless of
+// schema nullability so the nil-check is uniform — only the inner coercion
+// varies (see inputCoerceDeref for the cast / address-of / deref branches).
+// `_inc` / `_dec` paired fields are skipped here and dispatched separately
+// by the resolver via Increment.
+func translateUpdate{{ $t.StructName }}Input(in {{ $gqlPrefix }}Update{{ $t.StructName }}Input) *{{ $pkg }}.Update{{ $t.StructName }}Input {
+	out := &{{ $pkg }}.Update{{ $t.StructName }}Input{}
+{{ range $f := $t.UpdateInputFields -}}
+	if in.{{ $f.GoFieldName }} != nil {
+{{- if $f.PointerCast }}
+		v := {{ $f.CastTo }}(*in.{{ $f.GoFieldName }})
+		out.{{ $f.ModelFieldName }} = omittable.Set(&v)
+{{- else }}
+		out.{{ $f.ModelFieldName }} = omittable.Set({{ inputCoerceDeref $f }})
+{{- end }}
+	}
+{{ end -}}
+	return out
+}
+
+// hasUpdate{{ $t.StructName }}SetFields reports whether any non-`_inc`/`_dec`
+// field on the update input is set. The resolver only issues Update when at
+// least one set-field is present; a pure inc/dec mutation skips the Update
+// call entirely so the unified client's hook chain sees one Increment per op.
+func hasUpdate{{ $t.StructName }}SetFields(in {{ $gqlPrefix }}Update{{ $t.StructName }}Input) bool {
+{{- range $f := $t.UpdateInputFields }}
+	if in.{{ $f.GoFieldName }} != nil {
+		return true
+	}
+{{- end }}
+	return false
+}
+{{- end }}
+{{- with $t.Nested }}
+{{- $n := . }}
+{{- if $n.EmitCreate }}
+
+// translate{{ $n.CreateInputName }} maps the gqlgen-generated nested create
+// input onto the model's. The flat half goes through the ordinary
+// create translator, so the wrapper cannot drift from the input it contains.
+func translate{{ $n.CreateInputName }}(in {{ $gqlPrefix }}{{ $n.CreateInputName }}) *{{ $pkg }}.{{ $n.CreateInputName }} {
+	out := &{{ $pkg }}.{{ $n.CreateInputName }}{}
+	if in.{{ $n.ParentFieldName }} != nil {
+		out.{{ $n.ParentFieldName }} = *translateCreate{{ $t.StructName }}Input(*in.{{ $n.ParentFieldName }})
+	}
+{{- range $e := $n.Edges }}
+{{- if $e.EmitCreateBlock }}
+	out.{{ $e.FieldName }} = {{ $e.CreateBlockTranslateFunc }}(in.{{ $e.FieldName }})
+{{- end }}
+{{- end }}
+	return out
+}
+{{- end }}
+{{- if $n.EmitUpdate }}
+
+// translate{{ $n.UpdateInputName }} maps the gqlgen-generated nested update
+// input onto the model's. An omitted flat half leaves every parent
+// column alone, and the parent write then issues no UPDATE at all.
+// The flat half's `_inc` / `_dec` operators have no place on the Go input;
+{{- if $n.IncrementOpsFunc }}
+// {{ $n.IncrementOpsFunc }} collects them for the resolver.
+{{- else }}
+// this table has no incrementable column, so the input carries none.
+{{- end }}
+func translate{{ $n.UpdateInputName }}(in {{ $gqlPrefix }}{{ $n.UpdateInputName }}) *{{ $pkg }}.{{ $n.UpdateInputName }} {
+	out := &{{ $pkg }}.{{ $n.UpdateInputName }}{}
+	if in.{{ $n.ParentFieldName }} != nil {
+		out.{{ $n.ParentFieldName }} = *translateUpdate{{ $t.StructName }}Input(*in.{{ $n.ParentFieldName }})
+	}
+{{- range $e := $n.Edges }}
+	out.{{ $e.FieldName }} = {{ $e.UpdateBlockTranslateFunc }}(in.{{ $e.FieldName }})
+{{- end }}
+	return out
+}
+{{- if $n.IncrementOpsFunc }}
+
+// {{ $n.IncrementOpsFunc }} collects the `_inc` / `_dec` operators on the
+// flat half of an update{{ $t.StructName }}WithRelated input, rejecting the
+// same pairings update{{ $t.StructName }} rejects with INVALID_INPUT.
+// It lives here rather than in the resolver seed because a
+// seed is written once and then owned by gqlgen, while this file is
+// regenerated — so the rule it enforces can still be corrected later.
+func {{ $n.IncrementOpsFunc }}(in {{ $gqlPrefix }}{{ $n.UpdateInputName }}) ([]{{ $sqlgenPkg }}.IncrementOp[{{ $pkg }}.{{ $t.IncrementEnumType }}], error) {
+	p := in.{{ $n.ParentFieldName }}
+	if p == nil {
+		return nil, nil
+	}
+{{- range $op := $t.UpdateOps }}
+	if p.{{ $op.SetGoField }} != nil && p.{{ $op.IncGoField }} != nil {
+		return nil, {{ $sqlgenPkg }}.InvalidInputError("update {{ $t.SQLTable }} with related: column \"{{ $op.SQLName }}\" cannot be both set and incremented in one mutation")
+	}
+	if p.{{ $op.IncGoField }} != nil && p.{{ $op.DecGoField }} != nil {
+		return nil, {{ $sqlgenPkg }}.InvalidInputError("update {{ $t.SQLTable }} with related: column \"{{ $op.SQLName }}\" cannot be both incremented and decremented in one mutation")
+	}
+{{- end }}
+	var ops []{{ $sqlgenPkg }}.IncrementOp[{{ $pkg }}.{{ $t.IncrementEnumType }}]
+{{- range $op := $t.UpdateOps }}
+	if p.{{ $op.IncGoField }} != nil {
+		ops = append(ops, {{ $sqlgenPkg }}.IncrementOp[{{ $pkg }}.{{ $t.IncrementEnumType }}]{
+			Column: {{ $pkg }}.{{ $op.IncColumnConst }},
+			Amount: int(*p.{{ $op.IncGoField }}),
+		})
+	}
+	if p.{{ $op.DecGoField }} != nil {
+		ops = append(ops, {{ $sqlgenPkg }}.IncrementOp[{{ $pkg }}.{{ $t.IncrementEnumType }}]{
+			Column: {{ $pkg }}.{{ $op.IncColumnConst }},
+			Amount: -int(*p.{{ $op.DecGoField }}),
+		})
+	}
+{{- end }}
+	return ops, nil
+}
+{{- end }}
+{{- end }}
+{{- if $n.EmitUpsert }}
+
+// translate{{ $n.UpsertInputName }} maps the gqlgen-generated nested upsert
+// input onto the model's. Its nested half is the update-side block verbatim.
+func translate{{ $n.UpsertInputName }}(in {{ $gqlPrefix }}{{ $n.UpsertInputName }}) *{{ $pkg }}.{{ $n.UpsertInputName }} {
+	out := &{{ $pkg }}.{{ $n.UpsertInputName }}{}
+	if in.{{ $n.ParentFieldName }} != nil {
+		out.{{ $n.ParentFieldName }} = *translateCreate{{ $t.StructName }}Input(*in.{{ $n.ParentFieldName }})
+	}
+{{- range $e := $n.Edges }}
+	out.{{ $e.FieldName }} = {{ $e.UpdateBlockTranslateFunc }}(in.{{ $e.FieldName }})
+{{- end }}
+	return out
+}
+
+// {{ $n.ConflictTranslateFunc }} maps the GraphQL conflict-target enum onto
+// the model's constant. Cases compare on the raw enum value, as
+// the sort translators do, so the mapping does not depend on how gqlgen spells
+// the enum's Go constants. gqlgen rejects an undeclared value before the
+// resolver runs; the error is for a schema and a translator that disagree,
+// which must fail loudly rather than fall back to some other target.
+func {{ $n.ConflictTranslateFunc }}(v {{ $gqlPrefix }}{{ $n.ConflictEnumName }}) ({{ $pkg }}.{{ $n.ConflictEnumName }}, error) {
+	switch string(v) {
+{{- range $c := $n.ConflictTargets }}
+	case "{{ $c.EnumValue }}":
+		return {{ $pkg }}.{{ $c.ConstantName }}, nil
+{{- end }}
+	}
+	var none {{ $pkg }}.{{ $n.ConflictEnumName }}
+	return none, {{ $sqlgenPkg }}.InvalidInputError("upsert {{ $t.SQLTable }} with related: unknown conflict target \"" + string(v) + "\"")
+}
+{{- end }}
+{{- range $e := $n.Edges }}
+{{- if $e.EmitCreateBlock }}
+
+// {{ $e.CreateBlockTranslateFunc }} maps the create-side verb block for
+// {{ $t.StructName }}.{{ $e.FieldName }}.
+//
+// A nil block is an edge the caller did not touch.
+func {{ $e.CreateBlockTranslateFunc }}(in *{{ $gqlPrefix }}{{ $e.CreateBlockName }}) *{{ $pkg }}.{{ $e.CreateBlockName }} {
+	if in == nil {
+		return nil
+	}
+	out := &{{ $pkg }}.{{ $e.CreateBlockName }}{}
+{{ template "api/nested-create-verb" $e -}}
+{{ range $v := $e.CreateIDVerbs }}{{ template "api/nested-id-verb" $v }}{{ end -}}
+	return out
+}
+{{- end }}
+{{- if $e.EmitUpdateBlock }}
+
+// {{ $e.UpdateBlockTranslateFunc }} maps the update-side verb block for
+// {{ $t.StructName }}.{{ $e.FieldName }}.
+//
+// A nil block is an edge the caller did not touch.
+func {{ $e.UpdateBlockTranslateFunc }}(in *{{ $gqlPrefix }}{{ $e.UpdateBlockName }}) *{{ $pkg }}.{{ $e.UpdateBlockName }} {
+	if in == nil {
+		return nil
+	}
+	out := &{{ $pkg }}.{{ $e.UpdateBlockName }}{}
+{{- if $e.HasClear }}
+	if in.Clear != nil {
+		out.Clear = *in.Clear
+	}
+{{- end }}
+{{ template "api/nested-create-verb" $e -}}
+{{ range $v := $e.UpdateIDVerbs }}{{ template "api/nested-id-verb" $v }}{{ end -}}
+	return out
+}
+{{- end }}
+{{- if $e.ChildInputName }}
+
+// {{ $e.ChildTranslateFunc }} maps one element of the `create` verb for
+// {{ $t.StructName }}.{{ $e.FieldName }}.
+//
+// It is the target's create input without the columns the edge sets itself
+// from the parent's key.
+func {{ $e.ChildTranslateFunc }}(in {{ $gqlPrefix }}{{ $e.ChildInputName }}) *{{ $pkg }}.{{ $e.ChildInputName }} {
+	out := &{{ $pkg }}.{{ $e.ChildInputName }}{}
+{{ range $f := $e.ChildFields -}}
+{{- template "api/create-input-assign" $f.Input -}}
+{{- end }}
+	return out
+}
+{{- end }}
+{{- end }}
+{{- end }}
+
+{{ end }}
+{{- end -}}
+
+{{- /*
+  One create-input field's assignment, shared by the flat Create<T>Input
+  translator and the nested child input translators: a nested
+  child input's members ARE the target's create-input members, minus the
+  traversed FK and the discriminator, so the coercion that bridges gqlgen's
+  field onto the model's is the same one and is written once.
+*/ -}}
+{{- define "api/create-input-assign" -}}
+{{- $f := . -}}
+{{- if and (not $f.SchemaNullable) (not $f.ModelOmittable) -}}
+	out.{{ $f.ModelFieldName }} = {{ inputCoerceBare $f }}
+{{ else if not $f.SchemaNullable -}}
+	out.{{ $f.ModelFieldName }} = omittable.Set({{ inputCoerceBare $f }})
+{{ else -}}
+	if in.{{ $f.GoFieldName }} != nil {
+{{- if $f.PointerCast }}
+		v := {{ $f.CastTo }}(*in.{{ $f.GoFieldName }})
+		out.{{ $f.ModelFieldName }} = omittable.Set(&v)
+{{- else }}
+		out.{{ $f.ModelFieldName }} = omittable.Set({{ inputCoerceDeref $f }})
+{{- end }}
+	}
+{{ end -}}
+{{- end -}}
+
+{{- /* The `create` verb of either block: each element through its translator, */ -}}
+{{- /* or the one element on a has-one edge.                                     */ -}}
+{{- define "api/nested-create-verb" -}}
+{{- if .HasCreate -}}
+{{- if .Singular -}}
+	if in.Create != nil {
+		out.Create = {{ .ChildTranslateFunc }}(*in.Create)
+	}
+{{ else -}}
+	for _, c := range in.Create {
+		if c == nil {
+			continue
+		}
+		out.Create = append(out.Create, {{ .ChildTranslateFunc }}(*c))
+	}
+{{ end -}}
+{{- end -}}
+{{- end -}}
+
+{{- /* One id verb: threaded through when gqlgen binds the key's scalar to the */ -}}
+{{- /* model's own type, converted when it does not — element by element on a  */ -}}
+{{- /* list, through a local on a has-one edge's single optional id.           */ -}}
+{{- define "api/nested-id-verb" -}}
+{{- if and .Cast .Singular -}}
+	if in.{{ .GoField }} != nil {
+		v := {{ .Cast }}(*in.{{ .GoField }})
+		out.{{ .GoField }} = &v
+	}
+{{ else if .Cast -}}
+	for _, v := range in.{{ .GoField }} {
+		out.{{ .GoField }} = append(out.{{ .GoField }}, {{ .Cast }}(v))
+	}
+{{ else -}}
+	out.{{ .GoField }} = in.{{ .GoField }}
+{{ end -}}
+{{- end -}}

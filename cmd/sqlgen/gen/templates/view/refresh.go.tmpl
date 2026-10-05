@@ -1,0 +1,54 @@
+{{- define "view/refresh" -}}
+{{- if .Materialized -}}
+{{- $structCamel := .StructName | toCamelCase }}
+{{- /*
+  No tenant predicate here, deliberately. REFRESH
+  MATERIALIZED VIEW recomputes the entire relation — there is no per-tenant
+  refresh and no WHERE clause to scope, so emitting one would be meaningless
+  rather than merely redundant. Reads of the refreshed matview stay scoped via
+  view/get and view/count. Do not "fix" this omission by porting the tenancy
+  block from those templates.
+*/ -}}
+
+// Refresh recomputes the {{ .ViewName }} materialized view, replacing its
+// stored rows. It takes an ACCESS EXCLUSIVE lock on the view — concurrent
+// reads block until the refresh completes. It may run inside a transaction.
+func (c *{{ $structCamel }}Client) Refresh(ctx context.Context) error {
+	_, err := c.executeQuery(ctx, false, &hook.QueryContext{
+		Op: hook.OpRefresh, Table: {{ .TableNameConstant }}, Schema: {{ printf "%q" .Schema }},
+	}, func(ctx context.Context, q *hook.QueryContext) (any, error) {
+		conn := database.Conn(ctx, c.querier)
+		query := sql.BuildRefreshMaterializedView(c.dialect, c.table, false)
+		if _, err := conn.Exec(ctx, query); err != nil {
+			return nil, fmt.Errorf("refresh {{ .ViewName }}: %w", err)
+		}
+		return nil, nil
+	})
+	return err
+}
+{{- if .ConcurrentlyRefreshable }}
+
+// RefreshConcurrently recomputes the {{ .ViewName }} materialized view without
+// blocking concurrent reads. It requires a UNIQUE index on the view and does
+// more total work than Refresh. It cannot run inside a transaction block
+// (PostgreSQL restriction) — when an ambient transaction is present it returns
+// database.ErrRefreshConcurrentlyInTx before issuing any SQL.
+func (c *{{ $structCamel }}Client) RefreshConcurrently(ctx context.Context) error {
+	if database.InTransaction(ctx) {
+		return fmt.Errorf("refresh {{ .ViewName }}: %w", database.ErrRefreshConcurrentlyInTx)
+	}
+	_, err := c.executeQuery(ctx, false, &hook.QueryContext{
+		Op: hook.OpRefresh, Table: {{ .TableNameConstant }}, Schema: {{ printf "%q" .Schema }},
+	}, func(ctx context.Context, q *hook.QueryContext) (any, error) {
+		conn := database.Conn(ctx, c.querier)
+		query := sql.BuildRefreshMaterializedView(c.dialect, c.table, true)
+		if _, err := conn.Exec(ctx, query); err != nil {
+			return nil, fmt.Errorf("refresh {{ .ViewName }}: %w", err)
+		}
+		return nil, nil
+	})
+	return err
+}
+{{- end }}
+{{- end -}}
+{{- end -}}

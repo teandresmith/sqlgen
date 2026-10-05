@@ -1,0 +1,124 @@
+"""
+Document corresponds to the documents table.
+"""
+type Document {
+  "id"
+  id: UUID!
+  "entity_id"
+  entityID: UUID!
+  "entity_type"
+  entityType: DocumentEntityTypeEnum!
+  "name"
+  name: String!
+  "created_at"
+  createdAt: Time!
+  "many-to-many relationship with the assets table."
+  assets: [Asset!]!
+}
+
+type DocumentConnection {
+  edges:      [DocumentEdge!]!
+  pageInfo:   PageInfo!
+  totalCount: Int!
+}
+
+type DocumentEdge {
+  node:   Document!
+  cursor: String!
+}
+
+type DocumentListResult {
+  items:      [Document!]!
+  totalCount: Int!
+  offset:     Int!
+  limit:      Int!
+  hasMore:    Boolean!
+}
+
+input DocumentFilter {
+  entityID: IDComparator
+  entityType: DocumentEntityTypeEnumComparator
+  name: StringComparator
+  createdAt: TimeComparator
+  assets: AssetFilter
+  and: [DocumentFilter!]
+  or:  [DocumentFilter!]
+}
+
+enum DocumentSortField {
+  ID
+  ENTITY_ID
+  ENTITY_TYPE
+  NAME
+  CREATED_AT
+}
+
+input DocumentSort {
+  field:     DocumentSortField!
+  direction: SortDirection!
+}
+input CreateDocumentInput {
+  entityID: UUID!
+  entityType: DocumentEntityTypeEnum!
+  name: String!
+  createdAt: Time!
+}
+input UpdateDocumentInput {
+  entityID: UUID
+  entityType: DocumentEntityTypeEnum
+  name: String
+  createdAt: Time
+}
+
+extend type Query {
+  document(id: UUID!): Document
+  "Cursor-paginated; ordering is driven by cursor_keys to preserve keyset semantics — pass `sort` to documentList instead."
+  documents(filter: DocumentFilter, first: Int, after: String, last: Int, before: String): DocumentConnection!
+  documentList(filter: DocumentFilter, sort: [DocumentSort!], limit: Int, offset: Int): DocumentListResult!
+}
+
+extend type Mutation {
+  createDocument(input: CreateDocumentInput!): Document!
+  createDocuments(inputs: [CreateDocumentInput!]!): [Document!]!
+  updateDocument(id: UUID!, input: UpdateDocumentInput!): Document!
+  updateDocuments(filter: DocumentFilter!, input: UpdateDocumentInput!): [Document!]!
+  upsertDocument(input: CreateDocumentInput!): Document!
+  deleteDocument(id: UUID!): Boolean!
+}
+
+input CreateDocumentWithRelatedInput {
+  document: CreateDocumentInput!
+  assets: DocumentAssetsCreateNested
+}
+
+input UpdateDocumentWithRelatedInput {
+  document: UpdateDocumentInput
+  assets: DocumentAssetsUpdateNested
+}
+
+input UpsertDocumentWithRelatedInput {
+  document: CreateDocumentInput!
+  assets: DocumentAssetsUpdateNested
+}
+
+enum DocumentConflictTarget {
+  PK
+}
+
+input DocumentAssetsCreateNested {
+  create: [CreateAssetInput!]
+  connect: [UUID!]
+}
+
+input DocumentAssetsUpdateNested {
+  clear: Boolean
+  create: [CreateAssetInput!]
+  connect: [UUID!]
+  disconnect: [UUID!]
+}
+
+extend type Mutation {
+  createDocumentWithRelated(input: CreateDocumentWithRelatedInput!): Document!
+  updateDocumentWithRelated(id: UUID!, input: UpdateDocumentWithRelatedInput!): Document!
+  upsertDocumentWithRelated(input: UpsertDocumentWithRelatedInput!, conflictTarget: DocumentConflictTarget! = PK): Document!
+}

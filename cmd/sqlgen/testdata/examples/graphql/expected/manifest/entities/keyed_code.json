@@ -1,0 +1,502 @@
+{
+  "kind": "table",
+  "name": "KeyedCode",
+  "table": "keyed_codes",
+  "schema": "public",
+  "file_prefix": "keyed_code",
+  "files": [
+    "models_gen.go"
+  ],
+  "comment": "",
+  "indexes": [
+    {
+      "name": "keyed_codes_code_key",
+      "columns": [
+        "code"
+      ],
+      "unique": true,
+      "method": "btree"
+    }
+  ],
+  "pk": {
+    "kind": "single",
+    "columns": [
+      {
+        "name": "id",
+        "go_field": "ID",
+        "go_type": "uuid.UUID"
+      }
+    ]
+  },
+  "features": {
+    "soft_delete": null,
+    "cache": {
+      "ttl_seconds": 3600,
+      "hydration": "eager",
+      "key_pattern": "sqlgen:keyedcode:{id}",
+      "invalidates_on": [
+        "Create",
+        "Update",
+        "Delete",
+        "SoftDelete",
+        "Restore",
+        "Increment"
+      ]
+    },
+    "events": {
+      "enabled": true,
+      "types": [
+        "KeyedCodeCreated",
+        "KeyedCodeDeleted",
+        "KeyedCodeUpdated"
+      ],
+      "payload_shape": "models.KeyedCodeEvent"
+    },
+    "tenancy": null
+  },
+  "columns": [
+    {
+      "name": "id",
+      "go_field": "ID",
+      "go_type": "uuid.UUID",
+      "db_type": "uuid",
+      "nullable": false,
+      "pk": true,
+      "unique": false,
+      "comparator": "comparator.ID",
+      "comment": ""
+    },
+    {
+      "name": "code",
+      "go_field": "Code",
+      "go_type": "string",
+      "db_type": "text",
+      "nullable": false,
+      "pk": false,
+      "unique": true,
+      "comparator": "comparator.String",
+      "comment": ""
+    },
+    {
+      "name": "name",
+      "go_field": "Name",
+      "go_type": "string",
+      "db_type": "text",
+      "nullable": false,
+      "pk": false,
+      "unique": false,
+      "comparator": "comparator.String",
+      "comment": ""
+    }
+  ],
+  "relationships": [
+    {
+      "name": "Entries",
+      "kind": "o2m",
+      "target_entity": "KeyedCodeEntry",
+      "fk": {
+        "table": "keyed_code_entries",
+        "schema": "public",
+        "column": "keyed_code_id"
+      }
+    }
+  ],
+  "methods": {
+    "query": [
+      {
+        "name": "Get",
+        "params": [
+          {
+            "name": "id",
+            "type": "uuid.UUID"
+          }
+        ],
+        "returns": "*KeyedCode",
+        "errors": [
+          "ErrNotFound"
+        ],
+        "notes": "Delegates to GetMany with a primary-key filter; returns ErrNotFound when no row matches.",
+        "sql_bodies": {
+          "postgres": "SELECT \"code\", \"id\", \"name\" FROM \"public\".\"keyed_codes\" WHERE \"id\" = $1 LIMIT 1"
+        }
+      },
+      {
+        "name": "GetMany",
+        "params": [
+          {
+            "name": "input",
+            "type": "*GetKeyedCodesInput"
+          }
+        ],
+        "returns": "[]*KeyedCode",
+        "errors": [],
+        "sql_bodies": {
+          "postgres": "SELECT \"code\", \"id\", \"name\" FROM \"public\".\"keyed_codes\" WHERE <filter> ORDER BY <sort> LIMIT <limit>"
+        }
+      },
+      {
+        "name": "Count",
+        "params": [
+          {
+            "name": "filter",
+            "type": "*KeyedCodeFilter"
+          }
+        ],
+        "returns": "int64",
+        "errors": [],
+        "sql_bodies": {
+          "postgres": "SELECT COUNT(*) FROM \"public\".\"keyed_codes\" WHERE <filter>"
+        }
+      },
+      {
+        "name": "Exists",
+        "params": [
+          {
+            "name": "id",
+            "type": "uuid.UUID"
+          }
+        ],
+        "returns": "bool",
+        "errors": [],
+        "sql_bodies": {
+          "postgres": "SELECT EXISTS(SELECT 1 FROM \"public\".\"keyed_codes\" WHERE \"id\" = $1)"
+        }
+      },
+      {
+        "name": "ExistsWhere",
+        "params": [
+          {
+            "name": "filter",
+            "type": "*KeyedCodeFilter"
+          }
+        ],
+        "returns": "bool",
+        "errors": [],
+        "sql_bodies": {
+          "postgres": "SELECT EXISTS(SELECT 1 FROM \"public\".\"keyed_codes\" WHERE <filter>)"
+        }
+      },
+      {
+        "name": "Paginate",
+        "params": [
+          {
+            "name": "input",
+            "type": "PaginateInput[KeyedCodeFilter]"
+          }
+        ],
+        "returns": "*PaginateResult[KeyedCode]",
+        "errors": [],
+        "notes": "Offset pagination. Issues no statement of its own — composes Count and GetMany, so no sql_bodies entry."
+      },
+      {
+        "name": "Connection",
+        "params": [
+          {
+            "name": "input",
+            "type": "ConnectionInput[KeyedCodeFilter]"
+          }
+        ],
+        "returns": "*Connection[KeyedCode]",
+        "errors": [
+          "ErrInvalidCursor"
+        ],
+        "notes": "Relay cursor pagination. Issues no statement of its own — composes Count and GetMany, so no sql_bodies entry."
+      },
+      {
+        "name": "Stream",
+        "params": [
+          {
+            "name": "input",
+            "type": "*StreamKeyedCodesInput"
+          }
+        ],
+        "returns": "iter.Seq2[*KeyedCode, error]",
+        "errors": [],
+        "notes": "Scalars only — no relationship loading, cache always bypassed. Errors surface through the iterator's second value.",
+        "sql_bodies": {
+          "postgres": "SELECT \"code\", \"id\", \"name\" FROM \"public\".\"keyed_codes\" WHERE <filter> ORDER BY <sort>"
+        }
+      }
+    ],
+    "mutation": [
+      {
+        "name": "Create",
+        "params": [
+          {
+            "name": "input",
+            "type": "*CreateKeyedCodeInput"
+          }
+        ],
+        "returns": "*KeyedCode",
+        "errors": [
+          "ErrNilInput",
+          "ErrConstraintViolation"
+        ],
+        "sql_bodies": {
+          "postgres": "INSERT INTO \"public\".\"keyed_codes\" (<columns>) VALUES (<values>) RETURNING \"id\""
+        }
+      },
+      {
+        "name": "CreateMany",
+        "params": [
+          {
+            "name": "inputs",
+            "type": "[]*CreateKeyedCodeInput"
+          }
+        ],
+        "returns": "[]*KeyedCode",
+        "errors": [
+          "ErrNilInput",
+          "ErrConstraintViolation"
+        ],
+        "notes": "Batched in generation.batch_size chunks. Earlier chunks are not rolled back on a later failure — wrap in a transaction for atomicity.",
+        "sql_bodies": {
+          "postgres": "INSERT INTO \"public\".\"keyed_codes\" (<columns>) VALUES <values> RETURNING \"id\""
+        }
+      },
+      {
+        "name": "Upsert",
+        "params": [
+          {
+            "name": "input",
+            "type": "*CreateKeyedCodeInput"
+          },
+          {
+            "name": "target",
+            "type": "KeyedCodeConflictTarget"
+          }
+        ],
+        "returns": "*KeyedCode",
+        "errors": [
+          "ErrNilInput",
+          "ErrConstraintViolation"
+        ],
+        "notes": "One method over the generated KeyedCodeConflictTarget enum — the target argument selects the conflict columns at call time.",
+        "sql_bodies": {
+          "postgres": "INSERT INTO \"public\".\"keyed_codes\" (<columns>) VALUES (<values>) ON CONFLICT (<conflict_target>) DO UPDATE SET <excluded> RETURNING \"id\""
+        }
+      },
+      {
+        "name": "UpsertMany",
+        "params": [
+          {
+            "name": "inputs",
+            "type": "[]*CreateKeyedCodeInput"
+          },
+          {
+            "name": "target",
+            "type": "KeyedCodeConflictTarget"
+          }
+        ],
+        "returns": "[]*KeyedCode",
+        "errors": [
+          "ErrNilInput",
+          "ErrConstraintViolation"
+        ],
+        "notes": "Batched in generation.batch_size chunks over the same KeyedCodeConflictTarget enum Upsert takes. Inputs resolving to one target are deduped before the statement is built, last occurrence wins. Earlier chunks are not rolled back on a later failure — wrap in a transaction for atomicity.",
+        "sql_bodies": {
+          "postgres": "INSERT INTO \"public\".\"keyed_codes\" (<columns>) VALUES <values> ON CONFLICT (<conflict_target>) DO UPDATE SET <excluded>"
+        }
+      },
+      {
+        "name": "Update",
+        "params": [
+          {
+            "name": "id",
+            "type": "uuid.UUID"
+          },
+          {
+            "name": "input",
+            "type": "*UpdateKeyedCodeInput"
+          }
+        ],
+        "returns": "*KeyedCode",
+        "errors": [
+          "ErrNotFound",
+          "ErrNilInput",
+          "ErrConstraintViolation"
+        ],
+        "notes": "Only fields where IsSet() reports true reach the SET clause; an input with none set issues no UPDATE and returns the row unchanged.",
+        "sql_bodies": {
+          "postgres": "UPDATE \"public\".\"keyed_codes\" SET <set> WHERE \"id\" = $1"
+        }
+      },
+      {
+        "name": "UpdateMany",
+        "params": [
+          {
+            "name": "items",
+            "type": "[]UpdateKeyedCodeItem"
+          }
+        ],
+        "returns": "[]*KeyedCode",
+        "errors": [
+          "ErrNilInput",
+          "ErrConstraintViolation"
+        ],
+        "notes": "Issues one statement per item. Batched like CreateMany — earlier items are not rolled back on a later failure. A primary key that does not exist is silently skipped, even under strict_updates.",
+        "sql_bodies": {
+          "postgres": "UPDATE \"public\".\"keyed_codes\" SET <set> WHERE \"id\" = $1"
+        }
+      },
+      {
+        "name": "UpdateWhere",
+        "params": [
+          {
+            "name": "filter",
+            "type": "*KeyedCodeFilter"
+          },
+          {
+            "name": "input",
+            "type": "*UpdateKeyedCodeInput"
+          }
+        ],
+        "returns": "[]*KeyedCode",
+        "errors": [
+          "ErrNilInput",
+          "ErrEmptyFilter",
+          "ErrConstraintViolation"
+        ],
+        "notes": "Idempotent — returns an empty slice when no row matches. ErrEmptyFilter when the filter produces no conditions.",
+        "sql_bodies": {
+          "postgres": "UPDATE \"public\".\"keyed_codes\" SET <set> WHERE <filter> RETURNING \"id\""
+        }
+      },
+      {
+        "name": "HardDelete",
+        "params": [
+          {
+            "name": "id",
+            "type": "uuid.UUID"
+          }
+        ],
+        "returns": "",
+        "errors": [],
+        "notes": "Idempotent — a primary key that does not exist is not an error.",
+        "sql_bodies": {
+          "postgres": "DELETE FROM \"public\".\"keyed_codes\" WHERE \"id\" = $1"
+        }
+      },
+      {
+        "name": "HardDeleteMany",
+        "params": [
+          {
+            "name": "ids",
+            "type": "[]uuid.UUID"
+          }
+        ],
+        "returns": "",
+        "errors": [],
+        "notes": "Idempotent — primary keys that do not exist are not an error.",
+        "sql_bodies": {
+          "postgres": "DELETE FROM \"public\".\"keyed_codes\" WHERE \"id\" IN (<ids>)"
+        }
+      },
+      {
+        "name": "HardDeleteWhere",
+        "params": [
+          {
+            "name": "filter",
+            "type": "*KeyedCodeFilter"
+          }
+        ],
+        "returns": "",
+        "errors": [
+          "ErrEmptyFilter"
+        ],
+        "notes": "Idempotent — no match is not an error. ErrEmptyFilter when the filter produces no conditions.",
+        "sql_bodies": {
+          "postgres": "DELETE FROM \"public\".\"keyed_codes\" WHERE <filter> RETURNING \"id\""
+        }
+      },
+      {
+        "name": "CreateWithRelated",
+        "params": [
+          {
+            "name": "input",
+            "type": "*CreateKeyedCodeWithRelatedInput"
+          }
+        ],
+        "returns": "*KeyedCode",
+        "errors": [
+          "ErrNilInput",
+          "ErrConstraintViolation"
+        ],
+        "notes": "Writes the parent and its nested rows in one transaction — a SAVEPOINT when ctx already holds one. Issues no statement of its own: it composes Create and, per eligible relationship (Entries), the target's and junction's own client methods, so no sql_bodies entry. Each inner call fires its own hooks, events and cache invalidation under its own op; the nested method has none."
+      },
+      {
+        "name": "UpdateWithRelated",
+        "params": [
+          {
+            "name": "id",
+            "type": "uuid.UUID"
+          },
+          {
+            "name": "input",
+            "type": "*UpdateKeyedCodeWithRelatedInput"
+          }
+        ],
+        "returns": "*KeyedCode",
+        "errors": [
+          "ErrNilInput",
+          "ErrNotFound",
+          "ErrConstraintViolation"
+        ],
+        "notes": "Writes the parent and its nested rows in one transaction — a SAVEPOINT when ctx already holds one. Issues no statement of its own: it composes Update and, per eligible relationship (Entries), the target's and junction's own client methods, so no sql_bodies entry. Each inner call fires its own hooks, events and cache invalidation under its own op; the nested method has none."
+      },
+      {
+        "name": "UpsertWithRelated",
+        "params": [
+          {
+            "name": "input",
+            "type": "*UpsertKeyedCodeWithRelatedInput"
+          },
+          {
+            "name": "target",
+            "type": "KeyedCodeConflictTarget"
+          }
+        ],
+        "returns": "*KeyedCode",
+        "errors": [
+          "ErrNilInput",
+          "ErrConstraintViolation"
+        ],
+        "notes": "Writes the parent and its nested rows in one transaction — a SAVEPOINT when ctx already holds one. Issues no statement of its own: it composes Upsert and, per eligible relationship (Entries), the target's and junction's own client methods, so no sql_bodies entry. Each inner call fires its own hooks, events and cache invalidation under its own op; the nested method has none."
+      }
+    ]
+  },
+  "filter": {
+    "type": "KeyedCodeFilter",
+    "fields": [
+      {
+        "name": "Code",
+        "type": "*comparator.String"
+      },
+      {
+        "name": "ID",
+        "type": "*comparator.ID"
+      },
+      {
+        "name": "Name",
+        "type": "*comparator.String"
+      },
+      {
+        "name": "And",
+        "type": "[]*KeyedCodeFilter"
+      },
+      {
+        "name": "Or",
+        "type": "[]*KeyedCodeFilter"
+      }
+    ]
+  },
+  "sort": {
+    "type": "KeyedCodeSort",
+    "fields": [
+      "Code",
+      "ID",
+      "Name"
+    ]
+  },
+  "examples": {}
+}

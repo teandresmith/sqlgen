@@ -1,0 +1,72 @@
+"""
+BinaryKeyEvent corresponds to the binary_key_events table.
+"""
+type BinaryKeyEvent {
+  "id"
+  id: Int!
+  "binary_key_id"
+  binaryKeyID: Bytes!
+  "label"
+  label: String!
+}
+
+type BinaryKeyEventConnection {
+  edges:      [BinaryKeyEventEdge!]!
+  pageInfo:   PageInfo!
+  totalCount: Int!
+}
+
+type BinaryKeyEventEdge {
+  node:   BinaryKeyEvent!
+  cursor: String!
+}
+
+type BinaryKeyEventListResult {
+  items:      [BinaryKeyEvent!]!
+  totalCount: Int!
+  offset:     Int!
+  limit:      Int!
+  hasMore:    Boolean!
+}
+
+input BinaryKeyEventFilter {
+  binaryKeyID: BytesComparator
+  label: StringComparator
+  and: [BinaryKeyEventFilter!]
+  or:  [BinaryKeyEventFilter!]
+}
+
+enum BinaryKeyEventSortField {
+  ID
+  BINARY_KEY_ID
+  LABEL
+}
+
+input BinaryKeyEventSort {
+  field:     BinaryKeyEventSortField!
+  direction: SortDirection!
+}
+input CreateBinaryKeyEventInput {
+  binaryKeyID: Bytes!
+  label: String!
+}
+input UpdateBinaryKeyEventInput {
+  binaryKeyID: Bytes
+  label: String
+}
+
+extend type Query {
+  binaryKeyEvent(id: Int!): BinaryKeyEvent
+  "Cursor-paginated; ordering is driven by cursor_keys to preserve keyset semantics — pass `sort` to binaryKeyEventList instead."
+  binaryKeyEvents(filter: BinaryKeyEventFilter, first: Int, after: String, last: Int, before: String): BinaryKeyEventConnection!
+  binaryKeyEventList(filter: BinaryKeyEventFilter, sort: [BinaryKeyEventSort!], limit: Int, offset: Int): BinaryKeyEventListResult!
+}
+
+extend type Mutation {
+  createBinaryKeyEvent(input: CreateBinaryKeyEventInput!): BinaryKeyEvent!
+  createBinaryKeyEvents(inputs: [CreateBinaryKeyEventInput!]!): [BinaryKeyEvent!]!
+  updateBinaryKeyEvent(id: Int!, input: UpdateBinaryKeyEventInput!): BinaryKeyEvent!
+  updateBinaryKeyEvents(filter: BinaryKeyEventFilter!, input: UpdateBinaryKeyEventInput!): [BinaryKeyEvent!]!
+  upsertBinaryKeyEvent(input: CreateBinaryKeyEventInput!): BinaryKeyEvent!
+  deleteBinaryKeyEvent(id: Int!): Boolean!
+}

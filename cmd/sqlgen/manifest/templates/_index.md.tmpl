@@ -1,0 +1,17 @@
+# {{ .Package }} manifest
+
+- **Dialect:** {{ .Dialect }}
+- **Generator:** {{ .Generator.Name }} {{ .Generator.Version }}
+- **Schema version:** {{ .SchemaVersion }}
+
+Features: {{ featuresLine .GenerationConfig }}
+
+## Entities
+
+| Name | Table | Kind | File | Description |
+| --- | --- | --- | --- | --- |
+{{- range .Entities }}
+| {{ .Name }} | `{{ .Table }}` | {{ .Kind }} | [{{ .FilePrefix }}.md]({{ .FilePrefix }}.md) | {{ mdCell (firstLine .Comment) }} |
+{{- end }}
+
+See [conventions](_conventions.md) for package-wide error sentinels, pagination, comparators, soft-delete, CallOptions, and the omittable reference.

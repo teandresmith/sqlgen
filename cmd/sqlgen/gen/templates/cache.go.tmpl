@@ -1,0 +1,1111 @@
+{{- define "cache" -}}
+
+// Per-table schema fingerprint constants. Baked at codegen
+// time from the table's column names, Go types, struct tags, PK order, and
+// serializer identity. Any struct-shape change regenerates these; old-fingerprint
+// keys naturally orphan.
+{{- range .CachedTables }}
+const fingerprint{{ .Struct }} = "{{ .Fingerprint }}"
+{{- end }}
+{{- range .CachedViews }}
+const fingerprint{{ .Struct }} = "{{ .Fingerprint }}"
+{{- end }}
+
+// cacheOptions captures runtime-injectable overrides for a Cache instance.
+// All per-table TTL, serializer, key prefix, hydration, and circuit-breaker
+// defaults are baked in at codegen time; options are runtime-only overrides
+// (consumer-supplied objects, not config values).
+type cacheOptions struct {
+	invalidationSource cache.InvalidationSource
+	metricsRecorder    cache.MetricsRecorder
+	serializer         cache.Serializer
+	breaker            *cache.Breaker
+	onError            cache.OnErrorFunc
+}
+
+// CacheOption configures a Cache instance at construction time.
+type CacheOption func(*cacheOptions)
+
+// WithInvalidationSource wires a cross-instance invalidation source (e.g.,
+// cache.FromEventSubscriber for sqlgen's event bus, or a custom Kafka/CDC
+// adapter).
+func WithInvalidationSource(src cache.InvalidationSource) CacheOption {
+	return func(o *cacheOptions) { o.invalidationSource = src }
+}
+
+// WithMetricsRecorder wires a MetricsRecorder implementation. Nil is a
+// zero-cost path.
+func WithMetricsRecorder(r cache.MetricsRecorder) CacheOption {
+	return func(o *cacheOptions) { o.metricsRecorder = r }
+}
+
+// WithSerializer overrides the default serializer baked in at codegen time.
+// Required when cache.serializer is "custom" in sqlgen.yml.
+func WithSerializer(s cache.Serializer) CacheOption {
+	return func(o *cacheOptions) { o.serializer = s }
+}
+
+// WithCircuitBreaker overrides the default circuit breaker.
+func WithCircuitBreaker(b *cache.Breaker) CacheOption {
+	return func(o *cacheOptions) { o.breaker = b }
+}
+
+// WithOnError overrides the textual cache-error callback.
+func WithOnError(fn cache.OnErrorFunc) CacheOption {
+	return func(o *cacheOptions) { o.onError = fn }
+}
+
+// Cache is the generated cache facade. Instances are safe for concurrent use
+// after construction. Cache is wired into the generated client via WithCache.
+type Cache struct {
+	backend          cache.Backend
+	prefix           string
+	serializer       cache.Serializer
+	metrics          cache.MetricsRecorder
+	breaker          *cache.Breaker
+	onError          cache.OnErrorFunc
+	hydrationEnabled bool
+	hydrationTimeout time.Duration
+	sf               singleflight.Group
+	hydrating        sync.Map
+	invalidationSub  cache.InvalidationSubscription
+}
+
+// NewCache constructs a Cache backed by backend with runtime overrides in opts.
+// Returns an error when a required option is missing (e.g. cache.serializer:
+// custom without WithSerializer).
+func NewCache(backend cache.Backend, opts ...CacheOption) (*Cache, error) {
+	options := cacheOptions{}
+	for _, opt := range opts {
+		opt(&options)
+	}
+
+	if options.serializer == nil {
+	{{- if eq .Config.SerializerID "msgpack" }}
+		options.serializer = sqlgenmsgpack.New()
+	{{- else if eq .Config.SerializerID "custom" }}
+		return nil, fmt.Errorf("cache: serializer: custom requires WithSerializer(...) — see cache.serializer in sqlgen.yml")
+	{{- else }}
+		options.serializer = cache.JSONSerializer{}
+	{{- end }}
+	}
+
+	{{- if .Config.BreakerEnabled }}
+	if options.breaker == nil {
+		breakerCfg := cache.BreakerConfig{
+			FailureThreshold:  {{ .Config.BreakerFailThreshold }},
+			ProbeInterval:     time.Duration({{ .Config.BreakerProbeInterval.Nanoseconds }}),
+			HalfOpenMaxProbes: {{ .Config.BreakerHalfOpenMax }},
+		}
+		if options.metricsRecorder != nil {
+			m := options.metricsRecorder
+			breakerCfg.OnStateChange = func(from, to cache.CircuitState) {
+				m.CircuitBreakerStateChange(from, to)
+			}
+		}
+		options.breaker = cache.NewBreaker(breakerCfg)
+	}
+	{{- end }}
+
+	if options.onError == nil {
+		options.onError = cache.DefaultOnCacheError
+	}
+
+	c := &Cache{
+		backend:          backend,
+		prefix:           {{ printf "%q" .Config.Prefix }},
+		serializer:       options.serializer,
+		metrics:          options.metricsRecorder,
+		breaker:          options.breaker,
+		onError:          options.onError,
+		hydrationEnabled: {{ .Config.HydrationEnabled }},
+		hydrationTimeout: time.Duration({{ .Config.HydrationTimeout.Nanoseconds }}),
+	}
+
+	if options.invalidationSource != nil {
+		sub, err := options.invalidationSource.Subscribe(c.handleInvalidation)
+		if err != nil {
+			return nil, fmt.Errorf("cache: subscribe invalidation source: %w", err)
+		}
+		c.invalidationSub = sub
+	}
+
+	return c, nil
+}
+
+// handleInvalidation is the InvalidationSource handler: it dispatches signals
+// to InvalidateTable (when the signal carries no PKs), the precise
+// tenant-scoped per-PK path for tenanted tables, or
+// InvalidateMany.
+func (c *Cache) handleInvalidation(ctx context.Context, signal cache.InvalidationSignal) error {
+	if len(signal.PKs) == 0 {
+		return c.InvalidateTable(ctx, signal.Table)
+	}
+{{- if anyTenanted .CachedTables }}
+	switch signal.Table {
+{{- range .CachedTables }}
+{{- if and .Tenanted .TenantInPK }}
+	case {{ .TableNameConstant }}:
+		// Tenant lives inside the primary key — each signal PK carries it,
+		// so the receive side is precise even without a tenant stamp.
+		return c.invalidateAffectedTenanted(ctx, signal.Table, nil, signal.PKs)
+{{- else if .Tenanted }}
+	case {{ .TableNameConstant }}:
+		// Rebuild the exact per-PK key from the signal's tenant stamp: the
+		// %v round-trip makes the string form byte-identical to the local
+		// key, and the fingerprint is this receiver's own
+		// codegen constant — a rolling deploy only ever evicts keys this
+		// instance itself wrote. A tenant-less signal (out-of-band or
+		// pre-stamp publisher) degrades to the full-table pattern instead
+		// of erroring or going stale.
+		if signal.Tenant == "" {
+			return c.invalidateTenantedFallback(ctx, signal.Table, "invalidation signal carries no tenant")
+		}
+		tenants := make([]any, len(signal.PKs))
+		for i := range tenants {
+			tenants[i] = signal.Tenant
+		}
+		return c.invalidateAffectedTenanted(ctx, signal.Table, tenants, signal.PKs)
+{{- end }}
+{{- end }}
+	}
+{{- end }}
+	return c.InvalidateMany(ctx, signal.Table, signal.PKs)
+}
+
+{{ range .CachedTables }}
+{{- if .CompositePK }}
+// keyFor{{ .Struct }} builds the cache key for {{ .Struct }} with composite PK.
+// The []any is constructed in DDL PRIMARY KEY column order inside this one
+// function — call sites never reorder (key-order invariant).
+{{- if .Tenanted }}
+// Tenanted form: tenant: segment is emitted before fingerprint:
+// so the per-tenant trailing-wildcard pattern (BuildTenantTablePattern)
+// matches every fingerprint generation in one pass.
+func (c *Cache) keyFor{{ .Struct }}(tenant {{ .TenantGoType }}, pk {{ .CompositePKStruct }}) string {
+	return cache.BuildCompositeTenantKey(c.prefix, {{ printf "%q" .Schema }}, {{ printf "%q" .Name }}, fingerprint{{ .Struct }}, tenant, []any{
+	{{- range .PKColumns }}
+		pk.{{ .FieldName }},
+	{{- end }}
+	})
+}
+{{- else }}
+func (c *Cache) keyFor{{ .Struct }}(pk {{ .CompositePKStruct }}) string {
+	return cache.BuildCompositeKey(c.prefix, {{ printf "%q" .Schema }}, {{ printf "%q" .Name }}, fingerprint{{ .Struct }}, []any{
+	{{- range .PKColumns }}
+		pk.{{ .FieldName }},
+	{{- end }}
+	})
+}
+{{- end }}
+{{- else }}
+// keyFor{{ .Struct }} builds the cache key for {{ .Struct }} by PK.
+{{- if .Tenanted }}
+// Tenanted form: tenant: segment lands before fingerprint:
+// so per-tenant pattern invalidation works with a single trailing wildcard.
+func (c *Cache) keyFor{{ .Struct }}(tenant {{ .TenantGoType }}, pk {{ .PKGoType }}) string {
+	return cache.BuildTenantKey(c.prefix, {{ printf "%q" .Schema }}, {{ printf "%q" .Name }}, fingerprint{{ .Struct }}, tenant, pk)
+}
+{{- else }}
+func (c *Cache) keyFor{{ .Struct }}(pk {{ .PKGoType }}) string {
+	return cache.BuildKey(c.prefix, {{ printf "%q" .Schema }}, {{ printf "%q" .Name }}, fingerprint{{ .Struct }}, pk)
+}
+{{- end }}
+{{- end }}
+
+// ttlFor{{ .Struct }} returns the resolved TTL for {{ .Struct }} cache entries.
+func (c *Cache) ttlFor{{ .Struct }}() time.Duration {
+	return time.Duration({{ .TTL.Nanoseconds }})
+}
+
+// hasAnyRelationship{{ .Struct }} reports whether fo has any relationship-typed
+// flag set. Returns false when fo is nil or when only column flags are set.
+func hasAnyRelationship{{ .Struct }}(fo any) bool {
+	if fo == nil {
+		return false
+	}
+	typed, ok := fo.(*{{ .FieldOptionsName }})
+	if !ok || typed == nil {
+		return false
+	}
+{{- if .RelationshipFieldNames }}
+{{- range .RelationshipFieldNames }}
+	if typed.{{ . }} != nil {
+		return true
+	}
+{{- end }}
+{{- else }}
+	_ = typed
+{{- end }}
+	return false
+}
+
+// fullParentFieldOptions{{ .Struct }} returns a FieldOptions with every column
+// flag set to true and every relationship flag nil — used by hydration to
+// guarantee parent-only results regardless of nil-FieldOptions semantics
+// elsewhere.
+func fullParentFieldOptions{{ .Struct }}() *{{ .FieldOptionsName }} {
+	return &{{ .FieldOptionsName }}{
+	{{- range .ColumnFieldNames }}
+		{{ . }}: true,
+	{{- end }}
+	}
+}
+
+// readThrough{{ .Struct }} implements the cache read-through path for {{ .Struct }}:
+// probe cache → hit returns decoded entity, miss runs the DB query under
+// singleflight dedup and populates cache. Every backend call is breaker-gated;
+// errors are routed through cache.RouteError and fall through to the DB so
+// a cache outage never breaks the caller.
+{{- if .Tenanted }}
+// Tenanted: tenant comes from q.Tenant — resolved once at the entity-method
+// boundary and reused here without re-invoking TenantResolver.
+func (c *Cache) readThrough{{ .Struct }}(ctx context.Context, tenant {{ .TenantGoType }}, pk {{ if .CompositePK }}{{ .CompositePKStruct }}{{ else }}{{ .PKGoType }}{{ end }}, q *hook.QueryContext, next hook.QueryHandler) (any, error) {
+	key := c.keyFor{{ .Struct }}(tenant, pk)
+{{- else }}
+func (c *Cache) readThrough{{ .Struct }}(ctx context.Context, pk {{ if .CompositePK }}{{ .CompositePKStruct }}{{ else }}{{ .PKGoType }}{{ end }}, q *hook.QueryContext, next hook.QueryHandler) (any, error) {
+	key := c.keyFor{{ .Struct }}(pk)
+{{- end }}
+	schema := {{ printf "%q" .Schema }}
+
+	if c.breaker == nil || c.breaker.Allow() {
+		getStart := time.Now()
+		entity, hit, err := cache.GetAs[*{{ .Struct }}](ctx, c.backend, c.serializer, key)
+		if c.metrics != nil {
+			c.metrics.GetLatency(schema, {{ .TableNameConstant }}, time.Since(getStart))
+		}
+		if err != nil {
+			cache.RouteError(ctx, c.metrics, c.onError, c.breaker, "get", schema, {{ .TableNameConstant }}, err)
+		} else if hit {
+			if c.metrics != nil {
+				c.metrics.Hit(schema, {{ .TableNameConstant }})
+			}
+			if c.breaker != nil {
+				c.breaker.RecordSuccess()
+			}
+			return entity, nil
+		} else {
+			if c.metrics != nil {
+				c.metrics.Miss(schema, {{ .TableNameConstant }})
+			}
+			// A clean miss is a successful backend round-trip — it resets
+			// the consecutive-failure counter and closes a HalfOpen probe.
+			if c.breaker != nil {
+				c.breaker.RecordSuccess()
+			}
+		}
+	} else if c.metrics != nil {
+		c.metrics.Miss(schema, {{ .TableNameConstant }})
+	}
+
+	// Partial fetches must not write back to cache (invariant:
+	// only full entities). On miss, run the DB through `next` with the
+	// caller's partial FieldOptions, kick off fire-and-forget hydration to
+	// refill the cache with the full entity, and return the
+	// partial result directly. The partial + hydration-disabled case is
+	// filtered out earlier in QueryHook.
+	if extractFieldOptions(q.CallOptions) != nil {
+		result, err := next(ctx, q)
+		if err != nil {
+			return nil, err
+		}
+{{- if .Tenanted }}
+		c.hydrate{{ .Struct }}(tenant, pk, next)
+{{- else }}
+		c.hydrate{{ .Struct }}(pk, next)
+{{- end }}
+		return result, nil
+	}
+
+	ch := c.sf.DoChan(key, func() (any, error) {
+		// In-flight cache re-check: a sibling flight may have populated the
+		// cache between this caller's outer Get-miss and entering the flight.
+		// Without this, late stragglers that arrive after the sibling flight
+		// completed would register a new flight and run a duplicate DB query.
+		// The outer probe already recorded the Miss / breaker success; this
+		// inner re-check is dedup machinery, not an observable cache event, so
+		// it emits no metrics.
+		if c.breaker == nil || c.breaker.Allow() {
+			if entity, hit, err := cache.GetAs[*{{ .Struct }}](ctx, c.backend, c.serializer, key); err == nil && hit {
+				return entity, nil
+			}
+		}
+		result, fetchErr := next(ctx, q)
+		if fetchErr != nil {
+			return nil, fetchErr
+		}
+		entity, ok := result.(*{{ .Struct }})
+		if !ok || entity == nil {
+			return result, nil
+		}
+		if c.breaker != nil && !c.breaker.Allow() {
+			return result, nil
+		}
+		setStart := time.Now()
+		setErr := cache.SetAs(ctx, c.backend, c.serializer, key, entity, c.ttlFor{{ .Struct }}())
+		if c.metrics != nil {
+			c.metrics.SetLatency(schema, {{ .TableNameConstant }}, time.Since(setStart))
+		}
+		if setErr != nil {
+			cache.RouteError(ctx, c.metrics, c.onError, c.breaker, "set", schema, {{ .TableNameConstant }}, setErr)
+			return result, nil
+		}
+		if c.breaker != nil {
+			c.breaker.RecordSuccess()
+		}
+		if c.metrics != nil {
+			c.metrics.Set(schema, {{ .TableNameConstant }})
+		}
+		return result, nil
+	})
+
+	select {
+	case res := <-ch:
+		return res.Val, res.Err
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	}
+}
+
+// set{{ .Struct }} caches a full {{ .Struct }} entity. Called by the mutation hook
+// after a successful Create / CreateMany to populate the cache with the new
+// entity. The PK is read from the entity itself so this never
+// depends on parallel ordering with m.AffectedPKs (GetMany does not guarantee
+// result order). Failures route through cache.RouteError and never surface to
+// the caller path; a cache outage can delay the next Get but never breaks a
+// mutation.
+{{- if .Tenanted }}
+// Tenanted: tenant is supplied by the mutation hook from the row itself —
+// the PK struct when the tenant is part of the primary key, the structurally
+// captured m.AffectedTenants value otherwise — never the resolver, so
+// SkipTenancy creates write through under the correct key.
+func (c *Cache) set{{ .Struct }}(ctx context.Context, tenant {{ .TenantGoType }}, entity *{{ .Struct }}) {
+{{- else }}
+func (c *Cache) set{{ .Struct }}(ctx context.Context, entity *{{ .Struct }}) {
+{{- end }}
+	if entity == nil {
+		return
+	}
+	if c.breaker != nil && !c.breaker.Allow() {
+		return
+	}
+{{- if .CompositePK }}
+{{- if .Tenanted }}
+	key := c.keyFor{{ .Struct }}(tenant, {{ .CompositePKStruct }}{
+	{{- range .PKColumns }}
+		{{ .FieldName }}: entity.{{ .FieldName }},
+	{{- end }}
+	})
+{{- else }}
+	key := c.keyFor{{ .Struct }}({{ .CompositePKStruct }}{
+	{{- range .PKColumns }}
+		{{ .FieldName }}: entity.{{ .FieldName }},
+	{{- end }}
+	})
+{{- end }}
+{{- else }}
+{{- if .Tenanted }}
+	key := c.keyFor{{ .Struct }}(tenant, entity.{{ (index .PKColumns 0).FieldName }})
+{{- else }}
+	key := c.keyFor{{ .Struct }}(entity.{{ (index .PKColumns 0).FieldName }})
+{{- end }}
+{{- end }}
+	schema := {{ printf "%q" .Schema }}
+	setStart := time.Now()
+	err := cache.SetAs(ctx, c.backend, c.serializer, key, entity, c.ttlFor{{ .Struct }}())
+	if c.metrics != nil {
+		c.metrics.SetLatency(schema, {{ .TableNameConstant }}, time.Since(setStart))
+	}
+	if err != nil {
+		cache.RouteError(ctx, c.metrics, c.onError, c.breaker, "set", schema, {{ .TableNameConstant }}, err)
+		return
+	}
+	if c.breaker != nil {
+		c.breaker.RecordSuccess()
+	}
+	if c.metrics != nil {
+		c.metrics.Set(schema, {{ .TableNameConstant }})
+	}
+}
+
+// hydrate{{ .Struct }} launches at most one background hydration per (table, pk).
+// Runs with a fresh context.Background() timeout — does NOT inherit the
+// caller's ctx. Re-runs the Get through the
+// downstream chain with full-parent FieldOptions (every column true, every
+// relationship nil) and SkipHooks: true so the refill pulls a full entity,
+// then serializes and populates the cache under the full-entity key. Errors
+// surface via metrics.HydrationComplete + cache.RouteError; the caller path
+// is never affected.
+{{- if .Tenanted }}
+// Tenanted: tenant comes from the readThrough caller — resolved once at the
+// entity-method boundary, threaded through both the cache key and the
+// hydration QueryContext.Tenant.
+func (c *Cache) hydrate{{ .Struct }}(tenant {{ .TenantGoType }}, pk {{ if .CompositePK }}{{ .CompositePKStruct }}{{ else }}{{ .PKGoType }}{{ end }}, next hook.QueryHandler) {
+	if !c.hydrationEnabled {
+		return
+	}
+	key := c.keyFor{{ .Struct }}(tenant, pk)
+{{- else }}
+func (c *Cache) hydrate{{ .Struct }}(pk {{ if .CompositePK }}{{ .CompositePKStruct }}{{ else }}{{ .PKGoType }}{{ end }}, next hook.QueryHandler) {
+	if !c.hydrationEnabled {
+		return
+	}
+	key := c.keyFor{{ .Struct }}(pk)
+{{- end }}
+	if _, loaded := c.hydrating.LoadOrStore(key, struct{}{}); loaded {
+		return
+	}
+	go func() {
+		defer c.hydrating.Delete(key)
+		ctx, cancel := context.WithTimeout(context.Background(), c.hydrationTimeout)
+		defer cancel()
+		schema := {{ printf "%q" .Schema }}
+		if c.metrics != nil {
+			c.metrics.HydrationStart(schema, {{ .TableNameConstant }})
+		}
+
+		q := &hook.QueryContext{
+			Op:     hook.OpGet,
+			Table:  {{ .TableNameConstant }},
+			Schema: schema,
+			PK:     pk,
+{{- if .Tenanted }}
+			Tenant: tenant,
+{{- end }}
+			CallOptions: CallOptions[{{ .FieldOptionsName }}]{
+				FieldOptions: fullParentFieldOptions{{ .Struct }}(),
+				SkipHooks:    true,
+			},
+		}
+		result, err := next(ctx, q)
+		if err != nil {
+			if c.metrics != nil {
+				c.metrics.HydrationComplete(schema, {{ .TableNameConstant }}, err)
+			}
+			return
+		}
+		entity, ok := result.(*{{ .Struct }})
+		if !ok || entity == nil {
+			if c.metrics != nil {
+				c.metrics.HydrationComplete(schema, {{ .TableNameConstant }}, nil)
+			}
+			return
+		}
+
+		if c.breaker != nil && !c.breaker.Allow() {
+			if c.metrics != nil {
+				c.metrics.HydrationComplete(schema, {{ .TableNameConstant }}, nil)
+			}
+			return
+		}
+		setStart := time.Now()
+		setErr := cache.SetAs(ctx, c.backend, c.serializer, key, entity, c.ttlFor{{ .Struct }}())
+		if c.metrics != nil {
+			c.metrics.SetLatency(schema, {{ .TableNameConstant }}, time.Since(setStart))
+		}
+		if setErr != nil {
+			cache.RouteError(ctx, c.metrics, c.onError, c.breaker, "set", schema, {{ .TableNameConstant }}, setErr)
+			if c.metrics != nil {
+				c.metrics.HydrationComplete(schema, {{ .TableNameConstant }}, setErr)
+			}
+			return
+		}
+		if c.breaker != nil {
+			c.breaker.RecordSuccess()
+		}
+		if c.metrics != nil {
+			c.metrics.Set(schema, {{ .TableNameConstant }})
+			c.metrics.HydrationComplete(schema, {{ .TableNameConstant }}, nil)
+		}
+	}()
+}
+{{ end }}
+
+// patternsForSourceTable returns the view BuildTablePattern strings that the
+// mutation hook must invalidate after a mutation on source table.
+func (c *Cache) patternsForSourceTable(table hook.TableName) []string {
+	switch table {
+{{- range $src, $patterns := .ViewInvalidateMap }}
+	case hook.TableName({{ printf "%q" $src }}):
+		return []string{
+		{{- range $patterns }}
+			{{ printf "%q" . }},
+		{{- end }}
+		}
+{{- end }}
+	}
+	return nil
+}
+
+// Invalidate clears a single cached entry. pk must match the table's PK type
+// (scalar or generated XXXPK struct value).
+func (c *Cache) Invalidate(ctx context.Context, table hook.TableName, pk any) error {
+	return c.InvalidateMany(ctx, table, []any{pk})
+}
+
+// InvalidateMany clears multiple cached entries for the given table. pk
+// elements must match the table's PK type — wrong-type elements return the
+// descriptive error from cache.KeysFromAny.
+//
+// Tenanted tables require a tenant scope to construct keys
+// and are not callable through this path — use the cache hook
+// auto-invalidation (mutations resolve tenant once and invalidate
+// automatically) or InvalidateTable / BuildTenantTablePattern for
+// pattern-based clears.
+{{- $anyNonTenantedCached := false }}
+{{- range .CachedTables }}{{ if not .Tenanted }}{{ $anyNonTenantedCached = true }}{{ end }}{{ end }}
+func (c *Cache) InvalidateMany(ctx context.Context, table hook.TableName, pks []any) error {
+{{- if $anyNonTenantedCached }}
+	var (
+		keys []string
+		err  error
+	)
+{{- end }}
+	switch table {
+{{- range .CachedTables }}
+{{- if not .Tenanted }}
+	case {{ .TableNameConstant }}:
+		keys, err = cache.KeysFromAny(pks, c.keyFor{{ .Struct }})
+{{- end }}
+{{- end }}
+{{- range .CachedTables }}
+{{- if .Tenanted }}
+	case {{ .TableNameConstant }}:
+		return fmt.Errorf("cache: InvalidateMany(%q): table is tenanted; use cache hook auto-invalidation or InvalidateTable / BuildTenantTablePattern", table)
+{{- end }}
+{{- end }}
+	default:
+		return fmt.Errorf("cache: unknown or non-cached table %q", table)
+	}
+{{- if $anyNonTenantedCached }}
+	if err != nil {
+		return fmt.Errorf("cache: InvalidateMany(%q): %w", table, err)
+	}
+	return c.invalidateKeys(ctx, table, keys)
+{{- end }}
+}
+
+{{- if anyTenanted .CachedTables }}
+
+// invalidateAffected{{ "Tenanted" }} routes per-row invalidation for a tenanted
+// table. Every key is rebuilt from the affected row's own tenant:
+// the PK struct carries it when the tenant column is part
+// of the primary key; otherwise tenants[i] is the structurally captured value
+// for pks[i] (hook.MutationContext.AffectedTenants). Tenant values reach the
+// key through the same %v formatting the key grammar uses, so any
+// representation with an identical string form — the concrete resolver type
+// locally, the metadata string stamp on the event-driven path — rebuilds the
+// exact same key bytes.
+//
+// This path cannot fail a committed mutation over a capture gap: a nil
+// tenants[i] means the mutation did not materialize a row for that PK
+// (idempotent delete of an absent key, no-op batch item) — nothing cached
+// changed, so it is skipped — while a missing carrier or an unexpected PK
+// shape degrades to the cross-tenant table pattern via
+// invalidateTenantedFallback (safe but loud; should never fire). Only
+// backend errors propagate, exactly like the non-tenanted path.
+func (c *Cache) invalidateAffectedTenanted(ctx context.Context, table hook.TableName, tenants []any, pks []any) error {
+	keys := make([]string, 0, len(pks))
+	switch table {
+{{- range .CachedTables }}
+{{- if .Tenanted }}
+	case {{ .TableNameConstant }}:
+{{- if .TenantInPK }}
+		// Tenant lives inside the primary key — read it from each PK
+		// value; no parallel carrier is written for this shape.
+		for _, rawPK := range pks {
+			pk, ok := rawPK.({{ if .CompositePK }}{{ .CompositePKStruct }}{{ else }}{{ .PKGoType }}{{ end }})
+			if !ok {
+				return c.invalidateTenantedFallback(ctx, table, fmt.Sprintf("unexpected PK type %T", rawPK))
+			}
+			keys = append(keys, c.keyFor{{ .Struct }}({{ if .CompositePK }}pk.{{ .TenantFieldName }}{{ else }}pk{{ end }}, pk))
+		}
+{{- else }}
+		if len(tenants) < len(pks) {
+			return c.invalidateTenantedFallback(ctx, table, "captured tenant carrier missing")
+		}
+		for i, pk := range pks {
+			if tenants[i] == nil {
+				// Row not materialized by the mutation — nothing cached
+				// changed for this PK; skip (hook.AffectedTenants contract).
+				continue
+			}
+{{- if .CompositePK }}
+			compositePK, ok := pk.({{ .CompositePKStruct }})
+			if !ok {
+				return c.invalidateTenantedFallback(ctx, table, fmt.Sprintf("unexpected PK type %T", pk))
+			}
+			keys = append(keys, cache.BuildCompositeTenantKey(c.prefix, {{ printf "%q" .Schema }}, {{ printf "%q" .Name }}, fingerprint{{ .Struct }}, tenants[i], []any{
+			{{- range .PKColumns }}
+				compositePK.{{ .FieldName }},
+			{{- end }}
+			}))
+{{- else }}
+			keys = append(keys, cache.BuildTenantKey(c.prefix, {{ printf "%q" .Schema }}, {{ printf "%q" .Name }}, fingerprint{{ .Struct }}, tenants[i], pk))
+{{- end }}
+		}
+{{- end }}
+{{- end }}
+{{- end }}
+	default:
+		return fmt.Errorf("cache: invalidate %q: not a tenanted table", table)
+	}
+	return c.invalidateKeys(ctx, table, keys)
+}
+
+// invalidateTenantedFallback is the defensive net for a tenant-capture gap
+// over-evict every tenant's entries for
+// the table via the cross-tenant pattern, emit the cache error signal so the
+// anomaly is visible, and return nil — a committed write must never surface a
+// cache bookkeeping failure. Normal operation never reaches this
+// path;
+// the signal firing is a bug indicator, not expected load.
+func (c *Cache) invalidateTenantedFallback(ctx context.Context, table hook.TableName, reason string) error {
+	schema, name, _ := cacheRelationFor(table)
+	// nil breaker: the anomaly is a capture gap, not a backend failure — it
+	// must not trip the circuit.
+	cache.RouteError(ctx, c.metrics, c.onError, nil, "invalidate_tenant_fallback", schema, table,
+		fmt.Errorf("cache: invalidate %s: %s; degraded to cross-tenant table pattern", table, reason))
+	// A backend failure here is already routed via invalidatePattern's own
+	// RouteError; the fallback never fails the caller.
+	_ = c.invalidatePattern(ctx, table, cache.BuildTablePattern(c.prefix, schema, name))
+	return nil
+}
+{{- end }}
+
+// InvalidateTable clears every cached entry for the given table, including
+// orphaned prior-generation entries (BuildTablePattern is fingerprint-agnostic).
+func (c *Cache) InvalidateTable(ctx context.Context, table hook.TableName) error {
+	schema, name, ok := cacheRelationFor(table)
+	if !ok {
+		return fmt.Errorf("cache: unknown or non-cached table %q", table)
+	}
+	pattern := cache.BuildTablePattern(c.prefix, schema, name)
+	return c.invalidatePattern(ctx, table, pattern)
+}
+
+// cacheRelationFor resolves the static key segments for a cached table or
+// view: its schema and its bare SQL name. The name is not string(table) — a
+// hook.TableName value carries the schema too ("public.orders"), and
+// the key grammar joins the two itself. The third return is false when the
+// name is not a cached table or view — callers must return the canonical
+// "unknown or non-cached table" error.
+func cacheRelationFor(table hook.TableName) (schema, name string, ok bool) {
+	switch table {
+{{- range .CachedTables }}
+	case {{ .TableNameConstant }}:
+		return {{ printf "%q" .Schema }}, {{ printf "%q" .Name }}, true
+{{- end }}
+{{- range .CachedViews }}
+	case {{ .TableNameConstant }}:
+		return {{ printf "%q" .Schema }}, {{ printf "%q" .Name }}, true
+{{- end }}
+	}
+	return "", "", false
+}
+
+// cacheSchemaFor resolves the static schema segment for a cached table or view.
+// The second return is false when the name is not a cached table or view —
+// callers must return the canonical "unknown or non-cached table" error.
+func cacheSchemaFor(table hook.TableName) (string, bool) {
+	schema, _, ok := cacheRelationFor(table)
+	return schema, ok
+}
+
+// invalidateKeys centralizes metrics, circuit-breaker, latency timing, and
+// backend dispatch for key-based invalidation. Public Invalidate /
+// InvalidateMany paths converge here.
+func (c *Cache) invalidateKeys(ctx context.Context, table hook.TableName, keys []string) error {
+	if len(keys) == 0 {
+		return nil
+	}
+	if c.breaker != nil && !c.breaker.Allow() {
+		return nil
+	}
+	schema, _ := cacheSchemaFor(table)
+	start := time.Now()
+	err := c.backend.InvalidateMany(ctx, keys)
+	if c.metrics != nil {
+		c.metrics.InvalidateLatency(schema, table, time.Since(start))
+	}
+	if err != nil {
+		cache.RouteError(ctx, c.metrics, c.onError, c.breaker, "invalidate_many", schema, table, err)
+		return err
+	}
+	if c.breaker != nil {
+		c.breaker.RecordSuccess()
+	}
+	if c.metrics != nil {
+		c.metrics.Invalidate(schema, table)
+	}
+	return nil
+}
+
+// invalidatePattern centralizes metrics, circuit-breaker, latency timing, and
+// backend dispatch for pattern-based invalidation (InvalidateTable / view
+// invalidation / the tenant capture-gap fallback). Mutation invalidation does
+// not come through here — every op, *Where included, evicts by key.
+func (c *Cache) invalidatePattern(ctx context.Context, table hook.TableName, pattern string) error {
+	if c.breaker != nil && !c.breaker.Allow() {
+		return nil
+	}
+	schema, _ := cacheSchemaFor(table)
+	start := time.Now()
+	err := c.backend.InvalidatePattern(ctx, pattern)
+	if c.metrics != nil {
+		c.metrics.InvalidateLatency(schema, table, time.Since(start))
+	}
+	if err != nil {
+		cache.RouteError(ctx, c.metrics, c.onError, c.breaker, "invalidate_pattern", schema, table, err)
+		return err
+	}
+	if c.breaker != nil {
+		c.breaker.RecordSuccess()
+	}
+	if c.metrics != nil {
+		c.metrics.Invalidate(schema, table)
+	}
+	return nil
+}
+
+// cacheSkipper is implemented by CallOptions to check the SkipCache flag.
+type cacheSkipper interface {
+	skipCache() bool
+}
+
+func (o CallOptions[FO]) skipCache() bool { return o.SkipCache }
+
+// QueryHook returns the cache read-through hook. The hook dispatches to a
+// per-table typed helper that knows the concrete entity type; wrong-type PKs
+// or non-matching tables fall through to the DB so the cache never breaks the
+// caller path.
+func (c *Cache) QueryHook() hook.QueryHook {
+	return func(next hook.QueryHandler) hook.QueryHandler {
+		return func(ctx context.Context, q *hook.QueryContext) (any, error) {
+			if q.Op == hook.OpRefresh {
+				result, err := next(ctx, q)
+				if err != nil {
+					return result, err
+				}
+				c.dispatchRefresh(ctx, q.Table)
+				return result, nil
+			}
+			if q.Op != hook.OpGet {
+				return next(ctx, q)
+			}
+			if skipper, ok := q.CallOptions.(cacheSkipper); ok && skipper.skipCache() {
+				return next(ctx, q)
+			}
+			// Relationship-loaded Gets bypass the cache entirely.
+			if hasAnyRelationshipFieldOptions(q.Table, q.CallOptions) {
+				return next(ctx, q)
+			}
+			// Partial fetches with hydration disabled are pure pass-through
+			// With hydration enabled, partial fetches still go
+			// through read-through so a cached full entity can satisfy the
+			// request; the miss path in readThrough{{"{"}}Table{{"}"}} triggers
+			// fire-and-forget hydration without caching the partial result.
+			if !c.hydrationEnabled && extractFieldOptions(q.CallOptions) != nil {
+				return next(ctx, q)
+			}
+			switch q.Table {
+{{- range .CachedTables }}
+			case {{ .TableNameConstant }}:
+				pk, ok := q.PK.({{ if .CompositePK }}{{ .CompositePKStruct }}{{ else }}{{ .PKGoType }}{{ end }})
+				if !ok {
+					return next(ctx, q)
+				}
+{{- if .Tenanted }}
+				// Tenanted table: tenant must be resolved by the entity
+				// method and threaded via q.Tenant. A nil/wrong-type
+				// Tenant means the caller bypassed tenant resolution
+				// (e.g. SkipTenancy = true) — fall through to the DB
+				// rather than risking a cross-tenant cache hit.
+				tenant, ok := q.Tenant.({{ .TenantGoType }})
+				if !ok {
+					return next(ctx, q)
+				}
+				return c.readThrough{{ .Struct }}(ctx, tenant, pk, q, next)
+{{- else }}
+				return c.readThrough{{ .Struct }}(ctx, pk, q, next)
+{{- end }}
+{{- end }}
+			}
+			return next(ctx, q)
+		}
+	}
+}
+
+// MutationHook returns the cache invalidation hook. Entity + view invalidation
+// fires after every mutation; inside a transaction it's deferred via
+// tx.OnCommit (FIFO after the event hook).
+func (c *Cache) MutationHook() hook.MutationHook {
+	return func(next hook.MutationHandler) hook.MutationHandler {
+		return func(ctx context.Context, m *hook.MutationContext) (any, error) {
+			result, err := next(ctx, m)
+			if err != nil {
+				return result, err
+			}
+			if skipper, ok := m.CallOptions.(cacheSkipper); ok && skipper.skipCache() {
+				return result, nil
+			}
+			c.dispatchMutation(ctx, m, result)
+			return result, nil
+		}
+	}
+}
+
+// dispatchMutation fans out entity + view invalidation for a mutation. The
+// two callbacks are registered in-order on the transaction so the FIFO
+// guarantee on tx.OnCommit preserves entity-before-view ordering. The
+// mutation's result is forwarded so Create / CreateMany can populate the
+// cache with the new entity.
+func (c *Cache) dispatchMutation(ctx context.Context, m *hook.MutationContext, result any) {
+	table := m.Table
+	op := m.Op
+	affected := append([]any(nil), m.AffectedPKs...)
+{{- if anyTenanted .CachedTables }}
+	// Snapshot the captured per-row tenants alongside the PKs: the entity
+	// callback may run post-commit on a detached goroutine (CallbackAsync),
+	// after the MutationContext is out of scope.
+	affectedTenants := append([]any(nil), m.AffectedTenants...)
+{{- end }}
+	// Partial FieldOptions / relationship-loaded entities must not be cached
+	// The simplest safe check: only cache on Create when
+	// CallOptions.FieldOptions is unset — matching the "full, no relationships"
+	// row of the cache behavior table.
+	fieldOptsSet := extractFieldOptions(m.CallOptions) != nil
+
+	entityOp := func(ctx context.Context) error {
+		switch op {
+		case hook.OpCreate:
+			if fieldOptsSet {
+				return nil
+			}
+			switch table {
+		{{- range .CachedTables }}
+			case {{ .TableNameConstant }}:
+				if entity, ok := result.(*{{ .Struct }}); ok {
+		{{- if and .Tenanted .TenantInPK }}
+					// Tenant lives in the primary key — read it from the
+					// (full) entity's PK field; partial results are gated
+					// by fieldOptsSet above.
+					c.set{{ .Struct }}(ctx, entity.{{ .TenantFieldName }}, entity)
+		{{- else if .Tenanted }}
+					// Tenant sourced from the structural capture —
+					// never the resolver — so a
+					// SkipTenancy create writes through under the correct
+					// tenant-scoped key. A nil capture (no tenant value
+					// reached the INSERT) skips the write-through:
+					// safe-lossy, the next read hydrates the cache.
+					if len(affectedTenants) > 0 {
+						if tenant, ok := affectedTenants[0].({{ .TenantGoType }}); ok {
+							c.set{{ .Struct }}(ctx, tenant, entity)
+						}
+					}
+		{{- else }}
+					c.set{{ .Struct }}(ctx, entity)
+		{{- end }}
+				}
+		{{- end }}
+			}
+			return nil
+		case hook.OpCreateMany:
+			if fieldOptsSet {
+				return nil
+			}
+			switch table {
+		{{- range .CachedTables }}
+			case {{ .TableNameConstant }}:
+				if entities, ok := result.([]*{{ .Struct }}); ok {
+		{{- if and .Tenanted .TenantInPK }}
+					for _, entity := range entities {
+						// Tenant lives in the primary key — read it from
+						// each (full) entity's PK field.
+						c.set{{ .Struct }}(ctx, entity.{{ .TenantFieldName }}, entity)
+					}
+		{{- else if .Tenanted }}
+					// GetMany result order is not guaranteed to match
+					// AffectedPKs, so the captured tenants are re-aligned to
+					// entities via their PK — the same reason set{{ .Struct }}
+					// reads the PK off the entity.
+					tenantByPK := make(map[{{ if .CompositePK }}{{ .CompositePKStruct }}{{ else }}{{ .PKGoType }}{{ end }}]any, len(affected))
+					for i, rawPK := range affected {
+						if i >= len(affectedTenants) {
+							break
+						}
+						if pk, ok := rawPK.({{ if .CompositePK }}{{ .CompositePKStruct }}{{ else }}{{ .PKGoType }}{{ end }}); ok {
+							tenantByPK[pk] = affectedTenants[i]
+						}
+					}
+					for _, entity := range entities {
+						if tenant, ok := tenantByPK[{{ if .CompositePK }}{{ .CompositePKStruct }}{ {{- range .PKColumns }}{{ .FieldName }}: entity.{{ .FieldName }}, {{ end -}} }{{ else }}entity.{{ (index .PKColumns 0).FieldName }}{{ end }}].({{ .TenantGoType }}); ok {
+							c.set{{ .Struct }}(ctx, tenant, entity)
+						}
+					}
+		{{- else }}
+					for _, entity := range entities {
+						c.set{{ .Struct }}(ctx, entity)
+					}
+		{{- end }}
+				}
+		{{- end }}
+			}
+			return nil
+		case hook.OpUpdate, hook.OpUpsert, hook.OpSoftDelete, hook.OpHardDelete,
+			hook.OpRestore, hook.OpIncrement,
+			hook.OpUpsertMany, hook.OpUpdateMany, hook.OpSoftDeleteMany, hook.OpHardDeleteMany, hook.OpRestoreMany,
+			hook.OpUpdateWhere, hook.OpSoftDeleteWhere, hook.OpHardDeleteWhere, hook.OpRestoreWhere:
+			// Every op here evicts by key, the *Where ops included: each
+			// captures the affected rows' PKs on the MutationContext before
+			// it returns, so the predicate's row set is known by the time
+			// invalidation runs. Prior-fingerprint orphans are
+			// left to TTL and to a deliberate InvalidateTable sweep rather
+			// than to a whole-table pattern wipe on every *Where call.
+			//
+			// OpUpsertMany belongs here and not with OpCreateMany: it
+			// invalidates many, evicting by key like the
+			// other *Many ops rather than writing the returned entities
+			// through. It is a direct write path with its own op, so the
+			// switch needs it named explicitly — there is no permissive
+			// default that would otherwise cover it.
+			if len(affected) == 0 {
+				return nil
+			}
+			// A table the config left uncached still reaches this hook. It
+			// has nothing to evict, and the "non-cached table" error would
+			// otherwise surface out of a CallbackSync commit for a write
+			// that already succeeded.
+			if _, ok := cacheSchemaFor(table); !ok {
+				return nil
+			}
+{{- if anyTenanted .CachedTables }}
+			switch table {
+		{{- range .CachedTables }}
+		{{- if .Tenanted }}
+			case {{ .TableNameConstant }}:
+				// Tenanted tables rebuild each key from the row's own
+				// captured tenant — never a cross-tenant clear.
+				return c.invalidateAffectedTenanted(ctx, table, affectedTenants, affected)
+		{{- end }}
+		{{- end }}
+			}
+{{- end }}
+			return c.InvalidateMany(ctx, table, affected)
+		}
+		return nil
+	}
+
+	viewOp := func(ctx context.Context) error {
+		patterns := c.patternsForSourceTable(table)
+		if len(patterns) == 0 {
+			return nil
+		}
+		for _, pattern := range patterns {
+			if err := c.invalidatePattern(ctx, table, pattern); err != nil {
+				return err
+			}
+		}
+		return nil
+	}
+
+	if tx := database.FromContext(ctx); tx != nil && !tx.IsClosed() {
+		tx.OnCommit(entityOp)
+		tx.OnCommit(viewOp)
+		return
+	}
+	_ = entityOp(ctx)
+	_ = viewOp(ctx)
+}
+
+// dispatchRefresh clears every cached entry for a refreshed materialized view:
+// a refresh replaces the stored rows, so pre-refresh cached reads would serve
+// doubly-stale data. Views that are not
+// cached are a pure no-op. Inside a transaction the clear is deferred via
+// tx.OnCommit — the refreshed rows are invisible to other connections until
+// commit, so an eager clear could be repopulated with pre-commit rows (the
+// same race the mutation path defers for). Invalidation
+// errors route through the standard cache error path and never fail the
+// refresh.
+func (c *Cache) dispatchRefresh(ctx context.Context, table hook.TableName) {
+	if !c.isCachedView(table) {
+		return
+	}
+	refreshOp := func(ctx context.Context) error {
+		return c.InvalidateTable(ctx, table)
+	}
+	if tx := database.FromContext(ctx); tx != nil && !tx.IsClosed() {
+		tx.OnCommit(refreshOp)
+		return
+	}
+	_ = refreshOp(ctx)
+}
+
+// isCachedView reports whether table names a cached view.
+func (c *Cache) isCachedView(table hook.TableName) bool {
+{{- if .CachedViews }}
+	switch table {
+{{- range .CachedViews }}
+	case {{ .TableNameConstant }}:
+		return true
+{{- end }}
+	}
+{{- end }}
+	return false
+}
+
+// hasAnyRelationshipFieldOptions routes the FieldOptions relationship check
+// to the per-table hasAnyRelationshipXxx helper. FieldOptions is a
+// per-table pointer type — this dispatch resolves the CallOptions generic
+// parameter to the right concrete helper.
+func hasAnyRelationshipFieldOptions(table hook.TableName, callOpts any) bool {
+	fo := extractFieldOptions(callOpts)
+	if fo == nil {
+		return false
+	}
+	switch table {
+{{- range .CachedTables }}
+	case {{ .TableNameConstant }}:
+		return hasAnyRelationship{{ .Struct }}(fo)
+{{- end }}
+	}
+	return false
+}
+
+// extractFieldOptions pulls the FieldOptions pointer out of a resolved
+// CallOptions[FO] via a small interface probe. Returns nil when the
+// CallOptions shape does not expose FieldOptions.
+type fieldOptionsAccessor interface {
+	fieldOptions() any
+}
+
+func (o CallOptions[FO]) fieldOptions() any {
+	if o.FieldOptions == nil {
+		return nil
+	}
+	return o.FieldOptions
+}
+
+func extractFieldOptions(callOpts any) any {
+	if callOpts == nil {
+		return nil
+	}
+	if accessor, ok := callOpts.(fieldOptionsAccessor); ok {
+		return accessor.fieldOptions()
+	}
+	return nil
+}
+
+// Close stops the invalidation subscription and closes the backend when it
+// implements io.Closer. Hydration goroutines are not awaited — they exit on
+// their timeout deadline.
+func (c *Cache) Close() error {
+	if c.invalidationSub != nil {
+		_ = c.invalidationSub.Unsubscribe()
+	}
+	if closer, ok := c.backend.(io.Closer); ok {
+		return closer.Close()
+	}
+	return nil
+}
+{{- end -}}

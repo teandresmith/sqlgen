@@ -1,0 +1,178 @@
+"""
+WorkspaceNote corresponds to the workspace_notes table.
+"""
+type WorkspaceNote {
+  "id"
+  id: UUID!
+  "workspace_id"
+  workspaceID: UUID!
+  "parent_id"
+  parentID: UUID
+  "body"
+  body: String!
+  "pinned_order"
+  pinnedOrder: Int!
+  "kind"
+  kind: WorkspaceNoteKindEnum!
+  "labels"
+  labels: JSON!
+  "created_at"
+  createdAt: Time!
+  "one-to-many relationship with the workspace_notes table."
+  children: [WorkspaceNote!]!
+  "one-to-many relationship with the workspace_notes table."
+  draftChildren: [WorkspaceNote!]!
+}
+
+type WorkspaceNoteConnection {
+  edges:      [WorkspaceNoteEdge!]!
+  pageInfo:   PageInfo!
+  totalCount: Int!
+}
+
+type WorkspaceNoteEdge {
+  node:   WorkspaceNote!
+  cursor: String!
+}
+
+type WorkspaceNoteListResult {
+  items:      [WorkspaceNote!]!
+  totalCount: Int!
+  offset:     Int!
+  limit:      Int!
+  hasMore:    Boolean!
+}
+
+input WorkspaceNoteFilter {
+  workspaceID: IDComparator
+  parentID: NullableIDComparator
+  body: StringComparator
+  pinnedOrder: NumericComparator
+  kind: WorkspaceNoteKindEnumComparator
+  labels: JSONBComparator
+  createdAt: TimeComparator
+  children: WorkspaceNoteFilter
+  draftChildren: WorkspaceNoteFilter
+  and: [WorkspaceNoteFilter!]
+  or:  [WorkspaceNoteFilter!]
+}
+
+enum WorkspaceNoteSortField {
+  ID
+  WORKSPACE_ID
+  PARENT_ID
+  BODY
+  PINNED_ORDER
+  KIND
+  LABELS
+  CREATED_AT
+}
+
+input WorkspaceNoteSort {
+  field:     WorkspaceNoteSortField!
+  direction: SortDirection!
+}
+input CreateWorkspaceNoteInput {
+  workspaceID: UUID!
+  parentID: UUID
+  body: String!
+  pinnedOrder: Int!
+  kind: WorkspaceNoteKindEnum!
+  labels: JSON!
+  createdAt: Time!
+}
+input UpdateWorkspaceNoteInput {
+  parentID: UUID
+  body: String
+  pinnedOrder: Int
+  pinnedOrder_inc: Int
+  pinnedOrder_dec: Int
+  kind: WorkspaceNoteKindEnum
+  labels: JSON
+  createdAt: Time
+}
+
+extend type Query {
+  workspaceNote(id: UUID!): WorkspaceNote
+  "Cursor-paginated; ordering is driven by cursor_keys to preserve keyset semantics — pass `sort` to workspaceNoteList instead."
+  workspaceNotes(filter: WorkspaceNoteFilter, first: Int, after: String, last: Int, before: String): WorkspaceNoteConnection!
+  workspaceNoteList(filter: WorkspaceNoteFilter, sort: [WorkspaceNoteSort!], limit: Int, offset: Int): WorkspaceNoteListResult!
+}
+
+extend type Mutation {
+  createWorkspaceNote(input: CreateWorkspaceNoteInput!): WorkspaceNote!
+  createWorkspaceNotes(inputs: [CreateWorkspaceNoteInput!]!): [WorkspaceNote!]!
+  updateWorkspaceNote(id: UUID!, input: UpdateWorkspaceNoteInput!): WorkspaceNote!
+  updateWorkspaceNotes(filter: WorkspaceNoteFilter!, input: UpdateWorkspaceNoteInput!): [WorkspaceNote!]!
+  upsertWorkspaceNote(input: CreateWorkspaceNoteInput!): WorkspaceNote!
+  deleteWorkspaceNote(id: UUID!): Boolean!
+}
+
+input CreateWorkspaceNoteWithRelatedInput {
+  workspaceNote: CreateWorkspaceNoteInput!
+  children: WorkspaceNoteChildrenCreateNested
+  draftChildren: WorkspaceNoteDraftChildrenCreateNested
+}
+
+input UpdateWorkspaceNoteWithRelatedInput {
+  workspaceNote: UpdateWorkspaceNoteInput
+  children: WorkspaceNoteChildrenUpdateNested
+  draftChildren: WorkspaceNoteDraftChildrenUpdateNested
+}
+
+input UpsertWorkspaceNoteWithRelatedInput {
+  workspaceNote: CreateWorkspaceNoteInput!
+  children: WorkspaceNoteChildrenUpdateNested
+  draftChildren: WorkspaceNoteDraftChildrenUpdateNested
+}
+
+enum WorkspaceNoteConflictTarget {
+  PK
+}
+
+input WorkspaceNoteChildrenCreateNested {
+  create: [WorkspaceNoteChildrenCreateInput!]
+  connect: [UUID!]
+}
+
+input WorkspaceNoteChildrenUpdateNested {
+  clear: Boolean
+  create: [WorkspaceNoteChildrenCreateInput!]
+  connect: [UUID!]
+  disconnect: [UUID!]
+}
+
+input WorkspaceNoteChildrenCreateInput {
+  workspaceID: UUID!
+  body: String!
+  pinnedOrder: Int!
+  kind: WorkspaceNoteKindEnum!
+  labels: JSON!
+  createdAt: Time!
+}
+
+input WorkspaceNoteDraftChildrenCreateNested {
+  create: [WorkspaceNoteDraftChildrenCreateInput!]
+  connect: [UUID!]
+}
+
+input WorkspaceNoteDraftChildrenUpdateNested {
+  clear: Boolean
+  create: [WorkspaceNoteDraftChildrenCreateInput!]
+  connect: [UUID!]
+  disconnect: [UUID!]
+}
+
+input WorkspaceNoteDraftChildrenCreateInput {
+  workspaceID: UUID!
+  body: String!
+  pinnedOrder: Int!
+  labels: JSON!
+  createdAt: Time!
+}
+
+extend type Mutation {
+  createWorkspaceNoteWithRelated(input: CreateWorkspaceNoteWithRelatedInput!): WorkspaceNote!
+  updateWorkspaceNoteWithRelated(id: UUID!, input: UpdateWorkspaceNoteWithRelatedInput!): WorkspaceNote!
+  upsertWorkspaceNoteWithRelated(input: UpsertWorkspaceNoteWithRelatedInput!, conflictTarget: WorkspaceNoteConflictTarget! = PK): WorkspaceNote!
+}

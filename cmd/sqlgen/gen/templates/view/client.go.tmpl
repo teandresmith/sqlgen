@@ -1,0 +1,145 @@
+{{- define "view/client" -}}
+
+// {{ .StructName }}Client provides type-safe read operations for the {{ .ViewName }} view.
+type {{ .StructName }}Client interface {
+{{- if .HasPK }}
+
+	// Get returns a single {{ .StructName | toCamelCase }} by primary key.
+	Get(ctx context.Context, {{ if .CompositePK }}pk {{ .CompositePKStructName }}{{ else }}id {{ (index .PKColumns 0).GoType }}{{ end }}, opts ...func(*CallOptions[{{ .StructName }}FieldOptions])) (*{{ .StructName }}, error)
+{{- end }}
+
+	// GetMany returns {{ .ViewName }} matching the given filter, field selection, and sort criteria.
+	GetMany(ctx context.Context, input *Get{{ .StructName | structNamePlural }}Input, opts ...func(*CallOptions[{{ .StructName }}FieldOptions])) ([]*{{ .StructName }}, error)
+
+	// Count returns the number of {{ .ViewName }} matching the given filter.
+	Count(ctx context.Context, filter *{{ .StructName }}Filter, opts ...func(*CallOptions[{{ .StructName }}FieldOptions])) (int64, error)
+
+	// Paginate returns a page of {{ .ViewName }} with total count for offset-based pagination.
+	Paginate(ctx context.Context, input PaginateInput[{{ .StructName }}Filter], opts ...func(*CallOptions[{{ .StructName }}FieldOptions])) (*PaginateResult[{{ .StructName }}], error)
+{{- if .HasConnection }}
+
+	// Connection returns a Relay-style cursor-paginated connection of {{ .ViewName }}.
+	// Sort order is determined by cursor_keys — custom sorts are not supported.
+	// Use Paginate for custom sort orders.
+	Connection(ctx context.Context, input ConnectionInput[{{ .StructName }}Filter], opts ...func(*CallOptions[{{ .StructName }}FieldOptions])) (*Connection[{{ .StructName }}], error)
+{{- end }}
+{{- if .Materialized }}
+
+	// Refresh recomputes the materialized view, replacing its stored rows.
+	// It takes an ACCESS EXCLUSIVE lock — concurrent reads block until it
+	// completes. It may run inside a transaction.
+	Refresh(ctx context.Context) error
+{{- if .ConcurrentlyRefreshable }}
+
+	// RefreshConcurrently recomputes the materialized view without blocking
+	// concurrent reads. Requires a UNIQUE index on the view; cannot run inside
+	// a transaction (returns database.ErrRefreshConcurrentlyInTx).
+	RefreshConcurrently(ctx context.Context) error
+{{- end }}
+{{- end }}
+}
+
+// {{ .StructName | toCamelCase }}Client implements the {{ .StructName }}Client interface.
+type {{ .StructName | toCamelCase }}Client struct {
+	querier      database.Querier
+	dialect      sql.Dialect
+	table        sql.Table
+	queryLimit   int
+	pageSize     int
+{{- if .HasConnection }}
+	cursorKeys   []string
+{{- end }}
+	mutationHooks []hook.MutationHook
+	queryHooks   []hook.QueryHook
+	panicHandler hook.PanicHandler
+{{- if and .Tenancy .Tenancy.Tenanted }}
+	tenantResolver tenancy.TenantResolver[{{ .Tenancy.GoType }}]
+{{- end }}
+}
+
+// new{{ .StructName }}Client creates a new {{ .StructName | toCamelCase }}Client.
+func new{{ .StructName }}Client(querier database.Querier, mutationHooks []hook.MutationHook, queryHooks []hook.QueryHook, panicHandler hook.PanicHandler) *{{ .StructName | toCamelCase }}Client {
+	return &{{ .StructName | toCamelCase }}Client{
+		querier:       querier,
+		dialect:       {{ if eq .Dialect "postgres" }}sql.NewPostgresDialect(){{ else if eq .Dialect "mysql" }}sql.NewMySQLDialect(){{ else }}sql.NewSQLiteDialect(){{ end }},
+		table:         sql.Table{Schema: {{ printf "%q" .Schema }}, Name: {{ printf "%q" .ViewName }}},
+		queryLimit:    {{ .QueryLimit }},
+		pageSize:      {{ .PageSize }},
+{{- if .HasConnection }}
+		cursorKeys:    []string{ {{- range .CursorKeys }}{{ printf "%q" . }}, {{ end -}} },
+{{- end }}
+		mutationHooks: mutationHooks,
+		queryHooks:    queryHooks,
+		panicHandler:  panicHandler,
+	}
+}
+
+// executeQuery runs fn through the query hook chain.
+// When skipHooks is true, only panic recovery wraps the call.
+func (c *{{ .StructName | toCamelCase }}Client) executeQuery(ctx context.Context, skipHooks bool, qc *hook.QueryContext, fn hook.QueryHandler) (any, error) {
+	var hooks []hook.QueryHook
+	if !skipHooks {
+		hooks = c.queryHooks
+	}
+	return hook.BuildQueryChain(c.panicHandler, hooks, fn)(ctx, qc)
+}
+{{- if and .Tenancy .Tenancy.Tenanted }}
+
+// resolveTenant invokes the client's tenantResolver and returns the resolved
+// tenant value, a bool indicating whether tenancy should be applied to this
+// call, and any resolver error. The apply bool encodes the tenancy.required
+// semantic:
+//
+//   - Non-zero resolver return → apply=true; the five read methods AND the
+//     tenant filter into their WHERE.
+//   - Zero resolver return (resolver returned (zero, nil) or is nil) under
+//     tenancy.required:true → apply=false, err=tenancy.ErrMissing. The read
+//     fails closed before the DB round-trip.
+//   - Zero resolver return under tenancy.required:false → apply=false,
+//     err=nil. The read silently becomes cross-tenant: no filter append.
+//     This is the "missing tenant skips the filter" path.
+//   - Resolver returns a non-nil error → apply=false, err propagated.
+//
+// A view is read-only, so this is the whole tenancy surface:
+// none of the table path's mutation machinery — verify-match, affected-tenant
+// capture, SET-clause exclusion, INSERT auto-set — has a view analogue and
+// none of it is generated.
+//
+// explicit carries CallOptions.Tenant (the third resolution mode):
+// when non-nil, tenancy behaves as normal resolution with the resolver
+// replaced by this constant. Precedence over SkipTenancy is normalized in
+// resolveCallOptions, so callers gate on SkipTenancy exactly as before. The
+// pointer distinguishes set from unset; a set zero value is honored verbatim.
+func (c *{{ .StructName | toCamelCase }}Client) resolveTenant(ctx context.Context, explicit *{{ .Tenancy.GoType }}) ({{ .Tenancy.GoType }}, bool, error) {
+	if explicit != nil {
+		return *explicit, true, nil
+	}
+	var zero {{ .Tenancy.GoType }}
+	// Short-circuit: a mutation chaining entry point already resolved for
+	// this logical operation and stashed the value on ctx via
+	// tenancy.WithResolvedTenant. A view read inside that chain
+	// observes the same tenant rather than re-resolving.
+	//
+	// The cache carries what the resolver said, not what a table made of it:
+	// the required:true / required:false branch below is this view's own
+	// setting (a view has the same tri-state a table has), and applying it
+	// here rather than reading a cached decision is what keeps a fail-closed
+	// view fail-closed inside a chain rooted at a fail-open table.
+	v, ok := tenancy.CachedTenant[{{ .Tenancy.GoType }}](ctx)
+	if !ok && c.tenantResolver != nil {
+		var err error
+		if v, err = c.tenantResolver(ctx); err != nil {
+			return zero, false, err
+		}
+	}
+	if v == zero {
+{{- if .Tenancy.Required }}
+		return zero, false, tenancy.ErrMissing
+{{- else }}
+		return zero, false, nil
+{{- end }}
+	}
+	return v, true, nil
+}
+{{- end }}
+{{- end -}}

@@ -1,0 +1,94 @@
+"""
+Storage warehouses with type-overridden columns
+"""
+type Warehouse {
+  "Unique identifier"
+  id: Int!
+  "External reference ID (KSUID)"
+  externalID: KSUID!
+  "Warehouse name"
+  name: String!
+  "Operational cost"
+  price: Decimal!
+  "Optional secondary price"
+  nullablePrice: NullDecimal
+  "Row creation timestamp"
+  createdAt: Time!
+}
+
+type WarehouseConnection {
+  edges:      [WarehouseEdge!]!
+  pageInfo:   PageInfo!
+  totalCount: Int!
+}
+
+type WarehouseEdge {
+  node:   Warehouse!
+  cursor: String!
+}
+
+type WarehouseListResult {
+  items:      [Warehouse!]!
+  totalCount: Int!
+  offset:     Int!
+  limit:      Int!
+  hasMore:    Boolean!
+}
+
+input WarehouseFilter {
+  externalID: StringComparator
+  name: StringComparator
+  price: DecimalComparator
+  nullablePrice: NullableDecimalComparator
+  createdAt: TimeComparator
+  and: [WarehouseFilter!]
+  or:  [WarehouseFilter!]
+}
+
+enum WarehouseSortField {
+  ID
+  EXTERNAL_ID
+  NAME
+  PRICE
+  NULLABLE_PRICE
+  CREATED_AT
+}
+
+input WarehouseSort {
+  field:     WarehouseSortField!
+  direction: SortDirection!
+}
+input CreateWarehouseInput {
+  externalID: KSUID!
+  name: String!
+  price: Decimal!
+  nullablePrice: NullDecimal
+  createdAt: Time!
+}
+input UpdateWarehouseInput {
+  externalID: KSUID
+  name: String
+  price: Decimal
+  price_inc: Int
+  price_dec: Int
+  nullablePrice: NullDecimal
+  nullablePrice_inc: Int
+  nullablePrice_dec: Int
+  createdAt: Time
+}
+
+extend type Query {
+  warehouse(id: Int!): Warehouse
+  "Cursor-paginated; ordering is driven by cursor_keys to preserve keyset semantics — pass `sort` to warehouseList instead."
+  warehouses(filter: WarehouseFilter, first: Int, after: String, last: Int, before: String): WarehouseConnection!
+  warehouseList(filter: WarehouseFilter, sort: [WarehouseSort!], limit: Int, offset: Int): WarehouseListResult!
+}
+
+extend type Mutation {
+  createWarehouse(input: CreateWarehouseInput!): Warehouse!
+  createWarehouses(inputs: [CreateWarehouseInput!]!): [Warehouse!]!
+  updateWarehouse(id: Int!, input: UpdateWarehouseInput!): Warehouse!
+  updateWarehouses(filter: WarehouseFilter!, input: UpdateWarehouseInput!): [Warehouse!]!
+  upsertWarehouse(input: CreateWarehouseInput!): Warehouse!
+  deleteWarehouse(id: Int!): Boolean!
+}

@@ -1,0 +1,503 @@
+{
+  "kind": "table",
+  "name": "WorkspaceSetting",
+  "table": "workspace_settings",
+  "schema": "public",
+  "file_prefix": "workspace_setting",
+  "files": [
+    "models_gen.go"
+  ],
+  "comment": "",
+  "indexes": [
+    {
+      "name": "workspace_settings_pkey",
+      "columns": [
+        "workspace_id",
+        "key"
+      ],
+      "unique": true,
+      "method": "btree"
+    }
+  ],
+  "pk": {
+    "kind": "composite",
+    "struct": "WorkspaceSettingPK",
+    "columns": [
+      {
+        "name": "workspace_id",
+        "go_field": "WorkspaceID",
+        "go_type": "uuid.UUID"
+      },
+      {
+        "name": "key",
+        "go_field": "Key",
+        "go_type": "string"
+      }
+    ]
+  },
+  "features": {
+    "soft_delete": null,
+    "cache": {
+      "ttl_seconds": 3600,
+      "hydration": "eager",
+      "key_pattern": "sqlgen:workspacesetting:{workspace_id}:{key}",
+      "invalidates_on": [
+        "Create",
+        "Update",
+        "Delete",
+        "SoftDelete",
+        "Restore",
+        "Increment"
+      ]
+    },
+    "events": {
+      "enabled": true,
+      "types": [
+        "WorkspaceSettingCreated",
+        "WorkspaceSettingDeleted",
+        "WorkspaceSettingUpdated"
+      ],
+      "payload_shape": "models.WorkspaceSettingEvent"
+    },
+    "tenancy": {
+      "column": "workspace_id",
+      "mode": "verify-match",
+      "missing_resolver_error": "tenancy.ErrMissing",
+      "mismatch_error": "tenancy.ErrMismatch"
+    }
+  },
+  "columns": [
+    {
+      "name": "workspace_id",
+      "go_field": "WorkspaceID",
+      "go_type": "uuid.UUID",
+      "db_type": "uuid",
+      "nullable": false,
+      "pk": true,
+      "unique": false,
+      "comparator": "comparator.ID",
+      "comment": ""
+    },
+    {
+      "name": "key",
+      "go_field": "Key",
+      "go_type": "string",
+      "db_type": "text",
+      "nullable": false,
+      "pk": true,
+      "unique": false,
+      "comparator": "comparator.ID",
+      "comment": ""
+    },
+    {
+      "name": "value",
+      "go_field": "Value",
+      "go_type": "string",
+      "db_type": "text",
+      "nullable": false,
+      "pk": false,
+      "unique": false,
+      "comparator": "comparator.String",
+      "comment": ""
+    },
+    {
+      "name": "created_at",
+      "go_field": "CreatedAt",
+      "go_type": "time.Time",
+      "db_type": "timestamptz",
+      "nullable": false,
+      "pk": false,
+      "unique": false,
+      "default": "current_timestamp",
+      "default_kind": "function",
+      "comparator": "comparator.Time",
+      "comment": ""
+    }
+  ],
+  "relationships": [],
+  "methods": {
+    "query": [
+      {
+        "name": "Get",
+        "params": [
+          {
+            "name": "pk",
+            "type": "WorkspaceSettingPK"
+          }
+        ],
+        "returns": "*WorkspaceSetting",
+        "errors": [
+          "ErrNotFound",
+          "tenancy.ErrMissing",
+          "tenancy.ErrMismatch"
+        ],
+        "notes": "Delegates to GetMany with a primary-key filter; returns ErrNotFound when no row matches.",
+        "sql_bodies": {
+          "postgres": "SELECT \"created_at\", \"key\", \"value\", \"workspace_id\" FROM \"public\".\"workspace_settings\" WHERE \"workspace_id\" = $1 AND \"key\" = $2 LIMIT 1"
+        }
+      },
+      {
+        "name": "GetMany",
+        "params": [
+          {
+            "name": "input",
+            "type": "*GetWorkspaceSettingsInput"
+          }
+        ],
+        "returns": "[]*WorkspaceSetting",
+        "errors": [
+          "tenancy.ErrMissing"
+        ],
+        "sql_bodies": {
+          "postgres": "SELECT \"created_at\", \"key\", \"value\", \"workspace_id\" FROM \"public\".\"workspace_settings\" WHERE <filter> ORDER BY <sort> LIMIT <limit>"
+        }
+      },
+      {
+        "name": "Count",
+        "params": [
+          {
+            "name": "filter",
+            "type": "*WorkspaceSettingFilter"
+          }
+        ],
+        "returns": "int64",
+        "errors": [
+          "tenancy.ErrMissing"
+        ],
+        "sql_bodies": {
+          "postgres": "SELECT COUNT(*) FROM \"public\".\"workspace_settings\" WHERE <filter>"
+        }
+      },
+      {
+        "name": "Exists",
+        "params": [
+          {
+            "name": "pk",
+            "type": "WorkspaceSettingPK"
+          }
+        ],
+        "returns": "bool",
+        "errors": [
+          "tenancy.ErrMissing",
+          "tenancy.ErrMismatch"
+        ],
+        "sql_bodies": {
+          "postgres": "SELECT EXISTS(SELECT 1 FROM \"public\".\"workspace_settings\" WHERE \"workspace_id\" = $1 AND \"key\" = $2)"
+        }
+      },
+      {
+        "name": "ExistsWhere",
+        "params": [
+          {
+            "name": "filter",
+            "type": "*WorkspaceSettingFilter"
+          }
+        ],
+        "returns": "bool",
+        "errors": [
+          "tenancy.ErrMissing"
+        ],
+        "sql_bodies": {
+          "postgres": "SELECT EXISTS(SELECT 1 FROM \"public\".\"workspace_settings\" WHERE <filter>)"
+        }
+      },
+      {
+        "name": "Paginate",
+        "params": [
+          {
+            "name": "input",
+            "type": "PaginateInput[WorkspaceSettingFilter]"
+          }
+        ],
+        "returns": "*PaginateResult[WorkspaceSetting]",
+        "errors": [
+          "tenancy.ErrMissing"
+        ],
+        "notes": "Offset pagination. Issues no statement of its own — composes Count and GetMany, so no sql_bodies entry."
+      },
+      {
+        "name": "Connection",
+        "params": [
+          {
+            "name": "input",
+            "type": "ConnectionInput[WorkspaceSettingFilter]"
+          }
+        ],
+        "returns": "*Connection[WorkspaceSetting]",
+        "errors": [
+          "ErrInvalidCursor",
+          "tenancy.ErrMissing"
+        ],
+        "notes": "Relay cursor pagination. Issues no statement of its own — composes Count and GetMany, so no sql_bodies entry."
+      },
+      {
+        "name": "Stream",
+        "params": [
+          {
+            "name": "input",
+            "type": "*StreamWorkspaceSettingsInput"
+          }
+        ],
+        "returns": "iter.Seq2[*WorkspaceSetting, error]",
+        "errors": [
+          "tenancy.ErrMissing"
+        ],
+        "notes": "Scalars only — no relationship loading, cache always bypassed. Errors surface through the iterator's second value.",
+        "sql_bodies": {
+          "postgres": "SELECT \"created_at\", \"key\", \"value\", \"workspace_id\" FROM \"public\".\"workspace_settings\" WHERE <filter> ORDER BY <sort>"
+        }
+      }
+    ],
+    "mutation": [
+      {
+        "name": "Create",
+        "params": [
+          {
+            "name": "input",
+            "type": "*CreateWorkspaceSettingInput"
+          }
+        ],
+        "returns": "*WorkspaceSetting",
+        "errors": [
+          "ErrNilInput",
+          "ErrConstraintViolation",
+          "tenancy.ErrMissing",
+          "tenancy.ErrMismatch"
+        ],
+        "sql_bodies": {
+          "postgres": "INSERT INTO \"public\".\"workspace_settings\" (<columns>) VALUES (<values>)"
+        }
+      },
+      {
+        "name": "CreateMany",
+        "params": [
+          {
+            "name": "inputs",
+            "type": "[]*CreateWorkspaceSettingInput"
+          }
+        ],
+        "returns": "[]*WorkspaceSetting",
+        "errors": [
+          "ErrNilInput",
+          "ErrConstraintViolation",
+          "tenancy.ErrMissing",
+          "tenancy.ErrMismatch"
+        ],
+        "notes": "Batched in generation.batch_size chunks. Earlier chunks are not rolled back on a later failure — wrap in a transaction for atomicity.",
+        "sql_bodies": {
+          "postgres": "INSERT INTO \"public\".\"workspace_settings\" (<columns>) VALUES <values>"
+        }
+      },
+      {
+        "name": "Upsert",
+        "params": [
+          {
+            "name": "input",
+            "type": "*CreateWorkspaceSettingInput"
+          },
+          {
+            "name": "target",
+            "type": "WorkspaceSettingConflictTarget"
+          }
+        ],
+        "returns": "*WorkspaceSetting",
+        "errors": [
+          "ErrNilInput",
+          "ErrConstraintViolation",
+          "tenancy.ErrMissing",
+          "tenancy.ErrMismatch"
+        ],
+        "notes": "One method over the generated WorkspaceSettingConflictTarget enum — the target argument selects the conflict columns at call time.",
+        "sql_bodies": {
+          "postgres": "INSERT INTO \"public\".\"workspace_settings\" (<columns>) VALUES (<values>) ON CONFLICT (<conflict_target>) DO UPDATE SET <excluded>"
+        }
+      },
+      {
+        "name": "UpsertMany",
+        "params": [
+          {
+            "name": "inputs",
+            "type": "[]*CreateWorkspaceSettingInput"
+          },
+          {
+            "name": "target",
+            "type": "WorkspaceSettingConflictTarget"
+          }
+        ],
+        "returns": "[]*WorkspaceSetting",
+        "errors": [
+          "ErrNilInput",
+          "ErrConstraintViolation",
+          "tenancy.ErrMissing",
+          "tenancy.ErrMismatch"
+        ],
+        "notes": "Batched in generation.batch_size chunks over the same WorkspaceSettingConflictTarget enum Upsert takes. Inputs resolving to one target are deduped before the statement is built, last occurrence wins. Earlier chunks are not rolled back on a later failure — wrap in a transaction for atomicity.",
+        "sql_bodies": {
+          "postgres": "INSERT INTO \"public\".\"workspace_settings\" (<columns>) VALUES <values> ON CONFLICT (<conflict_target>) DO UPDATE SET <excluded>"
+        }
+      },
+      {
+        "name": "Update",
+        "params": [
+          {
+            "name": "pk",
+            "type": "WorkspaceSettingPK"
+          },
+          {
+            "name": "input",
+            "type": "*UpdateWorkspaceSettingInput"
+          }
+        ],
+        "returns": "*WorkspaceSetting",
+        "errors": [
+          "ErrNotFound",
+          "ErrNilInput",
+          "ErrConstraintViolation",
+          "tenancy.ErrMissing",
+          "tenancy.ErrMismatch"
+        ],
+        "notes": "Only fields where IsSet() reports true reach the SET clause; an input with none set issues no UPDATE and returns the row unchanged.",
+        "sql_bodies": {
+          "postgres": "UPDATE \"public\".\"workspace_settings\" SET <set> WHERE \"workspace_id\" = $1 AND \"key\" = $2"
+        }
+      },
+      {
+        "name": "UpdateMany",
+        "params": [
+          {
+            "name": "items",
+            "type": "[]UpdateWorkspaceSettingItem"
+          }
+        ],
+        "returns": "[]*WorkspaceSetting",
+        "errors": [
+          "ErrNilInput",
+          "ErrConstraintViolation",
+          "tenancy.ErrMissing",
+          "tenancy.ErrMismatch"
+        ],
+        "notes": "Issues one statement per item. Batched like CreateMany — earlier items are not rolled back on a later failure. A primary key that does not exist is silently skipped, even under strict_updates.",
+        "sql_bodies": {
+          "postgres": "UPDATE \"public\".\"workspace_settings\" SET <set> WHERE \"workspace_id\" = $1 AND \"key\" = $2"
+        }
+      },
+      {
+        "name": "UpdateWhere",
+        "params": [
+          {
+            "name": "filter",
+            "type": "*WorkspaceSettingFilter"
+          },
+          {
+            "name": "input",
+            "type": "*UpdateWorkspaceSettingInput"
+          }
+        ],
+        "returns": "[]*WorkspaceSetting",
+        "errors": [
+          "ErrNilInput",
+          "ErrEmptyFilter",
+          "ErrConstraintViolation",
+          "tenancy.ErrMissing"
+        ],
+        "notes": "Idempotent — returns an empty slice when no row matches. ErrEmptyFilter when the filter produces no conditions.",
+        "sql_bodies": {
+          "postgres": "UPDATE \"public\".\"workspace_settings\" SET <set> WHERE <filter> RETURNING \"workspace_id\", \"key\""
+        }
+      },
+      {
+        "name": "HardDelete",
+        "params": [
+          {
+            "name": "pk",
+            "type": "WorkspaceSettingPK"
+          }
+        ],
+        "returns": "",
+        "errors": [
+          "tenancy.ErrMissing",
+          "tenancy.ErrMismatch"
+        ],
+        "notes": "Idempotent — a primary key that does not exist is not an error.",
+        "sql_bodies": {
+          "postgres": "DELETE FROM \"public\".\"workspace_settings\" WHERE \"workspace_id\" = $1 AND \"key\" = $2"
+        }
+      },
+      {
+        "name": "HardDeleteMany",
+        "params": [
+          {
+            "name": "pks",
+            "type": "[]WorkspaceSettingPK"
+          }
+        ],
+        "returns": "",
+        "errors": [
+          "tenancy.ErrMissing",
+          "tenancy.ErrMismatch"
+        ],
+        "notes": "Idempotent — primary keys that do not exist are not an error.",
+        "sql_bodies": {
+          "postgres": "DELETE FROM \"public\".\"workspace_settings\" WHERE (\"workspace_id\", \"key\") IN (<pks>)"
+        }
+      },
+      {
+        "name": "HardDeleteWhere",
+        "params": [
+          {
+            "name": "filter",
+            "type": "*WorkspaceSettingFilter"
+          }
+        ],
+        "returns": "",
+        "errors": [
+          "ErrEmptyFilter",
+          "tenancy.ErrMissing"
+        ],
+        "notes": "Idempotent — no match is not an error. ErrEmptyFilter when the filter produces no conditions.",
+        "sql_bodies": {
+          "postgres": "DELETE FROM \"public\".\"workspace_settings\" WHERE <filter> RETURNING \"workspace_id\", \"key\""
+        }
+      }
+    ]
+  },
+  "filter": {
+    "type": "WorkspaceSettingFilter",
+    "fields": [
+      {
+        "name": "CreatedAt",
+        "type": "*comparator.Time"
+      },
+      {
+        "name": "Key",
+        "type": "*comparator.ID"
+      },
+      {
+        "name": "Value",
+        "type": "*comparator.String"
+      },
+      {
+        "name": "WorkspaceID",
+        "type": "*comparator.ID"
+      },
+      {
+        "name": "And",
+        "type": "[]*WorkspaceSettingFilter"
+      },
+      {
+        "name": "Or",
+        "type": "[]*WorkspaceSettingFilter"
+      }
+    ]
+  },
+  "sort": {
+    "type": "WorkspaceSettingSort",
+    "fields": [
+      "CreatedAt",
+      "Key",
+      "Value",
+      "WorkspaceID"
+    ]
+  },
+  "examples": {}
+}

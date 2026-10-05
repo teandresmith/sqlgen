@@ -1,0 +1,345 @@
+{
+  "$schema": "https://raw.githubusercontent.com/teandresmith/sqlgen/vdev/cmd/sqlgen/manifest/schema/v1.json",
+  "schema_version": "0.1.0",
+  "generated_at": "2026-01-01T00:00:00Z",
+  "generator": {
+    "name": "sqlgen",
+    "version": "dev"
+  },
+  "dialect": "postgres",
+  "package": "models",
+  "layout": "per_entity",
+  "conventions": {
+    "client_entry_points": {
+      "query": "client.<Entity>()",
+      "mutation": "client.<Entity>()"
+    },
+    "error_sentinels": [
+      {
+        "name": "ErrNotFound",
+        "graphql_code": "NOT_FOUND",
+        "package": "models"
+      },
+      {
+        "name": "ErrEmptyFilter",
+        "graphql_code": "",
+        "package": "models"
+      },
+      {
+        "name": "ErrNilInput",
+        "graphql_code": "",
+        "package": "models"
+      },
+      {
+        "name": "ErrAmbiguousFilter",
+        "graphql_code": "",
+        "package": "models"
+      },
+      {
+        "name": "ErrInvalidCursor",
+        "graphql_code": "",
+        "package": "models"
+      },
+      {
+        "name": "ErrDeadlock",
+        "graphql_code": "",
+        "package": "models"
+      },
+      {
+        "name": "ErrConnectionFailed",
+        "graphql_code": "",
+        "package": "models"
+      },
+      {
+        "name": "ErrConstraintViolation",
+        "graphql_code": "",
+        "package": "models"
+      },
+      {
+        "name": "ErrAlreadyRelated",
+        "graphql_code": "CONFLICT",
+        "package": "models"
+      },
+      {
+        "name": "ErrNestedVerbConflict",
+        "graphql_code": "INVALID_INPUT",
+        "package": "models"
+      },
+      {
+        "name": "ErrMissing",
+        "graphql_code": "UNAUTHENTICATED",
+        "package": "tenancy"
+      },
+      {
+        "name": "ErrMismatch",
+        "graphql_code": "FORBIDDEN",
+        "package": "tenancy"
+      }
+    ],
+    "constraint_error_codes": {
+      "check": "INVALID_INPUT",
+      "foreign_key": "BAD_REFERENCE",
+      "not_null": "INVALID_INPUT",
+      "unique": "CONFLICT"
+    },
+    "find_returns_nil_on_missing": false,
+    "pagination": {
+      "page_type": "Page",
+      "list_envelope_suffix": "List",
+      "cursor_encoding": "opaque-base64"
+    },
+    "call_options": {
+      "type": "CallOptions",
+      "fields": [
+        "SkipCache",
+        "SkipEvents",
+        "SkipHooks",
+        "SkipTenancy",
+        "Tenant",
+        "FieldOptions",
+        "LockMode",
+        "AllowInTransaction"
+      ]
+    },
+    "soft_delete": {
+      "default_excluded_from_finds": true,
+      "include_via": "set <SoftDeleteColumn> comparator on filter",
+      "hard_delete_method_suffix": "HardDelete",
+      "restore_method_suffix": "Restore"
+    },
+    "comparator": {
+      "package": "comparator",
+      "families": [
+        "Bool",
+        "Enum",
+        "ID",
+        "JSON",
+        "JSONB",
+        "Number",
+        "Slice",
+        "String",
+        "Time"
+      ],
+      "shape_notes": [
+        "All families share: Eq, Neq, In, NotIn, IsNull, IsNotNull",
+        "Numeric families (Number, Time) add: Gt, Gte, Lt, Lte",
+        "String adds: Like, ILike, NotLike, NotILike",
+        "Slice (JSON columns, PostgreSQL arrays) adds: Contains, ContainedBy, Overlap"
+      ],
+      "composition": {
+        "and": "Filter.And: []*Filter — predicates AND'd together",
+        "nesting": "And and Or nest arbitrarily; default is AND across top-level fields",
+        "or": "Filter.Or:  []*Filter — entries OR'd together; each entry's own fields are AND'd, so a union is one entry per branch"
+      },
+      "examples": {
+        "compound_or": "<pkg>.UserFilter{Or: []*<pkg>.UserFilter{{Email: &comparator.String{Eq: new(\"a@x.com\")}}, {Email: &comparator.String{Eq: new(\"b@x.com\")}}}}",
+        "field_filter": "<pkg>.UserFilter{Email: &comparator.String{Eq: new(\"a@x.com\")}}",
+        "id_in": "&comparator.ID{In: []string{\"u1\", \"u2\", \"u3\"}}",
+        "is_null": "&comparator.NullableString{Null: new(true)}",
+        "numeric_range": "&comparator.Number[int]{Between: &comparator.Range[int]{Start: 18, End: 65}}",
+        "text_contains": "&comparator.String{Contains: new(\"acme\")}",
+        "time_after": "&comparator.Time{Gt: new(cutoff)}"
+      }
+    },
+    "omittable": {
+      "package": "omittable",
+      "type": "omittable.Value[T]",
+      "purpose": "Distinguishes 'not set' from 'set to zero value'. Used in <Entity>Update structs and partial-update contexts.",
+      "construction": [
+        "omittable.Set(value) — set to a value",
+        "omittable.Omit[T]() — explicitly unset (zero state)"
+      ],
+      "methods": [
+        "IsSet() bool",
+        "IsZero() bool",
+        "Get() (T, bool)",
+        "MustGet() T"
+      ],
+      "json_behavior": "Marshals to the wrapped value when set; omitted when unset (omitzero semantics on the wrapper, via IsZero)"
+    }
+  },
+  "generation_config": {
+    "audit_columns": true,
+    "cache": true,
+    "events": true,
+    "graphql": true,
+    "graph_top_level": false,
+    "soft_delete": true,
+    "tenancy": true,
+    "views": true
+  },
+  "entities": [
+    {
+      "name": "Asset",
+      "table": "assets",
+      "kind": "table",
+      "file": "entities/asset.json"
+    },
+    {
+      "name": "AssetDocumentLink",
+      "table": "asset_document_links",
+      "kind": "table",
+      "file": "entities/asset_document_link.json"
+    },
+    {
+      "name": "Category",
+      "table": "categories",
+      "kind": "table",
+      "file": "entities/category.json"
+    },
+    {
+      "name": "CategoryPriceTotal",
+      "table": "category_price_totals",
+      "kind": "view",
+      "file": "entities/category_price_total.json"
+    },
+    {
+      "name": "Document",
+      "table": "documents",
+      "kind": "table",
+      "file": "entities/document.json"
+    },
+    {
+      "name": "Event",
+      "table": "events",
+      "kind": "table",
+      "file": "entities/event.json"
+    },
+    {
+      "name": "FilterProbe",
+      "table": "filter_probes",
+      "kind": "table",
+      "file": "entities/filter_probe.json"
+    },
+    {
+      "name": "KeyedCode",
+      "table": "keyed_codes",
+      "kind": "table",
+      "file": "entities/keyed_code.json"
+    },
+    {
+      "name": "KeyedCodeEntry",
+      "table": "keyed_code_entries",
+      "kind": "table",
+      "file": "entities/keyed_code_entry.json"
+    },
+    {
+      "name": "MaskedLabel",
+      "table": "masked_labels",
+      "kind": "table",
+      "file": "entities/masked_label.json"
+    },
+    {
+      "name": "NumericWidth",
+      "table": "numeric_widths",
+      "kind": "table",
+      "file": "entities/numeric_width.json"
+    },
+    {
+      "name": "Order",
+      "table": "orders",
+      "kind": "table",
+      "file": "entities/order.json"
+    },
+    {
+      "name": "OrderItem",
+      "table": "order_items",
+      "kind": "table",
+      "file": "entities/order_item.json"
+    },
+    {
+      "name": "Product",
+      "table": "products",
+      "kind": "table",
+      "file": "entities/product.json"
+    },
+    {
+      "name": "Profile",
+      "table": "profiles",
+      "kind": "table",
+      "file": "entities/profile.json"
+    },
+    {
+      "name": "ScalarProbe",
+      "table": "scalar_probes",
+      "kind": "table",
+      "file": "entities/scalar_probe.json"
+    },
+    {
+      "name": "User",
+      "table": "users",
+      "kind": "table",
+      "file": "entities/user.json"
+    },
+    {
+      "name": "UserBadge",
+      "table": "user_badges",
+      "kind": "table",
+      "file": "entities/user_badge.json"
+    },
+    {
+      "name": "UserCategory",
+      "table": "user_categories",
+      "kind": "table",
+      "file": "entities/user_category.json"
+    },
+    {
+      "name": "UserCredential",
+      "table": "user_credentials",
+      "kind": "table",
+      "file": "entities/user_credential.json"
+    },
+    {
+      "name": "UserSession",
+      "table": "user_sessions",
+      "kind": "table",
+      "file": "entities/user_session.json"
+    },
+    {
+      "name": "WorkspaceNote",
+      "table": "workspace_notes",
+      "kind": "table",
+      "file": "entities/workspace_note.json"
+    },
+    {
+      "name": "WorkspaceNoteSummary",
+      "table": "workspace_note_summary",
+      "kind": "view",
+      "file": "entities/workspace_note_summary.json"
+    },
+    {
+      "name": "WorkspaceSetting",
+      "table": "workspace_settings",
+      "kind": "table",
+      "file": "entities/workspace_setting.json"
+    }
+  ],
+  "enums": [
+    {
+      "name": "DocumentEntityTypeEnum",
+      "go_type": "DocumentEntityTypeEnum",
+      "db_type": "document_entity_type_enum",
+      "values": [
+        "asset.primary",
+        "asset.attachment",
+        "asset.invoice",
+        "spv"
+      ],
+      "graphql_name": "DocumentEntityTypeEnum",
+      "slice_type": "DocumentEntityTypeEnumSlice"
+    },
+    {
+      "name": "WorkspaceNoteKindEnum",
+      "go_type": "WorkspaceNoteKindEnum",
+      "db_type": "workspace_note_kind_enum",
+      "values": [
+        "draft",
+        "published",
+        "archived"
+      ],
+      "graphql_name": "WorkspaceNoteKindEnum",
+      "slice_type": "WorkspaceNoteKindEnumSlice"
+    }
+  ],
+  "extras": []
+}

@@ -1,0 +1,240 @@
+"""
+User corresponds to the users table.
+"""
+type User {
+  "id"
+  id: UUID!
+  "email"
+  email: String!
+  "name"
+  name: String!
+  "metadata"
+  metadata: JSON
+  "is_active"
+  isActive: Boolean!
+  "last_login_at"
+  lastLoginAt: Time
+  "ip_addr"
+  ipAddr: String
+  "created_at"
+  createdAt: Time!
+  "updated_at"
+  updatedAt: Time
+  "deleted_at"
+  deletedAt: Time
+  "one-to-one relationship with the user_badges table."
+  badge: UserBadge
+  "many-to-many relationship with the categories table."
+  categories: [Category!]!
+  "one-to-many relationship with the events table."
+  events: [Event!]!
+  "one-to-many relationship with the orders table."
+  orders: [Order!]!
+}
+
+type UserConnection {
+  edges:      [UserEdge!]!
+  pageInfo:   PageInfo!
+  totalCount: Int!
+}
+
+type UserEdge {
+  node:   User!
+  cursor: String!
+}
+
+type UserListResult {
+  items:      [User!]!
+  totalCount: Int!
+  offset:     Int!
+  limit:      Int!
+  hasMore:    Boolean!
+}
+
+input UserFilter {
+  email: StringComparator
+  name: StringComparator
+  metadata: NullableJSONBComparator
+  isActive: BooleanComparator
+  lastLoginAt: NullableTimeComparator
+  ipAddr: NullableStringComparator
+  createdAt: TimeComparator
+  updatedAt: NullableTimeComparator
+  deletedAt: NullableTimeComparator
+  categories: CategoryFilter
+  events: EventFilter
+  orders: OrderFilter
+  and: [UserFilter!]
+  or:  [UserFilter!]
+}
+
+enum UserSortField {
+  ID
+  EMAIL
+  NAME
+  METADATA
+  IS_ACTIVE
+  LAST_LOGIN_AT
+  IP_ADDR
+  CREATED_AT
+  UPDATED_AT
+  DELETED_AT
+}
+
+input UserSort {
+  field:     UserSortField!
+  direction: SortDirection!
+}
+input CreateUserInput {
+  email: String!
+  name: String!
+  metadata: JSON
+  isActive: Boolean!
+  newPassword: String
+  ipAddr: String
+  createdAt: Time!
+  updatedAt: Time
+  deletedAt: Time
+}
+input UpdateUserInput {
+  email: String
+  name: String
+  metadata: JSON
+  isActive: Boolean
+  newPassword: String
+  ipAddr: String
+  createdAt: Time
+  updatedAt: Time
+  deletedAt: Time
+}
+
+extend type Query {
+  user(id: UUID!): User
+  "Cursor-paginated; ordering is driven by cursor_keys to preserve keyset semantics — pass `sort` to userList instead."
+  users(filter: UserFilter, first: Int, after: String, last: Int, before: String): UserConnection!
+  userList(filter: UserFilter, sort: [UserSort!], limit: Int, offset: Int): UserListResult!
+}
+
+extend type Mutation {
+  createUser(input: CreateUserInput!): User!
+  createUsers(inputs: [CreateUserInput!]!): [User!]!
+  updateUser(id: UUID!, input: UpdateUserInput!): User!
+  updateUsers(filter: UserFilter!, input: UpdateUserInput!): [User!]!
+  upsertUser(input: CreateUserInput!): User!
+  hardDeleteUser(id: UUID!): Boolean!
+  softDeleteUser(id: UUID!): User
+  restoreUser(id: UUID!): User
+}
+
+input CreateUserWithRelatedInput {
+  user: CreateUserInput!
+  badge: UserBadgeCreateNested
+  categories: UserCategoriesCreateNested
+  events: UserEventsCreateNested
+  orders: UserOrdersCreateNested
+}
+
+input UpdateUserWithRelatedInput {
+  user: UpdateUserInput
+  badge: UserBadgeUpdateNested
+  categories: UserCategoriesUpdateNested
+  events: UserEventsUpdateNested
+  orders: UserOrdersUpdateNested
+}
+
+input UpsertUserWithRelatedInput {
+  user: CreateUserInput!
+  badge: UserBadgeUpdateNested
+  categories: UserCategoriesUpdateNested
+  events: UserEventsUpdateNested
+  orders: UserOrdersUpdateNested
+}
+
+enum UserConflictTarget {
+  EMAIL
+  PK
+}
+
+input UserBadgeCreateNested {
+  create: UserBadgeCreateInput
+  connect: Int
+}
+
+input UserBadgeUpdateNested {
+  clear: Boolean
+  create: UserBadgeCreateInput
+  connect: Int
+  disconnect: Int
+}
+
+input UserBadgeCreateInput {
+  label: String!
+}
+
+input UserCategoriesCreateNested {
+  create: [CreateCategoryInput!]
+  connect: [Int!]
+}
+
+input UserCategoriesUpdateNested {
+  clear: Boolean
+  create: [CreateCategoryInput!]
+  connect: [Int!]
+  disconnect: [Int!]
+}
+
+input UserEventsCreateNested {
+  create: [UserEventsCreateInput!]
+  connect: [UUID!]
+}
+
+input UserEventsUpdateNested {
+  clear: Boolean
+  create: [UserEventsCreateInput!]
+  connect: [UUID!]
+  disconnect: [UUID!]
+}
+
+input UserEventsCreateInput {
+  action: String!
+  occurredAt: DateTime!
+  processedAt: NullDateTime
+  adjustment: NullDecimal
+  retryCount: Int
+  succeeded: Boolean
+  mac: String
+  osName: String
+  ioCount: Int
+  pkVal: String
+  fkVal: String
+  asciiArt: String
+  csvData: String
+  tcpPort: Int
+  utf8Body: String
+  http2Flag: Boolean
+  line2ID: String
+  address2ID: String
+  s3URL: String
+}
+
+input UserOrdersCreateNested {
+  create: [UserOrdersCreateInput!]
+}
+
+input UserOrdersUpdateNested {
+  create: [UserOrdersCreateInput!]
+}
+
+input UserOrdersCreateInput {
+  total: Decimal!
+  notes: String
+  createdAt: Time!
+  updatedAt: Time
+  deletedAt: Time
+}
+
+extend type Mutation {
+  createUserWithRelated(input: CreateUserWithRelatedInput!): User!
+  updateUserWithRelated(id: UUID!, input: UpdateUserWithRelatedInput!): User!
+  upsertUserWithRelated(input: UpsertUserWithRelatedInput!, conflictTarget: UserConflictTarget! = PK): User!
+}

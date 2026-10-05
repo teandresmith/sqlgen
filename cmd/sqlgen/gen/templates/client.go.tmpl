@@ -1,0 +1,390 @@
+{{- define "client" -}}
+
+// {{ .ClientName }}Option configures the unified {{ .ClientName }} during construction.
+type {{ .ClientName }}Option func(*{{ .ClientName | toCamelCase }}Options)
+
+// {{ .ClientName | toCamelCase }}Options holds configuration set via {{ .ClientName }}Option functions.
+type {{ .ClientName | toCamelCase }}Options struct {
+	callbackMode  database.CallbackMode
+	panicHandler  func(ctx context.Context, r any, table hook.TableName, op string) error
+	mutationHooks []hook.MutationHook
+	queryHooks    []hook.QueryHook
+{{- if .EventsEnabled }}
+	eventPublisher event.Publisher
+	eventConfig    event.Config
+{{- end }}
+{{- if .CacheEnabled }}
+	cache *Cache
+{{- end }}
+{{- if .TenancyEnabled }}
+	tenantResolver tenancy.TenantResolver[{{ .TenancyGoType }}]
+{{- end }}
+}
+
+// WithCallbackMode sets the callback execution mode for transactions.
+// Default is database.CallbackAsync.
+func WithCallbackMode(mode database.CallbackMode) {{ .ClientName }}Option {
+	return func(o *{{ .ClientName | toCamelCase }}Options) {
+		o.callbackMode = mode
+	}
+}
+
+// WithPanicHandler sets a custom panic handler for all operations.
+// The handler receives the recovered value, table name, and operation,
+// and returns the error that the caller will see.
+func WithPanicHandler(handler func(ctx context.Context, r any, table hook.TableName, op string) error) {{ .ClientName }}Option {
+	return func(o *{{ .ClientName | toCamelCase }}Options) {
+		o.panicHandler = handler
+	}
+}
+
+// WithMutationHook appends a mutation hook to the client's hook chain.
+// Hooks execute in registration order (first registered = outermost).
+func WithMutationHook(h hook.MutationHook) {{ .ClientName }}Option {
+	return func(o *{{ .ClientName | toCamelCase }}Options) {
+		o.mutationHooks = append(o.mutationHooks, h)
+	}
+}
+
+// WithQueryHook appends a query hook to the client's hook chain.
+// Hooks execute in registration order (first registered = outermost).
+func WithQueryHook(h hook.QueryHook) {{ .ClientName }}Option {
+	return func(o *{{ .ClientName | toCamelCase }}Options) {
+		o.queryHooks = append(o.queryHooks, h)
+	}
+}
+{{- if .CacheEnabled }}
+
+// WithCache wires a *Cache into the client — shorthand for registering both
+// its QueryHook and MutationHook. Cache is the outermost hook in the chain so
+// hits short-circuit before any user hook or event hook runs.
+func WithCache(c *Cache) {{ .ClientName }}Option {
+	return func(o *{{ .ClientName | toCamelCase }}Options) {
+		o.cache = c
+	}
+}
+{{- end }}
+{{- if .TenancyEnabled }}
+
+// WithTenantResolver wires the request-scoped tenant resolver into the client.
+// All generated reads and mutations on tenanted tables call this resolver at
+// method entry and apply the resolved tenant as a WHERE filter / INSERT value.
+func WithTenantResolver(r tenancy.TenantResolver[{{ .TenancyGoType }}]) {{ .ClientName }}Option {
+	return func(o *{{ .ClientName | toCamelCase }}Options) {
+		o.tenantResolver = r
+	}
+}
+{{- end }}
+
+{{ if eq .Dialect "mysql" -}}
+// mysqlVersion holds the parsed MySQL server version reported by SELECT VERSION().
+// Used by the LockMode runtime guard to reject NoWait / SkipLocked on MySQL < 8.0
+// before any SQL round-trip.
+type mysqlVersion struct {
+	Raw   string // full version string as returned by the server, e.g. "8.0.34" or "5.7.40-log"
+	Major int    // major version parsed from Raw, e.g. 8 or 5
+}
+
+// mysqlVersionCache lazily probes and caches the MySQL server version for the
+// lifetime of the client. The probe runs at most once (sync.Once) on the first
+// call to a Get / GetMany / Connection method that requests a version-gated
+// LockMode (NoWait / SkipLocked), always on the pool rather than on a caller's
+// transaction connection. Cached errors are returned to every caller so a
+// transient probe failure surfaces immediately to the application instead of
+// silently retrying.
+type mysqlVersionCache struct {
+	once    sync.Once
+	querier database.Querier
+	version mysqlVersion
+	err     error
+}
+
+func newMySQLVersionCache(q database.Querier) *mysqlVersionCache {
+	return &mysqlVersionCache{querier: q}
+}
+
+func (c *mysqlVersionCache) get(ctx context.Context) (mysqlVersion, error) {
+	c.once.Do(func() {
+		// Deliberately the pool querier, never the caller's transaction
+		// connection: SELECT VERSION() is a server property, not transaction
+		// state, and the cache is already client-wide. Routing it through the
+		// active transaction would cache whatever that transaction's state
+		// produced — an error raised during its teardown, for the life of the
+		// client — and would make the first probe queue behind that
+		// transaction's reservation, blocking every other get() caller with it.
+		row := c.querier.QueryRow(ctx, "SELECT VERSION()")
+		var raw string
+		if err := row.Scan(&raw); err != nil {
+			c.err = fmt.Errorf("query mysql version: %w", err)
+			return
+		}
+		dot := strings.IndexByte(raw, '.')
+		if dot <= 0 {
+			c.err = fmt.Errorf("parse mysql version %q: missing major", raw)
+			return
+		}
+		major, err := strconv.Atoi(raw[:dot])
+		if err != nil {
+			c.err = fmt.Errorf("parse mysql version %q: %w", raw, err)
+			return
+		}
+		c.version = mysqlVersion{Raw: raw, Major: major}
+	})
+	return c.version, c.err
+}
+
+{{ end -}}
+// {{ .ClientName }} is the unified entry point for all database operations.
+// All entity clients share the same querier and configuration.
+// The {{ .ClientName }} is safe for concurrent use after construction.
+type {{ .ClientName }} struct {
+	querier database.Querier
+	opts    {{ .ClientName | toCamelCase }}Options
+{{- if eq .Dialect "mysql" }}
+	mysqlVersion *mysqlVersionCache
+{{- end }}
+{{- range .Entities }}
+	{{ .FieldName }} *{{ .FieldName }}Client
+{{- end }}
+}
+
+// New creates a new {{ .ClientName }} with the given querier and options.
+// All entity clients are constructed internally with the shared querier.
+func New(querier database.Querier, opts ...{{ .ClientName }}Option) *{{ .ClientName }} {
+	options := {{ .ClientName | toCamelCase }}Options{
+		callbackMode: database.CallbackAsync,
+	}
+	for _, o := range opts {
+		o(&options)
+	}
+{{- if .EventsEnabled }}
+
+	// Prepend event hooks as outermost hooks (before user hooks)
+	if options.eventPublisher != nil {
+		eventHooks := buildEventHooks(options.eventPublisher, options.eventConfig)
+		options.mutationHooks = append(eventHooks, options.mutationHooks...)
+	}
+{{- end }}
+{{- if .CacheEnabled }}
+
+	// Prepend cache hooks as the outermost hooks so a hit short-circuits before
+	// any event or user hook runs.
+	if options.cache != nil {
+		options.mutationHooks = append([]hook.MutationHook{options.cache.MutationHook()}, options.mutationHooks...)
+		options.queryHooks = append([]hook.QueryHook{options.cache.QueryHook()}, options.queryHooks...)
+	}
+{{- end }}
+
+{{ if eq .Dialect "mysql" }}
+	mysqlVersion := newMySQLVersionCache(querier)
+{{ end -}}
+	c := &{{ .ClientName }}{
+		querier: querier,
+		opts:    options,
+{{- if eq .Dialect "mysql" }}
+		mysqlVersion: mysqlVersion,
+{{- end }}
+{{- range .Entities }}
+		{{ .FieldName }}: new{{ .StructName }}Client(querier, options.mutationHooks, options.queryHooks, options.panicHandler{{ if and (eq $.Dialect "mysql") (not .IsView) }}, mysqlVersion{{ end }}),
+{{- end }}
+	}
+{{- if .TenancyEnabled }}
+
+	// Thread the tenant resolver into every entity client that needs one. That
+	// is a UNION of four conditions, not just "detected as tenanted"
+	// (TableContext.NeedsTenantResolver, resolved in finalizeTenancyWiring):
+	// the entity is itself tenanted; it has a tenanted O2O child whose filter
+	// the parent appends at GetMany time; one of its relationship filters can
+	// reach a tenanted target, so compiling it into an EXISTS needs the
+	// target's tenant predicate inside the subquery; or it carries a
+	// nested-mutation edge writing through a tenanted client, and hoists that
+	// write's single resolve.
+	//
+	// So a client for a NON-tenanted table can legitimately carry a
+	// tenantResolver — the field on the entity client is gated on the same
+	// union, so field and assignment cannot disagree. Carrying
+	// it does not scope that table's own reads: the outer-query tenant filter
+	// is emitted only under `and .Tenancy .Tenancy.Tenanted`.
+	//
+	// Nor does carrying it make such a client fail closed. filterOptions
+	// resolves only when the filter it was handed actually sets a relationship
+	// member, so a shared table stays readable before any tenant is selected
+	// even against a resolver that reports a missing tenant as an error.
+	// Past that gate, resolveTenant is emitted in its required:false form, so
+	// a zero resolver return leaves the subquery unscoped rather than
+	// erroring — a resolver error still propagates.
+{{- range .TenantedEntities }}
+	c.{{ . }}.tenantResolver = options.tenantResolver
+{{- end }}
+{{- end }}
+
+{{- if .NestedSurfaceEntities }}
+
+	// Push the configured CallbackMode down to every entity client that can
+	// carry a nested-mutation surface: the nested methods open the transaction
+	// the whole nested write runs in and pass this mode to it, so
+	// deferred events and cache invalidation flush the way the client was
+	// configured rather than on NewTransaction's default.
+{{- range .NestedSurfaceEntities }}
+	c.{{ . }}.callbackMode = options.callbackMode
+{{- end }}
+{{- end }}
+
+	// Wire up cross-client references for relationship loading and the clients
+	// the nested-mutation executors write through
+{{- range $entity := .Entities }}
+{{- range $entity.ClientWires }}
+	c.{{ $entity.FieldName }}.{{ .EntityField }} = c.{{ .TargetField }}
+{{- end }}
+{{- end }}
+
+	return c
+}
+{{ range .Entities }}
+
+// {{ .AccessorName }} returns the {{ .InterfaceName }} for {{ .StructName }} operations.
+func (c *{{ $.ClientName }}) {{ .AccessorName }}() {{ .InterfaceName }} {
+	return c.{{ .FieldName }}
+}
+{{- end }}
+
+// Begin starts a new transaction with the given name.
+// Delegates to database.NewTransaction with the client's querier.
+// The client's configured CallbackMode is applied when the caller does not
+// specify one explicitly via TxOptions.
+func (c *{{ .ClientName }}) Begin(ctx context.Context, name string, opts ...database.TxOptions) (context.Context, error) {
+	return database.NewTransaction(ctx, c.querier, name, c.applyTxDefaults(opts)...)
+}
+
+// applyTxDefaults returns opts with the client's configured CallbackMode
+// filled in when the caller did not specify one. A caller-supplied mode
+// always wins. Length >1 is passed through so NewTransaction returns its
+// normal "at most one TxOptions" error.
+func (c *{{ .ClientName }}) applyTxDefaults(opts []database.TxOptions) []database.TxOptions {
+	if len(opts) == 0 {
+		return []database.TxOptions{ {CallbackMode: c.opts.callbackMode} }
+	}
+	if len(opts) == 1 && opts[0].CallbackMode == "" {
+		merged := opts[0]
+		merged.CallbackMode = c.opts.callbackMode
+		return []database.TxOptions{merged}
+	}
+	return opts
+}
+
+// Commit commits the active transaction in the context.
+// Delegates to database.Commit.
+func (c *{{ .ClientName }}) Commit(ctx context.Context) error {
+	return database.Commit(ctx)
+}
+
+// Rollback rolls back the active transaction in the context.
+// Delegates to database.Rollback.
+func (c *{{ .ClientName }}) Rollback(ctx context.Context) error {
+	return database.Rollback(ctx)
+}
+
+// WithTx executes fn within a transaction. If fn returns nil, the
+// transaction is committed; otherwise it is rolled back.
+// Delegates to database.WithTransaction with the client's querier.
+// The client's configured CallbackMode is applied when the caller does not
+// specify one explicitly via TxOptions.
+func (c *{{ .ClientName }}) WithTx(ctx context.Context, name string, fn func(context.Context) error, opts ...database.TxOptions) error {
+	return database.WithTransaction(ctx, c.querier, name, fn, c.applyTxDefaults(opts)...)
+}
+
+// Querier returns the active transaction from the context if one exists,
+// otherwise the original querier. This is an escape hatch that bypasses
+// all hooks.
+//
+// Inside a transaction the returned Querier is the *database.Tx, so every
+// statement through it takes the transaction's connection reservation and
+// concurrent use is as safe as through the generated methods. What the
+// reservation cannot enforce is the one rule that remains the caller's: drain
+// or close a result set before issuing the next statement on that txCtx. A
+// caller who holds rows open and then issues another statement is waiting on a
+// reservation it holds itself, which surfaces as a wait bounded only by ctx or
+// TxOptions.Timeout — neither is set by default — rather than as an immediate
+// driver error. database.QueryFunc and database.QueryRowFunc are the spellings
+// that cannot leak a result set.
+func (c *{{ .ClientName }}) Querier(ctx context.Context) database.Querier {
+	return database.Conn(ctx, c.querier)
+}
+
+{{- if .TenancyEnabled }}
+// sqlgen: raw query bypasses tenancy
+{{- end }}
+// Raw executes a raw query and passes the result set to fn. The rows are
+// closed when fn returns, so fn must finish reading them before it does.
+// Raw does not wrap an error returned by fn, though a global hook may.
+// Pass nil args when there are none.
+// Global hooks (tracing, auth) are applied; entity-specific hooks are not.
+// Panic recovery always wraps the call, fn included.
+//
+// fn runs inside the hook chain, so the result set cannot outlive the call:
+// inside a transaction, the rows give the connection back before Raw returns,
+// and concurrent Raw calls on one transactional ctx serialize. A query hook
+// therefore spans the scan, and cannot intercept the rows. When ctx carries a
+// transaction, fn is still bound by the one rule that remains the caller's:
+// drain or close a result set before issuing the next statement on that txCtx.
+// A statement fn issues on it before the rows are drained waits on the
+// connection fn's own rows still hold.
+func (c *{{ .ClientName }}) Raw(ctx context.Context, rawSQL string, args []any, fn func(database.Rows) error) error {
+	terminal := func(ctx context.Context, _ *hook.QueryContext) (any, error) {
+		return nil, database.QueryFunc(ctx, database.Conn(ctx, c.querier), rawSQL, args, fn)
+	}
+	chain := hook.BuildQueryChain(c.opts.panicHandler, c.opts.queryHooks, terminal)
+	_, err := chain(ctx, &hook.QueryContext{
+		Op:    hook.QueryOp("raw_query"),
+		Input: args,
+	})
+	return err
+}
+
+{{- if .TenancyEnabled }}
+// sqlgen: raw query bypasses tenancy
+{{- end }}
+// RawExec executes a raw statement and returns the result.
+// Global hooks (tracing, auth) are applied; entity-specific hooks are not.
+// Panic recovery always wraps the call.
+func (c *{{ .ClientName }}) RawExec(ctx context.Context, rawSQL string, args ...any) (database.Result, error) {
+	terminal := func(ctx context.Context, _ *hook.MutationContext) (any, error) {
+		return database.Conn(ctx, c.querier).Exec(ctx, rawSQL, args...)
+	}
+	chain := hook.BuildMutationChain(c.opts.panicHandler, c.opts.mutationHooks, terminal)
+	result, err := chain(ctx, &hook.MutationContext{
+		Op:    hook.MutationOp("raw_exec"),
+		Input: args,
+	})
+	if err != nil {
+		return nil, err
+	}
+	return result.(database.Result), nil
+}
+
+// Ping verifies database connectivity. If the querier implements a native
+// Ping(context.Context) error method, it is used directly. Otherwise falls
+// back to executing SELECT 1.
+func (c *{{ .ClientName }}) Ping(ctx context.Context) error {
+	type pinger interface {
+		Ping(ctx context.Context) error
+	}
+	if p, ok := c.querier.(pinger); ok {
+		return p.Ping(ctx)
+	}
+	row := c.querier.QueryRow(ctx, "SELECT 1")
+	var n int
+	return row.Scan(&n)
+}
+
+// Close closes all closeable dependencies held by the client.
+// If a dependency does not implement io.Closer, it is silently skipped.
+// All close errors are collected and returned as a joined error.
+func (c *{{ .ClientName }}) Close() error {
+	var errs []error
+	if closer, ok := c.querier.(io.Closer); ok {
+		errs = append(errs, closer.Close())
+	}
+	return errors.Join(errs...)
+}
+{{- end -}}

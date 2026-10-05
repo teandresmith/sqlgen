@@ -1,0 +1,70 @@
+"""
+SluggedRow corresponds to the slugged_rows table.
+"""
+type SluggedRow {
+  "id"
+  id: Int!
+  "name"
+  name: String!
+  "slug"
+  slug: String!
+}
+
+type SluggedRowConnection {
+  edges:      [SluggedRowEdge!]!
+  pageInfo:   PageInfo!
+  totalCount: Int!
+}
+
+type SluggedRowEdge {
+  node:   SluggedRow!
+  cursor: String!
+}
+
+type SluggedRowListResult {
+  items:      [SluggedRow!]!
+  totalCount: Int!
+  offset:     Int!
+  limit:      Int!
+  hasMore:    Boolean!
+}
+
+input SluggedRowFilter {
+  name: StringComparator
+  slug: StringComparator
+  and: [SluggedRowFilter!]
+  or:  [SluggedRowFilter!]
+}
+
+enum SluggedRowSortField {
+  ID
+  NAME
+  SLUG
+}
+
+input SluggedRowSort {
+  field:     SluggedRowSortField!
+  direction: SortDirection!
+}
+input CreateSluggedRowInput {
+  name: String!
+}
+input UpdateSluggedRowInput {
+  name: String
+}
+
+extend type Query {
+  sluggedRow(id: Int!): SluggedRow
+  "Cursor-paginated; ordering is driven by cursor_keys to preserve keyset semantics — pass `sort` to sluggedRowList instead."
+  sluggedRows(filter: SluggedRowFilter, first: Int, after: String, last: Int, before: String): SluggedRowConnection!
+  sluggedRowList(filter: SluggedRowFilter, sort: [SluggedRowSort!], limit: Int, offset: Int): SluggedRowListResult!
+}
+
+extend type Mutation {
+  createSluggedRow(input: CreateSluggedRowInput!): SluggedRow!
+  createSluggedRows(inputs: [CreateSluggedRowInput!]!): [SluggedRow!]!
+  updateSluggedRow(id: Int!, input: UpdateSluggedRowInput!): SluggedRow!
+  updateSluggedRows(filter: SluggedRowFilter!, input: UpdateSluggedRowInput!): [SluggedRow!]!
+  upsertSluggedRow(input: CreateSluggedRowInput!): SluggedRow!
+  deleteSluggedRow(id: Int!): Boolean!
+}

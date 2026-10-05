@@ -1,0 +1,25 @@
+# gqlgen.yml — owned by the consumer, never modified by sqlgen. Mirrors the
+# root-relative api.graphql.schema_dir / resolver_dir (§26.5.8): for this
+# example the graph package lives at the top-level ./graph (a sibling of
+# ./models), so every path below is graph/… rather than models/graph/….
+#
+# At wrapper-invocation time (chained from `sqlgen generate`), sqlgen
+# merges its required `models:` entries (row structs, envelope aliases, scalar
+# bindings) into a temp config; this on-disk file stays byte-equal pre/post.
+
+schema:
+  - "graph/*.graphqls"
+
+exec:
+  filename: graph/generated_gen.go
+  package: graph
+
+model:
+  filename: graph/model/models_gen.go
+  package: model
+
+resolver:
+  layout: follow-schema
+  dir: graph
+  package: graph
+  filename_template: "{name}.resolvers.go"

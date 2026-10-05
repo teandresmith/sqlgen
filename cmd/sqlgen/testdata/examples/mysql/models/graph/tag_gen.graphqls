@@ -1,0 +1,74 @@
+"""
+Content tags with boolean soft delete
+"""
+type Tag {
+  "Unique identifier"
+  id: Int!
+  "Tag name"
+  name: String!
+  "Whether the tag is soft-deleted"
+  isDeleted: Boolean!
+}
+
+type TagConnection {
+  edges:      [TagEdge!]!
+  pageInfo:   PageInfo!
+  totalCount: Int!
+}
+
+type TagEdge {
+  node:   Tag!
+  cursor: String!
+}
+
+type TagListResult {
+  items:      [Tag!]!
+  totalCount: Int!
+  offset:     Int!
+  limit:      Int!
+  hasMore:    Boolean!
+}
+
+input TagFilter {
+  name: StringComparator
+  isDeleted: BooleanComparator
+  and: [TagFilter!]
+  or:  [TagFilter!]
+}
+
+enum TagSortField {
+  ID
+  NAME
+  IS_DELETED
+}
+
+input TagSort {
+  field:     TagSortField!
+  direction: SortDirection!
+}
+input CreateTagInput {
+  name: String!
+  isDeleted: Boolean!
+}
+input UpdateTagInput {
+  name: String
+  isDeleted: Boolean
+}
+
+extend type Query {
+  tag(id: Int!): Tag
+  "Cursor-paginated; ordering is driven by cursor_keys to preserve keyset semantics — pass `sort` to tagList instead."
+  tags(filter: TagFilter, first: Int, after: String, last: Int, before: String): TagConnection!
+  tagList(filter: TagFilter, sort: [TagSort!], limit: Int, offset: Int): TagListResult!
+}
+
+extend type Mutation {
+  createTag(input: CreateTagInput!): Tag!
+  createTags(inputs: [CreateTagInput!]!): [Tag!]!
+  updateTag(id: Int!, input: UpdateTagInput!): Tag!
+  updateTags(filter: TagFilter!, input: UpdateTagInput!): [Tag!]!
+  upsertTag(input: CreateTagInput!): Tag!
+  hardDeleteTag(id: Int!): Boolean!
+  softDeleteTag(id: Int!): Tag
+  restoreTag(id: Int!): Tag
+}

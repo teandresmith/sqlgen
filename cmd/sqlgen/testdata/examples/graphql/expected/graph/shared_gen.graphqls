@@ -1,0 +1,424 @@
+scalar Bytes
+scalar CIDR
+scalar DateTime
+scalar Decimal
+scalar Duration
+scalar IP
+scalar IPAddr
+scalar JSON
+scalar MacAddr
+scalar NullBool
+scalar NullDateTime
+scalar NullDecimal
+scalar NullFloat64
+scalar NullInt16
+scalar NullInt32
+scalar NullInt64
+scalar NullString
+scalar NullTime
+scalar Time
+scalar UUID
+
+enum DocumentEntityTypeEnum {
+  ASSETPRIMARY
+  ASSETATTACHMENT
+  ASSETINVOICE
+  SPV
+}
+
+enum WorkspaceNoteKindEnum {
+  DRAFT
+  PUBLISHED
+  ARCHIVED
+}
+
+type Query
+type Mutation
+
+type PageInfo {
+  hasNextPage:     Boolean!
+  hasPreviousPage: Boolean!
+  startCursor:     String
+  endCursor:       String
+}
+
+enum SortDirection {
+  ASC
+  DESC
+}
+
+input StringComparator {
+  eq:         String
+  neq:        String
+  gt:         String
+  gte:        String
+  lt:         String
+  lte:        String
+  contains:   String
+  startsWith: String
+  endsWith:   String
+  like:       String
+  nlike:      String
+  in:         [String!]
+  nin:        [String!]
+}
+
+input NullableStringComparator {
+  eq:         String
+  neq:        String
+  gt:         String
+  gte:        String
+  lt:         String
+  lte:        String
+  contains:   String
+  startsWith: String
+  endsWith:   String
+  like:       String
+  nlike:      String
+  in:         [String!]
+  nin:        [String!]
+  isNull:     Boolean
+}
+
+input NumericComparator {
+  eq:       Float
+  neq:      Float
+  gt:       Float
+  gte:      Float
+  lt:       Float
+  lte:      Float
+  in:       [Float!]
+  nin:      [Float!]
+  between:  NumericRange
+  nbetween: NumericRange
+}
+
+input NumericRange {
+  from: Float!
+  to:   Float!
+}
+
+input NullableNumericComparator {
+  eq:       Float
+  neq:      Float
+  gt:       Float
+  gte:      Float
+  lt:       Float
+  lte:      Float
+  in:       [Float!]
+  nin:      [Float!]
+  between:  NumericRange
+  nbetween: NumericRange
+  isNull:   Boolean
+}
+
+input BooleanComparator {
+  eq:  Boolean
+  neq: Boolean
+}
+
+input NullableBooleanComparator {
+  eq:     Boolean
+  neq:    Boolean
+  isNull: Boolean
+}
+
+input TimeComparator {
+  eq:       Time
+  neq:      Time
+  gt:       Time
+  gte:      Time
+  lt:       Time
+  lte:      Time
+  in:       [Time!]
+  nin:      [Time!]
+  between:  TimeRange
+  nbetween: TimeRange
+}
+
+input TimeRange {
+  from: Time!
+  to:   Time!
+}
+
+input NullableTimeComparator {
+  eq:       Time
+  neq:      Time
+  gt:       Time
+  gte:      Time
+  lt:       Time
+  lte:      Time
+  in:       [Time!]
+  nin:      [Time!]
+  between:  TimeRange
+  nbetween: TimeRange
+  isNull:   Boolean
+}
+
+input IDComparator {
+  eq:  ID
+  neq: ID
+  gt:  ID
+  gte: ID
+  lt:  ID
+  lte: ID
+  in:  [ID!]
+  nin: [ID!]
+}
+
+input NullableIDComparator {
+  eq:     ID
+  neq:    ID
+  gt:     ID
+  gte:    ID
+  lt:     ID
+  lte:    ID
+  in:     [ID!]
+  nin:    [ID!]
+  isNull: Boolean
+}
+
+input DecimalComparator {
+  eq:  Decimal
+  neq: Decimal
+  gt:  Decimal
+  gte: Decimal
+  lt:  Decimal
+  lte: Decimal
+  in:  [Decimal!]
+  nin: [Decimal!]
+}
+
+input NullableDecimalComparator {
+  eq:     Decimal
+  neq:    Decimal
+  gt:     Decimal
+  gte:    Decimal
+  lt:     Decimal
+  lte:    Decimal
+  in:     [Decimal!]
+  nin:    [Decimal!]
+  isNull: Boolean
+}
+
+input DurationComparator {
+  eq:       Duration
+  neq:      Duration
+  gt:       Duration
+  gte:      Duration
+  lt:       Duration
+  lte:      Duration
+  in:       [Duration!]
+  nin:      [Duration!]
+  between:  DurationRange
+  nbetween: DurationRange
+}
+
+input DurationRange {
+  from: Duration!
+  to:   Duration!
+}
+
+input NullableDurationComparator {
+  eq:       Duration
+  neq:      Duration
+  gt:       Duration
+  gte:      Duration
+  lt:       Duration
+  lte:      Duration
+  in:       [Duration!]
+  nin:      [Duration!]
+  between:  DurationRange
+  nbetween: DurationRange
+  isNull:   Boolean
+}
+
+input BytesComparator {
+  eq:  Bytes
+  neq: Bytes
+  gt:  Bytes
+  gte: Bytes
+  lt:  Bytes
+  lte: Bytes
+  in:  [Bytes!]
+  nin: [Bytes!]
+}
+
+input NullableBytesComparator {
+  eq:     Bytes
+  neq:    Bytes
+  gt:     Bytes
+  gte:    Bytes
+  lt:     Bytes
+  lte:    Bytes
+  in:     [Bytes!]
+  nin:    [Bytes!]
+  isNull: Boolean
+}
+
+input IPComparator {
+  eq:  IP
+  neq: IP
+  gt:  IP
+  gte: IP
+  lt:  IP
+  lte: IP
+  in:  [IP!]
+  nin: [IP!]
+}
+
+input NullableIPComparator {
+  eq:     IP
+  neq:    IP
+  gt:     IP
+  gte:    IP
+  lt:     IP
+  lte:    IP
+  in:     [IP!]
+  nin:    [IP!]
+  isNull: Boolean
+}
+
+input CIDRComparator {
+  eq:  CIDR
+  neq: CIDR
+  gt:  CIDR
+  gte: CIDR
+  lt:  CIDR
+  lte: CIDR
+  in:  [CIDR!]
+  nin: [CIDR!]
+}
+
+input NullableCIDRComparator {
+  eq:     CIDR
+  neq:    CIDR
+  gt:     CIDR
+  gte:    CIDR
+  lt:     CIDR
+  lte:    CIDR
+  in:     [CIDR!]
+  nin:    [CIDR!]
+  isNull: Boolean
+}
+
+input MacAddrComparator {
+  eq:  MacAddr
+  neq: MacAddr
+  gt:  MacAddr
+  gte: MacAddr
+  lt:  MacAddr
+  lte: MacAddr
+  in:  [MacAddr!]
+  nin: [MacAddr!]
+}
+
+input NullableMacAddrComparator {
+  eq:     MacAddr
+  neq:    MacAddr
+  gt:     MacAddr
+  gte:    MacAddr
+  lt:     MacAddr
+  lte:    MacAddr
+  in:     [MacAddr!]
+  nin:    [MacAddr!]
+  isNull: Boolean
+}
+
+input NullableJSONComparator {
+  contains: JSON
+  hasKey:   String
+  isNull:   Boolean
+}
+
+input JSONBComparator {
+  hasKey:      String
+  hasAnyKey:   [String!]
+  hasAllKeys:  [String!]
+  contains:    JSON
+  containedBy: JSON
+  pathExists:  String
+}
+
+input NullableJSONBComparator {
+  hasKey:      String
+  hasAnyKey:   [String!]
+  hasAllKeys:  [String!]
+  contains:    JSON
+  containedBy: JSON
+  pathExists:  String
+  isNull:      Boolean
+}
+
+input BooleanSliceComparator {
+  containsAny: [Boolean!]
+  containsAll: [Boolean!]
+  containedBy: [Boolean!]
+  isEmpty:     Boolean
+}
+
+input DocumentEntityTypeEnumComparator {
+  eq:  DocumentEntityTypeEnum
+  neq: DocumentEntityTypeEnum
+  in:  [DocumentEntityTypeEnum!]
+  nin: [DocumentEntityTypeEnum!]
+}
+
+input DocumentEntityTypeEnumSliceComparator {
+  containsAny: [DocumentEntityTypeEnum!]
+  containsAll: [DocumentEntityTypeEnum!]
+  containedBy: [DocumentEntityTypeEnum!]
+  isEmpty:     Boolean
+}
+
+input FloatSliceComparator {
+  containsAny: [Float!]
+  containsAll: [Float!]
+  containedBy: [Float!]
+  isEmpty:     Boolean
+}
+
+input IntSliceComparator {
+  containsAny: [Int!]
+  containsAll: [Int!]
+  containedBy: [Int!]
+  isEmpty:     Boolean
+}
+
+input NullableDocumentEntityTypeEnumComparator {
+  eq:     DocumentEntityTypeEnum
+  neq:    DocumentEntityTypeEnum
+  in:     [DocumentEntityTypeEnum!]
+  nin:    [DocumentEntityTypeEnum!]
+  isNull: Boolean
+}
+
+input NullableIntSliceComparator {
+  containsAny: [Int!]
+  containsAll: [Int!]
+  containedBy: [Int!]
+  isEmpty:     Boolean
+  isNull:      Boolean
+}
+
+input NullableStringSliceComparator {
+  containsAny: [String!]
+  containsAll: [String!]
+  containedBy: [String!]
+  isEmpty:     Boolean
+  isNull:      Boolean
+}
+
+input StringSliceComparator {
+  containsAny: [String!]
+  containsAll: [String!]
+  containedBy: [String!]
+  isEmpty:     Boolean
+}
+
+input WorkspaceNoteKindEnumComparator {
+  eq:  WorkspaceNoteKindEnum
+  neq: WorkspaceNoteKindEnum
+  in:  [WorkspaceNoteKindEnum!]
+  nin: [WorkspaceNoteKindEnum!]
+}

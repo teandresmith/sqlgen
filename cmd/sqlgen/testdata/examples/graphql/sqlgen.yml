@@ -1,0 +1,367 @@
+version: v1
+
+input:
+  dialect: postgres
+  paths:
+    - ./schema.sql
+  # Views join the GraphQL read surface. `workspace_note_summary` is tenanted
+  # (§29.2.5 detection) and is the end-to-end two-tenant isolation proof;
+  # `category_price_totals` is a materialized view and pins §26.4's
+  # "a matview emits the identical read surface, and Refresh never reaches
+  # the schema" claim.
+  views:
+    - ./views/
+
+output:
+  driver: pgx
+  dir: ./models
+  package: models
+
+generation:
+  soft_delete_columns:
+    - name: deleted_at
+      type: timestamp
+  # The nested-mutation surface (PRD §9.9). This is the example
+  # that carries every write shape the feature has in one schema (the mysql
+  # example enables it too, for the non-RETURNING write path): O2M on a
+  # NULLABLE FK (`users.Events`), O2M on a NOT NULL FK (`users.Orders`), M2M on
+  # an int64-PK target (`users.Categories`) and on a UUID-PK target
+  # (`assets.Documents` / `documents.Assets`), has-one on a NOT NULL FK
+  # (`assets.PrimaryDocument`, create-only) and on a NULLABLE FK into an
+  # int64-PK target (`users.Badge`, whose relink verbs take one converted
+  # `Int`), a self-referential O2M on a tenanted table
+  # (`workspace_notes.Children`), a polymorphic edge made write-eligible by
+  # `discriminator:`, and the four `filter:` edges on `assets` that a non-empty
+  # `filter:` makes ineligible and that must therefore emit no member.
+  nested_mutations:
+    enabled: true
+  # Enable the manifest surface (PRD §30) with the per_entity
+  # JSON layout: a lightweight top-level manifest_gen.json index plus one
+  # full-shape file per entity under manifest/entities/<table>.json. This is
+  # the example that exercises the per_entity code path, the //go:embed
+  # all:manifest/entities loader, and the layered-mode graph breadcrumb
+  # variant (graph/CLAUDE.md + graph/AGENTS.md alongside the models pair).
+  manifest:
+    enabled: true
+    json_layout: per_entity
+
+# Enable cache + tenancy globally. Cache emits the Cache
+# facade + per-table hooks under ./models/cache_gen.go (opt-in at runtime
+# via WithCache). Tenancy is auto-detected per §29.2.3 (tables) and §29.2.5
+# (views): an entity carrying a workspace_id column is tenanted, everything
+# else in this example is shared. Three entities qualify — workspace_settings
+# (tenant column inside the composite PK), workspace_notes (ordinary column),
+# and the workspace_note_summary view built over it.
+cache:
+  enabled: true
+  ttl: "1h"
+  serializer: json
+  key_prefix: sqlgen
+
+# Enable events so the §32 access fixture (users) covers every in-scope
+# external surface in one example (GraphQL + events + manifest; cache is
+# §32-exempt by design and asserted faithful instead).
+events:
+  enabled: true
+
+tenancy:
+  enabled: true
+  column: workspace_id
+  required: true
+  type:
+    type: uuid.UUID
+    import: uuid
+
+# Global type overrides. The `uuid` entry names the standard library
+# explicitly, which is equivalent to omitting it — `uuid` resolves to
+# `uuid.UUID` with no configuration (PRD §7.4) — and is spelled out so the
+# example's binding is readable next to the wrapper-backed guards
+# (postgres_stdlib on google, graphql_null_wrappers on gofrs). There is no
+# `nullable:`: the standard library ships no NullUUID, so a nullable `uuid`
+# column is `*uuid.UUID` at either `use_pointers` setting (PRD §7.3).
+# numeric → decimal.Decimal is the canonical category-4 binding. json / jsonb
+# columns both default to types.JSON (PRD §7.6): the runtime type carries
+# MarshalGQL / UnmarshalGQL methods (category 3) and resolves to scalar `JSON`
+# in the GraphQL schema; overriding to `json.RawMessage` would collide on the
+# same `JSON` scalar binding with no behavioral difference.
+overrides:
+  types:
+    uuid:
+      type: uuid.UUID
+      import: uuid
+    numeric:
+      type: decimal.Decimal
+      import: github.com/shopspring/decimal
+      nullable: decimal.NullDecimal
+
+# Per-view config. `workspace_note_summary` needs no entry: it
+# projects `id`, so the inherited `generation.cursor_keys` default resolves and
+# the connection query is emitted, and it projects `workspace_id`, so §29.2.5
+# scopes it by detection alone. A view has no primary-key fallback for
+# cursor_keys (§4.13), so the matview — whose columns are category_id /
+# product_count / total_price / max_price — has to name its own.
+views:
+  category_price_totals:
+    cursor_keys:
+      - category_id
+
+tables:
+  # §32 access-classified fixture — one column per non-public
+  # role. The core Go client keeps every column; only the generated API,
+  # event payloads, and manifest narrow.
+  #
+  # `ip_addr` is the §8.5 field-name override fixture. The column
+  # is public, so the rename has to reach the entity struct, the filter, both
+  # inputs, the field options, the manifest — and gqlgen, which binds the row
+  # type to this struct and would otherwise look for `IpAddr`/`IPAddr`. The
+  # `db` / `json` tags and the GraphQL field name stay `ip_addr` / `ipAddr`:
+  # the override renames the Go identifier only.
+  users:
+    column_map:
+      password_hash:
+        access: internal
+      new_password:
+        access: write_only
+      last_login_at:
+        access: read_only
+      internal_score:
+        access: hidden
+      ip_addr:
+        name: ClientIP
+    # The has-one relink fixture over a nullable FK into an int64-PK target.
+    # `user_badges.user_id` is UNIQUE, and a unique FK infers no edge on the
+    # parent, so the edge is declared. See schema.sql.
+    relationships:
+      - name: Badge
+        type: one_to_one
+        table: user_badges
+        fk: user_id
+  # `external_ref` carries a `description:` and nothing else — the narrowest
+  # `column_map` entry there is, which pins that the block does not require a
+  # `type:` to be meaningful.
+  #
+  # It used to be the column_map retype fixture, retyping this TEXT column to the
+  # registry scalar `uuid.UUID`. That moved to the graphql_null_wrappers
+  # example when this one adopted the standard library: the stdlib's
+  # `uuid.UUID` ships no `sql.Scanner`, and pgx registers `UUIDCodec` against
+  # the `uuid` OID, so a TEXT column cannot scan into it (PRD §7.4). The two
+  # wrapper-backed integrations do ship `Scan`/`Value`, which is why the
+  # fixture belongs on a gofrs- or google-bound example.
+  order_items:
+    column_map:
+      external_ref:
+        description: "Identifier of this line item in the upstream order system"
+      # Consumer-declared scalar fixture, the sibling of external_ref above. Same
+      # `column_map.type` mechanism, but onto a Go type the built-in scalar
+      # registry does NOT cover — so the GraphQL field type has to come from
+      # the `api.graphql.scalars` declaration below rather than from the
+      # registry. This is the case external_ref could not cover: it lands on
+      # uuid.UUID, which the registry already owns.
+      source_ip:
+        type: netip.Addr
+        import: net/netip
+        description: "Client address the line item was submitted from"
+  user_categories:
+    cursor_keys:
+      - user_id
+      - category_id
+  # "Go upsert on, API upsert off" (PRD §26.5.1 "Narrowing the API
+  # surface"). The mask names only `upsert`; every other operation passes
+  # through. See schema.sql.
+  masked_labels:
+    api:
+      operations:
+        upsert: false
+  # "nested upsert only, required conflictTarget, no flat block"
+  # (§26.5.1). An app-enforced key emits no KeyedCodeConflictPK, and
+  # the mask takes every other write off the API. See schema.sql.
+  keyed_codes:
+    primary_key:
+      columns:
+        - id
+    relationships:
+      - name: Entries
+        type: one_to_many
+        table: keyed_code_entries
+        fk: keyed_code_id
+    api:
+      operations:
+        create: false
+        create_many: false
+        update: false
+        update_where: false
+        hard_delete: false
+        soft_delete: false
+  # §26.10 / §9.9.4 end-to-end fixture for a nested-write target hidden from the
+  # API: off the API, on the Go client. See schema.sql.
+  user_sessions:
+    api:
+      enabled: false
+  # Composite-PK tenanted fixture. Cursor keys mirror the PK so the
+  # connection query has a deterministic ordering across pages.
+  workspace_settings:
+    cursor_keys:
+      - workspace_id
+      - key
+  # schema.sql's `parent_id` self-FK auto-detects as an O2M whose name
+  # is the target table's, so the generated field would read
+  # `WorkspaceNote.WorkspaceNotes`. Excluding the inferred edge and declaring
+  # the same FK under a name renames it to `Children` on every surface: the
+  # entity struct, the field-options walker, the GraphQL object type, and the
+  # `children: WorkspaceNoteFilter` member on the recursive filter input.
+  workspace_notes:
+    exclude_relationships:
+      - workspace_notes
+    relationships:
+      - name: Children
+        type: one_to_many
+        table: workspace_notes
+        fk: parent_id
+      # The only edge in any fixture that is polymorphic AND traverses a
+      # NULLABLE foreign key, which is what makes the discriminator check reachable: the
+      # `connect` visibility read has to carry the discriminator as an extra
+      # predicate, so a note of another `kind` comes back ErrNotFound instead
+      # of being silently relinked. The `assets` discriminator edges cannot
+      # cover it — `documents.entity_id` is NOT NULL, so §9.9.4 leaves them
+      # `create`-only. Being self-referential and tenanted, it doubles as the
+      # self-connect refusal fixture and the §29.10 tenant-propagation one.
+      - name: DraftChildren
+        type: one_to_many
+        table: workspace_notes
+        fk: parent_id
+        discriminator:
+          column: kind
+          value: draft
+  assets:
+    relationships:
+      - name: PrimaryDocument
+        type: one_to_one
+        table: documents
+        fk: entity_id
+        discriminator:
+          column: entity_type
+          value: "asset.primary"
+      - name: Attachments
+        type: one_to_many
+        table: documents
+        fk: entity_id
+        discriminator:
+          column: entity_type
+          value: "asset.attachment"
+      - name: Invoices
+        type: one_to_many
+        table: documents
+        fk: entity_id
+        discriminator:
+          column: entity_type
+          value: "asset.invoice"
+      # Multi-column filter coverage.
+      - name: PrimaryActiveDocument
+        type: one_to_one
+        table: documents
+        fk: entity_id
+        filter: "entity_type = 'asset.primary' AND name LIKE 'site_%'"
+      - name: PhotoAttachments
+        type: one_to_many
+        table: documents
+        fk: entity_id
+        filter: "entity_type = 'asset.attachment' AND name LIKE 'photo_%'"
+      - name: LinkedAttachments
+        type: many_to_many
+        table: documents
+        junction: asset_document_links
+        junction_local_fk: asset_id
+        junction_reference_fk: document_id
+        filter: "entity_type = 'asset.attachment' AND name LIKE 'link_%'"
+  events:
+    overrides:
+      types:
+        timestamptz:
+          type: types.DateTime
+          import: github.com/teandresmith/sqlgen/types
+          nullable: types.NullDateTime
+
+  # Scalar-registry shape-B fixture (the `database/sql` wrappers).
+  # `overrides.use_pointers: false` is what lands nullable columns on the
+  # `database/sql` wrappers in production, but it is module-wide and would
+  # retype every nullable column in this example. A table-scoped
+  # `overrides.types` reaches the same seven Go types on one table, and the
+  # scalar registry is keyed on the resolved Go type — so the schema, the
+  # gqlgen binding and the input translator are the ones `use_pointers: false`
+  # produces.
+  #
+  # Each entry declares both branches: `type` for the NOT NULL column, which
+  # must stay exactly what the built-in dialect mapping already gives, and
+  # `nullable` for the wrapper. `underlying_field` / `valid_field` are omitted
+  # deliberately — the sql.NullX family is in gotype's knownWrapperExtractions
+  # and takes precedence over anything declared here.
+  scalar_probes:
+    overrides:
+      types:
+        text:
+          type: string
+          nullable:
+            type: sql.NullString
+            import: database/sql
+        boolean:
+          type: bool
+          nullable:
+            type: sql.NullBool
+            import: database/sql
+        smallint:
+          type: int16
+          nullable:
+            type: sql.NullInt16
+            import: database/sql
+        integer:
+          type: int32
+          nullable:
+            type: sql.NullInt32
+            import: database/sql
+        bigint:
+          type: int64
+          nullable:
+            type: sql.NullInt64
+            import: database/sql
+        double precision:
+          type: float64
+          nullable:
+            type: sql.NullFloat64
+            import: database/sql
+        timestamptz:
+          type: time.Time
+          import: time
+          nullable:
+            type: sql.NullTime
+            import: database/sql
+
+# Enable the GraphQL API surface. schema_dir / resolver_dir are
+# root-relative (§26.5.8): paths from the module root, like output.dir. Setting
+# them to ./models/graph places the generated graph package nested alongside
+# models at ./models/graph/ (the same location the retired output.dir-relative
+# resolution produced for ./graph). The wrapper uses the consumer-owned
+# gqlgen.yml at the example root and never modifies it on disk.
+api:
+  enabled: true
+  graphql:
+    enabled: true
+    schema_dir: ./models/graph
+    resolver_dir: ./models/graph
+    package: graph
+    field_casing: camel_case
+    gqlgen_config: ./gqlgen.yml
+    gqlgen_bin: go run github.com/99designs/gqlgen
+    # Consumer-declared scalars (§26.4.1). Additions only — a go_type
+    # the built-in registry already owns (uuid.UUID, decimal.Decimal, …) is a
+    # config error, because the registry also carries the Null-wrapper pairing
+    # and the DecimalComparator narrowing that a rebind would silently break.
+    #
+    # `marshaling: external` means the marshalers are free functions the
+    # consumer wrote; marshaler_package is the import path gqlgen discovers
+    # MarshalIPAddr / UnmarshalIPAddr at. It is a separate field rather than
+    # go_type's package because nothing can be added to net/netip.
+    scalars:
+      IPAddr:
+        go_type: net/netip.Addr
+        marshaling: external
+        marshaler_package: github.com/teandresmith/sqlgen/cmd/sqlgen/testdata/examples/graphql/gqlscalars

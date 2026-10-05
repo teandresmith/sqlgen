@@ -1,0 +1,20 @@
+{{- define "view/model" -}}
+{{- if .CompositePK }}
+
+// {{ .CompositePKStructName }} - composite primary key for the {{ .ViewName }} view.
+type {{ .CompositePKStructName }} struct {
+{{- range .PKColumns }}
+{{- template "shared/field" . }}
+{{- end }}
+}
+{{- end }}
+
+{{- if .Description }}
+// {{ .StructName }} - {{ .Description }}
+{{- end }}
+type {{ .StructName }} struct {
+{{- range .Columns }}
+{{- template "shared/field" . }}
+{{- end }}
+}
+{{- end -}}

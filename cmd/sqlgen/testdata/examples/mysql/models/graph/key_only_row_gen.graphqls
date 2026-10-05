@@ -1,0 +1,51 @@
+"""
+KeyOnlyRow corresponds to the key_only_rows table.
+"""
+type KeyOnlyRow {
+  "id"
+  id: Int!
+}
+
+type KeyOnlyRowConnection {
+  edges:      [KeyOnlyRowEdge!]!
+  pageInfo:   PageInfo!
+  totalCount: Int!
+}
+
+type KeyOnlyRowEdge {
+  node:   KeyOnlyRow!
+  cursor: String!
+}
+
+type KeyOnlyRowListResult {
+  items:      [KeyOnlyRow!]!
+  totalCount: Int!
+  offset:     Int!
+  limit:      Int!
+  hasMore:    Boolean!
+}
+
+input KeyOnlyRowFilter {
+  and: [KeyOnlyRowFilter!]
+  or:  [KeyOnlyRowFilter!]
+}
+
+enum KeyOnlyRowSortField {
+  ID
+}
+
+input KeyOnlyRowSort {
+  field:     KeyOnlyRowSortField!
+  direction: SortDirection!
+}
+
+extend type Query {
+  keyOnlyRow(id: Int!): KeyOnlyRow
+  "Cursor-paginated; ordering is driven by cursor_keys to preserve keyset semantics — pass `sort` to keyOnlyRowList instead."
+  keyOnlyRows(filter: KeyOnlyRowFilter, first: Int, after: String, last: Int, before: String): KeyOnlyRowConnection!
+  keyOnlyRowList(filter: KeyOnlyRowFilter, sort: [KeyOnlyRowSort!], limit: Int, offset: Int): KeyOnlyRowListResult!
+}
+
+extend type Mutation {
+  deleteKeyOnlyRow(id: Int!): Boolean!
+}

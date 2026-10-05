@@ -1,0 +1,697 @@
+{
+  "kind": "table",
+  "name": "Order",
+  "table": "orders",
+  "schema": "public",
+  "file_prefix": "order",
+  "files": [
+    "models_gen.go"
+  ],
+  "comment": "",
+  "indexes": [
+    {
+      "name": "orders_pkey",
+      "columns": [
+        "id"
+      ],
+      "unique": true,
+      "method": "btree"
+    }
+  ],
+  "pk": {
+    "kind": "single",
+    "columns": [
+      {
+        "name": "id",
+        "go_field": "ID",
+        "go_type": "uuid.UUID"
+      }
+    ]
+  },
+  "features": {
+    "soft_delete": {
+      "column": "deleted_at",
+      "type": "timestamp"
+    },
+    "cache": {
+      "ttl_seconds": 3600,
+      "hydration": "eager",
+      "key_pattern": "sqlgen:order:{id}",
+      "invalidates_on": [
+        "Create",
+        "Update",
+        "Delete",
+        "SoftDelete",
+        "Restore",
+        "Increment"
+      ]
+    },
+    "events": {
+      "enabled": true,
+      "types": [
+        "OrderCreated",
+        "OrderDeleted",
+        "OrderRestored",
+        "OrderSoftDeleted",
+        "OrderUpdated"
+      ],
+      "payload_shape": "models.OrderEvent"
+    },
+    "tenancy": null,
+    "audit_columns": [
+      "updated_at"
+    ]
+  },
+  "columns": [
+    {
+      "name": "id",
+      "go_field": "ID",
+      "go_type": "uuid.UUID",
+      "db_type": "uuid",
+      "nullable": false,
+      "pk": true,
+      "unique": false,
+      "default": "gen_random_uuid()",
+      "default_kind": "function",
+      "comparator": "comparator.ID",
+      "comment": ""
+    },
+    {
+      "name": "user_id",
+      "go_field": "UserID",
+      "go_type": "uuid.UUID",
+      "db_type": "uuid",
+      "nullable": false,
+      "pk": false,
+      "unique": false,
+      "comparator": "comparator.ID",
+      "comment": ""
+    },
+    {
+      "name": "total",
+      "go_field": "Total",
+      "go_type": "decimal.Decimal",
+      "db_type": "numeric(12, 2)",
+      "nullable": false,
+      "pk": false,
+      "unique": false,
+      "default": "0",
+      "default_kind": "literal",
+      "comparator": "comparator.String",
+      "comment": ""
+    },
+    {
+      "name": "notes",
+      "go_field": "Notes",
+      "go_type": "*string",
+      "db_type": "text",
+      "nullable": true,
+      "pk": false,
+      "unique": false,
+      "comparator": "comparator.NullableString",
+      "comment": ""
+    },
+    {
+      "name": "created_at",
+      "go_field": "CreatedAt",
+      "go_type": "time.Time",
+      "db_type": "timestamptz",
+      "nullable": false,
+      "pk": false,
+      "unique": false,
+      "default": "current_timestamp",
+      "default_kind": "function",
+      "comparator": "comparator.Time",
+      "comment": ""
+    },
+    {
+      "name": "updated_at",
+      "go_field": "UpdatedAt",
+      "go_type": "*time.Time",
+      "db_type": "timestamptz",
+      "nullable": true,
+      "pk": false,
+      "unique": false,
+      "default": "current_timestamp",
+      "default_kind": "function",
+      "comparator": "comparator.NullableTime",
+      "comment": ""
+    },
+    {
+      "name": "deleted_at",
+      "go_field": "DeletedAt",
+      "go_type": "*time.Time",
+      "db_type": "timestamptz",
+      "nullable": true,
+      "pk": false,
+      "unique": false,
+      "comparator": "comparator.NullableTime",
+      "comment": ""
+    }
+  ],
+  "relationships": [
+    {
+      "name": "order_items",
+      "kind": "o2m",
+      "target_entity": "OrderItem",
+      "fk": {
+        "table": "order_items",
+        "schema": "public",
+        "column": "order_id"
+      }
+    }
+  ],
+  "methods": {
+    "query": [
+      {
+        "name": "Get",
+        "params": [
+          {
+            "name": "id",
+            "type": "uuid.UUID"
+          }
+        ],
+        "returns": "*Order",
+        "errors": [
+          "ErrNotFound"
+        ],
+        "notes": "Delegates to GetMany with a primary-key filter; returns ErrNotFound when no row matches.",
+        "sql_bodies": {
+          "postgres": "SELECT \"created_at\", \"deleted_at\", \"id\", \"notes\", \"total\", \"updated_at\", \"user_id\" FROM \"public\".\"orders\" WHERE \"id\" = $1 AND \"deleted_at\" IS NULL LIMIT 1"
+        }
+      },
+      {
+        "name": "GetMany",
+        "params": [
+          {
+            "name": "input",
+            "type": "*GetOrdersInput"
+          }
+        ],
+        "returns": "[]*Order",
+        "errors": [],
+        "sql_bodies": {
+          "postgres": "SELECT \"created_at\", \"deleted_at\", \"id\", \"notes\", \"total\", \"updated_at\", \"user_id\" FROM \"public\".\"orders\" WHERE <filter> AND \"deleted_at\" IS NULL ORDER BY <sort> LIMIT <limit>"
+        }
+      },
+      {
+        "name": "Count",
+        "params": [
+          {
+            "name": "filter",
+            "type": "*OrderFilter"
+          }
+        ],
+        "returns": "int64",
+        "errors": [],
+        "sql_bodies": {
+          "postgres": "SELECT COUNT(*) FROM \"public\".\"orders\" WHERE <filter> AND \"deleted_at\" IS NULL"
+        }
+      },
+      {
+        "name": "Exists",
+        "params": [
+          {
+            "name": "id",
+            "type": "uuid.UUID"
+          }
+        ],
+        "returns": "bool",
+        "errors": [],
+        "sql_bodies": {
+          "postgres": "SELECT EXISTS(SELECT 1 FROM \"public\".\"orders\" WHERE \"id\" = $1 AND \"deleted_at\" IS NULL)"
+        }
+      },
+      {
+        "name": "ExistsWhere",
+        "params": [
+          {
+            "name": "filter",
+            "type": "*OrderFilter"
+          }
+        ],
+        "returns": "bool",
+        "errors": [],
+        "sql_bodies": {
+          "postgres": "SELECT EXISTS(SELECT 1 FROM \"public\".\"orders\" WHERE <filter> AND \"deleted_at\" IS NULL)"
+        }
+      },
+      {
+        "name": "Paginate",
+        "params": [
+          {
+            "name": "input",
+            "type": "PaginateInput[OrderFilter]"
+          }
+        ],
+        "returns": "*PaginateResult[Order]",
+        "errors": [],
+        "notes": "Offset pagination. Issues no statement of its own — composes Count and GetMany, so no sql_bodies entry."
+      },
+      {
+        "name": "Connection",
+        "params": [
+          {
+            "name": "input",
+            "type": "ConnectionInput[OrderFilter]"
+          }
+        ],
+        "returns": "*Connection[Order]",
+        "errors": [
+          "ErrInvalidCursor"
+        ],
+        "notes": "Relay cursor pagination. Issues no statement of its own — composes Count and GetMany, so no sql_bodies entry."
+      },
+      {
+        "name": "Stream",
+        "params": [
+          {
+            "name": "input",
+            "type": "*StreamOrdersInput"
+          }
+        ],
+        "returns": "iter.Seq2[*Order, error]",
+        "errors": [],
+        "notes": "Scalars only — no relationship loading, cache always bypassed. Errors surface through the iterator's second value.",
+        "sql_bodies": {
+          "postgres": "SELECT \"created_at\", \"deleted_at\", \"id\", \"notes\", \"total\", \"updated_at\", \"user_id\" FROM \"public\".\"orders\" WHERE <filter> AND \"deleted_at\" IS NULL ORDER BY <sort>"
+        }
+      }
+    ],
+    "mutation": [
+      {
+        "name": "Create",
+        "params": [
+          {
+            "name": "input",
+            "type": "*CreateOrderInput"
+          }
+        ],
+        "returns": "*Order",
+        "errors": [
+          "ErrNilInput",
+          "ErrConstraintViolation"
+        ],
+        "sql_bodies": {
+          "postgres": "INSERT INTO \"public\".\"orders\" (<columns>) VALUES (<values>) RETURNING \"id\""
+        }
+      },
+      {
+        "name": "CreateMany",
+        "params": [
+          {
+            "name": "inputs",
+            "type": "[]*CreateOrderInput"
+          }
+        ],
+        "returns": "[]*Order",
+        "errors": [
+          "ErrNilInput",
+          "ErrConstraintViolation"
+        ],
+        "notes": "Batched in generation.batch_size chunks. Earlier chunks are not rolled back on a later failure — wrap in a transaction for atomicity.",
+        "sql_bodies": {
+          "postgres": "INSERT INTO \"public\".\"orders\" (<columns>) VALUES <values> RETURNING \"id\""
+        }
+      },
+      {
+        "name": "Upsert",
+        "params": [
+          {
+            "name": "input",
+            "type": "*CreateOrderInput"
+          },
+          {
+            "name": "target",
+            "type": "OrderConflictTarget"
+          }
+        ],
+        "returns": "*Order",
+        "errors": [
+          "ErrNilInput",
+          "ErrConstraintViolation"
+        ],
+        "notes": "One method over the generated OrderConflictTarget enum — the target argument selects the conflict columns at call time.",
+        "sql_bodies": {
+          "postgres": "INSERT INTO \"public\".\"orders\" (<columns>) VALUES (<values>) ON CONFLICT (<conflict_target>) DO UPDATE SET <excluded> RETURNING \"id\""
+        }
+      },
+      {
+        "name": "UpsertMany",
+        "params": [
+          {
+            "name": "inputs",
+            "type": "[]*CreateOrderInput"
+          },
+          {
+            "name": "target",
+            "type": "OrderConflictTarget"
+          }
+        ],
+        "returns": "[]*Order",
+        "errors": [
+          "ErrNilInput",
+          "ErrConstraintViolation"
+        ],
+        "notes": "Batched in generation.batch_size chunks over the same OrderConflictTarget enum Upsert takes. Inputs resolving to one target are deduped before the statement is built, last occurrence wins. Earlier chunks are not rolled back on a later failure — wrap in a transaction for atomicity.",
+        "sql_bodies": {
+          "postgres": "INSERT INTO \"public\".\"orders\" (<columns>) VALUES <values> ON CONFLICT (<conflict_target>) DO UPDATE SET <excluded>"
+        }
+      },
+      {
+        "name": "Update",
+        "params": [
+          {
+            "name": "id",
+            "type": "uuid.UUID"
+          },
+          {
+            "name": "input",
+            "type": "*UpdateOrderInput"
+          }
+        ],
+        "returns": "*Order",
+        "errors": [
+          "ErrNotFound",
+          "ErrNilInput",
+          "ErrConstraintViolation"
+        ],
+        "notes": "Only fields where IsSet() reports true reach the SET clause; an input with none set issues no UPDATE and returns the row unchanged.",
+        "sql_bodies": {
+          "postgres": "UPDATE \"public\".\"orders\" SET <set> WHERE \"id\" = $1"
+        }
+      },
+      {
+        "name": "UpdateMany",
+        "params": [
+          {
+            "name": "items",
+            "type": "[]UpdateOrderItem"
+          }
+        ],
+        "returns": "[]*Order",
+        "errors": [
+          "ErrNilInput",
+          "ErrConstraintViolation"
+        ],
+        "notes": "Issues one statement per item. Batched like CreateMany — earlier items are not rolled back on a later failure. A primary key that does not exist is silently skipped, even under strict_updates.",
+        "sql_bodies": {
+          "postgres": "UPDATE \"public\".\"orders\" SET <set> WHERE \"id\" = $1"
+        }
+      },
+      {
+        "name": "UpdateWhere",
+        "params": [
+          {
+            "name": "filter",
+            "type": "*OrderFilter"
+          },
+          {
+            "name": "input",
+            "type": "*UpdateOrderInput"
+          }
+        ],
+        "returns": "[]*Order",
+        "errors": [
+          "ErrNilInput",
+          "ErrEmptyFilter",
+          "ErrConstraintViolation"
+        ],
+        "notes": "Idempotent — returns an empty slice when no row matches. ErrEmptyFilter when the filter produces no conditions.",
+        "sql_bodies": {
+          "postgres": "UPDATE \"public\".\"orders\" SET <set> WHERE <filter> RETURNING \"id\""
+        }
+      },
+      {
+        "name": "Increment",
+        "params": [
+          {
+            "name": "id",
+            "type": "uuid.UUID"
+          },
+          {
+            "name": "input",
+            "type": "IncrementInput[OrderIncrementColumn]"
+          }
+        ],
+        "returns": "",
+        "errors": [
+          "ErrNotFound"
+        ],
+        "notes": "Atomic single-column arithmetic. The column is restricted to the generated OrderIncrementColumn enum — numeric, and identifying nothing: neither PK, FK, nor the tenant column. A negative amount decrements.",
+        "sql_bodies": {
+          "postgres": "UPDATE \"public\".\"orders\" SET <column> = <column> + $1 WHERE \"id\" = $2"
+        }
+      },
+      {
+        "name": "SoftDelete",
+        "params": [
+          {
+            "name": "id",
+            "type": "uuid.UUID"
+          }
+        ],
+        "returns": "*Order",
+        "errors": [],
+        "notes": "Idempotent — a primary key that does not exist is not an error.",
+        "sql_bodies": {
+          "postgres": "UPDATE \"public\".\"orders\" SET \"deleted_at\" = CURRENT_TIMESTAMP WHERE \"id\" = $1"
+        }
+      },
+      {
+        "name": "SoftDeleteMany",
+        "params": [
+          {
+            "name": "ids",
+            "type": "[]uuid.UUID"
+          }
+        ],
+        "returns": "[]*Order",
+        "errors": [],
+        "notes": "Idempotent — primary keys that do not exist are not an error.",
+        "sql_bodies": {
+          "postgres": "UPDATE \"public\".\"orders\" SET \"deleted_at\" = CURRENT_TIMESTAMP WHERE \"id\" IN (<ids>)"
+        }
+      },
+      {
+        "name": "SoftDeleteWhere",
+        "params": [
+          {
+            "name": "filter",
+            "type": "*OrderFilter"
+          }
+        ],
+        "returns": "[]*Order",
+        "errors": [
+          "ErrEmptyFilter"
+        ],
+        "notes": "Idempotent — no match is not an error. ErrEmptyFilter when the filter produces no conditions.",
+        "sql_bodies": {
+          "postgres": "UPDATE \"public\".\"orders\" SET \"deleted_at\" = CURRENT_TIMESTAMP WHERE <filter> AND \"deleted_at\" IS NULL RETURNING \"id\""
+        }
+      },
+      {
+        "name": "Restore",
+        "params": [
+          {
+            "name": "id",
+            "type": "uuid.UUID"
+          }
+        ],
+        "returns": "*Order",
+        "errors": [],
+        "notes": "Idempotent — a primary key that does not exist is not an error.",
+        "sql_bodies": {
+          "postgres": "UPDATE \"public\".\"orders\" SET \"deleted_at\" = $1 WHERE \"id\" = $2"
+        }
+      },
+      {
+        "name": "RestoreMany",
+        "params": [
+          {
+            "name": "ids",
+            "type": "[]uuid.UUID"
+          }
+        ],
+        "returns": "[]*Order",
+        "errors": [],
+        "notes": "Idempotent — primary keys that do not exist are not an error.",
+        "sql_bodies": {
+          "postgres": "UPDATE \"public\".\"orders\" SET \"deleted_at\" = $1 WHERE \"id\" IN (<ids>)"
+        }
+      },
+      {
+        "name": "RestoreWhere",
+        "params": [
+          {
+            "name": "filter",
+            "type": "*OrderFilter"
+          }
+        ],
+        "returns": "[]*Order",
+        "errors": [
+          "ErrEmptyFilter"
+        ],
+        "notes": "Idempotent — no match is not an error. ErrEmptyFilter when the filter produces no conditions.",
+        "sql_bodies": {
+          "postgres": "UPDATE \"public\".\"orders\" SET \"deleted_at\" = $1 WHERE <filter> AND \"deleted_at\" IS NOT NULL RETURNING \"id\""
+        }
+      },
+      {
+        "name": "HardDelete",
+        "params": [
+          {
+            "name": "id",
+            "type": "uuid.UUID"
+          }
+        ],
+        "returns": "",
+        "errors": [],
+        "notes": "Idempotent — a primary key that does not exist is not an error.",
+        "sql_bodies": {
+          "postgres": "DELETE FROM \"public\".\"orders\" WHERE \"id\" = $1"
+        }
+      },
+      {
+        "name": "HardDeleteMany",
+        "params": [
+          {
+            "name": "ids",
+            "type": "[]uuid.UUID"
+          }
+        ],
+        "returns": "",
+        "errors": [],
+        "notes": "Idempotent — primary keys that do not exist are not an error.",
+        "sql_bodies": {
+          "postgres": "DELETE FROM \"public\".\"orders\" WHERE \"id\" IN (<ids>)"
+        }
+      },
+      {
+        "name": "HardDeleteWhere",
+        "params": [
+          {
+            "name": "filter",
+            "type": "*OrderFilter"
+          }
+        ],
+        "returns": "",
+        "errors": [
+          "ErrEmptyFilter"
+        ],
+        "notes": "Idempotent — no match is not an error. ErrEmptyFilter when the filter produces no conditions.",
+        "sql_bodies": {
+          "postgres": "DELETE FROM \"public\".\"orders\" WHERE <filter> RETURNING \"id\""
+        }
+      },
+      {
+        "name": "CreateWithRelated",
+        "params": [
+          {
+            "name": "input",
+            "type": "*CreateOrderWithRelatedInput"
+          }
+        ],
+        "returns": "*Order",
+        "errors": [
+          "ErrNilInput",
+          "ErrConstraintViolation"
+        ],
+        "notes": "Writes the parent and its nested rows in one transaction — a SAVEPOINT when ctx already holds one. Issues no statement of its own: it composes Create and, per eligible relationship (OrderItems), the target's and junction's own client methods, so no sql_bodies entry. Each inner call fires its own hooks, events and cache invalidation under its own op; the nested method has none."
+      },
+      {
+        "name": "UpdateWithRelated",
+        "params": [
+          {
+            "name": "id",
+            "type": "uuid.UUID"
+          },
+          {
+            "name": "input",
+            "type": "*UpdateOrderWithRelatedInput"
+          }
+        ],
+        "returns": "*Order",
+        "errors": [
+          "ErrNilInput",
+          "ErrNotFound",
+          "ErrConstraintViolation"
+        ],
+        "notes": "Writes the parent and its nested rows in one transaction — a SAVEPOINT when ctx already holds one. Issues no statement of its own: it composes Update and, per eligible relationship (OrderItems), the target's and junction's own client methods, so no sql_bodies entry. Each inner call fires its own hooks, events and cache invalidation under its own op; the nested method has none."
+      },
+      {
+        "name": "UpsertWithRelated",
+        "params": [
+          {
+            "name": "input",
+            "type": "*UpsertOrderWithRelatedInput"
+          },
+          {
+            "name": "target",
+            "type": "OrderConflictTarget"
+          }
+        ],
+        "returns": "*Order",
+        "errors": [
+          "ErrNilInput",
+          "ErrConstraintViolation"
+        ],
+        "notes": "Writes the parent and its nested rows in one transaction — a SAVEPOINT when ctx already holds one. Issues no statement of its own: it composes Upsert and, per eligible relationship (OrderItems), the target's and junction's own client methods, so no sql_bodies entry. Each inner call fires its own hooks, events and cache invalidation under its own op; the nested method has none."
+      }
+    ]
+  },
+  "filter": {
+    "type": "OrderFilter",
+    "fields": [
+      {
+        "name": "CreatedAt",
+        "type": "*comparator.Time"
+      },
+      {
+        "name": "DeletedAt",
+        "type": "*comparator.NullableTime"
+      },
+      {
+        "name": "ID",
+        "type": "*comparator.ID"
+      },
+      {
+        "name": "Notes",
+        "type": "*comparator.NullableString"
+      },
+      {
+        "name": "Total",
+        "type": "*comparator.String"
+      },
+      {
+        "name": "UpdatedAt",
+        "type": "*comparator.NullableTime"
+      },
+      {
+        "name": "UserID",
+        "type": "*comparator.ID"
+      },
+      {
+        "name": "And",
+        "type": "[]*OrderFilter"
+      },
+      {
+        "name": "Or",
+        "type": "[]*OrderFilter"
+      }
+    ]
+  },
+  "sort": {
+    "type": "OrderSort",
+    "fields": [
+      "CreatedAt",
+      "DeletedAt",
+      "ID",
+      "Notes",
+      "Total",
+      "UpdatedAt",
+      "UserID"
+    ]
+  },
+  "examples": {}
+}

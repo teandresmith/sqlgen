@@ -1,0 +1,18 @@
+{{- define "sorter" -}}
+{{- range $table := .Tables }}
+
+// {{ $table.SorterTypeName }} provides type-safe sort helpers for the {{ $table.StructName }} entity.
+// Each method returns a sql.Sort for the corresponding column.
+type {{ $table.SorterTypeName }} struct{}
+
+// New{{ $table.SorterTypeName }} returns a new {{ $table.SorterTypeName }}.
+func New{{ $table.SorterTypeName }}() {{ $table.SorterTypeName }} { return {{ $table.SorterTypeName }}{} }
+{{- range $col := $table.Columns }}
+
+// {{ $col.MethodName }} returns a sort for the {{ $col.ColumnName }} column in the given direction.
+func (s {{ $table.SorterTypeName }}) {{ $col.MethodName }}(direction sql.SortDirection) sql.Sort {
+	return sql.Sort{Column: "{{ $col.ColumnName }}", Direction: direction}
+}
+{{- end }}
+{{- end }}
+{{- end -}}

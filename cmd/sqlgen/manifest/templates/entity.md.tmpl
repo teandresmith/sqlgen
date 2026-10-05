@@ -1,0 +1,139 @@
+{{- define "method" -}}
+### {{ .Name }}
+
+- Params: {{ if .Params }}{{ range $i, $p := .Params }}{{ if $i }}, {{ end }}`{{ $p.Name }} {{ $p.Type }}`{{ end }}{{ else }}none{{ end }}
+- Returns: {{ if .Returns }}`{{ .Returns }}`, `error`{{ else }}`error`{{ end }}
+{{- if .Errors }}
+- Errors: {{ range $i, $e := .Errors }}{{ if $i }}, {{ end }}`{{ $e }}`{{ end }}
+{{- end }}
+{{- if .Notes }}
+- Notes: {{ .Notes }}
+{{- end }}
+{{- if .SQLBodies }}
+
+Generated SQL:
+{{- range sqlBlocks .SQLBodies }}
+
+{{ .Dialect }}:
+
+```sql
+{{ .SQL }}
+```
+{{- end }}
+{{- end }}
+{{ end -}}
+# {{ .Name }}
+
+- **Table:** `{{ .Table }}`{{ if .Schema }} (schema `{{ .Schema }}`){{ end }}
+- **Kind:** {{ .Kind }}
+{{- if .Source }}
+- **Source:** `{{ .Source }}`
+{{- end }}
+{{- if .Comment }}
+
+{{ .Comment }}
+{{- end }}
+
+## Files
+{{ range .Files }}
+- `{{ . }}`
+{{- end }}
+
+## Primary key
+
+- Kind: {{ .PK.Kind }}
+{{- if .PK.Struct }}
+- Struct: `{{ .PK.Struct }}`
+{{- end }}
+{{- range .PK.Columns }}
+- `{{ .Name }}` — {{ .GoField }} `{{ .GoType }}`
+{{- end }}
+
+## Columns
+
+| Name | Go field | Go type | DB type | Null | PK | Unique | Default | Comparator | Comment |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+{{- range .Columns }}
+| `{{ .Name }}` | {{ .GoField }} | `{{ .GoType }}` | `{{ .DBType }}` | {{ mark .Nullable }} | {{ mark .PK }} | {{ mark .Unique }} | {{ if .Default }}`{{ .Default }}`{{ end }} | {{ if .Comparator }}`{{ .Comparator }}`{{ end }} | {{ mdCell .Comment }} |
+{{- end }}
+{{- if .Indexes }}
+
+## Indexes
+
+| Name | Columns | Unique | Method | Where |
+| --- | --- | --- | --- | --- |
+{{- range .Indexes }}
+| `{{ .Name }}` | {{ join .Columns ", " }} | {{ mark .Unique }} | {{ .Method }} | {{ if .Where }}`{{ .Where }}`{{ end }} |
+{{- end }}
+{{- end }}
+{{- with checkedColumns .Columns }}
+
+## Check constraints
+{{ range . }}
+- `{{ .Name }}`: `{{ .Check }}`
+{{- end }}
+{{- end }}
+{{- if .Relationships }}
+
+## Relationships
+
+| Name | Kind | Target | FK | Filter |
+| --- | --- | --- | --- | --- |
+{{- range .Relationships }}
+| {{ .Name }} | {{ .Kind }} | {{ .TargetEntity }} | {{ fkCell . }} | {{ if .Filter }}`{{ .Filter }}`{{ end }} |
+{{- end }}
+{{- end }}
+{{- if .Methods.Query }}
+
+## Query methods
+
+{{ range .Methods.Query }}{{ template "method" . }}
+{{ end -}}
+{{- end }}
+{{- if .Methods.Mutation }}
+
+## Mutation methods
+
+{{ range .Methods.Mutation }}{{ template "method" . }}
+{{ end -}}
+{{- end }}
+
+## Filter
+
+Type `{{ .Filter.Type }}`.
+{{- if .Filter.Fields }}
+
+| Field | Type |
+| --- | --- |
+{{- range .Filter.Fields }}
+| {{ .Name }} | `{{ .Type }}` |
+{{- end }}
+{{- end }}
+
+## Sort
+
+Type `{{ .Sort.Type }}`.
+{{- if .Sort.Fields }}
+
+Fields: {{ join .Sort.Fields ", " }}
+{{- end }}
+{{- if .Examples }}
+{{- if .Examples.Read }}
+
+## Read examples
+
+```go
+{{ range .Examples.Read }}{{ . }}
+{{ end -}}
+```
+{{- end }}
+{{- if .Examples.Write }}
+
+## Write examples
+
+```go
+{{ range .Examples.Write }}{{ . }}
+{{ end -}}
+```
+{{- end }}
+{{- end }}

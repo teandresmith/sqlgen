@@ -1,0 +1,98 @@
+scalar Decimal
+scalar Time
+scalar UUID
+
+type Query
+type Mutation
+
+type PageInfo {
+  hasNextPage:     Boolean!
+  hasPreviousPage: Boolean!
+  startCursor:     String
+  endCursor:       String
+}
+
+enum SortDirection {
+  ASC
+  DESC
+}
+
+input StringComparator {
+  eq:         String
+  neq:        String
+  gt:         String
+  gte:        String
+  lt:         String
+  lte:        String
+  contains:   String
+  startsWith: String
+  endsWith:   String
+  like:       String
+  nlike:      String
+  in:         [String!]
+  nin:        [String!]
+}
+
+input NullableStringComparator {
+  eq:         String
+  neq:        String
+  gt:         String
+  gte:        String
+  lt:         String
+  lte:        String
+  contains:   String
+  startsWith: String
+  endsWith:   String
+  like:       String
+  nlike:      String
+  in:         [String!]
+  nin:        [String!]
+  isNull:     Boolean
+}
+
+input NumericComparator {
+  eq:       Float
+  neq:      Float
+  gt:       Float
+  gte:      Float
+  lt:       Float
+  lte:      Float
+  in:       [Float!]
+  nin:      [Float!]
+  between:  NumericRange
+  nbetween: NumericRange
+}
+
+input NumericRange {
+  from: Float!
+  to:   Float!
+}
+
+input TimeComparator {
+  eq:       Time
+  neq:      Time
+  gt:       Time
+  gte:      Time
+  lt:       Time
+  lte:      Time
+  in:       [Time!]
+  nin:      [Time!]
+  between:  TimeRange
+  nbetween: TimeRange
+}
+
+input TimeRange {
+  from: Time!
+  to:   Time!
+}
+
+input DecimalComparator {
+  eq:  Decimal
+  neq: Decimal
+  gt:  Decimal
+  gte: Decimal
+  lt:  Decimal
+  lte: Decimal
+  in:  [Decimal!]
+  nin: [Decimal!]
+}

@@ -1,0 +1,82 @@
+name: Examples
+on:
+  pull_request:
+    paths-ignore: &docs-only
+      - '**.md'
+      - 'docs/**'
+      - 'guidelines/**'
+      - '.claude/**'
+      - '.gitignore'
+      - 'CHANGELOG.md'
+      - 'LICENSE'
+  push:
+    branches: [main]
+    paths-ignore: *docs-only
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  discover:
+    name: discover examples
+    runs-on: ubuntu-latest
+    outputs:
+      examples: ${{ steps.list.outputs.examples }}
+    steps:
+      - uses: actions/checkout@v7
+      # Every directory with a go.mod is an example module, the same set the
+      # Makefile's EXAMPLE_DIRS globs, so a new example is picked up without
+      # editing this file.
+      - id: list
+        run: |
+          examples=$(find cmd/sqlgen/testdata/examples -mindepth 2 -maxdepth 2 -name go.mod \
+            | xargs -n1 dirname | xargs -n1 basename | sort | jq -R . | jq -sc .)
+          echo "examples=$examples" >> "$GITHUB_OUTPUT"
+
+  lint:
+    name: lint (${{ matrix.example }})
+    needs: discover
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        example: ${{ fromJSON(needs.discover.outputs.examples) }}
+    steps:
+      - uses: actions/checkout@v7
+      - name: Read pinned golangci-lint version
+        id: tools
+        run: echo "version=v$(sed -n 's/^golangci-lint[[:space:]]\{1,\}//p' .tool-versions | tr -d '[:space:]')" >> "$GITHUB_OUTPUT"
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: .tool-versions
+          cache-dependency-path: cmd/sqlgen/testdata/examples/${{ matrix.example }}/go.sum
+      - uses: golangci/golangci-lint-action@v9
+        env:
+          GOWORK: off
+        with:
+          version: ${{ steps.tools.outputs.version }}
+          args: --timeout=5m
+          working-directory: cmd/sqlgen/testdata/examples/${{ matrix.example }}
+
+  test:
+    name: test (${{ matrix.example }})
+    needs: discover
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        example: ${{ fromJSON(needs.discover.outputs.examples) }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: .tool-versions
+          cache-dependency-path: cmd/sqlgen/testdata/examples/${{ matrix.example }}/go.sum
+      - run: go test -race -count=1 -timeout=10m ./...
+        env:
+          GOWORK: off
+        working-directory: cmd/sqlgen/testdata/examples/${{ matrix.example }}

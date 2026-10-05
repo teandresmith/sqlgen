@@ -1,0 +1,129 @@
+{{- define "table/exists" -}}
+{{- $pkCol := index .PKColumns 0 -}}
+{{- $singular := .TableName | toSingular -}}
+{{- $structCamel := .StructName | toCamelCase }}
+{{- if .Operations.Exists }}
+
+// Exists returns true if a {{ $singular }} with the given primary key exists.
+{{- if and .SoftDelete .ExcludeDeleted }}
+// Soft-deleted {{ .TableName }} are excluded — a soft-deleted {{ $singular }} returns false.
+// Use ExistsWhere with Filter.{{ .SoftDelete.FieldName }} comparator for soft-deleted rows.
+{{- end }}
+func (c *{{ $structCamel }}Client) Exists(ctx context.Context, {{ if .CompositePK }}pk {{ .CompositePKStructName }}{{ else }}id {{ $pkCol.GoType }}{{ end }}, opts ...func(*CallOptions[{{ .StructName }}FieldOptions])) (bool, error) {
+	options := resolveCallOptions(opts)
+	result, err := c.executeQuery(ctx, options.SkipHooks, &hook.QueryContext{
+		Op: hook.OpExists, Table: {{ .TableNameConstant }}, Schema: {{ printf "%q" .Schema }},
+		PK: {{ if .CompositePK }}pk{{ else }}id{{ end }}, CallOptions: options,
+	}, func(ctx context.Context, q *hook.QueryContext) (any, error) {
+		conn := database.Conn(ctx, c.querier)
+
+{{- if .CompositePK }}
+		conds := sql.BuildCompositePKConditions(c.dialect,
+			[]string{ {{- range .PKColumns }}{{ printf "%q" .Name }}, {{ end -}} },
+			[]any{ {{- range .PKColumns }}pk.{{ .FieldName }}, {{ end -}} })
+{{- else }}
+		conds := []sql.Condition{sql.Where(c.dialect.QuoteIdentifier({{ printf "%q" $pkCol.Name }})).Eq(id)}
+{{- end }}
+{{- if and .SoftDelete .ExcludeDeleted }}
+
+		// Soft delete condition always applied — Exists checks for active rows only.
+		conds = append(conds, {{ softDeleteCondition .SoftDelete }})
+{{- end }}
+{{- if and .Tenancy .Tenancy.Tenanted }}
+
+		// Tenancy auto-filter. apply=false under tenancy.required:false
+		// + zero resolver skips both the verify-match and the filter append.
+		if !options.SkipTenancy {
+			resolvedTenant, apply, err := c.resolveTenant(ctx, options.Tenant)
+			if err != nil {
+				return false, fmt.Errorf("exists {{ $singular }}: resolve tenant: %w", err)
+			}
+			if apply {
+{{- if and .Tenancy.InPrimaryKey .CompositePK }}
+				// Tenant-in-PK verify-match.
+				if pk.{{ .Tenancy.FieldName }} != resolvedTenant {
+					return false, tenancy.ErrMismatch
+				}
+{{- end }}
+				conds = append(conds, sql.Where(c.dialect.QuoteIdentifier({{ printf "%q" .Tenancy.Column }})).Eq(resolvedTenant))
+			}
+		}
+{{- end }}
+
+		query, args := sql.BuildExists(c.dialect, c.table, conds)
+
+		var exists bool
+		if err := conn.QueryRow(ctx, query, args...).Scan(&exists); err != nil {
+			return false, fmt.Errorf("exists {{ $singular }}: %w", err)
+		}
+		return exists, nil
+	})
+	if err != nil {
+		return false, err
+	}
+	return result.(bool), nil
+}
+
+// ExistsWhere returns true if any {{ $singular }} matches the given filter.
+{{- if and .SoftDelete .ExcludeDeleted }}
+// Soft-deleted {{ .TableName }} are excluded by default. Set Filter.{{ .SoftDelete.FieldName }} to override.
+{{- end }}
+func (c *{{ $structCamel }}Client) ExistsWhere(ctx context.Context, filter *{{ .StructName }}Filter, opts ...func(*CallOptions[{{ .StructName }}FieldOptions])) (bool, error) {
+	options := resolveCallOptions(opts)
+	result, err := c.executeQuery(ctx, options.SkipHooks, &hook.QueryContext{
+		Op: hook.OpExists, Table: {{ .TableNameConstant }}, Schema: {{ printf "%q" .Schema }},
+		Input: filter, CallOptions: options,
+	}, func(ctx context.Context, q *hook.QueryContext) (any, error) {
+		conn := database.Conn(ctx, c.querier)
+{{- if .HasTenantedRelationshipFilter }}
+
+		// A relationship filter compiles to a correlated EXISTS carrying the
+		// *target's* tenant predicate, so the tenant is
+		// resolved before the conditions are built rather than appended after them.
+		filterOpts, filterErr := c.filterOptions(ctx, filter, options.SkipTenancy, options.Tenant)
+		if filterErr != nil {
+			return nil, fmt.Errorf("exists {{ .TableName }}: %w", filterErr)
+		}
+{{- end }}
+
+		var conds []sql.Condition
+		if filter != nil {
+			conds = filter.ToConditions(c.dialect{{ if .HasTenantedRelationshipFilter }}, filterOpts...{{ end }})
+		}
+{{- if and .SoftDelete .ExcludeDeleted }}
+
+		// Soft delete: inject default if user didn't set the comparator
+		if filter == nil || filter.{{ .SoftDelete.FieldName }} == nil {
+			conds = append(conds, {{ softDeleteCondition .SoftDelete }})
+		}
+{{- end }}
+{{- if and .Tenancy .Tenancy.Tenanted }}
+
+		// Tenancy auto-filter. apply=false under tenancy.required:false
+		// + zero resolver skips the filter (cross-tenant probe).
+		if !options.SkipTenancy {
+			resolvedTenant, apply, err := c.resolveTenant(ctx, options.Tenant)
+			if err != nil {
+				return false, fmt.Errorf("exists {{ $singular }} where: resolve tenant: %w", err)
+			}
+			if apply {
+				conds = append(conds, sql.Where(c.dialect.QuoteIdentifier({{ printf "%q" .Tenancy.Column }})).Eq(resolvedTenant))
+			}
+		}
+{{- end }}
+
+		query, args := sql.BuildExists(c.dialect, c.table, conds)
+
+		var exists bool
+		if err := conn.QueryRow(ctx, query, args...).Scan(&exists); err != nil {
+			return false, fmt.Errorf("exists {{ $singular }} where: %w", err)
+		}
+		return exists, nil
+	})
+	if err != nil {
+		return false, err
+	}
+	return result.(bool), nil
+}
+{{- end }}
+{{- end -}}

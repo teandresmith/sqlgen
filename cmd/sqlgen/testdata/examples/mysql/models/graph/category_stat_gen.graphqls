@@ -1,0 +1,73 @@
+"""
+CategoryStat corresponds to the category_stats view.
+"""
+type CategoryStat {
+  "category_name"
+  categoryName: String
+  "product_count"
+  productCount: Int!
+  "total_price"
+  totalPrice: Float
+  "avg_price"
+  avgPrice: Float
+  "min_price"
+  minPrice: Float
+  "max_price"
+  maxPrice: Float
+  "product_names"
+  productNames: String
+  "product_names_json"
+  productNamesJSON: JSON!
+}
+
+type CategoryStatConnection {
+  edges:      [CategoryStatEdge!]!
+  pageInfo:   PageInfo!
+  totalCount: Int!
+}
+
+type CategoryStatEdge {
+  node:   CategoryStat!
+  cursor: String!
+}
+
+type CategoryStatListResult {
+  items:      [CategoryStat!]!
+  totalCount: Int!
+  offset:     Int!
+  limit:      Int!
+  hasMore:    Boolean!
+}
+
+input CategoryStatFilter {
+  categoryName: NullableStringComparator
+  productCount: NumericComparator
+  totalPrice: NullableNumericComparator
+  avgPrice: NullableNumericComparator
+  minPrice: NullableNumericComparator
+  maxPrice: NullableNumericComparator
+  productNames: NullableStringComparator
+  productNamesJSON: JSONComparator
+  and: [CategoryStatFilter!]
+  or:  [CategoryStatFilter!]
+}
+
+enum CategoryStatSortField {
+  CATEGORY_NAME
+  PRODUCT_COUNT
+  TOTAL_PRICE
+  AVG_PRICE
+  MIN_PRICE
+  MAX_PRICE
+  PRODUCT_NAMES
+  PRODUCT_NAMES_JSON
+}
+
+input CategoryStatSort {
+  field:     CategoryStatSortField!
+  direction: SortDirection!
+}
+
+extend type Query {
+  categoryStatList(filter: CategoryStatFilter, sort: [CategoryStatSort!], limit: Int, offset: Int): CategoryStatListResult!
+}

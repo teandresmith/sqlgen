@@ -1,0 +1,73 @@
+"""
+Junction table linking users to their preferred categories
+"""
+type UserCategory {
+  "User side of the relationship"
+  userID: Int!
+  "Category side of the relationship"
+  categoryID: Int!
+  "Display position of this category for this user. The UNIQUE below does NOT cover the primary key, which makes this the only MySQL table where a caller-known composite key still has to be read back after an upsert (PRD 9.5). Nullable so existing rows leave it unset; MySQL, like the other two dialects, allows repeated NULLs under a unique index."
+  slot: Int
+}
+
+type UserCategoryConnection {
+  edges:      [UserCategoryEdge!]!
+  pageInfo:   PageInfo!
+  totalCount: Int!
+}
+
+type UserCategoryEdge {
+  node:   UserCategory!
+  cursor: String!
+}
+
+type UserCategoryListResult {
+  items:      [UserCategory!]!
+  totalCount: Int!
+  offset:     Int!
+  limit:      Int!
+  hasMore:    Boolean!
+}
+
+input UserCategoryFilter {
+  slot: NullableNumericComparator
+  and: [UserCategoryFilter!]
+  or:  [UserCategoryFilter!]
+}
+
+enum UserCategorySortField {
+  USER_ID
+  CATEGORY_ID
+  SLOT
+}
+
+input UserCategorySort {
+  field:     UserCategorySortField!
+  direction: SortDirection!
+}
+input CreateUserCategoryInput {
+  userID: Int!
+  categoryID: Int!
+  slot: Int
+}
+input UpdateUserCategoryInput {
+  slot: Int
+  slot_inc: Int
+  slot_dec: Int
+}
+
+extend type Query {
+  userCategory(userID: Int!, categoryID: Int!): UserCategory
+  "Cursor-paginated; ordering is driven by cursor_keys to preserve keyset semantics — pass `sort` to userCategoryList instead."
+  userCategories(filter: UserCategoryFilter, first: Int, after: String, last: Int, before: String): UserCategoryConnection!
+  userCategoryList(filter: UserCategoryFilter, sort: [UserCategorySort!], limit: Int, offset: Int): UserCategoryListResult!
+}
+
+extend type Mutation {
+  createUserCategory(input: CreateUserCategoryInput!): UserCategory!
+  createUserCategories(inputs: [CreateUserCategoryInput!]!): [UserCategory!]!
+  updateUserCategory(userID: Int!, categoryID: Int!, input: UpdateUserCategoryInput!): UserCategory!
+  updateUserCategories(filter: UserCategoryFilter!, input: UpdateUserCategoryInput!): [UserCategory!]!
+  upsertUserCategory(input: CreateUserCategoryInput!): UserCategory!
+  deleteUserCategory(userID: Int!, categoryID: Int!): Boolean!
+}

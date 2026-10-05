@@ -1,0 +1,395 @@
+{{- define "event-hooks" -}}
+
+// eventSkipper is implemented by CallOptions to check the SkipEvents flag.
+type eventSkipper interface {
+	skipEvents() bool
+}
+
+func (o CallOptions[FO]) skipEvents() bool { return o.SkipEvents }
+{{- if .HasRedactedTables }}
+
+// redactZero clears one access-redacted input field in place on the event
+// clone: omittable fields reset to unset, required fields to their zero
+// value. Only the published Event.Input sees the cleared field —
+// the caller's input continues unchanged to the DB write.
+func redactZero[T any](p *T) {
+	var zero T
+	*p = zero
+}
+{{- end }}
+
+// mapOpToAction maps a mutation operation to an event action.
+func mapOpToAction(op hook.MutationOp) event.Action {
+	switch op {
+	case hook.OpCreate, hook.OpCreateMany:
+		return event.Create
+	case hook.OpUpdate, hook.OpUpdateMany, hook.OpUpdateWhere,
+		hook.OpRestore, hook.OpRestoreMany, hook.OpRestoreWhere,
+		hook.OpIncrement:
+		return event.Update
+	case hook.OpSoftDelete, hook.OpSoftDeleteMany, hook.OpSoftDeleteWhere,
+		hook.OpHardDelete, hook.OpHardDeleteMany, hook.OpHardDeleteWhere:
+		return event.Delete
+	case hook.OpUpsert, hook.OpUpsertMany:
+		// Batched upserts reuse the single-row action: a
+		// subscriber filtering event.Upsert receives them without changing
+		// its filter, and no new wire action is introduced.
+		return event.Upsert
+	default:
+		return event.Action(string(op))
+	}
+}
+
+// mergeEventMetadata builds one event's Metadata from the per-hook
+// MetadataFunc result (base) and the system-owned keys (system —
+// currently only the tenant stamp). base is shallow-cloned per event so
+// a shared map never bleeds across the fanned-out batch, and the system keys
+// are applied last so consumer metadata cannot override them. Returns nil when
+// neither source contributes a key, keeping the no-metadata path
+// byte-identical to prior output (a nil MetadataFunc on a non-tenanted table
+// yields a nil Metadata, exactly as before).
+func mergeEventMetadata(base, system map[string]string) map[string]string {
+	if len(base) == 0 && len(system) == 0 {
+		return nil
+	}
+	merged := make(map[string]string, len(base)+len(system))
+	maps.Copy(merged, base)
+	maps.Copy(merged, system)
+	return merged
+}
+{{- range .Tables }}
+
+// new{{ .StructName }}EventHook creates a mutation hook that publishes events for {{ .StructName }} mutations.
+func new{{ .StructName }}EventHook(publisher event.Publisher, onError func(ctx context.Context, events []event.Event, err error), metaFunc func(ctx context.Context) map[string]string) hook.MutationHook {
+	return func(next hook.MutationHandler) hook.MutationHandler {
+		return func(ctx context.Context, mc *hook.MutationContext) (any, error) {
+			result, err := next(ctx, mc)
+			if err != nil {
+				return result, err
+			}
+
+			// Check SkipEvents via CallOptions
+			if skipper, ok := mc.CallOptions.(eventSkipper); ok && skipper.skipEvents() {
+				return result, nil
+			}
+
+			if len(mc.AffectedPKs) == 0 {
+				return result, nil
+			}
+
+			// MetadataFunc: resolve consumer metadata
+			// once here at hook entry, where the request ctx is still live —
+			// never from the deferred OnCommit callback, which runs on
+			// context.Background(). The result is merged into
+			// each fanned-out event below; the system tenant stamp is applied
+			// last so a consumer cannot override it.
+			var baseMeta map[string]string
+			if metaFunc != nil {
+				baseMeta = metaFunc(ctx)
+			}
+
+			events := make([]event.Event, len(mc.AffectedPKs))
+{{- if or .BatchCreateOps .HasUpdateMany }}
+
+			// Per-entity Input fanout. For batch ops the i-th
+			// fanned-out event carries the i-th element of the published
+			// input slice — keeps wire cost O(N) on serialization and lets
+			// subscribers run one type-switch across single-op and batch
+			// shapes uniformly. UpsertMany publishes the *deduped* slice
+			// rather than the caller's, which is the one index-aligned with
+			// AffectedPKs. *Many delete/restore ops carry nil since
+{{- if or .EmitRedactCreate .EmitRedactUpdate .EmitRedactIncrement }}
+			// the PK already travels via Event.PK; create/update/increment
+			// inputs flow through the redact helpers below.
+{{- else if .FilterRedactOps }}
+			// the PK already travels via Event.PK; the *Where deletes publish
+			// a redacted clone of the caller's filter.
+{{- else }}
+			// the PK already travels via Event.PK; *Where ops and single-op
+			// mutations keep mc.Input unchanged.
+{{- end }}
+			var (
+{{- if .BatchCreateOps }}
+				batchCreateInputs []*Create{{ .StructName }}Input
+{{- end }}
+{{- if .HasUpdateMany }}
+				batchUpdateItems  []Update{{ .StructName }}Item
+{{- end }}
+			)
+			switch mc.Op {
+{{- if .BatchCreateOps }}
+			case {{ range $i, $op := .BatchCreateOps }}{{ if $i }}, {{ end }}hook.{{ $op }}{{ end }}:
+				batchCreateInputs, _ = mc.Input.([]*Create{{ .StructName }}Input)
+{{- end }}
+{{- if .HasUpdateMany }}
+			case hook.OpUpdateMany:
+				batchUpdateItems, _ = mc.Input.([]Update{{ .StructName }}Item)
+{{- end }}
+			}
+{{- end }}
+			for i, pk := range mc.AffectedPKs {
+				var inputVal any
+				switch mc.Op {
+{{- if .BatchCreateOps }}
+				case {{ range $i, $op := .BatchCreateOps }}{{ if $i }}, {{ end }}hook.{{ $op }}{{ end }}:
+					if i < len(batchCreateInputs) {
+{{- if .EmitRedactCreate }}
+						inputVal = redact{{ .StructName }}CreateInput(batchCreateInputs[i])
+{{- else }}
+						inputVal = batchCreateInputs[i]
+{{- end }}
+					}
+{{- end }}
+{{- if .HasUpdateMany }}
+				case hook.OpUpdateMany:
+					if i < len(batchUpdateItems) {
+{{- if .EmitRedactUpdate }}
+						item := batchUpdateItems[i]
+						item.Input = redact{{ .StructName }}UpdateInput(item.Input)
+						inputVal = item
+{{- else }}
+						inputVal = batchUpdateItems[i]
+{{- end }}
+					}
+{{- end }}
+{{- if .EmitRedactCreate }}
+				case hook.OpCreate, hook.OpUpsert:
+					// Event redaction: publish a redacted clone of the
+					// caller's input — same concrete type, sensitive fields
+					// cleared. The un-redacted pointer went to the DB write.
+					if in, ok := mc.Input.(*Create{{ .StructName }}Input); ok {
+						inputVal = redact{{ .StructName }}CreateInput(in)
+					}
+{{- end }}
+{{- if .EmitRedactUpdate }}
+				case hook.OpUpdate, hook.OpUpdateWhere:
+					if in, ok := mc.Input.(*Update{{ .StructName }}Input); ok {
+						inputVal = redact{{ .StructName }}UpdateInput(in)
+					}
+{{- end }}
+{{- if .EmitRedactIncrement }}
+				case hook.OpIncrement:
+					if in, ok := mc.Input.(IncrementInput[{{ .StructName }}IncrementColumn]); ok {
+						inputVal = redact{{ .StructName }}IncrementInput(in)
+					}
+{{- end }}
+{{- if .FilterRedactOps }}
+				case {{ range $i, $op := .FilterRedactOps }}{{ if $i }}, {{ end }}hook.{{ $op }}{{ end }}:
+					// Filter redaction: a *Where delete publishes the
+					// caller's filter as its payload, and the Go filter
+					// carries every column — including the ones the API filter
+					// surface drops. Publish a redacted clone: same concrete
+					// type, restricted comparators cleared, and / or members
+					// and relationship members redacted with it.
+					if in, ok := mc.Input.(*{{ .StructName }}Filter); ok {
+						inputVal = redact{{ .StructName }}Filter(in)
+					}
+{{- end }}
+				case hook.OpHardDeleteMany, hook.OpSoftDeleteMany, hook.OpRestoreMany:
+					// Per-entity input is nil — the PK already travels via Event.PK.
+{{- if .PassThroughOps }}
+				case {{ range $i, $op := .PassThroughOps }}{{ if $i }}, {{ end }}hook.{{ $op }}{{ end }}:
+					// Nothing redacted in these ops' event payload on this
+					// table, but they are enumerated anyway so the default arm
+					// below can fail closed.
+					inputVal = mc.Input
+{{- end }}
+{{- if .FailClosedDefault }}
+				default:
+					// Fail closed: every op this generator emits has an
+					// arm above, so reaching here means an op was added without
+					// one. Publish no payload rather than an un-redacted input.
+{{- else }}
+				default:
+					inputVal = mc.Input
+{{- end }}
+				}
+{{- if .Tenanted }}
+{{- if and .TenantInPK .CompositePKStructName }}
+				// Tenancy metadata: stamped from
+				// the row itself — the PK struct carries the tenant — so
+				// SkipTenancy mutations publish tenant-stamped events. Built
+				// synchronously here (before any OnCommit registration) so the
+				// async callback never re-resolves against Background. The %v
+				// form is byte-identical to the tenanted cache-key grammar (the
+				// round-trip invariant the event-driven receive side relies
+				// on). A failed PK assert omits the key — soft degrade, never
+				// "<nil>".
+				var tenantMeta map[string]string
+				if typedPK, ok := pk.({{ .CompositePKStructName }}); ok {
+					tenantMeta = map[string]string{"tenant": fmt.Sprintf("%v", typedPK.{{ .TenantFieldName }})}
+				}
+{{- else if .TenantInPK }}
+				// Tenancy metadata: the tenant
+				// column IS the primary key — stamp it directly from the PK.
+				// Built synchronously (before OnCommit) so the async callback
+				// never re-resolves; %v matches the cache-key grammar.
+				tenantMeta := map[string]string{"tenant": fmt.Sprintf("%v", pk)}
+{{- else }}
+				// Tenancy metadata: stamped from
+				// the structurally captured per-row tenant
+				// (mc.AffectedTenants, index-aligned with AffectedPKs) — never
+				// the resolver — so SkipTenancy mutations publish
+				// tenant-stamped events. Built synchronously here (before any
+				// OnCommit registration) so the async callback never
+				// re-resolves against Background. The %v form is
+				// byte-identical to the tenanted cache-key grammar (the
+				// round-trip invariant the event-driven receive side relies
+				// on). A nil capture (row not materialized, or an unwired
+				// shape) omits the key entirely — soft degrade, never "<nil>".
+				var tenantMeta map[string]string
+				if i < len(mc.AffectedTenants) && mc.AffectedTenants[i] != nil {
+					tenantMeta = map[string]string{"tenant": fmt.Sprintf("%v", mc.AffectedTenants[i])}
+				}
+{{- end }}
+{{- end }}
+				events[i] = event.Event{
+					ID:        {{ $.UUIDGenExpr }},
+					Table:     {{ printf "%q" .TableName }},
+					Schema:    mc.Schema,
+					Action:    mapOpToAction(mc.Op),
+					PK:        pk,
+					Input:     inputVal,
+					Timestamp: time.Now(),
+{{- if .Tenanted }}
+					Metadata:  mergeEventMetadata(baseMeta, tenantMeta),
+{{- else }}
+					Metadata:  mergeEventMetadata(baseMeta, nil),
+{{- end }}
+				}
+			}
+
+			publish := func(ctx context.Context) error {
+				if err := publisher.PublishBatch(ctx, events); err != nil {
+					onError(ctx, events, err)
+				}
+				return nil
+			}
+
+			if tx := database.FromContext(ctx); tx != nil {
+				tx.OnCommit(publish)
+			} else {
+				publish(ctx)
+			}
+
+			return result, nil
+		}
+	}
+}
+{{- if .EmitRedactCreate }}
+
+// redact{{ .StructName }}CreateInput returns a shallow copy of in with the
+// access-redacted fields cleared — omittable fields unset, required fields
+// zeroed. nil passes through so a failed upstream type
+// assertion publishes nil rather than leaking the raw input.
+func redact{{ .StructName }}CreateInput(in *Create{{ .StructName }}Input) *Create{{ .StructName }}Input {
+	if in == nil {
+		return nil
+	}
+	out := *in
+{{- range .RedactedCreateFields }}
+	redactZero(&out.{{ . }})
+{{- end }}
+	return &out
+}
+{{- end }}
+{{- if .EmitRedactUpdate }}
+
+// redact{{ .StructName }}UpdateInput returns a shallow copy of in with the
+// access-redacted fields cleared to unset. nil passes
+// through so a failed upstream type assertion publishes nil rather than
+// leaking the raw input.
+func redact{{ .StructName }}UpdateInput(in *Update{{ .StructName }}Input) *Update{{ .StructName }}Input {
+	if in == nil {
+		return nil
+	}
+	out := *in
+{{- range .RedactedUpdateFields }}
+	redactZero(&out.{{ . }})
+{{- end }}
+	return &out
+}
+{{- end }}
+{{- if .EmitRedactIncrement }}
+
+// redact{{ .StructName }}IncrementInput blanks the increment delta when the
+// target column is access-redacted — subscribers see
+// which column changed, never the redacted amount. Value semantics: in is
+// already a copy, so the caller's input is untouched.
+func redact{{ .StructName }}IncrementInput(in IncrementInput[{{ .StructName }}IncrementColumn]) IncrementInput[{{ .StructName }}IncrementColumn] {
+	switch in.Column {
+	case {{ range $i, $c := .RedactedIncrementConsts }}{{ if $i }}, {{ end }}{{ $c }}{{ end }}:
+		in.Amount = 0
+	default:
+		// Non-redacted column — the delta passes through unchanged.
+	}
+	return in
+}
+{{- end }}
+{{- end }}
+{{- range .FilterRedactors }}
+
+// redact{{ .StructName }}Filter returns a copy of f with the access-redacted
+// comparators cleared, for publication as Event.Input on the *Where delete /
+// restore ops. nil passes through so a failed upstream
+// type assertion publishes nil rather than leaking the raw filter.
+//
+// Unlike the input helpers this cannot be a shallow copy — a filter is a graph.
+// And / Or hold the same filter type, so a nested member would otherwise carry
+// a restricted value straight past the top-level clearing, and a relationship
+// member can reach another table's redacted columns. Every level returns a new
+// value, so the caller's filter is never mutated.
+func redact{{ .StructName }}Filter(f *{{ .StructName }}Filter) *{{ .StructName }}Filter {
+	if f == nil {
+		return nil
+	}
+	out := *f
+{{- range .RedactedFields }}
+	out.{{ . }} = nil
+{{- end }}
+{{- range .RelationshipMembers }}
+	out.{{ .FieldName }} = redact{{ .TargetStructName }}Filter(out.{{ .FieldName }})
+{{- end }}
+	if len(out.And) > 0 {
+		and := make([]*{{ .StructName }}Filter, len(out.And))
+		for i, sub := range out.And {
+			and[i] = redact{{ .StructName }}Filter(sub)
+		}
+		out.And = and
+	}
+	if len(out.Or) > 0 {
+		or := make([]*{{ .StructName }}Filter, len(out.Or))
+		for i, sub := range out.Or {
+			or[i] = redact{{ .StructName }}Filter(sub)
+		}
+		out.Or = or
+	}
+	return &out
+}
+{{- end }}
+
+// buildEventHooks creates per-entity event hooks scoped via hook.ForTable.
+func buildEventHooks(publisher event.Publisher, cfg event.Config) []hook.MutationHook {
+	onError := cfg.ResolveOnError()
+	metaFunc := cfg.MetadataFunc
+	return []hook.MutationHook{
+{{- range .Tables }}
+		hook.ForTable(new{{ .StructName }}EventHook(publisher, onError, metaFunc), {{ .TableNameConstant }}),
+{{- end }}
+	}
+}
+
+// WithEventPublisher configures event publishing for all mutations.
+// Event hooks are prepended to the mutation hook chain as the outermost hooks
+// (after panic recovery). Events are deferred via Tx.OnCommit inside transactions
+// and fire immediately outside transactions. Publish failures invoke OnError but
+// never fail the mutation.
+func WithEventPublisher(publisher event.Publisher, opts ...func(*event.Config)) {{ .ClientName }}Option {
+	return func(o *{{ .ClientName | toCamelCase }}Options) {
+		o.eventPublisher = publisher
+		for _, opt := range opts {
+			opt(&o.eventConfig)
+		}
+	}
+}
+{{- end -}}

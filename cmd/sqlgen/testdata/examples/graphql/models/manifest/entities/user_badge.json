@@ -1,0 +1,457 @@
+{
+  "kind": "table",
+  "name": "UserBadge",
+  "table": "user_badges",
+  "schema": "public",
+  "file_prefix": "user_badge",
+  "files": [
+    "models_gen.go"
+  ],
+  "comment": "",
+  "indexes": [
+    {
+      "name": "user_badges_pkey",
+      "columns": [
+        "id"
+      ],
+      "unique": true,
+      "method": "btree"
+    },
+    {
+      "name": "user_badges_user_id_key",
+      "columns": [
+        "user_id"
+      ],
+      "unique": true,
+      "method": "btree"
+    }
+  ],
+  "pk": {
+    "kind": "single",
+    "columns": [
+      {
+        "name": "id",
+        "go_field": "ID",
+        "go_type": "int64"
+      }
+    ]
+  },
+  "features": {
+    "soft_delete": null,
+    "cache": {
+      "ttl_seconds": 3600,
+      "hydration": "eager",
+      "key_pattern": "sqlgen:userbadge:{id}",
+      "invalidates_on": [
+        "Create",
+        "Update",
+        "Delete",
+        "SoftDelete",
+        "Restore",
+        "Increment"
+      ]
+    },
+    "events": {
+      "enabled": true,
+      "types": [
+        "UserBadgeCreated",
+        "UserBadgeDeleted",
+        "UserBadgeUpdated"
+      ],
+      "payload_shape": "models.UserBadgeEvent"
+    },
+    "tenancy": null
+  },
+  "columns": [
+    {
+      "name": "id",
+      "go_field": "ID",
+      "go_type": "int64",
+      "db_type": "bigint",
+      "nullable": false,
+      "pk": true,
+      "unique": false,
+      "auto": "insert",
+      "comparator": "comparator.Number[int64]",
+      "comment": ""
+    },
+    {
+      "name": "user_id",
+      "go_field": "UserID",
+      "go_type": "*uuid.UUID",
+      "db_type": "uuid",
+      "nullable": true,
+      "pk": false,
+      "unique": true,
+      "comparator": "comparator.NullableID",
+      "comment": ""
+    },
+    {
+      "name": "label",
+      "go_field": "Label",
+      "go_type": "string",
+      "db_type": "text",
+      "nullable": false,
+      "pk": false,
+      "unique": false,
+      "comparator": "comparator.String",
+      "comment": ""
+    }
+  ],
+  "relationships": [
+    {
+      "name": "users",
+      "kind": "o2o",
+      "target_entity": "User",
+      "fk": {
+        "table": "user_badges",
+        "schema": "public",
+        "column": "user_id"
+      }
+    }
+  ],
+  "methods": {
+    "query": [
+      {
+        "name": "Get",
+        "params": [
+          {
+            "name": "id",
+            "type": "int64"
+          }
+        ],
+        "returns": "*UserBadge",
+        "errors": [
+          "ErrNotFound"
+        ],
+        "notes": "Delegates to GetMany with a primary-key filter; returns ErrNotFound when no row matches.",
+        "sql_bodies": {
+          "postgres": "SELECT \"id\", \"label\", \"user_id\" FROM \"public\".\"user_badges\" WHERE \"id\" = $1 LIMIT 1"
+        }
+      },
+      {
+        "name": "GetMany",
+        "params": [
+          {
+            "name": "input",
+            "type": "*GetUserBadgesInput"
+          }
+        ],
+        "returns": "[]*UserBadge",
+        "errors": [],
+        "sql_bodies": {
+          "postgres": "SELECT \"id\", \"label\", \"user_id\" FROM \"public\".\"user_badges\" WHERE <filter> ORDER BY <sort> LIMIT <limit>"
+        }
+      },
+      {
+        "name": "Count",
+        "params": [
+          {
+            "name": "filter",
+            "type": "*UserBadgeFilter"
+          }
+        ],
+        "returns": "int64",
+        "errors": [],
+        "sql_bodies": {
+          "postgres": "SELECT COUNT(*) FROM \"public\".\"user_badges\" WHERE <filter>"
+        }
+      },
+      {
+        "name": "Exists",
+        "params": [
+          {
+            "name": "id",
+            "type": "int64"
+          }
+        ],
+        "returns": "bool",
+        "errors": [],
+        "sql_bodies": {
+          "postgres": "SELECT EXISTS(SELECT 1 FROM \"public\".\"user_badges\" WHERE \"id\" = $1)"
+        }
+      },
+      {
+        "name": "ExistsWhere",
+        "params": [
+          {
+            "name": "filter",
+            "type": "*UserBadgeFilter"
+          }
+        ],
+        "returns": "bool",
+        "errors": [],
+        "sql_bodies": {
+          "postgres": "SELECT EXISTS(SELECT 1 FROM \"public\".\"user_badges\" WHERE <filter>)"
+        }
+      },
+      {
+        "name": "Paginate",
+        "params": [
+          {
+            "name": "input",
+            "type": "PaginateInput[UserBadgeFilter]"
+          }
+        ],
+        "returns": "*PaginateResult[UserBadge]",
+        "errors": [],
+        "notes": "Offset pagination. Issues no statement of its own — composes Count and GetMany, so no sql_bodies entry."
+      },
+      {
+        "name": "Connection",
+        "params": [
+          {
+            "name": "input",
+            "type": "ConnectionInput[UserBadgeFilter]"
+          }
+        ],
+        "returns": "*Connection[UserBadge]",
+        "errors": [
+          "ErrInvalidCursor"
+        ],
+        "notes": "Relay cursor pagination. Issues no statement of its own — composes Count and GetMany, so no sql_bodies entry."
+      },
+      {
+        "name": "Stream",
+        "params": [
+          {
+            "name": "input",
+            "type": "*StreamUserBadgesInput"
+          }
+        ],
+        "returns": "iter.Seq2[*UserBadge, error]",
+        "errors": [],
+        "notes": "Scalars only — no relationship loading, cache always bypassed. Errors surface through the iterator's second value.",
+        "sql_bodies": {
+          "postgres": "SELECT \"id\", \"label\", \"user_id\" FROM \"public\".\"user_badges\" WHERE <filter> ORDER BY <sort>"
+        }
+      }
+    ],
+    "mutation": [
+      {
+        "name": "Create",
+        "params": [
+          {
+            "name": "input",
+            "type": "*CreateUserBadgeInput"
+          }
+        ],
+        "returns": "*UserBadge",
+        "errors": [
+          "ErrNilInput",
+          "ErrConstraintViolation"
+        ],
+        "sql_bodies": {
+          "postgres": "INSERT INTO \"public\".\"user_badges\" (<columns>) VALUES (<values>) RETURNING \"id\""
+        }
+      },
+      {
+        "name": "CreateMany",
+        "params": [
+          {
+            "name": "inputs",
+            "type": "[]*CreateUserBadgeInput"
+          }
+        ],
+        "returns": "[]*UserBadge",
+        "errors": [
+          "ErrNilInput",
+          "ErrConstraintViolation"
+        ],
+        "notes": "Batched in generation.batch_size chunks. Earlier chunks are not rolled back on a later failure — wrap in a transaction for atomicity.",
+        "sql_bodies": {
+          "postgres": "INSERT INTO \"public\".\"user_badges\" (<columns>) VALUES <values> RETURNING \"id\""
+        }
+      },
+      {
+        "name": "Upsert",
+        "params": [
+          {
+            "name": "input",
+            "type": "*CreateUserBadgeInput"
+          },
+          {
+            "name": "target",
+            "type": "UserBadgeConflictTarget"
+          }
+        ],
+        "returns": "*UserBadge",
+        "errors": [
+          "ErrNilInput",
+          "ErrConstraintViolation"
+        ],
+        "notes": "One method over the generated UserBadgeConflictTarget enum — the target argument selects the conflict columns at call time.",
+        "sql_bodies": {
+          "postgres": "INSERT INTO \"public\".\"user_badges\" (<columns>) VALUES (<values>) ON CONFLICT (<conflict_target>) DO UPDATE SET <excluded> RETURNING \"id\""
+        }
+      },
+      {
+        "name": "UpsertMany",
+        "params": [
+          {
+            "name": "inputs",
+            "type": "[]*CreateUserBadgeInput"
+          },
+          {
+            "name": "target",
+            "type": "UserBadgeConflictTarget"
+          }
+        ],
+        "returns": "[]*UserBadge",
+        "errors": [
+          "ErrNilInput",
+          "ErrConstraintViolation"
+        ],
+        "notes": "Batched in generation.batch_size chunks over the same UserBadgeConflictTarget enum Upsert takes. Inputs resolving to one target are deduped before the statement is built, last occurrence wins. Earlier chunks are not rolled back on a later failure — wrap in a transaction for atomicity.",
+        "sql_bodies": {
+          "postgres": "INSERT INTO \"public\".\"user_badges\" (<columns>) VALUES <values> ON CONFLICT (<conflict_target>) DO UPDATE SET <excluded>"
+        }
+      },
+      {
+        "name": "Update",
+        "params": [
+          {
+            "name": "id",
+            "type": "int64"
+          },
+          {
+            "name": "input",
+            "type": "*UpdateUserBadgeInput"
+          }
+        ],
+        "returns": "*UserBadge",
+        "errors": [
+          "ErrNotFound",
+          "ErrNilInput",
+          "ErrConstraintViolation"
+        ],
+        "notes": "Only fields where IsSet() reports true reach the SET clause; an input with none set issues no UPDATE and returns the row unchanged.",
+        "sql_bodies": {
+          "postgres": "UPDATE \"public\".\"user_badges\" SET <set> WHERE \"id\" = $1"
+        }
+      },
+      {
+        "name": "UpdateMany",
+        "params": [
+          {
+            "name": "items",
+            "type": "[]UpdateUserBadgeItem"
+          }
+        ],
+        "returns": "[]*UserBadge",
+        "errors": [
+          "ErrNilInput",
+          "ErrConstraintViolation"
+        ],
+        "notes": "Issues one statement per item. Batched like CreateMany — earlier items are not rolled back on a later failure. A primary key that does not exist is silently skipped, even under strict_updates.",
+        "sql_bodies": {
+          "postgres": "UPDATE \"public\".\"user_badges\" SET <set> WHERE \"id\" = $1"
+        }
+      },
+      {
+        "name": "UpdateWhere",
+        "params": [
+          {
+            "name": "filter",
+            "type": "*UserBadgeFilter"
+          },
+          {
+            "name": "input",
+            "type": "*UpdateUserBadgeInput"
+          }
+        ],
+        "returns": "[]*UserBadge",
+        "errors": [
+          "ErrNilInput",
+          "ErrEmptyFilter",
+          "ErrConstraintViolation"
+        ],
+        "notes": "Idempotent — returns an empty slice when no row matches. ErrEmptyFilter when the filter produces no conditions.",
+        "sql_bodies": {
+          "postgres": "UPDATE \"public\".\"user_badges\" SET <set> WHERE <filter> RETURNING \"id\""
+        }
+      },
+      {
+        "name": "HardDelete",
+        "params": [
+          {
+            "name": "id",
+            "type": "int64"
+          }
+        ],
+        "returns": "",
+        "errors": [],
+        "notes": "Idempotent — a primary key that does not exist is not an error.",
+        "sql_bodies": {
+          "postgres": "DELETE FROM \"public\".\"user_badges\" WHERE \"id\" = $1"
+        }
+      },
+      {
+        "name": "HardDeleteMany",
+        "params": [
+          {
+            "name": "ids",
+            "type": "[]int64"
+          }
+        ],
+        "returns": "",
+        "errors": [],
+        "notes": "Idempotent — primary keys that do not exist are not an error.",
+        "sql_bodies": {
+          "postgres": "DELETE FROM \"public\".\"user_badges\" WHERE \"id\" IN (<ids>)"
+        }
+      },
+      {
+        "name": "HardDeleteWhere",
+        "params": [
+          {
+            "name": "filter",
+            "type": "*UserBadgeFilter"
+          }
+        ],
+        "returns": "",
+        "errors": [
+          "ErrEmptyFilter"
+        ],
+        "notes": "Idempotent — no match is not an error. ErrEmptyFilter when the filter produces no conditions.",
+        "sql_bodies": {
+          "postgres": "DELETE FROM \"public\".\"user_badges\" WHERE <filter> RETURNING \"id\""
+        }
+      }
+    ]
+  },
+  "filter": {
+    "type": "UserBadgeFilter",
+    "fields": [
+      {
+        "name": "ID",
+        "type": "*comparator.Number[int64]"
+      },
+      {
+        "name": "Label",
+        "type": "*comparator.String"
+      },
+      {
+        "name": "UserID",
+        "type": "*comparator.NullableID"
+      },
+      {
+        "name": "And",
+        "type": "[]*UserBadgeFilter"
+      },
+      {
+        "name": "Or",
+        "type": "[]*UserBadgeFilter"
+      }
+    ]
+  },
+  "sort": {
+    "type": "UserBadgeSort",
+    "fields": [
+      "ID",
+      "Label",
+      "UserID"
+    ]
+  },
+  "examples": {}
+}

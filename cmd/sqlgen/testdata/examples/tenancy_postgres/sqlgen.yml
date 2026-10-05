@@ -1,0 +1,72 @@
+version: v1
+
+# tenancy_postgres — the pgx integration leg for tenant capture (PRD §29.5):
+# compiles and exercises the RETURNING-based tenant capture on the pgx
+# driver, most importantly the UpdateMany SendBatch path (per-item
+# `RETURNING <tenant>` scanned via br.Query()) that no other example
+# compiles. The exhaustive nil-tenant behavior suite lives in the sqlite
+# `tenancy` example.
+
+input:
+  dialect: postgres
+  paths:
+    - ./schema.sql
+  views:
+    - ./views/
+
+output:
+  driver: pgx
+  dir: ./models
+  package: models
+
+events:
+  enabled: true
+
+cache:
+  enabled: true
+  ttl: "1h"
+  serializer: json
+  key_prefix: sqlgen
+
+tenancy:
+  enabled: true
+  column: workspace_id
+  required: true
+
+overrides:
+  types:
+    uuid:
+      type: uuid.UUID
+      import: uuid
+
+generation:
+  # Manifest emission pins the `features.tenancy` block a tenanted
+  # view reports (PRD §30.4.2). per_entity so both the top-level
+  # manifest_gen.json index and entities/<view>.json carry the golden.
+  manifest:
+    enabled: true
+    json_layout: per_entity
+  soft_delete_columns:
+    - name: deleted_at
+      type: timestamp
+
+# View tenancy read-path emission (PRD §29.2.5). Both views
+# project workspace_id and are scoped by detection alone; neither carries a
+# tenancy block.
+#
+# workspace_line_totals is also cached, the only cached view on a PostgreSQL
+# example: a write to line_items must clear it through the schema-qualified
+# view-invalidate switch (PRD §27.11).
+views:
+  article_stats: {}
+  workspace_line_totals:
+    cursor_keys:
+      - workspace_id
+    cache:
+      enabled: true
+    invalidate_on:
+      - line_items
+
+tables:
+  articles: {}
+  line_items: {}

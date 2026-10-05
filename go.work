@@ -1,0 +1,12 @@
+go 1.27.0
+
+use (
+	.
+	cache/memory
+	cache/msgpack
+	cache/redis
+	cmd/sqlgen
+	event/natsbus
+	metrics/otel
+	parser
+)

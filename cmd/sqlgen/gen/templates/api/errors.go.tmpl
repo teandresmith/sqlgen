@@ -1,0 +1,107 @@
+{{- define "api/errors" -}}
+
+// mapErrorToGQL translates a sqlgen runtime error to a GraphQL error tagged
+// with the appropriate `extensions.code`. Wrapped errors
+// (e.g. `fmt.Errorf("ctx: %w", err)`) match through `errors.Is` and
+// `errors.As`, so callers may freely add context above the runtime layer.
+//
+// Constraint violations are dispatched via the structured *database.ConstraintError
+// (which Unwraps to ErrConstraintViolation) so the per-type mapping covers the
+// ErrUniqueViolation / ErrForeignKeyViolation / ErrCheckViolation /
+// ErrNotNullViolation entries with a single errors.As call.
+//
+// The two nested-mutation sentinels are matched the same way, so the
+// *database.NestedMutationError wrapper that carries them is absorbed without
+// a second arm. A nested `connect` whose target is not visible surfaces as
+// database.ErrNotFound and takes the arm above them: NOT_FOUND, never
+// BAD_REFERENCE — mapping it to BAD_REFERENCE would tell the caller the row
+// exists and is merely out of reach, which is the cross-tenant existence
+// oracle the visibility read exists to close.
+//
+// A failure inside a nested block additionally names the relationship that
+// failed, as `extensions.path: ["<Edge>"]`, read off the
+// *database.NestedMutationError's Edge — the relationship's Go field name,
+// the same spelling the error message carries. It is
+// attached whatever code the failure maps to: a duplicate child is still
+// CONFLICT and a missing FK target still BAD_REFERENCE, and in both cases the
+// caller needs the edge as much as the code. The alternative, a consumer
+// substring-matching the message to learn which edge failed, is what the
+// structured error exists to prevent.
+func mapErrorToGQL(err error) error {
+	if err == nil {
+		return nil
+	}
+	gqlErr := gqlErrorForCode(err)
+	var nme *database.NestedMutationError
+	if errors.As(err, &nme) {
+		gqlErr.Extensions["path"] = []string{nme.Edge}
+	}
+	return gqlErr
+}
+
+// gqlErrorForCode builds the gqlerror.Error for err's extensions.code. Every arm
+// returns a fresh Extensions map, which mapErrorToGQL then extends.
+func gqlErrorForCode(err error) *gqlerror.Error {
+	if errors.Is(err, database.ErrNotFound) {
+		return &gqlerror.Error{
+			Message:    "not found",
+			Extensions: map[string]any{"code": "NOT_FOUND"},
+		}
+	}
+	if errors.Is(err, database.ErrAlreadyRelated) {
+		return &gqlerror.Error{
+			Message:    "already related",
+			Extensions: map[string]any{"code": "CONFLICT"},
+		}
+	}
+	if errors.Is(err, database.ErrNestedVerbConflict) {
+		return &gqlerror.Error{
+			Message:    "conflicting nested verbs",
+			Extensions: map[string]any{"code": "INVALID_INPUT"},
+		}
+	}
+	if errors.Is(err, tenancy.ErrMissing) {
+		return &gqlerror.Error{
+			Message:    "tenant required",
+			Extensions: map[string]any{"code": "UNAUTHENTICATED"},
+		}
+	}
+	if errors.Is(err, tenancy.ErrMismatch) {
+		return &gqlerror.Error{
+			Message:    "tenant mismatch",
+			Extensions: map[string]any{"code": "FORBIDDEN"},
+		}
+	}
+
+	var ce *database.ConstraintError
+	if errors.As(err, &ce) {
+		switch ce.Type {
+		case database.ConstraintUnique:
+			return &gqlerror.Error{
+				Message:    "duplicate",
+				Extensions: map[string]any{"code": "CONFLICT"},
+			}
+		case database.ConstraintForeignKey:
+			return &gqlerror.Error{
+				Message:    "fk constraint",
+				Extensions: map[string]any{"code": "BAD_REFERENCE"},
+			}
+		case database.ConstraintCheck:
+			return &gqlerror.Error{
+				Message:    "check failed",
+				Extensions: map[string]any{"code": "INVALID_INPUT"},
+			}
+		case database.ConstraintNotNull:
+			return &gqlerror.Error{
+				Message:    "missing required",
+				Extensions: map[string]any{"code": "INVALID_INPUT"},
+			}
+		}
+	}
+
+	return &gqlerror.Error{
+		Message:    err.Error(),
+		Extensions: map[string]any{"code": "INTERNAL"},
+	}
+}
+{{- end -}}

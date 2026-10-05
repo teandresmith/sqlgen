@@ -1,0 +1,81 @@
+version: v1
+
+input:
+  dialect: postgres
+  paths:
+    - ./schema.sql
+  views:
+    - ./views/
+
+output:
+  driver: stdlib
+  dir: ./models
+  package: models
+
+generation:
+  soft_delete_columns:
+    - name: deleted_at
+      type: timestamp
+    - name: is_deleted
+      type: bool
+
+# This example is the wrapper-path regression guard. The standard library is
+# the default `uuid` binding (PRD §7.4), so without this block every `uuid`
+# column here would resolve to `uuid.UUID`/`*uuid.UUID` and nothing in the
+# example tree would exercise `uuid.NullUUID` — the wrapper shape, the
+# `.Valid`/`.UUID` FK unwrap, and `enrichOverride`'s integration back-fill.
+# Pairing it with `output.driver: stdlib` keeps the `database/sql` path
+# covered against a wrapper type.
+#
+# It has to be global rather than table-scoped: a table-scoped google override
+# alongside stdlib-resolved `uuid` columns elsewhere in the package is exactly
+# the two-library state PRD §4.13 rejects.
+overrides:
+  types:
+    uuid:
+      type: uuid.UUID
+      import: github.com/google/uuid
+      nullable: uuid.NullUUID
+
+tables:
+  public.users:
+    relationships:
+      - name: Profile
+        type: one_to_one
+        table: profiles
+        fk: user_id
+  profiles:
+    type_map:
+      address: Address
+  products:
+    type_map:
+      quantity: int32
+  orders: {}
+  order_items:
+    type_map:
+      quantity: int32
+  user_categories:
+    cursor_keys:
+      - user_id
+      - category_id
+  articles: {}
+  tags: {}
+  product_tag_labels:
+    cursor_keys:
+      - product_id
+      - tag_name
+      - label
+  warehouses:
+    overrides:
+      types:
+        uuid:
+          type: uuid.UUID
+          import: github.com/google/uuid
+          nullable: uuid.NullUUID
+        numeric:
+          type: decimal.Decimal
+          import: github.com/shopspring/decimal
+          nullable: decimal.NullDecimal
+        text:
+          type: ksuid.KSUID
+          import: github.com/segmentio/ksuid

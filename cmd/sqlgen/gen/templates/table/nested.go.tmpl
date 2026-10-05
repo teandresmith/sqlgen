@@ -1,0 +1,1064 @@
+{{- define "table/nested" -}}
+{{- if .Nested }}
+{{- $parent := . }}
+{{- $client := printf "%sClient" (.StructName | toCamelCase) }}
+{{- /* The error-wrap name, the snake singular the flat methods use. */}}
+{{- $singular := .TableName | toSingular }}
+{{- $pk := (index .PKColumns 0).FieldName }}
+{{- if .Nested.EmitCreate }}
+
+// {{ .Nested.CreateInputName }} holds the fields for creating a {{ .TableName }} record
+// together with rows on its nested relationships.
+//
+// The wrapper contains the flat input; it never restates its fields, so the
+// column-map overrides, the access projection and every future create-input
+// change are inherited rather than duplicated.
+type {{ .Nested.CreateInputName }} struct {
+	// {{ .StructName }} holds the parent's own columns — identical to the input Create accepts.
+	{{ .StructName }} Create{{ .StructName }}Input `json:"{{ .SnakeName }}"`
+{{- range .Nested.Edges }}
+
+	// {{ .FieldName }} - {{ .Description }}
+	{{ .FieldName }} *{{ .CreateBlockName }} `json:"{{ .JSONTag }},omitempty"`
+{{- end }}
+}
+{{- end }}
+{{- if .Nested.EmitUpdate }}
+
+// {{ .Nested.UpdateInputName }} holds the fields for updating a {{ .TableName }} record
+// together with rows on its nested relationships.
+//
+// Every member of the flat input is omittable, so an update that touches only
+// nested rows leaves the parent's own columns alone — the parent write issues
+// no UPDATE at all when nothing is set.
+type {{ .Nested.UpdateInputName }} struct {
+	// {{ .StructName }} holds the parent's own columns — identical to the input Update accepts.
+	{{ .StructName }} Update{{ .StructName }}Input `json:"{{ .SnakeName }}"`
+{{- range .Nested.Edges }}
+
+	// {{ .FieldName }} - {{ .Description }}
+	{{ .FieldName }} *{{ .UpdateBlockName }} `json:"{{ .JSONTag }},omitempty"`
+{{- end }}
+}
+{{- end }}
+{{- if .Nested.EmitUpsert }}
+
+// {{ .Nested.UpsertInputName }} holds the fields for upserting a {{ .TableName }} record
+// together with rows on its nested relationships.
+//
+// The flat half is Create{{ .StructName }}Input, the same input Upsert takes, and the
+// nested half is the **update-side** block verbatim — no insert-vs-update
+// branch detection. Each verb means the same thing on either branch: on
+// a freshly inserted parent, `create` and `connect` behave exactly as they do
+// on the create side, and `disconnect` / `clear` match zero rows and are
+// no-ops. `create` is not idempotent, so repeating an upsert that carries it
+// inserts again, or is refused on a has-one that already holds a child.
+type {{ .Nested.UpsertInputName }} struct {
+	// {{ .StructName }} holds the parent's own columns — identical to the input Upsert accepts.
+	{{ .StructName }} Create{{ .StructName }}Input `json:"{{ .SnakeName }}"`
+{{- range .Nested.Edges }}
+
+	// {{ .FieldName }} - {{ .Description }}
+	{{ .FieldName }} *{{ .UpdateBlockName }} `json:"{{ .JSONTag }},omitempty"`
+{{- end }}
+}
+{{- end }}
+{{- range .Nested.Edges }}
+{{- if $parent.Nested.EmitCreate }}
+
+// {{ .CreateBlockName }} is the create-side verb block for {{ $parent.StructName }}.{{ .FieldName }}.
+// `disconnect` and `clear` are meaningless on a row that does not exist yet, so
+// they are not expressible here rather than accepted and ignored.
+type {{ .CreateBlockName }} struct {
+{{- if .HasCreate }}
+{{- if eq .Shape "has_one" }}
+	Create *{{ .ChildCreateType }} `json:"create,omitempty"`
+{{- else }}
+	Create []*{{ .ChildCreateType }} `json:"create,omitempty"`
+{{- end }}
+{{- end }}
+{{- if .HasConnect }}
+{{- if eq .Shape "has_one" }}
+	Connect *{{ .ConnectIDGoType }} `json:"connect,omitempty"`
+{{- else }}
+	Connect []{{ .ConnectIDGoType }} `json:"connect,omitempty"`
+{{- end }}
+{{- end }}
+}
+{{- end }}
+
+// {{ .UpdateBlockName }} is the update-side verb block for {{ $parent.StructName }}.{{ .FieldName }},
+// carrying every verb the edge admits.
+//
+// It is also the executor's parameter type, so it is declared whether or not
+// `UpdateWithRelated` / `UpsertWithRelated` are emitted: one executor per edge
+// is what makes the three families structurally unable to drift,
+// and the widest block is the one they can all reach.
+type {{ .UpdateBlockName }} struct {
+{{- if .HasClear }}
+	// Clear unlinks every row currently on this edge and runs FIRST, before
+	// create and connect — running it after them would unlink what they had
+	// just linked. It takes no ids: `clear` plus `connect` is exactly
+	// "the set is now this", which is what makes a `set` verb unnecessary.
+	// With Clear set, Disconnect is ignored rather than
+	// rejected: every id it names is already unlinked.
+	Clear bool `json:"clear,omitempty"`
+{{- end }}
+{{- if .HasCreate }}
+{{- if eq .Shape "has_one" }}
+	Create *{{ .ChildCreateType }} `json:"create,omitempty"`
+{{- else }}
+	Create []*{{ .ChildCreateType }} `json:"create,omitempty"`
+{{- end }}
+{{- end }}
+{{- if .HasConnect }}
+{{- if eq .Shape "has_one" }}
+	Connect *{{ .ConnectIDGoType }} `json:"connect,omitempty"`
+{{- else }}
+	Connect []{{ .ConnectIDGoType }} `json:"connect,omitempty"`
+{{- end }}
+{{- end }}
+{{- if .HasDisconnect }}
+{{- if eq .Shape "has_one" }}
+	Disconnect *{{ .ConnectIDGoType }} `json:"disconnect,omitempty"`
+{{- else }}
+	Disconnect []{{ .ConnectIDGoType }} `json:"disconnect,omitempty"`
+{{- end }}
+{{- end }}
+}
+{{- if and .HasCreate .ChildInputName }}
+
+// {{ .ChildInputName }} is Create{{ .TargetStructName }}Input with the traversed
+// foreign key removed — that column is always set from the parent's primary key,
+// so leaving it would force the caller to supply a value that is then
+// overwritten.
+{{- if .DiscFieldName }}
+// The edge's discriminator column is removed for the same reason: the executor
+// sets it to the value the relationship declares.
+{{- end }}
+type {{ .ChildInputName }} struct {
+{{- range .ChildFields }}
+{{- if .Description }}
+	// {{ .FieldName }} - {{ .Description }}
+{{- end }}
+{{- if .Omittable }}
+	{{ .FieldName }} {{ .GoType }} `json:"{{ .JSONTag }},omitzero"`
+{{- else }}
+	{{ .FieldName }} {{ .GoType }} `json:"{{ .JSONTag }}"`
+{{- end }}
+{{- end }}
+}
+{{- end }}
+{{- if $parent.Nested.EmitCreate }}
+
+// {{ .WidenFuncName }} lifts the create-side block into the update-side one the
+// executor takes.
+//
+// The widening is sound rather than merely convenient: `Disconnect` and
+// `Clear` are absent from the create-side type by construction, so there
+// is no verb it could smuggle in — the two it copies are the two that exist.
+func {{ .WidenFuncName }}(n *{{ .CreateBlockName }}) *{{ .UpdateBlockName }} {
+	if n == nil {
+		return nil
+	}
+	return &{{ .UpdateBlockName }}{
+{{- if .HasCreate }}
+		Create: n.Create,
+{{- end }}
+{{- if .HasConnect }}
+		Connect: n.Connect,
+{{- end }}
+	}
+}
+{{- end }}
+{{- end }}
+
+// {{ .Nested.ParentFieldOptionsFunc }} projects the caller's selection onto the
+// parent write: relationship members are dropped, because loading them there
+// would run before the nested rows exist and return a stale set, and the primary
+// key is forced on because every nested write keys on it. A nil
+// selection passes through — the parent reads that as "every column".
+func {{ .Nested.ParentFieldOptionsFunc }}(fo *{{ .StructName }}FieldOptions) *{{ .StructName }}FieldOptions {
+	if fo == nil {
+		return nil
+	}
+	scalars := *fo
+{{- range .Nested.RelationshipFieldNames }}
+	scalars.{{ . }} = nil
+{{- end }}
+	scalars.{{ $pk }} = true
+	return &scalars
+}
+
+// {{ .Nested.SelectsRelationshipFunc }} reports whether the caller selected any
+// relationship, which is the only thing that earns the terminal re-read. A nil
+// FieldOptions selects none, so the parent comes back with its relationship
+// members unpopulated — on the edges the call just wrote as well as every other.
+func {{ .Nested.SelectsRelationshipFunc }}(fo *{{ .StructName }}FieldOptions) bool {
+	if fo == nil {
+		return false
+	}
+	return {{ range $i, $rel := .Nested.RelationshipFieldNames }}{{ if $i }} || {{ end }}fo.{{ $rel }} != nil{{ end }}
+}
+{{- if .NeedsTenantResolver }}
+
+// nestedResolvedTenantCtx resolves the tenant once for a whole nested write,
+// before the transaction opens, so every inner call inherits it off ctx instead
+// of re-invoking the user resolver: the tenant resolves at most once per
+// mutation, nested children included. The inner writes route through other
+// entity clients, and the stash each of them makes is scoped to its own
+// hook-handler ctx — it never escapes back here, so without this hoist a
+// two-edge nested write resolved three to ten times.
+//
+// Only the raw resolver value is cached. No tenancy.required branch is taken
+// here, which is what lets a *shared* parent hoist for a tenanted child: each
+// inner call still applies its own table's required setting to the value.
+// Hoisting a decision instead would hand this table's reading of a zero
+// resolver to children configured fail-closed.
+//
+// The other two resolution modes need no hoist and get none: SkipTenancy
+// resolves nothing anywhere, and an explicit tenant already reaches every inner
+// call through nestedChildOptions and short-circuits ahead of the cache.
+func (c *{{ $client }}) nestedResolvedTenantCtx(ctx context.Context, options CallOptions[{{ .StructName }}FieldOptions]) (context.Context, error) {
+	if options.SkipTenancy || options.Tenant != nil {
+		return ctx, nil
+	}
+	resolvedTenant, err := c.tenantValue(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return tenancy.WithResolvedTenant(ctx, resolvedTenant), nil
+}
+{{- end }}
+{{- if .Nested.EmitCreate }}
+
+// CreateWithRelated creates a {{ .StructName | toCamelCase }} together with rows on its nested
+// relationships, in a single transaction.
+//
+// Nested rows are written through the target table's own client, so their
+// hooks, events, cache invalidation and tenancy behave exactly as on a direct
+// call. When ctx already carries a transaction this becomes a savepoint
+// rather than a new transaction — so a consumer may call this
+// inside their own Begin / WithTx block, and a failure here rolls back only
+// the nested write.
+//
+// Edges are processed in byte-wise order of the relationship's Go field name, which is
+// contractual: it decides the order of error attribution and the order the
+// inner calls' events are enqueued.
+func (c *{{ $client }}) CreateWithRelated(ctx context.Context, input *{{ .Nested.CreateInputName }}, opts ...func(*CallOptions[{{ .StructName }}FieldOptions])) (*{{ .StructName }}, error) {
+	if input == nil {
+		return nil, fmt.Errorf("create {{ $singular }} with related: %w", ErrNilInput)
+	}
+	options := resolveCallOptions(opts)
+{{- if .NeedsTenantResolver }}
+
+	// The gate is "some client this method reaches resolves a tenant", not "an
+	// edge target is tenanted": the parent's own terminal Get re-read resolves
+	// too when the caller selected a relationship.
+	ctx, err := c.nestedResolvedTenantCtx(ctx, options)
+	if err != nil {
+		return nil, fmt.Errorf("create {{ $singular }} with related: resolve tenant: %w", err)
+	}
+{{- end }}
+
+	var result *{{ .StructName }}
+	// The transaction name doubles as the SAVEPOINT identifier when ctx already
+	// carries a transaction, so it must be a bare SQL identifier —
+	// database.Tx.Begin rejects anything else before issuing a statement. A
+	// prose name works at the top level, where it is only a label, and hard-errors
+	// on every nested call — exactly the case nested transactions exist for.
+	{{ if .NeedsTenantResolver }}err = {{ else }}err := {{ end }}database.WithTransaction(ctx, c.querier, "create_{{ .SnakeName }}_with_related", func(ctx context.Context) error {
+		// Parent first — v1 nests only where the parent's key flows down, so
+		// there is no topological sort and no cycle. Its own tenant check is
+		// what authorizes every nested write below: each one keys on this PK.
+		parent, err := c.Create(ctx, &input.{{ .StructName }}, func(o *CallOptions[{{ .StructName }}FieldOptions]) {
+			*o = options
+			o.FieldOptions = {{ .Nested.ParentFieldOptionsFunc }}(options.FieldOptions)
+			o.LockMode = sql.LockNone
+		})
+		if err != nil {
+			return err
+		}
+		result = parent
+{{- range .Nested.Edges }}
+
+		if err := c.{{ .ExecutorName }}(ctx, parent, {{ .WidenFuncName }}(input.{{ .FieldName }}), options); err != nil {
+			return err
+		}
+{{- end }}
+
+		// Terminal read — only when the caller selected a relationship; the
+		// parent write above stripped them.
+		if {{ .Nested.SelectsRelationshipFunc }}(options.FieldOptions) {
+			reloaded, err := c.Get(ctx, parent.{{ $pk }}, func(o *CallOptions[{{ .StructName }}FieldOptions]) {
+				*o = options
+				o.SkipHooks = true
+				o.LockMode = sql.LockNone
+			})
+			if err != nil {
+				return err
+			}
+			result = reloaded
+		}
+		return nil
+	}, database.TxOptions{CallbackMode: c.callbackMode})
+	if err != nil {
+		return nil, fmt.Errorf("create {{ $singular }} with related: %w", err)
+	}
+	return result, nil
+}
+{{- end }}
+{{- if .Nested.EmitUpdate }}
+
+// UpdateWithRelated updates a {{ .StructName | toCamelCase }} together with rows on its nested
+// relationships, in a single transaction.
+//
+// It is CreateWithRelated with the parent write swapped and the nested blocks
+// widened: `disconnect` and `clear` become expressible, because the parent
+// already exists and there are rows to unlink. Everything else — the
+// transaction, the per-edge executors, the error attribution and the terminal
+// re-read — is shared, so the two cannot drift.
+func (c *{{ $client }}) UpdateWithRelated(ctx context.Context, id {{ (index .PKColumns 0).GoType }}, input *{{ .Nested.UpdateInputName }}, opts ...func(*CallOptions[{{ .StructName }}FieldOptions])) (*{{ .StructName }}, error) {
+	if input == nil {
+		return nil, fmt.Errorf("update {{ $singular }} with related: %w", ErrNilInput)
+	}
+	options := resolveCallOptions(opts)
+{{- if .NeedsTenantResolver }}
+
+	ctx, err := c.nestedResolvedTenantCtx(ctx, options)
+	if err != nil {
+		return nil, fmt.Errorf("update {{ $singular }} with related: resolve tenant: %w", err)
+	}
+{{- end }}
+
+	var result *{{ .StructName }}
+	{{ if .NeedsTenantResolver }}err = {{ else }}err := {{ end }}database.WithTransaction(ctx, c.querier, "update_{{ .SnakeName }}_with_related", func(ctx context.Context) error {
+		// Parent first, and its own tenant check is what authorizes every
+		// nested write below. An input with no field set issues no UPDATE and
+		// returns the row unchanged, which is what makes a
+		// nested-only call cost nothing on the parent.
+		parent, err := c.Update(ctx, id, &input.{{ .StructName }}, func(o *CallOptions[{{ .StructName }}FieldOptions]) {
+			*o = options
+			o.FieldOptions = {{ .Nested.ParentFieldOptionsFunc }}(options.FieldOptions)
+			o.LockMode = sql.LockNone
+		})
+		if err != nil {
+			return err
+		}
+		result = parent
+{{- range .Nested.Edges }}
+
+		if err := c.{{ .ExecutorName }}(ctx, parent, input.{{ .FieldName }}, options); err != nil {
+			return err
+		}
+{{- end }}
+
+		if {{ .Nested.SelectsRelationshipFunc }}(options.FieldOptions) {
+			reloaded, err := c.Get(ctx, parent.{{ $pk }}, func(o *CallOptions[{{ .StructName }}FieldOptions]) {
+				*o = options
+				o.SkipHooks = true
+				o.LockMode = sql.LockNone
+			})
+			if err != nil {
+				return err
+			}
+			result = reloaded
+		}
+		return nil
+	}, database.TxOptions{CallbackMode: c.callbackMode})
+	if err != nil {
+		return nil, fmt.Errorf("update {{ $singular }} with related: %w", err)
+	}
+	return result, nil
+}
+{{- end }}
+{{- if .Nested.EmitUpsert }}
+
+// UpsertWithRelated inserts or updates a {{ .StructName | toCamelCase }} together with rows on
+// its nested relationships, in a single transaction.
+//
+// The nested half is the update-side block verbatim and there is no
+// insert-vs-update branch detection: each verb means the same thing on
+// either branch, so one block is correct on both. On a freshly inserted
+// parent, `disconnect` and `clear` match zero rows and are no-ops. `create`
+// is not idempotent, so repeating an upsert that carries it inserts again.
+func (c *{{ $client }}) UpsertWithRelated(ctx context.Context, input *{{ .Nested.UpsertInputName }}, target {{ .StructName }}ConflictTarget, opts ...func(*CallOptions[{{ .StructName }}FieldOptions])) (*{{ .StructName }}, error) {
+	if input == nil {
+		return nil, fmt.Errorf("upsert {{ $singular }} with related: %w", ErrNilInput)
+	}
+	options := resolveCallOptions(opts)
+{{- if .NeedsTenantResolver }}
+
+	ctx, err := c.nestedResolvedTenantCtx(ctx, options)
+	if err != nil {
+		return nil, fmt.Errorf("upsert {{ $singular }} with related: resolve tenant: %w", err)
+	}
+{{- end }}
+
+	var result *{{ .StructName }}
+	{{ if .NeedsTenantResolver }}err = {{ else }}err := {{ end }}database.WithTransaction(ctx, c.querier, "upsert_{{ .SnakeName }}_with_related", func(ctx context.Context) error {
+		parent, err := c.Upsert(ctx, &input.{{ .StructName }}, target, func(o *CallOptions[{{ .StructName }}FieldOptions]) {
+			*o = options
+			o.FieldOptions = {{ .Nested.ParentFieldOptionsFunc }}(options.FieldOptions)
+			o.LockMode = sql.LockNone
+		})
+		if err != nil {
+			return err
+		}
+		result = parent
+{{- range .Nested.Edges }}
+
+		if err := c.{{ .ExecutorName }}(ctx, parent, input.{{ .FieldName }}, options); err != nil {
+			return err
+		}
+{{- end }}
+
+		if {{ .Nested.SelectsRelationshipFunc }}(options.FieldOptions) {
+			reloaded, err := c.Get(ctx, parent.{{ $pk }}, func(o *CallOptions[{{ .StructName }}FieldOptions]) {
+				*o = options
+				o.SkipHooks = true
+				o.LockMode = sql.LockNone
+			})
+			if err != nil {
+				return err
+			}
+			result = reloaded
+		}
+		return nil
+	}, database.TxOptions{CallbackMode: c.callbackMode})
+	if err != nil {
+		return nil, fmt.Errorf("upsert {{ $singular }} with related: %w", err)
+	}
+	return result, nil
+}
+{{- end }}
+{{- range .Nested.Edges }}
+
+// {{ .ExecutorName }} applies the {{ $parent.StructName }}.{{ .FieldName }} block.
+//
+// One executor per edge, shared by every `…WithRelated` family: the per-edge
+// verb set is a property of this one function rather than a condition repeated
+// in three templates, so the families cannot drift.
+//
+// The verbs run in a fixed order — validate, clear, create, connect,
+{{- if eq .Shape "m2m" }}
+// link, disconnect — and the ordering is load-bearing at both ends: `clear`
+{{- else }}
+// disconnect — and the ordering is load-bearing at both ends: `clear`
+{{- end }}
+// before the linking verbs, or it would unlink what they had just linked, and
+// the whole validation step before any statement, or a refusal would leave
+// half the block applied.
+func (c *{{ $client }}) {{ .ExecutorName }}(ctx context.Context, parent *{{ $parent.StructName }}, nested *{{ .UpdateBlockName }}, options CallOptions[{{ $parent.StructName }}FieldOptions]) error {
+	if nested == nil {
+		return nil
+	}
+{{- if .HasConnect }}
+{{- if eq .Shape "has_one" }}
+	// A has-one edge connects at most one target; normalizing to a slice keeps
+	// the visibility read and the adoption identical across the three shapes.
+	var connectIDs []{{ .ConnectIDGoType }}
+	if nested.Connect != nil {
+		connectIDs = []{{ .ConnectIDGoType }}{*nested.Connect}
+	}
+{{- else }}
+	connectIDs := nested.Connect
+{{- end }}
+{{- end }}
+{{- if .HasDisconnect }}
+{{- if eq .Shape "has_one" }}
+	var disconnectIDs []{{ .ConnectIDGoType }}
+	if nested.Disconnect != nil {
+		disconnectIDs = []{{ .ConnectIDGoType }}{*nested.Disconnect}
+	}
+{{- else }}
+	disconnectIDs := nested.Disconnect
+{{- end }}
+{{- if .HasClear }}
+	if nested.Clear {
+		// Every id a disconnect names is already unlinked once clear has
+		// run, so the caller's requested end state holds. Dropped here rather
+		// than at the statement, so the verb-conflict check below cannot
+		// fire on a verb that will not run.
+		disconnectIDs = nil
+	}
+{{- end }}
+{{- end }}
+{{- if .SelfReferential }}
+{{- if or .HasConnect .HasDisconnect }}
+
+	// A connect naming the parent's own key writes a row that is its own
+	// parent, which every recursive read walks forever, and a disconnect
+	// naming it asks to unlink a link that could never have been made. No
+	// other guard catches either: an unparented self is an adoptable orphan
+	// under connect's own rule. Refused before any statement runs.
+{{- if .HasConnect }}
+	for _, v := range connectIDs {
+		if v == parent.{{ $pk }} {
+			return nestedError({{ printf "%q" .FieldName }}, "connect", v, ErrNestedVerbConflict)
+		}
+	}
+{{- end }}
+{{- if .HasDisconnect }}
+	for _, v := range disconnectIDs {
+		if v == parent.{{ $pk }} {
+			return nestedError({{ printf "%q" .FieldName }}, "disconnect", v, ErrNestedVerbConflict)
+		}
+	}
+{{- end }}
+{{- end }}
+{{- end }}
+{{- if .HasDisconnect }}
+
+	// Naming one target under two verbs on one edge is a validation
+	// error returned before any statement runs: the order would decide the
+	// outcome and there is no defensible default. The conflict is attributed
+	// to `disconnect`, the verb that contradicts one running earlier in
+	// that order, so the message names the verb whose removal resolves it
+	// without changing what the others already state.
+	if len(disconnectIDs) > 0 {
+		named := make(map[{{ .ConnectIDGoType }}]bool, len(disconnectIDs))
+		for _, v := range disconnectIDs {
+			named[v] = true
+		}
+{{- if .HasConnect }}
+		for _, v := range connectIDs {
+			if named[v] {
+				return nestedError({{ printf "%q" .FieldName }}, "disconnect", v, ErrNestedVerbConflict)
+			}
+		}
+{{- end }}
+{{- if and .HasCreate .ChildCreatePKField }}
+		// The create half bites only when the caller supplies an explicit key
+		// on a create entry — a nested create normally mints a new row and
+		// carries no target id, which is why the intersection above is the
+		// case that usually fires.
+{{- if eq .Shape "has_one" }}
+		if n := nested.Create; n != nil {
+			if v{{ if .ChildCreatePKOmittable }}, ok{{ end }} := n.{{ .ChildCreatePKField }}{{ if .ChildCreatePKOmittable }}.Get(){{ end }}; {{ if .ChildCreatePKOmittable }}ok && {{ end }}named[v] {
+				return nestedError({{ printf "%q" .FieldName }}, "disconnect", v, ErrNestedVerbConflict)
+			}
+		}
+{{- else }}
+		for _, n := range nested.Create {
+			if n == nil {
+				continue
+			}
+			if v{{ if .ChildCreatePKOmittable }}, ok{{ end }} := n.{{ .ChildCreatePKField }}{{ if .ChildCreatePKOmittable }}.Get(){{ end }}; {{ if .ChildCreatePKOmittable }}ok && {{ end }}named[v] {
+				return nestedError({{ printf "%q" .FieldName }}, "disconnect", v, ErrNestedVerbConflict)
+			}
+		}
+{{- end }}
+{{- end }}
+	}
+{{- end }}
+{{- if and (eq .Shape "has_one") .HasCreate .HasConnect }}
+
+	// A has-one edge holds at most one child, so a block that both creates one
+	// and connects another asks for two. Refused before any statement runs,
+	// like every other contradiction inside one block.
+	if nested.Create != nil && nested.Connect != nil {
+		return nestedError({{ printf "%q" .FieldName }}, "connect", *nested.Connect, ErrNestedVerbConflict)
+	}
+{{- end }}
+{{- if or .HasClear (and (ne .Shape "m2m") (or .HasDisconnect .HasConnect)) (and (eq .Shape "has_one") .HasCreate) }}
+
+	// The parent-scoped term every unlink carries. It is what makes a
+	// disconnect structurally incapable of touching another parent's rows, and
+	// on a clear it is the entire filter. An M2M disconnect
+	// needs no such term: the junction key it deletes by embeds the parent.
+{{- if and (ne .Shape "m2m") .HasConnect }}
+	// The connect adoption's verify read filters on it too.
+{{- end }}
+{{- if eq .Shape "has_one" }}
+	// The has-one occupancy read below filters on it too.
+{{- end }}
+	pid := {{ .ParentKeyExpr }}
+{{- end }}
+{{- if .HasClear }}
+
+	// clear — FIRST, and the ordering is load-bearing: running it after create
+	// and connect would unlink the rows they had just linked. One write, no id
+	// list and no visibility read, parent-scoped by construction.
+	// On MySQL the *Where method's pre-SELECT precedes the write.
+	if nested.Clear {
+{{- if eq .Shape "m2m" }}
+		if err := c.{{ .JunctionClientField }}.HardDeleteWhere(ctx, &{{ .JunctionStructName }}Filter{
+			{{ .JunctionLocalFilterField }}: {{ .ParentFilterExpr }},
+		}, func(o *CallOptions[{{ .JunctionStructName }}FieldOptions]) {
+			nestedChildOptions(o, options)
+		}); err != nil {
+			return nestedError({{ printf "%q" .FieldName }}, "clear", nil, err)
+		}
+{{- else }}
+		if _, err := c.{{ .TargetClientField }}.UpdateWhere(ctx,
+			&{{ .TargetStructName }}Filter{
+				{{ .FKFilterField }}: {{ .ParentFilterExpr }},
+{{- if .DiscFilterField }}
+				// On the unlink half too: this edge is `fk = parent AND
+				// <discriminator>`, so a clear without the second term would
+				// unlink every sibling edge's rows over the same foreign key —
+				// a silent over-unlink rather than a wrong error.
+				{{ .DiscFilterField }}: {{ .DiscFilterExpr }},
+{{- end }}
+			},
+			&Update{{ .TargetStructName }}Input{ {{ .FKFieldName }}: {{ .FKUnlinkAssignExpr }} },
+			func(o *CallOptions[{{ .TargetStructName }}FieldOptions]) {
+				nestedChildOptions(o, options)
+				// Nothing selected — the inner call does not need its result
+				// back, so it skips the read that would hand the rows over.
+				o.FieldOptions = &{{ .TargetStructName }}FieldOptions{}
+			}); err != nil {
+			return nestedError({{ printf "%q" .FieldName }}, "clear", nil, err)
+		}
+{{- end }}
+	}
+{{- end }}
+{{- if eq .Shape "m2m" }}
+
+	targetIDs := make([]{{ .ConnectIDGoType }}, 0, {{ if .HasCreate }}len(nested.Create){{ else }}0{{ end }}{{ if .HasConnect }}+len(connectIDs){{ end }})
+{{- if .HasCreate }}
+
+	if len(nested.Create) > 0 {
+		for _, n := range nested.Create {
+			if n == nil {
+				return nestedError({{ printf "%q" .FieldName }}, "create", nil, ErrNilInput)
+			}
+		}
+		// No traversed FK to elide on an M2M target — the parent's key goes
+		// into the junction row below — so this is the target's own create
+		// input verbatim. The PK-only selection is what the link step needs.
+		created, err := c.{{ .TargetClientField }}.CreateMany(ctx, nested.Create, func(o *CallOptions[{{ .TargetStructName }}FieldOptions]) {
+			nestedChildOptions(o, options)
+			o.FieldOptions = &{{ .TargetStructName }}FieldOptions{ {{ .TargetPKFieldName }}: true}
+		})
+		if err != nil {
+			return nestedError({{ printf "%q" .FieldName }}, "create", nil, err)
+		}
+		for _, row := range created {
+			targetIDs = append(targetIDs, row.{{ .TargetPKFieldName }})
+		}
+	}
+{{- end }}
+{{- if .HasConnect }}
+
+	// The junction FK proves existence, not visibility. Reading through the
+	// target's OWN client applies its tenant filter, soft-delete default and
+	// access rules, so a target in another tenant is NOT_FOUND here rather
+	// than a junction row nobody can ever read.
+	if len(connectIDs) > 0 {
+		found := make(map[{{ .ConnectIDGoType }}]bool, len(connectIDs))
+		// Chunked at c.batchSize. A single statement over the caller's
+		// whole list hits a bind-parameter ceiling that is dialect-dependent
+		// and lowest on SQLite (32766), and every dialect's error for it names
+		// no table, column, edge or verb, so it cannot be attributed to an edge.
+		for start := 0; start < len(connectIDs); start += c.batchSize {
+			end := min(start+c.batchSize, len(connectIDs))
+			ids := make([]{{ .ConnectKeyGoType }}, 0, end-start)
+			for _, v := range connectIDs[start:end] {
+				ids = append(ids, {{ .ConnectKeyExpr }})
+			}
+			// `Limit: new(0)` is normative: a *Limit of 0 means emit no LIMIT and
+			// skip the client's default query_limit, so a connect naming more
+			// targets than the page size cannot find the tail of its own list
+			// absent and report visible rows as NOT_FOUND.
+			visible, err := c.{{ .TargetClientField }}.GetMany(ctx, &Get{{ .TargetPlural }}Input{
+				Filter: &{{ .TargetStructName }}Filter{
+					{{ .TargetPKFieldName }}: {{ .ConnectFilterExpr }},
+				},
+				Limit: new(0),
+{{/*
+    No discriminator predicate on this arm, deliberately, and it is a template
+    comment rather than an emitted one because it explains an absence the
+    generated code gives the reader no reason to ask about.
+
+    An M2M edge declaring a `discriminator:` is refused outright by the config
+    resolver: the M2M `create` takes the target's create input unchanged,
+    which leaves the executor no elided column to set and no way to scope the
+    created row to the edge. So `.DiscColumn` is always empty here, and
+    emitting the read-side half alone would both look like support for an edge
+    the resolver never lets through and fail open on the create arm the day
+    that restriction is lifted. The O2M / has-one arm below is where the
+    predicate belongs.
+*/}}
+			}, func(o *CallOptions[{{ .TargetStructName }}FieldOptions]) {
+				nestedChildOptions(o, options)
+				o.FieldOptions = &{{ .TargetStructName }}FieldOptions{ {{ .TargetPKFieldName }}: true}
+				// Deliberately unlocked: this validates caller input at call time,
+				// it does not promise the target is still visible at commit.
+				o.LockMode = sql.LockNone
+			})
+			if err != nil {
+				return nestedError({{ printf "%q" .FieldName }}, "connect", nil, err)
+			}
+			for _, row := range visible {
+				found[row.{{ .TargetPKFieldName }}] = true
+			}
+		}
+		for _, tid := range connectIDs {
+			if !found[tid] {
+				return nestedError({{ printf "%q" .FieldName }}, "connect", tid, ErrNotFound)
+			}
+		}
+		targetIDs = append(targetIDs, connectIDs...)
+	}
+{{- end }}
+
+	// link — UpsertMany, not CreateMany: re-adding an existing link is a set
+	// operation whose answer is "linked", and CreateMany raises a primary-key
+	// violation on it. The junction is a pure link table, so this compiles to
+	// ON CONFLICT DO NOTHING on every dialect.
+	if len(targetIDs) > 0 {
+		links := make([]*Create{{ .JunctionStructName }}Input, 0, len(targetIDs))
+		seen := make(map[{{ .ConnectIDGoType }}]bool, len(targetIDs))
+		for _, tid := range targetIDs {
+			if seen[tid] {
+				continue
+			}
+			seen[tid] = true
+			links = append(links, &Create{{ .JunctionStructName }}Input{
+				{{ .JunctionLocalField }}: {{ .JunctionLocalAssignExpr }},
+				{{ .JunctionReferenceField }}: {{ .JunctionReferenceAssignExpr }},
+			})
+		}
+		if _, err := c.{{ .JunctionClientField }}.UpsertMany(ctx, links, {{ .JunctionConflictTarget }}, func(o *CallOptions[{{ .JunctionStructName }}FieldOptions]) {
+			nestedChildOptions(o, options)
+			o.FieldOptions = &{{ .JunctionStructName }}FieldOptions{}
+		}); err != nil {
+			return nestedError({{ printf "%q" .FieldName }}, "link", nil, err)
+		}
+	}
+{{- if .HasDisconnect }}
+
+	// disconnect — no visibility read. The junction key embeds the
+	// parent, so a caller can only ever delete its own links, and a miss is a
+	// no-op. A hard delete is correct because the junction carries no
+	// soft-delete column; one that did would emit no unlink verb at all,
+	// since the read loader's junction query has no soft-delete predicate and
+	// would keep showing the link.
+	if len(disconnectIDs) > 0 {
+		pks := make([]{{ .JunctionPKStructName }}, 0, len(disconnectIDs))
+		unlinking := make(map[{{ .ConnectIDGoType }}]bool, len(disconnectIDs))
+		for _, tid := range disconnectIDs {
+			if unlinking[tid] {
+				continue
+			}
+			unlinking[tid] = true
+			pks = append(pks, {{ .JunctionPKStructName }}{
+				{{ .JunctionPKLocalField }}: {{ .JunctionPKLocalAssignExpr }},
+				{{ .JunctionPKReferenceField }}: {{ .JunctionPKReferenceAssignExpr }},
+			})
+		}
+		// Chunked at c.batchSize; a composite key binds two parameters
+		// per row, so the ceiling arrives at half the id count.
+		for start := 0; start < len(pks); start += c.batchSize {
+			end := min(start+c.batchSize, len(pks))
+			if err := c.{{ .JunctionClientField }}.HardDeleteMany(ctx, pks[start:end], func(o *CallOptions[{{ .JunctionStructName }}FieldOptions]) {
+				nestedChildOptions(o, options)
+			}); err != nil {
+				return nestedError({{ printf "%q" .FieldName }}, "disconnect", nil, err)
+			}
+		}
+	}
+{{- end }}
+{{- else }}
+{{- if and (eq .Shape "has_one") (or .HasCreate .HasConnect) }}
+
+	// The occupancy read. A has-one edge holds at most one child, and nothing
+	// but a UNIQUE constraint on the foreign key makes the database refuse a
+	// second one: without it, a create or connect on a parent that already has
+	// a child adds a second row the edge's read path cannot return. So the edge
+	// is read first, after `clear` has run, through the target's own client —
+	// the same tenant and soft-delete scope the read path applies. The read
+	// takes no lock, so two concurrent calls can both pass it; only the UNIQUE
+	// constraint closes that race. Replacing the child is spelled `clear` plus
+	// `create` / `connect`.
+	if {{ if .HasCreate }}nested.Create != nil{{ end }}{{ if and .HasCreate .HasConnect }} || {{ end }}{{ if .HasConnect }}nested.Connect != nil{{ end }} {
+{{- if and .HasCreate .HasConnect }}
+		verb := "create"
+		if nested.Connect != nil {
+			verb = "connect"
+		}
+{{- else if .HasConnect }}
+		verb := "connect"
+{{- else }}
+		verb := "create"
+{{- end }}
+		occupied, err := c.{{ .TargetClientField }}.GetMany(ctx, &Get{{ .TargetPlural }}Input{
+			Filter: &{{ .TargetStructName }}Filter{
+				{{ .FKFilterField }}: {{ .ParentFilterExpr }},
+{{- if .DiscFilterField }}
+				{{ .DiscFilterField }}: {{ .DiscFilterExpr }},
+{{- end }}
+			},
+			// Unbounded, like every nested read, so the client's
+			// default `query_limit` cannot truncate it.
+			Limit: new(0),
+		}, func(o *CallOptions[{{ .TargetStructName }}FieldOptions]) {
+			nestedChildOptions(o, options)
+			o.FieldOptions = &{{ .TargetStructName }}FieldOptions{ {{ .TargetPKFieldName }}: true}
+			o.LockMode = sql.LockNone
+		})
+		if err != nil {
+			return nestedError({{ printf "%q" .FieldName }}, verb, nil, err)
+		}
+		for _, row := range occupied {
+{{- if .HasConnect }}
+			if nested.Connect != nil && row.{{ .TargetPKFieldName }} == *nested.Connect {
+				// Already ours — connect's own no-op below.
+				continue
+			}
+{{- end }}
+			return nestedError({{ printf "%q" .FieldName }}, verb, row.{{ .TargetPKFieldName }}, ErrAlreadyRelated)
+		}
+	}
+{{- end }}
+{{- if .HasCreate }}
+{{- if eq .Shape "has_one" }}
+
+	if n := nested.Create; n != nil {
+		if _, err := c.{{ .TargetClientField }}.Create(ctx, &Create{{ .TargetStructName }}Input{
+			{{ .FKFieldName }}: {{ .FKAssignExpr }},
+{{- if .DiscFieldName }}
+			{{ .DiscFieldName }}: {{ .DiscAssignExpr }},
+{{- end }}
+{{- range .ChildFields }}
+			{{ .FieldName }}: n.{{ .FieldName }},
+{{- end }}
+		}, func(o *CallOptions[{{ .TargetStructName }}FieldOptions]) {
+			nestedChildOptions(o, options)
+			// Nothing selected — the inner call does not need its result back,
+			// so it costs one statement rather than a statement plus a read.
+			o.FieldOptions = &{{ .TargetStructName }}FieldOptions{}
+		}); err != nil {
+			return nestedError({{ printf "%q" .FieldName }}, "create", nil, err)
+		}
+	}
+{{- else }}
+
+	if len(nested.Create) > 0 {
+		inputs := make([]*Create{{ .TargetStructName }}Input, 0, len(nested.Create))
+		for _, n := range nested.Create {
+			if n == nil {
+				return nestedError({{ printf "%q" .FieldName }}, "create", nil, ErrNilInput)
+			}
+			inputs = append(inputs, &Create{{ .TargetStructName }}Input{
+				{{ .FKFieldName }}: {{ .FKAssignExpr }},
+{{- if .DiscFieldName }}
+				{{ .DiscFieldName }}: {{ .DiscAssignExpr }},
+{{- end }}
+{{- range .ChildFields }}
+				{{ .FieldName }}: n.{{ .FieldName }},
+{{- end }}
+			})
+		}
+		if _, err := c.{{ .TargetClientField }}.CreateMany(ctx, inputs, func(o *CallOptions[{{ .TargetStructName }}FieldOptions]) {
+			nestedChildOptions(o, options)
+			// Nothing selected — the inner call does not need its result back,
+			// so it costs one statement rather than a statement plus a read.
+			o.FieldOptions = &{{ .TargetStructName }}FieldOptions{}
+		}); err != nil {
+			return nestedError({{ printf "%q" .FieldName }}, "create", nil, err)
+		}
+	}
+{{- end }}
+{{- end }}
+{{- if .HasConnect }}
+
+	// connect — adopt unparented rows. The visibility read is not optional:
+	// the UPDATE's row count alone cannot separate "no such row" from "already
+	// parented", and the FK constraint proves a row exists, not that the caller
+	// may see it.
+	if len(connectIDs) > 0 {
+		owner := make(map[{{ .ConnectIDGoType }}]{{ .FKOwnerGoType }}, len(connectIDs))
+		// Chunked at c.batchSize, for the reason the disconnect below is:
+		// a single `IN` over the caller's whole list hits a dialect-dependent
+		// bind ceiling whose error cannot be attributed to an edge.
+		for start := 0; start < len(connectIDs); start += c.batchSize {
+			end := min(start+c.batchSize, len(connectIDs))
+			ids := make([]{{ .ConnectKeyGoType }}, 0, end-start)
+			for _, v := range connectIDs[start:end] {
+				ids = append(ids, {{ .ConnectKeyExpr }})
+			}
+			// `Limit: new(0)` is normative: a *Limit of 0 means emit no LIMIT and
+			// skip the client's default query_limit, so a connect naming more
+			// targets than the page size cannot find the tail of its own list
+			// absent and report visible rows as NOT_FOUND.
+			visible, err := c.{{ .TargetClientField }}.GetMany(ctx, &Get{{ .TargetPlural }}Input{
+				Filter: &{{ .TargetStructName }}Filter{
+					{{ .TargetPKFieldName }}: {{ .ConnectFilterExpr }},
+				},
+				Limit: new(0),
+{{- if .DiscColumn }}
+				// The edge's `discriminator:` joins the visibility read,
+				// so a target whose value does not match this edge is ErrNotFound
+				// rather than a silent mislink. Same spelling as the read loader's
+				// predicate: dialect-quoted column, parameter-bound value.
+				conditions: []sql.Condition{sql.Raw(c.dialect.QuoteIdentifier({{ printf "%q" .DiscColumn }})+" = $", {{ .DiscGoLiteral }})},
+{{- end }}
+			}, func(o *CallOptions[{{ .TargetStructName }}FieldOptions]) {
+				nestedChildOptions(o, options)
+				o.FieldOptions = &{{ .TargetStructName }}FieldOptions{ {{ .TargetPKFieldName }}: true{{ if ne .FKFieldName .TargetPKFieldName }}, {{ .FKFieldName }}: true{{ end }}}
+				// Deliberately unlocked: this validates caller input at call time,
+				// it does not promise the target is still visible at commit.
+				o.LockMode = sql.LockNone
+			})
+			if err != nil {
+				return nestedError({{ printf "%q" .FieldName }}, "connect", nil, err)
+			}
+			for _, row := range visible {
+				owner[row.{{ .TargetPKFieldName }}] = row.{{ .FKFieldName }}
+			}
+		}
+
+		adopt := make([]{{ .ConnectKeyGoType }}, 0, len(connectIDs))
+		// A repeated id is ONE adoption: connect is a set operation, and the
+		// UPDATE matches the row once however many times the caller named it.
+		// Queueing it twice would trip the shortfall check below and report a
+		// conflict that did not happen.
+		queued := make(map[{{ .ConnectIDGoType }}]bool, len(connectIDs))
+		for _, v := range connectIDs {
+			cur, ok := owner[v]
+			switch {
+			case !ok:
+				// Absent, another tenant's, or soft-deleted — indistinguishable
+				// to this caller, and all NOT_FOUND. Never CONFLICT: that would
+				// confirm the row exists.
+				return nestedError({{ printf "%q" .FieldName }}, "connect", v, ErrNotFound)
+			case {{ .FKOwnerGuard }} && {{ .FKOwnerKey }} == parent.{{ $pk }}:
+				// Already ours — the requested end state holds, so this is a
+				// no-op rather than a conflict.
+				continue
+{{- if not .AllowReparent }}
+			case {{ .FKOwnerGuard }}:
+				return nestedError({{ printf "%q" .FieldName }}, "connect", v, ErrAlreadyRelated)
+{{- end }}
+			}
+			if queued[v] {
+				continue
+			}
+			queued[v] = true
+			adopt = append(adopt, {{ .ConnectKeyExpr }})
+		}
+
+		if len(adopt) > 0 {
+			adoptedCount := 0
+			// The adoption is chunked on the same ceiling the read above
+			// is, and the shortfall check sums across chunks: a row lost in one
+			// chunk is a lost race whichever chunk it landed in.
+			for start := 0; start < len(adopt); start += c.batchSize {
+				adopting := adopt[start:min(start+c.batchSize, len(adopt))]
+				if _, err := c.{{ .TargetClientField }}.UpdateWhere(ctx,
+					&{{ .TargetStructName }}Filter{
+						{{ .TargetPKFieldName }}: {{ .AdoptFilterExpr }},
+{{- if .DiscFilterField }}
+						// Scoped on the adoption too, matching the predicate the
+						// visibility read above already carries: without it a
+						// target whose discriminator changed between the two
+						// statements is adopted into an edge that can never
+						// read it back.
+						{{ .DiscFilterField }}: {{ .DiscFilterExpr }},
+{{- end }}
+{{- if not .AllowReparent }}
+						// The `IS NULL` guard is what makes the adoption atomic
+						// against a concurrent connect that parented the row
+						// between the read above and this statement.
+						{{ .FKFilterField }}: {{ .FKFilterNullExpr }},
+{{- end }}
+					},
+					&Update{{ .TargetStructName }}Input{ {{ .FKFieldName }}: {{ .FKUpdateAssignExpr }} },
+					func(o *CallOptions[{{ .TargetStructName }}FieldOptions]) {
+						nestedChildOptions(o, options)
+						// Nothing selected — the verify read below counts
+						// the adoption, not the rows UpdateWhere reports.
+						o.FieldOptions = &{{ .TargetStructName }}FieldOptions{}
+					}); err != nil {
+					return nestedError({{ printf "%q" .FieldName }}, "connect", nil, err)
+				}
+				// The verify read counts this chunk's ids that now name this
+				// parent. Inside the transaction a plain read sees its own
+				// writes, so it counts what the UPDATE adopted and never a row
+				// another connection parented first — on every dialect, with
+				// no lock. UpdateWhere's report cannot do this on MySQL, where
+				// a pre-SELECT names the rows. Hooks are
+				// skipped as on the terminal re-read: this is part of the write.
+				adopted, err := c.{{ .TargetClientField }}.GetMany(ctx, &Get{{ .TargetPlural }}Input{
+					Filter: &{{ .TargetStructName }}Filter{
+						{{ .TargetPKFieldName }}: {{ .AdoptFilterExpr }},
+						{{ .FKFilterField }}: {{ .ParentFilterExpr }},
+{{- if .DiscFilterField }}
+						// The same scope the UPDATE above carries.
+						{{ .DiscFilterField }}: {{ .DiscFilterExpr }},
+{{- end }}
+					},
+					Limit: new(0),
+				}, func(o *CallOptions[{{ .TargetStructName }}FieldOptions]) {
+					nestedChildOptions(o, options)
+					o.FieldOptions = &{{ .TargetStructName }}FieldOptions{ {{ .TargetPKFieldName }}: true}
+					o.SkipHooks = true
+					o.LockMode = sql.LockNone
+				})
+				if err != nil {
+					return nestedError({{ printf "%q" .FieldName }}, "connect", nil, err)
+				}
+				adoptedCount += len(adopted)
+			}
+			if adoptedCount != len(adopt) {
+{{- if .AllowReparent }}
+				// The UPDATE carries no `fk IS NULL` term under
+				// allow_reparent, so a row the visibility read returned
+				// that the verify read does not find under this parent
+				// stopped being visible in between — deleted, or
+				// soft-deleted. Reported the way the visibility read would
+				// have reported it.
+				return nestedError({{ printf "%q" .FieldName }}, "connect", nil, ErrNotFound)
+{{- else }}
+				// Lost the race — parented between the read and the UPDATE.
+				// Same outcome, reported the same way.
+				return nestedError({{ printf "%q" .FieldName }}, "connect", nil, ErrAlreadyRelated)
+{{- end }}
+			}
+		}
+	}
+{{- end }}
+{{- if .HasDisconnect }}
+
+	// disconnect — unlink, scoped to THIS parent. The `fk = parent` term is
+	// what stops a caller detaching another parent's row by guessing its id,
+	// and it is why a disconnect needs no visibility read where a connect does.
+	// A miss is a no-op, not an error.
+	if len(disconnectIDs) > 0 {
+		// Chunked at c.batchSize. The ceiling is a dialect-dependent bind
+		// limit, lowest on SQLite at 32766, and the error names nothing that
+		// can attribute — so it is removed rather than documented.
+		for start := 0; start < len(disconnectIDs); start += c.batchSize {
+			end := min(start+c.batchSize, len(disconnectIDs))
+			ids := make([]{{ .ConnectKeyGoType }}, 0, end-start)
+			for _, v := range disconnectIDs[start:end] {
+				ids = append(ids, {{ .ConnectKeyExpr }})
+			}
+			if _, err := c.{{ .TargetClientField }}.UpdateWhere(ctx,
+				&{{ .TargetStructName }}Filter{
+					{{ .TargetPKFieldName }}: {{ .ConnectFilterExpr }},
+					{{ .FKFilterField }}: {{ .ParentFilterExpr }},
+{{- if .DiscFilterField }}
+					// Scoped on the unlink half too — see the clear above.
+					{{ .DiscFilterField }}: {{ .DiscFilterExpr }},
+{{- end }}
+				},
+				&Update{{ .TargetStructName }}Input{ {{ .FKFieldName }}: {{ .FKUnlinkAssignExpr }} },
+				func(o *CallOptions[{{ .TargetStructName }}FieldOptions]) {
+					nestedChildOptions(o, options)
+					o.FieldOptions = &{{ .TargetStructName }}FieldOptions{}
+				}); err != nil {
+				return nestedError({{ printf "%q" .FieldName }}, "disconnect", nil, err)
+			}
+		}
+	}
+{{- end }}
+{{- end }}
+	return nil
+}
+{{- end }}
+{{- end }}
+{{- end -}}

@@ -1,0 +1,75 @@
+{{- define "api/middleware" -}}
+{{- $ctx := . -}}
+{{- $pkg := $ctx.ModelsPackage -}}
+
+// callOptionsKey is the unexported context key used to stash the per-request
+// CallOptions overrides extracted by WithCallOptionsMiddleware. Keeping the
+// type unexported prevents callers outside the generated graph package from
+// accidentally clobbering the value.
+type callOptionsKey struct{}
+
+// httpCallOptions captures the per-request flag bools extracted from HTTP
+// headers. It is deliberately non-generic so the same struct
+// can be stashed into the request context and projected into per-table
+// CallOptions[FO] setters by callOptionsFromHTTP.
+type httpCallOptions struct {
+	SkipCache  bool
+	SkipEvents bool
+	SkipHooks  bool
+}
+
+// WithCallOptionsMiddleware extracts CallOptions overrides from the standard
+// HTTP headers — `Cache-Control: no-cache`,
+// `X-Skip-Events: true`, and `X-Skip-Hooks: true` — and stashes the result
+// in the request context so resolver bodies can apply the overrides via
+// callOptionsFromHTTP.
+//
+// Wrap this around the gqlgen handler at server-bootstrap time. The
+// middleware is a no-op for requests that include none of the supported
+// headers — the empty httpCallOptions is still stashed so resolvers do not
+// have to special-case its absence.
+func WithCallOptionsMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var opts httpCallOptions
+		if r.Header.Get("Cache-Control") == "no-cache" {
+			opts.SkipCache = true
+		}
+		if r.Header.Get("X-Skip-Events") == "true" {
+			opts.SkipEvents = true
+		}
+		if r.Header.Get("X-Skip-Hooks") == "true" {
+			opts.SkipHooks = true
+		}
+		ctx := context.WithValue(r.Context(), callOptionsKey{}, opts)
+		next.ServeHTTP(w, r.WithContext(ctx))
+	})
+}
+
+// callOptionsFromHTTP returns the slice of CallOptions setters that the
+// middleware extracted from the current request's headers. The
+// returned slice is parametrised on the per-table FieldOptions so resolver
+// bodies can range over it and apply each setter to their typed
+// CallOptions[FO]. Returns nil when the middleware did not run (e.g. unit
+// tests that bypass the HTTP layer) or when no override headers were set.
+//
+// Setters are appended in the documented header order — Cache-Control,
+// X-Skip-Events, X-Skip-Hooks — so resolver dispatch is deterministic across
+// requests.
+func callOptionsFromHTTP[FO any](ctx context.Context) []func(*{{ $pkg }}.CallOptions[FO]) {
+	opts, ok := ctx.Value(callOptionsKey{}).(httpCallOptions)
+	if !ok {
+		return nil
+	}
+	var out []func(*{{ $pkg }}.CallOptions[FO])
+	if opts.SkipCache {
+		out = append(out, func(o *{{ $pkg }}.CallOptions[FO]) { o.SkipCache = true })
+	}
+	if opts.SkipEvents {
+		out = append(out, func(o *{{ $pkg }}.CallOptions[FO]) { o.SkipEvents = true })
+	}
+	if opts.SkipHooks {
+		out = append(out, func(o *{{ $pkg }}.CallOptions[FO]) { o.SkipHooks = true })
+	}
+	return out
+}
+{{- end -}}

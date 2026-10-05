@@ -1,0 +1,62 @@
+{{- define "shared/field-options" -}}
+
+// {{ .StructName }}FieldOptions controls column selection and relationship loading for {{ .TableName }} queries.
+type {{ .StructName }}FieldOptions struct {
+{{- range .Columns }}
+	{{ .FieldName }} bool `json:"{{ .JSONTag }}"`
+{{- end }}
+{{- range .Relationships }}
+{{- if isO2O . }}
+	{{ .FieldName }} *{{ .TargetStructName }}FieldOptions `json:"{{ .JSONTag }}"`
+{{- else }}
+	{{ .FieldName }} *{{ .TargetStructName }}RelationshipOptions `json:"{{ .JSONTag }}"`
+{{- end }}
+{{- end }}
+}
+
+// Columns returns the SQL column names for all selected columns, sorted alphabetically
+// to match the SQL builder's deterministic column ordering.
+func (fo *{{ .StructName }}FieldOptions) Columns() []string {
+	var cols []string
+{{- range .Columns }}
+	if fo.{{ .FieldName }} {
+		cols = append(cols, {{ printf "%q" .Name }})
+	}
+{{- end }}
+	slices.Sort(cols)
+	return cols
+}
+
+// ColumnMap returns a mapping of Go field name to SQL column name for all columns.
+func (fo *{{ .StructName }}FieldOptions) ColumnMap() map[string]string {
+	return map[string]string{
+{{- range .Columns }}
+		{{ printf "%q" .FieldName }}: {{ printf "%q" .Name }},
+{{- end }}
+	}
+}
+
+// HasSelectedColumns reports whether any column or relationship is selected.
+func (fo *{{ .StructName }}FieldOptions) HasSelectedColumns() bool {
+{{- range .Columns }}
+	if fo.{{ .FieldName }} {
+		return true
+	}
+{{- end }}
+{{- range .Relationships }}
+	if fo.{{ .FieldName }} != nil {
+		return true
+	}
+{{- end }}
+	return false
+}
+{{- range .RelationshipOptionsDefs }}
+
+// {{ .StructName }} controls loading options for {{ .TargetStructName }} relationships.
+type {{ .StructName }} struct {
+	FieldOptions *{{ .TargetStructName }}FieldOptions `json:"field_options"`
+	Filter       *{{ .TargetStructName }}Filter       `json:"filter"`
+	Sorts        []sql.Sort                           `json:"sorts"`
+}
+{{- end }}
+{{- end -}}

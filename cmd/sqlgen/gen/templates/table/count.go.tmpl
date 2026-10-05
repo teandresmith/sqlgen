@@ -1,0 +1,69 @@
+{{- define "table/count" -}}
+{{- $singular := .TableName | toSingular -}}
+{{- $structCamel := .StructName | toCamelCase }}
+{{- if .Operations.Count }}
+
+// Count returns the number of {{ .TableName }} matching the given filter.
+{{- if and .SoftDelete .ExcludeDeleted }}
+// Soft-deleted {{ .TableName }} are excluded by default. Set Filter.{{ .SoftDelete.FieldName }} to override.
+{{- end }}
+// A nil filter counts all {{ if and .SoftDelete .ExcludeDeleted }}non-deleted {{ end }}{{ .TableName }}.
+func (c *{{ $structCamel }}Client) Count(ctx context.Context, filter *{{ .StructName }}Filter, opts ...func(*CallOptions[{{ .StructName }}FieldOptions])) (int64, error) {
+	options := resolveCallOptions(opts)
+	result, err := c.executeQuery(ctx, options.SkipHooks, &hook.QueryContext{
+		Op: hook.OpCount, Table: {{ .TableNameConstant }}, Schema: {{ printf "%q" .Schema }},
+		Input: filter, CallOptions: options,
+	}, func(ctx context.Context, q *hook.QueryContext) (any, error) {
+		conn := database.Conn(ctx, c.querier)
+{{- if .HasTenantedRelationshipFilter }}
+
+		// A relationship filter compiles to a correlated EXISTS carrying the
+		// *target's* tenant predicate, so the tenant is
+		// resolved before the conditions are built rather than appended after them.
+		filterOpts, filterErr := c.filterOptions(ctx, filter, options.SkipTenancy, options.Tenant)
+		if filterErr != nil {
+			return nil, fmt.Errorf("count {{ .TableName }}: %w", filterErr)
+		}
+{{- end }}
+
+		var conds []sql.Condition
+		if filter != nil {
+			conds = filter.ToConditions(c.dialect{{ if .HasTenantedRelationshipFilter }}, filterOpts...{{ end }})
+		}
+{{- if and .SoftDelete .ExcludeDeleted }}
+
+		// Soft delete: inject default if user didn't set the comparator
+		if filter == nil || filter.{{ .SoftDelete.FieldName }} == nil {
+			conds = append(conds, {{ softDeleteCondition .SoftDelete }})
+		}
+{{- end }}
+{{- if and .Tenancy .Tenancy.Tenanted }}
+
+		// Tenancy auto-filter. apply=false under tenancy.required:false
+		// + zero resolver skips the filter (cross-tenant count).
+		if !options.SkipTenancy {
+			resolvedTenant, apply, err := c.resolveTenant(ctx, options.Tenant)
+			if err != nil {
+				return int64(0), fmt.Errorf("count {{ .TableName }}: resolve tenant: %w", err)
+			}
+			if apply {
+				conds = append(conds, sql.Where(c.dialect.QuoteIdentifier({{ printf "%q" .Tenancy.Column }})).Eq(resolvedTenant))
+			}
+		}
+{{- end }}
+
+		query, args := sql.BuildCount(c.dialect, c.table, conds)
+
+		var count int64
+		if err := conn.QueryRow(ctx, query, args...).Scan(&count); err != nil {
+			return int64(0), fmt.Errorf("count {{ .TableName }}: %w", err)
+		}
+		return count, nil
+	})
+	if err != nil {
+		return 0, err
+	}
+	return result.(int64), nil
+}
+{{- end }}
+{{- end -}}

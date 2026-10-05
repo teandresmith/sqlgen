@@ -1,0 +1,242 @@
+version: v1
+
+input:
+  dialect: postgres
+  paths:
+    - ./schema.sql
+  views:
+    - ./views/
+
+output:
+  driver: pgx
+  dir: ./models
+  package: models
+
+generation:
+  soft_delete_columns:
+    - name: deleted_at
+      type: timestamp
+    - name: is_deleted
+      type: bool
+  # Enable the manifest surface (PRD §30). Single JSON layout
+  # (the default): one manifest_gen.json carrying inline entities[]. The
+  # postgres schema already carries rich extended metadata (COMMENT ON,
+  # CHECK constraints) so this example is the primary end-to-end vehicle for
+  # comment / check / default_kind manifest fields.
+  manifest:
+    enabled: true
+    json_layout: single
+
+# `public.users` and `audit.users` are one SQL name in two schemas,
+# and the runtime identifies a table by its hook.TableName value alone. Cache
+# and events are on so the pair runs through every consumer of that value: the
+# cache facade's switches (which did not compile while both values were
+# "users"), the hook helpers, and the event-driven invalidation round trip
+# (multi_schema_test.go). Both are opt-in at runtime (WithCache,
+# WithEventPublisher), so the rest of the suite runs as before.
+cache:
+  enabled: true
+  ttl: "1h"
+  serializer: json
+  key_prefix: sqlgen
+
+events:
+  enabled: true
+
+# Materialized view coverage. ViewConfig applies to matviews
+# unchanged (design §6): cursor_keys enables the Connection method (the
+# global default keys don't exist on this view).
+views:
+  order_totals:
+    cursor_keys:
+      - product_id
+
+tables:
+  public.users:
+    relationships:
+      - name: Profile
+        type: one_to_one
+        table: profiles
+        fk: user_id
+      # Schema-qualified targets into the public.notes / audit.notes
+      # pair. `table: notes` would be ambiguous (PRD §5.5); each edge must
+      # read and write the table its struct names.
+      - name: Notes
+        type: one_to_many
+        table: public.notes
+        fk: user_id
+      - name: AuditNotes
+        type: one_to_many
+        table: audit.notes
+        fk: user_id
+      # The junction is bare and lives only in `audit`, while the
+      # parent is in `public`. It resolves to audit.note_watchers; carried
+      # without its schema, the loader and the filter read "note_watchers"
+      # through the search path, which has no such table.
+      - name: WatchedAuditNotes
+        type: many_to_many
+        table: audit.notes
+        junction: note_watchers
+        junction_local_fk: user_id
+        junction_reference_fk: note_id
+  # Has-one: each FK is on its target, and in that schema's `notes`
+  # only, so reading the FK's side off the other `notes` flips the join.
+  audit.events:
+    relationships:
+      - name: Note
+        type: one_to_one
+        table: audit.notes
+        fk: event_id
+      - name: SourceNote
+        type: one_to_one
+        table: public.notes
+        fk: source_event_id
+  # Belongs-to: the FK (user_id) is on audit.notes, and `users` names
+  # a table in both schemas, so only the qualified spelling reaches public.users.
+  audit.notes:
+    relationships:
+      - name: Author
+        type: one_to_one
+        table: public.users
+        fk: user_id
+  assets:
+    relationships:
+      - name: PrimaryDocument
+        type: one_to_one
+        table: documents
+        fk: entity_id
+        discriminator:
+          column: entity_type
+          value: "asset.primary"
+      - name: Attachments
+        type: one_to_many
+        table: documents
+        fk: entity_id
+        discriminator:
+          column: entity_type
+          value: "asset.attachment"
+      - name: Invoices
+        type: one_to_many
+        table: documents
+        fk: entity_id
+        discriminator:
+          column: entity_type
+          value: "asset.invoice"
+      # Multi-column filter coverage. One per relationship type so
+      # the JOIN ON (o2o), target-query WHERE (o2m), and junction-then-WHERE
+      # (m2m) codepaths all exercise the codegen-time qualifier.
+      - name: PrimaryActiveDocument
+        type: one_to_one
+        table: documents
+        fk: entity_id
+        filter: "entity_type = 'asset.primary' AND name LIKE 'site_%'"
+      - name: PhotoAttachments
+        type: one_to_many
+        table: documents
+        fk: entity_id
+        filter: "entity_type = 'asset.attachment' AND name LIKE 'photo_%'"
+        # The static sort (PRD §4.8) on the O2M loader, and on the M2M
+        # loader below. relationship_static_sort_test.go pins both orders.
+        sort:
+          - column: name
+            direction: desc
+      - name: LinkedAttachments
+        type: many_to_many
+        table: documents
+        junction: asset_document_links
+        junction_local_fk: asset_id
+        junction_reference_fk: document_id
+        filter: "entity_type = 'asset.attachment' AND name LIKE 'link_%'"
+        sort:
+          - column: name
+            direction: desc
+  # `column_map.<col>.type` + `.import` is the escape hatch
+  # for a per-column override to an *external* Go type. `type_map` cannot
+  # express this — it has no `import` field, so PRD §8.5 scopes it to builtins
+  # and same-package types (see profiles.address below). netip.Addr is not in
+  # gotype's known registry, so the import here is the only thing that puts
+  # `net/netip` in audit_users_gen.go. The column is nullable, so the field
+  # resolves to *netip.Addr — `column_map` has no `nullable:` sub-field and
+  # does not reach the Null-wrapper machinery `overrides.types` offers.
+  audit.users:
+    column_map:
+      source_ip:
+        type: netip.Addr
+        import: net/netip
+        description: "Client address the change originated from"
+  profiles:
+    type_map:
+      address: Address
+  products:
+    type_map:
+      quantity: int32
+  orders:
+    strict_updates: false
+  slugged_rows:
+    column_map:
+      slug:
+        access: read_only
+  order_items:
+    type_map:
+      quantity: int32
+  user_categories:
+    cursor_keys:
+      - user_id
+      - category_id
+  articles: {}
+  tags: {}
+  product_tag_labels:
+    cursor_keys:
+      - product_id
+      - tag_name
+      - label
+  # counters has no inline PRIMARY KEY clause; the post-CREATE
+  # `counters_key_uq` UNIQUE constraint covers (key). The override promotes
+  # that column to the PK position so the full PK-keyed client surface is
+  # emitted (single-column override path).
+  # Without the override, the table would be skipped entirely with a
+  # warning (PRD §9.4b).
+  counters:
+    primary_key:
+      columns: [key]
+  # rate_limits has no inline PRIMARY KEY clause; the post-CREATE
+  # `rate_limits_org_bucket_uq` UNIQUE constraint covers (org_id, bucket).
+  # The override promotes those columns to the PK position so the full
+  # PK-keyed client surface is emitted (composite override path).
+  rate_limits:
+    primary_key:
+      columns: [org_id, bucket]
+  warehouses:
+    # No `uuid` entry: this example binds the standard library, which is what
+    # `uuid` resolves to with no configuration (PRD §7.4). That keeps the
+    # self-referential nullable FK `warehouses.nullable_ref` on the
+    # `*uuid.UUID` FK-extraction branch — the `$v != nil` guard with a `(*$v)`
+    # unwrap — rather than the `uuid.NullUUID` wrapper branch, which
+    # `postgres_stdlib` now guards instead. A `uuid` entry naming a wrapper
+    # library here would make the package hold two UUID libraries and be
+    # rejected (PRD §4.13, §7.4).
+    overrides:
+      types:
+        numeric:
+          type: decimal.Decimal
+          import: github.com/shopspring/decimal
+          nullable: decimal.NullDecimal
+        text:
+          type: ksuid.KSUID
+          import: github.com/segmentio/ksuid
+        # User-declared Null-wrapper coverage. The `region_name`
+        # domain (scoped to this column so the override does not leak onto
+        # warehouses.name) resolves to customtypes.OptionalString, which
+        # uses `Val` as the underlying scalar field and `Set` as the
+        # validity flag — both non-default. Verifies the resolver picks
+        # up `valid_field` and `underlying_field` from sqlgen.yml; the
+        # generated model struct, scan, filter, and (where reachable) FK
+        # stringification all use the custom wrapper.
+        region_name:
+          type: customtypes.OptionalString
+          import: github.com/teandresmith/sqlgen/cmd/sqlgen/testdata/examples/postgres/customtypes
+          nullable:
+            type: customtypes.OptionalString
+            import: github.com/teandresmith/sqlgen/cmd/sqlgen/testdata/examples/postgres/customtypes
+            underlying_field: Val
+            valid_field: Set

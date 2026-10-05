@@ -1,0 +1,112 @@
+{{- define "api/field-options" -}}
+{{- $ctx := . -}}
+{{- $pkg := $ctx.ModelsPackage -}}
+
+// Per-table field-selection walkers. Each pair of functions translates the
+// GraphQL selection set in a request context into a fully-populated
+// <Table>FieldOptions tree. The walker is the load-bearing
+// piece behind the query-count contract: every column and relationship
+// in the source schema has a corresponding `case` clause here, so the
+// resolver can pre-compute the exact set of fields/relationships to load and
+// the unified client issues `1 + count(O2M selected) + 2 * count(M2M selected)`
+// queries per request, regardless of result-set size (each M2M edge costs
+// two queries — junction + entities).
+//
+// `<table>FieldOptionsFromContext` is the entry point used by every per-table
+// resolver method. It pulls the collected fields out of ctx, descends through
+// the conventional Relay Connection shape (`{ edges { node { ... } } }`) via
+// the shared `unwrapConnectionFields` helper when present, then forwards to
+// the recursive walker. `<table>FieldOptionsFromCollected` is the recursive
+// step used both at the top level and when descending into relationships.
+//
+// A selection set that asks for the row but names no column — `__typename`
+// alone, an edge selecting only its `cursor`, a `pageInfo` sub-selection —
+// still projects the row's identity columns, because the read path reads an
+// all-false FieldOptions as "the caller wants no rows" and would otherwise
+// swallow a row the request did ask for. The one selection that
+// genuinely wants no rows is a count-only envelope, and it never reaches the
+// walker: `unwrapConnectionFields` reports it and the entry point returns the
+// all-false value directly.
+//
+// Fragment & directive handling is delegated to gqlgen's CollectFieldsCtx /
+// CollectFields built-ins, which flatten named + inline fragments, apply
+// `@skip` / `@include`, and resolve aliases transparently. The walker only
+// sees real field names.
+//
+// "Transparently" resolves the *name*, not the multiplicity: CollectFields
+// groups by (Name, Alias), so one selection set naming the same field under two
+// aliases hands the walker two entries carrying the same Name. Every arm below
+// is written as though a name arrives once, so the fields are run through
+// `coalesceAliases` first, which unions the sub-selections of every alias into
+// a single entry per name. Relationship fields take no GraphQL
+// arguments, so two aliases of one relationship can differ only in
+// what they select — the union is the whole of what both asked for, and gqlgen
+// renders both aliases from the one load it drives.
+{{ range $t := $ctx.Tables }}
+
+// {{ toCamelCase $t.StructName }}FieldOptionsFromContext returns the
+// {{ $pkg }}.{{ $t.StructName }}FieldOptions for the current GraphQL request.
+func {{ toCamelCase $t.StructName }}FieldOptionsFromContext(ctx context.Context) *{{ $pkg }}.{{ $t.StructName }}FieldOptions {
+	opCtx := graphql.GetOperationContext(ctx)
+	fields := graphql.CollectFieldsCtx(ctx, nil)
+	entityFields, wantsRows := unwrapConnectionFields(ctx, fields, "{{ $t.StructName }}Connection", "{{ $t.StructName }}ListResult")
+	if !wantsRows {
+		// Count-only envelope selection: the request never reaches a row, so
+		// the all-false FieldOptions is the right answer and the read
+		// short-circuits into a single COUNT.
+		return &{{ $pkg }}.{{ $t.StructName }}FieldOptions{}
+	}
+	return {{ toCamelCase $t.StructName }}FieldOptionsFromCollected(opCtx, entityFields)
+}
+
+// {{ toCamelCase $t.StructName }}FieldOptionsFromCollected walks one level of
+// the {{ $t.StructName }} selection set and produces the corresponding
+{{- /* The relationship sentence is table-only: a view has none,             */ -}}
+{{- /* so its walker is columns-only and its read is exactly one query.      */ -}}
+{{- if $t.IsView }}
+// FieldOptions tree. A view has no relationships, so this walker is
+// columns-only and the read it drives is exactly one query.
+{{- else }}
+// FieldOptions tree. Recursive descent into relationships re-enters the
+// related table's walker on the child's selection set.
+{{- end }}
+func {{ toCamelCase $t.StructName }}FieldOptionsFromCollected(opCtx *graphql.OperationContext, fields []graphql.CollectedField) *{{ $pkg }}.{{ $t.StructName }}FieldOptions {
+	fo := &{{ $pkg }}.{{ $t.StructName }}FieldOptions{}
+	for _, f := range coalesceAliases(opCtx, fields) {
+		switch f.Name {
+{{- range $f := $t.Fields }}
+{{- if $f.Readable }}
+		case {{ printf "%q" $f.GraphQLName }}:
+			fo.{{ $f.GoFieldName }} = true
+{{- end }}
+{{- end }}
+{{- range $r := $t.Relationships }}
+{{- if $r.IsList }}
+		case {{ printf "%q" $r.GraphQLName }}:
+			fo.{{ $r.GoFieldName }} = &{{ $pkg }}.{{ $r.TargetType }}RelationshipOptions{
+				FieldOptions: {{ toCamelCase $r.TargetType }}FieldOptionsFromCollected(opCtx, f.Sub),
+			}
+{{- else }}
+		case {{ printf "%q" $r.GraphQLName }}:
+			fo.{{ $r.GoFieldName }} = {{ toCamelCase $r.TargetType }}FieldOptionsFromCollected(opCtx, f.Sub)
+{{- end }}
+{{- end }}
+		}
+	}
+{{- if $t.RowIdentityFields }}
+	if !fo.HasSelectedColumns() {
+		// The selection asked for this row but named no column. Projecting the
+		// row's identity keeps the all-false short-circuit — which means
+		// "the caller wants no rows" — from swallowing it. Columns
+		// the read derives rather than returns (cursor keys, relationship
+		// mapping keys, O2O NULL-detection keys) are unioned in downstream by
+		// the client method that reads them, not here.
+{{- range $rowIdentityField := $t.RowIdentityFields }}
+		fo.{{ $rowIdentityField }} = true
+{{- end }}
+	}
+{{- end }}
+	return fo
+}
+{{ end }}
+{{- end -}}

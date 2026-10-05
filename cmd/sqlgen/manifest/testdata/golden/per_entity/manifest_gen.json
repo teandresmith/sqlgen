@@ -1,0 +1,155 @@
+{
+  "$schema": "https://raw.githubusercontent.com/teandresmith/sqlgen/v0.42.0/cmd/sqlgen/manifest/schema/v1.json",
+  "schema_version": "0.1.0",
+  "generated_at": "2026-05-15T14:22:11Z",
+  "generator": {
+    "name": "sqlgen",
+    "version": "0.42.0"
+  },
+  "dialect": "postgres",
+  "package": "models",
+  "layout": "per_entity",
+  "conventions": {
+    "client_entry_points": {
+      "query": "client.<Entity>()",
+      "mutation": "client.<Entity>()"
+    },
+    "error_sentinels": [
+      {
+        "name": "ErrNotFound",
+        "graphql_code": "NOT_FOUND",
+        "package": "models"
+      },
+      {
+        "name": "ErrConstraintViolation",
+        "graphql_code": "",
+        "package": "models"
+      },
+      {
+        "name": "ErrMissing",
+        "graphql_code": "UNAUTHENTICATED",
+        "package": "tenancy"
+      }
+    ],
+    "constraint_error_codes": {
+      "check": "INVALID_INPUT",
+      "foreign_key": "BAD_REFERENCE",
+      "not_null": "INVALID_INPUT",
+      "unique": "CONFLICT"
+    },
+    "find_returns_nil_on_missing": true,
+    "pagination": {
+      "page_type": "Page",
+      "list_envelope_suffix": "List",
+      "cursor_encoding": "opaque-base64"
+    },
+    "call_options": {
+      "type": "CallOption",
+      "fields": [
+        "WithTx",
+        "IncludeSoftDeleted"
+      ]
+    },
+    "soft_delete": {
+      "default_excluded_from_finds": true,
+      "include_via": "WithSoftDeleted()",
+      "hard_delete_method_suffix": "HardDelete",
+      "restore_method_suffix": "Restore"
+    },
+    "comparator": {
+      "package": "comparator",
+      "families": [
+        "Bool",
+        "Enum",
+        "ID",
+        "JSON",
+        "JSONB",
+        "Number",
+        "Slice",
+        "String",
+        "Time"
+      ],
+      "shape_notes": [
+        "Every family exposes Eq/Neq; ordered families add Gt/Gte/Lt/Lte."
+      ],
+      "composition": {
+        "and": "all conditions must match",
+        "or": "any condition matches"
+      },
+      "examples": {
+        "eq": "comparator.String.Eq(\"alice\")"
+      }
+    },
+    "omittable": {
+      "package": "omittable",
+      "type": "omittable.Value[T]",
+      "purpose": "Distinguishes 'not set' from 'set to zero value'.",
+      "construction": [
+        "omittable.Set(value)",
+        "omittable.Omit[T]()"
+      ],
+      "methods": [
+        "IsSet() bool",
+        "IsZero() bool",
+        "Get() (T, bool)",
+        "MustGet() T"
+      ],
+      "json_behavior": "Marshals to the wrapped value when set; omitted when unset."
+    }
+  },
+  "generation_config": {
+    "audit_columns": true,
+    "cache": true,
+    "events": true,
+    "graphql": false,
+    "graph_top_level": false,
+    "soft_delete": false,
+    "tenancy": false,
+    "views": true
+  },
+  "entities": [
+    {
+      "name": "User",
+      "table": "users",
+      "kind": "table",
+      "file": "entities/users.json"
+    },
+    {
+      "name": "ActiveUser",
+      "table": "active_users",
+      "kind": "view",
+      "file": "entities/active_users.json"
+    }
+  ],
+  "enums": [
+    {
+      "name": "UserStatus",
+      "go_type": "UserStatus",
+      "db_type": "user_status",
+      "values": [
+        "active",
+        "pending",
+        "closed"
+      ]
+    }
+  ],
+  "extras": [
+    {
+      "kind": "composite",
+      "name": "Address",
+      "go_type": "Address",
+      "fields": [
+        {
+          "name": "Street",
+          "go_type": "string",
+          "json": "street"
+        },
+        {
+          "name": "City",
+          "go_type": "string",
+          "json": "city"
+        }
+      ]
+    }
+  ]
+}

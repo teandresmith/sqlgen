@@ -1,0 +1,72 @@
+"""
+KeyedCodeEntry corresponds to the keyed_code_entries table.
+"""
+type KeyedCodeEntry {
+  "id"
+  id: UUID!
+  "keyed_code_id"
+  keyedCodeID: UUID!
+  "note"
+  note: String!
+}
+
+type KeyedCodeEntryConnection {
+  edges:      [KeyedCodeEntryEdge!]!
+  pageInfo:   PageInfo!
+  totalCount: Int!
+}
+
+type KeyedCodeEntryEdge {
+  node:   KeyedCodeEntry!
+  cursor: String!
+}
+
+type KeyedCodeEntryListResult {
+  items:      [KeyedCodeEntry!]!
+  totalCount: Int!
+  offset:     Int!
+  limit:      Int!
+  hasMore:    Boolean!
+}
+
+input KeyedCodeEntryFilter {
+  keyedCodeID: IDComparator
+  note: StringComparator
+  and: [KeyedCodeEntryFilter!]
+  or:  [KeyedCodeEntryFilter!]
+}
+
+enum KeyedCodeEntrySortField {
+  ID
+  KEYED_CODE_ID
+  NOTE
+}
+
+input KeyedCodeEntrySort {
+  field:     KeyedCodeEntrySortField!
+  direction: SortDirection!
+}
+input CreateKeyedCodeEntryInput {
+  keyedCodeID: UUID!
+  note: String!
+}
+input UpdateKeyedCodeEntryInput {
+  keyedCodeID: UUID
+  note: String
+}
+
+extend type Query {
+  keyedCodeEntry(id: UUID!): KeyedCodeEntry
+  "Cursor-paginated; ordering is driven by cursor_keys to preserve keyset semantics — pass `sort` to keyedCodeEntryList instead."
+  keyedCodeEntries(filter: KeyedCodeEntryFilter, first: Int, after: String, last: Int, before: String): KeyedCodeEntryConnection!
+  keyedCodeEntryList(filter: KeyedCodeEntryFilter, sort: [KeyedCodeEntrySort!], limit: Int, offset: Int): KeyedCodeEntryListResult!
+}
+
+extend type Mutation {
+  createKeyedCodeEntry(input: CreateKeyedCodeEntryInput!): KeyedCodeEntry!
+  createKeyedCodeEntries(inputs: [CreateKeyedCodeEntryInput!]!): [KeyedCodeEntry!]!
+  updateKeyedCodeEntry(id: UUID!, input: UpdateKeyedCodeEntryInput!): KeyedCodeEntry!
+  updateKeyedCodeEntries(filter: KeyedCodeEntryFilter!, input: UpdateKeyedCodeEntryInput!): [KeyedCodeEntry!]!
+  upsertKeyedCodeEntry(input: CreateKeyedCodeEntryInput!): KeyedCodeEntry!
+  deleteKeyedCodeEntry(id: UUID!): Boolean!
+}

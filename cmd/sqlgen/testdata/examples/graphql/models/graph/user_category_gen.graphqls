@@ -1,0 +1,61 @@
+"""
+UserCategory corresponds to the user_categories table.
+"""
+type UserCategory {
+  "user_id"
+  userID: UUID!
+  "category_id"
+  categoryID: Int!
+}
+
+type UserCategoryConnection {
+  edges:      [UserCategoryEdge!]!
+  pageInfo:   PageInfo!
+  totalCount: Int!
+}
+
+type UserCategoryEdge {
+  node:   UserCategory!
+  cursor: String!
+}
+
+type UserCategoryListResult {
+  items:      [UserCategory!]!
+  totalCount: Int!
+  offset:     Int!
+  limit:      Int!
+  hasMore:    Boolean!
+}
+
+input UserCategoryFilter {
+  and: [UserCategoryFilter!]
+  or:  [UserCategoryFilter!]
+}
+
+enum UserCategorySortField {
+  USER_ID
+  CATEGORY_ID
+}
+
+input UserCategorySort {
+  field:     UserCategorySortField!
+  direction: SortDirection!
+}
+input CreateUserCategoryInput {
+  userID: UUID!
+  categoryID: Int!
+}
+
+extend type Query {
+  userCategory(userID: UUID!, categoryID: Int!): UserCategory
+  "Cursor-paginated; ordering is driven by cursor_keys to preserve keyset semantics — pass `sort` to userCategoryList instead."
+  userCategories(filter: UserCategoryFilter, first: Int, after: String, last: Int, before: String): UserCategoryConnection!
+  userCategoryList(filter: UserCategoryFilter, sort: [UserCategorySort!], limit: Int, offset: Int): UserCategoryListResult!
+}
+
+extend type Mutation {
+  createUserCategory(input: CreateUserCategoryInput!): UserCategory!
+  createUserCategories(inputs: [CreateUserCategoryInput!]!): [UserCategory!]!
+  upsertUserCategory(input: CreateUserCategoryInput!): UserCategory!
+  deleteUserCategory(userID: UUID!, categoryID: Int!): Boolean!
+}

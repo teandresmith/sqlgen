@@ -1,0 +1,68 @@
+"""
+Owner corresponds to the owners table.
+"""
+type Owner {
+  "owner_key"
+  ownerKey: Int!
+  "name"
+  name: String!
+  "one-to-one relationship with the owner_profiles table."
+  ownerProfile: OwnerProfile
+}
+
+type OwnerConnection {
+  edges:      [OwnerEdge!]!
+  pageInfo:   PageInfo!
+  totalCount: Int!
+}
+
+type OwnerEdge {
+  node:   Owner!
+  cursor: String!
+}
+
+type OwnerListResult {
+  items:      [Owner!]!
+  totalCount: Int!
+  offset:     Int!
+  limit:      Int!
+  hasMore:    Boolean!
+}
+
+input OwnerFilter {
+  name: StringComparator
+  and: [OwnerFilter!]
+  or:  [OwnerFilter!]
+}
+
+enum OwnerSortField {
+  OWNER_KEY
+  NAME
+}
+
+input OwnerSort {
+  field:     OwnerSortField!
+  direction: SortDirection!
+}
+input CreateOwnerInput {
+  name: String!
+}
+input UpdateOwnerInput {
+  name: String
+}
+
+extend type Query {
+  owner(ownerKey: Int!): Owner
+  "Cursor-paginated; ordering is driven by cursor_keys to preserve keyset semantics — pass `sort` to ownerList instead."
+  owners(filter: OwnerFilter, first: Int, after: String, last: Int, before: String): OwnerConnection!
+  ownerList(filter: OwnerFilter, sort: [OwnerSort!], limit: Int, offset: Int): OwnerListResult!
+}
+
+extend type Mutation {
+  createOwner(input: CreateOwnerInput!): Owner!
+  createOwners(inputs: [CreateOwnerInput!]!): [Owner!]!
+  updateOwner(ownerKey: Int!, input: UpdateOwnerInput!): Owner!
+  updateOwners(filter: OwnerFilter!, input: UpdateOwnerInput!): [Owner!]!
+  upsertOwner(input: CreateOwnerInput!): Owner!
+  deleteOwner(ownerKey: Int!): Boolean!
+}

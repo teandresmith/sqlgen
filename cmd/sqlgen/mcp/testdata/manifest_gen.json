@@ -1,0 +1,393 @@
+{
+  "$schema": "https://raw.githubusercontent.com/teandresmith/sqlgen/v0.42.0/cmd/sqlgen/manifest/schema/v1.json",
+  "schema_version": "0.1.0",
+  "generated_at": "2026-05-15T14:22:11Z",
+  "generator": {
+    "name": "sqlgen",
+    "version": "0.42.0"
+  },
+  "dialect": "postgres",
+  "package": "models",
+  "layout": "single",
+  "conventions": {
+    "client_entry_points": {
+      "query": "client.<Entity>()",
+      "mutation": "client.<Entity>()"
+    },
+    "error_sentinels": [
+      {
+        "name": "ErrNotFound",
+        "graphql_code": "NOT_FOUND",
+        "package": "models"
+      },
+      {
+        "name": "ErrEmptyFilter",
+        "graphql_code": "",
+        "package": "models"
+      },
+      {
+        "name": "ErrAmbiguousFilter",
+        "graphql_code": "",
+        "package": "models"
+      },
+      {
+        "name": "ErrInvalidCursor",
+        "graphql_code": "",
+        "package": "models"
+      },
+      {
+        "name": "ErrDeadlock",
+        "graphql_code": "",
+        "package": "models"
+      },
+      {
+        "name": "ErrConnectionFailed",
+        "graphql_code": "",
+        "package": "models"
+      },
+      {
+        "name": "ErrConstraintViolation",
+        "graphql_code": "",
+        "package": "models"
+      }
+    ],
+    "constraint_error_codes": {
+      "check": "INVALID_INPUT",
+      "foreign_key": "BAD_REFERENCE",
+      "not_null": "INVALID_INPUT",
+      "unique": "CONFLICT"
+    },
+    "find_returns_nil_on_missing": false,
+    "pagination": {
+      "page_type": "Page",
+      "list_envelope_suffix": "List",
+      "cursor_encoding": "opaque-base64"
+    },
+    "call_options": {
+      "type": "CallOption",
+      "fields": [
+        "WithTx",
+        "IncludeSoftDeleted"
+      ]
+    },
+    "soft_delete": {
+      "default_excluded_from_finds": true,
+      "include_via": "WithSoftDeleted()",
+      "hard_delete_method_suffix": "HardDelete",
+      "restore_method_suffix": "Restore"
+    },
+    "comparator": {
+      "package": "comparator",
+      "families": [
+        "Bool",
+        "Enum",
+        "ID",
+        "JSON",
+        "JSONB",
+        "Number",
+        "Slice",
+        "String",
+        "Time"
+      ],
+      "shape_notes": [
+        "Every family exposes Eq/Neq; ordered families add Gt/Gte/Lt/Lte."
+      ],
+      "composition": {
+        "and": "all conditions must match",
+        "or": "any condition matches"
+      },
+      "examples": {
+        "eq": "comparator.String.Eq(\"alice\")"
+      }
+    },
+    "omittable": {
+      "package": "omittable",
+      "type": "omittable.Value[T]",
+      "purpose": "Distinguishes 'not set' from 'set to zero value'.",
+      "construction": [
+        "omittable.Set(value)",
+        "omittable.Omit[T]()"
+      ],
+      "methods": [
+        "IsSet() bool",
+        "IsZero() bool",
+        "Get() (T, bool)",
+        "MustGet() T"
+      ],
+      "json_behavior": "Marshals to the wrapped value when set; omitted when unset."
+    }
+  },
+  "generation_config": {
+    "audit_columns": true,
+    "cache": true,
+    "events": true,
+    "graphql": false,
+    "graph_top_level": false,
+    "soft_delete": false,
+    "tenancy": false,
+    "views": true
+  },
+  "entities": [
+    {
+      "kind": "table",
+      "name": "User",
+      "table": "users",
+      "file_prefix": "users",
+      "files": [
+        "users_gen.go"
+      ],
+      "comment": "Application users. Soft-deleted on account closure.",
+      "indexes": [
+        {
+          "name": "users_pkey",
+          "columns": [
+            "id"
+          ],
+          "unique": true,
+          "method": "btree"
+        },
+        {
+          "name": "users_email_key",
+          "columns": [
+            "email"
+          ],
+          "unique": true,
+          "method": "btree"
+        },
+        {
+          "name": "users_active_idx",
+          "columns": [
+            "id"
+          ],
+          "unique": false,
+          "method": "btree",
+          "where": "deleted_at IS NULL"
+        }
+      ],
+      "pk": {
+        "kind": "single",
+        "columns": [
+          {
+            "name": "id",
+            "go_field": "ID",
+            "go_type": "uuid.UUID"
+          }
+        ]
+      },
+      "features": {
+        "soft_delete": null,
+        "cache": {
+          "ttl_seconds": 30,
+          "hydration": "lazy",
+          "key_pattern": "models:user:{id}",
+          "invalidates_on": [
+            "Create",
+            "Update",
+            "Delete"
+          ]
+        },
+        "events": {
+          "enabled": true,
+          "types": [
+            "created",
+            "updated",
+            "deleted"
+          ],
+          "payload_shape": "models.UserEvent"
+        },
+        "tenancy": null,
+        "audit_columns": [
+          "created_at",
+          "updated_at"
+        ]
+      },
+      "columns": [
+        {
+          "name": "id",
+          "go_field": "ID",
+          "go_type": "uuid.UUID",
+          "db_type": "uuid",
+          "nullable": false,
+          "pk": true,
+          "unique": true,
+          "default": "gen_random_uuid()",
+          "default_kind": "function",
+          "comparator": "comparator.ID",
+          "comment": "Primary key. Server-generated UUIDv7."
+        },
+        {
+          "name": "email",
+          "go_field": "Email",
+          "go_type": "string",
+          "db_type": "text",
+          "nullable": false,
+          "pk": false,
+          "unique": true,
+          "comparator": "comparator.String",
+          "comment": "Login identity. Rendered raw in <table> & lists.",
+          "check": "email <> ''"
+        },
+        {
+          "name": "status",
+          "go_field": "Status",
+          "go_type": "UserStatus",
+          "db_type": "user_status",
+          "nullable": false,
+          "pk": false,
+          "unique": false,
+          "default": "'pending'",
+          "default_kind": "literal",
+          "comparator": "comparator.Enum[UserStatus]",
+          "comment": ""
+        }
+      ],
+      "relationships": [
+        {
+          "name": "Posts",
+          "kind": "o2m",
+          "target_entity": "Post",
+          "fk": {
+            "table": "posts",
+            "column": "author_id"
+          }
+        }
+      ],
+      "methods": {
+        "query": [
+          {
+            "name": "Get",
+            "params": [
+              {
+                "name": "id",
+                "type": "uuid.UUID"
+              }
+            ],
+            "returns": "*User",
+            "errors": [],
+            "notes": "Returns nil when not found.",
+            "sql_bodies": {
+              "postgres": "SELECT * FROM \"users\" WHERE \"id\" = $1 AND \"deleted_at\" IS NULL"
+            }
+          }
+        ],
+        "mutation": [
+          {
+            "name": "Create",
+            "params": [
+              {
+                "name": "input",
+                "type": "UserCreateInput"
+              }
+            ],
+            "returns": "*User",
+            "errors": [
+              "ErrConstraintViolation"
+            ],
+            "sql_bodies": {
+              "postgres": "INSERT INTO \"users\" (\"email\", \"status\") VALUES ($1, $2) RETURNING *"
+            }
+          }
+        ]
+      },
+      "filter": {
+        "type": "UserFilter",
+        "fields": [
+          {
+            "name": "ID",
+            "type": "comparator.ID"
+          },
+          {
+            "name": "Email",
+            "type": "comparator.String"
+          }
+        ]
+      },
+      "sort": {
+        "type": "UserSort",
+        "fields": [
+          "ID",
+          "Email",
+          "CreatedAt"
+        ]
+      }
+    },
+    {
+      "kind": "view",
+      "name": "ActiveUser",
+      "table": "active_users",
+      "source": "views/active_users.sql",
+      "file_prefix": "active_users",
+      "files": [
+        "active_users_gen.go"
+      ],
+      "comment": "Non-deleted users.",
+      "indexes": [],
+      "pk": {
+        "kind": "none"
+      },
+      "features": {
+        "soft_delete": null,
+        "cache": null,
+        "events": null,
+        "tenancy": null
+      },
+      "columns": [
+        {
+          "name": "id",
+          "go_field": "ID",
+          "go_type": "uuid.UUID",
+          "db_type": "uuid",
+          "nullable": false,
+          "pk": false,
+          "unique": false,
+          "comparator": "comparator.ID",
+          "comment": ""
+        }
+      ],
+      "relationships": [],
+      "methods": {
+        "query": [],
+        "mutation": []
+      },
+      "filter": {
+        "type": "ActiveUserFilter",
+        "fields": []
+      },
+      "sort": {
+        "type": "ActiveUserSort",
+        "fields": []
+      }
+    }
+  ],
+  "enums": [
+    {
+      "name": "UserStatus",
+      "go_type": "UserStatus",
+      "db_type": "user_status",
+      "values": [
+        "active",
+        "pending",
+        "closed"
+      ]
+    }
+  ],
+  "extras": [
+    {
+      "kind": "composite",
+      "name": "Address",
+      "go_type": "Address",
+      "fields": [
+        {
+          "name": "Street",
+          "go_type": "string",
+          "json": "street"
+        },
+        {
+          "name": "City",
+          "go_type": "string",
+          "json": "city"
+        }
+      ]
+    }
+  ]
+}

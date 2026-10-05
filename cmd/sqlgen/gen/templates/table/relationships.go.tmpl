@@ -1,0 +1,101 @@
+{{- define "table/resolve-join" -}}
+	if {{ .FieldOptionsCheck }} {
+		joins = append(joins, sql.JoinClause{
+			Table:   sql.Table{Schema: {{ printf "%q" .TargetSchema }}, Name: {{ printf "%q" .TargetTable }}},
+			Alias:   {{ printf "%q" .Alias }},
+{{- if .Filter }}
+			// The sub-categorization predicate is parenthesised because it is
+			// AND-ed onto the correlation and AND binds tighter than OR: an
+			// unwrapped `filter:` carrying a top-level OR would pull the
+			// correlation into the disjunction and join other parents' rows.
+			// Same reason the EXISTS form wraps (shared/_filter.tmpl).
+			On:      fmt.Sprintf("{{ .Alias }}.%s = {{ .OnLocalAlias }}.%s", d.QuoteIdentifier({{ printf "%q" .OnRemote }}), d.QuoteIdentifier({{ printf "%q" .OnLocal }})) + " AND (" + {{ printf "%q" .Filter }} + ")",
+{{- else }}
+			On:      fmt.Sprintf("{{ .Alias }}.%s = {{ .OnLocalAlias }}.%s", d.QuoteIdentifier({{ printf "%q" .OnRemote }}), d.QuoteIdentifier({{ printf "%q" .OnLocal }})),
+{{- end }}
+			// The NULL-detection below reads the target's PK off the scanned
+			// row, so the join carries it even when FieldOptions did not ask
+			// for it — an unselected PK reads as a LEFT JOIN miss.
+			Columns: unionColumns({{ .FieldOptionsColumns }}, {{ printf "%q" .PKColumn }}),
+{{- if .HasSoftDelete }}
+			SoftDelete: &sql.SoftDeleteOptions{
+				Column: {{ printf "%q" .SoftDeleteColumn }},
+				Type:   {{ .SoftDeleteTypeConst }},
+			},
+{{- end }}
+		})
+{{- range .ChainedJoins }}
+{{ template "table/resolve-join" . }}
+{{- end }}
+	}
+{{- end -}}
+{{- define "table/relationships" -}}
+{{- if .HasO2ORelationships }}
+
+// resolveO2OJoins inspects FieldOptions and returns JOIN descriptors for each O2O relationship.
+// Returns nil if no O2O relationships are requested.
+func (c *{{ .StructName | toCamelCase }}Client) resolveO2OJoins(d sql.Dialect, fo *{{ .StructName }}FieldOptions) []sql.JoinClause {
+	if fo == nil {
+		return nil
+	}
+	var joins []sql.JoinClause
+{{- range .O2OJoinDetails }}
+{{ template "table/resolve-join" . }}
+{{- end }}
+	return joins
+}
+
+// scan{{ .StructName | structNamePlural }}WithOneToOneJoins scans rows from a LEFT JOIN query into
+// {{ .StructName }} entities with O2O relationships populated.
+// Routes columns by alias prefix and detects LEFT JOIN misses via NULL PK detection.
+func scan{{ .StructName | structNamePlural }}WithOneToOneJoins(rows database.Rows, columns []string) ([]*{{ .StructName }}, error) {
+	var result []*{{ .StructName }}
+	for rows.Next() {
+		{{ .VarName }} := &{{ .StructName }}{}
+{{- range .O2OAllTargets }}
+		{{ .VarName }} := &{{ .StructName }}{}
+		{{ .HasDataVar }} := false
+{{- end }}
+
+		targets := make([]any, len(columns))
+		for idx, col := range columns {
+			switch col {
+{{- range .O2OParentScanCases }}
+			case {{ printf "%q" .PrefixedColumn }}:
+				targets[idx] = {{ .ScanExpr }}
+{{- end }}
+{{- range .O2OAllTargets }}
+{{- $hasDataVar := .HasDataVar }}
+{{- range .ScanCases }}
+			case {{ printf "%q" .PrefixedColumn }}:
+				targets[idx] = {{ .ScanExpr }}
+{{- if .IsPK }}
+				{{ $hasDataVar }} = true
+{{- end }}
+{{- end }}
+{{- end }}
+			}
+		}
+
+		if err := rows.Scan(targets...); err != nil {
+			return nil, fmt.Errorf("scan {{ .TableName | toSingular }} with joins: %w", err)
+		}
+
+		// NULL detection — assign deepest chain first, then parents
+{{- range .O2OAssignOrder }}
+		if {{ .HasDataVar }} && {{ .VarName }}.{{ .PKFieldName }} != {{ .PKZeroValue }} {
+			{{ .ParentVarName }}.{{ .FieldName }} = {{ .VarName }}
+		} else {
+			{{ .ParentVarName }}.{{ .FieldName }} = nil
+		}
+{{- end }}
+
+		result = append(result, {{ .VarName }})
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate {{ .TableName | toSingular }} rows: %w", err)
+	}
+	return result, nil
+}
+{{- end }}
+{{- end -}}

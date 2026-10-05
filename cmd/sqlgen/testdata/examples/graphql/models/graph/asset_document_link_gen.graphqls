@@ -1,0 +1,61 @@
+"""
+AssetDocumentLink corresponds to the asset_document_links table.
+"""
+type AssetDocumentLink {
+  "asset_id"
+  assetID: UUID!
+  "document_id"
+  documentID: UUID!
+}
+
+type AssetDocumentLinkConnection {
+  edges:      [AssetDocumentLinkEdge!]!
+  pageInfo:   PageInfo!
+  totalCount: Int!
+}
+
+type AssetDocumentLinkEdge {
+  node:   AssetDocumentLink!
+  cursor: String!
+}
+
+type AssetDocumentLinkListResult {
+  items:      [AssetDocumentLink!]!
+  totalCount: Int!
+  offset:     Int!
+  limit:      Int!
+  hasMore:    Boolean!
+}
+
+input AssetDocumentLinkFilter {
+  and: [AssetDocumentLinkFilter!]
+  or:  [AssetDocumentLinkFilter!]
+}
+
+enum AssetDocumentLinkSortField {
+  ASSET_ID
+  DOCUMENT_ID
+}
+
+input AssetDocumentLinkSort {
+  field:     AssetDocumentLinkSortField!
+  direction: SortDirection!
+}
+input CreateAssetDocumentLinkInput {
+  assetID: UUID!
+  documentID: UUID!
+}
+
+extend type Query {
+  assetDocumentLink(assetID: UUID!, documentID: UUID!): AssetDocumentLink
+  "Cursor-paginated; ordering is driven by cursor_keys to preserve keyset semantics — pass `sort` to assetDocumentLinkList instead."
+  assetDocumentLinks(filter: AssetDocumentLinkFilter, first: Int, after: String, last: Int, before: String): AssetDocumentLinkConnection!
+  assetDocumentLinkList(filter: AssetDocumentLinkFilter, sort: [AssetDocumentLinkSort!], limit: Int, offset: Int): AssetDocumentLinkListResult!
+}
+
+extend type Mutation {
+  createAssetDocumentLink(input: CreateAssetDocumentLinkInput!): AssetDocumentLink!
+  createAssetDocumentLinks(inputs: [CreateAssetDocumentLinkInput!]!): [AssetDocumentLink!]!
+  upsertAssetDocumentLink(input: CreateAssetDocumentLinkInput!): AssetDocumentLink!
+  deleteAssetDocumentLink(assetID: UUID!, documentID: UUID!): Boolean!
+}

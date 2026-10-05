@@ -1,0 +1,47 @@
+{
+  "kind": "view",
+  "name": "ActiveUser",
+  "table": "active_users",
+  "source": "views/active_users.sql",
+  "file_prefix": "active_users",
+  "files": [
+    "active_users_gen.go"
+  ],
+  "comment": "Non-deleted users.",
+  "indexes": [],
+  "pk": {
+    "kind": "none"
+  },
+  "features": {
+    "soft_delete": null,
+    "cache": null,
+    "events": null,
+    "tenancy": null
+  },
+  "columns": [
+    {
+      "name": "id",
+      "go_field": "ID",
+      "go_type": "uuid.UUID",
+      "db_type": "uuid",
+      "nullable": false,
+      "pk": false,
+      "unique": false,
+      "comparator": "comparator.ID",
+      "comment": ""
+    }
+  ],
+  "relationships": [],
+  "methods": {
+    "query": [],
+    "mutation": []
+  },
+  "filter": {
+    "type": "ActiveUserFilter",
+    "fields": []
+  },
+  "sort": {
+    "type": "ActiveUserSort",
+    "fields": []
+  }
+}

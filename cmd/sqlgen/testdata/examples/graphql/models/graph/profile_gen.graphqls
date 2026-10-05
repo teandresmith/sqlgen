@@ -1,0 +1,92 @@
+"""
+Profile corresponds to the profiles table.
+"""
+type Profile {
+  "id"
+  id: UUID!
+  "user_id"
+  userID: UUID!
+  "bio"
+  bio: String
+  "avatar_url"
+  avatarURL: String
+  "settings"
+  settings: JSON
+  "created_at"
+  createdAt: Time!
+  "one-to-one relationship with the users table."
+  users: User
+}
+
+type ProfileConnection {
+  edges:      [ProfileEdge!]!
+  pageInfo:   PageInfo!
+  totalCount: Int!
+}
+
+type ProfileEdge {
+  node:   Profile!
+  cursor: String!
+}
+
+type ProfileListResult {
+  items:      [Profile!]!
+  totalCount: Int!
+  offset:     Int!
+  limit:      Int!
+  hasMore:    Boolean!
+}
+
+input ProfileFilter {
+  userID: IDComparator
+  bio: NullableStringComparator
+  avatarURL: NullableStringComparator
+  settings: NullableJSONComparator
+  createdAt: TimeComparator
+  and: [ProfileFilter!]
+  or:  [ProfileFilter!]
+}
+
+enum ProfileSortField {
+  ID
+  USER_ID
+  BIO
+  AVATAR_URL
+  SETTINGS
+  CREATED_AT
+}
+
+input ProfileSort {
+  field:     ProfileSortField!
+  direction: SortDirection!
+}
+input CreateProfileInput {
+  userID: UUID!
+  bio: String
+  avatarURL: String
+  settings: JSON
+  createdAt: Time!
+}
+input UpdateProfileInput {
+  userID: UUID
+  bio: String
+  avatarURL: String
+  settings: JSON
+  createdAt: Time
+}
+
+extend type Query {
+  profile(id: UUID!): Profile
+  "Cursor-paginated; ordering is driven by cursor_keys to preserve keyset semantics — pass `sort` to profileList instead."
+  profiles(filter: ProfileFilter, first: Int, after: String, last: Int, before: String): ProfileConnection!
+  profileList(filter: ProfileFilter, sort: [ProfileSort!], limit: Int, offset: Int): ProfileListResult!
+}
+
+extend type Mutation {
+  createProfile(input: CreateProfileInput!): Profile!
+  createProfiles(inputs: [CreateProfileInput!]!): [Profile!]!
+  updateProfile(id: UUID!, input: UpdateProfileInput!): Profile!
+  updateProfiles(filter: ProfileFilter!, input: UpdateProfileInput!): [Profile!]!
+  upsertProfile(input: CreateProfileInput!): Profile!
+  deleteProfile(id: UUID!): Boolean!
+}

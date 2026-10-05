@@ -1,0 +1,858 @@
+{
+  "kind": "table",
+  "name": "User",
+  "table": "users",
+  "schema": "public",
+  "file_prefix": "user",
+  "files": [
+    "models_gen.go"
+  ],
+  "comment": "",
+  "indexes": [
+    {
+      "name": "users_email_key",
+      "columns": [
+        "email"
+      ],
+      "unique": true,
+      "method": "btree"
+    },
+    {
+      "name": "users_pkey",
+      "columns": [
+        "id"
+      ],
+      "unique": true,
+      "method": "btree"
+    }
+  ],
+  "pk": {
+    "kind": "single",
+    "columns": [
+      {
+        "name": "id",
+        "go_field": "ID",
+        "go_type": "uuid.UUID"
+      }
+    ]
+  },
+  "features": {
+    "soft_delete": {
+      "column": "deleted_at",
+      "type": "timestamp"
+    },
+    "cache": {
+      "ttl_seconds": 3600,
+      "hydration": "eager",
+      "key_pattern": "sqlgen:user:{id}",
+      "invalidates_on": [
+        "Create",
+        "Update",
+        "Delete",
+        "SoftDelete",
+        "Restore",
+        "Increment"
+      ]
+    },
+    "events": {
+      "enabled": true,
+      "types": [
+        "UserCreated",
+        "UserDeleted",
+        "UserRestored",
+        "UserSoftDeleted",
+        "UserUpdated"
+      ],
+      "payload_shape": "models.UserEvent"
+    },
+    "tenancy": null,
+    "audit_columns": [
+      "updated_at"
+    ]
+  },
+  "columns": [
+    {
+      "name": "id",
+      "go_field": "ID",
+      "go_type": "uuid.UUID",
+      "db_type": "uuid",
+      "nullable": false,
+      "pk": true,
+      "unique": false,
+      "default": "gen_random_uuid()",
+      "default_kind": "function",
+      "comparator": "comparator.ID",
+      "comment": ""
+    },
+    {
+      "name": "email",
+      "go_field": "Email",
+      "go_type": "string",
+      "db_type": "text",
+      "nullable": false,
+      "pk": false,
+      "unique": true,
+      "comparator": "comparator.String",
+      "comment": ""
+    },
+    {
+      "name": "name",
+      "go_field": "Name",
+      "go_type": "string",
+      "db_type": "text",
+      "nullable": false,
+      "pk": false,
+      "unique": false,
+      "comparator": "comparator.String",
+      "comment": ""
+    },
+    {
+      "name": "metadata",
+      "go_field": "Metadata",
+      "go_type": "types.JSON",
+      "db_type": "jsonb",
+      "nullable": true,
+      "pk": false,
+      "unique": false,
+      "comparator": "comparator.NullableJSONB",
+      "comment": ""
+    },
+    {
+      "name": "is_active",
+      "go_field": "IsActive",
+      "go_type": "bool",
+      "db_type": "boolean",
+      "nullable": false,
+      "pk": false,
+      "unique": false,
+      "default": "true",
+      "default_kind": "literal",
+      "comparator": "comparator.Bool",
+      "comment": ""
+    },
+    {
+      "name": "password_hash",
+      "go_field": "PasswordHash",
+      "go_type": "string",
+      "db_type": "text",
+      "nullable": false,
+      "pk": false,
+      "unique": false,
+      "default": "''",
+      "default_kind": "literal",
+      "comparator": "comparator.String",
+      "comment": "",
+      "access": "internal",
+      "redacted": true
+    },
+    {
+      "name": "new_password",
+      "go_field": "NewPassword",
+      "go_type": "*string",
+      "db_type": "text",
+      "nullable": true,
+      "pk": false,
+      "unique": false,
+      "comparator": "comparator.NullableString",
+      "comment": "",
+      "access": "write_only",
+      "redacted": true
+    },
+    {
+      "name": "last_login_at",
+      "go_field": "LastLoginAt",
+      "go_type": "*time.Time",
+      "db_type": "timestamptz",
+      "nullable": true,
+      "pk": false,
+      "unique": false,
+      "comparator": "comparator.NullableTime",
+      "comment": "",
+      "access": "read_only"
+    },
+    {
+      "name": "internal_score",
+      "go_field": "InternalScore",
+      "go_type": "*int64",
+      "db_type": "bigint",
+      "nullable": true,
+      "pk": false,
+      "unique": false,
+      "comparator": "comparator.NullableNumber[int64]",
+      "comment": "",
+      "access": "hidden"
+    },
+    {
+      "name": "ip_addr",
+      "go_field": "ClientIP",
+      "go_type": "*string",
+      "db_type": "text",
+      "nullable": true,
+      "pk": false,
+      "unique": false,
+      "comparator": "comparator.NullableString",
+      "comment": ""
+    },
+    {
+      "name": "created_at",
+      "go_field": "CreatedAt",
+      "go_type": "time.Time",
+      "db_type": "timestamptz",
+      "nullable": false,
+      "pk": false,
+      "unique": false,
+      "default": "current_timestamp",
+      "default_kind": "function",
+      "comparator": "comparator.Time",
+      "comment": ""
+    },
+    {
+      "name": "updated_at",
+      "go_field": "UpdatedAt",
+      "go_type": "*time.Time",
+      "db_type": "timestamptz",
+      "nullable": true,
+      "pk": false,
+      "unique": false,
+      "default": "current_timestamp",
+      "default_kind": "function",
+      "comparator": "comparator.NullableTime",
+      "comment": ""
+    },
+    {
+      "name": "deleted_at",
+      "go_field": "DeletedAt",
+      "go_type": "*time.Time",
+      "db_type": "timestamptz",
+      "nullable": true,
+      "pk": false,
+      "unique": false,
+      "comparator": "comparator.NullableTime",
+      "comment": ""
+    }
+  ],
+  "relationships": [
+    {
+      "name": "Badge",
+      "kind": "o2o",
+      "target_entity": "UserBadge",
+      "fk": {
+        "table": "user_badges",
+        "schema": "public",
+        "column": "user_id"
+      }
+    },
+    {
+      "name": "categories",
+      "kind": "m2m",
+      "target_entity": "Category",
+      "junction": {
+        "table": "user_categories",
+        "schema": "public",
+        "local_fk": "user_id",
+        "target_fk": "category_id"
+      }
+    },
+    {
+      "name": "events",
+      "kind": "o2m",
+      "target_entity": "Event",
+      "fk": {
+        "table": "events",
+        "schema": "public",
+        "column": "user_id"
+      }
+    },
+    {
+      "name": "orders",
+      "kind": "o2m",
+      "target_entity": "Order",
+      "fk": {
+        "table": "orders",
+        "schema": "public",
+        "column": "user_id"
+      }
+    },
+    {
+      "name": "user_sessions",
+      "kind": "o2m",
+      "target_entity": "UserSession",
+      "fk": {
+        "table": "user_sessions",
+        "schema": "public",
+        "column": "user_id"
+      }
+    }
+  ],
+  "methods": {
+    "query": [
+      {
+        "name": "Get",
+        "params": [
+          {
+            "name": "id",
+            "type": "uuid.UUID"
+          }
+        ],
+        "returns": "*User",
+        "errors": [
+          "ErrNotFound"
+        ],
+        "notes": "Delegates to GetMany with a primary-key filter; returns ErrNotFound when no row matches.",
+        "sql_bodies": {
+          "postgres": "SELECT \"created_at\", \"deleted_at\", \"email\", \"id\", \"internal_score\", \"ip_addr\", \"is_active\", \"last_login_at\", \"metadata\", \"name\", \"new_password\", \"password_hash\", \"updated_at\" FROM \"public\".\"users\" WHERE \"id\" = $1 AND \"deleted_at\" IS NULL LIMIT 1"
+        }
+      },
+      {
+        "name": "GetMany",
+        "params": [
+          {
+            "name": "input",
+            "type": "*GetUsersInput"
+          }
+        ],
+        "returns": "[]*User",
+        "errors": [],
+        "sql_bodies": {
+          "postgres": "SELECT \"created_at\", \"deleted_at\", \"email\", \"id\", \"internal_score\", \"ip_addr\", \"is_active\", \"last_login_at\", \"metadata\", \"name\", \"new_password\", \"password_hash\", \"updated_at\" FROM \"public\".\"users\" WHERE <filter> AND \"deleted_at\" IS NULL ORDER BY <sort> LIMIT <limit>"
+        }
+      },
+      {
+        "name": "Count",
+        "params": [
+          {
+            "name": "filter",
+            "type": "*UserFilter"
+          }
+        ],
+        "returns": "int64",
+        "errors": [],
+        "sql_bodies": {
+          "postgres": "SELECT COUNT(*) FROM \"public\".\"users\" WHERE <filter> AND \"deleted_at\" IS NULL"
+        }
+      },
+      {
+        "name": "Exists",
+        "params": [
+          {
+            "name": "id",
+            "type": "uuid.UUID"
+          }
+        ],
+        "returns": "bool",
+        "errors": [],
+        "sql_bodies": {
+          "postgres": "SELECT EXISTS(SELECT 1 FROM \"public\".\"users\" WHERE \"id\" = $1 AND \"deleted_at\" IS NULL)"
+        }
+      },
+      {
+        "name": "ExistsWhere",
+        "params": [
+          {
+            "name": "filter",
+            "type": "*UserFilter"
+          }
+        ],
+        "returns": "bool",
+        "errors": [],
+        "sql_bodies": {
+          "postgres": "SELECT EXISTS(SELECT 1 FROM \"public\".\"users\" WHERE <filter> AND \"deleted_at\" IS NULL)"
+        }
+      },
+      {
+        "name": "Paginate",
+        "params": [
+          {
+            "name": "input",
+            "type": "PaginateInput[UserFilter]"
+          }
+        ],
+        "returns": "*PaginateResult[User]",
+        "errors": [],
+        "notes": "Offset pagination. Issues no statement of its own — composes Count and GetMany, so no sql_bodies entry."
+      },
+      {
+        "name": "Connection",
+        "params": [
+          {
+            "name": "input",
+            "type": "ConnectionInput[UserFilter]"
+          }
+        ],
+        "returns": "*Connection[User]",
+        "errors": [
+          "ErrInvalidCursor"
+        ],
+        "notes": "Relay cursor pagination. Issues no statement of its own — composes Count and GetMany, so no sql_bodies entry."
+      },
+      {
+        "name": "Stream",
+        "params": [
+          {
+            "name": "input",
+            "type": "*StreamUsersInput"
+          }
+        ],
+        "returns": "iter.Seq2[*User, error]",
+        "errors": [],
+        "notes": "Scalars only — no relationship loading, cache always bypassed. Errors surface through the iterator's second value.",
+        "sql_bodies": {
+          "postgres": "SELECT \"created_at\", \"deleted_at\", \"email\", \"id\", \"internal_score\", \"ip_addr\", \"is_active\", \"last_login_at\", \"metadata\", \"name\", \"new_password\", \"password_hash\", \"updated_at\" FROM \"public\".\"users\" WHERE <filter> AND \"deleted_at\" IS NULL ORDER BY <sort>"
+        }
+      }
+    ],
+    "mutation": [
+      {
+        "name": "Create",
+        "params": [
+          {
+            "name": "input",
+            "type": "*CreateUserInput"
+          }
+        ],
+        "returns": "*User",
+        "errors": [
+          "ErrNilInput",
+          "ErrConstraintViolation"
+        ],
+        "sql_bodies": {
+          "postgres": "INSERT INTO \"public\".\"users\" (<columns>) VALUES (<values>) RETURNING \"id\""
+        }
+      },
+      {
+        "name": "CreateMany",
+        "params": [
+          {
+            "name": "inputs",
+            "type": "[]*CreateUserInput"
+          }
+        ],
+        "returns": "[]*User",
+        "errors": [
+          "ErrNilInput",
+          "ErrConstraintViolation"
+        ],
+        "notes": "Batched in generation.batch_size chunks. Earlier chunks are not rolled back on a later failure — wrap in a transaction for atomicity.",
+        "sql_bodies": {
+          "postgres": "INSERT INTO \"public\".\"users\" (<columns>) VALUES <values> RETURNING \"id\""
+        }
+      },
+      {
+        "name": "Upsert",
+        "params": [
+          {
+            "name": "input",
+            "type": "*CreateUserInput"
+          },
+          {
+            "name": "target",
+            "type": "UserConflictTarget"
+          }
+        ],
+        "returns": "*User",
+        "errors": [
+          "ErrNilInput",
+          "ErrConstraintViolation"
+        ],
+        "notes": "One method over the generated UserConflictTarget enum — the target argument selects the conflict columns at call time.",
+        "sql_bodies": {
+          "postgres": "INSERT INTO \"public\".\"users\" (<columns>) VALUES (<values>) ON CONFLICT (<conflict_target>) DO UPDATE SET <excluded> RETURNING \"id\""
+        }
+      },
+      {
+        "name": "UpsertMany",
+        "params": [
+          {
+            "name": "inputs",
+            "type": "[]*CreateUserInput"
+          },
+          {
+            "name": "target",
+            "type": "UserConflictTarget"
+          }
+        ],
+        "returns": "[]*User",
+        "errors": [
+          "ErrNilInput",
+          "ErrConstraintViolation"
+        ],
+        "notes": "Batched in generation.batch_size chunks over the same UserConflictTarget enum Upsert takes. Inputs resolving to one target are deduped before the statement is built, last occurrence wins. Earlier chunks are not rolled back on a later failure — wrap in a transaction for atomicity.",
+        "sql_bodies": {
+          "postgres": "INSERT INTO \"public\".\"users\" (<columns>) VALUES <values> ON CONFLICT (<conflict_target>) DO UPDATE SET <excluded>"
+        }
+      },
+      {
+        "name": "Update",
+        "params": [
+          {
+            "name": "id",
+            "type": "uuid.UUID"
+          },
+          {
+            "name": "input",
+            "type": "*UpdateUserInput"
+          }
+        ],
+        "returns": "*User",
+        "errors": [
+          "ErrNotFound",
+          "ErrNilInput",
+          "ErrConstraintViolation"
+        ],
+        "notes": "Only fields where IsSet() reports true reach the SET clause; an input with none set issues no UPDATE and returns the row unchanged.",
+        "sql_bodies": {
+          "postgres": "UPDATE \"public\".\"users\" SET <set> WHERE \"id\" = $1"
+        }
+      },
+      {
+        "name": "UpdateMany",
+        "params": [
+          {
+            "name": "items",
+            "type": "[]UpdateUserItem"
+          }
+        ],
+        "returns": "[]*User",
+        "errors": [
+          "ErrNilInput",
+          "ErrConstraintViolation"
+        ],
+        "notes": "Issues one statement per item. Batched like CreateMany — earlier items are not rolled back on a later failure. A primary key that does not exist is silently skipped, even under strict_updates.",
+        "sql_bodies": {
+          "postgres": "UPDATE \"public\".\"users\" SET <set> WHERE \"id\" = $1"
+        }
+      },
+      {
+        "name": "UpdateWhere",
+        "params": [
+          {
+            "name": "filter",
+            "type": "*UserFilter"
+          },
+          {
+            "name": "input",
+            "type": "*UpdateUserInput"
+          }
+        ],
+        "returns": "[]*User",
+        "errors": [
+          "ErrNilInput",
+          "ErrEmptyFilter",
+          "ErrConstraintViolation"
+        ],
+        "notes": "Idempotent — returns an empty slice when no row matches. ErrEmptyFilter when the filter produces no conditions.",
+        "sql_bodies": {
+          "postgres": "UPDATE \"public\".\"users\" SET <set> WHERE <filter> RETURNING \"id\""
+        }
+      },
+      {
+        "name": "Increment",
+        "params": [
+          {
+            "name": "id",
+            "type": "uuid.UUID"
+          },
+          {
+            "name": "input",
+            "type": "IncrementInput[UserIncrementColumn]"
+          }
+        ],
+        "returns": "",
+        "errors": [
+          "ErrNotFound"
+        ],
+        "notes": "Atomic single-column arithmetic. The column is restricted to the generated UserIncrementColumn enum — numeric, and identifying nothing: neither PK, FK, nor the tenant column. A negative amount decrements.",
+        "sql_bodies": {
+          "postgres": "UPDATE \"public\".\"users\" SET <column> = <column> + $1 WHERE \"id\" = $2"
+        }
+      },
+      {
+        "name": "SoftDelete",
+        "params": [
+          {
+            "name": "id",
+            "type": "uuid.UUID"
+          }
+        ],
+        "returns": "*User",
+        "errors": [],
+        "notes": "Idempotent — a primary key that does not exist is not an error.",
+        "sql_bodies": {
+          "postgres": "UPDATE \"public\".\"users\" SET \"deleted_at\" = CURRENT_TIMESTAMP WHERE \"id\" = $1"
+        }
+      },
+      {
+        "name": "SoftDeleteMany",
+        "params": [
+          {
+            "name": "ids",
+            "type": "[]uuid.UUID"
+          }
+        ],
+        "returns": "[]*User",
+        "errors": [],
+        "notes": "Idempotent — primary keys that do not exist are not an error.",
+        "sql_bodies": {
+          "postgres": "UPDATE \"public\".\"users\" SET \"deleted_at\" = CURRENT_TIMESTAMP WHERE \"id\" IN (<ids>)"
+        }
+      },
+      {
+        "name": "SoftDeleteWhere",
+        "params": [
+          {
+            "name": "filter",
+            "type": "*UserFilter"
+          }
+        ],
+        "returns": "[]*User",
+        "errors": [
+          "ErrEmptyFilter"
+        ],
+        "notes": "Idempotent — no match is not an error. ErrEmptyFilter when the filter produces no conditions.",
+        "sql_bodies": {
+          "postgres": "UPDATE \"public\".\"users\" SET \"deleted_at\" = CURRENT_TIMESTAMP WHERE <filter> AND \"deleted_at\" IS NULL RETURNING \"id\""
+        }
+      },
+      {
+        "name": "Restore",
+        "params": [
+          {
+            "name": "id",
+            "type": "uuid.UUID"
+          }
+        ],
+        "returns": "*User",
+        "errors": [],
+        "notes": "Idempotent — a primary key that does not exist is not an error.",
+        "sql_bodies": {
+          "postgres": "UPDATE \"public\".\"users\" SET \"deleted_at\" = $1 WHERE \"id\" = $2"
+        }
+      },
+      {
+        "name": "RestoreMany",
+        "params": [
+          {
+            "name": "ids",
+            "type": "[]uuid.UUID"
+          }
+        ],
+        "returns": "[]*User",
+        "errors": [],
+        "notes": "Idempotent — primary keys that do not exist are not an error.",
+        "sql_bodies": {
+          "postgres": "UPDATE \"public\".\"users\" SET \"deleted_at\" = $1 WHERE \"id\" IN (<ids>)"
+        }
+      },
+      {
+        "name": "RestoreWhere",
+        "params": [
+          {
+            "name": "filter",
+            "type": "*UserFilter"
+          }
+        ],
+        "returns": "[]*User",
+        "errors": [
+          "ErrEmptyFilter"
+        ],
+        "notes": "Idempotent — no match is not an error. ErrEmptyFilter when the filter produces no conditions.",
+        "sql_bodies": {
+          "postgres": "UPDATE \"public\".\"users\" SET \"deleted_at\" = $1 WHERE <filter> AND \"deleted_at\" IS NOT NULL RETURNING \"id\""
+        }
+      },
+      {
+        "name": "HardDelete",
+        "params": [
+          {
+            "name": "id",
+            "type": "uuid.UUID"
+          }
+        ],
+        "returns": "",
+        "errors": [],
+        "notes": "Idempotent — a primary key that does not exist is not an error.",
+        "sql_bodies": {
+          "postgres": "DELETE FROM \"public\".\"users\" WHERE \"id\" = $1"
+        }
+      },
+      {
+        "name": "HardDeleteMany",
+        "params": [
+          {
+            "name": "ids",
+            "type": "[]uuid.UUID"
+          }
+        ],
+        "returns": "",
+        "errors": [],
+        "notes": "Idempotent — primary keys that do not exist are not an error.",
+        "sql_bodies": {
+          "postgres": "DELETE FROM \"public\".\"users\" WHERE \"id\" IN (<ids>)"
+        }
+      },
+      {
+        "name": "HardDeleteWhere",
+        "params": [
+          {
+            "name": "filter",
+            "type": "*UserFilter"
+          }
+        ],
+        "returns": "",
+        "errors": [
+          "ErrEmptyFilter"
+        ],
+        "notes": "Idempotent — no match is not an error. ErrEmptyFilter when the filter produces no conditions.",
+        "sql_bodies": {
+          "postgres": "DELETE FROM \"public\".\"users\" WHERE <filter> RETURNING \"id\""
+        }
+      },
+      {
+        "name": "CreateWithRelated",
+        "params": [
+          {
+            "name": "input",
+            "type": "*CreateUserWithRelatedInput"
+          }
+        ],
+        "returns": "*User",
+        "errors": [
+          "ErrNilInput",
+          "ErrNotFound",
+          "ErrAlreadyRelated",
+          "ErrNestedVerbConflict",
+          "ErrConstraintViolation"
+        ],
+        "notes": "Writes the parent and its nested rows in one transaction — a SAVEPOINT when ctx already holds one. Issues no statement of its own: it composes Create and, per eligible relationship (Badge, Categories, Events, Orders, UserSessions), the target's and junction's own client methods, so no sql_bodies entry. Each inner call fires its own hooks, events and cache invalidation under its own op; the nested method has none."
+      },
+      {
+        "name": "UpdateWithRelated",
+        "params": [
+          {
+            "name": "id",
+            "type": "uuid.UUID"
+          },
+          {
+            "name": "input",
+            "type": "*UpdateUserWithRelatedInput"
+          }
+        ],
+        "returns": "*User",
+        "errors": [
+          "ErrNilInput",
+          "ErrNotFound",
+          "ErrAlreadyRelated",
+          "ErrNestedVerbConflict",
+          "ErrConstraintViolation"
+        ],
+        "notes": "Writes the parent and its nested rows in one transaction — a SAVEPOINT when ctx already holds one. Issues no statement of its own: it composes Update and, per eligible relationship (Badge, Categories, Events, Orders, UserSessions), the target's and junction's own client methods, so no sql_bodies entry. Each inner call fires its own hooks, events and cache invalidation under its own op; the nested method has none."
+      },
+      {
+        "name": "UpsertWithRelated",
+        "params": [
+          {
+            "name": "input",
+            "type": "*UpsertUserWithRelatedInput"
+          },
+          {
+            "name": "target",
+            "type": "UserConflictTarget"
+          }
+        ],
+        "returns": "*User",
+        "errors": [
+          "ErrNilInput",
+          "ErrNotFound",
+          "ErrAlreadyRelated",
+          "ErrNestedVerbConflict",
+          "ErrConstraintViolation"
+        ],
+        "notes": "Writes the parent and its nested rows in one transaction — a SAVEPOINT when ctx already holds one. Issues no statement of its own: it composes Upsert and, per eligible relationship (Badge, Categories, Events, Orders, UserSessions), the target's and junction's own client methods, so no sql_bodies entry. Each inner call fires its own hooks, events and cache invalidation under its own op; the nested method has none."
+      }
+    ]
+  },
+  "filter": {
+    "type": "UserFilter",
+    "fields": [
+      {
+        "name": "ClientIP",
+        "type": "*comparator.NullableString"
+      },
+      {
+        "name": "CreatedAt",
+        "type": "*comparator.Time"
+      },
+      {
+        "name": "DeletedAt",
+        "type": "*comparator.NullableTime"
+      },
+      {
+        "name": "Email",
+        "type": "*comparator.String"
+      },
+      {
+        "name": "ID",
+        "type": "*comparator.ID"
+      },
+      {
+        "name": "InternalScore",
+        "type": "*comparator.NullableNumber[int64]"
+      },
+      {
+        "name": "IsActive",
+        "type": "*comparator.Bool"
+      },
+      {
+        "name": "LastLoginAt",
+        "type": "*comparator.NullableTime"
+      },
+      {
+        "name": "Metadata",
+        "type": "*comparator.NullableJSONB"
+      },
+      {
+        "name": "Name",
+        "type": "*comparator.String"
+      },
+      {
+        "name": "NewPassword",
+        "type": "*comparator.NullableString"
+      },
+      {
+        "name": "PasswordHash",
+        "type": "*comparator.String"
+      },
+      {
+        "name": "UpdatedAt",
+        "type": "*comparator.NullableTime"
+      },
+      {
+        "name": "And",
+        "type": "[]*UserFilter"
+      },
+      {
+        "name": "Or",
+        "type": "[]*UserFilter"
+      }
+    ]
+  },
+  "sort": {
+    "type": "UserSort",
+    "fields": [
+      "ClientIP",
+      "CreatedAt",
+      "DeletedAt",
+      "Email",
+      "ID",
+      "InternalScore",
+      "IsActive",
+      "LastLoginAt",
+      "Metadata",
+      "Name",
+      "NewPassword",
+      "PasswordHash",
+      "UpdatedAt"
+    ]
+  },
+  "examples": {}
+}

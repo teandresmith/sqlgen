@@ -1,0 +1,59 @@
+"""
+CategoryPriceTotal corresponds to the category_price_totals view.
+"""
+type CategoryPriceTotal {
+  "category_id"
+  categoryID: Int!
+  "product_count"
+  productCount: Int!
+  "total_price"
+  totalPrice: NullDecimal
+  "max_price"
+  maxPrice: NullDecimal
+}
+
+type CategoryPriceTotalConnection {
+  edges:      [CategoryPriceTotalEdge!]!
+  pageInfo:   PageInfo!
+  totalCount: Int!
+}
+
+type CategoryPriceTotalEdge {
+  node:   CategoryPriceTotal!
+  cursor: String!
+}
+
+type CategoryPriceTotalListResult {
+  items:      [CategoryPriceTotal!]!
+  totalCount: Int!
+  offset:     Int!
+  limit:      Int!
+  hasMore:    Boolean!
+}
+
+input CategoryPriceTotalFilter {
+  productCount: NumericComparator
+  totalPrice: NullableDecimalComparator
+  maxPrice: NullableDecimalComparator
+  and: [CategoryPriceTotalFilter!]
+  or:  [CategoryPriceTotalFilter!]
+}
+
+enum CategoryPriceTotalSortField {
+  CATEGORY_ID
+  PRODUCT_COUNT
+  TOTAL_PRICE
+  MAX_PRICE
+}
+
+input CategoryPriceTotalSort {
+  field:     CategoryPriceTotalSortField!
+  direction: SortDirection!
+}
+
+extend type Query {
+  categoryPriceTotal(categoryID: Int!): CategoryPriceTotal
+  "Cursor-paginated; ordering is driven by cursor_keys to preserve keyset semantics — pass `sort` to categoryPriceTotalList instead."
+  categoryPriceTotals(filter: CategoryPriceTotalFilter, first: Int, after: String, last: Int, before: String): CategoryPriceTotalConnection!
+  categoryPriceTotalList(filter: CategoryPriceTotalFilter, sort: [CategoryPriceTotalSort!], limit: Int, offset: Int): CategoryPriceTotalListResult!
+}

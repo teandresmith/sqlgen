@@ -1,0 +1,17 @@
+{{ marker }}
+
+# Data-access surface ({{ .Package }})
+
+The generated entities, methods, and conventions for this package are described by the
+sqlgen manifest. Start here: [{{ .IndexPath }}]({{ .IndexPath }}).
+
+- **Dialect:** {{ .Dialect }}
+
+## Entities
+
+{{ range .Entities }}- **{{ .Name }}** (`{{ .Table }}`, {{ .Kind }}) — [{{ .Path }}]({{ .Path }})
+{{ end }}
+## Conventions
+
+Package-wide error sentinels, pagination, comparators, soft-delete, CallOptions, and the
+omittable reference: [{{ .ConvPath }}]({{ .ConvPath }}).

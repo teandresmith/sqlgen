@@ -1,0 +1,288 @@
+# MaskedLabel
+
+- **Table:** `masked_labels` (schema `public`)
+- **Kind:** table
+
+## Files
+
+- `models_gen.go`
+
+## Primary key
+
+- Kind: single
+- `id` — ID `uuid.UUID`
+
+## Columns
+
+| Name | Go field | Go type | DB type | Null | PK | Unique | Default | Comparator | Comment |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| `id` | ID | `uuid.UUID` | `uuid` |  | yes |  | `gen_random_uuid()` | `comparator.ID` |  |
+| `label` | Label | `string` | `text` |  |  |  |  | `comparator.String` |  |
+
+## Indexes
+
+| Name | Columns | Unique | Method | Where |
+| --- | --- | --- | --- | --- |
+| `masked_labels_pkey` | id | yes | btree |  |
+
+## Query methods
+
+### Get
+
+- Params: `id uuid.UUID`
+- Returns: `*MaskedLabel`, `error`
+- Errors: `ErrNotFound`
+- Notes: Delegates to GetMany with a primary-key filter; returns ErrNotFound when no row matches.
+
+Generated SQL:
+
+postgres:
+
+```sql
+SELECT "id", "label" FROM "public"."masked_labels" WHERE "id" = $1 LIMIT 1
+```
+
+### GetMany
+
+- Params: `input *GetMaskedLabelsInput`
+- Returns: `[]*MaskedLabel`, `error`
+
+Generated SQL:
+
+postgres:
+
+```sql
+SELECT "id", "label" FROM "public"."masked_labels" WHERE <filter> ORDER BY <sort> LIMIT <limit>
+```
+
+### Count
+
+- Params: `filter *MaskedLabelFilter`
+- Returns: `int64`, `error`
+
+Generated SQL:
+
+postgres:
+
+```sql
+SELECT COUNT(*) FROM "public"."masked_labels" WHERE <filter>
+```
+
+### Exists
+
+- Params: `id uuid.UUID`
+- Returns: `bool`, `error`
+
+Generated SQL:
+
+postgres:
+
+```sql
+SELECT EXISTS(SELECT 1 FROM "public"."masked_labels" WHERE "id" = $1)
+```
+
+### ExistsWhere
+
+- Params: `filter *MaskedLabelFilter`
+- Returns: `bool`, `error`
+
+Generated SQL:
+
+postgres:
+
+```sql
+SELECT EXISTS(SELECT 1 FROM "public"."masked_labels" WHERE <filter>)
+```
+
+### Paginate
+
+- Params: `input PaginateInput[MaskedLabelFilter]`
+- Returns: `*PaginateResult[MaskedLabel]`, `error`
+- Notes: Offset pagination. Issues no statement of its own — composes Count and GetMany, so no sql_bodies entry.
+
+### Connection
+
+- Params: `input ConnectionInput[MaskedLabelFilter]`
+- Returns: `*Connection[MaskedLabel]`, `error`
+- Errors: `ErrInvalidCursor`
+- Notes: Relay cursor pagination. Issues no statement of its own — composes Count and GetMany, so no sql_bodies entry.
+
+### Stream
+
+- Params: `input *StreamMaskedLabelsInput`
+- Returns: `iter.Seq2[*MaskedLabel, error]`, `error`
+- Notes: Scalars only — no relationship loading, cache always bypassed. Errors surface through the iterator's second value.
+
+Generated SQL:
+
+postgres:
+
+```sql
+SELECT "id", "label" FROM "public"."masked_labels" WHERE <filter> ORDER BY <sort>
+```
+
+## Mutation methods
+
+### Create
+
+- Params: `input *CreateMaskedLabelInput`
+- Returns: `*MaskedLabel`, `error`
+- Errors: `ErrNilInput`, `ErrConstraintViolation`
+
+Generated SQL:
+
+postgres:
+
+```sql
+INSERT INTO "public"."masked_labels" (<columns>) VALUES (<values>) RETURNING "id"
+```
+
+### CreateMany
+
+- Params: `inputs []*CreateMaskedLabelInput`
+- Returns: `[]*MaskedLabel`, `error`
+- Errors: `ErrNilInput`, `ErrConstraintViolation`
+- Notes: Batched in generation.batch_size chunks. Earlier chunks are not rolled back on a later failure — wrap in a transaction for atomicity.
+
+Generated SQL:
+
+postgres:
+
+```sql
+INSERT INTO "public"."masked_labels" (<columns>) VALUES <values> RETURNING "id"
+```
+
+### Upsert
+
+- Params: `input *CreateMaskedLabelInput`, `target MaskedLabelConflictTarget`
+- Returns: `*MaskedLabel`, `error`
+- Errors: `ErrNilInput`, `ErrConstraintViolation`
+- Notes: One method over the generated MaskedLabelConflictTarget enum — the target argument selects the conflict columns at call time.
+
+Generated SQL:
+
+postgres:
+
+```sql
+INSERT INTO "public"."masked_labels" (<columns>) VALUES (<values>) ON CONFLICT (<conflict_target>) DO UPDATE SET <excluded> RETURNING "id"
+```
+
+### UpsertMany
+
+- Params: `inputs []*CreateMaskedLabelInput`, `target MaskedLabelConflictTarget`
+- Returns: `[]*MaskedLabel`, `error`
+- Errors: `ErrNilInput`, `ErrConstraintViolation`
+- Notes: Batched in generation.batch_size chunks over the same MaskedLabelConflictTarget enum Upsert takes. Inputs resolving to one target are deduped before the statement is built, last occurrence wins. Earlier chunks are not rolled back on a later failure — wrap in a transaction for atomicity.
+
+Generated SQL:
+
+postgres:
+
+```sql
+INSERT INTO "public"."masked_labels" (<columns>) VALUES <values> ON CONFLICT (<conflict_target>) DO UPDATE SET <excluded>
+```
+
+### Update
+
+- Params: `id uuid.UUID`, `input *UpdateMaskedLabelInput`
+- Returns: `*MaskedLabel`, `error`
+- Errors: `ErrNotFound`, `ErrNilInput`, `ErrConstraintViolation`
+- Notes: Only fields where IsSet() reports true reach the SET clause; an input with none set issues no UPDATE and returns the row unchanged.
+
+Generated SQL:
+
+postgres:
+
+```sql
+UPDATE "public"."masked_labels" SET <set> WHERE "id" = $1
+```
+
+### UpdateMany
+
+- Params: `items []UpdateMaskedLabelItem`
+- Returns: `[]*MaskedLabel`, `error`
+- Errors: `ErrNilInput`, `ErrConstraintViolation`
+- Notes: Issues one statement per item. Batched like CreateMany — earlier items are not rolled back on a later failure. A primary key that does not exist is silently skipped, even under strict_updates.
+
+Generated SQL:
+
+postgres:
+
+```sql
+UPDATE "public"."masked_labels" SET <set> WHERE "id" = $1
+```
+
+### UpdateWhere
+
+- Params: `filter *MaskedLabelFilter`, `input *UpdateMaskedLabelInput`
+- Returns: `[]*MaskedLabel`, `error`
+- Errors: `ErrNilInput`, `ErrEmptyFilter`, `ErrConstraintViolation`
+- Notes: Idempotent — returns an empty slice when no row matches. ErrEmptyFilter when the filter produces no conditions.
+
+Generated SQL:
+
+postgres:
+
+```sql
+UPDATE "public"."masked_labels" SET <set> WHERE <filter> RETURNING "id"
+```
+
+### HardDelete
+
+- Params: `id uuid.UUID`
+- Returns: `error`
+- Notes: Idempotent — a primary key that does not exist is not an error.
+
+Generated SQL:
+
+postgres:
+
+```sql
+DELETE FROM "public"."masked_labels" WHERE "id" = $1
+```
+
+### HardDeleteMany
+
+- Params: `ids []uuid.UUID`
+- Returns: `error`
+- Notes: Idempotent — primary keys that do not exist are not an error.
+
+Generated SQL:
+
+postgres:
+
+```sql
+DELETE FROM "public"."masked_labels" WHERE "id" IN (<ids>)
+```
+
+### HardDeleteWhere
+
+- Params: `filter *MaskedLabelFilter`
+- Returns: `error`
+- Errors: `ErrEmptyFilter`
+- Notes: Idempotent — no match is not an error. ErrEmptyFilter when the filter produces no conditions.
+
+Generated SQL:
+
+postgres:
+
+```sql
+DELETE FROM "public"."masked_labels" WHERE <filter> RETURNING "id"
+```
+
+## Filter
+
+Type `MaskedLabelFilter`.
+
+| Field | Type |
+| --- | --- |
+| ID | `*comparator.ID` |
+| Label | `*comparator.String` |
+| And | `[]*MaskedLabelFilter` |
+| Or | `[]*MaskedLabelFilter` |
+
+## Sort
+
+Type `MaskedLabelSort`.
+
+Fields: ID, Label

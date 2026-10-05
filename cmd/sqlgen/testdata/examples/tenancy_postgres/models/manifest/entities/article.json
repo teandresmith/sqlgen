@@ -1,0 +1,601 @@
+{
+  "kind": "table",
+  "name": "Article",
+  "table": "articles",
+  "schema": "public",
+  "file_prefix": "article",
+  "files": [
+    "models_gen.go"
+  ],
+  "comment": "",
+  "indexes": [
+    {
+      "name": "articles_pkey",
+      "columns": [
+        "id"
+      ],
+      "unique": true,
+      "method": "btree"
+    }
+  ],
+  "pk": {
+    "kind": "single",
+    "columns": [
+      {
+        "name": "id",
+        "go_field": "ID",
+        "go_type": "int64"
+      }
+    ]
+  },
+  "features": {
+    "soft_delete": {
+      "column": "deleted_at",
+      "type": "timestamp"
+    },
+    "cache": {
+      "ttl_seconds": 3600,
+      "hydration": "eager",
+      "key_pattern": "sqlgen:article:{id}",
+      "invalidates_on": [
+        "Create",
+        "Update",
+        "Delete",
+        "SoftDelete",
+        "Restore",
+        "Increment"
+      ]
+    },
+    "events": {
+      "enabled": true,
+      "types": [
+        "ArticleCreated",
+        "ArticleDeleted",
+        "ArticleRestored",
+        "ArticleSoftDeleted",
+        "ArticleUpdated"
+      ],
+      "payload_shape": "models.ArticleEvent"
+    },
+    "tenancy": {
+      "column": "workspace_id",
+      "mode": "auto-filter",
+      "missing_resolver_error": "tenancy.ErrMissing",
+      "mismatch_error": "tenancy.ErrMismatch"
+    }
+  },
+  "columns": [
+    {
+      "name": "id",
+      "go_field": "ID",
+      "go_type": "int64",
+      "db_type": "bigint",
+      "nullable": false,
+      "pk": true,
+      "unique": false,
+      "auto": "insert",
+      "comparator": "comparator.Number[int64]",
+      "comment": ""
+    },
+    {
+      "name": "workspace_id",
+      "go_field": "WorkspaceID",
+      "go_type": "uuid.UUID",
+      "db_type": "uuid",
+      "nullable": false,
+      "pk": false,
+      "unique": false,
+      "comparator": "comparator.ID",
+      "comment": ""
+    },
+    {
+      "name": "title",
+      "go_field": "Title",
+      "go_type": "string",
+      "db_type": "text",
+      "nullable": false,
+      "pk": false,
+      "unique": false,
+      "comparator": "comparator.String",
+      "comment": ""
+    },
+    {
+      "name": "deleted_at",
+      "go_field": "DeletedAt",
+      "go_type": "*time.Time",
+      "db_type": "timestamptz",
+      "nullable": true,
+      "pk": false,
+      "unique": false,
+      "comparator": "comparator.NullableTime",
+      "comment": ""
+    }
+  ],
+  "relationships": [],
+  "methods": {
+    "query": [
+      {
+        "name": "Get",
+        "params": [
+          {
+            "name": "id",
+            "type": "int64"
+          }
+        ],
+        "returns": "*Article",
+        "errors": [
+          "ErrNotFound",
+          "tenancy.ErrMissing"
+        ],
+        "notes": "Delegates to GetMany with a primary-key filter; returns ErrNotFound when no row matches.",
+        "sql_bodies": {
+          "postgres": "SELECT \"deleted_at\", \"id\", \"title\", \"workspace_id\" FROM \"public\".\"articles\" WHERE \"id\" = $1 AND \"deleted_at\" IS NULL LIMIT 1"
+        }
+      },
+      {
+        "name": "GetMany",
+        "params": [
+          {
+            "name": "input",
+            "type": "*GetArticlesInput"
+          }
+        ],
+        "returns": "[]*Article",
+        "errors": [
+          "tenancy.ErrMissing"
+        ],
+        "sql_bodies": {
+          "postgres": "SELECT \"deleted_at\", \"id\", \"title\", \"workspace_id\" FROM \"public\".\"articles\" WHERE <filter> AND \"deleted_at\" IS NULL ORDER BY <sort> LIMIT <limit>"
+        }
+      },
+      {
+        "name": "Count",
+        "params": [
+          {
+            "name": "filter",
+            "type": "*ArticleFilter"
+          }
+        ],
+        "returns": "int64",
+        "errors": [
+          "tenancy.ErrMissing"
+        ],
+        "sql_bodies": {
+          "postgres": "SELECT COUNT(*) FROM \"public\".\"articles\" WHERE <filter> AND \"deleted_at\" IS NULL"
+        }
+      },
+      {
+        "name": "Exists",
+        "params": [
+          {
+            "name": "id",
+            "type": "int64"
+          }
+        ],
+        "returns": "bool",
+        "errors": [
+          "tenancy.ErrMissing"
+        ],
+        "sql_bodies": {
+          "postgres": "SELECT EXISTS(SELECT 1 FROM \"public\".\"articles\" WHERE \"id\" = $1 AND \"deleted_at\" IS NULL)"
+        }
+      },
+      {
+        "name": "ExistsWhere",
+        "params": [
+          {
+            "name": "filter",
+            "type": "*ArticleFilter"
+          }
+        ],
+        "returns": "bool",
+        "errors": [
+          "tenancy.ErrMissing"
+        ],
+        "sql_bodies": {
+          "postgres": "SELECT EXISTS(SELECT 1 FROM \"public\".\"articles\" WHERE <filter> AND \"deleted_at\" IS NULL)"
+        }
+      },
+      {
+        "name": "Paginate",
+        "params": [
+          {
+            "name": "input",
+            "type": "PaginateInput[ArticleFilter]"
+          }
+        ],
+        "returns": "*PaginateResult[Article]",
+        "errors": [
+          "tenancy.ErrMissing"
+        ],
+        "notes": "Offset pagination. Issues no statement of its own — composes Count and GetMany, so no sql_bodies entry."
+      },
+      {
+        "name": "Connection",
+        "params": [
+          {
+            "name": "input",
+            "type": "ConnectionInput[ArticleFilter]"
+          }
+        ],
+        "returns": "*Connection[Article]",
+        "errors": [
+          "ErrInvalidCursor",
+          "tenancy.ErrMissing"
+        ],
+        "notes": "Relay cursor pagination. Issues no statement of its own — composes Count and GetMany, so no sql_bodies entry."
+      },
+      {
+        "name": "Stream",
+        "params": [
+          {
+            "name": "input",
+            "type": "*StreamArticlesInput"
+          }
+        ],
+        "returns": "iter.Seq2[*Article, error]",
+        "errors": [
+          "tenancy.ErrMissing"
+        ],
+        "notes": "Scalars only — no relationship loading, cache always bypassed. Errors surface through the iterator's second value.",
+        "sql_bodies": {
+          "postgres": "SELECT \"deleted_at\", \"id\", \"title\", \"workspace_id\" FROM \"public\".\"articles\" WHERE <filter> AND \"deleted_at\" IS NULL ORDER BY <sort>"
+        }
+      }
+    ],
+    "mutation": [
+      {
+        "name": "Create",
+        "params": [
+          {
+            "name": "input",
+            "type": "*CreateArticleInput"
+          }
+        ],
+        "returns": "*Article",
+        "errors": [
+          "ErrNilInput",
+          "ErrConstraintViolation",
+          "tenancy.ErrMissing",
+          "tenancy.ErrMismatch"
+        ],
+        "sql_bodies": {
+          "postgres": "INSERT INTO \"public\".\"articles\" (<columns>) VALUES (<values>) RETURNING \"id\""
+        }
+      },
+      {
+        "name": "CreateMany",
+        "params": [
+          {
+            "name": "inputs",
+            "type": "[]*CreateArticleInput"
+          }
+        ],
+        "returns": "[]*Article",
+        "errors": [
+          "ErrNilInput",
+          "ErrConstraintViolation",
+          "tenancy.ErrMissing",
+          "tenancy.ErrMismatch"
+        ],
+        "notes": "Batched in generation.batch_size chunks. Earlier chunks are not rolled back on a later failure — wrap in a transaction for atomicity.",
+        "sql_bodies": {
+          "postgres": "INSERT INTO \"public\".\"articles\" (<columns>) VALUES <values> RETURNING \"id\""
+        }
+      },
+      {
+        "name": "Upsert",
+        "params": [
+          {
+            "name": "input",
+            "type": "*CreateArticleInput"
+          },
+          {
+            "name": "target",
+            "type": "ArticleConflictTarget"
+          }
+        ],
+        "returns": "*Article",
+        "errors": [
+          "ErrNilInput",
+          "ErrConstraintViolation",
+          "tenancy.ErrMissing",
+          "tenancy.ErrMismatch"
+        ],
+        "notes": "One method over the generated ArticleConflictTarget enum — the target argument selects the conflict columns at call time.",
+        "sql_bodies": {
+          "postgres": "INSERT INTO \"public\".\"articles\" (<columns>) VALUES (<values>) ON CONFLICT (<conflict_target>) DO UPDATE SET <excluded> RETURNING \"id\""
+        }
+      },
+      {
+        "name": "UpsertMany",
+        "params": [
+          {
+            "name": "inputs",
+            "type": "[]*CreateArticleInput"
+          },
+          {
+            "name": "target",
+            "type": "ArticleConflictTarget"
+          }
+        ],
+        "returns": "[]*Article",
+        "errors": [
+          "ErrNilInput",
+          "ErrConstraintViolation",
+          "tenancy.ErrMissing",
+          "tenancy.ErrMismatch"
+        ],
+        "notes": "Batched in generation.batch_size chunks over the same ArticleConflictTarget enum Upsert takes. Inputs resolving to one target are deduped before the statement is built, last occurrence wins. Earlier chunks are not rolled back on a later failure — wrap in a transaction for atomicity.",
+        "sql_bodies": {
+          "postgres": "INSERT INTO \"public\".\"articles\" (<columns>) VALUES <values> ON CONFLICT (<conflict_target>) DO UPDATE SET <excluded>"
+        }
+      },
+      {
+        "name": "Update",
+        "params": [
+          {
+            "name": "id",
+            "type": "int64"
+          },
+          {
+            "name": "input",
+            "type": "*UpdateArticleInput"
+          }
+        ],
+        "returns": "*Article",
+        "errors": [
+          "ErrNotFound",
+          "ErrNilInput",
+          "ErrConstraintViolation",
+          "tenancy.ErrMissing",
+          "tenancy.ErrMismatch"
+        ],
+        "notes": "Only fields where IsSet() reports true reach the SET clause; an input with none set issues no UPDATE and returns the row unchanged.",
+        "sql_bodies": {
+          "postgres": "UPDATE \"public\".\"articles\" SET <set> WHERE \"id\" = $1"
+        }
+      },
+      {
+        "name": "UpdateMany",
+        "params": [
+          {
+            "name": "items",
+            "type": "[]UpdateArticleItem"
+          }
+        ],
+        "returns": "[]*Article",
+        "errors": [
+          "ErrNilInput",
+          "ErrConstraintViolation",
+          "tenancy.ErrMissing",
+          "tenancy.ErrMismatch"
+        ],
+        "notes": "Issues one statement per item. Batched like CreateMany — earlier items are not rolled back on a later failure. A primary key that does not exist is silently skipped, even under strict_updates.",
+        "sql_bodies": {
+          "postgres": "UPDATE \"public\".\"articles\" SET <set> WHERE \"id\" = $1"
+        }
+      },
+      {
+        "name": "UpdateWhere",
+        "params": [
+          {
+            "name": "filter",
+            "type": "*ArticleFilter"
+          },
+          {
+            "name": "input",
+            "type": "*UpdateArticleInput"
+          }
+        ],
+        "returns": "[]*Article",
+        "errors": [
+          "ErrNilInput",
+          "ErrEmptyFilter",
+          "ErrConstraintViolation",
+          "tenancy.ErrMissing",
+          "tenancy.ErrMismatch"
+        ],
+        "notes": "Idempotent — returns an empty slice when no row matches. ErrEmptyFilter when the filter produces no conditions.",
+        "sql_bodies": {
+          "postgres": "UPDATE \"public\".\"articles\" SET <set> WHERE <filter> RETURNING \"id\""
+        }
+      },
+      {
+        "name": "SoftDelete",
+        "params": [
+          {
+            "name": "id",
+            "type": "int64"
+          }
+        ],
+        "returns": "*Article",
+        "errors": [
+          "tenancy.ErrMissing"
+        ],
+        "notes": "Idempotent — a primary key that does not exist is not an error.",
+        "sql_bodies": {
+          "postgres": "UPDATE \"public\".\"articles\" SET \"deleted_at\" = CURRENT_TIMESTAMP WHERE \"id\" = $1"
+        }
+      },
+      {
+        "name": "SoftDeleteMany",
+        "params": [
+          {
+            "name": "ids",
+            "type": "[]int64"
+          }
+        ],
+        "returns": "[]*Article",
+        "errors": [
+          "tenancy.ErrMissing"
+        ],
+        "notes": "Idempotent — primary keys that do not exist are not an error.",
+        "sql_bodies": {
+          "postgres": "UPDATE \"public\".\"articles\" SET \"deleted_at\" = CURRENT_TIMESTAMP WHERE \"id\" IN (<ids>)"
+        }
+      },
+      {
+        "name": "SoftDeleteWhere",
+        "params": [
+          {
+            "name": "filter",
+            "type": "*ArticleFilter"
+          }
+        ],
+        "returns": "[]*Article",
+        "errors": [
+          "ErrEmptyFilter",
+          "tenancy.ErrMissing"
+        ],
+        "notes": "Idempotent — no match is not an error. ErrEmptyFilter when the filter produces no conditions.",
+        "sql_bodies": {
+          "postgres": "UPDATE \"public\".\"articles\" SET \"deleted_at\" = CURRENT_TIMESTAMP WHERE <filter> AND \"deleted_at\" IS NULL RETURNING \"id\""
+        }
+      },
+      {
+        "name": "Restore",
+        "params": [
+          {
+            "name": "id",
+            "type": "int64"
+          }
+        ],
+        "returns": "*Article",
+        "errors": [
+          "tenancy.ErrMissing"
+        ],
+        "notes": "Idempotent — a primary key that does not exist is not an error.",
+        "sql_bodies": {
+          "postgres": "UPDATE \"public\".\"articles\" SET \"deleted_at\" = $1 WHERE \"id\" = $2"
+        }
+      },
+      {
+        "name": "RestoreMany",
+        "params": [
+          {
+            "name": "ids",
+            "type": "[]int64"
+          }
+        ],
+        "returns": "[]*Article",
+        "errors": [
+          "tenancy.ErrMissing"
+        ],
+        "notes": "Idempotent — primary keys that do not exist are not an error.",
+        "sql_bodies": {
+          "postgres": "UPDATE \"public\".\"articles\" SET \"deleted_at\" = $1 WHERE \"id\" IN (<ids>)"
+        }
+      },
+      {
+        "name": "RestoreWhere",
+        "params": [
+          {
+            "name": "filter",
+            "type": "*ArticleFilter"
+          }
+        ],
+        "returns": "[]*Article",
+        "errors": [
+          "ErrEmptyFilter",
+          "tenancy.ErrMissing"
+        ],
+        "notes": "Idempotent — no match is not an error. ErrEmptyFilter when the filter produces no conditions.",
+        "sql_bodies": {
+          "postgres": "UPDATE \"public\".\"articles\" SET \"deleted_at\" = $1 WHERE <filter> AND \"deleted_at\" IS NOT NULL RETURNING \"id\""
+        }
+      },
+      {
+        "name": "HardDelete",
+        "params": [
+          {
+            "name": "id",
+            "type": "int64"
+          }
+        ],
+        "returns": "",
+        "errors": [
+          "tenancy.ErrMissing"
+        ],
+        "notes": "Idempotent — a primary key that does not exist is not an error.",
+        "sql_bodies": {
+          "postgres": "DELETE FROM \"public\".\"articles\" WHERE \"id\" = $1"
+        }
+      },
+      {
+        "name": "HardDeleteMany",
+        "params": [
+          {
+            "name": "ids",
+            "type": "[]int64"
+          }
+        ],
+        "returns": "",
+        "errors": [
+          "tenancy.ErrMissing"
+        ],
+        "notes": "Idempotent — primary keys that do not exist are not an error.",
+        "sql_bodies": {
+          "postgres": "DELETE FROM \"public\".\"articles\" WHERE \"id\" IN (<ids>)"
+        }
+      },
+      {
+        "name": "HardDeleteWhere",
+        "params": [
+          {
+            "name": "filter",
+            "type": "*ArticleFilter"
+          }
+        ],
+        "returns": "",
+        "errors": [
+          "ErrEmptyFilter",
+          "tenancy.ErrMissing"
+        ],
+        "notes": "Idempotent — no match is not an error. ErrEmptyFilter when the filter produces no conditions.",
+        "sql_bodies": {
+          "postgres": "DELETE FROM \"public\".\"articles\" WHERE <filter> RETURNING \"id\""
+        }
+      }
+    ]
+  },
+  "filter": {
+    "type": "ArticleFilter",
+    "fields": [
+      {
+        "name": "DeletedAt",
+        "type": "*comparator.NullableTime"
+      },
+      {
+        "name": "ID",
+        "type": "*comparator.Number[int64]"
+      },
+      {
+        "name": "Title",
+        "type": "*comparator.String"
+      },
+      {
+        "name": "WorkspaceID",
+        "type": "*comparator.ID"
+      },
+      {
+        "name": "And",
+        "type": "[]*ArticleFilter"
+      },
+      {
+        "name": "Or",
+        "type": "[]*ArticleFilter"
+      }
+    ]
+  },
+  "sort": {
+    "type": "ArticleSort",
+    "fields": [
+      "DeletedAt",
+      "ID",
+      "Title",
+      "WorkspaceID"
+    ]
+  },
+  "examples": {}
+}

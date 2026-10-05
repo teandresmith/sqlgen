@@ -1,0 +1,84 @@
+"""
+KeyedCode corresponds to the keyed_codes table.
+"""
+type KeyedCode {
+  "id"
+  id: UUID!
+  "code"
+  code: String!
+  "name"
+  name: String!
+  "one-to-many relationship with the keyed_code_entries table."
+  entries: [KeyedCodeEntry!]!
+}
+
+type KeyedCodeConnection {
+  edges:      [KeyedCodeEdge!]!
+  pageInfo:   PageInfo!
+  totalCount: Int!
+}
+
+type KeyedCodeEdge {
+  node:   KeyedCode!
+  cursor: String!
+}
+
+type KeyedCodeListResult {
+  items:      [KeyedCode!]!
+  totalCount: Int!
+  offset:     Int!
+  limit:      Int!
+  hasMore:    Boolean!
+}
+
+input KeyedCodeFilter {
+  code: StringComparator
+  name: StringComparator
+  entries: KeyedCodeEntryFilter
+  and: [KeyedCodeFilter!]
+  or:  [KeyedCodeFilter!]
+}
+
+enum KeyedCodeSortField {
+  ID
+  CODE
+  NAME
+}
+
+input KeyedCodeSort {
+  field:     KeyedCodeSortField!
+  direction: SortDirection!
+}
+input CreateKeyedCodeInput {
+  code: String!
+  name: String!
+}
+
+extend type Query {
+  keyedCode(id: UUID!): KeyedCode
+  "Cursor-paginated; ordering is driven by cursor_keys to preserve keyset semantics — pass `sort` to keyedCodeList instead."
+  keyedCodes(filter: KeyedCodeFilter, first: Int, after: String, last: Int, before: String): KeyedCodeConnection!
+  keyedCodeList(filter: KeyedCodeFilter, sort: [KeyedCodeSort!], limit: Int, offset: Int): KeyedCodeListResult!
+}
+
+
+input UpsertKeyedCodeWithRelatedInput {
+  keyedCode: CreateKeyedCodeInput!
+  entries: KeyedCodeEntriesUpdateNested
+}
+
+enum KeyedCodeConflictTarget {
+  CODE
+}
+
+input KeyedCodeEntriesUpdateNested {
+  create: [KeyedCodeEntriesCreateInput!]
+}
+
+input KeyedCodeEntriesCreateInput {
+  note: String!
+}
+
+extend type Mutation {
+  upsertKeyedCodeWithRelated(input: UpsertKeyedCodeWithRelatedInput!, conflictTarget: KeyedCodeConflictTarget!): KeyedCode!
+}

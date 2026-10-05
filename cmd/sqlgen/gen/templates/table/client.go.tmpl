@@ -1,0 +1,486 @@
+{{- define "table/client" -}}
+
+// {{ .StructName }}Client provides type-safe operations for the {{ .TableName }} table.
+type {{ .StructName }}Client interface {
+	// --- Read Operations ---
+
+	// Get returns a single {{ .StructName | toCamelCase }} by primary key.
+{{- if .SoftDelete }}
+	// Soft-deleted {{ .TableName }} are excluded by default (exclude_deleted is enabled).
+	// Use GetMany with Filter.{{ .SoftDelete.FieldName }} comparator to retrieve soft-deleted {{ .TableName }}.
+{{- end }}
+	Get(ctx context.Context, {{ if .CompositePK }}pk {{ .CompositePKStructName }}{{ else }}id {{ (index .PKColumns 0).GoType }}{{ end }}, opts ...func(*CallOptions[{{ .StructName }}FieldOptions])) (*{{ .StructName }}, error)
+
+	// GetMany returns {{ .TableName }} matching the given filter, field selection, and sort criteria.
+{{- if .SoftDelete }}
+	// Soft-deleted {{ .TableName }} are excluded by default. Set Filter.{{ .SoftDelete.FieldName }} to override.
+{{- end }}
+{{- if .HasO2MRelationships }}
+	// When FieldOptions includes O2M or M2M relationships, they are loaded via an
+	// errgroup fan-out — in parallel over the pool, and serialized by the
+	// transaction's connection reservation when ctx carries one.
+{{- end }}
+	GetMany(ctx context.Context, input *Get{{ .StructName | structNamePlural }}Input, opts ...func(*CallOptions[{{ .StructName }}FieldOptions])) ([]*{{ .StructName }}, error)
+{{- if .Operations.Exists }}
+
+	// Exists returns true if a {{ .StructName | toCamelCase }} with the given primary key exists.
+{{- if .SoftDelete }}
+	// Soft-deleted {{ .TableName }} are excluded — a soft-deleted {{ .StructName | toCamelCase }} returns false.
+{{- end }}
+	Exists(ctx context.Context, {{ if .CompositePK }}pk {{ .CompositePKStructName }}{{ else }}id {{ (index .PKColumns 0).GoType }}{{ end }}, opts ...func(*CallOptions[{{ .StructName }}FieldOptions])) (bool, error)
+
+	// ExistsWhere returns true if any {{ .StructName | toCamelCase }} matches the given filter.
+{{- if .SoftDelete }}
+	// Soft-deleted {{ .TableName }} are excluded by default.
+{{- end }}
+	ExistsWhere(ctx context.Context, filter *{{ .StructName }}Filter, opts ...func(*CallOptions[{{ .StructName }}FieldOptions])) (bool, error)
+{{- end }}
+
+	// Count returns the number of {{ .TableName }} matching the given filter.
+{{- if .SoftDelete }}
+	// Soft-deleted {{ .TableName }} are excluded by default. A nil filter counts all non-deleted {{ .TableName }}.
+{{- end }}
+	Count(ctx context.Context, filter *{{ .StructName }}Filter, opts ...func(*CallOptions[{{ .StructName }}FieldOptions])) (int64, error)
+{{- if .Operations.Create }}
+
+	// --- Write Operations ---
+
+	// Create inserts a new {{ .StructName | toCamelCase }} and returns the created entity.
+	Create(ctx context.Context, input *Create{{ .StructName }}Input, opts ...func(*CallOptions[{{ .StructName }}FieldOptions])) (*{{ .StructName }}, error)
+{{- end }}
+{{- if .Operations.CreateMany }}
+
+	// CreateMany inserts multiple {{ .TableName }} in batches and returns all created entities.
+	// Sub-batches are not automatically rolled back on failure — wrap in a transaction for atomicity.
+	CreateMany(ctx context.Context, inputs []*Create{{ .StructName }}Input, opts ...func(*CallOptions[{{ .StructName }}FieldOptions])) ([]*{{ .StructName }}, error)
+{{- end }}
+{{- if .Operations.Update }}
+
+	// Update partially updates a {{ .StructName | toCamelCase }} by primary key and returns the updated entity.
+	// Only fields where IsSet() is true are included in the SET clause.
+{{- if .StrictUpdates }}
+	// Returns ErrNotFound if the primary key does not exist.
+{{- end }}
+	Update(ctx context.Context, {{ if .CompositePK }}pk {{ .CompositePKStructName }}{{ else }}id {{ (index .PKColumns 0).GoType }}{{ end }}, input *Update{{ .StructName }}Input, opts ...func(*CallOptions[{{ .StructName }}FieldOptions])) (*{{ .StructName }}, error)
+{{- end }}
+{{- if .Operations.UpdateMany }}
+
+	// UpdateMany updates multiple {{ .TableName }} and returns the updated entities.
+	UpdateMany(ctx context.Context, items []Update{{ .StructName }}Item, opts ...func(*CallOptions[{{ .StructName }}FieldOptions])) ([]*{{ .StructName }}, error)
+{{- end }}
+{{- if .Operations.UpdateWhere }}
+
+	// UpdateWhere updates all {{ .TableName }} matching the filter and returns the updated entities.
+	// Idempotent — returns empty slice when no rows match.
+	UpdateWhere(ctx context.Context, filter *{{ .StructName }}Filter, input *Update{{ .StructName }}Input, opts ...func(*CallOptions[{{ .StructName }}FieldOptions])) ([]*{{ .StructName }}, error)
+{{- end }}
+{{- if .Operations.Upsert }}
+
+	// Upsert inserts a {{ .StructName | toCamelCase }} or updates it on conflict and returns the resulting entity.
+	Upsert(ctx context.Context, input *Create{{ .StructName }}Input, target {{ .StructName }}ConflictTarget, opts ...func(*CallOptions[{{ .StructName }}FieldOptions])) (*{{ .StructName }}, error)
+{{- end }}
+{{- if .Operations.UpsertMany }}
+
+	// UpsertMany inserts or updates multiple {{ .TableName }} in batches and returns all resulting entities.
+	// Inputs resolving to the same conflict target are deduped, last occurrence wins.
+	UpsertMany(ctx context.Context, inputs []*Create{{ .StructName }}Input, target {{ .StructName }}ConflictTarget, opts ...func(*CallOptions[{{ .StructName }}FieldOptions])) ([]*{{ .StructName }}, error)
+{{- end }}
+{{- if and .Nested .Nested.EmitCreate }}
+
+	// CreateWithRelated creates a {{ .StructName | toCamelCase }} together with rows on its nested
+	// relationships, in a single transaction. Nested rows are written through
+	// the target table's own client, so their hooks, events, cache
+	// invalidation and tenancy behave exactly as on a direct call.
+	CreateWithRelated(ctx context.Context, input *{{ .Nested.CreateInputName }}, opts ...func(*CallOptions[{{ .StructName }}FieldOptions])) (*{{ .StructName }}, error)
+{{- end }}
+{{- if and .Nested .Nested.EmitUpdate }}
+
+	// UpdateWithRelated updates a {{ .StructName | toCamelCase }} together with rows on its nested
+	// relationships, in a single transaction. The nested blocks add `disconnect`
+	// and `clear` to the create-side verbs, because the parent already exists
+	// and there are rows to unlink.
+	UpdateWithRelated(ctx context.Context, id {{ (index .PKColumns 0).GoType }}, input *{{ .Nested.UpdateInputName }}, opts ...func(*CallOptions[{{ .StructName }}FieldOptions])) (*{{ .StructName }}, error)
+{{- end }}
+{{- if and .Nested .Nested.EmitUpsert }}
+
+	// UpsertWithRelated inserts or updates a {{ .StructName | toCamelCase }} together with rows on
+	// its nested relationships, in a single transaction. It reuses the
+	// update-side nested block verbatim — each verb means the same thing on
+	// either branch, so one block is correct on both. `create` is not
+	// idempotent: repeating an upsert that carries it inserts again.
+	UpsertWithRelated(ctx context.Context, input *{{ .Nested.UpsertInputName }}, target {{ .StructName }}ConflictTarget, opts ...func(*CallOptions[{{ .StructName }}FieldOptions])) (*{{ .StructName }}, error)
+{{- end }}
+{{- if and .Operations.Increment (gt (len .IncrementColumns) 0) }}
+
+	// Increment atomically increments or decrements a numeric column on a {{ .StructName | toCamelCase }}.
+{{- if .StrictUpdates }}
+	// Returns ErrNotFound if the primary key does not exist.
+{{- end }}
+	Increment(ctx context.Context, {{ if .CompositePK }}pk {{ .CompositePKStructName }}{{ else }}id {{ (index .PKColumns 0).GoType }}{{ end }}, input IncrementInput[{{ .StructName }}IncrementColumn], opts ...func(*CallOptions[{{ .StructName }}FieldOptions])) error
+{{- end }}
+{{- if .Operations.SoftDelete }}
+
+	// --- Soft Delete Operations ---
+
+	// SoftDelete marks a {{ .StructName | toCamelCase }} as deleted by setting the {{ .SoftDelete.Column }} column and returns
+	// the updated entity. Idempotent — returns nil, nil if the primary key does not exist.
+	SoftDelete(ctx context.Context, {{ if .CompositePK }}pk {{ .CompositePKStructName }}{{ else }}id {{ (index .PKColumns 0).GoType }}{{ end }}, opts ...func(*CallOptions[{{ .StructName }}FieldOptions])) (*{{ .StructName }}, error)
+
+	// SoftDeleteMany marks multiple {{ .TableName }} as deleted and returns the updated entities.
+	SoftDeleteMany(ctx context.Context, {{ if .CompositePK }}pks []{{ .CompositePKStructName }}{{ else }}ids []{{ (index .PKColumns 0).GoType }}{{ end }}, opts ...func(*CallOptions[{{ .StructName }}FieldOptions])) ([]*{{ .StructName }}, error)
+
+	// SoftDeleteWhere marks all {{ .TableName }} matching the filter as deleted and returns them.
+	// Idempotent — returns empty slice when no rows match.
+	SoftDeleteWhere(ctx context.Context, filter *{{ .StructName }}Filter, opts ...func(*CallOptions[{{ .StructName }}FieldOptions])) ([]*{{ .StructName }}, error)
+{{- end }}
+{{- if .Operations.Restore }}
+
+	// --- Restore Operations ---
+
+	// Restore clears the {{ .SoftDelete.Column }} column, restoring a soft-deleted {{ .StructName | toCamelCase }}, and returns it.
+	// Idempotent — returns nil, nil if the primary key does not exist.
+	Restore(ctx context.Context, {{ if .CompositePK }}pk {{ .CompositePKStructName }}{{ else }}id {{ (index .PKColumns 0).GoType }}{{ end }}, opts ...func(*CallOptions[{{ .StructName }}FieldOptions])) (*{{ .StructName }}, error)
+
+	// RestoreMany restores multiple soft-deleted {{ .TableName }} and returns them.
+	RestoreMany(ctx context.Context, {{ if .CompositePK }}pks []{{ .CompositePKStructName }}{{ else }}ids []{{ (index .PKColumns 0).GoType }}{{ end }}, opts ...func(*CallOptions[{{ .StructName }}FieldOptions])) ([]*{{ .StructName }}, error)
+
+	// RestoreWhere restores all soft-deleted {{ .TableName }} matching the filter and returns them.
+	// Idempotent — returns empty slice when no rows match.
+	RestoreWhere(ctx context.Context, filter *{{ .StructName }}Filter, opts ...func(*CallOptions[{{ .StructName }}FieldOptions])) ([]*{{ .StructName }}, error)
+{{- end }}
+{{- if .Operations.HardDelete }}
+
+	// --- Hard Delete Operations ---
+
+	// HardDelete permanently removes a {{ .StructName | toCamelCase }} from the database.
+	// Idempotent — returns nil if the primary key does not exist.
+	HardDelete(ctx context.Context, {{ if .CompositePK }}pk {{ .CompositePKStructName }}{{ else }}id {{ (index .PKColumns 0).GoType }}{{ end }}, opts ...func(*CallOptions[{{ .StructName }}FieldOptions])) error
+
+	// HardDeleteMany permanently removes multiple {{ .TableName }} from the database.
+	HardDeleteMany(ctx context.Context, {{ if .CompositePK }}pks []{{ .CompositePKStructName }}{{ else }}ids []{{ (index .PKColumns 0).GoType }}{{ end }}, opts ...func(*CallOptions[{{ .StructName }}FieldOptions])) error
+
+	// HardDeleteWhere permanently removes all {{ .TableName }} matching the filter.
+	// Idempotent — returns nil when no rows match.
+	HardDeleteWhere(ctx context.Context, filter *{{ .StructName }}Filter, opts ...func(*CallOptions[{{ .StructName }}FieldOptions])) error
+{{- end }}
+{{- if .Operations.Paginate }}
+
+	// --- Pagination Operations ---
+
+	// Paginate returns a page of {{ .TableName }} with total count for offset-based pagination.
+{{- if .SoftDelete }}
+	// Soft-deleted {{ .TableName }} are excluded by default.
+{{- end }}
+	Paginate(ctx context.Context, input PaginateInput[{{ .StructName }}Filter], opts ...func(*CallOptions[{{ .StructName }}FieldOptions])) (*PaginateResult[{{ .StructName }}], error)
+{{- end }}
+{{- if .Operations.Connection }}
+
+	// Connection returns a Relay-style cursor-paginated connection of {{ .TableName }}.
+	// Sort order is determined by cursor_keys — custom sorts are not supported.
+	// Use Paginate for custom sort orders.
+	Connection(ctx context.Context, input ConnectionInput[{{ .StructName }}Filter], opts ...func(*CallOptions[{{ .StructName }}FieldOptions])) (*Connection[{{ .StructName }}], error)
+{{- end }}
+{{- if .Operations.Stream }}
+
+	// Stream returns an iterator over {{ .TableName }} matching the filter and sort criteria.
+	// Rows are yielded as the driver returns them; cache is bypassed.
+	// Stream cannot load relationships.
+	//
+	// Stream refuses an active transaction unless CallOptions.AllowInTransaction
+	// is set, and the opt-in commits the caller to issuing nothing else on that
+	// txCtx: the one rule that remains the caller's — drain or close a result set
+	// before issuing the next statement on that txCtx — applied to a loop whose
+	// body is caller code.
+	Stream(ctx context.Context, input *Stream{{ .StructName | structNamePlural }}Input, opts ...func(*CallOptions[Stream{{ .StructName }}FieldOptions])) iter.Seq2[*{{ .StructName }}, error]
+{{- end }}
+}
+
+// {{ .StructName | toCamelCase }}Client implements the {{ .StructName }}Client interface.
+type {{ .StructName | toCamelCase }}Client struct {
+	querier        database.Querier
+	dialect        sql.Dialect
+	table          sql.Table
+	batchSize      int
+	queryLimit     int
+{{- if .Operations.Connection }}
+	pageSize       int
+	cursorKeys     []string
+{{- end }}
+{{- if .StrictUpdates }}
+	strictUpdates  bool
+{{- end }}
+{{- if .SoftDelete }}
+	excludeDeleted bool
+{{- end }}
+	mutationHooks  []hook.MutationHook
+	queryHooks     []hook.QueryHook
+	panicHandler   hook.PanicHandler
+{{- if .HasNestedSurface }}
+	{{- /* The nested-mutation methods open the transaction the whole nested */ -}}
+	{{- /* write runs in, so the client's configured callback */ -}}
+	{{- /* mode has to reach this level; the unified client assigns it after */ -}}
+	{{- /* construction, as it does the tenant resolver. */}}
+	callbackMode   database.CallbackMode
+{{- end }}
+{{- if eq .Dialect "mysql" }}
+	mysqlVersion   *mysqlVersionCache
+{{- end }}
+{{- if .NeedsTenantResolver }}
+	tenantResolver tenancy.TenantResolver[{{ .Tenancy.GoType }}]
+{{- end }}
+{{- range .O2MRelationships }}
+	{{ .FieldName | toCamelCase }}DefaultSort []sql.Sort
+{{- end }}
+{{- range .M2MRelationships }}
+	{{ .FieldName | toCamelCase }}DefaultSort []sql.Sort
+{{- end }}
+{{- /* Target-client refs deduped per target struct name so sub-categorized */ -}}
+{{- /* relationships sharing a target emit one field, not N. */ -}}
+{{- range .RelationshipTargetClients }}
+	{{ . | toCamelCase }}Client *{{ . | toCamelCase }}Client
+{{- end }}
+{{- /* Clients the nested-mutation executors write through that the loaders */ -}}
+{{- /* above do not declare: each M2M edge's junction (the link rows) and each */ -}}
+{{- /* has-one edge's target (the nested create), deduped against the list above. */ -}}
+{{- range .NestedWriteClients }}
+	{{ . | toCamelCase }}Client *{{ . | toCamelCase }}Client
+{{- end }}
+}
+
+// new{{ .StructName }}Client creates a new {{ .StructName | toCamelCase }}Client.
+func new{{ .StructName }}Client(querier database.Querier, mutationHooks []hook.MutationHook, queryHooks []hook.QueryHook, panicHandler hook.PanicHandler{{ if eq .Dialect "mysql" }}, mysqlVersion *mysqlVersionCache{{ end }}) *{{ .StructName | toCamelCase }}Client {
+	return &{{ .StructName | toCamelCase }}Client{
+		querier:       querier,
+		dialect:       {{ if eq .Dialect "postgres" }}sql.NewPostgresDialect(){{ else if eq .Dialect "mysql" }}sql.NewMySQLDialect(){{ else }}sql.NewSQLiteDialect(){{ end }},
+		table:         sql.Table{Schema: {{ printf "%q" .Schema }}, Name: {{ printf "%q" .TableName }}},
+		batchSize:     {{ .BatchSize }},
+		queryLimit:    {{ .QueryLimit }},
+{{- if .Operations.Connection }}
+		pageSize:      {{ .PageSize }},
+		cursorKeys:    []string{ {{- range .CursorKeys }}{{ printf "%q" . }}, {{ end -}} },
+{{- end }}
+{{- if .StrictUpdates }}
+		strictUpdates: true,
+{{- end }}
+{{- if .SoftDelete }}
+		excludeDeleted: {{ .ExcludeDeleted }},
+{{- end }}
+		mutationHooks: mutationHooks,
+		queryHooks:    queryHooks,
+		panicHandler:  panicHandler,
+{{- if eq .Dialect "mysql" }}
+		mysqlVersion:  mysqlVersion,
+{{- end }}
+{{- /* A relationship's static `sort:` is the loader's fallback */ -}}
+{{- /* when the caller passes no Sorts; get.go.tmpl reads these fields. */ -}}
+{{- range .O2MRelationships }}{{ if .Sort }}
+		{{ .FieldName | toCamelCase }}DefaultSort: []sql.Sort{ {{- range .Sort }}{Column: {{ printf "%q" .Column }}, Direction: {{ if eq .Direction "DESC" }}sql.Desc{{ else }}sql.Asc{{ end }}}, {{ end -}} },
+{{- end }}{{ end }}
+{{- range .M2MRelationships }}{{ if .Sort }}
+		{{ .FieldName | toCamelCase }}DefaultSort: []sql.Sort{ {{- range .Sort }}{Column: {{ printf "%q" .Column }}, Direction: {{ if eq .Direction "DESC" }}sql.Desc{{ else }}sql.Asc{{ end }}}, {{ end -}} },
+{{- end }}{{ end }}
+	}
+}
+
+// executeMutation runs fn through the mutation hook chain.
+// When skipHooks is true, only panic recovery wraps the call.
+func (c *{{ .StructName | toCamelCase }}Client) executeMutation(ctx context.Context, skipHooks bool, mc *hook.MutationContext, fn hook.MutationHandler) (any, error) {
+	var hooks []hook.MutationHook
+	if !skipHooks {
+		hooks = c.mutationHooks
+	}
+	return hook.BuildMutationChain(c.panicHandler, hooks, fn)(ctx, mc)
+}
+
+// executeQuery runs fn through the query hook chain.
+// When skipHooks is true, only panic recovery wraps the call.
+func (c *{{ .StructName | toCamelCase }}Client) executeQuery(ctx context.Context, skipHooks bool, qc *hook.QueryContext, fn hook.QueryHandler) (any, error) {
+	var hooks []hook.QueryHook
+	if !skipHooks {
+		hooks = c.queryHooks
+	}
+	return hook.BuildQueryChain(c.panicHandler, hooks, fn)(ctx, qc)
+}
+{{- if .NeedsTenantResolver }}
+
+// resolveTenant reads the operation's tenant from tenantValue and applies THIS
+// table's tenancy.required setting to it, returning the value, a bool
+// indicating whether tenancy should be applied to this call, and any resolver
+// error. The split matters: tenantValue's answer is shared across every client
+// the operation touches, while the apply bool below is this table's alone
+// (required is a per-table setting). The apply bool encodes the
+// tenancy.required semantic:
+//
+//   - Non-zero resolver return → apply=true; callers AND the filter into the
+//     WHERE (reads), verify-match against caller-supplied tenant (mutations),
+//     and auto-set the tenant column on INSERT.
+//   - Zero resolver return (resolver returned (zero, nil) or is nil) under
+//     tenancy.required:true → apply=false, err=tenancy.ErrMissing. The op
+//     fails closed before the DB round-trip.
+//   - Zero resolver return under tenancy.required:false → apply=false, err=nil.
+//     The op silently becomes cross-tenant: no filter append, no verify-match,
+//     no auto-set. This is the "missing tenant skips the filter" path
+//     — always-off rather than a silent zero-value write.
+//   - Resolver returns a non-nil error → apply=false, err propagated.
+//
+// Required-at-codegen determinism: the required:true vs required:false branch
+// is picked at template-expansion time per-table, from the table's resolved
+// tenancy config. Runtime callers observe a stable behavior per table.
+//
+// explicit carries CallOptions.Tenant (the explicit-tenant resolution
+// mode): when non-nil, tenancy behaves as normal resolution with
+// the resolver replaced by this constant — filter, auto-set, and verify-match
+// all apply. Precedence over SkipTenancy is normalized in
+// resolveCallOptions, so callers gate on SkipTenancy exactly as before. The
+// pointer distinguishes set from unset; a set zero value is honored verbatim.
+func (c *{{ .StructName | toCamelCase }}Client) resolveTenant(ctx context.Context, explicit *{{ .Tenancy.GoType }}) ({{ .Tenancy.GoType }}, bool, error) {
+	if explicit != nil {
+		return *explicit, true, nil
+	}
+	var zero {{ .Tenancy.GoType }}
+	v, err := c.tenantValue(ctx)
+	if err != nil {
+		return zero, false, err
+	}
+	if v == zero {
+{{- if .Tenancy.Required }}
+		return zero, false, tenancy.ErrMissing
+{{- else }}
+		return zero, false, nil
+{{- end }}
+	}
+	return v, true, nil
+}
+
+// tenantValue returns the tenant the user resolver reports for this operation,
+// invoking it at most once per logical operation.
+//
+// It answers the table-independent half of the question and stops there: what
+// the resolver said. The tenancy.required reading of that answer — zero means
+// ErrMissing, or zero means skip the filter — belongs to resolveTenant above,
+// because `required` is a per-table setting while this value is
+// shared across every client the operation touches.
+//
+// Keeping the two apart is load-bearing rather than tidy. The ctx cache is
+// keyed on the tenant type alone, so it is one slot for the whole package;
+// caching the reading instead of the answer let whichever table resolved first
+// impose its `required` on the rest, and a required:false table handing
+// apply=false to a required:true one is a fail-open. A nil resolver
+// yields the zero value and the same per-table branch a zero return takes.
+func (c *{{ .StructName | toCamelCase }}Client) tenantValue(ctx context.Context) ({{ .Tenancy.GoType }}, error) {
+	// Short-circuit: an entry point for this logical operation — a chaining
+	// mutation (Create, Update, Upsert, …) or a nested method's hoist — already
+	// resolved and stashed the value via tenancy.WithResolvedTenant. Lookup
+	// uses the same comparable T as the resolver, so collisions across entity
+	// clients with different tenant types are impossible.
+	if v, ok := tenancy.CachedTenant[{{ .Tenancy.GoType }}](ctx); ok {
+		return v, nil
+	}
+	if c.tenantResolver == nil {
+		var zero {{ .Tenancy.GoType }}
+		return zero, nil
+	}
+	return c.tenantResolver(ctx)
+}
+{{- end }}
+{{- if .HasTenantedRelationshipFilter }}
+
+// filterOptions resolves the FilterOption set this client's filters need to
+// compile their relationship members. A relationship filter is a
+// read of the related table, so the target's tenant predicate goes inside the
+// EXISTS subquery — otherwise the filter would be a cross-tenant existence
+// probe on rows the caller cannot otherwise see.
+//
+// The resolve is gated on filter, not performed unconditionally, because the
+// option set is read only by the EXISTS helpers: a filter that sets no
+// relationship member compiles identically with or without it. Resolving anyway
+// would import the tenant's failure modes into calls that have no tenanted
+// component at all — on a shared table the outer WHERE is
+// never tenant-scoped, so a resolver that reports a missing tenant as an error
+// would reject every read that legitimately runs before a tenant is selected.
+//
+// Beyond that gate, nil is the correct answer in exactly the cases where the
+// table's own WHERE gets no tenant filter either: SkipTenancy, and a zero
+// resolver result under tenancy.required:false. The subquery is then unscoped
+// by the same decision that leaves the outer statement unscoped.
+func (c *{{ .StructName | toCamelCase }}Client) filterOptions(ctx context.Context, filter *{{ .StructName }}Filter, skipTenancy bool, explicit *{{ .Tenancy.GoType }}) ([]FilterOption, error) {
+	if skipTenancy || !filter.usesRelationshipFilter() {
+		return nil, nil
+	}
+	tenant, apply, err := c.resolveTenant(ctx, explicit)
+	if err != nil {
+		return nil, err
+	}
+	if !apply {
+		return nil, nil
+	}
+	return []FilterOption{WithFilterTenant(tenant)}, nil
+}
+{{- end }}
+{{- if and .Tenancy .Tenancy.Tenanted (not .Tenancy.InPrimaryKey) }}
+{{- if or (and (not (supportsReturning)) (or .Operations.Update .Operations.UpdateMany .Operations.Upsert .Operations.SoftDelete .Operations.Restore .Operations.HardDelete (and .Operations.Increment (gt (len .IncrementColumns) 0)))) (and .Operations.UpsertMany (or .CompositePK (ne .PKStrategy "db"))) }}
+
+// captureAffectedTenants reads the {{ .Tenancy.Column }} column of every row
+// matching conds, so cache invalidation and event stamping rebuild
+// tenant-scoped keys from the rows themselves rather than from the resolver.
+// Rows that do not exist (or are excluded by the conditions) are
+// simply absent from the map.
+//
+// Two shapes reach it. On MySQL, which has no RETURNING, every tenant-capturing
+// mutation pre-reads the rows it is about to touch. On every dialect, UpsertMany
+// reads back by primary key after each sub-batch: a conflict leaves the existing
+// row's tenant in place, and RETURNING cannot supply it because the DO NOTHING
+// branch yields no row at all. Only a caller-known key reaches here —
+// a database-generated one is resolved by resolveUpsertManyRows, which reads the
+// tenant column in the same statement.
+func (c *{{ .StructName | toCamelCase }}Client) captureAffectedTenants(ctx context.Context, conn database.Querier, conds []sql.Condition) (map[{{ if .CompositePK }}{{ .CompositePKStructName }}{{ else }}{{ (index .PKColumns 0).GoType }}{{ end }}]any, error) {
+	query, args := sql.BuildSelect(c.dialect, c.table, sql.SelectOptions{
+		Columns:    []string{ {{- range .PKColumns }}{{ printf "%q" .Name }}, {{ end }}{{ printf "%q" .Tenancy.Column -}} },
+		Conditions: conds,
+	})
+
+	rows, err := conn.Query(ctx, query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	// BuildSelect emits its column list sorted, which need not match the order
+	// the columns were requested in above — a tenant column that sorts before a
+	// PK column (account_id, company_id) would bind to the wrong target under a
+	// positional scan, silently when the two share a Go type. Bind by name, the
+	// same rule scan{{ .StructName | structNamePlural }} follows.
+	cols, err := rows.Columns()
+	if err != nil {
+		return nil, err
+	}
+
+	tenants := make(map[{{ if .CompositePK }}{{ .CompositePKStructName }}{{ else }}{{ (index .PKColumns 0).GoType }}{{ end }}]any)
+	for rows.Next() {
+{{- if .CompositePK }}
+		var pk {{ .CompositePKStructName }}
+{{- else }}
+		var id {{ (index .PKColumns 0).GoType }}
+{{- end }}
+		var rowTenant {{ .Tenancy.GoType }}
+		targets := make([]any, len(cols))
+		for i, col := range cols {
+			switch col {
+{{- range .PKColumns }}
+			case {{ printf "%q" .Name }}:
+				targets[i] = &{{ if $.CompositePK }}pk.{{ .FieldName }}{{ else }}id{{ end }}
+{{- end }}
+			case {{ printf "%q" .Tenancy.Column }}:
+				targets[i] = &rowTenant
+			}
+		}
+		if err := rows.Scan(targets...); err != nil {
+			return nil, err
+		}
+		tenants[{{ if .CompositePK }}pk{{ else }}id{{ end }}] = rowTenant
+	}
+	return tenants, rows.Err()
+}
+{{- end }}
+{{- end }}
+{{- end -}}

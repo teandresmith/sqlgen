@@ -1,0 +1,26 @@
+{{- define "table/model" -}}
+{{- if .CompositePK }}
+
+// {{ .CompositePKStructName }} - composite primary key for the {{ .TableName }} table.
+type {{ .CompositePKStructName }} struct {
+{{- range .PKColumns }}
+{{- template "shared/field" . }}
+{{- end }}
+}
+{{- end }}
+
+{{- if .Description }}
+// {{ .StructName }} - {{ .Description }}
+{{- end }}
+type {{ .StructName }} struct {
+{{- range .Columns }}
+{{- template "shared/field" . }}
+{{- end }}
+{{- if .Relationships }}
+{{ range .Relationships }}
+	// {{ .FieldName }} - {{ .Description }}
+	{{ .FieldName }} {{ .GoType }} `db:"-" json:"{{ .JSONTag }}"`
+{{- end }}
+{{- end }}
+}
+{{- end -}}

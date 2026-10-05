@@ -1,0 +1,204 @@
+{{- define "enum" -}}
+{{- range $enum := .Enums }}
+
+{{- if $enum.DocComment }}
+// {{ $enum.GoTypeName }} — {{ $enum.DocComment }}
+{{- else }}
+// {{ $enum.GoTypeName }} represents the {{ $enum.Name }} enum type.
+{{- end }}
+type {{ $enum.GoTypeName }} string
+
+const (
+{{- range $enum.Values }}
+	{{ $enum.GoTypeName }}{{ . | toPascalCase }} {{ $enum.GoTypeName }} = "{{ . }}"
+{{- end }}
+)
+
+// All{{ $enum.GoTypeName }} contains all valid {{ $enum.GoTypeName }} values.
+var All{{ $enum.GoTypeName }} = []{{ $enum.GoTypeName }}{
+{{- range $enum.Values }}
+	{{ $enum.GoTypeName }}{{ . | toPascalCase }},
+{{- end }}
+}
+
+// String returns the string representation of the {{ $enum.GoTypeName }}.
+func (s {{ $enum.GoTypeName }}) String() string { return string(s) }
+
+// Validate{{ $enum.GoTypeName }} returns a valid {{ $enum.GoTypeName }} or an error if the input
+// is not a known value.
+func Validate{{ $enum.GoTypeName }}(s string) ({{ $enum.GoTypeName }}, error) {
+	switch {{ $enum.GoTypeName }}(s) {
+	case {{ range $i, $v := $enum.Values }}{{ if $i }}, {{ end }}{{ $enum.GoTypeName }}{{ $v | toPascalCase }}{{ end }}:
+		return {{ $enum.GoTypeName }}(s), nil
+	default:
+		return "", fmt.Errorf("invalid {{ $enum.GoTypeName }}: %q", s)
+	}
+}
+
+// MarshalText implements encoding.TextMarshaler.
+func (s {{ $enum.GoTypeName }}) MarshalText() ([]byte, error) {
+	return []byte(s), nil
+}
+
+// UnmarshalText implements encoding.TextUnmarshaler. Returns an error if the
+// value is not a known {{ $enum.GoTypeName }}.
+func (s *{{ $enum.GoTypeName }}) UnmarshalText(b []byte) error {
+	v, err := Validate{{ $enum.GoTypeName }}(string(b))
+	if err != nil {
+		return err
+	}
+	*s = v
+	return nil
+}
+
+// Value implements driver.Valuer.
+func (s {{ $enum.GoTypeName }}) Value() (driver.Value, error) {
+	return string(s), nil
+}
+
+// Scan implements sql.Scanner.
+func (s *{{ $enum.GoTypeName }}) Scan(src any) error {
+	switch v := src.(type) {
+	case string:
+		*s = {{ $enum.GoTypeName }}(v)
+		return nil
+	case []byte:
+		*s = {{ $enum.GoTypeName }}(v)
+		return nil
+	default:
+		return fmt.Errorf("scanning %T into {{ $enum.GoTypeName }}", src)
+	}
+}
+
+// MarshalGQL writes the GraphQL enum identifier (SCREAMING_SNAKE_CASE) for s
+// onto w. Implements gqlgen's graphql.Marshaler interface via duck typing so
+// the models package can be bound directly as a GraphQL enum through the
+// `models:` mapping without importing gqlgen. The wire identifier
+// (`ASSETPRIMARY`) is the SCREAMING-cased Go constant suffix; the underlying
+// string value (e.g. `"asset.primary"`) stays in the Go variable and lands in
+// the database column unchanged.
+func (s {{ $enum.GoTypeName }}) MarshalGQL(w io.Writer) {
+	var name string
+	switch s {
+{{- range $v := $enum.Values }}
+	case {{ $enum.GoTypeName }}{{ $v | toPascalCase }}:
+		name = {{ printf "%q" (gqlEnumIdent $v) }}
+{{- end }}
+	default:
+		name = ""
+	}
+	fmt.Fprintf(w, "%q", name)
+}
+
+// UnmarshalGQL parses the GraphQL enum identifier received from a client into
+// the typed value. Mirrors MarshalGQL on the inbound path. Returns an error on
+// unknown identifier so gqlgen surfaces a typed validation failure rather than
+// inserting a zero-value enum into the database.
+func (s *{{ $enum.GoTypeName }}) UnmarshalGQL(v any) error {
+	str, ok := v.(string)
+	if !ok {
+		return fmt.Errorf("expected string for {{ $enum.GoTypeName }}, got %T", v)
+	}
+	switch str {
+{{- range $v := $enum.Values }}
+	case {{ printf "%q" (gqlEnumIdent $v) }}:
+		*s = {{ $enum.GoTypeName }}{{ $v | toPascalCase }}
+{{- end }}
+	default:
+		return fmt.Errorf("invalid {{ $enum.GoTypeName }}: %q", str)
+	}
+	return nil
+}
+
+{{- if $enum.SliceGoTypeName }}
+
+// {{ $enum.SliceGoTypeName }} represents a PostgreSQL array of {{ $enum.GoTypeName }} values.
+// It implements driver.Valuer and sql.Scanner using the PostgreSQL array text format
+// so that pgx can handle custom enum array OIDs without manual type registration.
+type {{ $enum.SliceGoTypeName }} []{{ $enum.GoTypeName }}
+
+// String returns the PostgreSQL array literal representation.
+func (s {{ $enum.SliceGoTypeName }}) String() string {
+	parts := make([]string, len(s))
+	for i, v := range s {
+		parts[i] = string(v)
+	}
+	return "{" + strings.Join(parts, ",") + "}"
+}
+
+// Value implements driver.Valuer.
+func (s {{ $enum.SliceGoTypeName }}) Value() (driver.Value, error) {
+	if s == nil {
+		return nil, nil
+	}
+	return s.String(), nil
+}
+
+// Scan implements sql.Scanner.
+func (s *{{ $enum.SliceGoTypeName }}) Scan(src any) error {
+	if src == nil {
+		*s = nil
+		return nil
+	}
+	var str string
+	switch v := src.(type) {
+	case string:
+		str = v
+	case []byte:
+		str = string(v)
+	default:
+		return fmt.Errorf("scanning %T into {{ $enum.SliceGoTypeName }}", src)
+	}
+	str = strings.TrimPrefix(str, "{")
+	str = strings.TrimSuffix(str, "}")
+	if str == "" {
+		*s = {{ $enum.SliceGoTypeName }}{}
+		return nil
+	}
+	parts := strings.Split(str, ",")
+	result := make({{ $enum.SliceGoTypeName }}, len(parts))
+	for i, p := range parts {
+		result[i] = {{ $enum.GoTypeName }}(p)
+	}
+	*s = result
+	return nil
+}
+
+// MarshalGQL writes the JSON array of GraphQL enum identifiers to w. Lets
+// gqlgen bind the GraphQL list type (`[{{ $enum.GoTypeName }}!]!`) directly to
+// this named slice via the `models:` mapping, avoiding the per-field resolver
+// stub gqlgen would otherwise emit for a list-of-bound-scalar shape.
+func (s {{ $enum.SliceGoTypeName }}) MarshalGQL(w io.Writer) {
+	w.Write([]byte("["))
+	for i, v := range s {
+		if i > 0 {
+			w.Write([]byte(","))
+		}
+		v.MarshalGQL(w)
+	}
+	w.Write([]byte("]"))
+}
+
+// UnmarshalGQL parses a JSON array of GraphQL enum identifiers (the wire form
+// gqlgen produces for an inbound `[{{ $enum.GoTypeName }}!]` argument) into
+// the named slice. Each element round-trips through the bare enum's
+// UnmarshalGQL so unknown identifiers surface a typed validation error.
+func (s *{{ $enum.SliceGoTypeName }}) UnmarshalGQL(v any) error {
+	raw, ok := v.([]any)
+	if !ok {
+		return fmt.Errorf("expected []any for {{ $enum.SliceGoTypeName }}, got %T", v)
+	}
+	out := make({{ $enum.SliceGoTypeName }}, 0, len(raw))
+	for i, item := range raw {
+		var elem {{ $enum.GoTypeName }}
+		if err := elem.UnmarshalGQL(item); err != nil {
+			return fmt.Errorf("{{ $enum.SliceGoTypeName }}[%d]: %w", i, err)
+		}
+		out = append(out, elem)
+	}
+	*s = out
+	return nil
+}
+{{- end }}
+{{- end }}
+{{- end -}}

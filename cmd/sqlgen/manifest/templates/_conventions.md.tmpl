@@ -1,0 +1,94 @@
+# {{ .Package }} conventions
+
+Package-wide reference. Per-entity files cross-reference this document rather than restating it.
+
+## Client entry points
+
+- Entity client: `{{ .Conventions.ClientEntryPoints.Query }}` — one accessor per entity, carrying reads and writes alike. Tables use the plural struct name (`client.Users()`), views the singular one (`client.ActiveUser()`).
+- `Get` returns nil on a missing row: {{ mark .Conventions.FindReturnsNilOnMissing }}
+
+## Error sentinels
+
+| Name | GraphQL code | Package |
+| --- | --- | --- |
+{{- range .Conventions.ErrorSentinels }}
+| `{{ .Name }}` | {{ if .GraphQLCode }}`{{ .GraphQLCode }}`{{ else }}—{{ end }} | {{ .Package }} |
+{{- end }}
+{{- if .Conventions.ConstraintErrorCodes }}
+
+## Constraint error codes
+
+Constraint failures arrive as one `*ConstraintError` (unwrapping to
+`ErrConstraintViolation`); its `Type` selects the GraphQL code:
+
+| ConstraintError.Type | GraphQL code |
+| --- | --- |
+{{- range sortedPairs .Conventions.ConstraintErrorCodes }}
+| `{{ .Key }}` | `{{ .Value }}` |
+{{- end }}
+{{- end }}
+
+## Pagination
+
+- Page type: `{{ .Conventions.Pagination.PageType }}`
+- List envelope suffix: `{{ .Conventions.Pagination.ListEnvelopeSuffix }}`
+- Cursor encoding: {{ .Conventions.Pagination.CursorEncoding }}
+
+## CallOptions
+
+- Type: `{{ .Conventions.CallOptions.Type }}`
+{{- if .Conventions.CallOptions.Fields }}
+- Fields:
+{{- range .Conventions.CallOptions.Fields }}
+  - `{{ . }}`
+{{- end }}
+{{- end }}
+
+## Soft delete
+
+- Excluded from finds by default: {{ mark .Conventions.SoftDelete.DefaultExcludedFromFinds }}
+- Include via: `{{ .Conventions.SoftDelete.IncludeVia }}`
+- Hard-delete method suffix: `{{ .Conventions.SoftDelete.HardDeleteMethodSuffix }}`
+- Restore method suffix: `{{ .Conventions.SoftDelete.RestoreMethodSuffix }}`
+
+## Comparator
+
+Package `{{ .Conventions.Comparator.Package }}`.
+
+Families: {{ join .Conventions.Comparator.Families ", " }}
+{{- range .Conventions.Comparator.ShapeNotes }}
+
+- {{ . }}
+{{- end }}
+{{- if .Conventions.Comparator.Composition }}
+
+Composition:
+{{- range sortedPairs .Conventions.Comparator.Composition }}
+- `{{ .Key }}`: {{ .Value }}
+{{- end }}
+{{- end }}
+{{- if .Conventions.Comparator.Examples }}
+
+Examples:
+{{- range sortedPairs .Conventions.Comparator.Examples }}
+- `{{ .Key }}`: `{{ .Value }}`
+{{- end }}
+{{- end }}
+
+## Omittable
+
+Package `{{ .Conventions.Omittable.Package }}` — type `{{ .Conventions.Omittable.Type }}`.
+
+{{ .Conventions.Omittable.Purpose }}
+
+Construction:
+{{- range .Conventions.Omittable.Construction }}
+- `{{ . }}`
+{{- end }}
+
+Methods:
+{{- range .Conventions.Omittable.Methods }}
+- `{{ . }}`
+{{- end }}
+
+JSON behavior: {{ .Conventions.Omittable.JSONBehavior }}

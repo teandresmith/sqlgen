@@ -1,0 +1,81 @@
+"""
+Category corresponds to the categories table.
+"""
+type Category {
+  "id"
+  id: Int!
+  "name"
+  name: String!
+  "description"
+  description: String
+  "created_at"
+  createdAt: Time!
+  "one-to-many relationship with the products table."
+  products: [Product!]!
+}
+
+type CategoryConnection {
+  edges:      [CategoryEdge!]!
+  pageInfo:   PageInfo!
+  totalCount: Int!
+}
+
+type CategoryEdge {
+  node:   Category!
+  cursor: String!
+}
+
+type CategoryListResult {
+  items:      [Category!]!
+  totalCount: Int!
+  offset:     Int!
+  limit:      Int!
+  hasMore:    Boolean!
+}
+
+input CategoryFilter {
+  name: StringComparator
+  description: NullableStringComparator
+  createdAt: TimeComparator
+  products: ProductFilter
+  and: [CategoryFilter!]
+  or:  [CategoryFilter!]
+}
+
+enum CategorySortField {
+  ID
+  NAME
+  DESCRIPTION
+  CREATED_AT
+}
+
+input CategorySort {
+  field:     CategorySortField!
+  direction: SortDirection!
+}
+input CreateCategoryInput {
+  name: String!
+  description: String
+  createdAt: Time!
+}
+input UpdateCategoryInput {
+  name: String
+  description: String
+  createdAt: Time
+}
+
+extend type Query {
+  category(id: Int!): Category
+  "Cursor-paginated; ordering is driven by cursor_keys to preserve keyset semantics — pass `sort` to categoryList instead."
+  categories(filter: CategoryFilter, first: Int, after: String, last: Int, before: String): CategoryConnection!
+  categoryList(filter: CategoryFilter, sort: [CategorySort!], limit: Int, offset: Int): CategoryListResult!
+}
+
+extend type Mutation {
+  createCategory(input: CreateCategoryInput!): Category!
+  createCategories(inputs: [CreateCategoryInput!]!): [Category!]!
+  updateCategory(id: Int!, input: UpdateCategoryInput!): Category!
+  updateCategories(filter: CategoryFilter!, input: UpdateCategoryInput!): [Category!]!
+  upsertCategory(input: CreateCategoryInput!): Category!
+  deleteCategory(id: Int!): Boolean!
+}

@@ -1,0 +1,6 @@
+coverage.out
+**/coverage.out
+.claude/scheduled_tasks.lock
+
+# /fix-vet prototype patches (local only; consumed by /fix-implement)
+.claude/prototypes/

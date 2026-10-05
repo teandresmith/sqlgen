@@ -1,0 +1,92 @@
+"""
+Entry corresponds to the entries table.
+"""
+type Entry {
+  "id"
+  id: Int64!
+  "account_id"
+  accountID: Int64!
+  "memo"
+  memo: NullString
+  "amount"
+  amount: Decimal!
+  "Identifier of this entry in the upstream ledger"
+  upstreamRef: UUID
+  "created_at"
+  createdAt: Time!
+}
+
+type EntryConnection {
+  edges:      [EntryEdge!]!
+  pageInfo:   PageInfo!
+  totalCount: Int!
+}
+
+type EntryEdge {
+  node:   Entry!
+  cursor: String!
+}
+
+type EntryListResult {
+  items:      [Entry!]!
+  totalCount: Int!
+  offset:     Int!
+  limit:      Int!
+  hasMore:    Boolean!
+}
+
+input EntryFilter {
+  accountID: NumericComparator
+  memo: NullableStringComparator
+  amount: DecimalComparator
+  upstreamRef: NullableStringComparator
+  createdAt: TimeComparator
+  and: [EntryFilter!]
+  or:  [EntryFilter!]
+}
+
+enum EntrySortField {
+  ID
+  ACCOUNT_ID
+  MEMO
+  AMOUNT
+  UPSTREAM_REF
+  CREATED_AT
+}
+
+input EntrySort {
+  field:     EntrySortField!
+  direction: SortDirection!
+}
+input CreateEntryInput {
+  accountID: Int64!
+  memo: NullString
+  amount: Decimal!
+  upstreamRef: UUID
+  createdAt: Time!
+}
+input UpdateEntryInput {
+  accountID: Int64
+  memo: NullString
+  amount: Decimal
+  amount_inc: Int
+  amount_dec: Int
+  upstreamRef: UUID
+  createdAt: Time
+}
+
+extend type Query {
+  entry(id: Int64!): Entry
+  "Cursor-paginated; ordering is driven by cursor_keys to preserve keyset semantics — pass `sort` to entryList instead."
+  entries(filter: EntryFilter, first: Int, after: String, last: Int, before: String): EntryConnection!
+  entryList(filter: EntryFilter, sort: [EntrySort!], limit: Int, offset: Int): EntryListResult!
+}
+
+extend type Mutation {
+  createEntry(input: CreateEntryInput!): Entry!
+  createEntries(inputs: [CreateEntryInput!]!): [Entry!]!
+  updateEntry(id: Int64!, input: UpdateEntryInput!): Entry!
+  updateEntries(filter: EntryFilter!, input: UpdateEntryInput!): [Entry!]!
+  upsertEntry(input: CreateEntryInput!): Entry!
+  deleteEntry(id: Int64!): Boolean!
+}

@@ -1,0 +1,74 @@
+"""
+UserBadge corresponds to the user_badges table.
+"""
+type UserBadge {
+  "id"
+  id: Int!
+  "user_id"
+  userID: UUID
+  "label"
+  label: String!
+  "one-to-one relationship with the users table."
+  users: User
+}
+
+type UserBadgeConnection {
+  edges:      [UserBadgeEdge!]!
+  pageInfo:   PageInfo!
+  totalCount: Int!
+}
+
+type UserBadgeEdge {
+  node:   UserBadge!
+  cursor: String!
+}
+
+type UserBadgeListResult {
+  items:      [UserBadge!]!
+  totalCount: Int!
+  offset:     Int!
+  limit:      Int!
+  hasMore:    Boolean!
+}
+
+input UserBadgeFilter {
+  userID: NullableIDComparator
+  label: StringComparator
+  and: [UserBadgeFilter!]
+  or:  [UserBadgeFilter!]
+}
+
+enum UserBadgeSortField {
+  ID
+  USER_ID
+  LABEL
+}
+
+input UserBadgeSort {
+  field:     UserBadgeSortField!
+  direction: SortDirection!
+}
+input CreateUserBadgeInput {
+  userID: UUID
+  label: String!
+}
+input UpdateUserBadgeInput {
+  userID: UUID
+  label: String
+}
+
+extend type Query {
+  userBadge(id: Int!): UserBadge
+  "Cursor-paginated; ordering is driven by cursor_keys to preserve keyset semantics — pass `sort` to userBadgeList instead."
+  userBadges(filter: UserBadgeFilter, first: Int, after: String, last: Int, before: String): UserBadgeConnection!
+  userBadgeList(filter: UserBadgeFilter, sort: [UserBadgeSort!], limit: Int, offset: Int): UserBadgeListResult!
+}
+
+extend type Mutation {
+  createUserBadge(input: CreateUserBadgeInput!): UserBadge!
+  createUserBadges(inputs: [CreateUserBadgeInput!]!): [UserBadge!]!
+  updateUserBadge(id: Int!, input: UpdateUserBadgeInput!): UserBadge!
+  updateUserBadges(filter: UserBadgeFilter!, input: UpdateUserBadgeInput!): [UserBadge!]!
+  upsertUserBadge(input: CreateUserBadgeInput!): UserBadge!
+  deleteUserBadge(id: Int!): Boolean!
+}

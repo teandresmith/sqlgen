@@ -1,0 +1,228 @@
+{{- define "shared/filter" -}}
+
+// {{ .StructName }}Filter provides type-safe filtering for the {{ .TableName }} table.
+type {{ .StructName }}Filter struct {
+{{- range .FilterFields }}
+{{- if .Filterable }}
+	{{ .FieldName }} {{ .ComparatorType }} `json:"{{ .ColumnName }}"`
+{{- end }}
+{{- end }}
+{{- range .RelationshipFilters }}
+	{{ .FieldName }} *{{ .TargetStructName }}Filter `json:"{{ .JSONTag }}"`
+{{- end }}
+{{- if .CompositePK }}
+	PKs []{{ .CompositePKStructName }} `json:"pks"`
+{{- end }}
+	And []*{{ .StructName }}Filter `json:"and"`
+	Or  []*{{ .StructName }}Filter `json:"or"`
+}
+
+// ToConditions converts the filter to a slice of SQL conditions.
+//
+// A nil receiver contributes no conditions. Two callers depend on that. The
+// *Where methods dereference their filter only here and document a nil one as
+// the empty-filter case, so this is what makes ErrEmptyFilter reachable instead
+// of a nil dereference. And a nil entry inside and / or is skipped rather than
+// fatal, matching the "an unset member contributes no SQL" rule the
+// relationship members already follow.
+func (f *{{ .StructName }}Filter) ToConditions(dialect sql.Dialect{{ if .HasFilterOptions }}, opts ...FilterOption{{ end }}) []sql.Condition {
+	if f == nil {
+		return nil
+	}
+
+	var conds []sql.Condition
+{{- /*
+	The column reaches the comparator already quoted: comparators write the
+	token they are given into Clause and Column verbatim, and builders render
+	Clause verbatim, so this is the one place the dialect can quote a filter
+	column (every SQL identifier is dialect-quoted). Column carries the same
+	quoted token, which is what lets PrefixConditions qualify it as
+	alias."col" on the O2O-join path and inside a relationship filter's EXISTS subquery.
+*/}}
+{{- range .FilterFields }}
+{{- if .Filterable }}
+
+	if f.{{ .FieldName }} != nil {
+		conds = append(conds, f.{{ .FieldName }}.Parse(dialect.QuoteIdentifier({{ printf "%q" .ColumnName }}), dialect)...)
+	}
+{{- end }}
+{{- end }}
+{{- range .RelationshipFilters }}
+
+	if f.{{ .FieldName }} != nil {
+		conds = append(conds, {{ .HelperName }}(f.{{ .FieldName }}, dialect, opts))
+	}
+{{- end }}
+{{- if .CompositePK }}
+
+	if len(f.PKs) > 0 {
+		var pkConds []sql.Condition
+		for _, pk := range f.PKs {
+			pkConds = append(pkConds, sql.And(
+{{- range .PKColumns }}
+				sql.Condition{Clause: dialect.QuoteIdentifier({{ printf "%q" .Name }}) + " = $", Value: pk.{{ .FieldName }}},
+{{- end }}
+			))
+		}
+		conds = append(conds, sql.Or(pkConds...))
+	}
+{{- end }}
+
+	for _, sub := range f.And {
+		subConds := sub.ToConditions(dialect{{ if .HasFilterOptions }}, opts...{{ end }})
+		if len(subConds) > 0 {
+			conds = append(conds, sql.And(subConds...))
+		}
+	}
+
+	// A filter object's own fields are always conjunctive, so each or member
+	// contributes sql.And of its own conditions and the members are OR-ed
+	// together as ONE group condition. Appending a per-member
+	// sql.Or instead hands the caller N conditions, and buildWhere joins those
+	// with AND — turning or: [A, B] into A AND B, while simultaneously OR-ing a
+	// single member's own fields against each other.
+	//
+	// The group is appended only when some member compiled to something:
+	// sql.Or of nothing expands to a literal "()", which buildWhere keeps
+	// because it is not the empty string, yielding invalid SQL.
+	var orGroup []sql.Condition
+	for _, sub := range f.Or {
+		subConds := sub.ToConditions(dialect{{ if .HasFilterOptions }}, opts...{{ end }})
+		if len(subConds) > 0 {
+			orGroup = append(orGroup, sql.And(subConds...))
+		}
+	}
+	if len(orGroup) > 0 {
+		conds = append(conds, sql.Or(orGroup...))
+	}
+
+	return conds
+}
+{{- if .HasTenantedRelationshipFilter }}
+
+// usesRelationshipFilter reports whether f sets at least one relationship
+// member, directly or through and / or.
+//
+// The FilterOption set ToConditions takes is read only by the EXISTS helpers
+// below, so a filter with no relationship member ignores it entirely and
+// compiles to byte-identical SQL either way. The client's filterOptions
+// consults this before resolving a tenant, which is what keeps a read that has
+// no tenanted component from failing closed: on a shared table the outer WHERE
+// is never tenant-scoped, so a resolver that reports a missing tenant as an
+// error would otherwise reject reads that legitimately run before any tenant
+// is selected.
+func (f *{{ .StructName }}Filter) usesRelationshipFilter() bool {
+	if f == nil {
+		return false
+	}
+{{- range .RelationshipFilters }}
+	if f.{{ .FieldName }} != nil {
+		return true
+	}
+{{- end }}
+	for _, sub := range f.And {
+		if sub.usesRelationshipFilter() {
+			return true
+		}
+	}
+	for _, sub := range f.Or {
+		if sub.usesRelationshipFilter() {
+			return true
+		}
+	}
+	return false
+}
+{{- end }}
+{{- range .RelationshipFilters }}
+{{ template "shared/filter-exists" . }}
+{{- end }}
+{{- end -}}
+
+{{- define "shared/filter-exists" -}}
+
+// {{ .HelperName }} compiles a {{ .TargetStructName }}Filter set on the
+// {{ .FieldName }} relationship into a correlated EXISTS over {{ .TargetTable }}
+{{- if .IsM2M }}, joined through the {{ .JunctionTable }} junction{{ end }}.
+//
+// The parent-side reference carries no qualifier: sql.CorrelationToken is
+// resolved by the builder against whichever FROM clause encloses the predicate,
+// so one emitted value is correct on both the plain read path and the aliased
+// O2O-join path.
+//
+// The subquery alias is keyed on nesting depth. A relationship filter nested
+// inside itself — legal for a self-referential relationship — would
+// otherwise reuse the alias and let the inner subquery shadow the reference its
+// own correlation resolves against.
+//
+// MySQL rejects an EXISTS naming the table an UPDATE or DELETE is mutating
+// (error 1093). A relationship filter whose target is the mutated table is
+// therefore a read-path predicate on MySQL, not one to pass to UpdateWhere /
+// SoftDeleteWhere / HardDeleteWhere / Increment.
+func {{ .HelperName }}(f *{{ .TargetStructName }}Filter, dialect sql.Dialect, opts []FilterOption) sql.Condition {
+	scope := resolveFilterScope(opts)
+	tgt := filterSubqueryAlias("tgt", scope.depth)
+{{- if .IsM2M }}
+	jn := filterSubqueryAlias("jn", scope.depth)
+	subSQL := "SELECT 1 FROM " + dialect.FormatTable(sql.Table{Schema: {{ printf "%q" .JunctionSchema }}, Name: {{ printf "%q" .JunctionTable }}}) + " " + jn +
+		" JOIN " + dialect.FormatTable(sql.Table{Schema: {{ printf "%q" .TargetSchema }}, Name: {{ printf "%q" .TargetTable }}}) + " " + tgt +
+		" ON " + tgt + "." + dialect.QuoteIdentifier({{ printf "%q" .TargetPKColumn }}) + " = " + jn + "." + dialect.QuoteIdentifier({{ printf "%q" .JunctionReferenceFK }}) +
+		" WHERE " + jn + "." + dialect.QuoteIdentifier({{ printf "%q" .JunctionLocalFK }}) + " = " + sql.CorrelationToken
+{{- else }}
+	subSQL := "SELECT 1 FROM " + dialect.FormatTable(sql.Table{Schema: {{ printf "%q" .TargetSchema }}, Name: {{ printf "%q" .TargetTable }}}) + " " + tgt +
+		" WHERE " + tgt + "." + dialect.QuoteIdentifier({{ printf "%q" .FKColumn }}) + " = " + sql.CorrelationToken
+{{- end }}
+	var subArgs []any
+{{- if .StaticFilterExpr }}
+
+	// Static sub-categorization predicate from the relationship's config
+	// `filter:` — without it a relationship filter would match
+	// rows belonging to a sibling sub-category. Qualified at codegen against
+	// the target alias, which an M2M subquery needs: the junction is in scope
+	// too, so a bare column name is ambiguous.
+	subSQL += " AND (" + {{ .StaticFilterExpr }} + ")"
+{{- end }}
+{{- with .Discriminator }}
+
+	// Same predicate from the relationship's config `discriminator:`, and
+	// here for the same reason the `filter:` form is: without it a
+	// relationship filter would match rows belonging to a sibling
+	// sub-category. The structured form carries a column and a value rather
+	// than opaque SQL, so the identifier is quoted by the dialect and the
+	// value binds into subArgs instead of being spliced into the statement.
+	subSQL += " AND (" + tgt + "." + dialect.QuoteIdentifier({{ printf "%q" .Column }}) + " = $)"
+	subArgs = append(subArgs, {{ .GoLiteral }})
+{{- end }}
+
+	// The target's own ToConditions supplies the inner WHERE, so nesting and
+	// and/or compose recursively. Every reference is qualified with the target
+	// alias: unqualified names inside a correlated subquery bind to the
+	// enclosing statement whenever the target lacks the column.
+	if where, whereArgs := sql.SubqueryWhere(dialect, tgt, f.ToConditions(dialect, nestFilterScope(opts, scope.depth+1)...)); where != "" {
+		subSQL += " AND " + where
+		subArgs = append(subArgs, whereArgs...)
+	}
+{{- with .SoftDelete }}
+
+	// The target's soft-delete rule applies inside the subquery, on the same
+	// terms as its own read path: the default is injected unless
+	// the caller set the comparator on the target filter.
+	if f.{{ .FieldName }} == nil {
+		subSQL += " AND " + tgt + "." + dialect.QuoteIdentifier({{ printf "%q" .Column }}) + {{ printf "%q" (softDeleteSubqueryPredicate .) }}
+{{- with softDeleteSubqueryArg . }}
+		subArgs = append(subArgs, {{ . }})
+{{- end }}
+	}
+{{- end }}
+{{- if .TenantColumn }}
+
+	// The target's tenant rule applies inside the subquery. Without it a
+	// relationship filter would be a cross-tenant existence probe on a table the caller cannot otherwise read.
+	if scope.applyTenant {
+		subSQL += " AND " + tgt + "." + dialect.QuoteIdentifier({{ printf "%q" .TenantColumn }}) + " = $"
+		subArgs = append(subArgs, scope.tenant)
+	}
+{{- end }}
+
+	return sql.Exists({{ printf "%q" .CorrelationColumn }}, sql.Subquery{SQL: subSQL, Args: subArgs})
+}
+{{- end -}}

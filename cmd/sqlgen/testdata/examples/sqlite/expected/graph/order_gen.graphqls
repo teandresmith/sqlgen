@@ -1,0 +1,95 @@
+"""
+Order corresponds to the orders table.
+"""
+type Order {
+  "id"
+  id: Int!
+  "user_id"
+  userID: Int!
+  "status"
+  status: String!
+  "total"
+  total: Float!
+  "notes"
+  notes: String
+  "ordered_at"
+  orderedAt: DateTime!
+  "one-to-many relationship with the order_items table."
+  orderItems: [OrderItem!]!
+}
+
+type OrderConnection {
+  edges:      [OrderEdge!]!
+  pageInfo:   PageInfo!
+  totalCount: Int!
+}
+
+type OrderEdge {
+  node:   Order!
+  cursor: String!
+}
+
+type OrderListResult {
+  items:      [Order!]!
+  totalCount: Int!
+  offset:     Int!
+  limit:      Int!
+  hasMore:    Boolean!
+}
+
+input OrderFilter {
+  userID: NumericComparator
+  status: StringComparator
+  total: NumericComparator
+  notes: NullableStringComparator
+  orderedAt: TimeComparator
+  orderItems: OrderItemFilter
+  and: [OrderFilter!]
+  or:  [OrderFilter!]
+}
+
+enum OrderSortField {
+  ID
+  USER_ID
+  STATUS
+  TOTAL
+  NOTES
+  ORDERED_AT
+}
+
+input OrderSort {
+  field:     OrderSortField!
+  direction: SortDirection!
+}
+input CreateOrderInput {
+  userID: Int!
+  status: String!
+  total: Float!
+  notes: String
+  orderedAt: DateTime!
+}
+input UpdateOrderInput {
+  userID: Int
+  status: String
+  total: Float
+  total_inc: Int
+  total_dec: Int
+  notes: String
+  orderedAt: DateTime
+}
+
+extend type Query {
+  order(id: Int!): Order
+  "Cursor-paginated; ordering is driven by cursor_keys to preserve keyset semantics — pass `sort` to orderList instead."
+  orders(filter: OrderFilter, first: Int, after: String, last: Int, before: String): OrderConnection!
+  orderList(filter: OrderFilter, sort: [OrderSort!], limit: Int, offset: Int): OrderListResult!
+}
+
+extend type Mutation {
+  createOrder(input: CreateOrderInput!): Order!
+  createOrders(inputs: [CreateOrderInput!]!): [Order!]!
+  updateOrder(id: Int!, input: UpdateOrderInput!): Order!
+  updateOrders(filter: OrderFilter!, input: UpdateOrderInput!): [Order!]!
+  upsertOrder(input: CreateOrderInput!): Order!
+  deleteOrder(id: Int!): Boolean!
+}

@@ -1,0 +1,13 @@
+# Pinned developer toolchain — the single source of truth for tool versions.
+#
+# Read by `make tools-check` (which `make check` and `make check-examples` run
+# first), by the lint jobs in .github/workflows/{lint,examples}.yml, and by the
+# /implement, /verify, /fix-implement and /close-phase preflights.
+#
+# asdf/mise format — `asdf install` / `mise install` consume it directly.
+#
+# golangci-lint must be built with a Go at or above the repo's go.mod floor, or
+# it refuses to run at all. Check with `golangci-lint --version`.
+golang 1.27.1
+golangci-lint 2.13.2
+gofumpt 0.12.0

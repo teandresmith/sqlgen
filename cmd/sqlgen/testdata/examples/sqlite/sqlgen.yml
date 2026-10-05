@@ -1,0 +1,184 @@
+version: v1
+
+input:
+  dialect: sqlite
+  paths:
+    - ./schema.sql
+  views:
+    - ./views/
+
+output:
+  driver: stdlib
+  dir: ./models
+  package: models
+  # This example uses the file_per_table layout so the golden
+  # tree proves manifest_embed_gen.go survives gen's stale sweep: gen's
+  # CleanStaleFiles (step 7) sweeps top-level *_gen.go not in result.Files
+  # BEFORE the manifest stage (step 7c) writes manifest_embed_gen.go, so a
+  # regression that ran them out of order would delete the embed file. The
+  # per-table layout is the shape that stresses this ordering.
+  layout: file_per_table
+
+generation:
+  soft_delete_columns:
+    - name: deleted_at
+      type: timestamp
+    - name: is_deleted
+      type: bool
+  # Enable the manifest surface (PRD §30), single JSON layout,
+  # embedded on the Client (embed_in_client defaults true).
+  manifest:
+    enabled: true
+    json_layout: single
+
+tables:
+  # A has-one edge across differing PK names (see schema.sql).
+  owners:
+    relationships:
+      - name: OwnerProfile
+        type: one_to_one
+        table: owner_profiles
+        fk: owner_id
+  users:
+    relationships:
+      - name: Profile
+        type: one_to_one
+        table: profiles
+        fk: user_id
+  assets:
+    relationships:
+      - name: PrimaryDocument
+        type: one_to_one
+        table: documents
+        fk: entity_id
+        discriminator:
+          column: entity_type
+          value: "asset.primary"
+      - name: Attachments
+        type: one_to_many
+        table: documents
+        fk: entity_id
+        discriminator:
+          column: entity_type
+          value: "asset.attachment"
+      - name: Invoices
+        type: one_to_many
+        table: documents
+        fk: entity_id
+        discriminator:
+          column: entity_type
+          value: "asset.invoice"
+      # Multi-column filter coverage.
+      - name: PrimaryActiveDocument
+        type: one_to_one
+        table: documents
+        fk: entity_id
+        filter: "entity_type = 'asset.primary' AND name LIKE 'site_%'"
+      - name: PhotoAttachments
+        type: one_to_many
+        table: documents
+        fk: entity_id
+        filter: "entity_type = 'asset.attachment' AND name LIKE 'photo_%'"
+      - name: LinkedAttachments
+        type: many_to_many
+        table: documents
+        junction: asset_document_links
+        junction_local_fk: asset_id
+        junction_reference_fk: document_id
+        filter: "entity_type = 'asset.attachment' AND name LIKE 'link_%'"
+      # Top-level OR coverage. Collecting two sub-categories under one
+      # edge is what §13.7.1 suggests for otherwise-stranded rows, and it is the
+      # one filter shape where operator precedence matters: AND binds tighter
+      # than OR, so an unparenthesised splice drops the FK correlation out of
+      # the predicate and the loader returns other assets' documents.
+      - name: PrimaryOrInvoiceDocuments
+        type: one_to_many
+        table: documents
+        fk: entity_id
+        filter: "entity_type = 'asset.primary' OR entity_type = 'asset.invoice'"
+      - name: SpvOrArchivedDocument
+        type: one_to_one
+        table: documents
+        fk: entity_id
+        filter: "entity_type = 'spv' OR entity_type = 'asset.archived'"
+  user_categories:
+    cursor_keys:
+      - user_id
+      - category_id
+  orders:
+    strict_updates: false
+  articles: {}
+  tags: {}
+  # A BLOB primary key filters through comparator.Opaque[[]byte].
+  # The relationship pulls the O2M loader's PK-IN path into the compiled
+  # module alongside the per-row Get / Delete paths.
+  binary_keys:
+    relationships:
+      - name: Events
+        type: one_to_many
+        table: binary_key_events
+        fk: binary_key_id
+  binary_key_events: {}
+  product_tag_labels:
+    cursor_keys:
+      - product_id
+      - tag_name
+      - label
+  slugged_rows:
+    column_map:
+      slug:
+        access: read_only
+  # A cursor key that only parses quoted. The keyset WHERE of every
+  # page after the first names it, so it has to go through the dialect.
+  digit_leading_columns:
+    cursor_keys:
+      - "2024_quota"
+      - id
+  warehouses:
+    overrides:
+      types:
+        real:
+          type: decimal.Decimal
+          import: github.com/shopspring/decimal
+          nullable: decimal.NullDecimal
+        varchar:
+          type: ksuid.KSUID
+          import: github.com/segmentio/ksuid
+
+# Enable the GraphQL API surface. This is the only module that
+# compiles the SQLite dialect into a gqlgen schema, and the one this example
+# exists to cover is the `types.DateTime` / `types.NullDateTime` pair: SQLite
+# has no date/time storage class, so `registerDialectDefaults` (gotype.go)
+# registers those two as the DIALECT DEFAULT for datetime/timestamp/date
+# columns. Every other module reaches those Go types through an explicit
+# `overrides.types` block (the `graphql` example's `events` table), so the
+# defaulting path itself compiles into no other GraphQL surface. SQLite's
+# BLOB primary key (`binary_keys`), its composite PKs, its views and the
+# `file_per_table` layout ride along on the same route.
+#
+# schema_dir / resolver_dir are root-relative (§26.5.8), placing the generated
+# graph package at ./models/graph/ alongside models — the same layout the
+# graphql and mysql examples use.
+api:
+  enabled: true
+  graphql:
+    enabled: true
+    schema_dir: ./models/graph
+    resolver_dir: ./models/graph
+    package: graph
+    field_casing: camel_case
+    gqlgen_config: ./gqlgen.yml
+    gqlgen_bin: go run github.com/99designs/gqlgen
+    # `warehouses.external_id` is retyped to ksuid.KSUID by the table-level
+    # override above — a Go type the built-in registry does not own, so §26.4.1
+    # requires the consumer to declare it. `marshaling: external` means the
+    # marshalers are free functions this example wrote; marshaler_package is
+    # the import path gqlgen discovers MarshalKSUID / UnmarshalKSUID at.
+    #
+    # This is the only binding the whole 18-table schema needed: every other
+    # column binds through the built-in registry or a spec built-in.
+    scalars:
+      KSUID:
+        go_type: github.com/segmentio/ksuid.KSUID
+        marshaling: external
+        marshaler_package: github.com/teandresmith/sqlgen/cmd/sqlgen/testdata/examples/sqlite/gqlscalars

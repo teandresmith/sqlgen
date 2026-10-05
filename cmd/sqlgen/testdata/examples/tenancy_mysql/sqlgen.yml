@@ -1,0 +1,56 @@
+version: v1
+
+# tenancy_mysql — the MySQL integration leg for tenant capture (PRD §29.5):
+# compiles and exercises the tenant-capture paths that have no RETURNING —
+# captureAffectedTenants pre-reads, the batched *Many pre-read,
+# the widened collectAffectedIDs/collectAffectedPKs, and the upsert
+# post-statement read — across the three PK shapes the generator
+# distinguishes (single numeric, composite with tenant OUTSIDE the PK,
+# string-typed). The exhaustive nil-tenant behavior suite lives in the
+# sqlite `tenancy` example; this module pins the MySQL-only mechanics
+# against a real server.
+
+input:
+  dialect: mysql
+  paths:
+    - ./schema.sql
+  views:
+    - ./views/
+
+output:
+  driver: stdlib
+  dir: ./models
+  package: models
+
+events:
+  enabled: true
+
+cache:
+  enabled: true
+  ttl: "1h"
+  serializer: json
+  key_prefix: sqlgen
+
+# The tenant column is CHAR(36); with no type override the resolver infers a
+# plain `string` tenant type — deliberately different from the sqlite/postgres
+# tenancy examples' uuid.UUID, proving the capture/stamp/key machinery is not
+# uuid-specific (§29.2.4 uniform-type rule still holds within the package).
+tenancy:
+  enabled: true
+  column: workspace_id
+  required: true
+
+generation:
+  soft_delete_columns:
+    - name: deleted_at
+      type: timestamp
+
+# View tenancy read-path emission (PRD §29.2.5). Scoped by
+# detection alone; no per-view tenancy block.
+views:
+  article_stats: {}
+
+tables:
+  articles: {}
+  line_items: {}
+  documents: {}

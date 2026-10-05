@@ -1,0 +1,63 @@
+version: v1
+
+input:
+  dialect: sqlite
+  paths:
+    - ./schema.sql
+  views:
+    - ./views/
+
+output:
+  driver: stdlib
+  dir: ./models
+  package: models
+
+events:
+  enabled: true
+
+cache:
+  enabled: true
+  ttl: "1h"
+  serializer: json
+  key_prefix: sqlgen
+  hydration:
+    enabled: true
+    timeout: "5s"
+  circuit_breaker:
+    enabled: true
+    failure_threshold: 3
+    probe_interval: "50ms"
+    half_open_max_probes: 1
+
+generation:
+  soft_delete_columns:
+    - name: deleted_at
+      type: timestamp
+
+tables:
+  products: {}
+  articles: {}
+  order_items:
+    cursor_keys:
+      - order_id
+      - product_id
+  users:
+    relationships:
+      - name: Profile
+        type: one_to_one
+        table: profiles
+        fk: user_id
+  profiles: {}
+  audit_logs:
+    cache:
+      enabled: false
+
+views:
+  product_summary:
+    struct_name: ProductSummary
+    sql: ./views/product_summary.sql
+    cache:
+      enabled: true
+      ttl: "15m"
+    invalidate_on:
+      - products

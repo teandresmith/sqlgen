@@ -1,0 +1,728 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw.githubusercontent.com/teandresmith/sqlgen/main/cmd/sqlgen/config/schema/v1.json",
+  "title": "sqlgen configuration",
+  "description": "Shape of a sqlgen.yml configuration file. Editor hinting only: this schema checks structure, key names and closed value sets. It cannot express sqlgen's cross-field rules (driver/dialect pairing, required connection, soft-delete column type compatibility, cursor-key existence) — run `sqlgen validate` for those.",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "version": {
+      "type": "string",
+      "description": "Config schema version, for forward compatibility.",
+      "default": "v1"
+    },
+    "input": { "$ref": "#/$defs/input" },
+    "output": { "$ref": "#/$defs/output" },
+    "generation": { "$ref": "#/$defs/generation" },
+    "overrides": { "$ref": "#/$defs/overrides" },
+    "exclude_tables": {
+      "type": "array",
+      "description": "Glob patterns for tables to drop from generation entirely, for file and introspection inputs alike. `*` matches any sequence, `?` any single character; case-sensitive.",
+      "items": { "type": "string" }
+    },
+    "tables": {
+      "type": "object",
+      "description": "Per-table customization, keyed by table name (bare or schema-qualified).",
+      "additionalProperties": { "$ref": "#/$defs/table" }
+    },
+    "views": {
+      "type": "object",
+      "description": "Per-view customization, keyed by view name.",
+      "additionalProperties": { "$ref": "#/$defs/view" }
+    },
+    "enums": {
+      "type": "object",
+      "description": "Per-enum customization, keyed by SQL enum name (bare or schema-qualified).",
+      "additionalProperties": { "$ref": "#/$defs/enum" }
+    },
+    "extras": {
+      "type": "object",
+      "description": "Custom struct definitions, typically to give a JSONB column a typed Go shape.",
+      "additionalProperties": { "$ref": "#/$defs/extraType" }
+    },
+    "api": { "$ref": "#/$defs/api" },
+    "cache": { "$ref": "#/$defs/cache" },
+    "events": { "$ref": "#/$defs/events" },
+    "tenancy": { "$ref": "#/$defs/tenancy" }
+  },
+  "$defs": {
+    "operations": {
+      "description": "An `api.operations` mask: which operations the generated API exposes. Either a preset name or an explicit key map. The Go client has no such switch — it generates every method the schema allows — so this narrows exposure only.",
+      "oneOf": [
+        { "$ref": "#/$defs/operationsPreset" },
+        { "$ref": "#/$defs/operationsObject" }
+      ]
+    },
+    "operationsPreset": {
+      "type": "string",
+      "description": "A named mask preset.",
+      "enum": ["all", "read_only", "append_only", "no_delete", "no_hard_delete"]
+    },
+    "operationsObject": {
+      "type": "object",
+      "description": "Explicit mask keys, optionally layered on a base preset. Each key names the client method its API surface calls. The client-only keys are declared only to be rejected.",
+      "additionalProperties": false,
+      "properties": {
+        "preset": { "$ref": "#/$defs/operationsPreset" },
+        "get": { "type": "boolean", "description": "The `<table>(id)` query, backed by Get." },
+        "paginate": { "type": "boolean", "description": "The `<table>List` query, backed by Paginate." },
+        "connection": { "type": "boolean", "description": "The `<table>s` cursor query, backed by Connection." },
+        "create": { "type": "boolean", "description": "The `create<Table>` mutation, backed by Create." },
+        "create_many": { "type": "boolean", "description": "The `create<Table>s` mutation, backed by CreateMany." },
+        "update": { "type": "boolean", "description": "The `update<Table>` mutation, backed by Update." },
+        "update_where": { "type": "boolean", "description": "The `update<Table>s(filter, input)` mutation, backed by UpdateWhere. Also gates the O2M / has-one nested relink verbs into this table." },
+        "upsert": { "type": "boolean", "description": "The `upsert<Table>` mutation, backed by Upsert. Needs a conflict target." },
+        "create_with_related": { "type": "boolean", "description": "The `create<Table>WithRelated` mutation. Requires `create` in the same mask. Emits nothing unless generation.nested_mutations enables the family and the table has an eligible relationship." },
+        "update_with_related": { "type": "boolean", "description": "The `update<Table>WithRelated` mutation. Requires `update` in the same mask; same gating as create_with_related." },
+        "upsert_with_related": { "type": "boolean", "description": "The `upsert<Table>WithRelated` mutation. Requires `upsert` in the same mask; same gating as create_with_related." },
+        "soft_delete": { "type": "boolean", "description": "The soft-delete mutation. Only takes effect when a soft-delete column is detected." },
+        "restore": { "type": "boolean", "description": "The `restore<Table>` mutation. Only takes effect when a soft-delete column is detected." },
+        "hard_delete": { "type": "boolean", "description": "The hard-delete mutation." },
+        "get_many": { "not": {}, "description": "Rejected: names a client method no API surface calls (PRD §26.5.1). `<table>List` is backed by Paginate and gated on `paginate`." },
+        "update_many": { "not": {}, "description": "Rejected: names a client method no API surface calls (PRD §26.5.1). `update<Table>s` is backed by UpdateWhere and gated on `update_where`." },
+        "upsert_many": { "not": {}, "description": "Rejected: names a client method no API surface calls (PRD §26.5.1)." },
+        "exists": { "not": {}, "description": "Rejected: names a client method no API surface calls (PRD §26.5.1)." },
+        "count": { "not": {}, "description": "Rejected: names a client method no API surface calls (PRD §26.5.1)." },
+        "increment": { "not": {}, "description": "Rejected: names a client method no API surface calls (PRD §26.5.1). Increments reach the API as `_inc` / `_dec` operators on the update input." },
+        "stream": { "not": {}, "description": "Rejected: names a client method no API surface calls (PRD §26.5.1)." }
+      }
+    },
+    "input": {
+      "type": "object",
+      "description": "Where the schema is read from.",
+      "additionalProperties": false,
+      "properties": {
+        "dialect": {
+          "type": "string",
+          "description": "SQL dialect used for parsing. Note: `postgres`, not `postgresql`.",
+          "enum": ["postgres", "mysql", "sqlite"],
+          "default": "postgres"
+        },
+        "source": {
+          "type": "string",
+          "description": "Schema source mode. `database` and `both` require `input.connection`.",
+          "enum": ["files", "database", "both"],
+          "default": "files"
+        },
+        "schema": {
+          "type": "string",
+          "description": "PostgreSQL only: the schema an unqualified table name or `REFERENCES` target resolves to. `*` resolves to `public`. It does not filter which schemas are parsed. Ignored with a warning on MySQL/SQLite.",
+          "default": "*"
+        },
+        "paths": {
+          "type": "array",
+          "description": "SQL files or directories to parse, when source is `files` or `both`.",
+          "items": { "type": "string" }
+        },
+        "views": {
+          "type": "array",
+          "description": "Paths to view annotation files or directories. Parsed only as views, never as DDL.",
+          "items": { "type": "string" }
+        },
+        "parse_mode": {
+          "type": "string",
+          "description": "How duplicate table definitions across files are handled.",
+          "enum": ["strict", "merge"],
+          "default": "strict"
+        },
+        "connection": { "$ref": "#/$defs/connection" },
+        "introspect": { "$ref": "#/$defs/introspect" }
+      }
+    },
+    "connection": {
+      "type": "object",
+      "description": "Database connection. Overridden by the SQLGEN_DB_URL and SQLGEN_DB_PASSWORD environment variables, which take highest precedence.",
+      "additionalProperties": false,
+      "properties": {
+        "url": { "type": "string", "description": "Full connection URL. Takes precedence over the individual fields." },
+        "host": { "type": "string", "description": "Required for postgres/mysql when `url` is empty." },
+        "port": { "type": "integer", "description": "Required for postgres/mysql when `url` is empty." },
+        "user": { "type": "string", "description": "Required for postgres/mysql when `url` is empty." },
+        "password": { "type": "string", "description": "Prefer SQLGEN_DB_PASSWORD over committing this." },
+        "database": { "type": "string", "description": "Database name, or the file path for SQLite." },
+        "ssl_mode": { "type": "string", "description": "TLS/SSL mode. Defaults to `disable` on postgres, `false` on mysql." }
+      }
+    },
+    "introspect": {
+      "type": "object",
+      "description": "Schema and table filtering applied during database introspection.",
+      "additionalProperties": false,
+      "properties": {
+        "schemas": { "type": "array", "description": "Schemas to include. Empty means all non-system schemas.", "items": { "type": "string" } },
+        "exclude_schemas": { "type": "array", "description": "Schemas to exclude. Applied after inclusion.", "items": { "type": "string" } },
+        "tables": { "type": "array", "description": "Tables to include. Empty means all in the selected schemas.", "items": { "type": "string" } }
+      }
+    },
+    "output": {
+      "type": "object",
+      "description": "Where generated code is written.",
+      "additionalProperties": false,
+      "properties": {
+        "driver": {
+          "type": "string",
+          "description": "Go database driver the generated code imports. `pgx` is only compatible with `dialect: postgres`.",
+          "enum": ["pgx", "stdlib"],
+          "default": "pgx"
+        },
+        "dir": { "type": "string", "description": "Default output directory for all artifacts.", "default": "." },
+        "package": { "type": "string", "description": "Default Go package name. Derived from `dir` when omitted." },
+        "layout": {
+          "type": "string",
+          "description": "File layout strategy for tables.",
+          "enum": ["single_file", "file_per_table"],
+          "default": "single_file"
+        },
+        "enums": { "$ref": "#/$defs/fileOutput" },
+        "types": { "$ref": "#/$defs/fileOutput" },
+        "client": {
+          "type": "object",
+          "description": "Unified client output settings.",
+          "additionalProperties": false,
+          "properties": {
+            "name": { "type": "string", "description": "Client struct name.", "default": "Client" },
+            "file": { "type": "string", "description": "Output filename, relative to output.dir.", "default": "client_gen.go" }
+          }
+        }
+      }
+    },
+    "fileOutput": {
+      "type": "object",
+      "description": "Override the output location for a generated artifact.",
+      "additionalProperties": false,
+      "properties": {
+        "file": { "type": "string", "description": "Output filename. Always resolved relative to output.dir — an absolute path is re-rooted under it, not honored." },
+        "package": { "type": "string", "description": "Go package name. Defaults to output.package." }
+      }
+    },
+    "generation": {
+      "type": "object",
+      "description": "Global generation defaults. Six of these can be overridden per-table under `tables.<name>`: query_limit, batch_size, page_size, cursor_keys, exclude_columns and strict_updates. The rest are global-only.",
+      "additionalProperties": false,
+      "properties": {
+        "query_limit": { "type": "integer", "description": "Default LIMIT for GetMany when none is given.", "default": 1000 },
+        "batch_size": { "type": "integer", "description": "Rows per batch in CreateMany / UpdateMany / DeleteMany.", "default": 200 },
+        "page_size": { "type": "integer", "description": "Default page size for pagination.", "default": 100 },
+        "cursor_keys": {
+          "type": "array",
+          "description": "Columns used to encode keyset-pagination cursors.",
+          "items": { "type": "string" },
+          "default": ["id"]
+        },
+        "uuid_version": {
+          "type": "string",
+          "description": "UUID strategy for app-generated UUID primary keys. v4 random, v7 time-ordered.",
+          "enum": ["v4", "v7"],
+          "default": "v4"
+        },
+        "strict_updates": {
+          "type": "boolean",
+          "description": "When true, Update and Increment return ErrNotFound for a missing PK. When false they are idempotent.",
+          "default": true
+        },
+        "exclude_deleted": { "type": "boolean", "description": "Exclude soft-deleted rows from reads by default." },
+        "soft_delete_columns": {
+          "type": "array",
+          "description": "Soft-delete columns to detect. Detection runs in list order.",
+          "items": { "$ref": "#/$defs/softDeleteColumn" }
+        },
+        "update_columns": {
+          "type": "array",
+          "description": "Columns stamped with the current timestamp on update.",
+          "items": { "type": "string" },
+          "default": ["updated_at", "updated_datetime", "last_modified_at", "modified_on"]
+        },
+        "exclude_columns": { "type": "array", "description": "Columns excluded across all tables. Merged with any per-table list.", "items": { "type": "string" } },
+        "operations": { "not": {}, "description": "Removed: the Go client generates every method the schema allows (PRD §4.6). Use api.operations to control what the API exposes." },
+        "nested_mutations": { "$ref": "#/$defs/nestedMutations" },
+        "manifest": { "$ref": "#/$defs/manifest" }
+      }
+    },
+    "nestedMutations": {
+      "type": "object",
+      "description": "Opt-in nested mutations — the three ...WithRelated methods. Off by default: with enabled unset or false, no nested method, wrapper input type or nested GraphQL mutation is emitted anywhere in the package.",
+      "additionalProperties": false,
+      "properties": {
+        "enabled": { "type": "boolean", "description": "Master switch. Nothing nested is emitted unless true.", "default": false },
+        "operations": {
+          "type": "array",
+          "description": "Which nested families to emit. The upsert family also needs a conflict target on the table.",
+          "items": { "type": "string", "enum": ["create", "update", "upsert"] },
+          "default": ["create", "update", "upsert"]
+        },
+        "verbs": {
+          "type": "array",
+          "description": "Which verbs may appear in a nested block. A verb omitted here is absent from every generated block, on top of the per-edge eligibility rules, which can only narrow it further.",
+          "items": { "type": "string", "enum": ["create", "connect", "disconnect", "clear"] },
+          "default": ["create", "connect", "disconnect", "clear"]
+        },
+        "max_depth": {
+          "type": "integer",
+          "description": "Nesting depth. 1 is the only accepted value in v1; the field exists so a future depth is a config change rather than a breaking default.",
+          "const": 1,
+          "default": 1
+        }
+      }
+    },
+    "softDeleteColumn": {
+      "type": "object",
+      "description": "A soft-delete column and the value convention it uses.",
+      "additionalProperties": false,
+      "required": ["name", "type"],
+      "properties": {
+        "name": { "type": "string", "description": "Column name, e.g. deleted_at." },
+        "type": {
+          "type": "string",
+          "description": "Value convention. timestamp -> CURRENT_TIMESTAMP/NULL, bool -> TRUE/FALSE, integer -> 1/0.",
+          "enum": ["timestamp", "bool", "integer"]
+        }
+      }
+    },
+    "manifest": {
+      "type": "object",
+      "description": "Opt-in machine-readable description of the generated package.",
+      "additionalProperties": false,
+      "properties": {
+        "enabled": { "type": "boolean", "description": "Nothing manifest-related is emitted unless true." },
+        "formats": {
+          "type": "array",
+          "description": "Artifacts to emit. At least one is required when enabled.",
+          "items": { "type": "string", "enum": ["json", "markdown"] }
+        },
+        "json_filename": { "type": "string", "description": "Manifest JSON filename.", "default": "manifest_gen.json" },
+        "json_layout": {
+          "type": "string",
+          "description": "single writes one document with inline entities; per_entity writes an index plus one file per entity.",
+          "enum": ["single", "per_entity"],
+          "default": "single"
+        },
+        "json_per_entity_dir": { "type": "string", "description": "Directory for per-entity JSON, used when json_layout is per_entity." },
+        "markdown_dir": { "type": "string", "description": "Directory for emitted markdown." },
+        "include_examples": { "type": "boolean", "description": "Include usage examples in the emitted markdown." },
+        "include_internal": { "type": "boolean", "description": "Include internal-only detail in the manifest." },
+        "embed_in_client": { "type": "boolean", "description": "Embed the manifest into the generated Client via manifest_embed_gen.go." },
+        "breadcrumbs": {
+          "type": "object",
+          "description": "Agent breadcrumb files emitted alongside the generated package.",
+          "additionalProperties": false,
+          "properties": {
+            "claude_md": { "type": "boolean", "description": "Emit CLAUDE.md." },
+            "agents_md": { "type": "boolean", "description": "Emit AGENTS.md." },
+            "package_doc": { "type": "boolean", "description": "Emit a package doc comment." }
+          }
+        },
+        "mcp": {
+          "type": "object",
+          "description": "MCP server wiring emitted alongside the manifest.",
+          "additionalProperties": false,
+          "properties": {
+            "emit_project_config": { "type": "boolean", "description": "Emit an MCP project config file." },
+            "project_configs": { "type": "array", "description": "Project config paths to emit.", "items": { "type": "string" } },
+            "server_key": { "type": "string", "description": "Server key used in the emitted MCP config." },
+            "command_template": { "type": "string", "description": "Command template used in the emitted MCP config." }
+          }
+        }
+      }
+    },
+    "overrides": {
+      "type": "object",
+      "description": "Global SQL-to-Go type mapping.",
+      "additionalProperties": false,
+      "properties": {
+        "use_pointers": { "type": "boolean", "description": "Use *T for nullable columns instead of sql.Null* types.", "default": true },
+        "types": {
+          "type": "object",
+          "description": "Per-SQL-type override, keyed by SQL type name (uuid, numeric, ...).",
+          "additionalProperties": { "$ref": "#/$defs/typeOverride" }
+        }
+      }
+    },
+    "typeOverride": {
+      "type": "object",
+      "description": "Map a SQL type to a Go type. The type must implement sql.Scanner and driver.Valuer, or be one the driver special-cases (uuid.UUID); wrap a type that does neither in one of your own that does. `import` is omitted for builtin Go types (string, int64, ...), same-package types, and built-in literals that resolve their own import (time.Time, json.RawMessage, types.JSON); it is REQUIRED whenever `type` names any other package, or the generated file would reference a package nothing imports. Under a `tenancy.type` block the rule is stricter still: setting `type` always requires `import`.",
+      "additionalProperties": false,
+      "properties": {
+        "type": { "type": "string", "description": "Go type name, e.g. uuid.UUID." },
+        "import": { "type": "string", "description": "Import path for the type." },
+        "zero_value": { "type": "string", "description": "Zero-value literal. Derived automatically; set only when derivation is wrong." },
+        "nullable": { "$ref": "#/$defs/nullableVariant" }
+      }
+    },
+    "nullableVariant": {
+      "description": "Nullable variant of the type. Shorthand is a bare type name sharing the parent's import; the full form is an object.",
+      "oneOf": [
+        { "type": "string", "description": "Nullable type name, sharing the parent's import path." },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "type": { "type": "string", "description": "Nullable Go type, e.g. uuid.NullUUID." },
+            "import": { "type": "string", "description": "Import path. Needed when it differs from the parent type's, OR when the parent needed none — a builtin or same-package parent has no import for the nullable variant to inherit, so {type: string, nullable: sql.NullString} must spell nullable.import: database/sql in the full form." },
+            "underlying_field": { "type": "string", "description": "Embedded scalar field on the wrapper, e.g. UUID for uuid.NullUUID. Required for foreign-key stringification when the wrapper has no String() method." },
+            "valid_field": { "type": "string", "description": "Bool field signalling validity. Defaults to Valid. Mutually exclusive with valid_method.", "default": "Valid" },
+            "valid_method": { "type": "string", "description": "Method returning a validity bool, e.g. IsValid. Mutually exclusive with valid_field." },
+            "valid_invert": { "type": "boolean", "description": "Negate valid_method, for methods that signal invalidity such as time.Time.IsZero." }
+          }
+        }
+      ]
+    },
+    "table": {
+      "type": "object",
+      "description": "Per-table customization. Generation fields here override the global `generation` block.",
+      "additionalProperties": false,
+      "properties": {
+        "struct_name": { "type": "string", "description": "Override the generated Go struct name." },
+        "description": { "type": "string", "description": "Go doc comment on the generated struct. Takes precedence over a SQL COMMENT ON TABLE." },
+        "overrides": { "$ref": "#/$defs/overrides" },
+        "primary_key": {
+          "type": "object",
+          "description": "Override primary-key detection and generation strategy.",
+          "additionalProperties": false,
+          "properties": {
+            "strategy": {
+              "type": "string",
+              "description": "db = database generates it, app = the client mints it, caller = supplied in the create input.",
+              "enum": ["db", "app", "caller"]
+            },
+            "uuid_version": { "type": "string", "enum": ["v4", "v7"], "description": "UUID strategy when the PK is an app-generated UUID." },
+            "columns": { "type": "array", "description": "Explicit PK columns, for schemas where detection cannot infer them.", "items": { "type": "string" } }
+          }
+        },
+        "exclude_relationships": { "type": "array", "description": "Auto-detected relationship names to drop.", "items": { "type": "string" } },
+        "relationships": { "type": "array", "description": "Explicitly declared relationships, beyond those detected from foreign keys.", "items": { "$ref": "#/$defs/relationship" } },
+        "column_map": {
+          "type": "object",
+          "description": "Per-column overrides, keyed by SQL column name.",
+          "additionalProperties": { "$ref": "#/$defs/columnOverride" }
+        },
+        "type_map": {
+          "type": "object",
+          "description": "Per-column Go type override, keyed by SQL column name.",
+          "additionalProperties": { "type": "string" }
+        },
+        "events": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": { "enabled": { "type": "boolean", "description": "Override global event publishing for this table." } }
+        },
+        "cache": { "$ref": "#/$defs/entityCache" },
+        "tenancy": { "$ref": "#/$defs/entityTenancy" },
+        "api": {
+          "type": "object",
+          "description": "Override this table's exposure on the generated API surface.",
+          "additionalProperties": false,
+          "properties": {
+            "enabled": { "type": "boolean", "description": "Tri-state: omit to inherit the global api.enabled." },
+            "operations": { "$ref": "#/$defs/operations" }
+          }
+        },
+        "manifest": {
+          "type": "object",
+          "description": "Per-table manifest opt-out.",
+          "additionalProperties": false,
+          "properties": { "enabled": { "type": "boolean" } }
+        },
+        "nested_mutations": { "$ref": "#/$defs/tableNestedMutations" },
+        "query_limit": { "type": "integer" },
+        "batch_size": { "type": "integer" },
+        "page_size": { "type": "integer" },
+        "cursor_keys": { "type": "array", "items": { "type": "string" } },
+        "exclude_columns": { "type": "array", "items": { "type": "string" } },
+        "operations": { "not": {}, "description": "Removed: the Go client generates every method the schema allows (PRD §4.6). Use api.operations to control what the API exposes." },
+        "strict_updates": { "type": "boolean" }
+      }
+    },
+    "relationship": {
+      "type": "object",
+      "description": "An explicitly declared relationship.",
+      "additionalProperties": false,
+      "properties": {
+        "name": { "type": "string", "description": "Go field name for the relationship." },
+        "type": {
+          "type": "string",
+          "description": "Relationship cardinality.",
+          "enum": ["o2o", "one_to_one", "o2m", "one_to_many", "m2m", "many_to_many"]
+        },
+        "side": {
+          "type": "string",
+          "description": "Which side of the edge this entry describes. Defaults to parent, the foreign-key holder.",
+          "enum": ["parent", "child"]
+        },
+        "table": { "type": "string", "description": "Target table." },
+        "fk": { "type": "string", "description": "Foreign-key column that creates the link. Required for o2o and o2m; m2m links through its junction instead." },
+        "junction": { "type": "string", "description": "Junction table that links the two. Required for m2m." },
+        "junction_local_fk": { "type": "string", "description": "Junction column pointing at this table." },
+        "junction_reference_fk": { "type": "string", "description": "Junction column pointing at the target table." },
+        "filter": { "type": "string", "description": "Additional SQL predicate applied when loading. Raw SQL, so not invertible — a `filter:` edge is readable but never write-eligible for nested mutations. Mutually exclusive with `discriminator`. Write bare identifiers and single-quoted values (entity_type = 'asset.primary'): on MySQL a double-quoted token is a string literal, not an identifier, so \"entity_type\" = 'asset.primary' compares two constants and matches no rows — quote MySQL identifiers with backticks. Rejected at codegen on MySQL." },
+        "discriminator": { "$ref": "#/$defs/relationshipDiscriminator" },
+        "sort": { "type": "array", "description": "Default ordering applied by the O2M / M2M loader when the caller passes no Sorts. Rejected on an o2o relationship, which is loaded by a LEFT JOIN in the parent query.", "items": { "$ref": "#/$defs/relationshipSort" } },
+        "description": { "type": "string", "description": "Go doc comment on the generated field." }
+      }
+    },
+    "relationshipDiscriminator": {
+      "type": "object",
+      "description": "Structured form of a polymorphic predicate: one column on the related table equal to one value. Compiles to the same equality predicate the equivalent `filter:` produced, and is the only polymorphic form nested mutations can write. Mutually exclusive with `filter`.",
+      "additionalProperties": false,
+      "required": ["column", "value"],
+      "properties": {
+        "column": { "type": "string", "description": "Discriminator column on the related table. Must exist there." },
+        "value": {
+          "description": "The value identifying this edge. Bound as a parameter on every read path that can carry one, and interpolated into the O2O JOIN ON clause, which cannot; written verbatim into the column by a nested create.",
+          "type": ["string", "number", "integer", "boolean"]
+        }
+      }
+    },
+    "tableNestedMutations": {
+      "type": "object",
+      "description": "Per-table nested-mutation settings. Inert unless generation.nested_mutations.enabled is true.",
+      "additionalProperties": false,
+      "properties": {
+        "relationships": {
+          "type": "array",
+          "description": "Explicit allowlist of edges. Omit it to include every eligible edge. When present, only the listed edges are reachable, and a listed edge that fails an eligibility rule is a hard error rather than a silent omission.",
+          "items": { "$ref": "#/$defs/tableNestedRelationship" }
+        }
+      }
+    },
+    "tableNestedRelationship": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name"],
+      "properties": {
+        "name": { "type": "string", "description": "The relationship's resolved Go field name, as it appears on the entity struct." },
+        "allow_reparent": { "type": "boolean", "description": "Lets an O2M connect on this edge adopt a row already parented elsewhere. With the default, such a row is ErrAlreadyRelated.", "default": false }
+      }
+    },
+    "relationshipSort": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["column"],
+      "properties": {
+        "column": { "type": "string", "description": "Column to sort by." },
+        "direction": { "type": "string", "description": "Sort direction.", "enum": ["asc", "desc", "ASC", "DESC"] }
+      }
+    },
+    "columnOverride": {
+      "type": "object",
+      "description": "Per-column override.",
+      "additionalProperties": false,
+      "properties": {
+        "name": { "type": "string", "description": "Override the Go field name. Must be a valid exported Go identifier. Renames only the Go identifier — db/json tags, SQL column constants, GraphQL field names and sort enums stay derived from the SQL column name." },
+        "description": { "type": "string", "description": "Go doc comment on the generated field." },
+        "type": { "type": "string", "description": "Go type for this column." },
+        "import": { "type": "string", "description": "Import path for the Go type." },
+        "access": {
+          "type": "string",
+          "description": "Access role constraining which external surfaces the value escapes through (generated API, event payloads, manifest). Never affects the core Go client.",
+          "enum": ["public", "read_only", "write_only", "hidden", "internal"],
+          "default": "public"
+        }
+      }
+    },
+    "view": {
+      "type": "object",
+      "description": "Per-view customization.",
+      "additionalProperties": false,
+      "properties": {
+        "struct_name": { "type": "string", "description": "Override the generated Go struct name." },
+        "sql": { "type": "string", "description": "Inline view SQL, as an alternative to an annotation file." },
+        "cache": { "$ref": "#/$defs/entityCache" },
+        "invalidate_on": { "type": "array", "description": "Tables whose mutations invalidate this view's cached reads.", "items": { "type": "string" } },
+        "cursor_keys": {
+          "type": "array",
+          "description": "Cursor keys for this view. When set explicitly every column must exist on the view. Views have no primary key, so there is no PK fallback.",
+          "items": { "type": "string" }
+        },
+        "tenancy": { "$ref": "#/$defs/entityTenancy" },
+        "api": {
+          "type": "object",
+          "description": "Override this view's exposure on the generated API surface. Opt-out only.",
+          "additionalProperties": false,
+          "properties": {
+            "enabled": { "type": "boolean", "description": "Tri-state: omit to inherit the global api.enabled." },
+            "operations": { "$ref": "#/$defs/operations" }
+          }
+        }
+      }
+    },
+    "entityCache": {
+      "type": "object",
+      "description": "Per-entity cache override. Omit a field to inherit the global value.",
+      "additionalProperties": false,
+      "properties": {
+        "enabled": { "type": "boolean" },
+        "ttl": { "type": "string", "description": "Go duration string, e.g. 5m." }
+      }
+    },
+    "entityTenancy": {
+      "type": "object",
+      "description": "Per-entity tenancy override. Omit a field to inherit the global value.",
+      "additionalProperties": false,
+      "properties": {
+        "enabled": { "type": "boolean" },
+        "column": { "type": "string", "description": "Tenant column name, when it differs from the global default." },
+        "required": { "type": "boolean" },
+        "type": { "$ref": "#/$defs/typeOverride" }
+      }
+    },
+    "enum": {
+      "type": "object",
+      "description": "Per-enum customization.",
+      "additionalProperties": false,
+      "properties": {
+        "struct_name": { "type": "string", "description": "Override the generated Go type name. Defaults to the PascalCased SQL enum name." },
+        "description": { "type": "string", "description": "Go doc comment on the generated type. Takes precedence over a SQL COMMENT ON TYPE." }
+      }
+    },
+    "extraType": {
+      "type": "object",
+      "description": "A custom struct definition, typically for a JSONB column.",
+      "additionalProperties": false,
+      "properties": {
+        "description": { "type": "string", "description": "Go doc comment on the generated struct." },
+        "fields": {
+          "type": "object",
+          "description": "Struct fields, keyed by field name.",
+          "additionalProperties": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "description": { "type": "string" },
+              "type": { "type": "string", "description": "Go type for the field." },
+              "import": { "type": "string", "description": "Import path for the Go type." },
+              "tags": {
+                "type": "object",
+                "description": "Struct tags, keyed by tag name.",
+                "additionalProperties": { "type": "string" }
+              }
+            }
+          }
+        }
+      }
+    },
+    "api": {
+      "type": "object",
+      "description": "API generation. Disabled unless present.",
+      "additionalProperties": false,
+      "properties": {
+        "enabled": { "type": "boolean" },
+        "operations": {
+          "description": "Mask on which operations the API exposes, across every table. Subtractive only: an operation the schema does not give the client can never be exposed.",
+          "$ref": "#/$defs/operations"
+        },
+        "graphql": { "$ref": "#/$defs/graphql" },
+        "rest": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "enabled": { "type": "boolean" },
+            "base_path": { "type": "string" },
+            "spec": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": { "file": { "type": "string" } }
+            }
+          }
+        },
+        "grpc": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "enabled": { "type": "boolean" },
+            "proto_dir": { "type": "string" },
+            "service_dir": { "type": "string" }
+          }
+        }
+      }
+    },
+    "graphql": {
+      "type": "object",
+      "description": "GraphQL schema and resolver generation.",
+      "additionalProperties": false,
+      "properties": {
+        "enabled": { "type": "boolean" },
+        "schema_dir": { "type": "string", "description": "Directory for generated .graphqls files. Root-relative." },
+        "resolver_dir": { "type": "string", "description": "Directory for generated resolvers. Root-relative." },
+        "package": { "type": "string", "description": "Go package name for the generated graph package." },
+        "max_depth": { "type": "integer", "description": "Maximum query depth accepted by the generated gate." },
+        "max_complexity": { "type": "integer", "description": "Maximum query complexity accepted by the generated gate." },
+        "field_casing": {
+          "type": "string",
+          "description": "Casing for generated GraphQL field names.",
+          "enum": ["camel_case", "snake_case"]
+        },
+        "gqlgen_config": { "type": "string", "description": "Path to the consumer-owned gqlgen.yml. It stays consumer-owned; sqlgen merges its own mappings in memory." },
+        "gqlgen_bin": { "type": "string", "description": "gqlgen binary to invoke." },
+        "scalars": {
+          "type": "object",
+          "description": "Custom scalar bindings, keyed by GraphQL scalar name.",
+          "additionalProperties": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["marshaling"],
+            "properties": {
+              "go_type": { "type": "string", "description": "Go type bound to the scalar." },
+              "marshaling": {
+                "type": "string",
+                "description": "How the scalar marshals. external requires marshaler_package.",
+                "enum": ["builtin", "method", "external"]
+              },
+              "marshaler_package": { "type": "string", "description": "Import path declaring Marshal<Scalar>/Unmarshal<Scalar>. Required when marshaling is external, rejected otherwise." }
+            }
+          }
+        }
+      }
+    },
+    "cache": {
+      "type": "object",
+      "description": "Read-through caching. Disabled unless present.",
+      "additionalProperties": false,
+      "properties": {
+        "enabled": { "type": "boolean" },
+        "version": { "type": "integer", "description": "Cache key version. Bump to invalidate every key at once." },
+        "ttl": { "type": "string", "description": "Go duration string, e.g. 5m." },
+        "serializer": {
+          "type": "string",
+          "description": "Value serialization format.",
+          "enum": ["json", "msgpack", "custom"]
+        },
+        "key_prefix": { "type": "string", "description": "Prefix on every cache key.", "default": "sqlgen" },
+        "hydration": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "enabled": { "type": "boolean" },
+            "timeout": { "type": "string", "description": "Go duration string." }
+          }
+        },
+        "circuit_breaker": {
+          "type": "object",
+          "description": "Trips the cache out of the read path after repeated backend failures.",
+          "additionalProperties": false,
+          "properties": {
+            "enabled": { "type": "boolean" },
+            "failure_threshold": { "type": "integer", "description": "Consecutive failures before the breaker opens." },
+            "probe_interval": { "type": "string", "description": "Go duration string between half-open probes." },
+            "half_open_max_probes": { "type": "integer", "description": "Probes allowed while half-open." }
+          }
+        }
+      }
+    },
+    "events": {
+      "type": "object",
+      "description": "Mutation lifecycle events. Disabled unless present.",
+      "additionalProperties": false,
+      "properties": { "enabled": { "type": "boolean" } }
+    },
+    "tenancy": {
+      "type": "object",
+      "description": "Mandatory tenant scoping. Disabled unless present.",
+      "additionalProperties": false,
+      "properties": {
+        "enabled": { "type": "boolean" },
+        "column": { "type": "string", "description": "Tenant column name used for detection across tables." },
+        "required": { "type": "boolean", "description": "When true, a missing tenant is an error rather than an unscoped query." },
+        "type": { "$ref": "#/$defs/typeOverride" }
+      }
+    }
+  }
+}

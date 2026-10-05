@@ -1,0 +1,161 @@
+version: v1
+
+input:
+  dialect: mysql
+  paths:
+    - ./schema.sql
+  views:
+    - ./views/
+
+output:
+  driver: stdlib
+  dir: ./models
+  package: models
+
+generation:
+  soft_delete_columns:
+    - name: deleted_at
+      type: timestamp
+    - name: is_deleted
+      type: bool
+  # The nested-mutation surface (PRD §9.9) on the one dialect
+  # without RETURNING. PostgreSQL and SQLite learn which rows a statement wrote
+  # from the statement itself; here UpdateWhere pre-SELECTs its rows and
+  # CreateMany derives generated keys as LAST_INSERT_ID() + i, and the nested
+  # executor's adoption count and M2M link step rest on both. `users` carries
+  # has-one (`Profile`), O2M on a NOT NULL FK (`Orders`) and O2M on a NULLABLE
+  # FK (`UserEvents`, the only one in this schema); `assets.Documents` carries
+  # M2M over an auto-increment target.
+  nested_mutations:
+    enabled: true
+  # Enable the manifest surface (PRD §30), single JSON layout.
+  manifest:
+    enabled: true
+    json_layout: single
+
+tables:
+  users:
+    # The nestable edges on users listed by name, so eligibility
+    # is a hard error rather than a silent omission (PRD §9.9.4): a change that
+    # made one ineligible fails generation instead of quietly dropping the
+    # surface this example exists to test. `Categories` is deliberately absent.
+    # Its junction carries `slot`, and §9.9.4 refuses a junction with any column
+    # beyond its two foreign keys, because the link step's upsert would reset
+    # that column on every re-link. Listing it here is exactly the hard error
+    # this block exists to produce. The M2M shape is carried by
+    # `assets.Documents`, over the pure `asset_document_links` junction.
+    nested_mutations:
+      relationships:
+        - name: Orders
+        - name: Profile
+        - name: UserEvents
+    relationships:
+      - name: Profile
+        type: one_to_one
+        table: profiles
+        fk: user_id
+  assets:
+    relationships:
+      - name: PrimaryDocument
+        type: one_to_one
+        table: documents
+        fk: entity_id
+        discriminator:
+          column: entity_type
+          value: "asset.primary"
+      - name: Attachments
+        type: one_to_many
+        table: documents
+        fk: entity_id
+        discriminator:
+          column: entity_type
+          value: "asset.attachment"
+      - name: Invoices
+        type: one_to_many
+        table: documents
+        fk: entity_id
+        discriminator:
+          column: entity_type
+          value: "asset.invoice"
+      # Multi-column filter coverage.
+      - name: PrimaryActiveDocument
+        type: one_to_one
+        table: documents
+        fk: entity_id
+        filter: "entity_type = 'asset.primary' AND name LIKE 'site_%'"
+      - name: PhotoAttachments
+        type: one_to_many
+        table: documents
+        fk: entity_id
+        filter: "entity_type = 'asset.attachment' AND name LIKE 'photo_%'"
+      - name: LinkedAttachments
+        type: many_to_many
+        table: documents
+        junction: asset_document_links
+        junction_local_fk: asset_id
+        junction_reference_fk: document_id
+        filter: "entity_type = 'asset.attachment' AND name LIKE 'link_%'"
+  user_categories:
+    cursor_keys:
+      - user_id
+      - category_id
+  orders:
+    strict_updates: false
+  slugged_rows:
+    column_map:
+      slug:
+        access: read_only
+  articles: {}
+  tags: {}
+  product_tag_labels:
+    cursor_keys:
+      - product_id
+      - tag_name
+      - label
+  warehouses:
+    overrides:
+      types:
+        decimal:
+          type: decimal.Decimal
+          import: github.com/shopspring/decimal
+          nullable: decimal.NullDecimal
+        text:
+          type: ksuid.KSUID
+          import: github.com/segmentio/ksuid
+
+# Enable the GraphQL API surface on a SECOND dialect.
+#
+# Every other API-enabled example is PostgreSQL, so without this block no module
+# would compile a MySQL-specific Go type into a gqlgen schema. The one this
+# example exists to cover is `users.permissions`, a `SET(...)` column: it
+# resolves to a named slice with no built-in GraphQL binding, and no unit test
+# can prove the emitted module compiles. The blob family, `year`,
+# `bit(1)` and the unsigned integer widths ride along on the same route.
+#
+# schema_dir / resolver_dir are root-relative (§26.5.8), placing the generated
+# graph package at ./models/graph/ alongside models — the same layout the
+# graphql example uses.
+api:
+  enabled: true
+  graphql:
+    enabled: true
+    schema_dir: ./models/graph
+    resolver_dir: ./models/graph
+    package: graph
+    field_casing: camel_case
+    gqlgen_config: ./gqlgen.yml
+    gqlgen_bin: go run github.com/99designs/gqlgen
+    # `warehouses.external_id` is retyped to ksuid.KSUID by the table-level
+    # override above — a Go type the built-in registry does not own, so §26.4.1
+    # requires the consumer to declare it. `marshaling: external` means the
+    # marshalers are free functions this example wrote; marshaler_package is
+    # the import path gqlgen discovers MarshalKSUID / UnmarshalKSUID at.
+    #
+    # The SET column needs no entry here: sqlgen binds it as a GraphQL enum
+    # list from the schema declaration itself (PRD §26.4), the same way a
+    # PostgreSQL enum array is bound.
+    scalars:
+      KSUID:
+        go_type: github.com/segmentio/ksuid.KSUID
+        marshaling: external
+        marshaler_package: github.com/teandresmith/sqlgen/cmd/sqlgen/testdata/examples/mysql/gqlscalars

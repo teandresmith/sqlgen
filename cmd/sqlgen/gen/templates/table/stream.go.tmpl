@@ -1,0 +1,208 @@
+{{- define "table/stream" -}}
+{{- if .Operations.Stream }}
+
+// Stream{{ .StructName | structNamePlural }}Input holds query parameters for streaming {{ .TableName }} records.
+// Stream is iterator-style and intentionally has no Limit/Offset.
+// Field selection is controlled via CallOptions.FieldOptions, not this struct.
+type Stream{{ .StructName | structNamePlural }}Input struct {
+	Filter *{{ .StructName }}Filter `json:"filter"`
+	Sorts  []sql.Sort               `json:"sorts"`
+}
+
+// Stream{{ .StructName }}FieldOptions controls scalar column selection for {{ .TableName }} streams.
+// Stream cannot load relationships — only scalar columns are selectable.
+type Stream{{ .StructName }}FieldOptions struct {
+{{- range .Columns }}
+	{{ .FieldName }} bool `json:"{{ .JSONTag }}"`
+{{- end }}
+}
+
+// Columns returns the SQL column names for all selected columns, sorted alphabetically
+// to match the SQL builder's deterministic column ordering.
+func (fo *Stream{{ .StructName }}FieldOptions) Columns() []string {
+	var cols []string
+{{- range .Columns }}
+	if fo.{{ .FieldName }} {
+		cols = append(cols, {{ printf "%q" .Name }})
+	}
+{{- end }}
+	slices.Sort(cols)
+	return cols
+}
+
+// HasSelectedColumns reports whether any column is selected.
+func (fo *Stream{{ .StructName }}FieldOptions) HasSelectedColumns() bool {
+{{- range .Columns }}
+	if fo.{{ .FieldName }} {
+		return true
+	}
+{{- end }}
+	return false
+}
+
+// scan{{ .StructName }}Row scans a single row into a {{ .StructName }} entity.
+// Used by Stream to yield rows one at a time without materializing the result set.
+func scan{{ .StructName }}Row(rows database.Rows, columns []string) (*{{ .StructName }}, error) {
+	{{ .VarName }} := &{{ .StructName }}{}
+
+	targets := make([]any, len(columns))
+	for idx, col := range columns {
+		switch col {
+{{- range .ScanShapes }}
+		case {{ printf "%q" .ColumnName }}:
+			targets[idx] = {{ .ScanExpr }}
+{{- end }}
+		}
+	}
+
+	if err := rows.Scan(targets...); err != nil {
+		return nil, fmt.Errorf("scan {{ .TableName | toSingular }}: %w", err)
+	}
+
+	return {{ .VarName }}, nil
+}
+
+// Stream returns an iterator over {{ .TableName }} matching the given filter and sort criteria.
+{{- if .SoftDelete }}
+// Soft-deleted {{ .TableName }} are excluded by default. Set Filter.{{ .SoftDelete.FieldName }} to override.
+{{- end }}
+// Rows are yielded as the driver returns them, without materializing the full
+// result set. Cache is bypassed regardless of caller setting.
+// Stream cannot load relationships — use Connection in a loop when relationships
+// are required.
+//
+// Stream refuses an active transaction. It runs consumer code inside an open
+// result set, which inside a transaction is the transaction's only connection,
+// held for the whole iteration — so a statement issued from the loop body on the
+// same txCtx waits on a reservation the loop itself holds. Set
+// CallOptions.AllowInTransaction for a snapshot-consistent stream that issues
+// nothing else on that txCtx. That obligation is the one rule that remains the
+// caller's — drain or close a result set before issuing the next statement on
+// that txCtx — applied to a loop whose body is caller code.
+func (c *{{ .StructName | toCamelCase }}Client) Stream(ctx context.Context, input *Stream{{ .StructName | structNamePlural }}Input, opts ...func(*CallOptions[Stream{{ .StructName }}FieldOptions])) iter.Seq2[*{{ .StructName }}, error] {
+	return func(yield func(*{{ .StructName }}, error) bool) {
+		// A nil input is the zero-value input. Without it, an
+		// unguarded nil dereference in the handler would be recovered by the
+		// panic wrapper and reported as an error instead of streaming the table.
+		if input == nil {
+			input = &Stream{{ .StructName | structNamePlural }}Input{}
+		}
+		options := resolveCallOptions(opts)
+		options.SkipCache = true
+
+		// Stream's contract is that the connection stays open across
+		// caller code; a transaction's is one connection, one statement at a
+		// time. The two cannot both hold, so Stream refuses a transaction unless
+		// the caller opts in. Refused before any SQL is issued and before the
+		// hook chain is built, mirroring the LockMode precondition, and
+		// surfaced through yield because Stream returns an iterator and has no
+		// error return.
+		if database.InTransaction(ctx) && !options.AllowInTransaction {
+			yield(nil, fmt.Errorf("stream {{ .TableName }}: unsupported inside a transaction — use Connection in a loop, "+
+				"or set AllowInTransaction for a snapshot-consistent stream that issues nothing else on this txCtx"))
+			return
+		}
+
+		// stopped is true while the consumer's loop body runs, and stays true
+		// once the body breaks (yield returned false) or panics out of yield.
+		// Calling yield again after either makes the Go runtime panic, so the
+		// chain's error below is yielded only while stopped is false.
+		var stopped bool
+		emit := func(row *{{ .StructName }}, err error) bool {
+			stopped = true
+			if !yield(row, err) {
+				return false
+			}
+			stopped = false
+			return true
+		}
+
+		// A recovered panic and a hook's abort error are the
+		// chain's return value. Stream has no error return, so it yields that
+		// error once, after anything the handler yielded.
+		_, err := c.executeQuery(ctx, options.SkipHooks, &hook.QueryContext{
+			Op: hook.OpStream, Table: {{ .TableNameConstant }}, Schema: {{ printf "%q" .Schema }},
+			Input: input, CallOptions: options,
+		}, func(ctx context.Context, q *hook.QueryContext) (any, error) {
+			conn := database.Conn(ctx, c.querier)
+
+			fieldOptions := options.FieldOptions
+			columns := {{ .StructName | toCamelCase }}AllColumns
+			if fieldOptions != nil {
+				if selected := fieldOptions.Columns(); len(selected) > 0 {
+					columns = selected
+				}
+			}
+{{- if .HasTenantedRelationshipFilter }}
+
+			// A relationship filter compiles to a correlated EXISTS carrying the
+			// *target's* tenant predicate, so the tenant is
+			// resolved before the conditions are built rather than appended after them.
+			filterOpts, filterErr := c.filterOptions(ctx, input.Filter, options.SkipTenancy, options.Tenant)
+			if filterErr != nil {
+				emit(nil, fmt.Errorf("stream {{ .TableName }}: %w", filterErr))
+				return nil, nil
+			}
+{{- end }}
+
+			var conds []sql.Condition
+			if input.Filter != nil {
+				conds = input.Filter.ToConditions(c.dialect{{ if .HasTenantedRelationshipFilter }}, filterOpts...{{ end }})
+			}
+{{- if .SoftDelete }}
+
+			if c.excludeDeleted && (input.Filter == nil || input.Filter.{{ .SoftDelete.FieldName }} == nil) {
+				conds = append(conds, {{ softDeleteCondition .SoftDelete }})
+			}
+{{- end }}
+{{- if and .Tenancy .Tenancy.Tenanted }}
+
+			if !options.SkipTenancy {
+				resolvedTenant, apply, err := c.resolveTenant(ctx, options.Tenant)
+				if err != nil {
+					emit(nil, fmt.Errorf("stream {{ .TableName }}: resolve tenant: %w", err))
+					return nil, nil
+				}
+				if apply {
+					conds = append(conds, sql.Where(c.dialect.QuoteIdentifier({{ printf "%q" .Tenancy.Column }})).Eq(resolvedTenant))
+				}
+			}
+{{- end }}
+
+			query, args := sql.BuildSelect(c.dialect, c.table, sql.SelectOptions{
+				Columns:    columns,
+				Conditions: conds,
+				OrderBy:    input.Sorts,
+			})
+
+			rows, err := conn.Query(ctx, query, args...)
+			if err != nil {
+				emit(nil, fmt.Errorf("stream {{ .TableName }}: %w", err))
+				return nil, nil
+			}
+			defer rows.Close()
+
+			for rows.Next() {
+				{{ .VarName }}, err := scan{{ .StructName }}Row(rows, columns)
+				if err != nil {
+					if !emit(nil, err) {
+						return nil, nil
+					}
+					continue
+				}
+				if !emit({{ .VarName }}, nil) {
+					return nil, nil
+				}
+			}
+			if err := rows.Err(); err != nil {
+				emit(nil, fmt.Errorf("iterate {{ .TableName | toSingular }} rows: %w", err))
+			}
+			return nil, nil
+		})
+		if err != nil && !stopped {
+			yield(nil, err)
+		}
+	}
+}
+{{- end }}
+{{- end -}}

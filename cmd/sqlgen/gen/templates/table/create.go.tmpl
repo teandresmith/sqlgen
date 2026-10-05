@@ -1,0 +1,636 @@
+{{- define "table/create" -}}
+{{- $pkCol := index .PKColumns 0 -}}
+{{- $singular := .TableName | toSingular -}}
+{{- $structCamel := .StructName | toCamelCase -}}
+{{- $captureTenant := and .Tenancy .Tenancy.Tenanted (not .Tenancy.InPrimaryKey) -}}
+{{- $needsInsertResolve := false -}}
+{{- if not .CompositePK -}}
+{{- if or (supportsReturning) (eq .PKStrategy "db") -}}
+{{- $needsInsertResolve = true -}}
+{{- end -}}
+{{- end }}
+{{- if .Operations.Create }}
+
+// Create inserts a new {{ $singular }} and returns the created entity.
+func (c *{{ $structCamel }}Client) Create(ctx context.Context, input *Create{{ .StructName }}Input, opts ...func(*CallOptions[{{ .StructName }}FieldOptions])) (*{{ .StructName }}, error) {
+	// A write cannot normalize nil to the zero value the way a read
+	// does — a zero Create{{ .StructName }}Input legally writes a row (each required
+	// field's zero value, or with no required field, every column's default), so
+	// that would turn a caller's mistake into a silently written one. Guarded
+	// before the executor, so nil fires no hook and publishes no event.
+	if input == nil {
+		return nil, ErrNilInput
+	}
+	options := resolveCallOptions(opts)
+	result, err := c.executeMutation(ctx, options.SkipHooks, &hook.MutationContext{
+		Op: hook.OpCreate, Table: {{ .TableNameConstant }}, Schema: {{ printf "%q" .Schema }},
+		Input: input, CallOptions: options,
+	}, func(ctx context.Context, m *hook.MutationContext) (any, error) {
+		conn := database.Conn(ctx, c.querier)
+
+		columns := []string{ {{- range .CreateInputFields }}{{ if .Required }}{{ printf "%q" .ColumnName }}, {{ end }}{{ end -}} }
+		args := []any{ {{- range .CreateInputFields }}{{ if .Required }}input.{{ .FieldName }}, {{ end }}{{ end -}} }
+{{- if and .Tenancy .Tenancy.Tenanted }}
+
+{{- if .Tenancy.InPrimaryKey }}
+		// Tenant-in-PK verify-match. The tenant column is part of
+		// the composite primary key and is a required field on CreateInput, so
+		// it was already appended to columns/args via the required-fields head
+		// above. Here we only verify the caller-supplied value matches the
+		// resolved tenant; mismatch returns ErrMismatch before the DB round-trip.
+		// apply=false under tenancy.required:false + zero resolver skips the
+		// verify-match (cross-tenant write; caller-supplied value is used as-is).
+		if !options.SkipTenancy {
+			resolvedTenant, apply, err := c.resolveTenant(ctx, options.Tenant)
+			if err != nil {
+				return nil, fmt.Errorf("create {{ $singular }}: resolve tenant: %w", err)
+			}
+			// Stash on ctx so the chained terminal Get/GetMany (and any nested
+			// resolveTenant inside the chain) reuses this value instead of
+			// re-invoking the user resolver — single-resolve.
+			// An explicit tenant is not cached: it rides on CallOptions, which
+			// every internal call inherits, and resolveTenant honours it ahead of
+			// the cache. A set zero is honoured verbatim where a resolved
+			// zero takes the required branch, and this slot cannot tell them apart.
+			if options.Tenant == nil {
+				ctx = tenancy.WithResolvedTenant(ctx, resolvedTenant)
+			}
+			if apply {
+				if input.{{ .Tenancy.FieldName }} != resolvedTenant {
+					return nil, tenancy.ErrMismatch
+				}
+				// Stash resolved tenant on MutationContext so the cache hook
+				// builds tenant-scoped keys without re-invoking the resolver
+				// (single-resolve per operation).
+				m.Tenant = resolvedTenant
+			}
+		}
+{{- else }}
+		// Tenancy auto-set + mismatch check. Caller-set tenant on
+		// the input is tolerated only when it matches the resolved value — any
+		// mismatch returns ErrMismatch before the DB round-trip. apply=false
+		// under tenancy.required:false + zero resolver falls through to the
+		// SkipTenancy-style branch: caller-supplied value wins, no auto-set,
+		// no verify-match (the DB NOT NULL constraint surfaces if the input is
+		// also empty).
+		// capturedTenant carries the tenant value written to the row into
+		// m.AffectedTenants so cache invalidation and event stamping rebuild
+		// the tenant-scoped key from the row itself, independent of how (or
+		// whether) the tenant was resolved. Stays nil only when
+		// no tenant value reaches the INSERT (a DB default fills the column).
+		var capturedTenant any
+		if !options.SkipTenancy {
+			resolvedTenant, apply, err := c.resolveTenant(ctx, options.Tenant)
+			if err != nil {
+				return nil, fmt.Errorf("create {{ $singular }}: resolve tenant: %w", err)
+			}
+			// Stash on ctx so the chained terminal Get reuses this value (and
+			// the GetMany inside Get's body) instead of re-invoking the user
+			// resolver — single-resolve. What is cached is the
+			// resolver's answer, not this table's reading of it: a zero return
+			// is cached as a zero, and each table downstream re-applies its own
+			// tenancy.required branch to it.
+			// An explicit tenant is not cached: it rides on CallOptions, which
+			// every internal call inherits, and resolveTenant honours it ahead of
+			// the cache. A set zero is honoured verbatim where a resolved
+			// zero takes the required branch, and this slot cannot tell them apart.
+			if options.Tenant == nil {
+				ctx = tenancy.WithResolvedTenant(ctx, resolvedTenant)
+			}
+			if apply {
+				if v, ok := input.{{ .Tenancy.FieldName }}.Get(); ok && v != resolvedTenant {
+					return nil, tenancy.ErrMismatch
+				}
+				columns = append(columns, {{ printf "%q" .Tenancy.Column }})
+				args = append(args, resolvedTenant)
+				// Stash resolved tenant on MutationContext so the cache hook
+				// builds tenant-scoped keys without re-invoking the resolver
+				// (single-resolve per operation).
+				m.Tenant = resolvedTenant
+				capturedTenant = resolvedTenant
+			} else if v, ok := input.{{ .Tenancy.FieldName }}.Get(); ok {
+				// required:false + zero resolver — caller-supplied value is used.
+				columns = append(columns, {{ printf "%q" .Tenancy.Column }})
+				args = append(args, v)
+				capturedTenant = v
+			}
+		} else if v, ok := input.{{ .Tenancy.FieldName }}.Get(); ok {
+			// SkipTenancy:true — caller must explicitly set the tenant value.
+			columns = append(columns, {{ printf "%q" .Tenancy.Column }})
+			args = append(args, v)
+			capturedTenant = v
+		}
+{{- end }}
+{{- end }}
+{{- if eq .PKStrategy "app" }}
+
+		// PK — use caller-provided ID or generate UUID
+		var pkValue {{ $pkCol.GoType }}
+		if v, ok := input.{{ $pkCol.FieldName }}.Get(); ok {
+			pkValue = v
+		} else {
+			pkValue = {{ $.PKAutoGenExpr }}
+		}
+		columns = append(columns, {{ printf "%q" $pkCol.Name }})
+		args = append(args, pkValue)
+{{- end }}
+{{- range .CreateInputFields }}
+{{- if .Omittable }}
+{{- if or (ne $.PKStrategy "app") (ne .ColumnName (index $.PKColumns 0).Name) }}
+{{- if or (not $.Tenancy) (not $.Tenancy.Tenanted) (ne .ColumnName $.Tenancy.Column) }}
+
+		if v, ok := input.{{ .FieldName }}.Get(); ok {
+			columns = append(columns, {{ printf "%q" .ColumnName }})
+			args = append(args, v)
+		}
+{{- end }}
+{{- end }}
+{{- end }}
+{{- end }}
+{{- if $needsInsertResolve }}
+
+		id, err := c.insertAndResolveID(ctx, conn, columns, args)
+		if err != nil {
+			return nil, fmt.Errorf("create {{ $singular }}: %w", err)
+		}
+		m.AffectedPKs = []any{id}
+{{- if $captureTenant }}
+		m.AffectedTenants = []any{capturedTenant}
+{{- end }}
+
+		// Empty FieldOptions — caller doesn't need the result
+		if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
+			return nil, nil
+		}
+
+		return c.Get(ctx, id, func(o *CallOptions[{{ .StructName }}FieldOptions]) {
+			*o = options
+			o.SkipHooks = true
+			o.LockMode = sql.LockNone
+		})
+{{- else }}
+
+		query, queryArgs := sql.BuildInsert(c.dialect, c.table, sql.InsertOptions{
+			Columns: columns,
+			Values:  args,
+		})
+		_, err := conn.Exec(ctx, query, queryArgs...)
+		if err != nil {
+			return nil, fmt.Errorf("create {{ $singular }}: %w", err)
+		}
+{{- if .CompositePK }}
+
+		m.AffectedPKs = []any{ {{ .CompositePKStructName }}{ {{- range .PKColumns }}{{ .FieldName }}: input.{{ .FieldName }}, {{ end -}} } }
+{{- else if eq .PKStrategy "app" }}
+
+		m.AffectedPKs = []any{pkValue}
+{{- else }}
+
+		m.AffectedPKs = []any{input.{{ $pkCol.FieldName }}}
+{{- end }}
+{{- if $captureTenant }}
+		m.AffectedTenants = []any{capturedTenant}
+{{- end }}
+
+		// Empty FieldOptions — caller doesn't need the result
+		if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
+			return nil, nil
+		}
+{{- if .CompositePK }}
+
+		return c.Get(ctx, {{ .CompositePKStructName }}{ {{- range .PKColumns }}{{ .FieldName }}: input.{{ .FieldName }}, {{ end -}} }, func(o *CallOptions[{{ .StructName }}FieldOptions]) {
+			*o = options
+			o.SkipHooks = true
+			o.LockMode = sql.LockNone
+		})
+{{- else if eq .PKStrategy "app" }}
+
+		return c.Get(ctx, pkValue, func(o *CallOptions[{{ .StructName }}FieldOptions]) {
+			*o = options
+			o.SkipHooks = true
+			o.LockMode = sql.LockNone
+		})
+{{- else }}
+
+		return c.Get(ctx, input.{{ $pkCol.FieldName }}, func(o *CallOptions[{{ .StructName }}FieldOptions]) {
+			*o = options
+			o.SkipHooks = true
+			o.LockMode = sql.LockNone
+		})
+{{- end }}
+{{- end }}
+	})
+	if err != nil {
+		return nil, err
+	}
+	if result == nil {
+		return nil, nil
+	}
+	return result.(*{{ .StructName }}), nil
+}
+{{- end }}
+{{- if .Operations.CreateMany }}
+
+// CreateMany inserts multiple {{ .TableName }} in batches and returns all created entities.
+// Sub-batches are not automatically rolled back on failure — wrap in a transaction for atomicity.
+func (c *{{ $structCamel }}Client) CreateMany(ctx context.Context, inputs []*Create{{ .StructName }}Input, opts ...func(*CallOptions[{{ .StructName }}FieldOptions])) ([]*{{ .StructName }}, error) {
+	// A nil *slice* is simply no rows, but a nil *element* is the
+	// same caller error a nil Create argument is — and skipping it silently
+	// would drop a row the caller asked for. Rejected before the executor.
+	for _, in := range inputs {
+		if in == nil {
+			return nil, ErrNilInput
+		}
+	}
+	options := resolveCallOptions(opts)
+	result, err := c.executeMutation(ctx, options.SkipHooks, &hook.MutationContext{
+		Op: hook.OpCreateMany, Table: {{ .TableNameConstant }}, Schema: {{ printf "%q" .Schema }},
+		Input: inputs, CallOptions: options,
+	}, func(ctx context.Context, m *hook.MutationContext) (any, error) {
+		conn := database.Conn(ctx, c.querier)
+		// An empty batch writes nothing and must read nothing. The trailing
+		// re-fetch below filters on the keys this call touched, and every
+		// generated key filter treats an empty set as *no condition* — so
+		// without this guard the re-fetch degrades to an unfiltered SELECT and
+		// returns the whole table as if this call had produced it.
+		if len(inputs) == 0 {
+			return []*{{ .StructName }}{}, nil
+		}
+{{- if and .Tenancy .Tenancy.Tenanted }}
+
+		// Resolve the tenant once for the entire batch.
+		// applyTenancy encodes both SkipTenancy AND the required:false +
+		// zero-resolver path: when false, the per-input verify-match and
+		// auto-set blocks below fall through to caller-supplied values.
+		var resolvedTenant {{ .Tenancy.GoType }}
+		applyTenancy := false
+		if !options.SkipTenancy {
+			var err error
+			var apply bool
+			resolvedTenant, apply, err = c.resolveTenant(ctx, options.Tenant)
+			if err != nil {
+				return nil, fmt.Errorf("create {{ .TableName }}: resolve tenant: %w", err)
+			}
+			// Stash on ctx so the chained terminal GetMany reuses this value
+			// (and the per-input verify-match short-circuits via the cache)
+			// instead of re-invoking the user resolver.
+			// An explicit tenant is not cached: it rides on CallOptions, which
+			// every internal call inherits, and resolveTenant honours it ahead of
+			// the cache. A set zero is honoured verbatim where a resolved
+			// zero takes the required branch, and this slot cannot tell them apart.
+			if options.Tenant == nil {
+				ctx = tenancy.WithResolvedTenant(ctx, resolvedTenant)
+			}
+			applyTenancy = apply
+			if apply {
+				// Stash resolved tenant on MutationContext for the cache hook
+				// (single-resolve per operation).
+				m.Tenant = resolvedTenant
+			}
+		}
+{{- end }}
+
+{{- if .CompositePK }}
+		var allPKs []{{ .CompositePKStructName }}
+{{- else }}
+		var allIDs []{{ $pkCol.GoType }}
+{{- end }}
+{{- if $captureTenant }}
+		// Filled in lockstep with the PK slice above; feeds m.AffectedTenants
+		// so cache invalidation and event stamping rebuild tenant-scoped keys
+		// from each row's own tenant value.
+		var allTenants []any
+{{- end }}
+		for start := 0; start < len(inputs); start += c.batchSize {
+			end := min(start+c.batchSize, len(inputs))
+			batch := inputs[start:end]
+{{- if not .CreateInputFields }}
+
+			// {{ .TableName }} has no writable column, and a multi-row INSERT
+			// cannot name none: PostgreSQL and SQLite reject `() VALUES (), ()`.
+			// Each row names the database-generated key instead and leaves it to
+			// the database — DEFAULT on
+			// PostgreSQL and MySQL; NULL on SQLite, which has no DEFAULT keyword
+			// in VALUES and assigns the next rowid to a NULL INTEGER PRIMARY KEY.
+			columns := []string{ {{- printf "%q" $pkCol.Name -}} }
+			valueRows := make([][]any, len(batch))
+			for i := range batch {
+{{- if eq .Dialect "sqlite" }}
+				valueRows[i] = []any{sql.NewDefaultExpr("NULL")}
+{{- else }}
+				valueRows[i] = []any{sql.Default}
+{{- end }}
+			}
+{{- else }}
+
+			columns := []string{ {{- range .CreateInputFields }}{{ printf "%q" .ColumnName }}, {{ end -}} }
+{{- if and (not .CompositePK) (not $needsInsertResolve) (eq .PKStrategy "app") }}
+			var batchIDs []{{ $pkCol.GoType }}
+{{- end }}
+			var valueRows [][]any
+			for _, input := range batch {
+{{- if and .Tenancy .Tenancy.Tenanted .Tenancy.InPrimaryKey }}
+				// Tenant-in-PK verify-match for each input in the batch.
+				// input.{{ .Tenancy.FieldName }} is a required plain field, so no
+				// auto-fill happens; the caller supplied it and we verify it here.
+				// applyTenancy is false under SkipTenancy OR under required:false
+				// + zero resolver — caller-supplied tenant is accepted as-is.
+				if applyTenancy && input.{{ .Tenancy.FieldName }} != resolvedTenant {
+					return nil, tenancy.ErrMismatch
+				}
+{{- end }}
+{{- if eq .PKStrategy "app" }}
+{{- if and (not .CompositePK) (not $needsInsertResolve) }}
+				var pkValue {{ $pkCol.GoType }}
+				if v, ok := input.{{ $pkCol.FieldName }}.Get(); ok {
+					pkValue = v
+				} else {
+					pkValue = {{ $.PKAutoGenExpr }}
+				}
+				batchIDs = append(batchIDs, pkValue)
+{{- else }}
+				var pkAny any
+				if v, ok := input.{{ $pkCol.FieldName }}.Get(); ok {
+					pkAny = v
+				} else {
+					pkAny = {{ $.PKAutoGenExpr }}
+				}
+{{- end }}
+{{- end }}
+{{- range .CreateInputFields }}
+{{- if .Omittable }}
+{{- if or (ne $.PKStrategy "app") (ne .ColumnName (index $.PKColumns 0).Name) }}
+{{- if and $.Tenancy $.Tenancy.Tenanted (eq .ColumnName $.Tenancy.Column) }}
+				// Tenancy auto-set + mismatch check.
+				// applyTenancy=false under SkipTenancy OR under required:false
+				// + zero resolver — caller-supplied tenant is used, else the DB
+				// NOT NULL constraint surfaces.
+				// The allTenants append below relies on the tenant-∉-PK column
+				// always being an omittable CreateInput field (promoted by
+				// attachTenancyToTables) so exactly one carrier element is
+				// appended per input, in lockstep with the PK slice.
+				var {{ .FieldName | toCamelCase | safeGoIdent }} any
+				if applyTenancy {
+					if v, ok := input.{{ .FieldName }}.Get(); ok && v != resolvedTenant {
+						return nil, tenancy.ErrMismatch
+					}
+					{{ .FieldName | toCamelCase | safeGoIdent }} = resolvedTenant
+				} else if v, ok := input.{{ .FieldName }}.Get(); ok {
+					{{ .FieldName | toCamelCase | safeGoIdent }} = v
+				} else {
+					return nil, fmt.Errorf("create {{ $.TableName }}: tenant column {{ .ColumnName }} required when SkipTenancy is set or resolver is absent")
+				}
+				allTenants = append(allTenants, {{ .FieldName | toCamelCase | safeGoIdent }})
+{{- else if eq $.Dialect "sqlite" }}
+				var {{ .FieldName | toCamelCase | safeGoIdent }} any = sql.NewDefaultExpr({{ printf "%q" .DefaultExpr }})
+				if v, ok := input.{{ .FieldName }}.Get(); ok {
+					{{ .FieldName | toCamelCase | safeGoIdent }} = v
+				}
+{{- else }}
+				var {{ .FieldName | toCamelCase | safeGoIdent }} any = sql.Default
+				if v, ok := input.{{ .FieldName }}.Get(); ok {
+					{{ .FieldName | toCamelCase | safeGoIdent }} = v
+				}
+{{- end }}
+{{- end }}
+{{- end }}
+{{- end }}
+
+				valueRows = append(valueRows, []any{
+{{- range .CreateInputFields }}
+{{- if .Required }}
+					input.{{ .FieldName }},
+{{- else if and (eq $.PKStrategy "app") (eq .ColumnName (index $.PKColumns 0).Name) }}
+{{- if and (not $.CompositePK) (not $needsInsertResolve) }}
+					pkValue,
+{{- else }}
+					pkAny,
+{{- end }}
+{{- else }}
+					{{ .FieldName | toCamelCase | safeGoIdent }},
+{{- end }}
+{{- end }}
+				})
+			}
+{{- end }}
+{{- if $needsInsertResolve }}
+
+			ids, err := c.multiInsertAndResolveIDs(ctx, conn, columns, valueRows)
+			if err != nil {
+				return nil, fmt.Errorf("create {{ .TableName }} batch: %w", err)
+			}
+			allIDs = append(allIDs, ids...)
+{{- else }}
+
+			query, queryArgs := sql.BuildMultiInsert(c.dialect, c.table, sql.MultiInsertOptions{
+				Columns:   columns,
+				ValueRows: valueRows,
+			})
+			_, err := conn.Exec(ctx, query, queryArgs...)
+			if err != nil {
+				return nil, fmt.Errorf("create {{ .TableName }} batch: %w", err)
+			}
+{{- if .CompositePK }}
+			for _, input := range batch {
+				allPKs = append(allPKs, {{ .CompositePKStructName }}{ {{- range .PKColumns }}{{ .FieldName }}: input.{{ .FieldName }}, {{ end -}} })
+			}
+{{- else if eq .PKStrategy "app" }}
+			allIDs = append(allIDs, batchIDs...)
+{{- else }}
+			for _, input := range batch {
+				allIDs = append(allIDs, input.{{ $pkCol.FieldName }})
+			}
+{{- end }}
+{{- end }}
+		}
+{{- if .CompositePK }}
+
+		m.AffectedPKs = toAnySlice(allPKs)
+{{- else }}
+
+		m.AffectedPKs = toAnySlice(allIDs)
+{{- end }}
+{{- if $captureTenant }}
+		m.AffectedTenants = allTenants
+{{- end }}
+
+		// Empty FieldOptions — skip fetch
+		if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
+			return nil, nil
+		}
+{{- if .CompositePK }}
+
+		// Re-fetch via composite PK filter
+		return c.GetMany(ctx, &Get{{ .StructName | structNamePlural }}Input{
+			Filter: &{{ .StructName }}Filter{PKs: allPKs},
+			Limit:  new(0),
+		}, func(o *CallOptions[{{ .StructName }}FieldOptions]) {
+			*o = options
+			o.SkipHooks = true
+			o.LockMode = sql.LockNone
+		})
+{{- else }}
+
+{{- if pkIsStringType $pkCol }}
+		// Convert IDs for filter
+		idStrings := make([]string, len(allIDs))
+		for i, id := range allIDs {
+			idStrings[i] = {{ fkToString $pkCol "id" }}
+		}
+		return c.GetMany(ctx, &Get{{ .StructName | structNamePlural }}Input{
+			Filter: &{{ .StructName }}Filter{
+				{{ $pkCol.FieldName }}: &comparator.ID{In: idStrings},
+			},
+			Limit: new(0),
+		}, func(o *CallOptions[{{ .StructName }}FieldOptions]) {
+			*o = options
+			o.SkipHooks = true
+			o.LockMode = sql.LockNone
+		})
+{{- else }}
+		return c.GetMany(ctx, &Get{{ .StructName | structNamePlural }}Input{
+			Filter: &{{ .StructName }}Filter{
+				{{ $pkCol.FieldName }}: {{ pkFilterInExpr $pkCol "allIDs" false }},
+			},
+			Limit: new(0),
+		}, func(o *CallOptions[{{ .StructName }}FieldOptions]) {
+			*o = options
+			o.SkipHooks = true
+			o.LockMode = sql.LockNone
+		})
+{{- end }}
+{{- end }}
+	})
+	if err != nil {
+		return nil, err
+	}
+	if result == nil {
+		return nil, nil
+	}
+	return result.([]*{{ .StructName }}), nil
+}
+{{- end }}
+{{- if and $needsInsertResolve (or .Operations.Create .Operations.CreateMany) }}
+
+// insertAndResolveID performs the INSERT and resolves the generated primary key.
+func (c *{{ $structCamel }}Client) insertAndResolveID(ctx context.Context, conn database.Querier, columns []string, args []any) ({{ $pkCol.GoType }}, error) {
+{{- if supportsReturning }}
+	query, queryArgs := sql.BuildInsert(c.dialect, c.table, sql.InsertOptions{
+		Columns:          columns,
+		Values:           args,
+		ReturningColumns: []string{ {{- printf "%q" $pkCol.Name -}} },
+	})
+	var id {{ $pkCol.GoType }}
+	if err := conn.QueryRow(ctx, query, queryArgs...).Scan(&id); err != nil {
+		return {{ zeroValue $pkCol }}, err
+	}
+	return id, nil
+{{- else }}
+	query, queryArgs := sql.BuildInsert(c.dialect, c.table, sql.InsertOptions{
+		Columns: columns,
+		Values:  args,
+	})
+	execResult, err := conn.Exec(ctx, query, queryArgs...)
+	if err != nil {
+		return {{ zeroValue $pkCol }}, err
+	}
+	rawID, err := execResult.LastInsertId()
+	if err != nil {
+		return {{ zeroValue $pkCol }}, err
+	}
+	return {{ $pkCol.GoType }}(rawID), nil
+{{- end }}
+}
+{{- end }}
+{{- if and $needsInsertResolve .Operations.CreateMany }}
+
+// multiInsertAndResolveIDs performs a multi-row INSERT and resolves all generated primary keys.
+func (c *{{ $structCamel }}Client) multiInsertAndResolveIDs(ctx context.Context, conn database.Querier, columns []string, valueRows [][]any) ([]{{ $pkCol.GoType }}, error) {
+{{- if supportsReturning }}
+	query, args := sql.BuildMultiInsert(c.dialect, c.table, sql.MultiInsertOptions{
+		Columns:          columns,
+		ValueRows:        valueRows,
+		ReturningColumns: []string{ {{- printf "%q" $pkCol.Name -}} },
+	})
+
+	rows, err := conn.Query(ctx, query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var ids []{{ $pkCol.GoType }}
+	for rows.Next() {
+		var id {{ $pkCol.GoType }}
+		if err := rows.Scan(&id); err != nil {
+			return nil, fmt.Errorf("scan {{ $singular }} id: %w", err)
+		}
+		ids = append(ids, id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return ids, nil
+{{- else }}
+	// MySQL has no RETURNING, so the keys are derived rather than reported, and
+	// the derivation reads the session's auto_increment_increment — which only
+	// the session that ran the INSERT can answer. A transaction is
+	// one session already. The pool is pinned to one without opening a
+	// transaction, so the INSERT still commits on its own. A single row needs no
+	// increment, so it needs no pin either.
+	if _, inTx := conn.(*database.Tx); inTx || len(valueRows) == 1 {
+		return c.insertAndDeriveIDs(ctx, conn, columns, valueRows)
+	}
+	pinner, ok := conn.(database.SessionPinner)
+	if !ok {
+		return nil, errors.New("deriving the keys of a multi-row insert needs a transaction or a querier that implements database.SessionPinner")
+	}
+	var ids []{{ $pkCol.GoType }}
+	err := pinner.WithSession(ctx, func(session database.Querier) error {
+		var err error
+		ids, err = c.insertAndDeriveIDs(ctx, session, columns, valueRows)
+		return err
+	})
+	return ids, err
+{{- end }}
+}
+{{- if not supportsReturning }}
+
+// insertAndDeriveIDs runs a multi-row INSERT on one session and derives the keys
+// it generated. LastInsertId names the first. A multi-row VALUES insert is a
+// "simple insert", which InnoDB assigns one block under every
+// innodb_autoinc_lock_mode, spaced by the session's auto_increment_increment —
+// 1 by default, the cluster size under Galera, a configured step under
+// multi-primary replication.
+func (c *{{ $structCamel }}Client) insertAndDeriveIDs(ctx context.Context, session database.Querier, columns []string, valueRows [][]any) ([]{{ $pkCol.GoType }}, error) {
+	query, args := sql.BuildMultiInsert(c.dialect, c.table, sql.MultiInsertOptions{
+		Columns:   columns,
+		ValueRows: valueRows,
+	})
+
+	execResult, err := session.Exec(ctx, query, args...)
+	if err != nil {
+		return nil, err
+	}
+
+	firstID, err := execResult.LastInsertId()
+	if err != nil {
+		return nil, err
+	}
+
+	step := int64(1)
+	if len(valueRows) > 1 {
+		if err := session.QueryRow(ctx, "SELECT @@auto_increment_increment").Scan(&step); err != nil {
+			return nil, fmt.Errorf("read auto_increment_increment: %w", err)
+		}
+	}
+
+	ids := make([]{{ $pkCol.GoType }}, len(valueRows))
+	for i := range valueRows {
+		ids[i] = {{ $pkCol.GoType }}(firstID + int64(i)*step)
+	}
+	return ids, nil
+}
+{{- end }}
+{{- end }}
+{{- end -}}

@@ -1,0 +1,92 @@
+"""
+Extended user profile information
+"""
+type Profile {
+  "Unique identifier"
+  id: Int!
+  "Owning user reference"
+  userID: Int!
+  "Personal website URL"
+  website: String
+  "GitHub username"
+  githubHandle: String
+  "Whether the profile has been verified"
+  verified: Boolean!
+  "User preference settings"
+  preferences: JSON
+  "one-to-one relationship with the users table."
+  users: User
+}
+
+type ProfileConnection {
+  edges:      [ProfileEdge!]!
+  pageInfo:   PageInfo!
+  totalCount: Int!
+}
+
+type ProfileEdge {
+  node:   Profile!
+  cursor: String!
+}
+
+type ProfileListResult {
+  items:      [Profile!]!
+  totalCount: Int!
+  offset:     Int!
+  limit:      Int!
+  hasMore:    Boolean!
+}
+
+input ProfileFilter {
+  userID: NumericComparator
+  website: NullableStringComparator
+  githubHandle: NullableStringComparator
+  verified: BooleanComparator
+  preferences: NullableJSONComparator
+  and: [ProfileFilter!]
+  or:  [ProfileFilter!]
+}
+
+enum ProfileSortField {
+  ID
+  USER_ID
+  WEBSITE
+  GITHUB_HANDLE
+  VERIFIED
+  PREFERENCES
+}
+
+input ProfileSort {
+  field:     ProfileSortField!
+  direction: SortDirection!
+}
+input CreateProfileInput {
+  userID: Int!
+  website: String
+  githubHandle: String
+  verified: Boolean!
+  preferences: JSON
+}
+input UpdateProfileInput {
+  userID: Int
+  website: String
+  githubHandle: String
+  verified: Boolean
+  preferences: JSON
+}
+
+extend type Query {
+  profile(id: Int!): Profile
+  "Cursor-paginated; ordering is driven by cursor_keys to preserve keyset semantics — pass `sort` to profileList instead."
+  profiles(filter: ProfileFilter, first: Int, after: String, last: Int, before: String): ProfileConnection!
+  profileList(filter: ProfileFilter, sort: [ProfileSort!], limit: Int, offset: Int): ProfileListResult!
+}
+
+extend type Mutation {
+  createProfile(input: CreateProfileInput!): Profile!
+  createProfiles(inputs: [CreateProfileInput!]!): [Profile!]!
+  updateProfile(id: Int!, input: UpdateProfileInput!): Profile!
+  updateProfiles(filter: ProfileFilter!, input: UpdateProfileInput!): [Profile!]!
+  upsertProfile(input: CreateProfileInput!): Profile!
+  deleteProfile(id: Int!): Boolean!
+}

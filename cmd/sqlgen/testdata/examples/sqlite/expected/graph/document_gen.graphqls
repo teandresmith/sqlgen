@@ -1,0 +1,87 @@
+"""
+Document corresponds to the documents table.
+"""
+type Document {
+  "id"
+  id: Int!
+  "entity_id"
+  entityID: Int!
+  "entity_type"
+  entityType: String!
+  "name"
+  name: String!
+  "created_at"
+  createdAt: DateTime!
+  "many-to-many relationship with the assets table."
+  assets: [Asset!]!
+}
+
+type DocumentConnection {
+  edges:      [DocumentEdge!]!
+  pageInfo:   PageInfo!
+  totalCount: Int!
+}
+
+type DocumentEdge {
+  node:   Document!
+  cursor: String!
+}
+
+type DocumentListResult {
+  items:      [Document!]!
+  totalCount: Int!
+  offset:     Int!
+  limit:      Int!
+  hasMore:    Boolean!
+}
+
+input DocumentFilter {
+  entityID: NumericComparator
+  entityType: StringComparator
+  name: StringComparator
+  createdAt: TimeComparator
+  assets: AssetFilter
+  and: [DocumentFilter!]
+  or:  [DocumentFilter!]
+}
+
+enum DocumentSortField {
+  ID
+  ENTITY_ID
+  ENTITY_TYPE
+  NAME
+  CREATED_AT
+}
+
+input DocumentSort {
+  field:     DocumentSortField!
+  direction: SortDirection!
+}
+input CreateDocumentInput {
+  entityID: Int!
+  entityType: String!
+  name: String!
+  createdAt: DateTime!
+}
+input UpdateDocumentInput {
+  entityID: Int
+  entityType: String
+  name: String
+  createdAt: DateTime
+}
+
+extend type Query {
+  document(id: Int!): Document
+  "Cursor-paginated; ordering is driven by cursor_keys to preserve keyset semantics — pass `sort` to documentList instead."
+  documents(filter: DocumentFilter, first: Int, after: String, last: Int, before: String): DocumentConnection!
+  documentList(filter: DocumentFilter, sort: [DocumentSort!], limit: Int, offset: Int): DocumentListResult!
+}
+
+extend type Mutation {
+  createDocument(input: CreateDocumentInput!): Document!
+  createDocuments(inputs: [CreateDocumentInput!]!): [Document!]!
+  updateDocument(id: Int!, input: UpdateDocumentInput!): Document!
+  updateDocuments(filter: DocumentFilter!, input: UpdateDocumentInput!): [Document!]!
+  upsertDocument(input: CreateDocumentInput!): Document!
+  deleteDocument(id: Int!): Boolean!
+}

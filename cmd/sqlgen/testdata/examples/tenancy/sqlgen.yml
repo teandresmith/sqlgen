@@ -1,0 +1,94 @@
+version: v1
+
+input:
+  dialect: sqlite
+  paths:
+    - ./schema.sql
+  views:
+    - ./views/
+
+output:
+  driver: stdlib
+  dir: ./models
+  package: models
+
+events:
+  enabled: true
+
+cache:
+  enabled: true
+  ttl: "1h"
+  serializer: json
+  key_prefix: sqlgen
+
+tenancy:
+  enabled: true
+  column: workspace_id
+  required: true
+  type:
+    type: uuid.UUID
+    import: uuid
+
+overrides:
+  types:
+    blob:
+      type: uuid.UUID
+      import: uuid
+
+generation:
+  soft_delete_columns:
+    - name: deleted_at
+      type: timestamp
+
+# View tenancy read-path emission (PRD §29.2.5).
+views:
+  product_stats: {}
+  workspace_summaries:
+    # Deliberate cross-tenant aggregate: the view projects workspace_id, so
+    # detection would scope it. The opt-out is explicit and rare (§29.2.5).
+    tenancy:
+      enabled: false
+
+tables:
+  workspaces:
+    tenancy:
+      enabled: false
+  products: {}
+  order_items:
+    cursor_keys:
+      - workspace_id
+      - order_id
+      - product_id
+  audit_logs:
+    tenancy:
+      enabled: false
+    cache:
+      enabled: false
+  legacy_widgets:
+    tenancy:
+      column: org_id
+      # required: false coverage. Resolver returning (zero, nil)
+      # skips the filter for this table only (PRD §29.2 "When false, missing
+      # tenant skips the filter"). All other tables inherit the global
+      # required:true default. See tests/required_false_test.go.
+      required: false
+  users:
+    relationships:
+      - name: Profile
+        type: one_to_one
+        table: user_profiles
+        fk: user_id
+  posts: {}
+  user_profiles: {}
+  tags: {}
+  post_tags:
+    tenancy:
+      enabled: false
+    cursor_keys:
+      - post_id
+      - tag_id
+  tag_links:
+    cursor_keys:
+      - tag_id
+      - related_tag_id
+  articles: {}

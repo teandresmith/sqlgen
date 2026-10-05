@@ -1,0 +1,74 @@
+{{- define "types" -}}
+{{- range $ct := .Composites }}
+
+{{- if $ct.DocComment }}
+// {{ $ct.GoTypeName }} — {{ $ct.DocComment }}
+{{- else }}
+// {{ $ct.GoTypeName }} represents the {{ $ct.Name }} composite type.
+{{- end }}
+type {{ $ct.GoTypeName }} struct {
+{{- range $ct.Fields }}
+	{{ .FieldName }} {{ .GoType }} `json:"{{ .JSONTag }}"`
+{{- end }}
+}
+
+// Value implements driver.Valuer — marshals to JSON for storage.
+func (v {{ $ct.GoTypeName }}) Value() (driver.Value, error) {
+	return json.Marshal(v)
+}
+
+// Scan implements sql.Scanner — unmarshals from JSON.
+func (v *{{ $ct.GoTypeName }}) Scan(src any) error {
+	switch data := src.(type) {
+	case []byte:
+		return json.Unmarshal(data, v)
+	case string:
+		return json.Unmarshal([]byte(data), v)
+	default:
+		return fmt.Errorf("scanning %T into {{ $ct.GoTypeName }}", src)
+	}
+}
+{{- end }}
+{{- range $dt := .Domains }}
+
+{{- if $dt.DocComment }}
+// {{ $dt.GoTypeName }} — {{ $dt.DocComment }}
+{{- else }}
+// {{ $dt.GoTypeName }} is a domain type alias for {{ $dt.BaseGoType }}.
+{{- end }}
+type {{ $dt.GoTypeName }} = {{ $dt.BaseGoType }}
+{{- end }}
+{{- range $et := .Extras }}
+
+{{- if $et.Description }}
+// {{ $et.GoTypeName }} {{ $et.Description }}
+{{- else }}
+// {{ $et.GoTypeName }} is a config-defined extra type.
+{{- end }}
+type {{ $et.GoTypeName }} struct {
+{{- range $et.Fields }}
+{{- if .Description }}
+	// {{ .FieldName }} {{ .Description }}
+{{- end }}
+	{{ .FieldName }} {{ .GoType }}{{ if .Tags }} {{ .Tags | formatTagPairs }}{{ end }}
+{{- end }}
+}
+
+// Value implements driver.Valuer — marshals to JSON for storage.
+func (v {{ $et.GoTypeName }}) Value() (driver.Value, error) {
+	return json.Marshal(v)
+}
+
+// Scan implements sql.Scanner — unmarshals from JSON.
+func (v *{{ $et.GoTypeName }}) Scan(src any) error {
+	switch data := src.(type) {
+	case []byte:
+		return json.Unmarshal(data, v)
+	case string:
+		return json.Unmarshal([]byte(data), v)
+	default:
+		return fmt.Errorf("scanning %T into {{ $et.GoTypeName }}", src)
+	}
+}
+{{- end }}
+{{- end -}}

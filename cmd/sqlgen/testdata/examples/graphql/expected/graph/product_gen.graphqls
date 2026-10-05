@@ -1,0 +1,159 @@
+"""
+Product corresponds to the products table.
+"""
+type Product {
+  "id"
+  id: UUID!
+  "name"
+  name: String!
+  "description"
+  description: String
+  "price"
+  price: Decimal!
+  "stock"
+  stock: Int!
+  "category_id"
+  categoryID: Int!
+  "created_at"
+  createdAt: Time!
+  "updated_at"
+  updatedAt: Time
+  "deleted_at"
+  deletedAt: Time
+  "one-to-many relationship with the order_items table."
+  orderItems: [OrderItem!]!
+}
+
+type ProductConnection {
+  edges:      [ProductEdge!]!
+  pageInfo:   PageInfo!
+  totalCount: Int!
+}
+
+type ProductEdge {
+  node:   Product!
+  cursor: String!
+}
+
+type ProductListResult {
+  items:      [Product!]!
+  totalCount: Int!
+  offset:     Int!
+  limit:      Int!
+  hasMore:    Boolean!
+}
+
+input ProductFilter {
+  name: StringComparator
+  description: NullableStringComparator
+  price: DecimalComparator
+  stock: NumericComparator
+  categoryID: NumericComparator
+  createdAt: TimeComparator
+  updatedAt: NullableTimeComparator
+  deletedAt: NullableTimeComparator
+  orderItems: OrderItemFilter
+  and: [ProductFilter!]
+  or:  [ProductFilter!]
+}
+
+enum ProductSortField {
+  ID
+  NAME
+  DESCRIPTION
+  PRICE
+  STOCK
+  CATEGORY_ID
+  CREATED_AT
+  UPDATED_AT
+  DELETED_AT
+}
+
+input ProductSort {
+  field:     ProductSortField!
+  direction: SortDirection!
+}
+input CreateProductInput {
+  name: String!
+  description: String
+  price: Decimal!
+  stock: Int!
+  categoryID: Int!
+  createdAt: Time!
+  updatedAt: Time
+  deletedAt: Time
+}
+input UpdateProductInput {
+  name: String
+  description: String
+  price: Decimal
+  price_inc: Int
+  price_dec: Int
+  stock: Int
+  stock_inc: Int
+  stock_dec: Int
+  categoryID: Int
+  createdAt: Time
+  updatedAt: Time
+  deletedAt: Time
+}
+
+extend type Query {
+  product(id: UUID!): Product
+  "Cursor-paginated; ordering is driven by cursor_keys to preserve keyset semantics — pass `sort` to productList instead."
+  products(filter: ProductFilter, first: Int, after: String, last: Int, before: String): ProductConnection!
+  productList(filter: ProductFilter, sort: [ProductSort!], limit: Int, offset: Int): ProductListResult!
+}
+
+extend type Mutation {
+  createProduct(input: CreateProductInput!): Product!
+  createProducts(inputs: [CreateProductInput!]!): [Product!]!
+  updateProduct(id: UUID!, input: UpdateProductInput!): Product!
+  updateProducts(filter: ProductFilter!, input: UpdateProductInput!): [Product!]!
+  upsertProduct(input: CreateProductInput!): Product!
+  hardDeleteProduct(id: UUID!): Boolean!
+  softDeleteProduct(id: UUID!): Product
+  restoreProduct(id: UUID!): Product
+}
+
+input CreateProductWithRelatedInput {
+  product: CreateProductInput!
+  orderItems: ProductOrderItemsCreateNested
+}
+
+input UpdateProductWithRelatedInput {
+  product: UpdateProductInput
+  orderItems: ProductOrderItemsUpdateNested
+}
+
+input UpsertProductWithRelatedInput {
+  product: CreateProductInput!
+  orderItems: ProductOrderItemsUpdateNested
+}
+
+enum ProductConflictTarget {
+  PK
+}
+
+input ProductOrderItemsCreateNested {
+  create: [ProductOrderItemsCreateInput!]
+}
+
+input ProductOrderItemsUpdateNested {
+  create: [ProductOrderItemsCreateInput!]
+}
+
+input ProductOrderItemsCreateInput {
+  orderID: UUID!
+  quantity: Int!
+  unitPrice: Decimal!
+  externalRef: String
+  sourceIP: IPAddr
+  createdAt: Time!
+}
+
+extend type Mutation {
+  createProductWithRelated(input: CreateProductWithRelatedInput!): Product!
+  updateProductWithRelated(id: UUID!, input: UpdateProductWithRelatedInput!): Product!
+  upsertProductWithRelated(input: UpsertProductWithRelatedInput!, conflictTarget: ProductConflictTarget! = PK): Product!
+}

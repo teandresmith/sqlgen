@@ -1,0 +1,278 @@
+{{- define "api/table-schema" -}}
+{{- $t := . -}}
+{{- /* Description is fully resolved on the context (entity comment, else the */ -}}
+{{- /* generated "<T> corresponds to the <sql> table."/"… view." placeholder),  */ -}}
+{{- /* so the noun follows the entity kind without this template knowing it.   */ -}}
+"""
+{{ $t.Description }}
+"""
+type {{ $t.StructName }} {
+{{- range $f := $t.Fields }}
+{{- if $f.Readable }}
+  "{{ if $f.Description }}{{ $f.Description }}{{ else }}{{ $f.SQLName }}{{ end }}"
+  {{ $f.GraphQLName }}: {{ $f.GraphQLType }}
+{{- end }}
+{{- end }}
+{{- range $r := $t.Relationships }}
+  "{{ if $r.Description }}{{ $r.Description }}{{ else }}relationship to {{ $r.TargetType }}{{ end }}"
+  {{ $r.GraphQLName }}: {{ $r.GraphQLType }}
+{{- end }}
+}
+
+type {{ $t.StructName }}Connection {
+  edges:      [{{ $t.StructName }}Edge!]!
+  pageInfo:   PageInfo!
+  totalCount: Int!
+}
+
+type {{ $t.StructName }}Edge {
+  node:   {{ $t.StructName }}!
+  cursor: String!
+}
+
+type {{ $t.StructName }}ListResult {
+  items:      [{{ $t.StructName }}!]!
+  totalCount: Int!
+  offset:     Int!
+  limit:      Int!
+  hasMore:    Boolean!
+}
+
+input {{ $t.StructName }}Filter {
+{{- range $f := $t.Fields }}
+{{- if and (not $f.PrimaryKey) $f.Filterable }}
+  {{ $f.GraphQLName }}: {{ $f.Filter.InputTypeName }}
+{{- end }}
+{{- end }}
+{{- /* Relationship members: an ordinary nested input, so                    */ -}}
+{{- /* no new gqlgen machinery. The context already dropped every target the */ -}}
+{{- /* API does not expose, and the same slice drives the translator's       */ -}}
+{{- /* recursion — one derivation, two emitters.                             */ -}}
+{{- range $r := $t.FilterRelationships }}
+  {{ $r.GraphQLName }}: {{ $r.InputTypeName }}
+{{- end }}
+  and: [{{ $t.StructName }}Filter!]
+  or:  [{{ $t.StructName }}Filter!]
+}
+
+enum {{ $t.StructName }}SortField {
+{{- range $f := $t.Fields }}
+{{- if $f.Sortable }}
+  {{ $f.SortEnumValue }}
+{{- end }}
+{{- end }}
+}
+
+input {{ $t.StructName }}Sort {
+  field:     {{ $t.StructName }}SortField!
+  direction: SortDirection!
+}
+
+{{- /*
+  Only emit `Create<T>Input` / `Update<T>Input` when the block below
+  would render at least one field. An empty `input X {}` block is rejected by
+  gqlgen ("expected at least one definition, found }"). The matching
+  `create<T>` / `update<T>` mutations are gated below on the same flags, so
+  the surface stays consistent.
+
+  Each input walks its own per-field flag rather than re-deriving membership
+  from column properties, so the schema, the translator, and the Has*Input
+  flags cannot drift apart:
+
+    - `$f.InCreateInput` keeps caller-strategy PK columns — a
+      pure M2M junction's create input is exactly its FK tuple, so gating on
+      "has a non-PK field" would wrongly suppress it.
+    - `$f.InUpdateInput` drops every PK (identity, not an attribute) and the
+      server-owned tenant column.
+*/ -}}
+{{- if $t.HasCreateInput }}
+input Create{{ $t.StructName }}Input {
+{{- range $f := $t.Fields }}
+{{- if $f.InCreateInput }}
+  {{ $f.GraphQLName }}: {{ $f.GraphQLType }}
+{{- end }}
+{{- end }}
+}
+{{- end }}
+
+{{- if $t.HasUpdateInput }}
+input Update{{ $t.StructName }}Input {
+{{- range $f := $t.Fields }}
+{{- /* `$f.InUpdateInput` drops PK columns (identity, addressed through the  */ -}}
+{{- /* mutation's PK args) and the server-owned tenant column (since         */ -}}
+{{- /* the runtime excludes it from the SET clause and verify-matches it, so */ -}}
+{{- /* offering it could only ever 403 or be silently discarded). The nested */ -}}
+{{- /* `_inc` / `_dec` pair takes a second, wider gate — `$f.Numeric`, fed   */ -}}
+{{- /* by the model-side increment surface, which drops the tenant column    */ -}}
+{{- /* whenever the table is tenanted. That is what                          */ -}}
+{{- /* keeps an arithmetic tenant column from exposing an increment out of   */ -}}
+{{- /* its tenant under `tenancy.required: false`, where this outer gate      */ -}}
+{{- /* keeps the plain set field.                                            */ -}}
+{{- if $f.InUpdateInput }}
+  {{ $f.GraphQLName }}: {{ $f.GraphQLBare }}
+{{- /* `_inc` / `_dec` paired fields always type as `Int` so the seed cast    */ -}}
+{{- /* `int(*input.<IncGoField>)` compiles uniformly across all incrementable */ -}}
+{{- /* column kinds (int / float / decimal). IncrementOp[T].Amount is `int`  */ -}}
+{{- /* by design; the runtime `column = column + ?` SQL accepts an int       */ -}}
+{{- /* against any numeric column type at the dialect level. Writable-gated  */ -}}
+{{- /* with the parent field — buildUpdateOps mirrors the same skip.         */ -}}
+{{- if $f.Numeric }}
+  {{ $f.GraphQLName }}_inc: Int
+  {{ $f.GraphQLName }}_dec: Int
+{{- end }}
+{{- end }}
+{{- end }}
+}
+{{- end }}
+{{- /* Guarded like the Mutation block below: a mask with every read off would */ -}}
+{{- /* otherwise open an empty extension, which gqlgen rejects.               */ -}}
+{{- if hasAnyRead $t }}
+
+extend type Query {
+{{- if $t.Operations.Get }}
+  {{ $t.QueryName }}({{ pkSchemaArgs $t.PKArgs }}): {{ $t.StructName }}
+{{- end }}
+{{- if $t.Operations.Connection }}
+  "Cursor-paginated; ordering is driven by cursor_keys to preserve keyset semantics — pass `sort` to {{ $t.ListQueryName }} instead."
+  {{ $t.QueryNamePlural }}(filter: {{ $t.StructName }}Filter, first: Int, after: String, last: Int, before: String): {{ $t.StructName }}Connection!
+{{- end }}
+{{- if $t.Operations.Paginate }}
+  {{ $t.ListQueryName }}(filter: {{ $t.StructName }}Filter, sort: [{{ $t.StructName }}Sort!], limit: Int, offset: Int): {{ $t.StructName }}ListResult!
+{{- end }}
+}
+{{- end }}
+{{ if hasAnyMutation $t }}
+extend type Mutation {
+{{- if and $t.Operations.Create $t.HasCreateInput }}
+  create{{ $t.StructName }}(input: Create{{ $t.StructName }}Input!): {{ $t.StructName }}!
+{{- end }}
+{{- if and $t.Operations.CreateMany $t.HasCreateInput }}
+  create{{ $t.StructNamePlural }}(inputs: [Create{{ $t.StructName }}Input!]!): [{{ $t.StructName }}!]!
+{{- end }}
+{{- if and $t.Operations.Update $t.HasUpdateInput }}
+  update{{ $t.StructName }}({{ pkSchemaArgs $t.PKArgs }}, input: Update{{ $t.StructName }}Input!): {{ $t.StructName }}!
+{{- end }}
+{{- if and $t.Operations.UpdateWhere $t.HasUpdateInput }}
+  update{{ $t.StructNamePlural }}(filter: {{ $t.StructName }}Filter!, input: Update{{ $t.StructName }}Input!): [{{ $t.StructName }}!]!
+{{- end }}
+{{- if and $t.Operations.Upsert $t.HasConflictPK $t.HasCreateInput }}
+  upsert{{ $t.StructName }}(input: Create{{ $t.StructName }}Input!): {{ $t.StructName }}!
+{{- end }}
+{{- if and $t.Operations.HardDelete (not $t.Operations.SoftDelete) }}
+  delete{{ $t.StructName }}({{ pkSchemaArgs $t.PKArgs }}): Boolean!
+{{- end }}
+{{- if and $t.Operations.SoftDelete (not $t.Operations.HardDelete) }}
+  delete{{ $t.StructName }}({{ pkSchemaArgs $t.PKArgs }}): {{ $t.StructName }}
+{{- end }}
+{{- if and $t.Operations.HardDelete $t.Operations.SoftDelete }}
+  hardDelete{{ $t.StructName }}({{ pkSchemaArgs $t.PKArgs }}): Boolean!
+  softDelete{{ $t.StructName }}({{ pkSchemaArgs $t.PKArgs }}): {{ $t.StructName }}
+{{- end }}
+{{- if and $t.Operations.Restore $t.HasSoftDelete }}
+  restore{{ $t.StructName }}({{ pkSchemaArgs $t.PKArgs }}): {{ $t.StructName }}
+{{- end }}
+}
+{{- end }}
+{{- with $t.Nested }}
+{{ template "api/nested-schema" $t }}
+{{- end }}
+{{- end -}}
+
+{{- /*
+  The nested-mutation surface. Additive by construction:
+  it declares its own types and its own `extend type Mutation` block, so the
+  flat create / update / upsert mutations above stay byte-identical whether or
+  not it is emitted. Every type here is projected from the Go type of the same
+  name — the wrappers CONTAIN the flat input rather than restating its fields,
+  so the access projection and the `_inc` / `_dec` operators on
+  `Update<T>Input` are inherited as they stand.
+
+  What each block carries was decided in Go (context_api_nested.go); this
+  template only lays it out. A verb absent from a block is not expressible on
+  that edge, never present and ignored.
+*/ -}}
+{{- define "api/nested-schema" -}}
+{{- $t := . -}}
+{{- $n := $t.Nested -}}
+{{- if $n.EmitCreate }}
+input {{ $n.CreateInputName }} {
+  {{ $n.ParentGraphQLName }}: Create{{ $t.StructName }}Input!
+{{- range $e := $n.Edges }}
+{{- if $e.EmitCreateBlock }}
+  {{ $e.GraphQLName }}: {{ $e.CreateBlockName }}
+{{- end }}
+{{- end }}
+}
+{{ end }}
+{{- /* Nullable, unlike the create-side member: every field of the flat update */ -}}
+{{- /* input is optional, so an update touching only nested rows omits it and */ -}}
+{{- /* the parent write issues no UPDATE at all.                              */ -}}
+{{- if $n.EmitUpdate }}
+input {{ $n.UpdateInputName }} {
+  {{ $n.ParentGraphQLName }}: Update{{ $t.StructName }}Input
+{{- range $e := $n.Edges }}
+  {{ $e.GraphQLName }}: {{ $e.UpdateBlockName }}
+{{- end }}
+}
+{{ end }}
+{{- if $n.EmitUpsert }}
+input {{ $n.UpsertInputName }} {
+  {{ $n.ParentGraphQLName }}: Create{{ $t.StructName }}Input!
+{{- range $e := $n.Edges }}
+  {{ $e.GraphQLName }}: {{ $e.UpdateBlockName }}
+{{- end }}
+}
+
+enum {{ $n.ConflictEnumName }} {
+{{- range $c := $n.ConflictTargets }}
+  {{ $c.EnumValue }}
+{{- end }}
+}
+{{ end }}
+{{- range $e := $n.Edges }}
+{{- if $e.EmitCreateBlock }}
+input {{ $e.CreateBlockName }} {
+{{- if $e.HasCreate }}
+  create: {{ $e.CreateGraphQLType }}
+{{- end }}
+{{- if $e.HasConnect }}
+  connect: {{ $e.IDGraphQLType }}
+{{- end }}
+}
+{{ end }}
+{{- if $e.EmitUpdateBlock }}
+input {{ $e.UpdateBlockName }} {
+{{- if $e.HasClear }}
+  clear: Boolean
+{{- end }}
+{{- if $e.HasCreate }}
+  create: {{ $e.CreateGraphQLType }}
+{{- end }}
+{{- if $e.HasConnect }}
+  connect: {{ $e.IDGraphQLType }}
+{{- end }}
+{{- if $e.HasDisconnect }}
+  disconnect: {{ $e.IDGraphQLType }}
+{{- end }}
+}
+{{ end }}
+{{- if $e.ChildInputName }}
+input {{ $e.ChildInputName }} {
+{{- range $f := $e.ChildFields }}
+  {{ $f.Input.GraphQLName }}: {{ $f.GraphQLType }}
+{{- end }}
+}
+{{ end }}
+{{- end }}
+extend type Mutation {
+{{- if $n.EmitCreate }}
+  create{{ $t.StructName }}WithRelated(input: {{ $n.CreateInputName }}!): {{ $t.StructName }}!
+{{- end }}
+{{- if $n.EmitUpdate }}
+  update{{ $t.StructName }}WithRelated({{ pkSchemaArgs $t.PKArgs }}, input: {{ $n.UpdateInputName }}!): {{ $t.StructName }}!
+{{- end }}
+{{- if $n.EmitUpsert }}
+  upsert{{ $t.StructName }}WithRelated(input: {{ $n.UpsertInputName }}!, {{ $n.ConflictArgName }}: {{ $n.ConflictEnumName }}!{{ if $n.ConflictDefault }} = {{ $n.ConflictDefault }}{{ end }}): {{ $t.StructName }}!
+{{- end }}
+}
+{{- end -}}

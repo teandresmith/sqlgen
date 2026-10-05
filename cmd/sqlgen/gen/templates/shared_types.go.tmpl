@@ -1,0 +1,26 @@
+{{- define "shared-types" -}}
+{{- range .Types }}
+
+// {{ .Doc }}
+type {{ .Name }}{{ .TypeParams }} struct {
+{{- range .Fields }}
+{{- if .Doc }}
+	{{ .Name }} {{ .GoType }} `json:"{{ .JSONTag }}"` // {{ .Doc }}
+{{- else }}
+	{{ .Name }} {{ .GoType }} `json:"{{ .JSONTag }}"`
+{{- end }}
+{{- end }}
+}
+{{- end }}
+{{- range .Helpers }}
+
+// {{ .Doc }}
+func {{ .Name }}{{ .Signature }} {
+{{ .Body }}
+}
+{{- end }}
+{{- range .Decls }}
+
+{{ . }}
+{{- end }}
+{{- end -}}

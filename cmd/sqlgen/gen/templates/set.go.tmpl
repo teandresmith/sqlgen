@@ -1,0 +1,170 @@
+{{- define "set" -}}
+{{- range $set := .Sets }}
+
+{{- if $set.DocComment }}
+// {{ $set.ValueGoTypeName }} — {{ $set.DocComment }} (individual value)
+{{- else }}
+// {{ $set.ValueGoTypeName }} represents an individual value within the {{ $set.Name }} set type.
+{{- end }}
+type {{ $set.ValueGoTypeName }} string
+
+const (
+{{- range $set.Values }}
+	{{ $set.ValueGoTypeName }}{{ . | toPascalCase }} {{ $set.ValueGoTypeName }} = "{{ . }}"
+{{- end }}
+)
+
+// All{{ $set.ValueGoTypeName }} contains all valid {{ $set.ValueGoTypeName }} values.
+var All{{ $set.ValueGoTypeName }} = []{{ $set.ValueGoTypeName }}{
+{{- range $set.Values }}
+	{{ $set.ValueGoTypeName }}{{ . | toPascalCase }},
+{{- end }}
+}
+
+// String returns the string representation of the {{ $set.ValueGoTypeName }}.
+func (s {{ $set.ValueGoTypeName }}) String() string { return string(s) }
+
+// Validate{{ $set.ValueGoTypeName }} returns a valid {{ $set.ValueGoTypeName }} or an error if the input
+// is not a known value.
+func Validate{{ $set.ValueGoTypeName }}(s string) ({{ $set.ValueGoTypeName }}, error) {
+	switch {{ $set.ValueGoTypeName }}(s) {
+	case {{ range $i, $v := $set.Values }}{{ if $i }}, {{ end }}{{ $set.ValueGoTypeName }}{{ $v | toPascalCase }}{{ end }}:
+		return {{ $set.ValueGoTypeName }}(s), nil
+	default:
+		return "", fmt.Errorf("invalid {{ $set.ValueGoTypeName }}: %q", s)
+	}
+}
+
+// MarshalGQL writes the GraphQL enum identifier (SCREAMING_SNAKE_CASE) for s
+// onto w. Implements gqlgen's graphql.Marshaler interface via duck typing so
+// the models package can be bound directly as a GraphQL enum through the
+// `models:` mapping without importing gqlgen — the same treatment a schema
+// enum gets, because a SET's allowed values ARE an enum. The
+// underlying string value (e.g. `"read"`) stays in the Go variable and lands
+// in the database column unchanged.
+func (s {{ $set.ValueGoTypeName }}) MarshalGQL(w io.Writer) {
+	var name string
+	switch s {
+{{- range $v := $set.Values }}
+	case {{ $set.ValueGoTypeName }}{{ $v | toPascalCase }}:
+		name = {{ printf "%q" (gqlEnumIdent $v) }}
+{{- end }}
+	default:
+		name = ""
+	}
+	fmt.Fprintf(w, "%q", name)
+}
+
+// UnmarshalGQL parses the GraphQL enum identifier received from a client into
+// the typed value. Mirrors MarshalGQL on the inbound path. Returns an error on
+// unknown identifier so gqlgen surfaces a typed validation failure rather than
+// writing an unknown member into a SET column.
+func (s *{{ $set.ValueGoTypeName }}) UnmarshalGQL(v any) error {
+	str, ok := v.(string)
+	if !ok {
+		return fmt.Errorf("expected string for {{ $set.ValueGoTypeName }}, got %T", v)
+	}
+	switch str {
+{{- range $v := $set.Values }}
+	case {{ printf "%q" (gqlEnumIdent $v) }}:
+		*s = {{ $set.ValueGoTypeName }}{{ $v | toPascalCase }}
+{{- end }}
+	default:
+		return fmt.Errorf("invalid {{ $set.ValueGoTypeName }}: %q", str)
+	}
+	return nil
+}
+
+{{- if $set.DocComment }}
+// {{ $set.GoTypeName }} — {{ $set.DocComment }}
+{{- else }}
+// {{ $set.GoTypeName }} represents the {{ $set.Name }} MySQL SET type as a type-safe slice.
+{{- end }}
+type {{ $set.GoTypeName }} []{{ $set.ValueGoTypeName }}
+
+// String returns the comma-separated string representation of the {{ $set.GoTypeName }}.
+func (s {{ $set.GoTypeName }}) String() string {
+	parts := make([]string, len(s))
+	for i, v := range s {
+		parts[i] = string(v)
+	}
+	return strings.Join(parts, ",")
+}
+
+// Value implements driver.Valuer.
+func (s {{ $set.GoTypeName }}) Value() (driver.Value, error) {
+	if s == nil {
+		return nil, nil
+	}
+	return s.String(), nil
+}
+
+// Scan implements sql.Scanner.
+func (s *{{ $set.GoTypeName }}) Scan(src any) error {
+	if src == nil {
+		*s = nil
+		return nil
+	}
+	var str string
+	switch v := src.(type) {
+	case string:
+		str = v
+	case []byte:
+		str = string(v)
+	default:
+		return fmt.Errorf("scanning %T into {{ $set.GoTypeName }}", src)
+	}
+	if str == "" {
+		*s = {{ $set.GoTypeName }}{}
+		return nil
+	}
+	parts := strings.Split(str, ",")
+	result := make({{ $set.GoTypeName }}, len(parts))
+	for i, p := range parts {
+		result[i] = {{ $set.ValueGoTypeName }}(p)
+	}
+	*s = result
+	return nil
+}
+
+// MarshalGQL writes the JSON array of GraphQL enum identifiers to w. Lets
+// gqlgen bind the GraphQL list type (`[{{ $set.ValueGoTypeName }}!]!`) directly
+// to this named slice via the `models:` mapping. It is not optional: gqlgen's
+// generated list marshaler for a named-slice binding is `return v` typed as
+// graphql.Marshaler, so without this method the emitted server does not
+// compile.
+func (s {{ $set.GoTypeName }}) MarshalGQL(w io.Writer) {
+	w.Write([]byte("["))
+	for i, v := range s {
+		if i > 0 {
+			w.Write([]byte(","))
+		}
+		v.MarshalGQL(w)
+	}
+	w.Write([]byte("]"))
+}
+
+// UnmarshalGQL parses a JSON array of GraphQL enum identifiers into the named
+// slice. Each element round-trips through the bare value type's UnmarshalGQL
+// so unknown identifiers surface a typed validation error. gqlgen builds
+// GENERATED input positions element-by-element as `[]{{ $set.ValueGoTypeName }}`
+// rather than through this method; it exists so the named slice is usable in
+// any position the bare value type is, matching the enum-array pair.
+func (s *{{ $set.GoTypeName }}) UnmarshalGQL(v any) error {
+	raw, ok := v.([]any)
+	if !ok {
+		return fmt.Errorf("expected []any for {{ $set.GoTypeName }}, got %T", v)
+	}
+	out := make({{ $set.GoTypeName }}, 0, len(raw))
+	for i, item := range raw {
+		var elem {{ $set.ValueGoTypeName }}
+		if err := elem.UnmarshalGQL(item); err != nil {
+			return fmt.Errorf("{{ $set.GoTypeName }}[%d]: %w", i, err)
+		}
+		out = append(out, elem)
+	}
+	*s = out
+	return nil
+}
+{{- end }}
+{{- end -}}

@@ -1,0 +1,96 @@
+"""
+Asset corresponds to the assets table.
+"""
+type Asset {
+  "id"
+  id: Int!
+  "name"
+  name: String!
+  "created_at"
+  createdAt: DateTime!
+  "one-to-many relationship with the documents table."
+  attachments: [Document!]!
+  "one-to-many relationship with the documents table."
+  invoices: [Document!]!
+  "many-to-many relationship with the documents table."
+  linkedAttachments: [Document!]!
+  "one-to-many relationship with the documents table."
+  photoAttachments: [Document!]!
+  "one-to-one relationship with the documents table."
+  primaryActiveDocument: Document
+  "one-to-one relationship with the documents table."
+  primaryDocument: Document
+  "one-to-many relationship with the documents table."
+  primaryOrInvoiceDocuments: [Document!]!
+  "one-to-one relationship with the documents table."
+  spvOrArchivedDocument: Document
+  "many-to-many relationship with the documents table."
+  documents: [Document!]!
+}
+
+type AssetConnection {
+  edges:      [AssetEdge!]!
+  pageInfo:   PageInfo!
+  totalCount: Int!
+}
+
+type AssetEdge {
+  node:   Asset!
+  cursor: String!
+}
+
+type AssetListResult {
+  items:      [Asset!]!
+  totalCount: Int!
+  offset:     Int!
+  limit:      Int!
+  hasMore:    Boolean!
+}
+
+input AssetFilter {
+  name: StringComparator
+  createdAt: TimeComparator
+  attachments: DocumentFilter
+  documents: DocumentFilter
+  invoices: DocumentFilter
+  linkedAttachments: DocumentFilter
+  photoAttachments: DocumentFilter
+  primaryOrInvoiceDocuments: DocumentFilter
+  and: [AssetFilter!]
+  or:  [AssetFilter!]
+}
+
+enum AssetSortField {
+  ID
+  NAME
+  CREATED_AT
+}
+
+input AssetSort {
+  field:     AssetSortField!
+  direction: SortDirection!
+}
+input CreateAssetInput {
+  name: String!
+  createdAt: DateTime!
+}
+input UpdateAssetInput {
+  name: String
+  createdAt: DateTime
+}
+
+extend type Query {
+  asset(id: Int!): Asset
+  "Cursor-paginated; ordering is driven by cursor_keys to preserve keyset semantics — pass `sort` to assetList instead."
+  assets(filter: AssetFilter, first: Int, after: String, last: Int, before: String): AssetConnection!
+  assetList(filter: AssetFilter, sort: [AssetSort!], limit: Int, offset: Int): AssetListResult!
+}
+
+extend type Mutation {
+  createAsset(input: CreateAssetInput!): Asset!
+  createAssets(inputs: [CreateAssetInput!]!): [Asset!]!
+  updateAsset(id: Int!, input: UpdateAssetInput!): Asset!
+  updateAssets(filter: AssetFilter!, input: UpdateAssetInput!): [Asset!]!
+  upsertAsset(input: CreateAssetInput!): Asset!
+  deleteAsset(id: Int!): Boolean!
+}

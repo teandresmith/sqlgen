@@ -1,0 +1,194 @@
+{{- define "api/seeds" -}}
+{{- $ctx := . -}}
+{{- $pkg := $ctx.ModelsPackage -}}
+{{- $sqlgenPkg := $ctx.SqlgenResolverPkgName -}}
+{{- /* gqlgen-emitted input types (Create<T>Input, Update<T>Input,          */ -}}
+{{- /* <T>Filter, <T>Sort) live in the package gqlgen writes to per its     */ -}}
+{{- /* `model:` block. They are referenced under the sqlgen-controlled     */ -}}
+{{- /* alias `gqlmodel` (apiCtx.GqlgenModelAlias). gqlgen v0.17.x mirrors  */ -}}
+{{- /* the GraphQL input name verbatim, so `input <T>Filter` / `input      */ -}}
+{{- /* <T>Sort` produce Go `<T>Filter` / `<T>Sort` (no "Input" suffix).    */ -}}
+{{- /* When the alias is empty (gqlgen.yml absent or module path           */ -}}
+{{- /* unresolvable), the bare identifier is emitted.                      */ -}}
+{{- $gql := $ctx.GqlgenModelAlias -}}
+{{- $gqlPrefix := "" -}}
+{{- if ne $gql "" -}}{{- $gqlPrefix = printf "%s." $gql -}}{{- end }}
+
+{{ range $t := $ctx.Tables }}
+{{- if $t.Operations.Get }}
+// {{ $t.StructName }} is the resolver for the {{ $t.QueryName }} field.
+func (r *queryResolver) {{ $t.StructName }}(ctx context.Context, {{ pkGoArgs $t.PKArgs }}) (*{{ $pkg }}.{{ $t.StructName }}, error) {
+	return r.Q.{{ $t.StructName }}(ctx, {{ pkPassArgs $t.PKArgs }})
+}
+{{- end }}
+
+{{- if $t.Operations.Connection }}
+// {{ $t.StructNamePlural }} is the resolver for the {{ $t.QueryNamePlural }} field.
+func (r *queryResolver) {{ $t.StructNamePlural }}(ctx context.Context, filter *{{ $gqlPrefix }}{{ $t.StructName }}Filter, first *int, after *string, last *int, before *string) (*{{ $pkg }}.Connection[{{ $pkg }}.{{ $t.StructName }}], error) {
+	return r.Q.{{ $t.StructNamePlural }}(ctx, translate{{ $t.StructName }}Filter(filter), first, after, last, before)
+}
+{{- end }}
+
+{{- if $t.Operations.Paginate }}
+// {{ $t.StructName }}List is the resolver for the {{ $t.ListQueryName }} field.
+func (r *queryResolver) {{ $t.StructName }}List(ctx context.Context, filter *{{ $gqlPrefix }}{{ $t.StructName }}Filter, sort []*{{ $gqlPrefix }}{{ $t.StructName }}Sort, limit *int, offset *int) (*{{ $pkg }}.PaginateResult[{{ $pkg }}.{{ $t.StructName }}], error) {
+	return r.Q.{{ $t.StructName }}List(ctx, translate{{ $t.StructName }}Filter(filter), translate{{ $t.StructName }}Sort(sort), limit, offset)
+}
+{{- end }}
+
+{{- if and $t.Operations.Create $t.HasCreateInput }}
+// Create{{ $t.StructName }} is the resolver for the create{{ $t.StructName }} field.
+func (r *mutationResolver) Create{{ $t.StructName }}(ctx context.Context, input {{ $gqlPrefix }}Create{{ $t.StructName }}Input) (*{{ $pkg }}.{{ $t.StructName }}, error) {
+	return r.M.Create{{ $t.StructName }}(ctx, translateCreate{{ $t.StructName }}Input(input))
+}
+{{- end }}
+
+{{- if and $t.Operations.CreateMany $t.HasCreateInput }}
+// Create{{ $t.StructNamePlural }} is the resolver for the create{{ $t.StructNamePlural }} field.
+func (r *mutationResolver) Create{{ $t.StructNamePlural }}(ctx context.Context, inputs []*{{ $gqlPrefix }}Create{{ $t.StructName }}Input) ([]*{{ $pkg }}.{{ $t.StructName }}, error) {
+	xs := make([]*{{ $pkg }}.Create{{ $t.StructName }}Input, 0, len(inputs))
+	for _, in := range inputs {
+		if in == nil {
+			continue
+		}
+		xs = append(xs, translateCreate{{ $t.StructName }}Input(*in))
+	}
+	return r.M.Create{{ $t.StructNamePlural }}(ctx, xs)
+}
+{{- end }}
+
+{{- if and $t.Operations.Update $t.HasUpdateInput }}
+{{- if $t.HasIncrementColumns }}
+// Update{{ $t.StructName }} is the resolver for the update{{ $t.StructName }} field.
+func (r *mutationResolver) Update{{ $t.StructName }}(ctx context.Context, {{ pkGoArgs $t.PKArgs }}, input {{ $gqlPrefix }}Update{{ $t.StructName }}Input) (*{{ $pkg }}.{{ $t.StructName }}, error) {
+{{- range $op := $t.UpdateOps }}
+	if input.{{ $op.SetGoField }} != nil && input.{{ $op.IncGoField }} != nil {
+		return nil, {{ $sqlgenPkg }}.InvalidInputError("update {{ $t.SQLTable }}: column \"{{ $op.SQLName }}\" cannot be both set and incremented in one mutation")
+	}
+	if input.{{ $op.IncGoField }} != nil && input.{{ $op.DecGoField }} != nil {
+		return nil, {{ $sqlgenPkg }}.InvalidInputError("update {{ $t.SQLTable }}: column \"{{ $op.SQLName }}\" cannot be both incremented and decremented in one mutation")
+	}
+{{- end }}
+	setIn := translateUpdate{{ $t.StructName }}Input(input)
+	hasSet := hasUpdate{{ $t.StructName }}SetFields(input)
+	var incOps []{{ $sqlgenPkg }}.IncrementOp[{{ $pkg }}.{{ $t.IncrementEnumType }}]
+{{- range $op := $t.UpdateOps }}
+	if input.{{ $op.IncGoField }} != nil {
+		incOps = append(incOps, {{ $sqlgenPkg }}.IncrementOp[{{ $pkg }}.{{ $t.IncrementEnumType }}]{
+			Column: {{ $pkg }}.{{ $op.IncColumnConst }},
+			Amount: int(*input.{{ $op.IncGoField }}),
+		})
+	}
+	if input.{{ $op.DecGoField }} != nil {
+		incOps = append(incOps, {{ $sqlgenPkg }}.IncrementOp[{{ $pkg }}.{{ $t.IncrementEnumType }}]{
+			Column: {{ $pkg }}.{{ $op.IncColumnConst }},
+			Amount: -int(*input.{{ $op.DecGoField }}),
+		})
+	}
+{{- end }}
+	return r.M.Update{{ $t.StructName }}(ctx, {{ pkPassArgs $t.PKArgs }}, setIn, hasSet, incOps)
+}
+{{- else }}
+// Update{{ $t.StructName }} is the resolver for the update{{ $t.StructName }} field.
+// No numeric non-PK columns → no IncrementColumn enum, no `_inc`/
+// `_dec` operators on the input, and the seed delegates with the reduced
+// (set-only) signature exposed by Q/M.
+func (r *mutationResolver) Update{{ $t.StructName }}(ctx context.Context, {{ pkGoArgs $t.PKArgs }}, input {{ $gqlPrefix }}Update{{ $t.StructName }}Input) (*{{ $pkg }}.{{ $t.StructName }}, error) {
+	setIn := translateUpdate{{ $t.StructName }}Input(input)
+	hasSet := hasUpdate{{ $t.StructName }}SetFields(input)
+	return r.M.Update{{ $t.StructName }}(ctx, {{ pkPassArgs $t.PKArgs }}, setIn, hasSet)
+}
+{{- end }}
+{{- end }}
+
+{{- if and $t.Operations.UpdateWhere $t.HasUpdateInput }}
+// Update{{ $t.StructNamePlural }} is the resolver for the update{{ $t.StructNamePlural }} field.
+func (r *mutationResolver) Update{{ $t.StructNamePlural }}(ctx context.Context, filter {{ $gqlPrefix }}{{ $t.StructName }}Filter, input {{ $gqlPrefix }}Update{{ $t.StructName }}Input) ([]*{{ $pkg }}.{{ $t.StructName }}, error) {
+{{- range $op := $t.UpdateOps }}
+	if input.{{ $op.SetGoField }} != nil && input.{{ $op.IncGoField }} != nil {
+		return nil, {{ $sqlgenPkg }}.InvalidInputError("update {{ $t.SQLTable }}: column \"{{ $op.SQLName }}\" cannot be both set and incremented in one mutation")
+	}
+	if input.{{ $op.IncGoField }} != nil && input.{{ $op.DecGoField }} != nil {
+		return nil, {{ $sqlgenPkg }}.InvalidInputError("update {{ $t.SQLTable }}: column \"{{ $op.SQLName }}\" cannot be both incremented and decremented in one mutation")
+	}
+{{- end }}
+	return r.M.Update{{ $t.StructNamePlural }}(ctx, translate{{ $t.StructName }}Filter(&filter), translateUpdate{{ $t.StructName }}Input(input))
+}
+{{- end }}
+
+{{- if and $t.Operations.Upsert $t.HasConflictPK $t.HasCreateInput }}
+// Upsert{{ $t.StructName }} is the resolver for the upsert{{ $t.StructName }} field.
+func (r *mutationResolver) Upsert{{ $t.StructName }}(ctx context.Context, input {{ $gqlPrefix }}Create{{ $t.StructName }}Input) (*{{ $pkg }}.{{ $t.StructName }}, error) {
+	return r.M.Upsert{{ $t.StructName }}(ctx, translateCreate{{ $t.StructName }}Input(input))
+}
+{{- end }}
+
+{{- if and $t.Operations.HardDelete (not $t.Operations.SoftDelete) }}
+// Delete{{ $t.StructName }} is the resolver for the delete{{ $t.StructName }} field.
+func (r *mutationResolver) Delete{{ $t.StructName }}(ctx context.Context, {{ pkGoArgs $t.PKArgs }}) (bool, error) {
+	return r.M.Delete{{ $t.StructName }}(ctx, {{ pkPassArgs $t.PKArgs }})
+}
+{{- end }}
+
+{{- if and $t.Operations.SoftDelete (not $t.Operations.HardDelete) }}
+// Delete{{ $t.StructName }} is the resolver for the delete{{ $t.StructName }} field.
+func (r *mutationResolver) Delete{{ $t.StructName }}(ctx context.Context, {{ pkGoArgs $t.PKArgs }}) (*{{ $pkg }}.{{ $t.StructName }}, error) {
+	return r.M.Delete{{ $t.StructName }}(ctx, {{ pkPassArgs $t.PKArgs }})
+}
+{{- end }}
+
+{{- if and $t.Operations.HardDelete $t.Operations.SoftDelete }}
+// HardDelete{{ $t.StructName }} is the resolver for the hardDelete{{ $t.StructName }} field.
+func (r *mutationResolver) HardDelete{{ $t.StructName }}(ctx context.Context, {{ pkGoArgs $t.PKArgs }}) (bool, error) {
+	return r.M.HardDelete{{ $t.StructName }}(ctx, {{ pkPassArgs $t.PKArgs }})
+}
+
+// SoftDelete{{ $t.StructName }} is the resolver for the softDelete{{ $t.StructName }} field.
+func (r *mutationResolver) SoftDelete{{ $t.StructName }}(ctx context.Context, {{ pkGoArgs $t.PKArgs }}) (*{{ $pkg }}.{{ $t.StructName }}, error) {
+	return r.M.SoftDelete{{ $t.StructName }}(ctx, {{ pkPassArgs $t.PKArgs }})
+}
+{{- end }}
+
+{{- if and $t.Operations.Restore $t.HasSoftDelete }}
+// Restore{{ $t.StructName }} is the resolver for the restore{{ $t.StructName }} field.
+func (r *mutationResolver) Restore{{ $t.StructName }}(ctx context.Context, {{ pkGoArgs $t.PKArgs }}) (*{{ $pkg }}.{{ $t.StructName }}, error) {
+	return r.M.Restore{{ $t.StructName }}(ctx, {{ pkPassArgs $t.PKArgs }})
+}
+{{- end }}
+
+{{- with $t.Nested }}
+{{- $n := . }}
+{{- if $n.EmitCreate }}
+// Create{{ $t.StructName }}WithRelated is the resolver for the create{{ $t.StructName }}WithRelated field.
+func (r *mutationResolver) Create{{ $t.StructName }}WithRelated(ctx context.Context, input {{ $gqlPrefix }}{{ $n.CreateInputName }}) (*{{ $pkg }}.{{ $t.StructName }}, error) {
+	return r.M.Create{{ $t.StructName }}WithRelated(ctx, translate{{ $n.CreateInputName }}(input))
+}
+{{- end }}
+{{- if $n.EmitUpdate }}
+// Update{{ $t.StructName }}WithRelated is the resolver for the update{{ $t.StructName }}WithRelated field.
+func (r *mutationResolver) Update{{ $t.StructName }}WithRelated(ctx context.Context, {{ pkGoArgs $t.PKArgs }}, input {{ $gqlPrefix }}{{ $n.UpdateInputName }}) (*{{ $pkg }}.{{ $t.StructName }}, error) {
+{{- if $n.IncrementOpsFunc }}
+	incOps, err := {{ $n.IncrementOpsFunc }}(input)
+	if err != nil {
+		return nil, err
+	}
+	return r.M.Update{{ $t.StructName }}WithRelated(ctx, {{ pkPassArgs $t.PKArgs }}, translate{{ $n.UpdateInputName }}(input), incOps)
+{{- else }}
+	return r.M.Update{{ $t.StructName }}WithRelated(ctx, {{ pkPassArgs $t.PKArgs }}, translate{{ $n.UpdateInputName }}(input))
+{{- end }}
+}
+{{- end }}
+{{- if $n.EmitUpsert }}
+// Upsert{{ $t.StructName }}WithRelated is the resolver for the upsert{{ $t.StructName }}WithRelated field.
+func (r *mutationResolver) Upsert{{ $t.StructName }}WithRelated(ctx context.Context, input {{ $gqlPrefix }}{{ $n.UpsertInputName }}, {{ $n.ConflictArgName }} {{ $gqlPrefix }}{{ $n.ConflictEnumName }}) (*{{ $pkg }}.{{ $t.StructName }}, error) {
+	target, err := {{ $n.ConflictTranslateFunc }}({{ $n.ConflictArgName }})
+	if err != nil {
+		return nil, err
+	}
+	return r.M.Upsert{{ $t.StructName }}WithRelated(ctx, translate{{ $n.UpsertInputName }}(input), target)
+}
+{{- end }}
+{{- end }}
+
+{{ end }}
+{{- end -}}

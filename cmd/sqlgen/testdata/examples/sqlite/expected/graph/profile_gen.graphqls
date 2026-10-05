@@ -1,0 +1,86 @@
+"""
+Profile corresponds to the profiles table.
+"""
+type Profile {
+  "id"
+  id: Int!
+  "user_id"
+  userID: Int!
+  "website"
+  website: String
+  "github_handle"
+  githubHandle: String
+  "verified"
+  verified: Boolean!
+  "one-to-one relationship with the users table."
+  users: User
+}
+
+type ProfileConnection {
+  edges:      [ProfileEdge!]!
+  pageInfo:   PageInfo!
+  totalCount: Int!
+}
+
+type ProfileEdge {
+  node:   Profile!
+  cursor: String!
+}
+
+type ProfileListResult {
+  items:      [Profile!]!
+  totalCount: Int!
+  offset:     Int!
+  limit:      Int!
+  hasMore:    Boolean!
+}
+
+input ProfileFilter {
+  userID: NumericComparator
+  website: NullableStringComparator
+  githubHandle: NullableStringComparator
+  verified: BooleanComparator
+  and: [ProfileFilter!]
+  or:  [ProfileFilter!]
+}
+
+enum ProfileSortField {
+  ID
+  USER_ID
+  WEBSITE
+  GITHUB_HANDLE
+  VERIFIED
+}
+
+input ProfileSort {
+  field:     ProfileSortField!
+  direction: SortDirection!
+}
+input CreateProfileInput {
+  userID: Int!
+  website: String
+  githubHandle: String
+  verified: Boolean!
+}
+input UpdateProfileInput {
+  userID: Int
+  website: String
+  githubHandle: String
+  verified: Boolean
+}
+
+extend type Query {
+  profile(id: Int!): Profile
+  "Cursor-paginated; ordering is driven by cursor_keys to preserve keyset semantics — pass `sort` to profileList instead."
+  profiles(filter: ProfileFilter, first: Int, after: String, last: Int, before: String): ProfileConnection!
+  profileList(filter: ProfileFilter, sort: [ProfileSort!], limit: Int, offset: Int): ProfileListResult!
+}
+
+extend type Mutation {
+  createProfile(input: CreateProfileInput!): Profile!
+  createProfiles(inputs: [CreateProfileInput!]!): [Profile!]!
+  updateProfile(id: Int!, input: UpdateProfileInput!): Profile!
+  updateProfiles(filter: ProfileFilter!, input: UpdateProfileInput!): [Profile!]!
+  upsertProfile(input: CreateProfileInput!): Profile!
+  deleteProfile(id: Int!): Boolean!
+}

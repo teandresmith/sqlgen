@@ -1,0 +1,104 @@
+version: v1
+
+input:
+  dialect: postgres
+  paths:
+    - ./schema.sql
+
+output:
+  driver: pgx
+  dir: ./models
+  package: models
+
+# The module-wide `use_pointers: false` fixture.
+#
+# This is the PRODUCTION route for the database/sql wrappers: §4.7's flag,
+# applied to every nullable column in every table, rather than the table-scoped
+# `overrides.types` block the `graphql` example's `scalar_probes` uses to reach
+# the same seven Go types. It gets a module of its own because the existing
+# examples' hand-written tests are all written against `*T` — flipping the flag
+# on one of them would rewrite its test suite, not extend its coverage.
+#
+# A models package that did not compile under this flag, on every dialect,
+# once went unnoticed because no module set it. Its regression pin was a unit
+# test; this module is the compile-and-run pin it wanted.
+overrides:
+  use_pointers: false
+  types:
+    # uuid → uuid.UUID and numeric → decimal.Decimal are the canonical
+    # category-4 bindings. Their `nullable:` variants come from the integration,
+    # NOT from use_pointers — the flag only governs types with a nullSQL
+    # mapping — so they sit alongside the stdlib wrappers as the contrast case.
+    #
+    # gofrs rather than google on purpose: it is the only integration whose
+    # zero value is the package VARIABLE `uuid.Nil` (google spells it
+    # `uuid.UUID{}`, and the standard library's `Nil` is a function, so it
+    # must use the literal). Nothing else in the example tree exercises
+    # `uuidgofrs`, and once the standard library became the default binding
+    # nothing would ever pull gofrs into a build — see PRD §7.4, "Three
+    # spellings of the zero UUID".
+    uuid:
+      type: uuid.UUID
+      import: github.com/gofrs/uuid/v5
+      nullable: uuid.NullUUID
+    numeric:
+      type: decimal.Decimal
+      import: github.com/shopspring/decimal
+      nullable: decimal.NullDecimal
+
+# column_map retype fixture, moved here from the `graphql` example when that
+# one adopted the standard library. `column_map.<col>.type` + `.import`
+# retypes a column to a Go type the resolution chain would never reach on its
+# own — `upstream_ref` is TEXT, so without this it is a Go `string` — and the
+# type is one the built-in scalar registry owns, so the GraphQL field is the
+# `UUID` scalar and the override has to survive the gqlgen handoff.
+#
+# The column is nullable and `column_map` has no `nullable:` sub-field, so it
+# does not reach the Null-wrapper machinery the `overrides.types` entries on
+# this example use: the field is `*uuid.UUID` even here, under
+# `use_pointers: false`. That contrast is the point of placing it in this
+# module.
+tables:
+  entries:
+    column_map:
+      upstream_ref:
+        type: uuid.UUID
+        import: github.com/gofrs/uuid/v5
+        description: "Identifier of this entry in the upstream ledger"
+
+generation:
+  # Soft delete on `deleted_at`, which under this flag is a sql.NullTime.
+  # PostgreSQL is the only dialect where the soft-delete column lands on a
+  # database/sql wrapper — SQLite claims datetime for types.NullDateTime.
+  soft_delete_columns:
+    - name: deleted_at
+      type: timestamp
+
+api:
+  enabled: true
+  graphql:
+    enabled: true
+    schema_dir: ./models/graph
+    resolver_dir: ./models/graph
+    package: graph
+    field_casing: camel_case
+    gqlgen_config: ./gqlgen.yml
+    gqlgen_bin: go run github.com/99designs/gqlgen
+    # The gqlgen-bundled-scalar route, which no other module compiles.
+    #
+    # `marshaling: builtin` means gqlgen ships the marshaler AND sqlgen pins the
+    # `models:` entry to it (§26.4.1 category 2). Without the pin, gqlgen's
+    # extraBuiltin model list for Int64 is [graphql.Int, graphql.Int64] and a
+    # GENERATED position takes Model[0] — `int` — against an `int64` model
+    # field, which is an input translator that does not compile.
+    #
+    # `api.graphql.scalars` is keyed by Go TYPE, so this retypes EVERY int64
+    # column in the module: the BIGSERIAL PKs, `external_ref`, `big_count`'s
+    # non-null partner and the `entries.account_id` FK. That blast radius is why
+    # the route wanted a module of its own rather than a line in an existing
+    # example — it rewrites PK resolver args, cursors, filter inputs and
+    # relationship loaders wherever it lands.
+    scalars:
+      Int64:
+        go_type: int64
+        marshaling: builtin

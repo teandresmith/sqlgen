@@ -1,0 +1,553 @@
+{
+  "kind": "table",
+  "name": "OrderItem",
+  "table": "order_items",
+  "schema": "public",
+  "file_prefix": "order_item",
+  "files": [
+    "models_gen.go"
+  ],
+  "comment": "",
+  "indexes": [
+    {
+      "name": "idx_order_items_order_product",
+      "columns": [
+        "order_id",
+        "product_id"
+      ],
+      "unique": false,
+      "method": "btree"
+    },
+    {
+      "name": "order_items_pkey",
+      "columns": [
+        "id"
+      ],
+      "unique": true,
+      "method": "btree"
+    }
+  ],
+  "pk": {
+    "kind": "single",
+    "columns": [
+      {
+        "name": "id",
+        "go_field": "ID",
+        "go_type": "uuid.UUID"
+      }
+    ]
+  },
+  "features": {
+    "soft_delete": null,
+    "cache": {
+      "ttl_seconds": 3600,
+      "hydration": "eager",
+      "key_pattern": "sqlgen:orderitem:{id}",
+      "invalidates_on": [
+        "Create",
+        "Update",
+        "Delete",
+        "SoftDelete",
+        "Restore",
+        "Increment"
+      ]
+    },
+    "events": {
+      "enabled": true,
+      "types": [
+        "OrderItemCreated",
+        "OrderItemDeleted",
+        "OrderItemUpdated"
+      ],
+      "payload_shape": "models.OrderItemEvent"
+    },
+    "tenancy": null
+  },
+  "columns": [
+    {
+      "name": "id",
+      "go_field": "ID",
+      "go_type": "uuid.UUID",
+      "db_type": "uuid",
+      "nullable": false,
+      "pk": true,
+      "unique": false,
+      "default": "gen_random_uuid()",
+      "default_kind": "function",
+      "comparator": "comparator.ID",
+      "comment": ""
+    },
+    {
+      "name": "order_id",
+      "go_field": "OrderID",
+      "go_type": "uuid.UUID",
+      "db_type": "uuid",
+      "nullable": false,
+      "pk": false,
+      "unique": false,
+      "comparator": "comparator.ID",
+      "comment": ""
+    },
+    {
+      "name": "product_id",
+      "go_field": "ProductID",
+      "go_type": "uuid.UUID",
+      "db_type": "uuid",
+      "nullable": false,
+      "pk": false,
+      "unique": false,
+      "comparator": "comparator.ID",
+      "comment": ""
+    },
+    {
+      "name": "quantity",
+      "go_field": "Quantity",
+      "go_type": "int32",
+      "db_type": "integer",
+      "nullable": false,
+      "pk": false,
+      "unique": false,
+      "default": "1",
+      "default_kind": "literal",
+      "comparator": "comparator.Number[int32]",
+      "comment": ""
+    },
+    {
+      "name": "unit_price",
+      "go_field": "UnitPrice",
+      "go_type": "decimal.Decimal",
+      "db_type": "numeric(12, 2)",
+      "nullable": false,
+      "pk": false,
+      "unique": false,
+      "comparator": "comparator.String",
+      "comment": ""
+    },
+    {
+      "name": "external_ref",
+      "go_field": "ExternalRef",
+      "go_type": "*string",
+      "db_type": "text",
+      "nullable": true,
+      "pk": false,
+      "unique": false,
+      "comparator": "comparator.NullableString",
+      "comment": ""
+    },
+    {
+      "name": "source_ip",
+      "go_field": "SourceIP",
+      "go_type": "*netip.Addr",
+      "db_type": "inet",
+      "nullable": true,
+      "pk": false,
+      "unique": false,
+      "comparator": "comparator.NullableString",
+      "comment": ""
+    },
+    {
+      "name": "created_at",
+      "go_field": "CreatedAt",
+      "go_type": "time.Time",
+      "db_type": "timestamptz",
+      "nullable": false,
+      "pk": false,
+      "unique": false,
+      "default": "current_timestamp",
+      "default_kind": "function",
+      "comparator": "comparator.Time",
+      "comment": ""
+    }
+  ],
+  "relationships": [],
+  "methods": {
+    "query": [
+      {
+        "name": "Get",
+        "params": [
+          {
+            "name": "id",
+            "type": "uuid.UUID"
+          }
+        ],
+        "returns": "*OrderItem",
+        "errors": [
+          "ErrNotFound"
+        ],
+        "notes": "Delegates to GetMany with a primary-key filter; returns ErrNotFound when no row matches.",
+        "sql_bodies": {
+          "postgres": "SELECT \"created_at\", \"external_ref\", \"id\", \"order_id\", \"product_id\", \"quantity\", \"source_ip\", \"unit_price\" FROM \"public\".\"order_items\" WHERE \"id\" = $1 LIMIT 1"
+        }
+      },
+      {
+        "name": "GetMany",
+        "params": [
+          {
+            "name": "input",
+            "type": "*GetOrderItemsInput"
+          }
+        ],
+        "returns": "[]*OrderItem",
+        "errors": [],
+        "sql_bodies": {
+          "postgres": "SELECT \"created_at\", \"external_ref\", \"id\", \"order_id\", \"product_id\", \"quantity\", \"source_ip\", \"unit_price\" FROM \"public\".\"order_items\" WHERE <filter> ORDER BY <sort> LIMIT <limit>"
+        }
+      },
+      {
+        "name": "Count",
+        "params": [
+          {
+            "name": "filter",
+            "type": "*OrderItemFilter"
+          }
+        ],
+        "returns": "int64",
+        "errors": [],
+        "sql_bodies": {
+          "postgres": "SELECT COUNT(*) FROM \"public\".\"order_items\" WHERE <filter>"
+        }
+      },
+      {
+        "name": "Exists",
+        "params": [
+          {
+            "name": "id",
+            "type": "uuid.UUID"
+          }
+        ],
+        "returns": "bool",
+        "errors": [],
+        "sql_bodies": {
+          "postgres": "SELECT EXISTS(SELECT 1 FROM \"public\".\"order_items\" WHERE \"id\" = $1)"
+        }
+      },
+      {
+        "name": "ExistsWhere",
+        "params": [
+          {
+            "name": "filter",
+            "type": "*OrderItemFilter"
+          }
+        ],
+        "returns": "bool",
+        "errors": [],
+        "sql_bodies": {
+          "postgres": "SELECT EXISTS(SELECT 1 FROM \"public\".\"order_items\" WHERE <filter>)"
+        }
+      },
+      {
+        "name": "Paginate",
+        "params": [
+          {
+            "name": "input",
+            "type": "PaginateInput[OrderItemFilter]"
+          }
+        ],
+        "returns": "*PaginateResult[OrderItem]",
+        "errors": [],
+        "notes": "Offset pagination. Issues no statement of its own — composes Count and GetMany, so no sql_bodies entry."
+      },
+      {
+        "name": "Connection",
+        "params": [
+          {
+            "name": "input",
+            "type": "ConnectionInput[OrderItemFilter]"
+          }
+        ],
+        "returns": "*Connection[OrderItem]",
+        "errors": [
+          "ErrInvalidCursor"
+        ],
+        "notes": "Relay cursor pagination. Issues no statement of its own — composes Count and GetMany, so no sql_bodies entry."
+      },
+      {
+        "name": "Stream",
+        "params": [
+          {
+            "name": "input",
+            "type": "*StreamOrderItemsInput"
+          }
+        ],
+        "returns": "iter.Seq2[*OrderItem, error]",
+        "errors": [],
+        "notes": "Scalars only — no relationship loading, cache always bypassed. Errors surface through the iterator's second value.",
+        "sql_bodies": {
+          "postgres": "SELECT \"created_at\", \"external_ref\", \"id\", \"order_id\", \"product_id\", \"quantity\", \"source_ip\", \"unit_price\" FROM \"public\".\"order_items\" WHERE <filter> ORDER BY <sort>"
+        }
+      }
+    ],
+    "mutation": [
+      {
+        "name": "Create",
+        "params": [
+          {
+            "name": "input",
+            "type": "*CreateOrderItemInput"
+          }
+        ],
+        "returns": "*OrderItem",
+        "errors": [
+          "ErrNilInput",
+          "ErrConstraintViolation"
+        ],
+        "sql_bodies": {
+          "postgres": "INSERT INTO \"public\".\"order_items\" (<columns>) VALUES (<values>) RETURNING \"id\""
+        }
+      },
+      {
+        "name": "CreateMany",
+        "params": [
+          {
+            "name": "inputs",
+            "type": "[]*CreateOrderItemInput"
+          }
+        ],
+        "returns": "[]*OrderItem",
+        "errors": [
+          "ErrNilInput",
+          "ErrConstraintViolation"
+        ],
+        "notes": "Batched in generation.batch_size chunks. Earlier chunks are not rolled back on a later failure — wrap in a transaction for atomicity.",
+        "sql_bodies": {
+          "postgres": "INSERT INTO \"public\".\"order_items\" (<columns>) VALUES <values> RETURNING \"id\""
+        }
+      },
+      {
+        "name": "Upsert",
+        "params": [
+          {
+            "name": "input",
+            "type": "*CreateOrderItemInput"
+          },
+          {
+            "name": "target",
+            "type": "OrderItemConflictTarget"
+          }
+        ],
+        "returns": "*OrderItem",
+        "errors": [
+          "ErrNilInput",
+          "ErrConstraintViolation"
+        ],
+        "notes": "One method over the generated OrderItemConflictTarget enum — the target argument selects the conflict columns at call time.",
+        "sql_bodies": {
+          "postgres": "INSERT INTO \"public\".\"order_items\" (<columns>) VALUES (<values>) ON CONFLICT (<conflict_target>) DO UPDATE SET <excluded> RETURNING \"id\""
+        }
+      },
+      {
+        "name": "UpsertMany",
+        "params": [
+          {
+            "name": "inputs",
+            "type": "[]*CreateOrderItemInput"
+          },
+          {
+            "name": "target",
+            "type": "OrderItemConflictTarget"
+          }
+        ],
+        "returns": "[]*OrderItem",
+        "errors": [
+          "ErrNilInput",
+          "ErrConstraintViolation"
+        ],
+        "notes": "Batched in generation.batch_size chunks over the same OrderItemConflictTarget enum Upsert takes. Inputs resolving to one target are deduped before the statement is built, last occurrence wins. Earlier chunks are not rolled back on a later failure — wrap in a transaction for atomicity.",
+        "sql_bodies": {
+          "postgres": "INSERT INTO \"public\".\"order_items\" (<columns>) VALUES <values> ON CONFLICT (<conflict_target>) DO UPDATE SET <excluded>"
+        }
+      },
+      {
+        "name": "Update",
+        "params": [
+          {
+            "name": "id",
+            "type": "uuid.UUID"
+          },
+          {
+            "name": "input",
+            "type": "*UpdateOrderItemInput"
+          }
+        ],
+        "returns": "*OrderItem",
+        "errors": [
+          "ErrNotFound",
+          "ErrNilInput",
+          "ErrConstraintViolation"
+        ],
+        "notes": "Only fields where IsSet() reports true reach the SET clause; an input with none set issues no UPDATE and returns the row unchanged.",
+        "sql_bodies": {
+          "postgres": "UPDATE \"public\".\"order_items\" SET <set> WHERE \"id\" = $1"
+        }
+      },
+      {
+        "name": "UpdateMany",
+        "params": [
+          {
+            "name": "items",
+            "type": "[]UpdateOrderItemItem"
+          }
+        ],
+        "returns": "[]*OrderItem",
+        "errors": [
+          "ErrNilInput",
+          "ErrConstraintViolation"
+        ],
+        "notes": "Issues one statement per item. Batched like CreateMany — earlier items are not rolled back on a later failure. A primary key that does not exist is silently skipped, even under strict_updates.",
+        "sql_bodies": {
+          "postgres": "UPDATE \"public\".\"order_items\" SET <set> WHERE \"id\" = $1"
+        }
+      },
+      {
+        "name": "UpdateWhere",
+        "params": [
+          {
+            "name": "filter",
+            "type": "*OrderItemFilter"
+          },
+          {
+            "name": "input",
+            "type": "*UpdateOrderItemInput"
+          }
+        ],
+        "returns": "[]*OrderItem",
+        "errors": [
+          "ErrNilInput",
+          "ErrEmptyFilter",
+          "ErrConstraintViolation"
+        ],
+        "notes": "Idempotent — returns an empty slice when no row matches. ErrEmptyFilter when the filter produces no conditions.",
+        "sql_bodies": {
+          "postgres": "UPDATE \"public\".\"order_items\" SET <set> WHERE <filter> RETURNING \"id\""
+        }
+      },
+      {
+        "name": "Increment",
+        "params": [
+          {
+            "name": "id",
+            "type": "uuid.UUID"
+          },
+          {
+            "name": "input",
+            "type": "IncrementInput[OrderItemIncrementColumn]"
+          }
+        ],
+        "returns": "",
+        "errors": [
+          "ErrNotFound"
+        ],
+        "notes": "Atomic single-column arithmetic. The column is restricted to the generated OrderItemIncrementColumn enum — numeric, and identifying nothing: neither PK, FK, nor the tenant column. A negative amount decrements.",
+        "sql_bodies": {
+          "postgres": "UPDATE \"public\".\"order_items\" SET <column> = <column> + $1 WHERE \"id\" = $2"
+        }
+      },
+      {
+        "name": "HardDelete",
+        "params": [
+          {
+            "name": "id",
+            "type": "uuid.UUID"
+          }
+        ],
+        "returns": "",
+        "errors": [],
+        "notes": "Idempotent — a primary key that does not exist is not an error.",
+        "sql_bodies": {
+          "postgres": "DELETE FROM \"public\".\"order_items\" WHERE \"id\" = $1"
+        }
+      },
+      {
+        "name": "HardDeleteMany",
+        "params": [
+          {
+            "name": "ids",
+            "type": "[]uuid.UUID"
+          }
+        ],
+        "returns": "",
+        "errors": [],
+        "notes": "Idempotent — primary keys that do not exist are not an error.",
+        "sql_bodies": {
+          "postgres": "DELETE FROM \"public\".\"order_items\" WHERE \"id\" IN (<ids>)"
+        }
+      },
+      {
+        "name": "HardDeleteWhere",
+        "params": [
+          {
+            "name": "filter",
+            "type": "*OrderItemFilter"
+          }
+        ],
+        "returns": "",
+        "errors": [
+          "ErrEmptyFilter"
+        ],
+        "notes": "Idempotent — no match is not an error. ErrEmptyFilter when the filter produces no conditions.",
+        "sql_bodies": {
+          "postgres": "DELETE FROM \"public\".\"order_items\" WHERE <filter> RETURNING \"id\""
+        }
+      }
+    ]
+  },
+  "filter": {
+    "type": "OrderItemFilter",
+    "fields": [
+      {
+        "name": "CreatedAt",
+        "type": "*comparator.Time"
+      },
+      {
+        "name": "ExternalRef",
+        "type": "*comparator.NullableString"
+      },
+      {
+        "name": "ID",
+        "type": "*comparator.ID"
+      },
+      {
+        "name": "OrderID",
+        "type": "*comparator.ID"
+      },
+      {
+        "name": "ProductID",
+        "type": "*comparator.ID"
+      },
+      {
+        "name": "Quantity",
+        "type": "*comparator.Number[int32]"
+      },
+      {
+        "name": "SourceIP",
+        "type": "*comparator.NullableString"
+      },
+      {
+        "name": "UnitPrice",
+        "type": "*comparator.String"
+      },
+      {
+        "name": "And",
+        "type": "[]*OrderItemFilter"
+      },
+      {
+        "name": "Or",
+        "type": "[]*OrderItemFilter"
+      }
+    ]
+  },
+  "sort": {
+    "type": "OrderItemSort",
+    "fields": [
+      "CreatedAt",
+      "ExternalRef",
+      "ID",
+      "OrderID",
+      "ProductID",
+      "Quantity",
+      "SourceIP",
+      "UnitPrice"
+    ]
+  },
+  "examples": {}
+}

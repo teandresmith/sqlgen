@@ -1,0 +1,188 @@
+"""
+Event corresponds to the events table.
+"""
+type Event {
+  "id"
+  id: UUID!
+  "user_id"
+  userID: UUID
+  "action"
+  action: String!
+  "occurred_at"
+  occurredAt: DateTime!
+  "processed_at"
+  processedAt: NullDateTime
+  "adjustment"
+  adjustment: NullDecimal
+  "retry_count"
+  retryCount: Int
+  "succeeded"
+  succeeded: Boolean
+  "mac"
+  mac: String
+  "os_name"
+  osName: String
+  "io_count"
+  ioCount: Int
+  "pk_val"
+  pkVal: String
+  "fk_val"
+  fkVal: String
+  "ascii_art"
+  asciiArt: String
+  "csv_data"
+  csvData: String
+  "tcp_port"
+  tcpPort: Int
+  "utf8_body"
+  utf8Body: String
+  "http2_flag"
+  http2Flag: Boolean
+  "line2_id"
+  line2ID: String
+  "address2_id"
+  address2ID: String
+  "s3_url"
+  s3URL: String
+}
+
+type EventConnection {
+  edges:      [EventEdge!]!
+  pageInfo:   PageInfo!
+  totalCount: Int!
+}
+
+type EventEdge {
+  node:   Event!
+  cursor: String!
+}
+
+type EventListResult {
+  items:      [Event!]!
+  totalCount: Int!
+  offset:     Int!
+  limit:      Int!
+  hasMore:    Boolean!
+}
+
+input EventFilter {
+  userID: NullableIDComparator
+  action: StringComparator
+  occurredAt: TimeComparator
+  processedAt: NullableTimeComparator
+  adjustment: NullableDecimalComparator
+  retryCount: NullableNumericComparator
+  succeeded: NullableBooleanComparator
+  mac: NullableStringComparator
+  osName: NullableStringComparator
+  ioCount: NullableNumericComparator
+  pkVal: NullableStringComparator
+  fkVal: NullableStringComparator
+  asciiArt: NullableStringComparator
+  csvData: NullableStringComparator
+  tcpPort: NullableNumericComparator
+  utf8Body: NullableStringComparator
+  http2Flag: NullableBooleanComparator
+  line2ID: NullableStringComparator
+  address2ID: NullableStringComparator
+  s3URL: NullableStringComparator
+  and: [EventFilter!]
+  or:  [EventFilter!]
+}
+
+enum EventSortField {
+  ID
+  USER_ID
+  ACTION
+  OCCURRED_AT
+  PROCESSED_AT
+  ADJUSTMENT
+  RETRY_COUNT
+  SUCCEEDED
+  MAC
+  OS_NAME
+  IO_COUNT
+  PK_VAL
+  FK_VAL
+  ASCII_ART
+  CSV_DATA
+  TCP_PORT
+  UTF8_BODY
+  HTTP2_FLAG
+  LINE2_ID
+  ADDRESS2_ID
+  S3_URL
+}
+
+input EventSort {
+  field:     EventSortField!
+  direction: SortDirection!
+}
+input CreateEventInput {
+  userID: UUID
+  action: String!
+  occurredAt: DateTime!
+  processedAt: NullDateTime
+  adjustment: NullDecimal
+  retryCount: Int
+  succeeded: Boolean
+  mac: String
+  osName: String
+  ioCount: Int
+  pkVal: String
+  fkVal: String
+  asciiArt: String
+  csvData: String
+  tcpPort: Int
+  utf8Body: String
+  http2Flag: Boolean
+  line2ID: String
+  address2ID: String
+  s3URL: String
+}
+input UpdateEventInput {
+  userID: UUID
+  action: String
+  occurredAt: DateTime
+  processedAt: NullDateTime
+  adjustment: NullDecimal
+  adjustment_inc: Int
+  adjustment_dec: Int
+  retryCount: Int
+  retryCount_inc: Int
+  retryCount_dec: Int
+  succeeded: Boolean
+  mac: String
+  osName: String
+  ioCount: Int
+  ioCount_inc: Int
+  ioCount_dec: Int
+  pkVal: String
+  fkVal: String
+  asciiArt: String
+  csvData: String
+  tcpPort: Int
+  tcpPort_inc: Int
+  tcpPort_dec: Int
+  utf8Body: String
+  http2Flag: Boolean
+  line2ID: String
+  address2ID: String
+  s3URL: String
+}
+
+extend type Query {
+  event(id: UUID!): Event
+  "Cursor-paginated; ordering is driven by cursor_keys to preserve keyset semantics — pass `sort` to eventList instead."
+  events(filter: EventFilter, first: Int, after: String, last: Int, before: String): EventConnection!
+  eventList(filter: EventFilter, sort: [EventSort!], limit: Int, offset: Int): EventListResult!
+}
+
+extend type Mutation {
+  createEvent(input: CreateEventInput!): Event!
+  createEvents(inputs: [CreateEventInput!]!): [Event!]!
+  updateEvent(id: UUID!, input: UpdateEventInput!): Event!
+  updateEvents(filter: EventFilter!, input: UpdateEventInput!): [Event!]!
+  upsertEvent(input: CreateEventInput!): Event!
+  deleteEvent(id: UUID!): Boolean!
+}

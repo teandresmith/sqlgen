@@ -1,0 +1,51 @@
+{{- define "api/shared-schema" -}}
+{{- range $s := .UsedScalars }}
+scalar {{ $s.Name }}
+{{- end }}
+{{ range $e := .UsedEnums }}
+enum {{ $e.GraphQLName }} {
+{{- range $v := $e.Values }}
+  {{ $v.GraphQLName }}
+{{- end }}
+}
+{{ end }}
+type Query
+type Mutation
+
+type PageInfo {
+  hasNextPage:     Boolean!
+  hasPreviousPage: Boolean!
+  startCursor:     String
+  endCursor:       String
+}
+
+enum SortDirection {
+  ASC
+  DESC
+}
+{{/*
+  Comparator inputs are rendered from APIContext.ComparatorFamilies, not
+  hard-coded here. The family table in context_api.go is
+  the single source of the operator sets, and each column's
+  APIFilterProjection references one of these blocks by name — so a newly
+  monomorphized family is a data change with no template edit, and a
+  per-table schema can never reference an input this file did not declare.
+
+  Operand types are padded to the family's longest `<name>:` label so each
+  block stays column-aligned.
+*/ -}}
+{{- range $c := .ComparatorFamilies }}
+input {{ $c.Name }} {
+{{- range $op := $c.Operators }}
+  {{ printf "%-*s" $c.NameWidth (printf "%s:" $op.Name) }} {{ $op.Type }}
+{{- end }}
+}
+{{- if $c.RangeInputName }}
+
+input {{ $c.RangeInputName }} {
+  from: {{ $c.RangeOperandType }}!
+  to:   {{ $c.RangeOperandType }}!
+}
+{{- end }}
+{{ end -}}
+{{ end -}}

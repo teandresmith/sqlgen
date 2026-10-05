@@ -1,0 +1,214 @@
+{
+  "kind": "view",
+  "name": "CategoryPriceTotal",
+  "table": "category_price_totals",
+  "schema": "public",
+  "source": "-- category_price_totals — the MATERIALIZED view fixture. PRD §26.4 states\n-- a matview emits the identical read surface to a regular view and that\n-- `Refresh` / `RefreshConcurrently` stay Go-client-only; before this fixture no\n-- API-enabled example carried a matview, so neither half of that sentence was\n-- tested. The postgres example has `order_totals` but no `api:` block.\n--\n-- It aggregates `products`, which is a SHARED table — deliberately, so the\n-- matview isolates the \"matview == view on the read surface\" claim from the\n-- tenancy claim `workspace_note_summary` carries.\n--\n-- Views have no primary-key fallback for cursor_keys (§4.13), and the\n-- inherited default `id` does not exist here, so the connection query needs\n-- the explicit `views.category_price_totals.cursor_keys` entry in sqlgen.yml.\n--\n-- @pk: category_id\n-- @type product_count: int32\n\nCREATE MATERIALIZED VIEW category_price_totals AS\nSELECT\n    p.category_id,\n    COUNT(p.id) AS product_count,\n    SUM(p.price) AS total_price,\n    MAX(p.price) AS max_price\nFROM products p\nGROUP BY p.category_id;\n",
+  "materialized": true,
+  "file_prefix": "category_price_total",
+  "files": [
+    "views_gen.go"
+  ],
+  "comment": "",
+  "indexes": [],
+  "pk": {
+    "kind": "single",
+    "columns": [
+      {
+        "name": "category_id",
+        "go_field": "CategoryID",
+        "go_type": "int64"
+      }
+    ]
+  },
+  "features": {
+    "soft_delete": null,
+    "cache": null,
+    "events": null,
+    "tenancy": null
+  },
+  "columns": [
+    {
+      "name": "category_id",
+      "go_field": "CategoryID",
+      "go_type": "int64",
+      "db_type": "bigint",
+      "nullable": false,
+      "pk": true,
+      "unique": false,
+      "comparator": "comparator.Number[int64]",
+      "comment": ""
+    },
+    {
+      "name": "product_count",
+      "go_field": "ProductCount",
+      "go_type": "int32",
+      "db_type": "int32",
+      "nullable": false,
+      "pk": false,
+      "unique": false,
+      "comparator": "comparator.Number[int32]",
+      "comment": ""
+    },
+    {
+      "name": "total_price",
+      "go_field": "TotalPrice",
+      "go_type": "decimal.NullDecimal",
+      "db_type": "numeric(12, 2)",
+      "nullable": true,
+      "pk": false,
+      "unique": false,
+      "comparator": "comparator.NullableString",
+      "comment": ""
+    },
+    {
+      "name": "max_price",
+      "go_field": "MaxPrice",
+      "go_type": "decimal.NullDecimal",
+      "db_type": "numeric(12, 2)",
+      "nullable": true,
+      "pk": false,
+      "unique": false,
+      "comparator": "comparator.NullableString",
+      "comment": ""
+    }
+  ],
+  "relationships": [],
+  "methods": {
+    "query": [
+      {
+        "name": "Get",
+        "params": [
+          {
+            "name": "id",
+            "type": "int64"
+          }
+        ],
+        "returns": "*CategoryPriceTotal",
+        "errors": [
+          "ErrNotFound"
+        ],
+        "notes": "Generated from the view's @pk annotation.",
+        "sql_bodies": {
+          "postgres": "SELECT \"category_id\", \"max_price\", \"product_count\", \"total_price\" FROM \"public\".\"category_price_totals\" WHERE \"category_id\" = $1 LIMIT 1"
+        }
+      },
+      {
+        "name": "GetMany",
+        "params": [
+          {
+            "name": "input",
+            "type": "*GetCategoryPriceTotalsInput"
+          }
+        ],
+        "returns": "[]*CategoryPriceTotal",
+        "errors": [],
+        "sql_bodies": {
+          "postgres": "SELECT \"category_id\", \"max_price\", \"product_count\", \"total_price\" FROM \"public\".\"category_price_totals\" WHERE <filter> ORDER BY <sort> LIMIT <limit>"
+        }
+      },
+      {
+        "name": "Count",
+        "params": [
+          {
+            "name": "filter",
+            "type": "*CategoryPriceTotalFilter"
+          }
+        ],
+        "returns": "int64",
+        "errors": [],
+        "sql_bodies": {
+          "postgres": "SELECT COUNT(*) FROM \"public\".\"category_price_totals\" WHERE <filter>"
+        }
+      },
+      {
+        "name": "Paginate",
+        "params": [
+          {
+            "name": "input",
+            "type": "PaginateInput[CategoryPriceTotalFilter]"
+          }
+        ],
+        "returns": "*PaginateResult[CategoryPriceTotal]",
+        "errors": [],
+        "notes": "Offset pagination. Issues no statement of its own — composes Count and GetMany, so no sql_bodies entry."
+      },
+      {
+        "name": "Connection",
+        "params": [
+          {
+            "name": "input",
+            "type": "ConnectionInput[CategoryPriceTotalFilter]"
+          }
+        ],
+        "returns": "*Connection[CategoryPriceTotal]",
+        "errors": [
+          "ErrInvalidCursor"
+        ],
+        "notes": "Relay cursor pagination. Issues no statement of its own — composes Count and GetMany, so no sql_bodies entry."
+      }
+    ],
+    "mutation": [
+      {
+        "name": "Refresh",
+        "params": [],
+        "returns": "",
+        "errors": [],
+        "notes": "Recomputes the materialized view (ACCESS EXCLUSIVE lock; may run inside a transaction). Invalidates the view's cache entries on success (no-op when the view is not cached).",
+        "sql_bodies": {
+          "postgres": "REFRESH MATERIALIZED VIEW \"public\".\"category_price_totals\""
+        }
+      },
+      {
+        "name": "RefreshConcurrently",
+        "params": [],
+        "returns": "",
+        "errors": [
+          "database.ErrRefreshConcurrentlyInTx"
+        ],
+        "notes": "Non-blocking refresh; requires a UNIQUE index on the view; cannot run inside a transaction. Invalidates the view's cache entries on success (no-op when the view is not cached).",
+        "sql_bodies": {
+          "postgres": "REFRESH MATERIALIZED VIEW CONCURRENTLY \"public\".\"category_price_totals\""
+        }
+      }
+    ]
+  },
+  "filter": {
+    "type": "CategoryPriceTotalFilter",
+    "fields": [
+      {
+        "name": "CategoryID",
+        "type": "*comparator.Number[int64]"
+      },
+      {
+        "name": "MaxPrice",
+        "type": "*comparator.NullableString"
+      },
+      {
+        "name": "ProductCount",
+        "type": "*comparator.Number[int32]"
+      },
+      {
+        "name": "TotalPrice",
+        "type": "*comparator.NullableString"
+      },
+      {
+        "name": "And",
+        "type": "[]*CategoryPriceTotalFilter"
+      },
+      {
+        "name": "Or",
+        "type": "[]*CategoryPriceTotalFilter"
+      }
+    ]
+  },
+  "sort": {
+    "type": "CategoryPriceTotalSort",
+    "fields": [
+      "CategoryID",
+      "MaxPrice",
+      "ProductCount",
+      "TotalPrice"
+    ]
+  }
+}

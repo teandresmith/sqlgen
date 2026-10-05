@@ -1,0 +1,11 @@
+CREATE TABLE IF NOT EXISTS test_users (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    name TEXT NOT NULL CHECK (length(name) > 0),
+    email TEXT NOT NULL UNIQUE
+);
+
+CREATE TABLE IF NOT EXISTS test_orders (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id INTEGER NOT NULL REFERENCES test_users(id),
+    amount INTEGER NOT NULL
+);

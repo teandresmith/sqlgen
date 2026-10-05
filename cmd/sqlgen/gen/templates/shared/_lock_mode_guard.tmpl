@@ -1,0 +1,45 @@
+{{- /*
+shared/lock-mode-guard emits the LockMode runtime guard at the top of read
+methods (Get, GetMany, Connection). The fragment expects a TableContext-shaped
+"." with .Dialect ("postgres" | "mysql" | "sqlite") and .TableName.
+
+Behavior:
+  - SQLite: any non-LockNone mode is rejected with a sqlgen error before SQL.
+  - Postgres / MySQL: LockMode requires an active transaction (database.InTransaction);
+    SkipCache is forced true so the cache hook bypasses read-through (a cache hit
+    without acquiring the actual row lock is a silent correctness bug).
+  - MySQL only: LockForUpdateNoWait / LockForUpdateSkipLocked require server >= 8.0.
+    The version is probed once via SELECT VERSION() and cached on the unified
+    client (see mysqlVersionCache in client.go.tmpl).
+
+Callers must place this fragment immediately after resolveCallOptions(opts) and
+before constructing &hook.QueryContext{...} so the SkipCache force is visible to
+the cache hook in the QueryContext snapshot.
+*/ -}}
+{{- define "shared/lock-mode-guard" -}}
+{{- $opName := .OpName -}}
+{{- if not $opName }}{{ $opName = .TableName | toSingular }}{{ end -}}
+{{- if eq .Dialect "sqlite" }}
+	if options.LockMode != sql.LockNone {
+		return nil, fmt.Errorf("{{ $opName }}: LockMode is unsupported on sqlite dialect")
+	}
+{{- else }}
+	if options.LockMode != sql.LockNone {
+		if !database.InTransaction(ctx) {
+			return nil, fmt.Errorf("{{ $opName }}: LockMode requires an active transaction")
+		}
+		options.SkipCache = true
+{{- if eq .Dialect "mysql" }}
+		if options.LockMode == sql.LockForUpdateNoWait || options.LockMode == sql.LockForUpdateSkipLocked {
+			version, err := c.mysqlVersion.get(ctx)
+			if err != nil {
+				return nil, fmt.Errorf("{{ $opName }}: %w", err)
+			}
+			if version.Major < 8 {
+				return nil, fmt.Errorf("{{ $opName }}: LockMode %s requires MySQL 8.0+ (server reports %s)", options.LockMode, version.Raw)
+			}
+		}
+{{- end }}
+	}
+{{- end }}
+{{- end -}}

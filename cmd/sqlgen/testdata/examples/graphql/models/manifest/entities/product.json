@@ -1,0 +1,729 @@
+{
+  "kind": "table",
+  "name": "Product",
+  "table": "products",
+  "schema": "public",
+  "file_prefix": "product",
+  "files": [
+    "models_gen.go"
+  ],
+  "comment": "",
+  "indexes": [
+    {
+      "name": "products_pkey",
+      "columns": [
+        "id"
+      ],
+      "unique": true,
+      "method": "btree"
+    }
+  ],
+  "pk": {
+    "kind": "single",
+    "columns": [
+      {
+        "name": "id",
+        "go_field": "ID",
+        "go_type": "uuid.UUID"
+      }
+    ]
+  },
+  "features": {
+    "soft_delete": {
+      "column": "deleted_at",
+      "type": "timestamp"
+    },
+    "cache": {
+      "ttl_seconds": 3600,
+      "hydration": "eager",
+      "key_pattern": "sqlgen:product:{id}",
+      "invalidates_on": [
+        "Create",
+        "Update",
+        "Delete",
+        "SoftDelete",
+        "Restore",
+        "Increment"
+      ]
+    },
+    "events": {
+      "enabled": true,
+      "types": [
+        "ProductCreated",
+        "ProductDeleted",
+        "ProductRestored",
+        "ProductSoftDeleted",
+        "ProductUpdated"
+      ],
+      "payload_shape": "models.ProductEvent"
+    },
+    "tenancy": null,
+    "audit_columns": [
+      "updated_at"
+    ]
+  },
+  "columns": [
+    {
+      "name": "id",
+      "go_field": "ID",
+      "go_type": "uuid.UUID",
+      "db_type": "uuid",
+      "nullable": false,
+      "pk": true,
+      "unique": false,
+      "default": "gen_random_uuid()",
+      "default_kind": "function",
+      "comparator": "comparator.ID",
+      "comment": ""
+    },
+    {
+      "name": "name",
+      "go_field": "Name",
+      "go_type": "string",
+      "db_type": "text",
+      "nullable": false,
+      "pk": false,
+      "unique": false,
+      "comparator": "comparator.String",
+      "comment": ""
+    },
+    {
+      "name": "description",
+      "go_field": "Description",
+      "go_type": "*string",
+      "db_type": "text",
+      "nullable": true,
+      "pk": false,
+      "unique": false,
+      "comparator": "comparator.NullableString",
+      "comment": ""
+    },
+    {
+      "name": "price",
+      "go_field": "Price",
+      "go_type": "decimal.Decimal",
+      "db_type": "numeric(12, 2)",
+      "nullable": false,
+      "pk": false,
+      "unique": false,
+      "comparator": "comparator.String",
+      "comment": ""
+    },
+    {
+      "name": "stock",
+      "go_field": "Stock",
+      "go_type": "int32",
+      "db_type": "integer",
+      "nullable": false,
+      "pk": false,
+      "unique": false,
+      "default": "0",
+      "default_kind": "literal",
+      "comparator": "comparator.Number[int32]",
+      "comment": ""
+    },
+    {
+      "name": "category_id",
+      "go_field": "CategoryID",
+      "go_type": "int64",
+      "db_type": "bigint",
+      "nullable": false,
+      "pk": false,
+      "unique": false,
+      "comparator": "comparator.Number[int64]",
+      "comment": ""
+    },
+    {
+      "name": "created_at",
+      "go_field": "CreatedAt",
+      "go_type": "time.Time",
+      "db_type": "timestamptz",
+      "nullable": false,
+      "pk": false,
+      "unique": false,
+      "default": "current_timestamp",
+      "default_kind": "function",
+      "comparator": "comparator.Time",
+      "comment": ""
+    },
+    {
+      "name": "updated_at",
+      "go_field": "UpdatedAt",
+      "go_type": "*time.Time",
+      "db_type": "timestamptz",
+      "nullable": true,
+      "pk": false,
+      "unique": false,
+      "default": "current_timestamp",
+      "default_kind": "function",
+      "comparator": "comparator.NullableTime",
+      "comment": ""
+    },
+    {
+      "name": "deleted_at",
+      "go_field": "DeletedAt",
+      "go_type": "*time.Time",
+      "db_type": "timestamptz",
+      "nullable": true,
+      "pk": false,
+      "unique": false,
+      "comparator": "comparator.NullableTime",
+      "comment": ""
+    }
+  ],
+  "relationships": [
+    {
+      "name": "order_items",
+      "kind": "o2m",
+      "target_entity": "OrderItem",
+      "fk": {
+        "table": "order_items",
+        "schema": "public",
+        "column": "product_id"
+      }
+    }
+  ],
+  "methods": {
+    "query": [
+      {
+        "name": "Get",
+        "params": [
+          {
+            "name": "id",
+            "type": "uuid.UUID"
+          }
+        ],
+        "returns": "*Product",
+        "errors": [
+          "ErrNotFound"
+        ],
+        "notes": "Delegates to GetMany with a primary-key filter; returns ErrNotFound when no row matches.",
+        "sql_bodies": {
+          "postgres": "SELECT \"category_id\", \"created_at\", \"deleted_at\", \"description\", \"id\", \"name\", \"price\", \"stock\", \"updated_at\" FROM \"public\".\"products\" WHERE \"id\" = $1 AND \"deleted_at\" IS NULL LIMIT 1"
+        }
+      },
+      {
+        "name": "GetMany",
+        "params": [
+          {
+            "name": "input",
+            "type": "*GetProductsInput"
+          }
+        ],
+        "returns": "[]*Product",
+        "errors": [],
+        "sql_bodies": {
+          "postgres": "SELECT \"category_id\", \"created_at\", \"deleted_at\", \"description\", \"id\", \"name\", \"price\", \"stock\", \"updated_at\" FROM \"public\".\"products\" WHERE <filter> AND \"deleted_at\" IS NULL ORDER BY <sort> LIMIT <limit>"
+        }
+      },
+      {
+        "name": "Count",
+        "params": [
+          {
+            "name": "filter",
+            "type": "*ProductFilter"
+          }
+        ],
+        "returns": "int64",
+        "errors": [],
+        "sql_bodies": {
+          "postgres": "SELECT COUNT(*) FROM \"public\".\"products\" WHERE <filter> AND \"deleted_at\" IS NULL"
+        }
+      },
+      {
+        "name": "Exists",
+        "params": [
+          {
+            "name": "id",
+            "type": "uuid.UUID"
+          }
+        ],
+        "returns": "bool",
+        "errors": [],
+        "sql_bodies": {
+          "postgres": "SELECT EXISTS(SELECT 1 FROM \"public\".\"products\" WHERE \"id\" = $1 AND \"deleted_at\" IS NULL)"
+        }
+      },
+      {
+        "name": "ExistsWhere",
+        "params": [
+          {
+            "name": "filter",
+            "type": "*ProductFilter"
+          }
+        ],
+        "returns": "bool",
+        "errors": [],
+        "sql_bodies": {
+          "postgres": "SELECT EXISTS(SELECT 1 FROM \"public\".\"products\" WHERE <filter> AND \"deleted_at\" IS NULL)"
+        }
+      },
+      {
+        "name": "Paginate",
+        "params": [
+          {
+            "name": "input",
+            "type": "PaginateInput[ProductFilter]"
+          }
+        ],
+        "returns": "*PaginateResult[Product]",
+        "errors": [],
+        "notes": "Offset pagination. Issues no statement of its own — composes Count and GetMany, so no sql_bodies entry."
+      },
+      {
+        "name": "Connection",
+        "params": [
+          {
+            "name": "input",
+            "type": "ConnectionInput[ProductFilter]"
+          }
+        ],
+        "returns": "*Connection[Product]",
+        "errors": [
+          "ErrInvalidCursor"
+        ],
+        "notes": "Relay cursor pagination. Issues no statement of its own — composes Count and GetMany, so no sql_bodies entry."
+      },
+      {
+        "name": "Stream",
+        "params": [
+          {
+            "name": "input",
+            "type": "*StreamProductsInput"
+          }
+        ],
+        "returns": "iter.Seq2[*Product, error]",
+        "errors": [],
+        "notes": "Scalars only — no relationship loading, cache always bypassed. Errors surface through the iterator's second value.",
+        "sql_bodies": {
+          "postgres": "SELECT \"category_id\", \"created_at\", \"deleted_at\", \"description\", \"id\", \"name\", \"price\", \"stock\", \"updated_at\" FROM \"public\".\"products\" WHERE <filter> AND \"deleted_at\" IS NULL ORDER BY <sort>"
+        }
+      }
+    ],
+    "mutation": [
+      {
+        "name": "Create",
+        "params": [
+          {
+            "name": "input",
+            "type": "*CreateProductInput"
+          }
+        ],
+        "returns": "*Product",
+        "errors": [
+          "ErrNilInput",
+          "ErrConstraintViolation"
+        ],
+        "sql_bodies": {
+          "postgres": "INSERT INTO \"public\".\"products\" (<columns>) VALUES (<values>) RETURNING \"id\""
+        }
+      },
+      {
+        "name": "CreateMany",
+        "params": [
+          {
+            "name": "inputs",
+            "type": "[]*CreateProductInput"
+          }
+        ],
+        "returns": "[]*Product",
+        "errors": [
+          "ErrNilInput",
+          "ErrConstraintViolation"
+        ],
+        "notes": "Batched in generation.batch_size chunks. Earlier chunks are not rolled back on a later failure — wrap in a transaction for atomicity.",
+        "sql_bodies": {
+          "postgres": "INSERT INTO \"public\".\"products\" (<columns>) VALUES <values> RETURNING \"id\""
+        }
+      },
+      {
+        "name": "Upsert",
+        "params": [
+          {
+            "name": "input",
+            "type": "*CreateProductInput"
+          },
+          {
+            "name": "target",
+            "type": "ProductConflictTarget"
+          }
+        ],
+        "returns": "*Product",
+        "errors": [
+          "ErrNilInput",
+          "ErrConstraintViolation"
+        ],
+        "notes": "One method over the generated ProductConflictTarget enum — the target argument selects the conflict columns at call time.",
+        "sql_bodies": {
+          "postgres": "INSERT INTO \"public\".\"products\" (<columns>) VALUES (<values>) ON CONFLICT (<conflict_target>) DO UPDATE SET <excluded> RETURNING \"id\""
+        }
+      },
+      {
+        "name": "UpsertMany",
+        "params": [
+          {
+            "name": "inputs",
+            "type": "[]*CreateProductInput"
+          },
+          {
+            "name": "target",
+            "type": "ProductConflictTarget"
+          }
+        ],
+        "returns": "[]*Product",
+        "errors": [
+          "ErrNilInput",
+          "ErrConstraintViolation"
+        ],
+        "notes": "Batched in generation.batch_size chunks over the same ProductConflictTarget enum Upsert takes. Inputs resolving to one target are deduped before the statement is built, last occurrence wins. Earlier chunks are not rolled back on a later failure — wrap in a transaction for atomicity.",
+        "sql_bodies": {
+          "postgres": "INSERT INTO \"public\".\"products\" (<columns>) VALUES <values> ON CONFLICT (<conflict_target>) DO UPDATE SET <excluded>"
+        }
+      },
+      {
+        "name": "Update",
+        "params": [
+          {
+            "name": "id",
+            "type": "uuid.UUID"
+          },
+          {
+            "name": "input",
+            "type": "*UpdateProductInput"
+          }
+        ],
+        "returns": "*Product",
+        "errors": [
+          "ErrNotFound",
+          "ErrNilInput",
+          "ErrConstraintViolation"
+        ],
+        "notes": "Only fields where IsSet() reports true reach the SET clause; an input with none set issues no UPDATE and returns the row unchanged.",
+        "sql_bodies": {
+          "postgres": "UPDATE \"public\".\"products\" SET <set> WHERE \"id\" = $1"
+        }
+      },
+      {
+        "name": "UpdateMany",
+        "params": [
+          {
+            "name": "items",
+            "type": "[]UpdateProductItem"
+          }
+        ],
+        "returns": "[]*Product",
+        "errors": [
+          "ErrNilInput",
+          "ErrConstraintViolation"
+        ],
+        "notes": "Issues one statement per item. Batched like CreateMany — earlier items are not rolled back on a later failure. A primary key that does not exist is silently skipped, even under strict_updates.",
+        "sql_bodies": {
+          "postgres": "UPDATE \"public\".\"products\" SET <set> WHERE \"id\" = $1"
+        }
+      },
+      {
+        "name": "UpdateWhere",
+        "params": [
+          {
+            "name": "filter",
+            "type": "*ProductFilter"
+          },
+          {
+            "name": "input",
+            "type": "*UpdateProductInput"
+          }
+        ],
+        "returns": "[]*Product",
+        "errors": [
+          "ErrNilInput",
+          "ErrEmptyFilter",
+          "ErrConstraintViolation"
+        ],
+        "notes": "Idempotent — returns an empty slice when no row matches. ErrEmptyFilter when the filter produces no conditions.",
+        "sql_bodies": {
+          "postgres": "UPDATE \"public\".\"products\" SET <set> WHERE <filter> RETURNING \"id\""
+        }
+      },
+      {
+        "name": "Increment",
+        "params": [
+          {
+            "name": "id",
+            "type": "uuid.UUID"
+          },
+          {
+            "name": "input",
+            "type": "IncrementInput[ProductIncrementColumn]"
+          }
+        ],
+        "returns": "",
+        "errors": [
+          "ErrNotFound"
+        ],
+        "notes": "Atomic single-column arithmetic. The column is restricted to the generated ProductIncrementColumn enum — numeric, and identifying nothing: neither PK, FK, nor the tenant column. A negative amount decrements.",
+        "sql_bodies": {
+          "postgres": "UPDATE \"public\".\"products\" SET <column> = <column> + $1 WHERE \"id\" = $2"
+        }
+      },
+      {
+        "name": "SoftDelete",
+        "params": [
+          {
+            "name": "id",
+            "type": "uuid.UUID"
+          }
+        ],
+        "returns": "*Product",
+        "errors": [],
+        "notes": "Idempotent — a primary key that does not exist is not an error.",
+        "sql_bodies": {
+          "postgres": "UPDATE \"public\".\"products\" SET \"deleted_at\" = CURRENT_TIMESTAMP WHERE \"id\" = $1"
+        }
+      },
+      {
+        "name": "SoftDeleteMany",
+        "params": [
+          {
+            "name": "ids",
+            "type": "[]uuid.UUID"
+          }
+        ],
+        "returns": "[]*Product",
+        "errors": [],
+        "notes": "Idempotent — primary keys that do not exist are not an error.",
+        "sql_bodies": {
+          "postgres": "UPDATE \"public\".\"products\" SET \"deleted_at\" = CURRENT_TIMESTAMP WHERE \"id\" IN (<ids>)"
+        }
+      },
+      {
+        "name": "SoftDeleteWhere",
+        "params": [
+          {
+            "name": "filter",
+            "type": "*ProductFilter"
+          }
+        ],
+        "returns": "[]*Product",
+        "errors": [
+          "ErrEmptyFilter"
+        ],
+        "notes": "Idempotent — no match is not an error. ErrEmptyFilter when the filter produces no conditions.",
+        "sql_bodies": {
+          "postgres": "UPDATE \"public\".\"products\" SET \"deleted_at\" = CURRENT_TIMESTAMP WHERE <filter> AND \"deleted_at\" IS NULL RETURNING \"id\""
+        }
+      },
+      {
+        "name": "Restore",
+        "params": [
+          {
+            "name": "id",
+            "type": "uuid.UUID"
+          }
+        ],
+        "returns": "*Product",
+        "errors": [],
+        "notes": "Idempotent — a primary key that does not exist is not an error.",
+        "sql_bodies": {
+          "postgres": "UPDATE \"public\".\"products\" SET \"deleted_at\" = $1 WHERE \"id\" = $2"
+        }
+      },
+      {
+        "name": "RestoreMany",
+        "params": [
+          {
+            "name": "ids",
+            "type": "[]uuid.UUID"
+          }
+        ],
+        "returns": "[]*Product",
+        "errors": [],
+        "notes": "Idempotent — primary keys that do not exist are not an error.",
+        "sql_bodies": {
+          "postgres": "UPDATE \"public\".\"products\" SET \"deleted_at\" = $1 WHERE \"id\" IN (<ids>)"
+        }
+      },
+      {
+        "name": "RestoreWhere",
+        "params": [
+          {
+            "name": "filter",
+            "type": "*ProductFilter"
+          }
+        ],
+        "returns": "[]*Product",
+        "errors": [
+          "ErrEmptyFilter"
+        ],
+        "notes": "Idempotent — no match is not an error. ErrEmptyFilter when the filter produces no conditions.",
+        "sql_bodies": {
+          "postgres": "UPDATE \"public\".\"products\" SET \"deleted_at\" = $1 WHERE <filter> AND \"deleted_at\" IS NOT NULL RETURNING \"id\""
+        }
+      },
+      {
+        "name": "HardDelete",
+        "params": [
+          {
+            "name": "id",
+            "type": "uuid.UUID"
+          }
+        ],
+        "returns": "",
+        "errors": [],
+        "notes": "Idempotent — a primary key that does not exist is not an error.",
+        "sql_bodies": {
+          "postgres": "DELETE FROM \"public\".\"products\" WHERE \"id\" = $1"
+        }
+      },
+      {
+        "name": "HardDeleteMany",
+        "params": [
+          {
+            "name": "ids",
+            "type": "[]uuid.UUID"
+          }
+        ],
+        "returns": "",
+        "errors": [],
+        "notes": "Idempotent — primary keys that do not exist are not an error.",
+        "sql_bodies": {
+          "postgres": "DELETE FROM \"public\".\"products\" WHERE \"id\" IN (<ids>)"
+        }
+      },
+      {
+        "name": "HardDeleteWhere",
+        "params": [
+          {
+            "name": "filter",
+            "type": "*ProductFilter"
+          }
+        ],
+        "returns": "",
+        "errors": [
+          "ErrEmptyFilter"
+        ],
+        "notes": "Idempotent — no match is not an error. ErrEmptyFilter when the filter produces no conditions.",
+        "sql_bodies": {
+          "postgres": "DELETE FROM \"public\".\"products\" WHERE <filter> RETURNING \"id\""
+        }
+      },
+      {
+        "name": "CreateWithRelated",
+        "params": [
+          {
+            "name": "input",
+            "type": "*CreateProductWithRelatedInput"
+          }
+        ],
+        "returns": "*Product",
+        "errors": [
+          "ErrNilInput",
+          "ErrConstraintViolation"
+        ],
+        "notes": "Writes the parent and its nested rows in one transaction — a SAVEPOINT when ctx already holds one. Issues no statement of its own: it composes Create and, per eligible relationship (OrderItems), the target's and junction's own client methods, so no sql_bodies entry. Each inner call fires its own hooks, events and cache invalidation under its own op; the nested method has none."
+      },
+      {
+        "name": "UpdateWithRelated",
+        "params": [
+          {
+            "name": "id",
+            "type": "uuid.UUID"
+          },
+          {
+            "name": "input",
+            "type": "*UpdateProductWithRelatedInput"
+          }
+        ],
+        "returns": "*Product",
+        "errors": [
+          "ErrNilInput",
+          "ErrNotFound",
+          "ErrConstraintViolation"
+        ],
+        "notes": "Writes the parent and its nested rows in one transaction — a SAVEPOINT when ctx already holds one. Issues no statement of its own: it composes Update and, per eligible relationship (OrderItems), the target's and junction's own client methods, so no sql_bodies entry. Each inner call fires its own hooks, events and cache invalidation under its own op; the nested method has none."
+      },
+      {
+        "name": "UpsertWithRelated",
+        "params": [
+          {
+            "name": "input",
+            "type": "*UpsertProductWithRelatedInput"
+          },
+          {
+            "name": "target",
+            "type": "ProductConflictTarget"
+          }
+        ],
+        "returns": "*Product",
+        "errors": [
+          "ErrNilInput",
+          "ErrConstraintViolation"
+        ],
+        "notes": "Writes the parent and its nested rows in one transaction — a SAVEPOINT when ctx already holds one. Issues no statement of its own: it composes Upsert and, per eligible relationship (OrderItems), the target's and junction's own client methods, so no sql_bodies entry. Each inner call fires its own hooks, events and cache invalidation under its own op; the nested method has none."
+      }
+    ]
+  },
+  "filter": {
+    "type": "ProductFilter",
+    "fields": [
+      {
+        "name": "CategoryID",
+        "type": "*comparator.Number[int64]"
+      },
+      {
+        "name": "CreatedAt",
+        "type": "*comparator.Time"
+      },
+      {
+        "name": "DeletedAt",
+        "type": "*comparator.NullableTime"
+      },
+      {
+        "name": "Description",
+        "type": "*comparator.NullableString"
+      },
+      {
+        "name": "ID",
+        "type": "*comparator.ID"
+      },
+      {
+        "name": "Name",
+        "type": "*comparator.String"
+      },
+      {
+        "name": "Price",
+        "type": "*comparator.String"
+      },
+      {
+        "name": "Stock",
+        "type": "*comparator.Number[int32]"
+      },
+      {
+        "name": "UpdatedAt",
+        "type": "*comparator.NullableTime"
+      },
+      {
+        "name": "And",
+        "type": "[]*ProductFilter"
+      },
+      {
+        "name": "Or",
+        "type": "[]*ProductFilter"
+      }
+    ]
+  },
+  "sort": {
+    "type": "ProductSort",
+    "fields": [
+      "CategoryID",
+      "CreatedAt",
+      "DeletedAt",
+      "Description",
+      "ID",
+      "Name",
+      "Price",
+      "Stock",
+      "UpdatedAt"
+    ]
+  },
+  "examples": {}
+}

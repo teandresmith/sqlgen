@@ -1,0 +1,250 @@
+{
+  "kind": "view",
+  "name": "WorkspaceNoteSummary",
+  "table": "workspace_note_summary",
+  "schema": "public",
+  "source": "-- workspace_note_summary — the view proof fixture: a TENANTED view reached\n-- over the real gqlgen server. It projects `workspace_id`, so §29.2.5's\n-- detection rule scopes every one of its reads with no\n-- `views.workspace_note_summary.tenancy` block; `@pk` makes the by-PK query\n-- available, and `id` satisfies the inherited `cursor_keys` default so the\n-- connection query is emitted too. All three read queries therefore exist,\n-- which is what lets tests/view_tenancy_test.go prove isolation across the\n-- whole read surface rather than one query of it.\n--\n-- `kind` (ENUM) and `labels` (JSONB) are projected so <V>Filter carries the\n-- enum and JSONB comparator families — PRD §26.4 promises a view's filter is\n-- the table's read half, and nothing else in the example tree tests that\n-- claim on a view.\n--\n-- The LEFT JOIN onto documents is what makes this a real view rather than a\n-- passthrough: `document_count` is an aggregate, so the object type carries a\n-- column with no base table behind it. `documents` is the schema's polymorphic\n-- child table — `entity_id` carries no FK precisely so several parents can\n-- share it — and `spv` is the one member of document_entity_type_enum that is\n-- NOT asset-scoped, so notes claim it without disturbing the §13.7\n-- sub-categorized-polymorphism fixture the `asset.*` members serve.\n--\n-- @pk: id\n-- @type document_count: int32\n\nCREATE VIEW workspace_note_summary AS\nSELECT\n    n.id,\n    n.workspace_id,\n    n.kind,\n    n.labels,\n    n.body,\n    n.pinned_order,\n    COUNT(d.id) AS document_count\nFROM workspace_notes n\nLEFT JOIN documents d\n       ON d.entity_id = n.id AND d.entity_type = 'spv'\nGROUP BY n.id, n.workspace_id, n.kind, n.labels, n.body, n.pinned_order;\n",
+  "file_prefix": "workspace_note_summary",
+  "files": [
+    "views_gen.go"
+  ],
+  "comment": "",
+  "indexes": [],
+  "pk": {
+    "kind": "single",
+    "columns": [
+      {
+        "name": "id",
+        "go_field": "ID",
+        "go_type": "uuid.UUID"
+      }
+    ]
+  },
+  "features": {
+    "soft_delete": null,
+    "cache": null,
+    "events": null,
+    "tenancy": {
+      "column": "workspace_id",
+      "mode": "auto-filter",
+      "missing_resolver_error": "tenancy.ErrMissing"
+    }
+  },
+  "columns": [
+    {
+      "name": "id",
+      "go_field": "ID",
+      "go_type": "uuid.UUID",
+      "db_type": "uuid",
+      "nullable": false,
+      "pk": true,
+      "unique": false,
+      "comparator": "comparator.ID",
+      "comment": ""
+    },
+    {
+      "name": "workspace_id",
+      "go_field": "WorkspaceID",
+      "go_type": "uuid.UUID",
+      "db_type": "uuid",
+      "nullable": false,
+      "pk": false,
+      "unique": false,
+      "comparator": "comparator.ID",
+      "comment": ""
+    },
+    {
+      "name": "kind",
+      "go_field": "Kind",
+      "go_type": "WorkspaceNoteKindEnum",
+      "db_type": "workspace_note_kind_enum",
+      "nullable": false,
+      "pk": false,
+      "unique": false,
+      "comparator": "comparator.Enum[WorkspaceNoteKindEnum]",
+      "comment": ""
+    },
+    {
+      "name": "labels",
+      "go_field": "Labels",
+      "go_type": "types.JSON",
+      "db_type": "jsonb",
+      "nullable": false,
+      "pk": false,
+      "unique": false,
+      "comparator": "comparator.JSONB",
+      "comment": ""
+    },
+    {
+      "name": "body",
+      "go_field": "Body",
+      "go_type": "string",
+      "db_type": "text",
+      "nullable": false,
+      "pk": false,
+      "unique": false,
+      "comparator": "comparator.String",
+      "comment": ""
+    },
+    {
+      "name": "pinned_order",
+      "go_field": "PinnedOrder",
+      "go_type": "int32",
+      "db_type": "integer",
+      "nullable": false,
+      "pk": false,
+      "unique": false,
+      "comparator": "comparator.Number[int32]",
+      "comment": ""
+    },
+    {
+      "name": "document_count",
+      "go_field": "DocumentCount",
+      "go_type": "int32",
+      "db_type": "int32",
+      "nullable": false,
+      "pk": false,
+      "unique": false,
+      "comparator": "comparator.Number[int32]",
+      "comment": ""
+    }
+  ],
+  "relationships": [],
+  "methods": {
+    "query": [
+      {
+        "name": "Get",
+        "params": [
+          {
+            "name": "id",
+            "type": "uuid.UUID"
+          }
+        ],
+        "returns": "*WorkspaceNoteSummary",
+        "errors": [
+          "ErrNotFound",
+          "tenancy.ErrMissing"
+        ],
+        "notes": "Generated from the view's @pk annotation.",
+        "sql_bodies": {
+          "postgres": "SELECT \"body\", \"document_count\", \"id\", \"kind\", \"labels\", \"pinned_order\", \"workspace_id\" FROM \"public\".\"workspace_note_summary\" WHERE \"id\" = $1 LIMIT 1"
+        }
+      },
+      {
+        "name": "GetMany",
+        "params": [
+          {
+            "name": "input",
+            "type": "*GetWorkspaceNoteSummariesInput"
+          }
+        ],
+        "returns": "[]*WorkspaceNoteSummary",
+        "errors": [
+          "tenancy.ErrMissing"
+        ],
+        "sql_bodies": {
+          "postgres": "SELECT \"body\", \"document_count\", \"id\", \"kind\", \"labels\", \"pinned_order\", \"workspace_id\" FROM \"public\".\"workspace_note_summary\" WHERE <filter> ORDER BY <sort> LIMIT <limit>"
+        }
+      },
+      {
+        "name": "Count",
+        "params": [
+          {
+            "name": "filter",
+            "type": "*WorkspaceNoteSummaryFilter"
+          }
+        ],
+        "returns": "int64",
+        "errors": [
+          "tenancy.ErrMissing"
+        ],
+        "sql_bodies": {
+          "postgres": "SELECT COUNT(*) FROM \"public\".\"workspace_note_summary\" WHERE <filter>"
+        }
+      },
+      {
+        "name": "Paginate",
+        "params": [
+          {
+            "name": "input",
+            "type": "PaginateInput[WorkspaceNoteSummaryFilter]"
+          }
+        ],
+        "returns": "*PaginateResult[WorkspaceNoteSummary]",
+        "errors": [
+          "tenancy.ErrMissing"
+        ],
+        "notes": "Offset pagination. Issues no statement of its own — composes Count and GetMany, so no sql_bodies entry."
+      },
+      {
+        "name": "Connection",
+        "params": [
+          {
+            "name": "input",
+            "type": "ConnectionInput[WorkspaceNoteSummaryFilter]"
+          }
+        ],
+        "returns": "*Connection[WorkspaceNoteSummary]",
+        "errors": [
+          "ErrInvalidCursor",
+          "tenancy.ErrMissing"
+        ],
+        "notes": "Relay cursor pagination. Issues no statement of its own — composes Count and GetMany, so no sql_bodies entry."
+      }
+    ],
+    "mutation": []
+  },
+  "filter": {
+    "type": "WorkspaceNoteSummaryFilter",
+    "fields": [
+      {
+        "name": "Body",
+        "type": "*comparator.String"
+      },
+      {
+        "name": "DocumentCount",
+        "type": "*comparator.Number[int32]"
+      },
+      {
+        "name": "ID",
+        "type": "*comparator.ID"
+      },
+      {
+        "name": "Kind",
+        "type": "*comparator.Enum[WorkspaceNoteKindEnum]"
+      },
+      {
+        "name": "Labels",
+        "type": "*comparator.JSONB"
+      },
+      {
+        "name": "PinnedOrder",
+        "type": "*comparator.Number[int32]"
+      },
+      {
+        "name": "WorkspaceID",
+        "type": "*comparator.ID"
+      },
+      {
+        "name": "And",
+        "type": "[]*WorkspaceNoteSummaryFilter"
+      },
+      {
+        "name": "Or",
+        "type": "[]*WorkspaceNoteSummaryFilter"
+      }
+    ]
+  },
+  "sort": {
+    "type": "WorkspaceNoteSummarySort",
+    "fields": [
+      "Body",
+      "DocumentCount",
+      "ID",
+      "Kind",
+      "Labels",
+      "PinnedOrder",
+      "WorkspaceID"
+    ]
+  }
+}

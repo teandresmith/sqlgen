@@ -1,0 +1,624 @@
+{{- define "table/upsert-many" -}}
+{{- $pkCol := index .PKColumns 0 -}}
+{{- $structCamel := .StructName | toCamelCase -}}
+{{- $captureTenant := and .Tenancy .Tenancy.Tenanted (not .Tenancy.InPrimaryKey) -}}
+{{- /* Two facts decide where the written rows' keys come from, and BOTH have to
+       hold for the input to be trusted.
+
+       The table's key must be knowable before the statement runs: true for a
+       composite key (every member is a required input field) and for the app /
+       caller strategies, false under the db strategy, where a serial or
+       AUTO_INCREMENT key is absent from CreateInput entirely and a
+       DEFAULT-backed uuid key is omittable.
+
+       And the conflict target must cover every primary-key column. This one is
+       a *runtime* argument, so a table declaring any non-covering target keeps
+       the choice to call time. On such a target the conflicting row keeps its
+       own key — the PK is excluded from the update half of the clause — so an
+       input-sourced key names a row that does not exist: AffectedPKs would be
+       wrong and the terminal GetMany would come back short, silently. The
+       single-row Upsert avoids this by resolving through RETURNING on every
+       RETURNING dialect regardless of strategy (upsert.go.tmpl); batched,
+       neither RETURNING nor LAST_INSERT_ID() is available, so the
+       read-back is the only mechanism. */ -}}
+{{- $keyKnownBeforeWrite := or .CompositePK (ne .PKStrategy "db") -}}
+{{- $anyTargetMissesPK := false -}}
+{{- range .ConflictTargets }}{{ if not .CoversPK }}{{ $anyTargetMissesPK = true }}{{ end }}{{ end -}}
+{{- /* Statically true when every declared target covers the key: the set of
+       targets is fixed at generation time even though the choice among them is
+       not, so a table whose targets all cover the PK pays no runtime branch. */ -}}
+{{- $mayReadBack := and $keyKnownBeforeWrite $anyTargetMissesPK -}}
+{{- $needsPKLookup := not $keyKnownBeforeWrite -}}
+{{- $anyReadBack := or $needsPKLookup $mayReadBack -}}
+{{- if .Operations.UpsertMany }}
+{{- if $mayReadBack }}
+
+// {{ $structCamel }}ConflictCoversPK reports, per conflict target, whether that target's
+// columns include every primary-key column of {{ .TableName }}.
+//
+// Only such a target makes a batched upsert's written key caller-known: the
+// conflict fired on columns that include the key, so the row the statement
+// touched is the row carrying the key the input supplied. On any other target
+// the conflicting row keeps its own key, and UpsertMany reads the sub-batch
+// back rather than trusting the input.
+var {{ $structCamel }}ConflictCoversPK = map[{{ .StructName }}ConflictTarget]bool{
+{{- range .ConflictTargets }}
+	{{ .ConstantName }}: {{ .CoversPK }},
+{{- end }}
+}
+{{- end }}
+
+// UpsertMany inserts or updates multiple {{ .TableName }} in batches and returns all
+// resulting entities. One conflict target applies to the whole batch, drawn from
+// the same enum Upsert takes. Sub-batches are not automatically rolled back on
+// failure — wrap in a transaction for atomicity.
+//
+// Inputs resolving to the same conflict target are deduped before the statement
+// is built, last occurrence wins. PostgreSQL rejects an
+// ON CONFLICT ... DO UPDATE that would affect one row twice; MySQL and SQLite
+// accept it and keep the last row. The dedupe is what makes one spelling behave
+// identically on all three. A row carrying no definite, non-NULL value for every
+// conflict column is exempt: a NULL never matches under a unique index on any of
+// the three dialects, so two such rows are two rows, not a duplicate.
+//
+// The returned slice carries one entity per deduped input on every dialect,
+// including the DO NOTHING branch a conflict target covering every inserted
+// column produces. The entities come from a re-fetch by primary key, never from
+// RETURNING — RETURNING yields only the rows actually inserted, so a batch that
+// conflicted would come back short. Row order is GetMany's, as with
+// CreateMany.
+{{- if $needsPKLookup }}
+//
+// {{ .TableName }}.{{ $pkCol.Name }} is database-generated, so the rows written by each
+// sub-batch are read back by the conflict target they targeted — two statements
+// per sub-batch rather than one. No dialect can report them from the
+// statement itself: MySQL's LAST_INSERT_ID() after a mixed batch names the first
+// *newly inserted* row, not the batch's first row, so fabricating ids from it is
+// unsound, and RETURNING drops every row that took the DO NOTHING branch. The
+// conflict target must therefore name columns the input carries; one that does
+// not is an error before anything is written.
+{{- else if $mayReadBack }}
+//
+// The written keys come from the inputs only on a conflict target that covers
+// every primary-key column. {{ .StructName }} declares one that does not, and on such a
+// target the conflicting row keeps its own key — the key column is excluded
+// from the update half of the clause — so each sub-batch is read back by the
+// conflict columns it targeted instead, two statements rather than one.
+// Taking the key from the input there would name a row that does
+// not exist: AffectedPKs would be wrong and this method would return short.
+{{- end }}
+func (c *{{ $structCamel }}Client) UpsertMany(ctx context.Context, inputs []*Create{{ .StructName }}Input, target {{ .StructName }}ConflictTarget, opts ...func(*CallOptions[{{ .StructName }}FieldOptions])) ([]*{{ .StructName }}, error) {
+	// A nil *slice* is simply no rows, but a nil *element* is the
+	// same caller error a nil Upsert argument is — and skipping it silently
+	// would drop a row the caller asked for. Rejected before the executor.
+	for _, in := range inputs {
+		if in == nil {
+			return nil, ErrNilInput
+		}
+	}
+	options := resolveCallOptions(opts)
+	result, err := c.executeMutation(ctx, options.SkipHooks, &hook.MutationContext{
+		Op: hook.OpUpsertMany, Table: {{ .TableNameConstant }}, Schema: {{ printf "%q" .Schema }},
+		Input: inputs, CallOptions: options,
+	}, func(ctx context.Context, m *hook.MutationContext) (any, error) {
+		// No rows means no statement and nothing affected. Guarded here because
+		// the terminal GetMany filters on the written keys, and a key filter
+		// built from an empty set contributes no condition — an unguarded empty
+		// call would read the whole table back.
+		if len(inputs) == 0 {
+			return []*{{ .StructName }}{}, nil
+		}
+		conn := database.Conn(ctx, c.querier)
+{{- if and .Tenancy .Tenancy.Tenanted }}
+
+		// Resolve the tenant once for the entire batch.
+		// applyTenancy encodes both SkipTenancy AND the required:false +
+		// zero-resolver path: when false, the per-input verify-match and
+		// auto-set blocks below fall through to caller-supplied values.
+		var resolvedTenant {{ .Tenancy.GoType }}
+		applyTenancy := false
+		if !options.SkipTenancy {
+			var err error
+			var apply bool
+			resolvedTenant, apply, err = c.resolveTenant(ctx, options.Tenant)
+			if err != nil {
+				return nil, fmt.Errorf("upsert {{ .TableName }}: resolve tenant: %w", err)
+			}
+			// Stash on ctx so the chained terminal GetMany reuses this value
+			// instead of re-invoking the user resolver.
+			// An explicit tenant is not cached: it rides on CallOptions, which
+			// every internal call inherits, and resolveTenant honours it ahead of
+			// the cache. A set zero is honoured verbatim where a resolved
+			// zero takes the required branch, and this slot cannot tell them apart.
+			if options.Tenant == nil {
+				ctx = tenancy.WithResolvedTenant(ctx, resolvedTenant)
+			}
+			applyTenancy = apply
+			if apply {
+				// Stash resolved tenant on MutationContext for the cache hook
+				// (single-resolve per operation).
+				m.Tenant = resolvedTenant
+			}
+		}
+{{- end }}
+
+		// Resolve conflict target and update columns. Tenant column is excluded
+		// from the UPDATE-set half of the conflict clause — a
+		// row's tenant is not a mutable attribute under normal operation.
+		//
+		// UpsertResolvePKColumn is deliberately not set: it exists so a
+		// single-row MySQL upsert can republish the conflicting row's id into
+		// the OK packet, and after a batch that packet names at most one row.
+		// Nothing here reads LastInsertId, so requesting it would
+		// only add a misleading assignment to the SET list.
+		columns := []string{ {{- range .CreateInputFields }}{{ printf "%q" .ColumnName }}, {{ end -}} }
+		conflictColumns := {{ $structCamel }}ConflictColumns[target]
+		updateColumns := excludeColumns(columns, append(conflictColumns, {{ range $i, $col := .PKColumns }}{{ if $i }}, {{ end }}{{ printf "%q" $col.Name }}{{ end }}{{ if and .Tenancy .Tenancy.Tenanted }}, {{ printf "%q" .Tenancy.Column }}{{ end }}))
+		conflictPositions, haveConflictKey := upsertConflictPositions(columns, conflictColumns)
+{{- if $mayReadBack }}
+
+		// Only a target covering every primary-key column leaves the written
+		// key caller-known. On any other target the conflicting row
+		// keeps its own key, so it is read back after the write instead.
+		pkFromInput := {{ $structCamel }}ConflictCoversPK[target]
+		if !pkFromInput && !haveConflictKey {
+			return nil, fmt.Errorf("upsert {{ .TableName }}: conflict target names a column the input does not supply, so the written rows cannot be identified")
+		}
+{{- else if $needsPKLookup }}
+		if !haveConflictKey {
+			return nil, fmt.Errorf("upsert {{ .TableName }}: conflict target names a column the input does not supply, so the written rows cannot be identified")
+		}
+{{- end }}
+
+		// One value row per input, built before any statement runs: the dedupe
+		// spans the whole call, not a sub-batch (ceil(M/batch_size)
+		// statements for M inputs, *after* the dedupe).
+		valueRows := make([][]any, 0, len(inputs))
+		rowInputs := make([]*Create{{ .StructName }}Input, 0, len(inputs))
+{{- if .CompositePK }}
+		rowPKs := make([]{{ .CompositePKStructName }}, 0, len(inputs))
+{{- else if $keyKnownBeforeWrite }}
+		rowIDs := make([]{{ $pkCol.GoType }}, 0, len(inputs))
+{{- else }}
+		var rowIDs []{{ $pkCol.GoType }}
+{{- end }}
+{{- if $mayReadBack }}
+		// Filled by the read-back when the conflict target does not cover the
+		// key, and substituted for the input-sourced slice above once every
+		// sub-batch is written.
+		var resolved{{ if .CompositePK }}PKs{{ else }}IDs{{ end }} []{{ if .CompositePK }}{{ .CompositePKStructName }}{{ else }}{{ $pkCol.GoType }}{{ end }}
+{{- end }}
+{{- if $captureTenant }}
+		// Filled from the rows themselves after each sub-batch; feeds
+		// m.AffectedTenants so cache invalidation and event stamping rebuild
+		// tenant-scoped keys from each row's own tenant value. A
+		// conflict leaves the existing row's tenant in place, so the input's
+		// value is not authoritative the way it is for CreateMany.
+		var rowTenants []any
+{{- end }}
+		for _, input := range inputs {
+{{- if and .Tenancy .Tenancy.Tenanted .Tenancy.InPrimaryKey }}
+			// Tenant-in-PK verify-match for each input in the batch.
+			// input.{{ .Tenancy.FieldName }} is a required plain field, so no
+			// auto-fill happens; the caller supplied it and we verify it here.
+			// applyTenancy is false under SkipTenancy OR under required:false
+			// + zero resolver — caller-supplied tenant is accepted as-is.
+			if applyTenancy && input.{{ .Tenancy.FieldName }} != resolvedTenant {
+				return nil, tenancy.ErrMismatch
+			}
+{{- end }}
+{{- if eq .PKStrategy "app" }}
+			var pkValue {{ $pkCol.GoType }}
+			if v, ok := input.{{ $pkCol.FieldName }}.Get(); ok {
+				pkValue = v
+			} else {
+				pkValue = {{ $.PKAutoGenExpr }}
+			}
+{{- end }}
+{{- range .CreateInputFields }}
+{{- if .Omittable }}
+{{- if or (ne $.PKStrategy "app") (ne .ColumnName (index $.PKColumns 0).Name) }}
+{{- if and $.Tenancy $.Tenancy.Tenanted (eq .ColumnName $.Tenancy.Column) }}
+			// Tenancy auto-set + mismatch check.
+			// applyTenancy=false under SkipTenancy OR under required:false
+			// + zero resolver — caller-supplied tenant is used, else the DB
+			// NOT NULL constraint surfaces.
+			var {{ .FieldName | toCamelCase | safeGoIdent }} any
+			if applyTenancy {
+				if v, ok := input.{{ .FieldName }}.Get(); ok && v != resolvedTenant {
+					return nil, tenancy.ErrMismatch
+				}
+				{{ .FieldName | toCamelCase | safeGoIdent }} = resolvedTenant
+			} else if v, ok := input.{{ .FieldName }}.Get(); ok {
+				{{ .FieldName | toCamelCase | safeGoIdent }} = v
+			} else {
+				return nil, fmt.Errorf("upsert {{ $.TableName }}: tenant column {{ .ColumnName }} required when SkipTenancy is set or resolver is absent")
+			}
+{{- else if eq $.Dialect "sqlite" }}
+			var {{ .FieldName | toCamelCase | safeGoIdent }} any = sql.NewDefaultExpr({{ printf "%q" .DefaultExpr }})
+			if v, ok := input.{{ .FieldName }}.Get(); ok {
+				{{ .FieldName | toCamelCase | safeGoIdent }} = v
+			}
+{{- else }}
+			var {{ .FieldName | toCamelCase | safeGoIdent }} any = sql.Default
+			if v, ok := input.{{ .FieldName }}.Get(); ok {
+				{{ .FieldName | toCamelCase | safeGoIdent }} = v
+			}
+{{- end }}
+{{- end }}
+{{- end }}
+{{- end }}
+
+			valueRows = append(valueRows, []any{
+{{- range .CreateInputFields }}
+{{- if .Required }}
+				input.{{ .FieldName }},
+{{- else if and (eq $.PKStrategy "app") (eq .ColumnName (index $.PKColumns 0).Name) }}
+				pkValue,
+{{- else }}
+				{{ .FieldName | toCamelCase | safeGoIdent }},
+{{- end }}
+{{- end }}
+			})
+			rowInputs = append(rowInputs, input)
+{{- if .CompositePK }}
+			rowPKs = append(rowPKs, {{ .CompositePKStructName }}{ {{- range .PKColumns }}{{ .FieldName }}: input.{{ .FieldName }}, {{ end -}} })
+{{- else if eq .PKStrategy "app" }}
+			rowIDs = append(rowIDs, pkValue)
+{{- else if $keyKnownBeforeWrite }}
+			rowIDs = append(rowIDs, input.{{ $pkCol.FieldName }})
+{{- end }}
+		}
+
+		// Dedupe by conflict target, last occurrence wins, first-appearance
+		// order preserved.
+		if haveConflictKey {
+			seen := make(map[string]int, len(valueRows))
+			dedupedRows := make([][]any, 0, len(valueRows))
+			dedupedInputs := make([]*Create{{ .StructName }}Input, 0, len(rowInputs))
+{{- if .CompositePK }}
+			dedupedPKs := make([]{{ .CompositePKStructName }}, 0, len(rowPKs))
+{{- else if $keyKnownBeforeWrite }}
+			dedupedIDs := make([]{{ $pkCol.GoType }}, 0, len(rowIDs))
+{{- end }}
+			for i, row := range valueRows {
+				key, keyed := upsertDedupeKey(row, conflictPositions)
+{{- if $needsPKLookup }}
+				if !keyed {
+					// The row cannot be read back by the conflict target, so
+					// its database-generated primary key would be unknowable.
+					// Refused before anything is written rather than returned
+					// short.
+					return nil, fmt.Errorf("upsert {{ .TableName }}: input %d supplies no definite value for every conflict column, so its generated {{ $pkCol.Name }} cannot be resolved", i)
+				}
+{{- else if $mayReadBack }}
+				if !keyed && !pkFromInput {
+					// This target does not cover the key, so the row's key can
+					// only come from the read-back — which needs a definite
+					// conflict value to match on. Refused before anything is
+					// written rather than returned short.
+					return nil, fmt.Errorf("upsert {{ .TableName }}: input %d supplies no definite value for every conflict column, so the key of the row it writes cannot be resolved", i)
+				}
+{{- end }}
+				if keyed {
+					if j, ok := seen[key]; ok {
+						dedupedRows[j] = row
+						dedupedInputs[j] = rowInputs[i]
+{{- if .CompositePK }}
+						dedupedPKs[j] = rowPKs[i]
+{{- else if $keyKnownBeforeWrite }}
+						dedupedIDs[j] = rowIDs[i]
+{{- end }}
+						continue
+					}
+					seen[key] = len(dedupedRows)
+				}
+				dedupedRows = append(dedupedRows, row)
+				dedupedInputs = append(dedupedInputs, rowInputs[i])
+{{- if .CompositePK }}
+				dedupedPKs = append(dedupedPKs, rowPKs[i])
+{{- else if $keyKnownBeforeWrite }}
+				dedupedIDs = append(dedupedIDs, rowIDs[i])
+{{- end }}
+			}
+			valueRows = dedupedRows
+			rowInputs = dedupedInputs
+{{- if .CompositePK }}
+			rowPKs = dedupedPKs
+{{- else if $keyKnownBeforeWrite }}
+			rowIDs = dedupedIDs
+{{- end }}
+		}
+		// The published input is the deduped slice, so it stays index-aligned
+		// with m.AffectedPKs: an event fanned out per affected row carries the
+		// input that actually wrote that row.
+		m.Input = rowInputs
+
+		for start := 0; start < len(valueRows); start += c.batchSize {
+			end := min(start+c.batchSize, len(valueRows))
+			batch := valueRows[start:end]
+
+			query, queryArgs := sql.BuildMultiInsert(c.dialect, c.table, sql.MultiInsertOptions{
+				Columns:             columns,
+				ValueRows:           batch,
+				UpsertConflictKeys:  conflictColumns,
+				UpsertUpdateColumns: updateColumns,
+			})
+			if _, err := conn.Exec(ctx, query, queryArgs...); err != nil {
+				return nil, fmt.Errorf("upsert {{ .TableName }} batch: %w", err)
+			}
+{{- if $needsPKLookup }}
+
+			batchIDs{{ if $captureTenant }}, batchTenants{{ end }}, err := c.resolveUpsertManyRows(ctx, conn, conflictColumns, conflictPositions, batch)
+			if err != nil {
+				return nil, fmt.Errorf("upsert {{ .TableName }} batch: %w", err)
+			}
+			rowIDs = append(rowIDs, batchIDs...)
+{{- if $captureTenant }}
+			rowTenants = append(rowTenants, batchTenants...)
+{{- end }}
+{{- else }}
+{{- if $mayReadBack }}
+
+			// This target does not cover the key, so the rows this sub-batch
+			// wrote are named by reading them back rather than taken from the
+			// inputs. The lookup carries the tenant in the
+			// same statement, which is why the capture below is the
+			// caller-known branch only.
+			if !pkFromInput {
+				batchKeys{{ if $captureTenant }}, batchTenants{{ end }}, err := c.resolveUpsertManyRows(ctx, conn, conflictColumns, conflictPositions, batch)
+				if err != nil {
+					return nil, fmt.Errorf("upsert {{ .TableName }} batch: %w", err)
+				}
+				resolved{{ if .CompositePK }}PKs{{ else }}IDs{{ end }} = append(resolved{{ if .CompositePK }}PKs{{ else }}IDs{{ end }}, batchKeys...)
+{{- if $captureTenant }}
+				rowTenants = append(rowTenants, batchTenants...)
+				// Skips the caller-known tenant capture below; this branch
+				// already has the tenants, in the same statement.
+				continue
+{{- end }}
+			}
+{{- end }}
+{{- if $captureTenant }}
+
+			// The conflicting row keeps its own tenant, and no dialect can
+			// report it from the statement — RETURNING yields nothing on the
+			// DO NOTHING branch — so the sub-batch is read back by primary key.
+{{- if .CompositePK }}
+			batchPKs := rowPKs[start:end]
+			pkValueSets := make([][]any, len(batchPKs))
+			for i, pk := range batchPKs {
+				pkValueSets[i] = []any{ {{- range .PKColumns }}pk.{{ .FieldName }}, {{ end -}} }
+			}
+			tenantByPK, err := c.captureAffectedTenants(ctx, conn, []sql.Condition{
+				sql.BuildCompositePKBatchCondition(c.dialect, []string{ {{- range .PKColumns }}{{ printf "%q" .Name }}, {{ end -}} }, pkValueSets),
+			})
+			if err != nil {
+				return nil, fmt.Errorf("upsert {{ .TableName }} batch: capture tenants: %w", err)
+			}
+			for _, pk := range batchPKs {
+				rowTenants = append(rowTenants, tenantByPK[pk])
+			}
+{{- else }}
+			batchIDs := rowIDs[start:end]
+			tenantByPK, err := c.captureAffectedTenants(ctx, conn, []sql.Condition{sql.Where(c.dialect.QuoteIdentifier({{ printf "%q" $pkCol.Name }})).In(toAnySlice(batchIDs)...)})
+			if err != nil {
+				return nil, fmt.Errorf("upsert {{ .TableName }} batch: capture tenants: %w", err)
+			}
+			for _, id := range batchIDs {
+				rowTenants = append(rowTenants, tenantByPK[id])
+			}
+{{- end }}
+{{- end }}
+{{- end }}
+		}
+{{- if $mayReadBack }}
+
+		// Every sub-batch resolved its own keys, in batch order, so the
+		// concatenation is index-aligned with the deduped value rows the
+		// input-sourced slice would have been.
+		if !pkFromInput {
+			row{{ if .CompositePK }}PKs{{ else }}IDs{{ end }} = resolved{{ if .CompositePK }}PKs{{ else }}IDs{{ end }}
+		}
+{{- end }}
+{{- if .CompositePK }}
+
+		m.AffectedPKs = toAnySlice(rowPKs)
+{{- else }}
+
+		m.AffectedPKs = toAnySlice(rowIDs)
+{{- end }}
+{{- if $captureTenant }}
+		m.AffectedTenants = rowTenants
+{{- end }}
+
+		// Empty FieldOptions — skip fetch
+		if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
+			return nil, nil
+		}
+{{- if .CompositePK }}
+
+		// Re-fetch via composite PK filter
+		return c.GetMany(ctx, &Get{{ .StructName | structNamePlural }}Input{
+			Filter: &{{ .StructName }}Filter{PKs: rowPKs},
+			Limit:  new(0),
+		}, func(o *CallOptions[{{ .StructName }}FieldOptions]) {
+			*o = options
+			o.SkipHooks = true
+			o.LockMode = sql.LockNone
+		})
+{{- else if pkIsStringType $pkCol }}
+
+		// Convert IDs for filter
+		idStrings := make([]string, len(rowIDs))
+		for i, id := range rowIDs {
+			idStrings[i] = {{ fkToString $pkCol "id" }}
+		}
+		return c.GetMany(ctx, &Get{{ .StructName | structNamePlural }}Input{
+			Filter: &{{ .StructName }}Filter{
+				{{ $pkCol.FieldName }}: &comparator.ID{In: idStrings},
+			},
+			Limit: new(0),
+		}, func(o *CallOptions[{{ .StructName }}FieldOptions]) {
+			*o = options
+			o.SkipHooks = true
+			o.LockMode = sql.LockNone
+		})
+{{- else }}
+
+		return c.GetMany(ctx, &Get{{ .StructName | structNamePlural }}Input{
+			Filter: &{{ .StructName }}Filter{
+				{{ $pkCol.FieldName }}: {{ pkFilterInExpr $pkCol "rowIDs" false }},
+			},
+			Limit: new(0),
+		}, func(o *CallOptions[{{ .StructName }}FieldOptions]) {
+			*o = options
+			o.SkipHooks = true
+			o.LockMode = sql.LockNone
+		})
+{{- end }}
+	})
+	if err != nil {
+		return nil, err
+	}
+	if result == nil {
+		return nil, nil
+	}
+	return result.([]*{{ .StructName }}), nil
+}
+{{- if $anyReadBack }}
+
+// resolveUpsertManyRows reads back the rows one UpsertMany sub-batch wrote,
+// keyed on the conflict target the statement used, and returns each row's
+// primary key{{ if $captureTenant }} and tenant{{ end }} in the batch's own order.
+//
+// It exists because no dialect reports a batch's keys: MySQL's LAST_INSERT_ID()
+// names the first *newly inserted* row after a mixed batch — not the batch's
+// first row, so fabricating ids as firstID+i is unsound — and RETURNING omits
+// every row that took the DO NOTHING branch. Reading back by
+// the conflict columns is unambiguous for the same reason
+// resolveUpsertConflictRow's lookup is: an explicit conflict target can only
+// have fired on those columns.
+//
+{{- if $needsPKLookup }}
+// {{ .TableName }}.{{ $pkCol.Name }} is database-generated, so every call takes this path.
+{{- else }}
+// {{ .StructName }}'s key is knowable before the write, so this runs only on a
+// conflict target that does not cover it — where the conflicting row keeps its
+// own key and the input's is not the row's.
+{{- end }}
+//
+// The lookup applies neither the soft-delete filter nor a tenant predicate. The
+// unique index matched regardless of either, so a soft-deleted or other-tenant
+// row is still the row that conflicted and still the row whose key this
+// resolves; the terminal GetMany then applies the read path's own filters,
+// exactly as on the DO UPDATE SET branch.
+//
+// It is a second statement, so a concurrent delete between the two leaves a row
+// unmatched. That is reported rather than silently returned short.
+func (c *{{ $structCamel }}Client) resolveUpsertManyRows(ctx context.Context, conn database.Querier, conflictColumns []string, positions []int, rows [][]any) ([]{{ if .CompositePK }}{{ .CompositePKStructName }}{{ else }}{{ $pkCol.GoType }}{{ end }}, {{ if $captureTenant }}[]any, {{ end }}error) {
+	if len(rows) == 0 {
+		return nil, {{ if $captureTenant }}nil, {{ end }}nil
+	}
+	keySets := make([][]any, len(rows))
+	for i, row := range rows {
+		vals := make([]any, len(positions))
+		for j, pos := range positions {
+			vals[j] = row[pos]
+		}
+		keySets[i] = vals
+	}
+
+	// Copied rather than sorted in place: conflictColumns aliases the
+	// package-level {{ $structCamel }}ConflictColumns entry, and BuildSelect
+	// emits its column list sorted, so scan{{ .StructName | structNamePlural }}
+	// must be handed the same sorted list to bind targets against.
+	lookupColumns := make([]string, 0, len(conflictColumns)+2)
+	lookupColumns = append(lookupColumns, conflictColumns...)
+	for _, required := range []string{ {{- range $i, $col := .PKColumns }}{{ if $i }}, {{ end }}{{ printf "%q" $col.Name }}{{ end }}{{ if $captureTenant }}, {{ printf "%q" .Tenancy.Column }}{{ end -}} } {
+		if !slices.Contains(lookupColumns, required) {
+			lookupColumns = append(lookupColumns, required)
+		}
+	}
+	slices.Sort(lookupColumns)
+
+	query, args := sql.BuildSelect(c.dialect, c.table, sql.SelectOptions{
+		Columns:    lookupColumns,
+		Conditions: []sql.Condition{sql.BuildCompositePKBatchCondition(c.dialect, conflictColumns, keySets)},
+	})
+	queried, err := conn.Query(ctx, query, args...)
+	if err != nil {
+		return nil, {{ if $captureTenant }}nil, {{ end }}err
+	}
+	found, err := scan{{ .StructName | structNamePlural }}(queried, lookupColumns)
+	if cerr := queried.Close(); err == nil {
+		err = cerr
+	}
+	if err != nil {
+		return nil, {{ if $captureTenant }}nil, {{ end }}err
+	}
+
+	// The read-back row is keyed by the same function the value rows are, over
+	// the conflict columns in their own order — so keyPositions is the identity.
+	keyPositions := make([]int, len(conflictColumns))
+	for i := range keyPositions {
+		keyPositions[i] = i
+	}
+	type resolvedRow struct {
+		pk {{ if .CompositePK }}{{ .CompositePKStructName }}{{ else }}{{ $pkCol.GoType }}{{ end }}
+{{- if $captureTenant }}
+		tenant any
+{{- end }}
+	}
+	byKey := make(map[string]resolvedRow, len(found))
+	for _, entity := range found {
+		keyRow := make([]any, len(conflictColumns))
+		for i, col := range conflictColumns {
+			keyRow[i] = {{ $structCamel }}ColumnValue(entity, col)
+		}
+		key, ok := upsertDedupeKey(keyRow, keyPositions)
+		if !ok {
+			continue
+		}
+		byKey[key] = resolvedRow{pk: {{ if .CompositePK }}{{ .CompositePKStructName }}{ {{- range .PKColumns }}{{ .FieldName }}: entity.{{ .FieldName }}, {{ end -}} }{{ else }}entity.{{ $pkCol.FieldName }}{{ end }}{{ if $captureTenant }}, tenant: entity.{{ .Tenancy.FieldName }}{{ end }}}
+	}
+
+	pks := make([]{{ if .CompositePK }}{{ .CompositePKStructName }}{{ else }}{{ $pkCol.GoType }}{{ end }}, len(rows))
+{{- if $captureTenant }}
+	tenants := make([]any, len(rows))
+{{- end }}
+	for i, row := range rows {
+		key, ok := upsertDedupeKey(row, positions)
+		if !ok {
+			return nil, {{ if $captureTenant }}nil, {{ end }}fmt.Errorf("row %d carries no definite conflict-target value", i)
+		}
+		resolved, ok := byKey[key]
+		if !ok {
+			return nil, {{ if $captureTenant }}nil, {{ end }}fmt.Errorf("row %d was written but could not be read back by conflict target %v: the stored value differs from the one supplied (a case-insensitive collation, CHAR padding or a timestamp precision the column truncates), or the row was deleted concurrently", i, conflictColumns)
+		}
+		pks[i] = resolved.pk
+{{- if $captureTenant }}
+		tenants[i] = resolved.tenant
+{{- end }}
+	}
+	return pks, {{ if $captureTenant }}tenants, {{ end }}nil
+}
+
+// {{ $structCamel }}ColumnValue returns one column's value off a scanned
+// {{ .StructName }}, so a row read back by resolveUpsertManyRows can be keyed
+// against the value row that wrote it. The conflict target is a runtime
+// argument, so the column cannot be selected at generation time — but its Go
+// type can, which is what keeps this switch free of reflection, like
+// scan{{ .StructName | structNamePlural }}.
+func {{ $structCamel }}ColumnValue({{ .VarName }} *{{ .StructName }}, column string) any {
+	switch column {
+{{- range .ScanShapes }}
+	case {{ printf "%q" .ColumnName }}:
+		return {{ $.VarName }}.{{ .FieldName }}
+{{- end }}
+	}
+	return nil
+}
+{{- end }}
+{{- end }}
+{{- end -}}

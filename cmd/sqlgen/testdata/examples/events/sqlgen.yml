@@ -1,0 +1,34 @@
+version: v1
+
+input:
+  dialect: sqlite
+  paths:
+    - ./schema.sql
+
+output:
+  driver: stdlib
+  dir: ./models
+  package: models
+
+events:
+  enabled: true
+
+generation:
+  soft_delete_columns:
+    - name: deleted_at
+      type: timestamp
+
+tables:
+  products: {}
+  articles: {}
+  audit_logs:
+    events:
+      enabled: false
+  accounts:
+    column_map:
+      password_hash:
+        access: internal
+      recovery_code:
+        access: write_only
+      internal_score:
+        access: internal

@@ -1,0 +1,428 @@
+{
+  "kind": "table",
+  "name": "AssetDocumentLink",
+  "table": "asset_document_links",
+  "schema": "public",
+  "file_prefix": "asset_document_link",
+  "files": [
+    "models_gen.go"
+  ],
+  "comment": "",
+  "indexes": [
+    {
+      "name": "asset_document_links_pkey",
+      "columns": [
+        "asset_id",
+        "document_id"
+      ],
+      "unique": true,
+      "method": "btree"
+    }
+  ],
+  "pk": {
+    "kind": "composite",
+    "struct": "AssetDocumentLinkPK",
+    "columns": [
+      {
+        "name": "asset_id",
+        "go_field": "AssetID",
+        "go_type": "uuid.UUID"
+      },
+      {
+        "name": "document_id",
+        "go_field": "DocumentID",
+        "go_type": "uuid.UUID"
+      }
+    ]
+  },
+  "features": {
+    "soft_delete": null,
+    "cache": {
+      "ttl_seconds": 3600,
+      "hydration": "eager",
+      "key_pattern": "sqlgen:assetdocumentlink:{asset_id}:{document_id}",
+      "invalidates_on": [
+        "Create",
+        "Update",
+        "Delete",
+        "SoftDelete",
+        "Restore",
+        "Increment"
+      ]
+    },
+    "events": {
+      "enabled": true,
+      "types": [
+        "AssetDocumentLinkCreated",
+        "AssetDocumentLinkDeleted",
+        "AssetDocumentLinkUpdated"
+      ],
+      "payload_shape": "models.AssetDocumentLinkEvent"
+    },
+    "tenancy": null
+  },
+  "columns": [
+    {
+      "name": "asset_id",
+      "go_field": "AssetID",
+      "go_type": "uuid.UUID",
+      "db_type": "uuid",
+      "nullable": false,
+      "pk": true,
+      "unique": false,
+      "comparator": "comparator.ID",
+      "comment": ""
+    },
+    {
+      "name": "document_id",
+      "go_field": "DocumentID",
+      "go_type": "uuid.UUID",
+      "db_type": "uuid",
+      "nullable": false,
+      "pk": true,
+      "unique": false,
+      "comparator": "comparator.ID",
+      "comment": ""
+    }
+  ],
+  "relationships": [],
+  "methods": {
+    "query": [
+      {
+        "name": "Get",
+        "params": [
+          {
+            "name": "pk",
+            "type": "AssetDocumentLinkPK"
+          }
+        ],
+        "returns": "*AssetDocumentLink",
+        "errors": [
+          "ErrNotFound"
+        ],
+        "notes": "Delegates to GetMany with a primary-key filter; returns ErrNotFound when no row matches.",
+        "sql_bodies": {
+          "postgres": "SELECT \"asset_id\", \"document_id\" FROM \"public\".\"asset_document_links\" WHERE \"asset_id\" = $1 AND \"document_id\" = $2 LIMIT 1"
+        }
+      },
+      {
+        "name": "GetMany",
+        "params": [
+          {
+            "name": "input",
+            "type": "*GetAssetDocumentLinksInput"
+          }
+        ],
+        "returns": "[]*AssetDocumentLink",
+        "errors": [],
+        "sql_bodies": {
+          "postgres": "SELECT \"asset_id\", \"document_id\" FROM \"public\".\"asset_document_links\" WHERE <filter> ORDER BY <sort> LIMIT <limit>"
+        }
+      },
+      {
+        "name": "Count",
+        "params": [
+          {
+            "name": "filter",
+            "type": "*AssetDocumentLinkFilter"
+          }
+        ],
+        "returns": "int64",
+        "errors": [],
+        "sql_bodies": {
+          "postgres": "SELECT COUNT(*) FROM \"public\".\"asset_document_links\" WHERE <filter>"
+        }
+      },
+      {
+        "name": "Exists",
+        "params": [
+          {
+            "name": "pk",
+            "type": "AssetDocumentLinkPK"
+          }
+        ],
+        "returns": "bool",
+        "errors": [],
+        "sql_bodies": {
+          "postgres": "SELECT EXISTS(SELECT 1 FROM \"public\".\"asset_document_links\" WHERE \"asset_id\" = $1 AND \"document_id\" = $2)"
+        }
+      },
+      {
+        "name": "ExistsWhere",
+        "params": [
+          {
+            "name": "filter",
+            "type": "*AssetDocumentLinkFilter"
+          }
+        ],
+        "returns": "bool",
+        "errors": [],
+        "sql_bodies": {
+          "postgres": "SELECT EXISTS(SELECT 1 FROM \"public\".\"asset_document_links\" WHERE <filter>)"
+        }
+      },
+      {
+        "name": "Paginate",
+        "params": [
+          {
+            "name": "input",
+            "type": "PaginateInput[AssetDocumentLinkFilter]"
+          }
+        ],
+        "returns": "*PaginateResult[AssetDocumentLink]",
+        "errors": [],
+        "notes": "Offset pagination. Issues no statement of its own — composes Count and GetMany, so no sql_bodies entry."
+      },
+      {
+        "name": "Connection",
+        "params": [
+          {
+            "name": "input",
+            "type": "ConnectionInput[AssetDocumentLinkFilter]"
+          }
+        ],
+        "returns": "*Connection[AssetDocumentLink]",
+        "errors": [
+          "ErrInvalidCursor"
+        ],
+        "notes": "Relay cursor pagination. Issues no statement of its own — composes Count and GetMany, so no sql_bodies entry."
+      },
+      {
+        "name": "Stream",
+        "params": [
+          {
+            "name": "input",
+            "type": "*StreamAssetDocumentLinksInput"
+          }
+        ],
+        "returns": "iter.Seq2[*AssetDocumentLink, error]",
+        "errors": [],
+        "notes": "Scalars only — no relationship loading, cache always bypassed. Errors surface through the iterator's second value.",
+        "sql_bodies": {
+          "postgres": "SELECT \"asset_id\", \"document_id\" FROM \"public\".\"asset_document_links\" WHERE <filter> ORDER BY <sort>"
+        }
+      }
+    ],
+    "mutation": [
+      {
+        "name": "Create",
+        "params": [
+          {
+            "name": "input",
+            "type": "*CreateAssetDocumentLinkInput"
+          }
+        ],
+        "returns": "*AssetDocumentLink",
+        "errors": [
+          "ErrNilInput",
+          "ErrConstraintViolation"
+        ],
+        "sql_bodies": {
+          "postgres": "INSERT INTO \"public\".\"asset_document_links\" (<columns>) VALUES (<values>)"
+        }
+      },
+      {
+        "name": "CreateMany",
+        "params": [
+          {
+            "name": "inputs",
+            "type": "[]*CreateAssetDocumentLinkInput"
+          }
+        ],
+        "returns": "[]*AssetDocumentLink",
+        "errors": [
+          "ErrNilInput",
+          "ErrConstraintViolation"
+        ],
+        "notes": "Batched in generation.batch_size chunks. Earlier chunks are not rolled back on a later failure — wrap in a transaction for atomicity.",
+        "sql_bodies": {
+          "postgres": "INSERT INTO \"public\".\"asset_document_links\" (<columns>) VALUES <values>"
+        }
+      },
+      {
+        "name": "Upsert",
+        "params": [
+          {
+            "name": "input",
+            "type": "*CreateAssetDocumentLinkInput"
+          },
+          {
+            "name": "target",
+            "type": "AssetDocumentLinkConflictTarget"
+          }
+        ],
+        "returns": "*AssetDocumentLink",
+        "errors": [
+          "ErrNilInput",
+          "ErrConstraintViolation"
+        ],
+        "notes": "One method over the generated AssetDocumentLinkConflictTarget enum — the target argument selects the conflict columns at call time.",
+        "sql_bodies": {
+          "postgres": "INSERT INTO \"public\".\"asset_document_links\" (<columns>) VALUES (<values>) ON CONFLICT (<conflict_target>) DO UPDATE SET <excluded>"
+        }
+      },
+      {
+        "name": "UpsertMany",
+        "params": [
+          {
+            "name": "inputs",
+            "type": "[]*CreateAssetDocumentLinkInput"
+          },
+          {
+            "name": "target",
+            "type": "AssetDocumentLinkConflictTarget"
+          }
+        ],
+        "returns": "[]*AssetDocumentLink",
+        "errors": [
+          "ErrNilInput",
+          "ErrConstraintViolation"
+        ],
+        "notes": "Batched in generation.batch_size chunks over the same AssetDocumentLinkConflictTarget enum Upsert takes. Inputs resolving to one target are deduped before the statement is built, last occurrence wins. Earlier chunks are not rolled back on a later failure — wrap in a transaction for atomicity.",
+        "sql_bodies": {
+          "postgres": "INSERT INTO \"public\".\"asset_document_links\" (<columns>) VALUES <values> ON CONFLICT (<conflict_target>) DO UPDATE SET <excluded>"
+        }
+      },
+      {
+        "name": "Update",
+        "params": [
+          {
+            "name": "pk",
+            "type": "AssetDocumentLinkPK"
+          },
+          {
+            "name": "input",
+            "type": "*UpdateAssetDocumentLinkInput"
+          }
+        ],
+        "returns": "*AssetDocumentLink",
+        "errors": [
+          "ErrNotFound",
+          "ErrNilInput",
+          "ErrConstraintViolation"
+        ],
+        "notes": "Only fields where IsSet() reports true reach the SET clause; an input with none set issues no UPDATE and returns the row unchanged.",
+        "sql_bodies": {
+          "postgres": "UPDATE \"public\".\"asset_document_links\" SET <set> WHERE \"asset_id\" = $1 AND \"document_id\" = $2"
+        }
+      },
+      {
+        "name": "UpdateMany",
+        "params": [
+          {
+            "name": "items",
+            "type": "[]UpdateAssetDocumentLinkItem"
+          }
+        ],
+        "returns": "[]*AssetDocumentLink",
+        "errors": [
+          "ErrNilInput",
+          "ErrConstraintViolation"
+        ],
+        "notes": "Issues one statement per item. Batched like CreateMany — earlier items are not rolled back on a later failure. A primary key that does not exist is silently skipped, even under strict_updates.",
+        "sql_bodies": {
+          "postgres": "UPDATE \"public\".\"asset_document_links\" SET <set> WHERE \"asset_id\" = $1 AND \"document_id\" = $2"
+        }
+      },
+      {
+        "name": "UpdateWhere",
+        "params": [
+          {
+            "name": "filter",
+            "type": "*AssetDocumentLinkFilter"
+          },
+          {
+            "name": "input",
+            "type": "*UpdateAssetDocumentLinkInput"
+          }
+        ],
+        "returns": "[]*AssetDocumentLink",
+        "errors": [
+          "ErrNilInput",
+          "ErrEmptyFilter",
+          "ErrConstraintViolation"
+        ],
+        "notes": "Idempotent — returns an empty slice when no row matches. ErrEmptyFilter when the filter produces no conditions.",
+        "sql_bodies": {
+          "postgres": "UPDATE \"public\".\"asset_document_links\" SET <set> WHERE <filter> RETURNING \"asset_id\", \"document_id\""
+        }
+      },
+      {
+        "name": "HardDelete",
+        "params": [
+          {
+            "name": "pk",
+            "type": "AssetDocumentLinkPK"
+          }
+        ],
+        "returns": "",
+        "errors": [],
+        "notes": "Idempotent — a primary key that does not exist is not an error.",
+        "sql_bodies": {
+          "postgres": "DELETE FROM \"public\".\"asset_document_links\" WHERE \"asset_id\" = $1 AND \"document_id\" = $2"
+        }
+      },
+      {
+        "name": "HardDeleteMany",
+        "params": [
+          {
+            "name": "pks",
+            "type": "[]AssetDocumentLinkPK"
+          }
+        ],
+        "returns": "",
+        "errors": [],
+        "notes": "Idempotent — primary keys that do not exist are not an error.",
+        "sql_bodies": {
+          "postgres": "DELETE FROM \"public\".\"asset_document_links\" WHERE (\"asset_id\", \"document_id\") IN (<pks>)"
+        }
+      },
+      {
+        "name": "HardDeleteWhere",
+        "params": [
+          {
+            "name": "filter",
+            "type": "*AssetDocumentLinkFilter"
+          }
+        ],
+        "returns": "",
+        "errors": [
+          "ErrEmptyFilter"
+        ],
+        "notes": "Idempotent — no match is not an error. ErrEmptyFilter when the filter produces no conditions.",
+        "sql_bodies": {
+          "postgres": "DELETE FROM \"public\".\"asset_document_links\" WHERE <filter> RETURNING \"asset_id\", \"document_id\""
+        }
+      }
+    ]
+  },
+  "filter": {
+    "type": "AssetDocumentLinkFilter",
+    "fields": [
+      {
+        "name": "AssetID",
+        "type": "*comparator.ID"
+      },
+      {
+        "name": "DocumentID",
+        "type": "*comparator.ID"
+      },
+      {
+        "name": "And",
+        "type": "[]*AssetDocumentLinkFilter"
+      },
+      {
+        "name": "Or",
+        "type": "[]*AssetDocumentLinkFilter"
+      }
+    ]
+  },
+  "sort": {
+    "type": "AssetDocumentLinkSort",
+    "fields": [
+      "AssetID",
+      "DocumentID"
+    ]
+  },
+  "examples": {}
+}

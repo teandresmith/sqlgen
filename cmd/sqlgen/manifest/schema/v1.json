@@ -1,0 +1,504 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw.githubusercontent.com/teandresmith/sqlgen/main/cmd/sqlgen/manifest/schema/v1.json",
+  "title": "sqlgen manifest v1",
+  "description": "Canonical shape of the sqlgen-emitted manifest JSON (PRD §30.4). A file is valid if it is either a manifest document (single-layout full document or per-entity top-level index) or a standalone per-entity record (per_entity/entities/<table>.json). Additional properties are tolerated for forward compatibility.",
+  "anyOf": [
+    { "$ref": "#/$defs/document" },
+    { "$ref": "#/$defs/entity" }
+  ],
+  "$defs": {
+    "document": {
+      "type": "object",
+      "required": [
+        "$schema",
+        "schema_version",
+        "generated_at",
+        "generator",
+        "dialect",
+        "package",
+        "layout",
+        "conventions",
+        "generation_config",
+        "entities",
+        "enums",
+        "extras"
+      ],
+      "additionalProperties": true,
+      "properties": {
+        "$schema": { "type": "string" },
+        "schema_version": {
+          "type": "string",
+          "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+$"
+        },
+        "generated_at": { "type": "string" },
+        "generator": { "$ref": "#/$defs/generator" },
+        "dialect": {
+          "type": "string",
+          "enum": ["postgres", "mysql", "sqlite"]
+        },
+        "package": { "type": "string" },
+        "layout": {
+          "type": "string",
+          "enum": ["single", "per_entity"]
+        },
+        "conventions": { "$ref": "#/$defs/conventions" },
+        "generation_config": { "$ref": "#/$defs/generation_config" },
+        "entities": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/entity" }
+        },
+        "enums": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/enum" }
+        },
+        "extras": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/extra" }
+        }
+      }
+    },
+    "generator": {
+      "type": "object",
+      "required": ["name", "version"],
+      "additionalProperties": true,
+      "properties": {
+        "name": { "type": "string" },
+        "version": { "type": "string" }
+      }
+    },
+    "generation_config": {
+      "type": "object",
+      "description": "Resolved feature-toggle snapshot (PRD §30.4.3). All eight toggles are required; a document fails validation without this object.",
+      "required": [
+        "audit_columns",
+        "cache",
+        "events",
+        "graphql",
+        "graph_top_level",
+        "soft_delete",
+        "tenancy",
+        "views"
+      ],
+      "additionalProperties": true,
+      "properties": {
+        "audit_columns": { "type": "boolean" },
+        "cache": { "type": "boolean" },
+        "events": { "type": "boolean" },
+        "graphql": { "type": "boolean" },
+        "graph_top_level": { "type": "boolean" },
+        "soft_delete": { "type": "boolean" },
+        "tenancy": { "type": "boolean" },
+        "views": { "type": "boolean" }
+      }
+    },
+    "conventions": {
+      "type": "object",
+      "required": [
+        "client_entry_points",
+        "error_sentinels",
+        "find_returns_nil_on_missing",
+        "pagination"
+      ],
+      "additionalProperties": true,
+      "properties": {
+        "client_entry_points": {
+          "type": "object",
+          "required": ["query", "mutation"],
+          "properties": {
+            "query": { "type": "string" },
+            "mutation": { "type": "string" }
+          }
+        },
+        "error_sentinels": {
+          "type": "array",
+          "description": "Go sentinels that exist and can be checked with errors.Is. name is the bare identifier, package qualifies it (the generated package for the PRD \u00a722.1 re-exports, \"tenancy\" for the runtime tenancy sentinels). graphql_code is empty for sentinels with no 1:1 PRD \u00a726.5.5 code, including ErrConstraintViolation \u2014 see constraint_error_codes.",
+          "items": {
+            "type": "object",
+            "required": ["name", "graphql_code", "package"],
+            "additionalProperties": true,
+            "properties": {
+              "name": { "type": "string" },
+              "graphql_code": { "type": "string" },
+              "package": { "type": "string" }
+            }
+          }
+        },
+        "constraint_error_codes": {
+          "type": "object",
+          "description": "PRD \u00a726.5.5 GraphQL code per database.ConstraintType (\u00a722.2). The four constraint kinds share one *ConstraintError discriminated by Type rather than having standalone sentinels.",
+          "additionalProperties": { "type": "string" }
+        },
+        "find_returns_nil_on_missing": { "type": "boolean" },
+        "pagination": {
+          "type": "object",
+          "properties": {
+            "page_type": { "type": "string" },
+            "list_envelope_suffix": { "type": "string" },
+            "cursor_encoding": { "type": "string" }
+          }
+        }
+      }
+    },
+    "entity": {
+      "type": "object",
+      "description": "A single entity. Full records (single-layout entities[] and per-entity files) carry the complete shape; per-entity index pointers carry only {name, table, kind, file}. Both validate here.",
+      "required": ["kind", "name", "table"],
+      "additionalProperties": true,
+      "properties": {
+        "kind": {
+          "type": "string",
+          "enum": ["table", "view"]
+        },
+        "name": { "type": "string" },
+        "table": { "type": "string" },
+        "schema": { "type": "string" },
+        "source": { "type": "string" },
+        "materialized": {
+          "type": "boolean",
+          "description": "True for a PostgreSQL materialized view (kind == \"view\" only). Advertises the refresh capability: mutation methods include Refresh, plus RefreshConcurrently when a qualifying unique index or @pk annotation establishes it."
+        },
+        "file": { "type": "string" },
+        "file_prefix": { "type": "string" },
+        "files": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "comment": { "type": "string" },
+        "indexes": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/index" }
+        },
+        "pk": { "$ref": "#/$defs/pk" },
+        "features": { "$ref": "#/$defs/features" },
+        "columns": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/column" }
+        },
+        "relationships": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/relationship" }
+        },
+        "methods": { "$ref": "#/$defs/methods" },
+        "filter": { "$ref": "#/$defs/filter" },
+        "sort": { "$ref": "#/$defs/sort" },
+        "examples": { "$ref": "#/$defs/examples" }
+      },
+      "if": {
+        "properties": { "kind": { "const": "view" } },
+        "required": ["kind"]
+      },
+      "then": {
+        "properties": {
+          "relationships": {
+            "type": "array",
+            "maxItems": 0
+          }
+        }
+      }
+    },
+    "index": {
+      "type": "object",
+      "required": ["name", "columns", "unique", "method"],
+      "additionalProperties": true,
+      "properties": {
+        "name": { "type": "string" },
+        "columns": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "unique": { "type": "boolean" },
+        "method": { "type": "string" },
+        "where": { "type": "string" }
+      }
+    },
+    "pk": {
+      "type": "object",
+      "required": ["kind"],
+      "additionalProperties": true,
+      "properties": {
+        "kind": {
+          "type": "string",
+          "enum": ["single", "composite", "none"]
+        },
+        "struct": { "type": "string" },
+        "columns": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["name", "go_field", "go_type"],
+            "additionalProperties": true,
+            "properties": {
+              "name": { "type": "string" },
+              "go_field": { "type": "string" },
+              "go_type": { "type": "string" }
+            }
+          }
+        }
+      }
+    },
+    "features": {
+      "type": "object",
+      "additionalProperties": true,
+      "properties": {
+        "soft_delete": {
+          "type": ["object", "null"],
+          "properties": {
+            "column": { "type": "string" },
+            "type": { "type": "string" }
+          }
+        },
+        "cache": {
+          "type": ["object", "null"],
+          "properties": {
+            "ttl_seconds": { "type": "integer" },
+            "hydration": { "type": "string" },
+            "key_pattern": { "type": "string" },
+            "invalidates_on": {
+              "type": "array",
+              "items": { "type": "string" }
+            }
+          }
+        },
+        "events": {
+          "type": ["object", "null"],
+          "properties": {
+            "enabled": { "type": "boolean" },
+            "types": {
+              "type": "array",
+              "items": { "type": "string" }
+            },
+            "payload_shape": { "type": "string" }
+          }
+        },
+        "tenancy": {
+          "type": ["object", "null"],
+          "properties": {
+            "column": { "type": "string" },
+            "mode": { "type": "string" },
+            "missing_resolver_error": { "type": "string" },
+            "mismatch_error": { "type": "string" }
+          }
+        },
+        "audit_columns": {
+          "type": "array",
+          "items": { "type": "string" }
+        }
+      }
+    },
+    "column": {
+      "type": "object",
+      "required": [
+        "name",
+        "go_field",
+        "go_type",
+        "db_type",
+        "nullable",
+        "pk",
+        "unique",
+        "comment"
+      ],
+      "additionalProperties": true,
+      "properties": {
+        "name": { "type": "string" },
+        "go_field": { "type": "string" },
+        "go_type": { "type": "string" },
+        "db_type": { "type": "string" },
+        "nullable": { "type": "boolean" },
+        "pk": { "type": "boolean" },
+        "unique": { "type": "boolean" },
+        "default": { "type": "string" },
+        "default_kind": {
+          "type": "string",
+          "enum": ["literal", "function", "expression"]
+        },
+        "auto": { "type": "string" },
+        "comparator": { "type": "string" },
+        "comment": { "type": "string" },
+        "check": { "type": "string" },
+        "access": {
+          "type": "string",
+          "enum": ["public", "read_only", "write_only", "hidden", "internal"],
+          "default": "public"
+        },
+        "redacted": { "type": "boolean", "default": false }
+      }
+    },
+    "relationship": {
+      "type": "object",
+      "required": ["name", "kind", "target_entity"],
+      "additionalProperties": true,
+      "properties": {
+        "name": { "type": "string" },
+        "kind": {
+          "type": "string",
+          "enum": ["o2o", "o2m", "m2o", "m2m"]
+        },
+        "target_entity": { "type": "string" },
+        "fk": {
+          "type": "object",
+          "properties": {
+            "table": { "type": "string" },
+            "schema": { "type": "string" },
+            "column": { "type": "string" }
+          }
+        },
+        "junction": {
+          "type": "object",
+          "properties": {
+            "table": { "type": "string" },
+            "schema": { "type": "string" },
+            "local_fk": { "type": "string" },
+            "target_fk": { "type": "string" }
+          }
+        },
+        "filter": { "type": "string" }
+      }
+    },
+    "methods": {
+      "type": "object",
+      "required": ["query", "mutation"],
+      "additionalProperties": true,
+      "properties": {
+        "query": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/method" }
+        },
+        "mutation": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/method" }
+        }
+      }
+    },
+    "method": {
+      "type": "object",
+      "required": ["name", "params", "returns", "errors"],
+      "additionalProperties": true,
+      "properties": {
+        "name": { "type": "string" },
+        "params": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["name", "type"],
+            "properties": {
+              "name": { "type": "string" },
+              "type": { "type": "string" }
+            }
+          }
+        },
+        "returns": { "type": "string" },
+        "errors": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "notes": { "type": "string" },
+        "source": {
+          "type": "object",
+          "properties": {
+            "kind": { "type": "string" },
+            "columns": {
+              "type": "array",
+              "items": { "type": "string" }
+            }
+          }
+        },
+        "sql_bodies": {
+          "type": "object",
+          "description": "Optional per-dialect canonical SQL (PRD §30.4.2). Absent when the SQL-build pipeline did not capture a body; the MCP server surfaces -32005 METHOD_SQL_UNAVAILABLE in that case.",
+          "additionalProperties": { "type": "string" }
+        }
+      }
+    },
+    "filter": {
+      "type": "object",
+      "required": ["type", "fields"],
+      "additionalProperties": true,
+      "properties": {
+        "type": { "type": "string" },
+        "fields": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["name", "type"],
+            "properties": {
+              "name": { "type": "string" },
+              "type": { "type": "string" }
+            }
+          }
+        }
+      }
+    },
+    "sort": {
+      "type": "object",
+      "required": ["type", "fields"],
+      "additionalProperties": true,
+      "properties": {
+        "type": { "type": "string" },
+        "fields": {
+          "type": "array",
+          "items": { "type": "string" }
+        }
+      }
+    },
+    "examples": {
+      "type": "object",
+      "additionalProperties": true,
+      "properties": {
+        "read": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "write": {
+          "type": "array",
+          "items": { "type": "string" }
+        }
+      }
+    },
+    "enum": {
+      "type": "object",
+      "required": ["name", "go_type", "db_type", "values"],
+      "additionalProperties": true,
+      "properties": {
+        "name": { "type": "string" },
+        "go_type": { "type": "string" },
+        "db_type": { "type": "string" },
+        "values": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "graphql_name": { "type": "string" },
+        "slice_type": { "type": "string" }
+      }
+    },
+    "extra": {
+      "type": "object",
+      "required": ["kind", "name", "go_type"],
+      "additionalProperties": true,
+      "properties": {
+        "kind": {
+          "type": "string",
+          "enum": ["composite", "domain", "extra"]
+        },
+        "name": { "type": "string" },
+        "go_type": { "type": "string" },
+        "base_type": { "type": "string" },
+        "fields": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["name", "go_type"],
+            "additionalProperties": true,
+            "properties": {
+              "name": { "type": "string" },
+              "go_type": { "type": "string" },
+              "json": { "type": "string" }
+            }
+          }
+        },
+        "source": { "type": "string" },
+        "json_only": { "type": "boolean" }
+      }
+    }
+  }
+}

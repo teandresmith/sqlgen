@@ -1,0 +1,218 @@
+scalar Bytes
+scalar Decimal
+scalar JSON
+scalar KSUID
+scalar NullDecimal
+scalar Time
+
+enum DocumentsEntityTypeEnum {
+  ASSETPRIMARY
+  ASSETATTACHMENT
+  ASSETINVOICE
+  SPV
+}
+
+enum OrdersStatusEnum {
+  PENDING
+  CONFIRMED
+  SHIPPED
+  DELIVERED
+  CANCELLED
+}
+
+enum UsersPermissionsSetValue {
+  READ
+  WRITE
+  DELETE
+  ADMIN
+}
+
+enum UsersRoleEnum {
+  ADMIN
+  EDITOR
+  VIEWER
+}
+
+type Query
+type Mutation
+
+type PageInfo {
+  hasNextPage:     Boolean!
+  hasPreviousPage: Boolean!
+  startCursor:     String
+  endCursor:       String
+}
+
+enum SortDirection {
+  ASC
+  DESC
+}
+
+input StringComparator {
+  eq:         String
+  neq:        String
+  gt:         String
+  gte:        String
+  lt:         String
+  lte:        String
+  contains:   String
+  startsWith: String
+  endsWith:   String
+  like:       String
+  nlike:      String
+  in:         [String!]
+  nin:        [String!]
+}
+
+input NullableStringComparator {
+  eq:         String
+  neq:        String
+  gt:         String
+  gte:        String
+  lt:         String
+  lte:        String
+  contains:   String
+  startsWith: String
+  endsWith:   String
+  like:       String
+  nlike:      String
+  in:         [String!]
+  nin:        [String!]
+  isNull:     Boolean
+}
+
+input NumericComparator {
+  eq:       Float
+  neq:      Float
+  gt:       Float
+  gte:      Float
+  lt:       Float
+  lte:      Float
+  in:       [Float!]
+  nin:      [Float!]
+  between:  NumericRange
+  nbetween: NumericRange
+}
+
+input NumericRange {
+  from: Float!
+  to:   Float!
+}
+
+input NullableNumericComparator {
+  eq:       Float
+  neq:      Float
+  gt:       Float
+  gte:      Float
+  lt:       Float
+  lte:      Float
+  in:       [Float!]
+  nin:      [Float!]
+  between:  NumericRange
+  nbetween: NumericRange
+  isNull:   Boolean
+}
+
+input BooleanComparator {
+  eq:  Boolean
+  neq: Boolean
+}
+
+input TimeComparator {
+  eq:       Time
+  neq:      Time
+  gt:       Time
+  gte:      Time
+  lt:       Time
+  lte:      Time
+  in:       [Time!]
+  nin:      [Time!]
+  between:  TimeRange
+  nbetween: TimeRange
+}
+
+input TimeRange {
+  from: Time!
+  to:   Time!
+}
+
+input NullableTimeComparator {
+  eq:       Time
+  neq:      Time
+  gt:       Time
+  gte:      Time
+  lt:       Time
+  lte:      Time
+  in:       [Time!]
+  nin:      [Time!]
+  between:  TimeRange
+  nbetween: TimeRange
+  isNull:   Boolean
+}
+
+input DecimalComparator {
+  eq:  Decimal
+  neq: Decimal
+  gt:  Decimal
+  gte: Decimal
+  lt:  Decimal
+  lte: Decimal
+  in:  [Decimal!]
+  nin: [Decimal!]
+}
+
+input NullableDecimalComparator {
+  eq:     Decimal
+  neq:    Decimal
+  gt:     Decimal
+  gte:    Decimal
+  lt:     Decimal
+  lte:    Decimal
+  in:     [Decimal!]
+  nin:    [Decimal!]
+  isNull: Boolean
+}
+
+input NullableBytesComparator {
+  eq:     Bytes
+  neq:    Bytes
+  gt:     Bytes
+  gte:    Bytes
+  lt:     Bytes
+  lte:    Bytes
+  in:     [Bytes!]
+  nin:    [Bytes!]
+  isNull: Boolean
+}
+
+input JSONComparator {
+  contains: JSON
+  hasKey:   String
+}
+
+input NullableJSONComparator {
+  contains: JSON
+  hasKey:   String
+  isNull:   Boolean
+}
+
+input DocumentsEntityTypeEnumComparator {
+  eq:  DocumentsEntityTypeEnum
+  neq: DocumentsEntityTypeEnum
+  in:  [DocumentsEntityTypeEnum!]
+  nin: [DocumentsEntityTypeEnum!]
+}
+
+input OrdersStatusEnumComparator {
+  eq:  OrdersStatusEnum
+  neq: OrdersStatusEnum
+  in:  [OrdersStatusEnum!]
+  nin: [OrdersStatusEnum!]
+}
+
+input UsersRoleEnumComparator {
+  eq:  UsersRoleEnum
+  neq: UsersRoleEnum
+  in:  [UsersRoleEnum!]
+  nin: [UsersRoleEnum!]
+}

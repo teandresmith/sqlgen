@@ -1,0 +1,164 @@
+"""
+Account corresponds to the accounts table.
+"""
+type Account {
+  "id"
+  id: Int64!
+  "name"
+  name: String!
+  "external_ref"
+  externalRef: Int64!
+  "nickname"
+  nickname: NullString
+  "flag"
+  flag: NullBool
+  "small_count"
+  smallCount: NullInt16
+  "mid_count"
+  midCount: NullInt32
+  "big_count"
+  bigCount: NullInt64
+  "ratio"
+  ratio: NullFloat64
+  "observed_at"
+  observedAt: NullTime
+  "balance"
+  balance: NullDecimal
+  "tenant_ref"
+  tenantRef: NullUUID
+  "parent_id"
+  parentID: NullInt64
+  "created_at"
+  createdAt: Time!
+  "deleted_at"
+  deletedAt: NullTime
+  "one-to-many relationship with the accounts table."
+  accounts: [Account!]!
+  "one-to-many relationship with the entries table."
+  entries: [Entry!]!
+}
+
+type AccountConnection {
+  edges:      [AccountEdge!]!
+  pageInfo:   PageInfo!
+  totalCount: Int!
+}
+
+type AccountEdge {
+  node:   Account!
+  cursor: String!
+}
+
+type AccountListResult {
+  items:      [Account!]!
+  totalCount: Int!
+  offset:     Int!
+  limit:      Int!
+  hasMore:    Boolean!
+}
+
+input AccountFilter {
+  name: StringComparator
+  externalRef: NumericComparator
+  nickname: NullableStringComparator
+  flag: NullableBooleanComparator
+  smallCount: NullableNumericComparator
+  midCount: NullableNumericComparator
+  bigCount: NullableNumericComparator
+  ratio: NullableNumericComparator
+  observedAt: NullableTimeComparator
+  balance: NullableDecimalComparator
+  tenantRef: NullableIDComparator
+  parentID: NullableNumericComparator
+  createdAt: TimeComparator
+  deletedAt: NullableTimeComparator
+  accounts: AccountFilter
+  entries: EntryFilter
+  and: [AccountFilter!]
+  or:  [AccountFilter!]
+}
+
+enum AccountSortField {
+  ID
+  NAME
+  EXTERNAL_REF
+  NICKNAME
+  FLAG
+  SMALL_COUNT
+  MID_COUNT
+  BIG_COUNT
+  RATIO
+  OBSERVED_AT
+  BALANCE
+  TENANT_REF
+  PARENT_ID
+  CREATED_AT
+  DELETED_AT
+}
+
+input AccountSort {
+  field:     AccountSortField!
+  direction: SortDirection!
+}
+input CreateAccountInput {
+  name: String!
+  externalRef: Int64!
+  nickname: NullString
+  flag: NullBool
+  smallCount: NullInt16
+  midCount: NullInt32
+  bigCount: NullInt64
+  ratio: NullFloat64
+  observedAt: NullTime
+  balance: NullDecimal
+  tenantRef: NullUUID
+  parentID: NullInt64
+  createdAt: Time!
+  deletedAt: NullTime
+}
+input UpdateAccountInput {
+  name: String
+  externalRef: Int64
+  externalRef_inc: Int
+  externalRef_dec: Int
+  nickname: NullString
+  flag: NullBool
+  smallCount: NullInt16
+  smallCount_inc: Int
+  smallCount_dec: Int
+  midCount: NullInt32
+  midCount_inc: Int
+  midCount_dec: Int
+  bigCount: NullInt64
+  bigCount_inc: Int
+  bigCount_dec: Int
+  ratio: NullFloat64
+  ratio_inc: Int
+  ratio_dec: Int
+  observedAt: NullTime
+  balance: NullDecimal
+  balance_inc: Int
+  balance_dec: Int
+  tenantRef: NullUUID
+  parentID: NullInt64
+  createdAt: Time
+  deletedAt: NullTime
+}
+
+extend type Query {
+  account(id: Int64!): Account
+  "Cursor-paginated; ordering is driven by cursor_keys to preserve keyset semantics — pass `sort` to accountList instead."
+  accounts(filter: AccountFilter, first: Int, after: String, last: Int, before: String): AccountConnection!
+  accountList(filter: AccountFilter, sort: [AccountSort!], limit: Int, offset: Int): AccountListResult!
+}
+
+extend type Mutation {
+  createAccount(input: CreateAccountInput!): Account!
+  createAccounts(inputs: [CreateAccountInput!]!): [Account!]!
+  updateAccount(id: Int64!, input: UpdateAccountInput!): Account!
+  updateAccounts(filter: AccountFilter!, input: UpdateAccountInput!): [Account!]!
+  upsertAccount(input: CreateAccountInput!): Account!
+  hardDeleteAccount(id: Int64!): Boolean!
+  softDeleteAccount(id: Int64!): Account
+  restoreAccount(id: Int64!): Account
+}

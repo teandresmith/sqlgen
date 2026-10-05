@@ -1,0 +1,11 @@
+{{- define "tablename" -}}
+
+const (
+{{- range .Tables }}
+	{{ .ConstantName }} hook.TableName = "{{ .Value }}"
+{{- end }}
+{{- range .Views }}
+	{{ .ConstantName }} hook.TableName = "{{ .Value }}"
+{{- end }}
+)
+{{- end -}}

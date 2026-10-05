@@ -1,0 +1,148 @@
+"""
+User corresponds to the users table.
+"""
+type User {
+  "id"
+  id: Int!
+  "name"
+  name: String!
+  "email"
+  email: String!
+  "role"
+  role: String!
+  "age"
+  age: Int
+  "bio"
+  bio: String
+  "is_active"
+  isActive: Boolean!
+  "balance"
+  balance: Float!
+  "login_count"
+  loginCount: Int!
+  "avatar"
+  avatar: Bytes
+  "score"
+  score: Float
+  "created_at"
+  createdAt: DateTime!
+  "updated_at"
+  updatedAt: NullDateTime
+  "one-to-one relationship with the profiles table."
+  profile: Profile
+  "many-to-many relationship with the categories table."
+  categories: [Category!]!
+  "one-to-many relationship with the orders table."
+  orders: [Order!]!
+}
+
+type UserConnection {
+  edges:      [UserEdge!]!
+  pageInfo:   PageInfo!
+  totalCount: Int!
+}
+
+type UserEdge {
+  node:   User!
+  cursor: String!
+}
+
+type UserListResult {
+  items:      [User!]!
+  totalCount: Int!
+  offset:     Int!
+  limit:      Int!
+  hasMore:    Boolean!
+}
+
+input UserFilter {
+  name: StringComparator
+  email: StringComparator
+  role: StringComparator
+  age: NullableNumericComparator
+  bio: NullableStringComparator
+  isActive: BooleanComparator
+  balance: NumericComparator
+  loginCount: NumericComparator
+  avatar: NullableBytesComparator
+  score: NullableNumericComparator
+  createdAt: TimeComparator
+  updatedAt: NullableTimeComparator
+  categories: CategoryFilter
+  orders: OrderFilter
+  and: [UserFilter!]
+  or:  [UserFilter!]
+}
+
+enum UserSortField {
+  ID
+  NAME
+  EMAIL
+  ROLE
+  AGE
+  BIO
+  IS_ACTIVE
+  BALANCE
+  LOGIN_COUNT
+  AVATAR
+  SCORE
+  CREATED_AT
+  UPDATED_AT
+}
+
+input UserSort {
+  field:     UserSortField!
+  direction: SortDirection!
+}
+input CreateUserInput {
+  name: String!
+  email: String!
+  role: String!
+  age: Int
+  bio: String
+  isActive: Boolean!
+  balance: Float!
+  loginCount: Int!
+  avatar: Bytes
+  score: Float
+  createdAt: DateTime!
+  updatedAt: NullDateTime
+}
+input UpdateUserInput {
+  name: String
+  email: String
+  role: String
+  age: Int
+  age_inc: Int
+  age_dec: Int
+  bio: String
+  isActive: Boolean
+  balance: Float
+  balance_inc: Int
+  balance_dec: Int
+  loginCount: Int
+  loginCount_inc: Int
+  loginCount_dec: Int
+  avatar: Bytes
+  score: Float
+  score_inc: Int
+  score_dec: Int
+  createdAt: DateTime
+  updatedAt: NullDateTime
+}
+
+extend type Query {
+  user(id: Int!): User
+  "Cursor-paginated; ordering is driven by cursor_keys to preserve keyset semantics — pass `sort` to userList instead."
+  users(filter: UserFilter, first: Int, after: String, last: Int, before: String): UserConnection!
+  userList(filter: UserFilter, sort: [UserSort!], limit: Int, offset: Int): UserListResult!
+}
+
+extend type Mutation {
+  createUser(input: CreateUserInput!): User!
+  createUsers(inputs: [CreateUserInput!]!): [User!]!
+  updateUser(id: Int!, input: UpdateUserInput!): User!
+  updateUsers(filter: UserFilter!, input: UpdateUserInput!): [User!]!
+  upsertUser(input: CreateUserInput!): User!
+  deleteUser(id: Int!): Boolean!
+}

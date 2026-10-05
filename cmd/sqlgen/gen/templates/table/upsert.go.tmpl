@@ -1,0 +1,557 @@
+{{- define "table/upsert" -}}
+{{- $pkCol := index .PKColumns 0 -}}
+{{- $singular := .TableName | toSingular -}}
+{{- $structCamel := .StructName | toCamelCase -}}
+{{- $captureTenant := and .Tenancy .Tenancy.Tenanted (not .Tenancy.InPrimaryKey) -}}
+{{- $needsInsertResolve := false -}}
+{{- if not .CompositePK -}}
+{{- if or (supportsReturning) (eq .PKStrategy "db") -}}
+{{- $needsInsertResolve = true -}}
+{{- end -}}
+{{- end }}
+{{- if or .Operations.Upsert .Operations.UpsertMany }}
+
+// {{ .StructName }}ConflictTarget identifies a unique constraint for upsert conflict detection.
+type {{ .StructName }}ConflictTarget int
+
+const (
+{{- range $i, $ct := .ConflictTargets }}
+{{- if eq $i 0 }}
+	{{ $ct.ConstantName }} {{ $.StructName }}ConflictTarget = iota // {{ $ct.Comment }}
+{{- else }}
+	{{ $ct.ConstantName }} // {{ $ct.Comment }}
+{{- end }}
+{{- end }}
+)
+
+// {{ $structCamel }}ConflictColumns maps each conflict target to its column set.
+var {{ $structCamel }}ConflictColumns = map[{{ .StructName }}ConflictTarget][]string{
+{{- range .ConflictTargets }}
+	{{ .ConstantName }}: { {{- range $i, $col := .Columns }}{{ if $i }}, {{ end }}{{ printf "%q" $col }}{{ end -}} },
+{{- end }}
+}
+{{- end }}
+{{- if .Operations.Upsert }}
+
+// Upsert inserts a {{ $singular }} or updates it if a row matching the conflict target already
+// exists. Returns the resulting entity with optional field selection and relationship loading.
+// The conflict target determines which unique constraint triggers an update
+// instead of an insert. Non-PK, non-conflict columns are included in the SET clause.
+func (c *{{ $structCamel }}Client) Upsert(ctx context.Context, input *Create{{ .StructName }}Input, target {{ .StructName }}ConflictTarget, opts ...func(*CallOptions[{{ .StructName }}FieldOptions])) (*{{ .StructName }}, error) {
+	// A write cannot normalize nil to the zero value the way a read
+	// does — a zero Create{{ .StructName }}Input legally writes a row (each required
+	// field's zero value, or with no required field, every column's default).
+	// Guarded before the executor, so nil fires no hook and publishes no event.
+	// An input that supplies no column gets no conflict clause on any dialect:
+	// it is a plain insert, so a conflict on a UNIQUE column with a
+	// DEFAULT is a unique violation, including on MySQL, where ON DUPLICATE KEY
+	// UPDATE would have returned the existing row.
+	if input == nil {
+		return nil, ErrNilInput
+	}
+	options := resolveCallOptions(opts)
+	result, err := c.executeMutation(ctx, options.SkipHooks, &hook.MutationContext{
+		Op: hook.OpUpsert, Table: {{ .TableNameConstant }}, Schema: {{ printf "%q" .Schema }},
+		Input: input, CallOptions: options,
+	}, func(ctx context.Context, m *hook.MutationContext) (any, error) {
+		conn := database.Conn(ctx, c.querier)
+
+		columns := []string{ {{- range .CreateInputFields }}{{ if .Required }}{{ printf "%q" .ColumnName }}, {{ end }}{{ end -}} }
+		args := []any{ {{- range .CreateInputFields }}{{ if .Required }}input.{{ .FieldName }}, {{ end }}{{ end -}} }
+{{- if and .Tenancy .Tenancy.Tenanted }}
+
+{{- if .Tenancy.InPrimaryKey }}
+		// Tenant-in-PK verify-match. input.{{ .Tenancy.FieldName }}
+		// is a required field (already appended to columns/args above).
+		// apply=false under tenancy.required:false + zero resolver skips the
+		// verify-match (cross-tenant write; caller-supplied value used as-is).
+		if !options.SkipTenancy {
+			resolvedTenant, apply, err := c.resolveTenant(ctx, options.Tenant)
+			if err != nil {
+				return nil, fmt.Errorf("upsert {{ $singular }}: resolve tenant: %w", err)
+			}
+			// Stash on ctx so the chained terminal Get reuses this value
+			// (single-resolve).
+			// An explicit tenant is not cached: it rides on CallOptions, which
+			// every internal call inherits, and resolveTenant honours it ahead of
+			// the cache. A set zero is honoured verbatim where a resolved
+			// zero takes the required branch, and this slot cannot tell them apart.
+			if options.Tenant == nil {
+				ctx = tenancy.WithResolvedTenant(ctx, resolvedTenant)
+			}
+			if apply {
+				if input.{{ .Tenancy.FieldName }} != resolvedTenant {
+					return nil, tenancy.ErrMismatch
+				}
+				// Stash for cache hook (single-resolve per operation).
+				m.Tenant = resolvedTenant
+			}
+		}
+{{- else }}
+		// Tenancy auto-set + mismatch check. apply=false under
+		// tenancy.required:false + zero resolver falls through to the
+		// caller-supplied value branch.
+		if !options.SkipTenancy {
+			resolvedTenant, apply, err := c.resolveTenant(ctx, options.Tenant)
+			if err != nil {
+				return nil, fmt.Errorf("upsert {{ $singular }}: resolve tenant: %w", err)
+			}
+			// Stash on ctx so the chained terminal Get reuses this value
+			// (single-resolve). The resolver's answer is cached, not
+			// this table's reading of it.
+			// An explicit tenant is not cached: it rides on CallOptions, which
+			// every internal call inherits, and resolveTenant honours it ahead of
+			// the cache. A set zero is honoured verbatim where a resolved
+			// zero takes the required branch, and this slot cannot tell them apart.
+			if options.Tenant == nil {
+				ctx = tenancy.WithResolvedTenant(ctx, resolvedTenant)
+			}
+			if apply {
+				if v, ok := input.{{ .Tenancy.FieldName }}.Get(); ok && v != resolvedTenant {
+					return nil, tenancy.ErrMismatch
+				}
+				columns = append(columns, {{ printf "%q" .Tenancy.Column }})
+				args = append(args, resolvedTenant)
+				// Stash for cache hook (single-resolve per operation).
+				m.Tenant = resolvedTenant
+			} else if v, ok := input.{{ .Tenancy.FieldName }}.Get(); ok {
+				// required:false + zero resolver — caller-supplied value used.
+				columns = append(columns, {{ printf "%q" .Tenancy.Column }})
+				args = append(args, v)
+			}
+		} else if v, ok := input.{{ .Tenancy.FieldName }}.Get(); ok {
+			columns = append(columns, {{ printf "%q" .Tenancy.Column }})
+			args = append(args, v)
+		}
+{{- end }}
+{{- end }}
+{{- if eq .PKStrategy "app" }}
+
+		// PK — use caller-provided ID or generate UUID
+		var pkValue {{ $pkCol.GoType }}
+		if v, ok := input.{{ $pkCol.FieldName }}.Get(); ok {
+			pkValue = v
+		} else {
+			pkValue = {{ $.PKAutoGenExpr }}
+		}
+		columns = append(columns, {{ printf "%q" $pkCol.Name }})
+		args = append(args, pkValue)
+{{- end }}
+{{- range .CreateInputFields }}
+{{- if .Omittable }}
+{{- if or (ne $.PKStrategy "app") (ne .ColumnName (index $.PKColumns 0).Name) }}
+{{- if or (not $.Tenancy) (not $.Tenancy.Tenanted) (ne .ColumnName $.Tenancy.Column) }}
+
+		if v, ok := input.{{ .FieldName }}.Get(); ok {
+			columns = append(columns, {{ printf "%q" .ColumnName }})
+			args = append(args, v)
+		}
+{{- end }}
+{{- end }}
+{{- end }}
+{{- end }}
+
+		// Resolve conflict target and update columns. Tenant column is excluded
+		// from the UPDATE-set half of the conflict clause — a
+		// row's tenant is not a mutable attribute under normal operation.
+		conflictColumns := {{ $structCamel }}ConflictColumns[target]
+		updateColumns := excludeColumns(columns, append(conflictColumns, {{ range $i, $col := .PKColumns }}{{ if $i }}, {{ end }}{{ printf "%q" $col.Name }}{{ end }}{{ if and .Tenancy .Tenancy.Tenanted }}, {{ printf "%q" .Tenancy.Column }}{{ end }}))
+{{- if $needsInsertResolve }}
+
+{{- if $captureTenant }}
+
+		id, capturedTenant, err := c.insertUpsertAndResolveID(ctx, conn, columns, args, conflictColumns, updateColumns)
+{{- else }}
+
+		id, err := c.insertUpsertAndResolveID(ctx, conn, columns, args, conflictColumns, updateColumns)
+{{- end }}
+		if err != nil {
+			return nil, fmt.Errorf("upsert {{ $singular }}: %w", err)
+		}
+		m.AffectedPKs = []any{id}
+{{- if $captureTenant }}
+		m.AffectedTenants = []any{capturedTenant}
+{{- end }}
+
+		// Empty FieldOptions — caller doesn't need the result
+		if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
+			return nil, nil
+		}
+
+		return c.Get(ctx, id, func(o *CallOptions[{{ .StructName }}FieldOptions]) {
+			*o = options
+			o.SkipHooks = true
+			o.LockMode = sql.LockNone
+		})
+{{- else }}
+
+{{- if and $captureTenant (supportsReturning) }}
+
+		// RETURNING the tenant column captures the row's own tenant — on the
+		// conflict-update path the existing row keeps its tenant, so the
+		// returned value (not the input) is the correct cache-key tenant.
+		query, queryArgs := sql.BuildInsert(c.dialect, c.table, sql.InsertOptions{
+			Columns:             columns,
+			Values:              args,
+			UpsertConflictKeys:  conflictColumns,
+			UpsertUpdateColumns: updateColumns,
+			ReturningColumns:    []string{ {{- printf "%q" .Tenancy.Column -}} },
+		})
+		var capturedTenant any
+		{
+			rows, err := conn.Query(ctx, query, queryArgs...)
+			if err != nil {
+				return nil, fmt.Errorf("upsert {{ $singular }}: %w", err)
+			}
+			var rowTenant {{ .Tenancy.GoType }}
+			found := rows.Next()
+			if found {
+				err = rows.Scan(&rowTenant)
+			}
+			if err == nil {
+				err = rows.Err()
+			}
+			// Closed before the fallback below issues its own statement: conn
+			// may be a transaction, where an open result set blocks the next
+			// statement on the same connection.
+			if cerr := rows.Close(); err == nil {
+				err = cerr
+			}
+			if err != nil {
+				return nil, fmt.Errorf("upsert {{ $singular }}: %w", err)
+			}
+			if found {
+				capturedTenant = rowTenant
+			} else {
+				// A conflict target covering every inserted column leaves
+				// nothing to set, so the dialect emitted DO NOTHING — which
+				// returns no row. The PK is caller-known on this
+				// branch, so the conflicting row's tenant is read back by PK.
+				// One column, so there is no scan-order hazard to guard.
+				tenantQuery, tenantArgs := sql.BuildSelect(c.dialect, c.table, sql.SelectOptions{
+					Columns: []string{ {{- printf "%q" .Tenancy.Column -}} },
+{{- if .CompositePK }}
+					Conditions: sql.BuildCompositePKConditions(c.dialect,
+						[]string{ {{- range .PKColumns }}{{ printf "%q" .Name }}, {{ end -}} },
+						[]any{ {{- range .PKColumns }}input.{{ .FieldName }}, {{ end -}} }),
+{{- else if eq .PKStrategy "app" }}
+					Conditions: []sql.Condition{sql.Where(c.dialect.QuoteIdentifier({{ printf "%q" $pkCol.Name }})).Eq(pkValue)},
+{{- else }}
+					Conditions: []sql.Condition{sql.Where(c.dialect.QuoteIdentifier({{ printf "%q" $pkCol.Name }})).Eq(input.{{ $pkCol.FieldName }})},
+{{- end }}
+					Limit: new(1),
+				})
+				if err := conn.QueryRow(ctx, tenantQuery, tenantArgs...).Scan(&rowTenant); err != nil {
+					return nil, fmt.Errorf("upsert {{ $singular }}: capture tenant: %w", err)
+				}
+				capturedTenant = rowTenant
+			}
+		}
+{{- else }}
+
+		query, queryArgs := sql.BuildInsert(c.dialect, c.table, sql.InsertOptions{
+			Columns:             columns,
+			Values:              args,
+			UpsertConflictKeys:  conflictColumns,
+			UpsertUpdateColumns: updateColumns,
+		})
+		_, err := conn.Exec(ctx, query, queryArgs...)
+		if err != nil {
+			return nil, fmt.Errorf("upsert {{ $singular }}: %w", err)
+		}
+{{- end }}
+{{- if and $captureTenant (not (supportsReturning)) }}
+
+		// MySQL has no RETURNING — read the upserted row's tenant after the
+		// statement so cache invalidation and event stamping can rebuild the
+		// tenant-scoped key from the row itself.
+{{- if .CompositePK }}
+		tenantByPK, err := c.captureAffectedTenants(ctx, conn, sql.BuildCompositePKConditions(c.dialect,
+			[]string{ {{- range .PKColumns }}{{ printf "%q" .Name }}, {{ end -}} },
+			[]any{ {{- range .PKColumns }}input.{{ .FieldName }}, {{ end -}} }))
+{{- else if eq .PKStrategy "app" }}
+		tenantByPK, err := c.captureAffectedTenants(ctx, conn, []sql.Condition{sql.Where(c.dialect.QuoteIdentifier({{ printf "%q" $pkCol.Name }})).Eq(pkValue)})
+{{- else }}
+		tenantByPK, err := c.captureAffectedTenants(ctx, conn, []sql.Condition{sql.Where(c.dialect.QuoteIdentifier({{ printf "%q" $pkCol.Name }})).Eq(input.{{ $pkCol.FieldName }})})
+{{- end }}
+		if err != nil {
+			return nil, fmt.Errorf("upsert {{ $singular }}: capture tenant: %w", err)
+		}
+		capturedTenant := tenantByPK[{{ if .CompositePK }}{{ .CompositePKStructName }}{ {{- range .PKColumns }}{{ .FieldName }}: input.{{ .FieldName }}, {{ end -}} }{{ else if eq .PKStrategy "app" }}pkValue{{ else }}input.{{ $pkCol.FieldName }}{{ end }}]
+{{- end }}
+{{- if .CompositePK }}
+
+		m.AffectedPKs = []any{ {{ .CompositePKStructName }}{ {{- range .PKColumns }}{{ .FieldName }}: input.{{ .FieldName }}, {{ end -}} } }
+{{- else if eq .PKStrategy "app" }}
+
+		m.AffectedPKs = []any{pkValue}
+{{- else }}
+
+		m.AffectedPKs = []any{input.{{ $pkCol.FieldName }}}
+{{- end }}
+{{- if $captureTenant }}
+		m.AffectedTenants = []any{capturedTenant}
+{{- end }}
+
+		// Empty FieldOptions — caller doesn't need the result
+		if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
+			return nil, nil
+		}
+{{- if .CompositePK }}
+
+		return c.Get(ctx, {{ .CompositePKStructName }}{ {{- range .PKColumns }}{{ .FieldName }}: input.{{ .FieldName }}, {{ end -}} }, func(o *CallOptions[{{ .StructName }}FieldOptions]) {
+			*o = options
+			o.SkipHooks = true
+			o.LockMode = sql.LockNone
+		})
+{{- else if eq .PKStrategy "app" }}
+
+		return c.Get(ctx, pkValue, func(o *CallOptions[{{ .StructName }}FieldOptions]) {
+			*o = options
+			o.SkipHooks = true
+			o.LockMode = sql.LockNone
+		})
+{{- else }}
+
+		return c.Get(ctx, input.{{ $pkCol.FieldName }}, func(o *CallOptions[{{ .StructName }}FieldOptions]) {
+			*o = options
+			o.SkipHooks = true
+			o.LockMode = sql.LockNone
+		})
+{{- end }}
+{{- end }}
+	})
+	if err != nil {
+		return nil, err
+	}
+	if result == nil {
+		return nil, nil
+	}
+	return result.(*{{ .StructName }}), nil
+}
+{{- end }}
+{{- if and $needsInsertResolve .Operations.Upsert }}
+{{- if $captureTenant }}
+
+// insertUpsertAndResolveID performs the INSERT with upsert clause and resolves
+// the generated primary key, also capturing the row's tenant column so cache
+// invalidation and event stamping can rebuild the tenant-scoped key from the
+// row itself. On the conflict-update path the existing row keeps
+// its tenant, so the captured value (not the input) is authoritative.
+func (c *{{ $structCamel }}Client) insertUpsertAndResolveID(ctx context.Context, conn database.Querier, columns []string, args []any, conflictColumns, updateColumns []string) ({{ $pkCol.GoType }}, any, error) {
+{{- if supportsReturning }}
+	query, queryArgs := sql.BuildInsert(c.dialect, c.table, sql.InsertOptions{
+		Columns:               columns,
+		Values:                args,
+		UpsertConflictKeys:    conflictColumns,
+		UpsertUpdateColumns:   updateColumns,
+		UpsertResolvePKColumn: {{ printf "%q" $pkCol.Name }},
+		ReturningColumns:      []string{ {{- printf "%q" $pkCol.Name }}, {{ printf "%q" .Tenancy.Column -}} },
+	})
+	rows, err := conn.Query(ctx, query, queryArgs...)
+	if err != nil {
+		return {{ zeroValue $pkCol }}, nil, err
+	}
+	var id {{ $pkCol.GoType }}
+	var rowTenant {{ .Tenancy.GoType }}
+	found := rows.Next()
+	if found {
+		err = rows.Scan(&id, &rowTenant)
+	}
+	if err == nil {
+		err = rows.Err()
+	}
+	// Closed before the fallback below issues its own statement: conn may be a
+	// transaction, where an open result set blocks the next statement on the
+	// same connection.
+	if cerr := rows.Close(); err == nil {
+		err = cerr
+	}
+	if err != nil {
+		return {{ zeroValue $pkCol }}, nil, err
+	}
+	if found {
+		return id, rowTenant, nil
+	}
+	return c.resolveUpsertConflictRow(ctx, conn, columns, args, conflictColumns)
+{{- else }}
+	query, queryArgs := sql.BuildInsert(c.dialect, c.table, sql.InsertOptions{
+		Columns:               columns,
+		Values:                args,
+		UpsertConflictKeys:    conflictColumns,
+		UpsertUpdateColumns:   updateColumns,
+		UpsertResolvePKColumn: {{ printf "%q" $pkCol.Name }},
+	})
+	execResult, err := conn.Exec(ctx, query, queryArgs...)
+	if err != nil {
+		return {{ zeroValue $pkCol }}, nil, err
+	}
+	// When the statement carries a conflict clause, UpsertResolvePKColumn made
+	// it republish the conflicting row's PK, so this is the affected row's id
+	// on either branch — including a conflict that changed nothing, which
+	// reports insert_id = 0 without it. A statement without one can
+	// only insert, and this is the new row's id.
+	rawID, err := execResult.LastInsertId()
+	if err != nil {
+		return {{ zeroValue $pkCol }}, nil, err
+	}
+	id := {{ $pkCol.GoType }}(rawID)
+	// MySQL has no RETURNING — read the upserted row's tenant after the
+	// statement.
+	tenantByPK, err := c.captureAffectedTenants(ctx, conn, []sql.Condition{sql.Where(c.dialect.QuoteIdentifier({{ printf "%q" $pkCol.Name }})).Eq(id)})
+	if err != nil {
+		return {{ zeroValue $pkCol }}, nil, err
+	}
+	return id, tenantByPK[id], nil
+{{- end }}
+}
+{{- else }}
+
+// insertUpsertAndResolveID performs the INSERT with upsert clause and resolves the generated primary key.
+func (c *{{ $structCamel }}Client) insertUpsertAndResolveID(ctx context.Context, conn database.Querier, columns []string, args []any, conflictColumns, updateColumns []string) ({{ $pkCol.GoType }}, error) {
+{{- if supportsReturning }}
+	query, queryArgs := sql.BuildInsert(c.dialect, c.table, sql.InsertOptions{
+		Columns:               columns,
+		Values:                args,
+		UpsertConflictKeys:    conflictColumns,
+		UpsertUpdateColumns:   updateColumns,
+		UpsertResolvePKColumn: {{ printf "%q" $pkCol.Name }},
+		ReturningColumns:      []string{ {{- printf "%q" $pkCol.Name -}} },
+	})
+	rows, err := conn.Query(ctx, query, queryArgs...)
+	if err != nil {
+		return {{ zeroValue $pkCol }}, err
+	}
+	var id {{ $pkCol.GoType }}
+	found := rows.Next()
+	if found {
+		err = rows.Scan(&id)
+	}
+	if err == nil {
+		err = rows.Err()
+	}
+	// Closed before the fallback below issues its own statement: conn may be a
+	// transaction, where an open result set blocks the next statement on the
+	// same connection.
+	if cerr := rows.Close(); err == nil {
+		err = cerr
+	}
+	if err != nil {
+		return {{ zeroValue $pkCol }}, err
+	}
+	if found {
+		return id, nil
+	}
+	return c.resolveUpsertConflictRow(ctx, conn, columns, args, conflictColumns)
+{{- else }}
+	query, queryArgs := sql.BuildInsert(c.dialect, c.table, sql.InsertOptions{
+		Columns:               columns,
+		Values:                args,
+		UpsertConflictKeys:    conflictColumns,
+		UpsertUpdateColumns:   updateColumns,
+		UpsertResolvePKColumn: {{ printf "%q" $pkCol.Name }},
+	})
+	execResult, err := conn.Exec(ctx, query, queryArgs...)
+	if err != nil {
+		return {{ zeroValue $pkCol }}, err
+	}
+	// When the statement carries a conflict clause, UpsertResolvePKColumn made
+	// it republish the conflicting row's PK, so this is the affected row's id
+	// on either branch — including a conflict that changed nothing, which
+	// reports insert_id = 0 without it. A statement without one can
+	// only insert, and this is the new row's id.
+	rawID, err := execResult.LastInsertId()
+	if err != nil {
+		return {{ zeroValue $pkCol }}, err
+	}
+	return {{ $pkCol.GoType }}(rawID), nil
+{{- end }}
+}
+{{- end }}
+{{- if supportsReturning }}
+
+// resolveUpsertConflictRow resolves the row an upsert conflicted with, for the
+// case where the statement returned nothing.
+//
+// A conflict target that covers every inserted column leaves no column to
+// assign, so the dialect emits DO NOTHING — and DO NOTHING returns
+// no row, which leaves the RETURNING branch above with no PK for a write that
+// did resolve to a row. The conflicting row is looked up by the same conflict
+// columns the statement targeted; unlike MySQL's ON DUPLICATE KEY UPDATE, an
+// explicit ON CONFLICT target can only have fired on those columns, so the
+// lookup identifies the same row the statement did.
+//
+// The lookup does not exclude soft-deleted rows: the unique index matched
+// regardless of the soft-delete column, so a soft-deleted row is still the row
+// that conflicted and still the row whose PK this resolves. (The terminal Get
+// then applies the read path's own soft-delete filter, exactly as it does on
+// the DO UPDATE SET branch.)
+//
+// This is a second statement, so a concurrent delete between the insert and
+// this lookup surfaces as ErrNotFound. Run the upsert inside a transaction
+// where the pair has to be atomic.
+func (c *{{ $structCamel }}Client) resolveUpsertConflictRow(ctx context.Context, conn database.Querier, columns []string, args []any, conflictColumns []string) ({{ $pkCol.GoType }}, {{ if $captureTenant }}any, {{ end }}error) {
+	conds := make([]sql.Condition, 0, len(conflictColumns))
+	for _, col := range conflictColumns {
+		i := slices.Index(columns, col)
+		if i < 0 {
+			// A conflict column the statement never supplied cannot have
+			// produced the conflict, so there is no row to look up.
+			return {{ zeroValue $pkCol }}, {{ if $captureTenant }}nil, {{ end }}ErrNotFound
+		}
+		conds = append(conds, sql.Where(c.dialect.QuoteIdentifier(col)).Eq(args[i]))
+	}
+
+	query, queryArgs := sql.BuildSelect(c.dialect, c.table, sql.SelectOptions{
+		Columns:    []string{ {{- printf "%q" $pkCol.Name }}{{ if $captureTenant }}, {{ printf "%q" .Tenancy.Column }}{{ end -}} },
+		Conditions: conds,
+		Limit:      new(1),
+	})
+	rows, err := conn.Query(ctx, query, queryArgs...)
+	if err != nil {
+		return {{ zeroValue $pkCol }}, {{ if $captureTenant }}nil, {{ end }}err
+	}
+	defer rows.Close()
+
+	var id {{ $pkCol.GoType }}
+{{- if $captureTenant }}
+	var rowTenant {{ .Tenancy.GoType }}
+{{- end }}
+	if !rows.Next() {
+		if err := rows.Err(); err != nil {
+			return {{ zeroValue $pkCol }}, {{ if $captureTenant }}nil, {{ end }}err
+		}
+		// The conflicting row is gone — deleted between the two statements.
+		return {{ zeroValue $pkCol }}, {{ if $captureTenant }}nil, {{ end }}ErrNotFound
+	}
+{{- if $captureTenant }}
+	// BuildSelect emits its column list sorted, which need not match the order
+	// the columns were requested in, so bind the scan targets by name rather
+	// than by position — the same rule scan{{ .StructName | structNamePlural }} follows.
+	cols, err := rows.Columns()
+	if err != nil {
+		return {{ zeroValue $pkCol }}, nil, err
+	}
+	targets := make([]any, len(cols))
+	for i, col := range cols {
+		switch col {
+		case {{ printf "%q" $pkCol.Name }}:
+			targets[i] = &id
+		case {{ printf "%q" .Tenancy.Column }}:
+			targets[i] = &rowTenant
+		}
+	}
+	if err := rows.Scan(targets...); err != nil {
+		return {{ zeroValue $pkCol }}, nil, err
+	}
+	return id, rowTenant, rows.Err()
+{{- else }}
+	if err := rows.Scan(&id); err != nil {
+		return {{ zeroValue $pkCol }}, err
+	}
+	return id, rows.Err()
+{{- end }}
+}
+{{- end }}
+{{- end }}
+{{- end -}}

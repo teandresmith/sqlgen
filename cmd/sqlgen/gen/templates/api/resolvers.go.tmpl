@@ -1,0 +1,486 @@
+{{- define "api/resolvers" -}}
+{{- $ctx := . -}}
+{{- $pkg := $ctx.ModelsPackage -}}
+
+// Per-table query and mutation methods on *Q and *M. The
+// receivers are sqlgen-owned types living in a sub-package so gqlgen's
+// resolvergen plugin never scans, copies, or attempts to stub them. Seed
+// files in the parent graph package delegate from the gqlgen-emitted
+// *queryResolver / *mutationResolver methods into r.Q.X(...) / r.M.Y(...).
+//
+// Q/M methods take model-side types only — that breaks the cycle that would
+// otherwise form between this sub-package and graph (graph's gqlgen-generated
+// input types depend on graph's package; seed-side translation maps them
+// onto these methods' model-shape parameters).
+
+// Q is the query helper struct for sqlgen-managed Query.* fields.
+type Q struct {
+	Client *{{ $pkg }}.{{ $ctx.ClientName }}
+}
+
+// M is the mutation helper struct for sqlgen-managed Mutation.* fields.
+type M struct {
+	Client *{{ $pkg }}.{{ $ctx.ClientName }}
+}
+
+// IncrementOp is the per-column increment dispatch shape used by Update*
+// methods. Amount may be negative to express decrement.
+type IncrementOp[T comparable] struct {
+	Column T
+	Amount int
+}
+
+// InvalidInputError builds a gqlerror.Error tagged with INVALID_INPUT for
+// runtime conflict checks on input operators. Exported so
+// seed files in the parent graph package can call it directly.
+func InvalidInputError(msg string) error {
+	return &gqlerror.Error{
+		Message:    msg,
+		Extensions: map[string]any{"code": "INVALID_INPUT"},
+	}
+}
+
+{{ range $t := $ctx.Tables }}
+{{- if $t.Operations.Get }}
+// {{ $t.StructName }} resolves the single-by-PK query for {{ $t.SQLTable }}.
+// <table>(id) returns null when missing — no separate exists query is
+// needed. ErrNotFound is collapsed to (nil, nil) so the nullable
+// schema field surfaces as JSON null rather than a NOT_FOUND error.
+func (q *Q) {{ $t.StructName }}(ctx context.Context, {{ pkGoArgs $t.PKArgs }}) (*{{ $pkg }}.{{ $t.StructName }}, error) {
+	fo := {{ toCamelCase $t.StructName }}FieldOptionsFromContext(ctx)
+	res, err := q.Client.{{ $t.ClientAccessor }}().Get(ctx, {{ pkConvert $pkg $t.StructName $t.PKArgs }}, func(o *{{ $pkg }}.CallOptions[{{ $pkg }}.{{ $t.StructName }}FieldOptions]) {
+		o.FieldOptions = fo
+		for _, f := range callOptionsFromHTTP[{{ $pkg }}.{{ $t.StructName }}FieldOptions](ctx) {
+			f(o)
+		}
+	})
+	if err != nil {
+		if errors.Is(err, {{ $pkg }}.ErrNotFound) {
+			return nil, nil
+		}
+		return nil, mapErrorToGQL(err)
+	}
+	return res, nil
+}
+{{- end }}
+
+{{- if $t.Operations.Connection }}
+// {{ $t.StructNamePlural }} resolves the cursor-paginated Connection query for {{ $t.SQLTable }}.
+func (q *Q) {{ $t.StructNamePlural }}(ctx context.Context, filter *{{ $pkg }}.{{ $t.StructName }}Filter, first *int, after *string, last *int, before *string) (*{{ $pkg }}.Connection[{{ $pkg }}.{{ $t.StructName }}], error) {
+	fo := {{ toCamelCase $t.StructName }}FieldOptionsFromContext(ctx)
+	res, err := q.Client.{{ $t.ClientAccessor }}().Connection(ctx, {{ $pkg }}.ConnectionInput[{{ $pkg }}.{{ $t.StructName }}Filter]{
+		Filter: filter,
+		First:  first,
+		After:  after,
+		Last:   last,
+		Before: before,
+	}, func(o *{{ $pkg }}.CallOptions[{{ $pkg }}.{{ $t.StructName }}FieldOptions]) {
+		o.FieldOptions = fo
+		for _, f := range callOptionsFromHTTP[{{ $pkg }}.{{ $t.StructName }}FieldOptions](ctx) {
+			f(o)
+		}
+	})
+	if err != nil {
+		return nil, mapErrorToGQL(err)
+	}
+	return res, nil
+}
+{{- end }}
+
+{{- if $t.Operations.Paginate }}
+// {{ $t.StructName }}List resolves the offset-paginated ListResult query for {{ $t.SQLTable }}.
+func (q *Q) {{ $t.StructName }}List(ctx context.Context, filter *{{ $pkg }}.{{ $t.StructName }}Filter, sort []sql.Sort, limit *int, offset *int) (*{{ $pkg }}.PaginateResult[{{ $pkg }}.{{ $t.StructName }}], error) {
+	fo := {{ toCamelCase $t.StructName }}FieldOptionsFromContext(ctx)
+	in := {{ $pkg }}.PaginateInput[{{ $pkg }}.{{ $t.StructName }}Filter]{
+		Filter: filter,
+		Sort:   sort,
+	}
+	if limit != nil {
+		in.Limit = *limit
+	}
+	if offset != nil {
+		in.Offset = *offset
+	}
+	res, err := q.Client.{{ $t.ClientAccessor }}().Paginate(ctx, in, func(o *{{ $pkg }}.CallOptions[{{ $pkg }}.{{ $t.StructName }}FieldOptions]) {
+		o.FieldOptions = fo
+		for _, f := range callOptionsFromHTTP[{{ $pkg }}.{{ $t.StructName }}FieldOptions](ctx) {
+			f(o)
+		}
+	})
+	if err != nil {
+		return nil, mapErrorToGQL(err)
+	}
+	return res, nil
+}
+{{- end }}
+
+{{- if and $t.Operations.Create $t.HasCreateInput }}
+// Create{{ $t.StructName }} resolves the single-row create mutation for {{ $t.SQLTable }}.
+func (m *M) Create{{ $t.StructName }}(ctx context.Context, input *{{ $pkg }}.Create{{ $t.StructName }}Input) (*{{ $pkg }}.{{ $t.StructName }}, error) {
+	fo := {{ toCamelCase $t.StructName }}FieldOptionsFromContext(ctx)
+	res, err := m.Client.{{ $t.ClientAccessor }}().Create(ctx, input, func(o *{{ $pkg }}.CallOptions[{{ $pkg }}.{{ $t.StructName }}FieldOptions]) {
+		o.FieldOptions = fo
+		for _, f := range callOptionsFromHTTP[{{ $pkg }}.{{ $t.StructName }}FieldOptions](ctx) {
+			f(o)
+		}
+	})
+	if err != nil {
+		return nil, mapErrorToGQL(err)
+	}
+	return res, nil
+}
+{{- end }}
+
+{{- if and $t.Operations.CreateMany $t.HasCreateInput }}
+// Create{{ $t.StructNamePlural }} resolves the bulk create mutation for {{ $t.SQLTable }}.
+func (m *M) Create{{ $t.StructNamePlural }}(ctx context.Context, inputs []*{{ $pkg }}.Create{{ $t.StructName }}Input) ([]*{{ $pkg }}.{{ $t.StructName }}, error) {
+	fo := {{ toCamelCase $t.StructName }}FieldOptionsFromContext(ctx)
+	res, err := m.Client.{{ $t.ClientAccessor }}().CreateMany(ctx, inputs, func(o *{{ $pkg }}.CallOptions[{{ $pkg }}.{{ $t.StructName }}FieldOptions]) {
+		o.FieldOptions = fo
+		for _, f := range callOptionsFromHTTP[{{ $pkg }}.{{ $t.StructName }}FieldOptions](ctx) {
+			f(o)
+		}
+	})
+	if err != nil {
+		return nil, mapErrorToGQL(err)
+	}
+	return res, nil
+}
+{{- end }}
+
+{{- if and $t.Operations.Update $t.HasUpdateInput }}
+{{- if $t.HasIncrementColumns }}
+// Update{{ $t.StructName }} resolves the single-row update mutation for {{ $t.SQLTable }}.
+// The input carries paired `<col>_inc` / `<col>_dec` operators
+// for every numeric column. The seed-side conflict checks reject illegal
+// pairings; this method dispatches `_set` → `_inc` → `_dec` in order and
+// re-fetches the entity afterwards so the mutation result reflects the
+// post-dispatch state.
+func (m *M) Update{{ $t.StructName }}(ctx context.Context, {{ pkGoArgs $t.PKArgs }}, setIn *{{ $pkg }}.Update{{ $t.StructName }}Input, hasSet bool, incOps []IncrementOp[{{ $pkg }}.{{ $t.IncrementEnumType }}]) (*{{ $pkg }}.{{ $t.StructName }}, error) {
+	fo := {{ toCamelCase $t.StructName }}FieldOptionsFromContext(ctx)
+	if hasSet {
+		if _, err := m.Client.{{ $t.ClientAccessor }}().Update(ctx, {{ pkConvert $pkg $t.StructName $t.PKArgs }}, setIn, func(o *{{ $pkg }}.CallOptions[{{ $pkg }}.{{ $t.StructName }}FieldOptions]) {
+			for _, f := range callOptionsFromHTTP[{{ $pkg }}.{{ $t.StructName }}FieldOptions](ctx) {
+				f(o)
+			}
+		}); err != nil {
+			return nil, mapErrorToGQL(err)
+		}
+	}
+	for _, op := range incOps {
+		if err := m.Client.{{ $t.ClientAccessor }}().Increment(ctx, {{ pkConvert $pkg $t.StructName $t.PKArgs }}, {{ $pkg }}.IncrementInput[{{ $pkg }}.{{ $t.IncrementEnumType }}]{
+			Column: op.Column,
+			Amount: op.Amount,
+		}, func(o *{{ $pkg }}.CallOptions[{{ $pkg }}.{{ $t.StructName }}FieldOptions]) {
+			for _, f := range callOptionsFromHTTP[{{ $pkg }}.{{ $t.StructName }}FieldOptions](ctx) {
+				f(o)
+			}
+		}); err != nil {
+			return nil, mapErrorToGQL(err)
+		}
+	}
+	res, err := m.Client.{{ $t.ClientAccessor }}().Get(ctx, {{ pkConvert $pkg $t.StructName $t.PKArgs }}, func(o *{{ $pkg }}.CallOptions[{{ $pkg }}.{{ $t.StructName }}FieldOptions]) {
+		o.FieldOptions = fo
+		for _, f := range callOptionsFromHTTP[{{ $pkg }}.{{ $t.StructName }}FieldOptions](ctx) {
+			f(o)
+		}
+	})
+	if err != nil {
+		return nil, mapErrorToGQL(err)
+	}
+	return res, nil
+}
+{{- else }}
+// Update{{ $t.StructName }} resolves the single-row update mutation for {{ $t.SQLTable }}.
+// This table has no numeric non-PK columns, so no `_inc`/`_dec`
+// dispatch is generated and the IncrementColumn enum is omitted. The method
+// simply applies the set input (when non-empty) and re-fetches the entity.
+func (m *M) Update{{ $t.StructName }}(ctx context.Context, {{ pkGoArgs $t.PKArgs }}, setIn *{{ $pkg }}.Update{{ $t.StructName }}Input, hasSet bool) (*{{ $pkg }}.{{ $t.StructName }}, error) {
+	fo := {{ toCamelCase $t.StructName }}FieldOptionsFromContext(ctx)
+	if hasSet {
+		if _, err := m.Client.{{ $t.ClientAccessor }}().Update(ctx, {{ pkConvert $pkg $t.StructName $t.PKArgs }}, setIn, func(o *{{ $pkg }}.CallOptions[{{ $pkg }}.{{ $t.StructName }}FieldOptions]) {
+			for _, f := range callOptionsFromHTTP[{{ $pkg }}.{{ $t.StructName }}FieldOptions](ctx) {
+				f(o)
+			}
+		}); err != nil {
+			return nil, mapErrorToGQL(err)
+		}
+	}
+	res, err := m.Client.{{ $t.ClientAccessor }}().Get(ctx, {{ pkConvert $pkg $t.StructName $t.PKArgs }}, func(o *{{ $pkg }}.CallOptions[{{ $pkg }}.{{ $t.StructName }}FieldOptions]) {
+		o.FieldOptions = fo
+		for _, f := range callOptionsFromHTTP[{{ $pkg }}.{{ $t.StructName }}FieldOptions](ctx) {
+			f(o)
+		}
+	})
+	if err != nil {
+		return nil, mapErrorToGQL(err)
+	}
+	return res, nil
+}
+{{- end }}
+{{- end }}
+
+{{- if and $t.Operations.UpdateWhere $t.HasUpdateInput }}
+// Update{{ $t.StructNamePlural }} resolves the bulk update-where mutation for {{ $t.SQLTable }}.
+// `_inc` / `_dec` operators are dispatched per-row internally by the unified
+// client, so the seed only needs to pass the translated set input.
+func (m *M) Update{{ $t.StructNamePlural }}(ctx context.Context, filter *{{ $pkg }}.{{ $t.StructName }}Filter, setIn *{{ $pkg }}.Update{{ $t.StructName }}Input) ([]*{{ $pkg }}.{{ $t.StructName }}, error) {
+	fo := {{ toCamelCase $t.StructName }}FieldOptionsFromContext(ctx)
+	res, err := m.Client.{{ $t.ClientAccessor }}().UpdateWhere(ctx, filter, setIn, func(o *{{ $pkg }}.CallOptions[{{ $pkg }}.{{ $t.StructName }}FieldOptions]) {
+		o.FieldOptions = fo
+		for _, f := range callOptionsFromHTTP[{{ $pkg }}.{{ $t.StructName }}FieldOptions](ctx) {
+			f(o)
+		}
+	})
+	if err != nil {
+		return nil, mapErrorToGQL(err)
+	}
+	return res, nil
+}
+{{- end }}
+
+{{- if and $t.Operations.Upsert $t.HasConflictPK $t.HasCreateInput }}
+// Upsert{{ $t.StructName }} resolves the single-row upsert mutation for {{ $t.SQLTable }}.
+func (m *M) Upsert{{ $t.StructName }}(ctx context.Context, input *{{ $pkg }}.Create{{ $t.StructName }}Input) (*{{ $pkg }}.{{ $t.StructName }}, error) {
+	fo := {{ toCamelCase $t.StructName }}FieldOptionsFromContext(ctx)
+	res, err := m.Client.{{ $t.ClientAccessor }}().Upsert(ctx, input, {{ $pkg }}.{{ $t.StructName }}ConflictPK, func(o *{{ $pkg }}.CallOptions[{{ $pkg }}.{{ $t.StructName }}FieldOptions]) {
+		o.FieldOptions = fo
+		for _, f := range callOptionsFromHTTP[{{ $pkg }}.{{ $t.StructName }}FieldOptions](ctx) {
+			f(o)
+		}
+	})
+	if err != nil {
+		return nil, mapErrorToGQL(err)
+	}
+	return res, nil
+}
+{{- end }}
+
+{{- if and $t.Operations.HardDelete (not $t.Operations.SoftDelete) }}
+// Delete{{ $t.StructName }} resolves the bare `delete<Table>` mutation when
+// only hard delete is enabled. Returns Boolean!.
+func (m *M) Delete{{ $t.StructName }}(ctx context.Context, {{ pkGoArgs $t.PKArgs }}) (bool, error) {
+	if err := m.Client.{{ $t.ClientAccessor }}().HardDelete(ctx, {{ pkConvert $pkg $t.StructName $t.PKArgs }}, func(o *{{ $pkg }}.CallOptions[{{ $pkg }}.{{ $t.StructName }}FieldOptions]) {
+		for _, f := range callOptionsFromHTTP[{{ $pkg }}.{{ $t.StructName }}FieldOptions](ctx) {
+			f(o)
+		}
+	}); err != nil {
+		if errors.Is(err, {{ $pkg }}.ErrNotFound) {
+			return false, nil
+		}
+		return false, mapErrorToGQL(err)
+	}
+	return true, nil
+}
+{{- end }}
+
+{{- if and $t.Operations.SoftDelete (not $t.Operations.HardDelete) }}
+// Delete{{ $t.StructName }} resolves the bare `delete<Table>` mutation when
+// only soft delete is enabled.
+func (m *M) Delete{{ $t.StructName }}(ctx context.Context, {{ pkGoArgs $t.PKArgs }}) (*{{ $pkg }}.{{ $t.StructName }}, error) {
+	fo := {{ toCamelCase $t.StructName }}FieldOptionsFromContext(ctx)
+	res, err := m.Client.{{ $t.ClientAccessor }}().SoftDelete(ctx, {{ pkConvert $pkg $t.StructName $t.PKArgs }}, func(o *{{ $pkg }}.CallOptions[{{ $pkg }}.{{ $t.StructName }}FieldOptions]) {
+		o.FieldOptions = fo
+		for _, f := range callOptionsFromHTTP[{{ $pkg }}.{{ $t.StructName }}FieldOptions](ctx) {
+			f(o)
+		}
+	})
+	if err != nil {
+		if errors.Is(err, {{ $pkg }}.ErrNotFound) {
+			return nil, nil
+		}
+		return nil, mapErrorToGQL(err)
+	}
+	return res, nil
+}
+{{- end }}
+
+{{- if and $t.Operations.HardDelete $t.Operations.SoftDelete }}
+// HardDelete{{ $t.StructName }} resolves the explicit hard-delete mutation
+// when both delete variants are enabled. Returns Boolean!.
+func (m *M) HardDelete{{ $t.StructName }}(ctx context.Context, {{ pkGoArgs $t.PKArgs }}) (bool, error) {
+	if err := m.Client.{{ $t.ClientAccessor }}().HardDelete(ctx, {{ pkConvert $pkg $t.StructName $t.PKArgs }}, func(o *{{ $pkg }}.CallOptions[{{ $pkg }}.{{ $t.StructName }}FieldOptions]) {
+		for _, f := range callOptionsFromHTTP[{{ $pkg }}.{{ $t.StructName }}FieldOptions](ctx) {
+			f(o)
+		}
+	}); err != nil {
+		if errors.Is(err, {{ $pkg }}.ErrNotFound) {
+			return false, nil
+		}
+		return false, mapErrorToGQL(err)
+	}
+	return true, nil
+}
+
+// SoftDelete{{ $t.StructName }} resolves the explicit soft-delete mutation
+// when both delete variants are enabled.
+func (m *M) SoftDelete{{ $t.StructName }}(ctx context.Context, {{ pkGoArgs $t.PKArgs }}) (*{{ $pkg }}.{{ $t.StructName }}, error) {
+	fo := {{ toCamelCase $t.StructName }}FieldOptionsFromContext(ctx)
+	res, err := m.Client.{{ $t.ClientAccessor }}().SoftDelete(ctx, {{ pkConvert $pkg $t.StructName $t.PKArgs }}, func(o *{{ $pkg }}.CallOptions[{{ $pkg }}.{{ $t.StructName }}FieldOptions]) {
+		o.FieldOptions = fo
+		for _, f := range callOptionsFromHTTP[{{ $pkg }}.{{ $t.StructName }}FieldOptions](ctx) {
+			f(o)
+		}
+	})
+	if err != nil {
+		if errors.Is(err, {{ $pkg }}.ErrNotFound) {
+			return nil, nil
+		}
+		return nil, mapErrorToGQL(err)
+	}
+	return res, nil
+}
+{{- end }}
+
+{{- if and $t.Operations.Restore $t.HasSoftDelete }}
+// Restore{{ $t.StructName }} resolves the restore mutation.
+func (m *M) Restore{{ $t.StructName }}(ctx context.Context, {{ pkGoArgs $t.PKArgs }}) (*{{ $pkg }}.{{ $t.StructName }}, error) {
+	fo := {{ toCamelCase $t.StructName }}FieldOptionsFromContext(ctx)
+	res, err := m.Client.{{ $t.ClientAccessor }}().Restore(ctx, {{ pkConvert $pkg $t.StructName $t.PKArgs }}, func(o *{{ $pkg }}.CallOptions[{{ $pkg }}.{{ $t.StructName }}FieldOptions]) {
+		o.FieldOptions = fo
+		for _, f := range callOptionsFromHTTP[{{ $pkg }}.{{ $t.StructName }}FieldOptions](ctx) {
+			f(o)
+		}
+	})
+	if err != nil {
+		if errors.Is(err, {{ $pkg }}.ErrNotFound) {
+			return nil, nil
+		}
+		return nil, mapErrorToGQL(err)
+	}
+	return res, nil
+}
+{{- end }}
+
+{{- with $t.Nested }}
+{{- $n := . }}
+{{- if $n.EmitCreate }}
+// Create{{ $t.StructName }}WithRelated resolves the nested create mutation for
+// {{ $t.SQLTable }}. The Go method writes the parent and
+// every nested row in one transaction, and the walked FieldOptions drive its
+// terminal read, so a selected relationship comes back already reflecting the
+// rows this call wrote.
+func (m *M) Create{{ $t.StructName }}WithRelated(ctx context.Context, input *{{ $pkg }}.{{ $n.CreateInputName }}) (*{{ $pkg }}.{{ $t.StructName }}, error) {
+	fo := {{ toCamelCase $t.StructName }}FieldOptionsFromContext(ctx)
+	res, err := m.Client.{{ $t.ClientAccessor }}().CreateWithRelated(ctx, input, func(o *{{ $pkg }}.CallOptions[{{ $pkg }}.{{ $t.StructName }}FieldOptions]) {
+		o.FieldOptions = fo
+		for _, f := range callOptionsFromHTTP[{{ $pkg }}.{{ $t.StructName }}FieldOptions](ctx) {
+			f(o)
+		}
+	})
+	if err != nil {
+		return nil, mapErrorToGQL(err)
+	}
+	return res, nil
+}
+{{- end }}
+{{- if $n.EmitUpdate }}
+{{- if $n.IncrementOpsFunc }}
+// Update{{ $t.StructName }}WithRelated resolves the nested update mutation for
+// {{ $t.SQLTable }}.
+//
+// The flat half is Update{{ $t.StructName }}Input, so it carries the `_inc` /
+// `_dec` operators update{{ $t.StructName }} does, and the Go
+// method has no place for them. When any is set, the method, the increments
+// and the read-back run in one transaction — UpdateWithRelated as a savepoint
+// inside it — so the mutation stays the single atomic write a nested mutation promises
+// rather than committing its nested rows before an increment can fail.
+func (m *M) Update{{ $t.StructName }}WithRelated(ctx context.Context, {{ pkGoArgs $t.PKArgs }}, input *{{ $pkg }}.{{ $n.UpdateInputName }}, incOps []IncrementOp[{{ $pkg }}.{{ $t.IncrementEnumType }}]) (*{{ $pkg }}.{{ $t.StructName }}, error) {
+	fo := {{ toCamelCase $t.StructName }}FieldOptionsFromContext(ctx)
+	if len(incOps) == 0 {
+		res, err := m.Client.{{ $t.ClientAccessor }}().UpdateWithRelated(ctx, {{ pkConvert $pkg $t.StructName $t.PKArgs }}, input, func(o *{{ $pkg }}.CallOptions[{{ $pkg }}.{{ $t.StructName }}FieldOptions]) {
+			o.FieldOptions = fo
+			for _, f := range callOptionsFromHTTP[{{ $pkg }}.{{ $t.StructName }}FieldOptions](ctx) {
+				f(o)
+			}
+		})
+		if err != nil {
+			return nil, mapErrorToGQL(err)
+		}
+		return res, nil
+	}
+	var res *{{ $pkg }}.{{ $t.StructName }}
+	err := m.Client.WithTx(ctx, "{{ $n.IncrementTxName }}", func(ctx context.Context) error {
+		if _, err := m.Client.{{ $t.ClientAccessor }}().UpdateWithRelated(ctx, {{ pkConvert $pkg $t.StructName $t.PKArgs }}, input, func(o *{{ $pkg }}.CallOptions[{{ $pkg }}.{{ $t.StructName }}FieldOptions]) {
+			for _, f := range callOptionsFromHTTP[{{ $pkg }}.{{ $t.StructName }}FieldOptions](ctx) {
+				f(o)
+			}
+		}); err != nil {
+			return err
+		}
+		for _, op := range incOps {
+			if err := m.Client.{{ $t.ClientAccessor }}().Increment(ctx, {{ pkConvert $pkg $t.StructName $t.PKArgs }}, {{ $pkg }}.IncrementInput[{{ $pkg }}.{{ $t.IncrementEnumType }}]{
+				Column: op.Column,
+				Amount: op.Amount,
+			}, func(o *{{ $pkg }}.CallOptions[{{ $pkg }}.{{ $t.StructName }}FieldOptions]) {
+				for _, f := range callOptionsFromHTTP[{{ $pkg }}.{{ $t.StructName }}FieldOptions](ctx) {
+					f(o)
+				}
+			}); err != nil {
+				return err
+			}
+		}
+		// The read-back is the Go method's terminal re-read, moved here because
+		// the increments must precede it, so it runs as that read does: with
+		// hooks — and so the cache — skipped. The writes above
+		// defer their cache invalidation to commit, and a read-through here
+		// would answer the mutation with the row's pre-mutation state.
+		var err error
+		res, err = m.Client.{{ $t.ClientAccessor }}().Get(ctx, {{ pkConvert $pkg $t.StructName $t.PKArgs }}, func(o *{{ $pkg }}.CallOptions[{{ $pkg }}.{{ $t.StructName }}FieldOptions]) {
+			o.FieldOptions = fo
+			for _, f := range callOptionsFromHTTP[{{ $pkg }}.{{ $t.StructName }}FieldOptions](ctx) {
+				f(o)
+			}
+			o.SkipHooks = true
+		})
+		return err
+	})
+	if err != nil {
+		return nil, mapErrorToGQL(err)
+	}
+	return res, nil
+}
+{{- else }}
+// Update{{ $t.StructName }}WithRelated resolves the nested update mutation for
+// {{ $t.SQLTable }}. This table has no incrementable
+// column, so the flat half carries no `_inc` / `_dec` operator and the call is
+// the Go method alone.
+func (m *M) Update{{ $t.StructName }}WithRelated(ctx context.Context, {{ pkGoArgs $t.PKArgs }}, input *{{ $pkg }}.{{ $n.UpdateInputName }}) (*{{ $pkg }}.{{ $t.StructName }}, error) {
+	fo := {{ toCamelCase $t.StructName }}FieldOptionsFromContext(ctx)
+	res, err := m.Client.{{ $t.ClientAccessor }}().UpdateWithRelated(ctx, {{ pkConvert $pkg $t.StructName $t.PKArgs }}, input, func(o *{{ $pkg }}.CallOptions[{{ $pkg }}.{{ $t.StructName }}FieldOptions]) {
+		o.FieldOptions = fo
+		for _, f := range callOptionsFromHTTP[{{ $pkg }}.{{ $t.StructName }}FieldOptions](ctx) {
+			f(o)
+		}
+	})
+	if err != nil {
+		return nil, mapErrorToGQL(err)
+	}
+	return res, nil
+}
+{{- end }}
+{{- end }}
+{{- if $n.EmitUpsert }}
+// Upsert{{ $t.StructName }}WithRelated resolves the nested upsert mutation for
+// {{ $t.SQLTable }}. Unlike upsert{{ $t.StructName }}, it
+// takes the conflict target as an argument: its update-side block is reachable
+// from both branches, so an upsert that always took the insert branch would
+// make `disconnect` match nothing.
+func (m *M) Upsert{{ $t.StructName }}WithRelated(ctx context.Context, input *{{ $pkg }}.{{ $n.UpsertInputName }}, target {{ $pkg }}.{{ $n.ConflictEnumName }}) (*{{ $pkg }}.{{ $t.StructName }}, error) {
+	fo := {{ toCamelCase $t.StructName }}FieldOptionsFromContext(ctx)
+	res, err := m.Client.{{ $t.ClientAccessor }}().UpsertWithRelated(ctx, input, target, func(o *{{ $pkg }}.CallOptions[{{ $pkg }}.{{ $t.StructName }}FieldOptions]) {
+		o.FieldOptions = fo
+		for _, f := range callOptionsFromHTTP[{{ $pkg }}.{{ $t.StructName }}FieldOptions](ctx) {
+			f(o)
+		}
+	})
+	if err != nil {
+		return nil, mapErrorToGQL(err)
+	}
+	return res, nil
+}
+{{- end }}
+{{- end }}
+
+{{ end }}
+{{- end -}}

@@ -1,0 +1,77 @@
+"""
+WorkspaceSetting corresponds to the workspace_settings table.
+"""
+type WorkspaceSetting {
+  "workspace_id"
+  workspaceID: UUID!
+  "key"
+  key: ID!
+  "value"
+  value: String!
+  "created_at"
+  createdAt: Time!
+}
+
+type WorkspaceSettingConnection {
+  edges:      [WorkspaceSettingEdge!]!
+  pageInfo:   PageInfo!
+  totalCount: Int!
+}
+
+type WorkspaceSettingEdge {
+  node:   WorkspaceSetting!
+  cursor: String!
+}
+
+type WorkspaceSettingListResult {
+  items:      [WorkspaceSetting!]!
+  totalCount: Int!
+  offset:     Int!
+  limit:      Int!
+  hasMore:    Boolean!
+}
+
+input WorkspaceSettingFilter {
+  value: StringComparator
+  createdAt: TimeComparator
+  and: [WorkspaceSettingFilter!]
+  or:  [WorkspaceSettingFilter!]
+}
+
+enum WorkspaceSettingSortField {
+  WORKSPACE_ID
+  KEY
+  VALUE
+  CREATED_AT
+}
+
+input WorkspaceSettingSort {
+  field:     WorkspaceSettingSortField!
+  direction: SortDirection!
+}
+input CreateWorkspaceSettingInput {
+  workspaceID: UUID!
+  key: ID!
+  value: String!
+  createdAt: Time!
+}
+input UpdateWorkspaceSettingInput {
+  value: String
+  createdAt: Time
+}
+
+extend type Query {
+  workspaceSetting(workspaceID: UUID!, key: ID!): WorkspaceSetting
+  "Cursor-paginated; ordering is driven by cursor_keys to preserve keyset semantics — pass `sort` to workspaceSettingList instead."
+  workspaceSettings(filter: WorkspaceSettingFilter, first: Int, after: String, last: Int, before: String): WorkspaceSettingConnection!
+  workspaceSettingList(filter: WorkspaceSettingFilter, sort: [WorkspaceSettingSort!], limit: Int, offset: Int): WorkspaceSettingListResult!
+}
+
+extend type Mutation {
+  createWorkspaceSetting(input: CreateWorkspaceSettingInput!): WorkspaceSetting!
+  createWorkspaceSettings(inputs: [CreateWorkspaceSettingInput!]!): [WorkspaceSetting!]!
+  updateWorkspaceSetting(workspaceID: UUID!, key: ID!, input: UpdateWorkspaceSettingInput!): WorkspaceSetting!
+  updateWorkspaceSettings(filter: WorkspaceSettingFilter!, input: UpdateWorkspaceSettingInput!): [WorkspaceSetting!]!
+  upsertWorkspaceSetting(input: CreateWorkspaceSettingInput!): WorkspaceSetting!
+  deleteWorkspaceSetting(workspaceID: UUID!, key: ID!): Boolean!
+}

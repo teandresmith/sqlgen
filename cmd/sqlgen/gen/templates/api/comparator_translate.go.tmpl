@@ -1,0 +1,568 @@
+{{- define "api/comparator-translate" -}}
+{{- $ctx := . -}}
+{{- /* gqlgen-emitted scalar comparator inputs (StringComparator, */ -}}
+{{- /* NullableStringComparator, IDComparator, NumericComparator, the Range */ -}}
+{{- /* types, …) live in the gqlgen `model:` package and are referenced */ -}}
+{{- /* under apiCtx.GqlgenModelAlias. */ -}}
+{{- $gql := $ctx.GqlgenModelAlias -}}
+{{- $gqlPrefix := "" -}}
+{{- if ne $gql "" -}}{{- $gqlPrefix = printf "%s." $gql -}}{{- end }}
+
+// Per-family comparator translators. These are shared across
+// the whole project (one impl per family variant, regardless of how many
+// tables reference it) and are dispatched into by the per-table filter
+// translators in filter_translate_gen.go.
+//
+// Numeric variants are emitted per Go T parameter (e.g.
+// translateNumericComparatorInt32, translateNumericComparatorFloat64). The
+// gqlgen-generated NumericComparator carries float64-typed fields (the
+// GraphQL `Float` scalar binds to Go `float64`); each variant casts to its
+// underlying T so the resulting *comparator.Number[T] matches the model
+// filter's column type exactly.
+//
+// Nullable variants take their own Nullable<X>Comparator input, not the base
+// one — GraphQL input types are global, so `isNull` cannot be a conditional
+// field on a shared input and nullability has to be a separate type.
+// They therefore copy the operands themselves rather than
+// delegating to the base translator: the two functions no longer accept the
+// same Go type. The operand block is identical text either way because
+// comparator.Nullable<X> embeds <X>, so Go promotes the field assignments.
+// `isNull` lands in the wrapper's `Null *bool`, giving IS NULL / IS NOT NULL
+// a reachable path from the API surface.
+//
+// The `Custom []sql.Condition` field every family carries is deliberately
+// never populated here — it is a raw-SQL escape hatch, and exposing it over
+// HTTP would be an injection surface.
+{{ range $tr := $ctx.ComparatorTranslators }}
+// {{ $tr.FuncName }} translates a GraphQL {{ $tr.InputTypeName }} into a
+// {{ $tr.GoReturnType }} for the model layer's filter struct.
+{{- if eq $tr.Family "Decimal" }}
+//
+// Decimal columns filter through comparator.String on the canonical string
+// form — decimal.Decimal does not satisfy comparator.Numeric — so
+// each Decimal-typed operand is rendered with String(). The ordered
+// operators stay numerically correct because the parameter is compared
+// against a numeric column: the database coerces it, rather than collating
+// it as text.
+{{- else if and (eq $tr.Family "Number") (eq $tr.NumericT "time.Duration") }}
+//
+// A duration column's model comparator IS comparator.Number[time.Duration] —
+// time.Duration is ~int64, so it satisfies comparator.Numeric — but its
+// operands bind to the Duration scalar rather than to Float, which is what
+// gives it an input type of its own instead of collapsing into
+// NumericComparator. gqlgen therefore hands us
+// time.Duration directly and the conversions below are identities. The value
+// reaches the driver as a duration, so the ordered and between operators
+// compare intervals rather than nanosecond counts.
+{{- else if eq $tr.Family "Number" }}
+//
+// Each operand casts from the input's float64 into {{ $tr.NumericT }} so the
+// result matches the model filter's column type exactly.
+{{- else if eq $tr.Family "Opaque" }}
+//
+// Operands are typed with the same scalar the column's own field declares, so
+// no conversion is needed — gqlgen hands us
+{{- if $tr.OperandIsPointer }} *{{ $tr.OpaqueT }}, which assigns straight onto
+// the comparator's own pointer field.
+{{- else }} {{ $tr.OpaqueT }}, which is already nilable
+// and so arrives unwrapped.
+{{- end }} The value reaches the driver as the column's
+// own Go type rather than as a text rendering of it, which is what makes the
+// filter compare against a binary or network column correctly.
+{{- else if eq $tr.Family "Enum" }}
+//
+// Operands are typed with the bound GraphQL enum rather than with String, so
+// an unknown member is rejected by the GraphQL parser before any resolver
+// runs. No conversion is needed: the gqlgen `models:`
+// merge binds that enum to {{ $tr.EnumT }} itself, so the values arrive as
+// the model comparator's own type parameter.
+{{- else if eq $tr.Family "JSON" }}
+//
+// The document operands are typed with the `JSON` scalar the column's own
+// field already declares, so a malformed document is rejected while
+// unmarshaling instead of reaching the database as a cast error. The comparator
+// holds them as `*any`; comparator.JSON.Parse switches on the dialect, so one
+// input serves PostgreSQL's `col::jsonb @>` / `col::jsonb ?` and MySQL's
+// JSON_CONTAINS / JSON_CONTAINS_PATH. `hasKey`'s operand is the
+// exception the shared input does not normalize: a bare key on PostgreSQL, a
+// JSON path on MySQL.
+{{- else if eq $tr.Family "JSONB" }}
+//
+// PostgreSQL-only, which needs no switch here:
+// resolveSimpleComparator resolves a column to comparator.JSONB only under the
+// postgres dialect, so nothing off it can reach this translator. The document
+// operands are typed with the `JSON` scalar, as the JSON family's are.
+{{- else if eq $tr.Family "Slice" }}
+//
+// PostgreSQL-only for the same structural reason the JSONB family is: only the
+// gotype resolver's PostgreSQL array branch sets IsSlice, so no column on
+// another dialect resolves to comparator.Slice at all.
+{{- if $tr.SliceElemCast }}
+//
+// The input is keyed on the ELEMENT's GraphQL type and this function on its Go
+// type, so every width binding to `{{ $tr.SliceElemGraphQL }}` shares one
+// {{ $tr.SliceElemGraphQL }}SliceComparator and each element converts into
+// {{ $tr.SliceT }} — the same split NumericComparator carries, for the same
+// reason.
+{{- else }}
+//
+// No conversion is needed: gqlgen's element type for
+// `[{{ $tr.SliceElemGraphQL }}!]` is already {{ $tr.SliceT }}.
+{{- end }}
+//
+// `isEmpty` is a Boolean predicate on the array itself rather than an element
+// operand, so it copies straight across whatever the element type is.
+{{- end }}
+func {{ $tr.FuncName }}(in *{{ $gqlPrefix }}{{ $tr.InputTypeName }}) {{ $tr.GoReturnType }} {
+	if in == nil {
+		return nil
+	}
+	out := &{{ $tr.OutStructName }}{}
+{{- template "api/comparator-operands" $tr }}
+{{- if $tr.Nullable }}
+	if in.IsNull != nil {
+		out.Null = in.IsNull
+	}
+{{- end }}
+	return out
+}
+{{ end }}
+{{- end -}}
+
+{{- /*
+  api/comparator-operands emits the operand copies for one family against a
+  local `out`. Shared by the base and Nullable variants of every family —
+  see the note above on field promotion. Ordered to match the operator list
+  in the shared schema so the two read in step.
+*/ -}}
+{{- define "api/comparator-operands" -}}
+{{- $tr := . -}}
+{{- if eq $tr.Family "String" }}
+	if in.Eq != nil {
+		out.Eq = in.Eq
+	}
+	if in.Neq != nil {
+		out.Neq = in.Neq
+	}
+	if in.Gt != nil {
+		out.Gt = in.Gt
+	}
+	if in.Gte != nil {
+		out.Gte = in.Gte
+	}
+	if in.Lt != nil {
+		out.Lt = in.Lt
+	}
+	if in.Lte != nil {
+		out.Lte = in.Lte
+	}
+	if in.Contains != nil {
+		out.Contains = in.Contains
+	}
+	if in.StartsWith != nil {
+		out.StartsWith = in.StartsWith
+	}
+	if in.EndsWith != nil {
+		out.EndsWith = in.EndsWith
+	}
+	if in.Like != nil {
+		out.Like = in.Like
+	}
+	if in.Nlike != nil {
+		out.NLike = in.Nlike
+	}
+	if len(in.In) > 0 {
+		out.In = append([]string(nil), in.In...)
+	}
+	if len(in.Nin) > 0 {
+		out.Nin = append([]string(nil), in.Nin...)
+	}
+{{- else if eq $tr.Family "ID" }}
+	if in.Eq != nil {
+		out.Eq = in.Eq
+	}
+	if in.Neq != nil {
+		out.Neq = in.Neq
+	}
+	if in.Gt != nil {
+		out.Gt = in.Gt
+	}
+	if in.Gte != nil {
+		out.Gte = in.Gte
+	}
+	if in.Lt != nil {
+		out.Lt = in.Lt
+	}
+	if in.Lte != nil {
+		out.Lte = in.Lte
+	}
+	if len(in.In) > 0 {
+		out.In = append([]string(nil), in.In...)
+	}
+	if len(in.Nin) > 0 {
+		out.Nin = append([]string(nil), in.Nin...)
+	}
+{{- else if eq $tr.Family "Bool" }}
+	if in.Eq != nil {
+		out.Eq = in.Eq
+	}
+	if in.Neq != nil {
+		out.Neq = in.Neq
+	}
+{{- else if eq $tr.Family "Decimal" }}
+	if in.Eq != nil {
+		v := in.Eq.String()
+		out.Eq = &v
+	}
+	if in.Neq != nil {
+		v := in.Neq.String()
+		out.Neq = &v
+	}
+	if in.Gt != nil {
+		v := in.Gt.String()
+		out.Gt = &v
+	}
+	if in.Gte != nil {
+		v := in.Gte.String()
+		out.Gte = &v
+	}
+	if in.Lt != nil {
+		v := in.Lt.String()
+		out.Lt = &v
+	}
+	if in.Lte != nil {
+		v := in.Lte.String()
+		out.Lte = &v
+	}
+{{- /* Decimal is a custom scalar, so its lists arrive as []*decimal.Decimal. */}}
+	if len(in.In) > 0 {
+		xs := make([]string, 0, len(in.In))
+		for _, v := range in.In {
+			if v == nil {
+				continue
+			}
+			xs = append(xs, v.String())
+		}
+		out.In = xs
+	}
+	if len(in.Nin) > 0 {
+		xs := make([]string, 0, len(in.Nin))
+		for _, v := range in.Nin {
+			if v == nil {
+				continue
+			}
+			xs = append(xs, v.String())
+		}
+		out.Nin = xs
+	}
+{{- else if eq $tr.Family "Time" }}
+	if in.Eq != nil {
+		out.Eq = in.Eq
+	}
+	if in.Neq != nil {
+		out.Neq = in.Neq
+	}
+	if in.Gt != nil {
+		out.Gt = in.Gt
+	}
+	if in.Gte != nil {
+		out.Gte = in.Gte
+	}
+	if in.Lt != nil {
+		out.Lt = in.Lt
+	}
+	if in.Lte != nil {
+		out.Lte = in.Lte
+	}
+{{- /*
+  gqlgen binds a list of a CUSTOM scalar as []*T even when the element is
+  declared non-null (`[Time!]`), unlike the builtin scalars, which come
+  through as []string / []float64. Deref with a nil guard so the generated
+  code is correct either way a value arrives.
+*/}}
+	if len(in.In) > 0 {
+		xs := make([]time.Time, 0, len(in.In))
+		for _, v := range in.In {
+			if v == nil {
+				continue
+			}
+			xs = append(xs, *v)
+		}
+		out.In = xs
+	}
+	if len(in.Nin) > 0 {
+		xs := make([]time.Time, 0, len(in.Nin))
+		for _, v := range in.Nin {
+			if v == nil {
+				continue
+			}
+			xs = append(xs, *v)
+		}
+		out.Nin = xs
+	}
+	if in.Between != nil {
+		out.Between = &comparator.Range[time.Time]{Start: in.Between.From, End: in.Between.To}
+	}
+	if in.Nbetween != nil {
+		out.NBetween = &comparator.Range[time.Time]{Start: in.Nbetween.From, End: in.Nbetween.To}
+	}
+{{- else if eq $tr.Family "Number" }}
+	if in.Eq != nil {
+		v := {{ $tr.NumericT }}(*in.Eq)
+		out.Eq = &v
+	}
+	if in.Neq != nil {
+		v := {{ $tr.NumericT }}(*in.Neq)
+		out.Neq = &v
+	}
+	if in.Gt != nil {
+		v := {{ $tr.NumericT }}(*in.Gt)
+		out.Gt = &v
+	}
+	if in.Gte != nil {
+		v := {{ $tr.NumericT }}(*in.Gte)
+		out.Gte = &v
+	}
+	if in.Lt != nil {
+		v := {{ $tr.NumericT }}(*in.Lt)
+		out.Lt = &v
+	}
+	if in.Lte != nil {
+		v := {{ $tr.NumericT }}(*in.Lte)
+		out.Lte = &v
+	}
+	if len(in.In) > 0 {
+		xs := make([]{{ $tr.NumericT }}, len(in.In))
+		for i, v := range in.In {
+			xs[i] = {{ $tr.NumericT }}(v)
+		}
+		out.In = xs
+	}
+	if len(in.Nin) > 0 {
+		xs := make([]{{ $tr.NumericT }}, len(in.Nin))
+		for i, v := range in.Nin {
+			xs[i] = {{ $tr.NumericT }}(v)
+		}
+		out.Nin = xs
+	}
+	if in.Between != nil {
+		out.Between = &comparator.Range[{{ $tr.NumericT }}]{
+			Start: {{ $tr.NumericT }}(in.Between.From),
+			End:   {{ $tr.NumericT }}(in.Between.To),
+		}
+	}
+	if in.Nbetween != nil {
+		out.NBetween = &comparator.Range[{{ $tr.NumericT }}]{
+			Start: {{ $tr.NumericT }}(in.Nbetween.From),
+			End:   {{ $tr.NumericT }}(in.Nbetween.To),
+		}
+	}
+{{- else if eq $tr.Family "Enum" }}
+{{- /*
+  A schema enum's Go type is a named string (templates/enum.go.tmpl), so by
+  the same two gqlgen rules opaqueComparatorBindings records it is neither
+  nilable (nullable scalar operands are pointer-wrapped) nor a struct
+  (non-null list elements stay bare). MEASURED against gqlgen v0.17.90, not
+  inferred: the graphql example's models_gen.go binds `entityType:
+  DocumentEntityTypeEnum` to *models.DocumentEntityTypeEnum and
+  `declaredCategories: [DocumentEntityTypeEnum!]!` to
+  []models.DocumentEntityTypeEnum.
+*/}}
+	if in.Eq != nil {
+		out.Eq = in.Eq
+	}
+	if in.Neq != nil {
+		out.Neq = in.Neq
+	}
+	if len(in.In) > 0 {
+		out.In = append([]{{ $tr.EnumT }}(nil), in.In...)
+	}
+	if len(in.Nin) > 0 {
+		out.Nin = append([]{{ $tr.EnumT }}(nil), in.Nin...)
+	}
+{{- else if eq $tr.Family "JSON" }}
+{{- template "api/comparator-json-document" "Contains" }}
+	if in.HasKey != nil {
+		out.HasKey = in.HasKey
+	}
+{{- else if eq $tr.Family "JSONB" }}
+	if in.HasKey != nil {
+		out.HasKey = in.HasKey
+	}
+	if len(in.HasAnyKey) > 0 {
+		out.HasAnyKey = append([]string(nil), in.HasAnyKey...)
+	}
+	if len(in.HasAllKeys) > 0 {
+		out.HasAllKeys = append([]string(nil), in.HasAllKeys...)
+	}
+{{- template "api/comparator-json-document" "Contains" }}
+{{- template "api/comparator-json-document" "ContainedBy" }}
+	if in.PathExists != nil {
+		out.PathExists = in.PathExists
+	}
+{{- else if eq $tr.Family "Slice" }}
+{{- $t := $tr.SliceT }}
+{{- if $tr.SliceElemCast }}
+	if len(in.ContainsAny) > 0 {
+		xs := make([]{{ $t }}, len(in.ContainsAny))
+		for i, v := range in.ContainsAny {
+			xs[i] = {{ $t }}(v)
+		}
+		out.ContainsAny = xs
+	}
+	if len(in.ContainsAll) > 0 {
+		xs := make([]{{ $t }}, len(in.ContainsAll))
+		for i, v := range in.ContainsAll {
+			xs[i] = {{ $t }}(v)
+		}
+		out.ContainsAll = xs
+	}
+	if len(in.ContainedBy) > 0 {
+		xs := make([]{{ $t }}, len(in.ContainedBy))
+		for i, v := range in.ContainedBy {
+			xs[i] = {{ $t }}(v)
+		}
+		out.ContainedBy = xs
+	}
+{{- else }}
+	if len(in.ContainsAny) > 0 {
+		out.ContainsAny = append([]{{ $t }}(nil), in.ContainsAny...)
+	}
+	if len(in.ContainsAll) > 0 {
+		out.ContainsAll = append([]{{ $t }}(nil), in.ContainsAll...)
+	}
+	if len(in.ContainedBy) > 0 {
+		out.ContainedBy = append([]{{ $t }}(nil), in.ContainedBy...)
+	}
+{{- end }}
+	if in.IsEmpty != nil {
+		out.IsEmpty = in.IsEmpty
+	}
+{{- else if eq $tr.Family "Opaque" }}
+{{- /*
+  Two operand shapes, both MEASURED against gqlgen v0.17.90 rather than
+  inferred (see opaqueComparatorBindings):
+
+    OperandIsPointer=false — the Go type is nilable ([]byte, net.IP,
+      net.HardwareAddr), so gqlgen leaves a nullable operand BARE. The
+      comparator field is *T, so we take the address of a local.
+    OperandIsPointer=true  — the Go type is not nilable (net.IPNet), so
+      gqlgen pointer-wraps and the pointer assigns straight across.
+
+  ListElemIsPointer follows a DIFFERENT gqlgen rule (struct elements are
+  pointer-wrapped inside a list, nilable and basic-kind ones are not), which
+  is why it is carried separately rather than derived from the flag above.
+*/}}
+{{- $t := $tr.OpaqueT }}
+{{- if $tr.OperandIsPointer }}
+	if in.Eq != nil {
+		out.Eq = in.Eq
+	}
+	if in.Neq != nil {
+		out.Neq = in.Neq
+	}
+	if in.Gt != nil {
+		out.Gt = in.Gt
+	}
+	if in.Gte != nil {
+		out.Gte = in.Gte
+	}
+	if in.Lt != nil {
+		out.Lt = in.Lt
+	}
+	if in.Lte != nil {
+		out.Lte = in.Lte
+	}
+{{- else }}
+	if in.Eq != nil {
+		v := in.Eq
+		out.Eq = &v
+	}
+	if in.Neq != nil {
+		v := in.Neq
+		out.Neq = &v
+	}
+	if in.Gt != nil {
+		v := in.Gt
+		out.Gt = &v
+	}
+	if in.Gte != nil {
+		v := in.Gte
+		out.Gte = &v
+	}
+	if in.Lt != nil {
+		v := in.Lt
+		out.Lt = &v
+	}
+	if in.Lte != nil {
+		v := in.Lte
+		out.Lte = &v
+	}
+{{- end }}
+{{- if $tr.ListElemIsPointer }}
+{{- /* Deref with a nil guard, as the Time family does for []*time.Time. */}}
+	if len(in.In) > 0 {
+		xs := make([]{{ $t }}, 0, len(in.In))
+		for _, v := range in.In {
+			if v == nil {
+				continue
+			}
+			xs = append(xs, *v)
+		}
+		out.In = xs
+	}
+	if len(in.Nin) > 0 {
+		xs := make([]{{ $t }}, 0, len(in.Nin))
+		for _, v := range in.Nin {
+			if v == nil {
+				continue
+			}
+			xs = append(xs, *v)
+		}
+		out.Nin = xs
+	}
+{{- else }}
+	if len(in.In) > 0 {
+		out.In = append([]{{ $t }}(nil), in.In...)
+	}
+	if len(in.Nin) > 0 {
+		out.Nin = append([]{{ $t }}(nil), in.Nin...)
+	}
+{{- end }}
+{{- end }}
+{{- end -}}
+
+{{- /*
+  api/comparator-json-document emits one document-operand copy for the JSON /
+  JSONB families. The argument is the Go field name shared by the gqlgen input
+  and the comparator (`Contains`, `ContainedBy`).
+
+  Two shapes have to be bridged. gqlgen binds the `JSON` scalar to types.JSON,
+  which is nilable, so it leaves the nullable operand BARE — the same rule
+  opaqueComparatorBindings records — while the comparator holds the document as
+  `*any`, so the value has to box into a local whose address can be taken.
+
+  The `string(...)` is not cosmetic, and the reason is MEASURED rather than
+  assumed. types.JSON is a []byte, so passing it through sends a BINARY
+  parameter. Against MySQL 8.0 that works on a default DSN and FAILS under
+  `interpolateParams=true`, which go-sql-driver escapes as `_binary'…'`:
+
+    SELECT JSON_CONTAINS('{"a":1,"b":2}', ?)  -- []byte arg
+    Error 3144 (22032): Cannot create a JSON value from a string with
+    CHARACTER SET 'binary'
+
+  A string arg returns 1 in both modes, and PostgreSQL's `@>` / `<@` accept it
+  as readily as the bytes. Since the DSN is the consumer's and not sqlgen's,
+  the generated filter has to be correct under either — and a string is also
+  the exact shape the Go-client callers already pass into these comparators,
+  so the model side sees one type whichever entry point built the filter.
+
+  The conversion additionally keeps this file free of a `types` import, which
+  under FormatOnly rendering would have to be emitted by hand.
+*/ -}}
+{{- define "api/comparator-json-document" }}
+	if in.{{ . }} != nil {
+		v := any(string(in.{{ . }}))
+		out.{{ . }} = &v
+	}
+{{- end -}}

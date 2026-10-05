@@ -1,0 +1,182 @@
+"""
+ScalarProbe corresponds to the scalar_probes table.
+"""
+type ScalarProbe {
+  "id"
+  id: UUID!
+  "label"
+  label: String!
+  "payload"
+  payload: Bytes!
+  "signature"
+  signature: Bytes
+  "dur"
+  dur: Duration!
+  "dur_n"
+  durN: Duration
+  "addr"
+  addr: IP!
+  "addr_n"
+  addrN: IP
+  "net_block"
+  netBlock: CIDR!
+  "net_block_n"
+  netBlockN: CIDR
+  "mac"
+  mac: MacAddr!
+  "mac_n"
+  macN: MacAddr
+  "note"
+  note: NullString
+  "flag"
+  flag: NullBool
+  "small_count"
+  smallCount: NullInt16
+  "mid_count"
+  midCount: NullInt32
+  "big_count"
+  bigCount: NullInt64
+  "ratio"
+  ratio: NullFloat64
+  "observed_at"
+  observedAt: NullTime
+  "created_at"
+  createdAt: Time!
+}
+
+type ScalarProbeConnection {
+  edges:      [ScalarProbeEdge!]!
+  pageInfo:   PageInfo!
+  totalCount: Int!
+}
+
+type ScalarProbeEdge {
+  node:   ScalarProbe!
+  cursor: String!
+}
+
+type ScalarProbeListResult {
+  items:      [ScalarProbe!]!
+  totalCount: Int!
+  offset:     Int!
+  limit:      Int!
+  hasMore:    Boolean!
+}
+
+input ScalarProbeFilter {
+  label: StringComparator
+  payload: BytesComparator
+  signature: NullableBytesComparator
+  dur: DurationComparator
+  durN: NullableDurationComparator
+  addr: IPComparator
+  addrN: NullableIPComparator
+  netBlock: CIDRComparator
+  netBlockN: NullableCIDRComparator
+  mac: MacAddrComparator
+  macN: NullableMacAddrComparator
+  note: NullableStringComparator
+  flag: NullableBooleanComparator
+  smallCount: NullableNumericComparator
+  midCount: NullableNumericComparator
+  bigCount: NullableNumericComparator
+  ratio: NullableNumericComparator
+  observedAt: NullableTimeComparator
+  createdAt: TimeComparator
+  and: [ScalarProbeFilter!]
+  or:  [ScalarProbeFilter!]
+}
+
+enum ScalarProbeSortField {
+  ID
+  LABEL
+  PAYLOAD
+  SIGNATURE
+  DUR
+  DUR_N
+  ADDR
+  ADDR_N
+  NET_BLOCK
+  NET_BLOCK_N
+  MAC
+  MAC_N
+  NOTE
+  FLAG
+  SMALL_COUNT
+  MID_COUNT
+  BIG_COUNT
+  RATIO
+  OBSERVED_AT
+  CREATED_AT
+}
+
+input ScalarProbeSort {
+  field:     ScalarProbeSortField!
+  direction: SortDirection!
+}
+input CreateScalarProbeInput {
+  label: String!
+  payload: Bytes!
+  signature: Bytes
+  dur: Duration!
+  durN: Duration
+  addr: IP!
+  addrN: IP
+  netBlock: CIDR!
+  netBlockN: CIDR
+  mac: MacAddr!
+  macN: MacAddr
+  note: NullString
+  flag: NullBool
+  smallCount: NullInt16
+  midCount: NullInt32
+  bigCount: NullInt64
+  ratio: NullFloat64
+  observedAt: NullTime
+  createdAt: Time!
+}
+input UpdateScalarProbeInput {
+  label: String
+  payload: Bytes
+  signature: Bytes
+  dur: Duration
+  durN: Duration
+  addr: IP
+  addrN: IP
+  netBlock: CIDR
+  netBlockN: CIDR
+  mac: MacAddr
+  macN: MacAddr
+  note: NullString
+  flag: NullBool
+  smallCount: NullInt16
+  smallCount_inc: Int
+  smallCount_dec: Int
+  midCount: NullInt32
+  midCount_inc: Int
+  midCount_dec: Int
+  bigCount: NullInt64
+  bigCount_inc: Int
+  bigCount_dec: Int
+  ratio: NullFloat64
+  ratio_inc: Int
+  ratio_dec: Int
+  observedAt: NullTime
+  createdAt: Time
+}
+
+extend type Query {
+  scalarProbe(id: UUID!): ScalarProbe
+  "Cursor-paginated; ordering is driven by cursor_keys to preserve keyset semantics — pass `sort` to scalarProbeList instead."
+  scalarProbes(filter: ScalarProbeFilter, first: Int, after: String, last: Int, before: String): ScalarProbeConnection!
+  scalarProbeList(filter: ScalarProbeFilter, sort: [ScalarProbeSort!], limit: Int, offset: Int): ScalarProbeListResult!
+}
+
+extend type Mutation {
+  createScalarProbe(input: CreateScalarProbeInput!): ScalarProbe!
+  createScalarProbes(inputs: [CreateScalarProbeInput!]!): [ScalarProbe!]!
+  updateScalarProbe(id: UUID!, input: UpdateScalarProbeInput!): ScalarProbe!
+  updateScalarProbes(filter: ScalarProbeFilter!, input: UpdateScalarProbeInput!): [ScalarProbe!]!
+  upsertScalarProbe(input: CreateScalarProbeInput!): ScalarProbe!
+  deleteScalarProbe(id: UUID!): Boolean!
+}

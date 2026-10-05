@@ -1,0 +1,57 @@
+name: Platform probe
+# Run by hand to check which release targets can build the cgo CLI and pass
+# the parser tests on their native runner, before trusting release.yml's
+# matrix.
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  probe:
+    name: probe (${{ matrix.goos }}/${{ matrix.goarch }})
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        # Keep in step with release.yml.
+        include:
+          - { goos: linux, goarch: amd64, runner: ubuntu-latest }
+          - { goos: linux, goarch: arm64, runner: ubuntu-24.04-arm }
+          - { goos: darwin, goarch: amd64, runner: macos-15-intel }
+          - { goos: darwin, goarch: arm64, runner: macos-latest }
+          - { goos: windows, goarch: amd64, runner: windows-latest }
+          - { goos: windows, goarch: arm64, runner: windows-11-arm }
+    defaults:
+      run:
+        shell: bash
+    env:
+      CGO_ENABLED: "1"
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: .tool-versions
+          cache-dependency-path: |
+            cmd/sqlgen/go.sum
+            parser/go.sum
+            go.work.sum
+      - name: Toolchain
+        run: |
+          go version
+          go env CC CGO_ENABLED GOOS GOARCH
+          "$(go env CC)" --version || true
+      - name: Build the CLI
+        working-directory: cmd/sqlgen
+        run: |
+          go build -o "../../sqlgen$(go env GOEXE)" .
+          "../../sqlgen$(go env GOEXE)" --version
+      # release.yml zips the Windows binary with Windows' own tar.exe.
+      - name: Archive tool
+        if: matrix.goos == 'windows'
+        run: /c/Windows/System32/tar.exe -a -cf probe.zip "sqlgen.exe" && /c/Windows/System32/tar.exe -tf probe.zip
+      # Parses real SQL through libpg_query and the SQLite parser.
+      - name: Parser tests
+        working-directory: parser
+        run: go test -short -count=1 ./...

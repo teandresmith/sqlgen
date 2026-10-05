@@ -1,0 +1,88 @@
+"""
+DigitLeadingColumn corresponds to the digit_leading_columns table.
+"""
+type DigitLeadingColumn {
+  "id"
+  id: Int!
+  "2010_revenue"
+  col2010Revenue: Float!
+  "2024_quota"
+  col2024Quota: Int!
+  "1st_place"
+  col1stPlace: String!
+  "3d_model_url"
+  col3dModelURL: String!
+}
+
+type DigitLeadingColumnConnection {
+  edges:      [DigitLeadingColumnEdge!]!
+  pageInfo:   PageInfo!
+  totalCount: Int!
+}
+
+type DigitLeadingColumnEdge {
+  node:   DigitLeadingColumn!
+  cursor: String!
+}
+
+type DigitLeadingColumnListResult {
+  items:      [DigitLeadingColumn!]!
+  totalCount: Int!
+  offset:     Int!
+  limit:      Int!
+  hasMore:    Boolean!
+}
+
+input DigitLeadingColumnFilter {
+  col2010Revenue: NumericComparator
+  col2024Quota: NumericComparator
+  col1stPlace: StringComparator
+  col3dModelURL: StringComparator
+  and: [DigitLeadingColumnFilter!]
+  or:  [DigitLeadingColumnFilter!]
+}
+
+enum DigitLeadingColumnSortField {
+  ID
+  COL_2010_REVENUE
+  COL_2024_QUOTA
+  COL_1ST_PLACE
+  COL_3D_MODEL_URL
+}
+
+input DigitLeadingColumnSort {
+  field:     DigitLeadingColumnSortField!
+  direction: SortDirection!
+}
+input CreateDigitLeadingColumnInput {
+  col2010Revenue: Float!
+  col2024Quota: Int!
+  col1stPlace: String!
+  col3dModelURL: String!
+}
+input UpdateDigitLeadingColumnInput {
+  col2010Revenue: Float
+  col2010Revenue_inc: Int
+  col2010Revenue_dec: Int
+  col2024Quota: Int
+  col2024Quota_inc: Int
+  col2024Quota_dec: Int
+  col1stPlace: String
+  col3dModelURL: String
+}
+
+extend type Query {
+  digitLeadingColumn(id: Int!): DigitLeadingColumn
+  "Cursor-paginated; ordering is driven by cursor_keys to preserve keyset semantics — pass `sort` to digitLeadingColumnList instead."
+  digitLeadingColumns(filter: DigitLeadingColumnFilter, first: Int, after: String, last: Int, before: String): DigitLeadingColumnConnection!
+  digitLeadingColumnList(filter: DigitLeadingColumnFilter, sort: [DigitLeadingColumnSort!], limit: Int, offset: Int): DigitLeadingColumnListResult!
+}
+
+extend type Mutation {
+  createDigitLeadingColumn(input: CreateDigitLeadingColumnInput!): DigitLeadingColumn!
+  createDigitLeadingColumns(inputs: [CreateDigitLeadingColumnInput!]!): [DigitLeadingColumn!]!
+  updateDigitLeadingColumn(id: Int!, input: UpdateDigitLeadingColumnInput!): DigitLeadingColumn!
+  updateDigitLeadingColumns(filter: DigitLeadingColumnFilter!, input: UpdateDigitLeadingColumnInput!): [DigitLeadingColumn!]!
+  upsertDigitLeadingColumn(input: CreateDigitLeadingColumnInput!): DigitLeadingColumn!
+  deleteDigitLeadingColumn(id: Int!): Boolean!
+}

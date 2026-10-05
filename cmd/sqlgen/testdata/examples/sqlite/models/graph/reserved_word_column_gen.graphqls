@@ -1,0 +1,122 @@
+"""
+ReservedWordColumn corresponds to the reserved_word_columns table.
+"""
+type ReservedWordColumn {
+  "id"
+  id: Int!
+  "type"
+  type: String!
+  "interface"
+  interface: String!
+  "func"
+  func: String!
+  "map"
+  map: String!
+  "new"
+  new: String!
+  "make"
+  make: String!
+  "len"
+  len: Int!
+  "error"
+  error: String!
+  "ctx"
+  ctx: String!
+  "err"
+  err: String!
+}
+
+type ReservedWordColumnConnection {
+  edges:      [ReservedWordColumnEdge!]!
+  pageInfo:   PageInfo!
+  totalCount: Int!
+}
+
+type ReservedWordColumnEdge {
+  node:   ReservedWordColumn!
+  cursor: String!
+}
+
+type ReservedWordColumnListResult {
+  items:      [ReservedWordColumn!]!
+  totalCount: Int!
+  offset:     Int!
+  limit:      Int!
+  hasMore:    Boolean!
+}
+
+input ReservedWordColumnFilter {
+  type: StringComparator
+  interface: StringComparator
+  func: StringComparator
+  map: StringComparator
+  new: StringComparator
+  make: StringComparator
+  len: NumericComparator
+  error: StringComparator
+  ctx: StringComparator
+  err: StringComparator
+  and: [ReservedWordColumnFilter!]
+  or:  [ReservedWordColumnFilter!]
+}
+
+enum ReservedWordColumnSortField {
+  ID
+  TYPE
+  INTERFACE
+  FUNC
+  MAP
+  NEW
+  MAKE
+  LEN
+  ERROR
+  CTX
+  ERR
+}
+
+input ReservedWordColumnSort {
+  field:     ReservedWordColumnSortField!
+  direction: SortDirection!
+}
+input CreateReservedWordColumnInput {
+  type: String!
+  interface: String!
+  func: String!
+  map: String!
+  new: String!
+  make: String!
+  len: Int!
+  error: String!
+  ctx: String!
+  err: String!
+}
+input UpdateReservedWordColumnInput {
+  type: String
+  interface: String
+  func: String
+  map: String
+  new: String
+  make: String
+  len: Int
+  len_inc: Int
+  len_dec: Int
+  error: String
+  ctx: String
+  err: String
+}
+
+extend type Query {
+  reservedWordColumn(id: Int!): ReservedWordColumn
+  "Cursor-paginated; ordering is driven by cursor_keys to preserve keyset semantics — pass `sort` to reservedWordColumnList instead."
+  reservedWordColumns(filter: ReservedWordColumnFilter, first: Int, after: String, last: Int, before: String): ReservedWordColumnConnection!
+  reservedWordColumnList(filter: ReservedWordColumnFilter, sort: [ReservedWordColumnSort!], limit: Int, offset: Int): ReservedWordColumnListResult!
+}
+
+extend type Mutation {
+  createReservedWordColumn(input: CreateReservedWordColumnInput!): ReservedWordColumn!
+  createReservedWordColumns(inputs: [CreateReservedWordColumnInput!]!): [ReservedWordColumn!]!
+  updateReservedWordColumn(id: Int!, input: UpdateReservedWordColumnInput!): ReservedWordColumn!
+  updateReservedWordColumns(filter: ReservedWordColumnFilter!, input: UpdateReservedWordColumnInput!): [ReservedWordColumn!]!
+  upsertReservedWordColumn(input: CreateReservedWordColumnInput!): ReservedWordColumn!
+  deleteReservedWordColumn(id: Int!): Boolean!
+}

@@ -1,0 +1,46 @@
+{{- define "view/count" -}}
+{{- $structCamel := .StructName | toCamelCase }}
+
+// Count returns the number of {{ .ViewName }} matching the given filter.
+// A nil filter counts all {{ .ViewName }}.
+func (c *{{ $structCamel }}Client) Count(ctx context.Context, filter *{{ .StructName }}Filter, opts ...func(*CallOptions[{{ .StructName }}FieldOptions])) (int64, error) {
+	options := resolveCallOptions(opts)
+	result, err := c.executeQuery(ctx, options.SkipHooks, &hook.QueryContext{
+		Op: hook.OpCount, Table: {{ .TableNameConstant }}, Schema: {{ printf "%q" .Schema }},
+		Input: filter, CallOptions: options,
+	}, func(ctx context.Context, q *hook.QueryContext) (any, error) {
+		conn := database.Conn(ctx, c.querier)
+
+		var conds []sql.Condition
+		if filter != nil {
+			conds = filter.ToConditions(c.dialect)
+		}
+{{- if and .Tenancy .Tenancy.Tenanted }}
+
+		// Tenancy auto-filter. apply=false under tenancy.required:false
+		// + zero resolver skips the filter (cross-tenant count).
+		if !options.SkipTenancy {
+			resolvedTenant, apply, err := c.resolveTenant(ctx, options.Tenant)
+			if err != nil {
+				return int64(0), fmt.Errorf("count {{ .ViewName }}: resolve tenant: %w", err)
+			}
+			if apply {
+				conds = append(conds, sql.Where(c.dialect.QuoteIdentifier({{ printf "%q" .Tenancy.Column }})).Eq(resolvedTenant))
+			}
+		}
+{{- end }}
+
+		query, args := sql.BuildCount(c.dialect, c.table, conds)
+
+		var count int64
+		if err := conn.QueryRow(ctx, query, args...).Scan(&count); err != nil {
+			return int64(0), fmt.Errorf("count {{ .ViewName }}: %w", err)
+		}
+		return count, nil
+	})
+	if err != nil {
+		return 0, err
+	}
+	return result.(int64), nil
+}
+{{- end -}}

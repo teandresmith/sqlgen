@@ -1,0 +1,106 @@
+"""
+OrderItem corresponds to the order_items table.
+"""
+type OrderItem {
+  "id"
+  id: UUID!
+  "order_id"
+  orderID: UUID!
+  "product_id"
+  productID: UUID!
+  "quantity"
+  quantity: Int!
+  "unit_price"
+  unitPrice: Decimal!
+  "Identifier of this line item in the upstream order system"
+  externalRef: String
+  "Client address the line item was submitted from"
+  sourceIP: IPAddr
+  "created_at"
+  createdAt: Time!
+}
+
+type OrderItemConnection {
+  edges:      [OrderItemEdge!]!
+  pageInfo:   PageInfo!
+  totalCount: Int!
+}
+
+type OrderItemEdge {
+  node:   OrderItem!
+  cursor: String!
+}
+
+type OrderItemListResult {
+  items:      [OrderItem!]!
+  totalCount: Int!
+  offset:     Int!
+  limit:      Int!
+  hasMore:    Boolean!
+}
+
+input OrderItemFilter {
+  orderID: IDComparator
+  productID: IDComparator
+  quantity: NumericComparator
+  unitPrice: DecimalComparator
+  externalRef: NullableStringComparator
+  sourceIP: NullableStringComparator
+  createdAt: TimeComparator
+  and: [OrderItemFilter!]
+  or:  [OrderItemFilter!]
+}
+
+enum OrderItemSortField {
+  ID
+  ORDER_ID
+  PRODUCT_ID
+  QUANTITY
+  UNIT_PRICE
+  EXTERNAL_REF
+  SOURCE_IP
+  CREATED_AT
+}
+
+input OrderItemSort {
+  field:     OrderItemSortField!
+  direction: SortDirection!
+}
+input CreateOrderItemInput {
+  orderID: UUID!
+  productID: UUID!
+  quantity: Int!
+  unitPrice: Decimal!
+  externalRef: String
+  sourceIP: IPAddr
+  createdAt: Time!
+}
+input UpdateOrderItemInput {
+  orderID: UUID
+  productID: UUID
+  quantity: Int
+  quantity_inc: Int
+  quantity_dec: Int
+  unitPrice: Decimal
+  unitPrice_inc: Int
+  unitPrice_dec: Int
+  externalRef: String
+  sourceIP: IPAddr
+  createdAt: Time
+}
+
+extend type Query {
+  orderItem(id: UUID!): OrderItem
+  "Cursor-paginated; ordering is driven by cursor_keys to preserve keyset semantics — pass `sort` to orderItemList instead."
+  orderItems(filter: OrderItemFilter, first: Int, after: String, last: Int, before: String): OrderItemConnection!
+  orderItemList(filter: OrderItemFilter, sort: [OrderItemSort!], limit: Int, offset: Int): OrderItemListResult!
+}
+
+extend type Mutation {
+  createOrderItem(input: CreateOrderItemInput!): OrderItem!
+  createOrderItems(inputs: [CreateOrderItemInput!]!): [OrderItem!]!
+  updateOrderItem(id: UUID!, input: UpdateOrderItemInput!): OrderItem!
+  updateOrderItems(filter: OrderItemFilter!, input: UpdateOrderItemInput!): [OrderItem!]!
+  upsertOrderItem(input: CreateOrderItemInput!): OrderItem!
+  deleteOrderItem(id: UUID!): Boolean!
+}

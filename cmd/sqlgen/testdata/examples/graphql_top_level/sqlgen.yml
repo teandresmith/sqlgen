@@ -1,0 +1,44 @@
+version: v1
+
+input:
+  dialect: postgres
+  paths:
+    - ./schema.sql
+
+output:
+  driver: pgx
+  dir: ./models
+  package: models
+
+# `uuid` names the standard library, which is what a `uuid` column resolves to
+# with no configuration (PRD §7.4); it carries no `nullable:` because the
+# package ships no NullUUID, so nullable `uuid` columns are `*uuid.UUID`
+# (PRD §7.3). numeric → decimal.Decimal is the canonical category-4 scalar
+# binding and is required because the schema uses NUMERIC columns.
+overrides:
+  types:
+    uuid:
+      type: uuid.UUID
+      import: uuid
+    numeric:
+      type: decimal.Decimal
+      import: github.com/shopspring/decimal
+      nullable: decimal.NullDecimal
+
+# Top-level GraphQL output dirs. schema_dir / resolver_dir are
+# root-relative (§26.5.8): paths from the module root, like output.dir. Setting
+# them to `graph` (no ./models prefix) places the generated graph package at
+# <root>/graph — a SIBLING of ./models, not nested under it. This is the
+# topology the nested `graphql` example (schema_dir: ./models/graph) does NOT
+# exercise. The wrapper uses the consumer-owned gqlgen.yml at the example root
+# and never modifies it on disk.
+api:
+  enabled: true
+  graphql:
+    enabled: true
+    schema_dir: graph
+    resolver_dir: graph
+    package: graph
+    field_casing: camel_case
+    gqlgen_config: ./gqlgen.yml
+    gqlgen_bin: go run github.com/99designs/gqlgen

@@ -1,0 +1,523 @@
+{{- define "api/scalars" -}}
+{{- range $s := .ExternalScalars }}
+{{- if eq $s.Name "UUID" }}
+
+// MarshalUUID marshals a uuid.UUID into a JSON-quoted string for GraphQL.
+//
+// Unlike gqlgen's bundled MarshalUUID (which silently emits `null` when the
+// value equals uuid.Nil), this marshaler writes the underlying string
+// unconditionally — a non-null field holding the Go zero value is a model-
+// layer bug, and silently emitting null would mask it. Consumers that need
+// null semantics should use the paired NullUUID scalar.
+func MarshalUUID(v uuid.UUID) graphql.Marshaler {
+	return graphql.WriterFunc(func(w io.Writer) {
+		_, _ = io.WriteString(w, strconv.Quote(v.String()))
+	})
+}
+
+// UnmarshalUUID parses a uuid.UUID from a GraphQL input value.
+func UnmarshalUUID(v any) (uuid.UUID, error) {
+	s, ok := v.(string)
+	if !ok {
+		return uuid.UUID{}, fmt.Errorf("UUID must be a string, got %T", v)
+	}
+	return {{ $.ParseUUIDFunc }}(s)
+}
+{{- end }}
+{{- if eq $s.Name "NullUUID" }}
+
+// MarshalNullUUID marshals a uuid.NullUUID. When Valid is false it emits the
+// GraphQL `null` literal; otherwise it writes the underlying UUID as a
+// JSON-quoted string. Paired with the UUID scalar — both share the same
+// wire format (string or null), the wrapper's Valid field is a Go-side
+// detail.
+func MarshalNullUUID(v uuid.NullUUID) graphql.Marshaler {
+	if !v.Valid {
+		return graphql.Null
+	}
+	return graphql.WriterFunc(func(w io.Writer) {
+		_, _ = io.WriteString(w, strconv.Quote(v.UUID.String()))
+	})
+}
+
+// UnmarshalNullUUID parses a uuid.NullUUID from a GraphQL input value. A nil
+// input collapses to uuid.NullUUID{Valid:false}; a string input parses into
+// the wrapper with Valid:true.
+func UnmarshalNullUUID(v any) (uuid.NullUUID, error) {
+	if v == nil {
+		return uuid.NullUUID{}, nil
+	}
+	s, ok := v.(string)
+	if !ok {
+		return uuid.NullUUID{}, fmt.Errorf("NullUUID must be a string or null, got %T", v)
+	}
+	parsed, err := {{ $.ParseUUIDFunc }}(s)
+	if err != nil {
+		return uuid.NullUUID{}, err
+	}
+	return uuid.NullUUID{UUID: parsed, Valid: true}, nil
+}
+{{- end }}
+{{- if eq $s.Name "Decimal" }}
+
+// MarshalDecimal marshals a decimal.Decimal into a JSON-quoted string for GraphQL.
+func MarshalDecimal(v decimal.Decimal) graphql.Marshaler {
+	return graphql.WriterFunc(func(w io.Writer) {
+		_, _ = io.WriteString(w, strconv.Quote(v.String()))
+	})
+}
+
+// UnmarshalDecimal parses a decimal.Decimal from a GraphQL input value.
+func UnmarshalDecimal(v any) (decimal.Decimal, error) {
+	s, ok := v.(string)
+	if !ok {
+		return decimal.Decimal{}, fmt.Errorf("Decimal must be a string, got %T", v)
+	}
+	return decimal.NewFromString(s)
+}
+{{- end }}
+{{- if eq $s.Name "NullDecimal" }}
+
+// MarshalNullDecimal marshals a decimal.NullDecimal. When Valid is false it
+// emits the GraphQL `null` literal; otherwise it writes the underlying
+// Decimal as a JSON-quoted string. Paired with the Decimal scalar — both
+// share the same wire format (string or null).
+func MarshalNullDecimal(v decimal.NullDecimal) graphql.Marshaler {
+	if !v.Valid {
+		return graphql.Null
+	}
+	return graphql.WriterFunc(func(w io.Writer) {
+		_, _ = io.WriteString(w, strconv.Quote(v.Decimal.String()))
+	})
+}
+
+// UnmarshalNullDecimal parses a decimal.NullDecimal from a GraphQL input
+// value. A nil input collapses to decimal.NullDecimal{Valid:false}; a
+// string input parses into the wrapper with Valid:true.
+func UnmarshalNullDecimal(v any) (decimal.NullDecimal, error) {
+	if v == nil {
+		return decimal.NullDecimal{}, nil
+	}
+	s, ok := v.(string)
+	if !ok {
+		return decimal.NullDecimal{}, fmt.Errorf("NullDecimal must be a string or null, got %T", v)
+	}
+	parsed, err := decimal.NewFromString(s)
+	if err != nil {
+		return decimal.NullDecimal{}, err
+	}
+	return decimal.NullDecimal{Decimal: parsed, Valid: true}, nil
+}
+{{- end }}
+{{- if eq $s.Name "JSON" }}
+
+// MarshalJSON marshals a json.RawMessage into the GraphQL output stream verbatim.
+func MarshalJSON(v json.RawMessage) graphql.Marshaler {
+	return graphql.WriterFunc(func(w io.Writer) {
+		if len(v) == 0 {
+			_, _ = io.WriteString(w, "null")
+			return
+		}
+		_, _ = w.Write(v)
+	})
+}
+
+// UnmarshalJSON parses a json.RawMessage from a GraphQL input value.
+func UnmarshalJSON(v any) (json.RawMessage, error) {
+	switch x := v.(type) {
+	case string:
+		return json.RawMessage(x), nil
+	case []byte:
+		return json.RawMessage(x), nil
+	case json.RawMessage:
+		return x, nil
+	default:
+		b, err := json.Marshal(x)
+		if err != nil {
+			return nil, fmt.Errorf("JSON marshal: %w", err)
+		}
+		return b, nil
+	}
+}
+{{- end }}
+{{- if eq $s.Name "Bytes" }}
+
+// MarshalBytes marshals a []byte as a base64 (standard encoding) JSON string,
+// the wire form fixed for the Bytes scalar.
+//
+// Binary columns (`bytea`, `blob`, `binary`, `varbinary`, …) previously bound
+// to the GraphQL `String` scalar, which pretended the bytes were UTF-8 text
+// and emitted a translator that did not compile. base64 round-trips
+// every byte sequence exactly; a nil slice marshals as an empty string rather
+// than null, because null is the nullable field's own encoding.
+func MarshalBytes(v []byte) graphql.Marshaler {
+	return graphql.WriterFunc(func(w io.Writer) {
+		_, _ = io.WriteString(w, strconv.Quote(base64.StdEncoding.EncodeToString(v)))
+	})
+}
+
+// UnmarshalBytes decodes a base64 string into a []byte.
+func UnmarshalBytes(v any) ([]byte, error) {
+	s, ok := v.(string)
+	if !ok {
+		return nil, fmt.Errorf("Bytes must be a base64 string, got %T", v)
+	}
+	return base64.StdEncoding.DecodeString(s)
+}
+{{- end }}
+{{- if eq $s.Name "Duration" }}
+
+// MarshalDuration marshals a time.Duration as a Go duration string ("1h30m0s"),
+// the wire form fixed for the Duration scalar. Chosen over ISO-8601
+// because time.ParseDuration reads it back exactly, with no hand-written
+// parser between the wire and the value.
+func MarshalDuration(v time.Duration) graphql.Marshaler {
+	return graphql.WriterFunc(func(w io.Writer) {
+		_, _ = io.WriteString(w, strconv.Quote(v.String()))
+	})
+}
+
+// UnmarshalDuration parses a Go duration string into a time.Duration.
+func UnmarshalDuration(v any) (time.Duration, error) {
+	s, ok := v.(string)
+	if !ok {
+		return 0, fmt.Errorf("Duration must be a string, got %T", v)
+	}
+	return time.ParseDuration(s)
+}
+{{- end }}
+{{- if eq $s.Name "IP" }}
+
+// MarshalIP marshals a net.IP as its textual form ("10.0.0.1", "2001:db8::1").
+//
+// A nil IP writes an empty string rather than net.IP(nil).String()'s "<nil>",
+// which is not a parseable address — the same hazard MarshalUUID documents for
+// uuid.Nil. A NOT NULL column holding the zero value is a model-layer bug, and
+// emitting a value that fails to round-trip would hide it downstream.
+func MarshalIP(v net.IP) graphql.Marshaler {
+	return graphql.WriterFunc(func(w io.Writer) {
+		if len(v) == 0 {
+			_, _ = io.WriteString(w, `""`)
+			return
+		}
+		_, _ = io.WriteString(w, strconv.Quote(v.String()))
+	})
+}
+
+// UnmarshalIP parses a textual IP address into a net.IP, normalizing IPv4 to
+// its 4-byte form.
+//
+// net.ParseIP returns the 16-byte IPv4-in-IPv6 representation for a dotted
+// quad, and a driver encodes that into a PostgreSQL `inet` as
+// "::ffff:10.0.0.1/128" rather than "10.0.0.1/32". Both render as "10.0.0.1"
+// through net.IP.String(), so the GraphQL round-trip hides the difference
+// entirely — but the stored value is a different inet, matching neither a text
+// comparison nor the subnet operators (<<, <<=, >>, >>=), and it is what any
+// non-sqlgen reader of the column sees.
+//
+// Normalizing here rather than at each call site covers the filter path as
+// well as the write path: gqlgen routes every IP operand through this
+// function, list elements included, so an IPComparator operand arrives at the
+// model layer already normalized. Values read back out of the database need no
+// normalization — the driver decodes `inet` into the 4-byte form already.
+func UnmarshalIP(v any) (net.IP, error) {
+	s, ok := v.(string)
+	if !ok {
+		return nil, fmt.Errorf("IP must be a string, got %T", v)
+	}
+	ip := net.ParseIP(s)
+	if ip == nil {
+		return nil, fmt.Errorf("IP: %q is not a valid IP address", s)
+	}
+	// To4 reports nil for a genuine IPv6 address, so the guard is required —
+	// without it every IPv6 value would collapse to nil.
+	if v4 := ip.To4(); v4 != nil {
+		return v4, nil
+	}
+	return ip, nil
+}
+{{- end }}
+{{- if eq $s.Name "CIDR" }}
+
+// MarshalCIDR marshals a net.IPNet in CIDR notation ("10.0.0.0/8").
+func MarshalCIDR(v net.IPNet) graphql.Marshaler {
+	return graphql.WriterFunc(func(w io.Writer) {
+		if len(v.IP) == 0 {
+			_, _ = io.WriteString(w, `""`)
+			return
+		}
+		_, _ = io.WriteString(w, strconv.Quote(v.String()))
+	})
+}
+
+// UnmarshalCIDR parses CIDR notation into a net.IPNet.
+//
+// net.ParseCIDR returns the masked network, which is what a PostgreSQL `cidr`
+// column stores — "10.0.0.1/8" is accepted and normalised to "10.0.0.0/8",
+// matching the database's own coercion.
+func UnmarshalCIDR(v any) (net.IPNet, error) {
+	s, ok := v.(string)
+	if !ok {
+		return net.IPNet{}, fmt.Errorf("CIDR must be a string, got %T", v)
+	}
+	_, network, err := net.ParseCIDR(s)
+	if err != nil {
+		return net.IPNet{}, err
+	}
+	return *network, nil
+}
+{{- end }}
+{{- if eq $s.Name "MacAddr" }}
+
+// MarshalMacAddr marshals a net.HardwareAddr as its textual form
+// ("01:23:45:67:89:ab").
+func MarshalMacAddr(v net.HardwareAddr) graphql.Marshaler {
+	return graphql.WriterFunc(func(w io.Writer) {
+		if len(v) == 0 {
+			_, _ = io.WriteString(w, `""`)
+			return
+		}
+		_, _ = io.WriteString(w, strconv.Quote(v.String()))
+	})
+}
+
+// UnmarshalMacAddr parses a textual MAC address into a net.HardwareAddr.
+func UnmarshalMacAddr(v any) (net.HardwareAddr, error) {
+	s, ok := v.(string)
+	if !ok {
+		return nil, fmt.Errorf("MacAddr must be a string, got %T", v)
+	}
+	return net.ParseMAC(s)
+}
+{{- end }}
+{{- if eq $s.Name "NullString" }}
+
+// MarshalNullString marshals a sql.NullString, emitting the GraphQL `null`
+// literal when Valid is false.
+//
+// The value half delegates to gqlgen's own String marshaler rather than
+// re-implementing it. That is what makes the shared wire-format invariant
+// structural: this scalar's partner IS the spec built-in `String`, so sharing
+// its marshaler is the only way the two cannot drift. The `Valid` bool stays a
+// Go-side detail and never reaches the wire.
+func MarshalNullString(v sql.NullString) graphql.Marshaler {
+	if !v.Valid {
+		return graphql.Null
+	}
+	return graphql.MarshalString(v.String)
+}
+
+// UnmarshalNullString collapses nil to sql.NullString{Valid: false} and
+// delegates the value half to gqlgen's String unmarshaler.
+//
+// Delegating is not a convenience. A scalar unmarshaler receives whatever the
+// request decoder produced, which is NOT the Go type gqlgen binds the scalar
+// to: an inline literal arrives as gqlparser parsed it, and an HTTP variable
+// arrives as encoding/json decoded it (`json.Number`, since the handler calls
+// UseNumber). Hand-rolling a type assertion here rejects valid requests.
+func UnmarshalNullString(v any) (sql.NullString, error) {
+	if v == nil {
+		return sql.NullString{}, nil
+	}
+	s, err := graphql.UnmarshalString(v)
+	if err != nil {
+		return sql.NullString{}, err
+	}
+	return sql.NullString{String: s, Valid: true}, nil
+}
+{{- end }}
+{{- if eq $s.Name "NullBool" }}
+
+// MarshalNullBool marshals a sql.NullBool, emitting `null` when Valid is
+// false and otherwise delegating to gqlgen's Boolean marshaler — its partner.
+func MarshalNullBool(v sql.NullBool) graphql.Marshaler {
+	if !v.Valid {
+		return graphql.Null
+	}
+	return graphql.MarshalBoolean(v.Bool)
+}
+
+// UnmarshalNullBool collapses nil to sql.NullBool{Valid: false}.
+func UnmarshalNullBool(v any) (sql.NullBool, error) {
+	if v == nil {
+		return sql.NullBool{}, nil
+	}
+	b, err := graphql.UnmarshalBoolean(v)
+	if err != nil {
+		return sql.NullBool{}, err
+	}
+	return sql.NullBool{Bool: b, Valid: true}, nil
+}
+{{- end }}
+{{- if eq $s.Name "NullInt16" }}
+
+// MarshalNullInt16 marshals a sql.NullInt16, emitting `null` when Valid is
+// false and otherwise delegating to gqlgen's Int16 marshaler.
+func MarshalNullInt16(v sql.NullInt16) graphql.Marshaler {
+	if !v.Valid {
+		return graphql.Null
+	}
+	return graphql.MarshalInt16(v.Int16)
+}
+
+// UnmarshalNullInt16 collapses nil to sql.NullInt16{Valid: false}.
+//
+// graphql.UnmarshalInt16 accepts every shape the request decoder can produce
+// for an integer (int/int8/…/int64, string, json.Number) and range-checks the
+// result against int16, returning gqlgen's own overflow error. A hand-written
+// `v.(int)` assertion here would reject an inline literal — gqlparser parses
+// IntValue with strconv.ParseInt(…, 64), so it arrives as int64 — and every
+// HTTP variable, which arrives as json.Number.
+func UnmarshalNullInt16(v any) (sql.NullInt16, error) {
+	if v == nil {
+		return sql.NullInt16{}, nil
+	}
+	n, err := graphql.UnmarshalInt16(v)
+	if err != nil {
+		return sql.NullInt16{}, err
+	}
+	return sql.NullInt16{Int16: n, Valid: true}, nil
+}
+{{- end }}
+{{- if eq $s.Name "NullInt32" }}
+
+// MarshalNullInt32 marshals a sql.NullInt32, emitting `null` when Valid is
+// false and otherwise delegating to gqlgen's Int32 marshaler.
+func MarshalNullInt32(v sql.NullInt32) graphql.Marshaler {
+	if !v.Valid {
+		return graphql.Null
+	}
+	return graphql.MarshalInt32(v.Int32)
+}
+
+// UnmarshalNullInt32 collapses nil to sql.NullInt32{Valid: false}, delegating
+// the shape handling and the int32 range check to gqlgen.
+func UnmarshalNullInt32(v any) (sql.NullInt32, error) {
+	if v == nil {
+		return sql.NullInt32{}, nil
+	}
+	n, err := graphql.UnmarshalInt32(v)
+	if err != nil {
+		return sql.NullInt32{}, err
+	}
+	return sql.NullInt32{Int32: n, Valid: true}, nil
+}
+{{- end }}
+{{- if eq $s.Name "NullInt64" }}
+
+// MarshalNullInt64 marshals a sql.NullInt64, emitting `null` when Valid is
+// false and otherwise delegating to gqlgen's Int64 marshaler.
+func MarshalNullInt64(v sql.NullInt64) graphql.Marshaler {
+	if !v.Valid {
+		return graphql.Null
+	}
+	return graphql.MarshalInt64(v.Int64)
+}
+
+// UnmarshalNullInt64 collapses nil to sql.NullInt64{Valid: false}.
+func UnmarshalNullInt64(v any) (sql.NullInt64, error) {
+	if v == nil {
+		return sql.NullInt64{}, nil
+	}
+	n, err := graphql.UnmarshalInt64(v)
+	if err != nil {
+		return sql.NullInt64{}, err
+	}
+	return sql.NullInt64{Int64: n, Valid: true}, nil
+}
+{{- end }}
+{{- if eq $s.Name "NullFloat64" }}
+
+// MarshalNullFloat64 marshals a sql.NullFloat64, emitting `null` when Valid is
+// false and otherwise delegating to gqlgen's Float marshaler — its partner.
+//
+// Delegation carries the partner's behaviour for non-finite values: gqlgen
+// formats with %g, so a NaN or ±Inf column value emits a bare NaN / +Inf token
+// that is not valid JSON. That is a property of the `Float` scalar itself
+// rather than of this wrapper, and diverging here would break the invariant
+// that a pair shares one wire format.
+func MarshalNullFloat64(v sql.NullFloat64) graphql.Marshaler {
+	if !v.Valid {
+		return graphql.Null
+	}
+	return graphql.MarshalFloat(v.Float64)
+}
+
+// UnmarshalNullFloat64 collapses nil to sql.NullFloat64{Valid: false}.
+func UnmarshalNullFloat64(v any) (sql.NullFloat64, error) {
+	if v == nil {
+		return sql.NullFloat64{}, nil
+	}
+	f, err := graphql.UnmarshalFloat(v)
+	if err != nil {
+		return sql.NullFloat64{}, err
+	}
+	return sql.NullFloat64{Float64: f, Valid: true}, nil
+}
+{{- end }}
+{{- if eq $s.Name "NullTime" }}
+
+// MarshalNullTime marshals a sql.NullTime, emitting `null` when Valid is false
+// and otherwise delegating to gqlgen's Time marshaler — its partner, the
+// gqlgen-bundled `Time` scalar — so both carry RFC 3339 identically.
+//
+// gqlgen's marshaler also emits null for a zero time. A Valid zero timestamp
+// is degenerate, and matching the partner exactly is the invariant.
+func MarshalNullTime(v sql.NullTime) graphql.Marshaler {
+	if !v.Valid {
+		return graphql.Null
+	}
+	return graphql.MarshalTime(v.Time)
+}
+
+// UnmarshalNullTime collapses nil to sql.NullTime{Valid: false}.
+func UnmarshalNullTime(v any) (sql.NullTime, error) {
+	if v == nil {
+		return sql.NullTime{}, nil
+	}
+	t, err := graphql.UnmarshalTime(v)
+	if err != nil {
+		return sql.NullTime{}, err
+	}
+	return sql.NullTime{Time: t, Valid: true}, nil
+}
+{{- end }}
+{{- end }}
+{{- range $w := .NumericWidthScalars }}
+{{- if eq $w.Name "Float32" }}
+
+// MarshalFloat32 marshals a float32 as a GraphQL Float.
+//
+// gqlgen binds the Float scalar to float64 alone (graphql/float.go), so a
+// `real` / `float4` / MySQL `float` column has no binding at all and gqlgen
+// answers the field with a panic("not implemented") resolver. This pair is
+// that binding; the wrapper appends it to the Float `models:` list, where it
+// sits behind gqlgen's own entry so every generated input field keeps its
+// float64 type and its float32 width cast.
+//
+// Formatted at bitSize 32 so the wire carries the value the column actually
+// holds — %g against a float64-widened float32 prints the widening artefact
+// (0.1 as 0.10000000149011612).
+func MarshalFloat32(v float32) graphql.Marshaler {
+	return graphql.WriterFunc(func(w io.Writer) {
+		_, _ = io.WriteString(w, strconv.FormatFloat(float64(v), 'g', -1, 32))
+	})
+}
+
+// UnmarshalFloat32 parses a float32 from a GraphQL Float input value.
+//
+// Narrowing is unchecked on purpose: a float64 outside float32's range becomes
+// ±Inf and one below its precision loses digits, but both are lossy
+// REPRESENTATION rather than a domain error, and the column itself is what
+// declared the narrower width. Rejecting them would make ordinary values
+// unwritable through the API that are writable through the Go client.
+func UnmarshalFloat32(v any) (float32, error) {
+	f, err := graphql.UnmarshalFloat(v)
+	if err != nil {
+		return 0, err
+	}
+	return float32(f), nil
+}
+{{- end }}
+{{- end }}
+{{- end -}}

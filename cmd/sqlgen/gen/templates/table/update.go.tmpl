@@ -1,0 +1,1271 @@
+{{- define "table/update" -}}
+{{- $pkCol := index .PKColumns 0 -}}
+{{- $singular := .TableName | toSingular -}}
+{{- $structCamel := .StructName | toCamelCase -}}
+{{- $captureTenant := and .Tenancy .Tenancy.Tenanted (not .Tenancy.InPrimaryKey) }}
+{{- if .Operations.Update }}
+
+// Update partially updates a {{ $singular }} by primary key and returns the updated entity.
+// Only fields where IsSet() is true are included in the SET clause. If no fields are
+// set, no UPDATE is executed and the current entity is returned unchanged.
+{{- if .StrictUpdates }}
+// Returns ErrNotFound if the primary key does not exist (strict_updates is enabled).
+{{- end }}
+func (c *{{ $structCamel }}Client) Update(ctx context.Context, {{ if .CompositePK }}pk {{ .CompositePKStructName }}{{ else }}id {{ $pkCol.GoType }}{{ end }}, input *Update{{ .StructName }}Input, opts ...func(*CallOptions[{{ .StructName }}FieldOptions])) (*{{ .StructName }}, error) {
+	// Nil is a caller error, distinct from an empty-but-non-nil
+	// input — that one is the documented no-op returning the entity unchanged.
+	// Guarded before the executor, so nil fires no hook and publishes no event.
+	if input == nil {
+		return nil, ErrNilInput
+	}
+	options := resolveCallOptions(opts)
+	result, err := c.executeMutation(ctx, options.SkipHooks, &hook.MutationContext{
+		Op: hook.OpUpdate, Table: {{ .TableNameConstant }}, Schema: {{ printf "%q" .Schema }},
+		PK: {{ if .CompositePK }}pk{{ else }}id{{ end }}, Input: input, CallOptions: options,
+	}, func(ctx context.Context, m *hook.MutationContext) (any, error) {
+		conn := database.Conn(ctx, c.querier)
+{{- if and .Tenancy .Tenancy.Tenanted }}
+
+		// Tenancy mismatch check before any SQL build. applyTenancy
+		// is false under SkipTenancy OR under required:false + zero resolver —
+		// in the second case the WHERE below also drops the tenant predicate.
+		var resolvedTenant {{ .Tenancy.GoType }}
+		applyTenancy := false
+		if !options.SkipTenancy {
+			var err error
+			var apply bool
+			resolvedTenant, apply, err = c.resolveTenant(ctx, options.Tenant)
+			if err != nil {
+				return nil, fmt.Errorf("update {{ $singular }}: resolve tenant: %w", err)
+			}
+			// Stash on ctx so the chained terminal Get reuses this value
+			// — single-resolve.
+			// An explicit tenant is not cached: it rides on CallOptions, which
+			// every internal call inherits, and resolveTenant honours it ahead of
+			// the cache. A set zero is honoured verbatim where a resolved
+			// zero takes the required branch, and this slot cannot tell them apart.
+			if options.Tenant == nil {
+				ctx = tenancy.WithResolvedTenant(ctx, resolvedTenant)
+			}
+			applyTenancy = apply
+			if apply {
+{{- if and .Tenancy.InPrimaryKey .CompositePK }}
+				// Tenant-in-PK verify-match. The tenant column is part of
+				// the composite primary key on {{ .CompositePKStructName }}; the caller supplies
+				// it explicitly, and we reject any mismatch before the DB round-trip.
+				// No input-side check — tenant column is excluded from UpdateInput when
+				// it lives in the PK.
+				if pk.{{ .Tenancy.FieldName }} != resolvedTenant {
+					return nil, tenancy.ErrMismatch
+				}
+{{- else }}
+				if v, ok := input.{{ .Tenancy.FieldName }}.Get(); ok && v != resolvedTenant {
+					return nil, tenancy.ErrMismatch
+				}
+{{- end }}
+				// Stash for cache hook (single-resolve per operation).
+				m.Tenant = resolvedTenant
+			}
+		}
+{{- end }}
+
+		// Build SET clause from omittable fields — explicit per-field checks, no reflection
+		setClauses := make(map[string]any)
+{{- range .UpdateInputFields }}
+{{- if and $.Tenancy $.Tenancy.Tenanted (eq .ColumnName $.Tenancy.Column) }}
+		// Tenant column excluded from SET under normal operation.
+		// Honored when the caller opted out via SkipTenancy OR when
+		// required:false + zero resolver opted out of tenancy for this call.
+		if !applyTenancy {
+			if v, ok := input.{{ .FieldName }}.Get(); ok {
+				setClauses[{{ printf "%q" .ColumnName }}] = v
+			}
+		}
+{{- else }}
+		if v, ok := input.{{ .FieldName }}.Get(); ok {
+			setClauses[{{ printf "%q" .ColumnName }}] = v
+		}
+{{- end }}
+{{- end }}
+
+		// Empty update — no fields set, return current entity unchanged
+		if len(setClauses) == 0 {
+			// Empty FieldOptions — caller doesn't need the result
+			if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
+				return nil, nil
+			}
+
+			return c.Get(ctx, {{ if .CompositePK }}pk{{ else }}id{{ end }}, func(o *CallOptions[{{ .StructName }}FieldOptions]) {
+				*o = options
+				o.SkipHooks = true
+				o.LockMode = sql.LockNone
+			})
+		}
+{{- range .UpdateColumns }}
+
+		// Auto-set {{ .Name }} to current time if not explicitly provided
+		if _, ok := input.{{ .FieldName }}.Get(); !ok {
+			setClauses[{{ printf "%q" .Name }}] = time.Now()
+		}
+{{- end }}
+
+{{- if and .Tenancy .Tenancy.Tenanted }}
+{{- if .CompositePK }}
+		updateConds := sql.BuildCompositePKConditions(c.dialect,
+			[]string{ {{- range .PKColumns }}{{ printf "%q" .Name }}, {{ end -}} },
+			[]any{ {{- range .PKColumns }}pk.{{ .FieldName }}, {{ end -}} })
+{{- else }}
+		updateConds := []sql.Condition{sql.Where(c.dialect.QuoteIdentifier({{ printf "%q" $pkCol.Name }})).Eq(id)}
+{{- end }}
+		if applyTenancy {
+			updateConds = append(updateConds, sql.Where(c.dialect.QuoteIdentifier({{ printf "%q" .Tenancy.Column }})).Eq(resolvedTenant))
+		}
+{{- if and $captureTenant (not (supportsReturning)) }}
+
+		// MySQL has no RETURNING — pre-read the row's tenant before the UPDATE
+		// so cache invalidation and event stamping can rebuild the tenant-scoped
+		// key from the row itself, independent of how (or whether) the tenant
+		// was resolved.
+		tenantByPK, err := c.captureAffectedTenants(ctx, conn, updateConds)
+		if err != nil {
+			return nil, fmt.Errorf("update {{ $singular }}: capture tenant: %w", err)
+		}
+		capturedTenant := tenantByPK[{{ if .CompositePK }}pk{{ else }}id{{ end }}]
+{{- end }}
+
+{{- if and $captureTenant (supportsReturning) }}
+
+		// RETURNING the tenant column captures the row's own tenant so cache
+		// invalidation and event stamping can rebuild the tenant-scoped key,
+		// independent of how (or whether) the tenant was resolved.
+		query, args := sql.BuildUpdate(c.dialect, c.table, sql.UpdateOptions{
+			SetClauses:       setClauses,
+			Conditions:       updateConds,
+			ReturningColumns: []string{ {{- printf "%q" .Tenancy.Column -}} },
+		})
+{{- else }}
+
+		query, args := sql.BuildUpdate(c.dialect, c.table, sql.UpdateOptions{
+			SetClauses: setClauses,
+			Conditions: updateConds,
+		})
+{{- end }}
+{{- else }}
+
+		query, args := sql.BuildUpdate(c.dialect, c.table, sql.UpdateOptions{
+			SetClauses: setClauses,
+{{- if .CompositePK }}
+			Conditions: sql.BuildCompositePKConditions(c.dialect,
+				[]string{ {{- range .PKColumns }}{{ printf "%q" .Name }}, {{ end -}} },
+				[]any{ {{- range .PKColumns }}pk.{{ .FieldName }}, {{ end -}} }),
+{{- else }}
+			Conditions: []sql.Condition{sql.Where(c.dialect.QuoteIdentifier({{ printf "%q" $pkCol.Name }})).Eq({{ if .CompositePK }}pk{{ else }}id{{ end }})},
+{{- end }}
+		})
+{{- end }}
+{{- if and $captureTenant (supportsReturning) }}
+
+		rows, err := conn.Query(ctx, query, args...)
+		if err != nil {
+			return nil, fmt.Errorf("update {{ $singular }}: %w", err)
+		}
+		var capturedTenant any
+{{- if .StrictUpdates }}
+		matched := 0
+{{- end }}
+		for rows.Next() {
+			var rowTenant {{ .Tenancy.GoType }}
+			if err := rows.Scan(&rowTenant); err != nil {
+				rows.Close()
+				return nil, fmt.Errorf("scan updated {{ $singular }} tenant: %w", err)
+			}
+			capturedTenant = rowTenant
+{{- if .StrictUpdates }}
+			matched++
+{{- end }}
+		}
+		if err := rows.Err(); err != nil {
+			rows.Close()
+			return nil, err
+		}
+		rows.Close()
+{{- if .StrictUpdates }}
+		if matched == 0 {
+			return nil, ErrNotFound
+		}
+{{- end }}
+{{- else }}
+
+		execResult, err := conn.Exec(ctx, query, args...)
+		if err != nil {
+			return nil, fmt.Errorf("update {{ $singular }}: %w", err)
+		}
+{{- if .StrictUpdates }}
+		count, err := execResult.RowsAffected()
+		if err != nil {
+			return nil, fmt.Errorf("update {{ $singular }} rows affected: %w", err)
+		}
+		if count == 0 {
+			return nil, ErrNotFound
+		}
+{{- else }}
+		_ = execResult
+{{- end }}
+{{- end }}
+		m.AffectedPKs = []any{ {{ if .CompositePK }}pk{{ else }}id{{ end }} }
+{{- if $captureTenant }}
+		m.AffectedTenants = []any{capturedTenant}
+{{- end }}
+
+		// Empty FieldOptions — caller doesn't need the result
+		if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
+			return nil, nil
+		}
+
+		return c.Get(ctx, {{ if .CompositePK }}pk{{ else }}id{{ end }}, func(o *CallOptions[{{ .StructName }}FieldOptions]) {
+			*o = options
+			o.SkipHooks = true
+			o.LockMode = sql.LockNone
+		})
+	})
+	if err != nil {
+		return nil, err
+	}
+	if result == nil {
+		return nil, nil
+	}
+	return result.(*{{ .StructName }}), nil
+}
+{{- end }}
+{{- if .Operations.UpdateMany }}
+
+// Update{{ .StructName }}Item pairs a primary key with an update input for batch updates.
+type Update{{ .StructName }}Item struct {
+{{- if .CompositePK }}
+	PK    {{ .CompositePKStructName }}    `json:"pk"`
+	Input *Update{{ .StructName }}Input `json:"input"`
+{{- else }}
+	{{ $pkCol.FieldName }} {{ $pkCol.GoType }} `json:"{{ $pkCol.JSONTag }}"`
+	Input *Update{{ .StructName }}Input `json:"input"`
+{{- end }}
+}
+
+// UpdateMany partially updates multiple {{ .TableName }} and returns the updated entities.
+// Each item is a (PK, UpdateInput) pair. Splits into batches of batchSize.
+{{- if eq .Driver "stdlib" }}
+// On stdlib, each UPDATE executes sequentially.
+{{- else }}
+// On pgx, uses SendBatch for pipelined execution within each batch.
+{{- end }}
+func (c *{{ $structCamel }}Client) UpdateMany(ctx context.Context, items []Update{{ .StructName }}Item, opts ...func(*CallOptions[{{ .StructName }}FieldOptions])) ([]*{{ .StructName }}, error) {
+	// Update{{ .StructName }}Item.Input is a pointer, so a zero-valued item
+	// carries a nil one — a shape that compiles naturally. Rejected before the
+	// executor, like every other nil write input.
+	for _, item := range items {
+		if item.Input == nil {
+			return nil, ErrNilInput
+		}
+	}
+	options := resolveCallOptions(opts)
+	result, err := c.executeMutation(ctx, options.SkipHooks, &hook.MutationContext{
+		Op: hook.OpUpdateMany, Table: {{ .TableNameConstant }}, Schema: {{ printf "%q" .Schema }},
+		Input: items, CallOptions: options,
+	}, func(ctx context.Context, m *hook.MutationContext) (any, error) {
+		conn := database.Conn(ctx, c.querier)
+		// An empty batch writes nothing and must read nothing. The trailing
+		// re-fetch below filters on the keys this call touched, and every
+		// generated key filter treats an empty set as *no condition* — so
+		// without this guard the re-fetch degrades to an unfiltered SELECT and
+		// returns the whole table as if this call had produced it.
+		if len(items) == 0 {
+			return []*{{ .StructName }}{}, nil
+		}
+{{- if and .Tenancy .Tenancy.Tenanted }}
+
+		// Resolve the tenant once; per-item mismatch checks use the same value.
+		// applyTenancy=false under SkipTenancy OR under required:false + zero
+		// resolver — the per-item verify-match and per-row WHERE both drop.
+		var resolvedTenant {{ .Tenancy.GoType }}
+		applyTenancy := false
+		if !options.SkipTenancy {
+			var err error
+			var apply bool
+			resolvedTenant, apply, err = c.resolveTenant(ctx, options.Tenant)
+			if err != nil {
+				return nil, fmt.Errorf("update {{ .TableName }}: resolve tenant: %w", err)
+			}
+			// Stash on ctx so the per-item verify-match short-circuits via the
+			// cache and the chained terminal GetMany reuses this value
+			// — single-resolve.
+			// An explicit tenant is not cached: it rides on CallOptions, which
+			// every internal call inherits, and resolveTenant honours it ahead of
+			// the cache. A set zero is honoured verbatim where a resolved
+			// zero takes the required branch, and this slot cannot tell them apart.
+			if options.Tenant == nil {
+				ctx = tenancy.WithResolvedTenant(ctx, resolvedTenant)
+			}
+			applyTenancy = apply
+			if apply {
+				for _, item := range items {
+{{- if and .Tenancy.InPrimaryKey .CompositePK }}
+					// Tenant-in-PK verify-match per item in the batch.
+					// No input-side check — tenant column excluded from UpdateInput
+					// when it lives in the PK.
+					if item.PK.{{ .Tenancy.FieldName }} != resolvedTenant {
+						return nil, tenancy.ErrMismatch
+					}
+{{- else }}
+					if v, ok := item.Input.{{ .Tenancy.FieldName }}.Get(); ok && v != resolvedTenant {
+						return nil, tenancy.ErrMismatch
+					}
+{{- end }}
+				}
+				// Stash for cache hook (single-resolve per operation).
+				m.Tenant = resolvedTenant
+			}
+		}
+{{- end }}
+
+{{- if .CompositePK }}
+		var allPKs []{{ .CompositePKStructName }}
+{{- else }}
+		var allIDs []{{ $pkCol.GoType }}
+{{- end }}
+{{- if and $captureTenant (supportsReturning) }}
+		// Per-item RETURNING captures each updated row's tenant; feeds
+		// m.AffectedTenants so cache invalidation and event stamping rebuild
+		// tenant-scoped keys from the rows themselves.
+		tenantByPK := make(map[{{ if .CompositePK }}{{ .CompositePKStructName }}{{ else }}{{ $pkCol.GoType }}{{ end }}]any, len(items))
+{{- else if $captureTenant }}
+		// MySQL has no RETURNING — one batched pre-read captures every item's
+		// tenant before the per-item UPDATE loop.
+		tenantByPK := make(map[{{ if .CompositePK }}{{ .CompositePKStructName }}{{ else }}{{ $pkCol.GoType }}{{ end }}]any, len(items))
+		if len(items) > 0 {
+			itemPKs := make([]{{ if .CompositePK }}{{ .CompositePKStructName }}{{ else }}{{ $pkCol.GoType }}{{ end }}, 0, len(items))
+			for _, item := range items {
+				itemPKs = append(itemPKs, {{ if .CompositePK }}item.PK{{ else }}item.{{ $pkCol.FieldName }}{{ end }})
+			}
+{{- if .CompositePK }}
+			preValues := make([][]any, len(itemPKs))
+			for i, pk := range itemPKs {
+				preValues[i] = []any{ {{- range .PKColumns }}pk.{{ .FieldName }}, {{ end -}} }
+			}
+			preConds := []sql.Condition{
+				sql.BuildCompositePKBatchCondition(c.dialect, []string{ {{- range .PKColumns }}{{ printf "%q" .Name }}, {{ end -}} }, preValues),
+			}
+{{- else }}
+			preConds := []sql.Condition{sql.Where(c.dialect.QuoteIdentifier({{ printf "%q" $pkCol.Name }})).In(toAnySlice(itemPKs)...)}
+{{- end }}
+			if applyTenancy {
+				preConds = append(preConds, sql.Where(c.dialect.QuoteIdentifier({{ printf "%q" .Tenancy.Column }})).Eq(resolvedTenant))
+			}
+			var err error
+			tenantByPK, err = c.captureAffectedTenants(ctx, conn, preConds)
+			if err != nil {
+				return nil, fmt.Errorf("update {{ .TableName }}: capture tenants: %w", err)
+			}
+		}
+{{- end }}
+		for start := 0; start < len(items); start += c.batchSize {
+			end := min(start+c.batchSize, len(items))
+			batch := items[start:end]
+{{- if eq .Driver "pgx" }}
+
+			// Build all UPDATE statements for this batch
+			pgxBatch := &pgx.Batch{}
+			var batchQueries []string
+			var batchArgs [][]any
+{{- if $captureTenant }}
+			var queuedPKs []{{ if .CompositePK }}{{ .CompositePKStructName }}{{ else }}{{ $pkCol.GoType }}{{ end }}
+{{- end }}
+			for _, item := range batch {
+				setClauses := make(map[string]any)
+{{- range .UpdateInputFields }}
+{{- if and $.Tenancy $.Tenancy.Tenanted (eq .ColumnName $.Tenancy.Column) }}
+				if !applyTenancy {
+					if v, ok := item.Input.{{ .FieldName }}.Get(); ok {
+						setClauses[{{ printf "%q" .ColumnName }}] = v
+					}
+				}
+{{- else }}
+				if v, ok := item.Input.{{ .FieldName }}.Get(); ok {
+					setClauses[{{ printf "%q" .ColumnName }}] = v
+				}
+{{- end }}
+{{- end }}
+
+				// Skip no-op updates
+				if len(setClauses) == 0 {
+{{- if .CompositePK }}
+					allPKs = append(allPKs, item.PK)
+{{- else }}
+					allIDs = append(allIDs, item.{{ $pkCol.FieldName }})
+{{- end }}
+					continue
+				}
+{{- range .UpdateColumns }}
+
+				// Auto-set {{ .Name }} to current time if not explicitly provided
+				if _, ok := item.Input.{{ .FieldName }}.Get(); !ok {
+					setClauses[{{ printf "%q" .Name }}] = time.Now()
+				}
+{{- end }}
+
+{{- if and .Tenancy .Tenancy.Tenanted }}
+{{- if .CompositePK }}
+				itemConds := sql.BuildCompositePKConditions(c.dialect,
+					[]string{ {{- range .PKColumns }}{{ printf "%q" .Name }}, {{ end -}} },
+					[]any{ {{- range .PKColumns }}item.PK.{{ .FieldName }}, {{ end -}} })
+{{- else }}
+				itemConds := []sql.Condition{sql.Where(c.dialect.QuoteIdentifier({{ printf "%q" $pkCol.Name }})).Eq(item.{{ $pkCol.FieldName }})}
+{{- end }}
+				if applyTenancy {
+					itemConds = append(itemConds, sql.Where(c.dialect.QuoteIdentifier({{ printf "%q" .Tenancy.Column }})).Eq(resolvedTenant))
+				}
+{{- if and $captureTenant (supportsReturning) }}
+				query, args := sql.BuildUpdate(c.dialect, c.table, sql.UpdateOptions{
+					SetClauses:       setClauses,
+					Conditions:       itemConds,
+					ReturningColumns: []string{ {{- printf "%q" .Tenancy.Column -}} },
+				})
+{{- else }}
+				query, args := sql.BuildUpdate(c.dialect, c.table, sql.UpdateOptions{
+					SetClauses: setClauses,
+					Conditions: itemConds,
+				})
+{{- end }}
+{{- else }}
+
+				query, args := sql.BuildUpdate(c.dialect, c.table, sql.UpdateOptions{
+					SetClauses: setClauses,
+{{- if .CompositePK }}
+					Conditions: sql.BuildCompositePKConditions(c.dialect,
+						[]string{ {{- range .PKColumns }}{{ printf "%q" .Name }}, {{ end -}} },
+						[]any{ {{- range .PKColumns }}item.PK.{{ .FieldName }}, {{ end -}} }),
+{{- else }}
+					Conditions: []sql.Condition{sql.Where(c.dialect.QuoteIdentifier({{ printf "%q" $pkCol.Name }})).Eq(item.{{ $pkCol.FieldName }})},
+{{- end }}
+				})
+{{- end }}
+				pgxBatch.Queue(query, args...)
+				batchQueries = append(batchQueries, query)
+				batchArgs = append(batchArgs, args)
+{{- if $captureTenant }}
+				queuedPKs = append(queuedPKs, {{ if .CompositePK }}item.PK{{ else }}item.{{ $pkCol.FieldName }}{{ end }})
+{{- end }}
+{{- if .CompositePK }}
+				allPKs = append(allPKs, item.PK)
+{{- else }}
+				allIDs = append(allIDs, item.{{ $pkCol.FieldName }})
+{{- end }}
+			}
+
+{{- if $captureTenant }}
+
+			// Send all UPDATEs — pipelined if supported, sequential otherwise.
+			// Each statement RETURNING-projects the row's tenant; the scan
+			// below captures it per queued PK.
+			if pgxBatch.Len() > 0 {
+				if batcher, ok := conn.(interface {
+					SendBatch(ctx context.Context, b *pgx.Batch) pgx.BatchResults
+				}); ok {
+					br := batcher.SendBatch(ctx, pgxBatch)
+					for i := range pgxBatch.Len() {
+						rows, err := br.Query()
+						if err != nil {
+							br.Close()
+							return nil, fmt.Errorf("update {{ .TableName }} batch: %w", err)
+						}
+						for rows.Next() {
+							var rowTenant {{ .Tenancy.GoType }}
+							if err := rows.Scan(&rowTenant); err != nil {
+								rows.Close()
+								br.Close()
+								return nil, fmt.Errorf("scan updated {{ $singular }} tenant: %w", err)
+							}
+							tenantByPK[queuedPKs[i]] = rowTenant
+						}
+						if err := rows.Err(); err != nil {
+							br.Close()
+							return nil, fmt.Errorf("update {{ .TableName }} batch: %w", err)
+						}
+						rows.Close()
+					}
+					if err := br.Close(); err != nil {
+						return nil, fmt.Errorf("close update batch: %w", err)
+					}
+				} else {
+					for i, q := range batchQueries {
+						rows, err := conn.Query(ctx, q, batchArgs[i]...)
+						if err != nil {
+							return nil, fmt.Errorf("update {{ .TableName }} batch: %w", err)
+						}
+						for rows.Next() {
+							var rowTenant {{ .Tenancy.GoType }}
+							if err := rows.Scan(&rowTenant); err != nil {
+								rows.Close()
+								return nil, fmt.Errorf("scan updated {{ $singular }} tenant: %w", err)
+							}
+							tenantByPK[queuedPKs[i]] = rowTenant
+						}
+						if err := rows.Err(); err != nil {
+							rows.Close()
+							return nil, fmt.Errorf("update {{ .TableName }} batch: %w", err)
+						}
+						rows.Close()
+					}
+				}
+			}
+{{- else }}
+
+			// Send all UPDATEs — pipelined if supported, sequential otherwise
+			if pgxBatch.Len() > 0 {
+				if batcher, ok := conn.(interface {
+					SendBatch(ctx context.Context, b *pgx.Batch) pgx.BatchResults
+				}); ok {
+					br := batcher.SendBatch(ctx, pgxBatch)
+					for range pgxBatch.Len() {
+						if _, err := br.Exec(); err != nil {
+							br.Close()
+							return nil, fmt.Errorf("update {{ .TableName }} batch: %w", err)
+						}
+					}
+					if err := br.Close(); err != nil {
+						return nil, fmt.Errorf("close update batch: %w", err)
+					}
+				} else {
+					for i, q := range batchQueries {
+						if _, err := conn.Exec(ctx, q, batchArgs[i]...); err != nil {
+							return nil, fmt.Errorf("update {{ .TableName }} batch: %w", err)
+						}
+					}
+				}
+			}
+{{- end }}
+{{- else }}
+
+			for _, item := range batch {
+				setClauses := make(map[string]any)
+{{- range .UpdateInputFields }}
+{{- if and $.Tenancy $.Tenancy.Tenanted (eq .ColumnName $.Tenancy.Column) }}
+				if !applyTenancy {
+					if v, ok := item.Input.{{ .FieldName }}.Get(); ok {
+						setClauses[{{ printf "%q" .ColumnName }}] = v
+					}
+				}
+{{- else }}
+				if v, ok := item.Input.{{ .FieldName }}.Get(); ok {
+					setClauses[{{ printf "%q" .ColumnName }}] = v
+				}
+{{- end }}
+{{- end }}
+
+				// Skip no-op updates
+				if len(setClauses) == 0 {
+{{- if .CompositePK }}
+					allPKs = append(allPKs, item.PK)
+{{- else }}
+					allIDs = append(allIDs, item.{{ $pkCol.FieldName }})
+{{- end }}
+					continue
+				}
+{{- range .UpdateColumns }}
+
+				// Auto-set {{ .Name }} to current time if not explicitly provided
+				if _, ok := item.Input.{{ .FieldName }}.Get(); !ok {
+					setClauses[{{ printf "%q" .Name }}] = time.Now()
+				}
+{{- end }}
+
+{{- if and .Tenancy .Tenancy.Tenanted }}
+{{- if .CompositePK }}
+				itemConds := sql.BuildCompositePKConditions(c.dialect,
+					[]string{ {{- range .PKColumns }}{{ printf "%q" .Name }}, {{ end -}} },
+					[]any{ {{- range .PKColumns }}item.PK.{{ .FieldName }}, {{ end -}} })
+{{- else }}
+				itemConds := []sql.Condition{sql.Where(c.dialect.QuoteIdentifier({{ printf "%q" $pkCol.Name }})).Eq(item.{{ $pkCol.FieldName }})}
+{{- end }}
+				if applyTenancy {
+					itemConds = append(itemConds, sql.Where(c.dialect.QuoteIdentifier({{ printf "%q" .Tenancy.Column }})).Eq(resolvedTenant))
+				}
+{{- if and $captureTenant (supportsReturning) }}
+				query, args := sql.BuildUpdate(c.dialect, c.table, sql.UpdateOptions{
+					SetClauses:       setClauses,
+					Conditions:       itemConds,
+					ReturningColumns: []string{ {{- printf "%q" .Tenancy.Column -}} },
+				})
+{{- else }}
+				query, args := sql.BuildUpdate(c.dialect, c.table, sql.UpdateOptions{
+					SetClauses: setClauses,
+					Conditions: itemConds,
+				})
+{{- end }}
+{{- else }}
+
+				query, args := sql.BuildUpdate(c.dialect, c.table, sql.UpdateOptions{
+					SetClauses: setClauses,
+{{- if .CompositePK }}
+					Conditions: sql.BuildCompositePKConditions(c.dialect,
+						[]string{ {{- range .PKColumns }}{{ printf "%q" .Name }}, {{ end -}} },
+						[]any{ {{- range .PKColumns }}item.PK.{{ .FieldName }}, {{ end -}} }),
+{{- else }}
+					Conditions: []sql.Condition{sql.Where(c.dialect.QuoteIdentifier({{ printf "%q" $pkCol.Name }})).Eq(item.{{ $pkCol.FieldName }})},
+{{- end }}
+				})
+{{- end }}
+
+{{- if and $captureTenant (supportsReturning) }}
+
+				rows, err := conn.Query(ctx, query, args...)
+				if err != nil {
+					return nil, fmt.Errorf("update {{ $singular }} %v: %w", item.{{ if .CompositePK }}PK{{ else }}{{ $pkCol.FieldName }}{{ end }}, err)
+				}
+				for rows.Next() {
+					var rowTenant {{ .Tenancy.GoType }}
+					if err := rows.Scan(&rowTenant); err != nil {
+						rows.Close()
+						return nil, fmt.Errorf("scan updated {{ $singular }} tenant: %w", err)
+					}
+					tenantByPK[{{ if .CompositePK }}item.PK{{ else }}item.{{ $pkCol.FieldName }}{{ end }}] = rowTenant
+				}
+				if err := rows.Err(); err != nil {
+					rows.Close()
+					return nil, fmt.Errorf("update {{ $singular }} %v: %w", item.{{ if .CompositePK }}PK{{ else }}{{ $pkCol.FieldName }}{{ end }}, err)
+				}
+				rows.Close()
+{{- else }}
+
+				_, err := conn.Exec(ctx, query, args...)
+				if err != nil {
+					return nil, fmt.Errorf("update {{ $singular }} %v: %w", item.{{ if .CompositePK }}PK{{ else }}{{ $pkCol.FieldName }}{{ end }}, err)
+				}
+{{- end }}
+{{- if .CompositePK }}
+				allPKs = append(allPKs, item.PK)
+{{- else }}
+				allIDs = append(allIDs, item.{{ $pkCol.FieldName }})
+{{- end }}
+			}
+{{- end }}
+		}
+{{- if .CompositePK }}
+
+		m.AffectedPKs = toAnySlice(allPKs)
+{{- else }}
+
+		m.AffectedPKs = toAnySlice(allIDs)
+{{- end }}
+{{- if $captureTenant }}
+{{- if .CompositePK }}
+		affectedTenants := make([]any, len(allPKs))
+		for i, pk := range allPKs {
+			affectedTenants[i] = tenantByPK[pk]
+		}
+{{- else }}
+		affectedTenants := make([]any, len(allIDs))
+		for i, id := range allIDs {
+			affectedTenants[i] = tenantByPK[id]
+		}
+{{- end }}
+		m.AffectedTenants = affectedTenants
+{{- end }}
+
+		// Empty FieldOptions — skip fetch
+		if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
+			return nil, nil
+		}
+{{- if .CompositePK }}
+
+		return c.GetMany(ctx, &Get{{ .StructName | structNamePlural }}Input{
+			Filter: &{{ .StructName }}Filter{PKs: allPKs},
+			Limit:  new(0),
+		}, func(o *CallOptions[{{ .StructName }}FieldOptions]) {
+			*o = options
+			o.SkipHooks = true
+			o.LockMode = sql.LockNone
+		})
+{{- else }}
+
+{{- if pkIsStringType $pkCol }}
+		// Convert IDs for filter
+		idStrings := make([]string, len(allIDs))
+		for i, id := range allIDs {
+			idStrings[i] = {{ fkToString $pkCol "id" }}
+		}
+		return c.GetMany(ctx, &Get{{ .StructName | structNamePlural }}Input{
+			Filter: &{{ .StructName }}Filter{
+				{{ $pkCol.FieldName }}: &comparator.ID{In: idStrings},
+			},
+			Limit: new(0),
+		}, func(o *CallOptions[{{ .StructName }}FieldOptions]) {
+			*o = options
+			o.SkipHooks = true
+			o.LockMode = sql.LockNone
+		})
+{{- else }}
+		return c.GetMany(ctx, &Get{{ .StructName | structNamePlural }}Input{
+			Filter: &{{ .StructName }}Filter{
+				{{ $pkCol.FieldName }}: {{ pkFilterInExpr $pkCol "allIDs" false }},
+			},
+			Limit: new(0),
+		}, func(o *CallOptions[{{ .StructName }}FieldOptions]) {
+			*o = options
+			o.SkipHooks = true
+			o.LockMode = sql.LockNone
+		})
+{{- end }}
+{{- end }}
+	})
+	if err != nil {
+		return nil, err
+	}
+	if result == nil {
+		return nil, nil
+	}
+	return result.([]*{{ .StructName }}), nil
+}
+{{- end }}
+{{- if .Operations.UpdateWhere }}
+
+// UpdateWhere updates all {{ .TableName }} matching the filter and returns the updated entities.
+// Idempotent — returns empty slice when no rows match.
+// Returns ErrNilInput when input is nil, checked before the filter.
+// Returns ErrEmptyFilter when the filter is nil or produces no conditions.
+func (c *{{ $structCamel }}Client) UpdateWhere(ctx context.Context, filter *{{ .StructName }}Filter, input *Update{{ .StructName }}Input, opts ...func(*CallOptions[{{ .StructName }}FieldOptions])) ([]*{{ .StructName }}, error) {
+	// Argument validity is checked before the filter's bulk-op
+	// safety guard, and before the executor, so a nil input fires no hook and
+	// publishes no event. ErrEmptyFilter still covers a non-nil input with an
+	// empty filter.
+	if input == nil {
+		return nil, ErrNilInput
+	}
+	options := resolveCallOptions(opts)
+	result, err := c.executeMutation(ctx, options.SkipHooks, &hook.MutationContext{
+		Op: hook.OpUpdateWhere, Table: {{ .TableNameConstant }}, Schema: {{ printf "%q" .Schema }},
+		Input: input, CallOptions: options,
+	}, func(ctx context.Context, m *hook.MutationContext) (any, error) {
+		conn := database.Conn(ctx, c.querier)
+{{- if .HasTenantedRelationshipFilter }}
+
+		// A relationship filter compiles to a correlated EXISTS carrying the
+		// *target's* tenant predicate, so the tenant is
+		// resolved before the conditions are built rather than appended after them.
+		filterOpts, filterErr := c.filterOptions(ctx, filter, options.SkipTenancy, options.Tenant)
+		if filterErr != nil {
+			return nil, fmt.Errorf("update {{ .TableName }} where: %w", filterErr)
+		}
+{{- end }}
+
+		conds := filter.ToConditions(c.dialect{{ if .HasTenantedRelationshipFilter }}, filterOpts...{{ end }})
+		if len(conds) == 0 {
+			return nil, ErrEmptyFilter
+		}
+{{- if and .Tenancy .Tenancy.Tenanted }}
+
+		// Tenancy filter + mismatch check. applyTenancy=false
+		// under SkipTenancy OR under required:false + zero resolver — the
+		// filter is not AND'd and the SET-clause tenant override below fires
+		// (only meaningful when the tenant column is NOT in the PK; when it
+		// is, the column is excluded from UpdateInputFields entirely).
+{{- if not .Tenancy.InPrimaryKey }}
+		applyTenancy := false
+{{- end }}
+		if !options.SkipTenancy {
+			resolvedTenant, apply, err := c.resolveTenant(ctx, options.Tenant)
+			if err != nil {
+				return nil, fmt.Errorf("update {{ .TableName }} where: resolve tenant: %w", err)
+			}
+			// Stash on ctx so the chained terminal GetMany reuses this value
+			// — single-resolve.
+			// An explicit tenant is not cached: it rides on CallOptions, which
+			// every internal call inherits, and resolveTenant honours it ahead of
+			// the cache. A set zero is honoured verbatim where a resolved
+			// zero takes the required branch, and this slot cannot tell them apart.
+			if options.Tenant == nil {
+				ctx = tenancy.WithResolvedTenant(ctx, resolvedTenant)
+			}
+{{- if not .Tenancy.InPrimaryKey }}
+			applyTenancy = apply
+{{- end }}
+			if apply {
+{{- if not .Tenancy.InPrimaryKey }}
+				if v, ok := input.{{ .Tenancy.FieldName }}.Get(); ok && v != resolvedTenant {
+					return nil, tenancy.ErrMismatch
+				}
+{{- end }}
+				conds = append(conds, sql.Where(c.dialect.QuoteIdentifier({{ printf "%q" .Tenancy.Column }})).Eq(resolvedTenant))
+			}
+		}
+{{- end }}
+
+		// Build SET clause (same per-field checks as Update)
+		setClauses := make(map[string]any)
+{{- range .UpdateInputFields }}
+{{- if and $.Tenancy $.Tenancy.Tenanted (eq .ColumnName $.Tenancy.Column) }}
+		if !applyTenancy {
+			if v, ok := input.{{ .FieldName }}.Get(); ok {
+				setClauses[{{ printf "%q" .ColumnName }}] = v
+			}
+		}
+{{- else }}
+		if v, ok := input.{{ .FieldName }}.Get(); ok {
+			setClauses[{{ printf "%q" .ColumnName }}] = v
+		}
+{{- end }}
+{{- end }}
+
+		// No fields set — return matching entities unchanged
+		if len(setClauses) == 0 {
+			if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
+				return nil, nil
+			}
+			return c.GetMany(ctx, &Get{{ .StructName | structNamePlural }}Input{
+				Filter: filter,
+				Limit:  new(0),
+			}, func(o *CallOptions[{{ .StructName }}FieldOptions]) {
+				*o = options
+				o.SkipHooks = true
+				o.LockMode = sql.LockNone
+			})
+		}
+{{- range .UpdateColumns }}
+
+		// Auto-set {{ .Name }} to current time if not explicitly provided
+		if _, ok := input.{{ .FieldName }}.Get(); !ok {
+			setClauses[{{ printf "%q" .Name }}] = time.Now()
+		}
+{{- end }}
+
+{{- if and .CompositePK (supportsReturning) }}
+
+		// UPDATE with RETURNING — get affected composite PKs in one round-trip
+		query, args := sql.BuildUpdate(c.dialect, c.table, sql.UpdateOptions{
+			SetClauses:       setClauses,
+			Conditions:       conds,
+{{- if $captureTenant }}
+			ReturningColumns: []string{ {{- range .PKColumns }}{{ printf "%q" .Name }}, {{ end }}{{ printf "%q" .Tenancy.Column -}} },
+{{- else }}
+			ReturningColumns: []string{ {{- range .PKColumns }}{{ printf "%q" .Name }}, {{ end -}} },
+{{- end }}
+		})
+
+		rows, err := conn.Query(ctx, query, args...)
+		if err != nil {
+			return nil, fmt.Errorf("update {{ .TableName }} where: %w", err)
+		}
+		defer rows.Close()
+
+		var pks []{{ .CompositePKStructName }}
+{{- if $captureTenant }}
+		var affectedTenants []any
+		for rows.Next() {
+			var pk {{ .CompositePKStructName }}
+			var rowTenant {{ .Tenancy.GoType }}
+			if err := rows.Scan({{ range $i, $col := .PKColumns }}{{ if $i }}, {{ end }}&pk.{{ $col.FieldName }}{{ end }}, &rowTenant); err != nil {
+				return nil, fmt.Errorf("scan updated {{ $singular }} pk: %w", err)
+			}
+			pks = append(pks, pk)
+			affectedTenants = append(affectedTenants, rowTenant)
+		}
+{{- else }}
+		for rows.Next() {
+			var pk {{ .CompositePKStructName }}
+			if err := rows.Scan({{ range $i, $col := .PKColumns }}{{ if $i }}, {{ end }}&pk.{{ $col.FieldName }}{{ end }}); err != nil {
+				return nil, fmt.Errorf("scan updated {{ $singular }} pk: %w", err)
+			}
+			pks = append(pks, pk)
+		}
+{{- end }}
+		if err := rows.Err(); err != nil {
+			return nil, err
+		}
+		if len(pks) == 0 {
+			return nil, nil
+		}
+		m.AffectedPKs = toAnySlice(pks)
+{{- if $captureTenant }}
+		m.AffectedTenants = affectedTenants
+{{- end }}
+
+		// Empty FieldOptions — skip fetch
+		if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
+			return nil, nil
+		}
+
+		return c.GetMany(ctx, &Get{{ .StructName | structNamePlural }}Input{
+			Filter: &{{ .StructName }}Filter{PKs: pks},
+			Limit:  new(0),
+		}, func(o *CallOptions[{{ .StructName }}FieldOptions]) {
+			*o = options
+			o.SkipHooks = true
+			o.LockMode = sql.LockNone
+		})
+{{- else if .CompositePK }}
+
+{{- if $captureTenant }}
+
+		// MySQL: must collect composite PKs — and each row's tenant, for
+		// tenant-scoped cache keys — before the UPDATE (no RETURNING)
+		pks, affectedTenants, err := c.collectAffectedPKs(ctx, conn, conds)
+{{- else }}
+
+		// MySQL: must collect composite PKs before the UPDATE (no RETURNING)
+		pks, err := c.collectAffectedPKs(ctx, conn, conds)
+{{- end }}
+		if err != nil {
+			return nil, fmt.Errorf("update {{ .TableName }} where: %w", err)
+		}
+		if len(pks) == 0 {
+			return nil, nil
+		}
+
+		query, args := sql.BuildUpdate(c.dialect, c.table, sql.UpdateOptions{
+			SetClauses: setClauses,
+			Conditions: conds,
+		})
+		_, err = conn.Exec(ctx, query, args...)
+		if err != nil {
+			return nil, fmt.Errorf("update {{ .TableName }} where: %w", err)
+		}
+		m.AffectedPKs = toAnySlice(pks)
+{{- if $captureTenant }}
+		m.AffectedTenants = affectedTenants
+{{- end }}
+
+		// Empty FieldOptions — skip fetch
+		if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
+			return nil, nil
+		}
+
+		return c.GetMany(ctx, &Get{{ .StructName | structNamePlural }}Input{
+			Filter: &{{ .StructName }}Filter{PKs: pks},
+			Limit:  new(0),
+		}, func(o *CallOptions[{{ .StructName }}FieldOptions]) {
+			*o = options
+			o.SkipHooks = true
+			o.LockMode = sql.LockNone
+		})
+{{- else if supportsReturning }}
+
+		// UPDATE with RETURNING "id" — get affected IDs in one round-trip
+		query, args := sql.BuildUpdate(c.dialect, c.table, sql.UpdateOptions{
+			SetClauses:       setClauses,
+			Conditions:       conds,
+{{- if $captureTenant }}
+			ReturningColumns: []string{ {{- printf "%q" $pkCol.Name }}, {{ printf "%q" .Tenancy.Column -}} },
+{{- else }}
+			ReturningColumns: []string{ {{- printf "%q" $pkCol.Name -}} },
+{{- end }}
+		})
+
+		rows, err := conn.Query(ctx, query, args...)
+		if err != nil {
+			return nil, fmt.Errorf("update {{ .TableName }} where: %w", err)
+		}
+		defer rows.Close()
+
+{{- if pkIsStringType $pkCol }}
+		var ids []string
+{{- if $captureTenant }}
+		var affectedTenants []any
+		for rows.Next() {
+			var id {{ $pkCol.GoType }}
+			var rowTenant {{ .Tenancy.GoType }}
+			if err := rows.Scan(&id, &rowTenant); err != nil {
+				return nil, fmt.Errorf("scan updated {{ $singular }} id: %w", err)
+			}
+			ids = append(ids, {{ fkToString $pkCol "id" }})
+			affectedTenants = append(affectedTenants, rowTenant)
+		}
+{{- else }}
+		for rows.Next() {
+			var id {{ $pkCol.GoType }}
+			if err := rows.Scan(&id); err != nil {
+				return nil, fmt.Errorf("scan updated {{ $singular }} id: %w", err)
+			}
+			ids = append(ids, {{ fkToString $pkCol "id" }})
+		}
+{{- end }}
+		if err := rows.Err(); err != nil {
+			return nil, err
+		}
+		if len(ids) == 0 {
+			return nil, nil
+		}
+		m.AffectedPKs = toAnySlice(ids)
+{{- if $captureTenant }}
+		m.AffectedTenants = affectedTenants
+{{- end }}
+
+		// Empty FieldOptions — skip fetch
+		if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
+			return nil, nil
+		}
+
+		// Fetch affected entities with FieldOptions
+		return c.GetMany(ctx, &Get{{ .StructName | structNamePlural }}Input{
+			Filter: &{{ .StructName }}Filter{
+				{{ $pkCol.FieldName }}: &comparator.ID{In: ids},
+			},
+			Limit: new(0),
+		}, func(o *CallOptions[{{ .StructName }}FieldOptions]) {
+			*o = options
+			o.SkipHooks = true
+			o.LockMode = sql.LockNone
+		})
+{{- else }}
+		var ids []{{ $pkCol.GoType }}
+{{- if $captureTenant }}
+		var affectedTenants []any
+		for rows.Next() {
+			var id {{ $pkCol.GoType }}
+			var rowTenant {{ .Tenancy.GoType }}
+			if err := rows.Scan(&id, &rowTenant); err != nil {
+				return nil, fmt.Errorf("scan updated {{ $singular }} id: %w", err)
+			}
+			ids = append(ids, id)
+			affectedTenants = append(affectedTenants, rowTenant)
+		}
+{{- else }}
+		for rows.Next() {
+			var id {{ $pkCol.GoType }}
+			if err := rows.Scan(&id); err != nil {
+				return nil, fmt.Errorf("scan updated {{ $singular }} id: %w", err)
+			}
+			ids = append(ids, id)
+		}
+{{- end }}
+		if err := rows.Err(); err != nil {
+			return nil, err
+		}
+		if len(ids) == 0 {
+			return nil, nil
+		}
+		m.AffectedPKs = toAnySlice(ids)
+{{- if $captureTenant }}
+		m.AffectedTenants = affectedTenants
+{{- end }}
+
+		// Empty FieldOptions — skip fetch
+		if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
+			return nil, nil
+		}
+
+		// Fetch affected entities with FieldOptions
+		return c.GetMany(ctx, &Get{{ .StructName | structNamePlural }}Input{
+			Filter: &{{ .StructName }}Filter{
+				{{ $pkCol.FieldName }}: {{ pkFilterInExpr $pkCol "ids" false }},
+			},
+			Limit: new(0),
+		}, func(o *CallOptions[{{ .StructName }}FieldOptions]) {
+			*o = options
+			o.SkipHooks = true
+			o.LockMode = sql.LockNone
+		})
+{{- end }}
+{{- else }}
+
+{{- if $captureTenant }}
+
+		// MySQL: must collect IDs — and each row's tenant, for tenant-scoped
+		// cache keys — before the UPDATE (no RETURNING)
+		ids, affectedTenants, err := c.collectAffectedIDs(ctx, conn, conds)
+{{- else }}
+
+		// MySQL: must collect IDs before the UPDATE (no RETURNING)
+		ids, err := c.collectAffectedIDs(ctx, conn, conds)
+{{- end }}
+		if err != nil {
+			return nil, fmt.Errorf("update {{ .TableName }} where: %w", err)
+		}
+		if len(ids) == 0 {
+			return nil, nil
+		}
+
+		query, args := sql.BuildUpdate(c.dialect, c.table, sql.UpdateOptions{
+			SetClauses: setClauses,
+			Conditions: conds,
+		})
+		_, err = conn.Exec(ctx, query, args...)
+		if err != nil {
+			return nil, fmt.Errorf("update {{ .TableName }} where: %w", err)
+		}
+		m.AffectedPKs = toAnySlice(ids)
+{{- if $captureTenant }}
+		m.AffectedTenants = affectedTenants
+{{- end }}
+
+		// Empty FieldOptions — skip fetch
+		if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
+			return nil, nil
+		}
+
+		return c.GetMany(ctx, &Get{{ .StructName | structNamePlural }}Input{
+			Filter: &{{ .StructName }}Filter{
+				{{ $pkCol.FieldName }}: {{ pkFilterInExpr $pkCol "ids" false }},
+			},
+			Limit: new(0),
+		}, func(o *CallOptions[{{ .StructName }}FieldOptions]) {
+			*o = options
+			o.SkipHooks = true
+			o.LockMode = sql.LockNone
+		})
+{{- end }}
+	})
+	if err != nil {
+		return nil, err
+	}
+	if result == nil {
+		return nil, nil
+	}
+	return result.([]*{{ .StructName }}), nil
+}
+{{- end }}
+{{- if and (not .CompositePK) .Operations.UpdateWhere (not (supportsReturning)) }}
+{{- if $captureTenant }}
+
+// collectAffectedIDs returns the PKs of rows matching the conditions, along
+// with each row's tenant column value (index-aligned with the PKs) so cache
+// invalidation and event stamping can rebuild tenant-scoped keys from the
+// rows themselves. Used by Where variants to know which rows
+// were affected.
+func (c *{{ $structCamel }}Client) collectAffectedIDs(ctx context.Context, conn database.Querier, conds []sql.Condition) ([]{{ if pkIsStringType $pkCol }}string{{ else }}{{ $pkCol.GoType }}{{ end }}, []any, error) {
+	query, args := sql.BuildSelect(c.dialect, c.table, sql.SelectOptions{
+		Columns:    []string{ {{- printf "%q" $pkCol.Name }}, {{ printf "%q" .Tenancy.Column -}} },
+		Conditions: conds,
+	})
+
+	rows, err := conn.Query(ctx, query, args...)
+	if err != nil {
+		return nil, nil, err
+	}
+	defer rows.Close()
+
+{{- if pkIsStringType $pkCol }}
+	var ids []string
+	var tenants []any
+	for rows.Next() {
+		var id {{ $pkCol.GoType }}
+		var rowTenant {{ .Tenancy.GoType }}
+		if err := rows.Scan(&id, &rowTenant); err != nil {
+			return nil, nil, err
+		}
+		ids = append(ids, {{ fkToString $pkCol "id" }})
+		tenants = append(tenants, rowTenant)
+	}
+{{- else }}
+	var ids []{{ $pkCol.GoType }}
+	var tenants []any
+	for rows.Next() {
+		var id {{ $pkCol.GoType }}
+		var rowTenant {{ .Tenancy.GoType }}
+		if err := rows.Scan(&id, &rowTenant); err != nil {
+			return nil, nil, err
+		}
+		ids = append(ids, id)
+		tenants = append(tenants, rowTenant)
+	}
+{{- end }}
+	return ids, tenants, rows.Err()
+}
+{{- else }}
+
+// collectAffectedIDs returns the PKs of rows matching the conditions.
+// Used by Where variants to know which rows were affected.
+func (c *{{ $structCamel }}Client) collectAffectedIDs(ctx context.Context, conn database.Querier, conds []sql.Condition) ([]{{ if pkIsStringType $pkCol }}string{{ else }}{{ $pkCol.GoType }}{{ end }}, error) {
+	query, args := sql.BuildSelect(c.dialect, c.table, sql.SelectOptions{
+		Columns:    []string{ {{- printf "%q" $pkCol.Name -}} },
+		Conditions: conds,
+	})
+
+	rows, err := conn.Query(ctx, query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+{{- if pkIsStringType $pkCol }}
+	var ids []string
+	for rows.Next() {
+		var id {{ $pkCol.GoType }}
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		ids = append(ids, {{ fkToString $pkCol "id" }})
+	}
+{{- else }}
+	var ids []{{ $pkCol.GoType }}
+	for rows.Next() {
+		var id {{ $pkCol.GoType }}
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		ids = append(ids, id)
+	}
+{{- end }}
+	return ids, rows.Err()
+}
+{{- end }}
+{{- end }}
+{{- if and .CompositePK .Operations.UpdateWhere (not (supportsReturning)) }}
+{{- if $captureTenant }}
+
+// collectAffectedPKs returns the composite PKs of rows matching the
+// conditions, along with each row's tenant column value (index-aligned) so
+// cache invalidation and event stamping can rebuild tenant-scoped keys from
+// the rows themselves. Used by Where variants to know which rows
+// were affected.
+func (c *{{ $structCamel }}Client) collectAffectedPKs(ctx context.Context, conn database.Querier, conds []sql.Condition) ([]{{ .CompositePKStructName }}, []any, error) {
+	query, args := sql.BuildSelect(c.dialect, c.table, sql.SelectOptions{
+		Columns:    []string{ {{- range .PKColumns }}{{ printf "%q" .Name }}, {{ end }}{{ printf "%q" .Tenancy.Column -}} },
+		Conditions: conds,
+	})
+
+	rows, err := conn.Query(ctx, query, args...)
+	if err != nil {
+		return nil, nil, err
+	}
+	defer rows.Close()
+
+	var pks []{{ .CompositePKStructName }}
+	var tenants []any
+	for rows.Next() {
+		var pk {{ .CompositePKStructName }}
+		var rowTenant {{ .Tenancy.GoType }}
+		if err := rows.Scan({{ range $i, $col := .PKColumns }}{{ if $i }}, {{ end }}&pk.{{ $col.FieldName }}{{ end }}, &rowTenant); err != nil {
+			return nil, nil, err
+		}
+		pks = append(pks, pk)
+		tenants = append(tenants, rowTenant)
+	}
+	return pks, tenants, rows.Err()
+}
+{{- else }}
+
+// collectAffectedPKs returns the composite PKs of rows matching the conditions.
+// Used by Where variants to know which rows were affected.
+func (c *{{ $structCamel }}Client) collectAffectedPKs(ctx context.Context, conn database.Querier, conds []sql.Condition) ([]{{ .CompositePKStructName }}, error) {
+	query, args := sql.BuildSelect(c.dialect, c.table, sql.SelectOptions{
+		Columns:    []string{ {{- range .PKColumns }}{{ printf "%q" .Name }}, {{ end -}} },
+		Conditions: conds,
+	})
+
+	rows, err := conn.Query(ctx, query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var pks []{{ .CompositePKStructName }}
+	for rows.Next() {
+		var pk {{ .CompositePKStructName }}
+		if err := rows.Scan({{ range $i, $col := .PKColumns }}{{ if $i }}, {{ end }}&pk.{{ $col.FieldName }}{{ end }}); err != nil {
+			return nil, err
+		}
+		pks = append(pks, pk)
+	}
+	return pks, rows.Err()
+}
+{{- end }}
+{{- end }}
+{{- end -}}

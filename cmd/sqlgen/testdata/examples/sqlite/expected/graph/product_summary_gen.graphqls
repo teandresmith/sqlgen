@@ -1,0 +1,63 @@
+"""
+ProductSummary corresponds to the product_summary view.
+"""
+type ProductSummary {
+  "id"
+  id: Int!
+  "title"
+  title: String
+  "price"
+  price: Float!
+  "category_name"
+  categoryName: String!
+  "order_count"
+  orderCount: Int!
+}
+
+type ProductSummaryConnection {
+  edges:      [ProductSummaryEdge!]!
+  pageInfo:   PageInfo!
+  totalCount: Int!
+}
+
+type ProductSummaryEdge {
+  node:   ProductSummary!
+  cursor: String!
+}
+
+type ProductSummaryListResult {
+  items:      [ProductSummary!]!
+  totalCount: Int!
+  offset:     Int!
+  limit:      Int!
+  hasMore:    Boolean!
+}
+
+input ProductSummaryFilter {
+  title: NullableStringComparator
+  price: NumericComparator
+  categoryName: StringComparator
+  orderCount: NumericComparator
+  and: [ProductSummaryFilter!]
+  or:  [ProductSummaryFilter!]
+}
+
+enum ProductSummarySortField {
+  ID
+  TITLE
+  PRICE
+  CATEGORY_NAME
+  ORDER_COUNT
+}
+
+input ProductSummarySort {
+  field:     ProductSummarySortField!
+  direction: SortDirection!
+}
+
+extend type Query {
+  productSummary(id: Int!): ProductSummary
+  "Cursor-paginated; ordering is driven by cursor_keys to preserve keyset semantics — pass `sort` to productSummaryList instead."
+  productSummaries(filter: ProductSummaryFilter, first: Int, after: String, last: Int, before: String): ProductSummaryConnection!
+  productSummaryList(filter: ProductSummaryFilter, sort: [ProductSummarySort!], limit: Int, offset: Int): ProductSummaryListResult!
+}

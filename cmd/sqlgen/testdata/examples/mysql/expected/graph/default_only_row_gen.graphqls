@@ -1,0 +1,80 @@
+"""
+DefaultOnlyRow corresponds to the default_only_rows table.
+"""
+type DefaultOnlyRow {
+  "id"
+  id: Int!
+  "label"
+  label: String!
+  "hits"
+  hits: Int!
+  "active"
+  active: Boolean!
+}
+
+type DefaultOnlyRowConnection {
+  edges:      [DefaultOnlyRowEdge!]!
+  pageInfo:   PageInfo!
+  totalCount: Int!
+}
+
+type DefaultOnlyRowEdge {
+  node:   DefaultOnlyRow!
+  cursor: String!
+}
+
+type DefaultOnlyRowListResult {
+  items:      [DefaultOnlyRow!]!
+  totalCount: Int!
+  offset:     Int!
+  limit:      Int!
+  hasMore:    Boolean!
+}
+
+input DefaultOnlyRowFilter {
+  label: StringComparator
+  hits: NumericComparator
+  active: BooleanComparator
+  and: [DefaultOnlyRowFilter!]
+  or:  [DefaultOnlyRowFilter!]
+}
+
+enum DefaultOnlyRowSortField {
+  ID
+  LABEL
+  HITS
+  ACTIVE
+}
+
+input DefaultOnlyRowSort {
+  field:     DefaultOnlyRowSortField!
+  direction: SortDirection!
+}
+input CreateDefaultOnlyRowInput {
+  label: String!
+  hits: Int!
+  active: Boolean!
+}
+input UpdateDefaultOnlyRowInput {
+  label: String
+  hits: Int
+  hits_inc: Int
+  hits_dec: Int
+  active: Boolean
+}
+
+extend type Query {
+  defaultOnlyRow(id: Int!): DefaultOnlyRow
+  "Cursor-paginated; ordering is driven by cursor_keys to preserve keyset semantics — pass `sort` to defaultOnlyRowList instead."
+  defaultOnlyRows(filter: DefaultOnlyRowFilter, first: Int, after: String, last: Int, before: String): DefaultOnlyRowConnection!
+  defaultOnlyRowList(filter: DefaultOnlyRowFilter, sort: [DefaultOnlyRowSort!], limit: Int, offset: Int): DefaultOnlyRowListResult!
+}
+
+extend type Mutation {
+  createDefaultOnlyRow(input: CreateDefaultOnlyRowInput!): DefaultOnlyRow!
+  createDefaultOnlyRows(inputs: [CreateDefaultOnlyRowInput!]!): [DefaultOnlyRow!]!
+  updateDefaultOnlyRow(id: Int!, input: UpdateDefaultOnlyRowInput!): DefaultOnlyRow!
+  updateDefaultOnlyRows(filter: DefaultOnlyRowFilter!, input: UpdateDefaultOnlyRowInput!): [DefaultOnlyRow!]!
+  upsertDefaultOnlyRow(input: CreateDefaultOnlyRowInput!): DefaultOnlyRow!
+  deleteDefaultOnlyRow(id: Int!): Boolean!
+}

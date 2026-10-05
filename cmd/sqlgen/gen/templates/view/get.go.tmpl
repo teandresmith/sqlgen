@@ -1,0 +1,189 @@
+{{- define "view/get" -}}
+
+// {{ .StructName | toCamelCase }}AllColumns is the column list for full-entity reads, sorted for determinism.
+var {{ .StructName | toCamelCase }}AllColumns = []string{
+{{- range .AllColumnNames }}{{ printf "%q" . }}, {{ end -}}
+}
+
+// scan{{ .StructName | structNamePlural }} scans rows into {{ .StructName }} entities using a column-name switch.
+// Handles both scan target shapes (direct, wrapped) without reflection.
+func scan{{ .StructName | structNamePlural }}(rows database.Rows, columns []string) ([]*{{ .StructName }}, error) {
+	var result []*{{ .StructName }}
+	for rows.Next() {
+		{{ .VarName }} := &{{ .StructName }}{}
+
+		targets := make([]any, len(columns))
+		for idx, col := range columns {
+			switch col {
+{{- range .ScanShapes }}
+			case {{ printf "%q" .ColumnName }}:
+				targets[idx] = {{ .ScanExpr }}
+{{- end }}
+			}
+		}
+
+		if err := rows.Scan(targets...); err != nil {
+			return nil, fmt.Errorf("scan {{ .ViewName | toSingular }}: %w", err)
+		}
+
+		result = append(result, {{ .VarName }})
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate {{ .ViewName | toSingular }} rows: %w", err)
+	}
+	return result, nil
+}
+{{- if .HasPK }}
+
+{{ $resultVar := printf "%s" (.StructName | structNamePlural | toCamelCase) -}}
+// Get returns a single {{ .ViewName | toSingular }} by primary key with optional field selection.
+func (c *{{ .StructName | toCamelCase }}Client) Get(ctx context.Context, {{ if .CompositePK }}pk {{ .CompositePKStructName }}{{ else }}id {{ (index .PKColumns 0).GoType }}{{ end }}, opts ...func(*CallOptions[{{ .StructName }}FieldOptions])) (*{{ .StructName }}, error) {
+	options := resolveCallOptions(opts)
+	result, err := c.executeQuery(ctx, options.SkipHooks, &hook.QueryContext{
+		Op: hook.OpGet, Table: {{ .TableNameConstant }}, Schema: {{ printf "%q" .Schema }},
+		PK: {{ if .CompositePK }}pk{{ else }}id{{ end }}, CallOptions: options,
+	}, func(ctx context.Context, q *hook.QueryContext) (any, error) {
+		// Internal GetMany call with SkipHooks to prevent nested hook invocation
+		internalOpts := func(o *CallOptions[{{ .StructName }}FieldOptions]) {
+			*o = options
+			o.SkipHooks = true
+		}
+		{{ $resultVar }}, err := c.GetMany(ctx, &Get{{ .StructName | structNamePlural }}Input{
+			Filter: &{{ .StructName }}Filter{
+{{- if .CompositePK }}
+{{- range .PKColumns }}
+				{{ .FieldName }}: {{ pkFilterExpr . (printf "pk.%s" .FieldName) }},
+{{- end }}
+{{- else }}
+				{{ (index .PKColumns 0).FieldName }}: {{ pkFilterExpr (index .PKColumns 0) "id" }},
+{{- end }}
+			},
+			Limit: new(1),
+		}, internalOpts)
+		if err != nil {
+			return nil, err
+		}
+		if len({{ $resultVar }}) == 0 {
+			return nil, ErrNotFound
+		}
+		return {{ $resultVar }}[0], nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	if result == nil {
+		return nil, nil
+	}
+	return result.(*{{ .StructName }}), nil
+}
+{{- end }}
+
+
+{{ $resultVar := printf "%s" (.StructName | structNamePlural | toCamelCase) -}}
+// GetMany returns {{ .ViewName }} matching the given filter, field selection, and sort criteria.
+func (c *{{ .StructName | toCamelCase }}Client) GetMany(ctx context.Context, input *Get{{ .StructName | structNamePlural }}Input, opts ...func(*CallOptions[{{ .StructName }}FieldOptions])) ([]*{{ .StructName }}, error) {
+	// A nil input is the zero-value input — no filter, no sorts, no
+	// limit. Normalized before the hook context is built, so a hook never sees
+	// a nil Input either.
+	if input == nil {
+		input = &Get{{ .StructName | structNamePlural }}Input{}
+	}
+	options := resolveCallOptions(opts)
+	result, err := c.executeQuery(ctx, options.SkipHooks, &hook.QueryContext{
+		Op: hook.OpGetMany, Table: {{ .TableNameConstant }}, Schema: {{ printf "%q" .Schema }},
+		Input: input, CallOptions: options,
+	}, func(ctx context.Context, q *hook.QueryContext) (any, error) {
+		conn := database.Conn(ctx, c.querier)
+
+		// FieldOptions from CallOptions — nil means all columns
+		fieldOptions := options.FieldOptions
+
+		// Nothing selected — return early
+		if fieldOptions != nil && !fieldOptions.HasSelectedColumns() {
+			return nil, nil
+		}
+
+		// Determine columns from FieldOptions. A narrowed projection still
+		// carries the columns this call structurally requires — the cursor keys
+		// an internal caller declares. An all-false FieldOptions is untouched:
+		// it short-circuits above.
+		columns := {{ .StructName | toCamelCase }}AllColumns
+		if fieldOptions != nil {
+			if selected := fieldOptions.Columns(); len(selected) > 0 {
+				columns = unionColumns(selected, input.requiredColumns...)
+			}
+		}
+
+		// Build conditions from filter
+		var conds []sql.Condition
+		if input.Filter != nil {
+			conds = input.Filter.ToConditions(c.dialect)
+		}
+{{- if and .Tenancy .Tenancy.Tenanted }}
+
+		// Tenancy auto-filter — append tenant = resolved to WHERE.
+		// apply=false under tenancy.required:false + zero resolver skips the
+		// filter (cross-tenant read). This is the single injection
+		// point for the view read surface: Get, Paginate and Connection all
+		// funnel through GetMany, so the predicate reaches them from here.
+		if !options.SkipTenancy {
+			resolvedTenant, apply, err := c.resolveTenant(ctx, options.Tenant)
+			if err != nil {
+				return nil, fmt.Errorf("get {{ .ViewName }}: resolve tenant: %w", err)
+			}
+			if apply {
+				conds = append(conds, sql.Where(c.dialect.QuoteIdentifier({{ printf "%q" .Tenancy.Column }})).Eq(resolvedTenant))
+			}
+		}
+{{- end }}
+
+		// Append internal conditions (e.g., keyset conditions from Connection)
+		conds = append(conds, input.conditions...)
+
+		// Resolve limit/offset to pointers for the builder.
+		// nil → no clause, *0 (via new(0)) → no clause, *N → LIMIT/OFFSET N.
+		var limitPtr *int
+		if input.Limit != nil {
+			if v := *input.Limit; v > 0 {
+				limitPtr = new(v)
+			}
+		} else if c.queryLimit > 0 {
+			limitPtr = new(c.queryLimit)
+		}
+		var offsetPtr *int
+		if input.Offset != nil {
+			if v := *input.Offset; v > 0 {
+				offsetPtr = new(v)
+			}
+		}
+
+		query, args := sql.BuildSelect(c.dialect, c.table, sql.SelectOptions{
+			Columns:    columns,
+			Conditions: conds,
+			OrderBy:    input.Sorts,
+			Limit:      limitPtr,
+			Offset:     offsetPtr,
+		})
+
+		rows, err := conn.Query(ctx, query, args...)
+		if err != nil {
+			return nil, fmt.Errorf("get {{ .ViewName }}: %w", err)
+		}
+		defer rows.Close()
+
+		{{ $resultVar }}, err := scan{{ .StructName | structNamePlural }}(rows, columns)
+		if err != nil {
+			return nil, err
+		}
+
+		return {{ $resultVar }}, nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	if result == nil {
+		return nil, nil
+	}
+	return result.([]*{{ .StructName }}), nil
+}
+{{- end -}}

@@ -1,0 +1,748 @@
+{
+  "kind": "table",
+  "name": "Event",
+  "table": "events",
+  "schema": "public",
+  "file_prefix": "event",
+  "files": [
+    "models_gen.go"
+  ],
+  "comment": "",
+  "indexes": [
+    {
+      "name": "events_pkey",
+      "columns": [
+        "id"
+      ],
+      "unique": true,
+      "method": "btree"
+    }
+  ],
+  "pk": {
+    "kind": "single",
+    "columns": [
+      {
+        "name": "id",
+        "go_field": "ID",
+        "go_type": "uuid.UUID"
+      }
+    ]
+  },
+  "features": {
+    "soft_delete": null,
+    "cache": {
+      "ttl_seconds": 3600,
+      "hydration": "eager",
+      "key_pattern": "sqlgen:event:{id}",
+      "invalidates_on": [
+        "Create",
+        "Update",
+        "Delete",
+        "SoftDelete",
+        "Restore",
+        "Increment"
+      ]
+    },
+    "events": {
+      "enabled": true,
+      "types": [
+        "EventCreated",
+        "EventDeleted",
+        "EventUpdated"
+      ],
+      "payload_shape": "models.EventEvent"
+    },
+    "tenancy": null
+  },
+  "columns": [
+    {
+      "name": "id",
+      "go_field": "ID",
+      "go_type": "uuid.UUID",
+      "db_type": "uuid",
+      "nullable": false,
+      "pk": true,
+      "unique": false,
+      "default": "gen_random_uuid()",
+      "default_kind": "function",
+      "comparator": "comparator.ID",
+      "comment": ""
+    },
+    {
+      "name": "user_id",
+      "go_field": "UserID",
+      "go_type": "*uuid.UUID",
+      "db_type": "uuid",
+      "nullable": true,
+      "pk": false,
+      "unique": false,
+      "comparator": "comparator.NullableID",
+      "comment": ""
+    },
+    {
+      "name": "action",
+      "go_field": "Action",
+      "go_type": "string",
+      "db_type": "text",
+      "nullable": false,
+      "pk": false,
+      "unique": false,
+      "comparator": "comparator.String",
+      "comment": ""
+    },
+    {
+      "name": "occurred_at",
+      "go_field": "OccurredAt",
+      "go_type": "types.DateTime",
+      "db_type": "timestamptz",
+      "nullable": false,
+      "pk": false,
+      "unique": false,
+      "comparator": "comparator.Time",
+      "comment": ""
+    },
+    {
+      "name": "processed_at",
+      "go_field": "ProcessedAt",
+      "go_type": "types.NullDateTime",
+      "db_type": "timestamptz",
+      "nullable": true,
+      "pk": false,
+      "unique": false,
+      "comparator": "comparator.NullableTime",
+      "comment": ""
+    },
+    {
+      "name": "adjustment",
+      "go_field": "Adjustment",
+      "go_type": "decimal.NullDecimal",
+      "db_type": "numeric(12, 2)",
+      "nullable": true,
+      "pk": false,
+      "unique": false,
+      "comparator": "comparator.NullableString",
+      "comment": ""
+    },
+    {
+      "name": "retry_count",
+      "go_field": "RetryCount",
+      "go_type": "*int32",
+      "db_type": "integer",
+      "nullable": true,
+      "pk": false,
+      "unique": false,
+      "comparator": "comparator.NullableNumber[int32]",
+      "comment": ""
+    },
+    {
+      "name": "succeeded",
+      "go_field": "Succeeded",
+      "go_type": "*bool",
+      "db_type": "boolean",
+      "nullable": true,
+      "pk": false,
+      "unique": false,
+      "comparator": "comparator.NullableBool",
+      "comment": ""
+    },
+    {
+      "name": "mac",
+      "go_field": "MAC",
+      "go_type": "*string",
+      "db_type": "text",
+      "nullable": true,
+      "pk": false,
+      "unique": false,
+      "comparator": "comparator.NullableString",
+      "comment": ""
+    },
+    {
+      "name": "os_name",
+      "go_field": "OSName",
+      "go_type": "*string",
+      "db_type": "text",
+      "nullable": true,
+      "pk": false,
+      "unique": false,
+      "comparator": "comparator.NullableString",
+      "comment": ""
+    },
+    {
+      "name": "io_count",
+      "go_field": "IOCount",
+      "go_type": "*int32",
+      "db_type": "integer",
+      "nullable": true,
+      "pk": false,
+      "unique": false,
+      "comparator": "comparator.NullableNumber[int32]",
+      "comment": ""
+    },
+    {
+      "name": "pk_val",
+      "go_field": "PKVal",
+      "go_type": "*string",
+      "db_type": "text",
+      "nullable": true,
+      "pk": false,
+      "unique": false,
+      "comparator": "comparator.NullableString",
+      "comment": ""
+    },
+    {
+      "name": "fk_val",
+      "go_field": "FKVal",
+      "go_type": "*string",
+      "db_type": "text",
+      "nullable": true,
+      "pk": false,
+      "unique": false,
+      "comparator": "comparator.NullableString",
+      "comment": ""
+    },
+    {
+      "name": "ascii_art",
+      "go_field": "ASCIIArt",
+      "go_type": "*string",
+      "db_type": "text",
+      "nullable": true,
+      "pk": false,
+      "unique": false,
+      "comparator": "comparator.NullableString",
+      "comment": ""
+    },
+    {
+      "name": "csv_data",
+      "go_field": "CSVData",
+      "go_type": "*string",
+      "db_type": "text",
+      "nullable": true,
+      "pk": false,
+      "unique": false,
+      "comparator": "comparator.NullableString",
+      "comment": ""
+    },
+    {
+      "name": "tcp_port",
+      "go_field": "TCPPort",
+      "go_type": "*int32",
+      "db_type": "integer",
+      "nullable": true,
+      "pk": false,
+      "unique": false,
+      "comparator": "comparator.NullableNumber[int32]",
+      "comment": ""
+    },
+    {
+      "name": "utf8_body",
+      "go_field": "Utf8Body",
+      "go_type": "*string",
+      "db_type": "text",
+      "nullable": true,
+      "pk": false,
+      "unique": false,
+      "comparator": "comparator.NullableString",
+      "comment": ""
+    },
+    {
+      "name": "http2_flag",
+      "go_field": "HTTP2Flag",
+      "go_type": "*bool",
+      "db_type": "boolean",
+      "nullable": true,
+      "pk": false,
+      "unique": false,
+      "comparator": "comparator.NullableBool",
+      "comment": ""
+    },
+    {
+      "name": "line2_id",
+      "go_field": "Line2ID",
+      "go_type": "*string",
+      "db_type": "text",
+      "nullable": true,
+      "pk": false,
+      "unique": false,
+      "comparator": "comparator.NullableString",
+      "comment": ""
+    },
+    {
+      "name": "address2_id",
+      "go_field": "Address2ID",
+      "go_type": "*string",
+      "db_type": "text",
+      "nullable": true,
+      "pk": false,
+      "unique": false,
+      "comparator": "comparator.NullableString",
+      "comment": ""
+    },
+    {
+      "name": "s3_url",
+      "go_field": "S3URL",
+      "go_type": "*string",
+      "db_type": "text",
+      "nullable": true,
+      "pk": false,
+      "unique": false,
+      "comparator": "comparator.NullableString",
+      "comment": ""
+    }
+  ],
+  "relationships": [],
+  "methods": {
+    "query": [
+      {
+        "name": "Get",
+        "params": [
+          {
+            "name": "id",
+            "type": "uuid.UUID"
+          }
+        ],
+        "returns": "*Event",
+        "errors": [
+          "ErrNotFound"
+        ],
+        "notes": "Delegates to GetMany with a primary-key filter; returns ErrNotFound when no row matches.",
+        "sql_bodies": {
+          "postgres": "SELECT \"action\", \"address2_id\", \"adjustment\", \"ascii_art\", \"csv_data\", \"fk_val\", \"http2_flag\", \"id\", \"io_count\", \"line2_id\", \"mac\", \"occurred_at\", \"os_name\", \"pk_val\", \"processed_at\", \"retry_count\", \"s3_url\", \"succeeded\", \"tcp_port\", \"user_id\", \"utf8_body\" FROM \"public\".\"events\" WHERE \"id\" = $1 LIMIT 1"
+        }
+      },
+      {
+        "name": "GetMany",
+        "params": [
+          {
+            "name": "input",
+            "type": "*GetEventsInput"
+          }
+        ],
+        "returns": "[]*Event",
+        "errors": [],
+        "sql_bodies": {
+          "postgres": "SELECT \"action\", \"address2_id\", \"adjustment\", \"ascii_art\", \"csv_data\", \"fk_val\", \"http2_flag\", \"id\", \"io_count\", \"line2_id\", \"mac\", \"occurred_at\", \"os_name\", \"pk_val\", \"processed_at\", \"retry_count\", \"s3_url\", \"succeeded\", \"tcp_port\", \"user_id\", \"utf8_body\" FROM \"public\".\"events\" WHERE <filter> ORDER BY <sort> LIMIT <limit>"
+        }
+      },
+      {
+        "name": "Count",
+        "params": [
+          {
+            "name": "filter",
+            "type": "*EventFilter"
+          }
+        ],
+        "returns": "int64",
+        "errors": [],
+        "sql_bodies": {
+          "postgres": "SELECT COUNT(*) FROM \"public\".\"events\" WHERE <filter>"
+        }
+      },
+      {
+        "name": "Exists",
+        "params": [
+          {
+            "name": "id",
+            "type": "uuid.UUID"
+          }
+        ],
+        "returns": "bool",
+        "errors": [],
+        "sql_bodies": {
+          "postgres": "SELECT EXISTS(SELECT 1 FROM \"public\".\"events\" WHERE \"id\" = $1)"
+        }
+      },
+      {
+        "name": "ExistsWhere",
+        "params": [
+          {
+            "name": "filter",
+            "type": "*EventFilter"
+          }
+        ],
+        "returns": "bool",
+        "errors": [],
+        "sql_bodies": {
+          "postgres": "SELECT EXISTS(SELECT 1 FROM \"public\".\"events\" WHERE <filter>)"
+        }
+      },
+      {
+        "name": "Paginate",
+        "params": [
+          {
+            "name": "input",
+            "type": "PaginateInput[EventFilter]"
+          }
+        ],
+        "returns": "*PaginateResult[Event]",
+        "errors": [],
+        "notes": "Offset pagination. Issues no statement of its own — composes Count and GetMany, so no sql_bodies entry."
+      },
+      {
+        "name": "Connection",
+        "params": [
+          {
+            "name": "input",
+            "type": "ConnectionInput[EventFilter]"
+          }
+        ],
+        "returns": "*Connection[Event]",
+        "errors": [
+          "ErrInvalidCursor"
+        ],
+        "notes": "Relay cursor pagination. Issues no statement of its own — composes Count and GetMany, so no sql_bodies entry."
+      },
+      {
+        "name": "Stream",
+        "params": [
+          {
+            "name": "input",
+            "type": "*StreamEventsInput"
+          }
+        ],
+        "returns": "iter.Seq2[*Event, error]",
+        "errors": [],
+        "notes": "Scalars only — no relationship loading, cache always bypassed. Errors surface through the iterator's second value.",
+        "sql_bodies": {
+          "postgres": "SELECT \"action\", \"address2_id\", \"adjustment\", \"ascii_art\", \"csv_data\", \"fk_val\", \"http2_flag\", \"id\", \"io_count\", \"line2_id\", \"mac\", \"occurred_at\", \"os_name\", \"pk_val\", \"processed_at\", \"retry_count\", \"s3_url\", \"succeeded\", \"tcp_port\", \"user_id\", \"utf8_body\" FROM \"public\".\"events\" WHERE <filter> ORDER BY <sort>"
+        }
+      }
+    ],
+    "mutation": [
+      {
+        "name": "Create",
+        "params": [
+          {
+            "name": "input",
+            "type": "*CreateEventInput"
+          }
+        ],
+        "returns": "*Event",
+        "errors": [
+          "ErrNilInput",
+          "ErrConstraintViolation"
+        ],
+        "sql_bodies": {
+          "postgres": "INSERT INTO \"public\".\"events\" (<columns>) VALUES (<values>) RETURNING \"id\""
+        }
+      },
+      {
+        "name": "CreateMany",
+        "params": [
+          {
+            "name": "inputs",
+            "type": "[]*CreateEventInput"
+          }
+        ],
+        "returns": "[]*Event",
+        "errors": [
+          "ErrNilInput",
+          "ErrConstraintViolation"
+        ],
+        "notes": "Batched in generation.batch_size chunks. Earlier chunks are not rolled back on a later failure — wrap in a transaction for atomicity.",
+        "sql_bodies": {
+          "postgres": "INSERT INTO \"public\".\"events\" (<columns>) VALUES <values> RETURNING \"id\""
+        }
+      },
+      {
+        "name": "Upsert",
+        "params": [
+          {
+            "name": "input",
+            "type": "*CreateEventInput"
+          },
+          {
+            "name": "target",
+            "type": "EventConflictTarget"
+          }
+        ],
+        "returns": "*Event",
+        "errors": [
+          "ErrNilInput",
+          "ErrConstraintViolation"
+        ],
+        "notes": "One method over the generated EventConflictTarget enum — the target argument selects the conflict columns at call time.",
+        "sql_bodies": {
+          "postgres": "INSERT INTO \"public\".\"events\" (<columns>) VALUES (<values>) ON CONFLICT (<conflict_target>) DO UPDATE SET <excluded> RETURNING \"id\""
+        }
+      },
+      {
+        "name": "UpsertMany",
+        "params": [
+          {
+            "name": "inputs",
+            "type": "[]*CreateEventInput"
+          },
+          {
+            "name": "target",
+            "type": "EventConflictTarget"
+          }
+        ],
+        "returns": "[]*Event",
+        "errors": [
+          "ErrNilInput",
+          "ErrConstraintViolation"
+        ],
+        "notes": "Batched in generation.batch_size chunks over the same EventConflictTarget enum Upsert takes. Inputs resolving to one target are deduped before the statement is built, last occurrence wins. Earlier chunks are not rolled back on a later failure — wrap in a transaction for atomicity.",
+        "sql_bodies": {
+          "postgres": "INSERT INTO \"public\".\"events\" (<columns>) VALUES <values> ON CONFLICT (<conflict_target>) DO UPDATE SET <excluded>"
+        }
+      },
+      {
+        "name": "Update",
+        "params": [
+          {
+            "name": "id",
+            "type": "uuid.UUID"
+          },
+          {
+            "name": "input",
+            "type": "*UpdateEventInput"
+          }
+        ],
+        "returns": "*Event",
+        "errors": [
+          "ErrNotFound",
+          "ErrNilInput",
+          "ErrConstraintViolation"
+        ],
+        "notes": "Only fields where IsSet() reports true reach the SET clause; an input with none set issues no UPDATE and returns the row unchanged.",
+        "sql_bodies": {
+          "postgres": "UPDATE \"public\".\"events\" SET <set> WHERE \"id\" = $1"
+        }
+      },
+      {
+        "name": "UpdateMany",
+        "params": [
+          {
+            "name": "items",
+            "type": "[]UpdateEventItem"
+          }
+        ],
+        "returns": "[]*Event",
+        "errors": [
+          "ErrNilInput",
+          "ErrConstraintViolation"
+        ],
+        "notes": "Issues one statement per item. Batched like CreateMany — earlier items are not rolled back on a later failure. A primary key that does not exist is silently skipped, even under strict_updates.",
+        "sql_bodies": {
+          "postgres": "UPDATE \"public\".\"events\" SET <set> WHERE \"id\" = $1"
+        }
+      },
+      {
+        "name": "UpdateWhere",
+        "params": [
+          {
+            "name": "filter",
+            "type": "*EventFilter"
+          },
+          {
+            "name": "input",
+            "type": "*UpdateEventInput"
+          }
+        ],
+        "returns": "[]*Event",
+        "errors": [
+          "ErrNilInput",
+          "ErrEmptyFilter",
+          "ErrConstraintViolation"
+        ],
+        "notes": "Idempotent — returns an empty slice when no row matches. ErrEmptyFilter when the filter produces no conditions.",
+        "sql_bodies": {
+          "postgres": "UPDATE \"public\".\"events\" SET <set> WHERE <filter> RETURNING \"id\""
+        }
+      },
+      {
+        "name": "Increment",
+        "params": [
+          {
+            "name": "id",
+            "type": "uuid.UUID"
+          },
+          {
+            "name": "input",
+            "type": "IncrementInput[EventIncrementColumn]"
+          }
+        ],
+        "returns": "",
+        "errors": [
+          "ErrNotFound"
+        ],
+        "notes": "Atomic single-column arithmetic. The column is restricted to the generated EventIncrementColumn enum — numeric, and identifying nothing: neither PK, FK, nor the tenant column. A negative amount decrements.",
+        "sql_bodies": {
+          "postgres": "UPDATE \"public\".\"events\" SET <column> = <column> + $1 WHERE \"id\" = $2"
+        }
+      },
+      {
+        "name": "HardDelete",
+        "params": [
+          {
+            "name": "id",
+            "type": "uuid.UUID"
+          }
+        ],
+        "returns": "",
+        "errors": [],
+        "notes": "Idempotent — a primary key that does not exist is not an error.",
+        "sql_bodies": {
+          "postgres": "DELETE FROM \"public\".\"events\" WHERE \"id\" = $1"
+        }
+      },
+      {
+        "name": "HardDeleteMany",
+        "params": [
+          {
+            "name": "ids",
+            "type": "[]uuid.UUID"
+          }
+        ],
+        "returns": "",
+        "errors": [],
+        "notes": "Idempotent — primary keys that do not exist are not an error.",
+        "sql_bodies": {
+          "postgres": "DELETE FROM \"public\".\"events\" WHERE \"id\" IN (<ids>)"
+        }
+      },
+      {
+        "name": "HardDeleteWhere",
+        "params": [
+          {
+            "name": "filter",
+            "type": "*EventFilter"
+          }
+        ],
+        "returns": "",
+        "errors": [
+          "ErrEmptyFilter"
+        ],
+        "notes": "Idempotent — no match is not an error. ErrEmptyFilter when the filter produces no conditions.",
+        "sql_bodies": {
+          "postgres": "DELETE FROM \"public\".\"events\" WHERE <filter> RETURNING \"id\""
+        }
+      }
+    ]
+  },
+  "filter": {
+    "type": "EventFilter",
+    "fields": [
+      {
+        "name": "ASCIIArt",
+        "type": "*comparator.NullableString"
+      },
+      {
+        "name": "Action",
+        "type": "*comparator.String"
+      },
+      {
+        "name": "Address2ID",
+        "type": "*comparator.NullableString"
+      },
+      {
+        "name": "Adjustment",
+        "type": "*comparator.NullableString"
+      },
+      {
+        "name": "CSVData",
+        "type": "*comparator.NullableString"
+      },
+      {
+        "name": "FKVal",
+        "type": "*comparator.NullableString"
+      },
+      {
+        "name": "HTTP2Flag",
+        "type": "*comparator.NullableBool"
+      },
+      {
+        "name": "ID",
+        "type": "*comparator.ID"
+      },
+      {
+        "name": "IOCount",
+        "type": "*comparator.NullableNumber[int32]"
+      },
+      {
+        "name": "Line2ID",
+        "type": "*comparator.NullableString"
+      },
+      {
+        "name": "MAC",
+        "type": "*comparator.NullableString"
+      },
+      {
+        "name": "OSName",
+        "type": "*comparator.NullableString"
+      },
+      {
+        "name": "OccurredAt",
+        "type": "*comparator.Time"
+      },
+      {
+        "name": "PKVal",
+        "type": "*comparator.NullableString"
+      },
+      {
+        "name": "ProcessedAt",
+        "type": "*comparator.NullableTime"
+      },
+      {
+        "name": "RetryCount",
+        "type": "*comparator.NullableNumber[int32]"
+      },
+      {
+        "name": "S3URL",
+        "type": "*comparator.NullableString"
+      },
+      {
+        "name": "Succeeded",
+        "type": "*comparator.NullableBool"
+      },
+      {
+        "name": "TCPPort",
+        "type": "*comparator.NullableNumber[int32]"
+      },
+      {
+        "name": "UserID",
+        "type": "*comparator.NullableID"
+      },
+      {
+        "name": "Utf8Body",
+        "type": "*comparator.NullableString"
+      },
+      {
+        "name": "And",
+        "type": "[]*EventFilter"
+      },
+      {
+        "name": "Or",
+        "type": "[]*EventFilter"
+      }
+    ]
+  },
+  "sort": {
+    "type": "EventSort",
+    "fields": [
+      "ASCIIArt",
+      "Action",
+      "Address2ID",
+      "Adjustment",
+      "CSVData",
+      "FKVal",
+      "HTTP2Flag",
+      "ID",
+      "IOCount",
+      "Line2ID",
+      "MAC",
+      "OSName",
+      "OccurredAt",
+      "PKVal",
+      "ProcessedAt",
+      "RetryCount",
+      "S3URL",
+      "Succeeded",
+      "TCPPort",
+      "UserID",
+      "Utf8Body"
+    ]
+  },
+  "examples": {}
+}

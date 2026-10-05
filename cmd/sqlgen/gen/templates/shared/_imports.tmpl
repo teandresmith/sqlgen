@@ -1,0 +1,10 @@
+{{- define "shared/imports" -}}
+{{- if . }}
+
+import (
+{{- range . }}
+	"{{ . }}"
+{{- end }}
+)
+{{- end -}}
+{{- end -}}

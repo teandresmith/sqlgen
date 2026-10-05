@@ -1,0 +1,71 @@
+"""
+WorkspaceNoteSummary corresponds to the workspace_note_summary view.
+"""
+type WorkspaceNoteSummary {
+  "id"
+  id: UUID!
+  "workspace_id"
+  workspaceID: UUID!
+  "kind"
+  kind: WorkspaceNoteKindEnum!
+  "labels"
+  labels: JSON!
+  "body"
+  body: String!
+  "pinned_order"
+  pinnedOrder: Int!
+  "document_count"
+  documentCount: Int!
+}
+
+type WorkspaceNoteSummaryConnection {
+  edges:      [WorkspaceNoteSummaryEdge!]!
+  pageInfo:   PageInfo!
+  totalCount: Int!
+}
+
+type WorkspaceNoteSummaryEdge {
+  node:   WorkspaceNoteSummary!
+  cursor: String!
+}
+
+type WorkspaceNoteSummaryListResult {
+  items:      [WorkspaceNoteSummary!]!
+  totalCount: Int!
+  offset:     Int!
+  limit:      Int!
+  hasMore:    Boolean!
+}
+
+input WorkspaceNoteSummaryFilter {
+  workspaceID: IDComparator
+  kind: WorkspaceNoteKindEnumComparator
+  labels: JSONBComparator
+  body: StringComparator
+  pinnedOrder: NumericComparator
+  documentCount: NumericComparator
+  and: [WorkspaceNoteSummaryFilter!]
+  or:  [WorkspaceNoteSummaryFilter!]
+}
+
+enum WorkspaceNoteSummarySortField {
+  ID
+  WORKSPACE_ID
+  KIND
+  LABELS
+  BODY
+  PINNED_ORDER
+  DOCUMENT_COUNT
+}
+
+input WorkspaceNoteSummarySort {
+  field:     WorkspaceNoteSummarySortField!
+  direction: SortDirection!
+}
+
+extend type Query {
+  workspaceNoteSummary(id: UUID!): WorkspaceNoteSummary
+  "Cursor-paginated; ordering is driven by cursor_keys to preserve keyset semantics — pass `sort` to workspaceNoteSummaryList instead."
+  workspaceNoteSummaries(filter: WorkspaceNoteSummaryFilter, first: Int, after: String, last: Int, before: String): WorkspaceNoteSummaryConnection!
+  workspaceNoteSummaryList(filter: WorkspaceNoteSummaryFilter, sort: [WorkspaceNoteSummarySort!], limit: Int, offset: Int): WorkspaceNoteSummaryListResult!
+}

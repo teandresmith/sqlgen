@@ -1,0 +1,186 @@
+{
+  "kind": "view",
+  "name": "ArticleStat",
+  "table": "article_stats",
+  "schema": "public",
+  "source": "-- article_stats — a tenanted regular view on the pgx leg. Scoped by detection\n-- alone (no `views.article_stats.tenancy` block), @pk makes Get available so\n-- all five read methods are exercised against a real PostgreSQL server.\n--\n-- @pk: id\n\nCREATE VIEW article_stats AS\nSELECT\n    a.id,\n    a.workspace_id,\n    a.title\nFROM articles a\nWHERE a.deleted_at IS NULL;\n",
+  "file_prefix": "article_stat",
+  "files": [
+    "views_gen.go"
+  ],
+  "comment": "",
+  "indexes": [],
+  "pk": {
+    "kind": "single",
+    "columns": [
+      {
+        "name": "id",
+        "go_field": "ID",
+        "go_type": "int64"
+      }
+    ]
+  },
+  "features": {
+    "soft_delete": null,
+    "cache": null,
+    "events": null,
+    "tenancy": {
+      "column": "workspace_id",
+      "mode": "auto-filter",
+      "missing_resolver_error": "tenancy.ErrMissing"
+    }
+  },
+  "columns": [
+    {
+      "name": "id",
+      "go_field": "ID",
+      "go_type": "int64",
+      "db_type": "bigint",
+      "nullable": false,
+      "pk": true,
+      "unique": false,
+      "comparator": "comparator.Number[int64]",
+      "comment": ""
+    },
+    {
+      "name": "workspace_id",
+      "go_field": "WorkspaceID",
+      "go_type": "uuid.UUID",
+      "db_type": "uuid",
+      "nullable": false,
+      "pk": false,
+      "unique": false,
+      "comparator": "comparator.ID",
+      "comment": ""
+    },
+    {
+      "name": "title",
+      "go_field": "Title",
+      "go_type": "string",
+      "db_type": "text",
+      "nullable": false,
+      "pk": false,
+      "unique": false,
+      "comparator": "comparator.String",
+      "comment": ""
+    }
+  ],
+  "relationships": [],
+  "methods": {
+    "query": [
+      {
+        "name": "Get",
+        "params": [
+          {
+            "name": "id",
+            "type": "int64"
+          }
+        ],
+        "returns": "*ArticleStat",
+        "errors": [
+          "ErrNotFound",
+          "tenancy.ErrMissing"
+        ],
+        "notes": "Generated from the view's @pk annotation.",
+        "sql_bodies": {
+          "postgres": "SELECT \"id\", \"title\", \"workspace_id\" FROM \"public\".\"article_stats\" WHERE \"id\" = $1 LIMIT 1"
+        }
+      },
+      {
+        "name": "GetMany",
+        "params": [
+          {
+            "name": "input",
+            "type": "*GetArticleStatsInput"
+          }
+        ],
+        "returns": "[]*ArticleStat",
+        "errors": [
+          "tenancy.ErrMissing"
+        ],
+        "sql_bodies": {
+          "postgres": "SELECT \"id\", \"title\", \"workspace_id\" FROM \"public\".\"article_stats\" WHERE <filter> ORDER BY <sort> LIMIT <limit>"
+        }
+      },
+      {
+        "name": "Count",
+        "params": [
+          {
+            "name": "filter",
+            "type": "*ArticleStatFilter"
+          }
+        ],
+        "returns": "int64",
+        "errors": [
+          "tenancy.ErrMissing"
+        ],
+        "sql_bodies": {
+          "postgres": "SELECT COUNT(*) FROM \"public\".\"article_stats\" WHERE <filter>"
+        }
+      },
+      {
+        "name": "Paginate",
+        "params": [
+          {
+            "name": "input",
+            "type": "PaginateInput[ArticleStatFilter]"
+          }
+        ],
+        "returns": "*PaginateResult[ArticleStat]",
+        "errors": [
+          "tenancy.ErrMissing"
+        ],
+        "notes": "Offset pagination. Issues no statement of its own — composes Count and GetMany, so no sql_bodies entry."
+      },
+      {
+        "name": "Connection",
+        "params": [
+          {
+            "name": "input",
+            "type": "ConnectionInput[ArticleStatFilter]"
+          }
+        ],
+        "returns": "*Connection[ArticleStat]",
+        "errors": [
+          "ErrInvalidCursor",
+          "tenancy.ErrMissing"
+        ],
+        "notes": "Relay cursor pagination. Issues no statement of its own — composes Count and GetMany, so no sql_bodies entry."
+      }
+    ],
+    "mutation": []
+  },
+  "filter": {
+    "type": "ArticleStatFilter",
+    "fields": [
+      {
+        "name": "ID",
+        "type": "*comparator.Number[int64]"
+      },
+      {
+        "name": "Title",
+        "type": "*comparator.String"
+      },
+      {
+        "name": "WorkspaceID",
+        "type": "*comparator.ID"
+      },
+      {
+        "name": "And",
+        "type": "[]*ArticleStatFilter"
+      },
+      {
+        "name": "Or",
+        "type": "[]*ArticleStatFilter"
+      }
+    ]
+  },
+  "sort": {
+    "type": "ArticleStatSort",
+    "fields": [
+      "ID",
+      "Title",
+      "WorkspaceID"
+    ]
+  }
+}

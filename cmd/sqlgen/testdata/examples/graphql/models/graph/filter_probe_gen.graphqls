@@ -1,0 +1,96 @@
+"""
+FilterProbe corresponds to the filter_probes table.
+"""
+type FilterProbe {
+  "id"
+  id: UUID!
+  "doc"
+  doc: JSON!
+  "tags"
+  tags: [String!]!
+  "tags_n"
+  tagsN: [String!]
+  "flags"
+  flags: [Boolean!]!
+  "weights"
+  weights: [Float!]!
+  "created_at"
+  createdAt: Time!
+}
+
+type FilterProbeConnection {
+  edges:      [FilterProbeEdge!]!
+  pageInfo:   PageInfo!
+  totalCount: Int!
+}
+
+type FilterProbeEdge {
+  node:   FilterProbe!
+  cursor: String!
+}
+
+type FilterProbeListResult {
+  items:      [FilterProbe!]!
+  totalCount: Int!
+  offset:     Int!
+  limit:      Int!
+  hasMore:    Boolean!
+}
+
+input FilterProbeFilter {
+  doc: JSONBComparator
+  tags: StringSliceComparator
+  tagsN: NullableStringSliceComparator
+  flags: BooleanSliceComparator
+  weights: FloatSliceComparator
+  createdAt: TimeComparator
+  and: [FilterProbeFilter!]
+  or:  [FilterProbeFilter!]
+}
+
+enum FilterProbeSortField {
+  ID
+  DOC
+  TAGS
+  TAGS_N
+  FLAGS
+  WEIGHTS
+  CREATED_AT
+}
+
+input FilterProbeSort {
+  field:     FilterProbeSortField!
+  direction: SortDirection!
+}
+input CreateFilterProbeInput {
+  doc: JSON!
+  tags: [String!]!
+  tagsN: [String!]
+  flags: [Boolean!]!
+  weights: [Float!]!
+  createdAt: Time!
+}
+input UpdateFilterProbeInput {
+  doc: JSON
+  tags: [String!]
+  tagsN: [String!]
+  flags: [Boolean!]
+  weights: [Float!]
+  createdAt: Time
+}
+
+extend type Query {
+  filterProbe(id: UUID!): FilterProbe
+  "Cursor-paginated; ordering is driven by cursor_keys to preserve keyset semantics — pass `sort` to filterProbeList instead."
+  filterProbes(filter: FilterProbeFilter, first: Int, after: String, last: Int, before: String): FilterProbeConnection!
+  filterProbeList(filter: FilterProbeFilter, sort: [FilterProbeSort!], limit: Int, offset: Int): FilterProbeListResult!
+}
+
+extend type Mutation {
+  createFilterProbe(input: CreateFilterProbeInput!): FilterProbe!
+  createFilterProbes(inputs: [CreateFilterProbeInput!]!): [FilterProbe!]!
+  updateFilterProbe(id: UUID!, input: UpdateFilterProbeInput!): FilterProbe!
+  updateFilterProbes(filter: FilterProbeFilter!, input: UpdateFilterProbeInput!): [FilterProbe!]!
+  upsertFilterProbe(input: CreateFilterProbeInput!): FilterProbe!
+  deleteFilterProbe(id: UUID!): Boolean!
+}

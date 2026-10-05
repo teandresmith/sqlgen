@@ -1,0 +1,147 @@
+{{- define "table/increment" -}}
+{{- $pkCol := index .PKColumns 0 -}}
+{{- $singular := .TableName | toSingular -}}
+{{- $structCamel := .StructName | toCamelCase -}}
+{{- $captureTenant := and .Tenancy .Tenancy.Tenanted (not .Tenancy.InPrimaryKey) }}
+{{- if and .Operations.Increment (gt (len .IncrementColumns) 0) }}
+
+// {{ .StructName }}IncrementColumn identifies a numeric column eligible for atomic increment/decrement.
+type {{ .StructName }}IncrementColumn string
+
+const (
+{{- range .IncrementColumns }}
+	{{ $.StructName }}Increment{{ .FieldName }} {{ $.StructName }}IncrementColumn = {{ printf "%q" .DBTag }}
+{{- end }}
+)
+
+// Increment atomically increments or decrements a numeric column on a {{ $singular }}.
+// A negative amount performs a decrement.
+{{- if .StrictUpdates }}
+// Returns ErrNotFound if the primary key does not exist.
+{{- end }}
+func (c *{{ $structCamel }}Client) Increment(ctx context.Context, {{ if .CompositePK }}pk {{ .CompositePKStructName }}{{ else }}id {{ $pkCol.GoType }}{{ end }}, input IncrementInput[{{ .StructName }}IncrementColumn], opts ...func(*CallOptions[{{ .StructName }}FieldOptions])) error {
+	options := resolveCallOptions(opts)
+	_, err := c.executeMutation(ctx, options.SkipHooks, &hook.MutationContext{
+		Op: hook.OpIncrement, Table: {{ .TableNameConstant }}, Schema: {{ printf "%q" .Schema }},
+		PK: {{ if .CompositePK }}pk{{ else }}id{{ end }}, Input: input, CallOptions: options,
+	}, func(ctx context.Context, m *hook.MutationContext) (any, error) {
+		conn := database.Conn(ctx, c.querier)
+
+{{- if and .Tenancy .Tenancy.Tenanted }}
+{{- if .CompositePK }}
+		incConds := sql.BuildCompositePKConditions(c.dialect,
+			[]string{ {{- range .PKColumns }}{{ printf "%q" .Name }}, {{ end -}} },
+			[]any{ {{- range .PKColumns }}pk.{{ .FieldName }}, {{ end -}} })
+{{- else }}
+		incConds := []sql.Condition{
+			sql.Where(c.dialect.QuoteIdentifier({{ printf "%q" $pkCol.Name }})).Eq(id),
+		}
+{{- end }}
+		if !options.SkipTenancy {
+			resolvedTenant, apply, err := c.resolveTenant(ctx, options.Tenant)
+			if err != nil {
+				return nil, fmt.Errorf("increment {{ $singular }}: resolve tenant: %w", err)
+			}
+			if apply {
+{{- if and .Tenancy.InPrimaryKey .CompositePK }}
+				// Tenant-in-PK verify-match.
+				if pk.{{ .Tenancy.FieldName }} != resolvedTenant {
+					return nil, tenancy.ErrMismatch
+				}
+{{- end }}
+				incConds = append(incConds, sql.Where(c.dialect.QuoteIdentifier({{ printf "%q" .Tenancy.Column }})).Eq(resolvedTenant))
+				// Stash for cache hook (single-resolve per operation).
+				m.Tenant = resolvedTenant
+			}
+		}
+{{- if and $captureTenant (not (supportsReturning)) }}
+
+		// MySQL has no RETURNING — pre-read the row's tenant before the UPDATE
+		// so cache invalidation and event stamping can rebuild the tenant-scoped
+		// key from the row itself.
+		tenantByPK, err := c.captureAffectedTenants(ctx, conn, incConds)
+		if err != nil {
+			return nil, fmt.Errorf("increment {{ $singular }}: capture tenant: %w", err)
+		}
+		capturedTenant := tenantByPK[{{ if .CompositePK }}pk{{ else }}id{{ end }}]
+{{- end }}
+{{- if and $captureTenant (supportsReturning) }}
+		// RETURNING the tenant column captures the row's own tenant so cache
+		// invalidation and event stamping can rebuild the tenant-scoped key,
+		// independent of how (or whether) the tenant was resolved.
+		query, args := sql.BuildIncrementReturning(c.dialect, c.table, string(input.Column), input.Amount, incConds, []string{ {{- printf "%q" .Tenancy.Column -}} })
+{{- else }}
+		query, args := sql.BuildIncrement(c.dialect, c.table, string(input.Column), input.Amount, incConds)
+{{- end }}
+{{- else }}
+{{- if .CompositePK }}
+		query, args := sql.BuildIncrement(c.dialect, c.table, string(input.Column), input.Amount, sql.BuildCompositePKConditions(c.dialect,
+			[]string{ {{- range .PKColumns }}{{ printf "%q" .Name }}, {{ end -}} },
+			[]any{ {{- range .PKColumns }}pk.{{ .FieldName }}, {{ end -}} }))
+{{- else }}
+		query, args := sql.BuildIncrement(c.dialect, c.table, string(input.Column), input.Amount, []sql.Condition{
+			sql.Where(c.dialect.QuoteIdentifier({{ printf "%q" $pkCol.Name }})).Eq(id),
+		})
+{{- end }}
+{{- end }}
+
+{{- if and $captureTenant (supportsReturning) }}
+
+		rows, err := conn.Query(ctx, query, args...)
+		if err != nil {
+			return nil, fmt.Errorf("increment {{ $singular }} %s: %w", input.Column, err)
+		}
+		var capturedTenant any
+{{- if .StrictUpdates }}
+		matched := 0
+{{- end }}
+		for rows.Next() {
+			var rowTenant {{ .Tenancy.GoType }}
+			if err := rows.Scan(&rowTenant); err != nil {
+				rows.Close()
+				return nil, fmt.Errorf("scan incremented {{ $singular }} tenant: %w", err)
+			}
+			capturedTenant = rowTenant
+{{- if .StrictUpdates }}
+			matched++
+{{- end }}
+		}
+		if err := rows.Err(); err != nil {
+			rows.Close()
+			return nil, err
+		}
+		rows.Close()
+{{- if .StrictUpdates }}
+		if matched == 0 {
+			return nil, ErrNotFound
+		}
+{{- end }}
+{{- else }}
+
+		execResult, err := conn.Exec(ctx, query, args...)
+		if err != nil {
+			return nil, fmt.Errorf("increment {{ $singular }} %s: %w", input.Column, err)
+		}
+{{- if .StrictUpdates }}
+
+		count, err := execResult.RowsAffected()
+		if err != nil {
+			return nil, fmt.Errorf("increment {{ $singular }} rows affected: %w", err)
+		}
+		if count == 0 {
+			return nil, ErrNotFound
+		}
+{{- else }}
+		_ = execResult
+{{- end }}
+{{- end }}
+		m.AffectedPKs = []any{ {{ if .CompositePK }}pk{{ else }}id{{ end }} }
+{{- if $captureTenant }}
+		m.AffectedTenants = []any{capturedTenant}
+{{- end }}
+		return nil, nil
+	})
+	return err
+}
+{{- end }}
+{{- end -}}

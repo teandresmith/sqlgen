@@ -1,0 +1,73 @@
+{{- define "api/filter-translate" -}}
+{{- $ctx := . -}}
+{{- $pkg := $ctx.ModelsPackage -}}
+{{- /* gqlgen-emitted <T>Filter lives in the gqlgen `model:` */ -}}
+{{- /* package and is referenced under apiCtx.GqlgenModelAlias. gqlgen */ -}}
+{{- /* v0.17.x mirrors the GraphQL input name verbatim so `input <T>Filter` */ -}}
+{{- /* renders as Go `<T>Filter`, not `<T>FilterInput`. */ -}}
+{{- $gql := $ctx.GqlgenModelAlias -}}
+{{- $gqlPrefix := "" -}}
+{{- if ne $gql "" -}}{{- $gqlPrefix = printf "%s." $gql -}}{{- end }}
+
+// Per-table GraphQL→model filter translators. Each function
+// converts the gqlgen-generated `<Table>Filter` value into the
+// consumer's model-side `*<pkg>.<Table>Filter`, dispatching field-level
+// translation through the project-wide comparator translators in
+// comparator_translate_gen.go.
+//
+// AND / OR sub-filters recurse into the same translator so deeply-nested
+// boolean expressions translate correctly. There is no dedicated
+// `includeDeleted` flag in the curated GraphQL surface — the soft-delete
+// column itself is exposed in the filter input as a regular comparator
+// field, and the runtime's existing soft-delete inject (see
+// template/table/get.go.tmpl:184) already short-circuits the auto-injected
+// "is not deleted" condition whenever the caller passes ANY non-nil
+// comparator on the soft-delete column. To include deleted rows, GraphQL
+// callers pass `deletedAt: {}` (or any deletedAt comparator they choose).
+
+{{ range $t := $ctx.Tables }}
+// translate{{ $t.StructName }}Filter converts the gqlgen-generated
+// {{ $t.StructName }}Filter into a *{{ $pkg }}.{{ $t.StructName }}Filter.
+// Returns nil when the input is nil so the model layer's "nil filter ⇒ no
+// where clause" contract is preserved.
+func translate{{ $t.StructName }}Filter(in *{{ $gqlPrefix }}{{ $t.StructName }}Filter) *{{ $pkg }}.{{ $t.StructName }}Filter {
+	if in == nil {
+		return nil
+	}
+	out := &{{ $pkg }}.{{ $t.StructName }}Filter{}
+{{- range $f := $t.FilterFields }}
+	if in.{{ $f.GoFieldName }} != nil {
+		out.{{ $f.ModelFieldName }} = {{ $f.TranslatorFunc }}(in.{{ $f.GoFieldName }})
+	}
+{{- end }}
+{{- /* Relationship members recurse into the TARGET's own translator:        */ -}}
+{{- /* the GraphQL side is an ordinary nested input, so nesting              */ -}}
+{{- /* and cycles compose for free. A nil member is skipped by the same      */ -}}
+{{- /* guard the column fields use, preserving "nil member ⇒ no EXISTS".     */ -}}
+{{- range $r := $t.FilterRelationships }}
+	if in.{{ $r.GoFieldName }} != nil {
+		out.{{ $r.ModelFieldName }} = {{ $r.TranslatorFunc }}(in.{{ $r.GoFieldName }})
+	}
+{{- end }}
+	if len(in.And) > 0 {
+		out.And = make([]*{{ $pkg }}.{{ $t.StructName }}Filter, 0, len(in.And))
+		for _, sub := range in.And {
+			if sub == nil {
+				continue
+			}
+			out.And = append(out.And, translate{{ $t.StructName }}Filter(sub))
+		}
+	}
+	if len(in.Or) > 0 {
+		out.Or = make([]*{{ $pkg }}.{{ $t.StructName }}Filter, 0, len(in.Or))
+		for _, sub := range in.Or {
+			if sub == nil {
+				continue
+			}
+			out.Or = append(out.Or, translate{{ $t.StructName }}Filter(sub))
+		}
+	}
+	return out
+}
+{{ end }}
+{{- end -}}

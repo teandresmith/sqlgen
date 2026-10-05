@@ -1,0 +1,285 @@
+"""
+Registered user accounts
+"""
+type User {
+  "Unique identifier"
+  id: Int!
+  "Display name"
+  name: String!
+  "Login email address"
+  email: String!
+  "Authorization level"
+  role: UsersRoleEnum!
+  "Granted permission flags"
+  permissions: [UsersPermissionsSetValue!]!
+  "User age in years"
+  age: Int
+  "Short biography"
+  bio: String
+  "Whether the account is active"
+  isActive: Boolean!
+  "Account balance in default currency"
+  balance: Float!
+  "Total number of logins"
+  loginCount: Int!
+  "Profile image binary data"
+  avatar: Bytes
+  "Arbitrary key-value data"
+  metadata: JSON
+  "Average user rating"
+  rating: Float
+  "Computed reputation score"
+  score: Float
+  "Small integer flag"
+  tinyFlag: Int
+  "Medium-range integer value"
+  mediumVal: Int
+  "Large unsigned counter"
+  bigUnsigned: Int
+  "Date of birth"
+  birthDate: Time
+  "Most recent login timestamp"
+  lastLogin: Time
+  "Row creation timestamp"
+  createdAt: Time!
+  "Last modification timestamp"
+  updatedAt: Time!
+  "one-to-one relationship with the profiles table."
+  profile: Profile
+  "many-to-many relationship with the categories table."
+  categories: [Category!]!
+  "one-to-many relationship with the orders table."
+  orders: [Order!]!
+  "one-to-many relationship with the user_events table."
+  userEvents: [UserEvent!]!
+}
+
+type UserConnection {
+  edges:      [UserEdge!]!
+  pageInfo:   PageInfo!
+  totalCount: Int!
+}
+
+type UserEdge {
+  node:   User!
+  cursor: String!
+}
+
+type UserListResult {
+  items:      [User!]!
+  totalCount: Int!
+  offset:     Int!
+  limit:      Int!
+  hasMore:    Boolean!
+}
+
+input UserFilter {
+  name: StringComparator
+  email: StringComparator
+  role: UsersRoleEnumComparator
+  permissions: StringComparator
+  age: NullableNumericComparator
+  bio: NullableStringComparator
+  isActive: BooleanComparator
+  balance: NumericComparator
+  loginCount: NumericComparator
+  avatar: NullableBytesComparator
+  metadata: NullableJSONComparator
+  rating: NullableNumericComparator
+  score: NullableNumericComparator
+  tinyFlag: NullableNumericComparator
+  mediumVal: NullableNumericComparator
+  bigUnsigned: NullableNumericComparator
+  birthDate: NullableTimeComparator
+  lastLogin: NullableTimeComparator
+  createdAt: TimeComparator
+  updatedAt: TimeComparator
+  categories: CategoryFilter
+  orders: OrderFilter
+  userEvents: UserEventFilter
+  and: [UserFilter!]
+  or:  [UserFilter!]
+}
+
+enum UserSortField {
+  ID
+  NAME
+  EMAIL
+  ROLE
+  PERMISSIONS
+  AGE
+  BIO
+  IS_ACTIVE
+  BALANCE
+  LOGIN_COUNT
+  AVATAR
+  METADATA
+  RATING
+  SCORE
+  TINY_FLAG
+  MEDIUM_VAL
+  BIG_UNSIGNED
+  BIRTH_DATE
+  LAST_LOGIN
+  CREATED_AT
+  UPDATED_AT
+}
+
+input UserSort {
+  field:     UserSortField!
+  direction: SortDirection!
+}
+input CreateUserInput {
+  name: String!
+  email: String!
+  role: UsersRoleEnum!
+  permissions: [UsersPermissionsSetValue!]!
+  age: Int
+  bio: String
+  isActive: Boolean!
+  balance: Float!
+  loginCount: Int!
+  avatar: Bytes
+  metadata: JSON
+  rating: Float
+  score: Float
+  tinyFlag: Int
+  mediumVal: Int
+  bigUnsigned: Int
+  birthDate: Time
+  lastLogin: Time
+  createdAt: Time!
+  updatedAt: Time!
+}
+input UpdateUserInput {
+  name: String
+  email: String
+  role: UsersRoleEnum
+  permissions: [UsersPermissionsSetValue!]
+  age: Int
+  age_inc: Int
+  age_dec: Int
+  bio: String
+  isActive: Boolean
+  balance: Float
+  balance_inc: Int
+  balance_dec: Int
+  loginCount: Int
+  loginCount_inc: Int
+  loginCount_dec: Int
+  avatar: Bytes
+  metadata: JSON
+  rating: Float
+  rating_inc: Int
+  rating_dec: Int
+  score: Float
+  score_inc: Int
+  score_dec: Int
+  tinyFlag: Int
+  tinyFlag_inc: Int
+  tinyFlag_dec: Int
+  mediumVal: Int
+  mediumVal_inc: Int
+  mediumVal_dec: Int
+  bigUnsigned: Int
+  bigUnsigned_inc: Int
+  bigUnsigned_dec: Int
+  birthDate: Time
+  lastLogin: Time
+  createdAt: Time
+  updatedAt: Time
+}
+
+extend type Query {
+  user(id: Int!): User
+  "Cursor-paginated; ordering is driven by cursor_keys to preserve keyset semantics — pass `sort` to userList instead."
+  users(filter: UserFilter, first: Int, after: String, last: Int, before: String): UserConnection!
+  userList(filter: UserFilter, sort: [UserSort!], limit: Int, offset: Int): UserListResult!
+}
+
+extend type Mutation {
+  createUser(input: CreateUserInput!): User!
+  createUsers(inputs: [CreateUserInput!]!): [User!]!
+  updateUser(id: Int!, input: UpdateUserInput!): User!
+  updateUsers(filter: UserFilter!, input: UpdateUserInput!): [User!]!
+  upsertUser(input: CreateUserInput!): User!
+  deleteUser(id: Int!): Boolean!
+}
+
+input CreateUserWithRelatedInput {
+  user: CreateUserInput!
+  orders: UserOrdersCreateNested
+  profile: UserProfileCreateNested
+  userEvents: UserUserEventsCreateNested
+}
+
+input UpdateUserWithRelatedInput {
+  user: UpdateUserInput
+  orders: UserOrdersUpdateNested
+  profile: UserProfileUpdateNested
+  userEvents: UserUserEventsUpdateNested
+}
+
+input UpsertUserWithRelatedInput {
+  user: CreateUserInput!
+  orders: UserOrdersUpdateNested
+  profile: UserProfileUpdateNested
+  userEvents: UserUserEventsUpdateNested
+}
+
+enum UserConflictTarget {
+  EMAIL
+  PK
+}
+
+input UserOrdersCreateNested {
+  create: [UserOrdersCreateInput!]
+}
+
+input UserOrdersUpdateNested {
+  create: [UserOrdersCreateInput!]
+}
+
+input UserOrdersCreateInput {
+  status: OrdersStatusEnum!
+  total: Float!
+  notes: String
+  orderedAt: Time!
+}
+
+input UserProfileCreateNested {
+  create: UserProfileCreateInput
+}
+
+input UserProfileUpdateNested {
+  create: UserProfileCreateInput
+}
+
+input UserProfileCreateInput {
+  website: String
+  githubHandle: String
+  verified: Boolean!
+  preferences: JSON
+}
+
+input UserUserEventsCreateNested {
+  create: [UserUserEventsCreateInput!]
+  connect: [Int!]
+}
+
+input UserUserEventsUpdateNested {
+  clear: Boolean
+  create: [UserUserEventsCreateInput!]
+  connect: [Int!]
+  disconnect: [Int!]
+}
+
+input UserUserEventsCreateInput {
+  action: String!
+}
+
+extend type Mutation {
+  createUserWithRelated(input: CreateUserWithRelatedInput!): User!
+  updateUserWithRelated(id: Int!, input: UpdateUserWithRelatedInput!): User!
+  upsertUserWithRelated(input: UpsertUserWithRelatedInput!, conflictTarget: UserConflictTarget! = PK): User!
+}
