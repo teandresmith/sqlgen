@@ -26,8 +26,8 @@ Product classification categories
 
 | Name | Columns | Unique | Method | Where |
 | --- | --- | --- | --- | --- |
-| `categories_name_key` | name | yes | btree |  |
-| `categories_pkey` | id | yes | btree |  |
+| `PRIMARY` | id | yes | btree |  |
+| `name` | name | yes | btree |  |
 
 ## Relationships
 

@@ -177,20 +177,11 @@ type Table struct {
 
 // Column represents a column in a table.
 type Column struct {
-	Name       string
-	Type       string
-	Nullable   bool
-	PrimaryKey bool
-	Unique     bool
-	// InlineUnique reports whether the column carries a UNIQUE constraint
-	// declared inline at column definition time (e.g. `email text UNIQUE`),
-	// as opposed to a table-level UNIQUE constraint that lives in
-	// Table.Constraints. The DDL parsers set this alongside Unique at column
-	// parse time; RecomputeColumnUnique consults it when re-deriving the
-	// effective Unique flag after a table-level UNIQUE is dropped, so an
-	// inline declaration still in force at the DB level is not silently
-	// stripped from the column.
-	InlineUnique     bool
+	Name             string
+	Type             string
+	Nullable         bool
+	PrimaryKey       bool
+	Unique           bool
 	Default          string
 	FKReference      *FKReference
 	AutoIncrement    bool
@@ -231,9 +222,8 @@ type FKReference struct {
 // Constraint represents a table-level constraint.
 //
 // Method and Where apply only to index-shaped constraints (Index and Unique).
-// Method holds the access-method name when the DDL declares one — "btree",
-// "gin", "gist", "hash", and so on — and is empty otherwise; consumers that
-// need a default treat the empty string as "btree" (PostgreSQL's default).
+// Method holds the access-method name: "btree", "gin", "gist", "hash", and so
+// on. CanonicalizeConstraints defaults it to "btree" on PostgreSQL and MySQL.
 // Where holds the predicate text of a partial index (PostgreSQL / SQLite)
 // without the leading WHERE keyword; MySQL does not support partial indexes
 // so Where stays empty for that dialect.
@@ -558,8 +548,7 @@ func ApplyConstraintToColumns(table *Table, c Constraint) {
 }
 
 // RecomputeColumnUnique re-derives the column's Unique flag from the
-// current table state — the column's InlineUnique flag plus any
-// unconditional, single-column UNIQUE constraint remaining in
+// unconditional, single-column UNIQUE constraints remaining in
 // table.Constraints. Callers must remove the dropped constraint from
 // table.Constraints before invoking this helper; partial UNIQUE
 // constraints (Where != "") are ignored because they cannot keep the
@@ -567,10 +556,6 @@ func ApplyConstraintToColumns(table *Table, c Constraint) {
 func RecomputeColumnUnique(table *Table, colName string) {
 	col := ColumnByName(table, colName)
 	if col == nil {
-		return
-	}
-	if col.InlineUnique {
-		col.Unique = true
 		return
 	}
 	for _, c := range table.Constraints {

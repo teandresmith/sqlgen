@@ -584,6 +584,7 @@ func TestAlterTableRenameTableCarriesForeignKeys(t *testing.T) {
 	}
 	want := []string{
 		"posts.user_id -> accounts",
+		"posts constraint -> accounts",
 		"comments.user_id -> accounts",
 		"comments constraint -> accounts",
 	}
@@ -613,9 +614,12 @@ func TestAlterTableRenameColumnCarriesReferences(t *testing.T) {
 			want: []string{
 				"users PRIMARY KEY [user_id]",
 				"posts.user_id -> users(user_id)",
+				"posts PRIMARY KEY [id]",
 				"posts FOREIGN KEY [user_id] -> users[user_id]",
 				"post_tags.post_id -> posts(id)",
+				"post_tags FOREIGN KEY [post_id] -> posts[id]",
 				"post_tags PRIMARY KEY [post_id tag_id]",
+				"members PRIMARY KEY [id]",
 				"members UNIQUE [org_id email]",
 			},
 		},
@@ -625,9 +629,12 @@ func TestAlterTableRenameColumnCarriesReferences(t *testing.T) {
 			want: []string{
 				"users PRIMARY KEY [id]",
 				"posts.user_id -> users(id)",
+				"posts PRIMARY KEY [id]",
 				"posts FOREIGN KEY [user_id] -> users[id]",
 				"post_tags.article_id -> posts(id)",
+				"post_tags FOREIGN KEY [article_id] -> posts[id]",
 				"post_tags PRIMARY KEY [article_id tag_id]",
+				"members PRIMARY KEY [id]",
 				"members UNIQUE [org_id email]",
 			},
 		},
@@ -639,9 +646,12 @@ func TestAlterTableRenameColumnCarriesReferences(t *testing.T) {
 			want: []string{
 				"users PRIMARY KEY [id]",
 				"posts.user_id -> users(id)",
+				"posts PRIMARY KEY [id]",
 				"posts FOREIGN KEY [user_id] -> users[id]",
 				"post_tags.post_id -> posts(id)",
+				"post_tags FOREIGN KEY [post_id] -> posts[id]",
 				"post_tags PRIMARY KEY [post_id tag_id]",
+				"members PRIMARY KEY [id]",
 				"members UNIQUE [org_id login]",
 			},
 		},

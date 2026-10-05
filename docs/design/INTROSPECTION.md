@@ -353,8 +353,9 @@ func assertSchemaParity(t *testing.T, dialect string, parsed, introspected *pars
 - **Full comparison by default.** Each dialect test starts from a full `cmp.Diff` of
   both sorted schemas, with constraints sorted too.
 - **One list of exceptions.** A field may be excluded only through a named
-  `parityException` with a reason, such as `InlineUnique`, which is parse provenance and
-  not stored in any catalog. All the exceptions live in a single table near the top of
+  `parityException` with a reason: a field that is parse provenance, not stored in any
+  catalog. (The one such field, `Column.InlineUnique`, went with the canonical constraint
+  model, so the table is empty.) All the exceptions live in a single table near the top of
   the file, so a reviewer can see each dialect's full set at a glance.
 - **The same rule for every dialect.** If a field round-trips on one dialect's catalog but
   not another's, the dialect it fails on must list an exception for it.

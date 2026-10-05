@@ -26,8 +26,8 @@ Content tags with boolean soft delete
 
 | Name | Columns | Unique | Method | Where |
 | --- | --- | --- | --- | --- |
-| `tags_name_key` | name | yes | btree |  |
-| `tags_pkey` | id | yes | btree |  |
+| `PRIMARY` | id | yes | btree |  |
+| `name` | name | yes | btree |  |
 
 ## Query methods
 

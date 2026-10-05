@@ -102,6 +102,7 @@ func (mi *MySQLIntrospector) introspectTables(ctx context.Context, schema *parse
 		if err := mi.introspectConstraints(ctx, &table); err != nil {
 			return err
 		}
+		parser.CanonicalizeConstraints(&table, "mysql")
 
 		schema.Tables = append(schema.Tables, table)
 	}
@@ -352,12 +353,7 @@ func (mi *MySQLIntrospector) introspectConstraints(ctx context.Context, table *p
 	}
 
 	// Check constraints (MySQL 8.0.16+).
-	if err := mi.introspectCheckConstraints(ctx, table); err != nil {
-		return err
-	}
-
-	parser.ApplyTableConstraints(table)
-	return nil
+	return mi.introspectCheckConstraints(ctx, table)
 }
 
 // applyIndexMetadata patches index access methods onto the PRIMARY KEY /

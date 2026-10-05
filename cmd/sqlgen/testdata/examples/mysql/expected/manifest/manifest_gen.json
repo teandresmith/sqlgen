@@ -168,7 +168,7 @@
       "comment": "Blog articles with timestamp soft delete",
       "indexes": [
         {
-          "name": "articles_pkey",
+          "name": "PRIMARY",
           "columns": [
             "id"
           ],
@@ -732,7 +732,7 @@
       "comment": "Polymorphic parent for sub-categorized document relationships",
       "indexes": [
         {
-          "name": "assets_pkey",
+          "name": "PRIMARY",
           "columns": [
             "id"
           ],
@@ -1282,7 +1282,7 @@
       "comment": "Junction table for m2m sub-categorized polymorphism",
       "indexes": [
         {
-          "name": "asset_document_links_pkey",
+          "name": "PRIMARY",
           "columns": [
             "asset_id",
             "document_id"
@@ -1697,17 +1697,17 @@
       "comment": "Product classification categories",
       "indexes": [
         {
-          "name": "categories_name_key",
+          "name": "PRIMARY",
           "columns": [
-            "name"
+            "id"
           ],
           "unique": true,
           "method": "btree"
         },
         {
-          "name": "categories_pkey",
+          "name": "name",
           "columns": [
-            "id"
+            "name"
           ],
           "unique": true,
           "method": "btree"
@@ -2411,7 +2411,7 @@
       "comment": "",
       "indexes": [
         {
-          "name": "default_only_rows_pkey",
+          "name": "PRIMARY",
           "columns": [
             "id"
           ],
@@ -2871,7 +2871,7 @@
       "comment": "Polymorphic child rows; entity_type sub-categorizes per-parent relationship",
       "indexes": [
         {
-          "name": "documents_pkey",
+          "name": "PRIMARY",
           "columns": [
             "id"
           ],
@@ -3392,7 +3392,7 @@
       "comment": "",
       "indexes": [
         {
-          "name": "key_only_rows_pkey",
+          "name": "PRIMARY",
           "columns": [
             "id"
           ],
@@ -3777,7 +3777,7 @@
       "comment": "Customer purchase orders",
       "indexes": [
         {
-          "name": "orders_pkey",
+          "name": "PRIMARY",
           "columns": [
             "id"
           ],
@@ -4335,28 +4335,20 @@
       "comment": "Individual line items within an order",
       "indexes": [
         {
+          "name": "PRIMARY",
+          "columns": [
+            "id"
+          ],
+          "unique": true,
+          "method": "btree"
+        },
+        {
           "name": "idx_order_items_order_product",
           "columns": [
             "order_id",
             "product_id"
           ],
           "unique": false,
-          "method": "btree"
-        },
-        {
-          "name": "order_id",
-          "columns": [
-            "order_id"
-          ],
-          "unique": false,
-          "method": "btree"
-        },
-        {
-          "name": "order_items_pkey",
-          "columns": [
-            "id"
-          ],
-          "unique": true,
           "method": "btree"
         },
         {
@@ -4832,6 +4824,14 @@
       "comment": "Catalog of products available for sale",
       "indexes": [
         {
+          "name": "PRIMARY",
+          "columns": [
+            "id"
+          ],
+          "unique": true,
+          "method": "btree"
+        },
+        {
           "name": "category_id",
           "columns": [
             "category_id"
@@ -4840,15 +4840,7 @@
           "method": "btree"
         },
         {
-          "name": "products_pkey",
-          "columns": [
-            "id"
-          ],
-          "unique": true,
-          "method": "btree"
-        },
-        {
-          "name": "products_sku_key",
+          "name": "sku",
           "columns": [
             "sku"
           ],
@@ -5664,7 +5656,7 @@
       "comment": "Product tag labels with 3-column composite primary key",
       "indexes": [
         {
-          "name": "product_tag_labels_pkey",
+          "name": "PRIMARY",
           "columns": [
             "product_id",
             "tag_name",
@@ -6109,7 +6101,7 @@
       "comment": "Extended user profile information",
       "indexes": [
         {
-          "name": "profiles_pkey",
+          "name": "PRIMARY",
           "columns": [
             "id"
           ],
@@ -6117,7 +6109,7 @@
           "method": "btree"
         },
         {
-          "name": "profiles_user_id_key",
+          "name": "user_id",
           "columns": [
             "user_id"
           ],
@@ -6594,7 +6586,7 @@
       "comment": "",
       "indexes": [
         {
-          "name": "slugged_rows_pkey",
+          "name": "PRIMARY",
           "columns": [
             "id"
           ],
@@ -6602,7 +6594,7 @@
           "method": "btree"
         },
         {
-          "name": "slugged_rows_slug_key",
+          "name": "slug",
           "columns": [
             "slug"
           ],
@@ -7024,17 +7016,17 @@
       "comment": "Content tags with boolean soft delete",
       "indexes": [
         {
-          "name": "tags_name_key",
+          "name": "PRIMARY",
           "columns": [
-            "name"
+            "id"
           ],
           "unique": true,
           "method": "btree"
         },
         {
-          "name": "tags_pkey",
+          "name": "name",
           "columns": [
-            "id"
+            "name"
           ],
           "unique": true,
           "method": "btree"
@@ -7548,17 +7540,17 @@
       "comment": "Registered user accounts",
       "indexes": [
         {
-          "name": "users_email_key",
+          "name": "PRIMARY",
           "columns": [
-            "email"
+            "id"
           ],
           "unique": true,
           "method": "btree"
         },
         {
-          "name": "users_pkey",
+          "name": "email",
           "columns": [
-            "id"
+            "email"
           ],
           "unique": true,
           "method": "btree"
@@ -8397,20 +8389,20 @@
       "comment": "Junction table linking users to their preferred categories",
       "indexes": [
         {
-          "name": "category_id",
-          "columns": [
-            "category_id"
-          ],
-          "unique": false,
-          "method": "btree"
-        },
-        {
-          "name": "user_categories_pkey",
+          "name": "PRIMARY",
           "columns": [
             "user_id",
             "category_id"
           ],
           "unique": true,
+          "method": "btree"
+        },
+        {
+          "name": "category_id",
+          "columns": [
+            "category_id"
+          ],
+          "unique": false,
           "method": "btree"
         },
         {
@@ -8858,7 +8850,7 @@
       "comment": "User activity events; the one nullable-FK child table in this schema",
       "indexes": [
         {
-          "name": "user_events_pkey",
+          "name": "PRIMARY",
           "columns": [
             "id"
           ],
@@ -9283,7 +9275,7 @@
       "comment": "Storage warehouses with type-overridden columns",
       "indexes": [
         {
-          "name": "warehouses_pkey",
+          "name": "PRIMARY",
           "columns": [
             "id"
           ],

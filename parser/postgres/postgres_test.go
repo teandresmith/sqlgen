@@ -1118,9 +1118,13 @@ func TestRenameColumnCarriesReferences(t *testing.T) {
 				ALTER TABLE users RENAME COLUMN id TO user_id;`,
 			want: []string{
 				"users.boss_id -> public.users(user_id)",
+				"users FOREIGN KEY [boss_id] -> public.users[user_id]",
 				"users PRIMARY KEY [user_id]",
 				"posts.user_id -> public.users(user_id)",
+				"posts PRIMARY KEY [id]",
+				"posts FOREIGN KEY [user_id] -> public.users[user_id]",
 				"comments.user_id -> public.users(user_id)",
+				"comments PRIMARY KEY [id]",
 				"comments FOREIGN KEY [user_id] -> public.users[user_id]",
 			},
 		},
@@ -1131,8 +1135,12 @@ func TestRenameColumnCarriesReferences(t *testing.T) {
 				CREATE TABLE post_tags (post_id uuid REFERENCES posts(id), tag_id uuid REFERENCES tags(id), PRIMARY KEY (post_id, tag_id));
 				ALTER TABLE post_tags RENAME COLUMN post_id TO article_id;`,
 			want: []string{
+				"posts PRIMARY KEY [id]",
+				"tags PRIMARY KEY [id]",
 				"post_tags.article_id -> public.posts(id)",
 				"post_tags.tag_id -> public.tags(id)",
+				"post_tags FOREIGN KEY [article_id] -> public.posts[id]",
+				"post_tags FOREIGN KEY [tag_id] -> public.tags[id]",
 				"post_tags PRIMARY KEY [article_id tag_id]",
 			},
 		},
@@ -1733,10 +1741,9 @@ CREATE INDEX users_email_idx ON users (email);`
 	}
 }
 
-// TestDropConstraintRecomputesColumnUnique pins that dropping a
-// table-level UNIQUE constraint must re-derive col.Unique from the
-// remaining state (other unconditional UNIQUEs + the column's
-// InlineUnique flag) rather than unconditionally clearing it.
+// TestDropConstraintRecomputesColumnUnique pins that dropping a UNIQUE
+// constraint re-derives col.Unique from the unconditional UNIQUEs that
+// remain, an inline one included, rather than unconditionally clearing it.
 func TestDropConstraintRecomputesColumnUnique(t *testing.T) {
 	tests := []struct {
 		name        string
@@ -1759,6 +1766,19 @@ func TestDropConstraintRecomputesColumnUnique(t *testing.T) {
 			column:      "email",
 			wantUnique:  true,
 			wantComment: "inline UNIQUE remains in force",
+		},
+		{
+			name: "inline UNIQUE dropped by its derived name clears Unique",
+			setupSQL: `
+				CREATE TABLE users (
+					id integer PRIMARY KEY,
+					email text UNIQUE
+				);
+			`,
+			dropSQL:     `ALTER TABLE users DROP CONSTRAINT users_email_key;`,
+			column:      "email",
+			wantUnique:  false,
+			wantComment: "the inline UNIQUE is the constraint users_email_key",
 		},
 		{
 			name: "full UNIQUE plus partial UNIQUE — drop partial keeps Unique",
@@ -2001,5 +2021,146 @@ CREATE MATERIALIZED VIEW active_users AS SELECT id, name FROM users;`
 	}
 	if !found {
 		t.Errorf("expected warning mentioning CREATE MATERIALIZED VIEW active_users, got %v", schema.Warnings)
+	}
+}
+
+// TestDerivedConstraintNames pins the names the parser gives unnamed
+// constraints and indexes. Each was measured on PostgreSQL 16.
+func TestDerivedConstraintNames(t *testing.T) {
+	tests := []struct {
+		name string
+		sql  string
+		want []string
+	}{
+		{
+			name: "checks name after their one column",
+			sql:  `CREATE TABLE t (a int CHECK (a > 0), b int CHECK (a > b), c int CHECK (length(c::text) > 0), CHECK (1 = 1));`,
+			want: []string{"t CHECK t_a_check", "t CHECK t_check", "t CHECK t_c_check", "t CHECK t_check1"},
+		},
+		{
+			name: "foreign keys on one column take a suffix",
+			sql: `CREATE TABLE p (id int PRIMARY KEY);
+				CREATE TABLE f (a int REFERENCES p (id), CONSTRAINT x FOREIGN KEY (a) REFERENCES p (id), FOREIGN KEY (a) REFERENCES p (id));`,
+			want: []string{"p PRIMARY KEY p_pkey", "f FOREIGN KEY f_a_fkey", "f FOREIGN KEY x", "f FOREIGN KEY f_a_fkey1"},
+		},
+		{
+			name: "an index name clashes with a table",
+			sql: `CREATE TABLE z_a_key (id int);
+				CREATE TABLE z (a int UNIQUE);`,
+			want: []string{"z UNIQUE z_a_key1"},
+		},
+		{
+			name: "index columns from expressions and repeats",
+			sql: `CREATE TABLE e (x text, a int, b int);
+				CREATE INDEX ON e (lower(x));
+				CREATE INDEX ON e ((a + b));
+				CREATE INDEX ON e (a, a);
+				CREATE INDEX ON e ((x::varchar));
+				CREATE INDEX ON e (a) INCLUDE (b);
+				CREATE UNIQUE INDEX ON e (b);`,
+			want: []string{
+				"e INDEX e_lower_idx", "e INDEX e_expr_idx", "e INDEX e_a_a1_idx",
+				"e INDEX e_x_idx", "e INDEX e_a_b_idx", "e UNIQUE e_b_idx",
+			},
+		},
+		{
+			name: "a merged primary key takes a unique's name",
+			sql: `CREATE TABLE m (id int UNIQUE, CONSTRAINT pk PRIMARY KEY (id), CONSTRAINT u2 UNIQUE (id));
+				CREATE TABLE m2 (CONSTRAINT u1 UNIQUE (id), id int PRIMARY KEY);`,
+			want: []string{"m PRIMARY KEY pk", "m2 PRIMARY KEY u1"},
+		},
+		{
+			name: "constraints added by ALTER TABLE",
+			sql: `CREATE TABLE p (id int PRIMARY KEY);
+				CREATE TABLE pk2_pkey (id int);
+				CREATE TABLE pk2 (id int);
+				ALTER TABLE pk2 ADD PRIMARY KEY (id);
+				CREATE TABLE ck (a int);
+				ALTER TABLE ck ADD CHECK (a > 0), ADD CHECK (a < 10);
+				ALTER TABLE ck ADD COLUMN b int UNIQUE CHECK (b > 0) REFERENCES p (id);
+				CREATE TABLE c (email text UNIQUE);
+				ALTER TABLE c ADD UNIQUE (email);`,
+			want: []string{
+				"p PRIMARY KEY p_pkey", "pk2 PRIMARY KEY pk2_pkey1",
+				"ck CHECK ck_a_check", "ck CHECK ck_a_check1", "ck UNIQUE ck_b_key", "ck FOREIGN KEY ck_b_fkey", "ck CHECK ck_b_check",
+				"c UNIQUE c_email_key", "c UNIQUE c_email_key1",
+			},
+		},
+		{
+			name: "a name stays across renames",
+			sql: `CREATE TABLE r (v int UNIQUE);
+				ALTER TABLE r RENAME TO r2;
+				ALTER TABLE r2 RENAME COLUMN v TO w;`,
+			want: []string{"r2 UNIQUE r_v_key"},
+		},
+		{
+			name: "dropping a column drops its constraints",
+			sql: `CREATE TABLE dc (a int UNIQUE, b int UNIQUE, CHECK (b > a));
+				ALTER TABLE dc DROP COLUMN a;`,
+			want: []string{"dc UNIQUE dc_b_key"},
+		},
+		{
+			name: "dropping a key column drops the composite primary key",
+			sql: `CREATE TABLE cp (a int, b int, PRIMARY KEY (a, b));
+				ALTER TABLE cp DROP COLUMN a;
+				ALTER TABLE cp ADD COLUMN c int;`,
+			want: nil,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			p := postgres.New("")
+			if err := p.Parse("test.sql", []byte(tt.sql)); err != nil {
+				t.Fatalf("Parse() error: %v", err)
+			}
+			var got []string
+			for _, tbl := range p.Schema().Tables {
+				for _, c := range tbl.Constraints {
+					got = append(got, fmt.Sprintf("%s %s %s", tbl.Name, c.Type, c.Name))
+				}
+			}
+			slices.Sort(got)
+			want := slices.Sorted(slices.Values(tt.want))
+			if diff := cmp.Diff(want, got); diff != "" {
+				t.Errorf("constraint names mismatch (-want +got):\n%s", diff)
+			}
+			for _, tbl := range p.Schema().Tables {
+				for _, col := range tbl.Columns {
+					if col.PrimaryKey && !slices.ContainsFunc(tbl.Constraints, func(c parser.Constraint) bool { return c.Type == parser.PrimaryKey }) {
+						t.Errorf("%s.%s is PrimaryKey with no PRIMARY KEY constraint", tbl.Name, col.Name)
+					}
+				}
+			}
+		})
+	}
+}
+
+// TestDropConstraintByDerivedName pins that DROP CONSTRAINT finds a key
+// declared without a name, or declared inline, under the name the parser
+// gave it.
+func TestDropConstraintByDerivedName(t *testing.T) {
+	tests := []struct {
+		name string
+		sql  string
+	}{
+		{name: "inline primary key", sql: `CREATE TABLE users (id int PRIMARY KEY); ALTER TABLE users DROP CONSTRAINT users_pkey;`},
+		{name: "unnamed table-level primary key", sql: `CREATE TABLE users (id int, PRIMARY KEY (id)); ALTER TABLE users DROP CONSTRAINT users_pkey;`},
+		{name: "named inline primary key", sql: `CREATE TABLE users (id int CONSTRAINT pk_u PRIMARY KEY); ALTER TABLE users DROP CONSTRAINT pk_u;`},
+		{name: "named inline unique", sql: `CREATE TABLE users (email text CONSTRAINT c_mail_named UNIQUE); ALTER TABLE users DROP CONSTRAINT c_mail_named;`},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			p := postgres.New("")
+			if err := p.Parse("test.sql", []byte(tt.sql)); err != nil {
+				t.Fatalf("Parse() error: %v", err)
+			}
+			table := p.Schema().Tables[0]
+			if len(table.Constraints) != 0 {
+				t.Errorf("Constraints = %+v, want none", table.Constraints)
+			}
+			if col := table.Columns[0]; col.PrimaryKey || col.Unique {
+				t.Errorf("column %s: PrimaryKey = %v, Unique = %v, want both false", col.Name, col.PrimaryKey, col.Unique)
+			}
+		})
 	}
 }

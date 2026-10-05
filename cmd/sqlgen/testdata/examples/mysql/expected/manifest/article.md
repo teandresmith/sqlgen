@@ -29,7 +29,7 @@ Blog articles with timestamp soft delete
 
 | Name | Columns | Unique | Method | Where |
 | --- | --- | --- | --- | --- |
-| `articles_pkey` | id | yes | btree |  |
+| `PRIMARY` | id | yes | btree |  |
 
 ## Query methods
 

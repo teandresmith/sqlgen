@@ -771,11 +771,8 @@ func checkExpressionForColumn(t *parser.Table, colName string) string {
 }
 
 // checkConstraintColumns resolves the columns a CHECK constraint participates
-// in. The dialect parsers populate CheckExpression but never Constraint.Columns
-// for CHECK-typed constraints (they cannot cheaply map the boolean expression
-// back onto columns), so when Columns is empty we derive the set by matching
-// identifier tokens in the expression against the table's real column names.
-// An explicit Columns list — set by tests or a future parser — takes priority.
+// in. Parsers and introspectors set Columns on every CHECK; the expression scan
+// covers a hand-built table that leaves it empty.
 func checkConstraintColumns(t *parser.Table, c parser.Constraint) []string {
 	if len(c.Columns) > 0 {
 		return c.Columns
@@ -904,7 +901,7 @@ func buildIndexes(t *parser.Table, tc gen.TableContext) []Index {
 			pkCols = append(pkCols, c.Name)
 		}
 		out = append(out, Index{
-			Name:    pkIndexName(t.Name),
+			Name:    pkIndexName(t),
 			Columns: pkCols,
 			Unique:  true,
 			Method:  "btree",
@@ -914,7 +911,7 @@ func buildIndexes(t *parser.Table, tc gen.TableContext) []Index {
 		switch c.Type {
 		case parser.Unique:
 			out = append(out, Index{
-				Name:    indexNameOrDerived(c, t.Name),
+				Name:    uniqueIndexName(c, t.Name),
 				Columns: append([]string(nil), c.Columns...),
 				Unique:  true,
 				Method:  indexMethodOrDefault(c.Method),
@@ -922,7 +919,7 @@ func buildIndexes(t *parser.Table, tc gen.TableContext) []Index {
 			})
 		case parser.Index:
 			out = append(out, Index{
-				Name:    indexNameOrDerived(c, t.Name),
+				Name:    c.Name,
 				Columns: append([]string(nil), c.Columns...),
 				Unique:  false,
 				Method:  indexMethodOrDefault(c.Method),
@@ -932,34 +929,28 @@ func buildIndexes(t *parser.Table, tc gen.TableContext) []Index {
 			// already covered (PK) or not an index
 		}
 	}
-	// An inline column UNIQUE (`email text UNIQUE`) is recorded on the column,
-	// not in t.Constraints, but the database builds an index for it all the
-	// same (PRD §30.7 "All declared indexes"). It has no declared name, so it
-	// takes PostgreSQL's default, as the PK index takes `<table>_pkey`.
-	for _, col := range t.Columns {
-		if !col.InlineUnique {
-			continue
-		}
-		out = append(out, Index{
-			Name:    inlineUniqueIndexName(t.Name, col.Name),
-			Columns: []string{col.Name},
-			Unique:  true,
-			Method:  "btree",
-		})
-	}
 	sort.SliceStable(out, func(i, j int) bool { return out[i].Name < out[j].Name })
 	return out
 }
 
-func pkIndexName(table string) string { return table + "_pkey" }
+// pkIndexName and uniqueIndexName list an index under its constraint's name.
+// PostgreSQL and MySQL name every constraint; SQLite stores no name for an
+// unnamed one, which is listed as <table>_pkey or <table>_<cols>_key
+// (PRD §30.7).
+func pkIndexName(t *parser.Table) string {
+	for _, c := range t.Constraints {
+		if c.Type == parser.PrimaryKey && c.Name != "" {
+			return c.Name
+		}
+	}
+	return t.Name + "_pkey"
+}
 
-func inlineUniqueIndexName(table, column string) string { return table + "_" + column + "_key" }
-
-func indexNameOrDerived(c parser.Constraint, table string) string {
+func uniqueIndexName(c parser.Constraint, table string) string {
 	if c.Name != "" {
 		return c.Name
 	}
-	return table + "_" + strings.Join(c.Columns, "_") + "_idx"
+	return table + "_" + strings.Join(c.Columns, "_") + "_key"
 }
 
 // indexMethodOrDefault returns the parser-declared access method when set,

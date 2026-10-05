@@ -29,7 +29,7 @@ Customer purchase orders
 
 | Name | Columns | Unique | Method | Where |
 | --- | --- | --- | --- | --- |
-| `orders_pkey` | id | yes | btree |  |
+| `PRIMARY` | id | yes | btree |  |
 | `user_id` | user_id |  | btree |  |
 
 ## Relationships

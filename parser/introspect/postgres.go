@@ -122,6 +122,7 @@ func (pi *PostgresIntrospector) introspectTables(ctx context.Context, schema *pa
 		if err := pi.introspectColumnComments(ctx, &table); err != nil {
 			return err
 		}
+		parser.CanonicalizeConstraints(&table, "postgres")
 
 		schema.Tables = append(schema.Tables, table)
 	}
@@ -442,11 +443,7 @@ func (pi *PostgresIntrospector) introspectConstraints(ctx context.Context, table
 	if err != nil {
 		return err
 	}
-	if err := pi.introspectStandaloneIndexes(ctx, table, conIndIDs); err != nil {
-		return err
-	}
-	parser.ApplyTableConstraints(table)
-	return nil
+	return pi.introspectStandaloneIndexes(ctx, table, conIndIDs)
 }
 
 func (pi *PostgresIntrospector) introspectConstraintsViaPgConstraint(ctx context.Context, table *parser.Table) (map[int64]struct{}, error) {
@@ -454,7 +451,7 @@ func (pi *PostgresIntrospector) introspectConstraintsViaPgConstraint(ctx context
 		SELECT
 			con.conname,
 			con.contype,
-			array_agg(att.attname ORDER BY u.ord) AS columns,
+			COALESCE(array_agg(att.attname ORDER BY u.ord) FILTER (WHERE att.attname IS NOT NULL), '{}') AS columns,
 			COALESCE(refns.nspname, ''),
 			COALESCE(refc.relname, ''),
 			COALESCE(
@@ -481,8 +478,8 @@ func (pi *PostgresIntrospector) introspectConstraintsViaPgConstraint(ctx context
 		FROM pg_catalog.pg_constraint con
 		JOIN pg_catalog.pg_class c ON con.conrelid = c.oid
 		JOIN pg_catalog.pg_namespace ns ON c.relnamespace = ns.oid
-		JOIN unnest(con.conkey) WITH ORDINALITY AS u(attnum, ord) ON true
-		JOIN pg_catalog.pg_attribute att ON att.attrelid = con.conrelid AND att.attnum = u.attnum
+		LEFT JOIN unnest(con.conkey) WITH ORDINALITY AS u(attnum, ord) ON true
+		LEFT JOIN pg_catalog.pg_attribute att ON att.attrelid = con.conrelid AND att.attnum = u.attnum
 		LEFT JOIN pg_catalog.pg_class refc ON con.confrelid = refc.oid
 		LEFT JOIN pg_catalog.pg_namespace refns ON refc.relnamespace = refns.oid
 		WHERE ns.nspname = $1 AND c.relname = $2

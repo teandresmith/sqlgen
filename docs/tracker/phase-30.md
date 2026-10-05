@@ -324,17 +324,17 @@ PRD Sections: 4.2, 4.3, 4.4, 5.2, 6.1, 6.3, 6.4, 7, 8.1.7, 16.2, 30.7
 
 **PRD Reference:** Sections 5.2, 30.7 (design doc Q11, §4.4 X1)
 
-**Status:** Not Started
+**Status:** Complete
 
 ### Tasks
 
-- [ ] Add `parser.CanonicalizeConstraints(table *parser.Table, dialect string)` to the `parser`
+- [x] Add `parser.CanonicalizeConstraints(table *parser.Table, dialect string)` to the `parser`
   package. After it runs:
   - every column `PrimaryKey` / `Unique` / `FKReference` flag has a matching table
     `Constraint`, and every table `Constraint` is reflected in the column flags
   - UNIQUE / Index `Method` defaults to `btree` on PG and MySQL
   - CHECK `Columns` lists the referenced columns on every dialect
-- [ ] Add per-dialect default-name derivation for unnamed constraints.
+- [x] Add per-dialect default-name derivation for unnamed constraints.
   - **PG:** PostgreSQL's `ChooseConstraintName` behavior: `<t>_pkey`, `<t>_<cols>_key`,
     `<t>_<cols>_fkey`, `<t>_<col>_check` (`<t>_check` when the CHECK references no column or
     several), 63-byte truncation (`NAMEDATALEN - 1`), and a numeric
@@ -346,7 +346,7 @@ PRD Sections: 4.2, 4.3, 4.4, 5.2, 6.1, 6.3, 6.4, 7, 8.1.7, 16.2, 30.7
   - Renames (probed 2026-10-05). PG keeps a derived name across `RENAME TABLE` /
     `RENAME COLUMN` (`e_pkey`, `e_v_key` on `e2.w`). MySQL 8.0 `RENAME TABLE` renames
     `q_ibfk_1` → `q2_ibfk_1` and `q_chk_1` → `q2_chk_1`. Each parser matches its database.
-- [ ] Duplicates follow the database (Q11 addendum, design doc §10; PRD §5.2). Probed
+- [x] Duplicates follow the database (Q11 addendum, design doc §10; PRD §5.2). Probed
   2026-10-05:
   - **PG:** merges duplicates within one `CREATE TABLE` into the first, which takes the first
     declared name. `id int PRIMARY KEY, CONSTRAINT bu UNIQUE(id)` gives a PK named `bu`. A
@@ -354,26 +354,26 @@ PRD Sections: 4.2, 4.3, 4.4, 5.2, 6.1, 6.3, 6.4, 7, 8.1.7, 16.2, 30.7
   - **SQLite:** drops a UNIQUE only when an identical index exists, so `INTEGER PRIMARY KEY
     UNIQUE` (a rowid alias) keeps its autoindex.
   - **MySQL:** keeps everything (`email`, `email_2`).
-- [ ] Unnamed plain indexes get the database's name (Q11 addendum; PRD §5.2 "Indexes get the
+- [x] Unnamed plain indexes get the database's name (Q11 addendum; PRD §5.2 "Indexes get the
   database's names too"):
   - PG: `<t>_<cols>_idx`, then `…_idx1`.
   - MySQL: the first column's name, sharing one counter with unnamed UNIQUE (`c`, `c_2`,
     `c_3`, probed).
-- [ ] MySQL parser: add the implicit index MySQL builds for an FK that no existing index starts
+- [x] MySQL parser: add the implicit index MySQL builds for an FK that no existing index starts
   with. It is named after the FK constraint (`fk_named`), or else the FK's first column (`e`),
   as probed 2026-10-05. Cover it in `TestMySQLIntrospect_TableConstraints`.
-- [ ] Call `CanonicalizeConstraints` at the end of each parser's table construction
+- [x] Call `CanonicalizeConstraints` at the end of each parser's table construction
   (`parser/postgres`, `parser/mysql`, `parser/sqlite`) and at the end of each introspector's
   per-table pass.
-- [ ] PG parser: keep the declared name of an inline `CONSTRAINT <name> UNIQUE`. It is dropped
+- [x] PG parser: keep the declared name of an inline `CONSTRAINT <name> UNIQUE`. It is dropped
   today; FIX-240 backlog line, 2026-10-02.
-- [ ] `cmd/sqlgen/manifest/builder.go` `indexNameOrDerived` / `pkIndexName` (`:954-958`): read the
+- [x] `cmd/sqlgen/manifest/builder.go` `indexNameOrDerived` / `pkIndexName` (`:954-958`): read the
   canonical constraint or index name instead of deriving one. On SQLite, an unnamed PRIMARY KEY or
   UNIQUE is listed as `<t>_pkey` / `<t>_<cols>_key`, inline or table-level alike. The builder's
   own `_idx` fallback goes (PRD §30.7).
-- [ ] Regenerate the example goldens (`make update-golden-e2e`). Explain every manifest index or
+- [x] Regenerate the example goldens (`make update-golden-e2e`). Explain every manifest index or
   constraint-name change in the Completion Record. **Only X1-caused changes are expected.**
-- [ ] Delete the two FIX-240 backlog lines this resolves (unnamed UNIQUE `_idx` vs `_key`; the
+- [x] Delete the two FIX-240 backlog lines this resolves (unnamed UNIQUE `_idx` vs `_key`; the
   inline `CONSTRAINT <name> UNIQUE` name dropped). Each line names its resolution in the commit
   message.
 
@@ -390,24 +390,137 @@ PRD Sections: 4.2, 4.3, 4.4, 5.2, 6.1, 6.3, 6.4, 7, 8.1.7, 16.2, 30.7
 
 ### Tests Required
 
-- [ ] `TestCanonicalizeConstraints` (table-driven): an inline PK, a table-level PK, a composite
+- [x] `TestCanonicalizeConstraints` (table-driven): an inline PK, a table-level PK, a composite
   PK, inline and table-level UNIQUE, an inline `REFERENCES` and a table-level FK, a column CHECK
   and a table CHECK, plus a UNIQUE repeating the PK and an inline + table-level UNIQUE on one
   column, each on PG / MySQL / SQLite. Assert the constraint set, the column flags, `Method` and
   CHECK `Columns`.
-- [ ] `TestDerivePostgresConstraintName`: every suffix kind, truncation at 63 bytes
+- [x] `TestDerivePostgresConstraintName`: every suffix kind, truncation at 63 bytes
   (multi-byte identifiers included), collision suffixes.
-- [ ] `TestDeriveMySQLConstraintName`: `PRIMARY`, `_ibfk_<n>` ordering, `_chk_<n>`,
+- [x] `TestDeriveMySQLConstraintName`: `PRIMARY`, `_ibfk_<n>` ordering, `_chk_<n>`,
   first-column UNIQUE naming with `_2` on collision.
-- [ ] `TestPostgresIntrospect_TableConstraints` and `TestMySQLIntrospect_TableConstraints`
+- [x] `TestPostgresIntrospect_TableConstraints` and `TestMySQLIntrospect_TableConstraints`
   (integration): canonical shape and names on both paths, including a PG name past 63 bytes.
-- [ ] SQLite: `s_posts` inline FK is a table constraint on both paths.
-- [ ] Manifest builder test: `indexes[].name` reads the canonical name.
-- [ ] `TestE2EGoldenFiles` passes after the regeneration.
+- [x] SQLite: `s_posts` inline FK is a table constraint on both paths.
+- [x] Manifest builder test: `indexes[].name` reads the canonical name.
+- [x] `TestE2EGoldenFiles` passes after the regeneration.
 
 ### Completion Record
 
-_Filled in when complete: files changed, commit references, notes._
+- **Completed:** 2026-10-05 (`/implement 30.2`). `make check` and `make check-examples` (all
+  12 example modules) passed. The integration suite passes except the three main parity
+  tests, whose remaining diffs are all owned by 30.4–30.6 (listed under Baseline).
+- **Files:**
+  - `parser/canonical.go` (new): `CanonicalizeConstraints`, `CheckColumns`
+  - `parser/constraint_names.go` (new): `DerivePostgresConstraintName`,
+    `PostgresIndexColumnNames`, `DeriveMySQLConstraintName`, `RenameMySQLGeneratedName`
+  - `parser/schema.go`: `Column.InlineUnique` removed (every inline UNIQUE is now a
+    constraint, so the provenance flag had no job left); `RecomputeColumnUnique` reads
+    constraints only
+  - `parser/postgres/postgres.go`: inline PK / UNIQUE / REFERENCES / CHECK become table
+    constraints (inline CHECKs were dropped before); duplicate PK / UNIQUE merge within one
+    `CREATE TABLE`; naming in PostgreSQL's creation order (CHECKs, PK, UNIQUEs, FKs) against
+    the schema namespace; unnamed `CREATE INDEX` naming with expression column names;
+    `DROP COLUMN` drops the table's constraints that name the column
+  - `parser/mysql/mysql.go`: inline keys and `REFERENCES` become constraints; `PRIMARY`;
+    `_ibfk_` / `_chk_` numbering (CREATE: among the unnamed; ALTER: after the highest);
+    first-column key names; MySQL's `foreign_key_prefix` redundancy rule for built FK
+    indexes, at CREATE and ALTER time (the parser tracks which indexes it built);
+    `_ibfk_` / `_chk_` names follow a table rename; `DROP COLUMN` shrinks keys
+  - `parser/sqlite/sqlite.go`: inline PK / UNIQUE / REFERENCES / CHECK become constraints
+    (inline CHECKs were dropped before); a UNIQUE identical to an indexed PK or an earlier
+    UNIQUE is dropped
+  - `parser/introspect/{postgres,mysql,sqlite}.go`: `CanonicalizeConstraints` at the end of
+    each table pass; PG constraint query keeps column-less CHECKs (D5)
+  - `cmd/sqlgen/manifest/builder.go`: `pkIndexName` / `uniqueIndexName` read the canonical
+    name; SQLite's unnamed labels; the `_idx` fallback and the inline-UNIQUE loop are gone
+  - `cmd/sqlgen/gen/context_table.go`: one conflict target per column set (MySQL keeps
+    `email` + `email_2`); the "inline PRIMARY KEY reads as app-enforced" known limitation is
+    gone, since an inline PK is now a constraint
+  - tests: `parser/canonical_test.go`, `parser/constraint_names_test.go`,
+    `parser/introspect/constraint_parity_test.go` (new); `TestDerivedConstraintNames` in the
+    PG and MySQL parser tests; `TestDropConstraintByDerivedName`;
+    `TestBuild_IndexNamesReadTheSchema` (replaces `TestBuild_InlineUniqueIsListed`);
+    `TestConflictTargetDuplicateUnique`; `parityExceptions` is now empty for every dialect
+  - `docs/PRD.md` §5.2: MySQL `<n>` counts the unnamed ones and ALTER continues from the
+    highest; a built FK index is dropped once a later index covers it, and takes the
+    `FOREIGN KEY <name> (…)` index name before the first column's
+- **Probes (2026-10-05, PG 16 and MySQL 8.0 throwaway containers).** Every expected name in
+  the unit tests comes from these.
+  - PG: `t_c_check` for `length(c::text)`; `t_check1`; `f_a_fkey1`; `z_a_key1` against a
+    table named `z_a_key`; `pk2_pkey1`; 63-byte cuts (`…ghi_colab…def_key`), multibyte cut
+    to whole characters; `e_lower_idx`, `e_expr_idx`, `e_a_a1_idx`, `e_x_idx` for
+    `(x::varchar)`, `e_a_b_idx` for `(a) INCLUDE (b)`, `e_b_idx` for a UNIQUE INDEX;
+    `m2 (CONSTRAINT u1 UNIQUE (id), id int PRIMARY KEY)` → PK `u1`; ALTER-added names
+    `ck_a_check1`, `ck_b_key`, `ck_b_fkey`, `ck_b_check`.
+  - MySQL: named CHECKs and FKs take no number (`k_chk_1`, `nn`, `k_chk_2`); ALTER after a
+    named `ren_ibfk_9` gives `ren_ibfk_10`; `RENAME TABLE` renames user-named
+    `ren_ibfk_9` too; unnamed keys use the column's declared spelling (`UNIQUE (a)` on
+    column `A` → `A`); a built FK index takes the constraint name, then
+    `FOREIGN KEY <name>`, then the first column; of two identical built indexes the later
+    stays; an ALTER-built FK index replaces an existing built one it covers (`ren` ended with
+    index `a`); `CREATE INDEX (order_id, product_id)` drops the built `order_id`. Inline
+    `REFERENCES` is ignored (no FK, no index) — see Questions.
+- **Fail-first evidence (against HEAD, in a throwaway worktree):** the three new
+  `*_TableConstraints` tests fail on every table that has a constraint (34 of 36; the two
+  that pass have none): missing inline PK / FK / UNIQUE constraints, `Method` `""` vs
+  `btree`, CHECK `Columns` nil vs `[col]`, unnamed vs derived names. After the parser
+  changes and before the D5 query change, `probe_app.checks` and `probe_names.t` still
+  failed on the column-less CHECK only.
+- **D5 done here.** 30.2's acceptance lists `checks`, whose `always_ok CHECK (1 = 1)` the
+  introspector dropped. The fix is the left join named in 30.4's task. 30.4 keeps its test
+  (`TestPostgresIntrospect_CheckAndDomainConstraints`, column-less CHECK case).
+- **Golden changes (`make update-golden-e2e`, `make update-golden`).** Only the `mysql`
+  example's manifest (`manifest_gen.json` and the 18 entity `.md` files, `expected/` and
+  `models/` alike); no generated Go changed anywhere, and the PG and SQLite manifests are
+  byte-identical. Every change is X1:
+  - `<t>_pkey` → `PRIMARY` (18 tables), `<t>_<col>_key` → `<col>` (`email`, `name` ×2,
+    `sku`, `user_id`, `slug`), and the re-sort that follows (`PRIMARY` sorts first)
+  - `order_items` loses index `order_id`: `CREATE INDEX idx_order_items_order_product ON
+    order_items (order_id, product_id)` covers it, so MySQL drops it (re-measured on MySQL
+    8.0 with the example's DDL)
+- **Baseline left for later sub-items** (the three main parity tests, X1 items gone):
+  - `TestPostgresIntrospect`: Q5 bigserial `Default`; D8 CHECK text; the unnamed domain
+    CHECK name and text (30.4)
+  - `TestMySQLIntrospect`: M2 `'active'` vs `active`; M7 CHECK text (30.5)
+  - `TestSQLiteIntrospect`: S4 `sqlite_autoindex_users_1` vs unnamed (30.6)
+- **For later sub-items:**
+  - 30.6: an unnamed SQLite UNIQUE has `Method: ""` when parsed and `btree` when
+    introspected. PRD §5.2 defaults `btree` on PG and MySQL only, so 30.6's Q8 / Q10 work
+    decides which side moves.
+  - 30.4–30.6: `assertConstraintParity` (in `constraint_parity_test.go`) ignores CHECK text;
+    the Q13 work compares it.
+- **Backlog lines resolved and deleted** (name each in the commit message):
+  - unnamed table-level UNIQUE listed as `_idx` (FIX-240): the builder reads the
+    canonical `_key` name
+  - inline UNIQUE listed beside a PK or table-level UNIQUE it duplicates (FIX-240):
+    duplicates now follow the database
+  - PG parser drops an inline `CONSTRAINT <name> UNIQUE` name (FIX-240): kept
+  - `DROP CONSTRAINT users_email_key` on an inline UNIQUE was a no-op (FIX-240): the
+    inline UNIQUE is that constraint (`TestDropConstraintRecomputesColumnUnique`)
+  - `DROP CONSTRAINT` on an unnamed or inline PK was a no-op (FIX-263): it drops
+    (`TestDropConstraintByDerivedName`)
+- **Ruled 2026-10-05 (user): keep MySQL inline `REFERENCES` as a foreign key.** MySQL 8.0
+  ignores it, but the MySQL parser has always made it a foreign key, and keeping it keeps the
+  relationship. 30.2 gives it the canonical shape (`<t>_ibfk_<n>` and a built index). PRD
+  §6.1 now names it as the one deliberate files/database difference. It also shifts the real
+  keys' numbers:
+  `t (a int REFERENCES p(id), b int, FOREIGN KEY (b) REFERENCES p(id))` parses as
+  `t_ibfk_1 [a]`, `t_ibfk_2 [b]` with indexes `a` and `b`, where MySQL has one key,
+  `t_ibfk_1 [b]`, and index `b`. `TestCanonicalizeConstraints` "mysql inline references"
+  pins the current choice.
+- **Auto-review (`sqlgen-reviewer`):** 1 issue, 1 question (above). It re-confirmed the D5
+  fail-first. Applied:
+  - **PG `DROP COLUMN` on a composite-PK column** left the other columns flagged `PrimaryKey`
+    with no constraint, and the next ALTER invented `<t>_pkey` from the flag. The drop now
+    reverses each dropped constraint's flags. Fail-first: the new `TestDerivedConstraintNames`
+    case gave `cp PRIMARY KEY cp_pkey`; `pgConstraintNamesFixture` gained the `cp` table.
+  - comments: the conflict-target compaction also covers PG's ALTER-added duplicate; the
+    builder's CHECK-column note no longer says parsers leave `Columns` empty
+  - line references in 30.4–30.6, shifted by this diff
+- **Backlog lines added:** vitess key-order approximation; PG
+  expression-only index kept by the parser only; PG `INCLUDE` columns; vitess one `KeyOpt`
+  per column.
 
 ---
 
@@ -423,13 +536,13 @@ _Filled in when complete: files changed, commit references, notes._
   `GeneratedExpr` (deparsed) and `GeneratedStorage = "STORED"`, and leave `Default` empty.
   Keep identity columns (`GENERATED … AS IDENTITY`) on the existing `AutoIncrement` path.
 - [ ] PG introspector: select `pg_attribute.attgenerated` in `introspectColumns`
-  (`postgres.go:381`). For `'s'`, set `GeneratedExpr` from `pg_attrdef` (normalized like the
+  (`postgres.go:382`). For `'s'`, set `GeneratedExpr` from `pg_attrdef` (normalized like the
   parser's) and `GeneratedStorage = "STORED"`, and clear `Default`.
 - [ ] MySQL parser: read `GENERATED ALWAYS AS (expr) [VIRTUAL|STORED]` and the shorthand
   `AS (expr)`. Storage defaults to `VIRTUAL`.
 - [ ] MySQL introspector: select `generation_expression`. Map `extra` `VIRTUAL GENERATED` /
   `STORED GENERATED` to `GeneratedStorage` and set `GeneratedExpr` in the parser's form
-  (`mysql.go:199`).
+  (`mysql.go:200`).
 - [ ] SQLite introspector: switch columns to `PRAGMA table_xinfo`. Map `hidden = 2` → `VIRTUAL`
   and `hidden = 3` → `STORED`, take the expression from the stored DDL (30.6's re-parse; until
   then, the `sqlite_master.sql` text), and skip `hidden = 1` (virtual-table hidden columns).
@@ -476,7 +589,7 @@ _Filled in when complete: files changed, commit references, notes._
   - `RegisterEnum`, `RegisterSet` and `RegisterDomain` also register a `schema.name` key
   - the bare key is registered only when that name is unique across schemas
   - `registerSchemaTypes` (`gen/orchestrate.go:2530`) passes the schema
-- [ ] D1 / D6 / Q3, canonical type form in the PG parser (`typeNameToString`, `postgres.go:814`)
+- [ ] D1 / D6 / Q3, canonical type form in the PG parser (`typeNameToString`, `postgres.go:1039`)
   and the introspector:
   - a type in the column's own schema is written bare
   - a cross-schema type stays qualified
@@ -485,8 +598,9 @@ _Filled in when complete: files changed, commit references, notes._
   (`postgres.go:75`).
 - [ ] D9 / Q14: the PG parser skips `CREATE TABLE … PARTITION OF` and appends a `schema.Warnings`
   line in the existing `CREATE VIEW` style.
-- [ ] D5: the constraint query keeps column-less CHECKs. Replace the inner join on
-  `unnest(conkey)` with a left join, or handle `conkey IS NULL` (`postgres.go:452`).
+- [x] D5: the constraint query keeps column-less CHECKs. Replace the inner join on
+  `unnest(conkey)` with a left join, or handle `conkey IS NULL` (`postgres.go:481`).
+  Done in 30.2, whose acceptance needs `checks`; this sub-item's test still covers it.
 - [ ] D7 / Q12: the PG parser's typmod formatting (`formatTypmods`) writes `numeric(12,2)`
   without a space.
 - [ ] Q5 defaults:
@@ -556,19 +670,19 @@ _Filled in when complete: files changed, commit references, notes._
 
 ### Tasks
 
-- [ ] M2 / M9 / Q5, default normalization (`mysql.go:234`):
+- [ ] M2 / M9 / Q5, default normalization (`mysql.go:235`):
   - re-quote string, enum, set and temporal literal defaults using `column_type`
   - treat a default as an expression when `extra` contains `DEFAULT_GENERATED`
   - put the result through `sqlparser.String`, so it matches the parser's form (for example
     `current_timestamp(3)`)
   - `DEFAULT ''` yields `''`, which is not empty
-- [ ] M4 / Q7: `introspectCheckConstraints` (`mysql.go:486`) falls back only on MySQL error 1109
+- [ ] M4 / Q7: `introspectCheckConstraints` (`mysql.go:482`) falls back only on MySQL error 1109
   (unknown table), checked with `errors.AsType[*mysql.MySQLError]`. Every other error is
   returned, wrapped.
 - [ ] M5: make the integer display width agree between the two paths. Decide the direction in
   the Completion Record against the probe (parser `int(11)` vs catalog `int`; `INT UNSIGNED`
   already agrees). If the direction isn't mechanical, stop and ask.
-- [ ] M6: `introspectViewColumns` (`mysql.go:163`) resolves an ENUM or SET view column to the
+- [ ] M6: `introspectViewColumns` (`mysql.go:164`) resolves an ENUM or SET view column to the
   synthetic `<table>_<column>_enum` / `_set` type of its source column when that column is
   identifiable. Otherwise it registers a view-scoped synthetic type. Never the bare `enum`.
 - [ ] M7 / Q13: normalize `check_clause` through `sqlparser`, dropping backticks and charset
@@ -619,16 +733,16 @@ _Filled in when complete: files changed, commit references, notes._
   declared constraint names, CHECK constraints and expression text from it. PRAGMAs stay the
   source for columns, types, nullability, PK membership and order, FKs, indexes and partial
   predicates.
-- [ ] S7: replace every Go `%q` PRAGMA argument (`sqlite.go:165,200,273,342,414,566`) with SQL
+- [ ] S7: replace every Go `%q` PRAGMA argument (`sqlite.go:166,201,274,343,415,567`) with SQL
   identifier quoting (double quotes, with embedded `"` doubled).
 - [ ] S2: order composite PK columns by `pk` (the stored `pkCol.order`), not `cid`
-  (`sqlite.go:235`, `:252`).
+  (`sqlite.go:236`, `:253`).
 - [ ] S3: scan `foreign_key_list.to` as `sql.NullString`. A NULL target resolves to the parent's
-  PK column(s), as the parser resolves it (`sqlite.go:296`). **Measured in 30.1:** the SQLite
+  PK column(s), as the parser resolves it (`sqlite.go:297`). **Measured in 30.1:** the SQLite
   parser rejects `REFERENCES t` with no column list (rqlite/sql: "expected left paren"), at
   column and table level, so there is no parser result to match yet. Settle how this test
   compares before writing it.
-- [ ] S4 / Q8: drop `origin = 'pk'` indexes from `introspectUniqueConstraints` (`sqlite.go:340`).
+- [ ] S4 / Q8: drop `origin = 'pk'` indexes from `introspectUniqueConstraints` (`sqlite.go:341`).
   Take UNIQUE names from the re-parse, so `sqlite_autoindex_*` never surfaces.
 - [ ] S5 / Q9: skip `type IN ('virtual', 'shadow')` rows from `PRAGMA table_list`. Add a
   `schema.Warnings` line naming each skipped virtual table, on the introspector **and** in the
@@ -636,7 +750,7 @@ _Filled in when complete: files changed, commit references, notes._
 - [ ] S8 / Q10: CHECK constraints come from the re-parse.
 - [ ] S9 / S11: `AutoIncrement` only for a rowid alias. That means a single `INTEGER PRIMARY KEY`
   column in a rowid table, not `WITHOUT ROWID` and not `DESC`, on the introspector
-  (`sqlite.go:245`) and the parser.
+  (`sqlite.go:246`) and the parser.
 - [ ] S12: set `WithoutRowID` and `Strict` from `PRAGMA table_list` (or the re-parse).
 - [ ] Tighten `TestSQLiteIntrospect` (`:365`) through `assertSchemaParity`. **`Type` is compared;
   today it is not.** (30.1 moved it onto the helper, so `Type` is now compared. This task makes

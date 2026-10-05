@@ -29,8 +29,8 @@ Extended user profile information
 
 | Name | Columns | Unique | Method | Where |
 | --- | --- | --- | --- | --- |
-| `profiles_pkey` | id | yes | btree |  |
-| `profiles_user_id_key` | user_id | yes | btree |  |
+| `PRIMARY` | id | yes | btree |  |
+| `user_id` | user_id | yes | btree |  |
 
 ## Relationships
 

@@ -102,6 +102,7 @@ func (si *SQLiteIntrospector) introspectTables(ctx context.Context, schema *pars
 		if err := si.introspectNonUniqueIndexes(ctx, &table); err != nil {
 			return err
 		}
+		parser.CanonicalizeConstraints(&table, "sqlite")
 
 		schema.Tables = append(schema.Tables, table)
 	}

@@ -112,7 +112,7 @@ func (p *Parser) parseCreateIndex(stmt *rsql.CreateIndexStatement) error {
 		c.Where = rsql.ExprString(stmt.WhereExpr)
 	}
 	table.Constraints = append(table.Constraints, c)
-	parser.ApplyConstraintToColumns(table, c)
+	parser.CanonicalizeConstraints(table, "sqlite")
 	return nil
 }
 
@@ -160,12 +160,15 @@ func (p *Parser) parseCreateTable(stmt *rsql.CreateTableStatement, src []rune) e
 		if i > 0 && isPrimaryKeySortOrder(stmt.Columns[i-1], col, src) {
 			key := &table.Columns[len(table.Columns)-1]
 			for _, constraint := range col.Constraints {
-				applyColumnConstraint(key, constraint)
+				if c, ok := applyColumnConstraint(key, constraint); ok {
+					table.Constraints = append(table.Constraints, c)
+				}
 			}
 			continue
 		}
-		c := parseColumn(col, withoutRowID)
+		c, constraints := parseColumn(col, withoutRowID)
 		table.Columns = append(table.Columns, c)
+		table.Constraints = append(table.Constraints, constraints...)
 	}
 
 	// Parse table-level constraints.
@@ -176,7 +179,8 @@ func (p *Parser) parseCreateTable(stmt *rsql.CreateTableStatement, src []rune) e
 		}
 	}
 
-	parser.ApplyTableConstraints(&table)
+	parser.CanonicalizeConstraints(&table, "sqlite")
+	dropDuplicateUniques(&table)
 
 	p.tableIndex[tableName] = len(p.schema.Tables)
 	p.schema.Tables = append(p.schema.Tables, table)
@@ -222,15 +226,56 @@ func onlyBlanksAndComments(s string) bool {
 	return true
 }
 
-func parseColumn(col *rsql.ColumnDefinition, withoutRowID bool) parser.Column {
+// dropDuplicateUniques drops each UNIQUE whose index SQLite never builds:
+// one over the same columns, in the same order, as the primary key's index or
+// an earlier UNIQUE. A rowid-alias INTEGER PRIMARY KEY has no index, so a
+// UNIQUE on it stays.
+func dropDuplicateUniques(table *parser.Table) {
+	var indexed [][]string
+	for _, c := range table.Constraints {
+		if c.Type == parser.PrimaryKey && !isRowIDAlias(table, c) {
+			indexed = append(indexed, c.Columns)
+		}
+	}
+	table.Constraints = slices.DeleteFunc(table.Constraints, func(c parser.Constraint) bool {
+		if c.Type != parser.Unique {
+			return false
+		}
+		if slices.ContainsFunc(indexed, func(cols []string) bool { return slices.Equal(cols, c.Columns) }) {
+			return true
+		}
+		indexed = append(indexed, c.Columns)
+		return false
+	})
+	for i := range table.Columns {
+		parser.RecomputeColumnUnique(table, table.Columns[i].Name)
+	}
+}
+
+// isRowIDAlias reports whether the primary key pk makes its column an alias
+// for the rowid: a single INTEGER column in a table that has a rowid.
+func isRowIDAlias(table *parser.Table, pk parser.Constraint) bool {
+	if table.WithoutRowID || len(pk.Columns) != 1 {
+		return false
+	}
+	col := parser.ColumnByName(table, pk.Columns[0])
+	return col != nil && col.Type == "integer"
+}
+
+// parseColumn returns the column col defines and the constraints declared
+// inline on it, as table constraints over the column.
+func parseColumn(col *rsql.ColumnDefinition, withoutRowID bool) (parser.Column, []parser.Constraint) {
 	c := parser.Column{
 		Name:     rsql.IdentName(col.Name),
 		Type:     buildTypeString(col.Type),
 		Nullable: true,
 	}
 
+	var constraints []parser.Constraint
 	for _, constraint := range col.Constraints {
-		applyColumnConstraint(&c, constraint)
+		if tc, ok := applyColumnConstraint(&c, constraint); ok {
+			constraints = append(constraints, tc)
+		}
 	}
 
 	// INTEGER PRIMARY KEY is auto-increment (rowid alias) unless WITHOUT ROWID.
@@ -238,10 +283,13 @@ func parseColumn(col *rsql.ColumnDefinition, withoutRowID bool) parser.Column {
 		c.AutoIncrement = true
 	}
 
-	return c
+	return c, constraints
 }
 
-func applyColumnConstraint(c *parser.Column, constraint rsql.Constraint) {
+// applyColumnConstraint applies an inline column constraint to c. A PRIMARY
+// KEY, UNIQUE, REFERENCES or CHECK is also returned as a table constraint over
+// the column.
+func applyColumnConstraint(c *parser.Column, constraint rsql.Constraint) (parser.Constraint, bool) {
 	switch ct := constraint.(type) {
 	case *rsql.PrimaryKeyConstraint:
 		c.PrimaryKey = true
@@ -249,11 +297,11 @@ func applyColumnConstraint(c *parser.Column, constraint rsql.Constraint) {
 		if ct.Autoincrement.IsValid() {
 			c.AutoIncrement = true
 		}
+		return parser.Constraint{Name: rsql.IdentName(ct.Name), Type: parser.PrimaryKey, Columns: []string{c.Name}}, true
 	case *rsql.NotNullConstraint:
 		c.Nullable = false
 	case *rsql.UniqueConstraint:
-		c.Unique = true
-		c.InlineUnique = true
+		return parser.Constraint{Name: rsql.IdentName(ct.Name), Type: parser.Unique, Columns: []string{c.Name}}, true
 	case *rsql.DefaultConstraint:
 		c.Default = rsql.ExprString(ct.Expr)
 	case *rsql.ForeignKeyConstraint:
@@ -266,6 +314,13 @@ func applyColumnConstraint(c *parser.Column, constraint rsql.Constraint) {
 				Table:  rsql.IdentName(ct.ForeignTable),
 				Column: refCol,
 			}
+			return parser.Constraint{
+				Name:             rsql.IdentName(ct.Name),
+				Type:             parser.ForeignKey,
+				Columns:          []string{c.Name},
+				ReferenceTable:   rsql.IdentName(ct.ForeignTable),
+				ReferenceColumns: identNames(ct.ForeignColumns),
+			}, true
 		}
 	case *rsql.GeneratedConstraint:
 		c.GeneratedExpr = rsql.ExprString(ct.Expr)
@@ -274,9 +329,12 @@ func applyColumnConstraint(c *parser.Column, constraint rsql.Constraint) {
 		} else {
 			c.GeneratedStorage = "VIRTUAL"
 		}
-	case *rsql.CheckConstraint, *rsql.CollateConstraint:
-		// CHECK is captured at table level; COLLATE is not stored.
+	case *rsql.CheckConstraint:
+		return parser.Constraint{Name: rsql.IdentName(ct.Name), Type: parser.Check, CheckExpression: rsql.ExprString(ct.Expr)}, true
+	case *rsql.CollateConstraint:
+		// COLLATE is not stored.
 	}
+	return parser.Constraint{}, false
 }
 
 // buildTypeString returns the lowercased SQL type string from a rqlite/sql Type.
@@ -366,8 +424,10 @@ func (p *Parser) parseAlterTable(stmt *rsql.AlterTableStatement) error {
 		if !ok {
 			return fmt.Errorf("table %s not found", tableName)
 		}
-		c := parseColumn(stmt.ColumnDef, table.WithoutRowID)
+		c, constraints := parseColumn(stmt.ColumnDef, table.WithoutRowID)
 		table.Columns = append(table.Columns, c)
+		table.Constraints = append(table.Constraints, constraints...)
+		parser.CanonicalizeConstraints(table, "sqlite")
 
 	case stmt.DropColumnName != nil:
 		// DROP COLUMN (SQLite 3.35+)

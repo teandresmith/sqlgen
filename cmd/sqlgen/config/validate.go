@@ -1300,9 +1300,9 @@ func validateSchemaDialect(cfg *RootConfig, warnings *[]Warning) {
 
 // SchemaTable holds the minimal table information needed for post-parse validation.
 //
-// UniqueGroups carries column-name groupings covered by table-level UNIQUE
-// constraints (CREATE UNIQUE INDEX, ADD CONSTRAINT ... UNIQUE (a, b)). Per-column
-// inline UNIQUE shows up on SchemaColumn.Unique instead. Both feed the
+// UniqueGroups carries the column groups of the table's PRIMARY KEY and UNIQUE
+// constraints, inline or table-level (CREATE UNIQUE INDEX, ADD CONSTRAINT ...
+// UNIQUE (a, b)). SchemaColumn.Unique carries the column flag. Both feed the
 // primary_key.columns "no UNIQUE coverage" validation.
 type SchemaTable struct {
 	Name         string

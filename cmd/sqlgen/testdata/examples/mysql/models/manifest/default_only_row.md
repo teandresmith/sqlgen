@@ -25,7 +25,7 @@
 
 | Name | Columns | Unique | Method | Where |
 | --- | --- | --- | --- | --- |
-| `default_only_rows_pkey` | id | yes | btree |  |
+| `PRIMARY` | id | yes | btree |  |
 
 ## Query methods
 

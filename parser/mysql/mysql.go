@@ -1,6 +1,7 @@
 package mysql
 
 import (
+	"cmp"
 	"fmt"
 	"slices"
 	"strings"
@@ -16,6 +17,9 @@ type Parser struct {
 	schema     *parser.Schema
 	tableIndex map[string]int // table name → index in schema.Tables
 	vparser    *sqlparser.Parser
+	// generated holds, per table, the names of the indexes MySQL built on its
+	// own for a foreign key. A later key can make one redundant.
+	generated map[string]map[string]bool
 }
 
 // New creates a new MySQL parser.
@@ -28,6 +32,7 @@ func New() (*Parser, error) {
 		schema:     &parser.Schema{},
 		tableIndex: make(map[string]int),
 		vparser:    vp,
+		generated:  make(map[string]map[string]bool),
 	}, nil
 }
 
@@ -115,6 +120,7 @@ func (p *Parser) parseDropTable(stmt *sqlparser.DropTable) error {
 		}
 		p.schema.Tables = slices.Delete(p.schema.Tables, idx, idx+1)
 		delete(p.tableIndex, name)
+		delete(p.generated, name)
 		for k, v := range p.tableIndex {
 			if v > idx {
 				p.tableIndex[k] = v - 1
@@ -150,27 +156,16 @@ func (p *Parser) parseCreateTable(stmt *sqlparser.CreateTable) error {
 		}
 	}
 
-	// Parse columns.
-	for _, col := range stmt.TableSpec.Columns {
-		c := p.parseColumn(tableName, col)
-		table.Columns = append(table.Columns, c)
+	keys, others, fkIndexes := p.parseTableSpec(&table, stmt.TableSpec)
+	p.generated[tableName] = make(map[string]bool)
+	for _, key := range keys {
+		p.addKey(&table, key, false)
 	}
-
-	// Parse indexes (PRIMARY KEY, UNIQUE, INDEX declared at table level).
-	for _, idx := range stmt.TableSpec.Indexes {
-		constraint := p.parseIndex(idx)
-		table.Constraints = append(table.Constraints, constraint)
+	nameCreatedConstraints(&table, others)
+	for _, key := range fkIndexes {
+		p.addKey(&table, key, true)
 	}
-
-	// Parse constraints (FOREIGN KEY, CHECK declared at table level).
-	for _, cd := range stmt.TableSpec.Constraints {
-		constraint := p.parseConstraintDef(cd)
-		table.Constraints = append(table.Constraints, constraint)
-	}
-
-	synthesizeForeignKeyIndexes(&table)
-
-	parser.ApplyTableConstraints(&table)
+	parser.CanonicalizeConstraints(&table, "mysql")
 
 	p.tableIndex[tableName] = len(p.schema.Tables)
 	p.schema.Tables = append(p.schema.Tables, table)
@@ -178,7 +173,59 @@ func (p *Parser) parseCreateTable(stmt *sqlparser.CreateTable) error {
 	return nil
 }
 
-func (p *Parser) parseColumn(tableName string, col *sqlparser.ColumnDefinition) parser.Column {
+// parseTableSpec adds spec's columns to table and returns its keys, its
+// FOREIGN KEY and CHECK constraints, and the index MySQL builds for each
+// foreign key. MySQL takes keys in declaration order. The AST keeps columns,
+// indexes and constraints apart, so the order taken is: keys declared on
+// columns, then table-level keys, then the indexes built for foreign keys.
+func (p *Parser) parseTableSpec(table *parser.Table, spec *sqlparser.TableSpec) (keys, others, fkIndexes []parser.Constraint) {
+	for _, col := range spec.Columns {
+		c, constraints := p.parseColumn(table.Name, col)
+		table.Columns = append(table.Columns, c)
+		for _, constraint := range constraints {
+			if isKey(constraint.Type) {
+				keys = append(keys, constraint)
+				continue
+			}
+			others = append(others, constraint)
+			fkIndexes = append(fkIndexes, foreignKeyIndex(constraint, ""))
+		}
+	}
+	for _, idx := range spec.Indexes {
+		keys = append(keys, p.parseIndex(idx))
+	}
+	for _, cd := range spec.Constraints {
+		constraint := p.parseConstraintDef(cd)
+		others = append(others, constraint)
+		if fk, ok := cd.Details.(*sqlparser.ForeignKeyDefinition); ok {
+			fkIndexes = append(fkIndexes, foreignKeyIndex(constraint, fk.IndexName.String()))
+		}
+	}
+	return keys, others, fkIndexes
+}
+
+// nameCreatedConstraints adds the FOREIGN KEY and CHECK constraints of a new
+// table. An unnamed one is numbered among the unnamed ones of its kind in the
+// statement, as MySQL's CREATE TABLE numbers them.
+func nameCreatedConstraints(table *parser.Table, constraints []parser.Constraint) {
+	var fks, checks []string
+	for _, c := range constraints {
+		c.Columns = declaredColumns(table, c.Columns)
+		if c.Name == "" {
+			generated := &fks
+			if c.Type == parser.Check {
+				generated = &checks
+			}
+			c.Name = parser.DeriveMySQLConstraintName(table.Name, c, *generated)
+			*generated = append(*generated, c.Name)
+		}
+		table.Constraints = append(table.Constraints, c)
+	}
+}
+
+// parseColumn returns the column col defines and the keys and foreign key
+// declared inline on it, as table constraints over the column.
+func (p *Parser) parseColumn(tableName string, col *sqlparser.ColumnDefinition) (parser.Column, []parser.Constraint) {
 	c := parser.Column{
 		Name:     col.Name.String(),
 		Nullable: true,
@@ -187,7 +234,7 @@ func (p *Parser) parseColumn(tableName string, col *sqlparser.ColumnDefinition) 
 
 	opts := col.Type.Options
 	if opts == nil {
-		return c
+		return c, nil
 	}
 
 	// Nullable: *bool — nil means unspecified (default nullable), false means NOT NULL.
@@ -212,15 +259,15 @@ func (p *Parser) parseColumn(tableName string, col *sqlparser.ColumnDefinition) 
 	}
 
 	// Column-level key options.
+	var constraints []parser.Constraint
 	switch opts.KeyOpt {
 	case sqlparser.ColKeyPrimary:
-		c.PrimaryKey = true
 		c.Nullable = false
+		constraints = append(constraints, parser.Constraint{Name: "PRIMARY", Type: parser.PrimaryKey, Columns: []string{c.Name}})
 	case sqlparser.ColKeyUnique, sqlparser.ColKeyUniqueKey:
-		c.Unique = true
-		c.InlineUnique = true
+		constraints = append(constraints, parser.Constraint{Type: parser.Unique, Columns: []string{c.Name}})
 	case sqlparser.ColKeyNone, sqlparser.ColKeySpatialKey, sqlparser.ColKeyFulltextKey, sqlparser.ColKey:
-		// No column flags to set for these key options.
+		// No key for these key options.
 	}
 
 	// Inline FK reference.
@@ -234,12 +281,18 @@ func (p *Parser) parseColumn(tableName string, col *sqlparser.ColumnDefinition) 
 			Table:  ref.ReferencedTable.Name.String(),
 			Column: refCol,
 		}
+		constraints = append(constraints, parser.Constraint{
+			Type:             parser.ForeignKey,
+			Columns:          []string{c.Name},
+			ReferenceTable:   ref.ReferencedTable.Name.String(),
+			ReferenceColumns: identifiers(ref.ReferencedColumns),
+		})
 	}
 
 	// Inline ENUM/SET — extract values and create schema entries.
 	p.extractInlineEnumOrSet(tableName, &c, col.Type)
 
-	return c
+	return c, constraints
 }
 
 // extractInlineEnumOrSet handles MySQL inline ENUM and SET column types.
@@ -378,8 +431,9 @@ func (p *Parser) parseIndex(idx *sqlparser.IndexDefinition) parser.Constraint {
 
 	switch idx.Info.Type {
 	case sqlparser.IndexTypePrimary:
+		// MySQL names a primary key PRIMARY, whatever name it is declared with.
 		return parser.Constraint{
-			Name:    name,
+			Name:    "PRIMARY",
 			Type:    parser.PrimaryKey,
 			Columns: cols,
 		}
@@ -425,23 +479,16 @@ func (p *Parser) parseConstraintDef(cd *sqlparser.ConstraintDefinition) parser.C
 
 	switch d := cd.Details.(type) {
 	case *sqlparser.ForeignKeyDefinition:
-		src := make([]string, len(d.Source))
-		for i, col := range d.Source {
-			src[i] = col.String()
-		}
 		var refTable string
 		var refCols []string
 		if d.ReferenceDefinition != nil {
 			refTable = d.ReferenceDefinition.ReferencedTable.Name.String()
-			refCols = make([]string, len(d.ReferenceDefinition.ReferencedColumns))
-			for i, col := range d.ReferenceDefinition.ReferencedColumns {
-				refCols[i] = col.String()
-			}
+			refCols = identifiers(d.ReferenceDefinition.ReferencedColumns)
 		}
 		return parser.Constraint{
 			Name:             name,
 			Type:             parser.ForeignKey,
-			Columns:          src,
+			Columns:          identifiers(d.Source),
 			ReferenceTable:   refTable,
 			ReferenceColumns: refCols,
 		}
@@ -458,65 +505,70 @@ func (p *Parser) parseConstraintDef(cd *sqlparser.ConstraintDefinition) parser.C
 	}
 }
 
-// synthesizeForeignKeyIndexes mirrors MySQL's auto-creation of a backing index
-// for every FOREIGN KEY whose referencing columns are not already the leftmost
-// prefix of an existing PRIMARY KEY, UNIQUE, or plain index. MySQL materializes
-// such an index at FK-creation time (naming it after the FK constraint, or the
-// first referencing column for an unnamed FK) and reports it via introspection;
-// without this a DDL parse of a bare `FOREIGN KEY (x) REFERENCES ...` omits the
-// index, producing the introspect-vs-DDL manifest drift.
-// Call after all of a table's constraints are parsed and before
-// ApplyTableConstraints. It is idempotent: a re-run finds each FK already
-// covered by the index synthesized for it, matching MySQL's own dedup of a
-// single backing index across FKs that share columns.
-func synthesizeForeignKeyIndexes(table *parser.Table) {
-	// Snapshot the FK (name, columns) pairs before mutating table.Constraints:
-	// the loop appends Index constraints, and a later FK sharing a column must
-	// observe the index synthesized for an earlier one.
-	type fkRef struct {
-		name    string
-		columns []string
-	}
-	var fks []fkRef
-	for _, c := range table.Constraints {
-		if c.Type == parser.ForeignKey && len(c.Columns) > 0 {
-			fks = append(fks, fkRef{name: c.Name, columns: c.Columns})
-		}
-	}
-
-	for _, fk := range fks {
-		if foreignKeyIndexCovers(table, fk.columns) {
-			continue
-		}
-		table.Constraints = append(table.Constraints, parser.Constraint{
-			Name:    foreignKeyIndexName(fk.name, fk.columns),
-			Type:    parser.Index,
-			Columns: slices.Clone(fk.columns),
-		})
+// foreignKeyIndex returns the index MySQL builds for the foreign key fk when
+// no other index starts with its columns. It is named after the constraint's
+// declared name, else the index name declared in FOREIGN KEY <name> (…), else
+// it takes the name of its first column.
+func foreignKeyIndex(fk parser.Constraint, indexName string) parser.Constraint {
+	return parser.Constraint{
+		Name:    cmp.Or(fk.Name, indexName),
+		Type:    parser.Index,
+		Columns: slices.Clone(fk.Columns),
 	}
 }
 
-// foreignKeyIndexCovers reports whether fkCols already form the leftmost prefix
-// of some PRIMARY KEY, UNIQUE, or plain index on the table — or, for a
-// single-column FK, of a column-level PRIMARY KEY / UNIQUE flag. This is
-// MySQL's condition for not materializing a backing index.
-func foreignKeyIndexCovers(table *parser.Table, fkCols []string) bool {
-	if len(fkCols) == 1 {
-		if col := parser.ColumnByName(table, fkCols[0]); col != nil && (col.PrimaryKey || col.Unique) {
-			return true
-		}
+func isKey(t parser.ConstraintType) bool {
+	return t == parser.PrimaryKey || t == parser.Unique || t == parser.Index
+}
+
+// addKey adds a key to table as MySQL adds a key after the ones it already
+// has. When one of the two is an index MySQL built for a foreign key and its
+// columns start the other's, one is redundant: a built index gives way to a
+// declared key, and of two built indexes the shorter goes, or the earlier
+// when they match. A PRIMARY KEY is named PRIMARY; any other unnamed key takes
+// its first column's name, made unique among the keys the table has.
+func (p *Parser) addKey(table *parser.Table, key parser.Constraint, generated bool) {
+	key.Columns = declaredColumns(table, key.Columns)
+	built := p.generated[table.Name]
+	if built == nil {
+		built = make(map[string]bool)
+		p.generated[table.Name] = built
 	}
-	for _, c := range table.Constraints {
-		switch c.Type {
-		case parser.PrimaryKey, parser.Unique, parser.Index:
-			if columnsPrefixMatch(c.Columns, fkCols) {
-				return true
-			}
-		case parser.ForeignKey, parser.Check:
-			// Neither backs an index that can cover a foreign key.
+	for i, k := range table.Constraints {
+		if !isKey(k.Type) || !redundantKeys(key.Columns, generated, k.Columns, built[k.Name]) {
+			continue
 		}
+		if !built[k.Name] || (generated && len(key.Columns) < len(k.Columns)) {
+			return
+		}
+		table.Constraints = slices.Delete(table.Constraints, i, i+1)
+		delete(built, k.Name)
+		break
 	}
-	return false
+	if key.Name == "" {
+		key.Name = parser.DeriveMySQLConstraintName(table.Name, key, constraintNames(table, key.Type))
+	}
+	table.Constraints = append(table.Constraints, key)
+	if generated {
+		built[key.Name] = true
+	}
+}
+
+// redundantKeys is MySQL's foreign_key_prefix test: whether, of keys a and b,
+// one is an index built for a foreign key (the shorter one, when both are)
+// whose columns start the other's.
+func redundantKeys(a []string, aBuilt bool, b []string, bBuilt bool) bool {
+	switch {
+	case aBuilt && bBuilt:
+		if len(a) > len(b) {
+			a, b = b, a
+		}
+	case bBuilt:
+		a, b = b, a
+	case !aBuilt:
+		return false
+	}
+	return columnsPrefixMatch(b, a)
 }
 
 // columnsPrefixMatch reports whether prefix equals the leading columns of
@@ -526,20 +578,69 @@ func columnsPrefixMatch(indexCols, prefix []string) bool {
 		return false
 	}
 	for i, col := range prefix {
-		if indexCols[i] != col {
+		if !strings.EqualFold(indexCols[i], col) {
 			return false
 		}
 	}
 	return true
 }
 
-// foreignKeyIndexName reproduces MySQL's naming of an FK backing index: the FK
-// constraint name when the FK is named, otherwise the first referencing column.
-func foreignKeyIndexName(fkName string, cols []string) string {
-	if fkName != "" {
-		return fkName
+// addConstraints adds the constraints ALTER TABLE creates, in order, each
+// named as MySQL names it against what the table already has. A FOREIGN KEY
+// brings the index MySQL builds for it; indexName is the index name its
+// FOREIGN KEY clause declares.
+func (p *Parser) addConstraints(table *parser.Table, constraints []parser.Constraint, indexName string) {
+	for _, c := range constraints {
+		if isKey(c.Type) {
+			p.addKey(table, c, false)
+			continue
+		}
+		named := c
+		named.Columns = declaredColumns(table, c.Columns)
+		if named.Name == "" {
+			named.Name = parser.DeriveMySQLConstraintName(table.Name, named, constraintNames(table, c.Type))
+		}
+		table.Constraints = append(table.Constraints, named)
+		if c.Type == parser.ForeignKey {
+			p.addKey(table, foreignKeyIndex(c, indexName), true)
+		}
 	}
-	return cols[0]
+	parser.CanonicalizeConstraints(table, "mysql")
+}
+
+// constraintNames returns the names MySQL compares a new constraint of kind
+// against: every key name for a key, every FOREIGN KEY or CHECK name otherwise.
+func constraintNames(table *parser.Table, kind parser.ConstraintType) []string {
+	var names []string
+	for _, c := range table.Constraints {
+		if c.Type == kind || (isKey(kind) && isKey(c.Type)) {
+			names = append(names, c.Name)
+		}
+	}
+	return names
+}
+
+// declaredColumns returns cols with each name spelled as the table declares
+// the column, since MySQL column names are case-insensitive.
+func declaredColumns(table *parser.Table, cols []string) []string {
+	out := slices.Clone(cols)
+	for i, name := range out {
+		for _, col := range table.Columns {
+			if strings.EqualFold(col.Name, name) {
+				out[i] = col.Name
+				break
+			}
+		}
+	}
+	return out
+}
+
+func identifiers(cols sqlparser.Columns) []string {
+	names := make([]string, len(cols))
+	for i, col := range cols {
+		names[i] = col.String()
+	}
+	return names
 }
 
 // --- ALTER TABLE ---
@@ -586,31 +687,25 @@ func (p *Parser) applyAlterOption(table *parser.Table, opt sqlparser.AlterOption
 	switch o := opt.(type) {
 	case *sqlparser.AddColumns:
 		for _, col := range o.Columns {
-			c := p.parseColumn(table.Name, col)
+			c, constraints := p.parseColumn(table.Name, col)
 			table.Columns = append(table.Columns, c)
+			p.addConstraints(table, constraints, "")
 		}
 	case *sqlparser.DropColumn:
-		colName := o.Name.Name.String()
-		table.Columns = slices.DeleteFunc(table.Columns, func(c parser.Column) bool {
-			return c.Name == colName
-		})
+		alterDropColumn(table, o.Name.Name.String())
 	case *sqlparser.ModifyColumn:
 		return p.alterModifyColumn(table, o)
 	case *sqlparser.AddIndexDefinition:
-		constraint := p.parseIndex(o.IndexDefinition)
-		table.Constraints = append(table.Constraints, constraint)
-		parser.ApplyConstraintToColumns(table, constraint)
+		p.addConstraints(table, []parser.Constraint{p.parseIndex(o.IndexDefinition)}, "")
 	case *sqlparser.DropKey:
 		applyDropKey(table, o)
+		delete(p.generated[table.Name], o.Name.String())
 	case *sqlparser.AddConstraintDefinition:
-		constraint := p.parseConstraintDef(o.ConstraintDefinition)
-		table.Constraints = append(table.Constraints, constraint)
-		parser.ApplyConstraintToColumns(table, constraint)
-		if constraint.Type == parser.ForeignKey {
-			// ALTER TABLE ... ADD FOREIGN KEY makes MySQL materialize a backing
-			// index too; mirror it so the DDL and introspect paths agree.
-			synthesizeForeignKeyIndexes(table)
+		var indexName string
+		if fk, ok := o.ConstraintDefinition.Details.(*sqlparser.ForeignKeyDefinition); ok {
+			indexName = fk.IndexName.String()
 		}
+		p.addConstraints(table, []parser.Constraint{p.parseConstraintDef(o.ConstraintDefinition)}, indexName)
 	case *sqlparser.RenameColumn:
 		oldName, newName := o.OldName.Name.String(), o.NewName.Name.String()
 		if err := parser.RenameColumn(table, oldName, newName); err != nil {
@@ -635,13 +730,34 @@ func (p *Parser) alterModifyColumn(table *parser.Table, o *sqlparser.ModifyColum
 	for i := range table.Columns {
 		if table.Columns[i].Name == name {
 			p.dropInlineEnumOrSet(table.Columns[i].Type)
-			table.Columns[i] = redefineColumn(table.Columns[i], p.parseColumn(table.Name, o.NewColDefinition))
+			newCol, constraints := p.parseColumn(table.Name, o.NewColDefinition)
+			table.Columns[i] = redefineColumn(table.Columns[i], newCol)
+			p.addConstraints(table, constraints, "")
 			return nil
 		}
 	}
 	// Column not found — add it.
-	table.Columns = append(table.Columns, p.parseColumn(table.Name, o.NewColDefinition))
+	newCol, constraints := p.parseColumn(table.Name, o.NewColDefinition)
+	table.Columns = append(table.Columns, newCol)
+	p.addConstraints(table, constraints, "")
 	return nil
+}
+
+// alterDropColumn drops the column and takes it out of every key, as MySQL
+// does. A key left with no column is dropped.
+func alterDropColumn(table *parser.Table, colName string) {
+	table.Columns = slices.DeleteFunc(table.Columns, func(c parser.Column) bool {
+		return c.Name == colName
+	})
+	for i := range table.Constraints {
+		if c := &table.Constraints[i]; isKey(c.Type) {
+			c.Columns = slices.DeleteFunc(c.Columns, func(name string) bool { return name == colName })
+		}
+	}
+	table.Constraints = slices.DeleteFunc(table.Constraints, func(c parser.Constraint) bool {
+		return isKey(c.Type) && len(c.Columns) == 0
+	})
+	parser.CanonicalizeConstraints(table, "mysql")
 }
 
 func (p *Parser) alterChangeColumn(table *parser.Table, o *sqlparser.ChangeColumn) error {
@@ -652,10 +768,11 @@ func (p *Parser) alterChangeColumn(table *parser.Table, o *sqlparser.ChangeColum
 	for i := range table.Columns {
 		if table.Columns[i].Name == oldName {
 			p.dropInlineEnumOrSet(table.Columns[i].Type)
-			newCol := p.parseColumn(table.Name, o.NewColDefinition)
+			newCol, constraints := p.parseColumn(table.Name, o.NewColDefinition)
 			table.Columns[i] = redefineColumn(table.Columns[i], newCol)
 			// CHANGE COLUMN can rename too; references follow, as on RENAME COLUMN.
 			parser.RenameColumnReferences(p.schema.Tables, table.Schema, table.Name, oldName, newCol.Name)
+			p.addConstraints(table, constraints, "")
 			return nil
 		}
 	}
@@ -677,7 +794,6 @@ func redefineColumn(old, newCol parser.Column) parser.Column {
 		newCol.Nullable = false
 	}
 	newCol.Unique = newCol.Unique || old.Unique
-	newCol.InlineUnique = newCol.InlineUnique || old.InlineUnique
 	if newCol.FKReference == nil {
 		newCol.FKReference = old.FKReference
 	}
@@ -688,15 +804,9 @@ func applyDropKey(table *parser.Table, o *sqlparser.DropKey) {
 	name := o.Name.String()
 	switch o.Type {
 	case sqlparser.PrimaryKeyType:
-		// A table has one primary key, and an inline PRIMARY KEY exists only
-		// as the column flag (parseColumn never records it in
-		// table.Constraints), so the flag comes off every column, not only
-		// the columns of a table-level constraint. Nullability
-		// stays: MySQL leaves the former key columns NOT NULL.
+		// A table has one primary key. Nullability stays: MySQL leaves the
+		// former key columns NOT NULL.
 		removeConstraintFromColumns(table, parser.PrimaryKey, name)
-		for i := range table.Columns {
-			table.Columns[i].PrimaryKey = false
-		}
 	case sqlparser.ForeignKeyType:
 		removeConstraintFromColumns(table, parser.ForeignKey, name)
 	case sqlparser.NormalKeyType:
@@ -720,7 +830,16 @@ func (p *Parser) renameTable(oldName, newName string) error {
 	// Keys referencing the table follow it to its new name, as they do in the
 	// database; left on the old name, relationship detection drops the edge.
 	parser.RenameTableReferences(p.schema.Tables, p.schema.Tables[idx].Schema, oldName, newName)
+	// MySQL renames a <table>_ibfk_<n> or <table>_chk_<n> name with its table.
+	for i := range p.schema.Tables[idx].Constraints {
+		c := &p.schema.Tables[idx].Constraints[i]
+		if c.Type == parser.ForeignKey || c.Type == parser.Check {
+			c.Name = parser.RenameMySQLGeneratedName(c.Name, oldName, newName)
+		}
+	}
 	p.schema.Tables[idx].Name = newName
+	p.generated[newName] = p.generated[oldName]
+	delete(p.generated, oldName)
 	delete(p.tableIndex, oldName)
 	p.tableIndex[newName] = idx
 	return nil
@@ -746,8 +865,7 @@ func indexColumns(idx *sqlparser.IndexDefinition) []string {
 // (cType, name) from table.Constraints and reverses its column flag
 // effects. Name may be empty for PrimaryKey (MySQL DROP PRIMARY KEY has
 // no name). The slice deletion happens first so that RecomputeColumnUnique
-// sees the post-drop state of the table when re-deriving col.Unique
-// from the remaining constraints + the column's InlineUnique flag.
+// sees the post-drop state of the table.
 func removeConstraintFromColumns(table *parser.Table, cType parser.ConstraintType, name string) {
 	idx := slices.IndexFunc(table.Constraints, func(c parser.Constraint) bool {
 		if c.Type != cType {

@@ -126,23 +126,140 @@ func (p *Parser) parseCreateTable(stmt *pg_query.CreateStmt) error {
 		Schema: schema,
 	}
 
+	var constraints []parser.Constraint
 	for _, elt := range stmt.TableElts {
 		switch n := elt.Node.(type) {
 		case *pg_query.Node_ColumnDef:
-			col := p.parseColumnDef(n.ColumnDef)
+			col, colConstraints := p.parseColumnDef(n.ColumnDef)
 			table.Columns = append(table.Columns, col)
+			constraints = append(constraints, colConstraints...)
 		case *pg_query.Node_Constraint:
-			constraint := p.parseConstraintNode(n.Constraint)
-			table.Constraints = append(table.Constraints, constraint)
+			constraints = append(constraints, p.parseConstraintNode(n.Constraint))
 		}
 	}
 
-	parser.ApplyTableConstraints(&table)
-
 	p.tableIndex[key] = len(p.schema.Tables)
 	p.schema.Tables = append(p.schema.Tables, table)
+	p.addConstraints(&p.schema.Tables[len(p.schema.Tables)-1], mergeDuplicateIndexes(constraints))
 
 	return nil
+}
+
+// mergeDuplicateIndexes merges the PRIMARY KEY and UNIQUE constraints of one
+// CREATE TABLE that cover the same columns, as PostgreSQL does: the primary key
+// comes first, then each UNIQUE in declaration order, and a later duplicate
+// folds into the earlier one, which takes the later one's name when it has
+// none of its own.
+func mergeDuplicateIndexes(constraints []parser.Constraint) []parser.Constraint {
+	var kept []int
+	if pk := slices.IndexFunc(constraints, func(c parser.Constraint) bool { return c.Type == parser.PrimaryKey }); pk >= 0 {
+		kept = append(kept, pk)
+	}
+	dropped := make([]bool, len(constraints))
+	for i, c := range constraints {
+		if c.Type != parser.Unique {
+			continue
+		}
+		j := slices.IndexFunc(kept, func(k int) bool {
+			return slices.Equal(constraints[k].Columns, c.Columns) && constraints[k].Where == c.Where
+		})
+		if j < 0 {
+			kept = append(kept, i)
+			continue
+		}
+		if constraints[kept[j]].Name == "" {
+			constraints[kept[j]].Name = c.Name
+		}
+		dropped[i] = true
+	}
+	out := make([]parser.Constraint, 0, len(constraints))
+	for i, c := range constraints {
+		if !dropped[i] {
+			out = append(out, c)
+		}
+	}
+	return out
+}
+
+// addConstraints adds the constraints one statement creates to table and
+// names each unnamed one as PostgreSQL does. PostgreSQL creates the CHECKs
+// first, then the primary key, then each UNIQUE, then each FOREIGN KEY, and a
+// name clashes with what exists in the table's schema at that moment.
+func (p *Parser) addConstraints(table *parser.Table, constraints []parser.Constraint) {
+	table.Constraints = append(table.Constraints, constraints...)
+	parser.CanonicalizeConstraints(table, "postgres")
+	ns := p.namespace(table.Schema)
+	for _, kind := range []parser.ConstraintType{parser.Check, parser.PrimaryKey, parser.Unique, parser.ForeignKey} {
+		for i := range table.Constraints {
+			c := &table.Constraints[i]
+			if c.Type == kind && c.Name == "" {
+				c.Name = parser.DerivePostgresConstraintName(table.Name, *c, ns.taken(kind))
+				ns.add(kind, c.Name)
+			}
+		}
+	}
+}
+
+// pgNamespace holds the names in use in one schema. An index, or the index
+// behind a PRIMARY KEY or UNIQUE, needs a name no table, composite type or
+// index in the schema has. A constraint needs a name no constraint in the
+// schema has, on any table or domain.
+type pgNamespace struct {
+	relations   map[string]bool
+	constraints map[string]bool
+}
+
+func (p *Parser) namespace(schema string) pgNamespace {
+	ns := pgNamespace{relations: make(map[string]bool), constraints: make(map[string]bool)}
+	for _, t := range p.schema.Tables {
+		if t.Schema != schema {
+			continue
+		}
+		ns.relations[t.Name] = true
+		for _, c := range t.Constraints {
+			ns.add(c.Type, c.Name)
+		}
+	}
+	for _, ct := range p.schema.CompositeTypes {
+		if ct.Schema == schema {
+			ns.relations[ct.Name] = true
+		}
+	}
+	for _, dt := range p.schema.DomainTypes {
+		if dt.Schema != schema {
+			continue
+		}
+		for _, c := range dt.Constraints {
+			ns.constraints[c.Name] = true
+		}
+	}
+	return ns
+}
+
+func (ns pgNamespace) taken(kind parser.ConstraintType) func(string) bool {
+	switch kind {
+	case parser.PrimaryKey, parser.Unique:
+		return func(name string) bool { return ns.relations[name] || ns.constraints[name] }
+	case parser.Index:
+		return func(name string) bool { return ns.relations[name] }
+	case parser.ForeignKey, parser.Check:
+	}
+	return func(name string) bool { return ns.constraints[name] }
+}
+
+func (ns pgNamespace) add(kind parser.ConstraintType, name string) {
+	if name == "" {
+		return
+	}
+	switch kind {
+	case parser.PrimaryKey, parser.Unique:
+		ns.relations[name] = true
+		ns.constraints[name] = true
+	case parser.Index:
+		ns.relations[name] = true
+	case parser.ForeignKey, parser.Check:
+		ns.constraints[name] = true
+	}
 }
 
 func (p *Parser) parseCreateEnum(stmt *pg_query.CreateEnumStmt) error {
@@ -257,9 +374,101 @@ func (p *Parser) parseCreateIndex(stmt *pg_query.IndexStmt) error {
 		Method:  method,
 		Where:   deparseExpr(stmt.WhereClause),
 	}
+	if c.Name == "" {
+		named := parser.Constraint{
+			Type:    parser.Index,
+			Columns: parser.PostgresIndexColumnNames(indexElemNames(slices.Concat(stmt.IndexParams, stmt.IndexIncludingParams))),
+		}
+		c.Name = parser.DerivePostgresConstraintName(table.Name, named, p.namespace(table.Schema).taken(parser.Index))
+	}
 	table.Constraints = append(table.Constraints, c)
-	parser.ApplyConstraintToColumns(table, c)
+	parser.CanonicalizeConstraints(table, "postgres")
 	return nil
+}
+
+// indexElemNames returns the name PostgreSQL gives each index column when it
+// names the index: the column's own name, the name an expression would take as
+// a select-list column (lower for lower(x)), or "expr".
+func indexElemNames(params []*pg_query.Node) []string {
+	names := make([]string, 0, len(params))
+	for _, p := range params {
+		e, ok := p.Node.(*pg_query.Node_IndexElem)
+		if !ok || e.IndexElem == nil {
+			continue
+		}
+		name := e.IndexElem.Name
+		if name == "" {
+			name, _ = figureColname(e.IndexElem.Expr)
+		}
+		if name == "" {
+			name = "expr"
+		}
+		names = append(names, name)
+	}
+	return names
+}
+
+// figureColname is PostgreSQL's FigureColnameInternal for the expressions an
+// index can hold: it returns the name an expression takes as a select-list
+// column, and how strongly it holds (2 for a real name, 1 for a fallback such
+// as a cast's type name, 0 for none).
+func figureColname(node *pg_query.Node) (string, int) {
+	if node == nil {
+		return "", 0
+	}
+	switch n := node.Node.(type) {
+	case *pg_query.Node_ColumnRef:
+		if fields := extractStringList(n.ColumnRef.Fields); len(fields) > 0 {
+			return fields[len(fields)-1], 2
+		}
+	case *pg_query.Node_FuncCall:
+		if names := extractStringList(n.FuncCall.Funcname); len(names) > 0 {
+			return names[len(names)-1], 2
+		}
+	case *pg_query.Node_TypeCast:
+		name, strength := figureColname(n.TypeCast.Arg)
+		if strength <= 1 && n.TypeCast.TypeName != nil {
+			if names := extractStringList(n.TypeCast.TypeName.Names); len(names) > 0 {
+				return names[len(names)-1], 1
+			}
+		}
+		return name, strength
+	case *pg_query.Node_CollateClause:
+		return figureColname(n.CollateClause.Arg)
+	case *pg_query.Node_CaseExpr:
+		name, strength := figureColname(n.CaseExpr.Defresult)
+		if strength <= 1 {
+			return "case", 1
+		}
+		return name, strength
+	}
+	if name := fixedColname(node); name != "" {
+		return name, 2
+	}
+	return "", 0
+}
+
+// fixedColname returns the name PostgreSQL gives an expression whose name does
+// not depend on its arguments, such as coalesce(…), or "".
+func fixedColname(node *pg_query.Node) string {
+	switch n := node.Node.(type) {
+	case *pg_query.Node_AExpr:
+		if n.AExpr.Kind == pg_query.A_Expr_Kind_AEXPR_NULLIF {
+			return "nullif"
+		}
+	case *pg_query.Node_AArrayExpr:
+		return "array"
+	case *pg_query.Node_RowExpr:
+		return "row"
+	case *pg_query.Node_CoalesceExpr:
+		return "coalesce"
+	case *pg_query.Node_MinMaxExpr:
+		if n.MinMaxExpr.Op == pg_query.MinMaxOp_IS_LEAST {
+			return "least"
+		}
+		return "greatest"
+	}
+	return ""
 }
 
 // indexParamColumns extracts column names from a CREATE INDEX parameter list.
@@ -567,11 +776,14 @@ func (p *Parser) alterAddColumn(table *parser.Table, cmd *pg_query.AlterTableCmd
 	if cmd.MissingOk && parser.ColumnByName(table, cd.ColumnDef.Colname) != nil {
 		return nil // ADD COLUMN IF NOT EXISTS — column already exists, skip
 	}
-	col := p.parseColumnDef(cd.ColumnDef)
+	col, constraints := p.parseColumnDef(cd.ColumnDef)
 	table.Columns = append(table.Columns, col)
+	p.addConstraints(table, constraints)
 	return nil
 }
 
+// alterDropColumn drops the column, and with it every index and constraint of
+// the table that names it, as PostgreSQL does.
 func alterDropColumn(table *parser.Table, cmd *pg_query.AlterTableCmd) {
 	if cmd.MissingOk && parser.ColumnByName(table, cmd.Name) == nil {
 		return // DROP COLUMN IF EXISTS — column doesn't exist, skip
@@ -579,6 +791,11 @@ func alterDropColumn(table *parser.Table, cmd *pg_query.AlterTableCmd) {
 	table.Columns = slices.DeleteFunc(table.Columns, func(c parser.Column) bool {
 		return c.Name == cmd.Name
 	})
+	for _, c := range slices.Clone(table.Constraints) {
+		if slices.Contains(c.Columns, cmd.Name) {
+			removeConstraintFromColumns(table, c.Name)
+		}
+	}
 }
 
 func (p *Parser) alterAddConstraint(table *parser.Table, cmd *pg_query.AlterTableCmd) {
@@ -589,9 +806,7 @@ func (p *Parser) alterAddConstraint(table *parser.Table, cmd *pg_query.AlterTabl
 	if !ok {
 		return
 	}
-	constraint := p.parseConstraintNode(cn.Constraint)
-	table.Constraints = append(table.Constraints, constraint)
-	parser.ApplyConstraintToColumns(table, constraint)
+	p.addConstraints(table, []parser.Constraint{p.parseConstraintNode(cn.Constraint)})
 }
 
 func alterDropConstraint(table *parser.Table, cmd *pg_query.AlterTableCmd) {
@@ -626,7 +841,9 @@ func alterColumnType(table *parser.Table, cmd *pg_query.AlterTableCmd) {
 
 // --- Column parsing ---
 
-func (p *Parser) parseColumnDef(cd *pg_query.ColumnDef) parser.Column {
+// parseColumnDef returns the column cd defines and the constraints declared
+// inline on it.
+func (p *Parser) parseColumnDef(cd *pg_query.ColumnDef) (parser.Column, []parser.Constraint) {
 	col := parser.Column{
 		Name:     cd.Colname,
 		Nullable: true,
@@ -654,18 +871,24 @@ func (p *Parser) parseColumnDef(cd *pg_query.ColumnDef) parser.Column {
 		col.Nullable = false
 	}
 
+	var constraints []parser.Constraint
 	for _, c := range cd.Constraints {
 		cn, ok := c.Node.(*pg_query.Node_Constraint)
 		if !ok {
 			continue
 		}
-		p.applyColumnConstraint(&col, cn.Constraint)
+		if constraint, ok := p.applyColumnConstraint(&col, cn.Constraint); ok {
+			constraints = append(constraints, constraint)
+		}
 	}
 
-	return col
+	return col, constraints
 }
 
-func (p *Parser) applyColumnConstraint(col *parser.Column, c *pg_query.Constraint) {
+// applyColumnConstraint applies an inline column constraint to col. A PRIMARY
+// KEY, UNIQUE, REFERENCES or CHECK is also returned as a table constraint over
+// the column.
+func (p *Parser) applyColumnConstraint(col *parser.Column, c *pg_query.Constraint) (parser.Constraint, bool) {
 	switch c.Contype {
 	case pg_query.ConstrType_CONSTR_NOTNULL:
 		col.Nullable = false
@@ -673,13 +896,12 @@ func (p *Parser) applyColumnConstraint(col *parser.Column, c *pg_query.Constrain
 	case pg_query.ConstrType_CONSTR_NULL:
 		col.Nullable = true
 
-	case pg_query.ConstrType_CONSTR_PRIMARY:
-		col.PrimaryKey = true
-		col.Nullable = false
-
-	case pg_query.ConstrType_CONSTR_UNIQUE:
-		col.Unique = true
-		col.InlineUnique = true
+	case pg_query.ConstrType_CONSTR_PRIMARY, pg_query.ConstrType_CONSTR_UNIQUE, pg_query.ConstrType_CONSTR_CHECK:
+		constraint := p.parseConstraintNode(c)
+		if constraint.Type != parser.Check {
+			constraint.Columns = []string{col.Name}
+		}
+		return constraint, true
 
 	case pg_query.ConstrType_CONSTR_DEFAULT:
 		col.Default = deparseExpr(c.RawExpr)
@@ -705,11 +927,15 @@ func (p *Parser) applyColumnConstraint(col *parser.Column, c *pg_query.Constrain
 				Schema: fkSchema,
 				Column: fkCol,
 			}
+			constraint := p.parseConstraintNode(c)
+			constraint.Columns = []string{col.Name}
+			return constraint, true
 		}
 
 	default:
 		// Other constraint types (IDENTITY, GENERATED, etc.) are handled elsewhere or ignored.
 	}
+	return parser.Constraint{}, false
 }
 
 // --- Constraint parsing ---
@@ -774,8 +1000,7 @@ func hasConstraint(table *parser.Table, name string) bool {
 // removeConstraintFromColumns removes the named constraint from
 // table.Constraints and reverses its column flag effects. The slice
 // deletion happens first so that RecomputeColumnUnique sees the
-// post-drop state of the table when re-deriving col.Unique from the
-// remaining constraints + the column's InlineUnique flag.
+// post-drop state of the table.
 func removeConstraintFromColumns(table *parser.Table, constraintName string) {
 	idx := slices.IndexFunc(table.Constraints, func(c parser.Constraint) bool {
 		return c.Name == constraintName

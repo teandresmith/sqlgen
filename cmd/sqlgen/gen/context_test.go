@@ -1103,10 +1103,41 @@ func TestConflictTargetGeneration(t *testing.T) {
 	}
 }
 
+// TestConflictTargetDuplicateUnique pins one conflict target for two UNIQUE
+// constraints over the same columns, as MySQL keeps them (email, email_2).
+func TestConflictTargetDuplicateUnique(t *testing.T) {
+	schema := &parser.Schema{
+		Tables: []parser.Table{
+			{
+				Name: "users",
+				Columns: []parser.Column{
+					{Name: "id", Type: "bigint", PrimaryKey: true, AutoIncrement: true},
+					{Name: "email", Type: "varchar", Unique: true},
+				},
+				Constraints: []parser.Constraint{
+					{Name: "PRIMARY", Type: parser.PrimaryKey, Columns: []string{"id"}},
+					{Name: "email", Type: parser.Unique, Columns: []string{"email"}},
+					{Name: "email_2", Type: parser.Unique, Columns: []string{"email"}},
+				},
+			},
+		},
+	}
+	contexts, err := gen.BuildTableContexts(testInput(schema), nil)
+	if err != nil {
+		t.Fatalf("BuildTableContexts() error: %v", err)
+	}
+	got := make([]string, 0, len(contexts[0].ConflictTargets))
+	for _, target := range contexts[0].ConflictTargets {
+		got = append(got, target.ConstantName)
+	}
+	if diff := cmp.Diff([]string{"UserConflictEmail", "UserConflictPK"}, got); diff != "" {
+		t.Errorf("ConflictTargets mismatch (-want +got):\n%s", diff)
+	}
+}
+
 func TestConflictTargetInlineUnique(t *testing.T) {
-	// Inline UNIQUE columns (col.Unique = true) without a table-level
-	// Constraint entry — this is how MySQL and PostgreSQL parsers represent
-	// column-level UNIQUE declarations.
+	// Unique columns with no UNIQUE constraint entry, as a hand-built schema
+	// can carry, still get a conflict target.
 	schema := &parser.Schema{
 		Tables: []parser.Table{
 			{
@@ -1781,7 +1812,7 @@ func TestBuildTableContexts_relationshipFKOnTarget(t *testing.T) {
 				Schema: "public",
 				Columns: []parser.Column{
 					{Name: "id", Type: "uuid", PrimaryKey: true},
-					{Name: "user_id", Type: "uuid", Unique: true, InlineUnique: true, FKReference: &parser.FKReference{Table: "users", Schema: "public", Column: "id"}},
+					{Name: "user_id", Type: "uuid", Unique: true, FKReference: &parser.FKReference{Table: "users", Schema: "public", Column: "id"}},
 				},
 			},
 			{
@@ -1945,7 +1976,7 @@ func TestBuildO2OJoinDetails_chainedFKOnTarget(t *testing.T) {
 				Schema: "public",
 				Columns: []parser.Column{
 					{Name: "id", Type: "uuid", PrimaryKey: true},
-					{Name: "customer_id", Type: "uuid", Unique: true, InlineUnique: true, FKReference: &parser.FKReference{Table: "customers", Schema: "public", Column: "id"}},
+					{Name: "customer_id", Type: "uuid", Unique: true, FKReference: &parser.FKReference{Table: "customers", Schema: "public", Column: "id"}},
 				},
 			},
 			{

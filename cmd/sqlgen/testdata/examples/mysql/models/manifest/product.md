@@ -32,9 +32,9 @@ Catalog of products available for sale
 
 | Name | Columns | Unique | Method | Where |
 | --- | --- | --- | --- | --- |
+| `PRIMARY` | id | yes | btree |  |
 | `category_id` | category_id |  | btree |  |
-| `products_pkey` | id | yes | btree |  |
-| `products_sku_key` | sku | yes | btree |  |
+| `sku` | sku | yes | btree |  |
 
 ## Relationships
 

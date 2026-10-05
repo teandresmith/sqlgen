@@ -1705,7 +1705,7 @@ func buildConflictTargets(table *parser.Table, tableCfg config.TableConfig, stru
 		})
 	}
 
-	// Also pick up inline UNIQUE columns not covered by table-level constraints.
+	// Also pick up Unique columns no UNIQUE constraint covers.
 	for _, col := range table.Columns {
 		if !col.Unique || col.PrimaryKey || coveredCols[col.Name] {
 			continue
@@ -1731,7 +1731,11 @@ func buildConflictTargets(table *parser.Table, tableCfg config.TableConfig, stru
 	slices.SortFunc(targets, func(a, b ConflictTargetContext) int {
 		return strings.Compare(a.ConstantName, b.ConstantName)
 	})
-	return targets
+	// Two UNIQUEs can share columns (MySQL keeps duplicates; PostgreSQL keeps
+	// one added by ALTER TABLE); one target serves both.
+	return slices.CompactFunc(targets, func(a, b ConflictTargetContext) bool {
+		return a.ConstantName == b.ConstantName
+	})
 }
 
 // pkConflictTargetIsIndexed reports whether an ON CONFLICT clause naming the
@@ -1756,19 +1760,9 @@ func buildConflictTargets(table *parser.Table, tableCfg config.TableConfig, stru
 // it ("the override silently takes precedence over any auto-detected PK"), and
 // a composite restatement has a real use, since override order sets <Table>PK
 // field order and cache-key order. Such a key is DB-backed and keeps its
-// target: a table-level PRIMARY KEY leaves a Constraint behind, and the
-// write-back never synthesizes one, so that constraint is a sound discriminator.
-//
-// KNOWN LIMITATION — an *inline* single-column `PRIMARY KEY` records only the
-// column flag, on all three dialects (no Constraint entry). Once the write-back
-// has set that same flag, `id uuid PRIMARY KEY` + `primary_key.columns: [id]`
-// is byte-identical to an app-enforced override, so this returns false and the
-// table loses <T>ConflictPK. It also loses its manifest `<table>_pkey`
-// (pkDeclaredInSchema) and, with no UNIQUE beside it, Upsert and UpsertMany.
-// The bias is deliberate: a missing constant is a compile error a Go caller
-// sees immediately (the GraphQL flat upsert<T> is omitted instead), whereas a wrongly-emitted target is a 42P10 that only fires in
-// production. Deleting the redundant config line restores the
-// target; it buys nothing for a single-column key.
+// target: every PRIMARY KEY, inline or table-level, leaves a Constraint behind
+// (PRD §5.2), and the write-back never synthesizes one, so that constraint is a
+// sound discriminator.
 func pkConflictTargetIsIndexed(table *parser.Table, tableCfg config.TableConfig, pkCols []string) bool {
 	return pkDeclaredInSchema(table, tableCfg, pkCols) || uniqueCoversColumns(table, pkCols)
 }
@@ -1777,13 +1771,11 @@ func pkConflictTargetIsIndexed(table *parser.Table, tableCfg config.TableConfig,
 // the schema declared, and so one the database built a primary-key index for.
 //
 // It is pkConflictTargetIsIndexed's first half, on the same evidence: no
-// primary_key.columns override, or an override restating a table-level PRIMARY
-// KEY constraint. A key that is only backed by a set-equal UNIQUE has an index,
+// primary_key.columns override, or an override restating the PRIMARY KEY
+// constraint. A key that is only backed by a set-equal UNIQUE has an index,
 // but it is that UNIQUE's, listed under its own name. The manifest reads this
 // through TableContext.PKDeclaredInSchema so that indexes[] names no
-// primary-key index the database does not have (PRD §30.7). It carries the
-// same known limitation: an inline PRIMARY KEY restated by the override reads
-// as app-enforced.
+// primary-key index the database does not have (PRD §30.7).
 func pkDeclaredInSchema(table *parser.Table, tableCfg config.TableConfig, pkCols []string) bool {
 	if tableCfg.PrimaryKey == nil || len(tableCfg.PrimaryKey.Columns) == 0 {
 		return true
@@ -1793,7 +1785,7 @@ func pkDeclaredInSchema(table *parser.Table, tableCfg config.TableConfig, pkCols
 
 // uniqueCoversColumns reports whether the table carries a UNIQUE constraint
 // whose column membership is exactly cols (order-independent), or — for a
-// single column — an inline UNIQUE on that column.
+// single column — a column whose Unique flag is set.
 //
 // Set equality is required, matching config.uniqueCovers: a UNIQUE on (a) does
 // not make (a, b) conflict-targetable. Partial UNIQUE constraints (Where != "")

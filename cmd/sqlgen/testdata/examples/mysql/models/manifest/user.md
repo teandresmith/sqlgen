@@ -44,8 +44,8 @@ Registered user accounts
 
 | Name | Columns | Unique | Method | Where |
 | --- | --- | --- | --- | --- |
-| `users_email_key` | email | yes | btree |  |
-| `users_pkey` | id | yes | btree |  |
+| `PRIMARY` | id | yes | btree |  |
+| `email` | email | yes | btree |  |
 
 ## Relationships
 

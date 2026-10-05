@@ -28,7 +28,7 @@ Polymorphic child rows; entity_type sub-categorizes per-parent relationship
 
 | Name | Columns | Unique | Method | Where |
 | --- | --- | --- | --- | --- |
-| `documents_pkey` | id | yes | btree |  |
+| `PRIMARY` | id | yes | btree |  |
 
 ## Relationships
 

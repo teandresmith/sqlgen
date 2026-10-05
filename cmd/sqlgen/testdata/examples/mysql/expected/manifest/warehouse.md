@@ -29,7 +29,7 @@ Storage warehouses with type-overridden columns
 
 | Name | Columns | Unique | Method | Where |
 | --- | --- | --- | --- | --- |
-| `warehouses_pkey` | id | yes | btree |  |
+| `PRIMARY` | id | yes | btree |  |
 
 ## Query methods
 

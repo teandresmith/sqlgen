@@ -77,7 +77,7 @@ var importFixtureDialects = []importFixtureDialect{
 func importFixtureSchema(d importFixtureDialect) *sqlparser.Schema {
 	authorCols := []sqlparser.Column{
 		{Name: "id", Type: d.uuid, PrimaryKey: true},
-		{Name: "email", Type: d.text, Unique: true, InlineUnique: true},
+		{Name: "email", Type: d.text, Unique: true},
 		{Name: "display_name", Type: d.text},
 		{Name: "view_count", Type: d.integer},
 		{Name: "balance", Type: d.numeric},

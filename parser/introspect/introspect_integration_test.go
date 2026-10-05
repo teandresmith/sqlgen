@@ -31,7 +31,7 @@ import (
 )
 
 // parityException excludes one field from assertSchemaParity. Field names a
-// field of a parser type as "<Type>.<Field>", such as "Column.InlineUnique".
+// field of a parser type as "<Type>.<Field>", such as "Constraint.CheckExpression".
 type parityException struct {
 	Field  string
 	Reason string
@@ -41,20 +41,11 @@ type parityException struct {
 // introspected schema cannot round-trip them. They are the only differences
 // assertSchemaParity tolerates. A test that needs its own exception declares
 // it beside this table and passes it as ignore, so every exception can be
-// reviewed in one place.
+// reviewed in one place. Every dialect round-trips every field today.
 var parityExceptions = map[string][]parityException{
-	"postgres": {{
-		Field:  "Column.InlineUnique",
-		Reason: "parse provenance: pg_constraint stores `col UNIQUE` and `UNIQUE (col)` identically",
-	}},
-	"mysql": {{
-		Field:  "Column.InlineUnique",
-		Reason: "parse provenance: information_schema stores `col UNIQUE` and `UNIQUE KEY (col)` identically",
-	}},
-	"sqlite": {{
-		Field:  "Column.InlineUnique",
-		Reason: "parse provenance: PRAGMA index_list reports `col UNIQUE` and `UNIQUE (col)` as the same auto-index",
-	}},
+	"postgres": nil,
+	"mysql":    nil,
+	"sqlite":   nil,
 }
 
 // parityFieldTypes maps the type half of a parityException.Field to the type

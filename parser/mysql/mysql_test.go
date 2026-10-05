@@ -2,6 +2,7 @@ package mysql_test
 
 import (
 	"fmt"
+	"slices"
 	"strings"
 	"testing"
 
@@ -951,6 +952,8 @@ func TestForeignKeyBackingIndexSynthesis(t *testing.T) {
 			want: []wantIdx{{Name: "fk_line", Columns: []string{"order_id", "product_id"}}},
 		},
 		{
+			// Measured on MySQL 8.0: of two identical foreign key indexes the
+			// later one stays.
 			name: "two FKs on same column share one backing index",
 			ddl: `CREATE TABLE audit (
 				id INT PRIMARY KEY,
@@ -958,7 +961,7 @@ func TestForeignKeyBackingIndexSynthesis(t *testing.T) {
 				CONSTRAINT fk_a FOREIGN KEY (user_id) REFERENCES users(id),
 				CONSTRAINT fk_b FOREIGN KEY (user_id) REFERENCES admins(id)
 			);`,
-			want: []wantIdx{{Name: "fk_a", Columns: []string{"user_id"}}},
+			want: []wantIdx{{Name: "fk_b", Columns: []string{"user_id"}}},
 		},
 	}
 
@@ -1152,6 +1155,7 @@ func TestRenameTableCarriesForeignKeys(t *testing.T) {
 	}
 	want := []string{
 		"posts.user_id -> accounts",
+		"posts constraint -> accounts",
 		"comments.user_id -> accounts",
 		"comments constraint -> accounts",
 	}
@@ -1247,6 +1251,7 @@ func TestRenameColumnCarriesReferences(t *testing.T) {
 			want: []string{
 				"users PRIMARY KEY [user_id]",
 				"posts.user_id -> users(user_id)",
+				"posts PRIMARY KEY [id]",
 				"posts FOREIGN KEY [user_id] -> users[user_id]",
 				"posts INDEX [user_id]",
 				"post_tags.post_id -> posts(id)",
@@ -1260,6 +1265,7 @@ func TestRenameColumnCarriesReferences(t *testing.T) {
 			want: []string{
 				"users PRIMARY KEY [user_id]",
 				"posts.user_id -> users(user_id)",
+				"posts PRIMARY KEY [id]",
 				"posts FOREIGN KEY [user_id] -> users[user_id]",
 				"posts INDEX [user_id]",
 				"post_tags.post_id -> posts(id)",
@@ -1273,6 +1279,7 @@ func TestRenameColumnCarriesReferences(t *testing.T) {
 			want: []string{
 				"users PRIMARY KEY [id]",
 				"posts.user_id -> users(id)",
+				"posts PRIMARY KEY [id]",
 				"posts FOREIGN KEY [user_id] -> users[id]",
 				"posts INDEX [user_id]",
 				"post_tags.article_id -> posts(id)",
@@ -1657,24 +1664,20 @@ func TestInlineIndex_UsingMethod(t *testing.T) {
 		t.Errorf("hash: Method=%q, want %q", hashIdx.Method, "hash")
 	}
 
-	// Without USING, MySQL parser leaves Method empty — the manifest builder
-	// falls back to "btree" at serialization time.
+	// Without USING, the method is btree, as information_schema reports it.
 	defaultIdx, ok := byName["idx_email_default"]
 	if !ok {
 		t.Fatalf("missing idx_email_default; constraints=%+v", table.Constraints)
 	}
-	if defaultIdx.Method != "" {
-		t.Errorf("default: Method=%q, want empty (manifest fills in btree)", defaultIdx.Method)
+	if defaultIdx.Method != "btree" {
+		t.Errorf("default: Method=%q, want %q", defaultIdx.Method, "btree")
 	}
 }
 
-// TestDropIndexRecomputesColumnUnique pins that dropping a table-
-// level UNIQUE index must re-derive col.Unique from the remaining state
-// (other unconditional UNIQUEs + the column's InlineUnique flag) rather
-// than leaving the column flag desynchronized from the constraint set.
-// MySQL has no partial-UNIQUE concept, so the partial-UNIQUE branch of
-// the bug applies only to PostgreSQL / SQLite; the inline + table-level
-// case and the lone-UNIQUE positive control are exercised here.
+// TestDropIndexRecomputesColumnUnique pins that dropping a UNIQUE index
+// re-derives col.Unique from the UNIQUEs that remain, an inline one
+// included, rather than leaving the column flag desynchronized from the
+// constraint set.
 func TestDropIndexRecomputesColumnUnique(t *testing.T) {
 	tests := []struct {
 		name        string
@@ -1697,6 +1700,19 @@ func TestDropIndexRecomputesColumnUnique(t *testing.T) {
 			column:      "email",
 			wantUnique:  true,
 			wantComment: "inline UNIQUE remains in force",
+		},
+		{
+			name: "inline UNIQUE dropped by its derived name clears Unique",
+			setupSQL: `
+				CREATE TABLE users (
+					id INT PRIMARY KEY,
+					email VARCHAR(255) UNIQUE
+				);
+			`,
+			dropSQL:     `ALTER TABLE users DROP INDEX email;`,
+			column:      "email",
+			wantUnique:  false,
+			wantComment: "the inline UNIQUE is the key named email",
 		},
 		{
 			name: "two table-level UNIQUEs — drop one keeps Unique",
@@ -1789,6 +1805,108 @@ CREATE MATERIALIZED VIEW order_totals AS SELECT customer_id FROM orders;`,
 			}
 			if !strings.Contains(err.Error(), "not supported for dialect mysql") {
 				t.Errorf("error = %q, want mention of 'not supported for dialect mysql'", err)
+			}
+		})
+	}
+}
+
+// TestDerivedConstraintNames pins the names the parser gives unnamed keys and
+// constraints, and which indexes MySQL builds for foreign keys. Each was
+// measured on MySQL 8.0.
+func TestDerivedConstraintNames(t *testing.T) {
+	tests := []struct {
+		name string
+		sql  string
+		want []string
+	}{
+		{
+			name: "checks are numbered among the unnamed ones",
+			sql:  `CREATE TABLE k (a int, CHECK (a > 0), CONSTRAINT nn CHECK (a < 10), CHECK (a <> 5), b int CHECK (b > 0));`,
+			want: []string{"k CHECK k_chk_1", "k CHECK nn", "k CHECK k_chk_2", "k CHECK k_chk_3"},
+		},
+		{
+			name: "foreign keys and the indexes built for them",
+			sql: `CREATE TABLE p (id int PRIMARY KEY);
+				CREATE TABLE fk (a int, b int, FOREIGN KEY (a) REFERENCES p (id), CONSTRAINT named_fk FOREIGN KEY (b) REFERENCES p (id), FOREIGN KEY (b) REFERENCES p (id));
+				ALTER TABLE fk ADD FOREIGN KEY (a) REFERENCES p (id);`,
+			want: []string{
+				"p PRIMARY KEY PRIMARY",
+				"fk FOREIGN KEY fk_ibfk_1", "fk FOREIGN KEY named_fk", "fk FOREIGN KEY fk_ibfk_2", "fk FOREIGN KEY fk_ibfk_3",
+				"fk INDEX a", "fk INDEX b",
+			},
+		},
+		{
+			name: "a built index takes the constraint name before the index name",
+			sql: `CREATE TABLE p (id int PRIMARY KEY);
+				CREATE TABLE fi (a int, b int, FOREIGN KEY my_idx (a) REFERENCES p (id), CONSTRAINT cn FOREIGN KEY ix2 (b) REFERENCES p (id));`,
+			want: []string{
+				"p PRIMARY KEY PRIMARY",
+				"fi FOREIGN KEY fi_ibfk_1", "fi FOREIGN KEY cn", "fi INDEX my_idx", "fi INDEX cn",
+			},
+		},
+		{
+			name: "unnamed keys share one counter",
+			sql: `CREATE TABLE u (a int UNIQUE, UNIQUE KEY (a), UNIQUE KEY a_3 (a), KEY (a));
+				CREATE TABLE up (A int, UNIQUE (a), KEY (A));`,
+			want: []string{
+				"u UNIQUE a", "u UNIQUE a_2", "u UNIQUE a_3", "u INDEX a_4",
+				"up UNIQUE A", "up INDEX A_2",
+			},
+		},
+		{
+			name: "a declared key covering a foreign key replaces its index",
+			sql: `CREATE TABLE p (id int PRIMARY KEY);
+				CREATE TABLE o4 (b int UNIQUE, c int, FOREIGN KEY (c) REFERENCES p (id), UNIQUE (c, b), KEY (c));`,
+			want: []string{
+				"p PRIMARY KEY PRIMARY",
+				"o4 UNIQUE b", "o4 UNIQUE c", "o4 INDEX c_2", "o4 FOREIGN KEY o4_ibfk_1",
+			},
+		},
+		{
+			name: "a longer built index replaces a built one",
+			sql: `CREATE TABLE p (id int PRIMARY KEY, b int, c int, KEY (b, c));
+				CREATE TABLE gen (a int, b int, FOREIGN KEY (a) REFERENCES p (id));
+				ALTER TABLE gen ADD CONSTRAINT gen_ab FOREIGN KEY (a, b) REFERENCES p (b, c);`,
+			want: []string{
+				"p PRIMARY KEY PRIMARY", "p INDEX b",
+				"gen FOREIGN KEY gen_ibfk_1", "gen FOREIGN KEY gen_ab", "gen INDEX gen_ab",
+			},
+		},
+		{
+			name: "rename carries generated names and a matching built index is replaced",
+			sql: `CREATE TABLE p (id int PRIMARY KEY);
+				CREATE TABLE ren (a int, CHECK (a > 0), FOREIGN KEY (a) REFERENCES p (id), CONSTRAINT ren_ibfk_9 FOREIGN KEY (a) REFERENCES p (id));
+				ALTER TABLE ren ADD FOREIGN KEY (a) REFERENCES p (id), ADD CHECK (a < 100);
+				RENAME TABLE ren TO ren2;`,
+			want: []string{
+				"p PRIMARY KEY PRIMARY",
+				"ren2 CHECK ren2_chk_1", "ren2 CHECK ren2_chk_2",
+				"ren2 FOREIGN KEY ren2_ibfk_1", "ren2 FOREIGN KEY ren2_ibfk_9", "ren2 FOREIGN KEY ren2_ibfk_10",
+				"ren2 INDEX a",
+			},
+		},
+		{
+			name: "a primary key is PRIMARY whatever its declared name",
+			sql:  `CREATE TABLE pk3 (a int, CONSTRAINT mypk PRIMARY KEY (a));`,
+			want: []string{"pk3 PRIMARY KEY PRIMARY"},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			p := newParser(t)
+			if err := p.Parse("test.sql", []byte(tt.sql)); err != nil {
+				t.Fatalf("Parse() error: %v", err)
+			}
+			var got []string
+			for _, tbl := range p.Schema().Tables {
+				for _, c := range tbl.Constraints {
+					got = append(got, fmt.Sprintf("%s %s %s", tbl.Name, c.Type, c.Name))
+				}
+			}
+			slices.Sort(got)
+			want := slices.Sorted(slices.Values(tt.want))
+			if diff := cmp.Diff(want, got); diff != "" {
+				t.Errorf("constraint names mismatch (-want +got):\n%s", diff)
 			}
 		})
 	}
