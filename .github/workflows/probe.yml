@@ -1,9 +1,14 @@
 name: Platform probe
-# Run by hand to check which release targets can build the cgo CLI and pass
-# the parser tests on their native runner, before trusting release.yml's
-# matrix.
+# Checks which release targets can build the cgo CLI and pass the parser tests
+# on their native runner, before trusting release.yml's matrix. Runs by hand,
+# and on its own whenever a push to main changes the matrix.
 on:
   workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - .github/workflows/probe.yml
+      - .github/workflows/release.yml
 
 permissions:
   contents: read

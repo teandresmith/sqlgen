@@ -67,7 +67,7 @@ The YAML lives in `.github/workflows/`; read it there rather than copying it her
 | `examples.yml` | `discover`, then `lint` and `test` per example | `GOWORK: off`, and `paths-ignore` for docs-only changes. |
 | `release-please.yml` | `release-please`, `tag-modules`, then `release` | Calls `release.yml` when a release is created. See [Section 11](#11-automated-release-management). |
 | `release.yml` | `build` per target, then `publish` | Native cgo builds on six runners. Runs when `release-please.yml` calls it, or by hand. |
-| `probe.yml` | `probe` per target | Run by hand. Builds the CLI and runs the parser tests on the six release runners; see [Native Builds](#native-builds). |
+| `probe.yml` | `probe` per target | Runs by hand, and on a push to `main` that changes `probe.yml` or `release.yml`. Builds the CLI and runs the parser tests on the six release runners; see [Native Builds](#native-builds). |
 
 Every workflow sets `permissions: contents: read` at the top and widens it per job only where needed (the release and tagging jobs). PR runs cancel when a newer commit lands on the same branch; pushes to `main` never cancel.
 
@@ -680,7 +680,7 @@ The CLI requires CGO because the PostgreSQL parser (`pg_query_go/v6`) links agai
 | windows/amd64 | `windows-latest` |
 | windows/arm64 | `windows-11-arm` |
 
-`.github/workflows/probe.yml` (run by hand) builds the CLI and runs the parser tests on the same six runners. Run it before relying on a target, and after changing the matrix. `release.yml` and `probe.yml` list the same runners; change them together.
+`.github/workflows/probe.yml` builds the CLI and runs the parser tests on the same six runners. It runs on its own when a push to `main` changes `probe.yml` or `release.yml`, and by hand before relying on a target. `release.yml` and `probe.yml` list the same runners; change them together.
 
 ### Installation Methods
 
