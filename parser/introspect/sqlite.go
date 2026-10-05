@@ -5,11 +5,13 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 
 	_ "modernc.org/sqlite" // SQLite database/sql driver
 
 	"github.com/teandresmith/sqlgen/parser"
+	"github.com/teandresmith/sqlgen/parser/sqlite"
 )
 
 // SQLiteIntrospector discovers schema elements from a live SQLite database.
@@ -61,7 +63,7 @@ func (si *SQLiteIntrospector) Introspect(ctx context.Context, connString string,
 
 func (si *SQLiteIntrospector) introspectTables(ctx context.Context, schema *parser.Schema, opts IntrospectionOptions) error {
 	rows, err := si.db.QueryContext(ctx, `
-		SELECT name
+		SELECT name, COALESCE(sql, '')
 		FROM sqlite_master
 		WHERE type = 'table' AND name NOT LIKE 'sqlite_%'
 		ORDER BY name`)
@@ -70,27 +72,31 @@ func (si *SQLiteIntrospector) introspectTables(ctx context.Context, schema *pars
 	}
 	defer rows.Close() //nolint:errcheck // rows.Close error is not actionable after reading
 
-	var tableNames []string
+	type tableRef struct {
+		name string
+		ddl  string
+	}
+	var tables []tableRef
 	for rows.Next() {
-		var name string
-		if err := rows.Scan(&name); err != nil {
+		var ref tableRef
+		if err := rows.Scan(&ref.name, &ref.ddl); err != nil {
 			return fmt.Errorf("introspect sqlite tables: scanning: %w", err)
 		}
-		if !tableAllowed(name, opts) {
+		if !tableAllowed(ref.name, opts) {
 			continue
 		}
-		tableNames = append(tableNames, name)
+		tables = append(tables, ref)
 	}
 	if err := rows.Err(); err != nil {
 		return fmt.Errorf("introspect sqlite tables: iterating: %w", err)
 	}
 
-	for _, name := range tableNames {
+	for _, ref := range tables {
 		table := parser.Table{
-			Name: name,
+			Name: ref.name,
 		}
 
-		if err := si.introspectColumns(ctx, &table); err != nil {
+		if err := si.introspectColumns(ctx, &table, ref.ddl); err != nil {
 			return err
 		}
 		if err := si.introspectForeignKeys(ctx, &table); err != nil {
@@ -196,9 +202,12 @@ func (si *SQLiteIntrospector) introspectViewColumns(ctx context.Context, view *p
 	return nil
 }
 
-func (si *SQLiteIntrospector) introspectColumns(ctx context.Context, table *parser.Table) error {
+// introspectColumns reads table's columns from PRAGMA table_xinfo, which,
+// unlike table_info, lists generated columns. ddl is the table's stored
+// CREATE TABLE, the only place SQLite keeps a generated column's expression.
+func (si *SQLiteIntrospector) introspectColumns(ctx context.Context, table *parser.Table, ddl string) error {
 	rows, err := si.db.QueryContext(ctx,
-		fmt.Sprintf("PRAGMA table_info(%q)", table.Name))
+		fmt.Sprintf("PRAGMA table_xinfo(%q)", table.Name))
 	if err != nil {
 		return fmt.Errorf("introspect sqlite columns %s: %w", table.Name, err)
 	}
@@ -215,8 +224,9 @@ func (si *SQLiteIntrospector) introspectColumns(ctx context.Context, table *pars
 			notNull   int
 			dfltValue sql.NullString
 			pk        int
+			hidden    int
 		)
-		if err := rows.Scan(&cid, &name, &typeName, &notNull, &dfltValue, &pk); err != nil {
+		if err := rows.Scan(&cid, &name, &typeName, &notNull, &dfltValue, &pk, &hidden); err != nil {
 			return fmt.Errorf("introspect sqlite columns %s: scanning: %w", table.Name, err)
 		}
 
@@ -225,6 +235,12 @@ func (si *SQLiteIntrospector) introspectColumns(ctx context.Context, table *pars
 			Type:     normalizeSQLiteType(typeName),
 			Nullable: notNull == 0,
 		}
+
+		storage, ok := sqliteGeneratedStorage(hidden)
+		if !ok {
+			continue
+		}
+		col.GeneratedStorage = storage
 
 		if dfltValue.Valid {
 			col.Default = dfltValue.String
@@ -240,6 +256,10 @@ func (si *SQLiteIntrospector) introspectColumns(ctx context.Context, table *pars
 	}
 	if err := rows.Err(); err != nil {
 		return fmt.Errorf("introspect sqlite columns %s: iterating: %w", table.Name, err)
+	}
+
+	if err := sqliteGeneratedExprs(table, ddl); err != nil {
+		return fmt.Errorf("introspect sqlite columns %s: %w", table.Name, err)
 	}
 
 	// INTEGER PRIMARY KEY is auto-increment (rowid alias) — single PK column only.
@@ -260,6 +280,51 @@ func (si *SQLiteIntrospector) introspectColumns(ctx context.Context, table *pars
 		table.Constraints = append(table.Constraints, constraint)
 	}
 
+	return nil
+}
+
+// sqliteGeneratedStorage maps PRAGMA table_xinfo's hidden value to a
+// column's GeneratedStorage: 0 is an ordinary column, 2 a VIRTUAL and 3 a
+// STORED generated column. ok is false for 1, a virtual table's hidden
+// column, which is not part of the model.
+func sqliteGeneratedStorage(hidden int) (storage string, ok bool) {
+	switch hidden {
+	case 1:
+		return "", false
+	case 2:
+		return "VIRTUAL", true
+	case 3:
+		return "STORED", true
+	}
+	return "", true
+}
+
+// sqliteGeneratedExprs sets GeneratedExpr on table's generated columns from
+// its stored CREATE TABLE, parsed by the SQLite file parser so the text
+// matches the files path. A table without one is not parsed.
+func sqliteGeneratedExprs(table *parser.Table, ddl string) error {
+	if !slices.ContainsFunc(table.Columns, func(c parser.Column) bool { return c.GeneratedStorage != "" }) {
+		return nil
+	}
+	p := sqlite.New()
+	if err := p.Parse("sqlite_master", []byte(ddl)); err != nil {
+		return fmt.Errorf("parsing stored CREATE TABLE: %w", err)
+	}
+	parsed := p.Schema().Tables
+	if len(parsed) != 1 {
+		return fmt.Errorf("stored CREATE TABLE yields %d tables, want 1", len(parsed))
+	}
+	for i := range table.Columns {
+		col := &table.Columns[i]
+		if col.GeneratedStorage == "" {
+			continue
+		}
+		pc := parser.ColumnByName(&parsed[0], col.Name)
+		if pc == nil || pc.GeneratedExpr == "" {
+			return fmt.Errorf("stored CREATE TABLE has no expression for generated column %s", col.Name)
+		}
+		col.GeneratedExpr = pc.GeneratedExpr
+	}
 	return nil
 }
 

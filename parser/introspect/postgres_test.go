@@ -161,3 +161,21 @@ func TestExtractCheckExpression(t *testing.T) {
 		})
 	}
 }
+
+func TestPostgresGeneratedStorage(t *testing.T) {
+	tests := []struct {
+		attgenerated string
+		want         string
+	}{
+		{attgenerated: "s", want: "STORED"},
+		{attgenerated: "v", want: "VIRTUAL"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.attgenerated, func(t *testing.T) {
+			if got := postgresGeneratedStorage(tt.attgenerated); got != tt.want {
+				t.Errorf("postgresGeneratedStorage(%q) = %q, want %q", tt.attgenerated, got, tt.want)
+			}
+		})
+	}
+}

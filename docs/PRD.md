@@ -1292,7 +1292,7 @@ Each dialect parser lives in the **parser module** (`github.com/teandresmith/sql
 - IF EXISTS / IF NOT EXISTS: ALTER TABLE IF EXISTS, ADD COLUMN IF NOT EXISTS, DROP COLUMN IF EXISTS, DROP CONSTRAINT IF EXISTS
 - Parses composite type attributes, domain type constraints, enum values
 - Detects auto-increment columns: `serial`/`bigserial`/`smallserial` and `GENERATED { ALWAYS | BY DEFAULT } AS IDENTITY` (SQL-standard identity columns, PostgreSQL 10+)
-- Generated columns: `GENERATED ALWAYS AS (expr) STORED` (PostgreSQL 12+)
+- Generated columns: `GENERATED ALWAYS AS (expr) STORED` (PostgreSQL 12+). PostgreSQL 18's VIRTUAL generated columns are a parse error: `pg_query_go` ships the PostgreSQL 17 grammar. Introspection reads them ([6.3](#63-dialect-introspection-capabilities))
 - `CREATE TABLE … PARTITION OF` is skipped with a warning, like `CREATE VIEW`. The partitioned parent (`PARTITION BY`) is the entity; a partition is not
 - Type modifiers are written without a space: `numeric(12,2)`, `varchar(255)`, as the catalog writes them. That is the spelling an `overrides.types` key matches ([7.1](#71-type-resolution-chain))
 - `pg_query_go` links against `libpg_query` via CGO. Building the CLI from source therefore requires a C compiler; the pre-built release binaries do not.
@@ -1526,7 +1526,7 @@ All schema elements (tables, columns, enums, types) are sorted before generation
 | `database` | Connect to live database via `connection` config and introspect schema. `paths` is not read. |
 | `both` | Introspect database first (source of truth), then merge file-based changes on top. See below. |
 
-**Both sources describe a schema the same way.** Introspected column defaults, CHECK expressions and domain constraints are normalized to the form the file parser produces for the same DDL. Catalog text is put through the same deparser the parser uses, and the casts the database adds on its own are removed: a domain cast to its base type, a literal cast to its column's type. MySQL backticks and charset introducers are dropped, and a PostgreSQL `serial` or identity column carries no default, only auto-increment, as when parsed. So `database` and `files` describe a schema identically: the same columns, types, defaults, constraints and constraint names ([5.2](#52-dialect-parsers)), and the same generated code and manifest. One exception is deliberate: MySQL ignores a foreign key written inline on a column (`pid INT REFERENCES p(id)`), but the MySQL file parser keeps it as a foreign key, named and indexed like any other, so its relationship is generated. Under `files` such a table has that extra key, and its unnamed foreign keys are numbered with it included; the database has neither.
+**Both sources describe a schema the same way.** Introspected column defaults, CHECK expressions and domain constraints are normalized to the form the file parser produces for the same DDL. Catalog text is put through the same deparser the parser uses, and the casts the database adds on its own are removed: a domain cast to its base type, a literal cast to its column's type. MySQL backticks and charset introducers are dropped, and a PostgreSQL `serial` or identity column carries no default, only auto-increment, as when parsed. So `database` and `files` describe a schema identically: the same columns, types, defaults, constraints and constraint names ([5.2](#52-dialect-parsers)), and the same generated code and manifest. One exception is deliberate: MySQL ignores a foreign key written inline on a column (`pid INT REFERENCES p(id)`), but the MySQL file parser keeps it as a foreign key, named and indexed like any other, so its relationship is generated. Under `files` such a table has that extra key, and its unnamed foreign keys are numbered with it included; the database has neither. DDL the file parser cannot read is an error under `files`, not a difference: a PostgreSQL 18 VIRTUAL generated column introspects but does not parse ([6.3](#63-dialect-introspection-capabilities)).
 
 #### `both` Mode — Merge Strategy
 
@@ -1577,9 +1577,11 @@ type Introspector interface {
 
 ¹ MySQL CHECK introspection needs MySQL 8.0.16 or later. An older server has no CHECK catalog, so it yields no CHECK constraints; any other failure reading CHECKs is an error. sqlgen sets no minimum MySQL version.
 
+- **PostgreSQL generated columns.** Both kinds are introspected with their expression and storage: STORED (`attgenerated = 's'`, PostgreSQL 12+) and VIRTUAL (`'v'`, PostgreSQL 18+, also what `GENERATED ALWAYS AS (expr)` with neither keyword creates). Either is left out of every write input. The file parser reads only STORED until `pg_query_go` moves to the PostgreSQL 18 grammar ([5.2](#52-dialect-parsers)).
 - **PostgreSQL partitions.** A partition (`CREATE TABLE … PARTITION OF`) is skipped; only the partitioned parent is introspected, as the parser does ([5.2](#52-dialect-parsers)).
 - **SQLite virtual tables.** Virtual tables (FTS5, R*Tree, …) and the shadow tables behind them are skipped, with a warning naming each virtual table, as the parser does.
 - **SQLite constraint names and CHECK text.** SQLite's PRAGMAs give columns, keys, foreign keys and indexes, but not constraint names or CHECK expressions. Those come from the table's stored `CREATE TABLE` (`sqlite_master.sql`), read with the file parser.
+- **SQLite generated columns.** `PRAGMA table_xinfo` lists them (`hidden` 2 is VIRTUAL, 3 is STORED), and the expression comes from the stored `CREATE TABLE`, read with the file parser. The file parser cannot read some legal SQLite DDL: a sort order before `AUTOINCREMENT` on a column `PRIMARY KEY` (`PRIMARY KEY ASC AUTOINCREMENT`), a column `PRIMARY KEY ON CONFLICT …`, and `REFERENCES t` with no column list. A table with a generated column and any of these is an introspection error, as the same DDL is a parse error under `files`.
 
 ### 6.4 Filtering
 
@@ -2356,14 +2358,14 @@ Unit tests run on every PR without external dependencies. Integration tests run 
 | `type Get{Table}sInput struct` | Query input: Filter, Limit, Offset, Sorts, and an unexported `conditions` field for internal callers (e.g., Connection keyset conditions). Field selection is controlled via `CallOptions.FieldOptions`. |
 | `type Create{Table}Input struct` | Insert input. Fields classified as required, omittable, or auto-generated. |
 | `type Update{Table}Input struct` | Update input. All fields wrapped in Omittable to distinguish "not set" from "set to zero". |
-| `type {Table}IncrementColumn string` | String enum restricting `Increment()` to numeric, non-identifying columns — neither PK, FK, nor the tenant column. Constants generated per incrementable column. |
+| `type {Table}IncrementColumn string` | String enum restricting `Increment()` to numeric, writable, non-identifying columns — neither PK, FK, the tenant column, nor a generated column. Constants generated per incrementable column. |
 | `func scan{Table}s(database.Rows, []string) ([]*{Table}, error)` | Internal (unexported). Generated scan function that handles all column types (direct, wrapped) and dynamic field selection. Reflection-free. See [Section 19.1](#191-core-package-database). |
 | `func scan{Table}sWithOneToOneJoins(database.Rows, []string) ([]*{Table}, error)` | Internal (unexported). Generated JOIN scan function for all O2O relationships on this table. One function per table (covers all O2O aliases). Handles prefix-based column routing, NULL detection for LEFT JOIN misses, and all three scan target shapes across joined tables. |
 | `func (*{Table}Filter) ToConditions(sql.Dialect) []sql.Condition` | Converts the filter struct to SQL conditions. Explicit per-field nil-checks — no reflection. Handles `And`/`Or` recursion and soft delete. |
 
 **IncrementColumn enum example:**
 
-A column is incrementable if its Go type is numeric (`int*`, `uint*`, `float*`, `decimal.Decimal`, or any type mapped from a numeric SQL type) **and it identifies nothing** — see "Eligibility: numeric, and identifying nothing" below for the full rule. Non-numeric columns are excluded, as are primary keys, foreign keys and the tenant column even when their Go type is numeric.
+A column is incrementable if its Go type is numeric (`int*`, `uint*`, `float*`, `decimal.Decimal`, or any type mapped from a numeric SQL type) **and it identifies nothing** — see "Eligibility: numeric, and identifying nothing" below for the full rule. Non-numeric columns are excluded, as are primary keys, foreign keys, the tenant column and generated columns even when their Go type is numeric.
 
 ```go
 // Generated for a products table with price (numeric) and stock (int) columns
@@ -2378,7 +2380,7 @@ const (
 client.Products().Increment(ctx, productID, <pkg>.ProductIncrementStock, 5)
 ```
 
-**Eligibility: numeric, and identifying nothing.** A column is incrementable when its resolved Go type is numeric AND it identifies no row:
+**Eligibility: numeric, and identifying nothing.** A column is incrementable when its resolved Go type is numeric AND it identifies no row AND it is writable:
 
 - **Primary key columns are excluded** — a row's identity is not an amount.
 - **Foreign key columns are excluded** — `category_id + 1` is arithmetic on *another* row's identity and lands on whichever row happens to sit at the next value. There is no schema in which that is the intended operation. This covers config-declared synthetic FKs (`tables.<t>.relationships[].fk`) as well as schema-declared ones, so a polymorphic pointer named as a relationship FK is excluded too. Only integer-typed FKs were ever affected — a `uuid` or `text` FK is not a numeric Go type — which is why the distinction is easy to miss.
@@ -2386,6 +2388,7 @@ client.Products().Increment(ctx, productID, <pkg>.ProductIncrementStock, 5)
   On a tenanted schema the exclusion is load-bearing rather than merely tidy: `Increment` constrains which rows it *matches* but not which column it *targets*, so incrementing a foreign key walks a reference into another tenant's row. No pre-write check can catch it, because the destination value is not known until after the arithmetic — see [TENANT_SCOPED_REFERENCES.md](./design/TENANT_SCOPED_REFERENCES.md) §5.
 
 - **The tenant column is excluded** — the same rule one step further out. A foreign key identifies another row; the tenant column identifies the partition the row itself belongs to, so `tenant_id + 1` walks the row out of its own tenant. The tenant predicate `Increment` appends to its `WHERE` scopes which rows match, not which column the `SET` targets, so it is no protection. This holds regardless of `tenancy.required` and regardless of whether the tenant column is part of the primary key (a PK column is already excluded above): the cross-tenant write path [29.4.2](#2942-mutations) documents under `required: false` names a target tenant through `Update`, which arithmetic cannot do. Only a tenant column whose resolved Go type is arithmetic was ever affected — integer, float, or `decimal.Decimal` — and only when it carries no declared FK, since the FK exclusion masks the rest. A `uuid` or `text` tenant column was never eligible to begin with. The exclusion covers both increment surfaces together: the Go client's `<T>IncrementColumn` enum and the GraphQL `_inc` / `_dec` operator pair ([29.4.2](#2942-mutations), [26.5.4](#2654-mutation-translation)).
+- **Generated columns are excluded** — the database computes them, so `SET "total" = "total" + 1` fails on every dialect, as any other write to them does ([10.3](#103-usage-in-generated-code)).
 
 **A type override cannot manufacture eligibility.** Eligibility reads the *resolved* Go type, and a per-column override ([7.1](#71-type-resolution-chain)) replaces that type without restating what the column is to the database. Retyping a `text` column to `int32` or `decimal.Decimal` would otherwise emit the whole increment surface for it — enum constant, `_inc` / `_dec` operators, and `SET "col" = "col" + $1`. **A column whose SQL type is classifiable and non-arithmetic is therefore left out of the increment surface**, and generation warns, naming the override route (`column_map.<col>.type`, `type_map.<col>`, or `overrides.types.<sql type>`) so the config line is findable.
 
@@ -3167,7 +3170,7 @@ All methods accept an optional trailing `...func(*CallOptions[{Table}FieldOption
 | `CreateWithRelated` | `(ctx, *Create{Table}WithRelatedInput, ...func(*CallOptions[FO])) → (*Entity, error)` | Creates the row together with rows on its eligible relationships, in one transaction. See [9.9](#99-nested-mutations). |
 | `UpdateWithRelated` | `(ctx, pk, *Update{Table}WithRelatedInput, ...func(*CallOptions[FO])) → (*Entity, error)` | Updates the row and applies a verb block per eligible relationship, in one transaction. See [9.9](#99-nested-mutations). |
 | `UpsertWithRelated` | `(ctx, *Upsert{Table}WithRelatedInput, {Table}ConflictTarget, ...func(*CallOptions[FO])) → (*Entity, error)` | Inserts or updates the row and applies the same verb blocks `UpdateWithRelated` accepts, in one transaction. See [9.9](#99-nested-mutations). |
-| `Increment` | `(ctx, pk, IncrementInput[{Table}IncrementColumn], ...func(*CallOptions[FO])) → error` | Atomic column increment/decrement. Column is restricted to numeric non-identifying columns — neither PK, FK, nor the tenant column — via the generated `{Table}IncrementColumn` enum. Negative amount performs decrement. Returns `ErrNotFound` if PK does not exist (configurable). |
+| `Increment` | `(ctx, pk, IncrementInput[{Table}IncrementColumn], ...func(*CallOptions[FO])) → error` | Atomic column increment/decrement. Column is restricted to numeric, writable, non-identifying columns — neither PK, FK, the tenant column, nor a generated column — via the generated `{Table}IncrementColumn` enum. Negative amount performs decrement. Returns `ErrNotFound` if PK does not exist (configurable). |
 
 **The three `…WithRelated` methods are separate methods, not extra arguments on the three they compose.** `Create` and `Upsert` share one `Create<T>Input` — on the GraphQL surface `create<Table>` and `upsert<Table>` are projected from the same input type ([26.5.1](#2651-exposed-resolver-surface)) — so a nested member added to it would be advertised on both and honoured by neither reliably: the schema would accept a field the executor drops. Each nested method therefore takes its own wrapper input type that *contains* the flat one rather than restating its fields. Nested methods are emitted only when the base operation they compose is also enabled ([4.13](#413-config-validation-rules)) and the table has at least one eligible relationship ([9.9](#99-nested-mutations)).
 
@@ -4283,7 +4286,7 @@ type ProductClient interface {
 
 This interface is what consumers import and mock. The doc comments surface soft delete behavior, idempotency semantics, and atomicity caveats without reading the unexported implementation.
 
-**Conditional methods:** `SoftDelete*`, `Restore*` methods are only present when the table has a soft delete column. `Increment` is only present when the table has numeric non-PK columns. `Upsert` is always present (PK is always a valid conflict target).
+**Conditional methods:** `SoftDelete*`, `Restore*` methods are only present when the table has a soft delete column. `Increment` is only present when the table has an incrementable column — numeric, writable and identifying nothing ([8.2](#82-generated-artifacts-per-table)). `Upsert` is only present when the table emits a conflict-target constant ([Operations](#operations)).
 
 #### Reference Schema
 
@@ -6481,7 +6484,7 @@ func (c *productClient) HardDelete(ctx context.Context, id uuid.UUID, opts ...fu
 
 #### 9.8.9a Increment
 
-Atomic column increment/decrement. The `column` parameter is a generated string enum restricting values to numeric, non-identifying columns (Section 8.2). Returns `error` only — no entity return since the operation is a single-column atomic update. Wrapped in a mutation hook chain with `OpIncrement`.
+Atomic column increment/decrement. The `column` parameter is a generated string enum restricting values to numeric, writable, non-identifying columns (Section 8.2). Returns `error` only — no entity return since the operation is a single-column atomic update. Wrapped in a mutation hook chain with `OpIncrement`.
 
 ```go
 // Increment atomically increments or decrements a numeric column on a product.
@@ -10159,7 +10162,7 @@ The authoritative interface definition — including all method signatures, gene
 **Conditional generation rules:** schema facts only. The interface includes every method the schema allows; there is no config that removes one. The gates are listed once in [4.6 Operations](#operations):
 - A view's interface has the read methods only ([16.4](#164-generated-artifacts-views-vs-tables)).
 - `SoftDelete*` and `Restore*` are included only when the table has a detected soft delete column.
-- `Increment` is included only when the table has an incrementable column — numeric and identifying nothing ([8.2](#82-generated-artifacts-per-table)).
+- `Increment` is included only when the table has an incrementable column — numeric, writable and identifying nothing ([8.2](#82-generated-artifacts-per-table)).
 - `Upsert`, `UpsertMany` and `UpsertWithRelated` are included only when the table emits a conflict target.
 - The three `…WithRelated` methods are included only when `nested_mutations` enables the family for the table and the table has an eligible edge ([9.9](#99-nested-mutations)).
 
@@ -11468,7 +11471,7 @@ Static analysis of consumer Go code that catches common mistakes the compiler ca
 | Rule | Severity | Description |
 |------|----------|-------------|
 | **Hook table/type mismatch** | Error | A `ForMutation` or `ForQuery` call references a `TableName` constant but the generic type parameters don't match that table's generated input/result types. E.g., `ForMutation[*CreateProductInput, *Product](TableUsers, ...)` — `CreateProductInput` belongs to `products`, not `users`. |
-| **Invalid operation for table** | Warning | A hook filters on an operation that the table doesn't support. E.g., filtering on `OpSoftDelete` for a table with no soft delete column, or `OpIncrement` for a table with no **incrementable** columns — "numeric, and identifying nothing", as [8.2](#82-generated-artifacts-per-table) defines it. A table whose only numeric columns are primary keys, foreign keys or the tenant column generates no `Increment` method, so "has numeric columns" is not the test. The hook would never fire. |
+| **Invalid operation for table** | Warning | A hook filters on an operation that the table doesn't support. E.g., filtering on `OpSoftDelete` for a table with no soft delete column, or `OpIncrement` for a table with no **incrementable** columns — "numeric, and identifying nothing", as [8.2](#82-generated-artifacts-per-table) defines it. A table whose only numeric columns are primary keys, foreign keys, the tenant column or generated columns generates no `Increment` method, so "has numeric columns" is not the test. The hook would never fire. |
 
 **How it works:**
 

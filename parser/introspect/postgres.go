@@ -10,6 +10,7 @@ import (
 	_ "github.com/jackc/pgx/v5/stdlib" // PostgreSQL database/sql driver
 
 	"github.com/teandresmith/sqlgen/parser"
+	"github.com/teandresmith/sqlgen/parser/postgres"
 )
 
 // PostgresIntrospector discovers schema elements from a live PostgreSQL database.
@@ -386,7 +387,10 @@ func (pi *PostgresIntrospector) introspectColumns(ctx context.Context, table *pa
 			format_type(a.atttypid, a.atttypmod),
 			NOT a.attnotnull,
 			pg_get_expr(ad.adbin, ad.adrelid),
-			a.attidentity
+			a.attidentity,
+			-- attgenerated arrived in PostgreSQL 12; read through to_jsonb so an
+			-- older server yields NULL instead of failing on the column name.
+			COALESCE(to_jsonb(a) ->> 'attgenerated', '')
 		FROM pg_catalog.pg_attribute a
 		JOIN pg_catalog.pg_class c ON a.attrelid = c.oid
 		JOIN pg_catalog.pg_namespace n ON c.relnamespace = n.oid
@@ -408,15 +412,25 @@ func (pi *PostgresIntrospector) introspectColumns(ctx context.Context, table *pa
 			nullable   bool
 			dflt       sql.NullString
 			identity   string
+			generated  string
 		)
-		if err := rows.Scan(&col.Name, &formatType, &nullable, &dflt, &identity); err != nil {
+		if err := rows.Scan(&col.Name, &formatType, &nullable, &dflt, &identity, &generated); err != nil {
 			return fmt.Errorf("introspect postgres columns %s.%s: scanning: %w", table.Schema, table.Name, err)
 		}
 
 		col.Type = normalizePostgresType(formatType)
 		col.Nullable = nullable
 
-		if dflt.Valid {
+		switch {
+		case generated != "":
+			// pg_attrdef holds a generated column's expression, not a default.
+			expr, err := postgres.NormalizeExpr(dflt.String)
+			if err != nil {
+				return fmt.Errorf("introspect postgres columns %s.%s: generated column %s: %w", table.Schema, table.Name, col.Name, err)
+			}
+			col.GeneratedExpr = expr
+			col.GeneratedStorage = postgresGeneratedStorage(generated)
+		case dflt.Valid:
 			col.Default = dflt.String
 			if strings.Contains(strings.ToLower(col.Default), "nextval(") {
 				col.AutoIncrement = true
@@ -434,6 +448,15 @@ func (pi *PostgresIntrospector) introspectColumns(ctx context.Context, table *pa
 		return fmt.Errorf("introspect postgres columns %s.%s: iterating: %w", table.Schema, table.Name, err)
 	}
 	return nil
+}
+
+// postgresGeneratedStorage maps pg_attribute.attgenerated to GeneratedStorage:
+// 's' is STORED (PostgreSQL 12+) and 'v' is VIRTUAL (PostgreSQL 18+).
+func postgresGeneratedStorage(attgenerated string) string {
+	if attgenerated == "v" {
+		return "VIRTUAL"
+	}
+	return "STORED"
 }
 
 func (pi *PostgresIntrospector) introspectConstraints(ctx context.Context, table *parser.Table) error {

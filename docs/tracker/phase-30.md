@@ -528,25 +528,25 @@ PRD Sections: 4.2, 4.3, 4.4, 5.2, 6.1, 6.3, 6.4, 7, 8.1.7, 16.2, 30.7
 
 **PRD Reference:** Sections 5.1, 5.2 (design doc Q1)
 
-**Status:** Not Started
+**Status:** Complete
 
 ### Tasks
 
-- [ ] PG parser: read `GENERATED ALWAYS AS (expr) STORED` from the column constraint. Set
+- [x] PG parser: read `GENERATED ALWAYS AS (expr) STORED` from the column constraint. Set
   `GeneratedExpr` (deparsed) and `GeneratedStorage = "STORED"`, and leave `Default` empty.
   Keep identity columns (`GENERATED … AS IDENTITY`) on the existing `AutoIncrement` path.
-- [ ] PG introspector: select `pg_attribute.attgenerated` in `introspectColumns`
+- [x] PG introspector: select `pg_attribute.attgenerated` in `introspectColumns`
   (`postgres.go:382`). For `'s'`, set `GeneratedExpr` from `pg_attrdef` (normalized like the
   parser's) and `GeneratedStorage = "STORED"`, and clear `Default`.
-- [ ] MySQL parser: read `GENERATED ALWAYS AS (expr) [VIRTUAL|STORED]` and the shorthand
+- [x] MySQL parser: read `GENERATED ALWAYS AS (expr) [VIRTUAL|STORED]` and the shorthand
   `AS (expr)`. Storage defaults to `VIRTUAL`.
-- [ ] MySQL introspector: select `generation_expression`. Map `extra` `VIRTUAL GENERATED` /
+- [x] MySQL introspector: select `generation_expression`. Map `extra` `VIRTUAL GENERATED` /
   `STORED GENERATED` to `GeneratedStorage` and set `GeneratedExpr` in the parser's form
   (`mysql.go:200`).
-- [ ] SQLite introspector: switch columns to `PRAGMA table_xinfo`. Map `hidden = 2` → `VIRTUAL`
+- [x] SQLite introspector: switch columns to `PRAGMA table_xinfo`. Map `hidden = 2` → `VIRTUAL`
   and `hidden = 3` → `STORED`, take the expression from the stored DDL (30.6's re-parse; until
   then, the `sqlite_master.sql` text), and skip `hidden = 1` (virtual-table hidden columns).
-- [ ] Confirm the generator's `IsComputed` path (`gen/context_table.go:942`) keeps PG and MySQL
+- [x] Confirm the generator's `IsComputed` path (`gen/context_table.go:942`) keeps PG and MySQL
   generated columns out of `Create<T>Input`, `Update<T>Input`, `Increment` columns and insert
   column lists, as it does on SQLite. Fix any template branch that doesn't.
 
@@ -561,19 +561,110 @@ PRD Sections: 4.2, 4.3, 4.4, 5.2, 6.1, 6.3, 6.4, 7, 8.1.7, 16.2, 30.7
 
 ### Tests Required
 
-- [ ] PG parser unit test: STORED generated column → `GeneratedExpr` / `GeneratedStorage`, no
+- [x] PG parser unit test: STORED generated column → `GeneratedExpr` / `GeneratedStorage`, no
   `Default`; identity columns unchanged.
-- [ ] MySQL parser unit test: `GENERATED ALWAYS AS (…) STORED`, `… VIRTUAL`, the shorthand
+- [x] MySQL parser unit test: `GENERATED ALWAYS AS (…) STORED`, `… VIRTUAL`, the shorthand
   `AS (…)`, and the default storage.
-- [ ] `TestPostgresIntrospect_GeneratedColumn`, `TestMySQLIntrospect_GeneratedColumn` and
+- [x] `TestPostgresIntrospect_GeneratedColumn`, `TestMySQLIntrospect_GeneratedColumn` and
   `TestSQLiteIntrospect_GeneratedColumn` (integration): parity with the parser through
   `assertSchemaParity`.
-- [ ] Codegen test per dialect: a table with a generated column has no create, update or
+- [x] Codegen test per dialect: a table with a generated column has no create, update or
   increment surface for it.
 
 ### Completion Record
 
-_Filled in when complete: files changed, commit references, notes._
+- **Files changed:**
+  - parsers: `parser/postgres/postgres.go` (`CONSTR_GENERATED`, `NormalizeExpr`),
+    `parser/mysql/mysql.go` (`opts.As` / `opts.Storage`, `NormalizeExpr`)
+  - introspectors: `parser/introspect/{postgres,mysql,sqlite}.go`
+  - generator: `cmd/sqlgen/gen/context_table.go` (`isIncrementEligible`)
+  - tests: `parser/{postgres,mysql}/*_test.go`,
+    `parser/introspect/{introspect_integration,postgres,mysql,sqlite}_test.go`,
+    `cmd/sqlgen/gen/context_test.go`, new `cmd/sqlgen/cli/generated_column_test.go`
+  - docs: PRD §5.2 / §6.1 / §6.3 / §8.2 / §9.8.9a / §20.2 / §23.7, `STATUS.md`, `backlog.md`,
+    this file
+- **Fail-first (against HEAD):**
+  - `TestGeneratedColumns` (PG, MySQL parser): every generated case had empty
+    `GeneratedExpr` / `GeneratedStorage`. The PG identity case already passed.
+  - `TestPostgresIntrospect_GeneratedColumn`: `Default: "(qty * 2)"` and no generated fields
+    (D4).
+  - `TestMySQLIntrospect_GeneratedColumn`: no generated fields on either path (M1).
+  - `TestSQLiteIntrospect_GeneratedColumn`: all four generated columns missing from the
+    introspected table (S1).
+  - `TestGenerate_GeneratedColumnHasNoWriteSurface`: PG and MySQL had `Total` / `Vtotal` in
+    `CreateItemInput` and `UpdateItemInput`. **All three dialects, SQLite included,** had them
+    in `ItemIncrementColumn`.
+- **Generator finding.** `IsComputed` already kept generated columns out of the create and update
+  inputs, and so out of the INSERT column lists and the API inputs built from them.
+  `isIncrementEligible` never checked it, so a numeric generated column was in the Increment
+  enum and the GraphQL `_inc` / `_dec` operators on every dialect. That includes SQLite, whose
+  parser already read generated columns. Fixed there. PRD §8.2 now lists generated columns
+  among the exclusions, and the §9 `Increment` row says the same. Measured: `UPDATE … SET a =
+  a + 1` on a generated column fails on PG 16 ("can only be updated to DEFAULT"), MySQL 8.0
+  (3105) and SQLite ("cannot UPDATE generated column").
+- **Expression text is the parser's form on every path:**
+  - PG: catalog text goes through `postgres.NormalizeExpr`, the parser's own `pg_query`
+    deparse, so `(qty * 2)` becomes `qty * 2`.
+  - MySQL: `generation_expression` is backslash-escaped again on top of `SHOW CREATE TABLE`'s
+    text (measured: `_latin1\'it\\\'s\'`). `unescapeMySQLCatalogText` undoes that, and
+    `mysql.NormalizeExpr` (vitess) drops the parentheses and backticks. Without the unescape,
+    vitess fails to parse any expression containing a string literal.
+  - SQLite: the expression comes from the stored `CREATE TABLE`, re-parsed by `parser/sqlite`
+    (a first slice of 30.6's Q10 re-parse). Only tables with a generated column are parsed.
+  - Left to 30.4 / 30.5, noted on their tasks: PG implicit literal casts (`price * 2` over
+    `numeric` introspects as `price * 2::numeric`) and MySQL charset introducers. Both are the
+    Q13 rule set, and `GeneratedExpr` shares it. The parity tests use expressions without
+    either.
+- **PostgreSQL version floor kept.** `attgenerated` exists from PostgreSQL 12. It is read as
+  `to_jsonb(a) ->> 'attgenerated'`, which is NULL on an older server, so the PG 10 floor that
+  `attidentity` sets is unchanged. Measured on PG 16 with `attmissingval` populated.
+- **Unchanged baselines:** `TestPostgresIntrospect`, `TestMySQLIntrospect` and
+  `TestSQLiteIntrospect` fail with exactly the 30.2 baseline (diffed before and after).
+- **Lint:** `assertSchemaParity`'s `ignore` parameter now trips `unparam`. It only trips with
+  more call sites, which this diff added. Kept with a reasoned `//nolint`, because 30.1 made
+  `ignore` the hook for a test-local parity exception.
+- **PostgreSQL 18 VIRTUAL generated columns (ruled 2026-10-05, user): introspect now, parse
+  later.** `attgenerated = 'v'` maps to `VIRTUAL` (`postgresGeneratedStorage`). Fail-first:
+  `TestPostgresIntrospect_VirtualGeneratedColumn`, on its own `postgres:18-alpine` container,
+  found `implicit_total` and `virtual_total` were not generated (their expression was the
+  `Default`). The PG parser keeps the PostgreSQL 17 grammar until `pg_query_go/v18` is released.
+  The v18 branch (open PR #151) parses both spellings, as checked in a scratch build. PRD §5.2,
+  §6.1 and §6.3 state the difference.
+- **Backlog lines added:** the PG parser's missing PostgreSQL 18 VIRTUAL support, to revisit
+  with `pg_query_go/v18`; PG `ALTER COLUMN … DROP EXPRESSION` ignored by the parser.
+- **Line references** in 30.4–30.6 updated for this diff.
+- **Auto-review (`sqlgen-reviewer`):** no issues. It confirmed the fail-first independently by
+  removing `!col.IsComputed`. Applied 7 doc fixes:
+  - PRD increment wording (§9.8.9a, §20.2, §23.7) now includes "writable"
+  - the `context_table.go` op-resolution comment and the `isIncrementEligible` comment
+  - the D5 line reference
+  - a 30.6 Q10 note to fold in `sqliteGeneratedExprs`
+- **When expression parsing fails (measured 2026-10-05, after the user asked):**
+  - **PG:** none of 20 expression forms failed on PG 16 or PG 18. The input is
+    PostgreSQL's own `pg_get_expr` output, parsed with the PG 17 grammar.
+  - **MySQL:** none of 25 forms failed on 8.0, including JSON paths, `CAST`, `COLLATE`,
+    `INTERVAL`, `ESCAPE` and escaped quotes and backslashes. Not measured: 5.7 and MariaDB,
+    whose escaping may differ.
+  - **SQLite:** this is where it fails. The stored DDL goes through rqlite/sql, which
+    rejects some legal SQLite (see the 30.6 Q10 note). The files path fails on the same DDL,
+    so both paths are loud. A fallback could not recover the expression; the column would
+    become writable, and inserts would fail.
+  - Every failure still aborts introspection. The differences found are text only (see the
+    30.4 and 30.5 notes), and codegen reads only whether `GeneratedExpr` is set.
+  - **Ruled 2026-10-05 (user):** the text differences are fine, and the SQLite failures are
+    accepted for now and documented (PRD §6.3, backlog), with a fix later.
+- **Not measured:** the PG `to_jsonb` floor below PG 16.
+- **Full integration suite (2026-10-05, `-race`, every module):** the only failures are the
+  three by-design parity tests above. `make test-integration` stops at the first failing
+  module, so while they stay red it skips `cmd/sqlgen` and every module after it. Run those
+  by hand until 30.4–30.6 land. **Ruled (user): do 30.4–30.6 next** to close that window.
+- **`/verify 30.3` (2026-10-05):** PRD 4/4, tests 4/4, no FIX logged. `make check` and
+  `make check-examples` pass. The independent reviewer re-confirmed the fail-first on the
+  PG 18 VIRTUAL mapping and found no issues. Applied its doc fixes: line references the PG 18
+  additions shifted; the files list; and "writable" in PRD §20.2, the `buildIncrementColumns`
+  comment and the `context_api.go` increment comments. That §20.2 sentence also said `Upsert`
+  is always present, which contradicts §4.6's conflict-target gate, so it was fixed too.
+  `SET EXPRESSION` was added to the `DROP EXPRESSION` backlog line.
 
 ---
 
@@ -588,18 +679,18 @@ _Filled in when complete: files changed, commit references, notes._
 - [ ] D6 / Q3, resolver (`cmd/sqlgen/gotype/gotype.go:431`, `:625`):
   - `RegisterEnum`, `RegisterSet` and `RegisterDomain` also register a `schema.name` key
   - the bare key is registered only when that name is unique across schemas
-  - `registerSchemaTypes` (`gen/orchestrate.go:2530`) passes the schema
-- [ ] D1 / D6 / Q3, canonical type form in the PG parser (`typeNameToString`, `postgres.go:1039`)
+  - `registerSchemaTypes` (`gen/orchestrate.go:2529`) passes the schema
+- [ ] D1 / D6 / Q3, canonical type form in the PG parser (`typeNameToString`, `postgres.go:1044`)
   and the introspector:
   - a type in the column's own schema is written bare
   - a cross-schema type stays qualified
   - array suffixes are preserved
 - [ ] D3 / Q4: skip tables with `pg_class.relispartition` in `introspectTables`
-  (`postgres.go:75`).
+  (`postgres.go:76`).
 - [ ] D9 / Q14: the PG parser skips `CREATE TABLE … PARTITION OF` and appends a `schema.Warnings`
   line in the existing `CREATE VIEW` style.
 - [x] D5: the constraint query keeps column-less CHECKs. Replace the inner join on
-  `unnest(conkey)` with a left join, or handle `conkey IS NULL` (`postgres.go:481`).
+  `unnest(conkey)` with a left join, or handle `conkey IS NULL` (`postgres.go:504`).
   Done in 30.2, whose acceptance needs `checks`; this sub-item's test still covers it.
 - [ ] D7 / Q12: the PG parser's typmod formatting (`formatTypmods`) writes `numeric(12,2)`
   without a space.
@@ -613,7 +704,17 @@ _Filled in when complete: files changed, commit references, notes._
   - strip implicit casts: domain → base type (`(score)::integer`) and literal → column type
   - normalize keyword case (`VALUE`)
   - each removal rule is a named function with its own unit test
-- [ ] Tighten `TestPostgresIntrospect` (`:202`) through `assertSchemaParity`, with no
+  - the literal-cast rule also covers `GeneratedExpr`. 30.3 added `postgres.NormalizeExpr` (the
+    parser's deparse) and puts generated expressions through it, but `price * 2` over a
+    `numeric` column still introspects as `price * 2::numeric`. Add that case to
+    `TestPostgresIntrospect_GeneratedColumn`.
+  - **Not only casts (measured in 30.3 on PG 16 and 18).** The catalog also rewrites
+    `x IN (1, 2)` to `x = ANY (ARRAY[1, 2])`, `SIMILAR TO` to `~ similar_to_escape(…)`,
+    and `LIKE … ESCAPE` to `~~ like_escape(…)` (the parser deparses the last as
+    `LIKE pg_catalog.like_escape(…)`). The cast rules don't undo these. **Ruled 2026-10-05
+    (user): these text differences are fine.** They become named parity exceptions in the
+    tests and in PRD §6.1, not reversals.
+- [ ] Tighten `TestPostgresIntrospect` (`:195`) through `assertSchemaParity`, with no
   PG-specific exceptions beyond the 30.1 provenance set. (30.1 moved it onto the helper.
   This task makes it pass; its baseline is in the 30.1 Completion Record.)
 - [ ] Unnamed domain CHECK name: the PG parser leaves it `""`, and PG names it
@@ -670,24 +771,34 @@ _Filled in when complete: files changed, commit references, notes._
 
 ### Tasks
 
-- [ ] M2 / M9 / Q5, default normalization (`mysql.go:235`):
+- [ ] M2 / M9 / Q5, default normalization (`mysql.go:238`):
   - re-quote string, enum, set and temporal literal defaults using `column_type`
   - treat a default as an expression when `extra` contains `DEFAULT_GENERATED`
   - put the result through `sqlparser.String`, so it matches the parser's form (for example
     `current_timestamp(3)`)
   - `DEFAULT ''` yields `''`, which is not empty
-- [ ] M4 / Q7: `introspectCheckConstraints` (`mysql.go:482`) falls back only on MySQL error 1109
+- [ ] M4 / Q7: `introspectCheckConstraints` (`mysql.go:495`) falls back only on MySQL error 1109
   (unknown table), checked with `errors.AsType[*mysql.MySQLError]`. Every other error is
   returned, wrapped.
 - [ ] M5: make the integer display width agree between the two paths. Decide the direction in
   the Completion Record against the probe (parser `int(11)` vs catalog `int`; `INT UNSIGNED`
   already agrees). If the direction isn't mechanical, stop and ask.
-- [ ] M6: `introspectViewColumns` (`mysql.go:164`) resolves an ENUM or SET view column to the
+- [ ] M6: `introspectViewColumns` (`mysql.go:165`) resolves an ENUM or SET view column to the
   synthetic `<table>_<column>_enum` / `_set` type of its source column when that column is
   identifiable. Otherwise it registers a view-scoped synthetic type. Never the bare `enum`.
 - [ ] M7 / Q13: normalize `check_clause` through `sqlparser`, dropping backticks and charset
   introducers (`_utf8mb4'x'`) to match the parser's text.
-- [ ] Tighten `TestMySQLIntrospect` (`:293`) and `TestMySQLIntrospectViews` (`:964`) through
+  - `check_clause` is backslash-escaped like `generation_expression`. 30.3's
+    `unescapeMySQLCatalogText` + `mysql.NormalizeExpr` already handle that; reuse them.
+  - the introducer rule also covers `GeneratedExpr`: a string literal in a generation
+    expression comes back with an introducer (`_latin1\'-x\'` in the 30.3 probe, through the
+    `mysql` client). Add that case to `TestMySQLIntrospect_GeneratedColumn`.
+  - **Not only introducers (measured in 30.3 on MySQL 8.0).** The catalog also rewrites
+    `doc->>'$.a'` to `json_unquote(json_extract(doc, '$.a'))`, `doc->'$.a'` to
+    `json_extract(…)`, `cast(x as char)` to `cast(x as char charset utf8mb4)`, and `x'41'`
+    to `0x41`. **Ruled 2026-10-05 (user): fine,** like the PG rewrites in 30.4. Name them
+    as parity exceptions.
+- [ ] Tighten `TestMySQLIntrospect` (`:286`) and `TestMySQLIntrospectViews` (`:1214`) through
   `assertSchemaParity`. (30.1 moved `TestMySQLIntrospect` onto the helper; its baseline is
   in the 30.1 Completion Record.)
 
@@ -732,17 +843,24 @@ _Filled in when complete: files changed, commit references, notes._
 - [ ] Q10 strategy: for each table, re-parse `sqlite_master.sql` with `parser/sqlite` and take
   declared constraint names, CHECK constraints and expression text from it. PRAGMAs stay the
   source for columns, types, nullability, PK membership and order, FKs, indexes and partial
-  predicates.
-- [ ] S7: replace every Go `%q` PRAGMA argument (`sqlite.go:166,201,274,343,415,567`) with SQL
+  predicates. Fold in 30.3's `sqliteGeneratedExprs`, which re-parses only tables with a
+  generated column. **A universal re-parse makes the parser's gaps fatal.** It rejects
+  legal DDL (backlog, from 30.1): `PRIMARY KEY ASC AUTOINCREMENT`, `PRIMARY KEY ON
+  CONFLICT …`, and `REFERENCES t` with no column list. Measured in 30.3, such a table
+  with a generated column already aborts introspection ("parsing stored CREATE TABLE: …
+  found 'AUTOINCREMENT'"). Re-parsing every table spreads that to every such table.
+  **Ruled 2026-10-05 (user): accepted for now, fix later.** It is documented in PRD §6.3
+  and the backlog. rqlite/sql has no newer commit, PR or issue for these constructs.
+- [ ] S7: replace every Go `%q` PRAGMA argument (`sqlite.go:172,210,339,408,480,632`) with SQL
   identifier quoting (double quotes, with embedded `"` doubled).
 - [ ] S2: order composite PK columns by `pk` (the stored `pkCol.order`), not `cid`
-  (`sqlite.go:236`, `:253`).
+  (`sqlite.go:252`, `:273`).
 - [ ] S3: scan `foreign_key_list.to` as `sql.NullString`. A NULL target resolves to the parent's
-  PK column(s), as the parser resolves it (`sqlite.go:297`). **Measured in 30.1:** the SQLite
+  PK column(s), as the parser resolves it (`sqlite.go:362`). **Measured in 30.1:** the SQLite
   parser rejects `REFERENCES t` with no column list (rqlite/sql: "expected left paren"), at
   column and table level, so there is no parser result to match yet. Settle how this test
   compares before writing it.
-- [ ] S4 / Q8: drop `origin = 'pk'` indexes from `introspectUniqueConstraints` (`sqlite.go:341`).
+- [ ] S4 / Q8: drop `origin = 'pk'` indexes from `introspectUniqueConstraints` (`sqlite.go:406`).
   Take UNIQUE names from the re-parse, so `sqlite_autoindex_*` never surfaces.
 - [ ] S5 / Q9: skip `type IN ('virtual', 'shadow')` rows from `PRAGMA table_list`. Add a
   `schema.Warnings` line naming each skipped virtual table, on the introspector **and** in the
@@ -750,12 +868,12 @@ _Filled in when complete: files changed, commit references, notes._
 - [ ] S8 / Q10: CHECK constraints come from the re-parse.
 - [ ] S9 / S11: `AutoIncrement` only for a rowid alias. That means a single `INTEGER PRIMARY KEY`
   column in a rowid table, not `WITHOUT ROWID` and not `DESC`, on the introspector
-  (`sqlite.go:246`) and the parser.
+  (`sqlite.go:266`) and the parser.
 - [ ] S12: set `WithoutRowID` and `Strict` from `PRAGMA table_list` (or the re-parse).
-- [ ] Tighten `TestSQLiteIntrospect` (`:365`) through `assertSchemaParity`. **`Type` is compared;
+- [ ] Tighten `TestSQLiteIntrospect` (`:358`) through `assertSchemaParity`. **`Type` is compared;
   today it is not.** (30.1 moved it onto the helper, so `Type` is now compared. This task makes
   it pass; its baseline is in the 30.1 Completion Record.)
-- [ ] Turn the three SQLite-only `TestBothMode*` tests (`:552`, `:617`, `:667`) into tables over
+- [ ] Turn the three SQLite-only `TestBothMode*` tests (`:802`, `:867`, `:917`) into tables over
   all three dialects.
 
 ### Acceptance Criteria

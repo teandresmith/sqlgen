@@ -9,6 +9,7 @@ import (
 	_ "github.com/go-sql-driver/mysql" // MySQL database/sql driver
 
 	"github.com/teandresmith/sqlgen/parser"
+	"github.com/teandresmith/sqlgen/parser/mysql"
 )
 
 // MySQLIntrospector discovers schema elements from a live MySQL database.
@@ -205,7 +206,8 @@ func (mi *MySQLIntrospector) introspectColumns(ctx context.Context, table *parse
 			is_nullable,
 			column_default,
 			extra,
-			COALESCE(column_comment, '')
+			COALESCE(column_comment, ''),
+			COALESCE(generation_expression, '')
 		FROM information_schema.columns
 		WHERE table_schema = DATABASE() AND table_name = ?
 		ORDER BY ordinal_position`, table.Name)
@@ -222,8 +224,9 @@ func (mi *MySQLIntrospector) introspectColumns(ctx context.Context, table *parse
 			dflt       sql.NullString
 			extra      string
 			comment    string
+			generation string
 		)
-		if err := rows.Scan(&col.Name, &columnType, &isNullable, &dflt, &extra, &comment); err != nil {
+		if err := rows.Scan(&col.Name, &columnType, &isNullable, &dflt, &extra, &comment, &generation); err != nil {
 			return fmt.Errorf("introspect mysql columns %s: scanning: %w", table.Name, err)
 		}
 
@@ -235,8 +238,18 @@ func (mi *MySQLIntrospector) introspectColumns(ctx context.Context, table *parse
 			col.Default = dflt.String
 		}
 
-		if strings.Contains(strings.ToLower(extra), "auto_increment") {
+		lowerExtra := strings.ToLower(extra)
+		if strings.Contains(lowerExtra, "auto_increment") {
 			col.AutoIncrement = true
+		}
+
+		if storage, ok := mysqlGeneratedStorage(lowerExtra); ok {
+			expr, err := mysql.NormalizeExpr(unescapeMySQLCatalogText(generation))
+			if err != nil {
+				return fmt.Errorf("introspect mysql columns %s: generated column %s: %w", table.Name, col.Name, err)
+			}
+			col.GeneratedExpr = expr
+			col.GeneratedStorage = storage
 		}
 
 		// Inline ENUM/SET columns get a table-scoped synthetic type name to match
@@ -582,4 +595,35 @@ func unescapeMySQL(c byte) string {
 	default:
 		return string(c)
 	}
+}
+
+// mysqlGeneratedStorage reports a generated column's storage from its
+// lowercased information_schema.columns.extra, which reads "virtual
+// generated" or "stored generated".
+func mysqlGeneratedStorage(extra string) (string, bool) {
+	switch {
+	case strings.Contains(extra, "stored generated"):
+		return "STORED", true
+	case strings.Contains(extra, "virtual generated"):
+		return "VIRTUAL", true
+	}
+	return "", false
+}
+
+// unescapeMySQLCatalogText undoes the backslash escaping information_schema
+// applies to expression text: a quote inside an expression is stored as \'
+// and a backslash as \\.
+func unescapeMySQLCatalogText(s string) string {
+	if !strings.Contains(s, `\`) {
+		return s
+	}
+	var b strings.Builder
+	b.Grow(len(s))
+	for i := 0; i < len(s); i++ {
+		if s[i] == '\\' && i+1 < len(s) {
+			i++
+		}
+		b.WriteByte(s[i])
+	}
+	return b.String()
 }

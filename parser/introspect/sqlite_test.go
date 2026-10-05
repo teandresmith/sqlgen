@@ -81,3 +81,26 @@ func TestNormalizeSQLiteType(t *testing.T) {
 		})
 	}
 }
+
+func TestSQLiteGeneratedStorage(t *testing.T) {
+	tests := []struct {
+		name        string
+		hidden      int
+		wantStorage string
+		wantOK      bool
+	}{
+		{name: "ordinary column", hidden: 0, wantOK: true},
+		{name: "virtual table hidden column", hidden: 1},
+		{name: "virtual generated column", hidden: 2, wantStorage: "VIRTUAL", wantOK: true},
+		{name: "stored generated column", hidden: 3, wantStorage: "STORED", wantOK: true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			storage, ok := sqliteGeneratedStorage(tt.hidden)
+			if storage != tt.wantStorage || ok != tt.wantOK {
+				t.Errorf("sqliteGeneratedStorage(%d) = (%q, %t), want (%q, %t)", tt.hidden, storage, ok, tt.wantStorage, tt.wantOK)
+			}
+		})
+	}
+}

@@ -36,6 +36,22 @@ func New() (*Parser, error) {
 	}, nil
 }
 
+// NormalizeExpr rewrites the SQL expression expr in the form the parser writes
+// expressions, so text read from the catalog compares equal to parsed DDL.
+// Redundant parentheses and backticks are dropped: "(`qty` * 2)" becomes
+// "qty * 2".
+func NormalizeExpr(expr string) (string, error) {
+	vp, err := sqlparser.New(sqlparser.Options{})
+	if err != nil {
+		return "", fmt.Errorf("creating mysql parser: %w", err)
+	}
+	e, err := vp.ParseExpr(expr)
+	if err != nil {
+		return "", fmt.Errorf("parsing expression %q: %w", expr, err)
+	}
+	return sqlparser.String(e), nil
+}
+
 // Seed pre-populates the parser with an existing schema. This enables "both"
 // mode where introspected tables are loaded before file-based DDL is applied.
 func (p *Parser) Seed(base *parser.Schema) {
@@ -251,6 +267,16 @@ func (p *Parser) parseColumn(tableName string, col *sqlparser.ColumnDefinition) 
 	// Default value.
 	if opts.Default != nil {
 		c.Default = sqlparser.String(opts.Default)
+	}
+
+	// Generated column: GENERATED ALWAYS AS (expr) or the shorthand AS (expr).
+	// Storage is VIRTUAL unless declared STORED.
+	if opts.As != nil {
+		c.GeneratedExpr = sqlparser.String(opts.As)
+		c.GeneratedStorage = "VIRTUAL"
+		if opts.Storage == sqlparser.StoredStorage {
+			c.GeneratedStorage = "STORED"
+		}
 	}
 
 	// Column comment.

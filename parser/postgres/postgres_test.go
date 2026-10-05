@@ -597,6 +597,80 @@ func TestSerialTypes(t *testing.T) {
 	}
 }
 
+func TestGeneratedColumns(t *testing.T) {
+	tests := []struct {
+		name string
+		sql  string
+		want parser.Column
+	}{
+		{
+			name: "stored generated column",
+			sql:  "CREATE TABLE t (qty integer, total integer GENERATED ALWAYS AS (qty * 2) STORED);",
+			want: parser.Column{Name: "total", Type: "integer", Nullable: true, GeneratedExpr: "qty * 2", GeneratedStorage: "STORED"},
+		},
+		{
+			name: "not null generated column",
+			sql:  "CREATE TABLE t (qty integer, total integer NOT NULL GENERATED ALWAYS AS (qty + 1) STORED);",
+			want: parser.Column{Name: "total", Type: "integer", GeneratedExpr: "qty + 1", GeneratedStorage: "STORED"},
+		},
+		{
+			name: "generated column added by alter table",
+			sql: `CREATE TABLE t (qty integer);
+				ALTER TABLE t ADD COLUMN total integer GENERATED ALWAYS AS (abs(qty)) STORED;`,
+			want: parser.Column{Name: "total", Type: "integer", Nullable: true, GeneratedExpr: "abs(qty)", GeneratedStorage: "STORED"},
+		},
+		{
+			name: "identity column is auto-increment, not generated",
+			sql:  "CREATE TABLE t (qty integer, total integer GENERATED ALWAYS AS IDENTITY);",
+			want: parser.Column{Name: "total", Type: "integer", AutoIncrement: true},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			p := postgres.New("")
+			if err := p.Parse("test.sql", []byte(tt.sql)); err != nil {
+				t.Fatalf("Parse() error: %v", err)
+			}
+			got := parser.ColumnByName(&p.Schema().Tables[0], "total")
+			if got == nil {
+				t.Fatal("column total not found")
+			}
+			if diff := cmp.Diff(tt.want, *got); diff != "" {
+				t.Errorf("column total mismatch (-want +got):\n%s", diff)
+			}
+		})
+	}
+}
+
+func TestNormalizeExpr(t *testing.T) {
+	tests := []struct {
+		name    string
+		expr    string
+		want    string
+		wantErr bool
+	}{
+		{name: "outer parentheses dropped", expr: "(qty * 2)", want: "qty * 2"},
+		{name: "function call", expr: "abs(qty)", want: "abs(qty)"},
+		{name: "string concatenation", expr: "(upper(name) || '-x')", want: "upper(name) || '-x'"},
+		{name: "already normalized", expr: "qty + 1", want: "qty + 1"},
+		{name: "incomplete expression", expr: "qty *", wantErr: true},
+		{name: "more than an expression", expr: "qty FROM t", wantErr: true},
+		{name: "two expressions", expr: "qty, price", wantErr: true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := postgres.NormalizeExpr(tt.expr)
+			if (err != nil) != tt.wantErr {
+				t.Fatalf("NormalizeExpr(%q) error = %v, wantErr %t", tt.expr, err, tt.wantErr)
+			}
+			if got != tt.want {
+				t.Errorf("NormalizeExpr(%q) = %q, want %q", tt.expr, got, tt.want)
+			}
+		})
+	}
+}
+
 func TestEmptyTable(t *testing.T) {
 	sql := `CREATE TABLE empty (id integer PRIMARY KEY);`
 

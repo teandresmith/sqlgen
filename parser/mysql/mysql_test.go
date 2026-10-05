@@ -490,6 +490,89 @@ func TestInlineComment(t *testing.T) {
 	}
 }
 
+func TestGeneratedColumns(t *testing.T) {
+	tests := []struct {
+		name string
+		sql  string
+		want parser.Column
+	}{
+		{
+			name: "stored generated column",
+			sql:  "CREATE TABLE t (qty INT, total INT GENERATED ALWAYS AS (qty * 2) STORED);",
+			want: parser.Column{Name: "total", Type: "int", Nullable: true, GeneratedExpr: "qty * 2", GeneratedStorage: "STORED"},
+		},
+		{
+			name: "virtual generated column",
+			sql:  "CREATE TABLE t (qty INT, total INT GENERATED ALWAYS AS (qty * 2) VIRTUAL);",
+			want: parser.Column{Name: "total", Type: "int", Nullable: true, GeneratedExpr: "qty * 2", GeneratedStorage: "VIRTUAL"},
+		},
+		{
+			name: "storage defaults to virtual",
+			sql:  "CREATE TABLE t (qty INT, total INT GENERATED ALWAYS AS (qty + 1));",
+			want: parser.Column{Name: "total", Type: "int", Nullable: true, GeneratedExpr: "qty + 1", GeneratedStorage: "VIRTUAL"},
+		},
+		{
+			name: "shorthand AS",
+			sql:  "CREATE TABLE t (qty INT, total INT AS (qty + 1));",
+			want: parser.Column{Name: "total", Type: "int", Nullable: true, GeneratedExpr: "qty + 1", GeneratedStorage: "VIRTUAL"},
+		},
+		{
+			name: "shorthand AS stored not null",
+			sql:  "CREATE TABLE t (qty INT, total INT AS (abs(qty)) STORED NOT NULL);",
+			want: parser.Column{Name: "total", Type: "int", GeneratedExpr: "abs(qty)", GeneratedStorage: "STORED"},
+		},
+		{
+			name: "generated column added by alter table",
+			sql: `CREATE TABLE t (qty INT);
+				ALTER TABLE t ADD COLUMN total INT AS (qty * 2) STORED;`,
+			want: parser.Column{Name: "total", Type: "int", Nullable: true, GeneratedExpr: "qty * 2", GeneratedStorage: "STORED"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			p := newParser(t)
+			if err := p.Parse("test.sql", []byte(tt.sql)); err != nil {
+				t.Fatalf("Parse() error: %v", err)
+			}
+			got := parser.ColumnByName(&p.Schema().Tables[0], "total")
+			if got == nil {
+				t.Fatal("column total not found")
+			}
+			if diff := cmp.Diff(tt.want, *got); diff != "" {
+				t.Errorf("column total mismatch (-want +got):\n%s", diff)
+			}
+		})
+	}
+}
+
+func TestNormalizeExpr(t *testing.T) {
+	tests := []struct {
+		name    string
+		expr    string
+		want    string
+		wantErr bool
+	}{
+		{name: "parentheses and backticks dropped", expr: "(`qty` * 2)", want: "qty * 2"},
+		{name: "function call", expr: "abs(`qty`)", want: "abs(qty)"},
+		{name: "reserved word keeps its backticks", expr: "(`order` + 1)", want: "`order` + 1"},
+		{name: "already normalized", expr: "qty + 1", want: "qty + 1"},
+		{name: "literal with a charset introducer", expr: "concat(`s`,_latin1'it\\'s')", want: "concat(s, _latin1 'it\\'s')"},
+		{name: "incomplete expression", expr: "qty *", wantErr: true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := mysql.NormalizeExpr(tt.expr)
+			if (err != nil) != tt.wantErr {
+				t.Fatalf("NormalizeExpr(%q) error = %v, wantErr %t", tt.expr, err, tt.wantErr)
+			}
+			if got != tt.want {
+				t.Errorf("NormalizeExpr(%q) = %q, want %q", tt.expr, got, tt.want)
+			}
+		})
+	}
+}
+
 func TestAlterTableAddDropModifyColumn(t *testing.T) {
 	sql := `
 		CREATE TABLE users (

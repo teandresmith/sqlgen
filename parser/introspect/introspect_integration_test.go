@@ -69,6 +69,8 @@ var parityFieldTypes = map[string]any{
 // composite types, domains and views, in full. The dialect's
 // parityExceptions are the only fields left out, plus any ignore entries. It
 // sorts both schemas in place first.
+//
+//nolint:unparam // ignore is the hook for a test-local parity exception; no test needs one yet
 func assertSchemaParity(t *testing.T, dialect string, parsed, introspected *parser.Schema, ignore ...parityException) {
 	t.Helper()
 	exceptions, ok := parityExceptions[dialect]
@@ -406,6 +408,263 @@ func TestSQLiteIntrospect(t *testing.T) {
 		t.Fatalf("Parse() error: %v", err)
 	}
 
+	assertSchemaParity(t, "sqlite", p.Schema(), introspected)
+}
+
+// --- Generated column tests ---
+
+// generatedColumn is the generated-column shape one column must have.
+type generatedColumn struct {
+	expr, storage string
+}
+
+// assertGeneratedColumns checks the generated-column fields of every column
+// in table, so parity cannot pass with both sides missing them. A column
+// absent from want must not be generated.
+func assertGeneratedColumns(t *testing.T, table *parser.Table, want map[string]generatedColumn) {
+	t.Helper()
+	got := make(map[string]generatedColumn)
+	for _, c := range table.Columns {
+		if c.GeneratedExpr != "" || c.GeneratedStorage != "" {
+			got[c.Name] = generatedColumn{expr: c.GeneratedExpr, storage: c.GeneratedStorage}
+		}
+		if c.GeneratedExpr != "" && c.Default != "" {
+			t.Errorf("%s.%s: Default = %q on a generated column, want empty", table.Name, c.Name, c.Default)
+		}
+	}
+	if diff := cmp.Diff(want, got, cmp.AllowUnexported(generatedColumn{})); diff != "" {
+		t.Errorf("%s generated columns mismatch (-want +got):\n%s", table.Name, diff)
+	}
+}
+
+func TestPostgresIntrospect_GeneratedColumn(t *testing.T) {
+	requireDatabases(t)
+
+	ctx := context.Background()
+
+	ddl := `
+		CREATE TABLE gen_items (
+			id integer PRIMARY KEY,
+			qty integer NOT NULL,
+			name text,
+			doubled integer GENERATED ALWAYS AS (qty * 2) STORED,
+			shout text NOT NULL GENERATED ALWAYS AS (upper(name)) STORED,
+			seq integer GENERATED ALWAYS AS IDENTITY
+		);
+	`
+
+	db, err := sql.Open("pgx", pgConnStr)
+	if err != nil {
+		t.Fatalf("opening postgres: %v", err)
+	}
+	defer db.Close() //nolint:errcheck // test cleanup
+
+	if _, err := db.ExecContext(ctx, "DROP SCHEMA IF EXISTS introspect_gen CASCADE; CREATE SCHEMA introspect_gen"); err != nil {
+		t.Fatalf("creating schema: %v", err)
+	}
+	defer db.ExecContext(ctx, "DROP SCHEMA IF EXISTS introspect_gen CASCADE") //nolint:errcheck // test cleanup
+	if _, err := db.ExecContext(ctx, "SET search_path TO introspect_gen; "+ddl); err != nil {
+		t.Fatalf("applying DDL: %v", err)
+	}
+
+	intro := introspect.NewPostgresIntrospector()
+	defer intro.Close() //nolint:errcheck // test cleanup
+
+	introspected := &parser.Schema{}
+	if err := intro.Introspect(ctx, pgConnStr, introspected, introspect.IntrospectionOptions{
+		Schemas: []string{"introspect_gen"},
+	}); err != nil {
+		t.Fatalf("Introspect() error: %v", err)
+	}
+
+	p := postgres.New("introspect_gen")
+	if err := p.Parse("test.sql", []byte(ddl)); err != nil {
+		t.Fatalf("Parse() error: %v", err)
+	}
+
+	want := map[string]generatedColumn{
+		"doubled": {expr: "qty * 2", storage: "STORED"},
+		"shout":   {expr: "upper(name)", storage: "STORED"},
+	}
+	assertGeneratedColumns(t, findTable(t, introspected, "gen_items"), want)
+	assertGeneratedColumns(t, findTable(t, p.Schema(), "gen_items"), want)
+	assertSchemaParity(t, "postgres", p.Schema(), introspected)
+}
+
+// TestPostgresIntrospect_VirtualGeneratedColumn needs PostgreSQL 18, the first
+// release with VIRTUAL generated columns, so it starts its own container. The
+// file parser's PostgreSQL 17 grammar rejects the syntax, so there is no
+// parsed schema to compare against.
+func TestPostgresIntrospect_VirtualGeneratedColumn(t *testing.T) {
+	requireDatabases(t)
+
+	ctx := context.Background()
+
+	container, err := tcpostgres.Run(
+		ctx,
+		"postgres:18-alpine",
+		tcpostgres.WithDatabase("sqlgen_test"),
+		tcpostgres.WithUsername("test"),
+		tcpostgres.WithPassword("test"),
+		testcontainers.WithWaitStrategy(
+			wait.ForLog("database system is ready to accept connections").
+				WithOccurrence(2),
+		),
+	)
+	if err != nil {
+		t.Fatalf("starting postgres 18 container: %v", err)
+	}
+	defer container.Terminate(ctx) //nolint:errcheck // test cleanup
+
+	connStr, err := container.ConnectionString(ctx, "sslmode=disable")
+	if err != nil {
+		t.Fatalf("postgres 18 connection string: %v", err)
+	}
+
+	db, err := sql.Open("pgx", connStr)
+	if err != nil {
+		t.Fatalf("opening postgres: %v", err)
+	}
+	defer db.Close() //nolint:errcheck // test cleanup
+
+	// With neither STORED nor VIRTUAL, PostgreSQL 18 makes the column VIRTUAL.
+	if _, err := db.ExecContext(ctx, `
+		CREATE TABLE gen_items (
+			id integer PRIMARY KEY,
+			qty integer NOT NULL,
+			implicit_total integer GENERATED ALWAYS AS (qty * 2),
+			virtual_total integer GENERATED ALWAYS AS (qty * 3) VIRTUAL,
+			stored_total integer GENERATED ALWAYS AS (qty * 4) STORED
+		)`); err != nil {
+		t.Fatalf("applying DDL: %v", err)
+	}
+
+	intro := introspect.NewPostgresIntrospector()
+	defer intro.Close() //nolint:errcheck // test cleanup
+
+	introspected := &parser.Schema{}
+	if err := intro.Introspect(ctx, connStr, introspected, introspect.IntrospectionOptions{
+		Schemas: []string{"public"},
+	}); err != nil {
+		t.Fatalf("Introspect() error: %v", err)
+	}
+
+	assertGeneratedColumns(t, findTable(t, introspected, "gen_items"), map[string]generatedColumn{
+		"implicit_total": {expr: "qty * 2", storage: "VIRTUAL"},
+		"virtual_total":  {expr: "qty * 3", storage: "VIRTUAL"},
+		"stored_total":   {expr: "qty * 4", storage: "STORED"},
+	})
+}
+
+func TestMySQLIntrospect_GeneratedColumn(t *testing.T) {
+	requireDatabases(t)
+
+	ctx := context.Background()
+
+	ddl := `
+		CREATE TABLE gen_items (
+			id int NOT NULL PRIMARY KEY,
+			qty int NOT NULL,
+			stored_total int GENERATED ALWAYS AS (qty * 2) STORED,
+			virtual_total int GENERATED ALWAYS AS (qty * 2) VIRTUAL,
+			default_total int GENERATED ALWAYS AS (qty + 1),
+			short_total int AS (qty + 2),
+			abs_qty int AS (abs(qty)) STORED NOT NULL
+		);
+	`
+
+	db, err := sql.Open("mysql", mysqlConnStr)
+	if err != nil {
+		t.Fatalf("opening mysql: %v", err)
+	}
+	defer db.Close() //nolint:errcheck // test cleanup
+
+	if _, err := db.ExecContext(ctx, "DROP TABLE IF EXISTS gen_items"); err != nil {
+		t.Fatalf("dropping table: %v", err)
+	}
+	defer db.ExecContext(ctx, "DROP TABLE IF EXISTS gen_items") //nolint:errcheck // test cleanup
+	if _, err := db.ExecContext(ctx, ddl); err != nil {
+		t.Fatalf("applying DDL: %v", err)
+	}
+
+	intro := introspect.NewMySQLIntrospector()
+	defer intro.Close() //nolint:errcheck // test cleanup
+
+	introspected := &parser.Schema{}
+	if err := intro.Introspect(ctx, mysqlConnStr, introspected, introspect.IntrospectionOptions{
+		Tables: []string{"gen_items"},
+	}); err != nil {
+		t.Fatalf("Introspect() error: %v", err)
+	}
+
+	p, err := mysql.New()
+	if err != nil {
+		t.Fatalf("creating mysql parser: %v", err)
+	}
+	if err := p.Parse("test.sql", []byte(ddl)); err != nil {
+		t.Fatalf("Parse() error: %v", err)
+	}
+
+	want := map[string]generatedColumn{
+		"stored_total":  {expr: "qty * 2", storage: "STORED"},
+		"virtual_total": {expr: "qty * 2", storage: "VIRTUAL"},
+		"default_total": {expr: "qty + 1", storage: "VIRTUAL"},
+		"short_total":   {expr: "qty + 2", storage: "VIRTUAL"},
+		"abs_qty":       {expr: "abs(qty)", storage: "STORED"},
+	}
+	assertGeneratedColumns(t, findTable(t, introspected, "gen_items"), want)
+	assertGeneratedColumns(t, findTable(t, p.Schema(), "gen_items"), want)
+	assertSchemaParity(t, "mysql", p.Schema(), introspected)
+}
+
+func TestSQLiteIntrospect_GeneratedColumn(t *testing.T) {
+	requireDatabases(t)
+
+	ctx := context.Background()
+
+	ddl := `
+		CREATE TABLE gen_items (
+			id integer PRIMARY KEY,
+			qty integer NOT NULL,
+			stored_total integer GENERATED ALWAYS AS (qty * 2) STORED,
+			virtual_total integer GENERATED ALWAYS AS (qty * 2) VIRTUAL,
+			short_total integer AS (qty + 1),
+			abs_qty integer AS (abs(qty)) STORED NOT NULL
+		);
+	`
+
+	dbPath := filepath.Join(t.TempDir(), "generated.db")
+	db, err := sql.Open("sqlite", dbPath)
+	if err != nil {
+		t.Fatalf("opening sqlite: %v", err)
+	}
+	defer db.Close() //nolint:errcheck // test cleanup
+
+	if _, err := db.ExecContext(ctx, ddl); err != nil {
+		t.Fatalf("applying DDL: %v", err)
+	}
+
+	intro := introspect.NewSQLiteIntrospector()
+	defer intro.Close() //nolint:errcheck // test cleanup
+
+	introspected := &parser.Schema{}
+	if err := intro.Introspect(ctx, dbPath, introspected, introspect.IntrospectionOptions{}); err != nil {
+		t.Fatalf("Introspect() error: %v", err)
+	}
+
+	p := sqlite.New()
+	if err := p.Parse("test.sql", []byte(ddl)); err != nil {
+		t.Fatalf("Parse() error: %v", err)
+	}
+
+	want := map[string]generatedColumn{
+		"stored_total":  {expr: `"qty" * 2`, storage: "STORED"},
+		"virtual_total": {expr: `"qty" * 2`, storage: "VIRTUAL"},
+		"short_total":   {expr: `"qty" + 1`, storage: "VIRTUAL"},
+		"abs_qty":       {expr: `abs("qty")`, storage: "STORED"},
+	}
+	assertGeneratedColumns(t, findTable(t, introspected, "gen_items"), want)
+	assertGeneratedColumns(t, findTable(t, p.Schema(), "gen_items"), want)
 	assertSchemaParity(t, "sqlite", p.Schema(), introspected)
 }
 

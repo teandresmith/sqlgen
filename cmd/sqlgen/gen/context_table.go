@@ -1256,7 +1256,7 @@ func toResolvedOperations(softDelete *SoftDeleteContext, columns []ColumnContext
 		Connection:  true,
 		Stream:      true,
 		// Soft delete and restore need a detected soft-delete column (§5.4);
-		// Increment needs a numeric column that identifies nothing (§8.2).
+		// Increment needs a writable numeric column that identifies nothing (§8.2).
 		SoftDelete: softDelete != nil,
 		Restore:    softDelete != nil,
 		Increment:  len(buildIncrementColumns(columns)) > 0,
@@ -1842,7 +1842,7 @@ func conflictConstantSuffix(columns []string) string {
 // --- Increment columns ---
 
 // buildIncrementColumns selects the columns eligible for atomic
-// increment/decrement: numeric, and identifying nothing.
+// increment/decrement: numeric, writable, and identifying nothing.
 //
 // Primary keys are excluded because a row's identity is not an amount. Foreign
 // keys are excluded for the same reason one step removed — `category_id + 1`
@@ -1876,16 +1876,17 @@ func buildIncrementColumns(columns []ColumnContext) []ColumnContext {
 }
 
 // isIncrementEligible reports whether a resolved column is enrolled in the
-// Increment surface: an arithmetic Go type over an arithmetic SQL column,
-// identifying nothing. It is the single decision point — the client surface,
-// the GraphQL `_inc` / `_dec` operators and the `_inc` namespace check all
-// read it, so none of them can drift from the others.
+// Increment surface: an arithmetic Go type over an arithmetic SQL column that
+// is writable (not generated) and identifies nothing. It is the single
+// decision point — the client surface, the GraphQL `_inc` / `_dec`
+// operators and the `_inc` namespace check all read it, so none of them can
+// drift from the others.
 //
 // ColumnContext.Tenant is attached after the table context is assembled, so
 // callers reached during assembly see it unset. buildIncrementColumns is
 // therefore re-run once tenancy lands; see attachTenancyToTables.
 func isIncrementEligible(col ColumnContext) bool {
-	return !col.PrimaryKey && col.FKReference == nil && !col.Tenant &&
+	return !col.PrimaryKey && col.FKReference == nil && !col.Tenant && !col.IsComputed &&
 		isIncrementableGoType(col.GoType) && isArithmeticSQLColumn(col)
 }
 

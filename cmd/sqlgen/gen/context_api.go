@@ -184,10 +184,10 @@ type APITableContext struct {
 	UsedScalars      []string // scalars used in this table (for shared dedup)
 	// IncrementEnumType is the generated Go enum-type name for the
 	// IncrementInput's Column generic argument (e.g. "ProductIncrementColumn").
-	// Empty when the table has no numeric non-PK columns.
+	// Empty when the table has no increment-eligible column.
 	IncrementEnumType string
-	// HasIncrementColumns is true iff the table has at least one non-PK
-	// numeric column whose update path emits an `_inc` / `_dec` operator —
+	// HasIncrementColumns is true iff the table has at least one
+	// increment-eligible column (isIncrementEligible) whose update path emits an `_inc` / `_dec` operator —
 	// equivalently, iff `IncrementEnumType != ""`. Drives template gating
 	// on the Update<Table> resolver and seed: when false, the
 	// rendered method drops the `incOps` parameter and the increment-

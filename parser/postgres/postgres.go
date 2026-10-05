@@ -913,6 +913,11 @@ func (p *Parser) applyColumnConstraint(col *parser.Column, c *pg_query.Constrain
 		col.AutoIncrement = true
 		col.Nullable = false
 
+	case pg_query.ConstrType_CONSTR_GENERATED:
+		// pg_query parses the PostgreSQL 17 grammar, which accepts only STORED.
+		col.GeneratedExpr = deparseExpr(c.RawExpr)
+		col.GeneratedStorage = "STORED"
+
 	case pg_query.ConstrType_CONSTR_FOREIGN:
 		if c.Pktable != nil {
 			fkSchema := p.referenceSchema(c.Pktable)
@@ -933,7 +938,7 @@ func (p *Parser) applyColumnConstraint(col *parser.Column, c *pg_query.Constrain
 		}
 
 	default:
-		// Other constraint types (IDENTITY, GENERATED, etc.) are handled elsewhere or ignored.
+		// EXCLUDE and the DEFERRABLE attributes carry nothing the model stores.
 	}
 	return parser.Constraint{}, false
 }
@@ -1156,6 +1161,24 @@ func deparseExpr(node *pg_query.Node) string {
 		return ""
 	}
 	return strings.TrimPrefix(sql, "SELECT ")
+}
+
+// NormalizeExpr rewrites the SQL expression expr in the form the parser writes
+// expressions, so text read from the catalog compares equal to parsed DDL.
+// Redundant parentheses are dropped: "(qty * 2)" becomes "qty * 2".
+func NormalizeExpr(expr string) (string, error) {
+	tree, err := pg_query.Parse("SELECT " + expr)
+	if err != nil {
+		return "", fmt.Errorf("parsing expression %q: %w", expr, err)
+	}
+	if len(tree.Stmts) != 1 {
+		return "", fmt.Errorf("parsing expression %q: not a single expression", expr)
+	}
+	sel := tree.Stmts[0].Stmt.GetSelectStmt()
+	if sel == nil || len(sel.TargetList) != 1 || sel.FromClause != nil || sel.WhereClause != nil {
+		return "", fmt.Errorf("parsing expression %q: not a single expression", expr)
+	}
+	return deparseExpr(sel.TargetList[0].GetResTarget().GetVal()), nil
 }
 
 // extractStringList extracts string values from a []*Node list.

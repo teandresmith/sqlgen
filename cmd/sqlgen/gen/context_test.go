@@ -1006,6 +1006,7 @@ func TestIncrementColumnDetection(t *testing.T) {
 					{Name: "name", Type: "text"},
 					{Name: "price", Type: "numeric"},
 					{Name: "stock", Type: "integer"},
+					{Name: "doubled", Type: "integer", GeneratedExpr: "stock * 2", GeneratedStorage: "STORED"},
 				},
 			},
 		},
@@ -1019,6 +1020,13 @@ func TestIncrementColumnDetection(t *testing.T) {
 	}
 
 	tc := contexts[0]
+
+	// Generated column excluded: the database computes it.
+	for _, col := range tc.IncrementColumns {
+		if col.Name == "doubled" {
+			t.Error("doubled (generated) should be excluded from IncrementColumns")
+		}
+	}
 
 	// PK excluded from increment.
 	for _, col := range tc.IncrementColumns {

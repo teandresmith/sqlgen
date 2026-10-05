@@ -61,3 +61,52 @@ func TestExtractMySQLEnumValues(t *testing.T) {
 		})
 	}
 }
+
+func TestMySQLGeneratedStorage(t *testing.T) {
+	tests := []struct {
+		name        string
+		extra       string
+		wantStorage string
+		wantOK      bool
+	}{
+		{name: "stored", extra: "stored generated", wantStorage: "STORED", wantOK: true},
+		{name: "virtual", extra: "virtual generated", wantStorage: "VIRTUAL", wantOK: true},
+		{name: "auto increment", extra: "auto_increment"},
+		{name: "expression default", extra: "default_generated"},
+		{name: "plain column", extra: ""},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			storage, ok := mysqlGeneratedStorage(tt.extra)
+			if storage != tt.wantStorage || ok != tt.wantOK {
+				t.Errorf("mysqlGeneratedStorage(%q) = (%q, %t), want (%q, %t)", tt.extra, storage, ok, tt.wantStorage, tt.wantOK)
+			}
+		})
+	}
+}
+
+// The cases use GENERATION_EXPRESSION as MySQL 8.0 stores it: the text
+// SHOW CREATE TABLE prints, with every quote and backslash escaped again.
+func TestUnescapeMySQLCatalogText(t *testing.T) {
+	tests := []struct {
+		name string
+		text string
+		want string
+	}{
+		{name: "no escapes", text: "(`qty` * 2)", want: "(`qty` * 2)"},
+		{name: "quoted literal", text: `concat(upper(` + "`name`" + `),_latin1\'-x\')`, want: "concat(upper(`name`),_latin1'-x')"},
+		{name: "escaped quote in a literal", text: `_latin1\'it\\\'s\'`, want: `_latin1'it\'s'`},
+		{name: "escaped backslash in a literal", text: `_latin1\'a\\\\b\'`, want: `_latin1'a\\b'`},
+		{name: "escaped newline in a literal", text: `_latin1\'c\\nd\'`, want: `_latin1'c\nd'`},
+		{name: "double quote is not escaped", text: `_latin1\'e"f\'`, want: `_latin1'e"f'`},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := unescapeMySQLCatalogText(tt.text); got != tt.want {
+				t.Errorf("unescapeMySQLCatalogText(%q) = %q, want %q", tt.text, got, tt.want)
+			}
+		})
+	}
+}
