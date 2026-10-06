@@ -1,7 +1,7 @@
 # Phase 30: Database Introspection — CLI Wiring & Introspector Parity
 
 Status: In Progress
-PRD Sections: 4.2, 4.3, 4.4, 5.2, 6.1, 6.3, 6.4, 7, 8.1.7, 16.2, 30.7
+PRD Sections: 4.1, 4.2, 4.3, 4.4, 5.2, 6.1, 6.3, 6.4, 7, 8.1.7, 16.2, 30.7
 
 > **Design.** `docs/design/INTROSPECTION.md` (DRAFT 2026-10-05) is the source for every sub-item
 > below. Its §4.0 records the 2026-10-05 probe (PG 16, MySQL 8.0, modernc SQLite: 20 of 22
@@ -1495,6 +1495,78 @@ PRD Sections: 4.2, 4.3, 4.4, 5.2, 6.1, 6.3, 6.4, 7, 8.1.7, 16.2, 30.7
     inline after a ruling; see above.
   - Note for 30.8 from the reviewer: `*connectionError` should wrap the driver error, never the
     built string, which carries the password.
+
+---
+
+## 30.7a `${VAR}` references in `sqlgen.yml` values
+
+**PRD Reference:** Sections 4.1, 4.3, 4.13, 4.14, 23.9
+
+**Design:** `docs/design/CONFIG_ENV.md` (DRAFT 2026-10-06, all five questions ruled in its §9).
+The 32-case prototype that verified §3–§5 is in the gitignored session scratchpad and isn't
+needed: §7 of the doc lists every case.
+
+**Status:** Not Started
+
+### Tasks
+
+- [ ] PRD sync (design doc §8). Add a new §4.1.1 "Environment variable references" covering the
+  syntax, semantics and redaction (doc §3, §4, §5.1). Add the §4.3 url/password note and the
+  URL-escaping guidance (doc §5.3). Add §4.13 error rows for an unset variable, an invalid
+  reference and an unterminated reference (exit 2), and the warning row for an ignored
+  `SQLGEN_DB_PASSWORD`. Add a §4.14 note that the schema flags `${…}` in integer and boolean
+  fields. Update `docs/configuration.md` and the `url` / `password` descriptions in
+  `cmd/sqlgen/config/schema/v1.json`.
+- [ ] Add `cmd/sqlgen/config/expand.go`:
+  - The reference parser: `${NAME}` with `NAME` = `[A-Za-z_][A-Za-z0-9_]*`. `$${` is a literal
+    `${`; any other `$` is kept. Invalid and unterminated references are errors.
+  - The node walk: expand scalar values in place and never keys. Record each reference's line,
+    dotted path (`[i]` for sequence items), original text and the variables it used.
+  - Plain scalars are re-typed from the expanded text, except that null is kept as `!!str`.
+    Quoted and block scalars stay strings.
+  - Unset variables are looked up with `os.LookupEnv`. Every unset or invalid reference is
+    reported, each as `line N: <path>: <problem>`.
+- [ ] Rework `decodeConfig` (`config/config.go:1637`) as design doc §6.1 describes:
+  - A config with no references takes today's single strict decode.
+  - With references, keep only the `not found in type` errors from the strict decode of the raw
+    bytes. Keep every error from `Node.Decode` of the expanded tree, redacting type errors on
+    reference lines (doc §5.1). Merge by line.
+  - Update the "Known gap" comment.
+- [ ] In `Operations.UnmarshalYAML` and `NullableVariant.UnmarshalYAML` (`config.go:556`,
+  `:617`), return a `*yaml.TypeError` from the inner `Decode` unwrapped (doc §6.1 step 4).
+- [ ] Ignored-`SQLGEN_DB_PASSWORD` warning (doc §9 Q4) in `config/validate.go`. Under
+  `source: database | both`, warn when the password variable is set, a `url` wins, and that
+  `url` (`SQLGEN_DB_URL`, or `input.connection.url` without a `${SQLGEN_DB_PASSWORD}` reference)
+  ignores it.
+
+### Acceptance Criteria
+
+- `url: postgres://app:${SQLGEN_DB_PASSWORD}@host/db` reaches `connString` with the password
+  filled in. The design doc §1 config without the reference warns.
+- An unset variable fails `generate` and `validate` with exit 2, naming the line, the path and
+  the variable. Every unset variable is reported together.
+- No error message contains an expanded value.
+- An unknown key is still reported at its real line in a config with references, including
+  one whose references sit inside an `operations` or `nullable` mapping.
+- A config without references decodes exactly as before. Existing tests and `make
+  check-examples` pass unchanged.
+
+### Tests Required
+
+- [ ] Table-driven expansion and decode tests (`config/expand_test.go`) covering every
+  design doc §7 row. Each case runs fail-first against HEAD where HEAD has a behavior to
+  contrast.
+- [ ] The no-secret-in-errors assertion across the error cases.
+- [ ] The unmarshaler-wrapping regression: an unknown key next to a typed reference in an
+  `operations` mapping.
+- [ ] Warning tests for doc §9 Q4: the config `url` without the reference warns; with it, no
+  warning; `SQLGEN_DB_URL` plus the password warns; individual fields don't warn; `source: files`
+  doesn't warn.
+- [ ] A CLI test: `sqlgen validate` with an unset variable exits 2 and names it.
+
+### Completion Record
+
+_Filled in when complete: files changed, commit references, notes._
 
 ---
 
