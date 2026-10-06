@@ -1369,11 +1369,11 @@ PRD Sections: 4.2, 4.3, 4.4, 5.2, 6.1, 6.3, 6.4, 7, 8.1.7, 16.2, 30.7
 
 **PRD Reference:** Sections 4.2, 4.3, 4.13
 
-**Status:** Not Started
+**Status:** Complete
 
 ### Tasks
 
-- [ ] Add `cmd/sqlgen/cli/connection.go` with `connString(dialect config.Dialect,
+- [x] Add `cmd/sqlgen/cli/connection.go` with `connString(dialect config.Dialect,
   c *config.ConnectionConfig) (string, error)`:
   - `url` set → returned verbatim
   - postgres → `postgres://user:pass@host:port/db?sslmode=<ssl_mode | disable>`, built with
@@ -1382,13 +1382,13 @@ PRD Sections: 4.2, 4.3, 4.4, 5.2, 6.1, 6.3, 6.4, 7, 8.1.7, 16.2, 30.7
   - sqlite → `database`
   - the port defaults to 5432 / 3306
   - a missing required field → an error naming `input.connection.<field>`
-- [ ] `config/validate.go`, next to `validateConnectionRequired` (`:1124`): when `url` is
+- [x] `config/validate.go`, next to `validateConnectionRequired` (`:1125`): when `url` is
   empty, `database` is required on every dialect, and `host` and `user` are required on postgres
-  and mysql. Report every missing field together. `SQLGEN_DB_URL` (applied at `config.go:1935`)
+  and mysql. Report every missing field together. `SQLGEN_DB_URL` (applied at `config.go:1981`)
   satisfies the rule. `port` is not required (PRD §4.3 default, synced in 30.0). Update the
   `port` description in `cmd/sqlgen/config/schema/v1.json` (`:139`, still "Required for
   postgres/mysql") to match, and the `paths` / `introspect` descriptions to note the warning.
-- [ ] Ignored input keys warn (PRD §4.13 "Input key the source does not read"; design doc Q11
+- [x] Ignored input keys warn (PRD §4.13 "Input key the source does not read"; design doc Q11
   addendum). An explicitly set `input.paths` under `source: database`, or any
   `input.introspect` field under `source: files`, warns and names the key and the source.
   Telling an explicit `paths` from the `["."]` default needs presence tracking at YAML decode.
@@ -1403,16 +1403,98 @@ PRD Sections: 4.2, 4.3, 4.4, 5.2, 6.1, 6.3, 6.4, 7, 8.1.7, 16.2, 30.7
 
 ### Tests Required
 
-- [ ] `TestConnString` (table-driven, three dialects): `url` precedence, password escaping, the
+- [x] `TestConnString` (table-driven, three dialects): `url` precedence, password escaping, the
   `ssl_mode` defaults, port defaults, each missing-field error.
-- [ ] Config validation tests: each missing field per dialect; all reported together; `url` set
+- [x] Config validation tests: each missing field per dialect; all reported together; `url` set
   skips the rule; `SQLGEN_DB_URL` alone satisfies it.
-- [ ] Ignored-key warning tests: `paths` explicit / defaulted under `database`; `introspect`
+- [x] Ignored-key warning tests: `paths` explicit / defaulted under `database`; `introspect`
   set / unset under `files`; neither warns under `both`.
 
 ### Completion Record
 
-_Filled in when complete: files changed, commit references, notes._
+- **Completed:** 2026-10-06 (`/done 30.7`); implemented 2026-10-05 (`/implement 30.7`). Not yet
+  committed. `make check` passed after the last change. `make check-examples` passed after the
+  last `config/validate.go` change; the MySQL socket change touched only `cli/connection.go` and
+  docs, which are not on the trigger list.
+- **Files:**
+  - `cmd/sqlgen/cli/connection.go` (new): `connString`.
+  - `cmd/sqlgen/config/config.go`: `(*ConnectionConfig).Errors(dialect)`, the single source of
+    the §4.3 field rules (required fields, and no `:` in a MySQL `user`), shared by `connString`
+    and validation;
+    `InputConfig.pathsSet`, set in `decodeConfig` from a second, non-strict decode of
+    `input.paths` into a `yaml.Node` (key present = `Kind != 0`, so `paths: []` and `paths: ~`
+    count as explicit).
+  - `cmd/sqlgen/config/validate.go`: `validateConnectionRequired` adds one error per problem,
+    collected with the other config errors by `errors.Join`.
+    `validateIgnoredInputKeys` adds the warnings.
+  - `cmd/sqlgen/config/schema/v1.json`: `host` (Unix socket: a directory on postgres, a
+    file on mysql), `port` (dialect default, ignored on SQLite and with a MySQL socket file), `user` (no `:` on mysql), `database` (required when `url` is empty), and
+    the `paths` / `introspect` descriptions.
+  - `docs/PRD.md` §4.3, `docs/configuration.md` and design doc §7.1: the `host`, `port` and `user` rows
+    (ruled with the user 2026-10-06; see below).
+  - Tests: `cli/connection_test.go` (new), `config/validate_test.go`.
+- **Decisions within the spec:**
+  - An `introspect` field counts as set when its list is non-empty. `introspect: {}` or an empty
+    list changes nothing on any source, so it doesn't warn. `paths` uses key presence, as the
+    task requires.
+  - The required-field rule runs only under `database` / `both`. A connection block under
+    `files` is never read and is not validated.
+  - MySQL: the password goes into the DSN raw, and the database name is `url.PathEscape`d and
+    `ssl_mode` is `url.QueryEscape`d, since go-sql-driver unescapes both.
+- **Driver probe** (throwaway module in the scratchpad, pgx v5.9.1 and go-sql-driver v1.9.3,
+  the parser module's versions). `pgconn.ParseConfig` and `mysql.ParseDSN` both return the
+  password `p@ss:w/rd%?#` intact from the strings `TestConnString` pins. pgx reads the
+  bracketed IPv6 host `::1`. go-sql-driver reads `my%2Fdb` as `my/db` and `tls=false` as
+  `"false"`.
+- **Ruled with the user 2026-10-06** (the PG socket and MySQL `user` rules came from the
+  auto-review and the MySQL socket rule followed; all three fixed inline rather than backlogged,
+  and each test failed before its fix):
+  - A PG `host` starting with `/` is a Unix-socket directory, as in libpq. It goes in
+    `?host=<dir>&port=<port>`, because `net.JoinHostPort` gave `%2Fvar%2Frun%2Fpostgresql:5432`
+    and pgx rejected it (`invalid URL escape "%2F"`). Probe: `pgconn.ParseConfig` reads the new
+    form back as host `/var/run/postgresql`, with the port, database and an escaped password
+    intact. PRD §4.3 states the rule.
+  - A MySQL `host` starting with `/` is the socket file and gives `unix(<file>)`, with no port.
+  - A MySQL `user` containing `:` is a config error, with or without a password. Probe:
+    go-sql-driver read `ap:p:secret@…` as user `ap`, password `p:secret`, which fails as a
+    misleading auth error. The DSN has no escape for it, so `url` is no workaround and the check
+    applies only when sqlgen builds the DSN. PRD §4.3 states the rule.
+  - **Live socket probe**, run inside MySQL 8.0 and postgres:16-alpine containers with a static
+    linux/arm64 build of a probe that opens each driver and runs `SELECT current_user`:
+    - The MySQL `unix(/var/run/mysqld/mysqld.sock)` DSN that `TestConnString` pins connected as
+      `app@localhost`, with the password `p@ss:w/rd%?#`. A wrong password got `Error 1045`, so
+      authentication really ran. The old `tcp(…sock:3306)` form failed with `no such host`.
+    - The PG `?host=%2Fvar%2Frun%2Fpostgresql&port=5432` URL connected as `app`. Port 6543
+      failed on `.s.PGSQL.6543`, so the port picks the socket file and has to be passed.
+    - `tls=true` over the MySQL socket fails at connect, because the driver needs a server name
+      for TLS. It's loud and only happens when TLS is requested, so `ssl_mode` passes through
+      unchanged.
+- **Tests:**
+  - `TestConnString`: 21 cases across the three dialects.
+  - `TestConnString_PostgresPasswordRoundTrips`: 8 passwords.
+  - `TestConnString_PostgresSocketRoundTrips`.
+  - `TestValidate_ConnectionFieldsMissing`: CLI test; exit 2, all three fields named.
+  - `TestValidatePreParse_ConnectionFields`: 15 cases.
+  - `TestLoadConfig_SQLGENDBURLSatisfiesConnectionFields`: 3 cases.
+  - `TestValidatePreParse_IgnoredInputKeys`: 11 cases.
+- **Lint:** gosec G101 flags the three postgres fixtures that put a password in a URL. They carry
+  `//nolint:gosec // test fixture, not a real credential`.
+- **Security review:** done by the `/verify 30.7` reviewer. Errors name fields and never repeat
+  a user value or password. `connString` builds a string and doesn't connect; 30.8 adds the
+  connection.
+- **`/verify 30.7` (2026-10-06):** PRD 10/10, tests 3/3, `make check` and `make check-examples`
+  passed. The reviewer confirmed fail-first by disabling the MySQL `:` check, which failed
+  three cases. No FIX entries. Six tracker-text corrections applied. Two questions went to the
+  user: `SQLGEN_DB_PASSWORD` next to a `url` (the `url` wins and the password is dropped), and
+  whether ignored connection fields should warn like `paths` and `introspect`.
+- **Auto-review** (`sqlgen-reviewer`): PRD 8/8, tests 3/3, fail-first confirmed (a value check in
+  place of key presence fails `database_with_empty_paths`). 0 high-confidence issues.
+  - Inline fixes applied: two stale line references in the task text, a shorter `pathsSet`
+    comment, and a `paths: ~` case.
+  - Two optional findings (a MySQL `user` containing `:`, PG Unix-socket hosts) were fixed
+    inline after a ruling; see above.
+  - Note for 30.8 from the reviewer: `*connectionError` should wrap the driver error, never the
+    built string, which carries the password.
 
 ---
 

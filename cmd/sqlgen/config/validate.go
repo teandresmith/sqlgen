@@ -32,6 +32,7 @@ func ValidatePreParse(cfg *RootConfig) ([]Warning, error) {
 	validateRemovedOperations(cfg, &errs)
 	validateNullableVariants(cfg, &errs)
 	validateSchemaDialect(cfg, &warnings)
+	validateIgnoredInputKeys(cfg, &warnings)
 	validateOutputDir(cfg, &warnings)
 	validateCacheConfig(cfg, &errs, &warnings)
 	validateViewCacheConfig(cfg, &errs)
@@ -1123,8 +1124,39 @@ func validateDriverDialect(cfg *RootConfig, errs *[]error) {
 // validateConnectionRequired checks that connection is present when source requires it.
 func validateConnectionRequired(cfg *RootConfig, errs *[]error) {
 	needsConnection := cfg.Input.Source == SourceDatabase || cfg.Input.Source == SourceBoth
-	if needsConnection && cfg.Input.Connection == nil {
+	if !needsConnection {
+		return
+	}
+	if cfg.Input.Connection == nil {
 		*errs = append(*errs, fmt.Errorf("input.connection is required when input.source is %q", cfg.Input.Source))
+		return
+	}
+	*errs = append(*errs, cfg.Input.Connection.Errors(cfg.Input.Dialect)...)
+}
+
+// validateIgnoredInputKeys warns about an input key the source never reads
+// (PRD §4.13): an explicit `paths` under `source: database`, or a non-empty
+// `introspect` field under `source: files`. The defaulted `paths` stays quiet.
+func validateIgnoredInputKeys(cfg *RootConfig, warnings *[]Warning) {
+	const msg = "%s is ignored under input.source: %s"
+	in := cfg.Input
+	if in.Source == SourceDatabase && in.pathsSet {
+		*warnings = append(*warnings, Warning{Message: fmt.Sprintf(msg, "input.paths", in.Source)})
+	}
+	if in.Source != SourceFiles || in.Introspect == nil {
+		return
+	}
+	for _, f := range []struct {
+		key    string
+		values []string
+	}{
+		{"input.introspect.schemas", in.Introspect.Schemas},
+		{"input.introspect.exclude_schemas", in.Introspect.ExcludeSchemas},
+		{"input.introspect.tables", in.Introspect.Tables},
+	} {
+		if len(f.values) > 0 {
+			*warnings = append(*warnings, Warning{Message: fmt.Sprintf(msg, f.key, in.Source)})
+		}
 	}
 }
 

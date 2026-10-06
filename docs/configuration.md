@@ -99,9 +99,9 @@ output:
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
 | `url` | string | — | Full connection URL. Takes precedence over the individual fields below. |
-| `host` | string | — | Required for postgres/mysql when `url` is empty. |
-| `port` | int | `5432` (pg), `3306` (mysql) | Ignored on SQLite. |
-| `user` | string | — | Required for postgres/mysql when `url` is empty. |
+| `host` | string | — | Required for postgres/mysql when `url` is empty. A value starting with `/` is a Unix socket: the socket directory on postgres, the socket file on mysql. |
+| `port` | int | `5432` (pg), `3306` (mysql) | Ignored on SQLite, and on mysql when `host` is a socket file. |
+| `user` | string | — | Required for postgres/mysql when `url` is empty. On mysql it cannot contain `:`, which the DSN has no escape for. |
 | `password` | string | — | See the environment overrides below. |
 | `database` | string | — | Database name, or the file path for SQLite. Required when `url` is empty. |
 | `ssl_mode` | string | `disable` (pg), `false` (mysql) | TLS/SSL mode. |

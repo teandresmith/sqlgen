@@ -490,8 +490,8 @@ func connString(dialect config.Dialect, c *config.ConnectionConfig) (string, err
 
 | Dialect | `url` set | Built from fields |
 |---|---|---|
-| postgres | verbatim (PRD §4.3: precedence) | `postgres://user:pass@host:port/db?sslmode=<ssl_mode, default disable>`, built with `net/url` so a password containing `@` / `:` / `/` is escaped |
-| mysql | verbatim | go-sql-driver DSN `user:pass@tcp(host:port)/db?tls=<ssl_mode, default false>` |
+| postgres | verbatim (PRD §4.3: precedence) | `postgres://user:pass@host:port/db?sslmode=<ssl_mode, default disable>`, built with `net/url` so a password containing `@` / `:` / `/` is escaped. A `host` starting with `/` is a Unix-socket directory and goes in `?host=<dir>&port=<port>` |
+| mysql | verbatim | go-sql-driver DSN `user:pass@tcp(host:port)/db?tls=<ssl_mode, default false>`. A `host` starting with `/` is the socket file and gives `unix(<file>)`, with no port. A `user` containing `:` is a config error, since the DSN cannot escape it |
 | sqlite | verbatim | `database` (file path) |
 
 A missing required field returns an error that names `input.connection.<field>`. The

@@ -4,6 +4,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/google/go-cmp/cmp"
+
 	"github.com/teandresmith/sqlgen/cmd/sqlgen/config"
 )
 
@@ -1959,6 +1961,139 @@ func TestValidatePostParse_RelationshipFKColumn(t *testing.T) {
 				return
 			}
 			assertErrContains(t, err, "ValidatePostParse()", tt.want...)
+		})
+	}
+}
+
+func TestValidatePreParse_ConnectionFields(t *testing.T) {
+	tests := []struct {
+		name          string
+		dialect       config.Dialect
+		source        config.Source
+		connection    *config.ConnectionConfig
+		wantErrFields []string
+	}{
+		{name: "postgres with no fields reports all three", dialect: config.DialectPostgres, source: config.SourceDatabase, connection: &config.ConnectionConfig{}, wantErrFields: []string{"host", "user", "database"}},
+		{name: "mysql with no fields reports all three", dialect: config.DialectMySQL, source: config.SourceDatabase, connection: &config.ConnectionConfig{}, wantErrFields: []string{"host", "user", "database"}},
+		{name: "sqlite needs only database", dialect: config.DialectSQLite, source: config.SourceDatabase, connection: &config.ConnectionConfig{}, wantErrFields: []string{"database"}},
+		{name: "postgres missing host", dialect: config.DialectPostgres, source: config.SourceBoth, connection: &config.ConnectionConfig{User: "app", Database: "app"}, wantErrFields: []string{"host"}},
+		{name: "postgres missing user", dialect: config.DialectPostgres, source: config.SourceDatabase, connection: &config.ConnectionConfig{Host: "localhost", Database: "app"}, wantErrFields: []string{"user"}},
+		{name: "mysql missing database", dialect: config.DialectMySQL, source: config.SourceBoth, connection: &config.ConnectionConfig{Host: "localhost", User: "app"}, wantErrFields: []string{"database"}},
+		{name: "port is not required", dialect: config.DialectMySQL, source: config.SourceDatabase, connection: &config.ConnectionConfig{Host: "localhost", User: "app", Database: "app"}},
+		{name: "sqlite ignores host and user", dialect: config.DialectSQLite, source: config.SourceDatabase, connection: &config.ConnectionConfig{Database: "app.db"}},
+		{name: "mysql user containing a colon", dialect: config.DialectMySQL, source: config.SourceDatabase, connection: &config.ConnectionConfig{Host: "localhost", User: "ap:p", Database: "app"}, wantErrFields: []string{"user"}},
+		{name: "mysql user containing a colon and missing host", dialect: config.DialectMySQL, source: config.SourceDatabase, connection: &config.ConnectionConfig{User: "ap:p", Database: "app"}, wantErrFields: []string{"host", "user"}},
+		{name: "mysql url skips the colon rule", dialect: config.DialectMySQL, source: config.SourceDatabase, connection: &config.ConnectionConfig{URL: "u@tcp(h)/d", User: "ap:p"}},
+		{name: "postgres user containing a colon", dialect: config.DialectPostgres, source: config.SourceDatabase, connection: &config.ConnectionConfig{Host: "localhost", User: "ap:p", Database: "app"}},
+		{name: "postgres socket host", dialect: config.DialectPostgres, source: config.SourceDatabase, connection: &config.ConnectionConfig{Host: "/var/run/postgresql", User: "app", Database: "app"}},
+		{name: "url skips the rule", dialect: config.DialectPostgres, source: config.SourceDatabase, connection: &config.ConnectionConfig{URL: "postgres://localhost/app"}},
+		{name: "files source does not read the connection", dialect: config.DialectPostgres, source: config.SourceFiles, connection: &config.ConnectionConfig{}},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg := validConfig()
+			cfg.Input.Dialect = tt.dialect
+			cfg.Input.Source = tt.source
+			cfg.Input.Connection = tt.connection
+			cfg.Output.Driver = "stdlib"
+
+			_, err := config.ValidatePreParse(cfg)
+			var got []string
+			if err != nil {
+				for line := range strings.SplitSeq(err.Error(), "\n") {
+					field, ok := strings.CutPrefix(line, "input.connection.")
+					if !ok {
+						t.Errorf("ValidatePreParse() unexpected error: %s", line)
+						continue
+					}
+					name, _, _ := strings.Cut(field, " ")
+					got = append(got, name)
+				}
+			}
+			if diff := cmp.Diff(tt.wantErrFields, got); diff != "" {
+				t.Errorf("ValidatePreParse() connection field errors mismatch (-want +got):\n%s\nerror: %v", diff, err)
+			}
+		})
+	}
+}
+
+// TestLoadConfig_SQLGENDBURLSatisfiesConnectionFields checks the env var is a
+// `url` for the required-field rule, with or without a connection block.
+func TestLoadConfig_SQLGENDBURLSatisfiesConnectionFields(t *testing.T) {
+	tests := []struct {
+		name    string
+		yaml    string
+		envURL  string
+		wantErr bool
+	}{
+		{name: "no connection block, env url set", yaml: "input:\n  source: database\n", envURL: "postgres://env/db"},
+		{name: "partial fields, env url set", yaml: "input:\n  source: database\n  connection:\n    host: localhost\n", envURL: "postgres://env/db"},
+		{name: "partial fields, env url unset", yaml: "input:\n  source: database\n  connection:\n    host: localhost\n", wantErr: true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Setenv("SQLGEN_DB_URL", tt.envURL)
+			cfg, err := config.LoadConfig(writeTestConfig(t, tt.yaml+"output:\n  dir: ./models\n"))
+			if err != nil {
+				t.Fatalf("LoadConfig() unexpected error: %v", err)
+			}
+			_, err = config.ValidatePreParse(cfg)
+			if gotErr := err != nil; gotErr != tt.wantErr {
+				t.Errorf("ValidatePreParse() error = %v, want error %v", err, tt.wantErr)
+			}
+		})
+	}
+}
+
+func TestValidatePreParse_IgnoredInputKeys(t *testing.T) {
+	const conn = "  connection:\n    url: postgres://localhost/app\n"
+	tests := []struct {
+		name  string
+		input string
+		want  []string
+	}{
+		{name: "database with explicit paths", input: "  source: database\n  paths: [./migrations]\n" + conn, want: []string{"input.paths is ignored under input.source: database"}},
+		{name: "database with explicit default paths", input: "  source: database\n  paths: [\".\"]\n" + conn, want: []string{"input.paths is ignored under input.source: database"}},
+		{name: "database with empty paths", input: "  source: database\n  paths: []\n" + conn, want: []string{"input.paths is ignored under input.source: database"}},
+		{name: "database with null paths", input: "  source: database\n  paths: ~\n" + conn, want: []string{"input.paths is ignored under input.source: database"}},
+		{name: "database with defaulted paths", input: "  source: database\n" + conn},
+		{name: "database with introspect", input: "  source: database\n  introspect:\n    tables: [users]\n" + conn},
+		{name: "files with introspect tables", input: "  source: files\n  introspect:\n    tables: [users]\n", want: []string{"input.introspect.tables is ignored under input.source: files"}},
+		{
+			name:  "files with every introspect field",
+			input: "  source: files\n  introspect:\n    schemas: [public]\n    exclude_schemas: [audit]\n    tables: [users]\n",
+			want: []string{
+				"input.introspect.schemas is ignored under input.source: files",
+				"input.introspect.exclude_schemas is ignored under input.source: files",
+				"input.introspect.tables is ignored under input.source: files",
+			},
+		},
+		{name: "files with an empty introspect block", input: "  source: files\n  introspect: {}\n"},
+		{name: "files with no introspect", input: "  source: files\n  paths: [./migrations]\n"},
+		{name: "both reads paths and introspect", input: "  source: both\n  paths: [./migrations]\n  introspect:\n    tables: [users]\n" + conn},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg, err := config.LoadConfig(writeTestConfig(t, "input:\n"+tt.input+"output:\n  dir: ./models\n"))
+			if err != nil {
+				t.Fatalf("LoadConfig() unexpected error: %v", err)
+			}
+			warnings, err := config.ValidatePreParse(cfg)
+			if err != nil {
+				t.Fatalf("ValidatePreParse() unexpected error: %v", err)
+			}
+			var got []string
+			for _, w := range warnings {
+				if strings.Contains(w.Message, "is ignored under input.source") {
+					got = append(got, w.Message)
+				}
+			}
+			if diff := cmp.Diff(tt.want, got); diff != "" {
+				t.Errorf("ValidatePreParse() ignored-key warnings mismatch (-want +got):\n%s", diff)
+			}
 		})
 	}
 }

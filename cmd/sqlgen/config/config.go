@@ -250,6 +250,10 @@ type InputConfig struct {
 	ParseMode  ParseMode         `yaml:"parse_mode"`
 	Connection *ConnectionConfig `yaml:"connection"`
 	Introspect *IntrospectConfig `yaml:"introspect"`
+
+	// pathsSet records that the YAML names `paths`, so an explicit ["."] can be
+	// told from the default applyInputDefaults fills in.
+	pathsSet bool
 }
 
 // ConnectionConfig holds database connection parameters.
@@ -261,6 +265,37 @@ type ConnectionConfig struct {
 	Password string `yaml:"password"` //nolint:gosec // config field, not a hardcoded credential
 	Database string `yaml:"database"`
 	SSLMode  string `yaml:"ssl_mode"`
+}
+
+// Errors returns every PRD §4.3 problem with the fields sqlgen builds a
+// connection string from, in config order. With `url` set nothing is built,
+// so there is nothing to check.
+func (c *ConnectionConfig) Errors(dialect Dialect) []error {
+	if c == nil {
+		c = &ConnectionConfig{}
+	}
+	if c.URL != "" {
+		return nil
+	}
+	const required = "input.connection.%s is required on %s when input.connection.url and SQLGEN_DB_URL are empty"
+	var errs []error
+	if dialect != DialectSQLite {
+		if c.Host == "" {
+			errs = append(errs, fmt.Errorf(required, "host", dialect))
+		}
+		if c.User == "" {
+			errs = append(errs, fmt.Errorf(required, "user", dialect))
+		}
+	}
+	// The go-sql-driver DSN has no escape for the user: it splits user from
+	// password at the first ':', and the server would see a different user.
+	if dialect == DialectMySQL && strings.Contains(c.User, ":") {
+		errs = append(errs, errors.New("input.connection.user cannot contain ':' on mysql: the driver splits the user from the password at the first ':'"))
+	}
+	if c.Database == "" {
+		errs = append(errs, fmt.Errorf(required, "database", dialect))
+	}
+	return errs
 }
 
 // IntrospectConfig controls schema/table filtering for database introspection.
@@ -1610,6 +1645,16 @@ func decodeConfig(data []byte) (*RootConfig, error) {
 	if err := dec.Decode(&cfg); err != nil && !errors.Is(err, io.EOF) {
 		return nil, fmt.Errorf("parsing config: %w", err)
 	}
+
+	var present struct {
+		Input struct {
+			Paths yaml.Node `yaml:"paths"`
+		} `yaml:"input"`
+	}
+	if err := yaml.Unmarshal(data, &present); err != nil {
+		return nil, fmt.Errorf("parsing config: %w", err)
+	}
+	cfg.Input.pathsSet = present.Input.Paths.Kind != 0
 	return &cfg, nil
 }
 

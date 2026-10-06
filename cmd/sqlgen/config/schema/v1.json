@@ -111,7 +111,7 @@
         },
         "paths": {
           "type": "array",
-          "description": "SQL files or directories to parse, when source is `files` or `both`.",
+          "description": "SQL files or directories to parse, when source is `files` or `both`. Not read under `database`, and setting it there warns.",
           "items": { "type": "string" }
         },
         "views": {
@@ -135,17 +135,17 @@
       "additionalProperties": false,
       "properties": {
         "url": { "type": "string", "description": "Full connection URL. Takes precedence over the individual fields." },
-        "host": { "type": "string", "description": "Required for postgres/mysql when `url` is empty." },
-        "port": { "type": "integer", "description": "Required for postgres/mysql when `url` is empty." },
-        "user": { "type": "string", "description": "Required for postgres/mysql when `url` is empty." },
+        "host": { "type": "string", "description": "Required for postgres/mysql when `url` is empty. A value starting with `/` is a Unix socket: the socket directory on postgres, the socket file on mysql." },
+        "port": { "type": "integer", "description": "Defaults to 5432 on postgres, 3306 on mysql. Ignored on SQLite, and on mysql when `host` is a socket file." },
+        "user": { "type": "string", "description": "Required for postgres/mysql when `url` is empty. On mysql it cannot contain `:`, which the DSN has no escape for." },
         "password": { "type": "string", "description": "Prefer SQLGEN_DB_PASSWORD over committing this." },
-        "database": { "type": "string", "description": "Database name, or the file path for SQLite." },
+        "database": { "type": "string", "description": "Database name, or the file path for SQLite. Required when `url` is empty." },
         "ssl_mode": { "type": "string", "description": "TLS/SSL mode. Defaults to `disable` on postgres, `false` on mysql." }
       }
     },
     "introspect": {
       "type": "object",
-      "description": "Schema and table filtering applied during database introspection.",
+      "description": "Schema and table filtering applied during database introspection. Has no effect under source `files`, and setting it there warns.",
       "additionalProperties": false,
       "properties": {
         "schemas": { "type": "array", "description": "Schemas to include. Empty means all non-system schemas.", "items": { "type": "string" } },
