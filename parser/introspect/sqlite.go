@@ -15,6 +15,13 @@ import (
 )
 
 // SQLiteIntrospector discovers schema elements from a live SQLite database.
+//
+// The PRAGMAs give the catalog facts: columns, types, nullability, defaults,
+// primary-key membership and order, foreign keys, indexes and table flags.
+// SQLite keeps no constraint names, CHECK expressions or generated-column
+// expressions apart from each table's stored CREATE TABLE, so those come
+// from reading that text with the file parser (PRD §6.3). A table the file
+// parser cannot read is an error, as the same DDL is under source: files.
 type SQLiteIntrospector struct {
 	db *sql.DB
 }
@@ -61,25 +68,34 @@ func (si *SQLiteIntrospector) Introspect(ctx context.Context, connString string,
 	return nil
 }
 
+// sqliteTableRef is one row of PRAGMA table_list, with the table's stored
+// CREATE TABLE.
+type sqliteTableRef struct {
+	name         string
+	virtual      bool
+	withoutRowID bool
+	strict       bool
+	ddl          string
+}
+
 func (si *SQLiteIntrospector) introspectTables(ctx context.Context, schema *parser.Schema, opts IntrospectionOptions) error {
+	// A virtual table's shadow tables (type 'shadow') are its storage, not
+	// part of the schema.
 	rows, err := si.db.QueryContext(ctx, `
-		SELECT name, COALESCE(sql, '')
-		FROM sqlite_master
-		WHERE type = 'table' AND name NOT LIKE 'sqlite_%'
-		ORDER BY name`)
+		SELECT tl.name, tl.type = 'virtual', tl.wr, tl.strict, COALESCE(m.sql, '')
+		FROM pragma_table_list AS tl
+		LEFT JOIN sqlite_master AS m ON m.type = 'table' AND m.name = tl.name
+		WHERE tl.schema = 'main' AND tl.type IN ('table', 'virtual') AND tl.name NOT LIKE 'sqlite_%'
+		ORDER BY tl.name`)
 	if err != nil {
 		return fmt.Errorf("introspect sqlite tables: %w", err)
 	}
 	defer rows.Close() //nolint:errcheck // rows.Close error is not actionable after reading
 
-	type tableRef struct {
-		name string
-		ddl  string
-	}
-	var tables []tableRef
+	var tables []sqliteTableRef
 	for rows.Next() {
-		var ref tableRef
-		if err := rows.Scan(&ref.name, &ref.ddl); err != nil {
+		var ref sqliteTableRef
+		if err := rows.Scan(&ref.name, &ref.virtual, &ref.withoutRowID, &ref.strict, &ref.ddl); err != nil {
 			return fmt.Errorf("introspect sqlite tables: scanning: %w", err)
 		}
 		if !tableAllowed(ref.name, opts) {
@@ -92,28 +108,99 @@ func (si *SQLiteIntrospector) introspectTables(ctx context.Context, schema *pars
 	}
 
 	for _, ref := range tables {
-		table := parser.Table{
-			Name: ref.name,
+		if ref.virtual {
+			schema.Warnings = append(schema.Warnings, sqlite.VirtualTableWarning(ref.name))
+			continue
 		}
-
-		if err := si.introspectColumns(ctx, &table, ref.ddl); err != nil {
+		table, err := si.introspectTable(ctx, ref)
+		if err != nil {
 			return err
 		}
-		if err := si.introspectForeignKeys(ctx, &table); err != nil {
-			return err
-		}
-		if err := si.introspectUniqueConstraints(ctx, &table); err != nil {
-			return err
-		}
-		if err := si.introspectNonUniqueIndexes(ctx, &table); err != nil {
-			return err
-		}
-		parser.CanonicalizeConstraints(&table, "sqlite")
-
 		schema.Tables = append(schema.Tables, table)
 	}
 
 	return nil
+}
+
+func (si *SQLiteIntrospector) introspectTable(ctx context.Context, ref sqliteTableRef) (parser.Table, error) {
+	declared, err := parseStoredTable(ref.ddl)
+	if err != nil {
+		return parser.Table{}, fmt.Errorf("introspect sqlite table %s: %w", ref.name, err)
+	}
+	table := parser.Table{
+		Name:         ref.name,
+		WithoutRowID: ref.withoutRowID,
+		Strict:       ref.strict,
+	}
+	indexes, err := si.indexList(ctx, table.Name)
+	if err != nil {
+		return parser.Table{}, err
+	}
+	if err := si.introspectColumns(ctx, &table, declared, indexes); err != nil {
+		return parser.Table{}, err
+	}
+	if err := si.introspectForeignKeys(ctx, &table); err != nil {
+		return parser.Table{}, err
+	}
+	if err := si.introspectIndexes(ctx, &table, indexes); err != nil {
+		return parser.Table{}, err
+	}
+	for _, c := range declared.Constraints {
+		if c.Type == parser.Check {
+			table.Constraints = append(table.Constraints, c)
+		}
+	}
+	if err := nameDeclaredConstraints(&table, declared); err != nil {
+		return parser.Table{}, fmt.Errorf("introspect sqlite table %s: %w", ref.name, err)
+	}
+	parser.CanonicalizeConstraints(&table, "sqlite")
+	return table, nil
+}
+
+// parseStoredTable reads a table's stored CREATE TABLE with the file parser.
+func parseStoredTable(ddl string) (*parser.Table, error) {
+	p := sqlite.New()
+	if err := p.Parse("sqlite_master", []byte(ddl)); err != nil {
+		return nil, fmt.Errorf("parsing stored CREATE TABLE: %w", err)
+	}
+	tables := p.Schema().Tables
+	if len(tables) != 1 {
+		return nil, fmt.Errorf("stored CREATE TABLE yields %d tables, want 1", len(tables))
+	}
+	return &tables[0], nil
+}
+
+// nameDeclaredConstraints gives each unnamed primary key, foreign key and
+// UNIQUE constraint read from the PRAGMAs the name its CREATE TABLE declares
+// for it, if any. Every such constraint must be in the CREATE TABLE; one that
+// is not means the parser and the catalog disagree.
+func nameDeclaredConstraints(table, declared *parser.Table) error {
+	used := make([]bool, len(declared.Constraints))
+	for i := range table.Constraints {
+		c := &table.Constraints[i]
+		if c.Name != "" || c.Type == parser.Check || c.Type == parser.Index {
+			continue
+		}
+		j := -1
+		for k, d := range declared.Constraints {
+			if !used[k] && d.Type == c.Type && sameColumns(d.Columns, c.Columns) && strings.EqualFold(d.ReferenceTable, c.ReferenceTable) {
+				j = k
+				break
+			}
+		}
+		if j < 0 {
+			return fmt.Errorf("stored CREATE TABLE declares no %s over (%s)", c.Type, strings.Join(c.Columns, ", "))
+		}
+		used[j] = true
+		c.Name = declared.Constraints[j].Name
+	}
+	return nil
+}
+
+// sameColumns reports whether a and b name the same columns in the same
+// order. SQLite column names are case-insensitive.
+func sameColumns(a, b []string) bool {
+	return slices.EqualFunc(a, b, strings.EqualFold)
 }
 
 func (si *SQLiteIntrospector) introspectViews(ctx context.Context, schema *parser.Schema, opts IntrospectionOptions) error {
@@ -168,8 +255,7 @@ func (si *SQLiteIntrospector) introspectViews(ctx context.Context, schema *parse
 }
 
 func (si *SQLiteIntrospector) introspectViewColumns(ctx context.Context, view *parser.View) error {
-	rows, err := si.db.QueryContext(ctx,
-		fmt.Sprintf("PRAGMA table_info(%q)", view.Name))
+	rows, err := si.db.QueryContext(ctx, "PRAGMA table_info("+quoteSQLiteIdent(view.Name)+")")
 	if err != nil {
 		return fmt.Errorf("introspect sqlite view columns %s: %w", view.Name, err)
 	}
@@ -190,7 +276,7 @@ func (si *SQLiteIntrospector) introspectViewColumns(ctx context.Context, view *p
 
 		col := parser.Column{
 			Name:     name,
-			Type:     normalizeSQLiteType(typeName),
+			Type:     sqlite.NormalizeType(typeName),
 			Nullable: notNull == 0,
 		}
 
@@ -203,19 +289,16 @@ func (si *SQLiteIntrospector) introspectViewColumns(ctx context.Context, view *p
 }
 
 // introspectColumns reads table's columns from PRAGMA table_xinfo, which,
-// unlike table_info, lists generated columns. ddl is the table's stored
+// unlike table_info, lists generated columns. declared is the table's stored
 // CREATE TABLE, the only place SQLite keeps a generated column's expression.
-func (si *SQLiteIntrospector) introspectColumns(ctx context.Context, table *parser.Table, ddl string) error {
-	rows, err := si.db.QueryContext(ctx,
-		fmt.Sprintf("PRAGMA table_xinfo(%q)", table.Name))
+func (si *SQLiteIntrospector) introspectColumns(ctx context.Context, table *parser.Table, declared *parser.Table, indexes []sqliteIndex) error {
+	rows, err := si.db.QueryContext(ctx, "PRAGMA table_xinfo("+quoteSQLiteIdent(table.Name)+")")
 	if err != nil {
 		return fmt.Errorf("introspect sqlite columns %s: %w", table.Name, err)
 	}
 	defer rows.Close() //nolint:errcheck // rows.Close error is not actionable after reading
 
-	// Track PK columns for composite PK detection.
 	var pkCols []pkCol
-
 	for rows.Next() {
 		var (
 			cid       int
@@ -232,7 +315,7 @@ func (si *SQLiteIntrospector) introspectColumns(ctx context.Context, table *pars
 
 		col := parser.Column{
 			Name:     name,
-			Type:     normalizeSQLiteType(typeName),
+			Type:     sqlite.NormalizeType(typeName),
 			Nullable: notNull == 0,
 		}
 
@@ -249,7 +332,7 @@ func (si *SQLiteIntrospector) introspectColumns(ctx context.Context, table *pars
 		if pk > 0 {
 			col.PrimaryKey = true
 			col.Nullable = false
-			pkCols = append(pkCols, pkCol{name: name, order: pk, colType: col.Type})
+			pkCols = append(pkCols, pkCol{name: name, order: pk})
 		}
 
 		table.Columns = append(table.Columns, col)
@@ -258,28 +341,29 @@ func (si *SQLiteIntrospector) introspectColumns(ctx context.Context, table *pars
 		return fmt.Errorf("introspect sqlite columns %s: iterating: %w", table.Name, err)
 	}
 
-	if err := sqliteGeneratedExprs(table, ddl); err != nil {
+	if err := sqliteGeneratedExprs(table, declared); err != nil {
 		return fmt.Errorf("introspect sqlite columns %s: %w", table.Name, err)
 	}
 
-	// INTEGER PRIMARY KEY is auto-increment (rowid alias) — single PK column only.
-	if len(pkCols) == 1 && pkCols[0].colType == "integer" {
-		if col := parser.ColumnByName(table, pkCols[0].name); col != nil {
-			col.AutoIncrement = true
-		}
+	if len(pkCols) == 0 {
+		return nil
 	}
-
-	// Add composite PK as a table-level constraint if >1 PK column.
-	if len(pkCols) > 1 {
-		constraint := parser.Constraint{
-			Type: parser.PrimaryKey,
-		}
-		for _, pc := range pkCols {
-			constraint.Columns = append(constraint.Columns, pc.name)
-		}
-		table.Constraints = append(table.Constraints, constraint)
+	// pk is the column's position in the key, which can differ from its
+	// position in the table: PRIMARY KEY (b, a).
+	slices.SortFunc(pkCols, func(a, b pkCol) int { return a.order - b.order })
+	constraint := parser.Constraint{Type: parser.PrimaryKey}
+	for _, pc := range pkCols {
+		constraint.Columns = append(constraint.Columns, pc.name)
 	}
+	table.Constraints = append(table.Constraints, constraint)
 
+	// A single-column primary key with no index of its own is the rowid
+	// alias, the only key SQLite fills in. INT, DESC and WITHOUT ROWID keys
+	// all get an index.
+	hasKeyIndex := slices.ContainsFunc(indexes, func(idx sqliteIndex) bool { return idx.origin == "pk" })
+	if len(pkCols) == 1 && !hasKeyIndex {
+		parser.ColumnByName(table, pkCols[0].name).AutoIncrement = true
+	}
 	return nil
 }
 
@@ -300,61 +384,50 @@ func sqliteGeneratedStorage(hidden int) (storage string, ok bool) {
 }
 
 // sqliteGeneratedExprs sets GeneratedExpr on table's generated columns from
-// its stored CREATE TABLE, parsed by the SQLite file parser so the text
-// matches the files path. A table without one is not parsed.
-func sqliteGeneratedExprs(table *parser.Table, ddl string) error {
-	if !slices.ContainsFunc(table.Columns, func(c parser.Column) bool { return c.GeneratedStorage != "" }) {
-		return nil
-	}
-	p := sqlite.New()
-	if err := p.Parse("sqlite_master", []byte(ddl)); err != nil {
-		return fmt.Errorf("parsing stored CREATE TABLE: %w", err)
-	}
-	parsed := p.Schema().Tables
-	if len(parsed) != 1 {
-		return fmt.Errorf("stored CREATE TABLE yields %d tables, want 1", len(parsed))
-	}
+// declared, its stored CREATE TABLE as the file parser reads it, so the text
+// matches the files path.
+func sqliteGeneratedExprs(table, declared *parser.Table) error {
 	for i := range table.Columns {
 		col := &table.Columns[i]
 		if col.GeneratedStorage == "" {
 			continue
 		}
-		pc := parser.ColumnByName(&parsed[0], col.Name)
-		if pc == nil || pc.GeneratedExpr == "" {
+		dc := parser.ColumnByName(declared, col.Name)
+		if dc == nil || dc.GeneratedExpr == "" {
 			return fmt.Errorf("stored CREATE TABLE has no expression for generated column %s", col.Name)
 		}
-		col.GeneratedExpr = pc.GeneratedExpr
+		col.GeneratedExpr = dc.GeneratedExpr
 	}
 	return nil
 }
 
 type pkCol struct {
-	name    string
-	order   int
-	colType string
+	name  string
+	order int
+}
+
+// sqliteFKRow is one row of PRAGMA foreign_key_list: column seq of foreign
+// key id. to is NULL for REFERENCES t with no column list, which reading the
+// stored CREATE TABLE rejects before foreign keys are read (PRD §6.3).
+type sqliteFKRow struct {
+	id       int
+	seq      int
+	refTable string
+	from     string
+	to       sql.NullString
 }
 
 func (si *SQLiteIntrospector) introspectForeignKeys(ctx context.Context, table *parser.Table) error {
-	rows, err := si.db.QueryContext(ctx,
-		fmt.Sprintf("PRAGMA foreign_key_list(%q)", table.Name))
+	rows, err := si.db.QueryContext(ctx, "PRAGMA foreign_key_list("+quoteSQLiteIdent(table.Name)+")")
 	if err != nil {
 		return fmt.Errorf("introspect sqlite foreign keys %s: %w", table.Name, err)
 	}
 	defer rows.Close() //nolint:errcheck // rows.Close error is not actionable after reading
 
-	// Group by FK id for composite FKs.
-	type fkRow struct {
-		id       int
-		seq      int
-		refTable string
-		from     string
-		to       string
-	}
-	var fkRows []fkRow
-
+	var fkRows []sqliteFKRow
 	for rows.Next() {
 		var (
-			r         fkRow
+			r         sqliteFKRow
 			onUpdate  string
 			onDelete  string
 			matchRule string
@@ -368,10 +441,9 @@ func (si *SQLiteIntrospector) introspectForeignKeys(ctx context.Context, table *
 		return fmt.Errorf("introspect sqlite foreign keys %s: iterating: %w", table.Name, err)
 	}
 
-	// Group rows by FK id.
+	// Group rows by FK id for composite FKs.
 	fks := make(map[int]*parser.Constraint)
 	var order []int
-
 	for _, r := range fkRows {
 		c, ok := fks[r.id]
 		if !ok {
@@ -383,7 +455,7 @@ func (si *SQLiteIntrospector) introspectForeignKeys(ctx context.Context, table *
 			order = append(order, r.id)
 		}
 		c.Columns = append(c.Columns, r.from)
-		c.ReferenceColumns = append(c.ReferenceColumns, r.to)
+		c.ReferenceColumns = append(c.ReferenceColumns, r.to.String)
 	}
 
 	for _, id := range order {
@@ -403,138 +475,75 @@ func (si *SQLiteIntrospector) introspectForeignKeys(ctx context.Context, table *
 	return nil
 }
 
-func (si *SQLiteIntrospector) introspectUniqueConstraints(ctx context.Context, table *parser.Table) error {
-	idxRows, err := si.db.QueryContext(ctx,
-		fmt.Sprintf("PRAGMA index_list(%q)", table.Name))
-	if err != nil {
-		return fmt.Errorf("introspect sqlite indexes %s: %w", table.Name, err)
-	}
-	defer idxRows.Close() //nolint:errcheck // rows.Close error is not actionable after reading
-
-	type idxRef struct {
-		name    string
-		unique  bool
-		partial bool
-	}
-	var indexes []idxRef
-
-	for idxRows.Next() {
-		var (
-			seq     int
-			name    string
-			unique  int
-			origin  string
-			partial int
-		)
-		if err := idxRows.Scan(&seq, &name, &unique, &origin, &partial); err != nil {
-			return fmt.Errorf("introspect sqlite indexes %s: scanning: %w", table.Name, err)
-		}
-		if unique == 1 {
-			indexes = append(indexes, idxRef{name: name, unique: true, partial: partial == 1})
-		}
-	}
-	if err := idxRows.Err(); err != nil {
-		return fmt.Errorf("introspect sqlite indexes %s: iterating: %w", table.Name, err)
-	}
-
-	for _, idx := range indexes {
-		cols, err := si.introspectIndexColumns(ctx, idx.name)
-		if err != nil {
-			return err
-		}
-		var where string
-		if idx.partial {
-			w, err := si.indexPartialWhere(ctx, idx.name)
-			if err != nil {
-				return err
-			}
-			where = w
-		}
-		constraint := parser.Constraint{
-			Name:    idx.name,
-			Type:    parser.Unique,
-			Columns: cols,
-			Method:  "btree", // SQLite indexes are always btree
-			Where:   where,
-		}
-		table.Constraints = append(table.Constraints, constraint)
-
-		// Route through ApplyConstraintToColumns so the partial-UNIQUE gate
-		// keeps col.Unique = false for partial unique indexes.
-		parser.ApplyConstraintToColumns(table, constraint)
-	}
-
-	return nil
+// sqliteIndex is one row of PRAGMA index_list. origin is "pk" for the
+// primary key's index, "u" for a UNIQUE constraint's and "c" for CREATE INDEX.
+type sqliteIndex struct {
+	name    string
+	unique  bool
+	origin  string
+	partial bool
 }
 
-// introspectNonUniqueIndexes emits parser.Index constraints for every
-// non-unique index on the table. The unique branch lives in
-// introspectUniqueConstraints; PRAGMA index_list reports non-unique indexes
-// with unique == 0 and origin == "c" (created by an explicit CREATE INDEX) —
-// the only way a non-unique index enters SQLite. PK / UNIQUE auto-indexes
-// (origin "pk" / "u") are always unique and handled elsewhere, so they never
-// reach this path. Partial non-unique indexes are legal in SQLite, so the WHERE
-// predicate round-trips via indexPartialWhere (PRD §30.7).
-func (si *SQLiteIntrospector) introspectNonUniqueIndexes(ctx context.Context, table *parser.Table) error {
-	idxRows, err := si.db.QueryContext(ctx,
-		fmt.Sprintf("PRAGMA index_list(%q)", table.Name))
+func (si *SQLiteIntrospector) indexList(ctx context.Context, table string) ([]sqliteIndex, error) {
+	rows, err := si.db.QueryContext(ctx, "PRAGMA index_list("+quoteSQLiteIdent(table)+")")
 	if err != nil {
-		return fmt.Errorf("introspect sqlite non-unique indexes %s: %w", table.Name, err)
+		return nil, fmt.Errorf("introspect sqlite indexes %s: %w", table, err)
 	}
-	defer idxRows.Close() //nolint:errcheck // rows.Close error is not actionable after reading
+	defer rows.Close() //nolint:errcheck // rows.Close error is not actionable after reading
 
-	type idxRef struct {
-		name    string
-		partial bool
-	}
-	var indexes []idxRef
-
-	for idxRows.Next() {
+	var indexes []sqliteIndex
+	for rows.Next() {
 		var (
+			idx     sqliteIndex
 			seq     int
-			name    string
 			unique  int
-			origin  string
 			partial int
 		)
-		if err := idxRows.Scan(&seq, &name, &unique, &origin, &partial); err != nil {
-			return fmt.Errorf("introspect sqlite non-unique indexes %s: scanning: %w", table.Name, err)
+		if err := rows.Scan(&seq, &idx.name, &unique, &idx.origin, &partial); err != nil {
+			return nil, fmt.Errorf("introspect sqlite indexes %s: scanning: %w", table, err)
 		}
-		if unique == 0 && origin == "c" {
-			indexes = append(indexes, idxRef{name: name, partial: partial == 1})
-		}
+		idx.unique, idx.partial = unique == 1, partial == 1
+		indexes = append(indexes, idx)
 	}
-	if err := idxRows.Err(); err != nil {
-		return fmt.Errorf("introspect sqlite non-unique indexes %s: iterating: %w", table.Name, err)
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("introspect sqlite indexes %s: iterating: %w", table, err)
 	}
+	return indexes, nil
+}
 
+// introspectIndexes adds a constraint for each index on table except the
+// primary key's. A UNIQUE constraint's index carries an auto-index name, so
+// it is left unnamed here for nameDeclaredConstraints; a CREATE [UNIQUE]
+// INDEX keeps its own name. SQLite indexes are always btree, which the parser
+// records for CREATE INDEX only. A non-unique expression-only index projects
+// no columns and is skipped, matching the PostgreSQL sweep. Partial indexes
+// keep their WHERE predicate (PRD §30.7).
+func (si *SQLiteIntrospector) introspectIndexes(ctx context.Context, table *parser.Table, indexes []sqliteIndex) error {
 	for _, idx := range indexes {
+		if idx.origin == "pk" {
+			continue
+		}
 		cols, err := si.introspectIndexColumns(ctx, idx.name)
 		if err != nil {
 			return err
 		}
-		// Expression-only indexes project no columns — skip them to match the
-		// PostgreSQL standalone-index sweep.
-		if len(cols) == 0 {
+		c := parser.Constraint{Type: parser.Unique, Columns: cols}
+		switch {
+		case idx.origin == "u":
+		case idx.unique:
+			c.Name, c.Method = idx.name, "btree"
+		case len(cols) == 0:
 			continue
+		default:
+			c.Type, c.Name, c.Method = parser.Index, idx.name, "btree"
 		}
-		var where string
 		if idx.partial {
-			w, err := si.indexPartialWhere(ctx, idx.name)
-			if err != nil {
+			if c.Where, err = si.indexPartialWhere(ctx, idx.name); err != nil {
 				return err
 			}
-			where = w
 		}
-		table.Constraints = append(table.Constraints, parser.Constraint{
-			Name:    idx.name,
-			Type:    parser.Index,
-			Columns: cols,
-			Method:  "btree", // SQLite indexes are always btree
-			Where:   where,
-		})
+		table.Constraints = append(table.Constraints, c)
 	}
-
 	return nil
 }
 
@@ -628,8 +637,7 @@ func isSQLiteSeparator(b byte) bool {
 }
 
 func (si *SQLiteIntrospector) introspectIndexColumns(ctx context.Context, indexName string) ([]string, error) {
-	rows, err := si.db.QueryContext(ctx,
-		fmt.Sprintf("PRAGMA index_info(%q)", indexName))
+	rows, err := si.db.QueryContext(ctx, "PRAGMA index_info("+quoteSQLiteIdent(indexName)+")")
 	if err != nil {
 		return nil, fmt.Errorf("introspect sqlite index info %s: %w", indexName, err)
 	}
@@ -657,11 +665,8 @@ func (si *SQLiteIntrospector) introspectIndexColumns(ctx context.Context, indexN
 	return cols, nil
 }
 
-// normalizeSQLiteType normalizes a SQLite type name to match the parser format.
-// The parser lowercases all types and maps unrecognized types to "blob".
-func normalizeSQLiteType(typeName string) string {
-	if typeName == "" {
-		return "blob"
-	}
-	return strings.ToLower(typeName)
+// quoteSQLiteIdent quotes name as a SQL identifier, doubling any embedded
+// double quote.
+func quoteSQLiteIdent(name string) string {
+	return `"` + strings.ReplaceAll(name, `"`, `""`) + `"`
 }

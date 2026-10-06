@@ -224,10 +224,10 @@ func TestIntegerPrimaryKeyAutoIncrement(t *testing.T) {
 // really named desc still parses.
 func TestPrimaryKeySortOrder(t *testing.T) {
 	tests := []struct {
-		name       string
-		sql        string
-		wantCols   []string
-		wantUnique string // a column that must carry the UNIQUE
+		name     string
+		sql      string
+		wantCols []string
+		wantFK   string // a column that must carry the foreign key
 	}{
 		{
 			name:     "DESC",
@@ -256,10 +256,10 @@ func TestPrimaryKeySortOrder(t *testing.T) {
 			wantCols: []string{"id", "v"},
 		},
 		{
-			name:       "constraints after the sort order stay on the key column",
-			sql:        `CREATE TABLE t (id INTEGER PRIMARY KEY DESC UNIQUE, v TEXT);`,
-			wantCols:   []string{"id", "v"},
-			wantUnique: "id",
+			name:     "constraints after the sort order stay on the key column",
+			sql:      `CREATE TABLE t (id INTEGER PRIMARY KEY DESC REFERENCES p(id), v TEXT);`,
+			wantCols: []string{"id", "v"},
+			wantFK:   "id",
 		},
 		{
 			name:     "column named desc",
@@ -287,9 +287,9 @@ func TestPrimaryKeySortOrder(t *testing.T) {
 			if diff := cmp.Diff(tt.wantCols, got); diff != "" {
 				t.Errorf("columns mismatch (-want +got):\n%s", diff)
 			}
-			if tt.wantUnique != "" {
-				if c := parser.ColumnByName(&table, tt.wantUnique); c == nil || !c.Unique {
-					t.Errorf("column %s: want Unique, got %+v", tt.wantUnique, c)
+			if tt.wantFK != "" {
+				if c := parser.ColumnByName(&table, tt.wantFK); c == nil || c.FKReference == nil {
+					t.Errorf("column %s: want FKReference, got %+v", tt.wantFK, c)
 				}
 			}
 		})
@@ -346,6 +346,55 @@ func TestIntegerPrimaryKeyWithoutRowID(t *testing.T) {
 	if cols2["id"].AutoIncrement {
 		t.Error("INTEGER PRIMARY KEY in WITHOUT ROWID table should have AutoIncrement=false")
 	}
+}
+
+// Only a primary key that aliases the rowid gets an automatic value, and it is
+// the only one SQLite builds no index for, so a UNIQUE on it is kept.
+func TestRowIDAlias(t *testing.T) {
+	tests := []struct {
+		name          string
+		sql           string
+		wantAutoInc   bool
+		wantUniqueCnt int
+	}{
+		{name: "column key", sql: `CREATE TABLE t (id INTEGER PRIMARY KEY, v TEXT);`, wantAutoInc: true},
+		{name: "lower-case type", sql: `CREATE TABLE t (id integer primary key, v TEXT);`, wantAutoInc: true},
+		{name: "ascending key", sql: `CREATE TABLE t (id INTEGER PRIMARY KEY ASC, v TEXT);`, wantAutoInc: true},
+		{name: "AUTOINCREMENT", sql: `CREATE TABLE t (id INTEGER PRIMARY KEY AUTOINCREMENT, v TEXT);`, wantAutoInc: true},
+		{name: "table-level key", sql: `CREATE TABLE t (id INTEGER, v TEXT, PRIMARY KEY (id));`, wantAutoInc: true},
+		{name: "descending key", sql: `CREATE TABLE t (id INTEGER PRIMARY KEY DESC, v TEXT);`},
+		{name: "WITHOUT ROWID", sql: `CREATE TABLE t (id INTEGER PRIMARY KEY, v TEXT) WITHOUT ROWID;`},
+		{name: "INT is not INTEGER", sql: `CREATE TABLE t (id INT PRIMARY KEY, v TEXT);`},
+		{name: "composite key", sql: `CREATE TABLE t (id INTEGER, v INTEGER, PRIMARY KEY (id, v));`},
+		{name: "UNIQUE on a rowid alias is kept", sql: `CREATE TABLE t (id INTEGER PRIMARY KEY UNIQUE, v TEXT);`, wantAutoInc: true, wantUniqueCnt: 1},
+		{name: "UNIQUE on a descending key is dropped", sql: `CREATE TABLE t (id INTEGER PRIMARY KEY DESC UNIQUE, v TEXT);`},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			p := sqlite.New()
+			if err := p.Parse("test.sql", []byte(tt.sql)); err != nil {
+				t.Fatalf("Parse() error: %v", err)
+			}
+			table := p.Schema().Tables[0]
+			if got := parser.ColumnByName(&table, "id").AutoIncrement; got != tt.wantAutoInc {
+				t.Errorf("id AutoIncrement = %t, want %t", got, tt.wantAutoInc)
+			}
+			if got := len(filterUniques(table.Constraints)); got != tt.wantUniqueCnt {
+				t.Errorf("UNIQUE constraints = %d, want %d: %+v", got, tt.wantUniqueCnt, table.Constraints)
+			}
+		})
+	}
+}
+
+func filterUniques(cs []parser.Constraint) []parser.Constraint {
+	var out []parser.Constraint
+	for _, c := range cs {
+		if c.Type == parser.Unique {
+			out = append(out, c)
+		}
+	}
+	return out
 }
 
 func TestGeneratedColumnStored(t *testing.T) {
@@ -979,6 +1028,109 @@ CREATE VIEW active_users AS SELECT id, name FROM users WHERE id > 0;`
 	}
 	if !foundViewWarning {
 		t.Errorf("expected warning mentioning CREATE VIEW active_users, got %v", schema.Warnings)
+	}
+}
+
+func TestCreateVirtualTableSkipped(t *testing.T) {
+	sqlStr := `CREATE TABLE docs (id INTEGER PRIMARY KEY, body TEXT);
+CREATE VIRTUAL TABLE docs_fts USING fts5(body);
+CREATE VIRTUAL TABLE "Boxes" USING rtree(id, minx, maxx);`
+
+	p := sqlite.New()
+	if err := p.Parse("test.sql", []byte(sqlStr)); err != nil {
+		t.Fatalf("Parse() error: %v", err)
+	}
+
+	schema := p.Schema()
+	if len(schema.Tables) != 1 || schema.Tables[0].Name != "docs" {
+		t.Errorf("tables = %+v, want only docs", schema.Tables)
+	}
+	wantWarnings := []string{
+		"CREATE VIRTUAL TABLE docs_fts skipped — virtual tables are not generated",
+		"CREATE VIRTUAL TABLE Boxes skipped — virtual tables are not generated",
+	}
+	if diff := cmp.Diff(wantWarnings, schema.Warnings); diff != "" {
+		t.Errorf("warnings mismatch (-want +got):\n%s", diff)
+	}
+}
+
+// A collation on an indexed column is not part of the column's name, which
+// is the name the catalog reports for the index.
+func TestIndexedColumnCollation(t *testing.T) {
+	sqlStr := `CREATE TABLE t (email TEXT, name TEXT, UNIQUE (email COLLATE NOCASE));
+CREATE INDEX t_name ON t (name COLLATE NOCASE DESC);`
+
+	p := sqlite.New()
+	if err := p.Parse("test.sql", []byte(sqlStr)); err != nil {
+		t.Fatalf("Parse() error: %v", err)
+	}
+
+	want := []parser.Constraint{
+		{Type: parser.Unique, Columns: []string{"email"}},
+		{Name: "t_name", Type: parser.Index, Columns: []string{"name"}, Method: "btree"},
+	}
+	if diff := cmp.Diff(want, p.Schema().Tables[0].Constraints); diff != "" {
+		t.Errorf("constraints mismatch (-want +got):\n%s", diff)
+	}
+}
+
+// SQLite builds one index per set of columns and collations, so a UNIQUE is a
+// duplicate only when its columns are indexed under the same collations. The
+// sort order does not count. Each want is the number of UNIQUE indexes SQLite
+// builds for the table.
+func TestUniqueDuplicatesFollowCollation(t *testing.T) {
+	tests := []struct {
+		name        string
+		sql         string
+		wantUniques int
+	}{
+		{name: "explicit collation differs", sql: `CREATE TABLE t (a TEXT, UNIQUE (a), UNIQUE (a COLLATE NOCASE));`, wantUniques: 2},
+		{name: "collation differs from the key", sql: `CREATE TABLE t (id TEXT PRIMARY KEY, UNIQUE (id COLLATE NOCASE));`, wantUniques: 1},
+		{name: "sort order does not count", sql: `CREATE TABLE t (a TEXT, UNIQUE (a), UNIQUE (a DESC));`, wantUniques: 1},
+		{name: "explicit equals the column's", sql: `CREATE TABLE t (a TEXT COLLATE NOCASE, UNIQUE (a), UNIQUE (a COLLATE nocase));`, wantUniques: 1},
+		{name: "explicit overrides the column's", sql: `CREATE TABLE t (a TEXT COLLATE NOCASE UNIQUE, UNIQUE (a COLLATE BINARY));`, wantUniques: 2},
+		{name: "key on a collated column", sql: `CREATE TABLE t (id TEXT COLLATE NOCASE PRIMARY KEY, UNIQUE (id));`},
+		{name: "explicit BINARY is the default", sql: `CREATE TABLE t (a TEXT, b TEXT, UNIQUE (a, b), UNIQUE (a COLLATE BINARY, b));`, wantUniques: 1},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			p := sqlite.New()
+			if err := p.Parse("test.sql", []byte(tt.sql)); err != nil {
+				t.Fatalf("Parse() error: %v", err)
+			}
+			table := p.Schema().Tables[0]
+			if got := len(filterUniques(table.Constraints)); got != tt.wantUniques {
+				t.Errorf("UNIQUE constraints = %d, want %d: %+v", got, tt.wantUniques, table.Constraints)
+			}
+		})
+	}
+}
+
+func TestNormalizeType(t *testing.T) {
+	tests := []struct {
+		name     string
+		declared string
+		want     string
+	}{
+		{name: "empty is blob", declared: "", want: "blob"},
+		{name: "case folding", declared: "INTEGER", want: "integer"},
+		{name: "mixed case", declared: "Text", want: "text"},
+		{name: "varchar passthrough", declared: "VARCHAR(255)", want: "varchar(255)"},
+		{name: "numeric passthrough", declared: "NUMERIC(10,2)", want: "numeric(10,2)"},
+		{name: "spaces inside the modifier", declared: "NUMERIC( 10, 2 )", want: "numeric(10,2)"},
+		{name: "space before the modifier", declared: "VARCHAR (255)", want: "varchar(255)"},
+		{name: "multi-word type", declared: "DOUBLE  PRECISION", want: "double precision"},
+		{name: "unrecognized is blob", declared: "uuid", want: "blob"},
+		{name: "unrecognized with a modifier is blob", declared: "XYZZY(100)", want: "blob"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := sqlite.NormalizeType(tt.declared); got != tt.want {
+				t.Errorf("NormalizeType(%q) = %q, want %q", tt.declared, got, tt.want)
+			}
+		})
 	}
 }
 

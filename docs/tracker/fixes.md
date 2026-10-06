@@ -23,6 +23,29 @@
 
 <!-- fixes:open:begin -->
 
+### FIX-267
+
+- **Status:** Open
+- **Severity:** tracked
+- **Origin:** phase 30, `parser/introspect` (`sqlite.go`)
+- **Surfaced by:** `/verify 30.6` (2026-10-05), confirmed by the sqlgen-reviewer pass
+
+**Issue.** When a SQLite table declares two FOREIGN KEYs over the same column(s) to the same parent table but different parent columns, `database` and `files` attach the constraint names to different keys. PRD §5.2 requires "the same constraint set, with the same names". Measured: `CREATE TABLE p (x INTEGER UNIQUE, y INTEGER UNIQUE); CREATE TABLE t (id INTEGER PRIMARY KEY, a INTEGER, CONSTRAINT fa FOREIGN KEY (a) REFERENCES p(x), CONSTRAINT fb FOREIGN KEY (a) REFERENCES p(y))` parses as `fa` = a→p(x), `fb` = a→p(y), but introspects as `fa` = a→p(y), `fb` = a→p(x). With only `fa` named, the name moves to the other key. Column `a` also gets a different `FKReference` (parsed `p.x`, introspected `p.y`).
+
+**Root cause.** `nameDeclaredConstraints` (`parser/introspect/sqlite.go:177`) matches a PRAGMA-built FK to a declared one by `Type`, `Columns` and `ReferenceTable` only, taking the first unused match. `PRAGMA foreign_key_list` numbers FKs in reverse declaration order (id 0 is the last declared), so the first PRAGMA FK takes the first declared FK's name. The `FKReference` half is older: `introspectForeignKeys` (`sqlite.go:420`) gives the column the first FK in PRAGMA order, the last declared, while the parser keeps the first declared.
+
+**Suggested fix.**
+- In `nameDeclaredConstraints`, also require `slices.EqualFunc(d.ReferenceColumns, c.ReferenceColumns, strings.EqualFold)` for an FK match.
+- In `introspectForeignKeys`, walk the FK ids from highest to lowest, so constraints and the single-column `FKReference` follow declaration order as the parser's do.
+- Add `TestSQLiteIntrospect_SameColumnForeignKeys` (or a case in `_CompositeConstraints`) with the DDL above in two variants (both FKs named; only the first named). Assert each key's name and the column's `FKReference`, then `assertSchemaParity`.
+
+**References.**
+- PRD §5.2 "Constraints (all dialects)"; PRD §6.1.
+- `docs/design/INTROSPECTION.md` §10 Q10 / Q11 (SQLite names come from the stored DDL).
+- 30.6 Completion Record, "Constraint names".
+
+**Resolution notes.** _Filled in by `/fix resolve`._
+
 ### FIX-268
 
 - **Status:** Open
@@ -49,6 +72,28 @@ The manifest's `default` / CHECK text differs by source, unannounced, for DDL as
 - PRD §6.1; `docs/design/INTROSPECTION.md` Q5, Q13, M9.
 - phase-30.md ground rule: a lasting user-visible parity exception is written into §6.1.
 - Parallel: the PRD §6.1 "PostgreSQL expression text the catalog rewrites" paragraph (30.4).
+
+**Resolution notes.** _Filled in by `/fix resolve`._
+
+### FIX-269
+
+- **Status:** Open
+- **Severity:** tracked
+- **Origin:** phase 30, `parser/introspect` (`sqlite.go`)
+- **Surfaced by:** `/verify 30.6` (2026-10-05), sqlgen-reviewer measurement; pre-existing at `0260df8e`
+
+**Issue.** A SQLite partial index's `Where` text differs by source, and the manifest carries it, against PRD §6.1. `CREATE UNIQUE INDEX ux ON t (a) WHERE a IS NOT NULL` parses as `"a" NOT NULL` but introspects as the raw `a IS NOT NULL`.
+
+**Root cause.** `indexPartialWhere` (`parser/introspect/sqlite.go:554`) returns the WHERE clause of the stored `CREATE INDEX` text as written, while the file parser renders it through rqlite/sql. Q10 re-parses each table's stored `CREATE TABLE`, but not its indexes.
+
+**Suggested fix.** Ruled 2026-10-05 (user): re-parse index DDL.
+- In `indexPartialWhere`, read the index's `sqlite_master.sql` with the SQLite file parser and take `Where` in the parser's form, as 30.6 does for tables.
+- Add a partial-index case (`WHERE a IS NOT NULL`, plus a comparison predicate) to `TestSQLiteIntrospect_UniqueAndPKAutoIndexes` or a new `_PartialIndexes` test, compared through `assertSchemaParity`.
+- A stored `CREATE INDEX` the parser cannot read fails introspection, in the class PRD §6.3 already names; extend that list if a new construct turns up.
+
+**References.**
+- PRD §6.1, §6.3; `docs/design/INTROSPECTION.md` Q10.
+- PG and MySQL already normalize partial-index predicates to the parser's form (30.4).
 
 **Resolution notes.** _Filled in by `/fix resolve`._
 

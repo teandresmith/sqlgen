@@ -421,8 +421,9 @@ Integration tests:
 
 ### 6.4 SQLite
 
-Unit tests (`sqlite_test.go`, extended): `TestNormalizeSQLiteType` covering empty → `blob`,
-case folding, and `VARCHAR(255)` / `NUMERIC(10,2)` passthrough.
+Unit tests: `TestNormalizeType` (`parser/sqlite/sqlite_test.go`) covering empty → `blob`,
+case folding, and `VARCHAR(255)` / `NUMERIC(10,2)` passthrough, plus spaces inside a modifier
+and unrecognized → `blob`.
 
 Integration tests:
 
@@ -431,7 +432,7 @@ Integration tests:
 | `TestSQLiteIntrospect` (tightened) | Full `cmp.Diff` per column against the file parser. **`Type` is compared** (today it isn't). `Default` per Q5. |
 | `TestSQLiteIntrospect_GeneratedColumn` | `GENERATED ALWAYS AS (…) VIRTUAL` / `STORED` and the shorthand `AS (…)` are present, with `GeneratedExpr` / `GeneratedStorage` matching the parser (S1) |
 | `TestSQLiteIntrospect_CompositePKOrder` | `PRIMARY KEY (b, a)` keeps `b, a` order (S2) |
-| `TestSQLiteIntrospect_ImplicitFKTarget` | `REFERENCES users` with no column resolves to the parent's PK column, as the file parser does (S3) |
+| `TestSQLiteIntrospect_ImplicitFKTarget` | `REFERENCES u` with no column list, at column and table level, fails on both paths with the parse error, and the introspector's error names the table (S3, ruled 2026-10-05) |
 | `TestSQLiteIntrospect_UniqueAndPKAutoIndexes` | `id TEXT PRIMARY KEY` gives no duplicate UNIQUE. Inline, named and table-level UNIQUE constraints get the same names as the file parser, taken from the stored DDL (Q8, S4). |
 | `TestSQLiteIntrospect_VirtualTables` | An FTS5 table and an R*Tree table, plus their shadow tables, are all skipped, and `schema.Warnings` names each virtual table (Q9, S5). The file-parser side gets the same warning test in `parser/sqlite`. |
 | `TestSQLiteIntrospect_QuotedNames` | A table and column whose names contain `"`, a space and mixed case (S7) |
@@ -567,7 +568,7 @@ exits 4 (Q2).
 
 | Test | Asserts |
 |---|---|
-| `TestGenerate_DatabaseSourceMatchesFiles` | Applies each dialect's representative DDL, then runs `generate` with `source: files` and again with `source: database`. The two generated trees, **including the manifest**, are **byte-identical**. Q5 normalizes defaults to the parser's form, so an allowed difference must be a named parity exception with a catalog reason. The DDL per dialect: <br>• **PG:** enum, domain, composite PK, FKs including a cross-schema one, identity, `uuid` / `numeric` / `jsonb`, a generated column, comments, a view with an annotation file <br>• **MySQL:** ENUM / SET, composite PK, FKs, AUTO_INCREMENT, `DEFAULT ''`, unsigned ints, a generated column, comments, a view <br>• **SQLite:** rowid alias, composite PK in non-column order, an implicit FK target, a generated column, UNIQUE, CHECK, a view |
+| `TestGenerate_DatabaseSourceMatchesFiles` | Applies each dialect's representative DDL, then runs `generate` with `source: files` and again with `source: database`. The two generated trees, **including the manifest**, are **byte-identical**. Q5 normalizes defaults to the parser's form, so an allowed difference must be a named parity exception with a catalog reason. The DDL per dialect: <br>• **PG:** enum, domain, composite PK, FKs including a cross-schema one, identity, `uuid` / `numeric` / `jsonb`, a generated column, comments, a view with an annotation file <br>• **MySQL:** ENUM / SET, composite PK, FKs, AUTO_INCREMENT, `DEFAULT ''`, unsigned ints, a generated column, comments, a view <br>• **SQLite:** rowid alias, composite PK in non-column order, a self-referencing FK, a generated column, UNIQUE, CHECK, a view |
 | `TestGenerate_BothSourceAppliesOverlay` | The DB has `users`. The file has `ALTER TABLE users ADD COLUMN nickname text` and `CREATE TABLE posts`. Both show up in the output. A `CREATE TABLE users` file instead exits 3 with the merge error. |
 | `TestGenerate_DatabaseSourceIgnoresPaths` | `paths` points at a file with a conflicting `users` table. The output reflects the DB only. |
 | `TestGenerate_IntrospectFilters` | `introspect.tables` narrows the generated set on all three dialects; `schemas` / `exclude_schemas` do too on PG. |

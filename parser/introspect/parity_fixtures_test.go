@@ -126,7 +126,14 @@ CREATE VIEW m_user_status AS SELECT id, status FROM m_users
 
 // sqliteParityFixture is applied to a fresh database file, so it needs no
 // reset.
-const sqliteParityFixture = `
+const sqliteParityFixture = sqliteParityTables + `;
+CREATE VIEW s_v AS SELECT id, email FROM s_users
+`
+
+// sqliteParityTables is sqliteParityFixture without its view, which the file
+// parser skips and the introspector reads, so it is the part both sources
+// describe alike.
+const sqliteParityTables = `
 CREATE TABLE s_users (
 	id INTEGER PRIMARY KEY,
 	email TEXT NOT NULL DEFAULT '',
@@ -150,8 +157,7 @@ CREATE TABLE s_desc (id INTEGER PRIMARY KEY DESC, v TEXT);
 CREATE TABLE s_int (id INT PRIMARY KEY, v TEXT);
 CREATE TABLE "Quoted""Name" (id INTEGER PRIMARY KEY, "weird col" TEXT);
 CREATE VIRTUAL TABLE s_fts USING fts5(body);
-CREATE VIRTUAL TABLE s_rtree USING rtree(id, minx, maxx);
-CREATE VIEW s_v AS SELECT id, email FROM s_users
+CREATE VIRTUAL TABLE s_rtree USING rtree(id, minx, maxx)
 `
 
 func TestParityFixtures(t *testing.T) {

@@ -1146,11 +1146,11 @@ PRD Sections: 4.2, 4.3, 4.4, 5.2, 6.1, 6.3, 6.4, 7, 8.1.7, 16.2, 30.7
 
 **PRD Reference:** Sections 5.2, 6.3 (design doc §6.4, Q8, Q9, Q10)
 
-**Status:** Not Started
+**Status:** Complete
 
 ### Tasks
 
-- [ ] Q10 strategy: for each table, re-parse `sqlite_master.sql` with `parser/sqlite` and take
+- [x] Q10 strategy: for each table, re-parse `sqlite_master.sql` with `parser/sqlite` and take
   declared constraint names, CHECK constraints and expression text from it. PRAGMAs stay the
   source for columns, types, nullability, PK membership and order, FKs, indexes and partial
   predicates. Fold in 30.3's `sqliteGeneratedExprs`, which re-parses only tables with a
@@ -1161,29 +1161,31 @@ PRD Sections: 4.2, 4.3, 4.4, 5.2, 6.1, 6.3, 6.4, 7, 8.1.7, 16.2, 30.7
   found 'AUTOINCREMENT'"). Re-parsing every table spreads that to every such table.
   **Ruled 2026-10-05 (user): accepted for now, fix later.** It is documented in PRD §6.3
   and the backlog. rqlite/sql has no newer commit, PR or issue for these constructs.
-- [ ] S7: replace every Go `%q` PRAGMA argument (`sqlite.go:172,210,339,408,480,632`) with SQL
+- [x] S7: replace every Go `%q` PRAGMA argument (`sqlite.go:172,210,339,408,480,632`) with SQL
   identifier quoting (double quotes, with embedded `"` doubled).
-- [ ] S2: order composite PK columns by `pk` (the stored `pkCol.order`), not `cid`
+- [x] S2: order composite PK columns by `pk` (the stored `pkCol.order`), not `cid`
   (`sqlite.go:252`, `:273`).
-- [ ] S3: scan `foreign_key_list.to` as `sql.NullString`. A NULL target resolves to the parent's
-  PK column(s), as the parser resolves it (`sqlite.go:362`). **Measured in 30.1:** the SQLite
+- [x] S3: scan `foreign_key_list.to` as `sql.NullString`. ~~A NULL target resolves to the parent's
+  PK column(s), as the parser resolves it (`sqlite.go:362`).~~ (Superseded by the 2026-10-05 ruling
+  in the Completion Record.) **Measured in 30.1:** the SQLite
   parser rejects `REFERENCES t` with no column list (rqlite/sql: "expected left paren"), at
   column and table level, so there is no parser result to match yet. Settle how this test
-  compares before writing it.
-- [ ] S4 / Q8: drop `origin = 'pk'` indexes from `introspectUniqueConstraints` (`sqlite.go:406`).
+  compares before writing it. **Ruled 2026-10-05 (user): the loud error stands, and the
+  parent-PK resolution is removed.** The NULL-safe scan stays.
+- [x] S4 / Q8: drop `origin = 'pk'` indexes from `introspectUniqueConstraints` (`sqlite.go:406`).
   Take UNIQUE names from the re-parse, so `sqlite_autoindex_*` never surfaces.
-- [ ] S5 / Q9: skip `type IN ('virtual', 'shadow')` rows from `PRAGMA table_list`. Add a
+- [x] S5 / Q9: skip `type IN ('virtual', 'shadow')` rows from `PRAGMA table_list`. Add a
   `schema.Warnings` line naming each skipped virtual table, on the introspector **and** in the
   SQLite parser for `CREATE VIRTUAL TABLE` (`parser/sqlite/sqlite.go:65-83`).
-- [ ] S8 / Q10: CHECK constraints come from the re-parse.
-- [ ] S9 / S11: `AutoIncrement` only for a rowid alias. That means a single `INTEGER PRIMARY KEY`
+- [x] S8 / Q10: CHECK constraints come from the re-parse.
+- [x] S9 / S11: `AutoIncrement` only for a rowid alias. That means a single `INTEGER PRIMARY KEY`
   column in a rowid table, not `WITHOUT ROWID` and not `DESC`, on the introspector
   (`sqlite.go:266`) and the parser.
-- [ ] S12: set `WithoutRowID` and `Strict` from `PRAGMA table_list` (or the re-parse).
-- [ ] Tighten `TestSQLiteIntrospect` (`:358`) through `assertSchemaParity`. **`Type` is compared;
+- [x] S12: set `WithoutRowID` and `Strict` from `PRAGMA table_list` (or the re-parse).
+- [x] Tighten `TestSQLiteIntrospect` (`:358`) through `assertSchemaParity`. **`Type` is compared;
   today it is not.** (30.1 moved it onto the helper, so `Type` is now compared. This task makes
   it pass; its baseline is in the 30.1 Completion Record.)
-- [ ] Turn the three SQLite-only `TestBothMode*` tests (`:802`, `:867`, `:917`) into tables over
+- [x] Turn the three SQLite-only `TestBothMode*` tests (`:802`, `:867`, `:917`) into tables over
   all three dialects.
 
 ### Acceptance Criteria
@@ -1192,7 +1194,11 @@ PRD Sections: 4.2, 4.3, 4.4, 5.2, 6.1, 6.3, 6.4, 7, 8.1.7, 16.2, 30.7
   `assertSchemaParity`. That includes the FTS5 and R*Tree tables, which are skipped with a
   warning on both paths.
 - A table named `Quoted"Name` introspects, and its presence does not abort the run.
-- `REFERENCES t` with no column introspects. Today it crashes the run.
+- `REFERENCES t` with no column list is an introspection error that names the table. It is
+  the parse error the same DDL gives under `files`, as PRD §6.3 says. Before this sub-item it
+  crashed the run on a NULL scan. **Amended 2026-10-05 by the user's ruling,** which replaced
+  "`REFERENCES t` with no column introspects": the re-parse of every table (Q10) cannot read
+  that clause until the parser can.
 - `INTEGER PRIMARY KEY DESC` and a `WITHOUT ROWID` `INTEGER PRIMARY KEY` are not auto-increment
   on either path. The measured behavior: the `DESC` insert stores `NULL`, and the
   `WITHOUT ROWID` insert fails NOT NULL.
@@ -1200,30 +1206,162 @@ PRD Sections: 4.2, 4.3, 4.4, 5.2, 6.1, 6.3, 6.4, 7, 8.1.7, 16.2, 30.7
 
 ### Tests Required
 
-- [ ] `TestSQLiteIntrospect_CompositePKOrder` (S2).
-- [ ] `TestSQLiteIntrospect_ImplicitFKTarget` (S3).
-- [ ] `TestSQLiteIntrospect_UniqueAndPKAutoIndexes`: no duplicate PK UNIQUE; inline, named and
+- [x] `TestSQLiteIntrospect_CompositePKOrder` (S2).
+- [x] `TestSQLiteIntrospect_ImplicitFKTarget` (S3): column-level and table-level
+  `REFERENCES u` fail on both paths with the parse error, and the introspector's error names
+  the table.
+- [x] `TestSQLiteIntrospect_UniqueAndPKAutoIndexes`: no duplicate PK UNIQUE; inline, named and
   table-level UNIQUE names match the parser (S4).
-- [ ] `TestSQLiteIntrospect_VirtualTables`: FTS5 + R*Tree skipped with warnings (S5), plus a
+- [x] `TestSQLiteIntrospect_VirtualTables`: FTS5 + R*Tree skipped with warnings (S5), plus a
   parser test for the `CREATE VIRTUAL TABLE` warning.
-- [ ] `TestSQLiteIntrospect_QuotedNames`: a table and a column containing `"`, a space and mixed
+- [x] `TestSQLiteIntrospect_QuotedNames`: a table and a column containing `"`, a space and mixed
   case (S7).
-- [ ] `TestSQLiteIntrospect_Checks`: column, table and named CHECKs match the parser (S8).
-- [ ] `TestSQLiteIntrospect_RowidAlias`: `INTEGER PRIMARY KEY` (auto-increment);
+- [x] `TestSQLiteIntrospect_Checks`: column, table and named CHECKs match the parser (S8).
+- [x] `TestSQLiteIntrospect_RowidAlias`: `INTEGER PRIMARY KEY` (auto-increment);
   `WITHOUT ROWID`, `DESC` and `INT PRIMARY KEY` (not auto-increment), on both paths (S9, S11).
-- [ ] `TestSQLiteIntrospect_TableFlags`: `WITHOUT ROWID` and `STRICT` (S12).
-- [ ] `TestSQLiteIntrospect_TypeCoverage`: `INTEGER`, `TEXT`, `REAL`, `BLOB`, `NUMERIC`,
+- [x] `TestSQLiteIntrospect_TableFlags`: `WITHOUT ROWID` and `STRICT` (S12).
+- [x] `TestSQLiteIntrospect_TypeCoverage`: `INTEGER`, `TEXT`, `REAL`, `BLOB`, `NUMERIC`,
   `VARCHAR(255)`, `BOOLEAN`, `DATETIME`, untyped → `blob`.
-- [ ] `TestSQLiteIntrospect_Defaults`: a string literal, a numeric literal, `CURRENT_TIMESTAMP`,
+- [x] `TestSQLiteIntrospect_Defaults`: a string literal, a numeric literal, `CURRENT_TIMESTAMP`,
   a parenthesized expression, `NULL`. These already match per the probe; pin them.
-- [ ] `TestSQLiteIntrospect_CompositeConstraints`: composite UNIQUE, a multi-column FK, a
+- [x] `TestSQLiteIntrospect_CompositeConstraints`: composite UNIQUE, a multi-column FK, a
   self-referencing FK.
-- [ ] `TestBothModeAlterOverlay`, `TestBothModeCreateExisting` and `TestBothModeColumnConflict`
+- [x] `TestBothModeAlterOverlay`, `TestBothModeCreateExisting` and `TestBothModeColumnConflict`
   over `postgres` / `mysql` / `sqlite`.
 
 ### Completion Record
 
-_Filled in when complete: files changed, commit references, notes._
+- **Completed:** 2026-10-05 (`/implement 30.6`, then the S3 follow-up on the tree merged with
+  30.4 and 30.5).
+  - The full `parser/introspect` integration suite passes on the merged tree, `-race`, with
+    PG 16 and MySQL 8.0 containers. That includes `TestPostgresIntrospect` and
+    `TestMySQLIntrospect`.
+  - `parser/sqlite` passes. `TestE2EGoldenFiles` passed before the merge, so no golden changed.
+  - The orchestrator ran `make check-examples` on the merged tree.
+- **Files:**
+  - `parser/introspect/sqlite.go`: tables come from `PRAGMA table_list` (`wr`, `strict`,
+    `type`) joined to `sqlite_master.sql`. Each table's stored `CREATE TABLE` is parsed once
+    (`parseStoredTable`), and that gives the CHECKs, the generated expressions and the PK /
+    FK / UNIQUE names (`nameDeclaredConstraints`). One `PRAGMA index_list` read per table
+    (`indexList`) feeds `introspectIndexes`, which replaces the separate unique and non-unique
+    passes. `quoteSQLiteIdent` is on every PRAGMA. `foreign_key_list.to` is scanned as
+    `sql.NullString`. `normalizeSQLiteType` is gone; types go through `sqlite.NormalizeType`.
+  - `parser/sqlite/sqlite.go`: `CREATE VIRTUAL TABLE` warning (`VirtualTableWarning`, shared
+    with the introspector so both sources warn alike); `rowIDAlias` replaces the per-column
+    AutoIncrement rule and `isRowIDAlias`; `NormalizeType` (exported, shared with the
+    introspector); `indexedColumnNames` drops a `COLLATE`.
+  - tests: `parser/introspect/introspect_integration_test.go` (the twelve tests above,
+    `TestSQLiteIntrospect_ParityFixture`, the `applySQLite` / `introspectSQLite` /
+    `sqliteSchemas` helpers, the both-mode tables); `parser/introspect/parity_fixtures_test.go`
+    (`sqliteParityTables`, the fixture without its view); `parser/introspect/sqlite_test.go`
+    (`TestQuoteSQLiteIdent`; `TestNormalizeSQLiteType` moved to `parser/sqlite` as
+    `TestNormalizeType`); `parser/sqlite/sqlite_test.go` (`TestRowIDAlias`,
+    `TestCreateVirtualTableSkipped`, `TestIndexedColumnCollation`,
+    `TestUniqueDuplicatesFollowCollation`, `TestNormalizeType`)
+  - docs: PRD §5.2 (a table-level `PRIMARY KEY (id)` over one INTEGER column is a rowid alias),
+    PRD §6.3 (type normalization; every table is re-parsed, so each parser gap is an
+    introspection error); `backlog.md` (three lines)
+- **Fail-first evidence (against HEAD `0260df8e`):**
+  - **S7:** `TestSQLiteIntrospect_QuotedNames` and `TestSQLiteIntrospect_ParityFixture`: the
+    whole run aborted with `introspect sqlite columns Quoted"Name: SQL logic error: near
+    "Name": syntax error (1)`.
+  - **S2:** `TestSQLiteIntrospect_CompositePKOrder`: `pairs` PK `[a b]` (want `[b a]`), `kv`
+    `[k ns]` (want `[ns k]`).
+  - **S3:** a `REFERENCES u` table crashed the run with `introspect sqlite foreign keys p:
+    scanning: sql: Scan error on column index 4, name "to": converting NULL to string is
+    unsupported`. `TestSQLiteIntrospect_ImplicitFKTarget` expects `introspect sqlite table p:`
+    and the parse error, so it fails against that message.
+  - **S4 / Q8:** `TestSQLiteIntrospect_UniqueAndPKAutoIndexes`: `sqlite_autoindex_*` UNIQUEs on
+    `tpk`, `ipk`, `dpk` and `cpk` (the PK's own index), and `u`'s four constraint UNIQUEs named
+    `sqlite_autoindex_u_1…4` with `Method: btree` where the parser has the declared name (or
+    none) and `Method: ""`. `TestSQLiteIntrospect` failed on `sqlite_autoindex_users_1` (the
+    30.1 baseline).
+  - **S5 / Q9:** `TestSQLiteIntrospect_VirtualTables`: introspected tables `boxes`,
+    `boxes_node`, `boxes_parent`, `boxes_rowid`, `docs`, `docs_fts`, `docs_fts_config`, … and
+    no warnings. `TestCreateVirtualTableSkipped` (parser): warnings `nil`.
+  - **S8:** `TestSQLiteIntrospect_Checks`: no CHECK introspected.
+  - **S9 / S11:** `TestSQLiteIntrospect_RowidAlias`: `WITHOUT ROWID` introspected
+    AutoIncrement; `descending key` AutoIncrement on both paths; `INT PRIMARY KEY` parity
+    failed on the auto-index UNIQUE. `TestRowIDAlias` (parser): `descending key` and `UNIQUE on
+    a descending key is dropped` were AutoIncrement, and the latter kept a UNIQUE SQLite never
+    builds (measured: `id INTEGER PRIMARY KEY DESC UNIQUE` has one index, origin `pk`).
+  - **Also found by `TestRowIDAlias` / `_RowidAlias`:** a table-level `PRIMARY KEY (id)` over
+    an INTEGER column is a rowid alias (measured: no index; the insert gets an id), but the
+    parser did not mark it AutoIncrement. Fixed by the same `rowIDAlias` rule.
+  - **S12:** `TestSQLiteIntrospect_TableFlags`: `wr`, `st`, `both_flags` introspected with both
+    flags false.
+  - **Type parity (found here, fixed inline):** `TestSQLiteIntrospect_TypeCoverage`:
+    `DECIMAL(10, 2)` parsed `decimal(10,2)`, introspected `decimal(10, 2)`; `UUID` parsed
+    `blob`, introspected `uuid`. PRD §6.1 requires the same types from both sources, so the
+    introspector applies the parser's rule (`sqlite.NormalizeType`). `TestNormalizeType` covers
+    the rule. No example uses an unrecognized SQLite type.
+  - **COLLATE (found here, fixed inline):** `TestIndexedColumnCollation`: the parser named the
+    columns of `UNIQUE (email COLLATE NOCASE)` and `CREATE INDEX … (name COLLATE NOCASE DESC)`
+    `"email" COLLATE "NOCASE"` and `"name" COLLATE "NOCASE"`, where the catalog reports `email`
+    and `name`. With UNIQUE names now matched by columns, that table failed introspection.
+  - `TestSQLiteIntrospect_CompositeConstraints`: auto-index names and a duplicate PK UNIQUE on
+    `parent` (S4).
+  - **Passed at HEAD (pins):** `TestSQLiteIntrospect_Defaults`, and the three `TestBothMode*`
+    tables on all three dialects. No PG or MySQL defect showed up in the both-mode cases.
+- **Rowid alias, measured.** The introspector's rule is the catalog's own: a single-column
+  primary key with no `origin = 'pk'` index. `INT`, `INTEGER(10)`, `DESC` and `WITHOUT ROWID`
+  keys all have one; `INTEGER PRIMARY KEY`, `ASC`, `AUTOINCREMENT` and table-level `PRIMARY KEY
+  (id)` do not. `TestSQLiteIntrospect_RowidAlias` also inserts a row without `id` and pins what
+  SQLite does: assigned for the aliases, `NULL` for `DESC` and `INT`, NOT NULL failure for
+  `WITHOUT ROWID`.
+- **Constraint names.** A PRAGMA-built PK, FK or constraint UNIQUE takes the name of the
+  re-parsed constraint over the same columns (case-insensitive; an FK also matches its parent
+  table). One with no match is an error ("stored CREATE TABLE declares no UNIQUE over (…)"),
+  since it means the parser and the catalog disagree. A constraint UNIQUE has `Method: ""`, as
+  parsed (PRD §5.2 defaults `btree` on PostgreSQL and MySQL only); a `CREATE UNIQUE INDEX` keeps
+  its name and `btree`, as parsed. That settles the 30.2 note on which side moves.
+- **Virtual tables.** A virtual table the table filters leave out is not warned about
+  (`TestSQLiteIntrospect_VirtualTables`); the parser has no filters and warns for every one.
+- **The fixture's view.** The parser skips `CREATE VIEW` with a warning and the introspector
+  reads the view (PRD §16), so `TestSQLiteIntrospect_ParityFixture` compares
+  `sqliteParityTables`, the fixture without `s_v`. `TestParityFixtures` still applies and parses
+  the whole fixture.
+- **S3, ruled 2026-10-05 (user): accept the loud error and remove the code that cannot run.**
+  - The acceptance criterion said `REFERENCES t` with no column list introspects. But Q10 sends
+    every table's stored DDL through rqlite/sql, which rejects that clause, so the two could not
+    both hold.
+  - Introspecting `p (…, uid INTEGER REFERENCES u)` now fails with `introspect sqlite table p:
+    parsing stored CREATE TABLE: parsing sqlite_master: 1:65: expected left paren, found ')'`.
+    That is the error the files path gives (PRD §6.3).
+  - The acceptance criterion is amended to match.
+  - The parent-PK resolution (`resolveImplicitTargets`, `primaryKeyColumns`) and its white-box
+    test `TestSQLiteForeignKeysImplicitTarget` are removed.
+  - **The NULL-safe scan of `to` stays, but it is unreachable too.** Only `REFERENCES t` with no
+    column list leaves `to` NULL, and the stored-DDL parse rejects that table before foreign
+    keys are read. The `sqliteFKRow` comment says so.
+- **Auto-review (`sqlgen-reviewer`):** 1 issue, 1 question (the dead resolution code, settled by
+  the S3 ruling above). It reproduced the S4 fail-first by deleting the `origin == "pk"` skip.
+  - **Fixed: collation-distinct UNIQUEs.** With `COLLATE` dropped from column names,
+    `dropDuplicateUniques` merged `UNIQUE (a), UNIQUE (a COLLATE NOCASE)` into one, where
+    SQLite builds two. Introspection then failed with "declares no UNIQUE over (a)".
+    `id TEXT PRIMARY KEY, UNIQUE (id COLLATE NOCASE)` failed the same way.
+    - The duplicate key is now the columns plus each column's effective collation: the
+      explicit one, else the column's `COLLATE`, else BINARY, compared case-insensitively.
+    - Measured on modernc SQLite, as two indexes or one: `(a)` + `(a COLLATE NOCASE)` 2;
+      `id TEXT PRIMARY KEY` + `(id COLLATE NOCASE)` a key index and a UNIQUE; `(a)` +
+      `(a DESC)` 1; a NOCASE column with `(a)` + `(a COLLATE nocase)` 1; a NOCASE column
+      `UNIQUE` + `(a COLLATE BINARY)` 2; a NOCASE `PRIMARY KEY` + `UNIQUE (id)` key index
+      only; `(a, b)` + `(a COLLATE BINARY, b)` 1.
+    - Pinned by `TestUniqueDuplicatesFollowCollation` (parser) and five `coll_*` tables in
+      `_UniqueAndPKAutoIndexes`. HEAD itself was not run against these cases. It kept the
+      collation in the column name, so it kept a UNIQUE whose collation matched only after
+      normalizing case or the default (`nocase`, `BINARY`).
+  - Applied:
+    - the §6.3 type sentence moved to its own "SQLite column types" bullet
+    - a column containing `"` (with a CHECK on it) added to `_QuotedNames`
+    - a measured backlog line for RENAME COLUMN and CHECK text
+  - The orchestrator applied the `docs/design/INTROSPECTION.md` §6.4 fix (`TestNormalizeType`
+    in `parser/sqlite`) after the merge.
+- **`/verify 30.6` (2026-10-05):** 10/11 requirements (FK name matching partial), 12/12
+  tests, reviewer fail-first confirmed. Logged: FIX-267 (tracked; FK names swap when two FKs
+  share columns and parent) and FIX-269 (tracked; partial-index `Where` text, ruled: re-parse
+  the stored index DDL). PRD §6.3 now names `ON CONFLICT` on any constraint as DDL the parser
+  cannot read. Three backlog lines.
 
 ---
 
@@ -1398,7 +1536,7 @@ _Filled in when complete: files changed, commit references, notes._
     a generated column, comments, an annotated view
   - **MySQL:** ENUM / SET, composite PK, FKs, AUTO_INCREMENT, `DEFAULT ''`, unsigned ints, a
     generated column, comments, a view
-  - **SQLite:** a rowid alias, a composite PK out of column order, an implicit FK target, a
+  - **SQLite:** a rowid alias, a composite PK out of column order, a self-referencing FK, a
     generated column, UNIQUE, CHECK, a view
 - [ ] `TestGenerate_DatabaseSourceCompiles`: `go build` of each dialect's `database` output
   (`GOWORK=off` with a `replace` to the runtime module).

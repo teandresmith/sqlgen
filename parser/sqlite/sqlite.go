@@ -76,10 +76,18 @@ func (p *Parser) processStmt(stmt rsql.Statement, src []rune) error {
 		p.schema.Warnings = append(p.schema.Warnings,
 			fmt.Sprintf("CREATE VIEW %s skipped in DDL file — use introspection or define the view in input.views",
 				rsql.IdentName(s.Name)))
+	case *rsql.CreateVirtualTableStatement:
+		p.schema.Warnings = append(p.schema.Warnings, VirtualTableWarning(rsql.IdentName(s.Name)))
 	case *rsql.DropViewStatement:
 		// DROP VIEW is skipped gracefully — views are not tracked in DDL parsing.
 	}
 	return nil
+}
+
+// VirtualTableWarning is the schema warning for a skipped virtual table (FTS5,
+// R*Tree, …). The introspector skips virtual tables with the same warning.
+func VirtualTableWarning(table string) string {
+	return fmt.Sprintf("CREATE VIRTUAL TABLE %s skipped — virtual tables are not generated", table)
 }
 
 // parseCreateIndex records a standalone CREATE [UNIQUE] INDEX as a Constraint
@@ -146,41 +154,54 @@ func (p *Parser) parseCreateTable(stmt *rsql.CreateTableStatement, src []rune) e
 		return fmt.Errorf("table %s already exists", tableName)
 	}
 
-	withoutRowID := stmt.Without.IsValid()
-	strict := stmt.Strict.IsValid()
-
 	table := parser.Table{
 		Name:         tableName,
-		WithoutRowID: withoutRowID,
-		Strict:       strict,
+		WithoutRowID: stmt.Without.IsValid(),
+		Strict:       stmt.Strict.IsValid(),
 	}
 
 	// Parse columns.
+	var descKey string // the column whose PRIMARY KEY is declared DESC
+	coll := indexCollations{columns: make(map[string]string), explicit: make(map[int][]string)}
 	for i, col := range stmt.Columns {
 		if i > 0 && isPrimaryKeySortOrder(stmt.Columns[i-1], col, src) {
 			key := &table.Columns[len(table.Columns)-1]
+			if strings.EqualFold(col.Name.Name, "DESC") {
+				descKey = key.Name
+			}
 			for _, constraint := range col.Constraints {
 				if c, ok := applyColumnConstraint(key, constraint); ok {
 					table.Constraints = append(table.Constraints, c)
 				}
 			}
+			coll.addColumn(key.Name, col.Constraints)
 			continue
 		}
-		c, constraints := parseColumn(col, withoutRowID)
+		c, constraints := parseColumn(col)
 		table.Columns = append(table.Columns, c)
 		table.Constraints = append(table.Constraints, constraints...)
+		coll.addColumn(c.Name, col.Constraints)
 	}
 
 	// Parse table-level constraints.
 	for _, constraint := range stmt.Constraints {
 		c := parseTableConstraint(constraint)
-		if c.Type != 0 {
-			table.Constraints = append(table.Constraints, c)
+		if c.Type == 0 {
+			continue
 		}
+		if u, ok := constraint.(*rsql.UniqueConstraint); ok {
+			coll.explicit[len(table.Constraints)] = indexedColumnCollations(u.Columns)
+		}
+		table.Constraints = append(table.Constraints, c)
 	}
 
+	// CanonicalizeConstraints only appends, so coll.explicit's positions hold.
 	parser.CanonicalizeConstraints(&table, "sqlite")
-	dropDuplicateUniques(&table)
+	alias := rowIDAlias(&table, descKey)
+	if col := parser.ColumnByName(&table, alias); col != nil {
+		col.AutoIncrement = true
+	}
+	dropDuplicateUniques(&table, alias, coll)
 
 	p.tableIndex[tableName] = len(p.schema.Tables)
 	p.schema.Tables = append(p.schema.Tables, table)
@@ -226,45 +247,97 @@ func onlyBlanksAndComments(s string) bool {
 	return true
 }
 
-// dropDuplicateUniques drops each UNIQUE whose index SQLite never builds:
-// one over the same columns, in the same order, as the primary key's index or
-// an earlier UNIQUE. A rowid-alias INTEGER PRIMARY KEY has no index, so a
-// UNIQUE on it stays.
-func dropDuplicateUniques(table *parser.Table) {
-	var indexed [][]string
-	for _, c := range table.Constraints {
-		if c.Type == parser.PrimaryKey && !isRowIDAlias(table, c) {
-			indexed = append(indexed, c.Columns)
+// indexCollations holds the collations SQLite compares when it decides two
+// indexes over the same columns are one: each column's declared COLLATE, and
+// the per-column COLLATE of each table-level UNIQUE, keyed by its position in
+// table.Constraints ("" where none is written).
+type indexCollations struct {
+	columns  map[string]string
+	explicit map[int][]string
+}
+
+// addColumn records the COLLATE among column's constraints, if any.
+func (ic indexCollations) addColumn(column string, constraints []rsql.Constraint) {
+	for _, c := range constraints {
+		if cc, ok := c.(*rsql.CollateConstraint); ok && cc.Collation != nil {
+			ic.columns[strings.ToLower(column)] = strings.ToUpper(cc.Collation.Name)
 		}
 	}
-	table.Constraints = slices.DeleteFunc(table.Constraints, func(c parser.Constraint) bool {
-		if c.Type != parser.Unique {
-			return false
+}
+
+// key identifies the index behind constraint i, c: its columns, each with the
+// collation it is indexed under (the explicit one, else the column's, else
+// BINARY). Sort order is not part of it.
+func (ic indexCollations) key(i int, c parser.Constraint) string {
+	var b strings.Builder
+	explicit := ic.explicit[i]
+	for k, col := range c.Columns {
+		collation := ""
+		if k < len(explicit) {
+			collation = explicit[k]
 		}
-		if slices.ContainsFunc(indexed, func(cols []string) bool { return slices.Equal(cols, c.Columns) }) {
-			return true
+		if collation == "" {
+			collation = ic.columns[strings.ToLower(col)]
 		}
-		indexed = append(indexed, c.Columns)
-		return false
-	})
+		if collation == "" {
+			collation = "BINARY"
+		}
+		b.WriteString(strings.ToLower(col) + "\x00" + collation + "\x00")
+	}
+	return b.String()
+}
+
+// dropDuplicateUniques drops each UNIQUE whose index SQLite never builds:
+// one over the same columns, in the same order and under the same
+// collations, as the primary key's index or an earlier UNIQUE. A primary key
+// on alias, the rowid-alias column (see rowIDAlias), has no index, so a
+// UNIQUE on it stays.
+func dropDuplicateUniques(table *parser.Table, alias string, coll indexCollations) {
+	indexed := make(map[string]bool)
+	for i, c := range table.Constraints {
+		if c.Type == parser.PrimaryKey && !slices.Equal(c.Columns, []string{alias}) {
+			indexed[coll.key(i, c)] = true
+		}
+	}
+	kept := table.Constraints[:0]
+	for i, c := range table.Constraints {
+		if c.Type == parser.Unique {
+			k := coll.key(i, c)
+			if indexed[k] {
+				continue
+			}
+			indexed[k] = true
+		}
+		kept = append(kept, c)
+	}
+	table.Constraints = kept
 	for i := range table.Columns {
 		parser.RecomputeColumnUnique(table, table.Columns[i].Name)
 	}
 }
 
-// isRowIDAlias reports whether the primary key pk makes its column an alias
-// for the rowid: a single INTEGER column in a table that has a rowid.
-func isRowIDAlias(table *parser.Table, pk parser.Constraint) bool {
-	if table.WithoutRowID || len(pk.Columns) != 1 {
-		return false
+// rowIDAlias returns the column that aliases the table's rowid, or "" when
+// none does. It is the one column of an INTEGER primary key in a table with a
+// rowid, unless the column declares its key DESC (descKey). Only that key gets
+// an automatic value, and SQLite builds no index for it.
+func rowIDAlias(table *parser.Table, descKey string) string {
+	if table.WithoutRowID {
+		return ""
 	}
-	col := parser.ColumnByName(table, pk.Columns[0])
-	return col != nil && col.Type == "integer"
+	for _, c := range table.Constraints {
+		if c.Type != parser.PrimaryKey || len(c.Columns) != 1 || c.Columns[0] == descKey {
+			continue
+		}
+		if col := parser.ColumnByName(table, c.Columns[0]); col != nil && col.Type == "integer" {
+			return col.Name
+		}
+	}
+	return ""
 }
 
 // parseColumn returns the column col defines and the constraints declared
 // inline on it, as table constraints over the column.
-func parseColumn(col *rsql.ColumnDefinition, withoutRowID bool) (parser.Column, []parser.Constraint) {
+func parseColumn(col *rsql.ColumnDefinition) (parser.Column, []parser.Constraint) {
 	c := parser.Column{
 		Name:     rsql.IdentName(col.Name),
 		Type:     buildTypeString(col.Type),
@@ -277,12 +350,6 @@ func parseColumn(col *rsql.ColumnDefinition, withoutRowID bool) (parser.Column, 
 			constraints = append(constraints, tc)
 		}
 	}
-
-	// INTEGER PRIMARY KEY is auto-increment (rowid alias) unless WITHOUT ROWID.
-	if c.PrimaryKey && c.Type == "integer" && !withoutRowID {
-		c.AutoIncrement = true
-	}
-
 	return c, constraints
 }
 
@@ -294,9 +361,6 @@ func applyColumnConstraint(c *parser.Column, constraint rsql.Constraint) (parser
 	case *rsql.PrimaryKeyConstraint:
 		c.PrimaryKey = true
 		c.Nullable = false
-		if ct.Autoincrement.IsValid() {
-			c.AutoIncrement = true
-		}
 		return parser.Constraint{Name: rsql.IdentName(ct.Name), Type: parser.PrimaryKey, Columns: []string{c.Name}}, true
 	case *rsql.NotNullConstraint:
 		c.Nullable = false
@@ -337,21 +401,31 @@ func applyColumnConstraint(c *parser.Column, constraint rsql.Constraint) (parser
 	return parser.Constraint{}, false
 }
 
-// buildTypeString returns the lowercased SQL type string from a rqlite/sql Type.
-// Unrecognized type names default to "blob"; SQLite itself gives such a
-// column NUMERIC affinity (BLOB affinity goes only to a declared type that
-// contains "BLOB", or to a column with none).
+// buildTypeString returns the type string for a rqlite/sql Type, by the rule
+// NormalizeType states.
 func buildTypeString(typ *rsql.Type) string {
 	if typ == nil || typ.Name == nil {
 		return "blob"
 	}
+	return NormalizeType(typ.String())
+}
 
-	baseName := strings.ToLower(typ.Name.Name)
-	if !isRecognizedType(baseName) {
+// NormalizeType returns the type the parser records for a column declared
+// with type declared: lower case, a type modifier written without spaces, and
+// blob for an empty or unrecognized type. SQLite itself gives an unrecognized
+// type NUMERIC affinity (BLOB affinity goes only to a declared type that
+// contains "BLOB", or to a column with none). The introspector applies it to
+// the declared type the catalog reports, so both sources agree.
+func NormalizeType(declared string) string {
+	base, mods, hasMods := strings.Cut(strings.ToLower(declared), "(")
+	base = strings.Join(strings.Fields(base), " ")
+	if base == "" || !isRecognizedType(base) {
 		return "blob"
 	}
-
-	return strings.ToLower(typ.String())
+	if !hasMods {
+		return base
+	}
+	return base + "(" + strings.Join(strings.Fields(mods), "")
 }
 
 // exactTypes are type names recognized by exact match (not substring).
@@ -424,7 +498,7 @@ func (p *Parser) parseAlterTable(stmt *rsql.AlterTableStatement) error {
 		if !ok {
 			return fmt.Errorf("table %s not found", tableName)
 		}
-		c, constraints := parseColumn(stmt.ColumnDef, table.WithoutRowID)
+		c, constraints := parseColumn(stmt.ColumnDef)
 		table.Columns = append(table.Columns, c)
 		table.Constraints = append(table.Constraints, constraints...)
 		parser.CanonicalizeConstraints(table, "sqlite")
@@ -496,10 +570,28 @@ func identNames(idents []*rsql.Ident) []string {
 	return names
 }
 
+// indexedColumnCollations returns each indexed column's explicit COLLATE, upper
+// case, or "" where none is written.
+func indexedColumnCollations(cols []*rsql.IndexedColumn) []string {
+	collations := make([]string, len(cols))
+	for i, col := range cols {
+		if collate, ok := col.X.(*rsql.CollateExpr); ok && collate.Collation != nil && collate.Collation.Name != nil {
+			collations[i] = strings.ToUpper(collate.Collation.Name.Name)
+		}
+	}
+	return collations
+}
+
+// indexedColumnNames returns the column each indexed column names, or the
+// expression text for an expression. A collation is not part of the name.
 func indexedColumnNames(cols []*rsql.IndexedColumn) []string {
 	names := make([]string, len(cols))
 	for i, col := range cols {
-		if ident, ok := col.X.(*rsql.Ident); ok {
+		x := col.X
+		if collate, ok := x.(*rsql.CollateExpr); ok {
+			x = collate.X
+		}
+		if ident, ok := x.(*rsql.Ident); ok {
 			names[i] = ident.Name
 		} else {
 			names[i] = rsql.ExprString(col.X)

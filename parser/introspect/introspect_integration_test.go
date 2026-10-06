@@ -682,6 +682,481 @@ func TestSQLiteIntrospect_GeneratedColumn(t *testing.T) {
 	assertSchemaParity(t, "sqlite", p.Schema(), introspected)
 }
 
+// --- SQLite parity tests ---
+
+// applySQLite applies ddl to a fresh database file, one statement at a time,
+// and returns the file's path.
+func applySQLite(t *testing.T, ddl string) string {
+	t.Helper()
+	dbPath := filepath.Join(t.TempDir(), "schema.db")
+	applyParityFixture(t, "sqlite", dbPath, "", ddl)
+	return dbPath
+}
+
+func introspectSQLite(t *testing.T, dbPath string, opts introspect.IntrospectionOptions) *parser.Schema {
+	t.Helper()
+	intro := introspect.NewSQLiteIntrospector()
+	t.Cleanup(func() { _ = intro.Close() })
+	schema := &parser.Schema{}
+	if err := intro.Introspect(context.Background(), dbPath, schema, opts); err != nil {
+		t.Fatalf("Introspect() error: %v", err)
+	}
+	return schema
+}
+
+func tableNames(s *parser.Schema) []string {
+	names := make([]string, 0, len(s.Tables))
+	for _, table := range s.Tables {
+		names = append(names, table.Name)
+	}
+	return names
+}
+
+func columnNames(cols []parser.Column) []string {
+	names := make([]string, 0, len(cols))
+	for _, c := range cols {
+		names = append(names, c.Name)
+	}
+	return names
+}
+
+// sqliteSchemas returns the file parser's and the introspector's schema for
+// ddl.
+func sqliteSchemas(t *testing.T, ddl string) (parsed, introspected *parser.Schema) {
+	t.Helper()
+	dbPath := applySQLite(t, ddl)
+	introspected = introspectSQLite(t, dbPath, introspect.IntrospectionOptions{})
+	return parseStatements(t, sqlite.New(), ddl), introspected
+}
+
+func TestSQLiteIntrospect_ParityFixture(t *testing.T) {
+	requireDatabases(t)
+	parsed, introspected := sqliteSchemas(t, sqliteParityTables)
+	assertSchemaParity(t, "sqlite", parsed, introspected)
+}
+
+func TestSQLiteIntrospect_CompositePKOrder(t *testing.T) {
+	requireDatabases(t)
+	parsed, introspected := sqliteSchemas(t, `
+		CREATE TABLE pairs (a INTEGER NOT NULL, b INTEGER NOT NULL, c TEXT, PRIMARY KEY (b, a));
+		CREATE TABLE kv (k TEXT, ns TEXT, v TEXT, PRIMARY KEY (ns, k)) WITHOUT ROWID
+	`)
+
+	for table, want := range map[string][]string{"pairs": {"b", "a"}, "kv": {"ns", "k"}} {
+		pk := filterConstraints(findTable(t, introspected, table).Constraints, parser.PrimaryKey)
+		if len(pk) != 1 {
+			t.Errorf("%s: introspected %d PRIMARY KEY constraints, want 1: %+v", table, len(pk), pk)
+			continue
+		}
+		if diff := cmp.Diff(want, pk[0].Columns); diff != "" {
+			t.Errorf("%s: introspected PRIMARY KEY columns mismatch (-want +got):\n%s", table, diff)
+		}
+	}
+	assertSchemaParity(t, "sqlite", parsed, introspected)
+}
+
+// REFERENCES t with no column list is legal SQLite, but the file parser
+// cannot read it, and the introspector reads every stored CREATE TABLE with
+// the file parser. So both paths fail on it, loudly (PRD §6.3).
+func TestSQLiteIntrospect_ImplicitFKTarget(t *testing.T) {
+	requireDatabases(t)
+	tests := []struct {
+		name string
+		ddl  string
+	}{
+		{
+			name: "column REFERENCES",
+			ddl:  `CREATE TABLE u (id INTEGER PRIMARY KEY); CREATE TABLE p (id INTEGER PRIMARY KEY, uid INTEGER REFERENCES u)`,
+		},
+		{
+			name: "table FOREIGN KEY",
+			ddl:  `CREATE TABLE u (id INTEGER PRIMARY KEY); CREATE TABLE p (id INTEGER PRIMARY KEY, uid INTEGER, FOREIGN KEY (uid) REFERENCES u)`,
+		},
+	}
+
+	const parseError = "expected left paren"
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			dbPath := applySQLite(t, tt.ddl)
+			intro := introspect.NewSQLiteIntrospector()
+			defer intro.Close() //nolint:errcheck // test cleanup
+			err := intro.Introspect(context.Background(), dbPath, &parser.Schema{}, introspect.IntrospectionOptions{})
+			if err == nil || !strings.Contains(err.Error(), "introspect sqlite table p:") || !strings.Contains(err.Error(), parseError) {
+				t.Errorf("Introspect() error = %v, want the parse error for table p", err)
+			}
+
+			p := sqlite.New()
+			err = p.Parse("schema.sql", []byte(tt.ddl))
+			if err == nil || !strings.Contains(err.Error(), parseError) {
+				t.Errorf("Parse() error = %v, want %q", err, parseError)
+			}
+		})
+	}
+}
+
+func TestSQLiteIntrospect_UniqueAndPKAutoIndexes(t *testing.T) {
+	requireDatabases(t)
+	parsed, introspected := sqliteSchemas(t, `
+		CREATE TABLE tpk (id TEXT PRIMARY KEY, v INTEGER);
+		CREATE TABLE ipk (id INT PRIMARY KEY, v INTEGER);
+		CREATE TABLE dpk (id INTEGER PRIMARY KEY DESC, v INTEGER);
+		CREATE TABLE cpk (a INTEGER, b INTEGER, PRIMARY KEY (a, b));
+		CREATE TABLE u (
+			id INTEGER PRIMARY KEY,
+			a TEXT UNIQUE,
+			b TEXT CONSTRAINT u_b_named UNIQUE,
+			c TEXT,
+			d TEXT,
+			UNIQUE (c, d),
+			CONSTRAINT u_dc_named UNIQUE (d, c)
+		);
+		CREATE UNIQUE INDEX u_c_idx ON u (c);
+		CREATE TABLE collated (email TEXT, name TEXT, UNIQUE (email COLLATE NOCASE));
+		CREATE UNIQUE INDEX collated_name_idx ON collated (name COLLATE NOCASE);
+		CREATE TABLE coll_two (a TEXT, UNIQUE (a), UNIQUE (a COLLATE NOCASE));
+		CREATE TABLE coll_key (id TEXT PRIMARY KEY, UNIQUE (id COLLATE NOCASE));
+		CREATE TABLE coll_order (a TEXT, UNIQUE (a), UNIQUE (a DESC));
+		CREATE TABLE coll_override (a TEXT COLLATE NOCASE UNIQUE, UNIQUE (a COLLATE BINARY));
+		CREATE TABLE coll_same_key (id TEXT COLLATE NOCASE PRIMARY KEY, UNIQUE (id))
+	`)
+
+	for _, table := range introspected.Tables {
+		for _, c := range table.Constraints {
+			if strings.HasPrefix(c.Name, "sqlite_autoindex_") {
+				t.Errorf("%s: constraint %+v carries an auto-index name", table.Name, c)
+			}
+		}
+	}
+	for _, table := range []string{"tpk", "ipk", "dpk", "cpk"} {
+		if uniques := filterConstraints(findTable(t, introspected, table).Constraints, parser.Unique); len(uniques) != 0 {
+			t.Errorf("%s: introspected UNIQUE constraints %+v, want none beside the primary key", table, uniques)
+		}
+	}
+	wantU := []parser.Constraint{
+		{Type: parser.Unique, Columns: []string{"a"}},
+		{Type: parser.Unique, Columns: []string{"c", "d"}},
+		{Name: "u_b_named", Type: parser.Unique, Columns: []string{"b"}},
+		{Name: "u_c_idx", Type: parser.Unique, Columns: []string{"c"}, Method: "btree"},
+		{Name: "u_dc_named", Type: parser.Unique, Columns: []string{"d", "c"}},
+	}
+	gotU := filterConstraints(findTable(t, introspected, "u").Constraints, parser.Unique)
+	sortConstraints(gotU)
+	if diff := cmp.Diff(wantU, gotU, cmpopts.EquateEmpty()); diff != "" {
+		t.Errorf("u: introspected UNIQUE constraints mismatch (-want +got):\n%s", diff)
+	}
+	assertSchemaParity(t, "sqlite", parsed, introspected)
+}
+
+func TestSQLiteIntrospect_VirtualTables(t *testing.T) {
+	requireDatabases(t)
+	ddl := `
+		CREATE TABLE docs (id INTEGER PRIMARY KEY, body TEXT);
+		CREATE VIRTUAL TABLE docs_fts USING fts5(body);
+		CREATE VIRTUAL TABLE boxes USING rtree(id, minx, maxx)
+	`
+	dbPath := applySQLite(t, ddl)
+	introspected := introspectSQLite(t, dbPath, introspect.IntrospectionOptions{})
+	parsed := parseStatements(t, sqlite.New(), ddl)
+
+	if diff := cmp.Diff([]string{"docs"}, tableNames(introspected)); diff != "" {
+		t.Errorf("introspected tables mismatch (-want +got):\n%s", diff)
+	}
+	wantWarnings := []string{
+		"CREATE VIRTUAL TABLE boxes skipped — virtual tables are not generated",
+		"CREATE VIRTUAL TABLE docs_fts skipped — virtual tables are not generated",
+	}
+	if diff := cmp.Diff(wantWarnings, introspected.Warnings); diff != "" {
+		t.Errorf("introspected warnings mismatch (-want +got):\n%s", diff)
+	}
+	assertSchemaParity(t, "sqlite", parsed, introspected)
+
+	// A virtual table the table filters leave out is not warned about.
+	filtered := introspectSQLite(t, dbPath, introspect.IntrospectionOptions{ExcludeTables: []string{"boxes"}})
+	if diff := cmp.Diff(wantWarnings[1:], filtered.Warnings); diff != "" {
+		t.Errorf("filtered warnings mismatch (-want +got):\n%s", diff)
+	}
+}
+
+func TestSQLiteIntrospect_QuotedNames(t *testing.T) {
+	requireDatabases(t)
+	ddl := `
+		CREATE TABLE "Quoted""Name" (id INTEGER PRIMARY KEY, "weird col" TEXT, "MixedCase" TEXT UNIQUE, "say ""hi""" TEXT CHECK ("say ""hi""" <> ''));
+		CREATE INDEX "idx ""q""" ON "Quoted""Name" ("weird col");
+		CREATE TABLE "Child Table" (id INTEGER PRIMARY KEY, qid INTEGER REFERENCES "Quoted""Name"(id));
+		CREATE TABLE "back\slash" (id TEXT PRIMARY KEY)
+	`
+	const view = `v "q"`
+	dbPath := applySQLite(t, ddl+`; CREATE VIEW "v ""q""" AS SELECT id, "weird col" FROM "Quoted""Name"`)
+	introspected := introspectSQLite(t, dbPath, introspect.IntrospectionOptions{ExcludeTables: []string{view}})
+	parsed := parseStatements(t, sqlite.New(), ddl)
+
+	if diff := cmp.Diff([]string{"Child Table", `Quoted"Name`, `back\slash`}, tableNames(introspected)); diff != "" {
+		t.Errorf("introspected tables mismatch (-want +got):\n%s", diff)
+	}
+	assertSchemaParity(t, "sqlite", parsed, introspected)
+
+	views := introspectSQLite(t, dbPath, introspect.IntrospectionOptions{Tables: []string{view}}).Views
+	if len(views) != 1 {
+		t.Fatalf("introspected %d views, want 1: %+v", len(views), views)
+	}
+	if diff := cmp.Diff([]string{"id", "weird col"}, columnNames(views[0].Columns)); diff != "" {
+		t.Errorf("view %s columns mismatch (-want +got):\n%s", view, diff)
+	}
+}
+
+func TestSQLiteIntrospect_Checks(t *testing.T) {
+	requireDatabases(t)
+	parsed, introspected := sqliteSchemas(t, `
+		CREATE TABLE c (
+			id INTEGER PRIMARY KEY,
+			qty INTEGER CHECK (qty >= 0),
+			price REAL CONSTRAINT c_price_positive CHECK (price > 0),
+			lo INTEGER,
+			hi INTEGER,
+			CHECK (lo <= hi),
+			CONSTRAINT c_always CHECK (1 = 1)
+		)
+	`)
+
+	want := []parser.Constraint{
+		{Type: parser.Check, Columns: []string{"lo", "hi"}, CheckExpression: `"lo" <= "hi"`},
+		{Type: parser.Check, Columns: []string{"qty"}, CheckExpression: `"qty" >= 0`},
+		{Name: "c_always", Type: parser.Check, CheckExpression: `1 = 1`},
+		{Name: "c_price_positive", Type: parser.Check, Columns: []string{"price"}, CheckExpression: `"price" > 0`},
+	}
+	got := filterConstraints(findTable(t, introspected, "c").Constraints, parser.Check)
+	sortConstraints(got)
+	if diff := cmp.Diff(want, got, cmpopts.EquateEmpty()); diff != "" {
+		t.Errorf("introspected CHECK constraints mismatch (-want +got):\n%s", diff)
+	}
+	assertSchemaParity(t, "sqlite", parsed, introspected)
+}
+
+// insertOutcome is what SQLite does with an INSERT that leaves the key out.
+type insertOutcome string
+
+const (
+	keyAssigned insertOutcome = "assigned"
+	keyNull     insertOutcome = "null"
+	keyRejected insertOutcome = "rejected"
+)
+
+func TestSQLiteIntrospect_RowidAlias(t *testing.T) {
+	requireDatabases(t)
+	tests := []struct {
+		name        string
+		ddl         string
+		wantAutoInc bool
+		wantInsert  insertOutcome
+	}{
+		{name: "INTEGER PRIMARY KEY", ddl: `CREATE TABLE t (id INTEGER PRIMARY KEY, v TEXT)`, wantAutoInc: true, wantInsert: keyAssigned},
+		{name: "ascending key", ddl: `CREATE TABLE t (id INTEGER PRIMARY KEY ASC, v TEXT)`, wantAutoInc: true, wantInsert: keyAssigned},
+		{name: "AUTOINCREMENT", ddl: `CREATE TABLE t (id INTEGER PRIMARY KEY AUTOINCREMENT, v TEXT)`, wantAutoInc: true, wantInsert: keyAssigned},
+		{name: "table-level key", ddl: `CREATE TABLE t (id INTEGER, v TEXT, PRIMARY KEY (id))`, wantAutoInc: true, wantInsert: keyAssigned},
+		{name: "WITHOUT ROWID", ddl: `CREATE TABLE t (id INTEGER PRIMARY KEY, v TEXT) WITHOUT ROWID`, wantInsert: keyRejected},
+		{name: "descending key", ddl: `CREATE TABLE t (id INTEGER PRIMARY KEY DESC, v TEXT)`, wantInsert: keyNull},
+		{name: "INT PRIMARY KEY", ddl: `CREATE TABLE t (id INT PRIMARY KEY, v TEXT)`, wantInsert: keyNull},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			dbPath := applySQLite(t, tt.ddl)
+			introspected := introspectSQLite(t, dbPath, introspect.IntrospectionOptions{})
+			parsed := parseStatements(t, sqlite.New(), tt.ddl)
+
+			for source, schema := range map[string]*parser.Schema{"parsed": parsed, "introspected": introspected} {
+				if got := parser.ColumnByName(findTable(t, schema, "t"), "id").AutoIncrement; got != tt.wantAutoInc {
+					t.Errorf("%s: id AutoIncrement = %t, want %t", source, got, tt.wantAutoInc)
+				}
+			}
+			if got := sqliteInsertWithoutKey(t, dbPath); got != tt.wantInsert {
+				t.Errorf("INSERT without id: %s, want %s", got, tt.wantInsert)
+			}
+			assertSchemaParity(t, "sqlite", parsed, introspected)
+		})
+	}
+}
+
+// sqliteInsertWithoutKey inserts a row into t that leaves id out and reports
+// what SQLite did with the key.
+func sqliteInsertWithoutKey(t *testing.T, dbPath string) insertOutcome {
+	t.Helper()
+	ctx := context.Background()
+	db, err := sql.Open("sqlite", dbPath)
+	if err != nil {
+		t.Fatalf("opening sqlite: %v", err)
+	}
+	defer db.Close() //nolint:errcheck // test cleanup
+	if _, err := db.ExecContext(ctx, `INSERT INTO t (v) VALUES ('x')`); err != nil {
+		return keyRejected
+	}
+	var id sql.NullInt64
+	if err := db.QueryRowContext(ctx, `SELECT id FROM t`).Scan(&id); err != nil {
+		t.Fatalf("reading id: %v", err)
+	}
+	if !id.Valid {
+		return keyNull
+	}
+	return keyAssigned
+}
+
+func TestSQLiteIntrospect_TableFlags(t *testing.T) {
+	requireDatabases(t)
+	parsed, introspected := sqliteSchemas(t, `
+		CREATE TABLE plain (id INTEGER PRIMARY KEY, v TEXT);
+		CREATE TABLE wr (id INTEGER PRIMARY KEY, v TEXT) WITHOUT ROWID;
+		CREATE TABLE st (id INTEGER PRIMARY KEY, v TEXT) STRICT;
+		CREATE TABLE both_flags (id INTEGER PRIMARY KEY, v TEXT) STRICT, WITHOUT ROWID
+	`)
+
+	type flags struct{ WithoutRowID, Strict bool }
+	want := map[string]flags{
+		"plain":      {},
+		"wr":         {WithoutRowID: true},
+		"st":         {Strict: true},
+		"both_flags": {WithoutRowID: true, Strict: true},
+	}
+	for name, w := range want {
+		table := findTable(t, introspected, name)
+		if got := (flags{WithoutRowID: table.WithoutRowID, Strict: table.Strict}); got != w {
+			t.Errorf("%s: introspected flags %+v, want %+v", name, got, w)
+		}
+	}
+	assertSchemaParity(t, "sqlite", parsed, introspected)
+}
+
+func TestSQLiteIntrospect_TypeCoverage(t *testing.T) {
+	requireDatabases(t)
+	parsed, introspected := sqliteSchemas(t, `
+		CREATE TABLE types (
+			c_integer INTEGER,
+			c_text TEXT,
+			c_real REAL,
+			c_blob BLOB,
+			c_numeric NUMERIC,
+			c_varchar VARCHAR(255),
+			c_boolean BOOLEAN,
+			c_datetime DATETIME,
+			c_untyped,
+			c_decimal DECIMAL(10, 2),
+			c_uuid UUID
+		)
+	`)
+
+	want := map[string]string{
+		"c_integer":  "integer",
+		"c_text":     "text",
+		"c_real":     "real",
+		"c_blob":     "blob",
+		"c_numeric":  "numeric",
+		"c_varchar":  "varchar(255)",
+		"c_boolean":  "boolean",
+		"c_datetime": "datetime",
+		"c_untyped":  "blob",
+		"c_decimal":  "decimal(10,2)",
+		"c_uuid":     "blob",
+	}
+	for source, schema := range map[string]*parser.Schema{"parsed": parsed, "introspected": introspected} {
+		got := make(map[string]string)
+		for _, c := range findTable(t, schema, "types").Columns {
+			got[c.Name] = c.Type
+		}
+		if diff := cmp.Diff(want, got); diff != "" {
+			t.Errorf("%s column types mismatch (-want +got):\n%s", source, diff)
+		}
+	}
+	assertSchemaParity(t, "sqlite", parsed, introspected)
+}
+
+func TestSQLiteIntrospect_Defaults(t *testing.T) {
+	requireDatabases(t)
+	ddl := `
+		CREATE TABLE d (
+			id INTEGER PRIMARY KEY,
+			s TEXT DEFAULT 'it''s',
+			n REAL DEFAULT 1.5,
+			neg INTEGER DEFAULT -1,
+			ts DATETIME DEFAULT CURRENT_TIMESTAMP,
+			expr INTEGER DEFAULT (1 + 2),
+			fn TEXT DEFAULT (lower('X')),
+			nul TEXT DEFAULT NULL
+		)
+	`
+	dbPath := applySQLite(t, ddl)
+	introspected := introspectSQLite(t, dbPath, introspect.IntrospectionOptions{})
+	parsed := parseStatements(t, sqlite.New(), ddl)
+
+	want := map[string]string{
+		"id":   "",
+		"s":    `'it''s'`,
+		"n":    "1.5",
+		"neg":  "-1",
+		"ts":   "CURRENT_TIMESTAMP",
+		"expr": "1 + 2",
+		"fn":   "lower('X')",
+		"nul":  "NULL",
+	}
+	got := make(map[string]string)
+	for _, c := range findTable(t, introspected, "d").Columns {
+		got[c.Name] = c.Default
+	}
+	if diff := cmp.Diff(want, got); diff != "" {
+		t.Errorf("introspected defaults mismatch (-want +got):\n%s", diff)
+	}
+
+	// The generator inlines a SQLite default into SQL, so each must be a valid
+	// expression on its own.
+	db, err := sql.Open("sqlite", dbPath)
+	if err != nil {
+		t.Fatalf("opening sqlite: %v", err)
+	}
+	defer db.Close() //nolint:errcheck // test cleanup
+	for name, dflt := range got {
+		if dflt == "" {
+			continue
+		}
+		var v any
+		if err := db.QueryRowContext(context.Background(), "SELECT "+dflt).Scan(&v); err != nil {
+			t.Errorf("%s: default %q is not a valid expression: %v", name, dflt, err)
+		}
+	}
+	assertSchemaParity(t, "sqlite", parsed, introspected)
+}
+
+func TestSQLiteIntrospect_CompositeConstraints(t *testing.T) {
+	requireDatabases(t)
+	parsed, introspected := sqliteSchemas(t, `
+		CREATE TABLE parent (a INTEGER NOT NULL, b INTEGER NOT NULL, name TEXT, PRIMARY KEY (a, b), UNIQUE (name, a));
+		CREATE TABLE child (
+			id INTEGER PRIMARY KEY,
+			pa INTEGER,
+			pb INTEGER,
+			parent_id INTEGER REFERENCES child(id),
+			CONSTRAINT child_parent_fk FOREIGN KEY (pb, pa) REFERENCES parent (b, a)
+		)
+	`)
+
+	want := map[string][]parser.Constraint{
+		"parent": {
+			{Type: parser.PrimaryKey, Columns: []string{"a", "b"}},
+			{Type: parser.Unique, Columns: []string{"name", "a"}},
+		},
+		"child": {
+			{Type: parser.PrimaryKey, Columns: []string{"id"}},
+			{Type: parser.ForeignKey, Columns: []string{"parent_id"}, ReferenceTable: "child", ReferenceColumns: []string{"id"}},
+			{Name: "child_parent_fk", Type: parser.ForeignKey, Columns: []string{"pb", "pa"}, ReferenceTable: "parent", ReferenceColumns: []string{"b", "a"}},
+		},
+	}
+	for name, w := range want {
+		got := slices.Clone(findTable(t, introspected, name).Constraints)
+		sortConstraints(got)
+		if diff := cmp.Diff(w, got, cmpopts.EquateEmpty()); diff != "" {
+			t.Errorf("%s: introspected constraints mismatch (-want +got):\n%s", name, diff)
+		}
+	}
+	assertSchemaParity(t, "sqlite", parsed, introspected)
+}
+
 // --- Filtering tests ---
 
 func TestPostgresSchemaFiltering(t *testing.T) {
@@ -813,193 +1288,210 @@ func TestTableFilteringWithWildcards(t *testing.T) {
 
 // --- Both mode tests ---
 
+// bothModeTable is the table the both-mode tests create in each database.
+const bothModeTable = "both_users"
+
+// bothModeDialect is one dialect's setup for the both-mode tests.
+type bothModeDialect struct {
+	name string
+	// schema is the schema a hand-built base table belongs to, the one the
+	// parser resolves an unqualified name to.
+	schema string
+	// base applies ddl, which creates only bothModeTable, and returns the
+	// introspected schema.
+	base      func(t *testing.T, ddl string) *parser.Schema
+	newParser func(t *testing.T) introspect.Seedable
+}
+
+var bothModeDialects = []bothModeDialect{
+	{
+		name:      "postgres",
+		schema:    "both_mode",
+		base:      postgresBothModeBase,
+		newParser: func(*testing.T) introspect.Seedable { return postgres.New("both_mode") },
+	},
+	{
+		name: "mysql",
+		base: mysqlBothModeBase,
+		newParser: func(t *testing.T) introspect.Seedable {
+			p, err := mysql.New()
+			if err != nil {
+				t.Fatalf("mysql.New() error: %v", err)
+			}
+			return p
+		},
+	},
+	{
+		name:      "sqlite",
+		base:      sqliteBothModeBase,
+		newParser: func(*testing.T) introspect.Seedable { return sqlite.New() },
+	},
+}
+
+func postgresBothModeBase(t *testing.T, ddl string) *parser.Schema {
+	t.Helper()
+	ctx := context.Background()
+	conn := pgConnStr + "&search_path=both_mode"
+	db, err := sql.Open("pgx", conn)
+	if err != nil {
+		t.Fatalf("opening postgres: %v", err)
+	}
+	t.Cleanup(func() {
+		_, _ = db.ExecContext(ctx, "DROP SCHEMA IF EXISTS both_mode CASCADE")
+		_ = db.Close()
+	})
+	for _, stmt := range []string{"DROP SCHEMA IF EXISTS both_mode CASCADE", "CREATE SCHEMA both_mode", ddl} {
+		if _, err := db.ExecContext(ctx, stmt); err != nil {
+			t.Fatalf("applying %q: %v", truncate(stmt), err)
+		}
+	}
+
+	intro := introspect.NewPostgresIntrospector()
+	t.Cleanup(func() { _ = intro.Close() })
+	schema := &parser.Schema{}
+	if err := intro.Introspect(ctx, conn, schema, introspect.IntrospectionOptions{Schemas: []string{"both_mode"}}); err != nil {
+		t.Fatalf("Introspect() error: %v", err)
+	}
+	return schema
+}
+
+func mysqlBothModeBase(t *testing.T, ddl string) *parser.Schema {
+	t.Helper()
+	ctx := context.Background()
+	db, err := sql.Open("mysql", mysqlConnStr)
+	if err != nil {
+		t.Fatalf("opening mysql: %v", err)
+	}
+	t.Cleanup(func() {
+		_, _ = db.ExecContext(ctx, "DROP TABLE IF EXISTS "+bothModeTable)
+		_ = db.Close()
+	})
+	for _, stmt := range []string{"DROP TABLE IF EXISTS " + bothModeTable, ddl} {
+		if _, err := db.ExecContext(ctx, stmt); err != nil {
+			t.Fatalf("applying %q: %v", truncate(stmt), err)
+		}
+	}
+
+	intro := introspect.NewMySQLIntrospector()
+	t.Cleanup(func() { _ = intro.Close() })
+	schema := &parser.Schema{}
+	if err := intro.Introspect(ctx, mysqlConnStr, schema, introspect.IntrospectionOptions{Tables: []string{bothModeTable}}); err != nil {
+		t.Fatalf("Introspect() error: %v", err)
+	}
+	return schema
+}
+
+func sqliteBothModeBase(t *testing.T, ddl string) *parser.Schema {
+	t.Helper()
+	return introspectSQLite(t, applySQLite(t, ddl), introspect.IntrospectionOptions{})
+}
+
+// writeMigration writes sql to a migration file and returns its path.
+func writeMigration(t *testing.T, sql string) string {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), "001_migration.sql")
+	if err := os.WriteFile(path, []byte(sql), 0o600); err != nil {
+		t.Fatalf("writing migration: %v", err)
+	}
+	return path
+}
+
 func TestBothModeAlterOverlay(t *testing.T) {
 	requireDatabases(t)
 
-	ctx := context.Background()
+	for _, d := range bothModeDialects {
+		t.Run(d.name, func(t *testing.T) {
+			base := d.base(t, "CREATE TABLE "+bothModeTable+" (id integer PRIMARY KEY, name text NOT NULL)")
+			migration := writeMigration(t, "ALTER TABLE "+bothModeTable+" ADD COLUMN email text;")
 
-	// Create a SQLite database with a base table.
-	dbPath := sqliteDBPath + "_both_alter"
-	db, err := sql.Open("sqlite", dbPath)
-	if err != nil {
-		t.Fatalf("opening sqlite: %v", err)
-	}
-	defer db.Close()        //nolint:errcheck // test cleanup
-	defer os.Remove(dbPath) //nolint:errcheck // test cleanup
+			p := d.newParser(t)
+			if err := introspect.Merge(base, p, []string{migration}); err != nil {
+				t.Fatalf("Merge() error: %v", err)
+			}
 
-	_, err = db.ExecContext(ctx, `
-		CREATE TABLE users (
-			id integer PRIMARY KEY,
-			name text NOT NULL
-		);
-	`)
-	if err != nil {
-		t.Fatalf("applying base DDL: %v", err)
-	}
-
-	// Introspect base schema.
-	intro := introspect.NewSQLiteIntrospector()
-	defer intro.Close() //nolint:errcheck // test cleanup
-
-	base := &parser.Schema{}
-	if err := intro.Introspect(ctx, dbPath, base, introspect.IntrospectionOptions{}); err != nil {
-		t.Fatalf("Introspect() error: %v", err)
-	}
-
-	// Create a migration file that adds a column.
-	tmpDir, err := os.MkdirTemp("", "sqlgen_both_test")
-	if err != nil {
-		t.Fatalf("creating temp dir: %v", err)
-	}
-	defer os.RemoveAll(tmpDir) //nolint:errcheck // test cleanup
-
-	migrationFile := filepath.Join(tmpDir, "001_add_email.sql")
-	if err := os.WriteFile(migrationFile, []byte("ALTER TABLE users ADD COLUMN email text;"), 0o600); err != nil {
-		t.Fatalf("writing migration: %v", err)
-	}
-
-	// Merge.
-	p := sqlite.New()
-	if err := introspect.Merge(base, p, []string{migrationFile}); err != nil {
-		t.Fatalf("Merge() error: %v", err)
-	}
-
-	merged := p.Schema()
-	if len(merged.Tables) != 1 {
-		t.Fatalf("expected 1 table, got %d", len(merged.Tables))
-	}
-
-	users := merged.Tables[0]
-	if len(users.Columns) != 3 {
-		t.Fatalf("expected 3 columns, got %d", len(users.Columns))
-	}
-	if users.Columns[2].Name != "email" {
-		t.Errorf("expected column 'email', got %q", users.Columns[2].Name)
+			merged := p.Schema()
+			if len(merged.Tables) != 1 {
+				t.Fatalf("merged tables = %d, want 1", len(merged.Tables))
+			}
+			if diff := cmp.Diff([]string{"id", "name", "email"}, columnNames(merged.Tables[0].Columns)); diff != "" {
+				t.Errorf("merged columns mismatch (-want +got):\n%s", diff)
+			}
+		})
 	}
 }
 
 func TestBothModeCreateExisting(t *testing.T) {
 	requireDatabases(t)
 
-	ctx := context.Background()
+	for _, d := range bothModeDialects {
+		t.Run(d.name, func(t *testing.T) {
+			base := d.base(t, "CREATE TABLE "+bothModeTable+" (id integer PRIMARY KEY)")
+			migration := writeMigration(t, "CREATE TABLE "+bothModeTable+" (id integer PRIMARY KEY, name text);")
 
-	// Create a SQLite database with a table.
-	dbPath := sqliteDBPath + "_both_create"
-	db, err := sql.Open("sqlite", dbPath)
-	if err != nil {
-		t.Fatalf("opening sqlite: %v", err)
-	}
-	defer db.Close()        //nolint:errcheck // test cleanup
-	defer os.Remove(dbPath) //nolint:errcheck // test cleanup
-
-	_, err = db.ExecContext(ctx, "CREATE TABLE users (id integer PRIMARY KEY);")
-	if err != nil {
-		t.Fatalf("applying base DDL: %v", err)
-	}
-
-	// Introspect base.
-	intro := introspect.NewSQLiteIntrospector()
-	defer intro.Close() //nolint:errcheck // test cleanup
-
-	base := &parser.Schema{}
-	if err := intro.Introspect(ctx, dbPath, base, introspect.IntrospectionOptions{}); err != nil {
-		t.Fatalf("Introspect() error: %v", err)
-	}
-
-	// File tries to CREATE TABLE users — should fail.
-	tmpDir, err := os.MkdirTemp("", "sqlgen_both_create")
-	if err != nil {
-		t.Fatalf("creating temp dir: %v", err)
-	}
-	defer os.RemoveAll(tmpDir) //nolint:errcheck // test cleanup
-
-	migrationFile := filepath.Join(tmpDir, "001_create_users.sql")
-	if err := os.WriteFile(migrationFile, []byte("CREATE TABLE users (id integer PRIMARY KEY, name text);"), 0o600); err != nil {
-		t.Fatalf("writing migration: %v", err)
-	}
-
-	p := sqlite.New()
-	err = introspect.Merge(base, p, []string{migrationFile})
-	if err == nil {
-		t.Fatal("Merge() expected error for CREATE TABLE on existing, got nil")
-	}
-	if got := err.Error(); !strings.Contains(got, "already exists") {
-		t.Errorf("Merge() error = %q, want error containing 'already exists'", got)
+			err := introspect.Merge(base, d.newParser(t), []string{migration})
+			if err == nil {
+				t.Fatal("Merge() expected error for CREATE TABLE on existing, got nil")
+			}
+			if got := err.Error(); !strings.Contains(got, "already exists") {
+				t.Errorf("Merge() error = %q, want error containing 'already exists'", got)
+			}
+		})
 	}
 }
 
 func TestBothModeColumnConflict(t *testing.T) {
 	requireDatabases(t)
 
-	tmpDir, err := os.MkdirTemp("", "sqlgen_both_conflict")
-	if err != nil {
-		t.Fatalf("creating temp dir: %v", err)
+	// base is an introspected table, built by hand: the conflict rule needs no
+	// database.
+	base := func(schema string) *parser.Schema {
+		return &parser.Schema{
+			Tables: []parser.Table{
+				{
+					Name:   "items",
+					Schema: schema,
+					Columns: []parser.Column{
+						{Name: "id", Type: "integer", PrimaryKey: true, AutoIncrement: true},
+						{Name: "count", Type: "integer"},
+					},
+				},
+			},
+		}
 	}
-	defer os.RemoveAll(tmpDir) //nolint:errcheck // test cleanup
 
-	t.Run("DROP+ADD is explicit and allowed", func(t *testing.T) {
-		base := &parser.Schema{
-			Tables: []parser.Table{
-				{
-					Name: "items",
-					Columns: []parser.Column{
-						{Name: "id", Type: "integer", PrimaryKey: true, AutoIncrement: true},
-						{Name: "count", Type: "integer"},
-					},
-				},
-			},
-		}
+	for _, d := range bothModeDialects {
+		t.Run(d.name, func(t *testing.T) {
+			t.Run("DROP+ADD is explicit and allowed", func(t *testing.T) {
+				migration := writeMigration(t, "ALTER TABLE items DROP COLUMN count;\nALTER TABLE items ADD COLUMN count text;")
 
-		migrationFile := filepath.Join(tmpDir, "001_change_type.sql")
-		migration := "ALTER TABLE items DROP COLUMN count;\nALTER TABLE items ADD COLUMN count text;"
-		if err := os.WriteFile(migrationFile, []byte(migration), 0o600); err != nil {
-			t.Fatalf("writing migration: %v", err)
-		}
+				p := d.newParser(t)
+				if err := introspect.Merge(base(d.schema), p, []string{migration}); err != nil {
+					t.Fatalf("Merge() unexpected error for DROP+ADD: %v", err)
+				}
 
-		p := sqlite.New()
-		if err := introspect.Merge(base, p, []string{migrationFile}); err != nil {
-			t.Fatalf("Merge() unexpected error for DROP+ADD: %v", err)
-		}
+				items := p.Schema().Tables[0]
+				countCol := parser.ColumnByName(&items, "count")
+				if countCol == nil {
+					t.Fatal("expected column 'count' in merged schema")
+				}
+				if countCol.Type != "text" {
+					t.Errorf("expected count type 'text', got %q", countCol.Type)
+				}
+			})
 
-		merged := p.Schema()
-		items := merged.Tables[0]
-		countCol := parser.ColumnByName(&items, "count")
-		if countCol == nil {
-			t.Fatal("expected column 'count' in merged schema")
-		}
-		if countCol.Type != "text" {
-			t.Errorf("expected count type 'text', got %q", countCol.Type)
-		}
-	})
+			t.Run("ADD COLUMN duplicating existing with different type errors", func(t *testing.T) {
+				migration := writeMigration(t, "ALTER TABLE items ADD COLUMN count text;")
 
-	t.Run("ADD COLUMN duplicating existing with different type errors", func(t *testing.T) {
-		base := &parser.Schema{
-			Tables: []parser.Table{
-				{
-					Name: "items",
-					Columns: []parser.Column{
-						{Name: "id", Type: "integer", PrimaryKey: true, AutoIncrement: true},
-						{Name: "count", Type: "integer"},
-					},
-				},
-			},
-		}
-
-		migrationFile := filepath.Join(tmpDir, "002_dup_column.sql")
-		migration := "ALTER TABLE items ADD COLUMN count text;"
-		if err := os.WriteFile(migrationFile, []byte(migration), 0o600); err != nil {
-			t.Fatalf("writing migration: %v", err)
-		}
-
-		p := sqlite.New()
-		err := introspect.Merge(base, p, []string{migrationFile})
-		if err == nil {
-			t.Fatal("Merge() expected error for duplicate column with different type, got nil")
-		}
-		if !strings.Contains(err.Error(), "column conflict") {
-			t.Errorf("Merge() error = %q, want error containing 'column conflict'", err.Error())
-		}
-	})
+				err := introspect.Merge(base(d.schema), d.newParser(t), []string{migration})
+				if err == nil {
+					t.Fatal("Merge() expected error for duplicate column with different type, got nil")
+				}
+				if !strings.Contains(err.Error(), "column conflict") {
+					t.Errorf("Merge() error = %q, want error containing 'column conflict'", err.Error())
+				}
+			})
+		})
+	}
 }
 
 // --- View introspection tests ---

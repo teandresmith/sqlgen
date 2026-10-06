@@ -1314,7 +1314,7 @@ Each dialect parser lives in the **parser module** (`github.com/teandresmith/sql
 - Generated columns: `GENERATED ALWAYS AS (expr) VIRTUAL|STORED` and shorthand `AS (expr)` (3.31+)
 - STRICT tables: recognizes `CREATE TABLE ... STRICT` modifier (3.37+)
 - WITHOUT ROWID tables: recognizes `CREATE TABLE ... WITHOUT ROWID` modifier (3.8.2+)
-- `INTEGER PRIMARY KEY` is auto-increment only when it is a rowid alias. It is not one in a `WITHOUT ROWID` table, nor when declared `INTEGER PRIMARY KEY DESC`; such a key gets no automatic value and the caller supplies it
+- `INTEGER PRIMARY KEY` is auto-increment only when it is a rowid alias. It is not one in a `WITHOUT ROWID` table, nor when declared `INTEGER PRIMARY KEY DESC`; such a key gets no automatic value and the caller supplies it. A table-level `PRIMARY KEY (id)` over one `INTEGER` column is a rowid alias too
 - `CREATE VIRTUAL TABLE` (FTS5, R*Tree, …) is skipped with a warning, like `CREATE VIEW`
 - No MODIFY COLUMN, enum, composite, or domain support
 - Type affinity handling (defaults to BLOB)
@@ -1584,7 +1584,9 @@ type Introspector interface {
 - **PostgreSQL partitions.** A partition (`CREATE TABLE … PARTITION OF`) is skipped; only the partitioned parent is introspected, as the parser does ([5.2](#52-dialect-parsers)).
 - **SQLite virtual tables.** Virtual tables (FTS5, R*Tree, …) and the shadow tables behind them are skipped, with a warning naming each virtual table, as the parser does.
 - **SQLite constraint names and CHECK text.** SQLite's PRAGMAs give columns, keys, foreign keys and indexes, but not constraint names or CHECK expressions. Those come from the table's stored `CREATE TABLE` (`sqlite_master.sql`), read with the file parser.
-- **SQLite generated columns.** `PRAGMA table_xinfo` lists them (`hidden` 2 is VIRTUAL, 3 is STORED), and the expression comes from the stored `CREATE TABLE`, read with the file parser. The file parser cannot read some legal SQLite DDL: a sort order before `AUTOINCREMENT` on a column `PRIMARY KEY` (`PRIMARY KEY ASC AUTOINCREMENT`), a column `PRIMARY KEY ON CONFLICT …`, and `REFERENCES t` with no column list. A table with a generated column and any of these is an introspection error, as the same DDL is a parse error under `files`.
+- **SQLite column types.** A column's type is the declared type the catalog reports, normalized as the file parser normalizes it, so an unrecognized type is `blob` and a type modifier has no spaces (`decimal(10,2)`).
+- **SQLite generated columns.** `PRAGMA table_xinfo` lists them (`hidden` 2 is VIRTUAL, 3 is STORED), and the expression comes from the stored `CREATE TABLE`, read with the file parser.
+- **SQLite DDL the file parser cannot read.** Every table's stored `CREATE TABLE` is read with the file parser, and the parser cannot read some legal SQLite DDL: a sort order before `AUTOINCREMENT` on a column `PRIMARY KEY` (`PRIMARY KEY ASC AUTOINCREMENT`), an `ON CONFLICT` clause on a `PRIMARY KEY`, `UNIQUE` or `NOT NULL` constraint, at column or table level (`UNIQUE (a) ON CONFLICT REPLACE`), a sort order or collation on a table-level `PRIMARY KEY` column (`PRIMARY KEY (id DESC)`), and `REFERENCES t` with no column list. A table with any of these is an introspection error, as the same DDL is a parse error under `files`.
 
 ### 6.4 Filtering
 
