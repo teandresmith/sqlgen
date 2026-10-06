@@ -129,7 +129,7 @@ func TestBuildView_TypeResolution(t *testing.T) {
 	parsed := parser.ViewSQL{
 		Name: "product_summary", Columns: columns, TableAliases: aliases,
 	}
-	view, err := parser.BuildView(parsed, "CREATE VIEW ...", annotations, tables)
+	view, err := parser.BuildView(parsed, "CREATE VIEW ...", annotations, &parser.Schema{Tables: tables})
 	if err != nil {
 		t.Fatalf("BuildView() error: %v", err)
 	}
@@ -221,7 +221,7 @@ func TestBuildView_AggregateInference(t *testing.T) {
 			parsed := parser.ViewSQL{
 				Name: "test", Columns: []parser.ViewSelectColumn{tt.col}, TableAliases: aliases,
 			}
-			view, err := parser.BuildView(parsed, "", annotations, tables)
+			view, err := parser.BuildView(parsed, "", annotations, &parser.Schema{Tables: tables})
 			if err != nil {
 				t.Fatalf("BuildView() error: %v", err)
 			}
@@ -287,7 +287,7 @@ func TestBuildView_ArrayAggRouting(t *testing.T) {
 				TableAliases: map[string]string{"o": "orders"},
 			}
 
-			view, err := parser.BuildView(parsed, "", annotations, tables)
+			view, err := parser.BuildView(parsed, "", annotations, &parser.Schema{Tables: tables})
 			if err != nil {
 				t.Fatalf("BuildView() error: %v", err)
 			}
@@ -303,6 +303,111 @@ func TestBuildView_ArrayAggRouting(t *testing.T) {
 				t.Errorf("Aggregate = %q, want %q", col.Aggregate, tt.wantAggregate)
 			}
 		})
+	}
+}
+
+// A view column copies its source column's type, written relative to the
+// view's schema the way a table column's type is: bare in its own schema,
+// qualified in any other.
+func TestBuildView_TypesRelativeToViewSchema(t *testing.T) {
+	schema := &parser.Schema{
+		Enums: []parser.Enum{
+			{Name: "status", Schema: "app"},
+			{Name: "status", Schema: "billing"},
+		},
+		DomainTypes: []parser.DomainType{{Name: "money_d", Schema: "app", BaseType: "numeric"}},
+		Tables: []parser.Table{
+			{Name: "accounts", Schema: "app", Columns: []parser.Column{
+				{Name: "status", Type: "status"},
+				{Name: "statuses", Type: "status[]"},
+				{Name: "other", Type: "billing.status"},
+				{Name: "amount", Type: "money_d"},
+				{Name: "note", Type: "text"},
+				{Name: "tags", Type: "text[]"},
+			}},
+			{Name: "accounts", Schema: "billing", Columns: []parser.Column{
+				{Name: "status", Type: "status"},
+			}},
+		},
+	}
+	sourceCols := []string{"status", "statuses", "other", "amount", "note", "tags"}
+	tests := []struct {
+		name       string
+		viewSchema string
+		table      string
+		tblSchema  string
+		want       map[string]string
+	}{
+		{
+			name: "view in the source table's schema", viewSchema: "app", table: "accounts", tblSchema: "app",
+			want: map[string]string{
+				"status": "status", "statuses": "status[]", "other": "billing.status",
+				"amount": "money_d", "note": "text", "tags": "text[]",
+			},
+		},
+		{
+			name: "view in the schema a qualified type names", viewSchema: "billing", table: "accounts", tblSchema: "app",
+			want: map[string]string{
+				"status": "app.status", "statuses": "app.status[]", "other": "status",
+				"amount": "app.money_d", "note": "text", "tags": "text[]",
+			},
+		},
+		{
+			name: "view in a third schema", viewSchema: "public", table: "accounts", tblSchema: "app",
+			want: map[string]string{
+				"status": "app.status", "statuses": "app.status[]", "other": "billing.status",
+				"amount": "app.money_d", "note": "text", "tags": "text[]",
+			},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cols := make([]parser.ViewSelectColumn, 0, len(sourceCols))
+			for _, c := range sourceCols {
+				cols = append(cols, parser.ViewSelectColumn{Alias: c, SourceTable: "a", SourceColumn: c})
+			}
+			parsed := parser.ViewSQL{
+				Name: "v", Schema: tt.viewSchema, Columns: cols,
+				TableAliases: map[string]string{"a": tt.table},
+				TableSchemas: map[string]string{"a": tt.tblSchema},
+			}
+			view, err := parser.BuildView(parsed, "", &parser.ViewAnnotations{}, schema)
+			if err != nil {
+				t.Fatalf("BuildView() error: %v", err)
+			}
+			got := make(map[string]string, len(view.Columns))
+			for _, c := range view.Columns {
+				got[c.Name] = c.Type
+			}
+			if diff := cmp.Diff(tt.want, got); diff != "" {
+				t.Errorf("column types mismatch (-want +got):\n%s", diff)
+			}
+		})
+	}
+}
+
+// The source table is looked up in the FROM clause's schema, so a view over
+// billing.accounts does not read app.accounts.
+func TestBuildView_SourceTableBySchema(t *testing.T) {
+	schema := &parser.Schema{Tables: []parser.Table{
+		{Name: "accounts", Schema: "app", Columns: []parser.Column{{Name: "code", Type: "text"}}},
+		{Name: "accounts", Schema: "billing", Columns: []parser.Column{{Name: "code", Type: "integer"}}},
+	}}
+	for _, tblSchema := range []string{"app", "billing"} {
+		parsed := parser.ViewSQL{
+			Name: "v", Schema: "public",
+			Columns:      []parser.ViewSelectColumn{{Alias: "code", SourceColumn: "code"}},
+			TableAliases: map[string]string{"accounts": "accounts"},
+			TableSchemas: map[string]string{"accounts": tblSchema},
+		}
+		view, err := parser.BuildView(parsed, "", &parser.ViewAnnotations{}, schema)
+		if err != nil {
+			t.Fatalf("BuildView() error: %v", err)
+		}
+		want := map[string]string{"app": "text", "billing": "integer"}[tblSchema]
+		if got := view.Columns[0].Type; got != want {
+			t.Errorf("FROM %s.accounts: code Type = %q, want %q", tblSchema, got, want)
+		}
 	}
 }
 
@@ -449,7 +554,7 @@ func TestBuildView_Materialized(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			view, err := parser.BuildView(parsed, "raw sql", tt.annotations, tables)
+			view, err := parser.BuildView(parsed, "raw sql", tt.annotations, &parser.Schema{Tables: tables})
 			if err != nil {
 				t.Fatalf("BuildView() error: %v", err)
 			}

@@ -2528,13 +2528,13 @@ func resolveDialect(name config.Dialect) sql.Dialect {
 // a models package that does not compile.
 func registerSchemaTypes(resolver *gotype.Resolver, schema *parser.Schema, cfg *config.RootConfig, collisions map[string]bool) {
 	for _, e := range schema.Enums {
-		resolver.RegisterEnum(e.Name, EnumGoTypeName(cfg, e.Name, e.Schema, collisions))
+		resolver.RegisterEnum(e.Schema, e.Name, EnumGoTypeName(cfg, e.Name, e.Schema, collisions))
 	}
 	for _, s := range schema.Sets {
-		resolver.RegisterSet(s.Name, StructName(s.Name, s.Schema, collisions))
+		resolver.RegisterSet(s.Schema, s.Name, StructName(s.Name, s.Schema, collisions))
 	}
 	for _, d := range schema.DomainTypes {
-		resolver.RegisterDomain(d.Name, d.BaseType)
+		resolver.RegisterDomain(d.Schema, d.Name, d.BaseType)
 	}
 }
 

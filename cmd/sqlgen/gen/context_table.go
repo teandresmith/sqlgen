@@ -293,7 +293,7 @@ func buildTableColumns(input *GenerateInput, table *parser.Table, tableCfg confi
 		if excludeSet[col.Name] {
 			continue
 		}
-		columns = append(columns, buildColumnContext(input, &col, tableCfg, tableOverrides))
+		columns = append(columns, buildColumnContext(input, table.Schema, &col, tableCfg, tableOverrides))
 	}
 
 	// PK column override (PRD §8.6 — tables.<name>.primary_key.columns):
@@ -910,8 +910,10 @@ func collectColumnImports(columns []ColumnContext) []string {
 
 // --- Column building ---
 
-func buildColumnContext(input *GenerateInput, col *parser.Column, tableCfg config.TableConfig, tableOverrides map[string]config.TypeOverride) ColumnContext {
-	gt := resolveColumnGoType(input.Resolver, col, tableCfg, tableOverrides, input.Config.Tenancy)
+// buildColumnContext builds the context of a column of a table in schema.
+func buildColumnContext(input *GenerateInput, schema string, col *parser.Column, tableCfg config.TableConfig, tableOverrides map[string]config.TypeOverride) ColumnContext {
+	resolver := input.Resolver.ForSchema(schema)
+	gt := resolveColumnGoType(resolver, col, tableCfg, tableOverrides, input.Config.Tenancy)
 
 	accessRole, accessCaps := resolveAccess(tableCfg.ColumnMap[col.Name].Access)
 	fieldName, fieldNameOverridden := resolveColumnFieldName(col.Name, tableCfg)
@@ -933,7 +935,7 @@ func buildColumnContext(input *GenerateInput, col *parser.Column, tableCfg confi
 		Import:        gt.Import,
 		ZeroValue:     gt.ZeroValue,
 		SQLType:       col.Type,
-		BaseSQLType:   baseSQLType(input.Resolver, col.Type),
+		BaseSQLType:   baseSQLType(resolver, col.Type),
 		Nullable:      col.Nullable,
 		PrimaryKey:    col.PrimaryKey,
 		HasDefault:    col.Default != "",
@@ -945,7 +947,7 @@ func buildColumnContext(input *GenerateInput, col *parser.Column, tableCfg confi
 		JSONTag:       col.Name,
 		IsSlice:       gt.IsSlice,
 		SliceElemType: gt.SliceElemType,
-		IsSet:         input.Resolver.IsSet(col.Type),
+		IsSet:         resolver.IsSet(col.Type),
 		FKConvert:     gt.FKConvert,
 		FKReference:   fkRef,
 		Unique:        col.Unique,

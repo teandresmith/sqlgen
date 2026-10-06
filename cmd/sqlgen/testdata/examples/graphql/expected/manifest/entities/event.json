@@ -116,7 +116,7 @@
       "name": "adjustment",
       "go_field": "Adjustment",
       "go_type": "decimal.NullDecimal",
-      "db_type": "numeric(12, 2)",
+      "db_type": "numeric(12,2)",
       "nullable": true,
       "pk": false,
       "unique": false,

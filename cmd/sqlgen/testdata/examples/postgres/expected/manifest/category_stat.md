@@ -35,10 +35,10 @@ GROUP BY c.name;
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
 | `category_name` | CategoryName | `*string` | `text` | yes |  |  |  | `comparator.NullableString` |  |
 | `product_count` | ProductCount | `int32` | `int32` |  |  |  |  | `comparator.Number[int32]` |  |
-| `total_price` | TotalPrice | `*float64` | `numeric(10, 2)` | yes |  |  |  | `comparator.NullableNumber[float64]` |  |
+| `total_price` | TotalPrice | `*float64` | `numeric(10,2)` | yes |  |  |  | `comparator.NullableNumber[float64]` |  |
 | `avg_price` | AvgPrice | `*float64` | `*float64` | yes |  |  |  | `comparator.NullableNumber[float64]` |  |
-| `min_price` | MinPrice | `*float64` | `numeric(10, 2)` | yes |  |  |  | `comparator.NullableNumber[float64]` |  |
-| `max_price` | MaxPrice | `*float64` | `numeric(10, 2)` | yes |  |  |  | `comparator.NullableNumber[float64]` |  |
+| `min_price` | MinPrice | `*float64` | `numeric(10,2)` | yes |  |  |  | `comparator.NullableNumber[float64]` |  |
+| `max_price` | MaxPrice | `*float64` | `numeric(10,2)` | yes |  |  |  | `comparator.NullableNumber[float64]` |  |
 | `product_names` | ProductNames | `*string` | `*string` | yes |  |  |  | `comparator.NullableString` |  |
 | `has_active_product` | HasActiveProduct | `*bool` | `*bool` | yes |  |  |  | `comparator.NullableBool` |  |
 | `product_names_json` | ProductNamesJSON | `types.JSON` | `types.JSON` |  |  |  |  | `comparator.JSON` |  |

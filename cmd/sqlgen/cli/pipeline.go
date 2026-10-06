@@ -259,7 +259,7 @@ func parseViewFiles(dialect config.Dialect, defaultSchema string, viewPaths []st
 			return fmt.Errorf("parsing view SQL in %s: %w", file, err)
 		}
 
-		view, err := parser.BuildView(parsed, string(data), annotations, schema.Tables)
+		view, err := parser.BuildView(parsed, string(data), annotations, schema)
 		if err != nil {
 			return fmt.Errorf("building view from %s: %w", file, err)
 		}

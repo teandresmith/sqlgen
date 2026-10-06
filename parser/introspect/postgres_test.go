@@ -4,6 +4,8 @@ import (
 	"testing"
 
 	"github.com/google/go-cmp/cmp"
+
+	"github.com/teandresmith/sqlgen/parser"
 )
 
 func TestChooseMatviewPK(t *testing.T) {
@@ -177,5 +179,61 @@ func TestPostgresGeneratedStorage(t *testing.T) {
 				t.Errorf("postgresGeneratedStorage(%q) = %q, want %q", tt.attgenerated, got, tt.want)
 			}
 		})
+	}
+}
+
+func TestColumnType(t *testing.T) {
+	tests := []struct {
+		name                           string
+		formatType, typSchema, typName string
+		own                            string
+		want                           string
+	}{
+		{name: "built-in type", formatType: "character varying(255)", own: "app", want: "varchar(255)"},
+		{name: "built-in array", formatType: "numeric(12,2)[]", own: "app", want: "numeric(12,2)[]"},
+		{name: "own-schema enum qualified by format_type", formatType: "app.status_enum", typSchema: "app", typName: "status_enum", own: "app", want: "status_enum"},
+		{name: "own-schema enum on the search_path", formatType: "status_enum", typSchema: "app", typName: "status_enum", own: "app", want: "status_enum"},
+		{name: "own-schema enum array", formatType: "app.status_enum[]", typSchema: "app", typName: "status_enum", own: "app", want: "status_enum[]"},
+		{name: "cross-schema enum on the search_path", formatType: "region", typSchema: "other", typName: "region", own: "app", want: "other.region"},
+		{name: "cross-schema domain array", formatType: "other.dom[]", typSchema: "other", typName: "dom", own: "app", want: "other.dom[]"},
+		{name: "quoted mixed-case name", formatType: `app."Mood"`, typSchema: "app", typName: "Mood", own: "public", want: "app.Mood"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := columnType(tt.formatType, tt.typSchema, tt.typName, tt.own); got != tt.want {
+				t.Errorf("columnType(%q, %q, %q, %q) = %q, want %q", tt.formatType, tt.typSchema, tt.typName, tt.own, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestApplyColumnExpr(t *testing.T) {
+	casts := map[string][]string{"code": {"text"}}
+	tests := []struct {
+		name string
+		expr columnExpr
+		want parser.Column
+	}{
+		{name: "no default", expr: columnExpr{}, want: parser.Column{}},
+		{name: "literal default loses its cast", expr: columnExpr{text: "'active'::app.status_enum"}, want: parser.Column{Default: "'active'"}},
+		{name: "serial default dropped", expr: columnExpr{text: "nextval('users_id_seq'::regclass)", serial: true}, want: parser.Column{AutoIncrement: true}},
+		{name: "sequence the column does not own", expr: columnExpr{text: "nextval('app.myseq'::regclass)"}, want: parser.Column{Default: "nextval('app.myseq')", AutoIncrement: true}},
+		{name: "stored generated", expr: columnExpr{text: "(price * (2)::numeric)", generated: "s"}, want: parser.Column{GeneratedExpr: "price * 2", GeneratedStorage: "STORED"}},
+		{name: "virtual generated over varchar", expr: columnExpr{text: "upper((code)::text)", generated: "v"}, want: parser.Column{GeneratedExpr: "upper(code)", GeneratedStorage: "VIRTUAL"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var got parser.Column
+			if err := applyColumnExpr(&got, tt.expr, casts); err != nil {
+				t.Fatalf("applyColumnExpr(%+v) error: %v", tt.expr, err)
+			}
+			if diff := cmp.Diff(tt.want, got); diff != "" {
+				t.Errorf("applyColumnExpr(%+v) mismatch (-want +got):\n%s", tt.expr, diff)
+			}
+		})
+	}
+	var col parser.Column
+	if err := applyColumnExpr(&col, columnExpr{text: "qty *"}, nil); err == nil {
+		t.Error("applyColumnExpr on unparsable text: error = nil, want an error")
 	}
 }

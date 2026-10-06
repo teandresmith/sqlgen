@@ -22,7 +22,7 @@ Individual line items within an order
 | `order_id` | OrderID | `uuid.UUID` | `uuid` |  |  |  |  | `comparator.ID` | Parent order reference |
 | `product_id` | ProductID | `uuid.UUID` | `uuid` |  |  |  |  | `comparator.ID` | Purchased product reference |
 | `quantity` | Quantity | `int32` | `positive_int` |  |  |  | `1` | `comparator.Number[int32]` | Number of units ordered |
-| `unit_price` | UnitPrice | `float64` | `numeric(10, 2)` |  |  |  |  | `comparator.Number[float64]` | Price per unit at time of purchase |
+| `unit_price` | UnitPrice | `float64` | `numeric(10,2)` |  |  |  |  | `comparator.Number[float64]` | Price per unit at time of purchase |
 | `created_at` | CreatedAt | `time.Time` | `timestamptz` |  |  |  | `current_timestamp` | `comparator.Time` | Row creation timestamp |
 
 ## Indexes

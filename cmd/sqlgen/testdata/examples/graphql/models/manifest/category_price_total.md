@@ -44,8 +44,8 @@ GROUP BY p.category_id;
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
 | `category_id` | CategoryID | `int64` | `bigint` |  | yes |  |  | `comparator.Number[int64]` |  |
 | `product_count` | ProductCount | `int32` | `int32` |  |  |  |  | `comparator.Number[int32]` |  |
-| `total_price` | TotalPrice | `decimal.NullDecimal` | `numeric(12, 2)` | yes |  |  |  | `comparator.NullableString` |  |
-| `max_price` | MaxPrice | `decimal.NullDecimal` | `numeric(12, 2)` | yes |  |  |  | `comparator.NullableString` |  |
+| `total_price` | TotalPrice | `decimal.NullDecimal` | `numeric(12,2)` | yes |  |  |  | `comparator.NullableString` |  |
+| `max_price` | MaxPrice | `decimal.NullDecimal` | `numeric(12,2)` | yes |  |  |  | `comparator.NullableString` |  |
 
 ## Query methods
 

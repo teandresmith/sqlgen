@@ -108,6 +108,19 @@ func (p *Parser) processStmt(node *pg_query.Node) error {
 }
 
 func (p *Parser) parseCreateTable(stmt *pg_query.CreateStmt) error {
+	if stmt.Partbound != nil {
+		// A partition is storage for its partitioned table, which is the
+		// entity; the introspector skips partitions too.
+		var parent string
+		if len(stmt.InhRelations) > 0 {
+			parent = stmt.InhRelations[0].GetRangeVar().GetRelname()
+		}
+		p.schema.Warnings = append(p.schema.Warnings,
+			fmt.Sprintf("CREATE TABLE %s PARTITION OF %s skipped in DDL file — the partitioned table is the entity",
+				stmt.Relation.Relname, parent))
+		return nil
+	}
+
 	schema := stmt.Relation.Schemaname
 	if schema == "" {
 		schema = p.defaultSchema
@@ -130,7 +143,7 @@ func (p *Parser) parseCreateTable(stmt *pg_query.CreateStmt) error {
 	for _, elt := range stmt.TableElts {
 		switch n := elt.Node.(type) {
 		case *pg_query.Node_ColumnDef:
-			col, colConstraints := p.parseColumnDef(n.ColumnDef)
+			col, colConstraints := p.parseColumnDef(n.ColumnDef, schema)
 			table.Columns = append(table.Columns, col)
 			constraints = append(constraints, colConstraints...)
 		case *pg_query.Node_Constraint:
@@ -309,7 +322,7 @@ func (p *Parser) parseCompositeType(stmt *pg_query.CompositeTypeStmt) error {
 		if cd, ok := col.Node.(*pg_query.Node_ColumnDef); ok {
 			ct.Attributes = append(ct.Attributes, parser.Attribute{
 				Name: cd.ColumnDef.Colname,
-				Type: typeNameToString(cd.ColumnDef.TypeName),
+				Type: p.typeName(cd.ColumnDef.TypeName, schema),
 			})
 		}
 	}
@@ -331,13 +344,24 @@ func (p *Parser) parseCreateDomain(stmt *pg_query.CreateDomainStmt) error {
 	dt := parser.DomainType{
 		Name:     name,
 		Schema:   schema,
-		BaseType: typeNameToString(stmt.TypeName),
+		BaseType: p.typeName(stmt.TypeName, schema),
 	}
 
+	// Only CHECKs are domain constraints in the model. An unnamed CHECK is
+	// named as PostgreSQL names it, in declaration order, against every
+	// constraint name in the schema.
+	ns := p.namespace(schema)
 	for _, c := range stmt.Constraints {
-		if cn, ok := c.Node.(*pg_query.Node_Constraint); ok {
-			dt.Constraints = append(dt.Constraints, p.parseConstraintNode(cn.Constraint))
+		cn, ok := c.Node.(*pg_query.Node_Constraint)
+		if !ok || cn.Constraint.Contype != pg_query.ConstrType_CONSTR_CHECK {
+			continue
 		}
+		check := p.parseConstraintNode(cn.Constraint)
+		if check.Name == "" {
+			check.Name = parser.DerivePostgresConstraintName(name, parser.Constraint{Type: parser.Check}, ns.taken(parser.Check))
+		}
+		ns.add(parser.Check, check.Name)
+		dt.Constraints = append(dt.Constraints, check)
 	}
 
 	p.schema.DomainTypes = append(p.schema.DomainTypes, dt)
@@ -559,6 +583,9 @@ func (p *Parser) parseAlterObjectSchema(stmt *pg_query.AlterObjectSchemaStmt) er
 	// PostgreSQL keys a foreign key on the referenced table's OID, so a move
 	// carries every reference along with it.
 	parser.MoveTableReferences(p.schema.Tables, table.Name, table.Schema, stmt.Newschema)
+	for i := range table.Columns {
+		table.Columns[i].Type = p.retargetTypeName(table.Columns[i].Type, table.Schema, stmt.Newschema)
+	}
 	table.Schema = stmt.Newschema
 	idx := p.tableIndex[oldKey]
 	delete(p.tableIndex, oldKey)
@@ -757,7 +784,7 @@ func (p *Parser) applyAlterCmd(table *parser.Table, cmd *pg_query.AlterTableCmd)
 	case pg_query.AlterTableType_AT_ColumnDefault:
 		alterColumnDefault(table, cmd)
 	case pg_query.AlterTableType_AT_AlterColumnType:
-		alterColumnType(table, cmd)
+		p.alterColumnType(table, cmd)
 	default:
 		// Other ALTER TABLE subtypes are not supported yet.
 	}
@@ -776,7 +803,7 @@ func (p *Parser) alterAddColumn(table *parser.Table, cmd *pg_query.AlterTableCmd
 	if cmd.MissingOk && parser.ColumnByName(table, cd.ColumnDef.Colname) != nil {
 		return nil // ADD COLUMN IF NOT EXISTS — column already exists, skip
 	}
-	col, constraints := p.parseColumnDef(cd.ColumnDef)
+	col, constraints := p.parseColumnDef(cd.ColumnDef, table.Schema)
 	table.Columns = append(table.Columns, col)
 	p.addConstraints(table, constraints)
 	return nil
@@ -826,7 +853,7 @@ func alterColumnDefault(table *parser.Table, cmd *pg_query.AlterTableCmd) {
 	}
 }
 
-func alterColumnType(table *parser.Table, cmd *pg_query.AlterTableCmd) {
+func (p *Parser) alterColumnType(table *parser.Table, cmd *pg_query.AlterTableCmd) {
 	if cmd.Def == nil {
 		return
 	}
@@ -835,21 +862,21 @@ func alterColumnType(table *parser.Table, cmd *pg_query.AlterTableCmd) {
 		return
 	}
 	if col := parser.ColumnByName(table, cmd.Name); col != nil {
-		col.Type = typeNameToString(cd.ColumnDef.TypeName)
+		col.Type = p.typeName(cd.ColumnDef.TypeName, table.Schema)
 	}
 }
 
 // --- Column parsing ---
 
-// parseColumnDef returns the column cd defines and the constraints declared
-// inline on it.
-func (p *Parser) parseColumnDef(cd *pg_query.ColumnDef) (parser.Column, []parser.Constraint) {
+// parseColumnDef returns the column cd defines in a table of schema, and the
+// constraints declared inline on it.
+func (p *Parser) parseColumnDef(cd *pg_query.ColumnDef, schema string) (parser.Column, []parser.Constraint) {
 	col := parser.Column{
 		Name:     cd.Colname,
 		Nullable: true,
 	}
 
-	col.Type = typeNameToString(cd.TypeName)
+	col.Type = p.typeName(cd.TypeName, schema)
 
 	// Detect serial types (preserved as-is in the raw parse tree).
 	switch strings.ToLower(col.Type) {
@@ -1040,6 +1067,70 @@ func removeConstraintFromColumns(table *parser.Table, constraintName string) {
 
 // --- Type name helpers ---
 
+// typeName writes the type of a column, composite attribute or domain that
+// belongs to schema. An enum, domain or composite type the DDL declared is
+// written bare when it lives in schema and schema-qualified when it lives in
+// another, as the introspector writes it; an unqualified name means the type
+// in the default schema. Every other type is written as typeNameToString
+// writes it.
+func (p *Parser) typeName(tn *pg_query.TypeName, schema string) string {
+	written := typeNameToString(tn)
+	if tn == nil {
+		return written
+	}
+	var typSchema, typName string
+	switch names := extractStringList(tn.Names); len(names) {
+	case 1:
+		typSchema, typName = p.defaultSchema, names[0]
+	case 2:
+		typSchema, typName = names[0], names[1]
+	default:
+		return written
+	}
+	if !p.isUserType(typSchema, typName) {
+		return written
+	}
+	name := relativeTypeName(typSchema, typName, schema)
+	if len(tn.ArrayBounds) > 0 {
+		name += "[]"
+	}
+	return name
+}
+
+// retargetTypeName rewrites a type typeName wrote for schema from as it is
+// written for schema to.
+func (p *Parser) retargetTypeName(typ, from, to string) string {
+	base, isArray := strings.CutSuffix(typ, "[]")
+	typSchema, typName, qualified := strings.Cut(base, ".")
+	if !qualified {
+		typSchema, typName = from, base
+	}
+	if !p.isUserType(typSchema, typName) {
+		return typ
+	}
+	name := relativeTypeName(typSchema, typName, to)
+	if isArray {
+		name += "[]"
+	}
+	return name
+}
+
+// relativeTypeName names the type typSchema.typName as seen from schema.
+func relativeTypeName(typSchema, typName, schema string) string {
+	if typSchema == schema {
+		return typName
+	}
+	return typSchema + "." + typName
+}
+
+// isUserType reports whether the DDL declared an enum, domain or composite
+// type named schema.name.
+func (p *Parser) isUserType(schema, name string) bool {
+	return p.findEnumByName(schema, name) != nil ||
+		p.findDomainByName(schema, name) != nil ||
+		p.findCompositeTypeByName(schema, name) != nil
+}
+
 // typeNameToString converts a pg_query TypeName to a SQL type string.
 func typeNameToString(tn *pg_query.TypeName) string {
 	if tn == nil {
@@ -1102,7 +1193,8 @@ func pgCatalogToSQL(internal string) string {
 	}
 }
 
-// formatTypmods formats type modifier values like (10, 2) for numeric(10, 2).
+// formatTypmods formats type modifier values as the catalog writes them, with
+// no space after a comma: (10,2) for numeric(10,2).
 func formatTypmods(typmods []*pg_query.Node) string {
 	if len(typmods) == 0 {
 		return ""
@@ -1125,7 +1217,7 @@ func formatTypmods(typmods []*pg_query.Node) string {
 	if len(parts) == 0 {
 		return ""
 	}
-	return "(" + strings.Join(parts, ", ") + ")"
+	return "(" + strings.Join(parts, ",") + ")"
 }
 
 // --- Utility functions ---
@@ -1167,18 +1259,27 @@ func deparseExpr(node *pg_query.Node) string {
 // expressions, so text read from the catalog compares equal to parsed DDL.
 // Redundant parentheses are dropped: "(qty * 2)" becomes "qty * 2".
 func NormalizeExpr(expr string) (string, error) {
+	node, err := parseExpr(expr)
+	if err != nil {
+		return "", err
+	}
+	return deparseExpr(node), nil
+}
+
+// parseExpr parses the SQL expression expr into its parse tree.
+func parseExpr(expr string) (*pg_query.Node, error) {
 	tree, err := pg_query.Parse("SELECT " + expr)
 	if err != nil {
-		return "", fmt.Errorf("parsing expression %q: %w", expr, err)
+		return nil, fmt.Errorf("parsing expression %q: %w", expr, err)
 	}
 	if len(tree.Stmts) != 1 {
-		return "", fmt.Errorf("parsing expression %q: not a single expression", expr)
+		return nil, fmt.Errorf("parsing expression %q: not a single expression", expr)
 	}
 	sel := tree.Stmts[0].Stmt.GetSelectStmt()
 	if sel == nil || len(sel.TargetList) != 1 || sel.FromClause != nil || sel.WhereClause != nil {
-		return "", fmt.Errorf("parsing expression %q: not a single expression", expr)
+		return nil, fmt.Errorf("parsing expression %q: not a single expression", expr)
 	}
-	return deparseExpr(sel.TargetList[0].GetResTarget().GetVal()), nil
+	return sel.TargetList[0].GetResTarget().GetVal(), nil
 }
 
 // extractStringList extracts string values from a []*Node list.

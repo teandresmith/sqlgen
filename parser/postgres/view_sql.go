@@ -51,11 +51,13 @@ func parseViewStmt(vs *pg_query.ViewStmt, defaultSchema string) (parser.ViewSQL,
 	}
 	sel := selectStmt.SelectStmt
 
+	aliases, schemas := extractFromAliases(sel.FromClause, defaultSchema)
 	return parser.ViewSQL{
 		Name:         vs.View.Relname,
 		Schema:       cmp.Or(vs.View.Schemaname, defaultSchema),
 		Columns:      extractResTargets(sel.TargetList),
-		TableAliases: extractFromAliases(sel.FromClause),
+		TableAliases: aliases,
+		TableSchemas: schemas,
 	}, nil
 }
 
@@ -66,11 +68,13 @@ func parseMatviewStmt(cs *pg_query.CreateTableAsStmt, defaultSchema string) (par
 	}
 	sel := selectStmt.SelectStmt
 
+	aliases, schemas := extractFromAliases(sel.FromClause, defaultSchema)
 	return parser.ViewSQL{
 		Name:         cs.Into.Rel.Relname,
 		Schema:       cmp.Or(cs.Into.Rel.Schemaname, defaultSchema),
 		Columns:      extractResTargets(sel.TargetList),
-		TableAliases: extractFromAliases(sel.FromClause),
+		TableAliases: aliases,
+		TableSchemas: schemas,
 		Materialized: true,
 	}, nil
 }
@@ -172,18 +176,21 @@ func extractFuncName(fc *pg_query.FuncCall) string {
 	return ""
 }
 
-// extractFromAliases builds a map of table alias → table name from the FROM clause.
-func extractFromAliases(fromClause []*pg_query.Node) map[string]string {
-	aliases := make(map[string]string)
+// extractFromAliases builds maps of table alias → table name and table alias →
+// table schema from the FROM clause. An unqualified table is in defaultSchema,
+// as an unqualified CREATE TABLE is.
+func extractFromAliases(fromClause []*pg_query.Node, defaultSchema string) (aliases, schemas map[string]string) {
+	aliases = make(map[string]string)
+	schemas = make(map[string]string)
 	for _, node := range fromClause {
-		collectFromAliases(node, aliases)
+		collectFromAliases(node, defaultSchema, aliases, schemas)
 	}
-	return aliases
+	return aliases, schemas
 }
 
 // collectFromAliases recursively collects table aliases from FROM clause nodes
 // (handles RangeVar for plain tables and JoinExpr for JOINs).
-func collectFromAliases(node *pg_query.Node, aliases map[string]string) {
+func collectFromAliases(node *pg_query.Node, defaultSchema string, aliases, schemas map[string]string) {
 	if node == nil {
 		return
 	}
@@ -191,16 +198,16 @@ func collectFromAliases(node *pg_query.Node, aliases map[string]string) {
 	switch n := node.Node.(type) {
 	case *pg_query.Node_RangeVar:
 		rv := n.RangeVar
-		tableName := rv.Relname
+		key := rv.Relname
 		if rv.Alias != nil && rv.Alias.Aliasname != "" {
-			aliases[rv.Alias.Aliasname] = tableName
-		} else {
-			aliases[tableName] = tableName
+			key = rv.Alias.Aliasname
 		}
+		aliases[key] = rv.Relname
+		schemas[key] = cmp.Or(rv.Schemaname, defaultSchema)
 
 	case *pg_query.Node_JoinExpr:
-		collectFromAliases(n.JoinExpr.Larg, aliases)
-		collectFromAliases(n.JoinExpr.Rarg, aliases)
+		collectFromAliases(n.JoinExpr.Larg, defaultSchema, aliases, schemas)
+		collectFromAliases(n.JoinExpr.Rarg, defaultSchema, aliases, schemas)
 	}
 }
 

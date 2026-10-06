@@ -1220,7 +1220,7 @@ func TestResolve_SchemaEnums(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			r := gotype.NewResolver("postgres", true, nil)
-			r.RegisterEnum("user_role", "UserRole")
+			r.RegisterEnum("", "user_role", "UserRole")
 
 			got := r.Resolve(tt.sqlType, tt.nullable, "role", nil, nil)
 			if diff := cmp.Diff(tt.want, got); diff != "" {
@@ -1232,7 +1232,7 @@ func TestResolve_SchemaEnums(t *testing.T) {
 
 func TestResolve_SchemaEnumOverriddenByTypeMap(t *testing.T) {
 	r := gotype.NewResolver("postgres", true, nil)
-	r.RegisterEnum("user_role", "UserRole")
+	r.RegisterEnum("", "user_role", "UserRole")
 
 	got := r.Resolve("user_role", false, "role",
 		map[string]string{"role": "string"}, nil)
@@ -1272,7 +1272,7 @@ func TestResolve_SchemaDomains(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			r := gotype.NewResolver("postgres", true, nil)
-			r.RegisterDomain("positive_int", "integer")
+			r.RegisterDomain("", "positive_int", "integer")
 
 			got := r.Resolve(tt.sqlType, tt.nullable, "quantity", nil, nil)
 			if diff := cmp.Diff(tt.want, got); diff != "" {
@@ -1324,7 +1324,7 @@ func TestResolve_SchemaSets(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			r := gotype.NewResolver("mysql", true, nil)
-			r.RegisterSet("permissions_set", "PermissionsSet")
+			r.RegisterSet("", "permissions_set", "PermissionsSet")
 
 			got := r.Resolve(tt.sqlType, tt.nullable, "permissions", nil, nil)
 			if diff := cmp.Diff(tt.want, got); diff != "" {
@@ -1336,13 +1336,259 @@ func TestResolve_SchemaSets(t *testing.T) {
 
 func TestResolve_SchemaSetOverriddenByTypeMap(t *testing.T) {
 	r := gotype.NewResolver("mysql", true, nil)
-	r.RegisterSet("permissions_set", "PermissionsSet")
+	r.RegisterSet("", "permissions_set", "PermissionsSet")
 
 	got := r.Resolve("permissions_set", false, "permissions",
 		map[string]string{"permissions": "string"}, nil)
 
 	if got.Name != "string" {
 		t.Errorf("type_map should override set: got %q, want %q", got.Name, "string")
+	}
+}
+
+// TestResolve_SchemaQualifiedNames pins how an enum, SET or domain answers to
+// its names: always schema-qualified, and bare only while no other schema
+// registers a type by that name (PRD §7.1).
+func TestResolve_SchemaQualifiedNames(t *testing.T) {
+	type registration struct {
+		kind, schema, name, value string
+	}
+	tests := []struct {
+		name     string
+		dialect  config.Dialect
+		register []registration
+		owner    string // the ForSchema schema; "" resolves without one
+		sqlType  string
+		want     string
+	}{
+		{
+			name:     "qualified enum",
+			register: []registration{{"enum", "app", "status_enum", "StatusEnum"}},
+			sqlType:  "app.status_enum",
+			want:     "StatusEnum",
+		},
+		{
+			name:     "qualified enum array",
+			register: []registration{{"enum", "app", "status_enum", "StatusEnum"}},
+			sqlType:  "app.status_enum[]",
+			want:     "StatusEnumSlice",
+		},
+		{
+			name:     "unique bare enum",
+			register: []registration{{"enum", "app", "status_enum", "StatusEnum"}},
+			sqlType:  "status_enum",
+			want:     "StatusEnum",
+		},
+		{
+			name:     "qualified name is case-insensitive",
+			register: []registration{{"enum", "App", "Status_Enum", "StatusEnum"}},
+			sqlType:  "APP.STATUS_ENUM",
+			want:     "StatusEnum",
+		},
+		{
+			name:     "qualified domain",
+			register: []registration{{"domain", "app", "positive_int", "integer"}},
+			sqlType:  "app.positive_int",
+			want:     "int32",
+		},
+		{
+			name:     "unique bare domain",
+			register: []registration{{"domain", "app", "positive_int", "integer"}},
+			sqlType:  "positive_int",
+			want:     "int32",
+		},
+		{
+			name:     "qualified set",
+			dialect:  config.DialectMySQL,
+			register: []registration{{"set", "shop", "perms_set", "PermsSet"}},
+			sqlType:  "shop.perms_set",
+			want:     "PermsSet",
+		},
+		{
+			name: "shared bare enum resolves only qualified",
+			register: []registration{
+				{"enum", "app", "status", "AppStatus"},
+				{"enum", "billing", "status", "BillingStatus"},
+			},
+			sqlType: "status",
+			want:    "string",
+		},
+		{
+			name: "shared enum answers to each qualified name",
+			register: []registration{
+				{"enum", "app", "status", "AppStatus"},
+				{"enum", "billing", "status", "BillingStatus"},
+			},
+			sqlType: "billing.status",
+			want:    "BillingStatus",
+		},
+		{
+			name: "a third schema cannot reclaim a shared bare name",
+			register: []registration{
+				{"enum", "app", "status", "AppStatus"},
+				{"enum", "billing", "status", "BillingStatus"},
+				{"enum", "audit", "status", "AuditStatus"},
+			},
+			sqlType: "status",
+			want:    "string",
+		},
+		{
+			name: "an enum and a domain sharing a bare name",
+			register: []registration{
+				{"enum", "app", "status", "AppStatus"},
+				{"domain", "billing", "status", "text"},
+			},
+			sqlType: "status",
+			want:    "string",
+		},
+		{
+			name: "a bare domain base is in the domain's schema",
+			register: []registration{
+				{"enum", "app", "status", "AppStatus"},
+				{"enum", "billing", "status", "BillingStatus"},
+				{"domain", "billing", "status_d", "status"},
+			},
+			sqlType: "billing.status_d",
+			want:    "BillingStatus",
+		},
+		{
+			name: "a qualified domain base is used as written",
+			register: []registration{
+				{"enum", "app", "status", "AppStatus"},
+				{"enum", "billing", "status", "BillingStatus"},
+				{"domain", "billing", "status_d", "app.status"},
+			},
+			sqlType: "status_d",
+			want:    "AppStatus",
+		},
+		{
+			name:     "a bare builtin domain base is not qualified",
+			register: []registration{{"domain", "app", "email", "text"}},
+			sqlType:  "app.email",
+			want:     "string",
+		},
+		{
+			name:     "shared bare enum resolves in the owner schema",
+			register: []registration{{"enum", "app", "status", "AppStatus"}, {"enum", "billing", "status", "BillingStatus"}},
+			owner:    "billing",
+			sqlType:  "status",
+			want:     "BillingStatus",
+		},
+		{
+			name:     "shared bare enum array resolves in the owner schema",
+			register: []registration{{"enum", "app", "status", "AppStatus"}, {"enum", "billing", "status", "BillingStatus"}},
+			owner:    "app",
+			sqlType:  "status[]",
+			want:     "AppStatusSlice",
+		},
+		{
+			name:     "owner schema matches case-insensitively",
+			register: []registration{{"enum", "app", "status", "AppStatus"}, {"enum", "billing", "status", "BillingStatus"}},
+			owner:    "App",
+			sqlType:  "STATUS",
+			want:     "AppStatus",
+		},
+		{
+			name:     "a qualified name ignores the owner schema",
+			register: []registration{{"enum", "app", "status", "AppStatus"}, {"enum", "billing", "status", "BillingStatus"}},
+			owner:    "app",
+			sqlType:  "billing.status",
+			want:     "BillingStatus",
+		},
+		{
+			name:     "bare name falls back when the owner schema has no such type",
+			register: []registration{{"enum", "app", "status_enum", "StatusEnum"}},
+			owner:    "billing",
+			sqlType:  "status_enum",
+			want:     "StatusEnum",
+		},
+		{
+			name:     "shared name with no type in the owner schema stays unresolved",
+			register: []registration{{"enum", "app", "status", "AppStatus"}, {"enum", "billing", "status", "BillingStatus"}},
+			owner:    "audit",
+			sqlType:  "status",
+			want:     "string",
+		},
+		{
+			name:     "shared bare domain resolves in the owner schema",
+			register: []registration{{"domain", "app", "amount", "integer"}, {"domain", "billing", "amount", "bigint"}},
+			owner:    "billing",
+			sqlType:  "amount",
+			want:     "int64",
+		},
+		{
+			name:     "shared bare set resolves in the owner schema",
+			dialect:  config.DialectMySQL,
+			register: []registration{{"set", "shop", "perms", "ShopPerms"}, {"set", "admin", "perms", "AdminPerms"}},
+			owner:    "admin",
+			sqlType:  "perms",
+			want:     "AdminPerms",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			dialect := tt.dialect
+			if dialect == "" {
+				dialect = config.DialectPostgres
+			}
+			r := gotype.NewResolver(dialect, true, nil)
+			for _, reg := range tt.register {
+				switch reg.kind {
+				case "enum":
+					r.RegisterEnum(reg.schema, reg.name, reg.value)
+				case "set":
+					r.RegisterSet(reg.schema, reg.name, reg.value)
+				case "domain":
+					r.RegisterDomain(reg.schema, reg.name, reg.value)
+				}
+			}
+			if tt.owner != "" {
+				r = r.ForSchema(tt.owner)
+			}
+			if got := r.Resolve(tt.sqlType, false, "c", nil, nil).Name; got != tt.want {
+				t.Errorf("ForSchema(%q).Resolve(%q) = %q, want %q", tt.owner, tt.sqlType, got, tt.want)
+			}
+		})
+	}
+}
+
+// TestForSchema_ClassifiersAndOverrides pins the owner-schema lookup on the
+// classifying entry points, and that an overrides.types key written with the
+// bare type name still wins over the schema's enum.
+func TestForSchema_ClassifiersAndOverrides(t *testing.T) {
+	r := gotype.NewResolver("postgres", true, map[string]config.TypeOverride{"mood": {Type: "string"}})
+	r.RegisterDomain("app", "amount", "integer")
+	r.RegisterDomain("billing", "amount", "text")
+	r.RegisterSet("app", "perms", "AppPerms")
+	r.RegisterSet("billing", "perms", "BillingPerms")
+	r.RegisterEnum("app", "mood", "AppMood")
+	r.RegisterEnum("billing", "mood", "BillingMood")
+
+	billing := r.ForSchema("billing")
+	// An enum or SET is not a domain, so its base type is the name as written.
+	for _, typ := range []string{"mood", "perms"} {
+		if got := billing.BaseSQLType(typ); got != typ {
+			t.Errorf(`ForSchema("billing").BaseSQLType(%q) = %q, want %q`, typ, got, typ)
+		}
+	}
+	if got := billing.BaseSQLType("amount"); got != "text" {
+		t.Errorf(`ForSchema("billing").BaseSQLType("amount") = %q, want "text"`, got)
+	}
+	if got := r.BaseSQLType("amount"); got != "amount" {
+		t.Errorf(`BaseSQLType("amount") without an owner = %q, want "amount" (the name is shared)`, got)
+	}
+	if !billing.IsSet("perms") {
+		t.Error(`ForSchema("billing").IsSet("perms") = false, want true`)
+	}
+	if r.IsSet("perms") {
+		t.Error(`IsSet("perms") without an owner = true, want false (the name is shared)`)
+	}
+	if got := billing.Resolve("mood", false, "m", nil, nil).Name; got != "string" {
+		t.Errorf(`ForSchema("billing").Resolve("mood") = %q, want the override's "string"`, got)
+	}
+	var none *gotype.Resolver
+	if none.ForSchema("app") != nil {
+		t.Error("ForSchema on a nil resolver: got non-nil, want nil")
 	}
 }
 
@@ -1403,7 +1649,7 @@ func TestResolveAggregateSumWidening(t *testing.T) {
 // target before the fix.
 func TestResolveAggregateSumWidening_Domain(t *testing.T) {
 	r := gotype.NewResolver("postgres", true, nil)
-	r.RegisterDomain("positive_int", "integer")
+	r.RegisterDomain("", "positive_int", "integer")
 
 	got := r.ResolveAggregate("SUM", "positive_int", true, "total_quantity", nil, nil)
 	if got.Name != "*int64" {

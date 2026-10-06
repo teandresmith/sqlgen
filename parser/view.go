@@ -2,6 +2,8 @@ package parser
 
 import (
 	"fmt"
+	"maps"
+	"slices"
 	"strings"
 )
 
@@ -34,6 +36,9 @@ type ViewSQL struct {
 	Schema       string
 	Columns      []ViewSelectColumn
 	TableAliases map[string]string
+	// TableSchemas maps the same keys as TableAliases to the table's schema,
+	// for a dialect with schemas (PostgreSQL); nil otherwise.
+	TableSchemas map[string]string
 
 	// Materialized reports whether the statement was CREATE MATERIALIZED VIEW
 	// (PostgreSQL-only; the MySQL/SQLite parsers reject the syntax).
@@ -132,9 +137,9 @@ func parseTypeDirective(annotations *ViewAnnotations, colName, value string) err
 }
 
 // BuildView constructs a View from pre-parsed SQL metadata, annotations, and
-// known tables. The parsed field is produced by a dialect-specific parser's
-// ParseViewSQL method; annotations come from ParseViewAnnotations.
-func BuildView(parsed ViewSQL, rawSQL string, annotations *ViewAnnotations, tables []Table) (*View, error) {
+// schema parsed so far. The parsed field is produced by a dialect-specific
+// parser's ParseViewSQL method; annotations come from ParseViewAnnotations.
+func BuildView(parsed ViewSQL, rawSQL string, annotations *ViewAnnotations, schema *Schema) (*View, error) {
 	// Validate annotation column references against parsed columns.
 	colSet := make(map[string]bool, len(parsed.Columns))
 	for _, col := range parsed.Columns {
@@ -156,7 +161,7 @@ func BuildView(parsed ViewSQL, rawSQL string, annotations *ViewAnnotations, tabl
 		}
 	}
 
-	viewColumns := resolveViewColumns(parsed.Columns, parsed.TableAliases, tables, annotations)
+	viewColumns := resolveViewColumns(parsed.Columns, newViewSources(parsed, schema), annotations)
 
 	// An annotation-file matview has no live unique index to discover, so @pk
 	// doubles as the user's assertion that a unique key exists — the same
@@ -188,17 +193,7 @@ func IsAggregateFunction(funcName string) bool {
 
 // resolveViewColumns resolves Go types for view columns using the PRD 16.3 chain:
 // @type annotation → aggregate inference → schema matching → any fallback.
-func resolveViewColumns(
-	selectCols []ViewSelectColumn,
-	tableAliases map[string]string,
-	tables []Table,
-	annotations *ViewAnnotations,
-) []Column {
-	tableMap := make(map[string]*Table, len(tables))
-	for i := range tables {
-		tableMap[tables[i].Name] = &tables[i]
-	}
-
+func resolveViewColumns(selectCols []ViewSelectColumn, sources *viewSources, annotations *ViewAnnotations) []Column {
 	nullableSet := make(map[string]bool, len(annotations.NullableColumns))
 	for _, col := range annotations.NullableColumns {
 		nullableSet[col] = true
@@ -212,7 +207,7 @@ func resolveViewColumns(
 	result := make([]Column, 0, len(selectCols))
 	for _, sc := range selectCols {
 		col := Column{Name: sc.Alias}
-		col.Type, col.Nullable = resolveColumnType(sc, tableAliases, tableMap, annotations)
+		col.Type, col.Nullable = resolveColumnType(sc, sources, annotations)
 
 		// Mark columns whose Type is already a Go type literal (from @type or
 		// aggregate inference). The code generator uses GoTypeLiteral directly
@@ -227,8 +222,7 @@ func resolveViewColumns(
 			// resolver (ARRAY_AGG returns the array form, e.g. text[]).
 			switch sc.Aggregate {
 			case "SUM", "MIN", "MAX", "ARRAY_AGG":
-				baseSQL := resolveFromSchema(sc, tableAliases, tableMap)
-				if baseSQL == "" {
+				if sources.columnType(sc) == "" {
 					col.GoTypeLiteral = col.Type // fallback "any"
 				} else {
 					// Flows through the SQL-to-Go resolver; record the aggregate
@@ -259,52 +253,124 @@ func resolveViewColumns(
 
 // resolveColumnType applies the PRD 16.3 resolution chain for a single column:
 // @type annotation → aggregate inference → schema matching → any fallback.
-func resolveColumnType(
-	sc ViewSelectColumn,
-	tableAliases map[string]string,
-	tableMap map[string]*Table,
-	annotations *ViewAnnotations,
-) (string, bool) {
+func resolveColumnType(sc ViewSelectColumn, sources *viewSources, annotations *ViewAnnotations) (string, bool) {
 	if ta, ok := annotations.TypeOverrides[sc.Alias]; ok {
 		return ta.GoType, false
 	}
 	if sc.Aggregate != "" {
-		baseType := resolveFromSchema(sc, tableAliases, tableMap)
+		baseType := sources.columnType(sc)
 		return inferAggregateType(sc.Aggregate, baseType), isAggregateNullable(sc.Aggregate)
 	}
 	if sc.SourceColumn != "" {
-		if resolved := resolveFromSchema(sc, tableAliases, tableMap); resolved != "" {
+		if resolved := sources.columnType(sc); resolved != "" {
 			return resolved, false
 		}
 	}
 	return "any", false
 }
 
-// resolveFromSchema attempts to find the column type from a known table.
-func resolveFromSchema(sc ViewSelectColumn, tableAliases map[string]string, tableMap map[string]*Table) string {
+// viewSources finds a view column's source column and writes its type
+// relative to the view's schema.
+type viewSources struct {
+	viewSchema string
+	aliases    map[string]string
+	schemas    map[string]string
+	tables     []Table
+	// userTypes holds "schema.name" for every enum, SET, composite and domain type.
+	userTypes map[string]bool
+}
+
+func newViewSources(parsed ViewSQL, schema *Schema) *viewSources {
+	vs := &viewSources{
+		viewSchema: parsed.Schema,
+		aliases:    parsed.TableAliases,
+		schemas:    parsed.TableSchemas,
+		userTypes:  make(map[string]bool),
+	}
+	if schema == nil {
+		return vs
+	}
+	vs.tables = schema.Tables
+	for _, e := range schema.Enums {
+		vs.userTypes[e.Schema+"."+e.Name] = true
+	}
+	for _, st := range schema.Sets {
+		vs.userTypes[st.Schema+"."+st.Name] = true
+	}
+	for _, ct := range schema.CompositeTypes {
+		vs.userTypes[ct.Schema+"."+ct.Name] = true
+	}
+	for _, d := range schema.DomainTypes {
+		vs.userTypes[d.Schema+"."+d.Name] = true
+	}
+	return vs
+}
+
+// columnType returns the type of sc's source column, written relative to the
+// view's schema, or "" when no source column is found. An unqualified column
+// is looked up in the FROM-clause tables, in key order.
+func (vs *viewSources) columnType(sc ViewSelectColumn) string {
 	if sc.SourceColumn == "" {
 		return ""
 	}
-	tableName := sc.SourceTable
-	if alias, ok := tableAliases[tableName]; ok {
-		tableName = alias
+	keys := []string{sc.SourceTable}
+	if sc.SourceTable == "" {
+		keys = slices.Sorted(maps.Keys(vs.aliases))
 	}
-	if tableName == "" {
-		for _, t := range tableMap {
+	for _, key := range keys {
+		if t := vs.table(key); t != nil {
 			if col := ColumnByName(t, sc.SourceColumn); col != nil {
-				return col.Type
+				return vs.relativeType(col.Type, t.Schema)
 			}
 		}
-		return ""
-	}
-	t, ok := tableMap[tableName]
-	if !ok {
-		return ""
-	}
-	if col := ColumnByName(t, sc.SourceColumn); col != nil {
-		return col.Type
 	}
 	return ""
+}
+
+// table returns the table a FROM-clause key (alias or table name) names: the
+// one in the recorded schema when there is one, else one with no schema.
+func (vs *viewSources) table(key string) *Table {
+	name := key
+	if n, ok := vs.aliases[key]; ok {
+		name = n
+	}
+	schema := vs.schemas[key]
+	var schemaless *Table
+	for i := range vs.tables {
+		t := &vs.tables[i]
+		if t.Name != name {
+			continue
+		}
+		if schema == "" || t.Schema == schema {
+			return t
+		}
+		if t.Schema == "" && schemaless == nil {
+			schemaless = t
+		}
+	}
+	return schemaless
+}
+
+// relativeType rewrites typ, written relative to the schema declared, so it
+// reads relative to the view's schema, as a table column's type does: a
+// user-defined type of declared is qualified, and a type qualified with the
+// view's schema is written bare. Array suffixes are kept.
+func (vs *viewSources) relativeType(typ, declared string) string {
+	if declared == "" || vs.viewSchema == "" || declared == vs.viewSchema {
+		return typ
+	}
+	base := strings.TrimRight(typ, "[]")
+	suffix := typ[len(base):]
+	if i := strings.LastIndexByte(base, '.'); i > 0 {
+		if base[:i] == vs.viewSchema {
+			return base[i+1:] + suffix
+		}
+		return typ
+	}
+	if vs.userTypes[declared+"."+base] {
+		return declared + "." + base + suffix
+	}
+	return typ
 }
 
 // inferAggregateType returns the type for an aggregate function per PRD 16.3.

@@ -52,8 +52,8 @@ func buildIncrementGuardTable(t *testing.T, tableCfg config.TableConfig) (gen.Ta
 	input := testInput(incrementGuardSchema())
 	// Mirrors registerSchemaTypes, which runs before BuildTableContexts on
 	// both real entry points (orchestrate.go:67, :1786).
-	input.Resolver.RegisterDomain("email", "text")
-	input.Resolver.RegisterDomain("positive_int", "integer")
+	input.Resolver.RegisterDomain("", "email", "text")
+	input.Resolver.RegisterDomain("", "positive_int", "integer")
 	input.Config.Tables["invoices"] = tableCfg
 	contexts, err := gen.BuildTableContexts(input, nil)
 	if err != nil {
@@ -247,8 +247,8 @@ func TestAPIIncrementSurfaceFollowsOperations(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			input := apiTestInput(t, incrementGuardSchema())
-			input.Resolver.RegisterDomain("email", "text")
-			input.Resolver.RegisterDomain("positive_int", "integer")
+			input.Resolver.RegisterDomain("", "email", "text")
+			input.Resolver.RegisterDomain("", "positive_int", "integer")
 
 			tables, err := gen.BuildTableContexts(input, nil)
 			if err != nil {

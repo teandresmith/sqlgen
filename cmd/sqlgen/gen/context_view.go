@@ -162,7 +162,7 @@ func buildViewColumns(input *GenerateInput, view *parser.View, viewCfg config.Vi
 		// literal / aggregate / resolver cascade).
 		gt, tenantTyped := viewTenantTypeOverride(&col, viewCfg, input.Config.Tenancy)
 		if !tenantTyped {
-			gt = viewColumnGoType(input.Resolver, &col, col.Nullable)
+			gt = viewColumnGoType(input.Resolver.ForSchema(view.Schema), &col, col.Nullable)
 		}
 		columns = append(columns, ColumnContext{
 			Name:       col.Name,

@@ -4370,7 +4370,7 @@ func graphQLTypeForGoType(goType string, col ColumnContext, binds typeBindings) 
 //
 // The two halves of that sentence are why this is not just `col.IsSet`.
 // ColumnContext.IsSet is derived from the SQL type NAME (context_table.go:
-// `input.Resolver.IsSet(col.Type)`), but `type_map.<col>` and `overrides.types`
+// `resolver.IsSet(col.Type)`), but `type_map.<col>` and `overrides.types`
 // win over the SET branch in the resolution chain — gotype.Resolve steps 1-4
 // all precede the SET branch at step 4.5, and FromLiteral fills no element
 // type. So a SET column the consumer retyped to `string` still carries

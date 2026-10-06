@@ -48,6 +48,14 @@ var parityExceptions = map[string][]parityException{
 	"sqlite":   nil,
 }
 
+// pgSkippedStatementExceptions are for a PostgreSQL fixture holding statements
+// the file parser skips with a warning: CREATE VIEW and CREATE TABLE …
+// PARTITION OF. A test that passes them checks the warnings itself.
+var pgSkippedStatementExceptions = []parityException{
+	{Field: "Schema.Views", Reason: "the file parser skips CREATE VIEW; views come from introspection or input.views (PRD §16)"},
+	{Field: "Schema.Warnings", Reason: "the file parser warns on each statement it skips; the introspector skips partitions without a word (PRD §5.2, §6.3)"},
+}
+
 // parityFieldTypes maps the type half of a parityException.Field to the type
 // whose field it ignores.
 var parityFieldTypes = map[string]any{
@@ -69,8 +77,6 @@ var parityFieldTypes = map[string]any{
 // composite types, domains and views, in full. The dialect's
 // parityExceptions are the only fields left out, plus any ignore entries. It
 // sorts both schemas in place first.
-//
-//nolint:unparam // ignore is the hook for a test-local parity exception; no test needs one yet
 func assertSchemaParity(t *testing.T, dialect string, parsed, introspected *parser.Schema, ignore ...parityException) {
 	t.Helper()
 	exceptions, ok := parityExceptions[dialect]
@@ -447,8 +453,12 @@ func TestPostgresIntrospect_GeneratedColumn(t *testing.T) {
 			id integer PRIMARY KEY,
 			qty integer NOT NULL,
 			name text,
+			price numeric,
+			code varchar(10),
 			doubled integer GENERATED ALWAYS AS (qty * 2) STORED,
 			shout text NOT NULL GENERATED ALWAYS AS (upper(name)) STORED,
+			total numeric GENERATED ALWAYS AS (price * 2) STORED,
+			loud text GENERATED ALWAYS AS (upper(code) || '!') STORED,
 			seq integer GENERATED ALWAYS AS IDENTITY
 		);
 	`
@@ -485,6 +495,8 @@ func TestPostgresIntrospect_GeneratedColumn(t *testing.T) {
 	want := map[string]generatedColumn{
 		"doubled": {expr: "qty * 2", storage: "STORED"},
 		"shout":   {expr: "upper(name)", storage: "STORED"},
+		"total":   {expr: "price * 2", storage: "STORED"},
+		"loud":    {expr: "upper(code) || '!'", storage: "STORED"},
 	}
 	assertGeneratedColumns(t, findTable(t, introspected, "gen_items"), want)
 	assertGeneratedColumns(t, findTable(t, p.Schema(), "gen_items"), want)

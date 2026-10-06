@@ -197,9 +197,17 @@ type Resolver struct {
 	usePointers     bool
 	globalOverrides map[string]config.TypeOverride
 	integrations    map[string]config.TypeOverride
-	enums           map[string]string // SQL enum name → PascalCase Go type name
-	sets            map[string]string // SQL set name → PascalCase Go set type name
-	domains         map[string]string // SQL domain name → base SQL type
+	enums           map[string]string     // SQL enum name → PascalCase Go type name
+	sets            map[string]string     // SQL set name → PascalCase Go set type name
+	domains         map[string]domainBase // SQL domain name → base SQL type
+	// bareOwners maps each bare enum, SET or domain name to the schema that
+	// registered it, and sharedBare holds the names more than one schema
+	// registered. A shared name answers only to its qualified keys.
+	bareOwners map[string]string
+	sharedBare map[string]bool
+	// ownerSchema is the schema of the table, view, composite or domain whose
+	// types are being resolved (see ForSchema), or "" for none.
+	ownerSchema string
 	// userWrappers holds Null-wrapper extraction info for types declared in
 	// sqlgen.yml overrides whose Nullable.UnderlyingField is set. Built-in
 	// wrappers (sql.NullX, uuid.NullUUID, decimal.NullDecimal,
@@ -239,7 +247,9 @@ func NewResolver(dialect config.Dialect, usePointers bool, globalOverrides map[s
 		integrations:    make(map[string]config.TypeOverride),
 		enums:           make(map[string]string),
 		sets:            make(map[string]string),
-		domains:         make(map[string]string),
+		domains:         make(map[string]domainBase),
+		bareOwners:      make(map[string]string),
+		sharedBare:      make(map[string]bool),
 	}
 	r.detectIntegrations()
 	r.registerDialectDefaults()
@@ -425,10 +435,43 @@ func (r *Resolver) RegisterIntegration(sqlType string, override config.TypeOverr
 	r.integrations[strings.ToLower(sqlType)] = override
 }
 
-// RegisterEnum registers a schema enum type so that columns using this enum
-// resolve to the generated Go type instead of falling through to string.
-func (r *Resolver) RegisterEnum(sqlName, goTypeName string) {
-	r.enums[strings.ToLower(sqlName)] = goTypeName
+// RegisterEnum registers the enum schema.sqlName so that columns using it
+// resolve to the generated Go type instead of falling through to string. The
+// enum answers to schema.sqlName, and to sqlName alone while no other schema
+// registers an enum, SET or domain by that name (PRD §7.1). An empty schema
+// registers the bare name only.
+func (r *Resolver) RegisterEnum(schema, sqlName, goTypeName string) {
+	registerSchemaType(r, r.enums, schema, sqlName, goTypeName)
+}
+
+// domainBase is a registered domain's base type and the schema the domain
+// lives in, which a bare base type name is relative to.
+type domainBase struct {
+	base   string
+	schema string
+}
+
+// registerSchemaType adds value to m under schema.name and, while no other
+// schema has registered a type by that name, under name. A name a second
+// schema registers is dropped from every type map; each schema's type keeps
+// its qualified key.
+func registerSchemaType[V any](r *Resolver, m map[string]V, schema, name string, value V) {
+	schema, name = strings.ToLower(schema), strings.ToLower(name)
+	if schema != "" {
+		m[schema+"."+name] = value
+	}
+	if r.sharedBare[name] {
+		return
+	}
+	if owner, ok := r.bareOwners[name]; ok && owner != schema {
+		r.sharedBare[name] = true
+		delete(r.enums, name)
+		delete(r.sets, name)
+		delete(r.domains, name)
+		return
+	}
+	r.bareOwners[name] = schema
+	m[name] = value
 }
 
 // IsEnumGoType reports whether goType is the Go type name of a registered
@@ -447,22 +490,84 @@ func (r *Resolver) IsEnumGoType(goType string) bool {
 	return false
 }
 
-// RegisterSet registers a MySQL SET type so that columns using this set
-// resolve to the generated Go set type (a named []ValueType slice).
-func (r *Resolver) RegisterSet(sqlName, goTypeName string) {
-	r.sets[strings.ToLower(sqlName)] = goTypeName
+// RegisterSet registers the MySQL SET type schema.sqlName so that columns
+// using it resolve to the generated Go set type (a named []ValueType slice).
+// It answers to the same names as an enum (see RegisterEnum).
+func (r *Resolver) RegisterSet(schema, sqlName, goTypeName string) {
+	registerSchemaType(r, r.sets, schema, sqlName, goTypeName)
 }
 
 // IsSet reports whether the given SQL type name is a registered SET type.
 func (r *Resolver) IsSet(sqlType string) bool {
-	_, ok := r.sets[strings.ToLower(normalizeSQL(sqlType))]
+	_, ok := r.sets[r.schemaTypeKey(normalizeSQL(sqlType))]
 	return ok
 }
 
-// RegisterDomain registers a schema domain type so that columns using this
-// domain resolve to the domain's base SQL type through the normal chain.
-func (r *Resolver) RegisterDomain(sqlName, baseSQLType string) {
-	r.domains[strings.ToLower(sqlName)] = strings.ToLower(baseSQLType)
+// ForSchema returns a resolver for the types of a table, view, composite type
+// or domain in schema. It resolves a bare enum, SET or domain name as
+// schema.name first and as the bare name second, so a column whose type lives
+// in its own schema resolves even when another schema has a type by the same
+// name (PRD §7.1). Overrides, integrations and built-in mappings are unchanged.
+func (r *Resolver) ForSchema(schema string) *Resolver {
+	if r == nil {
+		return nil
+	}
+	scoped := *r
+	scoped.ownerSchema = strings.ToLower(schema)
+	return &scoped
+}
+
+// schemaTypeKey returns the key the enum, SET and domain maps hold a bare
+// sqlType under for the owner schema: ownerSchema.sqlType when that is
+// registered, sqlType otherwise. A qualified sqlType is returned as given.
+func (r *Resolver) schemaTypeKey(sqlType string) string {
+	if r.ownerSchema == "" || strings.Contains(sqlType, ".") {
+		return sqlType
+	}
+	qualified := r.ownerSchema + "." + sqlType
+	_, isEnum := r.enums[qualified]
+	_, isSet := r.sets[qualified]
+	_, isDomain := r.domains[qualified]
+	if isEnum || isSet || isDomain {
+		return qualified
+	}
+	return sqlType
+}
+
+// RegisterDomain registers the domain schema.sqlName so that columns using it
+// resolve to the domain's base SQL type through the normal chain. It answers
+// to the same names as an enum (see RegisterEnum). A bare baseSQLType that
+// names an enum, SET or domain is taken to be in the domain's schema.
+func (r *Resolver) RegisterDomain(schema, sqlName, baseSQLType string) {
+	registerSchemaType(r, r.domains, schema, sqlName, domainBase{
+		base:   strings.ToLower(baseSQLType),
+		schema: strings.ToLower(schema),
+	})
+}
+
+// domainBaseType returns the base SQL type of the registered domain sqlType.
+// A bare base is qualified with the domain's schema when that names a
+// registered enum, SET or domain, since the base was written relative to it.
+func (r *Resolver) domainBaseType(sqlType string) (string, bool) {
+	d, ok := r.domains[sqlType]
+	if !ok {
+		return "", false
+	}
+	if d.schema == "" || strings.Contains(d.base, ".") {
+		return d.base, true
+	}
+	elem, isArray := strings.CutSuffix(d.base, "[]")
+	qualified := d.schema + "." + elem
+	_, isEnum := r.enums[qualified]
+	_, isSet := r.sets[qualified]
+	_, isDomain := r.domains[qualified]
+	if !isEnum && !isSet && !isDomain {
+		return d.base, true
+	}
+	if isArray {
+		qualified += "[]"
+	}
+	return qualified, true
 }
 
 // Resolve resolves a SQL column type to a Go type using the resolution chain:
@@ -535,9 +640,12 @@ func (r *Resolver) BaseSQLType(sqlType string) string {
 // (e.g. positive_int → integer), so aggregate widening keys on the real base
 // rather than the domain name. Bounded to guard against pathological cycles.
 func (r *Resolver) resolveDomainBase(sqlType string) string {
-	t := sqlType
+	t := r.schemaTypeKey(sqlType)
+	if _, ok := r.domainBaseType(t); !ok {
+		return sqlType
+	}
 	for range 16 {
-		base, ok := r.domains[t]
+		base, ok := r.domainBaseType(t)
 		if !ok {
 			return t
 		}
@@ -621,8 +729,9 @@ func (r *Resolver) resolveByType(sqlType string, nullable bool, tableOverrides m
 		return FromOverride(override, nullable)
 	}
 
-	// Step 4.5: Schema enums, sets, and domains
-	if goTypeName, ok := r.enums[sqlType]; ok {
+	// Step 4.5: Schema enums, sets, and domains, owner schema first
+	key := r.schemaTypeKey(sqlType)
+	if goTypeName, ok := r.enums[key]; ok {
 		gt := GoType{
 			Name:      goTypeName,
 			ZeroValue: `""`,
@@ -634,7 +743,7 @@ func (r *Resolver) resolveByType(sqlType string, nullable bool, tableOverrides m
 		}
 		return gt
 	}
-	if goTypeName, ok := r.sets[sqlType]; ok {
+	if goTypeName, ok := r.sets[key]; ok {
 		// SET types are named slices (reference types), so nullable uses the same type.
 		//
 		// IsSlice stays false: the model side treats a SET as an opaque named
@@ -650,7 +759,7 @@ func (r *Resolver) resolveByType(sqlType string, nullable bool, tableOverrides m
 			FKConvert:     FKStringSprint,
 		}
 	}
-	if baseSQLType, ok := r.domains[sqlType]; ok {
+	if baseSQLType, ok := r.domainBaseType(key); ok {
 		return r.resolveByType(baseSQLType, nullable, tableOverrides)
 	}
 
@@ -662,7 +771,7 @@ func (r *Resolver) resolveByType(sqlType string, nullable bool, tableOverrides m
 			// Enum arrays use a named slice type (e.g., UserRoleSlice) with
 			// Scan/Value methods so pgx can handle the custom OID without
 			// manual type registration.
-			if goTypeName, ok := r.enums[baseType]; ok {
+			if goTypeName, ok := r.enums[r.schemaTypeKey(baseType)]; ok {
 				return GoType{
 					Name:          goTypeName + "Slice",
 					ZeroValue:     "nil",

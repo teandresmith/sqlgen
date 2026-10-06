@@ -23,7 +23,27 @@
 
 <!-- fixes:open:begin -->
 
-_No open fixes._
+### FIX-270
+
+- **Status:** Open
+- **Severity:** tracked
+- **Origin:** phase 30, `cmd/sqlgen/gotype`
+- **Surfaced by:** `/verify 30.4` (2026-10-05)
+
+**Issue.** Since 30.4, both schema sources write a PostgreSQL type in its column's own schema bare. So an `overrides.types."app.status_enum"` key no longer matches the column `app.accounts.status`, whose type is now written `status_enum`, and nothing warns (`config/validate.go` checks only `nullable`). An accepted key that silently does nothing is the PRD §4.13 accept-and-drop pattern.
+
+**Root cause.** `lookupOverride` (`cmd/sqlgen/gotype/gotype.go:694`) tries only the type as written and its modifier-stripped form. Unlike the enum, SET and domain lookup (`schemaTypeKey`), it never tries `<owner schema>.<type>`.
+
+**Suggested fix.** Ruled 2026-10-05 (user): try the owner-qualified key.
+- In the override and integration steps, for a resolver scoped by `ForSchema`, look up `<ownerSchema>.<type>` (with and without modifiers, `[]` kept) before the bare keys, so a qualified key keeps matching its own-schema columns. A cross-schema column's type is already written qualified.
+- Tests: a `gotype` case for a qualified key on an own-schema column, a bare key still matching, and a qualified key not leaking to another schema's same-named type; plus a `cli` codegen case.
+- PRD §7.1 "How steps 3–5 match": state the owner-qualified lookup.
+
+**References.**
+- PRD §7.1, §4.13; 30.4 Completion Record ("Owner schema first").
+- `schemaTypeKey` / `ForSchema` (`cmd/sqlgen/gotype/gotype.go`), the pattern to mirror.
+
+**Resolution notes.** _Filled in by `/fix resolve`._
 
 <!-- fixes:open:end -->
 

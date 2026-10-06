@@ -1359,7 +1359,7 @@ func TestBuildViewContexts_enumSliceColumn(t *testing.T) {
 
 	input := testInput(schema)
 	input.Resolver = gotype.NewResolver(config.DialectPostgres, true, input.Config.Overrides.Types)
-	input.Resolver.RegisterEnum("user_role", "UserRole")
+	input.Resolver.RegisterEnum("", "user_role", "UserRole")
 	input.Config.Output.Driver = "stdlib"
 
 	contexts, err := gen.BuildViewContexts(input, nil)

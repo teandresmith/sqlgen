@@ -74,12 +74,17 @@ func (pi *PostgresIntrospector) Introspect(ctx context.Context, connString strin
 }
 
 func (pi *PostgresIntrospector) introspectTables(ctx context.Context, schema *parser.Schema, opts IntrospectionOptions) error {
+	// A partition is storage for its partitioned table, which is the entity,
+	// so partitions are left out (PRD §6.3).
 	rows, err := pi.db.QueryContext(ctx, `
-		SELECT table_schema, table_name
-		FROM information_schema.tables
-		WHERE table_type = 'BASE TABLE'
-		  AND table_schema NOT IN ('pg_catalog', 'information_schema')
-		ORDER BY table_schema, table_name`)
+		SELECT t.table_schema, t.table_name
+		FROM information_schema.tables t
+		JOIN pg_catalog.pg_namespace n ON n.nspname = t.table_schema
+		JOIN pg_catalog.pg_class c ON c.relnamespace = n.oid AND c.relname = t.table_name
+		WHERE t.table_type = 'BASE TABLE'
+		  AND t.table_schema NOT IN ('pg_catalog', 'information_schema')
+		  AND NOT c.relispartition
+		ORDER BY t.table_schema, t.table_name`)
 	if err != nil {
 		return fmt.Errorf("introspect postgres tables: %w", err)
 	}
@@ -111,10 +116,10 @@ func (pi *PostgresIntrospector) introspectTables(ctx context.Context, schema *pa
 			Name:   ref.name,
 		}
 
-		if err := pi.introspectColumns(ctx, &table); err != nil {
+		if err := pi.introspectColumns(ctx, &table, schema.DomainTypes); err != nil {
 			return err
 		}
-		if err := pi.introspectConstraints(ctx, &table); err != nil {
+		if err := pi.introspectConstraints(ctx, &table, postgres.TableImplicitCasts(&table, schema.DomainTypes)); err != nil {
 			return err
 		}
 		if err := pi.introspectTableComment(ctx, &table); err != nil {
@@ -339,15 +344,51 @@ func chooseMatviewPK(indexes []matviewUniqueIndex) []string {
 	return best.columns
 }
 
+// userTypeJoin joins, for the type whose OID the query exposes as
+// tt.type_oid, its element type when it is an array (et) and that type's
+// schema (tn). Both are NULL unless the type is an enum, a domain or a
+// standalone composite type, the user types columnType writes relative to the
+// column's schema.
+const userTypeJoin = `
+		LEFT JOIN pg_catalog.pg_type ty ON ty.oid = tt.type_oid
+		LEFT JOIN pg_catalog.pg_type et
+		  ON et.oid = CASE WHEN ty.typelem <> 0 AND ty.typlen = -1 THEN ty.typelem ELSE ty.oid END
+		 AND (et.typtype IN ('e', 'd')
+		      OR (et.typtype = 'c' AND EXISTS (
+		          SELECT 1 FROM pg_catalog.pg_class tc WHERE tc.oid = et.typrelid AND tc.relkind = 'c')))
+		LEFT JOIN pg_catalog.pg_namespace tn ON tn.oid = et.typnamespace`
+
+// columnType writes the type of a column, attribute or domain base type that
+// belongs to schema own, as the parser writes it. format_type qualifies a type
+// whose schema is not on the connection's search_path; an enum, domain or
+// composite type (typSchema set) is instead written bare when it lives in own
+// and qualified when it lives in another schema, whatever the search_path.
+func columnType(formatType, typSchema, typName, own string) string {
+	if typSchema == "" {
+		return normalizePostgresType(formatType)
+	}
+	name := typName
+	if typSchema != own {
+		name = typSchema + "." + typName
+	}
+	if strings.HasSuffix(formatType, "[]") {
+		name += "[]"
+	}
+	return name
+}
+
 func (pi *PostgresIntrospector) introspectViewColumns(ctx context.Context, view *parser.View) error {
 	rows, err := pi.db.QueryContext(ctx, `
 		SELECT
 			a.attname,
 			format_type(a.atttypid, a.atttypmod),
+			COALESCE(tn.nspname, ''),
+			COALESCE(et.typname, ''),
 			NOT a.attnotnull
 		FROM pg_catalog.pg_attribute a
 		JOIN pg_catalog.pg_class c ON a.attrelid = c.oid
 		JOIN pg_catalog.pg_namespace n ON c.relnamespace = n.oid
+		CROSS JOIN LATERAL (SELECT a.atttypid AS type_oid) tt`+userTypeJoin+`
 		WHERE n.nspname = $1
 		  AND c.relname = $2
 		  AND a.attnum > 0
@@ -360,15 +401,15 @@ func (pi *PostgresIntrospector) introspectViewColumns(ctx context.Context, view 
 
 	for rows.Next() {
 		var (
-			col        parser.Column
-			formatType string
-			nullable   bool
+			col                            parser.Column
+			formatType, typSchema, typName string
+			nullable                       bool
 		)
-		if err := rows.Scan(&col.Name, &formatType, &nullable); err != nil {
+		if err := rows.Scan(&col.Name, &formatType, &typSchema, &typName, &nullable); err != nil {
 			return fmt.Errorf("introspect postgres view columns %s.%s: scanning: %w", view.Schema, view.Name, err)
 		}
 
-		col.Type = normalizePostgresType(formatType)
+		col.Type = columnType(formatType, typSchema, typName, view.Schema)
 		col.Nullable = nullable
 
 		view.Columns = append(view.Columns, col)
@@ -380,21 +421,41 @@ func (pi *PostgresIntrospector) introspectViewColumns(ctx context.Context, view 
 	return nil
 }
 
-func (pi *PostgresIntrospector) introspectColumns(ctx context.Context, table *parser.Table) error {
+// columnExpr is the default or generation expression of one column, as the
+// catalog prints it.
+type columnExpr struct {
+	text      string
+	generated string // pg_attribute.attgenerated
+	serial    bool   // the default draws from a sequence the column owns
+}
+
+func (pi *PostgresIntrospector) introspectColumns(ctx context.Context, table *parser.Table, domains []parser.DomainType) error {
+	// A serial column owns its sequence (an 'a' dependency); an identity
+	// column's sequence is an 'i' dependency and it has no pg_attrdef row.
 	rows, err := pi.db.QueryContext(ctx, `
 		SELECT
 			a.attname,
 			format_type(a.atttypid, a.atttypmod),
+			COALESCE(tn.nspname, ''),
+			COALESCE(et.typname, ''),
 			NOT a.attnotnull,
 			pg_get_expr(ad.adbin, ad.adrelid),
 			a.attidentity,
 			-- attgenerated arrived in PostgreSQL 12; read through to_jsonb so an
 			-- older server yields NULL instead of failing on the column name.
-			COALESCE(to_jsonb(a) ->> 'attgenerated', '')
+			COALESCE(to_jsonb(a) ->> 'attgenerated', ''),
+			EXISTS (
+				SELECT 1
+				FROM pg_catalog.pg_depend dep
+				JOIN pg_catalog.pg_class seq ON seq.oid = dep.objid AND seq.relkind = 'S'
+				WHERE dep.classid = 'pg_catalog.pg_class'::regclass
+				  AND dep.refobjid = a.attrelid AND dep.refobjsubid = a.attnum
+				  AND dep.deptype = 'a')
 		FROM pg_catalog.pg_attribute a
 		JOIN pg_catalog.pg_class c ON a.attrelid = c.oid
 		JOIN pg_catalog.pg_namespace n ON c.relnamespace = n.oid
 		LEFT JOIN pg_catalog.pg_attrdef ad ON a.attrelid = ad.adrelid AND a.attnum = ad.adnum
+		CROSS JOIN LATERAL (SELECT a.atttypid AS type_oid) tt`+userTypeJoin+`
 		WHERE n.nspname = $1
 		  AND c.relname = $2
 		  AND a.attnum > 0
@@ -405,49 +466,82 @@ func (pi *PostgresIntrospector) introspectColumns(ctx context.Context, table *pa
 	}
 	defer rows.Close() //nolint:errcheck // rows.Close error is not actionable after reading
 
+	var exprs []columnExpr
 	for rows.Next() {
 		var (
-			col        parser.Column
-			formatType string
-			nullable   bool
-			dflt       sql.NullString
-			identity   string
-			generated  string
+			col                            parser.Column
+			formatType, typSchema, typName string
+			nullable                       bool
+			dflt                           sql.NullString
+			identity                       string
+			expr                           columnExpr
 		)
-		if err := rows.Scan(&col.Name, &formatType, &nullable, &dflt, &identity, &generated); err != nil {
+		if err := rows.Scan(&col.Name, &formatType, &typSchema, &typName, &nullable, &dflt, &identity, &expr.generated, &expr.serial); err != nil {
 			return fmt.Errorf("introspect postgres columns %s.%s: scanning: %w", table.Schema, table.Name, err)
 		}
 
-		col.Type = normalizePostgresType(formatType)
+		col.Type = columnType(formatType, typSchema, typName, table.Schema)
 		col.Nullable = nullable
-
-		switch {
-		case generated != "":
-			// pg_attrdef holds a generated column's expression, not a default.
-			expr, err := postgres.NormalizeExpr(dflt.String)
-			if err != nil {
-				return fmt.Errorf("introspect postgres columns %s.%s: generated column %s: %w", table.Schema, table.Name, col.Name, err)
-			}
-			col.GeneratedExpr = expr
-			col.GeneratedStorage = postgresGeneratedStorage(generated)
-		case dflt.Valid:
-			col.Default = dflt.String
-			if strings.Contains(strings.ToLower(col.Default), "nextval(") {
-				col.AutoIncrement = true
-			}
-		}
-
-		if identity != "" {
-			col.AutoIncrement = true
-		}
+		col.AutoIncrement = identity != ""
+		expr.text = dflt.String
 
 		table.Columns = append(table.Columns, col)
+		exprs = append(exprs, expr)
 	}
-
 	if err := rows.Err(); err != nil {
 		return fmt.Errorf("introspect postgres columns %s.%s: iterating: %w", table.Schema, table.Name, err)
 	}
+
+	// A generation expression may name any column, so every column's type
+	// must be known before the expressions are normalized.
+	casts := postgres.TableImplicitCasts(table, domains)
+	for i, expr := range exprs {
+		if err := applyColumnExpr(&table.Columns[i], expr, casts); err != nil {
+			return fmt.Errorf("introspect postgres columns %s.%s: column %s: %w", table.Schema, table.Name, table.Columns[i].Name, err)
+		}
+	}
 	return nil
+}
+
+// applyColumnExpr sets col's default or generation expression in the
+// parser's form. A serial column carries no default, only AutoIncrement, as
+// when parsed.
+func applyColumnExpr(col *parser.Column, expr columnExpr, casts map[string][]string) error {
+	if expr.text == "" {
+		return nil
+	}
+	isSequence := strings.Contains(strings.ToLower(expr.text), "nextval(")
+	if expr.generated == "" && expr.serial && isSequence {
+		col.AutoIncrement = true
+		return nil
+	}
+	text, err := catalogExpr(expr.text, casts)
+	if err != nil {
+		return err
+	}
+	if expr.generated != "" {
+		// pg_attrdef holds a generated column's expression, not a default.
+		col.GeneratedExpr = text
+		col.GeneratedStorage = postgresGeneratedStorage(expr.generated)
+		return nil
+	}
+	col.Default = text
+	if isSequence {
+		col.AutoIncrement = true
+	}
+	return nil
+}
+
+// catalogExpr is postgres.CatalogExpr for text that may be empty.
+func catalogExpr(text string, casts map[string][]string) (string, error) {
+	if text == "" {
+		return "", nil
+	}
+	out, err := postgres.CatalogExpr(text, casts)
+	if err != nil {
+		return "", fmt.Errorf("normalizing catalog text: %w", err)
+	}
+	return out, nil
 }
 
 // postgresGeneratedStorage maps pg_attribute.attgenerated to GeneratedStorage:
@@ -459,17 +553,20 @@ func postgresGeneratedStorage(attgenerated string) string {
 	return "STORED"
 }
 
-func (pi *PostgresIntrospector) introspectConstraints(ctx context.Context, table *parser.Table) error {
+// introspectConstraints reads the table's constraints and indexes. casts
+// holds the implicit casts of the table's columns, for normalizing CHECK
+// expressions and partial-index predicates (see postgres.CatalogExpr).
+func (pi *PostgresIntrospector) introspectConstraints(ctx context.Context, table *parser.Table, casts map[string][]string) error {
 	// Track the OIDs of indexes already covered by a pg_constraint so the
 	// non-constraint pg_index sweep below can skip them.
-	conIndIDs, err := pi.introspectConstraintsViaPgConstraint(ctx, table)
+	conIndIDs, err := pi.introspectConstraintsViaPgConstraint(ctx, table, casts)
 	if err != nil {
 		return err
 	}
-	return pi.introspectStandaloneIndexes(ctx, table, conIndIDs)
+	return pi.introspectStandaloneIndexes(ctx, table, conIndIDs, casts)
 }
 
-func (pi *PostgresIntrospector) introspectConstraintsViaPgConstraint(ctx context.Context, table *parser.Table) (map[int64]struct{}, error) {
+func (pi *PostgresIntrospector) introspectConstraintsViaPgConstraint(ctx context.Context, table *parser.Table, casts map[string][]string) (map[int64]struct{}, error) {
 	rows, err := pi.db.QueryContext(ctx, `
 		SELECT
 			con.conname,
@@ -518,57 +615,18 @@ func (pi *PostgresIntrospector) introspectConstraintsViaPgConstraint(ctx context
 	conIndIDs := make(map[int64]struct{})
 
 	for rows.Next() {
-		var (
-			name       string
-			contype    string
-			colsStr    string // PostgreSQL array literal
-			refSchema  string
-			refTable   string
-			refColsStr string
-			definition string
-			amName     string
-			where      string
-			indID      int64
-		)
-		if err := rows.Scan(&name, &contype, &colsStr, &refSchema, &refTable, &refColsStr, &definition, &amName, &where, &indID); err != nil {
+		var row pgConstraintRow
+		if err := rows.Scan(&row.name, &row.contype, &row.cols, &row.refSchema, &row.refTable, &row.refCols, &row.definition, &row.amName, &row.where, &row.indID); err != nil {
 			return nil, fmt.Errorf("introspect postgres constraints %s.%s: scanning: %w", table.Schema, table.Name, err)
 		}
-
-		cols := parsePostgresArray(colsStr)
-		refCols := parsePostgresArray(refColsStr)
-
-		constraint := parser.Constraint{
-			Name:    name,
-			Columns: cols,
-		}
-
-		switch contype {
-		case "p":
-			constraint.Type = parser.PrimaryKey
-			// Method / Where intentionally left unset on PRIMARY KEY — the
-			// DDL parser path leaves Method empty for inline PRIMARY KEY
-			// (no DDL surface to declare a method on a PK), and the manifest
-			// builder only consumes Method from indexes[] (PRD §30.7), not
-			// from the PK shape. Writing pg_am.amname here would create a
-			// path-dependent value (introspect = "btree" vs. DDL = "") with
-			// no consumer that cares.
-		case "u":
-			constraint.Type = parser.Unique
-			constraint.Method = amName
-			constraint.Where = where
-		case "f":
-			constraint.Type = parser.ForeignKey
-			constraint.ReferenceSchema = refSchema
-			constraint.ReferenceTable = refTable
-			constraint.ReferenceColumns = refCols
-		case "c":
-			constraint.Type = parser.Check
-			constraint.CheckExpression = extractCheckExpression(definition)
+		constraint, err := row.constraint(casts)
+		if err != nil {
+			return nil, fmt.Errorf("introspect postgres constraints %s.%s: constraint %s: %w", table.Schema, table.Name, row.name, err)
 		}
 
 		table.Constraints = append(table.Constraints, constraint)
-		if indID != 0 {
-			conIndIDs[indID] = struct{}{}
+		if row.indID != 0 {
+			conIndIDs[row.indID] = struct{}{}
 		}
 	}
 
@@ -579,13 +637,53 @@ func (pi *PostgresIntrospector) introspectConstraintsViaPgConstraint(ctx context
 	return conIndIDs, nil
 }
 
+// pgConstraintRow is one row of the pg_constraint query. cols and refCols are
+// PostgreSQL array literals.
+type pgConstraintRow struct {
+	name, contype, cols          string
+	refSchema, refTable, refCols string
+	definition, amName, where    string
+	indID                        int64
+}
+
+// constraint builds the row's constraint, with CHECK and predicate text in
+// the parser's form; casts holds the implicit casts of the table's columns.
+func (r pgConstraintRow) constraint(casts map[string][]string) (parser.Constraint, error) {
+	c := parser.Constraint{Name: r.name, Columns: parsePostgresArray(r.cols)}
+	var err error
+	switch r.contype {
+	case "p":
+		c.Type = parser.PrimaryKey
+		// Method / Where intentionally left unset on PRIMARY KEY — the
+		// DDL parser path leaves Method empty for inline PRIMARY KEY
+		// (no DDL surface to declare a method on a PK), and the manifest
+		// builder only consumes Method from indexes[] (PRD §30.7), not
+		// from the PK shape. Writing pg_am.amname here would create a
+		// path-dependent value (introspect = "btree" vs. DDL = "") with
+		// no consumer that cares.
+	case "u":
+		c.Type = parser.Unique
+		c.Method = r.amName
+		c.Where, err = catalogExpr(r.where, casts)
+	case "f":
+		c.Type = parser.ForeignKey
+		c.ReferenceSchema = r.refSchema
+		c.ReferenceTable = r.refTable
+		c.ReferenceColumns = parsePostgresArray(r.refCols)
+	case "c":
+		c.Type = parser.Check
+		c.CheckExpression, err = catalogExpr(extractCheckExpression(r.definition), casts)
+	}
+	return c, err
+}
+
 // introspectStandaloneIndexes emits parser.Index (or parser.Unique when partial
 // or otherwise not backed by a pg_constraint UNIQUE) entries for every
 // pg_index row on the table that isn't already covered by a pg_constraint
 // entry. This is the path that surfaces gin/gist/hash indexes (PRD §30.7) and
 // partial unique indexes created via CREATE UNIQUE INDEX ... WHERE ...
 // (which pg_constraint never represents).
-func (pi *PostgresIntrospector) introspectStandaloneIndexes(ctx context.Context, table *parser.Table, conIndIDs map[int64]struct{}) error {
+func (pi *PostgresIntrospector) introspectStandaloneIndexes(ctx context.Context, table *parser.Table, conIndIDs map[int64]struct{}, casts map[string][]string) error {
 	rows, err := pi.db.QueryContext(ctx, `
 		SELECT
 			pi.indexrelid,
@@ -640,6 +738,10 @@ func (pi *PostgresIntrospector) introspectStandaloneIndexes(ctx context.Context,
 		cType := parser.Index
 		if isUnique {
 			cType = parser.Unique
+		}
+		where, err := catalogExpr(where, casts)
+		if err != nil {
+			return fmt.Errorf("introspect postgres indexes %s.%s: index %s: %w", table.Schema, table.Name, indexName, err)
 		}
 
 		constraint := parser.Constraint{
@@ -790,8 +892,9 @@ func (pi *PostgresIntrospector) introspectCompositeTypes(ctx context.Context, sc
 		}
 
 		attrRows, err := pi.db.QueryContext(ctx, `
-			SELECT a.attname, format_type(a.atttypid, a.atttypmod)
+			SELECT a.attname, format_type(a.atttypid, a.atttypmod), COALESCE(tn.nspname, ''), COALESCE(et.typname, '')
 			FROM pg_catalog.pg_attribute a
+			CROSS JOIN LATERAL (SELECT a.atttypid AS type_oid) tt`+userTypeJoin+`
 			WHERE a.attrelid = $1
 			  AND a.attnum > 0
 			  AND NOT a.attisdropped
@@ -814,9 +917,11 @@ func (pi *PostgresIntrospector) introspectDomainTypes(ctx context.Context, schem
 	rows, err := pi.db.QueryContext(ctx, `
 		SELECT n.nspname, t.typname,
 		       format_type(t.typbasetype, t.typtypmod),
+		       COALESCE(tn.nspname, ''), COALESCE(et.typname, ''),
 		       t.oid
 		FROM pg_catalog.pg_type t
 		JOIN pg_catalog.pg_namespace n ON t.typnamespace = n.oid
+		CROSS JOIN LATERAL (SELECT t.typbasetype AS type_oid) tt`+userTypeJoin+`
 		WHERE t.typtype = 'd'
 		  AND n.nspname NOT IN ('pg_catalog', 'information_schema')
 		ORDER BY n.nspname, t.typname`)
@@ -825,50 +930,50 @@ func (pi *PostgresIntrospector) introspectDomainTypes(ctx context.Context, schem
 	}
 	defer rows.Close() //nolint:errcheck // rows.Close error is not actionable after reading
 
-	type dtRef struct {
-		schema   string
-		name     string
-		baseType string
-		oid      int64
-	}
-	var refs []dtRef
-
+	var (
+		domains []parser.DomainType
+		oids    []int64
+	)
 	for rows.Next() {
-		var ref dtRef
-		if err := rows.Scan(&ref.schema, &ref.name, &ref.baseType, &ref.oid); err != nil {
+		var (
+			dt                             parser.DomainType
+			formatType, typSchema, typName string
+			oid                            int64
+		)
+		if err := rows.Scan(&dt.Schema, &dt.Name, &formatType, &typSchema, &typName, &oid); err != nil {
 			return fmt.Errorf("introspect postgres domain types: scanning: %w", err)
 		}
-		if !schemaAllowed(ref.schema, opts) {
+		if !schemaAllowed(dt.Schema, opts) {
 			continue
 		}
-		refs = append(refs, ref)
+		dt.BaseType = columnType(formatType, typSchema, typName, dt.Schema)
+		domains = append(domains, dt)
+		oids = append(oids, oid)
 	}
 	if err := rows.Err(); err != nil {
 		return fmt.Errorf("introspect postgres domain types: iterating: %w", err)
 	}
 
-	for _, ref := range refs {
-		dt := parser.DomainType{
-			Name:     ref.name,
-			Schema:   ref.schema,
-			BaseType: normalizePostgresType(ref.baseType),
-		}
-
+	// Every base type is read first: a constraint's implicit casts follow a
+	// domain over another domain to its base. Only CHECKs are domain
+	// constraints in the model; PostgreSQL 18 also lists a domain's NOT NULL
+	// here (contype 'n'), and 16 keeps it on the type.
+	for i := range domains {
+		dt := &domains[i]
 		conRows, err := pi.db.QueryContext(ctx, `
 			SELECT conname, pg_get_constraintdef(oid)
 			FROM pg_catalog.pg_constraint
-			WHERE contypid = $1`, ref.oid)
+			WHERE contypid = $1 AND contype = 'c'`, oids[i])
 		if err != nil {
-			return fmt.Errorf("introspect postgres domain constraints %s.%s: %w", ref.schema, ref.name, err)
+			return fmt.Errorf("introspect postgres domain constraints %s.%s: %w", dt.Schema, dt.Name, err)
 		}
 
-		if err := scanDomainConstraints(conRows, &dt); err != nil {
-			return fmt.Errorf("introspect postgres domain constraints %s.%s: %w", ref.schema, ref.name, err)
+		if err := scanDomainConstraints(conRows, dt, postgres.DomainImplicitCasts(dt, domains)); err != nil {
+			return fmt.Errorf("introspect postgres domain constraints %s.%s: %w", dt.Schema, dt.Name, err)
 		}
-
-		schema.DomainTypes = append(schema.DomainTypes, dt)
 	}
 
+	schema.DomainTypes = append(schema.DomainTypes, domains...)
 	return nil
 }
 
@@ -998,12 +1103,14 @@ func scanCompositeAttributes(rows *sql.Rows, ct *parser.CompositeType) error {
 	defer rows.Close() //nolint:errcheck // rows.Close error is not actionable after reading
 
 	for rows.Next() {
-		var attr parser.Attribute
-		var formatType string
-		if err := rows.Scan(&attr.Name, &formatType); err != nil {
+		var (
+			attr                           parser.Attribute
+			formatType, typSchema, typName string
+		)
+		if err := rows.Scan(&attr.Name, &formatType, &typSchema, &typName); err != nil {
 			return fmt.Errorf("scanning: %w", err)
 		}
-		attr.Type = normalizePostgresType(formatType)
+		attr.Type = columnType(formatType, typSchema, typName, ct.Schema)
 		ct.Attributes = append(ct.Attributes, attr)
 	}
 
@@ -1013,9 +1120,10 @@ func scanCompositeAttributes(rows *sql.Rows, ct *parser.CompositeType) error {
 	return nil
 }
 
-// scanDomainConstraints reads domain constraints from rows and appends them
-// to dt. It closes the rows when done.
-func scanDomainConstraints(rows *sql.Rows, dt *parser.DomainType) error {
+// scanDomainConstraints reads domain CHECK constraints from rows and appends
+// them to dt, with their expressions in the parser's form. casts holds VALUE's
+// implicit casts. It closes the rows when done.
+func scanDomainConstraints(rows *sql.Rows, dt *parser.DomainType, casts map[string][]string) error {
 	defer rows.Close() //nolint:errcheck // rows.Close error is not actionable after reading
 
 	for rows.Next() {
@@ -1023,10 +1131,14 @@ func scanDomainConstraints(rows *sql.Rows, dt *parser.DomainType) error {
 		if err := rows.Scan(&conName, &definition); err != nil {
 			return fmt.Errorf("scanning: %w", err)
 		}
+		expr, err := catalogExpr(extractCheckExpression(definition), casts)
+		if err != nil {
+			return fmt.Errorf("constraint %s: %w", conName, err)
+		}
 		dt.Constraints = append(dt.Constraints, parser.Constraint{
 			Name:            conName,
 			Type:            parser.Check,
-			CheckExpression: extractCheckExpression(definition),
+			CheckExpression: expr,
 		})
 	}
 

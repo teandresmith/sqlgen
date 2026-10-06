@@ -22,6 +22,7 @@ func TestCreateTableColumnTypes(t *testing.T) {
 		t_real real,
 		t_double double precision,
 		t_numeric numeric(10, 2),
+		t_numeric_arr numeric(12, 2)[],
 		t_varchar varchar(255),
 		t_char char(1),
 		t_timestamp timestamp,
@@ -57,7 +58,8 @@ func TestCreateTableColumnTypes(t *testing.T) {
 		"t_bool":        "boolean",
 		"t_real":        "real",
 		"t_double":      "double precision",
-		"t_numeric":     "numeric(10, 2)",
+		"t_numeric":     "numeric(10,2)",
+		"t_numeric_arr": "numeric(12,2)[]",
 		"t_varchar":     "varchar(255)",
 		"t_char":        "char(1)",
 		"t_timestamp":   "timestamp",
@@ -2034,6 +2036,46 @@ func TestParseViewSQL_DefaultSchema(t *testing.T) {
 			}
 			if got.Schema != tt.wantSchema {
 				t.Errorf("Schema = %q, want %q", got.Schema, tt.wantSchema)
+			}
+		})
+	}
+}
+
+// A FROM-clause table keeps its schema, keyed like TableAliases. An
+// unqualified one is in the default schema, as an unqualified CREATE TABLE is.
+func TestParseViewSQL_TableSchemas(t *testing.T) {
+	tests := []struct {
+		name          string
+		sql           string
+		defaultSchema string
+		want          map[string]string
+	}{
+		{
+			name: "qualified, aliased and joined",
+			sql: `CREATE VIEW billing.v AS SELECT a.id, i.total
+FROM app.accounts a JOIN billing.invoices i ON i.account_id = a.id;`,
+			want: map[string]string{"a": "app", "i": "billing"},
+		},
+		{
+			name:          "unqualified table takes the default schema",
+			sql:           `CREATE MATERIALIZED VIEW reporting.v AS SELECT orders.id FROM orders;`,
+			defaultSchema: "billing",
+			want:          map[string]string{"orders": "billing"},
+		},
+		{
+			name: "unqualified table with no default is in public",
+			sql:  `CREATE VIEW v AS SELECT o.id FROM orders o;`,
+			want: map[string]string{"o": "public"},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := postgres.ParseViewSQL([]byte(tt.sql), tt.defaultSchema)
+			if err != nil {
+				t.Fatalf("ParseViewSQL() error: %v", err)
+			}
+			if diff := cmp.Diff(tt.want, got.TableSchemas); diff != "" {
+				t.Errorf("TableSchemas mismatch (-want +got):\n%s", diff)
 			}
 		})
 	}

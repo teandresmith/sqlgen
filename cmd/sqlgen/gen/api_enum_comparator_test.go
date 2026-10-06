@@ -81,7 +81,7 @@ func enumFixtureResolver(t *testing.T, schema *parserpkg.Schema, cfg *config.Roo
 	t.Helper()
 	r := gotype.NewResolver(config.DialectPostgres, true, cfg.Overrides.Types)
 	for _, e := range schema.Enums {
-		r.RegisterEnum(e.Name, gen.EnumGoTypeName(cfg, e.Name, e.Schema, collisions))
+		r.RegisterEnum(e.Schema, e.Name, gen.EnumGoTypeName(cfg, e.Name, e.Schema, collisions))
 	}
 	return r
 }
