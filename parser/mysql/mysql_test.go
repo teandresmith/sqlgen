@@ -557,7 +557,13 @@ func TestNormalizeExpr(t *testing.T) {
 		{name: "function call", expr: "abs(`qty`)", want: "abs(qty)"},
 		{name: "reserved word keeps its backticks", expr: "(`order` + 1)", want: "`order` + 1"},
 		{name: "already normalized", expr: "qty + 1", want: "qty + 1"},
-		{name: "literal with a charset introducer", expr: "concat(`s`,_latin1'it\\'s')", want: "concat(s, _latin1 'it\\'s')"},
+		{name: "charset introducer dropped", expr: "concat(`s`,_latin1'it\\'s')", want: "concat(s, 'it\\'s')"},
+		{name: "introducer on a lone literal", expr: "_utf8mb4'{}'", want: "'{}'"},
+		{name: "unary minus in parentheses", expr: "((`price` > 1) or (`price` < -(1)))", want: "price > 1 or price < -1"},
+		{name: "keyword function", expr: "CURRENT_TIMESTAMP", want: "current_timestamp()"},
+		{name: "keyword function with precision", expr: "CURRENT_TIMESTAMP(3)", want: "current_timestamp(3)"},
+		{name: "bit literal", expr: "b'101'", want: "0b101"},
+		{name: "json operators", expr: "json_unquote(json_extract(`doc`,_utf8mb4'$.a'))", want: "json_unquote(json_extract(doc, '$.a'))"},
 		{name: "incomplete expression", expr: "qty *", wantErr: true},
 	}
 	for _, tt := range tests {
@@ -568,6 +574,124 @@ func TestNormalizeExpr(t *testing.T) {
 			}
 			if got != tt.want {
 				t.Errorf("NormalizeExpr(%q) = %q, want %q", tt.expr, got, tt.want)
+			}
+		})
+	}
+}
+
+// MySQL 8.0.19+ stores an integer type without its display width, except
+// tinyint(1) and a ZEROFILL type, which is also UNSIGNED.
+func TestIntegerDisplayWidth(t *testing.T) {
+	tests := []struct {
+		declared string
+		want     string
+	}{
+		{declared: "INT(11)", want: "int"},
+		{declared: "BIGINT(20) UNSIGNED", want: "bigint unsigned"},
+		{declared: "SMALLINT(6)", want: "smallint"},
+		{declared: "MEDIUMINT(9)", want: "mediumint"},
+		{declared: "TINYINT(4)", want: "tinyint"},
+		{declared: "TINYINT(1)", want: "tinyint(1)"},
+		{declared: "TINYINT(1) UNSIGNED", want: "tinyint unsigned"},
+		{declared: "INT UNSIGNED", want: "int unsigned"},
+		{declared: "INT(5) ZEROFILL", want: "int(5) unsigned zerofill"},
+		{declared: "INT(5) UNSIGNED ZEROFILL", want: "int(5) unsigned zerofill"},
+		{declared: "INT ZEROFILL", want: "int(10) unsigned zerofill"},
+		{declared: "TINYINT ZEROFILL", want: "tinyint(3) unsigned zerofill"},
+		{declared: "BIGINT ZEROFILL", want: "bigint(20) unsigned zerofill"},
+		{declared: "DECIMAL(10,2)", want: "decimal(10,2)"},
+		{declared: "VARCHAR(20)", want: "varchar(20)"},
+		{declared: "BIT(8)", want: "bit(8)"},
+		{declared: "DOUBLE ZEROFILL", want: "double"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.declared, func(t *testing.T) {
+			p := newParser(t)
+			if err := p.Parse("test.sql", []byte("CREATE TABLE t (c "+tt.declared+");")); err != nil {
+				t.Fatalf("Parse() error: %v", err)
+			}
+			if got := p.Schema().Tables[0].Columns[0].Type; got != tt.want {
+				t.Errorf("type of %s = %q, want %q", tt.declared, got, tt.want)
+			}
+		})
+	}
+}
+
+// NormalizeType reads INFORMATION_SCHEMA.COLUMNS.COLUMN_TYPE, which a server
+// older than MySQL 8.0.19 writes with display widths.
+func TestNormalizeType(t *testing.T) {
+	tests := []struct {
+		columnType string
+		want       string
+	}{
+		{columnType: "int", want: "int"},
+		{columnType: "int(11)", want: "int"},
+		{columnType: "bigint(20) unsigned", want: "bigint unsigned"},
+		{columnType: "tinyint(1)", want: "tinyint(1)"},
+		{columnType: "tinyint(1) unsigned", want: "tinyint unsigned"},
+		{columnType: "tinyint(4)", want: "tinyint"},
+		{columnType: "int(5) unsigned zerofill", want: "int(5) unsigned zerofill"},
+		{columnType: "INT(11) UNSIGNED", want: "int unsigned"},
+		{columnType: "decimal(10,2)", want: "decimal(10,2)"},
+		{columnType: "VarChar(255)", want: "varchar(255)"},
+		{columnType: "bit(1)", want: "bit(1)"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.columnType, func(t *testing.T) {
+			if got := mysql.NormalizeType(tt.columnType); got != tt.want {
+				t.Errorf("NormalizeType(%q) = %q, want %q", tt.columnType, got, tt.want)
+			}
+		})
+	}
+}
+
+// The parser writes a default, CHECK or generated expression as the
+// normalized catalog text reads, so both sources agree.
+func TestExpressionText(t *testing.T) {
+	const ddl = `CREATE TABLE t (
+		a int DEFAULT NULL,
+		b varchar(10) DEFAULT _utf8mb4'x',
+		c varchar(20) AS (concat(_latin1'n-', b)),
+		d varchar(10) NOT NULL DEFAULT '',
+		CONSTRAINT t_b CHECK (b <> _latin1'q')
+	);`
+	p := newParser(t)
+	if err := p.Parse("test.sql", []byte(ddl)); err != nil {
+		t.Fatalf("Parse() error: %v", err)
+	}
+	table := &p.Schema().Tables[0]
+
+	defaults := make(map[string]string)
+	for _, c := range table.Columns {
+		defaults[c.Name] = c.Default
+	}
+	wantDefaults := map[string]string{"a": "", "b": "'x'", "c": "", "d": "''"}
+	if diff := cmp.Diff(wantDefaults, defaults); diff != "" {
+		t.Errorf("defaults mismatch (-want +got):\n%s", diff)
+	}
+	if got := parser.ColumnByName(table, "c").GeneratedExpr; got != "concat('n-', b)" {
+		t.Errorf("c GeneratedExpr = %q, want %q", got, "concat('n-', b)")
+	}
+	if c := findConstraint(table.Constraints, "t_b", parser.Check); c == nil || c.CheckExpression != "b != 'q'" {
+		t.Errorf("CHECK t_b = %+v, want CheckExpression %q", c, "b != 'q'")
+	}
+}
+
+func TestQuoteLiteral(t *testing.T) {
+	tests := []struct {
+		value string
+		want  string
+	}{
+		{value: "", want: "''"},
+		{value: "active", want: "'active'"},
+		{value: "it's", want: `'it\'s'`},
+		{value: `a\b`, want: `'a\\b'`},
+		{value: "r,w", want: "'r,w'"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.value, func(t *testing.T) {
+			if got := mysql.QuoteLiteral(tt.value); got != tt.want {
+				t.Errorf("QuoteLiteral(%q) = %q, want %q", tt.value, got, tt.want)
 			}
 		})
 	}

@@ -1,0 +1,426 @@
+package introspect_test
+
+import (
+	"bytes"
+	"context"
+	"errors"
+	"net"
+	"strings"
+	"sync"
+	"testing"
+
+	mysqldriver "github.com/go-sql-driver/mysql"
+	"github.com/google/go-cmp/cmp"
+
+	"github.com/teandresmith/sqlgen/parser"
+	"github.com/teandresmith/sqlgen/parser/introspect"
+	"github.com/teandresmith/sqlgen/parser/mysql"
+)
+
+// introspectMySQL introspects tables from the test database.
+func introspectMySQL(t *testing.T, tables ...string) *parser.Schema {
+	t.Helper()
+	intro := introspect.NewMySQLIntrospector()
+	defer intro.Close() //nolint:errcheck // test cleanup
+	schema := &parser.Schema{}
+	if err := intro.Introspect(context.Background(), mysqlConnStr, schema, introspect.IntrospectionOptions{
+		Tables: tables,
+	}); err != nil {
+		t.Fatalf("Introspect() error: %v", err)
+	}
+	return schema
+}
+
+// parseMySQL parses ddl one statement at a time with the MySQL file parser.
+func parseMySQL(t *testing.T, ddl string) *parser.Schema {
+	t.Helper()
+	p, err := mysql.New()
+	if err != nil {
+		t.Fatalf("mysql.New() error: %v", err)
+	}
+	return parseStatements(t, p, ddl)
+}
+
+// columnField returns field(c) for every column of table, keyed by column name.
+func columnField(t *testing.T, s *parser.Schema, table string, field func(parser.Column) string) map[string]string {
+	t.Helper()
+	got := make(map[string]string)
+	for _, c := range findTable(t, s, table).Columns {
+		got[c.Name] = field(c)
+	}
+	return got
+}
+
+// withoutViews returns a copy of s without its views and warnings. The file
+// parser skips CREATE VIEW with a warning, so views are compared on their own.
+func withoutViews(s *parser.Schema) *parser.Schema {
+	c := *s
+	c.Views = nil
+	c.Warnings = nil
+	return &c
+}
+
+func TestMySQLIntrospect_ProbeFixture(t *testing.T) {
+	requireDatabases(t)
+	applyParityFixture(t, "mysql", mysqlConnStr, mysqlParityFixtureReset, mysqlParityFixture)
+
+	introspected := introspectMySQL(t, "m_users", "m_pairs", "MixedCase", "m_user_status")
+	parsed := parseMySQL(t, mysqlParityFixture)
+
+	view := findView(t, introspected, "m_user_status")
+	wantView := []parser.Column{
+		{Name: "id", Type: "bigint"},
+		{Name: "status", Type: "m_users_status_enum"},
+	}
+	if diff := cmp.Diff(wantView, view.Columns); diff != "" {
+		t.Errorf("m_user_status columns mismatch (-want +got):\n%s", diff)
+	}
+	assertSchemaParity(t, "mysql", withoutViews(parsed), withoutViews(introspected))
+}
+
+func TestMySQLIntrospect_Defaults(t *testing.T) {
+	requireDatabases(t)
+	const ddl = `CREATE TABLE m_defaults (
+		id int NOT NULL PRIMARY KEY,
+		empty_str varchar(50) NOT NULL DEFAULT '',
+		str varchar(50) DEFAULT 'active',
+		quoted varchar(50) DEFAULT 'it''s',
+		backslash varchar(50) DEFAULT 'a\\b',
+		keyword_str varchar(50) DEFAULT 'CURRENT_TIMESTAMP',
+		null_str varchar(50) DEFAULT 'NULL',
+		status ENUM('active','in active') NOT NULL DEFAULT 'in active',
+		perms SET('r','w') DEFAULT 'r,w',
+		created_at datetime(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+		updated_at timestamp NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+		day date DEFAULT '2020-01-01',
+		at time DEFAULT '12:00:00',
+		uid varchar(36) DEFAULT (uuid()),
+		doc json DEFAULT ('{}'),
+		label varchar(20) DEFAULT (concat('a', 'b')),
+		sum_default int DEFAULT (1 + 2),
+		nothing int DEFAULT NULL,
+		unset int,
+		qty int NOT NULL DEFAULT 0,
+		neg int DEFAULT -1,
+		price decimal(10,2) DEFAULT 1.50,
+		flags bit(8) DEFAULT b'101',
+		yr year DEFAULT 2020
+	)`
+	applyParityFixture(t, "mysql", mysqlConnStr, "DROP TABLE IF EXISTS m_defaults", ddl)
+
+	introspected := introspectMySQL(t, "m_defaults")
+	parsed := parseMySQL(t, ddl)
+
+	want := map[string]string{
+		"id":          "",
+		"empty_str":   "''",
+		"str":         "'active'",
+		"quoted":      `'it\'s'`,
+		"backslash":   `'a\\b'`,
+		"keyword_str": "'CURRENT_TIMESTAMP'",
+		"null_str":    "'NULL'",
+		"status":      "'in active'",
+		"perms":       "'r,w'",
+		"created_at":  "current_timestamp(3)",
+		"updated_at":  "current_timestamp()",
+		"day":         "'2020-01-01'",
+		"at":          "'12:00:00'",
+		"uid":         "uuid()",
+		"doc":         "'{}'",
+		"label":       "concat('a', 'b')",
+		"sum_default": "1 + 2",
+		"nothing":     "",
+		"unset":       "",
+		"qty":         "0",
+		"neg":         "-1",
+		"price":       "1.50",
+		"flags":       "0b101",
+		"yr":          "2020",
+	}
+	def := func(c parser.Column) string { return c.Default }
+	if diff := cmp.Diff(want, columnField(t, introspected, "m_defaults", def)); diff != "" {
+		t.Errorf("introspected defaults mismatch (-want +got):\n%s", diff)
+	}
+	if diff := cmp.Diff(want, columnField(t, parsed, "m_defaults", def)); diff != "" {
+		t.Errorf("parsed defaults mismatch (-want +got):\n%s", diff)
+	}
+	assertSchemaParity(t, "mysql", parsed, introspected)
+}
+
+func TestMySQLIntrospect_TypeCoverage(t *testing.T) {
+	requireDatabases(t)
+	const ddl = `CREATE TABLE m_types (
+		id int NOT NULL PRIMARY KEY,
+		legacy INT(11),
+		big BIGINT(20) UNSIGNED,
+		u INT UNSIGNED,
+		bu BIGINT UNSIGNED,
+		small SMALLINT(6),
+		flag tinyint(1),
+		tiny tinyint(4),
+		utiny tinyint(1) unsigned,
+		zf int(5) zerofill,
+		zf_default int zerofill,
+		price decimal(10,2),
+		doc json,
+		at datetime(3),
+		uid binary(16),
+		vb varbinary(255),
+		b blob,
+		status ENUM('a','b'),
+		perms SET('r','w')
+	)`
+	applyParityFixture(t, "mysql", mysqlConnStr, "DROP TABLE IF EXISTS m_types", ddl)
+
+	introspected := introspectMySQL(t, "m_types")
+	parsed := parseMySQL(t, ddl)
+
+	want := map[string]string{
+		"id":         "int",
+		"legacy":     "int",
+		"big":        "bigint unsigned",
+		"u":          "int unsigned",
+		"bu":         "bigint unsigned",
+		"small":      "smallint",
+		"flag":       "tinyint(1)",
+		"tiny":       "tinyint",
+		"utiny":      "tinyint unsigned",
+		"zf":         "int(5) unsigned zerofill",
+		"zf_default": "int(10) unsigned zerofill",
+		"price":      "decimal(10,2)",
+		"doc":        "json",
+		"at":         "datetime(3)",
+		"uid":        "binary(16)",
+		"vb":         "varbinary(255)",
+		"b":          "blob",
+		"status":     "m_types_status_enum",
+		"perms":      "m_types_perms_set",
+	}
+	typ := func(c parser.Column) string { return c.Type }
+	if diff := cmp.Diff(want, columnField(t, introspected, "m_types", typ)); diff != "" {
+		t.Errorf("introspected types mismatch (-want +got):\n%s", diff)
+	}
+	if diff := cmp.Diff(want, columnField(t, parsed, "m_types", typ)); diff != "" {
+		t.Errorf("parsed types mismatch (-want +got):\n%s", diff)
+	}
+	assertSchemaParity(t, "mysql", parsed, introspected)
+}
+
+func TestMySQLIntrospect_QuotedIdentifiers(t *testing.T) {
+	requireDatabases(t)
+	const ddl = "CREATE TABLE `UserAccounts` (" + `
+		` + "`Id`" + ` int NOT NULL PRIMARY KEY,
+		` + "`createdAt`" + ` datetime NOT NULL,
+		` + "`order`" + ` int NOT NULL DEFAULT 0,
+		UNIQUE KEY ` + "`UserAccounts_order_createdAt` (`order`, `createdAt`)" + `,
+		CONSTRAINT ` + "`UserAccounts_order_check` CHECK (`order` >= 0)" + `
+	);
+	CREATE TABLE ` + "`AccountOrders` (`Id` int NOT NULL PRIMARY KEY, `accountId` int, " +
+		"CONSTRAINT `AccountOrders_account_fk` FOREIGN KEY (`accountId`) REFERENCES `UserAccounts` (`Id`))"
+	applyParityFixture(t, "mysql", mysqlConnStr, "DROP TABLE IF EXISTS `AccountOrders`; DROP TABLE IF EXISTS `UserAccounts`", ddl)
+
+	introspected := introspectMySQL(t, "UserAccounts", "AccountOrders")
+	parsed := parseMySQL(t, ddl)
+
+	check := findConstraintByName(findTable(t, introspected, "UserAccounts").Constraints, "UserAccounts_order_check")
+	if check == nil || check.CheckExpression != "`order` >= 0" {
+		t.Errorf("UserAccounts_order_check = %+v, want CheckExpression \"`order` >= 0\"", check)
+	}
+	assertSchemaParity(t, "mysql", parsed, introspected)
+}
+
+func TestMySQLIntrospect_CheckText(t *testing.T) {
+	requireDatabases(t)
+	const ddl = `CREATE TABLE m_checks (
+		id int NOT NULL PRIMARY KEY,
+		price decimal(10,2),
+		name varchar(20),
+		doc json,
+		CONSTRAINT m_checks_price CHECK (price >= 0),
+		CONSTRAINT m_checks_quote CHECK (name <> 'it''s'),
+		CONSTRAINT m_checks_in CHECK (name IN ('a', 'b') OR name IS NULL),
+		CONSTRAINT m_checks_like CHECK (name LIKE 'a\_%'),
+		CONSTRAINT m_checks_backslash CHECK (name <> 'back\\slash'),
+		CONSTRAINT m_checks_negative CHECK ((price > 1) OR (price < -1)),
+		CONSTRAINT m_checks_introducer CHECK (name <> _latin1'q'),
+		CONSTRAINT m_checks_json CHECK (doc->>'$.a' <> 'z'),
+		CONSTRAINT m_checks_json_extract CHECK (doc->'$.b' IS NOT NULL),
+		CHECK (price < 1000)
+	)`
+	applyParityFixture(t, "mysql", mysqlConnStr, "DROP TABLE IF EXISTS m_checks", ddl)
+
+	introspected := introspectMySQL(t, "m_checks")
+	parsed := parseMySQL(t, ddl)
+
+	want := map[string]string{
+		"m_checks_price":        "price >= 0",
+		"m_checks_quote":        "`name` != 'it\\'s'",
+		"m_checks_in":           "`name` in ('a', 'b') or `name` is null",
+		"m_checks_like":         "`name` like 'a\\_%'",
+		"m_checks_backslash":    "`name` != 'back\\\\slash'",
+		"m_checks_negative":     "price > 1 or price < -1",
+		"m_checks_introducer":   "`name` != 'q'",
+		"m_checks_json":         "json_unquote(json_extract(doc, '$.a')) != 'z'",
+		"m_checks_json_extract": "json_extract(doc, '$.b') is not null",
+		"m_checks_chk_1":        "price < 1000",
+	}
+	checkText := func(s *parser.Schema) map[string]string {
+		got := make(map[string]string)
+		for _, c := range filterConstraints(findTable(t, s, "m_checks").Constraints, parser.Check) {
+			got[c.Name] = c.CheckExpression
+		}
+		return got
+	}
+	if diff := cmp.Diff(want, checkText(introspected)); diff != "" {
+		t.Errorf("introspected CHECK text mismatch (-want +got):\n%s", diff)
+	}
+	if diff := cmp.Diff(want, checkText(parsed)); diff != "" {
+		t.Errorf("parsed CHECK text mismatch (-want +got):\n%s", diff)
+	}
+	assertSchemaParity(t, "mysql", parsed, introspected)
+}
+
+// TestMySQLIntrospect_CheckErrorsSurface cancels the context while the CHECK
+// query is on the wire, after every earlier catalog query has succeeded.
+// A context cancelled up front would fail at ping instead.
+func TestMySQLIntrospect_CheckErrorsSurface(t *testing.T) {
+	requireDatabases(t)
+	const ddl = `CREATE TABLE m_check_err (id int NOT NULL PRIMARY KEY, v int, CHECK (v > 0))`
+	applyParityFixture(t, "mysql", mysqlConnStr, "DROP TABLE IF EXISTS m_check_err", ddl)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	const network = "cancel_on_check_query"
+	mysqldriver.RegisterDialContext(network, func(dialCtx context.Context, addr string) (net.Conn, error) {
+		var d net.Dialer
+		conn, err := d.DialContext(dialCtx, "tcp", addr)
+		if err != nil {
+			return nil, err
+		}
+		return &cancelOnCheckQuery{Conn: conn, cancel: cancel, closed: make(chan struct{})}, nil
+	})
+	defer mysqldriver.DeregisterDialContext(network)
+
+	cfg, err := mysqldriver.ParseDSN(mysqlConnStr)
+	if err != nil {
+		t.Fatalf("ParseDSN(%q) error: %v", mysqlConnStr, err)
+	}
+	cfg.Net = network
+
+	intro := introspect.NewMySQLIntrospector()
+	defer intro.Close() //nolint:errcheck // test cleanup
+	schema := &parser.Schema{}
+	err = intro.Introspect(ctx, cfg.FormatDSN(), schema, introspect.IntrospectionOptions{Tables: []string{"m_check_err"}})
+	// A later catalog query would fail on the cancelled context too, so the
+	// error must come from the CHECK query itself.
+	if !errors.Is(err, context.Canceled) || !strings.Contains(err.Error(), "check constraints") {
+		t.Errorf("Introspect() error = %v, want the CHECK query's context.Canceled", err)
+	}
+}
+
+// cancelOnCheckQuery cancels the introspection context when the CHECK
+// constraint query is sent, then holds the write until the driver closes the
+// connection in response, so the query cannot finish first.
+type cancelOnCheckQuery struct {
+	net.Conn
+	cancel    context.CancelFunc
+	closed    chan struct{}
+	closeOnce sync.Once
+}
+
+func (c *cancelOnCheckQuery) Write(b []byte) (int, error) {
+	if bytes.Contains(b, []byte("information_schema.check_constraints")) {
+		c.cancel()
+		<-c.closed
+		return 0, net.ErrClosed
+	}
+	return c.Conn.Write(b)
+}
+
+func (c *cancelOnCheckQuery) Close() error {
+	c.closeOnce.Do(func() { close(c.closed) })
+	return c.Conn.Close()
+}
+
+// TestMySQLIntrospect_CatalogRewrites pins the text MySQL's catalog stores in
+// a form the file parser cannot rebuild from the DDL, so the two sources
+// differ (PRD §6.1). A CAST to a character type gains the connection
+// charset, a hex string literal reads back as 0x…, and a literal default is
+// stored converted to its column's type.
+func TestMySQLIntrospect_CatalogRewrites(t *testing.T) {
+	requireDatabases(t)
+	const ddl = `CREATE TABLE m_rewrites (
+		id int NOT NULL PRIMARY KEY,
+		price decimal(10,2) DEFAULT 1.5,
+		ratio double DEFAULT 1e3,
+		flag tinyint(1) DEFAULT TRUE,
+		qty int DEFAULT '5',
+		code varbinary(4) DEFAULT 'ab',
+		raw binary(2) DEFAULT x'4142',
+		name varchar(20),
+		label varchar(20) AS (cast(price as char)),
+		CONSTRAINT m_rewrites_cast CHECK (cast(price as char) <> ''),
+		CONSTRAINT m_rewrites_hex CHECK (name <> x'41')
+	)`
+	applyParityFixture(t, "mysql", mysqlConnStr, "DROP TABLE IF EXISTS m_rewrites", ddl)
+
+	introspected := introspectMySQL(t, "m_rewrites")
+	parsed := parseMySQL(t, ddl)
+
+	text := func(s *parser.Schema) map[string]string {
+		table := findTable(t, s, "m_rewrites")
+		got := make(map[string]string)
+		for _, c := range table.Columns {
+			if c.Default != "" {
+				got[c.Name] = c.Default
+			}
+			if c.GeneratedExpr != "" {
+				got[c.Name] = c.GeneratedExpr
+			}
+		}
+		for _, c := range filterConstraints(table.Constraints, parser.Check) {
+			got[c.Name] = c.CheckExpression
+		}
+		return got
+	}
+	wantParsed := map[string]string{
+		"price":           "1.5",
+		"ratio":           "1e3",
+		"flag":            "true",
+		"qty":             "'5'",
+		"code":            "'ab'",
+		"raw":             "X'4142'",
+		"label":           "cast(price as char)",
+		"m_rewrites_cast": "cast(price as char) != ''",
+		"m_rewrites_hex":  "`name` != X'41'",
+	}
+	wantIntrospected := map[string]string{
+		"price":           "1.50",
+		"ratio":           "1000",
+		"flag":            "1",
+		"qty":             "5",
+		"code":            "0x6162",
+		"raw":             "0x4142",
+		"label":           "cast(price as char character set utf8mb4)",
+		"m_rewrites_cast": "cast(price as char character set utf8mb4) != ''",
+		"m_rewrites_hex":  "`name` != 0x41",
+	}
+	if diff := cmp.Diff(wantParsed, text(parsed)); diff != "" {
+		t.Errorf("parsed text mismatch (-want +got):\n%s", diff)
+	}
+	if diff := cmp.Diff(wantIntrospected, text(introspected)); diff != "" {
+		t.Errorf("introspected text mismatch (-want +got):\n%s", diff)
+	}
+}
+
+func findView(t *testing.T, s *parser.Schema, name string) *parser.View {
+	t.Helper()
+	for i := range s.Views {
+		if s.Views[i].Name == name {
+			return &s.Views[i]
+		}
+	}
+	t.Fatalf("view %q not found in schema", name)
+	return nil
+}

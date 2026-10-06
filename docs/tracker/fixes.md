@@ -23,6 +23,35 @@
 
 <!-- fixes:open:begin -->
 
+### FIX-268
+
+- **Status:** Open
+- **Severity:** tracked
+- **Origin:** phase 30, `parser/mysql` (`exprText`) and `parser/introspect/mysql.go`
+- **Surfaced by:** `/verify 30.5` (2026-10-05), extended by the sqlgen-reviewer pass
+
+**Issue.** PRD §6.1 says `database` and `files` describe a schema identically, and its MySQL sentence lists the catalog rewrites that may differ. Measured on MySQL 8.0 with the real introspector against the file parser, these still differ and are neither normalized nor named:
+- `DEFAULT NOW()` → introspected `current_timestamp()`, parsed `now()`
+- `DEFAULT NOW(3)` → introspected `current_timestamp(3)`, parsed `now(3)`
+- `DEFAULT LOCALTIMESTAMP` → introspected `current_timestamp()`, parsed `localtimestamp()`
+- CHECK `m regexp '^[a-z]+$'` → introspected `regexp_like(m, '^[a-z]+$')`, parsed `m regexp '^[a-z]+$'`
+- CHECK `not (u > 200)` → introspected `u <= 200`, parsed `not u > 200`
+
+The manifest's `default` / CHECK text differs by source, unannounced, for DDL as common as `created_at DATETIME DEFAULT NOW()`. `default_kind` is "function" on both, and the Go code is unaffected.
+
+**Root cause.** MySQL stores `NOW` / `LOCALTIME` / `LOCALTIMESTAMP` as `CURRENT_TIMESTAMP` (with `DEFAULT_GENERATED`), and rewrites `REGEXP` and `NOT (cmp)` in `check_clause`. `exprText` (`parser/mysql/mysql.go:59`) only drops charset introducers, so the parser keeps the DDL's spelling, while `mysqlDefault` (`parser/introspect/mysql.go:633`) and the CHECK path return the catalog's.
+
+**Suggested fix.** Ruled 2026-10-05 (user): normalize the defaults, and name the CHECK rewrites.
+- In `exprText`, rewrite a function named `now`, `localtime` or `localtimestamp` to `current_timestamp`, keeping the precision argument (MySQL treats them as synonyms). Add the three cases to `TestMySQLIntrospect_Defaults` and `TestNormalizeExpr`.
+- Name `REGEXP` → `regexp_like(…)` and the `NOT (a > b)` → `a <= b` inversion in the PRD §6.1 MySQL sentence, and pin both in `TestMySQLIntrospect_CatalogRewrites` (`parser/introspect/mysql_integration_test.go`).
+
+**References.**
+- PRD §6.1; `docs/design/INTROSPECTION.md` Q5, Q13, M9.
+- phase-30.md ground rule: a lasting user-visible parity exception is written into §6.1.
+- Parallel: the PRD §6.1 "PostgreSQL expression text the catalog rewrites" paragraph (30.4).
+
+**Resolution notes.** _Filled in by `/fix resolve`._
+
 ### FIX-270
 
 - **Status:** Open

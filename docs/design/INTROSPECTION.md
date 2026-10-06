@@ -415,7 +415,7 @@ Integration tests:
 | `TestMySQLIntrospect_EnumEdgeValues` | ENUM values with a comma, a quote and an empty string give the same values on both paths (M3 introspector, M8 parser) |
 | `TestMySQLIntrospect_TableConstraints` | Canonical constraint shape and MySQL default names (`PRIMARY`, `<t>_ibfk_N`, `<t>_chk_N`, first-column UNIQUE name with `_2` on collision) on both paths (Q11 / X1); CHECK text after Q13 (M7) |
 | `TestMySQLIntrospect_CompositeConstraints` | Composite PK, composite UNIQUE, a multi-column FK (with column order) and a self-referencing FK |
-| `TestMySQLIntrospect_CheckErrorsSurface` | A CHECK query failure returns an error rather than dropping the CHECKs (M4, Q7). The probe showed that a context cancelled up front fails at ping, before the CHECK query, so the test cancels mid-run: it cancels from a `sql.DB` hook once the column queries finish. A white-box unit test covers the error-1109 fallback, since MySQL 8.0 can't produce it. |
+| `TestMySQLIntrospect_CheckErrorsSurface` | A CHECK query failure returns an error rather than dropping the CHECKs (M4, Q7). The probe showed that a context cancelled up front fails at ping, before the CHECK query, so the test cancels mid-run: it dials through a connection wrapper that cancels the context when the CHECK query is written, after every earlier catalog query has succeeded. A white-box unit test covers the error-1109 fallback, since MySQL 8.0 can't produce it. |
 | `TestMySQLIntrospectViews` (tightened) | A view projecting an ENUM column (M6) |
 | `TestMySQLIntrospect_QuotedIdentifiers` | A `` `UserAccounts` `` table, a `` `createdAt` `` column, a reserved-word column (`` `order` ``), and a constraint over them |
 

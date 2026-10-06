@@ -4,6 +4,7 @@ import (
 	"cmp"
 	"fmt"
 	"slices"
+	"strconv"
 	"strings"
 
 	"vitess.io/vitess/go/vt/sqlparser"
@@ -38,8 +39,8 @@ func New() (*Parser, error) {
 
 // NormalizeExpr rewrites the SQL expression expr in the form the parser writes
 // expressions, so text read from the catalog compares equal to parsed DDL.
-// Redundant parentheses and backticks are dropped: "(`qty` * 2)" becomes
-// "qty * 2".
+// Redundant parentheses, backticks and charset introducers are dropped:
+// "(`qty` * 2)" becomes "qty * 2", and "_utf8mb4'x'" becomes "'x'".
 func NormalizeExpr(expr string) (string, error) {
 	vp, err := sqlparser.New(sqlparser.Options{})
 	if err != nil {
@@ -49,7 +50,73 @@ func NormalizeExpr(expr string) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("parsing expression %q: %w", expr, err)
 	}
-	return sqlparser.String(e), nil
+	return exprText(e), nil
+}
+
+// exprText writes e without charset introducers. MySQL's catalog adds the
+// connection charset's introducer to every string literal in a stored
+// expression, so neither source keeps them.
+func exprText(e sqlparser.Expr) string {
+	e = sqlparser.Rewrite(sqlparser.CloneExpr(e), nil, func(c *sqlparser.Cursor) bool {
+		if intro, ok := c.Node().(*sqlparser.IntroducerExpr); ok {
+			c.Replace(intro.Expr)
+		}
+		return true
+	}).(sqlparser.Expr)
+	return sqlparser.String(e)
+}
+
+// QuoteLiteral writes value as a string literal in the form the parser
+// writes one: single-quoted, with MySQL backslash escapes.
+func QuoteLiteral(value string) string {
+	return sqlparser.String(sqlparser.NewStrLiteral(value))
+}
+
+// zerofillWidths is the display width MySQL gives a ZEROFILL integer type
+// declared without one.
+var zerofillWidths = map[string]int{
+	"tinyint": 3, "smallint": 5, "mediumint": 8, "int": 10, "integer": 10, "bigint": 20,
+}
+
+// NormalizeType writes a column type as MySQL 8.0.19+ stores it in
+// INFORMATION_SCHEMA.COLUMNS.COLUMN_TYPE: lowercased, and an integer type
+// without its display width, except tinyint(1) and a ZEROFILL type. ZEROFILL
+// implies UNSIGNED and keeps the width, the default one when none is given.
+// So "INT(11)" becomes "int" and "int zerofill" "int(10) unsigned zerofill".
+func NormalizeType(columnType string) string {
+	typ := strings.ToLower(strings.TrimSpace(columnType))
+	base, rest := typ, ""
+	if i := strings.IndexAny(typ, "( "); i >= 0 {
+		base, rest = typ[:i], typ[i:]
+	}
+	defaultWidth, isInteger := zerofillWidths[base]
+	if !isInteger {
+		return typ
+	}
+
+	width := ""
+	if strings.HasPrefix(rest, "(") {
+		if inner, after, ok := strings.Cut(rest[1:], ")"); ok {
+			width, rest = inner, after
+		}
+	}
+	attrs := strings.Fields(rest)
+	zerofill := slices.Contains(attrs, "zerofill")
+	unsigned := zerofill || slices.Contains(attrs, "unsigned")
+
+	switch {
+	case zerofill:
+		if width == "" {
+			width = strconv.Itoa(defaultWidth)
+		}
+		return base + "(" + width + ") unsigned zerofill"
+	case base == "tinyint" && width == "1" && !unsigned:
+		return "tinyint(1)"
+	case unsigned:
+		return base + " unsigned"
+	default:
+		return base
+	}
 }
 
 // Seed pre-populates the parser with an existing schema. This enables "both"
@@ -264,15 +331,16 @@ func (p *Parser) parseColumn(tableName string, col *sqlparser.ColumnDefinition) 
 		c.Nullable = false
 	}
 
-	// Default value.
-	if opts.Default != nil {
-		c.Default = sqlparser.String(opts.Default)
+	// Default value. MySQL stores DEFAULT NULL as no default at all, so it is
+	// recorded as none.
+	if _, isNull := opts.Default.(*sqlparser.NullVal); opts.Default != nil && !isNull {
+		c.Default = exprText(opts.Default)
 	}
 
 	// Generated column: GENERATED ALWAYS AS (expr) or the shorthand AS (expr).
 	// Storage is VIRTUAL unless declared STORED.
 	if opts.As != nil {
-		c.GeneratedExpr = sqlparser.String(opts.As)
+		c.GeneratedExpr = exprText(opts.As)
 		c.GeneratedStorage = "VIRTUAL"
 		if opts.Storage == sqlparser.StoredStorage {
 			c.GeneratedStorage = "STORED"
@@ -422,7 +490,8 @@ func (p *Parser) dropInlineEnumOrSet(typeName string) {
 	p.schema.Sets = slices.DeleteFunc(p.schema.Sets, func(s parser.Set) bool { return s.Name == typeName })
 }
 
-// buildTypeString builds the SQL type string from a ColumnType.
+// buildTypeString builds the SQL type string from a ColumnType, in the form
+// NormalizeType gives the catalog's.
 func buildTypeString(ct *sqlparser.ColumnType) string {
 	typ := strings.ToLower(ct.Type)
 
@@ -443,12 +512,14 @@ func buildTypeString(ct *sqlparser.ColumnType) string {
 		}
 	}
 
-	// Append unsigned.
 	if ct.Unsigned {
 		sb.WriteString(" unsigned")
 	}
+	if _, isInteger := zerofillWidths[typ]; ct.Zerofill && isInteger {
+		sb.WriteString(" zerofill")
+	}
 
-	return sb.String()
+	return NormalizeType(sb.String())
 }
 
 func (p *Parser) parseIndex(idx *sqlparser.IndexDefinition) parser.Constraint {
@@ -523,7 +594,7 @@ func (p *Parser) parseConstraintDef(cd *sqlparser.ConstraintDefinition) parser.C
 		return parser.Constraint{
 			Name:            name,
 			Type:            parser.Check,
-			CheckExpression: sqlparser.String(d.Expr),
+			CheckExpression: exprText(d.Expr),
 		}
 
 	default:

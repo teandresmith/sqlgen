@@ -581,7 +581,8 @@ func TestMySQLIntrospect_GeneratedColumn(t *testing.T) {
 			virtual_total int GENERATED ALWAYS AS (qty * 2) VIRTUAL,
 			default_total int GENERATED ALWAYS AS (qty + 1),
 			short_total int AS (qty + 2),
-			abs_qty int AS (abs(qty)) STORED NOT NULL
+			abs_qty int AS (abs(qty)) STORED NOT NULL,
+			label varchar(20) AS (concat('n-', qty))
 		);
 	`
 
@@ -623,6 +624,7 @@ func TestMySQLIntrospect_GeneratedColumn(t *testing.T) {
 		"default_total": {expr: "qty + 1", storage: "VIRTUAL"},
 		"short_total":   {expr: "qty + 2", storage: "VIRTUAL"},
 		"abs_qty":       {expr: "abs(qty)", storage: "STORED"},
+		"label":         {expr: "concat('n-', qty)", storage: "VIRTUAL"},
 	}
 	assertGeneratedColumns(t, findTable(t, introspected, "gen_items"), want)
 	assertGeneratedColumns(t, findTable(t, p.Schema(), "gen_items"), want)
@@ -1226,71 +1228,76 @@ func TestPostgresIntrospectMaterializedViews(t *testing.T) {
 func TestMySQLIntrospectViews(t *testing.T) {
 	requireDatabases(t)
 
-	ctx := context.Background()
-
-	db, err := sql.Open("mysql", mysqlConnStr)
-	if err != nil {
-		t.Fatalf("opening mysql: %v", err)
-	}
-	defer db.Close() //nolint:errcheck // test cleanup
-
-	// Clean up and set up.
-	for _, stmt := range []string{
-		"DROP VIEW IF EXISTS user_summary",
-		"DROP TABLE IF EXISTS view_users",
-		`CREATE TABLE view_users (
+	const ddl = `CREATE TABLE view_users (
 			id bigint NOT NULL AUTO_INCREMENT,
 			name varchar(255) NOT NULL,
 			score int NOT NULL DEFAULT 0,
+			status enum('active','inactive') NOT NULL DEFAULT 'active',
+			perms set('r','w'),
 			PRIMARY KEY (id)
-		)`,
-		"CREATE VIEW user_summary AS SELECT id, name, score FROM view_users WHERE score > 0",
-	} {
-		if _, err := db.ExecContext(ctx, stmt); err != nil {
-			t.Fatalf("setup %q: %v", stmt[:min(len(stmt), 40)], err)
-		}
-	}
+		);
+		CREATE VIEW user_summary AS
+			SELECT u.id, u.name, u.score, u.status, u.status AS state, u.perms, CAST(u.status AS CHAR) AS status_text
+			FROM view_users u WHERE u.score > 0;
+		CREATE VIEW user_states AS SELECT d.status FROM (SELECT status FROM view_users) d;
+		CREATE VIEW user_states_copy AS SELECT status FROM user_states`
+	applyParityFixture(t, "mysql", mysqlConnStr,
+		"DROP VIEW IF EXISTS user_states_copy; DROP VIEW IF EXISTS user_states; DROP VIEW IF EXISTS user_summary; DROP TABLE IF EXISTS view_users", ddl)
 
 	intro := introspect.NewMySQLIntrospector()
 	defer intro.Close() //nolint:errcheck // test cleanup
 
 	schema := &parser.Schema{}
-	err = intro.Introspect(ctx, mysqlConnStr, schema, introspect.IntrospectionOptions{})
+	err := intro.Introspect(context.Background(), mysqlConnStr, schema, introspect.IntrospectionOptions{
+		Tables: []string{"view_users", "user_summary", "user_states", "user_states_copy"},
+	})
 	if err != nil {
 		t.Fatalf("Introspect() error: %v", err)
 	}
 
-	// Find user_summary view.
-	var found *parser.View
-	for i := range schema.Views {
-		if schema.Views[i].Name == "user_summary" {
-			found = &schema.Views[i]
-			break
-		}
+	// A projected ENUM or SET column takes its source column's type. One whose
+	// source is not a table column read from the view's SELECT gets a type of
+	// its own.
+	wantViews := []parser.View{
+		{Name: "user_states", Columns: []parser.Column{{Name: "status", Type: "user_states_status_enum"}}},
+		{Name: "user_states_copy", Columns: []parser.Column{{Name: "status", Type: "user_states_copy_status_enum"}}},
+		{Name: "user_summary", Columns: []parser.Column{
+			{Name: "id", Type: "bigint"},
+			{Name: "name", Type: "varchar(255)"},
+			{Name: "score", Type: "int"},
+			{Name: "status", Type: "view_users_status_enum"},
+			{Name: "state", Type: "view_users_status_enum"},
+			{Name: "perms", Type: "view_users_perms_set", Nullable: true},
+			{Name: "status_text", Type: "varchar(8)", Nullable: true},
+		}},
 	}
-	if found == nil {
-		t.Fatalf("view user_summary not found in %d views", len(schema.Views))
+	if diff := cmp.Diff(wantViews, schema.Views, cmpopts.IgnoreFields(parser.View{}, "SQL")); diff != "" {
+		t.Errorf("views mismatch (-want +got):\n%s", diff)
+	}
+	wantEnums := []parser.Enum{
+		{Name: "view_users_status_enum", Values: []string{"active", "inactive"}},
+		{Name: "user_states_status_enum", Values: []string{"active", "inactive"}},
+		{Name: "user_states_copy_status_enum", Values: []string{"active", "inactive"}},
+	}
+	if diff := cmp.Diff(wantEnums, schema.Enums); diff != "" {
+		t.Errorf("enums mismatch (-want +got):\n%s", diff)
+	}
+	wantSets := []parser.Set{{Name: "view_users_perms_set", Values: []string{"r", "w"}}}
+	if diff := cmp.Diff(wantSets, schema.Sets); diff != "" {
+		t.Errorf("sets mismatch (-want +got):\n%s", diff)
 	}
 
-	if len(found.Columns) != 3 {
-		t.Fatalf("view columns = %d, want 3", len(found.Columns))
+	p, err := mysql.New()
+	if err != nil {
+		t.Fatalf("creating mysql parser: %v", err)
 	}
-
-	wantCols := map[string]string{
-		"id":    "bigint",
-		"name":  "varchar(255)",
-		"score": "int",
+	parsed := parseStatements(t, p, ddl)
+	tables := &parser.Schema{
+		Tables: schema.Tables,
+		Enums:  slices.DeleteFunc(slices.Clone(schema.Enums), func(e parser.Enum) bool { return strings.HasPrefix(e.Name, "user_states") }),
+		Sets:   schema.Sets,
 	}
-	for _, col := range found.Columns {
-		want, ok := wantCols[col.Name]
-		if !ok {
-			t.Errorf("unexpected view column %q", col.Name)
-			continue
-		}
-		if col.Type != want {
-			t.Errorf("view column %s type = %q, want %q", col.Name, col.Type, want)
-		}
-	}
+	assertSchemaParity(t, "mysql", withoutViews(parsed), tables)
 }
 
 func TestSQLiteIntrospectViews(t *testing.T) {

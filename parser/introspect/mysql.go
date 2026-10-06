@@ -3,10 +3,12 @@ package introspect
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
+	"slices"
 	"strings"
 
-	_ "github.com/go-sql-driver/mysql" // MySQL database/sql driver
+	mysqldriver "github.com/go-sql-driver/mysql" // MySQL database/sql driver
 
 	"github.com/teandresmith/sqlgen/parser"
 	"github.com/teandresmith/sqlgen/parser/mysql"
@@ -152,7 +154,7 @@ func (mi *MySQLIntrospector) introspectViews(ctx context.Context, schema *parser
 			SQL:  ref.definition,
 		}
 
-		if err := mi.introspectViewColumns(ctx, &view); err != nil {
+		if err := mi.introspectViewColumns(ctx, &view, schema); err != nil {
 			return err
 		}
 
@@ -162,7 +164,7 @@ func (mi *MySQLIntrospector) introspectViews(ctx context.Context, schema *parser
 	return nil
 }
 
-func (mi *MySQLIntrospector) introspectViewColumns(ctx context.Context, view *parser.View) error {
+func (mi *MySQLIntrospector) introspectViewColumns(ctx context.Context, view *parser.View, schema *parser.Schema) error {
 	rows, err := mi.db.QueryContext(ctx, `
 		SELECT
 			column_name,
@@ -188,12 +190,79 @@ func (mi *MySQLIntrospector) introspectViewColumns(ctx context.Context, view *pa
 
 		col.Type = normalizeMySQLType(columnType)
 		col.Nullable = isNullable == "YES"
+		if col.Type == "enum" || col.Type == "set" {
+			col.Type = viewEnumOrSetType(view, col.Name, columnType, schema)
+		}
 
 		view.Columns = append(view.Columns, col)
 	}
 
 	if err := rows.Err(); err != nil {
 		return fmt.Errorf("introspect mysql view columns %s: iterating: %w", view.Name, err)
+	}
+	return nil
+}
+
+// viewEnumOrSetType returns the type of a view's ENUM or SET column: the
+// synthetic type of the table column it projects, when the view's SELECT
+// names one whose values match, or else a synthetic type of the view's own,
+// added to schema.
+func viewEnumOrSetType(view *parser.View, column, columnType string, schema *parser.Schema) string {
+	values := extractMySQLEnumValues(columnType)
+	suffix := "_enum"
+	if strings.HasPrefix(strings.ToLower(columnType), "set(") {
+		suffix = "_set"
+	}
+
+	table, source, ok := viewColumnSource(view, column)
+	isTable := slices.ContainsFunc(schema.Tables, func(t parser.Table) bool { return t.Name == table })
+	if ok && isTable {
+		name := table + "_" + source + suffix
+		if values != nil && slices.Equal(enumOrSetValues(schema, name), values) {
+			return name
+		}
+	}
+
+	name := view.Name + "_" + column + suffix
+	if suffix == "_set" {
+		schema.Sets = append(schema.Sets, parser.Set{Name: name, Values: values})
+	} else {
+		schema.Enums = append(schema.Enums, parser.Enum{Name: name, Values: values})
+	}
+	return name
+}
+
+// viewColumnSource returns the table and column that the view column named
+// column projects unchanged, read from the view's stored SELECT. ok is false
+// when the column is an expression, comes from a derived table, or the SELECT
+// cannot be read.
+func viewColumnSource(view *parser.View, column string) (table, source string, ok bool) {
+	parsed, err := mysql.ParseViewSQL([]byte("CREATE VIEW v AS " + view.SQL))
+	if err != nil {
+		return "", "", false
+	}
+	for _, c := range parsed.Columns {
+		if c.Alias != column || c.SourceColumn == "" || c.Aggregate != "" {
+			continue
+		}
+		table, ok := parsed.TableAliases[c.SourceTable]
+		return table, c.SourceColumn, ok
+	}
+	return "", "", false
+}
+
+// enumOrSetValues returns the values of the enum or set named name in schema,
+// or nil when there is none.
+func enumOrSetValues(schema *parser.Schema, name string) []string {
+	for _, e := range schema.Enums {
+		if e.Name == name {
+			return e.Values
+		}
+	}
+	for _, s := range schema.Sets {
+		if s.Name == name {
+			return s.Values
+		}
 	}
 	return nil
 }
@@ -234,8 +303,9 @@ func (mi *MySQLIntrospector) introspectColumns(ctx context.Context, table *parse
 		col.Nullable = isNullable == "YES"
 		col.Comment = comment
 
-		if dflt.Valid {
-			col.Default = dflt.String
+		col.Default, err = mysqlDefault(dflt, extra, columnType)
+		if err != nil {
+			return fmt.Errorf("introspect mysql columns %s: column %s: %w", table.Name, col.Name, err)
 		}
 
 		lowerExtra := strings.ToLower(extra)
@@ -491,8 +561,7 @@ func (mi *MySQLIntrospector) introspectCheckConstraints(ctx context.Context, tab
 		  AND tc.table_name = ?
 		  AND tc.constraint_type = 'CHECK'`, table.Name)
 	if err != nil {
-		// Older MySQL versions may not have check_constraints table.
-		return nil //nolint:nilerr // gracefully degrade on older MySQL
+		return checkQueryError(table.Name, err)
 	}
 	defer rows.Close() //nolint:errcheck // rows.Close error is not actionable after reading
 
@@ -501,10 +570,14 @@ func (mi *MySQLIntrospector) introspectCheckConstraints(ctx context.Context, tab
 		if err := rows.Scan(&name, &clause); err != nil {
 			return fmt.Errorf("introspect mysql check constraints %s: scanning: %w", table.Name, err)
 		}
+		expr, err := mysql.NormalizeExpr(unescapeMySQLCatalogText(clause))
+		if err != nil {
+			return fmt.Errorf("introspect mysql check constraints %s: %s: %w", table.Name, name, err)
+		}
 		table.Constraints = append(table.Constraints, parser.Constraint{
 			Name:            name,
 			Type:            parser.Check,
-			CheckExpression: clause,
+			CheckExpression: expr,
 		})
 	}
 
@@ -514,8 +587,23 @@ func (mi *MySQLIntrospector) introspectCheckConstraints(ctx context.Context, tab
 	return nil
 }
 
+// mysqlErrUnknownTable is ER_UNKNOWN_TABLE. A server older than MySQL 8.0.16
+// has no information_schema.check_constraints and answers the CHECK query
+// with it.
+const mysqlErrUnknownTable = 1109
+
+// checkQueryError returns the error to report for a failed CHECK query: none
+// when the server has no CHECK catalog, so it has no CHECKs to read, and err
+// wrapped otherwise.
+func checkQueryError(table string, err error) error {
+	if myErr, ok := errors.AsType[*mysqldriver.MySQLError](err); ok && myErr.Number == mysqlErrUnknownTable {
+		return nil
+	}
+	return fmt.Errorf("introspect mysql check constraints %s: %w", table, err)
+}
+
 // normalizeMySQLType normalizes a MySQL COLUMN_TYPE to match the parser format.
-// Enum types become "enum"; everything else is lowercased as-is.
+// Enum and set types become "enum" and "set".
 func normalizeMySQLType(columnType string) string {
 	lower := strings.ToLower(columnType)
 	if strings.HasPrefix(lower, "enum(") {
@@ -524,7 +612,45 @@ func normalizeMySQLType(columnType string) string {
 	if strings.HasPrefix(lower, "set(") {
 		return "set"
 	}
-	return lower
+	return mysql.NormalizeType(lower)
+}
+
+// mysqlStringTypes are the column types whose literal default
+// information_schema.columns.column_default stores as the bare string value.
+var mysqlStringTypes = map[string]bool{
+	"char": true, "varchar": true, "tinytext": true, "text": true, "mediumtext": true, "longtext": true,
+	"enum": true, "set": true, "date": true, "datetime": true, "timestamp": true, "time": true,
+}
+
+// mysqlDefault returns a column's default in the parser's form, from its
+// information_schema.columns COLUMN_DEFAULT, EXTRA and COLUMN_TYPE.
+//   - An expression default (EXTRA has DEFAULT_GENERATED) is escaped like
+//     GENERATION_EXPRESSION, and is normalized like it.
+//   - A string or temporal column's literal default is the bare value, which
+//     is quoted again. An empty string is a default too.
+//   - Any other literal (a number, b'101', a binary column's 0x6162) is SQL
+//     text already.
+func mysqlDefault(dflt sql.NullString, extra, columnType string) (string, error) {
+	if !dflt.Valid {
+		return "", nil
+	}
+	text := dflt.String
+	if strings.Contains(strings.ToLower(extra), "default_generated") {
+		text = unescapeMySQLCatalogText(text)
+	} else {
+		base := strings.ToLower(columnType)
+		if i := strings.IndexAny(base, "( "); i >= 0 {
+			base = base[:i]
+		}
+		if mysqlStringTypes[base] {
+			return mysql.QuoteLiteral(text), nil
+		}
+	}
+	expr, err := mysql.NormalizeExpr(text)
+	if err != nil {
+		return "", fmt.Errorf("normalizing default: %w", err)
+	}
+	return expr, nil
 }
 
 // extractMySQLEnumValues extracts enum or set values from a MySQL COLUMN_TYPE

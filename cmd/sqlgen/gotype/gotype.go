@@ -63,6 +63,8 @@ var (
 	goInt16    = typeInfo{name: "int16", zero: "0", null: "sql.NullInt16", nullImp: "database/sql", kind: nullSQL, fk: FKStringSprint}
 	goInt32    = typeInfo{name: "int32", zero: "0", null: "sql.NullInt32", nullImp: "database/sql", kind: nullSQL, fk: FKStringSprint}
 	goInt64    = typeInfo{name: "int64", zero: "0", null: "sql.NullInt64", nullImp: "database/sql", kind: nullSQL, fk: FKStringSprint}
+	goUint8    = typeInfo{name: "uint8", zero: "0", null: "sql.NullInt16", nullImp: "database/sql", kind: nullSQL, fk: FKStringSprint}
+	goUint16   = typeInfo{name: "uint16", zero: "0", null: "sql.NullInt32", nullImp: "database/sql", kind: nullSQL, fk: FKStringSprint}
 	goUint32   = typeInfo{name: "uint32", zero: "0", null: "sql.NullInt64", nullImp: "database/sql", kind: nullSQL, fk: FKStringSprint}
 	goUint64   = typeInfo{name: "uint64", zero: "0", null: "sql.NullInt64", nullImp: "database/sql", kind: nullSQL, fk: FKStringSprint}
 	goFloat32  = typeInfo{name: "float32", zero: "0", null: "sql.NullFloat64", nullImp: "database/sql", kind: nullSQL, fk: FKStringSprint}
@@ -112,8 +114,10 @@ var mysqlMappings = map[string]typeInfo{
 	// Integer types
 	"tinyint": goInt8, "smallint": goInt16,
 	"int": goInt32, "integer": goInt32, "mediumint": goInt32,
-	"bigint":       goInt64,
-	"int unsigned": goUint32, "bigint unsigned": goUint64,
+	"bigint":           goInt64,
+	"tinyint unsigned": goUint8, "smallint unsigned": goUint16,
+	"int unsigned": goUint32, "integer unsigned": goUint32, "mediumint unsigned": goUint32,
+	"bigint unsigned": goUint64,
 	// Float types
 	"float":  goFloat32,
 	"double": goFloat64, "decimal": goFloat64,
@@ -688,15 +692,35 @@ func (r *Resolver) widenSumBase(base string) string {
 // type first and then falling back to the base type with modifiers stripped
 // (e.g., numeric(10,2) → numeric).
 func lookupOverride(m map[string]config.TypeOverride, sqlType string) (config.TypeOverride, bool) {
-	if override, ok := m[sqlType]; ok {
-		return override, true
-	}
-	if base := stripModifiers(sqlType); base != sqlType {
-		if override, ok := m[base]; ok {
+	for _, key := range lookupKeys(sqlType) {
+		if override, ok := m[key]; ok {
 			return override, true
 		}
 	}
 	return config.TypeOverride{}, false
+}
+
+// lookupKeys returns the keys a SQL type is matched under, in order: as
+// written, then without its modifiers (numeric(10,2) → numeric). A MySQL
+// ZEROFILL integer keeps its width, so int(10) unsigned zerofill is matched as
+// int unsigned, and never as the signed int.
+// mysqlIntegerBases are the MySQL integer types, which carry unsigned.
+var mysqlIntegerBases = map[string]bool{
+	"tinyint": true, "smallint": true, "mediumint": true, "int": true, "integer": true, "bigint": true,
+}
+
+func lookupKeys(sqlType string) []string {
+	base := stripModifiers(sqlType)
+	if base == sqlType {
+		return []string{sqlType}
+	}
+	if strings.Contains(sqlType, " unsigned") {
+		if mysqlIntegerBases[base] {
+			return []string{sqlType, base + " unsigned"}
+		}
+		return []string{sqlType, base + " unsigned", base}
+	}
+	return []string{sqlType, base}
 }
 
 // resolveByType implements steps 2-5 of the resolution chain.
@@ -799,13 +823,9 @@ func (r *Resolver) resolveByType(sqlType string, nullable bool, tableOverrides m
 // builtinResolve looks up the built-in dialect mapping for a SQL type.
 func (r *Resolver) builtinResolve(sqlType string, nullable bool) GoType {
 	if mappings, ok := dialectMappings[r.dialect]; ok {
-		// Try exact match first (handles bit(1), etc.).
-		if info, ok := mappings[sqlType]; ok {
-			return r.goTypeFromInfo(info, nullable)
-		}
-		// Try stripping type modifiers: numeric(10,2) → numeric.
-		if base := stripModifiers(sqlType); base != sqlType {
-			if info, ok := mappings[base]; ok {
+		// The exact key first handles bit(1).
+		for _, key := range lookupKeys(sqlType) {
+			if info, ok := mappings[key]; ok {
 				return r.goTypeFromInfo(info, nullable)
 			}
 		}

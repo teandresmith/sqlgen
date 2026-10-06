@@ -220,10 +220,20 @@ func TestMySQLTypeMappings(t *testing.T) {
 		{"mediumint nullable", "mediumint", true, gotype.GoType{Name: "*int32", ZeroValue: "nil", FKConvert: gotype.FKStringSprint}},
 		{"bigint", "bigint", false, gotype.GoType{Name: "int64", ZeroValue: "0", FKConvert: gotype.FKStringSprint}},
 		{"bigint nullable", "bigint", true, gotype.GoType{Name: "*int64", ZeroValue: "nil", FKConvert: gotype.FKStringSprint}},
+		{"tinyint unsigned", "tinyint unsigned", false, gotype.GoType{Name: "uint8", ZeroValue: "0", FKConvert: gotype.FKStringSprint}},
+		{"tinyint unsigned nullable", "tinyint unsigned", true, gotype.GoType{Name: "*uint8", ZeroValue: "nil", FKConvert: gotype.FKStringSprint}},
+		{"smallint unsigned", "smallint unsigned", false, gotype.GoType{Name: "uint16", ZeroValue: "0", FKConvert: gotype.FKStringSprint}},
+		{"smallint unsigned nullable", "smallint unsigned", true, gotype.GoType{Name: "*uint16", ZeroValue: "nil", FKConvert: gotype.FKStringSprint}},
+		{"mediumint unsigned", "mediumint unsigned", false, gotype.GoType{Name: "uint32", ZeroValue: "0", FKConvert: gotype.FKStringSprint}},
+		{"integer unsigned", "integer unsigned", false, gotype.GoType{Name: "uint32", ZeroValue: "0", FKConvert: gotype.FKStringSprint}},
 		{"int unsigned", "int unsigned", false, gotype.GoType{Name: "uint32", ZeroValue: "0", FKConvert: gotype.FKStringSprint}},
 		{"int unsigned nullable", "int unsigned", true, gotype.GoType{Name: "*uint32", ZeroValue: "nil", FKConvert: gotype.FKStringSprint}},
 		{"bigint unsigned", "bigint unsigned", false, gotype.GoType{Name: "uint64", ZeroValue: "0", FKConvert: gotype.FKStringSprint}},
 		{"bigint unsigned nullable", "bigint unsigned", true, gotype.GoType{Name: "*uint64", ZeroValue: "nil", FKConvert: gotype.FKStringSprint}},
+		{"zerofill tinyint", "tinyint(3) unsigned zerofill", false, gotype.GoType{Name: "uint8", ZeroValue: "0", FKConvert: gotype.FKStringSprint}},
+		{"zerofill int", "int(10) unsigned zerofill", false, gotype.GoType{Name: "uint32", ZeroValue: "0", FKConvert: gotype.FKStringSprint}},
+		{"zerofill bigint", "bigint(20) unsigned zerofill", false, gotype.GoType{Name: "uint64", ZeroValue: "0", FKConvert: gotype.FKStringSprint}},
+		{"zerofill decimal keeps its base type", "decimal(5,2) unsigned zerofill", false, gotype.GoType{Name: "float64", ZeroValue: "0", FKConvert: gotype.FKStringSprint}},
 
 		// --- Float types ---
 		{"float", "float", false, gotype.GoType{Name: "float32", ZeroValue: "0", FKConvert: gotype.FKStringSprint}},
@@ -947,6 +957,9 @@ func TestMySQLSQLNullTypes(t *testing.T) {
 		want    gotype.GoType
 	}{
 		{"tinyint uses NullInt16", "tinyint", gotype.GoType{Name: "sql.NullInt16", Import: "database/sql", ZeroValue: "sql.NullInt16{}", FKConvert: gotype.FKStringSprint}},
+		{"tinyint unsigned uses NullInt16", "tinyint unsigned", gotype.GoType{Name: "sql.NullInt16", Import: "database/sql", ZeroValue: "sql.NullInt16{}", FKConvert: gotype.FKStringSprint}},
+		{"smallint unsigned uses NullInt32", "smallint unsigned", gotype.GoType{Name: "sql.NullInt32", Import: "database/sql", ZeroValue: "sql.NullInt32{}", FKConvert: gotype.FKStringSprint}},
+		{"mediumint unsigned uses NullInt64", "mediumint unsigned", gotype.GoType{Name: "sql.NullInt64", Import: "database/sql", ZeroValue: "sql.NullInt64{}", FKConvert: gotype.FKStringSprint}},
 		{"int unsigned uses NullInt64", "int unsigned", gotype.GoType{Name: "sql.NullInt64", Import: "database/sql", ZeroValue: "sql.NullInt64{}", FKConvert: gotype.FKStringSprint}},
 		{"bigint unsigned uses NullInt64", "bigint unsigned", gotype.GoType{Name: "sql.NullInt64", Import: "database/sql", ZeroValue: "sql.NullInt64{}", FKConvert: gotype.FKStringSprint}},
 		{"float uses NullFloat64", "float", gotype.GoType{Name: "sql.NullFloat64", Import: "database/sql", ZeroValue: "sql.NullFloat64{}", FKConvert: gotype.FKStringSprint}},
@@ -2189,4 +2202,46 @@ func TestDefaultUUIDBinding(t *testing.T) {
 			t.Errorf("Resolve(uuid, nullable) with google override (-want +got):\n%s", diff)
 		}
 	})
+}
+
+// A MySQL ZEROFILL integer keeps its width and is unsigned, so an override is
+// matched under <base> unsigned and never under the signed base (PRD §7).
+func TestZerofillOverrideKey(t *testing.T) {
+	tests := []struct {
+		name      string
+		overrides map[string]config.TypeOverride
+		want      string
+	}{
+		{
+			name:      "unsigned key matches",
+			overrides: map[string]config.TypeOverride{"int unsigned": {Type: "int64"}},
+			want:      "int64",
+		},
+		{
+			name: "unsigned key wins over the signed base",
+			overrides: map[string]config.TypeOverride{
+				"int":          {Type: "example.Signed"},
+				"int unsigned": {Type: "example.Unsigned"},
+			},
+			want: "example.Unsigned",
+		},
+		{
+			name:      "signed base key never applies",
+			overrides: map[string]config.TypeOverride{"int": {Type: "example.Signed"}},
+			want:      "uint32",
+		},
+		{
+			name:      "exact key wins",
+			overrides: map[string]config.TypeOverride{"int(10) unsigned zerofill": {Type: "example.Exact"}, "int unsigned": {Type: "int64"}},
+			want:      "example.Exact",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			r := gotype.NewResolver("mysql", true, tt.overrides)
+			if got := r.Resolve("int(10) unsigned zerofill", false, "n", nil, nil).Name; got != tt.want {
+				t.Errorf("Resolve() Name = %q, want %q", got, tt.want)
+			}
+		})
+	}
 }

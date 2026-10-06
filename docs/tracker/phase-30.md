@@ -960,26 +960,26 @@ PRD Sections: 4.2, 4.3, 4.4, 5.2, 6.1, 6.3, 6.4, 7, 8.1.7, 16.2, 30.7
 
 **PRD Reference:** Sections 5.2, 6.1, 6.3 (design doc §6.3, Q5, Q7, Q13)
 
-**Status:** Not Started
+**Status:** Complete
 
 ### Tasks
 
-- [ ] M2 / M9 / Q5, default normalization (`mysql.go:238`):
+- [x] M2 / M9 / Q5, default normalization (`mysql.go:238`):
   - re-quote string, enum, set and temporal literal defaults using `column_type`
   - treat a default as an expression when `extra` contains `DEFAULT_GENERATED`
   - put the result through `sqlparser.String`, so it matches the parser's form (for example
     `current_timestamp(3)`)
   - `DEFAULT ''` yields `''`, which is not empty
-- [ ] M4 / Q7: `introspectCheckConstraints` (`mysql.go:495`) falls back only on MySQL error 1109
+- [x] M4 / Q7: `introspectCheckConstraints` (`mysql.go:495`) falls back only on MySQL error 1109
   (unknown table), checked with `errors.AsType[*mysql.MySQLError]`. Every other error is
   returned, wrapped.
-- [ ] M5: make the integer display width agree between the two paths. Decide the direction in
+- [x] M5: make the integer display width agree between the two paths. Decide the direction in
   the Completion Record against the probe (parser `int(11)` vs catalog `int`; `INT UNSIGNED`
   already agrees). If the direction isn't mechanical, stop and ask.
-- [ ] M6: `introspectViewColumns` (`mysql.go:165`) resolves an ENUM or SET view column to the
+- [x] M6: `introspectViewColumns` (`mysql.go:165`) resolves an ENUM or SET view column to the
   synthetic `<table>_<column>_enum` / `_set` type of its source column when that column is
   identifiable. Otherwise it registers a view-scoped synthetic type. Never the bare `enum`.
-- [ ] M7 / Q13: normalize `check_clause` through `sqlparser`, dropping backticks and charset
+- [x] M7 / Q13: normalize `check_clause` through `sqlparser`, dropping backticks and charset
   introducers (`_utf8mb4'x'`) to match the parser's text.
   - `check_clause` is backslash-escaped like `generation_expression`. 30.3's
     `unescapeMySQLCatalogText` + `mysql.NormalizeExpr` already handle that; reuse them.
@@ -991,7 +991,7 @@ PRD Sections: 4.2, 4.3, 4.4, 5.2, 6.1, 6.3, 6.4, 7, 8.1.7, 16.2, 30.7
     `json_extract(…)`, `cast(x as char)` to `cast(x as char charset utf8mb4)`, and `x'41'`
     to `0x41`. **Ruled 2026-10-05 (user): fine,** like the PG rewrites in 30.4. Name them
     as parity exceptions.
-- [ ] Tighten `TestMySQLIntrospect` (`:286`) and `TestMySQLIntrospectViews` (`:1214`) through
+- [x] Tighten `TestMySQLIntrospect` (`:286`) and `TestMySQLIntrospectViews` (`:1214`) through
   `assertSchemaParity`. (30.1 moved `TestMySQLIntrospect` onto the helper; its baseline is
   in the 30.1 Completion Record.)
 
@@ -1005,23 +1005,140 @@ PRD Sections: 4.2, 4.3, 4.4, 5.2, 6.1, 6.3, 6.4, 7, 8.1.7, 16.2, 30.7
 
 ### Tests Required
 
-- [ ] `TestMySQLIntrospect_Defaults`: `''`, a string literal, an ENUM literal,
+- [x] `TestMySQLIntrospect_Defaults`: `''`, a string literal, an ENUM literal,
   `CURRENT_TIMESTAMP(3)`, `(uuid())`, `DEFAULT NULL`, a numeric literal. Each equals the
   parser's text.
-- [ ] `TestMySQLIntrospect_TypeCoverage`: `INT(11)`, `BIGINT(20) UNSIGNED`, `INT UNSIGNED`,
+- [x] `TestMySQLIntrospect_TypeCoverage`: `INT(11)`, `BIGINT(20) UNSIGNED`, `INT UNSIGNED`,
   `BIGINT UNSIGNED`, `tinyint(1)`, `decimal(10,2)`, `json`, `datetime(3)`, `binary(16)`,
   `varbinary`, `blob`, ENUM, SET.
-- [ ] `TestMySQLIntrospect_CheckErrorsSurface`: cancel the context mid-run, after the column
+- [x] `TestMySQLIntrospect_CheckErrorsSurface`: cancel the context mid-run, after the column
   queries (a context cancelled up front fails at ping, per the probe). Plus a white-box unit
   test for the 1109 fallback.
-- [ ] `TestMySQLIntrospect_QuotedIdentifiers`: `` `UserAccounts` ``, `` `createdAt` ``, a
+- [x] `TestMySQLIntrospect_QuotedIdentifiers`: `` `UserAccounts` ``, `` `createdAt` ``, a
   reserved-word column (`` `order` ``), a constraint over them.
-- [ ] `TestMySQLIntrospectViews`: a view projecting an ENUM column (M6).
-- [ ] Codegen test: `DEFAULT ''` column is omittable (M2).
+- [x] `TestMySQLIntrospectViews`: a view projecting an ENUM column (M6).
+- [x] Codegen test: `DEFAULT ''` column is omittable (M2).
 
 ### Completion Record
 
-_Filled in when complete: files changed, commit references, notes._
+- **Status: Complete** — every task and test is done. The unsigned-integer question M5 raised
+  is ruled and fixed (below). `make check`, the full `parser/introspect` integration suite and
+  `make check-examples` pass on the merged 30.4 + 30.5 + 30.6 tree.
+- **Files:**
+  - `parser/mysql/mysql.go`: `NormalizeType` (integer display widths), `QuoteLiteral`,
+    `exprText` (drops charset introducers; `NormalizeExpr` and the parser's default,
+    generated and CHECK text all use it), `DEFAULT NULL` recorded as no default,
+    `buildTypeString` keeps `ZEROFILL` and goes through `NormalizeType`
+  - `parser/introspect/mysql.go`: `mysqlDefault` (M2 / M9), `checkQueryError` (M4),
+    CHECK text through `NormalizeExpr` (M7), `normalizeMySQLType` through
+    `mysql.NormalizeType` (M5), `viewEnumOrSetType` / `viewColumnSource` (M6)
+  - tests: `parser/mysql/mysql_test.go` (`TestIntegerDisplayWidth`, `TestNormalizeType`,
+    `TestExpressionText`, `TestQuoteLiteral`, new `TestNormalizeExpr` cases),
+    `parser/introspect/mysql_test.go` (`TestMySQLDefault`, `TestCheckQueryError`,
+    `TestNormalizeMySQLType` cases), `parser/introspect/mysql_integration_test.go` (new:
+    `TestMySQLIntrospect_ProbeFixture`, `_Defaults`, `_TypeCoverage`,
+    `_QuotedIdentifiers`, `_CheckText`, `_CheckErrorsSurface`, `_CatalogRewrites`),
+    `introspect_integration_test.go` (`TestMySQLIntrospectViews` rewritten, a string-literal
+    case in `TestMySQLIntrospect_GeneratedColumn`), `cmd/sqlgen/gen/create_input_default_test.go`
+    (new: `TestCreateInput_EmptyStringDefaultIsOmittable`)
+  - docs: PRD §6.1 (the MySQL catalog rewrites), `backlog.md`, this section
+  - The new integration tests are in their own MySQL-only file, so the merge with 30.4 and
+    30.6 stays clean.
+- **Fail-first (against `0260df8e`, white-box tests of the new helpers set aside):**
+  - **M2 / M9** `TestMySQLIntrospect_Defaults`: introspected `""` (no default) for
+    `DEFAULT ''`. The other literals came back bare (`active`, `it's`, `a\b`, `in active`,
+    `r,w`, `2020-01-01`, `12:00:00`, `b'101'`). Expressions came back as the catalog wrote
+    them: `CURRENT_TIMESTAMP(3)`, `CURRENT_TIMESTAMP`, `(1 + 2)`, and
+    `` _utf8mb4\'{}\' `` / `` concat(_utf8mb4\'a\',_utf8mb4\'b\') `` still escaped. The parser
+    gave `null` for `DEFAULT NULL`, where the catalog stores no default.
+  - **M4** `TestMySQLIntrospect_CheckErrorsSurface`: the run failed only later, at
+    `introspect mysql views: context canceled`. The CHECK query's error was dropped.
+  - **M5** `TestMySQLIntrospect_TypeCoverage` and `TestIntegerDisplayWidth`: parsed `int(11)`,
+    `bigint(20) unsigned`, `smallint(6)`, `tinyint(4)`, `tinyint(1) unsigned`, and `int(5)` /
+    `int` for the two ZEROFILL columns.
+  - **M6** `TestMySQLIntrospectViews` and `_ProbeFixture`: view columns `enum` / `set`, and no
+    enum for the derived-table view.
+  - **M7** `TestMySQLIntrospect_CheckText`, `_QuotedIdentifiers` and `TestMySQLIntrospect`:
+    raw `check_clause` (`` (`price` >= 0) ``, `-(1)`, escaped `_utf8mb4\'…\'`). The parser
+    kept a written `_latin1 'q'`. `TestMySQLIntrospect_GeneratedColumn`'s new case gave
+    `concat(_utf8mb4 'n-', qty)`. `TestNormalizeExpr` kept introducers.
+- **M5 direction: both paths write the type as MySQL 8.0.19+ stores it.** The catalog
+  discards an integer display width, so no other direction can agree. Measured on 8.0.46:
+  `INT(11)` → `int`, `BIGINT(20) UNSIGNED` → `bigint unsigned`, `tinyint(4)` → `tinyint`,
+  `tinyint(1)` kept, `tinyint(1) unsigned` → `tinyint unsigned`. ZEROFILL keeps the width and
+  adds `unsigned`, the default width when none is given: `int zerofill` →
+  `int(10) unsigned zerofill`, `tinyint` 3, `smallint` 5, `mediumint` 8, `bigint` 20.
+  `mysql.NormalizeType` applies the rule on both paths, so a pre-8.0.19 server's `int(11)`
+  agrees too. Side effects in files mode: an `overrides.types` key `int(11)` no longer matches,
+  `BIGINT(20) UNSIGNED` resolves to `uint64` (it was `int64`), and the question below.
+- **Default rule (Q5), measured on 8.0.46.** `COLUMN_DEFAULT` holds a string, ENUM, SET or
+  temporal literal as its bare value (`''` is an empty, non-NULL value), so it is quoted again
+  with the parser's encoding (`QuoteLiteral`). `EXTRA` has `DEFAULT_GENERATED` for every
+  expression default (`CURRENT_TIMESTAMP` included), and that text is backslash-escaped like
+  `generation_expression`. Any other literal is SQL already (`0`, `-1`, `1.50`, `b'101'`,
+  `0x6162`) and goes through `NormalizeExpr`. A string column whose default is the text
+  `CURRENT_TIMESTAMP` or `NULL` stays a quoted literal, since it has no `DEFAULT_GENERATED`.
+- **Measured on the CHECK path: no JSON-operator exception.** vitess writes `doc->>'$.a'` as
+  `json_unquote(json_extract(doc, '$.a'))` and `doc->'$.b'` as `json_extract(doc, '$.b')`,
+  the same as the catalog after normalization. `TestMySQLIntrospect_CheckText` passes parity
+  on both. So PRD §6.1 names only the cast-charset and hex rewrites, plus the literal-default
+  conversions measured here: `1.5` → `1.50` on `decimal(10,2)`, `1e3` → `1000`, `TRUE` →
+  `1`, `'5'` → `5`, `'ab'` / `x'4142'` on a binary column → `0x6162` / `0x4142`.
+  `TestMySQLIntrospect_CatalogRewrites` pins each. They are value-level, which a
+  `parityException` field entry cannot express, so the `"mysql"` exception list stays empty and
+  the parity fixtures avoid these forms.
+- **M6 design.** MySQL 8.0 has no `VIEW_COLUMN_USAGE` (measured: error 1109). The source column
+  comes from the stored `view_definition`, read with `mysql.ParseViewSQL`, with table aliases
+  resolved. It is accepted only when that table's synthetic type has the same values.
+  Otherwise the view gets `<view>_<column>_enum` / `_set`: an expression, a derived table
+  (`SELECT d.status FROM (…) d` still reports `enum`), a view over a view, or an unreadable
+  SELECT. A `UNION` of ENUM columns reports `varchar`, so it needs no type.
+- **`TestMySQLIntrospect` and the probe fixture now pass `assertSchemaParity`** (the 30.1
+  baseline's M2 and M7 items are gone). Views are compared on their own, because the file
+  parser skips `CREATE VIEW` with a warning.
+- **Codegen (M2).** `TestCreateInput_EmptyStringDefaultIsOmittable` builds the table as
+  both sources now describe it (`Default: "''"`) and finds the column omittable. The
+  generator was already right; the defect was the introspector's `""`.
+- **Rulings (user, 2026-10-05):**
+  - **MySQL unsigned small integers: add the mappings in this phase.** M5 made files mode
+    resolve `SMALLINT(6) UNSIGNED` as `smallint unsigned` → `string`, where it used to fall back
+    to `int16`; database mode always gave `string`. PRD §7 and `gotype` now map
+    `tinyint unsigned` → `uint8` (`sql.NullInt16`), `smallint unsigned` → `uint16`
+    (`sql.NullInt32`), and `mediumint unsigned` / `integer unsigned` → `uint32`
+    (`sql.NullInt64`, as `int unsigned`). Each null type is the narrowest that holds the Go type's range,
+    the rule `tinyint` → `sql.NullInt16` already follows. A MySQL `… unsigned` type is also
+    looked up as `<base> unsigned` before the width is stripped, so a ZEROFILL integer
+    (`int(10) unsigned zerofill`) resolves unsigned; it fell back to signed `int32` before. `overrides.types` and integrations use the same keys (`lookupKeys`), so an `int unsigned` override applies to a ZEROFILL `int` and an `int` override is only the last fallback (`TestZerofillOverrideKey`; the follow-up reviewer's probe showed an `int unsigned` override ignored and an `int: int64` override landing on the unsigned column). Ruled 2026-10-05 (user, from `/verify 30.5`): for an integer base the signed key never applies, so an `int` override does not reach a ZEROFILL `int unsigned` column, the same as a plain one.
+    PRD §7 has a note under the MySQL table on display widths and ZEROFILL. Fail-first: the
+    resolver probe above (`smallint unsigned` → `string`, `int(5) unsigned zerofill` →
+    `int32`). Tests: new cases in `TestMySQLTypeMappings` and `TestMySQLSQLNullTypes` (`gotype_test.go`).
+    The backlog line is resolved.
+  - **PRD §6.1 literal-default conversions: approved as written.**
+- **Left open, as a backlog line: no `DEFAULT_GENERATED` before MySQL 8.0.13** (raised by the
+  reviewer, not measured). On an older server `mysqlDefault` would quote a
+  `CURRENT_TIMESTAMP` default as `'CURRENT_TIMESTAMP'`, with no error. PRD §6.3 sets no
+  minimum MySQL version, and design §2 rules a version matrix out of scope.
+- **Backlog lines added:** MySQL type synonyms (`BOOLEAN` → `tinyint(1)` changes the Go type
+  under `database`, including in the mysql example), the unsigned small-integer gap (since resolved), a
+  view over a view's ENUM column, and ZEROFILL on non-integer types.
+- **Auto-review (`sqlgen-reviewer`):** PRD 5/6 (M6 partial), tests 6/6. It re-confirmed the M4
+  fail-first by reverting the site. Applied:
+  - **M6: a view over a view took a type that depended on view name order.** A view sorting
+    after its base view reused the base view's own synthetic type, and one sorting before got
+    its own. A source now counts only when it names a table in the schema. Fail-first: the new
+    `user_states_copy` case in `TestMySQLIntrospectViews` gave `user_states_status_enum`.
+  - **ZEROFILL on a non-integer type.** `buildTypeString` wrote `zerofill` there too, which
+    turned `DOUBLE ZEROFILL` from `double` into the unmapped `double zerofill` (`string`). It
+    now writes `zerofill` on integer types only (`TestIntegerDisplayWidth` "DOUBLE ZEROFILL"),
+    and the remaining difference is a backlog line.
+  - Its two doc fixes are no longer needed, because the code now matches the docs. The
+    view-over-view backlog line is now `[measured]`.
+  - Its second question, the pre-8.0.13 defaults, is listed above.
+- **`/verify 30.5` (2026-10-05):** 11/12 requirements (§6.1 partial), 6/6 tests, reviewer
+  fail-first confirmed. Logged: FIX-268 (tracked; `NOW` / `LOCALTIMESTAMP` defaults and the
+  `REGEXP` / `NOT` CHECK rewrites, ruled: normalize the defaults, name the CHECK rewrites in
+  §6.1). Ruled and fixed inline: a ZEROFILL integer never takes the signed base's override key
+  (`lookupKeys`, `TestZerofillOverrideKey`). One backlog line (views with a column list).
 
 ---
 
