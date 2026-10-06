@@ -238,6 +238,10 @@ type RootConfig struct {
 	// (either unset or explicit ""). ValidatePreParse reads this flag
 	// to emit the defaulted-key_prefix stderr warning.
 	CacheKeyPrefixDefaulted bool `yaml:"-"`
+
+	// envVars maps a dotted path to the environment variables its value
+	// referenced (PRD §4.1.1).
+	envVars map[string][]string
 }
 
 // InputConfig controls where the schema is read from.
@@ -265,6 +269,10 @@ type ConnectionConfig struct {
 	Password string `yaml:"password"` //nolint:gosec // config field, not a hardcoded credential
 	Database string `yaml:"database"`
 	SSLMode  string `yaml:"ssl_mode"`
+
+	// passwordEnvIgnoredBy names the url, SQLGEN_DB_URL or input.connection.url,
+	// when SQLGEN_DB_PASSWORD is set and that url doesn't reference it.
+	passwordEnvIgnoredBy string
 }
 
 // Errors returns every PRD §4.3 problem with the fields sqlgen builds a
@@ -563,6 +571,11 @@ func (o *Operations) UnmarshalYAML(value *yaml.Node) error {
 	type operationsAlias Operations
 	var alias operationsAlias
 	if err := value.Decode(&alias); err != nil {
+		// yaml.v3 collects a returned *TypeError with the rest of the file's
+		// errors, but aborts the whole decode on any other error.
+		if terr, ok := errors.AsType[*yaml.TypeError](err); ok {
+			return terr
+		}
 		return fmt.Errorf("decoding operations: %w", err)
 	}
 	*o = Operations(alias)
@@ -623,6 +636,10 @@ func (n *NullableVariant) UnmarshalYAML(value *yaml.Node) error {
 	type nullableAlias NullableVariant
 	var alias nullableAlias
 	if err := value.Decode(&alias); err != nil {
+		// Returned as is so yaml.v3 collects it; see Operations.UnmarshalYAML.
+		if terr, ok := errors.AsType[*yaml.TypeError](err); ok {
+			return terr
+		}
 		return fmt.Errorf("decoding nullable variant: %w", err)
 	}
 	*n = NullableVariant(alias)
@@ -1631,20 +1648,43 @@ func LoadConfig(path string) (*RootConfig, error) {
 // directory and takes every generated file, and every stale-artifact removal,
 // with it.
 //
-// Known gap: keys nested inside a type with its own UnmarshalYAML (Operations,
-// NullableVariant) are still accepted, because yaml.Node.Decode builds a fresh
-// non-strict decoder that this setting cannot reach.
+// ${NAME} references in values are expanded first (PRD §4.1.1). A config
+// without any takes the single strict decode; one with references is decoded
+// by decodeExpanded.
+//
+// Known gap, on both paths: keys nested inside a type with its own
+// UnmarshalYAML (Operations, NullableVariant) are still accepted, because
+// yaml.Node.Decode builds a fresh non-strict decoder that this setting cannot
+// reach.
 func decodeConfig(data []byte) (*RootConfig, error) {
-	dec := yaml.NewDecoder(bytes.NewReader(data))
-	dec.KnownFields(true)
+	var (
+		root yaml.Node
+		exp  expansion
+	)
+	// A parse error is left for the strict decode below to report.
+	if bytes.Contains(data, []byte("${")) && yaml.NewDecoder(bytes.NewReader(data)).Decode(&root) == nil {
+		var err error
+		if exp, err = expandEnv(&root); err != nil {
+			return nil, fmt.Errorf("parsing config: %w", err)
+		}
+	}
 
 	var cfg RootConfig
-	// An empty document is a valid (if useless) config, and Decode reports it
-	// as io.EOF where yaml.Unmarshal reported no error at all — keep the
-	// permissive reading so validation, not the parser, names what is missing.
-	if err := dec.Decode(&cfg); err != nil && !errors.Is(err, io.EOF) {
-		return nil, fmt.Errorf("parsing config: %w", err)
+	if len(exp.refs) > 0 {
+		if err := decodeExpanded(data, &root, exp, &cfg); err != nil {
+			return nil, fmt.Errorf("parsing config: %w", err)
+		}
+	} else {
+		dec := yaml.NewDecoder(bytes.NewReader(data))
+		dec.KnownFields(true)
+		// An empty document is a valid (if useless) config, and Decode reports it
+		// as io.EOF where yaml.Unmarshal reported no error at all — keep the
+		// permissive reading so validation, not the parser, names what is missing.
+		if err := dec.Decode(&cfg); err != nil && !errors.Is(err, io.EOF) {
+			return nil, fmt.Errorf("parsing config: %w", err)
+		}
 	}
+	cfg.envVars = exp.vars
 
 	var present struct {
 		Input struct {
@@ -1978,7 +2018,9 @@ func applyMapDefaults(cfg *RootConfig) {
 
 // applyEnvOverrides applies environment variable overrides to the config.
 func applyEnvOverrides(cfg *RootConfig) {
+	urlFromEnv := false
 	if url := os.Getenv("SQLGEN_DB_URL"); url != "" {
+		urlFromEnv = true
 		if cfg.Input.Connection == nil {
 			cfg.Input.Connection = &ConnectionConfig{}
 		}
@@ -1995,7 +2037,16 @@ func applyEnvOverrides(cfg *RootConfig) {
 		if cfg.Input.Connection == nil {
 			cfg.Input.Connection = &ConnectionConfig{}
 		}
-		cfg.Input.Connection.Password = pw
+		c := cfg.Input.Connection
+		c.Password = pw
+		// A url wins over the password (PRD §4.3), and SQLGEN_DB_URL is never
+		// expanded, so only a file url that references the variable uses it.
+		switch {
+		case urlFromEnv:
+			c.passwordEnvIgnoredBy = "SQLGEN_DB_URL"
+		case c.URL != "" && !slices.Contains(cfg.envVars["input.connection.url"], "SQLGEN_DB_PASSWORD"):
+			c.passwordEnvIgnoredBy = "input.connection.url"
+		}
 	}
 }
 

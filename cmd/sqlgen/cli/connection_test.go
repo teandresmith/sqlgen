@@ -249,3 +249,26 @@ func TestValidate_ConnectionFieldsMissing(t *testing.T) {
 		}
 	}
 }
+
+func TestValidate_UnsetEnvReference(t *testing.T) {
+	t.Setenv("SQLGEN_TEST_DB_HOST", "")
+	if err := os.Unsetenv("SQLGEN_TEST_DB_HOST"); err != nil {
+		t.Fatalf("unsetting SQLGEN_TEST_DB_HOST: %v", err)
+	}
+	dir := t.TempDir()
+	cfgPath := filepath.Join(dir, "sqlgen.yml")
+	content := "input:\n  dialect: postgres\n  source: database\n  connection:\n    host: ${SQLGEN_TEST_DB_HOST}\n" +
+		"    user: app\n    database: app\noutput:\n  dir: " + filepath.Join(dir, "output") + "\n"
+	if err := os.WriteFile(cfgPath, []byte(content), 0o600); err != nil {
+		t.Fatalf("writing config: %v", err)
+	}
+
+	_, stderr, err := executeCommand("validate", "--config", cfgPath)
+	if ee, ok := errors.AsType[*exitError](err); !ok || ee.code != ExitConfig {
+		t.Fatalf("validate error = %v, want exit code %d\nstderr: %s", err, ExitConfig, stderr)
+	}
+	want := "line 5: input.connection.host: environment variable SQLGEN_TEST_DB_HOST is not set"
+	if !strings.Contains(stderr, want) {
+		t.Errorf("validate stderr = %q, want it to contain %q", stderr, want)
+	}
+}

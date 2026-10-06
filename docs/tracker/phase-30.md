@@ -1506,18 +1506,18 @@ PRD Sections: 4.1, 4.2, 4.3, 4.4, 5.2, 6.1, 6.3, 6.4, 7, 8.1.7, 16.2, 30.7
 The 32-case prototype that verified §3–§5 is in the gitignored session scratchpad and isn't
 needed: §7 of the doc lists every case.
 
-**Status:** Not Started
+**Status:** Complete
 
 ### Tasks
 
-- [ ] PRD sync (design doc §8). Add a new §4.1.1 "Environment variable references" covering the
+- [x] PRD sync (design doc §8). Add a new §4.1.1 "Environment variable references" covering the
   syntax, semantics and redaction (doc §3, §4, §5.1). Add the §4.3 url/password note and the
   URL-escaping guidance (doc §5.3). Add §4.13 error rows for an unset variable, an invalid
   reference and an unterminated reference (exit 2), and the warning row for an ignored
   `SQLGEN_DB_PASSWORD`. Add a §4.14 note that the schema flags `${…}` in integer and boolean
   fields. Update `docs/configuration.md` and the `url` / `password` descriptions in
   `cmd/sqlgen/config/schema/v1.json`.
-- [ ] Add `cmd/sqlgen/config/expand.go`:
+- [x] Add `cmd/sqlgen/config/expand.go`:
   - The reference parser: `${NAME}` with `NAME` = `[A-Za-z_][A-Za-z0-9_]*`. `$${` is a literal
     `${`; any other `$` is kept. Invalid and unterminated references are errors.
   - The node walk: expand scalar values in place and never keys. Record each reference's line,
@@ -1526,15 +1526,15 @@ needed: §7 of the doc lists every case.
     Quoted and block scalars stay strings.
   - Unset variables are looked up with `os.LookupEnv`. Every unset or invalid reference is
     reported, each as `line N: <path>: <problem>`.
-- [ ] Rework `decodeConfig` (`config/config.go:1637`) as design doc §6.1 describes:
+- [x] Rework `decodeConfig` (`config/config.go:1658`) as design doc §6.1 describes:
   - A config with no references takes today's single strict decode.
   - With references, keep only the `not found in type` errors from the strict decode of the raw
     bytes. Keep every error from `Node.Decode` of the expanded tree, redacting type errors on
     reference lines (doc §5.1). Merge by line.
-  - Update the "Known gap" comment.
-- [ ] In `Operations.UnmarshalYAML` and `NullableVariant.UnmarshalYAML` (`config.go:556`,
-  `:617`), return a `*yaml.TypeError` from the inner `Decode` unwrapped (doc §6.1 step 4).
-- [ ] Ignored-`SQLGEN_DB_PASSWORD` warning (doc §9 Q4) in `config/validate.go`. Under
+  - Update the "Known gap" comment (now says the gap holds on both decode paths).
+- [x] In `Operations.UnmarshalYAML` and `NullableVariant.UnmarshalYAML` (`config.go:564`,
+  `:630`), return a `*yaml.TypeError` from the inner `Decode` unwrapped (doc §6.1 step 4).
+- [x] Ignored-`SQLGEN_DB_PASSWORD` warning (doc §9 Q4) in `config/validate.go`. Under
   `source: database | both`, warn when the password variable is set, a `url` wins, and that
   `url` (`SQLGEN_DB_URL`, or `input.connection.url` without a `${SQLGEN_DB_PASSWORD}` reference)
   ignores it.
@@ -1553,20 +1553,83 @@ needed: §7 of the doc lists every case.
 
 ### Tests Required
 
-- [ ] Table-driven expansion and decode tests (`config/expand_test.go`) covering every
+- [x] Table-driven expansion and decode tests (`config/expand_test.go`) covering every
   design doc §7 row. Each case runs fail-first against HEAD where HEAD has a behavior to
   contrast.
-- [ ] The no-secret-in-errors assertion across the error cases.
-- [ ] The unmarshaler-wrapping regression: an unknown key next to a typed reference in an
+- [x] The no-secret-in-errors assertion across the error cases.
+- [x] The unmarshaler-wrapping regression: an unknown key next to a typed reference in an
   `operations` mapping.
-- [ ] Warning tests for doc §9 Q4: the config `url` without the reference warns; with it, no
+- [x] Warning tests for doc §9 Q4: the config `url` without the reference warns; with it, no
   warning; `SQLGEN_DB_URL` plus the password warns; individual fields don't warn; `source: files`
   doesn't warn.
-- [ ] A CLI test: `sqlgen validate` with an unset variable exits 2 and names it.
+- [x] A CLI test: `sqlgen validate` with an unset variable exits 2 and names it.
 
 ### Completion Record
 
-_Filled in when complete: files changed, commit references, notes._
+- **Completed:** 2026-10-06 (`/done 30.7a`); implemented the same day (`/implement 30.7a`).
+  `make check` passed after the last change. `make check-examples` passed before the review fixes,
+  which touched only `config/expand.go` and `config/config.go`, neither on the trigger list.
+- **Files:**
+  - `cmd/sqlgen/config/expand.go` (new): `expandValue` (the reference parser), `expandEnv`
+    (the node walk, which records each expanded scalar's line, path and original text, and the
+    variables per path, alias paths included), `decodeExpanded` (the two decodes merged by line)
+    and `expansion.redact`.
+  - `cmd/sqlgen/config/config.go`: `decodeConfig` expands first and takes the single strict
+    decode when nothing expanded. The two unmarshalers return a `*yaml.TypeError` unwrapped.
+    `applyEnvOverrides` sets `ConnectionConfig.passwordEnvIgnoredBy`, and `RootConfig.envVars`
+    keeps the per-path variables.
+  - `cmd/sqlgen/config/validate.go`: `validateIgnoredPasswordEnv`.
+  - `cmd/sqlgen/config/schema/v1.json`: the `url` and `password` descriptions.
+  - `docs/PRD.md`: new §4.1.1, a §4.3 note and secrets paragraph, four §4.13 rows, a §4.14
+    paragraph. `docs/configuration.md`: an "Environment variables" section and the `connection`
+    note.
+  - Tests: `config/expand_test.go` (new), `config/validate_test.go`, `cli/connection_test.go`.
+- **Decisions within the spec:**
+  - Expansion errors print as `parsing config: environment variable references:` followed by
+    one indented `line N: <path>: <problem>` per reference, the layout of yaml.v3's own
+    `unmarshal errors:` list.
+  - The two-pass decode runs when any scalar changed, so a `$${` escape alone takes it too. A
+    `${` only in a key or a comment changes nothing and takes the strict decode.
+  - The raw strict pass keeps only `not found in type` errors. A non-type error from it is
+    dropped, and the expanded pass reports its own.
+  - Redaction rewrites only `cannot unmarshal` messages on a reference line. Duplicate-key and
+    unknown-key messages quote keys, which are never expanded. A line holding several
+    references names all of them.
+  - The Q4 warning names where the winning `url` came from. With `SQLGEN_DB_URL` it suggests
+    putting the password there or unsetting it, because writing the reference into the config
+    `url` alone does nothing while `SQLGEN_DB_URL` replaces it.
+  - The parser scans left to right, so `$$${X}` is `$` then the `$${` escape, giving `$${X}`.
+- **Tests:**
+  - `TestLoadConfig_EnvReferences`: 17 cases.
+  - `TestLoadConfig_EnvReferenceErrors`: 20 cases. Each one asserts that no expanded value, or
+    its 7-character yaml.v3 prefix, appears in the error.
+  - `TestValidatePreParse_IgnoredPasswordEnv`: 7 cases.
+  - `TestValidate_UnsetEnvReference`: CLI, exit 2, names the line, path and variable.
+  - Every design doc §7 row has a case, except URL escaping, which the doc checked
+    separately with `net/url`.
+- **Fail-first** (the new tests copied onto a HEAD worktree): 32 of 41 config cases and the CLI
+  test fail. The 9 that pass have no HEAD behavior to contrast: `$` outside a reference, the
+  flow-sequence parse error, an unknown key at its real line, a duplicate key, a type error away
+  from a reference, and the four no-warning rows. With the implementation but without the
+  unmarshaler unwrap, the two `operations` mapping cases fail.
+- **Auto-review** (`sqlgen-reviewer`): PRD 6/8 before fixes, tests 5/5, fail-first confirmed
+  (reverting the `Operations` unwrap silently accepts the typo). Two high-confidence issues,
+  both from an explicit YAML tag on a reference, both reproduced:
+  - `port: !!int ${P}` put the whole value in the error, because yaml.v3 fails a tag mismatch
+    with a plain error that `redact` never sees.
+  - The same tag made the raw strict pass abort with a non-type error, which was dropped along
+    with every unknown-key error, so `input.typo` was silently accepted.
+  - **Ruled with the user 2026-10-06: reject.** A reference in a value tagged anything but `!!str`
+    is a reference error, reported before decoding (PRD §4.1.1 sentence, §4.13 row). The raw
+    pass now returns a non-type error instead of dropping it; it quotes only file text. The new
+    `explicitly tagged reference` case fails without the rejection.
+  - Applied inline: `redact` leaves a `!!seq` / `!!map` message alone, since it quotes no value
+    and the culprit is that node (new case). The PRD, `configuration.md` and STATUS now
+    say no *config-load* error carries an expanded value, because later validation messages
+    such as `field_casing` quote values. The §4.13 warning row mentions the `SQLGEN_DB_URL` hint.
+    The task line references are updated, and the "Known gap" comment now says it holds on both
+    decode paths.
+  - Not covered by a test: the `NullableVariant` unwrap (the reviewer's probe shows it works).
 
 ---
 

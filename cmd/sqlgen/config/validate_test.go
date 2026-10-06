@@ -2097,3 +2097,49 @@ func TestValidatePreParse_IgnoredInputKeys(t *testing.T) {
 		})
 	}
 }
+
+func TestValidatePreParse_IgnoredPasswordEnv(t *testing.T) {
+	const warning = "SQLGEN_DB_PASSWORD is ignored: the connection comes from "
+	tests := []struct {
+		name     string
+		input    string
+		envURL   string
+		envPW    string
+		wantFrom string // empty: no warning
+	}{
+		{name: "config url without the reference", input: "  source: database\n  connection:\n    url: postgres://app@db/app\n", envPW: "s3cret", wantFrom: "input.connection.url"},
+		{name: "config url with the reference", input: "  source: database\n  connection:\n    url: postgres://app:${SQLGEN_DB_PASSWORD}@db/app\n", envPW: "s3cret"},
+		{name: "env url", input: "  source: both\n  connection:\n    host: db\n", envURL: "postgres://app@db/app", envPW: "s3cret", wantFrom: "SQLGEN_DB_URL"},
+		{name: "env url replaces a config url with the reference", input: "  source: database\n  connection:\n    url: postgres://app:${SQLGEN_DB_PASSWORD}@db/app\n", envURL: "postgres://app@db/app", envPW: "s3cret", wantFrom: "SQLGEN_DB_URL"},
+		{name: "individual fields", input: "  source: database\n  connection:\n    host: db\n    user: app\n    database: app\n", envPW: "s3cret"},
+		{name: "files source", input: "  source: files\n  connection:\n    url: postgres://app@db/app\n", envPW: "s3cret"},
+		{name: "password unset", input: "  source: database\n  connection:\n    url: postgres://app@db/app\n"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Setenv("SQLGEN_DB_URL", tt.envURL)
+			t.Setenv("SQLGEN_DB_PASSWORD", tt.envPW)
+			cfg, err := config.LoadConfig(writeTestConfig(t, "input:\n"+tt.input+"output:\n  dir: ./models\n"))
+			if err != nil {
+				t.Fatalf("LoadConfig() unexpected error: %v", err)
+			}
+			warnings, err := config.ValidatePreParse(cfg)
+			if err != nil {
+				t.Fatalf("ValidatePreParse() unexpected error: %v", err)
+			}
+			var got []string
+			for _, w := range warnings {
+				if strings.Contains(w.Message, "SQLGEN_DB_PASSWORD") {
+					got = append(got, w.Message)
+				}
+			}
+			switch {
+			case tt.wantFrom == "" && len(got) > 0:
+				t.Errorf("warnings = %q, want no SQLGEN_DB_PASSWORD warning", got)
+			case tt.wantFrom != "" && (len(got) != 1 || !strings.Contains(got[0], warning+tt.wantFrom)):
+				t.Errorf("warnings = %q, want one containing %q", got, warning+tt.wantFrom)
+			}
+		})
+	}
+}

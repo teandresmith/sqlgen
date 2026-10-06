@@ -134,11 +134,11 @@
       "description": "Database connection. Overridden by the SQLGEN_DB_URL and SQLGEN_DB_PASSWORD environment variables, which take highest precedence.",
       "additionalProperties": false,
       "properties": {
-        "url": { "type": "string", "description": "Full connection URL. Takes precedence over the individual fields." },
+        "url": { "type": "string", "description": "Full connection URL. Takes precedence over the individual fields, `password` and SQLGEN_DB_PASSWORD included. Reference a secret with ${NAME}, e.g. postgres://app:${SQLGEN_DB_PASSWORD}@host/db; substitution is literal, so a postgres password with / ? # or % must be stored percent-encoded." },
         "host": { "type": "string", "description": "Required for postgres/mysql when `url` is empty. A value starting with `/` is a Unix socket: the socket directory on postgres, the socket file on mysql." },
         "port": { "type": "integer", "description": "Defaults to 5432 on postgres, 3306 on mysql. Ignored on SQLite, and on mysql when `host` is a socket file." },
         "user": { "type": "string", "description": "Required for postgres/mysql when `url` is empty. On mysql it cannot contain `:`, which the DSN has no escape for." },
-        "password": { "type": "string", "description": "Prefer SQLGEN_DB_PASSWORD over committing this." },
+        "password": { "type": "string", "description": "Don't commit a password: reference one with ${NAME}, e.g. ${DB_PASSWORD}, or set SQLGEN_DB_PASSWORD. Ignored when `url` is set." },
         "database": { "type": "string", "description": "Database name, or the file path for SQLite. Required when `url` is empty." },
         "ssl_mode": { "type": "string", "description": "TLS/SSL mode. Defaults to `disable` on postgres, `false` on mysql." }
       }

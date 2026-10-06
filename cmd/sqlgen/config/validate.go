@@ -33,6 +33,7 @@ func ValidatePreParse(cfg *RootConfig) ([]Warning, error) {
 	validateNullableVariants(cfg, &errs)
 	validateSchemaDialect(cfg, &warnings)
 	validateIgnoredInputKeys(cfg, &warnings)
+	validateIgnoredPasswordEnv(cfg, &warnings)
 	validateOutputDir(cfg, &warnings)
 	validateCacheConfig(cfg, &errs, &warnings)
 	validateViewCacheConfig(cfg, &errs)
@@ -1158,6 +1159,24 @@ func validateIgnoredInputKeys(cfg *RootConfig, warnings *[]Warning) {
 			*warnings = append(*warnings, Warning{Message: fmt.Sprintf(msg, f.key, in.Source)})
 		}
 	}
+}
+
+// validateIgnoredPasswordEnv warns when SQLGEN_DB_PASSWORD is set but the
+// connection comes from a url that doesn't reference it (PRD §4.13). The url
+// wins (§4.3), so the password never reaches the driver, and the only other
+// symptom is a login failure.
+func validateIgnoredPasswordEnv(cfg *RootConfig, warnings *[]Warning) {
+	in := cfg.Input
+	if in.Source != SourceDatabase && in.Source != SourceBoth || in.Connection == nil || in.Connection.passwordEnvIgnoredBy == "" {
+		return
+	}
+	hint := "write ${SQLGEN_DB_PASSWORD} into the url to use it"
+	if in.Connection.passwordEnvIgnoredBy == "SQLGEN_DB_URL" {
+		hint = "put the password in SQLGEN_DB_URL, or unset it and write ${SQLGEN_DB_PASSWORD} into input.connection.url"
+	}
+	*warnings = append(*warnings, Warning{Message: fmt.Sprintf(
+		"SQLGEN_DB_PASSWORD is ignored: the connection comes from %s, which takes precedence over the password (PRD §4.3); %s",
+		in.Connection.passwordEnvIgnoredBy, hint)})
 }
 
 // validateRemovedOperations rejects a leftover client `operations` key under

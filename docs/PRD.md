@@ -278,6 +278,62 @@ output:
 | `cache` | `CacheConfig` | disabled | No | Cache configuration: TTL, serialization, hydration. See [Section 27](#27-caching). |
 | `events` | `EventConfig` | disabled | No | Event publishing: mutation lifecycle events. See [Section 28](#28-event-system). |
 
+#### 4.1.1 Environment variable references
+
+Any scalar value in `sqlgen.yml` can reference an environment variable. Keys are never expanded,
+because table, column and override keys name schema objects.
+
+```yaml
+input:
+  connection:
+    url: postgres://app:${DB_PASSWORD}@${DB_HOST}/appdb?sslmode=require
+```
+
+| Text in a value | Result |
+|---|---|
+| `${NAME}` | The value of environment variable `NAME`. `NAME` is `[A-Za-z_][A-Za-z0-9_]*`. |
+| `$${` | A literal `${`. This is the only escape. |
+| Any other `$` | Kept as written: `$1`, `$HOME`, `a$` and `$$x` are unchanged. |
+
+- A value can hold any number of references mixed with literal text.
+- Anything else between `${` and `}` is an invalid reference, including `${}`, `${1X}` and
+  `${X:-default}`: there are no defaults or fallbacks. A `${` with no closing `}` is an
+  unterminated reference. Both are config errors ([4.13](#413-config-validation-rules)).
+- An **unset** variable is a config error. A variable **set to the empty string** substitutes the
+  empty string; required-field rules still apply to the result.
+- Expansion runs once, while the config loads, for every command that loads it (`validate`
+  included), and before the `SQLGEN_DB_*` overrides in [4.3](#43-connectionconfig). It is a
+  single pass: text that came from a variable is never expanded again.
+- References are replaced in the parsed YAML, not in the raw text, so a value can never add keys,
+  items or documents. A value containing `: `, `#` or a newline stays one string.
+- An anchored scalar is expanded where it is defined, and every alias of it sees the result.
+- **Types.** A reference in a plain (unquoted) scalar is typed by its expanded text, as YAML types
+  any plain scalar: `port: ${DB_PORT}` with `DB_PORT=6543` is the integer 6543. An expansion is
+  never typed as null, so a value of `null`, `~` or the empty string stays a string. A reference
+  in a quoted or block scalar is always a string, so `port: "${DB_PORT}"` is a type error.
+  Inside a flow collection (`[…]`, `{…}`) a reference must be quoted, because `{` and `}` are
+  YAML syntax there: write `paths: ["${DIR}", b]`. A reference in a value with an explicit tag
+  other than `!!str` (`port: !!int ${DB_PORT}`) is a config error; leave it untagged.
+- **Errors** start with the YAML line, then give the dotted path (sequence items as `[i]`):
+
+  ```
+  line 3: input.connection.password: environment variable DB_PASSWORD is not set
+  line 6: input.paths[1]: invalid reference "${1X}": a name is letters, digits and '_', not starting with a digit
+  line 7: input.connection.host: unterminated reference "${DB_HOST"
+  ```
+
+  Every unset, invalid and unterminated reference is reported together, before anything is
+  decoded.
+- **Redaction.** No error from loading the config contains an expanded value. A type error on a line that holds a
+  reference names the reference instead of the value:
+  `line 3: input.connection.port: cannot unmarshal the expansion of "${DB_PORT}" into int`.
+- **Generated output.** `input.connection` never reaches generated code or the manifest. A
+  reference in any other field does, which makes the output depend on the environment that ran
+  `generate`. When generated files are committed and drift-checked, keep references to
+  connection and deployment settings.
+
+Only `sqlgen.yml` is expanded. The gqlgen config sqlgen reads and merges is not.
+
 ### 4.2 InputConfig
 
 Controls where the schema is read from.
@@ -311,6 +367,18 @@ Controls where the schema is read from.
 |----------|-----------|------------|
 | `SQLGEN_DB_URL` | `connection.url` and all individual fields | Highest |
 | `SQLGEN_DB_PASSWORD` | `connection.password` | Highest |
+
+Both are applied after `${VAR}` expansion ([4.1.1](#411-environment-variable-references)), and
+neither variable's value is expanded. Because `url` takes precedence, `SQLGEN_DB_PASSWORD` has no
+effect on a connection that comes from a `url`. Write the reference into the URL instead
+(`url: postgres://app:${SQLGEN_DB_PASSWORD}@db.internal/appdb`). sqlgen warns when the variable
+is set and a `url` ignores it ([4.13](#413-config-validation-rules)).
+
+**Secrets.** `url` and `password` usually take a reference, so the secret stays out of the
+committed file. Substitution is literal: a password containing `/`, `?`, `#` or `%` breaks a
+postgres URL. Either use the individual fields (`password: ${DB_PASSWORD}`), which sqlgen escapes
+when it builds the URL, or store the secret percent-encoded and reference it in `url`. The MySQL
+DSN takes the password unescaped, so it has no such problem.
 
 ### 4.4 IntrospectConfig
 
@@ -1130,6 +1198,11 @@ The config is validated immediately after loading, before parsing or generation 
 | **`input.schema` on MySQL/SQLite** | Warning | MySQL and SQLite do not support schemas. If `input.schema` is set for these dialects, it is ignored and a warning is printed. |
 | **Input key the source does not read** | Warning | `input.paths` set explicitly under `source: database`, or any `input.introspect` field set under `source: files`, is ignored, and a warning names the key and the source. The `["."]` default for `paths` is not an explicit setting and does not warn. |
 | **Missing `connection` for `database`/`both` source** | Error | `input.connection` is required when `input.source` is `database` or `both`. |
+| **Unset environment variable** | Error | A `${NAME}` reference to a variable that is not set ([4.1.1](#411-environment-variable-references)). Every unset reference is reported, each with its line, path and variable. A variable set to the empty string is not unset. |
+| **Invalid environment variable reference** | Error | A `${…}` whose name is not `[A-Za-z_][A-Za-z0-9_]*`, such as `${}`, `${1X}` or `${X:-default}`. Write `$${` for a literal `${`. |
+| **Unterminated environment variable reference** | Error | A `${` with no closing `}`. |
+| **Environment variable reference in a tagged value** | Error | A `${…}` in a value with an explicit YAML tag other than `!!str`, such as `!!int`. An untagged reference is already typed by its value ([4.1.1](#411-environment-variable-references)). |
+| **`SQLGEN_DB_PASSWORD` ignored by a `url`** | Warning | Under `source: database` or `both`, `SQLGEN_DB_PASSWORD` is set and non-empty, and the connection comes from a `url` (`SQLGEN_DB_URL` or `input.connection.url`) that doesn't reference `${SQLGEN_DB_PASSWORD}`. The `url` wins ([4.3](#43-connectionconfig)), so the password is not used. The warning names the variable and the `url`'s source, and suggests writing the reference into the `url`, or, when the `url` is `SQLGEN_DB_URL`, putting the password in it. |
 | **Duplicate `struct_name` overrides** | Error (resolution-level) | Two tables setting the same `struct_name` is one case of the resolved-name collision rule above, which is checked against auto-derived names too: `tables.accounts.struct_name: User` beside a `users` table collides just as surely as two identical overrides. |
 | **A relationship declares both `filter` and `discriminator`** | Error | The two are mutually exclusive on one relationship ([13.4.1](#1341-discriminator--the-structured-form-of-a-polymorphic-edge)). The error names the relationship and both keys. |
 | **`discriminator.column` is not a column on the related table** | Error *(schema-level)* | The discriminator compiles to a predicate on the related table, and on the write side a nested `create` sets it; a column that does not exist can do neither. The error names the relationship, the column, and the related table. |
@@ -1204,6 +1277,11 @@ express sqlgen's cross-field rules — driver/dialect pairing, `connection`
 required by `source`, soft-delete column type compatibility, cursor-key
 existence, `marshaler_package` required when `marshaling: external`. Those stay
 in [§4.13](#413-config-validation-rules) and remain the job of `sqlgen validate`.
+
+**Environment variable references.** The schema types integer and boolean fields strictly, so an
+editor flags `port: ${DB_PORT}` as a type error even though sqlgen accepts it
+([4.1.1](#411-environment-variable-references)). References go mostly in string fields, which the
+schema accepts as written.
 
 **Strictness.** Every object sets `"additionalProperties": false`. This is the
 opposite choice from the manifest schema, which tolerates unknown properties for
