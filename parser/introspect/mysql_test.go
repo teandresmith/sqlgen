@@ -169,8 +169,9 @@ func TestMySQLDefault(t *testing.T) {
 
 func TestMySQLDefault_UnparsableExpression(t *testing.T) {
 	dflt := sql.NullString{String: "uuid(", Valid: true}
-	if _, err := mysqlDefault(dflt, "DEFAULT_GENERATED", "varchar(36)"); err == nil {
-		t.Errorf("mysqlDefault(%+v) error = nil, want a parse error", dflt)
+	_, err := mysqlDefault(dflt, "DEFAULT_GENERATED", "varchar(36)")
+	if _, ok := errors.AsType[*SchemaError](err); !ok {
+		t.Errorf("mysqlDefault(%+v) error = %v, want a *SchemaError", dflt, err)
 	}
 }
 

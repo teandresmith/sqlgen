@@ -1,6 +1,9 @@
 package introspect
 
-import "testing"
+import (
+	"errors"
+	"testing"
+)
 
 func TestQuoteSQLiteIdent(t *testing.T) {
 	tests := []struct {
@@ -101,5 +104,14 @@ func TestSQLiteGeneratedStorage(t *testing.T) {
 				t.Errorf("sqliteGeneratedStorage(%d) = (%q, %t), want (%q, %t)", tt.hidden, storage, ok, tt.wantStorage, tt.wantOK)
 			}
 		})
+	}
+}
+
+// A stored CREATE TABLE the file parser cannot read is a schema error, not a
+// failure to read the catalog.
+func TestParseStoredTable_SchemaError(t *testing.T) {
+	_, err := parseStoredTable("CREATE TABLE t (id INTEGER PRIMARY KEY ASC AUTOINCREMENT)")
+	if _, ok := errors.AsType[*SchemaError](err); !ok {
+		t.Errorf("parseStoredTable() error = %v, want a *SchemaError", err)
 	}
 }

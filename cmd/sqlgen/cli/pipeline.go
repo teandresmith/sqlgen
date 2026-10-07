@@ -46,12 +46,8 @@ func loadAndValidate(ctx context.Context, flags *cliFlags, errOut io.Writer) (*c
 
 	schema, err := parseSchema(ctx, cfg)
 	if err != nil {
-		code := ExitSchema
-		if cfg.Input.Source == config.SourceDatabase || cfg.Input.Source == config.SourceBoth {
-			code = ExitConnection
-		}
-		printSchemaError(errOut, err)
-		return nil, nil, &exitError{code: code, err: err}
+		printParseError(errOut, err)
+		return nil, nil, &exitError{code: parseExitCode(err), err: err}
 	}
 	// Statements the parser skipped, e.g. CREATE VIEW in DDL (PRD §16).
 	printManifestWarnings(errOut, schema.Warnings, flags.quiet)
@@ -149,12 +145,17 @@ func lookupTableConfig(cfg *config.RootConfig, table *parser.Table) (config.Tabl
 	return tableCfg, ok
 }
 
-// printSchemaError writes a parseSchema error with the "Schema error:" prefix
-// on every line, so each of several joined unresolved-FK errors carries it,
-// as `validate` prefixes each line "Error:".
-func printSchemaError(w io.Writer, err error) {
+// printParseError writes a parseSchema error with a prefix on every line,
+// so each of several joined unresolved-FK errors carries it, as `validate`
+// prefixes each line "Error:". The prefix follows the exit code:
+// "Connection error:" for 4, "Schema error:" for 3.
+func printParseError(w io.Writer, err error) {
+	prefix := "Schema error"
+	if parseExitCode(err) == ExitConnection {
+		prefix = "Connection error"
+	}
 	for _, line := range splitJoinedErrors(err) {
-		_, _ = fmt.Fprintf(w, "Schema error: %s\n", line)
+		_, _ = fmt.Fprintf(w, "%s: %s\n", prefix, line)
 	}
 }
 

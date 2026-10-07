@@ -24,6 +24,18 @@ type Introspector interface {
 	Close() error
 }
 
+// SchemaError is a schema the database holds that the introspector cannot
+// read the way the file parser would: a stored CREATE TABLE the parser
+// rejects, or catalog text it cannot normalize. It is not a failure to reach
+// the database or query its catalog.
+type SchemaError struct {
+	Err error
+}
+
+func (e *SchemaError) Error() string { return e.Err.Error() }
+
+func (e *SchemaError) Unwrap() error { return e.Err }
+
 // IntrospectionOptions controls which schemas and tables are discovered.
 type IntrospectionOptions struct {
 	// Schemas to include. If empty, all non-system schemas are included.

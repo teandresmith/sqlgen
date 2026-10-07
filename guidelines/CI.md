@@ -764,8 +764,8 @@ sqlgen diff
 | `0` | Success |
 | `1` | Generation error (template failure, file write error) |
 | `2` | Config error (invalid YAML, validation failure) |
-| `3` | Schema error (parse failure, ambiguous names, constraint violations) |
-| `4` | Connection error (database introspection failed) |
+| `3` | Schema error (parse failure, ambiguous names, constraint violations), under every `input.source` |
+| `4` | Connection error (connecting to the database, or a catalog query, failed) |
 
 ### CI-Relevant Command Behavior
 

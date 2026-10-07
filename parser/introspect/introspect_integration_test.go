@@ -3,6 +3,7 @@ package introspect_test
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"flag"
 	"fmt"
 	"maps"
@@ -783,6 +784,9 @@ func TestSQLiteIntrospect_ImplicitFKTarget(t *testing.T) {
 			err := intro.Introspect(context.Background(), dbPath, &parser.Schema{}, introspect.IntrospectionOptions{})
 			if err == nil || !strings.Contains(err.Error(), "introspect sqlite table p:") || !strings.Contains(err.Error(), parseError) {
 				t.Errorf("Introspect() error = %v, want the parse error for table p", err)
+			}
+			if _, ok := errors.AsType[*introspect.SchemaError](err); !ok {
+				t.Errorf("Introspect() error = %v, want a *introspect.SchemaError", err)
 			}
 
 			p := sqlite.New()

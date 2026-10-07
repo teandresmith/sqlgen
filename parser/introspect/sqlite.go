@@ -161,11 +161,11 @@ func (si *SQLiteIntrospector) introspectTable(ctx context.Context, ref sqliteTab
 func parseStoredTable(ddl string) (*parser.Table, error) {
 	p := sqlite.New()
 	if err := p.Parse("sqlite_master", []byte(ddl)); err != nil {
-		return nil, fmt.Errorf("parsing stored CREATE TABLE: %w", err)
+		return nil, &SchemaError{Err: fmt.Errorf("parsing stored CREATE TABLE: %w", err)}
 	}
 	tables := p.Schema().Tables
 	if len(tables) != 1 {
-		return nil, fmt.Errorf("stored CREATE TABLE yields %d tables, want 1", len(tables))
+		return nil, &SchemaError{Err: fmt.Errorf("stored CREATE TABLE yields %d tables, want 1", len(tables))}
 	}
 	return &tables[0], nil
 }
@@ -189,7 +189,7 @@ func nameDeclaredConstraints(table, declared *parser.Table) error {
 			}
 		}
 		if j < 0 {
-			return fmt.Errorf("stored CREATE TABLE declares no %s over (%s)", c.Type, strings.Join(c.Columns, ", "))
+			return &SchemaError{Err: fmt.Errorf("stored CREATE TABLE declares no %s over (%s)", c.Type, strings.Join(c.Columns, ", "))}
 		}
 		used[j] = true
 		c.Name = declared.Constraints[j].Name
@@ -404,7 +404,7 @@ func sqliteGeneratedExprs(table, declared *parser.Table) error {
 		}
 		dc := parser.ColumnByName(declared, col.Name)
 		if dc == nil || dc.GeneratedExpr == "" {
-			return fmt.Errorf("stored CREATE TABLE has no expression for generated column %s", col.Name)
+			return &SchemaError{Err: fmt.Errorf("stored CREATE TABLE has no expression for generated column %s", col.Name)}
 		}
 		col.GeneratedExpr = dc.GeneratedExpr
 	}

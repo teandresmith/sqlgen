@@ -48,7 +48,7 @@ func makeValidateRunE(flags *cliFlags) func(*cobra.Command, []string) error {
 			schema, err = parseSchema(cmd.Context(), cfg)
 			if err != nil {
 				if exitCode == ExitSuccess {
-					exitCode = ExitSchema
+					exitCode = parseExitCode(err)
 				}
 				allErrors = append(allErrors, splitJoinedErrors(err)...)
 			}

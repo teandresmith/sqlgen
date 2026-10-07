@@ -3,6 +3,7 @@ package cli
 import (
 	"database/sql"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -342,5 +343,152 @@ func TestParseSchema_BothSourceViewReadsOverlaidTable(t *testing.T) {
 	}
 	if name := schema.Views[0].Columns[1]; !name.Nullable {
 		t.Errorf("user_names.name Nullable = false, want true: the migration drops its NOT NULL")
+	}
+}
+
+// TestCommands_ParseExitCode pins that only a failure to reach the database
+// or read its catalog exits 4. A schema error exits 3 under every source.
+func TestCommands_ParseExitCode(t *testing.T) {
+	tests := []struct {
+		name     string
+		source   config.Source
+		database func(t *testing.T, dir string) string
+		fileDDL  string
+		viewSQL  string
+		wantCode int
+		wantErr  string
+	}{
+		{
+			name:     "missing database file",
+			source:   config.SourceDatabase,
+			database: func(_ *testing.T, dir string) string { return filepath.Join(dir, "missing.db") },
+			wantCode: ExitConnection,
+			wantErr:  "does not exist",
+		},
+		{
+			name:   "file that is not a database",
+			source: config.SourceBoth,
+			database: func(t *testing.T, dir string) string {
+				path := filepath.Join(dir, "app.db")
+				if err := os.WriteFile(path, []byte("not a sqlite database, just text that fills the header page"), 0o600); err != nil {
+					t.Fatal(err)
+				}
+				return path
+			},
+			fileDDL:  "CREATE TABLE posts (id INTEGER PRIMARY KEY);",
+			wantCode: ExitConnection,
+			wantErr:  "not a database",
+		},
+		{
+			name:     "overlay creates a table the database has",
+			source:   config.SourceBoth,
+			database: func(t *testing.T, dir string) string { return sqliteDatabase(t, dir, sqliteUsersDDL) },
+			fileDDL:  "CREATE TABLE users (id INTEGER PRIMARY KEY);",
+			wantCode: ExitSchema,
+			wantErr:  "users",
+		},
+		{
+			name:   "stored CREATE TABLE the file parser cannot read",
+			source: config.SourceDatabase,
+			database: func(t *testing.T, dir string) string {
+				return sqliteDatabase(t, dir, "CREATE TABLE t (id INTEGER PRIMARY KEY ASC AUTOINCREMENT);")
+			},
+			wantCode: ExitSchema,
+			wantErr:  "parsing stored CREATE TABLE",
+		},
+		{
+			name:   "view annotation names a column the database view lacks",
+			source: config.SourceDatabase,
+			database: func(t *testing.T, dir string) string {
+				return sqliteDatabase(t, dir, sqliteUsersDDL+"CREATE VIEW user_names AS SELECT name FROM users;")
+			},
+			viewSQL:  "-- @pk: id\nCREATE VIEW user_names AS SELECT u.id, u.name FROM users u;\n",
+			wantCode: ExitSchema,
+			wantErr:  `@pk references unknown column "id"`,
+		},
+	}
+	for _, tt := range tests {
+		for _, command := range [][]string{{"generate"}, {"validate"}, {"diff"}, {"lint"}, {"graphql", "gen"}} {
+			t.Run(tt.name+"/"+strings.Join(command, " "), func(t *testing.T) {
+				dir := t.TempDir()
+				content := "input:\n  dialect: sqlite\n  source: " + string(tt.source) + "\n" +
+					"  connection:\n    database: \"" + filepath.ToSlash(tt.database(t, dir)) + "\"\n"
+				if tt.fileDDL != "" {
+					sqlDir := filepath.Join(dir, "sql")
+					if err := os.Mkdir(sqlDir, 0o750); err != nil {
+						t.Fatal(err)
+					}
+					writeSQLFile(t, sqlDir, tt.fileDDL)
+					content += "  paths:\n    - \"" + filepath.ToSlash(sqlDir) + "\"\n"
+				}
+				if tt.viewSQL != "" {
+					viewPath := filepath.Join(dir, "view.sql")
+					if err := os.WriteFile(viewPath, []byte(tt.viewSQL), 0o600); err != nil {
+						t.Fatal(err)
+					}
+					content += "  views:\n    - \"" + filepath.ToSlash(viewPath) + "\"\n"
+				}
+				content += "output:\n  driver: stdlib\n  dir: \"" + filepath.ToSlash(filepath.Join(dir, "output")) +
+					"\"\n  package: models\n  layout: file_per_table\n"
+				cfgPath := filepath.Join(dir, "sqlgen.yml")
+				if err := os.WriteFile(cfgPath, []byte(content), 0o600); err != nil {
+					t.Fatal(err)
+				}
+
+				_, stderr, err := executeCommand(append(command, "--config", cfgPath)...)
+				ee, ok := errors.AsType[*exitError](err)
+				if !ok || ee.code != tt.wantCode {
+					got := -1
+					if ok {
+						got = ee.code
+					}
+					t.Fatalf("error = %v, exit code %d, want %d\nstderr: %s", err, got, tt.wantCode, stderr)
+				}
+				if !strings.Contains(stderr, tt.wantErr) {
+					t.Errorf("stderr = %q, want it to contain %q", stderr, tt.wantErr)
+				}
+				prefix := "Schema error: "
+				switch {
+				case command[0] == "validate":
+					prefix = "Error: "
+				case tt.wantCode == ExitConnection:
+					prefix = "Connection error: "
+				}
+				if !strings.HasPrefix(stderr, prefix) {
+					t.Errorf("stderr = %q, want it to start with %q", stderr, prefix)
+				}
+			})
+		}
+	}
+}
+
+func TestParseExitCode(t *testing.T) {
+	dir := t.TempDir()
+	writeSQLFile(t, dir, "CREATE TABLE pets (id uuid PRIMARY KEY, owner_id uuid REFERENCES ghosts(id));")
+	_, fkErr := parseSchema(t.Context(), &config.RootConfig{Input: config.InputConfig{
+		Dialect: config.DialectPostgres,
+		Schema:  "*",
+		Paths:   []string{dir},
+	}})
+	if fkErr == nil {
+		t.Fatal("parseSchema: error = nil, want the unresolved-FK error")
+	}
+	connErr := &connectionError{err: errors.New("dial tcp 127.0.0.1:1: connect: connection refused")}
+
+	tests := []struct {
+		name string
+		err  error
+		want int
+	}{
+		{"unresolved foreign key", fkErr, ExitSchema},
+		{"connection failure", connErr, ExitConnection},
+		{"wrapped connection failure", fmt.Errorf("introspect: %w", connErr), ExitConnection},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := parseExitCode(tt.err); got != tt.want {
+				t.Errorf("parseExitCode(%q) = %d, want %d", tt.err, got, tt.want)
+			}
+		})
 	}
 }

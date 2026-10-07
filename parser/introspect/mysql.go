@@ -344,7 +344,7 @@ func (mi *MySQLIntrospector) introspectColumns(ctx context.Context, table *parse
 		if storage, ok := mysqlGeneratedStorage(lowerExtra); ok {
 			expr, err := mysql.NormalizeExpr(unescapeMySQLCatalogText(generation))
 			if err != nil {
-				return fmt.Errorf("introspect mysql columns %s: generated column %s: %w", table.Name, col.Name, err)
+				return &SchemaError{Err: fmt.Errorf("introspect mysql columns %s: generated column %s: %w", table.Name, col.Name, err)}
 			}
 			col.GeneratedExpr = expr
 			col.GeneratedStorage = storage
@@ -600,7 +600,7 @@ func (mi *MySQLIntrospector) introspectCheckConstraints(ctx context.Context, tab
 		}
 		expr, err := mysql.NormalizeExpr(unescapeMySQLCatalogText(clause))
 		if err != nil {
-			return fmt.Errorf("introspect mysql check constraints %s: %s: %w", table.Name, name, err)
+			return &SchemaError{Err: fmt.Errorf("introspect mysql check constraints %s: %s: %w", table.Name, name, err)}
 		}
 		table.Constraints = append(table.Constraints, parser.Constraint{
 			Name:            name,
@@ -676,7 +676,7 @@ func mysqlDefault(dflt sql.NullString, extra, columnType string) (string, error)
 	}
 	expr, err := mysql.NormalizeExpr(text)
 	if err != nil {
-		return "", fmt.Errorf("normalizing default: %w", err)
+		return "", &SchemaError{Err: fmt.Errorf("normalizing default: %w", err)}
 	}
 	return expr, nil
 }

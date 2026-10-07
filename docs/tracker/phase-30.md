@@ -1717,7 +1717,8 @@ needed: §7 of the doc lists every case.
   asserts each appears once; it failed with the guard removed.
 - **Every `Introspect` error is a `*connectionError`.** That includes a stored SQLite
   `CREATE TABLE` the file parser cannot read (PRD §6.3) and a catalog-normalization failure,
-  which arrive from the introspector as plain errors. 30.9 decides whether those exit 3.
+  which arrive from the introspector as plain errors. Decided in 30.9: they exit 3, through
+  `introspect.SchemaError`.
 - **Tests** (`cli/introspect_test.go`, SQLite files, no container):
   - `TestParseSchema_SQLiteDatabaseSource`: `database` ignores `paths`; `both` applies `ADD COLUMN`
     and a new `CREATE TABLE`; `introspect.tables` narrows.
@@ -1913,14 +1914,18 @@ columns differed by source and that the files path was unsound:
 
 **PRD Reference:** Section 8.1.7 (design doc Q2)
 
-**Status:** Not Started
+**Status:** Complete
 
 ### Tasks
 
-- [ ] In `generate.go:46-52`, `pipeline.go:48-54` and `validate.go:46-55`, replace the source-mode
+- [x] In `generate.go:46-52`, `pipeline.go:48-54` and `validate.go:46-55`, replace the source-mode
   remap with `errors.AsType[*connectionError]` → `ExitConnection` (4). Every other error →
   `ExitSchema` (3).
-- [ ] Record the FIX-243 Q3(b) outcome in that entry's history in `docs/tracker/fixes.md`.
+- [x] Record the FIX-243 Q3(b) outcome in that entry's history in `docs/tracker/fixes.md`.
+- [x] (Added at review, ruled with the user 2026-10-07.) A stored SQLite `CREATE TABLE` the file
+  parser cannot read, or catalog text the introspector cannot normalize, exits 3, not 4 (PRD §6.3,
+  §8.1.7, §23.9). `parser/introspect` returns these as `*introspect.SchemaError`, and the CLI
+  does not wrap them in `*connectionError`.
 
 ### Acceptance Criteria
 
@@ -1930,13 +1935,68 @@ columns differed by source and that the files path was unsound:
 
 ### Tests Required
 
-- [ ] Table-driven CLI test over the five commands: SQLite unreadable path → 4, overlay
-  `CREATE TABLE` conflict → 3, and an unresolved-FK schema under `source: both` → 3. Before this
-  change the last case exited 4, per the FIX-243 measurement.
+- [x] Table-driven CLI test over the five commands: SQLite unreadable path → 4, overlay
+  `CREATE TABLE` conflict → 3. ~~An unresolved-FK schema under `source: both` → 3~~: it needs a
+  live PostgreSQL (the FK check is PG-only and `both` introspects first), so it moved to 30.10
+  (ruled with the user 2026-10-07). Here a mapping test on the real unresolved-FK error stands in.
 
 ### Completion Record
 
-_Filled in when complete: files changed, commit references, notes._
+- **Completed:** 2026-10-07 (`/implement 30.9`, `/verify 30.9`, `/done 30.9`). `make check` and
+  `make check-examples` ok.
+- **Files:** `cmd/sqlgen/cli/connection.go` (new `parseExitCode`), `generate.go`, `pipeline.go`
+  (`loadAndValidate`: `diff`, `lint`, `graphql gen`), `validate.go`, `introspect_test.go`;
+  `parser/introspect/introspect.go` (new `SchemaError`), `sqlite.go`, `postgres.go`, `mysql.go`
+  and their tests; `docs/tracker/fixes.md` (FIX-243 history).
+- **Behavior:** `parseExitCode(err)` returns 4 when `err` holds a `*connectionError`, else 3. It
+  replaces the `source: database|both` → 4 remap in `generate` and `loadAndValidate`. `validate`
+  used to give 3 for every parse error, a connection failure included; it now uses the same
+  mapping (and still keeps an earlier config error's exit 2).
+- **Introspector schema errors (added at review).** The reviewer found that `introspectSchema`
+  wrapped every `Introspect` error as a `*connectionError`. That included a stored SQLite
+  `CREATE TABLE` the file parser rejects (`PRIMARY KEY ASC AUTOINCREMENT`, `ON CONFLICT`), which
+  then exited 4 with a "Schema error:" label. 30.8 had handed this question to 30.9. Ruled with
+  the user: exit 3, as the PRD says. `SchemaError` marks errors where they are raised:
+  - SQLite: `parseStoredTable`, `nameDeclaredConstraints`, `sqliteGeneratedExprs`
+  - PostgreSQL: `catalogExpr`, which covers defaults, generated columns, CHECKs, domain
+    constraints and partial-index predicates
+  - MySQL: `mysqlDefault`, generated-column and CHECK normalization
+
+  The error messages are unchanged.
+- **Tests:** `TestCommands_ParseExitCode` (5 cases × `generate` / `validate` / `diff` / `lint` /
+  `graphql gen`): a missing SQLite file → 4; a file that is not a SQLite database (the ping
+  fails, under `both`) → 4; an overlay `CREATE TABLE` of a table the database has → 3; a
+  stored `CREATE TABLE` the file parser cannot read (under `database`) → 3; a view annotation
+  naming a column the database view lacks (under `database`) → 3.
+  `TestParseExitCode`: the real PG unresolved-FK error → 3, a `*connectionError` (bare and
+  wrapped) → 4. In `parser/introspect`, `TestParseStoredTable_SchemaError`,
+  `TestCatalogExpr_SchemaError`, and a `*SchemaError` assertion added to
+  `TestMySQLDefault_UnparsableExpression` and to `TestSQLiteIntrospect_ImplicitFKTarget`
+  (integration). The MySQL generated-column and CHECK sites need a live server, so they have no
+  unit test.
+- **Fail-first:** with the three callers reverted (before the stored-DDL case was added), 10
+  subtests fail: both connection cases under
+  `validate` (got 3), and both schema cases under `generate`, `diff`, `lint` and `graphql gen`
+  (got 4).
+- **Fail-first (introspector schema errors):** with the CLI's `SchemaError` check removed, the
+  stored-DDL case fails under all five commands (got 4). With the three wrapping sites reverted,
+  the three `parser/introspect` unit tests fail.
+- **Moved to 30.10:** the live PG `source: both` unresolved-FK → 3 case.
+- **`/verify 30.9` (2026-10-07):** 3/3 PRD requirements pass, the required tests are present (the
+  PG `both` case moved to 30.10 by ruling), and the reviewer's fail-first spot check on the CLI
+  `SchemaError` passthrough is CONFIRMED. No FIX logged. Doc fixes applied: the
+  `parseExitCode` comment cites PRD §23.9, and this record's test count and fail-first note are
+  corrected. The test's failure message now prints the exit code it got.
+- **Connection-error label (ruled with the user at `/verify`, 2026-10-07).** A parse error that
+  exits 4 now prints `Connection error:` instead of `Schema error:`, matching PRD §23.9's wording.
+  `printSchemaError` became `printParseError`, which picks the prefix from `parseExitCode`, so the
+  label and the exit code cannot disagree. `TestCommands_ParseExitCode` asserts the prefix on every
+  command, `Error:` for `validate`. Fail-first: with the prefix forced to
+  `Schema error`, the two connection cases fail under the four other commands (8 subtests).
+- **Gates:** `make check` ok; `make check-examples` ok (triggered by `parser/**`); parser
+  `go test -race -count=1 ./...` with Docker (PG / MySQL integration) ok.
+- **Lint:** `introspectSchema` passes a `SchemaError` through unwrapped, under a reasoned
+  `//nolint:wrapcheck`. Its message already names the table and step.
 
 ---
 
@@ -1987,6 +2047,9 @@ _Filled in when complete: files changed, commit references, notes._
 - [ ] `TestGenerate_ConnectionFailureExitCode`: an unreachable host (PG, MySQL) or an unreadable
   file (SQLite) → 4 for `generate` and `validate`; an overlay schema error → 3.
 - [ ] PG `both`: a file FK into a DB-only table resolves (from 30.8).
+- [ ] PG `both`: a file FK whose target neither the database nor the files define → exit 3 for
+  `generate` and `validate` (moved from 30.9: it needs a live PostgreSQL). It exited 4 before
+  30.9, per the FIX-243 measurement.
 - [ ] PG `database` with `introspect.tables` cutting an FK: no unresolved-FK error, and no
   relationship into the filtered-out table (the 30.8 ruling, PRD §5.5).
 - [ ] Manual: a throwaway `sqlgen.yml` with `source: database` per dialect → `sqlgen generate` →

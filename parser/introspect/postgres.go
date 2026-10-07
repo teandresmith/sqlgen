@@ -599,7 +599,7 @@ func catalogExpr(text string, casts map[string][]string) (string, error) {
 	}
 	out, err := postgres.CatalogExpr(text, casts)
 	if err != nil {
-		return "", fmt.Errorf("normalizing catalog text: %w", err)
+		return "", &SchemaError{Err: fmt.Errorf("normalizing catalog text: %w", err)}
 	}
 	return out, nil
 }

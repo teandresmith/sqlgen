@@ -5853,6 +5853,7 @@ analogue is `input.schema`, a single string that `pipeline.go:151-155` (at `38d9
 - Tests: `TestUnqualifiedFKTargetSchema`, `TestUnresolvedForeignKeys`, `TestRenameTableCarriesForeignKeys` (mysql), `TestAlterTableRenameTableCarriesForeignKeys` (sqlite), `TestParseSchema_UnresolvedForeignKey` and `TestParseSchema_PrintsParserWarnings` (cli).
 - Gates: `make check` ok (golangci-lint 0 issues); `make update-golden` and `make update-golden-e2e` changed no file (golden churn none, matching the vet); `make check-examples` ok.
 - Fail-first re-run on the final code, one site at a time: column-FK and constraint-FK sites and the Postgres rename sync → `TestUnqualifiedFKTargetSchema` fails; MySQL / SQLite rename sync → their rename tests fail; CLI wiring off → `postgres_target_never_parsed/*` and `postgres_unqualified_target_only_another_schema_defines/*` fail; Postgres-only gate off → `mysql_/sqlite_target_never_parsed_still_generates/*` fail; each warning print site reverted → its `PrintsParserWarnings/<cmd>/quiet=false` fails.
+- Q3 settled as (b) on 2026-10-07 by phase 30.9 (design doc `INTROSPECTION.md` Q2). The CLI now introspects, so Q3(a)'s deferred ordering decision came due. A `parseSchema` error exits 4 only when it holds a `*connectionError` (connect, ping or catalog query); an unresolved FK, like every other schema error, exits 3 under every `input.source`. The mapping is `parseExitCode` (`cmd/sqlgen/cli/connection.go`), shared by `generate`, `validate` and `loadAndValidate`. The live PG `source: both` case is tested in 30.10.
 
 ### FIX-228
 

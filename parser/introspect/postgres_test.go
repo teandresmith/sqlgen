@@ -1,6 +1,7 @@
 package introspect
 
 import (
+	"errors"
 	"testing"
 
 	"github.com/google/go-cmp/cmp"
@@ -235,5 +236,14 @@ func TestApplyColumnExpr(t *testing.T) {
 	var col parser.Column
 	if err := applyColumnExpr(&col, columnExpr{text: "qty *"}, nil); err == nil {
 		t.Error("applyColumnExpr on unparsable text: error = nil, want an error")
+	}
+}
+
+// Catalog text the parser cannot normalize is a schema error, not a failure
+// to read the catalog.
+func TestCatalogExpr_SchemaError(t *testing.T) {
+	_, err := catalogExpr("nextval(", nil)
+	if _, ok := errors.AsType[*SchemaError](err); !ok {
+		t.Errorf("catalogExpr() error = %v, want a *SchemaError", err)
 	}
 }

@@ -27,6 +27,16 @@ func (e *connectionError) Error() string { return e.err.Error() }
 
 func (e *connectionError) Unwrap() error { return e.err }
 
+// parseExitCode is the exit code for a parseSchema error: 4 when the
+// database could not be reached or its catalog read, and 3 for a schema
+// error under every source (PRD §23.9).
+func parseExitCode(err error) int {
+	if _, ok := errors.AsType[*connectionError](err); ok {
+		return ExitConnection
+	}
+	return ExitSchema
+}
+
 // introspectSchema reads the schema from the database that input.connection
 // names (PRD §6.1). input.introspect narrows what is read; top-level
 // exclude_tables applies later, as it does for every source.
@@ -66,6 +76,9 @@ func introspectSchema(ctx context.Context, cfg *config.RootConfig) (*parser.Sche
 
 	schema := &parser.Schema{}
 	if err := intro.Introspect(ctx, conn, schema, opts); err != nil {
+		if _, ok := errors.AsType[*introspect.SchemaError](err); ok {
+			return nil, err //nolint:wrapcheck // the message already names the table and step; parseExitCode maps it to 3
+		}
 		return nil, &connectionError{err: err}
 	}
 	return schema, nil
