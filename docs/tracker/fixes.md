@@ -29,15 +29,39 @@
 - **Severity:** tracked
 - **Origin:** phase 30, `parser/introspect` (`sqlite.go`)
 - **Surfaced by:** `/verify 30.6` (2026-10-05), confirmed by the sqlgen-reviewer pass
+- **Vetted:** corrected at `dcc7eeeb` (2026-10-07)
 
 **Issue.** When a SQLite table declares two FOREIGN KEYs over the same column(s) to the same parent table but different parent columns, `database` and `files` attach the constraint names to different keys. PRD §5.2 requires "the same constraint set, with the same names". Measured: `CREATE TABLE p (x INTEGER UNIQUE, y INTEGER UNIQUE); CREATE TABLE t (id INTEGER PRIMARY KEY, a INTEGER, CONSTRAINT fa FOREIGN KEY (a) REFERENCES p(x), CONSTRAINT fb FOREIGN KEY (a) REFERENCES p(y))` parses as `fa` = a→p(x), `fb` = a→p(y), but introspects as `fa` = a→p(y), `fb` = a→p(x). With only `fa` named, the name moves to the other key. Column `a` also gets a different `FKReference` (parsed `p.x`, introspected `p.y`).
 
-**Root cause.** `nameDeclaredConstraints` (`parser/introspect/sqlite.go:177`) matches a PRAGMA-built FK to a declared one by `Type`, `Columns` and `ReferenceTable` only, taking the first unused match. `PRAGMA foreign_key_list` numbers FKs in reverse declaration order (id 0 is the last declared), so the first PRAGMA FK takes the first declared FK's name. The `FKReference` half is older: `introspectForeignKeys` (`sqlite.go:420`) gives the column the first FK in PRAGMA order, the last declared, while the parser keeps the first declared.
+**Root cause.** `nameDeclaredConstraints` (`parser/introspect/sqlite.go:177`) matches a PRAGMA-built FK to a declared one by `Type`, `Columns` and `ReferenceTable` only, taking the first unused match. `PRAGMA foreign_key_list` numbers FKs in reverse declaration order (id 0 is the last declared), so the first PRAGMA FK takes the first declared FK's name. The `FKReference` half is older: `introspectForeignKeys` (`sqlite.go:430`) gives the column the first FK in PRAGMA order, the last declared, while the parser keeps the first declared. That holds for table-level FKs and for an inline REFERENCES followed by a table-level FK. For two inline REFERENCES on one column, the parser keeps the last one instead (backlog, `parser/sqlite`).
 
 **Suggested fix.**
-- In `nameDeclaredConstraints`, also require `slices.EqualFunc(d.ReferenceColumns, c.ReferenceColumns, strings.EqualFold)` for an FK match.
-- In `introspectForeignKeys`, walk the FK ids from highest to lowest, so constraints and the single-column `FKReference` follow declaration order as the parser's do.
-- Add `TestSQLiteIntrospect_SameColumnForeignKeys` (or a case in `_CompositeConstraints`) with the DDL above in two variants (both FKs named; only the first named). Assert each key's name and the column's `FKReference`, then `assertSchemaParity`.
+- In `nameDeclaredConstraints`, an FK match also requires the same parent columns, compared case-insensitively (`sameColumns(d.ReferenceColumns, c.ReferenceColumns)`). The doc comment says why.
+- In `introspectForeignKeys`, sort the FK ids and walk them from highest to lowest (`slices.Backward`), so constraints and the single-column `FKReference` follow declaration order as the parser's do. A comment notes that PRAGMA id 0 is the last declared.
+- Add `TestSQLiteIntrospect_SameColumnForeignKeys`, table-driven over five cases: both named, only the first named, neither named, inline then table level, and composite `(a,b)`→`p(x,y)` / `p(y,x)`. Each case asserts the FK constraints in order and `t.a`'s `FKReference`, then calls `assertSchemaParity`.
+- Add a white-box `TestNameDeclaredConstraints_ForeignKeyParentColumns` (`parser/introspect/sqlite_test.go`). It lists catalog FKs in the opposite order to the declared ones, with upper-case parent columns, and checks that names attach by parent columns.
+- On landing, the 30.6 Completion Record's "Constraint names … an FK also matches its parent table" should read "and parent columns".
+- Changed from the original, which named only the integration test with two variants. Once the reversed walk lands, both lists are in declaration order, so the parent-column check cannot change any live result, and the integration test alone cannot show fail-first for it. The white-box unit test covers that site. The integration test gains the neither-named, inline-then-table-level and composite cases, which have the same root cause and the same fix site.
+- Prototype results, run at `dcc7eeeb` on 2026-10-07:
+  - Reproduction: a throwaway probe (`parser/introspect/zz_probe_fix267_test.go`, since deleted) with parent `p (x INTEGER UNIQUE, y INTEGER UNIQUE)` and `assertSchemaParity`; `cd parser && go test -short -count=1 -v -run TestZZProbeFix267 ./introspect/`:
+    - both FKs named: parsed `fa`→p[x], `fb`→p[y], `a.FKReference`=p.x; introspected `fa`→p[y], `fb`→p[x], `a.FKReference`=p.y;
+    - only the first named: introspected `fa`→p[y], `a.FKReference`=p.y;
+    - neither named: introspected FK order [y, x], `FKReference`=p.y;
+    - inline `CONSTRAINT fa REFERENCES p(x)` then table-level `fb`: names swapped;
+    - 6 of 7 variants fail parity at HEAD. The only pass, three FKs (x, y, x), comes out right by coincidence.
+  - A probe with quoted, mixed-case names (`REFERENCES "P"("X")` / `` `p`(`Y`) ``) passes with the fix, so the new check raises no false "declares no FOREIGN KEY" error.
+  - Gates:
+    - `cd parser && go test -race -count=1 ./...` → ok (containers ran);
+    - `golangci-lint run ./...` → 0 issues;
+    - `gofumpt -l introspect/` → clean;
+    - `cd cmd/sqlgen && go test -race -count=1 ./cli/...` → ok (109.7s, live PG/MySQL/SQLite generate);
+    - `go test -run TestE2EGoldenFiles -count=1 .` → ok.
+  - Fail-first:
+    - forward walk restored → `TestSQLiteIntrospect_SameColumnForeignKeys/{both_named,only_the_first_named,neither_named,…}` fails: "t: introspected foreign keys mismatch … - ReferenceColumns: []string{"x"} + ReferenceColumns: []string{"y"}" and "t.a: introspected FKReference mismatch … - Column: "x" + Column: "y"";
+    - parent-column match reverted → `TestNameDeclaredConstraints_ForeignKeyParentColumns` fails: "nameDeclaredConstraints() names for keys to p(Y), p(X) = ["fa" "fb"], want ["fb" "fa"]";
+    - the existing suite with HEAD `sqlite.go` (new tests skipped) → passes.
+  - Golden churn: none. No example sets `source:`.
+  - Patch: `.claude/prototypes/FIX-267.patch` (3 files, +108/-4).
 
 **References.**
 - PRD §5.2 "Constraints (all dialects)"; PRD §6.1.
@@ -52,6 +76,7 @@
 - **Severity:** tracked
 - **Origin:** phase 30, `parser/mysql` (`exprText`) and `parser/introspect/mysql.go`
 - **Surfaced by:** `/verify 30.5` (2026-10-05), extended by the sqlgen-reviewer pass
+- **Vetted:** corrected at `dcc7eeeb` (2026-10-07)
 
 **Issue.** PRD §6.1 says `database` and `files` describe a schema identically, and its MySQL sentence lists the catalog rewrites that may differ. Measured on MySQL 8.0 with the real introspector against the file parser, these still differ and are neither normalized nor named:
 - `DEFAULT NOW()` → introspected `current_timestamp()`, parsed `now()`
@@ -62,11 +87,68 @@
 
 The manifest's `default` / CHECK text differs by source, unannounced, for DDL as common as `created_at DATETIME DEFAULT NOW()`. `default_kind` is "function" on both, and the Go code is unaffected.
 
-**Root cause.** MySQL stores `NOW` / `LOCALTIME` / `LOCALTIMESTAMP` as `CURRENT_TIMESTAMP` (with `DEFAULT_GENERATED`), and rewrites `REGEXP` and `NOT (cmp)` in `check_clause`. `exprText` (`parser/mysql/mysql.go:59`) only drops charset introducers, so the parser keeps the DDL's spelling, while `mysqlDefault` (`parser/introspect/mysql.go:633`) and the CHECK path return the catalog's.
+**Root cause.** MySQL respells current-time synonyms. A bare keyword default `NOW` / `LOCALTIME` / `LOCALTIMESTAMP` is stored as `CURRENT_TIMESTAMP` (with `DEFAULT_GENERATED`). Inside an expression default the catalog writes `now()`: `DEFAULT (NOW())` and `DEFAULT (LOCALTIMESTAMP())` give `now()`, and `DEFAULT (NOW() + INTERVAL 1 DAY)` gives `(now() + interval 1 day)`. `CURRENT_DATE` / `CURRENT_TIME` come back as `curdate()` / `curtime()`. MySQL also rewrites `REGEXP` / `RLIKE` and folds `NOT` in every stored expression (CHECK, generated column, expression default), not only in `check_clause`. `exprText` (`parser/mysql/mysql.go:59`) only drops charset introducers, so the parser keeps the DDL's spelling, while `mysqlDefault` (`parser/introspect/mysql.go:661`) and the CHECK path (`NormalizeExpr`, `mysql.go:601`) return the catalog's.
 
 **Suggested fix.** Ruled 2026-10-05 (user): normalize the defaults, and name the CHECK rewrites.
-- In `exprText`, rewrite a function named `now`, `localtime` or `localtimestamp` to `current_timestamp`, keeping the precision argument (MySQL treats them as synonyms). Add the three cases to `TestMySQLIntrospect_Defaults` and `TestNormalizeExpr`.
-- Name `REGEXP` → `regexp_like(…)` and the `NOT (a > b)` → `a <= b` inversion in the PRD §6.1 MySQL sentence, and pin both in `TestMySQLIntrospect_CatalogRewrites` (`parser/introspect/mysql_integration_test.go`).
+- In `exprText`'s Rewrite callback, rename the time-function synonyms through an unexported `currentTimeSynonyms` map, keeping the `Fsp` precision:
+  - a `CurTimeFuncExpr` named `now`, `localtime` or `localtimestamp` becomes `current_timestamp`;
+  - `curtime` becomes `current_time`;
+  - an unqualified, zero-argument `FuncExpr` named `curdate` becomes `current_date`.
+  Both sources go through `exprText`, so bare defaults, expression defaults and `LOCALTIMESTAMP()` → `now()` all converge. Update the `exprText` and `NormalizeExpr` doc comments.
+- `TestNormalizeExpr`: add 9 cases (now, now(3), LOCALTIME, LOCALTIMESTAMP(6), now inside an expression, curdate, CURRENT_DATE, CURTIME(2), and UTC_TIMESTAMP as a non-synonym control).
+- `TestMySQLIntrospect_Defaults`: add 7 columns (NOW(), NOW(3), LOCALTIMESTAMP, LOCALTIME(6), `(LOCALTIMESTAMP() + INTERVAL 1 DAY)`, `(CURRENT_DATE)`, `(CURTIME())`), each asserted equal on both sources, plus `assertSchemaParity`.
+- `TestMySQLIntrospect_CatalogRewrites` (`parser/introspect/mysql_integration_test.go`):
+  - pin on both sources 13 CHECKs (regexp, rlike, not regexp, not cmp, `!`, not in, not between, not is null, double not, not-and, not on a bare column, not like kept) and one generated column `AS (not (qty > 3))`;
+  - its doc comment names both rewrites.
+- PRD §6.1:
+  - the normalization sentence says a MySQL current-time synonym takes its standard name under both sources;
+  - the MySQL catalog-rewrite sentence names, for any stored expression, the REGEXP/RLIKE → `regexp_like(…)` rewrite and the NOT-folding rule. That covers inverted comparisons; IN, BETWEEN and IS NULL gaining or losing NOT; double NOT cancelling; De Morgan over AND/OR; and `not x` → `0 = x`. NOT over LIKE/REGEXP is kept.
+- Changed from the original:
+  - the default normalization widens to `CURDATE()` / `CURRENT_DATE` and `CURTIME()` / `CURRENT_TIME` (same root cause, same fix site, measured mismatch);
+  - the PRD naming covers the whole NOT-folding rule and REGEXP/RLIKE in every stored expression. The original narrow wording (`NOT (a > b)` in CHECK) would leave measured differences unnamed: "u <= 1 or v <= 1", "v != 3", "0 = u";
+  - the parser still keeps those rewrites and only names them, per the ruling.
+- Auto-accepted the recommended option on 2026-10-07 (`/fix` auto-accept rule): which name do `CURDATE()` / `CURRENT_DATE` and `CURTIME()` / `CURRENT_TIME` normalize to? → `current_date()` / `current_time()`, matching the ruled `current_timestamp`. Conditions held: it was prototyped with green gates; there is no golden churn against the `curdate` / `curtime` alternative, since no example uses either; it adds no public surface (`currentTimeSynonyms` is unexported, and `NormalizeExpr` changes only its doc); and it reverses no ruling (it adds PRD text for an unspecified case).
+- Prototype results, run at `dcc7eeeb` on 2026-10-07:
+  - Reproduction: a throwaway probe (`parser/introspect/zz_probe_fix268_test.go`, since deleted) on testcontainers MySQL 8.0; `cd parser && go test -count=1 -run TestZZProbeFix268 ./introspect/`. `assertSchemaParity` diff (-parsed +introspected):
+    - `Default: "now()"` / `"current_timestamp()"`
+    - `"now(3)"` / `"current_timestamp(3)"`
+    - `"localtimestamp()"` / `"current_timestamp()"`
+    - `"localtime()"` / `"current_timestamp()"`
+    - `"localtimestamp(6)"` / `"current_timestamp(6)"`
+    - `"current_date()"` / `"curdate()"`
+    - `"current_time()"` / `"curtime()"`
+    - `"localtimestamp()"` / `"now()"` (from `DEFAULT (LOCALTIMESTAMP())`)
+    - `CheckExpression: "m regexp '^[a-z]+$'"` / `"regexp_like(m, '^[a-z]+$')"`
+    - `"not u > 200"` / `"u <= 200"`
+    All five of the Issue's bullets reproduce. With the prototype, only the named REGEXP and NOT rewrites remain.
+  - NOT-folding cases measured on raw catalog text:
+    - `!(v < 0)` → "v >= 0"
+    - `not (v = 3)` → "v != 3"
+    - `not (u <> 9)` → "u = 9"
+    - `not (v in (1,2))` → "v not in (1, 2)"
+    - `not (v not in (4,5))` → "v in (4, 5)"
+    - `not (u between 1 and 5)` → "u not between 1 and 5"
+    - `not (u is null)` → "u is not null"
+    - `not (not (u > 7))` → "u > 7"
+    - `not (u > 1 and v > 1)` → "u <= 1 or v <= 1"
+    - `not (u > 1 or v is null)` → "u <= 1 and v is not null"
+    - `not (u)` → "0 = u"
+    - `not (m like 'z%')` → kept as "not m like 'z%'"
+    - `m not regexp 'y'` → "not regexp_like(m, 'y')"
+    - `m rlike 'x'` → "regexp_like(m, 'x')"
+    - generated column `AS (not (u > 3))` → "u <= 3"; expression default `DEFAULT (not (1 > 2))` → "1 <= 2"
+  - Gates:
+    - `cd parser && go test -race -count=1 ./...` → ok (MySQL 8.0 and PG 16 containers);
+    - `golangci-lint run ./...` → 0 issues;
+    - `gofumpt -l parser/introspect parser/mysql` → clean;
+    - `cd cmd/sqlgen && go test -race -count=1 ./...` → all ok (incl. `TestE2EGoldenFiles`, cli, mcp/integration).
+  - Fail-first:
+    - `CurTimeFuncExpr` rename reverted → `TestNormalizeExpr` fails: `NormalizeExpr("NOW()") = "now()", want "current_timestamp()"`. `TestMySQLIntrospect_Defaults` also fails: `- "now_at": "current_timestamp()", + "now_at": "now()"`, and parity shows `- Default: "now(3)" + Default: "current_timestamp(3)"`.
+    - `curdate` case reverted → `NormalizeExpr("curdate()") = "curdate()", want "current_date()"` and `- "today": "current_date()", + "today": "curdate()"`.
+    - The `_CatalogRewrites` additions are test-only pins of database behavior and pass with `exprText` at HEAD.
+    - The existing suite without the fix (`go test -race -count=1 ./mysql/ ./introspect/` at HEAD) → passes.
+  - Golden churn: none (no example DDL uses a current-time synonym).
+  - Patch: `.claude/prototypes/FIX-268.patch` (4 files, +114/-28).
 
 **References.**
 - PRD §6.1; `docs/design/INTROSPECTION.md` Q5, Q13, M9.
@@ -81,15 +163,64 @@ The manifest's `default` / CHECK text differs by source, unannounced, for DDL as
 - **Severity:** tracked
 - **Origin:** phase 30, `parser/introspect` (`sqlite.go`)
 - **Surfaced by:** `/verify 30.6` (2026-10-05), sqlgen-reviewer measurement; pre-existing at `0260df8e`
+- **Vetted:** ready at `dcc7eeeb` (2026-10-07; re-vetted after the ruling)
 
 **Issue.** A SQLite partial index's `Where` text differs by source, and the manifest carries it, against PRD §6.1. `CREATE UNIQUE INDEX ux ON t (a) WHERE a IS NOT NULL` parses as `"a" NOT NULL` but introspects as the raw `a IS NOT NULL`.
 
-**Root cause.** `indexPartialWhere` (`parser/introspect/sqlite.go:554`) returns the WHERE clause of the stored `CREATE INDEX` text as written, while the file parser renders it through rqlite/sql. Q10 re-parses each table's stored `CREATE TABLE`, but not its indexes.
+**Root cause.** `indexPartialWhere` (`parser/introspect/sqlite.go:564`, called at `:551`) returns the WHERE clause of the stored `CREATE INDEX` text as written, while the file parser renders it through rqlite/sql. Q10 re-parses each table's stored `CREATE TABLE`, but not its indexes.
 
 **Suggested fix.** Ruled 2026-10-05 (user): re-parse index DDL.
 - In `indexPartialWhere`, read the index's `sqlite_master.sql` with the SQLite file parser and take `Where` in the parser's form, as 30.6 does for tables.
 - Add a partial-index case (`WHERE a IS NOT NULL`, plus a comparison predicate) to `TestSQLiteIntrospect_UniqueAndPKAutoIndexes` or a new `_PartialIndexes` test, compared through `assertSchemaParity`.
 - A stored `CREATE INDEX` the parser cannot read fails introspection, in the class PRD §6.3 already names; extend that list if a new construct turns up.
+- Vet correction (prototyped): parse the index statement by itself through a new exported `sqlite.IndexWhere(ddl string) (string, error)`, not table DDL plus index DDL through `sqlite.New().Parse`. The reason: the file parser looks up an index's `ON` table case-sensitively and silently drops the index when the case differs. Measured: `CREATE TABLE Users (a TEXT); CREATE UNIQUE INDEX ux2 ON users (a) WHERE a IS NOT NULL` → `casemismatch parsed Users: []`. `IndexWhere` and `parseCreateIndex` share an unexported `indexWhere` (`rsql.ExprString`), so both sources produce the text by one path.
+  - `indexPartialWhere` calls `sqlite.IndexWhere` on the stored `sqlite_master.sql`. A parse failure returns `*SchemaError` (`introspect sqlite index <name>: parsing CREATE INDEX: …`).
+  - The hand-written WHERE scanner and its test are deleted: `extractSQLiteIndexWhere`, `skipSQLiteInert`, `sqliteScanPast`, `matchesSQLiteWhere`, `isSQLiteSeparator`, `TestExtractSQLiteIndexWhere`. `docs/design/INTROSPECTION.md:86`/`:281` cite them in dated audit lines, which stay as they are.
+  - New tests:
+    - `TestSQLiteIntrospect_PartialIndexes`: three predicates (lowercase `where`, `'x WHERE y'` in a literal, `/* WHERE */` in a comment) plus `assertSchemaParity`;
+    - `TestSQLiteIntrospect_UnreadablePartialIndex`: `IS NOT DISTINCT FROM` fails both paths, as a `SchemaError` on introspection;
+    - `TestIndexWhere`: table-driven, 7 rows.
+  - PRD §6.3: the "constraint names and CHECK text" bullet says a partial index's predicate comes from its stored CREATE INDEX, read with the file parser. The "DDL the file parser cannot read" bullet covers partial indexes and adds `IS [NOT] DISTINCT FROM` in a partial index's `WHERE`.
+- Pending the user's ruling: the prototype newly crashes introspection of a partial index that uses `LIKE … ESCAPE`. `rsql.ExprString` panics on it. The files source already panics on it, and introspection used to return the raw text. Measured with `CREATE INDEX ix ON t (a) WHERE a LIKE 'x%' ESCAPE '\'` under `source: database`: HEAD → exit 0, `"where": "a LIKE 'x%' ESCAPE '\\'"`; prototype → exit 2, `panic: sql.BinaryExpr.String(): invalid op ESCAPE`.
+  - (a) Land as prototyped. Introspection matches files, which already panics on this index and on any CHECK with ESCAPE. This is a crash regression for database-only users until the ESCAPE panic is fixed.
+  - (b) Recommended by the vet: a `recover` in `indexWhere` that turns the panic into a parse error, and name `LIKE … ESCAPE` in the PRD §6.3 list. Measured (temporary edit): exit 3, `Schema error: introspect sqlite index ix: rendering CREATE INDEX predicate: sql.BinaryExpr.String(): invalid op ESCAPE`. Because `parseCreateIndex` shares `indexWhere`, files gets the same error. The CHECK, DEFAULT and generated-column sites would still panic. Not in the patch.
+  - (c) Fix the ESCAPE panic at its root (all six `rsql.ExprString` sites in `parser/sqlite/sqlite.go`) as its own entry first, then land FIX-269.
+- The user ruled on 2026-10-07: option (b). `indexWhere` recovers the ESCAPE panic into a parse error (a schema error on both sources), and PRD §6.3 names `LIKE … ESCAPE` in a partial index's `WHERE`. The CHECK, DEFAULT and generated-column panic stays in the backlog.
+- Prototype results, run at `dcc7eeeb` on 2026-10-07:
+  - Reproduction:
+    - parser probe (`zz_probe`, `sqliteSchemas` + `assertSchemaParity`, `CREATE UNIQUE INDEX ux ON t (a) WHERE a IS NOT NULL; CREATE INDEX ix ON t (b) WHERE b>0 AND a<>'x'`), `go test -count=1 -run TestZZProbeFIX269 ./introspect/` → `- Where: "a" NOT NULL` / `+ Where: "a IS NOT NULL"`, and `- Where: "b" > 0 AND "a" != 'x'` / `+ Where: "b>0 AND a<>'x'"`;
+    - end to end with the HEAD CLI (json_layout single): `-c files.yml` → `"where": "\"b\" > 0"`, `"where": "\"a\" NOT NULL"`; `-c database.yml` → `"where": "b>0"`, `"where": "a IS NOT NULL"`. With the prototype CLI, `diff -r out-files out-database` → identical.
+  - Gates:
+    - `cd parser && go test -race -count=1 ./...` → ok (PG16 + MySQL 8.0 containers);
+    - `golangci-lint run ./sqlite/... ./introspect/...` → 0 issues; `gofumpt -l parser/` → clean;
+    - `cd cmd/sqlgen && go test -race -count=1 -run 'TestGenerate_.*/sqlite' ./cli/` → ok.
+  - Fail-first:
+    - `parser/introspect/sqlite.go` at HEAD, new tests kept → `TestSQLiteIntrospect_PartialIndexes` fails: `"t_a_live": "a IS NOT NULL"` (want `"a" NOT NULL`), plus the parity diff. `TestSQLiteIntrospect_UnreadablePartialIndex` fails: "Introspect() error = <nil>, want the parse error for index t_ab".
+    - `IndexWhere` is new. The `parseCreateIndex` refactor is behavior-neutral, and `TestCreateIndex_PartialWhere` still passes.
+    - The existing suite without the fix (`./introspect/ ./sqlite/` at HEAD) → passes.
+  - Golden churn: none.
+  - Patch (first vet): 6 files, +130/-138, since replaced.
+- Prototype results for the ruled option (b), run at `dcc7eeeb` on 2026-10-07:
+  - Shape: the unexported `indexWhere` returns `(where string, err error)`, and a deferred `recover` turns an `rsql.ExprString` panic into `fmt.Errorf("rendering CREATE INDEX predicate: %v", r)`. `IndexWhere` returns that error, and `parseCreateIndex` wraps it as `index <name>: …`. PRD §6.3's unreadable-DDL list reads "`IS [NOT] DISTINCT FROM` or `LIKE … ESCAPE` in a partial index's `WHERE`." The CHECK, DEFAULT and generated-column sites are untouched.
+  - Tests:
+    - a `TestIndexWhere` row "LIKE ESCAPE predicate";
+    - new `TestCreateIndex_UnrenderablePredicate` (files path): "parsing schema.sql: index ix: rendering CREATE INDEX predicate: sql.BinaryExpr.String(): invalid op ESCAPE";
+    - `TestSQLiteIntrospect_UnreadablePartialIndex`, now table-driven over `IS NOT DISTINCT FROM` and `LIKE ESCAPE`: each wants a `*SchemaError` from introspection and a parse error from `sqlite.New().Parse`.
+  - End to end with the prototype CLI, `CREATE INDEX ix ON t (a) WHERE a LIKE 'x%' ESCAPE '\'`:
+    - `source: database` → exit 3, "Schema error: introspect sqlite index ix: rendering CREATE INDEX predicate: sql.BinaryExpr.String(): invalid op ESCAPE";
+    - `source: files` → exit 3, no panic, "Schema error: parsing schema files: parsing <path>/schema.sql: parsing <path>/schema.sql: index ix: rendering CREATE INDEX predicate: …";
+    - the doubled "parsing <path>:" predates this fix (backlog).
+  - Gates:
+    - `cd parser && go test -race -count=1 ./...` → ok (containers ran, 0 SKIP);
+    - `golangci-lint run ./sqlite/... ./introspect/...` → 0 issues; `gofumpt -l parser/` → clean;
+    - `cd cmd/sqlgen && go test -race -count=1 -run 'TestGenerate_.*/sqlite' ./cli/` → ok;
+    - `TestE2EGoldenFiles` → ok.
+  - Fail-first:
+    - `recover` removed → `TestIndexWhere/LIKE_ESCAPE_predicate`, `TestCreateIndex_UnrenderablePredicate` and `TestSQLiteIntrospect_UnreadablePartialIndex/LIKE_ESCAPE` fail: "panic: sql.BinaryExpr.String(): invalid op ESCAPE [recovered, repanicked]";
+    - with `parser/introspect/sqlite.go` reverted, the earlier fail-first holds (`- "t_a_live": \`"a" NOT NULL\`` / `+ "t_a_live": "a IS NOT NULL"`; "Introspect() error = <nil>, want a *introspect.SchemaError");
+    - the existing suite at `dcc7eeeb` → passes.
+  - Golden churn: none.
+  - Patch: `.claude/prototypes/FIX-269.patch` (6 files, +173/-137), the full diff against `dcc7eeeb`.
 
 **References.**
 - PRD §6.1, §6.3; `docs/design/INTROSPECTION.md` Q10.
@@ -103,6 +234,7 @@ The manifest's `default` / CHECK text differs by source, unannounced, for DDL as
 - **Severity:** tracked
 - **Origin:** phase 30, `cmd/sqlgen/gotype`
 - **Surfaced by:** `/verify 30.4` (2026-10-05)
+- **Vetted:** ready at `dcc7eeeb` (2026-10-07)
 
 **Issue.** Since 30.4, both schema sources write a PostgreSQL type in its column's own schema bare. So an `overrides.types."app.status_enum"` key no longer matches the column `app.accounts.status`, whose type is now written `status_enum`, and nothing warns (`config/validate.go` checks only `nullable`). An accepted key that silently does nothing is the PRD §4.13 accept-and-drop pattern.
 
@@ -112,6 +244,20 @@ The manifest's `default` / CHECK text differs by source, unannounced, for DDL as
 - In the override and integration steps, for a resolver scoped by `ForSchema`, look up `<ownerSchema>.<type>` (with and without modifiers, `[]` kept) before the bare keys, so a qualified key keeps matching its own-schema columns. A cross-schema column's type is already written qualified.
 - Tests: a `gotype` case for a qualified key on an own-schema column, a bare key still matching, and a qualified key not leaking to another schema's same-named type; plus a `cli` codegen case.
 - PRD §7.1 "How steps 3–5 match": state the owner-qualified lookup.
+- Prototype results, run at `dcc7eeeb` on 2026-10-07:
+  - Shape: `lookupOverride` becomes a `*Resolver` method. When `ownerSchema != ""` and the type is not already qualified, it tries `<owner>.<key>` for every `lookupKeys` key, then the bare keys. All four call sites use it (table and global overrides, scoped and global integrations), so the order of the chain is unchanged. The `ForSchema` doc comment, which said "Overrides, integrations and built-in mappings are unchanged", is reworded.
+  - Reproduction: a throwaway `cmd/sqlgen/cli/zz_probe_fix270_test.go` (since deleted) with enum `app.status_enum`, domain `app.positive_int`, tables `app.accounts` and `users`, and keys `"app.status_enum"` → `ext.Status` and `"app.positive_int"` → `ext.Score`. `go test ./cli/ -run TestZZProbeFIX270 -v` → `Account: map[ID:int64 Score:int32 Status:StatusEnum Statuses:StatusEnumSlice]`, `User: map[ID:int64 Score:ext.Score Status:ext.Status]`, stderr `""`. Both keys are silently ignored on the own-schema table. At `0260df8e` (before 30.4) the same probe gave `Account{Status: ext.Status, Score: ext.Score, …}`.
+  - Tests: `TestForSchema_QualifiedOverrideKey` (gotype, 11 cases: own-schema and cross-schema columns, no leak to `billing.status_enum`, no owner, domain key, bare key still matches, qualified beats bare, `[]` kept, modifier-stripped, table-scoped, table scope still precedes global) and `TestGenerate_QualifiedOverrideKey` (cli codegen; `Invoice.Status` stays `BillingStatusEnum`). PRD §7.1 also states that a qualified key beats a bare one.
+  - Gates (cmd/sqlgen):
+    - `gofumpt -l` and `go vet` → clean;
+    - `go test -race -count=1 ./gotype/... ./gen/... ./cli/... ./config/...` → ok (cli 92s, gen 63s);
+    - `golangci-lint run ./gotype/... ./cli/...` → 0 issues;
+    - `TestE2EGoldenFiles` → ok.
+  - Fail-first:
+    - qualified-key block disabled → `TestForSchema_QualifiedOverrideKey` fails 6/11, e.g. `ForSchema("app").Resolve("status_enum") = "AppStatusEnum", want "ext.Status"` and `ForSchema("app").Resolve("status_enum") = "ext.Bare", want "ext.Qualified"`. `TestGenerate_QualifiedOverrideKey` fails: `- "Status": "ext.Status" + "Status": "AppStatusEnum"`;
+    - the existing suite without the fix → passes.
+  - Golden churn: none.
+  - Patch: `.claude/prototypes/FIX-270.patch` (4 files, +183/-9).
 
 **References.**
 - PRD §7.1, §4.13; 30.4 Completion Record ("Owner schema first").
