@@ -1680,8 +1680,8 @@ needed: §7 of the doc lists every case.
   - a `CREATE TABLE` of an existing table is an error
   - view annotation merging gives one view
   - an `introspect.tables` filter
-- [ ] PG-only check with the integration container: a file FK into a DB-only table resolves under
-  `both`. Moved to 30.10's suite (listed there).
+- [x] PG-only check with the integration container: a file FK into a DB-only table resolves under
+  `both`. Landed in 30.10 (`TestGenerate_BothSourceForeignKeys`).
 
 ### Completion Record
 
@@ -2004,20 +2004,20 @@ columns differed by source and that the files path was unsound:
 
 **PRD Reference:** Sections 6.1, 8.1.7, 16.2 (design doc §7.4, §12)
 
-**Status:** Not Started
+**Status:** Complete
 
 ### Tasks
 
-- [ ] Add `cmd/sqlgen/cli/introspect_integration_test.go`.
+- [x] Add `cmd/sqlgen/cli/introspect_integration_test.go`.
   - It starts PG16 and MySQL 8.0 lazily through `sync.Once` helpers (not `TestMain`) and uses a
     temp file for SQLite.
   - It skips under `testing.Short()`.
   - `testcontainers-go` and its postgres and mysql modules become test-only requirements in
     `cmd/sqlgen/go.mod`.
-- [ ] Add a `dialectFixture` slice: starter, DDL, config fragment and a stated reason for any
+- [x] Add a `dialectFixture` slice: starter, DDL, config fragment and a stated reason for any
   test that doesn't apply. Add a `writeTestConfigWithSource` helper next to `writeTestConfig`
   (`cli_test.go:1169`).
-- [ ] Implement every design-doc §7.4 test as `postgres` / `mysql` / `sqlite` subtests.
+- [x] Implement every design-doc §7.4 test as `postgres` / `mysql` / `sqlite` subtests.
 
 ### Acceptance Criteria
 
@@ -2029,35 +2029,101 @@ columns differed by source and that the files path was unsound:
 
 ### Tests Required
 
-- [ ] `TestGenerate_DatabaseSourceMatchesFiles`, per dialect DDL as in design doc §7.4:
+- [x] `TestGenerate_DatabaseSourceMatchesFiles`, per dialect DDL as in design doc §7.4:
   - **PG:** enum, domain, composite PK, cross-schema FK, identity, `uuid` / `numeric` / `jsonb`,
     a generated column, comments, an annotated view
   - **MySQL:** ENUM / SET, composite PK, FKs, AUTO_INCREMENT, `DEFAULT ''`, unsigned ints, a
     generated column, comments, a view
   - **SQLite:** a rowid alias, a composite PK out of column order, a self-referencing FK, a
     generated column, UNIQUE, CHECK, a view
-- [ ] `TestGenerate_DatabaseSourceCompiles`: `go build` of each dialect's `database` output
+- [x] `TestGenerate_DatabaseSourceCompiles`: `go build` of each dialect's `database` output
   (`GOWORK=off` with a `replace` to the runtime module).
-- [ ] `TestGenerate_BothSourceAppliesOverlay`: overlay applied, and `CREATE TABLE` of an
+- [x] `TestGenerate_BothSourceAppliesOverlay`: overlay applied, and `CREATE TABLE` of an
   existing table → exit 3.
-- [ ] `TestGenerate_DatabaseSourceIgnoresPaths`.
-- [ ] `TestGenerate_IntrospectFilters`: `tables` on all three dialects;
+- [x] `TestGenerate_DatabaseSourceIgnoresPaths`.
+- [x] `TestGenerate_IntrospectFilters`: `tables` on all three dialects;
   `schemas` / `exclude_schemas` on PG.
-- [ ] `TestGenerate_IntrospectedViewWithAnnotation`: one view, with `@pk` applied.
-- [ ] `TestGenerate_ConnectionFailureExitCode`: an unreachable host (PG, MySQL) or an unreadable
+- [x] `TestGenerate_IntrospectedViewWithAnnotation`: one view, with `@pk` applied.
+- [x] `TestGenerate_ConnectionFailureExitCode`: an unreachable host (PG, MySQL) or an unreadable
   file (SQLite) → 4 for `generate` and `validate`; an overlay schema error → 3.
-- [ ] PG `both`: a file FK into a DB-only table resolves (from 30.8).
-- [ ] PG `both`: a file FK whose target neither the database nor the files define → exit 3 for
+- [x] PG `both`: a file FK into a DB-only table resolves (from 30.8).
+- [x] PG `both`: a file FK whose target neither the database nor the files define → exit 3 for
   `generate` and `validate` (moved from 30.9: it needs a live PostgreSQL). It exited 4 before
   30.9, per the FIX-243 measurement.
-- [ ] PG `database` with `introspect.tables` cutting an FK: no unresolved-FK error, and no
+- [x] PG `database` with `introspect.tables` cutting an FK: no unresolved-FK error, and no
   relationship into the filtered-out table (the 30.8 ruling, PRD §5.5).
-- [ ] Manual: a throwaway `sqlgen.yml` with `source: database` per dialect → `sqlgen generate` →
+- [x] Manual: a throwaway `sqlgen.yml` with `source: database` per dialect → `sqlgen generate` →
   `go build ./...`. Record it in the Completion Record.
 
 ### Completion Record
 
-_Filled in when complete: files changed, commit references, notes._
+- **Completed:** 2026-10-07 (`/implement 30.10`, `/done 30.10`). All 13 Phase 30 sub-items are
+  complete; next is `/close-phase 30`.
+- **Files:**
+  - `cmd/sqlgen/cli/introspect_integration_test.go` (new): lazy PG16 / MySQL 8.0 containers through
+    `sync.Once` (Ryuk removes them), a fresh database per test, a temp file for SQLite, a `-short`
+    skip, and the `dialectFixture` slice with a stated skip reason for each PG-only check.
+  - `cmd/sqlgen/cli/cli_test.go`: `testSource` and `writeTestConfigWithSource` (manifest on,
+    `json_layout: single`).
+  - `cmd/sqlgen/go.mod` / `go.sum`: `testcontainers-go` and its postgres and mysql modules, v0.42.0,
+    the versions `parser` uses.
+  - `docs/PRD.md` §6.1: names the view `source` difference (below).
+- **Tests** (each runs as `postgres` / `mysql` / `sqlite` subtests):
+  - `TestGenerate_DatabaseSourceMatchesFiles`: both runs write to the same output path with the
+    same config path and `--manifest-timestamp`, and the trees are compared byte for byte after
+    the parity exceptions. The manifest JSON and markdown are included.
+  - `TestGenerate_DatabaseSourceCompiles`: a temp module with a `replace` to this checkout and
+    the root `go.sum`, `GOWORK=off GOFLAGS=-mod=mod go build ./...`.
+  - `TestGenerate_BothSourceAppliesOverlay`, `TestGenerate_DatabaseSourceIgnoresPaths`,
+    `TestGenerate_IntrospectFilters` (`tables` on all three; `schemas` / `exclude_schemas` on PG),
+    `TestGenerate_IntrospectedViewWithAnnotation` (one view in the manifest, `pk.kind: single`).
+  - `TestGenerate_ConnectionFailureExitCode`: PG / MySQL on `127.0.0.1:1`, SQLite a missing file
+    and a directory → 4; an overlay `ALTER TABLE` of a missing table → 3. `generate` and
+    `validate` each.
+  - `TestGenerate_BothSourceForeignKeys`: a file FK into a DB-only table resolves on all three
+    (the manifest lists `users` → `Post`); on PG a file FK into `ghosts` → 3 for `generate` and
+    `validate`.
+  - `TestGenerate_IntrospectTablesCutsForeignKey`: `introspect.tables: [posts]` exits 0 on all
+    three, with no `users` entity and no relationship from `posts`. The MySQL fixture uses a
+    table-level `FOREIGN KEY`, since MySQL ignores a `REFERENCES` on the column.
+  - MySQL and SQLite skip only the `schemas` filter (PRD §4.4) and the unresolved-target check
+    (PRD §5.5: neither database checks an FK target), each with that reason.
+- **One parity exception, ruled in 30.8b and named here.** A view's manifest `source` is the view
+  file's text under `files` (annotation comments included) and the stored definition under
+  `database`: PG's `pg_get_viewdef` deparse, MySQL's qualified and backquoted text, SQLite's
+  statement without its `;`. It differs on all three dialects. `sourceParityExceptions` drops
+  the view entities' `source` from the JSON manifest and the `Source` line from the markdown
+  pages. PRD §6.1 now states it. Nothing else differed: `generated_at` is a clock, not a source
+  difference, and is pinned by the flag.
+- **Fail-first** (each mutation reverted afterwards):
+  - Without the exception, all three dialects fail on the view `source`.
+  - MySQL introspector dropping column comments: the differential fails on `Display name`.
+  - The FK check covering keys the database already has: the cut-FK test exits 3.
+  - View files appended rather than merged: the annotation test fails on all three.
+  - `database` reading `paths`: the ignores-paths test fails on all three.
+  - Every parse error mapped to 3: the unreachable cases fail (exit 3).
+  - `both` skipping `Merge`: the overlay test (all three) and both PG FK cases fail.
+- **Manual** (2026-10-07): a throwaway `sqlgen.yml` with `source: database` per dialect, against
+  `postgres:16-alpine` and `mysql:8.0` containers and a SQLite file (enum, identity, `uuid`,
+  `jsonb`, generated columns, ENUM / SET, composite PKs, FKs, a view each). The built `sqlgen
+  generate` wrote 10 / 11 / 9 files (2 tables and 1 view each), and `GOWORK=off go build ./...`
+  passed on all three.
+- **Auto-review** (`sqlgen-reviewer`): PRD 4/4, tests 10/10, fail-first spot check CONFIRMED
+  (normalizer replaced by the identity: all three fail on the view `source` only). Applied:
+  - **The FK skips were too wide.** Both FK tests skipped whole on MySQL / SQLite with a reason
+    that covers only the unresolved-target subtests. The PRD §5.5 resolution and filter rules
+    hold on every dialect, so both now run there and only `target nowhere` skips. With `both`
+    skipping `Merge`, `target only in the database` fails on all three.
+  - The markdown normalizer now matches only a `Source` line directly before `## Files`, and a
+    view whose manifest `source` is empty fails the test instead of being normalized away.
+  - The overlay conflict asserts the merge error's own `merge both mode` prefix.
+  - The 30.8 task line for the PG `both` FK check is checked off.
+- **Ruled with the user 2026-10-07:** a MySQL view's `source` under `database` keeps the database
+  name it is qualified with (``from `app`.`accounts` ``), though it then varies by environment.
+- **Gates:** `make check`, `make check-examples` (`cmd/sqlgen/go.mod` changed) and `make test-integration`
+  pass; `go test -race -count=1 ./cli/...` in `cmd/sqlgen` passes.
+- **Ruled with the user 2026-10-07:** a view's manifest `source` under `files` stays the annotation
+  file's text, not its path. PRD §30.4.2 now says so, matching the code; no golden moved.
 
 ---
 
