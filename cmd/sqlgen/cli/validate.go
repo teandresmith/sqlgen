@@ -43,12 +43,15 @@ func makeValidateRunE(flags *cliFlags) func(*cobra.Command, []string) error {
 
 		// 3. Parse schema — attempt even if pre-parse had errors to collect
 		// as much feedback as possible.
-		schema, err := parseSchema(cfg)
-		if err != nil {
-			if exitCode == ExitSuccess {
-				exitCode = ExitSchema
+		var schema *parser.Schema
+		if !connectionRejected(cfg) {
+			schema, err = parseSchema(cmd.Context(), cfg)
+			if err != nil {
+				if exitCode == ExitSuccess {
+					exitCode = ExitSchema
+				}
+				allErrors = append(allErrors, splitJoinedErrors(err)...)
 			}
-			allErrors = append(allErrors, splitJoinedErrors(err)...)
 		}
 
 		// 4. Post-parse validation, whenever there is a schema to check. An
@@ -110,4 +113,12 @@ func makeValidateRunE(flags *cliFlags) func(*cobra.Command, []string) error {
 		}
 		return nil
 	}
+}
+
+// connectionRejected reports that the source reads the database and
+// pre-parse rejected the connection block. validate does not try it, since
+// its errors are already reported.
+func connectionRejected(cfg *config.RootConfig) bool {
+	introspected := cfg.Input.Source == config.SourceDatabase || cfg.Input.Source == config.SourceBoth
+	return introspected && len(cfg.Input.Connection.Errors(cfg.Input.Dialect)) > 0
 }

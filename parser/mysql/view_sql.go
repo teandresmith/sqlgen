@@ -33,21 +33,23 @@ func ParseViewSQL(sql []byte) (parser.ViewSQL, error) {
 		return parser.ViewSQL{}, fmt.Errorf("no CREATE VIEW statement found")
 	}
 
-	sel, ok := cv.Select.(*sqlparser.Select)
-	if !ok {
-		return parser.ViewSQL{}, fmt.Errorf("CREATE VIEW query is not a simple SELECT")
-	}
-
 	var schema string
 	if q := cv.ViewName.Qualifier; !q.IsEmpty() {
 		schema = q.String()
 	}
+	sel, ok := cv.Select.(*sqlparser.Select)
+	if !ok {
+		return parser.ViewSQL{}, &parser.ViewQueryError{Schema: schema, Name: cv.ViewName.Name.String(), Err: fmt.Errorf("CREATE VIEW query is not a simple SELECT")}
+	}
+
+	aliases, outer := extractTableAliases(sel.From)
 
 	return parser.ViewSQL{
 		Name:         cv.ViewName.Name.String(),
 		Schema:       schema,
 		Columns:      extractSelectExprs(sel.SelectExprs.Exprs),
-		TableAliases: extractTableAliases(sel.From),
+		TableAliases: aliases,
+		OuterAliases: outer,
 	}, nil
 }
 
@@ -139,34 +141,42 @@ func extractFirstColNameArg(args []sqlparser.Expr, col *parser.ViewSelectColumn)
 	}
 }
 
-// extractTableAliases builds a map of table alias → table name from FROM clause.
-func extractTableAliases(from []sqlparser.TableExpr) map[string]string {
-	aliases := make(map[string]string)
+// extractTableAliases builds a map of table alias → table name from FROM
+// clause, and the set of aliases on the outer side of a join.
+func extractTableAliases(from []sqlparser.TableExpr) (aliases map[string]string, outer map[string]bool) {
+	aliases = make(map[string]string)
+	outer = make(map[string]bool)
 	for _, te := range from {
-		collectTableAliases(te, aliases)
+		collectTableAliases(te, false, aliases, outer)
 	}
-	return aliases
+	return aliases, outer
 }
 
-func collectTableAliases(te sqlparser.TableExpr, aliases map[string]string) {
+// collectTableAliases records te's table aliases. isOuter marks a table
+// expression on the outer side of an enclosing join.
+func collectTableAliases(te sqlparser.TableExpr, isOuter bool, aliases map[string]string, outer map[string]bool) {
 	switch t := te.(type) {
 	case *sqlparser.AliasedTableExpr:
 		if tn, ok := t.Expr.(sqlparser.TableName); ok {
-			tableName := tn.Name.String()
+			key := tn.Name.String()
 			if !t.As.IsEmpty() {
-				aliases[t.As.String()] = tableName
-			} else {
-				aliases[tableName] = tableName
+				key = t.As.String()
+			}
+			aliases[key] = tn.Name.String()
+			if isOuter {
+				outer[key] = true
 			}
 		}
 
 	case *sqlparser.JoinTableExpr:
-		collectTableAliases(t.LeftExpr, aliases)
-		collectTableAliases(t.RightExpr, aliases)
+		left := isOuter || t.Join == sqlparser.RightJoinType || t.Join == sqlparser.NaturalRightJoinType
+		right := isOuter || t.Join == sqlparser.LeftJoinType || t.Join == sqlparser.NaturalLeftJoinType
+		collectTableAliases(t.LeftExpr, left, aliases, outer)
+		collectTableAliases(t.RightExpr, right, aliases, outer)
 
 	case *sqlparser.ParenTableExpr:
 		for _, expr := range t.Exprs {
-			collectTableAliases(expr, aliases)
+			collectTableAliases(expr, isOuter, aliases, outer)
 		}
 	}
 }

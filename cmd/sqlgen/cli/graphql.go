@@ -82,7 +82,7 @@ func newGraphQLGenCmd(flags *cliFlags) *cobra.Command {
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			errOut := cmd.ErrOrStderr()
 
-			cfg, schema, err := loadAndValidate(flags, errOut)
+			cfg, schema, err := loadAndValidate(cmd.Context(), flags, errOut)
 			if err != nil {
 				return err
 			}

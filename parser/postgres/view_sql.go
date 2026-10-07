@@ -45,36 +45,50 @@ func ParseViewSQL(sql []byte, defaultSchema string) (parser.ViewSQL, error) {
 }
 
 func parseViewStmt(vs *pg_query.ViewStmt, defaultSchema string) (parser.ViewSQL, error) {
+	schema := cmp.Or(vs.View.Schemaname, defaultSchema)
 	selectStmt, ok := vs.Query.Node.(*pg_query.Node_SelectStmt)
 	if !ok {
-		return parser.ViewSQL{}, fmt.Errorf("CREATE VIEW query is not a SELECT statement")
+		return parser.ViewSQL{}, &parser.ViewQueryError{Schema: schema, Name: vs.View.Relname, Err: fmt.Errorf("CREATE VIEW query is not a SELECT statement")}
 	}
 	sel := selectStmt.SelectStmt
+	// A UNION, INTERSECT or EXCEPT has no single SELECT list whose columns
+	// can be traced to a table.
+	if sel.Op != pg_query.SetOperation_SETOP_NONE {
+		return parser.ViewSQL{}, &parser.ViewQueryError{Schema: schema, Name: vs.View.Relname, Err: fmt.Errorf("CREATE VIEW query is not a simple SELECT")}
+	}
 
-	aliases, schemas := extractFromAliases(sel.FromClause, defaultSchema)
+	aliases, schemas, outer := extractFromAliases(sel.FromClause, defaultSchema)
 	return parser.ViewSQL{
 		Name:         vs.View.Relname,
-		Schema:       cmp.Or(vs.View.Schemaname, defaultSchema),
+		Schema:       schema,
 		Columns:      extractResTargets(sel.TargetList),
 		TableAliases: aliases,
 		TableSchemas: schemas,
+		OuterAliases: outer,
 	}, nil
 }
 
 func parseMatviewStmt(cs *pg_query.CreateTableAsStmt, defaultSchema string) (parser.ViewSQL, error) {
+	schema := cmp.Or(cs.Into.Rel.Schemaname, defaultSchema)
 	selectStmt, ok := cs.Query.Node.(*pg_query.Node_SelectStmt)
 	if !ok {
-		return parser.ViewSQL{}, fmt.Errorf("CREATE MATERIALIZED VIEW query is not a SELECT statement")
+		return parser.ViewSQL{}, &parser.ViewQueryError{Schema: schema, Name: cs.Into.Rel.Relname, Err: fmt.Errorf("CREATE MATERIALIZED VIEW query is not a SELECT statement")}
 	}
 	sel := selectStmt.SelectStmt
+	// A UNION, INTERSECT or EXCEPT has no single SELECT list whose columns
+	// can be traced to a table.
+	if sel.Op != pg_query.SetOperation_SETOP_NONE {
+		return parser.ViewSQL{}, &parser.ViewQueryError{Schema: schema, Name: cs.Into.Rel.Relname, Err: fmt.Errorf("CREATE MATERIALIZED VIEW query is not a simple SELECT")}
+	}
 
-	aliases, schemas := extractFromAliases(sel.FromClause, defaultSchema)
+	aliases, schemas, outer := extractFromAliases(sel.FromClause, defaultSchema)
 	return parser.ViewSQL{
 		Name:         cs.Into.Rel.Relname,
-		Schema:       cmp.Or(cs.Into.Rel.Schemaname, defaultSchema),
+		Schema:       schema,
 		Columns:      extractResTargets(sel.TargetList),
 		TableAliases: aliases,
 		TableSchemas: schemas,
+		OuterAliases: outer,
 		Materialized: true,
 	}, nil
 }
@@ -177,20 +191,23 @@ func extractFuncName(fc *pg_query.FuncCall) string {
 }
 
 // extractFromAliases builds maps of table alias → table name and table alias →
-// table schema from the FROM clause. An unqualified table is in defaultSchema,
-// as an unqualified CREATE TABLE is.
-func extractFromAliases(fromClause []*pg_query.Node, defaultSchema string) (aliases, schemas map[string]string) {
+// table schema from the FROM clause, and the set of aliases on the outer side
+// of a join. An unqualified table is in defaultSchema, as an unqualified
+// CREATE TABLE is.
+func extractFromAliases(fromClause []*pg_query.Node, defaultSchema string) (aliases, schemas map[string]string, outer map[string]bool) {
 	aliases = make(map[string]string)
 	schemas = make(map[string]string)
+	outer = make(map[string]bool)
 	for _, node := range fromClause {
-		collectFromAliases(node, defaultSchema, aliases, schemas)
+		collectFromAliases(node, defaultSchema, false, aliases, schemas, outer)
 	}
-	return aliases, schemas
+	return aliases, schemas, outer
 }
 
 // collectFromAliases recursively collects table aliases from FROM clause nodes
-// (handles RangeVar for plain tables and JoinExpr for JOINs).
-func collectFromAliases(node *pg_query.Node, defaultSchema string, aliases, schemas map[string]string) {
+// (handles RangeVar for plain tables and JoinExpr for JOINs). isOuter marks
+// a node on the outer side of an enclosing join.
+func collectFromAliases(node *pg_query.Node, defaultSchema string, isOuter bool, aliases, schemas map[string]string, outer map[string]bool) {
 	if node == nil {
 		return
 	}
@@ -204,10 +221,16 @@ func collectFromAliases(node *pg_query.Node, defaultSchema string, aliases, sche
 		}
 		aliases[key] = rv.Relname
 		schemas[key] = cmp.Or(rv.Schemaname, defaultSchema)
+		if isOuter {
+			outer[key] = true
+		}
 
 	case *pg_query.Node_JoinExpr:
-		collectFromAliases(n.JoinExpr.Larg, defaultSchema, aliases, schemas)
-		collectFromAliases(n.JoinExpr.Rarg, defaultSchema, aliases, schemas)
+		join := n.JoinExpr.Jointype
+		left := isOuter || join == pg_query.JoinType_JOIN_RIGHT || join == pg_query.JoinType_JOIN_FULL
+		right := isOuter || join == pg_query.JoinType_JOIN_LEFT || join == pg_query.JoinType_JOIN_FULL
+		collectFromAliases(n.JoinExpr.Larg, defaultSchema, left, aliases, schemas, outer)
+		collectFromAliases(n.JoinExpr.Rarg, defaultSchema, right, aliases, schemas, outer)
 	}
 }
 

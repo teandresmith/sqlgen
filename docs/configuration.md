@@ -140,7 +140,7 @@ output:
 | `port` | int | `5432` (pg), `3306` (mysql) | Ignored on SQLite, and on mysql when `host` is a socket file. |
 | `user` | string | — | Required for postgres/mysql when `url` is empty. On mysql it cannot contain `:`, which the DSN has no escape for. |
 | `password` | string | — | Usually a reference, `password: ${DB_PASSWORD}`. See the environment overrides below. |
-| `database` | string | — | Database name, or the file path for SQLite. Required when `url` is empty. |
+| `database` | string | — | Database name, or the file path for SQLite. Required when `url` is empty. A SQLite file that does not exist is a connection error; sqlgen does not create it. A `file:` URI that sets `mode` is opened as that mode says. |
 | `ssl_mode` | string | `disable` (pg), `false` (mysql) | TLS/SSL mode. |
 
 Two environment variables override the file, and take highest precedence — keep credentials out
@@ -160,8 +160,8 @@ ignores it.
 
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
-| `schemas` | []string | all | Schemas to include. Empty means all non-system schemas. |
-| `exclude_schemas` | []string | `[]` | Schemas to exclude. Applied after inclusion. |
+| `schemas` | []string | all | Schemas to include. Empty means all non-system schemas. PostgreSQL only; ignored with a warning on MySQL/SQLite. |
+| `exclude_schemas` | []string | `[]` | Schemas to exclude. Applied after inclusion. PostgreSQL only; ignored with a warning on MySQL/SQLite. |
 | `tables` | []string | all | Tables to include. Empty means all in the selected schemas. |
 
 ### `exclude_tables`

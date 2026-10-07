@@ -1,6 +1,7 @@
 package postgres_test
 
 import (
+	"errors"
 	"fmt"
 	"slices"
 	"strings"
@@ -2278,5 +2279,55 @@ func TestDropConstraintByDerivedName(t *testing.T) {
 				t.Errorf("column %s: PrimaryKey = %v, Unique = %v, want both false", col.Name, col.PrimaryKey, col.Unique)
 			}
 		})
+	}
+}
+
+func TestParseViewSQL_OuterAliases(t *testing.T) {
+	tests := []struct {
+		name string
+		sql  string
+		want map[string]bool
+	}{
+		{name: "inner join", sql: `CREATE VIEW v AS SELECT a.id, b.id AS b_id FROM a JOIN b ON b.a_id = a.id;`, want: map[string]bool{}},
+		{name: "comma join", sql: `CREATE VIEW v AS SELECT a.id, b.id AS b_id FROM a, b;`, want: map[string]bool{}},
+		{name: "left join", sql: `CREATE VIEW v AS SELECT a.id, b.id AS b_id FROM a LEFT JOIN b ON b.a_id = a.id;`, want: map[string]bool{"b": true}},
+		{name: "left outer join with aliases", sql: `CREATE VIEW v AS SELECT x.id, y.id AS y_id FROM a x LEFT OUTER JOIN b y ON y.a_id = x.id;`, want: map[string]bool{"y": true}},
+		{name: "inner then left", sql: `CREATE VIEW v AS SELECT a.id FROM a JOIN b ON b.a_id = a.id LEFT JOIN c ON c.b_id = b.id;`, want: map[string]bool{"c": true}},
+		{name: "right join", sql: `CREATE VIEW v AS SELECT a.id FROM a RIGHT JOIN b ON b.a_id = a.id;`, want: map[string]bool{"a": true}},
+		{name: "full join", sql: `CREATE VIEW v AS SELECT a.id FROM a FULL JOIN b ON b.a_id = a.id;`, want: map[string]bool{"a": true, "b": true}},
+		{name: "join nested under the outer side", sql: `CREATE VIEW v AS SELECT a.id FROM a LEFT JOIN (b JOIN c ON c.b_id = b.id) ON b.a_id = a.id;`, want: map[string]bool{"b": true, "c": true}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := postgres.ParseViewSQL([]byte(tt.sql), "")
+			if err != nil {
+				t.Fatalf("ParseViewSQL() error: %v", err)
+			}
+			if diff := cmp.Diff(tt.want, got.OuterAliases); diff != "" {
+				t.Errorf("OuterAliases mismatch (-want +got):\n%s", diff)
+			}
+		})
+	}
+}
+
+func TestParseViewSQL_CompoundSelectRejected(t *testing.T) {
+	tests := []struct{ sql, schema string }{
+		{"CREATE VIEW v AS SELECT id FROM a UNION SELECT id FROM b;", "public"},
+		{"CREATE VIEW v AS SELECT id FROM a UNION ALL SELECT id FROM b;", "public"},
+		{"CREATE VIEW v AS SELECT id FROM a EXCEPT SELECT id FROM b;", "public"},
+		{"CREATE VIEW app.v AS SELECT id FROM a INTERSECT SELECT id FROM b;", "app"},
+		{"CREATE MATERIALIZED VIEW v AS SELECT id FROM a UNION SELECT id FROM b;", "public"},
+	}
+	for _, tt := range tests {
+		_, err := postgres.ParseViewSQL([]byte(tt.sql), "")
+		if err == nil || !strings.Contains(err.Error(), "not a simple SELECT") {
+			t.Errorf("ParseViewSQL(%q) error = %v, want not a simple SELECT", tt.sql, err)
+		}
+		// The error names the view, so an annotation file for a view the
+		// database defines can still overlay it.
+		qe, ok := errors.AsType[*parser.ViewQueryError](err)
+		if !ok || qe.Schema != tt.schema || qe.Name != "v" {
+			t.Errorf("ParseViewSQL(%q) error = %#v, want a ViewQueryError naming %s.v", tt.sql, err, tt.schema)
+		}
 	}
 }

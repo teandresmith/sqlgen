@@ -40,6 +40,9 @@ func Merge(base *parser.Schema, p Seedable, files []string) error {
 	if err := validateColumnConflicts(p.Schema()); err != nil {
 		return fmt.Errorf("merge both mode: %w", err)
 	}
+	if err := refreshViewColumns(p.Schema()); err != nil {
+		return fmt.Errorf("merge both mode: %w", err)
+	}
 
 	return nil
 }

@@ -38,7 +38,7 @@ func makeDiffRunE(flags *cliFlags) func(*cobra.Command, []string) error {
 		out := cmd.OutOrStdout()
 		errOut := cmd.ErrOrStderr()
 
-		cfg, schema, err := loadAndValidate(flags, errOut)
+		cfg, schema, err := loadAndValidate(cmd.Context(), flags, errOut)
 		if err != nil {
 			return err
 		}

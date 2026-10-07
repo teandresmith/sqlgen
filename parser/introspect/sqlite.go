@@ -244,9 +244,15 @@ func (si *SQLiteIntrospector) introspectViews(ctx context.Context, schema *parse
 			SQL:  ref.sql,
 		}
 
-		if err := si.introspectViewColumns(ctx, &view); err != nil {
+		declared, err := si.introspectViewColumns(ctx, &view)
+		if err != nil {
 			return err
 		}
+		// SQLite reports no type for an expression column; that one stays any.
+		catalog := view.Columns
+		columnsFromDefinition(&view, ref.sql, sqlite.ParseViewSQL, schema, func(i int) (parser.Column, bool) {
+			return catalog[i], declared[i] != ""
+		})
 
 		schema.Views = append(schema.Views, view)
 	}
@@ -254,13 +260,16 @@ func (si *SQLiteIntrospector) introspectViews(ctx context.Context, schema *parse
 	return nil
 }
 
-func (si *SQLiteIntrospector) introspectViewColumns(ctx context.Context, view *parser.View) error {
+// introspectViewColumns reads view's columns from PRAGMA table_info and
+// returns each one's declared type, which is empty for an expression.
+func (si *SQLiteIntrospector) introspectViewColumns(ctx context.Context, view *parser.View) ([]string, error) {
 	rows, err := si.db.QueryContext(ctx, "PRAGMA table_info("+quoteSQLiteIdent(view.Name)+")")
 	if err != nil {
-		return fmt.Errorf("introspect sqlite view columns %s: %w", view.Name, err)
+		return nil, fmt.Errorf("introspect sqlite view columns %s: %w", view.Name, err)
 	}
 	defer rows.Close() //nolint:errcheck // rows.Close error is not actionable after reading
 
+	var declared []string
 	for rows.Next() {
 		var (
 			cid       int
@@ -271,7 +280,7 @@ func (si *SQLiteIntrospector) introspectViewColumns(ctx context.Context, view *p
 			pk        int
 		)
 		if err := rows.Scan(&cid, &name, &typeName, &notNull, &dfltValue, &pk); err != nil {
-			return fmt.Errorf("introspect sqlite view columns %s: scanning: %w", view.Name, err)
+			return nil, fmt.Errorf("introspect sqlite view columns %s: scanning: %w", view.Name, err)
 		}
 
 		col := parser.Column{
@@ -281,11 +290,12 @@ func (si *SQLiteIntrospector) introspectViewColumns(ctx context.Context, view *p
 		}
 
 		view.Columns = append(view.Columns, col)
+		declared = append(declared, typeName)
 	}
 	if err := rows.Err(); err != nil {
-		return fmt.Errorf("introspect sqlite view columns %s: iterating: %w", view.Name, err)
+		return nil, fmt.Errorf("introspect sqlite view columns %s: iterating: %w", view.Name, err)
 	}
-	return nil
+	return declared, nil
 }
 
 // introspectColumns reads table's columns from PRAGMA table_xinfo, which,

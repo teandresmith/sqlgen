@@ -1,6 +1,7 @@
 package sqlite_test
 
 import (
+	"errors"
 	"fmt"
 	"strings"
 	"testing"
@@ -1234,5 +1235,71 @@ CREATE MATERIALIZED VIEW order_totals AS SELECT customer_id FROM orders;`,
 				t.Errorf("error = %q, want mention of 'not supported for dialect sqlite'", err)
 			}
 		})
+	}
+}
+
+func TestParseViewSQL_OuterAliases(t *testing.T) {
+	tests := []struct {
+		name string
+		sql  string
+		want map[string]bool
+	}{
+		{name: "inner join", sql: `CREATE VIEW v AS SELECT a.id, b.id AS b_id FROM a JOIN b ON b.a_id = a.id;`, want: map[string]bool{}},
+		{name: "comma join", sql: `CREATE VIEW v AS SELECT a.id, b.id AS b_id FROM a, b;`, want: map[string]bool{}},
+		{name: "left join", sql: `CREATE VIEW v AS SELECT a.id, b.id AS b_id FROM a LEFT JOIN b ON b.a_id = a.id;`, want: map[string]bool{"b": true}},
+		{name: "left outer join with aliases", sql: `CREATE VIEW v AS SELECT x.id, y.id AS y_id FROM a x LEFT OUTER JOIN b y ON y.a_id = x.id;`, want: map[string]bool{"y": true}},
+		{name: "inner then left", sql: `CREATE VIEW v AS SELECT a.id FROM a JOIN b ON b.a_id = a.id LEFT JOIN c ON c.b_id = b.id;`, want: map[string]bool{"c": true}},
+		{name: "join nested under the outer side", sql: `CREATE VIEW v AS SELECT a.id FROM a LEFT JOIN (b JOIN c ON c.b_id = b.id) ON b.a_id = a.id;`, want: map[string]bool{"b": true, "c": true}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := sqlite.ParseViewSQL([]byte(tt.sql))
+			if err != nil {
+				t.Fatalf("ParseViewSQL() error: %v", err)
+			}
+			if diff := cmp.Diff(tt.want, got.OuterAliases); diff != "" {
+				t.Errorf("OuterAliases mismatch (-want +got):\n%s", diff)
+			}
+		})
+	}
+}
+
+func TestParseViewSQL_CompoundSelectRejected(t *testing.T) {
+	for _, sql := range []string{
+		"CREATE VIEW v AS SELECT id FROM a UNION SELECT id FROM b;",
+		"CREATE VIEW v AS SELECT id FROM a UNION ALL SELECT id FROM b;",
+		"CREATE VIEW v AS SELECT id FROM a EXCEPT SELECT id FROM b;",
+	} {
+		_, err := sqlite.ParseViewSQL([]byte(sql))
+		if err == nil || !strings.Contains(err.Error(), "not a simple SELECT") {
+			t.Errorf("ParseViewSQL(%q) error = %v, want not a simple SELECT", sql, err)
+		}
+		// The error names the view, so an annotation file for a view the
+		// database defines can still overlay it.
+		if qe, ok := errors.AsType[*parser.ViewQueryError](err); !ok || qe.Name != "v" {
+			t.Errorf("ParseViewSQL(%q) error = %#v, want a ViewQueryError naming v", sql, err)
+		}
+	}
+}
+
+// The grammar has no RIGHT or FULL join. It reads the bare keyword as a
+// table alias over an inner join, where SQLite runs an outer join; the
+// OUTER spelling already fails to parse.
+func TestParseViewSQL_RightAndFullJoinRejected(t *testing.T) {
+	tests := []struct{ sql, want string }{
+		{"CREATE VIEW v AS SELECT a.id FROM a RIGHT JOIN b ON b.a_id = a.id;", "RIGHT and FULL joins"},
+		{"CREATE VIEW v AS SELECT a.id FROM a full JOIN b ON b.a_id = a.id;", "RIGHT and FULL joins"},
+		{"CREATE VIEW v AS SELECT a.id FROM c JOIN a FULL JOIN b ON b.a_id = a.id;", "RIGHT and FULL joins"},
+		{"CREATE VIEW v AS SELECT a.id FROM a RIGHT OUTER JOIN b ON b.a_id = a.id;", "found 'OUTER'"},
+	}
+	for _, tt := range tests {
+		_, err := sqlite.ParseViewSQL([]byte(tt.sql))
+		if err == nil || !strings.Contains(err.Error(), tt.want) {
+			t.Errorf("ParseViewSQL(%q) error = %v, want it to contain %q", tt.sql, err, tt.want)
+		}
+		_, named := errors.AsType[*parser.ViewQueryError](err)
+		if wantNamed := tt.want != "found 'OUTER'"; named != wantNamed {
+			t.Errorf("ParseViewSQL(%q) error is a ViewQueryError = %t, want %t", tt.sql, named, wantNamed)
+		}
 	}
 }

@@ -243,9 +243,10 @@ func TestValidate_ConnectionFieldsMissing(t *testing.T) {
 	if ee, ok := errors.AsType[*exitError](err); !ok || ee.code != ExitConfig {
 		t.Fatalf("validate error = %v, want exit code %d\nstderr: %s", err, ExitConfig, stderr)
 	}
+	// Each once: validate does not try the connection pre-parse rejected.
 	for _, field := range []string{"host", "user", "database"} {
-		if !strings.Contains(stderr, "input.connection."+field+" is required") {
-			t.Errorf("validate stderr = %q, want it to name input.connection.%s", stderr, field)
+		if n := strings.Count(stderr, "input.connection."+field+" is required"); n != 1 {
+			t.Errorf("validate stderr = %q, want it to name input.connection.%s once, got %d", stderr, field, n)
 		}
 	}
 }

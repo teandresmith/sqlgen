@@ -288,7 +288,7 @@ func TestParseSchema_UnresolvedForeignKeyReturnsSchema(t *testing.T) {
 				Views:   []string{viewPath},
 			}}
 
-			schema, err := parseSchema(cfg)
+			schema, err := parseSchema(t.Context(), cfg)
 			if err == nil {
 				t.Fatal("parseSchema: error = nil, want the unresolved-FK error")
 			}
@@ -448,7 +448,7 @@ func TestParseSchema_ViewDefaultSchema(t *testing.T) {
 				Views:   []string{viewDir},
 			}}
 
-			schema, err := parseSchema(cfg)
+			schema, err := parseSchema(t.Context(), cfg)
 			if err != nil {
 				t.Fatalf("parseSchema: %v", err)
 			}

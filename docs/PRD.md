@@ -358,7 +358,7 @@ Controls where the schema is read from.
 | `port` | `int` | `5432` (pg), `3306` (mysql) | Database port. Ignored on SQLite, and on mysql when `host` is a socket file. |
 | `user` | `string` | — | Username. Required for postgres/mysql when `url` is empty. On mysql it cannot contain `:`, which the DSN has no escape for. |
 | `password` | `string` | — | Password. Can be overridden by `SQLGEN_DB_PASSWORD` env var. |
-| `database` | `string` | — | Database name (or SQLite file path). Required when `url` is empty. |
+| `database` | `string` | — | Database name (or SQLite file path). Required when `url` is empty. A SQLite file that does not exist is a connection error; sqlgen does not create it. A `file:` URI that sets `mode` is opened as that mode says. |
 | `ssl_mode` | `string` | `"disable"` (pg), `"false"` (mysql) | TLS/SSL mode. |
 
 **Environment variable overrides:**
@@ -384,8 +384,8 @@ DSN takes the password unescaped, so it has no such problem.
 
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
-| `schemas` | `[]string` | `[]` (all) | Schemas to include. Empty means all non-system schemas. |
-| `exclude_schemas` | `[]string` | `[]` | Schemas to exclude. Applied after inclusion. |
+| `schemas` | `[]string` | `[]` (all) | Schemas to include. Empty means all non-system schemas. PostgreSQL only; ignored with a warning on MySQL/SQLite ([4.13](#413-config-validation-rules)). |
+| `exclude_schemas` | `[]string` | `[]` | Schemas to exclude. Applied after inclusion. PostgreSQL only; ignored with a warning on MySQL/SQLite. |
 | `tables` | `[]string` | `[]` (all) | Tables to include. Empty means all in selected schemas. |
 
 To filter tables out of generation, use the top-level `exclude_tables` field (next subsection). It applies to introspected schemas and file-based inputs alike.
@@ -1196,6 +1196,7 @@ The config is validated immediately after loading, before parsing or generation 
 | **Two claims on one GraphQL type name** | Error (codegen-level) | When the GraphQL surface is generated, two entities resolving to the same GraphQL type name — an enum against a declared scalar, a table against another table, an enum against `PageInfo`, a consumer scalar against a comparator input — is a generation error naming both claimants. Distinct from the Go rule above: the namespaces differ, and a document valid in Go can be invalid in GraphQL (a SQL enum named `duration` gives a legal Go `Duration` beside a `Duration` scalar that gqlparser rejects). Guidance: `enums.<enum>.struct_name`, `tables.<table>.struct_name`, `views.<view>.struct_name`, or rename the `api.graphql.scalars` entry. See [26.4](#graphql-type-name-ownership). |
 | **`exclude_columns` removes all columns** | Warning | If global + table-level `exclude_columns` removes every column from a table, a warning is printed and the table is skipped (no code generated). This is not an error — the consumer may intentionally exclude a table this way. |
 | **`input.schema` on MySQL/SQLite** | Warning | MySQL and SQLite do not support schemas. If `input.schema` is set for these dialects, it is ignored and a warning is printed. |
+| **`input.introspect.schemas` / `exclude_schemas` on MySQL/SQLite** | Warning | MySQL and SQLite do not support schemas, so under `source: database` or `both` these filters are ignored and a warning names the key and the dialect. Use `introspect.tables` to narrow introspection there. |
 | **Input key the source does not read** | Warning | `input.paths` set explicitly under `source: database`, or any `input.introspect` field set under `source: files`, is ignored, and a warning names the key and the source. The `["."]` default for `paths` is not an explicit setting and does not warn. |
 | **Missing `connection` for `database`/`both` source** | Error | `input.connection` is required when `input.source` is `database` or `both`. |
 | **Unset environment variable** | Error | A `${NAME}` reference to a variable that is not set ([4.1.1](#411-environment-variable-references)). Every unset reference is reported, each with its line, path and variable. A variable set to the empty string is not unset. |
@@ -1456,7 +1457,7 @@ SQL tables may or may not include a schema prefix depending on the dialect and h
 | `CREATE TABLE products (...)` | SQLite | N/A | `products` |
 
 - **PostgreSQL:** If the SQL omits the schema, the table is assigned the `input.schema` value. The default, `"*"`, assigns `"public"`.
-- **PostgreSQL foreign keys:** An unqualified `REFERENCES` target resolves the same way, to the `input.schema` value, and not to the schema of the table that declares the key. `CREATE TABLE audit.labels (document_id uuid REFERENCES documents(id))` references `public.documents`, as PostgreSQL's default `search_path` resolves it. A foreign key whose target no parsed table defines is a schema error, because PostgreSQL rejects that DDL too. MySQL (under `FOREIGN_KEY_CHECKS=0`) and SQLite accept such a key, so for them it is not an error and produces no relationship.
+- **PostgreSQL foreign keys:** An unqualified `REFERENCES` target resolves the same way, to the `input.schema` value, and not to the schema of the table that declares the key. `CREATE TABLE audit.labels (document_id uuid REFERENCES documents(id))` references `public.documents`, as PostgreSQL's default `search_path` resolves it. A foreign key whose target no parsed table defines is a schema error, because PostgreSQL rejects that DDL too. Under `source: database` or `both` ([6.1](#61-source-modes)) only the keys the SQL files add are checked: a key the database holds has a target, even one `input.introspect` leaves out, and its relationship is omitted like one into an `exclude_tables` table ([6.4](#64-filtering)). A file's key into a table the introspected schema includes resolves. A table `input.introspect` leaves out is not in the schema at all, so a file's key into it is unresolved and a file's `ALTER TABLE` on it fails. MySQL (under `FOREIGN_KEY_CHECKS=0`) and SQLite accept such a key, so for them it is not an error and produces no relationship.
 - **PostgreSQL views:** An unqualified `CREATE VIEW` or `CREATE MATERIALIZED VIEW` name in an `input.views` annotation file ([16.1](#161-annotation-files-file-sourced-views)) resolves the same way, to the `input.schema` value. A view always has a schema, as a table does, so its `hook.TableName` value and its generated SQL are schema-qualified.
 - **MySQL/SQLite:** Tables have no schema. The name is always bare.
 
@@ -1605,7 +1606,7 @@ All schema elements (tables, columns, enums, types) are sorted before generation
 | `database` | Connect to live database via `connection` config and introspect schema. `paths` is not read. |
 | `both` | Introspect database first (source of truth), then merge file-based changes on top. See below. |
 
-**Both sources describe a schema the same way.** Introspected column defaults, CHECK expressions and domain constraints are normalized to the form the file parser produces for the same DDL. Catalog text is put through the same deparser the parser uses, and the casts the database adds on its own are removed: a domain cast to its base type, a literal cast to its column's type. MySQL backticks and charset introducers are dropped, and a PostgreSQL `serial` or identity column carries no default, only auto-increment, as when parsed. So `database` and `files` describe a schema identically: the same columns, types, defaults, constraints and constraint names ([5.2](#52-dialect-parsers)), and the same generated code and manifest. One exception is deliberate: MySQL ignores a foreign key written inline on a column (`pid INT REFERENCES p(id)`), but the MySQL file parser keeps it as a foreign key, named and indexed like any other, so its relationship is generated. Under `files` such a table has that extra key, and its unnamed foreign keys are numbered with it included; the database has neither. MySQL's catalog also stores some text in a form the DDL cannot recover, so on MySQL that text differs by source: a `CAST` to a character type gains the connection charset (`cast(x as char)` reads back as `cast(x as char character set utf8mb4)`), a hex string literal reads back as `0x…` (`x'41'` as `0x41`), and a literal default is stored converted to its column's type (`1.5` on `decimal(10,2)` reads back as `1.50`, `1e3` on `double` as `1000`, `TRUE` as `1`, `'5'` on an integer column as `5`, `'ab'` on a binary column as `0x6162`). DDL the file parser cannot read is an error under `files`, not a difference: a PostgreSQL 18 VIRTUAL generated column introspects but does not parse ([6.3](#63-dialect-introspection-capabilities)).
+**Both sources describe a schema the same way.** Introspected column defaults, CHECK expressions and domain constraints are normalized to the form the file parser produces for the same DDL. Catalog text is put through the same deparser the parser uses, and the casts the database adds on its own are removed: a domain cast to its base type, a literal cast to its column's type. MySQL backticks and charset introducers are dropped, and a PostgreSQL `serial` or identity column carries no default, only auto-increment, as when parsed. So `database` and `files` describe a schema identically: the same columns, types, defaults, constraints and constraint names ([5.2](#52-dialect-parsers)), and the same generated code and manifest. A view's columns come from its definition under both sources ([16.2](#162-introspected-views-db-sourced-views)), except that a column the definition cannot trace to a table is `any` under `files` and takes the catalog's type under `database`. One exception is deliberate: MySQL ignores a foreign key written inline on a column (`pid INT REFERENCES p(id)`), but the MySQL file parser keeps it as a foreign key, named and indexed like any other, so its relationship is generated. Under `files` such a table has that extra key, and its unnamed foreign keys are numbered with it included; the database has neither. MySQL's catalog also stores some text in a form the DDL cannot recover, so on MySQL that text differs by source: a `CAST` to a character type gains the connection charset (`cast(x as char)` reads back as `cast(x as char character set utf8mb4)`), a hex string literal reads back as `0x…` (`x'41'` as `0x41`), and a literal default is stored converted to its column's type (`1.5` on `decimal(10,2)` reads back as `1.50`, `1e3` on `double` as `1000`, `TRUE` as `1`, `'5'` on an integer column as `5`, `'ab'` on a binary column as `0x6162`). DDL the file parser cannot read is an error under `files`, not a difference: a PostgreSQL 18 VIRTUAL generated column introspects but does not parse ([6.3](#63-dialect-introspection-capabilities)).
 
 **PostgreSQL expression text the catalog rewrites.** PostgreSQL stores some expressions in a form that cannot be turned back into the DDL's, so a CHECK, column default, generated-column or partial-index expression can read differently by source. `IN (…)` is stored as `= ANY(ARRAY[…])`, `BETWEEN` as two comparisons joined by `AND`, and `SIMILAR TO` and `LIKE … ESCAPE` as calls to `similar_to_escape` and `like_escape`. A date or time literal is printed in the server's output format: `'2000-01-01'` compared with a `timestamptz` column reads `'2000-01-01 00:00:00+00'`. A cast the DDL writes on a literal (`'{}'::jsonb`), or on a column to the type PostgreSQL would cast it to anyway (`code::text` on a `varchar` column), is stored the same as the cast the catalog adds, so introspection removes it.
 
@@ -1628,6 +1629,8 @@ The database is the **source of truth**. File-based changes are applied as an ov
 | `DROP TABLE foo` | Yes | Remove table from schema |
 
 **Use case:** The database contains the production schema, and the SQL files contain pending migrations that haven't been applied yet. `both` mode lets the generator produce code that reflects the *future* schema (after migrations run), while the database provides the *current* baseline.
+
+`paths` therefore holds only the migrations the database has not run. An applied migration's `CREATE TABLE` names a table the database already has, which is the validation error above. A pending migration changes an existing table with `ALTER TABLE`, or with `DROP TABLE` followed by `CREATE TABLE`. It can change only tables the introspected schema includes ([6.4](#64-filtering)). A pending change to a view does not apply: the database's view stands ([16.2](#162-introspected-views-db-sourced-views)), but its columns are read again against the migrated tables, so a pending change to a table a view reads reaches the view.
 
 **Conflict rule:** If a file-based column definition conflicts with an introspected column (same name, different type), it is a **validation error**. The file cannot silently redefine what the database already has — use explicit `ALTER TABLE ... ALTER COLUMN` to express the change.
 
@@ -9087,7 +9090,7 @@ GROUP BY p.id, p.name, p.discount;
 - Qualified column reference: `p.name` → column `name`
 - Bare column reference: `id` → column `id`
 
-Expressions without an alias and without a resolvable column name are a parse error.
+Expressions without an alias and without a resolvable column name are a parse error. The query must be a single `SELECT`: a compound query (`UNION`, `INTERSECT`, `EXCEPT`) is a parse error, since its columns cannot be traced to one table. On SQLite a `RIGHT` or `FULL` join is a parse error too: the SQLite view parser does not read them. A file that overlays a view the database defines is the exception ([16.2](#162-introspected-views-db-sourced-views)): only its view name is read.
 
 Since the file contains valid SQL, it can be executed directly against a database to create the actual view — the annotation comments are standard SQL line comments and are ignored by the database.
 
@@ -9098,7 +9101,7 @@ Annotations are SQL line comments (`-- @<directive>: <value>`) that appear befor
 | Directive | Syntax | Value | Effect | Multiplicity |
 |-----------|--------|-------|--------|:------------:|
 | `@pk` | `-- @pk: col1, col2` | Comma-separated column names | Marks columns as primary key — enables `Get` method. Without `@pk`, only `GetMany`, `Count`, `Paginate`, `Connection` are generated. | Exactly once |
-| `@type` | `-- @type col: GoType [import/path]` | Column name `:` Go type, optional import path | Overrides Go type for a column (highest priority in [16.3](#163-column-type-resolution-annotation-files) chain). Import path required for external packages, omitted for builtins. | Once per column |
+| `@type` | `-- @type col: GoType [import/path]` | Column name `:` Go type, optional import path | Overrides Go type for a column (highest priority in [16.3](#163-column-type-resolution) chain). Import path required for external packages, omitted for builtins. | Once per column |
 | `@nullable` | `-- @nullable: col1, col2` | Comma-separated column names | Forces columns to nullable. Already-nullable columns (e.g., `AVG` → `*float64`) are unaffected. | Multiple allowed (merged) |
 
 **Validation rules:**
@@ -9142,13 +9145,13 @@ When the schema source includes a live database (`source: database` or `source: 
 - **MySQL:** `information_schema.views` + `information_schema.columns`
 - **SQLite:** `sqlite_master WHERE type='view'` + `PRAGMA table_info`
 
-Introspected views provide accurate column names and types as reported by the database. No aggregate inference or schema matching is needed — the DB has already resolved the query.
+**Columns come from the view's definition.** An introspected view's columns are read from its stored definition with the same view parser and resolution chain ([16.3](#163-column-type-resolution)) an annotation file gets, so a view is described the same way under `database` and `files`. The catalog alone cannot do that: PostgreSQL and SQLite report every view column nullable. A column the definition cannot trace to a table column (an expression, or a column read from a subquery or another view) takes the catalog's type and nullability instead. SQLite reports no type for an expression, so there it stays `any`. Under `files` such a column is `any`, which is a deliberate difference by source: only the database knows its type. A definition the view parser cannot read, such as a compound query, keeps the catalog's columns, and a warning names the view.
 
-**Annotation overlays:** When both introspection and an annotation file exist for the same view, annotations take precedence. This allows users to add `@pk` (not discoverable from DB catalogs), override types, or force nullability on introspected views.
+**Annotation overlays:** When both introspection and an annotation file exist for the same view, the database's view stands: its columns are used, and the file supplies only the view's name and its annotations. Its `SELECT` is not read, so it may be one an annotation file alone could not hold, such as a compound query. The file's annotations take precedence over the introspected values. This allows users to add `@pk` (not discoverable from DB catalogs), override types, or force nullability on introspected views. An annotation that names a column the database's view lacks is an error, as it is in an annotation file. Under `source: both` a pending change to a view therefore appears only once it has run.
 
-### 16.3 Column Type Resolution (Annotation Files)
+### 16.3 Column Type Resolution
 
-For annotation file views, each SELECT column's Go type is resolved in this order:
+For every view, from an annotation file or a database view's definition ([16.2](#162-introspected-views-db-sourced-views)), each SELECT column's Go type is resolved in this order:
 
 1. **`@type` annotation** — highest priority, literal Go type string
 2. **Schema matching** — if column comes from a known table (via table alias in the SELECT), use that column's resolved Go type
@@ -9164,6 +9167,13 @@ For annotation file views, each SELECT column's Go type is resolved in this orde
    - `JSON_AGG(...)` / `JSONB_AGG(...)` / `JSON_ARRAYAGG(...)` → `types.JSON`
    - `JSON_OBJECT_AGG(...)` / `JSONB_OBJECT_AGG(...)` / `JSON_OBJECTAGG(...)` → `types.JSON`
 4. **Fallback** → `any`
+
+**Nullability.** A view column can hold NULL, and is generated nullable, when:
+- it is read from a table column that is nullable;
+- its table is on the outer side of a join: the right side of a `LEFT JOIN`, the left side of a `RIGHT JOIN`, either side of a `FULL JOIN`;
+- it is an aggregate other than `COUNT` (above).
+
+Otherwise it is non-nullable. A `@type` column is non-nullable, `@nullable` makes a column nullable, and `@pk` makes it non-nullable, applied in that order. A column that falls back to `any` can hold NULL whatever its flag.
 
 **SUM widening.** A database widens `SUM`'s result type to avoid overflow, so the inferred Go type must match what the driver actually scans — not the summed column's own type. The widening is dialect-specific and is applied on the domain-resolved base type (`CREATE DOMAIN positive_int AS integer` widens as `integer`):
 
@@ -9227,7 +9237,7 @@ Nothing in the runtime, parser-DDL, or non-Postgres introspection paths changes 
 - The PK is chosen **deterministically**: the qualifying index with the fewest columns, ties broken by index name ascending. Its columns are marked primary-key (and non-nullable), enabling `Get` without an annotation.
 - Partial and expression unique indexes never participate.
 
-**Annotation files.** `input.views` files may contain `CREATE MATERIALIZED VIEW [schema.]name AS SELECT ...` exactly like regular views ([16.1](#161-annotation-files-file-sourced-views)); all directives (`@pk`, `@type`, `@nullable`) and the [16.3](#163-column-type-resolution-annotation-files) resolution chain apply unchanged. Because there is no live index to discover:
+**Annotation files.** `input.views` files may contain `CREATE MATERIALIZED VIEW [schema.]name AS SELECT ...` exactly like regular views ([16.1](#161-annotation-files-file-sourced-views)); all directives (`@pk`, `@type`, `@nullable`) and the [16.3](#163-column-type-resolution) resolution chain apply unchanged. Because there is no live index to discover:
 
 - `@pk` present ⇒ those columns are the PK **and** the matview is concurrently refreshable (the user is asserting a unique key exists — the same precondition Postgres enforces for `CONCURRENTLY`).
 - `@pk` absent ⇒ no `Get`, and only plain `Refresh` is generated.

@@ -1637,11 +1637,11 @@ needed: §7 of the doc lists every case.
 
 **PRD Reference:** Sections 4.2, 4.4, 6.1, 6.4, 16.2
 
-**Status:** Not Started
+**Status:** Complete
 
 ### Tasks
 
-- [ ] Add `introspectSchema(ctx, cfg) (*parser.Schema, error)` in `cmd/sqlgen/cli`:
+- [x] Add `introspectSchema(ctx, cfg) (*parser.Schema, error)` in `cmd/sqlgen/cli`:
   - picks `introspect.New{Postgres,MySQL,SQLite}Introspector()` by dialect
   - builds the connection string with `connString`
   - maps `input.introspect.{schemas, exclude_schemas, tables}` → `IntrospectionOptions`
@@ -1649,18 +1649,19 @@ needed: §7 of the doc lists every case.
   - `defer`s `Close()`
   - wraps connect, ping and query failures in `*connectionError` (introduced here, consumed by
     30.9)
-- [ ] `parseSchema(ctx, cfg)` (`cli/pipeline.go:167`):
+- [x] `parseSchema(ctx, cfg)` (`cli/pipeline.go:170`):
   - `files` is unchanged
   - `database` introspects only and ignores `paths`
   - `both` introspects into `base`, then calls `introspect.Merge(base, newSeedableParser(…),
     files)` and takes `p.Schema()`
-- [ ] Refactor `parseViewFiles` (`pipeline.go:235`) to return the annotated views and the
+- [x] Refactor `parseViewFiles` (`pipeline.go:272`) to return the annotated views and the
   annotation map. Under `database | both`, combine them with `parser.MergeViewAnnotations`
-  (`parser/view.go:383`). Under `files`, keep the append.
-- [ ] Run the PG `parser.UnresolvedForeignKeys` check on the final (merged or introspected)
-  schema. This is the ordering FIX-243 Q3(a) deferred.
-- [ ] Thread `ctx` (`cmd.Context()`) through the three callers: `pipeline.go:44`
-  (`loadAndValidate`), `generate.go:45`, `validate.go:46`.
+  (`parser/view.go:449`). Under `files`, keep the append.
+- [x] Run the PG `parser.UnresolvedForeignKeys` check on the final (merged or introspected)
+  schema. This is the ordering FIX-243 Q3(a) deferred. Only keys the files add are reported
+  (ruling in the Completion Record).
+- [x] Thread `ctx` (`cmd.Context()`) through the three callers: `pipeline.go:47`
+  (`loadAndValidate`), `generate.go:45`, `validate.go:48`.
 
 ### Acceptance Criteria
 
@@ -1673,19 +1674,239 @@ needed: §7 of the doc lists every case.
 
 ### Tests Required
 
-- [ ] Unit tests with SQLite file databases (no container), covering:
+- [x] Unit tests with SQLite file databases (no container), covering:
   - `database` ignores `paths`
   - `both` applies `ALTER TABLE … ADD COLUMN` and a new `CREATE TABLE`
   - a `CREATE TABLE` of an existing table is an error
   - view annotation merging gives one view
   - an `introspect.tables` filter
 - [ ] PG-only check with the integration container: a file FK into a DB-only table resolves under
-  `both`. It can live in 30.10's suite.
+  `both`. Moved to 30.10's suite (listed there).
 
 ### Completion Record
 
-_Filled in when complete: files changed, commit references, notes._
+- **Files:**
+  - `cli/connection.go`: `connectionError`, `introspectSchema` and `sqliteFileExists`.
+  - `cli/pipeline.go`: `parseSchema(ctx, cfg)` with the `database` / `both` branches, the
+    overlay-only FK check, and `parseViewFiles` returning views plus annotations.
+    `newParser` now returns `introspect.Seedable`, so `both` needs no separate constructor.
+  - `cli/validate.go`, `generate.go`, `diff.go`, `lint.go`, `graphql.go`: pass `cmd.Context()`.
+  - `parser/view.go`: `mergeView` fix (below).
+  - `docs/PRD.md` §4.3 and §5.5, `docs/configuration.md`.
+- **Ruled with the user 2026-10-06: the PG FK check covers only keys the files add.** The PG
+  introspector keeps an FK whose target `introspect.tables` / `schemas` filtered out
+  (`postgres.go` constraint query), so checking the whole introspected schema would have failed
+  every filter that cuts an FK. `parseSchema` drops the unresolved FKs the introspected schema
+  already had (by message, read before `Merge`, which mutates its base). Under `database`
+  nothing is reported; under `both` a file FK into a missing table is still an error, and one into
+  a DB-only table resolves. The relationship into a filtered-out table is omitted, like one into an
+  `exclude_tables` table. PRD §5.5 states the rule. Not testable without PG; added to 30.10.
+- **SQLite missing file (probe).** modernc opens with `READWRITE|CREATE`, so a missing path
+  created an empty database and `source: database` generated nothing, with exit 0. Probe of the
+  introspector: missing file → no error, 0 tables, file created; missing directory, a directory,
+  an unreadable file and a non-database file all fail at ping; `file:…?mode=ro` fails. Design
+  §7.4 wants a missing file to exit 4, so `introspectSchema` stats a plain path (the part before
+  `?`) and returns a `*connectionError`. A `file:` URI is left to its `mode`. PRD §4.3 and
+  `configuration.md` state it.
+- **`mergeView` dropped `@type` (fixed inline).** It set `Column.Type` to the Go type but not
+  `GoTypeLiteral` / `GoTypeImport`, which `BuildView` sets and the generator reads
+  (`gen/context_view.go:215`). Only tests called it before. The new assertion in
+  `TestMergeViewAnnotations_AnnotationWins` failed first.
+- **`validate` skips introspection when pre-parse rejected the connection block.** Otherwise
+  `connString` repeated each missing-field error. `TestValidate_ConnectionFieldsMissing` now
+  asserts each appears once; it failed with the guard removed.
+- **Every `Introspect` error is a `*connectionError`.** That includes a stored SQLite
+  `CREATE TABLE` the file parser cannot read (PRD §6.3) and a catalog-normalization failure,
+  which arrive from the introspector as plain errors. 30.9 decides whether those exit 3.
+- **Tests** (`cli/introspect_test.go`, SQLite files, no container):
+  - `TestParseSchema_SQLiteDatabaseSource`: `database` ignores `paths`; `both` applies `ADD COLUMN`
+    and a new `CREATE TABLE`; `introspect.tables` narrows.
+  - `TestParseSchema_BothSourceCreateOfExistingTable`: error, not a `*connectionError`.
+  - `TestParseSchema_IntrospectedViewWithAnnotation`: one view, `@pk` and `@type` applied.
+  - `TestParseSchema_SQLiteMissingDatabaseFile`: `*connectionError`, no file created.
+  - `TestGenerate_SQLiteDatabaseSource`: end to end through `generate`.
+  - `TestParseSchema_SQLiteFileURI`: a `file:…?mode=ro` URI introspects.
+  - `TestParseSchema_MalformedPostgresURLHidesPassword`: 2 passwords.
+  - Fail-first, each fix removed in turn: append instead of merge (2 views), no stat (nil error),
+    no validate guard (duplicate lines), old `mergeView` (empty `GoTypeLiteral`).
+- **Auto-review** (`sqlgen-reviewer`), fail-first spot check confirmed. Two issues, both fixed
+  inline, each test failing first:
+  - **A password leaked through a pgx parse error.** pgx masks the URL but keeps
+    `url.Parse`'s message, so a `url` whose literal password holds `/` or `%` printed
+    `invalid port ":Sekr3t"` or `invalid URL escape "%zz"`. `introspectSchema` now parses a
+    `postgres://` URL first and returns a fixed message on failure. MySQL errors did not leak.
+  - **A `file:` URI skipped the missing-file check**, so `file:/x/a.db` created an empty
+    database. `sqliteFileExists` now stats a `file:` URI's path too, unless it sets `mode`.
+    The PRD §4.3 / `configuration.md` sentence names the `mode` exception.
+  - Line references corrected in the 30.8 and 30.9 task text.
+- **Reviewer questions, ruled with the user 2026-10-06** (all three as recommended):
+  - **A file FK into a table `introspect` leaves out stays unresolved under `both`.** A
+    filtered-out table is not in the schema at all, so a file's `ALTER TABLE` on it fails too
+    (probe: `table posts not found`). PRD §5.5 now says "a table the introspected schema
+    includes". PRD §6.1 now says `both` takes only the migrations the database has not run, and
+    that an overlay changes only introspected tables. Probe: `ALTER … ADD COLUMN` and
+    `DROP TABLE` + `CREATE TABLE` both apply; an applied migration's `CREATE TABLE` fails.
+  - **`@type` nullability matches `BuildView`.** `mergeView` makes a `@type` column NOT NULL,
+    then applies `@nullable`, then `@pk`. `TestParseSchema_IntrospectedViewWithAnnotation` failed
+    first (`name` nullable).
+  - **`introspect.schemas` / `exclude_schemas` warn on MySQL/SQLite** under `database` / `both`,
+    following the `input.schema` precedent. PRD §4.4 and §4.13, plus `configuration.md`.
+    `TestValidatePreParse_IgnoredIntrospectSchemas` (4 cases) failed first.
+  - Found while probing: plain view columns differ in nullability by source too (backlog, `[measured]`).
 
+---
+
+## 30.8b Views come from their definition, the same way for both sources
+
+**PRD Reference:** Sections 6.1, 16.1, 16.2, 16.3
+
+**Status:** Complete
+
+**Why.** A 2026-10-06 probe (PG 16, MySQL 8.0, SQLite, same two views) showed that view
+columns differed by source and that the files path was unsound:
+- `BuildView` marked every schema-matched column NOT NULL, including a nullable column and the
+  nullable side of a LEFT JOIN, so a NULL in either failed the scan.
+- PG and SQLite catalogs report every view column nullable, a primary key included, and
+  SQLite reports an expression's type as `blob`. Only MySQL works out nullability. No
+  catalog-based rule can match the files path.
+- Re-parsing each view's stored definition with the file view parser gives exactly the
+  files-path columns on all three dialects. On PG this needs `pg_get_viewdef` read under an
+  empty `search_path`, which qualifies every table.
+
+**Ruled with the user 2026-10-06:**
+- A view the database defines takes its columns from the database's definition. An
+  `input.views` file for it adds annotations only; its `SELECT` is never read, so it need not
+  parse as a single `SELECT` (ruled 2026-10-07, Option A). Under `both`, a
+  pending view change therefore does not appear until it runs.
+- Both sources derive view columns with one rule, from the view's SQL.
+- When the view parser cannot read a stored definition, or its columns differ from the
+  catalog's, the catalog's columns are used and a warning names the view.
+- An annotation naming a column the database view lacks is an error, as in a view file.
+- Added after a probe showed views over subqueries and other views turned `any`: a column the
+  definition cannot trace to a table takes the catalog's type and nullability. SQLite has no
+  type for an expression, so it stays `any` there. Under `files` it is `any`; PRD §6.1 names
+  that as a difference by source.
+
+### Tasks
+
+- [x] Nullability rule in `BuildView`, for every source:
+  - a column read straight from a table takes that column's nullability;
+  - a column from the outer side of a join is nullable (`LEFT` → right side, `RIGHT` → left,
+    `FULL` → both); `ViewSQL` records those aliases, and the three view parsers fill them;
+  - unchanged: `COUNT` NOT NULL, other aggregates nullable, `@type` NOT NULL (§16.3),
+    `@nullable` and `@pk` override, expressions `any`.
+- [x] The three introspectors derive each view's columns from its stored definition with the
+  dialect view parser and `BuildView`. PG reads `pg_get_viewdef` under an empty `search_path`.
+  `View.SQL` keeps the catalog text it holds today (the manifest's `source`). PG's matview
+  primary key from unique indexes (§16.5) still applies on top.
+- [x] Fallback: catalog columns plus a `schema.Warnings` line when the definition does not parse
+  or its column names differ from the catalog's.
+- [x] `parser.MergeViewAnnotations` returns an error for a `@pk`, `@type` or `@nullable` column
+  the view lacks.
+- [x] PRD §16.2, §16.3 and §6.1. Remove the 2026-10-06 view-nullability backlog line.
+- [x] Regenerate goldens; update example tests whose view fields become nullable.
+
+### Acceptance Criteria
+
+- A view over a nullable column or the outer side of a join generates a nullable field.
+- The same view gives the same columns under `files` and `database` on all three dialects.
+- A view the parser cannot read still introspects, with a warning naming it.
+- An annotation that names a missing column fails under every source.
+
+### Tests Required
+
+- [x] Each dialect's `ParseViewSQL` records outer-join aliases (table-driven: inner, left,
+  right, full, nested).
+- [x] `BuildView` nullability (table-driven): nullable column, NOT NULL column, each join side,
+  `COUNT` over an outer side, `@type`, `@pk`, `@nullable`.
+- [x] Integration, per dialect: an introspected view equals the file-parsed view; PG with a
+  `search_path` set to the view's schema; an unreadable view falls back with a warning.
+- [x] `MergeViewAnnotations` with a missing column → error; CLI test through `parseSchema`.
+
+### Completion Record
+
+- **Completed:** 2026-10-07 (`/done 30.8b`); implemented 2026-10-06, with the Option A follow-up
+  on 2026-10-07. `make check`, the `parser/introspect` view integration tests and
+  `make check-examples` pass; no golden moved.
+- **Files:**
+  - `parser/view.go`: `ViewSQL.OuterAliases`; `resolveColumnType` takes the source column's
+    nullability or the outer side's; `checkAnnotationColumns` shared by `BuildView` and
+    `mergeView`; `MergeViewAnnotations` returns an error.
+  - `parser/{postgres,mysql,sqlite}/view_sql.go`: record outer-join aliases. PG and SQLite now
+    reject a compound `SELECT`, as MySQL already did (see below).
+  - `parser/introspect/views.go` (new): `viewColumnsFromDefinition`, the fallback warning.
+  - `parser/introspect/{postgres,mysql,sqlite}.go`: derive view columns from the definition.
+    PG reads every `pg_get_viewdef` once per `Introspect`, in a read-only transaction with an
+    empty `search_path`. MySQL builds a catalog column only where it is used, since an ENUM/SET
+    column can add a type to the schema.
+  - `cmd/sqlgen/cli/pipeline.go`: `addViewFiles`, split out of `parseSchema` (cyclomatic limit).
+  - PRD §6.1, §16.1, §16.2, §16.3.
+- **Found while testing, fixed inline:** a compound view (`UNION`, `INTERSECT`, `EXCEPT`) parsed
+  to zero columns on PG and to the first branch's columns on SQLite, with no error, so a
+  nullable column in a later branch was generated non-nullable. Both now return MySQL's "not a
+  simple SELECT"; under `database` the view keeps the catalog's columns with a warning. PRD §16.1
+  states it. `TestParseViewSQL_CompoundSelectRejected` (PG, SQLite).
+- **Backlog:** the MySQL file parser keeps `integer` / `numeric(10,2)` as written while the
+  catalog says `int` / `decimal(10,2)` (a table-type parity gap, found by the new test, whose
+  fixture now uses the canonical spellings). The view-nullability line this sub-item fixes is
+  removed.
+- **No golden moved.** Every example view's LEFT JOIN column feeds an aggregate, which was
+  already nullable, and nullable source columns already carry `@nullable`.
+- **`View.SQL` unchanged:** it keeps the catalog's text, which the manifest emits as the view's
+  `source`. That still differs from a view file's text; 30.10 has to name it.
+- **Tests:**
+  - `TestParseViewSQL_OuterAliases` (PG 8, MySQL 7, SQLite 6 cases).
+  - `TestBuildView_Nullability` (11 cases); failed first on 3 with the old rule.
+  - `TestMergeViewAnnotations_UnknownColumn` (3 cases) and the CLI's
+    `TestParseSchema_AnnotationNamesColumnTheDatabaseViewLacks`; both fail with the check removed.
+  - `TestIntrospectViews_ColumnsFromDefinition` (integration, 3 dialects): a LEFT JOIN view equals
+    the view file's columns, with PG's `search_path` set to the view's schema; an expression
+    takes the catalog's type (SQLite `any`); a `UNION` view falls back with a warning. With
+    re-parsing disabled it fails on PG and SQLite (MySQL's catalog already gets it right).
+  - Updated: `TestPostgresIntrospectMaterializedViews` now expects the view-file types
+    (`COUNT` → `int64`, `SUM` keeps `numeric(10,2)` for the generator to widen).
+- **Auto-review** (`sqlgen-reviewer`), fail-first spot check confirmed. Two regressions, both
+  fixed inline with a test that failed first:
+  - **SQLite RIGHT / FULL JOIN.** rqlite has neither and reads `a RIGHT JOIN b` as table `a`
+    aliased `RIGHT`, inner-joined to `b`, with no error, so a NULL-able column came out NOT NULL.
+    `collectSourceAliases` now rejects a `RIGHT` / `FULL` alias (`OUTER` spellings already fail
+    to parse). Under `database` the view falls back to the catalog. PRD §16.1 states it.
+    `TestParseViewSQL_RightAndFullJoinRejected` (4 cases); a nested-join case was added to the
+    SQLite `OuterAliases` test.
+  - **`both` read view columns before the overlay.** A migration that drops a NOT NULL on a
+    table a view reads left the view column NOT NULL. `View.Definition` (new) keeps the parsed
+    definition, and `introspect.Merge` reads the columns again against the merged schema; a
+    column it cannot trace, and a matview primary key from a unique index, are kept.
+    `TestParseSchema_BothSourceViewReadsOverlaidTable` (CLI, SQLite) and
+    `TestMerge_RefreshesViewColumns` (PG matview); each fails without the refresh, and the PG
+    one also without the primary-key keep.
+  - Doc fixes applied: the PRD §16.2 sentence saying introspected views need no schema matching
+    is removed; §16.3 is "Column Type Resolution" for every view (3 anchors updated).
+  - `TestMySQLIntrospectViews` ignores `View.Definition` alongside `SQL`.
+- **Reviewer question, ruled Option A (2026-10-07):** a file for a view the database defines
+  supplies only the view's name and its annotations. Before, the file's `SELECT` still had to
+  parse and build, so a database view with a `UNION` could not be annotated, and an annotation
+  naming a column the database view has but the file's `SELECT` lacked failed.
+  - `parser.ViewQueryError` (new) carries the view's name when the query is the problem (a
+    compound `SELECT`, a non-`SELECT` query, a SQLite `RIGHT` / `FULL` join); the message is
+    unchanged. All three `ParseViewSQL`s return it.
+  - `parseViewFiles` takes the database's view keys. For a view in that set it accepts a
+    `ViewQueryError` and skips `BuildView`; `mergeView` still checks the annotations against the
+    database's columns. A file for a view the database lacks is read as before.
+  - PRD §16.1 (the exception) and §16.2 (the file supplies only the name and annotations).
+  - Tests: `TestParseViewSQL_CompoundSelectRejected` now asserts the named error (PG 5 cases
+    with a qualified view and a matview, SQLite 3, MySQL 2 new);
+    `TestParseViewSQL_RightAndFullJoinRejected` asserts it on the 3 alias cases;
+    `TestParseSchema_AnnotationFileQueryNotRead` (CLI, 3 cases: a `UNION` file, a file lacking
+    the annotated column, a `UNION` file for a view the database lacks → error). The first two
+    fail with the shortcut disabled.
+
+- **`/verify 30.8b` (2026-10-07):** 5/5 requirements pass, every required test is present, and
+  the reviewer's fail-first spot check on the Option A shortcut is CONFIRMED. No FIX logged. Doc
+  fixes applied: the `OuterAliases` SQLite count (6), and PRD §6.1 now says a view's columns are
+  read again against the migrated tables under `both`. Two adjacent findings went to the backlog:
+  view parsers silently dropping unaliased expressions and `*`, and a qualified MySQL view
+  file not overlaying the database's view.
 ---
 
 ## 30.9 Exit-code split — connection 4, schema 3
@@ -1696,7 +1917,7 @@ _Filled in when complete: files changed, commit references, notes._
 
 ### Tasks
 
-- [ ] In `generate.go:48`, `pipeline.go:47` and `validate.go:46-51`, replace the source-mode
+- [ ] In `generate.go:46-52`, `pipeline.go:48-54` and `validate.go:46-55`, replace the source-mode
   remap with `errors.AsType[*connectionError]` → `ExitConnection` (4). Every other error →
   `ExitSchema` (3).
 - [ ] Record the FIX-243 Q3(b) outcome in that entry's history in `docs/tracker/fixes.md`.
@@ -1766,6 +1987,8 @@ _Filled in when complete: files changed, commit references, notes._
 - [ ] `TestGenerate_ConnectionFailureExitCode`: an unreachable host (PG, MySQL) or an unreadable
   file (SQLite) → 4 for `generate` and `validate`; an overlay schema error → 3.
 - [ ] PG `both`: a file FK into a DB-only table resolves (from 30.8).
+- [ ] PG `database` with `introspect.tables` cutting an FK: no unresolved-FK error, and no
+  relationship into the filtered-out table (the 30.8 ruling, PRD §5.5).
 - [ ] Manual: a throwaway `sqlgen.yml` with `source: database` per dialect → `sqlgen generate` →
   `go build ./...`. Record it in the Completion Record.
 

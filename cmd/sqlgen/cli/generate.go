@@ -42,7 +42,7 @@ func makeGenerateRunE(flags *cliFlags) func(*cobra.Command, []string) error {
 		printWarnings(errOut, warnings, flags.quiet)
 
 		// 3. Parse schema.
-		schema, err := parseSchema(cfg)
+		schema, err := parseSchema(cmd.Context(), cfg)
 		if err != nil {
 			code := ExitSchema
 			if cfg.Input.Source == config.SourceDatabase || cfg.Input.Source == config.SourceBoth {

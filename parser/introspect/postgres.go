@@ -63,10 +63,14 @@ func (pi *PostgresIntrospector) Introspect(ctx context.Context, connString strin
 	if err := pi.introspectTables(ctx, schema, opts); err != nil {
 		return err
 	}
-	if err := pi.introspectViews(ctx, schema, opts); err != nil {
+	definitions, err := pi.viewDefinitions(ctx)
+	if err != nil {
 		return err
 	}
-	if err := pi.introspectMaterializedViews(ctx, schema, opts); err != nil {
+	if err := pi.introspectViews(ctx, schema, opts, definitions); err != nil {
+		return err
+	}
+	if err := pi.introspectMaterializedViews(ctx, schema, opts, definitions); err != nil {
 		return err
 	}
 
@@ -136,7 +140,7 @@ func (pi *PostgresIntrospector) introspectTables(ctx context.Context, schema *pa
 	return nil
 }
 
-func (pi *PostgresIntrospector) introspectViews(ctx context.Context, schema *parser.Schema, opts IntrospectionOptions) error {
+func (pi *PostgresIntrospector) introspectViews(ctx context.Context, schema *parser.Schema, opts IntrospectionOptions, definitions map[string]string) error {
 	rows, err := pi.db.QueryContext(ctx, `
 		SELECT table_schema, table_name, view_definition
 		FROM information_schema.views
@@ -182,11 +186,66 @@ func (pi *PostgresIntrospector) introspectViews(ctx context.Context, schema *par
 		if err := pi.introspectViewColumns(ctx, &view); err != nil {
 			return err
 		}
+		pi.columnsFromDefinition(&view, definitions, schema)
 
 		schema.Views = append(schema.Views, view)
 	}
 
 	return nil
+}
+
+// viewDefinitions returns the definition of every view and materialized view,
+// keyed by schema.name. pg_get_viewdef qualifies a table whose schema is not
+// on the search_path, so with an empty one every table is qualified and the
+// view parser finds it whatever the connection's search_path is.
+func (pi *PostgresIntrospector) viewDefinitions(ctx context.Context) (map[string]string, error) {
+	tx, err := pi.db.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
+	if err != nil {
+		return nil, fmt.Errorf("introspect postgres view definitions: %w", err)
+	}
+	defer tx.Rollback() //nolint:errcheck // read-only transaction; nothing to undo
+
+	if _, err := tx.ExecContext(ctx, "SELECT set_config('search_path', '', true)"); err != nil {
+		return nil, fmt.Errorf("introspect postgres view definitions: %w", err)
+	}
+	rows, err := tx.QueryContext(ctx, `
+		SELECT n.nspname, c.relname, pg_catalog.pg_get_viewdef(c.oid)
+		FROM pg_catalog.pg_class c
+		JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
+		WHERE c.relkind IN ('v', 'm')
+		  AND n.nspname NOT IN ('pg_catalog', 'information_schema')`)
+	if err != nil {
+		return nil, fmt.Errorf("introspect postgres view definitions: %w", err)
+	}
+	defer rows.Close() //nolint:errcheck // rows.Close error is not actionable after reading
+
+	definitions := make(map[string]string)
+	for rows.Next() {
+		var schemaName, name string
+		var definition sql.NullString
+		if err := rows.Scan(&schemaName, &name, &definition); err != nil {
+			return nil, fmt.Errorf("introspect postgres view definitions: scanning: %w", err)
+		}
+		definitions[schemaName+"."+name] = definition.String
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("introspect postgres view definitions: iterating: %w", err)
+	}
+	return definitions, nil
+}
+
+// columnsFromDefinition reads view's columns from its definition (PRD §16.2).
+func (pi *PostgresIntrospector) columnsFromDefinition(view *parser.View, definitions map[string]string, schema *parser.Schema) {
+	ddl := "CREATE VIEW " + quotePostgresIdent(view.Schema) + "." + quotePostgresIdent(view.Name) + " AS " + definitions[view.Schema+"."+view.Name]
+	parse := func(sql []byte) (parser.ViewSQL, error) { return postgres.ParseViewSQL(sql, view.Schema) }
+	catalog := view.Columns
+	columnsFromDefinition(view, ddl, parse, schema, func(i int) (parser.Column, bool) {
+		return catalog[i], true
+	})
+}
+
+func quotePostgresIdent(name string) string {
+	return `"` + strings.ReplaceAll(name, `"`, `""`) + `"`
 }
 
 // introspectMaterializedViews discovers PostgreSQL materialized views. They
@@ -195,7 +254,7 @@ func (pi *PostgresIntrospector) introspectViews(ctx context.Context, schema *par
 // introspectViewColumns query, which already matches relkind = 'm'. The
 // pg_matviews.definition populates View.SQL for documentation purposes only —
 // it is never re-injected at query time (same contract as regular views).
-func (pi *PostgresIntrospector) introspectMaterializedViews(ctx context.Context, schema *parser.Schema, opts IntrospectionOptions) error {
+func (pi *PostgresIntrospector) introspectMaterializedViews(ctx context.Context, schema *parser.Schema, opts IntrospectionOptions, definitions map[string]string) error {
 	rows, err := pi.db.QueryContext(ctx, `
 		SELECT schemaname, matviewname, definition
 		FROM pg_catalog.pg_matviews
@@ -242,6 +301,7 @@ func (pi *PostgresIntrospector) introspectMaterializedViews(ctx context.Context,
 		if err := pi.introspectViewColumns(ctx, &view); err != nil {
 			return err
 		}
+		pi.columnsFromDefinition(&view, definitions, schema)
 		if err := pi.introspectMatviewUniqueIndexes(ctx, &view); err != nil {
 			return err
 		}

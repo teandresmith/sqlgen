@@ -1136,27 +1136,39 @@ func validateConnectionRequired(cfg *RootConfig, errs *[]error) {
 }
 
 // validateIgnoredInputKeys warns about an input key the source never reads
-// (PRD §4.13): an explicit `paths` under `source: database`, or a non-empty
-// `introspect` field under `source: files`. The defaulted `paths` stays quiet.
+// (PRD §4.13): an explicit `paths` under `source: database`, a non-empty
+// `introspect` field under `source: files`, or `introspect.schemas` /
+// `exclude_schemas` on a dialect without schemas. The defaulted `paths`
+// stays quiet.
 func validateIgnoredInputKeys(cfg *RootConfig, warnings *[]Warning) {
-	const msg = "%s is ignored under input.source: %s"
 	in := cfg.Input
 	if in.Source == SourceDatabase && in.pathsSet {
-		*warnings = append(*warnings, Warning{Message: fmt.Sprintf(msg, "input.paths", in.Source)})
+		*warnings = append(*warnings, Warning{Message: fmt.Sprintf("input.paths is ignored under input.source: %s", in.Source)})
 	}
-	if in.Source != SourceFiles || in.Introspect == nil {
+	if in.Introspect == nil {
 		return
 	}
-	for _, f := range []struct {
+	fields := []struct {
 		key    string
 		values []string
 	}{
 		{"input.introspect.schemas", in.Introspect.Schemas},
 		{"input.introspect.exclude_schemas", in.Introspect.ExcludeSchemas},
 		{"input.introspect.tables", in.Introspect.Tables},
-	} {
+	}
+	var msg string
+	switch {
+	case in.Source == SourceFiles:
+		msg = fmt.Sprintf("%%s is ignored under input.source: %s", in.Source)
+	case in.Dialect != DialectPostgres:
+		msg = fmt.Sprintf("%%s is ignored on %s, which has no schemas", in.Dialect)
+		fields = fields[:2]
+	default:
+		return
+	}
+	for _, f := range fields {
 		if len(f.values) > 0 {
-			*warnings = append(*warnings, Warning{Message: fmt.Sprintf(msg, f.key, in.Source)})
+			*warnings = append(*warnings, Warning{Message: fmt.Sprintf(msg, f.key)})
 		}
 	}
 }

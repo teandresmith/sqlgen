@@ -154,8 +154,26 @@ func (mi *MySQLIntrospector) introspectViews(ctx context.Context, schema *parser
 			SQL:  ref.definition,
 		}
 
-		if err := mi.introspectViewColumns(ctx, &view, schema); err != nil {
+		catalog, err := mi.viewCatalogColumns(ctx, view.Name)
+		if err != nil {
 			return err
+		}
+		names := make([]string, len(catalog))
+		for i, col := range catalog {
+			names[i] = col.name
+		}
+		// A catalog ENUM / SET column may add a type to schema, so a catalog
+		// column is built only where it is used.
+		ddl := "CREATE VIEW " + quoteMySQLIdent(view.Name) + " AS " + ref.definition
+		view.Definition, view.Columns, err = viewColumnsFromDefinition(ddl, mysql.ParseViewSQL, schema, names, func(i int) (parser.Column, bool) {
+			return viewColumnFromCatalog(&view, catalog[i], schema), true
+		})
+		if err != nil {
+			schema.Warnings = append(schema.Warnings, viewFallbackWarning(view.Name, err))
+			view.Columns = make([]parser.Column, 0, len(catalog))
+			for _, row := range catalog {
+				view.Columns = append(view.Columns, viewColumnFromCatalog(&view, row, schema))
+			}
 		}
 
 		schema.Views = append(schema.Views, view)
@@ -164,7 +182,26 @@ func (mi *MySQLIntrospector) introspectViews(ctx context.Context, schema *parser
 	return nil
 }
 
-func (mi *MySQLIntrospector) introspectViewColumns(ctx context.Context, view *parser.View, schema *parser.Schema) error {
+// mysqlViewColumn is one row of a view's information_schema.columns.
+type mysqlViewColumn struct {
+	name, columnType string
+	nullable         bool
+}
+
+func quoteMySQLIdent(name string) string {
+	return "`" + strings.ReplaceAll(name, "`", "``") + "`"
+}
+
+// viewColumnFromCatalog builds a view column from its catalog row.
+func viewColumnFromCatalog(view *parser.View, row mysqlViewColumn, schema *parser.Schema) parser.Column {
+	col := parser.Column{Name: row.name, Type: normalizeMySQLType(row.columnType), Nullable: row.nullable}
+	if col.Type == "enum" || col.Type == "set" {
+		col.Type = viewEnumOrSetType(view, col.Name, row.columnType, schema)
+	}
+	return col
+}
+
+func (mi *MySQLIntrospector) viewCatalogColumns(ctx context.Context, view string) ([]mysqlViewColumn, error) {
 	rows, err := mi.db.QueryContext(ctx, `
 		SELECT
 			column_name,
@@ -172,35 +209,26 @@ func (mi *MySQLIntrospector) introspectViewColumns(ctx context.Context, view *pa
 			is_nullable
 		FROM information_schema.columns
 		WHERE table_schema = DATABASE() AND table_name = ?
-		ORDER BY ordinal_position`, view.Name)
+		ORDER BY ordinal_position`, view)
 	if err != nil {
-		return fmt.Errorf("introspect mysql view columns %s: %w", view.Name, err)
+		return nil, fmt.Errorf("introspect mysql view columns %s: %w", view, err)
 	}
 	defer rows.Close() //nolint:errcheck // rows.Close error is not actionable after reading
 
+	var cols []mysqlViewColumn
 	for rows.Next() {
-		var (
-			col        parser.Column
-			columnType string
-			isNullable string
-		)
-		if err := rows.Scan(&col.Name, &columnType, &isNullable); err != nil {
-			return fmt.Errorf("introspect mysql view columns %s: scanning: %w", view.Name, err)
+		var col mysqlViewColumn
+		var isNullable string
+		if err := rows.Scan(&col.name, &col.columnType, &isNullable); err != nil {
+			return nil, fmt.Errorf("introspect mysql view columns %s: scanning: %w", view, err)
 		}
-
-		col.Type = normalizeMySQLType(columnType)
-		col.Nullable = isNullable == "YES"
-		if col.Type == "enum" || col.Type == "set" {
-			col.Type = viewEnumOrSetType(view, col.Name, columnType, schema)
-		}
-
-		view.Columns = append(view.Columns, col)
+		col.nullable = isNullable == "YES"
+		cols = append(cols, col)
 	}
-
 	if err := rows.Err(); err != nil {
-		return fmt.Errorf("introspect mysql view columns %s: iterating: %w", view.Name, err)
+		return nil, fmt.Errorf("introspect mysql view columns %s: iterating: %w", view, err)
 	}
-	return nil
+	return cols, nil
 }
 
 // viewEnumOrSetType returns the type of a view's ENUM or SET column: the

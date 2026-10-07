@@ -330,6 +330,12 @@ type View struct {
 	// Always false for regular views (Materialized == false implies
 	// ConcurrentlyRefreshable == false).
 	ConcurrentlyRefreshable bool
+
+	// Definition is the parsed definition an introspected view's columns
+	// were read from (PRD §16.2), so that source: both can read them again
+	// against the schema the SQL files leave. Nil for a view from an
+	// annotation file, and for one whose columns come from the catalog.
+	Definition *ViewSQL
 }
 
 // RenameTableReferences repoints every foreign key that references the table

@@ -472,7 +472,10 @@ func TestMergeViewAnnotations_AnnotationWins(t *testing.T) {
 		},
 	}
 
-	result := parser.MergeViewAnnotations(introspected, annotated, annotationMap)
+	result, err := parser.MergeViewAnnotations(introspected, annotated, annotationMap)
+	if err != nil {
+		t.Fatalf("MergeViewAnnotations() error: %v", err)
+	}
 
 	if len(result) != 1 {
 		t.Fatalf("merged views = %d, want 1", len(result))
@@ -488,6 +491,11 @@ func TestMergeViewAnnotations_AnnotationWins(t *testing.T) {
 	if view.Columns[1].Type != "decimal.Decimal" {
 		t.Errorf("total Type = %q, want %q", view.Columns[1].Type, "decimal.Decimal")
 	}
+	// The generator reads a @type override from GoTypeLiteral, as BuildView sets it.
+	if view.Columns[1].GoTypeLiteral != "decimal.Decimal" || view.Columns[1].GoTypeImport != "github.com/shopspring/decimal" {
+		t.Errorf("total GoTypeLiteral, GoTypeImport = %q, %q, want %q, %q", view.Columns[1].GoTypeLiteral,
+			view.Columns[1].GoTypeImport, "decimal.Decimal", "github.com/shopspring/decimal")
+	}
 	if !view.Columns[1].Nullable {
 		t.Error("total Nullable = false, want true")
 	}
@@ -498,7 +506,10 @@ func TestMergeViewAnnotations_AnnotationOnlyView(t *testing.T) {
 		{Name: "my_view", Columns: []parser.Column{{Name: "x", Type: "text"}}},
 	}
 
-	result := parser.MergeViewAnnotations(nil, annotated, nil)
+	result, err := parser.MergeViewAnnotations(nil, annotated, nil)
+	if err != nil {
+		t.Fatalf("MergeViewAnnotations() error: %v", err)
+	}
 	if len(result) != 1 {
 		t.Fatalf("merged views = %d, want 1", len(result))
 	}
@@ -642,7 +653,10 @@ func TestMergeViewAnnotations_MatviewPKOverride(t *testing.T) {
 		},
 	}
 
-	result := parser.MergeViewAnnotations(introspected, annotated, annotationMap)
+	result, err := parser.MergeViewAnnotations(introspected, annotated, annotationMap)
+	if err != nil {
+		t.Fatalf("MergeViewAnnotations() error: %v", err)
+	}
 	if len(result) != 1 {
 		t.Fatalf("merged views = %d, want 1", len(result))
 	}
@@ -691,7 +705,10 @@ func TestMergeViewAnnotations_MatviewNoPKOverlayKeepsDiscovered(t *testing.T) {
 		{Name: "order_totals", Schema: "public", Materialized: true},
 	}
 
-	result := parser.MergeViewAnnotations(introspected, annotated, annotationMap)
+	result, err := parser.MergeViewAnnotations(introspected, annotated, annotationMap)
+	if err != nil {
+		t.Fatalf("MergeViewAnnotations() error: %v", err)
+	}
 	if len(result) != 1 {
 		t.Fatalf("merged views = %d, want 1", len(result))
 	}
@@ -705,5 +722,99 @@ func TestMergeViewAnnotations_MatviewNoPKOverlayKeepsDiscovered(t *testing.T) {
 	}
 	if view.Columns[1].Type != "decimal.Decimal" {
 		t.Errorf("total Type = %q, want %q", view.Columns[1].Type, "decimal.Decimal")
+	}
+}
+
+// TestBuildView_Nullability pins when a view column can hold NULL: a NULL
+// scanned into a non-nullable Go field fails, so a column is NOT NULL only
+// when its source column is NOT NULL and its table is on no outer side of a
+// join, or when an annotation or aggregate says so.
+func TestBuildView_Nullability(t *testing.T) {
+	schema := &parser.Schema{Tables: []parser.Table{
+		{Name: "products", Columns: []parser.Column{
+			{Name: "id", Type: "integer"},
+			{Name: "name", Type: "text"},
+			{Name: "discount", Type: "numeric", Nullable: true},
+		}},
+		{Name: "reviews", Columns: []parser.Column{
+			{Name: "id", Type: "integer"},
+			{Name: "rating", Type: "integer"},
+		}},
+	}}
+	aliases := map[string]string{"p": "products", "r": "reviews"}
+
+	tests := []struct {
+		name        string
+		column      parser.ViewSelectColumn
+		outer       map[string]bool
+		annotations *parser.ViewAnnotations
+		want        bool
+	}{
+		{name: "NOT NULL column", column: parser.ViewSelectColumn{Alias: "name", SourceTable: "p", SourceColumn: "name"}},
+		{name: "nullable column", column: parser.ViewSelectColumn{Alias: "discount", SourceTable: "p", SourceColumn: "discount"}, want: true},
+		{name: "NOT NULL column on the outer side", column: parser.ViewSelectColumn{Alias: "rating", SourceTable: "r", SourceColumn: "rating"}, outer: map[string]bool{"r": true}, want: true},
+		{name: "unqualified column on the outer side", column: parser.ViewSelectColumn{Alias: "rating", SourceColumn: "rating"}, outer: map[string]bool{"r": true}, want: true},
+		{name: "outer side elsewhere", column: parser.ViewSelectColumn{Alias: "name", SourceTable: "p", SourceColumn: "name"}, outer: map[string]bool{"r": true}},
+		{name: "COUNT over the outer side", column: parser.ViewSelectColumn{Alias: "n", Aggregate: "COUNT", SourceTable: "r", SourceColumn: "id"}, outer: map[string]bool{"r": true}},
+		{name: "SUM", column: parser.ViewSelectColumn{Alias: "total", Aggregate: "SUM", SourceTable: "r", SourceColumn: "rating"}, want: true},
+		{name: "unresolved column", column: parser.ViewSelectColumn{Alias: "x", SourceTable: "p", SourceColumn: "missing"}},
+		{
+			name:        "@type on the outer side",
+			column:      parser.ViewSelectColumn{Alias: "rating", SourceTable: "r", SourceColumn: "rating"},
+			outer:       map[string]bool{"r": true},
+			annotations: &parser.ViewAnnotations{TypeOverrides: map[string]parser.ViewTypeAnnotation{"rating": {GoType: "int64"}}},
+		},
+		{
+			name:        "@nullable on a NOT NULL column",
+			column:      parser.ViewSelectColumn{Alias: "name", SourceTable: "p", SourceColumn: "name"},
+			annotations: &parser.ViewAnnotations{NullableColumns: []string{"name"}},
+			want:        true,
+		},
+		{
+			name:        "@pk on a nullable column",
+			column:      parser.ViewSelectColumn{Alias: "discount", SourceTable: "p", SourceColumn: "discount"},
+			annotations: &parser.ViewAnnotations{PKColumns: []string{"discount"}},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			annotations := tt.annotations
+			if annotations == nil {
+				annotations = &parser.ViewAnnotations{}
+			}
+			parsed := parser.ViewSQL{
+				Name: "v", Columns: []parser.ViewSelectColumn{tt.column}, TableAliases: aliases, OuterAliases: tt.outer,
+			}
+			view, err := parser.BuildView(parsed, "CREATE VIEW ...", annotations, schema)
+			if err != nil {
+				t.Fatalf("BuildView() error: %v", err)
+			}
+			if got := view.Columns[0].Nullable; got != tt.want {
+				t.Errorf("Nullable = %t, want %t", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestMergeViewAnnotations_UnknownColumn(t *testing.T) {
+	introspected := []parser.View{{Name: "v", Schema: "public", Columns: []parser.Column{{Name: "id", Type: "integer"}}}}
+	tests := []struct {
+		name        string
+		annotations *parser.ViewAnnotations
+		want        string
+	}{
+		{name: "@pk", annotations: &parser.ViewAnnotations{PKColumns: []string{"uid"}}, want: `view public.v: @pk references unknown column "uid"`},
+		{name: "@type", annotations: &parser.ViewAnnotations{TypeOverrides: map[string]parser.ViewTypeAnnotation{"uid": {GoType: "string"}}}, want: `view public.v: @type references unknown column "uid"`},
+		{name: "@nullable", annotations: &parser.ViewAnnotations{NullableColumns: []string{"uid"}}, want: `view public.v: @nullable references unknown column "uid"`},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// The annotation file's own SELECT has uid; the database's view does not.
+			annotated := []parser.View{{Name: "v", Schema: "public", Columns: []parser.Column{{Name: "uid", Type: "integer"}}}}
+			_, err := parser.MergeViewAnnotations(introspected, annotated, map[string]*parser.ViewAnnotations{"public.v": tt.annotations})
+			if err == nil || err.Error() != tt.want {
+				t.Errorf("MergeViewAnnotations() error = %v, want %q", err, tt.want)
+			}
+		})
 	}
 }

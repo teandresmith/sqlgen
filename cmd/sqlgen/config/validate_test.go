@@ -2098,6 +2098,56 @@ func TestValidatePreParse_IgnoredInputKeys(t *testing.T) {
 	}
 }
 
+func TestValidatePreParse_IgnoredIntrospectSchemas(t *testing.T) {
+	const schemas = "  introspect:\n    schemas: [app]\n    exclude_schemas: [audit]\n    tables: [users]\n"
+	tests := []struct {
+		name  string
+		input string
+		want  []string
+	}{
+		{
+			name:  "mysql database",
+			input: "  dialect: mysql\n  source: database\n  connection:\n    url: app@tcp(db)/app\n" + schemas,
+			want: []string{
+				"input.introspect.schemas is ignored on mysql, which has no schemas",
+				"input.introspect.exclude_schemas is ignored on mysql, which has no schemas",
+			},
+		},
+		{
+			name:  "sqlite both",
+			input: "  dialect: sqlite\n  source: both\n  connection:\n    database: app.db\n" + schemas,
+			want: []string{
+				"input.introspect.schemas is ignored on sqlite, which has no schemas",
+				"input.introspect.exclude_schemas is ignored on sqlite, which has no schemas",
+			},
+		},
+		{name: "sqlite tables only", input: "  dialect: sqlite\n  source: database\n  connection:\n    database: app.db\n  introspect:\n    tables: [users]\n"},
+		{name: "postgres reads schemas", input: "  dialect: postgres\n  source: database\n  connection:\n    url: postgres://db/app\n" + schemas},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg, err := config.LoadConfig(writeTestConfig(t, "input:\n"+tt.input+"output:\n  driver: stdlib\n  dir: ./models\n"))
+			if err != nil {
+				t.Fatalf("LoadConfig() unexpected error: %v", err)
+			}
+			warnings, err := config.ValidatePreParse(cfg)
+			if err != nil {
+				t.Fatalf("ValidatePreParse() unexpected error: %v", err)
+			}
+			var got []string
+			for _, w := range warnings {
+				if strings.Contains(w.Message, "which has no schemas") {
+					got = append(got, w.Message)
+				}
+			}
+			if diff := cmp.Diff(tt.want, got); diff != "" {
+				t.Errorf("ValidatePreParse() warnings mismatch (-want +got):\n%s", diff)
+			}
+		})
+	}
+}
+
 func TestValidatePreParse_IgnoredPasswordEnv(t *testing.T) {
 	const warning = "SQLGEN_DB_PASSWORD is ignored: the connection comes from "
 	tests := []struct {

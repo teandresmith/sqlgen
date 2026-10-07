@@ -1664,12 +1664,14 @@ func TestPostgresIntrospectMaterializedViews(t *testing.T) {
 		t.Errorf("mv_totals.SQL = %q, want the pg_matviews definition", totals.SQL)
 	}
 
+	// Types as the view parser reads the definition (PRD §16.3): COUNT is an
+	// int64 literal, and SUM keeps its source column's type for the
+	// generator's widening.
 	wantCols := map[string]string{
 		"customer_id": "bigint",
 		"email":       "text",
-		"order_count": "bigint",
-		// sum(numeric(10,2)) widens to unconstrained numeric in Postgres.
-		"total": "numeric",
+		"order_count": "int64",
+		"total":       "numeric(10,2)",
 	}
 	if len(totals.Columns) != len(wantCols) {
 		t.Fatalf("mv_totals columns = %d, want %d", len(totals.Columns), len(wantCols))
@@ -1763,7 +1765,7 @@ func TestMySQLIntrospectViews(t *testing.T) {
 			{Name: "status_text", Type: "varchar(8)", Nullable: true},
 		}},
 	}
-	if diff := cmp.Diff(wantViews, schema.Views, cmpopts.IgnoreFields(parser.View{}, "SQL")); diff != "" {
+	if diff := cmp.Diff(wantViews, schema.Views, cmpopts.IgnoreFields(parser.View{}, "SQL", "Definition")); diff != "" {
 		t.Errorf("views mismatch (-want +got):\n%s", diff)
 	}
 	wantEnums := []parser.Enum{

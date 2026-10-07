@@ -39,11 +39,27 @@ type ViewSQL struct {
 	// TableSchemas maps the same keys as TableAliases to the table's schema,
 	// for a dialect with schemas (PostgreSQL); nil otherwise.
 	TableSchemas map[string]string
+	// OuterAliases holds the TableAliases keys on the outer side of a join,
+	// whose columns are NULL when no row matches: the right side of a LEFT
+	// JOIN, the left side of a RIGHT JOIN, both sides of a FULL JOIN.
+	OuterAliases map[string]bool
 
 	// Materialized reports whether the statement was CREATE MATERIALIZED VIEW
 	// (PostgreSQL-only; the MySQL/SQLite parsers reject the syntax).
 	Materialized bool
 }
+
+// ViewQueryError reports a CREATE VIEW whose name a dialect's ParseViewSQL
+// read but whose query it cannot, such as a compound SELECT. An annotation
+// file for a view the database defines needs only the name (PRD §16.2).
+type ViewQueryError struct {
+	Schema, Name string
+	Err          error
+}
+
+func (e *ViewQueryError) Error() string { return e.Err.Error() }
+
+func (e *ViewQueryError) Unwrap() error { return e.Err }
 
 // ParseViewAnnotations extracts @pk, @type, and @nullable directives from
 // SQL line comments at the top of a view annotation file.
@@ -140,25 +156,12 @@ func parseTypeDirective(annotations *ViewAnnotations, colName, value string) err
 // schema parsed so far. The parsed field is produced by a dialect-specific
 // parser's ParseViewSQL method; annotations come from ParseViewAnnotations.
 func BuildView(parsed ViewSQL, rawSQL string, annotations *ViewAnnotations, schema *Schema) (*View, error) {
-	// Validate annotation column references against parsed columns.
 	colSet := make(map[string]bool, len(parsed.Columns))
 	for _, col := range parsed.Columns {
 		colSet[col.Alias] = true
 	}
-	for _, pk := range annotations.PKColumns {
-		if !colSet[pk] {
-			return nil, fmt.Errorf("@pk references unknown column %q", pk)
-		}
-	}
-	for col := range annotations.TypeOverrides {
-		if !colSet[col] {
-			return nil, fmt.Errorf("@type references unknown column %q", col)
-		}
-	}
-	for _, col := range annotations.NullableColumns {
-		if !colSet[col] {
-			return nil, fmt.Errorf("@nullable references unknown column %q", col)
-		}
+	if err := checkAnnotationColumns(colSet, annotations); err != nil {
+		return nil, err
 	}
 
 	viewColumns := resolveViewColumns(parsed.Columns, newViewSources(parsed, schema), annotations)
@@ -222,7 +225,7 @@ func resolveViewColumns(selectCols []ViewSelectColumn, sources *viewSources, ann
 			// resolver (ARRAY_AGG returns the array form, e.g. text[]).
 			switch sc.Aggregate {
 			case "SUM", "MIN", "MAX", "ARRAY_AGG":
-				if sources.columnType(sc) == "" {
+				if typ, _ := sources.column(sc); typ == "" {
 					col.GoTypeLiteral = col.Type // fallback "any"
 				} else {
 					// Flows through the SQL-to-Go resolver; record the aggregate
@@ -253,17 +256,19 @@ func resolveViewColumns(selectCols []ViewSelectColumn, sources *viewSources, ann
 
 // resolveColumnType applies the PRD 16.3 resolution chain for a single column:
 // @type annotation → aggregate inference → schema matching → any fallback.
+// A schema-matched column is nullable when its source column is, or when its
+// table is on the outer side of a join.
 func resolveColumnType(sc ViewSelectColumn, sources *viewSources, annotations *ViewAnnotations) (string, bool) {
 	if ta, ok := annotations.TypeOverrides[sc.Alias]; ok {
 		return ta.GoType, false
 	}
 	if sc.Aggregate != "" {
-		baseType := sources.columnType(sc)
+		baseType, _ := sources.column(sc)
 		return inferAggregateType(sc.Aggregate, baseType), isAggregateNullable(sc.Aggregate)
 	}
 	if sc.SourceColumn != "" {
-		if resolved := sources.columnType(sc); resolved != "" {
-			return resolved, false
+		if resolved, nullable := sources.column(sc); resolved != "" {
+			return resolved, nullable
 		}
 	}
 	return "any", false
@@ -275,6 +280,7 @@ type viewSources struct {
 	viewSchema string
 	aliases    map[string]string
 	schemas    map[string]string
+	outer      map[string]bool
 	tables     []Table
 	// userTypes holds "schema.name" for every enum, SET, composite and domain type.
 	userTypes map[string]bool
@@ -285,6 +291,7 @@ func newViewSources(parsed ViewSQL, schema *Schema) *viewSources {
 		viewSchema: parsed.Schema,
 		aliases:    parsed.TableAliases,
 		schemas:    parsed.TableSchemas,
+		outer:      parsed.OuterAliases,
 		userTypes:  make(map[string]bool),
 	}
 	if schema == nil {
@@ -306,12 +313,14 @@ func newViewSources(parsed ViewSQL, schema *Schema) *viewSources {
 	return vs
 }
 
-// columnType returns the type of sc's source column, written relative to the
-// view's schema, or "" when no source column is found. An unqualified column
-// is looked up in the FROM-clause tables, in key order.
-func (vs *viewSources) columnType(sc ViewSelectColumn) string {
+// column returns the type of sc's source column, written relative to the
+// view's schema, and whether the view can read it as NULL: the column is
+// nullable or its table is on the outer side of a join. typ is "" when no
+// source column is found. An unqualified column is looked up in the
+// FROM-clause tables, in key order.
+func (vs *viewSources) column(sc ViewSelectColumn) (typ string, nullable bool) {
 	if sc.SourceColumn == "" {
-		return ""
+		return "", false
 	}
 	keys := []string{sc.SourceTable}
 	if sc.SourceTable == "" {
@@ -320,11 +329,11 @@ func (vs *viewSources) columnType(sc ViewSelectColumn) string {
 	for _, key := range keys {
 		if t := vs.table(key); t != nil {
 			if col := ColumnByName(t, sc.SourceColumn); col != nil {
-				return vs.relativeType(col.Type, t.Schema)
+				return vs.relativeType(col.Type, t.Schema), col.Nullable || vs.outer[key]
 			}
 		}
 	}
-	return ""
+	return "", false
 }
 
 // table returns the table a FROM-clause key (alias or table name) names: the
@@ -443,10 +452,33 @@ func isAggregateNullable(aggregate string) bool {
 	}
 }
 
+// checkAnnotationColumns returns an error for an annotation that names a
+// column not in columns.
+func checkAnnotationColumns(columns map[string]bool, annotations *ViewAnnotations) error {
+	for _, pk := range annotations.PKColumns {
+		if !columns[pk] {
+			return fmt.Errorf("@pk references unknown column %q", pk)
+		}
+	}
+	for _, col := range slices.Sorted(maps.Keys(annotations.TypeOverrides)) {
+		if !columns[col] {
+			return fmt.Errorf("@type references unknown column %q", col)
+		}
+	}
+	for _, col := range annotations.NullableColumns {
+		if !columns[col] {
+			return fmt.Errorf("@nullable references unknown column %q", col)
+		}
+	}
+	return nil
+}
+
 // MergeViewAnnotations merges annotation overlays onto introspected views.
 // For each view that has a matching annotation file, annotation @pk, @type,
-// and @nullable take precedence over introspected values.
-func MergeViewAnnotations(introspected []View, annotated []View, annotationMap map[string]*ViewAnnotations) []View {
+// and @nullable take precedence over introspected values. The introspected
+// view's columns stand (PRD §16.2), so an annotation naming a column it
+// lacks is an error.
+func MergeViewAnnotations(introspected []View, annotated []View, annotationMap map[string]*ViewAnnotations) ([]View, error) {
 	annotatedMap := make(map[string]int, len(annotated))
 	for i, v := range annotated {
 		key := viewKey(v.Schema, v.Name)
@@ -459,7 +491,10 @@ func MergeViewAnnotations(introspected []View, annotated []View, annotationMap m
 	for _, iv := range introspected {
 		key := viewKey(iv.Schema, iv.Name)
 		if _, ok := annotatedMap[key]; ok {
-			mergedView := mergeView(iv, annotationMap[key])
+			mergedView, err := mergeView(iv, annotationMap[key])
+			if err != nil {
+				return nil, fmt.Errorf("view %s: %w", key, err)
+			}
 			result = append(result, mergedView)
 			merged[key] = true
 		} else {
@@ -474,7 +509,7 @@ func MergeViewAnnotations(introspected []View, annotated []View, annotationMap m
 		}
 	}
 
-	return result
+	return result, nil
 }
 
 func viewKey(schema, name string) string {
@@ -485,9 +520,16 @@ func viewKey(schema, name string) string {
 }
 
 // mergeView merges an introspected view with annotation overrides.
-func mergeView(introspected View, annotations *ViewAnnotations) View {
+func mergeView(introspected View, annotations *ViewAnnotations) (View, error) {
 	if annotations == nil {
-		return introspected
+		return introspected, nil
+	}
+	columns := make(map[string]bool, len(introspected.Columns))
+	for _, col := range introspected.Columns {
+		columns[col.Name] = true
+	}
+	if err := checkAnnotationColumns(columns, annotations); err != nil {
+		return View{}, err
 	}
 
 	result := introspected
@@ -515,19 +557,24 @@ func mergeView(introspected View, annotations *ViewAnnotations) View {
 		}
 	}
 
+	// The same precedence BuildView applies: a @type column is NOT NULL,
+	// @nullable makes it nullable, and @pk wins over both.
 	for i := range result.Columns {
 		col := &result.Columns[i]
-		if pkSet[col.Name] {
-			col.PrimaryKey = true
-			col.Nullable = false
-		}
 		if ta, ok := annotations.TypeOverrides[col.Name]; ok {
 			col.Type = ta.GoType
+			col.GoTypeLiteral = ta.GoType
+			col.GoTypeImport = ta.ImportPath
+			col.Nullable = false
 		}
 		if nullableSet[col.Name] {
 			col.Nullable = true
 		}
+		if pkSet[col.Name] {
+			col.PrimaryKey = true
+			col.Nullable = false
+		}
 	}
 
-	return result
+	return result, nil
 }

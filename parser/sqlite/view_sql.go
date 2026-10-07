@@ -53,20 +53,30 @@ func createsMaterializedView(sql string) bool {
 }
 
 func parseCreateViewStmt(cv *rsql.CreateViewStatement) (parser.ViewSQL, error) {
+	name := rsql.IdentName(cv.Name)
 	sel := cv.Select
 	if sel == nil {
-		return parser.ViewSQL{}, fmt.Errorf("CREATE VIEW has no SELECT statement")
+		return parser.ViewSQL{}, &parser.ViewQueryError{Name: name, Err: fmt.Errorf("CREATE VIEW has no SELECT statement")}
+	}
+	// A compound SELECT (UNION, INTERSECT, EXCEPT) has no single column list
+	// whose columns can be traced to a table.
+	if sel.Compound != nil {
+		return parser.ViewSQL{}, &parser.ViewQueryError{Name: name, Err: fmt.Errorf("CREATE VIEW query is not a simple SELECT")}
 	}
 
 	aliases := make(map[string]string)
+	outer := make(map[string]bool)
 	if sel.Source != nil {
-		collectSourceAliases(sel.Source, aliases)
+		if err := collectSourceAliases(sel.Source, false, aliases, outer); err != nil {
+			return parser.ViewSQL{}, &parser.ViewQueryError{Name: name, Err: err}
+		}
 	}
 
 	return parser.ViewSQL{
-		Name:         rsql.IdentName(cv.Name),
+		Name:         name,
 		Columns:      extractResultColumns(sel.Columns),
 		TableAliases: aliases,
+		OuterAliases: outer,
 	}, nil
 }
 
@@ -140,24 +150,35 @@ func extractCallArg(arg rsql.Expr, col *parser.ViewSelectColumn) {
 	}
 }
 
-// collectSourceAliases recursively collects table aliases from a FROM clause Source.
-func collectSourceAliases(src rsql.Source, aliases map[string]string) {
+// collectSourceAliases recursively collects table aliases from a FROM clause
+// Source. isOuter marks a source on the outer side of an enclosing join.
+func collectSourceAliases(src rsql.Source, isOuter bool, aliases map[string]string, outer map[string]bool) error {
 	switch s := src.(type) {
 	case *rsql.QualifiedTableName:
-		tableName := rsql.IdentName(s.Name)
+		key := rsql.IdentName(s.Name)
 		if s.Alias != nil {
-			aliases[rsql.IdentName(s.Alias)] = tableName
-		} else {
-			aliases[tableName] = tableName
+			key = rsql.IdentName(s.Alias)
+			// RIGHT and FULL are not in the grammar, which reads either as a
+			// table alias over an inner join; SQLite runs an outer join.
+			if strings.EqualFold(key, "RIGHT") || strings.EqualFold(key, "FULL") {
+				return fmt.Errorf("CREATE VIEW uses a RIGHT or FULL join, which the view parser cannot read; RIGHT and FULL joins are not supported")
+			}
+		}
+		aliases[key] = rsql.IdentName(s.Name)
+		if isOuter {
+			outer[key] = true
 		}
 
 	case *rsql.JoinClause:
-		collectSourceAliases(s.X, aliases)
-		collectSourceAliases(s.Y, aliases)
+		if err := collectSourceAliases(s.X, isOuter, aliases, outer); err != nil {
+			return err
+		}
+		return collectSourceAliases(s.Y, isOuter || (s.Operator != nil && s.Operator.Left.IsValid()), aliases, outer)
 
 	case *rsql.ParenSource:
 		if s.X != nil {
-			collectSourceAliases(s.X, aliases)
+			return collectSourceAliases(s.X, isOuter, aliases, outer)
 		}
 	}
+	return nil
 }
