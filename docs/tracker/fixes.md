@@ -1063,6 +1063,7 @@ map straight on.
 - **Severity:** tracked
 - **Origin:** phase 30, `parser/mysql` + `parser/introspect` (`mysql.go`)
 - **Surfaced by:** backlog promotion at `/close-phase 30` (2026-10-08); first recorded by the FIX-274 and FIX-275 vets (2026-10-07)
+- **Vetted:** corrected at `be98918a` (2026-10-08)
 
 **Issue.** **MySQL indexes with an expression (functional) key part are not
 modeled the way PRD §30.7 now states for every source.** FIX-274 (SQLite) and
@@ -1077,8 +1078,7 @@ names it after its first column and shifts later keys: `zfn (a int, b int,
 KEY (a, (b + 1)), KEY (a))` → db `a:INDEX[a] functional_index:INDEX[a]`, parser
 `a:INDEX[a ""] a_2:INDEX[a]`.
 
-**Root cause.** The file parser's `indexColumns` (`parser/mysql/mysql.go`,
-~:976 at `d51ace1b`) writes `""` for a functional key part instead of skipping
+**Root cause.** The file parser's `indexColumns` (`parser/mysql/mysql.go:1060` at `be98918a`) writes `""` for a functional key part instead of skipping
 the index, and keeps it in the key list that `addKey` numbers. The introspector
 (`parser/introspect/mysql.go`) skips the part (`STATISTICS.COLUMN_NAME` is NULL)
 and drops an expression-only index, but keeps a mixed index over its plain
@@ -1094,6 +1094,23 @@ columns, the false-uniqueness shape the ruling removes.
   `zfn` numbering case; parser unit cases for `indexColumns` / key naming.
 - Interaction: FIX-275 (open, vetted ready, MySQL key declaration order) changes
   the same naming path; the vet should say which lands first.
+- Vet notes (stale facts and scope):
+  - `indexColumns` is at `parser/mysql/mysql.go:1060` at `be98918a`;
+  - on the introspector, only the non-unique sweep (`introspectNonUniqueIndexes`) skips the part. UNIQUE indexes come from `introspectConstraints`' TABLE_CONSTRAINTS ⨝ KEY_COLUMN_USAGE query (`introspect/mysql.go:388-405`), where KCU has no row for an expression part, so an expression-only UNIQUE drops out of the join while a mixed UNIQUE is kept as UNIQUE [a] and also sets `Column.Unique` on `a` (measured `zfm db: ux2:UNIQUE["a"] a.Unique`);
+  - MySQL numbers expression keys `functional_index`, `functional_index_2`, … unique against all of the table's key names, and a mixed key is named that way too (`t1 … KEY (a, (b + 1))` → `functional_index_4`; a column named `functional_index` pushes its key to `functional_index_2`).
+- Changed from the original:
+  - dropping the key before `addKey` is not enough: a skipped key still holds its name, as in FIX-276's PG reservation (a named `KEY a ((b+1))` pushes a later `KEY (a)` to `a_2`; an unnamed one holds `functional_index[_N]`);
+  - an expression key whose leading columns cover an FK also serves as MySQL's index for that FK, so MySQL builds no index for the FK, or drops one it already built (measured: zfk, FK-before-UNIQUE and the ALTER case). Without this the parser lists an FK index the database lacks;
+  - the introspector needs the filter on the constraint query too, not only on STATISTICS.
+- Prototype: `addKey` keeps any key with an expression part (an `""` column) in a new per-table `Parser.exprKeys` instead of `table.Constraints`, reserving its name for later unnamed keys; an unnamed one is named as if its column were `functional_index`. A built FK index whose columns lead an expression key is not added, and a declared expression key replaces an already built FK index through the unchanged redundancy loop. `exprKeys` follows its table (dropped on DROP TABLE and case-insensitive DROP INDEX, moved on RENAME TABLE), and its plain columns follow RENAME/CHANGE/DROP COLUMN, all measured on MySQL 8.0. `parser/introspect/mysql.go`: the UNIQUE/PK/FK query gets `AND (tc.constraint_type <> 'UNIQUE' OR NOT EXISTS (… statistics … column_name IS NULL))`, and the non-unique sweep skips any index with a NULL-`column_name` row. Tests: `TestExpressionKeys` (`parser/mysql`, 14 cases) and `TestMySQLIntrospect_ExpressionIndexes` (15 tables: key names on both sides, no `Column.Unique`, then `assertSchemaParity`).
+- Lands before FIX-275 (recommended; either order applies with plain `git apply --check` and gives a byte-identical tree, and both suites pass with both applied).
+- Prototype results, run at `be98918a` on 2026-10-08:
+  - Reproduction: a throwaway probe (`parser/introspect/zz_probe_fix294_test.go`, since deleted), `go -C parser test -count=1 -run TestZZProbeFIX294 -v ./introspect/` on MySQL 8.0, db vs parse: `UNIQUE INDEX ux ((lower(email)))` → none vs `ux:UNIQUE[""]`; `UNIQUE INDEX ux2 (a, (lower(b)))` → `ux2:UNIQUE["a"] a.Unique` vs `ux2:UNIQUE["a" ""]`; `KEY ix (a, (b + 1))` → `ix:INDEX["a"]` vs `ix:INDEX["a" ""]`; zfn `KEY (a, (b + 1)), KEY (a)` → `a:INDEX["a"] functional_index:INDEX["a"]` vs `a:INDEX["a" ""] a_2:INDEX["a"]`; `KEY a ((b + 1)), KEY (a)` → `a_2:INDEX["a"]` vs `a:INDEX[""] a_2:INDEX["a"]`; `KEY (a, (b + 1)), FOREIGN KEY (a) …` → `functional_index:INDEX["a"]` (no FK index) vs `a:INDEX["a" ""]`; `assertSchemaParity` fails.
+  - Gates: `go -C parser test -race -count=1 ./...` → ok (containers); parser `golangci-lint run ./...` → 0 issues; `gofumpt -l parser/` → clean; `go -C cmd/sqlgen test -short -count=1 ./...` → ok; with FIX-275 also applied, `./mysql/ ./introspect/` → ok.
+  - Fail-first: each site removed alone fails its test — the `addKey` skip (`+ {"e UNIQUE ux []"}`, `+ {"e INDEX ix [a ]"}`), the FK-prefix check, `functional_index` naming, the name reservation, the DROP INDEX / DROP TABLE releases (`- "e INDEX a [a]", + "e INDEX a_2 [a]"`), the RENAME TABLE move, the RENAME/CHANGE COLUMN rename, the DROP COLUMN strip, the introspector UNIQUE filter ("m_ex_m.a: Unique = true", `+ "m_ex_m": {"ux": "a"}`) and the non-unique skip; `parser/mysql/mysql.go` at HEAD → `+ "m_ex_u": {"ux": ""}`. The existing suite without the fix → passes.
+  - Golden churn: none.
+  - Patch: `.claude/prototypes/FIX-294.patch` (4 files, +280/-7).
+
 
 **References.**
 - PRD §30.7 (`indexes[]`), §16.5.2, §6.1; the 2026-10-08 ruling in FIX-274.
