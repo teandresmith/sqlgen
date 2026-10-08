@@ -109,6 +109,19 @@ func TestDetectSoftDelete(t *testing.T) {
 			wantStrategy: "bool",
 		},
 		{
+			name: "bool column: MySQL BOOLEAN, stored as tinyint(1)",
+			table: parser.Table{
+				Name: "tags",
+				Columns: []parser.Column{
+					{Name: "id", Type: "bigint"},
+					{Name: "is_deleted", Type: "tinyint(1)"},
+				},
+			},
+			columns:      []string{"is_deleted"},
+			wantColumn:   "is_deleted",
+			wantStrategy: "bool",
+		},
+		{
 			name: "integer column: integer",
 			table: parser.Table{
 				Name: "records",

@@ -234,6 +234,10 @@ func TestMySQLTypeMappings(t *testing.T) {
 		{"zerofill int", "int(10) unsigned zerofill", false, gotype.GoType{Name: "uint32", ZeroValue: "0", FKConvert: gotype.FKStringSprint}},
 		{"zerofill bigint", "bigint(20) unsigned zerofill", false, gotype.GoType{Name: "uint64", ZeroValue: "0", FKConvert: gotype.FKStringSprint}},
 		{"zerofill decimal keeps its base type", "decimal(5,2) unsigned zerofill", false, gotype.GoType{Name: "float64", ZeroValue: "0", FKConvert: gotype.FKStringSprint}},
+		{"zerofill double keeps its base type", "double unsigned zerofill", false, gotype.GoType{Name: "float64", ZeroValue: "0", FKConvert: gotype.FKStringSprint}},
+		{"zerofill float keeps its base type", "float(7,3) unsigned zerofill", false, gotype.GoType{Name: "float32", ZeroValue: "0", FKConvert: gotype.FKStringSprint}},
+		{"unsigned double keeps its base type", "double unsigned", false, gotype.GoType{Name: "float64", ZeroValue: "0", FKConvert: gotype.FKStringSprint}},
+		{"unsigned float keeps its base type", "float unsigned", true, gotype.GoType{Name: "*float32", ZeroValue: "nil", FKConvert: gotype.FKStringSprint}},
 
 		// --- Float types ---
 		{"float", "float", false, gotype.GoType{Name: "float32", ZeroValue: "0", FKConvert: gotype.FKStringSprint}},
@@ -296,6 +300,9 @@ func TestMySQLTypeMappings(t *testing.T) {
 		{"boolean nullable", "boolean", true, gotype.GoType{Name: "*bool", ZeroValue: "nil", FKConvert: gotype.FKStringSprint}},
 		{"bit(1)", "bit(1)", false, gotype.GoType{Name: "bool", ZeroValue: "false", FKConvert: gotype.FKStringSprint}},
 		{"bit(1) nullable", "bit(1)", true, gotype.GoType{Name: "*bool", ZeroValue: "nil", FKConvert: gotype.FKStringSprint}},
+		{"tinyint(1) is BOOLEAN", "tinyint(1)", false, gotype.GoType{Name: "bool", ZeroValue: "false", FKConvert: gotype.FKStringSprint}},
+		{"tinyint(1) nullable", "tinyint(1)", true, gotype.GoType{Name: "*bool", ZeroValue: "nil", FKConvert: gotype.FKStringSprint}},
+		{"tinyint(1) zerofill stays unsigned", "tinyint(1) unsigned zerofill", false, gotype.GoType{Name: "uint8", ZeroValue: "0", FKConvert: gotype.FKStringSprint}},
 		{"bit(8)", "bit(8)", false, gotype.GoType{Name: "[]byte", ZeroValue: "nil", FKConvert: gotype.FKStringSprint}},
 		{"bit(8) nullable", "bit(8)", true, gotype.GoType{Name: "[]byte", ZeroValue: "nil", FKConvert: gotype.FKStringSprint}},
 
@@ -963,6 +970,8 @@ func TestMySQLSQLNullTypes(t *testing.T) {
 		{"int unsigned uses NullInt64", "int unsigned", gotype.GoType{Name: "sql.NullInt64", Import: "database/sql", ZeroValue: "sql.NullInt64{}", FKConvert: gotype.FKStringSprint}},
 		{"bigint unsigned uses NullInt64", "bigint unsigned", gotype.GoType{Name: "sql.NullInt64", Import: "database/sql", ZeroValue: "sql.NullInt64{}", FKConvert: gotype.FKStringSprint}},
 		{"float uses NullFloat64", "float", gotype.GoType{Name: "sql.NullFloat64", Import: "database/sql", ZeroValue: "sql.NullFloat64{}", FKConvert: gotype.FKStringSprint}},
+		{"tinyint(1) uses NullBool", "tinyint(1)", gotype.GoType{Name: "sql.NullBool", Import: "database/sql", ZeroValue: "sql.NullBool{}", FKConvert: gotype.FKStringSprint}},
+		{"double unsigned zerofill uses NullFloat64", "double unsigned zerofill", gotype.GoType{Name: "sql.NullFloat64", Import: "database/sql", ZeroValue: "sql.NullFloat64{}", FKConvert: gotype.FKStringSprint}},
 	}
 
 	for _, tt := range tests {

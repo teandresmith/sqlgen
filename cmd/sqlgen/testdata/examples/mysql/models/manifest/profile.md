@@ -22,7 +22,7 @@ Extended user profile information
 | `user_id` | UserID | `int64` | `bigint` |  |  | yes |  | `comparator.Number[int64]` | Owning user reference |
 | `website` | Website | `*string` | `varchar(500)` | yes |  |  |  | `comparator.NullableString` | Personal website URL |
 | `github_handle` | GithubHandle | `*string` | `varchar(100)` | yes |  |  |  | `comparator.NullableString` | GitHub username |
-| `verified` | Verified | `bool` | `boolean` |  |  |  | `false` | `comparator.Bool` | Whether the profile has been verified |
+| `verified` | Verified | `bool` | `tinyint(1)` |  |  |  | `false` | `comparator.Bool` | Whether the profile has been verified |
 | `preferences` | Preferences | `types.JSON` | `json` | yes |  |  |  | `comparator.NullableJSON` | User preference settings |
 
 ## Indexes

@@ -23,153 +23,6 @@
 
 <!-- fixes:open:begin -->
 
-### FIX-271
-
-- **Status:** Open
-- **Severity:** tracked
-- **Origin:** phase 30, `parser/mysql` + `cmd/sqlgen/gotype`
-- **Surfaced by:** backlog promotion at `/close-phase 30` (2026-10-07); first recorded by 30.5 (2026-10-05), with the ZEROFILL line from the 30.5 reviewer (2026-10-05) and the alias line from 30.8b (2026-10-06)
-- **Vetted:** ready at `d51ace1b` (2026-10-07; ruled 2026-10-08, the ruled option is the prototype)
-
-**Issue.** **MySQL type synonyms and ZEROFILL non-integer types differ by
-source, and several change the Go type.** The catalog stores a synonym in
-its canonical form while the file parser keeps the DDL's spelling, so
-`database` and `files` give different column types, view column types,
-`overrides.types` keys and, for some, Go types, against PRD §6.1's "the same
-generated code and manifest". Measured evidence, quoted from the three
-backlog lines merged here:
-- (30.5) "the catalog stores `bool` / `boolean` as `tinyint(1)`, `integer` as `int`, `numeric(p,s)` as `decimal(p,s)`, `real` and `float(30)` as `double`, `decimal` / `decimal(5)` as `decimal(10,0)` / `decimal(5,0)`, `char` as `char(1)`, `bit` as `bit(1)`, `year(4)` as `year`, and `serial` as `bigint unsigned` AUTO_INCREMENT, while the parser keeps the DDL's spelling. Several change the Go type: files `BOOLEAN` → `bool` but database `tinyint(1)` → `int8` (the mysql example's `is_active BOOLEAN NOT NULL DEFAULT TRUE`, whose default also reads back `1` for `true`), and `NUMERIC(8,3)` / `REAL` → `string` but `decimal(8,3)` / `double` → `float64` — evidence: MySQL 8.0.46 `information_schema.columns.column_type` probe; resolver probe `tinyint(1)`→int8, `bool`→bool, `numeric(8,3)`→string, `real`→string"
-- (30.5 reviewer) "the catalog stores `double unsigned zerofill`, `decimal(5,2) unsigned zerofill`, `float(7,3) unsigned zerofill`, while the parser writes `double`, `decimal(5,2)`, `float(7,3)`; under `database` `double unsigned zerofill` resolves to `string` (the decimal and float forms fall back to `float64` / `float32`) — evidence: 30.5 reviewer probe on MySQL 8.0.46; `TestIntegerDisplayWidth` "DOUBLE ZEROFILL" → `double`"
-- (30.8b) "`integer` reads `int` and `numeric(10,2)` reads `decimal(10,2)` under `database`, so the column type, its view columns and `overrides.types` keys differ by source — evidence: 30.8b view parity test, `CREATE TABLE vd_p (id integer …, discount numeric(10,2))` → files `integer` / `numeric(10,2)`, database `int` / `decimal(10,2)`"
-
-The mysql example (`cmd/sqlgen/testdata/examples/mysql/schema.sql:14`,
-`is_active BOOLEAN NOT NULL DEFAULT TRUE`) is affected: `bool` under
-`files`, `int8` under `database`. 30.5 deferred this to the backlog
-(`docs/tracker/phase-30.md` 30.5 Completion Record, "Backlog lines added"),
-and PRD §6.1 does not name it as a parity exception, while the phase-30
-ground rule says a parity exception that stays user-visible must be written
-into §6.1.
-
-**Root cause.** Both sources go through `mysql.NormalizeType`
-(`parser/mysql/mysql.go:109-143`; the introspector via `normalizeMySQLType`,
-`parser/introspect/mysql.go:635-644`), but it canonicalizes only integer
-display widths and ZEROFILL integers (`zerofillWidths`, `mysql.go:100-102`);
-any other type is returned lowercased as written (`if !isInteger { return
-typ }`, `mysql.go:116-118`). So the parser's `buildTypeString`
-(`mysql.go:518-545`) keeps `boolean`, `integer`, `numeric(8,3)`, `real`,
-`decimal`, `char`, `bit`, `year(4)`, `serial`, and writes `zerofill` only on
-an integer base (`mysql.go:541`), so `DOUBLE UNSIGNED ZEROFILL` becomes
-`double unsigned` → `double`. On the resolver side, `mysqlMappings`
-(`cmd/sqlgen/gotype/gotype.go:113-138`) maps `bool` / `boolean` → `bool` but
-has no `tinyint(1)` key, so `tinyint(1)` falls back through `lookupKeys`
-(`gotype.go:725-738`) to `tinyint` → `int8`; it has no `numeric` or `real`
-key (fallback `string`); and `double unsigned zerofill` has no `(`, so
-`stripModifiers` (`gotype.go:1023`) yields no shorter key and it falls to
-`string`. PRD §7.2's MySQL table lists `bool`, `boolean` and `bit(1)` →
-`bool` and `tinyint` → `int8`; it has no `tinyint(1)` row, and the note under
-it says only that `tinyint(1)` keeps its width.
-
-**Suggested fix.** The direction is design-shaped; options for the vet
-(each needs a ruling before implementation):
-- **Option 1 — canonicalize the parser to the catalog form** (the 30.5 M5
-  approach, extended): teach `mysql.NormalizeType` the synonym table
-  (`bool`/`boolean` → `tinyint(1)`, `integer` → `int`, `numeric` →
-  `decimal`, bare `decimal` / `decimal(p)` → `decimal(10,0)` / `decimal(p,0)`,
-  `real` and `float(p>24)` → `double`, `char` → `char(1)`, `bit` → `bit(1)`,
-  `year(4)` → `year`, `serial` → `bigint unsigned` with AutoIncrement and the
-  UNIQUE key MySQL adds), and keep `unsigned zerofill` on a non-integer base
-  in `buildTypeString`. Consequences: types, view columns, manifest and
-  `overrides.types` keys match by source; an `overrides.types` key spelled
-  `boolean` / `numeric` / `integer` stops matching under `files` too (PRD
-  §7.2 note and §7.1 must say which spelling keys use); on its own this
-  turns every `BOOLEAN` column into `int8` under both sources, including the
-  mysql example's `is_active` (golden churn, a user-visible downgrade).
-- **Option 2 — map `tinyint(1)` → `bool` in the MySQL resolver** (add the key
-  to `mysqlMappings` and a row to PRD §7.2): `BOOLEAN` is `bool` under both
-  sources; but every hand-written `TINYINT(1)` column also becomes `bool`,
-  and a stored value other than 0/1 then fails to scan. Combined with Option
-  1 this gives one type string and `bool` on both sources.
-- **Option 3 — resolver-only**: add `numeric`, `real` → `float64`, and
-  `<double|float|decimal> unsigned [zerofill]` keys (or teach `lookupKeys`
-  to strip `unsigned zerofill` on a non-integer base) so the Go types agree,
-  leaving the type text different by source. The remaining text difference
-  (column type, view columns, override keys, manifest) must then be written
-  into PRD §6.1 as a named parity exception per the phase-30 ground rule.
-- **Option 4 — accept as-is** and write the whole difference, Go types
-  included, into §6.1. Contradicts §6.1's "same generated code" and leaves
-  the mysql example's `is_active` type source-dependent; listed for
-  completeness.
-- Whatever is chosen, the regression tests: a MySQL parity case in
-  `parser/introspect` (`assertSchemaParity` over a table with every synonym
-  above plus `DOUBLE/DECIMAL/FLOAT … ZEROFILL`, run on MySQL 8.0); unit cases
-  in `TestIntegerDisplayWidth` (`parser/mysql/mysql_test.go:594`) and
-  `TestMySQLTypeMappings` (`cmd/sqlgen/gotype/gotype_test.go:201`); the
-  mysql example goldens if `is_active` changes; and the 30.8b view parity
-  test (`vd_p`) with its exception removed.
-- Vet notes on scope:
-  - `SERIAL` is not kept "in the DDL's spelling": vitess rejects it (`syntax error at position 64 near 'SERIAL'`), so under `files` it is a parse error, which §6.1 treats as an error, not a difference. It drops out of the synonym table (backlog lists the other vitess-rejected synonyms);
-  - the parser writes `double unsigned`, `decimal(5,2) unsigned` and `float(7,3) unsigned` for the `… UNSIGNED ZEROFILL` forms; only `DOUBLE ZEROFILL` (no UNSIGNED) gives `double`. `double unsigned` resolves to `string` because `lookupKeys` has no fallback for a non-integer unsigned type without parentheses, so `DOUBLE UNSIGNED` / `FLOAT UNSIGNED` / `DOUBLE UNSIGNED ZEROFILL` are `string` under both sources. The real split is `DOUBLE ZEROFILL`: `float64` under files, `string` under database;
-  - the mysql example has 5 BOOLEAN columns (users.is_active, profiles.verified, products.in_stock, tags.is_deleted, default_only_rows.active). Under `source: database` generation fails outright: `soft delete column "is_deleted" in table "tags" has unsupported type "tinyint(1)"`. `parser.DetectSoftDelete` / `softDeleteStrategy` (`parser/detect.go`) has no `tinyint(1)` case, while `isSoftDeleteTypeCompatible` already accepts it;
-  - there is no `vd_p` exception to remove (643a723a moved the shared fixture to `int` / `decimal(10,2)`); the regression test is a new `TestMySQLIntrospect_TypeSynonyms`;
-  - further type text differs by source (measured): `float(p≤24)` → `float`, `float(25..53)` → `double`; `float4` → `float`, `float8` → `double`; `binary` → `binary(1)`; `real(8,2)` → `double(8,2)`; `INTEGER ZEROFILL` files `integer(10) unsigned zerofill` vs database `int(10) unsigned zerofill`; `DECIMAL(5,2) ZEROFILL` files `decimal(5,2)` vs database `decimal(5,2) unsigned zerofill`. Further Go-type splits: `FLOAT(30)` float32 vs float64; `FLOAT4` / `FLOAT8` string vs float32 / float64; `BIT` string vs bool.
-- Prototype (option A below):
-  - `parser/mysql/mysql.go` `NormalizeType` (split into `splitType` / `normalizeInteger` / `normalizeNonInteger` for cyclop) writes each synonym as the catalog stores it, on both paths: `bool`/`boolean` → `tinyint(1)`; `integer` → `int`; `numeric` → `decimal`; `real` → `double`; `float4` → `float`; `float8` → `double`; `decimal` → `decimal(10,0)`; `decimal(p)` → `decimal(p,0)`; `float(p)` → `float`, or `double` when p > 24; `char` / `binary` / `bit` → `(1)`; `year(4)` → `year`. ZEROFILL implies UNSIGNED on every numeric type. `buildTypeString` writes `zerofill` on any type, and the dead `"integer"` entry leaves `zerofillWidths`;
-  - `cmd/sqlgen/gotype/gotype.go` gains a `"tinyint(1)": goBool` mapping. `lookupKeys` matches a non-integer `… unsigned [zerofill]` type as `<base> unsigned`, then `<base>`, so `double unsigned zerofill` is `float64`. An integer base still never takes the signed key;
-  - `parser/detect.go`: `tinyint(1)` takes the `bool` soft-delete strategy;
-  - tests: `TestMySQLIntrospect_TypeSynonyms` (23 columns, both sources plus `assertSchemaParity`); new cases in `TestIntegerDisplayWidth`, `TestNormalizeType`, `TestMySQLTypeMappings`, `TestMySQLSQLNullTypes` and `TestDetectSoftDelete`; `TestCreateTableMySQLTypes` `t_bool` now expects `tinyint(1)`;
-  - PRD: a synonyms sentence in §6.1; the non-integer unsigned lookup in §7.1; the §7.2 row reads `tinyint(1)` (`bool`, `boolean`), and its note says `overrides.types` keys match the stored form, every `tinyint(1)` column is `bool`, and a stored value other than 0/1 does not scan; §4.6 lists `tinyint(1)` as soft-delete `bool`-compatible.
-- Changed from the original:
-  - any variant of option 1 needs the `parser/detect.go` `tinyint(1)` case, a second fix site; without it the canonical type breaks the mysql example's soft delete under `files` too;
-  - option 1 also needs the `lookupKeys` non-integer unsigned fallback (option 3's resolver half); without it, files-mode `DOUBLE ZEROFILL` would turn from `float64` into `string`;
-  - `serial` leaves the synonym table, and the regression test is new rather than the `vd_p` case.
-- Pending the user's ruling:
-  - Q1, direction:
-    - (A) Recommended by the vet, and prototyped: options 1+2. The canonical stored type on both sources, `tinyint(1)` → `bool`, plus the detect.go and `lookupKeys` changes above. Gains: types, manifest and override keys are identical by source, and the mysql example's generated Go is identical by source; the churn is the manifest `db_type` only. Costs: a hand-written `TINYINT(1)` column changes from `int8` to `bool` on both sources, and a stored 2 / -1 then fails to scan (already true for BOOLEAN columns today: `sql/driver: couldn't convert 2 into type bool`). Keys spelled `boolean` / `integer` / `numeric` / `real` stop matching under files (they never matched under database).
-    - (B) Option 1 alone, with `tinyint(1)` staying `int8`. The files output becomes today's database output: 27 model files / 1342 diff lines in the mysql example (5 fields `bool` → `int8`, `comparator.Number[int8]`, new `Increment` methods, GraphQL changes). It still needs the detect.go change.
-    - (C) Options 2+3, resolver only. Go types agree, but `db_type`, view column types and override keys differ by source and must be written into §6.1 as an exception. It still needs detect.go for database mode.
-    - (D) Option 4. The database-mode mysql example keeps failing generation.
-  - Q2, `overrides.types` keys spelled as a synonym:
-    - (A) Recommended by the vet, and prototyped: document in §7.2 that keys use the stored form. No example uses such a key.
-    - (B) Run MySQL override keys through `mysql.NormalizeType`, so a `boolean` key keeps matching (and also catches hand-written `TINYINT(1)` columns).
-    - (C) Warn when `NormalizeType` would rewrite a MySQL override key, so a key that can never match is loud.
-  - Not auto-accepted: A churns goldens relative to C/D and reverses PRD-stated behavior (`tinyint` → `int8` for `tinyint(1)`).
-- Prototype results, run at `d51ace1b` on 2026-10-07:
-  - Reproduction:
-    - probe, one table per type on MySQL 8.0, `go test -v -run TestZZProbeFix271 ./parser/introspect/` → 31 mismatched types, e.g. `BOOLEAN | files "boolean" | db "tinyint(1)"`, `NUMERIC(8,3) | files "numeric(8,3)" | db "decimal(8,3)"`, `DOUBLE ZEROFILL | files "double" | db "double unsigned zerofill"`, `FLOAT(30) | files "float(30)" | db "double"`;
-    - resolver probe: `tinyint(1)`→int8, `boolean`→bool, `numeric(8,3)`→string, `decimal(8,3)`→float64, `real`→string, `double unsigned`→string, `double unsigned zerofill`→string, `float(30)`→float32;
-    - E2E: the mysql example loaded into an anonymous `mysql:8.0` container, sibling copy with `source: database`, `GOWORK=off sqlgen generate` → `Generation error: … detecting soft delete: soft delete column "is_deleted" in table "tags" has unsupported type "tinyint(1)"`. With `is_deleted` dropped from `soft_delete_columns` in both copies, files vs database differ in 27 model files (1342 diff lines), e.g. `InStock omittable.Value[bool]` → `omittable.Value[int8]`, `*comparator.Bool` → `*comparator.Number[int8]`.
-  - With the prototype, the same E2E probe generates identical Go code from both sources, and database mode with `is_deleted` generates. The only remaining differences are default `true`/`1` and view `source`, both named exceptions in §6.1.
-  - Gates:
-    - `go test -race -count=1 ./parser/...` → ok (MySQL 8.0 and PG16 integration);
-    - `cd cmd/sqlgen && go test -race -count=1 ./...` → ok after the golden update;
-    - `make update-golden` → no churn; `make update-golden-e2e` → ok;
-    - mysql example: `GOWORK=off go test -race -count=1 ./...` → ok; `GOWORK=off golangci-lint run` → 0 issues;
-    - `golangci-lint` (parser, gotype) → 0 issues; `gofumpt -l` → clean.
-  - Fail-first:
-    - `NormalizeType` reverted → `TestIntegerDisplayWidth` fails: "type of BOOLEAN = "boolean", want "tinyint(1)"" (and 21 more); `TestMySQLIntrospect_TypeSynonyms` fails: "parsed types mismatch";
-    - integer-only zerofill in `buildTypeString` → "type of DOUBLE ZEROFILL = "double", want "double unsigned zerofill"";
-    - `"tinyint(1)": goBool` removed → `TestMySQLTypeMappings/tinyint(1)_is_BOOLEAN` fails (`+ Name: "int8"`), and `TestMySQLSQLNullTypes/tinyint(1)_uses_NullBool` fails;
-    - `lookupKeys` reverted → `TestMySQLTypeMappings/zerofill_double_keeps_its_base_type` fails: "- Name: "float64" + Name: "string"";
-    - `detect.go` reverted → `TestDetectSoftDelete/bool_column:_MySQL_BOOLEAN,_stored_as_tinyint(1)` fails: "unsupported type "tinyint(1)"";
-    - the existing suite without the fix → passes.
-  - Golden churn: mysql ~12 (6 each under `expected/manifest/` and `models/manifest/`: default_only_row.md, manifest_gen.json, product.md, profile.md, tag.md, user.md); only `db_type` `boolean` → `tinyint(1)` on 5 columns; generated Go is unchanged.
-  - Patch: `.claude/prototypes/FIX-271.patch` (20 files, +300/-68).
-
-- The user ruled on 2026-10-08: Q1 → (A), canonical stored type on both sources with `tinyint(1)` → `bool`, plus the `parser/detect.go` and `lookupKeys` changes; Q2 → (A), PRD §7.2 documents that `overrides.types` keys use the stored form. Both match the prototype, so it stands as vetted.
-
-
-**References.**
-- PRD §6.1 (both sources describe a schema identically; the named parity
-  exceptions), §7.1 (override key matching), §7.2 MySQL Type Mappings and
-  the display-width / ZEROFILL note under it.
-- `docs/tracker/phase-30.md` ground rules (lasting parity exceptions go into
-  §6.1) and 30.5 Completion Record (M5 rulings, "Backlog lines added").
-- `normalizeMySQLType` (`parser/introspect/mysql.go:635`) and
-  `mysql.NormalizeType` (`parser/mysql/mysql.go:109`), the shared
-  normalization site.
-
-**Resolution notes.** _Filled in by `/fix resolve`._
-
 ### FIX-272
 
 - **Status:** Open
@@ -1485,6 +1338,162 @@ map straight on.
 ## Resolved
 
 <!-- fixes:resolved:begin -->
+
+### FIX-271
+
+- **Status:** Resolved
+- **Severity:** tracked
+- **Origin:** phase 30, `parser/mysql` + `cmd/sqlgen/gotype`
+- **Surfaced by:** backlog promotion at `/close-phase 30` (2026-10-07); first recorded by 30.5 (2026-10-05), with the ZEROFILL line from the 30.5 reviewer (2026-10-05) and the alias line from 30.8b (2026-10-06)
+- **Vetted:** ready at `d51ace1b` (2026-10-07; ruled 2026-10-08, the ruled option is the prototype)
+
+**Issue.** **MySQL type synonyms and ZEROFILL non-integer types differ by
+source, and several change the Go type.** The catalog stores a synonym in
+its canonical form while the file parser keeps the DDL's spelling, so
+`database` and `files` give different column types, view column types,
+`overrides.types` keys and, for some, Go types, against PRD §6.1's "the same
+generated code and manifest". Measured evidence, quoted from the three
+backlog lines merged here:
+- (30.5) "the catalog stores `bool` / `boolean` as `tinyint(1)`, `integer` as `int`, `numeric(p,s)` as `decimal(p,s)`, `real` and `float(30)` as `double`, `decimal` / `decimal(5)` as `decimal(10,0)` / `decimal(5,0)`, `char` as `char(1)`, `bit` as `bit(1)`, `year(4)` as `year`, and `serial` as `bigint unsigned` AUTO_INCREMENT, while the parser keeps the DDL's spelling. Several change the Go type: files `BOOLEAN` → `bool` but database `tinyint(1)` → `int8` (the mysql example's `is_active BOOLEAN NOT NULL DEFAULT TRUE`, whose default also reads back `1` for `true`), and `NUMERIC(8,3)` / `REAL` → `string` but `decimal(8,3)` / `double` → `float64` — evidence: MySQL 8.0.46 `information_schema.columns.column_type` probe; resolver probe `tinyint(1)`→int8, `bool`→bool, `numeric(8,3)`→string, `real`→string"
+- (30.5 reviewer) "the catalog stores `double unsigned zerofill`, `decimal(5,2) unsigned zerofill`, `float(7,3) unsigned zerofill`, while the parser writes `double`, `decimal(5,2)`, `float(7,3)`; under `database` `double unsigned zerofill` resolves to `string` (the decimal and float forms fall back to `float64` / `float32`) — evidence: 30.5 reviewer probe on MySQL 8.0.46; `TestIntegerDisplayWidth` "DOUBLE ZEROFILL" → `double`"
+- (30.8b) "`integer` reads `int` and `numeric(10,2)` reads `decimal(10,2)` under `database`, so the column type, its view columns and `overrides.types` keys differ by source — evidence: 30.8b view parity test, `CREATE TABLE vd_p (id integer …, discount numeric(10,2))` → files `integer` / `numeric(10,2)`, database `int` / `decimal(10,2)`"
+
+The mysql example (`cmd/sqlgen/testdata/examples/mysql/schema.sql:14`,
+`is_active BOOLEAN NOT NULL DEFAULT TRUE`) is affected: `bool` under
+`files`, `int8` under `database`. 30.5 deferred this to the backlog
+(`docs/tracker/phase-30.md` 30.5 Completion Record, "Backlog lines added"),
+and PRD §6.1 does not name it as a parity exception, while the phase-30
+ground rule says a parity exception that stays user-visible must be written
+into §6.1.
+
+**Root cause.** Both sources go through `mysql.NormalizeType`
+(`parser/mysql/mysql.go:109-143`; the introspector via `normalizeMySQLType`,
+`parser/introspect/mysql.go:635-644`), but it canonicalizes only integer
+display widths and ZEROFILL integers (`zerofillWidths`, `mysql.go:100-102`);
+any other type is returned lowercased as written (`if !isInteger { return
+typ }`, `mysql.go:116-118`). So the parser's `buildTypeString`
+(`mysql.go:518-545`) keeps `boolean`, `integer`, `numeric(8,3)`, `real`,
+`decimal`, `char`, `bit`, `year(4)`, `serial`, and writes `zerofill` only on
+an integer base (`mysql.go:541`), so `DOUBLE UNSIGNED ZEROFILL` becomes
+`double unsigned` → `double`. On the resolver side, `mysqlMappings`
+(`cmd/sqlgen/gotype/gotype.go:113-138`) maps `bool` / `boolean` → `bool` but
+has no `tinyint(1)` key, so `tinyint(1)` falls back through `lookupKeys`
+(`gotype.go:725-738`) to `tinyint` → `int8`; it has no `numeric` or `real`
+key (fallback `string`); and `double unsigned zerofill` has no `(`, so
+`stripModifiers` (`gotype.go:1023`) yields no shorter key and it falls to
+`string`. PRD §7.2's MySQL table lists `bool`, `boolean` and `bit(1)` →
+`bool` and `tinyint` → `int8`; it has no `tinyint(1)` row, and the note under
+it says only that `tinyint(1)` keeps its width.
+
+**Suggested fix.** The direction is design-shaped; options for the vet
+(each needs a ruling before implementation):
+- **Option 1 — canonicalize the parser to the catalog form** (the 30.5 M5
+  approach, extended): teach `mysql.NormalizeType` the synonym table
+  (`bool`/`boolean` → `tinyint(1)`, `integer` → `int`, `numeric` →
+  `decimal`, bare `decimal` / `decimal(p)` → `decimal(10,0)` / `decimal(p,0)`,
+  `real` and `float(p>24)` → `double`, `char` → `char(1)`, `bit` → `bit(1)`,
+  `year(4)` → `year`, `serial` → `bigint unsigned` with AutoIncrement and the
+  UNIQUE key MySQL adds), and keep `unsigned zerofill` on a non-integer base
+  in `buildTypeString`. Consequences: types, view columns, manifest and
+  `overrides.types` keys match by source; an `overrides.types` key spelled
+  `boolean` / `numeric` / `integer` stops matching under `files` too (PRD
+  §7.2 note and §7.1 must say which spelling keys use); on its own this
+  turns every `BOOLEAN` column into `int8` under both sources, including the
+  mysql example's `is_active` (golden churn, a user-visible downgrade).
+- **Option 2 — map `tinyint(1)` → `bool` in the MySQL resolver** (add the key
+  to `mysqlMappings` and a row to PRD §7.2): `BOOLEAN` is `bool` under both
+  sources; but every hand-written `TINYINT(1)` column also becomes `bool`,
+  and a stored value other than 0/1 then fails to scan. Combined with Option
+  1 this gives one type string and `bool` on both sources.
+- **Option 3 — resolver-only**: add `numeric`, `real` → `float64`, and
+  `<double|float|decimal> unsigned [zerofill]` keys (or teach `lookupKeys`
+  to strip `unsigned zerofill` on a non-integer base) so the Go types agree,
+  leaving the type text different by source. The remaining text difference
+  (column type, view columns, override keys, manifest) must then be written
+  into PRD §6.1 as a named parity exception per the phase-30 ground rule.
+- **Option 4 — accept as-is** and write the whole difference, Go types
+  included, into §6.1. Contradicts §6.1's "same generated code" and leaves
+  the mysql example's `is_active` type source-dependent; listed for
+  completeness.
+- Whatever is chosen, the regression tests: a MySQL parity case in
+  `parser/introspect` (`assertSchemaParity` over a table with every synonym
+  above plus `DOUBLE/DECIMAL/FLOAT … ZEROFILL`, run on MySQL 8.0); unit cases
+  in `TestIntegerDisplayWidth` (`parser/mysql/mysql_test.go:594`) and
+  `TestMySQLTypeMappings` (`cmd/sqlgen/gotype/gotype_test.go:201`); the
+  mysql example goldens if `is_active` changes; and the 30.8b view parity
+  test (`vd_p`) with its exception removed.
+- Vet notes on scope:
+  - `SERIAL` is not kept "in the DDL's spelling": vitess rejects it (`syntax error at position 64 near 'SERIAL'`), so under `files` it is a parse error, which §6.1 treats as an error, not a difference. It drops out of the synonym table (backlog lists the other vitess-rejected synonyms);
+  - the parser writes `double unsigned`, `decimal(5,2) unsigned` and `float(7,3) unsigned` for the `… UNSIGNED ZEROFILL` forms; only `DOUBLE ZEROFILL` (no UNSIGNED) gives `double`. `double unsigned` resolves to `string` because `lookupKeys` has no fallback for a non-integer unsigned type without parentheses, so `DOUBLE UNSIGNED` / `FLOAT UNSIGNED` / `DOUBLE UNSIGNED ZEROFILL` are `string` under both sources. The real split is `DOUBLE ZEROFILL`: `float64` under files, `string` under database;
+  - the mysql example has 5 BOOLEAN columns (users.is_active, profiles.verified, products.in_stock, tags.is_deleted, default_only_rows.active). Under `source: database` generation fails outright: `soft delete column "is_deleted" in table "tags" has unsupported type "tinyint(1)"`. `parser.DetectSoftDelete` / `softDeleteStrategy` (`parser/detect.go`) has no `tinyint(1)` case, while `isSoftDeleteTypeCompatible` already accepts it;
+  - there is no `vd_p` exception to remove (643a723a moved the shared fixture to `int` / `decimal(10,2)`); the regression test is a new `TestMySQLIntrospect_TypeSynonyms`;
+  - further type text differs by source (measured): `float(p≤24)` → `float`, `float(25..53)` → `double`; `float4` → `float`, `float8` → `double`; `binary` → `binary(1)`; `real(8,2)` → `double(8,2)`; `INTEGER ZEROFILL` files `integer(10) unsigned zerofill` vs database `int(10) unsigned zerofill`; `DECIMAL(5,2) ZEROFILL` files `decimal(5,2)` vs database `decimal(5,2) unsigned zerofill`. Further Go-type splits: `FLOAT(30)` float32 vs float64; `FLOAT4` / `FLOAT8` string vs float32 / float64; `BIT` string vs bool.
+- Prototype (option A below):
+  - `parser/mysql/mysql.go` `NormalizeType` (split into `splitType` / `normalizeInteger` / `normalizeNonInteger` for cyclop) writes each synonym as the catalog stores it, on both paths: `bool`/`boolean` → `tinyint(1)`; `integer` → `int`; `numeric` → `decimal`; `real` → `double`; `float4` → `float`; `float8` → `double`; `decimal` → `decimal(10,0)`; `decimal(p)` → `decimal(p,0)`; `float(p)` → `float`, or `double` when p > 24; `char` / `binary` / `bit` → `(1)`; `year(4)` → `year`. ZEROFILL implies UNSIGNED on every numeric type. `buildTypeString` writes `zerofill` on any type, and the dead `"integer"` entry leaves `zerofillWidths`;
+  - `cmd/sqlgen/gotype/gotype.go` gains a `"tinyint(1)": goBool` mapping. `lookupKeys` matches a non-integer `… unsigned [zerofill]` type as `<base> unsigned`, then `<base>`, so `double unsigned zerofill` is `float64`. An integer base still never takes the signed key;
+  - `parser/detect.go`: `tinyint(1)` takes the `bool` soft-delete strategy;
+  - tests: `TestMySQLIntrospect_TypeSynonyms` (23 columns, both sources plus `assertSchemaParity`); new cases in `TestIntegerDisplayWidth`, `TestNormalizeType`, `TestMySQLTypeMappings`, `TestMySQLSQLNullTypes` and `TestDetectSoftDelete`; `TestCreateTableMySQLTypes` `t_bool` now expects `tinyint(1)`;
+  - PRD: a synonyms sentence in §6.1; the non-integer unsigned lookup in §7.1; the §7.2 row reads `tinyint(1)` (`bool`, `boolean`), and its note says `overrides.types` keys match the stored form, every `tinyint(1)` column is `bool`, and a stored value other than 0/1 does not scan; §4.6 lists `tinyint(1)` as soft-delete `bool`-compatible.
+- Changed from the original:
+  - any variant of option 1 needs the `parser/detect.go` `tinyint(1)` case, a second fix site; without it the canonical type breaks the mysql example's soft delete under `files` too;
+  - option 1 also needs the `lookupKeys` non-integer unsigned fallback (option 3's resolver half); without it, files-mode `DOUBLE ZEROFILL` would turn from `float64` into `string`;
+  - `serial` leaves the synonym table, and the regression test is new rather than the `vd_p` case.
+- Pending the user's ruling:
+  - Q1, direction:
+    - (A) Recommended by the vet, and prototyped: options 1+2. The canonical stored type on both sources, `tinyint(1)` → `bool`, plus the detect.go and `lookupKeys` changes above. Gains: types, manifest and override keys are identical by source, and the mysql example's generated Go is identical by source; the churn is the manifest `db_type` only. Costs: a hand-written `TINYINT(1)` column changes from `int8` to `bool` on both sources, and a stored 2 / -1 then fails to scan (already true for BOOLEAN columns today: `sql/driver: couldn't convert 2 into type bool`). Keys spelled `boolean` / `integer` / `numeric` / `real` stop matching under files (they never matched under database).
+    - (B) Option 1 alone, with `tinyint(1)` staying `int8`. The files output becomes today's database output: 27 model files / 1342 diff lines in the mysql example (5 fields `bool` → `int8`, `comparator.Number[int8]`, new `Increment` methods, GraphQL changes). It still needs the detect.go change.
+    - (C) Options 2+3, resolver only. Go types agree, but `db_type`, view column types and override keys differ by source and must be written into §6.1 as an exception. It still needs detect.go for database mode.
+    - (D) Option 4. The database-mode mysql example keeps failing generation.
+  - Q2, `overrides.types` keys spelled as a synonym:
+    - (A) Recommended by the vet, and prototyped: document in §7.2 that keys use the stored form. No example uses such a key.
+    - (B) Run MySQL override keys through `mysql.NormalizeType`, so a `boolean` key keeps matching (and also catches hand-written `TINYINT(1)` columns).
+    - (C) Warn when `NormalizeType` would rewrite a MySQL override key, so a key that can never match is loud.
+  - Not auto-accepted: A churns goldens relative to C/D and reverses PRD-stated behavior (`tinyint` → `int8` for `tinyint(1)`).
+- Prototype results, run at `d51ace1b` on 2026-10-07:
+  - Reproduction:
+    - probe, one table per type on MySQL 8.0, `go test -v -run TestZZProbeFix271 ./parser/introspect/` → 31 mismatched types, e.g. `BOOLEAN | files "boolean" | db "tinyint(1)"`, `NUMERIC(8,3) | files "numeric(8,3)" | db "decimal(8,3)"`, `DOUBLE ZEROFILL | files "double" | db "double unsigned zerofill"`, `FLOAT(30) | files "float(30)" | db "double"`;
+    - resolver probe: `tinyint(1)`→int8, `boolean`→bool, `numeric(8,3)`→string, `decimal(8,3)`→float64, `real`→string, `double unsigned`→string, `double unsigned zerofill`→string, `float(30)`→float32;
+    - E2E: the mysql example loaded into an anonymous `mysql:8.0` container, sibling copy with `source: database`, `GOWORK=off sqlgen generate` → `Generation error: … detecting soft delete: soft delete column "is_deleted" in table "tags" has unsupported type "tinyint(1)"`. With `is_deleted` dropped from `soft_delete_columns` in both copies, files vs database differ in 27 model files (1342 diff lines), e.g. `InStock omittable.Value[bool]` → `omittable.Value[int8]`, `*comparator.Bool` → `*comparator.Number[int8]`.
+  - With the prototype, the same E2E probe generates identical Go code from both sources, and database mode with `is_deleted` generates. The only remaining differences are default `true`/`1` and view `source`, both named exceptions in §6.1.
+  - Gates:
+    - `go test -race -count=1 ./parser/...` → ok (MySQL 8.0 and PG16 integration);
+    - `cd cmd/sqlgen && go test -race -count=1 ./...` → ok after the golden update;
+    - `make update-golden` → no churn; `make update-golden-e2e` → ok;
+    - mysql example: `GOWORK=off go test -race -count=1 ./...` → ok; `GOWORK=off golangci-lint run` → 0 issues;
+    - `golangci-lint` (parser, gotype) → 0 issues; `gofumpt -l` → clean.
+  - Fail-first:
+    - `NormalizeType` reverted → `TestIntegerDisplayWidth` fails: "type of BOOLEAN = "boolean", want "tinyint(1)"" (and 21 more); `TestMySQLIntrospect_TypeSynonyms` fails: "parsed types mismatch";
+    - integer-only zerofill in `buildTypeString` → "type of DOUBLE ZEROFILL = "double", want "double unsigned zerofill"";
+    - `"tinyint(1)": goBool` removed → `TestMySQLTypeMappings/tinyint(1)_is_BOOLEAN` fails (`+ Name: "int8"`), and `TestMySQLSQLNullTypes/tinyint(1)_uses_NullBool` fails;
+    - `lookupKeys` reverted → `TestMySQLTypeMappings/zerofill_double_keeps_its_base_type` fails: "- Name: "float64" + Name: "string"";
+    - `detect.go` reverted → `TestDetectSoftDelete/bool_column:_MySQL_BOOLEAN,_stored_as_tinyint(1)` fails: "unsupported type "tinyint(1)"";
+    - the existing suite without the fix → passes.
+  - Golden churn: mysql ~12 (6 each under `expected/manifest/` and `models/manifest/`: default_only_row.md, manifest_gen.json, product.md, profile.md, tag.md, user.md); only `db_type` `boolean` → `tinyint(1)` on 5 columns; generated Go is unchanged.
+  - Patch: `.claude/prototypes/FIX-271.patch` (20 files, +300/-68).
+
+- The user ruled on 2026-10-08: Q1 → (A), canonical stored type on both sources with `tinyint(1)` → `bool`, plus the `parser/detect.go` and `lookupKeys` changes; Q2 → (A), PRD §7.2 documents that `overrides.types` keys use the stored form. Both match the prototype, so it stands as vetted.
+- Auto-accepted the recommended option on 2026-10-08 (`/fix` auto-accept rule): should the shared `lookupKeys` fallback for an `… unsigned` type on a non-integer base also apply to SQLite (`double unsigned` now `float64`, was `string`)? → keep it, and §7.1 names both dialects, because the landed code is the prototype with green gates, no example has such a column (no golden churn either way), no public surface changes, and the PRD stated no SQLite behavior for it (SQLite gives the column REAL affinity, and §7.2's SQLite table maps `double` to `float64`).
+
+
+**References.**
+- PRD §6.1 (both sources describe a schema identically; the named parity
+  exceptions), §7.1 (override key matching), §7.2 MySQL Type Mappings and
+  the display-width / ZEROFILL note under it.
+- `docs/tracker/phase-30.md` ground rules (lasting parity exceptions go into
+  §6.1) and 30.5 Completion Record (M5 rulings, "Backlog lines added").
+- `normalizeMySQLType` (`parser/introspect/mysql.go:635`) and
+  `mysql.NormalizeType` (`parser/mysql/mysql.go:134`), the shared
+  normalization site.
+
+**Resolution notes.** Resolved 2026-10-08 from the vetted prototype (the ruled Q1 (A) + Q2 (A)), applied clean with `git apply --3way` at `13173996`; only tracker commits landed since the vet. The generated files were restored to HEAD and regenerated.
+- `parser/mysql/mysql.go`: `NormalizeType` (split into `splitType`, `normalizeInteger` and `normalizeNonInteger`) writes each type synonym as the catalog stores it, on both sources: `bool` / `boolean` → `tinyint(1)`, `integer` → `int`, `numeric` → `decimal`, `real` → `double`, `float4` → `float`, `float8` → `double`, `decimal` / `decimal(p)` → `decimal(10,0)` / `decimal(p,0)`, `float(p)` → `float` or `double` (p > 24), `char` / `binary` / `bit` → `(1)`, `year(4)` → `year`. ZEROFILL implies UNSIGNED on every numeric type. `buildTypeString` writes `zerofill` on any base, and the dead `"integer"` key leaves `zerofillWidths`.
+- `cmd/sqlgen/gotype/gotype.go`: `"tinyint(1)": goBool`; `lookupKeys` matches a non-integer `… unsigned [zerofill]` type as `<base> unsigned`, then `<base>` (an integer base still never takes the signed key), so `double unsigned zerofill` is `float64`.
+- `parser/detect.go`: `tinyint(1)` takes the `bool` soft-delete strategy, so the mysql example's `tags.is_deleted` generates under `source: database`.
+- Tests: new `TestMySQLIntrospect_TypeSynonyms` (both sources plus `assertSchemaParity`, MySQL 8.0); new cases in `TestIntegerDisplayWidth`, `TestNormalizeType`, `TestMySQLTypeMappings`, `TestMySQLSQLNullTypes`, `TestDetectSoftDelete`; `TestCreateTableMySQLTypes` `t_bool` expects `tinyint(1)`.
+- PRD: §6.1 says a MySQL type synonym takes its stored form under both sources; §7.1 describes the non-integer unsigned lookup; §7.2's row reads `tinyint(1)` (`bool`, `boolean`) and its note says `overrides.types` keys match the stored form, every `tinyint(1)` column is `bool`, and a value other than 0/1 does not scan; §4.6 lists `tinyint(1)` as `bool`-compatible.
+- Golden churn: mysql example, 12 files (6 each under `expected/manifest/` and `models/manifest/`), `db_type` `boolean` → `tinyint(1)` on 5 columns; generated Go unchanged. Matches the vet.
+- Gates: `make check` ok; `go test -race ./parser/...` with the MySQL integration tests ok; `make update-golden` no churn; `make update-golden-e2e` ok; `make check-examples` ok.
+- `/verify` (independent reviewer agreed, 4/4 PRD, fail-first confirmed) corrections applied inline: §7.2's MySQL rows read `int` (`integer`) and `int unsigned` (`integer unsigned`); §7.1's unsigned fallback names MySQL and SQLite (auto-accept above); `NormalizeType`'s doc comment and the `TestMySQLIntrospect_TypeSynonyms` comment shortened; this entry's `NormalizeType` ref → `:134`; backlog: the REAL_AS_FLOAT line's "(with the FIX-271 prototype)" → "(since FIX-271)", and the line claiming `tinyint(1) unsigned` reaches the bool match dropped (`NormalizeType` writes it as `tinyint unsigned`, an integer).
 
 ### FIX-269
 

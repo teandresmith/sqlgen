@@ -25,7 +25,7 @@ Registered user accounts
 | `permissions` | Permissions | `UsersPermissionsSet` | `users_permissions_set` |  |  |  | `'read'` | `comparator.String` | Granted permission flags |
 | `age` | Age | `*int16` | `smallint` | yes |  |  |  | `comparator.NullableNumber[int16]` | User age in years |
 | `bio` | Bio | `*string` | `text` | yes |  |  |  | `comparator.NullableString` | Short biography |
-| `is_active` | IsActive | `bool` | `boolean` |  |  |  | `true` | `comparator.Bool` | Whether the account is active |
+| `is_active` | IsActive | `bool` | `tinyint(1)` |  |  |  | `true` | `comparator.Bool` | Whether the account is active |
 | `balance` | Balance | `float64` | `decimal(12,2)` |  |  |  |  | `comparator.Number[float64]` | Account balance in default currency |
 | `login_count` | LoginCount | `int32` | `int` |  |  |  | `0` | `comparator.Number[int32]` | Total number of logins |
 | `avatar` | Avatar | `[]byte` | `blob` | yes |  |  |  | `comparator.NullableOpaque[[]byte]` | Profile image binary data |

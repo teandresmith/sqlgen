@@ -220,6 +220,75 @@ func TestMySQLIntrospect_TypeCoverage(t *testing.T) {
 	assertSchemaParity(t, "mysql", parsed, introspected)
 }
 
+// The catalog stores a type synonym, and ZEROFILL on a non-integer type, in
+// canonical form, and the parser must write the same (PRD §6.1, §7.2).
+func TestMySQLIntrospect_TypeSynonyms(t *testing.T) {
+	requireDatabases(t)
+	const ddl = `CREATE TABLE m_synonyms (
+		id INTEGER NOT NULL PRIMARY KEY,
+		b1 BOOL,
+		b2 BOOLEAN NOT NULL,
+		iu INTEGER(11) UNSIGNED,
+		iz INTEGER ZEROFILL,
+		n NUMERIC(8,3),
+		n0 NUMERIC,
+		d0 DECIMAL,
+		d5 DECIMAL(5),
+		r REAL,
+		r2 REAL(8,2),
+		f24 FLOAT(24),
+		f30 FLOAT(30),
+		f4 FLOAT4,
+		f8 FLOAT8,
+		c CHAR,
+		bn BINARY,
+		bt BIT,
+		y YEAR(4),
+		dz DOUBLE ZEROFILL,
+		duz DOUBLE UNSIGNED ZEROFILL,
+		decz DECIMAL(5,2) UNSIGNED ZEROFILL,
+		fz FLOAT(7,3) UNSIGNED ZEROFILL
+	)`
+	applyParityFixture(t, "mysql", mysqlConnStr, "DROP TABLE IF EXISTS m_synonyms", ddl)
+
+	introspected := introspectMySQL(t, "m_synonyms")
+	parsed := parseMySQL(t, ddl)
+
+	want := map[string]string{
+		"id":   "int",
+		"b1":   "tinyint(1)",
+		"b2":   "tinyint(1)",
+		"iu":   "int unsigned",
+		"iz":   "int(10) unsigned zerofill",
+		"n":    "decimal(8,3)",
+		"n0":   "decimal(10,0)",
+		"d0":   "decimal(10,0)",
+		"d5":   "decimal(5,0)",
+		"r":    "double",
+		"r2":   "double(8,2)",
+		"f24":  "float",
+		"f30":  "double",
+		"f4":   "float",
+		"f8":   "double",
+		"c":    "char(1)",
+		"bn":   "binary(1)",
+		"bt":   "bit(1)",
+		"y":    "year",
+		"dz":   "double unsigned zerofill",
+		"duz":  "double unsigned zerofill",
+		"decz": "decimal(5,2) unsigned zerofill",
+		"fz":   "float(7,3) unsigned zerofill",
+	}
+	typ := func(c parser.Column) string { return c.Type }
+	if diff := cmp.Diff(want, columnField(t, introspected, "m_synonyms", typ)); diff != "" {
+		t.Errorf("introspected types mismatch (-want +got):\n%s", diff)
+	}
+	if diff := cmp.Diff(want, columnField(t, parsed, "m_synonyms", typ)); diff != "" {
+		t.Errorf("parsed types mismatch (-want +got):\n%s", diff)
+	}
+	assertSchemaParity(t, "mysql", parsed, introspected)
+}
+
 func TestMySQLIntrospect_QuotedIdentifiers(t *testing.T) {
 	requireDatabases(t)
 	const ddl = "CREATE TABLE `UserAccounts` (" + `

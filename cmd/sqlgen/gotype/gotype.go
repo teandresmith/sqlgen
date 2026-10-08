@@ -133,7 +133,7 @@ var mysqlMappings = map[string]typeInfo{
 	"blob": goBytes, "binary": goBytes, "varbinary": goBytes,
 	"tinyblob": goBytes, "mediumblob": goBytes, "longblob": goBytes,
 	// Boolean
-	"bool": goBool, "boolean": goBool, "bit(1)": goBool,
+	"bool": goBool, "boolean": goBool, "tinyint(1)": goBool, "bit(1)": goBool,
 	// Year
 	"year": goInt16,
 }
@@ -713,25 +713,33 @@ func (r *Resolver) lookupOverride(m map[string]config.TypeOverride, sqlType stri
 	return config.TypeOverride{}, false
 }
 
-// lookupKeys returns the keys a SQL type is matched under, in order: as
-// written, then without its modifiers (numeric(10,2) → numeric). A MySQL
-// ZEROFILL integer keeps its width, so int(10) unsigned zerofill is matched as
-// int unsigned, and never as the signed int.
 // mysqlIntegerBases are the MySQL integer types, which carry unsigned.
 var mysqlIntegerBases = map[string]bool{
 	"tinyint": true, "smallint": true, "mediumint": true, "int": true, "integer": true, "bigint": true,
 }
 
+// lookupKeys returns the keys a SQL type is matched under, in order: as
+// written, then without its modifiers (numeric(10,2) → numeric). A MySQL
+// unsigned type is matched next as <base> unsigned. An integer one stops
+// there: a ZEROFILL integer keeps its width, so int(10) unsigned zerofill is
+// matched as int unsigned, and never as the signed int. Any other one falls
+// back to its signed base, which has the same Go type, so double unsigned
+// zerofill is matched as double unsigned, then double.
 func lookupKeys(sqlType string) []string {
+	if before, _, ok := strings.Cut(sqlType, " unsigned"); ok {
+		base := stripModifiers(before)
+		keys := []string{sqlType}
+		if unsigned := base + " unsigned"; unsigned != sqlType {
+			keys = append(keys, unsigned)
+		}
+		if !mysqlIntegerBases[base] {
+			keys = append(keys, base)
+		}
+		return keys
+	}
 	base := stripModifiers(sqlType)
 	if base == sqlType {
 		return []string{sqlType}
-	}
-	if strings.Contains(sqlType, " unsigned") {
-		if mysqlIntegerBases[base] {
-			return []string{sqlType, base + " unsigned"}
-		}
-		return []string{sqlType, base + " unsigned", base}
 	}
 	return []string{sqlType, base}
 }

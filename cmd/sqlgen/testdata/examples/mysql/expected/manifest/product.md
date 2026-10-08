@@ -23,7 +23,7 @@ Catalog of products available for sale
 | `title` | Title | `string` | `varchar(255)` |  |  |  |  | `comparator.String` | Product display name |
 | `price` | Price | `float64` | `decimal(10,2)` |  |  |  |  | `comparator.Number[float64]` | Unit price in default currency |
 | `weight_kg` | WeightKg | `*float64` | `double` | yes |  |  |  | `comparator.NullableNumber[float64]` | Product weight in kilograms |
-| `in_stock` | InStock | `bool` | `boolean` |  |  |  | `true` | `comparator.Bool` | Whether the product is currently available |
+| `in_stock` | InStock | `bool` | `tinyint(1)` |  |  |  | `true` | `comparator.Bool` | Whether the product is currently available |
 | `sku` | SKU | `string` | `varchar(50)` |  |  | yes |  | `comparator.String` | Stock keeping unit code |
 | `attributes` | Attributes | `types.JSON` | `json` |  |  |  |  | `comparator.JSON` | Structured product attributes |
 | `created_at` | CreatedAt | `time.Time` | `timestamp` |  |  |  | `current_timestamp()` | `comparator.Time` | Row creation timestamp |

@@ -98,48 +98,132 @@ func QuoteLiteral(value string) string {
 // zerofillWidths is the display width MySQL gives a ZEROFILL integer type
 // declared without one.
 var zerofillWidths = map[string]int{
-	"tinyint": 3, "smallint": 5, "mediumint": 8, "int": 10, "integer": 10, "bigint": 20,
+	"tinyint": 3, "smallint": 5, "mediumint": 8, "int": 10, "bigint": 20,
 }
 
+// typeSynonyms maps a MySQL type synonym to the type the catalog stores it as.
+// BOOL and BOOLEAN are tinyint(1), handled in NormalizeType.
+var typeSynonyms = map[string]string{
+	"integer": "int",
+	"numeric": "decimal",
+	"real":    "double",
+	"float4":  "float",
+	"float8":  "double",
+}
+
+// maxFloatPrecision is the largest FLOAT(p) precision MySQL stores as float;
+// a larger one is double.
+const maxFloatPrecision = 24
+
 // NormalizeType writes a column type as MySQL 8.0.19+ stores it in
-// INFORMATION_SCHEMA.COLUMNS.COLUMN_TYPE: lowercased, and an integer type
-// without its display width, except tinyint(1) and a ZEROFILL type. ZEROFILL
-// implies UNSIGNED and keeps the width, the default one when none is given.
-// So "INT(11)" becomes "int" and "int zerofill" "int(10) unsigned zerofill".
+// INFORMATION_SCHEMA.COLUMNS.COLUMN_TYPE, so the DDL and the catalog agree:
+// lowercased, a synonym in its stored form, an integer type without its display
+// width except tinyint(1) and a ZEROFILL type, and ZEROFILL implying UNSIGNED.
+// So "INT(11)" becomes "int", "int zerofill" "int(10) unsigned zerofill",
+// "BOOLEAN" "tinyint(1)" and "NUMERIC(8,3)" "decimal(8,3)".
 func NormalizeType(columnType string) string {
 	typ := strings.ToLower(strings.TrimSpace(columnType))
-	base, rest := typ, ""
-	if i := strings.IndexAny(typ, "( "); i >= 0 {
-		base, rest = typ[:i], typ[i:]
+	t := splitType(typ)
+	if t.base == "bool" || t.base == "boolean" {
+		return "tinyint(1)"
 	}
-	defaultWidth, isInteger := zerofillWidths[base]
-	if !isInteger {
+	if canonical, ok := typeSynonyms[t.base]; ok {
+		t.base = canonical
+	}
+	if defaultWidth, isInteger := zerofillWidths[t.base]; isInteger {
+		return normalizeInteger(t, defaultWidth)
+	}
+
+	switch t.base {
+	case "decimal", "float", "double":
+		return normalizeNonInteger(t)
+	case "char", "binary", "bit":
+		if t.args == "" {
+			t.args = "1"
+		}
+		return t.base + "(" + t.args + ")" + t.rest
+	case "year":
+		return t.base + t.rest
+	default:
 		return typ
 	}
+}
 
-	width := ""
-	if strings.HasPrefix(rest, "(") {
-		if inner, after, ok := strings.Cut(rest[1:], ")"); ok {
-			width, rest = inner, after
+// typeParts is a lowercased column type split into its base, the text inside
+// its parentheses, and its attributes.
+type typeParts struct {
+	base, args string
+	// rest is the text after the base and its parentheses.
+	rest               string
+	unsigned, zerofill bool
+}
+
+func splitType(typ string) typeParts {
+	t := typeParts{base: typ}
+	if i := strings.IndexAny(typ, "( "); i >= 0 {
+		t.base, t.rest = typ[:i], typ[i:]
+	}
+	if strings.HasPrefix(t.rest, "(") {
+		if inner, after, ok := strings.Cut(t.rest[1:], ")"); ok {
+			t.args, t.rest = inner, after
 		}
 	}
-	attrs := strings.Fields(rest)
-	zerofill := slices.Contains(attrs, "zerofill")
-	unsigned := zerofill || slices.Contains(attrs, "unsigned")
+	attrs := strings.Fields(t.rest)
+	t.zerofill = slices.Contains(attrs, "zerofill")
+	t.unsigned = t.zerofill || slices.Contains(attrs, "unsigned")
+	return t
+}
 
+// String writes a numeric type: base, (args), then unsigned and zerofill.
+func (t typeParts) String() string {
+	s := t.base
+	if t.args != "" {
+		s += "(" + t.args + ")"
+	}
+	if t.unsigned {
+		s += " unsigned"
+	}
+	if t.zerofill {
+		s += " zerofill"
+	}
+	return s
+}
+
+// normalizeNonInteger writes decimal with its precision and scale, and
+// float(p) as float or double. double, and float(M,D), keep their (M,D).
+func normalizeNonInteger(t typeParts) string {
+	switch t.base {
+	case "decimal":
+		switch {
+		case t.args == "":
+			t.args = "10,0"
+		case !strings.Contains(t.args, ","):
+			t.args += ",0"
+		}
+	case "float":
+		if p, err := strconv.Atoi(t.args); err == nil {
+			if p > maxFloatPrecision {
+				t.base = "double"
+			}
+			t.args = ""
+		}
+	}
+	return t.String()
+}
+
+// normalizeInteger drops an integer type's display width, except tinyint(1)'s
+// and a ZEROFILL type's, which takes defaultWidth when it has none.
+func normalizeInteger(t typeParts, defaultWidth int) string {
 	switch {
-	case zerofill:
-		if width == "" {
-			width = strconv.Itoa(defaultWidth)
+	case t.zerofill:
+		if t.args == "" {
+			t.args = strconv.Itoa(defaultWidth)
 		}
-		return base + "(" + width + ") unsigned zerofill"
-	case base == "tinyint" && width == "1" && !unsigned:
-		return "tinyint(1)"
-	case unsigned:
-		return base + " unsigned"
+	case t.base == "tinyint" && t.args == "1" && !t.unsigned:
 	default:
-		return base
+		t.args = ""
 	}
+	return t.String()
 }
 
 // Seed pre-populates the parser with an existing schema. This enables "both"
@@ -538,7 +622,7 @@ func buildTypeString(ct *sqlparser.ColumnType) string {
 	if ct.Unsigned {
 		sb.WriteString(" unsigned")
 	}
-	if _, isInteger := zerofillWidths[typ]; ct.Zerofill && isInteger {
+	if ct.Zerofill {
 		sb.WriteString(" zerofill")
 	}
 

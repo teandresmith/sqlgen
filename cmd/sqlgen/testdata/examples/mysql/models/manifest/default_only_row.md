@@ -19,7 +19,7 @@
 | `id` | ID | `int64` | `bigint` |  | yes |  |  | `comparator.Number[int64]` |  |
 | `label` | Label | `string` | `varchar(32)` |  |  |  | `'unset'` | `comparator.String` |  |
 | `hits` | Hits | `int32` | `int` |  |  |  | `0` | `comparator.Number[int32]` |  |
-| `active` | Active | `bool` | `boolean` |  |  |  | `true` | `comparator.Bool` |  |
+| `active` | Active | `bool` | `tinyint(1)` |  |  |  | `true` | `comparator.Bool` |  |
 
 ## Indexes
 

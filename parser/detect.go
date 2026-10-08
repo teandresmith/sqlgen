@@ -8,9 +8,10 @@ import (
 // DetectSoftDelete checks the table's columns against the given column names in
 // priority order. The first matching column determines the soft delete column.
 // The strategy is inferred from the column's SQL type: "timestamp" for
-// timestamp/timestamptz/datetime, "bool" for bool/boolean, "integer" for
-// int/integer/smallint/tinyint. Returns empty strings if no column matches.
-// Returns an error if a matching column has an unsupported type.
+// timestamp/timestamptz/datetime, "bool" for bool/boolean and MySQL's
+// tinyint(1), "integer" for int/integer/smallint/tinyint. Returns empty
+// strings if no column matches. Returns an error if a matching column has an
+// unsupported type.
 func DetectSoftDelete(table *Table, columns []string) (column string, strategy string, err error) {
 	for _, name := range columns {
 		col, found := findColumn(table, name)
@@ -53,6 +54,10 @@ func findColumn(table *Table, name string) (Column, bool) {
 // and false if the type is not a valid soft delete type.
 func softDeleteStrategy(sqlType string) (string, bool) {
 	normalized := strings.ToLower(strings.TrimSpace(sqlType))
+	if normalized == "tinyint(1)" {
+		// MySQL's BOOL and BOOLEAN.
+		return "bool", true
+	}
 	base, _, _ := strings.Cut(normalized, " ")
 
 	switch base {

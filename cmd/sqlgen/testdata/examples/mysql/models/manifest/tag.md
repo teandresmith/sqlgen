@@ -20,7 +20,7 @@ Content tags with boolean soft delete
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
 | `id` | ID | `int32` | `int` |  | yes |  |  | `comparator.Number[int32]` | Unique identifier |
 | `name` | Name | `string` | `varchar(255)` |  |  | yes |  | `comparator.String` | Tag name |
-| `is_deleted` | IsDeleted | `bool` | `boolean` |  |  |  | `false` | `comparator.Bool` | Whether the tag is soft-deleted |
+| `is_deleted` | IsDeleted | `bool` | `tinyint(1)` |  |  |  | `false` | `comparator.Bool` | Whether the tag is soft-deleted |
 
 ## Indexes
 

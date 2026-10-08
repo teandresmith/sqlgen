@@ -89,7 +89,7 @@ func TestCreateTableMySQLTypes(t *testing.T) {
 		"t_date":      "date",
 		"t_json":      "json",
 		"t_blob":      "blob",
-		"t_bool":      "bool",
+		"t_bool":      "tinyint(1)",
 		"t_enum":      "test_types_t_enum_enum",
 		"t_set":       "test_types_t_set_set",
 	}
@@ -612,7 +612,33 @@ func TestIntegerDisplayWidth(t *testing.T) {
 		{declared: "DECIMAL(10,2)", want: "decimal(10,2)"},
 		{declared: "VARCHAR(20)", want: "varchar(20)"},
 		{declared: "BIT(8)", want: "bit(8)"},
-		{declared: "DOUBLE ZEROFILL", want: "double"},
+		{declared: "DOUBLE ZEROFILL", want: "double unsigned zerofill"},
+		// A synonym takes the type the catalog stores it as.
+		{declared: "BOOL", want: "tinyint(1)"},
+		{declared: "BOOLEAN", want: "tinyint(1)"},
+		{declared: "INTEGER", want: "int"},
+		{declared: "INTEGER(11) UNSIGNED", want: "int unsigned"},
+		{declared: "INTEGER ZEROFILL", want: "int(10) unsigned zerofill"},
+		{declared: "NUMERIC(8,3)", want: "decimal(8,3)"},
+		{declared: "NUMERIC", want: "decimal(10,0)"},
+		{declared: "DECIMAL", want: "decimal(10,0)"},
+		{declared: "DECIMAL(5)", want: "decimal(5,0)"},
+		{declared: "REAL", want: "double"},
+		{declared: "REAL(8,2)", want: "double(8,2)"},
+		{declared: "FLOAT(24)", want: "float"},
+		{declared: "FLOAT(25)", want: "double"},
+		{declared: "FLOAT(7,3)", want: "float(7,3)"},
+		{declared: "FLOAT4", want: "float"},
+		{declared: "FLOAT8", want: "double"},
+		{declared: "CHAR", want: "char(1)"},
+		{declared: "BINARY", want: "binary(1)"},
+		{declared: "BIT", want: "bit(1)"},
+		{declared: "YEAR(4)", want: "year"},
+		// ZEROFILL implies UNSIGNED on every numeric type.
+		{declared: "DOUBLE UNSIGNED ZEROFILL", want: "double unsigned zerofill"},
+		{declared: "DECIMAL(5,2) ZEROFILL", want: "decimal(5,2) unsigned zerofill"},
+		{declared: "FLOAT(7,3) UNSIGNED ZEROFILL", want: "float(7,3) unsigned zerofill"},
+		{declared: "REAL UNSIGNED ZEROFILL", want: "double unsigned zerofill"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.declared, func(t *testing.T) {
@@ -645,6 +671,13 @@ func TestNormalizeType(t *testing.T) {
 		{columnType: "decimal(10,2)", want: "decimal(10,2)"},
 		{columnType: "VarChar(255)", want: "varchar(255)"},
 		{columnType: "bit(1)", want: "bit(1)"},
+		// The catalog's own forms are kept.
+		{columnType: "decimal(10,0)", want: "decimal(10,0)"},
+		{columnType: "double unsigned zerofill", want: "double unsigned zerofill"},
+		{columnType: "float(7,3) unsigned zerofill", want: "float(7,3) unsigned zerofill"},
+		{columnType: "char(1)", want: "char(1)"},
+		{columnType: "year", want: "year"},
+		{columnType: "double", want: "double"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.columnType, func(t *testing.T) {
