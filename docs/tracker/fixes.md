@@ -878,61 +878,6 @@ list (not measured).
 
 **Resolution notes.** _Filled in by `/fix resolve`._
 
-### FIX-291
-
-- **Status:** Open
-- **Severity:** tracked
-- **Origin:** phase 17, `parser/sqlite`
-- **Surfaced by:** /fix-vet FIX-281 (2026-10-07), filed at /close-phase 30 (2026-10-08)
-- **Vetted:** ready at `b606e4a7` (2026-10-08; on top of FIX-281)
-
-**Issue.** **A SQLite relationship `filter` using `LIKE … ESCAPE` panics
-`sqlgen generate`.** Measured: schema `assets(id, name)` +
-`documents(id, entity_id, name)`, o2m relationship `PctDocuments` with
-`filter: "name LIKE 'x\\%%' ESCAPE '\\'"`, `sqlgen generate` → exit 2
-"panic: sql.BinaryExpr.String(): invalid op ESCAPE" via
-sqlite.QualifyFilterIdentifiers → gen.qualifyFilter →
-gen.relationshipStaticFilter.
-
-**Root cause.** `sqlite.QualifyFilterIdentifiers` returns
-`qualified.String()` with no recover (`parser/sqlite/filter_qualifier.go:36`),
-and rqlite/sql's `BinaryExpr.String()` panics on the ESCAPE operator. It is
-reached through `qualifyFilter` (`cmd/sqlgen/gen/filter_qualifier.go:31`)
-from the relationship filter path (`cmd/sqlgen/gen/context_relfilter.go:242`,
-`:262`) and (measured 2026-10-08) from the o2o JOIN predicate
-(`cmd/sqlgen/gen/context_table.go:2638`).
-
-**Suggested fix.**
-- Replace the bare `qualified.String()` with FIX-281's shared recover helper
-  `exprString(e rsql.Expr, what string) (string, error)` in
-  `parser/sqlite/sqlite.go` (e.g. `exprString(qualified, "relationship
-  filter")`) and return its error wrapped as `qualify filter: …`, so
-  generation fails with a message naming the table, relationship and filter
-  instead of a panic. Land after FIX-281 (vetted ready, not yet landed), or
-  add the helper here if this lands first.
-- Tests: a `TestQualifyFilterIdentifiers` (`parser/sqlite/filter_qualifier_test.go:8`)
-  row for `name LIKE 'x\%' ESCAPE '\'` asserting an error and no panic; a
-  `cmd/sqlgen/gen` case for the o2m `filter` above asserting the wrapped
-  error.
-- Lands after FIX-281: the patch calls FIX-281's `exprString` helper and was prototyped on `b606e4a7` with FIX-281's patch applied; without FIX-281 it applies but does not compile. The o2o JOIN predicate path (`gen/context_table.go:2638`) is now measured, not only read.
-- Prototype: `parser/sqlite/filter_qualifier.go` `qualified.String()` → `exprString(qualifyExpr(parsed, alias), "relationship filter")`, wrapped as `qualify filter: %w`. `TestQualifyFilterIdentifiers`'s `wantErr bool` becomes `wantErr string` (a message substring) with a new row "unrenderable LIKE ESCAPE errors" ("qualify filter: rendering relationship filter: sql.BinaryExpr.String(): invalid op ESCAPE"); new `TestRelationshipFilter_UnrenderableSQLiteFilterErrors` (`cmd/sqlgen/gen/relfilter_static_test.go`, o2m and o2o subtests, one per qualification site) asserts the error names "relationship PctDocuments", the quoted filter and the wrapped ESCAPE message. Inline doc correction (stale since FIX-098, measured): PRD §4.8 "Invalid SQL will produce a runtime database error" and §13.7 "sqlgen does not parse or validate its contents …" are wrong, since a syntax error is already a generation error on all three dialects (`filter: "name LIKE"` → postgres "qualify filter: parsing "name LIKE": syntax error at end of input", mysql "syntax error at position 35", sqlite "1:9: expected expression, found 'EOF'"). §4.8 now says a filter the dialect's parser cannot read is a generation error; §13.7 says "does not validate its contents against the schema"; §13.7.4 gains a paragraph on syntax errors and the SQLite `LIKE … ESCAPE` limit.
-- Prototype results, run at `b606e4a7` (+ FIX-281) on 2026-10-08:
-  - Reproduction: schema `assets(id, name)` + `documents(id, entity_id REFERENCES assets(id), name)`, sqlite, `filter: "name LIKE 'x\\%%' ESCAPE '\\'"`. o2m `PctDocuments`: `GOWORK=off sqlgen generate` → exit 2 "panic: sql.BinaryExpr.String(): invalid op ESCAPE" via sqlite.QualifyFilterIdentifiers (`filter_qualifier.go:36`) → gen.qualifyFilter (`:31`) → gen.relationshipStaticFilter. o2o `PctDocument`: the same panic via gen.qualifyFilter → gen.o2oJoinPredicate (`context_table.go:2638`) → buildSingleO2ODetail.
-  - With the fix: `Generation error: building relationship filters: table assets: relationship PctDocuments: filter "name LIKE 'x\\%%' ESCAPE '\\'": qualify filter (sqlite): qualify filter: rendering relationship filter: sql.BinaryExpr.String(): invalid op ESCAPE`, exit 1; o2o the same through "building o2o join details for assets: relationship PctDocument: …".
-  - Gates: parser `go test -race ./sqlite/...` → ok, `golangci-lint run ./sqlite/...` → 0 issues; cmd/sqlgen `go test -race ./gen/...` → ok, `golangci-lint run ./gen/...` → 0 issues; `gofumpt -l` → clean; `make refs-check` → ok.
-  - Fail-first: `filter_qualifier.go` back on `qualified.String()` → `TestQualifyFilterIdentifiers/unrenderable_LIKE_ESCAPE_errors` and `TestRelationshipFilter_UnrenderableSQLiteFilterErrors/one_to_many` fail: "panic: sql.BinaryExpr.String(): invalid op ESCAPE [recovered, repanicked]"; the existing suite without the fix → passes.
-  - Golden churn: none.
-  - Patch: `.claude/prototypes/FIX-291.patch` (4 files, +63/-12; the FIX-291 delta only, against the FIX-281-applied tree).
-
-
-**References.**
-- PRD §4.8 (`filter` on a relationship), §13.4.
-- FIX-281 (the same panic in CHECK / DEFAULT / generated column / index;
-  adds `exprString`), FIX-269 (`indexWhere`'s recover), FIX-098 (filter
-  qualification).
-
-**Resolution notes.** _Filled in by `/fix resolve`._
-
 ### FIX-292
 
 - **Status:** Open
@@ -1092,6 +1037,83 @@ source (PRD §6.1).
 ## Resolved
 
 <!-- fixes:resolved:begin -->
+
+### FIX-291
+
+- **Status:** Resolved
+- **Severity:** tracked
+- **Origin:** phase 17, `parser/sqlite`
+- **Surfaced by:** /fix-vet FIX-281 (2026-10-07), filed at /close-phase 30 (2026-10-08)
+- **Vetted:** ready at `b606e4a7` (2026-10-08; on top of FIX-281)
+
+**Issue.** **A SQLite relationship `filter` using `LIKE … ESCAPE` panics
+`sqlgen generate`.** Measured: schema `assets(id, name)` +
+`documents(id, entity_id, name)`, o2m relationship `PctDocuments` with
+`filter: "name LIKE 'x\\%%' ESCAPE '\\'"`, `sqlgen generate` → exit 2
+"panic: sql.BinaryExpr.String(): invalid op ESCAPE" via
+sqlite.QualifyFilterIdentifiers → gen.qualifyFilter →
+gen.relationshipStaticFilter.
+
+**Root cause.** `sqlite.QualifyFilterIdentifiers` returns
+`qualified.String()` with no recover (`parser/sqlite/filter_qualifier.go:36`),
+and rqlite/sql's `BinaryExpr.String()` panics on the ESCAPE operator. It is
+reached through `qualifyFilter` (`cmd/sqlgen/gen/filter_qualifier.go:31`)
+from the relationship filter path (`cmd/sqlgen/gen/context_relfilter.go:242`,
+`:262`) and (measured 2026-10-08) from the o2o JOIN predicate
+(`cmd/sqlgen/gen/context_table.go:2647` at `552dda4f`).
+
+**Suggested fix.**
+- Replace the bare `qualified.String()` with FIX-281's shared recover helper
+  `exprString(e rsql.Expr, what string) (string, error)` in
+  `parser/sqlite/sqlite.go` (e.g. `exprString(qualified, "relationship
+  filter")`) and return its error wrapped as `qualify filter: …`, so
+  generation fails with a message naming the table, relationship and filter
+  instead of a panic. Land after FIX-281 (vetted ready, not yet landed), or
+  add the helper here if this lands first.
+- Tests: a `TestQualifyFilterIdentifiers` (`parser/sqlite/filter_qualifier_test.go:8`)
+  row for `name LIKE 'x\%' ESCAPE '\'` asserting an error and no panic; a
+  `cmd/sqlgen/gen` case for the o2m `filter` above asserting the wrapped
+  error.
+- Lands after FIX-281: the patch calls FIX-281's `exprString` helper and was prototyped on `b606e4a7` with FIX-281's patch applied; without FIX-281 it applies but does not compile. The o2o JOIN predicate path (`gen/context_table.go:2638`) is now measured, not only read.
+- Prototype: `parser/sqlite/filter_qualifier.go` `qualified.String()` → `exprString(qualifyExpr(parsed, alias), "relationship filter")`, wrapped as `qualify filter: %w`. `TestQualifyFilterIdentifiers`'s `wantErr bool` becomes `wantErr string` (a message substring) with a new row "unrenderable LIKE ESCAPE errors" ("qualify filter: rendering relationship filter: sql.BinaryExpr.String(): invalid op ESCAPE"); new `TestRelationshipFilter_UnrenderableSQLiteFilterErrors` (`cmd/sqlgen/gen/relfilter_static_test.go`, o2m and o2o subtests, one per qualification site) asserts the error names "relationship PctDocuments", the quoted filter and the wrapped ESCAPE message. Inline doc correction (stale since FIX-098, measured): PRD §4.8 "Invalid SQL will produce a runtime database error" and §13.7 "sqlgen does not parse or validate its contents …" are wrong, since a syntax error is already a generation error on all three dialects (`filter: "name LIKE"` → postgres "qualify filter: parsing "name LIKE": syntax error at end of input", mysql "syntax error at position 35", sqlite "1:9: expected expression, found 'EOF'"). §4.8 now says a filter the dialect's parser cannot read is a generation error; §13.7 says "does not validate its contents against the schema"; §13.7.4 gains a paragraph on syntax errors and the SQLite `LIKE … ESCAPE` limit.
+- Prototype results, run at `b606e4a7` (+ FIX-281) on 2026-10-08:
+  - Reproduction: schema `assets(id, name)` + `documents(id, entity_id REFERENCES assets(id), name)`, sqlite, `filter: "name LIKE 'x\\%%' ESCAPE '\\'"`. o2m `PctDocuments`: `GOWORK=off sqlgen generate` → exit 2 "panic: sql.BinaryExpr.String(): invalid op ESCAPE" via sqlite.QualifyFilterIdentifiers (`filter_qualifier.go:36`) → gen.qualifyFilter (`:31`) → gen.relationshipStaticFilter. o2o `PctDocument`: the same panic via gen.qualifyFilter → gen.o2oJoinPredicate (`context_table.go:2638`) → buildSingleO2ODetail.
+  - With the fix: `Generation error: building relationship filters: table assets: relationship PctDocuments: filter "name LIKE 'x\\%%' ESCAPE '\\'": qualify filter (sqlite): qualify filter: rendering relationship filter: sql.BinaryExpr.String(): invalid op ESCAPE`, exit 1; o2o the same through "building o2o join details for assets: relationship PctDocument: …".
+  - Gates: parser `go test -race ./sqlite/...` → ok, `golangci-lint run ./sqlite/...` → 0 issues; cmd/sqlgen `go test -race ./gen/...` → ok, `golangci-lint run ./gen/...` → 0 issues; `gofumpt -l` → clean; `make refs-check` → ok.
+  - Fail-first: `filter_qualifier.go` back on `qualified.String()` → `TestQualifyFilterIdentifiers/unrenderable_LIKE_ESCAPE_errors` and `TestRelationshipFilter_UnrenderableSQLiteFilterErrors/one_to_many` fail: "panic: sql.BinaryExpr.String(): invalid op ESCAPE [recovered, repanicked]"; the existing suite without the fix → passes.
+  - Golden churn: none.
+  - Patch: `.claude/prototypes/FIX-291.patch` (4 files, +63/-12; the FIX-291 delta only, against the FIX-281-applied tree).
+
+
+**References.**
+- PRD §4.8 (`filter` on a relationship), §13.4.
+- FIX-281 (the same panic in CHECK / DEFAULT / generated column / index;
+  adds `exprString`), FIX-269 (`indexWhere`'s recover), FIX-098 (filter
+  qualification).
+
+**Resolution notes.** `sqlite.QualifyFilterIdentifiers` now renders the
+qualified expression through a recovering `exprString(e, what)` helper and
+wraps its error as `qualify filter: …`, so a SQLite `filter:` rqlite/sql parses
+but cannot render (`LIKE … ESCAPE`) fails generation with an error naming the
+table, relationship and filter instead of panicking, on both the o2m
+relationship-filter path and the o2o JOIN predicate. FIX-281 had not landed, so
+this change adds `exprString` itself in `parser/sqlite/sqlite.go` (the shape
+FIX-281's patch defines) and moves `indexWhere`'s recover onto it, unchanged in
+message; FIX-281 reuses it. The prototype's source hunks applied clean; the
+helper is the only delta. Tests: `TestQualifyFilterIdentifiers` (`wantErr`
+becomes a message substring, new "unrenderable LIKE ESCAPE errors" row) and
+`TestRelationshipFilter_UnrenderableSQLiteFilterErrors` (o2m and o2o); both
+panic with the fix reverted. PRD §4.8, §13.7 and §13.7.4 corrected inline: a
+filter the dialect's parser cannot read is already a generation error on all
+three dialects. Measured: `sqlgen generate` on the reproduction schema → exit 1
+"Generation error: … relationship PctDocuments: filter … qualify filter
+(sqlite): qualify filter: rendering relationship filter:
+sql.BinaryExpr.String(): invalid op ESCAPE" (o2m and o2o). Golden churn: none.
+Inline at `/verify`: PRD §4.8 and §13.7.4 now scope the generation error to
+the filters codegen parses (every `o2o`, and each `o2m`/`m2m` that gets a
+relationship filter member); the `QualifyFilterIdentifiers` doc comment names
+both qualification sites; the Root cause's o2o line ref is updated to `:2647`.
+
 
 ### FIX-293
 

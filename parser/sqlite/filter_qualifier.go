@@ -14,8 +14,8 @@ import (
 // (GLOB, REGEXP, ->, ->>), and string-literal contents are all handled by
 // the upstream parser.
 //
-// It performs the codegen-time qualification of sub-categorized o2o
-// `filter:` predicates.
+// It qualifies relationship `filter:` predicates at codegen time: the o2o
+// JOIN ON predicate and the relationship filter subquery.
 func QualifyFilterIdentifiers(expr, alias string) (string, error) {
 	if strings.TrimSpace(expr) == "" {
 		return "", fmt.Errorf("qualify filter: empty expression")
@@ -32,8 +32,12 @@ func QualifyFilterIdentifiers(expr, alias string) (string, error) {
 		return "", fmt.Errorf("qualify filter: empty parse for %q", expr)
 	}
 
-	qualified := qualifyExpr(parsed, alias)
-	return qualified.String(), nil
+	// rqlite/sql panics rendering some predicates it parses (LIKE … ESCAPE).
+	out, err := exprString(qualifyExpr(parsed, alias), "relationship filter")
+	if err != nil {
+		return "", fmt.Errorf("qualify filter: %w", err)
+	}
+	return out, nil
 }
 
 // qualifyExpr returns expr with every bare identifier replaced by a

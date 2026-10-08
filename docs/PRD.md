@@ -937,7 +937,7 @@ WHERE "commentable_id" = ANY($1)
 
 - The `filter` field supports the **parent → child** direction only (e.g., post → comments). This is the common access pattern.
 - The **child → parent** direction (e.g., comment → its parent post/photo/video) is not supported via relationships because the return type varies per row. Consumers should query the parent table directly using the `commentable_type` and `commentable_id` values from the child entity.
-- The `filter` value is raw SQL. It is not validated against the schema — the consumer is responsible for correctness. Invalid SQL will produce a runtime database error.
+- The `filter` value is raw SQL. It is not validated against the schema — the consumer is responsible for correctness. Codegen parses the filter of every `o2o` relationship, and of each `o2m`/`m2m` relationship that gets a relationship filter member, and such a filter the dialect's parser cannot read is a generation error ([13.7.4](#1374-validation-boundaries)). Any other unreadable filter, and SQL that parses but is still wrong, such as a column the target table lacks, produces a runtime database error.
 - The `filter` field works with any relationship type (`o2o`, `o2m`, `m2m`) but is most commonly used with `o2m` for polymorphic patterns.
 
 #### Nested mutations per table
@@ -8719,7 +8719,7 @@ The `errgroup`-based loading executes each level sequentially (parents first, th
 
 Polymorphic *reads* are already covered: §4.8 introduces the `filter:` field on `TableRelationship`, and §13.2 describes how a polymorphic discriminator predicate is woven into the loader's WHERE clause. This section specifies one extension that builds on that mechanism — **sub-categorized polymorphism**, where a single parent declares multiple relationships into the same child table distinguished by the value in `filter:`.
 
-The `filter:` value remains raw SQL per §4.8 — sqlgen does not parse or validate its contents. The consumer is responsible for correctness; typos in literals surface as zero-row query results, and invalid SQL surfaces as runtime database errors. Codegen-time filter validation (column-existence checks, enum-value checks) is out of scope — see §13.7.4.
+The `filter:` value remains raw SQL per §4.8 — sqlgen does not validate its contents against the schema. The consumer is responsible for correctness; typos in literals surface as zero-row query results, and SQL that parses but names what the schema lacks surfaces as runtime database errors. Codegen-time filter validation (column-existence checks, enum-value checks) is out of scope — see §13.7.4.
 
 Writes into polymorphic child tables continue to go through the child's own client (`client.Documents().Create(ctx, &CreateDocumentInput{EntityID: ..., EntityType: ..., ...})`). No relationship-scoped writers are generated from `filter:`; a `filter:` discriminator is read-side only.
 
@@ -8853,6 +8853,8 @@ Codegen-time validation of `filter:` contents (column existence, enum literal va
 | **Enum literal validity** — a literal compared against an enum discriminator that is not one of the type's declared values. | A zero-row relationship result, or a runtime database error on dialects that reject the comparison. |
 
 Both are consequences of `filter:` being raw SQL; a consumer who needs the predicate checked expresses it as a declared relationship rather than a filter.
+
+Wherever codegen parses the filter (§4.8), what the qualifier cannot read fails generation, with an error naming the table, the relationship and the filter: a syntax error on any dialect, and on SQLite a `LIKE … ESCAPE`, which the SQLite parser reads but cannot write back ([6.3](#63-dialect-introspection-capabilities) lists the same limit for DDL).
 
 ---
 

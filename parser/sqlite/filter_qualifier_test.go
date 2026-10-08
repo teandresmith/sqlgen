@@ -13,7 +13,7 @@ func TestQualifyFilterIdentifiers(t *testing.T) {
 		expr    string
 		alias   string
 		want    string
-		wantErr bool
+		wantErr string // a substring of the error; "" means no error
 	}{
 		{
 			name:  "single column equality",
@@ -93,19 +93,27 @@ func TestQualifyFilterIdentifiers(t *testing.T) {
 			name:    "unparseable expression errors",
 			expr:    "WHERE AND OR",
 			alias:   "d",
-			wantErr: true,
+			wantErr: "qualify filter: parsing",
+		},
+		{
+			// rqlite/sql parses LIKE … ESCAPE and then panics rendering it; the
+			// panic comes back as an error so generation fails, not crashes.
+			name:    "unrenderable LIKE ESCAPE errors",
+			expr:    `name LIKE 'x\%' ESCAPE '\'`,
+			alias:   "d",
+			wantErr: "qualify filter: rendering relationship filter: sql.BinaryExpr.String(): invalid op ESCAPE",
 		},
 		{
 			name:    "empty expression errors",
 			expr:    "   ",
 			alias:   "d",
-			wantErr: true,
+			wantErr: "qualify filter: empty expression",
 		},
 		{
 			name:    "empty alias errors",
 			expr:    "name = 'x'",
 			alias:   "",
-			wantErr: true,
+			wantErr: "qualify filter: empty alias",
 		},
 	}
 
@@ -113,11 +121,14 @@ func TestQualifyFilterIdentifiers(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 			got, err := QualifyFilterIdentifiers(tt.expr, tt.alias)
-			if (err != nil) != tt.wantErr {
-				t.Fatalf("QualifyFilterIdentifiers(%q, %q) err = %v, wantErr = %v", tt.expr, tt.alias, err, tt.wantErr)
-			}
-			if tt.wantErr {
+			if tt.wantErr != "" {
+				if err == nil || !strings.Contains(err.Error(), tt.wantErr) {
+					t.Fatalf("QualifyFilterIdentifiers(%q, %q) err = %v, want an error containing %q", tt.expr, tt.alias, err, tt.wantErr)
+				}
 				return
+			}
+			if err != nil {
+				t.Fatalf("QualifyFilterIdentifiers(%q, %q) = %v", tt.expr, tt.alias, err)
 			}
 			if normalizeWS(got) != normalizeWS(tt.want) {
 				t.Errorf("QualifyFilterIdentifiers(%q, %q):\n  got:  %s\n  want: %s", tt.expr, tt.alias, got, tt.want)

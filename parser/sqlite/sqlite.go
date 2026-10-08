@@ -151,20 +151,26 @@ func IndexWhere(ddl string) (string, error) {
 }
 
 // indexWhere renders a CREATE INDEX statement's WHERE predicate, or "" when it
-// has none. rqlite/sql parses some predicates it then panics rendering
-// (LIKE … ESCAPE: "sql.BinaryExpr.String(): invalid op ESCAPE"); the panic is
-// returned as an error, so such an index is a schema error on both sources
-// (PRD §6.3), not a crash.
-func indexWhere(stmt *rsql.CreateIndexStatement) (where string, err error) {
+// has none. A predicate exprString cannot render is a schema error on both
+// sources (PRD §6.3), not a crash.
+func indexWhere(stmt *rsql.CreateIndexStatement) (string, error) {
 	if stmt.WhereExpr == nil {
 		return "", nil
 	}
+	return exprString(stmt.WhereExpr, "CREATE INDEX predicate")
+}
+
+// exprString renders e as rsql.ExprString does; what names e in an error.
+// rqlite/sql parses some expressions it then panics rendering (LIKE … ESCAPE:
+// "sql.BinaryExpr.String(): invalid op ESCAPE"); the panic is returned as an
+// error.
+func exprString(e rsql.Expr, what string) (s string, err error) {
 	defer func() {
 		if r := recover(); r != nil {
-			where, err = "", fmt.Errorf("rendering CREATE INDEX predicate: %v", r)
+			s, err = "", fmt.Errorf("rendering %s: %v", what, r)
 		}
 	}()
-	return rsql.ExprString(stmt.WhereExpr), nil
+	return rsql.ExprString(e), nil
 }
 
 func (p *Parser) parseDropTable(stmt *rsql.DropTableStatement) error {
