@@ -1,6 +1,6 @@
 # Phase 30: Database Introspection — CLI Wiring & Introspector Parity
 
-Status: In Progress
+Status: Complete (closed 2026-10-08)
 PRD Sections: 4.1, 4.2, 4.3, 4.4, 5.2, 6.1, 6.3, 6.4, 7, 8.1.7, 16.2, 30.7
 
 > **Design.** `docs/design/INTROSPECTION.md` (DRAFT 2026-10-05) is the source for every sub-item

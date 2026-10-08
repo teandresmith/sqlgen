@@ -3590,7 +3590,7 @@ Closure is `/close-phase 29`, with no sub-item of its own.
 
 ## Phase 30: Database Introspection — CLI Wiring & Introspector Parity
 
-> **Status: Not started.** Design doc `docs/design/INTROSPECTION.md` (DRAFT 2026-10-05; all 14 design questions resolved in its §10; probe results in its §4.0). Wires `parser/introspect` into the CLI so `input.source: database | both` (PRD §6.1) actually reads the database, and brings the PostgreSQL, MySQL and SQLite introspectors to parity with the file parsers.
+> **Status: Complete (closed 2026-10-08).** Design doc `docs/design/INTROSPECTION.md` (SYNCED 2026-10-08; DRAFT 2026-10-05; all 14 design questions resolved in its §10; probe results in its §4.0). Wires `parser/introspect` into the CLI so `input.source: database | both` (PRD §6.1) actually reads the database, and brings the PostgreSQL, MySQL and SQLite introspectors to parity with the file parsers.
 
 **Why.**
 - **`source: database | both` does nothing today.** No `cmd/sqlgen` package imports `parser/introspect`. `cli/pipeline.go` `parseSchema` parses `input.paths` in every mode, so `database` silently generates from whatever `.sql` files sit under `paths` (default `.`). This was noted while vetting FIX-243 (Q3, 2026-09-29) and never tracked.
