@@ -286,7 +286,7 @@ func TestPaginationTableTemplate_connectionForward(t *testing.T) {
 		`fmt.Errorf("connection products count: %w", err)`,
 		// Cursor decode
 		"if input.After != nil {",
-		"cursor, err := decodeCursor(*input.After)",
+		"cursor, err := decodeCursor(*input.After, c.cursorKeys)",
 		`keysetConds = append(keysetConds, cursorKeyset(c.dialect, c.cursorKeys, cursor, ">"))`,
 		// Direction
 		"limit := c.pageSize",
@@ -335,7 +335,7 @@ func TestPaginationTableTemplate_connectionBackward(t *testing.T) {
 
 	wantPatterns := []string{
 		"if input.Before != nil {",
-		"cursor, err := decodeCursor(*input.Before)",
+		"cursor, err := decodeCursor(*input.Before, c.cursorKeys)",
 		`keysetConds = append(keysetConds, cursorKeyset(c.dialect, c.cursorKeys, cursor, "<"))`,
 		"} else if input.Last != nil {",
 		"limit = *input.Last",

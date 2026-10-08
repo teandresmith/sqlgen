@@ -229,6 +229,82 @@ func TestConnection_TamperedCursorReturnsErrInvalidCursor(t *testing.T) {
 	}
 }
 
+// A cursor that decodes cleanly but lacks a cursor key, or holds null for one,
+// has no value to compare against, so Connection rejects it before querying.
+func TestConnection_CursorMissingKeyReturnsErrInvalidCursor(t *testing.T) {
+	ctx := context.Background()
+	client := newClient()
+
+	encode := func(raw string) *string {
+		return new(base64.StdEncoding.EncodeToString([]byte(raw)))
+	}
+	first := 5
+	last := 5
+
+	cases := []struct {
+		name string
+		call func() error
+	}{
+		{
+			name: "table after cursor without keys",
+			call: func() error {
+				_, err := client.Products().Connection(ctx, models.ConnectionInput[models.ProductFilter]{First: &first, After: encode(`{}`)})
+				return err
+			},
+		},
+		{
+			name: "table after cursor with null key",
+			call: func() error {
+				_, err := client.Products().Connection(ctx, models.ConnectionInput[models.ProductFilter]{First: &first, After: encode(`{"id":null}`)})
+				return err
+			},
+		},
+		{
+			name: "table before cursor without keys",
+			call: func() error {
+				_, err := client.Products().Connection(ctx, models.ConnectionInput[models.ProductFilter]{Last: &last, Before: encode(`{}`)})
+				return err
+			},
+		},
+		{
+			name: "table before cursor with null key",
+			call: func() error {
+				_, err := client.Products().Connection(ctx, models.ConnectionInput[models.ProductFilter]{Last: &last, Before: encode(`{"id":null}`)})
+				return err
+			},
+		},
+		{
+			name: "composite cursor missing trailing keys",
+			call: func() error {
+				_, err := client.ProductTagLabels().Connection(ctx, models.ConnectionInput[models.ProductTagLabelFilter]{First: &first, After: encode(`{"product_id":1}`)})
+				return err
+			},
+		},
+		{
+			name: "view after cursor without keys",
+			call: func() error {
+				_, err := client.ProductSummary().Connection(ctx, models.ConnectionInput[models.ProductSummaryFilter]{First: &first, After: encode(`{}`)})
+				return err
+			},
+		},
+		{
+			name: "view before cursor with null key",
+			call: func() error {
+				_, err := client.ProductSummary().Connection(ctx, models.ConnectionInput[models.ProductSummaryFilter]{Last: &last, Before: encode(`{"id":null}`)})
+				return err
+			},
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if err := tc.call(); !errors.Is(err, models.ErrInvalidCursor) {
+				t.Errorf("err = %v, want ErrInvalidCursor", err)
+			}
+		})
+	}
+}
+
 func TestConnection_PageInfoFirstMiddleLast(t *testing.T) {
 	ctx := context.Background()
 	client := newClient()

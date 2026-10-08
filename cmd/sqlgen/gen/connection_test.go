@@ -133,7 +133,8 @@ func TestConnectionTemplate_cursorEncodeDecode(t *testing.T) {
 	output := executeConnectionTemplate(t, ctx)
 
 	wantPatterns := []string{
-		"func decodeCursor(s string) (map[string]any, error)",
+		"func decodeCursor(s string, keys []string) (map[string]any, error)",
+		"if cursor[key] == nil {",
 		"base64.StdEncoding.DecodeString(s)",
 		"json.Unmarshal(data, &cursor)",
 	}

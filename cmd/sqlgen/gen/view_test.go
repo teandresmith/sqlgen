@@ -673,7 +673,8 @@ func TestViewPaginationTemplate_connectionMethod(t *testing.T) {
 	wantPatterns := []string{
 		"func (c *productSummaryClient) Connection(ctx context.Context, input ConnectionInput[ProductSummaryFilter]",
 		"Connection[ProductSummary]",
-		"decodeCursor(",
+		"decodeCursor(*input.After, c.cursorKeys)",
+		"decodeCursor(*input.Before, c.cursorKeys)",
 		"cursorKeyset(c.dialect, c.cursorKeys, cursor, ",
 		"cursorSorts(",
 		"encodeProductSummaryCursor(",

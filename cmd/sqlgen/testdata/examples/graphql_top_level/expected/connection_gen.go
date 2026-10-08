@@ -38,8 +38,10 @@ type PageInfo struct {
 	EndCursor       *string `json:"end_cursor"`   // nil when the edge list is empty
 }
 
-// decodeCursor decodes a base64 JSON cursor string into key-value pairs.
-func decodeCursor(s string) (map[string]any, error) {
+// decodeCursor decodes a base64 JSON cursor string into key-value pairs. Every
+// key must hold a non-null value: a missing one would leave its keyset
+// comparison without a bound argument.
+func decodeCursor(s string, keys []string) (map[string]any, error) {
 	data, err := base64.StdEncoding.DecodeString(s)
 	if err != nil {
 		return nil, err
@@ -47,6 +49,11 @@ func decodeCursor(s string) (map[string]any, error) {
 	var cursor map[string]any
 	if err := json.Unmarshal(data, &cursor); err != nil {
 		return nil, err
+	}
+	for _, key := range keys {
+		if cursor[key] == nil {
+			return nil, ErrInvalidCursor
+		}
 	}
 	return cursor, nil
 }

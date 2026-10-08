@@ -1004,59 +1004,6 @@ code reading).
 
 **Resolution notes.** _Filled in by `/fix resolve`._
 
-### FIX-293
-
-- **Status:** Open
-- **Severity:** tracked
-- **Origin:** phase 6, `cmd/sqlgen/gen` (`connection.go.tmpl`)
-- **Surfaced by:** `/fix-vet FIX-292` (2026-10-08), filed at `/close-phase 30` (2026-10-08)
-- **Vetted:** ready at `13173996` (2026-10-08)
-
-**Issue.** **A `Connection` cursor that lacks an expected key, or holds JSON
-`null` for it, returns an SQL error instead of `ErrInvalidCursor`.** PRD §14.2
-"Cursor Encoding" says a cursor that "does not contain the expected keys" makes
-the `Connection` method return `ErrInvalidCursor`, so callers' `errors.Is`
-checks miss this case. Measured in the sqlite example (probe since deleted),
-`GOWORK=off go test -count=1 -run TestZZProbeCursorNil -v ./tests/` →
-`After={} -> err=connection products: get products: query: SQL logic error:
-unrecognized token: "$" (1)`, and the same for `After={"id":null}`. The Phase 14
-record (`docs/tracker/phase-14.md:235`) noted missing-key cursors as uncaught
-and out of that phase's scope.
-
-**Root cause.** `cursorKeyset` (`cmd/sqlgen/gen/templates/connection.go.tmpl:53-56`)
-builds `sql.Condition{Clause: col + " " + op + " $", Value: cursor[key]}` without
-checking that `cursor[key]` is present and non-nil. The builder reads a nil
-`Value` as "no args" (`sql/builder.go:588-590`), so the clause keeps a bare `$`,
-the root cause FIX-284 and FIX-292 address for `Raw` and `Where`. `decodeCursor`
-(`:34`) validates only base64 and JSON, and the callers in
-`table/pagination.go.tmpl:90/:97` and `view/pagination.go.tmpl:98/:105` pass the
-map straight on.
-
-**Suggested fix.**
-- After `decodeCursor` in both pagination templates (or in a shared helper in
-  `connection.go.tmpl`), check that every resolved cursor key is present with a
-  non-nil value; otherwise return `ErrInvalidCursor`, wrapped the same way as the
-  existing decode failures.
-- Tests: extend the Phase 14 tampered-cursor E2E tests with `{}` and
-  `{"<key>": null}` cursors asserting `errors.Is(err, ErrInvalidCursor)`, for a
-  table and a view, on at least the sqlite example; regenerate goldens.
-- Independent of FIX-292's ruling: a cursor key is never meaningfully NULL here.
-- Prototype results, run at `13173996` on 2026-10-08:
-  - Reproduction: a throwaway probe (`cmd/sqlgen/testdata/examples/sqlite/tests/zz_probe_cursor_test.go`, since deleted), `GOWORK=off go test -count=1 -run TestZZProbeCursorNil -v ./tests/` → `table After={} -> err=connection products: get products: query: SQL logic error: unrecognized token: "$" (1)`; the same for table Before, the view (`connection product_summary: …`), and the cursors `{"id":null}`, `{"other":1}` and a top-level JSON `null`; composite `{"product_id":1}` and `{"product_id":1,"tag_name":"a","label":null}` → `connection product_tag_labels: … unrecognized token: "$" (1)`; control `{"id":1}` → ok. With the fix every one returns `sqlgen: invalid cursor`.
-  - Prototype (the shared-helper option): `decodeCursor(s string, keys []string)` in `connection.go.tmpl` loops over the keys and returns `ErrInvalidCursor` when `cursor[key] == nil`, which covers a missing key, a null value and a top-level `null`; it reuses the package's `ErrInvalidCursor` (no new import). The 4 call sites in `table/pagination.go.tmpl` and `view/pagination.go.tmpl` pass `c.cursorKeys`, and the callers' error handling is unchanged. Unit tests (`connection_test.go`, `pagination_table_test.go` patterns) and the unit goldens `connection_gen.go` / `pagination_products_gen.go` are updated. New E2E `TestConnection_CursorMissingKeyReturnsErrInvalidCursor` (sqlite, 7 cases: table After/Before × `{}` and `{"id":null}`, a composite cursor missing its trailing keys, view After `{}`, view Before `{"id":null}`).
-  - Gates: `cd cmd/sqlgen && go test -race -count=1 ./gen/...` → ok; `make update-golden` / `make update-golden-e2e` → ok; `TestE2EGoldenFiles` → ok; `gofumpt -l` → clean; all 12 churned examples `GOWORK=off go test -race -count=1 ./...` → ok and `GOWORK=off golangci-lint run` → 0 issues.
-  - Fail-first: the key-check loop removed and goldens regenerated → `TestConnection_CursorMissingKeyReturnsErrInvalidCursor` fails all 7 (`connection_test.go:302: err = connection products: get products: query: SQL logic error: unrecognized token: "$" (1), want ErrInvalidCursor`), and `TestConnectionTemplate_cursorEncodeDecode` fails (`output missing cursor decode: "if cursor[key] == nil {"`); the existing suite without the fix → passes.
-  - Golden churn (changed only; 2 lines per Connection method plus the `decodeCursor` body in `connection_gen.go`): cache, events, graphql, graphql_null_wrappers, graphql_top_level, mysql, postgres, postgres_stdlib, tenancy, tenancy_mysql, tenancy_postgres ~2–3 files each under `expected/` and `models/`; sqlite ~24 each (file_per_table); unit goldens `connection_gen.go`, `pagination_products_gen.go`. If FIX-272's `sequence_rows` table lands first, its Connection method picks up the same 2-line change on regeneration.
-  - Patch: `.claude/prototypes/FIX-293.patch` (116 files, +888/-629; source and tests 8 files, +104/-13).
-
-
-**References.**
-- PRD §14.2 "Cursor Encoding" / "Invalid cursors" (`docs/PRD.md:8911`); §22.1.
-- FIX-284, FIX-292 (nil `Value` → bare `$`).
-- `docs/tracker/phase-14.md:235` (missing-key cursors deferred).
-
-**Resolution notes.** _Filled in by `/fix resolve`._
-
 ### FIX-295
 
 - **Status:** Open
@@ -1145,6 +1092,60 @@ source (PRD §6.1).
 ## Resolved
 
 <!-- fixes:resolved:begin -->
+
+### FIX-293
+
+- **Status:** Resolved
+- **Severity:** tracked
+- **Origin:** phase 6, `cmd/sqlgen/gen` (`connection.go.tmpl`)
+- **Surfaced by:** `/fix-vet FIX-292` (2026-10-08), filed at `/close-phase 30` (2026-10-08)
+- **Vetted:** ready at `13173996` (2026-10-08)
+
+**Issue.** **A `Connection` cursor that lacks an expected key, or holds JSON
+`null` for it, returns an SQL error instead of `ErrInvalidCursor`.** PRD §14.2
+"Cursor Encoding" says a cursor that "does not contain the expected keys" makes
+the `Connection` method return `ErrInvalidCursor`, so callers' `errors.Is`
+checks miss this case. Measured in the sqlite example (probe since deleted),
+`GOWORK=off go test -count=1 -run TestZZProbeCursorNil -v ./tests/` →
+`After={} -> err=connection products: get products: query: SQL logic error:
+unrecognized token: "$" (1)`, and the same for `After={"id":null}`. The Phase 14
+record (`docs/tracker/phase-14.md:235`) noted missing-key cursors as uncaught
+and out of that phase's scope.
+
+**Root cause.** At `45a12a53`, `cursorKeyset` (`cmd/sqlgen/gen/templates/connection.go.tmpl:53-56`)
+builds `sql.Condition{Clause: col + " " + op + " $", Value: cursor[key]}` without
+checking that `cursor[key]` is present and non-nil. The builder reads a nil
+`Value` as "no args" (`sql/builder.go:588-590`), so the clause keeps a bare `$`,
+the root cause FIX-284 and FIX-292 address for `Raw` and `Where`. `decodeCursor`
+(`:34`) validates only base64 and JSON, and the callers in
+`table/pagination.go.tmpl:90/:97` and `view/pagination.go.tmpl:98/:105` pass the
+map straight on.
+
+**Suggested fix.**
+- After `decodeCursor` in both pagination templates (or in a shared helper in
+  `connection.go.tmpl`), check that every resolved cursor key is present with a
+  non-nil value; otherwise return `ErrInvalidCursor`, wrapped the same way as the
+  existing decode failures.
+- Tests: extend the Phase 14 tampered-cursor E2E tests with `{}` and
+  `{"<key>": null}` cursors asserting `errors.Is(err, ErrInvalidCursor)`, for a
+  table and a view, on at least the sqlite example; regenerate goldens.
+- Independent of FIX-292's ruling: a cursor key is never meaningfully NULL here.
+- Prototype results, run at `13173996` on 2026-10-08:
+  - Reproduction: a throwaway probe (`cmd/sqlgen/testdata/examples/sqlite/tests/zz_probe_cursor_test.go`, since deleted), `GOWORK=off go test -count=1 -run TestZZProbeCursorNil -v ./tests/` → `table After={} -> err=connection products: get products: query: SQL logic error: unrecognized token: "$" (1)`; the same for table Before, the view (`connection product_summary: …`), and the cursors `{"id":null}`, `{"other":1}` and a top-level JSON `null`; composite `{"product_id":1}` and `{"product_id":1,"tag_name":"a","label":null}` → `connection product_tag_labels: … unrecognized token: "$" (1)`; control `{"id":1}` → ok. With the fix every one returns `sqlgen: invalid cursor`.
+  - Prototype (the shared-helper option): `decodeCursor(s string, keys []string)` in `connection.go.tmpl` loops over the keys and returns `ErrInvalidCursor` when `cursor[key] == nil`, which covers a missing key, a null value and a top-level `null`; it reuses the package's `ErrInvalidCursor` (no new import). The 4 call sites in `table/pagination.go.tmpl` and `view/pagination.go.tmpl` pass `c.cursorKeys`, and the callers' error handling is unchanged. Unit tests (`connection_test.go`, `pagination_table_test.go` patterns) and the unit goldens `connection_gen.go` / `pagination_products_gen.go` are updated. New E2E `TestConnection_CursorMissingKeyReturnsErrInvalidCursor` (sqlite, 7 cases: table After/Before × `{}` and `{"id":null}`, a composite cursor missing its trailing keys, view After `{}`, view Before `{"id":null}`).
+  - Gates: `cd cmd/sqlgen && go test -race -count=1 ./gen/...` → ok; `make update-golden` / `make update-golden-e2e` → ok; `TestE2EGoldenFiles` → ok; `gofumpt -l` → clean; all 12 churned examples `GOWORK=off go test -race -count=1 ./...` → ok and `GOWORK=off golangci-lint run` → 0 issues.
+  - Fail-first: the key-check loop removed and goldens regenerated → `TestConnection_CursorMissingKeyReturnsErrInvalidCursor` fails all 7 (`connection_test.go:302: err = connection products: get products: query: SQL logic error: unrecognized token: "$" (1), want ErrInvalidCursor`), and `TestConnectionTemplate_cursorEncodeDecode` fails (`output missing cursor decode: "if cursor[key] == nil {"`); the existing suite without the fix → passes.
+  - Golden churn (changed only; 2 lines per Connection method plus the `decodeCursor` body in `connection_gen.go`): cache, events, graphql, graphql_null_wrappers, graphql_top_level, mysql, postgres, postgres_stdlib, tenancy, tenancy_mysql, tenancy_postgres ~2–3 files each under `expected/` and `models/`; sqlite ~24 each (file_per_table); unit goldens `connection_gen.go`, `pagination_products_gen.go`. If FIX-272's `sequence_rows` table lands first, its Connection method picks up the same 2-line change on regeneration.
+  - Patch: `.claude/prototypes/FIX-293.patch` (116 files, +888/-629; source and tests 8 files, +104/-13).
+
+
+**References.**
+- PRD §14.2 "Cursor Encoding" / "Invalid cursors" (`docs/PRD.md:8912`); §22.1.
+- FIX-284, FIX-292 (nil `Value` → bare `$`).
+- `docs/tracker/phase-14.md:235` (missing-key cursors deferred).
+
+**Resolution notes.** Resolved 2026-10-08 from the vetted prototype (fresh at HEAD `45a12a53`, applied clean). `decodeCursor` in `connection.go.tmpl` now takes the client's cursor keys and returns `ErrInvalidCursor` when any key is missing or null (this also covers a top-level JSON `null` cursor); the four call sites in `table/pagination.go.tmpl` and `view/pagination.go.tmpl` pass `c.cursorKeys`, and their error handling is unchanged. Regression test: sqlite `TestConnection_CursorMissingKeyReturnsErrInvalidCursor` (7 cases: table After/Before × `{}` and `{"id":null}`, a composite cursor missing its trailing keys, view After `{}`, view Before `{"id":null}`); template pattern tests in `connection_test.go` / `pagination_table_test.go` and unit goldens `connection_gen.go` / `pagination_products_gen.go` updated. Fail-first on the final code: the key-check loop removed from the generated sqlite `connection_gen.go` → all 7 cases fail with `unrecognized token: "$" (1), want ErrInvalidCursor`; removed from the template → `TestConnectionTemplate_cursorEncodeDecode` fails (`output missing cursor decode: "if cursor[key] == nil {"`). Golden churn matches the vet's 12 examples and 116 files, plus 2 lines in each postgres `models_gen.go` copy for the `sequence_rows` Connection method that FIX-272 (`4475a6a7`) added after the vet, as the entry anticipated. Gates: `make check` → ok; `make check-examples` → ok. Inline at `/verify`: the PRD §9.8.12 `Connection` sample (`docs/PRD.md:6812,6819`) and its `decodeCursor` body now show the two-argument form and the key check; `docs/tracker/phase-14.md:235` notes the later fix; `TestViewPaginationTemplate_connectionMethod` pins both view call sites to `c.cursorKeys`; this entry's PRD ref corrected to `:8912` and its root-cause line refs labelled `45a12a53`.
+
 
 ### FIX-294
 
