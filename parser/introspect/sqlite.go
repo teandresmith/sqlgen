@@ -172,8 +172,10 @@ func parseStoredTable(ddl string) (*parser.Table, error) {
 
 // nameDeclaredConstraints gives each unnamed primary key, foreign key and
 // UNIQUE constraint read from the PRAGMAs the name its CREATE TABLE declares
-// for it, if any. Every such constraint must be in the CREATE TABLE; one that
-// is not means the parser and the catalog disagree.
+// for it, if any. A foreign key matches on its parent table and columns as
+// well, since one table can hold several over the same columns. Every such
+// constraint must be in the CREATE TABLE; one that is not means the parser
+// and the catalog disagree.
 func nameDeclaredConstraints(table, declared *parser.Table) error {
 	used := make([]bool, len(declared.Constraints))
 	for i := range table.Constraints {
@@ -183,7 +185,8 @@ func nameDeclaredConstraints(table, declared *parser.Table) error {
 		}
 		j := -1
 		for k, d := range declared.Constraints {
-			if !used[k] && d.Type == c.Type && sameColumns(d.Columns, c.Columns) && strings.EqualFold(d.ReferenceTable, c.ReferenceTable) {
+			if !used[k] && d.Type == c.Type && sameColumns(d.Columns, c.Columns) &&
+				strings.EqualFold(d.ReferenceTable, c.ReferenceTable) && sameColumns(d.ReferenceColumns, c.ReferenceColumns) {
 				j = k
 				break
 			}
@@ -468,7 +471,12 @@ func (si *SQLiteIntrospector) introspectForeignKeys(ctx context.Context, table *
 		c.ReferenceColumns = append(c.ReferenceColumns, r.to.String)
 	}
 
-	for _, id := range order {
+	// PRAGMA foreign_key_list numbers foreign keys in reverse declaration
+	// order: id 0 is the last declared. Walking from the highest id keeps the
+	// constraints, and the FK a column's FKReference takes when it has
+	// several, in declaration order, as the file parser does.
+	slices.Sort(order)
+	for _, id := range slices.Backward(order) {
 		c := fks[id]
 		table.Constraints = append(table.Constraints, *c)
 		// Apply single-column FK to column.

@@ -23,53 +23,6 @@
 
 <!-- fixes:open:begin -->
 
-### FIX-267
-
-- **Status:** Open
-- **Severity:** tracked
-- **Origin:** phase 30, `parser/introspect` (`sqlite.go`)
-- **Surfaced by:** `/verify 30.6` (2026-10-05), confirmed by the sqlgen-reviewer pass
-- **Vetted:** corrected at `dcc7eeeb` (2026-10-07)
-
-**Issue.** When a SQLite table declares two FOREIGN KEYs over the same column(s) to the same parent table but different parent columns, `database` and `files` attach the constraint names to different keys. PRD §5.2 requires "the same constraint set, with the same names". Measured: `CREATE TABLE p (x INTEGER UNIQUE, y INTEGER UNIQUE); CREATE TABLE t (id INTEGER PRIMARY KEY, a INTEGER, CONSTRAINT fa FOREIGN KEY (a) REFERENCES p(x), CONSTRAINT fb FOREIGN KEY (a) REFERENCES p(y))` parses as `fa` = a→p(x), `fb` = a→p(y), but introspects as `fa` = a→p(y), `fb` = a→p(x). With only `fa` named, the name moves to the other key. Column `a` also gets a different `FKReference` (parsed `p.x`, introspected `p.y`).
-
-**Root cause.** `nameDeclaredConstraints` (`parser/introspect/sqlite.go:177`) matches a PRAGMA-built FK to a declared one by `Type`, `Columns` and `ReferenceTable` only, taking the first unused match. `PRAGMA foreign_key_list` numbers FKs in reverse declaration order (id 0 is the last declared), so the first PRAGMA FK takes the first declared FK's name. The `FKReference` half is older: `introspectForeignKeys` (`sqlite.go:430`) gives the column the first FK in PRAGMA order, the last declared, while the parser keeps the first declared. That holds for table-level FKs and for an inline REFERENCES followed by a table-level FK. For two inline REFERENCES on one column, the parser keeps the last one instead (backlog, `parser/sqlite`).
-
-**Suggested fix.**
-- In `nameDeclaredConstraints`, an FK match also requires the same parent columns, compared case-insensitively (`sameColumns(d.ReferenceColumns, c.ReferenceColumns)`). The doc comment says why.
-- In `introspectForeignKeys`, sort the FK ids and walk them from highest to lowest (`slices.Backward`), so constraints and the single-column `FKReference` follow declaration order as the parser's do. A comment notes that PRAGMA id 0 is the last declared.
-- Add `TestSQLiteIntrospect_SameColumnForeignKeys`, table-driven over five cases: both named, only the first named, neither named, inline then table level, and composite `(a,b)`→`p(x,y)` / `p(y,x)`. Each case asserts the FK constraints in order and `t.a`'s `FKReference`, then calls `assertSchemaParity`.
-- Add a white-box `TestNameDeclaredConstraints_ForeignKeyParentColumns` (`parser/introspect/sqlite_test.go`). It lists catalog FKs in the opposite order to the declared ones, with upper-case parent columns, and checks that names attach by parent columns.
-- On landing, the 30.6 Completion Record's "Constraint names … an FK also matches its parent table" should read "and parent columns".
-- Changed from the original, which named only the integration test with two variants. Once the reversed walk lands, both lists are in declaration order, so the parent-column check cannot change any live result, and the integration test alone cannot show fail-first for it. The white-box unit test covers that site. The integration test gains the neither-named, inline-then-table-level and composite cases, which have the same root cause and the same fix site.
-- Prototype results, run at `dcc7eeeb` on 2026-10-07:
-  - Reproduction: a throwaway probe (`parser/introspect/zz_probe_fix267_test.go`, since deleted) with parent `p (x INTEGER UNIQUE, y INTEGER UNIQUE)` and `assertSchemaParity`; `cd parser && go test -short -count=1 -v -run TestZZProbeFix267 ./introspect/`:
-    - both FKs named: parsed `fa`→p[x], `fb`→p[y], `a.FKReference`=p.x; introspected `fa`→p[y], `fb`→p[x], `a.FKReference`=p.y;
-    - only the first named: introspected `fa`→p[y], `a.FKReference`=p.y;
-    - neither named: introspected FK order [y, x], `FKReference`=p.y;
-    - inline `CONSTRAINT fa REFERENCES p(x)` then table-level `fb`: names swapped;
-    - 6 of 7 variants fail parity at HEAD. The only pass, three FKs (x, y, x), comes out right by coincidence.
-  - A probe with quoted, mixed-case names (`REFERENCES "P"("X")` / `` `p`(`Y`) ``) passes with the fix, so the new check raises no false "declares no FOREIGN KEY" error.
-  - Gates:
-    - `cd parser && go test -race -count=1 ./...` → ok (containers ran);
-    - `golangci-lint run ./...` → 0 issues;
-    - `gofumpt -l introspect/` → clean;
-    - `cd cmd/sqlgen && go test -race -count=1 ./cli/...` → ok (109.7s, live PG/MySQL/SQLite generate);
-    - `go test -run TestE2EGoldenFiles -count=1 .` → ok.
-  - Fail-first:
-    - forward walk restored → `TestSQLiteIntrospect_SameColumnForeignKeys/{both_named,only_the_first_named,neither_named,…}` fails: "t: introspected foreign keys mismatch … - ReferenceColumns: []string{"x"} + ReferenceColumns: []string{"y"}" and "t.a: introspected FKReference mismatch … - Column: "x" + Column: "y"";
-    - parent-column match reverted → `TestNameDeclaredConstraints_ForeignKeyParentColumns` fails: "nameDeclaredConstraints() names for keys to p(Y), p(X) = ["fa" "fb"], want ["fb" "fa"]";
-    - the existing suite with HEAD `sqlite.go` (new tests skipped) → passes.
-  - Golden churn: none. No example sets `source:`.
-  - Patch: `.claude/prototypes/FIX-267.patch` (3 files, +108/-4).
-
-**References.**
-- PRD §5.2 "Constraints (all dialects)"; PRD §6.1.
-- `docs/design/INTROSPECTION.md` §10 Q10 / Q11 (SQLite names come from the stored DDL).
-- 30.6 Completion Record, "Constraint names".
-
-**Resolution notes.** _Filled in by `/fix resolve`._
-
 ### FIX-269
 
 - **Status:** Open
@@ -146,6 +99,54 @@
 ## Resolved
 
 <!-- fixes:resolved:begin -->
+
+### FIX-267
+
+- **Status:** Resolved
+- **Severity:** tracked
+- **Origin:** phase 30, `parser/introspect` (`sqlite.go`)
+- **Surfaced by:** `/verify 30.6` (2026-10-05), confirmed by the sqlgen-reviewer pass
+- **Vetted:** corrected at `dcc7eeeb` (2026-10-07)
+
+**Issue.** When a SQLite table declares two FOREIGN KEYs over the same column(s) to the same parent table but different parent columns, `database` and `files` attach the constraint names to different keys. PRD §5.2 requires "the same constraint set, with the same names". Measured: `CREATE TABLE p (x INTEGER UNIQUE, y INTEGER UNIQUE); CREATE TABLE t (id INTEGER PRIMARY KEY, a INTEGER, CONSTRAINT fa FOREIGN KEY (a) REFERENCES p(x), CONSTRAINT fb FOREIGN KEY (a) REFERENCES p(y))` parses as `fa` = a→p(x), `fb` = a→p(y), but introspects as `fa` = a→p(y), `fb` = a→p(x). With only `fa` named, the name moves to the other key. Column `a` also gets a different `FKReference` (parsed `p.x`, introspected `p.y`).
+
+**Root cause.** `nameDeclaredConstraints` (`parser/introspect/sqlite.go:177` at `dcc7eeeb`) matches a PRAGMA-built FK to a declared one by `Type`, `Columns` and `ReferenceTable` only, taking the first unused match. `PRAGMA foreign_key_list` numbers FKs in reverse declaration order (id 0 is the last declared), so the first PRAGMA FK takes the first declared FK's name. The `FKReference` half is older: `introspectForeignKeys` (`sqlite.go:430` at `dcc7eeeb`) gives the column the first FK in PRAGMA order, the last declared, while the parser keeps the first declared. That holds for table-level FKs and for an inline REFERENCES followed by a table-level FK. For two inline REFERENCES on one column, the parser keeps the last one instead (backlog, `parser/sqlite`).
+
+**Suggested fix.**
+- In `nameDeclaredConstraints`, an FK match also requires the same parent columns, compared case-insensitively (`sameColumns(d.ReferenceColumns, c.ReferenceColumns)`). The doc comment says why.
+- In `introspectForeignKeys`, sort the FK ids and walk them from highest to lowest (`slices.Backward`), so constraints and the single-column `FKReference` follow declaration order as the parser's do. A comment notes that PRAGMA id 0 is the last declared.
+- Add `TestSQLiteIntrospect_SameColumnForeignKeys`, table-driven over five cases: both named, only the first named, neither named, inline then table level, and composite `(a,b)`→`p(x,y)` / `p(y,x)`. Each case asserts the FK constraints in order and `t.a`'s `FKReference`, then calls `assertSchemaParity`.
+- Add a white-box `TestNameDeclaredConstraints_ForeignKeyParentColumns` (`parser/introspect/sqlite_test.go`). It lists catalog FKs in the opposite order to the declared ones, with upper-case parent columns, and checks that names attach by parent columns.
+- On landing, the 30.6 Completion Record's "Constraint names … an FK also matches its parent table" should read "and parent columns".
+- Changed from the original, which named only the integration test with two variants. Once the reversed walk lands, both lists are in declaration order, so the parent-column check cannot change any live result, and the integration test alone cannot show fail-first for it. The white-box unit test covers that site. The integration test gains the neither-named, inline-then-table-level and composite cases, which have the same root cause and the same fix site.
+- Prototype results, run at `dcc7eeeb` on 2026-10-07:
+  - Reproduction: a throwaway probe (`parser/introspect/zz_probe_fix267_test.go`, since deleted) with parent `p (x INTEGER UNIQUE, y INTEGER UNIQUE)` and `assertSchemaParity`; `cd parser && go test -short -count=1 -v -run TestZZProbeFix267 ./introspect/`:
+    - both FKs named: parsed `fa`→p[x], `fb`→p[y], `a.FKReference`=p.x; introspected `fa`→p[y], `fb`→p[x], `a.FKReference`=p.y;
+    - only the first named: introspected `fa`→p[y], `a.FKReference`=p.y;
+    - neither named: introspected FK order [y, x], `FKReference`=p.y;
+    - inline `CONSTRAINT fa REFERENCES p(x)` then table-level `fb`: names swapped;
+    - 6 of 7 variants fail parity at HEAD. The only pass, three FKs (x, y, x), comes out right by coincidence.
+  - A probe with quoted, mixed-case names (`REFERENCES "P"("X")` / `` `p`(`Y`) ``) passes with the fix, so the new check raises no false "declares no FOREIGN KEY" error.
+  - Gates:
+    - `cd parser && go test -race -count=1 ./...` → ok (containers ran);
+    - `golangci-lint run ./...` → 0 issues;
+    - `gofumpt -l introspect/` → clean;
+    - `cd cmd/sqlgen && go test -race -count=1 ./cli/...` → ok (109.7s, live PG/MySQL/SQLite generate);
+    - `go test -run TestE2EGoldenFiles -count=1 .` → ok.
+  - Fail-first:
+    - forward walk restored → `TestSQLiteIntrospect_SameColumnForeignKeys/{both_named,only_the_first_named,neither_named,…}` fails: "t: introspected foreign keys mismatch … - ReferenceColumns: []string{"x"} + ReferenceColumns: []string{"y"}" and "t.a: introspected FKReference mismatch … - Column: "x" + Column: "y"";
+    - parent-column match reverted → `TestNameDeclaredConstraints_ForeignKeyParentColumns` fails: "nameDeclaredConstraints() names for keys to p(Y), p(X) = ["fa" "fb"], want ["fb" "fa"]";
+    - the existing suite with HEAD `sqlite.go` (new tests skipped) → passes.
+  - Golden churn: none. No example sets `source:`.
+  - Patch: `.claude/prototypes/FIX-267.patch` (3 files, +108/-4).
+- Auto-accepted the recommended option on 2026-10-07 (`/fix` auto-accept rule): which inline REFERENCES sets `FKReference` when one column has two (the parser keeps the last, the introspector now the first) → leave it to the backlog line already filed by the vet rather than add the `parser/sqlite` guard here, because that guard is a different fix site (scope cap), the landed change is prototyped with green gates, neither option churns goldens, neither touches public surface, and the PRD states no rule for this shape.
+
+**References.**
+- PRD §5.2 "Constraints (all dialects)"; PRD §6.1.
+- `docs/design/INTROSPECTION.md` §10 Q10 / Q11 (SQLite names come from the stored DDL).
+- 30.6 Completion Record, "Constraint names".
+
+**Resolution notes.** Applied the vetted prototype with `git apply --3way` at `2079b18b`; all three files applied cleanly (FIX-268 and FIX-270, landed since the vet, touch none of them). `nameDeclaredConstraints` (`parser/introspect/sqlite.go`) now matches an FK on its parent columns too (`sameColumns(d.ReferenceColumns, c.ReferenceColumns)`, case-insensitive), and `introspectForeignKeys` sorts the PRAGMA FK ids and walks them highest first (`slices.Backward`), so the constraints and a column's single-column `FKReference` follow declaration order as the file parser's do. Tests: `TestSQLiteIntrospect_SameColumnForeignKeys` (integration, 5 cases, each with `assertSchemaParity`) and the white-box `TestNameDeclaredConstraints_ForeignKeyParentColumns`. Fail-first on the final code: the forward walk restored fails `TestSQLiteIntrospect_SameColumnForeignKeys/{both_named,only_the_first_named,…}` (`- ReferenceColumns: []string{"x"}` / `+ ReferenceColumns: []string{"y"}`, `- Column: "x"` / `+ Column: "y"`); the parent-column match reverted fails `TestNameDeclaredConstraints_ForeignKeyParentColumns` (`names for keys to p(Y), p(X) = ["fa" "fb"], want ["fb" "fa"]`). Gates: `make check` ok; `cd parser && go test -race -count=1 ./...` ok (containers); `cd cmd/sqlgen && go test -race -count=1 ./cli/...` ok (live PG/MySQL/SQLite generate); `make update-golden-e2e` and `make update-golden` → no churn, matching the vet; `make check-examples` ok. Doc correction: the 30.6 Completion Record's "Constraint names" bullet (`docs/tracker/phase-30.md`) now says an FK also matches its parent table and parent columns. `/verify FIX-267` agreed with the reviewer on every finding; the landed source diff matches the prototype byte for byte. It pinned the Root cause line refs to `dcc7eeeb` and added the non-short gate runs here; the reviewer's question on two inline REFERENCES was auto-accepted (see Suggested fix), leaving it on the backlog.
 
 ### FIX-270
 

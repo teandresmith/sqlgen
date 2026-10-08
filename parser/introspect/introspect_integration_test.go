@@ -1161,6 +1161,79 @@ func TestSQLiteIntrospect_CompositeConstraints(t *testing.T) {
 	assertSchemaParity(t, "sqlite", parsed, introspected)
 }
 
+// Several foreign keys over the same columns to the same parent keep their
+// declared names and declaration order, and the column's FKReference is the
+// first declared, as the file parser reads them. PRAGMA foreign_key_list
+// numbers them last-declared first.
+func TestSQLiteIntrospect_SameColumnForeignKeys(t *testing.T) {
+	requireDatabases(t)
+	const parent = "CREATE TABLE p (x INTEGER UNIQUE, y INTEGER UNIQUE, UNIQUE (x, y), UNIQUE (y, x));\n"
+	tests := []struct {
+		name    string
+		ddl     string
+		wantFKs []parser.Constraint
+		wantRef *parser.FKReference
+	}{
+		{
+			name: "both named",
+			ddl:  "CREATE TABLE t (id INTEGER PRIMARY KEY, a INTEGER, CONSTRAINT fa FOREIGN KEY (a) REFERENCES p(x), CONSTRAINT fb FOREIGN KEY (a) REFERENCES p(y))",
+			wantFKs: []parser.Constraint{
+				{Name: "fa", Type: parser.ForeignKey, Columns: []string{"a"}, ReferenceTable: "p", ReferenceColumns: []string{"x"}},
+				{Name: "fb", Type: parser.ForeignKey, Columns: []string{"a"}, ReferenceTable: "p", ReferenceColumns: []string{"y"}},
+			},
+			wantRef: &parser.FKReference{Table: "p", Column: "x"},
+		},
+		{
+			name: "only the first named",
+			ddl:  "CREATE TABLE t (id INTEGER PRIMARY KEY, a INTEGER, CONSTRAINT fa FOREIGN KEY (a) REFERENCES p(x), FOREIGN KEY (a) REFERENCES p(y))",
+			wantFKs: []parser.Constraint{
+				{Name: "fa", Type: parser.ForeignKey, Columns: []string{"a"}, ReferenceTable: "p", ReferenceColumns: []string{"x"}},
+				{Type: parser.ForeignKey, Columns: []string{"a"}, ReferenceTable: "p", ReferenceColumns: []string{"y"}},
+			},
+			wantRef: &parser.FKReference{Table: "p", Column: "x"},
+		},
+		{
+			name: "neither named",
+			ddl:  "CREATE TABLE t (id INTEGER PRIMARY KEY, a INTEGER, FOREIGN KEY (a) REFERENCES p(x), FOREIGN KEY (a) REFERENCES p(y))",
+			wantFKs: []parser.Constraint{
+				{Type: parser.ForeignKey, Columns: []string{"a"}, ReferenceTable: "p", ReferenceColumns: []string{"x"}},
+				{Type: parser.ForeignKey, Columns: []string{"a"}, ReferenceTable: "p", ReferenceColumns: []string{"y"}},
+			},
+			wantRef: &parser.FKReference{Table: "p", Column: "x"},
+		},
+		{
+			name: "inline then table level",
+			ddl:  "CREATE TABLE t (id INTEGER PRIMARY KEY, a INTEGER CONSTRAINT fa REFERENCES p(x), CONSTRAINT fb FOREIGN KEY (a) REFERENCES p(y))",
+			wantFKs: []parser.Constraint{
+				{Name: "fa", Type: parser.ForeignKey, Columns: []string{"a"}, ReferenceTable: "p", ReferenceColumns: []string{"x"}},
+				{Name: "fb", Type: parser.ForeignKey, Columns: []string{"a"}, ReferenceTable: "p", ReferenceColumns: []string{"y"}},
+			},
+			wantRef: &parser.FKReference{Table: "p", Column: "x"},
+		},
+		{
+			name: "composite",
+			ddl:  "CREATE TABLE t (id INTEGER PRIMARY KEY, a INTEGER, b INTEGER, CONSTRAINT fa FOREIGN KEY (a, b) REFERENCES p(x, y), CONSTRAINT fb FOREIGN KEY (a, b) REFERENCES p(y, x))",
+			wantFKs: []parser.Constraint{
+				{Name: "fa", Type: parser.ForeignKey, Columns: []string{"a", "b"}, ReferenceTable: "p", ReferenceColumns: []string{"x", "y"}},
+				{Name: "fb", Type: parser.ForeignKey, Columns: []string{"a", "b"}, ReferenceTable: "p", ReferenceColumns: []string{"y", "x"}},
+			},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			parsed, introspected := sqliteSchemas(t, parent+tt.ddl)
+			table := findTable(t, introspected, "t")
+			if diff := cmp.Diff(tt.wantFKs, filterConstraints(table.Constraints, parser.ForeignKey)); diff != "" {
+				t.Errorf("t: introspected foreign keys mismatch (-want +got):\n%s", diff)
+			}
+			if diff := cmp.Diff(tt.wantRef, parser.ColumnByName(table, "a").FKReference); diff != "" {
+				t.Errorf("t.a: introspected FKReference mismatch (-want +got):\n%s", diff)
+			}
+			assertSchemaParity(t, "sqlite", parsed, introspected)
+		})
+	}
+}
+
 // --- Filtering tests ---
 
 func TestPostgresSchemaFiltering(t *testing.T) {

@@ -1311,7 +1311,7 @@ PRD Sections: 4.1, 4.2, 4.3, 4.4, 5.2, 6.1, 6.3, 6.4, 7, 8.1.7, 16.2, 30.7
   `WITHOUT ROWID`.
 - **Constraint names.** A PRAGMA-built PK, FK or constraint UNIQUE takes the name of the
   re-parsed constraint over the same columns (case-insensitive; an FK also matches its parent
-  table). One with no match is an error ("stored CREATE TABLE declares no UNIQUE over (…)"),
+  table and parent columns). One with no match is an error ("stored CREATE TABLE declares no UNIQUE over (…)"),
   since it means the parser and the catalog disagree. A constraint UNIQUE has `Method: ""`, as
   parsed (PRD §5.2 defaults `btree` on PostgreSQL and MySQL only); a `CREATE UNIQUE INDEX` keeps
   its name and `btree`, as parsed. That settles the 30.2 note on which side moves.
