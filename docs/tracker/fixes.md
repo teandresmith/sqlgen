@@ -1057,6 +1057,86 @@ map straight on.
 
 **Resolution notes.** _Filled in by `/fix resolve`._
 
+### FIX-294
+
+- **Status:** Open
+- **Severity:** tracked
+- **Origin:** phase 30, `parser/mysql` + `parser/introspect` (`mysql.go`)
+- **Surfaced by:** backlog promotion at `/close-phase 30` (2026-10-08); first recorded by the FIX-274 and FIX-275 vets (2026-10-07)
+
+**Issue.** **MySQL indexes with an expression (functional) key part are not
+modeled the way PRD §30.7 now states for every source.** FIX-274 (SQLite) and
+FIX-276 (PostgreSQL) landed the user's 2026-10-08 ruling (C): an index with an
+expression part "is not listed and is not a conflict target, under every
+source". On MySQL the two sources still diverge. Measured (MySQL 8.0):
+`CREATE UNIQUE INDEX ux ON zz274t ((lower(email)))` → parsed `[""]` vs
+introspected absent; `(a, (lower(b)))` → parsed `["a", ""]` vs introspected
+`[a]`. MySQL also names an unnamed index with any expression key part
+`functional_index`, so it never takes a column-name number, while the parser
+names it after its first column and shifts later keys: `zfn (a int, b int,
+KEY (a, (b + 1)), KEY (a))` → db `a:INDEX[a] functional_index:INDEX[a]`, parser
+`a:INDEX[a ""] a_2:INDEX[a]`.
+
+**Root cause.** The file parser's `indexColumns` (`parser/mysql/mysql.go`,
+~:976 at `d51ace1b`) writes `""` for a functional key part instead of skipping
+the index, and keeps it in the key list that `addKey` numbers. The introspector
+(`parser/introspect/mysql.go`) skips the part (`STATISTICS.COLUMN_NAME` is NULL)
+and drops an expression-only index, but keeps a mixed index over its plain
+columns, the false-uniqueness shape the ruling removes.
+
+**Suggested fix.**
+- Apply ruling (C) on both MySQL sources: skip any index with a functional key
+  part, unique or not. In the parser, drop it before `addKey` names the
+  remaining keys, so later unnamed keys take MySQL's numbers; in the introspector,
+  skip any index with a NULL-`COLUMN_NAME` row (or a non-NULL `EXPRESSION`).
+- Tests: a `mysql_integration_test.go` parity test (`assertSchemaParity`) covering
+  an expression-only UNIQUE, a mixed UNIQUE, a mixed non-unique index and the
+  `zfn` numbering case; parser unit cases for `indexColumns` / key naming.
+- Interaction: FIX-275 (open, vetted ready, MySQL key declaration order) changes
+  the same naming path; the vet should say which lands first.
+
+**References.**
+- PRD §30.7 (`indexes[]`), §16.5.2, §6.1; the 2026-10-08 ruling in FIX-274.
+- FIX-274, FIX-276 (SQLite and PostgreSQL halves), FIX-275.
+
+**Resolution notes.** _Filled in by `/fix resolve`._
+
+### FIX-295
+
+- **Status:** Open
+- **Severity:** tracked
+- **Origin:** phase 6, `cmd/sqlgen/gen` (`connection.go.tmpl`)
+- **Surfaced by:** `/fix-vet FIX-293` (2026-10-08), filed at `/close-phase 30` (2026-10-08)
+
+**Issue.** **A `Connection` cursor value that is a JSON array or object passes
+FIX-293's presence check and is not rejected as `ErrInvalidCursor`.** Measured in
+the sqlite example at `13173996`: `After={"id":[]}` → `SQL logic error:
+unrecognized token: "$" (1)`; `After={"id":[1,2]}` → `err=<nil>` (the tampered
+cursor is silently expanded as a list, changing the query); `After={"id":{"a":1}}`
+→ `sql: converting argument $1 type: unsupported type map[string]interface {},
+a map`. PRD §14.2 says an invalid cursor makes `Connection` return
+`ErrInvalidCursor`.
+
+**Root cause.** `decodeCursor` (`cmd/sqlgen/gen/templates/connection.go.tmpl`)
+checks only that each key is present and non-nil (FIX-293). `cursorKeyset` passes
+the decoded `any` as the condition's `Value`, and the builder treats `[]any` as a
+list to expand (`sql/builder.go` `expandSlice`), so an array becomes `IN`-style
+placeholders or, when empty, a bare `$`.
+
+**Suggested fix.**
+- In the `decodeCursor` loop, reject a value that is a JSON array or object with
+  `ErrInvalidCursor`, unless the cursor key column is array-typed (its
+  `json.Marshal` output is a JSON array). That needs a design call: decode
+  cursor values per key with the column's Go type, or keep `any` and reject
+  arrays/objects except for array-typed keys, or forbid array-typed cursor keys.
+- Tests: extend `TestConnection_CursorMissingKeyReturnsErrInvalidCursor` (sqlite)
+  with `[]`, `[1,2]` and `{"a":1}` values.
+
+**References.**
+- PRD §14.2 "Invalid cursors"; FIX-293.
+
+**Resolution notes.** _Filled in by `/fix resolve`._
+
 <!-- fixes:open:end -->
 
 ## Resolved
