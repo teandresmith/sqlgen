@@ -554,7 +554,7 @@ constraint column lists and FK references only, not `CheckExpression` text.
 - **Severity:** tracked
 - **Origin:** phase 4, `parser/mysql`
 - **Surfaced by:** backlog promotion at `/close-phase 30` (2026-10-07); first recorded by FIX-262 (2026-10-03)
-- **Vetted:** ready at `d51ace1b` (2026-10-07)
+- **Vetted:** needs ruling at `d51ace1b` (2026-10-07; ruled 2026-10-08, re-vet pending)
 
 **Issue.** **MySQL inline ENUM/SET entries are not kept in step with RENAME
 and DROP.** RENAME COLUMN / RENAME TABLE keep the entry named from the old
@@ -619,6 +619,8 @@ The introspector names it from current names
     - the existing suite without the fix → passes.
   - Golden churn: none.
   - Patch: `.claude/prototypes/FIX-278.patch` (3 files, +192/-35).
+
+- The user ruled on 2026-10-08 (FIX-288 Q2): rework this fix before it lands. The MySQL file parser tracks inline ENUM/SET values per (table, column), for example by deriving the entries from the final columns, so the `inlineTypeUsers` guard goes away and RENAME/DROP resolve a FIX-288 collision correctly; names are built with FIX-288's `parser.InlineEnumName` / `InlineSetName`. The entry is re-vetted on top of FIX-288.
 
 
 **References.**
@@ -1101,6 +1103,7 @@ never reaches its `PrimaryKeyType` case (`:926`).
 - **Severity:** tracked
 - **Origin:** phase 4, `parser/mysql` + `parser/introspect`
 - **Surfaced by:** /fix-vet FIX-278 (2026-10-07), filed at /close-phase 30 (2026-10-08)
+- **Vetted:** needs ruling at `b606e4a7` (2026-10-08; ruled 2026-10-08, re-vet pending)
 
 **Issue.** **MySQL inline ENUM/SET names `<table>_<column>_enum|_set`
 collide when underscores make them ambiguous**, and the remedy the error
@@ -1154,6 +1157,37 @@ options:
   (`parser/introspect/parity_fixtures_test.go:163`) so both sources agree;
   a `cmd/sqlgen/gen` case asserting generation succeeds or fails with the
   ruled message.
+- Vet notes (stale facts and scope):
+  - the view collision is measured on the database source: table `z8t` column `v_c` ENUM('1','2') and view `z8t_v AS SELECT d.c FROM (SELECT v_c AS c FROM z8t) d` both register `z8t_v_c_enum` (the file parser skips CREATE VIEW);
+  - Option 1 changes no Go type names: `toPascalCase` collapses `__`, so `a__b_c_enum` and `a_b__c_enum` both become `ABCEnum`. It removes only the SQL-name/config-key collision; only SQL names churn (doc comments and manifest `db_type`);
+  - `TestParityFixtures` never compares the two sources; the regression belongs in a `mysql_integration_test.go` test using `assertSchemaParity`;
+  - equal value lists fail at HEAD too: `ord.line_kind` and `ord_line.kind`, both ENUM('x','y') → "Generation error: enum ord_line_kind_enum and enum ord_line_kind_enum both resolve to the Go type name "OrdLineKindEnum" …";
+  - a SET collision fails with a different message and no config escape: `tg.set_flags` / `tg_set.flags` → "SET type tg_set_flags_set and SET type tg_set_flags_set both resolve to the Go type name "TgSetFlagsSet" and the Go type name "TgSetFlagsSetValue" — rename one of them in the schema".
+- Prototype (Option 2):
+  - a new `parser/inline_types.go`: `InlineEnumName` / `InlineSetName` build the derived names, used by `parser/mysql` (`extractInlineEnumOrSet`) and `parser/introspect/mysql.go` (table columns and `viewEnumOrSetType`), so the sources cannot drift. `MergeInlineTypes(*Schema) []error` collapses entries with a shared name and equal values into one, and for differing values returns one error naming every column: `inline ENUM ord_line_kind_enum: columns ord.line_kind, ord_line.kind derive this name with different values; rename one of the tables or columns (PRD §5.2)`;
+  - `cmd/sqlgen/cli/pipeline.go` `parseSchema` calls it for MySQL after both sources and before view files (one site, following the `UnresolvedForeignKeys` precedent), so the result is a "Schema error:" with exit 3 on generate, validate and diff (HEAD: Generation error, exit 5). It runs after the full parse, not per statement, so a migration that later renames the collision away is not rejected;
+  - tests: `parser/inline_types_test.go` (table-driven); `TestParseSchema_InlineTypeNameCollision` (cli: equal values generate; different ENUM or SET values fail; each through generate, validate, diff); `TestMySQLIntrospect_InlineTypeNameCollision` (file vs database parity, the same error from both sources, the view case merging);
+  - PRD §8.3.1 gains a paragraph: equal values share one type, different values are a schema error, and the remedy is renaming a table or column.
+- Pending the user's ruling:
+  - Q1, naming scheme for colliding inline ENUM/SET names:
+    - (a) Recommended by the vet, and prototyped: Option 2, keep `<table>_<column>_enum|_set`; equal values share one type; different values are a schema error naming the columns. No golden churn, no config surface. The different-values case moves from Generation error (exit 5) with a remedy that cannot work to Schema error (exit 3) with a working remedy. Sub-choice: share on equal values (prototyped) or reject every collision (simpler, stricter, but forces a rename even when one type would be correct);
+    - (b) Option 1, a `__` separator: does not remove the Go-name collision (`ABCEnum` both ways); only makes `enums.<name>.struct_name` usable for ENUMs (SETs still have no escape, and even equal values need a config entry); still not injective for identifiers containing `__`. Churn is SQL names only (mysql `enums_gen.go` 3 lines, `sets_gen.go` 2, `manifest_gen.json` 7 `db_type` values, `manifest/{document,order,user}.md` 4 lines; ~34 test literals; PRD §5.2 and §8.3.1);
+    - (c) Option 3, a `_2` suffix: generates, but the name depends on unrelated tables, against the PRD §26 "GraphQL type name ownership" principle (a name that shifts because an unrelated table was added is rejected in favour of an error);
+    - not auto-accepted: PRD §8.3.1 says the names are "scoped to the table to prevent collisions", and sharing one type across two tables is a behaviour choice the PRD does not settle.
+  - Q2, composition with FIX-278's `inlineTypeUsers` guard: neither option makes the guard removable. Measured with this patch alone, fixing the collision by ALTER in the files source gives a misleading error because the stale entry stays (`ALTER TABLE a_b RENAME COLUMN c TO d` → "inline ENUM a_b_c_enum: columns a.b_c, a_b.d derive this name with different values"; `DROP COLUMN c` → "columns a.b_c derive this name with different values"). FIX-278's guard leaves the same stale entries (by reading its patch; HEAD fails these sequences too, so no regression).
+    - (a) Recommended by the vet: before FIX-278 lands, rework it so the MySQL file parser tracks inline values per (table, column), for example by deriving the inline entries from the final columns; the guard then goes away and RENAME/DROP resolve the collision. Either way, FIX-278's `renameInlineEnumOrSet` should build names with `parser.InlineEnumName` / `InlineSetName`.
+    - (b) Land both as they are and accept the misleading error in that edge case (loud, and failing at HEAD anyway).
+  - Textual overlap with FIX-278: both insert a test after `TestMySQLIntrospect_QuotedIdentifiers` (trivial conflict); their `parser/mysql/mysql.go` hunks do not overlap. The stacked combination was not measured.
+- Prototype results, run at `b606e4a7` on 2026-10-08:
+  - Reproduction: a sibling copy of the mysql example with `CREATE TABLE a (id int PRIMARY KEY, b_c ENUM('1','2') NOT NULL); CREATE TABLE a_b (id int PRIMARY KEY, c ENUM('3','4') NOT NULL);`, `GOWORK=off sqlgen generate` → `Generation error: enum a_b_c_enum and enum a_b_c_enum both resolve to the Go type name "ABCEnum" — set enums.a_b_c_enum.struct_name to a different Go identifier`; with `struct_name: OtherEnum` → the same error naming "OtherEnum". Database source (probe): introspected Enums `z8a_b_c_enum [1 2]`, `z8a_b_c_enum [3 4]`, identical to the file parser.
+  - E2E with the prototype: the equal-values case generates 68 files with both columns typed `OrdLineKindEnum`; `go build ./...` and `go vet ./models/...` pass.
+  - Gates: parser `go test -race -count=1 ./...` → ok, `golangci-lint run ./...` → 0 issues; cmd/sqlgen `go test -race -count=1 ./cli/...` → ok, `golangci-lint run ./cli/...` → 0 issues; `TestE2EGoldenFiles` → ok; `gofumpt -l` → clean.
+  - Fail-first: pipeline call removed → `TestParseSchema_InlineTypeNameCollision` fails ("generate: unexpected error: enum ord_line_kind_enum and enum ord_line_kind_enum both resolve to the Go type name …"; "different_ENUM_values/generate: … want exit code 3"); `MergeInlineTypes` stubbed to `return nil` → `TestMergeInlineTypes` fails ("MergeInlineTypes() error = <nil>, want "inline ENUM a_b_c_enum: columns a.b_c, a_b.c derive this name with different values; …"") and `TestMySQLIntrospect_InlineTypeNameCollision` fails; the existing suite without the fix → passes.
+  - Golden churn: none.
+  - Patch: `.claude/prototypes/FIX-288.patch` (8 files, +310/-16).
+
+- The user ruled on 2026-10-08: Q1 → Option 1, the `__` separator (`<table>__<column>_enum|_set`), knowing the vet's measurement that it does not by itself remove the Go-type-name collision (`toPascalCase` collapses `__`) and only makes the ENUM `enums.<name>.struct_name` escape usable. Q2 → rework FIX-278 before it lands (track inline values per (table, column) so its guard goes away, using FIX-288's naming helpers). Option 1 differs from the prototype (Option 2), so the entry is re-vetted.
+
 
 **References.**
 - PRD §5.2 (inline ENUM values, table-scoped naming `<table>_<column>_enum`),
@@ -1169,6 +1203,7 @@ options:
 - **Severity:** tracked
 - **Origin:** phase 4, `parser` + `cmd/sqlgen/config`
 - **Surfaced by:** /fix-vet FIX-271 (2026-10-07), filed at /close-phase 30 (2026-10-08)
+- **Vetted:** corrected at `b606e4a7` (2026-10-08)
 
 **Issue.** **A soft-delete column whose type carries a modifier passes
 config validation and then fails generation.** `deleted_at DATETIME(3)`
@@ -1208,6 +1243,23 @@ list (not measured).
   zone` → timestamp and `int(10) unsigned zerofill` → integer; a
   `cmd/sqlgen/gen` case where a MySQL `deleted_at DATETIME(3)` table
   generates its soft-delete methods.
+- Vet notes (stale facts):
+  - only `config.ValidatePostParse` accepts these types: `sqlgen validate` already fails (exit 2) because `gen.ValidateGeneration` builds the contexts and hits the `DetectSoftDelete` error, and `sqlgen generate` fails with exit 1. Now run end to end;
+  - the bigint/mediumint gap is measured: `bigint` fails `DetectSoftDelete` on MySQL `BIGINT`, PG `bigint`/`int8` and SQLite `BIGINT`; MySQL `MEDIUMINT` fails too. `serial` is not a gap (the PG parser normalizes it to `integer`). Neither source produces `timestamp(6) with time zone` (the PG parser emits `timestamptz(6)`);
+  - MySQL `TINYINT(1)` already fails `DetectSoftDelete` at HEAD, not only after FIX-271;
+  - adding bigint/mediumint/serial to the integer case would contradict PRD §4.6 ("The supported column types are those listed above, and no other").
+- Changed from the original: the bigint/mediumint gap is closed by tightening validation to the PRD §4.6 list, not by widening detection; that also closes other types the substring match accepted and generation rejects (`interval` and `point`, which contain "int", and arrays such as `timestamptz[]`, `boolean[]`) — same root cause (the two lists disagree), same fix site.
+- Auto-accepted the recommended option on 2026-10-08 (`/fix` auto-accept rule): close the bigint/mediumint gap by tightening `isSoftDeleteTypeCompatible` to the PRD §4.6 list rather than widening `softDeleteStrategy` → tighten, because it was prototyped with green gates, causes no golden churn against the alternative, adds no public surface, and implements PRD §4.6/§4.13 rather than reversing it (widening would need a PRD amendment).
+- Prototype: `parser/detect.go` `softDeleteStrategy` adds `base, _, _ = strings.Cut(base, "(")` after the existing space cut (after the `base :=` line, so FIX-271's `tinyint(1)` exact match, inserted before it, runs first). `cmd/sqlgen/config/validate.go` `isSoftDeleteTypeCompatible` replaces substring matching with the same base-type cut and an exact match against the §4.6 list (timestamp: timestamp, timestamptz, datetime; integer: int, integer, smallint, tinyint; bool: bool, boolean, plus the existing `tinyint` / `tinyint(1)` leniency), and the stale `validateSoftDeleteTypes` doc comment is rewritten. Tests: `TestDetectSoftDelete` rows (datetime(3), timestamp(6), timestamptz(3), timestamp(6) with time zone → timestamp; int(10) unsigned zerofill → integer; bigint → error); `TestValidatePostParse_SoftDeleteTypeMatch` rows (datetime(3), timestamptz(6), int(10) unsigned zerofill, smallint); new `TestValidatePostParse_SoftDeleteTypeOutsideList` (bigint, mediumint, interval, point, timestamptz[], boolean[] → "incompatible type"); new `TestGenerate_SoftDeleteColumnWithPrecision` (MySQL stdlib, `posts.deleted_at datetime(3)`, emits `SoftDelete(` and `Restore(`).
+- Lands with FIX-271: strict `git apply --check` conflicts in both orders on `parser/detect.go` (shared 3-line context), but `git apply --3way` merges cleanly in both orders, keeping the `tinyint(1)` → bool check first, then the space cut, then the `(` cut. With both patches applied, parser `./...`, cmd/sqlgen config, gen, gotype and `TestE2EGoldenFiles` pass. Either landing order is safe.
+- Prototype results, run at `b606e4a7` on 2026-10-08:
+  - Reproduction: a probe (since deleted) parsing `CREATE TABLE t (id INTEGER PRIMARY KEY, deleted_at <T>)` with each dialect and running `DetectSoftDelete` → "unsupported type" for MySQL datetime(3), timestamp(6), int(10) unsigned zerofill, tinyint(1), bigint, mediumint; PG timestamp(6), timestamptz(3), timestamptz(6), timestamp(3), bigint (incl. int8); SQLite datetime(3), timestamp(6), bigint. CLI at HEAD on a MySQL project with `posts.deleted_at DATETIME(3) NULL`: `sqlgen validate` → "Error: building context for table posts: … unsupported type \"datetime(3)\"", exit 2; `sqlgen generate` → "Generation error: building table contexts: … unsupported type \"datetime(3)\"", exit 1. With `deleted BIGINT` and `type: integer`: `generate` → "… unsupported type \"bigint\"", exit 1.
+  - With the fix: the DATETIME(3) project → "sqlgen: generated 8 files (1 tables, 0 views)", exit 0, with the SoftDelete methods; the bigint project → "Post-parse validation error: soft_delete_columns: column \"deleted\" in table notes has incompatible type \"bigint\" (expected integer-compatible type)", exit 2.
+  - Gates: `gofumpt -l` → clean; parser `go test -race ./...` → ok; cmd/sqlgen `go test -race ./config/... ./gen/... ./cli/...` → ok; `TestE2EGoldenFiles` → PASS; `golangci-lint` (config, gen, parser) → 0 issues.
+  - Fail-first: the detect.go `(` cut reverted → `TestDetectSoftDelete` fails 5 rows ("unexpected error: … unsupported type \"datetime(3)\"") and `TestGenerate_SoftDeleteColumnWithPrecision` fails; validate.go reverted → `TestValidatePostParse_SoftDeleteTypeOutsideList` fails all 6 rows ("ValidatePostParse() error = <nil>, want an incompatible type error"); the existing suite without the fix → passes.
+  - Golden churn: none.
+  - Patch: `.claude/prototypes/FIX-289.patch` (5 files, +167/-7).
+
 
 **References.**
 - PRD §5.4 (soft delete column detection), §4.13 (validation rule "`soft_delete_columns`
@@ -1222,6 +1274,7 @@ list (not measured).
 - **Severity:** tracked
 - **Origin:** phase 30 (30.2 introspection parity), `parser/introspect`
 - **Surfaced by:** /fix-vet FIX-276 (2026-10-07), filed at /close-phase 30 (2026-10-08)
+- **Vetted:** ready at `b606e4a7` (2026-10-08)
 
 **Issue.** **The PG introspector lists `INCLUDE` columns as index key
 columns**, so a standalone index differs by source and a unique index with
@@ -1237,7 +1290,7 @@ not run).
 holds the key columns followed by the `INCLUDE` columns, and filters only
 `k.attnum <> 0` (`:759`). The matview query cuts at `k.ord <=
 ix.indnkeyatts` (`parser/introspect/postgres.go:329-339`); this one does
-not. The emitted constraint (`:808-814`) therefore carries the payload
+not. The emitted constraint (`:807-813`) therefore carries the payload
 columns, as `parser.Unique` when `indisunique` (`:799-800`).
 
 **Suggested fix.**
@@ -1249,6 +1302,17 @@ columns, as `parser.Unique` when `indisunique` (`:799-800`).
   (`parser/introspect/introspect_integration_test.go:2003`) with `CREATE
   INDEX inc ON e (a) INCLUDE (b)` and `CREATE UNIQUE INDEX u ON e (c)
   INCLUDE (d)`, asserting `["a"]` / `["c"]` and parity with the file parser.
+- Vet notes on scope: a second symptom with the same root cause: for `CREATE UNIQUE INDEX u ON e (c) INCLUDE (d)`, the parsed `e.c` has `Unique=true` and the introspected one `Unique=false` (parity diff `- Unique: true / + Unique: false`); the fix covers it. The constraint form `CONSTRAINT k_u UNIQUE (a) INCLUDE (b)` already matches (`conkey` holds only key columns), so the scope is standalone indexes only.
+- Changed from the original (test location only): `TestParityFixtures` applies and parses the fixture but never compares the two sources, so the regression test is a new `pgParityCase` + `assertSchemaParity` test, `TestPostgresIntrospect_IncludeColumns` in `parser/introspect/postgres_integration_test.go` (placed after `TestPostgresIntrospect_QuotedIdentifiers`, away from FIX-276's test hunk).
+- Lands with FIX-276: both patches edit the same subquery line in `parser/introspect/postgres.go`, so neither applies on top of the other (`patch failed: parser/introspect/postgres.go:755` / `:756`); their other files apply cleanly. Whichever lands second carries the line by hand: after FIX-276 drops `WHERE k.attnum <> 0`, the subquery ends `WHERE k.ord <= pi.indnkeyatts),`, matching the matview query. Verified green with both patches' tests (`go -C parser test -race -count=1 ./introspect/... ./postgres/...` → ok).
+- Prototype results, run at `b606e4a7` on 2026-10-08:
+  - Reproduction: a throwaway probe (`zz_probe_fix290_test.go`, since deleted) with `CREATE INDEX inc ON zz290.e (a) INCLUDE (b); CREATE UNIQUE INDEX u ON zz290.e (c) INCLUDE (d)`, `go -C parser test -count=1 -run TestZZProbeFIX290 -v ./introspect/` → parsed `inc [a]`, `u [c]`; introspected `inc [a b]`, `u [c d]`; `INSERT … ON CONFLICT (c, d) DO NOTHING` → "ERROR: there is no unique or exclusion constraint matching the ON CONFLICT specification (SQLSTATE 42P10)", `ON CONFLICT (c)` → ok. After the fix: introspected `[a]`, `[c]`, `e.c unique=true`, parity passes.
+  - Prototype: `postgres.go:759` `WHERE k.attnum <> 0` → `WHERE k.attnum <> 0 AND k.ord <= pi.indnkeyatts` (as suggested), plus the new test asserting `inc [a]` / `u [c]` and `assertSchemaParity`.
+  - Gates: `go -C parser test -race -count=1 ./introspect/...` → ok (integration ran); `gofumpt -l parser/introspect/` → clean; `golangci-lint run ./introspect/...` → 0 issues.
+  - Fail-first: line 759 reverted → `TestPostgresIntrospect_IncludeColumns` fails: "introspected e constraints mismatch (-want +got): … Columns: []string{ + "d", } … + "b"" and "postgres: introspected schema differs from the file parser's … - Unique: true, + Unique: false"; the existing suite without the fix → passes.
+  - Golden churn: none.
+  - Patch: `.claude/prototypes/FIX-290.patch` (2 files, +26/-1).
+
 
 **References.**
 - PRD §6.1 (both schema sources give the same schema), §30.7 (`indexes[]`).
@@ -1263,6 +1327,7 @@ columns, as `parser.Unique` when `indisunique` (`:799-800`).
 - **Severity:** tracked
 - **Origin:** phase 17, `parser/sqlite`
 - **Surfaced by:** /fix-vet FIX-281 (2026-10-07), filed at /close-phase 30 (2026-10-08)
+- **Vetted:** ready at `b606e4a7` (2026-10-08; on top of FIX-281)
 
 **Issue.** **A SQLite relationship `filter` using `LIKE … ESCAPE` panics
 `sqlgen generate`.** Measured: schema `assets(id, name)` +
@@ -1277,7 +1342,7 @@ gen.relationshipStaticFilter.
 and rqlite/sql's `BinaryExpr.String()` panics on the ESCAPE operator. It is
 reached through `qualifyFilter` (`cmd/sqlgen/gen/filter_qualifier.go:31`)
 from the relationship filter path (`cmd/sqlgen/gen/context_relfilter.go:242`,
-`:262`) and, by code reading, from the o2o JOIN predicate
+`:262`) and (measured 2026-10-08) from the o2o JOIN predicate
 (`cmd/sqlgen/gen/context_table.go:2638`).
 
 **Suggested fix.**
@@ -1292,6 +1357,16 @@ from the relationship filter path (`cmd/sqlgen/gen/context_relfilter.go:242`,
   row for `name LIKE 'x\%' ESCAPE '\'` asserting an error and no panic; a
   `cmd/sqlgen/gen` case for the o2m `filter` above asserting the wrapped
   error.
+- Lands after FIX-281: the patch calls FIX-281's `exprString` helper and was prototyped on `b606e4a7` with FIX-281's patch applied; without FIX-281 it applies but does not compile. The o2o JOIN predicate path (`gen/context_table.go:2638`) is now measured, not only read.
+- Prototype: `parser/sqlite/filter_qualifier.go` `qualified.String()` → `exprString(qualifyExpr(parsed, alias), "relationship filter")`, wrapped as `qualify filter: %w`. `TestQualifyFilterIdentifiers`'s `wantErr bool` becomes `wantErr string` (a message substring) with a new row "unrenderable LIKE ESCAPE errors" ("qualify filter: rendering relationship filter: sql.BinaryExpr.String(): invalid op ESCAPE"); new `TestRelationshipFilter_UnrenderableSQLiteFilterErrors` (`cmd/sqlgen/gen/relfilter_static_test.go`, o2m and o2o subtests, one per qualification site) asserts the error names "relationship PctDocuments", the quoted filter and the wrapped ESCAPE message. Inline doc correction (stale since FIX-098, measured): PRD §4.8 "Invalid SQL will produce a runtime database error" and §13.7 "sqlgen does not parse or validate its contents …" are wrong, since a syntax error is already a generation error on all three dialects (`filter: "name LIKE"` → postgres "qualify filter: parsing "name LIKE": syntax error at end of input", mysql "syntax error at position 35", sqlite "1:9: expected expression, found 'EOF'"). §4.8 now says a filter the dialect's parser cannot read is a generation error; §13.7 says "does not validate its contents against the schema"; §13.7.4 gains a paragraph on syntax errors and the SQLite `LIKE … ESCAPE` limit.
+- Prototype results, run at `b606e4a7` (+ FIX-281) on 2026-10-08:
+  - Reproduction: schema `assets(id, name)` + `documents(id, entity_id REFERENCES assets(id), name)`, sqlite, `filter: "name LIKE 'x\\%%' ESCAPE '\\'"`. o2m `PctDocuments`: `GOWORK=off sqlgen generate` → exit 2 "panic: sql.BinaryExpr.String(): invalid op ESCAPE" via sqlite.QualifyFilterIdentifiers (`filter_qualifier.go:36`) → gen.qualifyFilter (`:31`) → gen.relationshipStaticFilter. o2o `PctDocument`: the same panic via gen.qualifyFilter → gen.o2oJoinPredicate (`context_table.go:2638`) → buildSingleO2ODetail.
+  - With the fix: `Generation error: building relationship filters: table assets: relationship PctDocuments: filter "name LIKE 'x\\%%' ESCAPE '\\'": qualify filter (sqlite): qualify filter: rendering relationship filter: sql.BinaryExpr.String(): invalid op ESCAPE`, exit 1; o2o the same through "building o2o join details for assets: relationship PctDocument: …".
+  - Gates: parser `go test -race ./sqlite/...` → ok, `golangci-lint run ./sqlite/...` → 0 issues; cmd/sqlgen `go test -race ./gen/...` → ok, `golangci-lint run ./gen/...` → 0 issues; `gofumpt -l` → clean; `make refs-check` → ok.
+  - Fail-first: `filter_qualifier.go` back on `qualified.String()` → `TestQualifyFilterIdentifiers/unrenderable_LIKE_ESCAPE_errors` and `TestRelationshipFilter_UnrenderableSQLiteFilterErrors/one_to_many` fail: "panic: sql.BinaryExpr.String(): invalid op ESCAPE [recovered, repanicked]"; the existing suite without the fix → passes.
+  - Golden churn: none.
+  - Patch: `.claude/prototypes/FIX-291.patch` (4 files, +63/-12; the FIX-291 delta only, against the FIX-281-applied tree).
+
 
 **References.**
 - PRD §4.8 (`filter` on a relationship), §13.4.
@@ -1307,6 +1382,7 @@ from the relationship filter path (`cmd/sqlgen/gen/context_relfilter.go:242`,
 - **Severity:** nit
 - **Origin:** phase 1, `sql`
 - **Surfaced by:** /fix-vet FIX-284 (2026-10-07), filed at /close-phase 30 (2026-10-08)
+- **Vetted:** needs ruling at `b606e4a7` (2026-10-08; ruled 2026-10-08, re-vet pending)
 
 **Issue.** **`sql.Where(col).Eq(nil)` emits a bare `$` the database
 rejects**, and so do `Neq` / `Gt` / `Gte` / `Lt` / `Lte` / `Like` / `NLike`
@@ -1336,10 +1412,71 @@ code reading).
 - Tests: a `sql` builder table over the eight operators × three dialects
   asserting the ruled outcome (one placeholder with `ARGS=[nil]`, the
   panic, or the `IS [NOT] NULL` clause).
+- Vet notes: a typed nil is measured (`Eq((*int)(nil))` → `owner_id = $1` / `?` with ARGS=[(*int)(nil)], no error, 0 rows on all three dialects). PG and MySQL fail at execution on the bare `$`: PG `ERROR: syntax error at or near "$" (SQLSTATE 42601)`, MySQL `Error 1054 (42S22): Unknown column '$' in 'where clause'`. The patch does not conflict with FIX-284 (`git apply --check` passes in both orders; both applied → `go test -race -count=1 ./sql/...` ok).
+- Prototype (option B): Eq/Neq/Gt/Gte/Lt/Lte/Like/NLike go through an unexported `(b ConditionBuilder) operand(method, op string, v any)` that panics on `v == nil` with `sql: Where("owner_id").Eq(nil): a nil operand matches no row; use IsNull or IsNotNull to test for NULL`. Tests: `TestConditionBuilder_NilOperandPanics` (8 methods, exact panic) and `TestConditionBuilder_TypedNilOperandBinds` (pins the typed-nil boundary). PRD §11.5 gains a paragraph after the builder-methods table.
+- Pending the user's ruling: for a nil operand on Eq/Neq/Gt/Gte/Lt/Lte/Like/NLike, which outcome?
+  - (A) Bind NULL (`[]any{nil}`, FIX-284's shape): every op renders `col <op> $1` / `?` with ARGS=[nil], no error, 0 rows on all 3 dialects, the same as a typed nil today. Satisfies the PRD table (`Eq(v)` → `col = $`) literally, but is silent: a caller who meant IsNull gets an empty result.
+  - (B) Recommended by the vet, and prototyped: reject with a panic that points at the call site and names IsNull/IsNotNull. A typed nil and `sql.NullX{Valid:false}` still bind silently (catching those would need reflection). The condition is usually built before the generated method runs, outside its panic recovery, so a nil from e.g. a JSON-decoded `any` crashes the caller's goroutine where today it is a DB error. Follows the loud-errors-over-silent-degradation preference; NULL is never a meaningful operand for these 8 operators (unlike FIX-284's `IS NOT DISTINCT FROM $`), so it does not contradict FIX-284.
+  - (C) Redirect: Eq(nil) → `IS NULL` (measured ids=[1]), Neq(nil) → `IS NOT NULL` (ids=[2]). The other 6 ops still need A or B; `Eq(nil)` and `Eq((*int)(nil))` would return different rows; changes the PRD table's Eq/Neq rows (squirrel and goqu redirect, per their docs).
+  - (D) Not prototyped: a central rule in `expandConditionClause` binding NULL when a nil Value's clause has a `$` token. Covers these 8, FIX-284's Raw and the cursor candidate at one site, but is as silent as A, changes hand-built `Condition` semantics, and would supersede FIX-284's patch.
+  - Not auto-accepted: A and B both meet the rule's conditions mechanically, so the rule cannot choose, and B adds a panic contract to public runtime API.
+- Prototype results, run at `b606e4a7` on 2026-10-08:
+  - Reproduction: a throwaway probe (`sql/zz_probe_eqnil_test.go`, since deleted), `go test -count=1 -run TestZZProbeEqNil -v ./sql/`, table `users(id, owner_id)` with rows (1, NULL) and (2, '7') on SQLite, postgres:17-alpine (pgx) and mysql:8.4: all 8 ops × 3 dialects render a bare `$` with ARGS=nil (e.g. `sqlite Eq(nil): SQL=SELECT "id" FROM "users" WHERE owner_id = $ ARGS=[]interface {}(nil) -> err=SQL logic error: unrecognized token: "$" (1)`), and every op fails on PG (42601) and MySQL (1054). Controls: `IsNull()` → ids=[1], `IsNotNull()` → ids=[2], typed nil → ids=[] err=<nil>.
+  - Gates: `go test -race -count=1 ./sql/... ./comparator/...` → ok; `go test -race -short -count=1 ./...` (root) → ok; `gofumpt -l sql/` → clean; `golangci-lint run ./sql/...` → 0 issues; sqlite example `GOWORK=off go test -race -count=1 ./...` → ok (no generated call site passes an untyped nil).
+  - Fail-first: nil guard removed → `TestConditionBuilder_NilOperandPanics` fails all 8 subtests ("Where(\"owner_id\").Eq(nil) = {Clause:owner_id = $ Value:<nil> …}, want a panic"); the existing suite without the fix → passes.
+  - Golden churn: none.
+  - Patch: `.claude/prototypes/FIX-292.patch` (3 files, +90/-16).
+
+- The user ruled on 2026-10-08: a hybrid of (C) and (A). `Eq(nil)` redirects to `IS NULL` and `Neq(nil)` to `IS NOT NULL`; Gt/Gte/Lt/Lte/Like/NLike bind NULL (`[]any{nil}`, FIX-284's shape). This differs from the prototype (B), so the entry is re-vetted.
+
 
 **References.**
 - PRD §11.5 (condition composition, `sql.Where` builder).
 - FIX-284 (`sql.Raw(clause, nil)`, same root cause).
+
+**Resolution notes.** _Filled in by `/fix resolve`._
+
+### FIX-293
+
+- **Status:** Open
+- **Severity:** tracked
+- **Origin:** phase 6, `cmd/sqlgen/gen` (`connection.go.tmpl`)
+- **Surfaced by:** `/fix-vet FIX-292` (2026-10-08), filed at `/close-phase 30` (2026-10-08)
+
+**Issue.** **A `Connection` cursor that lacks an expected key, or holds JSON
+`null` for it, returns an SQL error instead of `ErrInvalidCursor`.** PRD §14.2
+"Cursor Encoding" says a cursor that "does not contain the expected keys" makes
+the `Connection` method return `ErrInvalidCursor`, so callers' `errors.Is`
+checks miss this case. Measured in the sqlite example (probe since deleted),
+`GOWORK=off go test -count=1 -run TestZZProbeCursorNil -v ./tests/` →
+`After={} -> err=connection products: get products: query: SQL logic error:
+unrecognized token: "$" (1)`, and the same for `After={"id":null}`. The Phase 14
+record (`docs/tracker/phase-14.md:235`) noted missing-key cursors as uncaught
+and out of that phase's scope.
+
+**Root cause.** `cursorKeyset` (`cmd/sqlgen/gen/templates/connection.go.tmpl:53-56`)
+builds `sql.Condition{Clause: col + " " + op + " $", Value: cursor[key]}` without
+checking that `cursor[key]` is present and non-nil. The builder reads a nil
+`Value` as "no args" (`sql/builder.go:588-590`), so the clause keeps a bare `$`,
+the root cause FIX-284 and FIX-292 address for `Raw` and `Where`. `decodeCursor`
+(`:34`) validates only base64 and JSON, and the callers in
+`table/pagination.go.tmpl:90/:97` and `view/pagination.go.tmpl:98/:105` pass the
+map straight on.
+
+**Suggested fix.**
+- After `decodeCursor` in both pagination templates (or in a shared helper in
+  `connection.go.tmpl`), check that every resolved cursor key is present with a
+  non-nil value; otherwise return `ErrInvalidCursor`, wrapped the same way as the
+  existing decode failures.
+- Tests: extend the Phase 14 tampered-cursor E2E tests with `{}` and
+  `{"<key>": null}` cursors asserting `errors.Is(err, ErrInvalidCursor)`, for a
+  table and a view, on at least the sqlite example; regenerate goldens.
+- Independent of FIX-292's ruling: a cursor key is never meaningfully NULL here.
+
+**References.**
+- PRD §14.2 "Cursor Encoding" / "Invalid cursors" (`docs/PRD.md:8911`); §22.1.
+- FIX-284, FIX-292 (nil `Value` → bare `$`).
+- `docs/tracker/phase-14.md:235` (missing-key cursors deferred).
 
 **Resolution notes.** _Filled in by `/fix resolve`._
 
