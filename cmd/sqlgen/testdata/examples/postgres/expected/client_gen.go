@@ -96,6 +96,7 @@ type Client struct {
 	publicNote        *publicNoteClient
 	publicUser        *publicUserClient
 	rateLimit         *rateLimitClient
+	sequenceRow       *sequenceRowClient
 	sluggedRow        *sluggedRowClient
 	tag               *tagClient
 	userCategory      *userCategoryClient
@@ -151,6 +152,7 @@ func New(querier database.Querier, opts ...ClientOption) *Client {
 		publicNote:        newPublicNoteClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler),
 		publicUser:        newPublicUserClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler),
 		rateLimit:         newRateLimitClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler),
+		sequenceRow:       newSequenceRowClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler),
 		sluggedRow:        newSluggedRowClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler),
 		tag:               newTagClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler),
 		userCategory:      newUserCategoryClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler),
@@ -310,6 +312,11 @@ func (c *Client) PublicUsers() PublicUserClient {
 // RateLimits returns the RateLimitClient for RateLimit operations.
 func (c *Client) RateLimits() RateLimitClient {
 	return c.rateLimit
+}
+
+// SequenceRows returns the SequenceRowClient for SequenceRow operations.
+func (c *Client) SequenceRows() SequenceRowClient {
+	return c.sequenceRow
 }
 
 // SluggedRows returns the SluggedRowClient for SluggedRow operations.

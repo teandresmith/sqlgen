@@ -2229,6 +2229,58 @@ func TestCreateInputFieldClassification_autoIncrementPKExcluded(t *testing.T) {
 	}
 }
 
+// The parser gives a serial or identity column no Default, only AutoIncrement.
+// SQLite's CreateMany sends DefaultExpr for an unset field; NULL makes a rowid
+// alias draw the next rowid.
+func TestCreateInputFieldClassification_autoIncrementNonPKOmittable(t *testing.T) {
+	tests := []struct {
+		name string
+		col  parser.Column
+	}{
+		{name: "serial or integer identity", col: parser.Column{Name: "seq", Type: "integer", AutoIncrement: true}},
+		{name: "bigserial or bigint identity", col: parser.Column{Name: "seq", Type: "bigint", AutoIncrement: true}},
+		{name: "smallserial", col: parser.Column{Name: "seq", Type: "smallint", AutoIncrement: true}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			schema := &parser.Schema{
+				Tables: []parser.Table{
+					{
+						Name: "items",
+						Columns: []parser.Column{
+							{Name: "id", Type: "bigint", PrimaryKey: true, AutoIncrement: true},
+							tt.col,
+							{Name: "note", Type: "text"},
+						},
+					},
+				},
+			}
+
+			contexts, err := gen.BuildTableContexts(testInput(schema), nil)
+			if err != nil {
+				t.Fatalf("BuildTableContexts() error: %v", err)
+			}
+
+			type field struct {
+				Column              string
+				Required, Omittable bool
+				DefaultExpr         string
+			}
+			var got []field
+			for _, f := range contexts[0].CreateInputFields {
+				got = append(got, field{f.ColumnName, f.Required, f.Omittable, f.DefaultExpr})
+			}
+			want := []field{
+				{Column: "seq", Omittable: true, DefaultExpr: "NULL"},
+				{Column: "note", Required: true},
+			}
+			if diff := cmp.Diff(want, got); diff != "" {
+				t.Errorf("CreateInputFields mismatch (-want +got):\n%s", diff)
+			}
+		})
+	}
+}
+
 func TestCreateInputFieldClassification_updateColumnsOmittable(t *testing.T) {
 	schema := &parser.Schema{
 		Tables: []parser.Table{

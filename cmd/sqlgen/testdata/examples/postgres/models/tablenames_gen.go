@@ -25,6 +25,7 @@ const (
 	TableProducts           hook.TableName = "public.products"
 	TableProfiles           hook.TableName = "public.profiles"
 	TableRateLimits         hook.TableName = "public.rate_limits"
+	TableSequenceRows       hook.TableName = "public.sequence_rows"
 	TableSluggedRows        hook.TableName = "public.slugged_rows"
 	TableTags               hook.TableName = "public.tags"
 	TableUserCategories     hook.TableName = "public.user_categories"

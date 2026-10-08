@@ -10786,6 +10786,500 @@
     },
     {
       "kind": "table",
+      "name": "SequenceRow",
+      "table": "sequence_rows",
+      "schema": "public",
+      "file_prefix": "sequence_row",
+      "files": [
+        "models_gen.go"
+      ],
+      "comment": "",
+      "indexes": [
+        {
+          "name": "sequence_rows_pkey",
+          "columns": [
+            "id"
+          ],
+          "unique": true,
+          "method": "btree"
+        }
+      ],
+      "pk": {
+        "kind": "single",
+        "columns": [
+          {
+            "name": "id",
+            "go_field": "ID",
+            "go_type": "int64"
+          }
+        ]
+      },
+      "features": {
+        "soft_delete": null,
+        "cache": {
+          "ttl_seconds": 3600,
+          "hydration": "eager",
+          "key_pattern": "sqlgen:sequencerow:{id}",
+          "invalidates_on": [
+            "Create",
+            "Update",
+            "Delete",
+            "SoftDelete",
+            "Restore",
+            "Increment"
+          ]
+        },
+        "events": {
+          "enabled": true,
+          "types": [
+            "SequenceRowCreated",
+            "SequenceRowDeleted",
+            "SequenceRowUpdated"
+          ],
+          "payload_shape": "models.SequenceRowEvent"
+        },
+        "tenancy": null
+      },
+      "columns": [
+        {
+          "name": "id",
+          "go_field": "ID",
+          "go_type": "int64",
+          "db_type": "bigint",
+          "nullable": false,
+          "pk": true,
+          "unique": false,
+          "auto": "insert",
+          "comparator": "comparator.Number[int64]",
+          "comment": ""
+        },
+        {
+          "name": "seq",
+          "go_field": "Seq",
+          "go_type": "int32",
+          "db_type": "integer",
+          "nullable": false,
+          "pk": false,
+          "unique": false,
+          "auto": "insert",
+          "comparator": "comparator.Number[int32]",
+          "comment": ""
+        },
+        {
+          "name": "ticket",
+          "go_field": "Ticket",
+          "go_type": "int64",
+          "db_type": "bigint",
+          "nullable": false,
+          "pk": false,
+          "unique": false,
+          "auto": "insert",
+          "comparator": "comparator.Number[int64]",
+          "comment": ""
+        },
+        {
+          "name": "audit_no",
+          "go_field": "AuditNo",
+          "go_type": "int32",
+          "db_type": "integer",
+          "nullable": false,
+          "pk": false,
+          "unique": false,
+          "auto": "insert",
+          "comparator": "comparator.Number[int32]",
+          "comment": ""
+        },
+        {
+          "name": "note",
+          "go_field": "Note",
+          "go_type": "string",
+          "db_type": "text",
+          "nullable": false,
+          "pk": false,
+          "unique": false,
+          "comparator": "comparator.String",
+          "comment": ""
+        }
+      ],
+      "relationships": [],
+      "methods": {
+        "query": [
+          {
+            "name": "Get",
+            "params": [
+              {
+                "name": "id",
+                "type": "int64"
+              }
+            ],
+            "returns": "*SequenceRow",
+            "errors": [
+              "ErrNotFound"
+            ],
+            "notes": "Delegates to GetMany with a primary-key filter; returns ErrNotFound when no row matches.",
+            "sql_bodies": {
+              "postgres": "SELECT \"audit_no\", \"id\", \"note\", \"seq\", \"ticket\" FROM \"public\".\"sequence_rows\" WHERE \"id\" = $1 LIMIT 1"
+            }
+          },
+          {
+            "name": "GetMany",
+            "params": [
+              {
+                "name": "input",
+                "type": "*GetSequenceRowsInput"
+              }
+            ],
+            "returns": "[]*SequenceRow",
+            "errors": [],
+            "sql_bodies": {
+              "postgres": "SELECT \"audit_no\", \"id\", \"note\", \"seq\", \"ticket\" FROM \"public\".\"sequence_rows\" WHERE <filter> ORDER BY <sort> LIMIT <limit>"
+            }
+          },
+          {
+            "name": "Count",
+            "params": [
+              {
+                "name": "filter",
+                "type": "*SequenceRowFilter"
+              }
+            ],
+            "returns": "int64",
+            "errors": [],
+            "sql_bodies": {
+              "postgres": "SELECT COUNT(*) FROM \"public\".\"sequence_rows\" WHERE <filter>"
+            }
+          },
+          {
+            "name": "Exists",
+            "params": [
+              {
+                "name": "id",
+                "type": "int64"
+              }
+            ],
+            "returns": "bool",
+            "errors": [],
+            "sql_bodies": {
+              "postgres": "SELECT EXISTS(SELECT 1 FROM \"public\".\"sequence_rows\" WHERE \"id\" = $1)"
+            }
+          },
+          {
+            "name": "ExistsWhere",
+            "params": [
+              {
+                "name": "filter",
+                "type": "*SequenceRowFilter"
+              }
+            ],
+            "returns": "bool",
+            "errors": [],
+            "sql_bodies": {
+              "postgres": "SELECT EXISTS(SELECT 1 FROM \"public\".\"sequence_rows\" WHERE <filter>)"
+            }
+          },
+          {
+            "name": "Paginate",
+            "params": [
+              {
+                "name": "input",
+                "type": "PaginateInput[SequenceRowFilter]"
+              }
+            ],
+            "returns": "*PaginateResult[SequenceRow]",
+            "errors": [],
+            "notes": "Offset pagination. Issues no statement of its own — composes Count and GetMany, so no sql_bodies entry."
+          },
+          {
+            "name": "Connection",
+            "params": [
+              {
+                "name": "input",
+                "type": "ConnectionInput[SequenceRowFilter]"
+              }
+            ],
+            "returns": "*Connection[SequenceRow]",
+            "errors": [
+              "ErrInvalidCursor"
+            ],
+            "notes": "Relay cursor pagination. Issues no statement of its own — composes Count and GetMany, so no sql_bodies entry."
+          },
+          {
+            "name": "Stream",
+            "params": [
+              {
+                "name": "input",
+                "type": "*StreamSequenceRowsInput"
+              }
+            ],
+            "returns": "iter.Seq2[*SequenceRow, error]",
+            "errors": [],
+            "notes": "Scalars only — no relationship loading, cache always bypassed. Errors surface through the iterator's second value.",
+            "sql_bodies": {
+              "postgres": "SELECT \"audit_no\", \"id\", \"note\", \"seq\", \"ticket\" FROM \"public\".\"sequence_rows\" WHERE <filter> ORDER BY <sort>"
+            }
+          }
+        ],
+        "mutation": [
+          {
+            "name": "Create",
+            "params": [
+              {
+                "name": "input",
+                "type": "*CreateSequenceRowInput"
+              }
+            ],
+            "returns": "*SequenceRow",
+            "errors": [
+              "ErrNilInput",
+              "ErrConstraintViolation"
+            ],
+            "sql_bodies": {
+              "postgres": "INSERT INTO \"public\".\"sequence_rows\" (<columns>) VALUES (<values>) RETURNING \"id\""
+            }
+          },
+          {
+            "name": "CreateMany",
+            "params": [
+              {
+                "name": "inputs",
+                "type": "[]*CreateSequenceRowInput"
+              }
+            ],
+            "returns": "[]*SequenceRow",
+            "errors": [
+              "ErrNilInput",
+              "ErrConstraintViolation"
+            ],
+            "notes": "Batched in generation.batch_size chunks. Earlier chunks are not rolled back on a later failure — wrap in a transaction for atomicity.",
+            "sql_bodies": {
+              "postgres": "INSERT INTO \"public\".\"sequence_rows\" (<columns>) VALUES <values> RETURNING \"id\""
+            }
+          },
+          {
+            "name": "Upsert",
+            "params": [
+              {
+                "name": "input",
+                "type": "*CreateSequenceRowInput"
+              },
+              {
+                "name": "target",
+                "type": "SequenceRowConflictTarget"
+              }
+            ],
+            "returns": "*SequenceRow",
+            "errors": [
+              "ErrNilInput",
+              "ErrConstraintViolation"
+            ],
+            "notes": "One method over the generated SequenceRowConflictTarget enum — the target argument selects the conflict columns at call time.",
+            "sql_bodies": {
+              "postgres": "INSERT INTO \"public\".\"sequence_rows\" (<columns>) VALUES (<values>) ON CONFLICT (<conflict_target>) DO UPDATE SET <excluded> RETURNING \"id\""
+            }
+          },
+          {
+            "name": "UpsertMany",
+            "params": [
+              {
+                "name": "inputs",
+                "type": "[]*CreateSequenceRowInput"
+              },
+              {
+                "name": "target",
+                "type": "SequenceRowConflictTarget"
+              }
+            ],
+            "returns": "[]*SequenceRow",
+            "errors": [
+              "ErrNilInput",
+              "ErrConstraintViolation"
+            ],
+            "notes": "Batched in generation.batch_size chunks over the same SequenceRowConflictTarget enum Upsert takes. Inputs resolving to one target are deduped before the statement is built, last occurrence wins. Earlier chunks are not rolled back on a later failure — wrap in a transaction for atomicity.",
+            "sql_bodies": {
+              "postgres": "INSERT INTO \"public\".\"sequence_rows\" (<columns>) VALUES <values> ON CONFLICT (<conflict_target>) DO UPDATE SET <excluded>"
+            }
+          },
+          {
+            "name": "Update",
+            "params": [
+              {
+                "name": "id",
+                "type": "int64"
+              },
+              {
+                "name": "input",
+                "type": "*UpdateSequenceRowInput"
+              }
+            ],
+            "returns": "*SequenceRow",
+            "errors": [
+              "ErrNotFound",
+              "ErrNilInput",
+              "ErrConstraintViolation"
+            ],
+            "notes": "Only fields where IsSet() reports true reach the SET clause; an input with none set issues no UPDATE and returns the row unchanged.",
+            "sql_bodies": {
+              "postgres": "UPDATE \"public\".\"sequence_rows\" SET <set> WHERE \"id\" = $1"
+            }
+          },
+          {
+            "name": "UpdateMany",
+            "params": [
+              {
+                "name": "items",
+                "type": "[]UpdateSequenceRowItem"
+              }
+            ],
+            "returns": "[]*SequenceRow",
+            "errors": [
+              "ErrNilInput",
+              "ErrConstraintViolation"
+            ],
+            "notes": "Issues one statement per item. Batched like CreateMany — earlier items are not rolled back on a later failure. A primary key that does not exist is silently skipped, even under strict_updates.",
+            "sql_bodies": {
+              "postgres": "UPDATE \"public\".\"sequence_rows\" SET <set> WHERE \"id\" = $1"
+            }
+          },
+          {
+            "name": "UpdateWhere",
+            "params": [
+              {
+                "name": "filter",
+                "type": "*SequenceRowFilter"
+              },
+              {
+                "name": "input",
+                "type": "*UpdateSequenceRowInput"
+              }
+            ],
+            "returns": "[]*SequenceRow",
+            "errors": [
+              "ErrNilInput",
+              "ErrEmptyFilter",
+              "ErrConstraintViolation"
+            ],
+            "notes": "Idempotent — returns an empty slice when no row matches. ErrEmptyFilter when the filter produces no conditions.",
+            "sql_bodies": {
+              "postgres": "UPDATE \"public\".\"sequence_rows\" SET <set> WHERE <filter> RETURNING \"id\""
+            }
+          },
+          {
+            "name": "Increment",
+            "params": [
+              {
+                "name": "id",
+                "type": "int64"
+              },
+              {
+                "name": "input",
+                "type": "IncrementInput[SequenceRowIncrementColumn]"
+              }
+            ],
+            "returns": "",
+            "errors": [
+              "ErrNotFound"
+            ],
+            "notes": "Atomic single-column arithmetic. The column is restricted to the generated SequenceRowIncrementColumn enum — numeric, and identifying nothing: neither PK, FK, nor the tenant column. A negative amount decrements.",
+            "sql_bodies": {
+              "postgres": "UPDATE \"public\".\"sequence_rows\" SET <column> = <column> + $1 WHERE \"id\" = $2"
+            }
+          },
+          {
+            "name": "HardDelete",
+            "params": [
+              {
+                "name": "id",
+                "type": "int64"
+              }
+            ],
+            "returns": "",
+            "errors": [],
+            "notes": "Idempotent — a primary key that does not exist is not an error.",
+            "sql_bodies": {
+              "postgres": "DELETE FROM \"public\".\"sequence_rows\" WHERE \"id\" = $1"
+            }
+          },
+          {
+            "name": "HardDeleteMany",
+            "params": [
+              {
+                "name": "ids",
+                "type": "[]int64"
+              }
+            ],
+            "returns": "",
+            "errors": [],
+            "notes": "Idempotent — primary keys that do not exist are not an error.",
+            "sql_bodies": {
+              "postgres": "DELETE FROM \"public\".\"sequence_rows\" WHERE \"id\" IN (<ids>)"
+            }
+          },
+          {
+            "name": "HardDeleteWhere",
+            "params": [
+              {
+                "name": "filter",
+                "type": "*SequenceRowFilter"
+              }
+            ],
+            "returns": "",
+            "errors": [
+              "ErrEmptyFilter"
+            ],
+            "notes": "Idempotent — no match is not an error. ErrEmptyFilter when the filter produces no conditions.",
+            "sql_bodies": {
+              "postgres": "DELETE FROM \"public\".\"sequence_rows\" WHERE <filter> RETURNING \"id\""
+            }
+          }
+        ]
+      },
+      "filter": {
+        "type": "SequenceRowFilter",
+        "fields": [
+          {
+            "name": "AuditNo",
+            "type": "*comparator.Number[int32]"
+          },
+          {
+            "name": "ID",
+            "type": "*comparator.Number[int64]"
+          },
+          {
+            "name": "Note",
+            "type": "*comparator.String"
+          },
+          {
+            "name": "Seq",
+            "type": "*comparator.Number[int32]"
+          },
+          {
+            "name": "Ticket",
+            "type": "*comparator.Number[int64]"
+          },
+          {
+            "name": "And",
+            "type": "[]*SequenceRowFilter"
+          },
+          {
+            "name": "Or",
+            "type": "[]*SequenceRowFilter"
+          }
+        ]
+      },
+      "sort": {
+        "type": "SequenceRowSort",
+        "fields": [
+          "AuditNo",
+          "ID",
+          "Note",
+          "Seq",
+          "Ticket"
+        ]
+      },
+      "examples": {}
+    },
+    {
+      "kind": "table",
       "name": "SluggedRow",
       "table": "slugged_rows",
       "schema": "public",

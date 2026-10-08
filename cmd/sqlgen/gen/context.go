@@ -182,8 +182,8 @@ type ColumnContext struct {
 	HasDefault bool
 	// DefaultExpr is the raw SQL default expression for this column.
 	// For columns with an explicit DEFAULT, this is the expression (e.g., "datetime('now')").
-	// For nullable columns without a DEFAULT, this is "NULL".
-	// Empty when the column is neither nullable nor has a default.
+	// For nullable or auto-increment columns without a DEFAULT, this is "NULL".
+	// Empty otherwise.
 	DefaultExpr string
 	// AutoIncrement indicates serial/auto_increment columns.
 	AutoIncrement bool
@@ -584,7 +584,8 @@ type InputFieldContext struct {
 	// DefaultExpr is the raw SQL default expression for this column, used
 	// by dialects that do not support the DEFAULT keyword in VALUES (SQLite).
 	// Contains the expression (e.g., "datetime('now')") or "NULL" for nullable
-	// columns without a default. Empty when the column has no fallback.
+	// or auto-increment columns without a default. Empty when the column has no
+	// fallback.
 	DefaultExpr string
 }
 

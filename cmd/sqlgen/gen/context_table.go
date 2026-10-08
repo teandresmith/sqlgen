@@ -1077,12 +1077,14 @@ func resolveColumnDescription(col *parser.Column, tableCfg config.TableConfig) s
 // resolveDefaultExpr returns the raw SQL expression to use in place of the
 // DEFAULT keyword for dialects that do not support it (SQLite). For columns
 // with an explicit DEFAULT, this is the expression itself. For nullable columns
-// without a DEFAULT, this is "NULL". Returns empty string when neither applies.
+// without a DEFAULT, this is "NULL", as it is for an auto-increment column:
+// SQLite marks only a rowid alias, which fills NULL with the next rowid.
+// Returns empty string when none applies.
 func resolveDefaultExpr(col *parser.Column) string {
 	if col.Default != "" {
 		return col.Default
 	}
-	if col.Nullable {
+	if col.Nullable || col.AutoIncrement {
 		return "NULL"
 	}
 	return ""
@@ -2304,14 +2306,21 @@ func buildCreateInputFields(columns []ColumnContext, pkStrategy config.PKStrateg
 			continue
 		}
 
-		// Update columns and soft delete columns → omittable (supports data backfilling).
-		if updateSet[col.Name] || col.Name == softDeleteCol || col.Nullable || col.HasDefault {
+		if createInputOmittable(col, updateSet, softDeleteCol) {
 			fields = append(fields, omittableInputField(col))
 		} else {
 			fields = append(fields, requiredInputField(col))
 		}
 	}
 	return fields
+}
+
+// createInputOmittable reports whether a non-key column may be left out of a
+// create input. Update and soft-delete columns are omittable to support data
+// backfilling. An auto-increment column has no Default (PRD §6.1), but the
+// database fills it.
+func createInputOmittable(col ColumnContext, updateSet map[string]bool, softDeleteCol string) bool {
+	return updateSet[col.Name] || col.Name == softDeleteCol || col.Nullable || col.HasDefault || col.AutoIncrement
 }
 
 func buildUpdateInputFields(columns []ColumnContext, _ []string, _ *SoftDeleteContext) []InputFieldContext {

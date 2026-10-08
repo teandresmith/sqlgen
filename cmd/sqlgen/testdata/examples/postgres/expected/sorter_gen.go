@@ -620,6 +620,38 @@ func (s RateLimitSorter) UpdatedAt(direction sql.SortDirection) sql.Sort {
 	return sql.Sort{Column: "updated_at", Direction: direction}
 }
 
+// SequenceRowSorter provides type-safe sort helpers for the SequenceRow entity.
+// Each method returns a sql.Sort for the corresponding column.
+type SequenceRowSorter struct{}
+
+// NewSequenceRowSorter returns a new SequenceRowSorter.
+func NewSequenceRowSorter() SequenceRowSorter { return SequenceRowSorter{} }
+
+// AuditNo returns a sort for the audit_no column in the given direction.
+func (s SequenceRowSorter) AuditNo(direction sql.SortDirection) sql.Sort {
+	return sql.Sort{Column: "audit_no", Direction: direction}
+}
+
+// ID returns a sort for the id column in the given direction.
+func (s SequenceRowSorter) ID(direction sql.SortDirection) sql.Sort {
+	return sql.Sort{Column: "id", Direction: direction}
+}
+
+// Note returns a sort for the note column in the given direction.
+func (s SequenceRowSorter) Note(direction sql.SortDirection) sql.Sort {
+	return sql.Sort{Column: "note", Direction: direction}
+}
+
+// Seq returns a sort for the seq column in the given direction.
+func (s SequenceRowSorter) Seq(direction sql.SortDirection) sql.Sort {
+	return sql.Sort{Column: "seq", Direction: direction}
+}
+
+// Ticket returns a sort for the ticket column in the given direction.
+func (s SequenceRowSorter) Ticket(direction sql.SortDirection) sql.Sort {
+	return sql.Sort{Column: "ticket", Direction: direction}
+}
+
 // SluggedRowSorter provides type-safe sort helpers for the SluggedRow entity.
 // Each method returns a sql.Sort for the corresponding column.
 type SluggedRowSorter struct{}
