@@ -1204,6 +1204,55 @@ CREATE INDEX users_email_idx ON users (email);`
 	}
 }
 
+func TestIndexWhere(t *testing.T) {
+	tests := []struct {
+		name    string
+		ddl     string
+		want    string
+		wantErr string
+	}{
+		{name: "not partial", ddl: `CREATE INDEX ix ON t (a)`},
+		{name: "IS NOT NULL", ddl: `CREATE UNIQUE INDEX ux ON t (a) WHERE a IS NOT NULL`, want: `"a" NOT NULL`},
+		{name: "comparison", ddl: `create index ix on t (b) where b>0 AND a<>'x'`, want: `"b" > 0 AND "a" != 'x'`},
+		{name: "WHERE in a comment", ddl: "CREATE INDEX ix ON t (a) -- WHERE b = 1\nWHERE a > 0", want: `"a" > 0`},
+		{name: "WHERE in an identifier", ddl: `CREATE INDEX ix ON t ("a WHERE b") WHERE "a WHERE b" > 0`, want: `"a WHERE b" > 0`},
+		{name: "unreadable predicate", ddl: `CREATE INDEX ix ON t (a) WHERE a IS NOT DISTINCT FROM b`, wantErr: "parsing CREATE INDEX: 1:41: expected expression, found 'DISTINCT'"},
+		{name: "LIKE ESCAPE predicate", ddl: `CREATE INDEX ix ON t (a) WHERE a LIKE 'x%' ESCAPE '\'`, wantErr: "rendering CREATE INDEX predicate: sql.BinaryExpr.String(): invalid op ESCAPE"},
+		{name: "not an index", ddl: `CREATE TABLE t (a)`, wantErr: "parsing CREATE INDEX: got *sql.CreateTableStatement"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := sqlite.IndexWhere(tt.ddl)
+			if tt.wantErr != "" {
+				if err == nil || err.Error() != tt.wantErr {
+					t.Fatalf("IndexWhere(%q) error = %v, want %q", tt.ddl, err, tt.wantErr)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("IndexWhere(%q) error: %v", tt.ddl, err)
+			}
+			if got != tt.want {
+				t.Errorf("IndexWhere(%q) = %q, want %q", tt.ddl, got, tt.want)
+			}
+		})
+	}
+}
+
+// rqlite/sql parses LIKE … ESCAPE but panics rendering it; a partial index
+// using it is a parse error, not a crash (PRD §6.3).
+func TestCreateIndex_UnrenderablePredicate(t *testing.T) {
+	const (
+		ddl  = `CREATE TABLE t (a TEXT); CREATE INDEX ix ON t (a) WHERE a LIKE 'x%' ESCAPE '\'`
+		want = "parsing schema.sql: index ix: rendering CREATE INDEX predicate: sql.BinaryExpr.String(): invalid op ESCAPE"
+	)
+	err := sqlite.New().Parse("schema.sql", []byte(ddl))
+	if err == nil || err.Error() != want {
+		t.Errorf("Parse() error = %v, want %q", err, want)
+	}
+}
+
 func TestParseViewSQL_MaterializedRejected(t *testing.T) {
 	tests := []struct {
 		name string

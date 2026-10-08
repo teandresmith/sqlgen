@@ -23,9 +23,17 @@
 
 <!-- fixes:open:begin -->
 
+_No open fixes._
+
+<!-- fixes:open:end -->
+
+## Resolved
+
+<!-- fixes:resolved:begin -->
+
 ### FIX-269
 
-- **Status:** Open
+- **Status:** Resolved
 - **Severity:** tracked
 - **Origin:** phase 30, `parser/introspect` (`sqlite.go`)
 - **Surfaced by:** `/verify 30.6` (2026-10-05), sqlgen-reviewer measurement; pre-existing at `0260df8e`
@@ -41,7 +49,7 @@
 - A stored `CREATE INDEX` the parser cannot read fails introspection, in the class PRD §6.3 already names; extend that list if a new construct turns up.
 - Vet correction (prototyped): parse the index statement by itself through a new exported `sqlite.IndexWhere(ddl string) (string, error)`, not table DDL plus index DDL through `sqlite.New().Parse`. The reason: the file parser looks up an index's `ON` table case-sensitively and silently drops the index when the case differs. Measured: `CREATE TABLE Users (a TEXT); CREATE UNIQUE INDEX ux2 ON users (a) WHERE a IS NOT NULL` → `casemismatch parsed Users: []`. `IndexWhere` and `parseCreateIndex` share an unexported `indexWhere` (`rsql.ExprString`), so both sources produce the text by one path.
   - `indexPartialWhere` calls `sqlite.IndexWhere` on the stored `sqlite_master.sql`. A parse failure returns `*SchemaError` (`introspect sqlite index <name>: parsing CREATE INDEX: …`).
-  - The hand-written WHERE scanner and its test are deleted: `extractSQLiteIndexWhere`, `skipSQLiteInert`, `sqliteScanPast`, `matchesSQLiteWhere`, `isSQLiteSeparator`, `TestExtractSQLiteIndexWhere`. `docs/design/INTROSPECTION.md:86`/`:281` cite them in dated audit lines, which stay as they are.
+  - The hand-written WHERE scanner and its test are deleted: `extractSQLiteIndexWhere`, `skipSQLiteInert`, `sqliteScanPast`, `matchesSQLiteWhere`, `isSQLiteSeparator`, `TestExtractSQLiteIndexWhere`. `docs/design/INTROSPECTION.md:86` cites `extractSQLiteIndexWhere` in a dated audit line, which stay as they are.
   - New tests:
     - `TestSQLiteIntrospect_PartialIndexes`: three predicates (lowercase `where`, `'x WHERE y'` in a literal, `/* WHERE */` in a comment) plus `assertSchemaParity`;
     - `TestSQLiteIntrospect_UnreadablePartialIndex`: `IS NOT DISTINCT FROM` fails both paths, as a `SchemaError` on introspection;
@@ -92,13 +100,15 @@
 - PRD §6.1, §6.3; `docs/design/INTROSPECTION.md` Q10.
 - PG and MySQL already normalize partial-index predicates to the parser's form (30.4).
 
-**Resolution notes.** _Filled in by `/fix resolve`._
-
-<!-- fixes:open:end -->
-
-## Resolved
-
-<!-- fixes:resolved:begin -->
+**Resolution notes.** Resolved 2026-10-07 from the vetted prototype (option (b)), applied with `git apply --3way` at `60abe1ee`; FIX-267's changes to `parser/introspect/sqlite.go`, `sqlite_test.go` and `introspect_integration_test.go` are intact.
+- `parser/sqlite/sqlite.go`: new exported `IndexWhere(ddl string) (string, error)` parses one CREATE INDEX statement; it and `parseCreateIndex` share the unexported `indexWhere`, whose deferred `recover` turns an `rsql.ExprString` panic (`LIKE … ESCAPE`) into `rendering CREATE INDEX predicate: …`. `parseCreateIndex` wraps it as `index <name>: …`.
+- `parser/introspect/sqlite.go`: `indexPartialWhere` reads the stored `sqlite_master.sql` through `sqlite.IndexWhere`; a failure is a `*SchemaError` (`introspect sqlite index <name>: …`). The hand-written WHERE scanner (`extractSQLiteIndexWhere`, `skipSQLiteInert`, `sqliteScanPast`, `matchesSQLiteWhere`, `isSQLiteSeparator`) and `TestExtractSQLiteIndexWhere` are deleted.
+- Tests: `TestIndexWhere` (8 rows), `TestCreateIndex_UnrenderablePredicate`, `TestSQLiteIntrospect_PartialIndexes` (with `assertSchemaParity`), `TestSQLiteIntrospect_UnreadablePartialIndex` (table-driven: `IS NOT DISTINCT FROM`, `LIKE ESCAPE`).
+- PRD §6.3: the constraint-names bullet says a partial index's predicate comes from its stored CREATE INDEX read with the file parser; the unreadable-DDL bullet covers partial indexes and names `IS [NOT] DISTINCT FROM` and `LIKE … ESCAPE` in a partial index's `WHERE`.
+- Divergence from the prototype: two added comments (`IndexWhere`, `TestSQLiteIntrospect_UnreadablePartialIndex`) shortened per GO.md → Keep it short; no code change. Inline doc corrections: `docs/design/INTROSPECTION.md` (the Q10 row said the PRAGMAs give partial predicates; two §6.4 rows for the new tests) and `docs/tracker/phase-30.md` (the 30.6 PRAGMA list; the 30.9 `SchemaError` raisers gain `indexPartialWhere`); backlog line on the `LIKE … ESCAPE` panic narrowed to the remaining sites.
+- Fail-first on the final code: `parser/introspect/sqlite.go` reverted → `TestSQLiteIntrospect_PartialIndexes` (`- "t_a_live": `"a" NOT NULL`` / `+ "t_a_live": "a IS NOT NULL"`) and both `UnreadablePartialIndex` subtests ("want a *introspect.SchemaError") fail; `recover` removed → `panic: sql.BinaryExpr.String(): invalid op ESCAPE [recovered, repanicked]` in `./sqlite/` and `./introspect/`.
+- Gates: `cd parser && go test -race -count=1 ./...` → ok (containers, 0 SKIP); `make check` → ok; `make check-examples` → ok; `make update-golden-e2e` + `make update-golden` → no churn (matches the vet).
+- The CHECK, DEFAULT, generated-column and expression-index-column (`indexedColumnNames`) `rsql.ExprString` sites still panic on `LIKE … ESCAPE` (already in the backlog, per the ruling).
 
 ### FIX-267
 

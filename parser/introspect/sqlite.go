@@ -565,10 +565,11 @@ func (si *SQLiteIntrospector) introspectIndexes(ctx context.Context, table *pars
 	return nil
 }
 
-// indexPartialWhere reads the canonical CREATE INDEX statement for a partial
-// unique index out of sqlite_master and extracts the predicate text that
-// follows the WHERE keyword. SQLite preserves the original DDL verbatim, so
-// this round-trips the same text the DDL parser would have captured.
+// indexPartialWhere reads a partial index's stored CREATE INDEX out of
+// sqlite_master with the file parser and returns its WHERE predicate in the
+// parser's form, so both schema sources give the same text (PRD §6.1). An
+// index the file parser cannot read is an error, as the same DDL is under
+// source: files (PRD §6.3).
 func (si *SQLiteIntrospector) indexPartialWhere(ctx context.Context, indexName string) (string, error) {
 	var ddl sql.NullString
 	err := si.db.QueryRowContext(ctx, `
@@ -580,78 +581,11 @@ func (si *SQLiteIntrospector) indexPartialWhere(ctx context.Context, indexName s
 	if !ddl.Valid {
 		return "", nil
 	}
-	return extractSQLiteIndexWhere(ddl.String), nil
-}
-
-// extractSQLiteIndexWhere returns the text following the (case-insensitive)
-// WHERE keyword in a CREATE INDEX statement. Returns "" when no WHERE clause
-// is present. It walks the DDL once with a small state machine that skips SQL
-// comments (`--` line, `/* */` block), string literals (`'…'`), and quoted
-// identifiers (`"…"`, “ `…` “, `[…]`) so a WHERE keyword appearing inside any
-// of those regions — or an identifier merely containing "where" — is not
-// mistaken for the real partial-index predicate.
-func extractSQLiteIndexWhere(ddl string) string {
-	for i := 0; i < len(ddl); i++ {
-		if next, ok := skipSQLiteInert(ddl, i); ok {
-			i = next
-			continue
-		}
-		if matchesSQLiteWhere(ddl, i) {
-			return strings.TrimSpace(ddl[i+len("WHERE"):])
-		}
+	where, err := sqlite.IndexWhere(ddl.String)
+	if err != nil {
+		return "", &SchemaError{Err: fmt.Errorf("introspect sqlite index %s: %w", indexName, err)}
 	}
-	return ""
-}
-
-// skipSQLiteInert reports whether a comment or delimited region begins at pos
-// and, if so, returns the index of its final byte so the caller's loop resumes
-// just past it. It covers `--` line comments, `/* */` block comments, `'…'`
-// string literals, and `"…"` / “ `…` “ / `[…]` quoted identifiers — the
-// regions where a WHERE keyword must not be treated as the partial-index
-// predicate.
-func skipSQLiteInert(ddl string, pos int) (int, bool) {
-	c := ddl[pos]
-	switch {
-	case c == '-' && pos+1 < len(ddl) && ddl[pos+1] == '-':
-		return sqliteScanPast(ddl, pos+2, "\n"), true
-	case c == '/' && pos+1 < len(ddl) && ddl[pos+1] == '*':
-		return sqliteScanPast(ddl, pos+2, "*/"), true
-	case c == '\'' || c == '"' || c == '`':
-		return sqliteScanPast(ddl, pos+1, string(c)), true
-	case c == '[':
-		return sqliteScanPast(ddl, pos+1, "]"), true
-	}
-	return pos, false
-}
-
-// sqliteScanPast returns the index of the last byte of the first occurrence of
-// term at or after start, or the final index of ddl when term is absent (an
-// unterminated region consumes the rest of the string).
-func sqliteScanPast(ddl string, start int, term string) int {
-	if off := strings.Index(ddl[start:], term); off >= 0 {
-		return start + off + len(term) - 1
-	}
-	return len(ddl) - 1
-}
-
-// matchesSQLiteWhere reports whether the WHERE keyword begins at pos as a
-// standalone token (bounded by separators or the string ends).
-func matchesSQLiteWhere(ddl string, pos int) bool {
-	end := pos + len("WHERE")
-	if end > len(ddl) || !strings.EqualFold(ddl[pos:end], "WHERE") {
-		return false
-	}
-	prevOK := pos == 0 || isSQLiteSeparator(ddl[pos-1])
-	nextOK := end >= len(ddl) || isSQLiteSeparator(ddl[end])
-	return prevOK && nextOK
-}
-
-func isSQLiteSeparator(b byte) bool {
-	switch b {
-	case ' ', '\t', '\n', '\r', '(', ')':
-		return true
-	}
-	return false
+	return where, nil
 }
 
 func (si *SQLiteIntrospector) introspectIndexColumns(ctx context.Context, indexName string) ([]string, error) {

@@ -116,12 +116,50 @@ func (p *Parser) parseCreateIndex(stmt *rsql.CreateIndexStatement) error {
 		Columns: indexedColumnNames(stmt.Columns),
 		Method:  "btree",
 	}
-	if stmt.WhereExpr != nil {
-		c.Where = rsql.ExprString(stmt.WhereExpr)
+	where, err := indexWhere(stmt)
+	if err != nil {
+		return fmt.Errorf("index %s: %w", c.Name, err)
 	}
+	c.Where = where
 	table.Constraints = append(table.Constraints, c)
 	parser.CanonicalizeConstraints(table, "sqlite")
 	return nil
+}
+
+// IndexWhere returns the WHERE predicate of one CREATE INDEX statement as the
+// parser records it in Constraint.Where, or "" for an index that is not
+// partial, so introspection can give the same text as the files source
+// (PRD §6.1).
+func IndexWhere(ddl string) (string, error) {
+	stmts, err := rsql.NewParser(strings.NewReader(ddl)).ParseStatements()
+	if err != nil {
+		return "", fmt.Errorf("parsing CREATE INDEX: %w", err)
+	}
+	if len(stmts) != 1 {
+		return "", fmt.Errorf("parsing CREATE INDEX: got %d statements, want 1", len(stmts))
+	}
+	stmt, ok := stmts[0].(*rsql.CreateIndexStatement)
+	if !ok {
+		return "", fmt.Errorf("parsing CREATE INDEX: got %T", stmts[0])
+	}
+	return indexWhere(stmt)
+}
+
+// indexWhere renders a CREATE INDEX statement's WHERE predicate, or "" when it
+// has none. rqlite/sql parses some predicates it then panics rendering
+// (LIKE … ESCAPE: "sql.BinaryExpr.String(): invalid op ESCAPE"); the panic is
+// returned as an error, so such an index is a schema error on both sources
+// (PRD §6.3), not a crash.
+func indexWhere(stmt *rsql.CreateIndexStatement) (where string, err error) {
+	if stmt.WhereExpr == nil {
+		return "", nil
+	}
+	defer func() {
+		if r := recover(); r != nil {
+			where, err = "", fmt.Errorf("rendering CREATE INDEX predicate: %v", r)
+		}
+	}()
+	return rsql.ExprString(stmt.WhereExpr), nil
 }
 
 func (p *Parser) parseDropTable(stmt *rsql.DropTableStatement) error {

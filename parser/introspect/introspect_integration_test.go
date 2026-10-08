@@ -851,6 +851,77 @@ func TestSQLiteIntrospect_UniqueAndPKAutoIndexes(t *testing.T) {
 	assertSchemaParity(t, "sqlite", parsed, introspected)
 }
 
+// A partial index's predicate comes from its stored CREATE INDEX, read with
+// the file parser, so it is the parser's text and not the DDL as written
+// (PRD §6.1, §6.3).
+func TestSQLiteIntrospect_PartialIndexes(t *testing.T) {
+	requireDatabases(t)
+	parsed, introspected := sqliteSchemas(t, `
+		CREATE TABLE t (a TEXT, b INTEGER, note TEXT);
+		CREATE UNIQUE INDEX t_a_live ON t (a) WHERE a IS NOT NULL;
+		CREATE INDEX t_b_pos ON t (b) where b>0 AND note<>'x WHERE y';
+		CREATE INDEX t_note_idx ON t (note) /* WHERE b = 1 */ WHERE note IN ('a', 'b')
+	`)
+
+	want := map[string]string{
+		"t_a_live":   `"a" NOT NULL`,
+		"t_b_pos":    `"b" > 0 AND "note" != 'x WHERE y'`,
+		"t_note_idx": `"note" IN ('a', 'b')`,
+	}
+	got := make(map[string]string)
+	for _, c := range findTable(t, introspected, "t").Constraints {
+		got[c.Name] = c.Where
+	}
+	if diff := cmp.Diff(want, got); diff != "" {
+		t.Errorf("t: introspected partial-index predicates mismatch (-want +got):\n%s", diff)
+	}
+	assertSchemaParity(t, "sqlite", parsed, introspected)
+}
+
+// The file parser cannot read IS [NOT] DISTINCT FROM and cannot render
+// LIKE … ESCAPE, so a partial index using either fails both schema sources
+// with an error, not a panic (PRD §6.3).
+func TestSQLiteIntrospect_UnreadablePartialIndex(t *testing.T) {
+	requireDatabases(t)
+	tests := []struct {
+		name       string
+		ddl        string
+		parseError string
+	}{
+		{
+			name:       "IS NOT DISTINCT FROM",
+			ddl:        `CREATE TABLE t (a TEXT, b TEXT); CREATE INDEX t_ab ON t (a) WHERE a IS NOT DISTINCT FROM b`,
+			parseError: "expected expression, found 'DISTINCT'",
+		},
+		{
+			name:       "LIKE ESCAPE",
+			ddl:        `CREATE TABLE t (a TEXT, b TEXT); CREATE INDEX t_ab ON t (a) WHERE a LIKE 'x%' ESCAPE '\'`,
+			parseError: "rendering CREATE INDEX predicate: sql.BinaryExpr.String(): invalid op ESCAPE",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			dbPath := applySQLite(t, tt.ddl)
+			intro := introspect.NewSQLiteIntrospector()
+			defer intro.Close() //nolint:errcheck // test cleanup
+			err := intro.Introspect(context.Background(), dbPath, &parser.Schema{}, introspect.IntrospectionOptions{})
+			if err == nil || !strings.Contains(err.Error(), "introspect sqlite index t_ab:") || !strings.Contains(err.Error(), tt.parseError) {
+				t.Errorf("Introspect() error = %v, want the parse error for index t_ab", err)
+			}
+			if _, ok := errors.AsType[*introspect.SchemaError](err); !ok {
+				t.Errorf("Introspect() error = %v, want a *introspect.SchemaError", err)
+			}
+
+			p := sqlite.New()
+			err = p.Parse("schema.sql", []byte(tt.ddl))
+			if err == nil || !strings.Contains(err.Error(), tt.parseError) {
+				t.Errorf("Parse() error = %v, want %q", err, tt.parseError)
+			}
+		})
+	}
+}
+
 func TestSQLiteIntrospect_VirtualTables(t *testing.T) {
 	requireDatabases(t)
 	ddl := `

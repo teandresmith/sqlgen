@@ -1152,8 +1152,9 @@ PRD Sections: 4.1, 4.2, 4.3, 4.4, 5.2, 6.1, 6.3, 6.4, 7, 8.1.7, 16.2, 30.7
 
 - [x] Q10 strategy: for each table, re-parse `sqlite_master.sql` with `parser/sqlite` and take
   declared constraint names, CHECK constraints and expression text from it. PRAGMAs stay the
-  source for columns, types, nullability, PK membership and order, FKs, indexes and partial
-  predicates. Fold in 30.3's `sqliteGeneratedExprs`, which re-parses only tables with a
+  source for columns, types, nullability, PK membership and order, FKs, indexes and which
+  indexes are partial; a partial index's predicate comes from its stored `CREATE INDEX`, read
+  with `parser/sqlite`. Fold in 30.3's `sqliteGeneratedExprs`, which re-parses only tables with a
   generated column. **A universal re-parse makes the parser's gaps fatal.** It rejects
   legal DDL (backlog, from 30.1): `PRIMARY KEY ASC AUTOINCREMENT`, `PRIMARY KEY ON
   CONFLICT …`, and `REFERENCES t` with no column list. Measured in 30.3, such a table
@@ -1957,7 +1958,7 @@ columns differed by source and that the files path was unsound:
   `CREATE TABLE` the file parser rejects (`PRIMARY KEY ASC AUTOINCREMENT`, `ON CONFLICT`), which
   then exited 4 with a "Schema error:" label. 30.8 had handed this question to 30.9. Ruled with
   the user: exit 3, as the PRD says. `SchemaError` marks errors where they are raised:
-  - SQLite: `parseStoredTable`, `nameDeclaredConstraints`, `sqliteGeneratedExprs`
+  - SQLite: `parseStoredTable`, `nameDeclaredConstraints`, `sqliteGeneratedExprs`, `indexPartialWhere`
   - PostgreSQL: `catalogExpr`, which covers defaults, generated columns, CHECKs, domain
     constraints and partial-index predicates
   - MySQL: `mysqlDefault`, generated-column and CHECK normalization
