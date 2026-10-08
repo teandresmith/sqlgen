@@ -1,6 +1,6 @@
 # SQLGen Database Introspection — CLI Wiring & Introspector Hardening
 
-> **Status: DRAFT — all open questions resolved (2026-10-05).** Sibling design doc for two linked pieces
+> **Status: SYNCED — superseded by PRD §4.2/§4.3/§5.2/§6.1/§6.3/§30.7 (2026-10-08).** Sibling design doc for two linked pieces
 > of work: wiring the existing `parser/introspect` package into the CLI so
 > `input.source: database | both` (PRD §6.1) actually reads the database, and
 > hardening all three introspectors (PostgreSQL, MySQL, SQLite) so the schema

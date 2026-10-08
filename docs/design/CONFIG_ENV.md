@@ -1,6 +1,6 @@
 # SQLGen Config — Environment Variable References
 
-> **Status: DRAFT, all questions resolved (2026-10-06).** Adds `${VAR}`
+> **Status: SYNCED — superseded by PRD §4.1.1 (2026-10-08).** Adds `${VAR}`
 > references to `sqlgen.yml` values. The behavior in §3–§5 was verified against
 > `gopkg.in/yaml.v3 v3.0.1` with a 32-case prototype (§7). §9 records the five
 > rulings. This doc is the input to sub-item 30.7a, which syncs the PRD and
