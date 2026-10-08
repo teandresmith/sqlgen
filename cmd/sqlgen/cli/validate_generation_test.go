@@ -95,3 +95,48 @@ output:
 		t.Fatalf("writing test config: %v", err)
 	}
 }
+
+// validate builds the generation contexts even after the config rules fail,
+// so a relationship with no `name:` (required, PRD §4.8) must yield only the
+// config error: no panic for an O2O edge, and no api-context error for an
+// O2M edge's filter member.
+func TestValidate_relationshipWithoutName(t *testing.T) {
+	const schema = `CREATE TABLE owners (id serial PRIMARY KEY);
+CREATE TABLE owner_profiles (id serial PRIMARY KEY, owner_id int NOT NULL UNIQUE REFERENCES owners(id), bio text);
+CREATE TABLE tags (id serial PRIMARY KEY);
+CREATE TABLE owner_tags (owner_id int NOT NULL REFERENCES owners(id), tag_id int NOT NULL REFERENCES tags(id), PRIMARY KEY (owner_id, tag_id));`
+	tests := []struct {
+		name string
+		rel  string
+	}{
+		{name: "o2o", rel: "type: o2o\n        table: owner_profiles\n        fk: owner_id\n"},
+		{name: "o2m", rel: "type: o2m\n        table: owner_profiles\n        fk: owner_id\n        filter: \"bio IS NOT NULL\"\n"},
+		{name: "m2m", rel: "type: m2m\n        table: tags\n        junction: owner_tags\n"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			dir := t.TempDir()
+			cfgPath := filepath.Join(dir, "sqlgen.yml")
+			sqlDir := filepath.Join(dir, "migrations")
+			if err := os.MkdirAll(sqlDir, 0o750); err != nil {
+				t.Fatalf("creating migrations dir: %v", err)
+			}
+			// The api block builds the filter members a nameless edge would
+			// render only half of.
+			writeValidateConfig(t, cfgPath, sqlDir, filepath.Join(dir, "output"),
+				"api:\n  enabled: true\n  graphql:\n    enabled: true\n    schema_dir: ./graph\n    resolver_dir: ./graph\n    package: graph\n"+
+					"tables:\n  owners:\n    relationships:\n      - "+tt.rel)
+			writeSQLFile(t, sqlDir, schema)
+
+			_, stderr, err := executeCommand("validate", "--config", cfgPath)
+			var ee *exitError
+			if !errors.As(err, &ee) || ee.code != ExitConfig {
+				t.Fatalf("validate error = %v, want exit code %d (config)", err, ExitConfig)
+			}
+			const want = "Error: tables.owners.relationships[0].name: required"
+			if got := strings.Count(stderr, "Error: "); got != 1 || !strings.Contains(stderr, want) {
+				t.Errorf("stderr = %q, want the one error %q", stderr, want)
+			}
+		})
+	}
+}

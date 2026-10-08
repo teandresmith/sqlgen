@@ -1874,6 +1874,57 @@ func TestValidatePreParse_RelationshipLinkKeyRequired(t *testing.T) {
 	}
 }
 
+// Each relationship type, and a name and type both missing (PRD §4.8).
+func TestValidatePreParse_RelationshipNameRequired(t *testing.T) {
+	const required = ".name: required — it names the relationship's Go field on the entity struct (PRD §4.8)"
+	tests := []struct {
+		name string
+		rel  config.TableRelationship
+		want []string // nil means the config validates
+	}{
+		{
+			name: "o2o without name",
+			rel:  config.TableRelationship{Type: "o2o", Table: "owner_profiles", FK: "owner_id"},
+			want: []string{"tables.owners.relationships[0]" + required},
+		},
+		{
+			name: "o2m without name",
+			rel:  config.TableRelationship{Type: "o2m", Table: "owner_profiles", FK: "owner_id", Filter: "bio IS NOT NULL"},
+			want: []string{"tables.owners.relationships[0]" + required},
+		},
+		{
+			name: "m2m without name",
+			rel:  config.TableRelationship{Type: "m2m", Table: "tags", Junction: "owner_tags"},
+			want: []string{"tables.owners.relationships[0]" + required},
+		},
+		{
+			// The name rule does not depend on the type, so both are reported.
+			name: "neither name nor type",
+			rel:  config.TableRelationship{Table: "owner_profiles", FK: "owner_id"},
+			want: []string{"tables.owners.relationships[0]" + required, "tables.owners.relationships[0].type: required"},
+		},
+		{
+			name: "o2m with name",
+			rel:  config.TableRelationship{Name: "Profiles", Type: "o2m", Table: "owner_profiles", FK: "owner_id"},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg := validConfig()
+			cfg.Tables["owners"] = config.TableConfig{Relationships: []config.TableRelationship{tt.rel}}
+
+			_, err := config.ValidatePreParse(cfg)
+			if tt.want == nil {
+				if err != nil {
+					t.Errorf("ValidatePreParse() = %v, want nil", err)
+				}
+				return
+			}
+			assertErrContains(t, err, "ValidatePreParse()", tt.want...)
+		})
+	}
+}
+
 // ownersSchema mirrors the sqlite example's has-one pair: the parent
 // spells its key owner_key, and owner_profiles carries the owner_id FK. The
 // parent's profile_id stands in for a belongs-to FK on this side.

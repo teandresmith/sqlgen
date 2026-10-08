@@ -358,8 +358,9 @@ func validateColumnOverridesSchema(cfg *RootConfig, tables []SchemaTable, errs *
 // identical filters written differently are accepted as distinct sub-categories.
 // The `discriminator:` portion is its column and value, compared the same way.
 //
-// It rejects a missing or unknown `type:`, a missing o2o / o2m `fk:` or m2m
-// `junction:`, and an unknown `side:` (validateRelationshipKeys).
+// It rejects a missing `name:`, a missing or unknown `type:`, a missing
+// o2o / o2m `fk:` or m2m `junction:`, and an unknown `side:`
+// (validateRelationshipKeys).
 //
 // It also enforces the §4.13 mutual exclusion of `filter:` and
 // `discriminator:` on one relationship: composed, their write-side inverse
@@ -420,6 +421,10 @@ func validateRelationships(cfg *RootConfig, errs *[]error) {
 
 // validateRelationshipKeys checks the keys PRD §4.8 constrains on their own:
 //
+//   - `name:` is required: it is the relationship's Go field on the entity
+//     struct. The generator skips a nameless edge (`sqlgen validate` still
+//     builds its contexts after this rule fails), so this is the one place
+//     the missing key is reported.
 //   - `type:` is required and one of the six spellings the generator maps; it
 //     would otherwise be read as o2m.
 //   - `fk:` is required on an o2o or o2m edge, and `junction:` on an m2m one.
@@ -431,6 +436,12 @@ func validateRelationships(cfg *RootConfig, errs *[]error) {
 //     rules depend on it.
 //   - `side:` is parent, child or empty.
 func validateRelationshipKeys(tableName string, i int, r TableRelationship, errs *[]error) {
+	if r.Name == "" {
+		*errs = append(*errs, fmt.Errorf(
+			"tables.%s.relationships[%d].name: required — it names the relationship's Go field on the entity struct (PRD §4.8)",
+			tableName, i,
+		))
+	}
 	switch {
 	case r.Type == "":
 		*errs = append(*errs, fmt.Errorf(

@@ -1413,6 +1413,12 @@ func mergeDeclaredRelationships(
 	var errs []error
 	seenKey := make(map[string]int)
 	for i, r := range tableCfg.Relationships {
+		if r.Name == "" {
+			// Config validation already reported the missing `name:` (PRD
+			// §4.8). `sqlgen validate` still builds the contexts, and an edge
+			// with no name has no field to build.
+			continue
+		}
 		if err := checkResolvedDuplicate(r, i, tableCfg.Relationships, targets, seenKey, qualifiedName); err != nil {
 			errs = append(errs, err)
 		}
@@ -2602,7 +2608,9 @@ func findO2ORelationships(schema *parser.Schema, table *parser.Table, tableCfg c
 
 	for _, r := range tableCfg.Relationships {
 		relType := parseRelationshipType(r.Type)
-		if relType != parser.OneToOne {
+		// A nameless entry is skipped as mergeDeclaredRelationships skips it:
+		// config validation reports the missing `name:` (PRD §4.8).
+		if relType != parser.OneToOne || r.Name == "" {
 			continue
 		}
 		if excludeSet[r.Name] {

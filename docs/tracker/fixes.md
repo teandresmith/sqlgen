@@ -552,58 +552,6 @@ unexpanded.
 
 **Resolution notes.** _Filled in by `/fix resolve`._
 
-### FIX-285
-
-- **Status:** Open
-- **Severity:** tracked
-- **Origin:** phase 5, `cmd/sqlgen/config`
-- **Surfaced by:** backlog promotion at `/close-phase 30` (2026-10-07); first recorded by FIX-260 (2026-10-03)
-- **Vetted:** corrected at `d51ace1b` (2026-10-07)
-
-**Issue.** **A declared relationship with no `name:` passes validation and
-surfaces only as an internal api-context error.** Measured evidence from the
-backlog line: sqlite probe `{type: o2m, table: owner_profiles, fk: owner_id,
-filter: "bio IS NOT NULL"}` → `sqlgen validate` exit 2 "building api
-context: api: filter for table \"owners\" has a relationship member that
-renders only one half (graphql=\"\" input=\"OwnerProfileFilter\" …)".
-
-**Root cause.** PRD §4.8 marks `name` required, but `validateRelationships`
-(`cmd/sqlgen/config/validate.go:372`) only checks duplicates when `r.Name !=
-""` (`:381`), and `validateRelationshipKeys` (`:433`) checks `type`, `fk` and
-`junction` but not `name`.
-
-**Suggested fix.**
-- Add a `tables.<t>.relationships[<i>].name: required (PRD §4.8)` config error
-  in `validateRelationshipKeys`.
-- Test: a `config` validation case for a relationship without `name`.
-- Vet notes on scope:
-  - a nameless o2o edge makes both `sqlgen validate` and `sqlgen generate` panic at HEAD: "panic: runtime error: slice bounds out of range [:1] with length 0" at `gen.generateAlias` (`gen/context_table.go:2676`), called from `buildSingleO2ODetail` (`:2473`). The "internal api-context error" holds only for o2m/m2m. Severity raised from `nit` to `tracked` on 2026-10-07 for the measured `generate` panic (origin phase 5, so it does not gate the Phase 30 close);
-  - `validateRelationshipKeys` (`:433`) also checks `side`;
-  - a second cause: `sqlgen validate` runs `gen.ValidateGeneration` even after `ValidatePreParse` fails (`cli/validate.go:36-97`, by design, to collect every error), so the config error alone does not stop the panic or the api-context noise under `validate`. Only `generate` stops at config errors.
-- Changed from the original: the config error alone is not enough (with only that change, `validate` on a nameless o2o still panics, and on o2m/m2m prints the right error then the internal api-context error). The prototype also skips a nameless declared entry (`continue`) in `mergeDeclaredRelationships` and in `findO2ORelationships`' declared-o2o loop, with a comment that config validation already reported it, following the gen precedent for config-reported cases (`context_discriminator.go:166`). A guard in `generateAlias` alone would leave the api-context noise, and skipping `ValidateGeneration` after pre-parse errors would change validate's collect-everything design. A CLI-level regression test is added because the config-package test cannot see the panic. The vet flags the gen-skip guard for a possible veto (alternatives: an error in gen, or have validate skip `ValidateGeneration` after pre-parse errors). Not prototyped: PRD §4.13 has no row for a missing relationship `name` (only §4.8's "Yes"); `/fix-implement` may add one beside the link-key row.
-- Prototype: `validateRelationshipKeys` adds `tables.<t>.relationships[<i>].name: required — it names the relationship's Go field on the entity struct (PRD §4.8)`, independent of the type switch, so a missing name and a missing type are both reported; doc comments updated. Tests: `TestValidatePreParse_RelationshipNameRequired` (o2o, o2m, m2m, missing name plus missing type, named control) and `TestValidate_relationshipWithoutName` (`cli/validate_generation_test.go`, o2o and o2m with an api block; exit code 2 and exactly one "Error: " line naming `relationships[0].name: required`).
-- Prototype results, run at `d51ace1b` on 2026-10-07:
-  - Reproduction (sibling copy of the sqlite example):
-    - `{type: o2m, table: owner_profiles, fk: owner_id, filter: "bio IS NOT NULL"}` added to owners → `sqlgen validate` → exit 2, "Error: building api context: api: filter for table \"owners\" has a relationship member that renders only one half (… input=\"OwnerProfileFilter\" … PRD §26.5.3)";
-    - `name: OwnerProfile` removed from the owners one_to_one → `validate` → "panic: runtime error: slice bounds out of range [:1] with length 0 … gen.generateAlias … context_table.go:2676", no config error printed;
-    - `name: LinkedAttachments` removed from the assets m2m → "building api context: api: filter for table \"assets\" has a relationship member that renders only one half (… input=\"DocumentFilter\" …)";
-    - minimal postgres config with a nameless o2o → `sqlgen generate` → the same panic, exit 2.
-  - With the fix: each probe → `validate` exit 2 with the single "Error: tables.<t>.relationships[N].name: required — …"; `generate` → "Config validation error: tables.owners.relationships[0].name: required …", exit 2.
-  - Gates: `gofumpt -l ./config ./gen ./cli` → clean; `golangci-lint run ./config/... ./gen/... ./cli/...` → 0 issues; `go test -race -count=1 ./config/... ./gen/... ./cli/...` → ok; `go test -race -count=1 -short ./...` (cmd/sqlgen) → ok; `sqlgen validate -q` in all 12 examples → exit 0; `TestE2EGoldenFiles` → PASS.
-  - Fail-first:
-    - config name check reverted → `TestValidatePreParse_RelationshipNameRequired/o2o_without_name` fails: "ValidatePreParse() = nil, want an error naming tables.owners.relationships[0].name: required …" (the other cases likewise), and `TestValidate_relationshipWithoutName/o2o` and `/o2m` fail: "validate error = <nil>, want exit code 2 (config)";
-    - `mergeDeclaredRelationships` guard reverted → `/o2o` panics ("slice bounds out of range [:1] with length 0 [recovered, repanicked]"), and `/o2m` prints the api-context error after the config error;
-    - `findO2ORelationships` guard reverted → `/o2o` panics at `context_table.go:2684`;
-    - the existing suite without the fix → passes.
-  - Golden churn: none.
-  - Patch: `.claude/prototypes/FIX-285.patch` (4 files, +119/-3).
-
-
-**References.**
-- PRD §4.8 (relationship `name`, required), §4.13.
-
-**Resolution notes.** _Filled in by `/fix resolve`._
-
 ### FIX-286
 
 - **Status:** Open
@@ -1037,6 +985,58 @@ source (PRD §6.1).
 ## Resolved
 
 <!-- fixes:resolved:begin -->
+### FIX-285
+
+- **Status:** Resolved
+- **Severity:** tracked
+- **Origin:** phase 5, `cmd/sqlgen/config`
+- **Surfaced by:** backlog promotion at `/close-phase 30` (2026-10-07); first recorded by FIX-260 (2026-10-03)
+- **Vetted:** corrected at `d51ace1b` (2026-10-07)
+
+**Issue.** **A declared relationship with no `name:` passes validation and
+surfaces only as an internal api-context error.** Measured evidence from the
+backlog line: sqlite probe `{type: o2m, table: owner_profiles, fk: owner_id,
+filter: "bio IS NOT NULL"}` → `sqlgen validate` exit 2 "building api
+context: api: filter for table \"owners\" has a relationship member that
+renders only one half (graphql=\"\" input=\"OwnerProfileFilter\" …)".
+
+**Root cause.** PRD §4.8 marks `name` required, but `validateRelationships`
+(`cmd/sqlgen/config/validate.go:372`) only checks duplicates when `r.Name !=
+""` (`:381`), and `validateRelationshipKeys` (`:433`) checks `type`, `fk` and
+`junction` but not `name`.
+
+**Suggested fix.**
+- Add a `tables.<t>.relationships[<i>].name: required (PRD §4.8)` config error
+  in `validateRelationshipKeys`.
+- Test: a `config` validation case for a relationship without `name`.
+- Vet notes on scope:
+  - a nameless o2o edge makes both `sqlgen validate` and `sqlgen generate` panic at HEAD: "panic: runtime error: slice bounds out of range [:1] with length 0" at `gen.generateAlias` (`gen/context_table.go:2676`), called from `buildSingleO2ODetail` (`:2473`). The "internal api-context error" holds only for o2m/m2m. Severity raised from `nit` to `tracked` on 2026-10-07 for the measured `generate` panic (origin phase 5, so it does not gate the Phase 30 close);
+  - `validateRelationshipKeys` (`:433`) also checks `side`;
+  - a second cause: `sqlgen validate` runs `gen.ValidateGeneration` even after `ValidatePreParse` fails (`cli/validate.go:36-97`, by design, to collect every error), so the config error alone does not stop the panic or the api-context noise under `validate`. Only `generate` stops at config errors.
+- Changed from the original: the config error alone is not enough (with only that change, `validate` on a nameless o2o still panics, and on o2m/m2m prints the right error then the internal api-context error). The prototype also skips a nameless declared entry (`continue`) in `mergeDeclaredRelationships` and in `findO2ORelationships`' declared-o2o loop, with a comment that config validation already reported it, following the gen precedent for config-reported cases (`context_discriminator.go:166`). A guard in `generateAlias` alone would leave the api-context noise, and skipping `ValidateGeneration` after pre-parse errors would change validate's collect-everything design. A CLI-level regression test is added because the config-package test cannot see the panic. The vet flags the gen-skip guard for a possible veto (alternatives: an error in gen, or have validate skip `ValidateGeneration` after pre-parse errors). Not prototyped: PRD §4.13 has no row for a missing relationship `name` (only §4.8's "Yes"); `/fix-implement` may add one beside the link-key row.
+- Prototype: `validateRelationshipKeys` adds `tables.<t>.relationships[<i>].name: required — it names the relationship's Go field on the entity struct (PRD §4.8)`, independent of the type switch, so a missing name and a missing type are both reported; doc comments updated. Tests: `TestValidatePreParse_RelationshipNameRequired` (o2o, o2m, m2m, missing name plus missing type, named control) and `TestValidate_relationshipWithoutName` (`cli/validate_generation_test.go`, o2o and o2m with an api block; exit code 2 and exactly one "Error: " line naming `relationships[0].name: required`).
+- Prototype results, run at `d51ace1b` on 2026-10-07:
+  - Reproduction (sibling copy of the sqlite example):
+    - `{type: o2m, table: owner_profiles, fk: owner_id, filter: "bio IS NOT NULL"}` added to owners → `sqlgen validate` → exit 2, "Error: building api context: api: filter for table \"owners\" has a relationship member that renders only one half (… input=\"OwnerProfileFilter\" … PRD §26.5.3)";
+    - `name: OwnerProfile` removed from the owners one_to_one → `validate` → "panic: runtime error: slice bounds out of range [:1] with length 0 … gen.generateAlias … context_table.go:2676", no config error printed;
+    - `name: LinkedAttachments` removed from the assets m2m → "building api context: api: filter for table \"assets\" has a relationship member that renders only one half (… input=\"DocumentFilter\" …)";
+    - minimal postgres config with a nameless o2o → `sqlgen generate` → the same panic, exit 2.
+  - With the fix: each probe → `validate` exit 2 with the single "Error: tables.<t>.relationships[N].name: required — …"; `generate` → "Config validation error: tables.owners.relationships[0].name: required …", exit 2.
+  - Gates: `gofumpt -l ./config ./gen ./cli` → clean; `golangci-lint run ./config/... ./gen/... ./cli/...` → 0 issues; `go test -race -count=1 ./config/... ./gen/... ./cli/...` → ok; `go test -race -count=1 -short ./...` (cmd/sqlgen) → ok; `sqlgen validate -q` in all 12 examples → exit 0; `TestE2EGoldenFiles` → PASS.
+  - Fail-first:
+    - config name check reverted → `TestValidatePreParse_RelationshipNameRequired/o2o_without_name` fails: "ValidatePreParse() = nil, want an error naming tables.owners.relationships[0].name: required …" (the other cases likewise), and `TestValidate_relationshipWithoutName/o2o` and `/o2m` fail: "validate error = <nil>, want exit code 2 (config)";
+    - `mergeDeclaredRelationships` guard reverted → `/o2o` panics ("slice bounds out of range [:1] with length 0 [recovered, repanicked]"), and `/o2m` prints the api-context error after the config error;
+    - `findO2ORelationships` guard reverted → `/o2o` panics at `context_table.go:2684`;
+    - the existing suite without the fix → passes.
+  - Golden churn: none.
+  - Patch: `.claude/prototypes/FIX-285.patch` (4 files, +119/-3).
+
+- Auto-accepted the recommended option on 2026-10-08 (`/fix` auto-accept rule): the vet's possible-veto flag on the gen-skip guard (skip a nameless edge in gen vs. an error in gen vs. validate skipping `ValidateGeneration` after pre-parse errors) → skip in gen, because it was prototyped with green gates, causes no golden churn, adds no public surface, and keeps validate's collect-every-error design the PRD and code state.
+
+**References.**
+- PRD §4.8 (relationship `name`, required), §4.13.
+
+**Resolution notes.** Resolved 2026-10-08 from the vetted prototype (applied clean with `--3way`; `context_table.go` had moved under FIX-272 at `4475a6a7`, outside these hunks). `validateRelationshipKeys` (`cmd/sqlgen/config/validate.go`) reports `tables.<t>.relationships[<i>].name: required` independent of the type check; `mergeDeclaredRelationships` and `findO2ORelationships` (`cmd/sqlgen/gen/context_table.go`) skip a nameless declared edge, so `sqlgen validate` prints only the config error instead of panicking (o2o) or adding an api-context error (o2m/m2m). Tests: `TestValidatePreParse_RelationshipNameRequired` (config) and `TestValidate_relationshipWithoutName` (cli). Inline: added the PRD §4.13 row "A relationship missing `name`" beside the link-key row; trimmed history from the prototype's test comments. Fail-first re-run on the final code: each of the three guards reverted fails the new tests (config rule → exit nil; either gen guard → slice-bounds panic). `/verify` corrections applied inline: the PRD §4.13 row now states the measured failure (an `o2o` edge panics the generator; an `o2m`/`m2m` edge emits a nameless entity-struct field and the package does not parse), the config test's doc comment no longer restates its name, and an `m2m` subtest was added to `TestValidate_relationshipWithoutName` for parity (it passes with the gen guard reverted, so it pins the single-error output rather than the bug). Backlog: `v1.json` relationship `required` list. Gates: `make check` ok, `make check-examples` ok, golden churn none (matches vet).
 
 ### FIX-291
 
