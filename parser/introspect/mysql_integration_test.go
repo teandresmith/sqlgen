@@ -92,6 +92,13 @@ func TestMySQLIntrospect_Defaults(t *testing.T) {
 		perms SET('r','w') DEFAULT 'r,w',
 		created_at datetime(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
 		updated_at timestamp NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+		now_at datetime DEFAULT NOW(),
+		now_ms datetime(3) DEFAULT NOW(3),
+		local_at datetime DEFAULT LOCALTIMESTAMP,
+		local_us datetime(6) DEFAULT LOCALTIME(6),
+		now_expr datetime DEFAULT (LOCALTIMESTAMP() + INTERVAL 1 DAY),
+		today date DEFAULT (CURRENT_DATE),
+		clock time DEFAULT (CURTIME()),
 		day date DEFAULT '2020-01-01',
 		at time DEFAULT '12:00:00',
 		uid varchar(36) DEFAULT (uuid()),
@@ -123,6 +130,13 @@ func TestMySQLIntrospect_Defaults(t *testing.T) {
 		"perms":       "'r,w'",
 		"created_at":  "current_timestamp(3)",
 		"updated_at":  "current_timestamp()",
+		"now_at":      "current_timestamp()",
+		"now_ms":      "current_timestamp(3)",
+		"local_at":    "current_timestamp()",
+		"local_us":    "current_timestamp(6)",
+		"now_expr":    "current_timestamp() + interval 1 day",
+		"today":       "current_date()",
+		"clock":       "current_time()",
 		"day":         "'2020-01-01'",
 		"at":          "'12:00:00'",
 		"uid":         "uuid()",
@@ -346,8 +360,9 @@ func (c *cancelOnCheckQuery) Close() error {
 // TestMySQLIntrospect_CatalogRewrites pins the text MySQL's catalog stores in
 // a form the file parser cannot rebuild from the DDL, so the two sources
 // differ (PRD §6.1). A CAST to a character type gains the connection
-// charset, a hex string literal reads back as 0x…, and a literal default is
-// stored converted to its column's type.
+// charset, a hex string literal reads back as 0x…, a literal default is
+// stored converted to its column's type, REGEXP becomes regexp_like(), and a
+// NOT is folded into the expression it negates.
 func TestMySQLIntrospect_CatalogRewrites(t *testing.T) {
 	requireDatabases(t)
 	const ddl = `CREATE TABLE m_rewrites (
@@ -360,8 +375,21 @@ func TestMySQLIntrospect_CatalogRewrites(t *testing.T) {
 		raw binary(2) DEFAULT x'4142',
 		name varchar(20),
 		label varchar(20) AS (cast(price as char)),
+		small tinyint AS (not (qty > 3)),
 		CONSTRAINT m_rewrites_cast CHECK (cast(price as char) <> ''),
-		CONSTRAINT m_rewrites_hex CHECK (name <> x'41')
+		CONSTRAINT m_rewrites_hex CHECK (name <> x'41'),
+		CONSTRAINT m_rewrites_regexp CHECK (name regexp '^[a-z]+$'),
+		CONSTRAINT m_rewrites_rlike CHECK (name rlike 'x'),
+		CONSTRAINT m_rewrites_not_regexp CHECK (name not regexp 'y'),
+		CONSTRAINT m_rewrites_not_cmp CHECK (not (qty > 200)),
+		CONSTRAINT m_rewrites_bang CHECK (!(qty < 0)),
+		CONSTRAINT m_rewrites_not_in CHECK (not (qty in (1, 2))),
+		CONSTRAINT m_rewrites_not_between CHECK (not (qty between 1 and 5)),
+		CONSTRAINT m_rewrites_not_null CHECK (not (qty is null)),
+		CONSTRAINT m_rewrites_not_not CHECK (not (not (qty > 7))),
+		CONSTRAINT m_rewrites_not_and CHECK (not (qty > 1 and price > 1)),
+		CONSTRAINT m_rewrites_not_col CHECK (not (flag)),
+		CONSTRAINT m_rewrites_not_like CHECK (not (name like 'z%'))
 	)`
 	applyParityFixture(t, "mysql", mysqlConnStr, "DROP TABLE IF EXISTS m_rewrites", ddl)
 
@@ -385,26 +413,52 @@ func TestMySQLIntrospect_CatalogRewrites(t *testing.T) {
 		return got
 	}
 	wantParsed := map[string]string{
-		"price":           "1.5",
-		"ratio":           "1e3",
-		"flag":            "true",
-		"qty":             "'5'",
-		"code":            "'ab'",
-		"raw":             "X'4142'",
-		"label":           "cast(price as char)",
-		"m_rewrites_cast": "cast(price as char) != ''",
-		"m_rewrites_hex":  "`name` != X'41'",
+		"price":                  "1.5",
+		"ratio":                  "1e3",
+		"flag":                   "true",
+		"qty":                    "'5'",
+		"code":                   "'ab'",
+		"raw":                    "X'4142'",
+		"label":                  "cast(price as char)",
+		"small":                  "not qty > 3",
+		"m_rewrites_cast":        "cast(price as char) != ''",
+		"m_rewrites_hex":         "`name` != X'41'",
+		"m_rewrites_regexp":      "`name` regexp '^[a-z]+$'",
+		"m_rewrites_rlike":       "`name` regexp 'x'",
+		"m_rewrites_not_regexp":  "`name` not regexp 'y'",
+		"m_rewrites_not_cmp":     "not qty > 200",
+		"m_rewrites_bang":        "!(qty < 0)",
+		"m_rewrites_not_in":      "not qty in (1, 2)",
+		"m_rewrites_not_between": "not qty between 1 and 5",
+		"m_rewrites_not_null":    "not qty is null",
+		"m_rewrites_not_not":     "not not qty > 7",
+		"m_rewrites_not_and":     "not (qty > 1 and price > 1)",
+		"m_rewrites_not_col":     "not flag",
+		"m_rewrites_not_like":    "not `name` like 'z%'",
 	}
 	wantIntrospected := map[string]string{
-		"price":           "1.50",
-		"ratio":           "1000",
-		"flag":            "1",
-		"qty":             "5",
-		"code":            "0x6162",
-		"raw":             "0x4142",
-		"label":           "cast(price as char character set utf8mb4)",
-		"m_rewrites_cast": "cast(price as char character set utf8mb4) != ''",
-		"m_rewrites_hex":  "`name` != 0x41",
+		"price":                  "1.50",
+		"ratio":                  "1000",
+		"flag":                   "1",
+		"qty":                    "5",
+		"code":                   "0x6162",
+		"raw":                    "0x4142",
+		"label":                  "cast(price as char character set utf8mb4)",
+		"small":                  "qty <= 3",
+		"m_rewrites_cast":        "cast(price as char character set utf8mb4) != ''",
+		"m_rewrites_hex":         "`name` != 0x41",
+		"m_rewrites_regexp":      "regexp_like(`name`, '^[a-z]+$')",
+		"m_rewrites_rlike":       "regexp_like(`name`, 'x')",
+		"m_rewrites_not_regexp":  "not regexp_like(`name`, 'y')",
+		"m_rewrites_not_cmp":     "qty <= 200",
+		"m_rewrites_bang":        "qty >= 0",
+		"m_rewrites_not_in":      "qty not in (1, 2)",
+		"m_rewrites_not_between": "qty not between 1 and 5",
+		"m_rewrites_not_null":    "qty is not null",
+		"m_rewrites_not_not":     "qty > 7",
+		"m_rewrites_not_and":     "qty <= 1 or price <= 1",
+		"m_rewrites_not_col":     "0 = flag",
+		"m_rewrites_not_like":    "not `name` like 'z%'",
 	}
 	if diff := cmp.Diff(wantParsed, text(parsed)); diff != "" {
 		t.Errorf("parsed text mismatch (-want +got):\n%s", diff)

@@ -70,93 +70,6 @@
 
 **Resolution notes.** _Filled in by `/fix resolve`._
 
-### FIX-268
-
-- **Status:** Open
-- **Severity:** tracked
-- **Origin:** phase 30, `parser/mysql` (`exprText`) and `parser/introspect/mysql.go`
-- **Surfaced by:** `/verify 30.5` (2026-10-05), extended by the sqlgen-reviewer pass
-- **Vetted:** corrected at `dcc7eeeb` (2026-10-07)
-
-**Issue.** PRD §6.1 says `database` and `files` describe a schema identically, and its MySQL sentence lists the catalog rewrites that may differ. Measured on MySQL 8.0 with the real introspector against the file parser, these still differ and are neither normalized nor named:
-- `DEFAULT NOW()` → introspected `current_timestamp()`, parsed `now()`
-- `DEFAULT NOW(3)` → introspected `current_timestamp(3)`, parsed `now(3)`
-- `DEFAULT LOCALTIMESTAMP` → introspected `current_timestamp()`, parsed `localtimestamp()`
-- CHECK `m regexp '^[a-z]+$'` → introspected `regexp_like(m, '^[a-z]+$')`, parsed `m regexp '^[a-z]+$'`
-- CHECK `not (u > 200)` → introspected `u <= 200`, parsed `not u > 200`
-
-The manifest's `default` / CHECK text differs by source, unannounced, for DDL as common as `created_at DATETIME DEFAULT NOW()`. `default_kind` is "function" on both, and the Go code is unaffected.
-
-**Root cause.** MySQL respells current-time synonyms. A bare keyword default `NOW` / `LOCALTIME` / `LOCALTIMESTAMP` is stored as `CURRENT_TIMESTAMP` (with `DEFAULT_GENERATED`). Inside an expression default the catalog writes `now()`: `DEFAULT (NOW())` and `DEFAULT (LOCALTIMESTAMP())` give `now()`, and `DEFAULT (NOW() + INTERVAL 1 DAY)` gives `(now() + interval 1 day)`. `CURRENT_DATE` / `CURRENT_TIME` come back as `curdate()` / `curtime()`. MySQL also rewrites `REGEXP` / `RLIKE` and folds `NOT` in every stored expression (CHECK, generated column, expression default), not only in `check_clause`. `exprText` (`parser/mysql/mysql.go:59`) only drops charset introducers, so the parser keeps the DDL's spelling, while `mysqlDefault` (`parser/introspect/mysql.go:661`) and the CHECK path (`NormalizeExpr`, `mysql.go:601`) return the catalog's.
-
-**Suggested fix.** Ruled 2026-10-05 (user): normalize the defaults, and name the CHECK rewrites.
-- In `exprText`'s Rewrite callback, rename the time-function synonyms through an unexported `currentTimeSynonyms` map, keeping the `Fsp` precision:
-  - a `CurTimeFuncExpr` named `now`, `localtime` or `localtimestamp` becomes `current_timestamp`;
-  - `curtime` becomes `current_time`;
-  - an unqualified, zero-argument `FuncExpr` named `curdate` becomes `current_date`.
-  Both sources go through `exprText`, so bare defaults, expression defaults and `LOCALTIMESTAMP()` → `now()` all converge. Update the `exprText` and `NormalizeExpr` doc comments.
-- `TestNormalizeExpr`: add 9 cases (now, now(3), LOCALTIME, LOCALTIMESTAMP(6), now inside an expression, curdate, CURRENT_DATE, CURTIME(2), and UTC_TIMESTAMP as a non-synonym control).
-- `TestMySQLIntrospect_Defaults`: add 7 columns (NOW(), NOW(3), LOCALTIMESTAMP, LOCALTIME(6), `(LOCALTIMESTAMP() + INTERVAL 1 DAY)`, `(CURRENT_DATE)`, `(CURTIME())`), each asserted equal on both sources, plus `assertSchemaParity`.
-- `TestMySQLIntrospect_CatalogRewrites` (`parser/introspect/mysql_integration_test.go`):
-  - pin on both sources 13 CHECKs (regexp, rlike, not regexp, not cmp, `!`, not in, not between, not is null, double not, not-and, not on a bare column, not like kept) and one generated column `AS (not (qty > 3))`;
-  - its doc comment names both rewrites.
-- PRD §6.1:
-  - the normalization sentence says a MySQL current-time synonym takes its standard name under both sources;
-  - the MySQL catalog-rewrite sentence names, for any stored expression, the REGEXP/RLIKE → `regexp_like(…)` rewrite and the NOT-folding rule. That covers inverted comparisons; IN, BETWEEN and IS NULL gaining or losing NOT; double NOT cancelling; De Morgan over AND/OR; and `not x` → `0 = x`. NOT over LIKE/REGEXP is kept.
-- Changed from the original:
-  - the default normalization widens to `CURDATE()` / `CURRENT_DATE` and `CURTIME()` / `CURRENT_TIME` (same root cause, same fix site, measured mismatch);
-  - the PRD naming covers the whole NOT-folding rule and REGEXP/RLIKE in every stored expression. The original narrow wording (`NOT (a > b)` in CHECK) would leave measured differences unnamed: "u <= 1 or v <= 1", "v != 3", "0 = u";
-  - the parser still keeps those rewrites and only names them, per the ruling.
-- Auto-accepted the recommended option on 2026-10-07 (`/fix` auto-accept rule): which name do `CURDATE()` / `CURRENT_DATE` and `CURTIME()` / `CURRENT_TIME` normalize to? → `current_date()` / `current_time()`, matching the ruled `current_timestamp`. Conditions held: it was prototyped with green gates; there is no golden churn against the `curdate` / `curtime` alternative, since no example uses either; it adds no public surface (`currentTimeSynonyms` is unexported, and `NormalizeExpr` changes only its doc); and it reverses no ruling (it adds PRD text for an unspecified case).
-- Prototype results, run at `dcc7eeeb` on 2026-10-07:
-  - Reproduction: a throwaway probe (`parser/introspect/zz_probe_fix268_test.go`, since deleted) on testcontainers MySQL 8.0; `cd parser && go test -count=1 -run TestZZProbeFix268 ./introspect/`. `assertSchemaParity` diff (-parsed +introspected):
-    - `Default: "now()"` / `"current_timestamp()"`
-    - `"now(3)"` / `"current_timestamp(3)"`
-    - `"localtimestamp()"` / `"current_timestamp()"`
-    - `"localtime()"` / `"current_timestamp()"`
-    - `"localtimestamp(6)"` / `"current_timestamp(6)"`
-    - `"current_date()"` / `"curdate()"`
-    - `"current_time()"` / `"curtime()"`
-    - `"localtimestamp()"` / `"now()"` (from `DEFAULT (LOCALTIMESTAMP())`)
-    - `CheckExpression: "m regexp '^[a-z]+$'"` / `"regexp_like(m, '^[a-z]+$')"`
-    - `"not u > 200"` / `"u <= 200"`
-    All five of the Issue's bullets reproduce. With the prototype, only the named REGEXP and NOT rewrites remain.
-  - NOT-folding cases measured on raw catalog text:
-    - `!(v < 0)` → "v >= 0"
-    - `not (v = 3)` → "v != 3"
-    - `not (u <> 9)` → "u = 9"
-    - `not (v in (1,2))` → "v not in (1, 2)"
-    - `not (v not in (4,5))` → "v in (4, 5)"
-    - `not (u between 1 and 5)` → "u not between 1 and 5"
-    - `not (u is null)` → "u is not null"
-    - `not (not (u > 7))` → "u > 7"
-    - `not (u > 1 and v > 1)` → "u <= 1 or v <= 1"
-    - `not (u > 1 or v is null)` → "u <= 1 and v is not null"
-    - `not (u)` → "0 = u"
-    - `not (m like 'z%')` → kept as "not m like 'z%'"
-    - `m not regexp 'y'` → "not regexp_like(m, 'y')"
-    - `m rlike 'x'` → "regexp_like(m, 'x')"
-    - generated column `AS (not (u > 3))` → "u <= 3"; expression default `DEFAULT (not (1 > 2))` → "1 <= 2"
-  - Gates:
-    - `cd parser && go test -race -count=1 ./...` → ok (MySQL 8.0 and PG 16 containers);
-    - `golangci-lint run ./...` → 0 issues;
-    - `gofumpt -l parser/introspect parser/mysql` → clean;
-    - `cd cmd/sqlgen && go test -race -count=1 ./...` → all ok (incl. `TestE2EGoldenFiles`, cli, mcp/integration).
-  - Fail-first:
-    - `CurTimeFuncExpr` rename reverted → `TestNormalizeExpr` fails: `NormalizeExpr("NOW()") = "now()", want "current_timestamp()"`. `TestMySQLIntrospect_Defaults` also fails: `- "now_at": "current_timestamp()", + "now_at": "now()"`, and parity shows `- Default: "now(3)" + Default: "current_timestamp(3)"`.
-    - `curdate` case reverted → `NormalizeExpr("curdate()") = "curdate()", want "current_date()"` and `- "today": "current_date()", + "today": "curdate()"`.
-    - The `_CatalogRewrites` additions are test-only pins of database behavior and pass with `exprText` at HEAD.
-    - The existing suite without the fix (`go test -race -count=1 ./mysql/ ./introspect/` at HEAD) → passes.
-  - Golden churn: none (no example DDL uses a current-time synonym).
-  - Patch: `.claude/prototypes/FIX-268.patch` (4 files, +114/-28).
-
-**References.**
-- PRD §6.1; `docs/design/INTROSPECTION.md` Q5, Q13, M9.
-- phase-30.md ground rule: a lasting user-visible parity exception is written into §6.1.
-- Parallel: the PRD §6.1 "PostgreSQL expression text the catalog rewrites" paragraph (30.4).
-
-**Resolution notes.** _Filled in by `/fix resolve`._
-
 ### FIX-269
 
 - **Status:** Open
@@ -270,6 +183,93 @@ The manifest's `default` / CHECK text differs by source, unannounced, for DDL as
 ## Resolved
 
 <!-- fixes:resolved:begin -->
+
+### FIX-268
+
+- **Status:** Resolved
+- **Severity:** tracked
+- **Origin:** phase 30, `parser/mysql` (`exprText`) and `parser/introspect/mysql.go`
+- **Surfaced by:** `/verify 30.5` (2026-10-05), extended by the sqlgen-reviewer pass
+- **Vetted:** corrected at `dcc7eeeb` (2026-10-07)
+
+**Issue.** PRD §6.1 says `database` and `files` describe a schema identically, and its MySQL sentence lists the catalog rewrites that may differ. Measured on MySQL 8.0 with the real introspector against the file parser, these still differ and are neither normalized nor named:
+- `DEFAULT NOW()` → introspected `current_timestamp()`, parsed `now()`
+- `DEFAULT NOW(3)` → introspected `current_timestamp(3)`, parsed `now(3)`
+- `DEFAULT LOCALTIMESTAMP` → introspected `current_timestamp()`, parsed `localtimestamp()`
+- CHECK `m regexp '^[a-z]+$'` → introspected `regexp_like(m, '^[a-z]+$')`, parsed `m regexp '^[a-z]+$'`
+- CHECK `not (u > 200)` → introspected `u <= 200`, parsed `not u > 200`
+
+The manifest's `default` / CHECK text differs by source, unannounced, for DDL as common as `created_at DATETIME DEFAULT NOW()`. `default_kind` is "function" on both, and the Go code is unaffected.
+
+**Root cause.** MySQL respells current-time synonyms. A bare keyword default `NOW` / `LOCALTIME` / `LOCALTIMESTAMP` is stored as `CURRENT_TIMESTAMP` (with `DEFAULT_GENERATED`). Inside an expression default the catalog writes `now()`: `DEFAULT (NOW())` and `DEFAULT (LOCALTIMESTAMP())` give `now()`, and `DEFAULT (NOW() + INTERVAL 1 DAY)` gives `(now() + interval 1 day)`. `CURRENT_DATE` / `CURRENT_TIME` come back as `curdate()` / `curtime()`. MySQL also rewrites `REGEXP` / `RLIKE` and folds `NOT` in every stored expression (CHECK, generated column, expression default), not only in `check_clause`. `exprText` (`parser/mysql/mysql.go:64`) only drops charset introducers, so the parser keeps the DDL's spelling, while `mysqlDefault` (`parser/introspect/mysql.go:661`) and the CHECK path (`NormalizeExpr`, `mysql.go:601`) return the catalog's.
+
+**Suggested fix.** Ruled 2026-10-05 (user): normalize the defaults, and name the CHECK rewrites.
+- In `exprText`'s Rewrite callback, rename the time-function synonyms through an unexported `currentTimeSynonyms` map, keeping the `Fsp` precision:
+  - a `CurTimeFuncExpr` named `now`, `localtime` or `localtimestamp` becomes `current_timestamp`;
+  - `curtime` becomes `current_time`;
+  - an unqualified, zero-argument `FuncExpr` named `curdate` becomes `current_date`.
+  Both sources go through `exprText`, so bare defaults, expression defaults and `LOCALTIMESTAMP()` → `now()` all converge. Update the `exprText` and `NormalizeExpr` doc comments.
+- `TestNormalizeExpr`: add 9 cases (now, now(3), LOCALTIME, LOCALTIMESTAMP(6), now inside an expression, curdate, CURRENT_DATE, CURTIME(2), and UTC_TIMESTAMP as a non-synonym control).
+- `TestMySQLIntrospect_Defaults`: add 7 columns (NOW(), NOW(3), LOCALTIMESTAMP, LOCALTIME(6), `(LOCALTIMESTAMP() + INTERVAL 1 DAY)`, `(CURRENT_DATE)`, `(CURTIME())`), each asserted equal on both sources, plus `assertSchemaParity`.
+- `TestMySQLIntrospect_CatalogRewrites` (`parser/introspect/mysql_integration_test.go`):
+  - pin on both sources 12 CHECKs (regexp, rlike, not regexp, not cmp, `!`, not in, not between, not is null, double not, not-and, not on a bare column, not like kept) and one generated column `AS (not (qty > 3))`;
+  - its doc comment names both rewrites.
+- PRD §6.1:
+  - the normalization sentence says a MySQL current-time synonym takes its standard name under both sources;
+  - the MySQL catalog-rewrite sentence names, for any stored expression, the REGEXP/RLIKE → `regexp_like(…)` rewrite and the NOT-folding rule. That covers inverted comparisons; IN, BETWEEN and IS NULL gaining or losing NOT; double NOT cancelling; De Morgan over AND/OR; and `not x` → `0 = x`. NOT over LIKE/REGEXP is kept.
+- Changed from the original:
+  - the default normalization widens to `CURDATE()` / `CURRENT_DATE` and `CURTIME()` / `CURRENT_TIME` (same root cause, same fix site, measured mismatch);
+  - the PRD naming covers the whole NOT-folding rule and REGEXP/RLIKE in every stored expression. The original narrow wording (`NOT (a > b)` in CHECK) would leave measured differences unnamed: "u <= 1 or v <= 1", "v != 3", "0 = u";
+  - the parser still keeps those rewrites and only names them, per the ruling.
+- Auto-accepted the recommended option on 2026-10-07 (`/fix` auto-accept rule): which name do `CURDATE()` / `CURRENT_DATE` and `CURTIME()` / `CURRENT_TIME` normalize to? → `current_date()` / `current_time()`, matching the ruled `current_timestamp`. Conditions held: it was prototyped with green gates; there is no golden churn against the `curdate` / `curtime` alternative, since no example uses either; it adds no public surface (`currentTimeSynonyms` is unexported, and `NormalizeExpr` changes only its doc); and it reverses no ruling (it adds PRD text for an unspecified case).
+- Prototype results, run at `dcc7eeeb` on 2026-10-07:
+  - Reproduction: a throwaway probe (`parser/introspect/zz_probe_fix268_test.go`, since deleted) on testcontainers MySQL 8.0; `cd parser && go test -count=1 -run TestZZProbeFix268 ./introspect/`. `assertSchemaParity` diff (-parsed +introspected):
+    - `Default: "now()"` / `"current_timestamp()"`
+    - `"now(3)"` / `"current_timestamp(3)"`
+    - `"localtimestamp()"` / `"current_timestamp()"`
+    - `"localtime()"` / `"current_timestamp()"`
+    - `"localtimestamp(6)"` / `"current_timestamp(6)"`
+    - `"current_date()"` / `"curdate()"`
+    - `"current_time()"` / `"curtime()"`
+    - `"localtimestamp()"` / `"now()"` (from `DEFAULT (LOCALTIMESTAMP())`)
+    - `CheckExpression: "m regexp '^[a-z]+$'"` / `"regexp_like(m, '^[a-z]+$')"`
+    - `"not u > 200"` / `"u <= 200"`
+    All five of the Issue's bullets reproduce. With the prototype, only the named REGEXP and NOT rewrites remain.
+  - NOT-folding cases measured on raw catalog text:
+    - `!(v < 0)` → "v >= 0"
+    - `not (v = 3)` → "v != 3"
+    - `not (u <> 9)` → "u = 9"
+    - `not (v in (1,2))` → "v not in (1, 2)"
+    - `not (v not in (4,5))` → "v in (4, 5)"
+    - `not (u between 1 and 5)` → "u not between 1 and 5"
+    - `not (u is null)` → "u is not null"
+    - `not (not (u > 7))` → "u > 7"
+    - `not (u > 1 and v > 1)` → "u <= 1 or v <= 1"
+    - `not (u > 1 or v is null)` → "u <= 1 and v is not null"
+    - `not (u)` → "0 = u"
+    - `not (m like 'z%')` → kept as "not m like 'z%'"
+    - `m not regexp 'y'` → "not regexp_like(m, 'y')"
+    - `m rlike 'x'` → "regexp_like(m, 'x')"
+    - generated column `AS (not (u > 3))` → "u <= 3"; expression default `DEFAULT (not (1 > 2))` → "1 <= 2"
+  - Gates:
+    - `cd parser && go test -race -count=1 ./...` → ok (MySQL 8.0 and PG 16 containers);
+    - `golangci-lint run ./...` → 0 issues;
+    - `gofumpt -l parser/introspect parser/mysql` → clean;
+    - `cd cmd/sqlgen && go test -race -count=1 ./...` → all ok (incl. `TestE2EGoldenFiles`, cli, mcp/integration).
+  - Fail-first:
+    - `CurTimeFuncExpr` rename reverted → `TestNormalizeExpr` fails: `NormalizeExpr("NOW()") = "now()", want "current_timestamp()"`. `TestMySQLIntrospect_Defaults` also fails: `- "now_at": "current_timestamp()", + "now_at": "now()"`, and parity shows `- Default: "now(3)" + Default: "current_timestamp(3)"`.
+    - `curdate` case reverted → `NormalizeExpr("curdate()") = "curdate()", want "current_date()"` and `- "today": "current_date()", + "today": "curdate()"`.
+    - The `_CatalogRewrites` additions are test-only pins of database behavior and pass with `exprText` at HEAD.
+    - The existing suite without the fix (`go test -race -count=1 ./mysql/ ./introspect/` at HEAD) → passes.
+  - Golden churn: none (no example DDL uses a current-time synonym).
+  - Patch: `.claude/prototypes/FIX-268.patch` (4 files, +114/-28).
+
+**References.**
+- PRD §6.1; `docs/design/INTROSPECTION.md` Q5, Q13, M9.
+- phase-30.md ground rule: a lasting user-visible parity exception is written into §6.1.
+- Parallel: the PRD §6.1 "PostgreSQL expression text the catalog rewrites" paragraph (30.4).
+
+**Resolution notes.** Applied the vetted prototype cleanly at `64755e5f`, since it was fresh against `dcc7eeeb`. `exprText` (`parser/mysql/mysql.go`) renames MySQL current-time synonyms through the unexported `currentTimeSynonyms` map and keeps their `Fsp`: `now` / `localtime` / `localtimestamp` → `current_timestamp`, `curtime` → `current_time`, and an unqualified zero-argument `curdate` → `current_date`. Both sources go through `exprText`, so bare and expression defaults converge. The `exprText` / `NormalizeExpr` doc comments were updated. PRD §6.1 states the synonym normalization and names the MySQL REGEXP/RLIKE → `regexp_like(…)` and NOT-folding catalog rewrites for every stored expression. Tests: 9 `TestNormalizeExpr` cases, 7 `TestMySQLIntrospect_Defaults` columns, and 12 CHECKs plus 1 generated column pinned on both sources in `TestMySQLIntrospect_CatalogRewrites`. Fail-first: with `mysql.go` at HEAD, 7 `TestNormalizeExpr` cases fail (`NormalizeExpr("NOW()") = "now()", want "current_timestamp()"`), and `TestMySQLIntrospect_Defaults` fails on the new columns. Gates: `make check` ok; `cd parser && go test -race -count=1 ./...` ok (MySQL 8.0 containers); `make check-examples` ok. Golden churn: none, matching the vet. Inline: `docs/design/INTROSPECTION.md`'s `TestMySQLIntrospect_Defaults` row now lists the current-time synonyms. `/verify FIX-268` agreed with the reviewer on every finding. It corrected two facts in this entry (12 CHECKs, not 13; `exprText` is at `mysql.go:64`) and sent one pre-existing `classifyDefaultKind` finding to the backlog.
 
 ### FIX-259
 

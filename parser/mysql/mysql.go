@@ -39,8 +39,10 @@ func New() (*Parser, error) {
 
 // NormalizeExpr rewrites the SQL expression expr in the form the parser writes
 // expressions, so text read from the catalog compares equal to parsed DDL.
-// Redundant parentheses, backticks and charset introducers are dropped:
-// "(`qty` * 2)" becomes "qty * 2", and "_utf8mb4'x'" becomes "'x'".
+// Redundant parentheses, backticks and charset introducers are dropped, and a
+// current-time synonym takes its standard name: "(`qty` * 2)" becomes
+// "qty * 2", "_utf8mb4'x'" becomes "'x'", and "now(3)" becomes
+// "current_timestamp(3)".
 func NormalizeExpr(expr string) (string, error) {
 	vp, err := sqlparser.New(sqlparser.Options{})
 	if err != nil {
@@ -53,17 +55,38 @@ func NormalizeExpr(expr string) (string, error) {
 	return exprText(e), nil
 }
 
-// exprText writes e without charset introducers. MySQL's catalog adds the
+// exprText writes e without charset introducers and with each synonym of a
+// current-time function under its standard name. MySQL's catalog adds the
 // connection charset's introducer to every string literal in a stored
-// expression, so neither source keeps them.
+// expression, and respells the synonyms: DEFAULT NOW() reads back as
+// CURRENT_TIMESTAMP, DEFAULT (CURRENT_DATE) as curdate(). So neither source
+// keeps the DDL's spelling.
 func exprText(e sqlparser.Expr) string {
 	e = sqlparser.Rewrite(sqlparser.CloneExpr(e), nil, func(c *sqlparser.Cursor) bool {
-		if intro, ok := c.Node().(*sqlparser.IntroducerExpr); ok {
-			c.Replace(intro.Expr)
+		switch n := c.Node().(type) {
+		case *sqlparser.IntroducerExpr:
+			c.Replace(n.Expr)
+		case *sqlparser.CurTimeFuncExpr:
+			if name, ok := currentTimeSynonyms[n.Name.Lowered()]; ok {
+				c.Replace(&sqlparser.CurTimeFuncExpr{Name: sqlparser.NewIdentifierCI(name), Fsp: n.Fsp})
+			}
+		case *sqlparser.FuncExpr:
+			if n.Qualifier.IsEmpty() && n.Name.Lowered() == "curdate" && len(n.Exprs) == 0 {
+				c.Replace(&sqlparser.FuncExpr{Name: sqlparser.NewIdentifierCI("current_date")})
+			}
 		}
 		return true
 	}).(sqlparser.Expr)
 	return sqlparser.String(e)
+}
+
+// currentTimeSynonyms maps each MySQL synonym of a current-time function to
+// the standard name exprText writes.
+var currentTimeSynonyms = map[string]string{
+	"now":            "current_timestamp",
+	"localtime":      "current_timestamp",
+	"localtimestamp": "current_timestamp",
+	"curtime":        "current_time",
 }
 
 // QuoteLiteral writes value as a string literal in the form the parser
