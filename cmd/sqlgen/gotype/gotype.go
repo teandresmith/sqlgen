@@ -511,7 +511,9 @@ func (r *Resolver) IsSet(sqlType string) bool {
 // or domain in schema. It resolves a bare enum, SET or domain name as
 // schema.name first and as the bare name second, so a column whose type lives
 // in its own schema resolves even when another schema has a type by the same
-// name (PRD §7.1). Overrides, integrations and built-in mappings are unchanged.
+// name (PRD §7.1). Override and integration keys are tried as schema.type
+// before type, for the same reason (see lookupOverride). Built-in mappings are
+// unchanged.
 func (r *Resolver) ForSchema(schema string) *Resolver {
 	if r == nil {
 		return nil
@@ -690,9 +692,20 @@ func (r *Resolver) widenSumBase(base string) string {
 
 // lookupOverride searches an override map for a SQL type, trying the exact
 // type first and then falling back to the base type with modifiers stripped
-// (e.g., numeric(10,2) → numeric).
-func lookupOverride(m map[string]config.TypeOverride, sqlType string) (config.TypeOverride, bool) {
-	for _, key := range lookupKeys(sqlType) {
+// (e.g., numeric(10,2) → numeric). For a resolver scoped by ForSchema, a bare
+// type is first looked up qualified with the owner schema: both schema sources
+// write a type in the column's own schema bare, so without this a key written
+// app.status_enum would never reach the app schema's own columns (PRD §7.1).
+func (r *Resolver) lookupOverride(m map[string]config.TypeOverride, sqlType string) (config.TypeOverride, bool) {
+	keys := lookupKeys(sqlType)
+	if r.ownerSchema != "" && !strings.Contains(sqlType, ".") {
+		qualified := make([]string, 0, 2*len(keys))
+		for _, key := range keys {
+			qualified = append(qualified, r.ownerSchema+"."+key)
+		}
+		keys = append(qualified, keys...)
+	}
+	for _, key := range keys {
 		if override, ok := m[key]; ok {
 			return override, true
 		}
@@ -734,22 +747,22 @@ func (r *Resolver) resolveByType(sqlType string, nullable bool, tableOverrides m
 	scopedOverrides, scopedIntegrations := scopeIntegrations(tableOverrides)
 
 	// Step 2: Table-level overrides.types
-	if override, ok := lookupOverride(scopedOverrides, sqlType); ok {
+	if override, ok := r.lookupOverride(scopedOverrides, sqlType); ok {
 		return FromOverride(override, nullable)
 	}
 
 	// Step 3: Global overrides.types
-	if override, ok := lookupOverride(r.globalOverrides, sqlType); ok {
+	if override, ok := r.lookupOverride(r.globalOverrides, sqlType); ok {
 		return FromOverride(override, nullable)
 	}
 
 	// Step 4: Built-in integrations. A table-scoped activation is the more
 	// specific of the two, so it is consulted first; both sit below every
 	// explicit override, per the chain in PRD §7.1.
-	if override, ok := lookupOverride(scopedIntegrations, sqlType); ok {
+	if override, ok := r.lookupOverride(scopedIntegrations, sqlType); ok {
 		return FromOverride(override, nullable)
 	}
-	if override, ok := lookupOverride(r.integrations, sqlType); ok {
+	if override, ok := r.lookupOverride(r.integrations, sqlType); ok {
 		return FromOverride(override, nullable)
 	}
 

@@ -141,9 +141,15 @@
 
 **Resolution notes.** _Filled in by `/fix resolve`._
 
+<!-- fixes:open:end -->
+
+## Resolved
+
+<!-- fixes:resolved:begin -->
+
 ### FIX-270
 
-- **Status:** Open
+- **Status:** Resolved
 - **Severity:** tracked
 - **Origin:** phase 30, `cmd/sqlgen/gotype`
 - **Surfaced by:** `/verify 30.4` (2026-10-05)
@@ -151,7 +157,7 @@
 
 **Issue.** Since 30.4, both schema sources write a PostgreSQL type in its column's own schema bare. So an `overrides.types."app.status_enum"` key no longer matches the column `app.accounts.status`, whose type is now written `status_enum`, and nothing warns (`config/validate.go` checks only `nullable`). An accepted key that silently does nothing is the PRD §4.13 accept-and-drop pattern.
 
-**Root cause.** `lookupOverride` (`cmd/sqlgen/gotype/gotype.go:694`) tries only the type as written and its modifier-stripped form. Unlike the enum, SET and domain lookup (`schemaTypeKey`), it never tries `<owner schema>.<type>`.
+**Root cause.** `lookupOverride` (`cmd/sqlgen/gotype/gotype.go:699`) tries only the type as written and its modifier-stripped form. Unlike the enum, SET and domain lookup (`schemaTypeKey`), it never tries `<owner schema>.<type>`.
 
 **Suggested fix.** Ruled 2026-10-05 (user): try the owner-qualified key.
 - In the override and integration steps, for a resolver scoped by `ForSchema`, look up `<ownerSchema>.<type>` (with and without modifiers, `[]` kept) before the bare keys, so a qualified key keeps matching its own-schema columns. A cross-schema column's type is already written qualified.
@@ -176,13 +182,7 @@
 - PRD §7.1, §4.13; 30.4 Completion Record ("Owner schema first").
 - `schemaTypeKey` / `ForSchema` (`cmd/sqlgen/gotype/gotype.go`), the pattern to mirror.
 
-**Resolution notes.** _Filled in by `/fix resolve`._
-
-<!-- fixes:open:end -->
-
-## Resolved
-
-<!-- fixes:resolved:begin -->
+**Resolution notes.** Applied the vetted prototype with `git apply --3way` at `6f8c18de`; all four files applied cleanly (FIX-268's PRD edit is in §6.1, this one in §7.1). `lookupOverride` (`cmd/sqlgen/gotype/gotype.go`) is now a `*Resolver` method: for a resolver scoped by `ForSchema` and a type not already qualified, it tries `<owner schema>.<key>` for every `lookupKeys` key (`[]` kept, modifiers stripped) before the bare keys. All four call sites use it (table and global overrides, scoped and global integrations), so the chain order is unchanged. The `ForSchema` doc comment is reworded, and PRD §7.1 "How steps 3–5 match a SQL type" states the owner-qualified lookup and that a qualified key wins over a bare one. Tests: `TestForSchema_QualifiedOverrideKey` (gotype, 11 cases) and `TestGenerate_QualifiedOverrideKey` (cli codegen). Fail-first: with the qualified-key block disabled, `TestForSchema_QualifiedOverrideKey` fails 6/11 (`ForSchema("app").Resolve("status_enum") = "AppStatusEnum", want "ext.Status"`) and `TestGenerate_QualifiedOverrideKey` fails on `Account.Status` / `Score`. Gates: `make check` ok; `make update-golden-e2e` and `make update-golden` → no churn, matching the vet; `make check-examples` ok. `/verify FIX-270` agreed with the reviewer on every finding; the landed diff matches the prototype byte for byte. It corrected the Root cause line ref (`gotype.go:699`) and extended backlog line 93 (`typeOverrideSource` warning key) with the table-scoped qualified-key variant.
 
 ### FIX-268
 

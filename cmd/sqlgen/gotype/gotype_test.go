@@ -1605,6 +1605,114 @@ func TestForSchema_ClassifiersAndOverrides(t *testing.T) {
 	}
 }
 
+// TestForSchema_QualifiedOverrideKey pins the owner-qualified override lookup:
+// both schema sources write a type in its column's own schema bare, so an
+// overrides.types key written schema.type must still reach that schema's own
+// columns, without reaching another schema's type of the same name (PRD §7.1).
+func TestForSchema_QualifiedOverrideKey(t *testing.T) {
+	ext := func(name string) config.TypeOverride {
+		return config.TypeOverride{Type: "ext." + name, Import: "example.com/ext"}
+	}
+	tests := []struct {
+		name   string
+		global map[string]config.TypeOverride
+		table  map[string]config.TypeOverride
+		owner  string
+		typ    string
+		want   string
+	}{
+		{
+			name:   "qualified key, own-schema column",
+			global: map[string]config.TypeOverride{"app.status_enum": ext("Status")},
+			owner:  "app",
+			typ:    "status_enum",
+			want:   "ext.Status",
+		},
+		{
+			name:   "qualified key, cross-schema column written qualified",
+			global: map[string]config.TypeOverride{"app.status_enum": ext("Status")},
+			owner:  "public",
+			typ:    "app.status_enum",
+			want:   "ext.Status",
+		},
+		{
+			name:   "qualified key does not leak to another schema's type",
+			global: map[string]config.TypeOverride{"app.status_enum": ext("Status")},
+			owner:  "billing",
+			typ:    "status_enum",
+			want:   "BillingStatusEnum",
+		},
+		{
+			name:   "qualified key needs an owner",
+			global: map[string]config.TypeOverride{"app.positive_int": ext("Score")},
+			typ:    "positive_int",
+			want:   "int32",
+		},
+		{
+			name:   "qualified domain key",
+			global: map[string]config.TypeOverride{"app.positive_int": ext("Score")},
+			owner:  "app",
+			typ:    "positive_int",
+			want:   "ext.Score",
+		},
+		{
+			name:   "bare key still matches",
+			global: map[string]config.TypeOverride{"status_enum": ext("Status")},
+			owner:  "app",
+			typ:    "status_enum",
+			want:   "ext.Status",
+		},
+		{
+			name:   "qualified key wins over bare",
+			global: map[string]config.TypeOverride{"status_enum": ext("Bare"), "app.status_enum": ext("Qualified")},
+			owner:  "app",
+			typ:    "status_enum",
+			want:   "ext.Qualified",
+		},
+		{
+			name:   "qualified array key keeps []",
+			global: map[string]config.TypeOverride{"app.status_enum[]": ext("Statuses")},
+			owner:  "app",
+			typ:    "status_enum[]",
+			want:   "ext.Statuses",
+		},
+		{
+			name:   "qualified key without modifiers",
+			global: map[string]config.TypeOverride{"app.positive_int": ext("Score")},
+			owner:  "app",
+			typ:    "positive_int(4)",
+			want:   "ext.Score",
+		},
+		{
+			name:  "qualified table-scoped key",
+			table: map[string]config.TypeOverride{"app.status_enum": ext("Table")},
+			owner: "app",
+			typ:   "status_enum",
+			want:  "ext.Table",
+		},
+		{
+			name:   "table scope still precedes global",
+			global: map[string]config.TypeOverride{"app.status_enum": ext("Global")},
+			table:  map[string]config.TypeOverride{"status_enum": ext("Table")},
+			owner:  "app",
+			typ:    "status_enum",
+			want:   "ext.Table",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			r := gotype.NewResolver("postgres", true, tt.global)
+			r.RegisterEnum("app", "status_enum", "AppStatusEnum")
+			r.RegisterEnum("billing", "status_enum", "BillingStatusEnum")
+			r.RegisterDomain("app", "positive_int", "integer")
+			got := r.ForSchema(tt.owner).Resolve(tt.typ, false, "c", nil, tt.table).Name
+			if got != tt.want {
+				t.Errorf("ForSchema(%q).Resolve(%q) = %q, want %q", tt.owner, tt.typ, got, tt.want)
+			}
+		})
+	}
+}
+
 // TestResolveAggregateSumWidening pins the dialect-specific SUM result-type
 // widening: PostgreSQL SUM(smallint|integer) → bigint and SUM(bigint) →
 // numeric; MySQL SUM(<integer>) → decimal; SQLite integers are already int64

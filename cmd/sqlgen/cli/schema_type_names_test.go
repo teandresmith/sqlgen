@@ -171,6 +171,59 @@ func TestGenerate_TypmodOverrideKey(t *testing.T) {
 	}
 }
 
+// TestGenerate_QualifiedOverrideKey generates a PostgreSQL schema against
+// overrides.types keys written schema-qualified. A key reaches the columns of
+// its type's own schema, where the type is written bare, as well as columns in
+// other schemas, where it is written qualified, and never another schema's
+// type of the same name (PRD §7.1).
+func TestGenerate_QualifiedOverrideKey(t *testing.T) {
+	cfgPath := writeSchemaProject(t, config.DialectPostgres, `
+		CREATE TYPE app.status_enum AS ENUM ('active', 'inactive');
+		CREATE TYPE billing.status_enum AS ENUM ('open', 'paid');
+		CREATE DOMAIN app.positive_int AS integer;
+		CREATE TABLE app.accounts (
+			id bigserial PRIMARY KEY,
+			status app.status_enum NOT NULL,
+			score app.positive_int NOT NULL
+		);
+		CREATE TABLE users (
+			id bigserial PRIMARY KEY,
+			status app.status_enum NOT NULL,
+			score app.positive_int NOT NULL
+		);
+		CREATE TABLE billing.invoices (
+			id bigserial PRIMARY KEY,
+			status billing.status_enum NOT NULL
+		);
+	`)
+	appendConfig(t, cfgPath, `overrides:
+  types:
+    "app.status_enum":
+      type: ext.Status
+      import: example.com/ext
+    "app.positive_int":
+      type: ext.Score
+      import: example.com/ext
+`)
+	if _, stderr, err := executeCommand("generate", "--config", cfgPath, "--quiet"); err != nil {
+		t.Fatalf("generate: unexpected error: %v\nstderr: %s", err, stderr)
+	}
+	files := parseGeneratedFiles(t, filepath.Join(filepath.Dir(cfgPath), "output"))
+
+	for _, c := range []struct {
+		typeName string
+		want     map[string]string
+	}{
+		{typeName: "Account", want: map[string]string{"ID": "int64", "Status": "ext.Status", "Score": "ext.Score"}},
+		{typeName: "User", want: map[string]string{"ID": "int64", "Status": "ext.Status", "Score": "ext.Score"}},
+		{typeName: "Invoice", want: map[string]string{"ID": "int64", "Status": "BillingStatusEnum"}},
+	} {
+		if diff := cmp.Diff(c.want, structFieldTypes(files, c.typeName)); diff != "" {
+			t.Errorf("%s field types mismatch (-want +got):\n%s", c.typeName, diff)
+		}
+	}
+}
+
 func appendConfig(t *testing.T, cfgPath, yaml string) {
 	t.Helper()
 	f, err := os.OpenFile(cfgPath, os.O_APPEND|os.O_WRONLY, 0o600) //nolint:gosec // test code, path is from controlled test dir
