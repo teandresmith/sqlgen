@@ -1063,6 +1063,7 @@ map straight on.
 - **Severity:** tracked
 - **Origin:** phase 6, `cmd/sqlgen/gen` (`connection.go.tmpl`)
 - **Surfaced by:** `/fix-vet FIX-293` (2026-10-08), filed at `/close-phase 30` (2026-10-08)
+- **Vetted:** ready at `be98918a` (2026-10-08; on top of FIX-293; ruled 2026-10-08 (A), the ruled option is the prototype)
 
 **Issue.** **A `Connection` cursor value that is a JSON array or object passes
 FIX-293's presence check and is not rejected as `ErrInvalidCursor`.** Measured in
@@ -1087,9 +1088,55 @@ placeholders or, when empty, a bare `$`.
   arrays/objects except for array-typed keys, or forbid array-typed cursor keys.
 - Tests: extend `TestConnection_CursorMissingKeyReturnsErrInvalidCursor` (sqlite)
   with `[]`, `[1,2]` and `{"a":1}` values.
+- Vet notes (scope): the root cause is wider than arrays and objects. `decodeCursor` decodes every value as untyped JSON (`any`), so a value never gets back its key column's Go type. Measured beyond arrays/objects: a `[]byte` key comes back as a base64 string; a `sql.Null*` key as a map; a PostgreSQL array key as `[]any`, expanded into several arguments; and a scalar of the wrong type (`"1"`, `true`, `1.5` for an int64 key) is silently accepted. No example has an array-typed cursor key (an AST scan of every example's `models/` found 171 cursor-key columns: int64 92, uuid.UUID 63, string 12, int32 3, `[]byte` 1, sqlite `binary_keys.id`). PRD §9.8's sample (`docs/PRD.md:6923-6935`, `decodeCursor(s string)`) is already stale against FIX-293's signature.
+- Pending the user's ruling: how should `Connection` decode cursor values?
+  - (A) Recommended by the vet, and prototyped: decode each value into its key column's Go type. `decodeCursor(s, keys)` returns `map[string]json.RawMessage` and keeps FIX-293's guard as `!ok || string(value) == "null"` (a JSON null unmarshals into int64 as a silent no-op, so the raw check must stay); a new `shared/_cursor_decode.tmpl` emits an unexported `decode<T>Cursor(encoded, keys)` per Connection entity with one `json.Unmarshal(raw[key], &row.<Field>)` case per cursor-key column; a new gen-internal `CursorKeyColumns []ColumnContext` on TableContext/ViewContext. Rejects every wrong-shape or wrong-type value as `ErrInvalidCursor`, and fixes three measured existing failures: the sqlite `binary_keys` `[]byte` key whose page 2 repeats page 1 (infinite pagination in a shipped example), `sql.Null*` keys under `use_pointers: false` (every page 2 fails with a driver error), and PG array keys (every page 2 fails with "expected 3 arguments, got 5"). Makes §14.2's "Type-preserving" claim true. Cost: ~7.4k generated lines across all 12 examples (2–3 files per tree each; sqlite 24 each), one unexported function per Connection entity; no exported identifier, no config key. PRD §9.8's sample and §14.2 "Invalid cursors" need updating (not prototyped).
+  - (B) Keep `any` and reject `[]any` / `map[string]any` except for array-typed keys: 27 files, +54/-29 for the simple form (the array exemption needs a per-entity key list and FIX-293-like call-site churn). The binary_keys page repeat and wrong-scalar acceptance stay; legitimate `sql.Null*` cursors become `ErrInvalidCursor` on the client's own cursor; array keys stay broken.
+  - (C) Forbid array-typed cursor keys (a new §4.13 validation error) and reject arrays/objects unconditionally: B's churn plus validation code and PRD text; no example affected. The PG array failure becomes a generation-time error; the `[]byte` and `sql.Null*` problems remain.
+  - Not auto-accepted: A churns ~7.4k lines against B's 54.
+- Prototype results (option A), run at `be98918a` + FIX-293 on 2026-10-08 (the patch assumes FIX-293 has landed):
+  - Reproduction (sqlite probe, since deleted): table After `{"id":[]}` → `SQL logic error: unrecognized token: "$" (1)`; `{"id":[1,2]}` → `err=<nil>`; `{"id":{"a":1}}` → `unsupported type map[string]interface {}, a map`; `{"id":"1"}` / `true` / `1.5` → `err=<nil>`; a composite with `"tag_name":[1,2]` → `err=<nil>`; binary_keys First:1 → p1 `"zz-a"`, cursor `{"id":"enotYQ=="}`, p2 → `"zz-a"` again. Config probes: `use_pointers: false` + `cursor_keys: [description, id]` → page 2 `sql: converting argument $1 type: unsupported type map[string]interface {}, a map`; postgres `profiles.cursor_keys: [scores, id]` (`[]int32`) → page 2 `expected 3 arguments, got 5`.
+  - With A: every tampered shape → `sqlgen: invalid cursor`; binary_keys page 2 → `"conn-bin-b"`; the `sql.NullString` key pages; the PG `[]int32` key pages, and its tampered values → `sqlgen: invalid cursor`.
+  - Tests: `TestConnection_CursorWrongShapeReturnsErrInvalidCursor` (sqlite, 6 cases), `TestConnection_BinaryKeyCursorAdvances`, unit `TestPaginationTableTemplate_decodeCursor` / `…_decodeCursorMultiKeys`, updated connection/pagination/view unit patterns and unit goldens.
+  - Gates: `go -C cmd/sqlgen test -race -count=1 ./gen/...` → ok; `make update-golden` / `make update-golden-e2e` → ok; `TestE2EGoldenFiles` → ok; `gofumpt` / `golangci-lint ./gen/...` → clean; all 12 examples `GOWORK=off go test -race -count=1 ./...` → ok and lint → 0 issues.
+  - Fail-first: the 3 templates reverted to FIX-293's untyped decode → the wrong-shape test fails all 6 and `TestConnection_BinaryKeyCursorAdvances` fails (`"conn-bin-a", - "conn-bin-b", + "conn-bin-a"…`); dropping only `|| string(value) == "null"` → FIX-293's missing-key test fails 3 cases; the existing suite without the fix → passes.
+  - Patch: `.claude/prototypes/FIX-295.patch` (121 files, +7480/-740; source and tests 11 files, +249/-16).
+- The user ruled on 2026-10-08: (A), decode each cursor value into its key column's Go type. This matches the prototype; PRD §9.8's sample and §14.2 "Invalid cursors" are updated when it lands.
+
 
 **References.**
 - PRD §14.2 "Invalid cursors"; FIX-293.
+
+**Resolution notes.** _Filled in by `/fix resolve`._
+
+### FIX-296
+
+- **Status:** Open
+- **Severity:** tracked
+- **Origin:** phase 30, `parser/mysql`
+- **Surfaced by:** `/fix-vet FIX-294` (2026-10-08), filed at `/close-phase 30` (2026-10-08)
+
+**Issue.** **The MySQL file parser matches `ALTER TABLE … DROP INDEX` names
+case-sensitively, while MySQL index names are case-insensitive.** Measured:
+`CREATE TABLE v2 (a int, KEY A (a)); ALTER TABLE v2 DROP INDEX a;` → the parser
+keeps `INDEX A [a]` (throwaway unit probe), while MySQL 8.0.46 drops it
+(`information_schema.statistics` has no rows for `v2`), so `indexes[]` differs by
+source (PRD §6.1).
+
+**Root cause.** The DROP INDEX path compares key names exactly:
+`removeConstraintFromColumns` (`c.Name == name`) and
+`delete(p.generated[…], name)` in `parser/mysql/mysql.go`. FIX-294's own
+`exprKeys` drop already uses `strings.EqualFold`.
+
+**Suggested fix.**
+- Match the dropped key name case-insensitively at every DROP INDEX / DROP KEY
+  site (constraints, the generated FK-index map), as FIX-294's `exprKeys` drop
+  does; check RENAME INDEX for the same comparison.
+- Tests: a parser unit case (`KEY A (a)` then `DROP INDEX a`) and a
+  `mysql_integration_test.go` parity case with `assertSchemaParity`.
+
+**References.**
+- PRD §6.1; FIX-294 (`exprKeys` case-insensitive drop), FIX-287 (DROP INDEX `PRIMARY`).
 
 **Resolution notes.** _Filled in by `/fix resolve`._
 
