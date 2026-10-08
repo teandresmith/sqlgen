@@ -80,12 +80,13 @@ type sqliteTableRef struct {
 
 func (si *SQLiteIntrospector) introspectTables(ctx context.Context, schema *parser.Schema, opts IntrospectionOptions) error {
 	// A virtual table's shadow tables (type 'shadow') are its storage, not
-	// part of the schema.
+	// part of the schema. SQLite reserves the sqlite_ prefix, ignoring case;
+	// the _ is escaped because LIKE reads it as a wildcard.
 	rows, err := si.db.QueryContext(ctx, `
 		SELECT tl.name, tl.type = 'virtual', tl.wr, tl.strict, COALESCE(m.sql, '')
 		FROM pragma_table_list AS tl
 		LEFT JOIN sqlite_master AS m ON m.type = 'table' AND m.name = tl.name
-		WHERE tl.schema = 'main' AND tl.type IN ('table', 'virtual') AND tl.name NOT LIKE 'sqlite_%'
+		WHERE tl.schema = 'main' AND tl.type IN ('table', 'virtual') AND tl.name NOT LIKE 'sqlite\_%' ESCAPE '\'
 		ORDER BY tl.name`)
 	if err != nil {
 		return fmt.Errorf("introspect sqlite tables: %w", err)
@@ -210,7 +211,7 @@ func (si *SQLiteIntrospector) introspectViews(ctx context.Context, schema *parse
 	rows, err := si.db.QueryContext(ctx, `
 		SELECT name, sql
 		FROM sqlite_master
-		WHERE type = 'view' AND name NOT LIKE 'sqlite_%'
+		WHERE type = 'view' AND name NOT LIKE 'sqlite\_%' ESCAPE '\'
 		ORDER BY name`)
 	if err != nil {
 		return fmt.Errorf("introspect sqlite views: %w", err)

@@ -979,6 +979,32 @@ func TestSQLiteIntrospect_QuotedNames(t *testing.T) {
 	}
 }
 
+// Only SQLite's own sqlite_ objects are left out; a user table or view whose
+// name merely starts with "sqlite" is introspected.
+func TestSQLiteIntrospect_ReservedPrefix(t *testing.T) {
+	requireDatabases(t)
+	ddl := `
+		CREATE TABLE sqlitex (id INTEGER PRIMARY KEY, v TEXT);
+		CREATE TABLE sqlite1 (id INTEGER PRIMARY KEY);
+		CREATE TABLE SQLiteZ (id INTEGER PRIMARY KEY);
+		CREATE TABLE seq (id INTEGER PRIMARY KEY AUTOINCREMENT)
+	`
+	const view = "sqlite1v"
+	dbPath := applySQLite(t, ddl+`; CREATE VIEW sqlite1v AS SELECT id, v FROM sqlitex; ANALYZE`)
+	introspected := introspectSQLite(t, dbPath, introspect.IntrospectionOptions{ExcludeTables: []string{view}})
+	parsed := parseStatements(t, sqlite.New(), ddl)
+
+	if diff := cmp.Diff([]string{"SQLiteZ", "seq", "sqlite1", "sqlitex"}, tableNames(introspected)); diff != "" {
+		t.Errorf("introspected tables mismatch (-want +got):\n%s", diff)
+	}
+	assertSchemaParity(t, "sqlite", parsed, introspected)
+
+	views := introspectSQLite(t, dbPath, introspect.IntrospectionOptions{}).Views
+	if len(views) != 1 || views[0].Name != view {
+		t.Errorf("introspected views %+v, want only %s", views, view)
+	}
+}
+
 func TestSQLiteIntrospect_Checks(t *testing.T) {
 	requireDatabases(t)
 	parsed, introspected := sqliteSchemas(t, `

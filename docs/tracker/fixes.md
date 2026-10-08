@@ -23,57 +23,6 @@
 
 <!-- fixes:open:begin -->
 
-### FIX-273
-
-- **Status:** Open
-- **Severity:** tracked
-- **Origin:** phase 30, `parser/introspect`
-- **Surfaced by:** backlog promotion at `/close-phase 30` (2026-10-07); first recorded by 30.6 (2026-10-05)
-- **Vetted:** corrected at `d51ace1b` (2026-10-07)
-
-**Issue.** **The SQLite introspector silently drops user tables and views
-whose name matches `sqlite_%` as a LIKE pattern, such as `sqlitex`.** `_` is
-a LIKE wildcard, so the filter meant for SQLite's reserved `sqlite_` prefix
-also matches `sqlitex`, `sqlite1` and so on (and, because LIKE ignores case, `SQLiteZ`); the file parser keeps the tables. The file parser never yields views (it skips `CREATE VIEW`), so for views the loss is introspection-only.
-Measured evidence from the backlog line: "probe `CREATE TABLE sqlitex` →
-parsed `[sqlitex]`, introspected `[]`; `parser/introspect/sqlite.go` table and
-view queries".
-
-**Root cause.** `introspectTables` filters `tl.name NOT LIKE 'sqlite_%'`
-(`parser/introspect/sqlite.go:88`) and `introspectViews` filters `name NOT
-LIKE 'sqlite_%'` (`parser/introspect/sqlite.go:213`), with the `_`
-unescaped.
-
-**Suggested fix.**
-- Escape the underscore at both sites: `NOT LIKE 'sqlite\_%' ESCAPE '\'`
-  (LIKE stays case-insensitive, matching SQLite's case-insensitive reserved
-  prefix), or compare `substr(lower(name), 1, 7) <> 'sqlite_'`.
-- Tests: an `assertSchemaParity` case in
-  `parser/introspect/introspect_integration_test.go` with a table `sqlitex`
-  and a view `sqlite1v` (both present on both sources), and a check that
-  `sqlite_sequence` (from an AUTOINCREMENT table) is still left out.
-- Changed from the original: the view half is checked by asserting the introspected `Views` directly, not by schema parity. The SQLite file parser skips every `CREATE VIEW` with a warning (`parser/sqlite/sqlite.go:75-77`), so no parity case can have "a view `sqlite1v` present on both sources". The table half uses parity as suggested. The SQL change is the first option above.
-- Prototype results, run at `d51ace1b` on 2026-10-07:
-  - Reproduction: a throwaway probe (`parser/introspect/zz_probe_fix273_test.go`, since deleted) with `CREATE TABLE sqlitex(...); CREATE TABLE sqlite1(...); CREATE TABLE SQLiteZ(...); CREATE TABLE seq (id INTEGER PRIMARY KEY AUTOINCREMENT); CREATE VIEW sqlite1v AS SELECT id, v FROM sqlitex`. `go test -race -count=1 -run TestZZProbeFix273 -v ./parser/introspect/` → "parsed tables: [sqlitex sqlite1 SQLiteZ seq]" / "introspected tables: [seq]" / "introspected views: []". LIKE is case-insensitive, so mixed-case `SQLiteZ` is dropped too. A second probe listed the `pragma_table_list` rows the filter must still drop after AUTOINCREMENT, CREATE INDEX and ANALYZE: `sqlite_schema`, `sqlite_sequence`, `sqlite_stat1`, `sqlite_stat4`.
-  - Prototype:
-    - both filters become `NOT LIKE 'sqlite\_%' ESCAPE '\'` (`sqlite.go:89`, `:214`), with a comment saying SQLite reserves the prefix case-insensitively and that `_` is a LIKE wildcard;
-    - new `TestSQLiteIntrospect_ReservedPrefix`: tables `sqlitex`, `sqlite1`, `SQLiteZ`, AUTOINCREMENT `seq`; the introspected names must be exactly `[SQLiteZ seq sqlite1 sqlitex]`, then `assertSchemaParity` (view excluded, as in `_QuotedNames`), and the only introspected view must be `sqlite1v`.
-  - Gates: `go test -race -count=1 ./parser/introspect/...` → ok; `golangci-lint run ./introspect/...` → 0 issues; `gofumpt -l parser/introspect/` → clean.
-  - Fail-first:
-    - table query reverted → `TestSQLiteIntrospect_ReservedPrefix` fails: "introspected tables mismatch (-want +got): - "SQLiteZ", "seq", - "sqlite1", …" and "sqlite: introspected schema differs from the file parser's";
-    - view query reverted → "introspected views [], want only sqlite1v";
-    - the existing suite without the fix → passes.
-  - Golden churn: none.
-  - Patch: `.claude/prototypes/FIX-273.patch` (2 files, +30/-3).
-
-
-**References.**
-- PRD §6.1 (same tables by source), §6.3 (SQLite introspection), §6.4.
-- `TestSQLiteIntrospect` / `TestSQLiteIntrospectViews`
-  (`parser/introspect/introspect_integration_test.go:365`, `:1945`).
-
-**Resolution notes.** _Filled in by `/fix resolve`._
-
 ### FIX-274
 
 - **Status:** Open
@@ -1311,6 +1260,56 @@ map straight on.
 ## Resolved
 
 <!-- fixes:resolved:begin -->
+
+### FIX-273
+
+- **Status:** Resolved
+- **Severity:** tracked
+- **Origin:** phase 30, `parser/introspect`
+- **Surfaced by:** backlog promotion at `/close-phase 30` (2026-10-07); first recorded by 30.6 (2026-10-05)
+- **Vetted:** corrected at `d51ace1b` (2026-10-07)
+
+**Issue.** **The SQLite introspector silently drops user tables and views
+whose name matches `sqlite_%` as a LIKE pattern, such as `sqlitex`.** `_` is
+a LIKE wildcard, so the filter meant for SQLite's reserved `sqlite_` prefix
+also matches `sqlitex`, `sqlite1` and so on (and, because LIKE ignores case, `SQLiteZ`); the file parser keeps the tables. The file parser never yields views (it skips `CREATE VIEW`), so for views the loss is introspection-only.
+Measured evidence from the backlog line: "probe `CREATE TABLE sqlitex` →
+parsed `[sqlitex]`, introspected `[]`; `parser/introspect/sqlite.go` table and
+view queries".
+
+**Root cause.** `introspectTables` filters `tl.name NOT LIKE 'sqlite_%'`
+(`parser/introspect/sqlite.go:88`) and `introspectViews` filters `name NOT
+LIKE 'sqlite_%'` (`parser/introspect/sqlite.go:213`), with the `_`
+unescaped.
+
+**Suggested fix.**
+- Escape the underscore at both sites: `NOT LIKE 'sqlite\_%' ESCAPE '\'`
+  (LIKE stays case-insensitive, matching SQLite's case-insensitive reserved
+  prefix), or compare `substr(lower(name), 1, 7) <> 'sqlite_'`.
+- Tests: an `assertSchemaParity` case in
+  `parser/introspect/introspect_integration_test.go` with a table `sqlitex`
+  and a view `sqlite1v` (both present on both sources), and a check that
+  `sqlite_sequence` (from an AUTOINCREMENT table) is still left out.
+- Changed from the original: the view half is checked by asserting the introspected `Views` directly, not by schema parity. The SQLite file parser skips every `CREATE VIEW` with a warning (`parser/sqlite/sqlite.go:75-77`), so no parity case can have "a view `sqlite1v` present on both sources". The table half uses parity as suggested. The SQL change is the first option above.
+- Prototype results, run at `d51ace1b` on 2026-10-07:
+  - Reproduction: a throwaway probe (`parser/introspect/zz_probe_fix273_test.go`, since deleted) with `CREATE TABLE sqlitex(...); CREATE TABLE sqlite1(...); CREATE TABLE SQLiteZ(...); CREATE TABLE seq (id INTEGER PRIMARY KEY AUTOINCREMENT); CREATE VIEW sqlite1v AS SELECT id, v FROM sqlitex`. `go test -race -count=1 -run TestZZProbeFix273 -v ./parser/introspect/` → "parsed tables: [sqlitex sqlite1 SQLiteZ seq]" / "introspected tables: [seq]" / "introspected views: []". LIKE is case-insensitive, so mixed-case `SQLiteZ` is dropped too. A second probe listed the `pragma_table_list` rows the filter must still drop after AUTOINCREMENT, CREATE INDEX and ANALYZE: `sqlite_schema`, `sqlite_sequence`, `sqlite_stat1`, `sqlite_stat4`.
+  - Prototype:
+    - both filters become `NOT LIKE 'sqlite\_%' ESCAPE '\'` (`sqlite.go:89`, `:214`), with a comment saying SQLite reserves the prefix case-insensitively and that `_` is a LIKE wildcard;
+    - new `TestSQLiteIntrospect_ReservedPrefix`: tables `sqlitex`, `sqlite1`, `SQLiteZ`, AUTOINCREMENT `seq`; the introspected names must be exactly `[SQLiteZ seq sqlite1 sqlitex]`, then `assertSchemaParity` (view excluded, as in `_QuotedNames`), and the only introspected view must be `sqlite1v`.
+  - Gates: `go test -race -count=1 ./parser/introspect/...` → ok; `golangci-lint run ./introspect/...` → 0 issues; `gofumpt -l parser/introspect/` → clean.
+  - Fail-first:
+    - table query reverted → `TestSQLiteIntrospect_ReservedPrefix` fails: "introspected tables mismatch (-want +got): - "SQLiteZ", "seq", - "sqlite1", …" and "sqlite: introspected schema differs from the file parser's";
+    - view query reverted → "introspected views [], want only sqlite1v";
+    - the existing suite without the fix → passes.
+  - Golden churn: none.
+  - Patch: `.claude/prototypes/FIX-273.patch` (2 files, +30/-3).
+
+**References.**
+- PRD §6.1 (same tables by source), §6.3 (SQLite introspection), §6.4.
+- `TestSQLiteIntrospect` / `TestSQLiteIntrospectViews`
+  (`parser/introspect/introspect_integration_test.go:365`, `:1971`).
+
+**Resolution notes.** Applied the vetted prototype clean (fresh since `d51ace1b`). Both SQLite filters now read `NOT LIKE 'sqlite\_%' ESCAPE '\'` (`introspectTables` and `introspectViews` in `parser/introspect/sqlite.go`), so only SQLite's own `sqlite_` objects (case-insensitive) are left out. New `TestSQLiteIntrospect_ReservedPrefix` in `parser/introspect/introspect_integration_test.go` runs `ANALYZE` after the DDL and asserts the introspected tables are exactly `[SQLiteZ seq sqlite1 sqlitex]` (so `sqlite_sequence`, `sqlite_stat1` and `sqlite_stat4` stay out; the `ANALYZE` was added at verify, on the reviewer's suggestion, and a filter of `NOT IN ('sqlite_sequence', 'sqlite_schema')` now fails it with `sqlite_stat1` and `sqlite_stat4` introspected), runs `assertSchemaParity`, and checks the only introspected view is `sqlite1v`. Fail-first re-run on the final code: table filter reverted → "introspected tables mismatch" + "introspected schema differs from the file parser's"; view filter reverted → "introspected views [], want only sqlite1v". `make check` and `make check-examples` green; no golden churn. Inline: the References line ref for `TestSQLiteIntrospectViews` updated `:1945` → `:1971`.
 
 ### FIX-272
 
