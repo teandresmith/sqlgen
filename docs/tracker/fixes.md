@@ -23,7 +23,684 @@
 
 <!-- fixes:open:begin -->
 
-_No open fixes._
+### FIX-271
+
+- **Status:** Open
+- **Severity:** tracked
+- **Origin:** phase 30, `parser/mysql` + `cmd/sqlgen/gotype`
+- **Surfaced by:** backlog promotion at `/close-phase 30` (2026-10-07); first recorded by 30.5 (2026-10-05), with the ZEROFILL line from the 30.5 reviewer (2026-10-05) and the alias line from 30.8b (2026-10-06)
+
+**Issue.** **MySQL type synonyms and ZEROFILL non-integer types differ by
+source, and several change the Go type.** The catalog stores a synonym in
+its canonical form while the file parser keeps the DDL's spelling, so
+`database` and `files` give different column types, view column types,
+`overrides.types` keys and, for some, Go types, against PRD §6.1's "the same
+generated code and manifest". Measured evidence, quoted from the three
+backlog lines merged here:
+- (30.5) "the catalog stores `bool` / `boolean` as `tinyint(1)`, `integer` as `int`, `numeric(p,s)` as `decimal(p,s)`, `real` and `float(30)` as `double`, `decimal` / `decimal(5)` as `decimal(10,0)` / `decimal(5,0)`, `char` as `char(1)`, `bit` as `bit(1)`, `year(4)` as `year`, and `serial` as `bigint unsigned` AUTO_INCREMENT, while the parser keeps the DDL's spelling. Several change the Go type: files `BOOLEAN` → `bool` but database `tinyint(1)` → `int8` (the mysql example's `is_active BOOLEAN NOT NULL DEFAULT TRUE`, whose default also reads back `1` for `true`), and `NUMERIC(8,3)` / `REAL` → `string` but `decimal(8,3)` / `double` → `float64` — evidence: MySQL 8.0.46 `information_schema.columns.column_type` probe; resolver probe `tinyint(1)`→int8, `bool`→bool, `numeric(8,3)`→string, `real`→string"
+- (30.5 reviewer) "the catalog stores `double unsigned zerofill`, `decimal(5,2) unsigned zerofill`, `float(7,3) unsigned zerofill`, while the parser writes `double`, `decimal(5,2)`, `float(7,3)`; under `database` `double unsigned zerofill` resolves to `string` (the decimal and float forms fall back to `float64` / `float32`) — evidence: 30.5 reviewer probe on MySQL 8.0.46; `TestIntegerDisplayWidth` "DOUBLE ZEROFILL" → `double`"
+- (30.8b) "`integer` reads `int` and `numeric(10,2)` reads `decimal(10,2)` under `database`, so the column type, its view columns and `overrides.types` keys differ by source — evidence: 30.8b view parity test, `CREATE TABLE vd_p (id integer …, discount numeric(10,2))` → files `integer` / `numeric(10,2)`, database `int` / `decimal(10,2)`"
+
+The mysql example (`cmd/sqlgen/testdata/examples/mysql/schema.sql:14`,
+`is_active BOOLEAN NOT NULL DEFAULT TRUE`) is affected: `bool` under
+`files`, `int8` under `database`. 30.5 deferred this to the backlog
+(`docs/tracker/phase-30.md` 30.5 Completion Record, "Backlog lines added"),
+and PRD §6.1 does not name it as a parity exception, while the phase-30
+ground rule says a parity exception that stays user-visible must be written
+into §6.1.
+
+**Root cause.** Both sources go through `mysql.NormalizeType`
+(`parser/mysql/mysql.go:109-143`; the introspector via `normalizeMySQLType`,
+`parser/introspect/mysql.go:635-644`), but it canonicalizes only integer
+display widths and ZEROFILL integers (`zerofillWidths`, `mysql.go:100-102`);
+any other type is returned lowercased as written (`if !isInteger { return
+typ }`, `mysql.go:115-117`). So the parser's `buildTypeString`
+(`mysql.go:518-545`) keeps `boolean`, `integer`, `numeric(8,3)`, `real`,
+`decimal`, `char`, `bit`, `year(4)`, `serial`, and writes `zerofill` only on
+an integer base (`mysql.go:541`), so `DOUBLE UNSIGNED ZEROFILL` becomes
+`double unsigned` → `double`. On the resolver side, `mysqlMappings`
+(`cmd/sqlgen/gotype/gotype.go:113-138`) maps `bool` / `boolean` → `bool` but
+has no `tinyint(1)` key, so `tinyint(1)` falls back through `lookupKeys`
+(`gotype.go:725-738`) to `tinyint` → `int8`; it has no `numeric` or `real`
+key (fallback `string`); and `double unsigned zerofill` has no `(`, so
+`stripModifiers` (`gotype.go:1023`) yields no shorter key and it falls to
+`string`. PRD §7.2's MySQL table lists `bool`, `boolean` and `bit(1)` →
+`bool` and `tinyint` → `int8`; it has no `tinyint(1)` row, and the note under
+it says only that `tinyint(1)` keeps its width.
+
+**Suggested fix.** The direction is design-shaped; options for the vet
+(each needs a ruling before implementation):
+- **Option 1 — canonicalize the parser to the catalog form** (the 30.5 M5
+  approach, extended): teach `mysql.NormalizeType` the synonym table
+  (`bool`/`boolean` → `tinyint(1)`, `integer` → `int`, `numeric` →
+  `decimal`, bare `decimal` / `decimal(p)` → `decimal(10,0)` / `decimal(p,0)`,
+  `real` and `float(p>24)` → `double`, `char` → `char(1)`, `bit` → `bit(1)`,
+  `year(4)` → `year`, `serial` → `bigint unsigned` with AutoIncrement and the
+  UNIQUE key MySQL adds), and keep `unsigned zerofill` on a non-integer base
+  in `buildTypeString`. Consequences: types, view columns, manifest and
+  `overrides.types` keys match by source; an `overrides.types` key spelled
+  `boolean` / `numeric` / `integer` stops matching under `files` too (PRD
+  §7.2 note and §7.1 must say which spelling keys use); on its own this
+  turns every `BOOLEAN` column into `int8` under both sources, including the
+  mysql example's `is_active` (golden churn, a user-visible downgrade).
+- **Option 2 — map `tinyint(1)` → `bool` in the MySQL resolver** (add the key
+  to `mysqlMappings` and a row to PRD §7.2): `BOOLEAN` is `bool` under both
+  sources; but every hand-written `TINYINT(1)` column also becomes `bool`,
+  and a stored value other than 0/1 then fails to scan. Combined with Option
+  1 this gives one type string and `bool` on both sources.
+- **Option 3 — resolver-only**: add `numeric`, `real` → `float64`, and
+  `<double|float|decimal> unsigned [zerofill]` keys (or teach `lookupKeys`
+  to strip `unsigned zerofill` on a non-integer base) so the Go types agree,
+  leaving the type text different by source. The remaining text difference
+  (column type, view columns, override keys, manifest) must then be written
+  into PRD §6.1 as a named parity exception per the phase-30 ground rule.
+- **Option 4 — accept as-is** and write the whole difference, Go types
+  included, into §6.1. Contradicts §6.1's "same generated code" and leaves
+  the mysql example's `is_active` type source-dependent; listed for
+  completeness.
+- Whatever is chosen, the regression tests: a MySQL parity case in
+  `parser/introspect` (`assertSchemaParity` over a table with every synonym
+  above plus `DOUBLE/DECIMAL/FLOAT … ZEROFILL`, run on MySQL 8.0); unit cases
+  in `TestIntegerDisplayWidth` (`parser/mysql/mysql_test.go:594`) and
+  `TestMySQLTypeMappings` (`cmd/sqlgen/gotype/gotype_test.go:201`); the
+  mysql example goldens if `is_active` changes; and the 30.8b view parity
+  test (`vd_p`) with its exception removed.
+
+**References.**
+- PRD §6.1 (both sources describe a schema identically; the named parity
+  exceptions), §7.1 (override key matching), §7.2 MySQL Type Mappings and
+  the display-width / ZEROFILL note under it.
+- `docs/tracker/phase-30.md` ground rules (lasting parity exceptions go into
+  §6.1) and 30.5 Completion Record (M5 rulings, "Backlog lines added").
+- `normalizeMySQLType` (`parser/introspect/mysql.go:635`) and
+  `mysql.NormalizeType` (`parser/mysql/mysql.go:109`), the shared
+  normalization site.
+
+**Resolution notes.** _Filled in by `/fix resolve`._
+
+### FIX-272
+
+- **Status:** Open
+- **Severity:** tracked
+- **Origin:** phase 30, `cmd/sqlgen/gen`
+- **Surfaced by:** backlog promotion at `/close-phase 30` (2026-10-07); first recorded by 30.4 (2026-10-05)
+
+**Issue.** **A non-PK `serial` column is required in `Create<T>Input`.**
+Since 30.4 (Q5) a PostgreSQL `serial` column carries no `Default` on either
+source, only `AutoIncrement` (PRD §6.1), so the create input no longer treats
+it as defaulted, and the caller must supply a sequence value. Measured
+evidence from the backlog line: "files-mode probe `CREATE TABLE items (id
+bigserial PRIMARY KEY, seq serial, note text NOT NULL)` →
+`CreateItemInput{Note string, Seq int32}`".
+
+**Root cause.** `buildCreateInputFields`
+(`cmd/sqlgen/gen/context_table.go:2274`) handles `AutoIncrement` /
+`isSerialType` only for a PK column (`:2295`); for any other column it makes
+the field omittable only on `updateSet || softDelete || col.Nullable ||
+col.HasDefault` (`:2308`), and `HasDefault` is `col.Default != ""`
+(`:941`). A serial column has `AutoIncrement` but no `Default`, so it lands in
+`requiredInputField`. The config side already counts it: `columnRequiredOnCreate`
+(`cmd/sqlgen/config/validate.go:1571`) returns false on `col.AutoIncrement`,
+so validation and codegen disagree.
+
+**Suggested fix.**
+- In `buildCreateInputFields` (`context_table.go:2308`), treat
+  `col.AutoIncrement` as defaulted for a non-PK column, so it is
+  `omittableInputField` and the INSERT omits it when unset (PRD §10.3).
+- Vet: decide whether a non-PK `GENERATED ALWAYS AS IDENTITY` column should
+  be excluded instead (PostgreSQL rejects an explicit value without
+  `OVERRIDING SYSTEM VALUE`); PRD §10.3's table names neither case, so add
+  the row the ruling picks.
+- Tests: a `gen` unit case for `buildCreateInputFields` (non-PK `serial`,
+  `bigserial`, identity → omittable / excluded) and a PG E2E case inserting
+  without the column and reading back a sequence value; check the
+  `pk.AutoIncrement` / `isSerialType` PK path (`:2295`) is unchanged.
+
+**References.**
+- PRD §10.3 (CreateInput treatment table), §6.1 (serial carries no default,
+  only auto-increment), §8.6.
+- `docs/tracker/phase-30.md` 30.4 Completion Record (Q5).
+- `columnRequiredOnCreate` (`cmd/sqlgen/config/validate.go:1571`), the rule
+  to match.
+
+**Resolution notes.** _Filled in by `/fix resolve`._
+
+### FIX-273
+
+- **Status:** Open
+- **Severity:** tracked
+- **Origin:** phase 30, `parser/introspect`
+- **Surfaced by:** backlog promotion at `/close-phase 30` (2026-10-07); first recorded by 30.6 (2026-10-05)
+
+**Issue.** **The SQLite introspector silently drops user tables and views
+whose name matches `sqlite_%` as a LIKE pattern, such as `sqlitex`.** `_` is
+a LIKE wildcard, so the filter meant for SQLite's reserved `sqlite_` prefix
+also matches `sqlitex`, `sqlite1` and so on; the file parser keeps them.
+Measured evidence from the backlog line: "probe `CREATE TABLE sqlitex` →
+parsed `[sqlitex]`, introspected `[]`; `parser/introspect/sqlite.go` table and
+view queries".
+
+**Root cause.** `introspectTables` filters `tl.name NOT LIKE 'sqlite_%'`
+(`parser/introspect/sqlite.go:88`) and `introspectViews` filters `name NOT
+LIKE 'sqlite_%'` (`parser/introspect/sqlite.go:213`), with the `_`
+unescaped.
+
+**Suggested fix.**
+- Escape the underscore at both sites: `NOT LIKE 'sqlite\_%' ESCAPE '\'`
+  (LIKE stays case-insensitive, matching SQLite's case-insensitive reserved
+  prefix), or compare `substr(lower(name), 1, 7) <> 'sqlite_'`.
+- Tests: an `assertSchemaParity` case in
+  `parser/introspect/introspect_integration_test.go` with a table `sqlitex`
+  and a view `sqlite1v` (both present on both sources), and a check that
+  `sqlite_sequence` (from an AUTOINCREMENT table) is still left out.
+
+**References.**
+- PRD §6.1 (same tables by source), §6.3 (SQLite introspection), §6.4.
+- `TestSQLiteIntrospect` / `TestSQLiteIntrospectViews`
+  (`parser/introspect/introspect_integration_test.go:365`, `:1945`).
+
+**Resolution notes.** _Filled in by `/fix resolve`._
+
+### FIX-274
+
+- **Status:** Open
+- **Severity:** tracked
+- **Origin:** phase 30, `parser/introspect` + `parser/sqlite`
+- **Surfaced by:** backlog promotion at `/close-phase 30` (2026-10-07); first recorded by 30.6 (2026-10-05)
+
+**Issue.** **SQLite expression index parts differ by source.** The file
+parser keeps an expression part as index column text; the introspector skips
+it, so the index's columns (conflict targets, manifest `indexes[]`) differ,
+and a non-unique expression-only index exists only under `files`. Measured
+evidence from the backlog line: "`CREATE UNIQUE INDEX ux ON t (lower(email))`
+→ parsed Columns `[lower("email")]`, introspected nil; `CREATE INDEX ix ON t
+(a, lower(b))` → `[a, lower("b")]` vs `[a]`; a non-unique expression-only
+index is dropped on the introspected side only. PG has the sibling 30.2 line"
+(filed as FIX-276).
+
+**Root cause.** Parser: `indexedColumnNames`
+(`parser/sqlite/sqlite.go:625-640`) writes `rsql.ExprString(col.X)` for any
+part that is not an `*rsql.Ident`. Introspector: `introspectIndexColumns`
+(`parser/introspect/sqlite.go:591-617`) skips `PRAGMA index_info` rows with a
+NULL name (`:609`), and `introspectIndexes` (`:539-566`) keeps a unique index
+with no columns but drops a non-unique one (`case len(cols) == 0: continue`,
+`:553`).
+
+**Suggested fix.** Design-shaped (it sets the canonical form for expression
+index parts, shared with FIX-276); options for the vet:
+- **Keep expressions (parser form):** the introspector reads index parts from
+  the stored `CREATE INDEX` with the file parser, as `indexPartialWhere`
+  (`parser/introspect/sqlite.go:573`) already does for the predicate, so
+  both sources give `lower("email")`. The vet must check what the generator
+  does with an expression in `Columns` today (conflict-target generation,
+  manifest), since that text is not a column name.
+- **Drop expressions (introspector form, as the PG and MySQL introspectors
+  do):** `indexedColumnNames` skips non-identifier parts, and both sides
+  agree on whether an index left with no columns is kept or dropped
+  (PG's introspector drops it, FIX-276).
+- Tests: an `assertSchemaParity` case in
+  `parser/introspect/introspect_integration_test.go` with the three indexes
+  above, plus a `parser/sqlite` unit case pinning the chosen form.
+
+**References.**
+- PRD §6.1, §6.3 ("SQLite constraint names and CHECK text"), §30.7
+  (manifest `indexes[]`).
+- FIX-276 (PG expression-only index), FIX-269 (stored `CREATE INDEX` read with
+  the file parser for partial-index predicates).
+
+**Resolution notes.** _Filled in by `/fix resolve`._
+
+### FIX-275
+
+- **Status:** Open
+- **Severity:** nit
+- **Origin:** phase 30, `parser/mysql`
+- **Surfaced by:** backlog promotion at `/close-phase 30` (2026-10-07); first recorded by 30.2 (2026-10-05)
+
+**Issue.** **MySQL unnamed-key `_2` numbering is not in declaration order.**
+The parser numbers unnamed keys as column keys, then table-level keys, then
+foreign-key indexes; MySQL numbers them in declaration order, so the `_2`
+can land on the other key and index names differ by source (PRD §5.2).
+Measured evidence from the backlog line: "MySQL 8.0 `o2 (b int, c int, FOREIGN
+KEY (b, c) REFERENCES p (b, c), KEY (b))` → FK index `b`, KEY `b_2`; the
+parser gives KEY `b`, FK index `b_2`".
+
+**Root cause.** vitess keeps a table's columns, indexes and constraints in
+separate lists with no positions, so `parseTableSpec`
+(`parser/mysql/mysql.go:287-310`) cannot interleave them and `parseCreateTable`
+adds keys, then FK indexes (`mysql.go:265-273`).
+
+**Suggested fix.**
+- Recover declaration order at `parseTableSpec` (e.g. from the statement
+  text) and add keys and FK indexes in that order; or, if not worth it,
+  write the difference into PRD §6.1 as a named parity exception (phase-30
+  ground rule).
+- Test: the `o2` case above as an `assertSchemaParity` MySQL case.
+
+**References.**
+- PRD §5.2 (MySQL index naming, declaration order), §6.1.
+- `docs/tracker/phase-30.md` 30.2 Completion Record ("vitess key-order
+  approximation").
+
+**Resolution notes.** _Filled in by `/fix resolve`._
+
+### FIX-276
+
+- **Status:** Open
+- **Severity:** nit
+- **Origin:** phase 30, `parser/postgres` + `parser/introspect`
+- **Surfaced by:** backlog promotion at `/close-phase 30` (2026-10-07); first recorded by 30.2 (2026-10-05)
+
+**Issue.** **A PostgreSQL expression-only index is kept by the parser and
+skipped by the introspector**, so the manifest's `indexes[]` differs by
+source. Measured evidence from the backlog line: "parser test `e_lower_idx`
+with `Columns: []` (introspector side by code reading)" for `CREATE INDEX ON
+e (lower(x))`.
+
+**Root cause.** `indexParamColumns` (`parser/postgres/postgres.go:502-514`)
+skips expression elements, and `parseCreateIndex` (`postgres.go:375-410`)
+appends the index even when no column is left. `introspectStandaloneIndexes`
+(`parser/introspect/postgres.go:746`) skips an index with no plain column
+(`if len(cols) == 0 { continue }`, `:794`).
+
+**Suggested fix.**
+- Align with the canonical form FIX-274 rules for expression parts; the
+  smallest change is for `parseCreateIndex` to skip an index whose
+  `indexParamColumns` is empty, matching the introspector.
+- Test: a PG `assertSchemaParity` case with `CREATE INDEX ON e (lower(x))`.
+
+**References.**
+- PRD §6.1, §30.7.
+- FIX-274 (SQLite sibling).
+
+**Resolution notes.** _Filled in by `/fix resolve`._
+
+### FIX-277
+
+- **Status:** Open
+- **Severity:** nit
+- **Origin:** phase 30, `parser/sqlite`
+- **Surfaced by:** backlog promotion at `/close-phase 30` (2026-10-07); first recorded by 30.6 (2026-10-05)
+
+**Issue.** **The SQLite parser keeps the old column name in CHECK text after
+RENAME COLUMN**, while SQLite rewrites its stored DDL, which the introspector
+reads, so the manifest's CHECK text differs by source. Measured evidence from
+the backlog line: "`ALTER TABLE t RENAME COLUMN a TO c` → parsed CHECK `"a" >
+0`, introspected `"c" > 0` (30.6 reviewer)".
+
+**Root cause.** The SQLite RENAME COLUMN branch
+(`parser/sqlite/sqlite.go:555-566`) calls `parser.RenameColumn` and
+`parser.RenameColumnReferences` (`parser/schema.go:381`), which rewrite
+constraint column lists and FK references only, not `CheckExpression` text.
+
+**Suggested fix.**
+- In the SQLite RENAME COLUMN branch, re-parse each of the table's CHECK
+  expressions (and, if cheap, its partial-index `Where` and generated
+  expressions) with rqlite, rename identifiers equal to the old name
+  (case-insensitive), and re-render.
+- Test: extend `TestAlterTableRenameColumn` (`parser/sqlite/sqlite_test.go:562`)
+  and add a SQLite parity case.
+
+**References.**
+- PRD §6.1.
+- Backlog line (2026-10-01, from FIX-247) on the same gap for CHECK / WHERE /
+  generated text on all dialects, which stays in the backlog.
+
+**Resolution notes.** _Filled in by `/fix resolve`._
+
+### FIX-278
+
+- **Status:** Open
+- **Severity:** tracked
+- **Origin:** phase 4, `parser/mysql`
+- **Surfaced by:** backlog promotion at `/close-phase 30` (2026-10-07); first recorded by FIX-262 (2026-10-03)
+
+**Issue.** **MySQL inline ENUM/SET entries are not kept in step with RENAME
+and DROP.** RENAME COLUMN / RENAME TABLE keep the entry named from the old
+names, so the Go enum type name differs by source and a re-added column
+registers the same name twice; DROP COLUMN / DROP TABLE never remove the
+entry, so a dead enum type is emitted and re-adding a same-named ENUM fails
+generation. Measured evidence, quoted from the two backlog lines merged here:
+- "RENAME COLUMN / RENAME TABLE keep the inline ENUM/SET name derived from the old names (`people.role:users_role_enum`, `users.kind:users_role_enum`), while introspection derives `<table>_<column>_enum` from current names, so the DDL and introspect paths name the Go type differently, and `RENAME COLUMN role TO kind; ADD COLUMN role ENUM('x')` registers `users_role_enum` twice — evidence: parser probe enums=[{users_role_enum [a b]} {users_role_enum [x]}]"
+- "`CREATE TABLE users (id int PRIMARY KEY, role ENUM('a','b') NOT NULL); ALTER TABLE users DROP COLUMN role; ALTER TABLE users ADD COLUMN role ENUM('x','y') NOT NULL;` → `sqlgen generate` (FIX-262 prototype applied) → "Generation error: enum users_role_enum and enum users_role_enum both resolve to the Go type name "UsersRoleEnum" …"; DROP TABLE + re-CREATE → two `users_role_enum` entries in a parser probe"
+
+**Root cause.** `extractInlineEnumOrSet` (`parser/mysql/mysql.go:419-441`)
+names the entry `<table>_<column>_enum|_set` once, at creation, and stores it
+as the column's `Type`. The RENAME COLUMN branch of `applyAlterOption`
+(`mysql.go:829-835`) and `renameTable` (`mysql.go:945`) never rename the
+entry or the column type (the `dropInlineEnumOrSet` doc comment,
+`mysql.go:493-499`, records this). `alterDropColumn` (`mysql.go:868-881`) and
+`parseDropTable` (`mysql.go:217-235`) never call `dropInlineEnumOrSet`
+(`mysql.go:500`), which only MODIFY and CHANGE COLUMN use (`:852`, `:890`).
+The introspector names it from current names
+(`parser/introspect/mysql.go:360`).
+
+**Suggested fix.**
+- RENAME COLUMN and RENAME TABLE: rename each affected inline entry and the
+  column's `Type` to `<new table>_<new column>_enum|_set`.
+- DROP COLUMN: call `p.dropInlineEnumOrSet(col.Type)` before the column is
+  removed (`alterDropColumn` becomes a method or takes the parser).
+  DROP TABLE: drop the entry of every ENUM/SET column of the table.
+- Once rename keeps names current, revisit the `users > 1` guard in
+  `dropInlineEnumOrSet` and its doc comment.
+- Tests: `parser/mysql/mysql_test.go` cases for rename column, rename table,
+  drop column and drop table + re-add, asserting `Schema().Enums`; a MySQL
+  `assertSchemaParity` case after RENAME COLUMN.
+
+**References.**
+- PRD §6.1, §5.2 (MySQL parser), the MySQL inline ENUM/SET naming
+  (`<table>_<column>_enum`).
+- FIX-262 (added `dropInlineEnumOrSet` for MODIFY / CHANGE COLUMN).
+
+**Resolution notes.** _Filled in by `/fix resolve`._
+
+### FIX-279
+
+- **Status:** Open
+- **Severity:** tracked
+- **Origin:** phase 4, `parser/sqlite`
+- **Surfaced by:** backlog promotion at `/close-phase 30` (2026-10-07); first recorded by 30.6 (2026-10-05)
+
+**Issue.** **The SQLite parser adds a phantom column for a quoted type name
+and for `REFERENCES … MATCH SIMPLE`, with no error**, so the entity struct
+gets a field for a column that does not exist. Measured evidence, quoted from
+the two backlog lines merged here:
+- "rqlite/sql reads a quoted type name as a second column, with no error: `f "my type"` parses as columns `f` (blob) and `my type` (blob), while SQLite has one column `f` of type `my type` — evidence: parser probe vs `PRAGMA table_xinfo`"
+- "`REFERENCES p(id) MATCH SIMPLE` makes rqlite/sql add a phantom column `MATCH` (blob) with no error; the introspector reads the right columns — evidence: `/verify 30.6` reviewer probe"
+
+**Root cause.** rqlite/sql's `parseColumnDefinitions` treats the comma
+between column definitions as optional (`if p.peek() == COMMA { p.scan() }`),
+so any identifier-like token left over after a column definition starts a new
+one: a quoted type name is not an `IDENT`, so `parseColumnDefinition` does not
+read it as a type, and `MATCH` is left after the foreign-key constraint.
+`parseCreateTable` (`parser/sqlite/sqlite.go:186-221`) appends every
+`stmt.Columns` entry as a column; only the `PRIMARY KEY ASC|DESC` case of
+this rqlite behavior is caught (`isPrimaryKeySortOrder`, `sqlite.go:255-272`).
+The introspector reads columns from `PRAGMA table_xinfo` but also parses the
+stored `CREATE TABLE` with the file parser (`parseStoredTable`,
+`parser/introspect/sqlite.go:161`).
+
+**Suggested fix.**
+- In `parseCreateTable`, generalize the `isPrimaryKeySortOrder` check: a
+  column definition whose name is not preceded by `(` or `,` (only blanks and
+  comments between, via `onlyBlanksAndComments` over `src` up to
+  `col.Name.NamePos`) is not a column. Return a parse error for it (PRD §6.3:
+  DDL the file parser cannot read is an error on both sources), or, for the
+  quoted-type case only, fold it back into the previous column's type if the
+  vet finds that safe.
+- Add both shapes to PRD §6.3's "SQLite DDL the file parser cannot read" list
+  if the error route is taken.
+- Tests: `parser/sqlite/sqlite_test.go` cases for `f "my type"` and
+  `REFERENCES p(id) MATCH SIMPLE`; a SQLite introspection case showing the
+  same error (or the same columns) under `database`.
+
+**References.**
+- PRD §6.1, §6.3 ("SQLite DDL the file parser cannot read").
+- `isPrimaryKeySortOrder` (`parser/sqlite/sqlite.go:255`), the existing
+  pattern; backlog line on rqlite upstream gaps.
+
+**Resolution notes.** _Filled in by `/fix resolve`._
+
+### FIX-280
+
+- **Status:** Open
+- **Severity:** tracked
+- **Origin:** phase 6, `parser/postgres` + `parser/mysql` + `parser/sqlite` (`view_sql.go`)
+- **Surfaced by:** backlog promotion at `/close-phase 30` (2026-10-07); first recorded by `/verify 30.8b` (2026-10-07)
+
+**Issue.** **All three view parsers silently drop an unaliased expression and
+`*`, and ignore a view column list**, though PRD §16.1 calls an unaliased
+expression a parse error. Under `files` the view struct has too few or
+misnamed fields and the scan fails at runtime (under `database` the name
+check falls back to the catalog with a warning). Measured evidence from the
+backlog line: "`SELECT id, a + b FROM t` → 1 column; `SELECT * FROM t` → 0;
+`CREATE VIEW v(x) AS SELECT id` → column `id`".
+
+**Root cause.** Each extractor keeps a select item only when it has an alias
+or a resolvable column name and skips the rest without error:
+`extractResTargets` (`parser/postgres/view_sql.go:97-110`, `if col.Alias !=
+""`), `extractSelectExprs` (`parser/mysql/view_sql.go:74-87`, also skipping
+any non-`AliasedExpr` such as `*`), `extractResultColumns`
+(`parser/sqlite/view_sql.go:84-94`). None reads the view's column list
+(PG `ViewStmt.Aliases`, vitess `CreateView.Columns`, rqlite
+`CreateViewStatement.Columns`).
+
+**Suggested fix.**
+- Unaliased expression with no resolvable name: return a parse error naming
+  the view and the expression, on all three dialects (PRD §16.1 states it).
+- `*` and a view column list: PRD §16.1 is silent; the vet asks for a
+  ruling — a parse error, or expand `*` from the source table and apply the
+  column list positionally as names — and the ruling adds the PRD text.
+- Tests: `ParseViewSQL` cases per dialect (`a + b` unaliased, `*`, `t.*`,
+  `v(x)`), and a generate case showing the loud error instead of a runtime
+  scan failure.
+
+**References.**
+- PRD §16.1 ("Expressions without an alias and without a resolvable column
+  name are a parse error"), §16.2, §6.1.
+- Backlog line on MySQL view-with-column-list enum types (kept), tied to the
+  column-list half.
+
+**Resolution notes.** _Filled in by `/fix resolve`._
+
+### FIX-281
+
+- **Status:** Open
+- **Severity:** tracked
+- **Origin:** phase 4, `parser/sqlite`
+- **Surfaced by:** backlog promotion at `/close-phase 30` (2026-10-07); first recorded by FIX-269 (2026-10-07)
+
+**Issue.** **`LIKE … ESCAPE` crashes `sqlgen generate` in a SQLite CHECK,
+DEFAULT, generated column or expression index.** `rsql.ExprString` panics on
+it, and five call sites do not recover. Measured evidence from the backlog
+line: "`CREATE TABLE t (id INTEGER PRIMARY KEY, a TEXT CHECK (a LIKE 'x%'
+ESCAPE '\'))`, `sqlgen generate` → exit 2, "panic: sql.BinaryExpr.String():
+invalid op ESCAPE"". The partial-index `WHERE` site was fixed by FIX-269
+(`7ac833aa`), which recovers the panic into a parse error (`indexWhere`).
+
+**Root cause.** rqlite/sql parses `LIKE … ESCAPE` but `BinaryExpr.String()`
+panics rendering it. The unrecovered `rsql.ExprString` sites in
+`parser/sqlite/sqlite.go`: DEFAULT (`:408`), generated column (`:428`),
+column CHECK (`:435`), table CHECK (`:521`), and `indexedColumnNames`
+(`:635`, used by `CREATE INDEX` and table-level `UNIQUE`). The introspector
+reaches the same sites through `parseStoredTable`
+(`parser/introspect/sqlite.go:161`), so `database` crashes too.
+
+**Suggested fix.**
+- Add one recovering helper (`exprString(e) (string, error)`, the
+  `indexWhere` pattern at `sqlite.go:153-163`) and use it at all five sites,
+  threading the error out of `parseColumn` / `applyColumnConstraint` /
+  `parseTableConstraint` / `indexedColumnNames` so the statement is a parse
+  error under `files` and a `SchemaError` under `database`.
+- Extend PRD §6.3's "SQLite DDL the file parser cannot read" list: `LIKE …
+  ESCAPE` anywhere, not only in a partial index's `WHERE`.
+- Tests: a `parser/sqlite` table-driven case per site asserting an error,
+  not a panic; a SQLite introspection case for the CHECK shape.
+
+**References.**
+- PRD §6.3 ("SQLite DDL the file parser cannot read").
+- FIX-269 (`7ac833aa`, the partial-index `WHERE` site).
+
+**Resolution notes.** _Filled in by `/fix resolve`._
+
+### FIX-282
+
+- **Status:** Open
+- **Severity:** tracked
+- **Origin:** phase 4, `parser/sqlite`
+- **Surfaced by:** backlog promotion at `/close-phase 30` (2026-10-07); first recorded by FIX-269 (2026-10-07)
+
+**Issue.** **SQLite `CREATE INDEX … ON <table>` looks the table up
+case-sensitively**, so `CREATE TABLE Users …; CREATE UNIQUE INDEX ux2 ON users
+(a) …` silently drops the index under `files` while introspection keeps it.
+Measured evidence from the backlog line: "assertSchemaParity diff `-
+Constraints: nil` / `+ {Name: "ux2", Type: UNIQUE, …}`".
+
+**Root cause.** `parseCreateIndex` (`parser/sqlite/sqlite.go:97-105`) does
+`p.tableIndex[tableName]` and returns nil when the exact spelling is absent.
+`tableIndex` is keyed by the name as declared (`sqlite.go:36`, `:244`), but
+SQLite identifiers are case-insensitive. The same exact-match lookup backs
+`lookupTable` (`:594`, used by ALTER TABLE), `parseDropTable` (`:167`), the
+duplicate-table check (`:188`) and rename (`:580`).
+
+**Suggested fix.**
+- Make table lookup case-insensitive in the SQLite parser (key `tableIndex`
+  by `strings.ToLower`, or one lookup helper used by every site above), keeping
+  the declared spelling in `Table.Name`.
+- Vet: confirm the other sites share the root cause and fix site (scope cap);
+  a silent skip on an unknown table in `parseCreateIndex` may also deserve an
+  error.
+- Tests: an `assertSchemaParity` SQLite case with the mixed-case index above,
+  plus parser cases for `ALTER TABLE users …` and `DROP TABLE users` on a
+  table declared `Users`.
+
+**References.**
+- PRD §6.1, §5.2.
+- FIX-269 (surfaced while adding the partial-index parity cases).
+
+**Resolution notes.** _Filled in by `/fix resolve`._
+
+### FIX-283
+
+- **Status:** Open
+- **Severity:** nit
+- **Origin:** phase 5, `cmd/sqlgen/config`
+- **Surfaced by:** backlog promotion at `/close-phase 30` (2026-10-07); first recorded by FIX-249 (2026-10-01)
+
+**Issue.** **A composite-PK member counts as unique on its own, so the PRD
+§4.13 "no UNIQUE constraint covers the declared PK" warning is missing.**
+Measured evidence from the backlog line: "postgres copy with
+`timeline_events.primary_key.columns: [id]`, `sqlgen generate` printed only
+the cursor_keys warning" over `PRIMARY KEY (id, created_at)`.
+
+**Root cause.** `uniqueCovers` (`cmd/sqlgen/config/validate.go:1892`) accepts
+a single-column override when the column has `c.Unique || c.PrimaryKey`
+(`:1899`); `PrimaryKey` is true on each member of a composite key.
+
+**Suggested fix.**
+- Count `c.PrimaryKey` only when the table's PK has exactly one column.
+- Test: a `config` validation case for `primary_key.columns: [id]` over a
+  composite `(id, created_at)` PK expecting the warning.
+
+**References.**
+- PRD §4.13 ("`primary_key.columns` has no UNIQUE coverage").
+
+**Resolution notes.** _Filled in by `/fix resolve`._
+
+### FIX-284
+
+- **Status:** Open
+- **Severity:** nit
+- **Origin:** phase 1, `sql`
+- **Surfaced by:** backlog promotion at `/close-phase 30` (2026-10-07); first recorded by FIX-258 (2026-10-03)
+
+**Issue.** **`sql.Raw(clause, nil)` drops the nil argument**, so the bare `$`
+reaches the database. Measured evidence from the backlog line: "sqlite
+`Raw("owner_id IS NOT DISTINCT FROM $", nil)` → `SQL: … (owner_id IS NOT
+DISTINCT FROM $) ARGS=[0]`, `SQL logic error: unrecognized token: "$" (1)`".
+
+**Root cause.** `Raw`'s one-argument case stores `Value: args[0]`
+(`sql/condition.go:313-314`), and `expandConditionClause` reads `Value ==
+nil` as "no args" (`sql/builder.go:588-590`), so the clause is emitted
+unexpanded.
+
+**Suggested fix.**
+- In `Raw`, store `[]any{nil}` when the single argument is nil, so
+  `expandSlice` (`sql/builder.go:653`) binds it.
+- Test: a `sql` builder case for `Raw("x IS NOT DISTINCT FROM $", nil)` on
+  all three dialects asserting one placeholder and `ARGS=[nil]`.
+
+**References.**
+- PRD §11.5 (ConditionBuilder, `sql.Raw`).
+
+**Resolution notes.** _Filled in by `/fix resolve`._
+
+### FIX-285
+
+- **Status:** Open
+- **Severity:** nit
+- **Origin:** phase 5, `cmd/sqlgen/config`
+- **Surfaced by:** backlog promotion at `/close-phase 30` (2026-10-07); first recorded by FIX-260 (2026-10-03)
+
+**Issue.** **A declared relationship with no `name:` passes validation and
+surfaces only as an internal api-context error.** Measured evidence from the
+backlog line: sqlite probe `{type: o2m, table: owner_profiles, fk: owner_id,
+filter: "bio IS NOT NULL"}` → `sqlgen validate` exit 2 "building api
+context: api: filter for table \"owners\" has a relationship member that
+renders only one half (graphql=\"\" input=\"OwnerProfileFilter\" …)".
+
+**Root cause.** PRD §4.8 marks `name` required, but `validateRelationships`
+(`cmd/sqlgen/config/validate.go:372`) only checks duplicates when `r.Name !=
+""` (`:381`), and `validateRelationshipKeys` (`:433`) checks `type`, `fk` and
+`junction` but not `name`.
+
+**Suggested fix.**
+- Add a `tables.<t>.relationships[<i>].name: required (PRD §4.8)` config error
+  in `validateRelationshipKeys`.
+- Test: a `config` validation case for a relationship without `name`.
+
+**References.**
+- PRD §4.8 (relationship `name`, required), §4.13.
+
+**Resolution notes.** _Filled in by `/fix resolve`._
+
+### FIX-286
+
+- **Status:** Open
+- **Severity:** nit
+- **Origin:** phase 16, `cmd/sqlgen/wrapper`
+- **Surfaced by:** backlog promotion at `/close-phase 30` (2026-10-07); first recorded by FIX-265 (2026-10-03)
+
+**Issue.** **A `resolver:` block with `layout: single-file` and no
+`filename` produces an unbuildable package** although `generate` exits 0.
+Measured evidence from the backlog line: "sqlite probe with `resolver:
+{layout: single-file, package: graph}`, HEAD binary → `sqlgen generate` exit 0
+then `go build ./...` → "graph/resolver.go:50:19: undefined:
+translateCreateArticleInput"; fixed binary → exit 0 then "found packages
+sqliteexample (generate.go) and graph (resolver.go)"".
+
+**Root cause.** `parseResolverLayout` (`cmd/sqlgen/wrapper/seeds.go:165`)
+defaults an empty `Filename` to `resolver.go` (`:192-194`) and seeds it,
+while gqlgen skips resolver generation when neither `dir` nor `filename` is
+set (and errors when only `dir` is).
+
+**Suggested fix.**
+- Under `layout: single-file`, return a config error when `resolver.filename`
+  is absent, naming the key, instead of defaulting it.
+- Test: a `wrapper` case for that gqlgen.yml expecting the error.
+
+**References.**
+- PRD §26.5.6 (wrapper subcommand, seed step, ownership table).
+
+**Resolution notes.** _Filled in by `/fix resolve`._
+
+### FIX-287
+
+- **Status:** Open
+- **Severity:** nit
+- **Origin:** phase 4, `parser/mysql`
+- **Surfaced by:** backlog promotion at `/close-phase 30` (2026-10-07); first recorded by FIX-263 (2026-10-03)
+
+**Issue.** **``ALTER TABLE … DROP INDEX `PRIMARY` `` leaves the primary key in
+place under `files`**, though MySQL drops it. Measured evidence from the
+backlog line: "MySQL 8.0.46 `SHOW CREATE TABLE` shows no key after that drop
+on a table-level `PRIMARY KEY (id)`, while the parser keeps "id pk=true" and
+the `PK PRIMARY [id]` constraint".
+
+**Root cause.** vitess parses it as `NormalKeyType`, so `applyDropKey`
+(`parser/mysql/mysql.go:923-941`) takes the UNIQUE/INDEX branch (`:932`) and
+never reaches its `PrimaryKeyType` case (`:926`).
+
+**Suggested fix.**
+- In `applyDropKey`, treat a `NormalKeyType` drop named `PRIMARY`
+  (case-insensitive) as the `PrimaryKeyType` case.
+- Test: a `parser/mysql` case for ``DROP INDEX `PRIMARY` `` and its
+  ``DROP INDEX `PRIMARY` ON t`` form.
+
+**References.**
+- PRD §6.1, §5.2 (a MySQL PRIMARY KEY is always `PRIMARY`).
+
+**Resolution notes.** _Filled in by `/fix resolve`._
 
 <!-- fixes:open:end -->
 
