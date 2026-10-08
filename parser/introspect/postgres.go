@@ -744,6 +744,7 @@ func (r pgConstraintRow) constraint(casts map[string][]string) (parser.Constrain
 // partial unique indexes created via CREATE UNIQUE INDEX ... WHERE ...
 // (which pg_constraint never represents). indexprs IS NULL skips an index with
 // an expression part, as the DDL parser does: it is not an index over columns.
+// k.ord <= indnkeyatts drops INCLUDE payload columns.
 func (pi *PostgresIntrospector) introspectStandaloneIndexes(ctx context.Context, table *parser.Table, conIndIDs map[int64]struct{}, casts map[string][]string) error {
 	rows, err := pi.db.QueryContext(ctx, `
 		SELECT
@@ -756,7 +757,8 @@ func (pi *PostgresIntrospector) introspectStandaloneIndexes(ctx context.Context,
 				(SELECT array_agg(att.attname ORDER BY k.ord)
 				 FROM unnest(pi.indkey::smallint[]) WITH ORDINALITY AS k(attnum, ord)
 				 JOIN pg_catalog.pg_attribute att
-				   ON att.attrelid = pi.indrelid AND att.attnum = k.attnum),
+				   ON att.attrelid = pi.indrelid AND att.attnum = k.attnum
+				 WHERE k.ord <= pi.indnkeyatts),
 				'{}'
 			)
 		FROM pg_catalog.pg_index pi

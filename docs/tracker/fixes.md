@@ -878,59 +878,6 @@ list (not measured).
 
 **Resolution notes.** _Filled in by `/fix resolve`._
 
-### FIX-290
-
-- **Status:** Open
-- **Severity:** tracked
-- **Origin:** phase 30 (30.2 introspection parity), `parser/introspect`
-- **Surfaced by:** /fix-vet FIX-276 (2026-10-07), filed at /close-phase 30 (2026-10-08)
-- **Vetted:** ready at `b606e4a7` (2026-10-08)
-
-**Issue.** **The PG introspector lists `INCLUDE` columns as index key
-columns**, so a standalone index differs by source and a unique index with
-`INCLUDE` would yield a wrong conflict target. Measured: `CREATE INDEX inc
-ON e (a) INCLUDE (b)` → parsed `["a"]`, introspected `["a" "b"]`
-(`assertSchemaParity` diff); `INSERT … ON CONFLICT (a, b) DO NOTHING` on
-`UNIQUE (a) INCLUDE (b)` → SQLSTATE 42P10 while `ON CONFLICT (a)` → ok (the
-generated conflict constant is inferred from the UNIQUE→conflict mapping,
-not run).
-
-**Root cause.** The `introspectStandaloneIndexes` column subquery
-(`parser/introspect/postgres.go:755-760`) unnests all of `indkey`, which
-holds the key columns followed by the `INCLUDE` columns, and filters only
-`k.attnum <> 0` (`:759`). The matview query cuts at `k.ord <=
-ix.indnkeyatts` (`parser/introspect/postgres.go:329-339`); this one does
-not. The emitted constraint (`:807-813`) therefore carries the payload
-columns, as `parser.Unique` when `indisunique` (`:799-800`).
-
-**Suggested fix.**
-- Add `AND k.ord <= pi.indnkeyatts` to the subquery's `WHERE`
-  (`parser/introspect/postgres.go:759`), matching the matview query.
-- Tests: a PG case in `TestParityFixtures`
-  (`parser/introspect/parity_fixtures_test.go:163`) or alongside
-  `TestPostgresIntrospect_IndexMethodAndPartialWhere`
-  (`parser/introspect/introspect_integration_test.go:2003`) with `CREATE
-  INDEX inc ON e (a) INCLUDE (b)` and `CREATE UNIQUE INDEX u ON e (c)
-  INCLUDE (d)`, asserting `["a"]` / `["c"]` and parity with the file parser.
-- Vet notes on scope: a second symptom with the same root cause: for `CREATE UNIQUE INDEX u ON e (c) INCLUDE (d)`, the parsed `e.c` has `Unique=true` and the introspected one `Unique=false` (parity diff `- Unique: true / + Unique: false`); the fix covers it. The constraint form `CONSTRAINT k_u UNIQUE (a) INCLUDE (b)` already matches (`conkey` holds only key columns), so the scope is standalone indexes only.
-- Changed from the original (test location only): `TestParityFixtures` applies and parses the fixture but never compares the two sources, so the regression test is a new `pgParityCase` + `assertSchemaParity` test, `TestPostgresIntrospect_IncludeColumns` in `parser/introspect/postgres_integration_test.go` (placed after `TestPostgresIntrospect_QuotedIdentifiers`, away from FIX-276's test hunk).
-- Lands with FIX-276: both patches edit the same subquery line in `parser/introspect/postgres.go`, so neither applies on top of the other (`patch failed: parser/introspect/postgres.go:755` / `:756`); their other files apply cleanly. Whichever lands second carries the line by hand: after FIX-276 drops `WHERE k.attnum <> 0`, the subquery ends `WHERE k.ord <= pi.indnkeyatts),`, matching the matview query. Verified green with both patches' tests (`go -C parser test -race -count=1 ./introspect/... ./postgres/...` → ok).
-- Prototype results, run at `b606e4a7` on 2026-10-08:
-  - Reproduction: a throwaway probe (`zz_probe_fix290_test.go`, since deleted) with `CREATE INDEX inc ON zz290.e (a) INCLUDE (b); CREATE UNIQUE INDEX u ON zz290.e (c) INCLUDE (d)`, `go -C parser test -count=1 -run TestZZProbeFIX290 -v ./introspect/` → parsed `inc [a]`, `u [c]`; introspected `inc [a b]`, `u [c d]`; `INSERT … ON CONFLICT (c, d) DO NOTHING` → "ERROR: there is no unique or exclusion constraint matching the ON CONFLICT specification (SQLSTATE 42P10)", `ON CONFLICT (c)` → ok. After the fix: introspected `[a]`, `[c]`, `e.c unique=true`, parity passes.
-  - Prototype: `postgres.go:759` `WHERE k.attnum <> 0` → `WHERE k.attnum <> 0 AND k.ord <= pi.indnkeyatts` (as suggested), plus the new test asserting `inc [a]` / `u [c]` and `assertSchemaParity`.
-  - Gates: `go -C parser test -race -count=1 ./introspect/...` → ok (integration ran); `gofumpt -l parser/introspect/` → clean; `golangci-lint run ./introspect/...` → 0 issues.
-  - Fail-first: line 759 reverted → `TestPostgresIntrospect_IncludeColumns` fails: "introspected e constraints mismatch (-want +got): … Columns: []string{ + "d", } … + "b"" and "postgres: introspected schema differs from the file parser's … - Unique: true, + Unique: false"; the existing suite without the fix → passes.
-  - Golden churn: none.
-  - Patch: `.claude/prototypes/FIX-290.patch` (2 files, +26/-1).
-
-
-**References.**
-- PRD §6.1 (both schema sources give the same schema), §30.7 (`indexes[]`).
-- FIX-276 (expression-only indexes in the same function).
-- `parser/introspect/postgres.go:329-339` (the `indnkeyatts` cut to copy).
-
-**Resolution notes.** _Filled in by `/fix resolve`._
-
 ### FIX-291
 
 - **Status:** Open
@@ -1115,6 +1062,76 @@ map straight on.
 ## Resolved
 
 <!-- fixes:resolved:begin -->
+### FIX-290
+
+- **Status:** Resolved
+- **Severity:** tracked
+- **Origin:** phase 30 (30.2 introspection parity), `parser/introspect`
+- **Surfaced by:** /fix-vet FIX-276 (2026-10-07), filed at /close-phase 30 (2026-10-08)
+- **Vetted:** ready at `b606e4a7` (2026-10-08)
+
+**Issue.** **The PG introspector lists `INCLUDE` columns as index key
+columns**, so a standalone index differs by source and a unique index with
+`INCLUDE` would yield a wrong conflict target. Measured: `CREATE INDEX inc
+ON e (a) INCLUDE (b)` → parsed `["a"]`, introspected `["a" "b"]`
+(`assertSchemaParity` diff); `INSERT … ON CONFLICT (a, b) DO NOTHING` on
+`UNIQUE (a) INCLUDE (b)` → SQLSTATE 42P10 while `ON CONFLICT (a)` → ok (the
+generated conflict constant is inferred from the UNIQUE→conflict mapping,
+not run).
+
+**Root cause.** The `introspectStandaloneIndexes` column subquery
+(`parser/introspect/postgres.go:756-759` at `50ef2ebd`) unnests all of
+`indkey`, which holds the key columns followed by the `INCLUDE` columns, and
+has no ordinal cut (FIX-276 dropped its only filter, `k.attnum <> 0`). The
+matview query cuts at `k.ord <= ix.indnkeyatts`
+(`parser/introspect/postgres.go:329-339`); this one does not. The emitted
+constraint (`:802-809`) therefore carries the payload columns, as
+`parser.Unique` when `indisunique` (`:794-795`).
+
+**Suggested fix.**
+- Add `WHERE k.ord <= pi.indnkeyatts` to the subquery
+  (`parser/introspect/postgres.go:759` at `50ef2ebd`), matching the matview
+  query.
+- Tests: a PG case in `TestParityFixtures`
+  (`parser/introspect/parity_fixtures_test.go:163`) or alongside
+  `TestPostgresIntrospect_IndexMethodAndPartialWhere`
+  (`parser/introspect/introspect_integration_test.go:2056`) with `CREATE
+  INDEX inc ON e (a) INCLUDE (b)` and `CREATE UNIQUE INDEX u ON e (c)
+  INCLUDE (d)`, asserting `["a"]` / `["c"]` and parity with the file parser.
+- Vet notes on scope: a second symptom with the same root cause: for `CREATE UNIQUE INDEX u ON e (c) INCLUDE (d)`, the parsed `e.c` has `Unique=true` and the introspected one `Unique=false` (parity diff `- Unique: true / + Unique: false`); the fix covers it. The constraint form `CONSTRAINT k_u UNIQUE (a) INCLUDE (b)` already matches (`conkey` holds only key columns), so the scope is standalone indexes only.
+- Changed from the original (test location only): `TestParityFixtures` applies and parses the fixture but never compares the two sources, so the regression test is a new `pgParityCase` + `assertSchemaParity` test, `TestPostgresIntrospect_IncludeColumns` in `parser/introspect/postgres_integration_test.go` (placed after `TestPostgresIntrospect_QuotedIdentifiers`, away from FIX-276's test hunk).
+- Lands with FIX-276: both patches edit the same subquery line in `parser/introspect/postgres.go`, so neither applies on top of the other (`patch failed: parser/introspect/postgres.go:755` / `:756`); their other files apply cleanly. Whichever lands second carries the line by hand: after FIX-276 drops `WHERE k.attnum <> 0`, the subquery ends `WHERE k.ord <= pi.indnkeyatts),`, matching the matview query. Verified green with both patches' tests (`go -C parser test -race -count=1 ./introspect/... ./postgres/...` → ok).
+- Prototype results, run at `b606e4a7` on 2026-10-08:
+  - Reproduction: a throwaway probe (`zz_probe_fix290_test.go`, since deleted) with `CREATE INDEX inc ON zz290.e (a) INCLUDE (b); CREATE UNIQUE INDEX u ON zz290.e (c) INCLUDE (d)`, `go -C parser test -count=1 -run TestZZProbeFIX290 -v ./introspect/` → parsed `inc [a]`, `u [c]`; introspected `inc [a b]`, `u [c d]`; `INSERT … ON CONFLICT (c, d) DO NOTHING` → "ERROR: there is no unique or exclusion constraint matching the ON CONFLICT specification (SQLSTATE 42P10)", `ON CONFLICT (c)` → ok. After the fix: introspected `[a]`, `[c]`, `e.c unique=true`, parity passes.
+  - Prototype: `postgres.go:759` `WHERE k.attnum <> 0` → `WHERE k.attnum <> 0 AND k.ord <= pi.indnkeyatts` (as suggested), plus the new test asserting `inc [a]` / `u [c]` and `assertSchemaParity`.
+  - Gates: `go -C parser test -race -count=1 ./introspect/...` → ok (integration ran); `gofumpt -l parser/introspect/` → clean; `golangci-lint run ./introspect/...` → 0 issues.
+  - Fail-first: line 759 reverted → `TestPostgresIntrospect_IncludeColumns` fails: "introspected e constraints mismatch (-want +got): … Columns: []string{ + "d", } … + "b"" and "postgres: introspected schema differs from the file parser's … - Unique: true, + Unique: false"; the existing suite without the fix → passes.
+  - Golden churn: none.
+  - Patch: `.claude/prototypes/FIX-290.patch` (2 files, +26/-1).
+
+
+**References.**
+- PRD §6.1 (both schema sources give the same schema), §30.7 (`indexes[]`).
+- FIX-276 (expression-only indexes in the same function).
+- `parser/introspect/postgres.go:329-339` (the `indnkeyatts` cut to copy).
+
+**Resolution notes.** The standalone-index subquery in
+`introspectStandaloneIndexes` now ends `WHERE k.ord <= pi.indnkeyatts),`
+(`parser/introspect/postgres.go:761`), matching the matview query, so
+`INCLUDE` columns are no longer listed as index keys and a unique index with
+`INCLUDE` keeps its column `Unique` on both sources. The function comment
+names the cut. New `TestPostgresIntrospect_IncludeColumns`
+(`parser/introspect/postgres_integration_test.go:443`) asserts `inc [a]` /
+`u [c]` and schema parity. Prototype applied with `git apply --3way`; the one
+conflicting line (FIX-276 had dropped `WHERE k.attnum <> 0`) was resolved by
+hand as the vet recorded. Fail-first: the cut removed → the new test fails on
+`Columns` (`+ "b"`, `+ "d"`) and `- Unique: true / + Unique: false`. Gates:
+`make check` ok; `go -C parser test -race -count=1 ./introspect/...
+./postgres/...` ok; `make check-examples` ok; golden churn none. Doc
+corrections: Root cause and Suggested fix line refs re-pinned to `50ef2ebd`
+(FIX-276 shifted them; Root cause no longer claims a `k.attnum <> 0` filter),
+`introspect_integration_test.go:2003` → `:2056`.
+
 ### FIX-276
 
 - **Status:** Resolved

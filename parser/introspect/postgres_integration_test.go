@@ -437,6 +437,31 @@ CREATE TABLE pgi_quoted.posts (
 	assertSchemaParity(t, "postgres", parsed, introspected)
 }
 
+// TestPostgresIntrospect_IncludeColumns pins that a standalone index lists
+// only its key columns, not its INCLUDE payload, so a unique index with
+// INCLUDE gives the conflict target PostgreSQL accepts.
+func TestPostgresIntrospect_IncludeColumns(t *testing.T) {
+	requireDatabases(t)
+	ddl := `
+CREATE SCHEMA pgi_include;
+CREATE TABLE pgi_include.e (a int, b int, c int, d int);
+CREATE INDEX inc ON pgi_include.e (a) INCLUDE (b);
+CREATE UNIQUE INDEX u ON pgi_include.e (c) INCLUDE (d)`
+	parsed, introspected := pgParityCase(t, "DROP SCHEMA IF EXISTS pgi_include CASCADE", ddl, "pgi_include")
+
+	want := []parser.Constraint{
+		{Name: "inc", Type: parser.Index, Columns: []string{"a"}, Method: "btree"},
+		{Name: "u", Type: parser.Unique, Columns: []string{"c"}, Method: "btree"},
+	}
+	got := findTable(t, introspected, "e")
+	sortConstraints(want)
+	sortConstraints(got.Constraints)
+	if diff := cmp.Diff(want, got.Constraints); diff != "" {
+		t.Errorf("introspected e constraints mismatch (-want +got):\n%s", diff)
+	}
+	assertSchemaParity(t, "postgres", parsed, introspected)
+}
+
 func TestPostgresIntrospect_Partitioning(t *testing.T) {
 	requireDatabases(t)
 	ddl := `
