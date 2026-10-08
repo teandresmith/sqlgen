@@ -307,6 +307,65 @@ func TestPostgresIntrospect_CatalogRewrites(t *testing.T) {
 	}
 }
 
+// TestPostgresIntrospect_ExpressionIndexes pins that both sources skip an
+// index with an expression part, unique or not, keep a column written as an
+// expression, and keep the name a skipped index takes while its table exists.
+func TestPostgresIntrospect_ExpressionIndexes(t *testing.T) {
+	requireDatabases(t)
+	ddl := `
+CREATE SCHEMA pgi_exprix;
+CREATE TABLE pgi_exprix.e (x text, a int, b int);
+CREATE INDEX ON pgi_exprix.e (lower(x));
+CREATE UNIQUE INDEX ux ON pgi_exprix.e (lower(x));
+CREATE UNIQUE INDEX ux2 ON pgi_exprix.e (a, lower(x));
+CREATE INDEX ix ON pgi_exprix.e (a, (a + b)) WHERE b > 0;
+CREATE INDEX px ON pgi_exprix.e (((a)), b);
+CREATE UNIQUE INDEX pcx ON pgi_exprix.e ((x COLLATE "C"));
+CREATE TABLE pgi_exprix.n (x text, lower int, a int);
+CREATE INDEX ON pgi_exprix.n (lower(x));
+CREATE INDEX ON pgi_exprix.n (lower);
+CREATE INDEX n_a_idx ON pgi_exprix.n (lower(x));
+CREATE INDEX ON pgi_exprix.n (a);
+CREATE TABLE pgi_exprix.d (x text, lower int);
+CREATE INDEX ON pgi_exprix.d (lower(x));
+DROP TABLE pgi_exprix.d;
+CREATE TABLE pgi_exprix.d (x text, lower int);
+CREATE INDEX ON pgi_exprix.d (lower);
+CREATE TABLE pgi_exprix.r (x text, lower int);
+CREATE INDEX ON pgi_exprix.r (lower(x));
+ALTER TABLE pgi_exprix.r RENAME TO r2;
+CREATE TABLE pgi_exprix.r (x text, lower int);
+CREATE INDEX ON pgi_exprix.r (lower)`
+	parsed, introspected := pgParityCase(t, "DROP SCHEMA IF EXISTS pgi_exprix CASCADE", ddl, "pgi_exprix")
+
+	want := map[string][]parser.Constraint{
+		"e": {
+			{Name: "px", Type: parser.Index, Columns: []string{"a", "b"}, Method: "btree"},
+			{Name: "pcx", Type: parser.Unique, Columns: []string{"x"}, Method: "btree"},
+		},
+		"n": {
+			{Name: "n_a_idx1", Type: parser.Index, Columns: []string{"a"}, Method: "btree"},
+			{Name: "n_lower_idx1", Type: parser.Index, Columns: []string{"lower"}, Method: "btree"},
+		},
+		"d": {{Name: "d_lower_idx", Type: parser.Index, Columns: []string{"lower"}, Method: "btree"}},
+		"r": {{Name: "r_lower_idx1", Type: parser.Index, Columns: []string{"lower"}, Method: "btree"}},
+	}
+	for name, w := range want {
+		got := findTable(t, introspected, name)
+		sortConstraints(w)
+		sortConstraints(got.Constraints)
+		if diff := cmp.Diff(w, got.Constraints); diff != "" {
+			t.Errorf("introspected %s constraints mismatch (-want +got):\n%s", name, diff)
+		}
+		for _, col := range got.Columns {
+			if col.Unique != (name == "e" && col.Name == "x") {
+				t.Errorf("introspected %s.%s: Unique = %v", name, col.Name, col.Unique)
+			}
+		}
+	}
+	assertSchemaParity(t, "postgres", parsed, introspected)
+}
+
 // TestPostgresIntrospect_NoSearchPath introspects the probe fixture with no
 // search_path and with search paths that put either schema first. Each gives
 // the parsed schema: a type in the column's own schema is bare, and one in

@@ -77,70 +77,6 @@ adds keys, then FK indexes (`mysql.go:265-273`).
 
 **Resolution notes.** _Filled in by `/fix resolve`._
 
-### FIX-276
-
-- **Status:** Open
-- **Severity:** tracked
-- **Origin:** phase 30, `parser/postgres` + `parser/introspect`
-- **Surfaced by:** backlog promotion at `/close-phase 30` (2026-10-07); first recorded by 30.2 (2026-10-05)
-- **Vetted:** ready at `d51ace1b` (2026-10-07; ruled 2026-10-08, the ruled option is the prototype)
-
-**Issue.** **A PostgreSQL expression-only index is kept by the parser and
-skipped by the introspector**, so the manifest's `indexes[]` differs by
-source. Measured evidence from the backlog line: "parser test `e_lower_idx`
-with `Columns: []` (introspector side by code reading)" for `CREATE INDEX ON
-e (lower(x))`.
-
-**Root cause.** `indexParamColumns` (`parser/postgres/postgres.go:502-514`)
-skips expression elements, and `parseCreateIndex` (`postgres.go:375-410`)
-appends the index even when no column is left. `introspectStandaloneIndexes`
-(`parser/introspect/postgres.go:746`) skips an index with no plain column
-(`if len(cols) == 0 { continue }`, `:794`).
-
-**Suggested fix.**
-- Align with the canonical form FIX-274 rules for expression parts; the
-  smallest change is for `parseCreateIndex` to skip an index whose
-  `indexParamColumns` is empty, matching the introspector.
-- Test: a PG `assertSchemaParity` case with `CREATE INDEX ON e (lower(x))`.
-- Vet notes on scope (all refs match HEAD):
-  - the introspector side is now measured on PG16: parsed `e_lower_idx INDEX []` → introspected absent. `TestDerivedConstraintNames` pins only the name `e_lower_idx`, not `Columns: []`;
-  - a unique expression-only index differs the same way (`ux UNIQUE []` → absent);
-  - a mixed UNIQUE index `(a, lower(x))` gives `UNIQUE [a]` and sets `Column a Unique: true` on both sources, a false uniqueness that fails at runtime (below);
-  - a column written as an expression is misread: `CREATE INDEX px ON e (((a)), b)` parses as `[b]` but introspects as `[a b]`; `((a))` parses as `[]` but introspects as `[a]`; `((x COLLATE "C"))` parses as `[]` but introspects as `[x]`. PG16 stores each as a plain column (`indexprs` NULL);
-  - the impact is not manifest-only, so `nit` understates it: generated conflict targets fail. E2E with the HEAD binary on a sibling copy of the postgres example (files source) with `expr_rows` (unique `lower(email)`, unique `(a, lower(b))`, index `(a, lower(b))`, index `lower(b)`): it generates `ExprRowConflict: {} // UNIQUE ()` and `ExprRowConflictA: {"a"} // UNIQUE (a)`, and the manifest lists `expr_rows_email_ux` and `expr_rows_lower_idx` with `"columns": null`. `Upsert(..., ExprRowConflict)` twice → "upsert expr_row: sqlgen: unique constraint violation on constraint expr_rows_email_ux: Key (lower(email))=(a@x) already exists." (the conflict clause is silently dropped). `Upsert(..., ExprRowConflictA)` → "upsert expr_row: pgx rows: ERROR: there is no unique or exclusion constraint matching the ON CONFLICT specification (SQLSTATE 42P10)", under both sources.
-- Pending the user's ruling: FIX-274's shared question (how is an index with an expression part modeled, on every dialect and source?). PG raises nothing its options miss. Measured PG consequences:
-  - (C), prototyped for PostgreSQL: in the `expr_rows` probe the conflict enum drops to `ExprRowConflictPK` only, and `exprRowConflictCoversPK` and the UpsertMany read-back branch drop out (190 changed lines in models_gen.go, all `expr_rows`); manifest `indexes[]` loses 4 entries (two had `"columns": null`), and column `a` goes from unique true to false. Nothing outside `expr_rows` changes; no golden churn;
-  - (A): PG needs only the original Suggested fix (mixed indexes already agree as `[a]`), but `ExprRowConflictA` stays and fails with 42P10 under both sources;
-  - (B): needs a deparse of `IndexElem.Expr`, `pg_get_indexdef(oid,k,true)` plus `catalogExpr`, and generator changes. Not prototyped;
-  - under any option PG needs the parenthesized-column unwrap; under C it also needs name reservation for skipped indexes.
-- Prototype (option C, PostgreSQL):
-  - `indexParamColumns` returns `([]string, bool)`, false when any part is an expression; `parseCreateIndex` skips such an index, unique or not, partial or not. It still derives the index's name and records it in a new `Parser.exprIndexes` (schema → names), which `namespace()` adds to the taken relation names. Without that, C regresses name parity: `CREATE INDEX n_a_idx ON n (lower(x)); CREATE INDEX ON n (a)` → PG names the second `n_a_idx1`, while an unreserved parser gives `n_a_idx`;
-  - a new `indexElemColumn` unwraps a ColumnRef inside any number of COLLATE clauses (parentheses are not in the AST), so `((a))` and `((x COLLATE "C"))` count as plain columns;
-  - `introspectStandaloneIndexes` adds `AND pi.indexprs IS NULL` (the matview query's filter), and the dead `WHERE k.attnum <> 0` and the `len(cols) == 0` skip are removed;
-  - tests: new `TestCreateIndex_ExpressionParts` (7 cases); `TestDerivedConstraintNames`'s "index columns from expressions and repeats" case rewritten so the skipped indexes' names show up as `e_lower_idx1`, `e_expr_idx1`, `e_x_idx1` on later plain indexes; new `TestPostgresIntrospect_ExpressionIndexes` (constraints, Unique flags, `assertSchemaParity`);
-  - known limit, not prototyped: in `both` mode a seeded (introspected) schema does not reserve the database's expression-index names; sequences and views have the same gap.
-- Changed from the original: "skip an index whose `indexParamColumns` is empty" is option A's PG half and leaves the mixed-index false uniqueness (42P10). Under C it also needs the name reservation and the parenthesized-column unwrap.
-- Prototype results, run at `d51ace1b` on 2026-10-07:
-  - Reproduction: a throwaway probe (`zz_probe_fix276_test.go`, since deleted), `cd parser && go test -v -count=1 -run TestZZProbeFIX276 ./introspect/`, parsed → introspected: `e_lower_idx INDEX []` → absent; `ux UNIQUE []` → absent; `ux2 UNIQUE ["a"]` → `["a"]` (column a Unique on both sides); `ix INDEX ["a"]` → `["a"]`; `px` → `["a" "b"]`; `inc INDEX ["a"]` (`(a) INCLUDE (b)`) → `["a" "b"]`; `assertSchemaParity` FAIL.
-  - Gates: `cd parser && go test -race -count=1 ./...` → ok (PG and MySQL containers); `golangci-lint run ./postgres/... ./introspect/...` → 0 issues; `gofumpt -l parser/` → clean; `cd cmd/sqlgen && go test -short -count=1 ./...` → ok; `TestE2EGoldenFiles` → ok.
-  - Fail-first:
-    - `parser/postgres/postgres.go` reverted → `TestCreateIndex_ExpressionParts` fails all 7 (e.g. `- nil + {{Name: "e_lower_idx", Type: s"INDEX", Columns: []string{}, Method: "btree"}}`); `TestDerivedConstraintNames` fails (`+ "e INDEX e_expr_idx"` …); the parity test fails (`- {Name: "ux2", Type: s"UNIQUE", Columns: []string{"a"}...}`);
-    - `parser/introspect/postgres.go` reverted with the parser fix kept → `+ {Name: "ux2", …}`, `+ {Name: "ix", … Where: "b > 0"}`, "introspected e.a: Unique = true";
-    - name-reservation line removed → `- "e INDEX e_lower_idx1" + "e INDEX e_lower_idx"` and `- Name: "n_a_idx" + Name: "n_a_idx1"`;
-    - parenthesized-column unwrap disabled → `parenthesized_column` and `parenthesized_collated_column` fail;
-    - the existing suite without the fix → passes.
-  - Golden churn: none.
-  - Patch: `.claude/prototypes/FIX-276.patch` (4 files, +147/-22).
-
-- The user ruled on 2026-10-08: FIX-274's option (C) for PostgreSQL, matching this prototype (with the skipped-index name reservation and the parenthesized-column unwrap). Severity raised from `nit` to `tracked` on 2026-10-08 for the measured 42P10 conflict-target failure, so it lands before the Phase 30 close.
-
-
-**References.**
-- PRD §6.1, §30.7.
-- FIX-274 (SQLite sibling).
-
-**Resolution notes.** _Filled in by `/fix resolve`._
-
 ### FIX-277
 
 - **Status:** Open
@@ -1179,6 +1115,70 @@ map straight on.
 ## Resolved
 
 <!-- fixes:resolved:begin -->
+### FIX-276
+
+- **Status:** Resolved
+- **Severity:** tracked
+- **Origin:** phase 30, `parser/postgres` + `parser/introspect`
+- **Surfaced by:** backlog promotion at `/close-phase 30` (2026-10-07); first recorded by 30.2 (2026-10-05)
+- **Vetted:** ready at `d51ace1b` (2026-10-07; ruled 2026-10-08, the ruled option is the prototype)
+
+**Issue.** **A PostgreSQL expression-only index is kept by the parser and
+skipped by the introspector**, so the manifest's `indexes[]` differs by
+source. Measured evidence from the backlog line: "parser test `e_lower_idx`
+with `Columns: []` (introspector side by code reading)" for `CREATE INDEX ON
+e (lower(x))`.
+
+**Root cause.** `indexParamColumns` (`parser/postgres/postgres.go:502-514`)
+skips expression elements, and `parseCreateIndex` (`postgres.go:375-410`)
+appends the index even when no column is left. `introspectStandaloneIndexes`
+(`parser/introspect/postgres.go:746`) skips an index with no plain column
+(`if len(cols) == 0 { continue }`, `:794`).
+
+**Suggested fix.**
+- Align with the canonical form FIX-274 rules for expression parts; the
+  smallest change is for `parseCreateIndex` to skip an index whose
+  `indexParamColumns` is empty, matching the introspector.
+- Test: a PG `assertSchemaParity` case with `CREATE INDEX ON e (lower(x))`.
+- Vet notes on scope (all refs match HEAD):
+  - the introspector side is now measured on PG16: parsed `e_lower_idx INDEX []` → introspected absent. `TestDerivedConstraintNames` pins only the name `e_lower_idx`, not `Columns: []`;
+  - a unique expression-only index differs the same way (`ux UNIQUE []` → absent);
+  - a mixed UNIQUE index `(a, lower(x))` gives `UNIQUE [a]` and sets `Column a Unique: true` on both sources, a false uniqueness that fails at runtime (below);
+  - a column written as an expression is misread: `CREATE INDEX px ON e (((a)), b)` parses as `[b]` but introspects as `[a b]`; `((a))` parses as `[]` but introspects as `[a]`; `((x COLLATE "C"))` parses as `[]` but introspects as `[x]`. PG16 stores each as a plain column (`indexprs` NULL);
+  - the impact is not manifest-only, so `nit` understates it: generated conflict targets fail. E2E with the HEAD binary on a sibling copy of the postgres example (files source) with `expr_rows` (unique `lower(email)`, unique `(a, lower(b))`, index `(a, lower(b))`, index `lower(b)`): it generates `ExprRowConflict: {} // UNIQUE ()` and `ExprRowConflictA: {"a"} // UNIQUE (a)`, and the manifest lists `expr_rows_email_ux` and `expr_rows_lower_idx` with `"columns": null`. `Upsert(..., ExprRowConflict)` twice → "upsert expr_row: sqlgen: unique constraint violation on constraint expr_rows_email_ux: Key (lower(email))=(a@x) already exists." (the conflict clause is silently dropped). `Upsert(..., ExprRowConflictA)` → "upsert expr_row: pgx rows: ERROR: there is no unique or exclusion constraint matching the ON CONFLICT specification (SQLSTATE 42P10)", under both sources.
+- Pending the user's ruling: FIX-274's shared question (how is an index with an expression part modeled, on every dialect and source?). PG raises nothing its options miss. Measured PG consequences:
+  - (C), prototyped for PostgreSQL: in the `expr_rows` probe the conflict enum drops to `ExprRowConflictPK` only, and `exprRowConflictCoversPK` and the UpsertMany read-back branch drop out (190 changed lines in models_gen.go, all `expr_rows`); manifest `indexes[]` loses 4 entries (two had `"columns": null`), and column `a` goes from unique true to false. Nothing outside `expr_rows` changes; no golden churn;
+  - (A): PG needs only the original Suggested fix (mixed indexes already agree as `[a]`), but `ExprRowConflictA` stays and fails with 42P10 under both sources;
+  - (B): needs a deparse of `IndexElem.Expr`, `pg_get_indexdef(oid,k,true)` plus `catalogExpr`, and generator changes. Not prototyped;
+  - under any option PG needs the parenthesized-column unwrap; under C it also needs name reservation for skipped indexes.
+- Prototype (option C, PostgreSQL):
+  - `indexParamColumns` returns `([]string, bool)`, false when any part is an expression; `parseCreateIndex` skips such an index, unique or not, partial or not. It still derives the index's name and records it in a new `Parser.exprIndexes` (schema → names), which `namespace()` adds to the taken relation names. Without that, C regresses name parity: `CREATE INDEX n_a_idx ON n (lower(x)); CREATE INDEX ON n (a)` → PG names the second `n_a_idx1`, while an unreserved parser gives `n_a_idx`;
+  - a new `indexElemColumn` unwraps a ColumnRef inside any number of COLLATE clauses (parentheses are not in the AST), so `((a))` and `((x COLLATE "C"))` count as plain columns;
+  - `introspectStandaloneIndexes` adds `AND pi.indexprs IS NULL` (the matview query's filter), and the dead `WHERE k.attnum <> 0` and the `len(cols) == 0` skip are removed;
+  - tests: new `TestCreateIndex_ExpressionParts` (7 cases); `TestDerivedConstraintNames`'s "index columns from expressions and repeats" case rewritten so the skipped indexes' names show up as `e_lower_idx1`, `e_expr_idx1`, `e_x_idx1` on later plain indexes; new `TestPostgresIntrospect_ExpressionIndexes` (constraints, Unique flags, `assertSchemaParity`);
+  - known limit, not prototyped: in `both` mode a seeded (introspected) schema does not reserve the database's expression-index names; sequences and views have the same gap.
+- Changed from the original: "skip an index whose `indexParamColumns` is empty" is option A's PG half and leaves the mixed-index false uniqueness (42P10). Under C it also needs the name reservation and the parenthesized-column unwrap.
+- Prototype results, run at `d51ace1b` on 2026-10-07:
+  - Reproduction: a throwaway probe (`zz_probe_fix276_test.go`, since deleted), `cd parser && go test -v -count=1 -run TestZZProbeFIX276 ./introspect/`, parsed → introspected: `e_lower_idx INDEX []` → absent; `ux UNIQUE []` → absent; `ux2 UNIQUE ["a"]` → `["a"]` (column a Unique on both sides); `ix INDEX ["a"]` → `["a"]`; `px` → `["a" "b"]`; `inc INDEX ["a"]` (`(a) INCLUDE (b)`) → `["a" "b"]`; `assertSchemaParity` FAIL.
+  - Gates: `cd parser && go test -race -count=1 ./...` → ok (PG and MySQL containers); `golangci-lint run ./postgres/... ./introspect/...` → 0 issues; `gofumpt -l parser/` → clean; `cd cmd/sqlgen && go test -short -count=1 ./...` → ok; `TestE2EGoldenFiles` → ok.
+  - Fail-first:
+    - `parser/postgres/postgres.go` reverted → `TestCreateIndex_ExpressionParts` fails all 7 (e.g. `- nil + {{Name: "e_lower_idx", Type: s"INDEX", Columns: []string{}, Method: "btree"}}`); `TestDerivedConstraintNames` fails (`+ "e INDEX e_expr_idx"` …); the parity test fails (`- {Name: "ux2", Type: s"UNIQUE", Columns: []string{"a"}...}`);
+    - `parser/introspect/postgres.go` reverted with the parser fix kept → `+ {Name: "ux2", …}`, `+ {Name: "ix", … Where: "b > 0"}`, "introspected e.a: Unique = true";
+    - name-reservation line removed → `- "e INDEX e_lower_idx1" + "e INDEX e_lower_idx"` and `- Name: "n_a_idx" + Name: "n_a_idx1"`;
+    - parenthesized-column unwrap disabled → `parenthesized_column` and `parenthesized_collated_column` fail;
+    - the existing suite without the fix → passes.
+  - Golden churn: none.
+  - Patch: `.claude/prototypes/FIX-276.patch` (4 files, +147/-22).
+
+- The user ruled on 2026-10-08: FIX-274's option (C) for PostgreSQL, matching this prototype (with the skipped-index name reservation and the parenthesized-column unwrap). Severity raised from `nit` to `tracked` on 2026-10-08 for the measured 42P10 conflict-target failure, so it lands before the Phase 30 close.
+
+
+**References.**
+- PRD §6.1, §30.7.
+- FIX-274 (SQLite sibling).
+
+**Resolution notes.** Resolved 2026-10-08 per the user's ruling (C), PostgreSQL half (SQLite was FIX-274). The vetted prototype was fresh (`git diff --stat d51ace1b HEAD` empty on its 4 files) and applied cleanly with `git apply --3way`. `parser/postgres`: `indexParamColumns` returns `([]string, bool)`, false when any part is an expression; the new `indexElemColumn` unwraps a ColumnRef inside any number of COLLATE clauses, so `((a))` and `((x COLLATE "C"))` are plain columns; `parseCreateIndex` skips an index with an expression part (unique or not, partial or not) but still derives its name and records it in `Parser.exprIndexes`, which `namespace()` adds to the taken relation names, so a later index's derived name matches PostgreSQL's (`n_a_idx1`). `parser/introspect`: `introspectStandaloneIndexes` filters `AND pi.indexprs IS NULL` (as the matview query does); the dead `WHERE k.attnum <> 0` and the `len(cols) == 0` skip are gone. PRD §30.7 already carries FIX-274's sentence ("not listed and is not a conflict target, under every source"); PG needed no extra wording. Tests: `TestCreateIndex_ExpressionParts` (7 cases), `TestDerivedConstraintNames`'s "index columns from expressions and repeats" case rewritten so the skipped names surface as `e_lower_idx1` / `e_expr_idx1` / `e_x_idx1`, and `TestPostgresIntrospect_ExpressionIndexes` (constraints, Unique flags, `assertSchemaParity`). Fail-first reproduced on the final code: `parser/postgres/postgres.go` reverted fails all 7 subtests, the derived-names case and the introspection test; `parser/introspect/postgres.go` reverted fails with "introspected e.a: Unique = true"; the name-reservation line removed gives `- "e INDEX e_lower_idx1" + "e INDEX e_lower_idx"`. Gates: `make check` ok, `make check-examples` ok, `make update-golden-e2e` / `make update-golden` → no churn (matches the vet). Beyond the prototype (found at verify): the prototype keyed the reserved names by schema, so they outlived their table; `CREATE INDEX ON d (lower(x)); DROP TABLE d; CREATE TABLE d (…, lower int); CREATE INDEX ON d (lower)` named the last index `d_lower_idx1` where HEAD and PostgreSQL give `d_lower_idx`, and `ALTER TABLE … SET SCHEMA` left the name behind. `exprIndexes` is now keyed by qualified table: `namespace()` reads it per table, `dropTable` deletes the entry, and a new `moveTableKey` (shared by RENAME and SET SCHEMA) carries it with the table, deleting the old key before setting the new one so a same-key rename stays a no-op as at HEAD (reviewer finding). Covered by the `TestDerivedConstraintNames` case "a skipped expression index's name goes with its table" (drop, set schema, rename, rename-then-drop; the schema-keyed version fails it with `+ "d INDEX d_lower_idx1"`, `+ "m INDEX m_lower_idx1"`) and tables `d` / `r` in `TestPostgresIntrospect_ExpressionIndexes` (PG16 gives `d_lower_idx` and `r_lower_idx1`). Backlog: three lines — DROP COLUMN does not release a reservation (reviewer finding; a mixed index regresses against HEAD in name only, and the fix needs each reservation's referenced columns), the vet's known limit (under `both`, a seeded schema does not reserve the database's expression-index names) and a same-type cast part (`(x::text)` on `text`) that PostgreSQL stores as a plain column but the parser skips (measured while writing the drop test).
+
 ### FIX-274
 
 - **Status:** Resolved

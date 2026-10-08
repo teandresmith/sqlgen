@@ -1818,6 +1818,52 @@ CREATE INDEX users_email_idx ON users (email);`
 	}
 }
 
+// TestCreateIndex_ExpressionParts pins that an index with an expression part
+// is skipped, unique or not, and that a column written as an expression is a
+// plain column, as PostgreSQL 16 stores it.
+func TestCreateIndex_ExpressionParts(t *testing.T) {
+	tests := []struct {
+		name   string
+		index  string
+		want   []parser.Constraint
+		unique string // the one column marked Unique
+	}{
+		{name: "expression only", index: `CREATE INDEX ON e (lower(x))`},
+		{name: "unique expression only", index: `CREATE UNIQUE INDEX ux ON e (lower(x))`},
+		{name: "unique column and expression", index: `CREATE UNIQUE INDEX ux ON e (a, lower(x))`},
+		{name: "column and expression", index: `CREATE INDEX ix ON e (a, (a + b))`},
+		{name: "partial expression", index: `CREATE INDEX ix ON e (lower(x)) WHERE a > 0`},
+		{
+			name:  "parenthesized column",
+			index: `CREATE INDEX px ON e (((a)), b)`,
+			want:  []parser.Constraint{{Name: "px", Type: parser.Index, Columns: []string{"a", "b"}, Method: "btree"}},
+		},
+		{
+			name:   "parenthesized collated column",
+			index:  `CREATE UNIQUE INDEX ON e ((x COLLATE "C"))`,
+			want:   []parser.Constraint{{Name: "e_x_idx", Type: parser.Unique, Columns: []string{"x"}, Method: "btree"}},
+			unique: "x",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			p := postgres.New("")
+			if err := p.Parse("test.sql", []byte(`CREATE TABLE e (x text, a int, b int); `+tt.index)); err != nil {
+				t.Fatalf("Parse() error: %v", err)
+			}
+			table := p.Schema().Tables[0]
+			if diff := cmp.Diff(tt.want, table.Constraints); diff != "" {
+				t.Errorf("constraints mismatch (-want +got):\n%s", diff)
+			}
+			for _, col := range table.Columns {
+				if col.Unique != (col.Name == tt.unique) {
+					t.Errorf("column %s: Unique = %v, want %v", col.Name, col.Unique, !col.Unique)
+				}
+			}
+		})
+	}
+}
+
 // TestDropConstraintRecomputesColumnUnique pins that dropping a UNIQUE
 // constraint re-derives col.Unique from the unconditional UNIQUEs that
 // remain, an inline one included, rather than unconditionally clearing it.
@@ -2168,17 +2214,47 @@ func TestDerivedConstraintNames(t *testing.T) {
 		},
 		{
 			name: "index columns from expressions and repeats",
-			sql: `CREATE TABLE e (x text, a int, b int);
+			sql: `CREATE TABLE e (x text, a int, b int, lower int, expr int);
 				CREATE INDEX ON e (lower(x));
 				CREATE INDEX ON e ((a + b));
 				CREATE INDEX ON e (a, a);
 				CREATE INDEX ON e ((x::varchar));
 				CREATE INDEX ON e (a) INCLUDE (b);
-				CREATE UNIQUE INDEX ON e (b);`,
+				CREATE UNIQUE INDEX ON e (b);
+				CREATE INDEX ON e (lower);
+				CREATE INDEX ON e (expr);
+				CREATE INDEX ON e (x);`,
+			// The skipped expression indexes still take e_lower_idx,
+			// e_expr_idx and e_x_idx.
 			want: []string{
-				"e INDEX e_lower_idx", "e INDEX e_expr_idx", "e INDEX e_a_a1_idx",
-				"e INDEX e_x_idx", "e INDEX e_a_b_idx", "e UNIQUE e_b_idx",
+				"e INDEX e_a_a1_idx", "e INDEX e_a_b_idx", "e UNIQUE e_b_idx",
+				"e INDEX e_lower_idx1", "e INDEX e_expr_idx1", "e INDEX e_x_idx1",
 			},
+		},
+		{
+			name: "a skipped expression index's name goes with its table",
+			sql: `CREATE TABLE d (x text, lower int);
+				CREATE INDEX ON d (lower(x));
+				DROP TABLE d;
+				CREATE TABLE d (x text, lower int);
+				CREATE INDEX ON d (lower);
+				CREATE TABLE m (x text, lower int);
+				CREATE INDEX ON m (lower(x));
+				ALTER TABLE m SET SCHEMA s;
+				CREATE TABLE m (x text, lower int);
+				CREATE INDEX ON m (lower);
+				CREATE TABLE r (x text, lower int);
+				CREATE INDEX ON r (lower(x));
+				ALTER TABLE r RENAME TO r2;
+				CREATE TABLE r (x text, lower int);
+				CREATE INDEX ON r (lower);
+				CREATE TABLE q (x text);
+				CREATE INDEX ON q (lower(x));
+				ALTER TABLE q RENAME TO q2;
+				DROP TABLE q2;
+				CREATE TABLE q (x text, lower int);
+				CREATE INDEX ON q (lower);`,
+			want: []string{"d INDEX d_lower_idx", "m INDEX m_lower_idx", "r INDEX r_lower_idx1", "q INDEX q_lower_idx"},
 		},
 		{
 			name: "a merged primary key takes a unique's name",

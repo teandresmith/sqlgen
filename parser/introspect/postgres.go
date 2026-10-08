@@ -742,7 +742,8 @@ func (r pgConstraintRow) constraint(casts map[string][]string) (parser.Constrain
 // pg_index row on the table that isn't already covered by a pg_constraint
 // entry. This is the path that surfaces gin/gist/hash indexes (PRD §30.7) and
 // partial unique indexes created via CREATE UNIQUE INDEX ... WHERE ...
-// (which pg_constraint never represents).
+// (which pg_constraint never represents). indexprs IS NULL skips an index with
+// an expression part, as the DDL parser does: it is not an index over columns.
 func (pi *PostgresIntrospector) introspectStandaloneIndexes(ctx context.Context, table *parser.Table, conIndIDs map[int64]struct{}, casts map[string][]string) error {
 	rows, err := pi.db.QueryContext(ctx, `
 		SELECT
@@ -755,8 +756,7 @@ func (pi *PostgresIntrospector) introspectStandaloneIndexes(ctx context.Context,
 				(SELECT array_agg(att.attname ORDER BY k.ord)
 				 FROM unnest(pi.indkey::smallint[]) WITH ORDINALITY AS k(attnum, ord)
 				 JOIN pg_catalog.pg_attribute att
-				   ON att.attrelid = pi.indrelid AND att.attnum = k.attnum
-				 WHERE k.attnum <> 0),
+				   ON att.attrelid = pi.indrelid AND att.attnum = k.attnum),
 				'{}'
 			)
 		FROM pg_catalog.pg_index pi
@@ -766,6 +766,7 @@ func (pi *PostgresIntrospector) introspectStandaloneIndexes(ctx context.Context,
 		LEFT JOIN pg_catalog.pg_am am ON am.oid = ic.relam
 		WHERE tns.nspname = $1 AND tc.relname = $2
 		  AND pi.indisvalid AND pi.indisready
+		  AND pi.indexprs IS NULL
 		ORDER BY ic.relname`, table.Schema, table.Name)
 	if err != nil {
 		return fmt.Errorf("introspect postgres indexes %s.%s: %w", table.Schema, table.Name, err)
@@ -788,12 +789,6 @@ func (pi *PostgresIntrospector) introspectStandaloneIndexes(ctx context.Context,
 			continue
 		}
 		cols := parsePostgresArray(colsStr)
-		// Expression-only indexes leave indkey entries as 0 — they have no
-		// projectable columns. Skip them to match the DDL parser's behavior
-		// (indexParamColumns skips expression-only entries).
-		if len(cols) == 0 {
-			continue
-		}
 
 		cType := parser.Index
 		if isUnique {

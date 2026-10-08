@@ -18,6 +18,9 @@ type Parser struct {
 	schema        *parser.Schema
 	defaultSchema string
 	tableIndex    map[string]int // qualified "schema.name" → index in schema.Tables
+	// exprIndexes holds, per qualified table, the names of its skipped
+	// expression indexes, which still take a relation name.
+	exprIndexes map[string][]string
 }
 
 // New creates a new PostgreSQL parser. If defaultSchema is empty, "public" is used.
@@ -29,6 +32,7 @@ func New(defaultSchema string) *Parser {
 		schema:        &parser.Schema{},
 		defaultSchema: defaultSchema,
 		tableIndex:    make(map[string]int),
+		exprIndexes:   make(map[string][]string),
 	}
 }
 
@@ -232,6 +236,9 @@ func (p *Parser) namespace(schema string) pgNamespace {
 		for _, c := range t.Constraints {
 			ns.add(c.Type, c.Name)
 		}
+		for _, name := range p.exprIndexes[t.Schema+"."+t.Name] {
+			ns.relations[name] = true
+		}
 	}
 	for _, ct := range p.schema.CompositeTypes {
 		if ct.Schema == schema {
@@ -371,7 +378,9 @@ func (p *Parser) parseCreateDomain(stmt *pg_query.CreateDomainStmt) error {
 // parseCreateIndex records a standalone CREATE [UNIQUE] INDEX as a Constraint
 // on the target table. CREATE INDEX defaults to btree when no USING clause is
 // given (PRD §30.7 expects "btree" / "gin" / "gist" / "hash"); WhereClause
-// holds the partial-index predicate text.
+// holds the partial-index predicate text. An index with an expression part is
+// not an index over columns, so it is skipped, as the introspector skips it;
+// its name stays taken.
 func (p *Parser) parseCreateIndex(stmt *pg_query.IndexStmt) error {
 	if stmt == nil || stmt.Relation == nil {
 		return nil
@@ -391,10 +400,11 @@ func (p *Parser) parseCreateIndex(stmt *pg_query.IndexStmt) error {
 		cType = parser.Unique
 	}
 
+	cols, plain := indexParamColumns(stmt.IndexParams)
 	c := parser.Constraint{
 		Name:    stmt.Idxname,
 		Type:    cType,
-		Columns: indexParamColumns(stmt.IndexParams),
+		Columns: cols,
 		Method:  method,
 		Where:   deparseExpr(stmt.WhereClause),
 	}
@@ -404,6 +414,11 @@ func (p *Parser) parseCreateIndex(stmt *pg_query.IndexStmt) error {
 			Columns: parser.PostgresIndexColumnNames(indexElemNames(slices.Concat(stmt.IndexParams, stmt.IndexIncludingParams))),
 		}
 		c.Name = parser.DerivePostgresConstraintName(table.Name, named, p.namespace(table.Schema).taken(parser.Index))
+	}
+	if !plain {
+		key := table.Schema + "." + table.Name
+		p.exprIndexes[key] = append(p.exprIndexes[key], c.Name)
+		return nil
 	}
 	table.Constraints = append(table.Constraints, c)
 	parser.CanonicalizeConstraints(table, "postgres")
@@ -496,21 +511,39 @@ func fixedColname(node *pg_query.Node) string {
 }
 
 // indexParamColumns extracts column names from a CREATE INDEX parameter list.
-// Expression-only entries (e.g. CREATE INDEX ... ON t (lower(x))) have an
-// empty IndexElem.Name and are skipped — the manifest's index surface is
-// column-oriented.
-func indexParamColumns(params []*pg_query.Node) []string {
+// It reports false when a part is an expression (lower(x), (a + b)).
+func indexParamColumns(params []*pg_query.Node) ([]string, bool) {
 	cols := make([]string, 0, len(params))
 	for _, p := range params {
 		e, ok := p.Node.(*pg_query.Node_IndexElem)
 		if !ok || e.IndexElem == nil {
 			continue
 		}
-		if name := e.IndexElem.Name; name != "" {
-			cols = append(cols, name)
+		name := indexElemColumn(e.IndexElem)
+		if name == "" {
+			return nil, false
 		}
+		cols = append(cols, name)
 	}
-	return cols
+	return cols, true
+}
+
+// indexElemColumn returns the column an index part names, or "" for an
+// expression. A column written as an expression, (a) or (a COLLATE "C"), is
+// stored by PostgreSQL as a plain column.
+func indexElemColumn(e *pg_query.IndexElem) string {
+	if e.Name != "" {
+		return e.Name
+	}
+	expr := e.Expr
+	for expr.GetCollateClause() != nil {
+		expr = expr.GetCollateClause().Arg
+	}
+	fields := expr.GetColumnRef().GetFields()
+	if len(fields) == 0 {
+		return ""
+	}
+	return fields[len(fields)-1].GetString_().GetSval()
 }
 
 func (p *Parser) parseRename(stmt *pg_query.RenameStmt) error {
@@ -532,9 +565,7 @@ func (p *Parser) parseRename(stmt *pg_query.RenameStmt) error {
 		parser.RenameTableReferences(p.schema.Tables, table.Schema, table.Name, stmt.Newname)
 		table.Name = stmt.Newname
 		newKey := table.Schema + "." + stmt.Newname
-		idx := p.tableIndex[oldKey]
-		delete(p.tableIndex, oldKey)
-		p.tableIndex[newKey] = idx
+		p.moveTableKey(oldKey, newKey)
 
 	case pg_query.ObjectType_OBJECT_COLUMN:
 		if stmt.Relation == nil {
@@ -587,10 +618,20 @@ func (p *Parser) parseAlterObjectSchema(stmt *pg_query.AlterObjectSchemaStmt) er
 		table.Columns[i].Type = p.retargetTypeName(table.Columns[i].Type, table.Schema, stmt.Newschema)
 	}
 	table.Schema = stmt.Newschema
+	p.moveTableKey(oldKey, newKey)
+	return nil
+}
+
+// moveTableKey rekeys a renamed or moved table. Its skipped expression-index
+// names go with it.
+func (p *Parser) moveTableKey(oldKey, newKey string) {
 	idx := p.tableIndex[oldKey]
 	delete(p.tableIndex, oldKey)
 	p.tableIndex[newKey] = idx
-	return nil
+	if names, ok := p.exprIndexes[oldKey]; ok {
+		delete(p.exprIndexes, oldKey)
+		p.exprIndexes[newKey] = names
+	}
 }
 
 func (p *Parser) parseDrop(stmt *pg_query.DropStmt) error {
@@ -652,6 +693,7 @@ func (p *Parser) dropTable(schema, name string) error {
 	}
 	p.schema.Tables = slices.Delete(p.schema.Tables, idx, idx+1)
 	delete(p.tableIndex, key)
+	delete(p.exprIndexes, key)
 	// Shift indices for tables after the removed one.
 	for k, v := range p.tableIndex {
 		if v > idx {
