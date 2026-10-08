@@ -1067,10 +1067,10 @@ Measured (probe of `DetectSoftDelete`): `datetime(3)` → `soft delete column
 `timestamp(6)`, `timestamptz(3)`, `int(10) unsigned zerofill`. Not run end to
 end.
 
-**Root cause.** `softDeleteStrategy` (`parser/detect.go:54-68`) cuts the
+**Root cause.** `softDeleteStrategy` (`parser/detect.go:55-73`) cuts the
 type at the first space only (`:56`) and matches the base against an exact
-list (`:58-64`), so a `(…)` modifier makes it miss; `DetectSoftDelete`
-(`parser/detect.go:14-27`) then returns the error (`:22`), reached from
+list (`:63-69`), so a `(…)` modifier makes it miss; `DetectSoftDelete`
+(`parser/detect.go:15-28`) then returns the error (`:22`), reached from
 `detectTableSoftDelete` (`cmd/sqlgen/gen/context_table.go:338`). Validation
 uses substring matching instead (`isSoftDeleteTypeCompatible`,
 `cmd/sqlgen/config/validate.go:2142-2154`), which accepts any type
@@ -1112,6 +1112,8 @@ list (not measured).
   - Fail-first: the detect.go `(` cut reverted → `TestDetectSoftDelete` fails 5 rows ("unexpected error: … unsupported type \"datetime(3)\"") and `TestGenerate_SoftDeleteColumnWithPrecision` fails; validate.go reverted → `TestValidatePostParse_SoftDeleteTypeOutsideList` fails all 6 rows ("ValidatePostParse() error = <nil>, want an incompatible type error"); the existing suite without the fix → passes.
   - Golden churn: none.
   - Patch: `.claude/prototypes/FIX-289.patch` (5 files, +167/-7).
+
+- Update after FIX-271 landed (`fa26812c`, 2026-10-08): `parser/detect.go` line refs above are re-pinned to the landed code; the `tinyint(1)` → bool case this entry anticipates is now in the tree, so this patch lands with `git apply --3way` on top of it (the vet showed the merged order: `tinyint(1)` check, space cut, `(` cut).
 
 
 **References.**
@@ -1235,7 +1237,7 @@ from the relationship filter path (`cmd/sqlgen/gen/context_relfilter.go:242`,
 - **Severity:** nit
 - **Origin:** phase 1, `sql`
 - **Surfaced by:** /fix-vet FIX-284 (2026-10-07), filed at /close-phase 30 (2026-10-08)
-- **Vetted:** needs ruling at `b606e4a7` (2026-10-08; ruled 2026-10-08, re-vet pending)
+- **Vetted:** ready at `13173996` (2026-10-08; re-vetted for the ruled hybrid)
 
 **Issue.** **`sql.Where(col).Eq(nil)` emits a bare `$` the database
 rejects**, and so do `Neq` / `Gt` / `Gte` / `Lt` / `Lte` / `Like` / `NLike`
@@ -1282,6 +1284,17 @@ code reading).
 
 - The user ruled on 2026-10-08: a hybrid of (C) and (A). `Eq(nil)` redirects to `IS NULL` and `Neq(nil)` to `IS NOT NULL`; Gt/Gte/Lt/Lte/Like/NLike bind NULL (`[]any{nil}`, FIX-284's shape). This differs from the prototype (B), so the entry is re-vetted.
 
+- Prototype results for the ruled hybrid, run at `13173996` on 2026-10-08 (replaces the option-B patch; the "3 files, +90/-16" above describes that old patch):
+  - Prototype: `Eq` returns `b.IsNull()` on a nil `v` and `Neq` returns `b.IsNotNull()`, both keeping `Column` set so `PrefixConditions` still qualifies them. Gt/Gte/Lt/Lte/Like/NLike store `operand(v)`, a new unexported helper returning `[]any{nil}` for a nil `v` (FIX-284's shape); the existing `expandSlice` → `renumberTokens` path binds it, with no builder change. Doc comments on all 8 methods are updated. PRD §11.5: the Eq row reads "`col = $`; `col IS NULL` for a nil `v`", the Neq row "`col != $`; `col IS NOT NULL` for a nil `v`", and a paragraph after the table says the other six bind NULL and match no row, and that a typed nil is bound, so `Eq((*int)(nil))` matches no row where `Eq(nil)` matches the NULL rows.
+  - Tests: `TestConditionBuilder_NilOperand` (8 methods × postgres / postgres stdlib / mysql / sqlite, rendered between `active = $1 … age > $N` to check numbering; exact SQL and args) and `TestConditionBuilder_TypedNilOperandBinds` (Eq/Neq/Gt with `(*int)(nil)` keep `col <op> $`).
+  - Real-DB probe (`sql/zz_probe_eqnil_test.go`, since deleted), rows (1, NULL) and (2, '7'), identical on SQLite, postgres:17-alpine and mysql:8.4: `Eq(nil)` → `owner_id IS NULL`, ids=[1]; `Neq(nil)` → `owner_id IS NOT NULL`, ids=[2]; Gt/Gte/Lt/Lte/Like/NLike(nil) → `owner_id > $1` / `?`, ARGS=[nil], ids=[] err=<nil>; `Eq((*int)(nil))` → unchanged, ids=[]. So `Eq(nil)` and `Eq((*int)(nil))` return different rows on every dialect, as the ruling accepted.
+  - Gates: `go test -race -count=1 ./sql/... ./comparator/...` → ok; `go test -race -short -count=1 ./...` (root) → ok; `gofumpt -l sql/` → clean; `golangci-lint run ./sql/...` → 0 issues; `go vet ./sql/` → ok; sqlite example `GOWORK=off go test -race -count=1 ./...` → ok and `GOWORK=off golangci-lint run` → 0 issues. Hand-built `Condition{Value: nil}` is unaffected (`expandConditionClause` untouched), and comparators dereference typed pointers.
+  - With FIX-284: `git apply --check` passes in both orders, and with both applied `./sql/... ./comparator/...` pass in both orders. Whichever lands second can have `Raw`'s nil branch call `operand(args[0])`.
+  - Fail-first: Eq guard removed → `TestConditionBuilder_NilOperand/Eq/*` fail ("… owner_id = $ AND age > ?\" want \"… owner_id IS NULL AND age > ?\""); Neq guard removed → `/Neq/*` fail; `operand` guard removed → 24 subtests fail (e.g. Like/mysql "… owner_id LIKE $ …" want "… owner_id LIKE ? …"); the existing suite without the fix → passes.
+  - Note for `/fix-implement`: `upsert.go.tmpl:502` `resolveUpsertConflictRow` calls `sql.Where(col).Eq(args[i])` with `args []any`; generated args are never an untyped nil, except a column overridden to Go type `any` holding nil, which would now do an `IS NULL` lookup instead of a DB syntax error (not measured).
+  - Golden churn: none.
+  - Patch: `.claude/prototypes/FIX-292.patch` (3 files, +123/-16).
+
 
 **References.**
 - PRD §11.5 (condition composition, `sql.Where` builder).
@@ -1295,6 +1308,7 @@ code reading).
 - **Severity:** tracked
 - **Origin:** phase 6, `cmd/sqlgen/gen` (`connection.go.tmpl`)
 - **Surfaced by:** `/fix-vet FIX-292` (2026-10-08), filed at `/close-phase 30` (2026-10-08)
+- **Vetted:** ready at `13173996` (2026-10-08)
 
 **Issue.** **A `Connection` cursor that lacks an expected key, or holds JSON
 `null` for it, returns an SQL error instead of `ErrInvalidCursor`.** PRD §14.2
@@ -1325,6 +1339,14 @@ map straight on.
   `{"<key>": null}` cursors asserting `errors.Is(err, ErrInvalidCursor)`, for a
   table and a view, on at least the sqlite example; regenerate goldens.
 - Independent of FIX-292's ruling: a cursor key is never meaningfully NULL here.
+- Prototype results, run at `13173996` on 2026-10-08:
+  - Reproduction: a throwaway probe (`cmd/sqlgen/testdata/examples/sqlite/tests/zz_probe_cursor_test.go`, since deleted), `GOWORK=off go test -count=1 -run TestZZProbeCursorNil -v ./tests/` → `table After={} -> err=connection products: get products: query: SQL logic error: unrecognized token: "$" (1)`; the same for table Before, the view (`connection product_summary: …`), and the cursors `{"id":null}`, `{"other":1}` and a top-level JSON `null`; composite `{"product_id":1}` and `{"product_id":1,"tag_name":"a","label":null}` → `connection product_tag_labels: … unrecognized token: "$" (1)`; control `{"id":1}` → ok. With the fix every one returns `sqlgen: invalid cursor`.
+  - Prototype (the shared-helper option): `decodeCursor(s string, keys []string)` in `connection.go.tmpl` loops over the keys and returns `ErrInvalidCursor` when `cursor[key] == nil`, which covers a missing key, a null value and a top-level `null`; it reuses the package's `ErrInvalidCursor` (no new import). The 4 call sites in `table/pagination.go.tmpl` and `view/pagination.go.tmpl` pass `c.cursorKeys`, and the callers' error handling is unchanged. Unit tests (`connection_test.go`, `pagination_table_test.go` patterns) and the unit goldens `connection_gen.go` / `pagination_products_gen.go` are updated. New E2E `TestConnection_CursorMissingKeyReturnsErrInvalidCursor` (sqlite, 7 cases: table After/Before × `{}` and `{"id":null}`, a composite cursor missing its trailing keys, view After `{}`, view Before `{"id":null}`).
+  - Gates: `cd cmd/sqlgen && go test -race -count=1 ./gen/...` → ok; `make update-golden` / `make update-golden-e2e` → ok; `TestE2EGoldenFiles` → ok; `gofumpt -l` → clean; all 12 churned examples `GOWORK=off go test -race -count=1 ./...` → ok and `GOWORK=off golangci-lint run` → 0 issues.
+  - Fail-first: the key-check loop removed and goldens regenerated → `TestConnection_CursorMissingKeyReturnsErrInvalidCursor` fails all 7 (`connection_test.go:302: err = connection products: get products: query: SQL logic error: unrecognized token: "$" (1), want ErrInvalidCursor`), and `TestConnectionTemplate_cursorEncodeDecode` fails (`output missing cursor decode: "if cursor[key] == nil {"`); the existing suite without the fix → passes.
+  - Golden churn (changed only; 2 lines per Connection method plus the `decodeCursor` body in `connection_gen.go`): cache, events, graphql, graphql_null_wrappers, graphql_top_level, mysql, postgres, postgres_stdlib, tenancy, tenancy_mysql, tenancy_postgres ~2–3 files each under `expected/` and `models/`; sqlite ~24 each (file_per_table); unit goldens `connection_gen.go`, `pagination_products_gen.go`. If FIX-272's `sequence_rows` table lands first, its Connection method picks up the same 2-line change on regeneration.
+  - Patch: `.claude/prototypes/FIX-293.patch` (116 files, +888/-629; source and tests 8 files, +104/-13).
+
 
 **References.**
 - PRD §14.2 "Cursor Encoding" / "Invalid cursors" (`docs/PRD.md:8911`); §22.1.
