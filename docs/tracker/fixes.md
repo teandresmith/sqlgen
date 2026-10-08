@@ -1095,6 +1095,254 @@ never reaches its `PrimaryKeyType` case (`:926`).
 
 **Resolution notes.** _Filled in by `/fix resolve`._
 
+### FIX-288
+
+- **Status:** Open
+- **Severity:** tracked
+- **Origin:** phase 4, `parser/mysql` + `parser/introspect`
+- **Surfaced by:** /fix-vet FIX-278 (2026-10-07), filed at /close-phase 30 (2026-10-08)
+
+**Issue.** **MySQL inline ENUM/SET names `<table>_<column>_enum|_set`
+collide when underscores make them ambiguous**, and the remedy the error
+offers cannot work. Table `a` column `b_c` and table `a_b` column `c` both
+register `a_b_c_enum`. Measured: `CREATE TABLE a (id int PRIMARY KEY, b_c
+ENUM('1','2') NOT NULL); CREATE TABLE a_b (id int PRIMARY KEY, c
+ENUM('3','4') NOT NULL);` → `sqlgen generate` → "Generation error: enum
+a_b_c_enum and enum a_b_c_enum both resolve to the Go type name "ABCEnum" —
+set enums.a_b_c_enum.struct_name to a different Go identifier"; with `enums:
+{a_b_c_enum: {struct_name: OtherEnum}}` → the same error naming "OtherEnum",
+since both entries share one config key. Both schema sources use the scheme,
+so `database` and `files` fail alike.
+
+**Root cause.** The derived name joins table, column and suffix with `_`,
+which can itself appear in either name, so the mapping (table, column) →
+name is not injective: `parser/mysql/mysql.go:430` / `:434`
+(`extractInlineEnumOrSet`) and `parser/introspect/mysql.go:360` / `:370`.
+The view path builds its own names the same way
+(`parser/introspect/mysql.go:254`, `<view>_<column><suffix>`), so a view name can collide with a table
+name likewise (by code reading). The duplicate is first caught at
+`validateResolvedNames` (`cmd/sqlgen/gen/resolved_names.go:403-414`), whose
+escape hint `enums.<name>.struct_name` (`cmd/sqlgen/gen/api_names.go:148`)
+names a key both entries share. FIX-278's prototype keeps an
+`inlineTypeUsers` guard (skip RENAME/DROP bookkeeping for a shared name)
+precisely because of this collision.
+
+**Suggested fix.** The naming scheme is a design question for the vet;
+options:
+- **Option 1 — a separator that cannot be confused.** E.g. `__` between
+  table and column (`a__b_c_enum` vs `a_b__c_enum`). Cheap, but not
+  injective either: a backquoted MySQL identifier may contain `__` or any
+  other character, so this narrows the collision rather than removing it.
+  Changes the PRD-documented name (§5.2, §8.3.1) and every golden enum name.
+- **Option 2 — keep the scheme, share identical values, reject different
+  ones loudly.** When two (table, column) pairs derive one name and their
+  value lists are equal, register one entry both columns use; when they
+  differ, fail in the parser / introspector with an error naming both
+  columns and a remedy that works (rename a table or column). No config
+  surface; the PRD gains one sentence.
+- **Option 3 — deterministic disambiguation.** On collision, suffix the
+  later pair (`a_b_c_2_enum`, by schema order). Generates, but a column's
+  enum name then depends on unrelated tables, and the `enums.<name>` key a
+  user configured can move to the other column when a table is added.
+- Whatever the option, move the naming into one shared helper in the
+  `parser` package used by `parser/mysql` and `parser/introspect` (both
+  already import it), so the two sources cannot drift; if the collision
+  disappears, FIX-278's `inlineTypeUsers` guard may become removable.
+- Tests: a `parser/mysql` case with tables `a` (`b_c`) and `a_b` (`c`),
+  asserting the ruled outcome (distinct names, one shared entry, or the
+  error); the same schema through `TestParityFixtures`
+  (`parser/introspect/parity_fixtures_test.go:163`) so both sources agree;
+  a `cmd/sqlgen/gen` case asserting generation succeeds or fails with the
+  ruled message.
+
+**References.**
+- PRD §5.2 (inline ENUM values, table-scoped naming `<table>_<column>_enum`),
+  §8.3.1 (MySQL inline ENUM/SET naming), §4.11 (enum overrides, `struct_name`).
+- FIX-278 (RENAME/DROP bookkeeping; its `inlineTypeUsers` guard).
+- `parser/mysql/mysql_test.go:341` (`TestRedefineColumnKeepsSharedInlineEnumName`).
+
+**Resolution notes.** _Filled in by `/fix resolve`._
+
+### FIX-289
+
+- **Status:** Open
+- **Severity:** tracked
+- **Origin:** phase 4, `parser` + `cmd/sqlgen/config`
+- **Surfaced by:** /fix-vet FIX-271 (2026-10-07), filed at /close-phase 30 (2026-10-08)
+
+**Issue.** **A soft-delete column whose type carries a modifier passes
+config validation and then fails generation.** `deleted_at DATETIME(3)`
+(MySQL) or `timestamp(6)` / `timestamptz(3)` (PostgreSQL) is accepted by
+`validateSoftDeleteTypes` and rejected by `parser.DetectSoftDelete`.
+Measured (probe of `DetectSoftDelete`): `datetime(3)` → `soft delete column
+"deleted_at" in table "t" has unsupported type "datetime(3)"`; same for
+`timestamp(6)`, `timestamptz(3)`, `int(10) unsigned zerofill`. Not run end to
+end.
+
+**Root cause.** `softDeleteStrategy` (`parser/detect.go:54-68`) cuts the
+type at the first space only (`:56`) and matches the base against an exact
+list (`:58-64`), so a `(…)` modifier makes it miss; `DetectSoftDelete`
+(`parser/detect.go:14-27`) then returns the error (`:22`), reached from
+`detectTableSoftDelete` (`cmd/sqlgen/gen/context_table.go:338`). Validation
+uses substring matching instead (`isSoftDeleteTypeCompatible`,
+`cmd/sqlgen/config/validate.go:2142-2154`), which accepts any type
+containing `timestamp` / `datetime` / `int`. By code reading the two also
+disagree on families without a modifier: `bigint`, `mediumint` and `serial`
+pass validation as `integer` but are absent from `softDeleteStrategy`'s
+list (not measured).
+
+**Suggested fix.**
+- In `softDeleteStrategy`, after the space cut, also cut the base at `(`
+  (`base, _, _ = strings.Cut(base, "(")`), so `datetime(3)`,
+  `timestamp(6)`, `timestamptz(3)`, `timestamp(6) with time zone` and
+  `int(10) unsigned zerofill` classify like their bare forms.
+- Order with FIX-271: its prototype adds a `tinyint(1)` → bool case to this
+  function; that exact match must run before the modifier strip, or
+  `tinyint(1)` falls through to `tinyint` → integer.
+- Have the vet measure the `bigint` / `mediumint` / `serial` gap; if
+  confirmed, add them to the integer case so the accepted sets match
+  (`config` cannot import `parser`, so the two lists stay separate and the
+  tests pin them together).
+- Tests: `TestDetectSoftDelete` (`parser/detect_test.go:10`) rows for
+  `datetime(3)`, `timestamp(6)`, `timestamptz(3)`, `timestamp(6) with time
+  zone` → timestamp and `int(10) unsigned zerofill` → integer; a
+  `cmd/sqlgen/gen` case where a MySQL `deleted_at DATETIME(3)` table
+  generates its soft-delete methods.
+
+**References.**
+- PRD §5.4 (soft delete column detection), §4.13 (validation rule "`soft_delete_columns`
+  type mismatch"), §4.6 (`soft_delete_columns`).
+- FIX-271 (MySQL synonyms; adds the `tinyint(1)` case here).
+
+**Resolution notes.** _Filled in by `/fix resolve`._
+
+### FIX-290
+
+- **Status:** Open
+- **Severity:** tracked
+- **Origin:** phase 30 (30.2 introspection parity), `parser/introspect`
+- **Surfaced by:** /fix-vet FIX-276 (2026-10-07), filed at /close-phase 30 (2026-10-08)
+
+**Issue.** **The PG introspector lists `INCLUDE` columns as index key
+columns**, so a standalone index differs by source and a unique index with
+`INCLUDE` would yield a wrong conflict target. Measured: `CREATE INDEX inc
+ON e (a) INCLUDE (b)` → parsed `["a"]`, introspected `["a" "b"]`
+(`assertSchemaParity` diff); `INSERT … ON CONFLICT (a, b) DO NOTHING` on
+`UNIQUE (a) INCLUDE (b)` → SQLSTATE 42P10 while `ON CONFLICT (a)` → ok (the
+generated conflict constant is inferred from the UNIQUE→conflict mapping,
+not run).
+
+**Root cause.** The `introspectStandaloneIndexes` column subquery
+(`parser/introspect/postgres.go:755-760`) unnests all of `indkey`, which
+holds the key columns followed by the `INCLUDE` columns, and filters only
+`k.attnum <> 0` (`:759`). The matview query cuts at `k.ord <=
+ix.indnkeyatts` (`parser/introspect/postgres.go:329-339`); this one does
+not. The emitted constraint (`:808-814`) therefore carries the payload
+columns, as `parser.Unique` when `indisunique` (`:799-800`).
+
+**Suggested fix.**
+- Add `AND k.ord <= pi.indnkeyatts` to the subquery's `WHERE`
+  (`parser/introspect/postgres.go:759`), matching the matview query.
+- Tests: a PG case in `TestParityFixtures`
+  (`parser/introspect/parity_fixtures_test.go:163`) or alongside
+  `TestPostgresIntrospect_IndexMethodAndPartialWhere`
+  (`parser/introspect/introspect_integration_test.go:2003`) with `CREATE
+  INDEX inc ON e (a) INCLUDE (b)` and `CREATE UNIQUE INDEX u ON e (c)
+  INCLUDE (d)`, asserting `["a"]` / `["c"]` and parity with the file parser.
+
+**References.**
+- PRD §6.1 (both schema sources give the same schema), §30.7 (`indexes[]`).
+- FIX-276 (expression-only indexes in the same function).
+- `parser/introspect/postgres.go:329-339` (the `indnkeyatts` cut to copy).
+
+**Resolution notes.** _Filled in by `/fix resolve`._
+
+### FIX-291
+
+- **Status:** Open
+- **Severity:** tracked
+- **Origin:** phase 17, `parser/sqlite`
+- **Surfaced by:** /fix-vet FIX-281 (2026-10-07), filed at /close-phase 30 (2026-10-08)
+
+**Issue.** **A SQLite relationship `filter` using `LIKE … ESCAPE` panics
+`sqlgen generate`.** Measured: schema `assets(id, name)` +
+`documents(id, entity_id, name)`, o2m relationship `PctDocuments` with
+`filter: "name LIKE 'x\\%%' ESCAPE '\\'"`, `sqlgen generate` → exit 2
+"panic: sql.BinaryExpr.String(): invalid op ESCAPE" via
+sqlite.QualifyFilterIdentifiers → gen.qualifyFilter →
+gen.relationshipStaticFilter.
+
+**Root cause.** `sqlite.QualifyFilterIdentifiers` returns
+`qualified.String()` with no recover (`parser/sqlite/filter_qualifier.go:36`),
+and rqlite/sql's `BinaryExpr.String()` panics on the ESCAPE operator. It is
+reached through `qualifyFilter` (`cmd/sqlgen/gen/filter_qualifier.go:31`)
+from the relationship filter path (`cmd/sqlgen/gen/context_relfilter.go:242`,
+`:262`) and, by code reading, from the o2o JOIN predicate
+(`cmd/sqlgen/gen/context_table.go:2638`).
+
+**Suggested fix.**
+- Replace the bare `qualified.String()` with FIX-281's shared recover helper
+  `exprString(e rsql.Expr, what string) (string, error)` in
+  `parser/sqlite/sqlite.go` (e.g. `exprString(qualified, "relationship
+  filter")`) and return its error wrapped as `qualify filter: …`, so
+  generation fails with a message naming the table, relationship and filter
+  instead of a panic. Land after FIX-281 (vetted ready, not yet landed), or
+  add the helper here if this lands first.
+- Tests: a `TestQualifyFilterIdentifiers` (`parser/sqlite/filter_qualifier_test.go:8`)
+  row for `name LIKE 'x\%' ESCAPE '\'` asserting an error and no panic; a
+  `cmd/sqlgen/gen` case for the o2m `filter` above asserting the wrapped
+  error.
+
+**References.**
+- PRD §4.8 (`filter` on a relationship), §13.4.
+- FIX-281 (the same panic in CHECK / DEFAULT / generated column / index;
+  adds `exprString`), FIX-269 (`indexWhere`'s recover), FIX-098 (filter
+  qualification).
+
+**Resolution notes.** _Filled in by `/fix resolve`._
+
+### FIX-292
+
+- **Status:** Open
+- **Severity:** nit
+- **Origin:** phase 1, `sql`
+- **Surfaced by:** /fix-vet FIX-284 (2026-10-07), filed at /close-phase 30 (2026-10-08)
+
+**Issue.** **`sql.Where(col).Eq(nil)` emits a bare `$` the database
+rejects**, and so do `Neq` / `Gt` / `Gte` / `Lt` / `Lte` / `Like` / `NLike`
+on `ConditionBuilder`. Same root cause as FIX-284, different fix site.
+Reachable only from hand-written `sql.Where` callers (generated comparators
+dereference typed pointers). Measured: `sqlite Eq(nil): SQL=SELECT * FROM
+"users" WHERE owner_id = $ ARGS=[]interface {}(nil)` → `SQL logic error:
+unrecognized token: "$" (1)`; postgres and mysql render a bare `$` too.
+
+**Root cause.** The single-value builders store `Value: v` unchanged
+(`sql/condition.go:73-101`, `:131-139`), and `expandConditionClause` reads
+`cond.Value == nil` as "no args" (`sql/builder.go:588-590`), the shape
+`IsNull` / `IsNotNull` rely on (`sql/condition.go:146-154`). A typed nil
+(e.g. `(*int)(nil)`) is not `== nil` as an `any` and binds normally (by
+code reading).
+
+**Suggested fix.** Design question for the vet; options:
+- **Bind NULL** — store `[]any{nil}` when `v == nil` (FIX-284's shape for
+  `Raw`), so `col = NULL` is sent and matches no rows. Consistent with
+  FIX-284 and with a typed nil, but silent.
+- **Reject** — panic (or a build-time error) naming the column and
+  pointing at `IsNull` / `IsNotNull`. Loud; the builder API has no error
+  return, so it would be a panic.
+- **Redirect** — `Eq(nil)` → `IsNull()`, `Neq(nil)` → `IsNotNull()`; the
+  ordering and LIKE operators have no NULL meaning and would still need
+  bind or reject.
+- Tests: a `sql` builder table over the eight operators × three dialects
+  asserting the ruled outcome (one placeholder with `ARGS=[nil]`, the
+  panic, or the `IS [NOT] NULL` clause).
+
+**References.**
+- PRD §11.5 (condition composition, `sql.Where` builder).
+- FIX-284 (`sql.Raw(clause, nil)`, same root cause).
+
+**Resolution notes.** _Filled in by `/fix resolve`._
+
 <!-- fixes:open:end -->
 
 ## Resolved
