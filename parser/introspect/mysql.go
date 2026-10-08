@@ -385,8 +385,10 @@ func (mi *MySQLIntrospector) introspectColumns(ctx context.Context, table *parse
 	return nil
 }
 
+// introspectConstraints reads the table's PRIMARY KEY, UNIQUE and FOREIGN KEY
+// constraints. A UNIQUE index with an expression part, which has a NULL
+// column_name, is skipped, as the DDL parser skips it (PRD §30.7).
 func (mi *MySQLIntrospector) introspectConstraints(ctx context.Context, table *parser.Table) error {
-	// Primary key and unique constraints.
 	rows, err := mi.db.QueryContext(ctx, `
 		SELECT
 			tc.constraint_name,
@@ -402,6 +404,12 @@ func (mi *MySQLIntrospector) introspectConstraints(ctx context.Context, table *p
 		WHERE tc.table_schema = DATABASE()
 		  AND tc.table_name = ?
 		  AND tc.constraint_type IN ('PRIMARY KEY', 'UNIQUE', 'FOREIGN KEY')
+		  AND (tc.constraint_type <> 'UNIQUE' OR NOT EXISTS (
+			SELECT 1 FROM information_schema.statistics s
+			WHERE s.table_schema = tc.table_schema
+			  AND s.table_name = tc.table_name
+			  AND s.index_name = tc.constraint_name
+			  AND s.column_name IS NULL))
 		ORDER BY tc.constraint_name, kcu.ordinal_position`, table.Name)
 	if err != nil {
 		return fmt.Errorf("introspect mysql constraints %s: %w", table.Name, err)
@@ -544,6 +552,7 @@ func (mi *MySQLIntrospector) introspectNonUniqueIndexes(ctx context.Context, tab
 	defer rows.Close() //nolint:errcheck // rows.Close error is not actionable after reading
 
 	indexes := make(map[string]*parser.Constraint)
+	exprIndexes := make(map[string]bool)
 	var order []string
 	for rows.Next() {
 		var (
@@ -554,10 +563,10 @@ func (mi *MySQLIntrospector) introspectNonUniqueIndexes(ctx context.Context, tab
 		if err := rows.Scan(&name, &col, &method); err != nil {
 			return fmt.Errorf("introspect mysql non-unique indexes %s: scanning: %w", table.Name, err)
 		}
-		// Expression index parts (MySQL 8.0.13+) report a NULL column_name and
-		// have no projectable column — skip them to match the DDL parser and
-		// the PostgreSQL standalone-index sweep.
+		// An expression part (MySQL 8.0.13+) has a NULL column_name. Its
+		// index is skipped, as the DDL parser skips it (PRD §30.7).
 		if !col.Valid {
+			exprIndexes[name] = true
 			continue
 		}
 		c, ok := indexes[name]
@@ -573,7 +582,9 @@ func (mi *MySQLIntrospector) introspectNonUniqueIndexes(ctx context.Context, tab
 	}
 
 	for _, name := range order {
-		table.Constraints = append(table.Constraints, *indexes[name])
+		if !exprIndexes[name] {
+			table.Constraints = append(table.Constraints, *indexes[name])
+		}
 	}
 	return nil
 }

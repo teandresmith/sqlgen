@@ -1057,9 +1057,51 @@ map straight on.
 
 **Resolution notes.** _Filled in by `/fix resolve`._
 
-### FIX-294
+### FIX-295
 
 - **Status:** Open
+- **Severity:** tracked
+- **Origin:** phase 6, `cmd/sqlgen/gen` (`connection.go.tmpl`)
+- **Surfaced by:** `/fix-vet FIX-293` (2026-10-08), filed at `/close-phase 30` (2026-10-08)
+
+**Issue.** **A `Connection` cursor value that is a JSON array or object passes
+FIX-293's presence check and is not rejected as `ErrInvalidCursor`.** Measured in
+the sqlite example at `13173996`: `After={"id":[]}` → `SQL logic error:
+unrecognized token: "$" (1)`; `After={"id":[1,2]}` → `err=<nil>` (the tampered
+cursor is silently expanded as a list, changing the query); `After={"id":{"a":1}}`
+→ `sql: converting argument $1 type: unsupported type map[string]interface {},
+a map`. PRD §14.2 says an invalid cursor makes `Connection` return
+`ErrInvalidCursor`.
+
+**Root cause.** `decodeCursor` (`cmd/sqlgen/gen/templates/connection.go.tmpl`)
+checks only that each key is present and non-nil (FIX-293). `cursorKeyset` passes
+the decoded `any` as the condition's `Value`, and the builder treats `[]any` as a
+list to expand (`sql/builder.go` `expandSlice`), so an array becomes `IN`-style
+placeholders or, when empty, a bare `$`.
+
+**Suggested fix.**
+- In the `decodeCursor` loop, reject a value that is a JSON array or object with
+  `ErrInvalidCursor`, unless the cursor key column is array-typed (its
+  `json.Marshal` output is a JSON array). That needs a design call: decode
+  cursor values per key with the column's Go type, or keep `any` and reject
+  arrays/objects except for array-typed keys, or forbid array-typed cursor keys.
+- Tests: extend `TestConnection_CursorMissingKeyReturnsErrInvalidCursor` (sqlite)
+  with `[]`, `[1,2]` and `{"a":1}` values.
+
+**References.**
+- PRD §14.2 "Invalid cursors"; FIX-293.
+
+**Resolution notes.** _Filled in by `/fix resolve`._
+
+<!-- fixes:open:end -->
+
+## Resolved
+
+<!-- fixes:resolved:begin -->
+
+### FIX-294
+
+- **Status:** Resolved
 - **Severity:** tracked
 - **Origin:** phase 30, `parser/mysql` + `parser/introspect` (`mysql.go`)
 - **Surfaced by:** backlog promotion at `/close-phase 30` (2026-10-08); first recorded by the FIX-274 and FIX-275 vets (2026-10-07)
@@ -1116,49 +1158,8 @@ columns, the false-uniqueness shape the ruling removes.
 - PRD §30.7 (`indexes[]`), §16.5.2, §6.1; the 2026-10-08 ruling in FIX-274.
 - FIX-274, FIX-276 (SQLite and PostgreSQL halves), FIX-275.
 
-**Resolution notes.** _Filled in by `/fix resolve`._
+**Resolution notes.** Resolved 2026-10-08 per the user's ruling (C), MySQL half (SQLite was FIX-274, PostgreSQL FIX-276); PRD §30.7 already says it for every source, so no PRD wording changed. The vetted prototype was fresh (`git diff --stat be98918a HEAD -- parser/` empty) and applied cleanly with `git apply --3way`. `parser/mysql`: `addKey` keeps a key with an expression part (an `""` column from `indexColumns`) in the per-table `Parser.exprKeys` instead of `table.Constraints`; its name stays taken for later unnamed keys, and an unnamed one is named as if its column were `functional_index`. A built FK index whose columns lead an expression key is not added, and a declared expression key replaces an FK index already built through the existing redundancy loop. `exprKeys` follows its table (dropped on DROP TABLE and case-insensitive DROP INDEX, moved on RENAME TABLE), and its plain columns follow RENAME / CHANGE / DROP COLUMN. `parser/introspect/mysql.go`: the PK/UNIQUE/FK query drops a UNIQUE with any NULL-`column_name` STATISTICS row (so a mixed UNIQUE no longer sets `Column.Unique`), and the non-unique sweep skips any index with a NULL-`column_name` row. Tests: `TestExpressionKeys` (`parser/mysql`, 15 cases) and `TestMySQLIntrospect_ExpressionIndexes` (16 tables: key names on both sides, no `Column.Unique`, then `assertSchemaParity`). Fail-first on the final code: both source files reverted to HEAD fail both tests. Gates: `make check` ok, `go -C parser test -race -count=1 ./...` ok (containers), `make check-examples` ok, `make update-golden-e2e` / `make update-golden` → no churn (matches the vet). Beyond the prototype: `renameTable` set the new key before deleting the old one, so `ALTER TABLE e RENAME TO e` lost the table's `exprKeys` (and, already at HEAD, its `generated` set). Measured on MySQL 8.0: `KEY a ((b + 1)); RENAME TO itself; ADD KEY (a)` → db `a_2`, parser `a`; `FOREIGN KEY (a) …; RENAME TO itself; ADD KEY ix (a)` → db `ix` only, parser `a` + `ix`. Both maps are now deleted before being set, as FIX-276's `moveTableKey` does; covered by the `TestExpressionKeys` case "renaming the table to its own name keeps its name", table `m_ex_rs` in the integration test, and a `TestForeignKeyBackingIndexSynthesis` case (each fails with the old order). Verify: the reviewer confirmed the prototype divergence is only the `renameTable` reorder and its tests (fail-first confirmed), and found no defects; its comment-trim nit was applied, and the backlog line on `Seed` not rebuilding `exprKeys` now also names the lost name reservation (reading).
 
-### FIX-295
-
-- **Status:** Open
-- **Severity:** tracked
-- **Origin:** phase 6, `cmd/sqlgen/gen` (`connection.go.tmpl`)
-- **Surfaced by:** `/fix-vet FIX-293` (2026-10-08), filed at `/close-phase 30` (2026-10-08)
-
-**Issue.** **A `Connection` cursor value that is a JSON array or object passes
-FIX-293's presence check and is not rejected as `ErrInvalidCursor`.** Measured in
-the sqlite example at `13173996`: `After={"id":[]}` → `SQL logic error:
-unrecognized token: "$" (1)`; `After={"id":[1,2]}` → `err=<nil>` (the tampered
-cursor is silently expanded as a list, changing the query); `After={"id":{"a":1}}`
-→ `sql: converting argument $1 type: unsupported type map[string]interface {},
-a map`. PRD §14.2 says an invalid cursor makes `Connection` return
-`ErrInvalidCursor`.
-
-**Root cause.** `decodeCursor` (`cmd/sqlgen/gen/templates/connection.go.tmpl`)
-checks only that each key is present and non-nil (FIX-293). `cursorKeyset` passes
-the decoded `any` as the condition's `Value`, and the builder treats `[]any` as a
-list to expand (`sql/builder.go` `expandSlice`), so an array becomes `IN`-style
-placeholders or, when empty, a bare `$`.
-
-**Suggested fix.**
-- In the `decodeCursor` loop, reject a value that is a JSON array or object with
-  `ErrInvalidCursor`, unless the cursor key column is array-typed (its
-  `json.Marshal` output is a JSON array). That needs a design call: decode
-  cursor values per key with the column's Go type, or keep `any` and reject
-  arrays/objects except for array-typed keys, or forbid array-typed cursor keys.
-- Tests: extend `TestConnection_CursorMissingKeyReturnsErrInvalidCursor` (sqlite)
-  with `[]`, `[1,2]` and `{"a":1}` values.
-
-**References.**
-- PRD §14.2 "Invalid cursors"; FIX-293.
-
-**Resolution notes.** _Filled in by `/fix resolve`._
-
-<!-- fixes:open:end -->
-
-## Resolved
-
-<!-- fixes:resolved:begin -->
 ### FIX-290
 
 - **Status:** Resolved

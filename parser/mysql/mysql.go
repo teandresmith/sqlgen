@@ -21,6 +21,10 @@ type Parser struct {
 	// generated holds, per table, the names of the indexes MySQL built on its
 	// own for a foreign key. A later key can make one redundant.
 	generated map[string]map[string]bool
+	// exprKeys holds, per table, its keys with an expression part. They are
+	// not listed, but each keeps its name, and one whose leading columns
+	// match a foreign key's serves as its index.
+	exprKeys map[string][]parser.Constraint
 }
 
 // New creates a new MySQL parser.
@@ -34,6 +38,7 @@ func New() (*Parser, error) {
 		tableIndex: make(map[string]int),
 		vparser:    vp,
 		generated:  make(map[string]map[string]bool),
+		exprKeys:   make(map[string][]parser.Constraint),
 	}, nil
 }
 
@@ -311,6 +316,7 @@ func (p *Parser) parseDropTable(stmt *sqlparser.DropTable) error {
 		p.schema.Tables = slices.Delete(p.schema.Tables, idx, idx+1)
 		delete(p.tableIndex, name)
 		delete(p.generated, name)
+		delete(p.exprKeys, name)
 		for k, v := range p.tableIndex {
 			if v > idx {
 				p.tableIndex[k] = v - 1
@@ -730,13 +736,21 @@ func isKey(t parser.ConstraintType) bool {
 // columns start the other's, one is redundant: a built index gives way to a
 // declared key, and of two built indexes the shorter goes, or the earlier
 // when they match. A PRIMARY KEY is named PRIMARY; any other unnamed key takes
-// its first column's name, made unique among the keys the table has.
+// its first column's name, made unique among the keys the table has. A key
+// with an expression part is not a key over columns (PRD §30.7): it is kept
+// in exprKeys, not listed, and an unnamed one is named functional_index.
 func (p *Parser) addKey(table *parser.Table, key parser.Constraint, generated bool) {
 	key.Columns = declaredColumns(table, key.Columns)
 	built := p.generated[table.Name]
 	if built == nil {
 		built = make(map[string]bool)
 		p.generated[table.Name] = built
+	}
+	exprKeys := p.exprKeys[table.Name]
+	if generated && slices.ContainsFunc(exprKeys, func(k parser.Constraint) bool {
+		return columnsPrefixMatch(k.Columns, key.Columns)
+	}) {
+		return
 	}
 	for i, k := range table.Constraints {
 		if !isKey(k.Type) || !redundantKeys(key.Columns, generated, k.Columns, built[k.Name]) {
@@ -749,8 +763,21 @@ func (p *Parser) addKey(table *parser.Table, key parser.Constraint, generated bo
 		delete(built, k.Name)
 		break
 	}
+	expr := slices.Contains(key.Columns, "")
 	if key.Name == "" {
-		key.Name = parser.DeriveMySQLConstraintName(table.Name, key, constraintNames(table, key.Type))
+		names := constraintNames(table, key.Type)
+		for _, k := range exprKeys {
+			names = append(names, k.Name)
+		}
+		named := key
+		if expr {
+			named.Columns = []string{"functional_index"}
+		}
+		key.Name = parser.DeriveMySQLConstraintName(table.Name, named, names)
+	}
+	if expr {
+		p.exprKeys[table.Name] = append(exprKeys, key)
+		return
 	}
 	table.Constraints = append(table.Constraints, key)
 	if generated {
@@ -897,6 +924,7 @@ func (p *Parser) applyAlterOption(table *parser.Table, opt sqlparser.AlterOption
 		}
 	case *sqlparser.DropColumn:
 		alterDropColumn(table, o.Name.Name.String())
+		p.dropExprKeyColumn(table.Name, o.Name.Name.String())
 	case *sqlparser.ModifyColumn:
 		return p.alterModifyColumn(table, o)
 	case *sqlparser.AddIndexDefinition:
@@ -904,6 +932,9 @@ func (p *Parser) applyAlterOption(table *parser.Table, opt sqlparser.AlterOption
 	case *sqlparser.DropKey:
 		applyDropKey(table, o)
 		delete(p.generated[table.Name], o.Name.String())
+		p.exprKeys[table.Name] = slices.DeleteFunc(p.exprKeys[table.Name], func(k parser.Constraint) bool {
+			return strings.EqualFold(k.Name, o.Name.String())
+		})
 	case *sqlparser.AddConstraintDefinition:
 		var indexName string
 		if fk, ok := o.ConstraintDefinition.Details.(*sqlparser.ForeignKeyDefinition); ok {
@@ -916,6 +947,7 @@ func (p *Parser) applyAlterOption(table *parser.Table, opt sqlparser.AlterOption
 			return fmt.Errorf("rename column %s: %w", table.Name, err)
 		}
 		parser.RenameColumnReferences(p.schema.Tables, table.Schema, table.Name, oldName, newName)
+		p.renameExprKeyColumn(table.Name, oldName, newName)
 		return nil
 	case *sqlparser.RenameTableName:
 		return p.renameTable(table.Name, o.Table.Name.String())
@@ -976,6 +1008,7 @@ func (p *Parser) alterChangeColumn(table *parser.Table, o *sqlparser.ChangeColum
 			table.Columns[i] = redefineColumn(table.Columns[i], newCol)
 			// CHANGE COLUMN can rename too; references follow, as on RENAME COLUMN.
 			parser.RenameColumnReferences(p.schema.Tables, table.Schema, table.Name, oldName, newCol.Name)
+			p.renameExprKeyColumn(table.Name, oldName, newCol.Name)
 			p.addConstraints(table, constraints, "")
 			return nil
 		}
@@ -1042,11 +1075,36 @@ func (p *Parser) renameTable(oldName, newName string) error {
 		}
 	}
 	p.schema.Tables[idx].Name = newName
-	p.generated[newName] = p.generated[oldName]
+	// Delete before setting, so renaming a table to its own name keeps them.
+	built, exprKeys := p.generated[oldName], p.exprKeys[oldName]
 	delete(p.generated, oldName)
+	delete(p.exprKeys, oldName)
+	p.generated[newName] = built
+	p.exprKeys[newName] = exprKeys
 	delete(p.tableIndex, oldName)
 	p.tableIndex[newName] = idx
 	return nil
+}
+
+// renameExprKeyColumn renames a column in the table's expression keys, as
+// MySQL renames it in every key.
+func (p *Parser) renameExprKeyColumn(table, oldName, newName string) {
+	for _, k := range p.exprKeys[table] {
+		for i, name := range k.Columns {
+			if name == oldName {
+				k.Columns[i] = newName
+			}
+		}
+	}
+}
+
+// dropExprKeyColumn takes a dropped column out of the table's expression
+// keys, as MySQL takes it out of every key.
+func (p *Parser) dropExprKeyColumn(table, colName string) {
+	for i := range p.exprKeys[table] {
+		k := &p.exprKeys[table][i]
+		k.Columns = slices.DeleteFunc(k.Columns, func(name string) bool { return name == colName })
+	}
 }
 
 func (p *Parser) lookupTable(name string) (*parser.Table, bool) {
@@ -1057,6 +1115,8 @@ func (p *Parser) lookupTable(name string) (*parser.Table, bool) {
 	return &p.schema.Tables[idx], true
 }
 
+// indexColumns returns the column each key part names, or "" for an
+// expression part, which names none.
 func indexColumns(idx *sqlparser.IndexDefinition) []string {
 	cols := make([]string, len(idx.Columns))
 	for i, c := range idx.Columns {

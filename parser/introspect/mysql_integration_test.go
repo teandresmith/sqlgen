@@ -537,6 +537,101 @@ func TestMySQLIntrospect_CatalogRewrites(t *testing.T) {
 	}
 }
 
+// TestMySQLIntrospect_ExpressionIndexes pins that both sources skip an index
+// with an expression part, unique or not, while it keeps its name, and that it
+// serves as a foreign key's index when its leading columns are the foreign
+// key's (PRD §30.7).
+func TestMySQLIntrospect_ExpressionIndexes(t *testing.T) {
+	requireDatabases(t)
+	const ddl = `CREATE TABLE m_ex_p (id int PRIMARY KEY, x int, y int, KEY (x, y));
+	CREATE TABLE m_ex_u (email varchar(64), UNIQUE INDEX ux ((lower(email))));
+	CREATE TABLE m_ex_m (a int, b varchar(64), c int, UNIQUE INDEX ux (a, (lower(b))), KEY ix (a, (c + 1)));
+	CREATE TABLE m_ex_n (a int, b int, KEY (a, (b + 1)), KEY (a));
+	CREATE TABLE m_ex_r (a int, b int, KEY a ((b + 1)), KEY (a));
+	CREATE TABLE m_ex_c (functional_index int, b int, KEY ((b + 1)), KEY (functional_index));
+	CREATE TABLE m_ex_fk (a int, b int, KEY (a, (b + 1)), FOREIGN KEY (a) REFERENCES m_ex_p (id));
+	CREATE TABLE m_ex_fk2 (a int, b int, FOREIGN KEY (a) REFERENCES m_ex_p (id), UNIQUE (a, (b + 1)));
+	CREATE TABLE m_ex_alt (a int, b int, FOREIGN KEY (a) REFERENCES m_ex_p (id));
+	ALTER TABLE m_ex_alt ADD INDEX (a, (b + 1));
+	CREATE TABLE m_ex_two (a int, b int, FOREIGN KEY (a, b) REFERENCES m_ex_p (x, y), KEY (a, (b + 1)));
+	CREATE TABLE m_ex_d (a int, b int, KEY A ((b + 1)));
+	ALTER TABLE m_ex_d DROP INDEX a;
+	ALTER TABLE m_ex_d ADD KEY (a);
+	CREATE TABLE m_ex_dt (a int, b int, KEY a ((b + 1)));
+	DROP TABLE m_ex_dt;
+	CREATE TABLE m_ex_dt (a int, KEY (a));
+	CREATE TABLE m_ex_rt0 (a int, b int, KEY a ((b + 1)));
+	ALTER TABLE m_ex_rt0 RENAME TO m_ex_rt;
+	ALTER TABLE m_ex_rt ADD KEY (a);
+	CREATE TABLE m_ex_rs (a int, b int, KEY a ((b + 1)));
+	ALTER TABLE m_ex_rs RENAME TO m_ex_rs;
+	ALTER TABLE m_ex_rs ADD KEY (a);
+	CREATE TABLE m_ex_rc (a int, b int, KEY (a, (b + 1)));
+	ALTER TABLE m_ex_rc RENAME COLUMN a TO c;
+	ALTER TABLE m_ex_rc ADD FOREIGN KEY (c) REFERENCES m_ex_p (id);
+	CREATE TABLE m_ex_cc (a int, b int, KEY (a, (b + 1)));
+	ALTER TABLE m_ex_cc CHANGE COLUMN a c int;
+	ALTER TABLE m_ex_cc ADD FOREIGN KEY (c) REFERENCES m_ex_p (id);
+	CREATE TABLE m_ex_dc (a int, b int, KEY (a, (b + 1)));
+	ALTER TABLE m_ex_dc DROP COLUMN a;
+	ALTER TABLE m_ex_dc ADD COLUMN a int;
+	ALTER TABLE m_ex_dc ADD FOREIGN KEY (a) REFERENCES m_ex_p (id)`
+	want := map[string]map[string]string{
+		"m_ex_u":   {},
+		"m_ex_m":   {},
+		"m_ex_n":   {"a": "a"},
+		"m_ex_r":   {"a_2": "a"},
+		"m_ex_c":   {"functional_index_2": "functional_index"},
+		"m_ex_fk":  {},
+		"m_ex_fk2": {},
+		"m_ex_alt": {},
+		"m_ex_two": {"a": "a,b"},
+		"m_ex_d":   {"a": "a"},
+		"m_ex_dt":  {"a": "a"},
+		"m_ex_rt":  {"a_2": "a"},
+		"m_ex_rs":  {"a_2": "a"},
+		"m_ex_rc":  {},
+		"m_ex_cc":  {},
+		"m_ex_dc":  {"a": "a"},
+	}
+	tables := make([]string, 0, len(want)+1)
+	reset := make([]string, 0, len(want)+2)
+	for table := range want {
+		tables = append(tables, table)
+		reset = append(reset, "DROP TABLE IF EXISTS "+table)
+	}
+	tables = append(tables, "m_ex_p")
+	reset = append(reset, "DROP TABLE IF EXISTS m_ex_rt0", "DROP TABLE IF EXISTS m_ex_p")
+	applyParityFixture(t, "mysql", mysqlConnStr, strings.Join(reset, ";"), ddl)
+	introspected := introspectMySQL(t, tables...)
+	parsed := parseMySQL(t, ddl)
+
+	keyNames := func(s *parser.Schema) map[string]map[string]string {
+		got := make(map[string]map[string]string)
+		for table := range want {
+			got[table] = make(map[string]string)
+			for _, c := range findTable(t, s, table).Constraints {
+				if c.Type == parser.Unique || c.Type == parser.Index {
+					got[table][c.Name] = strings.Join(c.Columns, ",")
+				}
+			}
+			for _, col := range findTable(t, s, table).Columns {
+				if col.Unique {
+					t.Errorf("%s.%s: Unique = true", table, col.Name)
+				}
+			}
+		}
+		return got
+	}
+	if diff := cmp.Diff(want, keyNames(introspected)); diff != "" {
+		t.Errorf("introspected keys mismatch (-want +got):\n%s", diff)
+	}
+	if diff := cmp.Diff(want, keyNames(parsed)); diff != "" {
+		t.Errorf("parsed keys mismatch (-want +got):\n%s", diff)
+	}
+	assertSchemaParity(t, "mysql", parsed, introspected)
+}
+
 func findView(t *testing.T, s *parser.Schema, name string) *parser.View {
 	t.Helper()
 	for i := range s.Views {

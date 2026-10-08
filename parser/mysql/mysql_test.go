@@ -1213,6 +1213,14 @@ func TestForeignKeyBackingIndexSynthesis(t *testing.T) {
 			);`,
 			want: []wantIdx{{Name: "fk_b", Columns: []string{"user_id"}}},
 		},
+		{
+			// Measured on MySQL 8.0.
+			name: "renaming the table to its own name keeps the FK index replaceable",
+			ddl: `CREATE TABLE orders (user_id INT, FOREIGN KEY (user_id) REFERENCES users(id));
+				ALTER TABLE orders RENAME TO orders;
+				ALTER TABLE orders ADD KEY ix (user_id);`,
+			want: []wantIdx{{Name: "ix", Columns: []string{"user_id"}}},
+		},
 	}
 
 	for _, tt := range tests {
@@ -2176,6 +2184,126 @@ func TestDerivedConstraintNames(t *testing.T) {
 			want := slices.Sorted(slices.Values(tt.want))
 			if diff := cmp.Diff(want, got); diff != "" {
 				t.Errorf("constraint names mismatch (-want +got):\n%s", diff)
+			}
+		})
+	}
+}
+
+// TestExpressionKeys pins that a key with an expression part is not listed,
+// unique or not, while it keeps its name, an unnamed one named
+// functional_index, and serves as a foreign key's index when its leading
+// columns are the foreign key's, as on MySQL 8.0 (PRD §30.7).
+func TestExpressionKeys(t *testing.T) {
+	tests := []struct {
+		name string
+		sql  string
+		want []string // every UNIQUE and INDEX, as "table TYPE name [columns]"
+	}{
+		{name: "unique expression only", sql: `CREATE TABLE e (x varchar(9)); CREATE UNIQUE INDEX ux ON e ((lower(x)));`},
+		{name: "unique column and expression", sql: `CREATE TABLE e (a int, x varchar(9), UNIQUE INDEX ux (a, (lower(x))));`},
+		{name: "column and expression", sql: `CREATE TABLE e (a int, b int); ALTER TABLE e ADD INDEX ix (a, (b + 1));`},
+		{
+			name: "a later unnamed key takes the name it would have",
+			sql:  `CREATE TABLE e (a int, b int, KEY (a, (b + 1)), KEY (a));`,
+			want: []string{"e INDEX a [a]"},
+		},
+		{
+			name: "a named expression key keeps its name",
+			sql:  `CREATE TABLE e (a int, b int, KEY a ((b + 1)), KEY (a));`,
+			want: []string{"e INDEX a_2 [a]"},
+		},
+		{
+			name: "an unnamed expression key is functional_index",
+			sql:  `CREATE TABLE e (functional_index int, b int, KEY ((b + 1)), KEY (functional_index));`,
+			want: []string{"e INDEX functional_index_2 [functional_index]"},
+		},
+		{
+			name: "dropping an expression key frees its name",
+			sql: `CREATE TABLE e (a int, b int, KEY A ((b + 1)));
+				ALTER TABLE e DROP INDEX a;
+				ALTER TABLE e ADD KEY (a);`,
+			want: []string{"e INDEX a [a]"},
+		},
+		{
+			name: "dropping the table frees its name",
+			sql: `CREATE TABLE e (a int, b int, KEY a ((b + 1)));
+				DROP TABLE e;
+				CREATE TABLE e (a int, KEY (a));`,
+			want: []string{"e INDEX a [a]"},
+		},
+		{
+			name: "renaming the table carries its name",
+			sql: `CREATE TABLE e (a int, b int, KEY a ((b + 1)));
+				ALTER TABLE e RENAME TO e2;
+				ALTER TABLE e2 ADD KEY (a);`,
+			want: []string{"e2 INDEX a_2 [a]"},
+		},
+		{
+			name: "renaming the table to its own name keeps its name",
+			sql: `CREATE TABLE e (a int, b int, KEY a ((b + 1)));
+				ALTER TABLE e RENAME TO e;
+				ALTER TABLE e ADD KEY (a);`,
+			want: []string{"e INDEX a_2 [a]"},
+		},
+		{
+			name: "an expression key serves a foreign key",
+			sql: `CREATE TABLE p (id int PRIMARY KEY);
+				CREATE TABLE e (a int, b int, KEY (a, (b + 1)), FOREIGN KEY (a) REFERENCES p (id));
+				CREATE TABLE e2 (a int, b int, FOREIGN KEY (a) REFERENCES p (id), UNIQUE (a, (b + 1)));`,
+		},
+		{
+			name: "an expression key replaces a foreign key's index",
+			sql: `CREATE TABLE p (id int PRIMARY KEY);
+				CREATE TABLE e (a int, b int, FOREIGN KEY (a) REFERENCES p (id));
+				ALTER TABLE e ADD INDEX (a, (b + 1));`,
+		},
+		{
+			name: "an expression part does not match a foreign key column",
+			sql: `CREATE TABLE p (x int, y int, KEY (x, y));
+				CREATE TABLE e (a int, b int, FOREIGN KEY (a, b) REFERENCES p (x, y), KEY (a, (b + 1)));`,
+			want: []string{"p INDEX x [x y]", "e INDEX a [a b]"},
+		},
+		{
+			name: "a renamed column stays in the expression key",
+			sql: `CREATE TABLE p (id int PRIMARY KEY);
+				CREATE TABLE e (a int, b int, KEY (a, (b + 1)));
+				ALTER TABLE e RENAME COLUMN a TO c;
+				ALTER TABLE e ADD FOREIGN KEY (c) REFERENCES p (id);
+				CREATE TABLE e2 (a int, b int, KEY (a, (b + 1)));
+				ALTER TABLE e2 CHANGE COLUMN a c int;
+				ALTER TABLE e2 ADD FOREIGN KEY (c) REFERENCES p (id);`,
+		},
+		{
+			name: "a dropped column leaves the expression key",
+			sql: `CREATE TABLE p (id int PRIMARY KEY);
+				CREATE TABLE e (a int, b int, KEY (a, (b + 1)));
+				ALTER TABLE e DROP COLUMN a;
+				ALTER TABLE e ADD COLUMN a int;
+				ALTER TABLE e ADD FOREIGN KEY (a) REFERENCES p (id);`,
+			want: []string{"e INDEX a [a]"},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			p := newParser(t)
+			if err := p.Parse("test.sql", []byte(tt.sql)); err != nil {
+				t.Fatalf("Parse() error: %v", err)
+			}
+			var got []string
+			for _, tbl := range p.Schema().Tables {
+				for _, c := range tbl.Constraints {
+					if c.Type == parser.Unique || c.Type == parser.Index {
+						got = append(got, fmt.Sprintf("%s %s %s %v", tbl.Name, c.Type, c.Name, c.Columns))
+					}
+				}
+				for _, col := range tbl.Columns {
+					if col.Unique {
+						t.Errorf("%s.%s: Unique = true", tbl.Name, col.Name)
+					}
+				}
+			}
+			if diff := cmp.Diff(tt.want, got); diff != "" {
+				t.Errorf("keys mismatch (-want +got):\n%s", diff)
 			}
 		})
 	}
