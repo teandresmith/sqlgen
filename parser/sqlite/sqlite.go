@@ -93,7 +93,8 @@ func VirtualTableWarning(table string) string {
 // parseCreateIndex records a standalone CREATE [UNIQUE] INDEX as a Constraint
 // on the target table. SQLite indexes are always btree, but partial indexes
 // (CREATE INDEX ... WHERE expr) need to surface their predicate via the
-// Constraint.Where field for the manifest's index surface (PRD §30.7).
+// Constraint.Where field for the manifest's index surface (PRD §30.7). An
+// index with an expression part is skipped, as the introspector skips it.
 func (p *Parser) parseCreateIndex(stmt *rsql.CreateIndexStatement) error {
 	if stmt == nil || stmt.Table == nil {
 		return nil
@@ -104,6 +105,10 @@ func (p *Parser) parseCreateIndex(stmt *rsql.CreateIndexStatement) error {
 		return nil
 	}
 	table := &p.schema.Tables[idx]
+	cols, ok := indexedColumnNames(stmt.Columns)
+	if !ok {
+		return nil
+	}
 
 	cType := parser.Index
 	if stmt.Unique.IsValid() {
@@ -113,7 +118,7 @@ func (p *Parser) parseCreateIndex(stmt *rsql.CreateIndexStatement) error {
 	c := parser.Constraint{
 		Name:    rsql.IdentName(stmt.Name),
 		Type:    cType,
-		Columns: indexedColumnNames(stmt.Columns),
+		Columns: cols,
 		Method:  "btree",
 	}
 	where, err := indexWhere(stmt)
@@ -501,10 +506,13 @@ func parseTableConstraint(constraint rsql.Constraint) parser.Constraint {
 			Columns: identNames(ct.Columns),
 		}
 	case *rsql.UniqueConstraint:
+		// SQLite rejects an expression in a UNIQUE constraint, so every
+		// part names a column.
+		cols, _ := indexedColumnNames(ct.Columns)
 		return parser.Constraint{
 			Name:    rsql.IdentName(ct.Name),
 			Type:    parser.Unique,
-			Columns: indexedColumnNames(ct.Columns),
+			Columns: cols,
 		}
 	case *rsql.ForeignKeyConstraint:
 		return parser.Constraint{
@@ -609,31 +617,44 @@ func identNames(idents []*rsql.Ident) []string {
 }
 
 // indexedColumnCollations returns each indexed column's explicit COLLATE, upper
-// case, or "" where none is written.
+// case, or "" where none is written. The outermost COLLATE counts, inside
+// parentheses or not.
 func indexedColumnCollations(cols []*rsql.IndexedColumn) []string {
 	collations := make([]string, len(cols))
 	for i, col := range cols {
-		if collate, ok := col.X.(*rsql.CollateExpr); ok && collate.Collation != nil && collate.Collation.Name != nil {
+		x := col.X
+		for paren, ok := x.(*rsql.ParenExpr); ok; paren, ok = x.(*rsql.ParenExpr) {
+			x = paren.X
+		}
+		if collate, ok := x.(*rsql.CollateExpr); ok && collate.Collation != nil && collate.Collation.Name != nil {
 			collations[i] = strings.ToUpper(collate.Collation.Name.Name)
 		}
 	}
 	return collations
 }
 
-// indexedColumnNames returns the column each indexed column names, or the
-// expression text for an expression. A collation is not part of the name.
-func indexedColumnNames(cols []*rsql.IndexedColumn) []string {
+// indexedColumnNames returns the column each indexed column names, and false
+// when a part is an expression, which names no column. A collation and
+// parentheses are not part of the name: SQLite indexes (a) as column a.
+func indexedColumnNames(cols []*rsql.IndexedColumn) ([]string, bool) {
 	names := make([]string, len(cols))
 	for i, col := range cols {
 		x := col.X
-		if collate, ok := x.(*rsql.CollateExpr); ok {
-			x = collate.X
+		for unwrapped := false; !unwrapped; {
+			switch e := x.(type) {
+			case *rsql.CollateExpr:
+				x = e.X
+			case *rsql.ParenExpr:
+				x = e.X
+			default:
+				unwrapped = true
+			}
 		}
-		if ident, ok := x.(*rsql.Ident); ok {
-			names[i] = ident.Name
-		} else {
-			names[i] = rsql.ExprString(col.X)
+		ident, ok := x.(*rsql.Ident)
+		if !ok {
+			return nil, false
 		}
+		names[i] = ident.Name
 	}
-	return names
+	return names, true
 }

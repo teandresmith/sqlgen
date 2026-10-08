@@ -1075,6 +1075,49 @@ CREATE INDEX t_name ON t (name COLLATE NOCASE DESC);`
 	}
 }
 
+// An index part in parentheses names its column, as SQLite indexes it. An
+// index with an expression part covers no column list and is skipped, as the
+// introspector skips it (PRD §6.1, §30.7).
+func TestIndexedColumnExpressions(t *testing.T) {
+	tests := []struct {
+		name string
+		sql  string
+		want []parser.Constraint
+	}{
+		{
+			name: "parenthesized column",
+			sql:  `CREATE INDEX t_ab ON t ((a), ((b) COLLATE NOCASE));`,
+			want: []parser.Constraint{{Name: "t_ab", Type: parser.Index, Columns: []string{"a", "b"}, Method: "btree"}},
+		},
+		{
+			name: "parenthesized UNIQUE constraint column",
+			sql:  `CREATE TABLE u (a TEXT, UNIQUE ((a)));`,
+			want: []parser.Constraint{{Type: parser.Unique, Columns: []string{"a"}}},
+		},
+		{name: "expression-only unique index", sql: `CREATE UNIQUE INDEX t_lower_a ON t (lower(a));`},
+		{name: "expression-only index", sql: `CREATE INDEX t_lower_a ON t (lower(a));`},
+		{name: "column and expression", sql: `CREATE INDEX t_a_lower_b ON t (a, lower(b));`},
+		{name: "unique column and expression", sql: `CREATE UNIQUE INDEX t_a_b1 ON t (a, b + 1);`},
+		{name: "partial expression index", sql: `CREATE INDEX t_lower_a ON t (lower(a)) WHERE b IS NOT NULL;`},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			p := sqlite.New()
+			if err := p.Parse("test.sql", []byte(`CREATE TABLE t (a TEXT, b TEXT);`+tt.sql)); err != nil {
+				t.Fatalf("Parse() error: %v", err)
+			}
+			var got []parser.Constraint
+			for _, table := range p.Schema().Tables {
+				got = append(got, table.Constraints...)
+			}
+			if diff := cmp.Diff(tt.want, got); diff != "" {
+				t.Errorf("constraints mismatch (-want +got):\n%s", diff)
+			}
+		})
+	}
+}
+
 // SQLite builds one index per set of columns and collations, so a UNIQUE is a
 // duplicate only when its columns are indexed under the same collations. The
 // sort order does not count. Each want is the number of UNIQUE indexes SQLite
@@ -1086,6 +1129,8 @@ func TestUniqueDuplicatesFollowCollation(t *testing.T) {
 		wantUniques int
 	}{
 		{name: "explicit collation differs", sql: `CREATE TABLE t (a TEXT, UNIQUE (a), UNIQUE (a COLLATE NOCASE));`, wantUniques: 2},
+		{name: "collation inside parentheses", sql: `CREATE TABLE t (a TEXT, UNIQUE (a), UNIQUE ((a COLLATE NOCASE)));`, wantUniques: 2},
+		{name: "collation outside parentheses", sql: `CREATE TABLE t (a TEXT, UNIQUE (a), UNIQUE ((a) COLLATE NOCASE));`, wantUniques: 2},
 		{name: "collation differs from the key", sql: `CREATE TABLE t (id TEXT PRIMARY KEY, UNIQUE (id COLLATE NOCASE));`, wantUniques: 1},
 		{name: "sort order does not count", sql: `CREATE TABLE t (a TEXT, UNIQUE (a), UNIQUE (a DESC));`, wantUniques: 1},
 		{name: "explicit equals the column's", sql: `CREATE TABLE t (a TEXT COLLATE NOCASE, UNIQUE (a), UNIQUE (a COLLATE nocase));`, wantUniques: 1},

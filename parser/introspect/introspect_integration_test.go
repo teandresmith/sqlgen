@@ -878,6 +878,33 @@ func TestSQLiteIntrospect_PartialIndexes(t *testing.T) {
 	assertSchemaParity(t, "sqlite", parsed, introspected)
 }
 
+// An index with an expression part is skipped under both sources, unique or
+// not, and a part in parentheses names its column and keeps its collation
+// (PRD §6.1, §30.7).
+func TestSQLiteIntrospect_ExpressionIndexes(t *testing.T) {
+	requireDatabases(t)
+	parsed, introspected := sqliteSchemas(t, `
+		CREATE TABLE t (a TEXT, b TEXT, email TEXT, UNIQUE ((email)));
+		CREATE UNIQUE INDEX t_lower_email ON t (lower(email));
+		CREATE UNIQUE INDEX t_a_b1 ON t (a, b + 1);
+		CREATE INDEX t_a_lower_b ON t (a, lower(b));
+		CREATE INDEX t_lower_a ON t (lower(a)) WHERE b IS NOT NULL;
+		CREATE INDEX t_b_a ON t (b COLLATE NOCASE, (a));
+		CREATE TABLE u (a TEXT, UNIQUE (a), UNIQUE ((a COLLATE NOCASE)))
+	`)
+
+	want := []parser.Constraint{
+		{Type: parser.Unique, Columns: []string{"email"}},
+		{Name: "t_b_a", Type: parser.Index, Columns: []string{"b", "a"}, Method: "btree"},
+	}
+	got := findTable(t, introspected, "t").Constraints
+	sortConstraints(got)
+	if diff := cmp.Diff(want, got, cmpopts.EquateEmpty()); diff != "" {
+		t.Errorf("t: introspected constraints mismatch (-want +got):\n%s", diff)
+	}
+	assertSchemaParity(t, "sqlite", parsed, introspected)
+}
+
 // The file parser cannot read IS [NOT] DISTINCT FROM and cannot render
 // LIKE … ESCAPE, so a partial index using either fails both schema sources
 // with an error, not a panic (PRD §6.3).

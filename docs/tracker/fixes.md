@@ -23,87 +23,6 @@
 
 <!-- fixes:open:begin -->
 
-### FIX-274
-
-- **Status:** Open
-- **Severity:** tracked
-- **Origin:** phase 30, `parser/introspect` + `parser/sqlite`
-- **Surfaced by:** backlog promotion at `/close-phase 30` (2026-10-07); first recorded by 30.6 (2026-10-05)
-- **Vetted:** ready at `d51ace1b` (2026-10-07; ruled 2026-10-08, the ruled option is the prototype)
-
-**Issue.** **SQLite expression index parts differ by source.** The file
-parser keeps an expression part as index column text; the introspector skips
-it, so the index's columns (conflict targets, manifest `indexes[]`) differ,
-and a non-unique expression-only index exists only under `files`. Measured
-evidence from the backlog line: "`CREATE UNIQUE INDEX ux ON t (lower(email))`
-→ parsed Columns `[lower("email")]`, introspected nil; `CREATE INDEX ix ON t
-(a, lower(b))` → `[a, lower("b")]` vs `[a]`; a non-unique expression-only
-index is dropped on the introspected side only. PG has the sibling 30.2 line"
-(filed as FIX-276).
-
-**Root cause.** Parser: `indexedColumnNames`
-(`parser/sqlite/sqlite.go:625-640`) writes `rsql.ExprString(col.X)` for any
-part that is not an `*rsql.Ident`. Introspector: `introspectIndexColumns`
-(`parser/introspect/sqlite.go:591-617`) skips `PRAGMA index_info` rows with a
-NULL name (`:609`), and `introspectIndexes` (`:539-566`) keeps a unique index
-with no columns but drops a non-unique one (`case len(cols) == 0: continue`,
-`:553`).
-
-**Suggested fix.** Design-shaped (it sets the canonical form for expression
-index parts, shared with FIX-276); options for the vet:
-- **Keep expressions (parser form):** the introspector reads index parts from
-  the stored `CREATE INDEX` with the file parser, as `indexPartialWhere`
-  (`parser/introspect/sqlite.go:573`) already does for the predicate, so
-  both sources give `lower("email")`. The vet must check what the generator
-  does with an expression in `Columns` today (conflict-target generation,
-  manifest), since that text is not a column name.
-- **Drop expressions (introspector form, as the PG and MySQL introspectors
-  do):** `indexedColumnNames` skips non-identifier parts, and both sides
-  agree on whether an index left with no columns is kept or dropped
-  (PG's introspector drops it, FIX-276).
-- Tests: an `assertSchemaParity` case in
-  `parser/introspect/introspect_integration_test.go` with the three indexes
-  above, plus a `parser/sqlite` unit case pinning the chosen form.
-- Vet notes on scope (refs all match HEAD):
-  - a parenthesized part is also misread: `CREATE INDEX cx ON t (b COLLATE NOCASE, (a))` parses as `[b, ("a")]` but introspects as `[b, a]`, and a table-level `UNIQUE ((email))` makes introspection fail: "introspect sqlite table t: stored CREATE TABLE declares no UNIQUE over (email)". Same root cause and fix site (`indexedColumnNames`), so the prototype unwraps parentheses and COLLATE;
-  - false uniqueness: the introspector keeps a UNIQUE index that mixes a column and an expression as UNIQUE over its plain columns. `CREATE UNIQUE INDEX t_a_b1 ON t (a, b + 1)` → `{t_a_b1 UNIQUE [a]}`, and it also sets `Column a Unique: true`;
-  - runtime effect, E2E on a sibling copy of the sqlite example with `expr_rows` (unique `lower(email)`, unique `(a, lower(b))`, index `(a, lower(b))`, index `lower(a)`):
-    - `files` generates `ExprRowConflictLowerEmail: {"lower(\"email\")"}`. `Upsert(..., ExprRowConflictLowerEmail)` silently drops the conflict clause (`suppliesAll`), and the second call fails: "upsert expr_row: sqlgen: unique constraint violation on constraint index 'expr_rows_email_ux' … (2067)";
-    - `database` generates `ExprRowConflict: {}  // UNIQUE ()` and `ExprRowConflictA: {"a"}`. `Upsert(..., ExprRowConflictA)` fails: "upsert expr_row: query: SQL logic error: ON CONFLICT clause does not match any PRIMARY KEY or UNIQUE constraint (1)".
-- Pending the user's ruling (one ruling covers this entry, FIX-276 and the MySQL sibling in the backlog): how should an index with an expression part be modeled, on every dialect and source?
-  - (C) Recommended by the vet, and prototyped for SQLite: drop the whole index, since it is not an index over columns. PG (FIX-276): the parser skips any index whose IndexElems include an expression, and the introspector skips any index with an `indkey` of 0, widening today's expression-only skip to mixed indexes. MySQL: the same on both sides. Result: no false uniqueness, no broken conflict targets, no generator change. Cost: the manifest `indexes[]` omits expression indexes, and the generated `<T>Conflict…` constants over expression or mixed UNIQUE indexes disappear; today those are either broken or silently a plain insert. No golden churn. Proposed PRD §30.7 sentence for the `indexes[]` cell: "An index with an expression part (`lower(email)`, `a + 1`) is not listed and is not a conflict target, under every source." This matches §16.5.2's "expression unique indexes never participate".
-  - (A) Keep the plain columns and drop the expression parts (the PG/MySQL introspector form), also dropping an index left with no columns, on both sides. Cheapest, and PG already agrees on mixed indexes. But it makes `UNIQUE (a, lower(b))` a UNIQUE over `[a]` on every source, which sets `Column.Unique`, `UniqueGroups` and `ConflictA`; that is the measured "ON CONFLICT clause does not match" error. It would need a second rule (drop a UNIQUE index with an expression part) to be safe.
-  - (B) Keep the expression text (the SQLite parser form). The SQLite introspector reads parts from the stored CREATE INDEX with the file parser. PG would deparse `IndexElem.Expr` on the parser side and read `pg_get_indexdef(oid, k, true)` through `catalogExpr`, with the §6.1 catalog-rewrite caveats. MySQL would read `STATISTICS.EXPRESSION` with normalization. The generator must also learn to skip expression entries in conflict targets, `UniqueGroups` and `uniqueCoversColumns` (`gen/context_table.go:1696`, `cli/pipeline.go:393`). It is the most faithful to §30.7's "All declared indexes", and the largest change.
-  - Not auto-accepted: C removes generated exported conflict constants for the affected schemas, and it is the decision FIX-276 shares.
-- Prototype results (option C, SQLite only), run at `d51ace1b` on 2026-10-07:
-  - Reproduction: a throwaway probe (`TestZZProbeFIX274`, since deleted), `cd parser && go test -short -count=1 -run TestZZProbeFIX274 ./introspect/`, parsed → introspected:
-    - SQLite: `ux UNIQUE [lower("email")]` → `[]string(nil)`; `ux2 UNIQUE [a, "b" + 1]` → `[a]`; `cx INDEX [b, ("a")]` → `[b, a]`; `ex INDEX [lower("a")]` → absent; `ix INDEX [a, lower("b")]` → `[a]`; `assertSchemaParity` FAIL.
-    - PG16: `ux UNIQUE []` → absent; `ex INDEX []` → absent; `ux2 UNIQUE [a]` → `[a]`; `ix INDEX [a]` → `[a]`.
-    - MySQL 8.0 (functional key parts): `ux [""]` → absent; `ex [""]` → absent; `ux2 UNIQUE ["a", ""]` → `[a]`; `ix ["a", ""]` → `[a]`.
-  - Prototype:
-    - `parser/sqlite` `indexedColumnNames` returns `([]string, bool)`. It unwraps COLLATE and parentheses at any nesting and returns false for a non-identifier part. `parseCreateIndex` skips such an index (unique or not, partial or not). The table-level UNIQUE call ignores the bool, since SQLite rejects an expression in a UNIQUE constraint.
-    - `parser/introspect` `introspectIndexColumns` returns `(cols, ok, err)`, with ok false on a `PRAGMA index_info` row with a NULL name. `introspectIndexes` skips that index, and the `len(cols)==0` case is removed.
-    - Tests: `TestIndexedColumnExpressions` (`parser/sqlite`, 7 cases) and `TestSQLiteIntrospect_ExpressionIndexes` (pins the constraints, then `assertSchemaParity`).
-    - E2E re-run with the prototype: files and database outputs are byte-identical apart from `generated_at`; the conflict map holds only `ExprRowConflictPK`.
-  - Gates: `cd parser && go test -race -count=1 ./...` → ok (PG and MySQL containers); `golangci-lint run ./sqlite/... ./introspect/...` → 0 issues; `gofumpt -l parser/` → clean; `cd cmd/sqlgen && go test -short -count=1 ./...` → ok.
-  - Fail-first:
-    - `parser/sqlite/sqlite.go` reverted → `TestIndexedColumnExpressions` fails in all 7 subtests (e.g. `Columns: []string{"a", \`lower("b")\`}` where nil was wanted; `- "a" + \`("a")\``). `TestSQLiteIntrospect_ExpressionIndexes` fails: "stored CREATE TABLE declares no UNIQUE over (email)";
-    - `parser/introspect/sqlite.go` reverted with the parser fix kept → `+ {Name: "t_a_b1", Type: s"UNIQUE", Columns: []string{"a"}, ...}`, `+ {Name: "t_lower_email", Type: s"UNIQUE", Method: "btree"}`, and `- Unique: false + Unique: true` on column `a`;
-    - the existing suite without the fix → passes.
-  - Golden churn: none (no example declares an expression index).
-  - Patch: `.claude/prototypes/FIX-274.patch` (4 files, +117/-30).
-
-- The user ruled on 2026-10-08: (C), an index with any expression part is dropped whole on every dialect and source (not listed, not a conflict target), with the PRD §30.7 sentence. The ruling also covers FIX-276; the MySQL half is in the backlog. This matches the prototype.
-
-
-**References.**
-- PRD §6.1, §6.3 ("SQLite constraint names and CHECK text"), §30.7
-  (manifest `indexes[]`).
-- FIX-276 (PG expression-only index), FIX-269 (stored `CREATE INDEX` read with
-  the file parser for partial-index predicates).
-
-**Resolution notes.** _Filled in by `/fix resolve`._
-
 ### FIX-275
 
 - **Status:** Open
@@ -1260,6 +1179,86 @@ map straight on.
 ## Resolved
 
 <!-- fixes:resolved:begin -->
+### FIX-274
+
+- **Status:** Resolved
+- **Severity:** tracked
+- **Origin:** phase 30, `parser/introspect` + `parser/sqlite`
+- **Surfaced by:** backlog promotion at `/close-phase 30` (2026-10-07); first recorded by 30.6 (2026-10-05)
+- **Vetted:** ready at `d51ace1b` (2026-10-07; ruled 2026-10-08, the ruled option is the prototype)
+
+**Issue.** **SQLite expression index parts differ by source.** The file
+parser keeps an expression part as index column text; the introspector skips
+it, so the index's columns (conflict targets, manifest `indexes[]`) differ,
+and a non-unique expression-only index exists only under `files`. Measured
+evidence from the backlog line: "`CREATE UNIQUE INDEX ux ON t (lower(email))`
+→ parsed Columns `[lower("email")]`, introspected nil; `CREATE INDEX ix ON t
+(a, lower(b))` → `[a, lower("b")]` vs `[a]`; a non-unique expression-only
+index is dropped on the introspected side only. PG has the sibling 30.2 line"
+(filed as FIX-276).
+
+**Root cause.** Parser: `indexedColumnNames`
+(`parser/sqlite/sqlite.go:625-640`) writes `rsql.ExprString(col.X)` for any
+part that is not an `*rsql.Ident`. Introspector: `introspectIndexColumns`
+(`parser/introspect/sqlite.go:592-618`) skips `PRAGMA index_info` rows with a
+NULL name (`:610`), and `introspectIndexes` (`:540-567`) keeps a unique index
+with no columns but drops a non-unique one (`case len(cols) == 0: continue`,
+`:554`).
+
+**Suggested fix.** Design-shaped (it sets the canonical form for expression
+index parts, shared with FIX-276); options for the vet:
+- **Keep expressions (parser form):** the introspector reads index parts from
+  the stored `CREATE INDEX` with the file parser, as `indexPartialWhere`
+  (`parser/introspect/sqlite.go:574`) already does for the predicate, so
+  both sources give `lower("email")`. The vet must check what the generator
+  does with an expression in `Columns` today (conflict-target generation,
+  manifest), since that text is not a column name.
+- **Drop expressions (introspector form, as the PG and MySQL introspectors
+  do):** `indexedColumnNames` skips non-identifier parts, and both sides
+  agree on whether an index left with no columns is kept or dropped
+  (PG's introspector drops it, FIX-276).
+- Tests: an `assertSchemaParity` case in
+  `parser/introspect/introspect_integration_test.go` with the three indexes
+  above, plus a `parser/sqlite` unit case pinning the chosen form.
+- Vet notes on scope (refs all match HEAD):
+  - a parenthesized part is also misread: `CREATE INDEX cx ON t (b COLLATE NOCASE, (a))` parses as `[b, ("a")]` but introspects as `[b, a]`, and a table-level `UNIQUE ((email))` makes introspection fail: "introspect sqlite table t: stored CREATE TABLE declares no UNIQUE over (email)". Same root cause and fix site (`indexedColumnNames`), so the prototype unwraps parentheses and COLLATE;
+  - false uniqueness: the introspector keeps a UNIQUE index that mixes a column and an expression as UNIQUE over its plain columns. `CREATE UNIQUE INDEX t_a_b1 ON t (a, b + 1)` → `{t_a_b1 UNIQUE [a]}`, and it also sets `Column a Unique: true`;
+  - runtime effect, E2E on a sibling copy of the sqlite example with `expr_rows` (unique `lower(email)`, unique `(a, lower(b))`, index `(a, lower(b))`, index `lower(a)`):
+    - `files` generates `ExprRowConflictLowerEmail: {"lower(\"email\")"}`. `Upsert(..., ExprRowConflictLowerEmail)` silently drops the conflict clause (`suppliesAll`), and the second call fails: "upsert expr_row: sqlgen: unique constraint violation on constraint index 'expr_rows_email_ux' … (2067)";
+    - `database` generates `ExprRowConflict: {}  // UNIQUE ()` and `ExprRowConflictA: {"a"}`. `Upsert(..., ExprRowConflictA)` fails: "upsert expr_row: query: SQL logic error: ON CONFLICT clause does not match any PRIMARY KEY or UNIQUE constraint (1)".
+- Pending the user's ruling (one ruling covers this entry, FIX-276 and the MySQL sibling in the backlog): how should an index with an expression part be modeled, on every dialect and source?
+  - (C) Recommended by the vet, and prototyped for SQLite: drop the whole index, since it is not an index over columns. PG (FIX-276): the parser skips any index whose IndexElems include an expression, and the introspector skips any index with an `indkey` of 0, widening today's expression-only skip to mixed indexes. MySQL: the same on both sides. Result: no false uniqueness, no broken conflict targets, no generator change. Cost: the manifest `indexes[]` omits expression indexes, and the generated `<T>Conflict…` constants over expression or mixed UNIQUE indexes disappear; today those are either broken or silently a plain insert. No golden churn. Proposed PRD §30.7 sentence for the `indexes[]` cell: "An index with an expression part (`lower(email)`, `a + 1`) is not listed and is not a conflict target, under every source." This matches §16.5.2's "expression unique indexes never participate".
+  - (A) Keep the plain columns and drop the expression parts (the PG/MySQL introspector form), also dropping an index left with no columns, on both sides. Cheapest, and PG already agrees on mixed indexes. But it makes `UNIQUE (a, lower(b))` a UNIQUE over `[a]` on every source, which sets `Column.Unique`, `UniqueGroups` and `ConflictA`; that is the measured "ON CONFLICT clause does not match" error. It would need a second rule (drop a UNIQUE index with an expression part) to be safe.
+  - (B) Keep the expression text (the SQLite parser form). The SQLite introspector reads parts from the stored CREATE INDEX with the file parser. PG would deparse `IndexElem.Expr` on the parser side and read `pg_get_indexdef(oid, k, true)` through `catalogExpr`, with the §6.1 catalog-rewrite caveats. MySQL would read `STATISTICS.EXPRESSION` with normalization. The generator must also learn to skip expression entries in conflict targets, `UniqueGroups` and `uniqueCoversColumns` (`gen/context_table.go:1696`, `cli/pipeline.go:393`). It is the most faithful to §30.7's "All declared indexes", and the largest change.
+  - Not auto-accepted: C removes generated exported conflict constants for the affected schemas, and it is the decision FIX-276 shares.
+- Prototype results (option C, SQLite only), run at `d51ace1b` on 2026-10-07:
+  - Reproduction: a throwaway probe (`TestZZProbeFIX274`, since deleted), `cd parser && go test -short -count=1 -run TestZZProbeFIX274 ./introspect/`, parsed → introspected:
+    - SQLite: `ux UNIQUE [lower("email")]` → `[]string(nil)`; `ux2 UNIQUE [a, "b" + 1]` → `[a]`; `cx INDEX [b, ("a")]` → `[b, a]`; `ex INDEX [lower("a")]` → absent; `ix INDEX [a, lower("b")]` → `[a]`; `assertSchemaParity` FAIL.
+    - PG16: `ux UNIQUE []` → absent; `ex INDEX []` → absent; `ux2 UNIQUE [a]` → `[a]`; `ix INDEX [a]` → `[a]`.
+    - MySQL 8.0 (functional key parts): `ux [""]` → absent; `ex [""]` → absent; `ux2 UNIQUE ["a", ""]` → `[a]`; `ix ["a", ""]` → `[a]`.
+  - Prototype:
+    - `parser/sqlite` `indexedColumnNames` returns `([]string, bool)`. It unwraps COLLATE and parentheses at any nesting and returns false for a non-identifier part. `parseCreateIndex` skips such an index (unique or not, partial or not). The table-level UNIQUE call ignores the bool, since SQLite rejects an expression in a UNIQUE constraint.
+    - `parser/introspect` `introspectIndexColumns` returns `(cols, ok, err)`, with ok false on a `PRAGMA index_info` row with a NULL name. `introspectIndexes` skips that index, and the `len(cols)==0` case is removed.
+    - Tests: `TestIndexedColumnExpressions` (`parser/sqlite`, 7 cases) and `TestSQLiteIntrospect_ExpressionIndexes` (pins the constraints, then `assertSchemaParity`).
+    - E2E re-run with the prototype: files and database outputs are byte-identical apart from `generated_at`; the conflict map holds only `ExprRowConflictPK`.
+  - Gates: `cd parser && go test -race -count=1 ./...` → ok (PG and MySQL containers); `golangci-lint run ./sqlite/... ./introspect/...` → 0 issues; `gofumpt -l parser/` → clean; `cd cmd/sqlgen && go test -short -count=1 ./...` → ok.
+  - Fail-first:
+    - `parser/sqlite/sqlite.go` reverted → `TestIndexedColumnExpressions` fails in all 7 subtests (e.g. `Columns: []string{"a", \`lower("b")\`}` where nil was wanted; `- "a" + \`("a")\``). `TestSQLiteIntrospect_ExpressionIndexes` fails: "stored CREATE TABLE declares no UNIQUE over (email)";
+    - `parser/introspect/sqlite.go` reverted with the parser fix kept → `+ {Name: "t_a_b1", Type: s"UNIQUE", Columns: []string{"a"}, ...}`, `+ {Name: "t_lower_email", Type: s"UNIQUE", Method: "btree"}`, and `- Unique: false + Unique: true` on column `a`;
+    - the existing suite without the fix → passes.
+  - Golden churn: none (no example declares an expression index).
+  - Patch: `.claude/prototypes/FIX-274.patch` (4 files, +117/-30).
+
+- The user ruled on 2026-10-08: (C), an index with any expression part is dropped whole on every dialect and source (not listed, not a conflict target), with the PRD §30.7 sentence. The ruling also covers FIX-276; the MySQL half is in the backlog. This matches the prototype.
+
+
+**References.**
+- PRD §6.1, §6.3 ("SQLite constraint names and CHECK text"), §30.7
+  (manifest `indexes[]`).
+- FIX-276 (PG expression-only index), FIX-269 (stored `CREATE INDEX` read with
+  the file parser for partial-index predicates).
+
+**Resolution notes.** Resolved 2026-10-08 per the user's ruling (C), SQLite half (PG is FIX-276; MySQL is a backlog line). The vetted prototype applied cleanly with `git apply --3way` (FIX-273 had shifted `parser/introspect/sqlite.go` and the integration test by +1 / +26 lines). `parser/sqlite`: `indexedColumnNames` returns `([]string, bool)`, unwraps COLLATE and parentheses at any nesting, and returns false for an expression part; `parseCreateIndex` skips such an index (unique or not, partial or not). `parser/introspect`: `introspectIndexColumns` returns `(cols, ok, err)` with ok false on a `PRAGMA index_info` row with a NULL name, `introspectIndexes` skips that index, and the `len(cols) == 0` case is gone. Beyond the prototype (found at verify): `indexedColumnCollations` unwraps parentheses before reading the outermost COLLATE, since the parser deduped `UNIQUE (a), UNIQUE ((a COLLATE NOCASE))` while SQLite builds two indexes, and introspection failed "stored CREATE TABLE declares no UNIQUE over (a)"; covered by two `TestUniqueDuplicatesFollowCollation` cases (the parenthesized-inside one fails first) and table `u` in `TestSQLiteIntrospect_ExpressionIndexes`. PRD §30.7 `indexes[]` gains the ruled sentence: "An index with an expression part (`lower(email)`, `a + 1`) is not listed and is not a conflict target, under every source." Tests: `TestIndexedColumnExpressions` (7 cases) and `TestSQLiteIntrospect_ExpressionIndexes` (constraints pinned, then `assertSchemaParity`). Fail-first reproduced on the final code: the parser reverted fails all 7 subtests and the introspection test with "stored CREATE TABLE declares no UNIQUE over (email)"; the introspector reverted shows `t_a_b1 UNIQUE [a]`, `t_lower_email UNIQUE []`, `t_a_lower_b INDEX [a]` and column `a` `Unique: true`. Gates: `make check` ok, `cd parser && go test -race -count=1 ./...` ok, `make check-examples` ok, `make update-golden-e2e` / `make update-golden` → no churn (matches the vet). Gates re-run after the collation addition: `make check`, the parser race suite and `make check-examples` ok. Doc corrections: Root cause line refs into `parser/introspect/sqlite.go` re-pinned +1 after FIX-273. Backlog: the SQLite `LIKE … ESCAPE` expression-index line (from FIX-281) removed as resolved (both sources now skip the index; measured err=nil under `files`); one line added for a table-level expression `UNIQUE` that SQLite rejects but `files` accepts with no columns.
 
 ### FIX-273
 

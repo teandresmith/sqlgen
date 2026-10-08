@@ -534,25 +534,26 @@ func (si *SQLiteIntrospector) indexList(ctx context.Context, table string) ([]sq
 // primary key's. A UNIQUE constraint's index carries an auto-index name, so
 // it is left unnamed here for nameDeclaredConstraints; a CREATE [UNIQUE]
 // INDEX keeps its own name. SQLite indexes are always btree, which the parser
-// records for CREATE INDEX only. A non-unique expression-only index projects
-// no columns and is skipped, matching the PostgreSQL sweep. Partial indexes
-// keep their WHERE predicate (PRD §30.7).
+// records for CREATE INDEX only. An index with an expression part is skipped,
+// as the file parser skips it. Partial indexes keep their WHERE predicate
+// (PRD §30.7).
 func (si *SQLiteIntrospector) introspectIndexes(ctx context.Context, table *parser.Table, indexes []sqliteIndex) error {
 	for _, idx := range indexes {
 		if idx.origin == "pk" {
 			continue
 		}
-		cols, err := si.introspectIndexColumns(ctx, idx.name)
+		cols, ok, err := si.introspectIndexColumns(ctx, idx.name)
 		if err != nil {
 			return err
+		}
+		if !ok {
+			continue
 		}
 		c := parser.Constraint{Type: parser.Unique, Columns: cols}
 		switch {
 		case idx.origin == "u":
 		case idx.unique:
 			c.Name, c.Method = idx.name, "btree"
-		case len(cols) == 0:
-			continue
 		default:
 			c.Type, c.Name, c.Method = parser.Index, idx.name, "btree"
 		}
@@ -589,33 +590,35 @@ func (si *SQLiteIntrospector) indexPartialWhere(ctx context.Context, indexName s
 	return where, nil
 }
 
-func (si *SQLiteIntrospector) introspectIndexColumns(ctx context.Context, indexName string) ([]string, error) {
+// introspectIndexColumns returns the columns an index covers, and false when
+// a part is an expression: PRAGMA index_info gives an expression part
+// (CREATE INDEX ... ON t (lower(a))) a NULL name.
+func (si *SQLiteIntrospector) introspectIndexColumns(ctx context.Context, indexName string) ([]string, bool, error) {
 	rows, err := si.db.QueryContext(ctx, "PRAGMA index_info("+quoteSQLiteIdent(indexName)+")")
 	if err != nil {
-		return nil, fmt.Errorf("introspect sqlite index info %s: %w", indexName, err)
+		return nil, false, fmt.Errorf("introspect sqlite index info %s: %w", indexName, err)
 	}
 	defer rows.Close() //nolint:errcheck // rows.Close error is not actionable after reading
 
 	var cols []string
+	ok := true
 	for rows.Next() {
 		var seqno, cid int
 		var name sql.NullString
 		if err := rows.Scan(&seqno, &cid, &name); err != nil {
-			return nil, fmt.Errorf("introspect sqlite index info %s: scanning: %w", indexName, err)
+			return nil, false, fmt.Errorf("introspect sqlite index info %s: scanning: %w", indexName, err)
 		}
-		// PRAGMA index_info reports a NULL name for expression index parts
-		// (e.g. CREATE INDEX ... ON t(lower(a))). Skip them — they have no
-		// projectable column — to match the MySQL + PostgreSQL sweeps and to
-		// avoid a "converting NULL to string" scan error.
-		if name.Valid {
-			cols = append(cols, name.String)
+		if !name.Valid {
+			ok = false
+			continue
 		}
+		cols = append(cols, name.String)
 	}
 
 	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("introspect sqlite index info %s: iterating: %w", indexName, err)
+		return nil, false, fmt.Errorf("introspect sqlite index info %s: iterating: %w", indexName, err)
 	}
-	return cols, nil
+	return cols, ok, nil
 }
 
 // quoteSQLiteIdent quotes name as a SQL identifier, doubling any embedded
