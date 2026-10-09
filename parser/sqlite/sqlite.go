@@ -217,11 +217,11 @@ func (p *Parser) parseCreateTable(stmt *rsql.CreateTableStatement, src []rune) e
 			if strings.EqualFold(col.Name.Name, "DESC") {
 				descKey = key.Name
 			}
-			for _, constraint := range col.Constraints {
-				if c, ok := applyColumnConstraint(key, constraint); ok {
-					table.Constraints = append(table.Constraints, c)
-				}
+			constraints, err := applyColumnConstraints(key, col.Constraints)
+			if err != nil {
+				return fmt.Errorf("table %s: %w", tableName, err)
 			}
+			table.Constraints = append(table.Constraints, constraints...)
 			coll.addColumn(key.Name, col.Constraints)
 			continue
 		}
@@ -229,22 +229,17 @@ func (p *Parser) parseCreateTable(stmt *rsql.CreateTableStatement, src []rune) e
 			return fmt.Errorf("table %s: %s: %q after column %s is not a column: a quoted type name or a MATCH clause cannot be read",
 				tableName, col.Name.NamePos, col.Name.Name, table.Columns[len(table.Columns)-1].Name)
 		}
-		c, constraints := parseColumn(col)
+		c, constraints, err := parseColumn(col)
+		if err != nil {
+			return fmt.Errorf("table %s: %w", tableName, err)
+		}
 		table.Columns = append(table.Columns, c)
 		table.Constraints = append(table.Constraints, constraints...)
 		coll.addColumn(c.Name, col.Constraints)
 	}
 
-	// Parse table-level constraints.
-	for _, constraint := range stmt.Constraints {
-		c := parseTableConstraint(constraint)
-		if c.Type == 0 {
-			continue
-		}
-		if u, ok := constraint.(*rsql.UniqueConstraint); ok {
-			coll.explicit[len(table.Constraints)] = indexedColumnCollations(u.Columns)
-		}
-		table.Constraints = append(table.Constraints, c)
+	if err := addTableConstraints(&table, stmt.Constraints, coll); err != nil {
+		return fmt.Errorf("table %s: %w", tableName, err)
 	}
 
 	// CanonicalizeConstraints only appends, so coll.explicit's positions hold.
@@ -258,6 +253,25 @@ func (p *Parser) parseCreateTable(stmt *rsql.CreateTableStatement, src []rune) e
 	p.tableIndex[foldASCII(tableName)] = len(p.schema.Tables)
 	p.schema.Tables = append(p.schema.Tables, table)
 
+	return nil
+}
+
+// addTableConstraints appends the table-level constraints to table, recording
+// each UNIQUE's explicit collations in coll.
+func addTableConstraints(table *parser.Table, constraints []rsql.Constraint, coll indexCollations) error {
+	for _, constraint := range constraints {
+		c, err := parseTableConstraint(constraint)
+		if err != nil {
+			return err
+		}
+		if c.Type == 0 {
+			continue
+		}
+		if u, ok := constraint.(*rsql.UniqueConstraint); ok {
+			coll.explicit[len(table.Constraints)] = indexedColumnCollations(u.Columns)
+		}
+		table.Constraints = append(table.Constraints, c)
+	}
 	return nil
 }
 
@@ -417,37 +431,54 @@ func rowIDAlias(table *parser.Table, descKey string) string {
 
 // parseColumn returns the column col defines and the constraints declared
 // inline on it, as table constraints over the column.
-func parseColumn(col *rsql.ColumnDefinition) (parser.Column, []parser.Constraint) {
+func parseColumn(col *rsql.ColumnDefinition) (parser.Column, []parser.Constraint, error) {
 	c := parser.Column{
 		Name:     rsql.IdentName(col.Name),
 		Type:     buildTypeString(col.Type),
 		Nullable: true,
 	}
+	constraints, err := applyColumnConstraints(&c, col.Constraints)
+	if err != nil {
+		return parser.Column{}, nil, err
+	}
+	return c, constraints, nil
+}
 
-	var constraints []parser.Constraint
-	for _, constraint := range col.Constraints {
-		if tc, ok := applyColumnConstraint(&c, constraint); ok {
-			constraints = append(constraints, tc)
+// applyColumnConstraints applies each inline column constraint to c and
+// returns those that are also table constraints over the column.
+func applyColumnConstraints(c *parser.Column, constraints []rsql.Constraint) ([]parser.Constraint, error) {
+	var tcs []parser.Constraint
+	for _, constraint := range constraints {
+		tc, ok, err := applyColumnConstraint(c, constraint)
+		if err != nil {
+			return nil, fmt.Errorf("column %s: %w", c.Name, err)
+		}
+		if ok {
+			tcs = append(tcs, tc)
 		}
 	}
-	return c, constraints
+	return tcs, nil
 }
 
 // applyColumnConstraint applies an inline column constraint to c. A PRIMARY
 // KEY, UNIQUE, REFERENCES or CHECK is also returned as a table constraint over
 // the column.
-func applyColumnConstraint(c *parser.Column, constraint rsql.Constraint) (parser.Constraint, bool) {
+func applyColumnConstraint(c *parser.Column, constraint rsql.Constraint) (parser.Constraint, bool, error) {
 	switch ct := constraint.(type) {
 	case *rsql.PrimaryKeyConstraint:
 		c.PrimaryKey = true
 		c.Nullable = false
-		return parser.Constraint{Name: rsql.IdentName(ct.Name), Type: parser.PrimaryKey, Columns: []string{c.Name}}, true
+		return parser.Constraint{Name: rsql.IdentName(ct.Name), Type: parser.PrimaryKey, Columns: []string{c.Name}}, true, nil
 	case *rsql.NotNullConstraint:
 		c.Nullable = false
 	case *rsql.UniqueConstraint:
-		return parser.Constraint{Name: rsql.IdentName(ct.Name), Type: parser.Unique, Columns: []string{c.Name}}, true
+		return parser.Constraint{Name: rsql.IdentName(ct.Name), Type: parser.Unique, Columns: []string{c.Name}}, true, nil
 	case *rsql.DefaultConstraint:
-		c.Default = rsql.ExprString(ct.Expr)
+		def, err := exprString(ct.Expr, "DEFAULT")
+		if err != nil {
+			return parser.Constraint{}, false, err
+		}
+		c.Default = def
 	case *rsql.ForeignKeyConstraint:
 		if ct.ForeignTable != nil {
 			var refCol string
@@ -464,21 +495,29 @@ func applyColumnConstraint(c *parser.Column, constraint rsql.Constraint) (parser
 				Columns:          []string{c.Name},
 				ReferenceTable:   rsql.IdentName(ct.ForeignTable),
 				ReferenceColumns: identNames(ct.ForeignColumns),
-			}, true
+			}, true, nil
 		}
 	case *rsql.GeneratedConstraint:
-		c.GeneratedExpr = rsql.ExprString(ct.Expr)
+		expr, err := exprString(ct.Expr, "generated column expression")
+		if err != nil {
+			return parser.Constraint{}, false, err
+		}
+		c.GeneratedExpr = expr
 		if ct.Stored.IsValid() {
 			c.GeneratedStorage = "STORED"
 		} else {
 			c.GeneratedStorage = "VIRTUAL"
 		}
 	case *rsql.CheckConstraint:
-		return parser.Constraint{Name: rsql.IdentName(ct.Name), Type: parser.Check, CheckExpression: rsql.ExprString(ct.Expr)}, true
+		check, err := exprString(ct.Expr, "CHECK")
+		if err != nil {
+			return parser.Constraint{}, false, err
+		}
+		return parser.Constraint{Name: rsql.IdentName(ct.Name), Type: parser.Check, CheckExpression: check}, true, nil
 	case *rsql.CollateConstraint:
 		// COLLATE is not stored.
 	}
-	return parser.Constraint{}, false
+	return parser.Constraint{}, false, nil
 }
 
 // buildTypeString returns the type string for a rqlite/sql Type, by the rule
@@ -534,14 +573,14 @@ func isRecognizedType(name string) bool {
 	return false
 }
 
-func parseTableConstraint(constraint rsql.Constraint) parser.Constraint {
+func parseTableConstraint(constraint rsql.Constraint) (parser.Constraint, error) {
 	switch ct := constraint.(type) {
 	case *rsql.PrimaryKeyConstraint:
 		return parser.Constraint{
 			Name:    rsql.IdentName(ct.Name),
 			Type:    parser.PrimaryKey,
 			Columns: identNames(ct.Columns),
-		}
+		}, nil
 	case *rsql.UniqueConstraint:
 		// SQLite rejects an expression in a UNIQUE constraint, so every
 		// part names a column.
@@ -550,7 +589,7 @@ func parseTableConstraint(constraint rsql.Constraint) parser.Constraint {
 			Name:    rsql.IdentName(ct.Name),
 			Type:    parser.Unique,
 			Columns: cols,
-		}
+		}, nil
 	case *rsql.ForeignKeyConstraint:
 		return parser.Constraint{
 			Name:             rsql.IdentName(ct.Name),
@@ -558,15 +597,19 @@ func parseTableConstraint(constraint rsql.Constraint) parser.Constraint {
 			Columns:          identNames(ct.Columns),
 			ReferenceTable:   rsql.IdentName(ct.ForeignTable),
 			ReferenceColumns: identNames(ct.ForeignColumns),
-		}
+		}, nil
 	case *rsql.CheckConstraint:
+		check, err := exprString(ct.Expr, "CHECK")
+		if err != nil {
+			return parser.Constraint{}, err
+		}
 		return parser.Constraint{
 			Name:            rsql.IdentName(ct.Name),
 			Type:            parser.Check,
-			CheckExpression: rsql.ExprString(ct.Expr),
-		}
+			CheckExpression: check,
+		}, nil
 	}
-	return parser.Constraint{}
+	return parser.Constraint{}, nil
 }
 
 // --- ALTER TABLE ---
@@ -581,7 +624,10 @@ func (p *Parser) parseAlterTable(stmt *rsql.AlterTableStatement) error {
 		if !ok {
 			return fmt.Errorf("table %s not found", tableName)
 		}
-		c, constraints := parseColumn(stmt.ColumnDef)
+		c, constraints, err := parseColumn(stmt.ColumnDef)
+		if err != nil {
+			return fmt.Errorf("table %s: %w", tableName, err)
+		}
 		table.Columns = append(table.Columns, c)
 		table.Constraints = append(table.Constraints, constraints...)
 		parser.CanonicalizeConstraints(table, "sqlite")

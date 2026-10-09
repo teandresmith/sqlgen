@@ -1028,6 +1028,26 @@ func TestSQLiteIntrospect_UnreadableTable(t *testing.T) {
 			ddl:        `CREATE TABLE p (id INTEGER PRIMARY KEY); CREATE TABLE t (id INTEGER PRIMARY KEY, pid INTEGER REFERENCES p(id) MATCH SIMPLE)`,
 			parseError: `"MATCH" after column pid is not a column`,
 		},
+		{
+			name:       "LIKE ESCAPE in a column CHECK",
+			ddl:        `CREATE TABLE t (a TEXT CHECK (a LIKE 'x%' ESCAPE '\'))`,
+			parseError: "column a: rendering CHECK: sql.BinaryExpr.String(): invalid op ESCAPE",
+		},
+		{
+			name:       "LIKE ESCAPE in a table CHECK",
+			ddl:        `CREATE TABLE t (a TEXT, CHECK (a LIKE 'x%' ESCAPE '\'))`,
+			parseError: "table t: rendering CHECK: sql.BinaryExpr.String(): invalid op ESCAPE",
+		},
+		{
+			name:       "LIKE ESCAPE in a DEFAULT",
+			ddl:        `CREATE TABLE t (a INTEGER DEFAULT ('x' LIKE 'y' ESCAPE '\'))`,
+			parseError: "column a: rendering DEFAULT: sql.BinaryExpr.String(): invalid op ESCAPE",
+		},
+		{
+			name:       "LIKE ESCAPE in a generated column",
+			ddl:        `CREATE TABLE t (a TEXT, b INTEGER GENERATED ALWAYS AS (a LIKE 'x%' ESCAPE '\'))`,
+			parseError: "column b: rendering generated column expression: sql.BinaryExpr.String(): invalid op ESCAPE",
+		},
 	}
 
 	for _, tt := range tests {

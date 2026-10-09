@@ -78,80 +78,6 @@ adds keys, then FK indexes (`mysql.go:355-364`; line refs at `cb04d107`).
 
 **Resolution notes.** _Filled in by `/fix resolve`._
 
-### FIX-281
-
-- **Status:** Open
-- **Severity:** tracked
-- **Origin:** phase 4, `parser/sqlite`
-- **Surfaced by:** backlog promotion at `/close-phase 30` (2026-10-07); first recorded by FIX-269 (2026-10-07)
-- **Vetted:** corrected at `cb04d107` (2026-10-09; re-vetted, rebuilt after FIX-274, FIX-279 and FIX-291)
-
-**Issue.** **`LIKE … ESCAPE` crashes `sqlgen generate` in a SQLite CHECK,
-DEFAULT or generated column.** `rsql.ExprString` panics on it, and four call
-sites do not recover. Measured evidence from the backlog line: "`CREATE TABLE t
-(id INTEGER PRIMARY KEY, a TEXT CHECK (a LIKE 'x%' ESCAPE '\'))`, `sqlgen
-generate` → exit 2, "panic: sql.BinaryExpr.String(): invalid op ESCAPE"". The
-partial-index `WHERE` site was fixed by FIX-269 (`7ac833aa`), and FIX-291
-(`e50172de`) moved its recover into the shared `exprString` helper. Expression
-indexes and table-level `UNIQUE ((expr))` no longer reach a render: FIX-274
-(`ffc9d7f2`) skips them on both sources, so they give no error.
-
-**Root cause.** rqlite/sql parses `LIKE … ESCAPE` but `BinaryExpr.String()`
-panics rendering it. The unrecovered `rsql.ExprString` sites in
-`parser/sqlite/sqlite.go` (line refs at `cb04d107`): DEFAULT (`:452`), generated
-column (`:472`), column CHECK (`:479`) and table CHECK (`:568`). They are also
-reached through the PRIMARY KEY sort-order branch of `parseCreateTable`
-(`:222-226`) and ALTER TABLE ADD COLUMN (`parseColumn` at `:586`). The
-introspector reaches the same sites through `parseStoredTable`
-(`parser/introspect/sqlite.go:162`), so `database` crashes too.
-
-**Suggested fix.**
-- Route the four sites through the existing recovering `exprString`
-  (`sqlite.go:163-174`) with "DEFAULT", "generated column expression" and
-  "CHECK", and thread the error out: `applyColumnConstraint` returns
-  `(Constraint, bool, error)`; a new `applyColumnConstraints` loops over a
-  column's constraints, wraps with "column <c>:", and is used by `parseColumn`
-  and the PK sort-order branch; `parseColumn` and `parseTableConstraint` return
-  errors; `parseCreateTable` and ALTER ADD COLUMN wrap with "table <t>:". Move the
-  table-level constraint loop into `addTableConstraints(table, constraints, coll)
-  error` to keep `parseCreateTable` under cyclop 15. The statement is a parse
-  error under `files` and a `SchemaError` under `database`.
-- PRD §6.3 reads "`IS [NOT] DISTINCT FROM` or `LIKE … ESCAPE` in a CHECK, a
-  column default, a generated column or a partial index's `WHERE`", and
-  INTROSPECTION.md's `TestSQLiteIntrospect_UnreadableTable` row is extended to
-  match.
-- Tests: `TestParse_UnrenderableExpression` (`parser/sqlite`, 7 cases asserting
-  the exact error; it replaces `TestCreateIndex_UnrenderablePredicate` and keeps
-  its case), and 4 `LIKE … ESCAPE` cases (column CHECK, table CHECK, DEFAULT,
-  generated column) added to FIX-279's `TestSQLiteIntrospect_UnreadableTable`,
-  each a `*SchemaError` naming table t plus the same error from `Parse`.
-- Changed from the original (re-vet at `cb04d107`, 2026-10-09): the helper
-  already exists (FIX-291 took it from this entry's first prototype), so it is
-  reused, not added; four sites, not five, because FIX-274 made
-  `indexedColumnNames` skip expression parts instead of rendering them, so the
-  index-expression and table-UNIQUE-expression cases and the PRD's "an index
-  expression" wording are dropped; the database cases extend
-  `TestSQLiteIntrospect_UnreadableTable` instead of adding the near-duplicate
-  `TestSQLiteIntrospect_UnrenderableTableExpression`; `addTableConstraints` is
-  new because FIX-279's phantom-column check used up `parseCreateTable`'s cyclop
-  headroom. `IS [NOT] DISTINCT FROM` in a DEFAULT or generated column was
-  measured: under `files` both are already parse errors ("expected expression,
-  found 'DISTINCT'"), so the PRD sentence holds there.
-- Prototype results, run at `cb04d107` on 2026-10-09 (first run at `d51ace1b` on 2026-10-07; that patch conflicted in 4 of 5 files and was rebuilt by hand):
-  - Reproduction: `CREATE TABLE t (id INTEGER PRIMARY KEY, a TEXT CHECK (a LIKE 'x%' ESCAPE '\'));` → `sqlgen generate` under `files` → exit=2 "panic: sql.BinaryExpr.String(): invalid op ESCAPE"; the same DDL in a db under `source: database` → exit=2, same panic. A unit probe through `sqlite.New().Parse` panics at 6 of 9 shapes (column CHECK, table NOT LIKE…ESCAPE CHECK, DEFAULT, generated column, CHECK after `PRIMARY KEY DESC`, ALTER ADD COLUMN CHECK); table `UNIQUE ((expr))` and an expression index → err=<nil> (FIX-274 skip); a partial-index `WHERE` → the FIX-269/291 error.
-  - With the fix: files → exit=3 "Schema error: parsing schema files: parsing ./schema.sql: parsing ./schema.sql: table t: column a: rendering CHECK: sql.BinaryExpr.String(): invalid op ESCAPE"; database → exit=3 "Schema error: introspect sqlite table t: parsing stored CREATE TABLE: parsing sqlite_master: table t: column a: rendering CHECK: sql.BinaryExpr.String(): invalid op ESCAPE".
-  - Gates: parser `gofumpt -l .` → clean; `golangci-lint run ./...` → 0 issues; `go test -race -count=1 ./...` → ok (containers ran); `go build ./cmd/sqlgen` → ok; `make refs-check` → ok.
-  - Fail-first, each site reverted alone: DEFAULT → `TestParse_UnrenderableExpression/DEFAULT` and `TestSQLiteIntrospect_UnreadableTable/LIKE_ESCAPE_in_a_DEFAULT` fail "panic: sql.BinaryExpr.String(): invalid op ESCAPE [recovered, repanicked]"; likewise generated column, column CHECK and table CHECK; PK sort-order branch error dropped → `/CHECK_after_a_PRIMARY_KEY_sort_order` fails "Parse() error = <nil>, want \"parsing schema.sql: table t: column id: rendering CHECK: sql.BinaryExpr.String(): invalid op ESCAPE\""; ALTER ADD COLUMN error dropped → `/added_column_CHECK` fails likewise; the existing suite without the fix → passes.
-  - Golden churn: none.
-  - Patch: `.claude/prototypes/FIX-281.patch` (5 files, +158/-49).
-
-
-**References.**
-- PRD §6.3 ("SQLite DDL the file parser cannot read").
-- FIX-269 (`7ac833aa`, the partial-index `WHERE` site).
-
-**Resolution notes.** _Filled in by `/fix resolve`._
-
 ### FIX-284
 
 - **Status:** Open
@@ -296,6 +222,80 @@ source (PRD §6.1).
 ## Resolved
 
 <!-- fixes:resolved:begin -->
+
+### FIX-281
+
+- **Status:** Resolved
+- **Severity:** tracked
+- **Origin:** phase 4, `parser/sqlite`
+- **Surfaced by:** backlog promotion at `/close-phase 30` (2026-10-07); first recorded by FIX-269 (2026-10-07)
+- **Vetted:** corrected at `cb04d107` (2026-10-09; re-vetted, rebuilt after FIX-274, FIX-279 and FIX-291)
+
+**Issue.** **`LIKE … ESCAPE` crashes `sqlgen generate` in a SQLite CHECK,
+DEFAULT or generated column.** `rsql.ExprString` panics on it, and four call
+sites do not recover. Measured evidence from the backlog line: "`CREATE TABLE t
+(id INTEGER PRIMARY KEY, a TEXT CHECK (a LIKE 'x%' ESCAPE '\'))`, `sqlgen
+generate` → exit 2, "panic: sql.BinaryExpr.String(): invalid op ESCAPE"". The
+partial-index `WHERE` site was fixed by FIX-269 (`7ac833aa`), and FIX-291
+(`e50172de`) moved its recover into the shared `exprString` helper. Expression
+indexes and table-level `UNIQUE ((expr))` no longer reach a render: FIX-274
+(`ffc9d7f2`) skips them on both sources, so they give no error.
+
+**Root cause.** rqlite/sql parses `LIKE … ESCAPE` but `BinaryExpr.String()`
+panics rendering it. The unrecovered `rsql.ExprString` sites in
+`parser/sqlite/sqlite.go` (line refs at `cb04d107`): DEFAULT (`:452`), generated
+column (`:472`), column CHECK (`:479`) and table CHECK (`:568`). They are also
+reached through the PRIMARY KEY sort-order branch of `parseCreateTable`
+(`:222-226`) and ALTER TABLE ADD COLUMN (`parseColumn` at `:586`). The
+introspector reaches the same sites through `parseStoredTable`
+(`parser/introspect/sqlite.go:162`), so `database` crashes too.
+
+**Suggested fix.**
+- Route the four sites through the existing recovering `exprString`
+  (`sqlite.go:163-174`) with "DEFAULT", "generated column expression" and
+  "CHECK", and thread the error out: `applyColumnConstraint` returns
+  `(Constraint, bool, error)`; a new `applyColumnConstraints` loops over a
+  column's constraints, wraps with "column <c>:", and is used by `parseColumn`
+  and the PK sort-order branch; `parseColumn` and `parseTableConstraint` return
+  errors; `parseCreateTable` and ALTER ADD COLUMN wrap with "table <t>:". Move the
+  table-level constraint loop into `addTableConstraints(table, constraints, coll)
+  error` to keep `parseCreateTable` under cyclop 15. The statement is a parse
+  error under `files` and a `SchemaError` under `database`.
+- PRD §6.3 reads "`IS [NOT] DISTINCT FROM` or `LIKE … ESCAPE` in a CHECK, a
+  column default, a generated column or a partial index's `WHERE`", and
+  INTROSPECTION.md's `TestSQLiteIntrospect_UnreadableTable` row is extended to
+  match.
+- Tests: `TestParse_UnrenderableExpression` (`parser/sqlite`, 7 cases asserting
+  the exact error; it replaces `TestCreateIndex_UnrenderablePredicate` and keeps
+  its case), and 4 `LIKE … ESCAPE` cases (column CHECK, table CHECK, DEFAULT,
+  generated column) added to FIX-279's `TestSQLiteIntrospect_UnreadableTable`,
+  each a `*SchemaError` naming table t plus the same error from `Parse`.
+- Changed from the original (re-vet at `cb04d107`, 2026-10-09): the helper
+  already exists (FIX-291 took it from this entry's first prototype), so it is
+  reused, not added; four sites, not five, because FIX-274 made
+  `indexedColumnNames` skip expression parts instead of rendering them, so the
+  index-expression and table-UNIQUE-expression cases and the PRD's "an index
+  expression" wording are dropped; the database cases extend
+  `TestSQLiteIntrospect_UnreadableTable` instead of adding the near-duplicate
+  `TestSQLiteIntrospect_UnrenderableTableExpression`; `addTableConstraints` is
+  new because FIX-279's phantom-column check used up `parseCreateTable`'s cyclop
+  headroom. `IS [NOT] DISTINCT FROM` in a DEFAULT or generated column was
+  measured: under `files` both are already parse errors ("expected expression,
+  found 'DISTINCT'"), so the PRD sentence holds there.
+- Prototype results, run at `cb04d107` on 2026-10-09 (first run at `d51ace1b` on 2026-10-07; that patch conflicted in 4 of 5 files and was rebuilt by hand):
+  - Reproduction: `CREATE TABLE t (id INTEGER PRIMARY KEY, a TEXT CHECK (a LIKE 'x%' ESCAPE '\'));` → `sqlgen generate` under `files` → exit=2 "panic: sql.BinaryExpr.String(): invalid op ESCAPE"; the same DDL in a db under `source: database` → exit=2, same panic. A unit probe through `sqlite.New().Parse` panics at 6 of 9 shapes (column CHECK, table NOT LIKE…ESCAPE CHECK, DEFAULT, generated column, CHECK after `PRIMARY KEY DESC`, ALTER ADD COLUMN CHECK); table `UNIQUE ((expr))` and an expression index → err=<nil> (FIX-274 skip); a partial-index `WHERE` → the FIX-269/291 error.
+  - With the fix: files → exit=3 "Schema error: parsing schema files: parsing ./schema.sql: parsing ./schema.sql: table t: column a: rendering CHECK: sql.BinaryExpr.String(): invalid op ESCAPE"; database → exit=3 "Schema error: introspect sqlite table t: parsing stored CREATE TABLE: parsing sqlite_master: table t: column a: rendering CHECK: sql.BinaryExpr.String(): invalid op ESCAPE".
+  - Gates: parser `gofumpt -l .` → clean; `golangci-lint run ./...` → 0 issues; `go test -race -count=1 ./...` → ok (containers ran); `go build ./cmd/sqlgen` → ok; `make refs-check` → ok.
+  - Fail-first, each site reverted alone: DEFAULT → `TestParse_UnrenderableExpression/DEFAULT` and `TestSQLiteIntrospect_UnreadableTable/LIKE_ESCAPE_in_a_DEFAULT` fail "panic: sql.BinaryExpr.String(): invalid op ESCAPE [recovered, repanicked]"; likewise generated column, column CHECK and table CHECK; PK sort-order branch error dropped → `/CHECK_after_a_PRIMARY_KEY_sort_order` fails "Parse() error = <nil>, want \"parsing schema.sql: table t: column id: rendering CHECK: sql.BinaryExpr.String(): invalid op ESCAPE\""; ALTER ADD COLUMN error dropped → `/added_column_CHECK` fails likewise; the existing suite without the fix → passes.
+  - Golden churn: none.
+  - Patch: `.claude/prototypes/FIX-281.patch` (5 files, +158/-49).
+
+
+**References.**
+- PRD §6.3 ("SQLite DDL the file parser cannot read").
+- FIX-269 (`7ac833aa`, the partial-index `WHERE` site).
+
+**Resolution notes.** Resolved 2026-10-09 from the vetted prototype (applied clean at `d7b8c100`, after FIX-282). `parser/sqlite/sqlite.go`: the DEFAULT, generated-column, column CHECK and table CHECK renders go through the recovering `exprString` helper; `applyColumnConstraint` returns `(Constraint, bool, error)`, the new `applyColumnConstraints` wraps with "column <c>:" and serves `parseColumn` and the PRIMARY KEY sort-order branch, `parseTableConstraint` returns an error, and the table-level loop moved into `addTableConstraints`; `parseCreateTable` and ALTER ADD COLUMN wrap with "table <t>:". PRD §6.3 and INTROSPECTION.md's `TestSQLiteIntrospect_UnreadableTable` row now name CHECK, column default and generated column. Tests: `TestParse_UnrenderableExpression` (7 cases, replacing `TestCreateIndex_UnrenderablePredicate`) and 4 `LIKE … ESCAPE` cases in `TestSQLiteIntrospect_UnreadableTable`. Fail-first: with the source reverted the new parser test panics "sql.BinaryExpr.String(): invalid op ESCAPE [recovered, repanicked]". E2E: the entry's reproduction now gives "Schema error: parsing schema files: parsing ./schema.sql: parsing ./schema.sql: table t: column a: rendering CHECK: sql.BinaryExpr.String(): invalid op ESCAPE" under `files` and exit=3 "Schema error: introspect sqlite table t: parsing stored CREATE TABLE: parsing sqlite_master: table t: column a: rendering CHECK: …" under `database`. Gates: `make check` ok; `parser/introspect` SQLite integration tests ok; `make check-examples` ok; golden churn none (matches vet). Inline: deleted the stale `backlog.md` line saying this entry's prototype was stale after FIX-291 (the re-vet rebuilt it).
 
 ### FIX-282
 

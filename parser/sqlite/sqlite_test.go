@@ -1532,16 +1532,59 @@ func TestIndexWhere(t *testing.T) {
 	}
 }
 
-// rqlite/sql parses LIKE … ESCAPE but panics rendering it; a partial index
-// using it is a parse error, not a crash (PRD §6.3).
-func TestCreateIndex_UnrenderablePredicate(t *testing.T) {
-	const (
-		ddl  = `CREATE TABLE t (a TEXT); CREATE INDEX ix ON t (a) WHERE a LIKE 'x%' ESCAPE '\'`
-		want = "parsing schema.sql: index ix: rendering CREATE INDEX predicate: sql.BinaryExpr.String(): invalid op ESCAPE"
-	)
-	err := sqlite.New().Parse("schema.sql", []byte(ddl))
-	if err == nil || err.Error() != want {
-		t.Errorf("Parse() error = %v, want %q", err, want)
+// rqlite/sql parses LIKE … ESCAPE but panics rendering it; an expression
+// using it is a parse error wherever it is rendered, not a crash (PRD §6.3).
+func TestParse_UnrenderableExpression(t *testing.T) {
+	const escapePanic = "sql.BinaryExpr.String(): invalid op ESCAPE"
+	tests := []struct {
+		name string
+		ddl  string
+		want string
+	}{
+		{
+			name: "column CHECK",
+			ddl:  `CREATE TABLE t (a TEXT CHECK (a LIKE 'x%' ESCAPE '\'))`,
+			want: "parsing schema.sql: table t: column a: rendering CHECK: " + escapePanic,
+		},
+		{
+			name: "table CHECK",
+			ddl:  `CREATE TABLE t (a TEXT, CHECK (a NOT LIKE 'x%' ESCAPE '\'))`,
+			want: "parsing schema.sql: table t: rendering CHECK: " + escapePanic,
+		},
+		{
+			name: "DEFAULT",
+			ddl:  `CREATE TABLE t (a INTEGER DEFAULT ('x' LIKE 'y' ESCAPE '\'))`,
+			want: "parsing schema.sql: table t: column a: rendering DEFAULT: " + escapePanic,
+		},
+		{
+			name: "generated column",
+			ddl:  `CREATE TABLE t (a TEXT, b INTEGER GENERATED ALWAYS AS (a LIKE 'x%' ESCAPE '\'))`,
+			want: "parsing schema.sql: table t: column b: rendering generated column expression: " + escapePanic,
+		},
+		{
+			name: "CHECK after a PRIMARY KEY sort order",
+			ddl:  `CREATE TABLE t (id INTEGER PRIMARY KEY DESC CHECK (id LIKE 'x%' ESCAPE '\'))`,
+			want: "parsing schema.sql: table t: column id: rendering CHECK: " + escapePanic,
+		},
+		{
+			name: "added column CHECK",
+			ddl:  `CREATE TABLE t (id INTEGER); ALTER TABLE t ADD COLUMN a TEXT CHECK (a LIKE 'x%' ESCAPE '\')`,
+			want: "parsing schema.sql: table t: column a: rendering CHECK: " + escapePanic,
+		},
+		{
+			name: "partial index predicate",
+			ddl:  `CREATE TABLE t (a TEXT); CREATE INDEX ix ON t (a) WHERE a LIKE 'x%' ESCAPE '\'`,
+			want: "parsing schema.sql: index ix: rendering CREATE INDEX predicate: " + escapePanic,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := sqlite.New().Parse("schema.sql", []byte(tt.ddl))
+			if err == nil || err.Error() != tt.want {
+				t.Errorf("Parse() error = %v, want %q", err, tt.want)
+			}
+		})
 	}
 }
 
