@@ -702,6 +702,46 @@ func TestValidatePostParse_SoftDeleteTypeMismatch(t *testing.T) {
 	}
 }
 
+// Only the types PRD §4.6 lists are compatible: generation rejects any other,
+// so validation must too.
+func TestValidatePostParse_SoftDeleteTypeOutsideList(t *testing.T) {
+	tests := []struct {
+		colType string
+		sdType  config.SoftDeleteType
+	}{
+		{colType: "bigint", sdType: config.SoftDeleteInteger},
+		{colType: "mediumint", sdType: config.SoftDeleteInteger},
+		{colType: "interval", sdType: config.SoftDeleteInteger},
+		{colType: "point", sdType: config.SoftDeleteInteger},
+		{colType: "timestamptz[]", sdType: config.SoftDeleteTimestamp},
+		{colType: "boolean[]", sdType: config.SoftDeleteBool},
+		{colType: "timestamptz(3)[]", sdType: config.SoftDeleteTimestamp},
+		{colType: "int(10)[]", sdType: config.SoftDeleteInteger},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.colType, func(t *testing.T) {
+			cfg := validConfig()
+			cfg.Generation.SoftDeleteColumns = []config.SoftDeleteConfig{
+				{Name: "soft_col", Type: tt.sdType},
+			}
+			tables := []config.SchemaTable{{
+				Name:   "items",
+				Schema: "public",
+				Columns: []config.SchemaColumn{
+					{Name: "id", Type: "bigint"},
+					{Name: "soft_col", Type: tt.colType},
+				},
+			}}
+
+			_, err := config.ValidatePostParse(cfg, tables, nil)
+			if err == nil || !strings.Contains(err.Error(), "incompatible type") {
+				t.Errorf("ValidatePostParse() error = %v, want an incompatible type error", err)
+			}
+		})
+	}
+}
+
 func TestValidatePostParse_SoftDeleteTypeMatch(t *testing.T) {
 	tests := []struct {
 		name    string
@@ -715,6 +755,10 @@ func TestValidatePostParse_SoftDeleteTypeMatch(t *testing.T) {
 		{name: "boolean matches bool", colType: "boolean", sdType: config.SoftDeleteBool},
 		{name: "bool matches bool", colType: "bool", sdType: config.SoftDeleteBool},
 		{name: "tinyint matches bool", colType: "tinyint", sdType: config.SoftDeleteBool},
+		{name: "datetime(3) matches timestamp", colType: "datetime(3)", sdType: config.SoftDeleteTimestamp},
+		{name: "timestamptz(6) matches timestamp", colType: "timestamptz(6)", sdType: config.SoftDeleteTimestamp},
+		{name: "int(10) unsigned zerofill matches integer", colType: "int(10) unsigned zerofill", sdType: config.SoftDeleteInteger},
+		{name: "smallint matches integer", colType: "smallint", sdType: config.SoftDeleteInteger},
 	}
 
 	for _, tt := range tests {

@@ -1762,8 +1762,8 @@ func validateCursorKeys(cfg *RootConfig, tables []SchemaTable, views []SchemaVie
 	}
 }
 
-// validateSoftDeleteTypes checks that soft delete columns have compatible SQL types.
-// Compatible categories: "timestamp" (timestamp*, datetime), "bool" (bool*, tinyint).
+// validateSoftDeleteTypes checks that soft delete columns have compatible SQL
+// types (see isSoftDeleteTypeCompatible).
 func validateSoftDeleteTypes(cfg *RootConfig, tables []SchemaTable, errs *[]error) {
 	sdCols := cfg.Generation.SoftDeleteColumns
 	if len(sdCols) == 0 {
@@ -2156,16 +2156,23 @@ func columnTypeMap(table SchemaTable) map[string]string {
 }
 
 // isSoftDeleteTypeCompatible checks if a SQL column type is compatible with the
-// configured soft delete type category.
+// configured soft delete type category. It matches the base type name against
+// the PRD §4.6 list (plus a bare tinyint for bool), as parser.DetectSoftDelete
+// does, so validation and generation accept the same types. Arrays never match.
 func isSoftDeleteTypeCompatible(configType SoftDeleteType, sqlType string) bool {
-	lower := strings.ToLower(sqlType)
+	lower := strings.ToLower(strings.TrimSpace(sqlType))
+	if strings.Contains(lower, "[") {
+		return false
+	}
+	base, _, _ := strings.Cut(lower, " ")
+	base, _, _ = strings.Cut(base, "(")
 	switch configType {
 	case SoftDeleteTimestamp:
-		return strings.Contains(lower, "timestamp") || strings.Contains(lower, "datetime")
+		return base == "timestamp" || base == "timestamptz" || base == "datetime"
 	case SoftDeleteBool:
-		return strings.Contains(lower, "bool") || lower == "tinyint" || lower == "tinyint(1)"
+		return base == "bool" || base == "boolean" || lower == "tinyint" || lower == "tinyint(1)"
 	case SoftDeleteInteger:
-		return strings.Contains(lower, "int") || strings.Contains(lower, "serial")
+		return base == "int" || base == "integer" || base == "smallint" || base == "tinyint"
 	default:
 		return false
 	}

@@ -83,6 +83,58 @@ func TestDetectSoftDelete(t *testing.T) {
 			wantStrategy: "timestamp",
 		},
 		{
+			name: "timestamp column: MySQL datetime(3)",
+			table: parser.Table{
+				Name: "posts",
+				Columns: []parser.Column{
+					{Name: "id", Type: "bigint"},
+					{Name: "deleted_at", Type: "datetime(3)"},
+				},
+			},
+			columns:      []string{"deleted_at"},
+			wantColumn:   "deleted_at",
+			wantStrategy: "timestamp",
+		},
+		{
+			name: "timestamp column: timestamp(6)",
+			table: parser.Table{
+				Name: "posts",
+				Columns: []parser.Column{
+					{Name: "id", Type: "integer"},
+					{Name: "deleted_at", Type: "timestamp(6)"},
+				},
+			},
+			columns:      []string{"deleted_at"},
+			wantColumn:   "deleted_at",
+			wantStrategy: "timestamp",
+		},
+		{
+			name: "timestamp column: timestamptz(3)",
+			table: parser.Table{
+				Name: "posts",
+				Columns: []parser.Column{
+					{Name: "id", Type: "integer"},
+					{Name: "deleted_at", Type: "timestamptz(3)"},
+				},
+			},
+			columns:      []string{"deleted_at"},
+			wantColumn:   "deleted_at",
+			wantStrategy: "timestamp",
+		},
+		{
+			name: "timestamp column: timestamp(6) with time zone",
+			table: parser.Table{
+				Name: "posts",
+				Columns: []parser.Column{
+					{Name: "id", Type: "integer"},
+					{Name: "deleted_at", Type: "timestamp(6) with time zone"},
+				},
+			},
+			columns:      []string{"deleted_at"},
+			wantColumn:   "deleted_at",
+			wantStrategy: "timestamp",
+		},
+		{
 			name: "bool column: boolean",
 			table: parser.Table{
 				Name: "users",
@@ -159,6 +211,43 @@ func TestDetectSoftDelete(t *testing.T) {
 			columns:      []string{"deleted_flag"},
 			wantColumn:   "deleted_flag",
 			wantStrategy: "integer",
+		},
+		{
+			name: "integer column: MySQL int(10) unsigned zerofill",
+			table: parser.Table{
+				Name: "records",
+				Columns: []parser.Column{
+					{Name: "id", Type: "integer"},
+					{Name: "deleted", Type: "int(10) unsigned zerofill"},
+				},
+			},
+			columns:      []string{"deleted"},
+			wantColumn:   "deleted",
+			wantStrategy: "integer",
+		},
+		{
+			name: "type mismatch: bigint is not in the integer list",
+			table: parser.Table{
+				Name: "records",
+				Columns: []parser.Column{
+					{Name: "id", Type: "integer"},
+					{Name: "deleted", Type: "bigint"},
+				},
+			},
+			columns: []string{"deleted"},
+			wantErr: true,
+		},
+		{
+			name: "type mismatch: timestamptz(3)[] is an array",
+			table: parser.Table{
+				Name: "posts",
+				Columns: []parser.Column{
+					{Name: "id", Type: "integer"},
+					{Name: "deleted_at", Type: "timestamptz(3)[]"},
+				},
+			},
+			columns: []string{"deleted_at"},
+			wantErr: true,
 		},
 		{
 			name: "type mismatch: varchar",

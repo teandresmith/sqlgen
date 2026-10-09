@@ -298,80 +298,6 @@ unexpanded.
 
 **Resolution notes.** _Filled in by `/fix resolve`._
 
-### FIX-289
-
-- **Status:** Open
-- **Severity:** tracked
-- **Origin:** phase 4, `parser` + `cmd/sqlgen/config`
-- **Surfaced by:** /fix-vet FIX-271 (2026-10-07), filed at /close-phase 30 (2026-10-08)
-- **Vetted:** corrected at `cb04d107` (2026-10-09; re-vetted, patch carried forward)
-
-**Issue.** **A soft-delete column whose type carries a modifier passes
-config validation and then fails generation.** `deleted_at DATETIME(3)`
-(MySQL) or `timestamp(6)` / `timestamptz(3)` (PostgreSQL) is accepted by
-`validateSoftDeleteTypes` and rejected by `parser.DetectSoftDelete`.
-Measured (probe of `DetectSoftDelete`): `datetime(3)` → `soft delete column
-"deleted_at" in table "t" has unsupported type "datetime(3)"`; same for
-`timestamp(6)`, `timestamptz(3)`, `int(10) unsigned zerofill`. Not run end to
-end.
-
-**Root cause.** `softDeleteStrategy` (`parser/detect.go:55-73`) cuts the
-type at the first space only (`:61`) and matches the base against an exact
-list (`:63-69`), so a `(…)` modifier makes it miss; `DetectSoftDelete`
-(`parser/detect.go:15-28`) then returns the error (`:23`), reached from
-`detectTableSoftDelete` (`cmd/sqlgen/gen/context_table.go:338`). Validation
-uses substring matching instead (`isSoftDeleteTypeCompatible`,
-`cmd/sqlgen/config/validate.go:2160-2172`; its caller `validateSoftDeleteTypes` doc comment at `:1765-1766`), which accepts any type
-containing `timestamp` / `datetime` / `int`. By code reading the two also
-disagree on families without a modifier: `bigint`, `mediumint` and `serial`
-pass validation as `integer` but are absent from `softDeleteStrategy`'s
-list (not measured).
-
-**Suggested fix.**
-- In `softDeleteStrategy`, after the space cut, also cut the base at `(`
-  (`base, _, _ = strings.Cut(base, "(")`), so `datetime(3)`,
-  `timestamp(6)`, `timestamptz(3)`, `timestamp(6) with time zone` and
-  `int(10) unsigned zerofill` classify like their bare forms.
-- Order with FIX-271: its prototype adds a `tinyint(1)` → bool case to this
-  function; that exact match must run before the modifier strip, or
-  `tinyint(1)` falls through to `tinyint` → integer.
-- Have the vet measure the `bigint` / `mediumint` / `serial` gap; if
-  confirmed, add them to the integer case so the accepted sets match
-  (`config` cannot import `parser`, so the two lists stay separate and the
-  tests pin them together).
-- Tests: `TestDetectSoftDelete` (`parser/detect_test.go:10`) rows for
-  `datetime(3)`, `timestamp(6)`, `timestamptz(3)`, `timestamp(6) with time
-  zone` → timestamp and `int(10) unsigned zerofill` → integer; a
-  `cmd/sqlgen/gen` case where a MySQL `deleted_at DATETIME(3)` table
-  generates its soft-delete methods.
-- Vet notes (stale facts):
-  - only `config.ValidatePostParse` accepts these types: `sqlgen validate` already fails (exit 2) because `gen.ValidateGeneration` builds the contexts and hits the `DetectSoftDelete` error, and `sqlgen generate` fails with exit 1. Now run end to end;
-  - the bigint/mediumint gap is measured: `bigint` fails `DetectSoftDelete` on MySQL `BIGINT`, PG `bigint`/`int8` and SQLite `BIGINT`; MySQL `MEDIUMINT` fails too. `serial` is not a gap (the PG parser normalizes it to `integer`). Neither source produces `timestamp(6) with time zone` (the PG parser emits `timestamptz(6)`);
-  - (superseded at `cb04d107`) MySQL `TINYINT(1)` failed `DetectSoftDelete` at `b606e4a7`; since FIX-271 (`fa26812c`) MySQL `TINYINT(1)` and `BOOL` give strategy="bool", err=<nil> (measured 2026-10-09);
-  - adding bigint/mediumint/serial to the integer case would contradict PRD §4.6 ("The supported column types are those listed above, and no other").
-- Changed from the original: the bigint/mediumint gap is closed by tightening validation to the PRD §4.6 list, not by widening detection; that also closes other types the substring match accepted and generation rejects (`interval` and `point`, which contain "int", and arrays such as `timestamptz[]`, `boolean[]`) — same root cause (the two lists disagree), same fix site.
-- Auto-accepted the recommended option on 2026-10-08 (`/fix` auto-accept rule): close the bigint/mediumint gap by tightening `isSoftDeleteTypeCompatible` to the PRD §4.6 list rather than widening `softDeleteStrategy` → tighten, because it was prototyped with green gates, causes no golden churn against the alternative, adds no public surface, and implements PRD §4.6/§4.13 rather than reversing it (widening would need a PRD amendment).
-- Prototype: `parser/detect.go` `softDeleteStrategy` adds `base, _, _ = strings.Cut(base, "(")` after the existing space cut (after the `base :=` line, so FIX-271's `tinyint(1)` exact match, inserted before it, runs first). `cmd/sqlgen/config/validate.go` `isSoftDeleteTypeCompatible` replaces substring matching with the same base-type cut and an exact match against the §4.6 list (timestamp: timestamp, timestamptz, datetime; integer: int, integer, smallint, tinyint; bool: bool, boolean, plus the existing `tinyint` / `tinyint(1)` leniency), and the stale `validateSoftDeleteTypes` doc comment is rewritten. Tests: `TestDetectSoftDelete` rows (datetime(3), timestamp(6), timestamptz(3), timestamp(6) with time zone → timestamp; int(10) unsigned zerofill → integer; bigint → error); `TestValidatePostParse_SoftDeleteTypeMatch` rows (datetime(3), timestamptz(6), int(10) unsigned zerofill, smallint); new `TestValidatePostParse_SoftDeleteTypeOutsideList` (bigint, mediumint, interval, point, timestamptz[], boolean[] → "incompatible type"); new `TestGenerate_SoftDeleteColumnWithPrecision` (MySQL stdlib, `posts.deleted_at datetime(3)`, emits `SoftDelete(` and `Restore(`).
-- Lands with FIX-271: strict `git apply --check` conflicts in both orders on `parser/detect.go` (shared 3-line context), but `git apply --3way` merges cleanly in both orders, keeping the `tinyint(1)` → bool check first, then the space cut, then the `(` cut. With both patches applied, parser `./...`, cmd/sqlgen config, gen, gotype and `TestE2EGoldenFiles` pass. Either landing order is safe.
-- Re-vet at `cb04d107` on 2026-10-09: the `parser/detect.go` hunk merges cleanly with `--3way` over FIX-271's `tinyint(1)` block; the rebuilt patch applies without `--3way` and its code is identical to the `b606e4a7` prototype (offsets only). Line refs above are re-pinned to `cb04d107` (`validate.go` moved after FIX-283 and FIX-285). Re-measured: the probe gives "unsupported type" for MySQL DATETIME(3), TIMESTAMP(6), INT(10) UNSIGNED ZEROFILL, BIGINT, MEDIUMINT; PG timestamp(6), timestamptz(3), `timestamp(6) with time zone` (stored "timestamptz(6)"), `timestamp(3) without time zone` (stored "timestamp(3)"), bigint, int8, interval, timestamptz[]; SQLite DATETIME(3), TIMESTAMP(6), BIGINT. CLI, MySQL `posts.deleted_at DATETIME(3) NULL`: `sqlgen validate` → "Error: building context for table posts: detecting soft delete for posts: detecting soft delete: soft delete column \"deleted_at\" in table \"posts\" has unsupported type \"datetime(3)\"", exit=2; `sqlgen generate` → "Generation error: building table contexts: … unsupported type \"datetime(3)\"", exit=1. With the fix: validate → "config and schema are valid", exit=0; generate → "sqlgen: generated 8 files (1 tables, 0 views)", exit=0. Gates (gofumpt, parser `go test -race ./...`, cmd/sqlgen `go test -race ./config/... ./gen/... ./cli/...`, `TestE2EGoldenFiles`, golangci-lint on config, gen and parser) → ok / 0 issues; fail-first identical to the run below; golden churn none.
-- Prototype results, run at `b606e4a7` on 2026-10-08:
-  - Reproduction: a probe (since deleted) parsing `CREATE TABLE t (id INTEGER PRIMARY KEY, deleted_at <T>)` with each dialect and running `DetectSoftDelete` → "unsupported type" for MySQL datetime(3), timestamp(6), int(10) unsigned zerofill, tinyint(1), bigint, mediumint; PG timestamp(6), timestamptz(3), timestamptz(6), timestamp(3), bigint (incl. int8); SQLite datetime(3), timestamp(6), bigint. CLI at HEAD on a MySQL project with `posts.deleted_at DATETIME(3) NULL`: `sqlgen validate` → "Error: building context for table posts: … unsupported type \"datetime(3)\"", exit 2; `sqlgen generate` → "Generation error: building table contexts: … unsupported type \"datetime(3)\"", exit 1. With `deleted BIGINT` and `type: integer`: `generate` → "… unsupported type \"bigint\"", exit 1.
-  - With the fix: the DATETIME(3) project → "sqlgen: generated 8 files (1 tables, 0 views)", exit 0, with the SoftDelete methods; the bigint project → "Post-parse validation error: soft_delete_columns: column \"deleted\" in table notes has incompatible type \"bigint\" (expected integer-compatible type)", exit 2.
-  - Gates: `gofumpt -l` → clean; parser `go test -race ./...` → ok; cmd/sqlgen `go test -race ./config/... ./gen/... ./cli/...` → ok; `TestE2EGoldenFiles` → PASS; `golangci-lint` (config, gen, parser) → 0 issues.
-  - Fail-first: the detect.go `(` cut reverted → `TestDetectSoftDelete` fails 5 rows ("unexpected error: … unsupported type \"datetime(3)\"") and `TestGenerate_SoftDeleteColumnWithPrecision` fails; validate.go reverted → `TestValidatePostParse_SoftDeleteTypeOutsideList` fails all 6 rows ("ValidatePostParse() error = <nil>, want an incompatible type error"); the existing suite without the fix → passes.
-  - Golden churn: none.
-  - Patch: `.claude/prototypes/FIX-289.patch` (5 files, +167/-7).
-
-- Update after FIX-271 landed (`fa26812c`, 2026-10-08): `parser/detect.go` line refs above are re-pinned to the landed code; the `tinyint(1)` → bool case this entry anticipates is now in the tree, so this patch lands with `git apply --3way` on top of it (the vet showed the merged order: `tinyint(1)` check, space cut, `(` cut).
-
-
-**References.**
-- PRD §5.4 (soft delete column detection), §4.13 (validation rule "`soft_delete_columns`
-  type mismatch"), §4.6 (`soft_delete_columns`).
-- FIX-271 (MySQL synonyms; adds the `tinyint(1)` case here).
-
-**Resolution notes.** _Filled in by `/fix resolve`._
-
 ### FIX-292
 
 - **Status:** Open
@@ -544,6 +470,110 @@ source (PRD §6.1).
 ## Resolved
 
 <!-- fixes:resolved:begin -->
+
+### FIX-289
+
+- **Status:** Resolved
+- **Severity:** tracked
+- **Origin:** phase 4, `parser` + `cmd/sqlgen/config`
+- **Surfaced by:** /fix-vet FIX-271 (2026-10-07), filed at /close-phase 30 (2026-10-08)
+- **Vetted:** corrected at `cb04d107` (2026-10-09; re-vetted, patch carried forward)
+
+**Issue.** **A soft-delete column whose type carries a modifier passes
+config validation and then fails generation.** `deleted_at DATETIME(3)`
+(MySQL) or `timestamp(6)` / `timestamptz(3)` (PostgreSQL) is accepted by
+`validateSoftDeleteTypes` and rejected by `parser.DetectSoftDelete`.
+Measured (probe of `DetectSoftDelete`): `datetime(3)` → `soft delete column
+"deleted_at" in table "t" has unsupported type "datetime(3)"`; same for
+`timestamp(6)`, `timestamptz(3)`, `int(10) unsigned zerofill`. Not run end to
+end.
+
+**Root cause.** (Line refs at `cb04d107`.) `softDeleteStrategy` (`parser/detect.go:55-73`) cuts the
+type at the first space only (`:61`) and matches the base against an exact
+list (`:63-69`), so a `(…)` modifier makes it miss; `DetectSoftDelete`
+(`parser/detect.go:15-28`) then returns the error (`:23`), reached from
+`detectTableSoftDelete` (`cmd/sqlgen/gen/context_table.go:338`). Validation
+uses substring matching instead (`isSoftDeleteTypeCompatible`,
+`cmd/sqlgen/config/validate.go:2160-2172`; its caller `validateSoftDeleteTypes` doc comment at `:1765-1766`), which accepts any type
+containing `timestamp` / `datetime` / `int`. By code reading the two also
+disagree on families without a modifier: `bigint`, `mediumint` and `serial`
+pass validation as `integer` but are absent from `softDeleteStrategy`'s
+list (not measured).
+
+**Suggested fix.**
+- In `softDeleteStrategy`, after the space cut, also cut the base at `(`
+  (`base, _, _ = strings.Cut(base, "(")`), so `datetime(3)`,
+  `timestamp(6)`, `timestamptz(3)`, `timestamp(6) with time zone` and
+  `int(10) unsigned zerofill` classify like their bare forms.
+- Order with FIX-271: its prototype adds a `tinyint(1)` → bool case to this
+  function; that exact match must run before the modifier strip, or
+  `tinyint(1)` falls through to `tinyint` → integer.
+- Have the vet measure the `bigint` / `mediumint` / `serial` gap; if
+  confirmed, add them to the integer case so the accepted sets match
+  (`config` cannot import `parser`, so the two lists stay separate and the
+  tests pin them together).
+- Tests: `TestDetectSoftDelete` (`parser/detect_test.go:10`) rows for
+  `datetime(3)`, `timestamp(6)`, `timestamptz(3)`, `timestamp(6) with time
+  zone` → timestamp and `int(10) unsigned zerofill` → integer; a
+  `cmd/sqlgen/gen` case where a MySQL `deleted_at DATETIME(3)` table
+  generates its soft-delete methods.
+- Vet notes (stale facts):
+  - only `config.ValidatePostParse` accepts these types: `sqlgen validate` already fails (exit 2) because `gen.ValidateGeneration` builds the contexts and hits the `DetectSoftDelete` error, and `sqlgen generate` fails with exit 1. Now run end to end;
+  - the bigint/mediumint gap is measured: `bigint` fails `DetectSoftDelete` on MySQL `BIGINT`, PG `bigint`/`int8` and SQLite `BIGINT`; MySQL `MEDIUMINT` fails too. `serial` is not a gap (the PG parser normalizes it to `integer`). Neither source produces `timestamp(6) with time zone` (the PG parser emits `timestamptz(6)`);
+  - (superseded at `cb04d107`) MySQL `TINYINT(1)` failed `DetectSoftDelete` at `b606e4a7`; since FIX-271 (`fa26812c`) MySQL `TINYINT(1)` and `BOOL` give strategy="bool", err=<nil> (measured 2026-10-09);
+  - adding bigint/mediumint/serial to the integer case would contradict PRD §4.6 ("The supported column types are those listed above, and no other").
+- Changed from the original: the bigint/mediumint gap is closed by tightening validation to the PRD §4.6 list, not by widening detection; that also closes other types the substring match accepted and generation rejects (`interval` and `point`, which contain "int", and arrays such as `timestamptz[]`, `boolean[]`) — same root cause (the two lists disagree), same fix site.
+- Auto-accepted the recommended option on 2026-10-08 (`/fix` auto-accept rule): close the bigint/mediumint gap by tightening `isSoftDeleteTypeCompatible` to the PRD §4.6 list rather than widening `softDeleteStrategy` → tighten, because it was prototyped with green gates, causes no golden churn against the alternative, adds no public surface, and implements PRD §4.6/§4.13 rather than reversing it (widening would need a PRD amendment).
+- Prototype: `parser/detect.go` `softDeleteStrategy` adds `base, _, _ = strings.Cut(base, "(")` after the existing space cut (after the `base :=` line, so FIX-271's `tinyint(1)` exact match, inserted before it, runs first). `cmd/sqlgen/config/validate.go` `isSoftDeleteTypeCompatible` replaces substring matching with the same base-type cut and an exact match against the §4.6 list (timestamp: timestamp, timestamptz, datetime; integer: int, integer, smallint, tinyint; bool: bool, boolean, plus the existing `tinyint` / `tinyint(1)` leniency), and the stale `validateSoftDeleteTypes` doc comment is rewritten. Tests: `TestDetectSoftDelete` rows (datetime(3), timestamp(6), timestamptz(3), timestamp(6) with time zone → timestamp; int(10) unsigned zerofill → integer; bigint → error); `TestValidatePostParse_SoftDeleteTypeMatch` rows (datetime(3), timestamptz(6), int(10) unsigned zerofill, smallint); new `TestValidatePostParse_SoftDeleteTypeOutsideList` (bigint, mediumint, interval, point, timestamptz[], boolean[] → "incompatible type"); new `TestGenerate_SoftDeleteColumnWithPrecision` (MySQL stdlib, `posts.deleted_at datetime(3)`, emits `SoftDelete(` and `Restore(`).
+- Lands with FIX-271: strict `git apply --check` conflicts in both orders on `parser/detect.go` (shared 3-line context), but `git apply --3way` merges cleanly in both orders, keeping the `tinyint(1)` → bool check first, then the space cut, then the `(` cut. With both patches applied, parser `./...`, cmd/sqlgen config, gen, gotype and `TestE2EGoldenFiles` pass. Either landing order is safe.
+- Re-vet at `cb04d107` on 2026-10-09: the `parser/detect.go` hunk merges cleanly with `--3way` over FIX-271's `tinyint(1)` block; the rebuilt patch applies without `--3way` and its code is identical to the `b606e4a7` prototype (offsets only). Line refs above are re-pinned to `cb04d107` (`validate.go` moved after FIX-283 and FIX-285). Re-measured: the probe gives "unsupported type" for MySQL DATETIME(3), TIMESTAMP(6), INT(10) UNSIGNED ZEROFILL, BIGINT, MEDIUMINT; PG timestamp(6), timestamptz(3), `timestamp(6) with time zone` (stored "timestamptz(6)"), `timestamp(3) without time zone` (stored "timestamp(3)"), bigint, int8, interval, timestamptz[]; SQLite DATETIME(3), TIMESTAMP(6), BIGINT. CLI, MySQL `posts.deleted_at DATETIME(3) NULL`: `sqlgen validate` → "Error: building context for table posts: detecting soft delete for posts: detecting soft delete: soft delete column \"deleted_at\" in table \"posts\" has unsupported type \"datetime(3)\"", exit=2; `sqlgen generate` → "Generation error: building table contexts: … unsupported type \"datetime(3)\"", exit=1. With the fix: validate → "config and schema are valid", exit=0; generate → "sqlgen: generated 8 files (1 tables, 0 views)", exit=0. Gates (gofumpt, parser `go test -race ./...`, cmd/sqlgen `go test -race ./config/... ./gen/... ./cli/...`, `TestE2EGoldenFiles`, golangci-lint on config, gen and parser) → ok / 0 issues; fail-first identical to the run below; golden churn none.
+- Prototype results, run at `b606e4a7` on 2026-10-08:
+  - Reproduction: a probe (since deleted) parsing `CREATE TABLE t (id INTEGER PRIMARY KEY, deleted_at <T>)` with each dialect and running `DetectSoftDelete` → "unsupported type" for MySQL datetime(3), timestamp(6), int(10) unsigned zerofill, tinyint(1), bigint, mediumint; PG timestamp(6), timestamptz(3), timestamptz(6), timestamp(3), bigint (incl. int8); SQLite datetime(3), timestamp(6), bigint. CLI at HEAD on a MySQL project with `posts.deleted_at DATETIME(3) NULL`: `sqlgen validate` → "Error: building context for table posts: … unsupported type \"datetime(3)\"", exit 2; `sqlgen generate` → "Generation error: building table contexts: … unsupported type \"datetime(3)\"", exit 1. With `deleted BIGINT` and `type: integer`: `generate` → "… unsupported type \"bigint\"", exit 1.
+  - With the fix: the DATETIME(3) project → "sqlgen: generated 8 files (1 tables, 0 views)", exit 0, with the SoftDelete methods; the bigint project → "Post-parse validation error: soft_delete_columns: column \"deleted\" in table notes has incompatible type \"bigint\" (expected integer-compatible type)", exit 2.
+  - Gates: `gofumpt -l` → clean; parser `go test -race ./...` → ok; cmd/sqlgen `go test -race ./config/... ./gen/... ./cli/...` → ok; `TestE2EGoldenFiles` → PASS; `golangci-lint` (config, gen, parser) → 0 issues.
+  - Fail-first: the detect.go `(` cut reverted → `TestDetectSoftDelete` fails 5 rows ("unexpected error: … unsupported type \"datetime(3)\"") and `TestGenerate_SoftDeleteColumnWithPrecision` fails; validate.go reverted → `TestValidatePostParse_SoftDeleteTypeOutsideList` fails all 6 rows ("ValidatePostParse() error = <nil>, want an incompatible type error"); the existing suite without the fix → passes.
+  - Golden churn: none.
+  - Patch: `.claude/prototypes/FIX-289.patch` (5 files, +167/-7).
+
+- Update after FIX-271 landed (`fa26812c`, 2026-10-08): `parser/detect.go` line refs above are re-pinned to the landed code; the `tinyint(1)` → bool case this entry anticipates is now in the tree, so this patch lands with `git apply --3way` on top of it (the vet showed the merged order: `tinyint(1)` check, space cut, `(` cut).
+
+
+**References.**
+- PRD §5.4 (soft delete column detection), §4.13 (validation rule "`soft_delete_columns`
+  type mismatch"), §4.6 (`soft_delete_columns`).
+- FIX-271 (MySQL synonyms; adds the `tinyint(1)` case here).
+
+**Resolution notes.** Resolved 2026-10-09. `softDeleteStrategy`
+(`parser/detect.go`) now cuts the base type at `(` after the space cut
+(FIX-271's `tinyint(1)` → bool check still runs first), so `datetime(3)`,
+`timestamp(6)`, `timestamptz(3)`, `timestamp(6) with time zone` and
+`int(10) unsigned zerofill` classify like their bare forms.
+`isSoftDeleteTypeCompatible` (`cmd/sqlgen/config/validate.go`) replaces
+substring matching with the same base-type cut and an exact match against
+the PRD §4.6 list (keeping the `tinyint` / `tinyint(1)` bool leniency), so
+validation now rejects `bigint`, `mediumint`, `interval`, `point` and array
+types that generation rejects; the stale `validateSoftDeleteTypes` doc
+comment is rewritten. Prototype applied clean at `421b3ad2` (fresh since
+`cb04d107`). Tests: `TestDetectSoftDelete` +7 rows,
+`TestValidatePostParse_SoftDeleteTypeMatch` +4 rows, new
+`TestValidatePostParse_SoftDeleteTypeOutsideList` (8 rows), new
+`TestGenerate_SoftDeleteColumnWithPrecision`. Gates: `make check` ok,
+`make check-examples` ok; golden churn none (`make update-golden` +
+`make update-golden-e2e`), matching the vet. Fail-first on the final code:
+source reverted → `TestDetectSoftDelete` fails 5 rows,
+`TestGenerate_SoftDeleteColumnWithPrecision` fails,
+`TestValidatePostParse_SoftDeleteTypeOutsideList` fails all 8 rows. Inline from the /verify reviewer:
+the `(` cut alone turned a precision array such as `timestamptz(3)[]`
+(emitted by the PG parser and introspection) into `timestamptz`, so
+generation silently emitted soft delete on a `[]time.Time` field (measured:
+`DetectSoftDelete` → strategy="timestamp", err=<nil>); both functions now
+reject any type containing `[` before the cuts, with a `TestDetectSoftDelete`
+`timestamptz(3)[]` → error row and `timestamptz(3)[]` / `int(10)[]` rows in
+`TestValidatePostParse_SoftDeleteTypeOutsideList` (fail-first: guard removed
+→ those 3 rows fail). Also inline: the `isSoftDeleteTypeCompatible` comment
+names the bare-`tinyint` bool leniency, the Root cause line refs are pinned
+to `cb04d107`, and the duplicate "configured type never drives the strategy"
+backlog line is merged into the 2026-10-09 one, which covers both directions.
 
 ### FIX-287
 

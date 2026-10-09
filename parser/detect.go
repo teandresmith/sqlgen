@@ -58,7 +58,15 @@ func softDeleteStrategy(sqlType string) (string, bool) {
 		// MySQL's BOOL and BOOLEAN.
 		return "bool", true
 	}
+	if strings.Contains(normalized, "[") {
+		// An array column cannot hold a soft delete marker, and timestamptz(3)[]
+		// would otherwise pass as timestamptz once the precision is cut.
+		return "", false
+	}
 	base, _, _ := strings.Cut(normalized, " ")
+	// A precision or display width does not change the family:
+	// datetime(3), timestamptz(6), int(10) unsigned zerofill.
+	base, _, _ = strings.Cut(base, "(")
 
 	switch base {
 	case "timestamp", "timestamptz", "datetime":

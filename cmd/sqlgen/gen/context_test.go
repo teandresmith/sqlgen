@@ -2,6 +2,7 @@ package gen_test
 
 import (
 	"maps"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -2499,6 +2500,39 @@ func TestExcludeDeleted_defaultTrueWhenSoftDeletePresent(t *testing.T) {
 	}
 	if !tc.ExcludeDeleted {
 		t.Error("ExcludeDeleted should default to true when SoftDelete is present")
+	}
+}
+
+// A soft-delete column whose type carries a precision is still detected, and
+// its table generates the soft-delete methods.
+func TestGenerate_SoftDeleteColumnWithPrecision(t *testing.T) {
+	outDir := t.TempDir()
+	cfg := loadLayoutConfig(t, outDir, "single_file")
+	cfg.Input.Dialect = config.DialectMySQL
+	cfg.Output.Driver = "stdlib"
+	schema := &parser.Schema{
+		Tables: []parser.Table{{
+			Name: "posts",
+			Columns: []parser.Column{
+				{Name: "id", Type: "bigint", PrimaryKey: true, AutoIncrement: true},
+				tableCol("title", "varchar(255)", false, false),
+				tableCol("deleted_at", "datetime(3)", true, false),
+			},
+		}},
+	}
+
+	if _, err := gen.Generate(schema, cfg, "test"); err != nil {
+		t.Fatalf("Generate() error = %v", err)
+	}
+
+	body := readGenerated(t, filepath.Join(outDir, "models_gen.go"))
+	for _, want := range []string{
+		"func (c *postClient) SoftDelete(",
+		"func (c *postClient) Restore(",
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("models_gen.go missing %q", want)
+		}
 	}
 }
 
