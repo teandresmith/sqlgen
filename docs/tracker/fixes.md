@@ -78,43 +78,6 @@ adds keys, then FK indexes (`mysql.go:355-364`; line refs at `cb04d107`).
 
 **Resolution notes.** _Filled in by `/fix resolve`._
 
-### FIX-284
-
-- **Status:** Open
-- **Severity:** nit
-- **Origin:** phase 1, `sql`
-- **Surfaced by:** backlog promotion at `/close-phase 30` (2026-10-07); first recorded by FIX-258 (2026-10-03)
-- **Vetted:** ready at `d51ace1b` (2026-10-07)
-
-**Issue.** **`sql.Raw(clause, nil)` drops the nil argument**, so the bare `$`
-reaches the database. Measured evidence from the backlog line: "sqlite
-`Raw("owner_id IS NOT DISTINCT FROM $", nil)` → `SQL: … (owner_id IS NOT
-DISTINCT FROM $) ARGS=[0]`, `SQL logic error: unrecognized token: "$" (1)`".
-
-**Root cause.** `Raw`'s one-argument case stores `Value: args[0]`
-(`sql/condition.go:313-314`), and `expandConditionClause` reads `Value ==
-nil` as "no args" (`sql/builder.go:588-590`), so the clause is emitted
-unexpanded.
-
-**Suggested fix.**
-- In `Raw`, store `[]any{nil}` when the single argument is nil, so
-  `expandSlice` (`sql/builder.go:653`) binds it.
-- Test: a `sql` builder case for `Raw("x IS NOT DISTINCT FROM $", nil)` on
-  all three dialects asserting one placeholder and `ARGS=[nil]`.
-- Prototype results, run at `d51ace1b` on 2026-10-07:
-  - Reproduction: a throwaway probe (`sql/zz_probe_rawnil_test.go`, since deleted), `go test -count=1 -run TestZZProbeRawNil -v ./sql/` → `postgres Raw nil: SQL=SELECT * FROM "public"."users" WHERE (owner_id IS NOT DISTINCT FROM $) ARGS=[]interface {}(nil)` (mysql and sqlite give the same bare `$`); SQLite exec → `SQL logic error: unrecognized token: "$" (1)`. On its own the Raw condition adds no args (`ARGS=[]`); the evidence's `ARGS=[0]` came from other conditions in the original probe. With the fix: `(owner_id IS NOT DISTINCT FROM ?) ARGS=[<nil>]: ids=[1]` on SQLite (the NULL-owner row comes back), and PostgreSQL renders `$1`.
-  - Prototype: `Raw` case 1 (`sql/condition.go:313-314`) returns `Value: args` (`[]any{nil}`) when `args[0] == nil`, so `expandSlice` binds it; the doc comment gains "A single nil arg binds NULL to the clause's one token." Side effect: `Raw("x IN $", nil)` now renders `x IN (?)` with `[nil]`, matching multi-arg Raw with ` IN $`. Tests: a `TestRaw` row "single nil arg" (`Value: []any{nil}`) and `TestRaw_NilArg` (postgres, postgres stdlib, mysql, sqlite; the Raw clause between `active = $` and `age > $`, one placeholder at position 2, args `[true, nil, 3]`).
-  - Gates: `go test -race -count=1 ./sql/...` → ok; `go test -race -short -count=1 ./...` (root) → ok; `gofumpt -l sql/` → clean; `golangci-lint run ./sql/...` → 0 issues.
-  - Fail-first: the nil branch reverted → `TestRaw_NilArg/postgres` fails: "BuildSelect sql = \"… WHERE active = $1 AND (owner_id IS NOT DISTINCT FROM $) AND age > $2\" want \"… (owner_id IS NOT DISTINCT FROM $2) AND age > $3\"" (the other dialects likewise), and `TestRaw/single_nil_arg` fails: "- Value: []any{nil}, + Value: nil"; the existing suite without the fix → passes.
-  - Golden churn: none.
-  - Patch: `.claude/prototypes/FIX-284.patch` (3 files, +46/-0).
-
-
-**References.**
-- PRD §11.5 (ConditionBuilder, `sql.Raw`).
-
-**Resolution notes.** _Filled in by `/fix resolve`._
-
 ### FIX-292
 
 - **Status:** Open
@@ -222,6 +185,45 @@ source (PRD §6.1).
 ## Resolved
 
 <!-- fixes:resolved:begin -->
+
+### FIX-284
+
+- **Status:** Resolved
+- **Severity:** nit
+- **Origin:** phase 1, `sql`
+- **Surfaced by:** backlog promotion at `/close-phase 30` (2026-10-07); first recorded by FIX-258 (2026-10-03)
+- **Vetted:** ready at `d51ace1b` (2026-10-07)
+
+**Issue.** **`sql.Raw(clause, nil)` drops the nil argument**, so the bare `$`
+reaches the database. Measured evidence from the backlog line: "sqlite
+`Raw("owner_id IS NOT DISTINCT FROM $", nil)` → `SQL: … (owner_id IS NOT
+DISTINCT FROM $) ARGS=[0]`, `SQL logic error: unrecognized token: "$" (1)`".
+
+**Root cause.** `Raw`'s one-argument case stores `Value: args[0]`
+(`sql/condition.go:313-314`, line refs at `e932c2e2`), and `expandConditionClause` reads `Value ==
+nil` as "no args" (`sql/builder.go:588-590`), so the clause is emitted
+unexpanded.
+
+**Suggested fix.**
+- In `Raw`, store `[]any{nil}` when the single argument is nil, so
+  `expandSlice` (`sql/builder.go:653`) binds it.
+- Test: a `sql` builder case for `Raw("x IS NOT DISTINCT FROM $", nil)` on
+  all three dialects asserting one placeholder and `ARGS=[nil]`.
+- Prototype results, run at `d51ace1b` on 2026-10-07:
+  - Reproduction: a throwaway probe (`sql/zz_probe_rawnil_test.go`, since deleted), `go test -count=1 -run TestZZProbeRawNil -v ./sql/` → `postgres Raw nil: SQL=SELECT * FROM "public"."users" WHERE (owner_id IS NOT DISTINCT FROM $) ARGS=[]interface {}(nil)` (mysql and sqlite give the same bare `$`); SQLite exec → `SQL logic error: unrecognized token: "$" (1)`. On its own the Raw condition adds no args (`ARGS=[]`); the evidence's `ARGS=[0]` came from other conditions in the original probe. With the fix: `(owner_id IS NOT DISTINCT FROM ?) ARGS=[<nil>]: ids=[1]` on SQLite (the NULL-owner row comes back), and PostgreSQL renders `$1`.
+  - Prototype: `Raw` case 1 (`sql/condition.go:313-314`) returns `Value: args` (`[]any{nil}`) when `args[0] == nil`, so `expandSlice` binds it; the doc comment gains "A single nil arg binds NULL to the clause's one token." Side effect: `Raw("x IN $", nil)` now renders `x IN (?)` with `[nil]`, matching multi-arg Raw with ` IN $`. Tests: a `TestRaw` row "single nil arg" (`Value: []any{nil}`) and `TestRaw_NilArg` (postgres, postgres stdlib, mysql, sqlite; the Raw clause between `active = $` and `age > $`, one placeholder at position 2, args `[true, nil, 3]`).
+  - Gates: `go test -race -count=1 ./sql/...` → ok; `go test -race -short -count=1 ./...` (root) → ok; `gofumpt -l sql/` → clean; `golangci-lint run ./sql/...` → 0 issues.
+  - Fail-first: the nil branch reverted → `TestRaw_NilArg/postgres` fails: "BuildSelect sql = \"… WHERE active = $1 AND (owner_id IS NOT DISTINCT FROM $) AND age > $2\" want \"… (owner_id IS NOT DISTINCT FROM $2) AND age > $3\"" (the other dialects likewise), and `TestRaw/single_nil_arg` fails: "- Value: []any{nil}, + Value: nil"; the existing suite without the fix → passes.
+  - Golden churn: none.
+  - Patch: `.claude/prototypes/FIX-284.patch` (3 files, +46/-0).
+- Auto-accepted the recommended option on 2026-10-09 (`/fix` auto-accept rule): should `Raw("x IN $", nil)` list-expand to `x IN (?)` with `[nil]`? → yes, keep the current behavior and leave the PRD §11.5 text alone, because the prototype is green, neither option churns goldens (no template or example passes an untyped nil), no public surface changes, and the PRD is silent on Raw with ` IN $` while multi-arg Raw already expands.
+
+
+**References.**
+- PRD §11.5 (ConditionBuilder, `sql.Raw`).
+
+**Resolution notes.** `Raw` keeps a lone nil arg wrapped as `[]any{nil}`, so the builder binds NULL to the clause's token instead of emitting a bare `$` (`sql/condition.go`, `Raw` case 1). Prototype applied clean at HEAD `e932c2e2`; its two comments were trimmed to state the rule only. Tests: `TestRaw` row "single nil arg" and `TestRaw_NilArg` (postgres, postgres stdlib, mysql, sqlite; one placeholder at position 2, args `[true, nil, 3]`). Fail-first: the nil branch reverted → `TestRaw_NilArg` and `TestRaw` fail; restored → pass. Gates: `make check` → ok; `make check-examples` → ok. Golden churn: none, as vetted.
+
 
 ### FIX-281
 

@@ -234,6 +234,11 @@ func TestRaw(t *testing.T) {
 			cmpOp: cmp.Options{cmpopts.EquateEmpty()},
 		},
 		{
+			name: "single nil arg",
+			got:  sql.Raw("col IS NOT DISTINCT FROM $", nil),
+			want: sql.Condition{Clause: "col IS NOT DISTINCT FROM $", Value: []any{nil}, Raw: true},
+		},
+		{
 			name: "no args",
 			got:  sql.Raw("col IS NULL"),
 			want: sql.Condition{Clause: "col IS NULL", Value: nil, Raw: true},

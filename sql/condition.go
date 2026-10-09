@@ -306,11 +306,18 @@ func isIdentifierByte(b byte) bool {
 // [Condition.Raw] and renders parenthesised — without it a clause whose
 // top-level operator is OR would break out of its own term once a caller
 // AND-joined it with others.
+//
+// A single nil arg binds NULL to the clause's one token.
 func Raw(clause string, args ...any) Condition {
 	switch len(args) {
 	case 0:
 		return Condition{Clause: clause, Value: nil, Raw: true}
 	case 1:
+		if args[0] == nil {
+			// A nil Value means a clause with no args, so a lone nil arg
+			// stays wrapped in its slice to be bound like any other list.
+			return Condition{Clause: clause, Value: args, Raw: true}
+		}
 		return Condition{Clause: clause, Value: args[0], Raw: true}
 	default:
 		return Condition{Clause: clause, Value: args, Raw: true}
