@@ -72,24 +72,51 @@ func parseCreateViewStmt(cv *rsql.CreateViewStatement) (parser.ViewSQL, error) {
 		}
 	}
 
+	columns, err := extractResultColumns(name, sel.Columns, cv.Columns)
+	if err != nil {
+		return parser.ViewSQL{}, &parser.ViewQueryError{Name: name, Err: err}
+	}
+
 	return parser.ViewSQL{
 		Name:         name,
-		Columns:      extractResultColumns(sel.Columns),
+		Columns:      columns,
 		TableAliases: aliases,
 		OuterAliases: outer,
 	}, nil
 }
 
-// extractResultColumns converts rqlite ResultColumns into ViewSelectColumns.
-func extractResultColumns(cols []*rsql.ResultColumn) []parser.ViewSelectColumn {
+// extractResultColumns converts rqlite ResultColumns into ViewSelectColumns,
+// named by the view's column list where it has one; SQLite requires the list
+// to name every column. Every column must have a name (PRD §16.1), and * is
+// refused, since the parser cannot list the columns it selects.
+func extractResultColumns(view string, cols []*rsql.ResultColumn, names []*rsql.Ident) ([]parser.ViewSelectColumn, error) {
 	result := make([]parser.ViewSelectColumn, 0, len(cols))
-	for _, rc := range cols {
-		col := extractResultColumn(rc)
-		if col.Alias != "" {
-			result = append(result, col)
+	for i, rc := range cols {
+		if isStar(rc) {
+			return nil, fmt.Errorf("view %s selects %s, whose columns the view parser cannot list; name each column", view, rc.String())
 		}
+		col := extractResultColumn(rc)
+		if i < len(names) {
+			col.Alias = rsql.IdentName(names[i])
+		}
+		if col.Alias == "" {
+			return nil, fmt.Errorf("view %s selects %s with no alias and no column name; name it with AS", view, rc.String())
+		}
+		result = append(result, col)
 	}
-	return result
+	if len(names) > 0 && len(names) != len(result) {
+		return nil, fmt.Errorf("view %s names %d columns in its column list but selects %d", view, len(names), len(result))
+	}
+	return result, nil
+}
+
+// isStar reports whether rc selects * or table.*.
+func isStar(rc *rsql.ResultColumn) bool {
+	if rc.Star.IsValid() {
+		return true
+	}
+	ref, ok := rc.Expr.(*rsql.QualifiedRef)
+	return ok && ref.Star.IsValid()
 }
 
 // extractResultColumn extracts a ViewSelectColumn from a single rqlite ResultColumn.

@@ -290,6 +290,19 @@ func TestParseSchema_AnnotationFileQueryNotRead(t *testing.T) {
 			viewSQL: "-- @pk: id\nCREATE VIEW ids AS SELECT name FROM users;\n",
 		},
 		{
+			name:    "select star",
+			viewSQL: "-- @pk: id\nCREATE VIEW ids AS SELECT * FROM users;\n",
+		},
+		{
+			name:    "unaliased expression",
+			viewSQL: "-- @pk: id\nCREATE VIEW ids AS SELECT id, id + 1 FROM users;\n",
+		},
+		{
+			name:    "unaliased expression for a view the database lacks",
+			viewSQL: "CREATE VIEW other_ids AS SELECT id, id + 1 FROM users;\n",
+			wantErr: "view other_ids selects",
+		},
+		{
 			name:    "compound query for a view the database lacks",
 			viewSQL: "-- @pk: id\nCREATE VIEW other_ids AS SELECT id FROM users UNION SELECT id FROM users;\n",
 			wantErr: "not a simple SELECT",

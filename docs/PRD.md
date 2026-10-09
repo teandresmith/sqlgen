@@ -9101,7 +9101,7 @@ GROUP BY p.id, p.name, p.discount;
 - Qualified column reference: `p.name` → column `name`
 - Bare column reference: `id` → column `id`
 
-Expressions without an alias and without a resolvable column name are a parse error. The query must be a single `SELECT`: a compound query (`UNION`, `INTERSECT`, `EXCEPT`) is a parse error, since its columns cannot be traced to one table. On SQLite a `RIGHT` or `FULL` join is a parse error too: the SQLite view parser does not read them. A file that overlays a view the database defines is the exception ([16.2](#162-introspected-views-db-sourced-views)): only its view name is read.
+Expressions without an alias and without a resolvable column name are a parse error, and so is `*` or `table.*`, whose columns the view parser cannot list: name each column. A column list (`CREATE VIEW v (a, b) AS ...`) names the view's columns in order instead, as the database does, so an expression it names needs no alias. It must name every column, except on PostgreSQL, where the columns it does not reach keep their own names; a list longer than the SELECT is an error on every dialect. The query must be a single `SELECT`: a compound query (`UNION`, `INTERSECT`, `EXCEPT`) is a parse error, since its columns cannot be traced to one table. On SQLite a `RIGHT` or `FULL` join is a parse error too: the SQLite view parser does not read them. A file that overlays a view the database defines is the exception ([16.2](#162-introspected-views-db-sourced-views)): only its view name is read.
 
 Since the file contains valid SQL, it can be executed directly against a database to create the actual view — the annotation comments are standard SQL line comments and are ignored by the database.
 
@@ -9116,7 +9116,7 @@ Annotations are SQL line comments (`-- @<directive>: <value>`) that appear befor
 | `@nullable` | `-- @nullable: col1, col2` | Comma-separated column names | Forces columns to nullable. Already-nullable columns (e.g., `AVG` → `*float64`) are unaffected. | Multiple allowed (merged) |
 
 **Validation rules:**
-- Column names in `@pk`, `@type`, and `@nullable` must match SELECT aliases exactly. Referencing a column not in the SELECT is a parse error.
+- Column names in `@pk`, `@type`, and `@nullable` must match the view's column names (SELECT aliases, or the column list) exactly. Referencing a column not in the view is a parse error.
 - Duplicate `@type` for the same column is a parse error.
 - Multiple `@pk` lines are not allowed — declare all PK columns in one line.
 - `@type` with an external package type (contains `.`) but no import path is a parse error.

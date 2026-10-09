@@ -222,78 +222,6 @@ The introspector names it from current names
 
 **Resolution notes.** _Filled in by `/fix resolve`._
 
-### FIX-280
-
-- **Status:** Open
-- **Severity:** tracked
-- **Origin:** phase 6, `parser/postgres` + `parser/mysql` + `parser/sqlite` (`view_sql.go`)
-- **Surfaced by:** backlog promotion at `/close-phase 30` (2026-10-07); first recorded by `/verify 30.8b` (2026-10-07)
-- **Vetted:** ready at `d51ace1b` (2026-10-07; ruled 2026-10-08, the ruled option is the prototype)
-
-**Issue.** **All three view parsers silently drop an unaliased expression and
-`*`, and ignore a view column list**, though PRD §16.1 calls an unaliased
-expression a parse error. Under `files` the view struct has too few or
-misnamed fields and the scan fails at runtime (under `database` the name
-check falls back to the catalog with a warning). Measured evidence from the
-backlog line: "`SELECT id, a + b FROM t` → 1 column; `SELECT * FROM t` → 0;
-`CREATE VIEW v(x) AS SELECT id` → column `id`".
-
-**Root cause.** Each extractor keeps a select item only when it has an alias
-or a resolvable column name and skips the rest without error:
-`extractResTargets` (`parser/postgres/view_sql.go:97-110`, `if col.Alias !=
-""`), `extractSelectExprs` (`parser/mysql/view_sql.go:74-87`, also skipping
-any non-`AliasedExpr` such as `*`), `extractResultColumns`
-(`parser/sqlite/view_sql.go:84-93`). None reads the view's column list
-(PG `ViewStmt.Aliases`, vitess `CreateView.Columns`, rqlite
-`CreateViewStatement.Columns`).
-
-**Suggested fix.**
-- Unaliased expression with no resolvable name: return a parse error naming
-  the view and the expression, on all three dialects (PRD §16.1 states it).
-- `*` and a view column list: PRD §16.1 is silent; the vet asks for a
-  ruling — a parse error, or expand `*` from the source table and apply the
-  column list positionally as names — and the ruling adds the PRD text.
-- Tests: `ParseViewSQL` cases per dialect (`a + b` unaliased, `*`, `t.*`,
-  `v(x)`), and a generate case showing the loud error instead of a runtime
-  scan failure.
-- Vet notes on scope (measured):
-  - an unaliased expression just disappears from the struct (`var vExprAllColumns = []string{"id"}`), with no runtime error; an unaliased aggregate (`COUNT(*)`) is dropped the same way (same root cause and fix site, covered). `SELECT *` generates an empty `type VStar struct {}` with `vStarAllColumns = []string{}`. Only the column-list case misreads at run time: the generated code selects `"id"` from `v_list`, which has only `x`, and SQLite returns the literal string (`SELECT "id", typeof("id") FROM "v_list"` → `id|text`), so the scan into int64 fails;
-  - "under `database` the name check falls back to the catalog" holds only where the stored definition is the original text: PostgreSQL's `pg_get_viewdef` always writes aliases and expands `*` (`(a + b) AS "?column?"`, `SELECT id, a, b, name`, `id AS x`), and MySQL's `view_definition` does too. The fallback is measured only on SQLite (all four shapes) and on MySQL with a column list;
-  - PRD §16.1 is not wholly silent on `*`: each selected expression "must resolve to a column name via one of" alias / qualified ref / bare ref, and `*` is none of those.
-- Prototype:
-  - PG `extractResTargets`, MySQL `extractSelectExprs` and SQLite `extractResultColumns` return an error instead of dropping the column: an unnamed column → `view v selects a + b with no alias and no column name; name it with AS` (PG deparses a one-target SELECT, vitess uses `sqlparser.String`, rqlite `rc.String()`); `*` or `t.*` → `view v selects *, whose columns the view parser cannot list; name each column`;
-  - every such error is a `*parser.ViewQueryError`, so an annotation file that overlays a database view still needs only its name (PRD §16.2), pinned by new overlay cases;
-  - option (a) below: the view column list names columns in order (PG `ViewStmt.Aliases` and matview `Into.ColNames`, vitess `CreateView.Columns`, rqlite `CreateViewStatement.Columns`); an expression the list names needs no alias. Count rules follow each database: PG allows a shorter list and errors on a longer one; MySQL and SQLite require an exact count (`view v names 2 columns in its column list but selects 1`);
-  - tests: `TestParseViewSQL_ColumnNames` in each of the postgres, mysql and sqlite parser tests; `TestParseSchema_ViewColumnNames` (cli pipeline: files source, loud error, column list); three new `TestParseSchema_AnnotationFileQueryNotRead` cases (overlay with `*`, overlay with an unaliased expression, unaliased expression for a view the database lacks → error);
-  - PRD §16.1 adds the `*` and column-list text, and the annotation-validation bullet says "the view's column names (SELECT aliases, or the column list)".
-- Changed from the original: the unaliased-expression error must be a `ViewQueryError`, not a plain error. A plain error would break overlay files, whose SELECT §16.2 says is not read, so `SELECT *` and unaliased overlays that work today would start failing. The unnamed check runs after the column list is applied, because `CREATE VIEW v(x, total) AS SELECT id, a + b` is fully named.
-- Auto-accepted the recommended option on 2026-10-07 (`/fix` auto-accept rule): `*` / `t.*` → expand from the source table, or a parse error? → a parse error (`ViewQueryError`) with a PRD sentence. Conditions held: it was prototyped with green gates; there is no golden churn (no example view uses `*`); it adds no exported identifier; and it adds PRD text for an unspecified case, consistent with §16.1's "must resolve via one of" list, reversing no ruling. Expansion would be new behavior the PRD does not specify (`BuildView` would need schema-driven star expansion).
-- Pending the user's ruling: how should a view column list (`CREATE VIEW v (x, y) AS …`) be read? PRD §16.1 does not settle it.
-  - (a) Recommended by the vet, and prototyped: apply it in order as the column names, with each database's count rule. No golden churn. Files: `CREATE VIEW v (order_id, next_total) AS SELECT o.id, o.total + 1` → columns `[order_id next_total]`. Database source changes on SQLite: a column-list view (`zv_list (x)`) now reads its definition (`def=true cols=[x:int]`, with definition nullability) where it fell back to the catalog with a warning. MySQL is unchanged (`view_definition` drops the list; existing backlog line).
-  - (b) Make a column list a parse error (`ViewQueryError`). A little less code, but valid SQL is rejected under files, and SQLite database views with a column list keep falling back to the catalog with a warning. No golden churn.
-  - Not auto-accepted: (a) changes the meaning of §16.1's "Column names are extracted from the SELECT clause" and of the @pk/@type/@nullable "must match SELECT aliases" rule, and it changes database-source output on SQLite.
-- Prototype results, run at `d51ace1b` on 2026-10-07:
-  - Reproduction: `go test -run TestZZProbeView -v ./postgres/ ./mysql/ ./sqlite/` (parser module, probe since deleted), identical on all three dialects: `SELECT id, a + b` → `cols=[id] err=<nil>`; `SELECT *` → `cols=[] err=<nil>`; `SELECT t.*` → `cols=[]`; `CREATE VIEW v(x) AS SELECT id` → `cols=[id]`; `SELECT id, COUNT(*)` → `cols=[id]`. `sqlgen generate` on a files/sqlite probe project → `generated 9 files (1 tables, 3 views)` with `type VStar struct {}` and `vListAllColumns = []string{"id"}`. A database probe measured the column-list count rules: PG `zv_short (x) AS SELECT id, name` → `[x name]`; a longer PG list → `CREATE VIEW specifies more column names than columns`; MySQL → `Error 1353 ... different column counts`; SQLite → `expected 1 columns for 'zv_ls' but got 2`.
-  - Gates: `gofumpt -l` (parser, cli) → clean; parser `go test -race -count=1 ./...` (Docker) → ok; cmd/sqlgen `go test -race -short -count=1 ./...` → ok; `go test -race -run 'View|Introspect' -count=1 ./cli/` → ok; `TestE2EGoldenFiles` → ok; `golangci-lint` (parser dialects, cli) → 0 issues. `make check-examples` is left to `/fix-implement`.
-  - Fail-first:
-    - `parser/postgres/view_sql.go` reverted → `TestParseViewSQL_ColumnNames` fails all 9 subtests: `ParseViewSQL() error = <nil>, want it to contain "view v selects a + b with no alias and no column name"`;
-    - the mysql and sqlite `view_sql.go` reverted → 14 subtests fail (e.g. `sqlite_test.go:1380: … want it to contain "view v selects \"a\" + \"b\" ..."`);
-    - all three reverted → `TestParseSchema_ViewColumnNames/unaliased_expression` fails: `want it to contain "v.sql: view v selects o.total + 1 with no alias and no column name"` (star and column_list too, plus the "view the database lacks" overlay case);
-    - the existing suite without the fix → passes.
-  - Golden churn: none.
-  - Patch: `.claude/prototypes/FIX-280.patch` (9 files, +329/-25).
-
-- The user ruled on 2026-10-08: (a), the view column list names the columns in order with each database's count rule. The `*` / `t.*` parse-error auto-accept stands (not vetoed). This matches the prototype.
-
-
-**References.**
-- PRD §16.1 ("Expressions without an alias and without a resolvable column
-  name are a parse error"), §16.2, §6.1.
-- Backlog line on MySQL view-with-column-list enum types (kept), tied to the
-  column-list half.
-
-**Resolution notes.** _Filled in by `/fix resolve`._
-
 ### FIX-281
 
 - **Status:** Open
@@ -913,6 +841,79 @@ source (PRD §6.1).
 ## Resolved
 
 <!-- fixes:resolved:begin -->
+
+### FIX-280
+
+- **Status:** Resolved
+- **Severity:** tracked
+- **Origin:** phase 6, `parser/postgres` + `parser/mysql` + `parser/sqlite` (`view_sql.go`)
+- **Surfaced by:** backlog promotion at `/close-phase 30` (2026-10-07); first recorded by `/verify 30.8b` (2026-10-07)
+- **Vetted:** ready at `d51ace1b` (2026-10-07; ruled 2026-10-08, the ruled option is the prototype)
+
+**Issue.** **All three view parsers silently drop an unaliased expression and
+`*`, and ignore a view column list**, though PRD §16.1 calls an unaliased
+expression a parse error. Under `files` the view struct has too few or
+misnamed fields and the scan fails at runtime (under `database` the name
+check falls back to the catalog with a warning). Measured evidence from the
+backlog line: "`SELECT id, a + b FROM t` → 1 column; `SELECT * FROM t` → 0;
+`CREATE VIEW v(x) AS SELECT id` → column `id`".
+
+**Root cause.** Each extractor keeps a select item only when it has an alias
+or a resolvable column name and skips the rest without error:
+`extractResTargets` (`parser/postgres/view_sql.go:97-110`, `if col.Alias !=
+""`), `extractSelectExprs` (`parser/mysql/view_sql.go:74-87`, also skipping
+any non-`AliasedExpr` such as `*`), `extractResultColumns`
+(`parser/sqlite/view_sql.go:84-93`). None reads the view's column list
+(PG `ViewStmt.Aliases`, vitess `CreateView.Columns`, rqlite
+`CreateViewStatement.Columns`).
+
+**Suggested fix.**
+- Unaliased expression with no resolvable name: return a parse error naming
+  the view and the expression, on all three dialects (PRD §16.1 states it).
+- `*` and a view column list: PRD §16.1 is silent; the vet asks for a
+  ruling — a parse error, or expand `*` from the source table and apply the
+  column list positionally as names — and the ruling adds the PRD text.
+- Tests: `ParseViewSQL` cases per dialect (`a + b` unaliased, `*`, `t.*`,
+  `v(x)`), and a generate case showing the loud error instead of a runtime
+  scan failure.
+- Vet notes on scope (measured):
+  - an unaliased expression just disappears from the struct (`var vExprAllColumns = []string{"id"}`), with no runtime error; an unaliased aggregate (`COUNT(*)`) is dropped the same way (same root cause and fix site, covered). `SELECT *` generates an empty `type VStar struct {}` with `vStarAllColumns = []string{}`. Only the column-list case misreads at run time: the generated code selects `"id"` from `v_list`, which has only `x`, and SQLite returns the literal string (`SELECT "id", typeof("id") FROM "v_list"` → `id|text`), so the scan into int64 fails;
+  - "under `database` the name check falls back to the catalog" holds only where the stored definition is the original text: PostgreSQL's `pg_get_viewdef` always writes aliases and expands `*` (`(a + b) AS "?column?"`, `SELECT id, a, b, name`, `id AS x`), and MySQL's `view_definition` does too. The fallback is measured only on SQLite (all four shapes) and on MySQL with a column list;
+  - PRD §16.1 is not wholly silent on `*`: each selected expression "must resolve to a column name via one of" alias / qualified ref / bare ref, and `*` is none of those.
+- Prototype:
+  - PG `extractResTargets`, MySQL `extractSelectExprs` and SQLite `extractResultColumns` return an error instead of dropping the column: an unnamed column → `view v selects a + b with no alias and no column name; name it with AS` (PG deparses a one-target SELECT, vitess uses `sqlparser.String`, rqlite `rc.String()`); `*` or `t.*` → `view v selects *, whose columns the view parser cannot list; name each column`;
+  - every such error is a `*parser.ViewQueryError`, so an annotation file that overlays a database view still needs only its name (PRD §16.2), pinned by new overlay cases;
+  - option (a) below: the view column list names columns in order (PG `ViewStmt.Aliases` and matview `Into.ColNames`, vitess `CreateView.Columns`, rqlite `CreateViewStatement.Columns`); an expression the list names needs no alias. Count rules follow each database: PG allows a shorter list and errors on a longer one; MySQL and SQLite require an exact count (`view v names 2 columns in its column list but selects 1`);
+  - tests: `TestParseViewSQL_ColumnNames` in each of the postgres, mysql and sqlite parser tests; `TestParseSchema_ViewColumnNames` (cli pipeline: files source, loud error, column list); three new `TestParseSchema_AnnotationFileQueryNotRead` cases (overlay with `*`, overlay with an unaliased expression, unaliased expression for a view the database lacks → error);
+  - PRD §16.1 adds the `*` and column-list text, and the annotation-validation bullet says "the view's column names (SELECT aliases, or the column list)".
+- Changed from the original: the unaliased-expression error must be a `ViewQueryError`, not a plain error. A plain error would break overlay files, whose SELECT §16.2 says is not read, so `SELECT *` and unaliased overlays that work today would start failing. The unnamed check runs after the column list is applied, because `CREATE VIEW v(x, total) AS SELECT id, a + b` is fully named.
+- Auto-accepted the recommended option on 2026-10-07 (`/fix` auto-accept rule): `*` / `t.*` → expand from the source table, or a parse error? → a parse error (`ViewQueryError`) with a PRD sentence. Conditions held: it was prototyped with green gates; there is no golden churn (no example view uses `*`); it adds no exported identifier; and it adds PRD text for an unspecified case, consistent with §16.1's "must resolve via one of" list, reversing no ruling. Expansion would be new behavior the PRD does not specify (`BuildView` would need schema-driven star expansion).
+- Pending the user's ruling: how should a view column list (`CREATE VIEW v (x, y) AS …`) be read? PRD §16.1 does not settle it.
+  - (a) Recommended by the vet, and prototyped: apply it in order as the column names, with each database's count rule. No golden churn. Files: `CREATE VIEW v (order_id, next_total) AS SELECT o.id, o.total + 1` → columns `[order_id next_total]`. Database source changes on SQLite: a column-list view (`zv_list (x)`) now reads its definition (`def=true cols=[x:int]`, with definition nullability) where it fell back to the catalog with a warning. MySQL is unchanged (`view_definition` drops the list; existing backlog line).
+  - (b) Make a column list a parse error (`ViewQueryError`). A little less code, but valid SQL is rejected under files, and SQLite database views with a column list keep falling back to the catalog with a warning. No golden churn.
+  - Not auto-accepted: (a) changes the meaning of §16.1's "Column names are extracted from the SELECT clause" and of the @pk/@type/@nullable "must match SELECT aliases" rule, and it changes database-source output on SQLite.
+- Prototype results, run at `d51ace1b` on 2026-10-07:
+  - Reproduction: `go test -run TestZZProbeView -v ./postgres/ ./mysql/ ./sqlite/` (parser module, probe since deleted), identical on all three dialects: `SELECT id, a + b` → `cols=[id] err=<nil>`; `SELECT *` → `cols=[] err=<nil>`; `SELECT t.*` → `cols=[]`; `CREATE VIEW v(x) AS SELECT id` → `cols=[id]`; `SELECT id, COUNT(*)` → `cols=[id]`. `sqlgen generate` on a files/sqlite probe project → `generated 9 files (1 tables, 3 views)` with `type VStar struct {}` and `vListAllColumns = []string{"id"}`. A database probe measured the column-list count rules: PG `zv_short (x) AS SELECT id, name` → `[x name]`; a longer PG list → `CREATE VIEW specifies more column names than columns`; MySQL → `Error 1353 ... different column counts`; SQLite → `expected 1 columns for 'zv_ls' but got 2`.
+  - Gates: `gofumpt -l` (parser, cli) → clean; parser `go test -race -count=1 ./...` (Docker) → ok; cmd/sqlgen `go test -race -short -count=1 ./...` → ok; `go test -race -run 'View|Introspect' -count=1 ./cli/` → ok; `TestE2EGoldenFiles` → ok; `golangci-lint` (parser dialects, cli) → 0 issues. `make check-examples` is left to `/fix-implement`.
+  - Fail-first:
+    - `parser/postgres/view_sql.go` reverted → `TestParseViewSQL_ColumnNames` fails all 9 subtests: `ParseViewSQL() error = <nil>, want it to contain "view v selects a + b with no alias and no column name"`;
+    - the mysql and sqlite `view_sql.go` reverted → 14 subtests fail (e.g. `sqlite_test.go:1380: … want it to contain "view v selects \"a\" + \"b\" ..."`);
+    - all three reverted → `TestParseSchema_ViewColumnNames/unaliased_expression` fails: `want it to contain "v.sql: view v selects o.total + 1 with no alias and no column name"` (star and column_list too, plus the "view the database lacks" overlay case);
+    - the existing suite without the fix → passes.
+  - Golden churn: none.
+  - Patch: `.claude/prototypes/FIX-280.patch` (9 files, +329/-25).
+
+- The user ruled on 2026-10-08: (a), the view column list names the columns in order with each database's count rule. The `*` / `t.*` parse-error auto-accept stands (not vetoed). This matches the prototype.
+
+
+**References.**
+- PRD §16.1 ("Expressions without an alias and without a resolvable column
+  name are a parse error"), §16.2, §6.1.
+- Backlog line on MySQL view-with-column-list enum types (kept), tied to the
+  column-list half.
+
+**Resolution notes.** Resolved 2026-10-08 from the vetted prototype (fresh at `0e4205d1`, applied clean). PG `extractResTargets`, MySQL `extractSelectExprs` and SQLite `extractResultColumns` now return a `*parser.ViewQueryError` for an unaliased expression with no column name (`view v selects a + b with no alias and no column name; name it with AS`) and for `*` / `t.*` (`view v selects *, whose columns the view parser cannot list; name each column`), so an overlay annotation file still needs only its view name (PRD §16.2). The view column list (PG `ViewStmt.Aliases` / matview `Into.ColNames`, vitess `CreateView.Columns`, rqlite `CreateViewStatement.Columns`) names the columns in order, per the user's 2026-10-08 ruling (a): PG allows a shorter list, MySQL and SQLite require an exact count. PRD §16.1 gains the `*` and column-list text, and the annotation validation bullet now says "the view's column names (SELECT aliases, or the column list)". Tests: `TestParseViewSQL_ColumnNames` (postgres, mysql, sqlite), `TestParseSchema_ViewColumnNames`, three new `TestParseSchema_AnnotationFileQueryNotRead` cases. Fail-first re-run on the final code: reverting the three `view_sql.go` files fails `TestParseViewSQL_ColumnNames` in all three parser packages, `TestParseSchema_ViewColumnNames` (3 subtests) and the "view the database lacks" overlay case. Inline: the new test doc comments were shortened (history phrasing dropped). Gates: `make check` ok; parser `go test -race ./...` (Docker) ok; `make check-examples` ok; golden churn none, matching the vet. `/verify FIX-280`: PRD 3/3, tests 3/3, reviewer agreed (source hunks identical to the prototype; only the test comments differ) and its fail-first spot check confirmed. Applied from the review: added `TestSQLiteIntrospect_ViewColumnList` (`parser/introspect`), pinning that a SQLite database view with a column list now reads its definition (fails without the fix: `v_list Definition = nil ... it reads columns [id a] where the catalog lists [x y]`); PRD §16.1 now says a list longer than the SELECT is an error on every dialect; the new test comments were rewrapped to 80 columns. One backlog line (database-fallback warning repeats view-file advice).
+
 ### FIX-279
 
 - **Status:** Resolved

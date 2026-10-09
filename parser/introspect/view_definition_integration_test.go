@@ -168,6 +168,34 @@ func TestIntrospectViews_ColumnsFromDefinition(t *testing.T) {
 	}
 }
 
+// TestSQLiteIntrospect_ViewColumnList checks that a SQLite view with a column
+// list reads its definition, named by the list. SQLite stores the original
+// view text, so the definition carries the list; PostgreSQL and MySQL store
+// a rewritten definition without one.
+func TestSQLiteIntrospect_ViewColumnList(t *testing.T) {
+	requireDatabases(t)
+	schema := introspectSQLite(t, applySQLite(t,
+		"CREATE TABLE t (id INTEGER PRIMARY KEY NOT NULL, a INT);\n"+
+			"CREATE VIEW v_list (x, y) AS SELECT id, a FROM t"), introspect.IntrospectionOptions{})
+
+	v := findView(t, schema, "v_list")
+	if v.Definition == nil {
+		t.Fatalf("v_list Definition = nil, want the parsed definition; warnings = %q", schema.Warnings)
+	}
+	nullable := map[string]bool{}
+	for _, col := range v.Columns {
+		nullable[col.Name] = col.Nullable
+	}
+	if diff := cmp.Diff(map[string]bool{"x": false, "y": true}, nullable); diff != "" {
+		t.Errorf("v_list column nullability (-want +got):\n%s", diff)
+	}
+	for _, w := range schema.Warnings {
+		if strings.Contains(w, "v_list") {
+			t.Errorf("warning %q, want none for v_list", w)
+		}
+	}
+}
+
 // TestMerge_RefreshesViewColumns pins that under source: both a migration
 // that changes a table a view reads changes the view's columns too, and
 // that a materialized view keeps the primary key its unique index gives.

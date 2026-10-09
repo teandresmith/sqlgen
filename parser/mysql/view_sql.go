@@ -42,12 +42,17 @@ func ParseViewSQL(sql []byte) (parser.ViewSQL, error) {
 		return parser.ViewSQL{}, &parser.ViewQueryError{Schema: schema, Name: cv.ViewName.Name.String(), Err: fmt.Errorf("CREATE VIEW query is not a simple SELECT")}
 	}
 
+	columns, err := extractSelectExprs(cv.ViewName.Name.String(), sel.SelectExprs.Exprs, cv.Columns)
+	if err != nil {
+		return parser.ViewSQL{}, &parser.ViewQueryError{Schema: schema, Name: cv.ViewName.Name.String(), Err: err}
+	}
+
 	aliases, outer := extractTableAliases(sel.From)
 
 	return parser.ViewSQL{
 		Name:         cv.ViewName.Name.String(),
 		Schema:       schema,
-		Columns:      extractSelectExprs(sel.SelectExprs.Exprs),
+		Columns:      columns,
 		TableAliases: aliases,
 		OuterAliases: outer,
 	}, nil
@@ -70,20 +75,30 @@ func createsMaterializedView(sql string) bool {
 	return false
 }
 
-// extractSelectExprs converts vitess SelectExpr slices into ViewSelectColumns.
-func extractSelectExprs(exprs []sqlparser.SelectExpr) []parser.ViewSelectColumn {
+// extractSelectExprs converts vitess SelectExpr slices into ViewSelectColumns,
+// named by the view's column list where it has one; MySQL requires the list
+// to name every column. Every column must have a name (PRD §16.1), and * is
+// refused, since the parser cannot list the columns it selects.
+func extractSelectExprs(view string, exprs []sqlparser.SelectExpr, names sqlparser.Columns) ([]parser.ViewSelectColumn, error) {
 	columns := make([]parser.ViewSelectColumn, 0, len(exprs))
-	for _, expr := range exprs {
+	for i, expr := range exprs {
 		ae, ok := expr.(*sqlparser.AliasedExpr)
 		if !ok {
-			continue
+			return nil, fmt.Errorf("view %s selects %s, whose columns the view parser cannot list; name each column", view, sqlparser.String(expr))
 		}
 		col := extractAliasedExpr(ae)
-		if col.Alias != "" {
-			columns = append(columns, col)
+		if i < len(names) {
+			col.Alias = names[i].String()
 		}
+		if col.Alias == "" {
+			return nil, fmt.Errorf("view %s selects %s with no alias and no column name; name it with AS", view, sqlparser.String(ae.Expr))
+		}
+		columns = append(columns, col)
 	}
-	return columns
+	if len(names) > 0 && len(names) != len(columns) {
+		return nil, fmt.Errorf("view %s names %d columns in its column list but selects %d", view, len(names), len(columns))
+	}
+	return columns, nil
 }
 
 // extractAliasedExpr extracts a ViewSelectColumn from a vitess AliasedExpr.

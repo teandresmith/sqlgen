@@ -391,6 +391,58 @@ func TestParseSchema_PrintsParserWarnings(t *testing.T) {
 	}
 }
 
+// TestParseSchema_ViewColumnNames checks that generation stops on a view file
+// with an unnamed column (PRD §16.1) rather than generating a view that reads
+// too few columns, and that a column list names the view's columns.
+func TestParseSchema_ViewColumnNames(t *testing.T) {
+	tests := []struct {
+		name, viewSQL string
+		want          []string
+		wantErr       string
+	}{
+		{name: "unaliased expression", viewSQL: "CREATE VIEW v AS SELECT o.id, o.total + 1 FROM orders o;", wantErr: "v.sql: view v selects o.total + 1 with no alias and no column name"},
+		{name: "star", viewSQL: "CREATE VIEW v AS SELECT * FROM orders;", wantErr: "view v selects *, whose columns the view parser cannot list"},
+		{name: "column list", viewSQL: "CREATE VIEW v (order_id, next_total) AS SELECT o.id, o.total + 1 FROM orders o;", want: []string{"order_id", "next_total"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			dir := t.TempDir()
+			schemaPath := filepath.Join(dir, "schema.sql")
+			if err := os.WriteFile(schemaPath, []byte("CREATE TABLE orders (id uuid PRIMARY KEY, total int NOT NULL);"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			viewPath := filepath.Join(dir, "v.sql")
+			if err := os.WriteFile(viewPath, []byte(tt.viewSQL), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			cfg := &config.RootConfig{Input: config.InputConfig{
+				Dialect: config.DialectPostgres,
+				Schema:  "*",
+				Paths:   []string{schemaPath},
+				Views:   []string{viewPath},
+			}}
+
+			schema, err := parseSchema(t.Context(), cfg)
+			if tt.wantErr != "" {
+				if err == nil || !strings.Contains(err.Error(), tt.wantErr) {
+					t.Fatalf("parseSchema: error = %v, want it to contain %q", err, tt.wantErr)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("parseSchema: %v", err)
+			}
+			var got []string
+			for _, col := range schema.Views[0].Columns {
+				got = append(got, col.Name)
+			}
+			if diff := cmp.Diff(tt.want, got); diff != "" {
+				t.Errorf("view columns (-want +got):\n%s", diff)
+			}
+		})
+	}
+}
+
 // TestParseSchema_ViewDefaultSchema pins that an input.views file whose view
 // name is unqualified resolves to the schema an unqualified CREATE TABLE does
 // (input.schema, "public" when unset). A view without one kept a bare

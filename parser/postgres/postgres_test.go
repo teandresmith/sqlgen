@@ -2407,3 +2407,51 @@ func TestParseViewSQL_CompoundSelectRejected(t *testing.T) {
 		}
 	}
 }
+
+// TestParseViewSQL_ColumnNames checks that every view column has a name (PRD
+// §16.1): an unaliased expression with no column name, * and t.* are
+// ViewQueryErrors, and a column list names the columns in order. PostgreSQL
+// lets the list name fewer columns than the SELECT has.
+func TestParseViewSQL_ColumnNames(t *testing.T) {
+	tests := []struct {
+		name, sql string
+		want      []string
+		wantErr   string
+	}{
+		{name: "unaliased expression", sql: "CREATE VIEW v AS SELECT id, a + b FROM t", wantErr: "view v selects a + b with no alias and no column name"},
+		{name: "unaliased aggregate", sql: "CREATE VIEW v AS SELECT id, COUNT(*) FROM t GROUP BY id", wantErr: "view v selects count(*) with no alias"},
+		{name: "unaliased matview expression", sql: "CREATE MATERIALIZED VIEW v AS SELECT id, lower(name) FROM t", wantErr: "view v selects lower(name) with no alias"},
+		{name: "star", sql: "CREATE VIEW v AS SELECT * FROM t", wantErr: "view v selects *, whose columns the view parser cannot list"},
+		{name: "table star", sql: "CREATE VIEW v AS SELECT id, t.* FROM t", wantErr: "view v selects t.*, whose columns"},
+		{name: "column list", sql: "CREATE VIEW v (x, total) AS SELECT id, a + b FROM t", want: []string{"x", "total"}},
+		{name: "short column list", sql: "CREATE VIEW v (x) AS SELECT id, name FROM t", want: []string{"x", "name"}},
+		{name: "matview column list", sql: "CREATE MATERIALIZED VIEW v (x) AS SELECT id FROM t", want: []string{"x"}},
+		{name: "long column list", sql: "CREATE VIEW v (x, y) AS SELECT id FROM t", wantErr: "view v names 2 columns in its column list but selects 1"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := postgres.ParseViewSQL([]byte(tt.sql), "")
+			if tt.wantErr != "" {
+				if err == nil || !strings.Contains(err.Error(), tt.wantErr) {
+					t.Fatalf("ParseViewSQL() error = %v, want it to contain %q", err, tt.wantErr)
+				}
+				// An annotation file for a view the database defines can
+				// still overlay it (PRD §16.2).
+				if qe, ok := errors.AsType[*parser.ViewQueryError](err); !ok || qe.Name != "v" {
+					t.Errorf("ParseViewSQL() error = %#v, want a ViewQueryError naming v", err)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("ParseViewSQL() error: %v", err)
+			}
+			names := make([]string, 0, len(got.Columns))
+			for _, c := range got.Columns {
+				names = append(names, c.Alias)
+			}
+			if diff := cmp.Diff(tt.want, names); diff != "" {
+				t.Errorf("column names (-want +got):\n%s", diff)
+			}
+		})
+	}
+}

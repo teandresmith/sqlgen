@@ -57,11 +57,16 @@ func parseViewStmt(vs *pg_query.ViewStmt, defaultSchema string) (parser.ViewSQL,
 		return parser.ViewSQL{}, &parser.ViewQueryError{Schema: schema, Name: vs.View.Relname, Err: fmt.Errorf("CREATE VIEW query is not a simple SELECT")}
 	}
 
+	columns, err := extractResTargets(vs.View.Relname, sel.TargetList, vs.Aliases)
+	if err != nil {
+		return parser.ViewSQL{}, &parser.ViewQueryError{Schema: schema, Name: vs.View.Relname, Err: err}
+	}
+
 	aliases, schemas, outer := extractFromAliases(sel.FromClause, defaultSchema)
 	return parser.ViewSQL{
 		Name:         vs.View.Relname,
 		Schema:       schema,
-		Columns:      extractResTargets(sel.TargetList),
+		Columns:      columns,
 		TableAliases: aliases,
 		TableSchemas: schemas,
 		OuterAliases: outer,
@@ -81,11 +86,16 @@ func parseMatviewStmt(cs *pg_query.CreateTableAsStmt, defaultSchema string) (par
 		return parser.ViewSQL{}, &parser.ViewQueryError{Schema: schema, Name: cs.Into.Rel.Relname, Err: fmt.Errorf("CREATE MATERIALIZED VIEW query is not a simple SELECT")}
 	}
 
+	columns, err := extractResTargets(cs.Into.Rel.Relname, sel.TargetList, cs.Into.ColNames)
+	if err != nil {
+		return parser.ViewSQL{}, &parser.ViewQueryError{Schema: schema, Name: cs.Into.Rel.Relname, Err: err}
+	}
+
 	aliases, schemas, outer := extractFromAliases(sel.FromClause, defaultSchema)
 	return parser.ViewSQL{
 		Name:         cs.Into.Rel.Relname,
 		Schema:       schema,
-		Columns:      extractResTargets(sel.TargetList),
+		Columns:      columns,
 		TableAliases: aliases,
 		TableSchemas: schemas,
 		OuterAliases: outer,
@@ -93,20 +103,63 @@ func parseMatviewStmt(cs *pg_query.CreateTableAsStmt, defaultSchema string) (par
 	}, nil
 }
 
-// extractResTargets converts pg_query ResTarget nodes into ViewSelectColumns.
-func extractResTargets(targets []*pg_query.Node) []parser.ViewSelectColumn {
+// extractResTargets converts pg_query ResTarget nodes into ViewSelectColumns,
+// named by the view's column list where it has one. PostgreSQL lets the list
+// name fewer columns than the SELECT has, and the rest keep their own names.
+// Every column must have a name (PRD §16.1), and * is refused, since the
+// parser cannot list the columns it selects.
+func extractResTargets(view string, targets, names []*pg_query.Node) ([]parser.ViewSelectColumn, error) {
 	columns := make([]parser.ViewSelectColumn, 0, len(targets))
-	for _, node := range targets {
+	for i, node := range targets {
 		rt, ok := node.Node.(*pg_query.Node_ResTarget)
 		if !ok {
 			continue
 		}
+		if isStar(rt.ResTarget) {
+			return nil, fmt.Errorf("view %s selects %s, whose columns the view parser cannot list; name each column", view, exprSQL(rt.ResTarget))
+		}
 		col := extractColumn(rt.ResTarget)
-		if col.Alias != "" {
-			columns = append(columns, col)
+		if i < len(names) {
+			col.Alias = nodeString(names[i])
+		}
+		if col.Alias == "" {
+			return nil, fmt.Errorf("view %s selects %s with no alias and no column name; name it with AS", view, exprSQL(rt.ResTarget))
+		}
+		columns = append(columns, col)
+	}
+	if len(names) > len(columns) {
+		return nil, fmt.Errorf("view %s names %d columns in its column list but selects %d", view, len(names), len(columns))
+	}
+	return columns, nil
+}
+
+// isStar reports whether rt selects * or table.*.
+func isStar(rt *pg_query.ResTarget) bool {
+	cr, ok := rt.Val.GetNode().(*pg_query.Node_ColumnRef)
+	if !ok {
+		return false
+	}
+	for _, f := range cr.ColumnRef.Fields {
+		if _, ok := f.Node.(*pg_query.Node_AStar); ok {
+			return true
 		}
 	}
-	return columns
+	return false
+}
+
+// exprSQL writes rt's expression as SQL, for an error message.
+func exprSQL(rt *pg_query.ResTarget) string {
+	sel := &pg_query.SelectStmt{
+		TargetList:  []*pg_query.Node{{Node: &pg_query.Node_ResTarget{ResTarget: &pg_query.ResTarget{Val: rt.Val}}}},
+		Op:          pg_query.SetOperation_SETOP_NONE,
+		LimitOption: pg_query.LimitOption_LIMIT_OPTION_DEFAULT,
+	}
+	tree := &pg_query.ParseResult{Stmts: []*pg_query.RawStmt{{Stmt: &pg_query.Node{Node: &pg_query.Node_SelectStmt{SelectStmt: sel}}}}}
+	out, err := pg_query.Deparse(tree)
+	if err != nil {
+		return "an expression"
+	}
+	return strings.TrimPrefix(out, "SELECT ")
 }
 
 // extractColumn extracts a ViewSelectColumn from a single ResTarget.
