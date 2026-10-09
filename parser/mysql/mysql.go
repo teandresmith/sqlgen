@@ -882,8 +882,8 @@ func (p *Parser) parseAlterTable(stmt *sqlparser.AlterTable) error {
 		return fmt.Errorf("table %s not found", tableName)
 	}
 
-	// MySQL drops the old primary key before it adds a new one, wherever DROP
-	// PRIMARY KEY sits among the clauses, and the drop clears the key flag on
+	// MySQL drops the old primary key before it adds a new one, wherever the
+	// primary-key drop sits among the clauses, and the drop clears the key flag on
 	// every column (applyDropKey). Applied in clause order, `ADD PRIMARY KEY
 	// (code), DROP PRIMARY KEY` would lose the key it just added.
 	for _, opt := range stmt.AlterOptions {
@@ -903,14 +903,25 @@ func (p *Parser) parseAlterTable(stmt *sqlparser.AlterTable) error {
 	return nil
 }
 
-// dropPrimaryKey returns opt as a DropKey, and true, when it is a DROP PRIMARY
-// KEY clause.
+// dropPrimaryKey returns opt as a DropKey, and true, when it drops the primary
+// key.
 func dropPrimaryKey(opt sqlparser.AlterOption) (*sqlparser.DropKey, bool) {
 	o, ok := opt.(*sqlparser.DropKey)
-	if !ok || o.Type != sqlparser.PrimaryKeyType {
+	if !ok || dropKeyType(o) != sqlparser.PrimaryKeyType {
 		return nil, false
 	}
 	return o, true
+}
+
+// dropKeyType returns the kind of key o drops. vitess parses the ALTER TABLE
+// clause DROP INDEX or DROP KEY `PRIMARY` as a normal-key drop, but a MySQL
+// primary key is always named PRIMARY, and index names compare
+// case-insensitively, so MySQL drops the primary key.
+func dropKeyType(o *sqlparser.DropKey) sqlparser.DropKeyType {
+	if o.Type == sqlparser.NormalKeyType && strings.EqualFold(o.Name.String(), "PRIMARY") {
+		return sqlparser.PrimaryKeyType
+	}
+	return o.Type
 }
 
 func (p *Parser) applyAlterOption(table *parser.Table, opt sqlparser.AlterOption) error {
@@ -1038,11 +1049,11 @@ func redefineColumn(old, newCol parser.Column) parser.Column {
 
 func applyDropKey(table *parser.Table, o *sqlparser.DropKey) {
 	name := o.Name.String()
-	switch o.Type {
+	switch dropKeyType(o) {
 	case sqlparser.PrimaryKeyType:
-		// A table has one primary key. Nullability stays: MySQL leaves the
-		// former key columns NOT NULL.
-		removeConstraintFromColumns(table, parser.PrimaryKey, name)
+		// A table has one primary key, so it matches by type alone. Nullability
+		// stays: MySQL leaves the former key columns NOT NULL.
+		removeConstraintFromColumns(table, parser.PrimaryKey, "")
 	case sqlparser.ForeignKeyType:
 		removeConstraintFromColumns(table, parser.ForeignKey, name)
 	case sqlparser.NormalKeyType:

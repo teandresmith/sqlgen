@@ -993,7 +993,8 @@ func TestTableWithNoPK(t *testing.T) {
 
 // TestDropPrimaryKey checks that ALTER TABLE … DROP PRIMARY KEY leaves no
 // column flagged as a key however the key was declared, and that the former
-// key columns stay NOT NULL, as MySQL leaves them.
+// key columns stay NOT NULL, as MySQL leaves them. DROP INDEX or DROP KEY
+// `PRIMARY`, in any letter case, drops the key the same way.
 func TestDropPrimaryKey(t *testing.T) {
 	tests := []struct {
 		name string
@@ -1060,6 +1061,36 @@ func TestDropPrimaryKey(t *testing.T) {
 			sql:  "CREATE TABLE users (id INT PRIMARY KEY, name TEXT); ALTER TABLE users MODIFY id BIGINT, DROP PRIMARY KEY;",
 			want: []string{"users.id bigint null", "users.name text null"},
 		},
+		{
+			name: "table-level primary key dropped by DROP INDEX PRIMARY",
+			sql:  "CREATE TABLE users (id INT, name TEXT, PRIMARY KEY (id)); ALTER TABLE users DROP INDEX `PRIMARY`;",
+			want: []string{"users.id int", "users.name text null"},
+		},
+		{
+			name: "inline primary key dropped by DROP KEY in lower case",
+			sql:  "CREATE TABLE users (id INT PRIMARY KEY, name TEXT); ALTER TABLE users DROP KEY `primary`;",
+			want: []string{"users.id int", "users.name text null"},
+		},
+		{
+			name: "composite primary key dropped by DROP INDEX PRIMARY",
+			sql:  "CREATE TABLE post_tags (post_id INT, tag_id INT, PRIMARY KEY (post_id, tag_id)); ALTER TABLE post_tags DROP INDEX `PRIMARY`;",
+			want: []string{"post_tags.post_id int", "post_tags.tag_id int"},
+		},
+		{
+			name: "primary key dropped by standalone DROP INDEX PRIMARY ON",
+			sql:  "CREATE TABLE users (id INT, name TEXT, PRIMARY KEY (id)); DROP INDEX `PRIMARY` ON users;",
+			want: []string{"users.id int", "users.name text null"},
+		},
+		{
+			name: "primary key replaced with ADD before DROP INDEX PRIMARY",
+			sql:  "CREATE TABLE users (id INT PRIMARY KEY, code INT NOT NULL); ALTER TABLE users ADD PRIMARY KEY (code), DROP INDEX `PRIMARY`;",
+			want: []string{"users.id int", "users.code int pk"},
+		},
+		{
+			name: "former key column redefined nullable before DROP INDEX PRIMARY",
+			sql:  "CREATE TABLE users (id INT PRIMARY KEY, name TEXT); ALTER TABLE users MODIFY id BIGINT, DROP INDEX `PRIMARY`;",
+			want: []string{"users.id bigint null", "users.name text null"},
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -1069,15 +1100,28 @@ func TestDropPrimaryKey(t *testing.T) {
 			}
 			var got []string
 			for _, tbl := range p.Schema().Tables {
+				var flagged, keyed []string
 				for _, col := range tbl.Columns {
 					s := tbl.Name + "." + col.Name + " " + col.Type
 					if col.PrimaryKey {
 						s += " pk"
+						flagged = append(flagged, col.Name)
 					}
 					if col.Nullable {
 						s += " null"
 					}
 					got = append(got, s)
+				}
+				for _, c := range tbl.Constraints {
+					if c.Type == parser.PrimaryKey {
+						keyed = append(keyed, c.Columns...)
+					}
+				}
+				// The PRIMARY KEY constraint goes with the column flags.
+				slices.Sort(flagged)
+				slices.Sort(keyed)
+				if diff := cmp.Diff(flagged, keyed); diff != "" {
+					t.Errorf("Parse(%q) table %s primary-key constraint columns differ from pk columns (-flagged +constraint):\n%s", tt.sql, tbl.Name, diff)
 				}
 			}
 			if diff := cmp.Diff(tt.want, got); diff != "" {

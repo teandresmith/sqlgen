@@ -320,47 +320,6 @@ unexpanded.
 
 **Resolution notes.** _Filled in by `/fix resolve`._
 
-### FIX-287
-
-- **Status:** Open
-- **Severity:** nit
-- **Origin:** phase 4, `parser/mysql`
-- **Surfaced by:** backlog promotion at `/close-phase 30` (2026-10-07); first recorded by FIX-263 (2026-10-03)
-- **Vetted:** corrected at `d51ace1b` (2026-10-07)
-
-**Issue.** **``ALTER TABLE … DROP INDEX `PRIMARY` `` leaves the primary key in
-place under `files`**, though MySQL drops it. Measured evidence from the
-backlog line: "MySQL 8.0.46 `SHOW CREATE TABLE` shows no key after that drop
-on a table-level `PRIMARY KEY (id)`, while the parser keeps "id pk=true" and
-the `PK PRIMARY [id]` constraint".
-
-**Root cause.** vitess parses it as `NormalKeyType`, so `applyDropKey`
-(`parser/mysql/mysql.go:923-941`) takes the UNIQUE/INDEX branch (`:932`) and
-never reaches its `PrimaryKeyType` case (`:926`).
-
-**Suggested fix.**
-- In `applyDropKey`, treat a `NormalKeyType` drop named `PRIMARY`
-  (case-insensitive) as the `PrimaryKeyType` case.
-- Test: a `parser/mysql` case for ``DROP INDEX `PRIMARY` `` and its
-  ``DROP INDEX `PRIMARY` ON t`` form.
-- Changed from the original (same root cause, vitess's NormalKeyType classification, at the same fix site):
-  - only the `ALTER TABLE … DROP INDEX|KEY \`PRIMARY\`` clause form is broken (vitess gives `DropKey type=2 name="PRIMARY"`). The standalone `DROP INDEX \`PRIMARY\` ON users` already becomes `DropKey{Type: PrimaryKeyType, Name: ""}` and works at HEAD, so its test case is a regression guard that cannot fail first;
-  - `dropPrimaryKey` (`mysql.go:798-804`), the predicate that moves primary-key drops ahead of the other clauses, must recognise the clause too. Otherwise `MODIFY id BIGINT, DROP INDEX \`PRIMARY\`` leaves `id` NOT NULL where MySQL makes it nullable (measured);
-  - the PK removal must not match by exact name: the clause may spell it `primary`, which misses the constraint named `PRIMARY`.
-- Prototype: a new `dropKeyType(o *sqlparser.DropKey) sqlparser.DropKeyType` returns PrimaryKeyType for a NormalKeyType drop named `PRIMARY` (`strings.EqualFold`), else `o.Type`. Both `dropPrimaryKey` and `applyDropKey`'s switch use it. The PrimaryKeyType branch of `applyDropKey` matches by type alone (name `""`), since a table has one primary key. `TestDropPrimaryKey` gains 6 rows (table-level DROP INDEX `PRIMARY`; inline DROP KEY `primary`; composite; standalone `DROP INDEX \`PRIMARY\` ON users`; ADD before DROP INDEX `PRIMARY`; MODIFY to nullable before DROP INDEX `PRIMARY`), and every row checks that the PRIMARY KEY constraint's columns equal the pk-flagged columns.
-- Prototype results, run at `d51ace1b` on 2026-10-07:
-  - Reproduction: a throwaway probe (`parser/mysql/zz_probe_drop_primary_test.go`, since deleted), `go test -count=1 -run TestZZProbeDropPrimary ./mysql/ -v`: `… PRIMARY KEY (id)); ALTER TABLE users DROP INDEX \`PRIMARY\`;` → "col id pk=true null=false / constraint PRIMARY KEY PRIMARY [id]"; inline PK likewise; `DROP KEY \`primary\`` → pk kept; `ADD PRIMARY KEY (code), DROP INDEX \`PRIMARY\`` → two primary keys; `DROP INDEX \`PRIMARY\` ON users` → correct. MySQL 8.0.46 ground truth (SHOW CREATE TABLE): DROP INDEX `PRIMARY` and DROP KEY `primary` leave no key and keep `id int NOT NULL`; `ADD PRIMARY KEY (code), DROP INDEX \`PRIMARY\`` → `PRIMARY KEY (\`code\`)` (drop before add, like DROP PRIMARY KEY); `MODIFY id BIGINT, DROP INDEX \`PRIMARY\`` → `id bigint DEFAULT NULL`.
-  - Gates: (parser) `go test -race -count=1 ./mysql/...` → ok; `go test -race -short -count=1 ./...` → ok; `golangci-lint run ./mysql/...` → 0 issues; `gofumpt -l mysql` → clean.
-  - Fail-first: `applyDropKey` back on `switch o.Type` → 5 rows fail (e.g. "- \"users.id int\", + \"users.id int pk\""); `dropPrimaryKey` predicate reverted → `former_key_column_redefined_nullable_before_DROP_INDEX_PRIMARY` fails ("- \"users.id bigint null\", + \"users.id bigint\""); PK branch matching by `name` → `inline_primary_key_dropped_by_DROP_KEY_in_lower_case` fails; the existing suite without the fix → passes.
-  - Golden churn: none.
-  - Patch: `.claude/prototypes/FIX-287.patch` (2 files, +64/-8).
-
-
-**References.**
-- PRD §6.1, §5.2 (a MySQL PRIMARY KEY is always `PRIMARY`).
-
-**Resolution notes.** _Filled in by `/fix resolve`._
-
 ### FIX-289
 
 - **Status:** Open
@@ -593,6 +552,59 @@ source (PRD §6.1).
 ## Resolved
 
 <!-- fixes:resolved:begin -->
+
+### FIX-287
+
+- **Status:** Resolved
+- **Severity:** nit
+- **Origin:** phase 4, `parser/mysql`
+- **Surfaced by:** backlog promotion at `/close-phase 30` (2026-10-07); first recorded by FIX-263 (2026-10-03)
+- **Vetted:** corrected at `d51ace1b` (2026-10-07)
+
+**Issue.** **``ALTER TABLE … DROP INDEX `PRIMARY` `` leaves the primary key in
+place under `files`**, though MySQL drops it. Measured evidence from the
+backlog line: "MySQL 8.0.46 `SHOW CREATE TABLE` shows no key after that drop
+on a table-level `PRIMARY KEY (id)`, while the parser keeps "id pk=true" and
+the `PK PRIMARY [id]` constraint".
+
+**Root cause.** vitess parses it as `NormalKeyType`, so `applyDropKey`
+(`parser/mysql/mysql.go:1050-1068`) takes the UNIQUE/INDEX branch (`:1059`) and
+never reaches its `PrimaryKeyType` case (`:1053`).
+
+**Suggested fix.**
+- In `applyDropKey`, treat a `NormalKeyType` drop named `PRIMARY`
+  (case-insensitive) as the `PrimaryKeyType` case.
+- Test: a `parser/mysql` case for ``DROP INDEX `PRIMARY` `` and its
+  ``DROP INDEX `PRIMARY` ON t`` form.
+- Changed from the original (same root cause, vitess's NormalKeyType classification, at the same fix site):
+  - only the `ALTER TABLE … DROP INDEX|KEY \`PRIMARY\`` clause form is broken (vitess gives `DropKey type=2 name="PRIMARY"`). The standalone `DROP INDEX \`PRIMARY\` ON users` already becomes `DropKey{Type: PrimaryKeyType, Name: ""}` and works at HEAD, so its test case is a regression guard that cannot fail first;
+  - `dropPrimaryKey` (`mysql.go:908-914`), the predicate that moves primary-key drops ahead of the other clauses, must recognise the clause too. Otherwise `MODIFY id BIGINT, DROP INDEX \`PRIMARY\`` leaves `id` NOT NULL where MySQL makes it nullable (measured);
+  - the PK removal must not match by exact name: the clause may spell it `primary`, which misses the constraint named `PRIMARY`.
+- Prototype: a new `dropKeyType(o *sqlparser.DropKey) sqlparser.DropKeyType` returns PrimaryKeyType for a NormalKeyType drop named `PRIMARY` (`strings.EqualFold`), else `o.Type`. Both `dropPrimaryKey` and `applyDropKey`'s switch use it. The PrimaryKeyType branch of `applyDropKey` matches by type alone (name `""`), since a table has one primary key. `TestDropPrimaryKey` gains 6 rows (table-level DROP INDEX `PRIMARY`; inline DROP KEY `primary`; composite; standalone `DROP INDEX \`PRIMARY\` ON users`; ADD before DROP INDEX `PRIMARY`; MODIFY to nullable before DROP INDEX `PRIMARY`), and every row checks that the PRIMARY KEY constraint's columns equal the pk-flagged columns.
+- Prototype results, run at `d51ace1b` on 2026-10-07:
+  - Reproduction: a throwaway probe (`parser/mysql/zz_probe_drop_primary_test.go`, since deleted), `go test -count=1 -run TestZZProbeDropPrimary ./mysql/ -v`: `… PRIMARY KEY (id)); ALTER TABLE users DROP INDEX \`PRIMARY\`;` → "col id pk=true null=false / constraint PRIMARY KEY PRIMARY [id]"; inline PK likewise; `DROP KEY \`primary\`` → pk kept; `ADD PRIMARY KEY (code), DROP INDEX \`PRIMARY\`` → two primary keys; `DROP INDEX \`PRIMARY\` ON users` → correct. MySQL 8.0.46 ground truth (SHOW CREATE TABLE): DROP INDEX `PRIMARY` and DROP KEY `primary` leave no key and keep `id int NOT NULL`; `ADD PRIMARY KEY (code), DROP INDEX \`PRIMARY\`` → `PRIMARY KEY (\`code\`)` (drop before add, like DROP PRIMARY KEY); `MODIFY id BIGINT, DROP INDEX \`PRIMARY\`` → `id bigint DEFAULT NULL`.
+  - Gates: (parser) `go test -race -count=1 ./mysql/...` → ok; `go test -race -short -count=1 ./...` → ok; `golangci-lint run ./mysql/...` → 0 issues; `gofumpt -l mysql` → clean.
+  - Fail-first: `applyDropKey` back on `switch o.Type` → 5 rows fail (e.g. "- \"users.id int\", + \"users.id int pk\""); `dropPrimaryKey` predicate reverted → `former_key_column_redefined_nullable_before_DROP_INDEX_PRIMARY` fails ("- \"users.id bigint null\", + \"users.id bigint\""); PK branch matching by `name` → `inline_primary_key_dropped_by_DROP_KEY_in_lower_case` fails; the existing suite without the fix → passes.
+  - Golden churn: none.
+  - Patch: `.claude/prototypes/FIX-287.patch` (2 files, +64/-8).
+
+
+**References.**
+- PRD §6.1, §5.2 (a MySQL PRIMARY KEY is always `PRIMARY`).
+
+**Resolution notes.** Resolved 2026-10-08. A new `dropKeyType` in
+`parser/mysql/mysql.go` reports a `NormalKeyType` drop named `PRIMARY`
+(`strings.EqualFold`) as `PrimaryKeyType`. `dropPrimaryKey` (the drop-first
+predicate in `parseAlterTable`) and `applyDropKey`'s switch both use it, and
+the primary-key branch matches by type alone, so `DROP KEY \`primary\`` finds
+the constraint named `PRIMARY`. `TestDropPrimaryKey` gains the prototype's 6
+rows and checks on every row that the PRIMARY KEY constraint's columns equal
+the pk-flagged columns. Prototype applied clean with `git apply --3way` over
+FIX-288's changes to the same files; comments trimmed. Line refs above updated to
+the landed code. Fail-first re-run on
+the final code matched the vet (5 / 1 / 1 rows). Gates: `make check` ok;
+`make update-golden-e2e` + `make update-golden` → no churn (matches vet);
+`make check-examples` ok.
 
 ### FIX-286
 
