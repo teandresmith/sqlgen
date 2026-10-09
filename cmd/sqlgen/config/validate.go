@@ -1895,19 +1895,26 @@ func validateCompositePKStrategy(cfg *RootConfig, tables []SchemaTable, errs *[]
 }
 
 // uniqueCovers reports whether any UNIQUE constraint (table-level UniqueGroups,
-// inline column Unique, or a column listed as PrimaryKey at the column level)
-// exactly matches the override column set. Set-equality is required: a covering
+// inline column Unique, or the column of a single-column PrimaryKey) exactly
+// matches the override column set. Set-equality is required: a covering
 // UNIQUE must have the same column membership as the override (order-independent).
 // A composite override matched by a single-column UNIQUE is NOT covered (a
-// per-column UNIQUE on `(a)` does not make `(a, b)` unique).
+// per-column UNIQUE on `(a)` does not make `(a, b)` unique), and neither is a
+// single-column override over one member of a composite PK.
 func uniqueCovers(table SchemaTable, override []string) bool {
 	want := make(map[string]bool, len(override))
 	for _, c := range override {
 		want[c] = true
 	}
 	if len(override) == 1 {
+		pkCols := 0
 		for _, c := range table.Columns {
-			if (c.Unique || c.PrimaryKey) && c.Name == override[0] {
+			if c.PrimaryKey {
+				pkCols++
+			}
+		}
+		for _, c := range table.Columns {
+			if c.Name == override[0] && (c.Unique || (c.PrimaryKey && pkCols == 1)) {
 				return true
 			}
 		}

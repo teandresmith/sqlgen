@@ -946,6 +946,71 @@ func TestValidatePostParse_PrimaryKeyOverride_CompositeUniqueCovered(t *testing.
 	}
 }
 
+// TestValidatePostParse_PrimaryKeyOverride_PKMemberCoverage pins that a
+// single-column override is covered by the schema PRIMARY KEY only when that
+// key is the column alone: one member of a composite key is not unique.
+func TestValidatePostParse_PrimaryKeyOverride_PKMemberCoverage(t *testing.T) {
+	tests := []struct {
+		name     string
+		columns  []config.SchemaColumn
+		groups   [][]string
+		wantWarn bool
+	}{
+		{
+			name: "member of a composite PK",
+			columns: []config.SchemaColumn{
+				{Name: "id", Type: "bigint", PrimaryKey: true},
+				{Name: "created_at", Type: "timestamptz", PrimaryKey: true},
+			},
+			groups:   [][]string{{"id", "created_at"}},
+			wantWarn: true,
+		},
+		{
+			name: "member of a composite PK with its own UNIQUE",
+			columns: []config.SchemaColumn{
+				{Name: "id", Type: "bigint", PrimaryKey: true, Unique: true},
+				{Name: "created_at", Type: "timestamptz", PrimaryKey: true},
+			},
+			groups: [][]string{{"id", "created_at"}},
+		},
+		{
+			name: "single-column PK",
+			columns: []config.SchemaColumn{
+				{Name: "id", Type: "bigint", PrimaryKey: true},
+				{Name: "created_at", Type: "timestamptz"},
+			},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg := validConfig()
+			cfg.Tables["timeline_events"] = config.TableConfig{
+				PrimaryKey: &config.TablePrimaryKeyConfig{Columns: []string{"id"}},
+			}
+			tables := []config.SchemaTable{{
+				Name:         "timeline_events",
+				Schema:       "public",
+				Columns:      tt.columns,
+				UniqueGroups: tt.groups,
+			}}
+
+			warnings, err := config.ValidatePostParse(cfg, tables, nil)
+			if err != nil {
+				t.Fatalf("ValidatePostParse() unexpected error: %v", err)
+			}
+			gotWarn := false
+			for _, w := range warnings {
+				if strings.Contains(w.Message, "tables.public.timeline_events.primary_key.columns: no UNIQUE constraint covers") {
+					gotWarn = true
+				}
+			}
+			if gotWarn != tt.wantWarn {
+				t.Errorf("no-UNIQUE-coverage warning = %v, want %v; warnings = %v", gotWarn, tt.wantWarn, warnings)
+			}
+		})
+	}
+}
+
 // TestValidatePostParse_MissingPrimaryKey pins the no-PK skip warning: a
 // table with no auto-detected PK and no override gets a warning directing
 // the user toward either declaring the PK via primary_key.columns or

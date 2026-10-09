@@ -283,42 +283,6 @@ duplicate-table check (`:188`) and rename (`:580`).
 
 **Resolution notes.** _Filled in by `/fix resolve`._
 
-### FIX-283
-
-- **Status:** Open
-- **Severity:** nit
-- **Origin:** phase 5, `cmd/sqlgen/config`
-- **Surfaced by:** backlog promotion at `/close-phase 30` (2026-10-07); first recorded by FIX-249 (2026-10-01)
-- **Vetted:** ready at `d51ace1b` (2026-10-07)
-
-**Issue.** **A composite-PK member counts as unique on its own, so the PRD
-§4.13 "no UNIQUE constraint covers the declared PK" warning is missing.**
-Measured evidence from the backlog line: "postgres copy with
-`timeline_events.primary_key.columns: [id]`, `sqlgen generate` printed only
-the cursor_keys warning" over `PRIMARY KEY (id, created_at)`.
-
-**Root cause.** `uniqueCovers` (`cmd/sqlgen/config/validate.go:1892`) accepts
-a single-column override when the column has `c.Unique || c.PrimaryKey`
-(`:1899`); `PrimaryKey` is true on each member of a composite key.
-
-**Suggested fix.**
-- Count `c.PrimaryKey` only when the table's PK has exactly one column.
-- Test: a `config` validation case for `primary_key.columns: [id]` over a
-  composite `(id, created_at)` PK expecting the warning.
-- Prototype results, run at `d51ace1b` on 2026-10-07:
-  - Reproduction: a sibling copy of the postgres example (models/ and expected/ removed) with `CREATE TABLE timeline_events (id BIGINT NOT NULL, created_at TIMESTAMPTZ NOT NULL DEFAULT now(), body TEXT NOT NULL, PRIMARY KEY (id, created_at));` and `timeline_events: primary_key: columns: [id]`; `GOWORK=off sqlgen generate` → exit 0 with only the cursor_keys warning, no UNIQUE-coverage warning. With the fixed binary the run also prints "Warning: tables.public.timeline_events.primary_key.columns: no UNIQUE constraint covers the declared PK on table public.timeline_events; sqlgen assumes uniqueness — enforce it at the application level if not at the DB level". (No example at HEAD has `timeline_events`; the evidence used a hand-added table.)
-  - Prototype: for a single-column override, `uniqueCovers` counts the table's `PrimaryKey` columns, and a column's `PrimaryKey` flag covers the override only when `pkCols == 1`; inline `c.Unique` still covers. The doc comment names the composite-member case. New table-driven `TestValidatePostParse_PrimaryKeyOverride_PKMemberCoverage` (override `[id]`: a member of a composite PK warns; a composite member with its own UNIQUE stays silent; a single-column PK stays silent).
-  - Gates: `cd cmd/sqlgen && go test -race -count=1 ./config/... ./cli/...` → ok; `gofumpt -l config` → clean; `go vet ./config/` → clean; `golangci-lint run ./config/...` → 0 issues.
-  - Fail-first: `pkCols == 1` reverted → `/member_of_a_composite_PK` fails: "no-UNIQUE-coverage warning = false, want true; warnings = []"; the PrimaryKey branch dropped entirely (over-correction probe) → `/single-column_PK` fails: "no-UNIQUE-coverage warning = true, want false"; the existing suite without the fix → passes.
-  - Golden churn: none (post-parse warnings only).
-  - Patch: `.claude/prototypes/FIX-283.patch` (2 files, +76/-4).
-
-
-**References.**
-- PRD §4.13 ("`primary_key.columns` has no UNIQUE coverage").
-
-**Resolution notes.** _Filled in by `/fix resolve`._
-
 ### FIX-284
 
 - **Status:** Open
@@ -673,6 +637,43 @@ source (PRD §6.1).
 ## Resolved
 
 <!-- fixes:resolved:begin -->
+
+### FIX-283
+
+- **Status:** Resolved
+- **Severity:** nit
+- **Origin:** phase 5, `cmd/sqlgen/config`
+- **Surfaced by:** backlog promotion at `/close-phase 30` (2026-10-07); first recorded by FIX-249 (2026-10-01)
+- **Vetted:** ready at `d51ace1b` (2026-10-07)
+
+**Issue.** **A composite-PK member counts as unique on its own, so the PRD
+§4.13 "no UNIQUE constraint covers the declared PK" warning is missing.**
+Measured evidence from the backlog line: "postgres copy with
+`timeline_events.primary_key.columns: [id]`, `sqlgen generate` printed only
+the cursor_keys warning" over `PRIMARY KEY (id, created_at)`.
+
+**Root cause.** `uniqueCovers` (`cmd/sqlgen/config/validate.go:1904`) accepts
+a single-column override when the column has `c.Unique || c.PrimaryKey`
+(`:1917`); `PrimaryKey` is true on each member of a composite key.
+
+**Suggested fix.**
+- Count `c.PrimaryKey` only when the table's PK has exactly one column.
+- Test: a `config` validation case for `primary_key.columns: [id]` over a
+  composite `(id, created_at)` PK expecting the warning.
+- Prototype results, run at `d51ace1b` on 2026-10-07:
+  - Reproduction: a sibling copy of the postgres example (models/ and expected/ removed) with `CREATE TABLE timeline_events (id BIGINT NOT NULL, created_at TIMESTAMPTZ NOT NULL DEFAULT now(), body TEXT NOT NULL, PRIMARY KEY (id, created_at));` and `timeline_events: primary_key: columns: [id]`; `GOWORK=off sqlgen generate` → exit 0 with only the cursor_keys warning, no UNIQUE-coverage warning. With the fixed binary the run also prints "Warning: tables.public.timeline_events.primary_key.columns: no UNIQUE constraint covers the declared PK on table public.timeline_events; sqlgen assumes uniqueness — enforce it at the application level if not at the DB level". (No example at HEAD has `timeline_events`; the evidence used a hand-added table.)
+  - Prototype: for a single-column override, `uniqueCovers` counts the table's `PrimaryKey` columns, and a column's `PrimaryKey` flag covers the override only when `pkCols == 1`; inline `c.Unique` still covers. The doc comment names the composite-member case. New table-driven `TestValidatePostParse_PrimaryKeyOverride_PKMemberCoverage` (override `[id]`: a member of a composite PK warns; a composite member with its own UNIQUE stays silent; a single-column PK stays silent).
+  - Gates: `cd cmd/sqlgen && go test -race -count=1 ./config/... ./cli/...` → ok; `gofumpt -l config` → clean; `go vet ./config/` → clean; `golangci-lint run ./config/...` → 0 issues.
+  - Fail-first: `pkCols == 1` reverted → `/member_of_a_composite_PK` fails: "no-UNIQUE-coverage warning = false, want true; warnings = []"; the PrimaryKey branch dropped entirely (over-correction probe) → `/single-column_PK` fails: "no-UNIQUE-coverage warning = true, want false"; the existing suite without the fix → passes.
+  - Golden churn: none (post-parse warnings only).
+  - Patch: `.claude/prototypes/FIX-283.patch` (2 files, +76/-4).
+
+
+**References.**
+- PRD §4.13 ("`primary_key.columns` has no UNIQUE coverage").
+
+**Resolution notes.** `uniqueCovers` (`cmd/sqlgen/config/validate.go`) counts the table's `PrimaryKey` columns for a single-column override and lets a column's `PrimaryKey` flag cover it only when that count is 1; inline `Unique` still covers, and composite overrides still match `UniqueGroups` by set equality. So `primary_key.columns: [id]` over `PRIMARY KEY (id, created_at)` now gets the PRD §4.13 no-UNIQUE-coverage warning. The vetted prototype applied clean at `d639d16e`. Regression test: table-driven `TestValidatePostParse_PrimaryKeyOverride_PKMemberCoverage` (composite-PK member warns; a composite member with its own UNIQUE stays silent; a single-column PK stays silent). Fail-first re-run on the final code: `pkCols == 1` loosened to `>= 1` fails `/member_of_a_composite_PK`, and the `PrimaryKey` branch dropped fails `/single-column_PK`. The gen-side parallel `uniqueCoversColumns` (`cmd/sqlgen/gen/context_table.go`) reads only the column `Unique` flag plus set-equal UNIQUE constraints (its sibling `pkDeclaredInSchema` checks the PRIMARY KEY constraint), so it already handled this case and is unchanged. Inline: the ordering comment in `cmd/sqlgen/cli/pipeline.go` now says `uniqueCovers` treats the column of a *single-column* PrimaryKey as self-covering. Gates: `make check` ok; `make check-examples` ok; golden churn none (post-parse warning only), matching the vet.
+
 
 ### FIX-277
 

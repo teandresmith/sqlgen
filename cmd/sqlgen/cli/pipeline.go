@@ -88,10 +88,10 @@ func loadAndValidate(ctx context.Context, flags *cliFlags, errOut io.Writer) (*c
 // Ordering is load-bearing on both sides and is not enforced by the type system:
 //
 //   - It must run AFTER config.ValidatePostParse. That pass reads the raw
-//     PK flags through toSchemaTables, and uniqueCovers treats a PrimaryKey
-//     column as self-covering. Resolving first would make every single-column
-//     override satisfy its own UNIQUE-coverage check and silently drop the
-//     §8.6 warning that exists for exactly that case.
+//     PK flags through toSchemaTables, and uniqueCovers treats the column of a
+//     single-column PrimaryKey as self-covering. Resolving first would make
+//     every single-column override satisfy its own UNIQUE-coverage check and
+//     silently drop the §8.6 warning that exists for exactly that case.
 //   - It must run BEFORE parser.DetectRelationships, which is the consumer
 //     this exists to correct.
 //
