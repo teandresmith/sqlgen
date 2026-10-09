@@ -610,6 +610,9 @@ func (p *Parser) parseAlterTable(stmt *rsql.AlterTableStatement) error {
 			return fmt.Errorf("rename column %s: %w", tableName, err)
 		}
 		parser.RenameColumnReferences(p.schema.Tables, table.Schema, table.Name, oldName, newName)
+		if err := renameColumnInExpressions(table, oldName, newName); err != nil {
+			return fmt.Errorf("rename column %s: %w", tableName, err)
+		}
 		return nil
 
 	case stmt.Rename.IsValid() && stmt.NewName != nil:
@@ -621,6 +624,123 @@ func (p *Parser) parseAlterTable(stmt *rsql.AlterTableStatement) error {
 	}
 
 	return nil
+}
+
+// renameColumnInExpressions rewrites column oldName to newName in the table's
+// CHECK, generated-column and partial-index expressions. SQLite rewrites the
+// stored DDL the same way on RENAME COLUMN, and introspection reads that DDL,
+// so left on the old name the text differs by source (PRD §6.1).
+func renameColumnInExpressions(table *parser.Table, oldName, newName string) error {
+	for i := range table.Columns {
+		c := &table.Columns[i]
+		expr, err := renameColumnInExpr(c.GeneratedExpr, oldName, newName)
+		if err != nil {
+			return fmt.Errorf("generated column %s: %w", c.Name, err)
+		}
+		c.GeneratedExpr = expr
+	}
+	for i := range table.Constraints {
+		c := &table.Constraints[i]
+		check, err := renameColumnInExpr(c.CheckExpression, oldName, newName)
+		if err != nil {
+			return fmt.Errorf("check constraint: %w", err)
+		}
+		where, err := renameColumnInExpr(c.Where, oldName, newName)
+		if err != nil {
+			return fmt.Errorf("index %s: %w", c.Name, err)
+		}
+		c.CheckExpression, c.Where = check, where
+	}
+	return nil
+}
+
+// renameColumnInExpr returns expr, as the parser renders it, with every
+// reference to column oldName renamed to newName. Names match without regard
+// to ASCII case, as SQLite matches them. Function, type, collation and table
+// names are left alone, and expr comes back unchanged when it does not name
+// the column.
+func renameColumnInExpr(expr, oldName, newName string) (string, error) {
+	if expr == "" {
+		return "", nil
+	}
+	x, err := rsql.ParseExprString(expr)
+	if err != nil {
+		return "", fmt.Errorf("parsing %q: %w", expr, err)
+	}
+	r := &columnRenamer{oldName: oldName, newName: newName, skip: make(map[*rsql.Ident]bool)}
+	if _, err := rsql.Walk(r, x); err != nil {
+		return "", fmt.Errorf("renaming in %q: %w", expr, err)
+	}
+	if !r.renamed {
+		return expr, nil
+	}
+	return exprString(x, "renamed expression")
+}
+
+// columnRenamer renames the column references in an expression. The walk
+// reaches every identifier, so the ones that name something other than a
+// column are marked to skip when their parent is visited.
+type columnRenamer struct {
+	oldName, newName string
+	skip             map[*rsql.Ident]bool
+	renamed          bool
+}
+
+// Visit renames n when it is a reference to the column, and marks the
+// identifiers below n that name something else.
+func (r *columnRenamer) Visit(n rsql.Node) (rsql.Visitor, rsql.Node, error) {
+	switch n := n.(type) {
+	case *rsql.Call:
+		r.skip[n.Name] = true
+		if n.Over != nil {
+			r.skip[n.Over.Name] = true
+		}
+	case *rsql.Type:
+		r.skip[n.Name] = true
+	case *rsql.CollateExpr:
+		if n.Collation != nil {
+			r.skip[n.Collation.Name] = true
+		}
+	case *rsql.QualifiedRef:
+		r.skip[n.Schema] = true
+		r.skip[n.Table] = true
+	case *rsql.Null:
+		// rqlite/sql's walk does not descend into IS NULL / NOT NULL.
+		if _, err := rsql.Walk(r, n.X); err != nil {
+			return nil, nil, fmt.Errorf("walking %s: %w", n, err)
+		}
+	case *rsql.Ident:
+		if !r.skip[n] && equalFoldASCII(n.Name, r.oldName) {
+			n.Name = r.newName
+			r.renamed = true
+		}
+	}
+	return r, n, nil
+}
+
+// VisitEnd returns n unchanged.
+func (r *columnRenamer) VisitEnd(n rsql.Node) (rsql.Node, error) { return n, nil }
+
+// equalFoldASCII reports whether a and b are equal when ASCII letters are
+// folded to lower case. SQLite folds only ASCII in identifiers, so "É" and "é"
+// name different columns.
+func equalFoldASCII(a, b string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range len(a) {
+		x, y := a[i], b[i]
+		if 'A' <= x && x <= 'Z' {
+			x += 'a' - 'A'
+		}
+		if 'A' <= y && y <= 'Z' {
+			y += 'a' - 'A'
+		}
+		if x != y {
+			return false
+		}
+	}
+	return true
 }
 
 func (p *Parser) renameTable(oldName, newName string) error {

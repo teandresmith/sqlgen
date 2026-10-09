@@ -77,58 +77,6 @@ adds keys, then FK indexes (`mysql.go:265-273`).
 
 **Resolution notes.** _Filled in by `/fix resolve`._
 
-### FIX-277
-
-- **Status:** Open
-- **Severity:** nit
-- **Origin:** phase 30, `parser/sqlite`
-- **Surfaced by:** backlog promotion at `/close-phase 30` (2026-10-07); first recorded by 30.6 (2026-10-05)
-- **Vetted:** ready at `d51ace1b` (2026-10-07)
-
-**Issue.** **The SQLite parser keeps the old column name in CHECK text after
-RENAME COLUMN**, while SQLite rewrites its stored DDL, which the introspector
-reads, so the manifest's CHECK text differs by source. Measured evidence from
-the backlog line: "`ALTER TABLE t RENAME COLUMN a TO c` → parsed CHECK `"a" >
-0`, introspected `"c" > 0` (30.6 reviewer)".
-
-**Root cause.** The SQLite RENAME COLUMN branch
-(`parser/sqlite/sqlite.go:555-566`) calls `parser.RenameColumn` and
-`parser.RenameColumnReferences` (`parser/schema.go:381`), which rewrite
-constraint column lists and FK references only, not `CheckExpression` text.
-
-**Suggested fix.**
-- In the SQLite RENAME COLUMN branch, re-parse each of the table's CHECK
-  expressions (and, if cheap, its partial-index `Where` and generated
-  expressions) with rqlite, rename identifiers equal to the old name
-  (case-insensitive), and re-render.
-- Test: extend `TestAlterTableRenameColumn` (`parser/sqlite/sqlite_test.go:562`)
-  and add a SQLite parity case.
-- Vet notes on scope: generated-column `GeneratedExpr` and partial-index `Where` diverge the same way as CHECK text, from the same root cause and at the same fix site; the entry's "if cheap" covers them, and the prototype includes both.
-- Prototype: after `RenameColumnReferences`, the RENAME COLUMN branch (`parser/sqlite/sqlite.go:555-566`) calls a new `renameColumnInExpressions`. It sends every `GeneratedExpr`, `CheckExpression` and `Where` on the table through `renameColumnInExpr`, which re-parses with `rsql.ParseExprString`, walks a `columnRenamer` visitor and re-renders with `rsql.ExprString`. Text that does not name the column is returned untouched. Errors wrap as `rename column <table>: …`. Implementation facts for `/fix-implement`:
-  - `columnRenamer` matches identifiers case-insensitively (`strings.EqualFold`), as SQLite does, and skips function names (`Call.Name`, `Over.Name`), type names, collation names and `QualifiedRef` schema/table identifiers. Without the skip, `upper(upper)` renames the function; SQLite keeps `upper(...)`;
-  - rqlite/sql's `Walk` does not descend into `*rsql.Null` operands (`IS NULL` / `NOT NULL`), so the visitor walks them by hand. Measured without it: `"r"."a" NOT NULL OR "a" IS NULL` and `CASE … END NOT NULL` stayed unrenamed.
-- Tests:
-  - `TestAlterTableRenameColumn` becomes table-driven with 8 cases: column only, CHECK, generated, partial-index `Where` (incl. `IS NOT NULL` / `IS NULL`), case-insensitive match, table-qualified reference, function/type/collation names are not columns, another column's name is left alone;
-  - new `TestSQLiteIntrospect_RenameColumnExpressions` parity case: three renames over CHECK, generated and partial-index text covering BETWEEN, NOT IN, unary minus, qualified refs, NOT NULL / ISNULL, CASE, CAST, COLLATE, NOT LIKE, GLOB, `IS NOT`, and a column named `upper` used as `upper(upper)`. It pins SQLite's rewritten text and calls `assertSchemaParity`.
-- Prototype results, run at `d51ace1b` on 2026-10-07:
-  - Reproduction: a throwaway probe (`parser/introspect/zz_probe_rename_test.go`, since deleted), `cd parser && go test -count=1 -run TestZZProbeRenameColumn ./introspect/` → FAIL. CHECK `"a" > 0` vs `"c" > 0` and `"a" < "b"` vs `"c" < "b"`; generated `"a" * 2` vs `"c" * 2`; partial `Where` `"a" > 0` vs `"c" > 0`; with column `A` and expressions using `a` / `"a"`, SQLite renames them all and the parser none; qualified `"q"."a" > 0` vs `"q"."c" > 0`.
-  - Gates: `cd parser && go test -race -count=1 ./...` → ok (containers); `golangci-lint run ./sqlite/... ./introspect/...` → 0 issues; `gofumpt -l` → clean.
-  - Fail-first:
-    - `renameColumnInExpressions` call removed → `TestAlterTableRenameColumn` fails 6 subtests (e.g. "- `CHECK [qty] \"qty\" > 0`, + `CHECK [qty] \"a\" > 0`"), and the parity test fails: "- GeneratedExpr: `\"a\" * 2`, + GeneratedExpr: `\"qty\" * 2`";
-    - `*rsql.Null` manual walk removed → `/partial_index_predicate` fails, and parity shows "- CheckExpression: `\"r\".\"a\" NOT NULL OR \"a\" IS NULL`";
-    - `Call.Name` skip removed → `/function_type_and_collation_names_are_not_columns` fails: "- \"upper\", + \"label\"";
-    - the existing suite without the fix → passes.
-  - Golden churn: none.
-  - Patch: `.claude/prototypes/FIX-277.patch` (3 files, +250/-18).
-
-
-**References.**
-- PRD §6.1.
-- Backlog line (2026-10-01, from FIX-247) on the same gap for CHECK / WHERE /
-  generated text on all dialects, which stays in the backlog.
-
-**Resolution notes.** _Filled in by `/fix resolve`._
-
 ### FIX-278
 
 - **Status:** Open
@@ -725,6 +673,85 @@ source (PRD §6.1).
 ## Resolved
 
 <!-- fixes:resolved:begin -->
+
+### FIX-277
+
+- **Status:** Resolved
+- **Severity:** nit
+- **Origin:** phase 30, `parser/sqlite`
+- **Surfaced by:** backlog promotion at `/close-phase 30` (2026-10-07); first recorded by 30.6 (2026-10-05)
+- **Vetted:** ready at `d51ace1b` (2026-10-07)
+
+**Issue.** **The SQLite parser keeps the old column name in CHECK text after
+RENAME COLUMN**, while SQLite rewrites its stored DDL, which the introspector
+reads, so the manifest's CHECK text differs by source. Measured evidence from
+the backlog line: "`ALTER TABLE t RENAME COLUMN a TO c` → parsed CHECK `"a" >
+0`, introspected `"c" > 0` (30.6 reviewer)".
+
+**Root cause.** The SQLite RENAME COLUMN branch
+(`parser/sqlite/sqlite.go:602-616`) calls `parser.RenameColumn` and
+`parser.RenameColumnReferences` (`parser/schema.go:381`), which rewrite
+constraint column lists and FK references only, not `CheckExpression` text.
+
+**Suggested fix.**
+- In the SQLite RENAME COLUMN branch, re-parse each of the table's CHECK
+  expressions (and, if cheap, its partial-index `Where` and generated
+  expressions) with rqlite, rename identifiers equal to the old name
+  (case-insensitive), and re-render.
+- Test: extend `TestAlterTableRenameColumn` (`parser/sqlite/sqlite_test.go:627`)
+  and add a SQLite parity case.
+- Vet notes on scope: generated-column `GeneratedExpr` and partial-index `Where` diverge the same way as CHECK text, from the same root cause and at the same fix site; the entry's "if cheap" covers them, and the prototype includes both.
+- Prototype: after `RenameColumnReferences`, the RENAME COLUMN branch (`parser/sqlite/sqlite.go:602-616`) calls a new `renameColumnInExpressions`. It sends every `GeneratedExpr`, `CheckExpression` and `Where` on the table through `renameColumnInExpr`, which re-parses with `rsql.ParseExprString`, walks a `columnRenamer` visitor and re-renders with `rsql.ExprString`. Text that does not name the column is returned untouched. Errors wrap as `rename column <table>: …`. Implementation facts for `/fix-implement`:
+  - `columnRenamer` matches identifiers case-insensitively (`strings.EqualFold`), as SQLite does, and skips function names (`Call.Name`, `Over.Name`), type names, collation names and `QualifiedRef` schema/table identifiers. Without the skip, `upper(upper)` renames the function; SQLite keeps `upper(...)`;
+  - rqlite/sql's `Walk` does not descend into `*rsql.Null` operands (`IS NULL` / `NOT NULL`), so the visitor walks them by hand. Measured without it: `"r"."a" NOT NULL OR "a" IS NULL` and `CASE … END NOT NULL` stayed unrenamed.
+- Tests:
+  - `TestAlterTableRenameColumn` becomes table-driven with 8 cases: column only, CHECK, generated, partial-index `Where` (incl. `IS NOT NULL` / `IS NULL`), case-insensitive match, table-qualified reference, function/type/collation names are not columns, another column's name is left alone;
+  - new `TestSQLiteIntrospect_RenameColumnExpressions` parity case: three renames over CHECK, generated and partial-index text covering BETWEEN, NOT IN, unary minus, qualified refs, NOT NULL / ISNULL, CASE, CAST, COLLATE, NOT LIKE, GLOB, `IS NOT`, and a column named `upper` used as `upper(upper)`. It pins SQLite's rewritten text and calls `assertSchemaParity`.
+- Prototype results, run at `d51ace1b` on 2026-10-07:
+  - Reproduction: a throwaway probe (`parser/introspect/zz_probe_rename_test.go`, since deleted), `cd parser && go test -count=1 -run TestZZProbeRenameColumn ./introspect/` → FAIL. CHECK `"a" > 0` vs `"c" > 0` and `"a" < "b"` vs `"c" < "b"`; generated `"a" * 2` vs `"c" * 2`; partial `Where` `"a" > 0` vs `"c" > 0`; with column `A` and expressions using `a` / `"a"`, SQLite renames them all and the parser none; qualified `"q"."a" > 0` vs `"q"."c" > 0`.
+  - Gates: `cd parser && go test -race -count=1 ./...` → ok (containers); `golangci-lint run ./sqlite/... ./introspect/...` → 0 issues; `gofumpt -l` → clean.
+  - Fail-first:
+    - `renameColumnInExpressions` call removed → `TestAlterTableRenameColumn` fails 6 subtests (e.g. "- `CHECK [qty] \"qty\" > 0`, + `CHECK [qty] \"a\" > 0`"), and the parity test fails: "- GeneratedExpr: `\"a\" * 2`, + GeneratedExpr: `\"qty\" * 2`";
+    - `*rsql.Null` manual walk removed → `/partial_index_predicate` fails, and parity shows "- CheckExpression: `\"r\".\"a\" NOT NULL OR \"a\" IS NULL`";
+    - `Call.Name` skip removed → `/function_type_and_collation_names_are_not_columns` fails: "- \"upper\", + \"label\"";
+    - the existing suite without the fix → passes.
+  - Golden churn: none.
+  - Patch: `.claude/prototypes/FIX-277.patch` (3 files, +250/-18).
+
+
+**References.**
+- PRD §6.1.
+- Backlog line (2026-10-01, from FIX-247) on the same gap for CHECK / WHERE /
+  generated text on PostgreSQL and MySQL, which stays in the backlog.
+
+**Resolution notes.** The SQLite RENAME COLUMN branch
+(`parser/sqlite/sqlite.go`) now calls `renameColumnInExpressions` after
+`RenameColumnReferences`. It re-parses each `GeneratedExpr`,
+`CheckExpression` and partial-index `Where` on the table with rqlite/sql,
+renames identifiers equal to the old name without regard to ASCII case (skipping
+function, type, collation and qualifier names, and walking `*rsql.Null`
+operands by hand), and re-renders; text that does not name the column comes
+back untouched. Prototype applied cleanly at `e9e59c50`; two changes from it:
+the re-render goes through `exprString` (landed after the vet in FIX-291),
+so an expression rqlite/sql cannot render returns an error, not a panic; and
+(from `/verify`) ASCII-only folding, below. Tests: `TestAlterTableRenameColumn`
+is table-driven with 9 cases (the ninth, `/only_ASCII_letters_fold`, from
+`/verify`), and
+`TestSQLiteIntrospect_RenameColumnExpressions` pins SQLite's rewritten text
+and parsed/introspected parity. Fail-first re-run on the final code: call
+removed → 6 subtests + parity fail; `*rsql.Null` walk removed →
+`/partial_index_predicate` + parity fail; `Call.Name` skip removed →
+`/function_type_and_collation_names_are_not_columns` fails. From the
+`/verify` review, fixed inline (same root cause, same site): names now match
+with ASCII-only case folding (`equalFoldASCII`) instead of
+`strings.EqualFold`, since SQLite folds only ASCII; measured on 3.51,
+`RENAME COLUMN "É" TO qty` leaves `"é"` alone, which `strings.EqualFold`
+renamed. New subtest `/only_ASCII_letters_fold` fails on `strings.EqualFold`
+("- `column g AS \"é\" + 1`, + `column g AS \"qty\" + 1`"). Stale line refs in
+this entry updated (`sqlite.go:555-566` → `602-616`, `sqlite_test.go:562` →
+`627`); the 2026-10-01 backlog line on the same gap now names PostgreSQL and
+MySQL only. Gates: `make check` ok, `make check-examples` ok, `cd parser &&
+go test -race ./sqlite/ ./introspect/` ok. Golden churn: none, as vetted.
 
 ### FIX-288
 

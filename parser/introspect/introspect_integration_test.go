@@ -851,6 +851,66 @@ func TestSQLiteIntrospect_UniqueAndPKAutoIndexes(t *testing.T) {
 	assertSchemaParity(t, "sqlite", parsed, introspected)
 }
 
+// SQLite rewrites the column's name in the stored CHECK, generated-column and
+// partial-index text on RENAME COLUMN, and the file parser renames it the same
+// way, so the text matches by source (PRD §6.1). Function names that equal the
+// column's are not renamed, by either.
+func TestSQLiteIntrospect_RenameColumnExpressions(t *testing.T) {
+	requireDatabases(t)
+	parsed, introspected := sqliteSchemas(t, `
+		CREATE TABLE r (
+			id INTEGER PRIMARY KEY,
+			a INTEGER CHECK (a >= 0),
+			B TEXT,
+			upper TEXT,
+			g INTEGER AS (a * 2),
+			h TEXT GENERATED ALWAYS AS (upper(b) || 'a') STORED,
+			CHECK (a BETWEEN 0 AND 100),
+			CHECK (a NOT IN (1, 2) AND -a < 0),
+			CHECK (r.a IS NOT NULL OR a ISNULL),
+			CHECK (CASE WHEN a > 1 THEN b ELSE 'a' END IS NOT NULL),
+			CHECK (CAST(a AS TEXT) <> upper(upper) COLLATE NOCASE),
+			CHECK (abs(a) < 1000 AND b NOT LIKE '%a%' AND "b" GLOB '*')
+		);
+		CREATE INDEX r_b ON r (b) WHERE a > 0 AND b IS NOT 'a';
+		ALTER TABLE r RENAME COLUMN a TO qty;
+		ALTER TABLE r RENAME COLUMN B TO label;
+		ALTER TABLE r RENAME COLUMN upper TO up
+	`)
+
+	// The text SQLite stores after the renames, read with the file parser.
+	want := []string{
+		`"qty" * 2`,
+		`upper("label") || 'a'`,
+		`"qty" > 0 AND "label" IS NOT 'a'`,
+		`"qty" >= 0`,
+		`"qty" BETWEEN 0 AND 100`,
+		`"qty" NOT IN (1, 2) AND -"qty" < 0`,
+		`"r"."qty" NOT NULL OR "qty" IS NULL`,
+		`CASE WHEN "qty" > 1 THEN "label" ELSE 'a' END NOT NULL`,
+		`CAST("qty" AS TEXT) != upper("up") COLLATE "NOCASE"`,
+		`abs("qty") < 1000 AND "label" NOT LIKE '%a%' AND "label" GLOB '*'`,
+	}
+	table := findTable(t, introspected, "r")
+	var got []string
+	for _, c := range table.Columns {
+		if c.GeneratedExpr != "" {
+			got = append(got, c.GeneratedExpr)
+		}
+	}
+	for _, c := range table.Constraints {
+		if text := c.CheckExpression + c.Where; text != "" {
+			got = append(got, text)
+		}
+	}
+	slices.Sort(want)
+	slices.Sort(got)
+	if diff := cmp.Diff(want, got); diff != "" {
+		t.Errorf("r: introspected expressions after RENAME COLUMN mismatch (-want +got):\n%s", diff)
+	}
+	assertSchemaParity(t, "sqlite", parsed, introspected)
+}
+
 // A partial index's predicate comes from its stored CREATE INDEX, read with
 // the file parser, so it is the parser's text and not the DDL as written
 // (PRD §6.1, §6.3).

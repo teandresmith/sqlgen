@@ -619,26 +619,106 @@ func TestAlterTableDropColumn(t *testing.T) {
 	}
 }
 
+// TestAlterTableRenameColumn pins that RENAME COLUMN renames the column and
+// every reference to it in the table's CHECK, generated-column and
+// partial-index expressions, as SQLite rewrites its stored DDL (measured on
+// 3.51). Function, type, collation and table names, and string literals, are
+// left alone.
 func TestAlterTableRenameColumn(t *testing.T) {
-	sql := `
-		CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT NOT NULL);
-		ALTER TABLE users RENAME COLUMN name TO display_name;
-	`
-
-	p := sqlite.New()
-	if err := p.Parse("test.sql", []byte(sql)); err != nil {
-		t.Fatalf("Parse() error: %v", err)
+	tests := []struct {
+		name string
+		sql  string
+		want []string
+	}{
+		{
+			name: "column only",
+			sql: `CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT NOT NULL);
+				ALTER TABLE users RENAME COLUMN name TO display_name;`,
+			want: []string{"column id", "column display_name"},
+		},
+		{
+			name: "check expressions",
+			sql: `CREATE TABLE t (a INTEGER CHECK (a > 0), b TEXT, CHECK (a < length(b)), CONSTRAINT lit CHECK (b <> 'a'));
+				ALTER TABLE t RENAME COLUMN a TO qty;`,
+			want: []string{
+				"column qty",
+				"column b",
+				`CHECK [qty] "qty" > 0`,
+				`CHECK [qty b] "qty" < length("b")`,
+				`CHECK lit [b] "b" != 'a'`,
+			},
+		},
+		{
+			name: "generated column expressions",
+			sql: `CREATE TABLE g (a INTEGER, d INTEGER AS (a * 2), e INTEGER GENERATED ALWAYS AS (abs(a) + 1) STORED);
+				ALTER TABLE g RENAME COLUMN a TO qty;`,
+			want: []string{"column qty", `column d AS "qty" * 2`, `column e AS abs("qty") + 1`},
+		},
+		{
+			name: "partial index predicate",
+			sql: `CREATE TABLE p (a INTEGER, b INTEGER);
+				CREATE INDEX p_b ON p (b) WHERE a > 0 AND a IS NOT NULL AND b IS NULL;
+				ALTER TABLE p RENAME COLUMN a TO qty;`,
+			want: []string{"column qty", "column b", `INDEX p_b [b] WHERE "qty" > 0 AND "qty" NOT NULL AND "b" IS NULL`},
+		},
+		{
+			name: "names match without regard to case",
+			sql: `CREATE TABLE k (A INTEGER CHECK ("a" > 0), b INTEGER AS (a + 1));
+				ALTER TABLE k RENAME COLUMN A TO qty;`,
+			want: []string{"column qty", `column b AS "qty" + 1`, `CHECK [qty] "qty" > 0`},
+		},
+		{
+			name: "only ASCII letters fold",
+			sql: `CREATE TABLE u ("É" INTEGER, "é" INTEGER, g INTEGER AS ("é" + 1));
+				ALTER TABLE u RENAME COLUMN "É" TO qty;`,
+			want: []string{"column qty", "column é", `column g AS "é" + 1`},
+		},
+		{
+			name: "table-qualified reference",
+			sql: `CREATE TABLE q (a INTEGER, CHECK (q.a > 0));
+				ALTER TABLE q RENAME COLUMN a TO qty;`,
+			want: []string{"column qty", `CHECK [qty] "q"."qty" > 0`},
+		},
+		{
+			name: "function type and collation names are not columns",
+			sql: `CREATE TABLE f (upper TEXT, CHECK (upper(upper) <> CAST(upper AS TEXT) COLLATE NOCASE));
+				ALTER TABLE f RENAME COLUMN upper TO label;`,
+			want: []string{"column label", `CHECK [label] upper("label") != CAST("label" AS TEXT) COLLATE "NOCASE"`},
+		},
+		{
+			name: "other column's name left alone",
+			sql: `CREATE TABLE o (a INTEGER, b INTEGER CHECK (b > 0));
+				ALTER TABLE o RENAME COLUMN a TO qty;`,
+			want: []string{"column qty", "column b", `CHECK [b] "b" > 0`},
+		},
 	}
-
-	table := p.Schema().Tables[0]
-	colNames := make([]string, 0, len(table.Columns))
-	for _, c := range table.Columns {
-		colNames = append(colNames, c.Name)
-	}
-
-	wantCols := []string{"id", "display_name"}
-	if diff := cmp.Diff(wantCols, colNames); diff != "" {
-		t.Errorf("columns after RENAME COLUMN mismatch (-want +got):\n%s", diff)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			p := sqlite.New()
+			if err := p.Parse("test.sql", []byte(tt.sql)); err != nil {
+				t.Fatalf("Parse() error: %v", err)
+			}
+			table := p.Schema().Tables[0]
+			var got []string
+			for _, c := range table.Columns {
+				line := "column " + c.Name
+				if c.GeneratedExpr != "" {
+					line += " AS " + c.GeneratedExpr
+				}
+				got = append(got, line)
+			}
+			for _, c := range table.Constraints {
+				switch {
+				case c.Type == parser.Check:
+					got = append(got, strings.TrimSpace(fmt.Sprintf("CHECK %s", c.Name))+fmt.Sprintf(" %v %s", c.Columns, c.CheckExpression))
+				case c.Where != "":
+					got = append(got, fmt.Sprintf("%s %s %v WHERE %s", c.Type, c.Name, c.Columns, c.Where))
+				}
+			}
+			if diff := cmp.Diff(tt.want, got); diff != "" {
+				t.Errorf("schema after RENAME COLUMN mismatch (-want +got):\n%s", diff)
+			}
+		})
 	}
 }
 
