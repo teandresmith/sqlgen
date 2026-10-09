@@ -949,6 +949,49 @@ func TestSQLiteIntrospect_UnreadablePartialIndex(t *testing.T) {
 	}
 }
 
+// The columns come from PRAGMA table_xinfo, but the stored CREATE TABLE is
+// still read with the file parser, so DDL it cannot read fails both sources.
+func TestSQLiteIntrospect_UnreadableTable(t *testing.T) {
+	requireDatabases(t)
+	tests := []struct {
+		name       string
+		ddl        string
+		parseError string
+	}{
+		{
+			name:       "quoted type name",
+			ddl:        `CREATE TABLE t (id INTEGER PRIMARY KEY, f "my type")`,
+			parseError: `"my type" after column f is not a column`,
+		},
+		{
+			name:       "MATCH on a foreign key",
+			ddl:        `CREATE TABLE p (id INTEGER PRIMARY KEY); CREATE TABLE t (id INTEGER PRIMARY KEY, pid INTEGER REFERENCES p(id) MATCH SIMPLE)`,
+			parseError: `"MATCH" after column pid is not a column`,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			dbPath := applySQLite(t, tt.ddl)
+			intro := introspect.NewSQLiteIntrospector()
+			defer intro.Close() //nolint:errcheck // test cleanup
+			err := intro.Introspect(context.Background(), dbPath, &parser.Schema{}, introspect.IntrospectionOptions{})
+			if err == nil || !strings.Contains(err.Error(), "introspect sqlite table t:") || !strings.Contains(err.Error(), tt.parseError) {
+				t.Errorf("Introspect() error = %v, want the parse error for table t", err)
+			}
+			if _, ok := errors.AsType[*introspect.SchemaError](err); !ok {
+				t.Errorf("Introspect() error = %v, want a *introspect.SchemaError", err)
+			}
+
+			p := sqlite.New()
+			err = p.Parse("schema.sql", []byte(tt.ddl))
+			if err == nil || !strings.Contains(err.Error(), tt.parseError) {
+				t.Errorf("Parse() error = %v, want %q", err, tt.parseError)
+			}
+		})
+	}
+}
+
 func TestSQLiteIntrospect_VirtualTables(t *testing.T) {
 	requireDatabases(t)
 	ddl := `

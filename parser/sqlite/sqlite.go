@@ -212,6 +212,7 @@ func (p *Parser) parseCreateTable(stmt *rsql.CreateTableStatement, src []rune) e
 	// Parse columns.
 	var descKey string // the column whose PRIMARY KEY is declared DESC
 	coll := indexCollations{columns: make(map[string]string), explicit: make(map[int][]string)}
+	starts := columnStarts(stmt, src)
 	for i, col := range stmt.Columns {
 		if i > 0 && isPrimaryKeySortOrder(stmt.Columns[i-1], col, src) {
 			key := &table.Columns[len(table.Columns)-1]
@@ -225,6 +226,10 @@ func (p *Parser) parseCreateTable(stmt *rsql.CreateTableStatement, src []rune) e
 			}
 			coll.addColumn(key.Name, col.Constraints)
 			continue
+		}
+		if i > 0 && !starts[col.Name.NamePos.Offset] {
+			return fmt.Errorf("table %s: %s: %q after column %s is not a column: a quoted type name or a MATCH clause cannot be read",
+				tableName, col.Name.NamePos, col.Name.Name, table.Columns[len(table.Columns)-1].Name)
 		}
 		c, constraints := parseColumn(col)
 		table.Columns = append(table.Columns, c)
@@ -280,6 +285,34 @@ func isPrimaryKeySortOrder(prev, col *rsql.ColumnDefinition, src []rune) bool {
 		return false
 	}
 	return onlyBlanksAndComments(string(src[from:to]))
+}
+
+// columnStarts returns the offsets in src of the tokens that follow the
+// opening paren or a comma of stmt's column list. rqlite/sql does not require
+// the comma between column definitions, so a token it cannot read as part of
+// one column, such as a quoted type name or MATCH, starts another; a column
+// whose name is not at one of these offsets is such a token.
+func columnStarts(stmt *rsql.CreateTableStatement, src []rune) map[int]bool {
+	starts := make(map[int]bool)
+	from, to := stmt.Lparen.Offset, stmt.Rparen.Offset
+	if from > to || to > len(src) {
+		return starts
+	}
+	s := rsql.NewScanner(strings.NewReader(string(src[from:to])))
+	afterDelim := false
+	for {
+		pos, tok, _ := s.Scan()
+		if tok == rsql.EOF {
+			return starts
+		}
+		if tok == rsql.COMMENT {
+			continue
+		}
+		if afterDelim {
+			starts[from+pos.Offset] = true
+		}
+		afterDelim = tok == rsql.LP || tok == rsql.COMMA
+	}
 }
 
 func onlyBlanksAndComments(s string) bool {

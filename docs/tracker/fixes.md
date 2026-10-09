@@ -222,78 +222,6 @@ The introspector names it from current names
 
 **Resolution notes.** _Filled in by `/fix resolve`._
 
-### FIX-279
-
-- **Status:** Open
-- **Severity:** tracked
-- **Origin:** phase 4, `parser/sqlite`
-- **Surfaced by:** backlog promotion at `/close-phase 30` (2026-10-07); first recorded by 30.6 (2026-10-05)
-- **Vetted:** corrected at `d51ace1b` (2026-10-07)
-
-**Issue.** **The SQLite parser adds a phantom column for a quoted type name
-and for `REFERENCES … MATCH SIMPLE`, with no error**, so the entity struct
-gets a field for a column that does not exist. Measured evidence, quoted from
-the two backlog lines merged here:
-- "rqlite/sql reads a quoted type name as a second column, with no error: `f "my type"` parses as columns `f` (blob) and `my type` (blob), while SQLite has one column `f` of type `my type` — evidence: parser probe vs `PRAGMA table_xinfo`"
-- "`REFERENCES p(id) MATCH SIMPLE` makes rqlite/sql add a phantom column `MATCH` (blob) with no error; the introspector reads the right columns — evidence: `/verify 30.6` reviewer probe"
-
-**Root cause.** rqlite/sql's `parseColumnDefinitions` treats the comma
-between column definitions as optional (`if p.peek() == COMMA { p.scan() }`),
-so any identifier-like token left over after a column definition starts a new
-one: a quoted type name is not an `IDENT`, so `parseColumnDefinition` does not
-read it as a type, and `MATCH` is left after the foreign-key constraint.
-`parseCreateTable` (`parser/sqlite/sqlite.go:186-247`, column loop at 204-221) appends every
-`stmt.Columns` entry as a column; only the `PRIMARY KEY ASC|DESC` case of
-this rqlite behavior is caught (`isPrimaryKeySortOrder`, `sqlite.go:255-272`).
-The introspector reads columns from `PRAGMA table_xinfo` but also parses the
-stored `CREATE TABLE` with the file parser (`parseStoredTable`,
-`parser/introspect/sqlite.go:161`).
-
-**Suggested fix.**
-- In `parseCreateTable`, generalize the `isPrimaryKeySortOrder` check: a
-  column definition whose name is not preceded by `(` or `,` (only blanks and
-  comments between, via `onlyBlanksAndComments` over `src` up to
-  `col.Name.NamePos`) is not a column. Return a parse error for it (PRD §6.3:
-  DDL the file parser cannot read is an error on both sources), or, for the
-  quoted-type case only, fold it back into the previous column's type if the
-  vet finds that safe.
-- Add both shapes to PRD §6.3's "SQLite DDL the file parser cannot read" list
-  if the error route is taken.
-- Tests: `parser/sqlite/sqlite_test.go` cases for `f "my type"` and
-  `REFERENCES p(id) MATCH SIMPLE`; a SQLite introspection case showing the
-  same error (or the same columns) under `database`.
-- Vet notes on scope:
-  - there are four phantom shapes at HEAD, not two, with one root cause: `f "my type"`, f `my type` (backquoted), `f INT "x"` (a quoted word after a type) and `REFERENCES p(id) MATCH SIMPLE`;
-  - related shapes already fail on both sources with a parse error, so they are not phantoms: `f 'text'`, `f [my type]`, `MATCH FULL ON DELETE CASCADE` and table-level `FOREIGN KEY … MATCH SIMPLE`. PRD §6.3's list leaves them all out;
-  - refined root cause: rqlite's `parseColumnDefinition` reads a type only when the next token is `IDENT`/`NULL`. A `QIDENT`/`BIDENT` token is skipped as a type, and `parseColumnDefinitions` then accepts it as the next column name because the comma is optional.
-- Changed from the original (mechanism only; the entry left error vs fold to the vet):
-  - the suggested `onlyBlanksAndComments` check over `src` "up to col.Name.NamePos" has no start offset, because rqlite's AST does not record where the previous column definition ends. A new `columnStarts(stmt, src)` instead runs rqlite's exported `rsql.NewScanner` over `src[Lparen:Rparen]`, skips COMMENT tokens, and records the offsets of tokens that follow `(` or `,`. In `parseCreateTable`, after the `isPrimaryKeySortOrder` fold, a column at i>0 whose `NamePos.Offset` is not a column start returns `table t: 1:43: "my type" after column f is not a column: a quoted type name or a MATCH clause cannot be read`;
-  - the error route was taken, not folding: `f INT "x"` introspects as type `int "x"`, so folding would have to rebuild the quoted source text exactly; the phantom's constraints (`NOT NULL`, …) would need moving back; and MATCH folding would cover only `MATCH SIMPLE`. The error route follows PRD §6.1/§6.3 ("DDL the file parser cannot read is an error"). Its cost: the `database` source, which today reads these tables' columns correctly from PRAGMA, now fails with the same error, as §6.3 requires;
-  - PRD §6.3 "SQLite DDL the file parser cannot read" adds "a `MATCH` clause on a foreign key (`REFERENCES p(id) MATCH SIMPLE`), a quoted type name (`f "my type"`, `f 'text'`, `f [text]`)", and `docs/design/INTROSPECTION.md`'s SQLite test table gains a `TestSQLiteIntrospect_UnreadableTable` row.
-- Prototype results, run at `d51ace1b` on 2026-10-07:
-  - Reproduction: a throwaway probe (`parser/introspect/zz_probe_phantom_test.go`, since deleted), `cd parser && go test -count=1 -run TestZZProbePhantom -v ./introspect/`:
-    - `f "my type"`: files `["id:integer" "f:blob" "my type:blob"]`, database `["id:integer" "f:blob"]`;
-    - `f "my type" NOT NULL, g TEXT`: files `[… "f:blob" "my type:blob" "g:text"]`, database `[… "f:blob" "g:text"]`;
-    - f `my type`: files `[… "f:blob" "my type:blob"]`, database `[… "f:blob"]`;
-    - `f INT "x"`: files `[… "f:int" "x:blob"]`, database `[… "f:int \"x\""]`;
-    - `pid INTEGER REFERENCES p(id) MATCH SIMPLE`: files `[… "pid:integer" "MATCH:blob"]`, database `[… "pid:integer"]`;
-    - controls agree on both sources: `PRIMARY KEY DESC`, `a TEXT b TEXT`, `DEFERRABLE INITIALLY DEFERRED`, `COLLATE NOCASE`. `ALTER TABLE t ADD COLUMN f "my type"` and `… MATCH SIMPLE` already fail ("expected semicolon or EOF").
-  - Tests: `TestCreateTable_TextAfterColumnIsNotAColumn` (`parser/sqlite`, 4 error cases plus a must-parse case with comma-bearing comments between columns); `TestSQLiteIntrospect_UnreadableTable` (both shapes are a `*SchemaError` naming table t under `database`, and the same parse error under `files`).
-  - Gates: `cd parser && go test -race -count=1 ./...` → ok; `cd cmd/sqlgen && go test -count=1 ./...` → ok (incl. E2E goldens); `golangci-lint run ./sqlite/... ./introspect/...` → 0 issues; `gofumpt -l` → clean.
-  - Fail-first:
-    - check disabled → `TestCreateTable_TextAfterColumnIsNotAColumn` fails: `Parse("CREATE TABLE t (id INTEGER PRIMARY KEY, f \"my type\");") error = <nil>, want it to contain "table t: 1:43: \"my type\" after column f is not a column"` (and the backquoted, `INT "x"` and MATCH cases). `TestSQLiteIntrospect_UnreadableTable` fails: `Introspect() error = <nil>, want the parse error for table t`;
-    - the existing suite without the fix → passes.
-  - Golden churn: none.
-  - Patch: `.claude/prototypes/FIX-279.patch` (5 files, +138/-1).
-
-
-**References.**
-- PRD §6.1, §6.3 ("SQLite DDL the file parser cannot read").
-- `isPrimaryKeySortOrder` (`parser/sqlite/sqlite.go:255`), the existing
-  pattern; backlog line on rqlite upstream gaps.
-
-**Resolution notes.** _Filled in by `/fix resolve`._
-
 ### FIX-280
 
 - **Status:** Open
@@ -985,6 +913,78 @@ source (PRD §6.1).
 ## Resolved
 
 <!-- fixes:resolved:begin -->
+### FIX-279
+
+- **Status:** Resolved
+- **Severity:** tracked
+- **Origin:** phase 4, `parser/sqlite`
+- **Surfaced by:** backlog promotion at `/close-phase 30` (2026-10-07); first recorded by 30.6 (2026-10-05)
+- **Vetted:** corrected at `d51ace1b` (2026-10-07)
+
+**Issue.** **The SQLite parser adds a phantom column for a quoted type name
+and for `REFERENCES … MATCH SIMPLE`, with no error**, so the entity struct
+gets a field for a column that does not exist. Measured evidence, quoted from
+the two backlog lines merged here:
+- "rqlite/sql reads a quoted type name as a second column, with no error: `f "my type"` parses as columns `f` (blob) and `my type` (blob), while SQLite has one column `f` of type `my type` — evidence: parser probe vs `PRAGMA table_xinfo`"
+- "`REFERENCES p(id) MATCH SIMPLE` makes rqlite/sql add a phantom column `MATCH` (blob) with no error; the introspector reads the right columns — evidence: `/verify 30.6` reviewer probe"
+
+**Root cause.** rqlite/sql's `parseColumnDefinitions` treats the comma
+between column definitions as optional (`if p.peek() == COMMA { p.scan() }`),
+so any identifier-like token left over after a column definition starts a new
+one: a quoted type name is not an `IDENT`, so `parseColumnDefinition` does not
+read it as a type, and `MATCH` is left after the foreign-key constraint.
+`parseCreateTable` (`parser/sqlite/sqlite.go:197-264`, column loop at 216-238) appends every
+`stmt.Columns` entry as a column; only the `PRIMARY KEY ASC|DESC` case of
+this rqlite behavior is caught (`isPrimaryKeySortOrder`, `sqlite.go:271-288`).
+The introspector reads columns from `PRAGMA table_xinfo` but also parses the
+stored `CREATE TABLE` with the file parser (`parseStoredTable`,
+`parser/introspect/sqlite.go:161`).
+
+**Suggested fix.**
+- In `parseCreateTable`, generalize the `isPrimaryKeySortOrder` check: a
+  column definition whose name is not preceded by `(` or `,` (only blanks and
+  comments between, via `onlyBlanksAndComments` over `src` up to
+  `col.Name.NamePos`) is not a column. Return a parse error for it (PRD §6.3:
+  DDL the file parser cannot read is an error on both sources), or, for the
+  quoted-type case only, fold it back into the previous column's type if the
+  vet finds that safe.
+- Add both shapes to PRD §6.3's "SQLite DDL the file parser cannot read" list
+  if the error route is taken.
+- Tests: `parser/sqlite/sqlite_test.go` cases for `f "my type"` and
+  `REFERENCES p(id) MATCH SIMPLE`; a SQLite introspection case showing the
+  same error (or the same columns) under `database`.
+- Vet notes on scope:
+  - there are four phantom shapes at HEAD, not two, with one root cause: `f "my type"`, f `my type` (backquoted), `f INT "x"` (a quoted word after a type) and `REFERENCES p(id) MATCH SIMPLE`;
+  - related shapes already fail on both sources with a parse error, so they are not phantoms: `f 'text'`, `f [my type]`, `MATCH FULL ON DELETE CASCADE` and table-level `FOREIGN KEY … MATCH SIMPLE`. PRD §6.3's list left them all out at vet time;
+  - refined root cause: rqlite's `parseColumnDefinition` reads a type only when the next token is `IDENT`/`NULL`. A `QIDENT`/`BIDENT` token is skipped as a type, and `parseColumnDefinitions` then accepts it as the next column name because the comma is optional.
+- Changed from the original (mechanism only; the entry left error vs fold to the vet):
+  - the suggested `onlyBlanksAndComments` check over `src` "up to col.Name.NamePos" has no start offset, because rqlite's AST does not record where the previous column definition ends. A new `columnStarts(stmt, src)` instead runs rqlite's exported `rsql.NewScanner` over `src[Lparen:Rparen]`, skips COMMENT tokens, and records the offsets of tokens that follow `(` or `,`. In `parseCreateTable`, after the `isPrimaryKeySortOrder` fold, a column at i>0 whose `NamePos.Offset` is not a column start returns `table t: 1:43: "my type" after column f is not a column: a quoted type name or a MATCH clause cannot be read`;
+  - the error route was taken, not folding: `f INT "x"` introspects as type `int "x"`, so folding would have to rebuild the quoted source text exactly; the phantom's constraints (`NOT NULL`, …) would need moving back; and MATCH folding would cover only `MATCH SIMPLE`. The error route follows PRD §6.1/§6.3 ("DDL the file parser cannot read is an error"). Its cost: the `database` source, which today reads these tables' columns correctly from PRAGMA, now fails with the same error, as §6.3 requires;
+  - PRD §6.3 "SQLite DDL the file parser cannot read" adds "a `MATCH` clause on a foreign key (`REFERENCES p(id) MATCH SIMPLE`), a quoted type name (`f "my type"`, `f 'text'`, `f [text]`)", and `docs/design/INTROSPECTION.md`'s SQLite test table gains a `TestSQLiteIntrospect_UnreadableTable` row.
+- Prototype results, run at `d51ace1b` on 2026-10-07:
+  - Reproduction: a throwaway probe (`parser/introspect/zz_probe_phantom_test.go`, since deleted), `cd parser && go test -count=1 -run TestZZProbePhantom -v ./introspect/`:
+    - `f "my type"`: files `["id:integer" "f:blob" "my type:blob"]`, database `["id:integer" "f:blob"]`;
+    - `f "my type" NOT NULL, g TEXT`: files `[… "f:blob" "my type:blob" "g:text"]`, database `[… "f:blob" "g:text"]`;
+    - f `my type`: files `[… "f:blob" "my type:blob"]`, database `[… "f:blob"]`;
+    - `f INT "x"`: files `[… "f:int" "x:blob"]`, database `[… "f:int \"x\""]`;
+    - `pid INTEGER REFERENCES p(id) MATCH SIMPLE`: files `[… "pid:integer" "MATCH:blob"]`, database `[… "pid:integer"]`;
+    - controls agree on both sources: `PRIMARY KEY DESC`, `a TEXT b TEXT`, `DEFERRABLE INITIALLY DEFERRED`, `COLLATE NOCASE`. `ALTER TABLE t ADD COLUMN f "my type"` and `… MATCH SIMPLE` already fail ("expected semicolon or EOF").
+  - Tests: `TestCreateTable_TextAfterColumnIsNotAColumn` (`parser/sqlite`, 4 error cases plus a must-parse case with comma-bearing comments between columns); `TestSQLiteIntrospect_UnreadableTable` (both shapes are a `*SchemaError` naming table t under `database`, and the same parse error under `files`).
+  - Gates: `cd parser && go test -race -count=1 ./...` → ok; `cd cmd/sqlgen && go test -count=1 ./...` → ok (incl. E2E goldens); `golangci-lint run ./sqlite/... ./introspect/...` → 0 issues; `gofumpt -l` → clean.
+  - Fail-first:
+    - check disabled → `TestCreateTable_TextAfterColumnIsNotAColumn` fails: `Parse("CREATE TABLE t (id INTEGER PRIMARY KEY, f \"my type\");") error = <nil>, want it to contain "table t: 1:43: \"my type\" after column f is not a column"` (and the backquoted, `INT "x"` and MATCH cases). `TestSQLiteIntrospect_UnreadableTable` fails: `Introspect() error = <nil>, want the parse error for table t`;
+    - the existing suite without the fix → passes.
+  - Golden churn: none.
+  - Patch: `.claude/prototypes/FIX-279.patch` (5 files, +138/-1).
+
+
+**References.**
+- PRD §6.1, §6.3 ("SQLite DDL the file parser cannot read").
+- `isPrimaryKeySortOrder` (`parser/sqlite/sqlite.go:271`), the existing
+  pattern; backlog line on rqlite upstream gaps.
+
+**Resolution notes.** Resolved 2026-10-08 from the vetted prototype (applied cleanly with `git apply --3way` at `b2a78c5d`; the target files had moved since `d51ace1b`, so not fresh, but no hunk conflicted). `parseCreateTable` (`parser/sqlite/sqlite.go`) now builds `columnStarts(stmt, src)`, the offsets of the tokens that follow `(` or `,` in the column list (rqlite's own scanner, comments skipped), and after the `isPrimaryKeySortOrder` fold returns `table t: 1:43: "my type" after column f is not a column: a quoted type name or a MATCH clause cannot be read` for a column at i>0 whose name is not at one of them. This covers all four phantom shapes (`f "my type"`, f `my type`, `f INT "x"`, `REFERENCES p(id) MATCH SIMPLE`); the `database` source fails with the same error as a `*SchemaError` naming the table, per PRD §6.3. PRD §6.3's unreadable-DDL list gains the `MATCH` clause and quoted type names; `docs/design/INTROSPECTION.md` gains the `TestSQLiteIntrospect_UnreadableTable` row. Tests: `TestCreateTable_TextAfterColumnIsNotAColumn` (`parser/sqlite`), `TestSQLiteIntrospect_UnreadableTable` (`parser/introspect`). Fail-first: with the check disabled both new tests fail (`Parse(...) error = <nil>, want it to contain "table t: 1:43: \"my type\" after column f is not a column"`; `Introspect() error = <nil>, want the parse error for table t`). Gates: `make check` ok; `make check-examples` ok; golden churn none, matching the vet. `/verify FIX-279`: PRD 3/3, tests 2/2, reviewer agreed and matched the prototype line for line; it refreshed the stale `sqlite.go` line refs in this entry.
+
 ### FIX-285
 
 - **Status:** Resolved

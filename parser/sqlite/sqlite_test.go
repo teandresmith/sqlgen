@@ -297,6 +297,66 @@ func TestPrimaryKeySortOrder(t *testing.T) {
 	}
 }
 
+// rqlite/sql reads a token it cannot place in a column definition as the
+// name of a new one, so these would gain a column the table does not have.
+func TestCreateTable_TextAfterColumnIsNotAColumn(t *testing.T) {
+	tests := []struct {
+		name     string
+		sql      string
+		wantErr  string
+		wantCols []string
+	}{
+		{
+			name:    "double-quoted type name",
+			sql:     `CREATE TABLE t (id INTEGER PRIMARY KEY, f "my type");`,
+			wantErr: `table t: 1:43: "my type" after column f is not a column`,
+		},
+		{
+			name:    "backquoted type name",
+			sql:     "CREATE TABLE t (id INTEGER PRIMARY KEY, f `my type` NOT NULL, g TEXT);",
+			wantErr: `table t: 1:43: "my type" after column f is not a column`,
+		},
+		{
+			name:    "quoted word after a type name",
+			sql:     `CREATE TABLE t (id INTEGER PRIMARY KEY, f INT "x");`,
+			wantErr: `table t: 1:47: "x" after column f is not a column`,
+		},
+		{
+			name:    "MATCH on a column foreign key",
+			sql:     `CREATE TABLE t (id INTEGER PRIMARY KEY, pid INTEGER REFERENCES p(id) MATCH SIMPLE);`,
+			wantErr: `table t: 1:70: "MATCH" after column pid is not a column`,
+		},
+		{
+			name:     "comments holding commas between columns",
+			sql:      "CREATE TABLE t (id INTEGER PRIMARY KEY, -- a, b\n /* c, d */ v TEXT);",
+			wantCols: []string{"id", "v"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			p := sqlite.New()
+			err := p.Parse("test.sql", []byte(tt.sql))
+			if tt.wantErr != "" {
+				if err == nil || !strings.Contains(err.Error(), tt.wantErr) {
+					t.Fatalf("Parse(%q) error = %v, want it to contain %q", tt.sql, err, tt.wantErr)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("Parse(%q) unexpected error: %v", tt.sql, err)
+			}
+			var got []string
+			for _, c := range p.Schema().Tables[0].Columns {
+				got = append(got, c.Name)
+			}
+			if diff := cmp.Diff(tt.wantCols, got); diff != "" {
+				t.Errorf("Parse(%q) columns mismatch (-want +got):\n%s", tt.sql, diff)
+			}
+		})
+	}
+}
+
 func TestIntegerPrimaryKeyWithoutRowID(t *testing.T) {
 	sql := `CREATE TABLE settings (
 		key TEXT PRIMARY KEY,
