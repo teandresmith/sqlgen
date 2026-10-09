@@ -16,7 +16,7 @@ import (
 // It uses rqlite/sql (pure Go) to parse SQLite SQL statements.
 type Parser struct {
 	schema     *parser.Schema
-	tableIndex map[string]int // table name → index in schema.Tables
+	tableIndex map[string]int // foldASCII(table name) → index in schema.Tables
 }
 
 // New creates a new SQLite parser.
@@ -33,7 +33,7 @@ func (p *Parser) Seed(base *parser.Schema) {
 	p.schema = base
 	p.tableIndex = make(map[string]int, len(base.Tables))
 	for i, t := range base.Tables {
-		p.tableIndex[t.Name] = i
+		p.tableIndex[foldASCII(t.Name)] = i
 	}
 }
 
@@ -99,12 +99,10 @@ func (p *Parser) parseCreateIndex(stmt *rsql.CreateIndexStatement) error {
 	if stmt == nil || stmt.Table == nil {
 		return nil
 	}
-	tableName := rsql.IdentName(stmt.Table)
-	idx, ok := p.tableIndex[tableName]
+	table, ok := p.lookupTable(rsql.IdentName(stmt.Table))
 	if !ok {
 		return nil
 	}
-	table := &p.schema.Tables[idx]
 	cols, ok := indexedColumnNames(stmt.Columns)
 	if !ok {
 		return nil
@@ -175,15 +173,15 @@ func exprString(e rsql.Expr, what string) (s string, err error) {
 
 func (p *Parser) parseDropTable(stmt *rsql.DropTableStatement) error {
 	name := rsql.IdentName(stmt.Name)
-	idx, ok := p.tableIndex[name]
+	idx, ok := p.tableIndex[foldASCII(name)]
 	if !ok {
 		return nil
 	}
-	if err := parser.CheckTableDropRefs(p.schema.Tables, "", name); err != nil {
+	if err := parser.CheckTableDropRefs(p.schema.Tables, "", p.schema.Tables[idx].Name); err != nil {
 		return fmt.Errorf("drop table %s: %w", name, err)
 	}
 	p.schema.Tables = slices.Delete(p.schema.Tables, idx, idx+1)
-	delete(p.tableIndex, name)
+	delete(p.tableIndex, foldASCII(name))
 	for k, v := range p.tableIndex {
 		if v > idx {
 			p.tableIndex[k] = v - 1
@@ -196,7 +194,7 @@ func (p *Parser) parseDropTable(stmt *rsql.DropTableStatement) error {
 
 func (p *Parser) parseCreateTable(stmt *rsql.CreateTableStatement, src []rune) error {
 	tableName := rsql.IdentName(stmt.Name)
-	if _, exists := p.tableIndex[tableName]; exists {
+	if _, exists := p.tableIndex[foldASCII(tableName)]; exists {
 		if stmt.IfNotExists.IsValid() {
 			return nil
 		}
@@ -257,7 +255,7 @@ func (p *Parser) parseCreateTable(stmt *rsql.CreateTableStatement, src []rune) e
 	}
 	dropDuplicateUniques(&table, alias, coll)
 
-	p.tableIndex[tableName] = len(p.schema.Tables)
+	p.tableIndex[foldASCII(tableName)] = len(p.schema.Tables)
 	p.schema.Tables = append(p.schema.Tables, table)
 
 	return nil
@@ -710,7 +708,7 @@ func (r *columnRenamer) Visit(n rsql.Node) (rsql.Visitor, rsql.Node, error) {
 			return nil, nil, fmt.Errorf("walking %s: %w", n, err)
 		}
 	case *rsql.Ident:
-		if !r.skip[n] && equalFoldASCII(n.Name, r.oldName) {
+		if !r.skip[n] && foldASCII(n.Name) == foldASCII(r.oldName) {
 			n.Name = r.newName
 			r.renamed = true
 		}
@@ -721,50 +719,41 @@ func (r *columnRenamer) Visit(n rsql.Node) (rsql.Visitor, rsql.Node, error) {
 // VisitEnd returns n unchanged.
 func (r *columnRenamer) VisitEnd(n rsql.Node) (rsql.Node, error) { return n, nil }
 
-// equalFoldASCII reports whether a and b are equal when ASCII letters are
-// folded to lower case. SQLite folds only ASCII in identifiers, so "É" and "é"
-// name different columns.
-func equalFoldASCII(a, b string) bool {
-	if len(a) != len(b) {
-		return false
-	}
-	for i := range len(a) {
-		x, y := a[i], b[i]
-		if 'A' <= x && x <= 'Z' {
-			x += 'a' - 'A'
-		}
-		if 'A' <= y && y <= 'Z' {
-			y += 'a' - 'A'
-		}
-		if x != y {
-			return false
-		}
-	}
-	return true
-}
-
 func (p *Parser) renameTable(oldName, newName string) error {
-	idx, ok := p.tableIndex[oldName]
+	idx, ok := p.tableIndex[foldASCII(oldName)]
 	if !ok {
 		return fmt.Errorf("table %s not found", oldName)
 	}
 	// Keys referencing the table follow it to its new name, as they do in the
 	// database; left on the old name, relationship detection drops the edge.
-	parser.RenameTableReferences(p.schema.Tables, p.schema.Tables[idx].Schema, oldName, newName)
-	p.schema.Tables[idx].Name = newName
-	delete(p.tableIndex, oldName)
-	p.tableIndex[newName] = idx
+	table := &p.schema.Tables[idx]
+	parser.RenameTableReferences(p.schema.Tables, table.Schema, table.Name, newName)
+	table.Name = newName
+	delete(p.tableIndex, foldASCII(oldName))
+	p.tableIndex[foldASCII(newName)] = idx
 	return nil
 }
 
 // --- Helpers ---
 
 func (p *Parser) lookupTable(name string) (*parser.Table, bool) {
-	idx, ok := p.tableIndex[name]
+	idx, ok := p.tableIndex[foldASCII(name)]
 	if !ok {
 		return nil, false
 	}
 	return &p.schema.Tables[idx], true
+}
+
+// foldASCII lowers the ASCII letters in an identifier, as SQLite does when it
+// matches names: Users and users are one table, while Äb and äb are two.
+func foldASCII(name string) string {
+	b := []byte(name)
+	for i, c := range b {
+		if 'A' <= c && c <= 'Z' {
+			b[i] = c + 'a' - 'A'
+		}
+	}
+	return string(b)
 }
 
 func identNames(idents []*rsql.Ident) []string {

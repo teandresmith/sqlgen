@@ -1461,6 +1461,33 @@ func TestSQLiteIntrospect_SameColumnForeignKeys(t *testing.T) {
 	}
 }
 
+// SQLite matches table names case-insensitively, so a statement may name a
+// table in another case than its CREATE TABLE did.
+func TestSQLiteIntrospect_TableNameCase(t *testing.T) {
+	requireDatabases(t)
+	parsed, introspected := sqliteSchemas(t, `
+		CREATE TABLE Users (id INTEGER PRIMARY KEY, a TEXT);
+		CREATE UNIQUE INDEX ux2 ON users (a);
+		ALTER TABLE USERS ADD COLUMN b TEXT;
+		CREATE INDEX users_b ON uSeRs (b);
+		CREATE TABLE Old (id INTEGER PRIMARY KEY);
+		CREATE TABLE posts (id INTEGER PRIMARY KEY, old_id INTEGER REFERENCES Old(id));
+		ALTER TABLE old RENAME TO Renamed;
+		CREATE TABLE Gone (id INTEGER PRIMARY KEY);
+		DROP TABLE gone
+	`)
+
+	if diff := cmp.Diff([]string{"Renamed", "Users", "posts"}, slices.Sorted(slices.Values(tableNames(introspected)))); diff != "" {
+		t.Errorf("introspected tables mismatch (-want +got):\n%s", diff)
+	}
+	for _, name := range []string{"ux2", "users_b"} {
+		if findConstraintByName(findTable(t, introspected, "Users").Constraints, name) == nil {
+			t.Errorf("Users: introspected index %s missing", name)
+		}
+	}
+	assertSchemaParity(t, "sqlite", parsed, introspected)
+}
+
 // --- Filtering tests ---
 
 func TestPostgresSchemaFiltering(t *testing.T) {

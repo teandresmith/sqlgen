@@ -152,65 +152,6 @@ introspector reaches the same sites through `parseStoredTable`
 
 **Resolution notes.** _Filled in by `/fix resolve`._
 
-### FIX-282
-
-- **Status:** Open
-- **Severity:** tracked
-- **Origin:** phase 4, `parser/sqlite`
-- **Surfaced by:** backlog promotion at `/close-phase 30` (2026-10-07); first recorded by FIX-269 (2026-10-07)
-- **Vetted:** corrected at `cb04d107` (2026-10-09; re-vetted, patch carried forward)
-
-**Issue.** **SQLite `CREATE INDEX … ON <table>` looks the table up
-case-sensitively**, so `CREATE TABLE Users …; CREATE UNIQUE INDEX ux2 ON users
-(a) …` silently drops the index under `files` while introspection keeps it.
-Measured evidence from the backlog line: "assertSchemaParity diff `-
-Constraints: nil` / `+ {Name: "ux2", Type: UNIQUE, …}`".
-
-**Root cause.** `parseCreateIndex` (`parser/sqlite/sqlite.go:98-106`, lookup at
-`:103`) does `p.tableIndex[tableName]` and returns nil when the exact spelling is
-absent. `tableIndex` is keyed by the name as declared (`sqlite.go:36`, `:260`), but
-SQLite identifiers are case-insensitive. The same exact-match lookup backs
-`lookupTable` (`:762`, lookup at `:763`, used by ALTER TABLE), `parseDropTable` (`:176`, lookup at `:178`), the
-duplicate-table check (`:199`) and `renameTable` (`:746`, lookup at `:747`). Line refs at `cb04d107`.
-
-**Suggested fix.**
-- Make table lookup case-insensitive in the SQLite parser (key `tableIndex`
-  by `strings.ToLower`, or one lookup helper used by every site above), keeping
-  the declared spelling in `Table.Name`.
-- Vet: confirm the other sites share the root cause and fix site (scope cap);
-  a silent skip on an unknown table in `parseCreateIndex` may also deserve an
-  error.
-- Tests: an `assertSchemaParity` SQLite case with the mixed-case index above,
-  plus parser cases for `ALTER TABLE users …` and `DROP TABLE users` on a
-  table declared `Users`.
-- Vet notes on scope: measured at HEAD, ALTER TABLE ADD/DROP/RENAME COLUMN and RENAME TO stop with an error (`table users not found`). The rest fail silently: DROP TABLE does nothing; a duplicate `CREATE TABLE users` after `Users` is accepted and leaves two tables; `IF NOT EXISTS` adds a second table; CREATE INDEX drops the index.
-- Changed from the original:
-  - the `strings.ToLower` key is wrong: SQLite folds ASCII letters only (`"Äb"` and `"äb"` are two tables), so `ToLower` would raise a false `table äb already exists`. A new helper `tableKey(name)` folds ASCII only, and every `tableIndex` read and write goes through it: Seed, the CREATE TABLE store and duplicate check, CREATE INDEX (now via `lookupTable`), DROP TABLE, `renameTable` and `lookupTable`. `Table.Name` keeps the CREATE TABLE spelling;
-  - a case-insensitive lookup alone is not enough. DROP and RENAME TO pass the table name to the shared FK helpers, which compare exactly; given the statement's spelling they miss keys that use the declared spelling (a renamed table's FK stays `->Users`, and dropping a referenced table succeeds without the error). `parseDropTable` now passes the stored name to `CheckTableDropRefs`, and `renameTable` passes `table.Name` to `RenameTableReferences`;
-  - the vet question ("should an unknown table in `parseCreateIndex` be an error?") has a different root cause and is a cross-dialect decision (the PG parser skips on purpose, `//nolint:nilerr`), so it moves to the backlog.
-- Re-vet at `cb04d107` on 2026-10-09: the `d51ace1b` patch no longer applied because `parseCreateIndex` now calls `indexedColumnNames(stmt.Columns)` (the expression-index skip) right after the `table := &p.schema.Tables[idx]` line the patch removed. Rebuilt by hand: the lookup goes through `lookupTable` and the `indexedColumnNames` block stays; every other hunk applied with `--3way`. FIX-291's `exprString`, FIX-279's `columnStarts` and FIX-277's `renameColumnInExpressions` touch no table-name lookup. RENAME COLUMN already passes the stored `table.Name` to `RenameColumnReferences`. Reproduction, tests, gates, fail-first and churn below re-measured at `cb04d107` with identical results. `/fix-implement` may share one ASCII-fold helper between `tableKey` and FIX-277's `equalFoldASCII`.
-- Prototype results, run at `cb04d107` on 2026-10-09 (first run at `d51ace1b` on 2026-10-07):
-  - Reproduction: a throwaway probe (`parser/introspect/zz_probe_fix282_test.go`, since deleted), `cd parser && go test -short -count=1 -run TestZZProbe -v ./introspect/`:
-    - `assertSchemaParity` on `CREATE TABLE Users (id INTEGER PRIMARY KEY, a TEXT); CREATE UNIQUE INDEX ux2 ON users (a)` fails: `+ {Name: "ux2", Type: s"UNIQUE", Columns: []string{"a"}, Method: "btree"}` and `- Unique: false / + Unique: true`;
-    - against real SQLite: `alter add` → SQLite ok, parser `table users not found`; `drop table` → SQLite `[]`, parser `[Users]`; `dup create` → SQLite `table users already exists`, parser ok with `[Users users]`; `rename table` → SQLite `[Accounts]`, parser `table users not found`; `"Äb"` and `"äb"` → SQLite accepts both.
-  - Tests: `TestTableNameCase` (`parser/sqlite`, 10 cases: CREATE INDEX, ADD/DROP/RENAME COLUMN, RENAME TO with FK follow-through, DROP TABLE, DROP of a referenced table, duplicate CREATE, IF NOT EXISTS, non-ASCII names keep their case) and `TestSQLiteIntrospect_TableNameCase` (mixed-case CREATE INDEX, ALTER, RENAME with an FK, DROP; `assertSchemaParity`).
-  - Gates: `cd parser && go test -race -count=1 ./...` → ok; `golangci-lint run ./sqlite/... ./introspect/...` → 0 issues; `gofumpt -l` → clean; `TestE2EGoldenFiles` → ok.
-  - Fail-first:
-    - `tableKey` returns the name unchanged → `TestTableNameCase` fails 9 of 10 (e.g. "table USERS not found", "Parse() error = <nil>, want \"table users already exists\""), and `TestSQLiteIntrospect_TableNameCase` fails;
-    - `renameTable` given `oldName` → `RENAME_TO_carries_the_foreign_keys` fails: `- "posts(id, user_id) ->Accounts"` / `+ "posts(id, user_id) ->Users"`;
-    - `parseDropTable` given the statement's name → `DROP_TABLE_referenced_by_a_foreign_key` fails: `want "drop table users: cannot drop table Users"`;
-    - `tableKey` as `strings.ToLower` → `non-ASCII_letters_keep_their_case` fails: `table äb already exists`;
-    - the existing suite without the fix → passes.
-  - Golden churn: none.
-  - Patch: `.claude/prototypes/FIX-282.patch` (3 files, +162/-16).
-
-
-**References.**
-- PRD §6.1, §5.2.
-- FIX-269 (surfaced while adding the partial-index parity cases).
-
-**Resolution notes.** _Filled in by `/fix resolve`._
-
 ### FIX-284
 
 - **Status:** Open
@@ -355,6 +296,66 @@ source (PRD §6.1).
 ## Resolved
 
 <!-- fixes:resolved:begin -->
+
+### FIX-282
+
+- **Status:** Resolved
+- **Severity:** tracked
+- **Origin:** phase 4, `parser/sqlite`
+- **Surfaced by:** backlog promotion at `/close-phase 30` (2026-10-07); first recorded by FIX-269 (2026-10-07)
+- **Vetted:** corrected at `cb04d107` (2026-10-09; re-vetted, patch carried forward)
+
+**Issue.** **SQLite `CREATE INDEX … ON <table>` looks the table up
+case-sensitively**, so `CREATE TABLE Users …; CREATE UNIQUE INDEX ux2 ON users
+(a) …` silently drops the index under `files` while introspection keeps it.
+Measured evidence from the backlog line: "assertSchemaParity diff `-
+Constraints: nil` / `+ {Name: "ux2", Type: UNIQUE, …}`".
+
+**Root cause.** `parseCreateIndex` (`parser/sqlite/sqlite.go:98-106`, lookup at
+`:103`) does `p.tableIndex[tableName]` and returns nil when the exact spelling is
+absent. `tableIndex` is keyed by the name as declared (`sqlite.go:36`, `:260`), but
+SQLite identifiers are case-insensitive. The same exact-match lookup backs
+`lookupTable` (`:762`, lookup at `:763`, used by ALTER TABLE), `parseDropTable` (`:176`, lookup at `:178`), the
+duplicate-table check (`:199`) and `renameTable` (`:746`, lookup at `:747`). Line refs at `cb04d107`.
+
+**Suggested fix.**
+- Make table lookup case-insensitive in the SQLite parser (key `tableIndex`
+  by `strings.ToLower`, or one lookup helper used by every site above), keeping
+  the declared spelling in `Table.Name`.
+- Vet: confirm the other sites share the root cause and fix site (scope cap);
+  a silent skip on an unknown table in `parseCreateIndex` may also deserve an
+  error.
+- Tests: an `assertSchemaParity` SQLite case with the mixed-case index above,
+  plus parser cases for `ALTER TABLE users …` and `DROP TABLE users` on a
+  table declared `Users`.
+- Vet notes on scope: measured at HEAD, ALTER TABLE ADD/DROP/RENAME COLUMN and RENAME TO stop with an error (`table users not found`). The rest fail silently: DROP TABLE does nothing; a duplicate `CREATE TABLE users` after `Users` is accepted and leaves two tables; `IF NOT EXISTS` adds a second table; CREATE INDEX drops the index.
+- Changed from the original:
+  - the `strings.ToLower` key is wrong: SQLite folds ASCII letters only (`"Äb"` and `"äb"` are two tables), so `ToLower` would raise a false `table äb already exists`. A new helper `tableKey(name)` folds ASCII only, and every `tableIndex` read and write goes through it: Seed, the CREATE TABLE store and duplicate check, CREATE INDEX (now via `lookupTable`), DROP TABLE, `renameTable` and `lookupTable`. `Table.Name` keeps the CREATE TABLE spelling;
+  - a case-insensitive lookup alone is not enough. DROP and RENAME TO pass the table name to the shared FK helpers, which compare exactly; given the statement's spelling they miss keys that use the declared spelling (a renamed table's FK stays `->Users`, and dropping a referenced table succeeds without the error). `parseDropTable` now passes the stored name to `CheckTableDropRefs`, and `renameTable` passes `table.Name` to `RenameTableReferences`;
+  - the vet question ("should an unknown table in `parseCreateIndex` be an error?") has a different root cause and is a cross-dialect decision (the PG parser skips on purpose, `//nolint:nilerr`), so it moves to the backlog.
+- Re-vet at `cb04d107` on 2026-10-09: the `d51ace1b` patch no longer applied because `parseCreateIndex` now calls `indexedColumnNames(stmt.Columns)` (the expression-index skip) right after the `table := &p.schema.Tables[idx]` line the patch removed. Rebuilt by hand: the lookup goes through `lookupTable` and the `indexedColumnNames` block stays; every other hunk applied with `--3way`. FIX-291's `exprString`, FIX-279's `columnStarts` and FIX-277's `renameColumnInExpressions` touch no table-name lookup. RENAME COLUMN already passes the stored `table.Name` to `RenameColumnReferences`. Reproduction, tests, gates, fail-first and churn below re-measured at `cb04d107` with identical results. `/fix-implement` may share one ASCII-fold helper between `tableKey` and FIX-277's `equalFoldASCII`.
+- Prototype results, run at `cb04d107` on 2026-10-09 (first run at `d51ace1b` on 2026-10-07):
+  - Reproduction: a throwaway probe (`parser/introspect/zz_probe_fix282_test.go`, since deleted), `cd parser && go test -short -count=1 -run TestZZProbe -v ./introspect/`:
+    - `assertSchemaParity` on `CREATE TABLE Users (id INTEGER PRIMARY KEY, a TEXT); CREATE UNIQUE INDEX ux2 ON users (a)` fails: `+ {Name: "ux2", Type: s"UNIQUE", Columns: []string{"a"}, Method: "btree"}` and `- Unique: false / + Unique: true`;
+    - against real SQLite: `alter add` → SQLite ok, parser `table users not found`; `drop table` → SQLite `[]`, parser `[Users]`; `dup create` → SQLite `table users already exists`, parser ok with `[Users users]`; `rename table` → SQLite `[Accounts]`, parser `table users not found`; `"Äb"` and `"äb"` → SQLite accepts both.
+  - Tests: `TestTableNameCase` (`parser/sqlite`, 10 cases: CREATE INDEX, ADD/DROP/RENAME COLUMN, RENAME TO with FK follow-through, DROP TABLE, DROP of a referenced table, duplicate CREATE, IF NOT EXISTS, non-ASCII names keep their case) and `TestSQLiteIntrospect_TableNameCase` (mixed-case CREATE INDEX, ALTER, RENAME with an FK, DROP; `assertSchemaParity`).
+  - Gates: `cd parser && go test -race -count=1 ./...` → ok; `golangci-lint run ./sqlite/... ./introspect/...` → 0 issues; `gofumpt -l` → clean; `TestE2EGoldenFiles` → ok.
+  - Fail-first:
+    - `tableKey` returns the name unchanged → `TestTableNameCase` fails 9 of 10 (e.g. "table USERS not found", "Parse() error = <nil>, want \"table users already exists\""), and `TestSQLiteIntrospect_TableNameCase` fails;
+    - `renameTable` given `oldName` → `RENAME_TO_carries_the_foreign_keys` fails: `- "posts(id, user_id) ->Accounts"` / `+ "posts(id, user_id) ->Users"`;
+    - `parseDropTable` given the statement's name → `DROP_TABLE_referenced_by_a_foreign_key` fails: `want "drop table users: cannot drop table Users"`;
+    - `tableKey` as `strings.ToLower` → `non-ASCII_letters_keep_their_case` fails: `table äb already exists`;
+    - the existing suite without the fix → passes.
+  - Golden churn: none.
+  - Patch: `.claude/prototypes/FIX-282.patch` (3 files, +162/-16).
+
+
+**References.**
+- PRD §6.1, §5.2.
+- FIX-269 (surfaced while adding the partial-index parity cases).
+
+**Resolution notes.** The SQLite parser now matches table names the way SQLite does, folding ASCII letters only. Every `tableIndex` read and write goes through one `foldASCII` helper: `Seed`, the CREATE TABLE store and duplicate check, CREATE INDEX (now via `lookupTable`), DROP TABLE, `renameTable` and `lookupTable`. `Table.Name` keeps the CREATE TABLE spelling. DROP TABLE passes the stored name to `CheckTableDropRefs`, and RENAME TO passes `table.Name` to `RenameTableReferences`, so a statement that names the table in another case still finds the foreign keys that use the declared spelling. Prototype applied clean with `--3way`. Inline simplification: `foldASCII` replaces both the prototype's `tableKey` and the existing `equalFoldASCII` used by RENAME COLUMN's identifier match, so one helper carries SQLite's ASCII-only folding. Tests: `TestTableNameCase` (`parser/sqlite`, 10 cases) and `TestSQLiteIntrospect_TableNameCase` (`assertSchemaParity`). Fail-first on the final code: `foldASCII` returning its input fails 9 of 10 `TestTableNameCase` cases and `TestAlterTableRenameColumn/names_match_without_regard_to_case`. Gates: `make check` ok, SQLite introspect integration tests ok, `make check-examples` ok. Golden churn: none, as recorded by the vet.
+
 ### FIX-278
 
 - **Status:** Resolved

@@ -1025,6 +1025,113 @@ func TestDuplicateCreateTable(t *testing.T) {
 	}
 }
 
+// SQLite matches table names case-insensitively, folding ASCII letters only.
+// Each table is summarized as its name, its columns, and its named
+// constraints and foreign-key targets.
+func TestTableNameCase(t *testing.T) {
+	tests := []struct {
+		name    string
+		sql     string
+		want    []string
+		wantErr string
+	}{
+		{
+			name: "CREATE INDEX",
+			sql:  `CREATE TABLE Users (id INTEGER PRIMARY KEY, a TEXT); CREATE UNIQUE INDEX ux2 ON users (a);`,
+			want: []string{"Users(id, a) ux2"},
+		},
+		{
+			name: "ALTER TABLE ADD COLUMN",
+			sql:  `CREATE TABLE Users (id INTEGER PRIMARY KEY); ALTER TABLE USERS ADD COLUMN b TEXT;`,
+			want: []string{"Users(id, b)"},
+		},
+		{
+			name: "ALTER TABLE DROP COLUMN",
+			sql:  `CREATE TABLE Users (id INTEGER PRIMARY KEY, b TEXT); ALTER TABLE users DROP COLUMN b;`,
+			want: []string{"Users(id)"},
+		},
+		{
+			name: "ALTER TABLE RENAME COLUMN",
+			sql:  `CREATE TABLE Users (id INTEGER PRIMARY KEY, b TEXT); ALTER TABLE users RENAME COLUMN b TO c;`,
+			want: []string{"Users(id, c)"},
+		},
+		{
+			name: "RENAME TO carries the foreign keys",
+			sql: `CREATE TABLE Users (id INTEGER PRIMARY KEY);
+				CREATE TABLE posts (id INTEGER PRIMARY KEY, user_id INTEGER REFERENCES Users(id));
+				ALTER TABLE users RENAME TO Accounts;
+				ALTER TABLE ACCOUNTS ADD COLUMN email TEXT;`,
+			want: []string{"Accounts(id, email)", "posts(id, user_id) ->Accounts"},
+		},
+		{
+			name: "DROP TABLE",
+			sql:  `CREATE TABLE Users (id INTEGER PRIMARY KEY); CREATE TABLE t (id INTEGER PRIMARY KEY); DROP TABLE users;`,
+			want: []string{"t(id)"},
+		},
+		{
+			name: "DROP TABLE referenced by a foreign key",
+			sql: `CREATE TABLE Users (id INTEGER PRIMARY KEY);
+				CREATE TABLE posts (id INTEGER PRIMARY KEY, user_id INTEGER REFERENCES Users(id));
+				DROP TABLE users;`,
+			wantErr: "drop table users: cannot drop table Users",
+		},
+		{
+			name:    "duplicate CREATE TABLE",
+			sql:     `CREATE TABLE Users (id INTEGER PRIMARY KEY); CREATE TABLE users (id INTEGER PRIMARY KEY);`,
+			wantErr: "table users already exists",
+		},
+		{
+			name: "CREATE TABLE IF NOT EXISTS",
+			sql:  `CREATE TABLE Users (id INTEGER PRIMARY KEY); CREATE TABLE IF NOT EXISTS users (x INTEGER PRIMARY KEY);`,
+			want: []string{"Users(id)"},
+		},
+		{
+			name: "non-ASCII letters keep their case",
+			sql:  `CREATE TABLE "Äb" (id INTEGER PRIMARY KEY); CREATE TABLE "äb" (id INTEGER PRIMARY KEY); CREATE INDEX ix ON "äb" (id);`,
+			want: []string{"Äb(id)", "äb(id) ix"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			p := sqlite.New()
+			err := p.Parse("test.sql", []byte(tt.sql))
+			if tt.wantErr != "" {
+				if err == nil || !strings.Contains(err.Error(), tt.wantErr) {
+					t.Errorf("Parse() error = %v, want %q", err, tt.wantErr)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("Parse() error: %v", err)
+			}
+			var got []string
+			for _, tbl := range p.Schema().Tables {
+				s := tbl.Name + "("
+				for i, c := range tbl.Columns {
+					if i > 0 {
+						s += ", "
+					}
+					s += c.Name
+				}
+				s += ")"
+				for _, c := range tbl.Constraints {
+					switch {
+					case c.Type == parser.ForeignKey:
+						s += " ->" + c.ReferenceTable
+					case c.Name != "":
+						s += " " + c.Name
+					}
+				}
+				got = append(got, s)
+			}
+			if diff := cmp.Diff(tt.want, got); diff != "" {
+				t.Errorf("Parse() tables mismatch (-want +got):\n%s", diff)
+			}
+		})
+	}
+}
+
 func TestDropTable(t *testing.T) {
 	p := sqlite.New()
 	sql := `
