@@ -272,8 +272,13 @@ func buildSingleTableContext(input *GenerateInput, table *parser.Table, collisio
 
 	updateColumns := parser.DetectUpdateColumns(table, cfg.Generation.UpdateColumns)
 
-	return assembleTableContext(input, table, tableCfg, structName, columns, pkColumns,
+	tc, err := assembleTableContext(input, table, tableCfg, structName, columns, pkColumns,
 		pkStrategy, softDelete, updateColumns, collisions)
+	if err != nil {
+		return TableContext{}, err
+	}
+	tc.CursorKeyColumns = buildCursorKeyColumns(tc.Columns, tc.CursorKeys)
+	return tc, nil
 }
 
 func buildTableColumns(input *GenerateInput, table *parser.Table, tableCfg config.TableConfig) ([]ColumnContext, []ColumnContext) {
@@ -2426,6 +2431,19 @@ func buildRelationshipOptionsDefs(rels []RelationshipContext) []RelationshipOpti
 }
 
 // --- All column names ---
+
+// buildCursorKeyColumns returns the columns named by the resolved cursor keys,
+// in key order. Columns are matched by name; a key with no column is skipped,
+// since it never resolves (PRD §4.13).
+func buildCursorKeyColumns(columns []ColumnContext, keys []string) []ColumnContext {
+	out := make([]ColumnContext, 0, len(keys))
+	for _, key := range keys {
+		if i := slices.IndexFunc(columns, func(col ColumnContext) bool { return col.Name == key }); i >= 0 {
+			out = append(out, columns[i])
+		}
+	}
+	return out
+}
 
 // buildAllColumnNames returns a sorted list of all SQL column names.
 func buildAllColumnNames(columns []ColumnContext) []string {

@@ -29,8 +29,23 @@ func loadPaginationTableTemplate(t *testing.T, dialect sql.Dialect) *template.Te
 	return tmpl
 }
 
+// cursorKeyColumns mirrors the context builder's CursorKeyColumns for the
+// hand-built test contexts: the columns named by keys, in key order.
+func cursorKeyColumns(columns []gen.ColumnContext, keys []string) []gen.ColumnContext {
+	var out []gen.ColumnContext
+	for _, key := range keys {
+		for _, col := range columns {
+			if col.Name == key {
+				out = append(out, col)
+			}
+		}
+	}
+	return out
+}
+
 func executePaginationTableTemplate(t *testing.T, ctx gen.TableContext, dialect sql.Dialect) string {
 	t.Helper()
+	ctx.CursorKeyColumns = cursorKeyColumns(ctx.Columns, ctx.CursorKeys)
 	tmpl := loadPaginationTableTemplate(t, dialect)
 	var buf strings.Builder
 	if err := tmpl.ExecuteTemplate(&buf, "table/pagination", ctx); err != nil {
@@ -286,7 +301,7 @@ func TestPaginationTableTemplate_connectionForward(t *testing.T) {
 		`fmt.Errorf("connection products count: %w", err)`,
 		// Cursor decode
 		"if input.After != nil {",
-		"cursor, err := decodeCursor(*input.After, c.cursorKeys)",
+		"cursor, err := decodeProductCursor(*input.After, c.cursorKeys)",
 		`keysetConds = append(keysetConds, cursorKeyset(c.dialect, c.cursorKeys, cursor, ">"))`,
 		// Direction
 		"limit := c.pageSize",
@@ -335,7 +350,7 @@ func TestPaginationTableTemplate_connectionBackward(t *testing.T) {
 
 	wantPatterns := []string{
 		"if input.Before != nil {",
-		"cursor, err := decodeCursor(*input.Before, c.cursorKeys)",
+		"cursor, err := decodeProductCursor(*input.Before, c.cursorKeys)",
 		`keysetConds = append(keysetConds, cursorKeyset(c.dialect, c.cursorKeys, cursor, "<"))`,
 		"} else if input.Last != nil {",
 		"limit = *input.Last",
@@ -455,6 +470,49 @@ func TestPaginationTableTemplate_encodeCursor(t *testing.T) {
 		if !strings.Contains(output, want) {
 			t.Errorf("output missing: %q\n\nfull output:\n%s", want, output)
 		}
+	}
+}
+
+// The decoder unmarshals each cursor value into its key column's Go field, so
+// the keyset condition binds the type the encoder marshaled and a value of the
+// wrong JSON shape (an array or object for a scalar key) fails to decode.
+func TestPaginationTableTemplate_decodeCursor(t *testing.T) {
+	ctx := testPaginationContext_postgres()
+	output := executePaginationTableTemplate(t, ctx, sql.NewPostgresDialect())
+
+	wantPatterns := []string{
+		"func decodeProductCursor(encoded string, keys []string) (map[string]any, error)",
+		"raw, err := decodeCursor(encoded, keys)",
+		"var row Product",
+		`case "id":`,
+		"err = json.Unmarshal(raw[key], &row.ID)",
+		"out[key] = row.ID",
+		// A value that binds SQL NULL (an invalid sql.Null* wrapper) is rejected.
+		"if cursorValueIsNull(out[key]) {\n\t\t\treturn nil, ErrInvalidCursor",
+	}
+	for _, want := range wantPatterns {
+		if !strings.Contains(output, want) {
+			t.Errorf("output missing: %q\n\nfull output:\n%s", want, output)
+		}
+	}
+	// Only the cursor key columns get a decode case.
+	if strings.Contains(output, "&row.Price") {
+		t.Errorf("decoder has a case for non-key column price\n\nfull output:\n%s", output)
+	}
+}
+
+func TestPaginationTableTemplate_decodeCursorMultiKeys(t *testing.T) {
+	ctx := testPaginationContext_multiCursorKeys()
+	output := executePaginationTableTemplate(t, ctx, sql.NewPostgresDialect())
+
+	want := "\t\tcase \"created_at\":\n" +
+		"\t\t\terr = json.Unmarshal(raw[key], &row.CreatedAt)\n" +
+		"\t\t\tout[key] = row.CreatedAt\n" +
+		"\t\tcase \"id\":\n" +
+		"\t\t\terr = json.Unmarshal(raw[key], &row.ID)\n" +
+		"\t\t\tout[key] = row.ID\n"
+	if !strings.Contains(output, want) {
+		t.Errorf("output missing decode cases in key order:\n%s\n\nfull output:\n%s", want, output)
 	}
 }
 

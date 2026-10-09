@@ -12,6 +12,8 @@ import (
 	"fmt"
 	"testing"
 
+	"github.com/google/go-cmp/cmp"
+
 	"github.com/teandresmith/sqlgen/comparator"
 	"github.com/teandresmith/sqlgen/omittable"
 
@@ -302,6 +304,111 @@ func TestConnection_CursorMissingKeyReturnsErrInvalidCursor(t *testing.T) {
 				t.Errorf("err = %v, want ErrInvalidCursor", err)
 			}
 		})
+	}
+}
+
+// A cursor value is decoded into its key column's Go type, so a value of the
+// wrong JSON shape or type is ErrInvalidCursor.
+func TestConnection_CursorWrongShapeReturnsErrInvalidCursor(t *testing.T) {
+	ctx := context.Background()
+	client := newClient()
+
+	encode := func(raw string) *string {
+		return new(base64.StdEncoding.EncodeToString([]byte(raw)))
+	}
+	first := 5
+	last := 5
+
+	cases := []struct {
+		name string
+		call func() error
+	}{
+		{
+			name: "table after cursor with empty array",
+			call: func() error {
+				_, err := client.Products().Connection(ctx, models.ConnectionInput[models.ProductFilter]{First: &first, After: encode(`{"id":[]}`)})
+				return err
+			},
+		},
+		{
+			name: "table after cursor with array",
+			call: func() error {
+				_, err := client.Products().Connection(ctx, models.ConnectionInput[models.ProductFilter]{First: &first, After: encode(`{"id":[1,2]}`)})
+				return err
+			},
+		},
+		{
+			name: "table before cursor with object",
+			call: func() error {
+				_, err := client.Products().Connection(ctx, models.ConnectionInput[models.ProductFilter]{Last: &last, Before: encode(`{"id":{"a":1}}`)})
+				return err
+			},
+		},
+		{
+			name: "table after cursor with string for integer key",
+			call: func() error {
+				_, err := client.Products().Connection(ctx, models.ConnectionInput[models.ProductFilter]{First: &first, After: encode(`{"id":"1"}`)})
+				return err
+			},
+		},
+		{
+			name: "composite cursor with array in a later key",
+			call: func() error {
+				_, err := client.ProductTagLabels().Connection(ctx, models.ConnectionInput[models.ProductTagLabelFilter]{First: &first, After: encode(`{"product_id":1,"tag_name":[1,2],"label":"a"}`)})
+				return err
+			},
+		},
+		{
+			name: "view after cursor with object",
+			call: func() error {
+				_, err := client.ProductSummary().Connection(ctx, models.ConnectionInput[models.ProductSummaryFilter]{First: &first, After: encode(`{"id":{"a":1}}`)})
+				return err
+			},
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if err := tc.call(); !errors.Is(err, models.ErrInvalidCursor) {
+				t.Errorf("err = %v, want ErrInvalidCursor", err)
+			}
+		})
+	}
+}
+
+// A []byte cursor key round-trips as []byte, so the keyset compares BLOB to
+// BLOB and each page advances.
+func TestConnection_BinaryKeyCursorAdvances(t *testing.T) {
+	ctx := context.Background()
+	client := newClient()
+
+	for _, id := range []string{"conn-bin-a", "conn-bin-b", "conn-bin-c"} {
+		if _, err := client.BinaryKeys().Create(ctx, &models.CreateBinaryKeyInput{ID: []byte(id), Name: id}); err != nil {
+			t.Fatalf("create binary key %q: %v", id, err)
+		}
+	}
+	filter := &models.BinaryKeyFilter{Name: &comparator.String{StartsWith: new("conn-bin-")}}
+	one := 1
+
+	var got []string
+	var after *string
+	for range 4 {
+		page, err := client.BinaryKeys().Connection(ctx, models.ConnectionInput[models.BinaryKeyFilter]{Filter: filter, First: &one, After: after})
+		if err != nil {
+			t.Fatalf("Connection: %v", err)
+		}
+		for _, edge := range page.Edges {
+			got = append(got, string(edge.Node.ID))
+		}
+		if !page.PageInfo.HasNextPage {
+			break
+		}
+		after = page.PageInfo.EndCursor
+	}
+
+	want := []string{"conn-bin-a", "conn-bin-b", "conn-bin-c"}
+	if diff := cmp.Diff(want, got); diff != "" {
+		t.Errorf("paged ids mismatch (-want +got):\n%s", diff)
 	}
 }
 

@@ -1093,6 +1093,9 @@ type TableContext struct {
 	QueryLimit int
 	// CursorKeys is the effective cursor key columns.
 	CursorKeys []string
+	// CursorKeyColumns is the columns CursorKeys names, in key order. The
+	// cursor decoder unmarshals each key's value into its column's Go type.
+	CursorKeyColumns []ColumnContext
 	// StrictUpdates indicates whether updates should fail on missing PK.
 	StrictUpdates bool
 	// Imports is the deduplicated, sorted list of import paths needed by this table's generated code.
@@ -1190,6 +1193,9 @@ type ViewContext struct {
 	// is false (views with inherited defaults whose columns do not match the
 	// view's projection omit Connection per PRD §4.13).
 	CursorKeys []string
+	// CursorKeyColumns is the columns CursorKeys names, in key order. The
+	// cursor decoder unmarshals each key's value into its column's Go type.
+	CursorKeyColumns []ColumnContext
 	// HasConnection reports whether the view should emit the Connection
 	// cursor-pagination method. False when the resolved cursor_keys do not
 	// exist on the view (views have no PK fallback — see PRD §4.13).

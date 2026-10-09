@@ -133,10 +133,13 @@ func TestConnectionTemplate_cursorEncodeDecode(t *testing.T) {
 	output := executeConnectionTemplate(t, ctx)
 
 	wantPatterns := []string{
-		"func decodeCursor(s string, keys []string) (map[string]any, error)",
-		"if cursor[key] == nil {",
+		"func decodeCursor(s string, keys []string) (map[string]json.RawMessage, error)",
+		`if value, ok := cursor[key]; !ok || string(value) == "null" {`,
 		"base64.StdEncoding.DecodeString(s)",
 		"json.Unmarshal(data, &cursor)",
+		"func cursorValueIsNull(v any) bool {",
+		"valuer, ok := v.(driver.Valuer)",
+		"return err != nil || value == nil",
 	}
 	for _, want := range wantPatterns {
 		if !strings.Contains(output, want) {
@@ -251,6 +254,7 @@ func TestBuildConnectionContext(t *testing.T) {
 	}
 
 	wantImports := []string{
+		"database/sql/driver",
 		"encoding/base64",
 		"encoding/json",
 		"github.com/teandresmith/sqlgen/sql",

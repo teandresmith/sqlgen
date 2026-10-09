@@ -1,0 +1,40 @@
+{{- /*
+shared/cursor-decode emits decode<T>Cursor, the inverse of the entity's
+encode<T>Cursor. The fragment expects a TableContext- or ViewContext-shaped
+"." with .StructName and .CursorKeyColumns.
+
+Each cursor value is unmarshaled into its key column's Go type, so the keyset
+condition binds the type the encoder marshaled ([]byte, a sql.Null* wrapper, a
+PostgreSQL array), and a value of the wrong JSON shape fails to decode. A value
+that decodes but binds SQL NULL (an invalid sql.Null* wrapper) is rejected like
+a JSON null in decodeCursor: it would match no row and end pagination silently.
+*/ -}}
+{{- define "shared/cursor-decode" }}
+
+// decode{{ .StructName }}Cursor decodes a cursor string into its key values,
+// each unmarshaled into the key column's Go type.
+func decode{{ .StructName }}Cursor(encoded string, keys []string) (map[string]any, error) {
+	raw, err := decodeCursor(encoded, keys)
+	if err != nil {
+		return nil, err
+	}
+	var row {{ .StructName }}
+	out := make(map[string]any, len(keys))
+	for _, key := range keys {
+		switch key {
+{{- range .CursorKeyColumns }}
+		case {{ printf "%q" .Name }}:
+			err = json.Unmarshal(raw[key], &row.{{ .FieldName }})
+			out[key] = row.{{ .FieldName }}
+{{- end }}
+		}
+		if err != nil {
+			return nil, err
+		}
+		if cursorValueIsNull(out[key]) {
+			return nil, ErrInvalidCursor
+		}
+	}
+	return out, nil
+}
+{{- end -}}

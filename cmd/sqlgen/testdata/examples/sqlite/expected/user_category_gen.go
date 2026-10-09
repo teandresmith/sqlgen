@@ -1205,14 +1205,14 @@ func (c *userCategoryClient) Connection(ctx context.Context, input ConnectionInp
 		// Decode cursors and build keyset conditions
 		var keysetConds []sql.Condition
 		if input.After != nil {
-			cursor, err := decodeCursor(*input.After, c.cursorKeys)
+			cursor, err := decodeUserCategoryCursor(*input.After, c.cursorKeys)
 			if err != nil {
 				return nil, ErrInvalidCursor
 			}
 			keysetConds = append(keysetConds, cursorKeyset(c.dialect, c.cursorKeys, cursor, ">"))
 		}
 		if input.Before != nil {
-			cursor, err := decodeCursor(*input.Before, c.cursorKeys)
+			cursor, err := decodeUserCategoryCursor(*input.Before, c.cursorKeys)
 			if err != nil {
 				return nil, ErrInvalidCursor
 			}
@@ -1303,6 +1303,34 @@ func encodeUserCategoryCursor(keys []string, u *UserCategory) (string, error) {
 		return "", fmt.Errorf("encode user_category cursor: %w", err)
 	}
 	return base64.StdEncoding.EncodeToString(data), nil
+}
+
+// decodeUserCategoryCursor decodes a cursor string into its key values,
+// each unmarshaled into the key column's Go type.
+func decodeUserCategoryCursor(encoded string, keys []string) (map[string]any, error) {
+	raw, err := decodeCursor(encoded, keys)
+	if err != nil {
+		return nil, err
+	}
+	var row UserCategory
+	out := make(map[string]any, len(keys))
+	for _, key := range keys {
+		switch key {
+		case "user_id":
+			err = json.Unmarshal(raw[key], &row.UserID)
+			out[key] = row.UserID
+		case "category_id":
+			err = json.Unmarshal(raw[key], &row.CategoryID)
+			out[key] = row.CategoryID
+		}
+		if err != nil {
+			return nil, err
+		}
+		if cursorValueIsNull(out[key]) {
+			return nil, ErrInvalidCursor
+		}
+	}
+	return out, nil
 }
 
 // StreamUserCategoriesInput holds query parameters for streaming user_categories records.

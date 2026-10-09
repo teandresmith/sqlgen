@@ -114,6 +114,7 @@ func buildSingleViewContext(input *GenerateInput, view *parser.View, collisions 
 		PageSize:                ptrInt(cfg.Generation.PageSize, 100),
 		QueryLimit:              ptrInt(cfg.Generation.QueryLimit, 1000),
 		CursorKeys:              cursorDecision.Keys,
+		CursorKeyColumns:        buildCursorKeyColumns(columns, cursorDecision.Keys),
 		HasConnection:           cursorDecision.Emit,
 		Imports:                 imports,
 		Package:                 cfg.Output.Package,

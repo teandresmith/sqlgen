@@ -6810,14 +6810,14 @@ func (c *productClient) Connection(ctx context.Context, input ConnectionInput[Pr
         // Decode cursors and build keyset conditions
         var keysetConds []sql.Condition
         if input.After != nil {
-            cursor, err := decodeCursor(*input.After, c.cursorKeys)
+            cursor, err := decodeProductCursor(*input.After, c.cursorKeys)
             if err != nil {
                 return nil, ErrInvalidCursor
             }
             keysetConds = append(keysetConds, cursorKeyset(c.dialect, c.cursorKeys, cursor, ">"))
         }
         if input.Before != nil {
-            cursor, err := decodeCursor(*input.Before, c.cursorKeys)
+            cursor, err := decodeProductCursor(*input.Before, c.cursorKeys)
             if err != nil {
                 return nil, ErrInvalidCursor
             }
@@ -6921,24 +6921,68 @@ func encodeProductCursor(keys []string, p *Product) (string, error) {
     return base64.StdEncoding.EncodeToString(data), nil
 }
 
-// decodeCursor decodes a base64 JSON cursor string into key-value pairs. Every
-// key must hold a non-null value: a missing one would leave its keyset
-// comparison without a bound argument.
-func decodeCursor(s string, keys []string) (map[string]any, error) {
+// decodeProductCursor decodes a cursor string into its key values,
+// each unmarshaled into the key column's Go type.
+func decodeProductCursor(encoded string, keys []string) (map[string]any, error) {
+    raw, err := decodeCursor(encoded, keys)
+    if err != nil {
+        return nil, err
+    }
+    var row Product
+    out := make(map[string]any, len(keys))
+    for _, key := range keys {
+        switch key {
+        case "id":
+            err = json.Unmarshal(raw[key], &row.ID)
+            out[key] = row.ID
+        }
+        if err != nil {
+            return nil, err
+        }
+        if cursorValueIsNull(out[key]) {
+            return nil, ErrInvalidCursor
+        }
+    }
+    return out, nil
+}
+```
+
+`encode<T>Cursor` has a case for every column; `decode<T>Cursor` has one for each `cursor_keys` column (here the default, `id`). Unmarshaling each value into its column's Go type means the keyset condition binds the type the encoder marshaled (`[]byte`, a `sql.Null*` wrapper, a PostgreSQL array), and a value of the wrong JSON shape or type fails to decode.
+
+**Cursor helpers (generated once, in `connection_gen.go`):**
+
+```go
+// decodeCursor decodes a base64 JSON cursor string into its raw key values.
+// Every key must hold a non-null value: a missing one would leave its keyset
+// comparison without a bound argument. Each entity's decode<T>Cursor then
+// unmarshals the values into the key columns' Go types.
+func decodeCursor(s string, keys []string) (map[string]json.RawMessage, error) {
     data, err := base64.StdEncoding.DecodeString(s)
     if err != nil {
         return nil, err
     }
-    var cursor map[string]any
+    var cursor map[string]json.RawMessage
     if err := json.Unmarshal(data, &cursor); err != nil {
         return nil, err
     }
     for _, key := range keys {
-        if cursor[key] == nil {
+        if value, ok := cursor[key]; !ok || string(value) == "null" {
             return nil, ErrInvalidCursor
         }
     }
     return cursor, nil
+}
+
+// cursorValueIsNull reports whether a decoded cursor value binds SQL NULL, as
+// an invalid sql.Null* wrapper does. A NULL bound into the keyset comparison
+// matches no row, so the page would come back silently empty.
+func cursorValueIsNull(v any) bool {
+    valuer, ok := v.(driver.Valuer)
+    if !ok {
+        return false
+    }
+    value, err := valuer.Value()
+    return err != nil || value == nil
 }
 ```
 
@@ -8919,7 +8963,7 @@ Cursors are not signed or encrypted. They are not a security boundary — they e
 
 Because the encoding is transparent in both directions — the value goes out on every edge cursor and comes back as `after` / `before`, where it becomes a keyset condition — [32.4](#324-validation) requires every resolved `cursor_keys` column to stay API-readable (`access ∈ {public, read_only}`). That is what makes this transparency safe to keep: a column `access` has restricted can never be a cursor key in the first place.
 
-**Invalid cursors:** If a cursor cannot be Base64-decoded, JSON-parsed, or does not contain the expected keys, the `Connection` method returns `ErrInvalidCursor` (see [Section 22.1](#221-generated-error-types)).
+**Invalid cursors:** If a cursor cannot be Base64-decoded or JSON-parsed, is missing an expected key or holds a JSON `null` for one, or holds a value that does not decode into its key column's Go type or that binds SQL NULL (an invalid `sql.Null*` wrapper), the `Connection` method returns `ErrInvalidCursor` (see [Section 22.1](#221-generated-error-types)).
 
 #### Relay Connection Semantics
 

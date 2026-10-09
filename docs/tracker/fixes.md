@@ -369,9 +369,45 @@ code reading).
 
 **Resolution notes.** _Filled in by `/fix resolve`._
 
-### FIX-295
+### FIX-296
 
 - **Status:** Open
+- **Severity:** tracked
+- **Origin:** phase 30, `parser/mysql`
+- **Surfaced by:** `/fix-vet FIX-294` (2026-10-08), filed at `/close-phase 30` (2026-10-08)
+
+**Issue.** **The MySQL file parser matches `ALTER TABLE … DROP INDEX` names
+case-sensitively, while MySQL index names are case-insensitive.** Measured:
+`CREATE TABLE v2 (a int, KEY A (a)); ALTER TABLE v2 DROP INDEX a;` → the parser
+keeps `INDEX A [a]` (throwaway unit probe), while MySQL 8.0.46 drops it
+(`information_schema.statistics` has no rows for `v2`), so `indexes[]` differs by
+source (PRD §6.1).
+
+**Root cause.** The DROP INDEX path compares key names exactly:
+`removeConstraintFromColumns` (`c.Name == name`) and
+`delete(p.generated[…], name)` in `parser/mysql/mysql.go`. FIX-294's own
+`exprKeys` drop already uses `strings.EqualFold`.
+
+**Suggested fix.**
+- Match the dropped key name case-insensitively at every DROP INDEX / DROP KEY
+  site (constraints, the generated FK-index map), as FIX-294's `exprKeys` drop
+  does; check RENAME INDEX for the same comparison.
+- Tests: a parser unit case (`KEY A (a)` then `DROP INDEX a`) and a
+  `mysql_integration_test.go` parity case with `assertSchemaParity`.
+
+**References.**
+- PRD §6.1; FIX-294 (`exprKeys` case-insensitive drop), FIX-287 (DROP INDEX `PRIMARY`).
+
+**Resolution notes.** _Filled in by `/fix resolve`._
+
+<!-- fixes:open:end -->
+
+## Resolved
+
+<!-- fixes:resolved:begin -->
+### FIX-295
+
+- **Status:** Resolved
 - **Severity:** tracked
 - **Origin:** phase 6, `cmd/sqlgen/gen` (`connection.go.tmpl`)
 - **Surfaced by:** `/fix-vet FIX-293` (2026-10-08), filed at `/close-phase 30` (2026-10-08)
@@ -432,44 +468,7 @@ placeholders or, when empty, a bare `$`.
 **References.**
 - PRD §14.2 "Invalid cursors"; FIX-293.
 
-**Resolution notes.** _Filled in by `/fix resolve`._
-
-### FIX-296
-
-- **Status:** Open
-- **Severity:** tracked
-- **Origin:** phase 30, `parser/mysql`
-- **Surfaced by:** `/fix-vet FIX-294` (2026-10-08), filed at `/close-phase 30` (2026-10-08)
-
-**Issue.** **The MySQL file parser matches `ALTER TABLE … DROP INDEX` names
-case-sensitively, while MySQL index names are case-insensitive.** Measured:
-`CREATE TABLE v2 (a int, KEY A (a)); ALTER TABLE v2 DROP INDEX a;` → the parser
-keeps `INDEX A [a]` (throwaway unit probe), while MySQL 8.0.46 drops it
-(`information_schema.statistics` has no rows for `v2`), so `indexes[]` differs by
-source (PRD §6.1).
-
-**Root cause.** The DROP INDEX path compares key names exactly:
-`removeConstraintFromColumns` (`c.Name == name`) and
-`delete(p.generated[…], name)` in `parser/mysql/mysql.go`. FIX-294's own
-`exprKeys` drop already uses `strings.EqualFold`.
-
-**Suggested fix.**
-- Match the dropped key name case-insensitively at every DROP INDEX / DROP KEY
-  site (constraints, the generated FK-index map), as FIX-294's `exprKeys` drop
-  does; check RENAME INDEX for the same comparison.
-- Tests: a parser unit case (`KEY A (a)` then `DROP INDEX a`) and a
-  `mysql_integration_test.go` parity case with `assertSchemaParity`.
-
-**References.**
-- PRD §6.1; FIX-294 (`exprKeys` case-insensitive drop), FIX-287 (DROP INDEX `PRIMARY`).
-
-**Resolution notes.** _Filled in by `/fix resolve`._
-
-<!-- fixes:open:end -->
-
-## Resolved
-
-<!-- fixes:resolved:begin -->
+**Resolution notes.** Applied the vetted prototype (option A plus the NULL-binding guard, as ruled 2026-10-08 and 2026-10-09) cleanly at `b30ed4b6`. `decodeCursor` (`connection.go.tmpl`) now returns `map[string]json.RawMessage` and rejects a missing key or a JSON `null`; a new `shared/_cursor_decode.tmpl` emits `decode<T>Cursor` per Connection entity, unmarshaling each value into its key column's Go type (new gen-internal `CursorKeyColumns` on TableContext/ViewContext) and returning `ErrInvalidCursor` when a decoded value binds SQL NULL (`cursorValueIsNull`, with the `database/sql/driver` import in `connection_gen.go`). Arrays, objects, wrong-type scalars and NULL-binding `sql.Null*` values are `ErrInvalidCursor`; `[]byte`, `sql.Null*` and PostgreSQL array keys page. Wrote PRD §9.8.12's sample (`decodeProductCursor` call sites and body, the `decodeCursor` and `cursorValueIsNull` helpers) and §14.2 "Invalid cursors" (wrong Go type and NULL-binding values). Tests: sqlite `TestConnection_CursorWrongShapeReturnsErrInvalidCursor` (6 cases), `TestConnection_BinaryKeyCursorAdvances`; unit `TestPaginationTableTemplate_decodeCursor`, `…_decodeCursorMultiKeys`, `TestConnectionTemplate_cursorEncodeDecode`, `TestBuildConnectionContext`. Golden churn matches the vet (12 examples, models/ + expected/; unit goldens `connection_gen.go`, `pagination_products_gen.go`). Fail-first re-run: against HEAD's sqlite models the wrong-shape test fails 6/6 and the binary-key test fails; dropping the `cursorValueIsNull` check fails `TestPaginationTableTemplate_decodeCursor`. Gates: `make check` ok; `make check-examples` ok. `/verify` (reviewer: prototype byte-identical apart from the PRD and tracker; fail-first confirmed) led to two inline test-comment rewrites in the sqlite `connection_test.go` to state the rule instead of the old behavior, and one backlog line on the untested `sql.Null*` / array / `time.Time` cursor-key paths.
 
 ### FIX-289
 
