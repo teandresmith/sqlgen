@@ -1380,8 +1380,8 @@ Each dialect parser lives in the **parser module** (`github.com/teandresmith/sql
 
 **MySQL** (`vitess/sqlparser`):
 - Parses CREATE TABLE with columns, constraints, indexes, inline comments
-- Inline ENUM values from column type definitions (table-scoped naming: `<table>_<column>_enum`, auto-resolved via `RegisterEnum`)
-- Inline SET values from column type definitions (table-scoped naming: `<table>_<column>_set`, auto-resolved via `RegisterSet`)
+- Inline ENUM values from column type definitions (table-scoped naming: `<table>__<column>_enum`, auto-resolved via `RegisterEnum`)
+- Inline SET values from column type definitions (table-scoped naming: `<table>__<column>_set`, auto-resolved via `RegisterSet`)
 - Generated columns: `GENERATED ALWAYS AS (expr) [VIRTUAL|STORED]` and shorthand `AS (expr)` (5.7+)
 - ALTER TABLE: ADD/DROP/MODIFY COLUMN, ADD/DROP INDEX, ADD/DROP CONSTRAINT, RENAME COLUMN, RENAME TABLE, CHANGE COLUMN
 - Standalone `RENAME TABLE a TO b [, c TO d ...]`, applied pair by pair, left to right
@@ -2618,7 +2618,7 @@ MySQL `SET` columns store zero or more values from a fixed set as a comma-separa
 1. **Value type** (`<Table><Column>SetValue string`) — a string-based enum representing individual allowed values, with constants, `All*` var, `String()`, and `Validate*()`.
 2. **Set type** (`<Table><Column>Set []<Table><Column>SetValue`) — a named slice type used as the column Go type, with `String()` (comma-joined), `Value()` (driver.Valuer), and `Scan()` (sql.Scanner, splits on comma).
 
-**Naming**: MySQL inline ENUM and SET names are scoped to the table to prevent collisions when multiple tables define columns with the same name but different values. The derived schema name is `<table>_<column>_set` (e.g., `users_permissions_set`), which resolves to Go type `UsersPermissionsSet`. Similarly, inline ENUMs use `<table>_<column>_enum` (e.g., `users_role_enum` → `UsersRoleEnum`). PostgreSQL is unaffected — it uses named `CREATE TYPE ... AS ENUM` with schema-level scoping.
+**Naming**: MySQL inline ENUM and SET names are scoped to the table to prevent collisions when multiple tables define columns with the same name but different values. The derived schema name is `<table>__<column>_set` (e.g., `users__permissions_set`), which resolves to Go type `UsersPermissionsSet`. Similarly, inline ENUMs use `<table>__<column>_enum` (e.g., `users__role_enum` → `UsersRoleEnum`). The double underscore keeps table `a`, column `b_c` (`a__b_c_enum`) apart from table `a_b`, column `c` (`a_b__c_enum`), so each has its own `enums:` key. Both still resolve to Go type `ABCEnum`, which is a resolved-name collision ([4.13](#413-config-validation-rules)): set `enums.<name>.struct_name` on one of them. A SET type has no such override, so a SET pair is resolved by renaming a table or column. A view column whose ENUM or SET is not its source table column's type is named after the view the same way (`<view>__<column>_enum`). PostgreSQL is unaffected — it uses named `CREATE TYPE ... AS ENUM` with schema-level scoping.
 
 ```go
 // Individual value type (for column `permissions SET('read','write','admin')` on table `users`)

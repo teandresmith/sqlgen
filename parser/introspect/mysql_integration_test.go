@@ -70,7 +70,7 @@ func TestMySQLIntrospect_ProbeFixture(t *testing.T) {
 	view := findView(t, introspected, "m_user_status")
 	wantView := []parser.Column{
 		{Name: "id", Type: "bigint"},
-		{Name: "status", Type: "m_users_status_enum"},
+		{Name: "status", Type: "m_users__status_enum"},
 	}
 	if diff := cmp.Diff(wantView, view.Columns); diff != "" {
 		t.Errorf("m_user_status columns mismatch (-want +got):\n%s", diff)
@@ -207,8 +207,8 @@ func TestMySQLIntrospect_TypeCoverage(t *testing.T) {
 		"uid":        "binary(16)",
 		"vb":         "varbinary(255)",
 		"b":          "blob",
-		"status":     "m_types_status_enum",
-		"perms":      "m_types_perms_set",
+		"status":     "m_types__status_enum",
+		"perms":      "m_types__perms_set",
 	}
 	typ := func(c parser.Column) string { return c.Type }
 	if diff := cmp.Diff(want, columnField(t, introspected, "m_types", typ)); diff != "" {
@@ -310,6 +310,52 @@ func TestMySQLIntrospect_QuotedIdentifiers(t *testing.T) {
 		t.Errorf("UserAccounts_order_check = %+v, want CheckExpression \"`order` >= 0\"", check)
 	}
 	assertSchemaParity(t, "mysql", parsed, introspected)
+}
+
+// TestMySQLIntrospect_InlineTypeNames checks that both schema sources keep
+// apart the inline ENUM and SET names of two columns a single underscore would
+// merge (m_nc.k_v and m_nc_k.v), and that a view column named after its view
+// (m_nc_v.c) stays apart from the table column m_nc.v_c.
+func TestMySQLIntrospect_InlineTypeNames(t *testing.T) {
+	requireDatabases(t)
+	const ddl = `CREATE TABLE m_nc (id int NOT NULL PRIMARY KEY, k_v enum('1','2') NOT NULL, s_t set('r','w'), v_c enum('x') NOT NULL);
+	CREATE TABLE m_nc_k (id int NOT NULL PRIMARY KEY, v enum('3') NOT NULL);
+	CREATE TABLE m_nc_s (id int NOT NULL PRIMARY KEY, t set('r'))`
+	applyParityFixture(t, "mysql", mysqlConnStr,
+		"DROP VIEW IF EXISTS m_nc_v; DROP TABLE IF EXISTS m_nc; DROP TABLE IF EXISTS m_nc_k; DROP TABLE IF EXISTS m_nc_s",
+		ddl+";\nCREATE VIEW m_nc_v AS SELECT d.c FROM (SELECT v_c AS c FROM m_nc) d")
+
+	introspected := introspectMySQL(t, "m_nc", "m_nc_k", "m_nc_s")
+	parsed := parseMySQL(t, ddl)
+	assertSchemaParity(t, "mysql", parsed, introspected)
+	wantEnums := []parser.Enum{
+		{Name: "m_nc__k_v_enum", Values: []string{"1", "2"}},
+		{Name: "m_nc__v_c_enum", Values: []string{"x"}},
+		{Name: "m_nc_k__v_enum", Values: []string{"3"}},
+	}
+	if diff := cmp.Diff(wantEnums, introspected.Enums); diff != "" {
+		t.Errorf("enums mismatch (-want +got):\n%s", diff)
+	}
+	wantSets := []parser.Set{
+		{Name: "m_nc__s_t_set", Values: []string{"r", "w"}},
+		{Name: "m_nc_s__t_set", Values: []string{"r"}},
+	}
+	if diff := cmp.Diff(wantSets, introspected.Sets); diff != "" {
+		t.Errorf("sets mismatch (-want +got):\n%s", diff)
+	}
+
+	withView := introspectMySQL(t, "m_nc", "m_nc_v")
+	if got := findView(t, withView, "m_nc_v").Columns[0].Type; got != "m_nc_v__c_enum" {
+		t.Errorf("m_nc_v.c type = %q, want m_nc_v__c_enum", got)
+	}
+	wantViewEnums := []parser.Enum{
+		{Name: "m_nc__k_v_enum", Values: []string{"1", "2"}},
+		{Name: "m_nc__v_c_enum", Values: []string{"x"}},
+		{Name: "m_nc_v__c_enum", Values: []string{"x"}},
+	}
+	if diff := cmp.Diff(wantViewEnums, withView.Enums); diff != "" {
+		t.Errorf("enums with view mismatch (-want +got):\n%s", diff)
+	}
 }
 
 func TestMySQLIntrospect_CheckText(t *testing.T) {

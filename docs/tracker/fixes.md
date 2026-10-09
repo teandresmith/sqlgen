@@ -493,122 +493,6 @@ never reaches its `PrimaryKeyType` case (`:926`).
 
 **Resolution notes.** _Filled in by `/fix resolve`._
 
-### FIX-288
-
-- **Status:** Open
-- **Severity:** tracked
-- **Origin:** phase 4, `parser/mysql` + `parser/introspect`
-- **Surfaced by:** /fix-vet FIX-278 (2026-10-07), filed at /close-phase 30 (2026-10-08)
-- **Vetted:** ready at `56fcc1c7` (2026-10-08; re-vetted for the ruled Option 1, rebased onto FIX-271)
-
-**Issue.** **MySQL inline ENUM/SET names `<table>_<column>_enum|_set`
-collide when underscores make them ambiguous**, and the remedy the error
-offers cannot work. Table `a` column `b_c` and table `a_b` column `c` both
-register `a_b_c_enum`. Measured: `CREATE TABLE a (id int PRIMARY KEY, b_c
-ENUM('1','2') NOT NULL); CREATE TABLE a_b (id int PRIMARY KEY, c
-ENUM('3','4') NOT NULL);` → `sqlgen generate` → "Generation error: enum
-a_b_c_enum and enum a_b_c_enum both resolve to the Go type name "ABCEnum" —
-set enums.a_b_c_enum.struct_name to a different Go identifier"; with `enums:
-{a_b_c_enum: {struct_name: OtherEnum}}` → the same error naming "OtherEnum",
-since both entries share one config key. Both schema sources use the scheme,
-so `database` and `files` fail alike.
-
-**Root cause.** The derived name joins table, column and suffix with `_`,
-which can itself appear in either name, so the mapping (table, column) →
-name is not injective: `parser/mysql/mysql.go:430` / `:434`
-(`extractInlineEnumOrSet`) and `parser/introspect/mysql.go:360` / `:370`.
-The view path builds its own names the same way
-(`parser/introspect/mysql.go:254`, `<view>_<column><suffix>`), so a view name can collide with a table
-name likewise (by code reading). The duplicate is first caught at
-`validateResolvedNames` (`cmd/sqlgen/gen/resolved_names.go:403-414`), whose
-escape hint `enums.<name>.struct_name` (`cmd/sqlgen/gen/api_names.go:148`)
-names a key both entries share. FIX-278's prototype keeps an
-`inlineTypeUsers` guard (skip RENAME/DROP bookkeeping for a shared name)
-precisely because of this collision.
-
-**Suggested fix.** The naming scheme is a design question for the vet;
-options:
-- **Option 1 — a separator that cannot be confused.** E.g. `__` between
-  table and column (`a__b_c_enum` vs `a_b__c_enum`). Cheap, but not
-  injective either: a backquoted MySQL identifier may contain `__` or any
-  other character, so this narrows the collision rather than removing it.
-  Changes the PRD-documented name (§5.2, §8.3.1) and every golden enum name.
-- **Option 2 — keep the scheme, share identical values, reject different
-  ones loudly.** When two (table, column) pairs derive one name and their
-  value lists are equal, register one entry both columns use; when they
-  differ, fail in the parser / introspector with an error naming both
-  columns and a remedy that works (rename a table or column). No config
-  surface; the PRD gains one sentence.
-- **Option 3 — deterministic disambiguation.** On collision, suffix the
-  later pair (`a_b_c_2_enum`, by schema order). Generates, but a column's
-  enum name then depends on unrelated tables, and the `enums.<name>` key a
-  user configured can move to the other column when a table is added.
-- Whatever the option, move the naming into one shared helper in the
-  `parser` package used by `parser/mysql` and `parser/introspect` (both
-  already import it), so the two sources cannot drift; if the collision
-  disappears, FIX-278's `inlineTypeUsers` guard may become removable.
-- Tests: a `parser/mysql` case with tables `a` (`b_c`) and `a_b` (`c`),
-  asserting the ruled outcome (distinct names, one shared entry, or the
-  error); the same schema through `TestParityFixtures`
-  (`parser/introspect/parity_fixtures_test.go:163`) so both sources agree;
-  a `cmd/sqlgen/gen` case asserting generation succeeds or fails with the
-  ruled message.
-- Vet notes (stale facts and scope):
-  - the view collision is measured on the database source: table `z8t` column `v_c` ENUM('1','2') and view `z8t_v AS SELECT d.c FROM (SELECT v_c AS c FROM z8t) d` both register `z8t_v_c_enum` (the file parser skips CREATE VIEW);
-  - Option 1 changes no Go type names: `toPascalCase` collapses `__`, so `a__b_c_enum` and `a_b__c_enum` both become `ABCEnum`. It removes only the SQL-name/config-key collision; only SQL names churn (doc comments and manifest `db_type`);
-  - `TestParityFixtures` never compares the two sources; the regression belongs in a `mysql_integration_test.go` test using `assertSchemaParity`;
-  - equal value lists fail at HEAD too: `ord.line_kind` and `ord_line.kind`, both ENUM('x','y') → "Generation error: enum ord_line_kind_enum and enum ord_line_kind_enum both resolve to the Go type name "OrdLineKindEnum" …";
-  - a SET collision fails with a different message and no config escape: `tg.set_flags` / `tg_set.flags` → "SET type tg_set_flags_set and SET type tg_set_flags_set both resolve to the Go type name "TgSetFlagsSet" and the Go type name "TgSetFlagsSetValue" — rename one of them in the schema".
-- Prototype (Option 2):
-  - a new `parser/inline_types.go`: `InlineEnumName` / `InlineSetName` build the derived names, used by `parser/mysql` (`extractInlineEnumOrSet`) and `parser/introspect/mysql.go` (table columns and `viewEnumOrSetType`), so the sources cannot drift. `MergeInlineTypes(*Schema) []error` collapses entries with a shared name and equal values into one, and for differing values returns one error naming every column: `inline ENUM ord_line_kind_enum: columns ord.line_kind, ord_line.kind derive this name with different values; rename one of the tables or columns (PRD §5.2)`;
-  - `cmd/sqlgen/cli/pipeline.go` `parseSchema` calls it for MySQL after both sources and before view files (one site, following the `UnresolvedForeignKeys` precedent), so the result is a "Schema error:" with exit 3 on generate, validate and diff (HEAD: Generation error, exit 5). It runs after the full parse, not per statement, so a migration that later renames the collision away is not rejected;
-  - tests: `parser/inline_types_test.go` (table-driven); `TestParseSchema_InlineTypeNameCollision` (cli: equal values generate; different ENUM or SET values fail; each through generate, validate, diff); `TestMySQLIntrospect_InlineTypeNameCollision` (file vs database parity, the same error from both sources, the view case merging);
-  - PRD §8.3.1 gains a paragraph: equal values share one type, different values are a schema error, and the remedy is renaming a table or column.
-- Pending the user's ruling:
-  - Q1, naming scheme for colliding inline ENUM/SET names:
-    - (a) Recommended by the vet, and prototyped: Option 2, keep `<table>_<column>_enum|_set`; equal values share one type; different values are a schema error naming the columns. No golden churn, no config surface. The different-values case moves from Generation error (exit 5) with a remedy that cannot work to Schema error (exit 3) with a working remedy. Sub-choice: share on equal values (prototyped) or reject every collision (simpler, stricter, but forces a rename even when one type would be correct);
-    - (b) Option 1, a `__` separator: does not remove the Go-name collision (`ABCEnum` both ways); only makes `enums.<name>.struct_name` usable for ENUMs (SETs still have no escape, and even equal values need a config entry); still not injective for identifiers containing `__`. Churn is SQL names only (mysql `enums_gen.go` 3 lines, `sets_gen.go` 2, `manifest_gen.json` 7 `db_type` values, `manifest/{document,order,user}.md` 4 lines; ~34 test literals; PRD §5.2 and §8.3.1);
-    - (c) Option 3, a `_2` suffix: generates, but the name depends on unrelated tables, against the PRD §26 "GraphQL type name ownership" principle (a name that shifts because an unrelated table was added is rejected in favour of an error);
-    - not auto-accepted: PRD §8.3.1 says the names are "scoped to the table to prevent collisions", and sharing one type across two tables is a behaviour choice the PRD does not settle.
-  - Q2, composition with FIX-278's `inlineTypeUsers` guard: neither option makes the guard removable. Measured with this patch alone, fixing the collision by ALTER in the files source gives a misleading error because the stale entry stays (`ALTER TABLE a_b RENAME COLUMN c TO d` → "inline ENUM a_b_c_enum: columns a.b_c, a_b.d derive this name with different values"; `DROP COLUMN c` → "columns a.b_c derive this name with different values"). FIX-278's guard leaves the same stale entries (by reading its patch; HEAD fails these sequences too, so no regression).
-    - (a) Recommended by the vet: before FIX-278 lands, rework it so the MySQL file parser tracks inline values per (table, column), for example by deriving the inline entries from the final columns; the guard then goes away and RENAME/DROP resolve the collision. Either way, FIX-278's `renameInlineEnumOrSet` should build names with `parser.InlineEnumName` / `InlineSetName`.
-    - (b) Land both as they are and accept the misleading error in that edge case (loud, and failing at HEAD anyway).
-  - Textual overlap with FIX-278: both insert a test after `TestMySQLIntrospect_QuotedIdentifiers` (trivial conflict); their `parser/mysql/mysql.go` hunks do not overlap. The stacked combination was not measured.
-- Prototype results, run at `b606e4a7` on 2026-10-08:
-  - Reproduction: a sibling copy of the mysql example with `CREATE TABLE a (id int PRIMARY KEY, b_c ENUM('1','2') NOT NULL); CREATE TABLE a_b (id int PRIMARY KEY, c ENUM('3','4') NOT NULL);`, `GOWORK=off sqlgen generate` → `Generation error: enum a_b_c_enum and enum a_b_c_enum both resolve to the Go type name "ABCEnum" — set enums.a_b_c_enum.struct_name to a different Go identifier`; with `struct_name: OtherEnum` → the same error naming "OtherEnum". Database source (probe): introspected Enums `z8a_b_c_enum [1 2]`, `z8a_b_c_enum [3 4]`, identical to the file parser.
-  - E2E with the prototype: the equal-values case generates 68 files with both columns typed `OrdLineKindEnum`; `go build ./...` and `go vet ./models/...` pass.
-  - Gates: parser `go test -race -count=1 ./...` → ok, `golangci-lint run ./...` → 0 issues; cmd/sqlgen `go test -race -count=1 ./cli/...` → ok, `golangci-lint run ./cli/...` → 0 issues; `TestE2EGoldenFiles` → ok; `gofumpt -l` → clean.
-  - Fail-first: pipeline call removed → `TestParseSchema_InlineTypeNameCollision` fails ("generate: unexpected error: enum ord_line_kind_enum and enum ord_line_kind_enum both resolve to the Go type name …"; "different_ENUM_values/generate: … want exit code 3"); `MergeInlineTypes` stubbed to `return nil` → `TestMergeInlineTypes` fails ("MergeInlineTypes() error = <nil>, want "inline ENUM a_b_c_enum: columns a.b_c, a_b.c derive this name with different values; …"") and `TestMySQLIntrospect_InlineTypeNameCollision` fails; the existing suite without the fix → passes.
-  - Golden churn: none.
-  - Patch: `.claude/prototypes/FIX-288.patch` (8 files, +310/-16).
-
-- The user ruled on 2026-10-08: Q1 → Option 1, the `__` separator (`<table>__<column>_enum|_set`), knowing the vet's measurement that it does not by itself remove the Go-type-name collision (`toPascalCase` collapses `__`) and only makes the ENUM `enums.<name>.struct_name` escape usable. Q2 → rework FIX-278 before it lands (track inline values per (table, column) so its guard goes away, using FIX-288's naming helpers). Option 1 differs from the prototype (Option 2), so the entry is re-vetted.
-
-- Prototype results for the ruled Option 1, run at `13173996` on 2026-10-08 (replaces the Option 2 patch):
-  - Stale facts in the first vet's Q1: the different-values case at HEAD exits 1 (`ExitGeneration = 1`, `cmd/sqlgen/cli/root.go:16`), not 5; Option 1 changes 47 name literals on 44 lines in 3 parser test files (`parser/mysql/mysql_test.go` 31, `introspect_integration_test.go` 10, `mysql_integration_test.go` 3), not ~34. Hand-built cmd/sqlgen fixtures use the name as an opaque string and are left alone.
-  - Reproduction: a sibling copy of the mysql example with `ord (line_kind ENUM('x','y'))` + `ord_line (kind ENUM('x','z'))`, `GOWORK=off sqlgen generate` → exit 1, `Generation error: enum ord_line_kind_enum and enum ord_line_kind_enum both resolve to the Go type name "OrdLineKindEnum" — set enums.ord_line_kind_enum.struct_name …`; with `enums.ord__line_kind_enum.struct_name` set → the same error (the unknown key is ignored silently, backlog).
-  - Prototype: a new `parser/inline_types.go` with `InlineEnumName(table, column)` / `InlineSetName(table, column)` returning `<table>__<column>_enum|_set`, used at every naming site: `parser/mysql` `extractInlineEnumOrSet` (lines 413-437 only), `parser/introspect/mysql.go` `introspectColumns`, and both names in `viewEnumOrSetType` (the source-table lookup and the view's own `<view>__<column>_*` type). Tests: `parser/inline_types_test.go`; `TestInlineTypeNamesSeparateTableFromColumn` (a/a_b ENUM, a/a_y SET); `TestMySQLIntrospect_InlineTypeNames` (`assertSchemaParity`, incl. view `m_nc_v.c` next to table column `m_nc.v_c`); `TestGenerate_InlineTypeNameCollision` (`cmd/sqlgen/cli/pipeline_test.go`, generate and validate: the ENUM pair without an override exits 1, with `enums.a__b_c_enum.struct_name: ABCInlineEnum` it generates, the SET pair fails); the 47 literals updated. PRD §5.2 gives the `<table>__<column>_enum|_set` naming, and §8.3.1 **Naming** uses `users__permissions_set` / `users__role_enum` and says the `__` gives each column its own `enums:` key, that both can still resolve to one Go name (a §4.13 resolved-name collision fixed with `enums.<name>.struct_name`), that a SET pair has no such override (rename a table or column), and that a view's own type is `<view>__<column>_enum`.
-  - What Option 1 now does (measured):
-    - a/a_b ENUM pair without config → exit 1, `enum a__b_c_enum and enum a_b__c_enum both resolve to the Go type name "ABCEnum" — set enums.a__b_c_enum.struct_name or enums.a_b__c_enum.struct_name to a different Go identifier` (two separate keys now); with the override it generates. In the full mysql example (GraphQL on) the enum collision clears but table `a_b` then trips FIX-248's root-name check ("Query.ab is Ab to gqlgen and AB to sqlgen", remedy `tables.a_b.struct_name`). The ord/ord_line probe with `enums.ord__line_kind_enum.struct_name` generates 68 files (`OrdLineKindInlineEnum`, `OrdLineKindEnum`), and `go build ./...` / `go vet ./models/...` pass;
-    - SET pair → `SET type a__b_c_set and SET type a_b__c_set both resolve to the Go type name "ABCSet" and the Go type name "ABCSetValue" — rename one of them in the schema` (no config way out; a schema rename works);
-    - equal values (both ENUM('x','y')) now fail the same way: each column gets its own type, so even identical lists need an `enums:` entry;
-    - still not injective for identifiers containing `__`: table `` `a__b` `` col `c` and table `a` col `` `b__c` `` both derive `a__b__c_enum`, giving the original unusable remedy (accepted by the ruling);
-    - a view's own type and a table column's type have distinct SQL names (`m_nc_v__c_enum` vs `m_nc__v_c_enum`) but share the Go name `MNcVCEnum` (parser level only, not run through generation);
-    - FIX-278 should build its names with the helpers, and its test literals need the `__` form.
-  - Gates: parser `go test -race -count=1 ./...` → ok (MySQL integration); parser `golangci-lint run ./...` → 0 issues; cmd/sqlgen `go test -race -count=1 ./cli/... ./gen/...` → ok; `TestE2EGoldenFiles` → ok; `golangci-lint run ./cli/...` → 0 issues; `make update-golden` → no change; mysql example `GOWORK=off go test -race -count=1 ./...` → ok and lint → 0 issues; `gofumpt -l` → clean.
-  - Fail-first: separator set back to `_` → `TestInlineTypeNames` (`InlineEnumName("a", "b_c") = "a_b_c_enum", want "a__b_c_enum"`), `TestInlineTypeNamesSeparateTableFromColumn`, `TestMySQLIntrospect_InlineTypeNames` and `TestGenerate_InlineTypeNameCollision/ENUM_pair_with_an_override/generate` fail; each mysql.go and introspector call site reverted alone fails its test (e.g. `- Name: "a__b_c_enum" + Name: "a_b_c_enum"`; view-own-name → `TestMySQLIntrospectViews` `- Type: "user_states__status_enum" + Type: "user_states_status_enum"`). The view source-table lookup (`viewEnumOrSetType` :248) has no covering test at HEAD either (backlog). The existing suite without the fix → passes.
-  - Golden churn: mysql only, 6 changed under `expected/` and the same 6 under `models/` (`enums_gen.go` 3 doc lines, `sets_gen.go` 2, `manifest/manifest_gen.json` 7 `db_type` values, `manifest/document.md` 1, `order.md` 1, `user.md` 2).
-  - Patch: `.claude/prototypes/FIX-288.patch` (21 files at `13173996`; being rebased onto FIX-271 by the FIX-278 re-vet).
-
-
-**References.**
-- PRD §5.2 (inline ENUM values, table-scoped naming `<table>_<column>_enum`),
-  §8.3.1 (MySQL inline ENUM/SET naming), §4.11 (enum overrides, `struct_name`).
-- FIX-278 (RENAME/DROP bookkeeping; its `inlineTypeUsers` guard).
-- `parser/mysql/mysql_test.go:341` (`TestRedefineColumnKeepsSharedInlineEnumName`).
-
-**Resolution notes.** _Filled in by `/fix resolve`._
-
 ### FIX-289
 
 - **Status:** Open
@@ -841,6 +725,123 @@ source (PRD §6.1).
 ## Resolved
 
 <!-- fixes:resolved:begin -->
+
+### FIX-288
+
+- **Status:** Resolved
+- **Severity:** tracked
+- **Origin:** phase 4, `parser/mysql` + `parser/introspect`
+- **Surfaced by:** /fix-vet FIX-278 (2026-10-07), filed at /close-phase 30 (2026-10-08)
+- **Vetted:** ready at `56fcc1c7` (2026-10-08; re-vetted for the ruled Option 1, rebased onto FIX-271)
+
+**Issue.** **MySQL inline ENUM/SET names `<table>_<column>_enum|_set`
+collide when underscores make them ambiguous**, and the remedy the error
+offers cannot work. Table `a` column `b_c` and table `a_b` column `c` both
+register `a_b_c_enum`. Measured: `CREATE TABLE a (id int PRIMARY KEY, b_c
+ENUM('1','2') NOT NULL); CREATE TABLE a_b (id int PRIMARY KEY, c
+ENUM('3','4') NOT NULL);` → `sqlgen generate` → "Generation error: enum
+a_b_c_enum and enum a_b_c_enum both resolve to the Go type name "ABCEnum" —
+set enums.a_b_c_enum.struct_name to a different Go identifier"; with `enums:
+{a_b_c_enum: {struct_name: OtherEnum}}` → the same error naming "OtherEnum",
+since both entries share one config key. Both schema sources use the scheme,
+so `database` and `files` fail alike.
+
+**Root cause.** The derived name joins table, column and suffix with `_`,
+which can itself appear in either name, so the mapping (table, column) →
+name is not injective: `parser/mysql/mysql.go:519` / `:523`
+(`extractInlineEnumOrSet`) and `parser/introspect/mysql.go:361` / `:371`.
+The view path builds its own names the same way
+(`parser/introspect/mysql.go:255`, `<view>_<column><suffix>`), so a view name can collide with a table
+name likewise (by code reading). The duplicate is first caught at
+`validateResolvedNames` (`cmd/sqlgen/gen/resolved_names.go:403-414`), whose
+escape hint `enums.<name>.struct_name` (`cmd/sqlgen/gen/api_names.go:148`)
+names a key both entries share. FIX-278's prototype keeps an
+`inlineTypeUsers` guard (skip RENAME/DROP bookkeeping for a shared name)
+precisely because of this collision.
+
+**Suggested fix.** The naming scheme is a design question for the vet;
+options:
+- **Option 1 — a separator that cannot be confused.** E.g. `__` between
+  table and column (`a__b_c_enum` vs `a_b__c_enum`). Cheap, but not
+  injective either: a backquoted MySQL identifier may contain `__` or any
+  other character, so this narrows the collision rather than removing it.
+  Changes the PRD-documented name (§5.2, §8.3.1) and every golden enum name.
+- **Option 2 — keep the scheme, share identical values, reject different
+  ones loudly.** When two (table, column) pairs derive one name and their
+  value lists are equal, register one entry both columns use; when they
+  differ, fail in the parser / introspector with an error naming both
+  columns and a remedy that works (rename a table or column). No config
+  surface; the PRD gains one sentence.
+- **Option 3 — deterministic disambiguation.** On collision, suffix the
+  later pair (`a_b_c_2_enum`, by schema order). Generates, but a column's
+  enum name then depends on unrelated tables, and the `enums.<name>` key a
+  user configured can move to the other column when a table is added.
+- Whatever the option, move the naming into one shared helper in the
+  `parser` package used by `parser/mysql` and `parser/introspect` (both
+  already import it), so the two sources cannot drift; if the collision
+  disappears, FIX-278's `inlineTypeUsers` guard may become removable.
+- Tests: a `parser/mysql` case with tables `a` (`b_c`) and `a_b` (`c`),
+  asserting the ruled outcome (distinct names, one shared entry, or the
+  error); the same schema through `TestParityFixtures`
+  (`parser/introspect/parity_fixtures_test.go:163`) so both sources agree;
+  a `cmd/sqlgen/gen` case asserting generation succeeds or fails with the
+  ruled message.
+- Vet notes (stale facts and scope):
+  - the view collision is measured on the database source: table `z8t` column `v_c` ENUM('1','2') and view `z8t_v AS SELECT d.c FROM (SELECT v_c AS c FROM z8t) d` both register `z8t_v_c_enum` (the file parser skips CREATE VIEW);
+  - Option 1 changes no Go type names: `toPascalCase` collapses `__`, so `a__b_c_enum` and `a_b__c_enum` both become `ABCEnum`. It removes only the SQL-name/config-key collision; only SQL names churn (doc comments and manifest `db_type`);
+  - `TestParityFixtures` never compares the two sources; the regression belongs in a `mysql_integration_test.go` test using `assertSchemaParity`;
+  - equal value lists fail at HEAD too: `ord.line_kind` and `ord_line.kind`, both ENUM('x','y') → "Generation error: enum ord_line_kind_enum and enum ord_line_kind_enum both resolve to the Go type name "OrdLineKindEnum" …";
+  - a SET collision fails with a different message and no config escape: `tg.set_flags` / `tg_set.flags` → "SET type tg_set_flags_set and SET type tg_set_flags_set both resolve to the Go type name "TgSetFlagsSet" and the Go type name "TgSetFlagsSetValue" — rename one of them in the schema".
+- Prototype (Option 2):
+  - a new `parser/inline_types.go`: `InlineEnumName` / `InlineSetName` build the derived names, used by `parser/mysql` (`extractInlineEnumOrSet`) and `parser/introspect/mysql.go` (table columns and `viewEnumOrSetType`), so the sources cannot drift. `MergeInlineTypes(*Schema) []error` collapses entries with a shared name and equal values into one, and for differing values returns one error naming every column: `inline ENUM ord_line_kind_enum: columns ord.line_kind, ord_line.kind derive this name with different values; rename one of the tables or columns (PRD §5.2)`;
+  - `cmd/sqlgen/cli/pipeline.go` `parseSchema` calls it for MySQL after both sources and before view files (one site, following the `UnresolvedForeignKeys` precedent), so the result is a "Schema error:" with exit 3 on generate, validate and diff (HEAD: Generation error, exit 5). It runs after the full parse, not per statement, so a migration that later renames the collision away is not rejected;
+  - tests: `parser/inline_types_test.go` (table-driven); `TestParseSchema_InlineTypeNameCollision` (cli: equal values generate; different ENUM or SET values fail; each through generate, validate, diff); `TestMySQLIntrospect_InlineTypeNameCollision` (file vs database parity, the same error from both sources, the view case merging);
+  - PRD §8.3.1 gains a paragraph: equal values share one type, different values are a schema error, and the remedy is renaming a table or column.
+- Pending the user's ruling:
+  - Q1, naming scheme for colliding inline ENUM/SET names:
+    - (a) Recommended by the vet, and prototyped: Option 2, keep `<table>_<column>_enum|_set`; equal values share one type; different values are a schema error naming the columns. No golden churn, no config surface. The different-values case moves from Generation error (exit 5) with a remedy that cannot work to Schema error (exit 3) with a working remedy. Sub-choice: share on equal values (prototyped) or reject every collision (simpler, stricter, but forces a rename even when one type would be correct);
+    - (b) Option 1, a `__` separator: does not remove the Go-name collision (`ABCEnum` both ways); only makes `enums.<name>.struct_name` usable for ENUMs (SETs still have no escape, and even equal values need a config entry); still not injective for identifiers containing `__`. Churn is SQL names only (mysql `enums_gen.go` 3 lines, `sets_gen.go` 2, `manifest_gen.json` 7 `db_type` values, `manifest/{document,order,user}.md` 4 lines; ~34 test literals; PRD §5.2 and §8.3.1);
+    - (c) Option 3, a `_2` suffix: generates, but the name depends on unrelated tables, against the PRD §26 "GraphQL type name ownership" principle (a name that shifts because an unrelated table was added is rejected in favour of an error);
+    - not auto-accepted: PRD §8.3.1 says the names are "scoped to the table to prevent collisions", and sharing one type across two tables is a behaviour choice the PRD does not settle.
+  - Q2, composition with FIX-278's `inlineTypeUsers` guard: neither option makes the guard removable. Measured with this patch alone, fixing the collision by ALTER in the files source gives a misleading error because the stale entry stays (`ALTER TABLE a_b RENAME COLUMN c TO d` → "inline ENUM a_b_c_enum: columns a.b_c, a_b.d derive this name with different values"; `DROP COLUMN c` → "columns a.b_c derive this name with different values"). FIX-278's guard leaves the same stale entries (by reading its patch; HEAD fails these sequences too, so no regression).
+    - (a) Recommended by the vet: before FIX-278 lands, rework it so the MySQL file parser tracks inline values per (table, column), for example by deriving the inline entries from the final columns; the guard then goes away and RENAME/DROP resolve the collision. Either way, FIX-278's `renameInlineEnumOrSet` should build names with `parser.InlineEnumName` / `InlineSetName`.
+    - (b) Land both as they are and accept the misleading error in that edge case (loud, and failing at HEAD anyway).
+  - Textual overlap with FIX-278: both insert a test after `TestMySQLIntrospect_QuotedIdentifiers` (trivial conflict); their `parser/mysql/mysql.go` hunks do not overlap. The stacked combination was not measured.
+- Prototype results, run at `b606e4a7` on 2026-10-08:
+  - Reproduction: a sibling copy of the mysql example with `CREATE TABLE a (id int PRIMARY KEY, b_c ENUM('1','2') NOT NULL); CREATE TABLE a_b (id int PRIMARY KEY, c ENUM('3','4') NOT NULL);`, `GOWORK=off sqlgen generate` → `Generation error: enum a_b_c_enum and enum a_b_c_enum both resolve to the Go type name "ABCEnum" — set enums.a_b_c_enum.struct_name to a different Go identifier`; with `struct_name: OtherEnum` → the same error naming "OtherEnum". Database source (probe): introspected Enums `z8a_b_c_enum [1 2]`, `z8a_b_c_enum [3 4]`, identical to the file parser.
+  - E2E with the prototype: the equal-values case generates 68 files with both columns typed `OrdLineKindEnum`; `go build ./...` and `go vet ./models/...` pass.
+  - Gates: parser `go test -race -count=1 ./...` → ok, `golangci-lint run ./...` → 0 issues; cmd/sqlgen `go test -race -count=1 ./cli/...` → ok, `golangci-lint run ./cli/...` → 0 issues; `TestE2EGoldenFiles` → ok; `gofumpt -l` → clean.
+  - Fail-first: pipeline call removed → `TestParseSchema_InlineTypeNameCollision` fails ("generate: unexpected error: enum ord_line_kind_enum and enum ord_line_kind_enum both resolve to the Go type name …"; "different_ENUM_values/generate: … want exit code 3"); `MergeInlineTypes` stubbed to `return nil` → `TestMergeInlineTypes` fails ("MergeInlineTypes() error = <nil>, want "inline ENUM a_b_c_enum: columns a.b_c, a_b.c derive this name with different values; …"") and `TestMySQLIntrospect_InlineTypeNameCollision` fails; the existing suite without the fix → passes.
+  - Golden churn: none.
+  - Patch: `.claude/prototypes/FIX-288.patch` (8 files, +310/-16).
+
+- The user ruled on 2026-10-08: Q1 → Option 1, the `__` separator (`<table>__<column>_enum|_set`), knowing the vet's measurement that it does not by itself remove the Go-type-name collision (`toPascalCase` collapses `__`) and only makes the ENUM `enums.<name>.struct_name` escape usable. Q2 → rework FIX-278 before it lands (track inline values per (table, column) so its guard goes away, using FIX-288's naming helpers). Option 1 differs from the prototype (Option 2), so the entry is re-vetted.
+
+- Prototype results for the ruled Option 1, run at `13173996` on 2026-10-08 (replaces the Option 2 patch):
+  - Stale facts in the first vet's Q1: the different-values case at HEAD exits 1 (`ExitGeneration = 1`, `cmd/sqlgen/cli/root.go:16`), not 5; Option 1 changes 47 name literals on 44 lines in 3 parser test files (`parser/mysql/mysql_test.go` 31, `introspect_integration_test.go` 10, `mysql_integration_test.go` 3), not ~34. Hand-built cmd/sqlgen fixtures use the name as an opaque string and are left alone.
+  - Reproduction: a sibling copy of the mysql example with `ord (line_kind ENUM('x','y'))` + `ord_line (kind ENUM('x','z'))`, `GOWORK=off sqlgen generate` → exit 1, `Generation error: enum ord_line_kind_enum and enum ord_line_kind_enum both resolve to the Go type name "OrdLineKindEnum" — set enums.ord_line_kind_enum.struct_name …`; with `enums.ord__line_kind_enum.struct_name` set → the same error (the unknown key is ignored silently, backlog).
+  - Prototype: a new `parser/inline_types.go` with `InlineEnumName(table, column)` / `InlineSetName(table, column)` returning `<table>__<column>_enum|_set`, used at every naming site: `parser/mysql` `extractInlineEnumOrSet` (lines 413-437 only), `parser/introspect/mysql.go` `introspectColumns`, and both names in `viewEnumOrSetType` (the source-table lookup and the view's own `<view>__<column>_*` type). Tests: `parser/inline_types_test.go`; `TestInlineTypeNamesSeparateTableFromColumn` (a/a_b ENUM, a/a_y SET); `TestMySQLIntrospect_InlineTypeNames` (`assertSchemaParity`, incl. view `m_nc_v.c` next to table column `m_nc.v_c`); `TestGenerate_InlineTypeNameCollision` (`cmd/sqlgen/cli/pipeline_test.go`, generate and validate: the ENUM pair without an override exits 1, with `enums.a__b_c_enum.struct_name: ABCInlineEnum` it generates, the SET pair fails); the 47 literals updated. PRD §5.2 gives the `<table>__<column>_enum|_set` naming, and §8.3.1 **Naming** uses `users__permissions_set` / `users__role_enum` and says the `__` gives each column its own `enums:` key, that both can still resolve to one Go name (a §4.13 resolved-name collision fixed with `enums.<name>.struct_name`), that a SET pair has no such override (rename a table or column), and that a view's own type is `<view>__<column>_enum`.
+  - What Option 1 now does (measured):
+    - a/a_b ENUM pair without config → exit 1, `enum a__b_c_enum and enum a_b__c_enum both resolve to the Go type name "ABCEnum" — set enums.a__b_c_enum.struct_name or enums.a_b__c_enum.struct_name to a different Go identifier` (two separate keys now); with the override it generates. In the full mysql example (GraphQL on) the enum collision clears but table `a_b` then trips FIX-248's root-name check ("Query.ab is Ab to gqlgen and AB to sqlgen", remedy `tables.a_b.struct_name`). The ord/ord_line probe with `enums.ord__line_kind_enum.struct_name` generates 68 files (`OrdLineKindInlineEnum`, `OrdLineKindEnum`), and `go build ./...` / `go vet ./models/...` pass;
+    - SET pair → `SET type a__b_c_set and SET type a_b__c_set both resolve to the Go type name "ABCSet" and the Go type name "ABCSetValue" — rename one of them in the schema` (no config way out; a schema rename works);
+    - equal values (both ENUM('x','y')) now fail the same way: each column gets its own type, so even identical lists need an `enums:` entry;
+    - still not injective for identifiers containing `__`: table `` `a__b` `` col `c` and table `a` col `` `b__c` `` both derive `a__b__c_enum`, giving the original unusable remedy (accepted by the ruling);
+    - a view's own type and a table column's type have distinct SQL names (`m_nc_v__c_enum` vs `m_nc__v_c_enum`) but share the Go name `MNcVCEnum` (parser level only, not run through generation);
+    - FIX-278 should build its names with the helpers, and its test literals need the `__` form.
+  - Gates: parser `go test -race -count=1 ./...` → ok (MySQL integration); parser `golangci-lint run ./...` → 0 issues; cmd/sqlgen `go test -race -count=1 ./cli/... ./gen/...` → ok; `TestE2EGoldenFiles` → ok; `golangci-lint run ./cli/...` → 0 issues; `make update-golden` → no change; mysql example `GOWORK=off go test -race -count=1 ./...` → ok and lint → 0 issues; `gofumpt -l` → clean.
+  - Fail-first: separator set back to `_` → `TestInlineTypeNames` (`InlineEnumName("a", "b_c") = "a_b_c_enum", want "a__b_c_enum"`), `TestInlineTypeNamesSeparateTableFromColumn`, `TestMySQLIntrospect_InlineTypeNames` and `TestGenerate_InlineTypeNameCollision/ENUM_pair_with_an_override/generate` fail; each mysql.go and introspector call site reverted alone fails its test (e.g. `- Name: "a__b_c_enum" + Name: "a_b_c_enum"`; view-own-name → `TestMySQLIntrospectViews` `- Type: "user_states__status_enum" + Type: "user_states_status_enum"`). The view source-table lookup (`viewEnumOrSetType` :248) has no covering test at HEAD either (backlog). The existing suite without the fix → passes.
+  - Golden churn: mysql only, 6 changed under `expected/` and the same 6 under `models/` (`enums_gen.go` 3 doc lines, `sets_gen.go` 2, `manifest/manifest_gen.json` 7 `db_type` values, `manifest/document.md` 1, `order.md` 1, `user.md` 2).
+  - Patch: `.claude/prototypes/FIX-288.patch` (21 files at `13173996`; being rebased onto FIX-271 by the FIX-278 re-vet).
+
+
+**References.**
+- PRD §5.2 (inline ENUM values, table-scoped naming `<table>__<column>_enum`),
+  §8.3.1 (MySQL inline ENUM/SET naming), §4.11 (enum overrides, `struct_name`).
+- FIX-278 (RENAME/DROP bookkeeping; its `inlineTypeUsers` guard).
+- `parser/mysql/mysql_test.go:384` (`TestRedefineColumnKeepsSharedInlineEnumName`).
+
+**Resolution notes.** Implemented the ruled Option 1 (2026-10-08) from the vetted prototype, which applied cleanly at `19772175`. New `parser/inline_types.go`: `InlineEnumName(table, column)` / `InlineSetName(table, column)` return `<table>__<column>_enum|_set` and are the only naming sites, used by `parser/mysql` `extractInlineEnumOrSet` and `parser/introspect/mysql.go` (`introspectColumns`, and both the source-table lookup and the view's own `<view>__<column>_*` name in `viewEnumOrSetType`), so the two schema sources cannot drift. Table `a` column `b_c` → `a__b_c_enum` and table `a_b` column `c` → `a_b__c_enum` now have separate `enums:` keys, and the resolved-name error's `enums.<name>.struct_name` remedy works for ENUMs; a SET pair still needs a schema rename, and identifiers containing `__` can still collide (both accepted by the ruling). PRD §5.2 and §8.3.1 **Naming** updated. Tests: `TestInlineTypeNames` (`parser/inline_types_test.go`), `TestInlineTypeNamesSeparateTableFromColumn` (`parser/mysql`), `TestMySQLIntrospect_InlineTypeNames` (file vs database parity incl. the view case), `TestGenerate_InlineTypeNameCollision` (`cmd/sqlgen/cli`, generate + validate: ENUM pair without/with override, SET pair); 47 existing name literals updated to the `__` form. Fail-first: separator set back to `_` → all four new tests fail. Golden churn: mysql only, 6 files under `expected/` and the same 6 under `models/` (`enums_gen.go`, `sets_gen.go`, `manifest/manifest_gen.json`, `manifest/{document,order,user}.md`), matching the vet. Gates: `make check` → ok; parser MySQL integration tests → ok; `make update-golden` → no change; `make check-examples` → ok.
+
 
 ### FIX-280
 

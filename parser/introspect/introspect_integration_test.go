@@ -1997,15 +1997,15 @@ func TestMySQLIntrospectViews(t *testing.T) {
 	// source is not a table column read from the view's SELECT gets a type of
 	// its own.
 	wantViews := []parser.View{
-		{Name: "user_states", Columns: []parser.Column{{Name: "status", Type: "user_states_status_enum"}}},
-		{Name: "user_states_copy", Columns: []parser.Column{{Name: "status", Type: "user_states_copy_status_enum"}}},
+		{Name: "user_states", Columns: []parser.Column{{Name: "status", Type: "user_states__status_enum"}}},
+		{Name: "user_states_copy", Columns: []parser.Column{{Name: "status", Type: "user_states_copy__status_enum"}}},
 		{Name: "user_summary", Columns: []parser.Column{
 			{Name: "id", Type: "bigint"},
 			{Name: "name", Type: "varchar(255)"},
 			{Name: "score", Type: "int"},
-			{Name: "status", Type: "view_users_status_enum"},
-			{Name: "state", Type: "view_users_status_enum"},
-			{Name: "perms", Type: "view_users_perms_set", Nullable: true},
+			{Name: "status", Type: "view_users__status_enum"},
+			{Name: "state", Type: "view_users__status_enum"},
+			{Name: "perms", Type: "view_users__perms_set", Nullable: true},
 			{Name: "status_text", Type: "varchar(8)", Nullable: true},
 		}},
 	}
@@ -2013,14 +2013,14 @@ func TestMySQLIntrospectViews(t *testing.T) {
 		t.Errorf("views mismatch (-want +got):\n%s", diff)
 	}
 	wantEnums := []parser.Enum{
-		{Name: "view_users_status_enum", Values: []string{"active", "inactive"}},
-		{Name: "user_states_status_enum", Values: []string{"active", "inactive"}},
-		{Name: "user_states_copy_status_enum", Values: []string{"active", "inactive"}},
+		{Name: "view_users__status_enum", Values: []string{"active", "inactive"}},
+		{Name: "user_states__status_enum", Values: []string{"active", "inactive"}},
+		{Name: "user_states_copy__status_enum", Values: []string{"active", "inactive"}},
 	}
 	if diff := cmp.Diff(wantEnums, schema.Enums); diff != "" {
 		t.Errorf("enums mismatch (-want +got):\n%s", diff)
 	}
-	wantSets := []parser.Set{{Name: "view_users_perms_set", Values: []string{"r", "w"}}}
+	wantSets := []parser.Set{{Name: "view_users__perms_set", Values: []string{"r", "w"}}}
 	if diff := cmp.Diff(wantSets, schema.Sets); diff != "" {
 		t.Errorf("sets mismatch (-want +got):\n%s", diff)
 	}
@@ -2215,7 +2215,7 @@ func TestMySQLIntrospect_EnumEdgeValues(t *testing.T) {
 	}
 
 	want := []parser.Enum{{
-		Name:   "enum_edge_status_enum",
+		Name:   "enum_edge__status_enum",
 		Values: []string{"active", "in,active", "it's", "", `b\c`},
 	}}
 	if diff := cmp.Diff(want, p.Schema().Enums); diff != "" {

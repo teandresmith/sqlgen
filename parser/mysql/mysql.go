@@ -503,9 +503,8 @@ func (p *Parser) parseColumn(tableName string, col *sqlparser.ColumnDefinition) 
 }
 
 // extractInlineEnumOrSet handles MySQL inline ENUM and SET column types.
-// It creates schema-level entries and updates the column type to the derived name.
-// Names are scoped to the table (e.g., "users_role_enum") to prevent collisions
-// when multiple tables have columns with the same name but different values.
+// It creates schema-level entries and updates the column type to the derived
+// table-scoped name (parser.InlineEnumName, parser.InlineSetName).
 func (p *Parser) extractInlineEnumOrSet(tableName string, c *parser.Column, ct *sqlparser.ColumnType) {
 	if len(ct.EnumValues) == 0 {
 		return
@@ -517,11 +516,11 @@ func (p *Parser) extractInlineEnumOrSet(tableName string, c *parser.Column, ct *
 	typ := strings.ToLower(ct.Type)
 	switch typ {
 	case "enum":
-		name := tableName + "_" + c.Name + "_enum"
+		name := parser.InlineEnumName(tableName, c.Name)
 		p.schema.Enums = append(p.schema.Enums, parser.Enum{Name: name, Values: values})
 		c.Type = name
 	case "set":
-		name := tableName + "_" + c.Name + "_set"
+		name := parser.InlineSetName(tableName, c.Name)
 		p.schema.Sets = append(p.schema.Sets, parser.Set{Name: name, Values: values})
 		c.Type = name
 	}

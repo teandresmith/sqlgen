@@ -202,6 +202,66 @@ func TestParseSchema_UnresolvedForeignKey(t *testing.T) {
 	}
 }
 
+// TestGenerate_InlineTypeNameCollision covers two MySQL columns a single
+// underscore would give one inline type name: table a, column b_c and table
+// a_b, column c. The schema names differ (a__b_c_enum, a_b__c_enum) but both
+// resolve to one Go type name, so the ENUM pair generates once one of the two
+// `enums:` keys renames its type. A SET type has no such key.
+func TestGenerate_InlineTypeNameCollision(t *testing.T) {
+	tests := []struct {
+		name     string
+		sql      string
+		config   string // appended to sqlgen.yml
+		wantCode int    // generate's exit code; 0 means the command succeeds
+		wantErr  string
+	}{
+		{
+			name: "ENUM pair without an override",
+			sql: `CREATE TABLE a (id INT PRIMARY KEY, b_c ENUM('1','2') NOT NULL);
+				CREATE TABLE a_b (id INT PRIMARY KEY, c ENUM('3','4') NOT NULL);`,
+			wantCode: ExitGeneration,
+			wantErr:  `enum a__b_c_enum and enum a_b__c_enum both resolve to the Go type name "ABCEnum" — set enums.a__b_c_enum.struct_name or enums.a_b__c_enum.struct_name to a different Go identifier`,
+		},
+		{
+			name: "ENUM pair with an override",
+			sql: `CREATE TABLE a (id INT PRIMARY KEY, b_c ENUM('1','2') NOT NULL);
+				CREATE TABLE a_b (id INT PRIMARY KEY, c ENUM('3','4') NOT NULL);`,
+			config: "enums:\n  a__b_c_enum:\n    struct_name: ABCInlineEnum\n",
+		},
+		{
+			name: "SET pair",
+			sql: `CREATE TABLE a (id INT PRIMARY KEY, b_c SET('1','2'));
+				CREATE TABLE a_b (id INT PRIMARY KEY, c SET('3'));`,
+			wantCode: ExitGeneration,
+			wantErr:  `SET type a__b_c_set and SET type a_b__c_set both resolve to the Go type name "ABCSet" and the Go type name "ABCSetValue" — rename one of them in the schema`,
+		},
+	}
+	for _, tt := range tests {
+		for _, command := range []string{"generate", "validate"} {
+			t.Run(tt.name+"/"+command, func(t *testing.T) {
+				cfgPath := writeSchemaProject(t, config.DialectMySQL, tt.sql)
+				appendConfig(t, cfgPath, tt.config)
+				stderr, err := runSchemaCommand(t, command, cfgPath, tt.wantCode == 0)
+				if tt.wantCode == 0 {
+					if err != nil {
+						t.Fatalf("%s: unexpected error: %v\nstderr: %s", command, err, stderr)
+					}
+					return
+				}
+				if err == nil {
+					t.Fatalf("%s: succeeded, want %q", command, tt.wantErr)
+				}
+				if ee, ok := errors.AsType[*exitError](err); command == "generate" && (!ok || ee.code != tt.wantCode) {
+					t.Fatalf("%s: error = %v, want exit code %d\nstderr: %s", command, err, tt.wantCode, stderr)
+				}
+				if !strings.Contains(stderr, tt.wantErr) {
+					t.Errorf("%s: stderr = %q, want it to contain %q", command, stderr, tt.wantErr)
+				}
+			})
+		}
+	}
+}
+
 // TestValidate_UnresolvedForeignKeyKeepsChecking pins that an unresolved
 // PostgreSQL foreign key does not hide the rest of `validate`'s report: the
 // parser warnings, the post-parse config error and the

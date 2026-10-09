@@ -8,7 +8,7 @@ import (
 	"strings"
 )
 
-// UsersPermissionsSetValue represents an individual value within the users_permissions_set set type.
+// UsersPermissionsSetValue represents an individual value within the users__permissions_set set type.
 type UsersPermissionsSetValue string
 
 const (
@@ -88,7 +88,7 @@ func (s *UsersPermissionsSetValue) UnmarshalGQL(v any) error {
 	return nil
 }
 
-// UsersPermissionsSet represents the users_permissions_set MySQL SET type as a type-safe slice.
+// UsersPermissionsSet represents the users__permissions_set MySQL SET type as a type-safe slice.
 type UsersPermissionsSet []UsersPermissionsSetValue
 
 // String returns the comma-separated string representation of the UsersPermissionsSet.

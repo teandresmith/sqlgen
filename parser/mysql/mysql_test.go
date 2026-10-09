@@ -90,8 +90,8 @@ func TestCreateTableMySQLTypes(t *testing.T) {
 		"t_json":      "json",
 		"t_blob":      "blob",
 		"t_bool":      "tinyint(1)",
-		"t_enum":      "test_types_t_enum_enum",
-		"t_set":       "test_types_t_set_set",
+		"t_enum":      "test_types__t_enum_enum",
+		"t_set":       "test_types__t_set_set",
 	}
 
 	for _, col := range table.Columns {
@@ -170,8 +170,8 @@ func TestInlineEnumExtraction(t *testing.T) {
 	for _, c := range table.Columns {
 		cols[c.Name] = c
 	}
-	if cols["status"].Type != "users_status_enum" {
-		t.Errorf("status type = %q, want %q", cols["status"].Type, "users_status_enum")
+	if cols["status"].Type != "users__status_enum" {
+		t.Errorf("status type = %q, want %q", cols["status"].Type, "users__status_enum")
 	}
 
 	// An Enum entry should be created for the inline ENUM.
@@ -229,16 +229,16 @@ func TestInlineSetExtraction(t *testing.T) {
 	for _, c := range table.Columns {
 		cols[c.Name] = c
 	}
-	if cols["permissions"].Type != "users_permissions_set" {
-		t.Errorf("permissions type = %q, want %q", cols["permissions"].Type, "users_permissions_set")
+	if cols["permissions"].Type != "users__permissions_set" {
+		t.Errorf("permissions type = %q, want %q", cols["permissions"].Type, "users__permissions_set")
 	}
 
 	// A Set entry should be created for the inline SET.
 	if len(schema.Sets) != 1 {
 		t.Fatalf("sets = %d, want 1", len(schema.Sets))
 	}
-	if schema.Sets[0].Name != "users_permissions_set" {
-		t.Errorf("set name = %q, want %q", schema.Sets[0].Name, "users_permissions_set")
+	if schema.Sets[0].Name != "users__permissions_set" {
+		t.Errorf("set name = %q, want %q", schema.Sets[0].Name, "users__permissions_set")
 	}
 	wantValues := []string{"read", "write", "admin"}
 	if diff := cmp.Diff(wantValues, schema.Sets[0].Values); diff != "" {
@@ -248,6 +248,49 @@ func TestInlineSetExtraction(t *testing.T) {
 	// No Enum entries should be created for SET.
 	if len(schema.Enums) != 0 {
 		t.Errorf("enums = %d, want 0 (SET should not create Enum entries)", len(schema.Enums))
+	}
+}
+
+// TestInlineTypeNamesSeparateTableFromColumn covers two columns that a single
+// underscore would give one name: table a, column b_c and table a_b, column c.
+func TestInlineTypeNamesSeparateTableFromColumn(t *testing.T) {
+	sql := `CREATE TABLE a (id INT PRIMARY KEY, b_c ENUM('1','2') NOT NULL, y_z SET('r'));
+		CREATE TABLE a_b (id INT PRIMARY KEY, c ENUM('3','4') NOT NULL);
+		CREATE TABLE a_y (id INT PRIMARY KEY, z SET('w'));`
+
+	p := newParser(t)
+	if err := p.Parse("test.sql", []byte(sql)); err != nil {
+		t.Fatalf("Parse() error: %v", err)
+	}
+	schema := p.Schema()
+
+	wantEnums := []parser.Enum{
+		{Name: "a__b_c_enum", Values: []string{"1", "2"}},
+		{Name: "a_b__c_enum", Values: []string{"3", "4"}},
+	}
+	if diff := cmp.Diff(wantEnums, schema.Enums); diff != "" {
+		t.Errorf("enums mismatch (-want +got):\n%s", diff)
+	}
+	wantSets := []parser.Set{
+		{Name: "a__y_z_set", Values: []string{"r"}},
+		{Name: "a_y__z_set", Values: []string{"w"}},
+	}
+	if diff := cmp.Diff(wantSets, schema.Sets); diff != "" {
+		t.Errorf("sets mismatch (-want +got):\n%s", diff)
+	}
+	types := map[string]string{}
+	for _, tbl := range schema.Tables {
+		for _, c := range tbl.Columns {
+			types[tbl.Name+"."+c.Name] = c.Type
+		}
+	}
+	wantTypes := map[string]string{
+		"a.id": "int", "a.b_c": "a__b_c_enum", "a.y_z": "a__y_z_set",
+		"a_b.id": "int", "a_b.c": "a_b__c_enum",
+		"a_y.id": "int", "a_y.z": "a_y__z_set",
+	}
+	if diff := cmp.Diff(wantTypes, types); diff != "" {
+		t.Errorf("column types mismatch (-want +got):\n%s", diff)
 	}
 }
 
@@ -267,20 +310,20 @@ func TestRedefineColumnReplacesInlineEnumOrSet(t *testing.T) {
 		{
 			name:      "MODIFY widening an ENUM",
 			sql:       "CREATE TABLE users (id INT PRIMARY KEY, role ENUM('a','b') NOT NULL); ALTER TABLE users MODIFY role ENUM('a','b','c') NOT NULL;",
-			wantType:  "users_role_enum",
-			wantEnums: []parser.Enum{{Name: "users_role_enum", Values: []string{"a", "b", "c"}}},
+			wantType:  "users__role_enum",
+			wantEnums: []parser.Enum{{Name: "users__role_enum", Values: []string{"a", "b", "c"}}},
 		},
 		{
 			name:      "CHANGE COLUMN widening an ENUM without a rename",
 			sql:       "CREATE TABLE users (id INT PRIMARY KEY, role ENUM('a','b') NOT NULL); ALTER TABLE users CHANGE COLUMN role role ENUM('a','b','c') NOT NULL;",
-			wantType:  "users_role_enum",
-			wantEnums: []parser.Enum{{Name: "users_role_enum", Values: []string{"a", "b", "c"}}},
+			wantType:  "users__role_enum",
+			wantEnums: []parser.Enum{{Name: "users__role_enum", Values: []string{"a", "b", "c"}}},
 		},
 		{
 			name:      "CHANGE COLUMN renaming an ENUM column",
 			sql:       "CREATE TABLE users (id INT PRIMARY KEY, role ENUM('a','b') NOT NULL); ALTER TABLE users CHANGE COLUMN role kind ENUM('a','b','c') NOT NULL;",
-			wantType:  "users_kind_enum",
-			wantEnums: []parser.Enum{{Name: "users_kind_enum", Values: []string{"a", "b", "c"}}},
+			wantType:  "users__kind_enum",
+			wantEnums: []parser.Enum{{Name: "users__kind_enum", Values: []string{"a", "b", "c"}}},
 		},
 		{
 			name:     "MODIFY from ENUM to VARCHAR",
@@ -290,26 +333,26 @@ func TestRedefineColumnReplacesInlineEnumOrSet(t *testing.T) {
 		{
 			name:      "MODIFY from VARCHAR to ENUM",
 			sql:       "CREATE TABLE users (id INT PRIMARY KEY, role VARCHAR(10) NOT NULL); ALTER TABLE users MODIFY role ENUM('a','b') NOT NULL;",
-			wantType:  "users_role_enum",
-			wantEnums: []parser.Enum{{Name: "users_role_enum", Values: []string{"a", "b"}}},
+			wantType:  "users__role_enum",
+			wantEnums: []parser.Enum{{Name: "users__role_enum", Values: []string{"a", "b"}}},
 		},
 		{
 			name:     "MODIFY widening a SET",
 			sql:      "CREATE TABLE users (id INT PRIMARY KEY, role SET('a','b') NOT NULL); ALTER TABLE users MODIFY role SET('a','b','c') NOT NULL;",
-			wantType: "users_role_set",
-			wantSets: []parser.Set{{Name: "users_role_set", Values: []string{"a", "b", "c"}}},
+			wantType: "users__role_set",
+			wantSets: []parser.Set{{Name: "users__role_set", Values: []string{"a", "b", "c"}}},
 		},
 		{
 			name:     "MODIFY from ENUM to SET",
 			sql:      "CREATE TABLE users (id INT PRIMARY KEY, role ENUM('a','b') NOT NULL); ALTER TABLE users MODIFY role SET('a','b') NOT NULL;",
-			wantType: "users_role_set",
-			wantSets: []parser.Set{{Name: "users_role_set", Values: []string{"a", "b"}}},
+			wantType: "users__role_set",
+			wantSets: []parser.Set{{Name: "users__role_set", Values: []string{"a", "b"}}},
 		},
 		{
 			name:      "MODIFY on one ENUM column leaves another table's ENUM column alone",
 			sql:       "CREATE TABLE users (id INT PRIMARY KEY, role ENUM('a','b') NOT NULL); CREATE TABLE admins (id INT PRIMARY KEY, role ENUM('x') NOT NULL); ALTER TABLE users MODIFY role ENUM('a','b','c') NOT NULL;",
-			wantType:  "users_role_enum",
-			wantEnums: []parser.Enum{{Name: "admins_role_enum", Values: []string{"x"}}, {Name: "users_role_enum", Values: []string{"a", "b", "c"}}},
+			wantType:  "users__role_enum",
+			wantEnums: []parser.Enum{{Name: "admins__role_enum", Values: []string{"x"}}, {Name: "users__role_enum", Values: []string{"a", "b", "c"}}},
 		},
 	}
 	for _, tt := range tests {
@@ -348,18 +391,18 @@ func TestRedefineColumnKeepsSharedInlineEnumName(t *testing.T) {
 			name: "RENAME COLUMN then ADD COLUMN under the old name",
 			sql:  "CREATE TABLE users (id INT PRIMARY KEY, role ENUM('a','b') NOT NULL); ALTER TABLE users RENAME COLUMN role TO kind; ALTER TABLE users ADD COLUMN role ENUM('x') NOT NULL; ALTER TABLE users MODIFY kind ENUM('a','b','c') NOT NULL;",
 			wantEnums: []parser.Enum{
-				{Name: "users_kind_enum", Values: []string{"a", "b", "c"}},
-				{Name: "users_role_enum", Values: []string{"a", "b"}},
-				{Name: "users_role_enum", Values: []string{"x"}},
+				{Name: "users__kind_enum", Values: []string{"a", "b", "c"}},
+				{Name: "users__role_enum", Values: []string{"a", "b"}},
+				{Name: "users__role_enum", Values: []string{"x"}},
 			},
 		},
 		{
 			name: "RENAME TABLE then CREATE TABLE under the old name",
 			sql:  "CREATE TABLE users (id INT PRIMARY KEY, role ENUM('a','b') NOT NULL); RENAME TABLE users TO accounts; CREATE TABLE users (id INT PRIMARY KEY, role ENUM('x') NOT NULL); ALTER TABLE users MODIFY role ENUM('x','y') NOT NULL;",
 			wantEnums: []parser.Enum{
-				{Name: "users_role_enum", Values: []string{"a", "b"}},
-				{Name: "users_role_enum", Values: []string{"x"}},
-				{Name: "users_role_enum", Values: []string{"x", "y"}},
+				{Name: "users__role_enum", Values: []string{"a", "b"}},
+				{Name: "users__role_enum", Values: []string{"x"}},
+				{Name: "users__role_enum", Values: []string{"x", "y"}},
 			},
 		},
 	}
@@ -392,16 +435,16 @@ func TestRedefineColumnReplacesSeededInlineEnum(t *testing.T) {
 			Name: "users",
 			Columns: []parser.Column{
 				{Name: "id", Type: "int", PrimaryKey: true},
-				{Name: "role", Type: "users_role_enum"},
+				{Name: "role", Type: "users__role_enum"},
 			},
 		}},
-		Enums: []parser.Enum{{Name: "users_role_enum", Values: []string{"a", "b"}}},
+		Enums: []parser.Enum{{Name: "users__role_enum", Values: []string{"a", "b"}}},
 	})
 	sql := "ALTER TABLE users MODIFY role ENUM('a','b','c') NOT NULL;"
 	if err := p.Parse("test.sql", []byte(sql)); err != nil {
 		t.Fatalf("Parse() error: %v", err)
 	}
-	want := []parser.Enum{{Name: "users_role_enum", Values: []string{"a", "b", "c"}}}
+	want := []parser.Enum{{Name: "users__role_enum", Values: []string{"a", "b", "c"}}}
 	if diff := cmp.Diff(want, p.Schema().Enums); diff != "" {
 		t.Errorf("Parse(%q) after Seed enums mismatch (-want +got):\n%s", sql, diff)
 	}

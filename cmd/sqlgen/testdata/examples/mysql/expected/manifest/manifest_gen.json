@@ -2923,7 +2923,7 @@
           "name": "entity_type",
           "go_field": "EntityType",
           "go_type": "DocumentsEntityTypeEnum",
-          "db_type": "documents_entity_type_enum",
+          "db_type": "documents__entity_type_enum",
           "nullable": false,
           "pk": false,
           "unique": false,
@@ -3837,7 +3837,7 @@
           "name": "status",
           "go_field": "Status",
           "go_type": "OrdersStatusEnum",
-          "db_type": "orders_status_enum",
+          "db_type": "orders__status_enum",
           "nullable": false,
           "pk": false,
           "unique": false,
@@ -7614,7 +7614,7 @@
           "name": "role",
           "go_field": "Role",
           "go_type": "UsersRoleEnum",
-          "db_type": "users_role_enum",
+          "db_type": "users__role_enum",
           "nullable": false,
           "pk": false,
           "unique": false,
@@ -7627,7 +7627,7 @@
           "name": "permissions",
           "go_field": "Permissions",
           "go_type": "UsersPermissionsSet",
-          "db_type": "users_permissions_set",
+          "db_type": "users__permissions_set",
           "nullable": false,
           "pk": false,
           "unique": false,
@@ -9757,7 +9757,7 @@
     {
       "name": "DocumentsEntityTypeEnum",
       "go_type": "DocumentsEntityTypeEnum",
-      "db_type": "documents_entity_type_enum",
+      "db_type": "documents__entity_type_enum",
       "values": [
         "asset.primary",
         "asset.attachment",
@@ -9769,7 +9769,7 @@
     {
       "name": "OrdersStatusEnum",
       "go_type": "OrdersStatusEnum",
-      "db_type": "orders_status_enum",
+      "db_type": "orders__status_enum",
       "values": [
         "pending",
         "confirmed",
@@ -9782,7 +9782,7 @@
     {
       "name": "UsersRoleEnum",
       "go_type": "UsersRoleEnum",
-      "db_type": "users_role_enum",
+      "db_type": "users__role_enum",
       "values": [
         "admin",
         "editor",

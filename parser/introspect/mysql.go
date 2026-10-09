@@ -237,22 +237,23 @@ func (mi *MySQLIntrospector) viewCatalogColumns(ctx context.Context, view string
 // added to schema.
 func viewEnumOrSetType(view *parser.View, column, columnType string, schema *parser.Schema) string {
 	values := extractMySQLEnumValues(columnType)
-	suffix := "_enum"
-	if strings.HasPrefix(strings.ToLower(columnType), "set(") {
-		suffix = "_set"
+	isSet := strings.HasPrefix(strings.ToLower(columnType), "set(")
+	inlineName := parser.InlineEnumName
+	if isSet {
+		inlineName = parser.InlineSetName
 	}
 
 	table, source, ok := viewColumnSource(view, column)
 	isTable := slices.ContainsFunc(schema.Tables, func(t parser.Table) bool { return t.Name == table })
 	if ok && isTable {
-		name := table + "_" + source + suffix
+		name := inlineName(table, source)
 		if values != nil && slices.Equal(enumOrSetValues(schema, name), values) {
 			return name
 		}
 	}
 
-	name := view.Name + "_" + column + suffix
-	if suffix == "_set" {
+	name := inlineName(view.Name, column)
+	if isSet {
 		schema.Sets = append(schema.Sets, parser.Set{Name: name, Values: values})
 	} else {
 		schema.Enums = append(schema.Enums, parser.Enum{Name: name, Values: values})
@@ -350,14 +351,14 @@ func (mi *MySQLIntrospector) introspectColumns(ctx context.Context, table *parse
 			col.GeneratedStorage = storage
 		}
 
-		// Inline ENUM/SET columns get a table-scoped synthetic type name to match
-		// parser/mysql/mysql.go::extractInlineEnumOrSet and prevent cross-table collisions.
+		// Inline ENUM/SET columns get the table-scoped synthetic type name the
+		// file parser gives them.
 		lowerType := strings.ToLower(columnType)
 		switch {
 		case strings.HasPrefix(lowerType, "enum("):
 			values := extractMySQLEnumValues(columnType)
 			if len(values) > 0 {
-				name := table.Name + "_" + col.Name + "_enum"
+				name := parser.InlineEnumName(table.Name, col.Name)
 				col.Type = name
 				schema.Enums = append(schema.Enums, parser.Enum{
 					Name:   name,
@@ -367,7 +368,7 @@ func (mi *MySQLIntrospector) introspectColumns(ctx context.Context, table *parse
 		case strings.HasPrefix(lowerType, "set("):
 			values := extractMySQLEnumValues(columnType)
 			if len(values) > 0 {
-				name := table.Name + "_" + col.Name + "_set"
+				name := parser.InlineSetName(table.Name, col.Name)
 				col.Type = name
 				schema.Sets = append(schema.Sets, parser.Set{
 					Name:   name,

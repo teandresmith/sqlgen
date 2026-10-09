@@ -20,7 +20,7 @@ Customer purchase orders
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
 | `id` | ID | `int64` | `bigint` |  | yes |  |  | `comparator.Number[int64]` | Unique identifier |
 | `user_id` | UserID | `int64` | `bigint` |  |  |  |  | `comparator.Number[int64]` | Ordering user reference |
-| `status` | Status | `OrdersStatusEnum` | `orders_status_enum` |  |  |  | `'pending'` | `comparator.Enum[OrdersStatusEnum]` | Current lifecycle state |
+| `status` | Status | `OrdersStatusEnum` | `orders__status_enum` |  |  |  | `'pending'` | `comparator.Enum[OrdersStatusEnum]` | Current lifecycle state |
 | `total` | Total | `float64` | `decimal(12,2)` |  |  |  |  | `comparator.Number[float64]` | Order total in default currency |
 | `notes` | Notes | `*string` | `text` | yes |  |  |  | `comparator.NullableString` | Optional order notes from the customer |
 | `ordered_at` | OrderedAt | `time.Time` | `datetime` |  |  |  | `current_timestamp()` | `comparator.Time` | Order placement timestamp |

@@ -20,7 +20,7 @@ Polymorphic child rows; entity_type sub-categorizes per-parent relationship
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
 | `id` | ID | `int64` | `bigint` |  | yes |  |  | `comparator.Number[int64]` | Unique identifier |
 | `entity_id` | EntityID | `int64` | `bigint` |  |  |  |  | `comparator.Number[int64]` | Parent row identifier (polymorphic FK) |
-| `entity_type` | EntityType | `DocumentsEntityTypeEnum` | `documents_entity_type_enum` |  |  |  |  | `comparator.Enum[DocumentsEntityTypeEnum]` | Polymorphic discriminator |
+| `entity_type` | EntityType | `DocumentsEntityTypeEnum` | `documents__entity_type_enum` |  |  |  |  | `comparator.Enum[DocumentsEntityTypeEnum]` | Polymorphic discriminator |
 | `name` | Name | `string` | `varchar(255)` |  |  |  |  | `comparator.String` | Document display name |
 | `created_at` | CreatedAt | `time.Time` | `timestamp` |  |  |  | `current_timestamp()` | `comparator.Time` | Row creation timestamp |
 
