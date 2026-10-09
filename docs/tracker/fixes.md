@@ -29,7 +29,7 @@
 - **Severity:** nit
 - **Origin:** phase 30, `parser/mysql`
 - **Surfaced by:** backlog promotion at `/close-phase 30` (2026-10-07); first recorded by 30.2 (2026-10-05)
-- **Vetted:** ready at `d51ace1b` (2026-10-07)
+- **Vetted:** ready at `cb04d107` (2026-10-09; re-vetted, patch carried forward)
 
 **Issue.** **MySQL unnamed-key `_2` numbering is not in declaration order.**
 The parser numbers unnamed keys as column keys, then table-level keys, then
@@ -41,8 +41,8 @@ parser gives KEY `b`, FK index `b_2`".
 
 **Root cause.** vitess keeps a table's columns, indexes and constraints in
 separate lists with no positions, so `parseTableSpec`
-(`parser/mysql/mysql.go:287-310`) cannot interleave them and `parseCreateTable`
-adds keys, then FK indexes (`mysql.go:265-273`).
+(`parser/mysql/mysql.go:377-401`, doc comment at `:372`) cannot interleave them and `parseCreateTable`
+adds keys, then FK indexes (`mysql.go:355-364`; line refs at `cb04d107`).
 
 **Suggested fix.**
 - Recover declaration order at `parseTableSpec` (e.g. from the statement
@@ -56,7 +56,8 @@ adds keys, then FK indexes (`mysql.go:265-273`).
   - `parseTableSpec` returns keys in declaration order as `tableKey{Constraint, built}`, with each FK's built index placed at its FOREIGN KEY, and FK/CHECK constraints in declaration order. `parseCreateTable` adds keys through the unchanged `addKey`, then names the constraints;
   - side effect: in `Table.Constraints` a built FK index now precedes the FK constraints; `TestRenameColumnCarriesReferences` is updated (3 swapped lines, an expectation change, not a defect guard);
   - tests: `TestNamesFollowDeclarationOrder` (`parser/mysql`, 7 cases: o2, column key after table key, FK before column UNIQUE, interleaved mix, inline REFERENCES, column CHECK between table CHECKs, keywords inside comments/strings/enums/backquoted names) and `TestMySQLIntrospect_KeyDeclarationOrder` (4 tables incl. o2, key names on both sides, then `assertSchemaParity`).
-- Interaction with FIX-274: none for this fix. Under FIX-274 option C, an expression index must leave the key list before `addKey` names the remaining keys (backlog line).
+- Interaction with FIX-274: none for this fix. The expression-index work it anticipated landed as FIX-294 (`80809acf`, `Parser.exprKeys` in `addKey`); this patch leaves `addKey` unchanged and only hands it keys in declaration order. Measured at `cb04d107`: parity holds for expression keys interleaved with FKs (`KEY (a, (b + 1))` before/after an FK, `KEY ((a + 1))` among FK/column UNIQUE/KEY, `CONSTRAINT UNIQUE (a)` after an FK → `same=true` for all four).
+- Re-vet at `cb04d107` on 2026-10-09: rebuilt with `git apply --3way`. `mysql.go` and `mysql_test.go` merged cleanly; `parser/introspect/mysql_integration_test.go` conflicted with FIX-288's `TestMySQLIntrospect_InlineTypeNames` at the same insertion point, and both tests are kept. The old patch also put `TestNamesFollowDeclarationOrder` between `TestDerivedConstraintNames`' doc comment and its func; the rebuilt patch moves that comment back. Source code is unchanged from the first prototype. Re-measured on MySQL 8.0 (probe `zz_probe_fix275_test.go`, deleted), db vs parse: zo2 → db `b:INDEX[b c] b_2:INDEX[b]`, parse `b:INDEX[b] b_2:INDEX[b c]`; zcol → db `a:INDEX[a x] a_2:UNIQUE[a]`, parse `a:UNIQUE[a] a_2:INDEX[a x]`; zfkcol → db `b:INDEX[b c] b_2:UNIQUE[b]`, parse `b:UNIQUE[b] b_2:INDEX[b c]`; zmix → db `b:INDEX[b c] b_2:INDEX[b] b_3:UNIQUE[b d]`, parse `b:INDEX[b] b_2:UNIQUE[b d] b_3:INDEX[b c]`; with the fix all match. Gates: `gofumpt -l parser/` → clean; parser `golangci-lint run ./...` → 0 issues; `go -C parser test -race -count=1 ./...` → ok (containers); `go -C cmd/sqlgen test -short -count=1 ./...` → ok; `TestE2EGoldenFiles` → PASS. Fail-first: `mysql.go` reverted → `TestNamesFollowDeclarationOrder` fails 5 of 7 (o2: `- "INDEX b [b c]", + "INDEX b [b]"`) and `TestMySQLIntrospect_KeyDeclarationOrder` fails "parsed key names mismatch"; the existing suite without the fix → passes. Golden churn: none. Patch: `.claude/prototypes/FIX-275.patch` (3 files, +258/-34).
 - Prototype results, run at `d51ace1b` on 2026-10-07:
   - Reproduction: a throwaway probe (`parser/introspect/zz_probe_fix275_test.go`, since deleted) on MySQL 8.0, `go -C parser test -count=1 -run TestZZProbeFIX275 ./introspect/`, db vs parse:
     - `o2 (b int, c int, FOREIGN KEY (b, c) REFERENCES p (b, c), KEY (b))` → db `b:INDEX[b c] b_2:INDEX[b]`; parse `b:INDEX[b] b_2:INDEX[b c]`;
@@ -83,7 +84,7 @@ adds keys, then FK indexes (`mysql.go:265-273`).
 - **Severity:** tracked
 - **Origin:** phase 4, `parser/mysql`
 - **Surfaced by:** backlog promotion at `/close-phase 30` (2026-10-07); first recorded by FIX-262 (2026-10-03)
-- **Vetted:** ready at `56fcc1c7` (2026-10-08; reworked per the ruling, lands after FIX-288)
+- **Vetted:** corrected at `cb04d107` (2026-10-09; re-vetted after FIX-288 and FIX-294 landed)
 
 **Issue.** **MySQL inline ENUM/SET entries are not kept in step with RENAME
 and DROP.** RENAME COLUMN / RENAME TABLE keep the entry named from the old
@@ -94,78 +95,35 @@ generation. Measured evidence, quoted from the two backlog lines merged here:
 - "RENAME COLUMN / RENAME TABLE keep the inline ENUM/SET name derived from the old names (`people.role:users_role_enum`, `users.kind:users_role_enum`), while introspection derives `<table>_<column>_enum` from current names, so the DDL and introspect paths name the Go type differently, and `RENAME COLUMN role TO kind; ADD COLUMN role ENUM('x')` registers `users_role_enum` twice — evidence: parser probe enums=[{users_role_enum [a b]} {users_role_enum [x]}]"
 - "`CREATE TABLE users (id int PRIMARY KEY, role ENUM('a','b') NOT NULL); ALTER TABLE users DROP COLUMN role; ALTER TABLE users ADD COLUMN role ENUM('x','y') NOT NULL;` → `sqlgen generate` (FIX-262 prototype applied; reproduces at `d51ace1b` with FIX-262 landed) → "Generation error: enum users_role_enum and enum users_role_enum both resolve to the Go type name "UsersRoleEnum" …"; DROP TABLE + re-CREATE → two `users_role_enum` entries in a parser probe"
 
-**Root cause.** `extractInlineEnumOrSet` (`parser/mysql/mysql.go:419-441`)
-names the entry `<table>_<column>_enum|_set` once, at creation, and stores it
-as the column's `Type`. The RENAME COLUMN branch of `applyAlterOption`
-(`mysql.go:829-835`) and `renameTable` (`mysql.go:945`) never rename the
-entry or the column type (the `dropInlineEnumOrSet` doc comment,
-`mysql.go:493-499`, records this). `alterDropColumn` (`mysql.go:868-882`) and
-`parseDropTable` (`mysql.go:217-237`) never call `dropInlineEnumOrSet`
-(`mysql.go:500`), which only MODIFY and CHANGE COLUMN use (`:852`, `:890`).
-The introspector names it from current names
-(`parser/introspect/mysql.go:360`).
+**Root cause.** `extractInlineEnumOrSet` (`parser/mysql/mysql.go:508-528`)
+names the entry `<table>__<column>_enum|_set` (through `parser.InlineEnumName` /
+`InlineSetName`, FIX-288) once, at creation, and stores it as the column's `Type`.
+The RENAME COLUMN branch of `applyAlterOption` (`mysql.go:954-961`) and
+`renameTable` (`mysql.go:1072`, name set at `:1087`) never rename the entry or
+the column type (the `dropInlineEnumOrSet` doc comment, `mysql.go:575-588`,
+records this). `alterDropColumn` (`mysql.go:994`) and `parseDropTable`
+(`mysql.go:306`) never call `dropInlineEnumOrSet` (`mysql.go:589`, `users > 1`
+guard at `:598`), which only MODIFY and CHANGE COLUMN use (`:978`, `:1016`). The
+introspector names entries from current names (`parser/introspect/mysql.go:361`
+enum, `:371` set). Line refs at `cb04d107`.
 
 **Suggested fix.**
-- RENAME COLUMN and RENAME TABLE: rename each affected inline entry and the
-  column's `Type` to `<new table>_<new column>_enum|_set`.
-- DROP COLUMN: call `p.dropInlineEnumOrSet(col.Type)` before the column is
-  removed (`alterDropColumn` becomes a method or takes the parser).
-  DROP TABLE: drop the entry of every ENUM/SET column of the table.
-- Once rename keeps names current, revisit the `users > 1` guard in
-  `dropInlineEnumOrSet` and its doc comment.
-- Tests: `parser/mysql/mysql_test.go` cases for rename column, rename table,
-  drop column and drop table + re-add, asserting `Schema().Enums`; a MySQL
-  `assertSchemaParity` case after RENAME COLUMN.
-- Prototype results, run at `d51ace1b` on 2026-10-07:
-  - Reproduction: parser probe `go test -run TestZZProbeFix278 -v ./parser/mysql/` (since deleted):
-    - RENAME COLUMN role TO kind → `users.kind:users_role_enum`, enums=[{users_role_enum [a b]}];
-    - ALTER TABLE users RENAME TO people, and RENAME TABLE users TO people → `people.role:users_role_enum`;
-    - RENAME COLUMN, then ADD COLUMN role ENUM('x') → enums=[{users_role_enum [a b]} {users_role_enum [x]}];
-    - DROP COLUMN role → enums=[{users_role_enum [a b]}] (dead entry);
-    - DROP TABLE users (ENUM + SET) → enums=[{users_role_enum [a b]}] sets=[{users_tags_set [p q]}];
-    - DROP TABLE, then re-CREATE → two `users_role_enum` entries.
-    CLI at HEAD (no patch; FIX-262 has landed since the backlog line): DROP COLUMN role then ADD COLUMN role ENUM('x','y') → "Generation error: enum users_role_enum and enum users_role_enum both resolve to the Go type name "UsersRoleEnum" — set enums.users_role_enum.struct_name to a different Go identifier". RENAME COLUMN role TO kind plus DROP COLUMN tier → a dead `type UsersTierEnum string` and the field `Kind UsersRoleEnum` (introspection gives `UsersKindEnum`).
-  - Prototype:
-    - new `(*Parser).renameInlineEnumOrSet(tableName, *Column)` renames the entry named `c.Type` to `<table>_<column>_enum|_set` and repoints `c.Type`. It is called after RENAME COLUMN (`applyAlterOption`) and for every column in `renameTable`, which covers ALTER … RENAME TO and RENAME TABLE;
-    - DROP COLUMN calls `p.dropInlineEnumOrSet(col.Type)` before `alterDropColumn`, and `parseDropTable` drops every column's entry after the `CheckTableDropRefs` check;
-    - the `users > 1` guard is kept, extracted into `inlineTypeUsers`, for a new reason: with names current, two columns share a name only when underscores make the derived names collide (table `a` / column `b_c` vs table `a_b` / column `c`). Renaming or dropping by name there would silently give one column the other's values (measured without the guard: `a_b_d_enum` gets values [1]). Both helpers skip a shared name, and the doc comment says so.
-  - Tests:
-    - `TestRedefineColumnKeepsSharedInlineEnumName` is replaced by `TestInlineEnumOrSetFollowsRenameAndDrop` (9 cases: rename column ENUM + SET, rename + re-add, swap via a temp name, ALTER RENAME TO, RENAME TABLE + re-create, drop column, drop column + re-add, drop table, drop table + re-create);
-    - new `TestSharedInlineEnumNameIsLeftAlone` (MODIFY, RENAME COLUMN, DROP COLUMN on the `a.b_c` / `a_b.c` collision);
-    - `TestMySQLIntrospect_InlineEnumAfterRenameAndDrop` (`parser/introspect/mysql_integration_test.go`) checks each shape with `assertSchemaParity`.
-  - Gates:
-    - `gofumpt -l parser/` → clean;
-    - `cd parser && go test -race -count=1 ./...` → ok (containers);
-    - `golangci-lint run ./...` → 0 issues;
-    - `cd cmd/sqlgen && go test -short -count=1 ./...` → ok; `TestE2EGoldenFiles` → ok;
-    - CLI with the prototype: drop + re-add generates one `UsersRoleEnum` (X, Y); rename + drop emits only `UsersKindEnum` and `Kind UsersKindEnum`.
-  - Fail-first:
-    - DROP TABLE loop removed → `/DROP_TABLE` and `/DROP_TABLE_then_CREATE_TABLE_under_the_same_name` fail: `+ {{Name: "users_role_enum", Values: []string{"a", "b"}}}`; parity: `- {Name: "m_enum_gone_state_enum", …}`;
-    - DROP COLUMN call removed → `/DROP_COLUMN` and `/…then_ADD_COLUMN…` fail; parity: `- {Name: "m_enum_alter_tier_enum", …}`;
-    - RENAME COLUMN call removed → `- "users.kind": "users_kind_enum", + "users.kind": "users_role_enum"`; parity: `- Type: "m_enum_alter_role_enum", + Type: "m_enum_alter_kind_enum"`;
-    - `renameTable` loop removed → `- "people.role": "people_role_enum", + "people.role": "users_role_enum"`;
-    - rename guard removed → `TestSharedInlineEnumNameIsLeftAlone/RENAME_COLUMN` fails (`- Name: "a_b_c_enum", + Name: "a_b_d_enum"`, values swapped); drop guard removed → `/MODIFY` and `/DROP_COLUMN` fail;
-    - the existing suite without the fix → passes.
-  - Golden churn: none.
-  - Patch: `.claude/prototypes/FIX-278.patch` (3 files, +192/-35).
-
 - The user ruled on 2026-10-08 (FIX-288 Q2): rework this fix before it lands. The MySQL file parser tracks inline ENUM/SET values per (table, column), for example by deriving the entries from the final columns, so the `inlineTypeUsers` guard goes away and RENAME/DROP resolve a FIX-288 collision correctly; names are built with FIX-288's `parser.InlineEnumName` / `InlineSetName`. The entry is re-vetted on top of FIX-288.
-
-- Prototype results for the ruled rework, run on 2026-10-08 at `56fcc1c7` + FIX-288 (the patch is a delta against FIX-288 and assumes FIX-288 has landed; `56fcc1c7` + FIX-288.patch + FIX-278.patch applies cleanly):
-  - Stale facts at `56fcc1c7`: `extractInlineEnumOrSet` `mysql.go:503-523`; RENAME COLUMN branch `:913-919`; `renameTable` `:1029` (name assignment `:1044`); `dropInlineEnumOrSet` doc `:570-583`, func `:584`; `alterDropColumn` `:952`; `parseDropTable` `:301`; MODIFY/CHANGE calls `:936`/`:974`. After FIX-288 the names are `<table>__<column>_enum|_set`, built only via `parser.InlineEnumName` / `InlineSetName`. The rename/drop helpers and the kept `inlineTypeUsers` guard in the Suggested fix are superseded by the ruling.
-  - Reproduction (FIX-288 applied): parser probe `go test -run TestZZProbeFix278 -v ./parser/mysql/` (since deleted): RENAME COLUMN role TO kind → `users.kind:users__role_enum`; ALTER … RENAME TO people / RENAME TABLE → `people.role:users__role_enum`; RENAME COLUMN then ADD role ENUM('x') → two `users__role_enum` entries; DROP COLUMN → a stale entry; DROP TABLE (ENUM+SET) → stale entries; DROP TABLE + re-CREATE → two `users__role_enum`; FIX-288's collision `a.b_c`/`a_b.c` + `ALTER TABLE a_b RENAME COLUMN c TO d` → `a_b.d:a_b__c_enum`, + `DROP COLUMN c` → a stale `{a_b__c_enum [3 4]}`; the `__` SQL-name collision `a.b__c`/`a__b.c` + MODIFY → three `a__b__c_enum` entries. CLI (sibling copy of the mysql example, FIX-288 binary): `ord.line_kind`/`ord_line.kind` + `ALTER TABLE ord_line RENAME COLUMN kind TO mode` → "Generation error: enum ord__line_kind_enum and enum ord_line__kind_enum both resolve to the Go type name "OrdLineKindEnum" …", and `DROP COLUMN kind` → the same error; `zz_u` DROP COLUMN role + ADD role ENUM('x','y') → "enum zz_u__role_enum and enum zz_u__role_enum both resolve to the Go type name "ZzURoleEnum" …"; RENAME COLUMN role TO kind → `type ZzURoleEnum` (introspection names it `ZzUKindEnum`).
-  - Prototype: the MySQL `Parser` gains `inline map[table]map[column]inlineType{set, values}`. `extractInlineEnumOrSet` records the column's ENUM/SET, or clears the key for any other type, on every definition (CREATE, ADD, MODIFY, CHANGE); RENAME COLUMN moves the key (`renameInline`, clearing the target when the source had none); `renameTable` moves the table's map. DROP COLUMN / DROP TABLE need no code, because `Schema()` derives the entries and each column's Type from the columns that exist, with the current names. `dropInlineEnumOrSet` and the `users > 1` guard are removed. A genuine shared SQL name (`a.b__c` / `a__b.c`) keeps one entry per column and still fails loudly at generation, and renaming or dropping one column resolves it. `Seed` (`input.source: both`) imports each introspected table column typed with its derived name into `inline` (first unclaimed entry of that name, in table/column order); entries no table column claims (a view's own type) are kept as seeded extras, so DDL that renames or drops an introspected column updates its entry.
-  - Changed from the first FIX-278 vet: values are tracked per (table, column) and derived from the final columns instead of renaming and dropping entries by name, so the guard goes away. `Seed` must import introspected entries (fail-first shows it). `Schema().Enums/Sets` come out in table/column order instead of parse order, which is invisible downstream (the pipeline calls `schema.Sort()`); one unsorted expectation in `TestRedefineColumnReplacesInlineEnumOrSet` is reordered.
-  - Tests: `TestRedefineColumnKeepsSharedInlineEnumName` is replaced by `TestInlineEnumOrSetFollowsRenameAndDrop` (11 cases, incl. CHANGE-to-VARCHAR then re-ADD, and DROP then RENAME of a VARCHAR column to the dropped name); new `TestInlineEnumNameCollision` (Go-name collision RENAME/DROP; `__` SQL-name collision MODIFY/RENAME/DROP) and `TestSeededInlineEnumOrSetFollowsRenameAndDrop`; parity tests `TestMySQLIntrospect_InlineEnumAfterRenameAndDrop`, `TestMySQLIntrospect_InlineEnumCollisionResolvedByAlter` and `TestMySQLIntrospect_BothModeInlineEnumAfterRenameAndDrop`.
-  - Gates: `gofumpt -l parser` → clean; parser `go test -race -count=1 ./...` → ok (containers); parser `golangci-lint run ./...` → 0 issues; cmd/sqlgen `go test -race -count=1 ./cli/...` → ok and `./gen/...` → ok; `make update-golden-e2e` → no change; `TestE2EGoldenFiles` → ok; mysql example `GOWORK=off go test -race -count=1 ./...` → ok and lint → 0 issues. CLI with the prototype: ord/ord_line RENAME → exit 0 (`OrdLineKindEnum` + `OrdLineModeEnum`); DROP → exit 0; `zz_u` DROP + re-ADD → one `ZzURoleEnum`; RENAME role→kind → `ZzUKindEnum`.
-  - Fail-first (each site reverted alone): the `renameInline` call → the RENAME cases, both collision RENAME cases, the seeded cases and all three parity tests fail; the target clear → `/DROP_COLUMN_then_RENAME_COLUMN_a_VARCHAR_column_to_its_name` fails (`- "users.role": "varchar(10)", + "users.role": "users__role_enum"`); the `renameTable` move → `/ALTER_TABLE_RENAME_TO` fails (`- "people.role": "people__role_enum", + "people.role": "users__role_enum"`); the `delete(p.inline, oldName)` → `/RENAME_TABLE_then_CREATE_TABLE_under_the_old_name,_then_MODIFY` fails; the non-ENUM clear → `/MODIFY_from_ENUM_to_VARCHAR` fails; the `Schema()` type derivation → rename cases fail; the `Seed` ENUM/SET import or claim → the seeded and BothMode parity tests fail. The existing suite without the fix → passes.
-  - Golden churn: none relative to the FIX-288-applied tree.
-  - Patch: `.claude/prototypes/FIX-278.patch` (3 files, +439/-72, the delta against FIX-288).
+- The ruled design: the MySQL `Parser` gains `inline map[table]map[column]inlineType{set, values}`. Every column definition (CREATE, ADD, MODIFY, CHANGE) goes through `extractInlineEnumOrSet`, which records the ENUM/SET or clears the key. `renameInline` moves the key on RENAME COLUMN and clears the target when the source has none. `renameTable` moves the table's map with the same delete-before-set order FIX-294 uses for `generated`/`exprKeys`, so a rename to its own name keeps it. `Schema()` derives the entries and each column's `Type` from the columns that exist, under current names, so DROP COLUMN / DROP TABLE need no code; `dropInlineEnumOrSet` and the `users > 1` guard are removed. `Seed` (`both` mode) imports each introspected table column typed with its derived name, taking the first unclaimed entry of that name; entries no table column claims (a view's own) are kept as seeded extras.
+- Tests: `TestRedefineColumnKeepsSharedInlineEnumName` is replaced by `TestInlineEnumOrSetFollowsRenameAndDrop` (12 cases, including `ALTER TABLE RENAME TO its own name`); new `TestInlineEnumNameCollision` and `TestSeededInlineEnumOrSetFollowsRenameAndDrop`; parity tests `TestMySQLIntrospect_InlineEnumAfterRenameAndDrop`, `TestMySQLIntrospect_InlineEnumCollisionResolvedByAlter` and `TestMySQLIntrospect_BothModeInlineEnumAfterRenameAndDrop`; one unsorted expectation in `TestRedefineColumnReplacesInlineEnumOrSet` is reordered.
+- Changed from the original: the original bullets (rename and drop entries by name, keep the `users > 1` guard; first prototyped at `d51ace1b` on 2026-10-07) are superseded by the ruling above. Changed at the `cb04d107` re-vet: FIX-288 has landed, so the patch is a plain diff, not a delta; it was rebased onto FIX-294's `exprKeys` field and delete-before-set `renameTable`, because the old set-then-delete inline move dropped the map on a self-rename (measured: `/ALTER_TABLE_RENAME_TO_its_own_name` fails `- {{Name: "users__role_enum", Values: []string{"a", "b"}}}, + nil`, leaving the column typed with an unregistered enum).
+- Prototype results, run at `cb04d107` on 2026-10-09 (earlier runs at `d51ace1b` and `56fcc1c7` + FIX-288):
+  - Reproduction: parser probe `cd parser && go test -run TestZZProbeFix278 -v -count=1 ./mysql/` (since deleted): RENAME COLUMN → `cols=[users.kind:users__role_enum] enums=[{users__role_enum [a b]}]`; ALTER … RENAME TO people and RENAME TABLE → `people.role:users__role_enum`; rename then re-add → `enums=[{users__role_enum [a b]} {users__role_enum [x]}]`; DROP COLUMN → `cols=[] enums=[{users__role_enum [a b]}]`; DROP TABLE (ENUM+SET) → `enums=[{users__role_enum [a b]}] sets=[{users__tags_set [p q]}]`; DROP + re-CREATE → two `users__role_enum`; Go-name collision `a.b_c`/`a_b.c`: RENAME c TO d → `a_b.d:a_b__c_enum`, DROP c → stale `{a_b__c_enum [3 4]}`; `__` SQL-name collision `a.b__c`/`a__b.c` + MODIFY → three `a__b__c_enum` entries.
+  - CLI, sibling copy of the mysql example, HEAD binary, `GOWORK=off sqlgen generate`: `zz_u` DROP COLUMN role + ADD role ENUM('x','y') → "Generation error: enum zz_u__role_enum and enum zz_u__role_enum both resolve to the Go type name "ZzURoleEnum" — set enums.zz_u__role_enum.struct_name to a different Go identifier", exit 1; RENAME COLUMN role TO kind + DROP COLUMN tier → exit 0, emits dead `type ZzUTierEnum string` and `Kind ZzURoleEnum`; `ord.line_kind`/`ord_line.kind` + `ALTER TABLE ord_line RENAME COLUMN kind TO mode` → "Generation error: enum ord__line_kind_enum and enum ord_line__kind_enum both resolve to the Go type name "OrdLineKindEnum" — …", exit 1; same tables + DROP COLUMN kind → same error, exit 1. With the prototype: exit 0 in all four (one `ZzURoleEnum` X/Y; only `ZzUKindEnum` and `Kind ZzUKindEnum`; `OrdLineKindEnum` + `OrdLineModeEnum`; `OrdLineKindEnum` only).
+  - Gates: `gofumpt -l parser` → clean; `cd parser && go test -race -count=1 ./...` → ok (containers; the three parity tests PASS); `cd parser && golangci-lint run ./...` → 0 issues; `cd cmd/sqlgen && go test -race -count=1 ./cli/... ./gen/...` → ok; `TestE2EGoldenFiles` → ok; mysql example `GOWORK=off go test -race -count=1 ./...` → ok. `make update-golden-e2e` was not run (no template touched; `TestE2EGoldenFiles` passing shows the goldens still match).
+  - Fail-first (each site reverted alone): `renameInline` call removed → the RENAME cases of all three unit tests and all three parity tests fail (`- "users.kind": "users__kind_enum", + "users.kind": "users__role_enum"`); target clear in `renameInline` removed → `/DROP_COLUMN_then_RENAME_COLUMN_a_VARCHAR_column_to_its_name` fails (`- "users.role": "varchar(10)", + "users.role": "users__role_enum"`); `renameTable` move removed → `/ALTER_TABLE_RENAME_TO`, `/…its_own_name`, `/RENAME_TABLE_then_CREATE…`, seeded `/RENAME_TABLE_and_DROP_COLUMN_on_a_shared_name` and two parity tests fail (`- "people.role": "people__role_enum", + "people.role": "users__role_enum"`); `delete(p.inline, oldName)` removed → `/RENAME_TABLE_then_CREATE_TABLE_under_the_old_name,_then_MODIFY` fails; set-then-delete order → `/ALTER_TABLE_RENAME_TO_its_own_name` fails; non-ENUM clear removed → `TestRedefineColumnReplacesInlineEnumOrSet/MODIFY_from_ENUM_to_VARCHAR` fails; `Schema()` type derivation removed → rename, collision, seeded and parity cases fail; `Seed` import removed → `TestSeededInlineEnumOrSetFollowsRenameAndDrop`, `TestRedefineColumnReplacesSeededInlineEnum` and the both-mode parity test fail; the existing suite without the fix → passes.
+  - Golden churn: none.
+  - Patch: `.claude/prototypes/FIX-278.patch` (3 files, +445/-73).
 
 
 **References.**
 - PRD §6.1, §5.2 (MySQL parser), the MySQL inline ENUM/SET naming
-  (`<table>_<column>_enum`).
+  (`<table>__<column>_enum`, FIX-288).
 - FIX-262 (added `dropInlineEnumOrSet` for MODIFY / CHANGE COLUMN).
 
 **Resolution notes.** _Filled in by `/fix resolve`._
@@ -176,47 +134,66 @@ The introspector names it from current names
 - **Severity:** tracked
 - **Origin:** phase 4, `parser/sqlite`
 - **Surfaced by:** backlog promotion at `/close-phase 30` (2026-10-07); first recorded by FIX-269 (2026-10-07)
-- **Vetted:** ready at `d51ace1b` (2026-10-07)
+- **Vetted:** corrected at `cb04d107` (2026-10-09; re-vetted, rebuilt after FIX-274, FIX-279 and FIX-291)
 
 **Issue.** **`LIKE … ESCAPE` crashes `sqlgen generate` in a SQLite CHECK,
-DEFAULT, generated column or expression index.** `rsql.ExprString` panics on
-it, and five call sites do not recover. Measured evidence from the backlog
-line: "`CREATE TABLE t (id INTEGER PRIMARY KEY, a TEXT CHECK (a LIKE 'x%'
-ESCAPE '\'))`, `sqlgen generate` → exit 2, "panic: sql.BinaryExpr.String():
-invalid op ESCAPE"". The partial-index `WHERE` site was fixed by FIX-269
-(`7ac833aa`), which recovers the panic into a parse error (`indexWhere`).
+DEFAULT or generated column.** `rsql.ExprString` panics on it, and four call
+sites do not recover. Measured evidence from the backlog line: "`CREATE TABLE t
+(id INTEGER PRIMARY KEY, a TEXT CHECK (a LIKE 'x%' ESCAPE '\'))`, `sqlgen
+generate` → exit 2, "panic: sql.BinaryExpr.String(): invalid op ESCAPE"". The
+partial-index `WHERE` site was fixed by FIX-269 (`7ac833aa`), and FIX-291
+(`e50172de`) moved its recover into the shared `exprString` helper. Expression
+indexes and table-level `UNIQUE ((expr))` no longer reach a render: FIX-274
+(`ffc9d7f2`) skips them on both sources, so they give no error.
 
 **Root cause.** rqlite/sql parses `LIKE … ESCAPE` but `BinaryExpr.String()`
 panics rendering it. The unrecovered `rsql.ExprString` sites in
-`parser/sqlite/sqlite.go`: DEFAULT (`:408`), generated column (`:428`),
-column CHECK (`:435`), table CHECK (`:521`), and `indexedColumnNames`
-(`:635`, used by `CREATE INDEX` and table-level `UNIQUE`). The introspector
-reaches the same sites through `parseStoredTable`
-(`parser/introspect/sqlite.go:161`), so `database` crashes too.
+`parser/sqlite/sqlite.go` (line refs at `cb04d107`): DEFAULT (`:452`), generated
+column (`:472`), column CHECK (`:479`) and table CHECK (`:568`). They are also
+reached through the PRIMARY KEY sort-order branch of `parseCreateTable`
+(`:222-226`) and ALTER TABLE ADD COLUMN (`parseColumn` at `:586`). The
+introspector reaches the same sites through `parseStoredTable`
+(`parser/introspect/sqlite.go:162`), so `database` crashes too.
 
 **Suggested fix.**
-- Add one recovering helper (`exprString(e) (string, error)`, the
-  `indexWhere` pattern at `sqlite.go:153-163`) and use it at all five sites,
-  threading the error out of `parseColumn` / `applyColumnConstraint` /
-  `parseTableConstraint` / `indexedColumnNames` so the statement is a parse
+- Route the four sites through the existing recovering `exprString`
+  (`sqlite.go:163-174`) with "DEFAULT", "generated column expression" and
+  "CHECK", and thread the error out: `applyColumnConstraint` returns
+  `(Constraint, bool, error)`; a new `applyColumnConstraints` loops over a
+  column's constraints, wraps with "column <c>:", and is used by `parseColumn`
+  and the PK sort-order branch; `parseColumn` and `parseTableConstraint` return
+  errors; `parseCreateTable` and ALTER ADD COLUMN wrap with "table <t>:". Move the
+  table-level constraint loop into `addTableConstraints(table, constraints, coll)
+  error` to keep `parseCreateTable` under cyclop 15. The statement is a parse
   error under `files` and a `SchemaError` under `database`.
-- Extend PRD §6.3's "SQLite DDL the file parser cannot read" list: `LIKE …
-  ESCAPE` anywhere, not only in a partial index's `WHERE`.
-- Tests: a `parser/sqlite` table-driven case per site asserting an error,
-  not a panic; a SQLite introspection case for the CHECK shape.
-- Vet notes on scope: every ref checks out. The sites have two more callers: the PRIMARY KEY ASC/DESC sort-order branch of `parseCreateTable` (`sqlite.go:211`), which also calls `applyColumnConstraint`, and ALTER TABLE ADD COLUMN (`parseColumn` at `:539`). Both panic today and both are covered. `IS [NOT] DISTINCT FROM` is unreadable in any expression, not only in a partial index's `WHERE`: in a CHECK it is already a parse error under `files` and an introspection error under `database` ("Schema error: introspect sqlite table t: parsing stored CREATE TABLE: parsing sqlite_master: 1:64: expected expression, found 'DISTINCT'", exit 3).
-- Prototype:
-  - a shared helper `exprString(e rsql.Expr, what string) (string, error)` in `parser/sqlite/sqlite.go` holds the single recover and returns "rendering <what>: <panic>". `indexWhere` calls `exprString(stmt.WhereExpr, "CREATE INDEX predicate")`, so FIX-269's message and tests are unchanged byte for byte, and all six rendering sites in the file go through the helper;
-  - the error is threaded out: `applyColumnConstraint` returns `(Constraint, bool, error)` and wraps with "column <c>:"; a new `applyColumnConstraints` loops over a column's constraints (used by `parseColumn` and the PK sort-order branch, which keeps `parseCreateTable` under cyclop 15); `parseColumn`, `parseTableConstraint` and `indexedColumnNames` return errors; `parseCreateTable` and ALTER ADD COLUMN wrap with "table <t>:", and `parseCreateIndex` with "index <ix>:";
-  - PRD §6.3 reads "`IS [NOT] DISTINCT FROM` or `LIKE … ESCAPE` in any expression: a CHECK, a column default, a generated column, an index expression or a partial index's `WHERE`", and INTROSPECTION.md's test table gains a row.
-- Prototype results, run at `d51ace1b` on 2026-10-07:
-  - Reproduction: `CREATE TABLE t (id INTEGER PRIMARY KEY, a TEXT CHECK (a LIKE 'x%' ESCAPE '\'));` → `sqlgen generate` under `files` → exit 2 "panic: sql.BinaryExpr.String(): invalid op ESCAPE"; the same DDL loaded into a db under `source: database` → exit 2, same panic. A unit probe through `sqlite.New().Parse` panics at every site: column CHECK, table CHECK, NOT LIKE…ESCAPE CHECK, DEFAULT, generated column, `CREATE INDEX ix ON t ((a LIKE … ESCAPE '\'))`, table `UNIQUE ((…))`, ALTER ADD COLUMN CHECK, and a CHECK after `PRIMARY KEY DESC`.
-  - With the fix: files → exit 3 "Schema error: parsing schema files: … table t: column a: rendering CHECK: sql.BinaryExpr.String(): invalid op ESCAPE"; database → exit 3 "Schema error: introspect sqlite table t: parsing stored CREATE TABLE: … table t: column a: rendering CHECK: …".
-  - Tests: `TestParse_UnrenderableExpression` (`parser/sqlite`, 9 cases, replacing and keeping `TestCreateIndex_UnrenderablePredicate`'s case; asserts the exact error) and `TestSQLiteIntrospect_UnrenderableTableExpression` (column CHECK, table CHECK, DEFAULT, generated column; a `*SchemaError` naming table t, plus the same parse error from `Parse`).
-  - Gates: parser `gofumpt -l .` → clean; `golangci-lint run ./...` → 0 issues; `go test -race -count=1 ./...` → ok (containers); `cmd/sqlgen go build ./...` → ok; `make refs-check` → clean.
-  - Fail-first, each site reverted alone to `rsql.ExprString(x), error(nil)`: `indexWhere` → `/partial_index_predicate` fails with "panic: sql.BinaryExpr.String(): invalid op ESCAPE [recovered, repanicked]"; likewise DEFAULT → `/DEFAULT`; generated column → `/generated_column`; column CHECK → `/column_CHECK` and `TestSQLiteIntrospect_UnrenderableTableExpression/column_CHECK`; table CHECK → `/table_CHECK`; `indexedColumnNames` → `/table_UNIQUE_expression`. The existing suite without the fix → passes.
+- PRD §6.3 reads "`IS [NOT] DISTINCT FROM` or `LIKE … ESCAPE` in a CHECK, a
+  column default, a generated column or a partial index's `WHERE`", and
+  INTROSPECTION.md's `TestSQLiteIntrospect_UnreadableTable` row is extended to
+  match.
+- Tests: `TestParse_UnrenderableExpression` (`parser/sqlite`, 7 cases asserting
+  the exact error; it replaces `TestCreateIndex_UnrenderablePredicate` and keeps
+  its case), and 4 `LIKE … ESCAPE` cases (column CHECK, table CHECK, DEFAULT,
+  generated column) added to FIX-279's `TestSQLiteIntrospect_UnreadableTable`,
+  each a `*SchemaError` naming table t plus the same error from `Parse`.
+- Changed from the original (re-vet at `cb04d107`, 2026-10-09): the helper
+  already exists (FIX-291 took it from this entry's first prototype), so it is
+  reused, not added; four sites, not five, because FIX-274 made
+  `indexedColumnNames` skip expression parts instead of rendering them, so the
+  index-expression and table-UNIQUE-expression cases and the PRD's "an index
+  expression" wording are dropped; the database cases extend
+  `TestSQLiteIntrospect_UnreadableTable` instead of adding the near-duplicate
+  `TestSQLiteIntrospect_UnrenderableTableExpression`; `addTableConstraints` is
+  new because FIX-279's phantom-column check used up `parseCreateTable`'s cyclop
+  headroom. `IS [NOT] DISTINCT FROM` in a DEFAULT or generated column was
+  measured: under `files` both are already parse errors ("expected expression,
+  found 'DISTINCT'"), so the PRD sentence holds there.
+- Prototype results, run at `cb04d107` on 2026-10-09 (first run at `d51ace1b` on 2026-10-07; that patch conflicted in 4 of 5 files and was rebuilt by hand):
+  - Reproduction: `CREATE TABLE t (id INTEGER PRIMARY KEY, a TEXT CHECK (a LIKE 'x%' ESCAPE '\'));` → `sqlgen generate` under `files` → exit=2 "panic: sql.BinaryExpr.String(): invalid op ESCAPE"; the same DDL in a db under `source: database` → exit=2, same panic. A unit probe through `sqlite.New().Parse` panics at 6 of 9 shapes (column CHECK, table NOT LIKE…ESCAPE CHECK, DEFAULT, generated column, CHECK after `PRIMARY KEY DESC`, ALTER ADD COLUMN CHECK); table `UNIQUE ((expr))` and an expression index → err=<nil> (FIX-274 skip); a partial-index `WHERE` → the FIX-269/291 error.
+  - With the fix: files → exit=3 "Schema error: parsing schema files: parsing ./schema.sql: parsing ./schema.sql: table t: column a: rendering CHECK: sql.BinaryExpr.String(): invalid op ESCAPE"; database → exit=3 "Schema error: introspect sqlite table t: parsing stored CREATE TABLE: parsing sqlite_master: table t: column a: rendering CHECK: sql.BinaryExpr.String(): invalid op ESCAPE".
+  - Gates: parser `gofumpt -l .` → clean; `golangci-lint run ./...` → 0 issues; `go test -race -count=1 ./...` → ok (containers ran); `go build ./cmd/sqlgen` → ok; `make refs-check` → ok.
+  - Fail-first, each site reverted alone: DEFAULT → `TestParse_UnrenderableExpression/DEFAULT` and `TestSQLiteIntrospect_UnreadableTable/LIKE_ESCAPE_in_a_DEFAULT` fail "panic: sql.BinaryExpr.String(): invalid op ESCAPE [recovered, repanicked]"; likewise generated column, column CHECK and table CHECK; PK sort-order branch error dropped → `/CHECK_after_a_PRIMARY_KEY_sort_order` fails "Parse() error = <nil>, want \"parsing schema.sql: table t: column id: rendering CHECK: sql.BinaryExpr.String(): invalid op ESCAPE\""; ALTER ADD COLUMN error dropped → `/added_column_CHECK` fails likewise; the existing suite without the fix → passes.
   - Golden churn: none.
-  - Patch: `.claude/prototypes/FIX-281.patch` (5 files, +217/-55).
+  - Patch: `.claude/prototypes/FIX-281.patch` (5 files, +158/-49).
 
 
 **References.**
@@ -231,7 +208,7 @@ reaches the same sites through `parseStoredTable`
 - **Severity:** tracked
 - **Origin:** phase 4, `parser/sqlite`
 - **Surfaced by:** backlog promotion at `/close-phase 30` (2026-10-07); first recorded by FIX-269 (2026-10-07)
-- **Vetted:** corrected at `d51ace1b` (2026-10-07)
+- **Vetted:** corrected at `cb04d107` (2026-10-09; re-vetted, patch carried forward)
 
 **Issue.** **SQLite `CREATE INDEX … ON <table>` looks the table up
 case-sensitively**, so `CREATE TABLE Users …; CREATE UNIQUE INDEX ux2 ON users
@@ -239,12 +216,12 @@ case-sensitively**, so `CREATE TABLE Users …; CREATE UNIQUE INDEX ux2 ON users
 Measured evidence from the backlog line: "assertSchemaParity diff `-
 Constraints: nil` / `+ {Name: "ux2", Type: UNIQUE, …}`".
 
-**Root cause.** `parseCreateIndex` (`parser/sqlite/sqlite.go:97-105`) does
-`p.tableIndex[tableName]` and returns nil when the exact spelling is absent.
-`tableIndex` is keyed by the name as declared (`sqlite.go:36`, `:244`), but
+**Root cause.** `parseCreateIndex` (`parser/sqlite/sqlite.go:98-106`, lookup at
+`:103`) does `p.tableIndex[tableName]` and returns nil when the exact spelling is
+absent. `tableIndex` is keyed by the name as declared (`sqlite.go:36`, `:260`), but
 SQLite identifiers are case-insensitive. The same exact-match lookup backs
-`lookupTable` (`:595`, lookup at `:596`, used by ALTER TABLE), `parseDropTable` (`:167`), the
-duplicate-table check (`:188`) and rename (`:580`).
+`lookupTable` (`:762`, lookup at `:763`, used by ALTER TABLE), `parseDropTable` (`:176`, lookup at `:178`), the
+duplicate-table check (`:199`) and `renameTable` (`:746`, lookup at `:747`). Line refs at `cb04d107`.
 
 **Suggested fix.**
 - Make table lookup case-insensitive in the SQLite parser (key `tableIndex`
@@ -261,7 +238,8 @@ duplicate-table check (`:188`) and rename (`:580`).
   - the `strings.ToLower` key is wrong: SQLite folds ASCII letters only (`"Äb"` and `"äb"` are two tables), so `ToLower` would raise a false `table äb already exists`. A new helper `tableKey(name)` folds ASCII only, and every `tableIndex` read and write goes through it: Seed, the CREATE TABLE store and duplicate check, CREATE INDEX (now via `lookupTable`), DROP TABLE, `renameTable` and `lookupTable`. `Table.Name` keeps the CREATE TABLE spelling;
   - a case-insensitive lookup alone is not enough. DROP and RENAME TO pass the table name to the shared FK helpers, which compare exactly; given the statement's spelling they miss keys that use the declared spelling (a renamed table's FK stays `->Users`, and dropping a referenced table succeeds without the error). `parseDropTable` now passes the stored name to `CheckTableDropRefs`, and `renameTable` passes `table.Name` to `RenameTableReferences`;
   - the vet question ("should an unknown table in `parseCreateIndex` be an error?") has a different root cause and is a cross-dialect decision (the PG parser skips on purpose, `//nolint:nilerr`), so it moves to the backlog.
-- Prototype results, run at `d51ace1b` on 2026-10-07:
+- Re-vet at `cb04d107` on 2026-10-09: the `d51ace1b` patch no longer applied because `parseCreateIndex` now calls `indexedColumnNames(stmt.Columns)` (the expression-index skip) right after the `table := &p.schema.Tables[idx]` line the patch removed. Rebuilt by hand: the lookup goes through `lookupTable` and the `indexedColumnNames` block stays; every other hunk applied with `--3way`. FIX-291's `exprString`, FIX-279's `columnStarts` and FIX-277's `renameColumnInExpressions` touch no table-name lookup. RENAME COLUMN already passes the stored `table.Name` to `RenameColumnReferences`. Reproduction, tests, gates, fail-first and churn below re-measured at `cb04d107` with identical results. `/fix-implement` may share one ASCII-fold helper between `tableKey` and FIX-277's `equalFoldASCII`.
+- Prototype results, run at `cb04d107` on 2026-10-09 (first run at `d51ace1b` on 2026-10-07):
   - Reproduction: a throwaway probe (`parser/introspect/zz_probe_fix282_test.go`, since deleted), `cd parser && go test -short -count=1 -run TestZZProbe -v ./introspect/`:
     - `assertSchemaParity` on `CREATE TABLE Users (id INTEGER PRIMARY KEY, a TEXT); CREATE UNIQUE INDEX ux2 ON users (a)` fails: `+ {Name: "ux2", Type: s"UNIQUE", Columns: []string{"a"}, Method: "btree"}` and `- Unique: false / + Unique: true`;
     - against real SQLite: `alter add` → SQLite ok, parser `table users not found`; `drop table` → SQLite `[]`, parser `[Users]`; `dup create` → SQLite `table users already exists`, parser ok with `[Users users]`; `rename table` → SQLite `[Accounts]`, parser `table users not found`; `"Äb"` and `"äb"` → SQLite accepts both.
@@ -326,7 +304,7 @@ unexpanded.
 - **Severity:** tracked
 - **Origin:** phase 4, `parser` + `cmd/sqlgen/config`
 - **Surfaced by:** /fix-vet FIX-271 (2026-10-07), filed at /close-phase 30 (2026-10-08)
-- **Vetted:** corrected at `b606e4a7` (2026-10-08)
+- **Vetted:** corrected at `cb04d107` (2026-10-09; re-vetted, patch carried forward)
 
 **Issue.** **A soft-delete column whose type carries a modifier passes
 config validation and then fails generation.** `deleted_at DATETIME(3)`
@@ -338,12 +316,12 @@ Measured (probe of `DetectSoftDelete`): `datetime(3)` → `soft delete column
 end.
 
 **Root cause.** `softDeleteStrategy` (`parser/detect.go:55-73`) cuts the
-type at the first space only (`:56`) and matches the base against an exact
+type at the first space only (`:61`) and matches the base against an exact
 list (`:63-69`), so a `(…)` modifier makes it miss; `DetectSoftDelete`
-(`parser/detect.go:15-28`) then returns the error (`:22`), reached from
+(`parser/detect.go:15-28`) then returns the error (`:23`), reached from
 `detectTableSoftDelete` (`cmd/sqlgen/gen/context_table.go:338`). Validation
 uses substring matching instead (`isSoftDeleteTypeCompatible`,
-`cmd/sqlgen/config/validate.go:2142-2154`), which accepts any type
+`cmd/sqlgen/config/validate.go:2160-2172`; its caller `validateSoftDeleteTypes` doc comment at `:1765-1766`), which accepts any type
 containing `timestamp` / `datetime` / `int`. By code reading the two also
 disagree on families without a modifier: `bigint`, `mediumint` and `serial`
 pass validation as `integer` but are absent from `softDeleteStrategy`'s
@@ -369,12 +347,13 @@ list (not measured).
 - Vet notes (stale facts):
   - only `config.ValidatePostParse` accepts these types: `sqlgen validate` already fails (exit 2) because `gen.ValidateGeneration` builds the contexts and hits the `DetectSoftDelete` error, and `sqlgen generate` fails with exit 1. Now run end to end;
   - the bigint/mediumint gap is measured: `bigint` fails `DetectSoftDelete` on MySQL `BIGINT`, PG `bigint`/`int8` and SQLite `BIGINT`; MySQL `MEDIUMINT` fails too. `serial` is not a gap (the PG parser normalizes it to `integer`). Neither source produces `timestamp(6) with time zone` (the PG parser emits `timestamptz(6)`);
-  - MySQL `TINYINT(1)` already fails `DetectSoftDelete` at HEAD, not only after FIX-271;
+  - (superseded at `cb04d107`) MySQL `TINYINT(1)` failed `DetectSoftDelete` at `b606e4a7`; since FIX-271 (`fa26812c`) MySQL `TINYINT(1)` and `BOOL` give strategy="bool", err=<nil> (measured 2026-10-09);
   - adding bigint/mediumint/serial to the integer case would contradict PRD §4.6 ("The supported column types are those listed above, and no other").
 - Changed from the original: the bigint/mediumint gap is closed by tightening validation to the PRD §4.6 list, not by widening detection; that also closes other types the substring match accepted and generation rejects (`interval` and `point`, which contain "int", and arrays such as `timestamptz[]`, `boolean[]`) — same root cause (the two lists disagree), same fix site.
 - Auto-accepted the recommended option on 2026-10-08 (`/fix` auto-accept rule): close the bigint/mediumint gap by tightening `isSoftDeleteTypeCompatible` to the PRD §4.6 list rather than widening `softDeleteStrategy` → tighten, because it was prototyped with green gates, causes no golden churn against the alternative, adds no public surface, and implements PRD §4.6/§4.13 rather than reversing it (widening would need a PRD amendment).
 - Prototype: `parser/detect.go` `softDeleteStrategy` adds `base, _, _ = strings.Cut(base, "(")` after the existing space cut (after the `base :=` line, so FIX-271's `tinyint(1)` exact match, inserted before it, runs first). `cmd/sqlgen/config/validate.go` `isSoftDeleteTypeCompatible` replaces substring matching with the same base-type cut and an exact match against the §4.6 list (timestamp: timestamp, timestamptz, datetime; integer: int, integer, smallint, tinyint; bool: bool, boolean, plus the existing `tinyint` / `tinyint(1)` leniency), and the stale `validateSoftDeleteTypes` doc comment is rewritten. Tests: `TestDetectSoftDelete` rows (datetime(3), timestamp(6), timestamptz(3), timestamp(6) with time zone → timestamp; int(10) unsigned zerofill → integer; bigint → error); `TestValidatePostParse_SoftDeleteTypeMatch` rows (datetime(3), timestamptz(6), int(10) unsigned zerofill, smallint); new `TestValidatePostParse_SoftDeleteTypeOutsideList` (bigint, mediumint, interval, point, timestamptz[], boolean[] → "incompatible type"); new `TestGenerate_SoftDeleteColumnWithPrecision` (MySQL stdlib, `posts.deleted_at datetime(3)`, emits `SoftDelete(` and `Restore(`).
 - Lands with FIX-271: strict `git apply --check` conflicts in both orders on `parser/detect.go` (shared 3-line context), but `git apply --3way` merges cleanly in both orders, keeping the `tinyint(1)` → bool check first, then the space cut, then the `(` cut. With both patches applied, parser `./...`, cmd/sqlgen config, gen, gotype and `TestE2EGoldenFiles` pass. Either landing order is safe.
+- Re-vet at `cb04d107` on 2026-10-09: the `parser/detect.go` hunk merges cleanly with `--3way` over FIX-271's `tinyint(1)` block; the rebuilt patch applies without `--3way` and its code is identical to the `b606e4a7` prototype (offsets only). Line refs above are re-pinned to `cb04d107` (`validate.go` moved after FIX-283 and FIX-285). Re-measured: the probe gives "unsupported type" for MySQL DATETIME(3), TIMESTAMP(6), INT(10) UNSIGNED ZEROFILL, BIGINT, MEDIUMINT; PG timestamp(6), timestamptz(3), `timestamp(6) with time zone` (stored "timestamptz(6)"), `timestamp(3) without time zone` (stored "timestamp(3)"), bigint, int8, interval, timestamptz[]; SQLite DATETIME(3), TIMESTAMP(6), BIGINT. CLI, MySQL `posts.deleted_at DATETIME(3) NULL`: `sqlgen validate` → "Error: building context for table posts: detecting soft delete for posts: detecting soft delete: soft delete column \"deleted_at\" in table \"posts\" has unsupported type \"datetime(3)\"", exit=2; `sqlgen generate` → "Generation error: building table contexts: … unsupported type \"datetime(3)\"", exit=1. With the fix: validate → "config and schema are valid", exit=0; generate → "sqlgen: generated 8 files (1 tables, 0 views)", exit=0. Gates (gofumpt, parser `go test -race ./...`, cmd/sqlgen `go test -race ./config/... ./gen/... ./cli/...`, `TestE2EGoldenFiles`, golangci-lint on config, gen and parser) → ok / 0 issues; fail-first identical to the run below; golden churn none.
 - Prototype results, run at `b606e4a7` on 2026-10-08:
   - Reproduction: a probe (since deleted) parsing `CREATE TABLE t (id INTEGER PRIMARY KEY, deleted_at <T>)` with each dialect and running `DetectSoftDelete` → "unsupported type" for MySQL datetime(3), timestamp(6), int(10) unsigned zerofill, tinyint(1), bigint, mediumint; PG timestamp(6), timestamptz(3), timestamptz(6), timestamp(3), bigint (incl. int8); SQLite datetime(3), timestamp(6), bigint. CLI at HEAD on a MySQL project with `posts.deleted_at DATETIME(3) NULL`: `sqlgen validate` → "Error: building context for table posts: … unsupported type \"datetime(3)\"", exit 2; `sqlgen generate` → "Generation error: building table contexts: … unsupported type \"datetime(3)\"", exit 1. With `deleted BIGINT` and `type: integer`: `generate` → "… unsupported type \"bigint\"", exit 1.
   - With the fix: the DATETIME(3) project → "sqlgen: generated 8 files (1 tables, 0 views)", exit 0, with the SoftDelete methods; the bigint project → "Post-parse validation error: soft_delete_columns: column \"deleted\" in table notes has incompatible type \"bigint\" (expected integer-compatible type)", exit 2.
@@ -470,7 +449,7 @@ code reading).
 - **Severity:** tracked
 - **Origin:** phase 6, `cmd/sqlgen/gen` (`connection.go.tmpl`)
 - **Surfaced by:** `/fix-vet FIX-293` (2026-10-08), filed at `/close-phase 30` (2026-10-08)
-- **Vetted:** ready at `be98918a` (2026-10-08; on top of FIX-293; ruled 2026-10-08 (A), the ruled option is the prototype)
+- **Vetted:** corrected at `cb04d107` (2026-10-09; re-vetted after FIX-293 landed; ruled 2026-10-09 to keep the NULL-binding guard, the ruled option is the prototype)
 
 **Issue.** **A `Connection` cursor value that is a JSON array or object passes
 FIX-293's presence check and is not rejected as `ErrInvalidCursor`.** Measured in
@@ -509,7 +488,20 @@ placeholders or, when empty, a bare `$`.
   - Fail-first: the 3 templates reverted to FIX-293's untyped decode → the wrong-shape test fails all 6 and `TestConnection_BinaryKeyCursorAdvances` fails (`"conn-bin-a", - "conn-bin-b", + "conn-bin-a"…`); dropping only `|| string(value) == "null"` → FIX-293's missing-key test fails 3 cases; the existing suite without the fix → passes.
   - Patch: `.claude/prototypes/FIX-295.patch` (121 files, +7480/-740; source and tests 11 files, +249/-16).
 - The user ruled on 2026-10-08: (A), decode each cursor value into its key column's Go type. This matches the prototype; PRD §9.8's sample and §14.2 "Invalid cursors" are updated when it lands.
-
+- Re-vet at `cb04d107` on 2026-10-09 (FIX-293 landed at `552dda4f`; the patch is now a plain diff, not a delta):
+  - Stale facts: FIX-293 updated PRD §9.8's sample (`docs/PRD.md:6924-6942`, `decodeCursor(s string, keys []string) (map[string]any, error)`, call sites `:6813` / `:6820` pass `c.cursorKeys`). Option A makes it stale again: the call sites become `decode<T>Cursor(...)`, `decodeCursor` returns `map[string]json.RawMessage` with `!ok || string(value) == "null"`, and the sample needs the `decode<T>Cursor` and `cursorValueIsNull` bodies. §14.2 "Invalid cursors" (`docs/PRD.md:8922`) needs "a value that does not decode into its key column's Go type, or that binds NULL". `/fix-implement` writes this PRD text; it is not in the patch. The PG array-key failure reads "expected 4 arguments, got 6" with a filter applied ("expected 3 arguments, got 5" unfiltered; the same n+2 expansion). The old patch put `buildCursorKeyColumns`' doc comment between `buildAllColumnNames`' comment and its func; moved back.
+  - Rebase: `git apply --3way` merged all but `cmd/sqlgen/gen/view_test.go` (`TestViewPaginationTemplate_connectionMethod`, where FIX-293 added a Before pattern), resolved to `decodeProductSummaryCursor(*input.After|Before, c.cursorKeys)`.
+  - Correction beyond the ruled option, measured: under `use_pointers: false` a `sql.Null*` cursor key decodes `{"a":1}` (unknown fields ignored), or the client's own cursor for a NULL-keyed row (`{"description":{"String":"","Valid":false},"id":1}`), into an invalid wrapper that binds NULL, so the keyset matches nothing. Probe with rows n (NULL description), a, b and `categories.cursor_keys: [description, id]`: page 1 `"n"` hasNext=true, page 2 empty hasNext=false (a and b silently lost); at HEAD the same page 2 errors `unsupported type map…`; with option A as written `{"description":{"a":1},"id":1}` → `err=<nil>`. The prototype adds `cursorValueIsNull(v any) bool` to `connection.go.tmpl` (true when a `driver.Valuer`'s `Value()` errors or returns nil; `BuildConnectionContext` adds the `database/sql/driver` import), and `decode<T>Cursor` returns `ErrInvalidCursor` when a decoded value would bind NULL. Both cases → `sqlgen: invalid cursor`. Cost: +3 lines per decoder, a 10-line helper and one import in `connection_gen.go`; no exported identifier or config key. Not auto-accepted (it adds golden churn).
+- Pending the user's ruling (2026-10-09): keep the NULL-binding guard? (1, recommended) keep it — every NULL-binding cursor value is `ErrInvalidCursor`, matching FIX-293's JSON `null` rule under `use_pointers: true` and the loud-over-silent preference; costs the churn above. (2) drop it — option A exactly as ruled; a tampered or NULL-keyed `sql.Null*` cursor returns a silently empty page.
+- The user ruled on 2026-10-09: (1), keep the NULL-binding guard. This matches the prototype; PRD §14.2 "Invalid cursors" names the NULL-binding case when it lands.
+- Prototype results, run at `cb04d107` on 2026-10-09 (option A plus the NULL-binding guard):
+  - Reproduction: new sqlite tests against HEAD's generated models, `GOWORK=off go test -count=1 -run 'TestConnection_CursorWrongShape|TestConnection_BinaryKeyCursorAdvances' ./tests/` → `{"id":[]}` → `SQL logic error: unrecognized token: "$" (1)`; `{"id":[1,2]}` → `err = <nil>`; Before `{"id":{"a":1}}` → `sql: converting argument $1 type: unsupported type map[string]interface {}, a map`; `{"id":"1"}` → `<nil>`; composite `"tag_name":[1,2]` → `<nil>`; view `{"id":{"a":1}}` → `unsupported type map…`; binary_keys pages → `- "conn-bin-b", + "conn-bin-a", - "conn-bin-c", + "conn-bin-a", + "conn-bin-a"`. Config probes (HEAD binary, `GOWORK=off`): sqlite `use_pointers: false` + `categories.cursor_keys: [description, id]` → page 2 `unsupported type map[string]interface {}, a map`, tampered `{"description":"x","id":1}` → `err=<nil>`; postgres `profiles.cursor_keys: [scores, id]` (`[]int32`) → page 2 `query: expected 4 arguments, got 6`, tampered `{"scores":[1],"id":5}` → `unable to encode 1 into binary format for _int4`.
+  - With the patch: every tampered shape → `sqlgen: invalid cursor`; binary_keys pages a → b → c; the `sql.NullString` key pages a → b → c and its tampered values → `sqlgen: invalid cursor`; the PG `[]int32` key pages `[1 2]` → `[3 4]` → `[5 6]`, tampered → `sqlgen: invalid cursor`.
+  - Tests: sqlite `TestConnection_CursorWrongShapeReturnsErrInvalidCursor` (6 cases) and `TestConnection_BinaryKeyCursorAdvances`; unit `TestPaginationTableTemplate_decodeCursor` (pins the null guard) and `…_decodeCursorMultiKeys`; `TestConnectionTemplate_cursorEncodeDecode` pins `cursorValueIsNull`; `TestBuildConnectionContext` imports; view/pagination pattern updates; unit goldens.
+  - Gates: `go -C cmd/sqlgen test -race -count=1 ./gen/...` → ok; `make update-golden` and `make update-golden-e2e` → ok; `TestE2EGoldenFiles` → ok; `gofumpt -l cmd/sqlgen/gen/` → clean; `golangci-lint run ./gen/...` → 0 issues; all 12 examples `GOWORK=off go test -race -count=1 ./...` → ok and `GOWORK=off golangci-lint run` → 0 issues.
+  - Fail-first: typed decode reverted to FIX-293's `decodeCursor` → `TestConnection_CursorWrongShapeReturnsErrInvalidCursor` fails 6/6 ("… unrecognized token: \"$\" (1), want ErrInvalidCursor", "err = <nil>, want ErrInvalidCursor") and `TestConnection_BinaryKeyCursorAdvances` fails ("paged ids mismatch … - \"conn-bin-b\", + \"conn-bin-a\""); `|| string(value) == "null"` dropped → `TestConnection_CursorMissingKeyReturnsErrInvalidCursor` fails 3 cases and `TestConnectionTemplate_cursorEncodeDecode` fails; `cursorValueIsNull` check dropped from `_cursor_decode.tmpl` → `TestPaginationTableTemplate_decodeCursor` fails (no example has a `sql.Null*` cursor key, so the behavioral evidence is the probe); table `CursorKeyColumns` wiring removed → `TestE2EGoldenFiles` fails for cache, events, graphql, …; the existing suite without the fix → passes.
+  - Golden churn (models/ + expected/, all modified, none added): cache 6 files +424/-40; events 4 +256/-28; graphql 6 +1354/-108; graphql_null_wrappers 4 +148/-20; graphql_top_level 4 +148/-20; mysql 6 +1090/-88; postgres 6 +1534/-120; postgres_stdlib 6 +814/-68; sqlite 48 +1312/-104; tenancy 6 +766/-64; tenancy_mysql 6 +262/-28; tenancy_postgres 6 +262/-28; unit goldens `connection_gen.go` and `pagination_products_gen.go`. 155 generated decoders, 171 key cases.
+  - Patch: `.claude/prototypes/FIX-295.patch` (122 files, +8691/-741; source, tests and unit goldens 14 files, +321/-25).
 
 **References.**
 - PRD §14.2 "Invalid cursors"; FIX-293.
