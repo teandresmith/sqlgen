@@ -117,6 +117,83 @@ func TestConditionBuilder_IsNotNull(t *testing.T) {
 	}
 }
 
+// TestConditionBuilder_NilOperand renders a nil operand between two bound
+// neighbours so the placeholder numbering around it is checked too. Eq and Neq
+// test for NULL; the other six bind it.
+func TestConditionBuilder_NilOperand(t *testing.T) {
+	methods := []struct {
+		method   string
+		build    func(sql.ConditionBuilder, any) sql.Condition
+		pgWhere  string // PostgreSQL WHERE clause
+		qWhere   string // MySQL and SQLite WHERE clause
+		wantArgs []any
+	}{
+		{"Eq", sql.ConditionBuilder.Eq, "active = $1 AND owner_id IS NULL AND age > $2", "active = ? AND owner_id IS NULL AND age > ?", []any{true, 3}},
+		{"Neq", sql.ConditionBuilder.Neq, "active = $1 AND owner_id IS NOT NULL AND age > $2", "active = ? AND owner_id IS NOT NULL AND age > ?", []any{true, 3}},
+		{"Gt", sql.ConditionBuilder.Gt, "active = $1 AND owner_id > $2 AND age > $3", "active = ? AND owner_id > ? AND age > ?", []any{true, nil, 3}},
+		{"Gte", sql.ConditionBuilder.Gte, "active = $1 AND owner_id >= $2 AND age > $3", "active = ? AND owner_id >= ? AND age > ?", []any{true, nil, 3}},
+		{"Lt", sql.ConditionBuilder.Lt, "active = $1 AND owner_id < $2 AND age > $3", "active = ? AND owner_id < ? AND age > ?", []any{true, nil, 3}},
+		{"Lte", sql.ConditionBuilder.Lte, "active = $1 AND owner_id <= $2 AND age > $3", "active = ? AND owner_id <= ? AND age > ?", []any{true, nil, 3}},
+		{"Like", sql.ConditionBuilder.Like, "active = $1 AND owner_id LIKE $2 AND age > $3", "active = ? AND owner_id LIKE ? AND age > ?", []any{true, nil, 3}},
+		{"NLike", sql.ConditionBuilder.NLike, "active = $1 AND owner_id NOT LIKE $2 AND age > $3", "active = ? AND owner_id NOT LIKE ? AND age > ?", []any{true, nil, 3}},
+	}
+	dialects := []struct {
+		name   string
+		d      sql.Dialect
+		tbl    sql.Table
+		prefix string
+		pg     bool
+	}{
+		{"postgres", pg, pgTbl, `SELECT * FROM "public"."users" WHERE `, true},
+		{"postgres stdlib", pgStd, pgTbl, `SELECT * FROM "public"."users" WHERE `, true},
+		{"mysql", my, myTbl, "SELECT * FROM `users` WHERE ", false},
+		{"sqlite", lite, ltTbl, `SELECT * FROM "users" WHERE `, false},
+	}
+	for _, m := range methods {
+		for _, dl := range dialects {
+			t.Run(m.method+"/"+dl.name, func(t *testing.T) {
+				cond := m.build(sql.Where("owner_id"), nil)
+				gotSQL, gotArgs := sql.BuildSelect(dl.d, dl.tbl, sql.SelectOptions{
+					Conditions: []sql.Condition{sql.Where("active").Eq(true), cond, sql.Where("age").Gt(3)},
+				})
+				wantSQL := dl.prefix + m.qWhere
+				if dl.pg {
+					wantSQL = dl.prefix + m.pgWhere
+				}
+				if gotSQL != wantSQL {
+					t.Errorf("BuildSelect(Where(\"owner_id\").%s(nil)) sql =\n  %q\nwant\n  %q", m.method, gotSQL, wantSQL)
+				}
+				if diff := cmp.Diff(m.wantArgs, gotArgs); diff != "" {
+					t.Errorf("BuildSelect(Where(\"owner_id\").%s(nil)) args mismatch (-want +got):\n%s", m.method, diff)
+				}
+			})
+		}
+	}
+}
+
+// TestConditionBuilder_TypedNilOperandBinds: a typed nil is not nil as an any,
+// so Eq and Neq bind it rather than testing for NULL. Eq(nil) matches the NULL
+// rows; Eq((*int)(nil)) matches none.
+func TestConditionBuilder_TypedNilOperandBinds(t *testing.T) {
+	var p *int
+	tests := []struct {
+		name string
+		got  sql.Condition
+		want sql.Condition
+	}{
+		{"Eq", sql.Where("owner_id").Eq(p), sql.Condition{Clause: "owner_id = $", Value: p, Column: "owner_id"}},
+		{"Neq", sql.Where("owner_id").Neq(p), sql.Condition{Clause: "owner_id != $", Value: p, Column: "owner_id"}},
+		{"Gt", sql.Where("owner_id").Gt(p), sql.Condition{Clause: "owner_id > $", Value: p, Column: "owner_id"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if diff := cmp.Diff(tt.want, tt.got); diff != "" {
+				t.Errorf("Where(\"owner_id\").%s((*int)(nil)) mismatch (-want +got):\n%s", tt.name, diff)
+			}
+		})
+	}
+}
+
 func TestAnd(t *testing.T) {
 	cond1 := sql.Where("price").Gte(50.00)
 	cond2 := sql.Where("stock").Gt(0)

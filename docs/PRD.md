@@ -8308,8 +8308,8 @@ cond := sql.Raw("price * quantity > $", 1000.00)
 
 | Method | SQL Produced |
 |--------|-------------|
-| `Eq(v)` | `col = $` |
-| `Neq(v)` | `col != $` |
+| `Eq(v)` | `col = $`; `col IS NULL` for a nil `v` |
+| `Neq(v)` | `col != $`; `col IS NOT NULL` for a nil `v` |
 | `Gt(v)` | `col > $` |
 | `Gte(v)` | `col >= $` |
 | `Lt(v)` | `col < $` |
@@ -8321,6 +8321,8 @@ cond := sql.Raw("price * quantity > $", 1000.00)
 | `Between(a, b)` | `col BETWEEN $ AND $` |
 | `IsNull()` | `col IS NULL` |
 | `IsNotNull()` | `col IS NOT NULL` |
+
+A nil operand is NULL. `col = NULL` and `col != NULL` match no row, so `Eq(nil)` and `Neq(nil)` build the conditions `IsNull()` and `IsNotNull()` build. `Gt`, `Gte`, `Lt`, `Lte`, `Like` and `NLike` have no NULL test to stand for: a nil operand binds NULL to their `$`, the statement runs, and it matches no row. The check is for a nil interface only. A typed nil such as a nil `*int` is bound like any other value, and the driver sends NULL, so `Eq((*int)(nil))` renders `col = $` and matches no row where `Eq(nil)` matches the NULL rows.
 
 `In` / `Nin` always expand: the array-parameter form (`col = ANY($)` / `col != ALL($)` on PostgreSQL+pgx) is chosen by the comparators, from `Dialect.SupportsArrayParams()` ([Appendix A](#appendix-a-sql-builder-functions)), never by the builder. That split is what lets `comparator.Enum` take the expanded form on pgx (see [11.2](#112-comparator-types)).
 

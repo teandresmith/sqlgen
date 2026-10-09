@@ -78,9 +78,46 @@ adds keys, then FK indexes (`mysql.go:355-364`; line refs at `cb04d107`).
 
 **Resolution notes.** _Filled in by `/fix resolve`._
 
-### FIX-292
+### FIX-296
 
 - **Status:** Open
+- **Severity:** tracked
+- **Origin:** phase 30, `parser/mysql`
+- **Surfaced by:** `/fix-vet FIX-294` (2026-10-08), filed at `/close-phase 30` (2026-10-08)
+
+**Issue.** **The MySQL file parser matches `ALTER TABLE … DROP INDEX` names
+case-sensitively, while MySQL index names are case-insensitive.** Measured:
+`CREATE TABLE v2 (a int, KEY A (a)); ALTER TABLE v2 DROP INDEX a;` → the parser
+keeps `INDEX A [a]` (throwaway unit probe), while MySQL 8.0.46 drops it
+(`information_schema.statistics` has no rows for `v2`), so `indexes[]` differs by
+source (PRD §6.1).
+
+**Root cause.** The DROP INDEX path compares key names exactly:
+`removeConstraintFromColumns` (`c.Name == name`) and
+`delete(p.generated[…], name)` in `parser/mysql/mysql.go`. FIX-294's own
+`exprKeys` drop already uses `strings.EqualFold`.
+
+**Suggested fix.**
+- Match the dropped key name case-insensitively at every DROP INDEX / DROP KEY
+  site (constraints, the generated FK-index map), as FIX-294's `exprKeys` drop
+  does; check RENAME INDEX for the same comparison.
+- Tests: a parser unit case (`KEY A (a)` then `DROP INDEX a`) and a
+  `mysql_integration_test.go` parity case with `assertSchemaParity`.
+
+**References.**
+- PRD §6.1; FIX-294 (`exprKeys` case-insensitive drop), FIX-287 (DROP INDEX `PRIMARY`).
+
+**Resolution notes.** _Filled in by `/fix resolve`._
+
+<!-- fixes:open:end -->
+
+## Resolved
+
+<!-- fixes:resolved:begin -->
+
+### FIX-292
+
+- **Status:** Resolved
 - **Severity:** nit
 - **Origin:** phase 1, `sql`
 - **Surfaced by:** /fix-vet FIX-284 (2026-10-07), filed at /close-phase 30 (2026-10-08)
@@ -95,7 +132,7 @@ dereference typed pointers). Measured: `sqlite Eq(nil): SQL=SELECT * FROM
 unrecognized token: "$" (1)`; postgres and mysql render a bare `$` too.
 
 **Root cause.** The single-value builders store `Value: v` unchanged
-(`sql/condition.go:73-101`, `:131-139`), and `expandConditionClause` reads
+(`sql/condition.go:73-101`, `:131-139`; line refs at `04b927d6`), and `expandConditionClause` reads
 `cond.Value == nil` as "no args" (`sql/builder.go:588-590`), the shape
 `IsNull` / `IsNotNull` rely on (`sql/condition.go:146-154`). A typed nil
 (e.g. `(*int)(nil)`) is not `== nil` as an `any` and binds normally (by
@@ -147,44 +184,7 @@ code reading).
 - PRD §11.5 (condition composition, `sql.Where` builder).
 - FIX-284 (`sql.Raw(clause, nil)`, same root cause).
 
-**Resolution notes.** _Filled in by `/fix resolve`._
-
-### FIX-296
-
-- **Status:** Open
-- **Severity:** tracked
-- **Origin:** phase 30, `parser/mysql`
-- **Surfaced by:** `/fix-vet FIX-294` (2026-10-08), filed at `/close-phase 30` (2026-10-08)
-
-**Issue.** **The MySQL file parser matches `ALTER TABLE … DROP INDEX` names
-case-sensitively, while MySQL index names are case-insensitive.** Measured:
-`CREATE TABLE v2 (a int, KEY A (a)); ALTER TABLE v2 DROP INDEX a;` → the parser
-keeps `INDEX A [a]` (throwaway unit probe), while MySQL 8.0.46 drops it
-(`information_schema.statistics` has no rows for `v2`), so `indexes[]` differs by
-source (PRD §6.1).
-
-**Root cause.** The DROP INDEX path compares key names exactly:
-`removeConstraintFromColumns` (`c.Name == name`) and
-`delete(p.generated[…], name)` in `parser/mysql/mysql.go`. FIX-294's own
-`exprKeys` drop already uses `strings.EqualFold`.
-
-**Suggested fix.**
-- Match the dropped key name case-insensitively at every DROP INDEX / DROP KEY
-  site (constraints, the generated FK-index map), as FIX-294's `exprKeys` drop
-  does; check RENAME INDEX for the same comparison.
-- Tests: a parser unit case (`KEY A (a)` then `DROP INDEX a`) and a
-  `mysql_integration_test.go` parity case with `assertSchemaParity`.
-
-**References.**
-- PRD §6.1; FIX-294 (`exprKeys` case-insensitive drop), FIX-287 (DROP INDEX `PRIMARY`).
-
-**Resolution notes.** _Filled in by `/fix resolve`._
-
-<!-- fixes:open:end -->
-
-## Resolved
-
-<!-- fixes:resolved:begin -->
+**Resolution notes.** Implemented the ruled hybrid in `sql/condition.go`: `Eq(nil)` returns `IsNull()` and `Neq(nil)` `IsNotNull()` (both keep `Column`, so `PrefixConditions` still qualifies them); `Gt`/`Gte`/`Lt`/`Lte`/`Like`/`NLike` store `operand(v)`, an unexported helper that wraps a nil `v` as `[]any{nil}` so the builder binds NULL. Prototype applied clean (`git apply --3way`) at HEAD `04b927d6`, after FIX-284; as the vet suggested, `Raw`'s one-arg case now also stores `operand(args[0])` in place of its own nil branch (same `[]any{nil}` shape, `TestRaw` / `TestRaw_NilArg` unchanged). Doc comments trimmed to state the rule only. PRD §11.5: the Eq/Neq table rows and a paragraph after the table, as prototyped. Tests: `TestConditionBuilder_NilOperand` (8 methods × postgres / postgres stdlib / mysql / sqlite, exact SQL and args) and `TestConditionBuilder_TypedNilOperandBinds`. Fail-first on the final code: Eq guard removed → `TestConditionBuilder_NilOperand/Eq/*` fail (4 subtests); `operand` guard removed → the 24 bind-NULL subtests plus `TestRaw/single_nil_arg` and `TestRaw_NilArg/*` fail; restored → pass. Gates: `make check` → ok; `make check-examples` → ok. Golden churn: none, as vetted.
 
 ### FIX-284
 
