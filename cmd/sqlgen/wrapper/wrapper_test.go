@@ -151,6 +151,42 @@ func TestGen_RejectsEmptyGqlgenBin(t *testing.T) {
 	}
 }
 
+// TestGen_SingleFileWithoutFilename pins that a single-file resolver block
+// without `filename` fails before anything is seeded or gqlgen runs.
+func TestGen_SingleFileWithoutFilename(t *testing.T) {
+	dir := t.TempDir()
+	cfgPath := filepath.Join(dir, "gqlgen.yml")
+	yml := "schema:\n  - graph/*.graphqls\nresolver:\n  layout: single-file\n  package: graph\n"
+	if err := os.WriteFile(cfgPath, []byte(yml), 0o600); err != nil {
+		t.Fatalf("seeding gqlgen.yml: %v", err)
+	}
+	t.Setenv("SQLGEN_WRAPPER_TEST_HELPER", "fail")
+
+	_, err := Gen(context.Background(), GenOptions{
+		GqlgenConfigPath: cfgPath,
+		GqlgenBin:        os.Args[0],
+		WorkingDir:       dir,
+		MergeInput:       MergeInput{SchemaGlob: "graph/*.graphqls"},
+		SeedPackage:      "graph",
+		Seeds:            []TableSeed{{SnakeName: "products", Body: "// body\n"}},
+		Stdout:           &bytes.Buffer{},
+		Stderr:           &bytes.Buffer{},
+	})
+	want := "parsing gqlgen.yml resolver block: resolver.filename is required with resolver.layout: single-file"
+	if err == nil || err.Error() != want {
+		t.Fatalf("Gen error = %v, want %q", err, want)
+	}
+	entries, rerr := os.ReadDir(dir)
+	if rerr != nil {
+		t.Fatalf("reading working dir: %v", rerr)
+	}
+	for _, e := range entries {
+		if e.Name() != "gqlgen.yml" {
+			t.Errorf("Gen wrote %s before rejecting the config", e.Name())
+		}
+	}
+}
+
 func TestGen_MalformedConfigErrorPath(t *testing.T) {
 	dir := t.TempDir()
 	cfgPath := filepath.Join(dir, "gqlgen.yml")
@@ -518,7 +554,9 @@ func TestBuildSeedFileContents_GqlgenModelImport(t *testing.T) {
 
 // TestParseResolverLayout pins the consumer's gqlgen.yml resolver block
 // extraction. Defaults must fall through to gqlgen's documented
-// follow-schema / `{name}.resolvers.go` shape when keys are absent.
+// follow-schema / `{name}.resolvers.go` shape when keys are absent, and a
+// single-file layout without `filename` is rejected: gqlgen has no default
+// for it.
 func TestParseResolverLayout(t *testing.T) {
 	tests := []struct {
 		name     string
@@ -527,22 +565,21 @@ func TestParseResolverLayout(t *testing.T) {
 		wantDir  string
 		wantTpl  string
 		wantFile string
+		wantErr  string
 	}{
 		{
-			name:     "all defaults",
-			yaml:     "schema:\n  - graph/*.graphqls\n",
-			wantLay:  "follow-schema",
-			wantDir:  "graph",
-			wantTpl:  "{name}.resolvers.go",
-			wantFile: "resolver.go",
+			name:    "all defaults",
+			yaml:    "schema:\n  - graph/*.graphqls\n",
+			wantLay: "follow-schema",
+			wantDir: "graph",
+			wantTpl: "{name}.resolvers.go",
 		},
 		{
-			name:     "follow-schema explicit",
-			yaml:     "resolver:\n  layout: follow-schema\n  dir: graph\n  package: graph\n  filename_template: \"{name}.resolvers.go\"\n",
-			wantLay:  "follow-schema",
-			wantDir:  "graph",
-			wantTpl:  "{name}.resolvers.go",
-			wantFile: "resolver.go",
+			name:    "follow-schema explicit",
+			yaml:    "resolver:\n  layout: follow-schema\n  dir: graph\n  package: graph\n  filename_template: \"{name}.resolvers.go\"\n",
+			wantLay: "follow-schema",
+			wantDir: "graph",
+			wantTpl: "{name}.resolvers.go",
 		},
 		{
 			name:     "single-file with custom dir",
@@ -552,10 +589,28 @@ func TestParseResolverLayout(t *testing.T) {
 			wantTpl:  "{name}.resolvers.go",
 			wantFile: "combined.go",
 		},
+		{
+			// gqlgen skips resolver generation entirely (IsDefined is false).
+			name:    "single-file without filename or dir",
+			yaml:    "resolver:\n  layout: single-file\n  package: graph\n",
+			wantErr: "resolver.filename is required with resolver.layout: single-file",
+		},
+		{
+			// gqlgen rejects this config itself (Check).
+			name:    "single-file with dir but no filename",
+			yaml:    "resolver:\n  layout: single-file\n  dir: graph\n  package: graph\n",
+			wantErr: "resolver.filename is required with resolver.layout: single-file",
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			got, err := parseResolverLayout([]byte(tt.yaml))
+			if tt.wantErr != "" {
+				if err == nil || err.Error() != tt.wantErr {
+					t.Fatalf("parseResolverLayout error = %v, want %q", err, tt.wantErr)
+				}
+				return
+			}
 			if err != nil {
 				t.Fatalf("parseResolverLayout: %v", err)
 			}
@@ -599,7 +654,7 @@ func TestWriteSeedFiles_FollowSchemaOnlyWhenAbsent(t *testing.T) {
 		},
 	}
 	layout := resolverLayout{
-		Layout: layoutFollowSchema, Dir: "graph", FilenameTemplate: defaultFilenameTpl, Filename: defaultSingleFilename,
+		Layout: layoutFollowSchema, Dir: "graph", FilenameTemplate: defaultFilenameTpl,
 	}
 
 	if _, err := writeSeedFiles(opts, layout); err != nil {
@@ -787,7 +842,7 @@ func TestWriteSeedFiles_FollowSchema_WritesSlimResolverScaffold(t *testing.T) {
 		},
 	}
 	layout := resolverLayout{
-		Layout: layoutFollowSchema, Dir: "graph", FilenameTemplate: defaultFilenameTpl, Filename: defaultSingleFilename,
+		Layout: layoutFollowSchema, Dir: "graph", FilenameTemplate: defaultFilenameTpl,
 	}
 
 	written, err := writeSeedFiles(opts, layout)
@@ -883,7 +938,7 @@ func TestWriteSeedFiles_FreshScaffold_ImportsGoimportsSorted(t *testing.T) {
 		},
 	}
 	layout := resolverLayout{
-		Layout: layoutFollowSchema, Dir: "graph", FilenameTemplate: defaultFilenameTpl, Filename: defaultSingleFilename,
+		Layout: layoutFollowSchema, Dir: "graph", FilenameTemplate: defaultFilenameTpl,
 	}
 
 	if _, err := writeSeedFiles(opts, layout); err != nil {
@@ -1238,7 +1293,7 @@ func (r *queryResolver) Products(ctx context.Context, filter *ProductFilter, sor
 		},
 	}
 	layout := resolverLayout{
-		Layout: layoutFollowSchema, Dir: "graph", FilenameTemplate: defaultFilenameTpl, Filename: defaultSingleFilename,
+		Layout: layoutFollowSchema, Dir: "graph", FilenameTemplate: defaultFilenameTpl,
 	}
 
 	if err := rewritePanicStubs(opts, layout); err != nil {
@@ -1355,7 +1410,7 @@ func TestWriteSeedFiles_ReturnsWrittenPaths_FollowSchema(t *testing.T) {
 		},
 	}
 	layout := resolverLayout{
-		Layout: layoutFollowSchema, Dir: "graph", FilenameTemplate: defaultFilenameTpl, Filename: defaultSingleFilename,
+		Layout: layoutFollowSchema, Dir: "graph", FilenameTemplate: defaultFilenameTpl,
 	}
 
 	first, err := writeSeedFiles(opts, layout)
@@ -1766,7 +1821,7 @@ type Resolver struct{}
 		SqlgenManagedFields: SqlgenManagedFieldSet{MutationFields: []string{"CreateProduct"}},
 	}
 	layout := resolverLayout{
-		Layout: layoutFollowSchema, Dir: "graph", FilenameTemplate: defaultFilenameTpl, Filename: defaultSingleFilename,
+		Layout: layoutFollowSchema, Dir: "graph", FilenameTemplate: defaultFilenameTpl,
 	}
 
 	got, err := mergeSingleFileResolver(opts, layout)
@@ -1935,7 +1990,7 @@ func (r *mutationResolver) CreateUserCategory(ctx context.Context, input CreateU
 		}},
 	}
 	layout := resolverLayout{
-		Layout: layoutFollowSchema, Dir: "graph", FilenameTemplate: defaultFilenameTpl, Filename: defaultSingleFilename,
+		Layout: layoutFollowSchema, Dir: "graph", FilenameTemplate: defaultFilenameTpl,
 	}
 
 	if err := rewritePanicStubs(opts, layout); err != nil {
@@ -2006,7 +2061,7 @@ func (r *queryResolver) Product(ctx context.Context, id string) (*models.Product
 		Seeds: []TableSeed{{SnakeName: "order", Body: "\nfunc (r *queryResolver) Order(ctx context.Context, id string) error { return nil }\n"}},
 	}
 	layout := resolverLayout{
-		Layout: layoutFollowSchema, Dir: "graph", FilenameTemplate: defaultFilenameTpl, Filename: defaultSingleFilename,
+		Layout: layoutFollowSchema, Dir: "graph", FilenameTemplate: defaultFilenameTpl,
 	}
 
 	if err := rewritePanicStubs(opts, layout); err != nil {

@@ -89,8 +89,8 @@ func TestCheckManagedRootStubs(t *testing.T) {
 			// The single-file stub carries no field name, so the check
 			// cannot rely on the panic message.
 			name:   "single-file bare stub",
-			layout: resolverLayout{Layout: layoutSingleFile, Dir: "graph", Filename: "graph/" + defaultSingleFilename},
-			file:   defaultSingleFilename,
+			layout: resolverLayout{Layout: layoutSingleFile, Dir: "graph", Filename: "graph/resolver.go"},
+			file:   "resolver.go",
 			src: `package graph
 
 import "context"

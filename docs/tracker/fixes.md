@@ -320,50 +320,6 @@ unexpanded.
 
 **Resolution notes.** _Filled in by `/fix resolve`._
 
-### FIX-286
-
-- **Status:** Open
-- **Severity:** nit
-- **Origin:** phase 16, `cmd/sqlgen/wrapper`
-- **Surfaced by:** backlog promotion at `/close-phase 30` (2026-10-07); first recorded by FIX-265 (2026-10-03)
-- **Vetted:** ready at `d51ace1b` (2026-10-07)
-
-**Issue.** **A `resolver:` block with `layout: single-file` and no
-`filename` produces an unbuildable package** although `generate` exits 0.
-Measured evidence from the backlog line: "sqlite probe with `resolver:
-{layout: single-file, package: graph}`, HEAD binary → `sqlgen generate` exit 0
-then `go build ./...` → "graph/resolver.go:50:19: undefined:
-translateCreateArticleInput"; fixed binary → exit 0 then "found packages
-sqliteexample (generate.go) and graph (resolver.go)"".
-
-**Root cause.** `parseResolverLayout` (`cmd/sqlgen/wrapper/seeds.go:165`)
-defaults an empty `Filename` to `resolver.go` (`:192-194`) and seeds it,
-while gqlgen skips resolver generation when neither `dir` nor `filename` is
-set (and errors when only `dir` is).
-
-**Suggested fix.**
-- Under `layout: single-file`, return a config error when `resolver.filename`
-  is absent, naming the key, instead of defaulting it.
-- Test: a `wrapper` case for that gqlgen.yml expecting the error.
-- Vet notes (stale facts):
-  - the quoted `undefined: translateCreateArticleInput` output predates FIX-265. At `d51ace1b` the seed is written to `<wd>/resolver.go` (FIX-265's `singleFileResolverPath` resolves `filename` against the working directory, default "resolver.go"), and the HEAD failure is the backlog line's "fixed binary" one: `go build ./...` → "found packages sqliteexample (generate.go) and graph (resolver.go)";
-  - a second symptom with the same root cause: with only `dir` set, gqlgen prints "failed to load schema: config.resolver: filename must be specified with layout=single-file" and generate exits 1, but the seed has already been written, so a stray `resolver.go` stays at the module root;
-  - the gqlgen v0.17.95 citations hold (`IsDefined` at codegen/config/resolver.go:149-151 gates `Check` at config.go:853 and resolvergen at plugin/resolvergen/resolver.go:39; `Check` errors at resolver.go:76-77), as do `seeds.go:165` and `:192-194`. PRD §26.5.6 step 4's "the single `graph/resolver.go`" is shorthand, not a default, so there is no PRD conflict. Related: FIX-265.
-- Prototype: `parseResolverLayout` (`cmd/sqlgen/wrapper/seeds.go`) returns `resolver.filename is required with resolver.layout: single-file` when the layout is single-file and `filename` is empty, instead of defaulting it. The `defaultSingleFilename` constant is removed (under follow-schema nothing in production reads `Filename`); the `resolverLayout.Filename` doc comment is updated, and a `parseResolverLayout` doc paragraph cites gqlgen's `IsDefined` / `Check`. Tests: two error cases in `TestParseResolverLayout` (no filename/no dir; dir but no filename) with a `wantErr` column, the follow-schema cases now expecting `Filename == ""`; new `TestGen_SingleFileWithoutFilename` asserts the wrapped error "parsing gqlgen.yml resolver block: resolver.filename is required with resolver.layout: single-file" and that nothing besides gqlgen.yml is written. Fixture churn: 8 follow-schema layouts in `wrapper_test.go` drop `Filename: defaultSingleFilename`, and `root_stubs_test.go`'s single-file case uses literal paths.
-- Prototype results, run at `d51ace1b` on 2026-10-07:
-  - Reproduction: a sibling copy of the sqlite example with `resolver: {layout: single-file, package: graph}` → `GOWORK=off sqlgen generate` → "generated 68 files (22 tables, 2 views)", exit 0; `GOWORK=off go build ./...` → "found packages sqliteexample (generate.go) and graph (resolver.go)", exit 1. With `dir: models/graph` added → "failed to load schema: config.resolver: filename must be specified with layout=single-file … exit status 1", and a stray `resolver.go` at the root.
-  - With the fix: both variants → exit 1 "Error: gqlgen subprocess failed: parsing gqlgen.yml resolver block: resolver.filename is required with resolver.layout: single-file; sqlgen-side artifacts emitted at ./models", no stray file; `dir: models/graph` + `filename: models/graph/resolver.go` → "generated 68 files", exit 0, `go build ./...` ok.
-  - Gates: `go test -race -count=1 ./wrapper/...` → ok; `golangci-lint run ./wrapper/...` → 0 issues; `gofumpt -l wrapper` → clean; graphql example `GOWORK=off go test -race -count=1 ./...` → ok and `GOWORK=off golangci-lint run` → 0 issues.
-  - Fail-first: `seeds.go` at HEAD with the new tests → `TestGen_SingleFileWithoutFilename` fails: "Gen error = <nil>, want \"parsing gqlgen.yml resolver block: resolver.filename is required with resolver.layout: single-file\""; `TestParseResolverLayout` fails (both error cases, and "Filename: got \"resolver.go\", want \"\""); the existing suite without the fix → passes.
-  - Golden churn: none.
-  - Patch: `.claude/prototypes/FIX-286.patch` (3 files, +95/-33).
-
-
-**References.**
-- PRD §26.5.6 (wrapper subcommand, seed step, ownership table).
-
-**Resolution notes.** _Filled in by `/fix resolve`._
-
 ### FIX-287
 
 - **Status:** Open
@@ -637,6 +593,51 @@ source (PRD §6.1).
 ## Resolved
 
 <!-- fixes:resolved:begin -->
+
+### FIX-286
+
+- **Status:** Resolved
+- **Severity:** nit
+- **Origin:** phase 16, `cmd/sqlgen/wrapper`
+- **Surfaced by:** backlog promotion at `/close-phase 30` (2026-10-07); first recorded by FIX-265 (2026-10-03)
+- **Vetted:** ready at `d51ace1b` (2026-10-07)
+
+**Issue.** **A `resolver:` block with `layout: single-file` and no
+`filename` produces an unbuildable package** although `generate` exits 0.
+Measured evidence from the backlog line: "sqlite probe with `resolver:
+{layout: single-file, package: graph}`, HEAD binary → `sqlgen generate` exit 0
+then `go build ./...` → "graph/resolver.go:50:19: undefined:
+translateCreateArticleInput"; fixed binary → exit 0 then "found packages
+sqliteexample (generate.go) and graph (resolver.go)"".
+
+**Root cause.** `parseResolverLayout` (`cmd/sqlgen/wrapper/seeds.go:165`)
+defaults an empty `Filename` to `resolver.go` (`:192-194`) and seeds it,
+while gqlgen skips resolver generation when neither `dir` nor `filename` is
+set (and errors when only `dir` is).
+
+**Suggested fix.**
+- Under `layout: single-file`, return a config error when `resolver.filename`
+  is absent, naming the key, instead of defaulting it.
+- Test: a `wrapper` case for that gqlgen.yml expecting the error.
+- Vet notes (stale facts):
+  - the quoted `undefined: translateCreateArticleInput` output predates FIX-265. At `d51ace1b` the seed is written to `<wd>/resolver.go` (FIX-265's `singleFileResolverPath` resolves `filename` against the working directory, default "resolver.go"), and the HEAD failure is the backlog line's "fixed binary" one: `go build ./...` → "found packages sqliteexample (generate.go) and graph (resolver.go)";
+  - a second symptom with the same root cause: with only `dir` set, gqlgen prints "failed to load schema: config.resolver: filename must be specified with layout=single-file" and generate exits 1, but the seed has already been written, so a stray `resolver.go` stays at the module root;
+  - the gqlgen v0.17.95 citations hold (`IsDefined` at codegen/config/resolver.go:149-151 gates `Check` at config.go:853 and resolvergen at plugin/resolvergen/resolver.go:39; `Check` errors at resolver.go:76-77), as do `seeds.go:165` and `:192-194`. PRD §26.5.6 step 4's "the single `graph/resolver.go`" is shorthand, not a default, so there is no PRD conflict. Related: FIX-265.
+- Prototype: `parseResolverLayout` (`cmd/sqlgen/wrapper/seeds.go`) returns `resolver.filename is required with resolver.layout: single-file` when the layout is single-file and `filename` is empty, instead of defaulting it. The `defaultSingleFilename` constant is removed (under follow-schema nothing in production reads `Filename`); the `resolverLayout.Filename` doc comment is updated, and a `parseResolverLayout` doc paragraph cites gqlgen's `IsDefined` / `Check`. Tests: two error cases in `TestParseResolverLayout` (no filename/no dir; dir but no filename) with a `wantErr` column, the follow-schema cases now expecting `Filename == ""`; new `TestGen_SingleFileWithoutFilename` asserts the wrapped error "parsing gqlgen.yml resolver block: resolver.filename is required with resolver.layout: single-file" and that nothing besides gqlgen.yml is written. Fixture churn: 8 follow-schema layouts in `wrapper_test.go` drop `Filename: defaultSingleFilename`, and `root_stubs_test.go`'s single-file case uses literal paths.
+- Prototype results, run at `d51ace1b` on 2026-10-07:
+  - Reproduction: a sibling copy of the sqlite example with `resolver: {layout: single-file, package: graph}` → `GOWORK=off sqlgen generate` → "generated 68 files (22 tables, 2 views)", exit 0; `GOWORK=off go build ./...` → "found packages sqliteexample (generate.go) and graph (resolver.go)", exit 1. With `dir: models/graph` added → "failed to load schema: config.resolver: filename must be specified with layout=single-file … exit status 1", and a stray `resolver.go` at the root.
+  - With the fix: both variants → exit 1 "Error: gqlgen subprocess failed: parsing gqlgen.yml resolver block: resolver.filename is required with resolver.layout: single-file; sqlgen-side artifacts emitted at ./models", no stray file; `dir: models/graph` + `filename: models/graph/resolver.go` → "generated 68 files", exit 0, `go build ./...` ok.
+  - Gates: `go test -race -count=1 ./wrapper/...` → ok; `golangci-lint run ./wrapper/...` → 0 issues; `gofumpt -l wrapper` → clean; graphql example `GOWORK=off go test -race -count=1 ./...` → ok and `GOWORK=off golangci-lint run` → 0 issues.
+  - Fail-first: `seeds.go` at HEAD with the new tests → `TestGen_SingleFileWithoutFilename` fails: "Gen error = <nil>, want \"parsing gqlgen.yml resolver block: resolver.filename is required with resolver.layout: single-file\""; `TestParseResolverLayout` fails (both error cases, and "Filename: got \"resolver.go\", want \"\""); the existing suite without the fix → passes.
+  - Golden churn: none.
+  - Patch: `.claude/prototypes/FIX-286.patch` (3 files, +95/-33).
+
+
+**References.**
+- PRD §26.5.6 (wrapper subcommand, seed step, ownership table).
+
+**Resolution notes.** `parseResolverLayout` (`cmd/sqlgen/wrapper/seeds.go`) now returns `resolver.filename is required with resolver.layout: single-file` when the layout is single-file and `filename` is empty, instead of defaulting it to `resolver.go`; the `defaultSingleFilename` constant is removed and the `resolverLayout.Filename` / `parseResolverLayout` doc comments say why. Tests: two error cases in `TestParseResolverLayout` (no filename or dir; dir without filename), follow-schema cases now expect `Filename == ""`, and `TestGen_SingleFileWithoutFilename` asserts the wrapped error and that nothing besides gqlgen.yml is written. Applied the vetted prototype cleanly (fresh at HEAD `28927c94`), minus its test comments' FIX references and a history sentence (refs-check, comment rules). Inline after review: the `writeSingleFileSeed` doc comment no longer claims a `resolver.go` default, a test-case comment no longer says the seed is written first, and `TestGen_SingleFileWithoutFilename` runs the gqlgen helper in `fail` mode so the exact-error assertion proves gqlgen never ran; a duplicated `backlog.md` line was removed. Fail-first: HEAD `seeds.go` with the new tests → `TestGen_SingleFileWithoutFilename` "Gen error = <nil>, want …" and `TestParseResolverLayout` fails. E2E probe (sibling copy of the sqlite example, `resolver: {layout: single-file, package: graph}`) → "Error: gqlgen subprocess failed: parsing gqlgen.yml resolver block: resolver.filename is required with resolver.layout: single-file; sqlgen-side artifacts emitted at ./models", no stray `resolver.go`; with `dir: models/graph` + `filename: models/graph/resolver.go` → "generated 68 files", `go build ./...` ok. Gates: `make check` ok, `make check-examples` ok. Golden churn: none (matches vet).
+
 
 ### FIX-283
 
