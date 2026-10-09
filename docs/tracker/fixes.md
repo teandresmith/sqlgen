@@ -109,6 +109,44 @@ source (PRD §6.1).
 
 **Resolution notes.** _Filled in by `/fix resolve`._
 
+### FIX-297
+
+- **Status:** Open
+- **Severity:** tracked
+- **Origin:** phase 30, `parser/sqlite` (view column extraction)
+- **Surfaced by:** `/fix-loop` FIX-281 verify (2026-10-09)
+
+**Issue.** **A SQLite view with an unaliased `LIKE … ESCAPE` column panics
+`sqlgen generate` instead of returning the "name it with AS" error.** Measured
+during the FIX-281 run (2026-10-09): `views/v.sql` with `-- @pk: id` and
+`CREATE VIEW v AS SELECT id, a LIKE 'x%' ESCAPE '\' FROM t;` under
+`input.views` → `sqlgen generate` → exit 2, "panic: sql.BinaryExpr.String():
+invalid op ESCAPE". With `AS m` the view parses fine.
+
+**Root cause.** The SQLite view extractor builds its error message with an
+unrecovered `rc.String()` (`parser/sqlite/view_sql.go:103`, the "no alias and
+no column name; name it with AS" error added by FIX-280), and rqlite/sql panics
+rendering `LIKE … ESCAPE`. So the panic fires while the parser formats the error
+it meant to return. `view_sql.go:96` (the `*` / `t.*` error) renders `rc` the
+same way. Line refs at `9bef68f1`.
+
+**Suggested fix.**
+- Render the result column through the recovering `exprString` helper
+  (`parser/sqlite/sqlite.go:165`, FIX-291/FIX-281), or fall back to a fixed
+  description when rendering fails, at both `view_sql.go:96` and `:103`, so the
+  "name it with AS" error is returned rather than a panic.
+- Vet: check whether any other `String()` / `rsql.ExprString` call in
+  `parser/sqlite/view_sql.go` renders user expressions without a recover
+  (same root cause, same file).
+- Tests: a `parser/sqlite` view case with the unaliased `LIKE … ESCAPE` column
+  asserting the "name it with AS" error, not a panic.
+
+**References.**
+- PRD §16.1 (view column naming), §6.3 ("SQLite DDL the file parser cannot read").
+- FIX-280 (`19772175`, added the unnamed-column error), FIX-281 (`e932c2e2`), FIX-291 (`e50172de`, `exprString`).
+
+**Resolution notes.** _Filled in by `/fix resolve`._
+
 <!-- fixes:open:end -->
 
 ## Resolved
