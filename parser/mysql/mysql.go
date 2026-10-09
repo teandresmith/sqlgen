@@ -25,6 +25,23 @@ type Parser struct {
 	// not listed, but each keeps its name, and one whose leading columns
 	// match a foreign key's serves as its index.
 	exprKeys map[string][]parser.Constraint
+	// inline holds, per table and column name, the inline ENUM or SET of the
+	// column. Every definition of a column records its own or clears the key,
+	// and RENAME COLUMN and RENAME TABLE move it, so the key of each column
+	// the schema has is current. Schema derives the entries and the column
+	// types from the columns the schema has, so a key a dropped column left is
+	// never read.
+	inline map[string]map[string]inlineType
+	// seededEnums and seededSets hold the entries of a seeded schema that no
+	// table column declares inline, such as an introspected view's own.
+	seededEnums []parser.Enum
+	seededSets  []parser.Set
+}
+
+// inlineType is the ENUM or SET a column declares inline.
+type inlineType struct {
+	set    bool
+	values []string
 }
 
 // New creates a new MySQL parser.
@@ -39,6 +56,7 @@ func New() (*Parser, error) {
 		vparser:    vp,
 		generated:  make(map[string]map[string]bool),
 		exprKeys:   make(map[string][]parser.Constraint),
+		inline:     make(map[string]map[string]inlineType),
 	}, nil
 }
 
@@ -233,12 +251,34 @@ func normalizeInteger(t typeParts, defaultWidth int) string {
 
 // Seed pre-populates the parser with an existing schema. This enables "both"
 // mode where introspected tables are loaded before file-based DDL is applied.
+//
+// A column typed with the name its table and column derive
+// (parser.InlineEnumName, parser.InlineSetName) takes the first entry of that
+// name not yet taken, in table and column order, the order the introspector
+// adds them in, so DDL that renames or drops it updates its entry.
 func (p *Parser) Seed(base *parser.Schema) {
 	p.schema = base
 	p.tableIndex = make(map[string]int, len(base.Tables))
+	p.inline = make(map[string]map[string]inlineType)
+	enums, sets := slices.Clone(base.Enums), slices.Clone(base.Sets)
 	for i, t := range base.Tables {
 		p.tableIndex[t.Name] = i
+		for _, c := range t.Columns {
+			if c.Type == parser.InlineEnumName(t.Name, c.Name) {
+				if j := slices.IndexFunc(enums, func(e parser.Enum) bool { return e.Name == c.Type }); j >= 0 {
+					p.setInline(t.Name, c.Name, &inlineType{values: enums[j].Values})
+					enums = slices.Delete(enums, j, j+1)
+				}
+			}
+			if c.Type == parser.InlineSetName(t.Name, c.Name) {
+				if j := slices.IndexFunc(sets, func(s parser.Set) bool { return s.Name == c.Type }); j >= 0 {
+					p.setInline(t.Name, c.Name, &inlineType{set: true, values: sets[j].Values})
+					sets = slices.Delete(sets, j, j+1)
+				}
+			}
+		}
 	}
+	p.seededEnums, p.seededSets = enums, sets
 }
 
 // Parse parses MySQL DDL from sql. It can be called multiple times with
@@ -266,9 +306,52 @@ func (p *Parser) Parse(filename string, sql []byte) error {
 	return nil
 }
 
-// Schema returns the accumulated schema model.
+// Schema returns the accumulated schema model. Each inline ENUM or SET column
+// is typed with, and registers an entry under, the name built from its current
+// table and column names, as the introspector names it from the catalog.
 func (p *Parser) Schema() *parser.Schema {
+	enums, sets := slices.Clone(p.seededEnums), slices.Clone(p.seededSets)
+	for i := range p.schema.Tables {
+		t := &p.schema.Tables[i]
+		for j := range t.Columns {
+			c := &t.Columns[j]
+			it, ok := p.inline[t.Name][c.Name]
+			switch {
+			case !ok:
+			case it.set:
+				c.Type = parser.InlineSetName(t.Name, c.Name)
+				sets = append(sets, parser.Set{Name: c.Type, Values: slices.Clone(it.values)})
+			default:
+				c.Type = parser.InlineEnumName(t.Name, c.Name)
+				enums = append(enums, parser.Enum{Name: c.Type, Values: slices.Clone(it.values)})
+			}
+		}
+	}
+	p.schema.Enums, p.schema.Sets = enums, sets
 	return p.schema
+}
+
+// setInline records it as the inline ENUM or SET of the column, or records
+// that the column has none when it is nil.
+func (p *Parser) setInline(table, column string, it *inlineType) {
+	if it == nil {
+		delete(p.inline[table], column)
+		return
+	}
+	if p.inline[table] == nil {
+		p.inline[table] = make(map[string]inlineType)
+	}
+	p.inline[table][column] = *it
+}
+
+// renameInline gives column newName of table the inline ENUM or SET that
+// column oldName had, or none.
+func (p *Parser) renameInline(table, oldName, newName string) {
+	if it, ok := p.inline[table][oldName]; ok {
+		p.setInline(table, newName, &it)
+		return
+	}
+	p.setInline(table, newName, nil)
 }
 
 func (p *Parser) processStmt(stmt sqlparser.Statement) error {
@@ -502,28 +585,27 @@ func (p *Parser) parseColumn(tableName string, col *sqlparser.ColumnDefinition) 
 	return c, constraints
 }
 
-// extractInlineEnumOrSet handles MySQL inline ENUM and SET column types.
-// It creates schema-level entries and updates the column type to the derived
-// table-scoped name (parser.InlineEnumName, parser.InlineSetName).
+// extractInlineEnumOrSet records the inline ENUM or SET that column c of
+// table tableName declares, or that it declares none, in place of what an
+// earlier definition of the column recorded, and types c with the
+// table-scoped name (parser.InlineEnumName, parser.InlineSetName). Schema
+// registers the entries.
 func (p *Parser) extractInlineEnumOrSet(tableName string, c *parser.Column, ct *sqlparser.ColumnType) {
-	if len(ct.EnumValues) == 0 {
+	typ := strings.ToLower(ct.Type)
+	if len(ct.EnumValues) == 0 || (typ != "enum" && typ != "set") {
+		p.setInline(tableName, c.Name, nil)
 		return
 	}
 	values := make([]string, len(ct.EnumValues))
 	for i, v := range ct.EnumValues {
 		values[i] = decodeEnumValue(v)
 	}
-	typ := strings.ToLower(ct.Type)
-	switch typ {
-	case "enum":
-		name := parser.InlineEnumName(tableName, c.Name)
-		p.schema.Enums = append(p.schema.Enums, parser.Enum{Name: name, Values: values})
-		c.Type = name
-	case "set":
-		name := parser.InlineSetName(tableName, c.Name)
-		p.schema.Sets = append(p.schema.Sets, parser.Set{Name: name, Values: values})
-		c.Type = name
+	if typ == "set" {
+		c.Type = parser.InlineSetName(tableName, c.Name)
+	} else {
+		c.Type = parser.InlineEnumName(tableName, c.Name)
 	}
+	p.setInline(tableName, c.Name, &inlineType{set: typ == "set", values: values})
 }
 
 // decodeEnumValue returns the value of one sqlparser EnumValues entry. The
@@ -570,36 +652,6 @@ func unescapeMySQL(c byte) string {
 	default:
 		return string(c)
 	}
-}
-
-// dropInlineEnumOrSet removes every inline ENUM or SET entry named typeName,
-// if there is one. MODIFY and CHANGE COLUMN call it with the old column's type
-// before parsing the new definition, which registers its own entry when it is
-// still an ENUM or SET: the new definition replaces the old value list rather
-// than adding a second entry under the same name, and a column redefined to
-// another type, or renamed by CHANGE, leaves no entry behind.
-//
-// A MySQL ENUM or SET exists only inline, so the entry normally belongs to the
-// redefined column alone, which still carries typeName when this runs. RENAME
-// COLUMN and RENAME TABLE keep the name derived from the old names, though, so
-// a later column can register the same name a second time. The entries are
-// then left alone: deleting by name would drop the other column's entry too
-// and turn the duplicate-type generation error into a column that silently
-// resolves to another column's values or to string.
-func (p *Parser) dropInlineEnumOrSet(typeName string) {
-	users := 0
-	for _, t := range p.schema.Tables {
-		for _, c := range t.Columns {
-			if c.Type == typeName {
-				users++
-			}
-		}
-	}
-	if users > 1 {
-		return
-	}
-	p.schema.Enums = slices.DeleteFunc(p.schema.Enums, func(e parser.Enum) bool { return e.Name == typeName })
-	p.schema.Sets = slices.DeleteFunc(p.schema.Sets, func(s parser.Set) bool { return s.Name == typeName })
 }
 
 // buildTypeString builds the SQL type string from a ColumnType, in the form
@@ -958,6 +1010,7 @@ func (p *Parser) applyAlterOption(table *parser.Table, opt sqlparser.AlterOption
 		}
 		parser.RenameColumnReferences(p.schema.Tables, table.Schema, table.Name, oldName, newName)
 		p.renameExprKeyColumn(table.Name, oldName, newName)
+		p.renameInline(table.Name, oldName, newName)
 		return nil
 	case *sqlparser.RenameTableName:
 		return p.renameTable(table.Name, o.Table.Name.String())
@@ -975,7 +1028,6 @@ func (p *Parser) alterModifyColumn(table *parser.Table, o *sqlparser.ModifyColum
 	name := o.NewColDefinition.Name.String()
 	for i := range table.Columns {
 		if table.Columns[i].Name == name {
-			p.dropInlineEnumOrSet(table.Columns[i].Type)
 			newCol, constraints := p.parseColumn(table.Name, o.NewColDefinition)
 			table.Columns[i] = redefineColumn(table.Columns[i], newCol)
 			p.addConstraints(table, constraints, "")
@@ -1013,7 +1065,6 @@ func (p *Parser) alterChangeColumn(table *parser.Table, o *sqlparser.ChangeColum
 	oldName := o.OldColumn.Name.String()
 	for i := range table.Columns {
 		if table.Columns[i].Name == oldName {
-			p.dropInlineEnumOrSet(table.Columns[i].Type)
 			newCol, constraints := p.parseColumn(table.Name, o.NewColDefinition)
 			table.Columns[i] = redefineColumn(table.Columns[i], newCol)
 			// CHANGE COLUMN can rename too; references follow, as on RENAME COLUMN.
@@ -1086,11 +1137,13 @@ func (p *Parser) renameTable(oldName, newName string) error {
 	}
 	p.schema.Tables[idx].Name = newName
 	// Delete before setting, so renaming a table to its own name keeps them.
-	built, exprKeys := p.generated[oldName], p.exprKeys[oldName]
+	built, exprKeys, inline := p.generated[oldName], p.exprKeys[oldName], p.inline[oldName]
 	delete(p.generated, oldName)
 	delete(p.exprKeys, oldName)
+	delete(p.inline, oldName)
 	p.generated[newName] = built
 	p.exprKeys[newName] = exprKeys
+	p.inline[newName] = inline
 	delete(p.tableIndex, oldName)
 	p.tableIndex[newName] = idx
 	return nil

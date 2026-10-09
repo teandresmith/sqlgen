@@ -78,56 +78,6 @@ adds keys, then FK indexes (`mysql.go:355-364`; line refs at `cb04d107`).
 
 **Resolution notes.** _Filled in by `/fix resolve`._
 
-### FIX-278
-
-- **Status:** Open
-- **Severity:** tracked
-- **Origin:** phase 4, `parser/mysql`
-- **Surfaced by:** backlog promotion at `/close-phase 30` (2026-10-07); first recorded by FIX-262 (2026-10-03)
-- **Vetted:** corrected at `cb04d107` (2026-10-09; re-vetted after FIX-288 and FIX-294 landed)
-
-**Issue.** **MySQL inline ENUM/SET entries are not kept in step with RENAME
-and DROP.** RENAME COLUMN / RENAME TABLE keep the entry named from the old
-names, so the Go enum type name differs by source and a re-added column
-registers the same name twice; DROP COLUMN / DROP TABLE never remove the
-entry, so a dead enum type is emitted and re-adding a same-named ENUM fails
-generation. Measured evidence, quoted from the two backlog lines merged here:
-- "RENAME COLUMN / RENAME TABLE keep the inline ENUM/SET name derived from the old names (`people.role:users_role_enum`, `users.kind:users_role_enum`), while introspection derives `<table>_<column>_enum` from current names, so the DDL and introspect paths name the Go type differently, and `RENAME COLUMN role TO kind; ADD COLUMN role ENUM('x')` registers `users_role_enum` twice — evidence: parser probe enums=[{users_role_enum [a b]} {users_role_enum [x]}]"
-- "`CREATE TABLE users (id int PRIMARY KEY, role ENUM('a','b') NOT NULL); ALTER TABLE users DROP COLUMN role; ALTER TABLE users ADD COLUMN role ENUM('x','y') NOT NULL;` → `sqlgen generate` (FIX-262 prototype applied; reproduces at `d51ace1b` with FIX-262 landed) → "Generation error: enum users_role_enum and enum users_role_enum both resolve to the Go type name "UsersRoleEnum" …"; DROP TABLE + re-CREATE → two `users_role_enum` entries in a parser probe"
-
-**Root cause.** `extractInlineEnumOrSet` (`parser/mysql/mysql.go:508-528`)
-names the entry `<table>__<column>_enum|_set` (through `parser.InlineEnumName` /
-`InlineSetName`, FIX-288) once, at creation, and stores it as the column's `Type`.
-The RENAME COLUMN branch of `applyAlterOption` (`mysql.go:954-961`) and
-`renameTable` (`mysql.go:1072`, name set at `:1087`) never rename the entry or
-the column type (the `dropInlineEnumOrSet` doc comment, `mysql.go:575-588`,
-records this). `alterDropColumn` (`mysql.go:994`) and `parseDropTable`
-(`mysql.go:306`) never call `dropInlineEnumOrSet` (`mysql.go:589`, `users > 1`
-guard at `:598`), which only MODIFY and CHANGE COLUMN use (`:978`, `:1016`). The
-introspector names entries from current names (`parser/introspect/mysql.go:361`
-enum, `:371` set). Line refs at `cb04d107`.
-
-**Suggested fix.**
-- The user ruled on 2026-10-08 (FIX-288 Q2): rework this fix before it lands. The MySQL file parser tracks inline ENUM/SET values per (table, column), for example by deriving the entries from the final columns, so the `inlineTypeUsers` guard goes away and RENAME/DROP resolve a FIX-288 collision correctly; names are built with FIX-288's `parser.InlineEnumName` / `InlineSetName`. The entry is re-vetted on top of FIX-288.
-- The ruled design: the MySQL `Parser` gains `inline map[table]map[column]inlineType{set, values}`. Every column definition (CREATE, ADD, MODIFY, CHANGE) goes through `extractInlineEnumOrSet`, which records the ENUM/SET or clears the key. `renameInline` moves the key on RENAME COLUMN and clears the target when the source has none. `renameTable` moves the table's map with the same delete-before-set order FIX-294 uses for `generated`/`exprKeys`, so a rename to its own name keeps it. `Schema()` derives the entries and each column's `Type` from the columns that exist, under current names, so DROP COLUMN / DROP TABLE need no code; `dropInlineEnumOrSet` and the `users > 1` guard are removed. `Seed` (`both` mode) imports each introspected table column typed with its derived name, taking the first unclaimed entry of that name; entries no table column claims (a view's own) are kept as seeded extras.
-- Tests: `TestRedefineColumnKeepsSharedInlineEnumName` is replaced by `TestInlineEnumOrSetFollowsRenameAndDrop` (12 cases, including `ALTER TABLE RENAME TO its own name`); new `TestInlineEnumNameCollision` and `TestSeededInlineEnumOrSetFollowsRenameAndDrop`; parity tests `TestMySQLIntrospect_InlineEnumAfterRenameAndDrop`, `TestMySQLIntrospect_InlineEnumCollisionResolvedByAlter` and `TestMySQLIntrospect_BothModeInlineEnumAfterRenameAndDrop`; one unsorted expectation in `TestRedefineColumnReplacesInlineEnumOrSet` is reordered.
-- Changed from the original: the original bullets (rename and drop entries by name, keep the `users > 1` guard; first prototyped at `d51ace1b` on 2026-10-07) are superseded by the ruling above. Changed at the `cb04d107` re-vet: FIX-288 has landed, so the patch is a plain diff, not a delta; it was rebased onto FIX-294's `exprKeys` field and delete-before-set `renameTable`, because the old set-then-delete inline move dropped the map on a self-rename (measured: `/ALTER_TABLE_RENAME_TO_its_own_name` fails `- {{Name: "users__role_enum", Values: []string{"a", "b"}}}, + nil`, leaving the column typed with an unregistered enum).
-- Prototype results, run at `cb04d107` on 2026-10-09 (earlier runs at `d51ace1b` and `56fcc1c7` + FIX-288):
-  - Reproduction: parser probe `cd parser && go test -run TestZZProbeFix278 -v -count=1 ./mysql/` (since deleted): RENAME COLUMN → `cols=[users.kind:users__role_enum] enums=[{users__role_enum [a b]}]`; ALTER … RENAME TO people and RENAME TABLE → `people.role:users__role_enum`; rename then re-add → `enums=[{users__role_enum [a b]} {users__role_enum [x]}]`; DROP COLUMN → `cols=[] enums=[{users__role_enum [a b]}]`; DROP TABLE (ENUM+SET) → `enums=[{users__role_enum [a b]}] sets=[{users__tags_set [p q]}]`; DROP + re-CREATE → two `users__role_enum`; Go-name collision `a.b_c`/`a_b.c`: RENAME c TO d → `a_b.d:a_b__c_enum`, DROP c → stale `{a_b__c_enum [3 4]}`; `__` SQL-name collision `a.b__c`/`a__b.c` + MODIFY → three `a__b__c_enum` entries.
-  - CLI, sibling copy of the mysql example, HEAD binary, `GOWORK=off sqlgen generate`: `zz_u` DROP COLUMN role + ADD role ENUM('x','y') → "Generation error: enum zz_u__role_enum and enum zz_u__role_enum both resolve to the Go type name "ZzURoleEnum" — set enums.zz_u__role_enum.struct_name to a different Go identifier", exit 1; RENAME COLUMN role TO kind + DROP COLUMN tier → exit 0, emits dead `type ZzUTierEnum string` and `Kind ZzURoleEnum`; `ord.line_kind`/`ord_line.kind` + `ALTER TABLE ord_line RENAME COLUMN kind TO mode` → "Generation error: enum ord__line_kind_enum and enum ord_line__kind_enum both resolve to the Go type name "OrdLineKindEnum" — …", exit 1; same tables + DROP COLUMN kind → same error, exit 1. With the prototype: exit 0 in all four (one `ZzURoleEnum` X/Y; only `ZzUKindEnum` and `Kind ZzUKindEnum`; `OrdLineKindEnum` + `OrdLineModeEnum`; `OrdLineKindEnum` only).
-  - Gates: `gofumpt -l parser` → clean; `cd parser && go test -race -count=1 ./...` → ok (containers; the three parity tests PASS); `cd parser && golangci-lint run ./...` → 0 issues; `cd cmd/sqlgen && go test -race -count=1 ./cli/... ./gen/...` → ok; `TestE2EGoldenFiles` → ok; mysql example `GOWORK=off go test -race -count=1 ./...` → ok. `make update-golden-e2e` was not run (no template touched; `TestE2EGoldenFiles` passing shows the goldens still match).
-  - Fail-first (each site reverted alone): `renameInline` call removed → the RENAME cases of all three unit tests and all three parity tests fail (`- "users.kind": "users__kind_enum", + "users.kind": "users__role_enum"`); target clear in `renameInline` removed → `/DROP_COLUMN_then_RENAME_COLUMN_a_VARCHAR_column_to_its_name` fails (`- "users.role": "varchar(10)", + "users.role": "users__role_enum"`); `renameTable` move removed → `/ALTER_TABLE_RENAME_TO`, `/…its_own_name`, `/RENAME_TABLE_then_CREATE…`, seeded `/RENAME_TABLE_and_DROP_COLUMN_on_a_shared_name` and two parity tests fail (`- "people.role": "people__role_enum", + "people.role": "users__role_enum"`); `delete(p.inline, oldName)` removed → `/RENAME_TABLE_then_CREATE_TABLE_under_the_old_name,_then_MODIFY` fails; set-then-delete order → `/ALTER_TABLE_RENAME_TO_its_own_name` fails; non-ENUM clear removed → `TestRedefineColumnReplacesInlineEnumOrSet/MODIFY_from_ENUM_to_VARCHAR` fails; `Schema()` type derivation removed → rename, collision, seeded and parity cases fail; `Seed` import removed → `TestSeededInlineEnumOrSetFollowsRenameAndDrop`, `TestRedefineColumnReplacesSeededInlineEnum` and the both-mode parity test fail; the existing suite without the fix → passes.
-  - Golden churn: none.
-  - Patch: `.claude/prototypes/FIX-278.patch` (3 files, +445/-73).
-
-
-**References.**
-- PRD §6.1, §5.2 (MySQL parser), the MySQL inline ENUM/SET naming
-  (`<table>__<column>_enum`, FIX-288).
-- FIX-262 (added `dropInlineEnumOrSet` for MODIFY / CHANGE COLUMN).
-
-**Resolution notes.** _Filled in by `/fix resolve`._
-
 ### FIX-281
 
 - **Status:** Open
@@ -405,6 +355,56 @@ source (PRD §6.1).
 ## Resolved
 
 <!-- fixes:resolved:begin -->
+### FIX-278
+
+- **Status:** Resolved
+- **Severity:** tracked
+- **Origin:** phase 4, `parser/mysql`
+- **Surfaced by:** backlog promotion at `/close-phase 30` (2026-10-07); first recorded by FIX-262 (2026-10-03)
+- **Vetted:** corrected at `cb04d107` (2026-10-09; re-vetted after FIX-288 and FIX-294 landed)
+
+**Issue.** **MySQL inline ENUM/SET entries are not kept in step with RENAME
+and DROP.** RENAME COLUMN / RENAME TABLE keep the entry named from the old
+names, so the Go enum type name differs by source and a re-added column
+registers the same name twice; DROP COLUMN / DROP TABLE never remove the
+entry, so a dead enum type is emitted and re-adding a same-named ENUM fails
+generation. Measured evidence, quoted from the two backlog lines merged here:
+- "RENAME COLUMN / RENAME TABLE keep the inline ENUM/SET name derived from the old names (`people.role:users_role_enum`, `users.kind:users_role_enum`), while introspection derives `<table>_<column>_enum` from current names, so the DDL and introspect paths name the Go type differently, and `RENAME COLUMN role TO kind; ADD COLUMN role ENUM('x')` registers `users_role_enum` twice — evidence: parser probe enums=[{users_role_enum [a b]} {users_role_enum [x]}]"
+- "`CREATE TABLE users (id int PRIMARY KEY, role ENUM('a','b') NOT NULL); ALTER TABLE users DROP COLUMN role; ALTER TABLE users ADD COLUMN role ENUM('x','y') NOT NULL;` → `sqlgen generate` (FIX-262 prototype applied; reproduces at `d51ace1b` with FIX-262 landed) → "Generation error: enum users_role_enum and enum users_role_enum both resolve to the Go type name "UsersRoleEnum" …"; DROP TABLE + re-CREATE → two `users_role_enum` entries in a parser probe"
+
+**Root cause.** `extractInlineEnumOrSet` (`parser/mysql/mysql.go:508-528`)
+names the entry `<table>__<column>_enum|_set` (through `parser.InlineEnumName` /
+`InlineSetName`, FIX-288) once, at creation, and stores it as the column's `Type`.
+The RENAME COLUMN branch of `applyAlterOption` (`mysql.go:954-961`) and
+`renameTable` (`mysql.go:1072`, name set at `:1087`) never rename the entry or
+the column type (the `dropInlineEnumOrSet` doc comment, `mysql.go:575-588`,
+records this). `alterDropColumn` (`mysql.go:994`) and `parseDropTable`
+(`mysql.go:306`) never call `dropInlineEnumOrSet` (`mysql.go:589`, `users > 1`
+guard at `:598`), which only MODIFY and CHANGE COLUMN use (`:978`, `:1016`). The
+introspector names entries from current names (`parser/introspect/mysql.go:361`
+enum, `:371` set). Line refs at `cb04d107`.
+
+**Suggested fix.**
+- The user ruled on 2026-10-08 (FIX-288 Q2): rework this fix before it lands. The MySQL file parser tracks inline ENUM/SET values per (table, column), for example by deriving the entries from the final columns, so the `inlineTypeUsers` guard goes away and RENAME/DROP resolve a FIX-288 collision correctly; names are built with FIX-288's `parser.InlineEnumName` / `InlineSetName`. The entry is re-vetted on top of FIX-288.
+- The ruled design: the MySQL `Parser` gains `inline map[table]map[column]inlineType{set, values}`. Every column definition (CREATE, ADD, MODIFY, CHANGE) goes through `extractInlineEnumOrSet`, which records the ENUM/SET or clears the key. `renameInline` moves the key on RENAME COLUMN and clears the target when the source has none. `renameTable` moves the table's map with the same delete-before-set order FIX-294 uses for `generated`/`exprKeys`, so a rename to its own name keeps it. `Schema()` derives the entries and each column's `Type` from the columns that exist, under current names, so DROP COLUMN / DROP TABLE need no code; `dropInlineEnumOrSet` and the `users > 1` guard are removed. `Seed` (`both` mode) imports each introspected table column typed with its derived name, taking the first unclaimed entry of that name; entries no table column claims (a view's own) are kept as seeded extras.
+- Tests: `TestRedefineColumnKeepsSharedInlineEnumName` is replaced by `TestInlineEnumOrSetFollowsRenameAndDrop` (12 cases, including `ALTER TABLE RENAME TO its own name`); new `TestInlineEnumNameCollision` and `TestSeededInlineEnumOrSetFollowsRenameAndDrop`; parity tests `TestMySQLIntrospect_InlineEnumAfterRenameAndDrop`, `TestMySQLIntrospect_InlineEnumCollisionResolvedByAlter` and `TestMySQLIntrospect_BothModeInlineEnumAfterRenameAndDrop`; one unsorted expectation in `TestRedefineColumnReplacesInlineEnumOrSet` is reordered.
+- Changed from the original: the original bullets (rename and drop entries by name, keep the `users > 1` guard; first prototyped at `d51ace1b` on 2026-10-07) are superseded by the ruling above. Changed at the `cb04d107` re-vet: FIX-288 has landed, so the patch is a plain diff, not a delta; it was rebased onto FIX-294's `exprKeys` field and delete-before-set `renameTable`, because the old set-then-delete inline move dropped the map on a self-rename (measured: `/ALTER_TABLE_RENAME_TO_its_own_name` fails `- {{Name: "users__role_enum", Values: []string{"a", "b"}}}, + nil`, leaving the column typed with an unregistered enum).
+- Prototype results, run at `cb04d107` on 2026-10-09 (earlier runs at `d51ace1b` and `56fcc1c7` + FIX-288):
+  - Reproduction: parser probe `cd parser && go test -run TestZZProbeFix278 -v -count=1 ./mysql/` (since deleted): RENAME COLUMN → `cols=[users.kind:users__role_enum] enums=[{users__role_enum [a b]}]`; ALTER … RENAME TO people and RENAME TABLE → `people.role:users__role_enum`; rename then re-add → `enums=[{users__role_enum [a b]} {users__role_enum [x]}]`; DROP COLUMN → `cols=[] enums=[{users__role_enum [a b]}]`; DROP TABLE (ENUM+SET) → `enums=[{users__role_enum [a b]}] sets=[{users__tags_set [p q]}]`; DROP + re-CREATE → two `users__role_enum`; Go-name collision `a.b_c`/`a_b.c`: RENAME c TO d → `a_b.d:a_b__c_enum`, DROP c → stale `{a_b__c_enum [3 4]}`; `__` SQL-name collision `a.b__c`/`a__b.c` + MODIFY → three `a__b__c_enum` entries.
+  - CLI, sibling copy of the mysql example, HEAD binary, `GOWORK=off sqlgen generate`: `zz_u` DROP COLUMN role + ADD role ENUM('x','y') → "Generation error: enum zz_u__role_enum and enum zz_u__role_enum both resolve to the Go type name "ZzURoleEnum" — set enums.zz_u__role_enum.struct_name to a different Go identifier", exit 1; RENAME COLUMN role TO kind + DROP COLUMN tier → exit 0, emits dead `type ZzUTierEnum string` and `Kind ZzURoleEnum`; `ord.line_kind`/`ord_line.kind` + `ALTER TABLE ord_line RENAME COLUMN kind TO mode` → "Generation error: enum ord__line_kind_enum and enum ord_line__kind_enum both resolve to the Go type name "OrdLineKindEnum" — …", exit 1; same tables + DROP COLUMN kind → same error, exit 1. With the prototype: exit 0 in all four (one `ZzURoleEnum` X/Y; only `ZzUKindEnum` and `Kind ZzUKindEnum`; `OrdLineKindEnum` + `OrdLineModeEnum`; `OrdLineKindEnum` only).
+  - Gates: `gofumpt -l parser` → clean; `cd parser && go test -race -count=1 ./...` → ok (containers; the three parity tests PASS); `cd parser && golangci-lint run ./...` → 0 issues; `cd cmd/sqlgen && go test -race -count=1 ./cli/... ./gen/...` → ok; `TestE2EGoldenFiles` → ok; mysql example `GOWORK=off go test -race -count=1 ./...` → ok. `make update-golden-e2e` was not run (no template touched; `TestE2EGoldenFiles` passing shows the goldens still match).
+  - Fail-first (each site reverted alone): `renameInline` call removed → the RENAME cases of all three unit tests and all three parity tests fail (`- "users.kind": "users__kind_enum", + "users.kind": "users__role_enum"`); target clear in `renameInline` removed → `/DROP_COLUMN_then_RENAME_COLUMN_a_VARCHAR_column_to_its_name` fails (`- "users.role": "varchar(10)", + "users.role": "users__role_enum"`); `renameTable` move removed → `/ALTER_TABLE_RENAME_TO`, `/…its_own_name`, `/RENAME_TABLE_then_CREATE…`, seeded `/RENAME_TABLE_and_DROP_COLUMN_on_a_shared_name` and two parity tests fail (`- "people.role": "people__role_enum", + "people.role": "users__role_enum"`); `delete(p.inline, oldName)` removed → `/RENAME_TABLE_then_CREATE_TABLE_under_the_old_name,_then_MODIFY` fails; set-then-delete order → `/ALTER_TABLE_RENAME_TO_its_own_name` fails; non-ENUM clear removed → `TestRedefineColumnReplacesInlineEnumOrSet/MODIFY_from_ENUM_to_VARCHAR` fails; `Schema()` type derivation removed → rename, collision, seeded and parity cases fail; `Seed` import removed → `TestSeededInlineEnumOrSetFollowsRenameAndDrop`, `TestRedefineColumnReplacesSeededInlineEnum` and the both-mode parity test fail; the existing suite without the fix → passes.
+  - Golden churn: none.
+  - Patch: `.claude/prototypes/FIX-278.patch` (3 files, +445/-73).
+
+
+**References.**
+- PRD §6.1, §5.2 (MySQL parser), the MySQL inline ENUM/SET naming
+  (`<table>__<column>_enum`, FIX-288).
+- FIX-262 (added `dropInlineEnumOrSet` for MODIFY / CHANGE COLUMN).
+
+**Resolution notes.** The MySQL file parser now tracks each inline ENUM/SET per (table, column) (`Parser.inline`) instead of appending entries at creation. Every column definition (CREATE, ADD, MODIFY, CHANGE) records its ENUM/SET or clears the key in `extractInlineEnumOrSet`; `renameInline` moves the key on RENAME COLUMN (clearing the target when the source has none); `renameTable` moves the table's map with the delete-before-set order `generated`/`exprKeys` use; `Schema()` derives the entries and each column's `Type` from the columns that exist, under current names (`parser.InlineEnumName` / `InlineSetName`), so DROP COLUMN / DROP TABLE need no code. `dropInlineEnumOrSet` and its `users > 1` guard are removed. `Seed` (`both` mode) imports each introspected column typed with its derived name, taking the first unclaimed entry of that name; unclaimed entries (a view's own) are kept. Tests: `TestInlineEnumOrSetFollowsRenameAndDrop` (replaces `TestRedefineColumnKeepsSharedInlineEnumName`), `TestInlineEnumNameCollision`, `TestSeededInlineEnumOrSetFollowsRenameAndDrop`, and MySQL parity tests `TestMySQLIntrospect_InlineEnumAfterRenameAndDrop`, `TestMySQLIntrospect_InlineEnumCollisionResolvedByAlter`, `TestMySQLIntrospect_BothModeInlineEnumAfterRenameAndDrop`; one expectation in `TestRedefineColumnReplacesInlineEnumOrSet` reordered (entries now follow table/column order). Prototype applied clean at `c85dd849`; the new unit tests fail against the unfixed parser. Gates: `make check` ok, parser container tests ok, `make update-golden-e2e` and `make update-golden` produced no churn, `make check-examples` ok.
+
 ### FIX-295
 
 - **Status:** Resolved

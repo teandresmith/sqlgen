@@ -358,6 +358,102 @@ func TestMySQLIntrospect_InlineTypeNames(t *testing.T) {
 	}
 }
 
+// TestMySQLIntrospect_InlineEnumAfterRenameAndDrop checks that the file parser
+// names inline ENUM and SET types from the current table and column names after
+// RENAME, and drops them with their column or table, as the catalog does.
+func TestMySQLIntrospect_InlineEnumAfterRenameAndDrop(t *testing.T) {
+	requireDatabases(t)
+	const ddl = `CREATE TABLE m_enum_alter (
+		id int NOT NULL PRIMARY KEY,
+		role enum('a','b') NOT NULL,
+		tier enum('p','q'),
+		tags set('x','y')
+	);
+	ALTER TABLE m_enum_alter RENAME COLUMN role TO kind;
+	ALTER TABLE m_enum_alter DROP COLUMN tier;
+	ALTER TABLE m_enum_alter ADD COLUMN role enum('z') NOT NULL;
+	CREATE TABLE m_enum_old (id int NOT NULL PRIMARY KEY, mode set('r','w'));
+	RENAME TABLE m_enum_old TO m_enum_new;
+	CREATE TABLE m_enum_gone (id int NOT NULL PRIMARY KEY, state enum('on','off'));
+	DROP TABLE m_enum_gone`
+	applyParityFixture(t, "mysql", mysqlConnStr, "DROP TABLE IF EXISTS m_enum_alter; DROP TABLE IF EXISTS m_enum_old; DROP TABLE IF EXISTS m_enum_new; DROP TABLE IF EXISTS m_enum_gone", ddl)
+
+	introspected := introspectMySQL(t, "m_enum_alter", "m_enum_new")
+	parsed := parseMySQL(t, ddl)
+
+	assertSchemaParity(t, "mysql", parsed, introspected)
+}
+
+// TestMySQLIntrospect_InlineEnumCollisionResolvedByAlter checks that a
+// migration renaming or dropping one of two colliding inline ENUM columns
+// leaves the file parser with the entries the catalog gives: m_cl.b_c and
+// m_cl_b.c share the Go type name MClBCEnum, and m_q.b__c and m_q__b.c share
+// the name m_q__b__c_enum.
+func TestMySQLIntrospect_InlineEnumCollisionResolvedByAlter(t *testing.T) {
+	requireDatabases(t)
+	const (
+		goName  = "CREATE TABLE m_cl (id int NOT NULL PRIMARY KEY, b_c enum('1','2') NOT NULL);\nCREATE TABLE m_cl_b (id int NOT NULL PRIMARY KEY, c enum('3','4') NOT NULL);\n"
+		sqlName = "CREATE TABLE m_q (id int NOT NULL PRIMARY KEY, b__c enum('1') NOT NULL);\nCREATE TABLE m_q__b (id int NOT NULL PRIMARY KEY, c enum('2') NOT NULL);\n"
+		reset   = "DROP TABLE IF EXISTS m_cl; DROP TABLE IF EXISTS m_cl_b; DROP TABLE IF EXISTS m_q; DROP TABLE IF EXISTS m_q__b"
+	)
+	tests := []struct {
+		name   string
+		ddl    string
+		tables []string
+	}{
+		{name: "RENAME COLUMN", ddl: goName + "ALTER TABLE m_cl_b RENAME COLUMN c TO d", tables: []string{"m_cl", "m_cl_b"}},
+		{name: "DROP COLUMN", ddl: goName + "ALTER TABLE m_cl_b DROP COLUMN c", tables: []string{"m_cl", "m_cl_b"}},
+		{name: "RENAME COLUMN on a shared name", ddl: sqlName + "ALTER TABLE m_q__b RENAME COLUMN c TO d", tables: []string{"m_q", "m_q__b"}},
+		{name: "DROP COLUMN on a shared name", ddl: sqlName + "ALTER TABLE m_q DROP COLUMN b__c", tables: []string{"m_q", "m_q__b"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			applyParityFixture(t, "mysql", mysqlConnStr, reset, tt.ddl)
+
+			introspected := introspectMySQL(t, tt.tables...)
+			parsed := parseMySQL(t, tt.ddl)
+
+			assertSchemaParity(t, "mysql", parsed, introspected)
+		})
+	}
+}
+
+// TestMySQLIntrospect_BothModeInlineEnumAfterRenameAndDrop checks `input.source:
+// both`: a migration renaming or dropping introspected inline ENUM and SET
+// columns leaves the merged schema with the entries the catalog gives once the
+// migration is applied.
+func TestMySQLIntrospect_BothModeInlineEnumAfterRenameAndDrop(t *testing.T) {
+	requireDatabases(t)
+	const (
+		base = `CREATE TABLE m_seed (
+			id int NOT NULL PRIMARY KEY,
+			role enum('a','b') NOT NULL,
+			tier enum('p','q'),
+			tags set('x','y')
+		);
+		CREATE TABLE m_seed_gone (id int NOT NULL PRIMARY KEY, state enum('on','off'))`
+		migration = `ALTER TABLE m_seed RENAME COLUMN role TO kind;
+		ALTER TABLE m_seed DROP COLUMN tier;
+		RENAME TABLE m_seed TO m_seed_new;
+		DROP TABLE m_seed_gone`
+	)
+	applyParityFixture(t, "mysql", mysqlConnStr, "DROP TABLE IF EXISTS m_seed; DROP TABLE IF EXISTS m_seed_new; DROP TABLE IF EXISTS m_seed_gone", base)
+	seeded := introspectMySQL(t, "m_seed", "m_seed_gone")
+
+	p, err := mysql.New()
+	if err != nil {
+		t.Fatalf("mysql.New() error: %v", err)
+	}
+	if err := introspect.Merge(seeded, p, []string{writeMigration(t, migration)}); err != nil {
+		t.Fatalf("Merge() error: %v", err)
+	}
+
+	applyParityFixture(t, "mysql", mysqlConnStr, "", migration)
+	introspected := introspectMySQL(t, "m_seed_new")
+
+	assertSchemaParity(t, "mysql", p.Schema(), introspected)
+}
+
 func TestMySQLIntrospect_CheckText(t *testing.T) {
 	requireDatabases(t)
 	const ddl = `CREATE TABLE m_checks (

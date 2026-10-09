@@ -352,7 +352,7 @@ func TestRedefineColumnReplacesInlineEnumOrSet(t *testing.T) {
 			name:      "MODIFY on one ENUM column leaves another table's ENUM column alone",
 			sql:       "CREATE TABLE users (id INT PRIMARY KEY, role ENUM('a','b') NOT NULL); CREATE TABLE admins (id INT PRIMARY KEY, role ENUM('x') NOT NULL); ALTER TABLE users MODIFY role ENUM('a','b','c') NOT NULL;",
 			wantType:  "users__role_enum",
-			wantEnums: []parser.Enum{{Name: "admins__role_enum", Values: []string{"x"}}, {Name: "users__role_enum", Values: []string{"a", "b", "c"}}},
+			wantEnums: []parser.Enum{{Name: "users__role_enum", Values: []string{"a", "b", "c"}}, {Name: "admins__role_enum", Values: []string{"x"}}},
 		},
 	}
 	for _, tt := range tests {
@@ -376,50 +376,273 @@ func TestRedefineColumnReplacesInlineEnumOrSet(t *testing.T) {
 	}
 }
 
-// TestRedefineColumnKeepsSharedInlineEnumName covers MODIFY on an ENUM column
-// whose inline name another column also carries, which RENAME COLUMN and
-// RENAME TABLE make possible by keeping the name derived from the old names.
-// Both entries survive, so generation still fails loudly on the duplicate Go
-// type instead of resolving one column to the other's values.
-func TestRedefineColumnKeepsSharedInlineEnumName(t *testing.T) {
+// inlineColumnTypes returns the type of every column of schema that is not an
+// int, keyed by table.column.
+func inlineColumnTypes(schema *parser.Schema) map[string]string {
+	types := make(map[string]string)
+	for _, table := range schema.Tables {
+		for _, c := range table.Columns {
+			if c.Type != "int" {
+				types[table.Name+"."+c.Name] = c.Type
+			}
+		}
+	}
+	return types
+}
+
+// sortEnumsByNameAndValues orders enums by name, then values, so a test can
+// list two entries of one name in a fixed order.
+var sortEnumsByNameAndValues = cmpopts.SortSlices(func(a, b parser.Enum) bool {
+	if a.Name != b.Name {
+		return a.Name < b.Name
+	}
+	return strings.Join(a.Values, ",") < strings.Join(b.Values, ",")
+})
+
+// TestInlineEnumOrSetFollowsRenameAndDrop covers RENAME and DROP on inline
+// ENUM and SET columns. The entry takes the name built from the current table
+// and column names, as introspection names it, and goes with its column or
+// table, so a column re-added under the old name registers the only entry of
+// that name.
+func TestInlineEnumOrSetFollowsRenameAndDrop(t *testing.T) {
 	tests := []struct {
 		name      string
 		sql       string
+		wantTypes map[string]string
 		wantEnums []parser.Enum
+		wantSets  []parser.Set
 	}{
 		{
-			name: "RENAME COLUMN then ADD COLUMN under the old name",
-			sql:  "CREATE TABLE users (id INT PRIMARY KEY, role ENUM('a','b') NOT NULL); ALTER TABLE users RENAME COLUMN role TO kind; ALTER TABLE users ADD COLUMN role ENUM('x') NOT NULL; ALTER TABLE users MODIFY kind ENUM('a','b','c') NOT NULL;",
-			wantEnums: []parser.Enum{
-				{Name: "users__kind_enum", Values: []string{"a", "b", "c"}},
-				{Name: "users__role_enum", Values: []string{"a", "b"}},
-				{Name: "users__role_enum", Values: []string{"x"}},
-			},
+			name:      "RENAME COLUMN",
+			sql:       "CREATE TABLE users (id INT PRIMARY KEY, role ENUM('a','b') NOT NULL, tags SET('p','q')); ALTER TABLE users RENAME COLUMN role TO kind, RENAME COLUMN tags TO labels;",
+			wantTypes: map[string]string{"users.kind": "users__kind_enum", "users.labels": "users__labels_set"},
+			wantEnums: []parser.Enum{{Name: "users__kind_enum", Values: []string{"a", "b"}}},
+			wantSets:  []parser.Set{{Name: "users__labels_set", Values: []string{"p", "q"}}},
 		},
 		{
-			name: "RENAME TABLE then CREATE TABLE under the old name",
-			sql:  "CREATE TABLE users (id INT PRIMARY KEY, role ENUM('a','b') NOT NULL); RENAME TABLE users TO accounts; CREATE TABLE users (id INT PRIMARY KEY, role ENUM('x') NOT NULL); ALTER TABLE users MODIFY role ENUM('x','y') NOT NULL;",
-			wantEnums: []parser.Enum{
-				{Name: "users__role_enum", Values: []string{"a", "b"}},
-				{Name: "users__role_enum", Values: []string{"x"}},
-				{Name: "users__role_enum", Values: []string{"x", "y"}},
-			},
+			name:      "RENAME COLUMN then ADD COLUMN under the old name, then MODIFY the renamed column",
+			sql:       "CREATE TABLE users (id INT PRIMARY KEY, role ENUM('a','b') NOT NULL); ALTER TABLE users RENAME COLUMN role TO kind; ALTER TABLE users ADD COLUMN role ENUM('x') NOT NULL; ALTER TABLE users MODIFY kind ENUM('a','b','c') NOT NULL;",
+			wantTypes: map[string]string{"users.kind": "users__kind_enum", "users.role": "users__role_enum"},
+			wantEnums: []parser.Enum{{Name: "users__kind_enum", Values: []string{"a", "b", "c"}}, {Name: "users__role_enum", Values: []string{"x"}}},
+		},
+		{
+			name:      "RENAME COLUMN swapping two ENUM columns",
+			sql:       "CREATE TABLE users (id INT PRIMARY KEY, a ENUM('1') NOT NULL, b ENUM('2') NOT NULL); ALTER TABLE users RENAME COLUMN a TO tmp, RENAME COLUMN b TO a, RENAME COLUMN tmp TO b;",
+			wantTypes: map[string]string{"users.a": "users__a_enum", "users.b": "users__b_enum"},
+			wantEnums: []parser.Enum{{Name: "users__a_enum", Values: []string{"2"}}, {Name: "users__b_enum", Values: []string{"1"}}},
+		},
+		{
+			name:      "CHANGE COLUMN renaming to VARCHAR, then ADD COLUMN under the old name",
+			sql:       "CREATE TABLE users (id INT PRIMARY KEY, role ENUM('a','b') NOT NULL); ALTER TABLE users CHANGE COLUMN role kind VARCHAR(10) NOT NULL; ALTER TABLE users ADD COLUMN role ENUM('x') NOT NULL;",
+			wantTypes: map[string]string{"users.kind": "varchar(10)", "users.role": "users__role_enum"},
+			wantEnums: []parser.Enum{{Name: "users__role_enum", Values: []string{"x"}}},
+		},
+		{
+			name:      "ALTER TABLE RENAME TO",
+			sql:       "CREATE TABLE users (id INT PRIMARY KEY, role ENUM('a','b') NOT NULL, tags SET('p','q')); ALTER TABLE users RENAME TO people;",
+			wantTypes: map[string]string{"people.role": "people__role_enum", "people.tags": "people__tags_set"},
+			wantEnums: []parser.Enum{{Name: "people__role_enum", Values: []string{"a", "b"}}},
+			wantSets:  []parser.Set{{Name: "people__tags_set", Values: []string{"p", "q"}}},
+		},
+		{
+			name:      "ALTER TABLE RENAME TO its own name",
+			sql:       "CREATE TABLE users (id INT PRIMARY KEY, role ENUM('a','b') NOT NULL); ALTER TABLE users RENAME TO users;",
+			wantTypes: map[string]string{"users.role": "users__role_enum"},
+			wantEnums: []parser.Enum{{Name: "users__role_enum", Values: []string{"a", "b"}}},
+		},
+		{
+			name:      "RENAME TABLE then CREATE TABLE under the old name, then MODIFY",
+			sql:       "CREATE TABLE users (id INT PRIMARY KEY, role ENUM('a','b') NOT NULL); RENAME TABLE users TO people; CREATE TABLE users (id INT PRIMARY KEY, role ENUM('x') NOT NULL); ALTER TABLE users MODIFY role ENUM('x','y') NOT NULL;",
+			wantTypes: map[string]string{"people.role": "people__role_enum", "users.role": "users__role_enum"},
+			wantEnums: []parser.Enum{{Name: "people__role_enum", Values: []string{"a", "b"}}, {Name: "users__role_enum", Values: []string{"x", "y"}}},
+		},
+		{
+			name: "DROP COLUMN",
+			sql:  "CREATE TABLE users (id INT PRIMARY KEY, role ENUM('a','b') NOT NULL, tags SET('p','q')); ALTER TABLE users DROP COLUMN role, DROP COLUMN tags;",
+		},
+		{
+			name:      "DROP COLUMN then ADD COLUMN under the same name",
+			sql:       "CREATE TABLE users (id INT PRIMARY KEY, role ENUM('a','b') NOT NULL); ALTER TABLE users DROP COLUMN role; ALTER TABLE users ADD COLUMN role ENUM('x','y') NOT NULL;",
+			wantTypes: map[string]string{"users.role": "users__role_enum"},
+			wantEnums: []parser.Enum{{Name: "users__role_enum", Values: []string{"x", "y"}}},
+		},
+		{
+			name:      "DROP COLUMN then RENAME COLUMN a VARCHAR column to its name",
+			sql:       "CREATE TABLE users (id INT PRIMARY KEY, role ENUM('a','b') NOT NULL, label VARCHAR(10)); ALTER TABLE users DROP COLUMN role; ALTER TABLE users RENAME COLUMN label TO role;",
+			wantTypes: map[string]string{"users.role": "varchar(10)"},
+		},
+		{
+			name: "DROP TABLE",
+			sql:  "CREATE TABLE users (id INT PRIMARY KEY, role ENUM('a','b') NOT NULL, tags SET('p','q')); DROP TABLE users;",
+		},
+		{
+			name:      "DROP TABLE then CREATE TABLE under the same name",
+			sql:       "CREATE TABLE users (id INT PRIMARY KEY, role ENUM('a','b') NOT NULL, tags SET('p','q')); DROP TABLE users; CREATE TABLE users (id INT PRIMARY KEY, role ENUM('x') NOT NULL);",
+			wantTypes: map[string]string{"users.role": "users__role_enum"},
+			wantEnums: []parser.Enum{{Name: "users__role_enum", Values: []string{"x"}}},
 		},
 	}
-	sortEnums := cmpopts.SortSlices(func(a, b parser.Enum) bool {
-		if a.Name != b.Name {
-			return a.Name < b.Name
-		}
-		return strings.Join(a.Values, ",") < strings.Join(b.Values, ",")
-	})
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			p := newParser(t)
 			if err := p.Parse("test.sql", []byte(tt.sql)); err != nil {
 				t.Fatalf("Parse() error: %v", err)
 			}
-			if diff := cmp.Diff(tt.wantEnums, p.Schema().Enums, sortEnums); diff != "" {
+			schema := p.Schema()
+			if diff := cmp.Diff(tt.wantTypes, inlineColumnTypes(schema), cmpopts.EquateEmpty()); diff != "" {
+				t.Errorf("Parse(%q) column types mismatch (-want +got):\n%s", tt.sql, diff)
+			}
+			if diff := cmp.Diff(tt.wantEnums, schema.Enums, sortEnumsByNameAndValues, cmpopts.EquateEmpty()); diff != "" {
 				t.Errorf("Parse(%q) enums mismatch (-want +got):\n%s", tt.sql, diff)
+			}
+			if diff := cmp.Diff(tt.wantSets, schema.Sets, cmpopts.EquateEmpty()); diff != "" {
+				t.Errorf("Parse(%q) sets mismatch (-want +got):\n%s", tt.sql, diff)
+			}
+		})
+	}
+}
+
+// TestInlineEnumNameCollision covers two columns whose inline ENUM names
+// collide: a.b_c and a_b.c share the Go type name ABCEnum, and a.b__c and
+// a__b.c share the name a__b__c_enum. Each column keeps its own values through
+// MODIFY, and renaming or dropping one of them resolves the collision.
+func TestInlineEnumNameCollision(t *testing.T) {
+	const (
+		goName  = "CREATE TABLE a (id INT PRIMARY KEY, b_c ENUM('1','2') NOT NULL); CREATE TABLE a_b (id INT PRIMARY KEY, c ENUM('3','4') NOT NULL); "
+		sqlName = "CREATE TABLE a (id INT PRIMARY KEY, b__c ENUM('1') NOT NULL); CREATE TABLE a__b (id INT PRIMARY KEY, c ENUM('2') NOT NULL); "
+	)
+	tests := []struct {
+		name      string
+		sql       string
+		wantTypes map[string]string
+		wantEnums []parser.Enum
+	}{
+		{
+			name:      "Go name: RENAME COLUMN",
+			sql:       goName + "ALTER TABLE a_b RENAME COLUMN c TO d;",
+			wantTypes: map[string]string{"a.b_c": "a__b_c_enum", "a_b.d": "a_b__d_enum"},
+			wantEnums: []parser.Enum{{Name: "a__b_c_enum", Values: []string{"1", "2"}}, {Name: "a_b__d_enum", Values: []string{"3", "4"}}},
+		},
+		{
+			name:      "Go name: DROP COLUMN",
+			sql:       goName + "ALTER TABLE a_b DROP COLUMN c;",
+			wantTypes: map[string]string{"a.b_c": "a__b_c_enum"},
+			wantEnums: []parser.Enum{{Name: "a__b_c_enum", Values: []string{"1", "2"}}},
+		},
+		{
+			name:      "SQL name: MODIFY",
+			sql:       sqlName + "ALTER TABLE a MODIFY b__c ENUM('1','3') NOT NULL;",
+			wantTypes: map[string]string{"a.b__c": "a__b__c_enum", "a__b.c": "a__b__c_enum"},
+			wantEnums: []parser.Enum{{Name: "a__b__c_enum", Values: []string{"1", "3"}}, {Name: "a__b__c_enum", Values: []string{"2"}}},
+		},
+		{
+			name:      "SQL name: RENAME COLUMN",
+			sql:       sqlName + "ALTER TABLE a__b RENAME COLUMN c TO d;",
+			wantTypes: map[string]string{"a.b__c": "a__b__c_enum", "a__b.d": "a__b__d_enum"},
+			wantEnums: []parser.Enum{{Name: "a__b__c_enum", Values: []string{"1"}}, {Name: "a__b__d_enum", Values: []string{"2"}}},
+		},
+		{
+			name:      "SQL name: DROP COLUMN",
+			sql:       sqlName + "ALTER TABLE a DROP COLUMN b__c;",
+			wantTypes: map[string]string{"a__b.c": "a__b__c_enum"},
+			wantEnums: []parser.Enum{{Name: "a__b__c_enum", Values: []string{"2"}}},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			p := newParser(t)
+			if err := p.Parse("test.sql", []byte(tt.sql)); err != nil {
+				t.Fatalf("Parse() error: %v", err)
+			}
+			schema := p.Schema()
+			if diff := cmp.Diff(tt.wantTypes, inlineColumnTypes(schema)); diff != "" {
+				t.Errorf("Parse(%q) column types mismatch (-want +got):\n%s", tt.sql, diff)
+			}
+			if diff := cmp.Diff(tt.wantEnums, schema.Enums, sortEnumsByNameAndValues); diff != "" {
+				t.Errorf("Parse(%q) enums mismatch (-want +got):\n%s", tt.sql, diff)
+			}
+		})
+	}
+}
+
+// TestSeededInlineEnumOrSetFollowsRenameAndDrop covers `input.source: both`:
+// DDL that renames or drops an introspected inline ENUM or SET column updates
+// its entry as it does a parsed column's, and an entry no table column
+// declares, such as a view's own, stays.
+func TestSeededInlineEnumOrSetFollowsRenameAndDrop(t *testing.T) {
+	seed := func() *parser.Schema {
+		return &parser.Schema{
+			Tables: []parser.Table{
+				{Name: "a", Columns: []parser.Column{{Name: "id", Type: "int"}, {Name: "b__c", Type: "a__b__c_enum"}}},
+				{Name: "a__b", Columns: []parser.Column{{Name: "id", Type: "int"}, {Name: "c", Type: "a__b__c_enum"}}},
+				{Name: "users", Columns: []parser.Column{{Name: "id", Type: "int"}, {Name: "role", Type: "users__role_enum"}, {Name: "tags", Type: "users__tags_set"}}},
+			},
+			Enums: []parser.Enum{
+				{Name: "a__b__c_enum", Values: []string{"1"}},
+				{Name: "a__b__c_enum", Values: []string{"2"}},
+				{Name: "users__role_enum", Values: []string{"a", "b"}},
+				{Name: "v__role_enum", Values: []string{"a"}},
+			},
+			Sets: []parser.Set{{Name: "users__tags_set", Values: []string{"p", "q"}}},
+		}
+	}
+	tests := []struct {
+		name      string
+		sql       string
+		wantTypes map[string]string
+		wantEnums []parser.Enum
+		wantSets  []parser.Set
+	}{
+		{
+			name:      "RENAME COLUMN",
+			sql:       "ALTER TABLE users RENAME COLUMN role TO kind, RENAME COLUMN tags TO labels;",
+			wantTypes: map[string]string{"a.b__c": "a__b__c_enum", "a__b.c": "a__b__c_enum", "users.kind": "users__kind_enum", "users.labels": "users__labels_set"},
+			wantEnums: []parser.Enum{
+				{Name: "a__b__c_enum", Values: []string{"1"}},
+				{Name: "a__b__c_enum", Values: []string{"2"}},
+				{Name: "users__kind_enum", Values: []string{"a", "b"}},
+				{Name: "v__role_enum", Values: []string{"a"}},
+			},
+			wantSets: []parser.Set{{Name: "users__labels_set", Values: []string{"p", "q"}}},
+		},
+		{
+			name:      "RENAME TABLE and DROP COLUMN on a shared name",
+			sql:       "RENAME TABLE users TO people; ALTER TABLE a DROP COLUMN b__c;",
+			wantTypes: map[string]string{"a__b.c": "a__b__c_enum", "people.role": "people__role_enum", "people.tags": "people__tags_set"},
+			wantEnums: []parser.Enum{
+				{Name: "a__b__c_enum", Values: []string{"2"}},
+				{Name: "people__role_enum", Values: []string{"a", "b"}},
+				{Name: "v__role_enum", Values: []string{"a"}},
+			},
+			wantSets: []parser.Set{{Name: "people__tags_set", Values: []string{"p", "q"}}},
+		},
+		{
+			name:      "DROP TABLE",
+			sql:       "DROP TABLE users; ALTER TABLE a__b RENAME COLUMN c TO d;",
+			wantTypes: map[string]string{"a.b__c": "a__b__c_enum", "a__b.d": "a__b__d_enum"},
+			wantEnums: []parser.Enum{
+				{Name: "a__b__c_enum", Values: []string{"1"}},
+				{Name: "a__b__d_enum", Values: []string{"2"}},
+				{Name: "v__role_enum", Values: []string{"a"}},
+			},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			p := newParser(t)
+			p.Seed(seed())
+			if err := p.Parse("test.sql", []byte(tt.sql)); err != nil {
+				t.Fatalf("Parse() error: %v", err)
+			}
+			schema := p.Schema()
+			if diff := cmp.Diff(tt.wantTypes, inlineColumnTypes(schema)); diff != "" {
+				t.Errorf("Parse(%q) after Seed column types mismatch (-want +got):\n%s", tt.sql, diff)
+			}
+			if diff := cmp.Diff(tt.wantEnums, schema.Enums, sortEnumsByNameAndValues); diff != "" {
+				t.Errorf("Parse(%q) after Seed enums mismatch (-want +got):\n%s", tt.sql, diff)
+			}
+			if diff := cmp.Diff(tt.wantSets, schema.Sets, cmpopts.EquateEmpty()); diff != "" {
+				t.Errorf("Parse(%q) after Seed sets mismatch (-want +got):\n%s", tt.sql, diff)
 			}
 		})
 	}
