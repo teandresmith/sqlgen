@@ -29,7 +29,7 @@
 - **Severity:** nit
 - **Origin:** phase 30, `parser/mysql`
 - **Surfaced by:** backlog promotion at `/close-phase 30` (2026-10-07); first recorded by 30.2 (2026-10-05)
-- **Vetted:** ready at `cb04d107` (2026-10-09; re-vetted, patch carried forward)
+- **Vetted:** ready at `717c3b7c` (2026-10-09; re-vetted after FIX-278, patch carried forward)
 
 **Issue.** **MySQL unnamed-key `_2` numbering is not in declaration order.**
 The parser numbers unnamed keys as column keys, then table-level keys, then
@@ -41,8 +41,8 @@ parser gives KEY `b`, FK index `b_2`".
 
 **Root cause.** vitess keeps a table's columns, indexes and constraints in
 separate lists with no positions, so `parseTableSpec`
-(`parser/mysql/mysql.go:377-401`, doc comment at `:372`) cannot interleave them and `parseCreateTable`
-adds keys, then FK indexes (`mysql.go:355-364`; line refs at `cb04d107`).
+(`parser/mysql/mysql.go:460-484`, doc comment at `:455`) cannot interleave them and `parseCreateTable`
+adds keys, then FK indexes (`mysql.go:438-446`; line refs at `717c3b7c`).
 
 **Suggested fix.**
 - Recover declaration order at `parseTableSpec` (e.g. from the statement
@@ -57,6 +57,7 @@ adds keys, then FK indexes (`mysql.go:355-364`; line refs at `cb04d107`).
   - side effect: in `Table.Constraints` a built FK index now precedes the FK constraints; `TestRenameColumnCarriesReferences` is updated (3 swapped lines, an expectation change, not a defect guard);
   - tests: `TestNamesFollowDeclarationOrder` (`parser/mysql`, 7 cases: o2, column key after table key, FK before column UNIQUE, interleaved mix, inline REFERENCES, column CHECK between table CHECKs, keywords inside comments/strings/enums/backquoted names) and `TestMySQLIntrospect_KeyDeclarationOrder` (4 tables incl. o2, key names on both sides, then `assertSchemaParity`).
 - Interaction with FIX-274: none for this fix. The expression-index work it anticipated landed as FIX-294 (`80809acf`, `Parser.exprKeys` in `addKey`); this patch leaves `addKey` unchanged and only hands it keys in declaration order. Measured at `cb04d107`: parity holds for expression keys interleaved with FKs (`KEY (a, (b + 1))` before/after an FK, `KEY ((a + 1))` among FK/column UNIQUE/KEY, `CONSTRAINT UNIQUE (a)` after an FK → `same=true` for all four).
+- Re-vet at `717c3b7c` on 2026-10-09 (after FIX-278, `ebcd8730`, changed the `processStmt` region and added three MySQL integration tests at the same insertion point): rebuilt with `git apply --3way`; `mysql.go` conflicted once (the new `processStmt(stmt, sql)` signature next to FIX-278's `setInline`/`renameInline`, both kept) and `mysql_integration_test.go` conflicted with FIX-278's tests (all kept, `TestMySQLIntrospect_KeyDeclarationOrder` after them). Source logic unchanged; `parseColumn` (now calling `setInline`) runs in declaration order, which is safe because `setInline` is keyed per (table, column). Re-measured on MySQL 8.0: zo2, zcol, zfkcol and zmix give the same db-vs-parse diffs as below and `same=true` with the fix; a FIX-278 cross-check (FK, then ENUM UNIQUE, KEY, SET with CHECK and UNIQUE, then `RENAME COLUMN Kind TO kind2`) → `same=true`, full `assertSchemaParity` passing with ENUM/SET entries. Gates: `gofumpt -l parser/` → clean; parser `golangci-lint run ./...` → 0 issues; `go -C parser test -race -count=1 ./...` → ok (containers); `go -C cmd/sqlgen test -short -count=1 ./...` → ok; `TestE2EGoldenFiles` → ok; `make update-golden` / `make update-golden-e2e` → no files changed. Fail-first: `mysql.go` reverted → `TestNamesFollowDeclarationOrder` fails 5 of 7 (o2: `- "INDEX b [b c]", + "INDEX b [b]"`) and `TestMySQLIntrospect_KeyDeclarationOrder` fails "parsed key names mismatch (-want +got): - \"b\": \"b,c\", + \"b\": \"b\""; the existing suite without the fix → passes. Golden churn: none. Patch: `.claude/prototypes/FIX-275.patch` (3 files, +258/-34).
 - Re-vet at `cb04d107` on 2026-10-09: rebuilt with `git apply --3way`. `mysql.go` and `mysql_test.go` merged cleanly; `parser/introspect/mysql_integration_test.go` conflicted with FIX-288's `TestMySQLIntrospect_InlineTypeNames` at the same insertion point, and both tests are kept. The old patch also put `TestNamesFollowDeclarationOrder` between `TestDerivedConstraintNames`' doc comment and its func; the rebuilt patch moves that comment back. Source code is unchanged from the first prototype. Re-measured on MySQL 8.0 (probe `zz_probe_fix275_test.go`, deleted), db vs parse: zo2 → db `b:INDEX[b c] b_2:INDEX[b]`, parse `b:INDEX[b] b_2:INDEX[b c]`; zcol → db `a:INDEX[a x] a_2:UNIQUE[a]`, parse `a:UNIQUE[a] a_2:INDEX[a x]`; zfkcol → db `b:INDEX[b c] b_2:UNIQUE[b]`, parse `b:UNIQUE[b] b_2:INDEX[b c]`; zmix → db `b:INDEX[b c] b_2:INDEX[b] b_3:UNIQUE[b d]`, parse `b:INDEX[b] b_2:UNIQUE[b d] b_3:INDEX[b c]`; with the fix all match. Gates: `gofumpt -l parser/` → clean; parser `golangci-lint run ./...` → 0 issues; `go -C parser test -race -count=1 ./...` → ok (containers); `go -C cmd/sqlgen test -short -count=1 ./...` → ok; `TestE2EGoldenFiles` → PASS. Fail-first: `mysql.go` reverted → `TestNamesFollowDeclarationOrder` fails 5 of 7 (o2: `- "INDEX b [b c]", + "INDEX b [b]"`) and `TestMySQLIntrospect_KeyDeclarationOrder` fails "parsed key names mismatch"; the existing suite without the fix → passes. Golden churn: none. Patch: `.claude/prototypes/FIX-275.patch` (3 files, +258/-34).
 - Prototype results, run at `d51ace1b` on 2026-10-07:
   - Reproduction: a throwaway probe (`parser/introspect/zz_probe_fix275_test.go`, since deleted) on MySQL 8.0, `go -C parser test -count=1 -run TestZZProbeFIX275 ./introspect/`, db vs parse:
@@ -84,6 +85,7 @@ adds keys, then FK indexes (`mysql.go:355-364`; line refs at `cb04d107`).
 - **Severity:** tracked
 - **Origin:** phase 30, `parser/mysql`
 - **Surfaced by:** `/fix-vet FIX-294` (2026-10-08), filed at `/close-phase 30` (2026-10-08)
+- **Vetted:** corrected at `717c3b7c` (2026-10-09)
 
 **Issue.** **The MySQL file parser matches `ALTER TABLE … DROP INDEX` names
 case-sensitively, while MySQL index names are case-insensitive.** Measured:
@@ -92,17 +94,46 @@ keeps `INDEX A [a]` (throwaway unit probe), while MySQL 8.0.46 drops it
 (`information_schema.statistics` has no rows for `v2`), so `indexes[]` differs by
 source (PRD §6.1).
 
-**Root cause.** The DROP INDEX path compares key names exactly:
-`removeConstraintFromColumns` (`c.Name == name`) and
-`delete(p.generated[…], name)` in `parser/mysql/mysql.go`. FIX-294's own
-`exprKeys` drop already uses `strings.EqualFold`.
+**Root cause.** The ALTER drop paths compare constraint names exactly:
+`removeConstraintFromColumns` (`parser/mysql/mysql.go:1201`, `c.Name == name`)
+serves DROP INDEX / DROP KEY and also DROP FOREIGN KEY, DROP CHECK and DROP
+CONSTRAINT, and the DropKey branch of `applyAlterOption` clears the FK-built
+index flag with an exact `delete(p.generated[table.Name], o.Name.String())`
+(`mysql.go:996`). FIX-294's own `exprKeys` drop already uses `strings.EqualFold`
+(`:997-998`). MySQL 8.0.46 matches all of these names case-insensitively, and
+rejects a re-added FK whose name differs only in case (`ERROR 1826 Duplicate
+foreign key constraint name 'fK2'`), so a first case-insensitive match is safe.
+Line refs at `717c3b7c`.
 
 **Suggested fix.**
-- Match the dropped key name case-insensitively at every DROP INDEX / DROP KEY
-  site (constraints, the generated FK-index map), as FIX-294's `exprKeys` drop
-  does; check RENAME INDEX for the same comparison.
-- Tests: a parser unit case (`KEY A (a)` then `DROP INDEX a`) and a
-  `mysql_integration_test.go` parity case with `assertSchemaParity`.
+- `removeConstraintFromColumns`: `c.Name == name` → `strings.EqualFold(c.Name,
+  name)`, with one comment sentence. This covers DROP INDEX/KEY (UNIQUE and
+  INDEX), DROP FOREIGN KEY and DROP CHECK/CONSTRAINT.
+- `applyAlterOption` DropKey: replace the exact `delete(p.generated[…], name)`
+  with `maps.DeleteFunc(…, strings.EqualFold …)`. Without it, an FK-built index
+  dropped in another case leaves a stale "built" flag, and a later declared key of
+  that name then gives way to a wider key (MySQL keeps `fk1 [a]` and `a [a,b]`;
+  the parser drops `fk1`).
+- Tests: `TestDropConstraintIgnoresNameCase` (`parser/mysql/mysql_test.go`, 7
+  cases: DROP INDEX, DROP KEY on UNIQUE (clears Unique), standalone `DROP INDEX
+  … ON`, DROP FOREIGN KEY (keeps the index, clears `FKReference`), DROP CHECK,
+  DROP CONSTRAINT, and the stale-built-flag sequence) and
+  `TestMySQLIntrospect_DropIgnoresNameCase`
+  (`parser/introspect/mysql_integration_test.go`, 7 `m_dc_*` tables,
+  `assertSchemaParity`).
+- Changed from the original (vet at `717c3b7c`, 2026-10-09): widened to DROP
+  FOREIGN KEY / DROP CHECK / DROP CONSTRAINT, which share the root cause and the
+  fix site (the shared helper) and were measured case-insensitive on MySQL; the
+  "check RENAME INDEX" bullet does not apply, because `applyAlterOption` has no
+  `*sqlparser.RenameIndex` case at all (RENAME INDEX is ignored, a different
+  defect); the regression sequence drops the FK in another case (`DROP FOREIGN
+  KEY FK1`), since a same-case drop already clears the map entry.
+- Prototype results, run at `717c3b7c` on 2026-10-09:
+  - Reproduction: throwaway probe `parser/mysql/zz_probe_drop_test.go` (deleted), `go test ./mysql/ -run TestZZProbeDropCase -v`: `CREATE TABLE v2 (a int, KEY A (a)); ALTER TABLE v2 DROP INDEX a;` → `INDEX A [a]`; `UNIQUE KEY A (a)` + `DROP KEY a` → `UNIQUE A [a]; col a unique=true`; `KEY A (a)` + `DROP INDEX a ON v2` → `INDEX A [a]`; `CONSTRAINT Fk FOREIGN KEY …` + `DROP FOREIGN KEY fk` → `FOREIGN KEY Fk [a]; INDEX Fk [a]; fk=true`; `CONSTRAINT Ck CHECK (a > 0)` + `DROP CHECK ck` → `CHECK Ck [a]`, and `DROP CONSTRAINT ck` → `CHECK Ck [a]`. The same statements on `mysql:8.0` (8.0.46): v2 and v3 have no rows in `information_schema.statistics`; f1 has no rows in `table_constraints` and its index `Fk` stays; c1 and c2 have no CHECK left.
+  - Gates: `cd parser && go test -race -count=1 ./...` → ok; `golangci-lint run ./mysql/... ./introspect/...` → 0 issues; `gofumpt -l mysql introspect` → clean; `go vet` → clean.
+  - Fail-first: `removeConstraintFromColumns` reverted → all 7 `TestDropConstraintIgnoresNameCase` cases fail (e.g. "DROP_INDEX_on_a_non-unique_key … constraints mismatch (-want +got): - nil, + {\"INDEX A [a]\"}") and `TestMySQLIntrospect_DropIgnoresNameCase` fails "mysql: introspected schema differs from the file parser's (-parsed +introspected)" (`- {Name: "Ck", Type: s"CHECK" …}`, `- FKReference: &parser.FKReference{Table: "m_dc_p", Column: "id"}`, `+ FKReference: nil`); `maps.DeleteFunc` reverted to the exact `delete` → `/a_dropped_foreign_key_index_no_longer_gives_way_to_a_wider_key` fails (`[]string{"INDEX a [a b]", - "INDEX fk1 [a]"}`) and the parity test fails on m_dc_g (`+ {Name: "m_dc_fk1", Type: s"INDEX", …}`); the existing suite without the fix → passes.
+  - Golden churn: none.
+  - Patch: `.claude/prototypes/FIX-296.patch` (3 files, +116/-3).
 
 **References.**
 - PRD §6.1; FIX-294 (`exprKeys` case-insensitive drop), FIX-287 (DROP INDEX `PRIMARY`).
@@ -115,35 +146,126 @@ source (PRD §6.1).
 - **Severity:** tracked
 - **Origin:** phase 30, `parser/sqlite` (view column extraction)
 - **Surfaced by:** `/fix-loop` FIX-281 verify (2026-10-09)
+- **Vetted:** corrected at `717c3b7c` (2026-10-09)
 
 **Issue.** **A SQLite view with an unaliased `LIKE … ESCAPE` column panics
-`sqlgen generate` instead of returning the "name it with AS" error.** Measured
-during the FIX-281 run (2026-10-09): `views/v.sql` with `-- @pk: id` and
-`CREATE VIEW v AS SELECT id, a LIKE 'x%' ESCAPE '\' FROM t;` under
-`input.views` → `sqlgen generate` → exit 2, "panic: sql.BinaryExpr.String():
-invalid op ESCAPE". With `AS m` the view parses fine.
+`sqlgen generate` instead of returning the "name it with AS" error, under both
+`files` and `database`.** Measured during the FIX-281 run (2026-10-09):
+`views/v.sql` with `-- @pk: id` and `CREATE VIEW v AS SELECT id, a LIKE 'x%'
+ESCAPE '\' FROM t;` under `input.views` → `sqlgen generate` → exit 2,
+"panic: sql.BinaryExpr.String(): invalid op ESCAPE". With `AS m` the view parses
+fine. The vet measured the same panic under `source: database`: introspection
+runs every stored view's SQL through `sqlite.ParseViewSQL`
+(`parser/introspect/sqlite.go:257`), so a view SQLite accepts crashes generation
+instead of falling back to the catalog columns with a warning.
 
 **Root cause.** The SQLite view extractor builds its error message with an
 unrecovered `rc.String()` (`parser/sqlite/view_sql.go:103`, the "no alias and
 no column name; name it with AS" error added by FIX-280), and rqlite/sql panics
 rendering `LIKE … ESCAPE`. So the panic fires while the parser formats the error
-it meant to return. `view_sql.go:96` (the `*` / `t.*` error) renders `rc` the
-same way. Line refs at `9bef68f1`.
+it meant to return. `view_sql.go:96` (the `*` / `t.*` error) also calls
+`rc.String()`, but `isStar` only admits `*` or a star `QualifiedRef`, which
+cannot hold a `LIKE … ESCAPE`, so it cannot panic (measured: `SELECT id, t.*`
+→ `view v selects "t".*, whose columns the view parser cannot list; name each
+column`). Line refs at `717c3b7c`.
 
 **Suggested fix.**
-- Render the result column through the recovering `exprString` helper
-  (`parser/sqlite/sqlite.go:165`, FIX-291/FIX-281), or fall back to a fixed
-  description when rendering fails, at both `view_sql.go:96` and `:103`, so the
-  "name it with AS" error is returned rather than a panic.
-- Vet: check whether any other `String()` / `rsql.ExprString` call in
-  `parser/sqlite/view_sql.go` renders user expressions without a recover
-  (same root cause, same file).
-- Tests: a `parser/sqlite` view case with the unaliased `LIKE … ESCAPE` column
-  asserting the "name it with AS" error, not a panic.
+- At `view_sql.go:103`, render `rc.Expr` through the recovering `exprString`
+  helper (`parser/sqlite/sqlite.go:165`, FIX-291) as `exprString(rc.Expr, "view
+  column")`; if rendering fails, name the column by position ("column N",
+  1-based). The "name it with AS" `ViewQueryError` is returned, not a panic.
+  Without an alias `ResultColumn.String()` is just `Expr.String()`, so the
+  message for renderable expressions is unchanged.
+- Tests: `TestParseViewSQL_ColumnNames` (`parser/sqlite/sqlite_test.go`) gains
+  3 cases: unaliased `LIKE … ESCAPE` and unaliased `COUNT(a LIKE … ESCAPE '\')`
+  → "view v selects column 2 with no alias and no column name; name it with AS";
+  aliased `LIKE … ESCAPE` → columns `[id m]`. New
+  `TestSQLiteIntrospect_ViewUnnamedLikeEscape`
+  (`parser/introspect/view_definition_integration_test.go`) checks the view
+  keeps its catalog columns `[id, a LIKE 'x%' ESCAPE '\']` and the fallback
+  warning "view v_like: columns come from the catalog, since its definition
+  cannot be read as a view file: view v_like selects column 2 with no alias and
+  no column name; name it with AS".
+- Changed from the original (vet at `717c3b7c`, 2026-10-09): `view_sql.go:96`
+  is dropped because it cannot panic, so there is no defect and no fail-first;
+  the fallback is a positional "column N", because `exprString`'s own error text
+  ("rendering view column: …panic…") would replace the "name it with AS" error;
+  the regression coverage is widened to the `database` path (same root cause and
+  fix site). A search of `view_sql.go` found no other unrecovered `String()` /
+  `rsql.ExprString` call.
+- Prototype results, run at `717c3b7c` on 2026-10-09:
+  - Reproduction: files → `GOWORK=off sqlgen generate -c sqlgen.yml` → exit=2, "panic: sql.BinaryExpr.String(): invalid op ESCAPE … extractResultColumns … view_sql.go:103"; with `AS m` → "sqlgen: generated 9 files (1 tables, 1 views)", exit=0. Database (the same view in a SQLite db) → exit=2, same panic via `ParseViewSQL` ← `introspect.viewColumnsFromDefinition`. Unit probe (`ParseViewSQL`) panics for unaliased `a LIKE … ESCAPE` and unaliased `COUNT(a LIKE … ESCAPE '\')`; no panic for aliased forms, `LIKE … ESCAPE` in WHERE or JOIN ON, or a column list `v (x, y)`.
+  - With the fix: files → "Schema error: parsing views: parsing view SQL in …/views/v.sql: view v selects column 2 with no alias and no column name; name it with AS", exit=3; database → "Warning: view v: columns come from the catalog, … view v selects column 2 …", generated 9 files, exit=0.
+  - Gates: (parser) `go test -race -count=1 ./sqlite/... ./introspect/...` → ok (containers); `gofumpt -l sqlite introspect` → clean; `golangci-lint run ./sqlite/... ./introspect/...` → 0 issues.
+  - Fail-first: `view_sql.go:103` reverted to `rc.String()` → `TestParseViewSQL_ColumnNames/unaliased_LIKE_ESCAPE` and `TestSQLiteIntrospect_ViewUnnamedLikeEscape` fail: "panic: sql.BinaryExpr.String(): invalid op ESCAPE [recovered, repanicked]"; the existing suite without the fix → passes.
+  - Golden churn: none.
+  - Patch: `.claude/prototypes/FIX-297.patch` (3 files, +33/-1).
 
 **References.**
 - PRD §16.1 (view column naming), §6.3 ("SQLite DDL the file parser cannot read").
-- FIX-280 (`19772175`, added the unnamed-column error), FIX-281 (`e932c2e2`), FIX-291 (`e50172de`, `exprString`).
+- FIX-280 (`19772175`, added the unnamed-column error), FIX-291 (`e50172de`, added `exprString`), FIX-281 (`e932c2e2`, reused it).
+
+**Resolution notes.** _Filled in by `/fix resolve`._
+
+### FIX-298
+
+- **Status:** Open
+- **Severity:** tracked
+- **Origin:** phase 4, `parser/mysql`
+- **Surfaced by:** `/fix-vet FIX-296` (2026-10-09)
+- **Vetted:** corrected at `717c3b7c` (2026-10-09)
+
+**Issue.** **The MySQL file parser matches column names in ALTER TABLE
+case-sensitively, while MySQL does not.** Measured by the FIX-296 vet and this
+entry's vet (2026-10-09), each against MySQL 8.0.46:
+- `CREATE TABLE dc (a int, b int); ALTER TABLE dc DROP COLUMN B;` → the parser keeps `a`, `b` (and a composite or expression key keeps `b`); MySQL has only `a`. The generated model carries `B *int32 \`db:"b"\``, and the generated client fails at runtime: `Get` → "get dc: query: Error 1054 (42S22): Unknown column 'b' in 'field list'", and `GetMany` and `Create` fail the same way (the failing `Create` had already inserted its row).
+- `MODIFY COLUMN B bigint NOT NULL` on column `b` → the parser appends a second column (`b int`, `B bigint`), and the generated models do not compile: "models/models_gen.go:22:2: B redeclared", "DmIncrementB redeclared in this block". MySQL renames the column to `B`, and keys and other tables' FK `referenced_column_name` follow.
+- CHANGE and RENAME COLUMN with the old name in another case stop generation: "Schema error: … rename column dr: column B not found in table dr" and "column B not found in table dch". MySQL accepts both.
+
+**Root cause.** The ALTER column paths in `parser/mysql/mysql.go` compare names
+exactly: `alterDropColumn` (`:1046-1048`, `c.Name == colName`, and `:1052` for
+the constraint column lists), the MODIFY COLUMN lookup (`:1030`,
+`table.Columns[i].Name == name`) and CHANGE COLUMN (`:1067`,
+`table.Columns[i].Name == oldName`), plus the RENAME COLUMN lookup. MySQL column
+names are case-insensitive on every platform. Line refs at `717c3b7c`.
+
+**Suggested fix.**
+- Add `declaredColumn(table, name)` to `parser/mysql/mysql.go` (factored out of
+  `declaredColumns`, which then calls it): it turns the name an ALTER clause gives
+  into the column's declared spelling before any exact compare. Constraint and
+  `exprKeys` column lists already hold declared spellings (`declaredColumns` in
+  `addKey`/`addConstraints`, plus `CanonicalizeConstraints`), so every downstream
+  exact compare then matches.
+- DROP COLUMN and RENAME COLUMN (the old name) resolve through `declaredColumn`.
+- MODIFY and CHANGE share a new `replaceColumn` (case-insensitive lookup, then
+  `redefineColumn`, `RenameColumnReferences`, `renameExprKeyColumn`,
+  `addConstraints`), so MODIFY in another case renames the column and FK
+  references follow, as MySQL does. MODIFY of a missing column still appends it;
+  CHANGE of a missing column still errors.
+- Tests: `TestAlterColumnNamedInAnotherCase` (`parser/mysql/mysql_test.go`, 5
+  cases: DROP, MODIFY, MODIFY of an FK-referenced column, CHANGE, RENAME of an
+  inline enum) and `TestMySQLIntrospect_AlterColumnNamedInAnotherCase`
+  (`parser/introspect/mysql_integration_test.go`, one `assertSchemaParity`
+  fixture covering DROP with a composite and an expression key, MODIFY with a
+  key, a cross-table FK and an enum, CHANGE, RENAME).
+- Changed from the original (vet at `717c3b7c`, 2026-10-09): MODIFY and CHANGE
+  take the spelling the clause names (measured on MySQL), so "keep the declared
+  spelling" holds only for DROP and RENAME's old name; the name is resolved once
+  at the ALTER entry point instead of `strings.EqualFold` at each constraint and
+  `exprKeys` site; `parser.ColumnByName`, `parser.RenameColumn` and
+  `RenameColumnReferences` are unchanged (shared with PostgreSQL, where names
+  compare exactly; their MySQL inputs are now declared spellings).
+- Prototype results, run at `717c3b7c` on 2026-10-09:
+  - Reproduction: see Issue (parser probe at HEAD; the same DDL on MySQL 8.0.46 → `dc: a`, `dk: a` with uk(a), `dm: a, B`, `dch: a, c`, `dr: a, c`, `de: a, c enum`, `dx: a`; a probe example under `examples/` generated with `GOWORK=off sqlgen generate` and run against the real table).
+  - With the fix: DROP → `Dc{ID, A}`, Get/GetMany ok against MySQL, and the same `Create` returns "Duplicate entry '2' for key 'dc.PRIMARY'" (its row was inserted by the failing run); MODIFY → `Dm{ID, B int64 db:"B"}`, `go build ./models/` ok; RENAME/CHANGE → "generated 8 files (2 tables, 0 views)".
+  - Gates: `cd parser && go test -race -count=1 ./...` → ok (containers); `golangci-lint run ./mysql/... ./introspect/...` → 0 issues; `gofumpt -l` → clean; `TestE2EGoldenFiles` → ok.
+  - Fail-first: DROP site reverted → `/DROP_COLUMN` fails ("columns mismatch … + {Name: \"b\", Type: \"int\"}") and the parity test fails on m_cc_drop; RENAME site reverted → `/RENAME_COLUMN` fails ("rename column t: column B not found in table t"); `replaceColumn` lookup exact → `/MODIFY_COLUMN`, `/MODIFY_COLUMN_of_a_referenced_column` and `/CHANGE_COLUMN` fail; MODIFY without the reference rename → `/MODIFY_COLUMN_of_a_referenced_column` fails ("- Ref: \"B\" + Ref: \"b\"") and parity fails on m_cc_ref's FKReference; the existing suite without the fix → passes.
+  - Golden churn: none.
+  - Patch: `.claude/prototypes/FIX-298.patch` (3 files, +163/-28); FIX-296.patch and FIX-275.patch still pass `git apply --check` with it applied first.
+
+**References.**
+- PRD §6.1, §5.2 (MySQL parser).
+- FIX-296 (case-insensitive constraint-name drops), FIX-282 (SQLite table-name case), the SQLite column-case backlog line from FIX-277/FIX-282.
 
 **Resolution notes.** _Filled in by `/fix resolve`._
 
