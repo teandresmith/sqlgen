@@ -100,7 +100,13 @@ func extractResultColumns(view string, cols []*rsql.ResultColumn, names []*rsql.
 			col.Alias = rsql.IdentName(names[i])
 		}
 		if col.Alias == "" {
-			return nil, fmt.Errorf("view %s selects %s with no alias and no column name; name it with AS", view, rc.String())
+			// rqlite/sql can fail to render an expression (LIKE … ESCAPE);
+			// name the column by position then.
+			expr, err := exprString(rc.Expr, "view column")
+			if err != nil {
+				expr = fmt.Sprintf("column %d", i+1)
+			}
+			return nil, fmt.Errorf("view %s selects %s with no alias and no column name; name it with AS", view, expr)
 		}
 		result = append(result, col)
 	}

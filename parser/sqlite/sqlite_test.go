@@ -1700,6 +1700,11 @@ func TestParseViewSQL_ColumnNames(t *testing.T) {
 	}{
 		{name: "unaliased expression", sql: "CREATE VIEW v AS SELECT id, a + b FROM t", wantErr: `view v selects "a" + "b" with no alias and no column name`},
 		{name: "unaliased aggregate", sql: "CREATE VIEW v AS SELECT id, COUNT(*) FROM t GROUP BY id", wantErr: "view v selects COUNT(*) with no alias"},
+		// rqlite/sql panics rendering LIKE … ESCAPE, so the column is named
+		// by position.
+		{name: "unaliased LIKE ESCAPE", sql: `CREATE VIEW v AS SELECT id, a LIKE 'x%' ESCAPE '\' FROM t`, wantErr: "view v selects column 2 with no alias and no column name; name it with AS"},
+		{name: "unaliased aggregate over LIKE ESCAPE", sql: `CREATE VIEW v AS SELECT id, COUNT(a LIKE 'x%' ESCAPE '\') FROM t GROUP BY id`, wantErr: "view v selects column 2 with no alias and no column name; name it with AS"},
+		{name: "aliased LIKE ESCAPE", sql: `CREATE VIEW v AS SELECT id, a LIKE 'x%' ESCAPE '\' AS m FROM t`, want: []string{"id", "m"}},
 		{name: "star", sql: "CREATE VIEW v AS SELECT * FROM t", wantErr: "view v selects *, whose columns the view parser cannot list"},
 		{name: "table star", sql: "CREATE VIEW v AS SELECT id, t.* FROM t", wantErr: `view v selects "t".*, whose columns`},
 		{name: "column list", sql: "CREATE VIEW v (x, total) AS SELECT id, a + b FROM t", want: []string{"x", "total"}},

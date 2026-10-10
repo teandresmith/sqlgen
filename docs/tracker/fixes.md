@@ -140,73 +140,6 @@ Line refs at `717c3b7c`.
 
 **Resolution notes.** _Filled in by `/fix resolve`._
 
-### FIX-297
-
-- **Status:** Open
-- **Severity:** tracked
-- **Origin:** phase 30, `parser/sqlite` (view column extraction)
-- **Surfaced by:** `/fix-loop` FIX-281 verify (2026-10-09)
-- **Vetted:** corrected at `717c3b7c` (2026-10-09)
-
-**Issue.** **A SQLite view with an unaliased `LIKE … ESCAPE` column panics
-`sqlgen generate` instead of returning the "name it with AS" error, under both
-`files` and `database`.** Measured during the FIX-281 run (2026-10-09):
-`views/v.sql` with `-- @pk: id` and `CREATE VIEW v AS SELECT id, a LIKE 'x%'
-ESCAPE '\' FROM t;` under `input.views` → `sqlgen generate` → exit 2,
-"panic: sql.BinaryExpr.String(): invalid op ESCAPE". With `AS m` the view parses
-fine. The vet measured the same panic under `source: database`: introspection
-runs every stored view's SQL through `sqlite.ParseViewSQL`
-(`parser/introspect/sqlite.go:257`), so a view SQLite accepts crashes generation
-instead of falling back to the catalog columns with a warning.
-
-**Root cause.** The SQLite view extractor builds its error message with an
-unrecovered `rc.String()` (`parser/sqlite/view_sql.go:103`, the "no alias and
-no column name; name it with AS" error added by FIX-280), and rqlite/sql panics
-rendering `LIKE … ESCAPE`. So the panic fires while the parser formats the error
-it meant to return. `view_sql.go:96` (the `*` / `t.*` error) also calls
-`rc.String()`, but `isStar` only admits `*` or a star `QualifiedRef`, which
-cannot hold a `LIKE … ESCAPE`, so it cannot panic (measured: `SELECT id, t.*`
-→ `view v selects "t".*, whose columns the view parser cannot list; name each
-column`). Line refs at `717c3b7c`.
-
-**Suggested fix.**
-- At `view_sql.go:103`, render `rc.Expr` through the recovering `exprString`
-  helper (`parser/sqlite/sqlite.go:165`, FIX-291) as `exprString(rc.Expr, "view
-  column")`; if rendering fails, name the column by position ("column N",
-  1-based). The "name it with AS" `ViewQueryError` is returned, not a panic.
-  Without an alias `ResultColumn.String()` is just `Expr.String()`, so the
-  message for renderable expressions is unchanged.
-- Tests: `TestParseViewSQL_ColumnNames` (`parser/sqlite/sqlite_test.go`) gains
-  3 cases: unaliased `LIKE … ESCAPE` and unaliased `COUNT(a LIKE … ESCAPE '\')`
-  → "view v selects column 2 with no alias and no column name; name it with AS";
-  aliased `LIKE … ESCAPE` → columns `[id m]`. New
-  `TestSQLiteIntrospect_ViewUnnamedLikeEscape`
-  (`parser/introspect/view_definition_integration_test.go`) checks the view
-  keeps its catalog columns `[id, a LIKE 'x%' ESCAPE '\']` and the fallback
-  warning "view v_like: columns come from the catalog, since its definition
-  cannot be read as a view file: view v_like selects column 2 with no alias and
-  no column name; name it with AS".
-- Changed from the original (vet at `717c3b7c`, 2026-10-09): `view_sql.go:96`
-  is dropped because it cannot panic, so there is no defect and no fail-first;
-  the fallback is a positional "column N", because `exprString`'s own error text
-  ("rendering view column: …panic…") would replace the "name it with AS" error;
-  the regression coverage is widened to the `database` path (same root cause and
-  fix site). A search of `view_sql.go` found no other unrecovered `String()` /
-  `rsql.ExprString` call.
-- Prototype results, run at `717c3b7c` on 2026-10-09:
-  - Reproduction: files → `GOWORK=off sqlgen generate -c sqlgen.yml` → exit=2, "panic: sql.BinaryExpr.String(): invalid op ESCAPE … extractResultColumns … view_sql.go:103"; with `AS m` → "sqlgen: generated 9 files (1 tables, 1 views)", exit=0. Database (the same view in a SQLite db) → exit=2, same panic via `ParseViewSQL` ← `introspect.viewColumnsFromDefinition`. Unit probe (`ParseViewSQL`) panics for unaliased `a LIKE … ESCAPE` and unaliased `COUNT(a LIKE … ESCAPE '\')`; no panic for aliased forms, `LIKE … ESCAPE` in WHERE or JOIN ON, or a column list `v (x, y)`.
-  - With the fix: files → "Schema error: parsing views: parsing view SQL in …/views/v.sql: view v selects column 2 with no alias and no column name; name it with AS", exit=3; database → "Warning: view v: columns come from the catalog, … view v selects column 2 …", generated 9 files, exit=0.
-  - Gates: (parser) `go test -race -count=1 ./sqlite/... ./introspect/...` → ok (containers); `gofumpt -l sqlite introspect` → clean; `golangci-lint run ./sqlite/... ./introspect/...` → 0 issues.
-  - Fail-first: `view_sql.go:103` reverted to `rc.String()` → `TestParseViewSQL_ColumnNames/unaliased_LIKE_ESCAPE` and `TestSQLiteIntrospect_ViewUnnamedLikeEscape` fail: "panic: sql.BinaryExpr.String(): invalid op ESCAPE [recovered, repanicked]"; the existing suite without the fix → passes.
-  - Golden churn: none.
-  - Patch: `.claude/prototypes/FIX-297.patch` (3 files, +33/-1).
-
-**References.**
-- PRD §16.1 (view column naming), §6.3 ("SQLite DDL the file parser cannot read").
-- FIX-280 (`19772175`, added the unnamed-column error), FIX-291 (`e50172de`, added `exprString`), FIX-281 (`e932c2e2`, reused it).
-
-**Resolution notes.** _Filled in by `/fix resolve`._
-
 ### FIX-298
 
 - **Status:** Open
@@ -274,6 +207,87 @@ names are case-insensitive on every platform. Line refs at `717c3b7c`.
 ## Resolved
 
 <!-- fixes:resolved:begin -->
+
+### FIX-297
+
+- **Status:** Resolved
+- **Severity:** tracked
+- **Origin:** phase 30, `parser/sqlite` (view column extraction)
+- **Surfaced by:** `/fix-loop` FIX-281 verify (2026-10-09)
+- **Vetted:** corrected at `717c3b7c` (2026-10-09)
+
+**Issue.** **A SQLite view with an unaliased `LIKE … ESCAPE` column panics
+`sqlgen generate` instead of returning the "name it with AS" error, under both
+`files` and `database`.** Measured during the FIX-281 run (2026-10-09):
+`views/v.sql` with `-- @pk: id` and `CREATE VIEW v AS SELECT id, a LIKE 'x%'
+ESCAPE '\' FROM t;` under `input.views` → `sqlgen generate` → exit 2,
+"panic: sql.BinaryExpr.String(): invalid op ESCAPE". With `AS m` the view parses
+fine. The vet measured the same panic under `source: database`: introspection
+runs every stored view's SQL through `sqlite.ParseViewSQL`
+(`parser/introspect/sqlite.go:257`), so a view SQLite accepts crashes generation
+instead of falling back to the catalog columns with a warning.
+
+**Root cause.** The SQLite view extractor builds its error message with an
+unrecovered `rc.String()` (`parser/sqlite/view_sql.go:103`, the "no alias and
+no column name; name it with AS" error added by FIX-280), and rqlite/sql panics
+rendering `LIKE … ESCAPE`. So the panic fires while the parser formats the error
+it meant to return. `view_sql.go:96` (the `*` / `t.*` error) also calls
+`rc.String()`, but `isStar` only admits `*` or a star `QualifiedRef`, which
+cannot hold a `LIKE … ESCAPE`, so it cannot panic (measured: `SELECT id, t.*`
+→ `view v selects "t".*, whose columns the view parser cannot list; name each
+column`). Line refs at `717c3b7c`.
+
+**Suggested fix.**
+- At `view_sql.go:103`, render `rc.Expr` through the recovering `exprString`
+  helper (`parser/sqlite/sqlite.go:165`, FIX-291) as `exprString(rc.Expr, "view
+  column")`; if rendering fails, name the column by position ("column N",
+  1-based). The "name it with AS" `ViewQueryError` is returned, not a panic.
+  Without an alias `ResultColumn.String()` is just `Expr.String()`, so the
+  message for renderable expressions is unchanged.
+- Tests: `TestParseViewSQL_ColumnNames` (`parser/sqlite/sqlite_test.go`) gains
+  3 cases: unaliased `LIKE … ESCAPE` and unaliased `COUNT(a LIKE … ESCAPE '\')`
+  → "view v selects column 2 with no alias and no column name; name it with AS";
+  aliased `LIKE … ESCAPE` → columns `[id m]`. New
+  `TestSQLiteIntrospect_ViewUnnamedLikeEscape`
+  (`parser/introspect/view_definition_integration_test.go`) checks the view
+  keeps its catalog columns `[id, a LIKE 'x%' ESCAPE '\']` and the fallback
+  warning "view v_like: columns come from the catalog, since its definition
+  cannot be read as a view file: view v_like selects column 2 with no alias and
+  no column name; name it with AS".
+- Changed from the original (vet at `717c3b7c`, 2026-10-09): `view_sql.go:96`
+  is dropped because it cannot panic, so there is no defect and no fail-first;
+  the fallback is a positional "column N", because `exprString`'s own error text
+  ("rendering view column: …panic…") would replace the "name it with AS" error;
+  the regression coverage is widened to the `database` path (same root cause and
+  fix site). A search of `view_sql.go` found no other unrecovered `String()` /
+  `rsql.ExprString` call.
+- Prototype results, run at `717c3b7c` on 2026-10-09:
+  - Reproduction: files → `GOWORK=off sqlgen generate -c sqlgen.yml` → exit=2, "panic: sql.BinaryExpr.String(): invalid op ESCAPE … extractResultColumns … view_sql.go:103"; with `AS m` → "sqlgen: generated 9 files (1 tables, 1 views)", exit=0. Database (the same view in a SQLite db) → exit=2, same panic via `ParseViewSQL` ← `introspect.viewColumnsFromDefinition`. Unit probe (`ParseViewSQL`) panics for unaliased `a LIKE … ESCAPE` and unaliased `COUNT(a LIKE … ESCAPE '\')`; no panic for aliased forms, `LIKE … ESCAPE` in WHERE or JOIN ON, or a column list `v (x, y)`.
+  - With the fix: files → "Schema error: parsing views: parsing view SQL in …/views/v.sql: view v selects column 2 with no alias and no column name; name it with AS", exit=3; database → "Warning: view v: columns come from the catalog, … view v selects column 2 …", generated 9 files, exit=0.
+  - Gates: (parser) `go test -race -count=1 ./sqlite/... ./introspect/...` → ok (containers); `gofumpt -l sqlite introspect` → clean; `golangci-lint run ./sqlite/... ./introspect/...` → 0 issues.
+  - Fail-first: `view_sql.go:103` reverted to `rc.String()` → `TestParseViewSQL_ColumnNames/unaliased_LIKE_ESCAPE` and `TestSQLiteIntrospect_ViewUnnamedLikeEscape` fail: "panic: sql.BinaryExpr.String(): invalid op ESCAPE [recovered, repanicked]"; the existing suite without the fix → passes.
+  - Golden churn: none.
+  - Patch: `.claude/prototypes/FIX-297.patch` (3 files, +33/-1).
+
+**References.**
+- PRD §16.1 (view column naming), §6.3 ("SQLite DDL the file parser cannot read").
+- FIX-280 (`19772175`, added the unnamed-column error), FIX-291 (`e50172de`, added `exprString`), FIX-281 (`e932c2e2`, reused it).
+
+**Resolution notes.** `extractResultColumns` (`parser/sqlite/view_sql.go`)
+now renders an unaliased column through the recovering `exprString` helper and,
+when rqlite/sql panics rendering it (`LIKE … ESCAPE`), names it by position
+("column N", 1-based), so the "no alias and no column name; name it with AS"
+`ViewQueryError` is returned instead of a panic; renderable expressions keep
+their message. Tests: `TestParseViewSQL_ColumnNames` gains unaliased
+`LIKE … ESCAPE`, unaliased `COUNT(a LIKE … ESCAPE '\')` and aliased
+`LIKE … ESCAPE` cases; new `TestSQLiteIntrospect_ViewUnnamedLikeEscape` pins the
+`source: database` catalog-column fallback and its warning. The vetted prototype
+applied clean at `44bccd14`. Fail-first: with `view_sql.go` reverted,
+`TestParseViewSQL_ColumnNames/unaliased_LIKE_ESCAPE` and the introspection test
+panic ("sql.BinaryExpr.String(): invalid op ESCAPE [recovered, repanicked]"). Gates: `make check` → ok;
+`make check-examples` → ok; golden churn: none (matches the vet). Inline from
+`/verify`: the new comment in `view_sql.go` was reworded to state the behavior
+rather than contrast it with the old `rc.String()` call.
 
 ### FIX-292
 
