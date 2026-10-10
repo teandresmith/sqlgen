@@ -3,6 +3,7 @@ package mysql
 import (
 	"cmp"
 	"fmt"
+	"maps"
 	"slices"
 	"strconv"
 	"strings"
@@ -993,7 +994,9 @@ func (p *Parser) applyAlterOption(table *parser.Table, opt sqlparser.AlterOption
 		p.addConstraints(table, []parser.Constraint{p.parseIndex(o.IndexDefinition)}, "")
 	case *sqlparser.DropKey:
 		applyDropKey(table, o)
-		delete(p.generated[table.Name], o.Name.String())
+		maps.DeleteFunc(p.generated[table.Name], func(name string, _ bool) bool {
+			return strings.EqualFold(name, o.Name.String())
+		})
 		p.exprKeys[table.Name] = slices.DeleteFunc(p.exprKeys[table.Name], func(k parser.Constraint) bool {
 			return strings.EqualFold(k.Name, o.Name.String())
 		})
@@ -1190,7 +1193,8 @@ func indexColumns(idx *sqlparser.IndexDefinition) []string {
 
 // removeConstraintFromColumns removes the first constraint matching
 // (cType, name) from table.Constraints and reverses its column flag
-// effects. Name may be empty for PrimaryKey (MySQL DROP PRIMARY KEY has
+// effects. MySQL compares index and constraint names case-insensitively.
+// Name may be empty for PrimaryKey (MySQL DROP PRIMARY KEY has
 // no name). The slice deletion happens first so that RecomputeColumnUnique
 // sees the post-drop state of the table.
 func removeConstraintFromColumns(table *parser.Table, cType parser.ConstraintType, name string) {
@@ -1198,7 +1202,7 @@ func removeConstraintFromColumns(table *parser.Table, cType parser.ConstraintTyp
 		if c.Type != cType {
 			return false
 		}
-		return name == "" || c.Name == name
+		return name == "" || strings.EqualFold(c.Name, name)
 	})
 	if idx < 0 {
 		return

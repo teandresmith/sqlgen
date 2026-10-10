@@ -774,6 +774,40 @@ func TestMySQLIntrospect_ExpressionIndexes(t *testing.T) {
 	assertSchemaParity(t, "mysql", parsed, introspected)
 }
 
+// TestMySQLIntrospect_DropIgnoresNameCase checks that the file parser drops a
+// key or constraint named in another case, as MySQL does.
+func TestMySQLIntrospect_DropIgnoresNameCase(t *testing.T) {
+	requireDatabases(t)
+	const ddl = `CREATE TABLE m_dc_p (id int PRIMARY KEY);
+	CREATE TABLE m_dc_i (id int PRIMARY KEY, a int, KEY A (a));
+	ALTER TABLE m_dc_i DROP INDEX a;
+	CREATE TABLE m_dc_u (id int PRIMARY KEY, a int, UNIQUE KEY A (a));
+	ALTER TABLE m_dc_u DROP KEY a;
+	CREATE TABLE m_dc_s (id int PRIMARY KEY, a int, KEY a (a));
+	DROP INDEX A ON m_dc_s;
+	CREATE TABLE m_dc_f (id int PRIMARY KEY, a int, CONSTRAINT Fk FOREIGN KEY (a) REFERENCES m_dc_p (id));
+	ALTER TABLE m_dc_f DROP FOREIGN KEY fk;
+	CREATE TABLE m_dc_c (id int PRIMARY KEY, a int, CONSTRAINT Ck CHECK (a > 0), CONSTRAINT Ck2 CHECK (a < 9));
+	ALTER TABLE m_dc_c DROP CHECK ck;
+	ALTER TABLE m_dc_c DROP CONSTRAINT ck2;
+	CREATE TABLE m_dc_g (id int PRIMARY KEY, a int, b int, CONSTRAINT m_dc_fk1 FOREIGN KEY (a) REFERENCES m_dc_p (id));
+	ALTER TABLE m_dc_g DROP FOREIGN KEY M_DC_FK1;
+	ALTER TABLE m_dc_g DROP INDEX M_DC_FK1;
+	ALTER TABLE m_dc_g ADD KEY m_dc_fk1 (a);
+	ALTER TABLE m_dc_g ADD KEY (a, b)`
+	tables := []string{"m_dc_i", "m_dc_u", "m_dc_s", "m_dc_f", "m_dc_c", "m_dc_g", "m_dc_p"}
+	reset := make([]string, len(tables))
+	for i, table := range tables {
+		reset[i] = "DROP TABLE IF EXISTS " + table
+	}
+	applyParityFixture(t, "mysql", mysqlConnStr, strings.Join(reset, ";"), ddl)
+
+	introspected := introspectMySQL(t, tables...)
+	parsed := parseMySQL(t, ddl)
+
+	assertSchemaParity(t, "mysql", parsed, introspected)
+}
+
 func findView(t *testing.T, s *parser.Schema, name string) *parser.View {
 	t.Helper()
 	for i := range s.Views {

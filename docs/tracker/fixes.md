@@ -79,67 +79,6 @@ adds keys, then FK indexes (`mysql.go:438-446`; line refs at `717c3b7c`).
 
 **Resolution notes.** _Filled in by `/fix resolve`._
 
-### FIX-296
-
-- **Status:** Open
-- **Severity:** tracked
-- **Origin:** phase 30, `parser/mysql`
-- **Surfaced by:** `/fix-vet FIX-294` (2026-10-08), filed at `/close-phase 30` (2026-10-08)
-- **Vetted:** corrected at `717c3b7c` (2026-10-09)
-
-**Issue.** **The MySQL file parser matches `ALTER TABLE … DROP INDEX` names
-case-sensitively, while MySQL index names are case-insensitive.** Measured:
-`CREATE TABLE v2 (a int, KEY A (a)); ALTER TABLE v2 DROP INDEX a;` → the parser
-keeps `INDEX A [a]` (throwaway unit probe), while MySQL 8.0.46 drops it
-(`information_schema.statistics` has no rows for `v2`), so `indexes[]` differs by
-source (PRD §6.1).
-
-**Root cause.** The ALTER drop paths compare constraint names exactly:
-`removeConstraintFromColumns` (`parser/mysql/mysql.go:1201`, `c.Name == name`)
-serves DROP INDEX / DROP KEY and also DROP FOREIGN KEY, DROP CHECK and DROP
-CONSTRAINT, and the DropKey branch of `applyAlterOption` clears the FK-built
-index flag with an exact `delete(p.generated[table.Name], o.Name.String())`
-(`mysql.go:996`). FIX-294's own `exprKeys` drop already uses `strings.EqualFold`
-(`:997-998`). MySQL 8.0.46 matches all of these names case-insensitively, and
-rejects a re-added FK whose name differs only in case (`ERROR 1826 Duplicate
-foreign key constraint name 'fK2'`), so a first case-insensitive match is safe.
-Line refs at `717c3b7c`.
-
-**Suggested fix.**
-- `removeConstraintFromColumns`: `c.Name == name` → `strings.EqualFold(c.Name,
-  name)`, with one comment sentence. This covers DROP INDEX/KEY (UNIQUE and
-  INDEX), DROP FOREIGN KEY and DROP CHECK/CONSTRAINT.
-- `applyAlterOption` DropKey: replace the exact `delete(p.generated[…], name)`
-  with `maps.DeleteFunc(…, strings.EqualFold …)`. Without it, an FK-built index
-  dropped in another case leaves a stale "built" flag, and a later declared key of
-  that name then gives way to a wider key (MySQL keeps `fk1 [a]` and `a [a,b]`;
-  the parser drops `fk1`).
-- Tests: `TestDropConstraintIgnoresNameCase` (`parser/mysql/mysql_test.go`, 7
-  cases: DROP INDEX, DROP KEY on UNIQUE (clears Unique), standalone `DROP INDEX
-  … ON`, DROP FOREIGN KEY (keeps the index, clears `FKReference`), DROP CHECK,
-  DROP CONSTRAINT, and the stale-built-flag sequence) and
-  `TestMySQLIntrospect_DropIgnoresNameCase`
-  (`parser/introspect/mysql_integration_test.go`, 7 `m_dc_*` tables,
-  `assertSchemaParity`).
-- Changed from the original (vet at `717c3b7c`, 2026-10-09): widened to DROP
-  FOREIGN KEY / DROP CHECK / DROP CONSTRAINT, which share the root cause and the
-  fix site (the shared helper) and were measured case-insensitive on MySQL; the
-  "check RENAME INDEX" bullet does not apply, because `applyAlterOption` has no
-  `*sqlparser.RenameIndex` case at all (RENAME INDEX is ignored, a different
-  defect); the regression sequence drops the FK in another case (`DROP FOREIGN
-  KEY FK1`), since a same-case drop already clears the map entry.
-- Prototype results, run at `717c3b7c` on 2026-10-09:
-  - Reproduction: throwaway probe `parser/mysql/zz_probe_drop_test.go` (deleted), `go test ./mysql/ -run TestZZProbeDropCase -v`: `CREATE TABLE v2 (a int, KEY A (a)); ALTER TABLE v2 DROP INDEX a;` → `INDEX A [a]`; `UNIQUE KEY A (a)` + `DROP KEY a` → `UNIQUE A [a]; col a unique=true`; `KEY A (a)` + `DROP INDEX a ON v2` → `INDEX A [a]`; `CONSTRAINT Fk FOREIGN KEY …` + `DROP FOREIGN KEY fk` → `FOREIGN KEY Fk [a]; INDEX Fk [a]; fk=true`; `CONSTRAINT Ck CHECK (a > 0)` + `DROP CHECK ck` → `CHECK Ck [a]`, and `DROP CONSTRAINT ck` → `CHECK Ck [a]`. The same statements on `mysql:8.0` (8.0.46): v2 and v3 have no rows in `information_schema.statistics`; f1 has no rows in `table_constraints` and its index `Fk` stays; c1 and c2 have no CHECK left.
-  - Gates: `cd parser && go test -race -count=1 ./...` → ok; `golangci-lint run ./mysql/... ./introspect/...` → 0 issues; `gofumpt -l mysql introspect` → clean; `go vet` → clean.
-  - Fail-first: `removeConstraintFromColumns` reverted → all 7 `TestDropConstraintIgnoresNameCase` cases fail (e.g. "DROP_INDEX_on_a_non-unique_key … constraints mismatch (-want +got): - nil, + {\"INDEX A [a]\"}") and `TestMySQLIntrospect_DropIgnoresNameCase` fails "mysql: introspected schema differs from the file parser's (-parsed +introspected)" (`- {Name: "Ck", Type: s"CHECK" …}`, `- FKReference: &parser.FKReference{Table: "m_dc_p", Column: "id"}`, `+ FKReference: nil`); `maps.DeleteFunc` reverted to the exact `delete` → `/a_dropped_foreign_key_index_no_longer_gives_way_to_a_wider_key` fails (`[]string{"INDEX a [a b]", - "INDEX fk1 [a]"}`) and the parity test fails on m_dc_g (`+ {Name: "m_dc_fk1", Type: s"INDEX", …}`); the existing suite without the fix → passes.
-  - Golden churn: none.
-  - Patch: `.claude/prototypes/FIX-296.patch` (3 files, +116/-3).
-
-**References.**
-- PRD §6.1; FIX-294 (`exprKeys` case-insensitive drop), FIX-287 (DROP INDEX `PRIMARY`).
-
-**Resolution notes.** _Filled in by `/fix resolve`._
-
 ### FIX-298
 
 - **Status:** Open
@@ -207,6 +146,80 @@ names are case-insensitive on every platform. Line refs at `717c3b7c`.
 ## Resolved
 
 <!-- fixes:resolved:begin -->
+
+### FIX-296
+
+- **Status:** Resolved
+- **Severity:** tracked
+- **Origin:** phase 30, `parser/mysql`
+- **Surfaced by:** `/fix-vet FIX-294` (2026-10-08), filed at `/close-phase 30` (2026-10-08)
+- **Vetted:** corrected at `717c3b7c` (2026-10-09)
+
+**Issue.** **The MySQL file parser matches `ALTER TABLE … DROP INDEX` names
+case-sensitively, while MySQL index names are case-insensitive.** Measured:
+`CREATE TABLE v2 (a int, KEY A (a)); ALTER TABLE v2 DROP INDEX a;` → the parser
+keeps `INDEX A [a]` (throwaway unit probe), while MySQL 8.0.46 drops it
+(`information_schema.statistics` has no rows for `v2`), so `indexes[]` differs by
+source (PRD §6.1).
+
+**Root cause.** The ALTER drop paths compare constraint names exactly:
+`removeConstraintFromColumns` (`parser/mysql/mysql.go:1201`, `c.Name == name`)
+serves DROP INDEX / DROP KEY and also DROP FOREIGN KEY, DROP CHECK and DROP
+CONSTRAINT, and the DropKey branch of `applyAlterOption` clears the FK-built
+index flag with an exact `delete(p.generated[table.Name], o.Name.String())`
+(`mysql.go:996`). FIX-294's own `exprKeys` drop already uses `strings.EqualFold`
+(`:997-998`). MySQL 8.0.46 matches all of these names case-insensitively, and
+rejects a re-added FK whose name differs only in case (`ERROR 1826 Duplicate
+foreign key constraint name 'fK2'`), so a first case-insensitive match is safe.
+Line refs at `717c3b7c`.
+
+**Suggested fix.**
+- `removeConstraintFromColumns`: `c.Name == name` → `strings.EqualFold(c.Name,
+  name)`, with one comment sentence. This covers DROP INDEX/KEY (UNIQUE and
+  INDEX), DROP FOREIGN KEY and DROP CHECK/CONSTRAINT.
+- `applyAlterOption` DropKey: replace the exact `delete(p.generated[…], name)`
+  with `maps.DeleteFunc(…, strings.EqualFold …)`. Without it, an FK-built index
+  dropped in another case leaves a stale "built" flag, and a later declared key of
+  that name then gives way to a wider key (MySQL keeps `fk1 [a]` and `a [a,b]`;
+  the parser drops `fk1`).
+- Tests: `TestDropConstraintIgnoresNameCase` (`parser/mysql/mysql_test.go`, 7
+  cases: DROP INDEX, DROP KEY on UNIQUE (clears Unique), standalone `DROP INDEX
+  … ON`, DROP FOREIGN KEY (keeps the index, clears `FKReference`), DROP CHECK,
+  DROP CONSTRAINT, and the stale-built-flag sequence) and
+  `TestMySQLIntrospect_DropIgnoresNameCase`
+  (`parser/introspect/mysql_integration_test.go`, 7 `m_dc_*` tables,
+  `assertSchemaParity`).
+- Changed from the original (vet at `717c3b7c`, 2026-10-09): widened to DROP
+  FOREIGN KEY / DROP CHECK / DROP CONSTRAINT, which share the root cause and the
+  fix site (the shared helper) and were measured case-insensitive on MySQL; the
+  "check RENAME INDEX" bullet does not apply, because `applyAlterOption` has no
+  `*sqlparser.RenameIndex` case at all (RENAME INDEX is ignored, a different
+  defect); the regression sequence drops the FK in another case (`DROP FOREIGN
+  KEY FK1`), since a same-case drop already clears the map entry.
+- Prototype results, run at `717c3b7c` on 2026-10-09:
+  - Reproduction: throwaway probe `parser/mysql/zz_probe_drop_test.go` (deleted), `go test ./mysql/ -run TestZZProbeDropCase -v`: `CREATE TABLE v2 (a int, KEY A (a)); ALTER TABLE v2 DROP INDEX a;` → `INDEX A [a]`; `UNIQUE KEY A (a)` + `DROP KEY a` → `UNIQUE A [a]; col a unique=true`; `KEY A (a)` + `DROP INDEX a ON v2` → `INDEX A [a]`; `CONSTRAINT Fk FOREIGN KEY …` + `DROP FOREIGN KEY fk` → `FOREIGN KEY Fk [a]; INDEX Fk [a]; fk=true`; `CONSTRAINT Ck CHECK (a > 0)` + `DROP CHECK ck` → `CHECK Ck [a]`, and `DROP CONSTRAINT ck` → `CHECK Ck [a]`. The same statements on `mysql:8.0` (8.0.46): v2 and v3 have no rows in `information_schema.statistics`; f1 has no rows in `table_constraints` and its index `Fk` stays; c1 and c2 have no CHECK left.
+  - Gates: `cd parser && go test -race -count=1 ./...` → ok; `golangci-lint run ./mysql/... ./introspect/...` → 0 issues; `gofumpt -l mysql introspect` → clean; `go vet` → clean.
+  - Fail-first: `removeConstraintFromColumns` reverted → all 7 `TestDropConstraintIgnoresNameCase` cases fail (e.g. "DROP_INDEX_on_a_non-unique_key … constraints mismatch (-want +got): - nil, + {\"INDEX A [a]\"}") and `TestMySQLIntrospect_DropIgnoresNameCase` fails "mysql: introspected schema differs from the file parser's (-parsed +introspected)" (`- {Name: "Ck", Type: s"CHECK" …}`, `- FKReference: &parser.FKReference{Table: "m_dc_p", Column: "id"}`, `+ FKReference: nil`); `maps.DeleteFunc` reverted to the exact `delete` → `/a_dropped_foreign_key_index_no_longer_gives_way_to_a_wider_key` fails (`[]string{"INDEX a [a b]", - "INDEX fk1 [a]"}`) and the parity test fails on m_dc_g (`+ {Name: "m_dc_fk1", Type: s"INDEX", …}`); the existing suite without the fix → passes.
+  - Golden churn: none.
+  - Patch: `.claude/prototypes/FIX-296.patch` (3 files, +116/-3).
+
+**References.**
+- PRD §6.1; FIX-294 (`exprKeys` case-insensitive drop), FIX-287 (DROP INDEX `PRIMARY`).
+
+**Resolution notes.** `removeConstraintFromColumns` (`parser/mysql/mysql.go`)
+now matches the dropped name with `strings.EqualFold`, so DROP INDEX / DROP KEY
+(UNIQUE and INDEX), standalone `DROP INDEX … ON`, DROP FOREIGN KEY and DROP
+CHECK / DROP CONSTRAINT drop a key or constraint named in another case, as MySQL
+does; the DropKey branch of `applyAlterOption` clears the FK-built index flag
+with `maps.DeleteFunc` + `strings.EqualFold`, so a later declared key of that
+name no longer gives way to a wider key. Tests: `TestDropConstraintIgnoresNameCase`
+(7 cases) and `TestMySQLIntrospect_DropIgnoresNameCase` (`assertSchemaParity`
+against MySQL 8.0). The vetted prototype applied clean at `a16055e2`; fail-first
+reproduced as recorded (helper reverted → all 7 unit cases and the parity test
+fail; `maps.DeleteFunc` reverted → the stale-built-flag case and parity on
+`m_dc_g` fail). Golden churn: none. Gates: `make check`, `make check-examples`
+→ ok. Inline: `TestAlterTableAddDropConstraint`'s failure message said "after DROP CONSTRAINT
+FK" for a `DROP FOREIGN KEY` step; it now says DROP FOREIGN KEY.
 
 ### FIX-297
 

@@ -1171,7 +1171,7 @@ func TestAlterTableAddDropConstraint(t *testing.T) {
 		cols[c.Name] = c
 	}
 	if cols["user_id"].FKReference != nil {
-		t.Error("user_id FKReference should be nil after DROP CONSTRAINT FK")
+		t.Error("user_id FKReference should be nil after DROP FOREIGN KEY")
 	}
 
 	// Drop the CHECK.
@@ -2339,6 +2339,81 @@ func TestDropIndexRecomputesColumnUnique(t *testing.T) {
 			}
 			if col.Unique != tt.wantUnique {
 				t.Errorf("col.Unique = %v, want %v (%s)", col.Unique, tt.wantUnique, tt.wantComment)
+			}
+		})
+	}
+}
+
+// TestDropConstraintIgnoresNameCase pins that ALTER TABLE drops a key or
+// constraint whose name differs from the dropped name only in case, as MySQL
+// 8.0 does, and reverses its column flags.
+func TestDropConstraintIgnoresNameCase(t *testing.T) {
+	tests := []struct {
+		name string
+		sql  string
+		want []string // every constraint of v, as "TYPE name [columns]", then flagged columns
+	}{
+		{
+			name: "DROP INDEX on a non-unique key",
+			sql:  `CREATE TABLE v (a int, KEY A (a)); ALTER TABLE v DROP INDEX a;`,
+		},
+		{
+			name: "DROP KEY on a unique key clears Unique",
+			sql:  `CREATE TABLE v (a int, UNIQUE KEY A (a)); ALTER TABLE v DROP KEY a;`,
+		},
+		{
+			name: "standalone DROP INDEX ON",
+			sql:  `CREATE TABLE v (a int, KEY a (a)); DROP INDEX A ON v;`,
+		},
+		{
+			name: "DROP FOREIGN KEY keeps its index and clears the reference",
+			sql: `CREATE TABLE p (id int PRIMARY KEY);
+				CREATE TABLE v (a int, CONSTRAINT Fk FOREIGN KEY (a) REFERENCES p (id));
+				ALTER TABLE v DROP FOREIGN KEY fk;`,
+			want: []string{"INDEX Fk [a]"},
+		},
+		{
+			name: "DROP CHECK",
+			sql:  `CREATE TABLE v (a int, CONSTRAINT Ck CHECK (a > 0)); ALTER TABLE v DROP CHECK ck;`,
+		},
+		{
+			name: "DROP CONSTRAINT on a check",
+			sql:  `CREATE TABLE v (a int, CONSTRAINT Ck CHECK (a > 0)); ALTER TABLE v DROP CONSTRAINT ck;`,
+		},
+		{
+			name: "a dropped foreign key index no longer gives way to a wider key",
+			sql: `CREATE TABLE p (id int PRIMARY KEY);
+				CREATE TABLE v (a int, b int, CONSTRAINT fk1 FOREIGN KEY (a) REFERENCES p (id));
+				ALTER TABLE v DROP FOREIGN KEY FK1;
+				ALTER TABLE v DROP INDEX FK1;
+				ALTER TABLE v ADD KEY fk1 (a);
+				ALTER TABLE v ADD KEY (a, b);`,
+			want: []string{"INDEX a [a b]", "INDEX fk1 [a]"},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			p := newParser(t)
+			if err := p.Parse("test.sql", []byte(tt.sql)); err != nil {
+				t.Fatalf("Parse() error: %v", err)
+			}
+			var got []string
+			for _, tbl := range p.Schema().Tables {
+				if tbl.Name != "v" {
+					continue
+				}
+				for _, c := range tbl.Constraints {
+					got = append(got, fmt.Sprintf("%s %s %v", c.Type, c.Name, c.Columns))
+				}
+				for _, c := range tbl.Columns {
+					if c.Unique || c.FKReference != nil {
+						got = append(got, fmt.Sprintf("column %s unique=%v fk=%v", c.Name, c.Unique, c.FKReference != nil))
+					}
+				}
+			}
+			slices.Sort(got)
+			if diff := cmp.Diff(tt.want, got); diff != "" {
+				t.Errorf("Parse(%q) constraints mismatch (-want +got):\n%s", tt.sql, diff)
 			}
 		})
 	}
