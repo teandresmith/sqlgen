@@ -79,9 +79,15 @@ adds keys, then FK indexes (`mysql.go:438-446`; line refs at `717c3b7c`).
 
 **Resolution notes.** _Filled in by `/fix resolve`._
 
+<!-- fixes:open:end -->
+
+## Resolved
+
+<!-- fixes:resolved:begin -->
+
 ### FIX-298
 
-- **Status:** Open
+- **Status:** Resolved
 - **Severity:** tracked
 - **Origin:** phase 4, `parser/mysql`
 - **Surfaced by:** `/fix-vet FIX-296` (2026-10-09)
@@ -139,13 +145,27 @@ names are case-insensitive on every platform. Line refs at `717c3b7c`.
 - PRD §6.1, §5.2 (MySQL parser).
 - FIX-296 (case-insensitive constraint-name drops), FIX-282 (SQLite table-name case), the SQLite column-case backlog line from FIX-277/FIX-282.
 
-**Resolution notes.** _Filled in by `/fix resolve`._
-
-<!-- fixes:open:end -->
-
-## Resolved
-
-<!-- fixes:resolved:begin -->
+**Resolution notes.** The MySQL ALTER column paths in `parser/mysql/mysql.go`
+now resolve the named column case-insensitively, as MySQL does: a new
+`declaredColumn` (factored out of `declaredColumns`) turns the clause's name into
+the declared spelling for DROP COLUMN and RENAME COLUMN's old name, and MODIFY and
+CHANGE share a new `replaceColumn` (case-insensitive lookup, `redefineColumn`,
+`RenameColumnReferences`, `renameExprKeyColumn`, `addConstraints`), so MODIFY
+naming the column in another case renames it and keys and FK references follow.
+MODIFY of a missing column still appends it; CHANGE of a missing column still
+errors. Tests: `TestAlterColumnNamedInAnotherCase` (6 cases) and
+`TestMySQLIntrospect_AlterColumnNamedInAnotherCase` (`assertSchemaParity`
+against MySQL 8.0). The vetted prototype was stale by FIX-296 (`4c951fad`, same
+files, disjoint hunks) and applied clean; doc comments trimmed. Fail-first on the
+final code: DROP site reverted → `/DROP_COLUMN` fails; RENAME site reverted →
+`/RENAME_COLUMN` fails; `replaceColumn` lookup exact → `/MODIFY_COLUMN`,
+`/MODIFY_COLUMN_of_a_referenced_column`, `/CHANGE_COLUMN` fail; reference rename
+removed → `/MODIFY_COLUMN_of_a_referenced_column` and `/CHANGE_COLUMN` fail.
+Golden churn: none. Gates: `make check`, `make check-examples` → ok;
+`go -C parser test -count=1 -run TestMySQLIntrospect_AlterColumnNamedInAnotherCase ./introspect/`
+→ ok (containers). Inline from `/verify`: added a unit case for MODIFY of an
+inline ENUM column named in another case (`t__B_enum`), so the enum rename is
+under `make check`, and reworded the `replaceColumn` doc.
 
 ### FIX-296
 

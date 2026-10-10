@@ -418,6 +418,32 @@ func TestMySQLIntrospect_InlineEnumCollisionResolvedByAlter(t *testing.T) {
 	}
 }
 
+// TestMySQLIntrospect_AlterColumnNamedInAnotherCase checks that each ALTER
+// TABLE column form naming a column in another case leaves the file parser
+// with the columns, keys and inline ENUMs the catalog gives: MySQL column
+// names are case-insensitive, and MODIFY COLUMN takes the spelling it names.
+func TestMySQLIntrospect_AlterColumnNamedInAnotherCase(t *testing.T) {
+	requireDatabases(t)
+	const ddl = `CREATE TABLE m_cc_drop (id int NOT NULL PRIMARY KEY, a int, b int, UNIQUE KEY uk (a, b), KEY kx ((a + 1), b));
+	ALTER TABLE m_cc_drop DROP COLUMN B;
+	CREATE TABLE m_cc_mod (id int NOT NULL PRIMARY KEY, b int, e enum('x','y'), UNIQUE KEY uk (b));
+	CREATE TABLE m_cc_ref (id int NOT NULL PRIMARY KEY, p_b int, CONSTRAINT fk_cc FOREIGN KEY (p_b) REFERENCES m_cc_mod (b));
+	ALTER TABLE m_cc_mod MODIFY COLUMN B int NOT NULL;
+	ALTER TABLE m_cc_mod MODIFY COLUMN E enum('x','y','z');
+	CREATE TABLE m_cc_change (id int NOT NULL PRIMARY KEY, b int, UNIQUE KEY uk (b));
+	ALTER TABLE m_cc_change CHANGE COLUMN B c bigint;
+	CREATE TABLE m_cc_rename (id int NOT NULL PRIMARY KEY, b enum('x','y'), UNIQUE KEY uk (b));
+	ALTER TABLE m_cc_rename RENAME COLUMN B TO c`
+	applyParityFixture(t, "mysql", mysqlConnStr,
+		"DROP TABLE IF EXISTS m_cc_drop; DROP TABLE IF EXISTS m_cc_ref; DROP TABLE IF EXISTS m_cc_mod; DROP TABLE IF EXISTS m_cc_change; DROP TABLE IF EXISTS m_cc_rename",
+		ddl)
+
+	introspected := introspectMySQL(t, "m_cc_drop", "m_cc_mod", "m_cc_ref", "m_cc_change", "m_cc_rename")
+	parsed := parseMySQL(t, ddl)
+
+	assertSchemaParity(t, "mysql", parsed, introspected)
+}
+
 // TestMySQLIntrospect_BothModeInlineEnumAfterRenameAndDrop checks `input.source:
 // both`: a migration renaming or dropping introspected inline ENUM and SET
 // columns leaves the merged schema with the entries the catalog gives once the

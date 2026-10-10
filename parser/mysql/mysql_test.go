@@ -2051,6 +2051,109 @@ func TestChangeColumnNotFound(t *testing.T) {
 	}
 }
 
+// MySQL column names are case-insensitive, and MODIFY COLUMN, like CHANGE
+// COLUMN, gives the column the spelling it names, carried into the keys and
+// foreign keys on it.
+func TestAlterColumnNamedInAnotherCase(t *testing.T) {
+	type column struct{ Name, Type, Ref string }
+	type key struct {
+		Name    string
+		Columns []string
+		Ref     []string
+	}
+	tests := []struct {
+		name     string
+		sql      string
+		table    string
+		wantCols []column
+		wantKeys []key
+	}{
+		{
+			name:     "DROP COLUMN",
+			sql:      "CREATE TABLE t (id int PRIMARY KEY, b int, UNIQUE KEY uk (id, b)); ALTER TABLE t DROP COLUMN B",
+			table:    "t",
+			wantCols: []column{{"id", "int", ""}},
+			wantKeys: []key{{Name: "PRIMARY", Columns: []string{"id"}}, {Name: "uk", Columns: []string{"id"}}},
+		},
+		{
+			name:     "MODIFY COLUMN",
+			sql:      "CREATE TABLE t (id int PRIMARY KEY, b int, UNIQUE KEY uk (b)); ALTER TABLE t MODIFY COLUMN B bigint NOT NULL",
+			table:    "t",
+			wantCols: []column{{"id", "int", ""}, {"B", "bigint", ""}},
+			wantKeys: []key{{Name: "PRIMARY", Columns: []string{"id"}}, {Name: "uk", Columns: []string{"B"}}},
+		},
+		{
+			name:     "MODIFY COLUMN of an inline ENUM",
+			sql:      "CREATE TABLE t (id int PRIMARY KEY, b enum('x','y')); ALTER TABLE t MODIFY COLUMN B enum('x','y','z')",
+			table:    "t",
+			wantCols: []column{{"id", "int", ""}, {"B", "t__B_enum", ""}},
+			wantKeys: []key{{Name: "PRIMARY", Columns: []string{"id"}}},
+		},
+		{
+			name: "MODIFY COLUMN of a referenced column",
+			sql: `CREATE TABLE p (id int PRIMARY KEY, b int, UNIQUE KEY uk (b));
+				CREATE TABLE c (id int PRIMARY KEY, p_b int, CONSTRAINT fk_c FOREIGN KEY (p_b) REFERENCES p (b));
+				ALTER TABLE p MODIFY COLUMN B int`,
+			table:    "c",
+			wantCols: []column{{"id", "int", ""}, {"p_b", "int", "B"}},
+			wantKeys: []key{
+				{Name: "PRIMARY", Columns: []string{"id"}},
+				{Name: "fk_c", Columns: []string{"p_b"}, Ref: []string{"B"}},
+				{Name: "fk_c", Columns: []string{"p_b"}},
+			},
+		},
+		{
+			name:     "CHANGE COLUMN",
+			sql:      "CREATE TABLE t (id int PRIMARY KEY, b int, UNIQUE KEY uk (b)); ALTER TABLE t CHANGE COLUMN B c bigint",
+			table:    "t",
+			wantCols: []column{{"id", "int", ""}, {"c", "bigint", ""}},
+			wantKeys: []key{{Name: "PRIMARY", Columns: []string{"id"}}, {Name: "uk", Columns: []string{"c"}}},
+		},
+		{
+			name:     "RENAME COLUMN",
+			sql:      "CREATE TABLE t (id int PRIMARY KEY, b enum('x','y'), UNIQUE KEY uk (b)); ALTER TABLE t RENAME COLUMN B TO c",
+			table:    "t",
+			wantCols: []column{{"id", "int", ""}, {"c", "t__c_enum", ""}},
+			wantKeys: []key{{Name: "PRIMARY", Columns: []string{"id"}}, {Name: "uk", Columns: []string{"c"}}},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			p := newParser(t)
+			if err := p.Parse("test.sql", []byte(tt.sql)); err != nil {
+				t.Fatalf("Parse() error: %v", err)
+			}
+			var table *parser.Table
+			for i, tb := range p.Schema().Tables {
+				if tb.Name == tt.table {
+					table = &p.Schema().Tables[i]
+				}
+			}
+			if table == nil {
+				t.Fatalf("table %s not found", tt.table)
+			}
+			gotCols := make([]column, 0, len(table.Columns))
+			for _, c := range table.Columns {
+				col := column{Name: c.Name, Type: c.Type}
+				if c.FKReference != nil {
+					col.Ref = c.FKReference.Column
+				}
+				gotCols = append(gotCols, col)
+			}
+			if diff := cmp.Diff(tt.wantCols, gotCols); diff != "" {
+				t.Errorf("columns mismatch (-want +got):\n%s", diff)
+			}
+			gotKeys := make([]key, 0, len(table.Constraints))
+			for _, c := range table.Constraints {
+				gotKeys = append(gotKeys, key{Name: c.Name, Columns: c.Columns, Ref: c.ReferenceColumns})
+			}
+			if diff := cmp.Diff(tt.wantKeys, gotKeys, cmpopts.EquateEmpty()); diff != "" {
+				t.Errorf("constraints mismatch (-want +got):\n%s", diff)
+			}
+		})
+	}
+}
+
 func TestMigrationSequence(t *testing.T) {
 	p := newParser(t)
 

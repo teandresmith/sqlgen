@@ -908,14 +908,20 @@ func constraintNames(table *parser.Table, kind parser.ConstraintType) []string {
 func declaredColumns(table *parser.Table, cols []string) []string {
 	out := slices.Clone(cols)
 	for i, name := range out {
-		for _, col := range table.Columns {
-			if strings.EqualFold(col.Name, name) {
-				out[i] = col.Name
-				break
-			}
-		}
+		out[i] = declaredColumn(table, name)
 	}
 	return out
+}
+
+// declaredColumn returns name spelled as the table declares the column, or
+// name itself when the table has no such column.
+func declaredColumn(table *parser.Table, name string) string {
+	for _, col := range table.Columns {
+		if strings.EqualFold(col.Name, name) {
+			return col.Name
+		}
+	}
+	return name
 }
 
 func identifiers(cols sqlparser.Columns) []string {
@@ -986,8 +992,9 @@ func (p *Parser) applyAlterOption(table *parser.Table, opt sqlparser.AlterOption
 			p.addConstraints(table, constraints, "")
 		}
 	case *sqlparser.DropColumn:
-		alterDropColumn(table, o.Name.Name.String())
-		p.dropExprKeyColumn(table.Name, o.Name.Name.String())
+		name := declaredColumn(table, o.Name.Name.String())
+		alterDropColumn(table, name)
+		p.dropExprKeyColumn(table.Name, name)
 	case *sqlparser.ModifyColumn:
 		return p.alterModifyColumn(table, o)
 	case *sqlparser.AddIndexDefinition:
@@ -1007,7 +1014,7 @@ func (p *Parser) applyAlterOption(table *parser.Table, opt sqlparser.AlterOption
 		}
 		p.addConstraints(table, []parser.Constraint{p.parseConstraintDef(o.ConstraintDefinition)}, indexName)
 	case *sqlparser.RenameColumn:
-		oldName, newName := o.OldName.Name.String(), o.NewName.Name.String()
+		oldName, newName := declaredColumn(table, o.OldName.Name.String()), o.NewName.Name.String()
 		if err := parser.RenameColumn(table, oldName, newName); err != nil {
 			return fmt.Errorf("rename column %s: %w", table.Name, err)
 		}
@@ -1028,14 +1035,8 @@ func (p *Parser) alterModifyColumn(table *parser.Table, o *sqlparser.ModifyColum
 	if o.NewColDefinition == nil {
 		return nil
 	}
-	name := o.NewColDefinition.Name.String()
-	for i := range table.Columns {
-		if table.Columns[i].Name == name {
-			newCol, constraints := p.parseColumn(table.Name, o.NewColDefinition)
-			table.Columns[i] = redefineColumn(table.Columns[i], newCol)
-			p.addConstraints(table, constraints, "")
-			return nil
-		}
+	if p.replaceColumn(table, o.NewColDefinition.Name.String(), o.NewColDefinition) {
+		return nil
 	}
 	// Column not found — add it.
 	newCol, constraints := p.parseColumn(table.Name, o.NewColDefinition)
@@ -1066,18 +1067,28 @@ func (p *Parser) alterChangeColumn(table *parser.Table, o *sqlparser.ChangeColum
 		return nil
 	}
 	oldName := o.OldColumn.Name.String()
-	for i := range table.Columns {
-		if table.Columns[i].Name == oldName {
-			newCol, constraints := p.parseColumn(table.Name, o.NewColDefinition)
-			table.Columns[i] = redefineColumn(table.Columns[i], newCol)
-			// CHANGE COLUMN can rename too; references follow, as on RENAME COLUMN.
-			parser.RenameColumnReferences(p.schema.Tables, table.Schema, table.Name, oldName, newCol.Name)
-			p.renameExprKeyColumn(table.Name, oldName, newCol.Name)
-			p.addConstraints(table, constraints, "")
-			return nil
-		}
+	if !p.replaceColumn(table, oldName, o.NewColDefinition) {
+		return fmt.Errorf("column %s not found in table %s", oldName, table.Name)
 	}
-	return fmt.Errorf("column %s not found in table %s", oldName, table.Name)
+	return nil
+}
+
+// replaceColumn redefines the column named name, matched case-insensitively as
+// MySQL does, as def. The column takes def's spelling, so MODIFY COLUMN naming
+// it in another case renames it, and references follow. It reports whether the
+// table has the column.
+func (p *Parser) replaceColumn(table *parser.Table, name string, def *sqlparser.ColumnDefinition) bool {
+	oldName := declaredColumn(table, name)
+	i := slices.IndexFunc(table.Columns, func(c parser.Column) bool { return c.Name == oldName })
+	if i < 0 {
+		return false
+	}
+	newCol, constraints := p.parseColumn(table.Name, def)
+	table.Columns[i] = redefineColumn(table.Columns[i], newCol)
+	parser.RenameColumnReferences(p.schema.Tables, table.Schema, table.Name, oldName, newCol.Name)
+	p.renameExprKeyColumn(table.Name, oldName, newCol.Name)
+	p.addConstraints(table, constraints, "")
+	return true
 }
 
 // redefineColumn returns the column that MODIFY or CHANGE COLUMN leaves in
