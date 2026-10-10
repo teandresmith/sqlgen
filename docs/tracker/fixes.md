@@ -22,10 +22,16 @@
 ## Open
 
 <!-- fixes:open:begin -->
+_No open fixes._
+<!-- fixes:open:end -->
+
+## Resolved
+
+<!-- fixes:resolved:begin -->
 
 ### FIX-275
 
-- **Status:** Open
+- **Status:** Resolved
 - **Severity:** nit
 - **Origin:** phase 30, `parser/mysql`
 - **Surfaced by:** backlog promotion at `/close-phase 30` (2026-10-07); first recorded by 30.2 (2026-10-05)
@@ -77,13 +83,8 @@ adds keys, then FK indexes (`mysql.go:438-446`; line refs at `717c3b7c`).
 - `docs/tracker/phase-30.md` 30.2 Completion Record ("vitess key-order
   approximation").
 
-**Resolution notes.** _Filled in by `/fix resolve`._
+**Resolution notes.** Resolved 2026-10-09 by implementing the vetted prototype (applied clean at `bc8b7d0a`; source logic unchanged except `replacedLater`, below). `Parse` passes each statement's text through `processStmt` → `parseCreateTable`; `tableElements` scans it with vitess's tokenizer, splits the definition list at top-level commas and classifies each entry (`classifyTableElement`), and `matchTableSpec` errors loudly ("create table t: cannot recover declaration order: …") when the counts disagree with the `TableSpec`. `parseTableSpec` now returns keys (with each FK's built index at its FOREIGN KEY) and FK/CHECK constraints in declaration order, so unnamed keys, FK indexes and `_ibfk_`/`_chk_` names number as MySQL does (PRD §5.2). Side effect: a built FK index now precedes its FK constraint in `Table.Constraints`; expectation updates in `TestRenameColumnCarriesReferences` (3 lines, as vetted) and in FIX-298's (`bc8b7d0a`) `TestAlterColumnNamedInAnotherCase` "MODIFY COLUMN of a referenced column" case (2 swapped lines; that test landed after the vet and is the same side effect meeting it). Tests: `TestNamesFollowDeclarationOrder` (`parser/mysql`, 11 cases) and `TestMySQLIntrospect_KeyDeclarationOrder` (MySQL 8.0 parity, 9 tables: the parent and 8 children). Gates: `make check` → ok; `go -C parser test -race -count=1 ./...` → ok (containers); `make update-golden` / `make update-golden-e2e` → no churn; `TestE2EGoldenFiles` → ok; `make check-examples` → ok. Fail-first: `mysql.go` reverted → `TestNamesFollowDeclarationOrder` fails 6 of 11 (the vet's 5 plus the later-foreign-key case) and `TestMySQLIntrospect_KeyDeclarationOrder` fails "parsed key names mismatch". Edge probes (throwaway, deleted): PARTITION BY, `CREATE TABLE … LIKE`, `CREATE TABLE (…) AS SELECT`, a generated column with CHECK → parse as before with no order error. `/verify` found one regression in the prototype and it was fixed inline. With the FK index built at its FOREIGN KEY, an index that a *later* key replaces took a name first and was deleted afterwards, so the keys declared in between were numbered around it. MySQL 8.0: `(a int, b int, FOREIGN KEY (a, b) …, KEY (a), KEY (a, b))` → db `a:[a] a_2:[a,b]`, parse `a:[a,b] a_2:[a]` (the pre-fix parser matched). `parseCreateTable` now skips a built index that `replacedLater` finds made redundant by a later key, by `addKey`'s own `redundantKeys` test. A throwaway parity probe of 12 replacement shapes (later KEY/UNIQUE/PRIMARY KEY/expression key/longer FK, named FK, columns in another case) gives `same=true` and passes `assertSchemaParity`. New cases, each measured on MySQL 8.0 through `TestMySQLIntrospect_KeyDeclarationOrder` (tables `m_ko_rk`, `m_ko_rf`, `m_ko_lf`, `m_ko_sk`): "a foreign key's index replaced by a later key", "… by a later foreign key's", "… by a later foreign key's, past a key" and "a foreign key's index kept past a later, shorter foreign key's". With the filter disabled, the `rk` and `lf` cases fail. With `replacedLater`'s shorter-built-key guard removed, the `sk` case fails. The reviewer brute-forced `replacedLater` against sequential `addKey` (every 3-key sequence over 53 shapes, plus 900k random 4–9-key sequences) and found the same survivors and names every time. MySQL 8.0 ignoring a column-level REFERENCES is the deliberate exception PRD §6.1 already records, so it was not logged.
 
-<!-- fixes:open:end -->
-
-## Resolved
-
-<!-- fixes:resolved:begin -->
 
 ### FIX-298
 

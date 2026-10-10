@@ -1820,8 +1820,8 @@ func TestRenameColumnCarriesReferences(t *testing.T) {
 				"users PRIMARY KEY [user_id]",
 				"posts.user_id -> users(user_id)",
 				"posts PRIMARY KEY [id]",
-				"posts FOREIGN KEY [user_id] -> users[user_id]",
 				"posts INDEX [user_id]",
+				"posts FOREIGN KEY [user_id] -> users[user_id]",
 				"post_tags.post_id -> posts(id)",
 				"post_tags PRIMARY KEY [post_id tag_id]",
 				"post_tags FOREIGN KEY [post_id] -> posts[id]",
@@ -1834,8 +1834,8 @@ func TestRenameColumnCarriesReferences(t *testing.T) {
 				"users PRIMARY KEY [user_id]",
 				"posts.user_id -> users(user_id)",
 				"posts PRIMARY KEY [id]",
-				"posts FOREIGN KEY [user_id] -> users[user_id]",
 				"posts INDEX [user_id]",
+				"posts FOREIGN KEY [user_id] -> users[user_id]",
 				"post_tags.post_id -> posts(id)",
 				"post_tags PRIMARY KEY [post_id tag_id]",
 				"post_tags FOREIGN KEY [post_id] -> posts[id]",
@@ -1848,8 +1848,8 @@ func TestRenameColumnCarriesReferences(t *testing.T) {
 				"users PRIMARY KEY [id]",
 				"posts.user_id -> users(id)",
 				"posts PRIMARY KEY [id]",
-				"posts FOREIGN KEY [user_id] -> users[id]",
 				"posts INDEX [user_id]",
+				"posts FOREIGN KEY [user_id] -> users[id]",
 				"post_tags.article_id -> posts(id)",
 				"post_tags PRIMARY KEY [article_id tag_id]",
 				"post_tags FOREIGN KEY [article_id] -> posts[id]",
@@ -2098,8 +2098,8 @@ func TestAlterColumnNamedInAnotherCase(t *testing.T) {
 			wantCols: []column{{"id", "int", ""}, {"p_b", "int", "B"}},
 			wantKeys: []key{
 				{Name: "PRIMARY", Columns: []string{"id"}},
-				{Name: "fk_c", Columns: []string{"p_b"}, Ref: []string{"B"}},
 				{Name: "fk_c", Columns: []string{"p_b"}},
+				{Name: "fk_c", Columns: []string{"p_b"}, Ref: []string{"B"}},
 			},
 		},
 		{
@@ -2570,6 +2570,94 @@ CREATE MATERIALIZED VIEW order_totals AS SELECT customer_id FROM orders;`,
 			}
 			if !strings.Contains(err.Error(), "not supported for dialect mysql") {
 				t.Errorf("error = %q, want mention of 'not supported for dialect mysql'", err)
+			}
+		})
+	}
+}
+
+// TestNamesFollowDeclarationOrder pins that unnamed keys and foreign keys are
+// numbered in the order the CREATE TABLE declares them, wherever a column,
+// a key, a FOREIGN KEY or a CHECK falls in its definition list.
+func TestNamesFollowDeclarationOrder(t *testing.T) {
+	const parent = `CREATE TABLE p (id int PRIMARY KEY, b int, c int, d int, KEY (b, c), KEY (b, c, d));`
+	tests := []struct {
+		name string
+		sql  string
+		want []string
+	}{
+		{
+			name: "a foreign key's index before a later key",
+			sql:  `CREATE TABLE o2 (b int, c int, FOREIGN KEY (b, c) REFERENCES p (b, c), KEY (b));`,
+			want: []string{"FOREIGN KEY o2_ibfk_1 [b c]", "INDEX b [b c]", "INDEX b_2 [b]"},
+		},
+		{
+			name: "a key declared on a column after a table-level key",
+			sql:  `CREATE TABLE kc (x int, KEY (a, x), a int UNIQUE);`,
+			want: []string{"INDEX a [a x]", "UNIQUE a_2 [a]"},
+		},
+		{
+			name: "a foreign key's index before a key declared on a later column",
+			sql:  `CREATE TABLE fc (x int, FOREIGN KEY (b, c) REFERENCES p (b, c), b int UNIQUE, c int);`,
+			want: []string{"FOREIGN KEY fc_ibfk_1 [b c]", "INDEX b [b c]", "UNIQUE b_2 [b]"},
+		},
+		{
+			name: "keys, columns and a foreign key interleaved",
+			sql:  `CREATE TABLE mx (b int, c int, d int, FOREIGN KEY (b, c) REFERENCES p (b, c), e int UNIQUE, KEY (b), UNIQUE (b, d));`,
+			want: []string{"FOREIGN KEY mx_ibfk_1 [b c]", "INDEX b [b c]", "UNIQUE e [e]", "INDEX b_2 [b]", "UNIQUE b_3 [b d]"},
+		},
+		{
+			name: "a foreign key's index replaced by a later key",
+			sql:  `CREATE TABLE rk (a int, b int, FOREIGN KEY (a, b) REFERENCES p (b, c), KEY (a), KEY (a, b));`,
+			want: []string{"FOREIGN KEY rk_ibfk_1 [a b]", "INDEX a [a]", "INDEX a_2 [a b]"},
+		},
+		{
+			name: "a foreign key's index replaced by a later foreign key's",
+			sql:  `CREATE TABLE rf (a int, b int, FOREIGN KEY (a) REFERENCES p (id), FOREIGN KEY (a, b) REFERENCES p (b, c), KEY (a));`,
+			want: []string{"FOREIGN KEY rf_ibfk_1 [a]", "FOREIGN KEY rf_ibfk_2 [a b]", "INDEX a [a b]", "INDEX a_2 [a]"},
+		},
+		{
+			name: "a foreign key's index replaced by a later foreign key's, past a key",
+			sql:  `CREATE TABLE lf (a int, b int, c int, FOREIGN KEY (a, b) REFERENCES p (b, c), KEY (a), FOREIGN KEY (a, b, c) REFERENCES p (b, c, d));`,
+			want: []string{"FOREIGN KEY lf_ibfk_1 [a b]", "FOREIGN KEY lf_ibfk_2 [a b c]", "INDEX a [a]", "INDEX a_2 [a b c]"},
+		},
+		{
+			name: "a foreign key's index kept past a later, shorter foreign key's",
+			sql:  `CREATE TABLE sk (a int, b int, FOREIGN KEY (a, b) REFERENCES p (b, c), KEY (b), FOREIGN KEY (a) REFERENCES p (id));`,
+			want: []string{"FOREIGN KEY sk_ibfk_1 [a b]", "FOREIGN KEY sk_ibfk_2 [a]", "INDEX a [a b]", "INDEX b [b]"},
+		},
+		{
+			name: "an inline REFERENCES after a table-level foreign key",
+			sql:  `CREATE TABLE il (a int, FOREIGN KEY (a) REFERENCES p (id), b int REFERENCES p (id));`,
+			want: []string{"FOREIGN KEY il_ibfk_1 [a]", "INDEX a [a]", "FOREIGN KEY il_ibfk_2 [b]", "INDEX b [b]"},
+		},
+		{
+			name: "a CHECK on a column between table-level CHECKs",
+			sql:  `CREATE TABLE ck (x int, CHECK (a > 0), a int CONSTRAINT nn CHECK (a < 10), CHECK (a <> 5), y int);`,
+			want: []string{"CHECK ck_chk_1 [a]", "CHECK nn [a]", "CHECK ck_chk_2 [a]"},
+		},
+		{
+			name: "keywords in comments, strings and nested parentheses",
+			sql: "CREATE TABLE kw (/* KEY (x), */ x int COMMENT 'UNIQUE, CHECK (', s enum('KEY', 'a,b') DEFAULT 'KEY', " +
+				"FOREIGN KEY (x) REFERENCES p (id), `key` int UNIQUE, CONSTRAINT UNIQUE (s, x), KEY (s));",
+			want: []string{"FOREIGN KEY kw_ibfk_1 [x]", "INDEX x [x]", "UNIQUE key [key]", "UNIQUE s [s x]", "INDEX s_2 [s]"},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			p := newParser(t)
+			if err := p.Parse("test.sql", []byte(parent+tt.sql)); err != nil {
+				t.Fatalf("Parse() error: %v", err)
+			}
+			tables := p.Schema().Tables
+			constraints := tables[len(tables)-1].Constraints
+			got := make([]string, 0, len(constraints))
+			for _, c := range constraints {
+				got = append(got, fmt.Sprintf("%s %s %v", c.Type, c.Name, c.Columns))
+			}
+			slices.Sort(got)
+			want := slices.Sorted(slices.Values(tt.want))
+			if diff := cmp.Diff(want, got); diff != "" {
+				t.Errorf("constraint names mismatch (-want +got):\n%s", diff)
 			}
 		})
 	}

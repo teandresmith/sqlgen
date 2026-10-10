@@ -299,7 +299,7 @@ func (p *Parser) Parse(filename string, sql []byte) error {
 		if err != nil {
 			return fmt.Errorf("parsing %s: %w", filename, err)
 		}
-		if err := p.processStmt(stmt); err != nil {
+		if err := p.processStmt(stmt, piece); err != nil {
 			return fmt.Errorf("parsing %s: %w", filename, err)
 		}
 	}
@@ -355,10 +355,11 @@ func (p *Parser) renameInline(table, oldName, newName string) {
 	p.setInline(table, newName, nil)
 }
 
-func (p *Parser) processStmt(stmt sqlparser.Statement) error {
+// processStmt applies stmt, parsed from the statement text sql.
+func (p *Parser) processStmt(stmt sqlparser.Statement, sql string) error {
 	switch s := stmt.(type) {
 	case *sqlparser.CreateTable:
-		return p.parseCreateTable(s)
+		return p.parseCreateTable(s, sql)
 	case *sqlparser.AlterTable:
 		return p.parseAlterTable(s)
 	case *sqlparser.DropTable:
@@ -412,7 +413,7 @@ func (p *Parser) parseDropTable(stmt *sqlparser.DropTable) error {
 
 // --- CREATE TABLE ---
 
-func (p *Parser) parseCreateTable(stmt *sqlparser.CreateTable) error {
+func (p *Parser) parseCreateTable(stmt *sqlparser.CreateTable, sql string) error {
 	if stmt.TableSpec == nil {
 		return nil
 	}
@@ -436,15 +437,19 @@ func (p *Parser) parseCreateTable(stmt *sqlparser.CreateTable) error {
 		}
 	}
 
-	keys, others, fkIndexes := p.parseTableSpec(&table, stmt.TableSpec)
+	elements, err := p.tableElements(sql, stmt.TableSpec)
+	if err != nil {
+		return fmt.Errorf("create table %s: %w", tableName, err)
+	}
+	keys, others := p.parseTableSpec(&table, stmt.TableSpec, elements)
 	p.generated[tableName] = make(map[string]bool)
-	for _, key := range keys {
-		p.addKey(&table, key, false)
+	for i, key := range keys {
+		if key.built && replacedLater(key, keys[i+1:]) {
+			continue
+		}
+		p.addKey(&table, key.Constraint, key.built)
 	}
 	nameCreatedConstraints(&table, others)
-	for _, key := range fkIndexes {
-		p.addKey(&table, key, true)
-	}
 	parser.CanonicalizeConstraints(&table, "mysql")
 
 	p.tableIndex[tableName] = len(p.schema.Tables)
@@ -453,35 +458,157 @@ func (p *Parser) parseCreateTable(stmt *sqlparser.CreateTable) error {
 	return nil
 }
 
-// parseTableSpec adds spec's columns to table and returns its keys, its
-// FOREIGN KEY and CHECK constraints, and the index MySQL builds for each
-// foreign key. MySQL takes keys in declaration order. The AST keeps columns,
-// indexes and constraints apart, so the order taken is: keys declared on
-// columns, then table-level keys, then the indexes built for foreign keys.
-func (p *Parser) parseTableSpec(table *parser.Table, spec *sqlparser.TableSpec) (keys, others, fkIndexes []parser.Constraint) {
-	for _, col := range spec.Columns {
-		c, constraints := p.parseColumn(table.Name, col)
-		table.Columns = append(table.Columns, c)
-		for _, constraint := range constraints {
-			if isKey(constraint.Type) {
-				keys = append(keys, constraint)
+// tableKey is a key of a new table: a declared key, or an index MySQL builds
+// for a foreign key.
+type tableKey struct {
+	parser.Constraint
+	built bool
+}
+
+// parseTableSpec adds spec's columns to table and returns its keys, with the
+// index MySQL builds for each foreign key, and its FOREIGN KEY and CHECK
+// constraints. Both come in declaration order, which elements gives, since
+// MySQL numbers unnamed keys and unnamed constraints in that order.
+func (p *Parser) parseTableSpec(table *parser.Table, spec *sqlparser.TableSpec, elements []tableElement) (keys []tableKey, others []parser.Constraint) {
+	var col, idx, con int
+	for _, element := range elements {
+		switch element {
+		case columnElement:
+			c, constraints := p.parseColumn(table.Name, spec.Columns[col])
+			col++
+			table.Columns = append(table.Columns, c)
+			for _, constraint := range constraints {
+				if isKey(constraint.Type) {
+					keys = append(keys, tableKey{Constraint: constraint})
+					continue
+				}
+				others = append(others, constraint)
+				keys = append(keys, tableKey{Constraint: foreignKeyIndex(constraint, ""), built: true})
+			}
+		case indexElement:
+			keys = append(keys, tableKey{Constraint: p.parseIndex(spec.Indexes[idx])})
+			idx++
+		case constraintElement:
+			cd := spec.Constraints[con]
+			con++
+			constraint := p.parseConstraintDef(cd)
+			others = append(others, constraint)
+			if fk, ok := cd.Details.(*sqlparser.ForeignKeyDefinition); ok {
+				keys = append(keys, tableKey{Constraint: foreignKeyIndex(constraint, fk.IndexName.String()), built: true})
+			}
+		}
+	}
+	return keys, others
+}
+
+// replacedLater reports whether a key in later, the keys declared after the
+// index MySQL would build for a foreign key, makes that index redundant. MySQL
+// then builds no index, so it takes no name ahead of the keys between.
+func replacedLater(key tableKey, later []tableKey) bool {
+	return slices.ContainsFunc(later, func(k tableKey) bool {
+		if k.built && len(k.Columns) < len(key.Columns) {
+			return false
+		}
+		return redundantKeys(key.Columns, true, k.Columns, k.built)
+	})
+}
+
+// tableElement is the kind of one entry of a CREATE TABLE definition list, as
+// the vitess TableSpec files it: a column, an index (PRIMARY KEY, UNIQUE,
+// KEY / INDEX, FULLTEXT, SPATIAL) or a constraint (FOREIGN KEY, CHECK).
+type tableElement int
+
+const (
+	columnElement tableElement = iota
+	indexElement
+	constraintElement
+)
+
+// tableElements returns the entries of the definition list of the CREATE
+// TABLE statement sql in declaration order, which the TableSpec spec parsed
+// from it does not keep: it holds columns, indexes and constraints in separate
+// lists. A column declared with a CHECK yields the column and then the
+// constraint, since vitess files that CHECK among the constraints. It reports
+// an error when the entries it reads do not match spec.
+func (p *Parser) tableElements(sql string, spec *sqlparser.TableSpec) ([]tableElement, error) {
+	var elements []tableElement
+	var tokens []int // the current entry's tokens outside nested parentheses
+	depth := 0
+	tkn := p.vparser.NewStringTokenizer(sql)
+scan:
+	for {
+		typ, _ := tkn.Scan()
+		switch {
+		case typ == 0 || typ == sqlparser.LEX_ERROR:
+			break scan
+		case typ == sqlparser.COMMENT:
+			continue
+		case typ == '(':
+			depth++
+			if depth == 1 {
 				continue
 			}
-			others = append(others, constraint)
-			fkIndexes = append(fkIndexes, foreignKeyIndex(constraint, ""))
+		case typ == ')':
+			depth--
+			if depth == 0 {
+				elements = append(elements, classifyTableElement(tokens)...)
+				break scan
+			}
+		case typ == ',' && depth == 1:
+			elements = append(elements, classifyTableElement(tokens)...)
+			tokens = tokens[:0]
+			continue
+		}
+		if depth == 1 {
+			tokens = append(tokens, typ)
 		}
 	}
-	for _, idx := range spec.Indexes {
-		keys = append(keys, p.parseIndex(idx))
+	if err := matchTableSpec(elements, spec); err != nil {
+		return nil, err
 	}
-	for _, cd := range spec.Constraints {
-		constraint := p.parseConstraintDef(cd)
-		others = append(others, constraint)
-		if fk, ok := cd.Details.(*sqlparser.ForeignKeyDefinition); ok {
-			fkIndexes = append(fkIndexes, foreignKeyIndex(constraint, fk.IndexName.String()))
+	return elements, nil
+}
+
+// matchTableSpec reports an error when elements does not hold as many
+// columns, indexes and constraints as spec.
+func matchTableSpec(elements []tableElement, spec *sqlparser.TableSpec) error {
+	var counts [3]int
+	for _, e := range elements {
+		counts[e]++
+	}
+	if counts != [3]int{len(spec.Columns), len(spec.Indexes), len(spec.Constraints)} {
+		return fmt.Errorf("cannot recover declaration order: read %d columns, %d indexes and %d constraints, parsed %d, %d and %d",
+			counts[columnElement], counts[indexElement], counts[constraintElement], len(spec.Columns), len(spec.Indexes), len(spec.Constraints))
+	}
+	return nil
+}
+
+// classifyTableElement returns what the definition-list entry with the
+// top-level tokens tokens is filed as. The keywords it looks for are reserved
+// in MySQL, so a column cannot start with one unquoted.
+func classifyTableElement(tokens []int) []tableElement {
+	if len(tokens) == 0 {
+		return nil
+	}
+	switch tokens[0] {
+	case sqlparser.PRIMARY, sqlparser.UNIQUE, sqlparser.KEY, sqlparser.INDEX, sqlparser.FULLTEXT, sqlparser.SPATIAL:
+		return []tableElement{indexElement}
+	case sqlparser.FOREIGN, sqlparser.CHECK:
+		return []tableElement{constraintElement}
+	case sqlparser.CONSTRAINT:
+		for _, typ := range tokens[1:] {
+			switch typ {
+			case sqlparser.PRIMARY, sqlparser.UNIQUE:
+				return []tableElement{indexElement}
+			case sqlparser.FOREIGN, sqlparser.CHECK:
+				return []tableElement{constraintElement}
+			}
 		}
 	}
-	return keys, others, fkIndexes
+	if slices.Contains(tokens, sqlparser.CHECK) {
+		return []tableElement{columnElement, constraintElement}
+	}
+	return []tableElement{columnElement}
 }
 
 // nameCreatedConstraints adds the FOREIGN KEY and CHECK constraints of a new

@@ -480,6 +480,58 @@ func TestMySQLIntrospect_BothModeInlineEnumAfterRenameAndDrop(t *testing.T) {
 	assertSchemaParity(t, "mysql", p.Schema(), introspected)
 }
 
+// TestMySQLIntrospect_KeyDeclarationOrder pins MySQL's numbering of unnamed
+// keys in declaration order, with the index it builds for a foreign key taking
+// its place where the FOREIGN KEY is declared unless a later key replaces it,
+// and a key declared on a column taking the column's place (PRD §5.2).
+func TestMySQLIntrospect_KeyDeclarationOrder(t *testing.T) {
+	requireDatabases(t)
+	const ddl = `CREATE TABLE m_ko_p (id int PRIMARY KEY, b int, c int, d int, KEY (b, c), KEY (b, c, d));
+	CREATE TABLE m_ko_fk (b int, c int, FOREIGN KEY (b, c) REFERENCES m_ko_p (b, c), KEY (b));
+	CREATE TABLE m_ko_col (x int, KEY (a, x), a int UNIQUE);
+	CREATE TABLE m_ko_fkcol (x int, FOREIGN KEY (b, c) REFERENCES m_ko_p (b, c), b int UNIQUE, c int);
+	CREATE TABLE m_ko_mix (b int, c int, d int, FOREIGN KEY (b, c) REFERENCES m_ko_p (b, c), e int UNIQUE, KEY (b), UNIQUE (b, d));
+	CREATE TABLE m_ko_rk (b int, c int, FOREIGN KEY (b, c) REFERENCES m_ko_p (b, c), KEY (b), KEY (b, c));
+	CREATE TABLE m_ko_rf (b int, c int, FOREIGN KEY (b) REFERENCES m_ko_p (id), FOREIGN KEY (b, c) REFERENCES m_ko_p (b, c), KEY (b));
+	CREATE TABLE m_ko_lf (b int, c int, d int, FOREIGN KEY (b, c) REFERENCES m_ko_p (b, c), KEY (b), FOREIGN KEY (b, c, d) REFERENCES m_ko_p (b, c, d));
+	CREATE TABLE m_ko_sk (b int, c int, FOREIGN KEY (b, c) REFERENCES m_ko_p (b, c), KEY (c), FOREIGN KEY (b) REFERENCES m_ko_p (id))`
+	applyParityFixture(t, "mysql", mysqlConnStr, "DROP TABLE IF EXISTS m_ko_fk; DROP TABLE IF EXISTS m_ko_col; DROP TABLE IF EXISTS m_ko_fkcol; DROP TABLE IF EXISTS m_ko_mix; DROP TABLE IF EXISTS m_ko_rk; DROP TABLE IF EXISTS m_ko_rf; DROP TABLE IF EXISTS m_ko_lf; DROP TABLE IF EXISTS m_ko_sk; DROP TABLE IF EXISTS m_ko_p", ddl)
+
+	tables := []string{"m_ko_p", "m_ko_fk", "m_ko_col", "m_ko_fkcol", "m_ko_mix", "m_ko_rk", "m_ko_rf", "m_ko_lf", "m_ko_sk"}
+	introspected := introspectMySQL(t, tables...)
+	parsed := parseMySQL(t, ddl)
+
+	want := map[string]map[string]string{
+		"m_ko_fk":    {"b": "b,c", "b_2": "b"},
+		"m_ko_col":   {"a": "a,x", "a_2": "a"},
+		"m_ko_fkcol": {"b": "b,c", "b_2": "b"},
+		"m_ko_mix":   {"b": "b,c", "e": "e", "b_2": "b", "b_3": "b,d"},
+		"m_ko_rk":    {"b": "b", "b_2": "b,c"},
+		"m_ko_rf":    {"b": "b,c", "b_2": "b"},
+		"m_ko_lf":    {"b": "b", "b_2": "b,c,d"},
+		"m_ko_sk":    {"b": "b,c", "c": "c"},
+	}
+	keyNames := func(s *parser.Schema) map[string]map[string]string {
+		got := make(map[string]map[string]string)
+		for table := range want {
+			got[table] = make(map[string]string)
+			for _, c := range findTable(t, s, table).Constraints {
+				if c.Type == parser.Unique || c.Type == parser.Index {
+					got[table][c.Name] = strings.Join(c.Columns, ",")
+				}
+			}
+		}
+		return got
+	}
+	if diff := cmp.Diff(want, keyNames(introspected)); diff != "" {
+		t.Errorf("introspected key names mismatch (-want +got):\n%s", diff)
+	}
+	if diff := cmp.Diff(want, keyNames(parsed)); diff != "" {
+		t.Errorf("parsed key names mismatch (-want +got):\n%s", diff)
+	}
+	assertSchemaParity(t, "mysql", parsed, introspected)
+}
+
 func TestMySQLIntrospect_CheckText(t *testing.T) {
 	requireDatabases(t)
 	const ddl = `CREATE TABLE m_checks (
