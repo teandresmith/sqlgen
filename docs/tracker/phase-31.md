@@ -192,37 +192,37 @@ PRD Sections: 4.1.1, 4.2, 4.3, 6.1, 6.3, 8.1.7, 16.2, 30.4.2
 
 **PRD Reference:** Sections 6.1, 30.4.2
 
-**Status:** Not Started
+**Status:** Complete
 
 ### Tasks
 
-- [ ] Create `cmd/sqlgen/internal/livedb` (package doc: test support for live-database tests;
+- [x] Create `cmd/sqlgen/internal/livedb` (package doc: test support for live-database tests;
   imported only by `_test.go` files). Move into it from `cli/introspect_integration_test.go`,
   exporting each:
   - the lazy container starters (`postgresAddr`, `mysqlServerAddr`), with their
     `sync.Once` state and the `testing.Short()` skip;
   - `postgresURL`, `mysqlDSN`, `execSQL`;
   - `newPostgresDatabase`, `newMySQLDatabase`, `newSQLiteDatabase`.
-- [ ] Add `ApplySetup(t, dialect, conn, dir string)`, the design §4.2 applier:
+- [x] Add `ApplySetup(t, dialect, conn, dir string)`, the design §4.2 applier:
   - it applies `schema.sql`, then `views/*.sql` in lexical order, then `after_views.sql` when
     present;
   - PostgreSQL runs one `Exec` per file;
   - MySQL opens with `multiStatements=true`;
   - SQLite runs one `Exec` per file.
-- [ ] Move `sourceParityException`, `sourceParityExceptions`, `dropViewSource` and
+- [x] Move `sourceParityException`, `sourceParityExceptions`, `dropViewSource` and
   `normalizeTree` into the package. Export `NormalizeTree` and the exception list.
-- [ ] Extend `dropViewSource` to the split manifest layout: `manifest/entities/<entity>.json`
+- [x] Extend `dropViewSource` to the split manifest layout: `manifest/entities/<entity>.json`
   with `kind: view`. Treat a view with an empty `source` as an error, as the single layout does.
-- [ ] Add the MySQL literal-default exception. Its reason quotes PRD §6.1 ("a literal default
+- [x] Add the MySQL literal-default exception. Its reason quotes PRD §6.1 ("a literal default
   is stored converted to its column's type … `TRUE` as `1`").
   - In the JSON and markdown manifest, it rewrites only a `default` of `true` / `false` on a
     `tinyint(1)` column to `1` / `0`, on both trees.
   - It applies to MySQL only. The dialect comes from the manifest, or from a parameter of
     `NormalizeTree`.
   - No other value is masked.
-- [ ] Point `cli/introspect_integration_test.go` at the package, with no behavior change. Its
+- [x] Point `cli/introspect_integration_test.go` at the package, with no behavior change. Its
   `dialectFixtures` stays in the CLI suite.
-- [ ] `go mod tidy` in `cmd/sqlgen`, and confirm that `testcontainers-go` was already required.
+- [x] `go mod tidy` in `cmd/sqlgen`, and confirm that `testcontainers-go` was already required.
   Confirm that `go list -deps .` (the `sqlgen` binary) does not include `internal/livedb`.
 
 ### Acceptance Criteria
@@ -235,23 +235,91 @@ PRD Sections: 4.1.1, 4.2, 4.3, 6.1, 6.3, 8.1.7, 16.2, 30.4.2
 
 ### Tests Required
 
-- [ ] `livedb` unit tests (no container), table-driven over the exceptions:
+- [x] `livedb` unit tests (no container), table-driven over the exceptions:
   - The view-`source` exception removes `source` from a view in both layouts and leaves a
     table's untouched.
   - It errors on a view with no `source`.
   - The MySQL default exception rewrites `true` → `1` on `tinyint(1)`. It leaves `true` on a
     non-`tinyint(1)` column, leaves a PostgreSQL manifest, and leaves `'1.5'` unchanged.
-- [ ] Fail-first per exception. Each is removed in turn and a twin case that needs it fails:
+- [x] Fail-first per exception. Each is removed in turn and a twin case that needs it fails:
   - the CLI suite for view `source`;
   - the 31.3 `mysql` twin for the boolean default, or a CLI MySQL fixture column
     `active BOOLEAN DEFAULT TRUE` added here.
 
   Quote each failure.
-- [ ] `go test -race -count=1 ./cli/... ./internal/...` in `cmd/sqlgen` (Docker) is green.
+- [x] `go test -race -count=1 ./cli/... ./internal/...` in `cmd/sqlgen` (Docker) is green.
 
 ### Completion Record
 
-_Filled in when complete: files changed, commit references, notes._
+- **Completed:** 2026-10-11.
+- **Files changed:**
+  - `cmd/sqlgen/internal/livedb/livedb.go` (new): `PostgresAddr`, `MySQLServerAddr` (lazy
+    containers, `sync.Once`, short-mode skip), `PostgresURL`, `MySQLDSN`, `ExecSQL`,
+    `NewPostgresDatabase`, `NewMySQLDatabase`, `NewSQLiteDatabase`, and `ApplySetup`. `ApplySetup`
+    applies `schema.sql`, `views/*.sql` in lexical order, then `after_views.sql` when present, one
+    `Exec` per file. On MySQL it adds `multiStatements=true` to the DSN. It has no caller yet; 31.3's twin is the first
+    to run it.
+  - `cmd/sqlgen/internal/livedb/parity.go` (new): `ParityException`, `ParityExceptions`, and
+    `NormalizeTree(t, dialect, tree)`.
+    - View `source` now also covers `manifest/entities/*.json`. A split-layout index entry (one
+      with `file`) carries no source and is skipped. A view entity with an empty or missing
+      `source` is an error in both layouts.
+    - The new MySQL literal-default exception quotes PRD §6.1. It rewrites a `true`/`false`
+      `default` to `1`/`0` only on a `tinyint(1)` column, in the JSON manifest (both layouts) and
+      the markdown column table. It applies to MySQL only.
+    - JSON is re-encoded without HTML escaping, so diffs stay readable.
+  - `cmd/sqlgen/internal/livedb/parity_test.go` (new): table-driven unit tests, no container.
+  - `cmd/sqlgen/cli/introspect_integration_test.go`: the helpers and exceptions are removed and
+    the suite calls `livedb`. `dialectFixtures` stays. `mysqlMatchDDL` gains
+    `active BOOLEAN NOT NULL DEFAULT TRUE` on `accounts`.
+  - `guidelines/ARCHITECTURE.md`: `internal/livedb/` added to the CLI layout tree and the
+    package table.
+- **Drivers:** `livedb` blank-imports `parser/introspect`, which registers the pgx, mysql and
+  sqlite drivers that sqlgen itself opens. Importing the three driver packages directly would
+  make `go mod tidy` add them as direct `cmd/sqlgen` requirements, with modernc sqlite resolving
+  to v1.60.1 instead of the parser's v1.48.2.
+- **Fail-first, view `source` replaced by a no-op:** `TestGenerate_DatabaseSourceMatchesFiles`
+  fails on all three dialects:
+  ```
+  --- FAIL: TestGenerate_DatabaseSourceMatchesFiles/postgres
+  -   "source": "-- @pk: id\nCREATE VIEW active_users AS\nSELECT u.id, u.email, u.status FROM users u WHERE u.status = 'active';\n",
+  +   "source": " SELECT id,\n    email,\n    status\n   FROM users u\n  WHERE (status = 'active'::user_status);",
+  --- FAIL: TestGenerate_DatabaseSourceMatchesFiles/mysql
+  +   "source": "select `a`.`id` AS `id`,`a`.`name` AS `name` from `t2`.`accounts` `a` where (`a`.`plan` = 'pro')",
+  --- FAIL: TestGenerate_DatabaseSourceMatchesFiles/sqlite
+  -   "source": "CREATE VIEW top_categories AS\nSELECT c.id, c.name FROM categories c WHERE c.parent_id IS NULL;\n",
+  +   "source": "CREATE VIEW top_categories AS\nSELECT c.id, c.name FROM categories c WHERE c.parent_id IS NULL",
+  ```
+  It fails in each dialect's markdown view page too (`- **Source:** ...`). The CLI fixture uses
+  the single layout. The split-layout path is pinned by the unit tests, and 31.3's `graphql` and
+  `tenancy_postgres` twins exercise it.
+- **Fail-first, MySQL literal default replaced by a no-op (with the new fixture column):**
+  ```
+  --- FAIL: TestGenerate_DatabaseSourceMatchesFiles/mysql
+  "manifest/account.md": ... | `active` | Active | `bool` | `tinyint(1)` |  |  |  | `
+  -   "true",
+  +   "1",
+  "manifest/manifest_gen.json": ...
+        "db_type": "tinyint(1)",
+  -     "default": "true",
+  +     "default": "1",
+  ```
+- **Binary and module graph:** `go list -deps .` in `cmd/sqlgen` is identical before and after
+  (459 packages, no `livedb` and no `testcontainers`). `testcontainers-go` and its `mysql` and
+  `postgres` modules were already direct requirements, and `go.mod`/`go.sum` are unchanged.
+  `go mod tidy -diff` is not clean at HEAD either: in workspace mode it wants the unpublished
+  `sqlgen` and `sqlgen/parser` v0.1.0. Its output is byte-identical with and without this change.
+- **Tests:** `go test -race -count=1 ./cli/... ./internal/...` in `cmd/sqlgen` (Docker) green
+  on the final code (`cli` 86.0s). `make check` green. `make check-examples` was not run: no changed path matches
+  its trigger table, since only test files under `cli/` changed. `/security-review` was not
+  triggered: the only `cli/**` change is a test file, not a subcommand.
+- **Auto-review:** 0 high-confidence issues. The reviewer independently confirmed the
+  boolean-default fail-first. It ran both markdown regexes over every example page: all 5 MySQL
+  `tinyint(1)` rows and all 11 view pages match, including those in the split-layout `graphql`
+  and `tenancy_postgres`. It found the driver blank-import sound. Applied its two doc fixes: the
+  ARCHITECTURE.md row now says the E2E harness shares the package through `TestE2EDatabaseTwin`,
+  and the `ApplySetup` bullet says it has no caller yet. Its latent finding went to `backlog.md`:
+  a view with a comment would get past `markdownViewSource`, though the twin would fail loudly.
 
 ## 31.3 Database twin — every `files` example from a live database
 

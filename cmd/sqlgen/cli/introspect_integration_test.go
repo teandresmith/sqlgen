@@ -1,161 +1,19 @@
 package cli
 
 import (
-	"context"
-	"database/sql"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"io/fs"
 	"os"
 	"os/exec"
 	"path/filepath"
-	"regexp"
 	"strings"
-	"sync"
-	"sync/atomic"
 	"testing"
 
 	"github.com/google/go-cmp/cmp"
-	"github.com/testcontainers/testcontainers-go"
-	tcmysql "github.com/testcontainers/testcontainers-go/modules/mysql"
-	tcpostgres "github.com/testcontainers/testcontainers-go/modules/postgres"
-	"github.com/testcontainers/testcontainers-go/wait"
+
+	"github.com/teandresmith/sqlgen/cmd/sqlgen/internal/livedb"
 )
-
-// The containers start on first use rather than in TestMain, so the rest of
-// the package does not wait on them. Ryuk removes them when the binary exits.
-var (
-	pgOnce    sync.Once
-	pgAddr    string
-	pgErr     error
-	mysqlOnce sync.Once
-	mysqlAddr string
-	mysqlErr  error
-
-	// liveDBSeq names each test's database.
-	liveDBSeq atomic.Int64
-)
-
-const liveDBPassword = "test"
-
-func requireLiveDatabase(t *testing.T) {
-	t.Helper()
-	if testing.Short() {
-		t.Skip("skipping live-database test in short mode")
-	}
-}
-
-func postgresAddr(t *testing.T) string {
-	t.Helper()
-	requireLiveDatabase(t)
-	pgOnce.Do(func() {
-		ctx := context.Background()
-		c, err := tcpostgres.Run(ctx, "postgres:16-alpine",
-			tcpostgres.WithDatabase("sqlgen"),
-			tcpostgres.WithUsername("test"),
-			tcpostgres.WithPassword(liveDBPassword),
-			testcontainers.WithWaitStrategy(
-				wait.ForLog("database system is ready to accept connections").WithOccurrence(2),
-			),
-		)
-		if err != nil {
-			pgErr = err
-			return
-		}
-		pgAddr, pgErr = c.PortEndpoint(ctx, "5432/tcp", "")
-	})
-	if pgErr != nil {
-		t.Fatalf("starting postgres: %v", pgErr)
-	}
-	return pgAddr
-}
-
-func mysqlServerAddr(t *testing.T) string {
-	t.Helper()
-	requireLiveDatabase(t)
-	mysqlOnce.Do(func() {
-		ctx := context.Background()
-		c, err := tcmysql.Run(ctx, "mysql:8.0",
-			tcmysql.WithDatabase("sqlgen"),
-			tcmysql.WithUsername("root"),
-			tcmysql.WithPassword(liveDBPassword),
-		)
-		if err != nil {
-			mysqlErr = err
-			return
-		}
-		mysqlAddr, mysqlErr = c.PortEndpoint(ctx, "3306/tcp", "")
-	})
-	if mysqlErr != nil {
-		t.Fatalf("starting mysql: %v", mysqlErr)
-	}
-	return mysqlAddr
-}
-
-func postgresURL(addr, database string) string {
-	return "postgres://test:" + liveDBPassword + "@" + addr + "/" + database + "?sslmode=disable"
-}
-
-func mysqlDSN(addr, database string) string {
-	return "root:" + liveDBPassword + "@tcp(" + addr + ")/" + database
-}
-
-// execSQL runs statements, which may be several, on the database at conn.
-func execSQL(t *testing.T, driver, conn, statements string) {
-	t.Helper()
-	db, err := sql.Open(driver, conn)
-	if err != nil {
-		t.Fatalf("opening %s: %v", driver, err)
-	}
-	defer db.Close() //nolint:errcheck // test cleanup
-	if _, err := db.ExecContext(t.Context(), statements); err != nil {
-		t.Fatalf("applying SQL: %v\n%s", err, statements)
-	}
-}
-
-// newPostgresDatabase creates an empty database and returns its URL.
-func newPostgresDatabase(t *testing.T) string {
-	t.Helper()
-	addr := postgresAddr(t)
-	name := fmt.Sprintf("t%d", liveDBSeq.Add(1))
-	execSQL(t, "pgx", postgresURL(addr, "sqlgen"), "CREATE DATABASE "+name)
-	t.Cleanup(func() {
-		db, err := sql.Open("pgx", postgresURL(addr, "sqlgen"))
-		if err != nil {
-			return
-		}
-		defer db.Close() //nolint:errcheck // test cleanup
-		_, _ = db.ExecContext(context.Background(), "DROP DATABASE IF EXISTS "+name+" WITH (FORCE)")
-	})
-	return postgresURL(addr, name)
-}
-
-// newMySQLDatabase creates an empty database and returns its DSN.
-func newMySQLDatabase(t *testing.T) string {
-	t.Helper()
-	addr := mysqlServerAddr(t)
-	name := fmt.Sprintf("t%d", liveDBSeq.Add(1))
-	execSQL(t, "mysql", mysqlDSN(addr, ""), "CREATE DATABASE "+name)
-	t.Cleanup(func() {
-		db, err := sql.Open("mysql", mysqlDSN(addr, ""))
-		if err != nil {
-			return
-		}
-		defer db.Close() //nolint:errcheck // test cleanup
-		_, _ = db.ExecContext(context.Background(), "DROP DATABASE IF EXISTS "+name)
-	})
-	return mysqlDSN(addr, name)
-}
-
-// newSQLiteDatabase creates an empty database file and returns its path.
-func newSQLiteDatabase(t *testing.T) string {
-	t.Helper()
-	requireLiveDatabase(t)
-	path := filepath.Join(t.TempDir(), "app.db")
-	execSQL(t, "sqlite", path, "PRAGMA user_version = 1")
-	return path
-}
 
 // dialectFixture is one dialect's setup for the live-database CLI tests.
 // A test that does not apply to a dialect skips with the reason held here.
@@ -241,6 +99,7 @@ SELECT u.id, u.email, u.status FROM users u WHERE u.status = 'active';
 	id int unsigned NOT NULL AUTO_INCREMENT PRIMARY KEY,
 	name varchar(100) NOT NULL DEFAULT '',
 	plan ENUM('free','pro') NOT NULL DEFAULT 'free',
+	active BOOLEAN NOT NULL DEFAULT TRUE,
 	flags SET('beta','staff') NOT NULL DEFAULT '',
 	balance decimal(12,2) NOT NULL DEFAULT 0.00,
 	doubled decimal(14,2) GENERATED ALWAYS AS (balance * 2) STORED,
@@ -283,8 +142,8 @@ func dialectFixtures() []dialectFixture {
 		{
 			dialect:         "postgres",
 			driver:          "pgx",
-			newDatabase:     newPostgresDatabase,
-			apply:           func(t *testing.T, conn, s string) { t.Helper(); execSQL(t, "pgx", conn, s) },
+			newDatabase:     livedb.NewPostgresDatabase,
+			apply:           func(t *testing.T, conn, s string) { t.Helper(); livedb.ExecSQL(t, "pgx", conn, s) },
 			ddl:             pgMatchDDL,
 			view:            pgMatchView,
 			users:           "CREATE TABLE users (id integer PRIMARY KEY, name text NOT NULL);\n",
@@ -301,10 +160,10 @@ func dialectFixtures() []dialectFixture {
 		{
 			dialect:     "mysql",
 			driver:      "stdlib",
-			newDatabase: newMySQLDatabase,
+			newDatabase: livedb.NewMySQLDatabase,
 			apply: func(t *testing.T, conn, s string) {
 				t.Helper()
-				execSQL(t, "mysql", conn+"?multiStatements=true", s)
+				livedb.ExecSQL(t, "mysql", conn+"?multiStatements=true", s)
 			},
 			ddl:         mysqlMatchDDL,
 			view:        mysqlMatchView,
@@ -323,8 +182,8 @@ func dialectFixtures() []dialectFixture {
 		{
 			dialect:         "sqlite",
 			driver:          "stdlib",
-			newDatabase:     newSQLiteDatabase,
-			apply:           func(t *testing.T, conn, s string) { t.Helper(); execSQL(t, "sqlite", conn, s) },
+			newDatabase:     livedb.NewSQLiteDatabase,
+			apply:           func(t *testing.T, conn, s string) { t.Helper(); livedb.ExecSQL(t, "sqlite", conn, s) },
 			ddl:             sqliteMatchDDL,
 			view:            sqliteMatchView,
 			users:           "CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT NOT NULL);\n",
@@ -444,74 +303,10 @@ func manifestEntities(t *testing.T, outDir string) map[string]map[string]any {
 	return byTable
 }
 
-// sourceParityException is a documented way the generated tree differs by
-// source (PRD §6.1). normalize removes it from one file's content, and the
-// comparison applies it to both trees.
-type sourceParityException struct {
-	name      string
-	reason    string
-	normalize func(path, content string) (string, error)
-}
-
-// sourceParityExceptions is every allowed difference between the files and
-// database trees, on all three dialects.
-var sourceParityExceptions = []sourceParityException{{
-	name: "view source",
-	reason: "a view's manifest source is its definition as the database stores it: PostgreSQL's " +
-		"pg_get_viewdef deparse, MySQL's qualified and backticked text, SQLite's statement without " +
-		"its terminator. Under files it is the view file's text, annotations included.",
-	normalize: dropViewSource,
-}}
-
-// markdownViewSource is the Source line of a manifest view page, which the
-// Files section follows.
-var markdownViewSource = regexp.MustCompile("(?m)^- \\*\\*Source:\\*\\* `(?s:.*?)`\n\n## Files\n")
-
-func dropViewSource(path, content string) (string, error) {
-	switch {
-	case path == "manifest/manifest_gen.json":
-		var doc map[string]any
-		if err := json.Unmarshal([]byte(content), &doc); err != nil {
-			return "", err
-		}
-		entities, _ := doc["entities"].([]any)
-		for _, e := range entities {
-			if e, ok := e.(map[string]any); ok && e["kind"] == "view" {
-				if e["source"] == "" || e["source"] == nil {
-					return "", fmt.Errorf("view %v has no source", e["table"])
-				}
-				delete(e, "source")
-			}
-		}
-		out, err := json.MarshalIndent(doc, "", "  ")
-		return string(out), err
-	case strings.HasPrefix(path, "manifest/") && strings.HasSuffix(path, ".md"):
-		return markdownViewSource.ReplaceAllString(content, "## Files\n"), nil
-	default:
-		return content, nil
-	}
-}
-
-// normalizeTree applies every sourceParityException to tree.
-func normalizeTree(t *testing.T, tree map[string]string) map[string]string {
-	t.Helper()
-	out := make(map[string]string, len(tree))
-	for path, content := range tree {
-		for _, e := range sourceParityExceptions {
-			var err error
-			if content, err = e.normalize(path, content); err != nil {
-				t.Fatalf("parity exception %q on %s: %v", e.name, path, err)
-			}
-		}
-		out[path] = content
-	}
-	return out
-}
-
 // TestGenerate_DatabaseSourceMatchesFiles generates the same DDL under
 // source: files and source: database, into the same output path with the
 // same config path and manifest timestamp, and compares the two trees byte
-// for byte, less the sourceParityExceptions.
+// for byte, less the livedb.ParityExceptions.
 func TestGenerate_DatabaseSourceMatchesFiles(t *testing.T) {
 	for _, f := range dialectFixtures() {
 		t.Run(f.dialect, func(t *testing.T) {
@@ -541,7 +336,7 @@ func TestGenerate_DatabaseSourceMatchesFiles(t *testing.T) {
 			if len(fromFiles) == 0 {
 				t.Fatal("source files generated nothing")
 			}
-			if diff := cmp.Diff(normalizeTree(t, fromFiles), normalizeTree(t, fromDatabase)); diff != "" {
+			if diff := cmp.Diff(livedb.NormalizeTree(t, f.dialect, fromFiles), livedb.NormalizeTree(t, f.dialect, fromDatabase)); diff != "" {
 				t.Errorf("generated tree differs by source (-files +database):\n%s", diff)
 			}
 		})
