@@ -8,8 +8,9 @@
 > on all four §8 questions on 2026-10-11, each matching its recommendation, so no question is
 > open. This doc is the input to `/phase`.
 >
-> **Phase:** TBD (the next free slot after Phase 30). It is meant to be short: one fix, one
-> harness extension, and three small example modules.
+> **Phase:** 31 (`docs/tracker/phase-31.md`, broken down 2026-10-11). It is meant to be short:
+> one fix, one harness extension, and three small example modules. The §9 preview's N.0–N.4
+> are 31.0–31.4.
 >
 > **Hard dependency:** Phase 30 closed, with its carried-forward FIX queue drained (0 open as
 > of `5b1a3573`). File references are to HEAD `5b1a3573`.

@@ -3666,6 +3666,43 @@ Closure is `/close-phase 30`, with no sub-item of its own. It flips the design d
 - **Generating clients for virtual tables.**
 - **A stated minimum MySQL version.** Q7 keeps a narrow fallback instead.
 
+## Phase 31: Introspection Examples — `source: database` and `both` End to End
+
+> **Status: Not Started.** Design doc `docs/design/INTROSPECTION_EXAMPLES.md` (ACCEPTED 2026-10-11; the four questions in its §8 were ruled on 2026-10-11, each matching its recommendation; probe results in its §2). Proves that code generated from a live database compiles, runs, and matches what the same schema generates from files.
+
+**Why.**
+- **No test runs code generated from a live database.** Every E2E example uses `source: files`. The CLI live-database suite (30.10) generates from one small fixture per dialect and only builds the output. PRD §6.1 promises that `database` and `files` give "the same generated code and manifest", and that `both` generates the *future* schema. Neither claim is measured at example scale.
+- **The 2026-10-11 probe found one defect.** All 12 examples were regenerated from a live database (PG 16, MySQL 8.0, SQLite) and diffed against their goldens. Ten gave identical Go code. The two PostgreSQL ones lost every type comment: the PG introspector reads `pg_description` only for tables and columns, so an enum, composite or domain comment is dropped and its Go doc comment falls back to the default (design doc P1). The manifests differed only where PRD §6.1 already allows it: a view's `source`, and MySQL storing `TRUE` as `1`.
+
+**Normative spec:** PRD §6.1, §6.3 ("Comments: `pg_description`") and §8.1.7, already specified. 31.0 adds one sentence to §8.1.7 about the database twin and the `both` examples. No behavior change.
+
+**Depends on:** Phase 30 closed, with its FIX queue drained (0 open at `5b1a3573`). **Resolves** the 2026-10-11 backlog line on PostgreSQL type comments (31.1; promoted into the phase and removed from the backlog).
+
+**Sub-items** (`docs/tracker/phase-31.md`):
+- **31.0** — **PRD and guideline sync.** No code. The PRD §8.1.7 sentence, plus `guidelines/TESTING.md` §10: the new modules, the setup convention, Docker for `both` goldens, and the new test. *Blocks every other sub-item.*
+- **31.1** — **PostgreSQL type comments (P1).** The introspector reads `COMMENT ON TYPE` / `COMMENT ON DOMAIN` from `pg_description` and sets `Comment` on every enum, composite and domain. The PG parity fixture and the CLI fixture gain type comments, so `assertSchemaParity` and `TestGenerate_DatabaseSourceMatchesFiles` pin them. *Depends on 31.0.*
+- **31.2** — **Shared live-database test package.** `cmd/sqlgen/internal/livedb` holds the container starters, the per-test database creators, the setup applier and the parity exceptions, and the CLI suite moves onto it. The view-`source` exception covers the split manifest layout, and a new MySQL literal-default exception covers PRD §6.1's stored-value rule. Each exception has a test that fails without it. *Depends on 31.0; runs alongside 31.1.*
+- **31.3** — **Database twin.** `TestE2EDatabaseTwin` regenerates every `files` example from a live database built from its own setup files and compares it with `expected/`, applying only the shared exceptions. It also adds the `after_views.sql` convention, which the `postgres` example's `order_totals` index moves into. *Depends on 31.1, 31.2.*
+- **31.4** — **`source: both` examples.** `introspect_postgres`, `introspect_mysql` and `introspect_sqlite` each have:
+  - a base schema in the database and pending migrations in `migrations/`;
+  - a runtime suite that runs against the migrated database.
+
+  `TestE2EGoldenFiles` learns each example's source. For a `both` example it checks three things: `both` gives the golden byte for byte, `database` on the migrated database matches it, and `files` on schema plus migrations matches it. Under `-short`, only the `files` check runs. *Depends on 31.2; its three modules run in parallel.*
+
+Closure is `/close-phase 31`, with no sub-item of its own. It flips the design doc to SYNCED.
+
+**Tests required:**
+- **Fail-first:** P1 has a parity test that failed before the fix, and every parity exception has a test that fails without it.
+- **Twin:** `TestE2EDatabaseTwin` passes for all 12 `files` examples.
+- **`both` examples:** each one's `both` output equals `expected/`, and its `database` and `files` twins equal it after normalization.
+- **Runtime:** each `introspect_*` suite covers every overlay shape the design doc's §5.3 marks ✓ for its dialect.
+- **Sweep:** `make check`, `make check-examples` and `make test-integration` are green. P1 changes no `files` output, so no existing golden should churn. Any golden change outside the new modules must be explained in the sub-item's Completion Record.
+
+**Out of scope:**
+- **New introspection behavior,** and the by-source divergences in `docs/tracker/backlog.md`. A twin or example that trips one goes through findings triage (ruling Q4).
+- **`go:generate` for the new examples.** Generating needs a live database.
+- **A database version matrix.** PG 16 and MySQL 8.0 only.
+
 ## Deferred Features
 
 These remain deferred until consumer demand justifies the implementation cost. Phase 15 establishes the unified client surface as feature-complete for direct Go consumers; Phase 16 extends it to GraphQL consumers. The deferred items below extend further or address adjacent surfaces.
