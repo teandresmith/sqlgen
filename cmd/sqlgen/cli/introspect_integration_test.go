@@ -223,6 +223,8 @@ CREATE TABLE users (
 );
 COMMENT ON TABLE users IS 'Application users';
 COMMENT ON COLUMN users.email IS 'Login address';
+COMMENT ON TYPE user_status IS 'Lifecycle state of a user';
+COMMENT ON DOMAIN positive_int IS 'Integer above zero';
 CREATE TABLE memberships (
 	user_id bigint NOT NULL REFERENCES users(id),
 	account_id integer NOT NULL REFERENCES billing.accounts(id),

@@ -95,28 +95,29 @@ PRD Sections: 4.1.1, 4.2, 4.3, 6.1, 6.3, 8.1.7, 16.2, 30.4.2
 
 **PRD Reference:** Sections 6.1, 6.3
 
-**Status:** Not Started
+**Status:** Complete
 
 ### Tasks
 
-- [ ] Fail first. Add type comments to `pgParityFixture` (`parser/introspect/parity_fixtures_test.go`):
+- [x] Fail first. Add type comments to `pgParityFixture` (`parser/introspect/parity_fixtures_test.go`):
   - `COMMENT ON TYPE probe_app.status_enum`;
   - a composite type `probe_app.address` with `COMMENT ON TYPE`;
   - `COMMENT ON DOMAIN probe_app.positive_int`.
 
-  Confirm that `TestPostgresIntrospect` (through `assertSchemaParity`) fails on `Enums[…].Comment`,
+  Confirm that `TestPostgresIntrospect_NoSearchPath` (the `assertSchemaParity` test on this
+  fixture) fails on `Enums[…].Comment`,
   `CompositeTypes[…].Comment` and `DomainTypes[…].Comment`. Quote the failure.
-- [ ] `parser/introspect/postgres.go`: read comments for every type in one query per run:
+- [x] `parser/introspect/postgres.go`: read comments for every type in one query per run:
   - the query is `pg_description` joined on `pg_type` (`classoid = 'pg_catalog.pg_type'::regclass`,
     `objsubid = 0`), keyed by schema and type name;
   - set `Comment` in `introspectEnums`, `introspectCompositeTypes` and `introspectDomainTypes`;
   - a domain's comment lives on its `pg_type` row, so the same map covers all three kinds.
-- [ ] Wrap errors in the file's style (`introspect postgres type comments: %w`).
-- [ ] Add a type comment to the CLI suite's PG fixture `ddl` (`cmd/sqlgen/cli/introspect_integration_test.go`,
+- [x] Wrap errors in the file's style (`introspect postgres type comments: %w`).
+- [x] Add a type comment to the CLI suite's PG fixture `ddl` (`cmd/sqlgen/cli/introspect_integration_test.go`,
   `dialectFixtures`), so `TestGenerate_DatabaseSourceMatchesFiles` pins the generated Go doc comment.
 - [x] Remove the 2026-10-11 PostgreSQL type-comment line from `docs/tracker/backlog.md`. Done
   at breakdown (2026-10-11): the phase owns the defect now.
-- [ ] Probe again: regenerate the `postgres` and `postgres_stdlib` examples from a live
+- [x] Probe again: regenerate the `postgres` and `postgres_stdlib` examples from a live
   database. `enums_gen.go` and `types_gen.go` must be identical to `expected/`. 31.3 makes this
   a standing test.
 
@@ -131,15 +132,61 @@ PRD Sections: 4.1.1, 4.2, 4.3, 6.1, 6.3, 8.1.7, 16.2, 30.4.2
 
 ### Tests Required
 
-- [ ] `TestPostgresIntrospect` parity passes with type comments on an enum, a composite and a
-  domain, and fails with the new query reverted. Quote the failure.
-- [ ] `TestGenerate_DatabaseSourceMatchesFiles/postgres` passes with a commented type in the
+- [x] `TestPostgresIntrospect_NoSearchPath` parity passes with type comments on an enum, a
+  composite and a domain, and fails with the new query reverted. Quote the failure.
+- [x] `TestGenerate_DatabaseSourceMatchesFiles/postgres` passes with a commented type in the
   fixture, and fails with the query reverted.
-- [ ] The existing `parser/introspect` suite passes without `-short`.
+- [x] The existing `parser/introspect` suite passes without `-short`.
 
 ### Completion Record
 
-_Filled in when complete: files changed, commit references, notes._
+- **Completed:** 2026-10-11.
+- **Files changed:**
+  - `parser/introspect/postgres.go`: `typeComments` reads every type comment in one query
+    (`pg_description` on `pg_type`, `objsubid = 0`), keyed by schema and type name.
+    `introspectEnums`, `introspectCompositeTypes` and `introspectDomainTypes` set `Comment` from it.
+  - `parser/introspect/parity_fixtures_test.go`: `pgParityFixture` gains a composite
+    `probe_app.address` and comments on `status_enum`, `address` and `positive_int`.
+    `probe_other.region` stays uncommented, so the default path is covered too.
+  - `cmd/sqlgen/cli/introspect_integration_test.go`: `pgMatchDDL` gains
+    `COMMENT ON TYPE user_status` and `COMMENT ON DOMAIN positive_int`.
+- **Fail-first (parser), fixture added, query absent:** all four
+  `TestPostgresIntrospect_NoSearchPath` subtests fail:
+  ```
+  Enums: { Name: "status_enum", ...
+  -   Comment: "Lifecycle state of a user",
+  +   Comment: "",
+  CompositeTypes: { Name: "address", ...
+  -   Comment: "Postal address",
+  +   Comment: "",
+  DomainTypes: { ... BaseType: "integer", ...
+  -   Comment: "Integer above zero",
+  +   Comment: "",
+  ```
+- **Fail-first (CLI), fixture added, `postgres.go` reverted to HEAD:**
+  ```
+  --- FAIL: TestGenerate_DatabaseSourceMatchesFiles/postgres
+  -   // UserStatus — Lifecycle state of a user
+  +   // UserStatus represents the user_status enum type.
+  -   // PositiveInt — Integer above zero
+  +   // PositiveInt is a domain type alias for int32.
+  ```
+- **Probe again:** `postgres` and `postgres_stdlib` regenerated from a live PostgreSQL 16 database
+  built from `schema.sql` and `views/*.sql` (plus the `order_totals` index for `postgres`).
+  `enums_gen.go` and `types_gen.go` are byte-identical to `expected/` in both. The only remaining
+  `postgres` difference is the view `source` in the manifest (`manifest_gen.json` and three view
+  `.md` files), which 31.2's exception covers. `postgres_stdlib` is identical apart from
+  hand-written tests.
+- **Tests:** `go test ./introspect/` (parser, without `-short`) green; `go test ./cli/` (without
+  `-short`) green; `make check` green; `make check-examples` green. No golden changed.
+- **Tracker fix:** the fail-first test is `TestPostgresIntrospect_NoSearchPath`, which applies
+  `pgParityFixture`; `TestPostgresIntrospect` has its own inline DDL. Design §6 said "one query
+  per schema, keyed by type OID"; it now says one query per run, keyed by schema and type name.
+- **Auto-review:** 0 high-confidence issues; fail-first independently confirmed. Applied its
+  design §6 wording fix (the CLI test has its own fixture, `pgMatchDDL`, rather than the shared
+  probe fixture) and its rename of the map key type to `qualifiedType`, since `sqlite.go` uses
+  `typeName` for local variables. Not applied: an uncommented type in `pgMatchDDL`. The parser
+  parity test already covers the default path through `probe_other.region`.
 
 ## 31.2 Shared live-database test package — `cmd/sqlgen/internal/livedb`
 

@@ -30,6 +30,10 @@ CREATE TABLE probe_other.accounts (id integer PRIMARY KEY);
 CREATE SCHEMA probe_app;
 CREATE TYPE probe_app.status_enum AS ENUM ('active', 'inactive');
 CREATE DOMAIN probe_app.positive_int AS integer CONSTRAINT positive_int_check CHECK (VALUE > 0);
+CREATE TYPE probe_app.address AS (street text, city text);
+COMMENT ON TYPE probe_app.status_enum IS 'Lifecycle state of a user';
+COMMENT ON TYPE probe_app.address IS 'Postal address';
+COMMENT ON DOMAIN probe_app.positive_int IS 'Integer above zero';
 CREATE TABLE probe_app.users (
 	id bigserial PRIMARY KEY,
 	uid uuid NOT NULL DEFAULT gen_random_uuid(),

@@ -297,11 +297,11 @@ modules from their `go.mod`.
 
 - **Introspector:** read `pg_description` for `pg_type` objects (`classoid = 'pg_type'::regclass`,
   `objsubid = 0`), and set `Comment` on each `Enum`, `CompositeType` and `DomainType` it builds.
-  - One query per schema, keyed by type OID. This avoids a query per type.
+  - One query per run, keyed by schema and type name. This avoids a query per type.
   - A domain's comment is stored on its `pg_type` row too, so one query covers all three kinds.
 - **Parity fixture:** add `COMMENT ON TYPE` for an enum and a composite, and `COMMENT ON DOMAIN`,
-  to the shared probe fixture. `assertSchemaParity` then pins it, and so does the CLI's
-  `TestGenerate_DatabaseSourceMatchesFiles` fixture.
+  to the shared probe fixture, which `assertSchemaParity` then pins. The CLI's
+  `TestGenerate_DatabaseSourceMatchesFiles` fixture gets its own type comments.
 - **Fail-first:** revert the query, and the parity test fails on `Comment`.
 - **Other dialects:** MySQL and SQLite have no named types (PRD §6.3), so the fix is
   PostgreSQL only.

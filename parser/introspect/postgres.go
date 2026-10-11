@@ -51,13 +51,17 @@ func (pi *PostgresIntrospector) Introspect(ctx context.Context, connString strin
 		return fmt.Errorf("introspect postgres: ping: %w", err)
 	}
 
-	if err := pi.introspectEnums(ctx, schema, opts); err != nil {
+	comments, err := pi.typeComments(ctx)
+	if err != nil {
 		return err
 	}
-	if err := pi.introspectCompositeTypes(ctx, schema, opts); err != nil {
+	if err := pi.introspectEnums(ctx, schema, opts, comments); err != nil {
 		return err
 	}
-	if err := pi.introspectDomainTypes(ctx, schema, opts); err != nil {
+	if err := pi.introspectCompositeTypes(ctx, schema, opts, comments); err != nil {
+		return err
+	}
+	if err := pi.introspectDomainTypes(ctx, schema, opts, comments); err != nil {
 		return err
 	}
 	if err := pi.introspectTables(ctx, schema, opts); err != nil {
@@ -865,7 +869,43 @@ func (pi *PostgresIntrospector) introspectColumnComments(ctx context.Context, ta
 	return nil
 }
 
-func (pi *PostgresIntrospector) introspectEnums(ctx context.Context, schema *parser.Schema, opts IntrospectionOptions) error {
+type qualifiedType struct {
+	schema string
+	name   string
+}
+
+// typeComments returns the COMMENT ON TYPE or COMMENT ON DOMAIN text of every
+// user type. A domain's comment is stored on its pg_type row too.
+func (pi *PostgresIntrospector) typeComments(ctx context.Context) (map[qualifiedType]string, error) {
+	rows, err := pi.db.QueryContext(ctx, `
+		SELECT n.nspname, t.typname, d.description
+		FROM pg_catalog.pg_description d
+		JOIN pg_catalog.pg_type t ON d.objoid = t.oid
+		JOIN pg_catalog.pg_namespace n ON t.typnamespace = n.oid
+		WHERE d.classoid = 'pg_catalog.pg_type'::regclass
+		  AND d.objsubid = 0
+		  AND n.nspname NOT IN ('pg_catalog', 'information_schema')`)
+	if err != nil {
+		return nil, fmt.Errorf("introspect postgres type comments: %w", err)
+	}
+	defer rows.Close() //nolint:errcheck // rows.Close error is not actionable after reading
+
+	comments := make(map[qualifiedType]string)
+	for rows.Next() {
+		var key qualifiedType
+		var comment string
+		if err := rows.Scan(&key.schema, &key.name, &comment); err != nil {
+			return nil, fmt.Errorf("introspect postgres type comments: scanning: %w", err)
+		}
+		comments[key] = comment
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("introspect postgres type comments: iterating: %w", err)
+	}
+	return comments, nil
+}
+
+func (pi *PostgresIntrospector) introspectEnums(ctx context.Context, schema *parser.Schema, opts IntrospectionOptions, comments map[qualifiedType]string) error {
 	rows, err := pi.db.QueryContext(ctx, `
 		SELECT n.nspname, t.typname,
 		       array_agg(e.enumlabel ORDER BY e.enumsortorder)
@@ -894,9 +934,10 @@ func (pi *PostgresIntrospector) introspectEnums(ctx context.Context, schema *par
 		}
 
 		schema.Enums = append(schema.Enums, parser.Enum{
-			Name:   typname,
-			Schema: nspname,
-			Values: parsePostgresArray(valuesStr),
+			Name:    typname,
+			Schema:  nspname,
+			Values:  parsePostgresArray(valuesStr),
+			Comment: comments[qualifiedType{nspname, typname}],
 		})
 	}
 
@@ -906,7 +947,7 @@ func (pi *PostgresIntrospector) introspectEnums(ctx context.Context, schema *par
 	return nil
 }
 
-func (pi *PostgresIntrospector) introspectCompositeTypes(ctx context.Context, schema *parser.Schema, opts IntrospectionOptions) error {
+func (pi *PostgresIntrospector) introspectCompositeTypes(ctx context.Context, schema *parser.Schema, opts IntrospectionOptions, comments map[qualifiedType]string) error {
 	rows, err := pi.db.QueryContext(ctx, `
 		SELECT n.nspname, t.typname, c.oid
 		FROM pg_catalog.pg_type t
@@ -944,8 +985,9 @@ func (pi *PostgresIntrospector) introspectCompositeTypes(ctx context.Context, sc
 
 	for _, ref := range refs {
 		ct := parser.CompositeType{
-			Name:   ref.name,
-			Schema: ref.schema,
+			Name:    ref.name,
+			Schema:  ref.schema,
+			Comment: comments[qualifiedType{ref.schema, ref.name}],
 		}
 
 		attrRows, err := pi.db.QueryContext(ctx, `
@@ -970,7 +1012,7 @@ func (pi *PostgresIntrospector) introspectCompositeTypes(ctx context.Context, sc
 	return nil
 }
 
-func (pi *PostgresIntrospector) introspectDomainTypes(ctx context.Context, schema *parser.Schema, opts IntrospectionOptions) error {
+func (pi *PostgresIntrospector) introspectDomainTypes(ctx context.Context, schema *parser.Schema, opts IntrospectionOptions, comments map[qualifiedType]string) error {
 	rows, err := pi.db.QueryContext(ctx, `
 		SELECT n.nspname, t.typname,
 		       format_type(t.typbasetype, t.typtypmod),
@@ -1004,6 +1046,7 @@ func (pi *PostgresIntrospector) introspectDomainTypes(ctx context.Context, schem
 			continue
 		}
 		dt.BaseType = columnType(formatType, typSchema, typName, dt.Schema)
+		dt.Comment = comments[qualifiedType{dt.Schema, dt.Name}]
 		domains = append(domains, dt)
 		oids = append(oids, oid)
 	}
