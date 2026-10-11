@@ -1,6 +1,6 @@
 # Phase 31: Introspection Examples — `source: database` and `both` End to End
 
-Status: Not Started
+Status: In Progress
 PRD Sections: 4.1.1, 4.2, 4.3, 6.1, 6.3, 8.1.7, 16.2, 30.4.2
 
 > **Design.** `docs/design/INTROSPECTION_EXAMPLES.md` (ACCEPTED 2026-10-11) is the source for every
@@ -26,28 +26,28 @@ PRD Sections: 4.1.1, 4.2, 4.3, 6.1, 6.3, 8.1.7, 16.2, 30.4.2
 
 **PRD Reference:** Section 8.1.7
 
-**Status:** Not Started
+**Status:** Complete
 
 ### Tasks
 
-- [ ] PRD §8.1.7, "End-to-End Integration Tests (Example Projects)": add one paragraph.
+- [x] PRD §8.1.7, "End-to-End Integration Tests (Example Projects)": add one paragraph.
   - Every `files` example is also generated from a live database built from its own setup
     files, and must match its goldens apart from the differences §6.1 names.
   - The `introspect_*` examples generate under `source: both`. Their output must equal the
     output of `database` on the migrated database and of `files` on schema plus migrations.
-- [ ] PRD §8.1.7 example tree: add `introspect_postgres/` with `migrations/` and `after_views.sql`,
+- [x] PRD §8.1.7 example tree: add `introspect_postgres/` with `migrations/` and `after_views.sql`,
   and one line each for `introspect_mysql/` and `introspect_sqlite/`.
-- [ ] `guidelines/TESTING.md` §10 Layout: add the three `introspect_*` modules and
+- [x] `guidelines/TESTING.md` §10 Layout: add the three `introspect_*` modules and
   `after_views.sql`.
-- [ ] `guidelines/TESTING.md` §10: add a "Database setup" paragraph (design §4.2) giving the
+- [x] `guidelines/TESTING.md` §10: add a "Database setup" paragraph (design §4.2) giving the
   setup order: `schema.sql`, then `views/*.sql` in lexical order, then `after_views.sql`.
-- [ ] `guidelines/TESTING.md` §10 Running table:
+- [x] `guidelines/TESTING.md` §10 Running table:
   - `TestE2EDatabaseTwin` (needs Docker);
   - `TestE2EGoldenFiles` needs Docker for `both` examples outside `-short`;
   - `make update-golden-e2e` needs Docker.
-- [ ] `guidelines/TESTING.md` §10 "When to Add a New Example": cite the `introspect_*` modules
+- [x] `guidelines/TESTING.md` §10 "When to Add a New Example": cite the `introspect_*` modules
   under "a new feature spans the whole pipeline".
-- [ ] Cross-check every edit against design doc §7.
+- [x] Cross-check every edit against design doc §7.
 
 ### Acceptance Criteria
 
@@ -62,11 +62,34 @@ PRD Sections: 4.1.1, 4.2, 4.3, 6.1, 6.3, 8.1.7, 16.2, 30.4.2
 
 ### Tests Required
 
-- [ ] None (docs only). `make check` green.
+- [x] None (docs only). `make check` green.
 
 ### Completion Record
 
-_Filled in when complete: files changed, commit references, notes._
+- **Completed:** 2026-10-11.
+- **Files changed:** `docs/PRD.md` (§8.1.7 example tree gains `introspect_postgres/` with
+  `after_views.sql` and `migrations/`, plus `introspect_mysql/` and `introspect_sqlite/`; one
+  paragraph after "Golden file tests" states the twin and the three-way `both` invariant),
+  `guidelines/TESTING.md` (§10 Layout, new "Database Setup" subsection, Running table rows and
+  paragraph, "When to Add a New Example").
+  Also `docs/design/INTROSPECTION_EXAMPLES.md` (§4.2, §5.4, §10) and
+  `docs/tracker/IMPLEMENTATION_ORDER.md` (31.4 summary), from the review pass below.
+- **Inline doc fixes:** the §10 Layout tree listed a nonexistent `sqlite_stdlib/` and omitted
+  `postgres_stdlib/`, `graphql_null_wrappers/`, `graphql_top_level/`, `tenancy_mysql/` and
+  `tenancy_postgres/`; it now matches `cmd/sqlgen/testdata/examples/`. "When to Add" cited
+  `sqlite_stdlib` for the `database/sql` adapter; it now cites `postgres_stdlib`.
+- **Cross-check against design §7:** PRD change is §8.1.7 only, no behavior change; §6.3 untouched;
+  `docs/configuration.md` untouched.
+- **Tests:** `make check` green (exit 0, `refs-check` included). Docs only, so no
+  `check-examples` trigger.
+- **Auto-review:** 0 high-confidence issues. Applied its six doc corrections: TESTING §10 Running
+  rows (`TestE2EGoldenFiles` skips under `-short`; the twin "generates", it never regenerates),
+  the parity-exception wording, `migrations/` in lexical order (PRD §5.6); PRD §8.1.7 step 1
+  ("its inputs", not `schema.sql`); design §4.2 names all three `TestMain`s that create a
+  view index inline (`postgres`, `graphql`, `tenancy_postgres`), which 31.3 moves to
+  `after_views.sql`. The 31.4 `-short` `files` row rested on a false premise
+  (`TestE2EGoldenFiles` skips entirely under `-short`); the user ruled 2026-10-11 to drop it, so
+  design §5.4 / §10 and the 31.4 tasks now keep the whole-test `-short` skip.
 
 ## 31.1 PostgreSQL type comments — introspect `COMMENT ON TYPE` / `COMMENT ON DOMAIN` (P1)
 
@@ -258,10 +281,10 @@ _Filled in when complete: files changed, commit references, notes._
     Generate the copy under `source: database` and compare it, normalized. Finally generate
     the copy under `source: files` with `paths: [schema.sql, migrations/]` and compare it,
     normalized (design §5.2).
-  - **`-short`:** run only the `files` row, normalized, so the unit CI job still catches golden
-    drift without Docker.
+  - **`-short`:** no change. `TestE2EGoldenFiles` skips under `-short` for every example
+    (ruled 2026-10-11 at 31.0).
   - **`-update-e2e`:** build the base database and regenerate `expected/` under `both`. It
-    needs Docker, and errors clearly under `-short`.
+    needs Docker.
 - [ ] Per module, use the layout in design §5.1:
   - `go.mod` / `go.sum` per `guidelines/TESTING.md` §10;
   - `sqlgen.yml` with `source: both`, `connection.url: ${SQLGEN_EXAMPLE_DATABASE_URL}`,
@@ -329,13 +352,10 @@ _Filled in when complete: files changed, commit references, notes._
 - Each runtime suite passes against the migrated database, and exercises every §5.3 ✓ shape for
   its dialect.
 - The connection comes from a `${VAR}` reference (PRD §4.1.1, §4.3). No credentials are committed.
-- Under `-short`, `TestE2EGoldenFiles` still checks every `both` example through its `files` row
-  and starts no container.
 
 ### Tests Required
 
-- [ ] `TestE2EGoldenFiles/introspect_{postgres,mysql,sqlite}` green, with Docker and under
-  `-short`.
+- [ ] `TestE2EGoldenFiles/introspect_{postgres,mysql,sqlite}` green (Docker).
 - [ ] Fail-first for the three-way check: a deliberately wrong golden fails the `both` row, and
   an extra column in the migrated database fails the `database` row. Quote both and revert.
 - [ ] The runtime suite of each `introspect_*` module is green under `make test-examples`.

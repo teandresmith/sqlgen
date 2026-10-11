@@ -523,14 +523,39 @@ cmd/sqlgen/testdata/examples/
 │   └── models/                         ← generated output, checked in; hand-written
 │                                          package-internal tests may live here
 │       └── ...
+├── postgres_stdlib/
 ├── mysql/
 ├── sqlite/
-├── sqlite_stdlib/
-├── tenancy/
 ├── cache/
 ├── events/
-└── graphql/
+├── graphql/
+├── graphql_null_wrappers/
+├── graphql_top_level/
+├── tenancy/
+├── tenancy_mysql/
+├── tenancy_postgres/
+├── introspect_postgres/                ← source: both
+│   ├── sqlgen.yml                      ← connection.url: ${SQLGEN_EXAMPLE_DATABASE_URL}
+│   ├── schema.sql                      ← the database's current schema
+│   ├── views/
+│   ├── after_views.sql                 ← optional; see Database Setup
+│   ├── migrations/                     ← pending migrations, the `both` overlay
+│   ├── expected/
+│   ├── models/
+│   └── tests/                          ← runs against the migrated database
+├── introspect_mysql/                   ← source: both, same layout
+└── introspect_sqlite/                  ← source: both, same layout
 ```
+
+### Database Setup
+
+A database built from an example applies, in order:
+
+1. `schema.sql`;
+2. every `views/*.sql`, in lexical order;
+3. `after_views.sql`, when present.
+
+A statement that must run after the views, such as an index on a materialized view, goes in `after_views.sql`, never inline in `TestMain`. The example's `TestMain` and the E2E harness both read the same files, so the database the runtime suite tests and the one `TestE2EDatabaseTwin` generates from cannot drift. An `introspect_*` example's `TestMain` then applies `migrations/*.sql` in lexical order, as sqlgen reads a directory (PRD §5.6); the harness applies them only for the migrated database (see Running).
 
 ### Module Setup
 
@@ -555,10 +580,13 @@ The `replace` lets the example consume in-tree changes without publishing. CI / 
 | `make test-examples` | Run every example's tests against real DBs (requires Docker) |
 | `make lint-examples` | Run `golangci-lint` per example module |
 | `make check-examples` | Lint + test all examples |
-| `make update-golden-e2e` | Regenerate `expected/` trees across all examples |
-| `cd cmd/sqlgen && go test -run TestE2EGoldenFiles -count=1 -timeout=5m` | Run the golden-file harness only (no DB) |
+| `make update-golden-e2e` | Regenerate `expected/` trees across all examples (requires Docker: a `source: both` golden is generated against a live database) |
+| `cd cmd/sqlgen && go test -run TestE2EGoldenFiles -count=1 -timeout=5m` | Run the golden-file harness only (skips under `-short`). Requires Docker for the `source: both` examples |
+| `cd cmd/sqlgen && go test -run TestE2EDatabaseTwin -count=1 -timeout=10m` | Generate every `source: files` example under `source: database` from a live database and compare with `expected/` (requires Docker) |
 
 The `-update-e2e` flag is the per-test toggle that powers `make update-golden-e2e`. **Two consecutive runs must produce byte-identical output** — idempotency is part of the contract.
+
+`TestE2EDatabaseTwin` builds each example's database (Database Setup) in one shared PostgreSQL or MySQL container, or a temp SQLite file. It generates into a copy of the example and never writes goldens. A `source: both` example in `TestE2EGoldenFiles` checks three things: `both` against the base database (setup only) equals `expected/` byte for byte; `database` against the migrated database (setup, then `migrations/`) equals it; and `files` over `schema.sql` plus `migrations/` equals it. The last two compare after the shared parity exceptions, each a difference PRD §6.1 names. `TestE2EDatabaseTwin` skips under `-short`, so `make check` needs no Docker.
 
 ### Test File Split
 
@@ -577,8 +605,8 @@ Splitting keeps individual files narrow enough to scan and lets a CI shard pick 
 
 Add a new example module when:
 
-- A new dialect / driver needs end-to-end validation (e.g., `sqlite_stdlib` was a separate example to cover the `database/sql` adapter alongside the modernc CGO-free path).
-- A new feature spans the whole pipeline (cache, tenancy, events, graphql each got their own example).
+- A new dialect / driver needs end-to-end validation (e.g., `postgres_stdlib` is a separate example to cover the `database/sql` adapter alongside the pgx path).
+- A new feature spans the whole pipeline (cache, tenancy, events, graphql each got their own example; `source: both` got `introspect_postgres`, `introspect_mysql` and `introspect_sqlite`, one per dialect, because no existing example can switch source without losing what it covers).
 - An existing example would have to embed contradictory config to test a new shape.
 
 Otherwise, prefer extending an existing example. The graphql example is the rule — exercises every relationship variant + every scalar registry category in a single module.

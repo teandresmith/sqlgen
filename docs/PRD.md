@@ -2392,18 +2392,30 @@ testdata/examples/
 │   ├── views/
 │   ├── expected/
 │   └── tests/               # Same file structure (minus postgres-specific files)
-└── sqlite/                  # SQLite: equivalent coverage, type affinity tests
-    ├── ...
+├── sqlite/                  # SQLite: equivalent coverage, type affinity tests
+│   ├── ...
+├── introspect_postgres/     # PostgreSQL under source: both
+│   ├── sqlgen.yml           # source: both; connection.url from ${SQLGEN_EXAMPLE_DATABASE_URL}
+│   ├── schema.sql           # The database's current schema
+│   ├── views/
+│   ├── after_views.sql      # Optional: statements applied after the views (indexes on views)
+│   ├── migrations/          # Pending migrations: read by sqlgen, not applied before generation
+│   ├── expected/
+│   └── tests/               # Runs against the database with migrations/ applied
+├── introspect_mysql/        # MySQL under source: both; same layout as introspect_postgres/
+└── introspect_sqlite/       # SQLite under source: both; same layout as introspect_postgres/
 ```
 
 Each example test does the following:
 
-1. **Generate** — runs sqlgen against the example's `sqlgen.yml` and `schema.sql`
+1. **Generate** — runs sqlgen against the example's `sqlgen.yml` and its inputs
 2. **Compare** — diffs the generated output against committed golden files in `expected/`. Any difference fails the test.
 3. **Compile** — verifies the generated code compiles cleanly
 4. **Exercise** — the `tests/` directory contains Go tests that import the generated code and execute real operations against a test database (via `testcontainers-go` or SQLite in-memory) to verify correctness at runtime
 
 Golden file tests (`expected/`) catch unintended output changes. Runtime tests (`tests/`) catch logical bugs where the generated code compiles but produces wrong SQL or wrong behavior.
+
+The examples also test the database sources ([6.1](#61-source-modes)). Every example that uses `source: files` is generated a second time under `source: database`, from a live database built from its own setup files, and must match its `expected/` apart from the differences §6.1 names. The `introspect_*` examples generate under `source: both`, from a database built from their setup files with `migrations/` as the overlay. That output is the golden. Apart from the same differences, it must also equal what `database` generates from the database with `migrations/` applied, and what `files` generates from `schema.sql` plus `migrations/`.
 
 **Updating golden files:** When a template change intentionally alters output, golden files are regenerated with a single command (`make update-golden`) and the diff is reviewed in the PR.
 

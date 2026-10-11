@@ -3687,7 +3687,7 @@ Closure is `/close-phase 30`, with no sub-item of its own. It flips the design d
   - a base schema in the database and pending migrations in `migrations/`;
   - a runtime suite that runs against the migrated database.
 
-  `TestE2EGoldenFiles` learns each example's source. For a `both` example it checks three things: `both` gives the golden byte for byte, `database` on the migrated database matches it, and `files` on schema plus migrations matches it. Under `-short`, only the `files` check runs. *Depends on 31.2; its three modules run in parallel.*
+  `TestE2EGoldenFiles` learns each example's source. For a `both` example it checks three things: `both` gives the golden byte for byte, `database` on the migrated database matches it, and `files` on schema plus migrations matches it. Under `-short` it skips, like every example. *Depends on 31.2; its three modules run in parallel.*
 
 Closure is `/close-phase 31`, with no sub-item of its own. It flips the design doc to SYNCED.
 

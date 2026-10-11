@@ -133,7 +133,9 @@ The twin applies, in order:
 
 An example whose `TestMain` applies anything beyond `schema.sql` and its views moves that
 statement into `after_views.sql`, and the `TestMain` reads the file too, so the two cannot drift.
-Today that is the PostgreSQL example's `order_totals` unique index.
+Today that is the unique index on each materialized view with `@pk`: `postgres`
+(`order_totals`), `graphql` (`category_price_totals`) and `tenancy_postgres`
+(`workspace_line_totals`).
 
 The probe applied views in lexical order everywhere except `postgres`, where it used the
 `TestMain` order. `/phase` confirms lexical order works there too, or the convention takes an
@@ -285,7 +287,7 @@ feature coverage is what the dialect examples are for.
 | Mode | A `both` example |
 |---|---|
 | Default (integration) | Builds the base database (§5.2), generates under `both` and compares with `expected/` byte for byte, then runs the other two rows of §5.2. |
-| `-short` | Has no database, so it runs only the `files` row against `expected/`, normalized. Golden drift is still caught in the unit CI job, without Docker. |
+| `-short` | Skips, as every example does: `TestE2EGoldenFiles` skips under `-short`, so golden drift is caught in the integration job, not the unit job (ruled 2026-10-11). |
 | `-update-e2e` | Needs Docker, since it builds the base database to regenerate the golden. `make update-golden-e2e` therefore needs Docker whenever a `both` example exists, as `check-examples` already does. |
 
 `discoverExamples` needs no change. The examples CI workflow (`examples.yml`) discovers the new
@@ -374,5 +376,4 @@ This list is provisional; `/phase` produces the authoritative breakdown. Closure
    shape in the §5.3 table that is ✓ for its dialect.
 4. P1 is fixed, with a parity test that failed first.
 5. Every parity exception has a test that fails without it.
-6. `make check`, `make check-examples` and `make test-integration` are green. Under `-short`,
-   `TestE2EGoldenFiles` still checks the `both` examples through their `files` row.
+6. `make check`, `make check-examples` and `make test-integration` are green.
