@@ -827,6 +827,10 @@ func (p *Parser) parseIndex(idx *sqlparser.IndexDefinition) parser.Constraint {
 			Columns: cols,
 		}
 	case sqlparser.IndexTypeUnique:
+		// With no index name, MySQL names the key after its CONSTRAINT symbol.
+		if name == "" {
+			name = idx.Info.ConstraintName.String()
+		}
 		return parser.Constraint{
 			Name:    name,
 			Type:    parser.Unique,

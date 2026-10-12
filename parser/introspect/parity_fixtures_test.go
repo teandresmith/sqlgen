@@ -112,7 +112,8 @@ CREATE TABLE m_users (
 	total decimal(12,2) GENERATED ALWAYS AS (price * 2) STORED,
 	vtotal decimal(12,2) AS (price * 3) VIRTUAL,
 	` + "`order`" + ` int COMMENT 'reserved word',
-	CONSTRAINT m_users_price_check CHECK (price >= 0)
+	CONSTRAINT m_users_price_check CHECK (price >= 0),
+	CONSTRAINT m_users_u_key UNIQUE (u)
 ) COMMENT='users table';
 CREATE TABLE m_pairs (
 	a int NOT NULL,
@@ -122,6 +123,7 @@ CREATE TABLE m_pairs (
 	parent_b int,
 	PRIMARY KEY (b, a),
 	UNIQUE KEY m_pairs_c (c, a),
+	CONSTRAINT m_pairs_sym UNIQUE KEY m_pairs_ac (a, c),
 	CONSTRAINT m_pairs_parent_fk FOREIGN KEY (parent_b, parent_a) REFERENCES m_pairs (b, a)
 );
 CREATE TABLE ` + "`MixedCase` (`Id` int PRIMARY KEY, `createdAt` datetime)" + `;

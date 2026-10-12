@@ -2739,6 +2739,18 @@ func TestDerivedConstraintNames(t *testing.T) {
 			},
 		},
 		{
+			name: "a unique key without an index name takes its constraint name",
+			sql: `CREATE TABLE cu (s int, t int, u int, v int, CONSTRAINT cu_s_key UNIQUE (s), CONSTRAINT cu_v_key UNIQUE KEY cu_v_idx (v));
+				ALTER TABLE cu ADD CONSTRAINT cu_t_key UNIQUE (t);
+				ALTER TABLE cu ADD CONSTRAINT cu_u_key UNIQUE KEY (u);`,
+			want: []string{"cu UNIQUE cu_s_key", "cu UNIQUE cu_t_key", "cu UNIQUE cu_u_key", "cu UNIQUE cu_v_idx"},
+		},
+		{
+			name: "a unique key named by its constraint drops by that name",
+			sql: `CREATE TABLE cd (a int, CONSTRAINT cd_a_key UNIQUE (a));
+				ALTER TABLE cd DROP INDEX cd_a_key;`,
+		},
+		{
 			name: "a primary key is PRIMARY whatever its declared name",
 			sql:  `CREATE TABLE pk3 (a int, CONSTRAINT mypk PRIMARY KEY (a));`,
 			want: []string{"pk3 PRIMARY KEY PRIMARY"},
@@ -2786,6 +2798,11 @@ func TestExpressionKeys(t *testing.T) {
 		{
 			name: "a named expression key keeps its name",
 			sql:  `CREATE TABLE e (a int, b int, KEY a ((b + 1)), KEY (a));`,
+			want: []string{"e INDEX a_2 [a]"},
+		},
+		{
+			name: "a unique expression key takes its constraint name",
+			sql:  `CREATE TABLE e (a int, b int, CONSTRAINT a UNIQUE ((b + 1)), KEY (a));`,
 			want: []string{"e INDEX a_2 [a]"},
 		},
 		{

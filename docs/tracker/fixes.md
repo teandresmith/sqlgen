@@ -29,6 +29,50 @@ _No open fixes._
 
 <!-- fixes:resolved:begin -->
 
+### FIX-299
+
+- **Status:** Resolved
+- **Severity:** blocking
+- **Origin:** phase 31, parser/mysql
+- **Surfaced by:** 31.4 three-way probe of `introspect_mysql` (2026-10-11)
+
+**Issue.** The MySQL file parser drops the `CONSTRAINT <symbol>` name of a
+named UNIQUE key, so `source: files` and `source: both` name the index after
+its column while the database names it after the symbol. PRD §6.1 promises the
+same constraint names under both sources. Measured on MySQL 8.0 with
+`CREATE TABLE z (…, CONSTRAINT z_s_key UNIQUE (s))`, `ALTER TABLE z ADD
+CONSTRAINT z_t_key UNIQUE (t)` and `ALTER TABLE z ADD CONSTRAINT z_u_key UNIQUE
+KEY (u)`: `information_schema.STATISTICS` gives `z_s_key`, `z_t_key`,
+`z_u_key`; the `files` manifest's `indexes[].name` gives `s`, `t`, `u`. The Go
+code is identical; only the manifest (JSON and markdown) differs.
+
+**Root cause.** `parseIndex` (`parser/mysql/mysql.go:817-848`) names a UNIQUE
+key from `idx.Info.Name`, the optional index name, and ignores
+`idx.Info.ConstraintName`, the vitess field holding the `CONSTRAINT` symbol.
+With no index name, the unnamed-key derivation then names it after its first
+column. MySQL uses the symbol as the index name when no index name is given.
+
+**Suggested fix.**
+- In `parseIndex`, for a UNIQUE key, fall back to `idx.Info.ConstraintName`
+  when `idx.Info.Name` is empty (an explicit index name still wins, as in MySQL).
+- Fail-first parser test in `parser/mysql/mysql_test.go`: the three forms above
+  (inline in `CREATE TABLE`, `ADD CONSTRAINT … UNIQUE`, `ADD CONSTRAINT … UNIQUE
+  KEY`) plus `CONSTRAINT sym UNIQUE KEY idx (c)`, which MySQL names `idx`.
+- Pin the database side in the MySQL parity fixture so `assertSchemaParity`
+  covers a named UNIQUE constraint.
+
+**References.**
+- PRD §6.1 — "the same columns, types, defaults, constraints and constraint
+  names ([5.2])".
+- `parser/mysql/mysql.go:1131-1132` (`applyAlterOption`: vitess parses
+  `ADD [CONSTRAINT x] UNIQUE …` as `AddIndexDefinition`, which reaches
+  `parseIndex`; `AddConstraintDefinition` carries only FOREIGN KEY and CHECK,
+  via `parseConstraintDef`).
+- vitess `sqlparser.IndexInfo.ConstraintName` (`go/vt/sqlparser/ast.go:2276`).
+- Phase 31 ruling Q4 (findings triage); the user chose to fix it in 31.4.
+
+**Resolution notes.** `parseIndex` (`parser/mysql/mysql.go`) names a UNIQUE key after its `CONSTRAINT` symbol when it has no index name; an explicit index name still wins, as in MySQL. Fail-first: the new `TestDerivedConstraintNames` case (inline `CONSTRAINT … UNIQUE`, `ADD CONSTRAINT … UNIQUE`, `ADD CONSTRAINT … UNIQUE KEY`, and `CONSTRAINT sym UNIQUE KEY idx`) got `s`/`t`/`u` against HEAD, and `TestMySQLIntrospect_ProbeFixture` / `TestMySQLIntrospect_TableConstraints`, with `CONSTRAINT m_users_u_key UNIQUE (u)` added to the MySQL parity fixture, failed on `u` vs `m_users_u_key`; all pass after the fix. No committed example uses the shape (the in-progress `introspect_mysql` migration does): `TestE2EGoldenFiles` and `TestE2EDatabaseTwin` pass with no golden churn, and `make check` and `make check-examples` are green. The `introspect_mysql` three-way probe now differs only by the two named parity exceptions. Inline, from the review: `TestExpressionKeys` pins that a functional `CONSTRAINT sym UNIQUE ((expr))` keeps `sym`, and `TestDerivedConstraintNames` that `DROP INDEX <symbol>` drops the key; the MySQL parity fixture also pins `CONSTRAINT m_pairs_sym UNIQUE KEY m_pairs_ac (a, c)` against the database (the index name wins); the reviewer's three tracker-reference corrections are applied. `DROP CONSTRAINT <symbol>` still drops only a CHECK, already on the backlog (2026-10-09 line).
+
 ### FIX-275
 
 - **Status:** Resolved
