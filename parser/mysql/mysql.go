@@ -697,14 +697,6 @@ func (p *Parser) parseColumn(tableName string, col *sqlparser.ColumnDefinition) 
 	// Inline FK reference.
 	if opts.Reference != nil {
 		ref := opts.Reference
-		var refCol string
-		if len(ref.ReferencedColumns) > 0 {
-			refCol = ref.ReferencedColumns[0].String()
-		}
-		c.FKReference = &parser.FKReference{
-			Table:  ref.ReferencedTable.Name.String(),
-			Column: refCol,
-		}
 		constraints = append(constraints, parser.Constraint{
 			Type:             parser.ForeignKey,
 			Columns:          []string{c.Name},
@@ -1234,18 +1226,17 @@ func (p *Parser) replaceColumn(table *parser.Table, name string, def *sqlparser.
 // PRIMARY KEY and every UNIQUE index on the column, declared inline or at table
 // level, and every foreign key on it (measured on MySQL 8.0, SHOW CREATE TABLE
 // after the ALTER).
-// The definition alone cannot see them, so the flags they set on old carry
+// The definition alone cannot see them, so the key flags they set on old carry
 // over, and a primary-key column stays NOT NULL as MySQL makes it. Without
-// this the table loses its primary key and drops out of generation.
+// this the table loses its primary key and drops out of generation. The
+// foreign keys stay in the table's constraints, which give the column its
+// FKReference when the table is canonicalized.
 func redefineColumn(old, newCol parser.Column) parser.Column {
 	if old.PrimaryKey {
 		newCol.PrimaryKey = true
 		newCol.Nullable = false
 	}
 	newCol.Unique = newCol.Unique || old.Unique
-	if newCol.FKReference == nil {
-		newCol.FKReference = old.FKReference
-	}
 	return newCol
 }
 
@@ -1379,6 +1370,8 @@ func removeConstraintFromColumns(table *parser.Table, cType parser.ConstraintTyp
 				col.FKReference = nil
 			}
 		}
+		// Another foreign key on the column may remain to give it one.
+		parser.CanonicalizeConstraints(table, "mysql")
 	case parser.Check, parser.Index:
 		// No column flags to reverse.
 	}

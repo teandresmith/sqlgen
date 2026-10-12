@@ -416,14 +416,6 @@ func applyColumnConstraint(c *parser.Column, constraint rsql.Constraint) (parser
 		c.Default = def
 	case *rsql.ForeignKeyConstraint:
 		if ct.ForeignTable != nil {
-			// With no column list the key references the parent's primary
-			// key, which resolveImplicitReferences fills in.
-			if len(ct.ForeignColumns) > 0 {
-				c.FKReference = &parser.FKReference{
-					Table:  rsql.IdentName(ct.ForeignTable),
-					Column: rsql.IdentName(ct.ForeignColumns[0]),
-				}
-			}
 			return parser.Constraint{
 				Name:             rsql.IdentName(ct.Name),
 				Type:             parser.ForeignKey,
@@ -779,6 +771,7 @@ func (p *Parser) renameTable(oldName, newName string) error {
 func (p *Parser) resolveImplicitReferences() {
 	for i := range p.schema.Tables {
 		t := &p.schema.Tables[i]
+		resolved := false
 		for j := range t.Constraints {
 			c := &t.Constraints[j]
 			if c.Type != parser.ForeignKey || len(c.ReferenceColumns) > 0 {
@@ -794,9 +787,12 @@ func (p *Parser) resolveImplicitReferences() {
 					key = pc.Columns
 				}
 			}
-			if c.ReferenceColumns = ImplicitReferenceColumns(c.Columns, key); len(c.ReferenceColumns) > 0 {
-				parser.ApplyConstraintToColumns(t, *c)
-			}
+			c.ReferenceColumns = ImplicitReferenceColumns(c.Columns, key)
+			resolved = resolved || len(c.ReferenceColumns) > 0
+		}
+		if resolved {
+			// The resolved key gives the column its FKReference.
+			parser.CanonicalizeConstraints(t, "sqlite")
 		}
 	}
 }

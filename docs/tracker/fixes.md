@@ -22,81 +22,6 @@
 ## Open
 
 <!-- fixes:open:begin -->
-### FIX-302
-
-- **Status:** Open
-- **Severity:** tracked
-- **Origin:** phase 4, `parser` (`ApplyConstraintToColumns`) + all three dialect parsers
-- **Surfaced by:** backlog sweep 2026-10-12 (backlog lines from FIX-267)
-- **Vetted:** corrected at `9b58288b` (2026-10-12)
-
-**Issue.** When one column carries several foreign keys, the parsed and introspected schemas pick
-different ones for `Column.FKReference`. Measured: SQLite `a INTEGER REFERENCES p(x) REFERENCES p(y)`
-→ parity diff `- Column: "y" + Column: "x"`; PG17 same inline form → files `y`, database `x`; PG17
-and MySQL 8.0 table-level `CONSTRAINT zz FOREIGN KEY (a) REFERENCES p(x), CONSTRAINT aa FOREIGN KEY
-(a) REFERENCES p(y)` → files `x`, database `y`.
-
-**Root cause.** There is no shared rule. The introspectors keep the first FK by `ORDER BY
-con.conname` (`parser/introspect/postgres.go:673`) and MySQL's by `ORDER BY tc.constraint_name`
-(`parser/introspect/mysql.go:414`), both through `ApplyConstraintToColumns`' nil guard
-(`parser/schema.go:543`; SQLite introspection keeps the first, `introspect/sqlite.go:485`); each
-parser's `applyColumnConstraint` overwrites on every inline REFERENCES
-(`parser/postgres/postgres.go:999`, `parser/mysql/mysql.go` ~698, `parser/sqlite/sqlite.go:488`), and
-table-level FKs follow declaration order. Dropping one of two FKs (PG `DROP CONSTRAINT`, MySQL `DROP
-FOREIGN KEY`) sets `FKReference = nil` in `removeConstraintFromColumns`
-(`parser/postgres/postgres.go:1101`, `parser/mysql/mysql.go:1368`), so files gives nil where the
-database gives the remaining FK.
-
-**Suggested fix.**
-- Auto-accepted the recommended option on 2026-10-12 (`/fix` auto-accept rule; user confirmed no
-  veto): which FK owns `FKReference` → the single-column FK whose name sorts first (byte order),
-  derived in canonicalization after naming (PG, MySQL); SQLite (unnamed FKs) keeps declaration order
-  (first), because both sources know every name and agree by construction; no golden churn, no public
-  surface, PRD silent.
-- `parser/canonical.go`: new `deriveFKReferences(table, dialect)` at the end of
-  `CanonicalizeConstraints` resets each non-synthetic column's `FKReference` and sets it from the
-  owning single-column FK (`Column` is "" when `ReferenceColumns` is empty). The `ForeignKey` branch of
-  `ApplyConstraintToColumns` (`parser/schema.go`) becomes a no-op; `addFlagConstraints`' flag→FK path
-  stays (`TestCanonicalizeConstraints_FromFlags`).
-- The parsers stop setting `FKReference`: PG/MySQL/SQLite inline REFERENCES writes, MySQL
-  `redefineColumn`'s carry-over, and the SQLite introspector's direct set (`introspect/sqlite.go:485`).
-- PG `addConstraints` canonicalizes again after its naming loop (PG canonicalizes before naming because
-  CHECK naming needs the CHECK columns; idempotent). PG and MySQL `removeConstraintFromColumns`
-  canonicalize after an FK drop, so a remaining FK takes over.
-- Tests: `TestPostgresIntrospect_SameColumnForeignKeys` (two inline, named table-level, inline then
-  named, added by ALTER, one dropped), `TestMySQLIntrospect_SameColumnForeignKeys` (named, unnamed,
-  added by ALTER, one dropped, column modified), two cases in `TestSQLiteIntrospect_SameColumnForeignKeys`
-  (two inline, two inline via ALTER), each pinning the introspected `FKReference` with full parity; three
-  `TestCanonicalizeConstraints` unit cases.
-- Corrected vs. the original suggestion (vet 2026-10-12): widened to the FK-drop paths (same root
-  cause — a parser writes `FKReference` directly — same fix: re-derive in canonicalization; measured
-  files nil vs database x), and PG needs the second `CanonicalizeConstraints` call because it names
-  after canonicalizing. Side effect: a PG table-level FK with no column list now gets
-  `FKReference{Column:""}` instead of nil, as the inline form already did; FIX-310 fills the columns.
-- Prototype results, run at `9b58288b` on 2026-10-12: probe (`zz_probe_fkref_test.go`, PG 16.15, PG
-  17.11, MySQL 8.0.46, modernc) — pg inline → files `p(y)`, database `p(x)`; pg named zz/aa → files
-  `p(x)`, database `p(y)`; pg/mysql drop aa → files `nil`, database `p(x)`; mysql named → files x,
-  database y; sqlite inline → files y, database x; after the fix every case agrees on all four
-  servers. Gates: `go test -race -count=1 ./...` in parser/ (integration on PG16 + MySQL 8.0 + SQLite)
-  ok; PG17 subset ok; `golangci-lint run ./...` 0 issues; `gofumpt -l` clean; `make update-golden` and
-  `make update-golden-e2e` no changes; `go test -short -race ./...` in cmd/sqlgen ok. Fail-first: whole
-  change reverted → 3 unit cases + 12 parity subtests fail (e.g. PG named_table_level `- Column: "x"` /
-  `+ Column: "y"`; one_dropped `- FKReference: nil` / `+ FKReference: &parser.FKReference{Table:
-  "m_fkp", Column: "x"}`); PG re-canonicalize removed → `inline_then_named` fails; drop-path
-  canonicalize removed → `one_dropped` fails per dialect; name order on SQLite → existing
-  `only_the_first_named` fails; declaration order on PG/MySQL → 6 parity subtests fail; existing suite
-  without the fix passes. Golden churn: none. Patch: `.claude/prototypes/FIX-302.patch` (10 files,
-  +167/-57). Composes with FIX-301 untested (no FIX-301 patch existed yet); overlap is the end of
-  `CanonicalizeConstraints` and the `ForeignKey` case of `ApplyConstraintToColumns`.
-
-**References.**
-- PRD §6.1; `parser/schema.go` `ApplyConstraintToColumns`.
-- Backlog lines absorbed: 2026-10-07 SQLite two inline REFERENCES (FIX-267); 2026-10-07 PG/MySQL
-  overwrite FKReference (FIX-267).
-- FIX-267 (first-FK rule on the SQLite introspector).
-
-**Resolution notes.** _Filled in by /fix resolve._
-
 ### FIX-303
 
 - **Status:** Open
@@ -2929,6 +2854,89 @@ DEFAULT.
 ## Resolved
 
 <!-- fixes:resolved:begin -->
+
+### FIX-302
+
+- **Status:** Resolved
+- **Severity:** tracked
+- **Origin:** phase 4, `parser` (`ApplyConstraintToColumns`) + all three dialect parsers
+- **Surfaced by:** backlog sweep 2026-10-12 (backlog lines from FIX-267)
+- **Vetted:** corrected at `9b58288b` (2026-10-12)
+
+**Issue.** When one column carries several foreign keys, the parsed and introspected schemas pick
+different ones for `Column.FKReference`. Measured: SQLite `a INTEGER REFERENCES p(x) REFERENCES p(y)`
+→ parity diff `- Column: "y" + Column: "x"`; PG17 same inline form → files `y`, database `x`; PG17
+and MySQL 8.0 table-level `CONSTRAINT zz FOREIGN KEY (a) REFERENCES p(x), CONSTRAINT aa FOREIGN KEY
+(a) REFERENCES p(y)` → files `x`, database `y`.
+
+**Root cause.** There is no shared rule. The introspectors keep the first FK by `ORDER BY
+con.conname` (`parser/introspect/postgres.go:673`) and MySQL's by `ORDER BY tc.constraint_name`
+(`parser/introspect/mysql.go:414`), both through `ApplyConstraintToColumns`' nil guard
+(`parser/schema.go:543`; SQLite introspection keeps the first, `introspect/sqlite.go:485`); each
+parser's `applyColumnConstraint` overwrites on every inline REFERENCES
+(`parser/postgres/postgres.go:999`, `parser/mysql/mysql.go` ~698, `parser/sqlite/sqlite.go:488`), and
+table-level FKs follow declaration order. Dropping one of two FKs (PG `DROP CONSTRAINT`, MySQL `DROP
+FOREIGN KEY`) sets `FKReference = nil` in `removeConstraintFromColumns`
+(`parser/postgres/postgres.go:1101`, `parser/mysql/mysql.go:1368`), so files gives nil where the
+database gives the remaining FK.
+
+**Suggested fix.**
+- Auto-accepted the recommended option on 2026-10-12 (`/fix` auto-accept rule; user confirmed no
+  veto): which FK owns `FKReference` → the single-column FK whose name sorts first (byte order),
+  derived in canonicalization after naming (PG, MySQL); SQLite (unnamed FKs) keeps declaration order
+  (first), because both sources know every name and agree by construction; no golden churn, no public
+  surface, PRD silent.
+- `parser/canonical.go`: new `deriveFKReferences(table, dialect)` at the end of
+  `CanonicalizeConstraints` resets each non-synthetic column's `FKReference` and sets it from the
+  owning single-column FK (`Column` is "" when `ReferenceColumns` is empty). The `ForeignKey` branch of
+  `ApplyConstraintToColumns` (`parser/schema.go`) becomes a no-op; `addFlagConstraints`' flag→FK path
+  stays (`TestCanonicalizeConstraints_FromFlags`).
+- The parsers stop setting `FKReference`: PG/MySQL/SQLite inline REFERENCES writes, MySQL
+  `redefineColumn`'s carry-over, and the SQLite introspector's direct set (`introspect/sqlite.go:485`).
+- PG `addConstraints` canonicalizes again after its naming loop (PG canonicalizes before naming because
+  CHECK naming needs the CHECK columns; idempotent). PG and MySQL `removeConstraintFromColumns`
+  canonicalize after an FK drop, so a remaining FK takes over.
+- Tests: `TestPostgresIntrospect_SameColumnForeignKeys` (two inline, named table-level, inline then
+  named, added by ALTER, one dropped), `TestMySQLIntrospect_SameColumnForeignKeys` (named, unnamed,
+  added by ALTER, one dropped, column modified), two cases in `TestSQLiteIntrospect_SameColumnForeignKeys`
+  (two inline, two inline via ALTER), each pinning the introspected `FKReference` with full parity; three
+  `TestCanonicalizeConstraints` unit cases.
+- Corrected vs. the original suggestion (vet 2026-10-12): widened to the FK-drop paths (same root
+  cause — a parser writes `FKReference` directly — same fix: re-derive in canonicalization; measured
+  files nil vs database x), and PG needs the second `CanonicalizeConstraints` call because it names
+  after canonicalizing. Side effect: a PG table-level FK with no column list now gets
+  `FKReference{Column:""}` instead of nil, as the inline form already did; FIX-310 fills the columns.
+- Prototype results, run at `9b58288b` on 2026-10-12: probe (`zz_probe_fkref_test.go`, PG 16.15, PG
+  17.11, MySQL 8.0.46, modernc) — pg inline → files `p(y)`, database `p(x)`; pg named zz/aa → files
+  `p(x)`, database `p(y)`; pg/mysql drop aa → files `nil`, database `p(x)`; mysql named → files x,
+  database y; sqlite inline → files y, database x; after the fix every case agrees on all four
+  servers. Gates: `go test -race -count=1 ./...` in parser/ (integration on PG16 + MySQL 8.0 + SQLite)
+  ok; PG17 subset ok; `golangci-lint run ./...` 0 issues; `gofumpt -l` clean; `make update-golden` and
+  `make update-golden-e2e` no changes; `go test -short -race ./...` in cmd/sqlgen ok. Fail-first: whole
+  change reverted → 3 unit cases + 12 parity subtests fail (e.g. PG named_table_level `- Column: "x"` /
+  `+ Column: "y"`; one_dropped `- FKReference: nil` / `+ FKReference: &parser.FKReference{Table:
+  "m_fkp", Column: "x"}`); PG re-canonicalize removed → `inline_then_named` fails; drop-path
+  canonicalize removed → `one_dropped` fails per dialect; name order on SQLite → existing
+  `only_the_first_named` fails; declaration order on PG/MySQL → 6 parity subtests fail; existing suite
+  without the fix passes. Golden churn: none. Patch: `.claude/prototypes/FIX-302.patch` (10 files,
+  +167/-57). Composes with FIX-301 untested (no FIX-301 patch existed yet); overlap is the end of
+  `CanonicalizeConstraints` and the `ForeignKey` case of `ApplyConstraintToColumns`.
+- Auto-accepted the recommended option on 2026-10-12 (`/fix` auto-accept rule): a SQLite foreign key
+  whose `REFERENCES p` parent key cannot be resolved (FIX-300, landed after the vet) → gives the column
+  no `FKReference`, as at HEAD, rather than `FKReference{Table: "p", Column: ""}` from the rule read
+  literally; because it was prototyped green, causes no golden churn (no example has a column-list-less
+  REFERENCES), adds no public surface, and keeps FIX-300's landed behavior (the literal rule would
+  stop increment methods on such a column, `isIncrementEligible`). Measured: literal rule →
+  `TestImplicitForeignKeyTarget` parent_without_a_primary_key / key_of_another_size /
+  parent_not_defined `FKReference = {Table:p Schema: Column: Synthetic:false}, want nil`.
+
+**References.**
+- PRD §6.1; `parser/schema.go` `ApplyConstraintToColumns`.
+- Backlog lines absorbed: 2026-10-07 SQLite two inline REFERENCES (FIX-267); 2026-10-07 PG/MySQL
+  overwrite FKReference (FIX-267).
+- FIX-267 (first-FK rule on the SQLite introspector).
+
+**Resolution notes.** Resolved 2026-10-12 from the vetted prototype, applied with `git apply --3way` (not fresh: FIX-300 and FIX-301 landed since `9b58288b`; `parser/canonical.go` doc comment and `parser/sqlite/sqlite.go` inline-REFERENCES hunk conflicted, resolved by keeping the landed text and dropping the parser's `FKReference` write). `CanonicalizeConstraints` now ends with `deriveFKReferences` (owner chosen by `fkReferenceOwner`, split out for the cyclop limit): PG/MySQL take the single-column FK whose name sorts first, SQLite the first declared; the `ForeignKey` branch of `ApplyConstraintToColumns` is a no-op; the PG/MySQL/SQLite parsers, MySQL `redefineColumn` and the SQLite introspector no longer set `FKReference`; PG canonicalizes again after naming, and PG/MySQL `removeConstraintFromColumns` re-canonicalize after an FK drop. Composition with FIX-300 (beyond the prototype): `resolveImplicitReferences` re-canonicalizes a table whose `REFERENCES p` it resolved (the `ApplyConstraintToColumns` call it used is now a no-op), and on SQLite an FK with no reference columns gives no `FKReference` (auto-accepted above); `TestImplicitForeignKeyTarget` now pins nil for the unresolvable cases. Tests: the prototype's `TestPostgresIntrospect_SameColumnForeignKeys`, `TestMySQLIntrospect_SameColumnForeignKeys`, two `TestSQLiteIntrospect_SameColumnForeignKeys` cases, three `TestCanonicalizeConstraints` cases. Fail-first re-run on the final code: source reverted (tests kept) → 3 unit cases + parity subtests fail; PG re-canonicalize removed → `inline_then_named`; drop-path canonicalize removed → `one_dropped` (PG, MySQL); name order on SQLite → `only_the_first_named`; declaration order on PG/MySQL → 6 parity subtests + 2 unit cases; `resolveImplicitReferences` re-canonicalize removed → 5 `TestImplicitForeignKeyTarget` cases + `TestSQLiteIntrospect_ImplicitFKTarget/column_REFERENCES`; SQLite empty-columns skip removed → 3 `TestImplicitForeignKeyTarget` cases. Gates: `make check` ok; parser `go test -race -count=1 ./...` (integration, PG16/PG18/MySQL/SQLite) ok; `make update-golden-e2e` and `make update-golden` no churn (matches vet); `make check-examples` ok. `/verify FIX-302`: PRD 2/2, tests 5/5, reviewer agreed (every divergence from the prototype is the FIX-300 composition above, the `fkReferenceOwner` split and a comment reword; fail-first spot check on the `resolveImplicitReferences` re-canonicalize confirmed); inline: the `CanonicalizeConstraints` doc now says a FOREIGN KEY sets its column flag only through `deriveFKReferences`.
 
 ### FIX-301
 

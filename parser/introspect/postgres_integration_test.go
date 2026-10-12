@@ -497,3 +497,33 @@ CREATE TABLE pgi_parts.events_2025 PARTITION OF pgi_parts.events FOR VALUES FROM
 	}
 	assertSchemaParity(t, "postgres", parsed, introspected, pgSkippedStatementExceptions...)
 }
+
+// A column with several foreign keys takes FKReference from the one whose
+// name sorts first, under both sources, however the keys were declared.
+func TestPostgresIntrospect_SameColumnForeignKeys(t *testing.T) {
+	requireDatabases(t)
+	const parent = "CREATE SCHEMA pgi_fks;\nCREATE TABLE pgi_fks.p (id int PRIMARY KEY, x int UNIQUE, y int UNIQUE);\n"
+	x := &parser.FKReference{Table: "p", Schema: "pgi_fks", Column: "x"}
+	y := &parser.FKReference{Table: "p", Schema: "pgi_fks", Column: "y"}
+	tests := []struct {
+		name    string
+		ddl     string
+		wantRef *parser.FKReference
+	}{
+		// PostgreSQL names them c_a_fkey and c_a_fkey1.
+		{name: "two inline", ddl: "CREATE TABLE pgi_fks.c (a int REFERENCES pgi_fks.p(x) REFERENCES pgi_fks.p(y))", wantRef: x},
+		{name: "named table level", ddl: "CREATE TABLE pgi_fks.c (a int, CONSTRAINT zz FOREIGN KEY (a) REFERENCES pgi_fks.p(x), CONSTRAINT aa FOREIGN KEY (a) REFERENCES pgi_fks.p(y))", wantRef: y},
+		{name: "inline then named", ddl: "CREATE TABLE pgi_fks.c (a int REFERENCES pgi_fks.p(x), CONSTRAINT aa FOREIGN KEY (a) REFERENCES pgi_fks.p(y))", wantRef: y},
+		{name: "added by alter", ddl: "CREATE TABLE pgi_fks.c (a int CONSTRAINT zz REFERENCES pgi_fks.p(x));\nALTER TABLE pgi_fks.c ADD CONSTRAINT aa FOREIGN KEY (a) REFERENCES pgi_fks.p(y)", wantRef: y},
+		{name: "one dropped", ddl: "CREATE TABLE pgi_fks.c (a int, CONSTRAINT zz FOREIGN KEY (a) REFERENCES pgi_fks.p(x), CONSTRAINT aa FOREIGN KEY (a) REFERENCES pgi_fks.p(y));\nALTER TABLE pgi_fks.c DROP CONSTRAINT aa", wantRef: x},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			parsed, introspected := pgParityCase(t, "DROP SCHEMA IF EXISTS pgi_fks CASCADE", parent+tt.ddl, "pgi_fks")
+			if diff := cmp.Diff(tt.wantRef, parser.ColumnByName(findTable(t, introspected, "c"), "a").FKReference); diff != "" {
+				t.Errorf("c.a: introspected FKReference mismatch (-want +got):\n%s", diff)
+			}
+			assertSchemaParity(t, "postgres", parsed, introspected)
+		})
+	}
+}

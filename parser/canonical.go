@@ -10,12 +10,15 @@ import (
 // introspector shares (PRD §5.2 "Constraints"). dialect is "postgres", "mysql"
 // or "sqlite". Afterwards:
 //   - every column PrimaryKey, Unique and FKReference flag has a matching table
-//     constraint, and every constraint sets its column flags
+//     constraint, and every constraint sets its column flags (a FOREIGN KEY
+//     only through deriveFKReferences)
 //   - a UNIQUE or index with no Method is btree on PostgreSQL and MySQL
 //   - a CHECK's Columns lists the table columns its expression references, in
 //     table order
 //   - a constraint spells each column as the table declares it, matching the
 //     names as the dialect does (SameColumnName)
+//   - a column's FKReference comes from one of the single-column FOREIGN
+//     KEYs on it (see deriveFKReferences)
 //
 // It names nothing. A parser names an unnamed constraint when it creates it,
 // because the name depends on what else exists at that moment.
@@ -39,6 +42,51 @@ func CanonicalizeConstraints(table *Table, dialect string) {
 		}
 	}
 	ApplyTableConstraints(table)
+	deriveFKReferences(table, dialect)
+}
+
+// deriveFKReferences sets each column's FKReference from the single-column
+// FOREIGN KEYs on it, so the parsed and the introspected table pick the same
+// one when a column has several. On PostgreSQL and MySQL it is the one whose
+// name sorts first, so a caller that names constraints canonicalizes again
+// once they are named. On SQLite, where a foreign key usually has no name, it
+// is the first declared, and one with no reference columns gives none, since
+// its parent key could not be resolved (sqlite.ImplicitReferenceColumns). A
+// column with no such foreign key has none, and a synthetic reference is left
+// alone.
+func deriveFKReferences(table *Table, dialect string) {
+	for i := range table.Columns {
+		col := &table.Columns[i]
+		if col.FKReference != nil && col.FKReference.Synthetic {
+			continue
+		}
+		col.FKReference = nil
+		if owner := fkReferenceOwner(table, dialect, col.Name); owner != nil {
+			col.FKReference = &FKReference{Table: owner.ReferenceTable, Schema: owner.ReferenceSchema}
+			if len(owner.ReferenceColumns) == 1 {
+				col.FKReference.Column = owner.ReferenceColumns[0]
+			}
+		}
+	}
+}
+
+// fkReferenceOwner returns the foreign key that gives column col its
+// FKReference (see deriveFKReferences), or nil.
+func fkReferenceOwner(table *Table, dialect, col string) *Constraint {
+	var owner *Constraint
+	for j := range table.Constraints {
+		c := &table.Constraints[j]
+		if c.Type != ForeignKey || len(c.Columns) != 1 || c.Columns[0] != col || len(c.ReferenceColumns) > 1 {
+			continue
+		}
+		if dialect == "sqlite" && len(c.ReferenceColumns) == 0 {
+			continue
+		}
+		if owner == nil || (dialect != "sqlite" && c.Name < owner.Name) {
+			owner = c
+		}
+	}
+	return owner
 }
 
 // declaredColumnNames rewrites each name in cols to the spelling of the table

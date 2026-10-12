@@ -1496,6 +1496,24 @@ func TestSQLiteIntrospect_SameColumnForeignKeys(t *testing.T) {
 			wantRef: &parser.FKReference{Table: "p", Column: "x"},
 		},
 		{
+			name: "two inline",
+			ddl:  "CREATE TABLE t (id INTEGER PRIMARY KEY, a INTEGER REFERENCES p(x) REFERENCES p(y))",
+			wantFKs: []parser.Constraint{
+				{Type: parser.ForeignKey, Columns: []string{"a"}, ReferenceTable: "p", ReferenceColumns: []string{"x"}},
+				{Type: parser.ForeignKey, Columns: []string{"a"}, ReferenceTable: "p", ReferenceColumns: []string{"y"}},
+			},
+			wantRef: &parser.FKReference{Table: "p", Column: "x"},
+		},
+		{
+			name: "two inline added by alter",
+			ddl:  "CREATE TABLE t (id INTEGER PRIMARY KEY);\nALTER TABLE t ADD COLUMN a INTEGER REFERENCES p(x) REFERENCES p(y)",
+			wantFKs: []parser.Constraint{
+				{Type: parser.ForeignKey, Columns: []string{"a"}, ReferenceTable: "p", ReferenceColumns: []string{"x"}},
+				{Type: parser.ForeignKey, Columns: []string{"a"}, ReferenceTable: "p", ReferenceColumns: []string{"y"}},
+			},
+			wantRef: &parser.FKReference{Table: "p", Column: "x"},
+		},
+		{
 			name: "composite",
 			ddl:  "CREATE TABLE t (id INTEGER PRIMARY KEY, a INTEGER, b INTEGER, CONSTRAINT fa FOREIGN KEY (a, b) REFERENCES p(x, y), CONSTRAINT fb FOREIGN KEY (a, b) REFERENCES p(y, x))",
 			wantFKs: []parser.Constraint{

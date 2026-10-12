@@ -544,18 +544,10 @@ func ApplyConstraintToColumns(table *Table, c Constraint) {
 				col.Unique = true
 			}
 		}
-	case ForeignKey:
-		if len(c.Columns) == 1 && len(c.ReferenceColumns) == 1 {
-			if col := ColumnByName(table, c.Columns[0]); col != nil && col.FKReference == nil {
-				col.FKReference = &FKReference{
-					Table:  c.ReferenceTable,
-					Schema: c.ReferenceSchema,
-					Column: c.ReferenceColumns[0],
-				}
-			}
-		}
-	case Check, Index:
-		// CHECK and INDEX constraints don't affect column flags.
+	case ForeignKey, Check, Index:
+		// CHECK and INDEX constraints set no column flags. CanonicalizeConstraints
+		// sets FKReference from every FOREIGN KEY at once, since a column may
+		// have several.
 	}
 }
 

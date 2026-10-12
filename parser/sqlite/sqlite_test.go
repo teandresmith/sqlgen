@@ -1075,7 +1075,7 @@ func TestImplicitForeignKeyTarget(t *testing.T) {
 		files   []string
 		table   string
 		want    []string // the foreign key's ReferenceColumns
-		wantRef string   // the FKReference.Column of column c, if any
+		wantRef string   // the FKReference.Column of column c; "" wants no FKReference
 	}{
 		{
 			name:    "column REFERENCES",
@@ -1161,12 +1161,15 @@ func TestImplicitForeignKeyTarget(t *testing.T) {
 			if diff := cmp.Diff(tt.want, fks[0].ReferenceColumns, cmpopts.EquateEmpty()); diff != "" {
 				t.Errorf("ReferenceColumns mismatch (-want +got):\n%s", diff)
 			}
-			var gotRef string
-			if c := parser.ColumnByName(table, "c"); c != nil && c.FKReference != nil {
-				gotRef = c.FKReference.Column
+			var ref *parser.FKReference
+			if c := parser.ColumnByName(table, "c"); c != nil {
+				ref = c.FKReference
 			}
-			if gotRef != tt.wantRef {
-				t.Errorf("FKReference.Column = %q, want %q", gotRef, tt.wantRef)
+			switch {
+			case tt.wantRef == "" && ref != nil:
+				t.Errorf("FKReference = %+v, want nil", *ref)
+			case tt.wantRef != "" && (ref == nil || ref.Column != tt.wantRef):
+				t.Errorf("FKReference = %+v, want column %q", ref, tt.wantRef)
 			}
 		})
 	}

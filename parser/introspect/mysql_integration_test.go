@@ -915,3 +915,35 @@ func findView(t *testing.T, s *parser.Schema, name string) *parser.View {
 	t.Fatalf("view %q not found in schema", name)
 	return nil
 }
+
+// A column with several foreign keys takes FKReference from the one whose
+// name sorts first, under both sources, however the keys were declared.
+func TestMySQLIntrospect_SameColumnForeignKeys(t *testing.T) {
+	requireDatabases(t)
+	const parent = "CREATE TABLE m_fkp (id int PRIMARY KEY, x int UNIQUE, y int UNIQUE);\n"
+	x := &parser.FKReference{Table: "m_fkp", Column: "x"}
+	y := &parser.FKReference{Table: "m_fkp", Column: "y"}
+	tests := []struct {
+		name    string
+		ddl     string
+		wantRef *parser.FKReference
+	}{
+		{name: "named table level", ddl: "CREATE TABLE m_fkc (a int, CONSTRAINT zz FOREIGN KEY (a) REFERENCES m_fkp(x), CONSTRAINT aa FOREIGN KEY (a) REFERENCES m_fkp(y))", wantRef: y},
+		// MySQL names them m_fkc_ibfk_1 and m_fkc_ibfk_2.
+		{name: "unnamed table level", ddl: "CREATE TABLE m_fkc (a int, FOREIGN KEY (a) REFERENCES m_fkp(y), FOREIGN KEY (a) REFERENCES m_fkp(x))", wantRef: y},
+		{name: "added by alter", ddl: "CREATE TABLE m_fkc (a int, CONSTRAINT zz FOREIGN KEY (a) REFERENCES m_fkp(x));\nALTER TABLE m_fkc ADD CONSTRAINT aa FOREIGN KEY (a) REFERENCES m_fkp(y)", wantRef: y},
+		{name: "one dropped", ddl: "CREATE TABLE m_fkc (a int, CONSTRAINT zz FOREIGN KEY (a) REFERENCES m_fkp(x), CONSTRAINT aa FOREIGN KEY (a) REFERENCES m_fkp(y));\nALTER TABLE m_fkc DROP FOREIGN KEY aa", wantRef: x},
+		{name: "column modified", ddl: "CREATE TABLE m_fkc (a int, CONSTRAINT zz FOREIGN KEY (a) REFERENCES m_fkp(x), CONSTRAINT aa FOREIGN KEY (a) REFERENCES m_fkp(y));\nALTER TABLE m_fkc MODIFY COLUMN a int NOT NULL", wantRef: y},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ddl := parent + tt.ddl
+			applyParityFixture(t, "mysql", mysqlConnStr, "DROP TABLE IF EXISTS m_fkc;\nDROP TABLE IF EXISTS m_fkp", ddl)
+			parsed, introspected := parseMySQL(t, ddl), introspectMySQL(t, "m_fkp", "m_fkc")
+			if diff := cmp.Diff(tt.wantRef, parser.ColumnByName(findTable(t, introspected, "m_fkc"), "a").FKReference); diff != "" {
+				t.Errorf("m_fkc.a: introspected FKReference mismatch (-want +got):\n%s", diff)
+			}
+			assertSchemaParity(t, "mysql", parsed, introspected)
+		})
+	}
+}

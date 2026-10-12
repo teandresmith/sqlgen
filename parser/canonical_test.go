@@ -78,6 +78,17 @@ func TestCanonicalizeConstraints(t *testing.T) {
 			columns: []columnKeys{{Name: "a", FKReference: ref("p", "public", "id")}, {Name: "b", FKReference: ref("p", "public", "id")}},
 		},
 		{
+			name:    "postgres foreign keys on one column: the first by name gives the reference",
+			dialect: "postgres", table: "t",
+			ddl: `CREATE TABLE p (id int PRIMARY KEY, x int UNIQUE);
+				CREATE TABLE t (a int REFERENCES p(x), CONSTRAINT aa FOREIGN KEY (a) REFERENCES p(id))`,
+			constraints: []parser.Constraint{
+				{Name: "aa", Type: parser.ForeignKey, Columns: []string{"a"}, ReferenceTable: "p", ReferenceSchema: "public", ReferenceColumns: []string{"id"}},
+				{Name: "t_a_fkey", Type: parser.ForeignKey, Columns: []string{"a"}, ReferenceTable: "p", ReferenceSchema: "public", ReferenceColumns: []string{"x"}},
+			},
+			columns: []columnKeys{{Name: "a", FKReference: ref("p", "public", "id")}},
+		},
+		{
 			name:    "postgres column and table check",
 			dialect: "postgres", table: "t",
 			ddl: `CREATE TABLE t (a int CHECK (a > 0), b int, CHECK (a < b))`,
@@ -169,6 +180,18 @@ func TestCanonicalizeConstraints(t *testing.T) {
 			columns: []columnKeys{{Name: "a", FKReference: ref("p", "", "id")}},
 		},
 		{
+			name:    "mysql foreign keys on one column: the first by name gives the reference",
+			dialect: "mysql", table: "t",
+			ddl: `CREATE TABLE p (id int PRIMARY KEY, x int UNIQUE);
+				CREATE TABLE t (a int, CONSTRAINT zz FOREIGN KEY (a) REFERENCES p(x), CONSTRAINT aa FOREIGN KEY (a) REFERENCES p(id))`,
+			constraints: []parser.Constraint{
+				{Name: "aa", Type: parser.ForeignKey, Columns: []string{"a"}, ReferenceTable: "p", ReferenceColumns: []string{"id"}},
+				{Name: "zz", Type: parser.ForeignKey, Columns: []string{"a"}, ReferenceTable: "p", ReferenceColumns: []string{"x"}},
+				{Name: "aa", Type: parser.Index, Columns: []string{"a"}, Method: "btree"},
+			},
+			columns: []columnKeys{{Name: "a", FKReference: ref("p", "", "id")}},
+		},
+		{
 			name:    "mysql column and table check",
 			dialect: "mysql", table: "t",
 			ddl: `CREATE TABLE t (a int, b int CHECK (B > 0), CONSTRAINT named_ck CHECK (a < b), CHECK (a <> 5))`,
@@ -241,6 +264,17 @@ func TestCanonicalizeConstraints(t *testing.T) {
 				{Type: parser.ForeignKey, Columns: []string{"b"}, ReferenceTable: "p", ReferenceColumns: []string{"id"}},
 			},
 			columns: []columnKeys{{Name: "a", FKReference: ref("p", "", "id")}, {Name: "b", FKReference: ref("p", "", "id")}},
+		},
+		{
+			name:    "sqlite foreign keys on one column: the first declared gives the reference",
+			dialect: "sqlite", table: "t",
+			ddl: `CREATE TABLE p (id INTEGER PRIMARY KEY, x INTEGER UNIQUE);
+				CREATE TABLE t (a INTEGER REFERENCES p(x) REFERENCES p(id))`,
+			constraints: []parser.Constraint{
+				{Type: parser.ForeignKey, Columns: []string{"a"}, ReferenceTable: "p", ReferenceColumns: []string{"x"}},
+				{Type: parser.ForeignKey, Columns: []string{"a"}, ReferenceTable: "p", ReferenceColumns: []string{"id"}},
+			},
+			columns: []columnKeys{{Name: "a", FKReference: ref("p", "", "x")}},
 		},
 		{
 			name:    "sqlite column and table check",

@@ -215,6 +215,9 @@ func (p *Parser) addConstraints(table *parser.Table, constraints []parser.Constr
 			}
 		}
 	}
+	// A column's FKReference is its foreign key whose name sorts first, so it
+	// is derived again now that every foreign key has its name.
+	parser.CanonicalizeConstraints(table, "postgres")
 }
 
 // pgNamespace holds the names in use in one schema. An index, or the index
@@ -994,18 +997,6 @@ func (p *Parser) applyColumnConstraint(col *parser.Column, c *pg_query.Constrain
 
 	case pg_query.ConstrType_CONSTR_FOREIGN:
 		if c.Pktable != nil {
-			fkSchema := p.referenceSchema(c.Pktable)
-			var fkCol string
-			if len(c.PkAttrs) > 0 {
-				if s := c.PkAttrs[0].GetString_(); s != nil {
-					fkCol = s.Sval
-				}
-			}
-			col.FKReference = &parser.FKReference{
-				Table:  c.Pktable.Relname,
-				Schema: fkSchema,
-				Column: fkCol,
-			}
 			constraint := p.parseConstraintNode(c)
 			constraint.Columns = []string{col.Name}
 			return constraint, true
@@ -1106,6 +1097,8 @@ func removeConstraintFromColumns(table *parser.Table, constraintName string) {
 				col.FKReference = nil
 			}
 		}
+		// Another foreign key on the column may remain to give it one.
+		parser.CanonicalizeConstraints(table, "postgres")
 
 	case parser.Check, parser.Index:
 		// CHECK and INDEX constraints don't affect column flags.

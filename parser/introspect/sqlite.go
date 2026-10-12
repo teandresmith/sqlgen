@@ -486,21 +486,11 @@ func (si *SQLiteIntrospector) introspectForeignKeys(ctx context.Context, table *
 
 	// PRAGMA foreign_key_list numbers foreign keys in reverse declaration
 	// order: id 0 is the last declared. Walking from the highest id keeps the
-	// constraints, and the FK a column's FKReference takes when it has
-	// several, in declaration order, as the file parser does.
+	// constraints in declaration order, as the file parser does, and with
+	// them the FK CanonicalizeConstraints gives a column that has several.
 	slices.Sort(order)
 	for _, id := range slices.Backward(order) {
-		c := fks[id]
-		table.Constraints = append(table.Constraints, *c)
-		// Apply single-column FK to column.
-		if len(c.Columns) == 1 && len(c.ReferenceColumns) == 1 {
-			if col := parser.ColumnByName(table, c.Columns[0]); col != nil && col.FKReference == nil {
-				col.FKReference = &parser.FKReference{
-					Table:  c.ReferenceTable,
-					Column: c.ReferenceColumns[0],
-				}
-			}
-		}
+		table.Constraints = append(table.Constraints, *fks[id])
 	}
 
 	return nil
