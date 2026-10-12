@@ -2538,7 +2538,7 @@ keys).
 - **Severity:** tracked
 - **Origin:** phase 6, runtime `sql/` builders (SQLite time binds: writes, cursor keyset, `comparator.Time` filters)
 - **Surfaced by:** backlog sweep vets (2026-10-12), filed at the backlog sweep's Step 5
-- **Vetted:** needs ruling at `02000941` (2026-10-12)
+- **Vetted:** ready at `02000941` (2026-10-12)
 
 **Issue.** On SQLite, a DATETIME keyset cursor and a time filter bind a text format that differs from the stored
 one, so pages skip or repeat rows and equality filters match nothing. `DEFAULT (datetime('now'))` stores
@@ -2579,7 +2579,10 @@ the postgres graphql example overrides `timestamptz` to it (`graphql/sqlgen.yml:
   `tests/datetime_test.go` `TestDateTime_ConnectionPagesAcrossEqualTimestamps` (forward and backward, one row per page,
   two `datetime()` rows and one EST Create at one instant plus a later row) and `TestDateTime_EqFilterMatchesScannedTime`;
   events `sqlgen.yml` audit_logs gains `cursor_keys: [created_at, id]`.
-- Pending the user's ruling:
+- The user ruled on 2026-10-12: Q1 → (a) SQLite-only, in the `sql` builders; Q2 → (i) convert all six kinds. Both are
+  the prototyped recommended option (`.claude/prototypes/FIX-335.patch`); `FIX-335.alt.patch` is the rejected option,
+  kept for reference only.
+- The questions as asked:
   - Q1. Where is the SQLite time text applied? (a, recommended, prototyped) dialect-scoped in the `sql` builders —
     PG and MySQL binds byte-identical to base (re-measured PG with a non-UTC session: stored 12:30:00.5 UTC,
     correct); SQLite writes, filters and keyset all use the `datetime()` text; `time.Time`-overridden SQLite columns
@@ -2673,6 +2676,203 @@ the broken string `Deleted: &comparator.Number[int32]{Neq: new(0)}`.
 - PRD §4.6, §5.4 (soft delete strategies).
 - FIX-324 (soft-delete strategy from config; lands first).
 - `cmd/sqlgen/gen/delete_test.go:255`.
+
+**Resolution notes.** _Filled in by /fix resolve._
+
+### FIX-337
+
+- **Status:** Open
+- **Severity:** nit
+- **Origin:** phase 4, `parser/mysql` (`alterChangeColumn` / `replaceColumn`) + CREATE TABLE in all three parsers
+- **Surfaced by:** FIX-331 vet (2026-10-12), filed at the backlog sweep's second Step 5
+
+**Issue.** Statements other than ADD COLUMN that leave a table with two columns of the same name are accepted, and
+the generated struct does not compile. Measured: MySQL `CREATE TABLE r1 (id int PRIMARY KEY, a int, b int); ALTER
+TABLE r1 CHANGE COLUMN a b bigint;` → `sqlgen generate` exit 0, `B *int64` and `B *int32`, "models_gen.go:22:2: B
+redeclared" (MySQL 8.0: ERROR 1060 "Duplicate column name 'b'"); PG `CREATE TABLE r1 (id int PRIMARY KEY, a int, a
+text)` → exit 0, "A redeclared" (PG17: `column "a" specified more than once`); MySQL `(… a int, A text)` → "A
+redeclared" (ERROR 1060 "Duplicate column name 'A'"); the SQLite parser accepts `(id INTEGER PRIMARY KEY, a INT, A
+TEXT)` → columns [id a A] (modernc: "duplicate column name: A (1)"). Under `both`, `validateColumnConflicts` catches
+only the different-type variants.
+
+**Root cause.** Only ADD COLUMN (FIX-331) and RENAME COLUMN check the table's existing column names; CREATE TABLE in
+each parser and MySQL CHANGE COLUMN do not.
+
+**Suggested fix.**
+- CREATE TABLE (PG, MySQL, SQLite): error on a repeated column name using FIX-301's `parser.SameColumnName(dialect)`
+  (PG exact, MySQL Unicode fold, SQLite ASCII fold). MySQL CHANGE COLUMN onto another existing column: error
+  (`SameColumnName("mysql")`, excluding the column being changed).
+- Tests per dialect, plus a `both` Merge case.
+
+**References.**
+- PRD §5.2, §6.1.
+- FIX-301 (`SameColumnName`), FIX-331 (ADD COLUMN twin; lands first).
+
+**Resolution notes.** _Filled in by /fix resolve._
+
+### FIX-338
+
+- **Status:** Open
+- **Severity:** nit
+- **Origin:** phase 4, `parser/postgres` (`parseAlterTable` on a composite type)
+- **Surfaced by:** FIX-305 vet (2026-10-12), filed at the backlog sweep's second Step 5
+
+**Issue.** `ALTER TYPE comp ADD ATTRIBUTE c int` (and DROP ATTRIBUTE / ALTER ATTRIBUTE … TYPE) is valid PostgreSQL
+DDL, but the PG parser fails on it, so generation stops. Measured: `p.Parse("x.sql", "CREATE TYPE comp AS (a int);
+ALTER TYPE comp ADD ATTRIBUTE c int")` → "parsing x.sql: table public.comp not found".
+
+**Root cause.** pg_query parses these as an `AlterTableStmt` with `objtype OBJECT_TYPE`, and `parseAlterTable` looks
+the name up as a table.
+
+**Suggested fix.**
+- In `parseAlterTable`, route `OBJECT_TYPE` to a composite-type path that applies ADD / DROP [IF EXISTS] / ALTER
+  ATTRIBUTE … TYPE to `CompositeTypes`, erroring where PG17 does (unknown type, existing / missing attribute); measure
+  PG17 (including RESTRICT / CASCADE when a column uses the type) at vet.
+- Tests: unit cases per subcommand plus a PG introspection parity case.
+
+**References.**
+- PRD §5.2 (PG DDL coverage).
+- FIX-305 (ALTER TYPE RENAME ATTRIBUTE and the composite rename paths; lands first).
+
+**Resolution notes.** _Filled in by /fix resolve._
+
+### FIX-339
+
+- **Status:** Open
+- **Severity:** nit
+- **Origin:** phase 4, `parser/postgres` (`parseDrop` / `dropTables` CASCADE)
+- **Surfaced by:** FIX-332 vet (2026-10-12), filed at the backlog sweep's second Step 5
+
+**Issue.** PG `DROP TABLE a CASCADE`, where `b` references `a`, is a parser error, while PostgreSQL drops `a` and
+only `b`'s foreign key. Measured: `CREATE TABLE a (id int PRIMARY KEY); CREATE TABLE b (id int PRIMARY KEY, a_id int
+REFERENCES a(id)); DROP TABLE a CASCADE;` → "drop table public.a: cannot drop table public.a: column public.b.a_id
+references it via foreign key"; PG17.11 → "NOTICE: drop cascades to constraint b_a_id_fkey on table b / DROP TABLE",
+and `\d b` keeps columns id and a_id with no FK. MySQL ignores CASCADE (ERROR 3730), which the MySQL parser already
+matches.
+
+**Root cause.** The PG parser ignores `DropStmt.Behavior`; the drop-reference check always errors.
+
+**Suggested fix.**
+- Under `DROP_CASCADE`, drop the dependent foreign keys (and recompute what they fed: FKReference, Unique-derived
+  state) instead of erroring; measure at vet what else PG cascades to from a table that the schema model holds (views
+  under `both` — see FIX-333 — and owned sequences) and decide per object.
+- Consider absorbing the backlog line on `DROP TYPE … CASCADE` (`dropType` / `dropDomain` ignore Behavior) only if the
+  vet shows the same site.
+- Tests: CASCADE with one and two referencing tables; RESTRICT still errors.
+
+**References.**
+- PRD §5.6 (drop validation).
+- FIX-332 (`dropTables`, set-based `CheckTableDropRefs`; lands first), FIX-312, FIX-333.
+
+**Resolution notes.** _Filled in by /fix resolve._
+
+### FIX-340
+
+- **Status:** Open
+- **Severity:** tracked
+- **Origin:** phase 5, `cmd/sqlgen/config` (`isValidRelationshipSide`) + `cmd/sqlgen/gen` (`parseRelationshipSide`)
+- **Surfaced by:** FIX-329 vet (2026-10-12), filed at the backlog sweep's second Step 5
+
+**Issue.** A padded relationship `side` passes validation and silently generates the edge parent-side. Measured:
+`side: " child "` (type o2o, fk set) → `LoadConfig=<nil> ValidatePreParse=<nil>`; manifest probe
+(`TestBuild_O2OSideDisambiguation` fixture with Side varied) → `side="child"` / `"Child"` / `"CHILD"` → `Profile
+kinds=[m2o]`, `side=" child "` / `"child "` → `Profile kinds=[o2o]`, with no diagnostic.
+
+**Root cause.** `isValidRelationshipSide` (`cmd/sqlgen/config/validate.go:765`) does
+`strings.ToLower(strings.TrimSpace(s))`, while `parseRelationshipSide` (`cmd/sqlgen/gen/context_table.go:1674`) only
+lowercases, so an unknown value falls back to `SideParent`.
+
+**Suggested fix.**
+- Drop the `TrimSpace` in `isValidRelationshipSide`, as `isValidRelationshipType` already does (its doc comment gives
+  the reason), so a padded side is a validation error; the FIX-329 schema already rejects it.
+- Tests: validate cases for `" child "` / `"child "`; keep the case-insensitive spellings valid.
+
+**References.**
+- PRD §4.8 (`side`), §4.13.
+- FIX-329 (schema side pattern; lands first).
+
+**Resolution notes.** _Filled in by /fix resolve._
+
+### FIX-341
+
+- **Status:** Open
+- **Severity:** tracked
+- **Origin:** phase 6, `cmd/sqlgen/config` (soft-delete validation) + `cmd/sqlgen/gen` (`funcSoftDeleteFilterOverride`)
+- **Surfaced by:** FIX-336 vet (2026-10-12), filed at the backlog sweep's second Step 5
+
+**Issue.** A NOT NULL timestamp soft-delete column passes validation but generates code that does not compile, and
+its default "not deleted" filter `IS NULL` could never match anyway. Measured on a postgres copy with `zz_ts1
+TIMESTAMPTZ NOT NULL DEFAULT now()` and `type: timestamp`: `sqlgen generate` → "generated 13 files", exit 0; `go build
+-gcflags=-e ./models/` → "models_gen.go:57208:29: unknown field Null in struct literal of type comparator.Time" (3
+sites).
+
+**Root cause.** Validation checks the soft-delete column's type, not its nullability; `funcSoftDeleteFilterOverride`'s
+fallback branch then emits `{Null: new(false)}` for a non-nullable comparator.
+
+**Suggested fix.**
+- Make a NOT NULL timestamp soft-delete column a validation error (the timestamp strategy means NULL = live), naming the
+  column and the fix (make it nullable or use another strategy); confirm against PRD §4.6 / §5.4 at vet and add PRD text
+  if it is silent. The fallback branch then stays unreachable for valid configs.
+- Tests: validate case; a gen case that the fallback is not reached.
+
+**References.**
+- PRD §4.6, §5.4.
+- FIX-324, FIX-336 (same function; land first).
+
+**Resolution notes.** _Filled in by /fix resolve._
+
+### FIX-342
+
+- **Status:** Open
+- **Severity:** tracked
+- **Origin:** runtime `types/` (`DateTime.Value` on MySQL)
+- **Surfaced by:** FIX-335 vet (2026-10-12), filed at the backlog sweep's second Step 5
+
+**Issue.** A MySQL column overridden to `types.DateTime` cannot store a UTC time: the RFC3339Nano text `Value()` binds
+is rejected. Measured on mysql:8.0: `INSERT … VALUES (?, ?)` with `types.DateTime{2026-01-01T12:30:00.5Z}` → "Error 1292
+(22007): Incorrect datetime value: '2026-01-01T12:30:00.5Z' for column 'dt' at row 1", under `parseTime=true` with
+loc=UTC or Local and session time_zone '+00:00' or '-05:00'. A zoned value is accepted but stored as wall time in the
+session zone (DATETIME "07:30:00.5" under '-05:00').
+
+**Root cause.** `types.DateTime.Value()` returns RFC3339Nano text for every dialect; MySQL rejects the `Z` suffix.
+
+**Suggested fix.**
+- Decide at vet, following FIX-335's dialect-scoped shape (the `sql` builders' `bindArgs` on the mysql dialect), how a
+  MySQL bind of `types.DateTime` should be formatted: likely pass a `time.Time` through so the driver's `loc` handling
+  applies, matching a plain `time.Time` column; measure DATETIME and TIMESTAMP under non-UTC session zones and `loc`
+  settings against a `time.Time` column. PG stays unchanged.
+- Tests: `sql` unit cases for the mysql dialect; a MySQL integration round trip with a `types.DateTime` override.
+
+**References.**
+- PRD §7 (type overrides).
+- FIX-335 (`sql/time.go` `bindArgs`; lands first).
+
+**Resolution notes.** _Filled in by /fix resolve._
+
+### FIX-343
+
+- **Status:** Open
+- **Severity:** nit
+- **Origin:** phase 6, `cmd/sqlgen/gotype` (SQLite `date` mapping) + runtime SQLite time binds
+- **Surfaced by:** FIX-335 vet (2026-10-12), filed at the backlog sweep's second Step 5
+
+**Issue.** A SQLite `date` column resolves to `types.DateTime`, so sqlgen writes and binds "2026-01-01 00:00:00" while a
+`DEFAULT (date(...))` stores "2026-01-01". Measured with FIX-335's first prototype: "date() default stored="2026-01-01"
+scan=time.Time(2026-01-01 00:00:00 +0000 UTC)", "types.DateTime written stored="2026-01-01 00:00:00"", "Eq on scanned
+date -> 1 rows (want 2)". Not yet measured at base or under FIX-335's chosen option.
+
+**Root cause.** `gotype.registerDialectDefaults` maps SQLite `date` like datetime/timestamp, and no bind path knows a
+column is a date.
+
+**Suggested fix.**
+- Measure at base and with FIX-335 applied. Then choose at vet: bind a date-only text (`YYYY-MM-DD`) for `date` columns
+  on SQLite (needs the column's SQL type at the bind site — generated code or a date type) or document the limit in PRD
+  §7.2's SQLite paragraph. Return a ruling question if the PRD does not settle it.
+- Tests: SQLite round trip of a `date()` default and a Go-written date, Eq and range filters.
+
+**References.**
+- PRD §7.2.
+- FIX-335 (lands first).
 
 **Resolution notes.** _Filled in by /fix resolve._
 
