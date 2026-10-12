@@ -3668,7 +3668,7 @@ Closure is `/close-phase 30`, with no sub-item of its own. It flips the design d
 
 ## Phase 31: Introspection Examples — `source: database` and `both` End to End
 
-> **Status: Not Started.** Design doc `docs/design/INTROSPECTION_EXAMPLES.md` (ACCEPTED 2026-10-11; the four questions in its §8 were ruled on 2026-10-11, each matching its recommendation; probe results in its §2). Proves that code generated from a live database compiles, runs, and matches what the same schema generates from files.
+> **Status: Complete (closed 2026-10-12).** Design doc `docs/design/INTROSPECTION_EXAMPLES.md` (SYNCED 2026-10-12; ACCEPTED 2026-10-11; the four questions in its §8 were ruled on 2026-10-11, each matching its recommendation; probe results in its §2). All 5 sub-items (31.0–31.4) landed. Normative spec PRD §6.1/§6.3/§8.1.7, with `guidelines/TESTING.md` §10. Full sweep clean under `-race` (check 100s / check-examples 149s / test-integration 206s), no flakes. 1 FIX originated in the phase (FIX-299, MySQL named UNIQUE keys, surfaced by the 31.4 probe) and was resolved within it; none carried forward.
 
 **Why.**
 - **No test runs code generated from a live database.** Every E2E example uses `source: files`. The CLI live-database suite (30.10) generates from one small fixture per dialect and only builds the output. PRD §6.1 promises that `database` and `files` give "the same generated code and manifest", and that `both` generates the *future* schema. Neither claim is measured at example scale.

@@ -1,6 +1,6 @@
 # SQLGen Introspection Examples: `source: database` and `both` End to End
 
-> **Status: ACCEPTED (2026-10-11).** This doc is the design for E2E coverage of the two
+> **Status: SYNCED — superseded by PRD §8.1.7 and `guidelines/TESTING.md` §10 (2026-10-12); ACCEPTED 2026-10-11.** This doc is the design for E2E coverage of the two
 > database-backed schema sources, `input.source: database` and `input.source: both`
 > (PRD §6.1). Phase 30 (`docs/design/INTROSPECTION.md`) built the sources. This work proves
 > that code generated from a live database compiles, behaves correctly at runtime, and matches
