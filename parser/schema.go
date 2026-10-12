@@ -173,6 +173,10 @@ type Table struct {
 	Comment      string
 	Strict       bool // SQLite STRICT table modifier (3.37+)
 	WithoutRowID bool // SQLite WITHOUT ROWID table modifier (3.8.2+)
+
+	// ExpressionIndexes holds the table's indexes with an expression part,
+	// which Constraints leaves out (PostgreSQL and MySQL).
+	ExpressionIndexes []ExpressionIndex
 }
 
 // Column represents a column in a table.

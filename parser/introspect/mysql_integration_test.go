@@ -480,6 +480,40 @@ func TestMySQLIntrospect_BothModeInlineEnumAfterRenameAndDrop(t *testing.T) {
 	assertSchemaParity(t, "mysql", p.Schema(), introspected)
 }
 
+// TestMySQLIntrospect_BothModeExpressionKeys checks `input.source: both`
+// against the database once the migration is applied: an introspected key
+// with an expression part keeps its name, named or functional_index, and
+// serves a foreign key whose columns lead it.
+func TestMySQLIntrospect_BothModeExpressionKeys(t *testing.T) {
+	requireDatabases(t)
+	const (
+		base = `CREATE TABLE m_sx_p (id int PRIMARY KEY);
+		CREATE TABLE m_sx_fk (a int, b int, KEY k (a, (b + 1)));
+		CREATE TABLE m_sx_nm (a int, b int, KEY a ((b + 1)));
+		CREATE TABLE m_sx_fn (functional_index int, b int, KEY ((b + 1)))`
+		migration = `ALTER TABLE m_sx_fk ADD FOREIGN KEY (a) REFERENCES m_sx_p (id);
+		ALTER TABLE m_sx_nm ADD KEY (a);
+		ALTER TABLE m_sx_fn ADD KEY (functional_index)`
+	)
+	tables := []string{"m_sx_p", "m_sx_fk", "m_sx_nm", "m_sx_fn"}
+	applyParityFixture(t, "mysql", mysqlConnStr, "DROP TABLE IF EXISTS m_sx_fk; DROP TABLE IF EXISTS m_sx_nm; DROP TABLE IF EXISTS m_sx_fn; DROP TABLE IF EXISTS m_sx_p", base)
+	seeded := introspectMySQL(t, tables...)
+
+	p, err := mysql.New()
+	if err != nil {
+		t.Fatalf("mysql.New() error: %v", err)
+	}
+	if err := introspect.Merge(seeded, p, []string{writeMigration(t, migration)}); err != nil {
+		t.Fatalf("Merge() error: %v", err)
+	}
+
+	applyParityFixture(t, "mysql", mysqlConnStr, "", migration)
+	introspected := introspectMySQL(t, tables...)
+
+	assertSchemaParity(t, "mysql", p.Schema(), introspected)
+	assertSchemaParity(t, "mysql", parseMySQL(t, base+";"+migration), introspected)
+}
+
 // TestMySQLIntrospect_KeyDeclarationOrder pins MySQL's numbering of unnamed
 // keys in declaration order, with the index it builds for a foreign key taking
 // its place where the FOREIGN KEY is declared unless a later key replaces it,

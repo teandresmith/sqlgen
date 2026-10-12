@@ -1637,6 +1637,8 @@ The database is the **source of truth**. File-based changes are applied as an ov
 
 **Conflict rule:** If a file-based column definition conflicts with an introspected column (same name, different type), it is a **validation error**. The file cannot silently redefine what the database already has — use explicit `ALTER TABLE ... ALTER COLUMN` to express the change.
 
+**MySQL foreign-key indexes under `both`.** MySQL builds an index for a foreign key when no index starts with the key's columns, and drops it once a later index does ([5.2](#52-dialect-parsers)). Its catalog does not say which indexes it built this way, so under `both` every introspected index counts as declared, and a pending migration's key leaves such an index in place: with `FOREIGN KEY (a)` in the database and `ALTER TABLE … ADD KEY (a, b)` in `paths`, `both` lists `a` over `(a)` and `a_2` over `(a, b)`, while the migrated database has only `a` over `(a, b)`.
+
 ### 6.2 Introspector Interface
 
 ```go

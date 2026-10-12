@@ -366,6 +366,59 @@ CREATE INDEX ON pgi_exprix.r (lower)`
 	assertSchemaParity(t, "postgres", parsed, introspected)
 }
 
+// TestPostgresIntrospect_BothModeExpressionIndexes checks `input.source: both`
+// and `files` against the database once the migration is applied: an
+// expression index or a view holds the name an unnamed index would take, and
+// dropping a column drops the expression and partial indexes that read it,
+// under its new name too.
+func TestPostgresIntrospect_BothModeExpressionIndexes(t *testing.T) {
+	requireDatabases(t)
+	const (
+		reset = "DROP SCHEMA IF EXISTS pgi_seedix CASCADE"
+		base  = `CREATE SCHEMA pgi_seedix;
+CREATE TABLE pgi_seedix.n (a int);
+CREATE INDEX ON pgi_seedix.n ((a::text));
+CREATE TABLE pgi_seedix.v (a int);
+CREATE VIEW pgi_seedix.v_a_idx AS SELECT 1 AS x;
+CREATE TABLE pgi_seedix.e (a int, x text, b int);
+CREATE INDEX ON pgi_seedix.e (a, lower(x));
+CREATE INDEX ON pgi_seedix.e (b) WHERE a > 0;
+CREATE TABLE pgi_seedix.r (a int, x text);
+CREATE INDEX ON pgi_seedix.r (a, lower(x))`
+		migration = `CREATE INDEX ON pgi_seedix.n (a);
+CREATE INDEX ON pgi_seedix.v (a);
+ALTER TABLE pgi_seedix.e DROP COLUMN a;
+ALTER TABLE pgi_seedix.e ADD COLUMN a int, ADD COLUMN lower int;
+CREATE INDEX ON pgi_seedix.e (a, lower);
+ALTER TABLE pgi_seedix.r RENAME COLUMN x TO y;
+ALTER TABLE pgi_seedix.r DROP COLUMN y;
+ALTER TABLE pgi_seedix.r ADD COLUMN lower int;
+CREATE INDEX ON pgi_seedix.r (a, lower)`
+	)
+	applyParityFixture(t, "pgx", pgConnStr, reset, base)
+	seeded := introspectPG(t, "", "pgi_seedix")
+	p := postgres.New("public")
+	if err := introspect.Merge(seeded, p, []string{writeMigration(t, migration)}); err != nil {
+		t.Fatalf("Merge() error: %v", err)
+	}
+
+	applyParityFixture(t, "pgx", pgConnStr, "", migration)
+	introspected := introspectPG(t, "", "pgi_seedix")
+
+	want := map[string][]string{"n": {"n_a_idx1"}, "v": {"v_a_idx1"}, "e": {"e_a_lower_idx"}, "r": {"r_a_lower_idx"}}
+	for name, w := range want {
+		var got []string
+		for _, c := range findTable(t, introspected, name).Constraints {
+			got = append(got, c.Name)
+		}
+		if diff := cmp.Diff(w, got); diff != "" {
+			t.Errorf("introspected %s index names mismatch (-want +got):\n%s", name, diff)
+		}
+	}
+	assertSchemaParity(t, "postgres", p.Schema(), introspected)
+	assertSchemaParity(t, "postgres", parsePG(t, base+";"+migration), introspected, pgSkippedStatementExceptions...)
+}
+
 // TestPostgresIntrospect_NoSearchPath introspects the probe fixture with no
 // search_path and with search paths that put either schema first. Each gives
 // the parsed schema: a type in the column's own schema is bare, and one in

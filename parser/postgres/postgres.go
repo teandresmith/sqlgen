@@ -2,6 +2,7 @@
 package postgres
 
 import (
+	"cmp"
 	"fmt"
 	"slices"
 	"strings"
@@ -18,9 +19,9 @@ type Parser struct {
 	schema        *parser.Schema
 	defaultSchema string
 	tableIndex    map[string]int // qualified "schema.name" → index in schema.Tables
-	// exprIndexes holds, per qualified table, the names of its skipped
-	// expression indexes, which still take a relation name.
-	exprIndexes map[string][]string
+	// skipped holds the qualified names of the relations the parser skips:
+	// views, materialized views and partitions. Each still takes its name.
+	skipped map[string]bool
 }
 
 // New creates a new PostgreSQL parser. If defaultSchema is empty, "public" is used.
@@ -32,7 +33,7 @@ func New(defaultSchema string) *Parser {
 		schema:        &parser.Schema{},
 		defaultSchema: defaultSchema,
 		tableIndex:    make(map[string]int),
-		exprIndexes:   make(map[string][]string),
+		skipped:       make(map[string]bool),
 	}
 }
 
@@ -45,6 +46,10 @@ func (p *Parser) Seed(base *parser.Schema) {
 	p.tableIndex = make(map[string]int, len(base.Tables))
 	for i, t := range base.Tables {
 		p.tableIndex[t.Schema+"."+t.Name] = i
+	}
+	p.skipped = make(map[string]bool, len(base.Views))
+	for _, v := range base.Views {
+		p.skipped[v.Schema+"."+v.Name] = true
 	}
 }
 
@@ -96,6 +101,7 @@ func (p *Parser) processStmt(node *pg_query.Node) error {
 	case *pg_query.Node_CreateDomainStmt:
 		return p.parseCreateDomain(n.CreateDomainStmt)
 	case *pg_query.Node_ViewStmt:
+		p.skipped[p.relationKey(n.ViewStmt.View)] = true
 		p.schema.Warnings = append(p.schema.Warnings,
 			fmt.Sprintf("CREATE VIEW %s skipped in DDL file — use introspection or define the view in input.views",
 				n.ViewStmt.View.Relname))
@@ -103,6 +109,7 @@ func (p *Parser) processStmt(node *pg_query.Node) error {
 		// CREATE MATERIALIZED VIEW parses as CreateTableAsStmt with a matview
 		// object type; plain CREATE TABLE AS keeps its pre-existing silent skip.
 		if n.CreateTableAsStmt.Objtype == pg_query.ObjectType_OBJECT_MATVIEW {
+			p.skipped[p.relationKey(n.CreateTableAsStmt.Into.Rel)] = true
 			p.schema.Warnings = append(p.schema.Warnings,
 				fmt.Sprintf("CREATE MATERIALIZED VIEW %s skipped in DDL file — use introspection or define the view in input.views",
 					n.CreateTableAsStmt.Into.Rel.Relname))
@@ -119,6 +126,7 @@ func (p *Parser) parseCreateTable(stmt *pg_query.CreateStmt) error {
 		if len(stmt.InhRelations) > 0 {
 			parent = stmt.InhRelations[0].GetRangeVar().GetRelname()
 		}
+		p.skipped[p.relationKey(stmt.Relation)] = true
 		p.schema.Warnings = append(p.schema.Warnings,
 			fmt.Sprintf("CREATE TABLE %s PARTITION OF %s skipped in DDL file — the partitioned table is the entity",
 				stmt.Relation.Relname, parent))
@@ -221,8 +229,8 @@ func (p *Parser) addConstraints(table *parser.Table, constraints []parser.Constr
 }
 
 // pgNamespace holds the names in use in one schema. An index, or the index
-// behind a PRIMARY KEY or UNIQUE, needs a name no table, composite type or
-// index in the schema has. A constraint needs a name no constraint in the
+// behind a PRIMARY KEY or UNIQUE, needs a name no table, view, composite type
+// or index in the schema has. A constraint needs a name no constraint in the
 // schema has, on any table or domain.
 type pgNamespace struct {
 	relations   map[string]bool
@@ -239,7 +247,12 @@ func (p *Parser) namespace(schema string) pgNamespace {
 		for _, c := range t.Constraints {
 			ns.add(c.Type, c.Name)
 		}
-		for _, name := range p.exprIndexes[t.Schema+"."+t.Name] {
+		for _, ix := range t.ExpressionIndexes {
+			ns.relations[ix.Name] = true
+		}
+	}
+	for key := range p.skipped {
+		if s, name, _ := strings.Cut(key, "."); s == schema {
 			ns.relations[name] = true
 		}
 	}
@@ -419,13 +432,44 @@ func (p *Parser) parseCreateIndex(stmt *pg_query.IndexStmt) error {
 		c.Name = parser.DerivePostgresConstraintName(table.Name, named, p.namespace(table.Schema).taken(parser.Index))
 	}
 	if !plain {
-		key := table.Schema + "." + table.Name
-		p.exprIndexes[key] = append(p.exprIndexes[key], c.Name)
+		table.ExpressionIndexes = append(table.ExpressionIndexes, parser.ExpressionIndex{
+			Name:    c.Name,
+			Columns: indexReads(table, stmt),
+		})
 		return nil
 	}
 	table.Constraints = append(table.Constraints, c)
 	parser.CanonicalizeConstraints(table, "postgres")
 	return nil
+}
+
+// indexReads returns the columns of table that the index stmt reads, in table
+// order: its key and INCLUDE columns and those its expressions and WHERE
+// predicate reference.
+func indexReads(table *parser.Table, stmt *pg_query.IndexStmt) []string {
+	read := make(map[string]bool)
+	exprs := []string{deparseExpr(stmt.WhereClause)}
+	for _, n := range slices.Concat(stmt.IndexParams, stmt.IndexIncludingParams) {
+		e := n.GetIndexElem()
+		if e == nil {
+			continue
+		}
+		if col := indexElemColumn(e); col != "" {
+			read[col] = true
+			continue
+		}
+		exprs = append(exprs, deparseExpr(e.Expr))
+	}
+	for _, col := range parser.CheckColumns(strings.Join(exprs, ", "), table.Columns, "postgres") {
+		read[col] = true
+	}
+	var out []string
+	for _, col := range table.Columns {
+		if read[col.Name] {
+			out = append(out, col.Name)
+		}
+	}
+	return out
 }
 
 // indexElemNames returns the name PostgreSQL gives each index column when it
@@ -589,9 +633,16 @@ func (p *Parser) parseRename(stmt *pg_query.RenameStmt) error {
 		if err := parser.RenameColumn(table, "postgres", stmt.Subname, stmt.Newname); err != nil {
 			return fmt.Errorf("rename column %s.%s: %w", table.Schema+"."+table.Name, stmt.Subname, err)
 		}
-		// Constraints and foreign keys name the column by its attribute
-		// number, so they follow the rename.
+		// Constraints, indexes and foreign keys name the column by its
+		// attribute number, so they follow the rename.
 		parser.RenameColumnReferences(p.schema.Tables, "postgres", table.Schema, table.Name, stmt.Subname, stmt.Newname)
+		for _, ix := range table.ExpressionIndexes {
+			for i, col := range ix.Columns {
+				if col == stmt.Subname {
+					ix.Columns[i] = stmt.Newname
+				}
+			}
+		}
 		return nil
 	}
 	return nil
@@ -630,16 +681,11 @@ func (p *Parser) parseAlterObjectSchema(stmt *pg_query.AlterObjectSchemaStmt) er
 	return nil
 }
 
-// moveTableKey rekeys a renamed or moved table. Its skipped expression-index
-// names go with it.
+// moveTableKey rekeys a renamed or moved table.
 func (p *Parser) moveTableKey(oldKey, newKey string) {
 	idx := p.tableIndex[oldKey]
 	delete(p.tableIndex, oldKey)
 	p.tableIndex[newKey] = idx
-	if names, ok := p.exprIndexes[oldKey]; ok {
-		delete(p.exprIndexes, oldKey)
-		p.exprIndexes[newKey] = names
-	}
 }
 
 func (p *Parser) parseDrop(stmt *pg_query.DropStmt) error {
@@ -661,8 +707,10 @@ func (p *Parser) parseDrop(stmt *pg_query.DropStmt) error {
 			if err := p.dropDomain(schema, name); err != nil {
 				return err
 			}
-		case pg_query.ObjectType_OBJECT_VIEW:
-			// DROP VIEW is skipped gracefully — views are not tracked in DDL parsing.
+		case pg_query.ObjectType_OBJECT_VIEW, pg_query.ObjectType_OBJECT_MATVIEW:
+			// A view is not modeled; only the relation name it takes is.
+			schema, name := p.splitQualifiedName(names)
+			delete(p.skipped, schema+"."+name)
 		default:
 			// Other object types (indexes, etc.) are not handled.
 		}
@@ -694,6 +742,7 @@ func (p *Parser) dropTable(schema, name string) error {
 	key := schema + "." + name
 	idx, ok := p.tableIndex[key]
 	if !ok {
+		delete(p.skipped, key) // a partition
 		return nil
 	}
 	if err := parser.CheckTableDropRefs(p.schema.Tables, "postgres", schema, name); err != nil {
@@ -701,7 +750,6 @@ func (p *Parser) dropTable(schema, name string) error {
 	}
 	p.schema.Tables = slices.Delete(p.schema.Tables, idx, idx+1)
 	delete(p.tableIndex, key)
-	delete(p.exprIndexes, key)
 	// Shift indices for tables after the removed one.
 	for k, v := range p.tableIndex {
 		if v > idx {
@@ -860,19 +908,28 @@ func (p *Parser) alterAddColumn(table *parser.Table, cmd *pg_query.AlterTableCmd
 }
 
 // alterDropColumn drops the column, and with it every index and constraint of
-// the table that names it, as PostgreSQL does.
+// the table that reads it, a partial index's predicate included, as
+// PostgreSQL does.
 func alterDropColumn(table *parser.Table, cmd *pg_query.AlterTableCmd) {
 	if cmd.MissingOk && parser.ColumnByName(table, cmd.Name) == nil {
 		return // DROP COLUMN IF EXISTS — column doesn't exist, skip
 	}
-	table.Columns = slices.DeleteFunc(table.Columns, func(c parser.Column) bool {
-		return c.Name == cmd.Name
-	})
 	for _, c := range slices.Clone(table.Constraints) {
-		if slices.Contains(c.Columns, cmd.Name) {
+		if slices.Contains(c.Columns, cmd.Name) ||
+			slices.Contains(parser.CheckColumns(c.Where, table.Columns, "postgres"), cmd.Name) {
 			removeConstraintFromColumns(table, c.Name)
 		}
 	}
+	var kept []parser.ExpressionIndex
+	for _, ix := range table.ExpressionIndexes {
+		if !slices.Contains(ix.Columns, cmd.Name) {
+			kept = append(kept, ix)
+		}
+	}
+	table.ExpressionIndexes = kept
+	table.Columns = slices.DeleteFunc(table.Columns, func(c parser.Column) bool {
+		return c.Name == cmd.Name
+	})
 }
 
 func (p *Parser) alterAddConstraint(table *parser.Table, cmd *pg_query.AlterTableCmd) {
@@ -1402,6 +1459,11 @@ func (p *Parser) splitQualifiedName(names []string) (schema, name string) {
 	default:
 		return names[0], names[1]
 	}
+}
+
+// relationKey returns the qualified "schema.name" key of rv.
+func (p *Parser) relationKey(rv *pg_query.RangeVar) string {
+	return cmp.Or(rv.GetSchemaname(), p.defaultSchema) + "." + rv.GetRelname()
 }
 
 // lookupTable finds a table by its RangeVar reference.

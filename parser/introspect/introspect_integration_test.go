@@ -110,6 +110,9 @@ func sortForParity(s *parser.Schema) {
 	slices.Sort(s.Warnings)
 	for i := range s.Tables {
 		sortConstraints(s.Tables[i].Constraints)
+		slices.SortFunc(s.Tables[i].ExpressionIndexes, func(a, b parser.ExpressionIndex) int {
+			return strings.Compare(a.Name, b.Name)
+		})
 	}
 	for i := range s.DomainTypes {
 		sortConstraints(s.DomainTypes[i].Constraints)

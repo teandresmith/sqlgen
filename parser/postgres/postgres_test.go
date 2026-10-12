@@ -2322,6 +2322,59 @@ func TestDerivedConstraintNames(t *testing.T) {
 			want: []string{"d INDEX d_lower_idx", "m INDEX m_lower_idx", "r INDEX r_lower_idx1", "q INDEX q_lower_idx"},
 		},
 		{
+			name: "dropping a column drops the expression and partial indexes that read it",
+			sql: `CREATE TABLE e (a int, x text, b int);
+				CREATE INDEX ON e (a, lower(x));
+				CREATE INDEX ON e (b) WHERE a > 0;
+				ALTER TABLE e DROP COLUMN a;
+				ALTER TABLE e ADD COLUMN a int, ADD COLUMN lower int;
+				CREATE INDEX ON e (a, lower);
+				CREATE TABLE i (a int, x text, c int);
+				CREATE INDEX ON i (lower(x)) INCLUDE (c);
+				ALTER TABLE i DROP COLUMN c;
+				ALTER TABLE i ADD COLUMN c int, ADD COLUMN lower int;
+				CREATE INDEX ON i (lower) INCLUDE (c);`,
+			want: []string{"e INDEX e_a_lower_idx", "i INDEX i_lower_c_idx"},
+		},
+		{
+			name: "an expression index follows a column rename",
+			sql: `CREATE TABLE r (a int, x text);
+				CREATE INDEX ON r (a, lower(x));
+				ALTER TABLE r RENAME COLUMN x TO y;
+				ALTER TABLE r DROP COLUMN y;
+				ALTER TABLE r ADD COLUMN lower int;
+				CREATE INDEX ON r (a, lower);
+				CREATE TABLE k (a int, x text);
+				CREATE INDEX ON k (a, lower(x));
+				ALTER TABLE k RENAME COLUMN x TO y;
+				ALTER TABLE k ADD COLUMN lower int;
+				CREATE INDEX ON k (a, lower);`,
+			want: []string{"r INDEX r_a_lower_idx", "k INDEX k_a_lower_idx1"},
+		},
+		{
+			name: "a view takes an index name until it is dropped",
+			sql: `CREATE TABLE v (a int, b int, c int);
+				CREATE VIEW v_a_idx AS SELECT 1 AS x;
+				CREATE MATERIALIZED VIEW v_b_idx AS SELECT 1 AS x;
+				CREATE VIEW v_c_idx AS SELECT 1 AS x;
+				DROP VIEW v_c_idx;
+				CREATE INDEX ON v (a);
+				CREATE INDEX ON v (b);
+				CREATE INDEX ON v (c);`,
+			want: []string{"v INDEX v_a_idx1", "v INDEX v_b_idx1", "v INDEX v_c_idx"},
+		},
+		{
+			name: "a partition takes an index name until it is dropped",
+			sql: `CREATE TABLE p (a int) PARTITION BY RANGE (a);
+				CREATE TABLE n_a_idx PARTITION OF p FOR VALUES FROM (0) TO (10);
+				CREATE TABLE n_b_idx PARTITION OF p FOR VALUES FROM (10) TO (20);
+				DROP TABLE n_b_idx;
+				CREATE TABLE n (a int, b int);
+				CREATE INDEX ON n (a);
+				CREATE INDEX ON n (b);`,
+			want: []string{"n INDEX n_a_idx1", "n INDEX n_b_idx"},
+		},
+		{
 			name: "a merged primary key takes a unique's name",
 			sql: `CREATE TABLE m (id int UNIQUE, CONSTRAINT pk PRIMARY KEY (id), CONSTRAINT u2 UNIQUE (id));
 				CREATE TABLE m2 (CONSTRAINT u1 UNIQUE (id), id int PRIMARY KEY);`,
@@ -2388,6 +2441,40 @@ func TestDerivedConstraintNames(t *testing.T) {
 						t.Errorf("%s.%s is PrimaryKey with no PRIMARY KEY constraint", tbl.Name, col.Name)
 					}
 				}
+			}
+		})
+	}
+}
+
+// TestSeedKeepsReservedIndexNames covers `input.source: both`: an introspected
+// expression index and view hold their names against an index the DDL files
+// create, and dropping a column the expression index reads frees its name.
+func TestSeedKeepsReservedIndexNames(t *testing.T) {
+	tests := []struct {
+		name string
+		sql  string
+		want string
+	}{
+		{name: "expression index and view hold names", sql: `CREATE INDEX ON n (a);`, want: "n_a_idx2"},
+		{name: "dropped column", sql: `ALTER TABLE n DROP COLUMN x; CREATE INDEX ON n (a);`, want: "n_a_idx"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			p := postgres.New("")
+			p.Seed(&parser.Schema{
+				Tables: []parser.Table{{
+					Name:              "n",
+					Schema:            "public",
+					Columns:           []parser.Column{{Name: "a", Type: "integer", Nullable: true}, {Name: "x", Type: "text", Nullable: true}},
+					ExpressionIndexes: []parser.ExpressionIndex{{Name: "n_a_idx", Columns: []string{"x"}}},
+				}},
+				Views: []parser.View{{Name: "n_a_idx1", Schema: "public"}},
+			})
+			if err := p.Parse("test.sql", []byte(tt.sql)); err != nil {
+				t.Fatalf("Parse() error: %v", err)
+			}
+			if got := p.Schema().Tables[0].Constraints; len(got) != 1 || got[0].Name != tt.want {
+				t.Errorf("constraints = %+v, want one index named %s", got, tt.want)
 			}
 		})
 	}

@@ -22,103 +22,6 @@
 ## Open
 
 <!-- fixes:open:begin -->
-### FIX-303
-
-- **Status:** Open
-- **Severity:** tracked
-- **Origin:** phase 30, `parser/postgres` + `parser/mysql` (`Seed`) + `parser/introspect`
-- **Surfaced by:** backlog sweep 2026-10-12 (backlog lines from FIX-276, FIX-294)
-- **Vetted:** corrected at `9b58288b` (2026-10-12)
-
-**Issue.** Index names derived for unnamed indexes go wrong when an expression index's name is
-reserved but invisible:
-- PG, `input.source: both`: DB `CREATE INDEX ON n ((a::text))` (named `n_a_idx`), file `CREATE INDEX ON
-  n (a)` → both gives `n_a_idx`; PostgreSQL and `files` give `n_a_idx1`. Files mode too: `CREATE VIEW
-  n_a_idx …; CREATE INDEX ON n (a)` → PG `n_a_idx1`, parser `n_a_idx` (views and sequences are not
-  counted in the namespace).
-- PG: `CREATE INDEX ON e (a, lower(x)); ALTER TABLE e DROP COLUMN a; … ADD COLUMN a int, ADD COLUMN
-  lower int; CREATE INDEX ON e (a, lower)` → PG17 `e_a_lower_idx`, parser `e_a_lower_idx1`; and a
-  partial index `ON e (b) WHERE a > 0` survives `DROP COLUMN a` in the parser while PG drops it.
-- MySQL, `both`: DB `KEY k (a,(b+1))` + file `ADD FOREIGN KEY (a) REFERENCES p(id)` → both builds an
-  extra `a` index; DB `KEY a ((b+1))` + file `ADD KEY (a)` → both `a`, MySQL `a_2`; an unnamed
-  expression key → both `functional_index`, MySQL `functional_index_2`.
-
-**Root cause.** The introspectors skip expression indexes entirely (PG `indexprs IS NULL`, MySQL
-`introspect/mysql.go:390,566-571`), so `Seed` (`parser/postgres/postgres.go:43`,
-`parser/mysql/mysql.go:260`) cannot restore PG `exprIndexes` or MySQL `exprKeys`. PG `exprIndexes` is
-names only, so `alterDropColumn` (`postgres.go:856`, touches only `table.Constraints`) cannot release
-a reservation, and `namespace()` (`postgres.go:229`) does not count views or sequences.
-
-**Suggested fix.**
-- New `parser.ExpressionIndex{Name, Columns}` (`parser/expression_index.go`) and a
-  `parser.Table.ExpressionIndexes` field (a 4-line hunk at the end of the `Table` struct). Columns:
-  on PG every column the index reads (key, expression, INCLUDE, WHERE) in table order; on MySQL the key
-  parts, with "" for an expression part.
-- The file parsers store expression indexes on the table instead of the private PG `exprIndexes` /
-  MySQL `exprKeys` (both removed), so `Seed` restores them for free and rename/move/drop-table
-  bookkeeping goes away. PG `parseCreateIndex` fills Columns via a new `indexReads` (reuses
-  `parser.CheckColumns` on deparsed expressions + WHERE). PG `alterDropColumn` (still a plain function)
-  also drops expression indexes and index constraints whose WHERE reads the column (`CheckColumns` over
-  `c.Where` at drop time, since seeded constraints carry only text); RENAME COLUMN renames carrier
-  columns. The MySQL functions keep their logic and take `*parser.Table`.
-- New `introspectExpressionIndexes` in both introspectors: PG `indexprs IS NOT NULL`, columns from
-  DISTINCT `pg_depend.refobjsubid > 0` ordered by attnum (pg_depend repeats a column: measured
-  `i3|{a,a,b}`); MySQL statistics rows of any index with a NULL `column_name`, ordered by
-  `seq_in_index`. Both stay out of `Constraints`, so indexes[], the manifest and generated code are
-  unchanged.
-- PG `namespace()` counts a parser-private `skipped` relation set: views and matviews (CREATE / DROP
-  [MATERIALIZED] VIEW) and partitions (PARTITION OF / DROP TABLE); `Seed` fills it from `base.Views`.
-  FIX-305's sequence registry should feed the same namespace (whichever lands second); FIX-304 builds on
-  `skipped` as its record of deliberately skipped relations.
-- Empty-slice care: `DeleteFunc` leaves `[]` against the introspector's nil and fails parity, so the PG
-  drop and MySQL DROP INDEX paths rebuild the slice as nil when empty.
-- MySQL `generated` (which FK index MySQL built itself) cannot be recovered from the catalog
-  (`mysql.indexes.is_generated` is hidden, ERROR 3554). Auto-accepted the recommended option on
-  2026-10-12 (`/fix` auto-accept rule; user confirmed no veto): treat every seeded index as declared and
-  document it as a `both`-mode limit in PRD §6.1 (measured example: DB `FOREIGN KEY (a)` + file `ADD KEY
-  (a, b)` → both `[a(a) a_2(a,b)]`, files and DB `a(a,b)`); no churn, doc-only.
-- Auto-accepted the recommended option on 2026-10-12 (`/fix` auto-accept rule): the carrier lives on
-  `parser.Table`, filled by both the file parser and the introspector, so `assertSchemaParity` compares
-  it and finds it equal (no parity exception); `sortForParity` sorts it by name; prototyped green, no
-  churn, no runtime or generated surface (the exported type and field are in the parser module),
-  reverses no ruling or PRD text.
-- Tests: PG `TestDerivedConstraintNames` cases (drop column across key/WHERE/INCLUDE, rename column,
-  view/matview/DROP VIEW, partition/DROP TABLE); `TestSeedKeepsReservedIndexNames` (PG),
-  `TestSeedKeepsExpressionKeys` (MySQL); integration `TestPostgresIntrospect_BothModeExpressionIndexes`,
-  `TestMySQLIntrospect_BothModeExpressionKeys` (Merge + files parse + migration, then
-  `assertSchemaParity`).
-- Corrected vs. the original suggestion (vet 2026-10-12): the file parsers fill the carrier too (not an
-  introspector-only carrier beside private parser state), so parity holds on both sides, including the
-  existing fixtures with expression indexes (pgi_exprix, probe_names.e, m_ex_*); WHERE references are
-  checked at drop time; `alterDropColumn` need not become a method; widened within the scope cap
-  (same root cause and site, `namespace()`) to partitions, measured on PG17: a `n_a_idx` partition
-  gives index `n_a_idx1` where the parser gave `n_a_idx`.
-- Prototype results, run at `9b58288b` on 2026-10-12: probe (`zz_probe_fix303_test.go`, postgres 17.11,
-  mysql 8.0.46; files / introspect+Seed+file / DB) → PG `((a::text))` + `CREATE INDEX ON n (a)`: db
-  `[n_a_idx n_a_idx1]`, files `[n_a_idx1(a)]`, both `[n_a_idx(a)]`; view `n_a_idx`: db `[n_a_idx1]`,
-  files and both `[n_a_idx(a)]`; drop-column: db `[n_a_lower_idx]`, files `[n_a_lower_idx1(a,lower)
-  n_b_idx(b)]`; MySQL fk-prefix: db `[k:1:a k:2:(b + 1)]`, files `[]`, both `[a(a)]`; `KEY a ((b+1))` +
-  `ADD KEY (a)`: db and files `a_2`, both `a`; functional: db and files `functional_index_2`, both
-  `functional_index`. Gates: parser `go test -race -count=1 ./...` (integration) ok; `golangci-lint`
-  0 issues; `gofumpt -l` clean; `make refs-check` ok; cmd/sqlgen `go build ./...` ok,
-  `TestE2EGoldenFiles` ok, `TestE2EDatabaseTwin` ok (12 PASS), `go test -short ./cli/... ./manifest/...
-  ./internal/livedb/...` ok, `golangci-lint` 0 issues. Fail-first: PG introspector fill reverted → `-
-  Name: "n_a_idx" + Name: "n_a_idx1"`; namespace views/partitions loop reverted → `- "v INDEX v_a_idx1"
-  + "v INDEX v_a_idx"`; Seed view registration reverted → "want one index named n_a_idx2"; drop-column
-  release reverted → `- "e INDEX e_a_lower_idx" + "e INDEX e_a_lower_idx1"`; WHERE check reverted → `+
-  "e INDEX e_b_idx"`; RENAME carrier reverted → `- "r INDEX r_a_lower_idx" + "r INDEX r_a_lower_idx1"`;
-  MySQL introspector fill reverted → extra FK index, `functional_index` vs `_2`, `a` vs `a_2`; MySQL
-  Seed carrier cleared → 3 subtests fail; existing suite without the fix passes. Golden churn: none.
-  Patch: `.claude/prototypes/FIX-303.patch` (12 files, +462/-51).
-
-**References.**
-- PRD §5.2 (index naming), §6.1 (including "`both` Mode — Merge Strategy").
-- Backlog lines absorbed: 2026-10-08 PG both-mode Seed expression-index names (FIX-276); 2026-10-08
-  PG DROP COLUMN keeps the reservation (FIX-276); 2026-10-08 MySQL Seed generated/exprKeys (FIX-294).
-- FIX-276, FIX-294, FIX-275.
-
-**Resolution notes.** _Filled in by /fix resolve._
-
 ### FIX-304
 
 - **Status:** Open
@@ -2854,6 +2757,103 @@ DEFAULT.
 ## Resolved
 
 <!-- fixes:resolved:begin -->
+
+### FIX-303
+
+- **Status:** Resolved
+- **Severity:** tracked
+- **Origin:** phase 30, `parser/postgres` + `parser/mysql` (`Seed`) + `parser/introspect`
+- **Surfaced by:** backlog sweep 2026-10-12 (backlog lines from FIX-276, FIX-294)
+- **Vetted:** corrected at `9b58288b` (2026-10-12)
+
+**Issue.** Index names derived for unnamed indexes go wrong when an expression index's name is
+reserved but invisible:
+- PG, `input.source: both`: DB `CREATE INDEX ON n ((a::text))` (named `n_a_idx`), file `CREATE INDEX ON
+  n (a)` → both gives `n_a_idx`; PostgreSQL and `files` give `n_a_idx1`. Files mode too: `CREATE VIEW
+  n_a_idx …; CREATE INDEX ON n (a)` → PG `n_a_idx1`, parser `n_a_idx` (views and sequences are not
+  counted in the namespace).
+- PG: `CREATE INDEX ON e (a, lower(x)); ALTER TABLE e DROP COLUMN a; … ADD COLUMN a int, ADD COLUMN
+  lower int; CREATE INDEX ON e (a, lower)` → PG17 `e_a_lower_idx`, parser `e_a_lower_idx1`; and a
+  partial index `ON e (b) WHERE a > 0` survives `DROP COLUMN a` in the parser while PG drops it.
+- MySQL, `both`: DB `KEY k (a,(b+1))` + file `ADD FOREIGN KEY (a) REFERENCES p(id)` → both builds an
+  extra `a` index; DB `KEY a ((b+1))` + file `ADD KEY (a)` → both `a`, MySQL `a_2`; an unnamed
+  expression key → both `functional_index`, MySQL `functional_index_2`.
+
+**Root cause.** The introspectors skip expression indexes entirely (PG `indexprs IS NULL`, MySQL
+`introspect/mysql.go:390,566-571`), so `Seed` (`parser/postgres/postgres.go:43`,
+`parser/mysql/mysql.go:260`) cannot restore PG `exprIndexes` or MySQL `exprKeys`. PG `exprIndexes` is
+names only, so `alterDropColumn` (`postgres.go:856`, touches only `table.Constraints`) cannot release
+a reservation, and `namespace()` (`postgres.go:229`) does not count views or sequences.
+
+**Suggested fix.**
+- New `parser.ExpressionIndex{Name, Columns}` (`parser/expression_index.go`) and a
+  `parser.Table.ExpressionIndexes` field (a 4-line hunk at the end of the `Table` struct). Columns:
+  on PG every column the index reads (key, expression, INCLUDE, WHERE) in table order; on MySQL the key
+  parts, with "" for an expression part.
+- The file parsers store expression indexes on the table instead of the private PG `exprIndexes` /
+  MySQL `exprKeys` (both removed), so `Seed` restores them for free and rename/move/drop-table
+  bookkeeping goes away. PG `parseCreateIndex` fills Columns via a new `indexReads` (reuses
+  `parser.CheckColumns` on deparsed expressions + WHERE). PG `alterDropColumn` (still a plain function)
+  also drops expression indexes and index constraints whose WHERE reads the column (`CheckColumns` over
+  `c.Where` at drop time, since seeded constraints carry only text); RENAME COLUMN renames carrier
+  columns. The MySQL functions keep their logic and take `*parser.Table`.
+- New `introspectExpressionIndexes` in both introspectors: PG `indexprs IS NOT NULL`, columns from
+  DISTINCT `pg_depend.refobjsubid > 0` ordered by attnum (pg_depend repeats a column: measured
+  `i3|{a,a,b}`); MySQL statistics rows of any index with a NULL `column_name`, ordered by
+  `seq_in_index`. Both stay out of `Constraints`, so indexes[], the manifest and generated code are
+  unchanged.
+- PG `namespace()` counts a parser-private `skipped` relation set: views and matviews (CREATE / DROP
+  [MATERIALIZED] VIEW) and partitions (PARTITION OF / DROP TABLE); `Seed` fills it from `base.Views`.
+  FIX-305's sequence registry should feed the same namespace (whichever lands second); FIX-304 builds on
+  `skipped` as its record of deliberately skipped relations.
+- Empty-slice care: `DeleteFunc` leaves `[]` against the introspector's nil and fails parity, so the PG
+  drop and MySQL DROP INDEX paths rebuild the slice as nil when empty.
+- MySQL `generated` (which FK index MySQL built itself) cannot be recovered from the catalog
+  (`mysql.indexes.is_generated` is hidden, ERROR 3554). Auto-accepted the recommended option on
+  2026-10-12 (`/fix` auto-accept rule; user confirmed no veto): treat every seeded index as declared and
+  document it as a `both`-mode limit in PRD §6.1 (measured example: DB `FOREIGN KEY (a)` + file `ADD KEY
+  (a, b)` → both `[a(a) a_2(a,b)]`, files and DB `a(a,b)`); no churn, doc-only.
+- Auto-accepted the recommended option on 2026-10-12 (`/fix` auto-accept rule): the carrier lives on
+  `parser.Table`, filled by both the file parser and the introspector, so `assertSchemaParity` compares
+  it and finds it equal (no parity exception); `sortForParity` sorts it by name; prototyped green, no
+  churn, no runtime or generated surface (the exported type and field are in the parser module),
+  reverses no ruling or PRD text.
+- Tests: PG `TestDerivedConstraintNames` cases (drop column across key/WHERE/INCLUDE, rename column,
+  view/matview/DROP VIEW, partition/DROP TABLE); `TestSeedKeepsReservedIndexNames` (PG),
+  `TestSeedKeepsExpressionKeys` (MySQL); integration `TestPostgresIntrospect_BothModeExpressionIndexes`,
+  `TestMySQLIntrospect_BothModeExpressionKeys` (Merge + files parse + migration, then
+  `assertSchemaParity`).
+- Corrected vs. the original suggestion (vet 2026-10-12): the file parsers fill the carrier too (not an
+  introspector-only carrier beside private parser state), so parity holds on both sides, including the
+  existing fixtures with expression indexes (pgi_exprix, probe_names.e, m_ex_*); WHERE references are
+  checked at drop time; `alterDropColumn` need not become a method; widened within the scope cap
+  (same root cause and site, `namespace()`) to partitions, measured on PG17: a `n_a_idx` partition
+  gives index `n_a_idx1` where the parser gave `n_a_idx`.
+- Prototype results, run at `9b58288b` on 2026-10-12: probe (`zz_probe_fix303_test.go`, postgres 17.11,
+  mysql 8.0.46; files / introspect+Seed+file / DB) → PG `((a::text))` + `CREATE INDEX ON n (a)`: db
+  `[n_a_idx n_a_idx1]`, files `[n_a_idx1(a)]`, both `[n_a_idx(a)]`; view `n_a_idx`: db `[n_a_idx1]`,
+  files and both `[n_a_idx(a)]`; drop-column: db `[n_a_lower_idx]`, files `[n_a_lower_idx1(a,lower)
+  n_b_idx(b)]`; MySQL fk-prefix: db `[k:1:a k:2:(b + 1)]`, files `[]`, both `[a(a)]`; `KEY a ((b+1))` +
+  `ADD KEY (a)`: db and files `a_2`, both `a`; functional: db and files `functional_index_2`, both
+  `functional_index`. Gates: parser `go test -race -count=1 ./...` (integration) ok; `golangci-lint`
+  0 issues; `gofumpt -l` clean; `make refs-check` ok; cmd/sqlgen `go build ./...` ok,
+  `TestE2EGoldenFiles` ok, `TestE2EDatabaseTwin` ok (12 PASS), `go test -short ./cli/... ./manifest/...
+  ./internal/livedb/...` ok, `golangci-lint` 0 issues. Fail-first: PG introspector fill reverted → `-
+  Name: "n_a_idx" + Name: "n_a_idx1"`; namespace views/partitions loop reverted → `- "v INDEX v_a_idx1"
+  + "v INDEX v_a_idx"`; Seed view registration reverted → "want one index named n_a_idx2"; drop-column
+  release reverted → `- "e INDEX e_a_lower_idx" + "e INDEX e_a_lower_idx1"`; WHERE check reverted → `+
+  "e INDEX e_b_idx"`; RENAME carrier reverted → `- "r INDEX r_a_lower_idx" + "r INDEX r_a_lower_idx1"`;
+  MySQL introspector fill reverted → extra FK index, `functional_index` vs `_2`, `a` vs `a_2`; MySQL
+  Seed carrier cleared → 3 subtests fail; existing suite without the fix passes. Golden churn: none.
+  Patch: `.claude/prototypes/FIX-303.patch` (12 files, +462/-51).
+
+**References.**
+- PRD §5.2 (index naming), §6.1 (including "`both` Mode — Merge Strategy").
+- Backlog lines absorbed: 2026-10-08 PG both-mode Seed expression-index names (FIX-276); 2026-10-08
+  PG DROP COLUMN keeps the reservation (FIX-276); 2026-10-08 MySQL Seed generated/exprKeys (FIX-294).
+- FIX-276, FIX-294, FIX-275.
+
+**Resolution notes.** Applied the vetted prototype with `git apply --3way`; the two conflicts (`parser/mysql/mysql.go` RENAME/CHANGE COLUMN, `parser/postgres/postgres.go` RENAME COLUMN) came from FIX-301 (`13baa029`) adding the dialect argument to `parser.RenameColumnReferences`, so the landed calls keep `"mysql"`/`"postgres"` and gain the carrier updates (`renameExprKeyColumn(table, …)`, the PG `ExpressionIndexes` column rename). New `parser.ExpressionIndex` (`parser/expression_index.go`) and `parser.Table.ExpressionIndexes`, filled by the PG and MySQL file parsers (replacing the private `exprIndexes` / `exprKeys`) and by new `introspectExpressionIndexes` in both introspectors, so `Seed` restores them; PG `alterDropColumn` drops expression indexes and index constraints whose WHERE reads the column; PG `namespace()` counts a `skipped` set of views, matviews and partitions, which `Seed` fills from `base.Views`; PRD §6.1 documents the MySQL `both`-mode foreign-key-index limit. Fail-first re-run on the final code: PG/MySQL introspector fill, namespace `skipped` loop, Seed view registration, WHERE check and RENAME carrier each fail their tests when reverted. Gates: `make check` ok, `cd parser && go test -race -count=1 ./...` (integration) ok, `make check-examples` ok, cmd/sqlgen `TestE2EDatabaseTwin`, `./cli/...` and `./internal/livedb/...` (integration) ok; `make update-golden-e2e` and `make update-golden` produced no churn, matching the vet. Verify reviewer: no high-confidence issues; the landed diff matches the prototype except FIX-301 context lines. Until FIX-304 lands, the new `skipped` set does not follow ALTER [MATERIALIZED] VIEW RENAME / SET SCHEMA or a partitioned parent's DROP TABLE, so those three shapes now hold the old name (FIX-304's vetted plan covers them); an expression EXCLUDE's backing index went to the backlog.
 
 ### FIX-302
 

@@ -484,7 +484,52 @@ func (mi *MySQLIntrospector) applyIndexMetadata(ctx context.Context, table *pars
 	if err := mi.applyIndexMethods(ctx, table); err != nil {
 		return err
 	}
-	return mi.introspectNonUniqueIndexes(ctx, table)
+	if err := mi.introspectNonUniqueIndexes(ctx, table); err != nil {
+		return err
+	}
+	return mi.introspectExpressionIndexes(ctx, table)
+}
+
+// introspectExpressionIndexes reads the keys with an expression part (MySQL
+// 8.0.13+), which the constraints leave out, unique or not. Each part is its
+// column, or "" for an expression part, which has a NULL column_name.
+func (mi *MySQLIntrospector) introspectExpressionIndexes(ctx context.Context, table *parser.Table) error {
+	rows, err := mi.db.QueryContext(ctx, `
+		SELECT s.index_name, s.column_name
+		FROM information_schema.statistics s
+		WHERE s.table_schema = DATABASE()
+		  AND s.table_name = ?
+		  AND EXISTS (
+			SELECT 1 FROM information_schema.statistics e
+			WHERE e.table_schema = s.table_schema
+			  AND e.table_name = s.table_name
+			  AND e.index_name = s.index_name
+			  AND e.column_name IS NULL)
+		ORDER BY s.index_name, s.seq_in_index`, table.Name)
+	if err != nil {
+		return fmt.Errorf("introspect mysql expression indexes %s: %w", table.Name, err)
+	}
+	defer rows.Close() //nolint:errcheck // rows.Close error is not actionable after reading
+
+	for rows.Next() {
+		var (
+			name string
+			col  sql.NullString
+		)
+		if err := rows.Scan(&name, &col); err != nil {
+			return fmt.Errorf("introspect mysql expression indexes %s: scanning: %w", table.Name, err)
+		}
+		n := len(table.ExpressionIndexes)
+		if n == 0 || table.ExpressionIndexes[n-1].Name != name {
+			table.ExpressionIndexes = append(table.ExpressionIndexes, parser.ExpressionIndex{Name: name})
+			n++
+		}
+		table.ExpressionIndexes[n-1].Columns = append(table.ExpressionIndexes[n-1].Columns, col.String)
+	}
+	if err := rows.Err(); err != nil {
+		return fmt.Errorf("introspect mysql expression indexes %s: iterating: %w", table.Name, err)
+	}
+	return nil
 }
 
 // applyIndexMethods reads INFORMATION_SCHEMA.STATISTICS.INDEX_TYPE for every

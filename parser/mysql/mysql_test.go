@@ -3002,6 +3002,65 @@ func TestExpressionKeys(t *testing.T) {
 	}
 }
 
+// TestSeedKeepsExpressionKeys covers `input.source: both`: an introspected key
+// with an expression part keeps its name against a key the DDL files add, and
+// serves a foreign key whose columns lead it, as on MySQL 8.0.
+func TestSeedKeepsExpressionKeys(t *testing.T) {
+	tests := []struct {
+		name string
+		key  parser.ExpressionIndex
+		sql  string
+		want []string // every UNIQUE and INDEX of e, as "name [columns]"
+	}{
+		{
+			name: "a named expression key keeps its name",
+			key:  parser.ExpressionIndex{Name: "a", Columns: []string{""}},
+			sql:  `ALTER TABLE e ADD KEY (a);`,
+			want: []string{"a_2 [a]"},
+		},
+		{
+			name: "an unnamed expression key keeps functional_index",
+			key:  parser.ExpressionIndex{Name: "functional_index", Columns: []string{""}},
+			sql:  `ALTER TABLE e ADD KEY (functional_index);`,
+			want: []string{"functional_index_2 [functional_index]"},
+		},
+		{
+			name: "an expression key serves a foreign key",
+			key:  parser.ExpressionIndex{Name: "k", Columns: []string{"a", ""}},
+			sql:  `ALTER TABLE e ADD FOREIGN KEY (a) REFERENCES p (id);`,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			p := newParser(t)
+			p.Seed(&parser.Schema{Tables: []parser.Table{
+				{
+					Name:        "p",
+					Columns:     []parser.Column{{Name: "id", Type: "int", PrimaryKey: true}},
+					Constraints: []parser.Constraint{{Name: "PRIMARY", Type: parser.PrimaryKey, Columns: []string{"id"}, Method: "btree"}},
+				},
+				{
+					Name:              "e",
+					Columns:           []parser.Column{{Name: "a", Type: "int", Nullable: true}, {Name: "functional_index", Type: "int", Nullable: true}, {Name: "b", Type: "int", Nullable: true}},
+					ExpressionIndexes: []parser.ExpressionIndex{tt.key},
+				},
+			}})
+			if err := p.Parse("test.sql", []byte(tt.sql)); err != nil {
+				t.Fatalf("Parse() error: %v", err)
+			}
+			var got []string
+			for _, c := range p.Schema().Tables[1].Constraints {
+				if c.Type == parser.Unique || c.Type == parser.Index {
+					got = append(got, fmt.Sprintf("%s %v", c.Name, c.Columns))
+				}
+			}
+			if diff := cmp.Diff(tt.want, got); diff != "" {
+				t.Errorf("keys mismatch (-want +got):\n%s", diff)
+			}
+		})
+	}
+}
+
 func TestParseViewSQL_OuterAliases(t *testing.T) {
 	tests := []struct {
 		name string

@@ -627,7 +627,57 @@ func (pi *PostgresIntrospector) introspectConstraints(ctx context.Context, table
 	if err != nil {
 		return err
 	}
-	return pi.introspectStandaloneIndexes(ctx, table, conIndIDs, casts)
+	if err := pi.introspectStandaloneIndexes(ctx, table, conIndIDs, casts); err != nil {
+		return err
+	}
+	return pi.introspectExpressionIndexes(ctx, table)
+}
+
+// introspectExpressionIndexes reads the indexes with an expression part, which
+// the constraints leave out, with the columns each reads: pg_depend records
+// one entry per column referenced anywhere in the index, and dropping any of
+// them drops the index.
+func (pi *PostgresIntrospector) introspectExpressionIndexes(ctx context.Context, table *parser.Table) error {
+	rows, err := pi.db.QueryContext(ctx, `
+		SELECT
+			ic.relname,
+			COALESCE(
+				(SELECT array_agg(att.attname ORDER BY att.attnum)
+				 FROM pg_catalog.pg_attribute att
+				 WHERE att.attrelid = pi.indrelid
+				   AND att.attnum IN (
+					SELECT dep.refobjsubid
+					FROM pg_catalog.pg_depend dep
+					WHERE dep.classid = 'pg_catalog.pg_class'::regclass
+					  AND dep.objid = pi.indexrelid
+					  AND dep.refclassid = 'pg_catalog.pg_class'::regclass
+					  AND dep.refobjid = pi.indrelid
+					  AND dep.refobjsubid > 0)),
+				'{}'
+			)
+		FROM pg_catalog.pg_index pi
+		JOIN pg_catalog.pg_class ic ON ic.oid = pi.indexrelid
+		JOIN pg_catalog.pg_class tc ON tc.oid = pi.indrelid
+		JOIN pg_catalog.pg_namespace tns ON tns.oid = tc.relnamespace
+		WHERE tns.nspname = $1 AND tc.relname = $2
+		  AND pi.indexprs IS NOT NULL
+		ORDER BY ic.relname`, table.Schema, table.Name)
+	if err != nil {
+		return fmt.Errorf("introspect postgres expression indexes %s.%s: %w", table.Schema, table.Name, err)
+	}
+	defer rows.Close() //nolint:errcheck // rows.Close error is not actionable after reading
+
+	for rows.Next() {
+		var name, cols string
+		if err := rows.Scan(&name, &cols); err != nil {
+			return fmt.Errorf("introspect postgres expression indexes %s.%s: scanning: %w", table.Schema, table.Name, err)
+		}
+		table.ExpressionIndexes = append(table.ExpressionIndexes, parser.ExpressionIndex{Name: name, Columns: parsePostgresArray(cols)})
+	}
+	if err := rows.Err(); err != nil {
+		return fmt.Errorf("introspect postgres expression indexes %s.%s: iterating: %w", table.Schema, table.Name, err)
+	}
+	return nil
 }
 
 func (pi *PostgresIntrospector) introspectConstraintsViaPgConstraint(ctx context.Context, table *parser.Table, casts map[string][]string) (map[int64]struct{}, error) {
