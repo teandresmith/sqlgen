@@ -2860,27 +2860,63 @@ column is a date.
 
 - **Status:** Open
 - **Severity:** tracked
-- **Origin:** phase 6, `cmd/sqlgen/gen` (soft-delete live filter) + `cmd/sqlgen/config` (soft-delete validation)
+- **Origin:** phase 6, `cmd/sqlgen/config` (soft-delete validation) + `cmd/sqlgen/cli` (`toSchemaTables` HasDefault)
 - **Surfaced by:** FIX-341 vet (2026-10-12), filed at the backlog sweep's third Step 5
+- **Vetted:** corrected at `506d34bc` (2026-10-12)
 
 **Issue.** A nullable bool soft-delete column with no DEFAULT hides every row created without the flag: the live
 ("not deleted") filter is `= false`, which excludes NULL. Measured on postgres:17 with `zz_b1(id SERIAL PK, name TEXT NOT
 NULL, zz_del1 BOOLEAN)` and `type: bool` (generate and build ok at base+FIX-324+FIX-336): `Create` → "Create: row=<nil>
 err=sqlgen: resource not found" although the row is inserted; `GetMany(nil)` → "0 rows"; after `SoftDelete(1)` +
-`Restore(1)`, `GetMany(nil)` → "1 rows". The integer strategy (`= 0`) has the same shape by reading; not measured.
+`Restore(1)`, `GetMany(nil)` → "1 rows". Measured identically for the integer strategy (`= 0`) on PG17, MySQL 8.0 and SQLite, at plain base and with
+FIX-324/336/341: bool and int `Create` → "row=false err=sqlgen: resource not found raw=<nil>", `GetMany` 0, `Count` 0,
+`Exists(1)` false, `Get(1)` not found; an O2M child likewise (EXISTS filter 0 rows, load 0 children).
 
-**Root cause.** The bool / integer strategies give NULL no meaning: the live filter compares to false / 0, and validation
-accepts a nullable column without a DEFAULT.
+**Root cause.** The bool / integer strategies give NULL no meaning: the live filter compares to false / 0 (emitted at 4
+sites — gen `funcSoftDeleteCondition`, `funcSoftDeleteSubqueryPredicate`/`Arg`, runtime `sql.writeJoinSoftDeleteFilter`,
+`manifest/sql.go` `softDeleteClause`; the restore scope is `= 1`), and validation accepts a nullable column without a
+DEFAULT.
 
 **Suggested fix.**
-- Decide at vet (measure both on all three dialects): (A) treat NULL as live — the live filter becomes `IS NOT TRUE` /
-  `COALESCE(col, 0) = 0` (or `IS NULL OR = false`) and the deleted filter stays `= true` / `<> 0`; or (B) validation
-  rejects a nullable bool / integer soft-delete column with no DEFAULT (or any nullable one), naming the column. Check PRD
-  §4.6 / §5.4 / §17.2 for what "not deleted" means for these strategies; return a ruling question unless the PRD settles it
-  or `/fix`'s auto-accept rule applies. Mind index use of the live filter and the generated `ToConditions` / comparator
-  shape (FIX-336's `funcSoftDeleteFilterOverride`).
-- Tests: per-dialect integration round trip (Create without the flag → visible; SoftDelete → hidden; Restore → visible)
-  for bool and integer.
+- `cmd/sqlgen/config/validate.go` `validateSoftDeleteTypes` (after FIX-341's case): reject a bool / integer column that is
+  nullable with no DEFAULT — `soft_delete_columns: column "<c>" in table <t> is nullable with no DEFAULT, but soft delete
+  type "bool" marks a live row with FALSE, so a row created without it is hidden (make it NOT NULL, or give it DEFAULT
+  FALSE)` (`0` for integer); an incompatible type still reports only the type error; only the first match is checked.
+- `cmd/sqlgen/cli/pipeline.go` `toSchemaTables`: `HasDefault` treats a literal `DEFAULT NULL` (any case, optional `::type`)
+  as no default via unexported `isNullDefault` — the PG / SQLite file parsers keep "NULL" while the PG catalog and the MySQL
+  parser record none, so without it `DEFAULT NULL` passed under `files` and errored under `database`. The only other
+  `HasDefault` consumer (§32.4, `validate.go:1582`) ORs it with `Nullable`.
+- PRD: §4.6 sentence (nullable bool/integer with no DEFAULT is an error; DEFAULT NULL counts as none; NOT NULL not
+  required), §4.13 row after FIX-341's, the phase-2 list and the §8 validate-test list.
+- Tests: config `TestValidatePostParse_SoftDeleteFlagNullability` (9 rows); cli `TestToSchemaTables_HasDefault` (7);
+  cli `TestGenerate_nullableNoDefaultFlagSoftDeleteRejected` (bool, bool DEFAULT NULL, integer; exit 2, no output dir);
+  `TestValidatePostParse_SoftDeleteTypeMatch` rows gain `HasDefault: true`.
+- Auto-accepted the recommended option on 2026-10-12 (`/fix` auto-accept rule): (Q1) NULL = live (A) vs validation error
+  (B) → B, because PRD §17.2 defines the not-deleted value as FALSE / 0 and §9.8 / §17.3 state the predicate literally (A
+  would reverse PRD-stated behavior), B was prototyped green, causes no churn (A unconditional churns postgres,
+  postgres_stdlib, mysql, sqlite) and adds no surface (A's M2M join site needs a new exported `SoftDeleteOptions` field).
+  Measured for A: all three predicate forms valid everywhere; only `(col IS NULL OR col = v)` uses an index (PG BitmapOr,
+  MySQL covering lookup, SQLite MULTI-INDEX OR). (Q2) which nullable columns → B1, nullable with no DEFAULT (DEFAULT NULL
+  counts as none), same conditions. Veto alternatives: B2 any nullable column (also rejects legacy `TINYINT(1) DEFAULT 0`;
+  closes B1's residual, measured on 3 dialects: a nullable DEFAULT FALSE column `Update(1, {ZzDel1:
+  omittable.Set[*bool](nil)})` → "row=false err=sqlgen: resource not found raw=<nil>", then GetMany 0); B3 any column with
+  no DEFAULT (also rejects NOT NULL without default).
+- Corrected from the original: the open choice is made (B1); widened to the `DEFAULT NULL` normalization (same root cause,
+  same site; before it PG files "generated 8 files" vs PG `source: database` "Post-parse validation error: …"); the option-A
+  round-trip tests are replaced by the validation / CLI tests, and the accepted shapes were round-tripped on all three
+  dialects (nullable `BOOLEAN DEFAULT FALSE`: Create raw=false, GetMany 1, SoftDelete → 0 rows, Restore → 1; O2M child with
+  DEFAULT FALSE: EXISTS 1, load 1).
+- Prototype results, run at `506d34bc` + FIX-324 + FIX-336 + FIX-341 on 2026-10-12: probe copies `probe344{pg,my,lite}`
+  (vet-FIX-344-pg postgres:17-alpine, vet-FIX-344-my mysql:8.0, modernc) → the reproduction above. Gates: `go test -race
+  -count=1 ./config/... ./cli/... ./gen/... ./manifest/... ./mcp/...` ok; gofumpt, golangci-lint clean; `make
+  update-golden` / `update-golden-e2e` no diff; `TestE2EDatabaseTwin` ok; `make refs-check` ok. Fail-first: validation case
+  disabled → `…/nullable_bool,_no_DEFAULT` "ValidatePostParse() error = <nil>, want \"soft_delete_columns: column
+  \\\"soft_col\\\" in table public.items is nullable with no DEFAULT, but soft delete type \\\"bool\\\" marks a live row with
+  FALSE\"" and `TestGenerate_…/bool` "generate error = <nil>, want exit code 2 (config)"; `isNullDefault` removed →
+  `TestToSchemaTables_HasDefault/DEFAULT_NULL` "HasDefault = true, want false (Default \"NULL\")" and `…/bool_DEFAULT_NULL`;
+  existing suite passes. Golden churn none. Stacked on FIX-324 + FIX-336 + FIX-341 (extends 341's switch, PRD sentence and
+  row, test file); FIX-328's §4.13 row is an adjacent-row rebase; FIX-321 / FIX-340 touch other hunks. Patch:
+  `.claude/prototypes/FIX-344.patch` (6 files, +215/-5).
 
 **References.**
 - PRD §4.6, §5.4, §17.2.
