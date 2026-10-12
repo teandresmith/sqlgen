@@ -325,19 +325,19 @@ PRD Sections: 4.1.1, 4.2, 4.3, 6.1, 6.3, 8.1.7, 16.2, 30.4.2
 
 **PRD Reference:** Sections 6.1, 16.2, 8.1.7
 
-**Status:** Not Started
+**Status:** Complete
 
 ### Tasks
 
-- [ ] `cmd/sqlgen/testdata/examples/postgres/after_views.sql`: move the `order_totals_product_id_idx`
+- [x] `cmd/sqlgen/testdata/examples/postgres/after_views.sql`: move the `order_totals_product_id_idx`
   unique index out of `tests/main_test.go`. Change that `TestMain` to apply the file after the
   views, so the runtime suite and the twin build the same database.
-- [ ] Check every other example's `TestMain` for DDL beyond `schema.sql` and its views. Move any
+- [x] Check every other example's `TestMain` for DDL beyond `schema.sql` and its views. Move any
   into that example's `after_views.sql`. Seed data stays where it is.
-- [ ] Confirm lexical view order works for every example. The `postgres` `TestMain` order is
+- [x] Confirm lexical view order works for every example. The `postgres` `TestMain` order is
   `product_summary`, `category_stats`, `order_totals`. If one needs an explicit order, stop and
   ask before adding one to the convention.
-- [ ] `cmd/sqlgen/e2e_test.go`: add `TestE2EDatabaseTwin`.
+- [x] `cmd/sqlgen/e2e_test.go`: add `TestE2EDatabaseTwin`.
   - It skips under `testing.Short()`.
   - For each `discoverExamples` entry whose `input.source` is `files` or unset, as a subtest:
     1. create a database on the example's dialect (`livedb`) and `livedb.ApplySetup`;
@@ -351,9 +351,9 @@ PRD Sections: 4.1.1, 4.2, 4.3, 6.1, 6.3, 8.1.7, 16.2, 30.4.2
     6. normalize both the output and `expected/` with `livedb.NormalizeTree`, then `cmp.Diff`
        per file.
   - It never writes goldens: it ignores `-update-e2e`.
-- [ ] Report a twin failure per example and per file, with the unified diff, so one example's
+- [x] Report a twin failure per example and per file, with the unified diff, so one example's
   divergence does not hide another's.
-- [ ] Record each example's twin wall time in the Completion Record. The design estimates
+- [x] Record each example's twin wall time in the Completion Record. The design estimates
   1–2 minutes in total.
 
 ### Acceptance Criteria
@@ -370,15 +370,100 @@ PRD Sections: 4.1.1, 4.2, 4.3, 6.1, 6.3, 8.1.7, 16.2, 30.4.2
 
 ### Tests Required
 
-- [ ] `TestE2EDatabaseTwin` green on all 12 examples (Docker).
-- [ ] Fail-first: with 31.1's query reverted, the `postgres` and `postgres_stdlib` subtests fail
+- [x] `TestE2EDatabaseTwin` green on all 12 examples (Docker).
+- [x] Fail-first: with 31.1's query reverted, the `postgres` and `postgres_stdlib` subtests fail
   on `enums_gen.go` / `types_gen.go`. Quote the failure.
-- [ ] `make check-examples` green, with the `postgres` example's `TestMain` reading `after_views.sql`.
-- [ ] `make test-integration` green.
+- [x] `make check-examples` green, with the `postgres` example's `TestMain` reading `after_views.sql`.
+- [x] `make test-integration` green.
 
 ### Completion Record
 
-_Filled in when complete: files changed, commit references, notes._
+- **Completed:** 2026-10-11.
+- **Files changed:**
+  - `cmd/sqlgen/testdata/examples/{postgres,graphql,tenancy_postgres}/after_views.sql` (new): each
+    holds the unique index on that example's materialized view with `@pk`
+    (`order_totals_product_id_idx`, `category_price_totals_category_id_idx`,
+    `workspace_line_totals_workspace_id_idx`). Each `tests/main_test.go` now reads the file after
+    its views instead of running the statement inline.
+  - `cmd/sqlgen/e2e_test.go`: `TestE2EDatabaseTwin` and its helpers. The helpers are
+    `runDatabaseTwin`, `removeGoldenOutputs`, `absoluteReplaces`, `inputValue`,
+    `rewriteToDatabaseSource` and `slashKeys`. `TestRewriteToDatabaseSource` is new and runs under
+    `-short`.
+  - `docs/tracker/backlog.md`: the 31.2 line about `markdownViewSource` gains the `(from SOURCE)`
+    suffix that `tracker-check` requires. It was failing `make check` at HEAD.
+- **Other `TestMain`s:** nothing else to move. Apart from the three indexes, every `TestMain`
+  applies only `schema.sql` and its views (plus connection PRAGMAs on SQLite). `cache` applies
+  `schema.sql` and not its one view; no test of that example queries the view. The twin still
+  builds it from `views/`. `graphql_top_level` has no `TestMain`.
+- **View order:** lexical order works on every example. No view reads another view, so the
+  `postgres` `TestMain` order (`product_summary`, `category_stats`, `order_totals`) and lexical
+  order build the same database. The `TestMain` view lists are unchanged.
+- **Harness:**
+  - Each twin copies the example to `t.TempDir()` and makes every relative `replace` in
+    `go.mod` absolute.
+  - It rewrites `sqlgen.yml` to `source: database` with `connection.url`, dropping
+    `input.paths`. `input.views` stays, for the annotations.
+  - It generates in the copy with `GOWORK=off` and the golden manifest timestamp, then
+    compares the output dir plus `siblingGraphDirs` with `expected/` after `livedb.NormalizeTree`.
+  - Each missing, extra or differing file is its own `t.Errorf`, with a `cmp.Diff` line diff,
+    inside a per-example subtest.
+  - Before generating, `removeGoldenOutputs` deletes every `expected/` path from the copy, except
+    `resolver.go` and `*.resolvers.go`, where gqlgen keeps resolver bodies. So a file the database
+    run fails to emit is reported missing, and the checked-in copy cannot stand in for it.
+  - `TestRewriteToDatabaseSource` (no container) loads every rewritten config through
+    `config.LoadConfig`. It must equal the original apart from `input.source`,
+    `input.connection` and `input.paths`, so a twin cannot quietly run under `files`. It failed
+    with `Paths: []string{"./schema.sql"}` when the `paths:` removal was disabled.
+- **Twin wall time** (`go test -run TestE2EDatabaseTwin -v`, 38.7s in total, including both
+  container start-ups, which land in the first PG and first MySQL example):
+
+  | Example | Time | Example | Time |
+  |---|---|---|---|
+  | `cache` | 0.17s | `postgres` | 0.67s |
+  | `events` | 0.11s | `postgres_stdlib` | 0.37s |
+  | `graphql` | 11.98s | `sqlite` | 6.86s |
+  | `graphql_null_wrappers` | 3.12s | `tenancy` | 0.34s |
+  | `graphql_top_level` | 2.86s | `tenancy_mysql` | 0.22s |
+  | `mysql` | 11.72s | `tenancy_postgres` | 0.25s |
+
+  All 12 pass. There were no divergences to triage and no backlog lines from this sub-item.
+- **Fail-first, 31.1 query reverted** (`typeComments` returning an empty map):
+  ```
+  --- FAIL: TestE2EDatabaseTwin/postgres (1.63s)
+      e2e_test.go:675: enums_gen.go differs by source (-expected +database):
+          - 	// OrderStatus — Lifecycle state of a customer order
+          + 	// OrderStatus represents the order_status enum type.
+          …
+      e2e_test.go:675: types_gen.go differs by source (-expected +database):
+          - 	// Address — Mailing address components
+          + 	// Address represents the address composite type.
+          - 	// Email — RFC 5321 email address
+          + 	// Email is a domain type alias for string.
+          …
+  --- FAIL: TestE2EDatabaseTwin/postgres_stdlib (0.42s)
+      (the same enums_gen.go and types_gen.go diffs)
+  ```
+- **Exceptions exercised:** with both `livedb` exceptions made no-ops, the `graphql` and
+  `tenancy_postgres` twins fail on the split layout (`manifest/entities/*.json` plus the view
+  `.md` pages), and `mysql` fails on `manifest_gen.json` and seven pages. This closes the 31.2
+  note that the split-layout path waited for these twins.
+- **Tests:**
+  - `make check` green.
+  - `make check-examples` green (2m24s), with the three `TestMain`s reading `after_views.sql`.
+  - `make test-integration` green (3m04s; `cmd/sqlgen` 136.7s, `cmd/sqlgen/cli` 108.0s).
+  - `make test` (`-short`) skips the twin before any container starts.
+  - `/security-review` was not triggered: no runtime embed package or `cli/**` subcommand changed.
+- **Auto-review:** 0 high-confidence issues. The reviewer confirmed the fail-first, the
+  `paths:` guard test and the exception counts, each in a throwaway worktree. Applied:
+  - the fail-first quote's line number (`:675`, the `t.Helper` caller) and `…` marks for the
+    cut lines;
+  - `guidelines/TESTING.md` Database Setup now says only the `after_views.sql` step cannot
+    drift, since most `TestMain`s list their views by name;
+  - `runDatabaseTwin` clears `SQLGEN_DB_URL`, which would otherwise override
+    `input.connection.url` (`applyEnvOverrides`).
+
+  The open question for the user is whether the `TestMain`s should switch to the sorted
+  `views/*.sql` glob.
 
 ## 31.4 `source: both` examples — `introspect_postgres`, `introspect_mysql`, `introspect_sqlite`
 

@@ -555,7 +555,7 @@ A database built from an example applies, in order:
 2. every `views/*.sql`, in lexical order;
 3. `after_views.sql`, when present.
 
-A statement that must run after the views, such as an index on a materialized view, goes in `after_views.sql`, never inline in `TestMain`. The example's `TestMain` and the E2E harness both read the same files, so the database the runtime suite tests and the one `TestE2EDatabaseTwin` generates from cannot drift. An `introspect_*` example's `TestMain` then applies `migrations/*.sql` in lexical order, as sqlgen reads a directory (PRD §5.6); the harness applies them only for the migrated database (see Running).
+A statement that must run after the views, such as an index on a materialized view, goes in `after_views.sql`, never inline in `TestMain`. The example's `TestMain` and the E2E harness both read `after_views.sql`, so that step cannot drift. Most `TestMain`s list their views by name, so a new view file goes in that list too. An `introspect_*` example's `TestMain` then applies `migrations/*.sql` in lexical order, as sqlgen reads a directory (PRD §5.6); the harness applies them only for the migrated database (see Running).
 
 ### Module Setup
 

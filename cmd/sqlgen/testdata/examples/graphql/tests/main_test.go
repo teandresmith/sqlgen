@@ -105,13 +105,15 @@ func TestMain(m *testing.M) {
 		}
 	}
 
-	// category_price_totals asserts `@pk: category_id`, which per PRD §16.5.2
-	// is what makes the matview concurrently refreshable — so the generated
-	// client emits RefreshConcurrently, and that statement requires a real
-	// UNIQUE index to exist. The annotation alone does not create one. Without
-	// this the fixture would advertise a precondition it never established.
-	if _, err := testPool.Exec(ctx, `CREATE UNIQUE INDEX category_price_totals_category_id_idx ON category_price_totals (category_id)`); err != nil {
-		panic(fmt.Sprintf("creating category_price_totals unique index: %v", err))
+	// after_views.sql creates the UNIQUE index that category_price_totals'
+	// `@pk: category_id` needs for RefreshConcurrently. Without it the fixture
+	// would advertise a precondition it never established.
+	afterViews, err := os.ReadFile("../after_views.sql")
+	if err != nil {
+		panic(fmt.Sprintf("reading after_views.sql: %v", err))
+	}
+	if _, err := testPool.Exec(ctx, string(afterViews)); err != nil {
+		panic(fmt.Sprintf("applying after_views.sql: %v", err))
 	}
 
 	testClient = models.New(dbpgx.New(testPool))

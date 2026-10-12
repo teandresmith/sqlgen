@@ -76,10 +76,15 @@ func TestMain(m *testing.M) {
 		}
 	}
 
-	// The unique index backing the @pk assertion — the precondition for
-	// REFRESH MATERIALIZED VIEW CONCURRENTLY.
-	if _, err := testPool.Exec(ctx, "CREATE UNIQUE INDEX order_totals_product_id_idx ON order_totals (product_id)"); err != nil {
-		panic(fmt.Sprintf("creating order_totals unique index: %v", err))
+	// Statements that need the views, such as the unique index backing
+	// order_totals' @pk, the precondition for REFRESH MATERIALIZED VIEW
+	// CONCURRENTLY.
+	afterViews, err := os.ReadFile("../after_views.sql")
+	if err != nil {
+		panic(fmt.Sprintf("reading after_views.sql: %v", err))
+	}
+	if _, err := testPool.Exec(ctx, string(afterViews)); err != nil {
+		panic(fmt.Sprintf("applying after_views.sql: %v", err))
 	}
 
 	code := m.Run()

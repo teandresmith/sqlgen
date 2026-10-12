@@ -81,11 +81,14 @@ func TestMain(m *testing.M) {
 			panic(fmt.Sprintf("applying view %s: %v", viewFile, err))
 		}
 	}
-	// REFRESH MATERIALIZED VIEW CONCURRENTLY requires a UNIQUE index covering
-	// all rows; the @pk annotation asserts it generator-side, the server needs
-	// the real index.
-	if _, err := testPool.Exec(ctx, "CREATE UNIQUE INDEX workspace_line_totals_workspace_id_idx ON workspace_line_totals (workspace_id)"); err != nil {
-		panic(fmt.Sprintf("creating workspace_line_totals unique index: %v", err))
+	// after_views.sql creates the UNIQUE index that REFRESH MATERIALIZED VIEW
+	// CONCURRENTLY needs on workspace_line_totals.
+	afterViews, err := os.ReadFile("../after_views.sql")
+	if err != nil {
+		panic(fmt.Sprintf("reading after_views.sql: %v", err))
+	}
+	if _, err := testPool.Exec(ctx, string(afterViews)); err != nil {
+		panic(fmt.Sprintf("applying after_views.sql: %v", err))
 	}
 
 	code := m.Run()
