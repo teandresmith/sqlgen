@@ -3030,7 +3030,7 @@ values break whenever loc ≠ session tz.
 - **Severity:** nit
 - **Origin:** phase 6, `cmd/sqlgen/gotype` (SQLite `date` mapping) + runtime SQLite time binds
 - **Surfaced by:** FIX-335 vet (2026-10-12), filed at the backlog sweep's second Step 5
-- **Vetted:** needs ruling at `f9a460a5` (2026-10-12)
+- **Vetted:** ready at `f9a460a5` (2026-10-12; doc-only, so no fail-first applies)
 
 **Issue.** A SQLite `date` column resolves to `types.DateTime`, so sqlgen writes and binds datetime text while a
 `date()` / `CURRENT_DATE` default stores `YYYY-MM-DD`; filters and cursors over a mix of the two are wrong. Measured
@@ -3053,7 +3053,8 @@ column is a date.
   `date()` / `CURRENT_DATE` rows (Eq / In miss, Gte/Lt boundaries shift a day, a cursor key skips forward and repeats a
   row on every page backward), and gives the remedy: `DEFAULT (datetime('now', 'start of day'))` and dates passed as
   UTC midnight.
-- Pending the user's ruling — Q1, how should FIX-343 close the SQLite `date` gap?
+- The user ruled on 2026-10-12: (c) — document the limit and the workaround in PRD §7.2 (the prototyped patch); (b), a
+  `types.Date` runtime type, is not pursued. The question as asked — Q1, how should FIX-343 close the SQLite `date` gap?
   - (c, recommended, prototyped) document the limit and workaround in PRD §7.2 only: no code, churn or surface; rows
     written by `date()` / `CURRENT_DATE` stay wrong as measured; the documented default makes Eq, In, ranges and cursors
     correct both ways (measured). No fail-first is possible for a doc-only change.
@@ -3076,6 +3077,38 @@ column is a date.
 **References.**
 - PRD §7.2.
 - FIX-335 (lands first).
+
+**Resolution notes.** _Filled in by /fix resolve._
+
+### FIX-344
+
+- **Status:** Open
+- **Severity:** tracked
+- **Origin:** phase 6, `cmd/sqlgen/gen` (soft-delete live filter) + `cmd/sqlgen/config` (soft-delete validation)
+- **Surfaced by:** FIX-341 vet (2026-10-12), filed at the backlog sweep's third Step 5
+
+**Issue.** A nullable bool soft-delete column with no DEFAULT hides every row created without the flag: the live
+("not deleted") filter is `= false`, which excludes NULL. Measured on postgres:17 with `zz_b1(id SERIAL PK, name TEXT NOT
+NULL, zz_del1 BOOLEAN)` and `type: bool` (generate and build ok at base+FIX-324+FIX-336): `Create` → "Create: row=<nil>
+err=sqlgen: resource not found" although the row is inserted; `GetMany(nil)` → "0 rows"; after `SoftDelete(1)` +
+`Restore(1)`, `GetMany(nil)` → "1 rows". The integer strategy (`= 0`) has the same shape by reading; not measured.
+
+**Root cause.** The bool / integer strategies give NULL no meaning: the live filter compares to false / 0, and validation
+accepts a nullable column without a DEFAULT.
+
+**Suggested fix.**
+- Decide at vet (measure both on all three dialects): (A) treat NULL as live — the live filter becomes `IS NOT TRUE` /
+  `COALESCE(col, 0) = 0` (or `IS NULL OR = false`) and the deleted filter stays `= true` / `<> 0`; or (B) validation
+  rejects a nullable bool / integer soft-delete column with no DEFAULT (or any nullable one), naming the column. Check PRD
+  §4.6 / §5.4 / §17.2 for what "not deleted" means for these strategies; return a ruling question unless the PRD settles it
+  or `/fix`'s auto-accept rule applies. Mind index use of the live filter and the generated `ToConditions` / comparator
+  shape (FIX-336's `funcSoftDeleteFilterOverride`).
+- Tests: per-dialect integration round trip (Create without the flag → visible; SoftDelete → hidden; Restore → visible)
+  for bool and integer.
+
+**References.**
+- PRD §4.6, §5.4, §17.2.
+- FIX-324, FIX-336, FIX-341 (soft-delete detection, filter literal, timestamp nullability; land first).
 
 **Resolution notes.** _Filled in by /fix resolve._
 
