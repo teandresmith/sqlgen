@@ -469,11 +469,11 @@ PRD Sections: 4.1.1, 4.2, 4.3, 6.1, 6.3, 8.1.7, 16.2, 30.4.2
 
 **PRD Reference:** Sections 4.1.1, 4.2, 4.3, 6.1 (`both` Mode — Merge Strategy), 6.3, 16.2
 
-**Status:** Not Started
+**Status:** Complete
 
 ### Tasks
 
-- [ ] **Harness first** (`cmd/sqlgen/e2e_test.go`). `TestE2EGoldenFiles` reads each example's
+- [x] **Harness first** (`cmd/sqlgen/e2e_test.go`). `TestE2EGoldenFiles` reads each example's
   `input.source`. For `both`:
   - **Default mode:** build the base database (`livedb.ApplySetup`) and set
     `SQLGEN_EXAMPLE_DATABASE_URL`. Generate under `both` and compare with `expected/` byte
@@ -485,13 +485,13 @@ PRD Sections: 4.1.1, 4.2, 4.3, 6.1, 6.3, 8.1.7, 16.2, 30.4.2
     (ruled 2026-10-11 at 31.0).
   - **`-update-e2e`:** build the base database and regenerate `expected/` under `both`. It
     needs Docker.
-- [ ] Per module, use the layout in design §5.1:
+- [x] Per module, use the layout in design §5.1:
   - `go.mod` / `go.sum` per `guidelines/TESTING.md` §10;
   - `sqlgen.yml` with `source: both`, `connection.url: ${SQLGEN_EXAMPLE_DATABASE_URL}`,
     `paths: [./migrations/]` and `views: [./views/]`;
   - `schema.sql`, `views/`, optional `after_views.sql`;
   - `migrations/`, `expected/`, `models/`, `tests/`.
-- [ ] `introspect_postgres` (driver `pgx`). The base schema has about six tables and covers:
+- [x] `introspect_postgres` (driver `pgx`). The base schema has about six tables and covers:
   - identity, a domain, a composite;
   - a cross-schema FK;
   - table, column and type comments (31.1);
@@ -503,14 +503,14 @@ PRD Sections: 4.1.1, 4.2, 4.3, 6.1, 6.3, 8.1.7, 16.2, 30.4.2
   `ADD CONSTRAINT … UNIQUE`, `CREATE TABLE` with an FK into an introspected table, `DROP TABLE`,
   `CREATE TYPE … AS ENUM` used by an added column, and `ALTER COLUMN … SET NOT NULL` on a column
   a view selects.
-- [ ] `introspect_mysql` (driver `stdlib`). The base schema covers:
+- [x] `introspect_mysql` (driver `stdlib`). The base schema covers:
   - `unsigned`, `SET`;
   - a generated column, comments;
   - a `BOOLEAN DEFAULT TRUE` column (the 31.2 exception).
 
   The migrations cover every mysql ✓ row of §5.3, using an inline `ENUM` for the new enum and
   `MODIFY` for the view-column nullability change.
-- [ ] `introspect_sqlite` (driver `stdlib`, modernc). The base schema covers:
+- [x] `introspect_sqlite` (driver `stdlib`, modernc). The base schema covers:
   - a rowid alias;
   - a composite PK in non-column order;
   - a generated column, a partial index.
@@ -518,16 +518,16 @@ PRD Sections: 4.1.1, 4.2, 4.3, 6.1, 6.3, 8.1.7, 16.2, 30.4.2
   The migrations cover every sqlite ✓ row of §5.3: `ADD COLUMN` (including
   `ADD COLUMN … REFERENCES` for the FK row), `DROP COLUMN`, `CREATE UNIQUE INDEX`,
   `CREATE TABLE` with an FK into an introspected table, and `DROP TABLE`.
-- [ ] Keep every pending migration inside the three-way invariant. A shape where PRD §6.1 lets
+- [x] Keep every pending migration inside the three-way invariant. A shape where PRD §6.1 lets
   the sources differ stays in the CLI suite:
   - a pending view change;
   - a column whose type the catalog reports differently.
 
   If a planned shape breaks the invariant, record it and stop to ask.
-- [ ] Each module's `tests/main_test.go` starts its container, then applies `schema.sql`,
+- [x] Each module's `tests/main_test.go` starts its container, then applies `schema.sql`,
   `views/`, `after_views.sql` and `migrations/` in order. The runtime suite tests the migrated
   database, which is the schema the generated code describes.
-- [ ] Runtime tests per module, split by concern (`guidelines/TESTING.md` §10). Each ✓ row of
+- [x] Runtime tests per module, split by concern (`guidelines/TESTING.md` §10). Each ✓ row of
   §5.3 gets the check the table names:
   - an added column round-trips through Create, Get and Update;
   - Create succeeds after `DROP COLUMN`;
@@ -538,9 +538,9 @@ PRD Sections: 4.1.1, 4.2, 4.3, 6.1, 6.3, 8.1.7, 16.2, 30.4.2
   - the view column is non-nullable after the pending `SET NOT NULL` / `MODIFY`;
   - `@pk` on the view gives `Get`;
   - the generated column is absent from `Create<T>Input` / `Update<T>Input`, and is readable.
-- [ ] Generate the goldens with `make update-golden-e2e` (Docker), and commit `expected/` and
+- [x] Generate the goldens with `make update-golden-e2e` (Docker), and commit `expected/` and
   `models/`.
-- [ ] Confirm the examples workflow (`.github/workflows/examples.yml`) discovers the three modules
+- [x] Confirm the examples workflow (`.github/workflows/examples.yml`) discovers the three modules
   from their `go.mod`, with no workflow edit.
 
 ### Acceptance Criteria
@@ -555,14 +555,117 @@ PRD Sections: 4.1.1, 4.2, 4.3, 6.1, 6.3, 8.1.7, 16.2, 30.4.2
 
 ### Tests Required
 
-- [ ] `TestE2EGoldenFiles/introspect_{postgres,mysql,sqlite}` green (Docker).
-- [ ] Fail-first for the three-way check: a deliberately wrong golden fails the `both` row, and
+- [x] `TestE2EGoldenFiles/introspect_{postgres,mysql,sqlite}` green (Docker).
+- [x] Fail-first for the three-way check: a deliberately wrong golden fails the `both` row, and
   an extra column in the migrated database fails the `database` row. Quote both and revert.
-- [ ] The runtime suite of each `introspect_*` module is green under `make test-examples`.
-- [ ] `make check`, `make check-examples` and `make test-integration` green.
-- [ ] Two consecutive `make update-golden-e2e` runs leave the tree unchanged (idempotency,
+- [x] The runtime suite of each `introspect_*` module is green under `make test-examples`.
+- [x] `make check`, `make check-examples` and `make test-integration` green.
+- [x] Two consecutive `make update-golden-e2e` runs leave the tree unchanged (idempotency,
   `guidelines/TESTING.md` §10).
 
 ### Completion Record
 
-_Filled in when complete: files changed, commit references, notes._
+- **Completed:** 2026-10-11.
+- **FIX logged and resolved inside this sub-item:** FIX-299 (blocking, `parser/mysql`). The
+  first three-way probe of `introspect_mysql` measured a `database` ≠ `files` divergence:
+  the MySQL file parser named `CONSTRAINT projects_slug_key UNIQUE (slug)` after its column
+  (`slug`), while MySQL names the index after the symbol. The user chose to fix it here rather
+  than steer the example around it. `parseIndex` now falls back to the `CONSTRAINT` symbol.
+  The fix is committed separately (`305bc1f8`), with fail-first parser and parity tests and no
+  golden churn. PostgreSQL and SQLite tripped no divergence. No backlog lines were added.
+- **Files changed:**
+  - `cmd/sqlgen/testdata/examples/introspect_{postgres,mysql,sqlite}/` (new). Each has:
+    - `go.mod`/`go.sum`, and the generated `.mcp.json`;
+    - `sqlgen.yml` (`source: both`, `connection.url: ${SQLGEN_EXAMPLE_DATABASE_URL}`,
+      `paths: [./migrations/]`, `views: [./views/]`, manifest on);
+    - `schema.sql`, `views/project_summaries.sql`, three `migrations/*.sql`;
+    - `expected/`, `models/`, `tests/`.
+
+    `introspect_postgres` also has `views/project_task_counts.sql` (a materialized view) and an
+    `after_views.sql` with its unique index.
+  - `cmd/sqlgen/e2e_test.go`:
+    - `TestE2EGoldenFiles` sends a `source: both` example to `runBothGoldenFileTest`.
+    - The twin is split into `generateCopy` and `compareBySource`, which both tests share.
+    - `rewriteToDatabaseSource` now also drops an existing `input.connection`, through a
+      shared `rewriteInput`.
+    - `rewriteToFilesSource` is new.
+    - `TestRewriteToFilesSource` is new, and `TestRewriteToDatabaseSource` now covers the
+      `both` examples.
+  - `cmd/sqlgen/internal/livedb/livedb.go`: `ApplyMigrations` and `NewNamedMySQLDatabase`.
+    `ApplySetup` now shares `applyFiles`.
+  - `cmd/sqlgen/config/strict_test.go`: `TestLoadConfig_AcceptsShippedExamples` sets
+    `SQLGEN_EXAMPLE_DATABASE_URL`, which the `both` configs reference.
+  - `cmd/sqlgen/testdata/examples/README.md`: the three modules, and the `both` harness.
+- **Harness, default mode:**
+  1. Build the base database (`livedb.ApplySetup`) and set `SQLGEN_EXAMPLE_DATABASE_URL`.
+  2. Generate under `both` into a temp dir and compare with `expected/` byte for byte.
+  3. Build the migrated database (`ApplySetup`, then `ApplyMigrations`).
+  4. The `database` and `files` subtests each generate a copy of the example and compare it
+     with `expected/` after `livedb.NormalizeTree`.
+
+  Under `-update-e2e` it builds the base database and regenerates in place. `-short` is
+  unchanged: the test skips.
+- **MySQL base database name:** MySQL stores a view's definition qualified with its database
+  name, so that name reaches the golden manifest's view `source`. The base database is
+  therefore named after the example (`introspect_mysql`), not a sequence number. The migrated
+  database keeps a sequence name; the view-`source` exception covers it.
+- **§5.3 shapes and runtime checks:** every ✓ row for each dialect is a pending migration with
+  a runtime test:
+  - `ADD COLUMN`, nullable and `NOT NULL DEFAULT` (`TestAddedColumnsRoundTrip`);
+  - `DROP COLUMN` (`TestCreateAfterDropColumn`);
+  - `ADD CONSTRAINT … FOREIGN KEY`, or SQLite `ADD COLUMN … REFERENCES`
+    (`TestRelationshipFromAddedForeignKey`);
+  - `ADD CONSTRAINT … UNIQUE`, or SQLite `CREATE UNIQUE INDEX` (the manifest index name and
+    `TestUpsertOnAddedUnique`);
+  - `CREATE TABLE` with an FK into an introspected table (`TestNewTableCRUD`,
+    `TestRelationshipIntoNewTable`);
+  - `DROP TABLE` (absent from the manifest);
+  - a new enum, PostgreSQL `CREATE TYPE` or MySQL inline `ENUM`: it round-trips, and the
+    database rejects `urgent`;
+  - `SET NOT NULL` / `MODIFY` under a view (`TestViewColumnNotNullAfterMigration`).
+
+  Each base schema's introspection-only facts also have tests:
+  - PostgreSQL: identity, the domain CHECK, the composite, the cross-schema FK, the table
+    comment, the generated column, and a materialized view whose `@pk` gives `Get`, with
+    `RefreshConcurrently`.
+  - MySQL: unsigned keys and the `SET` column; `DEFAULT TRUE` reads back true.
+  - SQLite: the rowid alias, the composite PK in non-column order, the partial index's `where`
+    in the manifest, and the view `Get`.
+
+  Each pending migration stays inside the three-way invariant.
+- **Fail-first:**
+  - Wrong golden: `Locale` set to `int64` in `introspect_sqlite/expected/models_gen.go`.
+    The `both` row fails, and so do `database` and `files`. Reverted.
+    ```
+    e2e_test.go:109: file "models_gen.go" differs from expected (-want +got):
+        - 	"int64 ",
+        + 	"string",
+    ```
+  - Extra column: `ALTER TABLE accounts ADD COLUMN extra TEXT` added to the migrated database
+    only. Just the `database` row fails. Reverted. (The injected line puts the call at `:224`;
+    without it the call is at `:223`.)
+    ```
+    --- FAIL: TestE2EGoldenFiles/introspect_sqlite/database (0.17s)
+        e2e_test.go:224: manifest/account.md differs by source (-expected +database):
+            + 	| `extra` | Extra | `*string` | `text` | yes |  |  |  | `comparator.NullableString` |  |
+    ```
+- **Idempotency:** two consecutive `make update-golden-e2e` runs leave every `expected/`,
+  `models/` and `graph/` file byte-identical (shasum snapshots before, between and after). No
+  committed golden changed.
+- **Workflow:** `examples.yml` lists every directory under `cmd/sqlgen/testdata/examples` with a
+  `go.mod`. That list now includes the three modules, with no workflow edit.
+- **Tests:**
+  - `TestE2EGoldenFiles/introspect_*` green with all three rows; `TestE2EDatabaseTwin` green
+    after the refactor.
+  - `make check` and `make check-examples` green; the three suites take 2.7s (pg), 8.3s (mysql)
+    and 1.5s (sqlite).
+  - `make test-integration` green (`cmd/sqlgen` 161.2s, `cmd/sqlgen/cli` 117.8s).
+  - `/security-review` was not triggered: no runtime embed package or `cli/**` subcommand changed.
+- **Auto-review:** 0 high-confidence issues. The reviewer re-ran `introspect_sqlite`, and
+  confirmed the extra-column fail-first, in a throwaway worktree. Applied:
+  - the README says `TestE2EDatabaseTwin` generates, not regenerates;
+  - design §5.1's layout comment now says the harness applies `migrations/` to the migrated
+    database only;
+  - the generated `.mcp.json` is in the files list above;
+  - SQLite's `TestViewGet` moved to `views_test.go`, as in the other two modules;
+  - `livedb` read errors name the file; an Exec failure prints the file's SQL.

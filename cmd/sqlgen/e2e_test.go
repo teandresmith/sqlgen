@@ -145,6 +145,11 @@ func runGoldenFileTest(t *testing.T, ex exampleDir) {
 		t.Fatalf("reading config %s: %v", cfgPath, err)
 	}
 
+	if inputValue(cfgData, "source") == "both" {
+		runBothGoldenFileTest(t, ex, cfgPath, cfgData)
+		return
+	}
+
 	// Graphql examples need a real Go-module context for the chained
 	// `sqlgen graphql gen` gqlgen subprocess — gqlgen infers
 	// import paths from go.mod, and absolute paths under /tmp resolve to
@@ -185,6 +190,61 @@ func runGoldenFileTest(t *testing.T, ex exampleDir) {
 	tmpOutput := t.TempDir()
 	runGenerateToDir(t, ex.Path, cfgPath, tmpOutput)
 	compareWithExpected(t, ex.Path, tmpOutput, nil)
+}
+
+// runBothGoldenFileTest generates a source: both example from its base
+// database (setup only), with migrations/ as the overlay, and compares the
+// output with expected/ byte for byte. The same tree must then come from
+// source: database on the migrated database and from source: files over
+// schema.sql plus migrations/, less the livedb.ParityExceptions (PRD §6.1).
+// The working directory is the example's.
+func runBothGoldenFileTest(t *testing.T, ex exampleDir, cfgPath string, cfgData []byte) {
+	t.Helper()
+	dialect := inputValue(cfgData, "dialect")
+	t.Setenv("SQLGEN_DB_URL", "") // it would override input.connection.url
+	base := newExampleDatabase(t, dialect, ex.Name)
+	livedb.ApplySetup(t, dialect, base, ex.Path)
+	t.Setenv("SQLGEN_EXAMPLE_DATABASE_URL", base)
+
+	if *updateE2E {
+		runGenerate(t, cfgPath)
+		copyOutputToExpected(t, ex.Path, nil)
+		t.Logf("updated golden files for %s", ex.Name)
+		return
+	}
+	tmpOutput := t.TempDir()
+	runGenerateToDir(t, ex.Path, cfgPath, tmpOutput)
+	compareWithExpected(t, ex.Path, tmpOutput, nil)
+
+	migrated := newExampleDatabase(t, dialect, "")
+	livedb.ApplySetup(t, dialect, migrated, ex.Path)
+	livedb.ApplyMigrations(t, dialect, migrated, ex.Path)
+	t.Run("database", func(t *testing.T) {
+		compareBySource(t, dialect, "database", ex, generateCopy(t, ex, cfgData, rewriteToDatabaseSource(cfgData, migrated)))
+	})
+	t.Run("files", func(t *testing.T) {
+		compareBySource(t, dialect, "files", ex, generateCopy(t, ex, cfgData, rewriteToFilesSource(cfgData)))
+	})
+}
+
+// newExampleDatabase creates an empty database for dialect and returns its
+// connection string. A non-empty name fixes the MySQL database's name, which
+// MySQL writes into each view's stored definition and so into the manifest.
+func newExampleDatabase(t *testing.T, dialect, name string) string {
+	t.Helper()
+	switch dialect {
+	case "postgres":
+		return livedb.NewPostgresDatabase(t)
+	case "mysql":
+		if name != "" {
+			return livedb.NewNamedMySQLDatabase(t, name)
+		}
+		return livedb.NewMySQLDatabase(t)
+	case "sqlite":
+		return livedb.NewSQLiteDatabase(t)
+	}
+	t.Fatalf("unknown input.dialect %q", dialect)
+	return ""
 }
 
 // runGenerate runs sqlgen generate using the config's output.dir (in-place).
@@ -677,34 +737,29 @@ func TestE2EDatabaseTwin(t *testing.T) {
 	}
 }
 
-// runDatabaseTwin builds ex's database, regenerates a copy of ex under
+// runDatabaseTwin builds ex's database, generates a copy of ex under
 // source: database, and compares the copy's output with ex's expected/.
 func runDatabaseTwin(t *testing.T, ex exampleDir, cfgData []byte) {
 	t.Helper()
-
 	dialect := inputValue(cfgData, "dialect")
-	var conn string
-	switch dialect {
-	case "postgres":
-		conn = livedb.NewPostgresDatabase(t)
-	case "mysql":
-		conn = livedb.NewMySQLDatabase(t)
-	case "sqlite":
-		conn = livedb.NewSQLiteDatabase(t)
-	default:
-		t.Fatalf("unknown input.dialect %q", dialect)
-	}
+	conn := newExampleDatabase(t, dialect, "")
 	livedb.ApplySetup(t, dialect, conn, ex.Path)
+	compareBySource(t, dialect, "database", ex, generateCopy(t, ex, cfgData, rewriteToDatabaseSource(cfgData, conn)))
+}
 
-	// The copy keeps a real module context for the chained gqlgen
-	// subprocess, and the checked-in models/ stays untouched.
+// generateCopy generates a copy of ex whose sqlgen.yml is cfg, and returns
+// the output, keyed by slash path as expected/ lays it out. cfgData is ex's
+// own config. The copy keeps a real module context for the chained gqlgen
+// subprocess, and the checked-in models/ stays untouched.
+func generateCopy(t *testing.T, ex exampleDir, cfgData, cfg []byte) map[string]string {
+	t.Helper()
 	dir := t.TempDir()
 	if err := copyDir(ex.Path, dir); err != nil {
 		t.Fatalf("copying example: %v", err)
 	}
 	absoluteReplaces(t, ex.Path, filepath.Join(dir, "go.mod"))
 	cfgPath := filepath.Join(dir, "sqlgen.yml")
-	if err := os.WriteFile(cfgPath, rewriteToDatabaseSource(cfgData, conn), 0o600); err != nil {
+	if err := os.WriteFile(cfgPath, cfg, 0o600); err != nil { //nolint:gosec // test writes its own temp copy
 		t.Fatal(err)
 	}
 
@@ -718,28 +773,34 @@ func runDatabaseTwin(t *testing.T, ex exampleDir, cfgData []byte) {
 	t.Setenv("SQLGEN_DB_URL", "")
 	runGenerate(t, cfgPath)
 
-	expected := collectFiles(t, filepath.Join(ex.Path, "expected"))
 	generated := collectFiles(t, outputDir)
 	for rel, abs := range siblings {
 		for k, v := range collectFiles(t, abs) {
 			generated[filepath.Join(rel, k)] = v
 		}
 	}
-	want := livedb.NormalizeTree(t, dialect, slashKeys(expected))
-	got := livedb.NormalizeTree(t, dialect, slashKeys(generated))
+	return slashKeys(generated)
+}
+
+// compareBySource compares a tree generated under source with ex's
+// expected/, after livedb.NormalizeTree on both.
+func compareBySource(t *testing.T, dialect, source string, ex exampleDir, generated map[string]string) {
+	t.Helper()
+	want := livedb.NormalizeTree(t, dialect, slashKeys(collectFiles(t, filepath.Join(ex.Path, "expected"))))
+	got := livedb.NormalizeTree(t, dialect, generated)
 	for _, path := range slices.Sorted(maps.Keys(want)) {
 		content, ok := got[path]
 		if !ok {
-			t.Errorf("%s is in expected/ but source: database did not generate it", path)
+			t.Errorf("%s is in expected/ but source: %s did not generate it", path, source)
 			continue
 		}
 		if diff := cmp.Diff(want[path], content); diff != "" {
-			t.Errorf("%s differs by source (-expected +database):\n%s", path, diff)
+			t.Errorf("%s differs by source (-expected +%s):\n%s", path, source, diff)
 		}
 	}
 	for _, path := range slices.Sorted(maps.Keys(got)) {
 		if _, ok := want[path]; !ok {
-			t.Errorf("%s was generated under source: database but is not in expected/", path)
+			t.Errorf("%s was generated under source: %s but is not in expected/", path, source)
 		}
 	}
 }
@@ -810,9 +871,24 @@ func inputValue(cfgData []byte, key string) string {
 }
 
 // rewriteToDatabaseSource returns cfgData with input.source: database and
-// input.connection.url set to conn, and input.paths (and any input.source)
-// removed. It assumes the two-space indent every example uses.
+// input.connection.url set to conn, and input.paths removed.
 func rewriteToDatabaseSource(cfgData []byte, conn string) []byte {
+	return rewriteInput(cfgData, []string{"source", "connection", "paths"},
+		"  source: database", "  connection:", "    url: "+strconv.Quote(conn))
+}
+
+// rewriteToFilesSource returns the config of a source: both example under
+// source: files: input.source and input.connection removed, and schema.sql
+// read ahead of the input.paths migrations.
+func rewriteToFilesSource(cfgData []byte) []byte {
+	rewritten := rewriteInput(cfgData, []string{"source", "connection"})
+	return []byte(strings.Replace(string(rewritten), "\n  paths:\n", "\n  paths:\n    - ./schema.sql\n", 1))
+}
+
+// rewriteInput returns cfgData with each input: key in drop removed, value
+// included, and the lines add inserted at the top of input:. It assumes the
+// two-space indent every example uses.
+func rewriteInput(cfgData []byte, drop []string, add ...string) []byte {
 	var out []string
 	inInput, skipping := false, false
 	for line := range strings.Lines(string(cfgData)) {
@@ -824,7 +900,7 @@ func rewriteToDatabaseSource(cfgData []byte, conn string) []byte {
 			skipping = false
 			out = append(out, line)
 			if inInput {
-				out = append(out, "  source: database", "  connection:", "    url: "+strconv.Quote(conn))
+				out = append(out, add...)
 			}
 			continue
 		}
@@ -834,7 +910,8 @@ func rewriteToDatabaseSource(cfgData []byte, conn string) []byte {
 			if skipping && (strings.HasPrefix(line, "   ") || strings.HasPrefix(trimmed, "- ")) {
 				continue
 			}
-			skipping = strings.HasPrefix(trimmed, "paths:") || strings.HasPrefix(trimmed, "source:")
+			key, _, _ := strings.Cut(trimmed, ":")
+			skipping = slices.Contains(drop, key)
 			if skipping {
 				continue
 			}
@@ -858,43 +935,79 @@ func slashKeys(files map[string]string) map[string]string {
 // input.connection and input.paths, so a twin cannot quietly run under files.
 func TestRewriteToDatabaseSource(t *testing.T) {
 	const conn = "postgres://localhost:5432/db?sslmode=disable"
+	for _, ex := range discoverExamples(t) {
+		t.Run(ex.Name, func(t *testing.T) {
+			testRewrite(t, ex, func(cfgData []byte) []byte { return rewriteToDatabaseSource(cfgData, conn) },
+				func(want *config.RootConfig) {
+					want.Input.Source = config.SourceDatabase
+					want.Input.Connection = &config.ConnectionConfig{URL: conn}
+					want.Input.Paths = []string{"."}
+				})
+		})
+	}
+}
+
+// TestRewriteToFilesSource loads every source: both example's files config
+// through the real config loader: it must differ from the original only in
+// input.source, input.connection and schema.sql ahead of input.paths.
+func TestRewriteToFilesSource(t *testing.T) {
+	var checked int
+	for _, ex := range discoverExamples(t) {
+		cfgData, err := os.ReadFile(filepath.Join(ex.Path, "sqlgen.yml")) //nolint:gosec // test reads an example's own config
+		if err != nil {
+			t.Fatal(err)
+		}
+		if inputValue(cfgData, "source") != "both" {
+			continue
+		}
+		checked++
+		t.Run(ex.Name, func(t *testing.T) {
+			testRewrite(t, ex, rewriteToFilesSource, func(want *config.RootConfig) {
+				want.Input.Source = config.SourceFiles
+				want.Input.Connection = nil
+				want.Input.Paths = append([]string{"./schema.sql"}, want.Input.Paths...)
+			})
+		})
+	}
+	if checked == 0 {
+		t.Fatal("no source: both example found")
+	}
+}
+
+// testRewrite checks that rewrite turns ex's config into the one edit makes
+// of it, comparing both as config.LoadConfig loads them.
+func testRewrite(t *testing.T, ex exampleDir, rewrite func([]byte) []byte, edit func(*config.RootConfig)) {
+	t.Helper()
+	// The source: both examples read their connection from this variable.
+	t.Setenv("SQLGEN_EXAMPLE_DATABASE_URL", "postgres://localhost:5432/base?sslmode=disable")
 	ignoreUnexported := cmp.FilterPath(func(p cmp.Path) bool {
 		f, ok := p.Last().(cmp.StructField)
 		return ok && !token.IsExported(f.Name())
 	}, cmp.Ignore())
 
-	for _, ex := range discoverExamples(t) {
-		t.Run(ex.Name, func(t *testing.T) {
-			cfgPath := filepath.Join(ex.Path, "sqlgen.yml")
-			cfgData, err := os.ReadFile(cfgPath) //nolint:gosec // test reads an example's own config
-			if err != nil {
-				t.Fatal(err)
-			}
-			if src := inputValue(cfgData, "source"); src != "" && src != "files" {
-				t.Skipf("input.source is %s", src)
-			}
-			want, err := config.LoadConfig(cfgPath)
-			if err != nil {
-				t.Fatal(err)
-			}
-			if dialect := inputValue(cfgData, "dialect"); dialect != string(want.Input.Dialect) {
-				t.Errorf("inputValue(dialect) = %q, want %q", dialect, want.Input.Dialect)
-			}
-			want.Input.Source = config.SourceDatabase
-			want.Input.Connection = &config.ConnectionConfig{URL: conn}
-			want.Input.Paths = []string{"."}
+	cfgPath := filepath.Join(ex.Path, "sqlgen.yml")
+	cfgData, err := os.ReadFile(cfgPath) //nolint:gosec // test reads an example's own config
+	if err != nil {
+		t.Fatal(err)
+	}
+	want, err := config.LoadConfig(cfgPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if dialect := inputValue(cfgData, "dialect"); dialect != string(want.Input.Dialect) {
+		t.Errorf("inputValue(dialect) = %q, want %q", dialect, want.Input.Dialect)
+	}
+	edit(want)
 
-			rewritten := filepath.Join(t.TempDir(), "sqlgen.yml")
-			if err := os.WriteFile(rewritten, rewriteToDatabaseSource(cfgData, conn), 0o600); err != nil {
-				t.Fatal(err)
-			}
-			got, err := config.LoadConfig(rewritten)
-			if err != nil {
-				t.Fatal(err)
-			}
-			if diff := cmp.Diff(want, got, ignoreUnexported); diff != "" {
-				t.Errorf("rewritten config (-want +got):\n%s", diff)
-			}
-		})
+	rewritten := filepath.Join(t.TempDir(), "sqlgen.yml")
+	if err := os.WriteFile(rewritten, rewrite(cfgData), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	got, err := config.LoadConfig(rewritten)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if diff := cmp.Diff(want, got, ignoreUnexported); diff != "" {
+		t.Errorf("rewritten config (-want +got):\n%s", diff)
 	}
 }

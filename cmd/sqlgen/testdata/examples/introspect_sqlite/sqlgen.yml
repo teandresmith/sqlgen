@@ -1,0 +1,23 @@
+version: v1
+
+# The database holds the current schema (schema.sql, views/) and migrations/
+# the changes not yet applied to it. Under source: both the generated code
+# describes the schema after those migrations run (PRD §6.1).
+input:
+  dialect: sqlite
+  source: both
+  connection:
+    url: ${SQLGEN_EXAMPLE_DATABASE_URL}
+  paths:
+    - ./migrations/
+  views:
+    - ./views/
+
+output:
+  driver: stdlib
+  dir: ./models
+  package: models
+
+generation:
+  manifest:
+    enabled: true

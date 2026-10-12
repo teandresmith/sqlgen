@@ -50,6 +50,9 @@ examples/
 | `tenancy/` | SQLite | stdlib (`modernc.org/sqlite`) | The full multi-tenancy suite: isolation, nil-tenant behavior, composite PKs, relationships, cache and event interplay |
 | `tenancy_mysql/` | MySQL | stdlib (`go-sql-driver/mysql`) | The tenant-capture paths with no `RETURNING`: pre-reads, the batched `*Many` pre-read and the upsert post-read |
 | `tenancy_postgres/` | PostgreSQL | pgx | `RETURNING`-based tenant capture on pgx, including the `UpdateMany` `SendBatch` path |
+| `introspect_postgres/` | PostgreSQL | pgx | `input.source: both`: the database holds `schema.sql`, `views/` and `after_views.sql`, and `migrations/` is the pending overlay. Covers identity, a domain, a composite, a cross-schema FK, type comments, a generated column and a materialized view with `@pk` |
+| `introspect_mysql/` | MySQL | stdlib (`go-sql-driver/mysql`) | `input.source: both`, as above: `unsigned`, `SET`, a generated column, comments and a `BOOLEAN DEFAULT TRUE` column, with an inline `ENUM` and `MODIFY` among the migrations |
+| `introspect_sqlite/` | SQLite | stdlib (`modernc.org/sqlite`) | `input.source: both`, as above: a rowid alias, a composite PK in non-column order, a generated column and a partial index, with `ADD COLUMN … REFERENCES` among the migrations |
 
 The dialect examples share the same test file structure. `postgres_stdlib/` runs a subset
 of `postgres/`'s schema and test suite: it omits the `assets`, `documents`,
@@ -62,7 +65,9 @@ and the generated batch code (no `pgx.Batch`).
 1. **`sqlgen.yml`** must exist in the example root. Its `input.paths`,
    `input.views`, and `output.dir` use relative paths (relative to the example directory).
 
-2. **`schema.sql`** (or a `schema/` directory) holds the DDL that the parser reads.
+2. **`schema.sql`** (or a `schema/` directory) holds the DDL that the parser reads. A
+   `source: both` example applies it to the database instead, and its `input.paths` lists
+   `migrations/`.
 
 3. **`views/`** holds view annotation files (one per view). Each file contains
    annotation comments (`@pk`, `@type`, `@nullable`) followed by a `CREATE VIEW`
@@ -79,7 +84,7 @@ and the generated batch code (no `pgx.Batch`).
 
 6. **`main_test.go`** contains `TestMain` (container/DB setup), `newClient`,
    and any shared helpers. It applies `schema.sql` and all view files from
-   `views/`. All other test files in `tests/` share the connection established here.
+   `views/`, and in an `introspect_*` example `after_views.sql` and `migrations/` too. All other test files in `tests/` share the connection established here.
 
 7. **One file per feature area.** Tests are split by concern (CRUD, batch,
    relationships, pagination, soft delete, views, etc.) for readability.
@@ -95,6 +100,16 @@ For each example, the harness runs:
 Generation itself validates compilation via `goimports`. Runtime tests in
 `tests/` compile the generated code by importing it.
 
+A `source: both` example (`introspect_*`) reads its connection from
+`${SQLGEN_EXAMPLE_DATABASE_URL}`. The harness builds its base database (setup
+only) and generates against it; that output is the golden. It then checks that
+`source: database` on the migrated database (setup, then `migrations/`) and
+`source: files` over `schema.sql` plus `migrations/` give the same tree, apart
+from the differences PRD §6.1 names. Its `TestMain` builds the migrated
+database, which is the schema the generated code describes. Separately,
+`TestE2EDatabaseTwin` generates every `source: files` example from a live
+database and compares it with `expected/`.
+
 ## Updating Golden Files
 
 When templates change intentionally:
@@ -104,6 +119,8 @@ make update-golden-e2e
 ```
 
 Review the diff, then commit the updated `expected/` directories.
+
+It needs Docker: a `source: both` golden is generated against a live database.
 
 ## Skipping
 

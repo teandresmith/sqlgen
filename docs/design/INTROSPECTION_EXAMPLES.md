@@ -211,7 +211,7 @@ introspect_postgres/
 ├── schema.sql          # the database's current schema, applied by the harness and TestMain
 ├── views/              # full view DDL plus annotations (@pk); applied to the database
 ├── after_views.sql     # optional (§4.2)
-├── migrations/         # pending migrations: read by sqlgen, never applied by the harness
+├── migrations/         # pending migrations: read by sqlgen; the harness applies them only to the migrated database (§5.2)
 ├── expected/
 ├── models/
 └── tests/              # TestMain applies schema.sql, views/, after_views.sql, then migrations/

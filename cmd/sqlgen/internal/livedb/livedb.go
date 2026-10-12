@@ -143,8 +143,17 @@ func NewPostgresDatabase(t *testing.T) string {
 // NewMySQLDatabase creates an empty database and returns its DSN.
 func NewMySQLDatabase(t *testing.T) string {
 	t.Helper()
+	return NewNamedMySQLDatabase(t, fmt.Sprintf("t%d", dbSeq.Add(1)))
+}
+
+// NewNamedMySQLDatabase creates an empty database called name, replacing any
+// database of that name, and returns its DSN. MySQL stores a view's
+// definition qualified with its database name, so output that must not vary
+// between runs reads from a database with a fixed name.
+func NewNamedMySQLDatabase(t *testing.T, name string) string {
+	t.Helper()
 	addr := MySQLServerAddr(t)
-	name := fmt.Sprintf("t%d", dbSeq.Add(1))
+	ExecSQL(t, "mysql", MySQLDSN(addr, ""), "DROP DATABASE IF EXISTS "+name)
 	ExecSQL(t, "mysql", MySQLDSN(addr, ""), "CREATE DATABASE "+name)
 	t.Cleanup(func() {
 		db, err := sql.Open("mysql", MySQLDSN(addr, ""))
@@ -172,17 +181,39 @@ func NewSQLiteDatabase(t *testing.T) string {
 // after_views.sql when present. Each file runs as one Exec.
 func ApplySetup(t *testing.T, dialect, conn, dir string) {
 	t.Helper()
-	views, err := filepath.Glob(filepath.Join(dir, "views", "*.sql"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	slices.Sort(views)
+	views := sortedGlob(t, filepath.Join(dir, "views", "*.sql"))
 	files := append([]string{filepath.Join(dir, "schema.sql")}, views...)
 	afterViews := filepath.Join(dir, "after_views.sql")
 	if _, err := os.Stat(afterViews); err == nil {
 		files = append(files, afterViews)
 	}
+	applyFiles(t, dialect, conn, files)
+}
 
+// ApplyMigrations runs every migrations/*.sql of the example directory dir on
+// the database at conn, in lexical order, as sqlgen reads a directory.
+func ApplyMigrations(t *testing.T, dialect, conn, dir string) {
+	t.Helper()
+	files := sortedGlob(t, filepath.Join(dir, "migrations", "*.sql"))
+	if len(files) == 0 {
+		t.Fatalf("apply migrations: %s has no migrations/*.sql", dir)
+	}
+	applyFiles(t, dialect, conn, files)
+}
+
+func sortedGlob(t *testing.T, pattern string) []string {
+	t.Helper()
+	files, err := filepath.Glob(pattern)
+	if err != nil {
+		t.Fatal(err)
+	}
+	slices.Sort(files)
+	return files
+}
+
+// applyFiles runs each file on the database at conn as one Exec.
+func applyFiles(t *testing.T, dialect, conn string, files []string) {
+	t.Helper()
 	driver, dsn := "", conn
 	switch dialect {
 	case "postgres":
@@ -198,12 +229,12 @@ func ApplySetup(t *testing.T, dialect, conn, dir string) {
 	case "sqlite":
 		driver = "sqlite"
 	default:
-		t.Fatalf("apply setup: unknown dialect %q", dialect)
+		t.Fatalf("applying %s: unknown dialect %q", files, dialect)
 	}
 	for _, path := range files {
 		data, err := os.ReadFile(path) //nolint:gosec // test reads an example's own setup files
 		if err != nil {
-			t.Fatalf("apply setup: %v", err)
+			t.Fatalf("applying %s: %v", path, err)
 		}
 		ExecSQL(t, driver, dsn, string(data))
 	}

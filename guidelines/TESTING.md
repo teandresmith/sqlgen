@@ -568,7 +568,7 @@ go 1.27
 
 require github.com/teandresmith/sqlgen v0.0.0
 
-replace github.com/teandresmith/sqlgen => ../../../..
+replace github.com/teandresmith/sqlgen => ../../../../..
 ```
 
 The `replace` lets the example consume in-tree changes without publishing. CI / local runs use `GOWORK=off` so the workspace at the repo root doesn't override the per-example replace.
@@ -581,7 +581,7 @@ The `replace` lets the example consume in-tree changes without publishing. CI / 
 | `make lint-examples` | Run `golangci-lint` per example module |
 | `make check-examples` | Lint + test all examples |
 | `make update-golden-e2e` | Regenerate `expected/` trees across all examples (requires Docker: a `source: both` golden is generated against a live database) |
-| `cd cmd/sqlgen && go test -run TestE2EGoldenFiles -count=1 -timeout=5m` | Run the golden-file harness only (skips under `-short`). Requires Docker for the `source: both` examples |
+| `cd cmd/sqlgen && go test -run TestE2EGoldenFiles -count=1 -timeout=5m` | Run the golden-file harness only (skips under `-short`). Requires Docker for the PostgreSQL and MySQL `source: both` examples |
 | `cd cmd/sqlgen && go test -run TestE2EDatabaseTwin -count=1 -timeout=10m` | Generate every `source: files` example under `source: database` from a live database and compare with `expected/` (requires Docker) |
 
 The `-update-e2e` flag is the per-test toggle that powers `make update-golden-e2e`. **Two consecutive runs must produce byte-identical output** — idempotency is part of the contract.

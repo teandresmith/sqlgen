@@ -83,6 +83,8 @@ func TestLoadConfig_AcceptsShippedExamples(t *testing.T) {
 	if len(matches) == 0 {
 		t.Fatal("no example configs found — the glob no longer matches the examples tree")
 	}
+	// The source: both examples read their connection from this variable.
+	t.Setenv("SQLGEN_EXAMPLE_DATABASE_URL", "postgres://localhost:5432/db?sslmode=disable")
 
 	for _, path := range matches {
 		t.Run(filepath.Base(filepath.Dir(path)), func(t *testing.T) {
