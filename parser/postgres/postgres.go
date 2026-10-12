@@ -20,7 +20,10 @@ type Parser struct {
 	defaultSchema string
 	tableIndex    map[string]int // qualified "schema.name" → index in schema.Tables
 	// skipped holds the qualified names of the relations the parser skips:
-	// views, materialized views and partitions. Each still takes its name.
+	// views, materialized views, partitions and CREATE TABLE AS / SELECT …
+	// INTO tables. Each still takes its name.
+	// The value reports whether PostgreSQL can index the relation: false
+	// for a view, true for the rest.
 	skipped map[string]bool
 }
 
@@ -40,16 +43,20 @@ func New(defaultSchema string) *Parser {
 // Seed pre-populates the parser with an existing schema. This enables "both"
 // mode where introspected tables are loaded before file-based DDL is applied.
 // CREATE TABLE on a seeded table produces a duplicate error; ALTER TABLE on
-// a seeded table modifies it in place.
+// a seeded table modifies it in place. The database's views and partitions
+// (base.Partitions) are skipped relations, as they are under files.
 func (p *Parser) Seed(base *parser.Schema) {
 	p.schema = base
 	p.tableIndex = make(map[string]int, len(base.Tables))
 	for i, t := range base.Tables {
 		p.tableIndex[t.Schema+"."+t.Name] = i
 	}
-	p.skipped = make(map[string]bool, len(base.Views))
+	p.skipped = make(map[string]bool, len(base.Views)+len(base.Partitions))
 	for _, v := range base.Views {
-		p.skipped[v.Schema+"."+v.Name] = true
+		p.skipped[v.Schema+"."+v.Name] = v.Materialized
+	}
+	for _, part := range base.Partitions {
+		p.skipped[part.Schema+"."+part.Name] = true
 	}
 }
 
@@ -100,22 +107,43 @@ func (p *Parser) processStmt(node *pg_query.Node) error {
 		return p.parseCompositeType(n.CompositeTypeStmt)
 	case *pg_query.Node_CreateDomainStmt:
 		return p.parseCreateDomain(n.CreateDomainStmt)
+	default:
+		p.skipRelation(node)
+	}
+	return nil
+}
+
+// skipRelation records the relation a view, materialized view, CREATE TABLE
+// AS or SELECT … INTO creates. The parser does not model it, but it takes its
+// name, and only a view cannot be indexed.
+func (p *Parser) skipRelation(node *pg_query.Node) {
+	switch n := node.Node.(type) {
 	case *pg_query.Node_ViewStmt:
-		p.skipped[p.relationKey(n.ViewStmt.View)] = true
+		p.skipped[p.relationKey(n.ViewStmt.View)] = false
 		p.schema.Warnings = append(p.schema.Warnings,
 			fmt.Sprintf("CREATE VIEW %s skipped in DDL file — use introspection or define the view in input.views",
 				n.ViewStmt.View.Relname))
 	case *pg_query.Node_CreateTableAsStmt:
 		// CREATE MATERIALIZED VIEW parses as CreateTableAsStmt with a matview
-		// object type; plain CREATE TABLE AS keeps its pre-existing silent skip.
+		// object type; plain CREATE TABLE AS is skipped silently.
+		p.skipped[p.relationKey(n.CreateTableAsStmt.Into.Rel)] = true
 		if n.CreateTableAsStmt.Objtype == pg_query.ObjectType_OBJECT_MATVIEW {
-			p.skipped[p.relationKey(n.CreateTableAsStmt.Into.Rel)] = true
 			p.schema.Warnings = append(p.schema.Warnings,
 				fmt.Sprintf("CREATE MATERIALIZED VIEW %s skipped in DDL file — use introspection or define the view in input.views",
 					n.CreateTableAsStmt.Into.Rel.Relname))
 		}
+	case *pg_query.Node_SelectStmt:
+		// SELECT … INTO creates a table, skipped silently as CREATE TABLE AS
+		// is. In a UNION, INTERSECT or EXCEPT the INTO sits on the leftmost
+		// SELECT.
+		sel := n.SelectStmt
+		for sel.Op != pg_query.SetOperation_SETOP_NONE && sel.Larg != nil {
+			sel = sel.Larg
+		}
+		if into := sel.IntoClause; into != nil && into.Rel != nil {
+			p.skipped[p.relationKey(into.Rel)] = true
+		}
 	}
-	return nil
 }
 
 func (p *Parser) parseCreateTable(stmt *pg_query.CreateStmt) error {
@@ -124,7 +152,14 @@ func (p *Parser) parseCreateTable(stmt *pg_query.CreateStmt) error {
 		// entity; the introspector skips partitions too.
 		var parent string
 		if len(stmt.InhRelations) > 0 {
-			parent = stmt.InhRelations[0].GetRangeVar().GetRelname()
+			parentRel := stmt.InhRelations[0].GetRangeVar()
+			parent = parentRel.GetRelname()
+			p.schema.Partitions = append(p.schema.Partitions, parser.Partition{
+				Schema:       cmp.Or(stmt.Relation.Schemaname, p.defaultSchema),
+				Name:         stmt.Relation.Relname,
+				ParentSchema: cmp.Or(parentRel.GetSchemaname(), p.defaultSchema),
+				ParentName:   parent,
+			})
 		}
 		p.skipped[p.relationKey(stmt.Relation)] = true
 		p.schema.Warnings = append(p.schema.Warnings,
@@ -396,14 +431,23 @@ func (p *Parser) parseCreateDomain(stmt *pg_query.CreateDomainStmt) error {
 // given (PRD §30.7 expects "btree" / "gin" / "gist" / "hash"); WhereClause
 // holds the partial-index predicate text. An index with an expression part is
 // not an index over columns, so it is skipped, as the introspector skips it;
-// its name stays taken.
+// its name stays taken. An index on a materialized view, a partition or a
+// CREATE TABLE AS table is skipped with the relation. An index on any other
+// relation no earlier statement created, a view included, is an error, as it
+// is in PostgreSQL.
 func (p *Parser) parseCreateIndex(stmt *pg_query.IndexStmt) error {
 	if stmt == nil || stmt.Relation == nil {
 		return nil
 	}
 	table, err := p.lookupTable(stmt.Relation)
 	if err != nil {
-		return nil //nolint:nilerr // CREATE INDEX on unknown tables is skipped silently to match DROP TABLE handling
+		if p.skipped[p.relationKey(stmt.Relation)] {
+			return nil
+		}
+		if stmt.Idxname == "" {
+			return fmt.Errorf("create index: %w", err)
+		}
+		return fmt.Errorf("create index %s: %w", stmt.Idxname, err)
 	}
 
 	method := stmt.AccessMethod
@@ -594,7 +638,11 @@ func indexElemColumn(e *pg_query.IndexElem) string {
 }
 
 func (p *Parser) parseRename(stmt *pg_query.RenameStmt) error {
-	switch stmt.RenameType { //nolint:exhaustive // only TABLE and COLUMN renames are relevant
+	switch stmt.RenameType { //nolint:exhaustive // only TABLE, COLUMN and view renames are relevant
+	case pg_query.ObjectType_OBJECT_VIEW, pg_query.ObjectType_OBJECT_MATVIEW:
+		if stmt.Relation != nil {
+			p.moveSkipped(p.relationKey(stmt.Relation), cmp.Or(stmt.Relation.Schemaname, p.defaultSchema)+"."+stmt.Newname)
+		}
 	case pg_query.ObjectType_OBJECT_TABLE:
 		if stmt.Relation == nil {
 			return nil
@@ -620,39 +668,52 @@ func (p *Parser) parseRename(stmt *pg_query.RenameStmt) error {
 		p.moveTableKey(oldKey, newKey)
 
 	case pg_query.ObjectType_OBJECT_COLUMN:
-		if stmt.Relation == nil {
+		return p.renameColumn(stmt)
+	}
+	return nil
+}
+
+// renameColumn applies ALTER TABLE … RENAME COLUMN.
+func (p *Parser) renameColumn(stmt *pg_query.RenameStmt) error {
+	if stmt.Relation == nil {
+		return nil
+	}
+	table, err := p.lookupTable(stmt.Relation)
+	if err != nil {
+		if stmt.MissingOk {
 			return nil
 		}
-		table, err := p.lookupTable(stmt.Relation)
-		if err != nil {
-			if stmt.MissingOk {
-				return nil
-			}
-			return err
-		}
-		if err := parser.RenameColumn(table, "postgres", stmt.Subname, stmt.Newname); err != nil {
-			return fmt.Errorf("rename column %s.%s: %w", table.Schema+"."+table.Name, stmt.Subname, err)
-		}
-		// Constraints, indexes and foreign keys name the column by its
-		// attribute number, so they follow the rename.
-		parser.RenameColumnReferences(p.schema.Tables, "postgres", table.Schema, table.Name, stmt.Subname, stmt.Newname)
-		for _, ix := range table.ExpressionIndexes {
-			for i, col := range ix.Columns {
-				if col == stmt.Subname {
-					ix.Columns[i] = stmt.Newname
-				}
+		return err
+	}
+	if err := parser.RenameColumn(table, "postgres", stmt.Subname, stmt.Newname); err != nil {
+		return fmt.Errorf("rename column %s.%s: %w", table.Schema+"."+table.Name, stmt.Subname, err)
+	}
+	// Constraints, indexes and foreign keys name the column by its
+	// attribute number, so they follow the rename.
+	parser.RenameColumnReferences(p.schema.Tables, "postgres", table.Schema, table.Name, stmt.Subname, stmt.Newname)
+	for _, ix := range table.ExpressionIndexes {
+		for i, col := range ix.Columns {
+			if col == stmt.Subname {
+				ix.Columns[i] = stmt.Newname
 			}
 		}
-		return nil
 	}
 	return nil
 }
 
 // parseAlterObjectSchema applies ALTER TABLE … SET SCHEMA, which pg_query
-// parses as an AlterObjectSchemaStmt, not an AlterTableStmt. Only tables are
-// modeled; moving any other object is ignored.
+// parses as an AlterObjectSchemaStmt, not an AlterTableStmt. A moved table is
+// rekeyed and a moved view or materialized view keeps its name reserved;
+// moving any other object is ignored.
 func (p *Parser) parseAlterObjectSchema(stmt *pg_query.AlterObjectSchemaStmt) error {
-	if stmt.ObjectType != pg_query.ObjectType_OBJECT_TABLE || stmt.Relation == nil {
+	if stmt.Relation == nil {
+		return nil
+	}
+	if stmt.ObjectType == pg_query.ObjectType_OBJECT_VIEW || stmt.ObjectType == pg_query.ObjectType_OBJECT_MATVIEW {
+		p.moveSkipped(p.relationKey(stmt.Relation), stmt.Newschema+"."+stmt.Relation.Relname)
+		return nil
+	}
+	if stmt.ObjectType != pg_query.ObjectType_OBJECT_TABLE {
 		return nil
 	}
 	table, err := p.lookupTable(stmt.Relation)
@@ -711,8 +772,11 @@ func (p *Parser) parseDrop(stmt *pg_query.DropStmt) error {
 			// A view is not modeled; only the relation name it takes is.
 			schema, name := p.splitQualifiedName(names)
 			delete(p.skipped, schema+"."+name)
+		case pg_query.ObjectType_OBJECT_INDEX:
+			schema, name := p.splitQualifiedName(names)
+			p.dropIndex(schema, name)
 		default:
-			// Other object types (indexes, etc.) are not handled.
+			// Other object types are not handled.
 		}
 	}
 	return nil
@@ -739,10 +803,11 @@ func extractDropObjectNames(node *pg_query.Node) []string {
 }
 
 func (p *Parser) dropTable(schema, name string) error {
+	p.dropPartitions(schema, name)
 	key := schema + "." + name
 	idx, ok := p.tableIndex[key]
 	if !ok {
-		delete(p.skipped, key) // a partition
+		delete(p.skipped, key) // a skipped relation
 		return nil
 	}
 	if err := parser.CheckTableDropRefs(p.schema.Tables, "postgres", schema, name); err != nil {
@@ -757,6 +822,65 @@ func (p *Parser) dropTable(schema, name string) error {
 		}
 	}
 	return nil
+}
+
+// moveSkipped rekeys a renamed or moved view or materialized view, so a later
+// CREATE INDEX finds it under its new name.
+func (p *Parser) moveSkipped(oldKey, newKey string) {
+	if indexable, ok := p.skipped[oldKey]; ok {
+		delete(p.skipped, oldKey)
+		p.skipped[newKey] = indexable
+	}
+}
+
+// dropPartitions forgets the partition schema.name, if it is one, and every
+// partition of it, as DROP TABLE drops a table's partitions with it.
+func (p *Parser) dropPartitions(schema, name string) {
+	dropped := map[string]bool{schema + "." + name: true}
+	for n := -1; n != len(p.schema.Partitions); {
+		n = len(p.schema.Partitions)
+		p.schema.Partitions = slices.DeleteFunc(p.schema.Partitions, func(part parser.Partition) bool {
+			key := part.Schema + "." + part.Name
+			if dropped[key] || dropped[part.ParentSchema+"."+part.ParentName] {
+				dropped[key] = true
+				delete(p.skipped, key)
+				return true
+			}
+			return false
+		})
+	}
+	if len(p.schema.Partitions) == 0 {
+		p.schema.Partitions = nil // as the introspector leaves it
+	}
+}
+
+// dropIndex applies DROP INDEX schema.name. A CREATE INDEX index leaves its
+// table, and the column flags it set are re-derived. An expression index
+// releases its name. An index the parser never recorded, such as one on a
+// materialized view or a partition, leaves the schema as it is.
+func (p *Parser) dropIndex(schema, name string) {
+	for i := range p.schema.Tables {
+		table := &p.schema.Tables[i]
+		if table.Schema != schema {
+			continue
+		}
+		if idx := slices.IndexFunc(table.Constraints, func(c parser.Constraint) bool {
+			return (c.Type == parser.Index || c.Type == parser.Unique) && c.Name == name
+		}); idx >= 0 {
+			c := table.Constraints[idx]
+			table.Constraints = slices.Delete(table.Constraints, idx, idx+1)
+			if c.Type == parser.Unique && len(c.Columns) == 1 {
+				parser.RecomputeColumnUnique(table, c.Columns[0])
+			}
+			return
+		}
+		if idx := slices.IndexFunc(table.ExpressionIndexes, func(ix parser.ExpressionIndex) bool {
+			return ix.Name == name
+		}); idx >= 0 {
+			table.ExpressionIndexes = slices.Delete(table.ExpressionIndexes, idx, idx+1)
+			return
+		}
+	}
 }
 
 func (p *Parser) dropType(schema, name string) error {

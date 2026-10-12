@@ -73,6 +73,8 @@ func (p *Parser) processStmt(stmt rsql.Statement, src []rune) error {
 		return p.parseDropTable(s)
 	case *rsql.CreateIndexStatement:
 		return p.parseCreateIndex(s)
+	case *rsql.DropIndexStatement:
+		p.parseDropIndex(s)
 	case *rsql.CreateViewStatement:
 		p.schema.Warnings = append(p.schema.Warnings,
 			fmt.Sprintf("CREATE VIEW %s skipped in DDL file — use introspection or define the view in input.views",
@@ -95,14 +97,16 @@ func VirtualTableWarning(table string) string {
 // on the target table. SQLite indexes are always btree, but partial indexes
 // (CREATE INDEX ... WHERE expr) need to surface their predicate via the
 // Constraint.Where field for the manifest's index surface (PRD §30.7). An
-// index with an expression part is skipped, as the introspector skips it.
+// index with an expression part is skipped, as the introspector skips it. An
+// index on a table no earlier statement created is an error, as it is in
+// SQLite, which cannot index a view or a virtual table either.
 func (p *Parser) parseCreateIndex(stmt *rsql.CreateIndexStatement) error {
 	if stmt == nil || stmt.Table == nil {
 		return nil
 	}
 	table, ok := p.lookupTable(rsql.IdentName(stmt.Table))
 	if !ok {
-		return nil
+		return fmt.Errorf("create index %s: table %s not found", rsql.IdentName(stmt.Name), rsql.IdentName(stmt.Table))
 	}
 	cols, ok := indexedColumnNames(stmt.Columns)
 	if !ok {
@@ -128,6 +132,30 @@ func (p *Parser) parseCreateIndex(stmt *rsql.CreateIndexStatement) error {
 	table.Constraints = append(table.Constraints, c)
 	parser.CanonicalizeConstraints(table, "sqlite")
 	return nil
+}
+
+// parseDropIndex drops the index a CREATE INDEX made, wherever its table is:
+// SQLite names an index without its table. The index of a UNIQUE or PRIMARY
+// KEY constraint carries an auto-index name and cannot be dropped, so only a
+// CREATE INDEX index (Method btree) matches. An index the parser never
+// recorded, such as one with an expression part, leaves the schema as it is.
+func (p *Parser) parseDropIndex(stmt *rsql.DropIndexStatement) {
+	name := parser.FoldASCII(rsql.IdentName(stmt.Name))
+	for i := range p.schema.Tables {
+		table := &p.schema.Tables[i]
+		idx := slices.IndexFunc(table.Constraints, func(c parser.Constraint) bool {
+			return c.Method == "btree" && parser.FoldASCII(c.Name) == name
+		})
+		if idx < 0 {
+			continue
+		}
+		c := table.Constraints[idx]
+		table.Constraints = slices.Delete(table.Constraints, idx, idx+1)
+		if c.Type == parser.Unique && len(c.Columns) == 1 {
+			parser.RecomputeColumnUnique(table, c.Columns[0])
+		}
+		return
+	}
 }
 
 // IndexWhere returns the WHERE predicate of one CREATE INDEX statement as the

@@ -1416,6 +1416,8 @@ PostgreSQL names follow its own rules: `<cols>` joins the column names with `_`,
 
 **Indexes get the database's names too.** SQLite requires every `CREATE INDEX` to be named. On PostgreSQL an unnamed `CREATE INDEX` is `<table>_<cols>_idx`, with the collision suffix. On MySQL an unnamed `KEY` / `INDEX` takes its first column's name, numbered together with the unnamed UNIQUEs (`c`, `c_2`, `c_3`). MySQL also builds an index for a FOREIGN KEY when no existing index starts with the key's columns, and drops it once a later index does. That index is named after the constraint when the constraint is named, then after the index name a `FOREIGN KEY <name> (…)` clause declares, and after the key's first column otherwise. The MySQL parser adds it as well, so both paths list it. UNIQUE and index `method` defaults to `btree` on PostgreSQL and MySQL, and a CHECK's columns are the columns its expression references.
 
+**A `CREATE INDEX` needs its table.** On every dialect a `CREATE INDEX` on a table no earlier statement created is an error, as the database rejects it, and so is one on a view, which no database indexes. A PostgreSQL materialized view, partition or `CREATE TABLE … AS` / `SELECT … INTO` table is the exception: the parser skips it, and an index on it is skipped with it. Under `both` the database's materialized views and partitions count, so a migration can index them. `DROP INDEX` removes a `CREATE INDEX` index from its table and re-derives the UNIQUE flag it set. Dropping an expression index frees its name for a later unnamed index. A name the parser holds no index for (an index on a skipped relation, or a name nothing created) changes nothing.
+
 ### 5.3 Relationship Detection
 
 Automatic relationship detection runs after all tables are parsed:

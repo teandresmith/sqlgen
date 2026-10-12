@@ -22,99 +22,6 @@
 ## Open
 
 <!-- fixes:open:begin -->
-### FIX-304
-
-- **Status:** Open
-- **Severity:** tracked
-- **Origin:** phase 4, `parser/postgres` + `parser/sqlite` (`parseCreateIndex`, DROP INDEX)
-- **Surfaced by:** backlog sweep 2026-10-12 (backlog lines from FIX-264, FIX-282, FIX-296)
-- **Vetted:** ready at `9b58288b` (2026-10-12)
-
-**Issue.** The PostgreSQL and SQLite parsers silently skip a `CREATE INDEX` on a table no statement
-defines (or, for PG, one created later), or on a view, and ignore a standalone `DROP INDEX`. Measured:
-SQLite `CREATE INDEX ix ON nope (id)` / on a view → err=nil (SQLite: "no such table: main.nope",
-"views may not be indexed"); PG `CREATE INDEX users_email ON users (id); CREATE TABLE users (…)` →
-err=nil, no index (PG16 `relation "users" does not exist`); SQLite `CREATE UNIQUE INDEX ix ON t(a);
-DROP INDEX ix` keeps `UNIQUE "ix"` with `a.Unique=true` (so `FindByA` is generated); PG17 `CREATE
-UNIQUE INDEX di_b ON di (b); DROP INDEX di_b` keeps it with `b.Unique=true`. MySQL already errors on
-a missing table and handles DROP INDEX.
-
-**Root cause.** SQLite `parseCreateIndex` returns nil when `lookupTable` misses; PG `parseCreateIndex`
-does the same on purpose (`parser/postgres/postgres.go:390`, `//nolint:nilerr` "to match DROP TABLE
-handling"). SQLite `processStmt` (`parser/sqlite/sqlite.go:65-84`) has no `*rsql.DropIndexStatement`
-case; PG `parseDrop` falls to its default branch for DROP INDEX.
-
-**Suggested fix.**
-- Ruling (user, 2026-10-12, backlog sweep Q5): `CREATE INDEX` on an unknown relation is an error on
-  every dialect, matching all three databases; relations the parser skips on purpose stay exempt (PG
-  materialized views and `PARTITION OF` children; SQLite views and virtual tables are an error).
-  Policy: reject DDL the database rejects only when accepting it corrupts the output.
-- SQLite: `parseCreateIndex` errors "create index <ix>: table <t> not found" (covers views and virtual
-  tables). New `parseDropIndex` matches a `Method == "btree"` constraint by ASCII-fold name on any table
-  (SQLite UNIQUE constraints carry Method ""), deletes it, `RecomputeColumnUnique`. No reservation to
-  release: every SQLite index is named.
-- PG: the `//nolint:nilerr` skip goes; CREATE INDEX on an unknown relation errors ("create index[ <ix>]:
-  table <schema.t> not found") unless FIX-303's `skipped[key]` is true — the set's value now means "PG
-  can index it" (true for matviews and partitions, false for plain views). `Seed` sets
-  `v.Materialized` per view and adds `base.Partitions`. ALTER VIEW / MATERIALIZED VIEW RENAME and SET
-  SCHEMA move the skipped key (else a valid `CREATE INDEX` on a renamed matview errors).
-- New parity-neutral `parser.Schema.Partitions []Partition{Schema, Name, ParentSchema, ParentName}`,
-  filled by both sources (introspector reads `pg_inherits` with `relispartition`); FIX-303 carries no
-  partitions. DROP TABLE drops a partition and, recursively, every partition of a dropped table
-  (`dropPartitions`), from both `Schema.Partitions` and `skipped`.
-- PG DROP INDEX: `dropIndex(schema, name)` removes an Index/Unique constraint by exact name in that
-  schema (by Type — a PG UNIQUE constraint also carries Method "btree", and gin/gist/hash must be
-  droppable), re-derives Unique, or releases a FIX-303 `ExpressionIndexes` entry.
-- PRD §5.2 gains "A `CREATE INDEX` needs its table".
-- Tests: `parser/postgres/index_test.go` (`TestCreateIndexOnUnknownRelation`,
-  `TestCreateIndexOnSeededRelation`, `TestPartitionsListed`, `TestDropIndex`),
-  `parser/sqlite/index_test.go` (`TestCreateIndexOnUnknownTable`, `TestDropIndex`),
-  `parser/introspect/index_integration_test.go` (`TestPostgresIntrospect_PartitionsListed`,
-  `TestPostgresMerge_Indexes`, `TestSQLiteMerge_Indexes`).
-- The four PG examples' `after_views.sql` matview indexes are confirmed outside `paths` (postgres,
-  graphql, tenancy_postgres: `./schema.sql`; introspect_postgres: `./migrations/`); parsing them as files
-  would now correctly error, since the matviews live in `views/`.
-- Corrected vs. the original suggestion (vet 2026-10-12): PG matches DROP INDEX by Type, not
-  `Method == "btree"`; no SQLite reservation exists; a new `Schema.Partitions` carrier is needed; FIX-303's
-  `skipped` set needs an indexable flag; view/matview renames move the skipped key.
-- Depends on FIX-303 (the patch is a diff on top of FIX-303's prototype). After FIX-301 lands,
-  `parseDropIndex`'s two `foldASCII` calls become `parser.FoldASCII`.
-- The user ruled on 2026-10-12 (option A, recommended, as prototyped): `DROP INDEX` of a name the parser holds no
-  index for is a no-op on PG and SQLite, as the MySQL parser already treats it — accepting it leaves the output
-  unchanged (Q5 policy), and it needs no carrier for indexes introspection cannot see. The error option (PG16/17
-  `index "nope" does not exist`, SQLite "no such index: nope") would need every skipped DB index carried into
-  `Seed` to avoid false errors under `both`. If `TestDropIndex` does not already pin it, add a case: `DROP INDEX
-  nope` → err=nil, schema unchanged (PG and SQLite).
-- Prototype results, run at `9b58288b` + FIX-303 on 2026-10-12: probes (`zz_probe_index_test.go` in
-  sqlite/postgres/mysql) → SQLite `CREATE INDEX ix ON nope (id)`, on a view, on an fts5 table → err=<nil>
-  (modernc: "no such table: main.nope", "views may not be indexed", "virtual tables may not be
-  indexed"); SQLite `CREATE UNIQUE INDEX ix ON t(a); DROP INDEX ix` → keeps it, a unique=true; PG index
-  before its table → err=<nil> (PG16/17 `relation "users" does not exist`); PG `DROP INDEX di_b` keeps it,
-  b unique=true; PG index on a plain view → err=<nil> (PG `cannot create index on relation "v"`);
-  matview/partition indexes accepted on PG16/17. Gates: parser `gofumpt -l` clean, `go test -race
-  -count=1 ./...` ok, `golangci-lint` 0 issues; cmd/sqlgen `go test -count=1 ./...` ok incl.
-  `TestE2EGoldenFiles` and the cli/livedb `source: both` runs, no golden changes; examples postgres,
-  graphql, tenancy_postgres, introspect_postgres `GOWORK=off go test -race ./...` ok. Fail-first: SQLite
-  create-index error reverted → `error = <nil>, want containing "create index ix: table nope not
-  found"`; SQLite DropIndexStatement removed → constraints and unique columns mismatch; PG create-index
-  error bypassed → `error = <nil>, want containing "create index users_email: table public.users not
-  found"`; view marked indexable → error = <nil>; Seed partitions loop removed → "create index p1_k:
-  table public.p1 not found" after Seed; PG OBJECT_INDEX case removed → `+ {Name: "g_b", Type:
-  "UNIQUE", …}`; expression-index release removed → `- Name: "n_a_idx" + Name: "n_a_idx1"`;
-  `dropPartitions` removed, partition append removed, `introspectPartitions` removed, `moveSkipped`
-  disabled → each fails its test; existing suite without the fix passes. Golden churn: none. Patch:
-  `.claude/prototypes/FIX-304.patch` (8 files, +624/-13, applies on top of FIX-303).
-
-**References.**
-- PRD §5.2 ("a statement sees only what came before"), §5.5.
-- Backlog lines absorbed: 2026-10-03 PG CREATE INDEX on a missing table (FIX-264; outside the Phase
-  30/31 attribution, absorbed by ruling Q7); 2026-10-07 SQLite CREATE INDEX on a missing table/view
-  (FIX-282); 2026-10-09 SQLite DROP INDEX ignored (FIX-296); PG DROP INDEX twin (backlog sweep
-  measurement, absorbed by ruling Q7).
-- FIX-264, FIX-303.
-
-**Resolution notes.** _Filled in by /fix resolve._
-
 ### FIX-305
 
 - **Status:** Open
@@ -2757,6 +2664,99 @@ DEFAULT.
 ## Resolved
 
 <!-- fixes:resolved:begin -->
+
+### FIX-304
+
+- **Status:** Resolved
+- **Severity:** tracked
+- **Origin:** phase 4, `parser/postgres` + `parser/sqlite` (`parseCreateIndex`, DROP INDEX)
+- **Surfaced by:** backlog sweep 2026-10-12 (backlog lines from FIX-264, FIX-282, FIX-296)
+- **Vetted:** ready at `9b58288b` (2026-10-12)
+
+**Issue.** The PostgreSQL and SQLite parsers silently skip a `CREATE INDEX` on a table no statement
+defines (or, for PG, one created later), or on a view, and ignore a standalone `DROP INDEX`. Measured:
+SQLite `CREATE INDEX ix ON nope (id)` / on a view → err=nil (SQLite: "no such table: main.nope",
+"views may not be indexed"); PG `CREATE INDEX users_email ON users (id); CREATE TABLE users (…)` →
+err=nil, no index (PG16 `relation "users" does not exist`); SQLite `CREATE UNIQUE INDEX ix ON t(a);
+DROP INDEX ix` keeps `UNIQUE "ix"` with `a.Unique=true` (so `FindByA` is generated); PG17 `CREATE
+UNIQUE INDEX di_b ON di (b); DROP INDEX di_b` keeps it with `b.Unique=true`. MySQL already errors on
+a missing table and handles DROP INDEX.
+
+**Root cause.** SQLite `parseCreateIndex` returns nil when `lookupTable` misses; PG `parseCreateIndex`
+does the same on purpose (`parser/postgres/postgres.go:406` at `b3abc88b`, `//nolint:nilerr` "to match DROP TABLE
+handling"). SQLite `processStmt` (`parser/sqlite/sqlite.go:66-86` at `b3abc88b`) has no `*rsql.DropIndexStatement`
+case; PG `parseDrop` falls to its default branch for DROP INDEX.
+
+**Suggested fix.**
+- Ruling (user, 2026-10-12, backlog sweep Q5): `CREATE INDEX` on an unknown relation is an error on
+  every dialect, matching all three databases; relations the parser skips on purpose stay exempt (PG
+  materialized views and `PARTITION OF` children; SQLite views and virtual tables are an error).
+  Policy: reject DDL the database rejects only when accepting it corrupts the output.
+- SQLite: `parseCreateIndex` errors "create index <ix>: table <t> not found" (covers views and virtual
+  tables). New `parseDropIndex` matches a `Method == "btree"` constraint by ASCII-fold name on any table
+  (SQLite UNIQUE constraints carry Method ""), deletes it, `RecomputeColumnUnique`. No reservation to
+  release: every SQLite index is named.
+- PG: the `//nolint:nilerr` skip goes; CREATE INDEX on an unknown relation errors ("create index[ <ix>]:
+  table <schema.t> not found") unless FIX-303's `skipped[key]` is true — the set's value now means "PG
+  can index it" (true for matviews and partitions, false for plain views). `Seed` sets
+  `v.Materialized` per view and adds `base.Partitions`. ALTER VIEW / MATERIALIZED VIEW RENAME and SET
+  SCHEMA move the skipped key (else a valid `CREATE INDEX` on a renamed matview errors).
+- New parity-neutral `parser.Schema.Partitions []Partition{Schema, Name, ParentSchema, ParentName}`,
+  filled by both sources (introspector reads `pg_inherits` with `relispartition`); FIX-303 carries no
+  partitions. DROP TABLE drops a partition and, recursively, every partition of a dropped table
+  (`dropPartitions`), from both `Schema.Partitions` and `skipped`.
+- PG DROP INDEX: `dropIndex(schema, name)` removes an Index/Unique constraint by exact name in that
+  schema (by Type — a PG UNIQUE constraint also carries Method "btree", and gin/gist/hash must be
+  droppable), re-derives Unique, or releases a FIX-303 `ExpressionIndexes` entry.
+- PRD §5.2 gains "A `CREATE INDEX` needs its table".
+- Tests: `parser/postgres/index_test.go` (`TestCreateIndexOnUnknownRelation`,
+  `TestCreateIndexOnSeededRelation`, `TestPartitionsListed`, `TestDropIndex`),
+  `parser/sqlite/index_test.go` (`TestCreateIndexOnUnknownTable`, `TestDropIndex`),
+  `parser/introspect/index_integration_test.go` (`TestPostgresIntrospect_PartitionsListed`,
+  `TestPostgresMerge_Indexes`, `TestSQLiteMerge_Indexes`).
+- The four PG examples' `after_views.sql` matview indexes are confirmed outside `paths` (postgres,
+  graphql, tenancy_postgres: `./schema.sql`; introspect_postgres: `./migrations/`); parsing them as files
+  would now correctly error, since the matviews live in `views/`.
+- Corrected vs. the original suggestion (vet 2026-10-12): PG matches DROP INDEX by Type, not
+  `Method == "btree"`; no SQLite reservation exists; a new `Schema.Partitions` carrier is needed; FIX-303's
+  `skipped` set needs an indexable flag; view/matview renames move the skipped key.
+- Depends on FIX-303 (the patch is a diff on top of FIX-303's prototype). After FIX-301 lands,
+  `parseDropIndex`'s two `foldASCII` calls become `parser.FoldASCII`.
+- The user ruled on 2026-10-12 (option A, recommended, as prototyped): `DROP INDEX` of a name the parser holds no
+  index for is a no-op on PG and SQLite, as the MySQL parser already treats it — accepting it leaves the output
+  unchanged (Q5 policy), and it needs no carrier for indexes introspection cannot see. The error option (PG16/17
+  `index "nope" does not exist`, SQLite "no such index: nope") would need every skipped DB index carried into
+  `Seed` to avoid false errors under `both`. If `TestDropIndex` does not already pin it, add a case: `DROP INDEX
+  nope` → err=nil, schema unchanged (PG and SQLite).
+- Prototype results, run at `9b58288b` + FIX-303 on 2026-10-12: probes (`zz_probe_index_test.go` in
+  sqlite/postgres/mysql) → SQLite `CREATE INDEX ix ON nope (id)`, on a view, on an fts5 table → err=<nil>
+  (modernc: "no such table: main.nope", "views may not be indexed", "virtual tables may not be
+  indexed"); SQLite `CREATE UNIQUE INDEX ix ON t(a); DROP INDEX ix` → keeps it, a unique=true; PG index
+  before its table → err=<nil> (PG16/17 `relation "users" does not exist`); PG `DROP INDEX di_b` keeps it,
+  b unique=true; PG index on a plain view → err=<nil> (PG `cannot create index on relation "v"`);
+  matview/partition indexes accepted on PG16/17. Gates: parser `gofumpt -l` clean, `go test -race
+  -count=1 ./...` ok, `golangci-lint` 0 issues; cmd/sqlgen `go test -count=1 ./...` ok incl.
+  `TestE2EGoldenFiles` and the cli/livedb `source: both` runs, no golden changes; examples postgres,
+  graphql, tenancy_postgres, introspect_postgres `GOWORK=off go test -race ./...` ok. Fail-first: SQLite
+  create-index error reverted → `error = <nil>, want containing "create index ix: table nope not
+  found"`; SQLite DropIndexStatement removed → constraints and unique columns mismatch; PG create-index
+  error bypassed → `error = <nil>, want containing "create index users_email: table public.users not
+  found"`; view marked indexable → error = <nil>; Seed partitions loop removed → "create index p1_k:
+  table public.p1 not found" after Seed; PG OBJECT_INDEX case removed → `+ {Name: "g_b", Type:
+  "UNIQUE", …}`; expression-index release removed → `- Name: "n_a_idx" + Name: "n_a_idx1"`;
+  `dropPartitions` removed, partition append removed, `introspectPartitions` removed, `moveSkipped`
+  disabled → each fails its test; existing suite without the fix passes. Golden churn: none. Patch:
+  `.claude/prototypes/FIX-304.patch` (8 files, +624/-13, applies on top of FIX-303).
+
+**References.**
+- PRD §5.2 ("a statement sees only what came before"), §5.5.
+- Backlog lines absorbed: 2026-10-03 PG CREATE INDEX on a missing table (FIX-264; outside the Phase
+  30/31 attribution, absorbed by ruling Q7); 2026-10-07 SQLite CREATE INDEX on a missing table/view
+  (FIX-282); 2026-10-09 SQLite DROP INDEX ignored (FIX-296); PG DROP INDEX twin (backlog sweep
+  measurement, absorbed by ruling Q7).
+- FIX-264, FIX-303.
+
+**Resolution notes.** Applied the vetted prototype with `git apply --3way`; it applied without conflicts on top of the landed FIX-303 (`b3abc88b`), whose `parser.Table.ExpressionIndexes` the prototype's `dropIndex` already releases, and `parseDropIndex`'s `foldASCII` calls became `parser.FoldASCII` (FIX-301). CREATE INDEX on an unknown relation now errors in the PG and SQLite parsers (PG materialized views and partitions exempt via the `skipped` set's indexable flag); new `parser.Schema.Partitions` / `parser.Partition`, filled by the PG file parser and the new `introspectPartitions`, so `Seed` registers the database's partitions; PG DROP INDEX (`dropIndex`) and SQLite DROP INDEX (`parseDropIndex`) remove the index and re-derive the UNIQUE flag, and an unknown name is a no-op (pinned by both `TestDropIndex` "unknown" cases); ALTER [MATERIALIZED] VIEW RENAME / SET SCHEMA move the skipped key (`moveSkipped`) and DROP TABLE forgets a partition and every partition of a dropped table (`dropPartitions`); PRD §5.2 gains "A `CREATE INDEX` needs its table". This closes the temporary regression FIX-303's resolution notes record: the new `TestDerivedConstraintNames` case "a renamed or moved view and a dropped table's partitions free their names" pins `w_a_idx`, `w_b_idx`, `w_c_idx`, `w_d_idx1`, measured on PostgreSQL 16 (`postgres:16-alpine`, `pg_indexes`), and fails at HEAD with `w_a_idx1`, `w_b_idx1`, `w_c_idx1`, `w_d_idx`. `parseRename`'s RENAME COLUMN branch moved into `renameColumn` to keep `parseRename` under the cyclop limit. The verify reviewer measured that the new error also rejected an index on a `CREATE TABLE … AS` or `SELECT … INTO` table (`CREATE TABLE x AS SELECT 1 AS a; CREATE INDEX ON x (a)` → `create index: table public.x not found`; PostgreSQL accepts it), relations the parser skips on purpose and the ruling exempts; both now register in `skipped` as indexable, DROP TABLE releases them, PRD §5.2 names them, and `TestCreateIndexOnUnknownRelation` gains three cases (the CTAS and SELECT … INTO cases fail with their registration removed, the dropped-CTAS case with `dropTable`'s release removed); `processStmt`'s skipped-relation cases moved into `skipRelation` to stay under the cyclop limit. The second verify pass measured `SELECT 1 AS a INTO x UNION SELECT 2; CREATE INDEX x_a ON x (a)` still rejected (pg_query puts the INTO on the leftmost `Larg`), so `skipRelation` now walks `Larg` through set operations (new "select into with union" case, fails without the walk); `dropPartitions` leaves `Partitions` nil once every partition is dropped, as the introspector does (new `TestPartitionsListed` case); a new `TestDerivedConstraintNames` case pins that a CREATE TABLE AS / SELECT INTO table takes an index name until dropped (`n_a_idx1`, `n_b_idx1`, `n_c_idx`, measured on `postgres:16-alpine`). Inline doc fixes from verify: `parseAlterObjectSchema`'s comment, `dropTable`'s comment, this entry's Root cause line refs. Two reading-only findings went to `backlog.md` (ALTER TABLE RENAME / SET SCHEMA on a skipped relation; a stale `skipped` key from CREATE TABLE IF NOT EXISTS … AS). Fail-first re-run on the final code: SQLite create-index error and DropIndexStatement case reverted, PG skipped check bypassed and OBJECT_INDEX case removed → `TestCreateIndexOnUnknownTable`, `TestCreateIndexOnUnknownRelation`, `TestCreateIndexOnSeededRelation` and both `TestDropIndex` fail. Gates: `make check` ok, `cd parser && go test -race -count=1 ./...` (integration, incl. `TestPostgresIntrospect_PartitionsListed`, `TestPostgresMerge_Indexes`, `TestSQLiteMerge_Indexes`) ok, cmd/sqlgen `TestE2EDatabaseTwin` and `./internal/livedb/...` ok, `make check-examples` ok; `make update-golden-e2e` and `make update-golden` produced no churn, matching the vet.
 
 ### FIX-303
 

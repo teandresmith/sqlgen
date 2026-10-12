@@ -2375,6 +2375,34 @@ func TestDerivedConstraintNames(t *testing.T) {
 			want: []string{"n INDEX n_a_idx1", "n INDEX n_b_idx"},
 		},
 		{
+			name: "a renamed or moved view and a dropped table's partitions free their names",
+			sql: `CREATE TABLE w (a int, b int, c int, d int);
+				CREATE VIEW w_a_idx AS SELECT 1 AS x;
+				ALTER VIEW w_a_idx RENAME TO w_d_idx;
+				CREATE MATERIALIZED VIEW w_b_idx AS SELECT 1 AS x;
+				ALTER MATERIALIZED VIEW w_b_idx SET SCHEMA s;
+				CREATE TABLE pp (a int) PARTITION BY RANGE (a);
+				CREATE TABLE w_c_idx PARTITION OF pp FOR VALUES FROM (0) TO (10);
+				DROP TABLE pp;
+				CREATE INDEX ON w (a);
+				CREATE INDEX ON w (b);
+				CREATE INDEX ON w (c);
+				CREATE INDEX ON w (d);`,
+			want: []string{"w INDEX w_a_idx", "w INDEX w_b_idx", "w INDEX w_c_idx", "w INDEX w_d_idx1"},
+		},
+		{
+			name: "a CREATE TABLE AS or SELECT INTO table takes an index name until it is dropped",
+			sql: `CREATE TABLE n_a_idx AS SELECT 1 AS x;
+				SELECT 1 AS x INTO n_b_idx;
+				CREATE TABLE n_c_idx AS SELECT 1 AS x;
+				DROP TABLE n_c_idx;
+				CREATE TABLE n (a int, b int, c int);
+				CREATE INDEX ON n (a);
+				CREATE INDEX ON n (b);
+				CREATE INDEX ON n (c);`,
+			want: []string{"n INDEX n_a_idx1", "n INDEX n_b_idx1", "n INDEX n_c_idx"},
+		},
+		{
 			name: "a merged primary key takes a unique's name",
 			sql: `CREATE TABLE m (id int UNIQUE, CONSTRAINT pk PRIMARY KEY (id), CONSTRAINT u2 UNIQUE (id));
 				CREATE TABLE m2 (CONSTRAINT u1 UNIQUE (id), id int PRIMARY KEY);`,

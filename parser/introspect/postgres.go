@@ -67,6 +67,9 @@ func (pi *PostgresIntrospector) Introspect(ctx context.Context, connString strin
 	if err := pi.introspectTables(ctx, schema, opts); err != nil {
 		return err
 	}
+	if err := pi.introspectPartitions(ctx, schema, opts); err != nil {
+		return err
+	}
 	definitions, err := pi.viewDefinitions(ctx)
 	if err != nil {
 		return err
@@ -78,6 +81,38 @@ func (pi *PostgresIntrospector) Introspect(ctx context.Context, connString strin
 		return err
 	}
 
+	return nil
+}
+
+// introspectPartitions lists the partitions introspectTables leaves out, each
+// with the table it is a partition of, as the file parser lists them.
+func (pi *PostgresIntrospector) introspectPartitions(ctx context.Context, schema *parser.Schema, opts IntrospectionOptions) error {
+	rows, err := pi.db.QueryContext(ctx, `
+		SELECT n.nspname, c.relname, pn.nspname, pc.relname
+		FROM pg_catalog.pg_inherits i
+		JOIN pg_catalog.pg_class c ON c.oid = i.inhrelid
+		JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
+		JOIN pg_catalog.pg_class pc ON pc.oid = i.inhparent
+		JOIN pg_catalog.pg_namespace pn ON pn.oid = pc.relnamespace
+		WHERE c.relispartition AND c.relkind IN ('r', 'p')
+		ORDER BY n.nspname, c.relname`)
+	if err != nil {
+		return fmt.Errorf("introspect postgres partitions: %w", err)
+	}
+	defer rows.Close() //nolint:errcheck // rows.Close error is not actionable after reading
+
+	for rows.Next() {
+		var part parser.Partition
+		if err := rows.Scan(&part.Schema, &part.Name, &part.ParentSchema, &part.ParentName); err != nil {
+			return fmt.Errorf("introspect postgres partitions: scanning: %w", err)
+		}
+		if schemaAllowed(part.Schema, opts) {
+			schema.Partitions = append(schema.Partitions, part)
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return fmt.Errorf("introspect postgres partitions: iterating: %w", err)
+	}
 	return nil
 }
 

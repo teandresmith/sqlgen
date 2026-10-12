@@ -110,6 +110,21 @@ type Schema struct {
 	Views          []View
 	Relationships  []Relationship
 	Warnings       []string
+
+	// Partitions lists the PostgreSQL partitions both sources skip (PRD
+	// §5.2, §6.3). A partition is not an entity, but PostgreSQL can index
+	// it, so under source: both the file parser needs to know the
+	// database's partitions to accept a CREATE INDEX on one.
+	Partitions []Partition
+}
+
+// Partition is one PostgreSQL partition (CREATE TABLE … PARTITION OF) and the
+// table it is a partition of.
+type Partition struct {
+	Schema       string
+	Name         string
+	ParentSchema string
+	ParentName   string
 }
 
 // Sort sorts all elements in the schema deterministically.
@@ -160,6 +175,13 @@ func (s *Schema) Sort() {
 	})
 
 	slices.SortFunc(s.Relationships, func(a, b Relationship) int {
+		return strings.Compare(a.Name, b.Name)
+	})
+
+	slices.SortFunc(s.Partitions, func(a, b Partition) int {
+		if c := strings.Compare(a.Schema, b.Schema); c != 0 {
+			return c
+		}
 		return strings.Compare(a.Name, b.Name)
 	})
 }
