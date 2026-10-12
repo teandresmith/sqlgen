@@ -517,7 +517,7 @@ case; PG `parseDrop` falls to its default branch for DROP INDEX.
 - **Severity:** tracked
 - **Origin:** phase 4, `parser/postgres` (`applyAlterCmd`, `processStmt`)
 - **Surfaced by:** backlog sweep 2026-10-12 (backlog lines from 30.3, 30.4)
-- **Vetted:** corrected at `9b58288b` (2026-10-12)
+- **Vetted:** corrected at `02000941` (2026-10-12)
 
 **Issue.** The PostgreSQL file parser ignores state-changing DDL that the introspector sees, so the
 two sources differ. Measured on PG17:
@@ -588,7 +588,39 @@ COLUMN; `alterColumnDefault` does not apply the nextval→AutoIncrement rule.
   ('ok','meh'); ALTER TYPE mood ADD VALUE 'great' BEFORE 'ok'; ALTER TYPE mood RENAME VALUE 'meh' TO 'bad';
   CREATE DOMAIN d1 AS int; ALTER DOMAIN d1 RENAME TO d2; ALTER TYPE mood RENAME TO mood2` → parser enum mood
   [ok meh], domain d1; PG17 {great,ok,bad}, d2, mood2. Re-vet to fold these into the prototype.
-- Prototype results, run at `9b58288b` on 2026-10-12: parity probe (`zz_probe_f305_test.go`, postgres:17)
+- Widened prototype (re-vet at `02000941`, per the ruling above): new `parser/postgres/alter_type.go`;
+  `processAlterStmt` gains an `AlterEnumStmt` case → `parseAlterEnum` (ADD VALUE [IF NOT EXISTS] [BEFORE|AFTER],
+  RENAME VALUE), erroring where PG17 does (duplicate label, unknown neighbor, unknown old label, new label already
+  present, unknown enum; IF NOT EXISTS on an existing label is a no-op even with a bad neighbor, PG's NOTICE path).
+  RENAME VALUE relabels the enum's constants type-aware, as PG17 does (measured: `CHECK ((m <> 'bad'::s3.mood))`,
+  generated `CASE WHEN (n = 'bad'::s3.mood)`, index predicate, domain `CHECK ((VALUE <> 'bad'::s3.mood))`): a whole
+  default of a column of the enum (or a domain over it), a constant cast to the enum, a constant compared with or
+  listed against such a column (`value` in a domain, IN lists, ARRAY elements); text constants untouched.
+  `parseRename` gains a `default` branch → `renameTypeObject` (split for cyclop): OBJECT_TYPE / OBJECT_DOMAIN via
+  `renameType` (enum, composite, domain; `ALTER TYPE` also renames a domain, as PG does, while `ALTER DOMAIN` of a
+  non-domain errors "… is not a domain"), erroring on a taken type or table name, a composite onto any relation
+  name, an unknown type; `renameTypeReferences` rewrites table columns, seeded view columns, composite attributes
+  and domain base types, arrays included, bare staying bare and qualified staying qualified (format_type, measured).
+  Widened under the scope cap (same root cause, same site): `ALTER TYPE … RENAME ATTRIBUTE` (errors on unknown /
+  existing name). PRD §5.2: the ALTER DOMAIN bullet gains RENAME TO; new ALTER TYPE bullet.
+- Re-vet results, run at `02000941` on 2026-10-12: the earlier patch still applies and its tests and
+  `TestPostgresIntrospect_StateChangingDDL` pass on postgres:16-alpine and 17. New tests at HEAD's code → enum values
+  `[ok meh]` (PG17 `{great,ok,mid,bad,end}`), defaults stay `'meh'`, types stay `mood`, `mood[]`, `d1`, `comp`,
+  `public.comp`, every PG error case `error = <nil>`; parity `TestPostgresIntrospect_AlterTypeDDL` on PG16 → `- Type:
+  "mood" + "mood2"`, `- Default: "'meh'" + "'bad'"`, `- "d1" + "d2"`, `- "comp[]" + "comp2[]"`. Gates: parser `go test
+  -race -count=1 ./...` ok; `TestPostgresIntrospect_*` on postgres:17 ok; golangci-lint 0 issues; gofumpt clean;
+  `make refs-check` ok; cmd/sqlgen `go test -short ./...` ok. Fail-first (each site removed alone): AlterEnumStmt
+  case → `- "great" … + "meh"`; BEFORE/AFTER → order diff; IF NOT EXISTS skip → `enum label "ok" already exists`;
+  whole-default, cast, comparison, IN-list, ARRAY, domain chain, domain `value`, table CHECK, index predicate,
+  generation expression → each its relabel diff (e.g. `- "c1": "m <> 'bad'" + "m <> 'meh'"`); OBJECT_TYPE/DOMAIN case
+  → TestRenameType / InSeededViews / Errors fail; `renameTypeReferences` → `- "public.t.c": "comp2" + "comp"`; view
+  loop → `view column type = "mood[]", want mood2[]`; composite relation check, ALTER DOMAIN non-domain check,
+  collision check, OBJECT_ATTRIBUTE → each fails its case; existing suite passes at HEAD. Golden churn none. Overlap:
+  unchanged from the earlier vet (FIX-301/303/304/309/310/312 conflict on postgres.go, 312 also on PRD.md:1376; with
+  FIX-303 first, the same 5 conflicts; the new code merges cleanly). Semantic overlap with FIX-312: it adds
+  `parser.ResolveTypeRef`; whichever of 305/312 lands second switches `isOfEnum` / `renameTypeReferences.retype` to it.
+  Patch: `.claude/prototypes/FIX-305.patch` (9 files, +1642/-19).
+- Earlier prototype results, run at `9b58288b` on 2026-10-12: parity probe (`zz_probe_f305_test.go`, postgres:17)
   → DROP/SET EXPRESSION `- GeneratedExpr: "a * 2" + ""`, `- "a * 3" + "a * 4"`; ATTACH/DETACH files `c1`
   not `c2`, database `c2` not `c1`; ALTER DOMAIN files `posint_check "value < 1000"`, database
   `posint_check1`, `positive`, `posint_check "value <> 7"`; pg_dump serial files
@@ -2128,7 +2160,7 @@ rule checks unmatched keys.
 - **Severity:** nit
 - **Origin:** phase 5, `cmd/sqlgen/config` (`schema/v1.json`)
 - **Surfaced by:** backlog sweep 2026-10-12 (backlog lines from FIX-254, FIX-285)
-- **Vetted:** ready at `a99568ff` (2026-10-12)
+- **Vetted:** ready at `02000941` (2026-10-12)
 
 **Issue.** `config/schema/v1.json` `$defs/relationship` has no `required` list, so editor validation
 does not flag a relationship missing `name`, `type`, `table`, or its link key, all of which `sqlgen`
@@ -2150,18 +2182,38 @@ name, missing type, missing table, o2m without `fk`, m2m without `junction` → 
   `type: O2M` (with name/table/fk) → `schema-valid=false`, `LoadConfig=<nil>`, `ValidatePreParse=<nil>`. Same fix
   site (`$defs/relationship`) and root cause (the schema does not mirror validate). The if/then rules must match
   case-insensitively too. Re-vet to fold this in.
-- Prototype results, run at `a99568ff` on 2026-10-12: probe (embedded schema + `LoadConfig` +
-  `ValidatePreParse`) → missing name / type / table, o2o / one_to_one / o2m / one_to_many without fk,
-  m2m / many_to_many without junction each `schema-valid=true`; ValidatePreParse rejects all but the
-  missing table (`sqlgen validate` → exit 2, the "targets \"\"" context-build error). Prototype adds the
-  schema rules plus 9 `TestSchemaV1_rejectsKnownMistakes` cases. Gates: `go test -race -count=1
-  ./config/...` ok; `-run Schema ./cli/...` ok; all 15 example configs and the PRD §4.12 full example pass
-  `TestSchemaV1_acceptsExampleConfigs` / `acceptsPRDFullExample`; gofumpt and golangci-lint clean.
-  Fail-first: dropping `required` → `relationship_missing_{name,type,table}` fail ("= nil, want a
-  validation error"); emptying the fk `then` → the four fk cases fail; emptying the junction `then` → the
-  two junction cases fail; existing suite passes at base. Golden churn none. Overlap: FIX-321 also edits
-  `v1.json` (hunk at @@ -529), applies cleanly in ID order. Patch: `.claude/prototypes/FIX-329.patch`
-  (2 files, +50/-0).
+- Widened prototype (re-vet at `02000941`): new `$defs/relationshipTypeLinkedByFK`
+  (`^([oO]2[oOmM]|[oO][nN][eE]_[tT][oO]_([oO][nN][eE]|[mM][aA][nN][yY]))$`) and
+  `$defs/relationshipTypeLinkedByJunction` (`^([mM]2[mM]|[mM][aA][nN][yY]_[tT][oO]_[mM][aA][nN][yY])$`), which the
+  two if/then rules `$ref`; `type` becomes `anyOf [enum (6 spellings), $ref FK, $ref Junction]`; `side` becomes
+  `anyOf [enum (parent, child), pattern ^([pP][aA][rR][eE][nN][tT]|[cC][hH][iI][lL][dD])?$]`. No pattern allows
+  surrounding whitespace; both descriptions say "Case-insensitive." New `TestSchemaV1_relationshipSpellingsMatchValidate`
+  (16 cases, each asserting the schema and `LoadConfig` + `ValidatePreParse` agree) plus two `rejectsKnownMistakes`
+  cases (padded side `" child "`, misspelled `chld`). PRD §4.8 `side` row gains "(case-insensitive)".
+- Auto-accepted the recommended option on 2026-10-12 (`/fix` auto-accept rule): `side` matches case-insensitively
+  in the schema, with "(case-insensitive)" added to the PRD §4.8 side row; `side: ""` is schema-valid (sqlgen treats
+  it as the parent default); the schema trims neither field (`type`: sqlgen rejects `" o2m "` / `"o2m "`, measured;
+  `side`: validate trims but gen does not, so rejecting padding is the loud option); the form is anyOf(enum,
+  pattern) to keep completion — because each was prototyped green, causes no golden churn, adds no public surface,
+  and only adds PRD text for an unspecified case that matches the code (validate.go:764 and
+  gen/context_table.go:1673 both fold side's case).
+- Inline doc fix (absorb when implementing): the schema's top-level `description` (`v1.json:5`) says it "cannot
+  express sqlgen's cross-field rules"; it now expresses the fk / junction rule — reword.
+- Prototype results, run at `02000941` on 2026-10-12 (builds on the `a99568ff` prototype, whose evidence for the
+  missing name / type / table / fk / junction cases stands: each schema-valid=true at base, ValidatePreParse
+  rejecting all but the missing table, which `sqlgen validate` reports only at context build). Probe at base:
+  `type: O2M` / `One_To_Many` with fk, `MANY_TO_MANY` with junction, `side: Child` / `PARENT` / `""` / `" child "` →
+  `schema-valid=false LoadConfig=<nil> ValidatePreParse=<nil>`; `type: " o2m "` → schema false, ValidatePreParse
+  `type: " o2m " is not a valid value…`. ECMA-262 check (ajv 2020, `RegExp(p,"u")`) agrees with the Go validator;
+  vscode-json-languageservice keeps completion for both enums and reports `Missing property "fk".` for O2M without
+  fk. Gates: `go test -race -count=1 ./config/...` ok; `-run Schema ./cli/...` ok; gofumpt, golangci-lint,
+  `make refs-check` clean; every example config and the PRD §4.12 example pass. Fail-first (each reverted alone):
+  `required` dropped → `relationship_missing_{name,type,table}` fail ("= nil, want a validation error"); fk `then`
+  emptied → 6 fail; junction `then` emptied → 4 fail; `type` back to the exact enum → 6 SpellingsMatchValidate fail
+  ("'/tables/assets/relationships/0/type' does not validate …"); if/then back to exact enums → 4 fail ("schema
+  Validate = <nil>, want valid=false"); `side` exact enum → 3 fail; patterns allowing `\s*` → 3 fail; existing suite
+  passes at base. Golden churn none. FIX-321's `v1.json` hunk composes in either order (offset 28). Patch:
+  `.claude/prototypes/FIX-329.patch` (3 files, +137/-5).
 
 **References.**
 - PRD §4.8.
@@ -2229,26 +2281,64 @@ so a fail-first probe must re-run `make update-golden-e2e` to restore them. Kill
 - **Severity:** nit
 - **Origin:** phase 4, `parser/postgres` + `parser/mysql` (ALTER TABLE ADD COLUMN)
 - **Surfaced by:** FIX-301 vet (2026-10-12), filed at the backlog sweep's Step 5
+- **Vetted:** corrected at `02000941` (2026-10-12)
 
 **Issue.** The PostgreSQL and MySQL parsers accept `ALTER TABLE … ADD COLUMN` of a column the table already
 has, so the generated struct carries a duplicate field and does not compile. Measured: PG files `CREATE TABLE
 items (id bigint PRIMARY KEY, count int); ALTER TABLE items ADD COLUMN count int;` → `sqlgen generate` exit 0,
 `models_gen.go` declares `Count *int32` twice. Under `source: both`, a same-type duplicate also passes `Merge`
-(`validateColumnConflicts` errors only on a type mismatch). PG and MySQL both reject the statement (column
-already exists). SQLite is fixed by FIX-301.
+(`validateColumnConflicts` errors only on a type mismatch). MySQL reproduces the same way (files `ADD COLUMN COUNT int` beside
+`count`; `both` with an exact `count`): exit 0, duplicate `Count *int32`, "Count redeclared". PG17 rejects the
+statement (`column "count" of relation "items" already exists`), MySQL 8.0 too (`ERROR 1060 (42S21): Duplicate
+column name 'count'`, also for `COUNT` and `É` beside `é`). SQLite is fixed by FIX-301.
 
 **Root cause.** The PG and MySQL ADD COLUMN paths append the column without checking the table's existing
 columns; FIX-301 added the check to SQLite only.
 
 **Suggested fix.**
-- PG and MySQL ADD COLUMN: error "add column <c> to <t>: column already exists" when the table already has the
-  column, compared with FIX-301's `parser.SameColumnName(dialect)` (PG exact, MySQL Unicode fold). PG `ADD
-  COLUMN IF NOT EXISTS` stays a no-op.
-- Tests: parser cases per dialect (duplicate, case-variant duplicate on MySQL, IF NOT EXISTS on PG), plus a
-  `both` Merge case.
+- PG `alterAddColumn`: a name the table has (`parser.SameColumnName("postgres")`) → `add column <c> to
+  <schema>.<t>: column already exists`, a no-op under `IF NOT EXISTS`. MySQL: new `addColumn` helper with the same
+  check (`SameColumnName("mysql")`, Unicode fold), including a column added earlier in the same clause or statement,
+  before `parseColumn`. MySQL has no `ADD COLUMN IF NOT EXISTS` (MySQL 8.0 ERROR 1064, vitess syntax error).
+- Both parsers apply a statement's DROP COLUMN clauses first, as PG17 and MySQL 8.0 do: PG `parseAlterTable` runs
+  DROP COLUMN commands, then the rest in clause order; MySQL gets a DROP COLUMN pre-pass beside the DROP PRIMARY KEY
+  one, via a `dropColumn` helper taken out of `applyAlterOption`. This also fixes a silent column loss at base:
+  `ALTER TABLE items ADD COLUMN count bigint, DROP COLUMN count` (valid on both DBs, ends with `count bigint`) left
+  `type Item struct { ID int64 }`.
+- `merge.go`: the Merge / `validateColumnConflicts` comments stop claiming the conflict rule catches ADD COLUMN
+  duplicates (it is now a backstop).
+- Tests: postgres `TestAddColumnOntoExistingName` (existing, same statement, quoted other case allowed, IF NOT
+  EXISTS, ADD+DROP same statement); mysql `TestAddColumnOntoExistingName` (existing, case variant, É/é, same
+  clause, same statement, ADD COUNT + DROP count); `TestBothModeColumnConflict` expects the parser error on all
+  three dialects plus a same-type subtest.
+- Auto-accepted the recommended option on 2026-10-12 (`/fix` auto-accept rule): `ADD COLUMN c …, DROP COLUMN c` in
+  one statement → apply DROP COLUMN first (measured PG17 / MySQL 8.0 order) rather than refuse valid SQL, because it
+  was prototyped green, causes no golden churn either way, adds no public surface (unexported helpers), and reverses
+  no ruling or PRD text (§5.2 "as PostgreSQL applies them" is silent on clause order).
+- Corrected from the original: adds the drop-first ordering (the check alone would refuse valid SQL); no MySQL IF
+  NOT EXISTS branch; the PG error carries the schema-qualified table, like the file's other errors.
+- Prototype results, run at `02000941` + FIX-301.patch on 2026-10-12: reproduction above; parser probe at
+  base+FIX-301 → PG `ADD COLUMN x int, ADD COLUMN x int` → [id x x], MySQL `ADD COLUMN (z1 int, z1 int)` → [id z1
+  z1]. RENAME COLUMN onto an existing name is already refused at base+FIX-301 on both dialects (nothing to widen).
+  Gates: parser `go test -race -count=1 ./...` ok (testcontainers integration incl.); golangci-lint 0 issues;
+  gofumpt clean; cmd/sqlgen `go test -race -count=1 ./...` ok incl. `TestE2EGoldenFiles`; E2E with the prototype
+  binary → "Schema error: … add column count to public.items: column already exists" / "add column COUNT to items:
+  column already exists", exit 3; `ADD COLUMN count bigint, DROP COLUMN count` → `Count *int64`, builds.
+  Fail-first: PG duplicate error reverted → "Parse() error = <nil>, want it to contain \"add column count to
+  public.items: column already exists\"" and the PG same-type `both` subtest; PG drop-first reverted → "add column
+  count to public.items: column already exists" on the same-statement case; MySQL error reverted → 5 cases fail
+  (e.g. "want it to contain \"add column É to t: column already exists\""); MySQL drop-first reverted → same-
+  statement case fails; existing suite (base+FIX-301 production code) passes. Golden churn none. Stacks on
+  FIX-301.patch only (applies cleanly to base alone); a plain apply of FIX-301 on top of FIX-300 fails at
+  sqlite.go:624, so verify the stack after FIX-300/301 land. Expected hand merges (no semantic conflicts): mysql.go
+  with FIX-303 (DropColumn body → `dropExprKeyColumn`, moved into `dropColumn`), FIX-306 (pre-passes,
+  `applyAlterOption` signature), FIX-307 (`readAlterColumnKeys` above the pre-pass); postgres.go with FIX-305
+  (`addColumnSequence` after append; `dropOwnedSequences` now runs in the drop-first pass), FIX-310
+  (`resolveImplicitRefs`); merge.go comment with FIX-309; `TestBothModeColumnConflict` with FIX-301. Patch:
+  `.claude/prototypes/FIX-331.patch` (6 files, +210/-36).
 
 **References.**
-- PRD §5.2 (a statement sees only what came before), §13.7.
+- PRD §5.2 (a statement sees only what came before), §6.1 (`both` merge and the column conflict rule).
 - FIX-301 (SQLite twin and the `SameColumnName` helper; lands first).
 
 **Resolution notes.** _Filled in by /fix resolve._
@@ -2257,28 +2347,62 @@ columns; FIX-301 added the check to SQLite only.
 
 - **Status:** Open
 - **Severity:** nit
-- **Origin:** phase 4, `parser/postgres` (`parseDrop`) + `parser` (`CheckTableDropRefs`)
+- **Origin:** phase 4, `parser/postgres` (`parseDrop` / `dropTable`) + `parser/mysql` (`parseDropTable`) + `parser` (`CheckTableDropRefs`)
 - **Surfaced by:** FIX-312 vet (2026-10-12), filed at the backlog sweep's Step 5
+- **Vetted:** corrected at `02000941` (2026-10-12)
 
 **Issue.** PostgreSQL `DROP TABLE a, b`, where `b` has a foreign key into `a`, is rejected because each table is
 checked against the remaining schema one at a time; PostgreSQL drops both. Measured: `CREATE TABLE a (id int
 PRIMARY KEY); CREATE TABLE b (id int PRIMARY KEY, a_id int REFERENCES a(id)); DROP TABLE a, b;` → "drop table
-public.a: cannot drop table public.a: column public.b.a_id references it via foreign key". MySQL and SQLite
-multi-table DROP were not measured.
+public.a: cannot drop table public.a: column public.b.a_id references it via foreign key" (also mutual FKs, `IF
+EXISTS a, b`, `a, b CASCADE`); the child-first `DROP TABLE b, a` already passes. MySQL has the same bug at the same
+site (`parseDropTable`, `parser/mysql/mysql.go:390-411`, check at `:398`): "drop table a: cannot drop table a: column
+b.a_id references it via foreign key". SQLite has no multi-table DROP (rqlite `DropTableStatement` has one `Name`).
+PG17.11 and MySQL 8.0.46 drop both in either order; with a third table `c → a` both reject the statement and keep
+all three tables (PG "cannot drop desired object(s) because other objects depend on them", MySQL "ERROR 3730").
 
-**Root cause.** `parseDrop` calls `CheckTableDropRefs` (`parser/schema.go:460`) per object before dropping it, so
-a reference from a table dropped later in the same statement still counts.
+**Root cause.** PG `parseDrop` → `dropTable` (`parser/postgres/postgres.go:684`, check at `:691`) and MySQL
+`parseDropTable` call `CheckTableDropRefs` (`parser/schema.go:460`) per object before dropping it, so a reference from
+a table dropped later in the same statement still counts.
 
 **Suggested fix.**
-- Collect the statement's targets first; ignore references from tables in that set when checking; then drop
-  them. Measure MySQL `DROP TABLE a, b` (and SQLite, single-table only) while vetting and widen only if it is
-  the same site.
-- Tests: the measured case, the reverse order `DROP TABLE b, a`, and a reference from a table outside the set
-  still erroring.
+- `parser/schema.go`: new exported `TableRef{Schema, Name}`; `CheckTableDropRefs(tables, dialect string, drop
+  []TableRef)` checks one statement's tables as a set, skipping a referencing table that is in `drop`
+  (`SameTableName`) — generalising the old self skip, mirroring FIX-312's `CheckTypeDropRefs(s, []TypeRef)`.
+- PG: the `parseDrop` TABLE case becomes `return p.dropTables(stmt)` — collect existing targets, check once
+  (all-or-nothing), then `removeTable(key)` each (no-op on a repeat; PG accepts `DROP TABLE a, a`). MySQL
+  `parseDropTable` gets the same shape. SQLite and `multifile_test.go`'s testParser pass a one-element set.
+- Error prefix on PG/MySQL becomes "drop table: cannot drop table public.a: …" (like FIX-312's "drop type: …");
+  SQLite keeps "drop table users: …".
+- PRD §5.6 "Drop validation" (`docs/PRD.md:1592-1594`) gains: a table dropped in the same `DROP TABLE` statement does
+  not block the drop; an outside reference still fails it and nothing is dropped.
+- Tests: `TestCheckTableDropRefs` rewritten for drop sets with exact error text (11 cases); `TestDropTablesTogether`
+  in postgres (7 cases, incl. cross-schema and IF EXISTS with a missing table) and mysql (6), asserting error text and
+  remaining tables.
+- Corrected from the original: widened to MySQL (same root cause, shared helper, same per-target loop, measured); the
+  API is the concrete set-based signature; the check runs before any removal so an outside reference leaves every table
+  in place, as both databases do; adds the PRD §5.6 sentence.
+- Landing notes (from the vet): stacks on FIX-301 (adds the `dialect` parameter) and FIX-312 (restructures `parseDrop`
+  into a switch; the PRD sentence sits before FIX-312's type sentences). When it lands after FIX-303/304/305, `dropTables`
+  must still run the per-object side effects for every named object (`dropPartitions`, `skipped` cleanup) before
+  filtering to existing tables, then check the set once, then `removeTable` (FIX-305's helper plus a repeat-name guard)
+  and `dropOwnedSequences` per table. FIX-303 also edits MySQL `parseDropTable` (`exprKeys`). FIX-300/307/314 touch
+  lines near the sqlite/mysql `parseDropTable` (`--3way`).
+- Prototype results, run at `02000941` + FIX-301.patch (`--3way`) + FIX-312.patch on 2026-10-12: probe
+  `zz_probe_drop_test.go` (postgres, mysql) → the reproduction above; with `c → a`, `DROP TABLE b, a` errors on c but
+  leaves 2 tables (non-atomic; harmless as the parse aborts). Gates: parser gofumpt clean, golangci-lint 0 issues, `go
+  test -race -count=1 ./...` ok (testcontainers incl.); cmd/sqlgen `-run TestE2EGoldenFiles .` ok, `./cli/...` ok; the
+  301 → 312 → 332 stack re-applied on a clean `02000941`, parser `go test -short ./...` ok. Fail-first: set skip reverted
+  → `TestCheckTableDropRefs` `error = "cannot drop table public.users: column public.orders.user_id references it via
+  foreign key", want ""` and postgres `TestDropTablesTogether/parent_first` "drop table: cannot drop table public.a: …";
+  PG `dropTables` reverted to per-object → 6 of 7 fail (e.g. `remaining tables = ["public.a" "public.c"], want
+  ["public.a" "public.b" "public.c"]`); MySQL per-object → 5 of 6 fail; existing suite (base+301+312) passes. Golden
+  churn none. Patch: `.claude/prototypes/FIX-332.patch` (9 files, +259/-69).
 
 **References.**
-- PRD §5.2.
-- FIX-301 (also touches `CheckTableDropRefs`; lands first), FIX-312.
+- PRD §5.6 ("Drop validation", `docs/PRD.md:1592-1594`).
+- FIX-301 (adds the `dialect` parameter; lands first), FIX-312 (`CheckTypeDropRefs` set shape, `parseDrop` switch;
+  lands first).
 
 **Resolution notes.** _Filled in by /fix resolve._
 
@@ -2287,27 +2411,63 @@ a reference from a table dropped later in the same statement still counts.
 - **Status:** Open
 - **Severity:** tracked
 - **Origin:** phase 30, `parser/introspect` (`source: both` views) + each parser's rename/drop-table path
-- **Surfaced by:** FIX-310 vet (2026-10-12), filed at the backlog sweep's Step 5
+- **Surfaced by:** FIX-309 / FIX-310 vet wave (2026-10-12; the probe uses FIX-309's `zz_users` fixture), filed at the
+  backlog sweep's Step 5
+- **Vetted:** corrected at `02000941` (2026-10-12)
 
 **Issue.** Under `source: both`, a file `RENAME TABLE` / `DROP TABLE` of a table a database view reads leaves
 the view stale without a word. Measured (Merge probe): MySQL `DROP TABLE zz_users` → `Merge err=nil`, the view
 keeps `zz_users__role_enum` while the enum is gone, so the column degrades to `string`; MySQL itself then fails
 the view with ERROR 1356. MySQL `RENAME TABLE zz_users TO zz_people` → the view keeps `zz_users__role_enum`
 while the enums hold `zz_people__role_enum`. PG `DROP TABLE users` → `Merge err=nil`, though PG17 refuses to drop
-a table a view depends on.
+a table a view depends on. SQLite DROP and RENAME → `Merge err=nil` too. CLI (`source: both`, mysql:8.0.46, base
+binary): DROP and RENAME TABLE exit 0 with `views_gen.go:19: Role string`.
 
-**Root cause.** FIX-309's rename/drop-column check covers columns only; table renames and drops never consult
-the views seeded from the database.
+**Root cause.** FIX-309's rename/drop-column check covers columns only, and its `refreshViewColumns` skips a column
+whose table is gone (`|| !hasTable(schema, ref)`); table renames and drops never consult the views seeded from the
+database.
 
 **Suggested fix.**
-- Follow the Q6 rule FIX-309 applies to RENAME/DROP COLUMN: where the database rejects the statement or leaves
-  the view invalid (PG DROP, MySQL DROP and RENAME, SQLite per measurement), error naming the view and table;
-  where the database follows a rename (measure PG and SQLite at vet), follow it. Decide and record per dialect
-  while vetting.
-- Tests: Merge cases per dialect for DROP and RENAME of a table a view reads.
+- Per-dialect rule, settled by measurement under Q6 (error where the database errors or leaves the view invalid,
+  follow where it follows): PG DROP → error, RENAME and SET SCHEMA → follow (PG17.11: DROP "cannot drop table users
+  because other objects depend on it"; RENAME → `pg_get_viewdef` "SELECT id, role FROM people;", still after a new
+  `users` is created; SET SCHEMA → "FROM other.people;"); MySQL DROP, RENAME TABLE and ALTER … RENAME → error (8.0.46:
+  all succeed, then "ERROR 1356 (HY000): View 'd.zz_v' references invalid table(s) or column(s)…"; valid again once the
+  old name exists); SQLite DROP → error, RENAME → follow (modernc 3.51.3, `legacy_alter_table=0`: DROP then "no such
+  table: main.users (1)"; RENAME rewrites every view to `FROM "people"`).
+- `parser/view.go`: new exported `ViewFromTables(def, schema) map[string]*Table` (each FROM key's table, resolved as
+  `BuildView` does) and `RenameViewTableReferences(schema, table, newSchema, newName)` (repoints every Definition's
+  TableAliases / TableSchemas entries). PG calls it in `parseRename` (OBJECT_TABLE) and `parseAlterObjectSchema`; SQLite in
+  `renameTable`; MySQL not.
+- `parser/introspect/views.go`: `readViewSources` records each view's FROM tables (`viewReads.from`); `refreshViewColumns`
+  first errors when one no longer resolves — "view V reads table T, which the SQL files drop or rename; under source: both
+  the database's view stands, so change it in the database first" — and FIX-309's `!hasTable` skip goes (so PG rename
+  table then DROP COLUMN, which PG refuses, is caught); `tableRef.String()` replaces the inline qualification.
+- PRD §6.1 both-mode paragraph gains the table rule (extending FIX-309's).
+- Tests: FIX-309's `TestMerge_ViewColumnRenameAndDrop` gains 10 cases (PG rename, set schema, drop, rename + drop column;
+  SQLite rename, drop; MySQL RENAME TABLE, ALTER … RENAME TO, DROP, rename then re-create the old name — valid).
+- Corrected from the original: per-dialect behavior settled by measurement; widened to PG SET SCHEMA (same root cause and
+  site); FIX-309's skip removed; the check is per FROM table, so `SELECT count(*) FROM users` views are covered.
+  DROP-then-CREATE under the same name still passes (FIX-309's post-merge stance, PRD §6.1's DROP+CREATE pattern).
+- Prototype results, run at `02000941` + FIX-308 + FIX-309 on 2026-10-12: probe `parser/introspect/zz_probe_fix333_test.go`
+  (testcontainers PG16, MySQL 8.0) → the reproduction above, identical at plain base and base+308+309 (MySQL rename: view
+  keeps `zz_users__role_enum` while enums hold `[zz_people__role_enum]`, aliases `map[zz_users:zz_users]`). Gates: parser
+  gofumpt clean, golangci-lint 0 issues, `go test -race -count=1 ./...` ok; cmd/sqlgen `-run TestE2E .` ok; `make
+  refs-check` ok; CLI scratch project with the prototype binary → exit 3, "Schema error: parsing schema files: merge both
+  mode: view zz_v reads table zz_users, which the SQL files drop or rename; …". Fail-first: table check disabled → 5 cases
+  fail with FIX-309's column message instead (with FIX-309's skip too, Merge returns `<nil>` for all seven probes); PG
+  `parseRename` call removed → `- Type: "integer" + Type: "bigint"`, `- Type: "role_t" + Type: "text"`; PG
+  `parseAlterObjectSchema` call or the TableSchemas update removed → set_schema fails the same way; SQLite `renameTable`
+  call removed → `- Type: "integer" + Type: "text"`; FIX-309's skip restored → rename_table_and_drop_column "Merge() error =
+  <nil>, want one starting \"merge both mode: view view_def.v: column role reads column role of table view_def.users, …\"";
+  existing suite (base+308+309) passes. Golden churn none. Stacked on FIX-308 + FIX-309 (FIX-300..309 could not be composed
+  in the vet: FIX-301 conflicts with FIX-300 in sqlite.go and with FIX-309 in postgres.go / sqlite.go). Expected merges:
+  FIX-301's `RenameTableReferences` call lines (keep 301's call, add `RenameViewTableReferences` above); FIX-303/304 near PG
+  `parseAlterObjectSchema` / `moveTableKey`; FIX-316 `introspect/views.go` import block (`maps`). Patch:
+  `.claude/prototypes/FIX-333.patch` (6 files, +181/-24).
 
 **References.**
-- PRD §5.5, §6.3 (`source: both`).
+- PRD §6.1 ("`both` Mode — Merge Strategy", `docs/PRD.md:1616`), §16.2 (introspected views).
 - FIX-309 (rename/drop-column twin and its ruling Q6; lands first), FIX-310.
 
 **Resolution notes.** _Filled in by /fix resolve._
@@ -2318,21 +2478,53 @@ the views seeded from the database.
 - **Severity:** nit
 - **Origin:** phase 30, `cmd/sqlgen/gotype` (domain resolution)
 - **Surfaced by:** FIX-322 vet (2026-10-12), filed at the backlog sweep's Step 5
+- **Vetted:** corrected at `02000941` (2026-10-12)
 
 **Issue.** A bare `overrides.types.<domain>` key does not reach a domain defined over that domain in the same
 schema, though PRD §7.1 says a domain in a schema tries the schema-qualified key, then the bare one. Measured in
 package gotype: `NewResolver("postgres", true, {"email": int64})`, `RegisterDomain("app","email","text")`,
 `RegisterDomain("app","email2","email")`, `ForSchema("app")` → `Resolve("email")=int64`,
-`Resolve("email2")=string`, so the override silently skips the `email2` column.
+`Resolve("email2")=string`, so the override silently skips the `email2` column. The recursion also resolves a
+domain's base in the *column's* schema, not the domain's: from a `public` column of type `app.email` (domain over
+text), `public.text` matches (int64) and `app.text` does not (string) — the reverse of PRD §7.1. End to end (postgres
+example copy, `CREATE DOMAIN email2 AS email`, `overrides.types.email: ksuid.KSUID`): `Contact.Addr string`, `Alt
+*string`, while `types_gen.go` has `type Email2 = ksuid.KSUID` (the alias resolves with `ForSchema(dt.Schema)`), so the
+alias and the field disagree.
 
-**Root cause.** `domainBaseType` qualifies the base to `app.email`, and `lookupKeys` has no bare fallback for an
-already-qualified type.
+**Root cause.** `domainBaseType` (`gotype.go:557-577`) returns `app.email`, and the domain recursion (`:807-808`,
+`r.resolveByType(baseSQLType, …)`) looks up only that key with the column's resolver; the qualified-then-bare logic
+lives in `lookupOverride` (`:699-714`), which skips a type containing "." (`lookupKeys`, `:728`, never adds schema
+keys).
 
 **Suggested fix.**
-- When walking the domain chain, look up the base domain with the same qualified-then-bare keys a column's own
-  domain type gets.
-- Tests: gotype table cases (bare key, qualified key, three-level chain); a gen case if the vet finds the column
-  path differs.
+- `resolveByTypeSource` (after FIX-322): the domain branch reads `d := r.domains[key]` and recurses with
+  `r.ForSchema(d.schema)` on the raw `d.base` (keeping `r` when `d.schema` is empty or the owner schema), so each link
+  of a chain tries its keys qualified with the domain's schema, then bare, as a column's own type does; table, global
+  and integration overrides are tried at every link, outer link first. `domainBaseType` stays for
+  `resolveDomainBase` / `BaseSQLType` (classification).
+- Tests: `TestForSchema_DomainChainOverrideKey` (13 cases: bare key over 2- and 3-level chains and from another
+  schema; qualified key; qualified beats bare at one link; table-scoped bare; outer global beats inner table key;
+  inner global beats its base's table key; `billing.email` key does not match `app`; a qualified base is matched only as
+  written; a builtin base qualified with the domain's schema); FIX-322's `TestOverrideSource` gains "domain chain reaches
+  the base domain's bare key", `TestIncrementSQLTypeGuardNamesMatchedOverrideKey` gains "global bare key on the domain a
+  domain is over".
+- PRD §7.1 may gain one sentence for the unspecified chain order: "a domain's base type is matched as a column of that
+  domain, in the domain's schema, at each link of the chain".
+- Corrected from the original: widened to the column-schema qualification of a domain's base (same root cause, same
+  site). Behavior changes beyond the bare-key case, PRD-aligned, no golden impact: a global key on the inner domain now
+  beats a table-scoped key on its base; `<column-schema>.<builtin>` no longer reaches a cross-schema domain's base and
+  `<domain-schema>.<builtin>` does.
+- Prototype results, run at `02000941` (+ FIX-319 + FIX-322) on 2026-10-12: probe (identical at plain base and
+  base+319+322) → with global `{"email": int64}`, `ForSchema(app)`: email int64, email2 string, email3 string;
+  `ForSchema(public).Resolve("app.email2")` string; global `{"public.text": int64}` → `ForSchema(public).Resolve("app.email")`
+  int64, `{"app.text": int64}` → string. E2E copy after the fix: `Contact.Addr ksuid.KSUID`, `Alt *ksuid.KSUID`,
+  `Contacts2.Addr ksuid.KSUID`, alias unchanged; `go build ./...`, `go vet ./models/...` pass. Gates: gofumpt, vet clean;
+  `go test -race -count=1 ./gotype/... ./gen/...` ok; `TestE2EGoldenFiles` ok; golangci-lint 0 issues. Fail-first: domain
+  branch reverted to base+322 → 7 of 13 fail (e.g. `ForSchema("app").Resolve("work_email") = "string", want
+  "ext.Email"`; `ForSchema("public").Resolve("app.email") = "ext.Text", want "string"`), `OverrideSource("work_email") =
+  ("", false, false), want ("email", false, true)`, increment warnings `= [], want one starting "overrides.types.email:
+  \"int64\""`; existing suite passes. Golden churn none. Stacked on FIX-319 + FIX-322 (edits a line 322 introduces; does
+  not apply without it). Patch: `.claude/prototypes/FIX-334.patch` (3 files, +148/-2).
 
 **References.**
 - PRD §7.1.
@@ -2344,31 +2536,88 @@ already-qualified type.
 
 - **Status:** Open
 - **Severity:** tracked
-- **Origin:** phase 6, `cmd/sqlgen/gen` (`connection.go.tmpl` cursor keyset) + `comparator/` (time binds on SQLite)
+- **Origin:** phase 6, runtime `sql/` builders (SQLite time binds: writes, cursor keyset, `comparator.Time` filters)
 - **Surfaced by:** backlog sweep vets (2026-10-12), filed at the backlog sweep's Step 5
+- **Vetted:** needs ruling at `02000941` (2026-10-12)
 
 **Issue.** On SQLite, a DATETIME keyset cursor and a time filter bind a text format that differs from the stored
 one, so pages skip or repeat rows and equality filters match nothing. `DEFAULT (datetime('now'))` stores
 `2026-01-01 00:00:00`; the cursor binds `types.DateTime.Value()` in RFC3339Nano (`2026-01-01T00:00:00Z`);
-`comparator.Time` binds through modernc as `2026-01-01 00:00:00 +0000 UTC`. Measured on the events example
-(`audit_logs.cursor_keys: [created_at, id]`, rows 9001/9002 at '2026-01-01 00:00:00', 9003 at '2026-01-02
+`comparator.Time` binds through modernc as `2026-01-01 00:00:00 +0000 UTC`. Measured on a probe variant of the events example
+(`audit_logs.cursor_keys: [created_at, id]`; the example itself inherits `[id]`, rows 9001/9002 at '2026-01-01 00:00:00', 9003 at '2026-01-02
 00:00:00', one row per page): forward → [9001 9003], want [9001 9002 9003]; backward → [9003 9003 9003 9003].
 `GetMany(Filter CreatedAt Eq row.CreatedAt.Time)` → 0 rows. Direct bind: `SELECT CAST(? AS TEXT),
 '2026-01-01 00:00:00' = ?` → bound "2026-01-01 00:00:00 +0000 UTC", stored-eq=0.
 
-**Root cause.** SQLite compares DATETIME as text; neither bind path formats a time the way SQLite's own
-`datetime()` writes it.
+Create and Update share the defect: `Create(CreatedAt=…12:30:00.123456789Z)` stores
+"2026-01-01T12:30:00.123456789Z", an EST-zoned value "2026-01-01T07:30:00.123456789-05:00"; both mis-sort against
+`datetime()` rows.
+
+**Root cause.** SQLite compares DATETIME as text; no bind path formats a time the way SQLite's own `datetime()`
+writes it: `types.DateTime.Value()` (`types/datetime.go`, default `outputLayout = time.RFC3339Nano`) feeds writes
+and the cursor keyset (decoded as `types.DateTime` by `shared/_cursor_decode.tmpl`; no template is involved), and
+modernc writes a `time.Time` operand as `t.String()` (no `_time_format` DSN). `types.DateTime` is not SQLite-only:
+the postgres graphql example overrides `timestamptz` to it (`graphql/sqlgen.yml:278-282`).
 
 **Suggested fix.**
-- Decide the canonical SQLite time text at vet (likely `YYYY-MM-DD HH:MM:SS[.fff]`, UTC, matching
-  `datetime()`) and bind it from both the cursor keyset and the comparator time binds on the SQLite dialect;
-  confirm what modernc does on scan so the round trip holds. Check whether the PRD already states a SQLite
-  time format; if not, add it.
-- Tests: SQLite integration in the events example — forward and backward paging across equal timestamps, and an
-  Eq filter on a scanned row's time.
+- Canonical SQLite time text (both options): `YYYY-MM-DD HH:MM:SS[.fffffffff]`, UTC, trailing fraction zeros
+  dropped — byte-identical to `datetime()` / `CURRENT_TIMESTAMP` at whole seconds, and Go sub-second values order
+  correctly against them (fixed `.SSS` misses every whole-second `datetime()` value; modernc's `_time_format=sqlite`
+  carries an offset and never matches).
+- Recommended (`.claude/prototypes/FIX-335.patch`, pending Q1): new `sql/time.go` with unexported `bindArgs(d,
+  args)` — on `d.Name() == "sqlite"` it replaces each `time.Time`, `*time.Time`, `sql.NullTime`, `types.DateTime`,
+  `*types.DateTime`, `types.NullDateTime` arg with `t.UTC().Format("2006-01-02 15:04:05.999999999")` (nil for a null),
+  copy-on-write; other dialects untouched. Every exported `sql/builder.go` builder that returns args returns
+  `bindArgs(d, args)` (BuildSelect, BuildSelectJoin, BuildInsert ×2, BuildMultiInsert, BuildUpdate, BuildCount,
+  BuildExists, BuildIncrement, BuildSoftDelete, BuildHardDelete, SubqueryWhere) — all 395 `sql.Build*` sites in the
+  sqlite example; no other exec/query args. No exported identifier; new `sql` → `types` import (both stdlib-only);
+  `types.SetOutputLayout`'s doc comment says it no longer affects SQLite statements sqlgen builds.
+- PRD §7.2 SQLite table: new row datetime/timestamp/timestamptz/date → `types.DateTime` / `types.NullDateTime`, and a
+  paragraph stating the canonical text and the bind rule.
+- Tests: `sql/time_test.go` `TestBuild_SQLiteTimeArgs` (13 value kinds × select/insert × sqlite/pg/mysql; PG and
+  MySQL pinned unchanged; caller slice unmodified) and `TestBuild_SQLiteTimeArgs_EveryBuilder` (9 builders); events
+  `tests/datetime_test.go` `TestDateTime_ConnectionPagesAcrossEqualTimestamps` (forward and backward, one row per page,
+  two `datetime()` rows and one EST Create at one instant plus a later row) and `TestDateTime_EqFilterMatchesScannedTime`;
+  events `sqlgen.yml` audit_logs gains `cursor_keys: [created_at, id]`.
+- Pending the user's ruling:
+  - Q1. Where is the SQLite time text applied? (a, recommended, prototyped) dialect-scoped in the `sql` builders —
+    PG and MySQL binds byte-identical to base (re-measured PG with a non-UTC session: stored 12:30:00.5 UTC,
+    correct); SQLite writes, filters and keyset all use the `datetime()` text; `time.Time`-overridden SQLite columns
+    fixed too (Eq 1/1); costs: `SetOutputLayout` ignored for SQLite statements sqlgen builds, raw driver binds outside
+    the builders keep the old formats. (b, `.claude/prototypes/FIX-335.alt.patch`) global `types.DateTime.Value()`
+    change plus a `comparator.Time` SQLite branch — measured: PG timestamptz via any `types.DateTime` override is 5h
+    off under `SET TIME ZONE 'America/New_York'` (stored 17:30:00.5 for 12:30:00.5; filter/cursor "bound==instant:
+    false") through pgx/v5, lib/pq and pgx stdlib; PG `timestamp` wall time changes for zoned input; MySQL stops the
+    1292 error but TIMESTAMP shifts under a non-UTC session; SQLite `time.Time` overrides flip Eq 1/0 → 0/1; keeps
+    `SetOutputLayout` effective everywhere.
+  - Q2. Under (a): convert `time.Time`, `*time.Time`, `sql.NullTime` too, or only the `types.*` kinds? (i,
+    recommended, prototyped) all six — comparator operands are always `time.Time`, so filters match, and so do
+    `time.Time`-overridden columns; rows modernc wrote earlier as `t.String()` ("… +0000 UTC") stop matching a filter.
+    (ii) `types.*` only — measured "matched [], want [5 6 7]": every `comparator.Time` filter on SQLite stays broken
+    unless the comparator changes too, which brings back (b)'s override regression.
+- Corrected from the original: the text is bound in the runtime SQL builders, not the cursor template or comparator;
+  Create/Update writes are covered; the regression test needs the `cursor_keys` fixture.
+- Prototype results, run at `02000941` on 2026-10-12: probe copy of events with audit_logs `cursor_keys: [created_at,
+  id]`, `GOWORK=off go test -run TestZZProbeFIX335 -v ./tests/` → "forward=[9001 9003] (want [9001 9002 9003])
+  backward=[9003 9003 9003 9003]"; Eq 0 (want 2), Gte 1 (want 3), In 0 (want 2); "direct time.Time bind: "2026-01-01
+  00:00:00 +0000 UTC" stored-eq=0"; "direct types.DateTime bind: "2026-01-01T00:00:00Z" stored-eq=0". modernc v1.48.1
+  scans every stored form to UTC `time.Time`. With (a): "forward=[9001 9002 9003] … backward=[9003 9002 9001]", Eq 2,
+  Gte 3, In 2, round-trip Eq 1 for every row sqlgen or SQLite wrote. Gates (a): gofumpt clean; golangci-lint 0 issues;
+  root `go test -race -count=1 -short ./...` ok; `make update-golden` no churn; `make update-golden-e2e` PASS;
+  events, sqlite, introspect_sqlite, cache, tenancy, postgres, mysql, graphql `GOWORK=off go test -race -count=1 ./...`
+  ok. Fail-first (a): `bindArgs` disabled → 11 `TestBuild_SQLiteTimeArgs*` subtests fail (BuildUpdate: "-
+  string("2026-01-01 12:30:00"), + s"2026-01-01 12:30:00 +0000 UTC"") and events "forward pages = [3 1 4], want [1 2 3
+  4]", "backward pages (reversed) = [4 4 4 4 4], want [1 2 3 4]", "matched [], want [5 6 7]"; `types.DateTime` case
+  removed → paging fails and "matched [5 6], want [5 6 7]"; `time.Time` case removed → "matched [], want [5 6 7]";
+  `.UTC()` removed → "+ string("2026-01-01 07:30:00")"; existing suite passes at base. Golden churn (both options):
+  events ~2 files (`expected/` and `models/models_gen.go`, +4/-1 each, from the `cursor_keys` fixture); no other
+  example. No other vetted patch touches `sql/`, `types/`, `comparator/` or the events example; PRD hunk ~:1797, clear
+  of the others. Patches: `.claude/prototypes/FIX-335.patch` (a; 9 files, +381/-16), `FIX-335.alt.patch` (b; 9 files,
+  +324/-40).
 
 **References.**
-- PRD §9.8 (cursor pagination), §11 (comparators), the SQLite type mapping in §7.
+- PRD §9.8.12 (Connection), §14.2 (cursor-based; "retain their types for correct keyset comparison"), §11
+  (comparators), §7.2 (the SQLite table has no datetime row today).
 - Measured during the backlog sweep vets (2026-10-12; events example probe).
 
 **Resolution notes.** _Filled in by /fix resolve._
@@ -2379,26 +2628,51 @@ one, so pages skip or repeat rows and equality filters match nothing. `DEFAULT (
 - **Severity:** tracked
 - **Origin:** phase 6, `cmd/sqlgen/gen` (`funcmap.go` `funcSoftDeleteFilterOverride`)
 - **Surfaced by:** FIX-324 vet (2026-10-12), filed at the backlog sweep's Step 5
+- **Vetted:** corrected at `02000941` (2026-10-12)
 
-**Issue.** An integer soft delete on a NOT NULL integer column whose Go type is not `int` generates code that does
-not compile. Measured on a mysql example copy with `zz_flag TINYINT NOT NULL DEFAULT 0` configured `type:
-integer`: gqlgen exit 1; `go build -gcflags=-e ./models/` → "models_gen.go:45153:43: cannot use new(0) (value of
-type *int) as *int8 value in struct literal" (3 sites). Every non-`int` width is affected; no example uses `type:
-integer`. After FIX-324 it also fires for a tinyint configured `bool` (the override keys on the comparator type,
-not the strategy).
+**Issue.** An integer soft delete on a NOT NULL integer column generates code that does not compile, on every
+dialect: no SQL type resolves to Go `int` (PG smallint/integer → int16/int32; MySQL tinyint/smallint/int and
+unsigned forms → int8/int16/int32/uint8/uint16/uint32; every SQLite integer → int64), and bigint/mediumint are
+rejected under `type: integer` by validation (PRD §4.6). Measured (sibling example copies, `go build -gcflags=-e
+./models/`): PG SMALLINT/INTEGER NOT NULL → generate exit 0, "models_gen.go:57212:43: cannot use new(0) (value of
+type *int) as *int16 value in struct literal" (9 sites); MySQL → generate exit 1 ("gqlgen subprocess failed"), 21
+sites (`*int8` … `*uint32`); SQLite → exit 1, "zz_t1_gen.go:861:43: cannot use new(0) (value of type *int) as
+*int64 value in struct literal" (12 sites). Nullable variants compile (`NullableNumber[T]{Null: new(false)}`).
+A plain `tinyint` configured `type: bool` (MySQL, SQLite) fails identically at base and with FIX-324 (`Number[int8]`
+/ `Number[int64]{Neq: new(0)}`). `TestDeleteTemplate_softDelete_integer` (`cmd/sqlgen/gen/delete_test.go:255`) pins
+the broken string `Deleted: &comparator.Number[int32]{Neq: new(0)}`.
 
 **Root cause.** `funcSoftDeleteFilterOverride` (`cmd/sqlgen/gen/funcmap.go:591-593`) emits
 `&comparator.Number[T]{Neq: new(0)}`; the untyped `0` gives `*int`.
 
 **Suggested fix.**
-- Emit a typed zero (`new(T(0))`, with T taken from the comparator's type argument), and key the override on the
-  soft-delete strategy rather than the comparator type.
-- Tests: funcmap unit cases per integer width; a generated-code compile test (or an example table) with an
-  integer soft delete on a non-`int` column.
+- Emit `&comparator.Number[T]{Neq: new(T(0))}`, T cut from the `comparator.Number[...]` type argument; the doc
+  comment says the literal follows the comparator type, not the strategy.
+- New table-driven `TestFuncSoftDeleteFilterOverride` (funcmap_test.go): one row per reachable width (int8/16/32/64,
+  uint8/16/32) plus NullableNumber, Bool, NullableBool, NullableTime; each row's expression is also compiled against
+  the real `comparator` package with a `%T` check (the generated-code compile pin). `TestDeleteTemplate_softDelete_integer`
+  expects `Neq: new(int32(0))`. No example table.
+- Corrected from the original: dropped "key the override on the soft-delete strategy" — the literal is assigned into
+  a field of the comparator type, so it must key on that (strategy-keyed would put `{Eq: new(true)}` into
+  `Number[int8]` and `{Neq: …}` into `comparator.Bool`); the comparator-keyed literals are right under both strategies
+  since deleted is 1/TRUE. The "every non-int width" and "after FIX-324" facts were restated (above).
+- Prototype results, run at `02000941` + FIX-324.patch on 2026-10-12: reproduction above. With the prototype, runtime
+  round trips (SoftDelete → GetMany → Restore): SQLite INTEGER + integer → ZzSd1=1, 0 rows, 0 (SoftDeleteMany 1);
+  SQLite TINYINT + bool → 1, 0 rows, 0; MySQL 8 TINYINT + bool → 1, 0 rows, 0; MySQL TINYINT(1) + integer → true,
+  0 rows, false; PG SMALLINT + integer → 1, 0 rows, 0. Gates: `go test -race -count=1 ./gen/...` ok; golangci-lint 0
+  issues; gofumpt clean; `TestE2EGoldenFiles` compare mode PASS; the 5 probe copies generate exit 0, `go build ./...`
+  and `go vet ./models/...` exit 0. `make update-golden*` not run (permission classifier denied it in the vet sandbox);
+  churn measured by the passing golden comparisons instead — `/fix-implement` must run them. Fail-first: override
+  reverted → `softDeleteFilterOverride("*comparator.Number[int8]") = "&comparator.Number[int8]{Neq: new(0)}", want
+  "&comparator.Number[int8]{Neq: new(int8(0))}"` (7 rows) and `TestDeleteTemplate_softDelete_integer` "output missing
+  SoftDelete integer pattern"; existing suite passes at base+324. Golden churn none (no example uses `type:
+  integer`). Stacked on FIX-324 by sequence only — it touches none of FIX-324's files and `git apply --check` passes
+  on plain `02000941`. Patch: `.claude/prototypes/FIX-336.patch` (3 files, +51/-6).
 
 **References.**
 - PRD §4.6, §5.4 (soft delete strategies).
 - FIX-324 (soft-delete strategy from config; lands first).
+- `cmd/sqlgen/gen/delete_test.go:255`.
 
 **Resolution notes.** _Filled in by /fix resolve._
 
