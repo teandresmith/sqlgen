@@ -560,11 +560,16 @@ func (p *Parser) parseRename(stmt *pg_query.RenameStmt) error {
 			return err
 		}
 		oldKey := table.Schema + "." + table.Name
+		newKey := table.Schema + "." + stmt.Newname
+		// PostgreSQL refuses a name a relation in the schema already has,
+		// the table's own included.
+		if _, exists := p.tableIndex[newKey]; exists {
+			return fmt.Errorf("table %s already exists", newKey)
+		}
 		// PostgreSQL keys a foreign key on the referenced table's OID, so a
 		// rename carries every reference along with it.
-		parser.RenameTableReferences(p.schema.Tables, table.Schema, table.Name, stmt.Newname)
+		parser.RenameTableReferences(p.schema.Tables, "postgres", table.Schema, table.Name, stmt.Newname)
 		table.Name = stmt.Newname
-		newKey := table.Schema + "." + stmt.Newname
 		p.moveTableKey(oldKey, newKey)
 
 	case pg_query.ObjectType_OBJECT_COLUMN:
@@ -578,12 +583,12 @@ func (p *Parser) parseRename(stmt *pg_query.RenameStmt) error {
 			}
 			return err
 		}
-		if err := parser.RenameColumn(table, stmt.Subname, stmt.Newname); err != nil {
+		if err := parser.RenameColumn(table, "postgres", stmt.Subname, stmt.Newname); err != nil {
 			return fmt.Errorf("rename column %s.%s: %w", table.Schema+"."+table.Name, stmt.Subname, err)
 		}
 		// Constraints and foreign keys name the column by its attribute
 		// number, so they follow the rename.
-		parser.RenameColumnReferences(p.schema.Tables, table.Schema, table.Name, stmt.Subname, stmt.Newname)
+		parser.RenameColumnReferences(p.schema.Tables, "postgres", table.Schema, table.Name, stmt.Subname, stmt.Newname)
 		return nil
 	}
 	return nil
@@ -688,7 +693,7 @@ func (p *Parser) dropTable(schema, name string) error {
 	if !ok {
 		return nil
 	}
-	if err := parser.CheckTableDropRefs(p.schema.Tables, schema, name); err != nil {
+	if err := parser.CheckTableDropRefs(p.schema.Tables, "postgres", schema, name); err != nil {
 		return fmt.Errorf("drop table %s.%s: %w", schema, name, err)
 	}
 	p.schema.Tables = slices.Delete(p.schema.Tables, idx, idx+1)

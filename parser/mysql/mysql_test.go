@@ -1673,6 +1673,91 @@ func TestRenameColumnNotFound(t *testing.T) {
 	}
 }
 
+// TestRenameOntoExistingName pins that ALTER TABLE refuses a table or column
+// name already taken, as MySQL 8.0 does (ERROR 1050, ERROR 1060), while a
+// table renamed to its own name and a column renamed to its own name in
+// another case are accepted.
+func TestRenameOntoExistingName(t *testing.T) {
+	tests := []struct {
+		name    string
+		sql     string
+		want    []string
+		wantErr string
+	}{
+		{
+			name:    "a table name another table has",
+			sql:     `CREATE TABLE a (id INT); CREATE TABLE b (id INT); ALTER TABLE a RENAME TO b;`,
+			wantErr: "table b already exists",
+		},
+		{
+			name: "the table's own name",
+			sql:  `CREATE TABLE a (id INT); ALTER TABLE a RENAME TO a;`,
+			want: []string{"a(id)"},
+		},
+		{
+			name:    "a column name another column has in another case",
+			sql:     `CREATE TABLE t (a INT, b INT); ALTER TABLE t RENAME COLUMN a TO B;`,
+			wantErr: "column B already exists in table t",
+		},
+		{
+			name: "a column's own name in another case",
+			sql:  `CREATE TABLE t (a INT, b INT); ALTER TABLE t RENAME COLUMN a TO A;`,
+			want: []string{"t(A, b)"},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			p := newParser(t)
+			err := p.Parse("test.sql", []byte(tt.sql))
+			if tt.wantErr != "" {
+				if err == nil || !strings.Contains(err.Error(), tt.wantErr) {
+					t.Fatalf("Parse() error = %v, want it to contain %q", err, tt.wantErr)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("Parse() error: %v", err)
+			}
+			var got []string
+			for _, tbl := range p.Schema().Tables {
+				var cols []string
+				for _, c := range tbl.Columns {
+					cols = append(cols, c.Name)
+				}
+				got = append(got, tbl.Name+"("+strings.Join(cols, ", ")+")")
+			}
+			if diff := cmp.Diff(tt.want, got); diff != "" {
+				t.Errorf("tables after the rename mismatch (-want +got):\n%s", diff)
+			}
+		})
+	}
+}
+
+// TestReferenceColumnInAnotherCase pins that a foreign key naming its
+// referenced column in another case follows a rename of that column, as MySQL
+// does (measured on 8.0: REFERENCES rp (B) is stored as `rp` (`b`), and
+// becomes `rp` (`z`) after RENAME COLUMN b TO z).
+func TestReferenceColumnInAnotherCase(t *testing.T) {
+	p := newParser(t)
+	sql := `CREATE TABLE rp (b INT PRIMARY KEY);
+		CREATE TABLE rc (x INT, FOREIGN KEY (x) REFERENCES rp (B));
+		ALTER TABLE rp RENAME COLUMN b TO z;`
+	if err := p.Parse("test.sql", []byte(sql)); err != nil {
+		t.Fatalf("Parse() error: %v", err)
+	}
+	rc := p.Schema().Tables[1]
+	if ref := rc.Columns[0].FKReference; ref == nil || ref.Column != "z" {
+		t.Errorf("rc.x FKReference = %+v, want column z", ref)
+	}
+	for _, c := range rc.Constraints {
+		if c.Type == parser.ForeignKey {
+			if diff := cmp.Diff([]string{"z"}, c.ReferenceColumns); diff != "" {
+				t.Errorf("rc FOREIGN KEY reference columns mismatch (-want +got):\n%s", diff)
+			}
+		}
+	}
+}
+
 func TestRenameTable(t *testing.T) {
 	p := newParser(t)
 	sql := `
@@ -1761,6 +1846,21 @@ func TestRenameTableStatement(t *testing.T) {
 			name:    "a missing table is an error",
 			sql:     `RENAME TABLE users TO accounts;`,
 			wantErr: "table users not found",
+		},
+		{
+			name:    "a name another table has is an error",
+			sql:     `CREATE TABLE a (id INT); CREATE TABLE b (id INT); RENAME TABLE a TO b;`,
+			wantErr: "table b already exists",
+		},
+		{
+			name:    "the table's own name is an error",
+			sql:     `CREATE TABLE a (id INT); RENAME TABLE a TO a;`,
+			wantErr: "table a already exists",
+		},
+		{
+			name: "a name in another case is another table",
+			sql:  `CREATE TABLE a (id INT); RENAME TABLE a TO A;`,
+			want: []string{"A"},
 		},
 	}
 	for _, tt := range tests {

@@ -350,6 +350,27 @@ func TestCheckColumns(t *testing.T) {
 	}
 }
 
+// TestCheckColumns_NonASCIICase checks that a CHECK names the columns its
+// dialect matches: SQLite folds ASCII case only, so "é" and "É" are two
+// columns, while MySQL folds Unicode case.
+func TestCheckColumns_NonASCIICase(t *testing.T) {
+	cols := []parser.Column{{Name: "é"}, {Name: "É"}}
+	tests := []struct {
+		dialect string
+		expr    string
+		want    []string
+	}{
+		{dialect: "sqlite", expr: `"é" > 0`, want: []string{"é"}},
+		{dialect: "mysql", expr: "`é` > 0", want: []string{"é", "É"}},
+		{dialect: "postgres", expr: `"é" > 0`, want: []string{"é"}},
+	}
+	for _, tt := range tests {
+		if diff := cmp.Diff(tt.want, parser.CheckColumns(tt.expr, cols, tt.dialect)); diff != "" {
+			t.Errorf("CheckColumns(%q, %s) mismatch (-want +got):\n%s", tt.expr, tt.dialect, diff)
+		}
+	}
+}
+
 func newDialectParser(t *testing.T, dialect string) parser.Parser {
 	t.Helper()
 	switch dialect {

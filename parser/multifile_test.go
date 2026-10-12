@@ -155,7 +155,7 @@ func (p *testParser) parseDropTable(rawName string) error {
 	if !ok {
 		return nil
 	}
-	if err := parser.CheckTableDropRefs(p.schema.Tables, schema, name); err != nil {
+	if err := parser.CheckTableDropRefs(p.schema.Tables, "postgres", schema, name); err != nil {
 		return fmt.Errorf("drop table %s: %w", key, err)
 	}
 	p.schema.Tables = slices.Delete(p.schema.Tables, idx, idx+1)

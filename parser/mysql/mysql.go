@@ -379,9 +379,15 @@ func (p *Parser) processStmt(stmt sqlparser.Statement, sql string) error {
 // parseRenameTable applies a standalone RENAME TABLE a TO b [, c TO d ...].
 // MySQL renames the pairs left to right, so a swap through a temporary name
 // works, and each pair goes through the same path as ALTER TABLE ... RENAME.
+// Unlike ALTER TABLE a RENAME TO a, which MySQL accepts as a no-op, RENAME
+// TABLE a TO a is an error (ERROR 1050).
 func (p *Parser) parseRenameTable(stmt *sqlparser.RenameTable) error {
 	for _, pair := range stmt.TablePairs {
-		if err := p.renameTable(pair.FromTable.Name.String(), pair.ToTable.Name.String()); err != nil {
+		from, to := pair.FromTable.Name.String(), pair.ToTable.Name.String()
+		if _, exists := p.tableIndex[from]; exists && from == to {
+			return fmt.Errorf("table %s already exists", to)
+		}
+		if err := p.renameTable(from, to); err != nil {
 			return err
 		}
 	}
@@ -395,7 +401,7 @@ func (p *Parser) parseDropTable(stmt *sqlparser.DropTable) error {
 		if !ok {
 			continue
 		}
-		if err := parser.CheckTableDropRefs(p.schema.Tables, "", name); err != nil {
+		if err := parser.CheckTableDropRefs(p.schema.Tables, "mysql", "", name); err != nil {
 			return fmt.Errorf("drop table %s: %w", name, err)
 		}
 		p.schema.Tables = slices.Delete(p.schema.Tables, idx, idx+1)
@@ -1146,10 +1152,10 @@ func (p *Parser) applyAlterOption(table *parser.Table, opt sqlparser.AlterOption
 		p.addConstraints(table, []parser.Constraint{p.parseConstraintDef(o.ConstraintDefinition)}, indexName)
 	case *sqlparser.RenameColumn:
 		oldName, newName := declaredColumn(table, o.OldName.Name.String()), o.NewName.Name.String()
-		if err := parser.RenameColumn(table, oldName, newName); err != nil {
+		if err := parser.RenameColumn(table, "mysql", oldName, newName); err != nil {
 			return fmt.Errorf("rename column %s: %w", table.Name, err)
 		}
-		parser.RenameColumnReferences(p.schema.Tables, table.Schema, table.Name, oldName, newName)
+		parser.RenameColumnReferences(p.schema.Tables, "mysql", table.Schema, table.Name, oldName, newName)
 		p.renameExprKeyColumn(table.Name, oldName, newName)
 		p.renameInline(table.Name, oldName, newName)
 		return nil
@@ -1216,7 +1222,7 @@ func (p *Parser) replaceColumn(table *parser.Table, name string, def *sqlparser.
 	}
 	newCol, constraints := p.parseColumn(table.Name, def)
 	table.Columns[i] = redefineColumn(table.Columns[i], newCol)
-	parser.RenameColumnReferences(p.schema.Tables, table.Schema, table.Name, oldName, newCol.Name)
+	parser.RenameColumnReferences(p.schema.Tables, "mysql", table.Schema, table.Name, oldName, newCol.Name)
 	p.renameExprKeyColumn(table.Name, oldName, newCol.Name)
 	p.addConstraints(table, constraints, "")
 	return true
@@ -1270,9 +1276,14 @@ func (p *Parser) renameTable(oldName, newName string) error {
 	if !ok {
 		return fmt.Errorf("table %s not found", oldName)
 	}
+	// Table names compare exactly (lower_case_table_names=0). Renaming a
+	// table to its own name is left to the caller.
+	if _, exists := p.tableIndex[newName]; exists && newName != oldName {
+		return fmt.Errorf("table %s already exists", newName)
+	}
 	// Keys referencing the table follow it to its new name, as they do in the
 	// database; left on the old name, relationship detection drops the edge.
-	parser.RenameTableReferences(p.schema.Tables, p.schema.Tables[idx].Schema, oldName, newName)
+	parser.RenameTableReferences(p.schema.Tables, "mysql", p.schema.Tables[idx].Schema, oldName, newName)
 	// MySQL renames a <table>_ibfk_<n> or <table>_chk_<n> name with its table.
 	for i := range p.schema.Tables[idx].Constraints {
 		c := &p.schema.Tables[idx].Constraints[i]

@@ -115,6 +115,63 @@ func TestParseSchema_SQLiteDatabaseSource(t *testing.T) {
 	}
 }
 
+// TestParseSchema_SQLiteReferenceInAnotherCase pins that a SQLite foreign key
+// naming its parent in another ASCII case, which SQLite resolves, keeps its
+// relationship under every source: the reference is spelled as the parent
+// declares it before relationship detection, so the parent gets its posts.
+func TestParseSchema_SQLiteReferenceInAnotherCase(t *testing.T) {
+	const users = "CREATE TABLE Users (id INTEGER PRIMARY KEY);"
+	// With no column list, SQLite references the parent's primary key.
+	for _, ref := range []string{"users(ID)", "users"} {
+		posts := "CREATE TABLE posts (id INTEGER PRIMARY KEY, user_id INTEGER NOT NULL REFERENCES " + ref + ");"
+		tests := []struct {
+			name           string
+			source         config.Source
+			dbDDL, fileDDL string
+		}{
+			{name: "files", source: config.SourceFiles, fileDDL: users + "\n" + posts},
+			{name: "database", source: config.SourceDatabase, dbDDL: users + "\n" + posts},
+			{name: "both", source: config.SourceBoth, dbDDL: users, fileDDL: posts},
+		}
+		for _, tt := range tests {
+			t.Run(ref+"/"+tt.name, func(t *testing.T) {
+				dir := t.TempDir()
+				dbPath := ""
+				if tt.dbDDL != "" {
+					dbPath = sqliteDatabase(t, dir, tt.dbDDL)
+				}
+				var paths []string
+				if tt.fileDDL != "" {
+					sqlDir := filepath.Join(dir, "sql")
+					if err := os.Mkdir(sqlDir, 0o750); err != nil {
+						t.Fatal(err)
+					}
+					writeSQLFile(t, sqlDir, tt.fileDDL)
+					paths = append(paths, sqlDir)
+				}
+				cfg := sqliteSourceConfig(tt.source, dbPath, paths...)
+				if tt.source == config.SourceFiles {
+					cfg.Input.Connection = nil
+				}
+
+				schema, err := parseSchema(t.Context(), cfg)
+				if err != nil {
+					t.Fatalf("parseSchema: %v", err)
+				}
+				parser.DetectRelationships(schema)
+				var got []string
+				for _, r := range schema.Relationships {
+					got = append(got, fmt.Sprintf("%s %s->%s via %s", r.Type, r.SourceTable, r.TargetTable, r.FKColumn))
+				}
+				want := []string{"OneToMany Users->posts via user_id"}
+				if diff := cmp.Diff(want, got); diff != "" {
+					t.Errorf("relationships (-want +got):\n%s", diff)
+				}
+			})
+		}
+	}
+}
+
 func TestParseSchema_BothSourceCreateOfExistingTable(t *testing.T) {
 	dir := t.TempDir()
 	dbPath := sqliteDatabase(t, dir, sqliteUsersDDL)

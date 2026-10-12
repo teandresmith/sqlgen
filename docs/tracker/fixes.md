@@ -22,115 +22,6 @@
 ## Open
 
 <!-- fixes:open:begin -->
-### FIX-301
-
-- **Status:** Open
-- **Severity:** tracked
-- **Origin:** phase 4, `parser` (`schema.go`, `canonical.go`) + `parser/sqlite` + `parser/mysql`
-- **Surfaced by:** backlog sweep 2026-10-12 (backlog lines from FIX-247, FIX-277, FIX-282, FIX-298)
-- **Vetted:** corrected at `9b58288b` (2026-10-12)
-
-**Issue.** The parsers compare table and column names in ways that differ from their databases.
-Measured at `e88e35bb`:
-- SQLite: a FK naming its parent in another case (`REFERENCES users(id)` against `CREATE TABLE Users`)
-  stays unresolved on both sources, and the relationship is silently dropped from generated code
-  (E2E: `User` has no `Posts` field; with `REFERENCES Users(id)` it has `Posts []*Post`). `ALTER TABLE
-  Users RENAME TO Accounts` leaves the reference on `users` (SQLite rewrites it), `DROP TABLE Users`
-  with the lowercase reference passes, and `REFERENCES u(B)` + `RENAME COLUMN b TO c` keeps `u(B)`.
-- SQLite ALTER: `DROP COLUMN B` on column `b` does nothing; `RENAME COLUMN a TO c` on `A` errors
-  "column a not found"; `RENAME COLUMN a TO b` with `B` present gives columns `[b B]` (SQLite:
-  "duplicate column name"); `ADD COLUMN A` beside `a` is accepted; `DROP COLUMN` of a missing column
-  is a no-op (SQLite: "no such column").
-- SQLite Unicode: `CheckColumns` / `declaredColumnNames` use Unicode `strings.EqualFold`, but SQLite
-  folds ASCII only, so a CHECK on `"é"` beside `"É"` lists both; `UNIQUE ("é")` records `[É]`; `"É"
-  UNIQUE, "é" UNIQUE` keeps one UNIQUE (the `indexCollations.key` uses Unicode `strings.ToLower`).
-- MySQL: `REFERENCES rp (B)` against `rp.b` keeps `B` (MySQL stores `b`), so a later `RENAME COLUMN
-  b` on the parent misses the reference.
-- All three parsers accept a table rename onto an existing name (`ALTER TABLE a RENAME TO b` with `b`
-  present → two `b` tables; SQLite also `Users RENAME TO users`). SQLite: "there is already another
-  table or index with this name"; PG16: `relation "b" already exists` (also for a rename to the
-  table's own name); MySQL: ERROR 1050 for `ALTER … RENAME TO b`, `RENAME TABLE a TO b` and `RENAME
-  TABLE a TO a`, while `ALTER TABLE a RENAME TO a` is a no-op.
-- Vet note (2026-10-12): `DROP TABLE Users` with a lowercase reference is a parser inconsistency, not
-  a database mismatch — SQLite (modernc, `foreign_keys=ON`) also accepts it; the fix applies the
-  parser's existing exact-case refusal under ASCII folding.
-
-**Root cause.** Exact compares in the shared helpers — `retargetTableReferences`
-(`parser/schema.go:360,366`), `UnresolvedForeignKeys` (`:426`), `CheckTableDropRefs` (`:467,475`),
-`RenameColumn` (`:582`), `RenameColumnReferences`/`replaceName` — Unicode folding in
-`declaredColumnNames` / `CheckColumns` (`parser/canonical.go:52,113`) and SQLite's
-`indexCollations.key`, an exact `c.Name == colName` in SQLite `parseAlterTable`, references kept in
-their written spelling, and no existence check in any dialect's `renameTable`. Measured identifier
-rules: PostgreSQL exact (pg_query already folds unquoted names); MySQL (`lower_case_table_names=0`)
-tables exact, columns Unicode case-insensitive (`É`≡`é`, `É`≠`e`); SQLite ASCII case-insensitive for
-both (`"É"` and `"é"` are two columns).
-
-**Suggested fix.**
-- New `parser/names.go`: exported `SameTableName(dialect, a, b)` (PG/MySQL exact, SQLite ASCII fold),
-  `SameColumnName(dialect, a, b)` (PG exact, MySQL `strings.EqualFold`, SQLite ASCII fold),
-  `FoldASCII` (moved from `parser/sqlite`), and `ResolveReferenceNames(schema, dialect)`, which rewrites
-  each non-synthetic `FKReference` and FK constraint's `ReferenceTable` / `ReferenceColumns` to the
-  parent's declared spelling (an exact match wins; a reference to an unknown table is untouched).
-- Thread the dialect through `RenameTableReferences`, `RenameColumnReferences`, `replaceName`,
-  `UnresolvedForeignKeys` and `CheckTableDropRefs`. `RenameColumn(table, dialect, old, new)` matches the
-  old name by dialect and rejects a new name another column already has (PG also its own name, as PG16
-  does). `MoveTableReferences` keeps its signature (PG-only). `declaredColumnNames` / `CheckColumns` use
-  `SameColumnName`.
-- SQLite: `indexCollations` keys use `FoldASCII`; ADD COLUMN errors "duplicate column name: X" on an
-  ASCII-fold duplicate; DROP COLUMN folds and errors "no such column: X" (extracted into
-  `addColumn` / `dropColumn` for cyclop); `renameTable` errors "table X already exists" on any
-  ASCII-fold match, its own name included.
-- PG `parseRename` errors when `schema.newname` exists (own name included). MySQL `renameTable` errors on
-  an existing name other than its own; `parseRenameTable` also rejects `RENAME TABLE a TO a`.
-- Final pass: one `parser.ResolveReferenceNames(schema, dialect)` call in `cli.parseSchema`
-  (`cmd/sqlgen/cli/pipeline.go`), after the files/merge block and before the PG unresolved-FK check; the
-  schema there is whole for every source, and `generate`, `validate` and `loadAndValidate` reach
-  `DetectRelationships` only through it. Parity tests call it on both sides.
-- Tests: parser `TestSameName`, `TestResolveReferenceNames`, `TestRenameColumn`,
-  `TestReferencesFollowRenamesInAnotherCase`, `TestCheckColumns_NonASCIICase`, dialect cases in
-  `TestCheckTableDropRefs` / `TestUnresolvedForeignKeys`; sqlite `TestIdentifierCase` (16 cases); mysql
-  `TestRenameOntoExistingName`, `TestReferenceColumnInAnotherCase`, 3 `TestRenameTableStatement` cases;
-  postgres `TestRenameOntoExistingName`; parity `TestSQLiteIntrospect_IdentifierCase`,
-  `TestMySQLIntrospect_ReferenceColumnCase`; CLI `TestParseSchema_SQLiteReferenceInAnotherCase`
-  (files/database/both → `OneToMany Users->posts via user_id`).
-- Corrected vs. the original suggestion (vet 2026-10-12): MySQL `ALTER TABLE a RENAME TO a` stays a
-  no-op (measured accepted), only `RENAME TABLE a TO a` and a rename onto another table error; widened
-  within the scope cap so the duplicate-name check lives in the shared `parser.RenameColumn` and covers
-  every dialect (PG16 rejects `a TO b` with b present and `a TO a`; MySQL ERROR 1060 for `a TO B`,
-  accepts `a TO A`; SQLite "duplicate column name: B", accepts `a TO A`); final-pass placement made
-  concrete; `foldASCII` exported as `parser.FoldASCII`.
-- Auto-accepted the recommended option on 2026-10-12 (`/fix` auto-accept rule): SQLite ADD COLUMN of a
-  name the table already has → the parser error "duplicate column name: count", as SQLite does, rather
-  than leaving exact duplicates to Merge, which leaves `files`-mode duplicates as two same-named
-  columns; `TestBothModeColumnConflict/sqlite/ADD_COLUMN_duplicating_existing_with_different_type_errors`
-  now expects that text on SQLite (PG/MySQL keep "column conflict"); conditions held: prototyped green,
-  no golden churn, no public runtime/generated surface, PRD §6.1 only requires "a validation error".
-- Prototype results, run at `9b58288b` on 2026-10-12: parser probe reproduced every measured case
-  (SQLite `REFERENCES users(id)` vs `Users` → `->users[id]`; `DROP COLUMN B` → cols [b x]; `RENAME
-  COLUMN a TO c` on `A` → "column a not found in table t"; CHECK on "é" → CHECK[é É]; `"É" UNIQUE, "é"
-  UNIQUE` → one UNIQUE[É]; MySQL `REFERENCES rp (B)` → `rp[B]` after `RENAME COLUMN b TO z`; rename onto
-  an existing table → two `b` tables on all three). Ground truth modernc, postgres:16, mysql:8.0
-  (utf8mb4 client). E2E SQLite `Users` + `REFERENCES users(id)`: base binary under `files` and `database`
-  → `type User struct { ID; Name }` with no Posts field; prototype → files, database and the
-  exact-spelled control byte-identical, with Posts. Gates: `cd parser && go test -race -count=1 ./...`
-  (integration, postgres:16-alpine + mysql:8.0) ok; `golangci-lint run ./...` 0 issues; `cd cmd/sqlgen &&
-  go test -race -count=1 ./...` ok incl. `TestE2EGoldenFiles`, `TestE2EDatabaseTwin`, internal/livedb;
-  `gofumpt -l` clean. Fail-first: each site reverted alone fails its test — e.g. retarget exact →
-  "FKReference = users(b), want Accounts(b)"; UnresolvedForeignKeys without fold → "+ {\"foreign key
-  posts(user_id) references users, which no parsed table defines\"}"; declaredColumnNames EqualFold →
-  `- "t(É, é) U[é]" + "t(É, é) U[É]"`; pipeline call removed → `TestParseSchema_SQLiteReferenceInAnotherCase`
-  fails (target `users` instead of `Users`); existing suite without the fix passes. Golden churn: none.
-  Patch: `.claude/prototypes/FIX-301.patch` (17 files, +1034/-122).
-
-**References.**
-- PRD §6.1 (same schema under both sources), §5.5 (name resolution), §5.2.
-- Backlog lines absorbed: 2026-10-01 rename onto an existing table name (FIX-247, FIX-282 re-vet);
-  2026-10-07 FK parent case (FIX-282); 2026-10-07 SQLite ALTER column case (FIX-282, FIX-277);
-  2026-10-08 Unicode EqualFold (FIX-277); 2026-10-09 MySQL FK column case (FIX-298).
-- FIX-298 (`declaredColumn` for the MySQL local side).
-
-**Resolution notes.** _Filled in by /fix resolve._
-
 ### FIX-302
 
 - **Status:** Open
@@ -3002,6 +2893,115 @@ accepts a nullable column without a DEFAULT.
 ## Resolved
 
 <!-- fixes:resolved:begin -->
+
+### FIX-301
+
+- **Status:** Resolved
+- **Severity:** tracked
+- **Origin:** phase 4, `parser` (`schema.go`, `canonical.go`) + `parser/sqlite` + `parser/mysql`
+- **Surfaced by:** backlog sweep 2026-10-12 (backlog lines from FIX-247, FIX-277, FIX-282, FIX-298)
+- **Vetted:** corrected at `9b58288b` (2026-10-12)
+
+**Issue.** The parsers compare table and column names in ways that differ from their databases.
+Measured at `e88e35bb`:
+- SQLite: a FK naming its parent in another case (`REFERENCES users(id)` against `CREATE TABLE Users`)
+  stays unresolved on both sources, and the relationship is silently dropped from generated code
+  (E2E: `User` has no `Posts` field; with `REFERENCES Users(id)` it has `Posts []*Post`). `ALTER TABLE
+  Users RENAME TO Accounts` leaves the reference on `users` (SQLite rewrites it), `DROP TABLE Users`
+  with the lowercase reference passes, and `REFERENCES u(B)` + `RENAME COLUMN b TO c` keeps `u(B)`.
+- SQLite ALTER: `DROP COLUMN B` on column `b` does nothing; `RENAME COLUMN a TO c` on `A` errors
+  "column a not found"; `RENAME COLUMN a TO b` with `B` present gives columns `[b B]` (SQLite:
+  "duplicate column name"); `ADD COLUMN A` beside `a` is accepted; `DROP COLUMN` of a missing column
+  is a no-op (SQLite: "no such column").
+- SQLite Unicode: `CheckColumns` / `declaredColumnNames` use Unicode `strings.EqualFold`, but SQLite
+  folds ASCII only, so a CHECK on `"é"` beside `"É"` lists both; `UNIQUE ("é")` records `[É]`; `"É"
+  UNIQUE, "é" UNIQUE` keeps one UNIQUE (the `indexCollations.key` uses Unicode `strings.ToLower`).
+- MySQL: `REFERENCES rp (B)` against `rp.b` keeps `B` (MySQL stores `b`), so a later `RENAME COLUMN
+  b` on the parent misses the reference.
+- All three parsers accept a table rename onto an existing name (`ALTER TABLE a RENAME TO b` with `b`
+  present → two `b` tables; SQLite also `Users RENAME TO users`). SQLite: "there is already another
+  table or index with this name"; PG16: `relation "b" already exists` (also for a rename to the
+  table's own name); MySQL: ERROR 1050 for `ALTER … RENAME TO b`, `RENAME TABLE a TO b` and `RENAME
+  TABLE a TO a`, while `ALTER TABLE a RENAME TO a` is a no-op.
+- Vet note (2026-10-12): `DROP TABLE Users` with a lowercase reference is a parser inconsistency, not
+  a database mismatch — SQLite (modernc, `foreign_keys=ON`) also accepts it; the fix applies the
+  parser's existing exact-case refusal under ASCII folding.
+
+**Root cause.** Exact compares in the shared helpers — `retargetTableReferences`
+(`parser/schema.go:360,366`), `UnresolvedForeignKeys` (`:426`), `CheckTableDropRefs` (`:467,475`),
+`RenameColumn` (`:582`), `RenameColumnReferences`/`replaceName` — Unicode folding in
+`declaredColumnNames` / `CheckColumns` (`parser/canonical.go:52,113`) and SQLite's
+`indexCollations.key`, an exact `c.Name == colName` in SQLite `parseAlterTable`, references kept in
+their written spelling, and no existence check in any dialect's `renameTable`. Measured identifier
+rules: PostgreSQL exact (pg_query already folds unquoted names); MySQL (`lower_case_table_names=0`)
+tables exact, columns Unicode case-insensitive (`É`≡`é`, `É`≠`e`); SQLite ASCII case-insensitive for
+both (`"É"` and `"é"` are two columns).
+
+**Suggested fix.**
+- New `parser/names.go`: exported `SameTableName(dialect, a, b)` (PG/MySQL exact, SQLite ASCII fold),
+  `SameColumnName(dialect, a, b)` (PG exact, MySQL `strings.EqualFold`, SQLite ASCII fold),
+  `FoldASCII` (moved from `parser/sqlite`), and `ResolveReferenceNames(schema, dialect)`, which rewrites
+  each non-synthetic `FKReference` and FK constraint's `ReferenceTable` / `ReferenceColumns` to the
+  parent's declared spelling (an exact match wins; a reference to an unknown table is untouched).
+- Thread the dialect through `RenameTableReferences`, `RenameColumnReferences`, `replaceName`,
+  `UnresolvedForeignKeys` and `CheckTableDropRefs`. `RenameColumn(table, dialect, old, new)` matches the
+  old name by dialect and rejects a new name another column already has (PG also its own name, as PG16
+  does). `MoveTableReferences` keeps its signature (PG-only). `declaredColumnNames` / `CheckColumns` use
+  `SameColumnName`.
+- SQLite: `indexCollations` keys use `FoldASCII`; ADD COLUMN errors "duplicate column name: X" on an
+  ASCII-fold duplicate; DROP COLUMN folds and errors "no such column: X" (extracted into
+  `addColumn` / `dropColumn` for cyclop); `renameTable` errors "table X already exists" on any
+  ASCII-fold match, its own name included.
+- PG `parseRename` errors when `schema.newname` exists (own name included). MySQL `renameTable` errors on
+  an existing name other than its own; `parseRenameTable` also rejects `RENAME TABLE a TO a`.
+- Final pass: one `parser.ResolveReferenceNames(schema, dialect)` call in `cli.parseSchema`
+  (`cmd/sqlgen/cli/pipeline.go`), after the files/merge block and before the PG unresolved-FK check; the
+  schema there is whole for every source, and `generate`, `validate` and `loadAndValidate` reach
+  `DetectRelationships` only through it. Parity tests call it on both sides.
+- Tests: parser `TestSameName`, `TestResolveReferenceNames`, `TestRenameColumn`,
+  `TestReferencesFollowRenamesInAnotherCase`, `TestCheckColumns_NonASCIICase`, dialect cases in
+  `TestCheckTableDropRefs` / `TestUnresolvedForeignKeys`; sqlite `TestIdentifierCase` (16 cases); mysql
+  `TestRenameOntoExistingName`, `TestReferenceColumnInAnotherCase`, 3 `TestRenameTableStatement` cases;
+  postgres `TestRenameOntoExistingName`; parity `TestSQLiteIntrospect_IdentifierCase`,
+  `TestMySQLIntrospect_ReferenceColumnCase`; CLI `TestParseSchema_SQLiteReferenceInAnotherCase`
+  (files/database/both → `OneToMany Users->posts via user_id`).
+- Corrected vs. the original suggestion (vet 2026-10-12): MySQL `ALTER TABLE a RENAME TO a` stays a
+  no-op (measured accepted), only `RENAME TABLE a TO a` and a rename onto another table error; widened
+  within the scope cap so the duplicate-name check lives in the shared `parser.RenameColumn` and covers
+  every dialect (PG16 rejects `a TO b` with b present and `a TO a`; MySQL ERROR 1060 for `a TO B`,
+  accepts `a TO A`; SQLite "duplicate column name: B", accepts `a TO A`); final-pass placement made
+  concrete; `foldASCII` exported as `parser.FoldASCII`.
+- Auto-accepted the recommended option on 2026-10-12 (`/fix` auto-accept rule): SQLite ADD COLUMN of a
+  name the table already has → the parser error "duplicate column name: count", as SQLite does, rather
+  than leaving exact duplicates to Merge, which leaves `files`-mode duplicates as two same-named
+  columns; `TestBothModeColumnConflict/sqlite/ADD_COLUMN_duplicating_existing_with_different_type_errors`
+  now expects that text on SQLite (PG/MySQL keep "column conflict"); conditions held: prototyped green,
+  no golden churn, no public runtime/generated surface, PRD §6.1 only requires "a validation error".
+- Prototype results, run at `9b58288b` on 2026-10-12: parser probe reproduced every measured case
+  (SQLite `REFERENCES users(id)` vs `Users` → `->users[id]`; `DROP COLUMN B` → cols [b x]; `RENAME
+  COLUMN a TO c` on `A` → "column a not found in table t"; CHECK on "é" → CHECK[é É]; `"É" UNIQUE, "é"
+  UNIQUE` → one UNIQUE[É]; MySQL `REFERENCES rp (B)` → `rp[B]` after `RENAME COLUMN b TO z`; rename onto
+  an existing table → two `b` tables on all three). Ground truth modernc, postgres:16, mysql:8.0
+  (utf8mb4 client). E2E SQLite `Users` + `REFERENCES users(id)`: base binary under `files` and `database`
+  → `type User struct { ID; Name }` with no Posts field; prototype → files, database and the
+  exact-spelled control byte-identical, with Posts. Gates: `cd parser && go test -race -count=1 ./...`
+  (integration, postgres:16-alpine + mysql:8.0) ok; `golangci-lint run ./...` 0 issues; `cd cmd/sqlgen &&
+  go test -race -count=1 ./...` ok incl. `TestE2EGoldenFiles`, `TestE2EDatabaseTwin`, internal/livedb;
+  `gofumpt -l` clean. Fail-first: each site reverted alone fails its test — e.g. retarget exact →
+  "FKReference = users(b), want Accounts(b)"; UnresolvedForeignKeys without fold → "+ {\"foreign key
+  posts(user_id) references users, which no parsed table defines\"}"; declaredColumnNames EqualFold →
+  `- "t(É, é) U[é]" + "t(É, é) U[É]"`; pipeline call removed → `TestParseSchema_SQLiteReferenceInAnotherCase`
+  fails (target `users` instead of `Users`); existing suite without the fix passes. Golden churn: none.
+  Patch: `.claude/prototypes/FIX-301.patch` (17 files, +1034/-122).
+
+**References.**
+- PRD §6.1 (same schema under both sources), §5.5 (name resolution), §5.2.
+- Backlog lines absorbed: 2026-10-01 rename onto an existing table name (FIX-247, FIX-282 re-vet);
+  2026-10-07 FK parent case (FIX-282); 2026-10-07 SQLite ALTER column case (FIX-282, FIX-277);
+  2026-10-08 Unicode EqualFold (FIX-277); 2026-10-09 MySQL FK column case (FIX-298).
+- FIX-298 (`declaredColumn` for the MySQL local side).
+
+**Resolution notes.** Applied the vetted prototype with `git apply --3way`; the one conflict, `parser/sqlite/sqlite.go` ADD COLUMN, came from FIX-300 (`ac19de67`) adding a `src` argument to `parseColumn`, so `addColumn` now takes and passes `src`. New `parser/names.go` (`SameTableName`, `SameColumnName`, `FoldASCII` moved from `parser/sqlite`, `ResolveReferenceNames`); the dialect is threaded through `RenameTableReferences`, `RenameColumnReferences`/`replaceName`, `UnresolvedForeignKeys`, `CheckTableDropRefs` and `RenameColumn` (which now rejects a new name another column has, and on PG its own name); `declaredColumnNames`/`CheckColumns` and SQLite `indexCollations` fold per dialect; SQLite ADD COLUMN ("duplicate column name") and DROP COLUMN ("no such column") fold ASCII case; the SQLite and MySQL `renameTable` and PostgreSQL `parseRename` refuse an existing name (MySQL `ALTER … RENAME TO a` on itself stays a no-op, `RENAME TABLE a TO a` errors); `cli.parseSchema` runs `parser.ResolveReferenceNames` once on the whole schema. `TestParseSchema_SQLiteReferenceInAnotherCase` also covers FIX-300's column-less `REFERENCES users` against `Users` on files/database/both (the implicit-key lookup already folds, and the final pass respells the target); removing the pipeline call fails all six subtests. Gates: `make check` ok, `cd parser && go test -race -count=1 ./...` (integration) ok, `make check-examples` ok; `make update-golden-e2e` and `make update-golden` produced no churn, matching the vet. Verify reviewer: two doc corrections applied (this note, the `TestSQLiteIntrospect_IdentifierCase` comment); the SQLite introspector's Unicode `strings.EqualFold` in `nameDeclaredConstraints` / `sameColumns` (`parser/introspect/sqlite.go:196,213`), a separate fix site, went to the backlog.
 
 ### FIX-300
 

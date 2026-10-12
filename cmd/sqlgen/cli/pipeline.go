@@ -189,7 +189,7 @@ func parseSchema(ctx context.Context, cfg *config.RootConfig) (*parser.Schema, e
 		if schema, err = introspectSchema(ctx, cfg); err != nil {
 			return nil, err
 		}
-		for _, e := range parser.UnresolvedForeignKeys(schema.Tables) {
+		for _, e := range parser.UnresolvedForeignKeys(schema.Tables, string(cfg.Input.Dialect)) {
 			inDatabase[e.Error()] = true
 		}
 	}
@@ -215,13 +215,19 @@ func parseSchema(ctx context.Context, cfg *config.RootConfig) (*parser.Schema, e
 		schema = p.Schema()
 	}
 
+	// Every source's schema is whole here, whichever wrote it: spell each
+	// foreign key's target as that table declares it, so relationship
+	// detection finds a parent named in another case and both sources agree
+	// (PRD §6.1).
+	parser.ResolveReferenceNames(schema, string(cfg.Input.Dialect))
+
 	// PostgreSQL rejects a REFERENCES target that does not exist, so a
 	// foreign key whose target no table defines is a schema error.
 	// Left in, relationship detection would drop its edge without a trace.
 	// MySQL (FOREIGN_KEY_CHECKS=0) and SQLite accept such DDL.
 	var fkErr error
 	if cfg.Input.Dialect == config.DialectPostgres {
-		errs := parser.UnresolvedForeignKeys(schema.Tables)
+		errs := parser.UnresolvedForeignKeys(schema.Tables, string(cfg.Input.Dialect))
 		errs = slices.DeleteFunc(errs, func(e error) bool { return inDatabase[e.Error()] })
 		fkErr = errors.Join(errs...)
 	}

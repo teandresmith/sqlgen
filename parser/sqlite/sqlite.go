@@ -16,7 +16,7 @@ import (
 // It uses rqlite/sql (pure Go) to parse SQLite SQL statements.
 type Parser struct {
 	schema     *parser.Schema
-	tableIndex map[string]int // foldASCII(table name) → index in schema.Tables
+	tableIndex map[string]int // parser.FoldASCII(table name) → index in schema.Tables
 }
 
 // New creates a new SQLite parser.
@@ -33,7 +33,7 @@ func (p *Parser) Seed(base *parser.Schema) {
 	p.schema = base
 	p.tableIndex = make(map[string]int, len(base.Tables))
 	for i, t := range base.Tables {
-		p.tableIndex[foldASCII(t.Name)] = i
+		p.tableIndex[parser.FoldASCII(t.Name)] = i
 	}
 }
 
@@ -173,15 +173,15 @@ func exprString(e rsql.Expr, what string) (s string, err error) {
 
 func (p *Parser) parseDropTable(stmt *rsql.DropTableStatement) error {
 	name := rsql.IdentName(stmt.Name)
-	idx, ok := p.tableIndex[foldASCII(name)]
+	idx, ok := p.tableIndex[parser.FoldASCII(name)]
 	if !ok {
 		return nil
 	}
-	if err := parser.CheckTableDropRefs(p.schema.Tables, "", p.schema.Tables[idx].Name); err != nil {
+	if err := parser.CheckTableDropRefs(p.schema.Tables, "sqlite", "", p.schema.Tables[idx].Name); err != nil {
 		return fmt.Errorf("drop table %s: %w", name, err)
 	}
 	p.schema.Tables = slices.Delete(p.schema.Tables, idx, idx+1)
-	delete(p.tableIndex, foldASCII(name))
+	delete(p.tableIndex, parser.FoldASCII(name))
 	for k, v := range p.tableIndex {
 		if v > idx {
 			p.tableIndex[k] = v - 1
@@ -194,7 +194,7 @@ func (p *Parser) parseDropTable(stmt *rsql.DropTableStatement) error {
 
 func (p *Parser) parseCreateTable(stmt *rsql.CreateTableStatement, src []rune) error {
 	tableName := rsql.IdentName(stmt.Name)
-	if _, exists := p.tableIndex[foldASCII(tableName)]; exists {
+	if _, exists := p.tableIndex[parser.FoldASCII(tableName)]; exists {
 		if stmt.IfNotExists.IsValid() {
 			return nil
 		}
@@ -235,7 +235,7 @@ func (p *Parser) parseCreateTable(stmt *rsql.CreateTableStatement, src []rune) e
 	}
 	dropDuplicateUniques(&table, alias, coll)
 
-	p.tableIndex[foldASCII(tableName)] = len(p.schema.Tables)
+	p.tableIndex[parser.FoldASCII(tableName)] = len(p.schema.Tables)
 	p.schema.Tables = append(p.schema.Tables, table)
 
 	return nil
@@ -272,7 +272,8 @@ func primaryKeyDesc(constraints []rsql.Constraint) bool {
 }
 
 // indexCollations holds the collations SQLite compares when it decides two
-// indexes over the same columns are one: each column's declared COLLATE, and
+// indexes over the same columns are one: each column's declared COLLATE (keyed
+// by the column name with its ASCII case folded, as SQLite matches it), and
 // the per-column COLLATE of each table-level UNIQUE, keyed by its position in
 // table.Constraints ("" where none is written).
 type indexCollations struct {
@@ -284,7 +285,7 @@ type indexCollations struct {
 func (ic indexCollations) addColumn(column string, constraints []rsql.Constraint) {
 	for _, c := range constraints {
 		if cc, ok := c.(*rsql.CollateConstraint); ok && cc.Collation != nil {
-			ic.columns[strings.ToLower(column)] = strings.ToUpper(cc.Collation.Name)
+			ic.columns[parser.FoldASCII(column)] = strings.ToUpper(cc.Collation.Name)
 		}
 	}
 }
@@ -301,12 +302,12 @@ func (ic indexCollations) key(i int, c parser.Constraint) string {
 			collation = explicit[k]
 		}
 		if collation == "" {
-			collation = ic.columns[strings.ToLower(col)]
+			collation = ic.columns[parser.FoldASCII(col)]
 		}
 		if collation == "" {
 			collation = "BINARY"
 		}
-		b.WriteString(strings.ToLower(col) + "\x00" + collation + "\x00")
+		b.WriteString(parser.FoldASCII(col) + "\x00" + collation + "\x00")
 	}
 	return b.String()
 }
@@ -593,13 +594,9 @@ func (p *Parser) parseAlterTable(stmt *rsql.AlterTableStatement, src []rune) err
 		if !ok {
 			return fmt.Errorf("table %s not found", tableName)
 		}
-		c, constraints, err := parseColumn(stmt.ColumnDef, src)
-		if err != nil {
+		if err := addColumn(table, stmt.ColumnDef, src); err != nil {
 			return fmt.Errorf("table %s: %w", tableName, err)
 		}
-		table.Columns = append(table.Columns, c)
-		table.Constraints = append(table.Constraints, constraints...)
-		parser.CanonicalizeConstraints(table, "sqlite")
 
 	case stmt.DropColumnName != nil:
 		// DROP COLUMN (SQLite 3.35+)
@@ -607,10 +604,9 @@ func (p *Parser) parseAlterTable(stmt *rsql.AlterTableStatement, src []rune) err
 		if !ok {
 			return fmt.Errorf("table %s not found", tableName)
 		}
-		colName := rsql.IdentName(stmt.DropColumnName)
-		table.Columns = slices.DeleteFunc(table.Columns, func(c parser.Column) bool {
-			return c.Name == colName
-		})
+		if err := dropColumn(table, rsql.IdentName(stmt.DropColumnName)); err != nil {
+			return fmt.Errorf("table %s: %w", tableName, err)
+		}
 
 	case stmt.ColumnName != nil && stmt.NewColumnName != nil:
 		// RENAME COLUMN
@@ -619,10 +615,10 @@ func (p *Parser) parseAlterTable(stmt *rsql.AlterTableStatement, src []rune) err
 			return fmt.Errorf("table %s not found", tableName)
 		}
 		oldName, newName := rsql.IdentName(stmt.ColumnName), rsql.IdentName(stmt.NewColumnName)
-		if err := parser.RenameColumn(table, oldName, newName); err != nil {
+		if err := parser.RenameColumn(table, "sqlite", oldName, newName); err != nil {
 			return fmt.Errorf("rename column %s: %w", tableName, err)
 		}
-		parser.RenameColumnReferences(p.schema.Tables, table.Schema, table.Name, oldName, newName)
+		parser.RenameColumnReferences(p.schema.Tables, "sqlite", table.Schema, table.Name, oldName, newName)
 		if err := renameColumnInExpressions(table, oldName, newName); err != nil {
 			return fmt.Errorf("rename column %s: %w", tableName, err)
 		}
@@ -636,6 +632,33 @@ func (p *Parser) parseAlterTable(stmt *rsql.AlterTableStatement, src []rune) err
 		return fmt.Errorf("unsupported ALTER TABLE operation on %s", tableName)
 	}
 
+	return nil
+}
+
+// addColumn adds the column def defines to table. A name the table already
+// has, in any ASCII case, is an error, as it is in SQLite.
+func addColumn(table *parser.Table, def *rsql.ColumnDefinition, src []rune) error {
+	c, constraints, err := parseColumn(def, src)
+	if err != nil {
+		return err
+	}
+	if columnIndex(table, c.Name) >= 0 {
+		return fmt.Errorf("duplicate column name: %s", c.Name)
+	}
+	table.Columns = append(table.Columns, c)
+	table.Constraints = append(table.Constraints, constraints...)
+	parser.CanonicalizeConstraints(table, "sqlite")
+	return nil
+}
+
+// dropColumn drops the column of table that name names in any ASCII case. A
+// column the table does not have is an error, as it is in SQLite.
+func dropColumn(table *parser.Table, name string) error {
+	i := columnIndex(table, name)
+	if i < 0 {
+		return fmt.Errorf("no such column: %s", name)
+	}
+	table.Columns = slices.Delete(table.Columns, i, i+1)
 	return nil
 }
 
@@ -718,7 +741,7 @@ func (r *columnRenamer) Visit(n rsql.Node) (rsql.Visitor, rsql.Node, error) {
 		r.skip[n.Schema] = true
 		r.skip[n.Table] = true
 	case *rsql.Ident:
-		if !r.skip[n] && foldASCII(n.Name) == foldASCII(r.oldName) {
+		if !r.skip[n] && parser.SameColumnName("sqlite", n.Name, r.oldName) {
 			n.Name = r.newName
 			r.renamed = true
 		}
@@ -730,17 +753,22 @@ func (r *columnRenamer) Visit(n rsql.Node) (rsql.Visitor, rsql.Node, error) {
 func (r *columnRenamer) VisitEnd(n rsql.Node) (rsql.Node, error) { return n, nil }
 
 func (p *Parser) renameTable(oldName, newName string) error {
-	idx, ok := p.tableIndex[foldASCII(oldName)]
+	idx, ok := p.tableIndex[parser.FoldASCII(oldName)]
 	if !ok {
 		return fmt.Errorf("table %s not found", oldName)
+	}
+	// SQLite refuses a name another table holds in any ASCII case, the
+	// table's own included: Users cannot be renamed to users.
+	if _, exists := p.tableIndex[parser.FoldASCII(newName)]; exists {
+		return fmt.Errorf("table %s already exists", newName)
 	}
 	// Keys referencing the table follow it to its new name, as they do in the
 	// database; left on the old name, relationship detection drops the edge.
 	table := &p.schema.Tables[idx]
-	parser.RenameTableReferences(p.schema.Tables, table.Schema, table.Name, newName)
+	parser.RenameTableReferences(p.schema.Tables, "sqlite", table.Schema, table.Name, newName)
 	table.Name = newName
-	delete(p.tableIndex, foldASCII(oldName))
-	p.tableIndex[foldASCII(newName)] = idx
+	delete(p.tableIndex, parser.FoldASCII(oldName))
+	p.tableIndex[parser.FoldASCII(newName)] = idx
 	return nil
 }
 
@@ -787,23 +815,19 @@ func ImplicitReferenceColumns(columns, parentKey []string) []string {
 // --- Helpers ---
 
 func (p *Parser) lookupTable(name string) (*parser.Table, bool) {
-	idx, ok := p.tableIndex[foldASCII(name)]
+	idx, ok := p.tableIndex[parser.FoldASCII(name)]
 	if !ok {
 		return nil, false
 	}
 	return &p.schema.Tables[idx], true
 }
 
-// foldASCII lowers the ASCII letters in an identifier, as SQLite does when it
-// matches names: Users and users are one table, while Äb and äb are two.
-func foldASCII(name string) string {
-	b := []byte(name)
-	for i, c := range b {
-		if 'A' <= c && c <= 'Z' {
-			b[i] = c + 'a' - 'A'
-		}
-	}
-	return string(b)
+// columnIndex returns the index of the column of table that name names, as
+// SQLite matches column names (ignoring ASCII case), or -1.
+func columnIndex(table *parser.Table, name string) int {
+	return slices.IndexFunc(table.Columns, func(c parser.Column) bool {
+		return parser.SameColumnName("sqlite", c.Name, name)
+	})
 }
 
 func identNames(idents []*rsql.Ident) []string {

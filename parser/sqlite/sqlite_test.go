@@ -1366,6 +1366,155 @@ func TestTableNameCase(t *testing.T) {
 	}
 }
 
+// TestIdentifierCase pins that the parser matches table and column names as
+// SQLite does, ignoring ASCII case only, and refuses what SQLite refuses
+// (measured with modernc.org/sqlite, legacy_alter_table off).
+func TestIdentifierCase(t *testing.T) {
+	tests := []struct {
+		name    string
+		sql     string
+		want    []string
+		wantErr string
+	}{
+		{
+			name: "RENAME TO carries a reference written in another case",
+			sql: `CREATE TABLE Users (id INTEGER PRIMARY KEY);
+				CREATE TABLE posts (uid INTEGER REFERENCES users(id));
+				ALTER TABLE Users RENAME TO Accounts;`,
+			want: []string{"Accounts(id) PK[id]", "posts(uid->Accounts.id) FK[uid]->Accounts[id]"},
+		},
+		{
+			name: "DROP TABLE referenced in another case",
+			sql: `CREATE TABLE Users (id INTEGER PRIMARY KEY);
+				CREATE TABLE posts (uid INTEGER REFERENCES users(id));
+				DROP TABLE Users;`,
+			wantErr: "cannot drop table Users",
+		},
+		{
+			name: "RENAME COLUMN carries a reference written in another case",
+			sql: `CREATE TABLE u (b INTEGER PRIMARY KEY);
+				CREATE TABLE c (x INTEGER REFERENCES u(B));
+				ALTER TABLE u RENAME COLUMN b TO c;`,
+			want: []string{"u(c) PK[c]", "c(x->u.c) FK[x]->u[c]"},
+		},
+		{
+			name: "DROP COLUMN in another case",
+			sql:  `CREATE TABLE t (b INTEGER, x INTEGER); ALTER TABLE t DROP COLUMN B;`,
+			want: []string{"t(x)"},
+		},
+		{
+			name:    "DROP COLUMN of a missing column",
+			sql:     `CREATE TABLE t (a INTEGER, x INTEGER); ALTER TABLE t DROP COLUMN zz;`,
+			wantErr: "table t: no such column: zz",
+		},
+		{
+			name: "RENAME COLUMN in another case",
+			sql:  `CREATE TABLE t (A INTEGER, x INTEGER); ALTER TABLE t RENAME COLUMN a TO c;`,
+			want: []string{"t(c, x)"},
+		},
+		{
+			name:    "RENAME COLUMN onto another column's name in another case",
+			sql:     `CREATE TABLE t (a INTEGER, B INTEGER); ALTER TABLE t RENAME COLUMN a TO b;`,
+			wantErr: "column b already exists in table t",
+		},
+		{
+			name: "RENAME COLUMN to its own name in another case",
+			sql:  `CREATE TABLE t (a INTEGER, B INTEGER); ALTER TABLE t RENAME COLUMN a TO A;`,
+			want: []string{"t(A, B)"},
+		},
+		{
+			name:    "ADD COLUMN in another case",
+			sql:     `CREATE TABLE t (a INTEGER); ALTER TABLE t ADD COLUMN A INTEGER;`,
+			wantErr: "table t: duplicate column name: A",
+		},
+		{
+			name: "ADD COLUMN differing in a non-ASCII letter",
+			sql:  `CREATE TABLE t ("é" INTEGER); ALTER TABLE t ADD COLUMN "É" INTEGER;`,
+			want: []string{"t(é, É)"},
+		},
+		{
+			name:    "RENAME TO an existing table",
+			sql:     `CREATE TABLE a (id INTEGER); CREATE TABLE b (id INTEGER); ALTER TABLE a RENAME TO b;`,
+			wantErr: "table b already exists",
+		},
+		{
+			name:    "RENAME TO an existing table in another case",
+			sql:     `CREATE TABLE a (id INTEGER); CREATE TABLE b (id INTEGER); ALTER TABLE a RENAME TO B;`,
+			wantErr: "table B already exists",
+		},
+		{
+			name:    "RENAME TO its own name in another case",
+			sql:     `CREATE TABLE Users (id INTEGER); ALTER TABLE Users RENAME TO users;`,
+			wantErr: "table users already exists",
+		},
+		{
+			name: "UNIQUE on é beside É",
+			sql:  `CREATE TABLE t ("É" INTEGER, "é" INTEGER, UNIQUE ("é"));`,
+			want: []string{"t(É, é) U[é]"},
+		},
+		{
+			name: "UNIQUE on É and on é are two indexes",
+			sql:  `CREATE TABLE t ("É" INTEGER UNIQUE, "é" INTEGER UNIQUE);`,
+			want: []string{"t(É, é) U[É] U[é]"},
+		},
+		{
+			name: "CHECK on é beside É",
+			sql:  `CREATE TABLE t ("é" INTEGER, "É" INTEGER, CHECK ("é" > 0));`,
+			want: []string{"t(é, É) CHECK[é]"},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			p := sqlite.New()
+			err := p.Parse("test.sql", []byte(tt.sql))
+			if tt.wantErr != "" {
+				if err == nil || !strings.Contains(err.Error(), tt.wantErr) {
+					t.Errorf("Parse() error = %v, want %q", err, tt.wantErr)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("Parse() error: %v", err)
+			}
+			if diff := cmp.Diff(tt.want, describeTables(p.Schema().Tables)); diff != "" {
+				t.Errorf("Parse() tables mismatch (-want +got):\n%s", diff)
+			}
+		})
+	}
+}
+
+// describeTables renders each table as name(columns) and its PRIMARY KEY,
+// UNIQUE, CHECK and FOREIGN KEY constraints, with each column's FKReference.
+func describeTables(tables []parser.Table) []string {
+	out := make([]string, 0, len(tables))
+	for _, tbl := range tables {
+		cols := make([]string, 0, len(tbl.Columns))
+		for _, c := range tbl.Columns {
+			col := c.Name
+			if ref := c.FKReference; ref != nil {
+				col += "->" + ref.Table + "." + ref.Column
+			}
+			cols = append(cols, col)
+		}
+		s := tbl.Name + "(" + strings.Join(cols, ", ") + ")"
+		for _, c := range tbl.Constraints {
+			switch c.Type {
+			case parser.PrimaryKey:
+				s += fmt.Sprintf(" PK%v", c.Columns)
+			case parser.Unique:
+				s += fmt.Sprintf(" U%v", c.Columns)
+			case parser.Check:
+				s += fmt.Sprintf(" CHECK%v", c.Columns)
+			case parser.ForeignKey:
+				s += fmt.Sprintf(" FK%v->%s%v", c.Columns, c.ReferenceTable, c.ReferenceColumns)
+			case parser.Index:
+			}
+		}
+		out = append(out, s)
+	}
+	return out
+}
+
 func TestDropTable(t *testing.T) {
 	p := sqlite.New()
 	sql := `

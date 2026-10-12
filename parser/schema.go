@@ -340,30 +340,31 @@ type View struct {
 
 // RenameTableReferences repoints every foreign key that references the table
 // (schema, oldName) at (schema, newName), so a RENAME TABLE keeps the keys
-// that reference the table resolvable.
-func RenameTableReferences(tables []Table, schema, oldName, newName string) {
-	retargetTableReferences(tables, schema, oldName, schema, newName)
+// that reference the table resolvable. A reference matches the table as
+// dialect matches names (SameTableName).
+func RenameTableReferences(tables []Table, dialect, schema, oldName, newName string) {
+	retargetTableReferences(tables, dialect, schema, oldName, schema, newName)
 }
 
-// MoveTableReferences repoints every foreign key that references the table
-// (oldSchema, name) at (newSchema, name), so an ALTER TABLE … SET SCHEMA keeps
-// the keys that reference the table resolvable.
+// MoveTableReferences repoints every foreign key that references the
+// PostgreSQL table (oldSchema, name) at (newSchema, name), so an ALTER TABLE …
+// SET SCHEMA keeps the keys that reference the table resolvable.
 func MoveTableReferences(tables []Table, name, oldSchema, newSchema string) {
-	retargetTableReferences(tables, oldSchema, name, newSchema, name)
+	retargetTableReferences(tables, "postgres", oldSchema, name, newSchema, name)
 }
 
-func retargetTableReferences(tables []Table, fromSchema, fromName, toSchema, toName string) {
+func retargetTableReferences(tables []Table, dialect, fromSchema, fromName, toSchema, toName string) {
 	for i := range tables {
 		t := &tables[i]
 		for j := range t.Columns {
 			ref := t.Columns[j].FKReference
-			if ref != nil && ref.Schema == fromSchema && ref.Table == fromName {
+			if ref != nil && ref.Schema == fromSchema && SameTableName(dialect, ref.Table, fromName) {
 				ref.Schema, ref.Table = toSchema, toName
 			}
 		}
 		for j := range t.Constraints {
 			c := &t.Constraints[j]
-			if c.Type == ForeignKey && c.ReferenceSchema == fromSchema && c.ReferenceTable == fromName {
+			if c.Type == ForeignKey && c.ReferenceSchema == fromSchema && SameTableName(dialect, c.ReferenceTable, fromName) {
 				c.ReferenceSchema, c.ReferenceTable = toSchema, toName
 			}
 		}
@@ -376,58 +377,62 @@ func retargetTableReferences(tables []Table, fromSchema, fromName, toSchema, toN
 // foreign key, on any table, that references the column. The database does
 // the same on RENAME COLUMN; left on the old name, a composite key no longer
 // matches its columns, so an M2M junction degrades to O2M and an upsert
-// conflict target names a column that no longer exists. Call it after
+// conflict target names a column that no longer exists. Tables and columns
+// match as dialect matches names (SameTableName, SameColumnName), so a
+// reference written in another case follows the rename too. Call it after
 // RenameColumn has renamed the column itself.
-func RenameColumnReferences(tables []Table, schema, table, oldName, newName string) {
+func RenameColumnReferences(tables []Table, dialect, schema, table, oldName, newName string) {
 	for i := range tables {
 		t := &tables[i]
-		owner := t.Schema == schema && t.Name == table
+		owner := t.Schema == schema && SameTableName(dialect, t.Name, table)
 		for j := range t.Columns {
 			ref := t.Columns[j].FKReference
-			if ref != nil && ref.Schema == schema && ref.Table == table && ref.Column == oldName {
+			if ref != nil && ref.Schema == schema && SameTableName(dialect, ref.Table, table) &&
+				SameColumnName(dialect, ref.Column, oldName) {
 				ref.Column = newName
 			}
 		}
 		for j := range t.Constraints {
 			c := &t.Constraints[j]
 			if owner {
-				replaceName(c.Columns, oldName, newName)
+				replaceName(c.Columns, dialect, oldName, newName)
 			}
-			if c.Type == ForeignKey && c.ReferenceSchema == schema && c.ReferenceTable == table {
-				replaceName(c.ReferenceColumns, oldName, newName)
+			if c.Type == ForeignKey && c.ReferenceSchema == schema && SameTableName(dialect, c.ReferenceTable, table) {
+				replaceName(c.ReferenceColumns, dialect, oldName, newName)
 			}
 		}
 	}
 }
 
-// replaceName replaces every oldName in names with newName, in place.
-func replaceName(names []string, oldName, newName string) {
+// replaceName replaces every name in names that names column oldName in
+// dialect with newName, in place.
+func replaceName(names []string, dialect, oldName, newName string) {
 	for i := range names {
-		if names[i] == oldName {
+		if SameColumnName(dialect, names[i], oldName) {
 			names[i] = newName
 		}
 	}
 }
 
 // UnresolvedForeignKeys returns one error per foreign key whose referenced
-// table is not in tables, sorted for deterministic output. Relationship
+// table is not in tables, sorted for deterministic output. A reference
+// matches a table as dialect matches names (SameTableName). Relationship
 // detection builds an edge from every foreign key, and an edge whose far end
 // was never parsed is dropped without a trace, so the caller reports these
 // instead.
-func UnresolvedForeignKeys(tables []Table) []error {
+func UnresolvedForeignKeys(tables []Table, dialect string) []error {
 	known := make(map[string]bool, len(tables))
 	for i := range tables {
-		known[qualifiedName(tables[i].Schema, tables[i].Name)] = true
+		known[qualifiedName(tables[i].Schema, tableKey(dialect, tables[i].Name))] = true
 	}
 	seen := make(map[string]bool)
 	var msgs []string
 	add := func(t *Table, cols, refSchema, refTable string) {
-		target := qualifiedName(refSchema, refTable)
-		if known[target] {
+		if known[qualifiedName(refSchema, tableKey(dialect, refTable))] {
 			return
 		}
 		msg := fmt.Sprintf("foreign key %s(%s) references %s, which no parsed table defines",
-			qualifiedName(t.Schema, t.Name), cols, target)
+			qualifiedName(t.Schema, t.Name), cols, qualifiedName(refSchema, refTable))
 		if !seen[msg] {
 			seen[msg] = true
 			msgs = append(msgs, msg)
@@ -455,16 +460,17 @@ func UnresolvedForeignKeys(tables []Table) []error {
 }
 
 // CheckTableDropRefs checks whether any table in the schema has a foreign key
-// reference to the table identified by (schema, name). Returns an error
-// describing the first dangling reference found, or nil if the drop is safe.
-func CheckTableDropRefs(tables []Table, schema, name string) error {
+// reference to the table identified by (schema, name), matching names as
+// dialect does (SameTableName). Returns an error describing the first
+// dangling reference found, or nil if the drop is safe.
+func CheckTableDropRefs(tables []Table, dialect, schema, name string) error {
 	for i := range tables {
 		t := &tables[i]
-		if t.Schema == schema && t.Name == name {
+		if t.Schema == schema && SameTableName(dialect, t.Name, name) {
 			continue // self — will be dropped
 		}
 		for _, col := range t.Columns {
-			if col.FKReference != nil && col.FKReference.Schema == schema && col.FKReference.Table == name {
+			if col.FKReference != nil && col.FKReference.Schema == schema && SameTableName(dialect, col.FKReference.Table, name) {
 				return fmt.Errorf(
 					"cannot drop table %s: column %s.%s references it via foreign key",
 					qualifiedName(schema, name), qualifiedName(t.Schema, t.Name), col.Name,
@@ -472,7 +478,7 @@ func CheckTableDropRefs(tables []Table, schema, name string) error {
 			}
 		}
 		for _, c := range t.Constraints {
-			if c.Type == ForeignKey && c.ReferenceSchema == schema && c.ReferenceTable == name {
+			if c.Type == ForeignKey && c.ReferenceSchema == schema && SameTableName(dialect, c.ReferenceTable, name) {
 				return fmt.Errorf(
 					"cannot drop table %s: table %s has a foreign key constraint referencing it",
 					qualifiedName(schema, name), qualifiedName(t.Schema, t.Name),
@@ -576,15 +582,23 @@ func RecomputeColumnUnique(table *Table, colName string) {
 	col.Unique = false
 }
 
-// RenameColumn renames a column in the table from oldName to newName.
-func RenameColumn(table *Table, oldName, newName string) error {
-	for i := range table.Columns {
-		if table.Columns[i].Name == oldName {
-			table.Columns[i].Name = newName
-			return nil
+// RenameColumn renames the column of table that oldName names to newName,
+// matching names as dialect does (SameColumnName). It is an error when no
+// column has oldName, or when another column already has newName, as it is in
+// the database. MySQL and SQLite let a column be renamed to its own name, in
+// any case; PostgreSQL rejects a rename to the name the column already has.
+func RenameColumn(table *Table, dialect, oldName, newName string) error {
+	i := slices.IndexFunc(table.Columns, func(c Column) bool { return SameColumnName(dialect, c.Name, oldName) })
+	if i < 0 {
+		return fmt.Errorf("column %s not found in table %s", oldName, table.Name)
+	}
+	for j, c := range table.Columns {
+		if (j != i || dialect == "postgres") && SameColumnName(dialect, c.Name, newName) {
+			return fmt.Errorf("column %s already exists in table %s", newName, table.Name)
 		}
 	}
-	return fmt.Errorf("column %s not found in table %s", oldName, table.Name)
+	table.Columns[i].Name = newName
+	return nil
 }
 
 func qualifiedName(schema, name string) string {

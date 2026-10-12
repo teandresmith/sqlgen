@@ -852,6 +852,25 @@ func TestMySQLIntrospect_ExpressionIndexes(t *testing.T) {
 	assertSchemaParity(t, "mysql", parsed, introspected)
 }
 
+// TestMySQLIntrospect_ReferenceColumnCase checks that a foreign key naming its
+// referenced column in another case gives both sources one schema: MySQL
+// stores the column as the parent declares it, and carries the key along when
+// the column is renamed. The CLI runs ResolveReferenceNames on either source.
+func TestMySQLIntrospect_ReferenceColumnCase(t *testing.T) {
+	requireDatabases(t)
+	const ddl = `CREATE TABLE m_rc_p (b int PRIMARY KEY, k int UNIQUE);
+	CREATE TABLE m_rc_c (x int, y int, CONSTRAINT m_rc_fk1 FOREIGN KEY (x) REFERENCES m_rc_p (B), CONSTRAINT m_rc_fk2 FOREIGN KEY (y) REFERENCES m_rc_p (K));
+	ALTER TABLE m_rc_p RENAME COLUMN k TO z`
+	applyParityFixture(t, "mysql", mysqlConnStr, "DROP TABLE IF EXISTS m_rc_c; DROP TABLE IF EXISTS m_rc_p", ddl)
+
+	introspected := introspectMySQL(t, "m_rc_p", "m_rc_c")
+	parsed := parseMySQL(t, ddl)
+	parser.ResolveReferenceNames(parsed, "mysql")
+	parser.ResolveReferenceNames(introspected, "mysql")
+
+	assertSchemaParity(t, "mysql", parsed, introspected)
+}
+
 // TestMySQLIntrospect_DropIgnoresNameCase checks that the file parser drops a
 // key or constraint named in another case, as MySQL does.
 func TestMySQLIntrospect_DropIgnoresNameCase(t *testing.T) {

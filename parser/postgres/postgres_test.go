@@ -1140,6 +1140,71 @@ func TestRenameTable(t *testing.T) {
 	}
 }
 
+// TestRenameOntoExistingName pins that a rename onto a name already taken is
+// an error, as it is on PostgreSQL 16 (relation "b" already exists; column "b"
+// of relation "t" already exists), the table's or column's own name included.
+// A table in another schema does not take the name.
+func TestRenameOntoExistingName(t *testing.T) {
+	tests := []struct {
+		name    string
+		sql     string
+		want    []string
+		wantErr string
+	}{
+		{
+			name:    "a table name another table has",
+			sql:     `CREATE TABLE a (id int); CREATE TABLE b (id int); ALTER TABLE a RENAME TO b;`,
+			wantErr: "table public.b already exists",
+		},
+		{
+			name:    "the table's own name",
+			sql:     `CREATE TABLE a (id int); ALTER TABLE a RENAME TO a;`,
+			wantErr: "table public.a already exists",
+		},
+		{
+			name: "a name a table in another schema has",
+			sql:  `CREATE SCHEMA s2; CREATE TABLE b (id int); CREATE TABLE s2.a (id int); ALTER TABLE s2.a RENAME TO b;`,
+			want: []string{"public.b(id)", "s2.b(id)"},
+		},
+		{
+			name:    "a column name another column has",
+			sql:     `CREATE TABLE t (a int, b int); ALTER TABLE t RENAME COLUMN a TO b;`,
+			wantErr: "column b already exists in table t",
+		},
+		{
+			name:    "the column's own name",
+			sql:     `CREATE TABLE t (a int, b int); ALTER TABLE t RENAME COLUMN a TO a;`,
+			wantErr: "column a already exists in table t",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			p := postgres.New("")
+			err := p.Parse("test.sql", []byte(tt.sql))
+			if tt.wantErr != "" {
+				if err == nil || !strings.Contains(err.Error(), tt.wantErr) {
+					t.Fatalf("Parse() error = %v, want it to contain %q", err, tt.wantErr)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("Parse() error: %v", err)
+			}
+			var got []string
+			for _, tbl := range p.Schema().Tables {
+				var cols []string
+				for _, c := range tbl.Columns {
+					cols = append(cols, c.Name)
+				}
+				got = append(got, tbl.Schema+"."+tbl.Name+"("+strings.Join(cols, ", ")+")")
+			}
+			if diff := cmp.Diff(tt.want, got); diff != "" {
+				t.Errorf("tables after the rename mismatch (-want +got):\n%s", diff)
+			}
+		})
+	}
+}
+
 func TestRenameColumn(t *testing.T) {
 	sql := `
 		CREATE TABLE users (id integer PRIMARY KEY, name text);

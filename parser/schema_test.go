@@ -508,35 +508,60 @@ func TestCheckTableDropRefs(t *testing.T) {
 
 	tests := []struct {
 		name    string
+		dialect string
 		schema  string
 		table   string
 		wantErr bool
 	}{
 		{
 			name:    "drop table with FK reference → error",
+			dialect: "postgres",
 			schema:  "public",
 			table:   "users",
 			wantErr: true,
 		},
 		{
 			name:    "drop table with no references → OK",
+			dialect: "postgres",
 			schema:  "public",
 			table:   "products",
 			wantErr: false,
 		},
 		{
 			name:    "drop nonexistent table → OK",
+			dialect: "postgres",
 			schema:  "public",
 			table:   "nonexistent",
+			wantErr: false,
+		},
+		{
+			name:    "SQLite reference in another ASCII case → error",
+			dialect: "sqlite",
+			schema:  "public",
+			table:   "USERS",
+			wantErr: true,
+		},
+		{
+			name:    "PostgreSQL name in another case is another table → OK",
+			dialect: "postgres",
+			schema:  "public",
+			table:   "USERS",
+			wantErr: false,
+		},
+		{
+			name:    "MySQL table name in another case is another table → OK",
+			dialect: "mysql",
+			schema:  "public",
+			table:   "USERS",
 			wantErr: false,
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			err := parser.CheckTableDropRefs(tables, tt.schema, tt.table)
+			err := parser.CheckTableDropRefs(tables, tt.dialect, tt.schema, tt.table)
 			if (err != nil) != tt.wantErr {
-				t.Errorf("CheckTableDropRefs(%s.%s) error = %v, wantErr %v", tt.schema, tt.table, err, tt.wantErr)
+				t.Errorf("CheckTableDropRefs(%s, %s.%s) error = %v, wantErr %v", tt.dialect, tt.schema, tt.table, err, tt.wantErr)
 			}
 		})
 	}
@@ -571,7 +596,7 @@ func TestCheckTableDropRefs_ConstraintLevel(t *testing.T) {
 		},
 	}
 
-	err := parser.CheckTableDropRefs(tables, "public", "categories")
+	err := parser.CheckTableDropRefs(tables, "postgres", "public", "categories")
 	if err == nil {
 		t.Fatal("CheckTableDropRefs() expected error for table-level FK constraint, got nil")
 	}
@@ -579,11 +604,28 @@ func TestCheckTableDropRefs_ConstraintLevel(t *testing.T) {
 
 func TestUnresolvedForeignKeys(t *testing.T) {
 	docs := parser.Table{Schema: "public", Name: "documents"}
+	users := parser.Table{Name: "Users"}
+	posts := parser.Table{
+		Name:    "posts",
+		Columns: []parser.Column{{Name: "user_id", FKReference: &parser.FKReference{Table: "users", Column: "id"}}},
+	}
 	tests := []struct {
-		name   string
-		tables []parser.Table
-		want   []string
+		name    string
+		dialect string
+		tables  []parser.Table
+		want    []string
 	}{
+		{
+			name:    "SQLite target named in another ASCII case resolves",
+			dialect: "sqlite",
+			tables:  []parser.Table{users, posts},
+		},
+		{
+			name:    "MySQL target named in another case is another table",
+			dialect: "mysql",
+			tables:  []parser.Table{users, posts},
+			want:    []string{"foreign key posts(user_id) references users, which no parsed table defines"},
+		},
 		{
 			name: "every target parsed",
 			tables: []parser.Table{docs, {
@@ -621,7 +663,11 @@ func TestUnresolvedForeignKeys(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			var got []string
-			for _, err := range parser.UnresolvedForeignKeys(tt.tables) {
+			dialect := tt.dialect
+			if dialect == "" {
+				dialect = "postgres"
+			}
+			for _, err := range parser.UnresolvedForeignKeys(tt.tables, dialect) {
 				got = append(got, err.Error())
 			}
 			if diff := cmp.Diff(tt.want, got); diff != "" {

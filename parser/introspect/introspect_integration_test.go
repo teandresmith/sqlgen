@@ -1546,6 +1546,36 @@ func TestSQLiteIntrospect_TableNameCase(t *testing.T) {
 	assertSchemaParity(t, "sqlite", parsed, introspected)
 }
 
+// TestSQLiteIntrospect_IdentifierCase checks that names SQLite matches
+// ignoring ASCII case only give both sources one schema once
+// ResolveReferenceNames has run on each.
+func TestSQLiteIntrospect_IdentifierCase(t *testing.T) {
+	requireDatabases(t)
+	parsed, introspected := sqliteSchemas(t, `
+		CREATE TABLE Users (id INTEGER PRIMARY KEY);
+		CREATE TABLE posts (id INTEGER PRIMARY KEY, uid INTEGER REFERENCES users(ID));
+		CREATE TABLE u (b INTEGER PRIMARY KEY);
+		CREATE TABLE c (x INTEGER REFERENCES u(B));
+		ALTER TABLE u RENAME COLUMN b TO c;
+		CREATE TABLE Old (id INTEGER PRIMARY KEY);
+		CREATE TABLE r (old_id INTEGER, FOREIGN KEY (old_id) REFERENCES old(id));
+		ALTER TABLE Old RENAME TO Renamed;
+		CREATE TABLE d (a INTEGER, b INTEGER);
+		ALTER TABLE d DROP COLUMN B;
+		CREATE TABLE e (A INTEGER, x INTEGER);
+		ALTER TABLE e RENAME COLUMN a TO c;
+		CREATE TABLE f ("É" INTEGER, "é" INTEGER, UNIQUE ("é"), CHECK ("é" > 0));
+		CREATE TABLE g ("É" INTEGER UNIQUE, "é" INTEGER UNIQUE)
+	`)
+	parser.ResolveReferenceNames(parsed, "sqlite")
+	parser.ResolveReferenceNames(introspected, "sqlite")
+
+	if ref := findTable(t, introspected, "posts").Columns[1].FKReference; ref == nil || ref.Table != "Users" || ref.Column != "id" {
+		t.Errorf("posts.uid FKReference = %+v, want Users(id)", ref)
+	}
+	assertSchemaParity(t, "sqlite", parsed, introspected)
+}
+
 // --- Filtering tests ---
 
 func TestPostgresSchemaFiltering(t *testing.T) {
@@ -1875,8 +1905,14 @@ func TestBothModeColumnConflict(t *testing.T) {
 				if err == nil {
 					t.Fatal("Merge() expected error for duplicate column with different type, got nil")
 				}
-				if !strings.Contains(err.Error(), "column conflict") {
-					t.Errorf("Merge() error = %q, want error containing 'column conflict'", err.Error())
+				// The SQLite parser refuses a column name the table already
+				// has, as SQLite does, before the conflict rule runs.
+				want := "column conflict"
+				if d.name == "sqlite" {
+					want = "duplicate column name: count"
+				}
+				if !strings.Contains(err.Error(), want) {
+					t.Errorf("Merge() error = %q, want error containing %q", err.Error(), want)
 				}
 			})
 		})

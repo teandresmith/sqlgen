@@ -14,17 +14,14 @@ import (
 //   - a UNIQUE or index with no Method is btree on PostgreSQL and MySQL
 //   - a CHECK's Columns lists the table columns its expression references, in
 //     table order
-//   - on MySQL and SQLite, where column names are case-insensitive, a
-//     constraint spells each column as the table declares it
+//   - a constraint spells each column as the table declares it, matching the
+//     names as the dialect does (SameColumnName)
 //
 // It names nothing. A parser names an unnamed constraint when it creates it,
 // because the name depends on what else exists at that moment.
 func CanonicalizeConstraints(table *Table, dialect string) {
-	foldCase := dialect == "mysql" || dialect == "sqlite"
-	if foldCase {
-		for i := range table.Constraints {
-			declaredColumnNames(table, table.Constraints[i].Columns)
-		}
+	for i := range table.Constraints {
+		declaredColumnNames(table, dialect, table.Constraints[i].Columns)
 	}
 	addFlagConstraints(table)
 	for i := range table.Constraints {
@@ -45,15 +42,10 @@ func CanonicalizeConstraints(table *Table, dialect string) {
 }
 
 // declaredColumnNames rewrites each name in cols to the spelling of the table
-// column it names case-insensitively.
-func declaredColumnNames(table *Table, cols []string) {
+// column it names in dialect (SameColumnName).
+func declaredColumnNames(table *Table, dialect string, cols []string) {
 	for i, name := range cols {
-		for _, col := range table.Columns {
-			if strings.EqualFold(col.Name, name) {
-				cols[i] = col.Name
-				break
-			}
-		}
+		cols[i] = declaredColumnName(table, dialect, name)
 	}
 }
 
@@ -99,20 +91,17 @@ func hasConstraintOn(table *Table, kind ConstraintType, col string) bool {
 }
 
 // CheckColumns returns the columns of cols that the CHECK expression expr
-// references, in column order. MySQL and SQLite match names case-insensitively;
-// PostgreSQL folds an unquoted name to lower case. A function name, a type name
+// references, in column order. Names match as SameColumnName matches them:
+// MySQL ignores case, SQLite ignores ASCII case only, and PostgreSQL folds an
+// unquoted name to lower case and then compares exactly. A function name, a type name
 // after ::, a string literal and a charset introducer (_utf8mb4'x') are not
 // column references.
 func CheckColumns(expr string, cols []Column, dialect string) []string {
-	foldCase := dialect == "mysql" || dialect == "sqlite"
 	refs := checkIdentifiers(expr, dialect)
 	var out []string
 	for _, col := range cols {
 		if slices.ContainsFunc(refs, func(ref string) bool {
-			if foldCase {
-				return strings.EqualFold(ref, col.Name)
-			}
-			return ref == col.Name
+			return SameColumnName(dialect, ref, col.Name)
 		}) {
 			out = append(out, col.Name)
 		}
