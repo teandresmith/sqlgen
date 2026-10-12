@@ -1899,7 +1899,8 @@ func validateCompositePKStrategy(cfg *RootConfig, tables []SchemaTable, errs *[]
 // matches the override column set. Set-equality is required: a covering
 // UNIQUE must have the same column membership as the override (order-independent).
 // A composite override matched by a single-column UNIQUE is NOT covered (a
-// per-column UNIQUE on `(a)` does not make `(a, b)` unique), and neither is a
+// per-column UNIQUE on `(a)` makes `(a, b)` unique but is no conflict target
+// for `(a, b)`, which is what {Table}ConflictPK needs), and neither is a
 // single-column override over one member of a composite PK.
 func uniqueCovers(table SchemaTable, override []string) bool {
 	want := make(map[string]bool, len(override))
