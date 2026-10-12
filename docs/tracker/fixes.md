@@ -424,7 +424,7 @@ a reservation, and `namespace()` (`postgres.go:229`) does not count views or seq
 - **Severity:** tracked
 - **Origin:** phase 4, `parser/postgres` + `parser/sqlite` (`parseCreateIndex`, DROP INDEX)
 - **Surfaced by:** backlog sweep 2026-10-12 (backlog lines from FIX-264, FIX-282, FIX-296)
-- **Vetted:** needs ruling at `9b58288b` (2026-10-12)
+- **Vetted:** ready at `9b58288b` (2026-10-12)
 
 **Issue.** The PostgreSQL and SQLite parsers silently skip a `CREATE INDEX` on a table no statement
 defines (or, for PG, one created later), or on a view, and ignore a standalone `DROP INDEX`. Measured:
@@ -475,16 +475,12 @@ case; PG `parseDrop` falls to its default branch for DROP INDEX.
   `skipped` set needs an indexable flag; view/matview renames move the skipped key.
 - Depends on FIX-303 (the patch is a diff on top of FIX-303's prototype). After FIX-301 lands,
   `parseDropIndex`'s two `foldASCII` calls become `parser.FoldASCII`.
-- Pending the user's ruling: should `DROP INDEX` of a name the parser holds no index for be an error
-  (PG/SQLite, unless `IF EXISTS`)?
-  - (A, recommended, prototyped) no-op — matches the MySQL parser today (`DROP INDEX nope ON t` → err=nil
-    though MySQL gives ERROR 1091) and the Q5 policy (accepting it leaves output unchanged); needs no
-    carrier for indexes the introspector cannot see.
-  - (B, the original suggestion) error — matches PG16/17 (`index "nope" does not exist`) and SQLite
-    ("no such index: nope"); under `files` it also needs matview/partition index names and SQLite
-    expression-index names tracked, and under `both` it gives false errors on legal migrations unless
-    every DB index the introspector skips (matview and partition indexes, invalid indexes, SQLite
-    expression indexes) is carried into `Seed`. Not prototyped. Neither option changes goldens.
+- The user ruled on 2026-10-12 (option A, recommended, as prototyped): `DROP INDEX` of a name the parser holds no
+  index for is a no-op on PG and SQLite, as the MySQL parser already treats it — accepting it leaves the output
+  unchanged (Q5 policy), and it needs no carrier for indexes introspection cannot see. The error option (PG16/17
+  `index "nope" does not exist`, SQLite "no such index: nope") would need every skipped DB index carried into
+  `Seed` to avoid false errors under `both`. If `TestDropIndex` does not already pin it, add a case: `DROP INDEX
+  nope` → err=nil, schema unchanged (PG and SQLite).
 - Prototype results, run at `9b58288b` + FIX-303 on 2026-10-12: probes (`zz_probe_index_test.go` in
   sqlite/postgres/mysql) → SQLite `CREATE INDEX ix ON nope (id)`, on a view, on an fts5 table → err=<nil>
   (modernc: "no such table: main.nope", "views may not be indexed", "virtual tables may not be
@@ -586,6 +582,12 @@ COLUMN; `alterColumnDefault` does not apply the nextval→AutoIncrement rule.
   key)`; `attachPartition` adds `p.skipped[key] = true`. Sequence names reach the namespace through a
   `p.sequences` loop in `namespace()` alongside `skipped`. Measured composed: unit tests and PG16/PG17
   `TestPostgresIntrospect_*` pass, and `CREATE SEQUENCE n_a_idx; CREATE INDEX ON n (a)` → `n_a_idx1`.
+- The user ruled on 2026-10-12 (backlog sweep Step 5): widen to PG `ALTER TYPE … ADD VALUE [BEFORE|AFTER]`,
+  `ALTER TYPE … RENAME VALUE`, and `ALTER TYPE|DOMAIN … RENAME TO`, all ignored today (same root cause, same sites:
+  `processStmt` AlterEnumStmt, `parseRename` OBJECT_TYPE / OBJECT_DOMAIN). Measured: `CREATE TYPE mood AS ENUM
+  ('ok','meh'); ALTER TYPE mood ADD VALUE 'great' BEFORE 'ok'; ALTER TYPE mood RENAME VALUE 'meh' TO 'bad';
+  CREATE DOMAIN d1 AS int; ALTER DOMAIN d1 RENAME TO d2; ALTER TYPE mood RENAME TO mood2` → parser enum mood
+  [ok meh], domain d1; PG17 {great,ok,bad}, d2, mood2. Re-vet to fold these into the prototype.
 - Prototype results, run at `9b58288b` on 2026-10-12: parity probe (`zz_probe_f305_test.go`, postgres:17)
   → DROP/SET EXPRESSION `- GeneratedExpr: "a * 2" + ""`, `- "a * 3" + "a * 4"`; ATTACH/DETACH files `c1`
   not `c2`, database `c2` not `c1`; ALTER DOMAIN files `posint_check "value < 1000"`, database
@@ -960,6 +962,9 @@ database `Column:id`, `ref=public.u[id]`; composite `FOREIGN KEY (x,y) REFERENCE
   after naming, then 310's collection loop) and `applyColumnConstraint` (take 302's deletion of the inline
   set) — plus an append-only integration-test conflict; with both applied parser `go test -race ./...`
   passes and a table-level no-list FK derives `FKReference{Column:"id"}`.
+- The user confirmed on 2026-10-12 (veto check, backlog sweep Step 5): keep the error for a no-column-list
+  REFERENCES to a table not defined yet, including under `both` with the target filtered out of introspection;
+  writing the column list is the workaround.
 - Prototype results, run at `9b58288b` on 2026-10-12: probe at base → `t1.uid fk={Table:u Schema:public
   Column:}`, `t1_uid_fkey ref=public.u[]`, table-level `ref=public.u[]` with no FKReference, composite
   `ref=public.u2[]`, self-references `ref=[]`; `s4 (id int UNIQUE, parent int REFERENCES s4)`, `REFERENCES
@@ -1455,19 +1460,45 @@ literal `'CURRENT_TIMESTAMP'`. Measured on `mysql:8.0.12`: `a timestamp DEFAULT 
 - **Severity:** nit
 - **Origin:** phase 30, `cmd/sqlgen/gotype`
 - **Surfaced by:** backlog sweep 2026-10-12 (backlog line from FIX-271)
+- **Vetted:** corrected at `a99568ff` (2026-10-12)
 
 **Issue.** `mysqlMappings`' `bool`, `boolean`, `integer` and `integer unsigned` keys and
 `widenSumBase`'s MySQL `integer` / `integer unsigned` labels are unreachable: both MySQL sources write
 the stored form (`BOOL`/`BOOLEAN` → `tinyint(1)`, `INTEGER` → `int`), the catalog types view
 expressions as `int`/`bigint`/`double`, and every `Resolve`/`ResolveAggregate` caller passes a parser
-or introspector `Column.Type`. `mysqlIntegerBases["integer"]` is NOT dead: SQLite reaches it.
+or introspector `Column.Type` (`gen/context_type.go:25,53` also pass composite-attribute and domain base
+types, both PostgreSQL-only). Only tests reach the keys: 7 rows of `TestMySQLTypeMappings`
+(`gotype_test.go:217,218,228,297-300`), the `"mysql integer"` row of `TestResolveAggregateSumWidening`
+(`:1752`), and the hand-built `dialectSQLTypes` fixture (`gen/api_scalar_binding_test.go:73,81`). `mysqlIntegerBases["integer"]` is NOT dead: SQLite reaches it.
 
 **Root cause.** Leftovers from before FIX-271 made both sources write the stored type.
 
 **Suggested fix.**
-- Delete the dead keys in `cmd/sqlgen/gotype/gotype.go:113-139` and the labels at `:678-680`; keep
-  `mysqlIntegerBases["integer"]` (`:717`).
-- Keep `go test ./cmd/sqlgen/gotype/...` and the MySQL examples green (no golden churn expected).
+- Delete `"integer"` / `"integer unsigned"` and the `"bool"` / `"boolean"` keys from `mysqlMappings`
+  (`cmd/sqlgen/gotype/gotype.go:113-139`; `tinyint(1)` and `bit(1)` stay) and the `"integer"` /
+  `"integer unsigned"` labels in `widenSumBase`'s MySQL branch (`:678-680`); keep
+  `mysqlIntegerBases["integer"]` (`:718`).
+- Drop the 7 dead-key rows of `TestMySQLTypeMappings` and the `"mysql integer"` row of
+  `TestResolveAggregateSumWidening`; in `gen/api_scalar_binding_test.go`'s `dialectSQLTypes` MySQL list drop
+  `"integer"` and replace `"bool", "boolean"` with the stored `"tinyint(1)"`. No new test: the invariant is
+  pinned by `parser/mysql/mysql_test.go:883-886` and `TestMySQLIntrospect_TypeSynonyms`.
+- Corrected from the original: it named no test edits, but 8 gotype rows pin the dead keys and the scalar-
+  binding fixture would otherwise exercise only the unknown-type fallback.
+- Prototype results, run at `a99568ff` on 2026-10-12: unreachability measured with a throwaway hook in
+  `builtinResolve` / `widenSumBase` logging hits on the four keys → `go test ./gotype/...` 8 hits, all tests
+  (`gotype_test.go:316`, `:1767`); every other cmd/sqlgen package, not short → 24 hits, all
+  `gen/api_scalar_binding_test.go:165,245`; `TestE2E*/^(mysql|introspect_mysql|tenancy_mysql)$` (goldens and
+  DatabaseTwin) → 0 hits; a throwaway MySQL schema (`INTEGER` PK, `BOOL`, `BOOLEAN`, `INTEGER UNSIGNED`,
+  `INTEGER(11) UNSIGNED ZEROFILL`, view with SUM/MAX/CAST/`n + 1`) under `files` and under `database` (live
+  MySQL 8.0) → 0 hits. `mysqlIntegerBases["integer"]` measured live: removing it flips SQLite
+  `Resolve("integer unsigned")` from `string` to `int64` with `go test ./gotype/` still green (kept). Gates:
+  `go test -race -count=1 ./gotype/... ./gen/...` ok; `go test -count=1 -timeout=30m ./...` (cmd/sqlgen, not
+  short, Docker) all ok incl. every example's E2E goldens; golangci-lint 0 issues; gofumpt clean. Fail-first:
+  the gotype.go deletion with the original tests → `TestMySQLTypeMappings/integer`: "Resolve("integer",
+  nullable=false) mismatch (-want +got)" (int32 → string) plus 6 more, `TestResolveAggregateSumWidening/
+  mysql_integer`: "ResolveAggregate(SUM, "integer", nullable=false) [mysql] = "string", want "float64""; existing
+  suite passes at base. Golden churn none. Overlap: FIX-322 touches gotype.go / gotype_test.go at disjoint
+  hunks; applies cleanly in either order. Patch: `.claude/prototypes/FIX-319.patch` (3 files, +7/-15).
 
 **References.**
 - PRD §7.2 (`docs/PRD.md:1783` already says these keys match no MySQL column).
@@ -1526,6 +1557,8 @@ tenant)` from every `CreateInputField`, per PRD §9.5 "Update columns in upsert"
   field to its generated code (veto option: a separate table instead); the SQLite demoted-rowid case is pinned
   by a cli generate-pipeline test rather than a sqlite-example table (which would churn far more); the E5
   rejection message is reworded.
+- The user confirmed on 2026-10-12 (veto check, backlog sweep Step 5): the postgres example's `sequence_rows`
+  gains `code TEXT UNIQUE` for the PG regression test (~10 golden files), not a separate table.
 - Auto-accepted the recommended option on 2026-10-12 (`/fix` auto-accept rule): E5 keeps rejecting an M2M
   junction carrying a non-PK auto-increment column (status quo, accurate reason) rather than exempting it now
   that the link step never resets it; prototyped green, no churn vs the alternative (no example junction has
@@ -1649,25 +1682,55 @@ nullability rule. Validate also never sees a view column's nullability: `toSchem
 - **Severity:** nit
 - **Origin:** phase 30, `cmd/sqlgen/gen` (`typeOverrideSource`) + `cmd/sqlgen/gotype`
 - **Surfaced by:** backlog sweep 2026-10-12 (backlog line from FIX-270)
+- **Vetted:** corrected at `a99568ff` (2026-10-12)
 
 **Issue.** The increment-eligibility warning names the wrong config key for a domain or qualified
 override. Measured (domain `email` over `text`, override → `int64`): global `email` → warning names
 `overrides.types.text`; global `app.email` → `overrides.types.text`; table-scoped
 `tables.app.invoices.overrides.types."app.email"` → `overrides.types.text` (scope prefix lost too).
+The same re-derivation misnames a key written without the column's modifiers: global `varchar` on a
+`varchar(255)` column → `overrides.types.varchar(255)`; table-scoped `varchar` → `overrides.types.varchar(255)`
+(prefix lost too); global `app.text` on `text` → `overrides.types.text`.
 
 **Root cause.** `typeOverrideSource` (`cmd/sqlgen/gen/context_table.go:800`) re-derives the key: it
 probes only table-scope bare `col.SQLType` / base keys and falls back to `overrides.types.<base>`,
 never asking the resolver which key matched.
 
 **Suggested fix.**
-- Add a gotype method, e.g. `(*Resolver).OverrideSource(sqlType, tableOverrides) (key string,
-  tableScoped, ok bool)`, walking exactly `resolveByType`'s step 2/3 order (`lookupKeys` qualified +
-  bare, then the domain chain); `typeOverrideSource` formats `tables.<t>.overrides.types.<key>` or
-  `overrides.types.<key>` from it.
-- Fail-first gen tests for the three measured cases; `increment_sql_type_test.go` stays green.
+- gotype: `lookupOverride` also returns the key it matched; `resolveByType`'s body moves into
+  `resolveByTypeSource`, returning `(GoType, overrideSource{key, tableScoped})` (step 2 table-scoped,
+  step 3 global; integrations, enums, SETs and built-ins return a zero source; domain recursion and the
+  array base pass the inner source up). `resolveByType` becomes a thin wrapper. New exported
+  `(*Resolver).OverrideSource(sqlType, tableOverrides) (key string, tableScoped, ok bool)`.
+- gen: `incrementSQLTypeWarnings` / `typeOverrideSource` take the column's resolver
+  (`input.Resolver.ForSchema(table.Schema)`) and format `tables.<t>.overrides.types.<key>` or
+  `overrides.types.<key>` from it; the `overrides.types.<base>` fallback stays only for ok=false (unreachable:
+  no built-in or integration mapping makes a non-arithmetic type arithmetic).
+- Tests: `TestIncrementSQLTypeGuardNamesMatchedOverrideKey` (gen, 6 cases: the three measured, a domain over
+  that domain, global and table-scoped modifier-less keys); `TestOverrideSource` (gotype, 6 cases).
+- Corrected from the original: the matched key is passed out of `resolveByType`'s own path instead of a second
+  walk copying its step 2/3 order, so the reported key cannot drift from the one that resolved; scope widened to
+  modifier-less keys and domain-over-domain (same root cause, same site).
+- Prototype results, run at `a99568ff` on 2026-10-12: probe `zz_probe_fix322_test.go` (table `app.invoices`,
+  domain `app.email` over `text`, override → `int64`, `BuildTableContexts`) → global `email`, global
+  `app.email`, table-scoped `app.email`, global `app.text` → "overrides.types.text"; global and table-scoped
+  `varchar` on `varchar(255)` → "overrides.types.varchar(255)". With the patch: `overrides.types.email`,
+  `overrides.types.app.email`, `tables.app.invoices.overrides.types.app.email`, `overrides.types.varchar`,
+  `tables.app.invoices.overrides.types.varchar`, `overrides.types.app.text`. Gates: `go test -race -count=1
+  ./gotype/... ./gen/...` ok; `-short ./cli/... ./config/...` ok; golangci-lint 0 issues; gofumpt clean.
+  Fail-first: gen `typeOverrideSource` reverted → all 6 gen subtests fail (`increment warnings =
+  ["overrides.types.text: \"int64\" is an arithmetic Go type but column \"note\" has SQL type \"email\" (a
+  domain over \"text\"), ..."], want one starting "overrides.types.email: \"int64\""`); `lookupOverride`
+  returning the probed type → `OverrideSource("VARCHAR(255)") = ("varchar(255)", false, true), want
+  ("varchar", false, true)`; domain recursion not passing the source → `OverrideSource("work_email") = ("",
+  false, false), want ("text", false, true)`; existing suite passes at base. Golden churn none. Overlap:
+  FIX-319 (gotype.go mappings / `widenSumBase` ~:675, gotype_test.go top) and FIX-324 (context_table.go
+  @@ -265, adjacent to the call site at :264) — `git apply --check` clean after either. Patch:
+  `.claude/prototypes/FIX-322.patch` (4 files, +215/-33).
 
 **References.**
-- PRD §7.1 (override matching), §10 (increment eligibility warning).
+- PRD §7.1 (override matching, `docs/PRD.md:1706`), §8.2 (increment eligibility warning, "A type override
+  cannot manufacture eligibility", `docs/PRD.md:2498`).
 - Backlog line absorbed: 2026-10-07 increment warning names wrong override key (FIX-270). The sibling
   enum-array line is a PRD §7.2 doc fix and the qualified-builtin-key line is deleted (both applied
   with the backlog sweep).
@@ -1999,10 +2062,13 @@ fallback.
 - **Severity:** nit
 - **Origin:** phase 5, `cmd/sqlgen/config` + `cmd/sqlgen/gen` (`context_enum.go`)
 - **Surfaced by:** backlog sweep 2026-10-12 (backlog line from FIX-288)
+- **Vetted:** corrected at `a99568ff` (2026-10-12)
 
 **Issue.** An `enums.<name>` key that matches no enum is ignored silently, so a typo, or a key in the
 old `<table>_<column>_enum` form after FIX-288, does nothing. Measured: postgres example copy with
-`enums: {nosuch_enum: {struct_name: Bogus}}` → `sqlgen validate` prints nothing, exit 0.
+`enums: {nosuch_enum: {struct_name: Bogus}}` → `sqlgen validate` prints no line for the key (only the
+example's unrelated cursor_keys warning, then "config and schema are valid"), exit 0; `sqlgen generate`
+likewise.
 
 **Root cause.** `EnumConfigFor` (`cmd/sqlgen/gen/context_enum.go:15-23`) is lookup-only; no validate
 rule checks unmatched keys.
@@ -2011,13 +2077,46 @@ rule checks unmatched keys.
 - Auto-accepted the recommended option on 2026-10-12 (`/fix` auto-accept rule; user confirmed no
   veto): a warning, not an error, because a schema filtered by `introspect.schemas` can legitimately
   leave a key unmatched (precedent: `unusedScalarWarnings`); no churn, no public surface.
-- In the gen-level warning pass (it needs `schema.Enums`), warn "enums.<key>: matches no enum in the
-  schema" when no enum matches qualified or bare (same two-step as `EnumConfigFor`); a key naming a
-  MySQL SET (`<t>__<c>_set`) says SETs take no override (PRD `:2633`).
-- Tests: unmatched key, SET key, matched key silent.
+- New `unmatchedEnumKeyWarnings(cfg, schema)` in `cmd/sqlgen/gen/context_enum.go` (nil when `cfg.Enums` is
+  empty; sorted keys; qualified-or-bare match, the same two-step as `EnumConfigFor`). A key naming a
+  `schema.Sets` entry → "enums.<k>: <k> is a SET type, which takes no enums: override, so the entry has no
+  effect — rename the table or column to change its Go type name" (PRD `:2635`); any other → "enums.<k>:
+  matches no enum in the schema, so the entry has no effect — check the spelling", plus " (a MySQL inline
+  ENUM is named <table>__<column>_enum)" under mysql.
+- There is no single gen-level warning pass: call it from `buildAllContexts` (generate / diff; after the view
+  contexts so the order matches validate) and from `ValidateGeneration` (after `BuildEnumContexts`), as
+  `unusedScalarWarnings` surfaces from both — not from `BuildEntityContextsFromSchema`, which `graphql gen`
+  chained inside `generate` would double.
+- PRD: new §4.13 row "An `enums:` key that matches no enum | Warning *(schema-level)*" and a §4.11 sentence
+  "A key that matches no enum in the schema warns ([4.13])."
+- Tests: `gen/enum_key_warnings_test.go` (table test asserting the same warnings from `ValidateGeneration` and
+  `GenerateInto`: unmatched, bare match, qualified match, wrong-schema qualified key, MySQL single-underscore
+  key with hint, MySQL SET key, MySQL match, several unmatched sorted); `cli/pipeline_test.go`
+  `TestUnmatchedEnumKey_Warns` (generate and validate each print the warning exactly once, exit 0).
+- Inline doc fix (absorb when implementing): PRD §26 "Unresolved declarations warn" (`docs/PRD.md:12487`) says
+  the unused-scalar check "fires at `generate` time rather than `sqlgen validate`", and the `unusedScalarWarnings`
+  comment (`cmd/sqlgen/gen/context_api.go:1581`) says "Emitted from Generate only"; measured, `sqlgen validate`
+  on a graphql example copy with an unused `api.graphql.scalars.UnusedThing` prints it too. Reword both to
+  "from `generate` and `validate`, not from `graphql gen`".
+- Corrected from the original: adds the PRD amendment (the warning was otherwise undocumented), names both
+  call sites, adds the MySQL naming hint for keys in the pre-FIX-288 form, and the CLI test.
+- Prototype results, run at `a99568ff` on 2026-10-12: postgres example copy with `enums: {nosuch_enum:
+  {struct_name: Bogus}, user_role: {description: matched bare}}` → `validate` / `generate` exit 0, no enums
+  line, `models/enums_gen.go:423` "// UserRole — matched bare" (matched key applied, unmatched ignored); mysql
+  copy with `users_role_enum` / `users__permissions_set` / `users__role_enum` keys → no enums line. Gates:
+  `go test -race -count=1 ./gen/... ./cli/...` ok; vet, gofumpt, golangci-lint clean; `make refs-check` ok; no
+  example declares `enums:`, and `sqlgen validate` on all 12 file-source examples is identical base vs
+  patched. Fail-first: without the `buildAllContexts` call → `TestUnmatchedEnumKeyWarnings/a_key_matching_no_enum`
+  "generate: enums: key warnings mismatch (-want +got)" and `TestUnmatchedEnumKey_Warns/generate` "stderr = \"\",
+  want it to contain \"Warning: enums.users_role_enum: …\" once"; without the `ValidateGeneration` call → the
+  validate halves fail; without the SET branch → `…/a_MySQL_key_naming_a_SET` fails; without the qualified match
+  → `…/a_schema-qualified_key_that_matches` fails; existing suite passes at base. Golden churn none. Overlap
+  (all apply cleanly in ID order): FIX-324 `orchestrate.go` @2403 (~34 lines from this hunk), FIX-321 PRD §4.13
+  @1174 and `pipeline_test.go` @574, FIX-316/317 `pipeline_test.go`; FIX-308 rewrites the §8.3 Naming paragraph
+  this links to. Patch: `.claude/prototypes/FIX-328.patch` (5 files, +219/-1).
 
 **References.**
-- PRD §4.11, §4.13, §8 (`docs/PRD.md:2633`).
+- PRD §4.11, §4.13, §8.3 (`docs/PRD.md:2635`).
 - Backlog line absorbed: 2026-10-08 unmatched enums key (FIX-288).
 - FIX-288.
 
@@ -2029,18 +2128,40 @@ rule checks unmatched keys.
 - **Severity:** nit
 - **Origin:** phase 5, `cmd/sqlgen/config` (`schema/v1.json`)
 - **Surfaced by:** backlog sweep 2026-10-12 (backlog lines from FIX-254, FIX-285)
+- **Vetted:** ready at `a99568ff` (2026-10-12)
 
 **Issue.** `config/schema/v1.json` `$defs/relationship` has no `required` list, so editor validation
-does not flag a relationship missing `name`, `type`, `table`, or its link key, all of which `sqlgen
-validate` rejects. Measured by compiling the embedded schema (santhosh-tekuri/jsonschema): missing
+does not flag a relationship missing `name`, `type`, `table`, or its link key, all of which `sqlgen`
+rejects (`validateRelationshipKeys` rejects a missing name, type or link key; a missing `table` passes
+it and fails only at context build: `"Profile" targets "", which generates no entity …`). Measured by compiling the embedded schema (santhosh-tekuri/jsonschema): missing
 name, missing type, missing table, o2m without `fk`, m2m without `junction` → each schema-valid.
 
-**Root cause.** `cmd/sqlgen/config/schema/v1.json:434-459` declares properties only.
+**Root cause.** `cmd/sqlgen/config/schema/v1.json:434-460` declares properties only.
 
 **Suggested fix.**
-- Add `"required": ["name", "type", "table"]` and an `allOf` of if/then rules: `one_to_one` /
-  `one_to_many` require `fk`, `many_to_many` requires `junction` (PRD §4.8 `:800-805`).
+- Add `"required": ["name", "type", "table"]` and an `allOf` of if/then rules: `o2o` / `one_to_one` /
+  `o2m` / `one_to_many` require `fk` (whatever `side` is — `validateRelationshipKeys` requires it for
+  every non-m2m type), `m2m` / `many_to_many` requires `junction` (PRD §4.8 `:800-805`). Each `if` also
+  carries `"required": ["type"]`, so an entry without `type` reports only the type error.
 - Schema tests for each missing field; `TestSchemaV1_acceptsExampleConfigs` guards the examples.
+- The user ruled on 2026-10-12 (backlog sweep Step 5): widen to the case-sensitivity gap — the schema's
+  relationship `type` enum is exact while PRD §4.8 (`:801`) calls `type` case-insensitive and
+  `isValidRelationshipType` lowercases it (`side` / `isValidRelationshipSide` likely the same, by reading). Measured:
+  `type: O2M` (with name/table/fk) → `schema-valid=false`, `LoadConfig=<nil>`, `ValidatePreParse=<nil>`. Same fix
+  site (`$defs/relationship`) and root cause (the schema does not mirror validate). The if/then rules must match
+  case-insensitively too. Re-vet to fold this in.
+- Prototype results, run at `a99568ff` on 2026-10-12: probe (embedded schema + `LoadConfig` +
+  `ValidatePreParse`) → missing name / type / table, o2o / one_to_one / o2m / one_to_many without fk,
+  m2m / many_to_many without junction each `schema-valid=true`; ValidatePreParse rejects all but the
+  missing table (`sqlgen validate` → exit 2, the "targets \"\"" context-build error). Prototype adds the
+  schema rules plus 9 `TestSchemaV1_rejectsKnownMistakes` cases. Gates: `go test -race -count=1
+  ./config/...` ok; `-run Schema ./cli/...` ok; all 15 example configs and the PRD §4.12 full example pass
+  `TestSchemaV1_acceptsExampleConfigs` / `acceptsPRDFullExample`; gofumpt and golangci-lint clean.
+  Fail-first: dropping `required` → `relationship_missing_{name,type,table}` fail ("= nil, want a
+  validation error"); emptying the fk `then` → the four fk cases fail; emptying the junction `then` → the
+  two junction cases fail; existing suite passes at base. Golden churn none. Overlap: FIX-321 also edits
+  `v1.json` (hunk at @@ -529), applies cleanly in ID order. Patch: `.claude/prototypes/FIX-329.patch`
+  (2 files, +50/-0).
 
 **References.**
 - PRD §4.8.
@@ -2055,27 +2176,232 @@ name, missing type, missing table, o2m without `fk`, m2m without `junction` → 
 - **Severity:** nit
 - **Origin:** phase 10, `cmd/sqlgen` (`e2e_test.go` `runGoldenFileTest`)
 - **Surfaced by:** backlog sweep 2026-10-12 (backlog line from FIX-295)
+- **Vetted:** corrected at `a99568ff` (2026-10-12)
 
 **Issue.** A failing `TestE2EGoldenFiles` run (without `-update-e2e`) leaves graphql-enabled example
 `models/` trees modified: after a deliberate regression it deleted
 `cmd/sqlgen/testdata/examples/sqlite/models/manifest_embed_gen.go` and rewrote other generated files,
-so a fail-first probe must re-run `make update-golden-e2e` to restore them.
+so a fail-first probe must re-run `make update-golden-e2e` to restore them. Killing the run mid-way
+(SIGTERM) leaves the same state: ` D …/sqlite/models/graph/generated_gen.go`, ` D …/sqlite/models/manifest_embed_gen.go`,
+` M …/sqlite/models/sorter_gen.go`.
 
 **Root cause.** `runGoldenFileTest` (`cmd/sqlgen/e2e_test.go:160-178`) generates in place
 (`runGenerate`) for graphql examples (`graphql`, `graphql_null_wrappers`, `graphql_top_level`,
 `mysql`, `sqlite`) and compares, with no restore; other examples generate into `t.TempDir()`.
 
 **Suggested fix.**
-- When `!*updateE2E`, snapshot the output dir and the sibling graph dirs before `runGenerate` and
-  restore them in `t.Cleanup` (or generate in a temporary sibling copy of the example, which keeps
-  the module depth but is slower).
-- Verify with a deliberate regression that `git status` stays clean after the failing run.
+- In compare mode (`!*updateE2E`), graphql examples call `compareFilesWithExpected(t, ex.Path,
+  generateCopy(t, ex, cfgData, cfgData))`: the existing `generateCopy` (TestE2EDatabaseTwin, `source: both`
+  sub-runs) copies the whole example into `t.TempDir()` with absolute go.mod replaces and folds in the sibling
+  graph dirs, so the checked-in `models/` is never written. The `-update-e2e` path is unchanged (in-place
+  `runGenerate` + `copyOutputToExpected`).
+- `compareWithExpected(t, examplePath, dir)` becomes a thin wrapper over `compareFilesWithExpected(t,
+  examplePath, map)`; the unused `siblings` parameter goes; both sides keyed through `slashKeys`. Rewrite the
+  graphql-branch comment and `runGenerateToDir`'s note ("a temp dir under /tmp has no go.mod so gqlgen
+  collides" holds only for a bare output dir, not a full example copy).
+- Corrected from the original: prototypes the entry's copy alternative, not snapshot/restore — it reuses
+  `generateCopy` (net -10 lines); it is interrupt-safe where `t.Cleanup` is not (Go runs no cleanups on
+  SIGINT/SIGTERM or a `-timeout` panic; measured: the base binary killed mid-run leaves 2 deleted + 1 modified
+  file, the prototype leaves `git status` clean); and `removeGoldenOutputs` clears golden-listed files in the
+  copy first, so a file the generator stops emitting can no longer pass on the stale checked-in copy (reading
+  only). Not slower: non-Docker `TestE2EGoldenFiles` 51.4s prototype vs 72.6s base (warm-cache noise).
+- Prototype results, run at `a99568ff` on 2026-10-12: regression `// REGRESSION-PROBE` in
+  `gen/templates/sorter.go.tmpl` → `go test -run 'TestE2EGoldenFiles/sqlite$' -count=1 .` → `file
+  "sorter_gen.go" differs from expected`, then `git status` ` M testdata/examples/sqlite/models/sorter_gen.go`;
+  with the prototype the same FAIL and `models/` clean. Gates: gofumpt clean; `golangci-lint run ./...` 0 issues;
+  `go test -race -count=1 -run 'TestE2E|TestRewrite' -skip 'TestE2EGoldenFiles/introspect_(mysql|postgres)|
+  TestE2EDatabaseTwin' .` ok; all 13 non-Docker golden subtests pass with a clean tree; `-update-e2e` with the
+  regression still writes `models/` and `expected/` in place (sqlite, graphql_top_level, introspect_sqlite), and
+  without it churns nothing. Not run: the Docker-backed introspect_mysql/postgres goldens and
+  TestE2EDatabaseTwin (their only change is the mechanical `compareWithExpected` signature) — `/fix-implement`'s
+  full gates cover them. Fail-first: in-place compare restored with the regression → `file "sorter_gen.go"
+  differs from expected` and `git status` dirty again; existing suite passes at base. Golden churn none. No
+  other vetted patch touches `e2e_test.go`. Patch: `.claude/prototypes/FIX-330.patch` (1 file, +32/-42).
 
 **References.**
 - `guidelines/TESTING.md` (golden files).
 - Backlog line absorbed: 2026-10-09 failing golden run rewrites models (FIX-295).
 
 **Resolution notes.** _Filled in by /fix resolve._
+### FIX-331
+
+- **Status:** Open
+- **Severity:** nit
+- **Origin:** phase 4, `parser/postgres` + `parser/mysql` (ALTER TABLE ADD COLUMN)
+- **Surfaced by:** FIX-301 vet (2026-10-12), filed at the backlog sweep's Step 5
+
+**Issue.** The PostgreSQL and MySQL parsers accept `ALTER TABLE … ADD COLUMN` of a column the table already
+has, so the generated struct carries a duplicate field and does not compile. Measured: PG files `CREATE TABLE
+items (id bigint PRIMARY KEY, count int); ALTER TABLE items ADD COLUMN count int;` → `sqlgen generate` exit 0,
+`models_gen.go` declares `Count *int32` twice. Under `source: both`, a same-type duplicate also passes `Merge`
+(`validateColumnConflicts` errors only on a type mismatch). PG and MySQL both reject the statement (column
+already exists). SQLite is fixed by FIX-301.
+
+**Root cause.** The PG and MySQL ADD COLUMN paths append the column without checking the table's existing
+columns; FIX-301 added the check to SQLite only.
+
+**Suggested fix.**
+- PG and MySQL ADD COLUMN: error "add column <c> to <t>: column already exists" when the table already has the
+  column, compared with FIX-301's `parser.SameColumnName(dialect)` (PG exact, MySQL Unicode fold). PG `ADD
+  COLUMN IF NOT EXISTS` stays a no-op.
+- Tests: parser cases per dialect (duplicate, case-variant duplicate on MySQL, IF NOT EXISTS on PG), plus a
+  `both` Merge case.
+
+**References.**
+- PRD §5.2 (a statement sees only what came before), §13.7.
+- FIX-301 (SQLite twin and the `SameColumnName` helper; lands first).
+
+**Resolution notes.** _Filled in by /fix resolve._
+
+### FIX-332
+
+- **Status:** Open
+- **Severity:** nit
+- **Origin:** phase 4, `parser/postgres` (`parseDrop`) + `parser` (`CheckTableDropRefs`)
+- **Surfaced by:** FIX-312 vet (2026-10-12), filed at the backlog sweep's Step 5
+
+**Issue.** PostgreSQL `DROP TABLE a, b`, where `b` has a foreign key into `a`, is rejected because each table is
+checked against the remaining schema one at a time; PostgreSQL drops both. Measured: `CREATE TABLE a (id int
+PRIMARY KEY); CREATE TABLE b (id int PRIMARY KEY, a_id int REFERENCES a(id)); DROP TABLE a, b;` → "drop table
+public.a: cannot drop table public.a: column public.b.a_id references it via foreign key". MySQL and SQLite
+multi-table DROP were not measured.
+
+**Root cause.** `parseDrop` calls `CheckTableDropRefs` (`parser/schema.go:460`) per object before dropping it, so
+a reference from a table dropped later in the same statement still counts.
+
+**Suggested fix.**
+- Collect the statement's targets first; ignore references from tables in that set when checking; then drop
+  them. Measure MySQL `DROP TABLE a, b` (and SQLite, single-table only) while vetting and widen only if it is
+  the same site.
+- Tests: the measured case, the reverse order `DROP TABLE b, a`, and a reference from a table outside the set
+  still erroring.
+
+**References.**
+- PRD §5.2.
+- FIX-301 (also touches `CheckTableDropRefs`; lands first), FIX-312.
+
+**Resolution notes.** _Filled in by /fix resolve._
+
+### FIX-333
+
+- **Status:** Open
+- **Severity:** tracked
+- **Origin:** phase 30, `parser/introspect` (`source: both` views) + each parser's rename/drop-table path
+- **Surfaced by:** FIX-310 vet (2026-10-12), filed at the backlog sweep's Step 5
+
+**Issue.** Under `source: both`, a file `RENAME TABLE` / `DROP TABLE` of a table a database view reads leaves
+the view stale without a word. Measured (Merge probe): MySQL `DROP TABLE zz_users` → `Merge err=nil`, the view
+keeps `zz_users__role_enum` while the enum is gone, so the column degrades to `string`; MySQL itself then fails
+the view with ERROR 1356. MySQL `RENAME TABLE zz_users TO zz_people` → the view keeps `zz_users__role_enum`
+while the enums hold `zz_people__role_enum`. PG `DROP TABLE users` → `Merge err=nil`, though PG17 refuses to drop
+a table a view depends on.
+
+**Root cause.** FIX-309's rename/drop-column check covers columns only; table renames and drops never consult
+the views seeded from the database.
+
+**Suggested fix.**
+- Follow the Q6 rule FIX-309 applies to RENAME/DROP COLUMN: where the database rejects the statement or leaves
+  the view invalid (PG DROP, MySQL DROP and RENAME, SQLite per measurement), error naming the view and table;
+  where the database follows a rename (measure PG and SQLite at vet), follow it. Decide and record per dialect
+  while vetting.
+- Tests: Merge cases per dialect for DROP and RENAME of a table a view reads.
+
+**References.**
+- PRD §5.5, §6.3 (`source: both`).
+- FIX-309 (rename/drop-column twin and its ruling Q6; lands first), FIX-310.
+
+**Resolution notes.** _Filled in by /fix resolve._
+
+### FIX-334
+
+- **Status:** Open
+- **Severity:** nit
+- **Origin:** phase 30, `cmd/sqlgen/gotype` (domain resolution)
+- **Surfaced by:** FIX-322 vet (2026-10-12), filed at the backlog sweep's Step 5
+
+**Issue.** A bare `overrides.types.<domain>` key does not reach a domain defined over that domain in the same
+schema, though PRD §7.1 says a domain in a schema tries the schema-qualified key, then the bare one. Measured in
+package gotype: `NewResolver("postgres", true, {"email": int64})`, `RegisterDomain("app","email","text")`,
+`RegisterDomain("app","email2","email")`, `ForSchema("app")` → `Resolve("email")=int64`,
+`Resolve("email2")=string`, so the override silently skips the `email2` column.
+
+**Root cause.** `domainBaseType` qualifies the base to `app.email`, and `lookupKeys` has no bare fallback for an
+already-qualified type.
+
+**Suggested fix.**
+- When walking the domain chain, look up the base domain with the same qualified-then-bare keys a column's own
+  domain type gets.
+- Tests: gotype table cases (bare key, qualified key, three-level chain); a gen case if the vet finds the column
+  path differs.
+
+**References.**
+- PRD §7.1.
+- FIX-322 (`resolveByTypeSource` restructures the same function; lands first).
+
+**Resolution notes.** _Filled in by /fix resolve._
+
+### FIX-335
+
+- **Status:** Open
+- **Severity:** tracked
+- **Origin:** phase 6, `cmd/sqlgen/gen` (`connection.go.tmpl` cursor keyset) + `comparator/` (time binds on SQLite)
+- **Surfaced by:** backlog sweep vets (2026-10-12), filed at the backlog sweep's Step 5
+
+**Issue.** On SQLite, a DATETIME keyset cursor and a time filter bind a text format that differs from the stored
+one, so pages skip or repeat rows and equality filters match nothing. `DEFAULT (datetime('now'))` stores
+`2026-01-01 00:00:00`; the cursor binds `types.DateTime.Value()` in RFC3339Nano (`2026-01-01T00:00:00Z`);
+`comparator.Time` binds through modernc as `2026-01-01 00:00:00 +0000 UTC`. Measured on the events example
+(`audit_logs.cursor_keys: [created_at, id]`, rows 9001/9002 at '2026-01-01 00:00:00', 9003 at '2026-01-02
+00:00:00', one row per page): forward → [9001 9003], want [9001 9002 9003]; backward → [9003 9003 9003 9003].
+`GetMany(Filter CreatedAt Eq row.CreatedAt.Time)` → 0 rows. Direct bind: `SELECT CAST(? AS TEXT),
+'2026-01-01 00:00:00' = ?` → bound "2026-01-01 00:00:00 +0000 UTC", stored-eq=0.
+
+**Root cause.** SQLite compares DATETIME as text; neither bind path formats a time the way SQLite's own
+`datetime()` writes it.
+
+**Suggested fix.**
+- Decide the canonical SQLite time text at vet (likely `YYYY-MM-DD HH:MM:SS[.fff]`, UTC, matching
+  `datetime()`) and bind it from both the cursor keyset and the comparator time binds on the SQLite dialect;
+  confirm what modernc does on scan so the round trip holds. Check whether the PRD already states a SQLite
+  time format; if not, add it.
+- Tests: SQLite integration in the events example — forward and backward paging across equal timestamps, and an
+  Eq filter on a scanned row's time.
+
+**References.**
+- PRD §9.8 (cursor pagination), §11 (comparators), the SQLite type mapping in §7.
+- Measured during the backlog sweep vets (2026-10-12; events example probe).
+
+**Resolution notes.** _Filled in by /fix resolve._
+
+### FIX-336
+
+- **Status:** Open
+- **Severity:** tracked
+- **Origin:** phase 6, `cmd/sqlgen/gen` (`funcmap.go` `funcSoftDeleteFilterOverride`)
+- **Surfaced by:** FIX-324 vet (2026-10-12), filed at the backlog sweep's Step 5
+
+**Issue.** An integer soft delete on a NOT NULL integer column whose Go type is not `int` generates code that does
+not compile. Measured on a mysql example copy with `zz_flag TINYINT NOT NULL DEFAULT 0` configured `type:
+integer`: gqlgen exit 1; `go build -gcflags=-e ./models/` → "models_gen.go:45153:43: cannot use new(0) (value of
+type *int) as *int8 value in struct literal" (3 sites). Every non-`int` width is affected; no example uses `type:
+integer`. After FIX-324 it also fires for a tinyint configured `bool` (the override keys on the comparator type,
+not the strategy).
+
+**Root cause.** `funcSoftDeleteFilterOverride` (`cmd/sqlgen/gen/funcmap.go:591-593`) emits
+`&comparator.Number[T]{Neq: new(0)}`; the untyped `0` gives `*int`.
+
+**Suggested fix.**
+- Emit a typed zero (`new(T(0))`, with T taken from the comparator's type argument), and key the override on the
+  soft-delete strategy rather than the comparator type.
+- Tests: funcmap unit cases per integer width; a generated-code compile test (or an example table) with an
+  integer soft delete on a non-`int` column.
+
+**References.**
+- PRD §4.6, §5.4 (soft delete strategies).
+- FIX-324 (soft-delete strategy from config; lands first).
+
+**Resolution notes.** _Filled in by /fix resolve._
+
 <!-- fixes:open:end -->
 
 ## Resolved
