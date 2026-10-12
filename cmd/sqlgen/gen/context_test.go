@@ -435,10 +435,8 @@ func TestPKStrategyDetection(t *testing.T) {
 			want: config.PKStrategyCaller,
 		},
 		{
-			// A referenced column list is optional in SQLite DDL
-			// (`REFERENCES users`), which leaves Column empty on a perfectly
-			// real foreign key. Detection must key on the reference existing,
-			// never on Column being populated.
+			// Detection keys on the reference existing, never on Column
+			// being populated.
 			name:    "sqlite FK PK with no referenced column → caller",
 			dialect: "sqlite",
 			columns: []parser.Column{

@@ -32,7 +32,6 @@ func QualifyFilterIdentifiers(expr, alias string) (string, error) {
 		return "", fmt.Errorf("qualify filter: empty parse for %q", expr)
 	}
 
-	// rqlite/sql panics rendering some predicates it parses (LIKE … ESCAPE).
 	out, err := exprString(qualifyExpr(parsed, alias), "relationship filter")
 	if err != nil {
 		return "", fmt.Errorf("qualify filter: %w", err)
@@ -69,6 +68,7 @@ func qualifyExprChildren(expr rsql.Expr, alias string) {
 	case *rsql.BinaryExpr:
 		e.X = qualifyExpr(e.X, alias)
 		e.Y = qualifyExpr(e.Y, alias)
+		e.EscapeExpr = qualifyExpr(e.EscapeExpr, alias)
 	case *rsql.UnaryExpr:
 		e.X = qualifyExpr(e.X, alias)
 	case *rsql.ParenExpr:

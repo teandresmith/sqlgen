@@ -756,45 +756,81 @@ func TestSQLiteIntrospect_CompositePKOrder(t *testing.T) {
 	assertSchemaParity(t, "sqlite", parsed, introspected)
 }
 
-// REFERENCES t with no column list is legal SQLite, but the file parser
-// cannot read it, and the introspector reads every stored CREATE TABLE with
-// the file parser. So both paths fail on it, loudly (PRD §6.3).
+// REFERENCES t with no column list references t's primary key. PRAGMA
+// foreign_key_list reports no parent columns for it, so both sources resolve
+// it to the parent's key, and leave it without columns when that key does not
+// fit.
 func TestSQLiteIntrospect_ImplicitFKTarget(t *testing.T) {
 	requireDatabases(t)
 	tests := []struct {
 		name string
 		ddl  string
+		want []string
 	}{
 		{
 			name: "column REFERENCES",
 			ddl:  `CREATE TABLE u (id INTEGER PRIMARY KEY); CREATE TABLE p (id INTEGER PRIMARY KEY, uid INTEGER REFERENCES u)`,
+			want: []string{"id"},
 		},
 		{
 			name: "table FOREIGN KEY",
-			ddl:  `CREATE TABLE u (id INTEGER PRIMARY KEY); CREATE TABLE p (id INTEGER PRIMARY KEY, uid INTEGER, FOREIGN KEY (uid) REFERENCES u)`,
+			ddl:  `CREATE TABLE u (id INTEGER PRIMARY KEY); CREATE TABLE p (id INTEGER PRIMARY KEY, uid INTEGER, CONSTRAINT p_uid FOREIGN KEY (uid) REFERENCES u)`,
+			want: []string{"id"},
+		},
+		{
+			name: "composite key",
+			ddl:  `CREATE TABLE u (a INT, b INT, PRIMARY KEY (b, a)); CREATE TABLE p (id INTEGER PRIMARY KEY, x INT, y INT, FOREIGN KEY (x, y) REFERENCES u)`,
+			want: []string{"b", "a"},
+		},
+		{
+			name: "parent defined later",
+			ddl:  `CREATE TABLE p (id INTEGER PRIMARY KEY, uid INTEGER REFERENCES u); CREATE TABLE u (id INTEGER PRIMARY KEY)`,
+			want: []string{"id"},
+		},
+		{
+			name: "self reference",
+			ddl:  `CREATE TABLE p (id INTEGER PRIMARY KEY, parent INTEGER REFERENCES p)`,
+			want: []string{"id"},
+		},
+		{
+			name: "next to a key with columns",
+			ddl:  `CREATE TABLE u (id INTEGER PRIMARY KEY, code TEXT UNIQUE); CREATE TABLE p (id INTEGER PRIMARY KEY, uid TEXT, CONSTRAINT p_code FOREIGN KEY (uid) REFERENCES u(code), CONSTRAINT p_id FOREIGN KEY (uid) REFERENCES u)`,
+			want: []string{"code", "id"},
+		},
+		{
+			name: "parent without a primary key",
+			ddl:  `CREATE TABLE u (id INTEGER); CREATE TABLE p (id INTEGER PRIMARY KEY, uid INTEGER REFERENCES u)`,
+		},
+		{
+			name: "parent not defined",
+			ddl:  `CREATE TABLE p (id INTEGER PRIMARY KEY, uid INTEGER REFERENCES u)`,
 		},
 	}
 
-	const parseError = "expected left paren"
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			dbPath := applySQLite(t, tt.ddl)
-			intro := introspect.NewSQLiteIntrospector()
-			defer intro.Close() //nolint:errcheck // test cleanup
-			err := intro.Introspect(context.Background(), dbPath, &parser.Schema{}, introspect.IntrospectionOptions{})
-			if err == nil || !strings.Contains(err.Error(), "introspect sqlite table p:") || !strings.Contains(err.Error(), parseError) {
-				t.Errorf("Introspect() error = %v, want the parse error for table p", err)
+			parsed, introspected := sqliteSchemas(t, tt.ddl)
+			var got []string
+			for _, c := range filterConstraints(findTable(t, introspected, "p").Constraints, parser.ForeignKey) {
+				got = append(got, c.ReferenceColumns...)
 			}
-			if _, ok := errors.AsType[*introspect.SchemaError](err); !ok {
-				t.Errorf("Introspect() error = %v, want a *introspect.SchemaError", err)
+			if diff := cmp.Diff(tt.want, got, cmpopts.EquateEmpty()); diff != "" {
+				t.Errorf("introspected ReferenceColumns mismatch (-want +got):\n%s", diff)
 			}
-
-			p := sqlite.New()
-			err = p.Parse("schema.sql", []byte(tt.ddl))
-			if err == nil || !strings.Contains(err.Error(), parseError) {
-				t.Errorf("Parse() error = %v, want %q", err, parseError)
-			}
+			assertSchemaParity(t, "sqlite", parsed, introspected)
 		})
+	}
+}
+
+// The parent's key comes from the database, so it resolves when
+// input.introspect leaves the parent out.
+func TestSQLiteIntrospect_ImplicitFKTargetFiltered(t *testing.T) {
+	requireDatabases(t)
+	dbPath := applySQLite(t, `CREATE TABLE u (uid INTEGER PRIMARY KEY); CREATE TABLE p (id INTEGER PRIMARY KEY, uid INTEGER REFERENCES u)`)
+	introspected := introspectSQLite(t, dbPath, introspect.IntrospectionOptions{Tables: []string{"p"}})
+	fks := filterConstraints(findTable(t, introspected, "p").Constraints, parser.ForeignKey)
+	if len(fks) != 1 || !cmp.Equal(fks[0].ReferenceColumns, []string{"uid"}) {
+		t.Errorf("p: introspected foreign keys %+v, want one referencing u(uid)", fks)
 	}
 }
 
@@ -965,46 +1001,68 @@ func TestSQLiteIntrospect_ExpressionIndexes(t *testing.T) {
 	assertSchemaParity(t, "sqlite", parsed, introspected)
 }
 
-// The file parser cannot read IS [NOT] DISTINCT FROM and cannot render
-// LIKE … ESCAPE, so a partial index using either fails both schema sources
-// with an error, not a panic (PRD §6.3).
-func TestSQLiteIntrospect_UnreadablePartialIndex(t *testing.T) {
+// DDL the file parser reads as SQLite does gives the same schema by source
+// (PRD §6.1).
+func TestSQLiteIntrospect_ClausesReadAsSQLite(t *testing.T) {
 	requireDatabases(t)
 	tests := []struct {
-		name       string
-		ddl        string
-		parseError string
+		name string
+		ddl  string
 	}{
 		{
-			name:       "IS NOT DISTINCT FROM",
-			ddl:        `CREATE TABLE t (a TEXT, b TEXT); CREATE INDEX t_ab ON t (a) WHERE a IS NOT DISTINCT FROM b`,
-			parseError: "expected expression, found 'DISTINCT'",
+			name: "IS NOT DISTINCT FROM in a partial index",
+			ddl:  `CREATE TABLE t (a TEXT, b TEXT); CREATE INDEX t_ab ON t (a) WHERE a IS NOT DISTINCT FROM b`,
 		},
 		{
-			name:       "LIKE ESCAPE",
-			ddl:        `CREATE TABLE t (a TEXT, b TEXT); CREATE INDEX t_ab ON t (a) WHERE a LIKE 'x%' ESCAPE '\'`,
-			parseError: "rendering CREATE INDEX predicate: sql.BinaryExpr.String(): invalid op ESCAPE",
+			name: "LIKE ESCAPE in a partial index",
+			ddl:  `CREATE TABLE t (a TEXT, b TEXT); CREATE INDEX t_ab ON t (a) WHERE a LIKE 'x%' ESCAPE '\'`,
+		},
+		{
+			name: "LIKE ESCAPE in a column CHECK",
+			ddl:  `CREATE TABLE t (a TEXT CHECK (a LIKE 'x%' ESCAPE '\'))`,
+		},
+		{
+			name: "IS DISTINCT FROM in a table CHECK",
+			ddl:  `CREATE TABLE t (a TEXT, CHECK (a IS DISTINCT FROM 'x'))`,
+		},
+		{
+			name: "LIKE ESCAPE in a DEFAULT",
+			ddl:  `CREATE TABLE t (a INTEGER DEFAULT ('x' LIKE 'y' ESCAPE '\'))`,
+		},
+		{
+			name: "LIKE ESCAPE in a generated column",
+			ddl:  `CREATE TABLE t (a TEXT, b INTEGER GENERATED ALWAYS AS (a LIKE 'x%' ESCAPE '\'))`,
+		},
+		{
+			name: "MATCH on a foreign key",
+			ddl:  `CREATE TABLE p (id INTEGER PRIMARY KEY); CREATE TABLE t (id INTEGER PRIMARY KEY, pid INTEGER REFERENCES p(id) MATCH SIMPLE, qid INTEGER, CONSTRAINT t_q FOREIGN KEY (qid) REFERENCES p(id) MATCH FULL)`,
+		},
+		{
+			name: "ON CONFLICT",
+			ddl:  `CREATE TABLE t (id INTEGER PRIMARY KEY ON CONFLICT REPLACE, a TEXT NOT NULL ON CONFLICT IGNORE UNIQUE ON CONFLICT ABORT, b TEXT, UNIQUE (b) ON CONFLICT FAIL)`,
+		},
+		{
+			name: "sort order before AUTOINCREMENT",
+			ddl:  `CREATE TABLE t (id INTEGER PRIMARY KEY ASC AUTOINCREMENT, v TEXT)`,
+		},
+		{
+			name: "descending column key",
+			ddl:  `CREATE TABLE t (id INTEGER PRIMARY KEY DESC, v TEXT)`,
+		},
+		{
+			name: "sort order and collation on a table-level key",
+			ddl:  `CREATE TABLE t (id INTEGER, v TEXT, PRIMARY KEY (id DESC)); CREATE TABLE u (a TEXT, b TEXT, PRIMARY KEY (a COLLATE NOCASE, b DESC))`,
+		},
+		{
+			name: "bracket-quoted names",
+			ddl:  `CREATE TABLE [p] ([Y] INTEGER PRIMARY KEY); CREATE TABLE [t] ([a b] TEXT, [x] INTEGER REFERENCES [p]([Y]))`,
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			dbPath := applySQLite(t, tt.ddl)
-			intro := introspect.NewSQLiteIntrospector()
-			defer intro.Close() //nolint:errcheck // test cleanup
-			err := intro.Introspect(context.Background(), dbPath, &parser.Schema{}, introspect.IntrospectionOptions{})
-			if err == nil || !strings.Contains(err.Error(), "introspect sqlite index t_ab:") || !strings.Contains(err.Error(), tt.parseError) {
-				t.Errorf("Introspect() error = %v, want the parse error for index t_ab", err)
-			}
-			if _, ok := errors.AsType[*introspect.SchemaError](err); !ok {
-				t.Errorf("Introspect() error = %v, want a *introspect.SchemaError", err)
-			}
-
-			p := sqlite.New()
-			err = p.Parse("schema.sql", []byte(tt.ddl))
-			if err == nil || !strings.Contains(err.Error(), tt.parseError) {
-				t.Errorf("Parse() error = %v, want %q", err, tt.parseError)
-			}
+			parsed, introspected := sqliteSchemas(t, tt.ddl)
+			assertSchemaParity(t, "sqlite", parsed, introspected)
 		})
 	}
 }
@@ -1021,32 +1079,12 @@ func TestSQLiteIntrospect_UnreadableTable(t *testing.T) {
 		{
 			name:       "quoted type name",
 			ddl:        `CREATE TABLE t (id INTEGER PRIMARY KEY, f "my type")`,
-			parseError: `"my type" after column f is not a column`,
+			parseError: "column f: 1:43: a quoted type name cannot be read",
 		},
 		{
-			name:       "MATCH on a foreign key",
-			ddl:        `CREATE TABLE p (id INTEGER PRIMARY KEY); CREATE TABLE t (id INTEGER PRIMARY KEY, pid INTEGER REFERENCES p(id) MATCH SIMPLE)`,
-			parseError: `"MATCH" after column pid is not a column`,
-		},
-		{
-			name:       "LIKE ESCAPE in a column CHECK",
-			ddl:        `CREATE TABLE t (a TEXT CHECK (a LIKE 'x%' ESCAPE '\'))`,
-			parseError: "column a: rendering CHECK: sql.BinaryExpr.String(): invalid op ESCAPE",
-		},
-		{
-			name:       "LIKE ESCAPE in a table CHECK",
-			ddl:        `CREATE TABLE t (a TEXT, CHECK (a LIKE 'x%' ESCAPE '\'))`,
-			parseError: "table t: rendering CHECK: sql.BinaryExpr.String(): invalid op ESCAPE",
-		},
-		{
-			name:       "LIKE ESCAPE in a DEFAULT",
-			ddl:        `CREATE TABLE t (a INTEGER DEFAULT ('x' LIKE 'y' ESCAPE '\'))`,
-			parseError: "column a: rendering DEFAULT: sql.BinaryExpr.String(): invalid op ESCAPE",
-		},
-		{
-			name:       "LIKE ESCAPE in a generated column",
-			ddl:        `CREATE TABLE t (a TEXT, b INTEGER GENERATED ALWAYS AS (a LIKE 'x%' ESCAPE '\'))`,
-			parseError: "column b: rendering generated column expression: sql.BinaryExpr.String(): invalid op ESCAPE",
+			name:       "quoted type name with a modifier",
+			ddl:        `CREATE TABLE t (id INTEGER PRIMARY KEY, f "varchar"(10))`,
+			parseError: "column f: 1:43: a quoted type name cannot be read",
 		},
 	}
 

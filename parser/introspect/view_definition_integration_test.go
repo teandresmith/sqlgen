@@ -198,8 +198,8 @@ func TestSQLiteIntrospect_ViewColumnList(t *testing.T) {
 }
 
 // TestSQLiteIntrospect_ViewUnnamedLikeEscape checks that a SQLite view
-// selecting an unaliased LIKE … ESCAPE, which rqlite/sql panics rendering,
-// keeps the catalog's columns with a warning instead of crashing.
+// selecting an unaliased LIKE … ESCAPE keeps the catalog's columns with a
+// warning naming the expression.
 func TestSQLiteIntrospect_ViewUnnamedLikeEscape(t *testing.T) {
 	requireDatabases(t)
 	schema := introspectSQLite(t, applySQLite(t,
@@ -210,7 +210,7 @@ func TestSQLiteIntrospect_ViewUnnamedLikeEscape(t *testing.T) {
 		t.Errorf("v_like columns = %q, want the catalog's", names)
 	}
 	want := "view v_like: columns come from the catalog, since its definition cannot be read as a view file: " +
-		"view v_like selects column 2 with no alias and no column name; name it with AS"
+		`view v_like selects "a" LIKE 'x%' ESCAPE '\' with no alias and no column name; name it with AS`
 	if !slices.Contains(schema.Warnings, want) {
 		t.Errorf("warnings = %q, want %q", schema.Warnings, want)
 	}

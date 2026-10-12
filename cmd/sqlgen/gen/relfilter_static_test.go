@@ -1,7 +1,6 @@
 package gen_test
 
 import (
-	"strconv"
 	"strings"
 	"testing"
 
@@ -176,13 +175,10 @@ func TestRelationshipStaticFilter_AcceptsOrdinaryFilters(t *testing.T) {
 	}
 }
 
-// TestRelationshipFilter_UnrenderableSQLiteFilterErrors pins that a SQLite
-// `filter:` rqlite/sql parses but cannot render back fails generation with an
-// error naming the relationship and the filter, rather than panicking. LIKE …
-// ESCAPE is such a predicate: BinaryExpr.String() panics with "invalid op
-// ESCAPE". Both qualification sites are covered: the o2m relationship filter
-// subquery and the o2o JOIN predicate.
-func TestRelationshipFilter_UnrenderableSQLiteFilterErrors(t *testing.T) {
+// TestRelationshipFilter_SQLiteLikeEscape pins that a SQLite `filter:` using
+// LIKE … ESCAPE generates at both qualification sites: the o2m relationship
+// filter subquery and the o2o JOIN predicate.
+func TestRelationshipFilter_SQLiteLikeEscape(t *testing.T) {
 	const filter = `name LIKE 'x\%' ESCAPE '\'`
 
 	for _, relType := range []string{"one_to_many", "one_to_one"} {
@@ -190,18 +186,8 @@ func TestRelationshipFilter_UnrenderableSQLiteFilterErrors(t *testing.T) {
 			rel := filterRel("PctDocuments", relType)
 			rel.Filter = filter
 
-			_, err := buildFilteredAssets(t, config.DialectSQLite, rel)
-			if err == nil {
-				t.Fatalf("BuildTableContextsFromSchema(sqlite, filter=%q) = nil error, want one", filter)
-			}
-			for _, want := range []string{
-				"relationship PctDocuments",
-				"filter " + strconv.Quote(filter),
-				"qualify filter (sqlite): qualify filter: rendering relationship filter: sql.BinaryExpr.String(): invalid op ESCAPE",
-			} {
-				if !strings.Contains(err.Error(), want) {
-					t.Errorf("error = %v, want it to contain %q", err, want)
-				}
+			if _, err := buildFilteredAssets(t, config.DialectSQLite, rel); err != nil {
+				t.Errorf("BuildTableContextsFromSchema(sqlite, filter=%q) = %v, want nil", filter, err)
 			}
 		})
 	}

@@ -3,6 +3,8 @@ package sqlite
 import (
 	"strings"
 	"testing"
+
+	rsql "github.com/rqlite/sql"
 )
 
 func TestQualifyFilterIdentifiers(t *testing.T) {
@@ -96,12 +98,22 @@ func TestQualifyFilterIdentifiers(t *testing.T) {
 			wantErr: "qualify filter: parsing",
 		},
 		{
-			// rqlite/sql parses LIKE … ESCAPE and then panics rendering it; the
-			// panic comes back as an error so generation fails, not crashes.
-			name:    "unrenderable LIKE ESCAPE errors",
-			expr:    `name LIKE 'x\%' ESCAPE '\'`,
-			alias:   "d",
-			wantErr: "qualify filter: rendering relationship filter: sql.BinaryExpr.String(): invalid op ESCAPE",
+			name:  "LIKE ESCAPE",
+			expr:  `name LIKE 'x\%' ESCAPE '\'`,
+			alias: "d",
+			want:  `"d"."name" LIKE 'x\%' ESCAPE '\'`,
+		},
+		{
+			name:  "ESCAPE reading a column",
+			expr:  `name NOT LIKE pattern ESCAPE esc`,
+			alias: "d",
+			want:  `"d"."name" NOT LIKE "d"."pattern" ESCAPE "d"."esc"`,
+		},
+		{
+			name:  "IS NOT DISTINCT FROM",
+			expr:  `name IS NOT DISTINCT FROM other`,
+			alias: "d",
+			want:  `"d"."name" IS NOT DISTINCT FROM "d"."other"`,
 		},
 		{
 			name:    "empty expression errors",
@@ -209,5 +221,16 @@ func TestQualifyFilterIdentifiers_QuotingIsDialectSpecific(t *testing.T) {
 				t.Errorf("QualifyFilterIdentifiers(%q, %q):\n  got:  %s\n  want: %s", tt.expr, "d", got, tt.want)
 			}
 		})
+	}
+}
+
+// rqlite/sql panics rendering a node it has no text for; exprString returns
+// that as an error, so generation fails instead of crashing.
+func TestExprString_Panic(t *testing.T) {
+	x := &rsql.BinaryExpr{X: &rsql.Ident{Name: "a"}, Op: rsql.ILLEGAL, Y: &rsql.Ident{Name: "b"}}
+	_, err := exprString(x, "CHECK")
+	const want = "rendering CHECK: sql.BinaryExpr.String(): invalid op ILLEGAL"
+	if err == nil || err.Error() != want {
+		t.Errorf("exprString() error = %v, want %q", err, want)
 	}
 }

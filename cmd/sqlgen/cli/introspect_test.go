@@ -404,7 +404,7 @@ func TestCommands_ParseExitCode(t *testing.T) {
 			name:   "stored CREATE TABLE the file parser cannot read",
 			source: config.SourceDatabase,
 			database: func(t *testing.T, dir string) string {
-				return sqliteDatabase(t, dir, "CREATE TABLE t (id INTEGER PRIMARY KEY ASC AUTOINCREMENT);")
+				return sqliteDatabase(t, dir, `CREATE TABLE t (id INTEGER PRIMARY KEY, f "my type");`)
 			},
 			wantCode: ExitSchema,
 			wantErr:  "parsing stored CREATE TABLE",

@@ -55,7 +55,7 @@ func TestSQLiteGeneratedStorage(t *testing.T) {
 // A stored CREATE TABLE the file parser cannot read is a schema error, not a
 // failure to read the catalog.
 func TestParseStoredTable_SchemaError(t *testing.T) {
-	_, err := parseStoredTable("CREATE TABLE t (id INTEGER PRIMARY KEY ASC AUTOINCREMENT)")
+	_, err := parseStoredTable(`CREATE TABLE t (id INTEGER PRIMARY KEY, f "my type")`)
 	if _, ok := errors.AsType[*SchemaError](err); !ok {
 		t.Errorf("parseStoredTable() error = %v, want a *SchemaError", err)
 	}

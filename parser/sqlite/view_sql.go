@@ -100,8 +100,8 @@ func extractResultColumns(view string, cols []*rsql.ResultColumn, names []*rsql.
 			col.Alias = rsql.IdentName(names[i])
 		}
 		if col.Alias == "" {
-			// rqlite/sql can fail to render an expression (LIKE … ESCAPE);
-			// name the column by position then.
+			// Name the column by position when rqlite/sql cannot render
+			// the expression.
 			expr, err := exprString(rc.Expr, "view column")
 			if err != nil {
 				expr = fmt.Sprintf("column %d", i+1)
@@ -191,11 +191,6 @@ func collectSourceAliases(src rsql.Source, isOuter bool, aliases map[string]stri
 		key := rsql.IdentName(s.Name)
 		if s.Alias != nil {
 			key = rsql.IdentName(s.Alias)
-			// RIGHT and FULL are not in the grammar, which reads either as a
-			// table alias over an inner join; SQLite runs an outer join.
-			if strings.EqualFold(key, "RIGHT") || strings.EqualFold(key, "FULL") {
-				return fmt.Errorf("CREATE VIEW uses a RIGHT or FULL join, which the view parser cannot read; RIGHT and FULL joins are not supported")
-			}
 		}
 		aliases[key] = rsql.IdentName(s.Name)
 		if isOuter {
@@ -203,6 +198,9 @@ func collectSourceAliases(src rsql.Source, isOuter bool, aliases map[string]stri
 		}
 
 	case *rsql.JoinClause:
+		if s.Operator != nil && (s.Operator.Right.IsValid() || s.Operator.Full.IsValid()) {
+			return fmt.Errorf("CREATE VIEW uses a RIGHT or FULL join; RIGHT and FULL joins are not supported")
+		}
 		if err := collectSourceAliases(s.X, isOuter, aliases, outer); err != nil {
 			return err
 		}

@@ -53,6 +53,7 @@ func (p *Parser) Parse(filename string, sql []byte) error {
 			return fmt.Errorf("parsing %s: %w", filename, err)
 		}
 	}
+	p.resolveImplicitReferences()
 
 	return nil
 }
@@ -67,7 +68,7 @@ func (p *Parser) processStmt(stmt rsql.Statement, src []rune) error {
 	case *rsql.CreateTableStatement:
 		return p.parseCreateTable(s, src)
 	case *rsql.AlterTableStatement:
-		return p.parseAlterTable(s)
+		return p.parseAlterTable(s, src)
 	case *rsql.DropTableStatement:
 		return p.parseDropTable(s)
 	case *rsql.CreateIndexStatement:
@@ -159,9 +160,8 @@ func indexWhere(stmt *rsql.CreateIndexStatement) (string, error) {
 }
 
 // exprString renders e as rsql.ExprString does; what names e in an error.
-// rqlite/sql parses some expressions it then panics rendering (LIKE … ESCAPE:
-// "sql.BinaryExpr.String(): invalid op ESCAPE"); the panic is returned as an
-// error.
+// rqlite/sql panics rendering a node it has no text for; the panic is
+// returned as an error.
 func exprString(e rsql.Expr, what string) (s string, err error) {
 	defer func() {
 		if r := recover(); r != nil {
@@ -210,28 +210,13 @@ func (p *Parser) parseCreateTable(stmt *rsql.CreateTableStatement, src []rune) e
 	// Parse columns.
 	var descKey string // the column whose PRIMARY KEY is declared DESC
 	coll := indexCollations{columns: make(map[string]string), explicit: make(map[int][]string)}
-	starts := columnStarts(stmt, src)
-	for i, col := range stmt.Columns {
-		if i > 0 && isPrimaryKeySortOrder(stmt.Columns[i-1], col, src) {
-			key := &table.Columns[len(table.Columns)-1]
-			if strings.EqualFold(col.Name.Name, "DESC") {
-				descKey = key.Name
-			}
-			constraints, err := applyColumnConstraints(key, col.Constraints)
-			if err != nil {
-				return fmt.Errorf("table %s: %w", tableName, err)
-			}
-			table.Constraints = append(table.Constraints, constraints...)
-			coll.addColumn(key.Name, col.Constraints)
-			continue
-		}
-		if i > 0 && !starts[col.Name.NamePos.Offset] {
-			return fmt.Errorf("table %s: %s: %q after column %s is not a column: a quoted type name or a MATCH clause cannot be read",
-				tableName, col.Name.NamePos, col.Name.Name, table.Columns[len(table.Columns)-1].Name)
-		}
-		c, constraints, err := parseColumn(col)
+	for _, col := range stmt.Columns {
+		c, constraints, err := parseColumn(col, src)
 		if err != nil {
 			return fmt.Errorf("table %s: %w", tableName, err)
+		}
+		if primaryKeyDesc(col.Constraints) {
+			descKey = c.Name
 		}
 		table.Columns = append(table.Columns, c)
 		table.Constraints = append(table.Constraints, constraints...)
@@ -275,70 +260,15 @@ func addTableConstraints(table *parser.Table, constraints []rsql.Constraint, col
 	return nil
 }
 
-// isPrimaryKeySortOrder reports whether col is the ASC or DESC of the column
-// PRIMARY KEY that ends prev. rqlite/sql reads that keyword as the name of a
-// new column, along with any constraints after it. Only blanks and comments
-// can separate it from KEY; after a comma it is a real column named asc or
-// desc.
-func isPrimaryKeySortOrder(prev, col *rsql.ColumnDefinition, src []rune) bool {
-	if col.Name == nil || col.Name.Quoted || col.Type != nil ||
-		(!strings.EqualFold(col.Name.Name, "ASC") && !strings.EqualFold(col.Name.Name, "DESC")) {
-		return false
-	}
-	if len(prev.Constraints) == 0 {
-		return false
-	}
-	pk, ok := prev.Constraints[len(prev.Constraints)-1].(*rsql.PrimaryKeyConstraint)
-	if !ok || pk.Autoincrement.IsValid() {
-		return false
-	}
-	from, to := pk.Key.Offset+len("KEY"), col.Name.NamePos.Offset
-	if from > to || to > len(src) {
-		return false
-	}
-	return onlyBlanksAndComments(string(src[from:to]))
-}
-
-// columnStarts returns the offsets in src of the tokens that follow the
-// opening paren or a comma of stmt's column list. rqlite/sql does not require
-// the comma between column definitions, so a token it cannot read as part of
-// one column, such as a quoted type name or MATCH, starts another; a column
-// whose name is not at one of these offsets is such a token.
-func columnStarts(stmt *rsql.CreateTableStatement, src []rune) map[int]bool {
-	starts := make(map[int]bool)
-	from, to := stmt.Lparen.Offset, stmt.Rparen.Offset
-	if from > to || to > len(src) {
-		return starts
-	}
-	s := rsql.NewScanner(strings.NewReader(string(src[from:to])))
-	afterDelim := false
-	for {
-		pos, tok, _ := s.Scan()
-		if tok == rsql.EOF {
-			return starts
-		}
-		if tok == rsql.COMMENT {
-			continue
-		}
-		if afterDelim {
-			starts[from+pos.Offset] = true
-		}
-		afterDelim = tok == rsql.LP || tok == rsql.COMMA
-	}
-}
-
-func onlyBlanksAndComments(s string) bool {
-	for s = strings.TrimSpace(s); s != ""; s = strings.TrimSpace(s) {
-		switch {
-		case strings.HasPrefix(s, "--"):
-			_, s, _ = strings.Cut(s, "\n")
-		case strings.HasPrefix(s, "/*"):
-			_, s, _ = strings.Cut(s[2:], "*/")
-		default:
-			return false
+// primaryKeyDesc reports whether constraints, a column's, declare its
+// PRIMARY KEY DESC.
+func primaryKeyDesc(constraints []rsql.Constraint) bool {
+	for _, c := range constraints {
+		if pk, ok := c.(*rsql.PrimaryKeyConstraint); ok && pk.Desc.IsValid() {
+			return true
 		}
 	}
-	return true
+	return false
 }
 
 // indexCollations holds the collations SQLite compares when it decides two
@@ -431,7 +361,11 @@ func rowIDAlias(table *parser.Table, descKey string) string {
 
 // parseColumn returns the column col defines and the constraints declared
 // inline on it, as table constraints over the column.
-func parseColumn(col *rsql.ColumnDefinition) (parser.Column, []parser.Constraint, error) {
+func parseColumn(col *rsql.ColumnDefinition, src []rune) (parser.Column, []parser.Constraint, error) {
+	if quotedTypeName(col.Type, src) {
+		return parser.Column{}, nil, fmt.Errorf("column %s: %s: a quoted type name cannot be read",
+			rsql.IdentName(col.Name), col.Type.Name.NamePos)
+	}
 	c := parser.Column{
 		Name:     rsql.IdentName(col.Name),
 		Type:     buildTypeString(col.Type),
@@ -481,13 +415,13 @@ func applyColumnConstraint(c *parser.Column, constraint rsql.Constraint) (parser
 		c.Default = def
 	case *rsql.ForeignKeyConstraint:
 		if ct.ForeignTable != nil {
-			var refCol string
+			// With no column list the key references the parent's primary
+			// key, which resolveImplicitReferences fills in.
 			if len(ct.ForeignColumns) > 0 {
-				refCol = rsql.IdentName(ct.ForeignColumns[0])
-			}
-			c.FKReference = &parser.FKReference{
-				Table:  rsql.IdentName(ct.ForeignTable),
-				Column: refCol,
+				c.FKReference = &parser.FKReference{
+					Table:  rsql.IdentName(ct.ForeignTable),
+					Column: rsql.IdentName(ct.ForeignColumns[0]),
+				}
 			}
 			return parser.Constraint{
 				Name:             rsql.IdentName(ct.Name),
@@ -518,6 +452,35 @@ func applyColumnConstraint(c *parser.Column, constraint rsql.Constraint) (parser
 		// COLLATE is not stored.
 	}
 	return parser.Constraint{}, false, nil
+}
+
+// quotedTypeName reports whether typ, a column's declared type, has a quoted
+// part ("my type", 'text', [text]). SQLite keeps such a type in a form the
+// parser does not reproduce (PRAGMA table_info reports "varchar"(10) as
+// varchar, INT "x" as INT "x"), so it would differ by source.
+func quotedTypeName(typ *rsql.Type, src []rune) bool {
+	if typ == nil || typ.Name == nil {
+		return false
+	}
+	from := typ.Name.NamePos.Offset
+	if from < 0 || from > len(src) {
+		return false
+	}
+	// rqlite/sql joins the type's tokens with a space; scan that many.
+	s := rsql.NewScanner(strings.NewReader(string(src[from:])))
+	for n := 0; n < len(typ.Name.Name); {
+		_, tok, lit := s.Scan()
+		if tok == rsql.EOF {
+			return false
+		}
+		if tok == rsql.QIDENT || tok == rsql.BIDENT || tok == rsql.STRING {
+			return true
+		}
+		if tok != rsql.COMMENT {
+			n += len(lit) + 1
+		}
+	}
+	return false
 }
 
 // buildTypeString returns the type string for a rqlite/sql Type, by the rule
@@ -576,10 +539,16 @@ func isRecognizedType(name string) bool {
 func parseTableConstraint(constraint rsql.Constraint) (parser.Constraint, error) {
 	switch ct := constraint.(type) {
 	case *rsql.PrimaryKeyConstraint:
+		// SQLite rejects an expression in a PRIMARY KEY; left in, it would
+		// be a key over no columns.
+		cols, ok := indexedColumnNames(ct.Columns)
+		if !ok {
+			return parser.Constraint{}, fmt.Errorf("PRIMARY KEY has an expression part: expressions prohibited in PRIMARY KEY")
+		}
 		return parser.Constraint{
 			Name:    rsql.IdentName(ct.Name),
 			Type:    parser.PrimaryKey,
-			Columns: identNames(ct.Columns),
+			Columns: cols,
 		}, nil
 	case *rsql.UniqueConstraint:
 		// SQLite rejects an expression in a UNIQUE constraint, so every
@@ -614,7 +583,7 @@ func parseTableConstraint(constraint rsql.Constraint) (parser.Constraint, error)
 
 // --- ALTER TABLE ---
 
-func (p *Parser) parseAlterTable(stmt *rsql.AlterTableStatement) error {
+func (p *Parser) parseAlterTable(stmt *rsql.AlterTableStatement, src []rune) error {
 	tableName := rsql.IdentName(stmt.Name)
 
 	switch {
@@ -624,7 +593,7 @@ func (p *Parser) parseAlterTable(stmt *rsql.AlterTableStatement) error {
 		if !ok {
 			return fmt.Errorf("table %s not found", tableName)
 		}
-		c, constraints, err := parseColumn(stmt.ColumnDef)
+		c, constraints, err := parseColumn(stmt.ColumnDef, src)
 		if err != nil {
 			return fmt.Errorf("table %s: %w", tableName, err)
 		}
@@ -748,11 +717,6 @@ func (r *columnRenamer) Visit(n rsql.Node) (rsql.Visitor, rsql.Node, error) {
 	case *rsql.QualifiedRef:
 		r.skip[n.Schema] = true
 		r.skip[n.Table] = true
-	case *rsql.Null:
-		// rqlite/sql's walk does not descend into IS NULL / NOT NULL.
-		if _, err := rsql.Walk(r, n.X); err != nil {
-			return nil, nil, fmt.Errorf("walking %s: %w", n, err)
-		}
 	case *rsql.Ident:
 		if !r.skip[n] && foldASCII(n.Name) == foldASCII(r.oldName) {
 			n.Name = r.newName
@@ -778,6 +742,46 @@ func (p *Parser) renameTable(oldName, newName string) error {
 	delete(p.tableIndex, foldASCII(oldName))
 	p.tableIndex[foldASCII(newName)] = idx
 	return nil
+}
+
+// resolveImplicitReferences gives each foreign key written with no column
+// list (REFERENCES p) its parent's primary key columns, as SQLite reads it. A
+// parent defined later is resolved by a later Parse, since SQLite accepts a
+// forward reference.
+func (p *Parser) resolveImplicitReferences() {
+	for i := range p.schema.Tables {
+		t := &p.schema.Tables[i]
+		for j := range t.Constraints {
+			c := &t.Constraints[j]
+			if c.Type != parser.ForeignKey || len(c.ReferenceColumns) > 0 {
+				continue
+			}
+			parent, ok := p.lookupTable(c.ReferenceTable)
+			if !ok {
+				continue
+			}
+			var key []string
+			for _, pc := range parent.Constraints {
+				if pc.Type == parser.PrimaryKey {
+					key = pc.Columns
+				}
+			}
+			if c.ReferenceColumns = ImplicitReferenceColumns(c.Columns, key); len(c.ReferenceColumns) > 0 {
+				parser.ApplyConstraintToColumns(t, *c)
+			}
+		}
+	}
+}
+
+// ImplicitReferenceColumns returns the columns a foreign key over columns
+// written with no column list references: parentKey, its parent's primary
+// key, when that has as many columns. Otherwise it returns none, and SQLite
+// reports an error when it enforces the key.
+func ImplicitReferenceColumns(columns, parentKey []string) []string {
+	if len(parentKey) != len(columns) {
+		return []string{}
+	}
+	return slices.Clone(parentKey)
 }
 
 // --- Helpers ---

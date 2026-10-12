@@ -22,121 +22,6 @@
 ## Open
 
 <!-- fixes:open:begin -->
-### FIX-300
-
-- **Status:** Open
-- **Severity:** tracked
-- **Origin:** phase 4, `parser/sqlite` (`go.mod` pin of `github.com/rqlite/sql`)
-- **Surfaced by:** backlog sweep 2026-10-12 (backlog lines from 30.1, FIX-267, FIX-279, FIX-281, FIX-291)
-- **Vetted:** corrected at `9b58288b` (2026-10-12)
-
-**Issue.** The SQLite file parser cannot read legal SQLite DDL, so it is a parse error under
-`files` and, through the stored-DDL re-parse, an introspection error under `database` (PRD §6.3):
-`REFERENCES t` with no column list, `PRIMARY KEY ASC AUTOINCREMENT`, a column `PRIMARY KEY ON
-CONFLICT …`, bracket-quoted identifiers (`CREATE TABLE t ([a] TEXT, …)`, `REFERENCES [p]([Y])` →
-"found 'ILLEGAL'"), `IS [NOT] DISTINCT FROM` in an expression index (`files` exit 3 "expected
-expression, found 'DISTINCT'" while `database` exits 0), and a SQLite relationship `filter:` with
-`LIKE … ESCAPE` is a generation error ("sql.BinaryExpr.String(): invalid op ESCAPE"). All measured
-at `e88e35bb`; sqlite3 accepts every statement.
-
-**Root cause.** The pinned `github.com/rqlite/sql v0.0.0-20260224021119-1b2524a41372`
-(`parser/go.mod:10`) lacks the grammar. Upstream master `4555bb784427` (2026-10-09, untagged) landed
-~70 commits on 2026-10-08/09: bracketed identifiers, `IS [NOT] DISTINCT FROM`, ESCAPE rendering,
-`REFERENCES t` without columns, ON CONFLICT on PRIMARY KEY / NOT NULL / UNIQUE, MATCH, quoted type
-names, and the PRIMARY KEY ASC/DESC phantom-column fix
-(https://github.com/rqlite/sql/compare/1b2524a413728dec9974c7054d77edb90801373f...4555bb784427dae80a1ceb8beecda5f3942a8e01).
-
-**Suggested fix.**
-- Ruling (user, 2026-10-12, backlog sweep Q1): upgrade to `4555bb784427`.
-- Bump `parser/go.mod` / `go.sum` only (no example module, `cmd/sqlgen/go.mod` or `go.work.sum`
-  names rqlite/sql); `go get …@4555bb784427dae80a1ceb8beecda5f3942a8e01` resolves to
-  `v0.0.0-20261009033234-4555bb784427`, `go mod tidy` adds nothing.
-- Table-level PRIMARY KEY goes through `indexedColumnNames`; an expression part is an error ("PRIMARY
-  KEY has an expression part: expressions prohibited in PRIMARY KEY") — this is FIX-315's PK half.
-- Delete `isPrimaryKeySortOrder`, `columnStarts`, `onlyBlanksAndComments`; `primaryKeyDesc` reads
-  `PrimaryKeyConstraint.Desc` for `rowIDAlias`, **column form only** (modernc: `INTEGER PRIMARY KEY
-  DESC` is not a rowid alias; table-level `PRIMARY KEY (id DESC)` is).
-- `columnStarts` was also the quoted-type-name guard: new `quotedTypeName(typ, src)` rescans the type
-  tokens and rejects a quoted type name ("column f: 1:43: a quoted type name cannot be read") for
-  CREATE TABLE and ADD COLUMN; without it the sources diverge (PRAGMA vs parser: `"varchar"(10)` →
-  `varchar` vs `varchar(10)`; `INT "x"` → `int "x"` vs `int x`; `[decimal] (10, 2)` → `blob` vs
-  `decimal(10,2)`).
-- `REFERENCES p` with no column list, files: `(*Parser).resolveImplicitReferences` at the end of every
-  Parse (SQLite accepts forward references) fills the parent's PK columns in key order and sets
-  `FKReference` through `ApplyConstraintToColumns`. Database: the introspector skips NULL `to` values
-  and resolves both the PRAGMA FK and the stored-DDL (declared) FK through `pragma_table_info(parent)`
-  (works when `input.introspect` filters the parent out). Both share `sqlite.ImplicitReferenceColumns`,
-  which returns `[]` when the parent's key does not fit.
-- Same code: `qualifyExprChildren` also qualifies `EscapeExpr`; the dead Null walk in
-  `columnRenamer.Visit` is removed (`rsql.Walk` now descends into `*rsql.Null`); RIGHT/FULL joins are
-  rejected through `JoinOperator.Right/Full` instead of the alias hack.
-- Tests: new `TestCreateTable_QuotedTypeName`, `_ClausesReadAsSQLite`, `_PrimaryKeyExpression`,
-  `TestImplicitForeignKeyTarget` (9 cases), `TestParse_EscapeAndDistinctExpressions`,
-  `TestExprString_Panic`; extended `TestRowIDAlias` (+5), IndexWhere, ColumnNames, QualifyFilter,
-  RightAndFullJoin; integration `TestSQLiteIntrospect_ImplicitFKTarget` (8 + `…Filtered`),
-  `_ClausesReadAsSQLite` (12, replaces `_UnreadablePartialIndex`), `_UnreadableTable` (quoted type names
-  only); CLI `TestCommands_ParseExitCode` fixture → `f "my type"`; gen relfilter ESCAPE test expects
-  success.
-- From FIX-315's vet: the PK expression check has a gap — SQLite reads a string-literal part as a column
-  (`PRIMARY KEY ('a')` is valid); FIX-315's `indexedColumnNames` change covers it once both land.
-- Inline (from FIX-310's vet): reword the `cmd/sqlgen/gen/context_test.go:439` case comment that says SQLite
-  `REFERENCES users` "leaves Column empty" — after this fix it resolves to the parent PK.
-- Docs: PRD §6.3 (`docs/PRD.md:1673`) rewritten — a bullet on how a no-column-list FK resolves, and
-  "cannot read" lists only quoted type names; §13.7.4 (`:8920`) drops the ESCAPE clause;
-  `docs/design/INTROSPECTION.md` test-table rows (ImplicitFKTarget, UnreadablePartialIndex,
-  UnreadableTable) updated.
-- Corrected vs. the original suggestion (vet 2026-10-12): `columnStarts` is not simply dead (its guard
-  is replaced); a bare bump makes introspection *error* on `REFERENCES p` ("stored CREATE TABLE declares
-  no FOREIGN KEY over (uid)"), so implicit FKs are resolved on both the PRAGMA rows and the stored-DDL
-  table, reading the parent from the database; files-side resolution runs at end of Parse (unlike
-  FIX-310's statement-time PG rule, because SQLite accepts forward references); DESC rework column form
-  only; `EscapeExpr` qualification added (same root cause, same site). ~20 test updates turned out to be
-  7 `parser/sqlite` tests (~19 subtests) plus `parser/introspect` (`TestParseStoredTable_SchemaError`,
-  `TestSQLiteIntrospect_ImplicitFKTarget`, `_UnreadablePartialIndex`, `_UnreadableTable`,
-  `_ViewUnnamedLikeEscape`) and `cmd/sqlgen` (gen `TestRelationshipFilter_UnrenderableSQLiteFilterErrors`,
-  cli `TestCommands_ParseExitCode`).
-- Auto-accepted the recommended option on 2026-10-12 (`/fix` auto-accept rule): RIGHT/FULL JOIN views on
-  SQLite stay rejected (now via `JoinOperator.Right/Full`), because PRD §16.1 states it ("On SQLite a
-  RIGHT or FULL join is a parse error too"); prototyped green, no churn, no public surface. Veto option
-  measured: support them with §16.3 nullability (6-line change in `collectSourceAliases`; `a RIGHT JOIN
-  b` → outer {a}, `FULL OUTER` → {a,b}; no churn; the test inverts and the §16.1 sentence goes).
-- Auto-accepted the recommended option on 2026-10-12 (`/fix` auto-accept rule): every quoted type name
-  stays rejected (PRD §6.3 keeps that clause), rather than emulating SQLite's type-text dequoting;
-  prototyped green, no churn, no public surface.
-- Auto-accepted the recommended option on 2026-10-12 (`/fix` auto-accept rule): an unresolvable
-  `REFERENCES t` (parent missing, no PK, or a PK of a different column count) gives no parent columns
-  on both sources and no error, as SQLite and MySQL accept a missing FK target; adds PRD §6.3 text for
-  an uncovered case; generation exits 0 (measured); no churn, no public surface.
-- Prototype results, run at `9b58288b` on 2026-10-12: probe at base (`go test ./sqlite/ -run
-  TestZZProbeFIX300 -v`) → `REFERENCES p` "1:106: expected left paren, found ')'"; `PRIMARY KEY ASC
-  AUTOINCREMENT` "…found 'AUTOINCREMENT'"; `([a] TEXT…)` "found 'ILLEGAL'"; `IS NOT DISTINCT FROM` index
-  "expected expression, found 'DISTINCT'"; `PRIMARY KEY (id DESC)` "expected comma or right paren, found
-  'DESC'"; `MATCH FULL` "\"MATCH\" after column pid is not a column"; ESCAPE filter "sql.BinaryExpr.String():
-  invalid op ESCAPE". Bare bump with only the compile fix → `id INTEGER PRIMARY KEY DESC` `ai=true` vs
-  introspected `ai=false`; `PRIMARY KEY (lower(a))` → PK `cols=[]`. Gates: parser `go test -race
-  -count=1 ./...` (integration) ok; parser `golangci-lint` 0 issues; cmd/sqlgen `go test -short -race
-  ./...` ok; `golangci-lint ./gen/... ./cli/...` 0 issues; `TestE2EGoldenFiles/(sqlite|introspect_sqlite|cache|events|tenancy)$`
-  and `TestE2EDatabaseTwin/(sqlite|cache|events|tenancy)$` ok; `examples/sqlite` and
-  `examples/introspect_sqlite` `GOWORK=off go test -race ./...` ok; `gofumpt -l` clean. Generation probe:
-  `REFERENCES users` / self / no-PK / missing → exit 0, `models/` byte-identical to the explicit `(id)`
-  schema. Fail-first: `primaryKeyDesc` removed → "id AutoIncrement = true, want false";
-  `resolveImplicitReferences` call removed → `FKReference.Column = "", want "id"`; introspector
-  resolution disabled → "sqlite: introspected schema differs from the file parser's"; `quotedTypeName`
-  disabled → error = <nil>; PK expression check disabled → error = <nil>; JoinOperator check disabled →
-  "error = <nil>, want it to reject the join"; EscapeExpr qualification removed → `… ESCAPE "esc"`,
-  want `… ESCAPE "d"."esc"`; existing suite without the fix passes. Golden churn: none (sqlite,
-  introspect_sqlite database and files, cache, events, tenancy all +0/~0). Patch:
-  `.claude/prototypes/FIX-300.patch` (15 files, +617/-280).
-
-**References.**
-- PRD §6.3, §6.1 ("Both sources describe a schema the same way"), §13.7.4.
-- Backlog lines absorbed: 2026-10-05 rqlite rejects legal DDL (30.1); 2026-10-07 bracket-quoted
-  identifiers (FIX-267, FIX-279); 2026-10-08 LIKE … ESCAPE filter (FIX-291); 2026-10-09 IS DISTINCT
-  FROM expression index (FIX-281).
-- FIX-310 (PostgreSQL `REFERENCES t` without a column list — same parent-PK resolution).
-
-**Resolution notes.** _Filled in by /fix resolve._
-
 ### FIX-301
 
 - **Status:** Open
@@ -3117,6 +3002,121 @@ accepts a nullable column without a DEFAULT.
 ## Resolved
 
 <!-- fixes:resolved:begin -->
+
+### FIX-300
+
+- **Status:** Resolved
+- **Severity:** tracked
+- **Origin:** phase 4, `parser/sqlite` (`go.mod` pin of `github.com/rqlite/sql`)
+- **Surfaced by:** backlog sweep 2026-10-12 (backlog lines from 30.1, FIX-267, FIX-279, FIX-281, FIX-291)
+- **Vetted:** corrected at `9b58288b` (2026-10-12)
+
+**Issue.** The SQLite file parser cannot read legal SQLite DDL, so it is a parse error under
+`files` and, through the stored-DDL re-parse, an introspection error under `database` (PRD §6.3):
+`REFERENCES t` with no column list, `PRIMARY KEY ASC AUTOINCREMENT`, a column `PRIMARY KEY ON
+CONFLICT …`, bracket-quoted identifiers (`CREATE TABLE t ([a] TEXT, …)`, `REFERENCES [p]([Y])` →
+"found 'ILLEGAL'"), `IS [NOT] DISTINCT FROM` in an expression index (`files` exit 3 "expected
+expression, found 'DISTINCT'" while `database` exits 0), and a SQLite relationship `filter:` with
+`LIKE … ESCAPE` is a generation error ("sql.BinaryExpr.String(): invalid op ESCAPE"). All measured
+at `e88e35bb`; sqlite3 accepts every statement.
+
+**Root cause.** The pinned `github.com/rqlite/sql v0.0.0-20260224021119-1b2524a41372`
+(`parser/go.mod:10`) lacks the grammar. Upstream master `4555bb784427` (2026-10-09, untagged) landed
+~70 commits on 2026-10-08/09: bracketed identifiers, `IS [NOT] DISTINCT FROM`, ESCAPE rendering,
+`REFERENCES t` without columns, ON CONFLICT on PRIMARY KEY / NOT NULL / UNIQUE, MATCH, quoted type
+names, and the PRIMARY KEY ASC/DESC phantom-column fix
+(https://github.com/rqlite/sql/compare/1b2524a413728dec9974c7054d77edb90801373f...4555bb784427dae80a1ceb8beecda5f3942a8e01).
+
+**Suggested fix.**
+- Ruling (user, 2026-10-12, backlog sweep Q1): upgrade to `4555bb784427`.
+- Bump `parser/go.mod` / `go.sum` only (no example module, `cmd/sqlgen/go.mod` or `go.work.sum`
+  names rqlite/sql); `go get …@4555bb784427dae80a1ceb8beecda5f3942a8e01` resolves to
+  `v0.0.0-20261009033234-4555bb784427`, `go mod tidy` adds nothing.
+- Table-level PRIMARY KEY goes through `indexedColumnNames`; an expression part is an error ("PRIMARY
+  KEY has an expression part: expressions prohibited in PRIMARY KEY") — this is FIX-315's PK half.
+- Delete `isPrimaryKeySortOrder`, `columnStarts`, `onlyBlanksAndComments`; `primaryKeyDesc` reads
+  `PrimaryKeyConstraint.Desc` for `rowIDAlias`, **column form only** (modernc: `INTEGER PRIMARY KEY
+  DESC` is not a rowid alias; table-level `PRIMARY KEY (id DESC)` is).
+- `columnStarts` was also the quoted-type-name guard: new `quotedTypeName(typ, src)` rescans the type
+  tokens and rejects a quoted type name ("column f: 1:43: a quoted type name cannot be read") for
+  CREATE TABLE and ADD COLUMN; without it the sources diverge (PRAGMA vs parser: `"varchar"(10)` →
+  `varchar` vs `varchar(10)`; `INT "x"` → `int "x"` vs `int x`; `[decimal] (10, 2)` → `blob` vs
+  `decimal(10,2)`).
+- `REFERENCES p` with no column list, files: `(*Parser).resolveImplicitReferences` at the end of every
+  Parse (SQLite accepts forward references) fills the parent's PK columns in key order and sets
+  `FKReference` through `ApplyConstraintToColumns`. Database: the introspector skips NULL `to` values
+  and resolves both the PRAGMA FK and the stored-DDL (declared) FK through `pragma_table_info(parent)`
+  (works when `input.introspect` filters the parent out). Both share `sqlite.ImplicitReferenceColumns`,
+  which returns `[]` when the parent's key does not fit.
+- Same code: `qualifyExprChildren` also qualifies `EscapeExpr`; the dead Null walk in
+  `columnRenamer.Visit` is removed (`rsql.Walk` now descends into `*rsql.Null`); RIGHT/FULL joins are
+  rejected through `JoinOperator.Right/Full` instead of the alias hack.
+- Tests: new `TestCreateTable_QuotedTypeName`, `_ClausesReadAsSQLite`, `_PrimaryKeyExpression`,
+  `TestImplicitForeignKeyTarget` (9 cases), `TestParse_EscapeAndDistinctExpressions`,
+  `TestExprString_Panic`; extended `TestRowIDAlias` (+5), IndexWhere, ColumnNames, QualifyFilter,
+  RightAndFullJoin; integration `TestSQLiteIntrospect_ImplicitFKTarget` (8 + `…Filtered`),
+  `_ClausesReadAsSQLite` (12, replaces `_UnreadablePartialIndex`), `_UnreadableTable` (quoted type names
+  only); CLI `TestCommands_ParseExitCode` fixture → `f "my type"`; gen relfilter ESCAPE test expects
+  success.
+- From FIX-315's vet: the PK expression check has a gap — SQLite reads a string-literal part as a column
+  (`PRIMARY KEY ('a')` is valid); FIX-315's `indexedColumnNames` change covers it once both land.
+- Inline (from FIX-310's vet): reword the `cmd/sqlgen/gen/context_test.go:439` case comment that says SQLite
+  `REFERENCES users` "leaves Column empty" — after this fix it resolves to the parent PK.
+- Docs: PRD §6.3 (`docs/PRD.md:1673`) rewritten — a bullet on how a no-column-list FK resolves, and
+  "cannot read" lists only quoted type names; §13.7.4 (`:8920`) drops the ESCAPE clause;
+  `docs/design/INTROSPECTION.md` test-table rows (ImplicitFKTarget, UnreadablePartialIndex,
+  UnreadableTable) updated.
+- Corrected vs. the original suggestion (vet 2026-10-12): `columnStarts` is not simply dead (its guard
+  is replaced); a bare bump makes introspection *error* on `REFERENCES p` ("stored CREATE TABLE declares
+  no FOREIGN KEY over (uid)"), so implicit FKs are resolved on both the PRAGMA rows and the stored-DDL
+  table, reading the parent from the database; files-side resolution runs at end of Parse (unlike
+  FIX-310's statement-time PG rule, because SQLite accepts forward references); DESC rework column form
+  only; `EscapeExpr` qualification added (same root cause, same site). ~20 test updates turned out to be
+  7 `parser/sqlite` tests (~19 subtests) plus `parser/introspect` (`TestParseStoredTable_SchemaError`,
+  `TestSQLiteIntrospect_ImplicitFKTarget`, `_UnreadablePartialIndex`, `_UnreadableTable`,
+  `_ViewUnnamedLikeEscape`) and `cmd/sqlgen` (gen `TestRelationshipFilter_UnrenderableSQLiteFilterErrors`,
+  cli `TestCommands_ParseExitCode`).
+- Auto-accepted the recommended option on 2026-10-12 (`/fix` auto-accept rule): RIGHT/FULL JOIN views on
+  SQLite stay rejected (now via `JoinOperator.Right/Full`), because PRD §16.1 states it ("On SQLite a
+  RIGHT or FULL join is a parse error too"); prototyped green, no churn, no public surface. Veto option
+  measured: support them with §16.3 nullability (6-line change in `collectSourceAliases`; `a RIGHT JOIN
+  b` → outer {a}, `FULL OUTER` → {a,b}; no churn; the test inverts and the §16.1 sentence goes).
+- Auto-accepted the recommended option on 2026-10-12 (`/fix` auto-accept rule): every quoted type name
+  stays rejected (PRD §6.3 keeps that clause), rather than emulating SQLite's type-text dequoting;
+  prototyped green, no churn, no public surface.
+- Auto-accepted the recommended option on 2026-10-12 (`/fix` auto-accept rule): an unresolvable
+  `REFERENCES t` (parent missing, no PK, or a PK of a different column count) gives no parent columns
+  on both sources and no error, as SQLite and MySQL accept a missing FK target; adds PRD §6.3 text for
+  an uncovered case; generation exits 0 (measured); no churn, no public surface.
+- Prototype results, run at `9b58288b` on 2026-10-12: probe at base (`go test ./sqlite/ -run
+  TestZZProbeFIX300 -v`) → `REFERENCES p` "1:106: expected left paren, found ')'"; `PRIMARY KEY ASC
+  AUTOINCREMENT` "…found 'AUTOINCREMENT'"; `([a] TEXT…)` "found 'ILLEGAL'"; `IS NOT DISTINCT FROM` index
+  "expected expression, found 'DISTINCT'"; `PRIMARY KEY (id DESC)` "expected comma or right paren, found
+  'DESC'"; `MATCH FULL` "\"MATCH\" after column pid is not a column"; ESCAPE filter "sql.BinaryExpr.String():
+  invalid op ESCAPE". Bare bump with only the compile fix → `id INTEGER PRIMARY KEY DESC` `ai=true` vs
+  introspected `ai=false`; `PRIMARY KEY (lower(a))` → PK `cols=[]`. Gates: parser `go test -race
+  -count=1 ./...` (integration) ok; parser `golangci-lint` 0 issues; cmd/sqlgen `go test -short -race
+  ./...` ok; `golangci-lint ./gen/... ./cli/...` 0 issues; `TestE2EGoldenFiles/(sqlite|introspect_sqlite|cache|events|tenancy)$`
+  and `TestE2EDatabaseTwin/(sqlite|cache|events|tenancy)$` ok; `examples/sqlite` and
+  `examples/introspect_sqlite` `GOWORK=off go test -race ./...` ok; `gofumpt -l` clean. Generation probe:
+  `REFERENCES users` / self / no-PK / missing → exit 0, `models/` byte-identical to the explicit `(id)`
+  schema. Fail-first: `primaryKeyDesc` removed → "id AutoIncrement = true, want false";
+  `resolveImplicitReferences` call removed → `FKReference.Column = "", want "id"`; introspector
+  resolution disabled → "sqlite: introspected schema differs from the file parser's"; `quotedTypeName`
+  disabled → error = <nil>; PK expression check disabled → error = <nil>; JoinOperator check disabled →
+  "error = <nil>, want it to reject the join"; EscapeExpr qualification removed → `… ESCAPE "esc"`,
+  want `… ESCAPE "d"."esc"`; existing suite without the fix passes. Golden churn: none (sqlite,
+  introspect_sqlite database and files, cache, events, tenancy all +0/~0). Patch:
+  `.claude/prototypes/FIX-300.patch` (15 files, +617/-280).
+
+**References.**
+- PRD §6.3, §6.1 ("Both sources describe a schema the same way"), §13.7.4.
+- Backlog lines absorbed: 2026-10-05 rqlite rejects legal DDL (30.1); 2026-10-07 bracket-quoted
+  identifiers (FIX-267, FIX-279); 2026-10-08 LIKE … ESCAPE filter (FIX-291); 2026-10-09 IS DISTINCT
+  FROM expression index (FIX-281).
+- FIX-310 (PostgreSQL `REFERENCES t` without a column list — same parent-PK resolution).
+
+**Resolution notes.** Applied the vetted prototype (clean, fresh at `9b58288b`): `parser/go.mod`/`go.sum` bump `github.com/rqlite/sql` to `v0.0.0-20261009033234-4555bb784427`; `parser/sqlite/sqlite.go` drops the `isPrimaryKeySortOrder`/`columnStarts`/`onlyBlanksAndComments` workarounds for `primaryKeyDesc` (column form) and `quotedTypeName`, rejects an expression part in a table PRIMARY KEY via `indexedColumnNames`, and resolves `REFERENCES p` with no column list at the end of each Parse (`resolveImplicitReferences`, shared `ImplicitReferenceColumns`); `parser/introspect/sqlite.go` resolves the same on PRAGMA rows (NULL `to`) and the stored-DDL table through `pragma_table_info(parent)`; `filter_qualifier.go` qualifies `EscapeExpr`; `view_sql.go` rejects RIGHT/FULL joins through `JoinOperator.Right/Full`; dead `*rsql.Null` walk removed. PRD §6.3/§13.7.4 and `docs/design/INTROSPECTION.md` updated. Inline: reworded the `cmd/sqlgen/gen/context_test.go` "no referenced column" case comment (the parser now resolves `REFERENCES users`). Gates: `make check` ok; parser `go test -race ./sqlite/ ./introspect/` (integration) ok; `make update-golden-e2e` and `make update-golden` → no churn (matches vet); `make check-examples` ok. Fail-first list re-run on the final code: all seven mutations fail their tests. Verify (reviewer agreed, prototype divergence only the asked-for comment reword): corrected the unresolvable-key wording in PRD §6.3 and the `ImplicitReferenceColumns` doc (a missing parent is a "no such table" error in SQLite, not a foreign key mismatch); trimmed the `context_test.go` comment; two backlog lines (FIX-323 entry staleness, no re-resolve of a recreated parent).
 
 ### FIX-299
 

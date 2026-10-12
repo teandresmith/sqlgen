@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/google/go-cmp/cmp"
+	"github.com/google/go-cmp/cmp/cmpopts"
 
 	"github.com/teandresmith/sqlgen/parser"
 	"github.com/teandresmith/sqlgen/parser/sqlite"
@@ -257,6 +258,16 @@ func TestPrimaryKeySortOrder(t *testing.T) {
 			wantCols: []string{"id", "v"},
 		},
 		{
+			name:     "AUTOINCREMENT after the sort order",
+			sql:      `CREATE TABLE t (id INTEGER PRIMARY KEY ASC AUTOINCREMENT, v TEXT);`,
+			wantCols: []string{"id", "v"},
+		},
+		{
+			name:     "ON CONFLICT after the sort order",
+			sql:      `CREATE TABLE t (id INTEGER PRIMARY KEY DESC ON CONFLICT REPLACE, v TEXT);`,
+			wantCols: []string{"id", "v"},
+		},
+		{
 			name:     "constraints after the sort order stay on the key column",
 			sql:      `CREATE TABLE t (id INTEGER PRIMARY KEY DESC REFERENCES p(id), v TEXT);`,
 			wantCols: []string{"id", "v"},
@@ -297,39 +308,70 @@ func TestPrimaryKeySortOrder(t *testing.T) {
 	}
 }
 
-// rqlite/sql reads a token it cannot place in a column definition as the
-// name of a new one, so these would gain a column the table does not have.
-func TestCreateTable_TextAfterColumnIsNotAColumn(t *testing.T) {
+// SQLite keeps a quoted type name in a form the parser does not reproduce,
+// so a column declared with one is an error; an unquoted type of several
+// words, or with a modifier, reads as written.
+func TestCreateTable_QuotedTypeName(t *testing.T) {
 	tests := []struct {
 		name     string
 		sql      string
 		wantErr  string
-		wantCols []string
+		wantType string
 	}{
 		{
 			name:    "double-quoted type name",
 			sql:     `CREATE TABLE t (id INTEGER PRIMARY KEY, f "my type");`,
-			wantErr: `table t: 1:43: "my type" after column f is not a column`,
+			wantErr: "table t: column f: 1:43: a quoted type name cannot be read",
 		},
 		{
 			name:    "backquoted type name",
 			sql:     "CREATE TABLE t (id INTEGER PRIMARY KEY, f `my type` NOT NULL, g TEXT);",
-			wantErr: `table t: 1:43: "my type" after column f is not a column`,
+			wantErr: "table t: column f: 1:43: a quoted type name cannot be read",
+		},
+		{
+			name:    "string type name",
+			sql:     `CREATE TABLE t (id INTEGER PRIMARY KEY, f 'text');`,
+			wantErr: "table t: column f: 1:43: a quoted type name cannot be read",
+		},
+		{
+			name:    "bracketed type name",
+			sql:     `CREATE TABLE t (id INTEGER PRIMARY KEY, f [text]);`,
+			wantErr: "table t: column f: 1:43: a quoted type name cannot be read",
+		},
+		{
+			name:    "quoted type name with a modifier",
+			sql:     `CREATE TABLE t (id INTEGER PRIMARY KEY, f "varchar"(10));`,
+			wantErr: "table t: column f: 1:43: a quoted type name cannot be read",
 		},
 		{
 			name:    "quoted word after a type name",
 			sql:     `CREATE TABLE t (id INTEGER PRIMARY KEY, f INT "x");`,
-			wantErr: `table t: 1:47: "x" after column f is not a column`,
+			wantErr: "table t: column f: 1:43: a quoted type name cannot be read",
 		},
 		{
-			name:    "MATCH on a column foreign key",
-			sql:     `CREATE TABLE t (id INTEGER PRIMARY KEY, pid INTEGER REFERENCES p(id) MATCH SIMPLE);`,
-			wantErr: `table t: 1:70: "MATCH" after column pid is not a column`,
+			name:    "added column",
+			sql:     `CREATE TABLE t (id INTEGER PRIMARY KEY); ALTER TABLE t ADD COLUMN f "text";`,
+			wantErr: "table t: column f: 1:69: a quoted type name cannot be read",
+		},
+		{
+			name:     "words",
+			sql:      `CREATE TABLE t (id INTEGER PRIMARY KEY, f unsigned  big /* x */ int NOT NULL);`,
+			wantType: "unsigned big int",
+		},
+		{
+			name:     "modifier",
+			sql:      `CREATE TABLE t (id INTEGER PRIMARY KEY, f varchar (10) DEFAULT 'x');`,
+			wantType: "varchar(10)",
+		},
+		{
+			name:     "quoted column name",
+			sql:      `CREATE TABLE t (id INTEGER PRIMARY KEY, "f" TEXT COLLATE "NOCASE");`,
+			wantType: "text",
 		},
 		{
 			name:     "comments holding commas between columns",
-			sql:      "CREATE TABLE t (id INTEGER PRIMARY KEY, -- a, b\n /* c, d */ v TEXT);",
-			wantCols: []string{"id", "v"},
+			sql:      "CREATE TABLE t (id INTEGER PRIMARY KEY, -- a, b\n /* c, d */ f TEXT);",
+			wantType: "text",
 		},
 	}
 
@@ -346,14 +388,95 @@ func TestCreateTable_TextAfterColumnIsNotAColumn(t *testing.T) {
 			if err != nil {
 				t.Fatalf("Parse(%q) unexpected error: %v", tt.sql, err)
 			}
-			var got []string
-			for _, c := range p.Schema().Tables[0].Columns {
-				got = append(got, c.Name)
+			table := p.Schema().Tables[0]
+			if got := columnNamesOf(table); !cmp.Equal(got, []string{"id", "f"}) {
+				t.Fatalf("Parse(%q) columns = %v, want [id f]", tt.sql, got)
 			}
-			if diff := cmp.Diff(tt.wantCols, got); diff != "" {
-				t.Errorf("Parse(%q) columns mismatch (-want +got):\n%s", tt.sql, diff)
+			if got := parser.ColumnByName(&table, "f").Type; got != tt.wantType {
+				t.Errorf("Parse(%q) f type = %q, want %q", tt.sql, got, tt.wantType)
 			}
 		})
+	}
+}
+
+func columnNamesOf(table parser.Table) []string {
+	names := make([]string, 0, len(table.Columns))
+	for _, c := range table.Columns {
+		names = append(names, c.Name)
+	}
+	return names
+}
+
+// DDL the parser reads as SQLite does: a clause that does not change the
+// model (ON CONFLICT, MATCH), bracket-quoted names, and a sort order or
+// collation on a table-level key column.
+func TestCreateTable_ClausesReadAsSQLite(t *testing.T) {
+	tests := []struct {
+		name string
+		sql  string
+		want []parser.Constraint
+	}{
+		{
+			name: "ON CONFLICT",
+			sql:  `CREATE TABLE t (a INTEGER PRIMARY KEY ON CONFLICT REPLACE, b TEXT NOT NULL ON CONFLICT IGNORE UNIQUE ON CONFLICT ABORT, c TEXT, UNIQUE (c) ON CONFLICT FAIL);`,
+			want: []parser.Constraint{
+				{Type: parser.PrimaryKey, Columns: []string{"a"}},
+				{Type: parser.Unique, Columns: []string{"b"}},
+				{Type: parser.Unique, Columns: []string{"c"}},
+			},
+		},
+		{
+			name: "table-level ON CONFLICT",
+			sql:  `CREATE TABLE t (a INTEGER, b TEXT, PRIMARY KEY (a, b) ON CONFLICT ROLLBACK);`,
+			want: []parser.Constraint{{Type: parser.PrimaryKey, Columns: []string{"a", "b"}}},
+		},
+		{
+			name: "MATCH",
+			sql:  `CREATE TABLE p (id INTEGER PRIMARY KEY); CREATE TABLE t (a INTEGER REFERENCES p(id) MATCH SIMPLE, b INTEGER, FOREIGN KEY (b) REFERENCES p(id) MATCH FULL);`,
+			want: []parser.Constraint{
+				{Type: parser.ForeignKey, Columns: []string{"a"}, ReferenceTable: "p", ReferenceColumns: []string{"id"}},
+				{Type: parser.ForeignKey, Columns: []string{"b"}, ReferenceTable: "p", ReferenceColumns: []string{"id"}},
+			},
+		},
+		{
+			name: "bracket-quoted names",
+			sql:  `CREATE TABLE [p] ([Y] INTEGER PRIMARY KEY); CREATE TABLE [t] ([a b] TEXT, [x] INTEGER REFERENCES [p]([Y]));`,
+			want: []parser.Constraint{{Type: parser.ForeignKey, Columns: []string{"x"}, ReferenceTable: "p", ReferenceColumns: []string{"Y"}}},
+		},
+		{
+			name: "table-level key sort order and collation",
+			sql:  `CREATE TABLE t (a TEXT, b TEXT, PRIMARY KEY (a DESC, b COLLATE NOCASE));`,
+			want: []parser.Constraint{{Type: parser.PrimaryKey, Columns: []string{"a", "b"}}},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			p := sqlite.New()
+			if err := p.Parse("test.sql", []byte(tt.sql)); err != nil {
+				t.Fatalf("Parse() error: %v", err)
+			}
+			tables := p.Schema().Tables
+			got := tables[len(tables)-1].Constraints
+			if diff := cmp.Diff(tt.want, got, cmpopts.EquateEmpty()); diff != "" {
+				t.Errorf("constraints mismatch (-want +got):\n%s", diff)
+			}
+		})
+	}
+}
+
+// SQLite rejects an expression in a PRIMARY KEY; read as written it would be
+// a key over no columns.
+func TestCreateTable_PrimaryKeyExpression(t *testing.T) {
+	for _, sql := range []string{
+		`CREATE TABLE t (a TEXT, PRIMARY KEY (lower(a)));`,
+		`CREATE TABLE t (a INTEGER, PRIMARY KEY (a, a + 1));`,
+	} {
+		err := sqlite.New().Parse("test.sql", []byte(sql))
+		const want = "parsing test.sql: table t: PRIMARY KEY has an expression part: expressions prohibited in PRIMARY KEY"
+		if err == nil || err.Error() != want {
+			t.Errorf("Parse(%q) error = %v, want %q", sql, err, want)
+		}
 	}
 }
 
@@ -423,7 +546,13 @@ func TestRowIDAlias(t *testing.T) {
 		{name: "ascending key", sql: `CREATE TABLE t (id INTEGER PRIMARY KEY ASC, v TEXT);`, wantAutoInc: true},
 		{name: "AUTOINCREMENT", sql: `CREATE TABLE t (id INTEGER PRIMARY KEY AUTOINCREMENT, v TEXT);`, wantAutoInc: true},
 		{name: "table-level key", sql: `CREATE TABLE t (id INTEGER, v TEXT, PRIMARY KEY (id));`, wantAutoInc: true},
+		{name: "ascending AUTOINCREMENT", sql: `CREATE TABLE t (id INTEGER PRIMARY KEY ASC AUTOINCREMENT, v TEXT);`, wantAutoInc: true},
+		{name: "ON CONFLICT", sql: `CREATE TABLE t (id INTEGER PRIMARY KEY ON CONFLICT REPLACE, v TEXT);`, wantAutoInc: true},
 		{name: "descending key", sql: `CREATE TABLE t (id INTEGER PRIMARY KEY DESC, v TEXT);`},
+		{name: "descending key with ON CONFLICT", sql: `CREATE TABLE t (id INTEGER PRIMARY KEY DESC ON CONFLICT FAIL, v TEXT);`},
+		// Only the column form is the exception; a table-level key aliases
+		// the rowid whatever its sort order.
+		{name: "table-level descending key", sql: `CREATE TABLE t (id INTEGER, v TEXT, PRIMARY KEY (id DESC));`, wantAutoInc: true},
 		{name: "WITHOUT ROWID", sql: `CREATE TABLE t (id INTEGER PRIMARY KEY, v TEXT) WITHOUT ROWID;`},
 		{name: "INT is not INTEGER", sql: `CREATE TABLE t (id INT PRIMARY KEY, v TEXT);`},
 		{name: "composite key", sql: `CREATE TABLE t (id INTEGER, v INTEGER, PRIMARY KEY (id, v));`},
@@ -935,6 +1064,111 @@ func TestParserReentrant(t *testing.T) {
 	}
 	if schema.Tables[1].Name != "posts" {
 		t.Errorf("table[1] = %q, want %q", schema.Tables[1].Name, "posts")
+	}
+}
+
+// A foreign key written with no column list references its parent's primary
+// key, as SQLite reads it, whichever file defines the parent.
+func TestImplicitForeignKeyTarget(t *testing.T) {
+	tests := []struct {
+		name    string
+		files   []string
+		table   string
+		want    []string // the foreign key's ReferenceColumns
+		wantRef string   // the FKReference.Column of column c, if any
+	}{
+		{
+			name:    "column REFERENCES",
+			files:   []string{`CREATE TABLE p (id INTEGER PRIMARY KEY); CREATE TABLE t (c INTEGER REFERENCES p);`},
+			table:   "t",
+			want:    []string{"id"},
+			wantRef: "id",
+		},
+		{
+			name:    "table FOREIGN KEY",
+			files:   []string{`CREATE TABLE p (id TEXT PRIMARY KEY); CREATE TABLE t (c TEXT, FOREIGN KEY (c) REFERENCES p);`},
+			table:   "t",
+			want:    []string{"id"},
+			wantRef: "id",
+		},
+		{
+			name:  "composite key in key order",
+			files: []string{`CREATE TABLE p (a INT, b INT, PRIMARY KEY (b, a)); CREATE TABLE t (x INT, y INT, FOREIGN KEY (x, y) REFERENCES p);`},
+			table: "t",
+			want:  []string{"b", "a"},
+		},
+		{
+			name:    "self reference",
+			files:   []string{`CREATE TABLE t (id INTEGER PRIMARY KEY, c INTEGER REFERENCES t);`},
+			table:   "t",
+			want:    []string{"id"},
+			wantRef: "id",
+		},
+		{
+			name:    "parent defined later",
+			files:   []string{`CREATE TABLE t (c INTEGER REFERENCES p);`, `CREATE TABLE p (id INTEGER PRIMARY KEY);`},
+			table:   "t",
+			want:    []string{"id"},
+			wantRef: "id",
+		},
+		{
+			name:    "parent key renamed",
+			files:   []string{`CREATE TABLE p (id INTEGER PRIMARY KEY); CREATE TABLE t (c INTEGER REFERENCES p);`, `ALTER TABLE p RENAME COLUMN id TO pid;`},
+			table:   "t",
+			want:    []string{"pid"},
+			wantRef: "pid",
+		},
+		{
+			name:  "parent without a primary key",
+			files: []string{`CREATE TABLE p (id INTEGER); CREATE TABLE t (c INTEGER REFERENCES p);`},
+			table: "t",
+		},
+		{
+			name:  "key of another size",
+			files: []string{`CREATE TABLE p (a INT, b INT, PRIMARY KEY (a, b)); CREATE TABLE t (c INTEGER REFERENCES p);`},
+			table: "t",
+		},
+		{
+			name:  "parent not defined",
+			files: []string{`CREATE TABLE t (c INTEGER REFERENCES p);`},
+			table: "t",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			p := sqlite.New()
+			for i, sql := range tt.files {
+				if err := p.Parse(fmt.Sprintf("%d.sql", i), []byte(sql)); err != nil {
+					t.Fatalf("Parse(%q) error: %v", sql, err)
+				}
+			}
+			var table *parser.Table
+			for i := range p.Schema().Tables {
+				if p.Schema().Tables[i].Name == tt.table {
+					table = &p.Schema().Tables[i]
+				}
+			}
+			var fks []parser.Constraint
+			for _, c := range table.Constraints {
+				if c.Type == parser.ForeignKey {
+					fks = append(fks, c)
+				}
+			}
+			if len(fks) != 1 {
+				t.Fatalf("foreign keys = %+v, want 1", fks)
+			}
+			if diff := cmp.Diff(tt.want, fks[0].ReferenceColumns, cmpopts.EquateEmpty()); diff != "" {
+				t.Errorf("ReferenceColumns mismatch (-want +got):\n%s", diff)
+			}
+			var gotRef string
+			if c := parser.ColumnByName(table, "c"); c != nil && c.FKReference != nil {
+				gotRef = c.FKReference.Column
+			}
+			if gotRef != tt.wantRef {
+				t.Errorf("FKReference.Column = %q, want %q", gotRef, tt.wantRef)
+			}
+		})
 	}
 }
 
@@ -1508,8 +1742,9 @@ func TestIndexWhere(t *testing.T) {
 		{name: "comparison", ddl: `create index ix on t (b) where b>0 AND a<>'x'`, want: `"b" > 0 AND "a" != 'x'`},
 		{name: "WHERE in a comment", ddl: "CREATE INDEX ix ON t (a) -- WHERE b = 1\nWHERE a > 0", want: `"a" > 0`},
 		{name: "WHERE in an identifier", ddl: `CREATE INDEX ix ON t ("a WHERE b") WHERE "a WHERE b" > 0`, want: `"a WHERE b" > 0`},
-		{name: "unreadable predicate", ddl: `CREATE INDEX ix ON t (a) WHERE a IS NOT DISTINCT FROM b`, wantErr: "parsing CREATE INDEX: 1:41: expected expression, found 'DISTINCT'"},
-		{name: "LIKE ESCAPE predicate", ddl: `CREATE INDEX ix ON t (a) WHERE a LIKE 'x%' ESCAPE '\'`, wantErr: "rendering CREATE INDEX predicate: sql.BinaryExpr.String(): invalid op ESCAPE"},
+		{name: "IS NOT DISTINCT FROM", ddl: `CREATE INDEX ix ON t (a) WHERE a IS NOT DISTINCT FROM b`, want: `"a" IS NOT DISTINCT FROM "b"`},
+		{name: "LIKE ESCAPE", ddl: `CREATE INDEX ix ON t (a) WHERE a LIKE 'x%' ESCAPE '\'`, want: `"a" LIKE 'x%' ESCAPE '\'`},
+		{name: "unreadable predicate", ddl: `CREATE INDEX ix ON t (a) WHERE a IS`, wantErr: "parsing CREATE INDEX: 1:35: expected expression, found 'EOF'"},
 		{name: "not an index", ddl: `CREATE TABLE t (a)`, wantErr: "parsing CREATE INDEX: got *sql.CreateTableStatement"},
 	}
 
@@ -1532,57 +1767,73 @@ func TestIndexWhere(t *testing.T) {
 	}
 }
 
-// rqlite/sql parses LIKE … ESCAPE but panics rendering it; an expression
-// using it is a parse error wherever it is rendered, not a crash (PRD §6.3).
-func TestParse_UnrenderableExpression(t *testing.T) {
-	const escapePanic = "sql.BinaryExpr.String(): invalid op ESCAPE"
+// LIKE … ESCAPE and IS [NOT] DISTINCT FROM read and render wherever an
+// expression is kept.
+func TestParse_EscapeAndDistinctExpressions(t *testing.T) {
 	tests := []struct {
 		name string
 		ddl  string
+		get  func(*parser.Schema) string
 		want string
 	}{
 		{
 			name: "column CHECK",
 			ddl:  `CREATE TABLE t (a TEXT CHECK (a LIKE 'x%' ESCAPE '\'))`,
-			want: "parsing schema.sql: table t: column a: rendering CHECK: " + escapePanic,
+			get:  func(s *parser.Schema) string { return s.Tables[0].Constraints[0].CheckExpression },
+			want: `"a" LIKE 'x%' ESCAPE '\'`,
 		},
 		{
 			name: "table CHECK",
 			ddl:  `CREATE TABLE t (a TEXT, CHECK (a NOT LIKE 'x%' ESCAPE '\'))`,
-			want: "parsing schema.sql: table t: rendering CHECK: " + escapePanic,
+			get:  func(s *parser.Schema) string { return s.Tables[0].Constraints[0].CheckExpression },
+			want: `"a" NOT LIKE 'x%' ESCAPE '\'`,
 		},
 		{
 			name: "DEFAULT",
 			ddl:  `CREATE TABLE t (a INTEGER DEFAULT ('x' LIKE 'y' ESCAPE '\'))`,
-			want: "parsing schema.sql: table t: column a: rendering DEFAULT: " + escapePanic,
+			get:  func(s *parser.Schema) string { return s.Tables[0].Columns[0].Default },
+			want: `'x' LIKE 'y' ESCAPE '\'`,
 		},
 		{
 			name: "generated column",
-			ddl:  `CREATE TABLE t (a TEXT, b INTEGER GENERATED ALWAYS AS (a LIKE 'x%' ESCAPE '\'))`,
-			want: "parsing schema.sql: table t: column b: rendering generated column expression: " + escapePanic,
+			ddl:  `CREATE TABLE t (a TEXT, b INTEGER GENERATED ALWAYS AS (a IS DISTINCT FROM 'x'))`,
+			get:  func(s *parser.Schema) string { return s.Tables[0].Columns[1].GeneratedExpr },
+			want: `"a" IS DISTINCT FROM 'x'`,
 		},
 		{
 			name: "CHECK after a PRIMARY KEY sort order",
 			ddl:  `CREATE TABLE t (id INTEGER PRIMARY KEY DESC CHECK (id LIKE 'x%' ESCAPE '\'))`,
-			want: "parsing schema.sql: table t: column id: rendering CHECK: " + escapePanic,
+			get:  func(s *parser.Schema) string { return s.Tables[0].Constraints[1].CheckExpression },
+			want: `"id" LIKE 'x%' ESCAPE '\'`,
 		},
 		{
 			name: "added column CHECK",
-			ddl:  `CREATE TABLE t (id INTEGER); ALTER TABLE t ADD COLUMN a TEXT CHECK (a LIKE 'x%' ESCAPE '\')`,
-			want: "parsing schema.sql: table t: column a: rendering CHECK: " + escapePanic,
+			ddl:  `CREATE TABLE t (id INTEGER); ALTER TABLE t ADD COLUMN a TEXT CHECK (a IS NOT DISTINCT FROM 'x')`,
+			get:  func(s *parser.Schema) string { return s.Tables[0].Constraints[0].CheckExpression },
+			want: `"a" IS NOT DISTINCT FROM 'x'`,
 		},
 		{
 			name: "partial index predicate",
 			ddl:  `CREATE TABLE t (a TEXT); CREATE INDEX ix ON t (a) WHERE a LIKE 'x%' ESCAPE '\'`,
-			want: "parsing schema.sql: index ix: rendering CREATE INDEX predicate: " + escapePanic,
+			get:  func(s *parser.Schema) string { return s.Tables[0].Constraints[0].Where },
+			want: `"a" LIKE 'x%' ESCAPE '\'`,
+		},
+		{
+			name: "renamed column",
+			ddl:  `CREATE TABLE t (a TEXT, b TEXT CHECK (b LIKE a ESCAPE '\' OR b IS DISTINCT FROM a)); ALTER TABLE t RENAME COLUMN a TO z`,
+			get:  func(s *parser.Schema) string { return s.Tables[0].Constraints[0].CheckExpression },
+			want: `"b" LIKE "z" ESCAPE '\' OR "b" IS DISTINCT FROM "z"`,
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			err := sqlite.New().Parse("schema.sql", []byte(tt.ddl))
-			if err == nil || err.Error() != tt.want {
-				t.Errorf("Parse() error = %v, want %q", err, tt.want)
+			p := sqlite.New()
+			if err := p.Parse("schema.sql", []byte(tt.ddl)); err != nil {
+				t.Fatalf("Parse() error: %v", err)
+			}
+			if got := tt.get(p.Schema()); got != tt.want {
+				t.Errorf("got %q, want %q", got, tt.want)
 			}
 		})
 	}
@@ -1666,24 +1917,21 @@ func TestParseViewSQL_CompoundSelectRejected(t *testing.T) {
 	}
 }
 
-// The grammar has no RIGHT or FULL join. It reads the bare keyword as a
-// table alias over an inner join, where SQLite runs an outer join; the
-// OUTER spelling already fails to parse.
 func TestParseViewSQL_RightAndFullJoinRejected(t *testing.T) {
-	tests := []struct{ sql, want string }{
-		{"CREATE VIEW v AS SELECT a.id FROM a RIGHT JOIN b ON b.a_id = a.id;", "RIGHT and FULL joins"},
-		{"CREATE VIEW v AS SELECT a.id FROM a full JOIN b ON b.a_id = a.id;", "RIGHT and FULL joins"},
-		{"CREATE VIEW v AS SELECT a.id FROM c JOIN a FULL JOIN b ON b.a_id = a.id;", "RIGHT and FULL joins"},
-		{"CREATE VIEW v AS SELECT a.id FROM a RIGHT OUTER JOIN b ON b.a_id = a.id;", "found 'OUTER'"},
-	}
-	for _, tt := range tests {
-		_, err := sqlite.ParseViewSQL([]byte(tt.sql))
-		if err == nil || !strings.Contains(err.Error(), tt.want) {
-			t.Errorf("ParseViewSQL(%q) error = %v, want it to contain %q", tt.sql, err, tt.want)
+	for _, sql := range []string{
+		"CREATE VIEW v AS SELECT a.id FROM a RIGHT JOIN b ON b.a_id = a.id;",
+		"CREATE VIEW v AS SELECT a.id FROM a full JOIN b ON b.a_id = a.id;",
+		"CREATE VIEW v AS SELECT a.id FROM c JOIN a FULL JOIN b ON b.a_id = a.id;",
+		"CREATE VIEW v AS SELECT a.id FROM a RIGHT OUTER JOIN b ON b.a_id = a.id;",
+		"CREATE VIEW v AS SELECT a.id FROM a NATURAL FULL OUTER JOIN b;",
+		"CREATE VIEW v AS SELECT a.id FROM (a RIGHT JOIN b ON b.a_id = a.id) JOIN c ON c.id = a.id;",
+	} {
+		_, err := sqlite.ParseViewSQL([]byte(sql))
+		if err == nil || !strings.Contains(err.Error(), "RIGHT and FULL joins are not supported") {
+			t.Errorf("ParseViewSQL(%q) error = %v, want it to reject the join", sql, err)
 		}
-		_, named := errors.AsType[*parser.ViewQueryError](err)
-		if wantNamed := tt.want != "found 'OUTER'"; named != wantNamed {
-			t.Errorf("ParseViewSQL(%q) error is a ViewQueryError = %t, want %t", tt.sql, named, wantNamed)
+		if _, ok := errors.AsType[*parser.ViewQueryError](err); !ok {
+			t.Errorf("ParseViewSQL(%q) error = %v, want a ViewQueryError", sql, err)
 		}
 	}
 }
@@ -1700,10 +1948,8 @@ func TestParseViewSQL_ColumnNames(t *testing.T) {
 	}{
 		{name: "unaliased expression", sql: "CREATE VIEW v AS SELECT id, a + b FROM t", wantErr: `view v selects "a" + "b" with no alias and no column name`},
 		{name: "unaliased aggregate", sql: "CREATE VIEW v AS SELECT id, COUNT(*) FROM t GROUP BY id", wantErr: "view v selects COUNT(*) with no alias"},
-		// rqlite/sql panics rendering LIKE … ESCAPE, so the column is named
-		// by position.
-		{name: "unaliased LIKE ESCAPE", sql: `CREATE VIEW v AS SELECT id, a LIKE 'x%' ESCAPE '\' FROM t`, wantErr: "view v selects column 2 with no alias and no column name; name it with AS"},
-		{name: "unaliased aggregate over LIKE ESCAPE", sql: `CREATE VIEW v AS SELECT id, COUNT(a LIKE 'x%' ESCAPE '\') FROM t GROUP BY id`, wantErr: "view v selects column 2 with no alias and no column name; name it with AS"},
+		{name: "unaliased LIKE ESCAPE", sql: `CREATE VIEW v AS SELECT id, a LIKE 'x%' ESCAPE '\' FROM t`, wantErr: `view v selects "a" LIKE 'x%' ESCAPE '\' with no alias and no column name; name it with AS`},
+		{name: "unaliased aggregate over LIKE ESCAPE", sql: `CREATE VIEW v AS SELECT id, COUNT(a LIKE 'x%' ESCAPE '\') FROM t GROUP BY id`, wantErr: `view v selects COUNT("a" LIKE 'x%' ESCAPE '\') with no alias and no column name; name it with AS`},
 		{name: "aliased LIKE ESCAPE", sql: `CREATE VIEW v AS SELECT id, a LIKE 'x%' ESCAPE '\' AS m FROM t`, want: []string{"id", "m"}},
 		{name: "star", sql: "CREATE VIEW v AS SELECT * FROM t", wantErr: "view v selects *, whose columns the view parser cannot list"},
 		{name: "table star", sql: "CREATE VIEW v AS SELECT id, t.* FROM t", wantErr: `view v selects "t".*, whose columns`},

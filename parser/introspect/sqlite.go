@@ -146,9 +146,15 @@ func (si *SQLiteIntrospector) introspectTable(ctx context.Context, ref sqliteTab
 	if err := si.introspectIndexes(ctx, &table, indexes); err != nil {
 		return parser.Table{}, err
 	}
-	for _, c := range declared.Constraints {
+	for i := range declared.Constraints {
+		c := &declared.Constraints[i]
 		if c.Type == parser.Check {
-			table.Constraints = append(table.Constraints, c)
+			table.Constraints = append(table.Constraints, *c)
+		}
+		// The stored CREATE TABLE is read alone, so a key written with no
+		// column list resolves here, as the PRAGMA's does.
+		if err := si.resolveImplicitReference(ctx, c); err != nil {
+			return parser.Table{}, fmt.Errorf("introspect sqlite table %s: %w", ref.name, err)
 		}
 	}
 	if err := nameDeclaredConstraints(&table, declared); err != nil {
@@ -421,8 +427,7 @@ type pkCol struct {
 }
 
 // sqliteFKRow is one row of PRAGMA foreign_key_list: column seq of foreign
-// key id. to is NULL for REFERENCES t with no column list, which reading the
-// stored CREATE TABLE rejects before foreign keys are read (PRD §6.3).
+// key id. to is NULL for REFERENCES t with no column list.
 type sqliteFKRow struct {
 	id       int
 	seq      int
@@ -469,7 +474,14 @@ func (si *SQLiteIntrospector) introspectForeignKeys(ctx context.Context, table *
 			order = append(order, r.id)
 		}
 		c.Columns = append(c.Columns, r.from)
-		c.ReferenceColumns = append(c.ReferenceColumns, r.to.String)
+		if r.to.Valid {
+			c.ReferenceColumns = append(c.ReferenceColumns, r.to.String)
+		}
+	}
+	for _, c := range fks {
+		if err := si.resolveImplicitReference(ctx, c); err != nil {
+			return fmt.Errorf("introspect sqlite foreign keys %s: %w", table.Name, err)
+		}
 	}
 
 	// PRAGMA foreign_key_list numbers foreign keys in reverse declaration
@@ -491,6 +503,35 @@ func (si *SQLiteIntrospector) introspectForeignKeys(ctx context.Context, table *
 		}
 	}
 
+	return nil
+}
+
+// resolveImplicitReference gives c, a foreign key, its parent's primary key
+// columns when it is written with no column list (REFERENCES p), as the file
+// parser does. The parent is read from the database, so it need not be one
+// input.introspect includes.
+func (si *SQLiteIntrospector) resolveImplicitReference(ctx context.Context, c *parser.Constraint) error {
+	if c.Type != parser.ForeignKey || len(c.ReferenceColumns) > 0 {
+		return nil
+	}
+	rows, err := si.db.QueryContext(ctx, "SELECT name FROM pragma_table_info(?) WHERE pk > 0 ORDER BY pk", c.ReferenceTable)
+	if err != nil {
+		return fmt.Errorf("reading the primary key of %s: %w", c.ReferenceTable, err)
+	}
+	defer rows.Close() //nolint:errcheck // rows.Close error is not actionable after reading
+
+	var key []string
+	for rows.Next() {
+		var name string
+		if err := rows.Scan(&name); err != nil {
+			return fmt.Errorf("reading the primary key of %s: scanning: %w", c.ReferenceTable, err)
+		}
+		key = append(key, name)
+	}
+	if err := rows.Err(); err != nil {
+		return fmt.Errorf("reading the primary key of %s: iterating: %w", c.ReferenceTable, err)
+	}
+	c.ReferenceColumns = sqlite.ImplicitReferenceColumns(c.Columns, key)
 	return nil
 }
 

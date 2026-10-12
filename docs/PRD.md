@@ -1670,7 +1670,8 @@ type Introspector interface {
 - **SQLite constraint names and CHECK text.** SQLite's PRAGMAs give columns, keys, foreign keys and indexes, but not constraint names or CHECK expressions. Those come from the table's stored `CREATE TABLE` (`sqlite_master.sql`), read with the file parser. `PRAGMA index_list` flags a partial index but does not give its predicate, which comes from the index's stored `CREATE INDEX`, read with the file parser, so it is the parser's text and not the DDL as written.
 - **SQLite column types.** A column's type is the declared type the catalog reports, normalized as the file parser normalizes it, so an unrecognized type is `blob` and a type modifier has no spaces (`decimal(10,2)`).
 - **SQLite generated columns.** `PRAGMA table_xinfo` lists them (`hidden` 2 is VIRTUAL, 3 is STORED), and the expression comes from the stored `CREATE TABLE`, read with the file parser.
-- **SQLite DDL the file parser cannot read.** Every table's stored `CREATE TABLE`, and every partial index's stored `CREATE INDEX`, is read with the file parser, and the parser cannot read some legal SQLite DDL: a sort order before `AUTOINCREMENT` on a column `PRIMARY KEY` (`PRIMARY KEY ASC AUTOINCREMENT`), an `ON CONFLICT` clause on a `PRIMARY KEY`, `UNIQUE` or `NOT NULL` constraint, at column or table level (`UNIQUE (a) ON CONFLICT REPLACE`), a sort order or collation on a table-level `PRIMARY KEY` column (`PRIMARY KEY (id DESC)`), `REFERENCES t` with no column list, a `MATCH` clause on a foreign key (`REFERENCES p(id) MATCH SIMPLE`), a quoted type name (`f "my type"`, `f 'text'`, `f [text]`), and `IS [NOT] DISTINCT FROM` or `LIKE … ESCAPE` in a CHECK, a column default, a generated column or a partial index's `WHERE`. A table or partial index with any of these is an introspection error, as the same DDL is a parse error under `files`.
+- **SQLite foreign keys with no column list.** `REFERENCES t` with no column list references `t`'s primary key. `PRAGMA foreign_key_list` gives no parent columns for it, so both sources take them from the parent's primary key, in key order, whichever file or statement defines the parent. A key whose parent is not defined, has no primary key, or has a primary key over a different number of columns keeps no parent columns under both sources, as SQLite reports an error (a missing table or a foreign key mismatch) when it enforces it.
+- **SQLite DDL the file parser cannot read.** Every table's stored `CREATE TABLE`, and every partial index's stored `CREATE INDEX`, is read with the file parser. The parser rejects a quoted type name (`f "my type"`, `f 'text'`, `f [text]`, `f "varchar"(10)`, `f INT "x"`): SQLite keeps it in a form the parser does not reproduce (`PRAGMA table_info` reports `"varchar"(10)` as `varchar`), so it would differ by source. A table with one is an introspection error, as the same DDL is a parse error under `files`.
 
 ### 6.4 Filtering
 
@@ -8917,7 +8918,7 @@ Codegen-time validation of `filter:` contents (column existence, enum literal va
 
 Both are consequences of `filter:` being raw SQL; a consumer who needs the predicate checked expresses it as a declared relationship rather than a filter.
 
-Wherever codegen parses the filter (§4.8), what the qualifier cannot read fails generation, with an error naming the table, the relationship and the filter: a syntax error on any dialect, and on SQLite a `LIKE … ESCAPE`, which the SQLite parser reads but cannot write back ([6.3](#63-dialect-introspection-capabilities) lists the same limit for DDL).
+Wherever codegen parses the filter (§4.8), what the qualifier cannot read fails generation, with an error naming the table, the relationship and the filter: a syntax error on any dialect.
 
 ---
 
