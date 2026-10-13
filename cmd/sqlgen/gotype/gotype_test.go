@@ -1715,6 +1715,132 @@ func TestForSchema_QualifiedOverrideKey(t *testing.T) {
 	}
 }
 
+// TestForSchema_DomainChainOverrideKey pins the override keys each link of a
+// domain chain is matched under. A domain's base type is a column of the
+// domain, so it tries its keys qualified with the domain's schema and then
+// bare, wherever the column using the outer domain lives (PRD §7.1).
+func TestForSchema_DomainChainOverrideKey(t *testing.T) {
+	ext := func(name string) config.TypeOverride {
+		return config.TypeOverride{Type: "ext." + name, Import: "example.com/ext"}
+	}
+	tests := []struct {
+		name   string
+		global map[string]config.TypeOverride
+		table  map[string]config.TypeOverride
+		owner  string
+		typ    string
+		want   string
+	}{
+		{
+			name:   "bare key on the domain a domain is over",
+			global: map[string]config.TypeOverride{"email": ext("Email")},
+			owner:  "app",
+			typ:    "work_email",
+			want:   "ext.Email",
+		},
+		{
+			name:   "bare key through a three-level chain",
+			global: map[string]config.TypeOverride{"email": ext("Email")},
+			owner:  "app",
+			typ:    "alt_email",
+			want:   "ext.Email",
+		},
+		{
+			name:   "bare key from a column in another schema",
+			global: map[string]config.TypeOverride{"email": ext("Email")},
+			owner:  "public",
+			typ:    "app.work_email",
+			want:   "ext.Email",
+		},
+		{
+			name:   "qualified key on the domain a domain is over",
+			global: map[string]config.TypeOverride{"app.email": ext("Email")},
+			owner:  "app",
+			typ:    "work_email",
+			want:   "ext.Email",
+		},
+		{
+			name:   "qualified key wins over bare at the same link",
+			global: map[string]config.TypeOverride{"email": ext("Bare"), "app.email": ext("Qualified")},
+			owner:  "app",
+			typ:    "work_email",
+			want:   "ext.Qualified",
+		},
+		{
+			name:  "table-scoped bare key on the domain a domain is over",
+			table: map[string]config.TypeOverride{"email": ext("Table")},
+			owner: "app",
+			typ:   "work_email",
+			want:  "ext.Table",
+		},
+		{
+			name:   "an outer link's global key wins over an inner link's table key",
+			global: map[string]config.TypeOverride{"work_email": ext("Global")},
+			table:  map[string]config.TypeOverride{"email": ext("Table")},
+			owner:  "app",
+			typ:    "work_email",
+			want:   "ext.Global",
+		},
+		{
+			name:   "an inner link's global key wins over its base's table key",
+			global: map[string]config.TypeOverride{"email": ext("Global")},
+			table:  map[string]config.TypeOverride{"text": ext("Table")},
+			owner:  "app",
+			typ:    "work_email",
+			want:   "ext.Global",
+		},
+		{
+			name:   "a key qualified with another schema does not match",
+			global: map[string]config.TypeOverride{"billing.email": ext("Email")},
+			owner:  "app",
+			typ:    "work_email",
+			want:   "string",
+		},
+		{
+			name:   "a base written qualified is matched only as written",
+			global: map[string]config.TypeOverride{"email": ext("Email")},
+			owner:  "app",
+			typ:    "billing_email",
+			want:   "string",
+		},
+		{
+			name:   "a base written qualified takes its qualified key",
+			global: map[string]config.TypeOverride{"billing.email": ext("Email")},
+			owner:  "app",
+			typ:    "billing_email",
+			want:   "ext.Email",
+		},
+		{
+			name:   "a builtin base is qualified with the domain's schema",
+			global: map[string]config.TypeOverride{"app.text": ext("Text")},
+			owner:  "public",
+			typ:    "app.email",
+			want:   "ext.Text",
+		},
+		{
+			name:   "a builtin base is not qualified with the column's schema",
+			global: map[string]config.TypeOverride{"public.text": ext("Text")},
+			owner:  "public",
+			typ:    "app.email",
+			want:   "string",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			r := gotype.NewResolver("postgres", true, tt.global)
+			r.RegisterDomain("app", "email", "text")
+			r.RegisterDomain("app", "work_email", "email")
+			r.RegisterDomain("app", "alt_email", "work_email")
+			r.RegisterDomain("billing", "email", "varchar")
+			r.RegisterDomain("app", "billing_email", "billing.email")
+			got := r.ForSchema(tt.owner).Resolve(tt.typ, false, "c", nil, tt.table).Name
+			if got != tt.want {
+				t.Errorf("ForSchema(%q).Resolve(%q) = %q, want %q", tt.owner, tt.typ, got, tt.want)
+			}
+		})
+	}
+}
+
 // TestResolveAggregateSumWidening pins the dialect-specific SUM result-type
 // widening: PostgreSQL SUM(smallint|integer) → bigint and SUM(bigint) →
 // numeric; MySQL SUM(<integer>) → decimal; SQLite integers are already int64
@@ -2393,6 +2519,12 @@ func TestOverrideSource(t *testing.T) {
 			global:  map[string]config.TypeOverride{"text": {Type: "int64"}},
 			sqlType: "work_email",
 			wantKey: "text", wantOK: true,
+		},
+		{
+			name:    "domain chain reaches the base domain's bare key",
+			global:  map[string]config.TypeOverride{"email": {Type: "int64"}},
+			sqlType: "work_email",
+			wantKey: "email", wantOK: true,
 		},
 		{
 			name:    "integration activated by another key has none",

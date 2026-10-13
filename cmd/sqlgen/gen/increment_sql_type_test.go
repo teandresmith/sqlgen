@@ -332,6 +332,12 @@ func TestIncrementSQLTypeGuardNamesMatchedOverrideKey(t *testing.T) {
 			wantPrefix:  `overrides.types.app.email: "int64"`,
 		},
 		{
+			name:        "global bare key on the domain a domain is over",
+			columnType:  "work_email",
+			globalTypes: map[string]config.TypeOverride{"email": {Type: "int64"}},
+			wantPrefix:  `overrides.types.email: "int64"`,
+		},
+		{
 			name:        "global key without the column's modifiers",
 			columnType:  "varchar(255)",
 			globalTypes: map[string]config.TypeOverride{"varchar": {Type: "int64"}},

@@ -22,66 +22,6 @@
 ## Open
 
 <!-- fixes:open:begin -->
-### FIX-334
-
-- **Status:** Open
-- **Severity:** nit
-- **Origin:** phase 30, `cmd/sqlgen/gotype` (domain resolution)
-- **Surfaced by:** FIX-322 vet (2026-10-12), filed at the backlog sweep's Step 5
-- **Vetted:** corrected at `02000941` (2026-10-12)
-
-**Issue.** A bare `overrides.types.<domain>` key does not reach a domain defined over that domain in the same
-schema, though PRD §7.1 says a domain in a schema tries the schema-qualified key, then the bare one. Measured in
-package gotype: `NewResolver("postgres", true, {"email": int64})`, `RegisterDomain("app","email","text")`,
-`RegisterDomain("app","email2","email")`, `ForSchema("app")` → `Resolve("email")=int64`,
-`Resolve("email2")=string`, so the override silently skips the `email2` column. The recursion also resolves a
-domain's base in the *column's* schema, not the domain's: from a `public` column of type `app.email` (domain over
-text), `public.text` matches (int64) and `app.text` does not (string) — the reverse of PRD §7.1. End to end (postgres
-example copy, `CREATE DOMAIN email2 AS email`, `overrides.types.email: ksuid.KSUID`): `Contact.Addr string`, `Alt
-*string`, while `types_gen.go` has `type Email2 = ksuid.KSUID` (the alias resolves with `ForSchema(dt.Schema)`), so the
-alias and the field disagree.
-
-**Root cause.** `domainBaseType` (`gotype.go:557-577`) returns `app.email`, and the domain recursion (`:807-808`,
-`r.resolveByType(baseSQLType, …)`) looks up only that key with the column's resolver; the qualified-then-bare logic
-lives in `lookupOverride` (`:699-714`), which skips a type containing "." (`lookupKeys`, `:728`, never adds schema
-keys).
-
-**Suggested fix.**
-- `resolveByTypeSource` (after FIX-322): the domain branch reads `d := r.domains[key]` and recurses with
-  `r.ForSchema(d.schema)` on the raw `d.base` (keeping `r` when `d.schema` is empty or the owner schema), so each link
-  of a chain tries its keys qualified with the domain's schema, then bare, as a column's own type does; table, global
-  and integration overrides are tried at every link, outer link first. `domainBaseType` stays for
-  `resolveDomainBase` / `BaseSQLType` (classification).
-- Tests: `TestForSchema_DomainChainOverrideKey` (13 cases: bare key over 2- and 3-level chains and from another
-  schema; qualified key; qualified beats bare at one link; table-scoped bare; outer global beats inner table key;
-  inner global beats its base's table key; `billing.email` key does not match `app`; a qualified base is matched only as
-  written; a builtin base qualified with the domain's schema); FIX-322's `TestOverrideSource` gains "domain chain reaches
-  the base domain's bare key", `TestIncrementSQLTypeGuardNamesMatchedOverrideKey` gains "global bare key on the domain a
-  domain is over".
-- PRD §7.1 may gain one sentence for the unspecified chain order: "a domain's base type is matched as a column of that
-  domain, in the domain's schema, at each link of the chain".
-- Corrected from the original: widened to the column-schema qualification of a domain's base (same root cause, same
-  site). Behavior changes beyond the bare-key case, PRD-aligned, no golden impact: a global key on the inner domain now
-  beats a table-scoped key on its base; `<column-schema>.<builtin>` no longer reaches a cross-schema domain's base and
-  `<domain-schema>.<builtin>` does.
-- Prototype results, run at `02000941` (+ FIX-319 + FIX-322) on 2026-10-12: probe (identical at plain base and
-  base+319+322) → with global `{"email": int64}`, `ForSchema(app)`: email int64, email2 string, email3 string;
-  `ForSchema(public).Resolve("app.email2")` string; global `{"public.text": int64}` → `ForSchema(public).Resolve("app.email")`
-  int64, `{"app.text": int64}` → string. E2E copy after the fix: `Contact.Addr ksuid.KSUID`, `Alt *ksuid.KSUID`,
-  `Contacts2.Addr ksuid.KSUID`, alias unchanged; `go build ./...`, `go vet ./models/...` pass. Gates: gofumpt, vet clean;
-  `go test -race -count=1 ./gotype/... ./gen/...` ok; `TestE2EGoldenFiles` ok; golangci-lint 0 issues. Fail-first: domain
-  branch reverted to base+322 → 7 of 13 fail (e.g. `ForSchema("app").Resolve("work_email") = "string", want
-  "ext.Email"`; `ForSchema("public").Resolve("app.email") = "ext.Text", want "string"`), `OverrideSource("work_email") =
-  ("", false, false), want ("email", false, true)`, increment warnings `= [], want one starting "overrides.types.email:
-  \"int64\""`; existing suite passes. Golden churn none. Stacked on FIX-319 + FIX-322 (edits a line 322 introduces; does
-  not apply without it). Patch: `.claude/prototypes/FIX-334.patch` (3 files, +148/-2).
-
-**References.**
-- PRD §7.1.
-- FIX-322 (`resolveByTypeSource` restructures the same function; lands first).
-
-**Resolution notes.** _Filled in by /fix resolve._
-
 ### FIX-335
 
 - **Status:** Open
@@ -703,6 +643,80 @@ DEFAULT.
 ## Resolved
 
 <!-- fixes:resolved:begin -->
+### FIX-334
+
+- **Status:** Resolved
+- **Severity:** nit
+- **Origin:** phase 30, `cmd/sqlgen/gotype` (domain resolution)
+- **Surfaced by:** FIX-322 vet (2026-10-12), filed at the backlog sweep's Step 5
+- **Vetted:** corrected at `02000941` (2026-10-12)
+
+**Issue.** A bare `overrides.types.<domain>` key does not reach a domain defined over that domain in the same
+schema, though PRD §7.1 says a domain in a schema tries the schema-qualified key, then the bare one. Measured in
+package gotype: `NewResolver("postgres", true, {"email": int64})`, `RegisterDomain("app","email","text")`,
+`RegisterDomain("app","email2","email")`, `ForSchema("app")` → `Resolve("email")=int64`,
+`Resolve("email2")=string`, so the override silently skips the `email2` column. The recursion also resolves a
+domain's base in the *column's* schema, not the domain's: from a `public` column of type `app.email` (domain over
+text), `public.text` matches (int64) and `app.text` does not (string) — the reverse of PRD §7.1. End to end (postgres
+example copy, `CREATE DOMAIN email2 AS email`, `overrides.types.email: ksuid.KSUID`): `Contact.Addr string`, `Alt
+*string`, while `types_gen.go` has `type Email2 = ksuid.KSUID` (the alias resolves with `ForSchema(dt.Schema)`), so the
+alias and the field disagree.
+
+**Root cause.** `domainBaseType` (`gotype.go:557-577`) returns `app.email`, and the domain recursion (`:832-833`,
+inside `resolveByTypeSource` since FIX-322, `r.resolveByTypeSource(baseSQLType, …)`) looks up only that key with the
+column's resolver; the qualified-then-bare logic lives in `lookupOverride` (`:699-714`), which skips a type containing
+"." (`lookupKeys`, `:729`, never adds schema keys).
+
+**Suggested fix.**
+- `resolveByTypeSource` (after FIX-322): the domain branch reads `d := r.domains[key]` and recurses with
+  `r.ForSchema(d.schema)` on the raw `d.base` (keeping `r` when `d.schema` is empty or the owner schema), so each link
+  of a chain tries its keys qualified with the domain's schema, then bare, as a column's own type does; table, global
+  and integration overrides are tried at every link, outer link first. `domainBaseType` stays for
+  `resolveDomainBase` / `BaseSQLType` (classification).
+- Tests: `TestForSchema_DomainChainOverrideKey` (13 cases: bare key over 2- and 3-level chains and from another
+  schema; qualified key; qualified beats bare at one link; table-scoped bare; outer global beats inner table key;
+  inner global beats its base's table key; `billing.email` key does not match `app`; a qualified base is matched only as
+  written; a builtin base qualified with the domain's schema); FIX-322's `TestOverrideSource` gains "domain chain reaches
+  the base domain's bare key", `TestIncrementSQLTypeGuardNamesMatchedOverrideKey` gains "global bare key on the domain a
+  domain is over".
+- PRD §7.1 may gain one sentence for the unspecified chain order: "a domain's base type is matched as a column of that
+  domain, in the domain's schema, at each link of the chain".
+- Corrected from the original: widened to the column-schema qualification of a domain's base (same root cause, same
+  site). Behavior changes beyond the bare-key case, PRD-aligned, no golden impact: a global key on the inner domain now
+  beats a table-scoped key on its base; `<column-schema>.<builtin>` no longer reaches a cross-schema domain's base and
+  `<domain-schema>.<builtin>` does.
+- Prototype results, run at `02000941` (+ FIX-319 + FIX-322) on 2026-10-12: probe (identical at plain base and
+  base+319+322) → with global `{"email": int64}`, `ForSchema(app)`: email int64, email2 string, email3 string;
+  `ForSchema(public).Resolve("app.email2")` string; global `{"public.text": int64}` → `ForSchema(public).Resolve("app.email")`
+  int64, `{"app.text": int64}` → string. E2E copy after the fix: `Contact.Addr ksuid.KSUID`, `Alt *ksuid.KSUID`,
+  `Contacts2.Addr ksuid.KSUID`, alias unchanged; `go build ./...`, `go vet ./models/...` pass. Gates: gofumpt, vet clean;
+  `go test -race -count=1 ./gotype/... ./gen/...` ok; `TestE2EGoldenFiles` ok; golangci-lint 0 issues. Fail-first: domain
+  branch reverted to base+322 → 7 of 13 fail (e.g. `ForSchema("app").Resolve("work_email") = "string", want
+  "ext.Email"`; `ForSchema("public").Resolve("app.email") = "ext.Text", want "string"`), `OverrideSource("work_email") =
+  ("", false, false), want ("email", false, true)`, increment warnings `= [], want one starting "overrides.types.email:
+  \"int64\""`; existing suite passes. Golden churn none. Stacked on FIX-319 + FIX-322 (edits a line 322 introduces; does
+  not apply without it). Patch: `.claude/prototypes/FIX-334.patch` (3 files, +148/-2).
+
+**References.**
+- PRD §7.1.
+- FIX-322 (`resolveByTypeSource` restructures the same function; lands first).
+
+**Resolution notes.** The domain branch of `resolveByTypeSource` (`cmd/sqlgen/gotype/gotype.go`) now reads
+`d := r.domains[key]` and resolves the raw `d.base` with `r.ForSchema(d.schema)` (keeping `r` when the domain has no
+schema or is in the owner schema), so each link of a domain chain tries its `overrides.types` keys qualified with the
+domain's schema and then bare, and table, global and integration overrides are tried at every link, outer link first.
+`domainBaseType` stays for `resolveDomainBase` / `BaseSQLType`. The matched key is still the one `lookupOverride`
+returns (FIX-322), so `OverrideSource` and the increment-eligibility warning name `email` for a `work_email` column of a
+domain over `email`. Tests: `TestForSchema_DomainChainOverrideKey` (13 cases), `TestOverrideSource` "domain chain reaches
+the base domain's bare key", `TestIncrementSQLTypeGuardNamesMatchedOverrideKey` "global bare key on the domain a domain
+is over". PRD §7.1 ("How steps 3–5 match a SQL type") gains the chain sentence: a domain's base is matched as a column of
+that domain, in the domain's schema, each link tried at steps 3–5 before the next. Prototype applied clean at
+`f4bc470c`; the domain-branch comment was shortened. Fail-first: source hunk reverted → 7 of 13 new cases fail, plus `OverrideSource("work_email") = ("", false,
+false), want ("email", false, true)` and `increment warnings = [], want one starting "overrides.types.email:
+\"int64\""`. Gates: `make check` ok, `make update-golden-e2e` / `make update-golden` no churn (matches the vet),
+`make check-examples` ok. Inline: Root cause updated to HEAD (`:807-808` → `:832-833`, `:728` → `:729`; the recursion is now
+`r.resolveByTypeSource`, inside `resolveByTypeSource` since FIX-322).
+
 ### FIX-333
 
 - **Status:** Resolved

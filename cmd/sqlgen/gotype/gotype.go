@@ -829,8 +829,14 @@ func (r *Resolver) resolveByTypeSource(sqlType string, nullable bool, tableOverr
 			FKConvert:     FKStringSprint,
 		}, overrideSource{}
 	}
-	if baseSQLType, ok := r.domainBaseType(key); ok {
-		return r.resolveByTypeSource(baseSQLType, nullable, tableOverrides)
+	if d, ok := r.domains[key]; ok {
+		// A domain's base resolves as a column of the domain, in the
+		// domain's schema (PRD §7.1).
+		scope := r
+		if d.schema != "" && d.schema != r.ownerSchema {
+			scope = r.ForSchema(d.schema)
+		}
+		return scope.resolveByTypeSource(d.base, nullable, tableOverrides)
 	}
 
 	// Handle PostgreSQL array types: strip [] suffix and resolve base type.
