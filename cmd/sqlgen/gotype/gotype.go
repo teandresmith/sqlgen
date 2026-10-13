@@ -696,7 +696,7 @@ func (r *Resolver) widenSumBase(base string) string {
 // type is first looked up qualified with the owner schema: both schema sources
 // write a type in the column's own schema bare, so without this a key written
 // app.status_enum would never reach the app schema's own columns (PRD §7.1).
-func (r *Resolver) lookupOverride(m map[string]config.TypeOverride, sqlType string) (config.TypeOverride, bool) {
+func (r *Resolver) lookupOverride(m map[string]config.TypeOverride, sqlType string) (config.TypeOverride, string, bool) {
 	keys := lookupKeys(sqlType)
 	if r.ownerSchema != "" && !strings.Contains(sqlType, ".") {
 		qualified := make([]string, 0, 2*len(keys))
@@ -707,10 +707,10 @@ func (r *Resolver) lookupOverride(m map[string]config.TypeOverride, sqlType stri
 	}
 	for _, key := range keys {
 		if override, ok := m[key]; ok {
-			return override, true
+			return override, key, true
 		}
 	}
-	return config.TypeOverride{}, false
+	return config.TypeOverride{}, "", false
 }
 
 // mysqlIntegerBases are the integer bases whose unsigned form never falls
@@ -745,8 +745,32 @@ func lookupKeys(sqlType string) []string {
 	return []string{sqlType, base}
 }
 
+// OverrideSource reports the `overrides.types` key that gives sqlType its Go
+// type, as written in the config: the key the resolution chain matched, which
+// for a domain is whichever link of the domain chain carried the entry. It
+// reports whether that key is in tableOverrides rather than the global map,
+// and ok is false when no `overrides.types` entry resolves sqlType.
+func (r *Resolver) OverrideSource(sqlType string, tableOverrides map[string]config.TypeOverride) (key string, tableScoped, ok bool) {
+	_, source := r.resolveByTypeSource(normalizeSQL(sqlType), false, tableOverrides)
+	return source.key, source.tableScoped, source.key != ""
+}
+
+// overrideSource is the `overrides.types` entry a resolution matched. The
+// zero value means none did.
+type overrideSource struct {
+	key         string
+	tableScoped bool
+}
+
 // resolveByType implements steps 2-5 of the resolution chain.
 func (r *Resolver) resolveByType(sqlType string, nullable bool, tableOverrides map[string]config.TypeOverride) GoType {
+	gt, _ := r.resolveByTypeSource(sqlType, nullable, tableOverrides)
+	return gt
+}
+
+// resolveByTypeSource is resolveByType, also reporting the override entry the
+// Go type came from.
+func (r *Resolver) resolveByTypeSource(sqlType string, nullable bool, tableOverrides map[string]config.TypeOverride) (GoType, overrideSource) {
 	// A table-scoped overrides.types map activates the integrations it names,
 	// exactly as the global map does at resolver construction — nesting depth
 	// is not part of the resolution (PRD §7.4). The two halves land at
@@ -756,23 +780,23 @@ func (r *Resolver) resolveByType(sqlType string, nullable bool, tableOverrides m
 	scopedOverrides, scopedIntegrations := scopeIntegrations(tableOverrides)
 
 	// Step 2: Table-level overrides.types
-	if override, ok := r.lookupOverride(scopedOverrides, sqlType); ok {
-		return FromOverride(override, nullable)
+	if override, key, ok := r.lookupOverride(scopedOverrides, sqlType); ok {
+		return FromOverride(override, nullable), overrideSource{key: key, tableScoped: true}
 	}
 
 	// Step 3: Global overrides.types
-	if override, ok := r.lookupOverride(r.globalOverrides, sqlType); ok {
-		return FromOverride(override, nullable)
+	if override, key, ok := r.lookupOverride(r.globalOverrides, sqlType); ok {
+		return FromOverride(override, nullable), overrideSource{key: key}
 	}
 
 	// Step 4: Built-in integrations. A table-scoped activation is the more
 	// specific of the two, so it is consulted first; both sit below every
 	// explicit override, per the chain in PRD §7.1.
-	if override, ok := r.lookupOverride(scopedIntegrations, sqlType); ok {
-		return FromOverride(override, nullable)
+	if override, _, ok := r.lookupOverride(scopedIntegrations, sqlType); ok {
+		return FromOverride(override, nullable), overrideSource{}
 	}
-	if override, ok := r.lookupOverride(r.integrations, sqlType); ok {
-		return FromOverride(override, nullable)
+	if override, _, ok := r.lookupOverride(r.integrations, sqlType); ok {
+		return FromOverride(override, nullable), overrideSource{}
 	}
 
 	// Step 4.5: Schema enums, sets, and domains, owner schema first
@@ -787,7 +811,7 @@ func (r *Resolver) resolveByType(sqlType string, nullable bool, tableOverrides m
 			gt.Name = "*" + goTypeName
 			gt.ZeroValue = "nil"
 		}
-		return gt
+		return gt, overrideSource{}
 	}
 	if goTypeName, ok := r.sets[key]; ok {
 		// SET types are named slices (reference types), so nullable uses the same type.
@@ -803,10 +827,10 @@ func (r *Resolver) resolveByType(sqlType string, nullable bool, tableOverrides m
 			ZeroValue:     "nil",
 			SliceElemType: goTypeName + "Value",
 			FKConvert:     FKStringSprint,
-		}
+		}, overrideSource{}
 	}
 	if baseSQLType, ok := r.domainBaseType(key); ok {
-		return r.resolveByType(baseSQLType, nullable, tableOverrides)
+		return r.resolveByTypeSource(baseSQLType, nullable, tableOverrides)
 	}
 
 	// Handle PostgreSQL array types: strip [] suffix and resolve base type.
@@ -824,22 +848,22 @@ func (r *Resolver) resolveByType(sqlType string, nullable bool, tableOverrides m
 					IsSlice:       true,
 					SliceElemType: goTypeName,
 					FKConvert:     FKStringSprint,
-				}
+				}, overrideSource{}
 			}
 
-			base := r.resolveByType(baseType, false, tableOverrides)
+			base, source := r.resolveByTypeSource(baseType, false, tableOverrides)
 			return GoType{
 				Name:      "[]" + base.Name,
 				Import:    base.Import,
 				ZeroValue: "nil",
 				IsSlice:   true,
 				FKConvert: FKStringSprint,
-			}
+			}, source
 		}
 	}
 
 	// Step 5: Built-in dialect mapping
-	return r.builtinResolve(sqlType, nullable)
+	return r.builtinResolve(sqlType, nullable), overrideSource{}
 }
 
 // builtinResolve looks up the built-in dialect mapping for a SQL type.

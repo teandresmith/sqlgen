@@ -2354,3 +2354,66 @@ func TestZerofillOverrideKey(t *testing.T) {
 		})
 	}
 }
+
+// TestOverrideSource pins that OverrideSource reports the key Resolve matched,
+// as written, and only an overrides.types key: a type an integration, enum or
+// built-in mapping resolves has none.
+func TestOverrideSource(t *testing.T) {
+	decimalOverride := config.TypeOverride{Type: "decimal.Decimal", Import: decimal.ImportPath}
+	tests := []struct {
+		name            string
+		global          map[string]config.TypeOverride
+		table           map[string]config.TypeOverride
+		sqlType         string
+		wantKey         string
+		wantTableScoped bool
+		wantOK          bool
+	}{
+		{
+			name:    "global key as written",
+			global:  map[string]config.TypeOverride{"varchar": {Type: "int64"}},
+			sqlType: "VARCHAR(255)",
+			wantKey: "varchar", wantOK: true,
+		},
+		{
+			name:    "table-scoped key wins over global",
+			global:  map[string]config.TypeOverride{"text": {Type: "int32"}},
+			table:   map[string]config.TypeOverride{"email": {Type: "int64"}},
+			sqlType: "email",
+			wantKey: "email", wantTableScoped: true, wantOK: true,
+		},
+		{
+			name:    "owner-qualified key before bare",
+			global:  map[string]config.TypeOverride{"email": {Type: "int32"}, "app.email": {Type: "int64"}},
+			sqlType: "email",
+			wantKey: "app.email", wantOK: true,
+		},
+		{
+			name:    "domain chain reaches the base's key",
+			global:  map[string]config.TypeOverride{"text": {Type: "int64"}},
+			sqlType: "work_email",
+			wantKey: "text", wantOK: true,
+		},
+		{
+			name:    "integration activated by another key has none",
+			global:  map[string]config.TypeOverride{"numeric": decimalOverride},
+			sqlType: "decimal",
+		},
+		{
+			name:    "built-in mapping has none",
+			sqlType: "text",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			r := gotype.NewResolver("postgres", true, tt.global)
+			r.RegisterDomain("app", "email", "text")
+			r.RegisterDomain("app", "work_email", "email")
+			key, tableScoped, ok := r.ForSchema("app").OverrideSource(tt.sqlType, tt.table)
+			if key != tt.wantKey || tableScoped != tt.wantTableScoped || ok != tt.wantOK {
+				t.Errorf("OverrideSource(%q) = (%q, %v, %v), want (%q, %v, %v)",
+					tt.sqlType, key, tableScoped, ok, tt.wantKey, tt.wantTableScoped, tt.wantOK)
+			}
+		})
+	}
+}

@@ -22,68 +22,6 @@
 ## Open
 
 <!-- fixes:open:begin -->
-### FIX-322
-
-- **Status:** Open
-- **Severity:** nit
-- **Origin:** phase 30, `cmd/sqlgen/gen` (`typeOverrideSource`) + `cmd/sqlgen/gotype`
-- **Surfaced by:** backlog sweep 2026-10-12 (backlog line from FIX-270)
-- **Vetted:** corrected at `a99568ff` (2026-10-12)
-
-**Issue.** The increment-eligibility warning names the wrong config key for a domain or qualified
-override. Measured (domain `email` over `text`, override → `int64`): global `email` → warning names
-`overrides.types.text`; global `app.email` → `overrides.types.text`; table-scoped
-`tables.app.invoices.overrides.types."app.email"` → `overrides.types.text` (scope prefix lost too).
-The same re-derivation misnames a key written without the column's modifiers: global `varchar` on a
-`varchar(255)` column → `overrides.types.varchar(255)`; table-scoped `varchar` → `overrides.types.varchar(255)`
-(prefix lost too); global `app.text` on `text` → `overrides.types.text`.
-
-**Root cause.** `typeOverrideSource` (`cmd/sqlgen/gen/context_table.go:800`) re-derives the key: it
-probes only table-scope bare `col.SQLType` / base keys and falls back to `overrides.types.<base>`,
-never asking the resolver which key matched.
-
-**Suggested fix.**
-- gotype: `lookupOverride` also returns the key it matched; `resolveByType`'s body moves into
-  `resolveByTypeSource`, returning `(GoType, overrideSource{key, tableScoped})` (step 2 table-scoped,
-  step 3 global; integrations, enums, SETs and built-ins return a zero source; domain recursion and the
-  array base pass the inner source up). `resolveByType` becomes a thin wrapper. New exported
-  `(*Resolver).OverrideSource(sqlType, tableOverrides) (key string, tableScoped, ok bool)`.
-- gen: `incrementSQLTypeWarnings` / `typeOverrideSource` take the column's resolver
-  (`input.Resolver.ForSchema(table.Schema)`) and format `tables.<t>.overrides.types.<key>` or
-  `overrides.types.<key>` from it; the `overrides.types.<base>` fallback stays only for ok=false (unreachable:
-  no built-in or integration mapping makes a non-arithmetic type arithmetic).
-- Tests: `TestIncrementSQLTypeGuardNamesMatchedOverrideKey` (gen, 6 cases: the three measured, a domain over
-  that domain, global and table-scoped modifier-less keys); `TestOverrideSource` (gotype, 6 cases).
-- Corrected from the original: the matched key is passed out of `resolveByType`'s own path instead of a second
-  walk copying its step 2/3 order, so the reported key cannot drift from the one that resolved; scope widened to
-  modifier-less keys and domain-over-domain (same root cause, same site).
-- Prototype results, run at `a99568ff` on 2026-10-12: probe `zz_probe_fix322_test.go` (table `app.invoices`,
-  domain `app.email` over `text`, override → `int64`, `BuildTableContexts`) → global `email`, global
-  `app.email`, table-scoped `app.email`, global `app.text` → "overrides.types.text"; global and table-scoped
-  `varchar` on `varchar(255)` → "overrides.types.varchar(255)". With the patch: `overrides.types.email`,
-  `overrides.types.app.email`, `tables.app.invoices.overrides.types.app.email`, `overrides.types.varchar`,
-  `tables.app.invoices.overrides.types.varchar`, `overrides.types.app.text`. Gates: `go test -race -count=1
-  ./gotype/... ./gen/...` ok; `-short ./cli/... ./config/...` ok; golangci-lint 0 issues; gofumpt clean.
-  Fail-first: gen `typeOverrideSource` reverted → all 6 gen subtests fail (`increment warnings =
-  ["overrides.types.text: \"int64\" is an arithmetic Go type but column \"note\" has SQL type \"email\" (a
-  domain over \"text\"), ..."], want one starting "overrides.types.email: \"int64\""`); `lookupOverride`
-  returning the probed type → `OverrideSource("VARCHAR(255)") = ("varchar(255)", false, true), want
-  ("varchar", false, true)`; domain recursion not passing the source → `OverrideSource("work_email") = ("",
-  false, false), want ("text", false, true)`; existing suite passes at base. Golden churn none. Overlap:
-  FIX-319 (gotype.go mappings / `widenSumBase` ~:675, gotype_test.go top) and FIX-324 (context_table.go
-  @@ -265, adjacent to the call site at :264) — `git apply --check` clean after either. Patch:
-  `.claude/prototypes/FIX-322.patch` (4 files, +215/-33).
-
-**References.**
-- PRD §7.1 (override matching, `docs/PRD.md:1706`), §8.2 (increment eligibility warning, "A type override
-  cannot manufacture eligibility", `docs/PRD.md:2498`).
-- Backlog line absorbed: 2026-10-07 increment warning names wrong override key (FIX-270). The sibling
-  enum-array line is a PRD §7.2 doc fix and the qualified-builtin-key line is deleted (both applied
-  with the backlog sweep).
-- FIX-270.
-
-**Resolution notes.** _Filled in by /fix resolve._
-
 ### FIX-323
 
 - **Status:** Open
@@ -1467,6 +1405,68 @@ DEFAULT.
 ## Resolved
 
 <!-- fixes:resolved:begin -->
+
+### FIX-322
+
+- **Status:** Resolved
+- **Severity:** nit
+- **Origin:** phase 30, `cmd/sqlgen/gen` (`typeOverrideSource`) + `cmd/sqlgen/gotype`
+- **Surfaced by:** backlog sweep 2026-10-12 (backlog line from FIX-270)
+- **Vetted:** corrected at `a99568ff` (2026-10-12)
+
+**Issue.** The increment-eligibility warning names the wrong config key for a domain or qualified
+override. Measured (domain `email` over `text`, override → `int64`): global `email` → warning names
+`overrides.types.text`; global `app.email` → `overrides.types.text`; table-scoped
+`tables.app.invoices.overrides.types."app.email"` → `overrides.types.text` (scope prefix lost too).
+The same re-derivation misnames a key written without the column's modifiers: global `varchar` on a
+`varchar(255)` column → `overrides.types.varchar(255)`; table-scoped `varchar` → `overrides.types.varchar(255)`
+(prefix lost too); global `app.text` on `text` → `overrides.types.text`.
+
+**Root cause.** `typeOverrideSource` (`cmd/sqlgen/gen/context_table.go:800`) re-derives the key: it
+probes only table-scope bare `col.SQLType` / base keys and falls back to `overrides.types.<base>`,
+never asking the resolver which key matched.
+
+**Suggested fix.**
+- gotype: `lookupOverride` also returns the key it matched; `resolveByType`'s body moves into
+  `resolveByTypeSource`, returning `(GoType, overrideSource{key, tableScoped})` (step 2 table-scoped,
+  step 3 global; integrations, enums, SETs and built-ins return a zero source; domain recursion and the
+  array base pass the inner source up). `resolveByType` becomes a thin wrapper. New exported
+  `(*Resolver).OverrideSource(sqlType, tableOverrides) (key string, tableScoped, ok bool)`.
+- gen: `incrementSQLTypeWarnings` / `typeOverrideSource` take the column's resolver
+  (`input.Resolver.ForSchema(table.Schema)`) and format `tables.<t>.overrides.types.<key>` or
+  `overrides.types.<key>` from it; the `overrides.types.<base>` fallback stays only for ok=false (unreachable:
+  no built-in or integration mapping makes a non-arithmetic type arithmetic).
+- Tests: `TestIncrementSQLTypeGuardNamesMatchedOverrideKey` (gen, 6 cases: the three measured, a domain over
+  that domain, global and table-scoped modifier-less keys); `TestOverrideSource` (gotype, 6 cases).
+- Corrected from the original: the matched key is passed out of `resolveByType`'s own path instead of a second
+  walk copying its step 2/3 order, so the reported key cannot drift from the one that resolved; scope widened to
+  modifier-less keys and domain-over-domain (same root cause, same site).
+- Prototype results, run at `a99568ff` on 2026-10-12: probe `zz_probe_fix322_test.go` (table `app.invoices`,
+  domain `app.email` over `text`, override → `int64`, `BuildTableContexts`) → global `email`, global
+  `app.email`, table-scoped `app.email`, global `app.text` → "overrides.types.text"; global and table-scoped
+  `varchar` on `varchar(255)` → "overrides.types.varchar(255)". With the patch: `overrides.types.email`,
+  `overrides.types.app.email`, `tables.app.invoices.overrides.types.app.email`, `overrides.types.varchar`,
+  `tables.app.invoices.overrides.types.varchar`, `overrides.types.app.text`. Gates: `go test -race -count=1
+  ./gotype/... ./gen/...` ok; `-short ./cli/... ./config/...` ok; golangci-lint 0 issues; gofumpt clean.
+  Fail-first: gen `typeOverrideSource` reverted → all 6 gen subtests fail (`increment warnings =
+  ["overrides.types.text: \"int64\" is an arithmetic Go type but column \"note\" has SQL type \"email\" (a
+  domain over \"text\"), ..."], want one starting "overrides.types.email: \"int64\""`); `lookupOverride`
+  returning the probed type → `OverrideSource("VARCHAR(255)") = ("varchar(255)", false, true), want
+  ("varchar", false, true)`; domain recursion not passing the source → `OverrideSource("work_email") = ("",
+  false, false), want ("text", false, true)`; existing suite passes at base. Golden churn none. Overlap:
+  FIX-319 (gotype.go mappings / `widenSumBase` ~:675, gotype_test.go top) and FIX-324 (context_table.go
+  @@ -265, adjacent to the call site at :264) — `git apply --check` clean after either. Patch:
+  `.claude/prototypes/FIX-322.patch` (4 files, +215/-33).
+
+**References.**
+- PRD §7.1 (override matching, `docs/PRD.md:1719`), §8.2 (increment eligibility warning, "A type override
+  cannot manufacture eligibility", `docs/PRD.md:2513`).
+- Backlog line absorbed: 2026-10-07 increment warning names wrong override key (FIX-270). The sibling
+  enum-array line is a PRD §7.2 doc fix and the qualified-builtin-key line is deleted (both applied
+  with the backlog sweep).
+- FIX-270.
+
+**Resolution notes.** Landed as vetted. `lookupOverride` also returns the key it matched; `resolveByType`'s body moved into `resolveByTypeSource`, which returns the Go type with an `overrideSource{key, tableScoped}` (step 2 table-scoped, step 3 global; integrations, enums, SETs and built-ins return none; domain recursion and the array base pass the inner source up), and `resolveByType` is a thin wrapper. New `(*Resolver).OverrideSource`. `incrementSQLTypeWarnings` / `typeOverrideSource` (`cmd/sqlgen/gen/context_table.go`) take the column's resolver (`input.Resolver.ForSchema(table.Schema)`) and name the matched key at its scope; the `overrides.types.<base>` fallback stays only for the unreachable ok=false case. Tests: `TestIncrementSQLTypeGuardNamesMatchedOverrideKey` (gen, 6 cases), `TestOverrideSource` (gotype, 6 cases). Prototype applied with `git apply --3way` (FIX-319 `29c96dfc` had edited `gotype.go` near `lookupOverride`); it merged without conflicts. Fail-first on the final code: gen `context_table.go` reverted → all 6 gen subtests fail; `lookupOverride` returning the probed type → `OverrideSource("VARCHAR(255)") = ("varchar(255)", false, true)`; domain recursion not passing the source → `OverrideSource("work_email") = ("", false, false)`. Gates: `make check` ok; `make update-golden` + `make update-golden-e2e` → no churn (matches vet); `make check-examples` ok. Verify-pass inline corrections: the `!ok` fallback comment in `typeOverrideSource` no longer claims the branch is unreachable (a `tenancy.type` override reaches it); References PRD line refs corrected (1706 → 1719, 2498 → 2513). The `tenancy.type` route going unnamed in the warning predates this fix and is a different gap, so it went to the backlog.
 
 ### FIX-321
 

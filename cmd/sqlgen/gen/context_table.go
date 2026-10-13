@@ -261,7 +261,7 @@ func buildSingleTableContext(input *GenerateInput, table *parser.Table, collisio
 	columns, pkColumns := buildTableColumns(input, table, tableCfg)
 
 	input.Warnings = append(input.Warnings,
-		incrementSQLTypeWarnings(qualifiedTableOrName(table), tableCfg, columns)...)
+		incrementSQLTypeWarnings(input.Resolver.ForSchema(table.Schema), qualifiedTableOrName(table), tableCfg, columns)...)
 
 	pkStrategy := detectPKStrategy(input, table, pkColumns, tableCfg)
 
@@ -771,7 +771,7 @@ func baseSQLType(resolver *gotype.Resolver, sqlType string) string {
 // notion of which override route was taken — and a column nobody overrode
 // cannot reach it, because no non-arithmetic SQL type resolves to an
 // arithmetic Go type on its own.
-func incrementSQLTypeWarnings(qualifiedTable string, tableCfg config.TableConfig, columns []ColumnContext) []string {
+func incrementSQLTypeWarnings(resolver *gotype.Resolver, qualifiedTable string, tableCfg config.TableConfig, columns []ColumnContext) []string {
 	var warnings []string
 	for _, col := range columns {
 		if !incrementBlockedBySQLType(col) {
@@ -783,7 +783,7 @@ func incrementSQLTypeWarnings(qualifiedTable string, tableCfg config.TableConfig
 		}
 		warnings = append(warnings, fmt.Sprintf(
 			"%s: %q is an arithmetic Go type but column %q has SQL type %s, so %s is not offered for increment — `%s = %s + ?` would error on PostgreSQL, coerce on MySQL, and silently rewrite the stored value on SQLite. Everything else about the override applies as written.",
-			typeOverrideSource(qualifiedTable, tableCfg, col, col.BaseSQLType), col.GoType, col.Name, sqlTypeDesc,
+			typeOverrideSource(resolver, qualifiedTable, tableCfg, col), col.GoType, col.Name, sqlTypeDesc,
 			qualifiedTable+"."+col.Name, col.Name, col.Name,
 		))
 	}
@@ -792,26 +792,33 @@ func incrementSQLTypeWarnings(qualifiedTable string, tableCfg config.TableConfig
 
 // typeOverrideSource names the config key that produced a column's resolved Go
 // type, so an error can point at the line to edit. The two per-column routes
-// are named exactly. For the by-SQL-type routes, the table-level map is probed
-// first so the error carries the `tables.<t>.` prefix when that is where the
-// entry lives, and the key is reported as written — the raw SQL type when the
-// user keyed on it, the domain-resolved base otherwise — rather than as a
-// spelling (`varchar(255)`) that appears in no config file.
-func typeOverrideSource(qualifiedTable string, tableCfg config.TableConfig, col ColumnContext, baseSQLType string) string {
+// are named exactly. For the by-SQL-type routes the resolver reports the
+// `overrides.types` key it matched, as written — `email`, `app.email` or
+// `varchar` rather than the domain's base or a spelling (`varchar(255)`) that
+// appears in no config file — and whether it is table-scoped. resolver must be
+// the one the column was resolved with.
+func typeOverrideSource(resolver *gotype.Resolver, qualifiedTable string, tableCfg config.TableConfig, col ColumnContext) string {
 	if override, ok := tableCfg.ColumnMap[col.Name]; ok && override.Type != "" {
 		return fmt.Sprintf("tables.%s.column_map.%s.type", qualifiedTable, col.Name)
 	}
 	if _, ok := tableCfg.TypeMap[col.Name]; ok {
 		return fmt.Sprintf("tables.%s.type_map.%s", qualifiedTable, col.Name)
 	}
+	var tableOverrides map[string]config.TypeOverride
 	if tableCfg.Overrides != nil {
-		for _, key := range []string{col.SQLType, baseSQLType} {
-			if _, ok := tableCfg.Overrides.Types[key]; ok {
-				return fmt.Sprintf("tables.%s.overrides.types.%s", qualifiedTable, key)
-			}
-		}
+		tableOverrides = tableCfg.Overrides.Types
 	}
-	return fmt.Sprintf("overrides.types.%s", baseSQLType)
+	key, tableScoped, ok := resolver.OverrideSource(col.SQLType, tableOverrides)
+	switch {
+	case !ok:
+		// No overrides.types entry matched, so tenancy.type produced the
+		// type; that route is not named here.
+		return fmt.Sprintf("overrides.types.%s", col.BaseSQLType)
+	case tableScoped:
+		return fmt.Sprintf("tables.%s.overrides.types.%s", qualifiedTable, key)
+	default:
+		return "overrides.types." + key
+	}
 }
 
 // needsExplicitImport reports whether a Go type literal names a package
