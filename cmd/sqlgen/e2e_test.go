@@ -151,30 +151,26 @@ func runGoldenFileTest(t *testing.T, ex exampleDir) {
 	}
 
 	// Graphql examples need a real Go-module context for the chained
-	// `sqlgen graphql gen` gqlgen subprocess — gqlgen infers
-	// import paths from go.mod, and absolute paths under /tmp resolve to
-	// the empty import path, colliding the exec/model packages. Rather
-	// than synthesize a fake module on every run, generate in-place at
-	// ex.Path and diff against expected/. Update mode copies the freshly
-	// regenerated tree into expected/ to refresh the goldens.
+	// `sqlgen graphql gen` gqlgen subprocess — gqlgen infers import paths
+	// from go.mod, so a bare temp output dir resolves to the empty import
+	// path and collides the exec/model packages. Update mode generates in
+	// place at ex.Path and copies the tree into expected/. Compare mode
+	// generates in a copy of the whole example (generateCopy), so a failing
+	// run never rewrites the checked-in models/.
+	//
+	// Root-relative schema_dir/resolver_dir (§26.5.8) can place the graph
+	// package as a sibling of output.dir (e.g. a top-level ./graph), outside
+	// the output.dir walk. siblingGraphDirs folds any such tree into the
+	// golden set under its root-relative path; a graph nested under
+	// output.dir (e.g. models/graph) is already walked.
 	if isGraphQLExample(ex.Path, cfgData) {
-		runGenerate(t, cfgPath)
-		outputDir := findOutputDir(t, ex.Path)
-		// Root-relative schema_dir/resolver_dir (§26.5.8) can place the graph
-		// package as a sibling of output.dir (e.g. a top-level ./graph). Such a
-		// tree lives outside output.dir, so the output.dir-only diff below would
-		// silently skip it. Capture any graph dir that resolves outside
-		// output.dir and fold it into the golden set under its root-relative
-		// path. Graph nested under output.dir (e.g. models/graph) is already
-		// covered by the output.dir walk, so siblings is empty for that layout
-		// and behavior is unchanged.
-		siblings := siblingGraphDirs(t, ex.Path, cfgData, outputDir)
 		if *updateE2E {
-			copyOutputToExpected(t, ex.Path, siblings)
+			runGenerate(t, cfgPath)
+			copyOutputToExpected(t, ex.Path, siblingGraphDirs(t, ex.Path, cfgData, findOutputDir(t, ex.Path)))
 			t.Logf("updated golden files for %s", ex.Name)
 			return
 		}
-		compareWithExpected(t, ex.Path, outputDir, siblings)
+		compareFilesWithExpected(t, ex.Path, generateCopy(t, ex, cfgData, cfgData))
 		return
 	}
 
@@ -189,7 +185,7 @@ func runGoldenFileTest(t *testing.T, ex exampleDir) {
 	// Generate into a temp directory and compare against expected/.
 	tmpOutput := t.TempDir()
 	runGenerateToDir(t, ex.Path, cfgPath, tmpOutput)
-	compareWithExpected(t, ex.Path, tmpOutput, nil)
+	compareWithExpected(t, ex.Path, tmpOutput)
 }
 
 // runBothGoldenFileTest generates a source: both example from its base
@@ -214,7 +210,7 @@ func runBothGoldenFileTest(t *testing.T, ex exampleDir, cfgPath string, cfgData 
 	}
 	tmpOutput := t.TempDir()
 	runGenerateToDir(t, ex.Path, cfgPath, tmpOutput)
-	compareWithExpected(t, ex.Path, tmpOutput, nil)
+	compareWithExpected(t, ex.Path, tmpOutput)
 
 	migrated := newExampleDatabase(t, dialect, "")
 	livedb.ApplySetup(t, dialect, migrated, ex.Path)
@@ -272,10 +268,10 @@ func runGenerate(t *testing.T, cfgPath string) {
 // env var to the originally configured output.dir so import paths stay stable
 // while writes still go to the temp directory.
 //
-// Note: this path is not used for graphql examples — those generate
-// in-place at ex.Path because the chained `sqlgen graphql gen` gqlgen
-// subprocess infers import paths from the example's
-// go.mod, and a temp dir under /tmp has no go.mod so gqlgen collides on
+// Note: this path is not used for graphql examples — those generate in a
+// copy of the whole example (generateCopy) because the chained `sqlgen
+// graphql gen` gqlgen subprocess infers import paths from the example's
+// go.mod, and a bare temp output dir has no go.mod so gqlgen collides on
 // the empty import path.
 func runGenerateToDir(t *testing.T, _ /*examplePath*/, cfgPath, outputDir string) {
 	t.Helper()
@@ -548,29 +544,23 @@ func copyOutputToExpected(t *testing.T, examplePath string, siblings map[string]
 	}
 }
 
-// compareWithExpected diffs the generated output against the expected/ golden
-// directory. Sibling graph dirs (outside output.dir) are folded into the
-// generated set under their root-relative path so they diff against
-// expected/<root-relative-path> (mirrors copyOutputToExpected).
-func compareWithExpected(t *testing.T, examplePath, tmpOutputDir string, siblings map[string]string) {
+// compareWithExpected diffs the output dir tmpOutputDir against the expected/
+// golden directory.
+func compareWithExpected(t *testing.T, examplePath, tmpOutputDir string) {
+	t.Helper()
+	compareFilesWithExpected(t, examplePath, slashKeys(collectFiles(t, tmpOutputDir)))
+}
+
+// compareFilesWithExpected diffs generatedFiles, keyed by slash path, against
+// the expected/ golden directory.
+func compareFilesWithExpected(t *testing.T, examplePath string, generatedFiles map[string]string) {
 	t.Helper()
 
 	expectedDir := filepath.Join(examplePath, "expected")
 	if _, err := os.Stat(expectedDir); err != nil {
 		t.Fatalf("expected/ directory does not exist in %s (run with -update-e2e to create)", examplePath)
 	}
-
-	// Collect all files from both directories.
-	expectedFiles := collectFiles(t, expectedDir)
-	generatedFiles := collectFiles(t, tmpOutputDir)
-
-	// Fold sibling graph trees into the generated set under their root-relative
-	// path so keys line up with expected/<root-relative-path>.
-	for rel, abs := range siblings {
-		for k, v := range collectFiles(t, abs) {
-			generatedFiles[filepath.Join(rel, k)] = v
-		}
-	}
+	expectedFiles := slashKeys(collectFiles(t, expectedDir))
 
 	// Check for files in expected/ but missing from generated output.
 	for relPath := range expectedFiles {
@@ -806,8 +796,8 @@ func compareBySource(t *testing.T, dialect, source string, ex exampleDir, genera
 }
 
 // removeGoldenOutputs deletes from a copy of an example every file its
-// expected/ lists, so a file the database run fails to emit cannot pass as
-// the checked-in one. gqlgen keeps resolver implementations in resolver.go
+// expected/ lists, so a file the run fails to emit cannot pass as the
+// checked-in one. gqlgen keeps resolver implementations in resolver.go
 // and *.resolvers.go, so those stay.
 func removeGoldenOutputs(t *testing.T, expectedDir, outputDir string, siblings map[string]string) {
 	t.Helper()

@@ -22,59 +22,6 @@
 ## Open
 
 <!-- fixes:open:begin -->
-### FIX-330
-
-- **Status:** Open
-- **Severity:** nit
-- **Origin:** phase 10, `cmd/sqlgen` (`e2e_test.go` `runGoldenFileTest`)
-- **Surfaced by:** backlog sweep 2026-10-12 (backlog line from FIX-295)
-- **Vetted:** corrected at `a99568ff` (2026-10-12)
-
-**Issue.** A failing `TestE2EGoldenFiles` run (without `-update-e2e`) leaves graphql-enabled example
-`models/` trees modified: after a deliberate regression it deleted
-`cmd/sqlgen/testdata/examples/sqlite/models/manifest_embed_gen.go` and rewrote other generated files,
-so a fail-first probe must re-run `make update-golden-e2e` to restore them. Killing the run mid-way
-(SIGTERM) leaves the same state: ` D …/sqlite/models/graph/generated_gen.go`, ` D …/sqlite/models/manifest_embed_gen.go`,
-` M …/sqlite/models/sorter_gen.go`.
-
-**Root cause.** `runGoldenFileTest` (`cmd/sqlgen/e2e_test.go:160-178`) generates in place
-(`runGenerate`) for graphql examples (`graphql`, `graphql_null_wrappers`, `graphql_top_level`,
-`mysql`, `sqlite`) and compares, with no restore; other examples generate into `t.TempDir()`.
-
-**Suggested fix.**
-- In compare mode (`!*updateE2E`), graphql examples call `compareFilesWithExpected(t, ex.Path,
-  generateCopy(t, ex, cfgData, cfgData))`: the existing `generateCopy` (TestE2EDatabaseTwin, `source: both`
-  sub-runs) copies the whole example into `t.TempDir()` with absolute go.mod replaces and folds in the sibling
-  graph dirs, so the checked-in `models/` is never written. The `-update-e2e` path is unchanged (in-place
-  `runGenerate` + `copyOutputToExpected`).
-- `compareWithExpected(t, examplePath, dir)` becomes a thin wrapper over `compareFilesWithExpected(t,
-  examplePath, map)`; the unused `siblings` parameter goes; both sides keyed through `slashKeys`. Rewrite the
-  graphql-branch comment and `runGenerateToDir`'s note ("a temp dir under /tmp has no go.mod so gqlgen
-  collides" holds only for a bare output dir, not a full example copy).
-- Corrected from the original: prototypes the entry's copy alternative, not snapshot/restore — it reuses
-  `generateCopy` (net -10 lines); it is interrupt-safe where `t.Cleanup` is not (Go runs no cleanups on
-  SIGINT/SIGTERM or a `-timeout` panic; measured: the base binary killed mid-run leaves 2 deleted + 1 modified
-  file, the prototype leaves `git status` clean); and `removeGoldenOutputs` clears golden-listed files in the
-  copy first, so a file the generator stops emitting can no longer pass on the stale checked-in copy (reading
-  only). Not slower: non-Docker `TestE2EGoldenFiles` 51.4s prototype vs 72.6s base (warm-cache noise).
-- Prototype results, run at `a99568ff` on 2026-10-12: regression `// REGRESSION-PROBE` in
-  `gen/templates/sorter.go.tmpl` → `go test -run 'TestE2EGoldenFiles/sqlite$' -count=1 .` → `file
-  "sorter_gen.go" differs from expected`, then `git status` ` M testdata/examples/sqlite/models/sorter_gen.go`;
-  with the prototype the same FAIL and `models/` clean. Gates: gofumpt clean; `golangci-lint run ./...` 0 issues;
-  `go test -race -count=1 -run 'TestE2E|TestRewrite' -skip 'TestE2EGoldenFiles/introspect_(mysql|postgres)|
-  TestE2EDatabaseTwin' .` ok; all 13 non-Docker golden subtests pass with a clean tree; `-update-e2e` with the
-  regression still writes `models/` and `expected/` in place (sqlite, graphql_top_level, introspect_sqlite), and
-  without it churns nothing. Not run: the Docker-backed introspect_mysql/postgres goldens and
-  TestE2EDatabaseTwin (their only change is the mechanical `compareWithExpected` signature) — `/fix-implement`'s
-  full gates cover them. Fail-first: in-place compare restored with the regression → `file "sorter_gen.go"
-  differs from expected` and `git status` dirty again; existing suite passes at base. Golden churn none. No
-  other vetted patch touches `e2e_test.go`. Patch: `.claude/prototypes/FIX-330.patch` (1 file, +32/-42).
-
-**References.**
-- `guidelines/TESTING.md` (golden files).
-- Backlog line absorbed: 2026-10-09 failing golden run rewrites models (FIX-295).
-
-**Resolution notes.** _Filled in by /fix resolve._
 ### FIX-331
 
 - **Status:** Open
@@ -953,6 +900,60 @@ DEFAULT.
 ## Resolved
 
 <!-- fixes:resolved:begin -->
+
+### FIX-330
+
+- **Status:** Resolved
+- **Severity:** nit
+- **Origin:** phase 10, `cmd/sqlgen` (`e2e_test.go` `runGoldenFileTest`)
+- **Surfaced by:** backlog sweep 2026-10-12 (backlog line from FIX-295)
+- **Vetted:** corrected at `a99568ff` (2026-10-12)
+
+**Issue.** A failing `TestE2EGoldenFiles` run (without `-update-e2e`) leaves graphql-enabled example
+`models/` trees modified: after a deliberate regression it deleted
+`cmd/sqlgen/testdata/examples/sqlite/models/manifest_embed_gen.go` and rewrote other generated files,
+so a fail-first probe must re-run `make update-golden-e2e` to restore them. Killing the run mid-way
+(SIGTERM) leaves the same state: ` D …/sqlite/models/graph/generated_gen.go`, ` D …/sqlite/models/manifest_embed_gen.go`,
+` M …/sqlite/models/sorter_gen.go`.
+
+**Root cause.** `runGoldenFileTest` (`cmd/sqlgen/e2e_test.go:160-178`) generates in place
+(`runGenerate`) for graphql examples (`graphql`, `graphql_null_wrappers`, `graphql_top_level`,
+`mysql`, `sqlite`) and compares, with no restore; other examples generate into `t.TempDir()`.
+
+**Suggested fix.**
+- In compare mode (`!*updateE2E`), graphql examples call `compareFilesWithExpected(t, ex.Path,
+  generateCopy(t, ex, cfgData, cfgData))`: the existing `generateCopy` (TestE2EDatabaseTwin, `source: both`
+  sub-runs) copies the whole example into `t.TempDir()` with absolute go.mod replaces and folds in the sibling
+  graph dirs, so the checked-in `models/` is never written. The `-update-e2e` path is unchanged (in-place
+  `runGenerate` + `copyOutputToExpected`).
+- `compareWithExpected(t, examplePath, dir)` becomes a thin wrapper over `compareFilesWithExpected(t,
+  examplePath, map)`; the unused `siblings` parameter goes; both sides keyed through `slashKeys`. Rewrite the
+  graphql-branch comment and `runGenerateToDir`'s note ("a temp dir under /tmp has no go.mod so gqlgen
+  collides" holds only for a bare output dir, not a full example copy).
+- Corrected from the original: prototypes the entry's copy alternative, not snapshot/restore — it reuses
+  `generateCopy` (net -10 lines); it is interrupt-safe where `t.Cleanup` is not (Go runs no cleanups on
+  SIGINT/SIGTERM or a `-timeout` panic; measured: the base binary killed mid-run leaves 2 deleted + 1 modified
+  file, the prototype leaves `git status` clean); and `removeGoldenOutputs` clears golden-listed files in the
+  copy first, so a file the generator stops emitting can no longer pass on the stale checked-in copy (reading
+  only). Not slower: non-Docker `TestE2EGoldenFiles` 51.4s prototype vs 72.6s base (warm-cache noise).
+- Prototype results, run at `a99568ff` on 2026-10-12: regression `// REGRESSION-PROBE` in
+  `gen/templates/sorter.go.tmpl` → `go test -run 'TestE2EGoldenFiles/sqlite$' -count=1 .` → `file
+  "sorter_gen.go" differs from expected`, then `git status` ` M testdata/examples/sqlite/models/sorter_gen.go`;
+  with the prototype the same FAIL and `models/` clean. Gates: gofumpt clean; `golangci-lint run ./...` 0 issues;
+  `go test -race -count=1 -run 'TestE2E|TestRewrite' -skip 'TestE2EGoldenFiles/introspect_(mysql|postgres)|
+  TestE2EDatabaseTwin' .` ok; all 13 non-Docker golden subtests pass with a clean tree; `-update-e2e` with the
+  regression still writes `models/` and `expected/` in place (sqlite, graphql_top_level, introspect_sqlite), and
+  without it churns nothing. Not run: the Docker-backed introspect_mysql/postgres goldens and
+  TestE2EDatabaseTwin (their only change is the mechanical `compareWithExpected` signature) — `/fix-implement`'s
+  full gates cover them. Fail-first: in-place compare restored with the regression → `file "sorter_gen.go"
+  differs from expected` and `git status` dirty again; existing suite passes at base. Golden churn none. No
+  other vetted patch touches `e2e_test.go`. Patch: `.claude/prototypes/FIX-330.patch` (1 file, +32/-42).
+
+**References.**
+- `guidelines/TESTING.md` (golden files).
+- Backlog line absorbed: 2026-10-09 failing golden run rewrites models (FIX-295).
+
+**Resolution notes.** Resolved 2026-10-13. Prototype applied clean at `38e80b61`. `runGoldenFileTest` (`cmd/sqlgen/e2e_test.go`) compare mode now generates graphql examples through `generateCopy` (a full copy of the example in `t.TempDir()` with absolute go.mod replaces, sibling graph dirs folded in, golden-listed outputs cleared first) and diffs it with the new `compareFilesWithExpected`; `compareWithExpected` is a thin wrapper and drops the `siblings` parameter. `-update-e2e` still generates in place and copies into `expected/`. Divergence from the prototype: dropped the `(FIX-330)` reference from the graphql-branch comment (refs rule) and made `removeGoldenOutputs`'s doc comment source-neutral ("the run", not "the database run") now that compare mode uses it too. Fail-first: a `// REGRESSION-PROBE` line in `gen/templates/sorter.go.tmpl` → `go test -run 'TestE2EGoldenFiles/(sqlite|graphql_top_level)$'` fails with `file "sorter_gen.go" differs from expected` both ways; at base `git status` shows ` M …/graphql_top_level/models/sorter_gen.go` and ` M …/sqlite/models/sorter_gen.go`, with the fix `models/` stays clean. Gates: `make check` ok; full Docker `TestE2EGoldenFiles` (all 13 examples incl. introspect_mysql/postgres database+files) and `TestE2EDatabaseTwin` (13 subtests) pass; `make update-golden-e2e` churns nothing. `check-examples` not path-triggered (test file only).
 
 ### FIX-329
 
