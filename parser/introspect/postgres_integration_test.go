@@ -292,6 +292,90 @@ CREATE UNIQUE INDEX c_code_uq ON pgi_checks.c (code) WHERE code <> ''`
 	assertSchemaParity(t, "postgres", parsed, introspected)
 }
 
+// TestPostgresIntrospect_ExcludedSchemaDomain pins that an expression over a
+// value of a domain whose schema introspect.schemas leaves out loses the cast
+// the catalog adds to it, as it does when the domain's schema is introspected.
+func TestPostgresIntrospect_ExcludedSchemaDomain(t *testing.T) {
+	requireDatabases(t)
+	ddl := `
+CREATE SCHEMA pgi_domx;
+CREATE SCHEMA pgi_domx_app;
+CREATE DOMAIN pgi_domx.pos AS integer CHECK (VALUE > 0);
+CREATE DOMAIN pgi_domx_app.small AS pgi_domx.pos CHECK (VALUE < 100);
+CREATE TABLE pgi_domx_app.t (
+	x pgi_domx.pos CHECK (x > 5),
+	y integer GENERATED ALWAYS AS (x * 2) STORED
+)`
+	reset := "DROP SCHEMA IF EXISTS pgi_domx_app CASCADE; DROP SCHEMA IF EXISTS pgi_domx CASCADE"
+	parsed, introspected := pgParityCase(t, reset, ddl, "pgi_domx_app")
+
+	domains := make([]string, 0, len(introspected.DomainTypes))
+	for _, d := range introspected.DomainTypes {
+		domains = append(domains, d.Schema+"."+d.Name)
+	}
+	if diff := cmp.Diff([]string{"pgi_domx_app.small"}, domains); diff != "" {
+		t.Errorf("introspected domains mismatch (-want +got):\n%s", diff)
+	}
+
+	want := map[string]string{
+		"t_x_check":   "x > 5",
+		"y":           "x * 2",
+		"small_check": "value < 100",
+	}
+	for _, side := range []struct {
+		name   string
+		schema *parser.Schema
+	}{{"parsed", parsed}, {"introspected", introspected}} {
+		got := make(map[string]string)
+		tbl := findTable(t, side.schema, "t")
+		for _, c := range tbl.Constraints {
+			if c.Type == parser.Check {
+				got[c.Name] = c.CheckExpression
+			}
+		}
+		for _, c := range tbl.Columns {
+			if c.GeneratedExpr != "" {
+				got[c.Name] = c.GeneratedExpr
+			}
+		}
+		for _, d := range side.schema.DomainTypes {
+			if d.Schema != "pgi_domx_app" {
+				continue
+			}
+			for _, c := range d.Constraints {
+				got[c.Name] = c.CheckExpression
+			}
+		}
+		if diff := cmp.Diff(want, got); diff != "" {
+			t.Errorf("%s expressions mismatch (-want +got):\n%s", side.name, diff)
+		}
+	}
+}
+
+// TestPostgresIntrospect_DomainConstraintOrder pins that a domain's CHECKs
+// come in creation order, the order the parser reads them in, whatever order
+// the catalog stores them in: renaming a constraint writes its row again after
+// the others.
+func TestPostgresIntrospect_DomainConstraintOrder(t *testing.T) {
+	requireDatabases(t)
+	applyParityFixture(t, "pgx", pgConnStr, "DROP SCHEMA IF EXISTS pgi_domorder CASCADE", `
+CREATE SCHEMA pgi_domorder;
+CREATE DOMAIN pgi_domorder.d AS integer CONSTRAINT a CHECK (VALUE > 0) CONSTRAINT b CHECK (VALUE < 100);
+ALTER DOMAIN pgi_domorder.d RENAME CONSTRAINT a TO a2`)
+	s := introspectPG(t, "", "pgi_domorder")
+
+	if len(s.DomainTypes) != 1 {
+		t.Fatalf("DomainTypes = %d, want 1", len(s.DomainTypes))
+	}
+	got := make([]string, 0, len(s.DomainTypes[0].Constraints))
+	for _, c := range s.DomainTypes[0].Constraints {
+		got = append(got, c.Name)
+	}
+	if diff := cmp.Diff([]string{"a2", "b"}, got); diff != "" {
+		t.Errorf("domain constraint order mismatch (-want +got):\n%s", diff)
+	}
+}
+
 // TestPostgresIntrospect_CatalogRewrites pins the expressions whose catalog
 // text cannot be brought back to the DDL's: the catalog rewrites the operator,
 // prints a date or time value in its own format, or holds a cast the DDL wrote

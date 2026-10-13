@@ -22,59 +22,6 @@
 ## Open
 
 <!-- fixes:open:begin -->
-### FIX-313
-
-- **Status:** Open
-- **Severity:** tracked
-- **Origin:** phase 30, `parser/introspect` (`postgres.go` domains)
-- **Surfaced by:** backlog sweep 2026-10-12 (backlog line from 30.4)
-- **Vetted:** ready at `9b58288b` (2026-10-12)
-
-**Issue.** With `introspect.schemas` excluding the schema that holds a domain, a table CHECK over a
-column of that domain keeps the catalog's cast. Measured on PG17: `CREATE DOMAIN dom.pos …; t(x
-dom.pos, CHECK (x > 5))`, introspected with `Schemas=[public]` → files `x > 5`, database `x::int > 5`.
-The domain-constraint query has no `ORDER BY`, so domain CHECK order is not pinned. Vet 2026-10-12:
-reproduced on PG16 and PG17 — `ALTER DOMAIN d RENAME CONSTRAINT a TO a2` rewrites a's row after b's, and
-the unordered scan returns [b, a2] where oid order is [a2, b]; also drop p, `VACUUM pg_constraint`, `ADD
-CONSTRAINT s` → scan [s, q, r], oid order [q, r, s]. The same filtered domain list also reaches
-`introspectColumns` (generated and default expressions: `y GENERATED AS (x*2)` → `x::int * 2`) and
-`DomainImplicitCasts` (`app.small AS dom.pos CHECK (VALUE < 100)` → `value::int < 100`).
-
-**Root cause.** `introspectDomainTypes` (`parser/introspect/postgres.go`) keeps only domains in
-`introspect.schemas`, and `TableImplicitCasts` sees only those; the `WHERE contypid=$1 AND
-contype='c'` query has no `ORDER BY`.
-
-**Suggested fix.**
-- Keep the unfiltered domain list for `TableImplicitCasts`; filter only what is appended to
-  `schema.DomainTypes`.
-- `ORDER BY oid` on the domain-constraint query (creation order = the parser's declaration order,
-  `ALTER DOMAIN ADD` included — see FIX-305).
-- Fail-first integration test for the excluded-schema case.
-- Widened within the scope cap (same root cause, same fix site): the unfiltered domain list also feeds
-  `introspectColumns` and `DomainImplicitCasts`. Prototype: `introspectDomainTypes` returns
-  `([]parser.DomainType, error)` — every domain with its base type, unfiltered — and queries constraints and
-  appends to `schema.DomainTypes` only for allowed schemas; `Introspect` passes the list to
-  `introspectTables(ctx, schema, opts, domains)` for `introspectColumns` and `TableImplicitCasts`;
-  `DomainImplicitCasts` gets it too; the constraint query gains `ORDER BY oid`. Tests:
-  `TestPostgresIntrospect_ExcludedSchemaDomain` (table CHECK, generated expression, domain-over-domain
-  CHECK, both sides), `TestPostgresIntrospect_DomainConstraintOrder` (the RENAME CONSTRAINT case, want [a2 b]).
-- Prototype results, run at `9b58288b` on 2026-10-12: probe (`zz_probe_fix313_test.go`, postgres 17.11,
-  Schemas=[app] vs [app dom]) → [app]: `small_check: value::int < 100`, `t.y gen="x::int * 2"`, `t_x_check:
-  x::int > 5`; [app dom]: `value < 100`, `x * 2`, `x > 5`; the parser gives the latter. Gates: `go test -race
-  -count=1 ./parser/...` ok; introspect on postgres:17-alpine ok; `golangci-lint ./introspect/...` 0 issues;
-  gofumpt clean. Fail-first: `ORDER BY oid` removed → `TestPostgresIntrospect_DomainConstraintOrder` fails on
-  PG16 and PG17 ("- \"a2\", + \"b\", - \"b\", + \"a2\""); scan-time filter put back →
-  `TestPostgresIntrospect_ExcludedSchemaDomain` fails ("- \"small_check\": \"value < 100\", + …
-  \"value::int < 100\", - \"t_x_check\": \"x > 5\", + \"x::int > 5\", - \"y\": \"x * 2\", + \"x::int * 2\""); existing
-  suite without the fix passes. Golden churn: none (no example sets `introspect.schemas`). Patch:
-  `.claude/prototypes/FIX-313.patch` (2 files, +113/-25).
-
-**References.**
-- PRD §6.1, §6.3 (`introspect.schemas`).
-- Backlog line absorbed: 2026-10-05 excluded-schema domain casts (30.4).
-
-**Resolution notes.** _Filled in by /fix resolve._
-
 ### FIX-314
 
 - **Status:** Open
@@ -2020,6 +1967,59 @@ DEFAULT.
 ## Resolved
 
 <!-- fixes:resolved:begin -->
+
+### FIX-313
+
+- **Status:** Resolved
+- **Severity:** tracked
+- **Origin:** phase 30, `parser/introspect` (`postgres.go` domains)
+- **Surfaced by:** backlog sweep 2026-10-12 (backlog line from 30.4)
+- **Vetted:** ready at `9b58288b` (2026-10-12)
+
+**Issue.** With `introspect.schemas` excluding the schema that holds a domain, a table CHECK over a
+column of that domain keeps the catalog's cast. Measured on PG17: `CREATE DOMAIN dom.pos …; t(x
+dom.pos, CHECK (x > 5))`, introspected with `Schemas=[public]` → files `x > 5`, database `x::int > 5`.
+The domain-constraint query has no `ORDER BY`, so domain CHECK order is not pinned. Vet 2026-10-12:
+reproduced on PG16 and PG17 — `ALTER DOMAIN d RENAME CONSTRAINT a TO a2` rewrites a's row after b's, and
+the unordered scan returns [b, a2] where oid order is [a2, b]; also drop p, `VACUUM pg_constraint`, `ADD
+CONSTRAINT s` → scan [s, q, r], oid order [q, r, s]. The same filtered domain list also reaches
+`introspectColumns` (generated and default expressions: `y GENERATED AS (x*2)` → `x::int * 2`) and
+`DomainImplicitCasts` (`app.small AS dom.pos CHECK (VALUE < 100)` → `value::int < 100`).
+
+**Root cause.** `introspectDomainTypes` (`parser/introspect/postgres.go`) keeps only domains in
+`introspect.schemas`, and `TableImplicitCasts` sees only those; the `WHERE contypid=$1 AND
+contype='c'` query has no `ORDER BY`.
+
+**Suggested fix.**
+- Keep the unfiltered domain list for `TableImplicitCasts`; filter only what is appended to
+  `schema.DomainTypes`.
+- `ORDER BY oid` on the domain-constraint query (creation order = the parser's declaration order,
+  `ALTER DOMAIN ADD` included — see FIX-305).
+- Fail-first integration test for the excluded-schema case.
+- Widened within the scope cap (same root cause, same fix site): the unfiltered domain list also feeds
+  `introspectColumns` and `DomainImplicitCasts`. Prototype: `introspectDomainTypes` returns
+  `([]parser.DomainType, error)` — every domain with its base type, unfiltered — and queries constraints and
+  appends to `schema.DomainTypes` only for allowed schemas; `Introspect` passes the list to
+  `introspectTables(ctx, schema, opts, domains)` for `introspectColumns` and `TableImplicitCasts`;
+  `DomainImplicitCasts` gets it too; the constraint query gains `ORDER BY oid`. Tests:
+  `TestPostgresIntrospect_ExcludedSchemaDomain` (table CHECK, generated expression, domain-over-domain
+  CHECK, both sides), `TestPostgresIntrospect_DomainConstraintOrder` (the RENAME CONSTRAINT case, want [a2 b]).
+- Prototype results, run at `9b58288b` on 2026-10-12: probe (`zz_probe_fix313_test.go`, postgres 17.11,
+  Schemas=[app] vs [app dom]) → [app]: `small_check: value::int < 100`, `t.y gen="x::int * 2"`, `t_x_check:
+  x::int > 5`; [app dom]: `value < 100`, `x * 2`, `x > 5`; the parser gives the latter. Gates: `go test -race
+  -count=1 ./parser/...` ok; introspect on postgres:17-alpine ok; `golangci-lint ./introspect/...` 0 issues;
+  gofumpt clean. Fail-first: `ORDER BY oid` removed → `TestPostgresIntrospect_DomainConstraintOrder` fails on
+  PG16 and PG17 ("- \"a2\", + \"b\", - \"b\", + \"a2\""); scan-time filter put back →
+  `TestPostgresIntrospect_ExcludedSchemaDomain` fails ("- \"small_check\": \"value < 100\", + …
+  \"value::int < 100\", - \"t_x_check\": \"x > 5\", + \"x::int > 5\", - \"y\": \"x * 2\", + \"x::int * 2\""); existing
+  suite without the fix passes. Golden churn: none (no example sets `introspect.schemas`). Patch:
+  `.claude/prototypes/FIX-313.patch` (2 files, +113/-25).
+
+**References.**
+- PRD §6.1 (catalog casts removed), §6.4 (`introspect.schemas`).
+- Backlog line absorbed: 2026-10-05 excluded-schema domain casts (30.4).
+
+**Resolution notes.** `introspectDomainTypes` (`parser/introspect/postgres.go`) now returns every domain in the database with its base type, unfiltered, and reads CHECK constraints and appends to `schema.DomainTypes` only for domains in allowed schemas; `Introspect` passes the full list to `introspectTables` (for `introspectColumns` and `TableImplicitCasts`), and `DomainImplicitCasts` gets it too, so an expression over a value of a domain whose schema `introspect.schemas` leaves out loses the catalog's cast as the parser does. The domain-constraint query gains `ORDER BY oid` (creation order). Prototype applied with `--3way`: the one conflict was at `Introspect`/`introspectTables`, where FIX-304's `introspectPartitions` landed between them; kept it and took the new `introspectTables` signature. Tests: `TestPostgresIntrospect_ExcludedSchemaDomain`, `TestPostgresIntrospect_DomainConstraintOrder`; fail-first re-run on the final code (dropping `ORDER BY oid` fails the order test; restoring the scan-time filter fails the excluded-schema test with `x::int > 5`, `x::int * 2`, `value::int < 100`). `make check` and `make check-examples` green; golden churn none, as vetted. Inline from /verify: `TestPostgresIntrospect_ExcludedSchemaDomain` also asserts the introspected `DomainTypes` is only `pgi_domx_app.small`, pinning the `introspect.schemas` filter at its new site (fails with `+ "pgi_domx.pos"` when the filter is dropped); References corrected from §6.3 to §6.4.
 
 ### FIX-312
 

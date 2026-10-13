@@ -61,10 +61,11 @@ func (pi *PostgresIntrospector) Introspect(ctx context.Context, connString strin
 	if err := pi.introspectCompositeTypes(ctx, schema, opts, comments); err != nil {
 		return err
 	}
-	if err := pi.introspectDomainTypes(ctx, schema, opts, comments); err != nil {
+	domains, err := pi.introspectDomainTypes(ctx, schema, opts, comments)
+	if err != nil {
 		return err
 	}
-	if err := pi.introspectTables(ctx, schema, opts); err != nil {
+	if err := pi.introspectTables(ctx, schema, opts, domains); err != nil {
 		return err
 	}
 	if err := pi.introspectPartitions(ctx, schema, opts); err != nil {
@@ -116,7 +117,11 @@ func (pi *PostgresIntrospector) introspectPartitions(ctx context.Context, schema
 	return nil
 }
 
-func (pi *PostgresIntrospector) introspectTables(ctx context.Context, schema *parser.Schema, opts IntrospectionOptions) error {
+// introspectTables reads the tables of the allowed schemas. domains holds
+// every domain in the database, whatever its schema: a column's implicit casts
+// follow its domain type to the base type even when introspect.schemas leaves
+// the domain's schema out.
+func (pi *PostgresIntrospector) introspectTables(ctx context.Context, schema *parser.Schema, opts IntrospectionOptions, domains []parser.DomainType) error {
 	// A partition is storage for its partitioned table, which is the entity,
 	// so partitions are left out (PRD §6.3).
 	rows, err := pi.db.QueryContext(ctx, `
@@ -159,10 +164,10 @@ func (pi *PostgresIntrospector) introspectTables(ctx context.Context, schema *pa
 			Name:   ref.name,
 		}
 
-		if err := pi.introspectColumns(ctx, &table, schema.DomainTypes); err != nil {
+		if err := pi.introspectColumns(ctx, &table, domains); err != nil {
 			return err
 		}
-		if err := pi.introspectConstraints(ctx, &table, postgres.TableImplicitCasts(&table, schema.DomainTypes)); err != nil {
+		if err := pi.introspectConstraints(ctx, &table, postgres.TableImplicitCasts(&table, domains)); err != nil {
 			return err
 		}
 		if err := pi.introspectTableComment(ctx, &table); err != nil {
@@ -1097,7 +1102,12 @@ func (pi *PostgresIntrospector) introspectCompositeTypes(ctx context.Context, sc
 	return nil
 }
 
-func (pi *PostgresIntrospector) introspectDomainTypes(ctx context.Context, schema *parser.Schema, opts IntrospectionOptions, comments map[qualifiedType]string) error {
+// introspectDomainTypes appends the domains of the allowed schemas, with their
+// CHECK constraints, to schema.DomainTypes. It returns every domain in the
+// database, without constraints, for the implicit casts of an expression over
+// a domain-typed value: a table or domain in an allowed schema may use a domain
+// whose schema introspect.schemas leaves out.
+func (pi *PostgresIntrospector) introspectDomainTypes(ctx context.Context, schema *parser.Schema, opts IntrospectionOptions, comments map[qualifiedType]string) ([]parser.DomainType, error) {
 	rows, err := pi.db.QueryContext(ctx, `
 		SELECT n.nspname, t.typname,
 		       format_type(t.typbasetype, t.typtypmod),
@@ -1110,13 +1120,13 @@ func (pi *PostgresIntrospector) introspectDomainTypes(ctx context.Context, schem
 		  AND n.nspname NOT IN ('pg_catalog', 'information_schema')
 		ORDER BY n.nspname, t.typname`)
 	if err != nil {
-		return fmt.Errorf("introspect postgres domain types: %w", err)
+		return nil, fmt.Errorf("introspect postgres domain types: %w", err)
 	}
 	defer rows.Close() //nolint:errcheck // rows.Close error is not actionable after reading
 
 	var (
-		domains []parser.DomainType
-		oids    []int64
+		all  []parser.DomainType
+		oids []int64
 	)
 	for rows.Next() {
 		var (
@@ -1125,41 +1135,43 @@ func (pi *PostgresIntrospector) introspectDomainTypes(ctx context.Context, schem
 			oid                            int64
 		)
 		if err := rows.Scan(&dt.Schema, &dt.Name, &formatType, &typSchema, &typName, &oid); err != nil {
-			return fmt.Errorf("introspect postgres domain types: scanning: %w", err)
-		}
-		if !schemaAllowed(dt.Schema, opts) {
-			continue
+			return nil, fmt.Errorf("introspect postgres domain types: scanning: %w", err)
 		}
 		dt.BaseType = columnType(formatType, typSchema, typName, dt.Schema)
-		dt.Comment = comments[qualifiedType{dt.Schema, dt.Name}]
-		domains = append(domains, dt)
+		all = append(all, dt)
 		oids = append(oids, oid)
 	}
 	if err := rows.Err(); err != nil {
-		return fmt.Errorf("introspect postgres domain types: iterating: %w", err)
+		return nil, fmt.Errorf("introspect postgres domain types: iterating: %w", err)
 	}
 
 	// Every base type is read first: a constraint's implicit casts follow a
 	// domain over another domain to its base. Only CHECKs are domain
 	// constraints in the model; PostgreSQL 18 also lists a domain's NOT NULL
-	// here (contype 'n'), and 16 keeps it on the type.
-	for i := range domains {
-		dt := &domains[i]
+	// here (contype 'n'), and 16 keeps it on the type. The constraints come in
+	// creation order, which is the order the parser reads them from DDL.
+	for i := range all {
+		if !schemaAllowed(all[i].Schema, opts) {
+			continue
+		}
+		dt := all[i]
+		dt.Comment = comments[qualifiedType{dt.Schema, dt.Name}]
 		conRows, err := pi.db.QueryContext(ctx, `
 			SELECT conname, pg_get_constraintdef(oid)
 			FROM pg_catalog.pg_constraint
-			WHERE contypid = $1 AND contype = 'c'`, oids[i])
+			WHERE contypid = $1 AND contype = 'c'
+			ORDER BY oid`, oids[i])
 		if err != nil {
-			return fmt.Errorf("introspect postgres domain constraints %s.%s: %w", dt.Schema, dt.Name, err)
+			return nil, fmt.Errorf("introspect postgres domain constraints %s.%s: %w", dt.Schema, dt.Name, err)
 		}
 
-		if err := scanDomainConstraints(conRows, dt, postgres.DomainImplicitCasts(dt, domains)); err != nil {
-			return fmt.Errorf("introspect postgres domain constraints %s.%s: %w", dt.Schema, dt.Name, err)
+		if err := scanDomainConstraints(conRows, &dt, postgres.DomainImplicitCasts(&dt, all)); err != nil {
+			return nil, fmt.Errorf("introspect postgres domain constraints %s.%s: %w", dt.Schema, dt.Name, err)
 		}
+		schema.DomainTypes = append(schema.DomainTypes, dt)
 	}
 
-	schema.DomainTypes = append(schema.DomainTypes, domains...)
-	return nil
+	return all, nil
 }
 
 // normalizePostgresType converts format_type() output to the short-form SQL
