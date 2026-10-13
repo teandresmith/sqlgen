@@ -108,7 +108,7 @@ func (p *Parser) parseCreateIndex(stmt *rsql.CreateIndexStatement) error {
 	if !ok {
 		return fmt.Errorf("create index %s: table %s not found", rsql.IdentName(stmt.Name), rsql.IdentName(stmt.Table))
 	}
-	cols, ok := indexedColumnNames(stmt.Columns)
+	cols, ok := indexedColumnNames(stmt.Columns, false)
 	if !ok {
 		return nil
 	}
@@ -634,7 +634,7 @@ func parseTableConstraint(constraint rsql.Constraint) (parser.Constraint, error)
 	case *rsql.PrimaryKeyConstraint:
 		// SQLite rejects an expression in a PRIMARY KEY; left in, it would
 		// be a key over no columns.
-		cols, ok := indexedColumnNames(ct.Columns)
+		cols, ok := indexedColumnNames(ct.Columns, true)
 		if !ok {
 			return parser.Constraint{}, fmt.Errorf("PRIMARY KEY has an expression part: expressions prohibited in PRIMARY KEY")
 		}
@@ -644,9 +644,12 @@ func parseTableConstraint(constraint rsql.Constraint) (parser.Constraint, error)
 			Columns: cols,
 		}, nil
 	case *rsql.UniqueConstraint:
-		// SQLite rejects an expression in a UNIQUE constraint, so every
-		// part names a column.
-		cols, _ := indexedColumnNames(ct.Columns)
+		// SQLite rejects an expression in a UNIQUE constraint; left in, it
+		// would be a UNIQUE over no columns.
+		cols, ok := indexedColumnNames(ct.Columns, false)
+		if !ok {
+			return parser.Constraint{}, fmt.Errorf("UNIQUE has an expression part: expressions prohibited in UNIQUE")
+		}
 		return parser.Constraint{
 			Name:    rsql.IdentName(ct.Name),
 			Type:    parser.Unique,
@@ -957,26 +960,36 @@ func indexedColumnCollations(cols []*rsql.IndexedColumn) []string {
 
 // indexedColumnNames returns the column each indexed column names, and false
 // when a part is an expression, which names no column. A collation and
-// parentheses are not part of the name: SQLite indexes (a) as column a.
-func indexedColumnNames(cols []*rsql.IndexedColumn) ([]string, bool) {
+// parentheses are not part of the name: SQLite indexes (a) as column a. A
+// string literal is a name too: SQLite reads 'a' there as the column a, under
+// any number of COLLATEs in a PRIMARY KEY but at most one elsewhere.
+func indexedColumnNames(cols []*rsql.IndexedColumn, primaryKey bool) ([]string, bool) {
 	names := make([]string, len(cols))
 	for i, col := range cols {
 		x := col.X
+		collations := 0
 		for unwrapped := false; !unwrapped; {
 			switch e := x.(type) {
 			case *rsql.CollateExpr:
 				x = e.X
+				collations++
 			case *rsql.ParenExpr:
 				x = e.X
 			default:
 				unwrapped = true
 			}
 		}
-		ident, ok := x.(*rsql.Ident)
-		if !ok {
+		switch e := x.(type) {
+		case *rsql.Ident:
+			names[i] = e.Name
+		case *rsql.StringLit:
+			if collations > 1 && !primaryKey {
+				return nil, false
+			}
+			names[i] = e.Value
+		default:
 			return nil, false
 		}
-		names[i] = ident.Name
 	}
 	return names, true
 }

@@ -22,66 +22,6 @@
 ## Open
 
 <!-- fixes:open:begin -->
-### FIX-315
-
-- **Status:** Open
-- **Severity:** tracked
-- **Origin:** phase 4, `parser/sqlite` (`parseTableConstraint`)
-- **Surfaced by:** backlog sweep 2026-10-12 (backlog line from FIX-274)
-- **Vetted:** corrected at `9b58288b` (2026-10-12)
-
-**Issue.** A table-level `UNIQUE` with an expression part, which SQLite rejects ("expressions
-prohibited in PRIMARY KEY and UNIQUE constraints"), parses under `files` as a `UNIQUE` with no
-columns. Measured: `CREATE TABLE u (a TEXT, UNIQUE (lower(a)))` and `UNIQUE (a, a + 1)` → err=nil,
-`UNIQUE Columns: []`, which generates `UConflict UConflictTarget = iota // UNIQUE ()` / `UConflict: {},`
-(`models/models_gen.go:864/870`).
-
-**Root cause.** `parseTableConstraint` (`parser/sqlite/sqlite.go:576`) discards
-`indexedColumnNames`' ok flag (`cols, _ := indexedColumnNames(ct.Columns)` at `:587`).
-
-**Suggested fix.**
-- `parseTableConstraint` UNIQUE case: when `indexedColumnNames` reports !ok, return "UNIQUE has an
-  expression part: expressions prohibited in UNIQUE" (mirrors FIX-300's PK message; wrapped "parsing
-  test.sql: table t: UNIQUE has an expression part: …"). The PRIMARY KEY half is in FIX-300.
-- `indexedColumnNames` takes a `*rsql.StringLit` (after unwrapping COLLATE and parens) as the column it
-  names, as SQLite's `sqlite3StringToId` does: modernc accepts `UNIQUE ('a')`, `UNIQUE (('a'))`, `UNIQUE ('a'
-  COLLATE NOCASE)`, `PRIMARY KEY ('a')`, `CREATE INDEX i ON u ('a')` and `pragma_index_info` reports column
-  `a`. This also fixes the `CREATE INDEX … ('a')` skip and, once FIX-300 lands, `PRIMARY KEY ('a')`.
-- Tests: `TestCreateTable_UniqueExpression` (5 DDLs, exact error); `TestIndexedColumnExpressions` cases
-  "string literal" and "string literal UNIQUE constraint column"; `TestSQLiteIntrospect_ExpressionIndexes`
-  gains table `v` (`UNIQUE ('a' COLLATE NOCASE, b)` + `CREATE INDEX v_a ON v ('a')`) with parity.
-- Corrected vs. the original suggestion (vet 2026-10-12): applied as written the new error also rejects a
-  string-literal part SQLite accepts — `files` fails and introspecting a valid database fails ("introspect
-  sqlite table v: parsing stored CREATE TABLE: … UNIQUE has an expression part"); at base that database
-  already fails ("stored CREATE TABLE declares no UNIQUE over (a, b)") and `CREATE INDEX i ON u ('a')`
-  introspects as `INDEX i:["a"]` while `files` drops it. Same fix site (`indexedColumnNames`' part
-  classification), so the literal maps to its column.
-- Auto-accepted the recommended option on 2026-10-12 (`/fix` auto-accept rule): a string-literal index part
-  names its column rather than erroring; prototyped green, no churn either way, no public surface
-  (unexported func), reverses no PRD text (§30.7 excludes expression parts, and SQLite does not treat `'a'`
-  as one).
-- Composition with FIX-300: plain `git apply --check` fails at `parser/sqlite/sqlite.go:582` (FIX-300
-  rewrites the adjacent PK case); `git apply --3way` applies cleanly; combined tree gofumpt clean and parser
-  `go test -race ./...` ok; `PRIMARY KEY ('a')` → `PRIMARY KEY:["a"]` (modernc `sqlite_autoindex_u_1:a`).
-- Prototype results, run at `9b58288b` on 2026-10-12: modernc 3.51.3 vs parser → `UNIQUE (lower(a))`, `(a, a
-  + 1)`, `(1)`, `(+a)`, `(NULL)`, `(x'61')` → "expressions prohibited in PRIMARY KEY and UNIQUE constraints",
-  parser `err=<nil> cons=UNIQUE:[]`; `UNIQUE (u.a)` → 'the "." operator prohibited in index expressions'.
-  Generation at base exits 0 with the `UNIQUE ()` conflict target; with the patch exit 3 "Schema error:
-  … table u: UNIQUE has an expression part: expressions prohibited in UNIQUE". Gates: parser `go test -race
-  -count=1 ./...` ok; `golangci-lint ./sqlite/... ./introspect/...` 0 issues; gofumpt clean; `make
-  update-golden` / `update-golden-e2e` no churn. Fail-first: check reverted → `error = <nil>, want "…UNIQUE
-  has an expression part…"` (all 5); StringLit case removed → `string_literal` `- {{Name: "t_a", …}} + nil`,
-  the UNIQUE literal case and `TestSQLiteIntrospect_ExpressionIndexes` fail with the new error; base
-  sqlite.go → integration "stored CREATE TABLE declares no UNIQUE over (a, b)"; existing suite without the
-  fix passes. Golden churn: none. Patch: `.claude/prototypes/FIX-315.patch` (3 files, +61/-13).
-
-**References.**
-- PRD §5.2, §6.1.
-- Backlog line absorbed: 2026-10-08 expression UNIQUE parses as empty UNIQUE (FIX-274).
-- FIX-274, FIX-300.
-
-**Resolution notes.** _Filled in by /fix resolve._
-
 ### FIX-316
 
 - **Status:** Open
@@ -1903,6 +1843,66 @@ DEFAULT.
 ## Resolved
 
 <!-- fixes:resolved:begin -->
+
+### FIX-315
+
+- **Status:** Resolved
+- **Severity:** tracked
+- **Origin:** phase 4, `parser/sqlite` (`parseTableConstraint`)
+- **Surfaced by:** backlog sweep 2026-10-12 (backlog line from FIX-274)
+- **Vetted:** corrected at `9b58288b` (2026-10-12)
+
+**Issue.** A table-level `UNIQUE` with an expression part, which SQLite rejects ("expressions
+prohibited in PRIMARY KEY and UNIQUE constraints"), parses under `files` as a `UNIQUE` with no
+columns. Measured: `CREATE TABLE u (a TEXT, UNIQUE (lower(a)))` and `UNIQUE (a, a + 1)` → err=nil,
+`UNIQUE Columns: []`, which generates `UConflict UConflictTarget = iota // UNIQUE ()` / `UConflict: {},`
+(`models/models_gen.go:864/870`).
+
+**Root cause.** `parseTableConstraint` (`parser/sqlite/sqlite.go:632`) discards
+`indexedColumnNames`' ok flag (`cols, _ := indexedColumnNames(ct.Columns)` at `:649`).
+
+**Suggested fix.**
+- `parseTableConstraint` UNIQUE case: when `indexedColumnNames` reports !ok, return "UNIQUE has an
+  expression part: expressions prohibited in UNIQUE" (mirrors FIX-300's PK message; wrapped "parsing
+  test.sql: table t: UNIQUE has an expression part: …"). The PRIMARY KEY half is in FIX-300.
+- `indexedColumnNames` takes a `*rsql.StringLit` (after unwrapping COLLATE and parens) as the column it
+  names, as SQLite's `sqlite3StringToId` does: modernc accepts `UNIQUE ('a')`, `UNIQUE (('a'))`, `UNIQUE ('a'
+  COLLATE NOCASE)`, `PRIMARY KEY ('a')`, `CREATE INDEX i ON u ('a')` and `pragma_index_info` reports column
+  `a`. This also fixes the `CREATE INDEX … ('a')` skip and, once FIX-300 lands, `PRIMARY KEY ('a')`.
+- Tests: `TestCreateTable_UniqueExpression` (5 DDLs, exact error); `TestIndexedColumnExpressions` cases
+  "string literal" and "string literal UNIQUE constraint column"; `TestSQLiteIntrospect_ExpressionIndexes`
+  gains table `v` (`UNIQUE ('a' COLLATE NOCASE, b)` + `CREATE INDEX v_a ON v ('a')`) with parity.
+- Corrected vs. the original suggestion (vet 2026-10-12): applied as written the new error also rejects a
+  string-literal part SQLite accepts — `files` fails and introspecting a valid database fails ("introspect
+  sqlite table v: parsing stored CREATE TABLE: … UNIQUE has an expression part"); at base that database
+  already fails ("stored CREATE TABLE declares no UNIQUE over (a, b)") and `CREATE INDEX i ON u ('a')`
+  introspects as `INDEX i:["a"]` while `files` drops it. Same fix site (`indexedColumnNames`' part
+  classification), so the literal maps to its column.
+- Auto-accepted the recommended option on 2026-10-12 (`/fix` auto-accept rule): a string-literal index part
+  names its column rather than erroring; prototyped green, no churn either way, no public surface
+  (unexported func), reverses no PRD text (§30.7 excludes expression parts, and SQLite does not treat `'a'`
+  as one).
+- Composition with FIX-300: plain `git apply --check` fails at `parser/sqlite/sqlite.go:582` (FIX-300
+  rewrites the adjacent PK case); `git apply --3way` applies cleanly; combined tree gofumpt clean and parser
+  `go test -race ./...` ok; `PRIMARY KEY ('a')` → `PRIMARY KEY:["a"]` (modernc `sqlite_autoindex_u_1:a`).
+- Prototype results, run at `9b58288b` on 2026-10-12: modernc 3.51.3 vs parser → `UNIQUE (lower(a))`, `(a, a
+  + 1)`, `(1)`, `(+a)`, `(NULL)`, `(x'61')` → "expressions prohibited in PRIMARY KEY and UNIQUE constraints",
+  parser `err=<nil> cons=UNIQUE:[]`; `UNIQUE (u.a)` → 'the "." operator prohibited in index expressions'.
+  Generation at base exits 0 with the `UNIQUE ()` conflict target; with the patch exit 3 "Schema error:
+  … table u: UNIQUE has an expression part: expressions prohibited in UNIQUE". Gates: parser `go test -race
+  -count=1 ./...` ok; `golangci-lint ./sqlite/... ./introspect/...` 0 issues; gofumpt clean; `make
+  update-golden` / `update-golden-e2e` no churn. Fail-first: check reverted → `error = <nil>, want "…UNIQUE
+  has an expression part…"` (all 5); StringLit case removed → `string_literal` `- {{Name: "t_a", …}} + nil`,
+  the UNIQUE literal case and `TestSQLiteIntrospect_ExpressionIndexes` fail with the new error; base
+  sqlite.go → integration "stored CREATE TABLE declares no UNIQUE over (a, b)"; existing suite without the
+  fix passes. Golden churn: none. Patch: `.claude/prototypes/FIX-315.patch` (3 files, +61/-13).
+
+**References.**
+- PRD §5.2, §6.1.
+- Backlog line absorbed: 2026-10-08 expression UNIQUE parses as empty UNIQUE (FIX-274).
+- FIX-274, FIX-300.
+
+**Resolution notes.** `parseTableConstraint`'s UNIQUE case (`parser/sqlite/sqlite.go`) now checks `indexedColumnNames`' ok flag and returns "UNIQUE has an expression part: expressions prohibited in UNIQUE", mirroring the PRIMARY KEY case FIX-300 added; `indexedColumnNames` reads a `*rsql.StringLit` part (after COLLATE and parentheses are unwrapped) as the column it names, as SQLite does, so `UNIQUE ('a' COLLATE NOCASE, b)`, `PRIMARY KEY ('a')` and `CREATE INDEX v_a ON v ('a')` name column `a` under `files` and introspection alike. Prototype applied with `git apply --3way` (plain apply failed at `sqlite.go:582` against FIX-300's PK rewrite, as the entry's overlap note said). Tests: `TestCreateTable_UniqueExpression` (6 DDLs, exact error); `TestIndexedColumnExpressions` cases "string literal", "string literal UNIQUE constraint column" and, added inline, "string literal PRIMARY KEY column"; `TestSQLiteIntrospect_ExpressionIndexes` table `v` with parity. Fail-first re-run on the final code: check disabled → all 5 `error = <nil>`; StringLit case removed → the 3 literal cases fail and introspection fails with the new error. Inline from the /verify reviewer (measured, modernc vs parser): SQLite's `sqlite3StringToId` converts a literal only at the top or under one COLLATE in UNIQUE and CREATE INDEX (`sqlite3CreateIndex`), but under any number in a PRIMARY KEY (`sqlite3AddPrimaryKey` skips every COLLATE first). So `CREATE INDEX i ON u (('a' COLLATE NOCASE) COLLATE BINARY)` is an expression index the introspector skips, but `files` read it as `INDEX i:["a"]`. `indexedColumnNames` now takes a `primaryKey` flag and treats a literal under two or more COLLATEs as an expression outside a PRIMARY KEY; new cases in `TestIndexedColumnExpressions` (PK and index), `TestCreateTable_UniqueExpression` (sixth DDL), and `TestSQLiteIntrospect_ExpressionIndexes` (`v_a_collated` skipped, table `w` PK `[a]`, parity), each fail-first confirmed. Root cause line refs updated to HEAD (`:632`, `:649`). Gates: `make check` ok; parser `go test -race -count=1 ./...` ok; `make update-golden` / `update-golden-e2e` no churn (matches vet); `make check-examples` ok.
 
 ### FIX-314
 

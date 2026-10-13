@@ -978,8 +978,9 @@ func TestSQLiteIntrospect_PartialIndexes(t *testing.T) {
 }
 
 // An index with an expression part is skipped under both sources, unique or
-// not, and a part in parentheses names its column and keeps its collation
-// (PRD §6.1, §30.7).
+// not, and a part in parentheses names its column and keeps its collation.
+// A string literal part names its column, as SQLite reads it: under at most
+// one COLLATE, or any number in a PRIMARY KEY (PRD §6.1, §30.7).
 func TestSQLiteIntrospect_ExpressionIndexes(t *testing.T) {
 	requireDatabases(t)
 	parsed, introspected := sqliteSchemas(t, `
@@ -989,7 +990,11 @@ func TestSQLiteIntrospect_ExpressionIndexes(t *testing.T) {
 		CREATE INDEX t_a_lower_b ON t (a, lower(b));
 		CREATE INDEX t_lower_a ON t (lower(a)) WHERE b IS NOT NULL;
 		CREATE INDEX t_b_a ON t (b COLLATE NOCASE, (a));
-		CREATE TABLE u (a TEXT, UNIQUE (a), UNIQUE ((a COLLATE NOCASE)))
+		CREATE TABLE u (a TEXT, UNIQUE (a), UNIQUE ((a COLLATE NOCASE)));
+		CREATE TABLE v (a TEXT, b TEXT, UNIQUE ('a' COLLATE NOCASE, b));
+		CREATE INDEX v_a ON v ('a');
+		CREATE INDEX v_a_collated ON v (('a' COLLATE NOCASE) COLLATE BINARY);
+		CREATE TABLE w (a TEXT, PRIMARY KEY (('a' COLLATE NOCASE) COLLATE BINARY))
 	`)
 
 	want := []parser.Constraint{
@@ -1000,6 +1005,19 @@ func TestSQLiteIntrospect_ExpressionIndexes(t *testing.T) {
 	sortConstraints(got)
 	if diff := cmp.Diff(want, got, cmpopts.EquateEmpty()); diff != "" {
 		t.Errorf("t: introspected constraints mismatch (-want +got):\n%s", diff)
+	}
+	wantV := []parser.Constraint{
+		{Type: parser.Unique, Columns: []string{"a", "b"}},
+		{Name: "v_a", Type: parser.Index, Columns: []string{"a"}, Method: "btree"},
+	}
+	gotV := findTable(t, introspected, "v").Constraints
+	sortConstraints(gotV)
+	if diff := cmp.Diff(wantV, gotV, cmpopts.EquateEmpty()); diff != "" {
+		t.Errorf("v: introspected constraints mismatch (-want +got):\n%s", diff)
+	}
+	wantW := []parser.Constraint{{Type: parser.PrimaryKey, Columns: []string{"a"}}}
+	if diff := cmp.Diff(wantW, findTable(t, introspected, "w").Constraints, cmpopts.EquateEmpty()); diff != "" {
+		t.Errorf("w: introspected constraints mismatch (-want +got):\n%s", diff)
 	}
 	assertSchemaParity(t, "sqlite", parsed, introspected)
 }

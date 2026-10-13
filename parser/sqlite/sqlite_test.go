@@ -1714,9 +1714,10 @@ CREATE INDEX t_name ON t (name COLLATE NOCASE DESC);`
 	}
 }
 
-// An index part in parentheses names its column, as SQLite indexes it. An
-// index with an expression part covers no column list and is skipped, as the
-// introspector skips it (PRD §6.1, §30.7).
+// An index part in parentheses names its column, as SQLite indexes it, and so
+// does a string literal, which SQLite reads as a column name. An index with an
+// expression part covers no column list and is skipped, as the introspector
+// skips it (PRD §6.1, §30.7).
 func TestIndexedColumnExpressions(t *testing.T) {
 	tests := []struct {
 		name string
@@ -1733,6 +1734,27 @@ func TestIndexedColumnExpressions(t *testing.T) {
 			sql:  `CREATE TABLE u (a TEXT, UNIQUE ((a)));`,
 			want: []parser.Constraint{{Type: parser.Unique, Columns: []string{"a"}}},
 		},
+		{
+			name: "string literal",
+			sql:  `CREATE INDEX t_a ON t ('a');`,
+			want: []parser.Constraint{{Name: "t_a", Type: parser.Index, Columns: []string{"a"}, Method: "btree"}},
+		},
+		{
+			name: "string literal UNIQUE constraint column",
+			sql:  `CREATE TABLE u (a TEXT, b TEXT, UNIQUE ((('a') COLLATE NOCASE), b));`,
+			want: []parser.Constraint{{Type: parser.Unique, Columns: []string{"a", "b"}}},
+		},
+		{
+			name: "string literal PRIMARY KEY column",
+			sql:  `CREATE TABLE u (a TEXT, PRIMARY KEY ('a'));`,
+			want: []parser.Constraint{{Type: parser.PrimaryKey, Columns: []string{"a"}}},
+		},
+		{
+			name: "string literal under two COLLATEs in a PRIMARY KEY",
+			sql:  `CREATE TABLE u (a TEXT, PRIMARY KEY (('a' COLLATE NOCASE) COLLATE BINARY));`,
+			want: []parser.Constraint{{Type: parser.PrimaryKey, Columns: []string{"a"}}},
+		},
+		{name: "string literal under two COLLATEs in an index", sql: `CREATE INDEX t_a ON t (('a' COLLATE NOCASE) COLLATE BINARY);`},
 		{name: "expression-only unique index", sql: `CREATE UNIQUE INDEX t_lower_a ON t (lower(a));`},
 		{name: "expression-only index", sql: `CREATE INDEX t_lower_a ON t (lower(a));`},
 		{name: "column and expression", sql: `CREATE INDEX t_a_lower_b ON t (a, lower(b));`},
@@ -1754,6 +1776,25 @@ func TestIndexedColumnExpressions(t *testing.T) {
 				t.Errorf("constraints mismatch (-want +got):\n%s", diff)
 			}
 		})
+	}
+}
+
+// SQLite rejects an expression in a UNIQUE constraint; read as written it
+// would be a UNIQUE over no columns.
+func TestCreateTable_UniqueExpression(t *testing.T) {
+	for _, sql := range []string{
+		`CREATE TABLE t (a TEXT, UNIQUE (lower(a)));`,
+		`CREATE TABLE t (a INTEGER, UNIQUE (a, a + 1));`,
+		`CREATE TABLE t (a TEXT, CONSTRAINT t_a UNIQUE ((a || 'x') COLLATE NOCASE));`,
+		`CREATE TABLE t (a TEXT, UNIQUE (+a));`,
+		`CREATE TABLE t (a TEXT, UNIQUE (1));`,
+		`CREATE TABLE t (a TEXT, UNIQUE (('a' COLLATE NOCASE) COLLATE BINARY));`,
+	} {
+		err := sqlite.New().Parse("test.sql", []byte(sql))
+		const want = "parsing test.sql: table t: UNIQUE has an expression part: expressions prohibited in UNIQUE"
+		if err == nil || err.Error() != want {
+			t.Errorf("Parse(%q) error = %v, want %q", sql, err, want)
+		}
 	}
 }
 
