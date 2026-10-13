@@ -749,3 +749,42 @@ ALTER TYPE pgi_type.comp2 RENAME ATTRIBUTE x TO y`
 	}
 	assertSchemaParity(t, "postgres", parsed, introspected, pgSkippedStatementExceptions...)
 }
+
+// `REFERENCES t` with no column list references t's primary key under both
+// sources, wherever the key is declared.
+func TestPostgresIntrospect_ImplicitReferenceColumns(t *testing.T) {
+	requireDatabases(t)
+	const parents = "CREATE SCHEMA pgi_refs;\nCREATE TABLE pgi_refs.u (id int PRIMARY KEY);\nCREATE TABLE pgi_refs.u2 (a int, b int, PRIMARY KEY (b, a));\n"
+	tests := []struct {
+		name     string
+		ddl      string
+		table    string
+		wantCols []string
+		// wantWarnings holds the warnings of the statements the parser skips.
+		wantWarnings []string
+	}{
+		{name: "inline", ddl: "CREATE TABLE pgi_refs.c (uid int REFERENCES pgi_refs.u)", table: "c", wantCols: []string{"id"}},
+		{name: "table level", ddl: "CREATE TABLE pgi_refs.c (vid int, FOREIGN KEY (vid) REFERENCES pgi_refs.u)", table: "c", wantCols: []string{"id"}},
+		{name: "composite", ddl: "CREATE TABLE pgi_refs.c (x int, y int, FOREIGN KEY (x, y) REFERENCES pgi_refs.u2)", table: "c", wantCols: []string{"b", "a"}},
+		{name: "self reference", ddl: "CREATE TABLE pgi_refs.s (parent int REFERENCES pgi_refs.s, id int PRIMARY KEY)", table: "s", wantCols: []string{"id"}},
+		{name: "alter table", ddl: "CREATE TABLE pgi_refs.s (id int, parent int);\nALTER TABLE pgi_refs.s ADD FOREIGN KEY (parent) REFERENCES pgi_refs.s, ADD PRIMARY KEY (id)", table: "s", wantCols: []string{"id"}},
+		{name: "partition", ddl: "CREATE TABLE pgi_refs.ev (id int PRIMARY KEY) PARTITION BY RANGE (id);\nCREATE TABLE pgi_refs.ev1 PARTITION OF pgi_refs.ev FOR VALUES FROM (0) TO (10);\nCREATE TABLE pgi_refs.c (eid int REFERENCES pgi_refs.ev1)", table: "c", wantCols: []string{"id"}, wantWarnings: []string{"CREATE TABLE ev1 PARTITION OF ev skipped in DDL file — the partitioned table is the entity"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			parsed, introspected := pgParityCase(t, "DROP SCHEMA IF EXISTS pgi_refs CASCADE", parents+tt.ddl, "pgi_refs")
+			if diff := cmp.Diff(tt.wantWarnings, parsed.Warnings); diff != "" {
+				t.Errorf("parser warnings mismatch (-want +got):\n%s", diff)
+			}
+			for _, c := range findTable(t, introspected, tt.table).Constraints {
+				if c.Type != parser.ForeignKey {
+					continue
+				}
+				if diff := cmp.Diff(tt.wantCols, c.ReferenceColumns); diff != "" {
+					t.Errorf("introspected %s ReferenceColumns mismatch (-want +got):\n%s", c.Name, diff)
+				}
+			}
+			assertSchemaParity(t, "postgres", parsed, introspected, pgSkippedStatementExceptions...)
+		})
+	}
+}

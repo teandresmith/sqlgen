@@ -27,6 +27,10 @@ type Parser struct {
 	skipped map[string]bool
 	// sequences holds the sequences the DDL creates, in creation order.
 	sequences []*pgSequence
+	// implicitRefs holds the names of the foreign keys the current statement
+	// added with no referenced column list; resolveImplicitRefs gives them
+	// the referenced table's primary key once the statement is applied.
+	implicitRefs []string
 }
 
 // New creates a new PostgreSQL parser. If defaultSchema is empty, "public" is used.
@@ -227,7 +231,7 @@ func (p *Parser) parseCreateTable(stmt *pg_query.CreateStmt) error {
 	}
 	p.addConstraints(created, mergeDuplicateIndexes(constraints))
 
-	return nil
+	return p.resolveImplicitRefs(created)
 }
 
 // mergeDuplicateIndexes merges the PRIMARY KEY and UNIQUE constraints of one
@@ -271,6 +275,7 @@ func mergeDuplicateIndexes(constraints []parser.Constraint) []parser.Constraint 
 // first, then the primary key, then each UNIQUE, then each FOREIGN KEY, and a
 // name clashes with what exists in the table's schema at that moment.
 func (p *Parser) addConstraints(table *parser.Table, constraints []parser.Constraint) {
+	start := len(table.Constraints)
 	table.Constraints = append(table.Constraints, constraints...)
 	parser.CanonicalizeConstraints(table, "postgres")
 	ns := p.namespace(table.Schema)
@@ -286,6 +291,73 @@ func (p *Parser) addConstraints(table *parser.Table, constraints []parser.Constr
 	// A column's FKReference is its foreign key whose name sorts first, so it
 	// is derived again now that every foreign key has its name.
 	parser.CanonicalizeConstraints(table, "postgres")
+	for _, c := range table.Constraints[start:] {
+		if c.Type == parser.ForeignKey && len(c.ReferenceColumns) == 0 {
+			p.implicitRefs = append(p.implicitRefs, c.Name)
+		}
+	}
+}
+
+// resolveImplicitRefs gives each foreign key this statement added to table
+// with no referenced column list (`REFERENCES t`) t's primary key as the
+// statement leaves it, as PostgreSQL does. It is an error when t is not
+// defined, or is a modelled table with no primary key.
+func (p *Parser) resolveImplicitRefs(table *parser.Table) error {
+	names := p.implicitRefs
+	p.implicitRefs = nil
+	if len(names) == 0 {
+		return nil
+	}
+	isPK := func(k parser.Constraint) bool { return k.Type == parser.PrimaryKey }
+	for _, name := range names {
+		i := slices.IndexFunc(table.Constraints, func(k parser.Constraint) bool {
+			return k.Type == parser.ForeignKey && k.Name == name
+		})
+		if i < 0 {
+			continue // dropped later in the same statement
+		}
+		c := &table.Constraints[i]
+		target := p.findTableByNames([]string{c.ReferenceSchema, c.ReferenceTable})
+		if _, skipped := p.skipped[c.ReferenceSchema+"."+c.ReferenceTable]; target == nil && skipped {
+			// A partition has its partitioned table's primary key. The model
+			// keeps no keys for any other skipped relation, or for a partition
+			// of a table with none, so such a reference stays as written.
+			target = p.partitionedTable(c.ReferenceSchema, c.ReferenceTable)
+			if target == nil || !slices.ContainsFunc(target.Constraints, isPK) {
+				continue
+			}
+		}
+		if target == nil {
+			return fmt.Errorf("foreign key %s on %s.%s: referenced table %s.%s does not exist",
+				c.Name, table.Schema, table.Name, c.ReferenceSchema, c.ReferenceTable)
+		}
+		pk := slices.IndexFunc(target.Constraints, isPK)
+		if pk < 0 {
+			return fmt.Errorf("foreign key %s on %s.%s: there is no primary key for referenced table %s.%s",
+				c.Name, table.Schema, table.Name, c.ReferenceSchema, c.ReferenceTable)
+		}
+		c.ReferenceColumns = slices.Clone(target.Constraints[pk].Columns)
+	}
+	// Sets FKReference from the keys just resolved.
+	parser.CanonicalizeConstraints(table, "postgres")
+	return nil
+}
+
+// partitionedTable returns the modelled table that schema.name is a partition
+// of, at any depth, or nil when it is no partition of one.
+func (p *Parser) partitionedTable(schema, name string) *parser.Table {
+	for {
+		i := slices.IndexFunc(p.schema.Partitions, func(part parser.Partition) bool {
+			return part.Schema == schema && part.Name == name
+		})
+		if i < 0 {
+			return nil
+		}
+		schema, name = p.schema.Partitions[i].ParentSchema, p.schema.Partitions[i].ParentName
+		if t := p.findTableByNames([]string{schema, name}); t != nil {
+			return t
+		}
+	}
 }
 
 // pgNamespace holds the names in use in one schema. An index, or the index
@@ -1170,7 +1242,7 @@ func (p *Parser) parseAlterTable(stmt *pg_query.AlterTableStmt) error {
 		}
 	}
 
-	return nil
+	return p.resolveImplicitRefs(table)
 }
 
 // alterSkippedTable applies ALTER TABLE to a relation the parser skips. Only

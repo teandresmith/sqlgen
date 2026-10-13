@@ -239,9 +239,8 @@ type FKReference struct {
 	// clause. The database does not enforce it, and it may name a column that
 	// holds no foreign key at all, so any consumer deciding something about
 	// the *referential contract* — as opposed to how a column is filtered or
-	// typed — must exclude it. Column is empty for synthetic references, but
-	// that is not a usable test: the PostgreSQL parser also leaves it empty
-	// when a REFERENCES clause omits the referenced column list.
+	// typed — must exclude it. Column is empty for synthetic references;
+	// test Synthetic, not Column, to tell the two apart.
 	Synthetic bool
 }
 

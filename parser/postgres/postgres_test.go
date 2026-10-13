@@ -878,6 +878,142 @@ func TestUnqualifiedFKTargetSchema(t *testing.T) {
 	}
 }
 
+// TestImplicitReferenceColumns pins `REFERENCES t` with no column list: the
+// foreign key references t's primary key as t has it once the statement is
+// applied, as PostgreSQL resolves it, and it is an error when t does not exist
+// yet or has no primary key.
+func TestImplicitReferenceColumns(t *testing.T) {
+	type fk struct {
+		Table, Name string
+		RefColumns  []string
+		Column      *parser.FKReference // FKReference of the key's one column
+	}
+	tests := []struct {
+		name    string
+		sql     string
+		want    []fk
+		wantErr string
+	}{
+		{
+			name: "inline",
+			sql:  `CREATE TABLE u (id int PRIMARY KEY); CREATE TABLE t (uid int REFERENCES u);`,
+			want: []fk{{"public.t", "t_uid_fkey", []string{"id"}, &parser.FKReference{Table: "u", Schema: "public", Column: "id"}}},
+		},
+		{
+			name: "table level",
+			sql:  `CREATE TABLE u (id int PRIMARY KEY); CREATE TABLE t (vid int, FOREIGN KEY (vid) REFERENCES u);`,
+			want: []fk{{"public.t", "t_vid_fkey", []string{"id"}, &parser.FKReference{Table: "u", Schema: "public", Column: "id"}}},
+		},
+		{
+			name: "composite takes the primary key's column order",
+			sql:  `CREATE TABLE u (a int, b int, PRIMARY KEY (b, a)); CREATE TABLE t (x int, y int, FOREIGN KEY (x, y) REFERENCES u);`,
+			want: []fk{{"public.t", "t_x_y_fkey", []string{"b", "a"}, nil}},
+		},
+		{
+			name: "qualified target",
+			sql:  `CREATE TABLE o.p (pk int PRIMARY KEY); CREATE TABLE t (r int REFERENCES o.p);`,
+			want: []fk{{"public.t", "t_r_fkey", []string{"pk"}, &parser.FKReference{Table: "p", Schema: "o", Column: "pk"}}},
+		},
+		{
+			name: "self reference with the primary key declared later",
+			sql:  `CREATE TABLE s (parent int REFERENCES s, id int PRIMARY KEY);`,
+			want: []fk{{"public.s", "s_parent_fkey", []string{"id"}, &parser.FKReference{Table: "s", Schema: "public", Column: "id"}}},
+		},
+		{
+			name: "self reference with a table-level primary key declared later",
+			sql:  `CREATE TABLE s (parent int, id int, FOREIGN KEY (parent) REFERENCES s, PRIMARY KEY (id));`,
+			want: []fk{{"public.s", "s_parent_fkey", []string{"id"}, &parser.FKReference{Table: "s", Schema: "public", Column: "id"}}},
+		},
+		{
+			name: "ALTER TABLE ADD CONSTRAINT and ADD COLUMN",
+			sql: `CREATE TABLE u (id int PRIMARY KEY); CREATE TABLE t (z int);
+				ALTER TABLE t ADD CONSTRAINT tz FOREIGN KEY (z) REFERENCES u;
+				ALTER TABLE t ADD COLUMN q int REFERENCES u;`,
+			want: []fk{
+				{"public.t", "t_q_fkey", []string{"id"}, &parser.FKReference{Table: "u", Schema: "public", Column: "id"}},
+				{"public.t", "tz", []string{"id"}, &parser.FKReference{Table: "u", Schema: "public", Column: "id"}},
+			},
+		},
+		{
+			name: "one ALTER TABLE replaces the primary key after adding the foreign key",
+			sql: `CREATE TABLE s (id int, parent int, CONSTRAINT pk PRIMARY KEY (id));
+				ALTER TABLE s ADD FOREIGN KEY (id) REFERENCES s, DROP CONSTRAINT pk, ADD PRIMARY KEY (parent);`,
+			want: []fk{{"public.s", "s_id_fkey", []string{"parent"}, &parser.FKReference{Table: "s", Schema: "public", Column: "parent"}}},
+		},
+		{
+			name: "partition takes its partitioned table's primary key",
+			sql: `CREATE TABLE ev (a int, b int, PRIMARY KEY (b, a)) PARTITION BY RANGE (a);
+				CREATE TABLE ev1 PARTITION OF ev FOR VALUES FROM (0) TO (10) PARTITION BY RANGE (b);
+				CREATE TABLE ev11 PARTITION OF ev1 FOR VALUES FROM (0) TO (5);
+				CREATE TABLE t (x int, y int, FOREIGN KEY (x, y) REFERENCES ev11);`,
+			want: []fk{{"public.t", "t_x_y_fkey", []string{"b", "a"}, nil}},
+		},
+		{
+			name: "attached partition",
+			sql: `CREATE TABLE ev (id int PRIMARY KEY) PARTITION BY RANGE (id); CREATE TABLE p1 (id int PRIMARY KEY);
+				ALTER TABLE ev ATTACH PARTITION p1 FOR VALUES FROM (0) TO (10); CREATE TABLE t (x int REFERENCES p1);`,
+			want: []fk{{"public.t", "t_x_fkey", []string{"id"}, &parser.FKReference{Table: "p1", Schema: "public", Column: "id"}}},
+		},
+		{
+			name: "other skipped relation stays as written",
+			sql:  `CREATE TABLE u (id int PRIMARY KEY); CREATE TABLE c AS SELECT * FROM u; CREATE TABLE t (x int REFERENCES c);`,
+			want: []fk{{"public.t", "t_x_fkey", []string{}, &parser.FKReference{Table: "c", Schema: "public"}}},
+		},
+		{
+			name: "view stays as written",
+			sql:  `CREATE TABLE u (id int PRIMARY KEY); CREATE VIEW v AS SELECT * FROM u; CREATE TABLE t (x int REFERENCES v);`,
+			want: []fk{{"public.t", "t_x_fkey", []string{}, &parser.FKReference{Table: "v", Schema: "public"}}},
+		},
+		{
+			name:    "target with no primary key",
+			sql:     `CREATE TABLE u (id int UNIQUE); CREATE TABLE t (uid int REFERENCES u);`,
+			wantErr: "foreign key t_uid_fkey on public.t: there is no primary key for referenced table public.u",
+		},
+		{
+			name:    "self reference with no primary key",
+			sql:     `CREATE TABLE s (id int UNIQUE, parent int REFERENCES s);`,
+			wantErr: "foreign key s_parent_fkey on public.s: there is no primary key for referenced table public.s",
+		},
+		{
+			name:    "target not created yet",
+			sql:     `CREATE TABLE t (wid int REFERENCES w); CREATE TABLE w (id int PRIMARY KEY);`,
+			wantErr: "foreign key t_wid_fkey on public.t: referenced table public.w does not exist",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			p := postgres.New("")
+			err := p.Parse("test.sql", []byte(tt.sql))
+			if tt.wantErr != "" {
+				if err == nil || !strings.Contains(err.Error(), tt.wantErr) {
+					t.Fatalf("Parse() error = %v, want %q", err, tt.wantErr)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("Parse() error: %v", err)
+			}
+			var got []fk
+			for _, tbl := range p.Schema().Tables {
+				for _, c := range tbl.Constraints {
+					if c.Type != parser.ForeignKey {
+						continue
+					}
+					var ref *parser.FKReference
+					if len(c.Columns) == 1 {
+						ref = parser.ColumnByName(&tbl, c.Columns[0]).FKReference
+					}
+					got = append(got, fk{tbl.Schema + "." + tbl.Name, c.Name, c.ReferenceColumns, ref})
+				}
+			}
+			slices.SortFunc(got, func(a, b fk) int { return strings.Compare(a.Name, b.Name) })
+			if diff := cmp.Diff(tt.want, got); diff != "" {
+				t.Errorf("foreign keys mismatch (-want +got):\n%s", diff)
+			}
+		})
+	}
+}
+
 func TestDuplicateCreateTable(t *testing.T) {
 	sql := `
 		CREATE TABLE users (id integer PRIMARY KEY);

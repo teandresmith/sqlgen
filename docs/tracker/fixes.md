@@ -22,85 +22,6 @@
 ## Open
 
 <!-- fixes:open:begin -->
-### FIX-310
-
-- **Status:** Open
-- **Severity:** tracked
-- **Origin:** phase 4, `parser/postgres` (foreign keys)
-- **Surfaced by:** backlog sweep 2026-10-12 (backlog line from 30.1)
-- **Vetted:** corrected at `9b58288b` (2026-10-12)
-
-**Issue.** `REFERENCES u` with no column list leaves `FKReference.Column` empty and `FOREIGN KEY (vid)
-REFERENCES u` gives `ReferenceColumns: []`, while PostgreSQL resolves both to `u`'s primary key.
-Measured on PG17: files `uid fk={u public Column:""}`, `vid fk=nil`, constraint `ref=public.u[]`;
-database `Column:id`, `ref=public.u[id]`; composite `FOREIGN KEY (x,y) REFERENCES u2` (PK a,b) → files
-`[]`, database `[a b]`.
-
-**Root cause.** `applyColumnConstraint` and `parseConstraintNode`
-(`parser/postgres/postgres.go`) copy `PkAttrs` as written.
-
-**Suggested fix.**
-- `addConstraints` records each new FK with no `ReferenceColumns` in `p.implicitRefs`; a new
-  `resolveImplicitRefs(table)` runs at the end of `parseCreateTable` and of `parseAlterTable` — after the
-  statement's last sub-command, not when the ADD runs (PG16/17 accept `ALTER TABLE s6 ADD FOREIGN KEY
-  (parent) REFERENCES s6, ADD PRIMARY KEY (id)` → confkey {id}, and resolve `ALTER TABLE zs ADD FOREIGN KEY
-  (id) REFERENCES zs, DROP CONSTRAINT zpk, ADD PRIMARY KEY (parent)` to the new key {parent}). It copies
-  the referenced table's PRIMARY KEY columns in declared order (PK (b,a) → {b,a}), then calls
-  `CanonicalizeConstraints` again so `FKReference` is set; a self-reference resolves because the table is
-  already indexed; a key dropped later in the statement is skipped.
-- Errors matching PG: `foreign key <name> on <schema>.<table>: there is no primary key for referenced
-  table <s>.<t>` and `… referenced table <s>.<t> does not exist`.
-- `applyColumnConstraint` sets `FKReference` only when the clause has a column list (otherwise
-  `ApplyConstraintToColumns`' nil guard at `parser/schema.go:543` keeps `Column ""`).
-- `parser/schema.go:216-218`: the FKReference comment drops the "PostgreSQL parser leaves it empty"
-  caveat and reads "Column is empty for synthetic references; test Synthetic, not Column, to tell the two
-  apart."
-- Tests: `TestImplicitReferenceColumns` (11 cases: inline, table-level, composite (b,a), qualified target,
-  self-reference with the PK declared later — inline and table-level, ALTER ADD CONSTRAINT and ADD
-  COLUMN, one ALTER replacing the PK after the FK, and three errors); `TestPostgresIntrospect_ImplicitReferenceColumns`
-  (parity: inline, table-level, composite, self-reference, alter-table).
-- Corrected vs. the original suggestion (vet 2026-10-12): resolve once the statement is fully applied
-  (resolving at the ADD gives `{"id"}` where PG gives `{"parent"}`); the inline FKReference must not be set
-  without a column list; a target that does not exist yet is an error too (auto-accept below).
-- Auto-accepted the recommended option on 2026-10-12 (`/fix` auto-accept rule): a REFERENCES with no
-  column list to a table that does not exist yet is a parse error (`foreign key t_wid_fkey on public.t:
-  referenced table public.w does not exist`), as PG16/17 reject it, rather than leaving it unresolved;
-  prototyped green, no churn, no public surface (unexported field and function), reverses no PRD text
-  (§5.2: a statement sees only what came before). Measured consequence for veto: in a `both` overlay whose
-  `input.introspect.tables` leaves out the target, `ALTER TABLE orders ADD COLUMN uid int REFERENCES users`
-  → `foreign key orders_uid_fkey on public.orders: referenced table public.users does not exist`, which PG
-  would accept; `REFERENCES users(id)` still parses, so writing the column list is the workaround.
-- Composition with FIX-302: `--3way` gives two conflicts — `addConstraints` (keep 302's re-canonicalize
-  after naming, then 310's collection loop) and `applyColumnConstraint` (take 302's deletion of the inline
-  set) — plus an append-only integration-test conflict; with both applied parser `go test -race ./...`
-  passes and a table-level no-list FK derives `FKReference{Column:"id"}`.
-- The user confirmed on 2026-10-12 (veto check, backlog sweep Step 5): keep the error for a no-column-list
-  REFERENCES to a table not defined yet, including under `both` with the target filtered out of introspection;
-  writing the column list is the workaround.
-- Prototype results, run at `9b58288b` on 2026-10-12: probe at base → `t1.uid fk={Table:u Schema:public
-  Column:}`, `t1_uid_fkey ref=public.u[]`, table-level `ref=public.u[]` with no FKReference, composite
-  `ref=public.u2[]`, self-references `ref=[]`; `s4 (id int UNIQUE, parent int REFERENCES s4)`, `REFERENCES
-  nopk` and the forward `REFERENCES w` → err=<nil>. PG16/17 (identical): t1/t2 {id}, t3 {b,a}, s1–s6/t5 {id};
-  `there is no primary key for referenced table "s4"`, `relation "w" does not exist`. Generation (probe copy
-  of `postgres` + `probe_inline … REFERENCES users`, `probe_tbl … FOREIGN KEY (owner_id) REFERENCES
-  users`, control `probe_ctl … REFERENCES users(id)`) → `ProbeTbls` 42 grep hits vs 61 for the control
-  (users gets no has-many edge to probe_tbl); with the fix 61. Gates: parser `gofumpt -l` clean, `go vet`
-  clean, `go test -race -count=1 ./...` ok (5 packages, testcontainers), `golangci-lint` 0 issues;
-  cmd/sqlgen `go test -short ./...` ok. Fail-first: postgres.go reverted → all 11 unit and 5 parity subtests
-  fail (`- RefColumns: []string{"id"} + RefColumns: []string{}`; `Parse() error = <nil>, want "…there is no
-  primary key for referenced table public.u"`); applyColumnConstraint hunk reverted → 4 subtests `- Column:
-  "id" + Column: ""`; parseAlterTable resolve call reverted → 2 ALTER subtests fail; per-sub-command
-  resolution → `- RefColumns: []string{"parent"} + RefColumns: []string{"id"}`; re-canonicalize dropped →
-  7 subtests fail; existing suite without the fix passes. Golden churn: none. Patch:
-  `.claude/prototypes/FIX-310.patch` (4 files, +206/-14).
-
-**References.**
-- PRD §6.1, §5.2.
-- Backlog line absorbed: 2026-10-05 REFERENCES without a column list (30.1).
-- FIX-300 (same rule for SQLite after the rqlite upgrade).
-
-**Resolution notes.** _Filled in by /fix resolve._
-
 ### FIX-311
 
 - **Status:** Open
@@ -2233,6 +2154,97 @@ DEFAULT.
 ## Resolved
 
 <!-- fixes:resolved:begin -->
+
+### FIX-310
+
+- **Status:** Resolved
+- **Severity:** tracked
+- **Origin:** phase 4, `parser/postgres` (foreign keys)
+- **Surfaced by:** backlog sweep 2026-10-12 (backlog line from 30.1)
+- **Vetted:** corrected at `9b58288b` (2026-10-12)
+
+**Issue.** `REFERENCES u` with no column list leaves `FKReference.Column` empty and `FOREIGN KEY (vid)
+REFERENCES u` gives `ReferenceColumns: []`, while PostgreSQL resolves both to `u`'s primary key.
+Measured on PG17: files `uid fk={u public Column:""}`, `vid fk=nil`, constraint `ref=public.u[]`;
+database `Column:id`, `ref=public.u[id]`; composite `FOREIGN KEY (x,y) REFERENCES u2` (PK a,b) → files
+`[]`, database `[a b]`.
+
+**Root cause.** `applyColumnConstraint` and `parseConstraintNode`
+(`parser/postgres/postgres.go`) copy `PkAttrs` as written.
+
+**Suggested fix.**
+- `addConstraints` records each new FK with no `ReferenceColumns` in `p.implicitRefs`; a new
+  `resolveImplicitRefs(table)` runs at the end of `parseCreateTable` and of `parseAlterTable` — after the
+  statement's last sub-command, not when the ADD runs (PG16/17 accept `ALTER TABLE s6 ADD FOREIGN KEY
+  (parent) REFERENCES s6, ADD PRIMARY KEY (id)` → confkey {id}, and resolve `ALTER TABLE zs ADD FOREIGN KEY
+  (id) REFERENCES zs, DROP CONSTRAINT zpk, ADD PRIMARY KEY (parent)` to the new key {parent}). It copies
+  the referenced table's PRIMARY KEY columns in declared order (PK (b,a) → {b,a}), then calls
+  `CanonicalizeConstraints` again so `FKReference` is set; a self-reference resolves because the table is
+  already indexed; a key dropped later in the statement is skipped.
+- Errors matching PG: `foreign key <name> on <schema>.<table>: there is no primary key for referenced
+  table <s>.<t>` and `… referenced table <s>.<t> does not exist`.
+- `applyColumnConstraint` sets `FKReference` only when the clause has a column list (otherwise
+  `ApplyConstraintToColumns`' nil guard at `parser/schema.go:543` keeps `Column ""`).
+- `parser/schema.go:216-218`: the FKReference comment drops the "PostgreSQL parser leaves it empty"
+  caveat and reads "Column is empty for synthetic references; test Synthetic, not Column, to tell the two
+  apart."
+- Tests: `TestImplicitReferenceColumns` (11 cases: inline, table-level, composite (b,a), qualified target,
+  self-reference with the PK declared later — inline and table-level, ALTER ADD CONSTRAINT and ADD
+  COLUMN, one ALTER replacing the PK after the FK, and three errors); `TestPostgresIntrospect_ImplicitReferenceColumns`
+  (parity: inline, table-level, composite, self-reference, alter-table).
+- Corrected vs. the original suggestion (vet 2026-10-12): resolve once the statement is fully applied
+  (resolving at the ADD gives `{"id"}` where PG gives `{"parent"}`); the inline FKReference must not be set
+  without a column list; a target that does not exist yet is an error too (auto-accept below).
+- Auto-accepted the recommended option on 2026-10-12 (`/fix` auto-accept rule): a REFERENCES with no
+  column list to a table that does not exist yet is a parse error (`foreign key t_wid_fkey on public.t:
+  referenced table public.w does not exist`), as PG16/17 reject it, rather than leaving it unresolved;
+  prototyped green, no churn, no public surface (unexported field and function), reverses no PRD text
+  (§5.2: a statement sees only what came before). Measured consequence for veto: in a `both` overlay whose
+  `input.introspect.tables` leaves out the target, `ALTER TABLE orders ADD COLUMN uid int REFERENCES users`
+  → `foreign key orders_uid_fkey on public.orders: referenced table public.users does not exist`, which PG
+  would accept; `REFERENCES users(id)` still parses, so writing the column list is the workaround.
+- Composition with FIX-302: `--3way` gives two conflicts — `addConstraints` (keep 302's re-canonicalize
+  after naming, then 310's collection loop) and `applyColumnConstraint` (take 302's deletion of the inline
+  set) — plus an append-only integration-test conflict; with both applied parser `go test -race ./...`
+  passes and a table-level no-list FK derives `FKReference{Column:"id"}`.
+- The user confirmed on 2026-10-12 (veto check, backlog sweep Step 5): keep the error for a no-column-list
+  REFERENCES to a table not defined yet, including under `both` with the target filtered out of introspection;
+  writing the column list is the workaround.
+- Auto-accepted the recommended option on 2026-10-13 (`/fix` auto-accept rule): a `REFERENCES t` with no column list
+  whose target is a relation the parser skips → a partition (created with PARTITION OF or attached) takes its
+  partitioned table's primary key, at any depth, and any other skipped relation (a view, a CREATE TABLE AS table, a
+  partition of a table with no primary key) stays as written, as at HEAD, rather than the "does not exist" error the
+  prototype gave; because it was prototyped green (parity with PG17 on a partition target), causes no golden churn,
+  adds no public surface (unexported helper) and reverses no ruling (the 2026-10-12 ruling covers a table not defined
+  yet, not one the parser skips).
+- Auto-accepted the recommended option on 2026-10-13 (`/fix` auto-accept rule): whether `resolveImplicitRefs` also
+  returns PostgreSQL's "number of referencing and referenced columns for foreign key disagree" error → no, it stays
+  with the backlog line that tracks the explicit-column-list twin, because the shape was already mismatched at HEAD
+  (`ReferenceColumns []` against one column), the current code is green with no churn, and it adds no public surface
+  and reverses nothing.
+- Prototype results, run at `9b58288b` on 2026-10-12: probe at base → `t1.uid fk={Table:u Schema:public
+  Column:}`, `t1_uid_fkey ref=public.u[]`, table-level `ref=public.u[]` with no FKReference, composite
+  `ref=public.u2[]`, self-references `ref=[]`; `s4 (id int UNIQUE, parent int REFERENCES s4)`, `REFERENCES
+  nopk` and the forward `REFERENCES w` → err=<nil>. PG16/17 (identical): t1/t2 {id}, t3 {b,a}, s1–s6/t5 {id};
+  `there is no primary key for referenced table "s4"`, `relation "w" does not exist`. Generation (probe copy
+  of `postgres` + `probe_inline … REFERENCES users`, `probe_tbl … FOREIGN KEY (owner_id) REFERENCES
+  users`, control `probe_ctl … REFERENCES users(id)`) → `ProbeTbls` 42 grep hits vs 61 for the control
+  (users gets no has-many edge to probe_tbl); with the fix 61. Gates: parser `gofumpt -l` clean, `go vet`
+  clean, `go test -race -count=1 ./...` ok (5 packages, testcontainers), `golangci-lint` 0 issues;
+  cmd/sqlgen `go test -short ./...` ok. Fail-first: postgres.go reverted → all 11 unit and 5 parity subtests
+  fail (`- RefColumns: []string{"id"} + RefColumns: []string{}`; `Parse() error = <nil>, want "…there is no
+  primary key for referenced table public.u"`); applyColumnConstraint hunk reverted → 4 subtests `- Column:
+  "id" + Column: ""`; parseAlterTable resolve call reverted → 2 ALTER subtests fail; per-sub-command
+  resolution → `- RefColumns: []string{"parent"} + RefColumns: []string{"id"}`; re-canonicalize dropped →
+  7 subtests fail; existing suite without the fix passes. Golden churn: none. Patch:
+  `.claude/prototypes/FIX-310.patch` (4 files, +206/-14).
+
+**References.**
+- PRD §6.1, §5.2.
+- Backlog line absorbed: 2026-10-05 REFERENCES without a column list (30.1).
+- FIX-300 (same rule for SQLite after the rqlite upgrade).
+
+**Resolution notes.** `REFERENCES t` with no column list now resolves to t's primary key, in declared order, once the CREATE TABLE or ALTER TABLE statement is fully applied: `addConstraints` records each new foreign key with no `ReferenceColumns`, and `resolveImplicitRefs` (end of `parseCreateTable` and `parseAlterTable` in `parser/postgres/postgres.go`) copies the target's primary key, then re-canonicalizes so FIX-302's derivation sets the column's `FKReference`; a missing target or one with no primary key is an error, as in PostgreSQL. The inline `applyColumnConstraint` set stays deleted (FIX-302). The `parser/schema.go` FKReference.Synthetic comment drops the PostgreSQL-parser caveat. Tests: `TestImplicitReferenceColumns` (15 cases) and `TestPostgresIntrospect_ImplicitReferenceColumns` (6 parity cases). Prototype applied with `--3way` onto FIX-301/302/303/304/305/309: the struct conflict kept HEAD's `skipped`/`sequences` fields (the prototype's `exprIndexes` context was gone) plus `implicitRefs`; `parseCreateTable` kept the sequence loop; `addConstraints` kept FIX-302's re-canonicalize, then the collection loop; `applyColumnConstraint` took FIX-302's deletion; the integration test was appended after the newer tests. A target the parser skips does not take the "does not exist" error: `partitionedTable` resolves a partition to its partitioned table's primary key, and any other skipped relation stays as written (verify review finding; 4 unit cases (sub-partition, attached partition, CREATE TABLE AS, view) and a partition parity case that checks its skipped-statement warning added). The `resolveImplicitRefs` comment was shortened and backlog line "The PG parser accepts foreign keys PostgreSQL rejects" was corrected (its `REFERENCES u2` example has no column list). Fail-first: `postgres.go` reverted → 13 of 15 unit subtests fail (the CREATE TABLE AS and view cases pin HEAD behavior); the skipped-relation branch disabled → the 4 partition/skipped subtests fail. Gates: `make check` ok, parser `go test -race ./...` ok (testcontainers), `make check-examples` ok; golden churn none, matching the vet.
 
 ### FIX-309
 
