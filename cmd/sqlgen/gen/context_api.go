@@ -1578,9 +1578,9 @@ func collectNumericWidthScalars(tables []APITableContext) []APINumericWidth {
 // rejects that — so a name in UsedScalars means this declaration is what put
 // it there.
 //
-// Emitted from Generate only. `sqlgen generate` chains the gqlgen wrapper in
-// the same run, and the wrapper builds its own APIContext; warning
-// from both would report every entry twice.
+// Emitted from `generate` and `validate`, not from `graphql gen`: `sqlgen
+// generate` chains the gqlgen wrapper in the same run, and the wrapper builds
+// its own APIContext; warning from both would report every entry twice.
 func unusedScalarWarnings(cfg *config.RootConfig, apiCtx *APIContext) []string {
 	if apiCtx == nil || cfg.API == nil || cfg.API.GraphQL == nil {
 		return nil

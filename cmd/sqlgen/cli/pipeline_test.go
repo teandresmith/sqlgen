@@ -262,6 +262,27 @@ func TestGenerate_InlineTypeNameCollision(t *testing.T) {
 	}
 }
 
+// TestUnmatchedEnumKey_Warns pins that an `enums:` key in the MySQL
+// `<table>_<column>_enum` form, which matches no enum, is reported by both
+// `generate` and `validate` as a warning, and neither command fails.
+func TestUnmatchedEnumKey_Warns(t *testing.T) {
+	const want = "Warning: enums.users_role_enum: matches no enum in the schema, so the entry has no effect — check the spelling (a MySQL inline ENUM is named <table>__<column>_enum)\n"
+	for _, command := range []string{"generate", "validate"} {
+		t.Run(command, func(t *testing.T) {
+			cfgPath := writeSchemaProject(t, config.DialectMySQL,
+				`CREATE TABLE users (id INT PRIMARY KEY, role ENUM('admin','viewer') NOT NULL);`)
+			appendConfig(t, cfgPath, "enums:\n  users_role_enum:\n    struct_name: Role\n")
+			stderr, err := runSchemaCommand(t, command, cfgPath, true)
+			if err != nil {
+				t.Fatalf("%s: unexpected error: %v\nstderr: %s", command, err, stderr)
+			}
+			if strings.Count(stderr, want) != 1 {
+				t.Errorf("%s: stderr = %q, want it to contain %q once", command, stderr, want)
+			}
+		})
+	}
+}
+
 // TestValidate_UnresolvedForeignKeyKeepsChecking pins that an unresolved
 // PostgreSQL foreign key does not hide the rest of `validate`'s report: the
 // parser warnings, the post-parse config error and the

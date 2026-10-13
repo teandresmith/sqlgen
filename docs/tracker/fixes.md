@@ -22,72 +22,6 @@
 ## Open
 
 <!-- fixes:open:begin -->
-### FIX-328
-
-- **Status:** Open
-- **Severity:** nit
-- **Origin:** phase 5, `cmd/sqlgen/config` + `cmd/sqlgen/gen` (`context_enum.go`)
-- **Surfaced by:** backlog sweep 2026-10-12 (backlog line from FIX-288)
-- **Vetted:** corrected at `a99568ff` (2026-10-12)
-
-**Issue.** An `enums.<name>` key that matches no enum is ignored silently, so a typo, or a key in the
-old `<table>_<column>_enum` form after FIX-288, does nothing. Measured: postgres example copy with
-`enums: {nosuch_enum: {struct_name: Bogus}}` → `sqlgen validate` prints no line for the key (only the
-example's unrelated cursor_keys warning, then "config and schema are valid"), exit 0; `sqlgen generate`
-likewise.
-
-**Root cause.** `EnumConfigFor` (`cmd/sqlgen/gen/context_enum.go:15-23`) is lookup-only; no validate
-rule checks unmatched keys.
-
-**Suggested fix.**
-- Auto-accepted the recommended option on 2026-10-12 (`/fix` auto-accept rule; user confirmed no
-  veto): a warning, not an error, because a schema filtered by `introspect.schemas` can legitimately
-  leave a key unmatched (precedent: `unusedScalarWarnings`); no churn, no public surface.
-- New `unmatchedEnumKeyWarnings(cfg, schema)` in `cmd/sqlgen/gen/context_enum.go` (nil when `cfg.Enums` is
-  empty; sorted keys; qualified-or-bare match, the same two-step as `EnumConfigFor`). A key naming a
-  `schema.Sets` entry → "enums.<k>: <k> is a SET type, which takes no enums: override, so the entry has no
-  effect — rename the table or column to change its Go type name" (PRD `:2635`); any other → "enums.<k>:
-  matches no enum in the schema, so the entry has no effect — check the spelling", plus " (a MySQL inline
-  ENUM is named <table>__<column>_enum)" under mysql.
-- There is no single gen-level warning pass: call it from `buildAllContexts` (generate / diff; after the view
-  contexts so the order matches validate) and from `ValidateGeneration` (after `BuildEnumContexts`), as
-  `unusedScalarWarnings` surfaces from both — not from `BuildEntityContextsFromSchema`, which `graphql gen`
-  chained inside `generate` would double.
-- PRD: new §4.13 row "An `enums:` key that matches no enum | Warning *(schema-level)*" and a §4.11 sentence
-  "A key that matches no enum in the schema warns ([4.13])."
-- Tests: `gen/enum_key_warnings_test.go` (table test asserting the same warnings from `ValidateGeneration` and
-  `GenerateInto`: unmatched, bare match, qualified match, wrong-schema qualified key, MySQL single-underscore
-  key with hint, MySQL SET key, MySQL match, several unmatched sorted); `cli/pipeline_test.go`
-  `TestUnmatchedEnumKey_Warns` (generate and validate each print the warning exactly once, exit 0).
-- Inline doc fix (absorb when implementing): PRD §26 "Unresolved declarations warn" (`docs/PRD.md:12487`) says
-  the unused-scalar check "fires at `generate` time rather than `sqlgen validate`", and the `unusedScalarWarnings`
-  comment (`cmd/sqlgen/gen/context_api.go:1581`) says "Emitted from Generate only"; measured, `sqlgen validate`
-  on a graphql example copy with an unused `api.graphql.scalars.UnusedThing` prints it too. Reword both to
-  "from `generate` and `validate`, not from `graphql gen`".
-- Corrected from the original: adds the PRD amendment (the warning was otherwise undocumented), names both
-  call sites, adds the MySQL naming hint for keys in the pre-FIX-288 form, and the CLI test.
-- Prototype results, run at `a99568ff` on 2026-10-12: postgres example copy with `enums: {nosuch_enum:
-  {struct_name: Bogus}, user_role: {description: matched bare}}` → `validate` / `generate` exit 0, no enums
-  line, `models/enums_gen.go:423` "// UserRole — matched bare" (matched key applied, unmatched ignored); mysql
-  copy with `users_role_enum` / `users__permissions_set` / `users__role_enum` keys → no enums line. Gates:
-  `go test -race -count=1 ./gen/... ./cli/...` ok; vet, gofumpt, golangci-lint clean; `make refs-check` ok; no
-  example declares `enums:`, and `sqlgen validate` on all 12 file-source examples is identical base vs
-  patched. Fail-first: without the `buildAllContexts` call → `TestUnmatchedEnumKeyWarnings/a_key_matching_no_enum`
-  "generate: enums: key warnings mismatch (-want +got)" and `TestUnmatchedEnumKey_Warns/generate` "stderr = \"\",
-  want it to contain \"Warning: enums.users_role_enum: …\" once"; without the `ValidateGeneration` call → the
-  validate halves fail; without the SET branch → `…/a_MySQL_key_naming_a_SET` fails; without the qualified match
-  → `…/a_schema-qualified_key_that_matches` fails; existing suite passes at base. Golden churn none. Overlap
-  (all apply cleanly in ID order): FIX-324 `orchestrate.go` @2403 (~34 lines from this hunk), FIX-321 PRD §4.13
-  @1174 and `pipeline_test.go` @574, FIX-316/317 `pipeline_test.go`; FIX-308 rewrites the §8.3 Naming paragraph
-  this links to. Patch: `.claude/prototypes/FIX-328.patch` (5 files, +219/-1).
-
-**References.**
-- PRD §4.11, §4.13, §8.3 (`docs/PRD.md:2635`).
-- Backlog line absorbed: 2026-10-08 unmatched enums key (FIX-288).
-- FIX-288.
-
-**Resolution notes.** _Filled in by /fix resolve._
-
 ### FIX-329
 
 - **Status:** Open
@@ -1087,6 +1021,73 @@ DEFAULT.
 ## Resolved
 
 <!-- fixes:resolved:begin -->
+
+### FIX-328
+
+- **Status:** Resolved
+- **Severity:** nit
+- **Origin:** phase 5, `cmd/sqlgen/config` + `cmd/sqlgen/gen` (`context_enum.go`)
+- **Surfaced by:** backlog sweep 2026-10-12 (backlog line from FIX-288)
+- **Vetted:** corrected at `a99568ff` (2026-10-12)
+
+**Issue.** An `enums.<name>` key that matches no enum is ignored silently, so a typo, or a key in the
+old `<table>_<column>_enum` form after FIX-288, does nothing. Measured: postgres example copy with
+`enums: {nosuch_enum: {struct_name: Bogus}}` → `sqlgen validate` prints no line for the key (only the
+example's unrelated cursor_keys warning, then "config and schema are valid"), exit 0; `sqlgen generate`
+likewise.
+
+**Root cause.** `EnumConfigFor` (`cmd/sqlgen/gen/context_enum.go:17-25`) is lookup-only; no validate
+rule checks unmatched keys.
+
+**Suggested fix.**
+- Auto-accepted the recommended option on 2026-10-12 (`/fix` auto-accept rule; user confirmed no
+  veto): a warning, not an error, because a schema filtered by `introspect.schemas` can legitimately
+  leave a key unmatched (precedent: `unusedScalarWarnings`); no churn, no public surface.
+- New `unmatchedEnumKeyWarnings(cfg, schema)` in `cmd/sqlgen/gen/context_enum.go` (nil when `cfg.Enums` is
+  empty; sorted keys; qualified-or-bare match, the same two-step as `EnumConfigFor`). A key naming a
+  `schema.Sets` entry → "enums.<k>: <k> is a SET type, which takes no enums: override, so the entry has no
+  effect — rename the table or column to change its Go type name" (PRD `:2651`); any other → "enums.<k>:
+  matches no enum in the schema, so the entry has no effect — check the spelling", plus " (a MySQL inline
+  ENUM is named <table>__<column>_enum)" under mysql.
+- There is no single gen-level warning pass: call it from `buildAllContexts` (generate / diff; after the view
+  contexts so the order matches validate) and from `ValidateGeneration` (after `BuildEnumContexts`), as
+  `unusedScalarWarnings` surfaces from both — not from `BuildEntityContextsFromSchema`, which `graphql gen`
+  chained inside `generate` would double.
+- PRD: new §4.13 row "An `enums:` key that matches no enum | Warning *(schema-level)*" and a §4.11 sentence
+  "A key that matches no enum in the schema warns ([4.13])."
+- Tests: `gen/enum_key_warnings_test.go` (table test asserting the same warnings from `ValidateGeneration` and
+  `GenerateInto`: unmatched, bare match, qualified match, wrong-schema qualified key, MySQL single-underscore
+  key with hint, MySQL SET key, MySQL match, several unmatched sorted); `cli/pipeline_test.go`
+  `TestUnmatchedEnumKey_Warns` (generate and validate each print the warning exactly once, exit 0).
+- Inline doc fix (absorb when implementing): PRD §26 "Unresolved declarations warn" (`docs/PRD.md:12503`) says
+  the unused-scalar check "fires at `generate` time rather than `sqlgen validate`", and the `unusedScalarWarnings`
+  comment (`cmd/sqlgen/gen/context_api.go:1581`) says "Emitted from Generate only"; measured, `sqlgen validate`
+  on a graphql example copy with an unused `api.graphql.scalars.UnusedThing` prints it too. Reword both to
+  "from `generate` and `validate`, not from `graphql gen`".
+- Corrected from the original: adds the PRD amendment (the warning was otherwise undocumented), names both
+  call sites, adds the MySQL naming hint for keys in the pre-FIX-288 form, and the CLI test.
+- Prototype results, run at `a99568ff` on 2026-10-12: postgres example copy with `enums: {nosuch_enum:
+  {struct_name: Bogus}, user_role: {description: matched bare}}` → `validate` / `generate` exit 0, no enums
+  line, `models/enums_gen.go:423` "// UserRole — matched bare" (matched key applied, unmatched ignored); mysql
+  copy with `users_role_enum` / `users__permissions_set` / `users__role_enum` keys → no enums line. Gates:
+  `go test -race -count=1 ./gen/... ./cli/...` ok; vet, gofumpt, golangci-lint clean; `make refs-check` ok; no
+  example declares `enums:`, and `sqlgen validate` on all 12 file-source examples is identical base vs
+  patched. Fail-first: without the `buildAllContexts` call → `TestUnmatchedEnumKeyWarnings/a_key_matching_no_enum`
+  "generate: enums: key warnings mismatch (-want +got)" and `TestUnmatchedEnumKey_Warns/generate` "stderr = \"\",
+  want it to contain \"Warning: enums.users_role_enum: …\" once"; without the `ValidateGeneration` call → the
+  validate halves fail; without the SET branch → `…/a_MySQL_key_naming_a_SET` fails; without the qualified match
+  → `…/a_schema-qualified_key_that_matches` fails; existing suite passes at base. Golden churn none. Overlap
+  (all apply cleanly in ID order): FIX-324 `orchestrate.go` @2403 (~34 lines from this hunk), FIX-321 PRD §4.13
+  @1174 and `pipeline_test.go` @574, FIX-316/317 `pipeline_test.go`; FIX-308 rewrites the §8.3 Naming paragraph
+  this links to. Patch: `.claude/prototypes/FIX-328.patch` (5 files, +219/-1).
+
+**References.**
+- PRD §4.11, §4.13, §8.3 (`docs/PRD.md:2651`).
+- Backlog line absorbed: 2026-10-08 unmatched enums key (FIX-288).
+- FIX-288.
+
+**Resolution notes.** Resolved 2026-10-13 on `feat/introspection` from the vetted prototype (applied clean at `7bb713c1`). New `unmatchedEnumKeyWarnings` (`cmd/sqlgen/gen/context_enum.go`) warns on an `enums:` key that neither the qualified nor the bare name of any schema enum answers, with a separate message for a key naming a MySQL SET and a `<table>__<column>_enum` hint under mysql; called from `buildAllContexts` (`generate`; `diff` runs it too but prints no warnings) and `ValidateGeneration` (`validate`), not from `BuildEntityContextsFromSchema`. PRD §4.11 sentence and §4.13 row added. Inline doc fix absorbed: PRD §26 "Unresolved declarations warn" and the `unusedScalarWarnings` comment now say the check fires from `generate` and `validate`, not from `graphql gen` (both call sites confirmed at `orchestrate.go`). Tests: `gen/enum_key_warnings_test.go` (`TestUnmatchedEnumKeyWarnings`, 8 cases through `ValidateGeneration` and `GenerateInto`) and `cli/pipeline_test.go` `TestUnmatchedEnumKey_Warns`. Fail-first re-run on the final code: removing the `buildAllContexts` call fails the generate halves, removing the `ValidateGeneration` call fails the validate halves, disabling the SET branch fails `a_MySQL_key_naming_a_SET`, dropping the qualified match fails `a_schema-qualified_key_that_matches`. Gates: `make check` ok; `make update-golden-e2e` + `make update-golden` produced no churn (matches vet); `make check-examples` ok, no example prints an `enums.` warning. Verify-pass reviewer comment and line-ref corrections applied inline (`context_enum.go`, both test doc comments, this entry's `:2651` / `:12503` / `:17-25` refs).
+
 ### FIX-327
 
 - **Status:** Resolved

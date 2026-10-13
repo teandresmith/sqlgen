@@ -131,6 +131,10 @@ func buildAllContexts(input *GenerateInput, collisions map[string]bool) (generat
 		return generationContexts{}, fmt.Errorf("building view contexts: %w", err)
 	}
 
+	// After the table and view contexts, so `generate` lists its warnings in the
+	// order ValidateGeneration does.
+	input.Warnings = append(input.Warnings, unmatchedEnumKeyWarnings(cfg, schema)...)
+
 	if err := validateResolvedPackage(cfg, ctxs); err != nil {
 		return generationContexts{}, err
 	}
@@ -2437,6 +2441,7 @@ func ValidateGeneration(schema *parser.Schema, cfg *config.RootConfig) ([]string
 	}
 
 	enumContexts := BuildEnumContexts(schema, collisions, cfg)
+	input.Warnings = append(input.Warnings, unmatchedEnumKeyWarnings(cfg, schema)...)
 
 	// The package-scope name rules need every category at once, and the
 	// categories that did not build contribute nothing rather than blocking

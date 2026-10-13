@@ -1,6 +1,8 @@
 package gen
 
 import (
+	"fmt"
+	"maps"
 	"slices"
 	"strings"
 
@@ -20,6 +22,55 @@ func EnumConfigFor(cfg *config.RootConfig, name, schema string) config.EnumConfi
 		return ec
 	}
 	return cfg.Enums[name]
+}
+
+// unmatchedEnumKeyWarnings reports every `enums:` key that EnumConfigFor
+// resolves for no schema enum, so the entry has no effect (PRD §4.11, §4.13).
+// A key matches an enum by the same two spellings that lookup tries: the
+// schema-qualified name or the bare one.
+//
+// A warning rather than an error, the unusedScalarWarnings precedent: a
+// schema narrowed by `introspect.schemas` or `introspect.tables` can
+// legitimately leave a key unmatched. What it catches is a typo, or a MySQL
+// key in the `<table>_<column>_enum` form rather than `<table>__<column>_enum`
+// (PRD §8.3). A key naming a MySQL SET type gets its own message,
+// since a SET takes no override at all.
+//
+// Emitted by buildAllContexts (`generate`) and ValidateGeneration
+// (`validate`), not by BuildEntityContextsFromSchema: `graphql gen` runs
+// chained inside `generate`, so warning there too would report each key twice.
+func unmatchedEnumKeyWarnings(cfg *config.RootConfig, schema *parser.Schema) []string {
+	if cfg == nil || len(cfg.Enums) == 0 {
+		return nil
+	}
+	enums := make(map[string]bool, 2*len(schema.Enums))
+	for _, e := range schema.Enums {
+		enums[qualifiedTableName(e.Schema, e.Name)] = true
+		enums[e.Name] = true
+	}
+	sets := make(map[string]bool, 2*len(schema.Sets))
+	for _, s := range schema.Sets {
+		sets[qualifiedTableName(s.Schema, s.Name)] = true
+		sets[s.Name] = true
+	}
+	var out []string
+	for _, key := range slices.Sorted(maps.Keys(cfg.Enums)) {
+		switch {
+		case enums[key]:
+		case sets[key]:
+			out = append(out, fmt.Sprintf(
+				"enums.%s: %s is a SET type, which takes no enums: override, so the entry has no effect — rename the table or column to change its Go type name",
+				key, key,
+			))
+		default:
+			msg := fmt.Sprintf("enums.%s: matches no enum in the schema, so the entry has no effect — check the spelling", key)
+			if cfg.Input.Dialect == config.DialectMySQL {
+				msg += " (a MySQL inline ENUM is named <table>__<column>_enum)"
+			}
+			out = append(out, msg)
+		}
+	}
+	return out
 }
 
 // EnumGoTypeName returns the Go type name one schema enum resolves to,
