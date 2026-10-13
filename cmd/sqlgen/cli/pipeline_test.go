@@ -460,8 +460,8 @@ func TestParseSchema_ViewColumnNames(t *testing.T) {
 		want          []string
 		wantErr       string
 	}{
-		{name: "unaliased expression", viewSQL: "CREATE VIEW v AS SELECT o.id, o.total + 1 FROM orders o;", wantErr: "v.sql: view v selects o.total + 1 with no alias and no column name"},
-		{name: "star", viewSQL: "CREATE VIEW v AS SELECT * FROM orders;", wantErr: "view v selects *, whose columns the view parser cannot list"},
+		{name: "unaliased expression", viewSQL: "CREATE VIEW v AS SELECT o.id, o.total + 1 FROM orders o;", wantErr: "v.sql: view v selects o.total + 1 with no alias and no column name; name it with AS"},
+		{name: "star", viewSQL: "CREATE VIEW v AS SELECT * FROM orders;", wantErr: "view v selects *, whose columns the view parser cannot list; name each column"},
 		{name: "column list", viewSQL: "CREATE VIEW v (order_id, next_total) AS SELECT o.id, o.total + 1 FROM orders o;", want: []string{"order_id", "next_total"}},
 	}
 	for _, tt := range tests {

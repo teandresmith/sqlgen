@@ -1,6 +1,7 @@
 package introspect
 
 import (
+	"errors"
 	"fmt"
 	"slices"
 	"strings"
@@ -176,9 +177,21 @@ func viewColumnsFromDefinition(ddl string, parse viewSQLParser, schema *parser.S
 }
 
 // viewFallbackWarning names a view whose columns come from the catalog
-// because its definition could not be read as a view file.
+// because its definition could not be read as a view file. It gives only the
+// reason, not a ViewParseError's advice to a view file's author: the view is
+// the database's, and its catalog columns stand. A reason that names the
+// view again calls it "it".
 func viewFallbackWarning(view string, err error) string {
-	return fmt.Sprintf("view %s: columns come from the catalog, since its definition cannot be read as a view file: %v", view, err)
+	reason := err.Error()
+	if pe, ok := errors.AsType[*parser.ViewParseError](err); ok {
+		reason = strings.TrimSuffix(reason, "; "+pe.Advice)
+	}
+	if qe, ok := errors.AsType[*parser.ViewQueryError](err); ok {
+		if rest, ok := strings.CutPrefix(reason, "view "+qe.Name+" "); ok {
+			reason = "it " + rest
+		}
+	}
+	return fmt.Sprintf("view %s: columns come from the catalog, since its definition cannot be read as a view file: %s", view, reason)
 }
 
 func columnNames(cols []parser.Column) []string {

@@ -84,14 +84,20 @@ func extractSelectExprs(view string, exprs []sqlparser.SelectExpr, names sqlpars
 	for i, expr := range exprs {
 		ae, ok := expr.(*sqlparser.AliasedExpr)
 		if !ok {
-			return nil, fmt.Errorf("view %s selects %s, whose columns the view parser cannot list; name each column", view, sqlparser.String(expr))
+			return nil, &parser.ViewParseError{
+				Reason: fmt.Sprintf("view %s selects %s, whose columns the view parser cannot list", view, sqlparser.String(expr)),
+				Advice: "name each column",
+			}
 		}
 		col := extractAliasedExpr(ae)
 		if i < len(names) {
 			col.Alias = names[i].String()
 		}
 		if col.Alias == "" {
-			return nil, fmt.Errorf("view %s selects %s with no alias and no column name; name it with AS", view, sqlparser.String(ae.Expr))
+			return nil, &parser.ViewParseError{
+				Reason: fmt.Sprintf("view %s selects %s with no alias and no column name", view, sqlparser.String(ae.Expr)),
+				Advice: "name it with AS",
+			}
 		}
 		columns = append(columns, col)
 	}

@@ -210,7 +210,7 @@ func TestSQLiteIntrospect_ViewUnnamedLikeEscape(t *testing.T) {
 		t.Errorf("v_like columns = %q, want the catalog's", names)
 	}
 	want := "view v_like: columns come from the catalog, since its definition cannot be read as a view file: " +
-		`view v_like selects "a" LIKE 'x%' ESCAPE '\' with no alias and no column name; name it with AS`
+		`it selects "a" LIKE 'x%' ESCAPE '\' with no alias and no column name`
 	if !slices.Contains(schema.Warnings, want) {
 		t.Errorf("warnings = %q, want %q", schema.Warnings, want)
 	}

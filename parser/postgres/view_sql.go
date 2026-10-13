@@ -116,14 +116,20 @@ func extractResTargets(view string, targets, names []*pg_query.Node) ([]parser.V
 			continue
 		}
 		if isStar(rt.ResTarget) {
-			return nil, fmt.Errorf("view %s selects %s, whose columns the view parser cannot list; name each column", view, exprSQL(rt.ResTarget))
+			return nil, &parser.ViewParseError{
+				Reason: fmt.Sprintf("view %s selects %s, whose columns the view parser cannot list", view, exprSQL(rt.ResTarget)),
+				Advice: "name each column",
+			}
 		}
 		col := extractColumn(rt.ResTarget)
 		if i < len(names) {
 			col.Alias = nodeString(names[i])
 		}
 		if col.Alias == "" {
-			return nil, fmt.Errorf("view %s selects %s with no alias and no column name; name it with AS", view, exprSQL(rt.ResTarget))
+			return nil, &parser.ViewParseError{
+				Reason: fmt.Sprintf("view %s selects %s with no alias and no column name", view, exprSQL(rt.ResTarget)),
+				Advice: "name it with AS",
+			}
 		}
 		columns = append(columns, col)
 	}

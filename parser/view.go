@@ -65,6 +65,16 @@ func (e *ViewQueryError) Error() string { return e.Err.Error() }
 
 func (e *ViewQueryError) Unwrap() error { return e.Err }
 
+// ViewParseError reports a view query a dialect's ParseViewSQL cannot read,
+// such as one that selects *. Reason says what it cannot read; Advice is what
+// the error adds for a view file's author, which does not apply to a view the
+// database defines, since its query is not the user's to change.
+type ViewParseError struct {
+	Reason, Advice string
+}
+
+func (e *ViewParseError) Error() string { return e.Reason + "; " + e.Advice }
+
 // ParseViewAnnotations extracts @pk, @type, and @nullable directives from
 // SQL line comments at the top of a view annotation file.
 func ParseViewAnnotations(content string) (*ViewAnnotations, error) {

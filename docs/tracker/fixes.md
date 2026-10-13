@@ -22,57 +22,6 @@
 ## Open
 
 <!-- fixes:open:begin -->
-### FIX-316
-
-- **Status:** Open
-- **Severity:** nit
-- **Origin:** phase 30, `parser/introspect` (`views.go` `viewFallbackWarning`)
-- **Surfaced by:** backlog sweep 2026-10-12 (backlog line from FIX-280)
-- **Vetted:** ready at `9b58288b` (2026-10-12)
-
-**Issue.** The database-source fallback warning for a view repeats advice meant for a view file the
-user writes. Measured (modernc): "view v_star: columns come from the catalog, since its definition
-cannot be read as a view file: view v_star selects *, whose columns the view parser cannot list; name
-each column", and `v_expr` "…; name it with AS". The view may belong to someone else's database.
-
-**Root cause.** `viewFallbackWarning` (`parser/introspect/views.go:92`) wraps the
-`{postgres,mysql,sqlite}/view_sql.go` errors, which carry the advice in their text.
-
-**Suggested fix.**
-- Return a typed view-parse error carrying reason and advice separately; the view-file path prints
-  both, the introspection warning prints only the reason.
-- Update the warning tests on all three dialects.
-- Scope note (vet 2026-10-12): only SQLite introspection reaches the defect. PG 16 and MySQL 8 catalogs expand
-  `*` and name every expression (pg_views stores `SELECT id, a FROM t` and `(a || 'x'::text) AS "?column?"`;
-  MySQL stores `` `d`.`t`.`id` AS `id` `` and ``concat(`d`.`t`.`a`,'x') AS `CONCAT(a, 'x')` ``), which both view
-  parsers read without error; the PG/MySQL changes are for uniformity and unit-tested only. Same root cause and
-  site: SQLite's RIGHT/FULL join error is split the same way.
-- Inline for the implementer (same site): the warning names the view twice ("view v_star: … view v_star
-  selects *, …") because each dialect reason starts with "view %s"; trim the repetition in `viewFallbackWarning`.
-- Prototype: `parser/view.go` gains `ViewParseError{Reason, Advice string}` (`Error()` = Reason + "; " + Advice, so
-  the view-file path prints the same text); the star and unaliased-column errors of all three `view_sql.go` and
-  SQLite's RIGHT/FULL error return `*parser.ViewParseError` (still wrapped in `ViewQueryError`);
-  `viewFallbackWarning` trims "; "+Advice when `errors.AsType` finds one (TrimSuffix keeps any wrap prefix).
-  Tests: `parser/introspect/views_test.go` `TestViewFallbackWarning` (sqlite star / `t.*` / expr / RIGHT join /
-  compound passthrough; pg star / expr; mysql star / expr); `TestSQLiteIntrospect_ViewUnnamedLikeEscape` want
-  drops "; name it with AS"; cli `TestParseSchema_ViewColumnNames` pins that the view-file path keeps the advice.
-- Prototype results, run at `9b58288b` on 2026-10-12: modernc probe via `introspect.NewSQLiteIntrospector()` →
-  "view v_star: columns come from the catalog, since its definition cannot be read as a view file: view v_star
-  selects *, whose columns the view parser cannot list; name each column", likewise v_expr ("; name it with AS"),
-  v_tstar, v_right ("; RIGHT and FULL joins are not supported"); with the prototype each line ends before the
-  advice. Gates: parser `go test -race -short ./...` ok; `golangci-lint` 0 issues; gofumpt clean; cli
-  `-run 'TestParseSchema_View|TestView'` ok (the testcontainers integration test was not run; its new want was
-  confirmed byte-for-byte by the probe). Fail-first: `viewFallbackWarning` reverted → 8 of 9 subtests fail (e.g.
-  `= "…cannot list; name each column", want "…cannot list"`); sqlite view_sql.go reverted → 4 sqlite subtests
-  fail; pg + mysql reverted → their 4 fail; existing suite without the fix passes. Golden churn: none. Patch:
-  `.claude/prototypes/FIX-316.patch` (8 files, +97/-12).
-
-**References.**
-- PRD §16.2 ("a warning names the view").
-- Backlog line absorbed: 2026-10-08 view fallback warning wording (FIX-280).
-
-**Resolution notes.** _Filled in by /fix resolve._
-
 ### FIX-317
 
 - **Status:** Open
@@ -1843,6 +1792,71 @@ DEFAULT.
 ## Resolved
 
 <!-- fixes:resolved:begin -->
+### FIX-316
+
+- **Status:** Resolved
+- **Severity:** nit
+- **Origin:** phase 30, `parser/introspect` (`views.go` `viewFallbackWarning`)
+- **Surfaced by:** backlog sweep 2026-10-12 (backlog line from FIX-280)
+- **Vetted:** ready at `9b58288b` (2026-10-12)
+
+**Issue.** The database-source fallback warning for a view repeats advice meant for a view file the
+user writes. Measured (modernc): "view v_star: columns come from the catalog, since its definition
+cannot be read as a view file: view v_star selects *, whose columns the view parser cannot list; name
+each column", and `v_expr` "…; name it with AS". The view may belong to someone else's database.
+
+**Root cause.** `viewFallbackWarning` (`parser/introspect/views.go:184`) wraps the
+`{postgres,mysql,sqlite}/view_sql.go` errors, which carry the advice in their text.
+
+**Suggested fix.**
+- Return a typed view-parse error carrying reason and advice separately; the view-file path prints
+  both, the introspection warning prints only the reason.
+- Update the warning tests on all three dialects.
+- Scope note (vet 2026-10-12): only SQLite introspection reaches the defect. PG 16 and MySQL 8 catalogs expand
+  `*` and name every expression (pg_views stores `SELECT id, a FROM t` and `(a || 'x'::text) AS "?column?"`;
+  MySQL stores `` `d`.`t`.`id` AS `id` `` and ``concat(`d`.`t`.`a`,'x') AS `CONCAT(a, 'x')` ``), which both view
+  parsers read without error; the PG/MySQL changes are for uniformity and unit-tested only. Same root cause and
+  site: SQLite's RIGHT/FULL join error is split the same way.
+- Inline for the implementer (same site): the warning names the view twice ("view v_star: … view v_star
+  selects *, …") because each dialect reason starts with "view %s"; trim the repetition in `viewFallbackWarning`.
+- Prototype: `parser/view.go` gains `ViewParseError{Reason, Advice string}` (`Error()` = Reason + "; " + Advice, so
+  the view-file path prints the same text); the star and unaliased-column errors of all three `view_sql.go` and
+  SQLite's RIGHT/FULL error return `*parser.ViewParseError` (still wrapped in `ViewQueryError`);
+  `viewFallbackWarning` trims "; "+Advice when `errors.AsType` finds one (TrimSuffix keeps any wrap prefix).
+  Tests: `parser/introspect/views_test.go` `TestViewFallbackWarning` (sqlite star / `t.*` / expr / RIGHT join /
+  compound passthrough; pg star / expr; mysql star / expr); `TestSQLiteIntrospect_ViewUnnamedLikeEscape` want
+  drops "; name it with AS"; cli `TestParseSchema_ViewColumnNames` pins that the view-file path keeps the advice.
+- Prototype results, run at `9b58288b` on 2026-10-12: modernc probe via `introspect.NewSQLiteIntrospector()` →
+  "view v_star: columns come from the catalog, since its definition cannot be read as a view file: view v_star
+  selects *, whose columns the view parser cannot list; name each column", likewise v_expr ("; name it with AS"),
+  v_tstar, v_right ("; RIGHT and FULL joins are not supported"); with the prototype each line ends before the
+  advice. Gates: parser `go test -race -short ./...` ok; `golangci-lint` 0 issues; gofumpt clean; cli
+  `-run 'TestParseSchema_View|TestView'` ok (the testcontainers integration test was not run; its new want was
+  confirmed byte-for-byte by the probe). Fail-first: `viewFallbackWarning` reverted → 8 of 9 subtests fail (e.g.
+  `= "…cannot list; name each column", want "…cannot list"`); sqlite view_sql.go reverted → 4 sqlite subtests
+  fail; pg + mysql reverted → their 4 fail; existing suite without the fix passes. Golden churn: none. Patch:
+  `.claude/prototypes/FIX-316.patch` (8 files, +97/-12).
+
+**References.**
+- PRD §16.2 ("a warning names the view").
+- Backlog line absorbed: 2026-10-08 view fallback warning wording (FIX-280).
+
+**Resolution notes.** `parser.ViewParseError{Reason, Advice}` (`parser/view.go`) carries the view parser's
+reason and its advice to a view file's author separately; `Error()` joins them with "; ", so a view file's error
+reads as before. The star and unaliased-column errors of all three `view_sql.go` and SQLite's RIGHT/FULL join error
+return it (still wrapped in `ViewQueryError`). `viewFallbackWarning` (`parser/introspect/views.go`) drops the advice
+and, per the inline note, calls the view "it" when the reason names it again (prefix `view <ViewQueryError.Name> `),
+so the modernc warning now reads "view v_star: columns come from the catalog, since its definition cannot be read
+as a view file: it selects *, whose columns the view parser cannot list". Prototype applied with `--3way`: FIX-300's
+rqlite/sql pin moved the SQLite RIGHT/FULL check from the alias heuristic to the `JoinClause` operator, so that error
+(text "CREATE VIEW uses a RIGHT or FULL join; RIGHT and FULL joins are not supported", unchanged for view files) is
+the one split; `TestSQLiteIntrospect_ViewUnnamedLikeEscape` keeps HEAD's rendered `"a" LIKE 'x%' ESCAPE '\'`
+expression (FIX-297/FIX-314) with the advice dropped and "it". Tests: new `parser/introspect/views_test.go`
+`TestViewFallbackWarning` (9 rows across three dialects; the PostgreSQL rows use production's quoted, schema-qualified
+DDL and warning name `public.v`); cli `TestParseSchema_ViewColumnNames` pins the view-file advice. Fail-first:
+`views.go` reverted → 8 of 9 subtests fail (compound passthrough passes). Gates: `make check` ok, `make
+check-examples` ok, integration test run against containers ok. Golden churn: none (matches vet).
+
 
 ### FIX-315
 

@@ -93,7 +93,10 @@ func extractResultColumns(view string, cols []*rsql.ResultColumn, names []*rsql.
 	result := make([]parser.ViewSelectColumn, 0, len(cols))
 	for i, rc := range cols {
 		if isStar(rc) {
-			return nil, fmt.Errorf("view %s selects %s, whose columns the view parser cannot list; name each column", view, rc.String())
+			return nil, &parser.ViewParseError{
+				Reason: fmt.Sprintf("view %s selects %s, whose columns the view parser cannot list", view, rc.String()),
+				Advice: "name each column",
+			}
 		}
 		col := extractResultColumn(rc)
 		if i < len(names) {
@@ -106,7 +109,10 @@ func extractResultColumns(view string, cols []*rsql.ResultColumn, names []*rsql.
 			if err != nil {
 				expr = fmt.Sprintf("column %d", i+1)
 			}
-			return nil, fmt.Errorf("view %s selects %s with no alias and no column name; name it with AS", view, expr)
+			return nil, &parser.ViewParseError{
+				Reason: fmt.Sprintf("view %s selects %s with no alias and no column name", view, expr),
+				Advice: "name it with AS",
+			}
 		}
 		result = append(result, col)
 	}
@@ -199,7 +205,10 @@ func collectSourceAliases(src rsql.Source, isOuter bool, aliases map[string]stri
 
 	case *rsql.JoinClause:
 		if s.Operator != nil && (s.Operator.Right.IsValid() || s.Operator.Full.IsValid()) {
-			return fmt.Errorf("CREATE VIEW uses a RIGHT or FULL join; RIGHT and FULL joins are not supported")
+			return &parser.ViewParseError{
+				Reason: "CREATE VIEW uses a RIGHT or FULL join",
+				Advice: "RIGHT and FULL joins are not supported",
+			}
 		}
 		if err := collectSourceAliases(s.X, isOuter, aliases, outer); err != nil {
 			return err
