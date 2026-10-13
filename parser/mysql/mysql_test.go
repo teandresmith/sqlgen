@@ -2622,6 +2622,162 @@ func TestDropConstraintIgnoresNameCase(t *testing.T) {
 	}
 }
 
+// TestAlterTableKeyNames checks the keys ALTER TABLE leaves after it drops,
+// renames and adds keys. Each want was measured on MySQL 8.0.46, and a key
+// with an expression part, which is not listed, shows in the name a later key
+// takes.
+func TestAlterTableKeyNames(t *testing.T) {
+	const parents = `CREATE TABLE p (id int PRIMARY KEY); CREATE TABLE p2 (b int, c int, PRIMARY KEY (b, c));`
+	tests := []struct {
+		name string
+		sql  string
+		want []string // every constraint of v, as "TYPE name [columns]", then flagged columns
+	}{
+		{
+			name: "RENAME INDEX matches the old name in any case",
+			sql:  `CREATE TABLE v (a int, KEY A (a)); ALTER TABLE v RENAME INDEX a TO b;`,
+			want: []string{"INDEX b [a]"},
+		},
+		{
+			name: "RENAME KEY renames a unique key",
+			sql:  `CREATE TABLE v (a int, UNIQUE KEY u (a)); ALTER TABLE v RENAME KEY U TO w;`,
+			want: []string{"UNIQUE w [a]", "column a unique=true fk=false"},
+		},
+		{
+			name: "DROP INDEX finds a key by its new name",
+			sql:  `CREATE TABLE v (a int, KEY a (a)); ALTER TABLE v RENAME INDEX a TO b; ALTER TABLE v DROP INDEX b;`,
+		},
+		{
+			name: "a renamed foreign key index no longer gives way to a wider key",
+			sql: parents + `CREATE TABLE v (a int, b int, CONSTRAINT fk FOREIGN KEY (a) REFERENCES p (id));
+				ALTER TABLE v RENAME INDEX fk TO x;
+				ALTER TABLE v ADD KEY (a, b);`,
+			want: []string{"FOREIGN KEY fk [a]", "INDEX a [a b]", "INDEX x [a]", "column a unique=false fk=true"},
+		},
+		{
+			name: "nor after it is renamed back",
+			sql: parents + `CREATE TABLE v (a int, b int, CONSTRAINT fk FOREIGN KEY (a) REFERENCES p (id));
+				ALTER TABLE v RENAME INDEX fk TO x;
+				ALTER TABLE v RENAME INDEX x TO fk;
+				ALTER TABLE v ADD KEY (a, b);`,
+			want: []string{"FOREIGN KEY fk [a]", "INDEX a [a b]", "INDEX fk [a]", "column a unique=false fk=true"},
+		},
+		{
+			name: "RENAME INDEX renames an expression key",
+			sql:  `CREATE TABLE v (a int, KEY a ((a + 1))); ALTER TABLE v RENAME INDEX a TO f; ALTER TABLE v ADD KEY (a);`,
+			want: []string{"INDEX a [a]"},
+		},
+		{
+			name: "a rename applies before the keys the statement adds",
+			sql:  `CREATE TABLE v (a int, KEY a (a)); ALTER TABLE v ADD KEY (a), RENAME INDEX a TO b;`,
+			want: []string{"INDEX a [a]", "INDEX b [a]"},
+		},
+		{
+			name: "a new key is named against the renamed keys",
+			sql:  `CREATE TABLE v (a int, b int, KEY a (a), KEY b (b)); ALTER TABLE v ADD KEY (a), RENAME INDEX b TO a_2;`,
+			want: []string{"INDEX a [a]", "INDEX a_2 [b]", "INDEX a_3 [a]"},
+		},
+		{
+			name: "a drop applies before the keys the statement adds",
+			sql:  `CREATE TABLE v (a int, KEY a (a)); ALTER TABLE v ADD KEY (a), DROP INDEX a;`,
+			want: []string{"INDEX a [a]"},
+		},
+		{
+			name: "a drop applies before the statement's renames",
+			sql:  `CREATE TABLE v (a int, b int, KEY a (a), KEY b (b)); ALTER TABLE v RENAME INDEX b TO a, DROP INDEX a;`,
+			want: []string{"INDEX a [b]"},
+		},
+		{
+			name: "DROP CONSTRAINT drops a foreign key and keeps its index",
+			sql:  parents + `CREATE TABLE v (a int, CONSTRAINT fk FOREIGN KEY (a) REFERENCES p (id)); ALTER TABLE v DROP CONSTRAINT FK;`,
+			want: []string{"INDEX fk [a]"},
+		},
+		{
+			name: "DROP CONSTRAINT drops a unique key",
+			sql:  `CREATE TABLE v (a int, CONSTRAINT U UNIQUE (a)); ALTER TABLE v DROP CONSTRAINT u;`,
+		},
+		{
+			name: "DROP CONSTRAINT drops a unique expression key",
+			sql:  `CREATE TABLE v (x int, b int, CONSTRAINT x UNIQUE ((b + 1))); ALTER TABLE v DROP CONSTRAINT x; ALTER TABLE v ADD KEY (x);`,
+			want: []string{"INDEX x [x]"},
+		},
+		{
+			name: "DROP CONSTRAINT PRIMARY drops the primary key",
+			sql:  "CREATE TABLE v (a int, b int, PRIMARY KEY (a)); ALTER TABLE v DROP CONSTRAINT `primary`;",
+		},
+		{
+			name: "DROP CONSTRAINT PRIMARY applies before the key the statement adds",
+			sql:  "CREATE TABLE v (a int, b int, PRIMARY KEY (a)); ALTER TABLE v ADD PRIMARY KEY (b), DROP CONSTRAINT `PRIMARY`;",
+			want: []string{"PRIMARY KEY PRIMARY [b]"},
+		},
+		{
+			name: "DROP CONSTRAINT keeps the foreign key index replaceable",
+			sql: parents + `CREATE TABLE v (a int, b int, CONSTRAINT fk FOREIGN KEY (a) REFERENCES p (id));
+				ALTER TABLE v DROP CONSTRAINT fk;
+				ALTER TABLE v ADD KEY (a, b);`,
+			want: []string{"INDEX a [a b]"},
+		},
+		{
+			name: "DROP FOREIGN KEY keeps the foreign key index replaceable",
+			sql: parents + `CREATE TABLE v (a int, b int, CONSTRAINT fk4 FOREIGN KEY (a) REFERENCES p (id));
+				ALTER TABLE v DROP FOREIGN KEY fk4;
+				ALTER TABLE v ADD KEY (a, b);`,
+			want: []string{"INDEX a [a b]"},
+		},
+		{
+			name: "DROP FOREIGN KEY keeps an expression key of that name",
+			sql: parents + `CREATE TABLE v (x int, b int, KEY x (x, (b + 1)), CONSTRAINT x FOREIGN KEY (x) REFERENCES p (id));
+				ALTER TABLE v DROP FOREIGN KEY x;
+				ALTER TABLE v ADD KEY (x);`,
+			want: []string{"INDEX x_2 [x]"},
+		},
+		{
+			name: "DROP CHECK keeps an expression key of that name",
+			sql: `CREATE TABLE v (x int, b int, CONSTRAINT x CHECK (b > 0), KEY x ((b + 1)));
+				ALTER TABLE v DROP CHECK x;
+				ALTER TABLE v ADD KEY (x);`,
+			want: []string{"INDEX x_2 [x]"},
+		},
+		{
+			name: "a key a later clause adds replaces a foreign key index before it is named",
+			sql: parents + `CREATE TABLE v (a int, b int);
+				ALTER TABLE v ADD FOREIGN KEY (a, b) REFERENCES p2 (b, c), ADD KEY (a), ADD KEY (a, b);`,
+			want: []string{"FOREIGN KEY v_ibfk_1 [a b]", "INDEX a [a]", "INDEX a_2 [a b]"},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			p := newParser(t)
+			if err := p.Parse("test.sql", []byte(tt.sql)); err != nil {
+				t.Fatalf("Parse() error: %v", err)
+			}
+			var got []string
+			for _, tbl := range p.Schema().Tables {
+				if tbl.Name != "v" {
+					continue
+				}
+				for _, c := range tbl.Constraints {
+					got = append(got, fmt.Sprintf("%s %s %v", c.Type, c.Name, c.Columns))
+				}
+				for _, c := range tbl.Columns {
+					if c.Unique || c.FKReference != nil {
+						got = append(got, fmt.Sprintf("column %s unique=%v fk=%v", c.Name, c.Unique, c.FKReference != nil))
+					}
+					if c.PrimaryKey != slices.ContainsFunc(tbl.Constraints, func(k parser.Constraint) bool {
+						return k.Type == parser.PrimaryKey && slices.Contains(k.Columns, c.Name)
+					}) {
+						t.Errorf("column %s: PrimaryKey = %v", c.Name, c.PrimaryKey)
+					}
+				}
+			}
+			slices.Sort(got)
+			if diff := cmp.Diff(tt.want, got); diff != "" {
+				t.Errorf("Parse(%q) constraints mismatch (-want +got):\n%s", tt.sql, diff)
+			}
+		})
+	}
+}
+
 func TestParseViewSQL_CompoundSelectRejected(t *testing.T) {
 	tests := []struct{ sql, schema string }{
 		{"CREATE VIEW v AS SELECT id FROM a UNION SELECT id FROM b;", ""},

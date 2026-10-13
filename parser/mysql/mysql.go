@@ -994,9 +994,10 @@ func columnsPrefixMatch(indexCols, prefix []string) bool {
 
 // addConstraints adds the constraints ALTER TABLE creates, in order, each
 // named as MySQL names it against what the table already has. A FOREIGN KEY
-// brings the index MySQL builds for it; indexName is the index name its
-// FOREIGN KEY clause declares.
-func (p *Parser) addConstraints(table *parser.Table, constraints []parser.Constraint, indexName string) {
+// brings the index MySQL builds for it, unless a key in later, the keys the
+// statement's later clauses add, makes it redundant (replacedLater); indexName
+// is the index name its FOREIGN KEY clause declares.
+func (p *Parser) addConstraints(table *parser.Table, constraints []parser.Constraint, indexName string, later []tableKey) {
 	for _, c := range constraints {
 		if isKey(c.Type) {
 			p.addKey(table, c, false)
@@ -1008,8 +1009,11 @@ func (p *Parser) addConstraints(table *parser.Table, constraints []parser.Constr
 			named.Name = parser.DeriveMySQLConstraintName(table.Name, named, constraintNames(table, c.Type))
 		}
 		table.Constraints = append(table.Constraints, named)
-		if c.Type == parser.ForeignKey {
-			p.addKey(table, foreignKeyIndex(c, indexName), true)
+		if c.Type != parser.ForeignKey {
+			continue
+		}
+		if key := (tableKey{Constraint: foreignKeyIndex(c, indexName), built: true}); !replacedLater(key, later) {
+			p.addKey(table, key.Constraint, true)
 		}
 	}
 	parser.CanonicalizeConstraints(table, "mysql")
@@ -1065,20 +1069,40 @@ func (p *Parser) parseAlterTable(stmt *sqlparser.AlterTable) error {
 		return fmt.Errorf("table %s not found", tableName)
 	}
 
-	// MySQL drops the old primary key before it adds a new one, wherever the
-	// primary-key drop sits among the clauses, and the drop clears the key flag on
-	// every column (applyDropKey). Applied in clause order, `ADD PRIMARY KEY
-	// (code), DROP PRIMARY KEY` would lose the key it just added.
-	for _, opt := range stmt.AlterOptions {
-		if o, ok := dropPrimaryKey(opt); ok {
-			applyDropKey(table, o)
+	// MySQL applies the statement's drops to the keys the table has, then its
+	// key renames, wherever they sit among the clauses, and only then adds the
+	// new keys in clause order, each named against the keys before it
+	// (measured on MySQL 8.0). Applied in clause order, `ADD PRIMARY KEY
+	// (code), DROP PRIMARY KEY` would lose the key it just added, and `ADD KEY
+	// (a), DROP INDEX a` would name the new key a_2.
+	opts := stmt.AlterOptions
+	for _, opt := range opts {
+		if o, ok := opt.(*sqlparser.DropKey); ok {
+			p.dropKey(table, o)
 		}
 	}
-	for _, opt := range stmt.AlterOptions {
-		if _, ok := dropPrimaryKey(opt); ok {
+	for _, opt := range opts {
+		if o, ok := opt.(*sqlparser.RenameIndex); ok {
+			p.renameKey(table, o)
+		}
+	}
+	// As in CREATE TABLE, MySQL builds no index for a foreign key when a key a
+	// later clause adds makes it redundant (replacedLater). after[i] is where
+	// the keys the clauses after clause i add start in added.
+	var added []tableKey
+	after := make([]int, len(opts))
+	for i, opt := range opts {
+		if key, ok := p.addedKey(opt); ok {
+			added = append(added, key)
+		}
+		after[i] = len(added)
+	}
+	for i, opt := range opts {
+		switch opt.(type) {
+		case *sqlparser.DropKey, *sqlparser.RenameIndex:
 			continue
 		}
-		if err := p.applyAlterOption(table, opt); err != nil {
+		if err := p.applyAlterOption(table, opt, added[after[i]:]); err != nil {
 			return err
 		}
 	}
@@ -1086,34 +1110,42 @@ func (p *Parser) parseAlterTable(stmt *sqlparser.AlterTable) error {
 	return nil
 }
 
-// dropPrimaryKey returns opt as a DropKey, and true, when it drops the primary
-// key.
-func dropPrimaryKey(opt sqlparser.AlterOption) (*sqlparser.DropKey, bool) {
-	o, ok := opt.(*sqlparser.DropKey)
-	if !ok || dropKeyType(o) != sqlparser.PrimaryKeyType {
-		return nil, false
+// addedKey returns the key an ADD INDEX or ADD FOREIGN KEY clause adds, for a
+// foreign key the index MySQL builds for it, and true, or false for any other
+// clause. Column-inline keys are left out: one covers a single column, so a
+// foreign key index it makes redundant is replaced as soon as it is added.
+func (p *Parser) addedKey(opt sqlparser.AlterOption) (tableKey, bool) {
+	switch o := opt.(type) {
+	case *sqlparser.AddIndexDefinition:
+		return tableKey{Constraint: p.parseIndex(o.IndexDefinition)}, true
+	case *sqlparser.AddConstraintDefinition:
+		if fk, ok := o.ConstraintDefinition.Details.(*sqlparser.ForeignKeyDefinition); ok {
+			key := foreignKeyIndex(p.parseConstraintDef(o.ConstraintDefinition), fk.IndexName.String())
+			return tableKey{Constraint: key, built: true}, true
+		}
 	}
-	return o, true
+	return tableKey{}, false
 }
 
 // dropKeyType returns the kind of key o drops. vitess parses the ALTER TABLE
-// clause DROP INDEX or DROP KEY `PRIMARY` as a normal-key drop, but a MySQL
-// primary key is always named PRIMARY, and index names compare
-// case-insensitively, so MySQL drops the primary key.
+// clause DROP INDEX or DROP KEY `PRIMARY` as a normal-key drop, and DROP
+// CONSTRAINT `PRIMARY` as a check drop, but a MySQL primary key is always
+// named PRIMARY, and index and constraint names compare case-insensitively,
+// so MySQL drops the primary key.
 func dropKeyType(o *sqlparser.DropKey) sqlparser.DropKeyType {
-	if o.Type == sqlparser.NormalKeyType && strings.EqualFold(o.Name.String(), "PRIMARY") {
+	if (o.Type == sqlparser.NormalKeyType || o.Type == sqlparser.CheckKeyType) && strings.EqualFold(o.Name.String(), "PRIMARY") {
 		return sqlparser.PrimaryKeyType
 	}
 	return o.Type
 }
 
-func (p *Parser) applyAlterOption(table *parser.Table, opt sqlparser.AlterOption) error {
+func (p *Parser) applyAlterOption(table *parser.Table, opt sqlparser.AlterOption, later []tableKey) error {
 	switch o := opt.(type) {
 	case *sqlparser.AddColumns:
 		for _, col := range o.Columns {
 			c, constraints := p.parseColumn(table.Name, col)
 			table.Columns = append(table.Columns, c)
-			p.addConstraints(table, constraints, "")
+			p.addConstraints(table, constraints, "", nil)
 		}
 	case *sqlparser.DropColumn:
 		name := declaredColumn(table, o.Name.Name.String())
@@ -1122,23 +1154,13 @@ func (p *Parser) applyAlterOption(table *parser.Table, opt sqlparser.AlterOption
 	case *sqlparser.ModifyColumn:
 		return p.alterModifyColumn(table, o)
 	case *sqlparser.AddIndexDefinition:
-		p.addConstraints(table, []parser.Constraint{p.parseIndex(o.IndexDefinition)}, "")
-	case *sqlparser.DropKey:
-		applyDropKey(table, o)
-		maps.DeleteFunc(p.generated[table.Name], func(name string, _ bool) bool {
-			return strings.EqualFold(name, o.Name.String())
-		})
-		if i := slices.IndexFunc(table.ExpressionIndexes, func(k parser.ExpressionIndex) bool {
-			return strings.EqualFold(k.Name, o.Name.String())
-		}); i >= 0 {
-			table.ExpressionIndexes = slices.Concat(table.ExpressionIndexes[:i], table.ExpressionIndexes[i+1:])
-		}
+		p.addConstraints(table, []parser.Constraint{p.parseIndex(o.IndexDefinition)}, "", later)
 	case *sqlparser.AddConstraintDefinition:
 		var indexName string
 		if fk, ok := o.ConstraintDefinition.Details.(*sqlparser.ForeignKeyDefinition); ok {
 			indexName = fk.IndexName.String()
 		}
-		p.addConstraints(table, []parser.Constraint{p.parseConstraintDef(o.ConstraintDefinition)}, indexName)
+		p.addConstraints(table, []parser.Constraint{p.parseConstraintDef(o.ConstraintDefinition)}, indexName, later)
 	case *sqlparser.RenameColumn:
 		oldName, newName := declaredColumn(table, o.OldName.Name.String()), o.NewName.Name.String()
 		if err := parser.RenameColumn(table, "mysql", oldName, newName); err != nil {
@@ -1167,7 +1189,7 @@ func (p *Parser) alterModifyColumn(table *parser.Table, o *sqlparser.ModifyColum
 	// Column not found — add it.
 	newCol, constraints := p.parseColumn(table.Name, o.NewColDefinition)
 	table.Columns = append(table.Columns, newCol)
-	p.addConstraints(table, constraints, "")
+	p.addConstraints(table, constraints, "", nil)
 	return nil
 }
 
@@ -1213,7 +1235,7 @@ func (p *Parser) replaceColumn(table *parser.Table, name string, def *sqlparser.
 	table.Columns[i] = redefineColumn(table.Columns[i], newCol)
 	parser.RenameColumnReferences(p.schema.Tables, "mysql", table.Schema, table.Name, oldName, newCol.Name)
 	renameExprKeyColumn(table, oldName, newCol.Name)
-	p.addConstraints(table, constraints, "")
+	p.addConstraints(table, constraints, "", nil)
 	return true
 }
 
@@ -1237,8 +1259,13 @@ func redefineColumn(old, newCol parser.Column) parser.Column {
 	return newCol
 }
 
-func applyDropKey(table *parser.Table, o *sqlparser.DropKey) {
+// dropKey applies a DROP clause of ALTER TABLE. Only a clause that drops a
+// UNIQUE or INDEX by name drops an expression key of that name or clears the
+// mark of an index MySQL built for a foreign key: DROP FOREIGN KEY keeps that
+// index, and a later key still makes it redundant (measured on MySQL 8.0).
+func (p *Parser) dropKey(table *parser.Table, o *sqlparser.DropKey) {
 	name := o.Name.String()
+	var kinds []parser.ConstraintType // the kinds of key the clause drops by name
 	switch dropKeyType(o) {
 	case sqlparser.PrimaryKeyType:
 		// A table has one primary key, so it matches by type alone. Nullability
@@ -1250,10 +1277,51 @@ func applyDropKey(table *parser.Table, o *sqlparser.DropKey) {
 		// MySQL DROP INDEX drops both UNIQUE and non-UNIQUE indexes by
 		// name. parseIndex tags UNIQUE indexes as parser.Unique, so
 		// reverse flags via the helper for whichever shape matches.
-		removeConstraintFromColumns(table, parser.Unique, name)
-		removeConstraintFromColumns(table, parser.Index, name)
+		kinds = []parser.ConstraintType{parser.Unique, parser.Index}
 	case sqlparser.CheckKeyType:
-		removeConstraintFromColumns(table, parser.Check, name)
+		// vitess parses DROP CHECK and DROP CONSTRAINT alike. DROP CONSTRAINT
+		// drops the CHECK, FOREIGN KEY or UNIQUE of that name (MySQL 8.0.19+),
+		// and MySQL rejects a name two of them share.
+		if !removeConstraintFromColumns(table, parser.Check, name) &&
+			!removeConstraintFromColumns(table, parser.ForeignKey, name) {
+			kinds = []parser.ConstraintType{parser.Unique}
+		}
+	}
+	if len(kinds) == 0 {
+		return
+	}
+	for _, kind := range kinds {
+		removeConstraintFromColumns(table, kind, name)
+	}
+	maps.DeleteFunc(p.generated[table.Name], func(built string, _ bool) bool {
+		return strings.EqualFold(built, name)
+	})
+	if i := slices.IndexFunc(table.ExpressionIndexes, func(k parser.ExpressionIndex) bool {
+		return strings.EqualFold(k.Name, name)
+	}); i >= 0 {
+		table.ExpressionIndexes = slices.Concat(table.ExpressionIndexes[:i], table.ExpressionIndexes[i+1:])
+	}
+}
+
+// renameKey applies RENAME INDEX or RENAME KEY, which MySQL matches
+// case-insensitively. A renamed index MySQL built for a foreign key is no
+// longer one: a later key does not make it redundant, even after it is renamed
+// back (measured on MySQL 8.0).
+func (p *Parser) renameKey(table *parser.Table, o *sqlparser.RenameIndex) {
+	oldName, newName := o.OldName.String(), o.NewName.String()
+	for i := range table.Constraints {
+		if c := &table.Constraints[i]; (c.Type == parser.Unique || c.Type == parser.Index) && strings.EqualFold(c.Name, oldName) {
+			c.Name = newName
+			break
+		}
+	}
+	maps.DeleteFunc(p.generated[table.Name], func(built string, _ bool) bool {
+		return strings.EqualFold(built, oldName)
+	})
+	for i := range table.ExpressionIndexes {
+		if k := &table.ExpressionIndexes[i]; strings.EqualFold(k.Name, oldName) {
+			k.Name = newName
+		}
 	}
 }
 
@@ -1332,11 +1400,11 @@ func indexColumns(idx *sqlparser.IndexDefinition) []string {
 
 // removeConstraintFromColumns removes the first constraint matching
 // (cType, name) from table.Constraints and reverses its column flag
-// effects. MySQL compares index and constraint names case-insensitively.
-// Name may be empty for PrimaryKey (MySQL DROP PRIMARY KEY has
-// no name). The slice deletion happens first so that RecomputeColumnUnique
-// sees the post-drop state of the table.
-func removeConstraintFromColumns(table *parser.Table, cType parser.ConstraintType, name string) {
+// effects, and reports whether it found one. MySQL compares index and
+// constraint names case-insensitively. Name may be empty for PrimaryKey
+// (MySQL DROP PRIMARY KEY has no name). The slice deletion happens first so
+// that RecomputeColumnUnique sees the post-drop state of the table.
+func removeConstraintFromColumns(table *parser.Table, cType parser.ConstraintType, name string) bool {
 	idx := slices.IndexFunc(table.Constraints, func(c parser.Constraint) bool {
 		if c.Type != cType {
 			return false
@@ -1344,7 +1412,7 @@ func removeConstraintFromColumns(table *parser.Table, cType parser.ConstraintTyp
 		return name == "" || strings.EqualFold(c.Name, name)
 	})
 	if idx < 0 {
-		return
+		return false
 	}
 	c := table.Constraints[idx]
 	table.Constraints = slices.Delete(table.Constraints, idx, idx+1)
@@ -1370,4 +1438,5 @@ func removeConstraintFromColumns(table *parser.Table, cType parser.ConstraintTyp
 	case parser.Check, parser.Index:
 		// No column flags to reverse.
 	}
+	return true
 }

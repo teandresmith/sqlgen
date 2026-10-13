@@ -1386,7 +1386,7 @@ Each dialect parser lives in the **parser module** (`github.com/teandresmith/sql
 - Inline ENUM values from column type definitions (table-scoped naming: `<table>__<column>_enum`, auto-resolved via `RegisterEnum`)
 - Inline SET values from column type definitions (table-scoped naming: `<table>__<column>_set`, auto-resolved via `RegisterSet`)
 - Generated columns: `GENERATED ALWAYS AS (expr) [VIRTUAL|STORED]` and shorthand `AS (expr)` (5.7+)
-- ALTER TABLE: ADD/DROP/MODIFY COLUMN, ADD/DROP INDEX, ADD/DROP CONSTRAINT, RENAME COLUMN, RENAME TABLE, CHANGE COLUMN
+- ALTER TABLE: ADD/DROP/MODIFY COLUMN, ADD/DROP INDEX, ADD/DROP CONSTRAINT, RENAME COLUMN, RENAME INDEX / KEY, RENAME TABLE, CHANGE COLUMN. `DROP CONSTRAINT` drops the CHECK, FOREIGN KEY, UNIQUE or `PRIMARY` key of that name, as MySQL 8.0.19+ does. As in MySQL, a statement's key drops and then its key renames apply before any key it adds, whatever the clause order
 - Standalone `RENAME TABLE a TO b [, c TO d ...]`, applied pair by pair, left to right
 - No native enum type, composite type, or domain type support
 - Uses databases instead of schemas

@@ -22,89 +22,6 @@
 ## Open
 
 <!-- fixes:open:begin -->
-### FIX-306
-
-- **Status:** Open
-- **Severity:** tracked
-- **Origin:** phase 4, `parser/mysql` (`applyAlterOption`, `applyDropKey`, `parseAlterTable`)
-- **Surfaced by:** backlog sweep 2026-10-12 (backlog lines from FIX-275, FIX-296)
-- **Vetted:** corrected at `9b58288b` (2026-10-12)
-
-**Issue.** The MySQL file parser gets index names and sets wrong after some ALTER TABLE forms
-(measured against MySQL 8.0.46):
-- `ALTER TABLE v2 RENAME INDEX a TO b` → parser keeps `A`, DB `b` (also `RENAME KEY` on a UNIQUE; a
-  rename then `DROP INDEX <new>` leaves a stale index).
-- `ALTER TABLE … DROP CONSTRAINT x` removes only a CHECK; MySQL 8.0.19+ drops a FOREIGN KEY, UNIQUE
-  (case-insensitive) or `PRIMARY` of that name.
-- `ALTER TABLE t ADD FOREIGN KEY (a, b) REFERENCES p2 (b, c), ADD KEY (a), ADD KEY (a, b)` → parser
-  `a_2:[a] a:[a,b]`, DB `a:[a] a_2:[a,b]` (the CREATE TABLE form was fixed by FIX-275).
-- `CONSTRAINT fk4 FOREIGN KEY (a) …; ALTER TABLE g4 DROP FOREIGN KEY fk4; ALTER TABLE g4 ADD KEY (a,
-  b)` → parser keeps `fk4[a]` + `a[a,b]`, DB only `a[a,b]`.
-
-**Root cause.** `applyAlterOption` (`parser/mysql/mysql.go:1117`) has no `*sqlparser.RenameIndex`
-case; vitess maps `DROP CONSTRAINT` and `DROP CHECK` to `CheckKeyType` (`sql.y:3497-3503`) and
-`applyDropKey` (`:1261`) removes only a CHECK; ALTER clauses are applied one at a time without the
-CREATE TABLE lookahead (`replacedLater`, `:507`); the DropKey case (`:1135`) clears `p.generated` by
-name for every DropKey type, so dropping an FK un-flags a same-named built index.
-
-**Suggested fix.**
-- `parseAlterTable` applies a statement's key changes in MySQL's order: every DropKey first (the PK-only
-  pre-pass becomes `p.dropKey`), then every RenameIndex (`p.renameKey`), then the remaining clauses in
-  order. Each ADD clause gets `later` — the keys the clauses after it add (`addedKey`: ADD INDEX and an
-  ADD FOREIGN KEY's built index; column-inline keys are left out, they cover one column) — and
-  `addConstraints` skips an FK's built index when `replacedLater(key, later)`, as CREATE TABLE does.
-- `renameKey`: rename the UNIQUE/INDEX constraint (old name matched case-insensitively), delete the name
-  from `p.generated` (a renamed FK index stays non-replaceable even when renamed back — measured), and
-  rename a matching `exprKeys` entry.
-- `dropKey`: `dropKeyType` maps `CheckKeyType` + `PRIMARY` to `PrimaryKeyType` (only the backticked
-  `` DROP CONSTRAINT `PRIMARY` `` is valid DDL; unquoted is ERROR 1064). `CheckKeyType` drops the CHECK,
-  else the FK (keeping its index and the index's generated flag), else the UNIQUE (MySQL rejects a name
-  two of these share, ERROR 3939). `p.generated` is cleared and `exprKeys` pruned only for index drops
-  and the UNIQUE fallback. `removeConstraintFromColumns` returns bool.
-- Test `TestAlterTableKeyNames` (20 cases, each want measured on 8.0.46). PRD §5.2's MySQL ALTER bullet
-  lists RENAME INDEX / KEY, says what DROP CONSTRAINT drops, and that drops then renames apply before
-  adds.
-- Corrected vs. the original suggestion (vet 2026-10-12): widened at the same fix site for the same root
-  cause (the parser applies ALTER clauses one at a time; MySQL applies drops, then renames, then adds,
-  whatever the clause order — measured `ADD KEY (a), DROP INDEX a` → DB `a [a]`, parser `a_2`; `ADD KEY
-  (a), RENAME INDEX a TO b` → DB `a, b`, parser `a, a_2`), so drops and renames are pre-passes rather than
-  an `applyAlterOption` case; and HEAD also deletes a same-named `exprKeys` entry on DROP FOREIGN KEY /
-  DROP CHECK (measured `KEY x (x,(b+1)), CONSTRAINT x FOREIGN KEY (x)…; DROP FOREIGN KEY x; ADD KEY (x)` →
-  DB `x_2 [x]`, parser `x [x]`), fixed the same way.
-- Auto-accepted the recommended option on 2026-10-12 (`/fix` auto-accept rule): extend PRD §5.2's MySQL
-  ALTER bullet with RENAME INDEX / KEY, DROP CONSTRAINT's targets and the drops → renames → adds order —
-  PRD text for an unspecified case; prototyped green, no churn, no public surface, reverses nothing.
-- Composition with FIX-303 (not landed): `renameKey`'s exprKeys loop becomes a loop over
-  `table.ExpressionIndexes`; `dropKey`'s kind filter becomes "remove the entry by name when `len(kinds) >
-  0`" (DROP CONSTRAINT on a non-unique key is ERROR 3940, so the UNIQUE fallback never meets a non-unique
-  expression key in valid DDL). The patches conflict textually at `parser/mysql/mysql.go:1135`; whichever
-  lands second rebases onto the other.
-- Prototype results, run at `9b58288b` on 2026-10-12: probe (`zz_probe_fix306_test.go`, 32 DDL cases,
-  parser vs mysql:8.0.46 `information_schema.statistics` + `table_constraints`) → at HEAD "27/32
-  mismatched" (e.g. RENAME INDEX a TO b → parser `IDX A [a]`, DB `IDX b [a]`; DROP CONSTRAINT FK → parser
-  keeps the FK; `ADD PRIMARY KEY (b), DROP CONSTRAINT \`PRIMARY\`` → parser two PRIMARY keys; multi-clause
-  FK lookahead → parser `a [a,b], a_2 [a]`, DB `a [a], a_2 [a,b]`; DROP FOREIGN KEY fk4 then ADD KEY (a,b) →
-  parser `fk4 [a]` + `a [a,b]`, DB `a [a,b]`); with the prototype "0/32 mismatched". Gates: parser `go test
-  -race -count=1 ./...` ok (integration); `golangci-lint` 0 issues; `gofumpt -l` clean; cmd/sqlgen
-  `TestE2EGoldenFiles` ok; `make refs-check` ok. Fail-first: the new test against HEAD's mysql.go → 19 of
-  20 subtests fail (the 20th guards the kind filter); rename pass removed → "- INDEX b [a] + INDEX A [a]";
-  renameKey keeps the generated flag → "- INDEX fk [a]"; renameKey skips exprKeys → "- INDEX a [a] + INDEX
-  a_2 [a]"; no FK fallback → "+ FOREIGN KEY fk [a]"; no UNIQUE fallback → "+ {\"UNIQUE U [a]\", …}"; no
-  PRIMARY mapping → "+ {\"PRIMARY KEY PRIMARY [a]\"}"; PK-only pre-pass → "- INDEX a [a] + INDEX a_2 [a]";
-  empty `later` → lookahead case fails; generated cleared on every drop → "+ INDEX fk4 [a]"; exprKeys pruned
-  on every drop → "- INDEX x_2 [x] + INDEX x [x]"; existing suite without the fix passes. Golden churn:
-  none (introspect_mysql's migrations are single-clause). Patch: `.claude/prototypes/FIX-306.patch` (3
-  files, +277/-51).
-
-**References.**
-- PRD §5.2 (MySQL index naming), §6.1.
-- Backlog lines absorbed: 2026-10-09 RENAME INDEX ignored (FIX-296); 2026-10-09 DROP CONSTRAINT drops
-  only CHECK (FIX-296); 2026-10-09 multi-clause ALTER FK index (FIX-275). The DROP FOREIGN KEY case
-  is a backlog-sweep measurement at the same fix site.
-- FIX-275, FIX-296, FIX-299.
-
-**Resolution notes.** _Filled in by /fix resolve._
-
 ### FIX-307
 
 - **Status:** Open
@@ -2529,6 +2446,89 @@ DEFAULT.
 ## Resolved
 
 <!-- fixes:resolved:begin -->
+
+### FIX-306
+
+- **Status:** Resolved
+- **Severity:** tracked
+- **Origin:** phase 4, `parser/mysql` (`applyAlterOption`, `applyDropKey`, `parseAlterTable`)
+- **Surfaced by:** backlog sweep 2026-10-12 (backlog lines from FIX-275, FIX-296)
+- **Vetted:** corrected at `9b58288b` (2026-10-12)
+
+**Issue.** The MySQL file parser gets index names and sets wrong after some ALTER TABLE forms
+(measured against MySQL 8.0.46):
+- `ALTER TABLE v2 RENAME INDEX a TO b` → parser keeps `A`, DB `b` (also `RENAME KEY` on a UNIQUE; a
+  rename then `DROP INDEX <new>` leaves a stale index).
+- `ALTER TABLE … DROP CONSTRAINT x` removes only a CHECK; MySQL 8.0.19+ drops a FOREIGN KEY, UNIQUE
+  (case-insensitive) or `PRIMARY` of that name.
+- `ALTER TABLE t ADD FOREIGN KEY (a, b) REFERENCES p2 (b, c), ADD KEY (a), ADD KEY (a, b)` → parser
+  `a_2:[a] a:[a,b]`, DB `a:[a] a_2:[a,b]` (the CREATE TABLE form was fixed by FIX-275).
+- `CONSTRAINT fk4 FOREIGN KEY (a) …; ALTER TABLE g4 DROP FOREIGN KEY fk4; ALTER TABLE g4 ADD KEY (a,
+  b)` → parser keeps `fk4[a]` + `a[a,b]`, DB only `a[a,b]`.
+
+**Root cause.** `applyAlterOption` (`parser/mysql/mysql.go:1117`) has no `*sqlparser.RenameIndex`
+case; vitess maps `DROP CONSTRAINT` and `DROP CHECK` to `CheckKeyType` (`sql.y:3497-3503`) and
+`applyDropKey` (`:1261`) removes only a CHECK; ALTER clauses are applied one at a time without the
+CREATE TABLE lookahead (`replacedLater`, `:507`); the DropKey case (`:1135`) clears `p.generated` by
+name for every DropKey type, so dropping an FK un-flags a same-named built index.
+
+**Suggested fix.**
+- `parseAlterTable` applies a statement's key changes in MySQL's order: every DropKey first (the PK-only
+  pre-pass becomes `p.dropKey`), then every RenameIndex (`p.renameKey`), then the remaining clauses in
+  order. Each ADD clause gets `later` — the keys the clauses after it add (`addedKey`: ADD INDEX and an
+  ADD FOREIGN KEY's built index; column-inline keys are left out, they cover one column) — and
+  `addConstraints` skips an FK's built index when `replacedLater(key, later)`, as CREATE TABLE does.
+- `renameKey`: rename the UNIQUE/INDEX constraint (old name matched case-insensitively), delete the name
+  from `p.generated` (a renamed FK index stays non-replaceable even when renamed back — measured), and
+  rename a matching `exprKeys` entry.
+- `dropKey`: `dropKeyType` maps `CheckKeyType` + `PRIMARY` to `PrimaryKeyType` (only the backticked
+  `` DROP CONSTRAINT `PRIMARY` `` is valid DDL; unquoted is ERROR 1064). `CheckKeyType` drops the CHECK,
+  else the FK (keeping its index and the index's generated flag), else the UNIQUE (MySQL rejects a name
+  two of these share, ERROR 3939). `p.generated` is cleared and `exprKeys` pruned only for index drops
+  and the UNIQUE fallback. `removeConstraintFromColumns` returns bool.
+- Test `TestAlterTableKeyNames` (20 cases, each want measured on 8.0.46). PRD §5.2's MySQL ALTER bullet
+  lists RENAME INDEX / KEY, says what DROP CONSTRAINT drops, and that drops then renames apply before
+  adds.
+- Corrected vs. the original suggestion (vet 2026-10-12): widened at the same fix site for the same root
+  cause (the parser applies ALTER clauses one at a time; MySQL applies drops, then renames, then adds,
+  whatever the clause order — measured `ADD KEY (a), DROP INDEX a` → DB `a [a]`, parser `a_2`; `ADD KEY
+  (a), RENAME INDEX a TO b` → DB `a, b`, parser `a, a_2`), so drops and renames are pre-passes rather than
+  an `applyAlterOption` case; and HEAD also deletes a same-named `exprKeys` entry on DROP FOREIGN KEY /
+  DROP CHECK (measured `KEY x (x,(b+1)), CONSTRAINT x FOREIGN KEY (x)…; DROP FOREIGN KEY x; ADD KEY (x)` →
+  DB `x_2 [x]`, parser `x [x]`), fixed the same way.
+- Auto-accepted the recommended option on 2026-10-12 (`/fix` auto-accept rule): extend PRD §5.2's MySQL
+  ALTER bullet with RENAME INDEX / KEY, DROP CONSTRAINT's targets and the drops → renames → adds order —
+  PRD text for an unspecified case; prototyped green, no churn, no public surface, reverses nothing.
+- Composition with FIX-303 (landed first, b3abc88b): `renameKey`'s exprKeys loop becomes a loop over
+  `table.ExpressionIndexes`; `dropKey`'s kind filter becomes "remove the entry by name when `len(kinds) >
+  0`" (DROP CONSTRAINT on a non-unique key is ERROR 3940, so the UNIQUE fallback never meets a non-unique
+  expression key in valid DDL). The patches conflict textually at `parser/mysql/mysql.go:1135`; whichever
+  lands second rebases onto the other.
+- Prototype results, run at `9b58288b` on 2026-10-12: probe (`zz_probe_fix306_test.go`, 32 DDL cases,
+  parser vs mysql:8.0.46 `information_schema.statistics` + `table_constraints`) → at HEAD "27/32
+  mismatched" (e.g. RENAME INDEX a TO b → parser `IDX A [a]`, DB `IDX b [a]`; DROP CONSTRAINT FK → parser
+  keeps the FK; `ADD PRIMARY KEY (b), DROP CONSTRAINT \`PRIMARY\`` → parser two PRIMARY keys; multi-clause
+  FK lookahead → parser `a [a,b], a_2 [a]`, DB `a [a], a_2 [a,b]`; DROP FOREIGN KEY fk4 then ADD KEY (a,b) →
+  parser `fk4 [a]` + `a [a,b]`, DB `a [a,b]`); with the prototype "0/32 mismatched". Gates: parser `go test
+  -race -count=1 ./...` ok (integration); `golangci-lint` 0 issues; `gofumpt -l` clean; cmd/sqlgen
+  `TestE2EGoldenFiles` ok; `make refs-check` ok. Fail-first: the new test against HEAD's mysql.go → 19 of
+  20 subtests fail (the 20th guards the kind filter); rename pass removed → "- INDEX b [a] + INDEX A [a]";
+  renameKey keeps the generated flag → "- INDEX fk [a]"; renameKey skips exprKeys → "- INDEX a [a] + INDEX
+  a_2 [a]"; no FK fallback → "+ FOREIGN KEY fk [a]"; no UNIQUE fallback → "+ {\"UNIQUE U [a]\", …}"; no
+  PRIMARY mapping → "+ {\"PRIMARY KEY PRIMARY [a]\"}"; PK-only pre-pass → "- INDEX a [a] + INDEX a_2 [a]";
+  empty `later` → lookahead case fails; generated cleared on every drop → "+ INDEX fk4 [a]"; exprKeys pruned
+  on every drop → "- INDEX x_2 [x] + INDEX x [x]"; existing suite without the fix passes. Golden churn:
+  none (introspect_mysql's migrations are single-clause). Patch: `.claude/prototypes/FIX-306.patch` (3
+  files, +277/-51).
+
+**References.**
+- PRD §5.2 (MySQL index naming), §6.1.
+- Backlog lines absorbed: 2026-10-09 RENAME INDEX ignored (FIX-296); 2026-10-09 DROP CONSTRAINT drops
+  only CHECK (FIX-296); 2026-10-09 multi-clause ALTER FK index (FIX-275). The DROP FOREIGN KEY case
+  is a backlog-sweep measurement at the same fix site.
+- FIX-275, FIX-296, FIX-299.
+
+**Resolution notes.** `parseAlterTable` (`parser/mysql/mysql.go`) now applies a statement's key drops (`p.dropKey`, replacing `applyDropKey` and the PK-only pre-pass), then its key renames (`p.renameKey`, new: RENAME INDEX / KEY), then the remaining clauses in order; each ADD clause gets `later` (`addedKey`) so `addConstraints` skips a foreign key's built index a later key replaces (`replacedLater`), as CREATE TABLE does. `dropKeyType` maps DROP CONSTRAINT `PRIMARY` to the primary key; DROP CONSTRAINT drops the CHECK, else the FOREIGN KEY, else the UNIQUE of that name; `p.generated` and the expression-index list are cleared only for index drops and the UNIQUE fallback. Test `TestAlterTableKeyNames` (20 cases); PRD §5.2's MySQL ALTER bullet extended. Prototype applied with `git apply --3way`: `parser/mysql/mysql.go` conflicted with FIX-303 (b3abc88b), which moved expression keys from `p.exprKeys` to `table.ExpressionIndexes`; resolved per the entry's composition note (`renameKey` loops over `table.ExpressionIndexes`; `dropKey` removes the entry by name when `len(kinds) > 0`). The removal uses `IndexFunc` + `slices.Concat`, as HEAD did, not `slices.DeleteFunc`: DeleteFunc leaves an empty non-nil slice, which failed FIX-303's `TestMySQLIntrospect_ExpressionIndexes` (`m_ex_d`: parser `[]` vs introspected `nil`). Fail-first re-run on the final code: HEAD's mysql.go → 19 of 20 subtests fail (the one passing, "DROP CONSTRAINT drops a unique expression key", guards the UNIQUE fallback's expression-index removal; HEAD pruned on every drop); renameKey skipping expression indexes → "RENAME INDEX renames an expression key" fails; removing the `len(kinds)` gate (generated flag cleared and expression index pruned on every drop) → the two "keeps the foreign key index replaceable" and two "keeps an expression key of that name" cases fail. Gates: `make check` ok; parser `go test -race -count=1 ./...` ok (integration); `make update-golden-e2e` no churn (matches vet); `make check-examples` ok.
 
 ### FIX-305
 
