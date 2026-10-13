@@ -20,9 +20,9 @@ type Seedable interface {
 // error). ALTER TABLE on introspected tables modifies them in place.
 //
 // After parsing, Merge validates that no duplicate column names with
-// conflicting types exist within any table. This catches the case where
-// ALTER TABLE ADD COLUMN names a column that already exists from the
-// introspected schema with a different type.
+// conflicting types exist within any table. The parsers already refuse an
+// ALTER TABLE ADD COLUMN of a name the table has, as the databases do, so
+// this is a backstop for any other statement that leaves one.
 func Merge(base *parser.Schema, p Seedable, files []string) error {
 	reads := readViewSources(base)
 
@@ -36,7 +36,7 @@ func Merge(base *parser.Schema, p Seedable, files []string) error {
 	}
 
 	// Validate column conflicts: duplicate column names with different types
-	// indicate that a file-based ADD COLUMN collided with an introspected column.
+	// indicate that a file-based column collided with an introspected one.
 	// Explicit DROP + ADD or ALTER COLUMN TYPE are fine because they remove
 	// the original before redefining.
 	if err := validateColumnConflicts(p.Schema()); err != nil {

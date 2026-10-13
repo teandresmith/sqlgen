@@ -1271,12 +1271,22 @@ func (p *Parser) parseAlterTable(stmt *pg_query.AlterTableStmt) error {
 		return err
 	}
 
+	var drops, rest []*pg_query.AlterTableCmd
 	for _, cmd := range stmt.Cmds {
 		atCmd, ok := cmd.Node.(*pg_query.Node_AlterTableCmd)
 		if !ok {
 			continue
 		}
-		if err := p.applyAlterCmd(table, atCmd.AlterTableCmd); err != nil {
+		if atCmd.AlterTableCmd.Subtype == pg_query.AlterTableType_AT_DropColumn {
+			drops = append(drops, atCmd.AlterTableCmd)
+		} else {
+			rest = append(rest, atCmd.AlterTableCmd)
+		}
+	}
+	// PostgreSQL drops columns before it adds any, wherever DROP COLUMN sits
+	// among the clauses, so `ADD COLUMN c, DROP COLUMN c` replaces c.
+	for _, cmd := range slices.Concat(drops, rest) {
+		if err := p.applyAlterCmd(table, cmd); err != nil {
 			return err
 		}
 	}
@@ -1355,6 +1365,9 @@ func (p *Parser) applyAlterStateCmd(table *parser.Table, cmd *pg_query.AlterTabl
 	}
 }
 
+// alterAddColumn adds the column cmd defines to table. A name the table
+// already has is an error, as it is in PostgreSQL, and a no-op under ADD
+// COLUMN IF NOT EXISTS.
 func (p *Parser) alterAddColumn(table *parser.Table, cmd *pg_query.AlterTableCmd) error {
 	if cmd.Def == nil {
 		return nil
@@ -1363,8 +1376,12 @@ func (p *Parser) alterAddColumn(table *parser.Table, cmd *pg_query.AlterTableCmd
 	if !ok {
 		return nil
 	}
-	if cmd.MissingOk && parser.ColumnByName(table, cd.ColumnDef.Colname) != nil {
-		return nil // ADD COLUMN IF NOT EXISTS — column already exists, skip
+	name := cd.ColumnDef.Colname
+	if slices.ContainsFunc(table.Columns, func(c parser.Column) bool { return parser.SameColumnName("postgres", c.Name, name) }) {
+		if cmd.MissingOk {
+			return nil
+		}
+		return fmt.Errorf("add column %s to %s.%s: column already exists", name, table.Schema, table.Name)
 	}
 	col, constraints := p.parseColumnDef(cd.ColumnDef, table.Schema)
 	table.Columns = append(table.Columns, col)

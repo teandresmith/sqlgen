@@ -1313,6 +1313,68 @@ func TestDropColumnIfExists(t *testing.T) {
 	}
 }
 
+// TestAddColumnOntoExistingName pins ADD COLUMN of a name the table already
+// has against PostgreSQL 17: `column "count" of relation "items" already
+// exists`, while IF NOT EXISTS skips it and a DROP COLUMN anywhere in the same
+// statement runs first.
+func TestAddColumnOntoExistingName(t *testing.T) {
+	const items = "CREATE TABLE items (id bigint PRIMARY KEY, count int);"
+	tests := []struct {
+		name    string
+		sql     string
+		want    []string
+		wantErr string
+	}{
+		{
+			name:    "a column the table has",
+			sql:     items + "ALTER TABLE items ADD COLUMN count int;",
+			wantErr: "add column count to public.items: column already exists",
+		},
+		{
+			name:    "a column the same statement adds",
+			sql:     items + "ALTER TABLE items ADD COLUMN x int, ADD COLUMN x int;",
+			wantErr: "add column x to public.items: column already exists",
+		},
+		{
+			name: "a quoted name in another case",
+			sql:  items + `ALTER TABLE items ADD COLUMN "COUNT" text;`,
+			want: []string{"id bigint", "count integer", "COUNT text"},
+		},
+		{
+			name: "IF NOT EXISTS",
+			sql:  items + "ALTER TABLE items ADD COLUMN IF NOT EXISTS count text;",
+			want: []string{"id bigint", "count integer"},
+		},
+		{
+			name: "a column the same statement drops later",
+			sql:  items + "ALTER TABLE items ADD COLUMN count text, DROP COLUMN count;",
+			want: []string{"id bigint", "count text"},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			p := postgres.New("")
+			err := p.Parse("test.sql", []byte(tt.sql))
+			if tt.wantErr != "" {
+				if err == nil || !strings.Contains(err.Error(), tt.wantErr) {
+					t.Fatalf("Parse() error = %v, want it to contain %q", err, tt.wantErr)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("Parse() error: %v", err)
+			}
+			var got []string
+			for _, c := range p.Schema().Tables[0].Columns {
+				got = append(got, c.Name+" "+c.Type)
+			}
+			if diff := cmp.Diff(tt.want, got); diff != "" {
+				t.Errorf("columns after ADD COLUMN mismatch (-want +got):\n%s", diff)
+			}
+		})
+	}
+}
+
 func TestDropConstraintIfExists(t *testing.T) {
 	sql := `
 		CREATE TABLE users (

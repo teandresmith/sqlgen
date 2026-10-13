@@ -1130,11 +1130,12 @@ func (p *Parser) parseAlterTable(stmt *sqlparser.AlterTable, sql string) error {
 	}
 
 	// MySQL applies the statement's drops to the keys the table has, then its
-	// key renames, wherever they sit among the clauses, and only then adds the
-	// new keys in clause order, each named against the keys before it
-	// (measured on MySQL 8.0). Applied in clause order, `ADD PRIMARY KEY
-	// (code), DROP PRIMARY KEY` would lose the key it just added, and `ADD KEY
-	// (a), DROP INDEX a` would name the new key a_2.
+	// key renames, then its column drops, wherever they sit among the clauses,
+	// and only then applies the other clauses in clause order, each new key
+	// named against the keys before it (measured on MySQL 8.0). Applied in
+	// clause order, `ADD PRIMARY KEY (code), DROP PRIMARY KEY` would lose the
+	// key it just added, `ADD KEY (a), DROP INDEX a` would name the new key
+	// a_2, and `ADD COLUMN c, DROP COLUMN c` would refuse c as a duplicate.
 	opts := stmt.AlterOptions
 	for _, opt := range opts {
 		if o, ok := opt.(*sqlparser.DropKey); ok {
@@ -1144,6 +1145,11 @@ func (p *Parser) parseAlterTable(stmt *sqlparser.AlterTable, sql string) error {
 	for _, opt := range opts {
 		if o, ok := opt.(*sqlparser.RenameIndex); ok {
 			p.renameKey(table, o)
+		}
+	}
+	for _, opt := range opts {
+		if o, ok := opt.(*sqlparser.DropColumn); ok {
+			dropColumn(table, o)
 		}
 	}
 	// As in CREATE TABLE, MySQL builds no index for a foreign key when a key a
@@ -1159,7 +1165,7 @@ func (p *Parser) parseAlterTable(stmt *sqlparser.AlterTable, sql string) error {
 	}
 	for i, opt := range opts {
 		switch opt.(type) {
-		case *sqlparser.DropKey, *sqlparser.RenameIndex:
+		case *sqlparser.DropKey, *sqlparser.RenameIndex, *sqlparser.DropColumn:
 			continue
 		}
 		if err := p.applyAlterOption(table, opt, added[after[i]:]); err != nil {
@@ -1203,14 +1209,10 @@ func (p *Parser) applyAlterOption(table *parser.Table, opt sqlparser.AlterOption
 	switch o := opt.(type) {
 	case *sqlparser.AddColumns:
 		for _, col := range o.Columns {
-			c, constraints := p.parseColumn(table.Name, col)
-			table.Columns = append(table.Columns, c)
-			p.addConstraints(table, constraints, "", nil)
+			if err := p.addColumn(table, col); err != nil {
+				return err
+			}
 		}
-	case *sqlparser.DropColumn:
-		name := declaredColumn(table, o.Name.Name.String())
-		alterDropColumn(table, name)
-		dropExprKeyColumn(table, name)
 	case *sqlparser.ModifyColumn:
 		return p.alterModifyColumn(table, o)
 	case *sqlparser.AddIndexDefinition:
@@ -1236,6 +1238,26 @@ func (p *Parser) applyAlterOption(table *parser.Table, opt sqlparser.AlterOption
 		return p.alterChangeColumn(table, o)
 	}
 
+	return nil
+}
+
+// dropColumn applies the DROP COLUMN clause o to table.
+func dropColumn(table *parser.Table, o *sqlparser.DropColumn) {
+	name := declaredColumn(table, o.Name.Name.String())
+	alterDropColumn(table, name)
+	dropExprKeyColumn(table, name)
+}
+
+// addColumn adds the column def defines to table. A name the table already
+// has, in any case, is an error, as it is in MySQL.
+func (p *Parser) addColumn(table *parser.Table, def *sqlparser.ColumnDefinition) error {
+	name := def.Name.String()
+	if slices.ContainsFunc(table.Columns, func(c parser.Column) bool { return parser.SameColumnName("mysql", c.Name, name) }) {
+		return fmt.Errorf("add column %s to %s: column already exists", name, table.Name)
+	}
+	c, constraints := p.parseColumn(table.Name, def)
+	table.Columns = append(table.Columns, c)
+	p.addConstraints(table, constraints, "", nil)
 	return nil
 }
 

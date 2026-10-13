@@ -1733,6 +1733,72 @@ func TestRenameOntoExistingName(t *testing.T) {
 	}
 }
 
+// TestAddColumnOntoExistingName pins ADD COLUMN of a name the table already
+// has, in any case, against MySQL 8.0: ERROR 1060 "Duplicate column name
+// 'COUNT'", while a DROP COLUMN anywhere in the same statement runs first.
+func TestAddColumnOntoExistingName(t *testing.T) {
+	const items = "CREATE TABLE items (id BIGINT PRIMARY KEY, count INT);"
+	tests := []struct {
+		name    string
+		sql     string
+		want    []string
+		wantErr string
+	}{
+		{
+			name:    "a column the table has",
+			sql:     items + "ALTER TABLE items ADD COLUMN count INT;",
+			wantErr: "add column count to items: column already exists",
+		},
+		{
+			name:    "a column the table has in another case",
+			sql:     items + "ALTER TABLE items ADD COLUMN COUNT INT;",
+			wantErr: "add column COUNT to items: column already exists",
+		},
+		{
+			name:    "a column the table has in another non-ASCII case",
+			sql:     "CREATE TABLE t (`é` INT, e INT); ALTER TABLE t ADD COLUMN `É` INT;",
+			wantErr: "add column É to t: column already exists",
+		},
+		{
+			name:    "a column the same clause adds",
+			sql:     items + "ALTER TABLE items ADD COLUMN (x INT, X INT);",
+			wantErr: "add column X to items: column already exists",
+		},
+		{
+			name:    "a column the same statement adds",
+			sql:     items + "ALTER TABLE items ADD COLUMN x INT, ADD COLUMN X INT;",
+			wantErr: "add column X to items: column already exists",
+		},
+		{
+			name: "a column the same statement drops later",
+			sql:  items + "ALTER TABLE items ADD COLUMN COUNT BIGINT, DROP COLUMN count;",
+			want: []string{"id bigint", "COUNT bigint"},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			p := newParser(t)
+			err := p.Parse("test.sql", []byte(tt.sql))
+			if tt.wantErr != "" {
+				if err == nil || !strings.Contains(err.Error(), tt.wantErr) {
+					t.Fatalf("Parse() error = %v, want it to contain %q", err, tt.wantErr)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("Parse() error: %v", err)
+			}
+			var got []string
+			for _, c := range p.Schema().Tables[0].Columns {
+				got = append(got, c.Name+" "+c.Type)
+			}
+			if diff := cmp.Diff(tt.want, got); diff != "" {
+				t.Errorf("columns after ADD COLUMN mismatch (-want +got):\n%s", diff)
+			}
+		})
+	}
+}
+
 // TestReferenceColumnInAnotherCase pins that a foreign key naming its
 // referenced column in another case follows a rename of that column, as MySQL
 // does (measured on 8.0: REFERENCES rp (B) is stored as `rp` (`b`), and

@@ -22,74 +22,6 @@
 ## Open
 
 <!-- fixes:open:begin -->
-### FIX-331
-
-- **Status:** Open
-- **Severity:** nit
-- **Origin:** phase 4, `parser/postgres` + `parser/mysql` (ALTER TABLE ADD COLUMN)
-- **Surfaced by:** FIX-301 vet (2026-10-12), filed at the backlog sweep's Step 5
-- **Vetted:** corrected at `02000941` (2026-10-12)
-
-**Issue.** The PostgreSQL and MySQL parsers accept `ALTER TABLE … ADD COLUMN` of a column the table already
-has, so the generated struct carries a duplicate field and does not compile. Measured: PG files `CREATE TABLE
-items (id bigint PRIMARY KEY, count int); ALTER TABLE items ADD COLUMN count int;` → `sqlgen generate` exit 0,
-`models_gen.go` declares `Count *int32` twice. Under `source: both`, a same-type duplicate also passes `Merge`
-(`validateColumnConflicts` errors only on a type mismatch). MySQL reproduces the same way (files `ADD COLUMN COUNT int` beside
-`count`; `both` with an exact `count`): exit 0, duplicate `Count *int32`, "Count redeclared". PG17 rejects the
-statement (`column "count" of relation "items" already exists`), MySQL 8.0 too (`ERROR 1060 (42S21): Duplicate
-column name 'count'`, also for `COUNT` and `É` beside `é`). SQLite is fixed by FIX-301.
-
-**Root cause.** The PG and MySQL ADD COLUMN paths append the column without checking the table's existing
-columns; FIX-301 added the check to SQLite only.
-
-**Suggested fix.**
-- PG `alterAddColumn`: a name the table has (`parser.SameColumnName("postgres")`) → `add column <c> to
-  <schema>.<t>: column already exists`, a no-op under `IF NOT EXISTS`. MySQL: new `addColumn` helper with the same
-  check (`SameColumnName("mysql")`, Unicode fold), including a column added earlier in the same clause or statement,
-  before `parseColumn`. MySQL has no `ADD COLUMN IF NOT EXISTS` (MySQL 8.0 ERROR 1064, vitess syntax error).
-- Both parsers apply a statement's DROP COLUMN clauses first, as PG17 and MySQL 8.0 do: PG `parseAlterTable` runs
-  DROP COLUMN commands, then the rest in clause order; MySQL gets a DROP COLUMN pre-pass beside the DROP PRIMARY KEY
-  one, via a `dropColumn` helper taken out of `applyAlterOption`. This also fixes a silent column loss at base:
-  `ALTER TABLE items ADD COLUMN count bigint, DROP COLUMN count` (valid on both DBs, ends with `count bigint`) left
-  `type Item struct { ID int64 }`.
-- `merge.go`: the Merge / `validateColumnConflicts` comments stop claiming the conflict rule catches ADD COLUMN
-  duplicates (it is now a backstop).
-- Tests: postgres `TestAddColumnOntoExistingName` (existing, same statement, quoted other case allowed, IF NOT
-  EXISTS, ADD+DROP same statement); mysql `TestAddColumnOntoExistingName` (existing, case variant, É/é, same
-  clause, same statement, ADD COUNT + DROP count); `TestBothModeColumnConflict` expects the parser error on all
-  three dialects plus a same-type subtest.
-- Auto-accepted the recommended option on 2026-10-12 (`/fix` auto-accept rule): `ADD COLUMN c …, DROP COLUMN c` in
-  one statement → apply DROP COLUMN first (measured PG17 / MySQL 8.0 order) rather than refuse valid SQL, because it
-  was prototyped green, causes no golden churn either way, adds no public surface (unexported helpers), and reverses
-  no ruling or PRD text (§5.2 "as PostgreSQL applies them" is silent on clause order).
-- Corrected from the original: adds the drop-first ordering (the check alone would refuse valid SQL); no MySQL IF
-  NOT EXISTS branch; the PG error carries the schema-qualified table, like the file's other errors.
-- Prototype results, run at `02000941` + FIX-301.patch on 2026-10-12: reproduction above; parser probe at
-  base+FIX-301 → PG `ADD COLUMN x int, ADD COLUMN x int` → [id x x], MySQL `ADD COLUMN (z1 int, z1 int)` → [id z1
-  z1]. RENAME COLUMN onto an existing name is already refused at base+FIX-301 on both dialects (nothing to widen).
-  Gates: parser `go test -race -count=1 ./...` ok (testcontainers integration incl.); golangci-lint 0 issues;
-  gofumpt clean; cmd/sqlgen `go test -race -count=1 ./...` ok incl. `TestE2EGoldenFiles`; E2E with the prototype
-  binary → "Schema error: … add column count to public.items: column already exists" / "add column COUNT to items:
-  column already exists", exit 3; `ADD COLUMN count bigint, DROP COLUMN count` → `Count *int64`, builds.
-  Fail-first: PG duplicate error reverted → "Parse() error = <nil>, want it to contain \"add column count to
-  public.items: column already exists\"" and the PG same-type `both` subtest; PG drop-first reverted → "add column
-  count to public.items: column already exists" on the same-statement case; MySQL error reverted → 5 cases fail
-  (e.g. "want it to contain \"add column É to t: column already exists\""); MySQL drop-first reverted → same-
-  statement case fails; existing suite (base+FIX-301 production code) passes. Golden churn none. Stacks on
-  FIX-301.patch only (applies cleanly to base alone); a plain apply of FIX-301 on top of FIX-300 fails at
-  sqlite.go:624, so verify the stack after FIX-300/301 land. Expected hand merges (no semantic conflicts): mysql.go
-  with FIX-303 (DropColumn body → `dropExprKeyColumn`, moved into `dropColumn`), FIX-306 (pre-passes,
-  `applyAlterOption` signature), FIX-307 (`readAlterColumnKeys` above the pre-pass); postgres.go with FIX-305
-  (`addColumnSequence` after append; `dropOwnedSequences` now runs in the drop-first pass), FIX-310
-  (`resolveImplicitRefs`); merge.go comment with FIX-309; `TestBothModeColumnConflict` with FIX-301. Patch:
-  `.claude/prototypes/FIX-331.patch` (6 files, +210/-36).
-
-**References.**
-- PRD §5.2 (a statement sees only what came before), §6.1 (`both` merge and the column conflict rule).
-- FIX-301 (SQLite twin and the `SameColumnName` helper; lands first).
-
-**Resolution notes.** _Filled in by /fix resolve._
-
 ### FIX-332
 
 - **Status:** Open
@@ -900,6 +832,74 @@ DEFAULT.
 ## Resolved
 
 <!-- fixes:resolved:begin -->
+
+### FIX-331
+
+- **Status:** Resolved
+- **Severity:** nit
+- **Origin:** phase 4, `parser/postgres` + `parser/mysql` (ALTER TABLE ADD COLUMN)
+- **Surfaced by:** FIX-301 vet (2026-10-12), filed at the backlog sweep's Step 5
+- **Vetted:** corrected at `02000941` (2026-10-12)
+
+**Issue.** The PostgreSQL and MySQL parsers accept `ALTER TABLE … ADD COLUMN` of a column the table already
+has, so the generated struct carries a duplicate field and does not compile. Measured: PG files `CREATE TABLE
+items (id bigint PRIMARY KEY, count int); ALTER TABLE items ADD COLUMN count int;` → `sqlgen generate` exit 0,
+`models_gen.go` declares `Count *int32` twice. Under `source: both`, a same-type duplicate also passes `Merge`
+(`validateColumnConflicts` errors only on a type mismatch). MySQL reproduces the same way (files `ADD COLUMN COUNT int` beside
+`count`; `both` with an exact `count`): exit 0, duplicate `Count *int32`, "Count redeclared". PG17 rejects the
+statement (`column "count" of relation "items" already exists`), MySQL 8.0 too (`ERROR 1060 (42S21): Duplicate
+column name 'count'`, also for `COUNT` and `É` beside `é`). SQLite is fixed by FIX-301.
+
+**Root cause.** The PG and MySQL ADD COLUMN paths append the column without checking the table's existing
+columns; FIX-301 added the check to SQLite only.
+
+**Suggested fix.**
+- PG `alterAddColumn`: a name the table has (`parser.SameColumnName("postgres")`) → `add column <c> to
+  <schema>.<t>: column already exists`, a no-op under `IF NOT EXISTS`. MySQL: new `addColumn` helper with the same
+  check (`SameColumnName("mysql")`, Unicode fold), including a column added earlier in the same clause or statement,
+  before `parseColumn`. MySQL has no `ADD COLUMN IF NOT EXISTS` (MySQL 8.0 ERROR 1064, vitess syntax error).
+- Both parsers apply a statement's DROP COLUMN clauses first, as PG17 and MySQL 8.0 do: PG `parseAlterTable` runs
+  DROP COLUMN commands, then the rest in clause order; MySQL gets a DROP COLUMN pre-pass beside the DROP PRIMARY KEY
+  one, via a `dropColumn` helper taken out of `applyAlterOption`. This also fixes a silent column loss at base:
+  `ALTER TABLE items ADD COLUMN count bigint, DROP COLUMN count` (valid on both DBs, ends with `count bigint`) left
+  `type Item struct { ID int64 }`.
+- `merge.go`: the Merge / `validateColumnConflicts` comments stop claiming the conflict rule catches ADD COLUMN
+  duplicates (it is now a backstop).
+- Tests: postgres `TestAddColumnOntoExistingName` (existing, same statement, quoted other case allowed, IF NOT
+  EXISTS, ADD+DROP same statement); mysql `TestAddColumnOntoExistingName` (existing, case variant, É/é, same
+  clause, same statement, ADD COUNT + DROP count); `TestBothModeColumnConflict` expects the parser error on all
+  three dialects plus a same-type subtest.
+- Auto-accepted the recommended option on 2026-10-12 (`/fix` auto-accept rule): `ADD COLUMN c …, DROP COLUMN c` in
+  one statement → apply DROP COLUMN first (measured PG17 / MySQL 8.0 order) rather than refuse valid SQL, because it
+  was prototyped green, causes no golden churn either way, adds no public surface (unexported helpers), and reverses
+  no ruling or PRD text (§5.2 "as PostgreSQL applies them" is silent on clause order).
+- Corrected from the original: adds the drop-first ordering (the check alone would refuse valid SQL); no MySQL IF
+  NOT EXISTS branch; the PG error carries the schema-qualified table, like the file's other errors.
+- Prototype results, run at `02000941` + FIX-301.patch on 2026-10-12: reproduction above; parser probe at
+  base+FIX-301 → PG `ADD COLUMN x int, ADD COLUMN x int` → [id x x], MySQL `ADD COLUMN (z1 int, z1 int)` → [id z1
+  z1]. RENAME COLUMN onto an existing name is already refused at base+FIX-301 on both dialects (nothing to widen).
+  Gates: parser `go test -race -count=1 ./...` ok (testcontainers integration incl.); golangci-lint 0 issues;
+  gofumpt clean; cmd/sqlgen `go test -race -count=1 ./...` ok incl. `TestE2EGoldenFiles`; E2E with the prototype
+  binary → "Schema error: … add column count to public.items: column already exists" / "add column COUNT to items:
+  column already exists", exit 3; `ADD COLUMN count bigint, DROP COLUMN count` → `Count *int64`, builds.
+  Fail-first: PG duplicate error reverted → "Parse() error = <nil>, want it to contain \"add column count to
+  public.items: column already exists\"" and the PG same-type `both` subtest; PG drop-first reverted → "add column
+  count to public.items: column already exists" on the same-statement case; MySQL error reverted → 5 cases fail
+  (e.g. "want it to contain \"add column É to t: column already exists\""); MySQL drop-first reverted → same-
+  statement case fails; existing suite (base+FIX-301 production code) passes. Golden churn none. Stacks on
+  FIX-301.patch only (applies cleanly to base alone); a plain apply of FIX-301 on top of FIX-300 fails at
+  sqlite.go:624, so verify the stack after FIX-300/301 land. Expected hand merges (no semantic conflicts): mysql.go
+  with FIX-303 (DropColumn body → `dropExprKeyColumn`, moved into `dropColumn`), FIX-306 (pre-passes,
+  `applyAlterOption` signature), FIX-307 (`readAlterColumnKeys` above the pre-pass); postgres.go with FIX-305
+  (`addColumnSequence` after append; `dropOwnedSequences` now runs in the drop-first pass), FIX-310
+  (`resolveImplicitRefs`); merge.go comment with FIX-309; `TestBothModeColumnConflict` with FIX-301. Patch:
+  `.claude/prototypes/FIX-331.patch` (6 files, +210/-36).
+
+**References.**
+- PRD §5.2 (a statement sees only what came before), §6.1 (`both` merge and the column conflict rule).
+- FIX-301 (SQLite twin and the `SameColumnName` helper; lands first).
+
+**Resolution notes.** Resolved 2026-10-13. Prototype applied with `git apply --3way` at `a4351fae`: the test files and `merge.go` applied clean, `mysql.go` and `postgres.go` were hand-merged per the overlap notes. PostgreSQL `alterAddColumn` refuses a name the table has (`SameColumnName("postgres")`) with `add column <c> to <schema>.<t>: column already exists`, a no-op under IF NOT EXISTS, and `parseAlterTable` applies the DROP COLUMN commands before the rest (FIX-305's `dropOwnedSequences` now runs in the drop pass, `addColumnSequence` stays in `alterAddColumn`, and FIX-310's `resolveImplicitRefs` still runs after all commands). MySQL: new `addColumn` (`SameColumnName("mysql")`, passes `later` = nil like the other column-inline keys) and a `dropColumn` helper taken out of `applyAlterOption`; the DROP COLUMN pre-pass sits after FIX-306's key-drop and key-rename passes and before the clause-order pass, which now skips `DropColumn` too (the prototype's DROP PRIMARY KEY pass is FIX-306's `dropKey` pass now). `dropColumn` is a plain function, since FIX-303's `dropExprKeyColumn` takes the table. `merge.go` comments say the conflict rule is a backstop. Tests: postgres and mysql `TestAddColumnOntoExistingName`, `TestBothModeColumnConflict` expects the parser error on all three dialects plus a same-type subtest. Fail-first re-run on the merged code: production reverted → mysql 5 cases and postgres 3 cases fail; PG drop-first reversed → "add column count to public.items: column already exists"; MySQL drop-first moved back into clause order → "add column COUNT to items: column already exists". Gates: `make check` ok; parser `go test -race` (mysql, postgres, introspect incl. testcontainers, sqlite) ok; `TestE2EGoldenFiles` ok; `make check-examples` ok. Golden churn none, as vetted. /verify: reviewer agreed (fail-first spot check confirmed); one note correction applied; the PG DROP COLUMN of a missing column went to the backlog.
 
 ### FIX-330
 

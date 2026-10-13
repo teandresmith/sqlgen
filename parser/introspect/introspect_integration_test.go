@@ -1943,23 +1943,27 @@ func TestBothModeColumnConflict(t *testing.T) {
 				}
 			})
 
-			t.Run("ADD COLUMN duplicating existing with different type errors", func(t *testing.T) {
-				migration := writeMigration(t, "ALTER TABLE items ADD COLUMN count text;")
+			// Each parser refuses a column name the table already has, as its
+			// database does, whatever the type: the conflict rule never sees
+			// the duplicate.
+			want := map[string]string{
+				"postgres": "add column count to both_mode.items: column already exists",
+				"mysql":    "add column count to items: column already exists",
+				"sqlite":   "duplicate column name: count",
+			}[d.name]
+			for _, tc := range []struct{ name, typ string }{
+				{"ADD COLUMN duplicating existing with different type errors", "text"},
+				{"ADD COLUMN duplicating existing with same type errors", "integer"},
+			} {
+				t.Run(tc.name, func(t *testing.T) {
+					migration := writeMigration(t, "ALTER TABLE items ADD COLUMN count "+tc.typ+";")
 
-				err := introspect.Merge(base(d.schema), d.newParser(t), []string{migration})
-				if err == nil {
-					t.Fatal("Merge() expected error for duplicate column with different type, got nil")
-				}
-				// The SQLite parser refuses a column name the table already
-				// has, as SQLite does, before the conflict rule runs.
-				want := "column conflict"
-				if d.name == "sqlite" {
-					want = "duplicate column name: count"
-				}
-				if !strings.Contains(err.Error(), want) {
-					t.Errorf("Merge() error = %q, want error containing %q", err.Error(), want)
-				}
-			})
+					err := introspect.Merge(base(d.schema), d.newParser(t), []string{migration})
+					if err == nil || !strings.Contains(err.Error(), want) {
+						t.Errorf("Merge() error = %v, want error containing %q", err, want)
+					}
+				})
+			}
 		})
 	}
 }
