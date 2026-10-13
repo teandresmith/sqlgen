@@ -188,8 +188,8 @@ The `files` vs `database` differential in §7.4 depends on this:
   - `gen/context_table.go:939` reads presence only (`HasDefault`).
   - `gen/context_table.go:1080` (`resolveDefaultExpr`) inlines the text, but only on SQLite.
 - **Manifest:**
-  - `manifest/builder.go:611` emits the literal as `default`.
-  - `manifest/builder.go:668` classifies it into `default_kind` (literal / function / expression).
+  - `manifest/builder.go:613` emits the literal as `default`.
+  - `manifest/builder.go:677` classifies it into `default_kind` (literal / function / expression).
 
   PG normalizes defaults in the catalog (`'active'` → `'active'::status_enum`,
   `'{}'` → `'{}'::text[]`), so the manifest **will** differ between `files` and `database`
@@ -287,7 +287,7 @@ Measured against `postgres:16-alpine`, `mysql:8.0` and modernc SQLite, at `49c0d
 
 | # | Defect | Path | Evidence | Consequence |
 |---|---|---|---|---|
-| X1 | **Constraint shape and names differ by source.** <br>• The introspectors emit a table-level PK constraint for a single-column inline PK (PG `users_pkey`, MySQL `PRIMARY`), and an FK constraint for an inline `REFERENCES` (PG, SQLite); the parsers record both only on the column. <br>• An unnamed composite PK is `""` when parsed but `pairs_pkey` / `PRIMARY` when introspected. <br>• A table-level UNIQUE has `Method: ""` when parsed but `btree` when introspected (PG, MySQL). <br>• A PG CHECK has `Columns: nil` when parsed but `[col]` when introspected. | All three introspectors and parsers | PG `checks`, `pairs`, `users`, `accounts`; MySQL `MixedCase`, `m_pairs`, `m_users`; SQLite `s_posts` | The manifest's index and constraint names and lists differ by source (`builder.go:917-958` derives names from these) |
+| X1 | **Constraint shape and names differ by source.** <br>• The introspectors emit a table-level PK constraint for a single-column inline PK (PG `users_pkey`, MySQL `PRIMARY`), and an FK constraint for an inline `REFERENCES` (PG, SQLite); the parsers record both only on the column. <br>• An unnamed composite PK is `""` when parsed but `pairs_pkey` / `PRIMARY` when introspected. <br>• A table-level UNIQUE has `Method: ""` when parsed but `btree` when introspected (PG, MySQL). <br>• A PG CHECK has `Columns: nil` when parsed but `[col]` when introspected. | All three introspectors and parsers | PG `checks`, `pairs`, `users`, `accounts`; MySQL `MixedCase`, `m_pairs`, `m_users`; SQLite `s_posts` | The manifest's index and constraint names and lists differ by source (`builder.go:1026-1091` derives names from these) |
 | D7 | PG typmod spacing: the parser writes `numeric(12, 2)`, the catalog `numeric(12,2)`. Override lookup is exact-then-base (`gotype.go:582`). | PG parser | `users.price` | `overrides.types."numeric(12,2)"` matches introspected columns but **not parsed ones**, which fall back to the `numeric` override |
 | D8 | PG CHECK and domain text: the catalog adds casts and parentheses (`score < 1000` → `((score)::integer < 1000)`) and keeps keyword case (`value > 0` → `(VALUE > 0)`). | PG introspector | `users_score_check`, `positive_int_check` | The manifest's CHECK text differs by source |
 | D9 | **PG parser:** `CREATE TABLE … PARTITION OF …` adds a table with **no columns** | PG parser | `events_2024` / `events_2025` parsed with `Columns: nil` | Under files mode, a partitioned schema generates broken column-less entities |

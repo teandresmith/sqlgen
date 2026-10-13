@@ -22,79 +22,6 @@
 ## Open
 
 <!-- fixes:open:begin -->
-### FIX-325
-
-- **Status:** Open
-- **Severity:** tracked
-- **Origin:** phase 18, `cmd/sqlgen/manifest` (`classifyDefaultKind`)
-- **Surfaced by:** backlog sweep 2026-10-12 (backlog line from FIX-268 review)
-- **Vetted:** corrected at `9b58288b` (2026-10-12)
-
-**Issue.** A column default that contains a call but does not end in `)` is classified `literal`.
-Measured through each dialect parser: PG `now() AT TIME ZONE 'utc'`, `now() + '1 day'::interval`,
-`lower('X') || 'y'`; MySQL `current_timestamp() + interval 1 day`, `abs(-1) + 1`; SQLite
-`datetime('now') || 'x'`, `abs(-1) + 1` → all `literal`. PRD §30.7 defines `literal` as a constant
-value and `expression` as anything else.
-
-**Root cause.** `classifyDefaultKind` (`cmd/sqlgen/manifest/builder.go:668-702`) gates the
-function/expression branches on `HasSuffix(")")`, so anything else falls through to `literal`.
-
-**Suggested fix.**
-- Stale facts (vet 2026-10-12): PG `now() AT TIME ZONE 'utc'` and MySQL `current_timestamp() + interval 1
-  day` / `abs(-1) + 1` cannot be declared bare (parse errors); the declared DDL is parenthesized, and the
-  parser stores it without parens — the classified text in the Issue is right. The same heuristic also
-  misclassifies (a) casts with type modifiers as `function` (PG `'x'::varchar(10)`, `(0.5)::numeric(4, 2)`,
-  `'00:00'::time(3)`), (b) PG niladic SQL value functions as `literal` (`localtimestamp`, `localtime`,
-  `current_user`, `session_user`, `user`, `current_schema`), (c) a call with an operator character anywhere
-  in its arguments as `expression` (`abs(-1)`, SQLite `datetime('now', '+1 day')`, `strftime('%Y-%m-%d',
-  'now')`), and `now()::date` / `upper('a')::text` as `literal`. Parser renderings to expect: MySQL `b'101'` →
-  `0b101`, `x'1F'` → `X'1F'`; PG `B'101'` → `b'101'`, backslash string → `E'C:\\'`; PG `+1` → `+ 1`, `-1::integer`
-  → `- 1::int`; MySQL escapes an embedded quote as `'it\'s'`.
-- `classifyDefaultKind` (`cmd/sqlgen/manifest/builder.go:668-702`) is reversed: peel one balanced outer paren
-  pair and any trailing top-level `::type` cast, repeatedly (the type check accepts `timestamp with time
-  zone`, `public."MyType"`, `numeric(4, 2)`, `varchar(10)[]`); a constant (NULL/TRUE/FALSE, signed
-  decimal/float/`0x…`/`0b…`, or one string with an optional E/B/X/N prefix) → `literal`; an SQL value keyword
-  (current_timestamp/date/time, localtime[stamp], current_user/role, session_user, user,
-  current_catalog/schema) or a top-level function shape (a qualified or quoted name followed by `(` whose
-  matching `)` ends the text) → `function`; else `expression`. Paren matching and cast search skip quoted
-  text; a default whose quotes do not balance under `''`-doubling is rescanned with backslash escapes (MySQL
-  `'it\'s'`), keeping SQLite `'C:\'` and PG `E'C:\\'` literal. `containsOperator` and the unicode-based
-  `isFunctionShape` are replaced; `stripTrailingCast` splits out `lastTopLevelCast` for cyclop. No signature
-  change, no exported identifier. `docs/design/INTROSPECTION.md:191-192` line refs updated (`:613` / `:678`).
-- Test: 33 new rows in `TestBuild_DefaultKindClassification` using measured parser-emitted texts for all three
-  dialects.
-- Corrected vs. the original suggestion (vet 2026-10-12): strip any trailing top-level `::type` cast, not only
-  `'…'::type`; add the niladic keyword set (else `localtimestamp` / `current_user` would become `expression`
-  while PRD §30.7 calls CURRENT_TIMESTAMP a function); decide function shape at the top level whatever
-  operators appear inside the arguments; add the backslash-escape fallback; drop the old bare `NOW` keyword (no
-  dialect accepts it).
-- Auto-accepted the recommended option on 2026-10-12 (`/fix` auto-accept rule): a cast of a call (`now()::date`,
-  `upper('a')::text`) → `function`; bare SQL value functions → `function` (extends §30.7's CURRENT_TIMESTAMP
-  example to its family); a call whose arguments contain operators → `function` by top-level shape;
-  constructors left unspecial-cased (`ARRAY[...]` → `expression`, `ROW(1, 2)` and MySQL `cast(1 as char)` →
-  `function`). For each: prototyped green, no churn, no public surface, §30.7 does not cover the case.
-- Prototype results, run at `9b58288b` on 2026-10-12: probe (`zz_probe_defaults_test.go`, DDL through
-  postgres/mysql/sqlite parsers, then `classifyDefaultKind`) at base → `now() + '1 day'::interval`, `lower('X')
-  || 'y'`, `(now() AT TIME ZONE 'utc')`, MySQL `(current_timestamp() + interval 1 day)`, `(abs(-1) + 1)`,
-  SQLite `(datetime('now') || 'x')` → literal; `'x'::varchar(10)`, `0.5::numeric(4,2)` → function;
-  `localtimestamp`, `current_user`, `now()::date`, `ARRAY[]::text[]` → literal. Bare `CURRENT_TIMESTAMP` is
-  already `function` on all three. Introspection where cheap (SQLite modernc; PG `postgres.CatalogExpr` on
-  catalog text) gives the same kinds under the new classifier. Gates: cmd/sqlgen `go test -race
-  ./manifest/...` ok; `golangci-lint ./manifest/...` 0 issues; gofumpt clean; `go test -short ./...` ok; `make
-  update-golden-e2e` PASS, no testdata changes. Fail-first: builder.go reverted → 18 rows fail (e.g. `default
-  "'x'::varchar(10)" → kind "function", want "literal"`; `default "localtimestamp" → kind "literal", want
-  "function"`; `default "datetime('now', '+1 day')" → kind "expression", want "function"`; `default "abs(-1) +
-  1" → kind "literal", want "expression"`); existing suite without the fix passes. Golden churn: none (all 53
-  committed manifests' default pairs keep their kind). Patch: `.claude/prototypes/FIX-325.patch` (3 files,
-  +242/-61).
-
-**References.**
-- PRD §30.7 (`default_kind`).
-- Backlog line absorbed: 2026-10-07 classifyDefaultKind (FIX-268 review).
-- FIX-268.
-
-**Resolution notes.** _Filled in by /fix resolve._
-
 ### FIX-326
 
 - **Status:** Open
@@ -1268,6 +1195,96 @@ DEFAULT.
 ## Resolved
 
 <!-- fixes:resolved:begin -->
+
+### FIX-325
+
+- **Status:** Resolved
+- **Severity:** tracked
+- **Origin:** phase 18, `cmd/sqlgen/manifest` (`classifyDefaultKind`)
+- **Surfaced by:** backlog sweep 2026-10-12 (backlog line from FIX-268 review)
+- **Vetted:** corrected at `9b58288b` (2026-10-12)
+
+**Issue.** A column default that contains a call but does not end in `)` is classified `literal`.
+Measured through each dialect parser: PG `now() AT TIME ZONE 'utc'`, `now() + '1 day'::interval`,
+`lower('X') || 'y'`; MySQL `current_timestamp() + interval 1 day`, `abs(-1) + 1`; SQLite
+`datetime('now') || 'x'`, `abs(-1) + 1` → all `literal`. PRD §30.7 defines `literal` as a constant
+value and `expression` as anything else.
+
+**Root cause.** `classifyDefaultKind` (`cmd/sqlgen/manifest/builder.go:668-702`) gates the
+function/expression branches on `HasSuffix(")")`, so anything else falls through to `literal`.
+
+**Suggested fix.**
+- Stale facts (vet 2026-10-12): PG `now() AT TIME ZONE 'utc'` and MySQL `current_timestamp() + interval 1
+  day` / `abs(-1) + 1` cannot be declared bare (parse errors); the declared DDL is parenthesized, and the
+  parser stores it without parens — the classified text in the Issue is right. The same heuristic also
+  misclassifies (a) casts with type modifiers as `function` (PG `'x'::varchar(10)`, `(0.5)::numeric(4, 2)`,
+  `'00:00'::time(3)`), (b) PG niladic SQL value functions as `literal` (`localtimestamp`, `localtime`,
+  `current_user`, `session_user`, `user`, `current_schema`), (c) a call with an operator character anywhere
+  in its arguments as `expression` (`abs(-1)`, SQLite `datetime('now', '+1 day')`, `strftime('%Y-%m-%d',
+  'now')`), and `now()::date` / `upper('a')::text` as `literal`. Parser renderings to expect: MySQL `b'101'` →
+  `0b101`, `x'1F'` → `X'1F'`; PG `B'101'` → `b'101'`, backslash string → `E'C:\\'`; PG `+1` → `+ 1`, `-1::integer`
+  → `- 1::int`; MySQL escapes an embedded quote as `'it\'s'`.
+- `classifyDefaultKind` (`cmd/sqlgen/manifest/builder.go:668-702`) is reversed: peel one balanced outer paren
+  pair and any trailing top-level `::type` cast, repeatedly (the type check accepts `timestamp with time
+  zone`, `public."MyType"`, `numeric(4, 2)`, `varchar(10)[]`); a constant (NULL/TRUE/FALSE, signed
+  decimal/float/`0x…`/`0b…`, or one string with an optional E/B/X/N prefix) → `literal`; an SQL value keyword
+  (current_timestamp/date/time, localtime[stamp], current_user/role, session_user, user,
+  current_catalog/schema) or a top-level function shape (a qualified or quoted name followed by `(` whose
+  matching `)` ends the text) → `function`; else `expression`. Paren matching and cast search skip quoted
+  text; a default whose quotes do not balance under `''`-doubling is rescanned with backslash escapes (MySQL
+  `'it\'s'`), keeping SQLite `'C:\'` and PG `E'C:\\'` literal. `containsOperator` and the unicode-based
+  `isFunctionShape` are replaced; `stripTrailingCast` splits out `lastTopLevelCast` for cyclop. No signature
+  change, no exported identifier. `docs/design/INTROSPECTION.md:191-192` line refs updated (`:613` / `:678`).
+- Test: 33 new rows in `TestBuild_DefaultKindClassification` using measured parser-emitted texts for all three
+  dialects.
+- Corrected vs. the original suggestion (vet 2026-10-12): strip any trailing top-level `::type` cast, not only
+  `'…'::type`; add the niladic keyword set (else `localtimestamp` / `current_user` would become `expression`
+  while PRD §30.7 calls CURRENT_TIMESTAMP a function); decide function shape at the top level whatever
+  operators appear inside the arguments; add the backslash-escape fallback; drop the old bare `NOW` keyword (no
+  dialect accepts it).
+- Auto-accepted the recommended option on 2026-10-12 (`/fix` auto-accept rule): a cast of a call (`now()::date`,
+  `upper('a')::text`) → `function`; bare SQL value functions → `function` (extends §30.7's CURRENT_TIMESTAMP
+  example to its family); a call whose arguments contain operators → `function` by top-level shape;
+  constructors left unspecial-cased (`ARRAY[...]` → `expression`, `ROW(1, 2)` and MySQL `cast(1 as char)` →
+  `function`). For each: prototyped green, no churn, no public surface, §30.7 does not cover the case.
+- Prototype results, run at `9b58288b` on 2026-10-12: probe (`zz_probe_defaults_test.go`, DDL through
+  postgres/mysql/sqlite parsers, then `classifyDefaultKind`) at base → `now() + '1 day'::interval`, `lower('X')
+  || 'y'`, `(now() AT TIME ZONE 'utc')`, MySQL `(current_timestamp() + interval 1 day)`, `(abs(-1) + 1)`,
+  SQLite `(datetime('now') || 'x')` → literal; `'x'::varchar(10)`, `0.5::numeric(4,2)` → function;
+  `localtimestamp`, `current_user`, `now()::date`, `ARRAY[]::text[]` → literal. Bare `CURRENT_TIMESTAMP` is
+  already `function` on all three. Introspection where cheap (SQLite modernc; PG `postgres.CatalogExpr` on
+  catalog text) gives the same kinds under the new classifier. Gates: cmd/sqlgen `go test -race
+  ./manifest/...` ok; `golangci-lint ./manifest/...` 0 issues; gofumpt clean; `go test -short ./...` ok; `make
+  update-golden-e2e` PASS, no testdata changes. Fail-first: builder.go reverted → 18 rows fail (e.g. `default
+  "'x'::varchar(10)" → kind "function", want "literal"`; `default "localtimestamp" → kind "literal", want
+  "function"`; `default "datetime('now', '+1 day')" → kind "expression", want "function"`; `default "abs(-1) +
+  1" → kind "literal", want "expression"`); existing suite without the fix passes. Golden churn: none (all 53
+  committed manifests' default pairs keep their kind). Patch: `.claude/prototypes/FIX-325.patch` (3 files,
+  +242/-61).
+- Auto-accepted the recommended option on 2026-10-13 (`/fix` auto-accept rule): keep `interval` among the typed-literal keywords (`interval '1 day'` → `literal`) rather than limit them to the measured MySQL `date`/`time`/`timestamp` renderings → keep, because the value is a constant (§30.7 `literal`), HEAD already classified it `literal`, it was prototyped with gates green, neither option churns goldens, and no public surface changes.
+
+**References.**
+- PRD §30.7 (`default_kind`).
+- Backlog line absorbed: 2026-10-07 classifyDefaultKind (FIX-268 review).
+- FIX-268.
+
+**Resolution notes.** Landed the vetted prototype (applied clean at `64b9eb9b`). `classifyDefaultKind`
+(`cmd/sqlgen/manifest/builder.go:677`) now peels outer parens and trailing top-level `::type` casts,
+then classifies a constant (NULL/TRUE/FALSE, a number, one string with an optional E/B/X/N prefix or
+date/time/timestamp/interval keyword) as `literal`, an SQL value keyword or a top-level call as
+`function`, and anything else as `expression`. Paren and cast scanning skips quoted text;
+`containsOperator` and the unicode-based `isFunctionShape` are gone. Two divergences from the prototype,
+both from the `/verify` reviewer pass: (1) backslash escapes now follow the dialect (`buildColumns` and
+`classifyDefaultKind` take `config.Dialect`; MySQL only) instead of the prototype's "quotes do not balance
+under doubling" fallback, which split a MySQL string with an even number of embedded quotes (measured:
+`DEFAULT 'say ''hi'''` → parser text `'say \'hi\''` → `expression`); `quotesBalance` is dropped. (2) A
+MySQL typed literal (`DEFAULT (DATE '2020-01-01')` → parser text `date'2020-01-01'`) was `literal` at HEAD
+but `expression` under the prototype; it is `literal` again. 40 rows added to
+`TestBuild_DefaultKindClassification` (MySQL and SQLite rows run under their dialect); fail-first with
+`builder.go` at HEAD → 20 rows fail, and with the prototype's `builder.go` → the 4 rows for (1) and (2)
+fail. `docs/design/INTROSPECTION.md` line refs updated (`:613` / `:677`, X1 row `:1026-1091`, whose HEAD range `917-958` was already stale). Gates:
+`make check` ok; `make update-golden-e2e` + `make update-golden` → no churn (matches vet); `make
+check-examples` ok.
 
 ### FIX-324
 

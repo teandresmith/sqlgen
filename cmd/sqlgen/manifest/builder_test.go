@@ -651,8 +651,9 @@ func TestBuild_CheckConstraintExpressionLiteralNotMatched(t *testing.T) {
 
 func TestBuild_DefaultKindClassification(t *testing.T) {
 	tests := []struct {
-		def  string
-		kind string
+		def     string
+		kind    string
+		dialect config.Dialect // PostgreSQL when empty
 	}{
 		{def: "gen_random_uuid()", kind: "function"},
 		{def: "CURRENT_TIMESTAMP", kind: "function"},
@@ -663,10 +664,56 @@ func TestBuild_DefaultKindClassification(t *testing.T) {
 		// form is also common. Both are function shapes, not expressions.
 		{def: "(datetime('now'))", kind: "function"},
 		{def: "(now())", kind: "function"},
+		// Most forms below are the text each dialect's parser emits for the
+		// declared default. A cast labels a constant without making it a call.
+		{def: "'pending'::text", kind: "literal"},
+		{def: "'x'::varchar(10)", kind: "literal"},
+		{def: "(0.5)::numeric(4, 2)", kind: "literal"},
+		{def: "'00:00'::time(3)", kind: "literal"},
+		{def: "'2020-01-01'::timestamp with time zone", kind: "literal"},
+		{def: "'x'::\"MyType\"", kind: "literal"},
+		{def: "- 1::int", kind: "literal"},
+		{def: "+ 1", kind: "literal"},
+		{def: "-1.5", kind: "literal"},
+		{def: "E'C:\\\\'", kind: "literal"},
+		{def: "b'101'", kind: "literal"},
+		{def: "0b101", kind: "literal", dialect: config.DialectMySQL},
+		{def: "X'1F'", kind: "literal", dialect: config.DialectMySQL},
+		{def: "'it\\'s'", kind: "literal", dialect: config.DialectMySQL},
+		{def: "'say \\'hi\\''", kind: "literal", dialect: config.DialectMySQL},
+		{def: "'it\\'s' || 'x'", kind: "expression", dialect: config.DialectMySQL},
+		{def: "'it''s'", kind: "literal"},
+		{def: "'C:\\'", kind: "literal", dialect: config.DialectSQLite},
+		{def: "date'2020-01-01'", kind: "literal", dialect: config.DialectMySQL},
+		{def: "timestamp'2020-01-01 00:00:00'", kind: "literal", dialect: config.DialectMySQL},
+		{def: "interval '1 day'", kind: "literal"},
+		{def: "date'2020-01-01' + interval 1 day", kind: "expression", dialect: config.DialectMySQL},
+		{def: "NULL", kind: "literal"},
+		{def: "localtimestamp", kind: "function"},
+		{def: "current_user", kind: "function"},
+		{def: "now()::date", kind: "function"},
+		{def: "current_timestamp()", kind: "function"},
+		{def: "datetime('now', '+1 day')", kind: "function"},
+		{def: "abs(-1)", kind: "function"},
+		{def: "public.\"MyFunc\"()", kind: "function"},
+		{def: "now() AT TIME ZONE 'utc'", kind: "expression"},
+		{def: "now() + '1 day'::interval", kind: "expression"},
+		{def: "lower('X') || 'y'", kind: "expression"},
+		{def: "current_timestamp() + interval 1 day", kind: "expression", dialect: config.DialectMySQL},
+		{def: "abs(-1) + 1", kind: "expression", dialect: config.DialectMySQL},
+		{def: "datetime('now') || 'x'", kind: "expression"},
+		{def: "strftime('%s', 'now') * 1000", kind: "expression"},
+		{def: "lower('a') || upper('b')", kind: "expression"},
+		{def: "'1'::int + 1", kind: "expression"},
+		{def: "ARRAY[]::text[]", kind: "expression"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.def, func(t *testing.T) {
 			cfg := baseConfig()
+			if tt.dialect != "" {
+				cfg.Input.Dialect = tt.dialect
+				cfg.Output.Driver = config.DriverStdlib
+			}
 			schema := &parser.Schema{
 				Tables: []parser.Table{
 					{
