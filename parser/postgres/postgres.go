@@ -1003,7 +1003,11 @@ func (p *Parser) moveTableKey(oldKey, newKey string) {
 }
 
 func (p *Parser) parseDrop(stmt *pg_query.DropStmt) error {
-	// PostgreSQL drops the objects of one DROP TYPE or DROP DOMAIN together.
+	// PostgreSQL drops the objects of one DROP TABLE, DROP TYPE or DROP DOMAIN
+	// together.
+	if stmt.RemoveType == pg_query.ObjectType_OBJECT_TABLE {
+		return p.dropTables(stmt)
+	}
 	if stmt.RemoveType == pg_query.ObjectType_OBJECT_TYPE {
 		return p.dropTypes(p.dropTypeRefs(stmt), "type")
 	}
@@ -1013,11 +1017,6 @@ func (p *Parser) parseDrop(stmt *pg_query.DropStmt) error {
 	for _, obj := range stmt.Objects {
 		names := extractDropObjectNames(obj)
 		switch stmt.RemoveType {
-		case pg_query.ObjectType_OBJECT_TABLE:
-			schema, name := p.splitQualifiedName(names)
-			if err := p.dropTable(schema, name); err != nil {
-				return err
-			}
 		case pg_query.ObjectType_OBJECT_VIEW, pg_query.ObjectType_OBJECT_MATVIEW:
 			// A view is not modeled; only the relation name it takes is.
 			schema, name := p.splitQualifiedName(names)
@@ -1065,18 +1064,31 @@ func extractDropObjectNames(node *pg_query.Node) []string {
 	return nil
 }
 
-func (p *Parser) dropTable(schema, name string) error {
-	p.dropPartitions(schema, name)
-	key := schema + "." + name
-	if _, ok := p.tableIndex[key]; !ok {
-		delete(p.skipped, key) // a skipped relation
-		return nil
+// dropTables drops the tables of one DROP TABLE statement. PostgreSQL drops
+// them together, so a foreign key from one to another does not block the
+// drop. A relation the schema does not model is skipped.
+func (p *Parser) dropTables(stmt *pg_query.DropStmt) error {
+	refs := make([]parser.TableRef, 0, len(stmt.Objects))
+	for _, obj := range stmt.Objects {
+		schema, name := p.splitQualifiedName(extractDropObjectNames(obj))
+		p.dropPartitions(schema, name)
+		if _, ok := p.tableIndex[schema+"."+name]; !ok {
+			delete(p.skipped, schema+"."+name) // a skipped relation
+			continue
+		}
+		refs = append(refs, parser.TableRef{Schema: schema, Name: name})
 	}
-	if err := parser.CheckTableDropRefs(p.schema.Tables, "postgres", schema, name); err != nil {
-		return fmt.Errorf("drop table %s.%s: %w", schema, name, err)
+	if err := parser.CheckTableDropRefs(p.schema.Tables, "postgres", refs); err != nil {
+		return fmt.Errorf("drop table: %w", err)
 	}
-	p.removeTable(key)
-	p.dropOwnedSequences(key, "")
+	for _, ref := range refs {
+		key := ref.Schema + "." + ref.Name
+		if _, ok := p.tableIndex[key]; !ok {
+			continue // named twice in one DROP TABLE
+		}
+		p.removeTable(key)
+		p.dropOwnedSequences(key, "")
+	}
 	return nil
 }
 

@@ -484,30 +484,44 @@ func UnresolvedForeignKeys(tables []Table, dialect string) []error {
 	return errs
 }
 
-// CheckTableDropRefs checks whether any table in the schema has a foreign key
-// reference to the table identified by (schema, name), matching names as
-// dialect does (SameTableName). Returns an error describing the first
-// dangling reference found, or nil if the drop is safe.
-func CheckTableDropRefs(tables []Table, dialect, schema, name string) error {
-	for i := range tables {
-		t := &tables[i]
-		if t.Schema == schema && SameTableName(dialect, t.Name, name) {
-			continue // self — will be dropped
-		}
-		for _, col := range t.Columns {
-			if col.FKReference != nil && col.FKReference.Schema == schema && SameTableName(dialect, col.FKReference.Table, name) {
-				return fmt.Errorf(
-					"cannot drop table %s: column %s.%s references it via foreign key",
-					qualifiedName(schema, name), qualifiedName(t.Schema, t.Name), col.Name,
-				)
+// TableRef names a table by schema and name.
+type TableRef struct {
+	Schema, Name string
+}
+
+// CheckTableDropRefs checks whether the tables in drop, the tables of one DROP
+// TABLE statement, can be dropped together: a foreign key from a table outside
+// drop to one of them blocks the drop, while a foreign key between tables in
+// drop does not. Names match as dialect matches them (SameTableName). Returns
+// an error describing the first blocking reference found, or nil if the drop
+// is safe.
+func CheckTableDropRefs(tables []Table, dialect string, drop []TableRef) error {
+	dropping := func(schema, name string) bool {
+		return slices.ContainsFunc(drop, func(r TableRef) bool {
+			return r.Schema == schema && SameTableName(dialect, r.Name, name)
+		})
+	}
+	for _, ref := range drop {
+		for i := range tables {
+			t := &tables[i]
+			if dropping(t.Schema, t.Name) {
+				continue // dropped with it
 			}
-		}
-		for _, c := range t.Constraints {
-			if c.Type == ForeignKey && c.ReferenceSchema == schema && SameTableName(dialect, c.ReferenceTable, name) {
-				return fmt.Errorf(
-					"cannot drop table %s: table %s has a foreign key constraint referencing it",
-					qualifiedName(schema, name), qualifiedName(t.Schema, t.Name),
-				)
+			for _, col := range t.Columns {
+				if col.FKReference != nil && col.FKReference.Schema == ref.Schema && SameTableName(dialect, col.FKReference.Table, ref.Name) {
+					return fmt.Errorf(
+						"cannot drop table %s: column %s.%s references it via foreign key",
+						qualifiedName(ref.Schema, ref.Name), qualifiedName(t.Schema, t.Name), col.Name,
+					)
+				}
+			}
+			for _, c := range t.Constraints {
+				if c.Type == ForeignKey && c.ReferenceSchema == ref.Schema && SameTableName(dialect, c.ReferenceTable, ref.Name) {
+					return fmt.Errorf(
+						"cannot drop table %s: table %s has a foreign key constraint referencing it",
+						qualifiedName(ref.Schema, ref.Name), qualifiedName(t.Schema, t.Name),
+					)
+				}
 			}
 		}
 	}

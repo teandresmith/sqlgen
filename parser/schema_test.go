@@ -504,64 +504,97 @@ func TestCheckTableDropRefs(t *testing.T) {
 				{Name: "id", Type: "bigint"},
 			},
 		},
+		{
+			Name:   "reviews",
+			Schema: "public",
+			Columns: []parser.Column{
+				{Name: "id", Type: "bigint"},
+				{Name: "order_id", Type: "bigint"},
+			},
+			Constraints: []parser.Constraint{{
+				Name: "fk_order", Type: parser.ForeignKey, Columns: []string{"order_id"},
+				ReferenceSchema: "public", ReferenceTable: "orders", ReferenceColumns: []string{"id"},
+			}},
+		},
 	}
+	ref := func(name string) parser.TableRef { return parser.TableRef{Schema: "public", Name: name} }
 
 	tests := []struct {
 		name    string
 		dialect string
-		schema  string
-		table   string
-		wantErr bool
+		drop    []parser.TableRef
+		want    string // "" for no error
 	}{
 		{
 			name:    "drop table with FK reference → error",
 			dialect: "postgres",
-			schema:  "public",
-			table:   "users",
-			wantErr: true,
+			drop:    []parser.TableRef{ref("users")},
+			want:    "cannot drop table public.users: column public.orders.user_id references it via foreign key",
 		},
 		{
 			name:    "drop table with no references → OK",
 			dialect: "postgres",
-			schema:  "public",
-			table:   "products",
-			wantErr: false,
+			drop:    []parser.TableRef{ref("products")},
 		},
 		{
 			name:    "drop nonexistent table → OK",
 			dialect: "postgres",
-			schema:  "public",
-			table:   "nonexistent",
-			wantErr: false,
+			drop:    []parser.TableRef{ref("nonexistent")},
 		},
 		{
 			name:    "SQLite reference in another ASCII case → error",
 			dialect: "sqlite",
-			schema:  "public",
-			table:   "USERS",
-			wantErr: true,
+			drop:    []parser.TableRef{ref("USERS")},
+			want:    "cannot drop table public.USERS: column public.orders.user_id references it via foreign key",
 		},
 		{
 			name:    "PostgreSQL name in another case is another table → OK",
 			dialect: "postgres",
-			schema:  "public",
-			table:   "USERS",
-			wantErr: false,
+			drop:    []parser.TableRef{ref("USERS")},
 		},
 		{
 			name:    "MySQL table name in another case is another table → OK",
 			dialect: "mysql",
-			schema:  "public",
-			table:   "USERS",
-			wantErr: false,
+			drop:    []parser.TableRef{ref("USERS")},
+		},
+		{
+			name:    "parent dropped before its referencing table in one statement → OK",
+			dialect: "postgres",
+			drop:    []parser.TableRef{ref("users"), ref("orders"), ref("reviews")},
+		},
+		{
+			name:    "referencing table dropped before its parent in one statement → OK",
+			dialect: "mysql",
+			drop:    []parser.TableRef{ref("reviews"), ref("orders"), ref("users")},
+		},
+		{
+			name:    "reference from a table outside the statement → error",
+			dialect: "postgres",
+			drop:    []parser.TableRef{ref("users"), ref("orders")},
+			want:    "cannot drop table public.orders: table public.reviews has a foreign key constraint referencing it",
+		},
+		{
+			name:    "SQLite set member named in another ASCII case → OK",
+			dialect: "sqlite",
+			drop:    []parser.TableRef{ref("users"), ref("ORDERS"), ref("Reviews")},
+		},
+		{
+			name:    "PostgreSQL set member named in another case is another table → error",
+			dialect: "postgres",
+			drop:    []parser.TableRef{ref("users"), ref("ORDERS")},
+			want:    "cannot drop table public.users: column public.orders.user_id references it via foreign key",
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			err := parser.CheckTableDropRefs(tables, tt.dialect, tt.schema, tt.table)
-			if (err != nil) != tt.wantErr {
-				t.Errorf("CheckTableDropRefs(%s, %s.%s) error = %v, wantErr %v", tt.dialect, tt.schema, tt.table, err, tt.wantErr)
+			err := parser.CheckTableDropRefs(tables, tt.dialect, tt.drop)
+			got := ""
+			if err != nil {
+				got = err.Error()
+			}
+			if got != tt.want {
+				t.Errorf("CheckTableDropRefs(%s, %v) error = %q, want %q", tt.dialect, tt.drop, got, tt.want)
 			}
 		})
 	}
@@ -596,7 +629,7 @@ func TestCheckTableDropRefs_ConstraintLevel(t *testing.T) {
 		},
 	}
 
-	err := parser.CheckTableDropRefs(tables, "postgres", "public", "categories")
+	err := parser.CheckTableDropRefs(tables, "postgres", []parser.TableRef{{Schema: "public", Name: "categories"}})
 	if err == nil {
 		t.Fatal("CheckTableDropRefs() expected error for table-level FK constraint, got nil")
 	}

@@ -1622,6 +1622,65 @@ func TestDropTableCrossFile(t *testing.T) {
 	}
 }
 
+// TestDropTablesTogether mirrors MySQL 8.0 with foreign_key_checks on: one
+// DROP TABLE drops its tables together, so a foreign key between them does
+// not block it, while a reference from a table outside the statement fails
+// the whole statement.
+func TestDropTablesTogether(t *testing.T) {
+	const ab = `CREATE TABLE a (id INT PRIMARY KEY);
+		CREATE TABLE b (id INT PRIMARY KEY, a_id INT, FOREIGN KEY (a_id) REFERENCES a(id));`
+	const abc = ab + `CREATE TABLE c (id INT PRIMARY KEY, a_id INT, FOREIGN KEY (a_id) REFERENCES a(id));`
+	tests := []struct {
+		name    string
+		sql     string
+		wantErr string
+		want    []string // remaining tables
+	}{
+		{name: "parent first", sql: ab + `DROP TABLE a, b;`},
+		{name: "referencing table first", sql: ab + `DROP TABLE b, a;`},
+		{
+			name: "mutual references",
+			sql: `CREATE TABLE a (id INT PRIMARY KEY, b_id INT);
+				CREATE TABLE b (id INT PRIMARY KEY, a_id INT, FOREIGN KEY (a_id) REFERENCES a(id));
+				ALTER TABLE a ADD CONSTRAINT a_b_fk FOREIGN KEY (b_id) REFERENCES b(id);
+				DROP TABLE a, b;`,
+		},
+		{name: "IF EXISTS with a missing table", sql: ab + `DROP TABLE IF EXISTS a, zz, b;`},
+		{
+			name:    "reference from a table outside the statement",
+			sql:     abc + `DROP TABLE a, b;`,
+			wantErr: "drop table: cannot drop table a: column c.a_id references it via foreign key",
+			want:    []string{"a", "b", "c"},
+		},
+		{
+			name:    "reference from a table outside the statement, referencing table first",
+			sql:     abc + `DROP TABLE b, a;`,
+			wantErr: "drop table: cannot drop table a: column c.a_id references it via foreign key",
+			want:    []string{"a", "b", "c"},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			p := newParser(t)
+			err := p.Parse("test.sql", []byte(tt.sql))
+			if tt.wantErr == "" && err != nil {
+				t.Fatalf("Parse() error = %v", err)
+			}
+			if tt.wantErr != "" && (err == nil || !strings.Contains(err.Error(), tt.wantErr)) {
+				t.Fatalf("Parse() error = %v, want %q", err, tt.wantErr)
+			}
+			tables := p.Schema().Tables
+			got := make([]string, 0, len(tables))
+			for _, tbl := range tables {
+				got = append(got, tbl.Name)
+			}
+			if !slices.Equal(got, tt.want) {
+				t.Errorf("remaining tables = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
 func TestDropTableNoReferences(t *testing.T) {
 	p := newParser(t)
 	sql := `

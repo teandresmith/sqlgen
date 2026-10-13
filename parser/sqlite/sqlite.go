@@ -277,7 +277,7 @@ func (p *Parser) parseDropTable(stmt *rsql.DropTableStatement) error {
 	if !ok {
 		return nil
 	}
-	if err := parser.CheckTableDropRefs(p.schema.Tables, "sqlite", "", p.schema.Tables[idx].Name); err != nil {
+	if err := parser.CheckTableDropRefs(p.schema.Tables, "sqlite", []parser.TableRef{{Name: p.schema.Tables[idx].Name}}); err != nil {
 		return fmt.Errorf("drop table %s: %w", name, err)
 	}
 	p.schema.Tables = slices.Delete(p.schema.Tables, idx, idx+1)

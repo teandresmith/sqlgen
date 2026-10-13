@@ -22,69 +22,6 @@
 ## Open
 
 <!-- fixes:open:begin -->
-### FIX-332
-
-- **Status:** Open
-- **Severity:** nit
-- **Origin:** phase 4, `parser/postgres` (`parseDrop` / `dropTable`) + `parser/mysql` (`parseDropTable`) + `parser` (`CheckTableDropRefs`)
-- **Surfaced by:** FIX-312 vet (2026-10-12), filed at the backlog sweep's Step 5
-- **Vetted:** corrected at `02000941` (2026-10-12)
-
-**Issue.** PostgreSQL `DROP TABLE a, b`, where `b` has a foreign key into `a`, is rejected because each table is
-checked against the remaining schema one at a time; PostgreSQL drops both. Measured: `CREATE TABLE a (id int
-PRIMARY KEY); CREATE TABLE b (id int PRIMARY KEY, a_id int REFERENCES a(id)); DROP TABLE a, b;` → "drop table
-public.a: cannot drop table public.a: column public.b.a_id references it via foreign key" (also mutual FKs, `IF
-EXISTS a, b`, `a, b CASCADE`); the child-first `DROP TABLE b, a` already passes. MySQL has the same bug at the same
-site (`parseDropTable`, `parser/mysql/mysql.go:390-411`, check at `:398`): "drop table a: cannot drop table a: column
-b.a_id references it via foreign key". SQLite has no multi-table DROP (rqlite `DropTableStatement` has one `Name`).
-PG17.11 and MySQL 8.0.46 drop both in either order; with a third table `c → a` both reject the statement and keep
-all three tables (PG "cannot drop desired object(s) because other objects depend on them", MySQL "ERROR 3730").
-
-**Root cause.** PG `parseDrop` → `dropTable` (`parser/postgres/postgres.go:684`, check at `:691`) and MySQL
-`parseDropTable` call `CheckTableDropRefs` (`parser/schema.go:460`) per object before dropping it, so a reference from
-a table dropped later in the same statement still counts.
-
-**Suggested fix.**
-- `parser/schema.go`: new exported `TableRef{Schema, Name}`; `CheckTableDropRefs(tables, dialect string, drop
-  []TableRef)` checks one statement's tables as a set, skipping a referencing table that is in `drop`
-  (`SameTableName`) — generalising the old self skip, mirroring FIX-312's `CheckTypeDropRefs(s, []TypeRef)`.
-- PG: the `parseDrop` TABLE case becomes `return p.dropTables(stmt)` — collect existing targets, check once
-  (all-or-nothing), then `removeTable(key)` each (no-op on a repeat; PG accepts `DROP TABLE a, a`). MySQL
-  `parseDropTable` gets the same shape. SQLite and `multifile_test.go`'s testParser pass a one-element set.
-- Error prefix on PG/MySQL becomes "drop table: cannot drop table public.a: …" (like FIX-312's "drop type: …");
-  SQLite keeps "drop table users: …".
-- PRD §5.6 "Drop validation" (`docs/PRD.md:1592-1594`) gains: a table dropped in the same `DROP TABLE` statement does
-  not block the drop; an outside reference still fails it and nothing is dropped.
-- Tests: `TestCheckTableDropRefs` rewritten for drop sets with exact error text (11 cases); `TestDropTablesTogether`
-  in postgres (7 cases, incl. cross-schema and IF EXISTS with a missing table) and mysql (6), asserting error text and
-  remaining tables.
-- Corrected from the original: widened to MySQL (same root cause, shared helper, same per-target loop, measured); the
-  API is the concrete set-based signature; the check runs before any removal so an outside reference leaves every table
-  in place, as both databases do; adds the PRD §5.6 sentence.
-- Landing notes (from the vet): stacks on FIX-301 (adds the `dialect` parameter) and FIX-312 (restructures `parseDrop`
-  into a switch; the PRD sentence sits before FIX-312's type sentences). When it lands after FIX-303/304/305, `dropTables`
-  must still run the per-object side effects for every named object (`dropPartitions`, `skipped` cleanup) before
-  filtering to existing tables, then check the set once, then `removeTable` (FIX-305's helper plus a repeat-name guard)
-  and `dropOwnedSequences` per table. FIX-303 also edits MySQL `parseDropTable` (`exprKeys`). FIX-300/307/314 touch
-  lines near the sqlite/mysql `parseDropTable` (`--3way`).
-- Prototype results, run at `02000941` + FIX-301.patch (`--3way`) + FIX-312.patch on 2026-10-12: probe
-  `zz_probe_drop_test.go` (postgres, mysql) → the reproduction above; with `c → a`, `DROP TABLE b, a` errors on c but
-  leaves 2 tables (non-atomic; harmless as the parse aborts). Gates: parser gofumpt clean, golangci-lint 0 issues, `go
-  test -race -count=1 ./...` ok (testcontainers incl.); cmd/sqlgen `-run TestE2EGoldenFiles .` ok, `./cli/...` ok; the
-  301 → 312 → 332 stack re-applied on a clean `02000941`, parser `go test -short ./...` ok. Fail-first: set skip reverted
-  → `TestCheckTableDropRefs` `error = "cannot drop table public.users: column public.orders.user_id references it via
-  foreign key", want ""` and postgres `TestDropTablesTogether/parent_first` "drop table: cannot drop table public.a: …";
-  PG `dropTables` reverted to per-object → 6 of 7 fail (e.g. `remaining tables = ["public.a" "public.c"], want
-  ["public.a" "public.b" "public.c"]`); MySQL per-object → 5 of 6 fail; existing suite (base+301+312) passes. Golden
-  churn none. Patch: `.claude/prototypes/FIX-332.patch` (9 files, +259/-69).
-
-**References.**
-- PRD §5.6 ("Drop validation", `docs/PRD.md:1592-1594`).
-- FIX-301 (adds the `dialect` parameter; lands first), FIX-312 (`CheckTypeDropRefs` set shape, `parseDrop` switch;
-  lands first).
-
-**Resolution notes.** _Filled in by /fix resolve._
-
 ### FIX-333
 
 - **Status:** Open
@@ -832,6 +769,68 @@ DEFAULT.
 ## Resolved
 
 <!-- fixes:resolved:begin -->
+### FIX-332
+
+- **Status:** Resolved
+- **Severity:** nit
+- **Origin:** phase 4, `parser/postgres` (`parseDrop` / `dropTable`) + `parser/mysql` (`parseDropTable`) + `parser` (`CheckTableDropRefs`)
+- **Surfaced by:** FIX-312 vet (2026-10-12), filed at the backlog sweep's Step 5
+- **Vetted:** corrected at `02000941` (2026-10-12)
+
+**Issue.** PostgreSQL `DROP TABLE a, b`, where `b` has a foreign key into `a`, is rejected because each table is
+checked against the remaining schema one at a time; PostgreSQL drops both. Measured: `CREATE TABLE a (id int
+PRIMARY KEY); CREATE TABLE b (id int PRIMARY KEY, a_id int REFERENCES a(id)); DROP TABLE a, b;` → "drop table
+public.a: cannot drop table public.a: column public.b.a_id references it via foreign key" (also mutual FKs, `IF
+EXISTS a, b`, `a, b CASCADE`); the child-first `DROP TABLE b, a` already passes. MySQL has the same bug at the same
+site (`parseDropTable`, `parser/mysql/mysql.go:396-425`, check at `:406`): "drop table a: cannot drop table a: column
+b.a_id references it via foreign key". SQLite has no multi-table DROP (rqlite `DropTableStatement` has one `Name`).
+PG17.11 and MySQL 8.0.46 drop both in either order; with a third table `c → a` both reject the statement and keep
+all three tables (PG "cannot drop desired object(s) because other objects depend on them", MySQL "ERROR 3730").
+
+**Root cause.** PG `parseDrop` → `dropTable` (`parser/postgres/postgres.go:1070`, check at `:1081`) and MySQL
+`parseDropTable` call `CheckTableDropRefs` (`parser/schema.go:498`) per object before dropping it, so a reference from
+a table dropped later in the same statement still counts.
+
+**Suggested fix.**
+- `parser/schema.go`: new exported `TableRef{Schema, Name}`; `CheckTableDropRefs(tables, dialect string, drop
+  []TableRef)` checks one statement's tables as a set, skipping a referencing table that is in `drop`
+  (`SameTableName`) — generalising the old self skip, mirroring FIX-312's `CheckTypeDropRefs(s, []TypeRef)`.
+- PG: the `parseDrop` TABLE case becomes `return p.dropTables(stmt)` — collect existing targets, check once
+  (all-or-nothing), then `removeTable(key)` each (no-op on a repeat; PG accepts `DROP TABLE a, a`). MySQL
+  `parseDropTable` gets the same shape. SQLite and `multifile_test.go`'s testParser pass a one-element set.
+- Error prefix on PG/MySQL becomes "drop table: cannot drop table public.a: …" (like FIX-312's "drop type: …");
+  SQLite keeps "drop table users: …".
+- PRD §5.6 "Drop validation" (`docs/PRD.md:1605-1607`) gains: a table dropped in the same `DROP TABLE` statement does
+  not block the drop; an outside reference still fails it and nothing is dropped.
+- Tests: `TestCheckTableDropRefs` rewritten for drop sets with exact error text (11 cases); `TestDropTablesTogether`
+  in postgres (7 cases, incl. cross-schema and IF EXISTS with a missing table) and mysql (6), asserting error text and
+  remaining tables.
+- Corrected from the original: widened to MySQL (same root cause, shared helper, same per-target loop, measured); the
+  API is the concrete set-based signature; the check runs before any removal so an outside reference leaves every table
+  in place, as both databases do; adds the PRD §5.6 sentence.
+- Landing notes (from the vet): stacks on FIX-301 (adds the `dialect` parameter) and FIX-312 (restructures `parseDrop`
+  into a switch; the PRD sentence sits before FIX-312's type sentences). When it lands after FIX-303/304/305, `dropTables`
+  must still run the per-object side effects for every named object (`dropPartitions`, `skipped` cleanup) before
+  filtering to existing tables, then check the set once, then `removeTable` (FIX-305's helper plus a repeat-name guard)
+  and `dropOwnedSequences` per table. FIX-303 also edits MySQL `parseDropTable` (`exprKeys`). FIX-300/307/314 touch
+  lines near the sqlite/mysql `parseDropTable` (`--3way`).
+- Prototype results, run at `02000941` + FIX-301.patch (`--3way`) + FIX-312.patch on 2026-10-12: probe
+  `zz_probe_drop_test.go` (postgres, mysql) → the reproduction above; with `c → a`, `DROP TABLE b, a` errors on c but
+  leaves 2 tables (non-atomic; harmless as the parse aborts). Gates: parser gofumpt clean, golangci-lint 0 issues, `go
+  test -race -count=1 ./...` ok (testcontainers incl.); cmd/sqlgen `-run TestE2EGoldenFiles .` ok, `./cli/...` ok; the
+  301 → 312 → 332 stack re-applied on a clean `02000941`, parser `go test -short ./...` ok. Fail-first: set skip reverted
+  → `TestCheckTableDropRefs` `error = "cannot drop table public.users: column public.orders.user_id references it via
+  foreign key", want ""` and postgres `TestDropTablesTogether/parent_first` "drop table: cannot drop table public.a: …";
+  PG `dropTables` reverted to per-object → 6 of 7 fail (e.g. `remaining tables = ["public.a" "public.c"], want
+  ["public.a" "public.b" "public.c"]`); MySQL per-object → 5 of 6 fail; existing suite (base+301+312) passes. Golden
+  churn none. Patch: `.claude/prototypes/FIX-332.patch` (9 files, +259/-69).
+
+**References.**
+- PRD §5.6 ("Drop validation", `docs/PRD.md:1605-1607`).
+- FIX-301 (adds the `dialect` parameter; lands first), FIX-312 (`CheckTypeDropRefs` set shape, `parseDrop` switch;
+  lands first).
+
+**Resolution notes.** Resolved 2026-10-13. Prototype applied with `git apply --3way` at `e1ef5213`: the tests, `schema.go`, `mysql.go`, `sqlite.go` and `multifile_test.go` applied clean; `docs/PRD.md` and `parser/postgres/postgres.go` were hand-merged per the landing notes. `parser.TableRef` and set-based `CheckTableDropRefs(tables, dialect, drop []TableRef)` skip a referencing table that is in the drop set. PostgreSQL: `parseDrop` keeps its if-chain plus per-object switch from FIX-304/305/312 and routes DROP TABLE to the new `dropTables`, which runs `dropPartitions` and the `skipped` cleanup for every named object, checks the existing tables once ("drop table: cannot drop table public.a: …"), then `removeTable` (FIX-305's helper, behind a repeat-name guard, since it has no missing-key check) and `dropOwnedSequences` per table. MySQL `parseDropTable` has the same shape (FIX-303's expression indexes now live on the table, so the drop needs no extra cleanup). SQLite and the multifile testParser pass a one-element set. PRD §5.6 sentence added before FIX-312's type sentences. Tests: `TestCheckTableDropRefs` (11 cases, exact text), `TestDropTablesTogether` postgres (8 cases, adding "table named twice" to cover the repeat guard) and mysql (6). Fail-first on the merged code: set skip reverted → `TestCheckTableDropRefs` 4 cases and postgres/mysql `TestDropTablesTogether` fail ("drop table: cannot drop table public.a: column public.b.a_id references it via foreign key"); PG repeat guard removed → `table_named_twice` `remaining tables = ["public.b"], want ["public.a" "public.b"]`. Gates: `make check` ok; `make check-examples` ok. Golden churn none, as vetted.
 
 ### FIX-331
 

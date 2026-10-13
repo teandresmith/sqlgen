@@ -1125,6 +1125,71 @@ func TestDropTableCrossFile(t *testing.T) {
 	}
 }
 
+// TestDropTablesTogether mirrors PostgreSQL 17: one DROP TABLE drops its
+// tables together, so a foreign key between them does not block it, while a
+// reference from a table outside the statement fails the whole statement.
+func TestDropTablesTogether(t *testing.T) {
+	const ab = `CREATE TABLE a (id int PRIMARY KEY);
+		CREATE TABLE b (id int PRIMARY KEY, a_id int REFERENCES a(id));`
+	const abc = ab + `CREATE TABLE c (id int PRIMARY KEY, a_id int REFERENCES a(id));`
+	tests := []struct {
+		name    string
+		sql     string
+		wantErr string
+		want    []string // remaining tables, qualified
+	}{
+		{name: "parent first", sql: ab + `DROP TABLE a, b;`},
+		{name: "referencing table first", sql: ab + `DROP TABLE b, a;`},
+		{
+			name: "mutual references",
+			sql: `CREATE TABLE a (id int PRIMARY KEY, b_id int);
+				CREATE TABLE b (id int PRIMARY KEY, a_id int REFERENCES a(id));
+				ALTER TABLE a ADD CONSTRAINT a_b_fk FOREIGN KEY (b_id) REFERENCES b(id);
+				DROP TABLE a, b;`,
+		},
+		{name: "IF EXISTS with a missing table", sql: ab + `DROP TABLE IF EXISTS a, zz, b;`},
+		{name: "table named twice", sql: abc + `DROP TABLE c, c;`, want: []string{"public.a", "public.b"}},
+		{
+			name: "referencing table in another schema",
+			sql: `CREATE SCHEMA s2; CREATE TABLE a (id int PRIMARY KEY);
+				CREATE TABLE s2.b (id int PRIMARY KEY, a_id int REFERENCES public.a(id));
+				DROP TABLE a, s2.b;`,
+		},
+		{
+			name:    "reference from a table outside the statement",
+			sql:     abc + `DROP TABLE a, b;`,
+			wantErr: "drop table: cannot drop table public.a: column public.c.a_id references it via foreign key",
+			want:    []string{"public.a", "public.b", "public.c"},
+		},
+		{
+			name:    "reference from a table outside the statement, referencing table first",
+			sql:     abc + `DROP TABLE b, a;`,
+			wantErr: "drop table: cannot drop table public.a: column public.c.a_id references it via foreign key",
+			want:    []string{"public.a", "public.b", "public.c"},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			p := postgres.New("")
+			err := p.Parse("test.sql", []byte(tt.sql))
+			if tt.wantErr == "" && err != nil {
+				t.Fatalf("Parse() error = %v", err)
+			}
+			if tt.wantErr != "" && (err == nil || !strings.Contains(err.Error(), tt.wantErr)) {
+				t.Fatalf("Parse() error = %v, want %q", err, tt.wantErr)
+			}
+			tables := p.Schema().Tables
+			got := make([]string, 0, len(tables))
+			for _, tbl := range tables {
+				got = append(got, tbl.Schema+"."+tbl.Name)
+			}
+			if !slices.Equal(got, tt.want) {
+				t.Errorf("remaining tables = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
 func TestDropEnum(t *testing.T) {
 	sql := `
 		CREATE TYPE status AS ENUM ('active', 'inactive');

@@ -393,15 +393,24 @@ func (p *Parser) parseRenameTable(stmt *sqlparser.RenameTable) error {
 	return nil
 }
 
+// parseDropTable drops the tables of one DROP TABLE statement. MySQL drops
+// them together, so a foreign key from one to another does not block the
+// drop. A table the schema does not have is skipped.
 func (p *Parser) parseDropTable(stmt *sqlparser.DropTable) error {
+	refs := make([]parser.TableRef, 0, len(stmt.FromTables))
 	for _, tbl := range stmt.FromTables {
-		name := tbl.Name.String()
+		if _, ok := p.tableIndex[tbl.Name.String()]; ok {
+			refs = append(refs, parser.TableRef{Name: tbl.Name.String()})
+		}
+	}
+	if err := parser.CheckTableDropRefs(p.schema.Tables, "mysql", refs); err != nil {
+		return fmt.Errorf("drop table: %w", err)
+	}
+	for _, ref := range refs {
+		name := ref.Name
 		idx, ok := p.tableIndex[name]
 		if !ok {
-			continue
-		}
-		if err := parser.CheckTableDropRefs(p.schema.Tables, "mysql", "", name); err != nil {
-			return fmt.Errorf("drop table %s: %w", name, err)
+			continue // named twice in one DROP TABLE
 		}
 		p.schema.Tables = slices.Delete(p.schema.Tables, idx, idx+1)
 		delete(p.tableIndex, name)
