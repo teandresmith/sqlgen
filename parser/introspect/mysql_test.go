@@ -120,7 +120,8 @@ func TestUnescapeMySQLCatalogText(t *testing.T) {
 
 // The cases use COLUMN_DEFAULT and EXTRA as MySQL 8.0 stores them: a literal
 // default unquoted, an expression default escaped like GENERATION_EXPRESSION
-// and marked DEFAULT_GENERATED.
+// and marked DEFAULT_GENERATED. Before 8.0.13 a CURRENT_TIMESTAMP default is
+// not marked DEFAULT_GENERATED.
 func TestMySQLDefault(t *testing.T) {
 	tests := []struct {
 		name       string
@@ -148,6 +149,9 @@ func TestMySQLDefault(t *testing.T) {
 		{name: "binary literal reads as hex", dflt: sql.NullString{String: "0x6162", Valid: true}, columnType: "varbinary(4)", want: "0x6162"},
 		{name: "current timestamp", dflt: sql.NullString{String: "CURRENT_TIMESTAMP", Valid: true}, extra: "DEFAULT_GENERATED on update CURRENT_TIMESTAMP", columnType: "timestamp", want: "current_timestamp()"},
 		{name: "current timestamp with precision", dflt: sql.NullString{String: "CURRENT_TIMESTAMP(3)", Valid: true}, extra: "DEFAULT_GENERATED", columnType: "datetime(3)", want: "current_timestamp(3)"},
+		{name: "current timestamp before 8.0.13", dflt: sql.NullString{String: "CURRENT_TIMESTAMP", Valid: true}, columnType: "timestamp", want: "current_timestamp()"},
+		{name: "current timestamp with precision before 8.0.13", dflt: sql.NullString{String: "CURRENT_TIMESTAMP(3)", Valid: true}, extra: "on update CURRENT_TIMESTAMP(3)", columnType: "datetime(3)", want: "current_timestamp(3)"},
+		{name: "current timestamp text in a string column", dflt: sql.NullString{String: "current_timestamp(3)", Valid: true}, columnType: "varchar(30)", want: "'current_timestamp(3)'"},
 		{name: "function", dflt: sql.NullString{String: "uuid()", Valid: true}, extra: "DEFAULT_GENERATED", columnType: "varchar(36)", want: "uuid()"},
 		{name: "parenthesized expression", dflt: sql.NullString{String: "(1 + 2)", Valid: true}, extra: "DEFAULT_GENERATED", columnType: "int", want: "1 + 2"},
 		{name: "expression with a literal", dflt: sql.NullString{String: `_utf8mb4\'{}\'`, Valid: true}, extra: "DEFAULT_GENERATED", columnType: "json", want: "'{}'"},

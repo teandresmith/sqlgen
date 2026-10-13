@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"regexp"
 	"slices"
 	"strings"
 
@@ -749,10 +750,18 @@ var mysqlStringTypes = map[string]bool{
 	"enum": true, "set": true, "date": true, "datetime": true, "timestamp": true, "time": true,
 }
 
+// mysqlCurrentTimestamp matches a CURRENT_TIMESTAMP default as COLUMN_DEFAULT
+// stores it, with or without a fractional-seconds precision. MySQL stores NOW()
+// and LOCALTIMESTAMP as CURRENT_TIMESTAMP too.
+var mysqlCurrentTimestamp = regexp.MustCompile(`(?i)^current_timestamp(\(\d\))?$`)
+
 // mysqlDefault returns a column's default in the parser's form, from its
 // information_schema.columns COLUMN_DEFAULT, EXTRA and COLUMN_TYPE.
 //   - An expression default (EXTRA has DEFAULT_GENERATED) is escaped like
 //     GENERATION_EXPRESSION, and is normalized like it.
+//   - A datetime or timestamp column's CURRENT_TIMESTAMP default is an
+//     expression too. MySQL before 8.0.13 does not mark it DEFAULT_GENERATED,
+//     and no such column can hold the literal text CURRENT_TIMESTAMP.
 //   - A string or temporal column's literal default is the bare value, which
 //     is quoted again. An empty string is a default too.
 //   - Any other literal (a number, b'101', a binary column's 0x6162) is SQL
@@ -769,7 +778,8 @@ func mysqlDefault(dflt sql.NullString, extra, columnType string) (string, error)
 		if i := strings.IndexAny(base, "( "); i >= 0 {
 			base = base[:i]
 		}
-		if mysqlStringTypes[base] {
+		temporalNow := (base == "datetime" || base == "timestamp") && mysqlCurrentTimestamp.MatchString(text)
+		if mysqlStringTypes[base] && !temporalNow {
 			return mysql.QuoteLiteral(text), nil
 		}
 	}

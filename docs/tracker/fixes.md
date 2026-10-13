@@ -22,55 +22,6 @@
 ## Open
 
 <!-- fixes:open:begin -->
-### FIX-318
-
-- **Status:** Open
-- **Severity:** tracked
-- **Origin:** phase 30, `parser/introspect` (`mysql.go` `mysqlDefault`)
-- **Surfaced by:** backlog sweep 2026-10-12 (backlog line from 30.5)
-- **Vetted:** ready at `9b58288b` (2026-10-12)
-
-**Issue.** On MySQL before 8.0.13 a `CURRENT_TIMESTAMP` column default introspects as the quoted
-literal `'CURRENT_TIMESTAMP'`. Measured on `mysql:8.0.12`: `a timestamp DEFAULT CURRENT_TIMESTAMP`,
-`b datetime(3) DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE …` → `'CURRENT_TIMESTAMP'`, `'CURRENT_TIMESTAMP(3)'`
-(8.0.46: `current_timestamp()`, `current_timestamp(3)`); manifest `default_kind` `literal` instead of
-`function`. No error. PRD §6.3 sets no minimum MySQL version.
-
-**Root cause.** `mysqlDefault` (`parser/introspect/mysql.go:673`) relies only on EXTRA's
-`DEFAULT_GENERATED`, which MySQL adds in 8.0.13.
-
-**Suggested fix.**
-- Auto-accepted the recommended option on 2026-10-12 (`/fix` auto-accept rule; user confirmed no
-  veto): with no `DEFAULT_GENERATED`, a datetime/timestamp column whose default text matches
-  `^current_timestamp(\(\d\))?$` (case-insensitive) is the expression, because a temporal column can
-  never hold that literal text, so the rule is exact without a version probe; a varchar
-  `'CURRENT_TIMESTAMP'` literal stays quoted; no churn.
-- Unit test on `mysqlDefault`; optional integration check on `mysql:8.0.12` (amd64 emulation).
-- Prototype results, run at `9b58288b` on 2026-10-12: `NewMySQLIntrospector` probe against mysql:8.0.12
-  (amd64) and 8.0.46. Catalog on 8.0.12 (COLUMN_DEFAULT | EXTRA): `timestamp DEFAULT CURRENT_TIMESTAMP` →
-  `CURRENT_TIMESTAMP | ""`; `datetime(3) … ON UPDATE CURRENT_TIMESTAMP(3)` → `CURRENT_TIMESTAMP(3) | "on
-  update CURRENT_TIMESTAMP(3)"`; NOW(), LOCALTIMESTAMP, LOCALTIME, lowercase and `CURRENT_TIMESTAMP()` all
-  store `CURRENT_TIMESTAMP`; varchar `'CURRENT_TIMESTAMP'` → `CURRENT_TIMESTAMP | ""`. 8.0.46 adds
-  `DEFAULT_GENERATED` on the temporal rows only. Introspected at base on 8.0.12: `'CURRENT_TIMESTAMP'`,
-  `'CURRENT_TIMESTAMP(3)'`, `'CURRENT_TIMESTAMP(6)'`, `'CURRENT_TIMESTAMP(2)'` vs 8.0.46 `current_timestamp()`,
-  `current_timestamp(3)`…; varchar stays quoted on both. Exactness: datetime `DEFAULT 'CURRENT_TIMESTAMP'`,
-  timestamp `DEFAULT 'current_timestamp(3)'`, `date`/`time DEFAULT CURRENT_TIMESTAMP` all fail "ERROR 1067
-  (42000): Invalid default value" even with `sql_mode=''`, so the datetime/timestamp restriction is exact.
-  Prototype: `mysqlCurrentTimestamp = regexp.MustCompile(`(?i)^current_timestamp(\(\d\))?$`)`; on the
-  non-DEFAULT_GENERATED path a datetime/timestamp match falls through to `mysql.NormalizeExpr` (the 8.0.13+
-  path); `TestMySQLDefault` gains 3 cases. With the patch the 8.0.12 probe matches 8.0.46 on all 14 columns.
-  Gates: gofumpt clean; parser `go test -race ./introspect/...` ok; `golangci-lint ./introspect/...` 0 issues.
-  Fail-first: guard removed → `mysqlDefault({String:CURRENT_TIMESTAMP Valid:true}, "", "timestamp") =
-  "'CURRENT_TIMESTAMP'", want "current_timestamp()"`; type restriction removed → `…"varchar(20)") =
-  "current_timestamp()", want "'CURRENT_TIMESTAMP'"`; existing suite without the fix passes. Golden churn:
-  none. Patch: `.claude/prototypes/FIX-318.patch` (2 files, +16/-2).
-
-**References.**
-- PRD §6.1, §6.3 (footnote 1 version notes), §30.7.
-- Backlog line absorbed: 2026-10-05 pre-8.0.13 DEFAULT_GENERATED (30.5).
-
-**Resolution notes.** _Filled in by /fix resolve._
-
 ### FIX-319
 
 - **Status:** Open
@@ -1738,6 +1689,55 @@ DEFAULT.
 ## Resolved
 
 <!-- fixes:resolved:begin -->
+### FIX-318
+
+- **Status:** Resolved
+- **Severity:** tracked
+- **Origin:** phase 30, `parser/introspect` (`mysql.go` `mysqlDefault`)
+- **Surfaced by:** backlog sweep 2026-10-12 (backlog line from 30.5)
+- **Vetted:** ready at `9b58288b` (2026-10-12)
+
+**Issue.** On MySQL before 8.0.13 a `CURRENT_TIMESTAMP` column default introspects as the quoted
+literal `'CURRENT_TIMESTAMP'`. Measured on `mysql:8.0.12`: `a timestamp DEFAULT CURRENT_TIMESTAMP`,
+`b datetime(3) DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE …` → `'CURRENT_TIMESTAMP'`, `'CURRENT_TIMESTAMP(3)'`
+(8.0.46: `current_timestamp()`, `current_timestamp(3)`); manifest `default_kind` `literal` instead of
+`function`. No error. PRD §6.3 sets no minimum MySQL version.
+
+**Root cause.** `mysqlDefault` (`parser/introspect/mysql.go:769`) relies only on EXTRA's
+`DEFAULT_GENERATED`, which MySQL adds in 8.0.13.
+
+**Suggested fix.**
+- Auto-accepted the recommended option on 2026-10-12 (`/fix` auto-accept rule; user confirmed no
+  veto): with no `DEFAULT_GENERATED`, a datetime/timestamp column whose default text matches
+  `^current_timestamp(\(\d\))?$` (case-insensitive) is the expression, because a temporal column can
+  never hold that literal text, so the rule is exact without a version probe; a varchar
+  `'CURRENT_TIMESTAMP'` literal stays quoted; no churn.
+- Unit test on `mysqlDefault`; optional integration check on `mysql:8.0.12` (amd64 emulation).
+- Prototype results, run at `9b58288b` on 2026-10-12: `NewMySQLIntrospector` probe against mysql:8.0.12
+  (amd64) and 8.0.46. Catalog on 8.0.12 (COLUMN_DEFAULT | EXTRA): `timestamp DEFAULT CURRENT_TIMESTAMP` →
+  `CURRENT_TIMESTAMP | ""`; `datetime(3) … ON UPDATE CURRENT_TIMESTAMP(3)` → `CURRENT_TIMESTAMP(3) | "on
+  update CURRENT_TIMESTAMP(3)"`; NOW(), LOCALTIMESTAMP, LOCALTIME, lowercase and `CURRENT_TIMESTAMP()` all
+  store `CURRENT_TIMESTAMP`; varchar `'CURRENT_TIMESTAMP'` → `CURRENT_TIMESTAMP | ""`. 8.0.46 adds
+  `DEFAULT_GENERATED` on the temporal rows only. Introspected at base on 8.0.12: `'CURRENT_TIMESTAMP'`,
+  `'CURRENT_TIMESTAMP(3)'`, `'CURRENT_TIMESTAMP(6)'`, `'CURRENT_TIMESTAMP(2)'` vs 8.0.46 `current_timestamp()`,
+  `current_timestamp(3)`…; varchar stays quoted on both. Exactness: datetime `DEFAULT 'CURRENT_TIMESTAMP'`,
+  timestamp `DEFAULT 'current_timestamp(3)'`, `date`/`time DEFAULT CURRENT_TIMESTAMP` all fail "ERROR 1067
+  (42000): Invalid default value" even with `sql_mode=''`, so the datetime/timestamp restriction is exact.
+  Prototype: `mysqlCurrentTimestamp = regexp.MustCompile(`(?i)^current_timestamp(\(\d\))?$`)`; on the
+  non-DEFAULT_GENERATED path a datetime/timestamp match falls through to `mysql.NormalizeExpr` (the 8.0.13+
+  path); `TestMySQLDefault` gains 3 cases. With the patch the 8.0.12 probe matches 8.0.46 on all 14 columns.
+  Gates: gofumpt clean; parser `go test -race ./introspect/...` ok; `golangci-lint ./introspect/...` 0 issues.
+  Fail-first: guard removed → `mysqlDefault({String:CURRENT_TIMESTAMP Valid:true}, "", "timestamp") =
+  "'CURRENT_TIMESTAMP'", want "current_timestamp()"`; type restriction removed → `…"varchar(20)") =
+  "current_timestamp()", want "'CURRENT_TIMESTAMP'"`; existing suite without the fix passes. Golden churn:
+  none. Patch: `.claude/prototypes/FIX-318.patch` (2 files, +16/-2).
+
+**References.**
+- PRD §6.1, §6.3 (footnote 1 version notes), §30.7.
+- Backlog line absorbed: 2026-10-05 pre-8.0.13 DEFAULT_GENERATED (30.5).
+
+**Resolution notes.** `mysqlDefault` (`parser/introspect/mysql.go`) now reads a datetime or timestamp column's default that matches `(?i)^current_timestamp(\(\d\))?$` as an expression when EXTRA lacks `DEFAULT_GENERATED` (MySQL before 8.0.13), so it normalizes to `current_timestamp()` / `current_timestamp(n)` as on 8.0.13+; a string column's `CURRENT_TIMESTAMP` text stays a quoted literal. Prototype applied clean at `a0bad64f`. `TestMySQLDefault` gains 3 cases (timestamp and datetime(3) without `DEFAULT_GENERATED`, varchar `current_timestamp(3)` text). Fail-first re-run on the final code: guard removed → the two temporal cases fail (`= "'CURRENT_TIMESTAMP'", want "current_timestamp()"`); type restriction removed → the two string-column cases fail (`= "current_timestamp()", want "'CURRENT_TIMESTAMP'"`; `= "current_timestamp(3)", want "'current_timestamp(3)'"`). Gates: `make check` ok, `make check-examples` ok; golden churn none (matches vet). Verify doc corrections: Root cause line ref `mysql.go:673` → `:769`; `phase-30.md` backlog line marked resolved.
+
 ### FIX-317
 
 - **Status:** Resolved

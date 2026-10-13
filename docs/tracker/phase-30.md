@@ -1114,7 +1114,7 @@ PRD Sections: 4.1, 4.2, 4.3, 4.4, 5.2, 6.1, 6.3, 6.4, 7, 8.1.7, 16.2, 30.7
     `int32`). Tests: new cases in `TestMySQLTypeMappings` and `TestMySQLSQLNullTypes` (`gotype_test.go`).
     The backlog line is resolved.
   - **PRD §6.1 literal-default conversions: approved as written.**
-- **Left open, as a backlog line: no `DEFAULT_GENERATED` before MySQL 8.0.13** (raised by the
+- **Left open, as a backlog line (since resolved by FIX-318): no `DEFAULT_GENERATED` before MySQL 8.0.13** (raised by the
   reviewer, not measured). On an older server `mysqlDefault` would quote a
   `CURRENT_TIMESTAMP` default as `'CURRENT_TIMESTAMP'`, with no error. PRD §6.3 sets no
   minimum MySQL version, and design §2 rules a version matrix out of scope.
