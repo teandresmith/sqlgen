@@ -2180,27 +2180,35 @@ func TestMySQLIntrospectViews(t *testing.T) {
 			SELECT u.id, u.name, u.score, u.status, u.status AS state, u.perms, CAST(u.status AS CHAR) AS status_text
 			FROM view_users u WHERE u.score > 0;
 		CREATE VIEW user_states AS SELECT d.status FROM (SELECT status FROM view_users) d;
-		CREATE VIEW user_states_copy AS SELECT status FROM user_states`
+		CREATE VIEW user_states_copy AS SELECT status FROM user_states;
+		CREATE VIEW a_states (s) AS SELECT status FROM user_states_copy;
+		CREATE VIEW user_labels (label, state) AS SELECT name, status FROM view_users`
 	applyParityFixture(t, "mysql", mysqlConnStr,
-		"DROP VIEW IF EXISTS user_states_copy; DROP VIEW IF EXISTS user_states; DROP VIEW IF EXISTS user_summary; DROP TABLE IF EXISTS view_users", ddl)
+		"DROP VIEW IF EXISTS user_labels; DROP VIEW IF EXISTS a_states; DROP VIEW IF EXISTS user_states_copy; DROP VIEW IF EXISTS user_states; DROP VIEW IF EXISTS user_summary; DROP TABLE IF EXISTS view_users", ddl)
 
 	intro := introspect.NewMySQLIntrospector()
 	defer intro.Close() //nolint:errcheck // test cleanup
 
 	schema := &parser.Schema{}
 	err := intro.Introspect(context.Background(), mysqlConnStr, schema, introspect.IntrospectionOptions{
-		Tables: []string{"view_users", "user_summary", "user_states", "user_states_copy"},
+		Tables: []string{"view_users", "user_summary", "user_states", "user_states_copy", "a_states", "user_labels"},
 	})
 	if err != nil {
 		t.Fatalf("Introspect() error: %v", err)
 	}
 
-	// A projected ENUM or SET column takes its source column's type. One whose
-	// source is not a table column read from the view's SELECT gets a type of
-	// its own.
+	// A projected ENUM or SET column takes its source column's type, through
+	// any chain of views and whatever their names' order, and a column list
+	// renames it (a_states, user_labels). One read from a derived table gets
+	// a type of its own (user_states).
 	wantViews := []parser.View{
+		{Name: "a_states", Columns: []parser.Column{{Name: "s", Type: "user_states__status_enum"}}},
+		{Name: "user_labels", Columns: []parser.Column{
+			{Name: "label", Type: "varchar(255)"},
+			{Name: "state", Type: "view_users__status_enum"},
+		}},
 		{Name: "user_states", Columns: []parser.Column{{Name: "status", Type: "user_states__status_enum"}}},
-		{Name: "user_states_copy", Columns: []parser.Column{{Name: "status", Type: "user_states_copy__status_enum"}}},
+		{Name: "user_states_copy", Columns: []parser.Column{{Name: "status", Type: "user_states__status_enum"}}},
 		{Name: "user_summary", Columns: []parser.Column{
 			{Name: "id", Type: "bigint"},
 			{Name: "name", Type: "varchar(255)"},
@@ -2217,10 +2225,12 @@ func TestMySQLIntrospectViews(t *testing.T) {
 	wantEnums := []parser.Enum{
 		{Name: "view_users__status_enum", Values: []string{"active", "inactive"}},
 		{Name: "user_states__status_enum", Values: []string{"active", "inactive"}},
-		{Name: "user_states_copy__status_enum", Values: []string{"active", "inactive"}},
 	}
 	if diff := cmp.Diff(wantEnums, schema.Enums); diff != "" {
 		t.Errorf("enums mismatch (-want +got):\n%s", diff)
+	}
+	if len(schema.Warnings) != 0 {
+		t.Errorf("Warnings = %q, want none", schema.Warnings)
 	}
 	wantSets := []parser.Set{{Name: "view_users__perms_set", Values: []string{"r", "w"}}}
 	if diff := cmp.Diff(wantSets, schema.Sets); diff != "" {

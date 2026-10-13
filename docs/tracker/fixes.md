@@ -22,74 +22,6 @@
 ## Open
 
 <!-- fixes:open:begin -->
-### FIX-308
-
-- **Status:** Open
-- **Severity:** tracked
-- **Origin:** phase 30, `parser/introspect` (`mysql.go` views)
-- **Surfaced by:** backlog sweep 2026-10-12 (backlog lines from 30.5, FIX-288)
-- **Vetted:** ready at `9b58288b` (2026-10-12)
-
-**Issue.** A MySQL view column that reads an ENUM/SET column gets a view-scoped Go type instead of the
-source column's, so one SQL enum yields two Go types. Measured on MySQL 8.0.46: `CREATE VIEW pv1 (s)
-AS SELECT status FROM p_a` → `pv1.s` = `pv1__s_enum` plus warning "columns come from the catalog …
-reads columns [status] where the catalog lists [s]" (the whole view falls back to the catalog); `CREATE
-VIEW pv0 AS SELECT status, perms FROM p_a; CREATE VIEW pvv AS SELECT status, perms FROM pv0` →
-`pvv.status` = `pvv__status_enum`, `pvv.perms` = `pvv__perms_set`. The source-table branch of
-`viewEnumOrSetType` has no covering test (mutating its name derivation leaves `go test ./introspect/`
-green).
-
-**Root cause.** `introspectViews` builds `CREATE VIEW <name> AS <view_definition>`
-(`parser/introspect/mysql.go:167`), but MySQL keeps a view's column list outside `view_definition`;
-`viewEnumOrSetType` (`:238`, `isTable` at `:247`) accepts only a table as the source.
-
-**Suggested fix.**
-- Build `CREATE VIEW v (`c1`, `c2`, …) AS <definition>` from the catalog's column names (prototyped:
-  `pv1.s` → `p_a__status_enum`, no warning, `go test ./introspect/` green). Column-list views then get
-  a Definition and are refreshed under `both`.
-- Auto-accepted the recommended option on 2026-10-12 (`/fix` auto-accept rule; user confirmed no
-  veto): a view-over-view ENUM/SET column reuses its source view column's type transitively; a
-  derived-table column stays view-scoped; because PRD §8 ("not its source table column's type")
-  read transitively wants one Go type per SQL enum; no churn. It must not depend on view name order
-  (the 30.5 fix removed exactly that): resolve after all views exist (post-pass that rewrites
-  view-scoped names and removes orphaned Enums/Sets entries) or build in dependency order. Flips the
-  `TestMySQLIntrospectViews` `user_states_copy` expectation.
-- The source-table branch becomes dead after the column-list change: delete it, or cover it with a
-  white-box unit test in the rewrite.
-- Prototype results, run at `9b58288b` on 2026-10-12: probe (`zz_probe_fix308_test.go`, mysql 8.0.46) at
-  base → `VIEW pv1 def=false: s=pv1__s_enum` + warning "it reads columns [status] where the catalog lists
-  [s]"; `VIEW pvv def=true: status=pvv__status_enum perms=pvv__perms_set`; a 3-view chain in reverse name
-  order → `a_top s2=a_top__s2_enum`; mutating the source-table branch's name derivation leaves `go test
-  ./introspect/` ok. With the patch: `pv1 s=p_a__status_enum`, `pvv status=p_a__status_enum
-  perms=p_a__perms_set`, `a_top s2=p_a__status_enum`, derived-table `pdt status=pdt__status_enum`; every
-  view def=true, no warnings, only `p_a__status_enum`, `pdt__status_enum`, `p_a__perms_set` remain.
-  Prototype: `introspectViews` builds the column list via a new `mysqlColumnList` (`quoteMySQLIdent`; no
-  list when the catalog is empty); the dead source-table branch is deleted (`viewEnumOrSetType`,
-  `viewColumnSource`, `enumOrSetValues`), `viewColumnFromCatalog` always mints the view-scoped type; a
-  post-pass `reuseViewSourceTypes(schema)` after all views are built resolves a view-scoped ENUM/SET
-  column that projects another view's column unchanged (by index through `view.Definition` and
-  TableAliases), recursively with a depth guard and a values check, then deletes orphaned Enums/Sets;
-  `TestMySQLIntrospectViews` gains `a_states (s)` (two-hop chain sorting before its sources) and
-  `user_labels (label, state)` plus a no-warnings assertion, and flips `user_states_copy` to
-  `user_states__status_enum`; PRD §8 (`:2635`) gains "a view column that reads another view's column
-  unchanged takes that column's type, so a chain of views shares one type". Gates: parser `go test -race
-  -count=1 ./...` ok (testcontainers pg16 + mysql:8.0); `golangci-lint` 0 issues; gofumpt clean;
-  `TestE2EGoldenFiles/(introspect_mysql|mysql|tenancy_mysql)$` and `TestE2EDatabaseTwin/(mysql|tenancy_mysql)$`
-  pass; `go test -race ./cli/ ./internal/livedb/` ok; `make refs-check` ok. Fail-first: column list
-  reverted → `a_states` `- Type: "user_states__status_enum" + Type: "a_states__s_enum"` plus the two
-  fallback warnings; `reuseViewSourceTypes` removed → `user_states_copy` `+ Type:
-  "user_states_copy__status_enum"`; single-pass name-order mutant → `a_states` `+ Type:
-  "user_states_copy__status_enum"`; existing suite without the fix passes. Golden churn: none. Patch:
-  `.claude/prototypes/FIX-308.patch` (3 files, +118/-66).
-
-**References.**
-- PRD §8 (MySQL ENUM/SET type names, `docs/PRD.md:2635`), §16.2, §6.1.
-- Backlog lines absorbed: 2026-10-05 view-over-view enum (30.5); 2026-10-05 column-list view enum
-  (30.5); 2026-10-08 source-table branch untested (FIX-288).
-- FIX-288; `docs/tracker/phase-30.md:1129`.
-
-**Resolution notes.** _Filled in by /fix resolve._
-
 ### FIX-309
 
 - **Status:** Open
@@ -2373,6 +2305,74 @@ DEFAULT.
 ## Resolved
 
 <!-- fixes:resolved:begin -->
+
+### FIX-308
+
+- **Status:** Resolved
+- **Severity:** tracked
+- **Origin:** phase 30, `parser/introspect` (`mysql.go` views)
+- **Surfaced by:** backlog sweep 2026-10-12 (backlog lines from 30.5, FIX-288)
+- **Vetted:** ready at `9b58288b` (2026-10-12)
+
+**Issue.** A MySQL view column that reads an ENUM/SET column gets a view-scoped Go type instead of the
+source column's, so one SQL enum yields two Go types. Measured on MySQL 8.0.46: `CREATE VIEW pv1 (s)
+AS SELECT status FROM p_a` → `pv1.s` = `pv1__s_enum` plus warning "columns come from the catalog …
+reads columns [status] where the catalog lists [s]" (the whole view falls back to the catalog); `CREATE
+VIEW pv0 AS SELECT status, perms FROM p_a; CREATE VIEW pvv AS SELECT status, perms FROM pv0` →
+`pvv.status` = `pvv__status_enum`, `pvv.perms` = `pvv__perms_set`. The source-table branch of
+`viewEnumOrSetType` has no covering test (mutating its name derivation leaves `go test ./introspect/`
+green).
+
+**Root cause.** `introspectViews` builds `CREATE VIEW <name> AS <view_definition>`
+(`parser/introspect/mysql.go:167`), but MySQL keeps a view's column list outside `view_definition`;
+`viewEnumOrSetType` (`:238`, `isTable` at `:247`) accepts only a table as the source.
+
+**Suggested fix.**
+- Build `CREATE VIEW v (`c1`, `c2`, …) AS <definition>` from the catalog's column names (prototyped:
+  `pv1.s` → `p_a__status_enum`, no warning, `go test ./introspect/` green). Column-list views then get
+  a Definition and are refreshed under `both`.
+- Auto-accepted the recommended option on 2026-10-12 (`/fix` auto-accept rule; user confirmed no
+  veto): a view-over-view ENUM/SET column reuses its source view column's type transitively; a
+  derived-table column stays view-scoped; because PRD §8 ("not its source table column's type")
+  read transitively wants one Go type per SQL enum; no churn. It must not depend on view name order
+  (the 30.5 fix removed exactly that): resolve after all views exist (post-pass that rewrites
+  view-scoped names and removes orphaned Enums/Sets entries) or build in dependency order. Flips the
+  `TestMySQLIntrospectViews` `user_states_copy` expectation.
+- The source-table branch becomes dead after the column-list change: delete it, or cover it with a
+  white-box unit test in the rewrite.
+- Prototype results, run at `9b58288b` on 2026-10-12: probe (`zz_probe_fix308_test.go`, mysql 8.0.46) at
+  base → `VIEW pv1 def=false: s=pv1__s_enum` + warning "it reads columns [status] where the catalog lists
+  [s]"; `VIEW pvv def=true: status=pvv__status_enum perms=pvv__perms_set`; a 3-view chain in reverse name
+  order → `a_top s2=a_top__s2_enum`; mutating the source-table branch's name derivation leaves `go test
+  ./introspect/` ok. With the patch: `pv1 s=p_a__status_enum`, `pvv status=p_a__status_enum
+  perms=p_a__perms_set`, `a_top s2=p_a__status_enum`, derived-table `pdt status=pdt__status_enum`; every
+  view def=true, no warnings, only `p_a__status_enum`, `pdt__status_enum`, `p_a__perms_set` remain.
+  Prototype: `introspectViews` builds the column list via a new `mysqlColumnList` (`quoteMySQLIdent`; no
+  list when the catalog is empty); the dead source-table branch is deleted (`viewEnumOrSetType`,
+  `viewColumnSource`, `enumOrSetValues`), `viewColumnFromCatalog` always mints the view-scoped type; a
+  post-pass `reuseViewSourceTypes(schema)` after all views are built resolves a view-scoped ENUM/SET
+  column that projects another view's column unchanged (by index through `view.Definition` and
+  TableAliases), recursively with a depth guard and a values check, then deletes orphaned Enums/Sets;
+  `TestMySQLIntrospectViews` gains `a_states (s)` (two-hop chain sorting before its sources) and
+  `user_labels (label, state)` plus a no-warnings assertion, and flips `user_states_copy` to
+  `user_states__status_enum`; PRD §8 (`:2643`) gains "a view column that reads another view's column
+  unchanged takes that column's type, so a chain of views shares one type". Gates: parser `go test -race
+  -count=1 ./...` ok (testcontainers pg16 + mysql:8.0); `golangci-lint` 0 issues; gofumpt clean;
+  `TestE2EGoldenFiles/(introspect_mysql|mysql|tenancy_mysql)$` and `TestE2EDatabaseTwin/(mysql|tenancy_mysql)$`
+  pass; `go test -race ./cli/ ./internal/livedb/` ok; `make refs-check` ok. Fail-first: column list
+  reverted → `a_states` `- Type: "user_states__status_enum" + Type: "a_states__s_enum"` plus the two
+  fallback warnings; `reuseViewSourceTypes` removed → `user_states_copy` `+ Type:
+  "user_states_copy__status_enum"`; single-pass name-order mutant → `a_states` `+ Type:
+  "user_states_copy__status_enum"`; existing suite without the fix passes. Golden churn: none. Patch:
+  `.claude/prototypes/FIX-308.patch` (3 files, +118/-66).
+
+**References.**
+- PRD §8 (MySQL ENUM/SET type names, `docs/PRD.md:2643`), §16.2, §6.1.
+- Backlog lines absorbed: 2026-10-05 view-over-view enum (30.5); 2026-10-05 column-list view enum
+  (30.5); 2026-10-08 source-table branch untested (FIX-288).
+- FIX-288; `docs/tracker/phase-30.md:1129`.
+
+**Resolution notes.** `introspectViews` (`parser/introspect/mysql.go`) now builds ``CREATE VIEW v (`c1`, …) AS <definition>`` from the catalog's column names via `mysqlColumnList`, so a column-list view gets a Definition and its columns resolve to the source table column's type with no fallback warning. A post-pass `reuseViewSourceTypes`, run once every view is read, gives a view-scoped ENUM/SET column that projects another view's column unchanged that column's type (recursively, independent of view name order, with a values check) and drops the orphaned Enums/Sets; a derived-table column keeps its view-scoped type. The dead source-table branch (`viewEnumOrSetType`, `viewColumnSource`, `enumOrSetValues`) is deleted. `TestMySQLIntrospectViews` gains `a_states (s)` (a two-hop chain sorting before its sources) and `user_labels (label, state)` plus a no-warnings assertion, and `user_states_copy` flips to `user_states__status_enum`; PRD §8 gains the view-chain sentence. Prototype applied via 3-way (the touched files moved since the vet only in unrelated hunks). Fail-first re-run on the final code: column list reverted → `a_states` `+ Type: "a_states__s_enum"` and `user_labels` `+ Type: "user_labels__state_enum"`; post-pass removed → `user_states_copy` `+ Type: "user_states_copy__status_enum"`. Gates: `make check` ok; parser `go test -race -count=1 ./...` ok; `TestE2EGoldenFiles`/`TestE2EDatabaseTwin` ok; `go test -race ./cli/ ./internal/livedb/` ok; `make check-examples` ok. Golden churn: none. Verify (reviewer agreed, prototype byte-identical): corrected this entry's PRD line refs `:2635` → `:2643`, the moved syntax-error position in a backlog line, and marked the phase-30 M6 note superseded; three `[reading]` backlog lines appended (white-box coverage of `reuseViewSourceTypes`, orphan deletion under the inline-name collision, `both`-mode dangling upstream type).
 
 ### FIX-307
 

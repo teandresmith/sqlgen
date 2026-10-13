@@ -162,24 +162,40 @@ func (mi *MySQLIntrospector) introspectViews(ctx context.Context, schema *parser
 		for i, col := range catalog {
 			names[i] = col.name
 		}
+		// MySQL keeps a view's column list out of view_definition, so the
+		// statement names the catalog's columns, as a column list would.
 		// A catalog ENUM / SET column may add a type to schema, so a catalog
 		// column is built only where it is used.
-		ddl := "CREATE VIEW " + quoteMySQLIdent(view.Name) + " AS " + ref.definition
+		ddl := "CREATE VIEW " + quoteMySQLIdent(view.Name) + mysqlColumnList(names) + " AS " + ref.definition
 		view.Definition, view.Columns, err = viewColumnsFromDefinition(ddl, mysql.ParseViewSQL, schema, names, func(i int) (parser.Column, bool) {
-			return viewColumnFromCatalog(&view, catalog[i], schema), true
+			return viewColumnFromCatalog(view.Name, catalog[i], schema), true
 		})
 		if err != nil {
 			schema.Warnings = append(schema.Warnings, viewFallbackWarning(view.Name, err))
 			view.Columns = make([]parser.Column, 0, len(catalog))
 			for _, row := range catalog {
-				view.Columns = append(view.Columns, viewColumnFromCatalog(&view, row, schema))
+				view.Columns = append(view.Columns, viewColumnFromCatalog(view.Name, row, schema))
 			}
 		}
 
 		schema.Views = append(schema.Views, view)
 	}
 
+	reuseViewSourceTypes(schema)
 	return nil
+}
+
+// mysqlColumnList returns names as a CREATE VIEW column list, or "" when
+// there are none.
+func mysqlColumnList(names []string) string {
+	if len(names) == 0 {
+		return ""
+	}
+	quoted := make([]string, len(names))
+	for i, name := range names {
+		quoted[i] = quoteMySQLIdent(name)
+	}
+	return " (" + strings.Join(quoted, ", ") + ")"
 }
 
 // mysqlViewColumn is one row of a view's information_schema.columns.
@@ -192,11 +208,18 @@ func quoteMySQLIdent(name string) string {
 	return "`" + strings.ReplaceAll(name, "`", "``") + "`"
 }
 
-// viewColumnFromCatalog builds a view column from its catalog row.
-func viewColumnFromCatalog(view *parser.View, row mysqlViewColumn, schema *parser.Schema) parser.Column {
+// viewColumnFromCatalog builds a view column from its catalog row. An ENUM
+// or SET column gets a type of the view's own, added to schema, which
+// reuseViewSourceTypes may replace later.
+func viewColumnFromCatalog(view string, row mysqlViewColumn, schema *parser.Schema) parser.Column {
 	col := parser.Column{Name: row.name, Type: normalizeMySQLType(row.columnType), Nullable: row.nullable}
-	if col.Type == "enum" || col.Type == "set" {
-		col.Type = viewEnumOrSetType(view, col.Name, row.columnType, schema)
+	switch col.Type {
+	case "enum":
+		col.Type = parser.InlineEnumName(view, col.Name)
+		schema.Enums = append(schema.Enums, parser.Enum{Name: col.Type, Values: extractMySQLEnumValues(row.columnType)})
+	case "set":
+		col.Type = parser.InlineSetName(view, col.Name)
+		schema.Sets = append(schema.Sets, parser.Set{Name: col.Type, Values: extractMySQLEnumValues(row.columnType)})
 	}
 	return col
 }
@@ -231,69 +254,88 @@ func (mi *MySQLIntrospector) viewCatalogColumns(ctx context.Context, view string
 	return cols, nil
 }
 
-// viewEnumOrSetType returns the type of a view's ENUM or SET column: the
-// synthetic type of the table column it projects, when the view's SELECT
-// names one whose values match, or else a synthetic type of the view's own,
-// added to schema.
-func viewEnumOrSetType(view *parser.View, column, columnType string, schema *parser.Schema) string {
-	values := extractMySQLEnumValues(columnType)
-	isSet := strings.HasPrefix(strings.ToLower(columnType), "set(")
-	inlineName := parser.InlineEnumName
-	if isSet {
-		inlineName = parser.InlineSetName
+// reuseViewSourceTypes gives a view's ENUM or SET column that projects
+// another view's column unchanged the type of that column, through any
+// chain of views, so one ENUM or SET column has one type (PRD §8). A
+// table's column already has its table's type, since the view's definition
+// resolves it. It runs once every view is read, so the result does not
+// depend on the order views are read in, and it drops the view types no
+// column uses any longer.
+func reuseViewSourceTypes(schema *parser.Schema) {
+	views := make(map[string]*parser.View, len(schema.Views))
+	for i := range schema.Views {
+		views[schema.Views[i].Name] = &schema.Views[i]
 	}
+	unused := make(map[string]bool)
 
-	table, source, ok := viewColumnSource(view, column)
-	isTable := slices.ContainsFunc(schema.Tables, func(t parser.Table) bool { return t.Name == table })
-	if ok && isTable {
-		name := inlineName(table, source)
-		if values != nil && slices.Equal(enumOrSetValues(schema, name), values) {
-			return name
+	// resolve returns the type of view's column i, after reusing its
+	// source's. depth stops a cycle MySQL would refuse anyway.
+	var resolve func(view *parser.View, i, depth int) string
+	resolve = func(view *parser.View, i, depth int) string {
+		col := &view.Columns[i]
+		isSet := col.Type == parser.InlineSetName(view.Name, col.Name)
+		own := isSet || col.Type == parser.InlineEnumName(view.Name, col.Name)
+		if !own || depth > len(views) {
+			return col.Type
+		}
+		source, j, ok := sourceViewColumn(view, i, views)
+		if !ok {
+			return col.Type
+		}
+		typ := resolve(source, j, depth+1)
+		values, found := inlineTypeValues(schema, typ, isSet)
+		ownValues, _ := inlineTypeValues(schema, col.Type, isSet)
+		if typ != col.Type && found && slices.Equal(values, ownValues) {
+			unused[col.Type] = true
+			col.Type = typ
+		}
+		return col.Type
+	}
+	for i := range schema.Views {
+		for j := range schema.Views[i].Columns {
+			resolve(&schema.Views[i], j, 0)
 		}
 	}
 
-	name := inlineName(view.Name, column)
-	if isSet {
-		schema.Sets = append(schema.Sets, parser.Set{Name: name, Values: values})
-	} else {
-		schema.Enums = append(schema.Enums, parser.Enum{Name: name, Values: values})
-	}
-	return name
+	schema.Enums = slices.DeleteFunc(schema.Enums, func(e parser.Enum) bool { return unused[e.Name] })
+	schema.Sets = slices.DeleteFunc(schema.Sets, func(s parser.Set) bool { return unused[s.Name] })
 }
 
-// viewColumnSource returns the table and column that the view column named
-// column projects unchanged, read from the view's stored SELECT. ok is false
-// when the column is an expression, comes from a derived table, or the SELECT
-// cannot be read.
-func viewColumnSource(view *parser.View, column string) (table, source string, ok bool) {
-	parsed, err := mysql.ParseViewSQL([]byte("CREATE VIEW v AS " + view.SQL))
-	if err != nil {
-		return "", "", false
+// sourceViewColumn returns the view in views, and the index of its column,
+// that view's column i projects unchanged, read from view's definition. ok
+// is false when the column is an expression, comes from a table or a
+// derived table, or view has no definition.
+func sourceViewColumn(view *parser.View, i int, views map[string]*parser.View) (source *parser.View, j int, ok bool) {
+	if view.Definition == nil || i >= len(view.Definition.Columns) {
+		return nil, 0, false
 	}
-	for _, c := range parsed.Columns {
-		if c.Alias != column || c.SourceColumn == "" || c.Aggregate != "" {
-			continue
-		}
-		table, ok := parsed.TableAliases[c.SourceTable]
-		return table, c.SourceColumn, ok
+	c := view.Definition.Columns[i]
+	if c.SourceColumn == "" || c.Aggregate != "" {
+		return nil, 0, false
 	}
-	return "", "", false
+	source, ok = views[view.Definition.TableAliases[c.SourceTable]]
+	if !ok {
+		return nil, 0, false
+	}
+	j = slices.IndexFunc(source.Columns, func(col parser.Column) bool { return col.Name == c.SourceColumn })
+	return source, j, j >= 0
 }
 
-// enumOrSetValues returns the values of the enum or set named name in schema,
-// or nil when there is none.
-func enumOrSetValues(schema *parser.Schema, name string) []string {
-	for _, e := range schema.Enums {
-		if e.Name == name {
-			return e.Values
+// inlineTypeValues returns the values of the SET (isSet) or ENUM named name
+// in schema.
+func inlineTypeValues(schema *parser.Schema, name string, isSet bool) ([]string, bool) {
+	if isSet {
+		i := slices.IndexFunc(schema.Sets, func(s parser.Set) bool { return s.Name == name })
+		if i < 0 {
+			return nil, false
 		}
+		return schema.Sets[i].Values, true
 	}
-	for _, s := range schema.Sets {
-		if s.Name == name {
-			return s.Values
-		}
+	i := slices.IndexFunc(schema.Enums, func(e parser.Enum) bool { return e.Name == name })
+	if i < 0 {
+		return nil, false
 	}
-	return nil
+	return schema.Enums[i].Values, true
 }
 
 func (mi *MySQLIntrospector) introspectColumns(ctx context.Context, table *parser.Table, schema *parser.Schema) error {

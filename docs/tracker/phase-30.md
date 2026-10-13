@@ -1127,6 +1127,7 @@ PRD Sections: 4.1, 4.2, 4.3, 4.4, 5.2, 6.1, 6.3, 6.4, 7, 8.1.7, 16.2, 30.7
     after its base view reused the base view's own synthetic type, and one sorting before got
     its own. A source now counts only when it names a table in the schema. Fail-first: the new
     `user_states_copy` case in `TestMySQLIntrospectViews` gave `user_states_status_enum`.
+    (Superseded by FIX-308: a view source now reuses the source view's type.)
   - **ZEROFILL on a non-integer type.** `buildTypeString` wrote `zerofill` there too, which
     turned `DOUBLE ZEROFILL` from `double` into the unmapped `double zerofill` (`string`). It
     now writes `zerofill` on integer types only (`TestIntegerDisplayWidth` "DOUBLE ZEROFILL"),
