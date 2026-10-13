@@ -1812,6 +1812,9 @@ MySQL column types are written on both schema sources as MySQL 8.0.19+ stores th
 | `real`, `float`, `double`, `numeric`, `decimal` | `float64` | `sql.NullFloat64` |
 | `blob` | `[]byte` | `[]byte` |
 | `boolean`, `bool` | `bool` | `sql.NullBool` |
+| `datetime`, `timestamp`, `timestamptz`, `date` | `types.DateTime` | `types.NullDateTime` |
+
+SQLite has no date/time storage class and compares these columns as text, so on SQLite the SQL builders bind every time value in the text SQLite's own `datetime()` and `CURRENT_TIMESTAMP` write: `YYYY-MM-DD HH:MM:SS` in UTC, followed by the fractional seconds the Go time carries, with trailing zeros dropped (`2026-01-01 00:00:00`, `2026-01-01 00:00:00.5`). This covers a `time.Time`, `*time.Time`, `sql.NullTime`, `types.DateTime`, `*types.DateTime` or `types.NullDateTime` argument, whether it is a written value, a filter operand or a cursor keyset value, so all three compare against a row a `DEFAULT (datetime('now'))` wrote. PostgreSQL and MySQL bind the value unchanged. `types.SetOutputLayout` therefore does not affect a SQLite statement sqlgen builds. A `date` column is written in the same text, so it does not compare equal to a value `date()` wrote (`2026-01-01`).
 
 </details>
 

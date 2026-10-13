@@ -187,6 +187,7 @@ They return the SQL string and the argument slice. They never execute queries.
 - Builders compose `WHERE` clauses from `[]sql.Condition`. They do not build conditions — that is the comparator's job.
 - `RETURNING` is appended only when `Dialect.SupportsReturning()` returns true.
 - Column lists are always sorted to ensure deterministic SQL output.
+- **A builder that returns args returns them through `bindArgs`.** On SQLite it binds each time value (`time.Time`, `sql.NullTime`, `types.DateTime`, their pointer and null forms) as the UTC text `datetime()` writes (PRD §7.2); the other dialects get the args unchanged. A builder that skips it still passes every PostgreSQL and MySQL test and fails only on SQLite.
 - **`Limit`/`Offset` are `*int` pointers.** `nil` means omit the clause entirely. The builder emits the clause only when the pointer is non-nil. It does **not** interpret `0` specially — `LIMIT 0` returns zero rows in SQL. The "0 means no limit" semantic is the generated code's responsibility: resolve `new(0)` → `nil` before calling the builder.
 
 ---

@@ -131,7 +131,7 @@ func BuildSelect(d Dialect, t Table, opts SelectOptions) (string, []any) {
 	writeLimitOffset(&b, opts.Limit, opts.Offset)
 	writeLockClause(&b, d, opts.LockMode)
 
-	return b.String(), args
+	return b.String(), bindArgs(d, args)
 }
 
 // BuildSelectJoin generates a SELECT with LEFT JOIN clauses for O2O relationships.
@@ -171,7 +171,7 @@ func BuildSelectJoin(d Dialect, t Table, joins []JoinClause, opts SelectOptions)
 	writeLimitOffset(&b, opts.Limit, opts.Offset)
 	writeLockClause(&b, d, opts.LockMode)
 
-	return b.String(), args
+	return b.String(), bindArgs(d, args)
 }
 
 // BuildInsert generates a single-row INSERT statement.
@@ -192,7 +192,7 @@ func BuildInsert(d Dialect, t Table, opts InsertOptions) (string, []any) {
 		b.WriteString(" ")
 		b.WriteString(d.DefaultValuesClause())
 		writeReturning(&b, d, opts.ReturningColumns)
-		return b.String(), vals
+		return b.String(), bindArgs(d, vals)
 	}
 	b.WriteString(" (")
 	writeQuotedList(&b, d, cols)
@@ -216,7 +216,7 @@ func BuildInsert(d Dialect, t Table, opts InsertOptions) (string, []any) {
 	}
 	writeReturning(&b, d, opts.ReturningColumns)
 
-	return b.String(), vals
+	return b.String(), bindArgs(d, vals)
 }
 
 // suppliesAll reports whether every key is one of cols.
@@ -293,7 +293,7 @@ func BuildMultiInsert(d Dialect, t Table, opts MultiInsertOptions) (string, []an
 	}
 	writeReturning(&b, d, opts.ReturningColumns)
 
-	return b.String(), args
+	return b.String(), bindArgs(d, args)
 }
 
 // BuildUpdate generates an UPDATE statement with sorted SET columns.
@@ -327,7 +327,7 @@ func BuildUpdate(d Dialect, t Table, opts UpdateOptions) (string, []any) {
 	}
 	writeReturning(&b, d, opts.ReturningColumns)
 
-	return b.String(), args
+	return b.String(), bindArgs(d, args)
 }
 
 // BuildCount generates a SELECT COUNT(*) statement.
@@ -337,7 +337,7 @@ func BuildCount(d Dialect, t Table, conditions []Condition) (string, []any) {
 	b.WriteString("SELECT COUNT(*) FROM ")
 	b.WriteString(table)
 	args := appendWhere(&b, d, conditions, 1, table)
-	return b.String(), args
+	return b.String(), bindArgs(d, args)
 }
 
 // BuildRefreshMaterializedView generates a REFRESH MATERIALIZED VIEW
@@ -362,7 +362,7 @@ func BuildExists(d Dialect, t Table, conditions []Condition) (string, []any) {
 	b.WriteString(table)
 	args := appendWhere(&b, d, conditions, 1, table)
 	b.WriteString(")")
-	return b.String(), args
+	return b.String(), bindArgs(d, args)
 }
 
 // BuildIncrement generates an UPDATE SET col = col + $N statement.
@@ -386,7 +386,7 @@ func BuildIncrement(d Dialect, t Table, column string, amount any, conditions []
 		args = append(args, whereArgs...)
 	}
 
-	return b.String(), args
+	return b.String(), bindArgs(d, args)
 }
 
 // BuildIncrementReturning generates the same UPDATE SET col = col + $N
@@ -422,7 +422,7 @@ func BuildSoftDelete(d Dialect, t Table, opts SoftDeleteOptions) (string, []any)
 
 	args := appendWhere(&b, d, opts.Conditions, 1, table)
 	writeReturning(&b, d, opts.ReturningColumns)
-	return b.String(), args
+	return b.String(), bindArgs(d, args)
 }
 
 // HardDeleteOptions configures a DELETE FROM statement.
@@ -443,7 +443,7 @@ func BuildHardDelete(d Dialect, t Table, opts HardDeleteOptions) (string, []any)
 	b.WriteString(table)
 	args := appendWhere(&b, d, opts.Conditions, 1, table)
 	writeReturning(&b, d, opts.ReturningColumns)
-	return b.String(), args
+	return b.String(), bindArgs(d, args)
 }
 
 // BuildColumnsFromFieldOptions extracts and sorts column names from a field options map.
@@ -1094,7 +1094,7 @@ func SubqueryWhere(d Dialect, alias string, conditions []Condition) (string, []a
 		return "", nil
 	}
 	clause, args, _ := buildWhere(bareDialect{d}, PrefixConditions(alias, conditions), 1, alias)
-	return clause, args
+	return clause, bindArgs(d, args)
 }
 
 // bareDialect wraps a Dialect so placeholders render as the bare "$" token.

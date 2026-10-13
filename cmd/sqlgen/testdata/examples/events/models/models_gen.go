@@ -4762,7 +4762,7 @@ func newAuditLogClient(querier database.Querier, mutationHooks []hook.MutationHo
 		batchSize:     200,
 		queryLimit:    1000,
 		pageSize:      100,
-		cursorKeys:    []string{"id"},
+		cursorKeys:    []string{"created_at", "id"},
 		strictUpdates: true,
 		mutationHooks: mutationHooks,
 		queryHooks:    queryHooks,
@@ -6233,6 +6233,9 @@ func decodeAuditLogCursor(encoded string, keys []string) (map[string]any, error)
 	out := make(map[string]any, len(keys))
 	for _, key := range keys {
 		switch key {
+		case "created_at":
+			err = json.Unmarshal(raw[key], &row.CreatedAt)
+			out[key] = row.CreatedAt
 		case "id":
 			err = json.Unmarshal(raw[key], &row.ID)
 			out[key] = row.ID

@@ -22,99 +22,6 @@
 ## Open
 
 <!-- fixes:open:begin -->
-### FIX-335
-
-- **Status:** Open
-- **Severity:** tracked
-- **Origin:** phase 6, runtime `sql/` builders (SQLite time binds: writes, cursor keyset, `comparator.Time` filters)
-- **Surfaced by:** backlog sweep vets (2026-10-12), filed at the backlog sweep's Step 5
-- **Vetted:** ready at `02000941` (2026-10-12)
-
-**Issue.** On SQLite, a DATETIME keyset cursor and a time filter bind a text format that differs from the stored
-one, so pages skip or repeat rows and equality filters match nothing. `DEFAULT (datetime('now'))` stores
-`2026-01-01 00:00:00`; the cursor binds `types.DateTime.Value()` in RFC3339Nano (`2026-01-01T00:00:00Z`);
-`comparator.Time` binds through modernc as `2026-01-01 00:00:00 +0000 UTC`. Measured on a probe variant of the events example
-(`audit_logs.cursor_keys: [created_at, id]`; the example itself inherits `[id]`, rows 9001/9002 at '2026-01-01 00:00:00', 9003 at '2026-01-02
-00:00:00', one row per page): forward → [9001 9003], want [9001 9002 9003]; backward → [9003 9003 9003 9003].
-`GetMany(Filter CreatedAt Eq row.CreatedAt.Time)` → 0 rows. Direct bind: `SELECT CAST(? AS TEXT),
-'2026-01-01 00:00:00' = ?` → bound "2026-01-01 00:00:00 +0000 UTC", stored-eq=0.
-
-Create and Update share the defect: `Create(CreatedAt=…12:30:00.123456789Z)` stores
-"2026-01-01T12:30:00.123456789Z", an EST-zoned value "2026-01-01T07:30:00.123456789-05:00"; both mis-sort against
-`datetime()` rows.
-
-**Root cause.** SQLite compares DATETIME as text; no bind path formats a time the way SQLite's own `datetime()`
-writes it: `types.DateTime.Value()` (`types/datetime.go`, default `outputLayout = time.RFC3339Nano`) feeds writes
-and the cursor keyset (decoded as `types.DateTime` by `shared/_cursor_decode.tmpl`; no template is involved), and
-modernc writes a `time.Time` operand as `t.String()` (no `_time_format` DSN). `types.DateTime` is not SQLite-only:
-the postgres graphql example overrides `timestamptz` to it (`graphql/sqlgen.yml:278-282`).
-
-**Suggested fix.**
-- Canonical SQLite time text (both options): `YYYY-MM-DD HH:MM:SS[.fffffffff]`, UTC, trailing fraction zeros
-  dropped — byte-identical to `datetime()` / `CURRENT_TIMESTAMP` at whole seconds, and Go sub-second values order
-  correctly against them (fixed `.SSS` misses every whole-second `datetime()` value; modernc's `_time_format=sqlite`
-  carries an offset and never matches).
-- Recommended (`.claude/prototypes/FIX-335.patch`, pending Q1): new `sql/time.go` with unexported `bindArgs(d,
-  args)` — on `d.Name() == "sqlite"` it replaces each `time.Time`, `*time.Time`, `sql.NullTime`, `types.DateTime`,
-  `*types.DateTime`, `types.NullDateTime` arg with `t.UTC().Format("2006-01-02 15:04:05.999999999")` (nil for a null),
-  copy-on-write; other dialects untouched. Every exported `sql/builder.go` builder that returns args returns
-  `bindArgs(d, args)` (BuildSelect, BuildSelectJoin, BuildInsert ×2, BuildMultiInsert, BuildUpdate, BuildCount,
-  BuildExists, BuildIncrement, BuildSoftDelete, BuildHardDelete, SubqueryWhere) — all 395 `sql.Build*` sites in the
-  sqlite example; no other exec/query args. No exported identifier; new `sql` → `types` import (both stdlib-only);
-  `types.SetOutputLayout`'s doc comment says it no longer affects SQLite statements sqlgen builds.
-- PRD §7.2 SQLite table: new row datetime/timestamp/timestamptz/date → `types.DateTime` / `types.NullDateTime`, and a
-  paragraph stating the canonical text and the bind rule.
-- Tests: `sql/time_test.go` `TestBuild_SQLiteTimeArgs` (13 value kinds × select/insert × sqlite/pg/mysql; PG and
-  MySQL pinned unchanged; caller slice unmodified) and `TestBuild_SQLiteTimeArgs_EveryBuilder` (9 builders); events
-  `tests/datetime_test.go` `TestDateTime_ConnectionPagesAcrossEqualTimestamps` (forward and backward, one row per page,
-  two `datetime()` rows and one EST Create at one instant plus a later row) and `TestDateTime_EqFilterMatchesScannedTime`;
-  events `sqlgen.yml` audit_logs gains `cursor_keys: [created_at, id]`.
-- The user ruled on 2026-10-12: Q1 → (a) SQLite-only, in the `sql` builders; Q2 → (i) convert all six kinds. Both are
-  the prototyped recommended option (`.claude/prototypes/FIX-335.patch`); `FIX-335.alt.patch` is the rejected option,
-  kept for reference only.
-- The questions as asked:
-  - Q1. Where is the SQLite time text applied? (a, recommended, prototyped) dialect-scoped in the `sql` builders —
-    PG and MySQL binds byte-identical to base (re-measured PG with a non-UTC session: stored 12:30:00.5 UTC,
-    correct); SQLite writes, filters and keyset all use the `datetime()` text; `time.Time`-overridden SQLite columns
-    fixed too (Eq 1/1); costs: `SetOutputLayout` ignored for SQLite statements sqlgen builds, raw driver binds outside
-    the builders keep the old formats. (b, `.claude/prototypes/FIX-335.alt.patch`) global `types.DateTime.Value()`
-    change plus a `comparator.Time` SQLite branch — measured: PG timestamptz via any `types.DateTime` override is 5h
-    off under `SET TIME ZONE 'America/New_York'` (stored 17:30:00.5 for 12:30:00.5; filter/cursor "bound==instant:
-    false") through pgx/v5, lib/pq and pgx stdlib; PG `timestamp` wall time changes for zoned input; MySQL stops the
-    1292 error but TIMESTAMP shifts under a non-UTC session; SQLite `time.Time` overrides flip Eq 1/0 → 0/1; keeps
-    `SetOutputLayout` effective everywhere.
-  - Q2. Under (a): convert `time.Time`, `*time.Time`, `sql.NullTime` too, or only the `types.*` kinds? (i,
-    recommended, prototyped) all six — comparator operands are always `time.Time`, so filters match, and so do
-    `time.Time`-overridden columns; rows modernc wrote earlier as `t.String()` ("… +0000 UTC") stop matching a filter.
-    (ii) `types.*` only — measured "matched [], want [5 6 7]": every `comparator.Time` filter on SQLite stays broken
-    unless the comparator changes too, which brings back (b)'s override regression.
-- Corrected from the original: the text is bound in the runtime SQL builders, not the cursor template or comparator;
-  Create/Update writes are covered; the regression test needs the `cursor_keys` fixture.
-- Prototype results, run at `02000941` on 2026-10-12: probe copy of events with audit_logs `cursor_keys: [created_at,
-  id]`, `GOWORK=off go test -run TestZZProbeFIX335 -v ./tests/` → "forward=[9001 9003] (want [9001 9002 9003])
-  backward=[9003 9003 9003 9003]"; Eq 0 (want 2), Gte 1 (want 3), In 0 (want 2); "direct time.Time bind: "2026-01-01
-  00:00:00 +0000 UTC" stored-eq=0"; "direct types.DateTime bind: "2026-01-01T00:00:00Z" stored-eq=0". modernc v1.48.1
-  scans every stored form to UTC `time.Time`. With (a): "forward=[9001 9002 9003] … backward=[9003 9002 9001]", Eq 2,
-  Gte 3, In 2, round-trip Eq 1 for every row sqlgen or SQLite wrote. Gates (a): gofumpt clean; golangci-lint 0 issues;
-  root `go test -race -count=1 -short ./...` ok; `make update-golden` no churn; `make update-golden-e2e` PASS;
-  events, sqlite, introspect_sqlite, cache, tenancy, postgres, mysql, graphql `GOWORK=off go test -race -count=1 ./...`
-  ok. Fail-first (a): `bindArgs` disabled → 11 `TestBuild_SQLiteTimeArgs*` subtests fail (BuildUpdate: "-
-  string("2026-01-01 12:30:00"), + s"2026-01-01 12:30:00 +0000 UTC"") and events "forward pages = [3 1 4], want [1 2 3
-  4]", "backward pages (reversed) = [4 4 4 4 4], want [1 2 3 4]", "matched [], want [5 6 7]"; `types.DateTime` case
-  removed → paging fails and "matched [5 6], want [5 6 7]"; `time.Time` case removed → "matched [], want [5 6 7]";
-  `.UTC()` removed → "+ string("2026-01-01 07:30:00")"; existing suite passes at base. Golden churn (both options):
-  events ~2 files (`expected/` and `models/models_gen.go`, +4/-1 each, from the `cursor_keys` fixture); no other
-  example. No other vetted patch touches `sql/`, `types/`, `comparator/` or the events example; PRD hunk ~:1797, clear
-  of the others. Patches: `.claude/prototypes/FIX-335.patch` (a; 9 files, +381/-16), `FIX-335.alt.patch` (b; 9 files,
-  +324/-40).
-
-**References.**
-- PRD §9.8.12 (Connection), §14.2 (cursor-based; "retain their types for correct keyset comparison"), §11
-  (comparators), §7.2 (the SQLite table has no datetime row today).
-- Measured during the backlog sweep vets (2026-10-12; events example probe).
-
-**Resolution notes.** _Filled in by /fix resolve._
-
 ### FIX-336
 
 - **Status:** Open
@@ -643,6 +550,100 @@ DEFAULT.
 ## Resolved
 
 <!-- fixes:resolved:begin -->
+
+### FIX-335
+
+- **Status:** Resolved
+- **Severity:** tracked
+- **Origin:** phase 6, runtime `sql/` builders (SQLite time binds: writes, cursor keyset, `comparator.Time` filters)
+- **Surfaced by:** backlog sweep vets (2026-10-12), filed at the backlog sweep's Step 5
+- **Vetted:** ready at `02000941` (2026-10-12)
+
+**Issue.** On SQLite, a DATETIME keyset cursor and a time filter bind a text format that differs from the stored
+one, so pages skip or repeat rows and equality filters match nothing. `DEFAULT (datetime('now'))` stores
+`2026-01-01 00:00:00`; the cursor binds `types.DateTime.Value()` in RFC3339Nano (`2026-01-01T00:00:00Z`);
+`comparator.Time` binds through modernc as `2026-01-01 00:00:00 +0000 UTC`. Measured on a probe variant of the events example
+(`audit_logs.cursor_keys: [created_at, id]`; the example itself inherits `[id]`, rows 9001/9002 at '2026-01-01 00:00:00', 9003 at '2026-01-02
+00:00:00', one row per page): forward → [9001 9003], want [9001 9002 9003]; backward → [9003 9003 9003 9003].
+`GetMany(Filter CreatedAt Eq row.CreatedAt.Time)` → 0 rows. Direct bind: `SELECT CAST(? AS TEXT),
+'2026-01-01 00:00:00' = ?` → bound "2026-01-01 00:00:00 +0000 UTC", stored-eq=0.
+
+Create and Update share the defect: `Create(CreatedAt=…12:30:00.123456789Z)` stores
+"2026-01-01T12:30:00.123456789Z", an EST-zoned value "2026-01-01T07:30:00.123456789-05:00"; both mis-sort against
+`datetime()` rows.
+
+**Root cause.** SQLite compares DATETIME as text; no bind path formats a time the way SQLite's own `datetime()`
+writes it: `types.DateTime.Value()` (`types/datetime.go`, default `outputLayout = time.RFC3339Nano`) feeds writes
+and the cursor keyset (decoded as `types.DateTime` by `shared/_cursor_decode.tmpl`; no template is involved), and
+modernc writes a `time.Time` operand as `t.String()` (no `_time_format` DSN). `types.DateTime` is not SQLite-only:
+the postgres graphql example overrides `timestamptz` to it (`graphql/sqlgen.yml:278-282`).
+
+**Suggested fix.**
+- Canonical SQLite time text (both options): `YYYY-MM-DD HH:MM:SS[.fffffffff]`, UTC, trailing fraction zeros
+  dropped — byte-identical to `datetime()` / `CURRENT_TIMESTAMP` at whole seconds, and Go sub-second values order
+  correctly against them (fixed `.SSS` misses every whole-second `datetime()` value; modernc's `_time_format=sqlite`
+  carries an offset and never matches).
+- Recommended (`.claude/prototypes/FIX-335.patch`, pending Q1): new `sql/time.go` with unexported `bindArgs(d,
+  args)` — on `d.Name() == "sqlite"` it replaces each `time.Time`, `*time.Time`, `sql.NullTime`, `types.DateTime`,
+  `*types.DateTime`, `types.NullDateTime` arg with `t.UTC().Format("2006-01-02 15:04:05.999999999")` (nil for a null),
+  copy-on-write; other dialects untouched. Every exported `sql/builder.go` builder that returns args returns
+  `bindArgs(d, args)` (BuildSelect, BuildSelectJoin, BuildInsert ×2, BuildMultiInsert, BuildUpdate, BuildCount,
+  BuildExists, BuildIncrement, BuildSoftDelete, BuildHardDelete, SubqueryWhere) — all 395 `sql.Build*` sites in the
+  sqlite example; no other exec/query args. No exported identifier; new `sql` → `types` import (both stdlib-only);
+  `types.SetOutputLayout`'s doc comment says it no longer affects SQLite statements sqlgen builds.
+- PRD §7.2 SQLite table: new row datetime/timestamp/timestamptz/date → `types.DateTime` / `types.NullDateTime`, and a
+  paragraph stating the canonical text and the bind rule.
+- Tests: `sql/time_test.go` `TestBuild_SQLiteTimeArgs` (13 value kinds × select/insert × sqlite/pg/mysql; PG and
+  MySQL pinned unchanged; caller slice unmodified) and `TestBuild_SQLiteTimeArgs_EveryBuilder` (9 builders); events
+  `tests/datetime_test.go` `TestDateTime_ConnectionPagesAcrossEqualTimestamps` (forward and backward, one row per page,
+  two `datetime()` rows and one EST Create at one instant plus a later row) and `TestDateTime_EqFilterMatchesScannedTime`;
+  events `sqlgen.yml` audit_logs gains `cursor_keys: [created_at, id]`.
+- The user ruled on 2026-10-12: Q1 → (a) SQLite-only, in the `sql` builders; Q2 → (i) convert all six kinds. Both are
+  the prototyped recommended option (`.claude/prototypes/FIX-335.patch`); `FIX-335.alt.patch` is the rejected option,
+  kept for reference only.
+- The questions as asked:
+  - Q1. Where is the SQLite time text applied? (a, recommended, prototyped) dialect-scoped in the `sql` builders —
+    PG and MySQL binds byte-identical to base (re-measured PG with a non-UTC session: stored 12:30:00.5 UTC,
+    correct); SQLite writes, filters and keyset all use the `datetime()` text; `time.Time`-overridden SQLite columns
+    fixed too (Eq 1/1); costs: `SetOutputLayout` ignored for SQLite statements sqlgen builds, raw driver binds outside
+    the builders keep the old formats. (b, `.claude/prototypes/FIX-335.alt.patch`) global `types.DateTime.Value()`
+    change plus a `comparator.Time` SQLite branch — measured: PG timestamptz via any `types.DateTime` override is 5h
+    off under `SET TIME ZONE 'America/New_York'` (stored 17:30:00.5 for 12:30:00.5; filter/cursor "bound==instant:
+    false") through pgx/v5, lib/pq and pgx stdlib; PG `timestamp` wall time changes for zoned input; MySQL stops the
+    1292 error but TIMESTAMP shifts under a non-UTC session; SQLite `time.Time` overrides flip Eq 1/0 → 0/1; keeps
+    `SetOutputLayout` effective everywhere.
+  - Q2. Under (a): convert `time.Time`, `*time.Time`, `sql.NullTime` too, or only the `types.*` kinds? (i,
+    recommended, prototyped) all six — comparator operands are always `time.Time`, so filters match, and so do
+    `time.Time`-overridden columns; rows modernc wrote earlier as `t.String()` ("… +0000 UTC") stop matching a filter.
+    (ii) `types.*` only — measured "matched [], want [5 6 7]": every `comparator.Time` filter on SQLite stays broken
+    unless the comparator changes too, which brings back (b)'s override regression.
+- Corrected from the original: the text is bound in the runtime SQL builders, not the cursor template or comparator;
+  Create/Update writes are covered; the regression test needs the `cursor_keys` fixture.
+- Prototype results, run at `02000941` on 2026-10-12: probe copy of events with audit_logs `cursor_keys: [created_at,
+  id]`, `GOWORK=off go test -run TestZZProbeFIX335 -v ./tests/` → "forward=[9001 9003] (want [9001 9002 9003])
+  backward=[9003 9003 9003 9003]"; Eq 0 (want 2), Gte 1 (want 3), In 0 (want 2); "direct time.Time bind: "2026-01-01
+  00:00:00 +0000 UTC" stored-eq=0"; "direct types.DateTime bind: "2026-01-01T00:00:00Z" stored-eq=0". modernc v1.48.1
+  scans every stored form to UTC `time.Time`. With (a): "forward=[9001 9002 9003] … backward=[9003 9002 9001]", Eq 2,
+  Gte 3, In 2, round-trip Eq 1 for every row sqlgen or SQLite wrote. Gates (a): gofumpt clean; golangci-lint 0 issues;
+  root `go test -race -count=1 -short ./...` ok; `make update-golden` no churn; `make update-golden-e2e` PASS;
+  events, sqlite, introspect_sqlite, cache, tenancy, postgres, mysql, graphql `GOWORK=off go test -race -count=1 ./...`
+  ok. Fail-first (a): `bindArgs` disabled → 11 `TestBuild_SQLiteTimeArgs*` subtests fail (BuildUpdate: "-
+  string("2026-01-01 12:30:00"), + s"2026-01-01 12:30:00 +0000 UTC"") and events "forward pages = [3 1 4], want [1 2 3
+  4]", "backward pages (reversed) = [4 4 4 4 4], want [1 2 3 4]", "matched [], want [5 6 7]"; `types.DateTime` case
+  removed → paging fails and "matched [5 6], want [5 6 7]"; `time.Time` case removed → "matched [], want [5 6 7]";
+  `.UTC()` removed → "+ string("2026-01-01 07:30:00")"; existing suite passes at base. Golden churn (both options):
+  events ~2 files (`expected/` and `models/models_gen.go`, +4/-1 each, from the `cursor_keys` fixture); no other
+  example. No other vetted patch touches `sql/`, `types/`, `comparator/` or the events example; PRD hunk ~:1797, clear
+  of the others. Patches: `.claude/prototypes/FIX-335.patch` (a; 9 files, +381/-16), `FIX-335.alt.patch` (b; 9 files,
+  +324/-40).
+
+**References.**
+- PRD §9.8.12 (Connection), §14.2 (cursor-based; "retain their types for correct keyset comparison"), §11
+  (comparators), §7.2 (the SQLite table had no datetime row; this fix adds it).
+- Measured during the backlog sweep vets (2026-10-12; events example probe).
+
+**Resolution notes.** Recommended option (a)(i) as ruled. New `sql/time.go` adds the unexported `bindArgs(d, args)`: on SQLite it binds each `time.Time`, `*time.Time`, `sql.NullTime`, `types.DateTime`, `*types.DateTime` or `types.NullDateTime` argument as `t.UTC().Format("2006-01-02 15:04:05.999999999")` (nil for a null), copy-on-write; PostgreSQL and MySQL args are returned unchanged. Every exported `sql/builder.go` builder that returns args returns `bindArgs(d, args)`; `BuildIncrementReturning` reuses `BuildIncrement`'s already-bound args (the prototype called `bindArgs` a second time there, a no-op dropped inline). PRD §7.2 SQLite table gains the datetime/timestamp/timestamptz/date → `types.DateTime` / `types.NullDateTime` row and the bind-rule paragraph; `types.SetOutputLayout`'s doc comment says it does not affect SQLite statements sqlgen builds. Tests: `sql/time_test.go` (`TestBuild_SQLiteTimeArgs`, 13 value kinds × select/insert × three dialects, caller slice unmodified; `TestBuild_SQLiteTimeArgs_EveryBuilder`, 9 builders); events `tests/datetime_test.go` (`TestDateTime_ConnectionPagesAcrossEqualTimestamps`, `TestDateTime_EqFilterMatchesScannedTime`) with audit_logs `cursor_keys: [created_at, id]` in events `sqlgen.yml`. Prototype applied clean (source hunks; goldens regenerated). Golden churn: events `expected/models_gen.go` and `models/models_gen.go`, +4/-1 each (the `cursor_keys` fixture), matching the vet. Fail-first on the final code: `bindArgs` disabled → 11 `TestBuild_SQLiteTimeArgs*` subtests fail, and events "forward pages = [3 1 4], want [1 2 3 4]", "backward pages (reversed) = [4 4 4 4 4], want [1 2 3 4]", "matched [], want [5 6 7]"; restored → pass. Gates: `make check` ok; `make check-examples` ok. `/verify` reviewer agreed (PRD 4/4, fail-first confirmed, no behaviour defects); applied inline: the `bindArgs` doc comment no longer implies RFC 3339 binds fine on MySQL, this entry's §7.2 reference reworded now that the row exists, `guidelines/SQL.md` §6 Rules gains the `bindArgs` rule for arg-returning builders, and `TestBuild_SQLiteTimeArgs_ListAndSubquery` pins the IN, BETWEEN and `Exists` subquery arg paths (3 subtests fail with `bindArgs` disabled); `make check` and `make check-examples` re-run ok.
+
 ### FIX-334
 
 - **Status:** Resolved
