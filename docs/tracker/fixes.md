@@ -22,60 +22,6 @@
 ## Open
 
 <!-- fixes:open:begin -->
-### FIX-317
-
-- **Status:** Open
-- **Severity:** tracked
-- **Origin:** phase 6, `parser/mysql` (`view_sql.go` `ParseViewSQL`)
-- **Surfaced by:** backlog sweep 2026-10-12 (backlog line from /verify 30.8b)
-- **Vetted:** ready at `9b58288b` (2026-10-12)
-
-**Issue.** A MySQL view annotation file that qualifies its view (`CREATE VIEW app.v …`) never overlays
-the database's `v`. Measured with a copy of `introspect_mysql` (DB `l61`, view file `CREATE VIEW
-l61.project_summaries`): `source: both` → "generated 11 files (4 tables, 2 views)" and `source:
-database` → "generated 10 files (4 tables, 2 views)", with both `TableProjectSummaries` and `TableL61ProjectSummaries`; the `@pk` annotation never
-reaches the database view (`projectSummaryClient.Get` disappears). Under `files` the view's
-`hook.TableName` is qualified.
-
-**Root cause.** `ParseViewSQL` (`parser/mysql/view_sql.go:36-39`) keeps the qualifier as `Schema`, while
-introspected MySQL views have no schema, so `parseViewFiles` / `MergeViewAnnotations` keys (`app.v` vs
-`v`) never match. PRD §5.5: MySQL names are always bare.
-
-**Suggested fix.**
-- Drop the qualifier in `ParseViewSQL` (Schema always `""`, also in `ViewQueryError`), as the MySQL
-  DDL parser does for tables.
-- Update `TestParseViewSQL_CompoundSelectRejected` (expects Schema `app`); fail-first test for the
-  merge keying.
-- Same root cause and site (vet 2026-10-12): a qualified view file whose query is compound (`CREATE VIEW
-  app.v AS SELECT … UNION SELECT …`) fails hard under database and both (`parsing view SQL in …: CREATE VIEW
-  query is not a simple SELECT`), because the `ViewQueryError` carries Schema "app" and
-  `inDatabase["app.project_ids"]` misses; dropping the qualifier fixes it too.
-- Prototype results, run at `9b58288b` on 2026-10-12: sibling copy of introspect_mysql with `CREATE VIEW
-  app.project_summaries`, mysql:8.0 DB `app` → both: "generated 11 files (4 tables, 2 views)",
-  `TableProjectSummaries = "project_summaries"` and `TableAppProjectSummaries = "app.project_summaries"`,
-  only `appProjectSummaryClient.Get`; database: "generated 10 files (4 tables, 2 views)", same; files: `hook.TableName
-  = "app.project_summaries"`, `sql.Table{Schema: "app", …}`, manifest `"schema": "app"`. Prototype:
-  `ParseViewSQL` drops the qualifier (Schema "" in `ViewSQL` and both `ViewQueryError` returns);
-  `TestParseViewSQL_CompoundSelectRejected` expects a bare `ViewQueryError`; new
-  `TestParseViewSQL_QualifiedNameIsBare` (bare, `app.v`, backticked with a qualified FROM) and
-  `TestAddViewFiles_MySQLQualifiedView` (cli; simple overlay, compound overlay, files). With the fix: both →
-  "generated 11 files (4 tables, 1 views)", `projectSummaryClient.Get` back, output byte-identical to
-  introspect_mysql/expected except `generated_at` and the DB name in view source; database → 10 files, 1
-  view; files all bare. Gates: parser `go test -race ./mysql/... ./introspect/... .` ok; `golangci-lint
-  ./mysql/...` 0 issues; cmd/sqlgen `go test -race ./cli/...` ok, `golangci-lint ./cli/...` 0 issues;
-  `TestE2EGoldenFiles/(mysql|introspect_mysql|tenancy_mysql)$` pass; gofumpt clean. Fail-first:
-  view_sql.go reverted → `ParseViewSQL(…) = "app"."v", want the bare view v`; `error =
-  &parser.ViewQueryError{Schema:"app", …}, want … the bare view v`; `TestAddViewFiles_MySQLQualifiedView`
-  cases fail (`+ "app.project_ids.id pk=true"`; compound "CREATE VIEW query is not a simple SELECT"); existing
-  suite without the fix passes. Golden churn: none. Patch: `.claude/prototypes/FIX-317.patch` (3 files,
-  +87/-19).
-
-**References.**
-- PRD §5.5, §16.2.
-- Backlog line absorbed: 2026-10-07 qualified MySQL view file (/verify 30.8b).
-
-**Resolution notes.** _Filled in by /fix resolve._
-
 ### FIX-318
 
 - **Status:** Open
@@ -1792,6 +1738,60 @@ DEFAULT.
 ## Resolved
 
 <!-- fixes:resolved:begin -->
+### FIX-317
+
+- **Status:** Resolved
+- **Severity:** tracked
+- **Origin:** phase 6, `parser/mysql` (`view_sql.go` `ParseViewSQL`)
+- **Surfaced by:** backlog sweep 2026-10-12 (backlog line from /verify 30.8b)
+- **Vetted:** ready at `9b58288b` (2026-10-12)
+
+**Issue.** A MySQL view annotation file that qualifies its view (`CREATE VIEW app.v …`) never overlays
+the database's `v`. Measured with a copy of `introspect_mysql` (DB `l61`, view file `CREATE VIEW
+l61.project_summaries`): `source: both` → "generated 11 files (4 tables, 2 views)" and `source:
+database` → "generated 10 files (4 tables, 2 views)", with both `TableProjectSummaries` and `TableL61ProjectSummaries`; the `@pk` annotation never
+reaches the database view (`projectSummaryClient.Get` disappears). Under `files` the view's
+`hook.TableName` is qualified.
+
+**Root cause.** `ParseViewSQL` (`parser/mysql/view_sql.go:36-39`) keeps the qualifier as `Schema`, while
+introspected MySQL views have no schema, so `parseViewFiles` / `MergeViewAnnotations` keys (`app.v` vs
+`v`) never match. PRD §5.5: MySQL names are always bare.
+
+**Suggested fix.**
+- Drop the qualifier in `ParseViewSQL` (Schema always `""`, also in `ViewQueryError`), as the MySQL
+  DDL parser does for tables.
+- Update `TestParseViewSQL_CompoundSelectRejected` (expects Schema `app`); fail-first test for the
+  merge keying.
+- Same root cause and site (vet 2026-10-12): a qualified view file whose query is compound (`CREATE VIEW
+  app.v AS SELECT … UNION SELECT …`) fails hard under database and both (`parsing view SQL in …: CREATE VIEW
+  query is not a simple SELECT`), because the `ViewQueryError` carries Schema "app" and
+  `inDatabase["app.project_ids"]` misses; dropping the qualifier fixes it too.
+- Prototype results, run at `9b58288b` on 2026-10-12: sibling copy of introspect_mysql with `CREATE VIEW
+  app.project_summaries`, mysql:8.0 DB `app` → both: "generated 11 files (4 tables, 2 views)",
+  `TableProjectSummaries = "project_summaries"` and `TableAppProjectSummaries = "app.project_summaries"`,
+  only `appProjectSummaryClient.Get`; database: "generated 10 files (4 tables, 2 views)", same; files: `hook.TableName
+  = "app.project_summaries"`, `sql.Table{Schema: "app", …}`, manifest `"schema": "app"`. Prototype:
+  `ParseViewSQL` drops the qualifier (Schema "" in `ViewSQL` and both `ViewQueryError` returns);
+  `TestParseViewSQL_CompoundSelectRejected` expects a bare `ViewQueryError`; new
+  `TestParseViewSQL_QualifiedNameIsBare` (bare, `app.v`, backticked with a qualified FROM) and
+  `TestAddViewFiles_MySQLQualifiedView` (cli; simple overlay, compound overlay, files). With the fix: both →
+  "generated 11 files (4 tables, 1 views)", `projectSummaryClient.Get` back, output byte-identical to
+  introspect_mysql/expected except `generated_at` and the DB name in view source; database → 10 files, 1
+  view; files all bare. Gates: parser `go test -race ./mysql/... ./introspect/... .` ok; `golangci-lint
+  ./mysql/...` 0 issues; cmd/sqlgen `go test -race ./cli/...` ok, `golangci-lint ./cli/...` 0 issues;
+  `TestE2EGoldenFiles/(mysql|introspect_mysql|tenancy_mysql)$` pass; gofumpt clean. Fail-first:
+  view_sql.go reverted → `ParseViewSQL(…) = "app"."v", want the bare view v`; `error =
+  &parser.ViewQueryError{Schema:"app", …}, want … the bare view v`; `TestAddViewFiles_MySQLQualifiedView`
+  cases fail (`+ "app.project_ids.id pk=true"`; compound "CREATE VIEW query is not a simple SELECT"); existing
+  suite without the fix passes. Golden churn: none. Patch: `.claude/prototypes/FIX-317.patch` (3 files,
+  +87/-19).
+
+**References.**
+- PRD §5.5, §16.2.
+- Backlog line absorbed: 2026-10-07 qualified MySQL view file (/verify 30.8b).
+
+**Resolution notes.** `ParseViewSQL` (`parser/mysql/view_sql.go`) drops the database qualifier from the view name: `ViewSQL.Schema` and both `ViewQueryError` returns are always bare, as the MySQL DDL parser does for tables (PRD §5.5). A qualified view file now overlays the database view of the bare name under `both` and `database` (PRD §16.2), including a compound query, and generates the bare name under `files`. Prototype applied clean (fresh at HEAD); comments trimmed. Tests: `TestParseViewSQL_CompoundSelectRejected` expects a bare `ViewQueryError`; new `TestParseViewSQL_QualifiedNameIsBare` (parser/mysql) and `TestAddViewFiles_MySQLQualifiedView` (cmd/sqlgen/cli: simple overlay, compound overlay, files). Fail-first with `view_sql.go` reverted: all three fail (`= "app"."v", want the bare view v`; `+ "app.project_ids.id pk=true"`; `CREATE VIEW query is not a simple SELECT`). Gates: `make check` ok; `make update-golden-e2e` + `make update-golden` → no golden churn (matches vet); `make check-examples` ok. Doc correction: PRD §16.1 "View name" now limits schema-qualified view names to PostgreSQL and says a MySQL/SQLite qualifier is dropped, the name bare.
+
 ### FIX-316
 
 - **Status:** Resolved

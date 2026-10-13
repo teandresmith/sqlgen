@@ -2779,20 +2779,39 @@ func TestAlterTableKeyNames(t *testing.T) {
 }
 
 func TestParseViewSQL_CompoundSelectRejected(t *testing.T) {
-	tests := []struct{ sql, schema string }{
-		{"CREATE VIEW v AS SELECT id FROM a UNION SELECT id FROM b;", ""},
-		{"CREATE VIEW app.v AS SELECT id FROM a UNION ALL SELECT id FROM b;", "app"},
+	tests := []string{
+		"CREATE VIEW v AS SELECT id FROM a UNION SELECT id FROM b;",
+		"CREATE VIEW app.v AS SELECT id FROM a UNION ALL SELECT id FROM b;",
 	}
-	for _, tt := range tests {
-		_, err := mysql.ParseViewSQL([]byte(tt.sql))
+	for _, sql := range tests {
+		_, err := mysql.ParseViewSQL([]byte(sql))
 		if err == nil || !strings.Contains(err.Error(), "not a simple SELECT") {
-			t.Errorf("ParseViewSQL(%q) error = %v, want not a simple SELECT", tt.sql, err)
+			t.Errorf("ParseViewSQL(%q) error = %v, want not a simple SELECT", sql, err)
 		}
-		// The error names the view, so an annotation file for a view the
+		// The error names the bare view, so an annotation file for a view the
 		// database defines can still overlay it.
 		qe, ok := errors.AsType[*parser.ViewQueryError](err)
-		if !ok || qe.Schema != tt.schema || qe.Name != "v" {
-			t.Errorf("ParseViewSQL(%q) error = %#v, want a ViewQueryError naming %q.v", tt.sql, err, tt.schema)
+		if !ok || qe.Schema != "" || qe.Name != "v" {
+			t.Errorf("ParseViewSQL(%q) error = %#v, want a ViewQueryError naming the bare view v", sql, err)
+		}
+	}
+}
+
+// MySQL names are always bare (PRD §5.5), so a database qualifier on the view
+// name is dropped, as on a CREATE TABLE.
+func TestParseViewSQL_QualifiedNameIsBare(t *testing.T) {
+	tests := []string{
+		"CREATE VIEW v AS SELECT p.id FROM projects p;",
+		"CREATE VIEW app.v AS SELECT p.id FROM projects p;",
+		"CREATE VIEW `app`.`v` AS SELECT p.id FROM app.projects p;",
+	}
+	for _, sql := range tests {
+		got, err := mysql.ParseViewSQL([]byte(sql))
+		if err != nil {
+			t.Fatalf("ParseViewSQL(%q) error: %v", sql, err)
+		}
+		if got.Schema != "" || got.Name != "v" {
+			t.Errorf("ParseViewSQL(%q) = %q.%q, want the bare view v", sql, got.Schema, got.Name)
 		}
 	}
 }

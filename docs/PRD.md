@@ -9165,7 +9165,7 @@ LEFT JOIN reviews r ON r.product_id = p.id
 GROUP BY p.id, p.name, p.discount;
 ```
 
-**View name** is extracted from the `CREATE VIEW` statement (e.g., `CREATE VIEW product_summary AS` → view name `product_summary`). Schema-qualified names are supported: `CREATE VIEW reporting.product_summary AS` → schema `reporting`, name `product_summary`. On PostgreSQL an unqualified name resolves to `input.schema` ([5.5](#55-schema-qualification--table-naming)). `CREATE OR REPLACE VIEW` is also accepted.
+**View name** is extracted from the `CREATE VIEW` statement (e.g., `CREATE VIEW product_summary AS` → view name `product_summary`). On PostgreSQL schema-qualified names are supported: `CREATE VIEW reporting.product_summary AS` → schema `reporting`, name `product_summary`, and an unqualified name resolves to `input.schema` ([5.5](#55-schema-qualification--table-naming)). On MySQL and SQLite a view, like a table, has no schema: a qualifier is dropped and the name is bare, so `CREATE VIEW app.product_summary` names the view `product_summary` and overlays the database's view of that name ([16.2](#162-introspected-views-db-sourced-views)). `CREATE OR REPLACE VIEW` is also accepted.
 
 **Column names** are extracted from the SELECT clause. Each selected expression must resolve to a column name via one of:
 - Explicit alias: `AVG(r.rating) AS avg_rating` → column `avg_rating`

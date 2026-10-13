@@ -33,25 +33,23 @@ func ParseViewSQL(sql []byte) (parser.ViewSQL, error) {
 		return parser.ViewSQL{}, fmt.Errorf("no CREATE VIEW statement found")
 	}
 
-	var schema string
-	if q := cv.ViewName.Qualifier; !q.IsEmpty() {
-		schema = q.String()
-	}
+	// MySQL names are always bare (PRD §5.5): the qualifier is dropped so the
+	// file's view keys the same as the database view it overlays.
+	name := cv.ViewName.Name.String()
 	sel, ok := cv.Select.(*sqlparser.Select)
 	if !ok {
-		return parser.ViewSQL{}, &parser.ViewQueryError{Schema: schema, Name: cv.ViewName.Name.String(), Err: fmt.Errorf("CREATE VIEW query is not a simple SELECT")}
+		return parser.ViewSQL{}, &parser.ViewQueryError{Name: name, Err: fmt.Errorf("CREATE VIEW query is not a simple SELECT")}
 	}
 
-	columns, err := extractSelectExprs(cv.ViewName.Name.String(), sel.SelectExprs.Exprs, cv.Columns)
+	columns, err := extractSelectExprs(name, sel.SelectExprs.Exprs, cv.Columns)
 	if err != nil {
-		return parser.ViewSQL{}, &parser.ViewQueryError{Schema: schema, Name: cv.ViewName.Name.String(), Err: err}
+		return parser.ViewSQL{}, &parser.ViewQueryError{Name: name, Err: err}
 	}
 
 	aliases, outer := extractTableAliases(sel.From)
 
 	return parser.ViewSQL{
-		Name:         cv.ViewName.Name.String(),
-		Schema:       schema,
+		Name:         name,
 		Columns:      columns,
 		TableAliases: aliases,
 		OuterAliases: outer,

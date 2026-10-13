@@ -574,3 +574,48 @@ func TestParseSchema_ViewDefaultSchema(t *testing.T) {
 		})
 	}
 }
+
+// A database qualifier on a MySQL view file's name is dropped (PRD §5.5), so
+// the file overlays the database's view of the bare name (PRD §16.2) rather
+// than generating a second view.
+func TestAddViewFiles_MySQLQualifiedView(t *testing.T) {
+	tests := []struct {
+		name         string
+		viewSQL      string
+		introspected bool
+	}{
+		{name: "overlays the database view", viewSQL: "-- @pk: id\nCREATE VIEW app.project_ids AS SELECT p.id FROM projects p;\n", introspected: true},
+		{name: "overlays the database view from a compound query", viewSQL: "-- @pk: id\nCREATE VIEW app.project_ids AS SELECT id FROM projects UNION SELECT id FROM projects;\n", introspected: true},
+		{name: "files", viewSQL: "-- @pk: id\nCREATE VIEW `app`.`project_ids` AS SELECT p.id FROM projects p;\n"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			viewPath := filepath.Join(t.TempDir(), "project_ids.sql")
+			if err := os.WriteFile(viewPath, []byte(tt.viewSQL), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			schema := &parser.Schema{Tables: []parser.Table{{
+				Name:    "projects",
+				Columns: []parser.Column{{Name: "id", Type: "bigint", PrimaryKey: true}},
+			}}}
+			if tt.introspected {
+				schema.Views = []parser.View{{Name: "project_ids", Columns: []parser.Column{{Name: "id", Type: "bigint", Nullable: true}}}}
+			}
+			cfg := &config.RootConfig{Input: config.InputConfig{Dialect: config.DialectMySQL, Views: []string{viewPath}}}
+
+			if err := addViewFiles(cfg, "", tt.introspected, schema); err != nil {
+				t.Fatalf("addViewFiles: %v", err)
+			}
+			var got []string
+			for _, v := range schema.Views {
+				for _, col := range v.Columns {
+					got = append(got, fmt.Sprintf("%s.%s.%s pk=%v", v.Schema, v.Name, col.Name, col.PrimaryKey))
+				}
+			}
+			want := []string{".project_ids.id pk=true"}
+			if diff := cmp.Diff(want, got); diff != "" {
+				t.Errorf("views (-want +got):\n%s", diff)
+			}
+		})
+	}
+}
