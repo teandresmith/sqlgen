@@ -22,70 +22,6 @@
 ## Open
 
 <!-- fixes:open:begin -->
-### FIX-314
-
-- **Status:** Open
-- **Severity:** tracked
-- **Origin:** phase 4, `parser/sqlite` (`exprString`, filter qualifier)
-- **Surfaced by:** backlog sweep 2026-10-12 (backlog line from FIX-269)
-- **Vetted:** corrected at `9b58288b` + FIX-300 (2026-10-12)
-
-**Issue.** rqlite/sql renders `CURRENT_TIMESTAMP` / `CURRENT_DATE` / `CURRENT_TIME` in an expression
-as a quoted identifier, which SQLite reads as a string literal or a missing column. Measured: CHECK
-`(y < CURRENT_TIMESTAMP)` → `"y" < "CURRENT_TIMESTAMP"` (manifest CHECK text on both sources); a
-relationship `filter: expires_at > CURRENT_TIMESTAMP` qualifies to `"t"."expires_at" >
-"t"."CURRENT_TIMESTAMP"`, which sqlite3 rejects with "no such column: t.CURRENT_TIMESTAMP". Only the bare
-`DEFAULT CURRENT_TIMESTAMP` renders correctly (rqlite parses it as a literal): `DEFAULT (CURRENT_TIMESTAMP)`
-→ files `"CURRENT_TIMESTAMP"`, database `CURRENT_TIMESTAMP`, so CreateMany/UpsertMany inline
-`sql.NewDefaultExpr("\"CURRENT_TIMESTAMP\"")` and store the literal text, and the manifest reports
-`default_kind: literal` (vet 2026-10-12). Still present on rqlite `4555bb7`. (The backlog line's partial-index example is
-illegal SQLite: "non-deterministic functions prohibited in partial index WHERE clauses".)
-
-**Root cause.** rqlite parses these keywords in expression position as a bare `*rsql.Ident`, which
-`String()` quotes.
-
-**Suggested fix.**
-- `parser/sqlite/sqlite.go`: `exprString` renders `timeKeywords(e)`; `timeKeyword` turns an unquoted
-  `*rsql.Ident` named CURRENT_TIME / CURRENT_DATE / CURRENT_TIMESTAMP (ASCII fold) into
-  `&rsql.TimestampLit{Value: <as written>}`. A `timeKeywordVisitor` (rsql.Walk) replaces operands from their
-  parent (BinaryExpr X/Y/EscapeExpr, Unary, Paren, Range, ExprList, Call args, CaseExpr/CaseBlock, Cast,
-  Collate, Null), because Walk asserts `*Ident` in name slots and replacing the ident itself would panic.
-  Quoted and backtick identifiers stay names.
-- `parser/sqlite/filter_qualifier.go`: `qualifyExpr` returns the keyword literal instead of qualifying it.
-- Tests: `TestParse_TimeKeywords` (column, table and added-column CHECK; nested BETWEEN / call / CASE inside IS
-  NOT NULL; parenthesized DEFAULT; DEFAULT function argument; a quoted name staying quoted); two
-  `TestQualifyFilterIdentifiers` cases; `TestQualifyFilterIdentifiers_TimeKeywordRuns` (modernc, skipped
-  under -short); `TestSQLiteIntrospect_Checks` gets `due > CURRENT_DATE`; `TestSQLiteIntrospect_Defaults` gets
-  `pts DEFAULT (CURRENT_TIMESTAMP)` and `day DEFAULT (date(current_date, '+1 day'))`.
-- Corrected vs. the original suggestion (vet 2026-10-12): widened to DEFAULT expressions (parenthesized and
-  function arguments) — same root cause and site, measured wrong data and a parity break; the
-  generated-column test is replaced because SQLite rejects CURRENT_* there ("non-deterministic functions
-  prohibited in generated columns"); the visitor also covers `EscapeExpr` on the new rqlite. Lands strictly
-  after FIX-300: the patch does not apply to bare `9b58288b` (test hunks anchor on FIX-300's tests, and
-  `BinaryExpr.EscapeExpr` exists only in rqlite 4555bb7). On HEAD's rqlite, Walk does not descend into
-  `*Null`, so a CASE inside IS NOT NULL would stay quoted.
-- Prototype results, run at `9b58288b` + FIX-300 on 2026-10-12: parser probe at base → CHECK `"y" <
-  "CURRENT_TIMESTAMP"`, `DEFAULT (CURRENT_TIMESTAMP)` → `"CURRENT_TIMESTAMP"`, filter `"t"."expires_at" >
-  "t"."CURRENT_TIMESTAMP"`. modernc: qualified `"t"."expires_at" > CURRENT_TIMESTAMP` runs (1 row); `>
-  "t"."CURRENT_TIMESTAMP"` → "no such column: t.CURRENT_TIMESTAMP"; unquoted keyword wins even over a column
-  of that name. E2E (sibling sqlite example, o2m and o2o filter `created_at <= CURRENT_TIMESTAMP`, `clocks.at
-  DEFAULT (CURRENT_TIMESTAMP)`): o2m "get assets: query: SQL logic error: no such column:
-  tgt0.CURRENT_TIMESTAMP (1)"; o2o "no such column: p.CURRENT_TIMESTAMP"; `Clocks().CreateMany` stored
-  `at="CURRENT_TIMESTAMP"`; with the fix all correct and manifest `default_kind: function`. Gates: parser `go
-  test -race -count=1 ./...` ok (Docker integration); `golangci-lint` 0 issues; gofumpt clean; cmd/sqlgen
-  `go test -short -race ./...` ok; `TestE2EGoldenFiles` ok. Fail-first (on the FIX-300 stack): `exprString`
-  reverted → `CHECK = "\"y\" < \"CURRENT_TIMESTAMP\"", want "\"y\" < CURRENT_TIMESTAMP"`, `y Default =
-  "\"CURRENT_TIMESTAMP\"", want "CURRENT_TIMESTAMP"`, and the two introspect tests fail parity; `qualifyExpr`
-  check removed → "no such column: d.CURRENT_TIMESTAMP (1)"; existing suite without the fix passes. Golden
-  churn: none. Patch: `.claude/prototypes/FIX-314.patch` (5 files, +207/-2; applies on top of FIX-300).
-
-**References.**
-- PRD §6.1, §13.7.4.
-- Backlog line absorbed: 2026-10-07 CURRENT_TIMESTAMP rendered as identifier (FIX-269).
-- FIX-300.
-
-**Resolution notes.** _Filled in by /fix resolve._
-
 ### FIX-315
 
 - **Status:** Open
@@ -1967,6 +1903,70 @@ DEFAULT.
 ## Resolved
 
 <!-- fixes:resolved:begin -->
+
+### FIX-314
+
+- **Status:** Resolved
+- **Severity:** tracked
+- **Origin:** phase 4, `parser/sqlite` (`exprString`, filter qualifier)
+- **Surfaced by:** backlog sweep 2026-10-12 (backlog line from FIX-269)
+- **Vetted:** corrected at `9b58288b` + FIX-300 (2026-10-12)
+
+**Issue.** rqlite/sql renders `CURRENT_TIMESTAMP` / `CURRENT_DATE` / `CURRENT_TIME` in an expression
+as a quoted identifier, which SQLite reads as a string literal or a missing column. Measured: CHECK
+`(y < CURRENT_TIMESTAMP)` → `"y" < "CURRENT_TIMESTAMP"` (manifest CHECK text on both sources); a
+relationship `filter: expires_at > CURRENT_TIMESTAMP` qualifies to `"t"."expires_at" >
+"t"."CURRENT_TIMESTAMP"`, which sqlite3 rejects with "no such column: t.CURRENT_TIMESTAMP". Only the bare
+`DEFAULT CURRENT_TIMESTAMP` renders correctly (rqlite parses it as a literal): `DEFAULT (CURRENT_TIMESTAMP)`
+→ files `"CURRENT_TIMESTAMP"`, database `CURRENT_TIMESTAMP`, so CreateMany/UpsertMany inline
+`sql.NewDefaultExpr("\"CURRENT_TIMESTAMP\"")` and store the literal text, and the manifest reports
+`default_kind: literal` (vet 2026-10-12). Still present on rqlite `4555bb7`. (The backlog line's partial-index example is
+illegal SQLite: "non-deterministic functions prohibited in partial index WHERE clauses".)
+
+**Root cause.** rqlite parses these keywords in expression position as a bare `*rsql.Ident`, which
+`String()` quotes.
+
+**Suggested fix.**
+- `parser/sqlite/sqlite.go`: `exprString` renders `timeKeywords(e)`; `timeKeyword` turns an unquoted
+  `*rsql.Ident` named CURRENT_TIME / CURRENT_DATE / CURRENT_TIMESTAMP (ASCII fold) into
+  `&rsql.TimestampLit{Value: <as written>}`. A `timeKeywordVisitor` (rsql.Walk) replaces operands from their
+  parent (BinaryExpr X/Y/EscapeExpr, Unary, Paren, Range, ExprList, Call args, CaseExpr/CaseBlock, Cast,
+  Collate, Null), because Walk asserts `*Ident` in name slots and replacing the ident itself would panic.
+  Quoted and backtick identifiers stay names.
+- `parser/sqlite/filter_qualifier.go`: `qualifyExpr` returns the keyword literal instead of qualifying it.
+- Tests: `TestParse_TimeKeywords` (column, table and added-column CHECK; nested BETWEEN / call / CASE inside IS
+  NOT NULL; parenthesized DEFAULT; DEFAULT function argument; a quoted name staying quoted); two
+  `TestQualifyFilterIdentifiers` cases; `TestQualifyFilterIdentifiers_TimeKeywordRuns` (modernc, skipped
+  under -short); `TestSQLiteIntrospect_Checks` gets `due > CURRENT_DATE`; `TestSQLiteIntrospect_Defaults` gets
+  `pts DEFAULT (CURRENT_TIMESTAMP)` and `day DEFAULT (date(current_date, '+1 day'))`.
+- Corrected vs. the original suggestion (vet 2026-10-12): widened to DEFAULT expressions (parenthesized and
+  function arguments) — same root cause and site, measured wrong data and a parity break; the
+  generated-column test is replaced because SQLite rejects CURRENT_* there ("non-deterministic functions
+  prohibited in generated columns"); the visitor also covers `EscapeExpr` on the new rqlite. Lands strictly
+  after FIX-300: the patch does not apply to bare `9b58288b` (test hunks anchor on FIX-300's tests, and
+  `BinaryExpr.EscapeExpr` exists only in rqlite 4555bb7). On `9b58288b`'s rqlite (`1b2524a`), Walk does not descend
+  into `*Null`, so a CASE inside IS NOT NULL would stay quoted; `4555bb7` does.
+- Prototype results, run at `9b58288b` + FIX-300 on 2026-10-12: parser probe at base → CHECK `"y" <
+  "CURRENT_TIMESTAMP"`, `DEFAULT (CURRENT_TIMESTAMP)` → `"CURRENT_TIMESTAMP"`, filter `"t"."expires_at" >
+  "t"."CURRENT_TIMESTAMP"`. modernc: qualified `"t"."expires_at" > CURRENT_TIMESTAMP` runs (1 row); `>
+  "t"."CURRENT_TIMESTAMP"` → "no such column: t.CURRENT_TIMESTAMP"; unquoted keyword wins even over a column
+  of that name. E2E (sibling sqlite example, o2m and o2o filter `created_at <= CURRENT_TIMESTAMP`, `clocks.at
+  DEFAULT (CURRENT_TIMESTAMP)`): o2m "get assets: query: SQL logic error: no such column:
+  tgt0.CURRENT_TIMESTAMP (1)"; o2o "no such column: p.CURRENT_TIMESTAMP"; `Clocks().CreateMany` stored
+  `at="CURRENT_TIMESTAMP"`; with the fix all correct and manifest `default_kind: function`. Gates: parser `go
+  test -race -count=1 ./...` ok (Docker integration); `golangci-lint` 0 issues; gofumpt clean; cmd/sqlgen
+  `go test -short -race ./...` ok; `TestE2EGoldenFiles` ok. Fail-first (on the FIX-300 stack): `exprString`
+  reverted → `CHECK = "\"y\" < \"CURRENT_TIMESTAMP\"", want "\"y\" < CURRENT_TIMESTAMP"`, `y Default =
+  "\"CURRENT_TIMESTAMP\"", want "CURRENT_TIMESTAMP"`, and the two introspect tests fail parity; `qualifyExpr`
+  check removed → "no such column: d.CURRENT_TIMESTAMP (1)"; existing suite without the fix passes. Golden
+  churn: none. Patch: `.claude/prototypes/FIX-314.patch` (5 files, +207/-2; applies on top of FIX-300).
+
+**References.**
+- PRD §6.1, §13.7.4.
+- Backlog line absorbed: 2026-10-07 CURRENT_TIMESTAMP rendered as identifier (FIX-269).
+- FIX-300.
+
+**Resolution notes.** Applied the vetted prototype (`git apply --3way`; every hunk applied, sqlite.go's at an offset past FIX-301..309). One landing adjustment: `timeKeyword` folds with `parser.FoldASCII`, since FIX-301 removed the package-local `foldASCII`. `exprString` renders `timeKeywords(e)`, which turns an unquoted `*rsql.Ident` named CURRENT_TIME / CURRENT_DATE / CURRENT_TIMESTAMP into a `*rsql.TimestampLit` through `timeKeywordVisitor`; `qualifyExpr` returns the keyword instead of qualifying it. Inline, the same root cause where FIX-309's `columnRenamer` meets it: renaming a column named `"current_date"` rewrote the keyword in `CHECK (x > CURRENT_DATE)` to `"x" > "d"`, where sqlite3 keeps `x > CURRENT_DATE`; the renamer now skips an identifier `timeKeyword` reads as the keyword (new `TestAlterTableRenameColumn` case, fail-first). Tests as the Suggested fix lists. Fail-first on HEAD: `exprString` reverted → `CHECK = "\"y\" < \"CURRENT_TIMESTAMP\""` and 4 more `TestParse_TimeKeywords` cases; `qualifyExpr` check removed → "no such column: d.CURRENT_TIMESTAMP (1)"; renamer skip removed → the rename case fails. Gates: `make check` ok; parser sqlite + introspect (Docker) ok; `make check-examples` ok. Golden churn: none, as vetted.
 
 ### FIX-313
 

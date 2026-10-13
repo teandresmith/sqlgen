@@ -48,6 +48,11 @@ func qualifyExpr(expr rsql.Expr, alias string) rsql.Expr {
 		return nil
 	}
 	if ident, ok := expr.(*rsql.Ident); ok {
+		// CURRENT_TIMESTAMP and its kin parse as identifiers, but are not
+		// columns.
+		if kw := timeKeyword(ident); kw != expr {
+			return kw
+		}
 		return &rsql.QualifiedRef{
 			Table:  &rsql.Ident{Name: alias},
 			Column: ident,

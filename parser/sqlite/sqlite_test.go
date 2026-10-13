@@ -815,6 +815,12 @@ func TestAlterTableRenameColumn(t *testing.T) {
 			want: []string{"column label", `CHECK [label] upper("label") != CAST("label" AS TEXT) COLLATE "NOCASE"`},
 		},
 		{
+			name: "time keyword is not the column it spells",
+			sql: `CREATE TABLE c (x TEXT, "current_date" TEXT, CHECK (x > CURRENT_DATE AND "current_date" <> ''));
+				ALTER TABLE c RENAME COLUMN "current_date" TO d;`,
+			want: []string{"column x", "column d", `CHECK [x d] "x" > CURRENT_DATE AND "d" != ''`},
+		},
+		{
 			name: "other column's name left alone",
 			sql: `CREATE TABLE o (a INTEGER, b INTEGER CHECK (b > 0));
 				ALTER TABLE o RENAME COLUMN a TO qty;`,
@@ -1914,6 +1920,78 @@ func TestIndexWhere(t *testing.T) {
 			}
 			if got != tt.want {
 				t.Errorf("IndexWhere(%q) = %q, want %q", tt.ddl, got, tt.want)
+			}
+		})
+	}
+}
+
+// TestParse_TimeKeywords pins that CURRENT_TIME, CURRENT_DATE and
+// CURRENT_TIMESTAMP in an expression render as the keyword, as written.
+// rqlite/sql parses them as identifiers there, and a quoted identifier is what
+// SQLite reads as a string: DEFAULT ("CURRENT_TIMESTAMP") is the text
+// CURRENT_TIMESTAMP. A quoted name stays a name.
+func TestParse_TimeKeywords(t *testing.T) {
+	tests := []struct {
+		name        string
+		ddl         string
+		wantDefault string
+		wantCheck   string
+	}{
+		{
+			name:      "column CHECK",
+			ddl:       `CREATE TABLE t (y TEXT CHECK (y < CURRENT_TIMESTAMP))`,
+			wantCheck: `"y" < CURRENT_TIMESTAMP`,
+		},
+		{
+			name:      "table CHECK, as written, in nested operands",
+			ddl:       `CREATE TABLE t (y TEXT, CHECK ((y BETWEEN current_date AND datetime(CURRENT_TIME, '+1 day')) OR CASE WHEN y IS NULL THEN Current_Timestamp END IS NOT NULL))`,
+			wantCheck: `("y" BETWEEN current_date AND datetime(CURRENT_TIME, '+1 day')) OR CASE WHEN "y" IS NULL THEN Current_Timestamp END NOT NULL`,
+		},
+		{
+			name:      "added column CHECK",
+			ddl:       `CREATE TABLE t (id INTEGER); ALTER TABLE t ADD COLUMN y TEXT CHECK (y < CURRENT_DATE)`,
+			wantCheck: `"y" < CURRENT_DATE`,
+		},
+		{
+			name:        "parenthesized DEFAULT",
+			ddl:         `CREATE TABLE t (y TEXT DEFAULT (CURRENT_TIMESTAMP))`,
+			wantDefault: `CURRENT_TIMESTAMP`,
+		},
+		{
+			name:        "DEFAULT function argument",
+			ddl:         `CREATE TABLE t (y TEXT DEFAULT (datetime(CURRENT_TIMESTAMP, '+1 day')))`,
+			wantDefault: `datetime(CURRENT_TIMESTAMP, '+1 day')`,
+		},
+		{
+			name:      "quoted name",
+			ddl:       `CREATE TABLE t (y TEXT, CHECK (y < "CURRENT_TIMESTAMP"))`,
+			wantCheck: `"y" < "CURRENT_TIMESTAMP"`,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			p := sqlite.New()
+			if err := p.Parse("schema.sql", []byte(tt.ddl)); err != nil {
+				t.Fatalf("Parse() error: %v", err)
+			}
+			table := p.Schema().Tables[0]
+			var gotDefault, gotCheck string
+			for _, c := range table.Columns {
+				if c.Name == "y" {
+					gotDefault = c.Default
+				}
+			}
+			for _, c := range table.Constraints {
+				if c.Type == parser.Check {
+					gotCheck = c.CheckExpression
+				}
+			}
+			if gotDefault != tt.wantDefault {
+				t.Errorf("y Default = %q, want %q", gotDefault, tt.wantDefault)
+			}
+			if gotCheck != tt.wantCheck {
+				t.Errorf("CHECK = %q, want %q", gotCheck, tt.wantCheck)
 			}
 		})
 	}

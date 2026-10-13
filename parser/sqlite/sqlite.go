@@ -187,7 +187,8 @@ func indexWhere(stmt *rsql.CreateIndexStatement) (string, error) {
 	return exprString(stmt.WhereExpr, "CREATE INDEX predicate")
 }
 
-// exprString renders e as rsql.ExprString does; what names e in an error.
+// exprString renders e as rsql.ExprString does, with its time keywords
+// unquoted (timeKeywords); what names e in an error.
 // rqlite/sql panics rendering a node it has no text for; the panic is
 // returned as an error.
 func exprString(e rsql.Expr, what string) (s string, err error) {
@@ -196,8 +197,79 @@ func exprString(e rsql.Expr, what string) (s string, err error) {
 			s, err = "", fmt.Errorf("rendering %s: %v", what, r)
 		}
 	}()
-	return rsql.ExprString(e), nil
+	return rsql.ExprString(timeKeywords(e)), nil
 }
+
+// timeKeywords returns e with each CURRENT_TIME, CURRENT_DATE and
+// CURRENT_TIMESTAMP it names as an operand made the keyword SQLite reads
+// there. rqlite/sql parses those keywords in an expression as an identifier,
+// which renders quoted: SQLite then reads "CURRENT_TIMESTAMP" as a string, and
+// "t"."CURRENT_TIMESTAMP" as a missing column.
+func timeKeywords(e rsql.Expr) rsql.Expr {
+	if e == nil {
+		return nil
+	}
+	e = timeKeyword(e)
+	// The visitor never returns an error.
+	_, _ = rsql.Walk(timeKeywordVisitor{}, e)
+	return e
+}
+
+// timeKeyword returns e as a time keyword when it is one written as an
+// unquoted identifier, and e otherwise. A quoted identifier is a name in
+// SQLite, as is a name after a dot, which is never an operand.
+func timeKeyword(e rsql.Expr) rsql.Expr {
+	ident, ok := e.(*rsql.Ident)
+	if !ok || ident.Quoted {
+		return e
+	}
+	switch parser.FoldASCII(ident.Name) {
+	case "current_time", "current_date", "current_timestamp":
+		return &rsql.TimestampLit{ValuePos: ident.NamePos, Value: ident.Name}
+	}
+	return e
+}
+
+// timeKeywordVisitor makes each operand of an expression node a time keyword
+// when it is one. It replaces operands from the parent: rsql.Walk requires a
+// node in an identifier's place, such as a function's name, to stay one.
+type timeKeywordVisitor struct{}
+
+// Visit makes the operands of n time keywords when they are ones.
+func (v timeKeywordVisitor) Visit(n rsql.Node) (rsql.Visitor, rsql.Node, error) {
+	switch n := n.(type) {
+	case *rsql.BinaryExpr:
+		n.X, n.Y, n.EscapeExpr = timeKeyword(n.X), timeKeyword(n.Y), timeKeyword(n.EscapeExpr)
+	case *rsql.UnaryExpr:
+		n.X = timeKeyword(n.X)
+	case *rsql.ParenExpr:
+		n.X = timeKeyword(n.X)
+	case *rsql.Range:
+		n.X, n.Y = timeKeyword(n.X), timeKeyword(n.Y)
+	case *rsql.ExprList:
+		for i, x := range n.Exprs {
+			n.Exprs[i] = timeKeyword(x)
+		}
+	case *rsql.Call:
+		for i, x := range n.Args {
+			n.Args[i] = timeKeyword(x)
+		}
+	case *rsql.CaseExpr:
+		n.Operand, n.ElseExpr = timeKeyword(n.Operand), timeKeyword(n.ElseExpr)
+	case *rsql.CaseBlock:
+		n.Condition, n.Body = timeKeyword(n.Condition), timeKeyword(n.Body)
+	case *rsql.CastExpr:
+		n.X = timeKeyword(n.X)
+	case *rsql.CollateExpr:
+		n.X = timeKeyword(n.X)
+	case *rsql.Null:
+		n.X = timeKeyword(n.X)
+	}
+	return v, n, nil
+}
+
+// VisitEnd returns n unchanged.
+func (v timeKeywordVisitor) VisitEnd(n rsql.Node) (rsql.Node, error) { return n, nil }
 
 func (p *Parser) parseDropTable(stmt *rsql.DropTableStatement) error {
 	name := rsql.IdentName(stmt.Name)
@@ -746,7 +818,8 @@ type columnRenamer struct {
 }
 
 // Visit renames n when it is a reference to the column, and marks the
-// identifiers below n that name something else.
+// identifiers below n that name something else. An unquoted CURRENT_DATE
+// is the keyword even beside a column of that name.
 func (r *columnRenamer) Visit(n rsql.Node) (rsql.Visitor, rsql.Node, error) {
 	switch n := n.(type) {
 	case *rsql.Call:
@@ -764,7 +837,7 @@ func (r *columnRenamer) Visit(n rsql.Node) (rsql.Visitor, rsql.Node, error) {
 		r.skip[n.Schema] = true
 		r.skip[n.Table] = true
 	case *rsql.Ident:
-		if !r.skip[n] && parser.SameColumnName("sqlite", n.Name, r.oldName) {
+		if !r.skip[n] && timeKeyword(n) == n && parser.SameColumnName("sqlite", n.Name, r.oldName) {
 			n.Name = r.newName
 			r.renamed = true
 		}

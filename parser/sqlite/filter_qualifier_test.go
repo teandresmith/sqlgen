@@ -1,10 +1,13 @@
 package sqlite
 
 import (
+	"context"
+	"database/sql"
 	"strings"
 	"testing"
 
 	rsql "github.com/rqlite/sql"
+	_ "modernc.org/sqlite"
 )
 
 func TestQualifyFilterIdentifiers(t *testing.T) {
@@ -90,6 +93,20 @@ func TestQualifyFilterIdentifiers(t *testing.T) {
 			expr:  "name GLOB 'photo_*'",
 			alias: "d",
 			want:  `"d"."name" GLOB 'photo_*'`,
+		},
+		{
+			// rqlite/sql parses these keywords as identifiers; qualified, SQLite
+			// reports "no such column: d.CURRENT_TIMESTAMP".
+			name:  "time keywords are not columns",
+			expr:  "expires_at > CURRENT_TIMESTAMP AND date(expires_at) <= current_date AND CURRENT_TIME IS NOT NULL",
+			alias: "d",
+			want:  `"d"."expires_at" > CURRENT_TIMESTAMP AND date("d"."expires_at") <= current_date AND CURRENT_TIME NOT NULL`,
+		},
+		{
+			name:  "a quoted time keyword is a column",
+			expr:  `"CURRENT_TIMESTAMP" > 0 AND ` + "`current_date`" + ` > 0`,
+			alias: "d",
+			want:  `"d"."CURRENT_TIMESTAMP" > 0 AND "d"."current_date" > 0`,
 		},
 		{
 			name:    "unparseable expression errors",
@@ -232,5 +249,38 @@ func TestExprString_Panic(t *testing.T) {
 	const want = "rendering CHECK: sql.BinaryExpr.String(): invalid op ILLEGAL"
 	if err == nil || err.Error() != want {
 		t.Errorf("exprString() error = %v, want %q", err, want)
+	}
+}
+
+// TestQualifyFilterIdentifiers_TimeKeywordRuns runs a qualified filter that
+// compares with CURRENT_TIMESTAMP on SQLite. Rendered as the identifier
+// "d"."CURRENT_TIMESTAMP", it fails with "no such column".
+func TestQualifyFilterIdentifiers_TimeKeywordRuns(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping integration test in short mode")
+	}
+	t.Parallel()
+
+	db, err := sql.Open("sqlite", ":memory:")
+	if err != nil {
+		t.Fatalf("opening sqlite: %v", err)
+	}
+	defer db.Close() //nolint:errcheck // test cleanup
+	ctx := context.Background()
+	if _, err := db.ExecContext(ctx, `CREATE TABLE docs (expires_at TEXT);
+		INSERT INTO docs VALUES ('2000-01-01 00:00:00'), ('2999-01-01 00:00:00')`); err != nil {
+		t.Fatalf("seeding: %v", err)
+	}
+
+	where, err := QualifyFilterIdentifiers("expires_at > CURRENT_TIMESTAMP", "d")
+	if err != nil {
+		t.Fatalf("QualifyFilterIdentifiers: %v", err)
+	}
+	var n int
+	if err := db.QueryRowContext(ctx, `SELECT count(*) FROM docs AS "d" WHERE `+where).Scan(&n); err != nil {
+		t.Fatalf("filter %s: %v", where, err)
+	}
+	if n != 1 {
+		t.Errorf("filter %s matched %d rows, want 1", where, n)
 	}
 }

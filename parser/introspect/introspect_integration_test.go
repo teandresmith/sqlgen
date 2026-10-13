@@ -1205,12 +1205,14 @@ func TestSQLiteIntrospect_Checks(t *testing.T) {
 			price REAL CONSTRAINT c_price_positive CHECK (price > 0),
 			lo INTEGER,
 			hi INTEGER,
+			due TEXT CHECK (due > CURRENT_DATE),
 			CHECK (lo <= hi),
 			CONSTRAINT c_always CHECK (1 = 1)
 		)
 	`)
 
 	want := []parser.Constraint{
+		{Type: parser.Check, Columns: []string{"due"}, CheckExpression: `"due" > CURRENT_DATE`},
 		{Type: parser.Check, Columns: []string{"lo", "hi"}, CheckExpression: `"lo" <= "hi"`},
 		{Type: parser.Check, Columns: []string{"qty"}, CheckExpression: `"qty" >= 0`},
 		{Name: "c_always", Type: parser.Check, CheckExpression: `1 = 1`},
@@ -1369,6 +1371,8 @@ func TestSQLiteIntrospect_Defaults(t *testing.T) {
 			n REAL DEFAULT 1.5,
 			neg INTEGER DEFAULT -1,
 			ts DATETIME DEFAULT CURRENT_TIMESTAMP,
+			pts DATETIME DEFAULT (CURRENT_TIMESTAMP),
+			day TEXT DEFAULT (date(current_date, '+1 day')),
 			expr INTEGER DEFAULT (1 + 2),
 			fn TEXT DEFAULT (lower('X')),
 			nul TEXT DEFAULT NULL
@@ -1384,6 +1388,8 @@ func TestSQLiteIntrospect_Defaults(t *testing.T) {
 		"n":    "1.5",
 		"neg":  "-1",
 		"ts":   "CURRENT_TIMESTAMP",
+		"pts":  "CURRENT_TIMESTAMP",
+		"day":  "date(current_date, '+1 day')",
 		"expr": "1 + 2",
 		"fn":   "lower('X')",
 		"nul":  "NULL",
