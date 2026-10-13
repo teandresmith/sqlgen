@@ -129,9 +129,13 @@ func backfillRelationshipFilterTenancy(tables []TableContext) {
 // column: a parent without a single-column PK has no single column to
 // correlate on, and an M2M whose target has no single-column PK has nothing to
 // join the junction to. The same applies to a target outside the generated set
-// (excluded by `exclude_tables`, or in another package), which has no filter
-// type to reference.
+// (a view, or a table in another package), which has no filter type to
+// reference. Every list relationship's `filter:` is parsed first, so an
+// unreadable one fails generation even on an edge skipped here.
 func buildRelationshipFilters(tc *TableContext, targets map[string]*TableContext) ([]RelationshipFilterContext, error) {
+	if err := parseListRelationshipFilters(tc); err != nil {
+		return nil, err
+	}
 	if len(tc.PKColumns) != 1 {
 		return nil, nil
 	}
@@ -191,6 +195,26 @@ func buildRelationshipFilters(tc *TableContext, targets map[string]*TableContext
 		return nil, nil
 	}
 	return out, nil
+}
+
+// parseListRelationshipFilters runs every o2m and m2m `filter:` on tc through
+// the dialect's qualifier and discards the output, so an unreadable filter fails
+// generation whether or not its edge gets a relationship filter member below
+// (PRD §4.8). The loader sends the filter to the database unparsed, so nothing
+// else would catch it before runtime.
+func parseListRelationshipFilters(tc *TableContext) error {
+	var errs []error
+	for _, rels := range [][]RelationshipContext{tc.O2MRelationships, tc.M2MRelationships} {
+		for _, rel := range rels {
+			if strings.TrimSpace(rel.Filter) == "" {
+				continue
+			}
+			if _, err := qualifyFilter(rel.Filter, RelationshipFilterAliasToken, tc.Dialect); err != nil {
+				errs = append(errs, fmt.Errorf("table %s: relationship %s: filter %q: %w", tc.TableName, rel.FieldName, rel.Filter, err))
+			}
+		}
+	}
+	return errors.Join(errs...)
 }
 
 // relationshipStaticFilter returns the Go expression that rebuilds the

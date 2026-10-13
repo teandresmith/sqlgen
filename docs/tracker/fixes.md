@@ -22,76 +22,6 @@
 ## Open
 
 <!-- fixes:open:begin -->
-### FIX-323
-
-- **Status:** Open
-- **Severity:** tracked
-- **Origin:** phase 17, `cmd/sqlgen/gen` (`filter_qualifier.go`, `context_relfilter.go`)
-- **Surfaced by:** backlog sweep 2026-10-12 (backlog lines from FIX-291)
-- **Vetted:** ready at `9b58288b` (2026-10-12)
-
-**Issue.** Relationship `filter:` handling at generation is inconsistent. An o2m/m2m filter is parsed
-only when the edge gets a relationship-filter member, so an unreadable filter on a parent without a
-single-column PK, with a taken field name, or with an excluded target passes generation and fails at
-runtime, while the same filter on an o2o fails generation. Measured (pg, `filter: "name LIKE"`):
-composite-PK parent o2m → `BuildTableContextsFromSchema` nil error; composite-PK o2o → error;
-single-PK o2m → error. The error text also repeats its prefix: "filter \"name LIKE\": qualify filter
-(postgres): qualify filter: parsing \"name LIKE\": syntax error at end of input" (all three dialects).
-
-**Root cause.** `buildRelationshipFilters` returns early on `len(PKColumns) != 1`
-(`cmd/sqlgen/gen/context_relfilter.go:135`) and `continue`s on a taken field name or missing target,
-before `relationshipStaticFilter` parses; `gen.qualifyFilter` (`cmd/sqlgen/gen/filter_qualifier.go:36`)
-wraps `qualify filter (%s): %w` around parser errors that already start with "qualify filter:".
-
-**Suggested fix.**
-- Ruling (user, 2026-10-12, backlog sweep Q4): parse every o2m/m2m filter at generation (parse-only
-  check through `qualifyFilter`, output discarded) before the early return and `continue`s, so the
-  outcome depends on the filter alone. Amend PRD §4.8 (`docs/PRD.md:940`) and §13.7.4 (`:8920`), and
-  §13.7.1, whose "o2m / m2m filters are not parsed at codegen time" already contradicts both.
-- `qualifyFilter` wraps as `fmt.Errorf("%s: %w", dialect, err)`; update
-  `relfilter_static_test.go:200`, which pins the doubled text.
-- Fail-first gen tests: composite-PK parent o2m, taken field name, excluded target; the error text.
-- Golden churn: none.
-- Stale facts (vet 2026-10-12): an "excluded target" never reaches the skip — a declared relationship to an
-  `exclude_tables` table already fails in `checkDeclaredTarget` ("…which generates no entity — it is
-  excluded by `exclude_tables`, has no primary key, or is not in the schema"); the reachable `lookupTarget`
-  miss is a target with no table context, such as a view (o2m to a view with `filter: "name LIKE"` → nil
-  error at base), which replaces the excluded-target regression case. A fourth skip site exists:
-  `relationshipFilterEntry` returns !ok for an m2m whose target lacks a single-column PK or has incomplete
-  junction metadata, and for an o2m with no FKColumn; parsing first covers it. The `buildRelationshipFilters`
-  doc comment still lists "excluded by `exclude_tables`" as a target-miss reason — fix inline when
-  implementing.
-- Prototype: `parseListRelationshipFilters(tc)` runs every non-empty o2m/m2m `rel.Filter` through
-  `qualifyFilter(…, RelationshipFilterAliasToken, tc.Dialect)`, discards the output, and joins errors as
-  `table %s: relationship %s: filter %q: %w`; called first in `buildRelationshipFilters` (edges dropped by
-  `exclude_relationships` are never parsed — they generate nothing). `qualifyFilter` wraps `"%s: %w"`; same
-  site, `qualifiedAliasPrefix`'s wrap becomes `"deriving alias prefix: %w"` (else the dialect appears twice).
-  Tests: `relfilter_static_test.go:200` re-pinned; `TestRelationshipFilter_UnreadableListFilterFailsGeneration`
-  (composite-PK o2m, composite-PK m2m, a taken field name, o2m to a view; each with a green control);
-  `TestRelationshipFilter_ParseErrorNamesQualifierOnce` (all three dialects, `strings.Count(err, "qualify
-  filter") == 1`). PRD §4.8 (`:940`), §13.7.1 (`:8850`) and §13.7.4 (`:8920`) amended.
-- After FIX-300 lands, `TestRelationshipFilter_UnrenderableSQLiteFilterErrors` (incl. the `:200` text) flips,
-  since ESCAPE then renders — FIX-300's concern.
-- Prototype results, run at `9b58288b` on 2026-10-12: probe (`gen.BuildTableContextsFromSchema`, `filter:
-  "name LIKE"`) → single-PK o2m on pg/mysql/sqlite → error with the doubled prefix ("…qualify filter
-  (postgres): qualify filter: parsing \"name LIKE\": syntax error at end of input"); composite-PK o2m → nil;
-  composite-PK o2o → error; taken field name → nil; composite-PK m2m → nil; o2m to a view → nil. Gates:
-  cmd/sqlgen `go test -race ./gen/...` ok; `go test -short ./...` ok; `golangci-lint ./gen/...` 0 issues;
-  gofumpt and vet clean; `TestE2EGoldenFiles` 22/22 PASS (all 14 example `filter:` lines still parse);
-  `make refs-check` ok. Fail-first: `parseListRelationshipFilters` call removed → all 4 subtests fail
-  (`BuildTableContextsFromSchema(filter="name LIKE") = nil error, want one`); old wrap restored → `… says
-  "qualify filter" 2 times, want once` on all three dialects; existing suite without the fix passes. The
-  `qualifiedAliasPrefix` wrap is not fail-first testable (its probe column always parses). Golden churn:
-  none. Patch: `.claude/prototypes/FIX-323.patch` (4 files, +160/-6).
-
-**References.**
-- PRD §4.8, §13.7.1, §13.7.4.
-- Backlog lines absorbed: 2026-10-08 doubled "qualify filter" prefix (FIX-291); 2026-10-08 o2m/m2m
-  filter parsed only with a member (FIX-291).
-- FIX-291, FIX-259.
-
-**Resolution notes.** _Filled in by /fix resolve._
-
 ### FIX-324
 
 - **Status:** Open
@@ -1405,6 +1335,78 @@ DEFAULT.
 ## Resolved
 
 <!-- fixes:resolved:begin -->
+
+### FIX-323
+
+- **Status:** Resolved
+- **Severity:** tracked
+- **Origin:** phase 17, `cmd/sqlgen/gen` (`filter_qualifier.go`, `context_relfilter.go`)
+- **Surfaced by:** backlog sweep 2026-10-12 (backlog lines from FIX-291)
+- **Vetted:** ready at `9b58288b` (2026-10-12)
+
+**Issue.** Relationship `filter:` handling at generation is inconsistent. An o2m/m2m filter is parsed
+only when the edge gets a relationship-filter member, so an unreadable filter on a parent without a
+single-column PK, with a taken field name, or with an excluded target passes generation and fails at
+runtime, while the same filter on an o2o fails generation. Measured (pg, `filter: "name LIKE"`):
+composite-PK parent o2m → `BuildTableContextsFromSchema` nil error; composite-PK o2o → error;
+single-PK o2m → error. The error text also repeats its prefix: "filter \"name LIKE\": qualify filter
+(postgres): qualify filter: parsing \"name LIKE\": syntax error at end of input" (all three dialects).
+
+**Root cause.** `buildRelationshipFilters` returns early on `len(PKColumns) != 1`
+(`cmd/sqlgen/gen/context_relfilter.go:135`) and `continue`s on a taken field name or missing target,
+before `relationshipStaticFilter` parses; `gen.qualifyFilter` (`cmd/sqlgen/gen/filter_qualifier.go:36`)
+wraps `qualify filter (%s): %w` around parser errors that already start with "qualify filter:".
+
+**Suggested fix.**
+- Ruling (user, 2026-10-12, backlog sweep Q4): parse every o2m/m2m filter at generation (parse-only
+  check through `qualifyFilter`, output discarded) before the early return and `continue`s, so the
+  outcome depends on the filter alone. Amend PRD §4.8 (`docs/PRD.md:940`) and §13.7.4 (`:8920`), and
+  §13.7.1, whose "o2m / m2m filters are not parsed at codegen time" already contradicts both.
+- `qualifyFilter` wraps as `fmt.Errorf("%s: %w", dialect, err)`; update
+  `relfilter_static_test.go:200`, which pins the doubled text.
+- Fail-first gen tests: composite-PK parent o2m, taken field name, excluded target; the error text.
+- Golden churn: none.
+- Stale facts (vet 2026-10-12): an "excluded target" never reaches the skip — a declared relationship to an
+  `exclude_tables` table already fails in `checkDeclaredTarget` ("…which generates no entity — it is
+  excluded by `exclude_tables`, has no primary key, or is not in the schema"); the reachable `lookupTarget`
+  miss is a target with no table context, such as a view (o2m to a view with `filter: "name LIKE"` → nil
+  error at base), which replaces the excluded-target regression case. A fourth skip site exists:
+  `relationshipFilterEntry` returns !ok for an m2m whose target lacks a single-column PK or has incomplete
+  junction metadata, and for an o2m with no FKColumn; parsing first covers it. The `buildRelationshipFilters`
+  doc comment still lists "excluded by `exclude_tables`" as a target-miss reason — fix inline when
+  implementing.
+- Prototype: `parseListRelationshipFilters(tc)` runs every non-empty o2m/m2m `rel.Filter` through
+  `qualifyFilter(…, RelationshipFilterAliasToken, tc.Dialect)`, discards the output, and joins errors as
+  `table %s: relationship %s: filter %q: %w`; called first in `buildRelationshipFilters` (edges dropped by
+  `exclude_relationships` are never parsed — they generate nothing). `qualifyFilter` wraps `"%s: %w"`; same
+  site, `qualifiedAliasPrefix`'s wrap becomes `"deriving alias prefix: %w"` (else the dialect appears twice).
+  Tests: `relfilter_static_test.go:200` re-pinned; `TestRelationshipFilter_UnreadableListFilterFailsGeneration`
+  (composite-PK o2m, composite-PK m2m, a taken field name, o2m to a view; each with a green control);
+  `TestRelationshipFilter_ParseErrorNamesQualifierOnce` (all three dialects, `strings.Count(err, "qualify
+  filter") == 1`). PRD §4.8 (`:940`), §13.7.1 (`:8850`) and §13.7.4 (`:8920`) amended.
+- After FIX-300 lands, `TestRelationshipFilter_UnrenderableSQLiteFilterErrors` (incl. the `:200` text) flips,
+  since ESCAPE then renders — FIX-300's concern.
+- Prototype results, run at `9b58288b` on 2026-10-12: probe (`gen.BuildTableContextsFromSchema`, `filter:
+  "name LIKE"`) → single-PK o2m on pg/mysql/sqlite → error with the doubled prefix ("…qualify filter
+  (postgres): qualify filter: parsing \"name LIKE\": syntax error at end of input"); composite-PK o2m → nil;
+  composite-PK o2o → error; taken field name → nil; composite-PK m2m → nil; o2m to a view → nil. Gates:
+  cmd/sqlgen `go test -race ./gen/...` ok; `go test -short ./...` ok; `golangci-lint ./gen/...` 0 issues;
+  gofumpt and vet clean; `TestE2EGoldenFiles` 22/22 PASS (all 14 example `filter:` lines still parse);
+  `make refs-check` ok. Fail-first: `parseListRelationshipFilters` call removed → all 4 subtests fail
+  (`BuildTableContextsFromSchema(filter="name LIKE") = nil error, want one`); old wrap restored → `… says
+  "qualify filter" 2 times, want once` on all three dialects; existing suite without the fix passes. The
+  `qualifiedAliasPrefix` wrap is not fail-first testable (its probe column always parses). Golden churn:
+  none. Patch: `.claude/prototypes/FIX-323.patch` (4 files, +160/-6).
+
+- Auto-accepted the recommended option on 2026-10-13 (`/fix` auto-accept rule): an o2o to a view with `filter: "name LIKE"` still passes generation (`buildSingleO2ODetail` finds no table and returns before `o2oJoinPredicate`; measured nil error, `O2OJoinDetails=0`) — extend the parse to it, or narrow the PRD sentences to the cases codegen parses → narrow PRD §4.8, §13.7.1 and §13.7.4 to "every o2m and m2m relationship, and every o2o relationship to a table", because it is a doc-only correction to match the code (gates unaffected), causes no golden churn, adds no public surface, and reverses no ruling (Q4 covered o2m/m2m only). The o2o-to-view edge itself is a backlog item.
+
+**References.**
+- PRD §4.8, §13.7.1, §13.7.4.
+- Backlog lines absorbed: 2026-10-08 doubled "qualify filter" prefix (FIX-291); 2026-10-08 o2m/m2m
+  filter parsed only with a member (FIX-291).
+- FIX-291, FIX-259.
+
+**Resolution notes.** Every non-empty o2m/m2m `filter:` now runs through `qualifyFilter` (output discarded) in `parseListRelationshipFilters`, called first in `buildRelationshipFilters` (`cmd/sqlgen/gen/context_relfilter.go`), so an unreadable filter fails generation before the composite-PK early return, the taken-field-name and missing-target `continue`s, and `relationshipFilterEntry`'s skips. `qualifyFilter` wraps `"%s: %w"` with the dialect (`cmd/sqlgen/gen/filter_qualifier.go`), so "qualify filter" appears once; `qualifiedAliasPrefix` wraps `"deriving alias prefix: %w"`. Tests (`relfilter_static_test.go`): `TestRelationshipFilter_UnreadableListFilterFailsGeneration` (composite-PK o2m, composite-PK m2m, taken field name, o2m to a view; each with a green control) and `TestRelationshipFilter_ParseErrorNamesQualifierOnce` (all three dialects); both fail-first (call removed → 4/4 fail; old wrap → 3/3 fail). PRD §4.8, §13.7.1, §13.7.4 amended. Prototype applied with `--3way`: FIX-300 (`ac19de67`) had already turned `TestRelationshipFilter_UnrenderableSQLiteFilterErrors` into the green `TestRelationshipFilter_SQLiteLikeEscape`, so the prototype's re-pin of the old `:200` text was dropped, and §13.7.4's line keeps FIX-300's wording (no SQLite `LIKE … ESCAPE` clause), and the test file re-adds the `strconv` import FIX-300 removed. The amended PRD sentences name o2m, m2m and o2o-to-a-table rather than "every relationship": an o2o to a view is not parsed (see Suggested fix's auto-accept). Inline: the `buildRelationshipFilters` doc comment no longer lists `exclude_tables` as a target-miss reason (a view is the reachable one) and says every filter is parsed first. Gates: `make check` ok; `make update-golden-e2e` / `make update-golden` → no churn; `make check-examples` ok.
 
 ### FIX-322
 

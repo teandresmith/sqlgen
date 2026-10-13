@@ -1,6 +1,7 @@
 package gen_test
 
 import (
+	"strconv"
 	"strings"
 	"testing"
 
@@ -209,4 +210,135 @@ func buildFilteredAssets(t *testing.T, dialect config.Dialect, rel config.TableR
 	}
 
 	return gen.BuildTableContextsFromSchema(in.Schema, in.Config)
+}
+
+// TestRelationshipFilter_UnreadableListFilterFailsGeneration pins that an o2m or
+// m2m `filter:` the dialect cannot parse fails generation on every edge, not
+// only on one that gets a relationship filter member. The loader sends the
+// filter to the database unparsed, so each case below would otherwise generate
+// cleanly and fail at query time.
+//
+// Each case first builds with a readable filter, so the error it then expects
+// can only come from the filter.
+func TestRelationshipFilter_UnreadableListFilterFailsGeneration(t *testing.T) {
+	const bad = "name LIKE"
+
+	o2m := func(name, table string) config.TableRelationship {
+		return config.TableRelationship{Name: name, Type: "one_to_many", Table: table, FK: "entity_id"}
+	}
+	m2m := config.TableRelationship{
+		Name: "Tags", Type: "many_to_many", Table: "tags",
+		Junction: "asset_tags", JunctionLocalFK: "asset_id", JunctionReferenceFK: "tag_id",
+	}
+
+	tests := []struct {
+		name        string
+		compositePK bool
+		rel         config.TableRelationship
+		wantRel     string
+	}{
+		// No single parent column for the EXISTS subquery to correlate on.
+		{"o2m on a composite-PK parent", true, o2m("Attachments", "documents"), "Attachments"},
+		{"m2m on a composite-PK parent", true, m2m, "Tags"},
+		// The `name` column's comparator already owns the field name.
+		{"o2m whose field name a column takes", false, o2m("Name", "documents"), "Name"},
+		// A view has no table context, so it has no filter type to reference.
+		{"o2m to a view", false, o2m("Summaries", "document_summaries"), "Summaries"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			rel := tt.rel
+			rel.Filter = "name LIKE 'x%'"
+			if err := buildListFilterAssets(config.DialectPostgres, tt.compositePK, rel); err != nil {
+				t.Fatalf("BuildTableContextsFromSchema(filter=%q) = %v, want nil", rel.Filter, err)
+			}
+
+			rel.Filter = bad
+			err := buildListFilterAssets(config.DialectPostgres, tt.compositePK, rel)
+			if err == nil {
+				t.Fatalf("BuildTableContextsFromSchema(filter=%q) = nil error, want one", bad)
+			}
+			for _, want := range []string{
+				"table assets: relationship " + tt.wantRel,
+				"filter " + strconv.Quote(bad) + ": postgres: qualify filter: parsing",
+			} {
+				if !strings.Contains(err.Error(), want) {
+					t.Errorf("error = %v, want it to contain %q", err, want)
+				}
+			}
+		})
+	}
+}
+
+// TestRelationshipFilter_ParseErrorNamesQualifierOnce pins the error text of an
+// unreadable filter on every dialect: the dialect is named once and the
+// qualifier's own "qualify filter" prefix is not repeated.
+func TestRelationshipFilter_ParseErrorNamesQualifierOnce(t *testing.T) {
+	const bad = "name LIKE"
+
+	for _, dialect := range []config.Dialect{config.DialectPostgres, config.DialectMySQL, config.DialectSQLite} {
+		t.Run(string(dialect), func(t *testing.T) {
+			rel := filterRel("Attachments", "one_to_many")
+			rel.Filter = bad
+
+			_, err := buildFilteredAssets(t, dialect, rel)
+			if err == nil {
+				t.Fatalf("BuildTableContextsFromSchema(%s, filter=%q) = nil error, want one", dialect, bad)
+			}
+			want := "filter " + strconv.Quote(bad) + ": " + string(dialect) + ": qualify filter: parsing " + strconv.Quote(bad) + ": "
+			if !strings.Contains(err.Error(), want) {
+				t.Errorf("error = %v, want it to contain %q", err, want)
+			}
+			if n := strings.Count(err.Error(), "qualify filter"); n != 1 {
+				t.Errorf("error = %v, says %q %d times, want once", err, "qualify filter", n)
+			}
+		})
+	}
+}
+
+// buildListFilterAssets builds discriminatorSchema plus an m2m target, its
+// junction and a view, with rel declared on `assets`. compositePK adds `name`
+// to the parent's primary key.
+func buildListFilterAssets(dialect config.Dialect, compositePK bool, rel config.TableRelationship) error {
+	schema := discriminatorSchema()
+	if compositePK {
+		schema.Tables[0].Columns[1].PrimaryKey = true
+	}
+	schema.Tables = append(schema.Tables,
+		parser.Table{
+			Name: "tags",
+			Columns: []parser.Column{
+				{Name: "id", Type: "uuid", PrimaryKey: true},
+				{Name: "name", Type: "text"},
+			},
+		},
+		parser.Table{
+			Name: "asset_tags",
+			Columns: []parser.Column{
+				{Name: "asset_id", Type: "uuid", PrimaryKey: true},
+				{Name: "tag_id", Type: "uuid", PrimaryKey: true},
+			},
+		},
+	)
+	schema.Views = append(schema.Views, parser.View{
+		Name: "document_summaries",
+		Columns: []parser.Column{
+			{Name: "entity_id", Type: "uuid"},
+			{Name: "name", Type: "text"},
+		},
+	})
+
+	in := testInput(schema)
+	in.Config.Input.Dialect = dialect
+	if dialect != config.DialectPostgres {
+		in.Config.Output.Driver = "stdlib"
+	}
+	parser.DetectRelationships(in.Schema)
+	in.Config.Tables["assets"] = config.TableConfig{
+		Relationships: []config.TableRelationship{rel},
+	}
+
+	_, err := gen.BuildTableContextsFromSchema(in.Schema, in.Config)
+	return err
 }

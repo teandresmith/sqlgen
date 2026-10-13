@@ -937,7 +937,7 @@ WHERE "commentable_id" = ANY($1)
 
 - The `filter` field supports the **parent → child** direction only (e.g., post → comments). This is the common access pattern.
 - The **child → parent** direction (e.g., comment → its parent post/photo/video) is not supported via relationships because the return type varies per row. Consumers should query the parent table directly using the `commentable_type` and `commentable_id` values from the child entity.
-- The `filter` value is raw SQL. It is not validated against the schema — the consumer is responsible for correctness. Codegen parses the filter of every `o2o` relationship, and of each `o2m`/`m2m` relationship that gets a relationship filter member, and such a filter the dialect's parser cannot read is a generation error ([13.7.4](#1374-validation-boundaries)). Any other unreadable filter, and SQL that parses but is still wrong, such as a column the target table lacks, produces a runtime database error.
+- The `filter` value is raw SQL. It is not validated against the schema — the consumer is responsible for correctness. Codegen parses the filter of every `o2m` and `m2m` relationship, and of every `o2o` relationship to a table, and a filter the dialect's parser cannot read is a generation error ([13.7.4](#1374-validation-boundaries)). SQL that parses but is still wrong, such as a column the target table lacks, produces a runtime database error.
 - The `filter` field works with any relationship type (`o2o`, `o2m`, `m2m`) but is most commonly used with `o2m` for polymorphic patterns.
 
 #### Nested mutations per table
@@ -8862,7 +8862,7 @@ The o2o JOIN ON clause receives the qualified form, **parenthesised**, as a sing
 
 The wrap is applied when the condition is rendered rather than when it is constructed, because the o2o-join read path first runs every condition through `sql.PrefixConditions`, which qualifies a clause it has no `Column` for by prepending the alias to the whole string. Parenthesising earlier would produce `<alias>.(...)`.
 
-Malformed filters on the o2o path — anything the dialect's parser cannot parse — are reported at codegen time with the offending expression and the relationship name. o2m / m2m filters are not parsed at codegen time and reach the database as written.
+Malformed filters — anything the dialect's parser cannot parse — are reported at codegen time with the offending expression and the relationship name, on every o2m and m2m relationship and on every o2o relationship to a table. On the o2m / m2m loader path the parse is a check only: the loader still sends the filter to the database as written.
 
 **Quoting inside `filter:` is dialect-specific.** A `filter:` value is raw SQL in the configured dialect, and the three dialects do not agree on what a double quote means. Write **bare identifiers and single-quoted string values** — the one spelling that means the same thing everywhere — and the predicate ports unchanged:
 
@@ -8932,7 +8932,7 @@ Codegen-time validation of `filter:` contents (column existence, enum literal va
 
 Both are consequences of `filter:` being raw SQL; a consumer who needs the predicate checked expresses it as a declared relationship rather than a filter.
 
-Wherever codegen parses the filter (§4.8), what the qualifier cannot read fails generation, with an error naming the table, the relationship and the filter: a syntax error on any dialect.
+Wherever codegen parses the filter (§4.8: every o2m and m2m relationship, and every o2o relationship to a table), what the qualifier cannot read fails generation, with an error naming the table, the relationship and the filter: a syntax error on any dialect.
 
 ---
 

@@ -33,7 +33,7 @@ func qualifyFilter(filter, alias string, dialect config.Dialect) (string, error)
 		return "", fmt.Errorf("qualify filter: unsupported dialect %q", dialect)
 	}
 	if err != nil {
-		return "", fmt.Errorf("qualify filter (%s): %w", dialect, err)
+		return "", fmt.Errorf("%s: %w", dialect, err)
 	}
 	return out, nil
 }
@@ -62,7 +62,7 @@ const aliasProbeColumn = "sqlgencol"
 func qualifiedAliasPrefix(alias string, dialect config.Dialect) (string, error) {
 	probe, err := qualifyFilter(aliasProbeColumn, alias, dialect)
 	if err != nil {
-		return "", fmt.Errorf("deriving alias prefix (%s): %w", dialect, err)
+		return "", fmt.Errorf("deriving alias prefix: %w", err)
 	}
 	// Neither the alias nor the probe column contains a separator, and no
 	// dialect's quoting characters do either, so the last one is the
