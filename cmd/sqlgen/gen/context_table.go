@@ -265,10 +265,7 @@ func buildSingleTableContext(input *GenerateInput, table *parser.Table, collisio
 
 	pkStrategy := detectPKStrategy(input, table, pkColumns, tableCfg)
 
-	softDelete, err := detectTableSoftDelete(table, cfg, columns)
-	if err != nil {
-		return TableContext{}, fmt.Errorf("detecting soft delete for %s: %w", table.Name, err)
-	}
+	softDelete := detectTableSoftDelete(table, cfg, columns)
 
 	updateColumns := parser.DetectUpdateColumns(table, cfg.Generation.UpdateColumns)
 
@@ -339,19 +336,22 @@ func buildTableColumns(input *GenerateInput, table *parser.Table, tableCfg confi
 	return columns, pkColumns
 }
 
-func detectTableSoftDelete(table *parser.Table, cfg *config.RootConfig, columns []ColumnContext) (*SoftDeleteContext, error) {
-	sdCol, sdStrategy, err := parser.DetectSoftDelete(table, softDeleteColumnNames(cfg.Generation.SoftDeleteColumns))
-	if err != nil {
-		return nil, fmt.Errorf("detecting soft delete: %w", err)
-	}
+// detectTableSoftDelete returns the table's soft delete column, or nil when it
+// has none. The strategy is the matched entry's configured type (PRD §5.4).
+// The column's SQL type is not checked here: ValidatePostParse rejects an
+// incompatible one before generation runs.
+func detectTableSoftDelete(table *parser.Table, cfg *config.RootConfig, columns []ColumnContext) *SoftDeleteContext {
+	sdCols := cfg.Generation.SoftDeleteColumns
+	sdCol := parser.DetectSoftDelete(table, softDeleteColumnNames(sdCols))
 	if sdCol == "" {
-		return nil, nil
+		return nil
 	}
+	i := slices.IndexFunc(sdCols, func(sd config.SoftDeleteConfig) bool { return sd.Name == sdCol })
 	return &SoftDeleteContext{
 		Column:    sdCol,
 		FieldName: columnFieldName(columns, sdCol),
-		Strategy:  config.SoftDeleteType(sdStrategy),
-	}, nil
+		Strategy:  sdCols[i].Type,
+	}
 }
 
 // modelTemplateImports is the import set the table and view templates always
@@ -2535,7 +2535,7 @@ func buildSingleO2ODetail(input *GenerateInput, rel RelationshipContext, parentA
 	}
 
 	// Detect soft delete on target
-	targetSoftDelete, _ := detectTableSoftDelete(targetTable, input.Config, targetColumns)
+	targetSoftDelete := detectTableSoftDelete(targetTable, input.Config, targetColumns)
 
 	// Build scan cases for target columns
 	scanCases := buildO2OScanCases(targetColumns, alias, varName, pkCol.Name, input.Config.Output.Driver)

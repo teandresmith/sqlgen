@@ -140,3 +140,59 @@ CREATE TABLE owner_tags (owner_id int NOT NULL REFERENCES owners(id), tag_id int
 		})
 	}
 }
+
+const softDeleteMismatchErr = `soft_delete_columns: column "zz_bad" in table public.zz_c has incompatible type "varchar(10)"`
+
+// writeSoftDeleteMismatchProject writes a project whose soft delete column has
+// a SQL type its configured type does not accept, and returns the config path
+// and the output dir.
+func writeSoftDeleteMismatchProject(t *testing.T) (cfgPath, outputDir string) {
+	t.Helper()
+	dir := t.TempDir()
+	cfgPath = filepath.Join(dir, "sqlgen.yml")
+	sqlDir := filepath.Join(dir, "migrations")
+	if err := os.MkdirAll(sqlDir, 0o750); err != nil {
+		t.Fatalf("creating migrations dir: %v", err)
+	}
+	outputDir = filepath.Join(dir, "output")
+	writeValidateConfig(t, cfgPath, sqlDir, outputDir,
+		"generation:\n  soft_delete_columns:\n    - name: zz_bad\n      type: integer\n")
+	writeSQLFile(t, sqlDir, "CREATE TABLE zz_c (id serial PRIMARY KEY, zz_bad varchar(10) NOT NULL);")
+	return cfgPath, outputDir
+}
+
+// A soft delete column whose SQL type does not fit its configured type is one
+// config error. Generation does not check the type a second time, so validate,
+// which builds the contexts after the config rules fail, reports it once.
+func TestValidate_softDeleteTypeMismatchReportedOnce(t *testing.T) {
+	cfgPath, _ := writeSoftDeleteMismatchProject(t)
+
+	_, stderr, err := executeCommand("validate", "--config", cfgPath)
+	if ee, ok := errors.AsType[*exitError](err); !ok || ee.code != ExitConfig {
+		t.Fatalf("validate error = %v, want exit code %d (config)", err, ExitConfig)
+	}
+	if got := strings.Count(stderr, "Error: "); got != 1 || !strings.Contains(stderr, "Error: "+softDeleteMismatchErr) {
+		t.Errorf("stderr = %q, want the one error %q", stderr, softDeleteMismatchErr)
+	}
+}
+
+// Post-parse validation is the only soft delete type check, so every command
+// that builds generation contexts must run it first and stop there.
+func TestSoftDeleteTypeMismatchStopsEveryContextBuilder(t *testing.T) {
+	for _, args := range [][]string{{"generate"}, {"diff"}, {"lint"}, {"graphql", "gen"}} {
+		t.Run(strings.Join(args, " "), func(t *testing.T) {
+			cfgPath, outputDir := writeSoftDeleteMismatchProject(t)
+
+			_, stderr, err := executeCommand(append(args, "--config", cfgPath)...)
+			if ee, ok := errors.AsType[*exitError](err); !ok || ee.code != ExitConfig {
+				t.Fatalf("error = %v, want exit code %d (config)", err, ExitConfig)
+			}
+			if want := "Post-parse validation error: " + softDeleteMismatchErr; !strings.Contains(stderr, want) {
+				t.Errorf("stderr = %q, want %q", stderr, want)
+			}
+			if _, err := os.Stat(outputDir); !os.IsNotExist(err) {
+				t.Error("the command wrote the output directory")
+			}
+		})
+	}
+}

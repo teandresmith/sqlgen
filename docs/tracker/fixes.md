@@ -22,73 +22,6 @@
 ## Open
 
 <!-- fixes:open:begin -->
-### FIX-324
-
-- **Status:** Open
-- **Severity:** tracked
-- **Origin:** phase 6, `cmd/sqlgen/gen` (`detectTableSoftDelete`) + `parser` (`DetectSoftDelete`)
-- **Surfaced by:** backlog sweep 2026-10-12 (backlog lines from FIX-289)
-- **Vetted:** ready at `9b58288b` (2026-10-12)
-
-**Issue.** The soft-delete strategy comes from the column's SQL type, not the configured
-`soft_delete_columns[].type`, and a type mismatch is reported twice. Measured (mysql example copy):
-`zz_flag TINYINT` with `type: bool` → `Type: sql.SoftDeleteInteger`, filter `.Eq(0)`; `zz_one
-TINYINT(1)` with `type: integer` → `sql.SoftDeleteBool`; `zz_bad VARCHAR(10)` with `type: integer` →
-`sqlgen validate` prints "soft_delete_columns: column \"zz_bad\" … incompatible type" and then
-"building context for table zz_c: detecting soft delete for zz_c: detecting soft delete: soft delete
-column … unsupported type" (doubled prefix), exit 2.
-
-**Root cause.** `detectTableSoftDelete` (`cmd/sqlgen/gen/context_table.go:342`) builds `Strategy` from
-`parser.DetectSoftDelete`'s SQL-type mapping, a second compatibility check beside
-`config.isSoftDeleteTypeCompatible` (whose bool case accepts plain `tinyint`, `validate.go:2174`).
-
-**Suggested fix.**
-- Auto-accepted the recommended option on 2026-10-12 (`/fix` auto-accept rule; user confirmed no
-  veto): the strategy is the configured type, because PRD §5.4 says the first match "determines the
-  strategy" and the config type is the declared intent; validation (run by every CLI entry point
-  before gen) stays the only compatibility gate; no churn, no public surface.
-- `parser.DetectSoftDelete` reduces to a name match (or gen skips its type check); the duplicate
-  error and doubled prefix disappear.
-- PRD: add plain MySQL `tinyint` to the §4.6 bool compatibility row (`docs/PRD.md:487`).
-- Fail-first tests for the two cross pairs and the single error.
-- Entry-point audit (vet 2026-10-12): every caller of `BuildTableContexts`, `buildAllContexts` or
-  `detectTableSoftDelete` runs `ValidatePostParse` first — generate (`generate.go:57` before `gen.Generate` at
-  `:69`), validate (`validate.go:68` then `ValidateGeneration` at `:90`), and diff / lint / graphql gen through
-  `loadAndValidate` (`pipeline.go:57`); the MCP server, manifest diff/validate and wrapper build no contexts.
-- Prototype: `parser/detect.go` `DetectSoftDelete(table *Table, columns []string) string` is a name match
-  (`softDeleteStrategy` deleted, `findColumn` → `hasColumn`); `detectTableSoftDelete` returns
-  `*SoftDeleteContext` with no error and takes Strategy from the matched entry's configured `Type`; the
-  wrapping in `buildTableContext` and the `_` discard at the O2O target site go. Stale comments fixed
-  (`isSoftDeleteTypeCompatible` doc: the only compatibility check; "an ambiguous soft-delete column" dropped
-  from `cli/validate.go` and `gen/orchestrate.go`). PRD §4.6 bool row adds `tinyint` plus "a type compatible
-  with more than one row (MySQL `tinyint` / `tinyint(1)`) takes the strategy of the configured `type`"; §5.4
-  says the match is by name and the first match's configured `type` sets the strategy. Tests: gen
-  `TestBuildTableContexts_SoftDeleteStrategyFromConfiguredType` (tinyint / tinyint(1) × bool / integer); cli
-  `TestValidate_softDeleteTypeMismatchReportedOnce`, `TestSoftDeleteTypeMismatchStopsEveryContextBuilder`
-  (generate, diff, lint, graphql gen each exit 2 with no output dir); `TestDetectSoftDelete` rewritten to
-  name-match rows, its type-family rows moved to config `TestValidatePostParse_SoftDeleteTypeMatch` (+8) and
-  `SoftDeleteTypeOutsideList` (+varchar(255), text).
-- Prototype results, run at `9b58288b` on 2026-10-12: mysql example copy (files) → `zz_flag TINYINT` +
-  `type: bool` → `Type: sql.SoftDeleteInteger`, `.Eq(0)` / restore `.Eq(1)`; `zz_one TINYINT(1)` + `type:
-  integer` → `sql.SoftDeleteBool`, `.Eq(false)`; live mysql:8.0.46 `source: database` identical (COLUMN_TYPE
-  `tinyint` / `tinyint(1)`); `zz_bad VARCHAR(10)` + `type: integer` → `sqlgen validate` prints both errors
-  (the second "building context for table zz_c: detecting soft delete for zz_c: detecting soft delete: …"),
-  exit 2. Gates: parser `go test -race ./...` ok; cmd/sqlgen `go test -race ./gen/... ./config/...
-  ./manifest/... ./cli/...` ok; `golangci-lint` 0 issues in both modules; gofumpt clean; `make update-golden`
-  and `make update-golden-e2e` (15 examples incl. introspect_* database and files) no diff. Fail-first: base
-  detect.go / context_table.go → `SoftDelete.Strategy = "integer", want "bool"` and `= "bool", want
-  "integer"`, and the two-error stderr; `validateSoftDeleteTypes` call dropped → generate `error = <nil>, want
-  exit code 2`, diff `error = 8 files would change`, lint `error = <nil>`; existing suite without the fix passes.
-  Golden churn: none. Patch: `.claude/prototypes/FIX-324.patch` (10 files, +171/-348).
-
-**References.**
-- PRD §4.6, §5.4.
-- Backlog lines absorbed: 2026-10-09 strategy ignores configured type (FIX-289); 2026-10-09 validate
-  reports mismatch twice (FIX-289).
-- FIX-289.
-
-**Resolution notes.** _Filled in by /fix resolve._
-
 ### FIX-325
 
 - **Status:** Open
@@ -1335,6 +1268,73 @@ DEFAULT.
 ## Resolved
 
 <!-- fixes:resolved:begin -->
+
+### FIX-324
+
+- **Status:** Resolved
+- **Severity:** tracked
+- **Origin:** phase 6, `cmd/sqlgen/gen` (`detectTableSoftDelete`) + `parser` (`DetectSoftDelete`)
+- **Surfaced by:** backlog sweep 2026-10-12 (backlog lines from FIX-289)
+- **Vetted:** ready at `9b58288b` (2026-10-12)
+
+**Issue.** The soft-delete strategy comes from the column's SQL type, not the configured
+`soft_delete_columns[].type`, and a type mismatch is reported twice. Measured (mysql example copy):
+`zz_flag TINYINT` with `type: bool` → `Type: sql.SoftDeleteInteger`, filter `.Eq(0)`; `zz_one
+TINYINT(1)` with `type: integer` → `sql.SoftDeleteBool`; `zz_bad VARCHAR(10)` with `type: integer` →
+`sqlgen validate` prints "soft_delete_columns: column \"zz_bad\" … incompatible type" and then
+"building context for table zz_c: detecting soft delete for zz_c: detecting soft delete: soft delete
+column … unsupported type" (doubled prefix), exit 2.
+
+**Root cause.** `detectTableSoftDelete` (`cmd/sqlgen/gen/context_table.go:343`) builds `Strategy` from
+`parser.DetectSoftDelete`'s SQL-type mapping, a second compatibility check beside
+`config.isSoftDeleteTypeCompatible` (whose bool case accepts plain `tinyint`, `validate.go:2165`).
+
+**Suggested fix.**
+- Auto-accepted the recommended option on 2026-10-12 (`/fix` auto-accept rule; user confirmed no
+  veto): the strategy is the configured type, because PRD §5.4 says the first match "determines the
+  strategy" and the config type is the declared intent; validation (run by every CLI entry point
+  before gen) stays the only compatibility gate; no churn, no public surface.
+- `parser.DetectSoftDelete` reduces to a name match (or gen skips its type check); the duplicate
+  error and doubled prefix disappear.
+- PRD: add plain MySQL `tinyint` to the §4.6 bool compatibility row (`docs/PRD.md:487`).
+- Fail-first tests for the two cross pairs and the single error.
+- Entry-point audit (vet 2026-10-12): every caller of `BuildTableContexts`, `buildAllContexts` or
+  `detectTableSoftDelete` runs `ValidatePostParse` first — generate (`generate.go:57` before `gen.Generate` at
+  `:69`), validate (`validate.go:68` then `ValidateGeneration` at `:89`), and diff / lint / graphql gen through
+  `loadAndValidate` (`pipeline.go:57`); the MCP server, manifest diff/validate and wrapper build no contexts.
+- Prototype: `parser/detect.go` `DetectSoftDelete(table *Table, columns []string) string` is a name match
+  (`softDeleteStrategy` deleted, `findColumn` → `hasColumn`); `detectTableSoftDelete` returns
+  `*SoftDeleteContext` with no error and takes Strategy from the matched entry's configured `Type`; the
+  wrapping in `buildSingleTableContext` and the `_` discard at the O2O target site go. Stale comments fixed
+  (`isSoftDeleteTypeCompatible` doc: the only compatibility check; "an ambiguous soft-delete column" dropped
+  from `cli/validate.go` and `gen/orchestrate.go`). PRD §4.6 bool row adds `tinyint` plus "a type compatible
+  with more than one row (MySQL `tinyint` / `tinyint(1)`) takes the strategy of the configured `type`"; §5.4
+  says the match is by name and the first match's configured `type` sets the strategy. Tests: gen
+  `TestBuildTableContexts_SoftDeleteStrategyFromConfiguredType` (tinyint / tinyint(1) × bool / integer); cli
+  `TestValidate_softDeleteTypeMismatchReportedOnce`, `TestSoftDeleteTypeMismatchStopsEveryContextBuilder`
+  (generate, diff, lint, graphql gen each exit 2 with no output dir); `TestDetectSoftDelete` rewritten to
+  name-match rows, its type-family rows moved to config `TestValidatePostParse_SoftDeleteTypeMatch` (+8) and
+  `SoftDeleteTypeOutsideList` (+varchar(255), text).
+- Prototype results, run at `9b58288b` on 2026-10-12: mysql example copy (files) → `zz_flag TINYINT` +
+  `type: bool` → `Type: sql.SoftDeleteInteger`, `.Eq(0)` / restore `.Eq(1)`; `zz_one TINYINT(1)` + `type:
+  integer` → `sql.SoftDeleteBool`, `.Eq(false)`; live mysql:8.0.46 `source: database` identical (COLUMN_TYPE
+  `tinyint` / `tinyint(1)`); `zz_bad VARCHAR(10)` + `type: integer` → `sqlgen validate` prints both errors
+  (the second "building context for table zz_c: detecting soft delete for zz_c: detecting soft delete: …"),
+  exit 2. Gates: parser `go test -race ./...` ok; cmd/sqlgen `go test -race ./gen/... ./config/...
+  ./manifest/... ./cli/...` ok; `golangci-lint` 0 issues in both modules; gofumpt clean; `make update-golden`
+  and `make update-golden-e2e` (15 examples incl. introspect_* database and files) no diff. Fail-first: base
+  detect.go / context_table.go → `SoftDelete.Strategy = "integer", want "bool"` and `= "bool", want
+  "integer"`, and the two-error stderr; `validateSoftDeleteTypes` call dropped → generate `error = <nil>, want
+  exit code 2`, diff `error = 8 files would change`, lint `error = <nil>`; existing suite without the fix passes.
+  Golden churn: none. Patch: `.claude/prototypes/FIX-324.patch` (10 files, +171/-348).
+
+**References.**
+- PRD §4.6, §5.4.
+- Backlog lines absorbed: 2026-10-09 strategy ignores configured type (FIX-289); 2026-10-09 validate
+  reports mismatch twice (FIX-289).
+- FIX-289.
+
+**Resolution notes.** The soft-delete strategy is now the matched `soft_delete_columns` entry's configured `type`: `parser.DetectSoftDelete` (`parser/detect.go`) is a name match returning only the column (`softDeleteStrategy` removed, `findColumn` → `hasColumn`), and `detectTableSoftDelete` (`cmd/sqlgen/gen/context_table.go`) returns `*SoftDeleteContext` with no error, taking Strategy from the entry's `Type`; the error wrapping in `buildSingleTableContext` and the `_` discard at the O2O target site are gone, so `config.isSoftDeleteTypeCompatible` is the only compatibility check and a mismatch is reported once. PRD §4.6 bool row adds plain `tinyint` (dialect-neutral, as `isSoftDeleteTypeCompatible` and the integer row have it) and states that a type compatible with more than one row takes the configured `type`; §5.4 says the match is by name. Stale comments fixed in `config/validate.go`, `cli/validate.go` and `gen/orchestrate.go`. Tests: gen `TestBuildTableContexts_SoftDeleteStrategyFromConfiguredType`, cli `TestValidate_softDeleteTypeMismatchReportedOnce` and `TestSoftDeleteTypeMismatchStopsEveryContextBuilder`, `TestDetectSoftDelete` rewritten to name-match rows, type-family rows moved to config `TestValidatePostParse_SoftDeleteTypeMatch` / `SoftDeleteTypeOutsideList`. Prototype applied clean at `4b955348`; fail-first re-run against base source (`Strategy = "integer", want "bool"`, `= "bool", want "integer"`, two-error stderr). `make check`, `make update-golden`, `make update-golden-e2e` (no churn) and `make check-examples` green. /verify: reviewer found the landed source byte-identical to the prototype and no defects; four stale line/name refs in this entry corrected in place (`context_table.go:343`, `validate.go:2165`, `ValidateGeneration` at `:89`, `buildSingleTableContext`).
 
 ### FIX-323
 

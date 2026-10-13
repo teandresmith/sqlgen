@@ -484,10 +484,10 @@ Resolution order for any generation field:
 | Type | SQL on Soft Delete | SQL on Restore | Compatible SQL Types |
 |------|-------------------|----------------|---------------------|
 | `timestamp` | `SET col = CURRENT_TIMESTAMP` | `SET col = NULL` | `timestamp`, `timestamptz`, `datetime` |
-| `bool` | `SET col = TRUE` | `SET col = FALSE` | `bool`, `boolean`, MySQL `tinyint(1)` (`BOOL` / `BOOLEAN`) |
+| `bool` | `SET col = TRUE` | `SET col = FALSE` | `bool`, `boolean`, `tinyint`, MySQL `tinyint(1)` (`BOOL` / `BOOLEAN`) |
 | `integer` | `SET col = 1` | `SET col = 0` | `int`, `integer`, `smallint`, `tinyint` |
 
-The `integer` type supports `0`/`1` soft delete patterns common in legacy schemas. If a configured soft delete column exists in the table but has an incompatible type (e.g., `varchar`, `text`, `uuid`), it is a **validation error**.
+The `integer` type supports `0`/`1` soft delete patterns common in legacy schemas. If a configured soft delete column exists in the table but has an incompatible type (e.g., `varchar`, `text`, `uuid`), it is a **validation error**. A type compatible with more than one row, such as MySQL `tinyint` or `tinyint(1)`, takes the strategy of the configured `type` ([5.4](#54-soft-delete-column-detection)).
 
 Custom soft delete value mappings — `varchar` columns carrying `"yes"`/`"no"` or `"active"`/`"deleted"` — are out of scope. The supported column types are those listed above, and no other.
 
@@ -1447,7 +1447,7 @@ Relationships can also be manually configured via `tables.<table>.relationships`
 
 ### 5.4 Soft Delete Column Detection
 
-For each table, columns are checked against the `soft_delete_columns` list in priority order. The first match determines the soft delete strategy:
+For each table, columns are checked against the `soft_delete_columns` list in priority order, by name. The first match's configured `type` determines the soft delete strategy, and its SQL type only has to be compatible with that `type` ([4.6](#46-generationconfig)):
 
 - **Timestamp type:** Sets column to `CURRENT_TIMESTAMP` on soft delete
 - **Bool type:** Sets column to `true` on soft delete

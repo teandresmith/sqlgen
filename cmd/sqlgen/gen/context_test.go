@@ -2571,6 +2571,55 @@ func TestGenerate_SoftDeleteColumnWithPrecision(t *testing.T) {
 	}
 }
 
+// The soft delete strategy is the configured type (PRD §5.4), not one inferred
+// from the column's SQL type. A MySQL tinyint and tinyint(1) are each
+// compatible with both bool and integer (PRD §4.6).
+func TestBuildTableContexts_SoftDeleteStrategyFromConfiguredType(t *testing.T) {
+	tests := []struct {
+		name    string
+		sqlType string
+		sdType  config.SoftDeleteType
+	}{
+		{name: "tinyint configured as bool", sqlType: "tinyint", sdType: config.SoftDeleteBool},
+		{name: "tinyint configured as integer", sqlType: "tinyint", sdType: config.SoftDeleteInteger},
+		{name: "tinyint(1) configured as integer", sqlType: "tinyint(1)", sdType: config.SoftDeleteInteger},
+		{name: "tinyint(1) configured as bool", sqlType: "tinyint(1)", sdType: config.SoftDeleteBool},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			schema := &parser.Schema{
+				Tables: []parser.Table{{
+					Name: "flags",
+					Columns: []parser.Column{
+						{Name: "id", Type: "bigint", PrimaryKey: true, AutoIncrement: true},
+						{Name: "zz_deleted", Type: tt.sqlType},
+					},
+				}},
+			}
+			input := testInput(schema)
+			input.Config.Input.Dialect = config.DialectMySQL
+			input.Config.Output.Driver = "stdlib"
+			input.Config.Generation.SoftDeleteColumns = []config.SoftDeleteConfig{
+				{Name: "zz_deleted", Type: tt.sdType},
+			}
+			input.Resolver = gotype.NewResolver("mysql", true, input.Config.Overrides.Types)
+
+			contexts, err := gen.BuildTableContexts(input, nil)
+			if err != nil {
+				t.Fatalf("BuildTableContexts() error: %v", err)
+			}
+			sd := contexts[0].SoftDelete
+			if sd == nil {
+				t.Fatal("SoftDelete = nil, want zz_deleted")
+			}
+			if sd.Strategy != tt.sdType {
+				t.Errorf("SoftDelete.Strategy = %q, want %q", sd.Strategy, tt.sdType)
+			}
+		})
+	}
+}
+
 func TestExcludeDeleted_falseWhenNoSoftDelete(t *testing.T) {
 	schema := &parser.Schema{
 		Tables: []parser.Table{

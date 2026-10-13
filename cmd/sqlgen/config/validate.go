@@ -2148,8 +2148,9 @@ func columnTypeMap(table SchemaTable) map[string]string {
 
 // isSoftDeleteTypeCompatible checks if a SQL column type is compatible with the
 // configured soft delete type category. It matches the base type name against
-// the PRD §4.6 list (plus a bare tinyint for bool), as parser.DetectSoftDelete
-// does, so validation and generation accept the same types. Arrays never match.
+// the PRD §4.6 list. Arrays never match. Generation takes the strategy from the
+// configured type and does not check the column again, so this is the only
+// compatibility check.
 func isSoftDeleteTypeCompatible(configType SoftDeleteType, sqlType string) bool {
 	lower := strings.ToLower(strings.TrimSpace(sqlType))
 	if strings.Contains(lower, "[") {

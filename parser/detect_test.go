@@ -7,14 +7,15 @@ import (
 	"github.com/teandresmith/sqlgen/parser"
 )
 
+// DetectSoftDelete matches by name only. The column's SQL type plays no part:
+// the strategy is the configured type, and config validation owns the
+// compatibility check.
 func TestDetectSoftDelete(t *testing.T) {
 	tests := []struct {
-		name         string
-		table        parser.Table
-		columns      []string
-		wantColumn   string
-		wantStrategy string
-		wantErr      bool
+		name    string
+		table   parser.Table
+		columns []string
+		want    string
 	}{
 		{
 			name: "priority ordering: deleted_at wins over is_deleted",
@@ -26,278 +27,8 @@ func TestDetectSoftDelete(t *testing.T) {
 					{Name: "is_deleted", Type: "boolean"},
 				},
 			},
-			columns:      []string{"deleted_at", "is_deleted"},
-			wantColumn:   "deleted_at",
-			wantStrategy: "timestamp",
-		},
-		{
-			name: "timestamp column: timestamp",
-			table: parser.Table{
-				Name: "posts",
-				Columns: []parser.Column{
-					{Name: "id", Type: "integer"},
-					{Name: "deleted_at", Type: "timestamp"},
-				},
-			},
-			columns:      []string{"deleted_at"},
-			wantColumn:   "deleted_at",
-			wantStrategy: "timestamp",
-		},
-		{
-			name: "timestamp column: timestamptz",
-			table: parser.Table{
-				Name: "posts",
-				Columns: []parser.Column{
-					{Name: "id", Type: "integer"},
-					{Name: "deleted_at", Type: "timestamptz"},
-				},
-			},
-			columns:      []string{"deleted_at"},
-			wantColumn:   "deleted_at",
-			wantStrategy: "timestamp",
-		},
-		{
-			name: "timestamp column: datetime",
-			table: parser.Table{
-				Name: "posts",
-				Columns: []parser.Column{
-					{Name: "id", Type: "integer"},
-					{Name: "deleted_datetime", Type: "datetime"},
-				},
-			},
-			columns:      []string{"deleted_datetime"},
-			wantColumn:   "deleted_datetime",
-			wantStrategy: "timestamp",
-		},
-		{
-			name: "timestamp column: timestamp without time zone",
-			table: parser.Table{
-				Name: "posts",
-				Columns: []parser.Column{
-					{Name: "id", Type: "integer"},
-					{Name: "deleted_at", Type: "timestamp without time zone"},
-				},
-			},
-			columns:      []string{"deleted_at"},
-			wantColumn:   "deleted_at",
-			wantStrategy: "timestamp",
-		},
-		{
-			name: "timestamp column: MySQL datetime(3)",
-			table: parser.Table{
-				Name: "posts",
-				Columns: []parser.Column{
-					{Name: "id", Type: "bigint"},
-					{Name: "deleted_at", Type: "datetime(3)"},
-				},
-			},
-			columns:      []string{"deleted_at"},
-			wantColumn:   "deleted_at",
-			wantStrategy: "timestamp",
-		},
-		{
-			name: "timestamp column: timestamp(6)",
-			table: parser.Table{
-				Name: "posts",
-				Columns: []parser.Column{
-					{Name: "id", Type: "integer"},
-					{Name: "deleted_at", Type: "timestamp(6)"},
-				},
-			},
-			columns:      []string{"deleted_at"},
-			wantColumn:   "deleted_at",
-			wantStrategy: "timestamp",
-		},
-		{
-			name: "timestamp column: timestamptz(3)",
-			table: parser.Table{
-				Name: "posts",
-				Columns: []parser.Column{
-					{Name: "id", Type: "integer"},
-					{Name: "deleted_at", Type: "timestamptz(3)"},
-				},
-			},
-			columns:      []string{"deleted_at"},
-			wantColumn:   "deleted_at",
-			wantStrategy: "timestamp",
-		},
-		{
-			name: "timestamp column: timestamp(6) with time zone",
-			table: parser.Table{
-				Name: "posts",
-				Columns: []parser.Column{
-					{Name: "id", Type: "integer"},
-					{Name: "deleted_at", Type: "timestamp(6) with time zone"},
-				},
-			},
-			columns:      []string{"deleted_at"},
-			wantColumn:   "deleted_at",
-			wantStrategy: "timestamp",
-		},
-		{
-			name: "bool column: boolean",
-			table: parser.Table{
-				Name: "users",
-				Columns: []parser.Column{
-					{Name: "id", Type: "integer"},
-					{Name: "is_deleted", Type: "boolean"},
-				},
-			},
-			columns:      []string{"is_deleted"},
-			wantColumn:   "is_deleted",
-			wantStrategy: "bool",
-		},
-		{
-			name: "bool column: bool",
-			table: parser.Table{
-				Name: "users",
-				Columns: []parser.Column{
-					{Name: "id", Type: "integer"},
-					{Name: "is_deleted", Type: "bool"},
-				},
-			},
-			columns:      []string{"is_deleted"},
-			wantColumn:   "is_deleted",
-			wantStrategy: "bool",
-		},
-		{
-			name: "bool column: MySQL BOOLEAN, stored as tinyint(1)",
-			table: parser.Table{
-				Name: "tags",
-				Columns: []parser.Column{
-					{Name: "id", Type: "bigint"},
-					{Name: "is_deleted", Type: "tinyint(1)"},
-				},
-			},
-			columns:      []string{"is_deleted"},
-			wantColumn:   "is_deleted",
-			wantStrategy: "bool",
-		},
-		{
-			name: "integer column: integer",
-			table: parser.Table{
-				Name: "records",
-				Columns: []parser.Column{
-					{Name: "id", Type: "integer"},
-					{Name: "deleted", Type: "integer"},
-				},
-			},
-			columns:      []string{"deleted"},
-			wantColumn:   "deleted",
-			wantStrategy: "integer",
-		},
-		{
-			name: "integer column: smallint",
-			table: parser.Table{
-				Name: "records",
-				Columns: []parser.Column{
-					{Name: "id", Type: "integer"},
-					{Name: "deleted", Type: "smallint"},
-				},
-			},
-			columns:      []string{"deleted"},
-			wantColumn:   "deleted",
-			wantStrategy: "integer",
-		},
-		{
-			name: "integer column: tinyint",
-			table: parser.Table{
-				Name: "records",
-				Columns: []parser.Column{
-					{Name: "id", Type: "integer"},
-					{Name: "deleted_flag", Type: "tinyint"},
-				},
-			},
-			columns:      []string{"deleted_flag"},
-			wantColumn:   "deleted_flag",
-			wantStrategy: "integer",
-		},
-		{
-			name: "integer column: MySQL int(10) unsigned zerofill",
-			table: parser.Table{
-				Name: "records",
-				Columns: []parser.Column{
-					{Name: "id", Type: "integer"},
-					{Name: "deleted", Type: "int(10) unsigned zerofill"},
-				},
-			},
-			columns:      []string{"deleted"},
-			wantColumn:   "deleted",
-			wantStrategy: "integer",
-		},
-		{
-			name: "type mismatch: bigint is not in the integer list",
-			table: parser.Table{
-				Name: "records",
-				Columns: []parser.Column{
-					{Name: "id", Type: "integer"},
-					{Name: "deleted", Type: "bigint"},
-				},
-			},
-			columns: []string{"deleted"},
-			wantErr: true,
-		},
-		{
-			name: "type mismatch: timestamptz(3)[] is an array",
-			table: parser.Table{
-				Name: "posts",
-				Columns: []parser.Column{
-					{Name: "id", Type: "integer"},
-					{Name: "deleted_at", Type: "timestamptz(3)[]"},
-				},
-			},
-			columns: []string{"deleted_at"},
-			wantErr: true,
-		},
-		{
-			name: "type mismatch: varchar",
-			table: parser.Table{
-				Name: "users",
-				Columns: []parser.Column{
-					{Name: "id", Type: "integer"},
-					{Name: "deleted_at", Type: "varchar(255)"},
-				},
-			},
-			columns: []string{"deleted_at"},
-			wantErr: true,
-		},
-		{
-			name: "type mismatch: text",
-			table: parser.Table{
-				Name: "users",
-				Columns: []parser.Column{
-					{Name: "id", Type: "integer"},
-					{Name: "is_deleted", Type: "text"},
-				},
-			},
-			columns: []string{"is_deleted"},
-			wantErr: true,
-		},
-		{
-			name: "no match: column not found",
-			table: parser.Table{
-				Name: "products",
-				Columns: []parser.Column{
-					{Name: "id", Type: "integer"},
-					{Name: "name", Type: "text"},
-				},
-			},
-			columns:      []string{"deleted_at", "is_deleted"},
-			wantColumn:   "",
-			wantStrategy: "",
-		},
-		{
-			name: "no match: empty columns list",
-			table: parser.Table{
-				Name: "products",
-				Columns: []parser.Column{
-					{Name: "id", Type: "integer"},
-					{Name: "deleted_at", Type: "timestamp"},
-				},
-			},
-			columns:      nil,
-			wantColumn:   "",
-			wantStrategy: "",
+			columns: []string{"deleted_at", "is_deleted"},
+			want:    "deleted_at",
 		},
 		{
 			name: "priority: skips missing column, finds second match",
@@ -308,29 +39,51 @@ func TestDetectSoftDelete(t *testing.T) {
 					{Name: "is_deleted", Type: "boolean"},
 				},
 			},
-			columns:      []string{"deleted_at", "is_deleted"},
-			wantColumn:   "is_deleted",
-			wantStrategy: "bool",
+			columns: []string{"deleted_at", "is_deleted"},
+			want:    "is_deleted",
+		},
+		{
+			name: "type is not checked: varchar still matches",
+			table: parser.Table{
+				Name: "users",
+				Columns: []parser.Column{
+					{Name: "id", Type: "integer"},
+					{Name: "deleted_at", Type: "varchar(255)"},
+				},
+			},
+			columns: []string{"deleted_at"},
+			want:    "deleted_at",
+		},
+		{
+			name: "no match: column not found",
+			table: parser.Table{
+				Name: "products",
+				Columns: []parser.Column{
+					{Name: "id", Type: "integer"},
+					{Name: "name", Type: "text"},
+				},
+			},
+			columns: []string{"deleted_at", "is_deleted"},
+			want:    "",
+		},
+		{
+			name: "no match: empty columns list",
+			table: parser.Table{
+				Name: "products",
+				Columns: []parser.Column{
+					{Name: "id", Type: "integer"},
+					{Name: "deleted_at", Type: "timestamp"},
+				},
+			},
+			columns: nil,
+			want:    "",
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			col, strategy, err := parser.DetectSoftDelete(&tt.table, tt.columns)
-			if tt.wantErr {
-				if err == nil {
-					t.Fatalf("DetectSoftDelete() error = nil, want error")
-				}
-				return
-			}
-			if err != nil {
-				t.Fatalf("DetectSoftDelete() unexpected error: %v", err)
-			}
-			if col != tt.wantColumn {
-				t.Errorf("DetectSoftDelete() column = %q, want %q", col, tt.wantColumn)
-			}
-			if strategy != tt.wantStrategy {
-				t.Errorf("DetectSoftDelete() strategy = %q, want %q", strategy, tt.wantStrategy)
+			if got := parser.DetectSoftDelete(&tt.table, tt.columns); got != tt.want {
+				t.Errorf("DetectSoftDelete() = %q, want %q", got, tt.want)
 			}
 		})
 	}

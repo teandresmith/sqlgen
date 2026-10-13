@@ -2403,7 +2403,7 @@ func newContextBuildInput(schema *parser.Schema, cfg *config.RootConfig) (*Gener
 // `validate` stopped at ValidatePostParse and printed "config and schema are
 // valid" for configs that `generate` then rejected — a resolved-field-name
 // collision (PRD §8.5), a per-column type literal with no importable package,
-// an ambiguous soft-delete column, an unresolvable `api.operations` mask,
+// an unresolvable `api.operations` mask,
 // a bad tenancy declaration, an o2o join that cannot be built, or an API
 // context that will not assemble. All of those are config or schema errors,
 // so validate time is where they belong.
