@@ -97,7 +97,7 @@ func extractResultColumns(view string, cols []*rsql.ResultColumn, names []*rsql.
 		}
 		col := extractResultColumn(rc)
 		if i < len(names) {
-			col.Alias = rsql.IdentName(names[i])
+			col.Alias, col.Unaliased = rsql.IdentName(names[i]), false
 		}
 		if col.Alias == "" {
 			// Name the column by position when rqlite/sql cannot render
@@ -146,13 +146,13 @@ func extractResultColumn(rc *rsql.ResultColumn) parser.ViewSelectColumn {
 			col.SourceColumn = rsql.IdentName(expr.Column)
 		}
 		if col.Alias == "" {
-			col.Alias = col.SourceColumn
+			col.Alias, col.Unaliased = col.SourceColumn, true
 		}
 
 	case *rsql.Ident:
 		col.SourceColumn = rsql.IdentName(expr)
 		if col.Alias == "" {
-			col.Alias = col.SourceColumn
+			col.Alias, col.Unaliased = col.SourceColumn, true
 		}
 
 	case *rsql.Call:

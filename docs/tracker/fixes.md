@@ -22,78 +22,6 @@
 ## Open
 
 <!-- fixes:open:begin -->
-### FIX-309
-
-- **Status:** Open
-- **Severity:** tracked
-- **Origin:** phase 30, `parser/introspect` (`views.go` `refreshViewColumns`)
-- **Surfaced by:** backlog sweep 2026-10-12 (backlog line from FIX-278)
-- **Vetted:** ready at `9b58288b` (2026-10-12)
-
-**Issue.** Under `input.source: both`, a pending migration that renames or drops a table column a
-database view reads leaves the view column silently degraded. Measured on MySQL 8.0.46: `users(id,
-role enum('a','b'))`, `v (uid, role) AS SELECT id, role FROM users` (catalog fallback) and `v2 AS
-SELECT id, role FROM users` (definition path); migration `ALTER TABLE users RENAME COLUMN role TO
-kind` → generation succeeds with `V.Role` and `V2.Role` typed `string` (baseline `UsersRoleEnum`),
-no error or warning; `DROP COLUMN role` the same. MySQL itself then rejects `SELECT * FROM v2` with
-ERROR 1356 "references invalid table(s) or column(s)".
-
-**Root cause.** `refreshViewColumns` (`parser/introspect/views.go:34-55`) keeps the old column when
-the rebuilt one is `any`, stale inline type name included; a catalog-fallback view is never re-read.
-
-**Suggested fix.**
-- Ruling (user, 2026-10-12, backlog sweep Q6): on MySQL, which invalidates such a view, this is an
-  error naming the view and the column; on PostgreSQL and SQLite, follow the rename the way the
-  database does (measure first: PG keeps a view valid across RENAME COLUMN and rejects DROP COLUMN
-  without CASCADE; SQLite rewrites view text on RENAME COLUMN under `legacy_alter_table=0`).
-- For catalog-fallback views, add a post-merge check that every view column's ENUM/SET type name
-  still exists. FIX-308 shrinks that set (column-list views gain a Definition) — land after it.
-- Fail-first tests: the MySQL rename and drop cases, and the measured PG/SQLite behavior.
-- Measured database behavior (vet 2026-10-12): SQLite (modernc, `legacy_alter_table=0`) renames an
-  unaliased view column on RENAME COLUMN (`SELECT id, role` → `SELECT id, kind`), keeps an `AS` alias or a
-  column-list name, and refuses DROP COLUMN ("error in view v after drop column: no such column: kind");
-  PG17 refuses DROP ("cannot drop column kind of table users because other objects depend on it"); MySQL
-  8.0.46 accepts both, then ERROR 1356 on `SELECT * FROM v2`. So "follow the database" for PG/SQLite DROP
-  is an error, and PG/SQLite RENAME follows the rename.
-- Prototype: `parser/view.go` gains `ViewSourceTables(def, schema)` (the table each select column reads,
-  BuildView's lookup), `RenameViewColumnReferences(schema, table, old, new)` (points each Definition column
-  reading `table.old` at `new`, and renames the alias when `Unaliased`), and `ViewSelectColumn.Unaliased`
-  (set only by the SQLite view parser: no AS, no column list). The PG and SQLite parsers call the rename
-  helper before `parser.RenameColumn`; MySQL does not. `Merge` records what views read (`readViewSources`)
-  before `Seed`; `refreshViewColumns` errors when a Definition column read a now-missing column of a table
-  that still exists ("view V: column C reads column S of table T, which the SQL files drop or rename; under
-  source: both the database's view stands, so change it in the database first"), or when a catalog-columns
-  view's ENUM/SET type existed in the base but is gone after the merge ("… column C has type X …") —
-  covering MySQL rename and drop, PG and SQLite drop, and PG `DROP TYPE` under a compound view. PRD §6.1
-  gains a paragraph for the ruled behavior. Test: `TestMerge_ViewColumnRenameAndDrop` (8 cases; rename
-  cases re-add a column under the old name to show which column the view reads).
-- Composition: applies cleanly with FIX-308 in either order (disjoint files); composed, the MySQL
-  column-list case errors through the Definition path and the catalog check stays covered by `postgres/drop
-  type`.
-- Prototype results, run at `9b58288b` on 2026-10-12: Merge probe at base → MySQL `RENAME COLUMN role TO
-  kind`: `Merge err=<nil>`, `view zz_v2 … role:zz_users__role_enum` while enums hold `zz_users__kind_enum`;
-  PG DROP COLUMN: `Merge err=<nil>`, view keeps `role:role_t`; SQLite RENAME: column stays `role` (SQLite
-  says `kind`); SQLite DROP: `Merge err=<nil>`. CLI (sibling mysql copy) base binary: RENAME and DROP exit 0
-  with `views_gen.go:19: Role string`; prototype exits 3 "Schema error: parsing schema files: merge both
-  mode: view v: column role has type users__role_enum, which the SQL files drop or rename; …". Gates: parser
-  `gofumpt -l` clean, `golangci-lint` 0 issues, `go test -race -count=1 ./...` ok (containers); cmd/sqlgen
-  `go test -race -run TestE2E .` (GoldenFiles + DatabaseTwin) ok; `make refs-check` ok. Fail-first:
-  Definition-path check disabled → postgres/drop, sqlite/drop, mysql/rename, mysql/drop fail ("Merge() error
-  = <nil>, want one starting \"merge both mode: view vr_v: column role reads column role of table vr_users,
-  …\""); catalog type check disabled → `mysql/rename_under_a_view_with_a_column_list` fails (with FIX-308
-  composed, `postgres/drop_type`); PG rename call removed → `- Type: "role_t", + Type: "text"`; SQLite call
-  removed → `- {Name: "kind", Type: "text"}, + {Name: "role", Type: "integer", Nullable: true}`;
-  `Unaliased` not set → `- Name: "kind", + Name: "role"`; existing suite without the fix passes. Golden
-  churn: none. Patch: `.claude/prototypes/FIX-309.patch` (8 files, +319/-15; new exported identifiers are in
-  the parser module only).
-
-**References.**
-- PRD §5.5 (`both` mode), §16.2, §8.
-- Backlog line absorbed: 2026-10-09 view keeps stale inline enum (FIX-278).
-- FIX-262, FIX-278, FIX-308.
-
-**Resolution notes.** _Filled in by /fix resolve._
-
 ### FIX-310
 
 - **Status:** Open
@@ -2305,6 +2233,79 @@ DEFAULT.
 ## Resolved
 
 <!-- fixes:resolved:begin -->
+
+### FIX-309
+
+- **Status:** Resolved
+- **Severity:** tracked
+- **Origin:** phase 30, `parser/introspect` (`views.go` `refreshViewColumns`)
+- **Surfaced by:** backlog sweep 2026-10-12 (backlog line from FIX-278)
+- **Vetted:** ready at `9b58288b` (2026-10-12)
+
+**Issue.** Under `input.source: both`, a pending migration that renames or drops a table column a
+database view reads leaves the view column silently degraded. Measured on MySQL 8.0.46: `users(id,
+role enum('a','b'))`, `v (uid, role) AS SELECT id, role FROM users` (catalog fallback) and `v2 AS
+SELECT id, role FROM users` (definition path); migration `ALTER TABLE users RENAME COLUMN role TO
+kind` → generation succeeds with `V.Role` and `V2.Role` typed `string` (baseline `UsersRoleEnum`),
+no error or warning; `DROP COLUMN role` the same. MySQL itself then rejects `SELECT * FROM v2` with
+ERROR 1356 "references invalid table(s) or column(s)".
+
+**Root cause.** `refreshViewColumns` (`parser/introspect/views.go:34-55` before the fix) keeps the old column when
+the rebuilt one is `any`, stale inline type name included; a catalog-fallback view is never re-read.
+
+**Suggested fix.**
+- Ruling (user, 2026-10-12, backlog sweep Q6): on MySQL, which invalidates such a view, this is an
+  error naming the view and the column; on PostgreSQL and SQLite, follow the rename the way the
+  database does (measure first: PG keeps a view valid across RENAME COLUMN and rejects DROP COLUMN
+  without CASCADE; SQLite rewrites view text on RENAME COLUMN under `legacy_alter_table=0`).
+- For catalog-fallback views, add a post-merge check that every view column's ENUM/SET type name
+  still exists. FIX-308 shrinks that set (column-list views gain a Definition) — land after it.
+- Fail-first tests: the MySQL rename and drop cases, and the measured PG/SQLite behavior.
+- Measured database behavior (vet 2026-10-12): SQLite (modernc, `legacy_alter_table=0`) renames an
+  unaliased view column on RENAME COLUMN (`SELECT id, role` → `SELECT id, kind`), keeps an `AS` alias or a
+  column-list name, and refuses DROP COLUMN ("error in view v after drop column: no such column: kind");
+  PG17 refuses DROP ("cannot drop column kind of table users because other objects depend on it"); MySQL
+  8.0.46 accepts both, then ERROR 1356 on `SELECT * FROM v2`. So "follow the database" for PG/SQLite DROP
+  is an error, and PG/SQLite RENAME follows the rename.
+- Prototype: `parser/view.go` gains `ViewSourceTables(def, schema)` (the table each select column reads,
+  BuildView's lookup), `RenameViewColumnReferences(schema, table, old, new)` (points each Definition column
+  reading `table.old` at `new`, and renames the alias when `Unaliased`), and `ViewSelectColumn.Unaliased`
+  (set only by the SQLite view parser: no AS, no column list). The PG and SQLite parsers call the rename
+  helper before `parser.RenameColumn`; MySQL does not. `Merge` records what views read (`readViewSources`)
+  before `Seed`; `refreshViewColumns` errors when a Definition column read a now-missing column of a table
+  that still exists ("view V: column C reads column S of table T, which the SQL files drop or rename; under
+  source: both the database's view stands, so change it in the database first"), or when a catalog-columns
+  view's ENUM/SET type existed in the base but is gone after the merge ("… column C has type X …") —
+  covering MySQL rename and drop, PG and SQLite drop, and PG `DROP TYPE` under a compound view. PRD §6.1
+  gains a paragraph for the ruled behavior. Test: `TestMerge_ViewColumnRenameAndDrop` (8 cases; rename
+  cases re-add a column under the old name to show which column the view reads).
+- Composition: applies cleanly with FIX-308 in either order (disjoint files); composed, the MySQL
+  column-list case errors through the Definition path and the catalog check stays covered by `postgres/drop
+  type`.
+- Prototype results, run at `9b58288b` on 2026-10-12: Merge probe at base → MySQL `RENAME COLUMN role TO
+  kind`: `Merge err=<nil>`, `view zz_v2 … role:zz_users__role_enum` while enums hold `zz_users__kind_enum`;
+  PG DROP COLUMN: `Merge err=<nil>`, view keeps `role:role_t`; SQLite RENAME: column stays `role` (SQLite
+  says `kind`); SQLite DROP: `Merge err=<nil>`. CLI (sibling mysql copy) base binary: RENAME and DROP exit 0
+  with `views_gen.go:19: Role string`; prototype exits 3 "Schema error: parsing schema files: merge both
+  mode: view v: column role has type users__role_enum, which the SQL files drop or rename; …". Gates: parser
+  `gofumpt -l` clean, `golangci-lint` 0 issues, `go test -race -count=1 ./...` ok (containers); cmd/sqlgen
+  `go test -race -run TestE2E .` (GoldenFiles + DatabaseTwin) ok; `make refs-check` ok. Fail-first:
+  Definition-path check disabled → postgres/drop, sqlite/drop, mysql/rename, mysql/drop fail ("Merge() error
+  = <nil>, want one starting \"merge both mode: view vr_v: column role reads column role of table vr_users,
+  …\""); catalog type check disabled → `mysql/rename_under_a_view_with_a_column_list` fails (with FIX-308
+  composed, `postgres/drop_type`); PG rename call removed → `- Type: "role_t", + Type: "text"`; SQLite call
+  removed → `- {Name: "kind", Type: "text"}, + {Name: "role", Type: "integer", Nullable: true}`;
+  `Unaliased` not set → `- Name: "kind", + Name: "role"`; existing suite without the fix passes. Golden
+  churn: none. Patch: `.claude/prototypes/FIX-309.patch` (8 files, +319/-15; new exported identifiers are in
+  the parser module only).
+- Auto-accepted the recommended option on 2026-10-13 (`/fix` auto-accept rule): the PRD sentence "Dropping a column a view reads is an error" also covers a view that reads the column through a derived table or CTE, which the Definition check cannot trace (measured `Merge err=<nil>`) → keep the PRD sentence as ruled and report the shape as a candidate FIX rather than narrow the PRD, because the landed code's gates are green, neither option churns goldens or adds public surface, and keeping the sentence reverses no ruling.
+
+**References.**
+- PRD §6.1 (`both` mode), §16.2, §8.
+- Backlog line absorbed: 2026-10-09 view keeps stale inline enum (FIX-278).
+- FIX-262, FIX-278, FIX-308.
+
+**Resolution notes.** Landed from the vetted prototype, applied `--3way`: the PostgreSQL and SQLite rename-column hunks conflicted with FIX-301 (`13baa029`, dialect argument on `RenameColumn`/`RenameColumnReferences`) and FIX-305 (`c695fd6f`, PG `renameColumn` extracted); resolved by calling `parser.RenameViewColumnReferences` before `parser.RenameColumn` in both. Composition with FIX-301: `RenameViewColumnReferences` gains a `dialect` argument and matches the renamed column with `SameColumnName`, so SQLite `RENAME COLUMN ROLE TO kind` on `role` follows into the view instead of erroring (new case `sqlite/rename in another case`; fails with exact matching). Composition with FIX-308 (`8edbaeac`): the MySQL column-list view now has a Definition, so `mysql/rename under a view with a column list` asserts the Definition-path error exactly ("view vr_vl: column role reads column role of table vr_users, …"); the catalog-type check stays covered by `postgres/drop type`. Under `source: both`, `Merge` records what each view reads before seeding; `refreshViewColumns` errors when a view column read a now-missing column of a surviving table, or when a catalog-columns view's ENUM/SET type is gone; PRD §6.1 (`both` mode) gains the ruled behavior. Test `TestMerge_ViewColumnRenameAndDrop` (9 cases). Fail-first re-run on the final code: definition check off → postgres/drop, sqlite/drop, mysql/rename, mysql/drop, mysql column-list fail; catalog check off → postgres/drop type; PG call off → postgres/rename; SQLite call off → both sqlite rename cases; `Unaliased` off → `+ Name: "role"`. Gates: `make check` ok, parser `go test -race ./...` ok, `make update-golden-e2e`/`update-golden` no churn (matches vet), `make check-examples` ok.
 
 ### FIX-308
 

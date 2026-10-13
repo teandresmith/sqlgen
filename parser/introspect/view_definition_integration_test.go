@@ -247,3 +247,173 @@ func TestMerge_RefreshesViewColumns(t *testing.T) {
 		t.Errorf("mv columns after the migration (-want +got):\n%s", diff)
 	}
 }
+
+// TestMerge_ViewColumnRenameAndDrop checks that under source: both a
+// migration that renames or drops a table column a view reads is applied
+// the way the database applies it: PostgreSQL keeps the view's column name
+// and reads the renamed column, SQLite also renames a column named after its
+// source, and dropping a column a view reads is an error on both, as the
+// database refuses it. MySQL leaves the view invalid on either, so both are
+// errors there.
+func TestMerge_ViewColumnRenameAndDrop(t *testing.T) {
+	requireDatabases(t)
+	type col struct {
+		Name, Type string
+		Nullable   bool
+	}
+	pgBase := func(t *testing.T) *parser.Schema {
+		conn := pgConnStr + "&search_path=view_def"
+		execAll(t, "pgx", conn, `DROP SCHEMA IF EXISTS view_def CASCADE; CREATE SCHEMA view_def;
+			CREATE TYPE role_t AS ENUM ('a', 'b');
+			CREATE TABLE users (id int PRIMARY KEY, role role_t NOT NULL);
+			CREATE VIEW v AS SELECT id, role FROM users;
+			CREATE VIEW v2 AS SELECT u.id, u.role AS r FROM users u;
+			CREATE VIEW vu AS SELECT role FROM users UNION SELECT role FROM users`)
+		t.Cleanup(func() { execAll(t, "pgx", conn, "DROP SCHEMA IF EXISTS view_def CASCADE") })
+		return introspectWith(t, introspect.NewPostgresIntrospector(), conn, introspect.IntrospectionOptions{Schemas: []string{"view_def"}})
+	}
+	sqliteBase := func(t *testing.T) *parser.Schema {
+		return introspectSQLite(t, applySQLite(t, `CREATE TABLE users (id INTEGER PRIMARY KEY NOT NULL, role TEXT NOT NULL);
+			CREATE VIEW v AS SELECT id, role FROM users;
+			CREATE VIEW v2 AS SELECT u.id, u.role AS r FROM users u;
+			CREATE VIEW v3 (a, b) AS SELECT id, role FROM users`), introspect.IntrospectionOptions{})
+	}
+	// mysqlBase introspects the table and view.
+	mysqlBase := func(view string) func(*testing.T) *parser.Schema {
+		return func(t *testing.T) *parser.Schema {
+			const reset = "DROP VIEW IF EXISTS vr_v, vr_vl; DROP TABLE IF EXISTS vr_users"
+			execAll(t, "mysql", mysqlConnStr, reset+`;
+				CREATE TABLE vr_users (id int PRIMARY KEY, role enum('a', 'b') NOT NULL);
+				CREATE VIEW vr_v AS SELECT id, role FROM vr_users;
+				CREATE VIEW vr_vl (uid, role) AS SELECT id, role FROM vr_users`)
+			t.Cleanup(func() { execAll(t, "mysql", mysqlConnStr, reset) })
+			return introspectWith(t, introspect.NewMySQLIntrospector(), mysqlConnStr, introspect.IntrospectionOptions{
+				Tables: []string{"vr_users", view},
+			})
+		}
+	}
+	newPostgres := func(*testing.T) introspect.Seedable { return postgres.New("view_def") }
+	newSQLite := func(*testing.T) introspect.Seedable { return sqlite.New() }
+	newMySQL := func(t *testing.T) introspect.Seedable {
+		p, err := mysql.New()
+		if err != nil {
+			t.Fatalf("mysql.New() error: %v", err)
+		}
+		return p
+	}
+	const stands = ", which the SQL files drop or rename; under source: both the database's view stands, so change it in the database first"
+	// A rename migration adds a column under the old name, so the view's
+	// columns show which of the two it reads.
+	tests := []struct {
+		name      string
+		base      func(*testing.T) *parser.Schema
+		parser    func(*testing.T) introspect.Seedable
+		migration string
+		want      map[string][]col
+		// wantErr is a prefix of the error.
+		wantErr string
+	}{
+		{
+			name:   "postgres/rename",
+			base:   pgBase,
+			parser: newPostgres,
+			migration: `ALTER TABLE users RENAME COLUMN role TO kind;
+				ALTER TABLE users ALTER COLUMN kind DROP NOT NULL;
+				ALTER TABLE users ADD COLUMN role text NOT NULL;`,
+			want: map[string][]col{
+				"v":  {{"id", "integer", false}, {"role", "role_t", true}},
+				"v2": {{"id", "integer", false}, {"r", "role_t", true}},
+			},
+		},
+		{
+			name:      "postgres/drop",
+			base:      pgBase,
+			parser:    newPostgres,
+			migration: "ALTER TABLE users DROP COLUMN role;",
+			wantErr:   "merge both mode: view view_def.v: column role reads column role of table view_def.users" + stands,
+		},
+		{
+			// vu's columns come from the catalog, so its type is checked.
+			name:      "postgres/drop type",
+			base:      pgBase,
+			parser:    newPostgres,
+			migration: "ALTER TABLE users ALTER COLUMN role TYPE text; DROP TYPE role_t;",
+			wantErr:   "merge both mode: view view_def.vu: column role has type role_t" + stands,
+		},
+		{
+			name:   "sqlite/rename",
+			base:   sqliteBase,
+			parser: newSQLite,
+			migration: `ALTER TABLE users RENAME COLUMN role TO kind;
+				ALTER TABLE users ADD COLUMN role INTEGER;`,
+			want: map[string][]col{
+				"v":  {{"id", "integer", false}, {"kind", "text", false}},
+				"v2": {{"id", "integer", false}, {"r", "text", false}},
+				"v3": {{"a", "integer", false}, {"b", "text", false}},
+			},
+		},
+		{
+			// SQLite matches the column name ignoring ASCII case.
+			name:      "sqlite/rename in another case",
+			base:      sqliteBase,
+			parser:    newSQLite,
+			migration: "ALTER TABLE users RENAME COLUMN ROLE TO kind;",
+			want: map[string][]col{
+				"v":  {{"id", "integer", false}, {"kind", "text", false}},
+				"v2": {{"id", "integer", false}, {"r", "text", false}},
+			},
+		},
+		{
+			name:      "sqlite/drop",
+			base:      sqliteBase,
+			parser:    newSQLite,
+			migration: "ALTER TABLE users DROP COLUMN role;",
+			wantErr:   "merge both mode: view v: column role reads column role of table users" + stands,
+		},
+		{
+			name:      "mysql/rename",
+			base:      mysqlBase("vr_v"),
+			parser:    newMySQL,
+			migration: "ALTER TABLE vr_users RENAME COLUMN role TO kind;",
+			wantErr:   "merge both mode: view vr_v: column role reads column role of table vr_users" + stands,
+		},
+		{
+			name:      "mysql/drop",
+			base:      mysqlBase("vr_v"),
+			parser:    newMySQL,
+			migration: "ALTER TABLE vr_users DROP COLUMN role;",
+			wantErr:   "merge both mode: view vr_v: column role reads column role of table vr_users" + stands,
+		},
+		{
+			name:      "mysql/rename under a view with a column list",
+			base:      mysqlBase("vr_vl"),
+			parser:    newMySQL,
+			migration: "ALTER TABLE vr_users RENAME COLUMN role TO kind;",
+			wantErr:   "merge both mode: view vr_vl: column role reads column role of table vr_users" + stands,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			p := tt.parser(t)
+			err := introspect.Merge(tt.base(t), p, []string{writeMigration(t, tt.migration)})
+			if tt.wantErr != "" {
+				if err == nil || !strings.HasPrefix(err.Error(), tt.wantErr) {
+					t.Fatalf("Merge() error = %v, want one starting %q", err, tt.wantErr)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("Merge() error: %v", err)
+			}
+			got := make(map[string][]col, len(tt.want))
+			for name := range tt.want {
+				for _, c := range findView(t, p.Schema(), name).Columns {
+					got[name] = append(got[name], col{c.Name, c.Type, c.Nullable})
+				}
+			}
+			if diff := cmp.Diff(tt.want, got); diff != "" {
+				t.Errorf("view columns after the migration (-want +got):\n%s", diff)
+			}
+		})
+	}
+}

@@ -635,6 +635,9 @@ func (p *Parser) parseAlterTable(stmt *rsql.AlterTableStatement, src []rune) err
 			return fmt.Errorf("table %s not found", tableName)
 		}
 		oldName, newName := rsql.IdentName(stmt.ColumnName), rsql.IdentName(stmt.NewColumnName)
+		// SQLite rewrites a view that reads the column, as it rewrites the
+		// table's own expressions below.
+		parser.RenameViewColumnReferences(p.schema, table, "sqlite", oldName, newName)
 		if err := parser.RenameColumn(table, "sqlite", oldName, newName); err != nil {
 			return fmt.Errorf("rename column %s: %w", tableName, err)
 		}

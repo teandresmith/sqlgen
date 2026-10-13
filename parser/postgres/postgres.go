@@ -757,11 +757,12 @@ func (p *Parser) renameColumn(stmt *pg_query.RenameStmt) error {
 		}
 		return err
 	}
+	// Views, constraints, indexes and foreign keys name the column by its
+	// attribute number, so they follow the rename.
+	parser.RenameViewColumnReferences(p.schema, table, "postgres", stmt.Subname, stmt.Newname)
 	if err := parser.RenameColumn(table, "postgres", stmt.Subname, stmt.Newname); err != nil {
 		return fmt.Errorf("rename column %s.%s: %w", table.Schema+"."+table.Name, stmt.Subname, err)
 	}
-	// Constraints, indexes and foreign keys name the column by its
-	// attribute number, so they follow the rename.
 	parser.RenameColumnReferences(p.schema.Tables, "postgres", table.Schema, table.Name, stmt.Subname, stmt.Newname)
 	for _, ix := range table.ExpressionIndexes {
 		for i, col := range ix.Columns {

@@ -27,6 +27,10 @@ type ViewSelectColumn struct {
 	SourceTable  string // table alias the column comes from (if qualified reference)
 	SourceColumn string // column name in the source table
 	Aggregate    string // aggregate function name (uppercase), empty if not aggregate
+	// Unaliased reports a column named after its source column, with no AS
+	// and no view column list. SQLite renames such a column when its source
+	// column is renamed, so only the SQLite view parser sets it.
+	Unaliased bool
 }
 
 // ViewSQL holds the metadata extracted from a CREATE VIEW or CREATE
@@ -316,24 +320,70 @@ func newViewSources(parsed ViewSQL, schema *Schema) *viewSources {
 // column returns the type of sc's source column, written relative to the
 // view's schema, and whether the view can read it as NULL: the column is
 // nullable or its table is on the outer side of a join. typ is "" when no
-// source column is found. An unqualified column is looked up in the
-// FROM-clause tables, in key order.
+// source column is found.
 func (vs *viewSources) column(sc ViewSelectColumn) (typ string, nullable bool) {
-	if sc.SourceColumn == "" {
+	t, key := vs.sourceTable(sc)
+	if t == nil {
 		return "", false
+	}
+	col := ColumnByName(t, sc.SourceColumn)
+	return vs.relativeType(col.Type, t.Schema), col.Nullable || vs.outer[key]
+}
+
+// sourceTable returns the table that has sc's source column, and the
+// FROM-clause key it is read through, or nil when no table has it. An
+// unqualified column is looked up in the FROM-clause tables, in key order.
+func (vs *viewSources) sourceTable(sc ViewSelectColumn) (*Table, string) {
+	if sc.SourceColumn == "" {
+		return nil, ""
 	}
 	keys := []string{sc.SourceTable}
 	if sc.SourceTable == "" {
 		keys = slices.Sorted(maps.Keys(vs.aliases))
 	}
 	for _, key := range keys {
-		if t := vs.table(key); t != nil {
-			if col := ColumnByName(t, sc.SourceColumn); col != nil {
-				return vs.relativeType(col.Type, t.Schema), col.Nullable || vs.outer[key]
+		if t := vs.table(key); t != nil && ColumnByName(t, sc.SourceColumn) != nil {
+			return t, key
+		}
+	}
+	return nil, ""
+}
+
+// ViewSourceTables returns, for each column of def, the table whose column
+// it reads, resolved against schema as BuildView resolves it, or nil for a
+// column that reads no table column.
+func ViewSourceTables(def ViewSQL, schema *Schema) []*Table {
+	vs := newViewSources(def, schema)
+	tables := make([]*Table, len(def.Columns))
+	for i, sc := range def.Columns {
+		tables[i], _ = vs.sourceTable(sc)
+	}
+	return tables
+}
+
+// RenameViewColumnReferences repoints every view column whose Definition
+// reads column oldName of table at newName, as PostgreSQL and SQLite do on
+// RENAME COLUMN, so the view's columns can be read again after the rename.
+// Column names match as dialect matches them (SameColumnName). An Unaliased
+// column also takes the new name, as SQLite renames it. Call it before the
+// table's column is renamed.
+func RenameViewColumnReferences(schema *Schema, table *Table, dialect, oldName, newName string) {
+	for i := range schema.Views {
+		def := schema.Views[i].Definition
+		if def == nil {
+			continue
+		}
+		for j, t := range ViewSourceTables(*def, schema) {
+			sc := &def.Columns[j]
+			if t != table || !SameColumnName(dialect, sc.SourceColumn, oldName) {
+				continue
+			}
+			sc.SourceColumn = newName
+			if sc.Unaliased {
+				sc.Alias = newName
 			}
 		}
 	}
-	return "", false
 }
 
 // table returns the table a FROM-clause key (alias or table name) names: the

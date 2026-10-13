@@ -24,6 +24,8 @@ type Seedable interface {
 // ALTER TABLE ADD COLUMN names a column that already exists from the
 // introspected schema with a different type.
 func Merge(base *parser.Schema, p Seedable, files []string) error {
+	reads := readViewSources(base)
+
 	// Seed the parser with the introspected schema.
 	p.Seed(base)
 
@@ -40,7 +42,7 @@ func Merge(base *parser.Schema, p Seedable, files []string) error {
 	if err := validateColumnConflicts(p.Schema()); err != nil {
 		return fmt.Errorf("merge both mode: %w", err)
 	}
-	if err := refreshViewColumns(p.Schema()); err != nil {
+	if err := refreshViewColumns(p.Schema(), reads); err != nil {
 		return fmt.Errorf("merge both mode: %w", err)
 	}
 
