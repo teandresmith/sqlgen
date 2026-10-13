@@ -22,79 +22,6 @@
 ## Open
 
 <!-- fixes:open:begin -->
-### FIX-307
-
-- **Status:** Open
-- **Severity:** tracked
-- **Origin:** phase 4, `parser/mysql` (`parseColumn`)
-- **Surfaced by:** backlog sweep 2026-10-12 (backlog lines from 30.2, FIX-275)
-- **Vetted:** corrected at `9b58288b` (2026-10-12)
-
-**Issue.** MySQL column key attributes are lost under `files`. `zkey (a int KEY, b int)` → DB
-`PRIMARY KEY[a]`, parser no constraints and `a.PrimaryKey=false`. `zpkcol (x int, KEY (a), a int
-PRIMARY KEY UNIQUE, UNIQUE (a))` → DB PRIMARY + a + a_2 + a_3, parser loses PRIMARY; `a int UNIQUE
-PRIMARY KEY` → parser PRIMARY only (DB also unique `a`); `a int KEY UNIQUE` → parser UNIQUE only.
-A lost primary key can drop the table out of generation.
-
-**Root cause.** vitess keeps one `ColumnTypeOptions.KeyOpt` per column, last attribute wins
-(`sql.y:2374`); `parseColumn` (`parser/mysql/mysql.go:681-687`) lists `sqlparser.ColKey` in the no-key
-case, although in a column definition MySQL reads bare `KEY` as PRIMARY KEY.
-
-**Suggested fix.**
-- Auto-accepted the recommended option on 2026-10-12 (`/fix` auto-accept rule; user confirmed no
-  veto): recover every key a column's attributes declare rather than reject them, because PRD §6.1
-  promises the same constraints under both sources; no churn, no public surface.
-- MySQL makes at most one primary key and one unique key per column however the attributes repeat
-  (measured on 8.0.46: `UNIQUE UNIQUE` and `UNIQUE KEY UNIQUE` → one key `a`; `UNIQUE NOT NULL UNIQUE
-  PRIMARY KEY UNIQUE KEY` → PRIMARY + `a`; `a_2`/`a_3` arise only from table-level keys).
-- `tableElements` (the CREATE TABLE token scan) also returns `columnKeys{primary, unique}` per column
-  entry via `readColumnKeys` (top-level tokens after the column name: `PRIMARY KEY` or bare `KEY` →
-  primary; `UNIQUE [KEY]` → unique). `parseColumn` reads `p.columnKeys[col]` (filled per statement) and
-  emits the PRIMARY KEY first (setting NOT NULL), then the UNIQUE; the KeyOpt switch is removed (the scan
-  uses vitess's Tokenizer, so it sees every key vitess parses). Signatures of `parseColumn` and its ALTER
-  callers are unchanged.
-- ALTER: `processStmt` passes `sql` to `parseAlterTable(stmt, sql)`; a preamble `readAlterColumnKeys`
-  zips the AST's AddColumns / ModifyColumn / ChangeColumn definitions with a token scan of the
-  statement (`ADD [COLUMN] def`, `ADD [COLUMN] (def, …)`, `MODIFY [COLUMN] def`, `CHANGE [COLUMN] old
-  def`), skips a qualified table name, stops at a depth-0 PARTITION clause (`PARTITION BY KEY (a)` is not a
-  primary key), and errors "cannot recover column keys: read N column definitions, parsed M" on a count
-  mismatch, like `matchTableSpec`.
-- Tests: `TestColumnKeyAttributes` (21 cases, each measured on MySQL 8.0: CREATE, ALTER
-  ADD/ADD-list/MODIFY/CHANGE, mixed clauses, qualified table, a table named `modify`, a comment, a
-  partition clause, version comments, a column named `primary`); `mysqlConstraintNamesFixture` gains
-  n_ck, n_cs, n_cu and the ALTERed n_ca for live parity.
-- Corrected vs. the original suggestion (vet 2026-10-12): "move ColKey into ColKeyPrimary" is subsumed —
-  the KeyOpt switch goes entirely (with the scan in place, a union with KeyOpt was dead code); and the
-  parser emits at most one primary and one unique key per column instead of one per attribute, which
-  would invent `a_2` keys for `UNIQUE UNIQUE`.
-- Doc note for the implementer: PRD §5.2's MySQL "DDL the file parser cannot read" bullet lists the
-  `SERIAL` type but not the `SERIAL DEFAULT VALUE` column attribute, which vitess also rejects (measured:
-  `a int SERIAL DEFAULT VALUE` → "syntax error at position 29 near 'SERIAL'"); add it inline.
-- Overlap with FIX-306: applyAlterOption and applyDropKey are untouched; `parseAlterTable` gains a
-  parameter and a 3-line preamble before the drop-primary-key loop, and new functions sit between
-  `alterChangeColumn` and `replaceColumn`.
-- Prototype results, run at `9b58288b` on 2026-10-12: probe vs mysql:8.0.46 → `a int KEY, b int` parser
-  no constraints, DB PRIMARY[a]; `x int, KEY (a), a int PRIMARY KEY UNIQUE, UNIQUE (a)` parser a INDEX,
-  a_2 UNIQUE, a_3 UNIQUE, no PRIMARY, DB a, a_2, a_3, PRIMARY; `UNIQUE PRIMARY KEY` parser PRIMARY only;
-  `KEY UNIQUE` parser UNIQUE only; `UNIQUE KEY KEY` / `PRIMARY KEY KEY` parser no keys; ALTER `ADD COLUMN b
-  int KEY`, `MODIFY COLUMN a int UNIQUE KEY KEY` parser no keys, `CHANGE a b int KEY UNIQUE` UNIQUE only —
-  DB has PRIMARY in each. Gates: parser `go test -race -count=1 ./...` ok (live containers);
-  `golangci-lint` 0 issues; gofumpt clean; cmd/sqlgen `TestE2EGoldenFiles` ok. Fail-first: original
-  KeyOpt switch restored → 17 subtests fail (`- {"PRIMARY KEY PRIMARY [a]", "pk a"}, + nil`); CREATE scan
-  not recorded → 12 CREATE subtests fail; `readAlterColumnKeys` removed → 9 ALTER subtests fail; PARTITION
-  stop removed → `a_partition_clause_after_MODIFY` fails; qualified-name skip removed → "read 0 column
-  definitions, parsed 1"; `UNIQUE KEY` lookahead removed → 4 fail; ADD-list branch removed → "read 1
-  column definitions, parsed 3"; base parser with the new parity fixture → `n_cu: … - Constraints: nil, +
-  {Name: "PRIMARY" …}`; existing suite without the fix passes. Golden churn: none. Patch:
-  `.claude/prototypes/FIX-307.patch` (3 files, +367/-18).
-
-**References.**
-- PRD §5.2, §6.1.
-- Backlog lines absorbed: 2026-10-05 inline PRIMARY KEY UNIQUE (30.2, measured by FIX-275);
-  2026-10-07 column attribute KEY (FIX-275).
-
-**Resolution notes.** _Filled in by /fix resolve._
-
 ### FIX-308
 
 - **Status:** Open
@@ -2446,6 +2373,94 @@ DEFAULT.
 ## Resolved
 
 <!-- fixes:resolved:begin -->
+
+### FIX-307
+
+- **Status:** Resolved
+- **Severity:** tracked
+- **Origin:** phase 4, `parser/mysql` (`parseColumn`)
+- **Surfaced by:** backlog sweep 2026-10-12 (backlog lines from 30.2, FIX-275)
+- **Vetted:** corrected at `9b58288b` (2026-10-12)
+
+**Issue.** MySQL column key attributes are lost under `files`. `zkey (a int KEY, b int)` → DB
+`PRIMARY KEY[a]`, parser no constraints and `a.PrimaryKey=false`. `zpkcol (x int, KEY (a), a int
+PRIMARY KEY UNIQUE, UNIQUE (a))` → DB PRIMARY + a + a_2 + a_3, parser loses PRIMARY; `a int UNIQUE
+PRIMARY KEY` → parser PRIMARY only (DB also unique `a`); `a int KEY UNIQUE` → parser UNIQUE only.
+A lost primary key can drop the table out of generation.
+
+**Root cause.** vitess keeps one `ColumnTypeOptions.KeyOpt` per column, last attribute wins
+(`sql.y:2374`); `parseColumn` (`parser/mysql/mysql.go:681-687`) lists `sqlparser.ColKey` in the no-key
+case, although in a column definition MySQL reads bare `KEY` as PRIMARY KEY.
+
+**Suggested fix.**
+- Auto-accepted the recommended option on 2026-10-12 (`/fix` auto-accept rule; user confirmed no
+  veto): recover every key a column's attributes declare rather than reject them, because PRD §6.1
+  promises the same constraints under both sources; no churn, no public surface.
+- MySQL makes at most one primary key and one unique key per column however the attributes repeat
+  (measured on 8.0.46: `UNIQUE UNIQUE` and `UNIQUE KEY UNIQUE` → one key `a`; `UNIQUE NOT NULL UNIQUE
+  PRIMARY KEY UNIQUE KEY` → PRIMARY + `a`; `a_2`/`a_3` arise only from table-level keys).
+- `tableElements` (the CREATE TABLE token scan) also returns `columnKeys{primary, unique}` per column
+  entry via `readColumnKeys` (top-level tokens after the column name: `PRIMARY KEY` or bare `KEY` →
+  primary; `UNIQUE [KEY]` → unique). `parseColumn` reads `p.columnKeys[col]` (filled per statement) and
+  emits the PRIMARY KEY first (setting NOT NULL), then the UNIQUE; the KeyOpt switch is removed (the scan
+  uses vitess's Tokenizer, so it sees every key vitess parses). Signatures of `parseColumn` and its ALTER
+  callers are unchanged.
+- ALTER: `processStmt` passes `sql` to `parseAlterTable(stmt, sql)`; a preamble `readAlterColumnKeys`
+  zips the AST's AddColumns / ModifyColumn / ChangeColumn definitions with a token scan of the
+  statement (`ADD [COLUMN] def`, `ADD [COLUMN] (def, …)`, `MODIFY [COLUMN] def`, `CHANGE [COLUMN] old
+  def`), skips a qualified table name, stops at a depth-0 PARTITION clause (`PARTITION BY KEY (a)` is not a
+  primary key), and errors "cannot recover column keys: read N column definitions, parsed M" on a count
+  mismatch, like `matchTableSpec`.
+- Tests: `TestColumnKeyAttributes` (21 cases, each measured on MySQL 8.0: CREATE, ALTER
+  ADD/ADD-list/MODIFY/CHANGE, mixed clauses, qualified table, a table named `modify`, a comment, a
+  partition clause, version comments, a column named `primary`); `mysqlConstraintNamesFixture` gains
+  n_ck, n_cs, n_cu and the ALTERed n_ca for live parity.
+- Corrected vs. the original suggestion (vet 2026-10-12): "move ColKey into ColKeyPrimary" is subsumed —
+  the KeyOpt switch goes entirely (with the scan in place, a union with KeyOpt was dead code); and the
+  parser emits at most one primary and one unique key per column instead of one per attribute, which
+  would invent `a_2` keys for `UNIQUE UNIQUE`.
+- Doc note for the implementer: PRD §5.2's MySQL "DDL the file parser cannot read" bullet lists the
+  `SERIAL` type but not the `SERIAL DEFAULT VALUE` column attribute, which vitess also rejects (measured:
+  `a int SERIAL DEFAULT VALUE` → "syntax error at position 29 near 'SERIAL'"); add it inline.
+- Overlap with FIX-306: applyAlterOption and applyDropKey are untouched; `parseAlterTable` gains a
+  parameter and a 3-line preamble before the drop-primary-key loop, and new functions sit between
+  `alterChangeColumn` and `replaceColumn`.
+- Prototype results, run at `9b58288b` on 2026-10-12: probe vs mysql:8.0.46 → `a int KEY, b int` parser
+  no constraints, DB PRIMARY[a]; `x int, KEY (a), a int PRIMARY KEY UNIQUE, UNIQUE (a)` parser a INDEX,
+  a_2 UNIQUE, a_3 UNIQUE, no PRIMARY, DB a, a_2, a_3, PRIMARY; `UNIQUE PRIMARY KEY` parser PRIMARY only;
+  `KEY UNIQUE` parser UNIQUE only; `UNIQUE KEY KEY` / `PRIMARY KEY KEY` parser no keys; ALTER `ADD COLUMN b
+  int KEY`, `MODIFY COLUMN a int UNIQUE KEY KEY` parser no keys, `CHANGE a b int KEY UNIQUE` UNIQUE only —
+  DB has PRIMARY in each. Gates: parser `go test -race -count=1 ./...` ok (live containers);
+  `golangci-lint` 0 issues; gofumpt clean; cmd/sqlgen `TestE2EGoldenFiles` ok. Fail-first: original
+  KeyOpt switch restored → 17 subtests fail (`- {"PRIMARY KEY PRIMARY [a]", "pk a"}, + nil`); CREATE scan
+  not recorded → 12 CREATE subtests fail; `readAlterColumnKeys` removed → 9 ALTER subtests fail; PARTITION
+  stop removed → `a_partition_clause_after_MODIFY` fails; qualified-name skip removed → "read 0 column
+  definitions, parsed 1"; `UNIQUE KEY` lookahead removed → 4 fail; ADD-list branch removed → "read 1
+  column definitions, parsed 3"; base parser with the new parity fixture → `n_cu: … - Constraints: nil, +
+  {Name: "PRIMARY" …}`; existing suite without the fix passes. Golden churn: none. Patch:
+  `.claude/prototypes/FIX-307.patch` (3 files, +367/-18).
+
+**References.**
+- PRD §5.2, §6.1.
+- Backlog lines absorbed: 2026-10-05 inline PRIMARY KEY UNIQUE (30.2, measured by FIX-275);
+  2026-10-07 column attribute KEY (FIX-275).
+
+**Resolution notes.** MySQL column key attributes are recovered from the statement tokens instead of
+vitess's last-wins `KeyOpt`: `tableElements` returns `columnKeys{primary, unique}` per column entry
+(`readColumnKeys`: `PRIMARY KEY` or bare `KEY` → primary, `UNIQUE [KEY]` → unique), and
+`parseAlterTable(stmt, sql)` runs `readAlterColumnKeys` over the ADD / ADD-list / MODIFY / CHANGE
+clauses (qualified-name skip, stops at a depth-0 PARTITION clause, count-mismatch error). `parseColumn`
+emits PRIMARY (NOT NULL) then UNIQUE, at most one of each; the KeyOpt switch is gone. Prototype applied
+with `git apply --3way` (FIX-306 `1767367a` reworked `parseAlterTable`; the preamble sits before its
+drop/rename/add passes and the map is keyed by definition pointer, so clause reordering is unaffected).
+PRD §5.2 MySQL "DDL the file parser cannot read" bullet gains the `SERIAL DEFAULT VALUE` column
+attribute. Tests: `TestColumnKeyAttributes` (21 cases); `mysqlConstraintNamesFixture` gains n_ck, n_cs,
+n_cu, n_ca for live parity. Fail-first: base `mysql.go` → 17 `TestColumnKeyAttributes` subtests fail and
+live parity fails on n_ck, n_cs, n_cu, n_ca. Gates: `make check` ok, parser `go test -race ./...` (live)
+ok, `make check-examples` ok; golden churn none (matches vet). Inline: the 3-way merge (and the prototype)
+put `TestColumnKeyAttributes` between `TestExpressionKeys`'s doc comment and its func; the comment was
+moved back. /verify reviewer: no findings; one pre-existing adjacent finding (two inline primary keys
+accepted) went to the backlog.
 
 ### FIX-306
 

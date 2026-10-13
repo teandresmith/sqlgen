@@ -3033,6 +3033,147 @@ func TestDerivedConstraintNames(t *testing.T) {
 	}
 }
 
+// TestColumnKeyAttributes pins the keys the key attributes of a column
+// definition declare: PRIMARY KEY or KEY alone is the primary key, UNIQUE
+// [KEY] a unique key, and repeated or mixed attributes make at most one of
+// each. Each case was measured on MySQL 8.0.
+func TestColumnKeyAttributes(t *testing.T) {
+	tests := []struct {
+		name string
+		sql  string
+		want []string // every key, as "TYPE name [columns]", and "pk column" per primary-key column
+	}{
+		{
+			name: "KEY alone is the primary key",
+			sql:  `CREATE TABLE z (a int KEY, b int);`,
+			want: []string{"PRIMARY KEY PRIMARY [a]", "pk a"},
+		},
+		{
+			name: "PRIMARY KEY then UNIQUE between table-level keys",
+			sql:  `CREATE TABLE z (x int, KEY (a), a int PRIMARY KEY UNIQUE, UNIQUE (a));`,
+			want: []string{"INDEX a [a]", "PRIMARY KEY PRIMARY [a]", "UNIQUE a_2 [a]", "UNIQUE a_3 [a]", "pk a"},
+		},
+		{
+			name: "UNIQUE then PRIMARY KEY",
+			sql:  `CREATE TABLE z (a int UNIQUE PRIMARY KEY);`,
+			want: []string{"PRIMARY KEY PRIMARY [a]", "UNIQUE a [a]", "pk a"},
+		},
+		{
+			name: "KEY then UNIQUE",
+			sql:  `CREATE TABLE z (a int KEY UNIQUE);`,
+			want: []string{"PRIMARY KEY PRIMARY [a]", "UNIQUE a [a]", "pk a"},
+		},
+		{
+			name: "UNIQUE KEY is a unique key",
+			sql:  `CREATE TABLE z (a int UNIQUE KEY);`,
+			want: []string{"UNIQUE a [a]"},
+		},
+		{
+			name: "repeated UNIQUE makes one unique key",
+			sql:  `CREATE TABLE z (a int UNIQUE KEY UNIQUE, b int UNIQUE UNIQUE);`,
+			want: []string{"UNIQUE a [a]", "UNIQUE b [b]"},
+		},
+		{
+			name: "UNIQUE KEY then KEY",
+			sql:  `CREATE TABLE z (a int UNIQUE KEY KEY);`,
+			want: []string{"PRIMARY KEY PRIMARY [a]", "UNIQUE a [a]", "pk a"},
+		},
+		{
+			name: "repeated primary key attributes make one primary key",
+			sql:  `CREATE TABLE z (a int PRIMARY KEY KEY, b int);`,
+			want: []string{"PRIMARY KEY PRIMARY [a]", "pk a"},
+		},
+		{
+			name: "key attributes among other attributes",
+			sql:  `CREATE TABLE z (a int KEY COMMENT 'x' UNIQUE DEFAULT 1 UNIQUE KEY);`,
+			want: []string{"PRIMARY KEY PRIMARY [a]", "UNIQUE a [a]", "pk a"},
+		},
+		{
+			name: "a generated column",
+			sql:  `CREATE TABLE z (a int AS (1) STORED UNIQUE PRIMARY KEY);`,
+			want: []string{"PRIMARY KEY PRIMARY [a]", "UNIQUE a [a]", "pk a"},
+		},
+		{
+			name: "key words in a type, a default and a comment",
+			sql:  `CREATE TABLE z (b enum('KEY', 'UNIQUE') DEFAULT 'KEY' COMMENT 'PRIMARY KEY' UNIQUE);`,
+			want: []string{"UNIQUE b [b]"},
+		},
+		{
+			name: "key attributes in version comments, which MySQL reads as one text",
+			sql:  `CREATE TABLE z (a int /*!50000 UNIQUE */ /*!50000 KEY */, b int /*!50000 KEY */);`,
+			want: []string{"UNIQUE a [a]", "PRIMARY KEY PRIMARY [b]", "pk b"},
+		},
+		{
+			name: "ADD COLUMN with KEY",
+			sql:  `CREATE TABLE z (a int); ALTER TABLE z ADD COLUMN b int KEY;`,
+			want: []string{"PRIMARY KEY PRIMARY [b]", "pk b"},
+		},
+		{
+			name: "ADD COLUMN on a qualified table",
+			sql:  `CREATE TABLE z (a int); ALTER TABLE t.z ADD b int UNIQUE PRIMARY KEY;`,
+			want: []string{"PRIMARY KEY PRIMARY [b]", "UNIQUE b [b]", "pk b"},
+		},
+		{
+			name: "ADD a list of columns",
+			sql:  `CREATE TABLE z (a int); ALTER TABLE z ADD (b int KEY UNIQUE, c varchar(5) UNIQUE COMMENT 'KEY', d int UNIQUE KEY);`,
+			want: []string{"PRIMARY KEY PRIMARY [b]", "UNIQUE b [b]", "UNIQUE c [c]", "UNIQUE d [d]", "pk b"},
+		},
+		{
+			name: "MODIFY COLUMN",
+			sql:  `CREATE TABLE z (a int); ALTER TABLE z MODIFY COLUMN a int UNIQUE KEY KEY;`,
+			want: []string{"PRIMARY KEY PRIMARY [a]", "UNIQUE a [a]", "pk a"},
+		},
+		{
+			name: "MODIFY on a table named modify",
+			sql:  `CREATE TABLE modify (a int); ALTER TABLE modify MODIFY a int KEY UNIQUE;`,
+			want: []string{"PRIMARY KEY PRIMARY [a]", "UNIQUE a [a]", "pk a"},
+		},
+		{
+			name: "CHANGE COLUMN after a table option and a comment",
+			sql:  `CREATE TABLE z (a int NOT NULL); ALTER TABLE z ALGORITHM=COPY, /* KEY */ CHANGE a b varchar(10) UNIQUE KEY KEY COMMENT 'KEY, UNIQUE';`,
+			want: []string{"PRIMARY KEY PRIMARY [b]", "UNIQUE b [b]", "pk b"},
+		},
+		{
+			name: "column clauses among other clauses",
+			sql:  `CREATE TABLE z (a int); ALTER TABLE z ADD COLUMN b int KEY, ADD UNIQUE (a), MODIFY a int UNIQUE UNIQUE, ADD COLUMN c int UNIQUE, ADD INDEX (c);`,
+			want: []string{"PRIMARY KEY PRIMARY [b]", "UNIQUE a [a]", "UNIQUE a_2 [a]", "UNIQUE c [c]", "INDEX c_2 [c]", "pk b"},
+		},
+		{
+			name: "a partition clause after MODIFY",
+			sql:  `CREATE TABLE z (a int NOT NULL); ALTER TABLE z MODIFY a int UNIQUE PARTITION BY KEY (a) PARTITIONS 2;`,
+			want: []string{"UNIQUE a [a]"},
+		},
+		{
+			name: "a unique key on a column named primary",
+			sql:  "CREATE TABLE z (a int); ALTER TABLE z ADD COLUMN `primary` int UNIQUE KEY KEY;",
+			want: []string{"PRIMARY KEY PRIMARY [primary]", "UNIQUE primary_2 [primary]", "pk primary"},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			p := newParser(t)
+			if err := p.Parse("test.sql", []byte(tt.sql)); err != nil {
+				t.Fatalf("Parse() error: %v", err)
+			}
+			table := p.Schema().Tables[0]
+			var got []string
+			for _, c := range table.Constraints {
+				got = append(got, fmt.Sprintf("%s %s %v", c.Type, c.Name, c.Columns))
+			}
+			for _, c := range table.Columns {
+				if c.PrimaryKey && !c.Nullable {
+					got = append(got, "pk "+c.Name)
+				}
+			}
+			slices.Sort(got)
+			want := slices.Sorted(slices.Values(tt.want))
+			if diff := cmp.Diff(want, got); diff != "" {
+				t.Errorf("Parse(%q) keys mismatch (-want +got):\n%s", tt.sql, diff)
+			}
+		})
+	}
+}
+
 // TestExpressionKeys pins that a key with an expression part is not listed,
 // unique or not, while it keeps its name, an unnamed one named
 // functional_index, and serves as a foreign key's index when its leading

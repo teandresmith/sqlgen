@@ -89,7 +89,12 @@ CREATE TABLE n_gen (a int, b int, FOREIGN KEY (a) REFERENCES n_p (id));
 ALTER TABLE n_gen ADD CONSTRAINT n_gen_ab FOREIGN KEY (a, b) REFERENCES n_p (b, c);
 ALTER TABLE n_gen ADD INDEX n_gen_b (b);
 CREATE TABLE n_dc (a int, b int, UNIQUE (a, b), KEY (b));
-ALTER TABLE n_dc DROP COLUMN a
+ALTER TABLE n_dc DROP COLUMN a;
+CREATE TABLE n_ck (a int KEY, b int UNIQUE KEY UNIQUE);
+CREATE TABLE n_cs (x int, KEY (a), a int PRIMARY KEY UNIQUE, UNIQUE (a));
+CREATE TABLE n_cu (a int UNIQUE KEY KEY);
+CREATE TABLE n_ca (a int, b int);
+ALTER TABLE n_ca ADD COLUMN c int KEY UNIQUE, MODIFY a int UNIQUE UNIQUE, ADD (d int UNIQUE, e int UNIQUE KEY), CHANGE b f int UNIQUE
 `
 
 const mysqlConstraintNamesFixtureReset = `
@@ -105,7 +110,11 @@ DROP TABLE IF EXISTS n_u;
 DROP TABLE IF EXISTS n_up;
 DROP TABLE IF EXISTS n_pk;
 DROP TABLE IF EXISTS n_kc;
-DROP TABLE IF EXISTS n_dc
+DROP TABLE IF EXISTS n_dc;
+DROP TABLE IF EXISTS n_ck;
+DROP TABLE IF EXISTS n_cs;
+DROP TABLE IF EXISTS n_cu;
+DROP TABLE IF EXISTS n_ca
 `
 
 func TestPostgresIntrospect_TableConstraints(t *testing.T) {
@@ -140,6 +149,7 @@ func TestMySQLIntrospect_TableConstraints(t *testing.T) {
 	tables := []string{
 		"MixedCase", "m_pairs", "m_users",
 		"n_p", "n_k", "n_fk", "n_fi", "n_u", "n_up", "n_o4", "n_pk", "n_ren2", "n_kc", "n_gen", "n_dc",
+		"n_ck", "n_cs", "n_cu", "n_ca",
 	}
 	intro := introspect.NewMySQLIntrospector()
 	defer intro.Close() //nolint:errcheck // test cleanup

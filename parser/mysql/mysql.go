@@ -33,6 +33,10 @@ type Parser struct {
 	// table column declares inline, such as an introspected view's own.
 	seededEnums []parser.Enum
 	seededSets  []parser.Set
+	// columnKeys holds the keys each column definition of the statement being
+	// applied declares, read from the statement text by tableElements or
+	// readAlterColumnKeys.
+	columnKeys map[*sqlparser.ColumnDefinition]columnKeys
 }
 
 // inlineType is the ENUM or SET a column declares inline.
@@ -356,7 +360,7 @@ func (p *Parser) processStmt(stmt sqlparser.Statement, sql string) error {
 	case *sqlparser.CreateTable:
 		return p.parseCreateTable(s, sql)
 	case *sqlparser.AlterTable:
-		return p.parseAlterTable(s)
+		return p.parseAlterTable(s, sql)
 	case *sqlparser.DropTable:
 		return p.parseDropTable(s)
 	case *sqlparser.RenameTable:
@@ -437,10 +441,11 @@ func (p *Parser) parseCreateTable(stmt *sqlparser.CreateTable, sql string) error
 		}
 	}
 
-	elements, err := p.tableElements(sql, stmt.TableSpec)
+	elements, columnKeys, err := p.tableElements(sql, stmt.TableSpec)
 	if err != nil {
 		return fmt.Errorf("create table %s: %w", tableName, err)
 	}
+	p.columnKeys = columnKeysOf(stmt.TableSpec.Columns, columnKeys)
 	keys, others := p.parseTableSpec(&table, stmt.TableSpec, elements)
 	p.generated[tableName] = make(map[string]bool)
 	for i, key := range keys {
@@ -528,11 +533,20 @@ const (
 // TABLE statement sql in declaration order, which the TableSpec spec parsed
 // from it does not keep: it holds columns, indexes and constraints in separate
 // lists. A column declared with a CHECK yields the column and then the
-// constraint, since vitess files that CHECK among the constraints. It reports
-// an error when the entries it reads do not match spec.
-func (p *Parser) tableElements(sql string, spec *sqlparser.TableSpec) ([]tableElement, error) {
+// constraint, since vitess files that CHECK among the constraints. It also
+// returns the keys each column declares, in column order. It reports an error
+// when the entries it reads do not match spec.
+func (p *Parser) tableElements(sql string, spec *sqlparser.TableSpec) ([]tableElement, []columnKeys, error) {
 	var elements []tableElement
+	var keys []columnKeys
 	var tokens []int // the current entry's tokens outside nested parentheses
+	addEntry := func() {
+		entry := classifyTableElement(tokens)
+		elements = append(elements, entry...)
+		if len(entry) > 0 && entry[0] == columnElement {
+			keys = append(keys, readColumnKeys(tokens))
+		}
+	}
 	depth := 0
 	tkn := p.vparser.NewStringTokenizer(sql)
 scan:
@@ -551,11 +565,11 @@ scan:
 		case typ == ')':
 			depth--
 			if depth == 0 {
-				elements = append(elements, classifyTableElement(tokens)...)
+				addEntry()
 				break scan
 			}
 		case typ == ',' && depth == 1:
-			elements = append(elements, classifyTableElement(tokens)...)
+			addEntry()
 			tokens = tokens[:0]
 			continue
 		}
@@ -564,9 +578,53 @@ scan:
 		}
 	}
 	if err := matchTableSpec(elements, spec); err != nil {
-		return nil, err
+		return nil, nil, err
 	}
-	return elements, nil
+	return elements, keys, nil
+}
+
+// columnKeys is the keys a column definition declares on its column. MySQL
+// reads the attribute PRIMARY KEY, or KEY alone, as the primary key and
+// UNIQUE [KEY] as a unique key, and makes one key of each kind however many
+// times the attributes repeat (measured on MySQL 8.0: `a int UNIQUE NOT NULL
+// UNIQUE PRIMARY KEY UNIQUE KEY` makes PRIMARY and one unique key a). vitess
+// keeps only the last attribute (ColumnTypeOptions.KeyOpt), so the keys are
+// read from the statement's tokens, which hold every attribute vitess parses.
+type columnKeys struct {
+	primary, unique bool
+}
+
+// readColumnKeys returns the keys the column definition with the top-level
+// tokens tokens, the column name first, declares. The key keywords are
+// reserved in MySQL, so no name, type or other attribute of the column is one
+// unquoted.
+func readColumnKeys(tokens []int) columnKeys {
+	var k columnKeys
+	for i := 1; i < len(tokens); i++ {
+		switch tokens[i] {
+		case sqlparser.PRIMARY:
+			k.primary = true
+			i++ // KEY
+		case sqlparser.KEY:
+			k.primary = true
+		case sqlparser.UNIQUE:
+			k.unique = true
+			if i+1 < len(tokens) && tokens[i+1] == sqlparser.KEY {
+				i++
+			}
+		}
+	}
+	return k
+}
+
+// columnKeysOf maps each column definition in defs to the keys in keys at
+// the same position.
+func columnKeysOf(defs []*sqlparser.ColumnDefinition, keys []columnKeys) map[*sqlparser.ColumnDefinition]columnKeys {
+	m := make(map[*sqlparser.ColumnDefinition]columnKeys, len(defs))
+	for i, def := range defs {
+		m[def] = keys[i]
+	}
+	return m
 }
 
 // matchTableSpec reports an error when elements does not hold as many
@@ -676,16 +734,15 @@ func (p *Parser) parseColumn(tableName string, col *sqlparser.ColumnDefinition) 
 		c.Comment = opts.Comment.Val
 	}
 
-	// Column-level key options.
+	// Column-level keys, the primary key first as MySQL adds them.
 	var constraints []parser.Constraint
-	switch opts.KeyOpt {
-	case sqlparser.ColKeyPrimary:
+	keys := p.columnKeys[col]
+	if keys.primary {
 		c.Nullable = false
 		constraints = append(constraints, parser.Constraint{Name: "PRIMARY", Type: parser.PrimaryKey, Columns: []string{c.Name}})
-	case sqlparser.ColKeyUnique, sqlparser.ColKeyUniqueKey:
+	}
+	if keys.unique {
 		constraints = append(constraints, parser.Constraint{Type: parser.Unique, Columns: []string{c.Name}})
-	case sqlparser.ColKeyNone, sqlparser.ColKeySpatialKey, sqlparser.ColKeyFulltextKey, sqlparser.ColKey:
-		// No key for these key options.
 	}
 
 	// Inline FK reference.
@@ -1062,11 +1119,14 @@ func identifiers(cols sqlparser.Columns) []string {
 
 // --- ALTER TABLE ---
 
-func (p *Parser) parseAlterTable(stmt *sqlparser.AlterTable) error {
+func (p *Parser) parseAlterTable(stmt *sqlparser.AlterTable, sql string) error {
 	tableName := stmt.Table.Name.String()
 	table, ok := p.lookupTable(tableName)
 	if !ok {
 		return fmt.Errorf("table %s not found", tableName)
+	}
+	if err := p.readAlterColumnKeys(stmt, sql); err != nil {
+		return fmt.Errorf("alter table %s: %w", tableName, err)
 	}
 
 	// MySQL applies the statement's drops to the keys the table has, then its
@@ -1219,6 +1279,144 @@ func (p *Parser) alterChangeColumn(table *parser.Table, o *sqlparser.ChangeColum
 		return fmt.Errorf("column %s not found in table %s", oldName, table.Name)
 	}
 	return nil
+}
+
+// readAlterColumnKeys records the keys each column definition of the ALTER
+// TABLE statement stmt declares, read from its text sql: the ADD, MODIFY and
+// CHANGE COLUMN clauses, in clause order. It reports an error when the
+// definitions it reads do not match stmt's.
+func (p *Parser) readAlterColumnKeys(stmt *sqlparser.AlterTable, sql string) error {
+	var defs []*sqlparser.ColumnDefinition
+	for _, opt := range stmt.AlterOptions {
+		switch o := opt.(type) {
+		case *sqlparser.AddColumns:
+			defs = append(defs, o.Columns...)
+		case *sqlparser.ModifyColumn:
+			defs = append(defs, o.NewColDefinition)
+		case *sqlparser.ChangeColumn:
+			defs = append(defs, o.NewColDefinition)
+		}
+	}
+	keys := p.alterColumnKeys(sql)
+	if len(keys) != len(defs) {
+		return fmt.Errorf("cannot recover column keys: read %d column definitions, parsed %d", len(keys), len(defs))
+	}
+	p.columnKeys = columnKeysOf(defs, keys)
+	return nil
+}
+
+// alterToken is a token of an ALTER TABLE statement and how deep in
+// parentheses it sits; a parenthesis sits at the depth outside it.
+type alterToken struct {
+	typ, depth int
+}
+
+// alterColumnKeys returns the keys each column definition of the ALTER TABLE
+// statement sql declares, in clause order: the clauses ADD [COLUMN] col_def,
+// ADD [COLUMN] (col_def, ...), MODIFY [COLUMN] col_def and CHANGE [COLUMN]
+// old_name col_def. The clauses end at a partition clause, which declares no
+// column.
+func (p *Parser) alterColumnKeys(sql string) []columnKeys {
+	var tokens []alterToken
+	depth := 0
+	tkn := p.vparser.NewStringTokenizer(sql)
+	for {
+		typ, _ := tkn.Scan()
+		if typ == 0 || typ == sqlparser.LEX_ERROR {
+			break
+		}
+		switch typ {
+		case sqlparser.COMMENT:
+			continue
+		case '(':
+			tokens = append(tokens, alterToken{typ, depth})
+			depth++
+			continue
+		case ')':
+			depth--
+		}
+		tokens = append(tokens, alterToken{typ, depth})
+	}
+
+	// The clauses follow ALTER TABLE and the table name, which may be
+	// qualified.
+	start := slices.IndexFunc(tokens, func(t alterToken) bool { return t.typ == sqlparser.TABLE }) + 2
+	if start < len(tokens) && tokens[start].typ == '.' {
+		start += 2
+	}
+	var keys []columnKeys
+	var clause []alterToken
+	for _, t := range tokens[min(start, len(tokens)):] {
+		if t.depth == 0 && t.typ == sqlparser.PARTITION {
+			break
+		}
+		if t.depth == 0 && t.typ == ',' {
+			keys = append(keys, clauseColumnKeys(clause)...)
+			clause = clause[:0]
+			continue
+		}
+		clause = append(clause, t)
+	}
+	return append(keys, clauseColumnKeys(clause)...)
+}
+
+// clauseColumnKeys returns the keys each column definition of the ALTER TABLE
+// clause clause declares, or none when it defines no column.
+func clauseColumnKeys(clause []alterToken) []columnKeys {
+	if len(clause) == 0 {
+		return nil
+	}
+	verb, rest := clause[0].typ, clause[1:]
+	if len(rest) > 0 && rest[0].typ == sqlparser.COLUMN {
+		rest = rest[1:]
+	}
+	switch verb {
+	case sqlparser.ADD:
+		if len(rest) > 0 && rest[0].typ == '(' {
+			return listColumnKeys(rest)
+		}
+		def := tokensAt(rest, 0)
+		if entry := classifyTableElement(def); len(entry) == 0 || entry[0] != columnElement {
+			return nil
+		}
+		return []columnKeys{readColumnKeys(def)}
+	case sqlparser.MODIFY:
+		return []columnKeys{readColumnKeys(tokensAt(rest, 0))}
+	case sqlparser.CHANGE:
+		def := tokensAt(rest, 0)
+		return []columnKeys{readColumnKeys(def[min(1, len(def)):])}
+	}
+	return nil
+}
+
+// listColumnKeys returns the keys each column definition of the
+// parenthesized list tokens, ADD's (col_def, ...), declares.
+func listColumnKeys(tokens []alterToken) []columnKeys {
+	var keys []columnKeys
+	var def []int
+	for _, t := range tokens[1:] {
+		switch {
+		case t.depth == 0:
+			return append(keys, readColumnKeys(def))
+		case t.depth == 1 && t.typ == ',':
+			keys = append(keys, readColumnKeys(def))
+			def = def[:0]
+		case t.depth == 1:
+			def = append(def, t.typ)
+		}
+	}
+	return keys
+}
+
+// tokensAt returns the types of the tokens in tokens at depth.
+func tokensAt(tokens []alterToken, depth int) []int {
+	var types []int
+	for _, t := range tokens {
+		if t.depth == depth {
+			types = append(types, t.typ)
+		}
+	}
+	return types
 }
 
 // replaceColumn redefines the column named name, matched case-insensitively as
