@@ -1098,18 +1098,15 @@ func resolveColumnDescription(col *parser.Column, tableCfg config.TableConfig) s
 
 // resolveDefaultExpr returns the raw SQL expression to use in place of the
 // DEFAULT keyword for dialects that do not support it (SQLite). For columns
-// with an explicit DEFAULT, this is the expression itself. For nullable columns
-// without a DEFAULT, this is "NULL", as it is for an auto-increment column:
-// SQLite marks only a rowid alias, which fills NULL with the next rowid.
-// Returns empty string when none applies.
+// with an explicit DEFAULT, this is the expression itself; every other column
+// gets "NULL", SQLite's implicit default. A rowid alias fills NULL with the
+// next rowid, and a NOT NULL column fails with the NOT NULL violation
+// single-row Create reports.
 func resolveDefaultExpr(col *parser.Column) string {
 	if col.Default != "" {
 		return col.Default
 	}
-	if col.Nullable || col.AutoIncrement {
-		return "NULL"
-	}
-	return ""
+	return "NULL"
 }
 
 // --- PK strategy detection ---

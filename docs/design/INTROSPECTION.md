@@ -185,8 +185,8 @@ func Merge(base *parser.Schema, p Seedable, files []string) error  // merge.go
 The `files` vs `database` differential in §7.4 depends on this:
 
 - **Generator:**
-  - `gen/context_table.go:939` reads presence only (`HasDefault`).
-  - `gen/context_table.go:1080` (`resolveDefaultExpr`) inlines the text, but only on SQLite.
+  - `gen/context_table.go:963` reads presence only (`HasDefault`).
+  - `gen/context_table.go:1108` (`resolveDefaultExpr`) inlines the text, but only on SQLite.
 - **Manifest:**
   - `manifest/builder.go:613` emits the literal as `default`.
   - `manifest/builder.go:677` classifies it into `default_kind` (literal / function / expression).

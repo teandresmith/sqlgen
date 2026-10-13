@@ -22,62 +22,6 @@
 ## Open
 
 <!-- fixes:open:begin -->
-### FIX-327
-
-- **Status:** Open
-- **Severity:** tracked
-- **Origin:** phase 6, `cmd/sqlgen/gen` (`resolveDefaultExpr`)
-- **Surfaced by:** backlog sweep 2026-10-12 (backlog line from FIX-272)
-- **Vetted:** ready at `9b58288b` (2026-10-12)
-
-**Issue.** On SQLite, an omittable NOT NULL column with no DEFAULT that is not auto-increment (an
-`update_columns` column or the soft-delete column declared without a DEFAULT) gets an empty
-`DefaultExpr`, so CreateMany / UpsertMany with it unset write `VALUES (, …)`. Measured: `zz_upd(id
-INTEGER PRIMARY KEY, code TEXT NOT NULL UNIQUE, updated_at DATETIME NOT NULL)` → generated `var
-updatedAt any = sql.NewDefaultExpr("")`; `CreateMany` → "create zz_upd batch: query: SQL logic error:
-near \")\": syntax error (1)", `UpsertMany` likewise; single `Create` → typed NOT NULL violation.
-
-**Root cause.** `resolveDefaultExpr` (`cmd/sqlgen/gen/context_table.go:1088`) returns `""` as its final
-fallback.
-
-**Suggested fix.**
-- Fall back to `"NULL"` (SQLite's implicit default for a column without DEFAULT, what PG/MySQL's
-  `DEFAULT` keyword does), so batch paths fail with the same typed NOT NULL violation as `Create`.
-  Update the doc comment.
-- Fail-first gen unit case and a SQLite probe of CreateMany. Golden churn: none (no committed output
-  contains `NewDefaultExpr("")`).
-- Vet notes (2026-10-12): where the empty slot lands depends on column order (with `updated_at` last it
-  renders `(?, )`, hence `near ")"`). The "matches PG/MySQL's DEFAULT keyword" claim was not measured for MySQL,
-  so the code comment does not make it. `DefaultExpr` is read only by the SQLite branches of
-  `create.go.tmpl:385` (CreateMany) and `upsert_many.go.tmpl:238` (UpsertMany); nested create, M2M and has-many
-  writes go through the target's CreateMany/UpsertMany (`nested.go.tmpl:631,724,855`) and inherit the fix; the
-  manifest's `defaultLiteral` reads it only under `HasDefault`. The `InputFieldContext.DefaultExpr` comment
-  (`gen/context.go:584-588`) is left unchanged because those lines are FIX-320 patch context — whichever of
-  FIX-320 / FIX-327 lands second updates it to "or \"NULL\" for a column without a default; empty on a required
-  field".
-- Prototype results, run at `9b58288b` on 2026-10-12: sibling sqlite example (`zz_upd` with `updated_at DATETIME
-  NOT NULL`, `zz_sd` with `is_deleted BOOLEAN NOT NULL` as soft-delete column, nested `zz_parent`/`zz_child`) →
-  generated `var updatedAt any = sql.NewDefaultExpr("")` (`zz_upd_gen.go:425`, `:1136`) and `var isDeleted any =
-  sql.NewDefaultExpr("")`; CreateMany / UpsertMany / mixed CreateMany / soft-delete table unset → "SQL logic error:
-  near \")\": syntax error (1)"; nested CreateWithRelated → "…create zz_child batch: tx query …: near \")\": syntax
-  error (1)"; Create and single Upsert → typed not_null. With the fix all sites emit `NewDefaultExpr("NULL")` and
-  every unset batch path returns the typed not_null violation; fully-set batches still succeed. Prototype:
-  `resolveDefaultExpr` returns `"NULL"` for every column without a DEFAULT (doc comment explains each case);
-  `ColumnContext.DefaultExpr` comment updated; new `TestCreateInputFieldClassification_defaultExprFallsBackToNULL`;
-  PRD §9.8.5 (`:5499`), §10.3 (`:7863`) and the `sql.Default` appendix (`:16022`) say `NULL` covers "a column
-  without a default" (FIX-272 precedent). Gates: gofumpt clean; `go vet ./gen/` ok; `go test -race ./gen/...` ok;
-  `./manifest/...` ok; `make update-golden` / `update-golden-e2e` no diff. Fail-first: old body restored →
-  "CreateInputFields mismatch … Column: \"updated_at\" … - DefaultExpr: \"NULL\", + DefaultExpr: \"\""; existing
-  suite without the fix passes. Golden churn: none. Patch: `.claude/prototypes/FIX-327.patch` (4 files, +60/-13;
-  FIX-320's patch applies cleanly on top).
-
-**References.**
-- PRD §10.3 (`update_columns`), §9.4 (batch inserts).
-- Backlog line absorbed: 2026-10-08 SQLite empty DefaultExpr (FIX-272).
-- FIX-272.
-
-**Resolution notes.** _Filled in by /fix resolve._
-
 ### FIX-328
 
 - **Status:** Open
@@ -1143,6 +1087,62 @@ DEFAULT.
 ## Resolved
 
 <!-- fixes:resolved:begin -->
+### FIX-327
+
+- **Status:** Resolved
+- **Severity:** tracked
+- **Origin:** phase 6, `cmd/sqlgen/gen` (`resolveDefaultExpr`)
+- **Surfaced by:** backlog sweep 2026-10-12 (backlog line from FIX-272)
+- **Vetted:** ready at `9b58288b` (2026-10-12)
+
+**Issue.** On SQLite, an omittable NOT NULL column with no DEFAULT that is not auto-increment (an
+`update_columns` column or the soft-delete column declared without a DEFAULT) gets an empty
+`DefaultExpr`, so CreateMany / UpsertMany with it unset write `VALUES (, …)`. Measured: `zz_upd(id
+INTEGER PRIMARY KEY, code TEXT NOT NULL UNIQUE, updated_at DATETIME NOT NULL)` → generated `var
+updatedAt any = sql.NewDefaultExpr("")`; `CreateMany` → "create zz_upd batch: query: SQL logic error:
+near \")\": syntax error (1)", `UpsertMany` likewise; single `Create` → typed NOT NULL violation.
+
+**Root cause.** `resolveDefaultExpr` (`cmd/sqlgen/gen/context_table.go:1108`) returns `""` as its final
+fallback.
+
+**Suggested fix.**
+- Fall back to `"NULL"` (SQLite's implicit default for a column without DEFAULT, what PG/MySQL's
+  `DEFAULT` keyword does), so batch paths fail with the same typed NOT NULL violation as `Create`.
+  Update the doc comment.
+- Fail-first gen unit case and a SQLite probe of CreateMany. Golden churn: none (no committed output
+  contains `NewDefaultExpr("")`).
+- Vet notes (2026-10-12): where the empty slot lands depends on column order (with `updated_at` last it
+  renders `(?, )`, hence `near ")"`). The "matches PG/MySQL's DEFAULT keyword" claim was not measured for MySQL,
+  so the code comment does not make it. `DefaultExpr` is read only by the SQLite branches of
+  `create.go.tmpl:385` (CreateMany) and `upsert_many.go.tmpl:246` (UpsertMany); nested create, M2M and has-many
+  writes go through the target's CreateMany/UpsertMany (`nested.go.tmpl:631,724,855`) and inherit the fix; the
+  manifest's `defaultLiteral` reads it only under `HasDefault`. The `InputFieldContext.DefaultExpr` comment
+  (`gen/context.go:584-588`) is left unchanged because those lines are FIX-320 patch context — whichever of
+  FIX-320 / FIX-327 lands second updates it to "or \"NULL\" for a column without a default; empty on a required
+  field".
+- Prototype results, run at `9b58288b` on 2026-10-12: sibling sqlite example (`zz_upd` with `updated_at DATETIME
+  NOT NULL`, `zz_sd` with `is_deleted BOOLEAN NOT NULL` as soft-delete column, nested `zz_parent`/`zz_child`) →
+  generated `var updatedAt any = sql.NewDefaultExpr("")` (`zz_upd_gen.go:425`, `:1136`) and `var isDeleted any =
+  sql.NewDefaultExpr("")`; CreateMany / UpsertMany / mixed CreateMany / soft-delete table unset → "SQL logic error:
+  near \")\": syntax error (1)"; nested CreateWithRelated → "…create zz_child batch: tx query …: near \")\": syntax
+  error (1)"; Create and single Upsert → typed not_null. With the fix all sites emit `NewDefaultExpr("NULL")` and
+  every unset batch path returns the typed not_null violation; fully-set batches still succeed. Prototype:
+  `resolveDefaultExpr` returns `"NULL"` for every column without a DEFAULT (doc comment explains each case);
+  `ColumnContext.DefaultExpr` comment updated; new `TestCreateInputFieldClassification_defaultExprFallsBackToNULL`;
+  PRD §9.8.5 (`:5514`), §10.3 (`:7878`) and the `sql.Default` appendix (`:16037`) say `NULL` covers "a column
+  without a default" (FIX-272 precedent). Gates: gofumpt clean; `go vet ./gen/` ok; `go test -race ./gen/...` ok;
+  `./manifest/...` ok; `make update-golden` / `update-golden-e2e` no diff. Fail-first: old body restored →
+  "CreateInputFields mismatch … Column: \"updated_at\" … - DefaultExpr: \"NULL\", + DefaultExpr: \"\""; existing
+  suite without the fix passes. Golden churn: none. Patch: `.claude/prototypes/FIX-327.patch` (4 files, +60/-13;
+  FIX-320's patch applies cleanly on top).
+
+**References.**
+- PRD §10.3 (`update_columns`), §9.4 (batch inserts).
+- Backlog line absorbed: 2026-10-08 SQLite empty DefaultExpr (FIX-272).
+- FIX-272.
+
+**Resolution notes.** Resolved 2026-10-13. `resolveDefaultExpr` (`cmd/sqlgen/gen/context_table.go:1108`) now returns `"NULL"` for every column without a DEFAULT, SQLite's implicit default, so an unset NOT NULL update or soft-delete column in SQLite CreateMany / UpsertMany fails with the typed NOT NULL violation `Create` reports instead of writing `VALUES (?, )`. The prototype applied clean at `951ad718` (the stale-by-diff files were changed by other fixes, not at these hunks). FIX-320 landed first, so this change updates the `InputFieldContext.DefaultExpr` comment (`gen/context.go:584-587`) to "or \"NULL\" for a column without a default; empty on a required field", alongside the `ColumnContext.DefaultExpr` comment and PRD §9.8.5, §10.3 and the `sql.Default` appendix, plus `guidelines/SQL.md:404` (not in the prototype; it still said NULL only for nullable columns) and `docs/design/INTROSPECTION.md:188-189` (stale `context_table.go` refs). Test: `TestCreateInputFieldClassification_defaultExprFallsBackToNULL` (`gen/context_test.go`); its `got` slice is preallocated (lint `prealloc`). Fail-first: the old body restored → `updated_at` and `deleted_at` rows report `DefaultExpr: ""` against `"NULL"`. SQLite probe: `INSERT … VALUES ('a', NULL)` → "NOT NULL constraint failed: zz_upd.updated_at (19)"; `VALUES ('b', )` → "near \")\": syntax error". Gates: `make check` ok; `make update-golden` / `update-golden-e2e` no diff (golden churn: none, matches vet); `make check-examples` ok. Line refs in this entry updated to HEAD (`context_table.go:1108`, `upsert_many.go.tmpl:246` after FIX-320, PRD `:5514`/`:7878`/`:16037`).
+
 ### FIX-326
 
 - **Status:** Resolved

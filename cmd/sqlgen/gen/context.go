@@ -182,8 +182,8 @@ type ColumnContext struct {
 	HasDefault bool
 	// DefaultExpr is the raw SQL default expression for this column.
 	// For columns with an explicit DEFAULT, this is the expression (e.g., "datetime('now')").
-	// For nullable or auto-increment columns without a DEFAULT, this is "NULL".
-	// Empty otherwise.
+	// For every column without a DEFAULT, this is "NULL", SQLite's implicit
+	// default; a NOT NULL column then fails with a NOT NULL violation.
 	DefaultExpr string
 	// AutoIncrement indicates serial/auto_increment columns.
 	AutoIncrement bool
@@ -583,9 +583,8 @@ type InputFieldContext struct {
 	JSONTag string
 	// DefaultExpr is the raw SQL default expression for this column, used
 	// by dialects that do not support the DEFAULT keyword in VALUES (SQLite).
-	// Contains the expression (e.g., "datetime('now')") or "NULL" for nullable
-	// or auto-increment columns without a default. Empty when the column has no
-	// fallback.
+	// Contains the expression (e.g., "datetime('now')") or "NULL" for a column
+	// without a default; empty on a required field.
 	DefaultExpr string
 	// AutoIncrement marks a non-key column the database draws from a
 	// sequence: serial, identity, a nextval() default, MySQL AUTO_INCREMENT,

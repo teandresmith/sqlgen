@@ -401,7 +401,7 @@ All batch operations split input into sub-batches of `generation.batch_size` (de
 
 ### SQLite DEFAULT Limitation
 
-SQLite does not support the `DEFAULT` keyword as a value expression in `INSERT ... VALUES(...)`. The `sql.Default` sentinel used by PostgreSQL and MySQL causes a syntax error on SQLite. Instead, the code generator emits `sql.DefaultExpr` for SQLite — a sentinel that carries the raw SQL default expression (e.g., `datetime('now')`, `'viewer'`, `0`). For nullable columns without a DEFAULT clause, the expression is `NULL`. `BuildMultiInsert` writes the expression inline instead of the `DEFAULT` keyword.
+SQLite does not support the `DEFAULT` keyword as a value expression in `INSERT ... VALUES(...)`. The `sql.Default` sentinel used by PostgreSQL and MySQL causes a syntax error on SQLite. Instead, the code generator emits `sql.DefaultExpr` for SQLite — a sentinel that carries the raw SQL default expression (e.g., `datetime('now')`, `'viewer'`, `0`). For a column without a DEFAULT clause, the expression is `NULL`, SQLite's implicit default: a nullable column stores `NULL`, a rowid-alias auto-increment column draws the next rowid, and a NOT NULL column fails with a NOT NULL violation. `BuildMultiInsert` writes the expression inline instead of the `DEFAULT` keyword.
 
 | Dialect | Omittable field not set | Sentinel | SQL output |
 |---------|------------------------|----------|------------|

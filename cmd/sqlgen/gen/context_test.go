@@ -2318,6 +2318,52 @@ func TestCreateInputFieldClassification_updateColumnsOmittable(t *testing.T) {
 	}
 }
 
+// SQLite's CreateMany and UpsertMany inline an unset omittable field's
+// DefaultExpr; an empty one would render `VALUES (?, )`. A NOT NULL update or
+// soft-delete column without a DEFAULT must get NULL.
+func TestCreateInputFieldClassification_defaultExprFallsBackToNULL(t *testing.T) {
+	schema := &parser.Schema{
+		Tables: []parser.Table{
+			{
+				Name: "items",
+				Columns: []parser.Column{
+					{Name: "id", Type: "integer", PrimaryKey: true, AutoIncrement: true},
+					{Name: "code", Type: "text"},
+					{Name: "note", Type: "text", Nullable: true},
+					{Name: "status", Type: "text", Default: "'new'"},
+					{Name: "updated_at", Type: "timestamp"},
+					{Name: "deleted_at", Type: "timestamp"},
+				},
+			},
+		},
+	}
+
+	contexts, err := gen.BuildTableContexts(testInput(schema), nil)
+	if err != nil {
+		t.Fatalf("BuildTableContexts() error: %v", err)
+	}
+
+	type field struct {
+		Column              string
+		Required, Omittable bool
+		DefaultExpr         string
+	}
+	got := make([]field, 0, len(contexts[0].CreateInputFields))
+	for _, f := range contexts[0].CreateInputFields {
+		got = append(got, field{f.ColumnName, f.Required, f.Omittable, f.DefaultExpr})
+	}
+	want := []field{
+		{Column: "code", Required: true},
+		{Column: "note", Omittable: true, DefaultExpr: "NULL"},
+		{Column: "status", Omittable: true, DefaultExpr: "'new'"},
+		{Column: "updated_at", Omittable: true, DefaultExpr: "NULL"},
+		{Column: "deleted_at", Omittable: true, DefaultExpr: "NULL"},
+	}
+	if diff := cmp.Diff(want, got); diff != "" {
+		t.Errorf("CreateInputFields mismatch (-want +got):\n%s", diff)
+	}
+}
+
 // --- UpdateInput update_columns classification test ---
 
 func TestUpdateInputFieldClassification_updateColumnsExcluded(t *testing.T) {
