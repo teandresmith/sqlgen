@@ -128,6 +128,21 @@ type ManagedFieldOwner struct {
 	GraphQLName string
 }
 
+// SubprocessError reports that the gqlgen binary failed to start or exited
+// non-zero. Gen's other errors come from sqlgen's own steps before or after
+// the subprocess, so callers use this type to tell the two apart.
+type SubprocessError struct {
+	// Bin is the gqlgen_bin invocation form that was run.
+	Bin string
+	Err error
+}
+
+func (e *SubprocessError) Error() string {
+	return fmt.Sprintf("running gqlgen (%s): %v", e.Bin, e.Err)
+}
+
+func (e *SubprocessError) Unwrap() error { return e.Err }
+
 // GenResult holds the outcome of one wrapper invocation. Callers use the
 // reported file paths to merge into the broader sqlgen generate report
 // (the chained `sqlgen generate` -> `sqlgen graphql gen` path).
@@ -221,7 +236,7 @@ func Gen(ctx context.Context, opts GenOptions) (*GenResult, error) {
 	cmd.Env = subprocessEnv(name, args)
 
 	if err := cmd.Run(); err != nil {
-		return nil, fmt.Errorf("running gqlgen (%s): %w", opts.GqlgenBin, err)
+		return nil, &SubprocessError{Bin: opts.GqlgenBin, Err: err}
 	}
 
 	if err := settleManagedStubs(opts, layout); err != nil {

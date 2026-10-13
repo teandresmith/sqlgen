@@ -120,6 +120,68 @@ func TestGenerate_ChainedGraphQL_MissingGqlgenYml(t *testing.T) {
 	}
 }
 
+// TestGenerate_ChainedGraphQL_WrapperErrorLabel pins that only a failure of
+// the gqlgen binary itself is reported as "gqlgen subprocess failed" (PRD
+// §26.5.6); an error raised by the wrapper's own steps is labelled
+// "gqlgen wrapper". Both keep the artifacts-emitted suffix.
+func TestGenerate_ChainedGraphQL_WrapperErrorLabel(t *testing.T) {
+	tests := []struct {
+		name       string
+		gqlgenYML  string
+		gqlgenBin  string
+		wantPrefix string
+	}{
+		{
+			name:       "gqlgen binary fails",
+			gqlgenYML:  "schema:\n  - graph/*.graphqls\nresolver:\n  layout: follow-schema\n  dir: graph\n  package: graph\n",
+			gqlgenBin:  "no-such-gqlgen-binary",
+			wantPrefix: "Error: gqlgen subprocess failed: running gqlgen (no-such-gqlgen-binary): ",
+		},
+		{
+			name:       "single-file resolver block without filename",
+			gqlgenYML:  "schema:\n  - graph/*.graphqls\nresolver:\n  layout: single-file\n  dir: graph\n  package: graph\n",
+			gqlgenBin:  "no-such-gqlgen-binary",
+			wantPrefix: "Error: gqlgen wrapper: parsing gqlgen.yml resolver block: resolver.filename is required with resolver.layout: single-file; ",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			dir := t.TempDir()
+			cfgPath := filepath.Join(dir, "sqlgen.yml")
+			sqlDir := filepath.Join(dir, "migrations")
+			if err := os.MkdirAll(sqlDir, 0o750); err != nil {
+				t.Fatalf("creating migrations dir: %v", err)
+			}
+			outDir := filepath.Join(dir, "output")
+			gqlgenPath := filepath.Join(dir, "gqlgen.yml")
+			if err := os.WriteFile(gqlgenPath, []byte(tt.gqlgenYML), 0o600); err != nil {
+				t.Fatalf("writing gqlgen.yml: %v", err)
+			}
+			t.Chdir(dir)
+			writeAPIGraphQLConfig(t, cfgPath, sqlDir, outDir, gqlgenPath)
+			appendConfig(t, cfgPath, "    gqlgen_bin: "+tt.gqlgenBin+"\n")
+			writeSQLFile(t, sqlDir, "CREATE TABLE products (id uuid PRIMARY KEY, name text NOT NULL);")
+
+			_, stderr, err := executeCommand("--config", cfgPath)
+			if err == nil {
+				t.Fatalf("generate with a failing gqlgen wrapper returned nil error")
+			}
+			_, after, found := strings.Cut(stderr, "Error: ")
+			if !found {
+				t.Fatalf("generate stderr = %q, want an \"Error: \" line", stderr)
+			}
+			line := "Error: " + after
+			if !strings.HasPrefix(line, tt.wantPrefix) {
+				t.Errorf("generate stderr = %q, want a line starting %q", stderr, tt.wantPrefix)
+			}
+			wantSuffix := "; sqlgen-side artifacts emitted at " + outDir + "\n"
+			if !strings.HasSuffix(line, wantSuffix) {
+				t.Errorf("generate stderr = %q, want it to end %q", stderr, wantSuffix)
+			}
+		})
+	}
+}
+
 // TestGenerate_ChainedGraphQL_NoGraphQLFlag pins the escape hatch:
 // `sqlgen generate --no-graphql` skips the chained gqlgen call even when
 // api.graphql.enabled is true. The check: a missing gqlgen.yml does NOT

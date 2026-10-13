@@ -22,58 +22,6 @@
 ## Open
 
 <!-- fixes:open:begin -->
-### FIX-326
-
-- **Status:** Open
-- **Severity:** nit
-- **Origin:** phase 16, `cmd/sqlgen/cli` (`graphql.go`) + `cmd/sqlgen/wrapper`
-- **Surfaced by:** backlog sweep 2026-10-12 (backlog line from FIX-286)
-- **Vetted:** ready at `9b58288b` (2026-10-12)
-
-**Issue.** `sqlgen generate` prefixes every `wrapper.Gen` error with "gqlgen subprocess failed",
-including errors raised before or after gqlgen runs. Measured: a `resolver: {layout: single-file}`
-block without `filename` → "Error: gqlgen subprocess failed: parsing gqlgen.yml resolver block:
-resolver.filename is required with resolver.layout: single-file; sqlgen-side artifacts emitted at
-./models".
-
-**Root cause.** `cmd/sqlgen/cli/graphql.go:213` wraps every error except `*wrapper.UnboundRootFieldsError`
-(printed bare at `:208-212`, FIX-248); only the `running gqlgen (…)` branch
-of `wrapper/gen.go` is a subprocess failure (read gqlgen.yml, `parseResolverLayout`, `Merge`,
-`writeTempConfig`, `writeSeedFiles`, `splitBin`, `settleManagedStubs`, `mergeSingleFileResolver` and Gen's
-two empty-argument guards are not).
-
-**Suggested fix.**
-- `wrapper.Gen` returns a typed error (e.g. `*wrapper.SubprocessError`) for the `cmd.Run` branch only;
-  `graphql.go` prints the PRD §26 message for it and `Error: gqlgen wrapper: <details>; sqlgen-side
-  artifacts emitted at <dir>` otherwise.
-- Tests for both branches (neither has one today).
-- Inline for the implementer: PRD §26.5.6 names only the subprocess-failure line; add a one-clause note that
-  wrapper-side failures carry the "gqlgen wrapper" label.
-- Prototype results, run at `9b58288b` on 2026-10-12: sibling copy of `graphql` with `resolver: {layout:
-  single-file, dir: models/graph, package: graph}` → base `GOWORK=off sqlgen generate` exit 1 "Error: gqlgen
-  subprocess failed: parsing gqlgen.yml resolver block: resolver.filename is required with resolver.layout:
-  single-file; sqlgen-side artifacts emitted at ./models"; `gqlgen_bin: "false"` → "Error: gqlgen subprocess
-  failed: running gqlgen (false): exit status 1; …". With the prototype the first reads "Error: gqlgen wrapper:
-  parsing gqlgen.yml resolver block: …" and the second is unchanged. Prototype: `wrapper/gen.go` exports
-  `SubprocessError{Bin string; Err error}` (`Error()` = "running gqlgen (<bin>): <err>", `Unwrap()`), returned
-  only by the `cmd.Run()` branch; `cli/graphql.go` keeps the `UnboundRootFieldsError` branch and labels
-  "gqlgen subprocess failed" when `errors.AsType[*wrapper.SubprocessError]` matches, "gqlgen wrapper" otherwise.
-  Tests: `TestGenerate_ChainedGraphQL_WrapperErrorLabel` (missing binary → subprocess label; single-file without
-  filename → wrapper label; both end "; sqlgen-side artifacts emitted at <outDir>"); wrapper tests assert the
-  type. Gates: `go test -race ./cli/ ./wrapper/` ok; `golangci-lint ./cli/... ./wrapper/...` 0 issues; gofumpt
-  clean. Fail-first: `cmd.Run` branch reverted → "Gen error = running gqlgen (…): exit status 1, want a
-  *SubprocessError" and the subprocess-label case fails ("…Error: gqlgen wrapper: running gqlgen
-  (no-such-gqlgen-binary): …"); label logic reverted → the single-file case reads "Error: gqlgen subprocess
-  failed: parsing gqlgen.yml resolver block: …"; existing suite without the fix passes. Golden churn: none.
-  Patch: `.claude/prototypes/FIX-326.patch` (4 files, +105/-2).
-
-**References.**
-- PRD §26.5.6 "Failure mode." (`docs/PRD.md:12950`).
-- Backlog line absorbed: 2026-10-07 gqlgen-subprocess prefix (FIX-286).
-- FIX-286, FIX-248.
-
-**Resolution notes.** _Filled in by /fix resolve._
-
 ### FIX-327
 
 - **Status:** Open
@@ -1195,6 +1143,58 @@ DEFAULT.
 ## Resolved
 
 <!-- fixes:resolved:begin -->
+### FIX-326
+
+- **Status:** Resolved
+- **Severity:** nit
+- **Origin:** phase 16, `cmd/sqlgen/cli` (`graphql.go`) + `cmd/sqlgen/wrapper`
+- **Surfaced by:** backlog sweep 2026-10-12 (backlog line from FIX-286)
+- **Vetted:** ready at `9b58288b` (2026-10-12)
+
+**Issue.** `sqlgen generate` prefixes every `wrapper.Gen` error with "gqlgen subprocess failed",
+including errors raised before or after gqlgen runs. Measured: a `resolver: {layout: single-file}`
+block without `filename` → "Error: gqlgen subprocess failed: parsing gqlgen.yml resolver block:
+resolver.filename is required with resolver.layout: single-file; sqlgen-side artifacts emitted at
+./models".
+
+**Root cause.** `cmd/sqlgen/cli/graphql.go:213` wraps every error except `*wrapper.UnboundRootFieldsError`
+(printed bare at `:208-212`, FIX-248); only the `running gqlgen (…)` branch
+of `wrapper/gen.go` is a subprocess failure (read gqlgen.yml, `parseResolverLayout`, `Merge`,
+`writeTempConfig`, `writeSeedFiles`, `splitBin`, `settleManagedStubs`, `mergeSingleFileResolver` and Gen's
+two empty-argument guards are not).
+
+**Suggested fix.**
+- `wrapper.Gen` returns a typed error (e.g. `*wrapper.SubprocessError`) for the `cmd.Run` branch only;
+  `graphql.go` prints the PRD §26 message for it and `Error: gqlgen wrapper: <details>; sqlgen-side
+  artifacts emitted at <dir>` otherwise.
+- Tests for both branches (neither has one today).
+- Inline for the implementer: PRD §26.5.6 names only the subprocess-failure line; add a one-clause note that
+  wrapper-side failures carry the "gqlgen wrapper" label.
+- Prototype results, run at `9b58288b` on 2026-10-12: sibling copy of `graphql` with `resolver: {layout:
+  single-file, dir: models/graph, package: graph}` → base `GOWORK=off sqlgen generate` exit 1 "Error: gqlgen
+  subprocess failed: parsing gqlgen.yml resolver block: resolver.filename is required with resolver.layout:
+  single-file; sqlgen-side artifacts emitted at ./models"; `gqlgen_bin: "false"` → "Error: gqlgen subprocess
+  failed: running gqlgen (false): exit status 1; …". With the prototype the first reads "Error: gqlgen wrapper:
+  parsing gqlgen.yml resolver block: …" and the second is unchanged. Prototype: `wrapper/gen.go` exports
+  `SubprocessError{Bin string; Err error}` (`Error()` = "running gqlgen (<bin>): <err>", `Unwrap()`), returned
+  only by the `cmd.Run()` branch; `cli/graphql.go` keeps the `UnboundRootFieldsError` branch and labels
+  "gqlgen subprocess failed" when `errors.AsType[*wrapper.SubprocessError]` matches, "gqlgen wrapper" otherwise.
+  Tests: `TestGenerate_ChainedGraphQL_WrapperErrorLabel` (missing binary → subprocess label; single-file without
+  filename → wrapper label; both end "; sqlgen-side artifacts emitted at <outDir>"); wrapper tests assert the
+  type. Gates: `go test -race ./cli/ ./wrapper/` ok; `golangci-lint ./cli/... ./wrapper/...` 0 issues; gofumpt
+  clean. Fail-first: `cmd.Run` branch reverted → "Gen error = running gqlgen (…): exit status 1, want a
+  *SubprocessError" and the subprocess-label case fails ("…Error: gqlgen wrapper: running gqlgen
+  (no-such-gqlgen-binary): …"); label logic reverted → the single-file case reads "Error: gqlgen subprocess
+  failed: parsing gqlgen.yml resolver block: …"; existing suite without the fix passes. Golden churn: none.
+  Patch: `.claude/prototypes/FIX-326.patch` (4 files, +105/-2).
+
+**References.**
+- PRD §26.5.6 "Failure mode." (`docs/PRD.md:12965`).
+- Backlog line absorbed: 2026-10-07 gqlgen-subprocess prefix (FIX-286).
+- FIX-286, FIX-248.
+
+**Resolution notes.** `wrapper.Gen` now returns `*wrapper.SubprocessError{Bin, Err}` (`Error()` = "running gqlgen (<bin>): <err>", `Unwrap()`) from the `cmd.Run()` branch only (`cmd/sqlgen/wrapper/gen.go`); `runGraphQLGen` (`cmd/sqlgen/cli/graphql.go`) keeps the bare `*UnboundRootFieldsError` branch and labels the rest "gqlgen subprocess failed" when `errors.AsType[*wrapper.SubprocessError]` matches and "gqlgen wrapper" otherwise, both ending "; sqlgen-side artifacts emitted at <output.dir>". PRD §26.5.6 "Failure mode." gains a sentence naming the "gqlgen wrapper" label for wrapper-side failures. Tests: `TestGenerate_ChainedGraphQL_WrapperErrorLabel` (missing binary → subprocess label; single-file without filename → wrapper label; both with the suffix); `TestGen_TempFileCleanupOnSubprocessFailure` and `TestGen_SingleFileWithoutFilename` assert the error type. Prototype applied clean at `86b6b968`. Fail-first re-run on the final code: `cmd.Run` branch reverted → "Gen error = running gqlgen (…): exit status 1, want a *SubprocessError" and the subprocess-label case reads "Error: gqlgen wrapper: running gqlgen (no-such-gqlgen-binary): …"; label logic reverted → the single-file case reads "Error: gqlgen subprocess failed: parsing gqlgen.yml resolver block: …". `make check` and `make check-examples` green; golden churn: none, as vetted. /verify reviewer items applied inline: the PRD sentence names writing seeds and rewriting resolver stubs and points an unbound root resolver name at its own error ("Root resolver names are checked, not stated"), since `settleManagedStubs` can return the bare-printed `*UnboundRootFieldsError`; the References PRD line ref corrected to `:12965`; backlog line 2026-10-01 (cli) reworded for the now-tested labelled branches; the test reuses the package's `appendConfig` instead of a duplicate helper.
+
 
 ### FIX-325
 

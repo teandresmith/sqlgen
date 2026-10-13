@@ -12962,7 +12962,7 @@ Two escape hatches exist for consumers who split the phases — a CI pipeline th
 
 **Pre-flight.** The chained path requires `gqlgen.yml` at `api.graphql.gqlgen_config` (default `./gqlgen.yml`). When it is missing, `sqlgen generate` fails fast with an error pointing at `sqlgen graphql init`. Auto-init is deliberately **not** a side effect of generate: config scaffolding is a one-shot the consumer performs knowingly, and silently writing a `gqlgen.yml` on a mistyped path would produce a second config the consumer does not know they own.
 
-**Failure mode.** If the gqlgen subprocess fails, the sqlgen-side files emitted earlier in the run stay on disk and are **not** rolled back. The failure surfaces loudly — `Error: gqlgen subprocess failed: <details>; sqlgen-side artifacts emitted at <output.dir>` — and the consumer fixes the gqlgen issue and re-runs.
+**Failure mode.** If the gqlgen subprocess fails, the sqlgen-side files emitted earlier in the run stay on disk and are **not** rolled back. The failure surfaces loudly — `Error: gqlgen subprocess failed: <details>; sqlgen-side artifacts emitted at <output.dir>` — and the consumer fixes the gqlgen issue and re-runs. A failure in the wrapper's own steps before or after the subprocess (reading or merging `gqlgen.yml`, writing seeds, rewriting resolver stubs) keeps the same artifacts-emitted suffix but carries the `gqlgen wrapper` label instead; an unbound root resolver name prints its own error (see "Root resolver names are checked, not stated").
 
 **Wrapper data flow (`sqlgen graphql gen`, and the chained half of `sqlgen generate`):**
 

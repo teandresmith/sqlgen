@@ -210,7 +210,11 @@ func runGraphQLGen(ctx context.Context, cfg *config.RootConfig, schema *parser.S
 			_, _ = fmt.Fprintf(errOut, "Error: %v\n", err)
 			return nil, &exitError{code: ExitGeneration, err: err}
 		}
-		_, _ = fmt.Fprintf(errOut, "Error: gqlgen subprocess failed: %v; sqlgen-side artifacts emitted at %s\n", err, cfg.Output.Dir)
+		label := "gqlgen wrapper"
+		if _, ok := errors.AsType[*wrapper.SubprocessError](err); ok {
+			label = "gqlgen subprocess failed"
+		}
+		_, _ = fmt.Fprintf(errOut, "Error: %s: %v; sqlgen-side artifacts emitted at %s\n", label, err, cfg.Output.Dir)
 		return nil, &exitError{code: ExitGeneration, err: err}
 	}
 	return res, nil

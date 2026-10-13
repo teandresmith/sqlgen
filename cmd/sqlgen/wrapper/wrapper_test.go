@@ -3,6 +3,7 @@ package wrapper
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"io/fs"
 	"os"
@@ -119,6 +120,9 @@ func TestGen_TempFileCleanupOnSubprocessFailure(t *testing.T) {
 	if err == nil {
 		t.Fatalf("Gen on failure path: expected error, got nil")
 	}
+	if _, ok := errors.AsType[*SubprocessError](err); !ok {
+		t.Errorf("Gen error = %v, want a *SubprocessError", err)
+	}
 	if !strings.Contains(err.Error(), "running gqlgen") {
 		t.Errorf("error %q is missing the sqlgen-flavoured wrap", err)
 	}
@@ -175,6 +179,9 @@ func TestGen_SingleFileWithoutFilename(t *testing.T) {
 	want := "parsing gqlgen.yml resolver block: resolver.filename is required with resolver.layout: single-file"
 	if err == nil || err.Error() != want {
 		t.Fatalf("Gen error = %v, want %q", err, want)
+	}
+	if _, ok := errors.AsType[*SubprocessError](err); ok {
+		t.Errorf("Gen error = %v is a *SubprocessError; gqlgen never ran", err)
 	}
 	entries, rerr := os.ReadDir(dir)
 	if rerr != nil {
