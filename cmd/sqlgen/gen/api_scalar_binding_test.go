@@ -70,7 +70,7 @@ var dialectSQLTypes = map[config.Dialect][]string{
 		"inet", "cidr", "macaddr",
 	},
 	config.DialectMySQL: {
-		"tinyint", "smallint", "int", "integer", "mediumint", "bigint",
+		"tinyint", "smallint", "int", "mediumint", "bigint",
 		"int unsigned", "bigint unsigned",
 		"float", "double", "decimal",
 		"varchar", "text", "char", "enum", "tinytext", "mediumtext", "longtext",
@@ -78,7 +78,7 @@ var dialectSQLTypes = map[config.Dialect][]string{
 		"datetime", "timestamp", "date",
 		"json",
 		"blob", "binary", "varbinary", "tinyblob", "mediumblob", "longblob",
-		"bool", "boolean", "bit(1)",
+		"tinyint(1)", "bit(1)",
 		"year",
 	},
 	config.DialectSQLite: {

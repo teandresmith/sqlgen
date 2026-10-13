@@ -113,10 +113,10 @@ var postgresMappings = map[string]typeInfo{
 var mysqlMappings = map[string]typeInfo{
 	// Integer types
 	"tinyint": goInt8, "smallint": goInt16,
-	"int": goInt32, "integer": goInt32, "mediumint": goInt32,
+	"int": goInt32, "mediumint": goInt32,
 	"bigint":           goInt64,
 	"tinyint unsigned": goUint8, "smallint unsigned": goUint16,
-	"int unsigned": goUint32, "integer unsigned": goUint32, "mediumint unsigned": goUint32,
+	"int unsigned": goUint32, "mediumint unsigned": goUint32,
 	"bigint unsigned": goUint64,
 	// Float types
 	"float":  goFloat32,
@@ -133,7 +133,7 @@ var mysqlMappings = map[string]typeInfo{
 	"blob": goBytes, "binary": goBytes, "varbinary": goBytes,
 	"tinyblob": goBytes, "mediumblob": goBytes, "longblob": goBytes,
 	// Boolean
-	"bool": goBool, "boolean": goBool, "tinyint(1)": goBool, "bit(1)": goBool,
+	"tinyint(1)": goBool, "bit(1)": goBool,
 	// Year
 	"year": goInt16,
 }
@@ -675,9 +675,9 @@ func (r *Resolver) widenSumBase(base string) string {
 		}
 	case config.DialectMySQL:
 		switch base {
-		case "tinyint", "smallint", "mediumint", "int", "integer", "bigint",
+		case "tinyint", "smallint", "mediumint", "int", "bigint",
 			"tinyint unsigned", "smallint unsigned", "mediumint unsigned",
-			"int unsigned", "integer unsigned", "bigint unsigned":
+			"int unsigned", "bigint unsigned":
 			// MySQL returns DECIMAL for SUM over any exact-value integer,
 			// signed or unsigned — the unsigned variants would otherwise leave
 			// a uint32/uint64 scan target too narrow for the returned decimal.
@@ -713,7 +713,8 @@ func (r *Resolver) lookupOverride(m map[string]config.TypeOverride, sqlType stri
 	return config.TypeOverride{}, false
 }
 
-// mysqlIntegerBases are the MySQL integer types, which carry unsigned.
+// mysqlIntegerBases are the integer bases whose unsigned form never falls
+// back to the signed base: MySQL's, and SQLite's integer.
 var mysqlIntegerBases = map[string]bool{
 	"tinyint": true, "smallint": true, "mediumint": true, "int": true, "integer": true, "bigint": true,
 }

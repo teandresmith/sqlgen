@@ -214,8 +214,6 @@ func TestMySQLTypeMappings(t *testing.T) {
 		{"smallint nullable", "smallint", true, gotype.GoType{Name: "*int16", ZeroValue: "nil", FKConvert: gotype.FKStringSprint}},
 		{"int", "int", false, gotype.GoType{Name: "int32", ZeroValue: "0", FKConvert: gotype.FKStringSprint}},
 		{"int nullable", "int", true, gotype.GoType{Name: "*int32", ZeroValue: "nil", FKConvert: gotype.FKStringSprint}},
-		{"integer", "integer", false, gotype.GoType{Name: "int32", ZeroValue: "0", FKConvert: gotype.FKStringSprint}},
-		{"integer nullable", "integer", true, gotype.GoType{Name: "*int32", ZeroValue: "nil", FKConvert: gotype.FKStringSprint}},
 		{"mediumint", "mediumint", false, gotype.GoType{Name: "int32", ZeroValue: "0", FKConvert: gotype.FKStringSprint}},
 		{"mediumint nullable", "mediumint", true, gotype.GoType{Name: "*int32", ZeroValue: "nil", FKConvert: gotype.FKStringSprint}},
 		{"bigint", "bigint", false, gotype.GoType{Name: "int64", ZeroValue: "0", FKConvert: gotype.FKStringSprint}},
@@ -225,7 +223,6 @@ func TestMySQLTypeMappings(t *testing.T) {
 		{"smallint unsigned", "smallint unsigned", false, gotype.GoType{Name: "uint16", ZeroValue: "0", FKConvert: gotype.FKStringSprint}},
 		{"smallint unsigned nullable", "smallint unsigned", true, gotype.GoType{Name: "*uint16", ZeroValue: "nil", FKConvert: gotype.FKStringSprint}},
 		{"mediumint unsigned", "mediumint unsigned", false, gotype.GoType{Name: "uint32", ZeroValue: "0", FKConvert: gotype.FKStringSprint}},
-		{"integer unsigned", "integer unsigned", false, gotype.GoType{Name: "uint32", ZeroValue: "0", FKConvert: gotype.FKStringSprint}},
 		{"int unsigned", "int unsigned", false, gotype.GoType{Name: "uint32", ZeroValue: "0", FKConvert: gotype.FKStringSprint}},
 		{"int unsigned nullable", "int unsigned", true, gotype.GoType{Name: "*uint32", ZeroValue: "nil", FKConvert: gotype.FKStringSprint}},
 		{"bigint unsigned", "bigint unsigned", false, gotype.GoType{Name: "uint64", ZeroValue: "0", FKConvert: gotype.FKStringSprint}},
@@ -294,10 +291,6 @@ func TestMySQLTypeMappings(t *testing.T) {
 		{"longblob nullable", "longblob", true, gotype.GoType{Name: "[]byte", ZeroValue: "nil", FKConvert: gotype.FKStringSprint}},
 
 		// --- Boolean ---
-		{"bool", "bool", false, gotype.GoType{Name: "bool", ZeroValue: "false", FKConvert: gotype.FKStringSprint}},
-		{"bool nullable", "bool", true, gotype.GoType{Name: "*bool", ZeroValue: "nil", FKConvert: gotype.FKStringSprint}},
-		{"boolean", "boolean", false, gotype.GoType{Name: "bool", ZeroValue: "false", FKConvert: gotype.FKStringSprint}},
-		{"boolean nullable", "boolean", true, gotype.GoType{Name: "*bool", ZeroValue: "nil", FKConvert: gotype.FKStringSprint}},
 		{"bit(1)", "bit(1)", false, gotype.GoType{Name: "bool", ZeroValue: "false", FKConvert: gotype.FKStringSprint}},
 		{"bit(1) nullable", "bit(1)", true, gotype.GoType{Name: "*bool", ZeroValue: "nil", FKConvert: gotype.FKStringSprint}},
 		{"tinyint(1) is BOOLEAN", "tinyint(1)", false, gotype.GoType{Name: "bool", ZeroValue: "false", FKConvert: gotype.FKStringSprint}},
@@ -1749,7 +1742,6 @@ func TestResolveAggregateSumWidening(t *testing.T) {
 		// MySQL: every integer sum widens to decimal (float64 here).
 		{"mysql tinyint", "mysql", "tinyint", false, "float64"},
 		{"mysql int", "mysql", "int", false, "float64"},
-		{"mysql integer", "mysql", "integer", false, "float64"},
 		{"mysql bigint", "mysql", "bigint", false, "float64"},
 		{"mysql int unsigned", "mysql", "int unsigned", false, "float64"},
 		{"mysql bigint unsigned", "mysql", "bigint unsigned", false, "float64"},

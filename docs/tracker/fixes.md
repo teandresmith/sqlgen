@@ -22,59 +22,6 @@
 ## Open
 
 <!-- fixes:open:begin -->
-### FIX-319
-
-- **Status:** Open
-- **Severity:** nit
-- **Origin:** phase 30, `cmd/sqlgen/gotype`
-- **Surfaced by:** backlog sweep 2026-10-12 (backlog line from FIX-271)
-- **Vetted:** corrected at `a99568ff` (2026-10-12)
-
-**Issue.** `mysqlMappings`' `bool`, `boolean`, `integer` and `integer unsigned` keys and
-`widenSumBase`'s MySQL `integer` / `integer unsigned` labels are unreachable: both MySQL sources write
-the stored form (`BOOL`/`BOOLEAN` → `tinyint(1)`, `INTEGER` → `int`), the catalog types view
-expressions as `int`/`bigint`/`double`, and every `Resolve`/`ResolveAggregate` caller passes a parser
-or introspector `Column.Type` (`gen/context_type.go:25,53` also pass composite-attribute and domain base
-types, both PostgreSQL-only). Only tests reach the keys: 7 rows of `TestMySQLTypeMappings`
-(`gotype_test.go:217,218,228,297-300`), the `"mysql integer"` row of `TestResolveAggregateSumWidening`
-(`:1752`), and the hand-built `dialectSQLTypes` fixture (`gen/api_scalar_binding_test.go:73,81`). `mysqlIntegerBases["integer"]` is NOT dead: SQLite reaches it.
-
-**Root cause.** Leftovers from before FIX-271 made both sources write the stored type.
-
-**Suggested fix.**
-- Delete `"integer"` / `"integer unsigned"` and the `"bool"` / `"boolean"` keys from `mysqlMappings`
-  (`cmd/sqlgen/gotype/gotype.go:113-139`; `tinyint(1)` and `bit(1)` stay) and the `"integer"` /
-  `"integer unsigned"` labels in `widenSumBase`'s MySQL branch (`:678-680`); keep
-  `mysqlIntegerBases["integer"]` (`:718`).
-- Drop the 7 dead-key rows of `TestMySQLTypeMappings` and the `"mysql integer"` row of
-  `TestResolveAggregateSumWidening`; in `gen/api_scalar_binding_test.go`'s `dialectSQLTypes` MySQL list drop
-  `"integer"` and replace `"bool", "boolean"` with the stored `"tinyint(1)"`. No new test: the invariant is
-  pinned by `parser/mysql/mysql_test.go:883-886` and `TestMySQLIntrospect_TypeSynonyms`.
-- Corrected from the original: it named no test edits, but 8 gotype rows pin the dead keys and the scalar-
-  binding fixture would otherwise exercise only the unknown-type fallback.
-- Prototype results, run at `a99568ff` on 2026-10-12: unreachability measured with a throwaway hook in
-  `builtinResolve` / `widenSumBase` logging hits on the four keys → `go test ./gotype/...` 8 hits, all tests
-  (`gotype_test.go:316`, `:1767`); every other cmd/sqlgen package, not short → 24 hits, all
-  `gen/api_scalar_binding_test.go:165,245`; `TestE2E*/^(mysql|introspect_mysql|tenancy_mysql)$` (goldens and
-  DatabaseTwin) → 0 hits; a throwaway MySQL schema (`INTEGER` PK, `BOOL`, `BOOLEAN`, `INTEGER UNSIGNED`,
-  `INTEGER(11) UNSIGNED ZEROFILL`, view with SUM/MAX/CAST/`n + 1`) under `files` and under `database` (live
-  MySQL 8.0) → 0 hits. `mysqlIntegerBases["integer"]` measured live: removing it flips SQLite
-  `Resolve("integer unsigned")` from `string` to `int64` with `go test ./gotype/` still green (kept). Gates:
-  `go test -race -count=1 ./gotype/... ./gen/...` ok; `go test -count=1 -timeout=30m ./...` (cmd/sqlgen, not
-  short, Docker) all ok incl. every example's E2E goldens; golangci-lint 0 issues; gofumpt clean. Fail-first:
-  the gotype.go deletion with the original tests → `TestMySQLTypeMappings/integer`: "Resolve("integer",
-  nullable=false) mismatch (-want +got)" (int32 → string) plus 6 more, `TestResolveAggregateSumWidening/
-  mysql_integer`: "ResolveAggregate(SUM, "integer", nullable=false) [mysql] = "string", want "float64""; existing
-  suite passes at base. Golden churn none. Overlap: FIX-322 touches gotype.go / gotype_test.go at disjoint
-  hunks; applies cleanly in either order. Patch: `.claude/prototypes/FIX-319.patch` (3 files, +7/-15).
-
-**References.**
-- PRD §7.2 (`docs/PRD.md:1783` already says these keys match no MySQL column).
-- Backlog line absorbed: 2026-10-08 unreachable mysqlMappings keys (FIX-271).
-- FIX-271.
-
-**Resolution notes.** _Filled in by /fix resolve._
-
 ### FIX-320
 
 - **Status:** Open
@@ -1689,6 +1636,59 @@ DEFAULT.
 ## Resolved
 
 <!-- fixes:resolved:begin -->
+### FIX-319
+
+- **Status:** Resolved
+- **Severity:** nit
+- **Origin:** phase 30, `cmd/sqlgen/gotype`
+- **Surfaced by:** backlog sweep 2026-10-12 (backlog line from FIX-271)
+- **Vetted:** corrected at `a99568ff` (2026-10-12)
+
+**Issue.** `mysqlMappings`' `bool`, `boolean`, `integer` and `integer unsigned` keys and
+`widenSumBase`'s MySQL `integer` / `integer unsigned` labels are unreachable: both MySQL sources write
+the stored form (`BOOL`/`BOOLEAN` → `tinyint(1)`, `INTEGER` → `int`), the catalog types view
+expressions as `int`/`bigint`/`double`, and every `Resolve`/`ResolveAggregate` caller passes a parser
+or introspector `Column.Type` (`gen/context_type.go:25,53` also pass composite-attribute and domain base
+types, both PostgreSQL-only). Only tests reach the keys: 7 rows of `TestMySQLTypeMappings`
+(`gotype_test.go:217,218,228,297-300`), the `"mysql integer"` row of `TestResolveAggregateSumWidening`
+(`:1752`), and the hand-built `dialectSQLTypes` fixture (`gen/api_scalar_binding_test.go:73,81`). `mysqlIntegerBases["integer"]` is NOT dead: SQLite reaches it.
+
+**Root cause.** Leftovers from before FIX-271 made both sources write the stored type.
+
+**Suggested fix.**
+- Delete `"integer"` / `"integer unsigned"` and the `"bool"` / `"boolean"` keys from `mysqlMappings`
+  (`cmd/sqlgen/gotype/gotype.go:113-139`; `tinyint(1)` and `bit(1)` stay) and the `"integer"` /
+  `"integer unsigned"` labels in `widenSumBase`'s MySQL branch (`:678-680`); keep
+  `mysqlIntegerBases["integer"]` (`:718`).
+- Drop the 7 dead-key rows of `TestMySQLTypeMappings` and the `"mysql integer"` row of
+  `TestResolveAggregateSumWidening`; in `gen/api_scalar_binding_test.go`'s `dialectSQLTypes` MySQL list drop
+  `"integer"` and replace `"bool", "boolean"` with the stored `"tinyint(1)"`. No new test: the invariant is
+  pinned by `parser/mysql/mysql_test.go:883-886` and `TestMySQLIntrospect_TypeSynonyms`.
+- Corrected from the original: it named no test edits, but 8 gotype rows pin the dead keys and the scalar-
+  binding fixture would otherwise exercise only the unknown-type fallback.
+- Prototype results, run at `a99568ff` on 2026-10-12: unreachability measured with a throwaway hook in
+  `builtinResolve` / `widenSumBase` logging hits on the four keys → `go test ./gotype/...` 8 hits, all tests
+  (`gotype_test.go:316`, `:1767`); every other cmd/sqlgen package, not short → 24 hits, all
+  `gen/api_scalar_binding_test.go:165,245`; `TestE2E*/^(mysql|introspect_mysql|tenancy_mysql)$` (goldens and
+  DatabaseTwin) → 0 hits; a throwaway MySQL schema (`INTEGER` PK, `BOOL`, `BOOLEAN`, `INTEGER UNSIGNED`,
+  `INTEGER(11) UNSIGNED ZEROFILL`, view with SUM/MAX/CAST/`n + 1`) under `files` and under `database` (live
+  MySQL 8.0) → 0 hits. `mysqlIntegerBases["integer"]` measured live: removing it flips SQLite
+  `Resolve("integer unsigned")` from `string` to `int64` with `go test ./gotype/` still green (kept). Gates:
+  `go test -race -count=1 ./gotype/... ./gen/...` ok; `go test -count=1 -timeout=30m ./...` (cmd/sqlgen, not
+  short, Docker) all ok incl. every example's E2E goldens; golangci-lint 0 issues; gofumpt clean. Fail-first:
+  the gotype.go deletion with the original tests → `TestMySQLTypeMappings/integer`: "Resolve("integer",
+  nullable=false) mismatch (-want +got)" (int32 → string) plus 6 more, `TestResolveAggregateSumWidening/
+  mysql_integer`: "ResolveAggregate(SUM, "integer", nullable=false) [mysql] = "string", want "float64""; existing
+  suite passes at base. Golden churn none. Overlap: FIX-322 touches gotype.go / gotype_test.go at disjoint
+  hunks; applies cleanly in either order. Patch: `.claude/prototypes/FIX-319.patch` (3 files, +7/-15).
+
+**References.**
+- PRD §7.2 (`docs/PRD.md:1794` already says these keys match no MySQL column).
+- Backlog line absorbed: 2026-10-08 unreachable mysqlMappings keys (FIX-271).
+- FIX-271.
+
+**Resolution notes.** Deleted the unreachable `bool`, `boolean`, `integer` and `integer unsigned` keys from `mysqlMappings` and the `integer` / `integer unsigned` labels from `widenSumBase`'s MySQL branch in `cmd/sqlgen/gotype/gotype.go`; `tinyint(1)`, `bit(1)` and `mysqlIntegerBases["integer"]` (reached by SQLite) stay. Dropped the 7 dead-key rows of `TestMySQLTypeMappings` and the `"mysql integer"` row of `TestResolveAggregateSumWidening`, and moved `gen/api_scalar_binding_test.go`'s MySQL `dialectSQLTypes` list to stored forms (`integer` dropped, `bool`/`boolean` → `tinyint(1)`). Prototype fresh at `ebc61852`, applied clean. Fail-first: the gotype.go change with the original tests → 7 `TestMySQLTypeMappings` mismatches plus `TestResolveAggregateSumWidening/mysql_integer` (`= "string", want "float64"`). Gates: `make check` ok; `make check-examples` ok; `make update-golden-e2e` and `make update-golden` → golden churn none, as vetted. Inline from `/verify`: `mysqlIntegerBases`' comment now says it also holds SQLite's `integer`, and the References PRD line ref is corrected (`:1783` → `:1794`).
+
 ### FIX-318
 
 - **Status:** Resolved
