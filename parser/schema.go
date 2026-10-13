@@ -514,18 +514,69 @@ func CheckTableDropRefs(tables []Table, dialect, schema, name string) error {
 	return nil
 }
 
-// CheckTypeDropRefs checks whether any column in the schema uses the given
-// type name. Returns an error if a reference is found, or nil if the drop is safe.
-func CheckTypeDropRefs(tables []Table, schema, name string) error {
-	qualified := qualifiedName(schema, name)
-	for i := range tables {
-		t := &tables[i]
+// TypeRef names a user type, an enum, domain or composite type, by schema
+// and name.
+type TypeRef struct {
+	Schema, Name string
+}
+
+// ResolveTypeRef reads a column, attribute or domain base type written for
+// schema owner: a bare name is a type in owner, a qualified one names its
+// schema, and an array of a type refers to that type.
+func ResolveTypeRef(typ, owner string) (ref TypeRef, isArray bool) {
+	base, isArray := strings.CutSuffix(typ, "[]")
+	if typSchema, typName, ok := strings.Cut(base, "."); ok {
+		return TypeRef{Schema: typSchema, Name: typName}, isArray
+	}
+	return TypeRef{Schema: owner, Name: base}, isArray
+}
+
+// CheckTypeDropRefs checks whether the types in drop, the objects of one DROP
+// TYPE or DROP DOMAIN statement, can be dropped together. A table or view
+// column, a domain's base type, or a composite type's attribute that uses one
+// of them, or an array of one, blocks the drop, unless that domain or
+// composite type is itself in drop. Each type is read relative to the schema
+// of the object it belongs to, as ResolveTypeRef reads it. Returns an error
+// naming the first reference found, or nil if the drop is safe.
+func CheckTypeDropRefs(s *Schema, drop []TypeRef) error {
+	dropping := func(typ, owner string) (TypeRef, bool) {
+		ref, _ := ResolveTypeRef(typ, owner)
+		return ref, slices.Contains(drop, ref)
+	}
+	refErr := func(ref TypeRef, user string) error {
+		return fmt.Errorf("cannot drop type %s: %s uses it", qualifiedName(ref.Schema, ref.Name), user)
+	}
+	for i := range s.Tables {
+		t := &s.Tables[i]
 		for _, col := range t.Columns {
-			if col.Type == name || col.Type == qualified {
-				return fmt.Errorf(
-					"cannot drop type %s: column %s.%s uses it",
-					qualified, qualifiedName(t.Schema, t.Name), col.Name,
-				)
+			if ref, ok := dropping(col.Type, t.Schema); ok {
+				return refErr(ref, fmt.Sprintf("column %s.%s", qualifiedName(t.Schema, t.Name), col.Name))
+			}
+		}
+	}
+	for i := range s.Views {
+		v := &s.Views[i]
+		for _, col := range v.Columns {
+			if ref, ok := dropping(col.Type, v.Schema); ok {
+				return refErr(ref, fmt.Sprintf("column %s.%s of view", qualifiedName(v.Schema, v.Name), col.Name))
+			}
+		}
+	}
+	for _, dt := range s.DomainTypes {
+		if slices.Contains(drop, TypeRef{Schema: dt.Schema, Name: dt.Name}) {
+			continue
+		}
+		if ref, ok := dropping(dt.BaseType, dt.Schema); ok {
+			return refErr(ref, "domain "+qualifiedName(dt.Schema, dt.Name))
+		}
+	}
+	for _, ct := range s.CompositeTypes {
+		if slices.Contains(drop, TypeRef{Schema: ct.Schema, Name: ct.Name}) {
+			continue
+		}
+		for _, attr := range ct.Attributes {
+			if ref, ok := dropping(attr.Type, ct.Schema); ok {
+				return refErr(ref, fmt.Sprintf("attribute %s of composite type %s", attr.Name, qualifiedName(ct.Schema, ct.Name)))
 			}
 		}
 	}

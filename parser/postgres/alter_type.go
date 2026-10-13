@@ -161,17 +161,14 @@ func (r relabel) isEnumCast(tc *pg_query.TypeCast) bool {
 // over it.
 func (p *Parser) isOfEnum(typ, schema string, e *parser.Enum) bool {
 	for range len(p.schema.DomainTypes) + 1 {
-		if strings.HasSuffix(typ, "[]") {
+		ref, isArray := parser.ResolveTypeRef(typ, schema)
+		if isArray {
 			return false
 		}
-		typSchema, typName, ok := strings.Cut(typ, ".")
-		if !ok {
-			typSchema, typName = schema, typ
-		}
-		if typSchema == e.Schema && typName == e.Name {
+		if ref.Schema == e.Schema && ref.Name == e.Name {
 			return true
 		}
-		d := p.findDomainByName(typSchema, typName)
+		d := p.findDomainByName(ref.Schema, ref.Name)
 		if d == nil {
 			return false
 		}
@@ -216,16 +213,12 @@ func (p *Parser) renameType(stmt *pg_query.RenameStmt) error {
 // types of tables and views, composite attributes and domain base types.
 func (p *Parser) renameTypeReferences(schema, oldName, newName string) {
 	retype := func(typ, own string) string {
-		base, isArray := strings.CutSuffix(typ, "[]")
-		typSchema, typName, qualified := strings.Cut(base, ".")
-		if !qualified {
-			typSchema, typName = own, base
-		}
-		if typSchema != schema || typName != oldName {
+		ref, isArray := parser.ResolveTypeRef(typ, own)
+		if ref.Schema != schema || ref.Name != oldName {
 			return typ
 		}
 		out := newName
-		if qualified {
+		if strings.Contains(typ, ".") {
 			out = schema + "." + newName
 		}
 		if isArray {

@@ -310,7 +310,7 @@ func TestMerge_ViewColumnRenameAndDrop(t *testing.T) {
 		parser    func(*testing.T) introspect.Seedable
 		migration string
 		want      map[string][]col
-		// wantErr is a prefix of the error.
+		// wantErr is part of the error.
 		wantErr string
 	}{
 		{
@@ -333,12 +333,13 @@ func TestMerge_ViewColumnRenameAndDrop(t *testing.T) {
 			wantErr:   "merge both mode: view view_def.v: column role reads column role of table view_def.users" + stands,
 		},
 		{
-			// vu's columns come from the catalog, so its type is checked.
+			// The file parser refuses to drop a type a database view uses,
+			// as PostgreSQL does.
 			name:      "postgres/drop type",
 			base:      pgBase,
 			parser:    newPostgres,
 			migration: "ALTER TABLE users ALTER COLUMN role TYPE text; DROP TYPE role_t;",
-			wantErr:   "merge both mode: view view_def.vu: column role has type role_t" + stands,
+			wantErr:   "drop type: cannot drop type view_def.role_t: column view_def.v.role of view uses it",
 		},
 		{
 			name:   "sqlite/rename",
@@ -397,8 +398,8 @@ func TestMerge_ViewColumnRenameAndDrop(t *testing.T) {
 			p := tt.parser(t)
 			err := introspect.Merge(tt.base(t), p, []string{writeMigration(t, tt.migration)})
 			if tt.wantErr != "" {
-				if err == nil || !strings.HasPrefix(err.Error(), tt.wantErr) {
-					t.Fatalf("Merge() error = %v, want one starting %q", err, tt.wantErr)
+				if err == nil || !strings.Contains(err.Error(), tt.wantErr) {
+					t.Fatalf("Merge() error = %v, want one containing %q", err, tt.wantErr)
 				}
 				return
 			}

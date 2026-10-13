@@ -678,49 +678,103 @@ func TestUnresolvedForeignKeys(t *testing.T) {
 }
 
 func TestCheckTypeDropRefs(t *testing.T) {
-	tables := []parser.Table{
-		{
-			Name:   "users",
-			Schema: "public",
-			Columns: []parser.Column{
-				{Name: "id", Type: "bigint"},
-				{Name: "status", Type: "status"},
-				{Name: "role", Type: "public.role"},
+	schema := &parser.Schema{
+		Tables: []parser.Table{
+			{
+				Name:   "users",
+				Schema: "public",
+				Columns: []parser.Column{
+					{Name: "id", Type: "bigint"},
+					{Name: "status", Type: "status"},
+					{Name: "role", Type: "public.role"},
+					{Name: "tags", Type: "tag[]"},
+				},
 			},
+			{
+				Name:    "t",
+				Schema:  "s1",
+				Columns: []parser.Column{{Name: "s", Type: "st"}},
+			},
+		},
+		Views: []parser.View{
+			{Name: "v", Schema: "public", Columns: []parser.Column{{Name: "m", Type: "s2.mood"}}},
+		},
+		DomainTypes: []parser.DomainType{
+			{Name: "de", Schema: "public", BaseType: "e"},
+			{Name: "d2", Schema: "public", BaseType: "d1"},
+		},
+		CompositeTypes: []parser.CompositeType{
+			{Name: "comp", Schema: "public", Attributes: []parser.Attribute{{Name: "x", Type: "e2[]"}}},
 		},
 	}
 
 	tests := []struct {
-		name     string
-		schema   string
-		typeName string
-		wantErr  bool
+		name    string
+		drop    []parser.TypeRef
+		wantErr string
 	}{
 		{
-			name:     "drop type used by column (bare name match) → error",
-			schema:   "public",
-			typeName: "status",
-			wantErr:  true,
+			name:    "bare name in the column's schema",
+			drop:    []parser.TypeRef{{Schema: "public", Name: "status"}},
+			wantErr: "cannot drop type public.status: column public.users.status uses it",
 		},
 		{
-			name:     "drop type used by column (qualified name match) → error",
-			schema:   "public",
-			typeName: "role",
-			wantErr:  true,
+			name:    "qualified name",
+			drop:    []parser.TypeRef{{Schema: "public", Name: "role"}},
+			wantErr: "cannot drop type public.role: column public.users.role uses it",
 		},
 		{
-			name:     "drop type not used by any column → OK",
-			schema:   "public",
-			typeName: "unused_type",
-			wantErr:  false,
+			name:    "array column",
+			drop:    []parser.TypeRef{{Schema: "public", Name: "tag"}},
+			wantErr: "cannot drop type public.tag: column public.users.tags uses it",
+		},
+		{
+			name:    "bare name resolves to the column's own schema",
+			drop:    []parser.TypeRef{{Schema: "s1", Name: "st"}},
+			wantErr: "cannot drop type s1.st: column s1.t.s uses it",
+		},
+		{
+			name: "a same-named type in another schema is free",
+			drop: []parser.TypeRef{{Schema: "s2", Name: "st"}},
+		},
+		{
+			name:    "view column",
+			drop:    []parser.TypeRef{{Schema: "s2", Name: "mood"}},
+			wantErr: "cannot drop type s2.mood: column public.v.m of view uses it",
+		},
+		{
+			name:    "domain base type",
+			drop:    []parser.TypeRef{{Schema: "public", Name: "e"}},
+			wantErr: "cannot drop type public.e: domain public.de uses it",
+		},
+		{
+			name: "a domain dropped with its base type",
+			drop: []parser.TypeRef{{Schema: "public", Name: "d1"}, {Schema: "public", Name: "d2"}},
+		},
+		{
+			name:    "composite attribute of an array type",
+			drop:    []parser.TypeRef{{Schema: "public", Name: "e2"}},
+			wantErr: "cannot drop type public.e2: attribute x of composite type public.comp uses it",
+		},
+		{
+			name: "a composite type dropped with its attribute's type",
+			drop: []parser.TypeRef{{Schema: "public", Name: "e2"}, {Schema: "public", Name: "comp"}},
+		},
+		{
+			name: "unused type",
+			drop: []parser.TypeRef{{Schema: "public", Name: "unused_type"}},
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			err := parser.CheckTypeDropRefs(tables, tt.schema, tt.typeName)
-			if (err != nil) != tt.wantErr {
-				t.Errorf("CheckTypeDropRefs(%s.%s) error = %v, wantErr %v", tt.schema, tt.typeName, err, tt.wantErr)
+			err := parser.CheckTypeDropRefs(schema, tt.drop)
+			got := ""
+			if err != nil {
+				got = err.Error()
+			}
+			if got != tt.wantErr {
+				t.Errorf("CheckTypeDropRefs(%v) error = %q, want %q", tt.drop, got, tt.wantErr)
 			}
 		})
 	}

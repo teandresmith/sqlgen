@@ -1003,22 +1003,19 @@ func (p *Parser) moveTableKey(oldKey, newKey string) {
 }
 
 func (p *Parser) parseDrop(stmt *pg_query.DropStmt) error {
+	// PostgreSQL drops the objects of one DROP TYPE or DROP DOMAIN together.
+	if stmt.RemoveType == pg_query.ObjectType_OBJECT_TYPE {
+		return p.dropTypes(p.dropTypeRefs(stmt), "type")
+	}
+	if stmt.RemoveType == pg_query.ObjectType_OBJECT_DOMAIN {
+		return p.dropTypes(p.dropTypeRefs(stmt), "domain")
+	}
 	for _, obj := range stmt.Objects {
 		names := extractDropObjectNames(obj)
 		switch stmt.RemoveType {
 		case pg_query.ObjectType_OBJECT_TABLE:
 			schema, name := p.splitQualifiedName(names)
 			if err := p.dropTable(schema, name); err != nil {
-				return err
-			}
-		case pg_query.ObjectType_OBJECT_TYPE:
-			schema, name := p.splitQualifiedName(names)
-			if err := p.dropType(schema, name); err != nil {
-				return err
-			}
-		case pg_query.ObjectType_OBJECT_DOMAIN:
-			schema, name := p.splitQualifiedName(names)
-			if err := p.dropDomain(schema, name); err != nil {
 				return err
 			}
 		case pg_query.ObjectType_OBJECT_VIEW, pg_query.ObjectType_OBJECT_MATVIEW:
@@ -1036,6 +1033,16 @@ func (p *Parser) parseDrop(stmt *pg_query.DropStmt) error {
 		}
 	}
 	return nil
+}
+
+// dropTypeRefs names the objects of a DROP TYPE or DROP DOMAIN statement.
+func (p *Parser) dropTypeRefs(stmt *pg_query.DropStmt) []parser.TypeRef {
+	refs := make([]parser.TypeRef, 0, len(stmt.Objects))
+	for _, obj := range stmt.Objects {
+		schema, name := p.splitQualifiedName(extractDropObjectNames(obj))
+		refs = append(refs, parser.TypeRef{Schema: schema, Name: name})
+	}
+	return refs
 }
 
 // extractDropObjectNames extracts name parts from a DROP statement's object node.
@@ -1154,26 +1161,32 @@ func (p *Parser) dropIndex(schema, name string) {
 	}
 }
 
-func (p *Parser) dropType(schema, name string) error {
-	if err := parser.CheckTypeDropRefs(p.schema.Tables, schema, name); err != nil {
-		return fmt.Errorf("drop type %s.%s: %w", schema, name, err)
+// dropTypes drops the objects of one DROP TYPE (kind "type") or DROP DOMAIN
+// (kind "domain") statement. PostgreSQL drops them together, so a reference
+// from one to another does not block the drop. DROP TYPE drops a domain too;
+// DROP DOMAIN refuses an enum or composite type.
+func (p *Parser) dropTypes(refs []parser.TypeRef, kind string) error {
+	if kind == "domain" {
+		for _, ref := range refs {
+			if p.findEnumByName(ref.Schema, ref.Name) != nil || p.findCompositeTypeByName(ref.Schema, ref.Name) != nil {
+				return fmt.Errorf("drop domain: %s.%s is not a domain", ref.Schema, ref.Name)
+			}
+		}
 	}
-	p.schema.Enums = slices.DeleteFunc(p.schema.Enums, func(e parser.Enum) bool {
-		return e.Schema == schema && e.Name == name
-	})
-	p.schema.CompositeTypes = slices.DeleteFunc(p.schema.CompositeTypes, func(ct parser.CompositeType) bool {
-		return ct.Schema == schema && ct.Name == name
-	})
-	return nil
-}
-
-func (p *Parser) dropDomain(schema, name string) error {
-	if err := parser.CheckTypeDropRefs(p.schema.Tables, schema, name); err != nil {
-		return fmt.Errorf("drop domain %s.%s: %w", schema, name, err)
+	if err := parser.CheckTypeDropRefs(p.schema, refs); err != nil {
+		return fmt.Errorf("drop %s: %w", kind, err)
 	}
-	p.schema.DomainTypes = slices.DeleteFunc(p.schema.DomainTypes, func(dt parser.DomainType) bool {
-		return dt.Schema == schema && dt.Name == name
-	})
+	for _, ref := range refs {
+		p.schema.DomainTypes = slices.DeleteFunc(p.schema.DomainTypes, func(dt parser.DomainType) bool {
+			return dt.Schema == ref.Schema && dt.Name == ref.Name
+		})
+		p.schema.Enums = slices.DeleteFunc(p.schema.Enums, func(e parser.Enum) bool {
+			return e.Schema == ref.Schema && e.Name == ref.Name
+		})
+		p.schema.CompositeTypes = slices.DeleteFunc(p.schema.CompositeTypes, func(ct parser.CompositeType) bool {
+			return ct.Schema == ref.Schema && ct.Name == ref.Name
+		})
+	}
 	return nil
 }
 
@@ -1658,22 +1671,29 @@ func removeConstraintFromColumns(table *parser.Table, constraintName string) {
 // written bare when it lives in schema and schema-qualified when it lives in
 // another, as the introspector writes it; an unqualified name means the type
 // in the default schema. Every other type is written as typeNameToString
-// writes it.
+// writes it, less a default-schema qualifier: the introspector writes such a
+// type with format_type, which leaves out the schema of a type on the
+// connection's search_path, and that search_path is assumed to resolve the
+// default schema, as an unqualified name in the DDL does.
 func (p *Parser) typeName(tn *pg_query.TypeName, schema string) string {
 	written := typeNameToString(tn)
 	if tn == nil {
 		return written
 	}
 	var typSchema, typName string
+	qualified := false
 	switch names := extractStringList(tn.Names); len(names) {
 	case 1:
 		typSchema, typName = p.defaultSchema, names[0]
 	case 2:
-		typSchema, typName = names[0], names[1]
+		typSchema, typName, qualified = names[0], names[1], true
 	default:
 		return written
 	}
 	if !p.isUserType(typSchema, typName) {
+		if qualified && typSchema == p.defaultSchema {
+			return strings.TrimPrefix(written, typSchema+".")
+		}
 		return written
 	}
 	name := relativeTypeName(typSchema, typName, schema)
@@ -1686,15 +1706,11 @@ func (p *Parser) typeName(tn *pg_query.TypeName, schema string) string {
 // retargetTypeName rewrites a type typeName wrote for schema from as it is
 // written for schema to.
 func (p *Parser) retargetTypeName(typ, from, to string) string {
-	base, isArray := strings.CutSuffix(typ, "[]")
-	typSchema, typName, qualified := strings.Cut(base, ".")
-	if !qualified {
-		typSchema, typName = from, base
-	}
-	if !p.isUserType(typSchema, typName) {
+	ref, isArray := parser.ResolveTypeRef(typ, from)
+	if !p.isUserType(ref.Schema, ref.Name) {
 		return typ
 	}
-	name := relativeTypeName(typSchema, typName, to)
+	name := relativeTypeName(ref.Schema, ref.Name, to)
 	if isArray {
 		name += "[]"
 	}

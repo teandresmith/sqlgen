@@ -146,6 +146,35 @@ CREATE TABLE pgi_types.wide (
 	assertSchemaParity(t, "postgres", parsed, introspected)
 }
 
+// TestPostgresIntrospect_DefaultSchemaQualifiedTypes checks that a type the
+// DDL does not declare, qualified with the default schema, is spelled the same
+// under both sources: format_type leaves out a schema on the search_path, so
+// the parser leaves out the default schema.
+func TestPostgresIntrospect_DefaultSchemaQualifiedTypes(t *testing.T) {
+	requireDatabases(t)
+	ddl := `
+CREATE EXTENSION IF NOT EXISTS citext;
+CREATE SCHEMA pgi_qual;
+CREATE TABLE pgi_qual.t (
+	id int PRIMARY KEY,
+	c public.citext,
+	cs public.citext[],
+	b citext
+)`
+	parsed, introspected := pgParityCase(t, "DROP SCHEMA IF EXISTS pgi_qual CASCADE", ddl, "pgi_qual")
+	want := map[string]string{"id": "integer", "c": "citext", "cs": "citext[]", "b": "citext"}
+	typeOf := func(c parser.Column) string { return c.Type }
+	for _, side := range []struct {
+		name   string
+		schema *parser.Schema
+	}{{"parsed", parsed}, {"introspected", introspected}} {
+		if diff := cmp.Diff(want, qualifiedColumnField(t, side.schema, "pgi_qual", "t", typeOf)); diff != "" {
+			t.Errorf("%s column types mismatch (-want +got):\n%s", side.name, diff)
+		}
+	}
+	assertSchemaParity(t, "postgres", parsed, introspected)
+}
+
 func TestPostgresIntrospect_Defaults(t *testing.T) {
 	requireDatabases(t)
 	ddl := `

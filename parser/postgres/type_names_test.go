@@ -57,6 +57,14 @@ func TestTypeNamesFollowColumnSchema(t *testing.T) {
 			want:  map[string]string{"x": "app.citext", "y": "citext", "z": "integer", "w": "text"},
 		},
 		{
+			// format_type writes these bare under the default search_path
+			// (PostgreSQL 17), so the introspector does too.
+			name:  "an undeclared type qualified with the default schema is written bare",
+			ddl:   `CREATE TABLE r (id int); CREATE TABLE app.t (h public.hstore, ha public.hstore[], rr public.r, c ext.citext)`,
+			table: "app.t",
+			want:  map[string]string{"h": "hstore", "ha": "hstore[]", "rr": "r", "c": "ext.citext"},
+		},
+		{
 			name:  "ALTER COLUMN TYPE",
 			ddl:   `CREATE TABLE app.t (e text, r text); ALTER TABLE app.t ALTER COLUMN e TYPE app.status_enum, ALTER COLUMN r TYPE other.region`,
 			table: "app.t",
@@ -126,6 +134,32 @@ CREATE DOMAIN other.status_d AS app.status_enum;
 	wantBase := map[string]string{"app.positive_int": "integer", "other.region_d": "region", "other.status_d": "app.status_enum"}
 	if diff := cmp.Diff(wantBase, gotBase); diff != "" {
 		t.Errorf("domain base types mismatch (-want +got):\n%s", diff)
+	}
+}
+
+// TestTypeNamesStripDefaultSchema checks that an undeclared type qualified
+// with the parser's default schema is written bare wherever a type is written,
+// and that only the default schema is stripped.
+func TestTypeNamesStripDefaultSchema(t *testing.T) {
+	ddl := `
+CREATE TABLE t (c app.citext, h public.hstore);
+CREATE DOMAIN d AS app.citext;
+CREATE TYPE comp AS (c app.citext[]);
+`
+	p := postgres.New("app")
+	if err := p.Parse("test.sql", []byte(ddl)); err != nil {
+		t.Fatalf("Parse() error: %v", err)
+	}
+	s := p.Schema()
+	got := map[string]string{
+		"t.c":    s.Tables[0].Columns[0].Type,
+		"t.h":    s.Tables[0].Columns[1].Type,
+		"d":      s.DomainTypes[0].BaseType,
+		"comp.c": s.CompositeTypes[0].Attributes[0].Type,
+	}
+	want := map[string]string{"t.c": "citext", "t.h": "public.hstore", "d": "citext", "comp.c": "citext[]"}
+	if diff := cmp.Diff(want, got); diff != "" {
+		t.Errorf("type names mismatch (-want +got):\n%s", diff)
 	}
 }
 

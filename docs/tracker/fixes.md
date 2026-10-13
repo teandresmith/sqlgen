@@ -22,85 +22,6 @@
 ## Open
 
 <!-- fixes:open:begin -->
-### FIX-312
-
-- **Status:** Open
-- **Severity:** tracked
-- **Origin:** phase 30, `parser` (`CheckTypeDropRefs`) + `parser/postgres` (type names)
-- **Surfaced by:** backlog sweep 2026-10-12 (backlog lines from 30.4)
-- **Vetted:** corrected at `9b58288b` (2026-10-12)
-
-**Issue.** Type references are compared inconsistently on PostgreSQL. Measured on PG17: `s
-status_enum[]; DROP TYPE status_enum` → parser drops the enum (PG: `2BP01 cannot drop type …`); `s1.t.s
-s1.st; DROP TYPE s2.st` → parser errors "cannot drop type s2.st: column s1.t.s uses it" (PG succeeds);
-`CREATE DOMAIN de AS e; DROP TYPE e`, a composite attribute of type `e`, and `s dd[]; DROP DOMAIN dd`
-→ parser drops silently (PG refuses). Separately, a non-user type qualified with a schema on the
-search_path is spelled differently by source: `public.hstore`, `public.r` → files `public.hstore`,
-database `hstore`, so an `overrides.types.hstore` key matches only the database column.
-
-**Root cause.** `CheckTypeDropRefs` (`parser/schema.go:488`, PG is its only caller,
-`postgres.go:707,720`) compares `col.Type` to the bare or qualified name only and ignores arrays,
-domain base types and composite attributes; the introspector writes non-user types with
-`format_type` (search_path-relative) while the parser writes them as the DDL spells them.
-
-**Suggested fix.**
-- `parser/schema.go`: new `TypeRef{Schema, Name}` and `ResolveTypeRef(typ, owner)` (bare = owner's schema,
-  strip `[]`); `CheckTypeDropRefs(s *Schema, drop []TypeRef)` compares (schema, name) exactly over table
-  columns, view columns (seeded under `both`), `DomainType.BaseType` and composite attributes, skipping a
-  domain or composite that is itself in the drop set.
-- `parser/postgres/postgres.go`: `parseDrop` gathers all objects of one DROP TYPE/DOMAIN and checks them as a
-  set (`dropType` / `dropDomain` merge into `dropTypes(refs, kind)`); `retargetTypeName` reuses
-  `ResolveTypeRef`; `typeName` strips an `<input.schema>.` qualifier from a 2-part name that is not a user
-  type. Error text: "drop type: cannot drop type public.e: domain public.de uses it".
-- Auto-accepted the recommended option on 2026-10-12 (`/fix` auto-accept rule; user confirmed no veto): the
-  parser strips an `<input.schema>.` qualifier from a non-user type, matching `format_type` under the
-  default search_path, and a new PRD §5.2 PostgreSQL bullet states that the connection's search_path is
-  assumed to resolve `input.schema` (the introspector connects with the user's conn string as is,
-  `parser/introspect/postgres.go:44`; only the viewdef tx sets `search_path=''`); because only the parser
-  has the information and the alternative mis-spells the commoner bare case; no churn; new exported
-  `parser.TypeRef`, `parser.ResolveTypeRef` and the changed `CheckTypeDropRefs` signature are parser-module
-  only. Consequences: a `public.hstore` column in a public table becomes `hstore` (both keys reach it); in
-  `app.t` the key `"public.hstore"` no longer reaches it under files, matching database; with a non-public
-  `input.schema` off the connection's search_path, DDL `app.citext` becomes `citext` while `format_type`
-  writes `app.citext` — the PRD bullet states the assumption.
-- PRD §5.6 drop validation extended (array, domain, composite and view references; owner-relative names;
-  same-statement drops).
-- Tests: `TestCheckTypeDropRefs` (11 cases), `TestDropTypeReferences` (9 DDL cases mirroring PG17, incl. both
-  drop-set cases), `TestTypeNamesStripDefaultSchema`, a case in `TestTypeNamesFollowColumnSchema`,
-  integration `TestPostgresIntrospect_DefaultSchemaQualifiedTypes` (`public.citext`, `public.citext[]`,
-  parity); `multifile_test.go` updated for the signature.
-- Corrected vs. the original suggestion (vet 2026-10-12): check the statement's whole drop set (checking
-  each object in turn would reject `DROP TYPE e4, comp4` and `DROP DOMAIN d1, d2`, which PG17 accepts and the
-  parser accepts at base); cover view columns (same root cause and site; PG refuses a type drop a view uses);
-  share `ResolveTypeRef` through `parser`; the PRD did not already state the search_path assumption (stale
-  claim) — it is added.
-- Prototype results, run at `9b58288b` on 2026-10-12: PG17 `2BP01` for `status_enum[]` column, domain over
-  enum, composite attribute, domain array column, domain over domain, composite attribute of an array type;
-  PG17 accepts `s1.t.s s1.st; DROP TYPE s2.st` and `DROP TYPE e4, comp4`. Parser at base: array column
-  err=<nil>; cross schema → "drop type s2.st: cannot drop type s2.st: column s1.t.s uses it"; domain base,
-  composite attr, domain array, domain over domain → err=<nil>. `format_type` (PG17): default search_path →
-  `hstore`, `r`, `comp`, `ext.citext`; `search_path=''` → `public.hstore` …; introspector at base `hstore`,
-  `r`, `ext.citext`, `hstore[]` vs parser `public.hstore`, `public.r`, `ext.citext`, `public.hstore[]`.
-  Gates: parser `gofumpt -l` clean, `golangci-lint` 0 issues, `go test -race -count=1 ./...` ok (incl.
-  testcontainers); cmd/sqlgen `TestE2EGoldenFiles` ok, `./cli/... ./gotype/...` ok; `make update-golden` and
-  `update-golden-e2e` no changes; `make refs-check` ok. Fail-first: `[]` kept → array cases fail
-  (`Parse() error = "", want "…cannot drop type public.status_enum: column public.t1.s uses it"`); bare name
-  matches any schema → `error = "cannot drop type s2.st: …", want ""`; view loop removed → `error = "", want
-  "…column public.v.m of view uses it"`; domain loop removed → `want "…domain public.de uses it"`; composite
-  loop removed → `want "…attribute x of composite type public.comp uses it"`; drop-set skip removed or per-object
-  check → `error = "…cannot drop type public.e4: attribute x of composite type public.comp4 uses it", want
-  ""`; strip removed → `"h": "hstore"` vs `"public.hstore"` and the parity diff; existing suite without the
-  fix passes. Golden churn: none. Patch: `.claude/prototypes/FIX-312.patch` (8 files, +330/-86).
-
-**References.**
-- PRD §5.2, §5.5 (`docs/PRD.md:1462-1463`: unqualified names resolve to `input.schema` "as PostgreSQL's
-  default search_path resolves it"), §5.6 "Drop validation" (`:1594`), §6.1, §6.3, §7.1 (override key
-  matching, `:1702-1712`); `docs/design/INTROSPECTION.md:67` (the CLI sets no search_path).
-- Backlog lines absorbed: 2026-10-05 `CheckTypeDropRefs` (30.4); 2026-10-05 non-user type
-  qualification (30.4).
-
-**Resolution notes.** _Filled in by /fix resolve._
-
 ### FIX-313
 
 - **Status:** Open
@@ -2099,6 +2020,92 @@ DEFAULT.
 ## Resolved
 
 <!-- fixes:resolved:begin -->
+
+### FIX-312
+
+- **Status:** Resolved
+- **Severity:** tracked
+- **Origin:** phase 30, `parser` (`CheckTypeDropRefs`) + `parser/postgres` (type names)
+- **Surfaced by:** backlog sweep 2026-10-12 (backlog lines from 30.4)
+- **Vetted:** corrected at `9b58288b` (2026-10-12)
+
+**Issue.** Type references are compared inconsistently on PostgreSQL. Measured on PG17: `s
+status_enum[]; DROP TYPE status_enum` → parser drops the enum (PG: `2BP01 cannot drop type …`); `s1.t.s
+s1.st; DROP TYPE s2.st` → parser errors "cannot drop type s2.st: column s1.t.s uses it" (PG succeeds);
+`CREATE DOMAIN de AS e; DROP TYPE e`, a composite attribute of type `e`, and `s dd[]; DROP DOMAIN dd`
+→ parser drops silently (PG refuses). Separately, a non-user type qualified with a schema on the
+search_path is spelled differently by source: `public.hstore`, `public.r` → files `public.hstore`,
+database `hstore`, so an `overrides.types.hstore` key matches only the database column.
+
+**Root cause.** `CheckTypeDropRefs` (`parser/schema.go:519`, PG is its only caller,
+`postgres.go:1158,1171`) compares `col.Type` to the bare or qualified name only and ignores arrays,
+domain base types and composite attributes; the introspector writes non-user types with
+`format_type` (search_path-relative) while the parser writes them as the DDL spells them.
+
+**Suggested fix.**
+- `parser/schema.go`: new `TypeRef{Schema, Name}` and `ResolveTypeRef(typ, owner)` (bare = owner's schema,
+  strip `[]`); `CheckTypeDropRefs(s *Schema, drop []TypeRef)` compares (schema, name) exactly over table
+  columns, view columns (seeded under `both`), `DomainType.BaseType` and composite attributes, skipping a
+  domain or composite that is itself in the drop set.
+- `parser/postgres/postgres.go`: `parseDrop` gathers all objects of one DROP TYPE/DOMAIN and checks them as a
+  set (`dropType` / `dropDomain` merge into `dropTypes(refs, kind)`); `retargetTypeName` reuses
+  `ResolveTypeRef`; `typeName` strips an `<input.schema>.` qualifier from a 2-part name that is not a user
+  type. Error text: "drop type: cannot drop type public.e: domain public.de uses it".
+- Auto-accepted the recommended option on 2026-10-12 (`/fix` auto-accept rule; user confirmed no veto): the
+  parser strips an `<input.schema>.` qualifier from a non-user type, matching `format_type` under the
+  default search_path, and a new PRD §5.2 PostgreSQL bullet states that the connection's search_path is
+  assumed to resolve `input.schema` (the introspector connects with the user's conn string as is,
+  `parser/introspect/postgres.go:44`; only the viewdef tx sets `search_path=''`); because only the parser
+  has the information and the alternative mis-spells the commoner bare case; no churn; new exported
+  `parser.TypeRef`, `parser.ResolveTypeRef` and the changed `CheckTypeDropRefs` signature are parser-module
+  only. Consequences: a `public.hstore` column in a public table becomes `hstore` (both keys reach it); in
+  `app.t` the key `"public.hstore"` no longer reaches it under files, matching database; with a non-public
+  `input.schema` off the connection's search_path, DDL `app.citext` becomes `citext` while `format_type`
+  writes `app.citext` — the PRD bullet states the assumption.
+- PRD §5.6 drop validation extended (array, domain, composite and view references; owner-relative names;
+  same-statement drops).
+- Tests: `TestCheckTypeDropRefs` (11 cases), `TestDropTypeReferences` (11 DDL cases mirroring PG17, incl. both
+  drop-set cases), `TestTypeNamesStripDefaultSchema`, a case in `TestTypeNamesFollowColumnSchema`,
+  integration `TestPostgresIntrospect_DefaultSchemaQualifiedTypes` (`public.citext`, `public.citext[]`,
+  parity); `multifile_test.go` updated for the signature.
+- Corrected vs. the original suggestion (vet 2026-10-12): check the statement's whole drop set (checking
+  each object in turn would reject `DROP TYPE e4, comp4` and `DROP DOMAIN d1, d2`, which PG17 accepts and the
+  parser accepts at base); cover view columns (same root cause and site; PG refuses a type drop a view uses);
+  share `ResolveTypeRef` through `parser`; the PRD did not already state the search_path assumption (stale
+  claim) — it is added.
+- Prototype results, run at `9b58288b` on 2026-10-12: PG17 `2BP01` for `status_enum[]` column, domain over
+  enum, composite attribute, domain array column, domain over domain, composite attribute of an array type;
+  PG17 accepts `s1.t.s s1.st; DROP TYPE s2.st` and `DROP TYPE e4, comp4`. Parser at base: array column
+  err=<nil>; cross schema → "drop type s2.st: cannot drop type s2.st: column s1.t.s uses it"; domain base,
+  composite attr, domain array, domain over domain → err=<nil>. `format_type` (PG17): default search_path →
+  `hstore`, `r`, `comp`, `ext.citext`; `search_path=''` → `public.hstore` …; introspector at base `hstore`,
+  `r`, `ext.citext`, `hstore[]` vs parser `public.hstore`, `public.r`, `ext.citext`, `public.hstore[]`.
+  Gates: parser `gofumpt -l` clean, `golangci-lint` 0 issues, `go test -race -count=1 ./...` ok (incl.
+  testcontainers); cmd/sqlgen `TestE2EGoldenFiles` ok, `./cli/... ./gotype/...` ok; `make update-golden` and
+  `update-golden-e2e` no changes; `make refs-check` ok. Fail-first: `[]` kept → array cases fail
+  (`Parse() error = "", want "…cannot drop type public.status_enum: column public.t1.s uses it"`); bare name
+  matches any schema → `error = "cannot drop type s2.st: …", want ""`; view loop removed → `error = "", want
+  "…column public.v.m of view uses it"`; domain loop removed → `want "…domain public.de uses it"`; composite
+  loop removed → `want "…attribute x of composite type public.comp uses it"`; drop-set skip removed or per-object
+  check → `error = "…cannot drop type public.e4: attribute x of composite type public.comp4 uses it", want
+  ""`; strip removed → `"h": "hstore"` vs `"public.hstore"` and the parity diff; existing suite without the
+  fix passes. Golden churn: none. Patch: `.claude/prototypes/FIX-312.patch` (8 files, +330/-86).
+- Auto-accepted the recommended option on 2026-10-13 (`/fix` auto-accept rule): FIX-309 (`accaf642`, landed after
+  the vet) pinned `TestMerge_ViewColumnRenameAndDrop/postgres/drop type` to its catalog-view merge error ("view
+  view_def.vu: column role has type role_t, …"), which this fix's view-column check now pre-empts at parse time
+  ("drop type: cannot drop type view_def.role_t: column view_def.v.role of view uses it") → keep the parser's refusal
+  and repoint the case (substring match), adding a PRD §6.1 sentence that PostgreSQL refuses the `DROP TYPE` first;
+  because gates are green, neither option churns goldens or adds public surface, and the view check is this entry's
+  ruled scope while the outcome stays the error PRD §6.1 states, naming the view and its column.
+
+**References.**
+- PRD §5.2, §5.5 (`docs/PRD.md:1469`: unqualified names resolve to `input.schema` "as PostgreSQL's
+  default search_path resolves it"), §5.6 "Drop validation" (`:1598`), §6.1, §6.3, §7.1 (override key
+  matching, `:1703-1721`); `docs/design/INTROSPECTION.md:67` (the CLI sets no search_path).
+- Backlog lines absorbed: 2026-10-05 `CheckTypeDropRefs` (30.4); 2026-10-05 non-user type
+  qualification (30.4).
+
+**Resolution notes.** Landed from the vetted prototype, applied `--3way`: `parser/postgres/postgres.go` `parseDrop` conflicted with FIX-303/304 (`b3abc88b`, `a0090f9b`: per-object VIEW/MATVIEW, INDEX and SEQUENCE cases); resolved by dispatching DROP TYPE and DROP DOMAIN to `dropTypes(dropTypeRefs(stmt), kind)` as a set before the per-object loop, which keeps the landed cases. PRD §5.2 hunk applied clean over FIX-301..311. Semantic overlap with FIX-305 (`c695fd6f`) per its landing note: `isOfEnum` and `renameTypeReferences.retype` (`parser/postgres/alter_type.go`) now read types with `parser.ResolveTypeRef`. Composition with FIX-309 (`accaf642`): seeded database views are checked by `CheckTypeDropRefs`, so `TestMerge_ViewColumnRenameAndDrop/postgres/drop type` now fails at parse time with this fix's error; the case is repointed (wantErr matched as a substring) and PRD §6.1 states that PostgreSQL refuses the `DROP TYPE` first (auto-accepted, see Suggested fix). Changes: `TypeRef`, `ResolveTypeRef` and the set-shaped `CheckTypeDropRefs(s, drop)` in `parser/schema.go` (table and view columns, domain base types, composite attributes, arrays, owner-relative names, same-statement drops); `typeName` strips an `input.schema` qualifier from a non-user type; PRD §5.2 and §5.6 bullets. Tests: `TestCheckTypeDropRefs`, `TestDropTypeReferences`, `TestTypeNamesStripDefaultSchema`, a `TestTypeNamesFollowColumnSchema` case, integration `TestPostgresIntrospect_DefaultSchemaQualifiedTypes`. Fail-first re-run on the final code: `[]` kept → array cases fail; owner-relative read replaced → table/domain/cross-schema cases fail; view loop off → `want "…column public.v.m of view uses it"`; drop-set skip off → `CheckTypeDropRefs([{public d1} {public d2}]) error = "cannot drop type public.d1: domain public.d2 uses it", want ""` and `TestDropTypeReferences` fail; strip off → `TestTypeNamesStripDefaultSchema`, `TestTypeNamesFollowColumnSchema` fail. Review (verify): the drop set ignored each object's kind, so `DROP DOMAIN d, comp` dropped `d` and kept `comp` (PG17: `"comp" is not a domain`), and `DROP TYPE e, de` kept the domain `de` (PG17 drops both); fixed in `dropTypes` (DROP DOMAIN refuses an enum or composite type, DROP TYPE deletes a domain too), with two `TestDropTypeReferences` cases that fail without it. Root cause and References line refs corrected to HEAD. Re-review: `dropTypes` comment narrowed to what it refuses; PRD §5.6 states that `DROP TYPE` drops a domain and `DROP DOMAIN` on an enum or composite type is an error; pre-existing silent accept of unknown type names and ignored `CASCADE` went to the backlog. A catalog-columns view check left without a test path is in the backlog; a false refusal from the strip (`public.r` row-type column in `app.t` read as enum `app.r`, so `DROP TYPE app.r` is refused) is reported as a candidate, not widened here. Gates: `make check` ok, parser `go test -race -count=1 ./...` ok (testcontainers), `make update-golden` / `update-golden-e2e` no churn (matches vet), `make check-examples` ok.
 
 ### FIX-311
 

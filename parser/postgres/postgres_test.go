@@ -1179,6 +1179,83 @@ func TestDropDomainWithColumnReference(t *testing.T) {
 	}
 }
 
+// TestDropTypeReferences checks DROP TYPE and DROP DOMAIN against what
+// PostgreSQL 17 does with the same DDL: a drop it refuses with 2BP01 is an
+// error, and one it accepts removes the type.
+func TestDropTypeReferences(t *testing.T) {
+	tests := []struct {
+		name    string
+		sql     string
+		wantErr string // empty: PostgreSQL accepts the drop
+	}{
+		{
+			name:    "array column",
+			sql:     `CREATE TYPE status_enum AS ENUM ('a'); CREATE TABLE t1 (s status_enum[]); DROP TYPE status_enum;`,
+			wantErr: "parsing test.sql: drop type: cannot drop type public.status_enum: column public.t1.s uses it",
+		},
+		{
+			name: "a same-named type in another schema",
+			sql: `CREATE TYPE s1.st AS ENUM ('a'); CREATE TYPE s2.st AS ENUM ('a');
+				CREATE TABLE s1.t (s s1.st); DROP TYPE s2.st;`,
+		},
+		{
+			name:    "DROP DOMAIN naming a composite type",
+			sql:     `CREATE DOMAIN d AS int; CREATE TYPE comp AS (x d); DROP DOMAIN d, comp;`,
+			wantErr: "parsing test.sql: drop domain: public.comp is not a domain",
+		},
+		{
+			name: "DROP TYPE drops a domain with its base type",
+			sql:  `CREATE TYPE e AS ENUM ('a'); CREATE DOMAIN de AS e; DROP TYPE e, de; CREATE DOMAIN de AS int;`,
+		},
+		{
+			name:    "domain base type",
+			sql:     `CREATE TYPE e AS ENUM ('a'); CREATE DOMAIN de AS e; DROP TYPE e;`,
+			wantErr: "parsing test.sql: drop type: cannot drop type public.e: domain public.de uses it",
+		},
+		{
+			name:    "domain over a domain",
+			sql:     `CREATE DOMAIN d1 AS int; CREATE DOMAIN d2 AS d1; DROP DOMAIN d1;`,
+			wantErr: "parsing test.sql: drop domain: cannot drop type public.d1: domain public.d2 uses it",
+		},
+		{
+			name:    "composite attribute",
+			sql:     `CREATE TYPE e2 AS ENUM ('a'); CREATE TYPE comp AS (x e2); DROP TYPE e2;`,
+			wantErr: "parsing test.sql: drop type: cannot drop type public.e2: attribute x of composite type public.comp uses it",
+		},
+		{
+			name:    "composite attribute of an array type",
+			sql:     `CREATE TYPE e3 AS ENUM ('a'); CREATE TYPE comp3 AS (x e3[]); DROP TYPE e3;`,
+			wantErr: "parsing test.sql: drop type: cannot drop type public.e3: attribute x of composite type public.comp3 uses it",
+		},
+		{
+			name:    "domain array column",
+			sql:     `CREATE DOMAIN dd AS int; CREATE TABLE t5 (s dd[]); DROP DOMAIN dd;`,
+			wantErr: "parsing test.sql: drop domain: cannot drop type public.dd: column public.t5.s uses it",
+		},
+		{
+			name: "a composite type dropped with its attribute's type",
+			sql:  `CREATE TYPE e4 AS ENUM ('a'); CREATE TYPE comp4 AS (x e4); DROP TYPE e4, comp4;`,
+		},
+		{
+			name: "a domain dropped with its base domain",
+			sql:  `CREATE DOMAIN d1 AS int; CREATE DOMAIN d2 AS d1; DROP DOMAIN d1, d2;`,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			p := postgres.New("public")
+			err := p.Parse("test.sql", []byte(tt.sql))
+			got := ""
+			if err != nil {
+				got = err.Error()
+			}
+			if got != tt.wantErr {
+				t.Fatalf("Parse() error = %q, want %q", got, tt.wantErr)
+			}
+		})
+	}
+}
+
 func TestAlterTableIfExists(t *testing.T) {
 	p := postgres.New("")
 	if err := p.Parse("test.sql", []byte(`CREATE TABLE users (id integer PRIMARY KEY);`)); err != nil {

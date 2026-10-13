@@ -191,7 +191,7 @@ func (p *testParser) parseCreateEnum(rawName, values string) error {
 
 func (p *testParser) parseDropType(rawName string) error {
 	schema, name := p.qualifyName(rawName)
-	if err := parser.CheckTypeDropRefs(p.schema.Tables, schema, name); err != nil {
+	if err := parser.CheckTypeDropRefs(p.schema, []parser.TypeRef{{Schema: schema, Name: name}}); err != nil {
 		return fmt.Errorf("drop type %s: %w", keyFor(schema, name), err)
 	}
 	p.schema.Enums = slices.DeleteFunc(p.schema.Enums, func(e parser.Enum) bool {
