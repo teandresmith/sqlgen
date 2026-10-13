@@ -10,10 +10,10 @@ import _ "embed"
 var schemaV1 []byte
 
 // SchemaV1 returns the embedded canonical JSON Schema for sqlgen.yml. The
-// schema covers structure, key names and closed value sets only — cross-field
-// rules (driver/dialect pairing, required connection, soft-delete column type
-// compatibility, cursor-key existence) live in Validate and are not expressible
-// in JSON Schema. The returned bytes are read-only.
+// schema covers structure, key names, closed value sets and a relationship's
+// link key; the other cross-field rules, such as driver/dialect pairing,
+// required connection, soft-delete column type compatibility and cursor-key
+// existence, live in Validate. The returned bytes are read-only.
 func SchemaV1() []byte { return schemaV1 }
 
 // SchemaV1URL is the published location of the schema returned by [SchemaV1].

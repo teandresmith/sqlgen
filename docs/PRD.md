@@ -799,7 +799,7 @@ When both `column_map` and `type_map` specify a type for the same column, `colum
 |-------|------|----------|-------------|
 | `name` | `string` | Yes | Go field name for the relationship (e.g., `"Tags"`). |
 | `type` | `string` | Yes | Relationship cardinality: `o2o`, `o2m`, `m2m`, or the long spellings `one_to_one`, `one_to_many`, `many_to_many` (case-insensitive). Any other value, or an omitted `type`, is a config error. |
-| `side` | `string` | No (O2O only) | Which end of the edge this entry represents. `parent` (default) for the FK-holder side; `child` for the inverse view from the referenced side. The manifest emits `kind: "o2o"` for `parent` and `kind: "m2o"` for `child`. Ignored for `o2m` and `m2m` (auto-detection emits both peers as parent-side). |
+| `side` | `string` | No (O2O only) | Which end of the edge this entry represents. `parent` (default) for the FK-holder side; `child` for the inverse view from the referenced side. Either value is case-insensitive. The manifest emits `kind: "o2o"` for `parent` and `kind: "m2o"` for `child`. Ignored for `o2m` and `m2m` (auto-detection emits both peers as parent-side). |
 | `table` | `string` | Yes | Related table name (bare or schema-qualified). |
 | `fk` | `string` | Yes (O2O/O2M) | The FK column that creates the link. For O2M: column on the **related** table pointing to this table's PK. For O2O: column on **this** table pointing to the related table's PK (belongs-to), or on the **related** table pointing to this table's PK (has-one); which one is derived from where the column is declared ([13.1](#131-relationship-types)). |
 | `junction` | `string` | Yes (M2M) | Junction table name (bare or schema-qualified). FK column names are inferred from the linked table names (e.g., `product_id`, `tag_id`). |
@@ -1279,11 +1279,13 @@ filename.
 structure, key names, value types, and closed value sets (`dialect`, `driver`,
 `layout`, `uuid_version`, soft-delete `type`, operations presets, column
 `access` roles, GraphQL `field_casing`, scalar `marshaling`, cache
-`serializer`, manifest `json_layout`, relationship `type` / `side`). It does not
-express sqlgen's cross-field rules — driver/dialect pairing, `connection`
-required by `source`, soft-delete column type compatibility, cursor-key
-existence, `marshaler_package` required when `marshaling: external`. Those stay
-in [§4.13](#413-config-validation-rules) and remain the job of `sqlgen validate`.
+`serializer`, manifest `json_layout`, relationship `type` / `side`). Of
+sqlgen's cross-field rules it expresses only a relationship's link key (`fk`
+for `o2o` / `o2m`, `junction` for `m2m`); it does not express the others, such
+as driver/dialect pairing, `connection` required by `source`, soft-delete
+column type compatibility, cursor-key existence, `marshaler_package` required
+when `marshaling: external`. Those stay in
+[§4.13](#413-config-validation-rules) and remain the job of `sqlgen validate`.
 
 **Environment variable references.** The schema types integer and boolean fields strictly, so an
 editor flags `port: ${DB_PORT}` as a type error even though sqlgen accepts it

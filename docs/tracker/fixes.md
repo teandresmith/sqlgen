@@ -22,74 +22,6 @@
 ## Open
 
 <!-- fixes:open:begin -->
-### FIX-329
-
-- **Status:** Open
-- **Severity:** nit
-- **Origin:** phase 5, `cmd/sqlgen/config` (`schema/v1.json`)
-- **Surfaced by:** backlog sweep 2026-10-12 (backlog lines from FIX-254, FIX-285)
-- **Vetted:** ready at `02000941` (2026-10-12)
-
-**Issue.** `config/schema/v1.json` `$defs/relationship` has no `required` list, so editor validation
-does not flag a relationship missing `name`, `type`, `table`, or its link key, all of which `sqlgen`
-rejects (`validateRelationshipKeys` rejects a missing name, type or link key; a missing `table` passes
-it and fails only at context build: `"Profile" targets "", which generates no entity …`). Measured by compiling the embedded schema (santhosh-tekuri/jsonschema): missing
-name, missing type, missing table, o2m without `fk`, m2m without `junction` → each schema-valid.
-
-**Root cause.** `cmd/sqlgen/config/schema/v1.json:434-460` declares properties only.
-
-**Suggested fix.**
-- Add `"required": ["name", "type", "table"]` and an `allOf` of if/then rules: `o2o` / `one_to_one` /
-  `o2m` / `one_to_many` require `fk` (whatever `side` is — `validateRelationshipKeys` requires it for
-  every non-m2m type), `m2m` / `many_to_many` requires `junction` (PRD §4.8 `:800-805`). Each `if` also
-  carries `"required": ["type"]`, so an entry without `type` reports only the type error.
-- Schema tests for each missing field; `TestSchemaV1_acceptsExampleConfigs` guards the examples.
-- The user ruled on 2026-10-12 (backlog sweep Step 5): widen to the case-sensitivity gap — the schema's
-  relationship `type` enum is exact while PRD §4.8 (`:801`) calls `type` case-insensitive and
-  `isValidRelationshipType` lowercases it (`side` / `isValidRelationshipSide` likely the same, by reading). Measured:
-  `type: O2M` (with name/table/fk) → `schema-valid=false`, `LoadConfig=<nil>`, `ValidatePreParse=<nil>`. Same fix
-  site (`$defs/relationship`) and root cause (the schema does not mirror validate). The if/then rules must match
-  case-insensitively too. Re-vet to fold this in.
-- Widened prototype (re-vet at `02000941`): new `$defs/relationshipTypeLinkedByFK`
-  (`^([oO]2[oOmM]|[oO][nN][eE]_[tT][oO]_([oO][nN][eE]|[mM][aA][nN][yY]))$`) and
-  `$defs/relationshipTypeLinkedByJunction` (`^([mM]2[mM]|[mM][aA][nN][yY]_[tT][oO]_[mM][aA][nN][yY])$`), which the
-  two if/then rules `$ref`; `type` becomes `anyOf [enum (6 spellings), $ref FK, $ref Junction]`; `side` becomes
-  `anyOf [enum (parent, child), pattern ^([pP][aA][rR][eE][nN][tT]|[cC][hH][iI][lL][dD])?$]`. No pattern allows
-  surrounding whitespace; both descriptions say "Case-insensitive." New `TestSchemaV1_relationshipSpellingsMatchValidate`
-  (16 cases, each asserting the schema and `LoadConfig` + `ValidatePreParse` agree) plus two `rejectsKnownMistakes`
-  cases (padded side `" child "`, misspelled `chld`). PRD §4.8 `side` row gains "(case-insensitive)".
-- Auto-accepted the recommended option on 2026-10-12 (`/fix` auto-accept rule): `side` matches case-insensitively
-  in the schema, with "(case-insensitive)" added to the PRD §4.8 side row; `side: ""` is schema-valid (sqlgen treats
-  it as the parent default); the schema trims neither field (`type`: sqlgen rejects `" o2m "` / `"o2m "`, measured;
-  `side`: validate trims but gen does not, so rejecting padding is the loud option); the form is anyOf(enum,
-  pattern) to keep completion — because each was prototyped green, causes no golden churn, adds no public surface,
-  and only adds PRD text for an unspecified case that matches the code (validate.go:764 and
-  gen/context_table.go:1673 both fold side's case).
-- Inline doc fix (absorb when implementing): the schema's top-level `description` (`v1.json:5`) says it "cannot
-  express sqlgen's cross-field rules"; it now expresses the fk / junction rule — reword.
-- Prototype results, run at `02000941` on 2026-10-12 (builds on the `a99568ff` prototype, whose evidence for the
-  missing name / type / table / fk / junction cases stands: each schema-valid=true at base, ValidatePreParse
-  rejecting all but the missing table, which `sqlgen validate` reports only at context build). Probe at base:
-  `type: O2M` / `One_To_Many` with fk, `MANY_TO_MANY` with junction, `side: Child` / `PARENT` / `""` / `" child "` →
-  `schema-valid=false LoadConfig=<nil> ValidatePreParse=<nil>`; `type: " o2m "` → schema false, ValidatePreParse
-  `type: " o2m " is not a valid value…`. ECMA-262 check (ajv 2020, `RegExp(p,"u")`) agrees with the Go validator;
-  vscode-json-languageservice keeps completion for both enums and reports `Missing property "fk".` for O2M without
-  fk. Gates: `go test -race -count=1 ./config/...` ok; `-run Schema ./cli/...` ok; gofumpt, golangci-lint,
-  `make refs-check` clean; every example config and the PRD §4.12 example pass. Fail-first (each reverted alone):
-  `required` dropped → `relationship_missing_{name,type,table}` fail ("= nil, want a validation error"); fk `then`
-  emptied → 6 fail; junction `then` emptied → 4 fail; `type` back to the exact enum → 6 SpellingsMatchValidate fail
-  ("'/tables/assets/relationships/0/type' does not validate …"); if/then back to exact enums → 4 fail ("schema
-  Validate = <nil>, want valid=false"); `side` exact enum → 3 fail; patterns allowing `\s*` → 3 fail; existing suite
-  passes at base. Golden churn none. FIX-321's `v1.json` hunk composes in either order (offset 28). Patch:
-  `.claude/prototypes/FIX-329.patch` (3 files, +137/-5).
-
-**References.**
-- PRD §4.8.
-- Backlog lines absorbed: 2026-10-02 relationship has no `required` list (FIX-254; outside the Phase
-  30/31 attribution, absorbed by ruling Q7); 2026-10-08 relationship lacks `required` (FIX-285).
-
-**Resolution notes.** _Filled in by /fix resolve._
-
 ### FIX-330
 
 - **Status:** Open
@@ -1021,6 +953,74 @@ DEFAULT.
 ## Resolved
 
 <!-- fixes:resolved:begin -->
+
+### FIX-329
+
+- **Status:** Resolved
+- **Severity:** nit
+- **Origin:** phase 5, `cmd/sqlgen/config` (`schema/v1.json`)
+- **Surfaced by:** backlog sweep 2026-10-12 (backlog lines from FIX-254, FIX-285)
+- **Vetted:** ready at `02000941` (2026-10-12)
+
+**Issue.** `config/schema/v1.json` `$defs/relationship` has no `required` list, so editor validation
+does not flag a relationship missing `name`, `type`, `table`, or its link key, all of which `sqlgen`
+rejects (`validateRelationshipKeys` rejects a missing name, type or link key; a missing `table` passes
+it and fails only at context build: `"Profile" targets "", which generates no entity …`). Measured by compiling the embedded schema (santhosh-tekuri/jsonschema): missing
+name, missing type, missing table, o2m without `fk`, m2m without `junction` → each schema-valid.
+
+**Root cause.** `cmd/sqlgen/config/schema/v1.json:434-460` declares properties only.
+
+**Suggested fix.**
+- Add `"required": ["name", "type", "table"]` and an `allOf` of if/then rules: `o2o` / `one_to_one` /
+  `o2m` / `one_to_many` require `fk` (whatever `side` is — `validateRelationshipKeys` requires it for
+  every non-m2m type), `m2m` / `many_to_many` requires `junction` (PRD §4.8 `:800-805`). Each `if` also
+  carries `"required": ["type"]`, so an entry without `type` reports only the type error.
+- Schema tests for each missing field; `TestSchemaV1_acceptsExampleConfigs` guards the examples.
+- The user ruled on 2026-10-12 (backlog sweep Step 5): widen to the case-sensitivity gap — the schema's
+  relationship `type` enum is exact while PRD §4.8 (`:801`) calls `type` case-insensitive and
+  `isValidRelationshipType` lowercases it (`side` / `isValidRelationshipSide` likely the same, by reading). Measured:
+  `type: O2M` (with name/table/fk) → `schema-valid=false`, `LoadConfig=<nil>`, `ValidatePreParse=<nil>`. Same fix
+  site (`$defs/relationship`) and root cause (the schema does not mirror validate). The if/then rules must match
+  case-insensitively too. Re-vet to fold this in.
+- Widened prototype (re-vet at `02000941`): new `$defs/relationshipTypeLinkedByFK`
+  (`^([oO]2[oOmM]|[oO][nN][eE]_[tT][oO]_([oO][nN][eE]|[mM][aA][nN][yY]))$`) and
+  `$defs/relationshipTypeLinkedByJunction` (`^([mM]2[mM]|[mM][aA][nN][yY]_[tT][oO]_[mM][aA][nN][yY])$`), which the
+  two if/then rules `$ref`; `type` becomes `anyOf [enum (6 spellings), $ref FK, $ref Junction]`; `side` becomes
+  `anyOf [enum (parent, child), pattern ^([pP][aA][rR][eE][nN][tT]|[cC][hH][iI][lL][dD])?$]`. No pattern allows
+  surrounding whitespace; both descriptions say "Case-insensitive." New `TestSchemaV1_relationshipSpellingsMatchValidate`
+  (16 cases, each asserting the schema and `LoadConfig` + `ValidatePreParse` agree) plus two `rejectsKnownMistakes`
+  cases (padded side `" child "`, misspelled `chld`). PRD §4.8 `side` row gains "(case-insensitive)".
+- Auto-accepted the recommended option on 2026-10-12 (`/fix` auto-accept rule): `side` matches case-insensitively
+  in the schema, with "(case-insensitive)" added to the PRD §4.8 side row; `side: ""` is schema-valid (sqlgen treats
+  it as the parent default); the schema trims neither field (`type`: sqlgen rejects `" o2m "` / `"o2m "`, measured;
+  `side`: validate trims but gen does not, so rejecting padding is the loud option); the form is anyOf(enum,
+  pattern) to keep completion — because each was prototyped green, causes no golden churn, adds no public surface,
+  and only adds PRD text for an unspecified case that matches the code (validate.go:764 and
+  gen/context_table.go:1687 both fold side's case).
+- Inline doc fix (absorb when implementing): the schema's top-level `description` (`v1.json:5`) says it "cannot
+  express sqlgen's cross-field rules"; it now expresses the fk / junction rule — reword.
+- Prototype results, run at `02000941` on 2026-10-12 (builds on the `a99568ff` prototype, whose evidence for the
+  missing name / type / table / fk / junction cases stands: each schema-valid=true at base, ValidatePreParse
+  rejecting all but the missing table, which `sqlgen validate` reports only at context build). Probe at base:
+  `type: O2M` / `One_To_Many` with fk, `MANY_TO_MANY` with junction, `side: Child` / `PARENT` / `""` / `" child "` →
+  `schema-valid=false LoadConfig=<nil> ValidatePreParse=<nil>`; `type: " o2m "` → schema false, ValidatePreParse
+  `type: " o2m " is not a valid value…`. ECMA-262 check (ajv 2020, `RegExp(p,"u")`) agrees with the Go validator;
+  vscode-json-languageservice keeps completion for both enums and reports `Missing property "fk".` for O2M without
+  fk. Gates: `go test -race -count=1 ./config/...` ok; `-run Schema ./cli/...` ok; gofumpt, golangci-lint,
+  `make refs-check` clean; every example config and the PRD §4.12 example pass. Fail-first (each reverted alone):
+  `required` dropped → `relationship_missing_{name,type,table}` fail ("= nil, want a validation error"); fk `then`
+  emptied → 6 fail; junction `then` emptied → 4 fail; `type` back to the exact enum → 6 SpellingsMatchValidate fail
+  ("'/tables/assets/relationships/0/type' does not validate …"); if/then back to exact enums → 4 fail ("schema
+  Validate = <nil>, want valid=false"); `side` exact enum → 3 fail; patterns allowing `\s*` → 3 fail; existing suite
+  passes at base. Golden churn none. FIX-321's `v1.json` hunk composes in either order (offset 28). Patch:
+  `.claude/prototypes/FIX-329.patch` (3 files, +137/-5).
+
+**References.**
+- PRD §4.8.
+- Backlog lines absorbed: 2026-10-02 relationship has no `required` list (FIX-254; outside the Phase
+  30/31 attribution, absorbed by ruling Q7); 2026-10-08 relationship lacks `required` (FIX-285).
+
+**Resolution notes.** Landed from the vetted prototype (applied clean at `32a7f773`). `cmd/sqlgen/config/schema/v1.json` `$defs/relationship` now has `required: [name, type, table]` and an `allOf` of two if/then rules (each `if` also requires `type`): a type matching the new `$defs/relationshipTypeLinkedByFK` pattern (o2o / one_to_one / o2m / one_to_many, any case) requires `fk`, one matching `$defs/relationshipTypeLinkedByJunction` (m2m / many_to_many, any case) requires `junction`. `type` is `anyOf [enum, $ref FK, $ref Junction]` and `side` is `anyOf [enum, pattern]` (case-insensitive, empty allowed, no padding), so completion keeps the enum values. PRD §4.8 `side` row gains "(case-insensitive)". Tests: 11 new `TestSchemaV1_rejectsKnownMistakes` cases and `TestSchemaV1_relationshipSpellingsMatchValidate` (16 cases, schema and `LoadConfig` + `ValidatePreParse` must agree). Inline doc fix absorbed: the schema's top-level `description` (`v1.json:5`) no longer says it cannot express any cross-field rule — it names the relationship link key as the one it checks; the parallel scope text in `config/schema.go` (`SchemaV1` doc comment) and PRD §4.14 **Scope** paragraph reworded the same way, as is `docs/configuration.md`'s schema note. Removed the 2026-10-02 backlog line (relationship `type` enum case-sensitive, from FIX-254), which this fix's widening resolves. Gates: `make check` ok; `check-examples` not path-triggered (only `config/schema/*`, `schema_test.go`, `schema.go`, PRD). Fail-first re-run on the final code: dropping `required` and emptying the fk `then` fails 3 + 6 cases. Golden churn none.
 
 ### FIX-328
 

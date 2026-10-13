@@ -30,10 +30,11 @@ To enable it on an existing config, add that line at the top of your
 IDEs, and any editor running `yaml-language-server` — no plugin or registry
 setup beyond the YAML extension itself.
 
-> The schema checks structure, key names, and closed value sets. It cannot
-> express sqlgen's cross-field rules — that `pgx` requires `dialect: postgres`,
-> that `connection` is required when `source: database`, that a soft-delete
-> column's SQL type must match its declared `type`. A file with no editor
+> The schema checks structure, key names, and closed value sets. Of sqlgen's
+> cross-field rules it checks only a relationship's link key (`fk` for o2o /
+> o2m, `junction` for m2m), not the others — such as that `pgx` requires
+> `dialect: postgres`, that `connection` is required when `source: database`,
+> that a soft-delete column's SQL type must match its declared `type`. A file with no editor
 > warnings can still fail `sqlgen validate`, so keep running it in CI.
 >
 > The schema expects a number or `true`/`false` in integer and boolean fields, so it flags
