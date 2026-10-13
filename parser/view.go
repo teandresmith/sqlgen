@@ -396,6 +396,41 @@ func RenameViewColumnReferences(schema *Schema, table *Table, dialect, oldName, 
 	}
 }
 
+// ViewFromTables returns, by FROM-clause key, the table each key of def
+// names, resolved against schema as BuildView resolves it, or nil for a key
+// that names no table in schema (a view, or a table schema lacks).
+func ViewFromTables(def ViewSQL, schema *Schema) map[string]*Table {
+	vs := newViewSources(def, schema)
+	tables := make(map[string]*Table, len(def.TableAliases))
+	for key := range def.TableAliases {
+		tables[key] = vs.table(key)
+	}
+	return tables
+}
+
+// RenameViewTableReferences repoints every FROM-clause key of a view
+// Definition that names table at (newSchema, newName), as PostgreSQL does
+// on a table rename or SET SCHEMA and SQLite on a table rename, so the
+// view's columns can be read again after the change. Call it before the
+// table is renamed or moved.
+func RenameViewTableReferences(schema *Schema, table *Table, newSchema, newName string) {
+	for i := range schema.Views {
+		def := schema.Views[i].Definition
+		if def == nil {
+			continue
+		}
+		for key, t := range ViewFromTables(*def, schema) {
+			if t != table {
+				continue
+			}
+			def.TableAliases[key] = newName
+			if def.TableSchemas != nil {
+				def.TableSchemas[key] = newSchema
+			}
+		}
+	}
+}
+
 // table returns the table a FROM-clause key (alias or table name) names: the
 // one in the recorded schema when there is one, else one with no schema.
 func (vs *viewSources) table(key string) *Table {

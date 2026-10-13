@@ -3,6 +3,7 @@ package introspect
 import (
 	"errors"
 	"fmt"
+	"maps"
 	"slices"
 	"strings"
 
@@ -34,18 +35,39 @@ type viewReads struct {
 	// tables holds, by viewKey, the table each column of a view with a
 	// Definition reads; a zero tableRef for a column that reads none.
 	tables map[string][]tableRef
+	// from holds, by viewKey, the table each FROM-clause key of a view with
+	// a Definition names, for the keys that name a table.
+	from map[string]map[string]tableRef
 	// types holds every ENUM and SET type name, bare and schema-qualified.
 	types map[string]bool
 }
 
 type tableRef struct{ schema, name string }
 
+func (r tableRef) String() string {
+	if r.schema == "" {
+		return r.name
+	}
+	return r.schema + "." + r.name
+}
+
 func readViewSources(schema *parser.Schema) viewReads {
-	reads := viewReads{tables: make(map[string][]tableRef), types: enumAndSetNames(schema)}
+	reads := viewReads{
+		tables: make(map[string][]tableRef),
+		from:   make(map[string]map[string]tableRef),
+		types:  enumAndSetNames(schema),
+	}
 	for _, view := range schema.Views {
 		if view.Definition == nil {
 			continue
 		}
+		from := make(map[string]tableRef)
+		for key, t := range parser.ViewFromTables(*view.Definition, schema) {
+			if t != nil {
+				from[key] = tableRef{t.Schema, t.Name}
+			}
+		}
+		reads.from[viewKey(view)] = from
 		tables := parser.ViewSourceTables(*view.Definition, schema)
 		refs := make([]tableRef, len(tables))
 		for i, t := range tables {
@@ -88,13 +110,15 @@ func viewKey(view parser.View) string {
 // definition cannot trace keeps the column it has, and a primary key from a
 // materialized view's unique index stays.
 //
-// A column that read a table column the SQL files drop or rename is an
-// error, since the database's view stands under source: both: PostgreSQL
-// and SQLite refuse to drop a column a view reads, and MySQL leaves the view
-// invalid. A rename PostgreSQL and SQLite carry into the view has already
-// been applied to its Definition by the file parser. A view whose columns
-// come from the catalog cannot be traced, so it is an error only when one
-// of its ENUM or SET types is gone.
+// A view that read a table the SQL files drop or rename, or a column that
+// read a table column they drop or rename, is an error, since the
+// database's view stands under source: both: PostgreSQL refuses to drop a
+// table or column a view reads, SQLite refuses to drop such a column and
+// leaves the view invalid when its table is dropped, and MySQL leaves the
+// view invalid on any of them. A rename PostgreSQL and SQLite carry into
+// the view has already been applied to its Definition by the file parser.
+// A view whose columns come from the catalog cannot be traced, so it is an
+// error only when one of its ENUM or SET types is gone.
 func refreshViewColumns(schema *parser.Schema, reads viewReads) error {
 	types := enumAndSetNames(schema)
 	for i := range schema.Views {
@@ -108,17 +132,21 @@ func refreshViewColumns(schema *parser.Schema, reads viewReads) error {
 			}
 			continue
 		}
+		from, nowFrom := reads.from[viewKey(*view)], parser.ViewFromTables(*view.Definition, schema)
+		for _, key := range slices.Sorted(maps.Keys(from)) {
+			if nowFrom[key] == nil {
+				return fmt.Errorf("view %s reads table %s, which the SQL files drop or rename; under source: both the database's view stands, so change it in the database first", viewKey(*view), from[key])
+			}
+		}
+		// Every table the view read still resolves, so a column that no
+		// longer finds its source column lost it.
 		now := parser.ViewSourceTables(*view.Definition, schema)
 		for j, ref := range reads.tables[viewKey(*view)] {
-			if ref.name == "" || now[j] != nil || !hasTable(schema, ref) {
+			if ref.name == "" || now[j] != nil {
 				continue
 			}
 			sc := view.Definition.Columns[j]
-			table := ref.name
-			if ref.schema != "" {
-				table = ref.schema + "." + ref.name
-			}
-			return fmt.Errorf("view %s: column %s reads column %s of table %s, which the SQL files drop or rename; under source: both the database's view stands, so change it in the database first", viewKey(*view), sc.Alias, sc.SourceColumn, table)
+			return fmt.Errorf("view %s: column %s reads column %s of table %s, which the SQL files drop or rename; under source: both the database's view stands, so change it in the database first", viewKey(*view), sc.Alias, sc.SourceColumn, ref)
 		}
 		built, err := parser.BuildView(*view.Definition, view.SQL, &parser.ViewAnnotations{}, schema)
 		if err != nil {
@@ -135,12 +163,6 @@ func refreshViewColumns(schema *parser.Schema, reads viewReads) error {
 		}
 	}
 	return nil
-}
-
-func hasTable(schema *parser.Schema, ref tableRef) bool {
-	return slices.ContainsFunc(schema.Tables, func(t parser.Table) bool {
-		return t.Schema == ref.schema && t.Name == ref.name
-	})
 }
 
 // viewColumnsFromDefinition reads a view's columns from ddl, its CREATE VIEW

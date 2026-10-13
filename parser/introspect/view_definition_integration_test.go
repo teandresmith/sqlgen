@@ -254,7 +254,10 @@ func TestMerge_RefreshesViewColumns(t *testing.T) {
 // and reads the renamed column, SQLite also renames a column named after its
 // source, and dropping a column a view reads is an error on both, as the
 // database refuses it. MySQL leaves the view invalid on either, so both are
-// errors there.
+// errors there. A table a view reads is the same: PostgreSQL and SQLite
+// views follow a table rename (and a PostgreSQL SET SCHEMA), dropping it is
+// an error on every dialect (PostgreSQL refuses it, MySQL and SQLite leave
+// the view invalid), and so is renaming it on MySQL.
 func TestMerge_ViewColumnRenameAndDrop(t *testing.T) {
 	requireDatabases(t)
 	type col struct {
@@ -391,6 +394,99 @@ func TestMerge_ViewColumnRenameAndDrop(t *testing.T) {
 			parser:    newMySQL,
 			migration: "ALTER TABLE vr_users RENAME COLUMN role TO kind;",
 			wantErr:   "merge both mode: view vr_vl: column role reads column role of table vr_users" + stands,
+		},
+		// Table renames and drops. A rename migration creates a table under
+		// the old name, so the view's columns show which of the two it reads.
+		{
+			name:   "postgres/rename table",
+			base:   pgBase,
+			parser: newPostgres,
+			migration: `ALTER TABLE users RENAME TO people;
+				ALTER TABLE people ALTER COLUMN role DROP NOT NULL;
+				CREATE TABLE users (id bigint PRIMARY KEY, role text NOT NULL);`,
+			want: map[string][]col{
+				"v":  {{"id", "integer", false}, {"role", "role_t", true}},
+				"v2": {{"id", "integer", false}, {"r", "role_t", true}},
+			},
+		},
+		{
+			name:   "postgres/set schema",
+			base:   pgBase,
+			parser: newPostgres,
+			migration: `ALTER TABLE users SET SCHEMA view_def_other;
+				ALTER TABLE view_def_other.users ALTER COLUMN role DROP NOT NULL;
+				CREATE TABLE users (id bigint PRIMARY KEY, role text NOT NULL);`,
+			want: map[string][]col{
+				"v":  {{"id", "integer", false}, {"role", "role_t", true}},
+				"v2": {{"id", "integer", false}, {"r", "role_t", true}},
+			},
+		},
+		{
+			name:      "postgres/drop table",
+			base:      pgBase,
+			parser:    newPostgres,
+			migration: "DROP TABLE users;",
+			wantErr:   "merge both mode: view view_def.v reads table view_def.users" + stands,
+		},
+		{
+			// The view follows the rename, so dropping the column is refused.
+			name:      "postgres/rename table and drop column",
+			base:      pgBase,
+			parser:    newPostgres,
+			migration: "ALTER TABLE users RENAME TO people; ALTER TABLE people DROP COLUMN role;",
+			wantErr:   "merge both mode: view view_def.v: column role reads column role of table view_def.users" + stands,
+		},
+		{
+			name:   "sqlite/rename table",
+			base:   sqliteBase,
+			parser: newSQLite,
+			migration: `ALTER TABLE users RENAME TO people;
+				CREATE TABLE users (id TEXT PRIMARY KEY NOT NULL, role INTEGER);`,
+			want: map[string][]col{
+				"v":  {{"id", "integer", false}, {"role", "text", false}},
+				"v2": {{"id", "integer", false}, {"r", "text", false}},
+				"v3": {{"a", "integer", false}, {"b", "text", false}},
+			},
+		},
+		{
+			name:      "sqlite/drop table",
+			base:      sqliteBase,
+			parser:    newSQLite,
+			migration: "DROP TABLE users;",
+			wantErr:   "merge both mode: view v reads table users" + stands,
+		},
+		{
+			name:      "mysql/rename table",
+			base:      mysqlBase("vr_v"),
+			parser:    newMySQL,
+			migration: "RENAME TABLE vr_users TO vr_people;",
+			wantErr:   "merge both mode: view vr_v reads table vr_users" + stands,
+		},
+		{
+			name:      "mysql/alter table rename",
+			base:      mysqlBase("vr_v"),
+			parser:    newMySQL,
+			migration: "ALTER TABLE vr_users RENAME TO vr_people;",
+			wantErr:   "merge both mode: view vr_v reads table vr_users" + stands,
+		},
+		{
+			name:      "mysql/drop table",
+			base:      mysqlBase("vr_v"),
+			parser:    newMySQL,
+			migration: "DROP TABLE vr_users;",
+			wantErr:   "merge both mode: view vr_v reads table vr_users" + stands,
+		},
+		{
+			// MySQL reads a view's tables by name, so a table created under
+			// the old name makes the view valid again.
+			name:   "mysql/rename table and create one under its name",
+			base:   mysqlBase("vr_v"),
+			parser: newMySQL,
+			migration: `RENAME TABLE vr_users TO vr_people;
+				CREATE TABLE vr_users (id bigint PRIMARY KEY, role text NOT NULL);`,
+			want: map[string][]col{
+				"vr_v": {{"id", "bigint", false}, {"role", "text", false}},
+			},
 		},
 	}
 	for _, tt := range tests {

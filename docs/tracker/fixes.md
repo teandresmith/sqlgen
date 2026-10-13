@@ -22,72 +22,6 @@
 ## Open
 
 <!-- fixes:open:begin -->
-### FIX-333
-
-- **Status:** Open
-- **Severity:** tracked
-- **Origin:** phase 30, `parser/introspect` (`source: both` views) + each parser's rename/drop-table path
-- **Surfaced by:** FIX-309 / FIX-310 vet wave (2026-10-12; the probe uses FIX-309's `zz_users` fixture), filed at the
-  backlog sweep's Step 5
-- **Vetted:** corrected at `02000941` (2026-10-12)
-
-**Issue.** Under `source: both`, a file `RENAME TABLE` / `DROP TABLE` of a table a database view reads leaves
-the view stale without a word. Measured (Merge probe): MySQL `DROP TABLE zz_users` → `Merge err=nil`, the view
-keeps `zz_users__role_enum` while the enum is gone, so the column degrades to `string`; MySQL itself then fails
-the view with ERROR 1356. MySQL `RENAME TABLE zz_users TO zz_people` → the view keeps `zz_users__role_enum`
-while the enums hold `zz_people__role_enum`. PG `DROP TABLE users` → `Merge err=nil`, though PG17 refuses to drop
-a table a view depends on. SQLite DROP and RENAME → `Merge err=nil` too. CLI (`source: both`, mysql:8.0.46, base
-binary): DROP and RENAME TABLE exit 0 with `views_gen.go:19: Role string`.
-
-**Root cause.** FIX-309's rename/drop-column check covers columns only, and its `refreshViewColumns` skips a column
-whose table is gone (`|| !hasTable(schema, ref)`); table renames and drops never consult the views seeded from the
-database.
-
-**Suggested fix.**
-- Per-dialect rule, settled by measurement under Q6 (error where the database errors or leaves the view invalid,
-  follow where it follows): PG DROP → error, RENAME and SET SCHEMA → follow (PG17.11: DROP "cannot drop table users
-  because other objects depend on it"; RENAME → `pg_get_viewdef` "SELECT id, role FROM people;", still after a new
-  `users` is created; SET SCHEMA → "FROM other.people;"); MySQL DROP, RENAME TABLE and ALTER … RENAME → error (8.0.46:
-  all succeed, then "ERROR 1356 (HY000): View 'd.zz_v' references invalid table(s) or column(s)…"; valid again once the
-  old name exists); SQLite DROP → error, RENAME → follow (modernc 3.51.3, `legacy_alter_table=0`: DROP then "no such
-  table: main.users (1)"; RENAME rewrites every view to `FROM "people"`).
-- `parser/view.go`: new exported `ViewFromTables(def, schema) map[string]*Table` (each FROM key's table, resolved as
-  `BuildView` does) and `RenameViewTableReferences(schema, table, newSchema, newName)` (repoints every Definition's
-  TableAliases / TableSchemas entries). PG calls it in `parseRename` (OBJECT_TABLE) and `parseAlterObjectSchema`; SQLite in
-  `renameTable`; MySQL not.
-- `parser/introspect/views.go`: `readViewSources` records each view's FROM tables (`viewReads.from`); `refreshViewColumns`
-  first errors when one no longer resolves — "view V reads table T, which the SQL files drop or rename; under source: both
-  the database's view stands, so change it in the database first" — and FIX-309's `!hasTable` skip goes (so PG rename
-  table then DROP COLUMN, which PG refuses, is caught); `tableRef.String()` replaces the inline qualification.
-- PRD §6.1 both-mode paragraph gains the table rule (extending FIX-309's).
-- Tests: FIX-309's `TestMerge_ViewColumnRenameAndDrop` gains 10 cases (PG rename, set schema, drop, rename + drop column;
-  SQLite rename, drop; MySQL RENAME TABLE, ALTER … RENAME TO, DROP, rename then re-create the old name — valid).
-- Corrected from the original: per-dialect behavior settled by measurement; widened to PG SET SCHEMA (same root cause and
-  site); FIX-309's skip removed; the check is per FROM table, so `SELECT count(*) FROM users` views are covered.
-  DROP-then-CREATE under the same name still passes (FIX-309's post-merge stance, PRD §6.1's DROP+CREATE pattern).
-- Prototype results, run at `02000941` + FIX-308 + FIX-309 on 2026-10-12: probe `parser/introspect/zz_probe_fix333_test.go`
-  (testcontainers PG16, MySQL 8.0) → the reproduction above, identical at plain base and base+308+309 (MySQL rename: view
-  keeps `zz_users__role_enum` while enums hold `[zz_people__role_enum]`, aliases `map[zz_users:zz_users]`). Gates: parser
-  gofumpt clean, golangci-lint 0 issues, `go test -race -count=1 ./...` ok; cmd/sqlgen `-run TestE2E .` ok; `make
-  refs-check` ok; CLI scratch project with the prototype binary → exit 3, "Schema error: parsing schema files: merge both
-  mode: view zz_v reads table zz_users, which the SQL files drop or rename; …". Fail-first: table check disabled → 5 cases
-  fail with FIX-309's column message instead (with FIX-309's skip too, Merge returns `<nil>` for all seven probes); PG
-  `parseRename` call removed → `- Type: "integer" + Type: "bigint"`, `- Type: "role_t" + Type: "text"`; PG
-  `parseAlterObjectSchema` call or the TableSchemas update removed → set_schema fails the same way; SQLite `renameTable`
-  call removed → `- Type: "integer" + Type: "text"`; FIX-309's skip restored → rename_table_and_drop_column "Merge() error =
-  <nil>, want one starting \"merge both mode: view view_def.v: column role reads column role of table view_def.users, …\"";
-  existing suite (base+308+309) passes. Golden churn none. Stacked on FIX-308 + FIX-309 (FIX-300..309 could not be composed
-  in the vet: FIX-301 conflicts with FIX-300 in sqlite.go and with FIX-309 in postgres.go / sqlite.go). Expected merges:
-  FIX-301's `RenameTableReferences` call lines (keep 301's call, add `RenameViewTableReferences` above); FIX-303/304 near PG
-  `parseAlterObjectSchema` / `moveTableKey`; FIX-316 `introspect/views.go` import block (`maps`). Patch:
-  `.claude/prototypes/FIX-333.patch` (6 files, +181/-24).
-
-**References.**
-- PRD §6.1 ("`both` Mode — Merge Strategy", `docs/PRD.md:1616`), §16.2 (introspected views).
-- FIX-309 (rename/drop-column twin and its ruling Q6; lands first), FIX-310.
-
-**Resolution notes.** _Filled in by /fix resolve._
-
 ### FIX-334
 
 - **Status:** Open
@@ -769,6 +703,72 @@ DEFAULT.
 ## Resolved
 
 <!-- fixes:resolved:begin -->
+### FIX-333
+
+- **Status:** Resolved
+- **Severity:** tracked
+- **Origin:** phase 30, `parser/introspect` (`source: both` views) + each parser's rename/drop-table path
+- **Surfaced by:** FIX-309 / FIX-310 vet wave (2026-10-12; the probe uses FIX-309's `zz_users` fixture), filed at the
+  backlog sweep's Step 5
+- **Vetted:** corrected at `02000941` (2026-10-12)
+
+**Issue.** Under `source: both`, a file `RENAME TABLE` / `DROP TABLE` of a table a database view reads leaves
+the view stale without a word. Measured (Merge probe): MySQL `DROP TABLE zz_users` → `Merge err=nil`, the view
+keeps `zz_users__role_enum` while the enum is gone, so the column degrades to `string`; MySQL itself then fails
+the view with ERROR 1356. MySQL `RENAME TABLE zz_users TO zz_people` → the view keeps `zz_users__role_enum`
+while the enums hold `zz_people__role_enum`. PG `DROP TABLE users` → `Merge err=nil`, though PG17 refuses to drop
+a table a view depends on. SQLite DROP and RENAME → `Merge err=nil` too. CLI (`source: both`, mysql:8.0.46, base
+binary): DROP and RENAME TABLE exit 0 with `views_gen.go:19: Role string`.
+
+**Root cause.** FIX-309's rename/drop-column check covers columns only, and its `refreshViewColumns` skips a column
+whose table is gone (`|| !hasTable(schema, ref)`); table renames and drops never consult the views seeded from the
+database.
+
+**Suggested fix.**
+- Per-dialect rule, settled by measurement under Q6 (error where the database errors or leaves the view invalid,
+  follow where it follows): PG DROP → error, RENAME and SET SCHEMA → follow (PG17.11: DROP "cannot drop table users
+  because other objects depend on it"; RENAME → `pg_get_viewdef` "SELECT id, role FROM people;", still after a new
+  `users` is created; SET SCHEMA → "FROM other.people;"); MySQL DROP, RENAME TABLE and ALTER … RENAME → error (8.0.46:
+  all succeed, then "ERROR 1356 (HY000): View 'd.zz_v' references invalid table(s) or column(s)…"; valid again once the
+  old name exists); SQLite DROP → error, RENAME → follow (modernc 3.51.3, `legacy_alter_table=0`: DROP then "no such
+  table: main.users (1)"; RENAME rewrites every view to `FROM "people"`).
+- `parser/view.go`: new exported `ViewFromTables(def, schema) map[string]*Table` (each FROM key's table, resolved as
+  `BuildView` does) and `RenameViewTableReferences(schema, table, newSchema, newName)` (repoints every Definition's
+  TableAliases / TableSchemas entries). PG calls it in `parseRename` (OBJECT_TABLE) and `parseAlterObjectSchema`; SQLite in
+  `renameTable`; MySQL not.
+- `parser/introspect/views.go`: `readViewSources` records each view's FROM tables (`viewReads.from`); `refreshViewColumns`
+  first errors when one no longer resolves — "view V reads table T, which the SQL files drop or rename; under source: both
+  the database's view stands, so change it in the database first" — and FIX-309's `!hasTable` skip goes (so PG rename
+  table then DROP COLUMN, which PG refuses, is caught); `tableRef.String()` replaces the inline qualification.
+- PRD §6.1 both-mode paragraph gains the table rule (extending FIX-309's).
+- Tests: FIX-309's `TestMerge_ViewColumnRenameAndDrop` gains 10 cases (PG rename, set schema, drop, rename + drop column;
+  SQLite rename, drop; MySQL RENAME TABLE, ALTER … RENAME TO, DROP, rename then re-create the old name — valid).
+- Corrected from the original: per-dialect behavior settled by measurement; widened to PG SET SCHEMA (same root cause and
+  site); FIX-309's skip removed; the check is per FROM table, so `SELECT count(*) FROM users` views are covered.
+  DROP-then-CREATE under the same name still passes (FIX-309's post-merge stance, PRD §6.1's DROP+CREATE pattern).
+- Prototype results, run at `02000941` + FIX-308 + FIX-309 on 2026-10-12: probe `parser/introspect/zz_probe_fix333_test.go`
+  (testcontainers PG16, MySQL 8.0) → the reproduction above, identical at plain base and base+308+309 (MySQL rename: view
+  keeps `zz_users__role_enum` while enums hold `[zz_people__role_enum]`, aliases `map[zz_users:zz_users]`). Gates: parser
+  gofumpt clean, golangci-lint 0 issues, `go test -race -count=1 ./...` ok; cmd/sqlgen `-run TestE2E .` ok; `make
+  refs-check` ok; CLI scratch project with the prototype binary → exit 3, "Schema error: parsing schema files: merge both
+  mode: view zz_v reads table zz_users, which the SQL files drop or rename; …". Fail-first: table check disabled → 5 cases
+  fail with FIX-309's column message instead (with FIX-309's skip too, Merge returns `<nil>` for all seven probes); PG
+  `parseRename` call removed → `- Type: "integer" + Type: "bigint"`, `- Type: "role_t" + Type: "text"`; PG
+  `parseAlterObjectSchema` call or the TableSchemas update removed → set_schema fails the same way; SQLite `renameTable`
+  call removed → `- Type: "integer" + Type: "text"`; FIX-309's skip restored → rename_table_and_drop_column "Merge() error =
+  <nil>, want one starting \"merge both mode: view view_def.v: column role reads column role of table view_def.users, …\"";
+  existing suite (base+308+309) passes. Golden churn none. Stacked on FIX-308 + FIX-309 (FIX-300..309 could not be composed
+  in the vet: FIX-301 conflicts with FIX-300 in sqlite.go and with FIX-309 in postgres.go / sqlite.go). Expected merges:
+  FIX-301's `RenameTableReferences` call lines (keep 301's call, add `RenameViewTableReferences` above); FIX-303/304 near PG
+  `parseAlterObjectSchema` / `moveTableKey`; FIX-316 `introspect/views.go` import block (`maps`). Patch:
+  `.claude/prototypes/FIX-333.patch` (6 files, +181/-24).
+
+**References.**
+- PRD §6.1 ("`both` Mode — Merge Strategy", `docs/PRD.md:1629`), §16.2 (introspected views).
+- FIX-309 (rename/drop-column twin and its ruling Q6; lands first), FIX-310.
+
+**Resolution notes.** Under `source: both`, a file `RENAME TABLE` / `DROP TABLE` of a table a database view reads is now followed or rejected per dialect instead of leaving the view stale. `parser/view.go` gains `ViewFromTables` and `RenameViewTableReferences`; PG `parseRename` (OBJECT_TABLE) and `parseAlterObjectSchema` and SQLite `renameTable` repoint the seeded views' FROM keys before the table moves (MySQL does not, so its renames error). `parser/introspect/views.go` records each view's FROM tables in `readViewSources` (`viewReads.from`) and `refreshViewColumns` errors first when one no longer resolves ("view V reads table T, which the SQL files drop or rename; …"); FIX-309's `hasTable` skip is removed, and `tableRef.String()` replaces the inline qualification. PRD §6.1's both-mode paragraph gains the table rule. `TestMerge_ViewColumnRenameAndDrop` gains 10 cases (PG rename table, set schema, drop table, rename table + drop column; SQLite rename, drop table; MySQL RENAME TABLE, ALTER … RENAME, DROP, rename then re-create the old name). Prototype applied with `git apply --3way`: conflicts resolved per the overlap notes (FIX-301's dialect-aware `RenameTableReferences` call and table-exists guard kept in PG `parseRename` and SQLite `renameTable`, `RenameViewTableReferences` added above it; PRD paragraph keeps FIX-312's closing `DROP TYPE` sentence after the new table rule); `views.go` and `view.go` applied clean on top of FIX-316 (one `refreshViewColumns` doc-comment paragraph reflowed). Verify (`/verify FIX-333`): reviewer agreed, fail-first spot check confirmed; References line ref updated `:1616` → `:1629`. Fail-first re-run on the final code matches the vet: table check disabled → 5 cases fail (PG/SQLite drop table, MySQL rename/alter rename/drop); FIX-309's skip restored → postgres/rename_table_and_drop_column fails; PG `parseRename` call removed → rename_table and rename_table_and_drop_column fail; PG `parseAlterObjectSchema` call removed → set_schema fails; SQLite `renameTable` call removed → sqlite/rename_table fails. `make check` ok, `make check-examples` ok, golden churn none.
+
 ### FIX-332
 
 - **Status:** Resolved

@@ -863,7 +863,9 @@ func (p *Parser) renameTable(oldName, newName string) error {
 	}
 	// Keys referencing the table follow it to its new name, as they do in the
 	// database; left on the old name, relationship detection drops the edge.
+	// SQLite rewrites a view that reads the table too.
 	table := &p.schema.Tables[idx]
+	parser.RenameViewTableReferences(p.schema, table, table.Schema, newName)
 	parser.RenameTableReferences(p.schema.Tables, "sqlite", table.Schema, table.Name, newName)
 	table.Name = newName
 	delete(p.tableIndex, parser.FoldASCII(oldName))

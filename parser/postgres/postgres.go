@@ -815,8 +815,9 @@ func (p *Parser) parseRename(stmt *pg_query.RenameStmt) error {
 		if _, exists := p.tableIndex[newKey]; exists {
 			return fmt.Errorf("table %s already exists", newKey)
 		}
-		// PostgreSQL keys a foreign key on the referenced table's OID, so a
-		// rename carries every reference along with it.
+		// PostgreSQL keys a foreign key and a view's table on the referenced
+		// table's OID, so a rename carries every reference along with it.
+		parser.RenameViewTableReferences(p.schema, table, table.Schema, stmt.Newname)
 		parser.RenameTableReferences(p.schema.Tables, "postgres", table.Schema, table.Name, stmt.Newname)
 		table.Name = stmt.Newname
 		p.moveTableKey(oldKey, newKey)
@@ -983,8 +984,9 @@ func (p *Parser) parseAlterObjectSchema(stmt *pg_query.AlterObjectSchemaStmt) er
 	if _, exists := p.tableIndex[newKey]; exists {
 		return fmt.Errorf("table %s already exists", newKey)
 	}
-	// PostgreSQL keys a foreign key on the referenced table's OID, so a move
-	// carries every reference along with it.
+	// PostgreSQL keys a foreign key and a view's table on the referenced
+	// table's OID, so a move carries every reference along with it.
+	parser.RenameViewTableReferences(p.schema, table, stmt.Newschema, table.Name)
 	parser.MoveTableReferences(p.schema.Tables, table.Name, table.Schema, stmt.Newschema)
 	for i := range table.Columns {
 		table.Columns[i].Type = p.retargetTypeName(table.Columns[i].Type, table.Schema, stmt.Newschema)
