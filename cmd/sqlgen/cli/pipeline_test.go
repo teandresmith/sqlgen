@@ -619,3 +619,83 @@ func TestAddViewFiles_MySQLQualifiedView(t *testing.T) {
 		})
 	}
 }
+
+// TestValidate_NullableCursorKey pins that a nullable column cannot be a
+// cursor key (PRD §4.13): an explicit key naming one is a config error under
+// either nullable representation, and an inherited key naming one does not
+// resolve. A view column's nullability is the one §16.3 resolves, so a column
+// read from the outer side of a LEFT JOIN counts.
+func TestValidate_NullableCursorKey(t *testing.T) {
+	const schema = `CREATE TABLE notes (
+			id INTEGER PRIMARY KEY,
+			body TEXT
+		);
+		CREATE TABLE tags (
+			id INTEGER PRIMARY KEY,
+			note_id INTEGER NOT NULL
+		);`
+	const view = `CREATE VIEW note_tags AS
+		SELECT t.note_id, n.id
+		FROM tags t
+		LEFT JOIN notes n ON n.id = t.note_id;`
+	tests := []struct {
+		name        string
+		config      string
+		wantErr     string
+		wantWarning string
+	}{
+		{
+			name:    "explicit table key",
+			config:  "tables:\n  notes:\n    cursor_keys: [body, id]\n",
+			wantErr: `Error: cursor_keys: column "body" in table notes is nullable; a cursor key must be NOT NULL`,
+		},
+		{
+			name:    "explicit table key with sql.Null wrappers",
+			config:  "overrides:\n  use_pointers: false\ntables:\n  notes:\n    cursor_keys: [body, id]\n",
+			wantErr: `Error: cursor_keys: column "body" in table notes is nullable; a cursor key must be NOT NULL`,
+		},
+		{
+			name:    "explicit view key",
+			config:  "views:\n  note_tags:\n    cursor_keys: [id]\n",
+			wantErr: `Error: cursor_keys: column "id" in view note_tags is nullable; a cursor key must be NOT NULL`,
+		},
+		{
+			name:        "inherited view key",
+			wantWarning: `Warning: cursor_keys: inherited default does not resolve on view note_tags (column "id" is nullable); Connection method omitted`,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cfgPath := writeSchemaProject(t, config.DialectSQLite, schema)
+			viewDir := t.TempDir()
+			if err := os.WriteFile(filepath.Join(viewDir, "note_tags.sql"), []byte(view), 0o600); err != nil {
+				t.Fatalf("writing view file: %v", err)
+			}
+			cfg, err := os.ReadFile(cfgPath) //nolint:gosec // test code, path is from controlled test dir
+			if err != nil {
+				t.Fatalf("reading config: %v", err)
+			}
+			content := strings.Replace(string(cfg), "\noutput:", "\n  views:\n    - \""+filepath.ToSlash(viewDir)+"\"\noutput:", 1) + tt.config
+			if err := os.WriteFile(cfgPath, []byte(content), 0o600); err != nil { //nolint:gosec // test code, path is from controlled test dir
+				t.Fatalf("writing config: %v", err)
+			}
+
+			_, stderr, err := executeCommand("validate", "--config", cfgPath)
+			if tt.wantErr != "" {
+				if err == nil {
+					t.Fatalf("validate succeeded, want %q\nstderr: %s", tt.wantErr, stderr)
+				}
+				if !strings.Contains(stderr, tt.wantErr) {
+					t.Errorf("validate: stderr = %q, want it to contain %q", stderr, tt.wantErr)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("validate: unexpected error: %v\nstderr: %s", err, stderr)
+			}
+			if !strings.Contains(stderr, tt.wantWarning) {
+				t.Errorf("validate: stderr = %q, want it to contain %q", stderr, tt.wantWarning)
+			}
+		})
+	}
+}

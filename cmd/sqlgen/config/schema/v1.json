@@ -529,7 +529,7 @@
         "invalidate_on": { "type": "array", "description": "Tables whose mutations invalidate this view's cached reads.", "items": { "type": "string" } },
         "cursor_keys": {
           "type": "array",
-          "description": "Cursor keys for this view. When set explicitly every column must exist on the view. Views have no primary key, so there is no PK fallback.",
+          "description": "Cursor keys for this view. When set explicitly every column must exist on the view and be NOT NULL. Views have no primary key, so there is no PK fallback.",
           "items": { "type": "string" }
         },
         "tenancy": { "$ref": "#/$defs/entityTenancy" },

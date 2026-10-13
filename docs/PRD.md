@@ -458,7 +458,7 @@ Resolution order for any generation field:
 | `query_limit` | `int` | `1000` | Default LIMIT for GetMany when none specified. |
 | `batch_size` | `int` | `200` | Number of rows per batch in CreateMany/UpdateMany/DeleteMany. |
 | `page_size` | `int` | `100` | Default page size for pagination when none specified. |
-| `cursor_keys` | `[]string` | `["id"]` | Columns used for cursor encoding in keyset pagination. Applied as the default to every table and view unless overridden. When inherited (i.e. not explicitly set on a table/view), missing columns trigger a fallback instead of an error — see [4.13](#413-config-validation-rules). |
+| `cursor_keys` | `[]string` | `["id"]` | Columns used for cursor encoding in keyset pagination. Applied as the default to every table and view unless overridden. When inherited (i.e. not explicitly set on a table/view), missing or nullable columns trigger a fallback instead of an error — see [4.13](#413-config-validation-rules). |
 | `uuid_version` | `string` | `"v4"` | UUID generation strategy for app-generated UUID PKs. `v4` = random, `v7` = time-ordered. |
 | `strict_updates` | `bool` | `true` | When true, `Update` and `Increment` return `ErrNotFound` if the target PK does not exist. When false, they return `nil` (idempotent). See [9.5](#95-edge-case-behaviors). |
 
@@ -505,7 +505,7 @@ There is no operations setting. The client generates **every method the schema a
 
 | Schema fact | Methods it gates |
 |-------------|------------------|
-| The entity is a **view** | A view gets a read client and no write method; [16.4](#164-generated-artifacts-views-vs-tables) lists its methods (`Get` only when the view declares a key, `Refresh` only on a materialized view). Its `Connection` is omitted when inherited `cursor_keys` name a column the view lacks ([4.13](#413-config-validation-rules)). |
+| The entity is a **view** | A view gets a read client and no write method; [16.4](#164-generated-artifacts-views-vs-tables) lists its methods (`Get` only when the view declares a key, `Refresh` only on a materialized view). Its `Connection` is omitted when inherited `cursor_keys` name a column the view lacks or a nullable one ([4.13](#413-config-validation-rules)). |
 | The table has **no primary key** after override resolution | Nothing is generated for the table: no client, model, filter, cache entry or event hook ([9.4b](#94b-no-pk-tables-are-skipped)). |
 | The table has **no soft-delete column** ([5.4](#54-soft-delete-column-detection)) | `SoftDelete`, `SoftDeleteMany`, `SoftDeleteWhere`, `Restore`, `RestoreMany` and `RestoreWhere` are not generated. Hard deletes always are. |
 | The table has **no incrementable column** ([9.8.9a](#989a-increment)) | `Increment` and its `<Table>IncrementColumn` enum are not generated. |
@@ -684,7 +684,7 @@ Any field from `generation` can be set per-table to override the global default.
 | `query_limit` | `int` | Override `generation.query_limit` for this table. |
 | `batch_size` | `int` | Override `generation.batch_size` for this table. |
 | `page_size` | `int` | Override `generation.page_size` for this table. |
-| `cursor_keys` | `[]string` | Override `generation.cursor_keys` for this table. When set explicitly, every listed column must exist on this table (hard error). When inherited from `generation.cursor_keys`, missing columns fall back to the table's primary key — or, if the table has no PK, the table's `Connection` method is omitted with a warning. See [4.13](#413-config-validation-rules). |
+| `cursor_keys` | `[]string` | Override `generation.cursor_keys` for this table. When set explicitly, every listed column must exist on this table and be NOT NULL (hard error). When inherited from `generation.cursor_keys`, missing or nullable columns fall back to the table's primary key — or, if the table has no PK, the table's `Connection` method is omitted with a warning. See [4.13](#413-config-validation-rules). |
 | `exclude_columns` | `[]string` | Merged with `generation.exclude_columns` (union of both lists). |
 | `strict_updates` | `bool` | Override `generation.strict_updates` for this table. |
 
@@ -977,7 +977,7 @@ Each entry in the `views` map defines a read-only view. Key is view identifier.
 | `sql` | `string` | Yes | Path to SQL file containing the SELECT statement. |
 | `cache` | `ViewCacheConfig` | No | View cache overrides (`enabled`, `ttl` — tri-state pointers). **Opt-in:** views do NOT inherit global `cache.enabled`; a view is cached only when `view.cache.enabled: true` is set explicitly AND `invalidate_on` is non-empty. See [Section 27](#27-caching). |
 | `invalidate_on` | `[]string` | Conditional | Table names whose mutations invalidate this view's cache. **Required** when `cache.enabled: true` (hard validation error if missing). Table names must resolve to parsed tables that are included in generation (excluded tables are a hard error — no mutation hook fires for them). See [27.11](#2711-view-cache-invalidation). |
-| `cursor_keys` | `[]string` | No | Override `generation.cursor_keys` for this view. When set explicitly, every listed column must exist on this view (hard error). When omitted, the global value is applied if all its columns exist on the view; otherwise the view's `Connection` method is omitted with a warning. Views have no primary key, so there is no PK fallback. See [4.13](#413-config-validation-rules). |
+| `cursor_keys` | `[]string` | No | Override `generation.cursor_keys` for this view. When set explicitly, every listed column must exist on this view and be NOT NULL (hard error). When omitted, the global value is applied if all its columns exist on the view and are NOT NULL; otherwise the view's `Connection` method is omitted with a warning. Views have no primary key, so there is no PK fallback. See [4.13](#413-config-validation-rules). |
 | `tenancy` | `TableTenancyConfig` | No | Per-view tenancy overrides (`enabled`, `column`, `required`, `type` — tri-state pointers, same shape and precedence as `tables.<name>.tenancy`). A view carrying the tenant column is scoped by **detection**, so this block is only needed to opt out or to name a non-standard column. Read path only. See [29.2.5](#2925-view-tenancy). |
 | `api` | `ViewAPIConfig` | No | Per-view API exposure. `enabled` (`*bool`, nil = inherit global `api.enabled`) excludes the view from the GraphQL surface when false. `operations` (`*Operations`) narrows the view's read operations subtractively — only `get`, `paginate`, `connection` are expressible; naming any mutation operation, or a client-only key such as `get_many`, is a validation error. See [26.4](#views-on-the-graphql-surface). |
 
@@ -1174,6 +1174,8 @@ The config is validated immediately after loading, before parsing or generation 
 | **Driver/dialect mismatch** | Error | `output.driver: pgx` is only compatible with `input.dialect: postgres`. Using pgx with MySQL or SQLite is a validation error. |
 | **Table-level `cursor_keys` referencing non-existent columns** | Error | When `tables.<name>.cursor_keys` is set explicitly, every listed column must exist on that table. |
 | **View-level `cursor_keys` referencing non-existent columns** | Error | When `views.<name>.cursor_keys` is set explicitly, every listed column must exist on that view. |
+| **Explicit `cursor_keys` naming a nullable column** | Error | When `tables.<name>.cursor_keys` or `views.<name>.cursor_keys` is set explicitly, every listed column must be NOT NULL: a NULL key value encodes into a cursor that cannot be decoded back, so no row past it can be paged to. A view column's nullability is the one [16.3](#163-column-type-resolution) resolves. The error names the table or view and the column. |
+| **Inherited `cursor_keys` naming a nullable column** | As a missing column | An inherited key that names a nullable column does not resolve, exactly as a missing one does: a table falls back to its primary key, a table without one and a view omit `Connection` with a warning (rules below). On a view, `@type` or `@pk` on the column makes it NOT NULL ([16.3](#163-column-type-resolution)). |
 | **Inherited `cursor_keys` missing on a table with a PK** | Silent fallback | When a table inherits `generation.cursor_keys` and any listed column is missing, the table falls back to its primary key (single or composite) for cursor pagination. No warning. |
 | **Resolved `cursor_keys` naming an access-restricted column** | Error | Every column in a table's resolved `cursor_keys` must carry `access ∈ {public, read_only}` — cursor key values are encoded into every edge cursor and accepted back as `after` / `before`. Applies to explicit and inherited keys alike, and regardless of whether an API is generated; exempt when the keys do not resolve, since `Connection` is then omitted. See [32.4](#324-validation). |
 | **Inherited `cursor_keys` missing on a table without a PK** | Warning | When a table inherits `generation.cursor_keys`, any listed column is missing, and the table has no primary key, the table's `Connection` method is omitted. A warning is emitted naming the table. |
@@ -1251,16 +1253,18 @@ The config is validated immediately after loading, before parsing or generation 
 
 Validation runs in three phases:
 1. **Config-level** (before parsing) — driver/dialect mismatch, missing connection, invalid `api.operations` presets, a leftover client `operations` key, client-only keys in an `api.operations` mask, duplicate struct names
-2. **Schema-level** (after parsing) — cursor_keys existence, soft_delete type mismatch, struct name collisions from auto-detection, exclude_columns exhaustion
+2. **Schema-level** (after parsing) — cursor_keys existence and nullability, soft_delete type mismatch, struct name collisions from auto-detection, exclude_columns exhaustion
 3. **Resolution-level** (during generation) — the few rules that need the naming or type engine to have run, and so cannot be answered from the config text alone: the `api.operations` over-reach warning (which reads each table's resolved operations), the resolved-field-name rules (collision and reserved name), whether a declared relationship's target generates at all (which needs `exclude_tables` and the primary-key rule applied, and the target's `struct_name` resolved), the two rules that ask whether a Go type literal needs an explicit import, and the one-UUID-library-per-package rule, which has to collect the import path every column actually resolved to across the whole package before it can count them. They live in the generator rather than in config validation, and the table above marks them — but `sqlgen validate` still reports them: it builds the table, view and API contexts in memory and discards them, so every phase-3 rule is answered at validate time without loading a template or writing a file.
 
 **Cursor key resolution — fallback semantics.** `cursor_keys` resolution is lenient for inherited values and strict for explicit values. The rationale: explicit configuration is a user assertion that must be honored or flagged; an inherited default should degrade gracefully because the global default cannot know every table's schema shape. Partial matches (some columns present, others missing) always trigger a full fallback — never a subset — because a partial cursor would silently change sort semantics. Resolution rules:
 
-1. **Table, inherited, any column missing, PK present** → use table PK (single or composite). No warning.
-2. **Table, inherited, any column missing, no PK** → omit `Connection`. Warning.
-3. **Table, explicit, any column missing** → error.
-4. **View, inherited, any column missing** → omit `Connection`. Warning. (Views have no PK fallback.)
-5. **View, explicit, any column missing** → error.
+1. **Table, inherited, any column missing or nullable, PK present** → use table PK (single or composite). No warning.
+2. **Table, inherited, any column missing or nullable, no PK** → omit `Connection`. Warning.
+3. **Table, explicit, any column missing or nullable** → error.
+4. **View, inherited, any column missing or nullable** → omit `Connection`. Warning. (Views have no PK fallback.)
+5. **View, explicit, any column missing or nullable** → error.
+
+A nullable column counts as unresolved because a cursor cannot carry NULL: the keyset condition `cursor_keys > cursor_values` has no value to compare a NULL key against, so a cursor holding one is rejected as invalid.
 
 ### 4.14 Config JSON Schema (editor support)
 
@@ -2240,6 +2244,8 @@ This catches template regressions without running the full generation pipeline.
 - Driver/dialect mismatch (pgx + MySQL = error)
 - Table-level `cursor_keys` referencing non-existent columns (error)
 - View-level `cursor_keys` referencing non-existent columns (error)
+- Explicit table- or view-level `cursor_keys` naming a nullable column (error), under `use_pointers: true` and `false` alike
+- Inherited `cursor_keys` naming a nullable column → PK fallback on a table with PK; `Connection` omitted, warning, on a PK-less table or a view
 - Inherited `cursor_keys` missing on table with PK → PK fallback, no warning
 - Inherited `cursor_keys` missing on table without PK → `Connection` omitted, warning
 - Inherited `cursor_keys` missing on view → `Connection` omitted, warning
@@ -9049,9 +9055,9 @@ type PageInfo struct {
 
 #### Configurable
 
-- `generation.cursor_keys` — columns used for cursor encoding (default: `["id"]`). Should be columns that are unique and immutable (or monotonically increasing). Inherited-default resolution is lenient: tables fall back to their PK and views omit `Connection` when the inherited keys don't exist on the entity. Explicit per-table/per-view overrides are strict — see [4.13](#413-config-validation-rules).
-- `tables.<name>.cursor_keys` — per-table override (strict — every listed column must exist on the table).
-- `views.<name>.cursor_keys` — per-view override (strict — every listed column must exist on the view).
+- `generation.cursor_keys` — columns used for cursor encoding (default: `["id"]`). Should be columns that are unique and immutable (or monotonically increasing). Inherited-default resolution is lenient: tables fall back to their PK and views omit `Connection` when the inherited keys don't exist on the entity or are nullable. Explicit per-table/per-view overrides are strict — see [4.13](#413-config-validation-rules).
+- `tables.<name>.cursor_keys` — per-table override (strict — every listed column must exist on the table and be NOT NULL).
+- `views.<name>.cursor_keys` — per-view override (strict — every listed column must exist on the view and be NOT NULL).
 - `generation.page_size` — default page size when `first`/`last` is not specified (default: `100`)
 
 ---

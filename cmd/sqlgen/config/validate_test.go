@@ -2353,3 +2353,121 @@ func TestValidatePreParse_IgnoredPasswordEnv(t *testing.T) {
 		})
 	}
 }
+
+// TestValidatePostParse_CursorKeys_Nullable pins that a nullable column never
+// resolves as a cursor key (PRD §4.13): a NULL key value encodes into a cursor
+// that cannot be decoded back, so every row past it is unreachable. An
+// explicit key naming one is an error; an inherited key naming one is
+// unresolved, and takes the missing-column path.
+func TestValidatePostParse_CursorKeys_Nullable(t *testing.T) {
+	tables := []config.SchemaTable{
+		{
+			Name:   "orders",
+			Schema: "public",
+			Columns: []config.SchemaColumn{
+				{Name: "id", Type: "bigint", PrimaryKey: true},
+				{Name: "shipped_at", Type: "timestamp", Nullable: true},
+			},
+		},
+		{
+			Name:   "audit_events",
+			Schema: "public",
+			Columns: []config.SchemaColumn{
+				{Name: "shipped_at", Type: "timestamp", Nullable: true},
+			},
+		},
+	}
+	views := []config.SchemaView{
+		{
+			Name:   "order_totals",
+			Schema: "public",
+			Columns: []config.SchemaColumn{
+				{Name: "shipped_at", Type: "timestamp", Nullable: true},
+			},
+		},
+	}
+	tests := []struct {
+		name         string
+		inherited    []string
+		tableKeys    []string
+		viewKeys     []string
+		wantErr      string
+		wantWarnings []string
+	}{
+		{
+			name:      "explicit table key",
+			inherited: []string{"id"},
+			tableKeys: []string{"shipped_at", "id"},
+			wantErr:   `cursor_keys: column "shipped_at" in table public.orders is nullable; a cursor key must be NOT NULL`,
+			wantWarnings: []string{
+				`cursor_keys: inherited default does not resolve on table public.audit_events (column "id" is missing) and no primary key is available; Connection method omitted`,
+				`cursor_keys: inherited default does not resolve on view public.order_totals (column "id" is missing); Connection method omitted (views have no primary key fallback)`,
+			},
+		},
+		{
+			name:      "explicit view key",
+			inherited: []string{"id"},
+			viewKeys:  []string{"shipped_at"},
+			wantErr:   `cursor_keys: column "shipped_at" in view public.order_totals is nullable; a cursor key must be NOT NULL`,
+			wantWarnings: []string{
+				`cursor_keys: inherited default does not resolve on table public.audit_events (column "id" is missing) and no primary key is available; Connection method omitted`,
+			},
+		},
+		{
+			// orders falls back to its PK silently; the PK-less table and
+			// the view omit Connection with a warning.
+			name:      "inherited key",
+			inherited: []string{"shipped_at"},
+			wantWarnings: []string{
+				`cursor_keys: inherited default does not resolve on table public.audit_events (column "shipped_at" is nullable) and no primary key is available; Connection method omitted`,
+				`cursor_keys: inherited default does not resolve on view public.order_totals (column "shipped_at" is nullable); Connection method omitted (views have no primary key fallback)`,
+			},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg := validConfig()
+			cfg.Generation.CursorKeys = tt.inherited
+			if tt.tableKeys != nil {
+				cfg.Tables["public.orders"] = config.TableConfig{CursorKeys: tt.tableKeys}
+			}
+			if tt.viewKeys != nil {
+				cfg.Views["public.order_totals"] = config.ViewConfig{CursorKeys: tt.viewKeys}
+			}
+
+			warnings, err := config.ValidatePostParse(cfg, tables, views)
+			gotErr := ""
+			if err != nil {
+				gotErr = err.Error()
+			}
+			if gotErr != tt.wantErr {
+				t.Errorf("ValidatePostParse() error = %q, want %q", gotErr, tt.wantErr)
+			}
+			var gotWarnings []string
+			for _, w := range warnings {
+				if strings.Contains(w.Message, "cursor_keys") {
+					gotWarnings = append(gotWarnings, w.Message)
+				}
+			}
+			if diff := cmp.Diff(tt.wantWarnings, gotWarnings); diff != "" {
+				t.Errorf("ValidatePostParse() cursor_keys warnings mismatch (-want +got):\n%s", diff)
+			}
+		})
+	}
+}
+
+// TestResolveTableConnection_NullableInheritedKeyFallsBackToPK pins the keys
+// an unresolved inherited key falls back to: the table's PK, never the
+// subset of keys that would resolve.
+func TestResolveTableConnection_NullableInheritedKeyFallsBackToPK(t *testing.T) {
+	global := config.GenerationConfig{CursorKeys: []string{"created_at", "id"}}
+	columns := []config.SchemaColumn{
+		{Name: "id", PrimaryKey: true},
+		{Name: "created_at", Nullable: true},
+	}
+	got := config.ResolveTableConnection(config.TableConfig{}, global, "public.orders", columns, []string{"id"})
+	want := config.CursorKeysDecision{Keys: []string{"id"}, Emit: true}
+	if diff := cmp.Diff(want, got); diff != "" {
+		t.Errorf("ResolveTableConnection() mismatch (-want +got):\n%s", diff)
+	}
+}

@@ -90,7 +90,7 @@ func buildSingleViewContext(input *GenerateInput, view *parser.View, collisions 
 		viewCfg,
 		cfg.Generation,
 		qualifiedViewOrName(view),
-		columnContextNames(columns),
+		cursorKeyCandidates(columns),
 	)
 
 	return ViewContext{

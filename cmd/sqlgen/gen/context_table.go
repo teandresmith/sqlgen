@@ -463,7 +463,7 @@ func assembleTableContext(
 		tableCfg,
 		cfg.Generation,
 		qualifiedTableOrName(table),
-		columnContextNames(columns),
+		cursorKeyCandidates(columns),
 		columnContextNames(pkColumns),
 	)
 
@@ -875,6 +875,16 @@ func tableHasResolvedPK(cfg *config.RootConfig, table *parser.Table) bool {
 		}
 	}
 	return false
+}
+
+// cursorKeyCandidates returns the columns §4.13 cursor_keys resolution checks
+// keys against, carrying the nullability a key must not have.
+func cursorKeyCandidates(cols []ColumnContext) []config.SchemaColumn {
+	out := make([]config.SchemaColumn, len(cols))
+	for i, c := range cols {
+		out[i] = config.SchemaColumn{Name: c.Name, Nullable: c.Nullable}
+	}
+	return out
 }
 
 // columnContextNames returns the slice of column names from a ColumnContext

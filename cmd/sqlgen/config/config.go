@@ -2078,7 +2078,7 @@ func ResolveTablePageSize(table TableConfig, global GenerationConfig) int {
 // CursorKeysDecision is the outcome of cursor_keys resolution for one table or
 // view. It carries the effective keys, whether Connection should be emitted,
 // an optional warning for fallback paths, and an error when an explicit
-// override references missing columns. See PRD §4.13.
+// override names a missing or nullable column. See PRD §4.13.
 type CursorKeysDecision struct {
 	// Keys is the effective cursor key column list. Empty when Emit is false.
 	Keys []string
@@ -2087,41 +2087,41 @@ type CursorKeysDecision struct {
 	// Warning is a human-readable diagnostic when resolution relied on a
 	// PK-less omit. Empty on clean resolution and on silent PK fallback.
 	Warning string
-	// Err is non-nil when an explicit table/view-level override references a
-	// column that does not exist on the entity (hard validation error).
+	// Err is non-nil when an explicit table/view-level override names a
+	// column that does not exist on the entity or is nullable (hard
+	// validation error).
 	Err error
 }
 
 // ResolveTableConnection applies the §4.13 cursor_keys resolution rules for a
 // table. The rules are:
 //
-//  1. Explicit table-level cursor_keys with any missing column → Err.
-//  2. Inherited (global) cursor_keys fully present → use them silently.
-//  3. Inherited cursor_keys partially or fully missing, table has PK → fall
-//     back to the PK column list silently (no warning).
-//  4. Inherited cursor_keys partially or fully missing, table has no PK →
-//     Emit is false and Warning is populated naming the table.
+//  1. Explicit table-level cursor_keys with any missing or nullable column →
+//     Err.
+//  2. Inherited (global) cursor_keys all present and NOT NULL → use them
+//     silently.
+//  3. Inherited cursor_keys with any column missing or nullable, table has
+//     PK → fall back to the PK column list silently (no warning).
+//  4. Inherited cursor_keys with any column missing or nullable, table has no
+//     PK → Emit is false and Warning is populated naming the table.
+//
+// A nullable key cannot resolve: a cursor holding a NULL key is rejected as
+// invalid, so every row past it is unreachable.
 //
 // qualifiedName is used in the warning / error message (e.g. "public.products").
-// columns must list every column name on the table; pk must list the PK
-// column names in declaration order.
-func ResolveTableConnection(table TableConfig, global GenerationConfig, qualifiedName string, columns, pk []string) CursorKeysDecision {
-	colSet := stringSet(columns)
-
+// columns must list every column on the table; pk must list the PK column
+// names in declaration order.
+func ResolveTableConnection(table TableConfig, global GenerationConfig, qualifiedName string, columns []SchemaColumn, pk []string) CursorKeysDecision {
 	if len(table.CursorKeys) > 0 {
-		if missing := missingColumns(table.CursorKeys, colSet); len(missing) > 0 {
-			return CursorKeysDecision{
-				Err: fmt.Errorf("cursor_keys: column %q does not exist in table %s", missing[0], qualifiedName),
-			}
+		if err := checkExplicitCursorKeys(table.CursorKeys, columns, "table", qualifiedName); err != nil {
+			return CursorKeysDecision{Err: err}
 		}
 		return CursorKeysDecision{Keys: table.CursorKeys, Emit: true}
 	}
 
-	inherited := global.CursorKeys
-	if len(inherited) == 0 {
-		inherited = []string{"id"}
-	}
-	if len(missingColumns(inherited, colSet)) == 0 {
+	inherited := inheritedCursorKeys(global)
+	reason := unresolvedCursorKeys(inherited, columns)
+	if reason == "" {
 		return CursorKeysDecision{Keys: inherited, Emit: true}
 	}
 	if len(pk) > 0 {
@@ -2129,43 +2129,90 @@ func ResolveTableConnection(table TableConfig, global GenerationConfig, qualifie
 	}
 	return CursorKeysDecision{
 		Emit:    false,
-		Warning: fmt.Sprintf("cursor_keys: inherited default does not match table %s and no primary key is available; Connection method omitted", qualifiedName),
+		Warning: fmt.Sprintf("cursor_keys: inherited default does not resolve on table %s (%s) and no primary key is available; Connection method omitted", qualifiedName, reason),
 	}
 }
 
 // ResolveViewConnection applies the §4.13 cursor_keys resolution rules for a
 // view. The rules are:
 //
-//  1. Explicit view-level cursor_keys with any missing column → Err.
-//  2. Inherited (global) cursor_keys fully present → use them silently.
-//  3. Inherited cursor_keys partially or fully missing → Emit is false and
-//     Warning is populated naming the view. Views have no PK fallback.
+//  1. Explicit view-level cursor_keys with any missing or nullable column →
+//     Err.
+//  2. Inherited (global) cursor_keys all present and NOT NULL → use them
+//     silently.
+//  3. Inherited cursor_keys with any column missing or nullable → Emit is
+//     false and Warning is populated naming the view. Views have no PK
+//     fallback.
 //
 // qualifiedName is used in the warning / error message (e.g. "public.view_summary").
-// columns must list every column name on the view.
-func ResolveViewConnection(view ViewConfig, global GenerationConfig, qualifiedName string, columns []string) CursorKeysDecision {
-	colSet := stringSet(columns)
-
+// columns must list every column on the view, with its resolved (§16.3)
+// nullability.
+func ResolveViewConnection(view ViewConfig, global GenerationConfig, qualifiedName string, columns []SchemaColumn) CursorKeysDecision {
 	if len(view.CursorKeys) > 0 {
-		if missing := missingColumns(view.CursorKeys, colSet); len(missing) > 0 {
-			return CursorKeysDecision{
-				Err: fmt.Errorf("cursor_keys: column %q does not exist in view %s", missing[0], qualifiedName),
-			}
+		if err := checkExplicitCursorKeys(view.CursorKeys, columns, "view", qualifiedName); err != nil {
+			return CursorKeysDecision{Err: err}
 		}
 		return CursorKeysDecision{Keys: view.CursorKeys, Emit: true}
 	}
 
-	inherited := global.CursorKeys
-	if len(inherited) == 0 {
-		inherited = []string{"id"}
-	}
-	if len(missingColumns(inherited, colSet)) == 0 {
+	inherited := inheritedCursorKeys(global)
+	reason := unresolvedCursorKeys(inherited, columns)
+	if reason == "" {
 		return CursorKeysDecision{Keys: inherited, Emit: true}
 	}
 	return CursorKeysDecision{
 		Emit:    false,
-		Warning: fmt.Sprintf("cursor_keys: inherited default does not match view %s; Connection method omitted (views have no primary key fallback)", qualifiedName),
+		Warning: fmt.Sprintf("cursor_keys: inherited default does not resolve on view %s (%s); Connection method omitted (views have no primary key fallback)", qualifiedName, reason),
 	}
+}
+
+// inheritedCursorKeys returns generation.cursor_keys, or the built-in ["id"]
+// default when it is unset.
+func inheritedCursorKeys(global GenerationConfig) []string {
+	if len(global.CursorKeys) == 0 {
+		return []string{"id"}
+	}
+	return global.CursorKeys
+}
+
+// checkExplicitCursorKeys reports the first explicit key that names a missing
+// or nullable column.
+func checkExplicitCursorKeys(keys []string, columns []SchemaColumn, kind, qualifiedName string) error {
+	byName := columnsByName(columns)
+	for _, k := range keys {
+		col, ok := byName[k]
+		if !ok {
+			return fmt.Errorf("cursor_keys: column %q does not exist in %s %s", k, kind, qualifiedName)
+		}
+		if col.Nullable {
+			return fmt.Errorf("cursor_keys: column %q in %s %s is nullable; a cursor key must be NOT NULL", k, kind, qualifiedName)
+		}
+	}
+	return nil
+}
+
+// unresolvedCursorKeys returns why inherited keys do not resolve against
+// columns — the first missing or nullable key — or "" when they all resolve.
+func unresolvedCursorKeys(keys []string, columns []SchemaColumn) string {
+	byName := columnsByName(columns)
+	for _, k := range keys {
+		col, ok := byName[k]
+		if !ok {
+			return fmt.Sprintf("column %q is missing", k)
+		}
+		if col.Nullable {
+			return fmt.Sprintf("column %q is nullable", k)
+		}
+	}
+	return ""
+}
+
+func columnsByName(columns []SchemaColumn) map[string]SchemaColumn {
+	byName := make(map[string]SchemaColumn, len(columns))
+	for _, c := range columns {
+		byName[c.Name] = c
+	}
+	return byName
 }
 
 func stringSet(values []string) map[string]bool {
@@ -2174,17 +2221,6 @@ func stringSet(values []string) map[string]bool {
 		set[v] = true
 	}
 	return set
-}
-
-// missingColumns returns the subset of keys that are not present in colSet.
-func missingColumns(keys []string, colSet map[string]bool) []string {
-	var missing []string
-	for _, k := range keys {
-		if !colSet[k] {
-			missing = append(missing, k)
-		}
-	}
-	return missing
 }
 
 // ResolveTableStrictUpdates returns the effective strict_updates for a table.

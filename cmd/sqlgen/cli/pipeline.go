@@ -428,6 +428,7 @@ func toSchemaViews(schema *parser.Schema) []config.SchemaView {
 				Name:       c.Name,
 				Type:       c.Type,
 				PrimaryKey: c.PrimaryKey,
+				Nullable:   c.Nullable,
 			})
 		}
 		views = append(views, config.SchemaView{

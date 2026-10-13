@@ -2469,6 +2469,42 @@ func TestOperations_ResolvedSetIsTheSchemaFacts(t *testing.T) {
 	})
 }
 
+// TestBuildContexts_NullableInheritedCursorKey pins that the generator reads
+// a nullable inherited cursor key as unresolved, as validate does (PRD
+// §4.13): a table falls back to its PK, and a view, having no PK to fall
+// back to, gets no Connection.
+func TestBuildContexts_NullableInheritedCursorKey(t *testing.T) {
+	input := testInput(&parser.Schema{
+		Tables: []parser.Table{{Name: "orders", Columns: []parser.Column{
+			{Name: "id", Type: "bigint", PrimaryKey: true},
+			{Name: "shipped_at", Type: "timestamptz", Nullable: true},
+		}}},
+		Views: []parser.View{{Name: "order_totals", Columns: []parser.Column{
+			{Name: "shipped_at", Type: "timestamptz", Nullable: true},
+		}}},
+	})
+	input.Config.Generation.CursorKeys = []string{"shipped_at"}
+
+	tables, err := gen.BuildTableContexts(input, nil)
+	if err != nil {
+		t.Fatalf("BuildTableContexts() error: %v", err)
+	}
+	if diff := cmp.Diff([]string{"id"}, tables[0].CursorKeys); diff != "" {
+		t.Errorf("table CursorKeys mismatch (-want +got):\n%s", diff)
+	}
+	if !tables[0].Operations.Connection {
+		t.Error("table Operations.Connection = false, want true")
+	}
+
+	views, err := gen.BuildViewContexts(input, nil)
+	if err != nil {
+		t.Fatalf("BuildViewContexts() error: %v", err)
+	}
+	if views[0].HasConnection {
+		t.Error("view HasConnection = true, want false")
+	}
+}
+
 // --- ExcludeDeleted tests ---
 
 func TestExcludeDeleted_defaultTrueWhenSoftDeletePresent(t *testing.T) {

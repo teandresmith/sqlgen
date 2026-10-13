@@ -1628,10 +1628,10 @@ func resolvedPKColumns(tc TableConfig, table SchemaTable) []string {
 // cursor ever carries.
 func resolvedCursorKeys(cfg *RootConfig, tc TableConfig, table SchemaTable) (map[string]bool, string) {
 	excluded := stringSet(ResolveTableExcludeColumns(tc, cfg.Generation))
-	var present []string
-	for _, name := range columnNames(table.Columns) {
-		if !excluded[name] {
-			present = append(present, name)
+	var present []SchemaColumn
+	for _, col := range table.Columns {
+		if !excluded[col.Name] {
+			present = append(present, col)
 		}
 	}
 	decision := ResolveTableConnection(
@@ -1715,7 +1715,7 @@ func apiCreateOpsEnabled(cfg *RootConfig, tc TableConfig) bool {
 func opOn(p *bool) bool { return p != nil && *p }
 
 // validateCursorKeys delegates to the per-entity resolvers and surfaces their
-// decisions as errors (explicit override pointing at a missing column) or
+// decisions as errors (explicit override naming a missing or nullable column) or
 // warnings (inherited default forcing a Connection omission). Silent PK
 // fallback produces neither — see PRD §4.13.
 func validateCursorKeys(cfg *RootConfig, tables []SchemaTable, views []SchemaView, errs *[]error, warnings *[]Warning) {
@@ -1734,7 +1734,7 @@ func validateCursorKeys(cfg *RootConfig, tables []SchemaTable, views []SchemaVie
 			tc,
 			cfg.Generation,
 			qualifiedTableName(table),
-			columnNames(table.Columns),
+			table.Columns,
 			resolvedPKColumns(tc, table),
 		)
 		if decision.Err != nil {
@@ -1751,7 +1751,7 @@ func validateCursorKeys(cfg *RootConfig, tables []SchemaTable, views []SchemaVie
 			vc,
 			cfg.Generation,
 			qualifiedViewName(view),
-			columnNames(view.Columns),
+			view.Columns,
 		)
 		if decision.Err != nil {
 			*errs = append(*errs, decision.Err)
@@ -2123,16 +2123,6 @@ func findViewConfig(cfg *RootConfig, view SchemaView) ViewConfig {
 		return vc
 	}
 	return ViewConfig{}
-}
-
-// columnNames returns the flat list of column names from a slice of
-// SchemaColumn values (tables and views share the column type).
-func columnNames(cols []SchemaColumn) []string {
-	names := make([]string, len(cols))
-	for i, col := range cols {
-		names[i] = col.Name
-	}
-	return names
 }
 
 // pkColumnNames returns the subset of column names marked PrimaryKey, in

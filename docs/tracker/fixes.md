@@ -22,90 +22,6 @@
 ## Open
 
 <!-- fixes:open:begin -->
-### FIX-321
-
-- **Status:** Open
-- **Severity:** tracked
-- **Origin:** phase 5, `cmd/sqlgen/config` (cursor key resolution)
-- **Surfaced by:** backlog sweep 2026-10-12 (backlog lines from FIX-293, FIX-295)
-- **Vetted:** corrected at `9b58288b` (2026-10-12)
-
-**Issue.** A nullable `cursor_keys` column breaks paging. Measured on SQLite: `zz_cur(id INTEGER
-PRIMARY KEY, description TEXT)`, `cursor_keys: [description, id]`, rows NULL/a/b → page 1 cursor
-`{"description":null,"id":1}`, page 2 `sqlgen: invalid cursor`; with `use_pointers: false` the cursor
-is `{"description":{"String":"","Valid":false},"id":1}` and page 2 is the same error. Rows past a NULL
-key cannot be paged in either mode. No example configures a `sql.Null*`, array or `time.Time` cursor
-key (all 189 committed `decode<T>Cursor` cases are ID/PK-style), so those decode paths and
-`cursorValueIsNull`'s true branch never run in a test.
-
-**Root cause.** `ResolveTableConnection` / `ResolveViewConnection`
-(`cmd/sqlgen/config/config.go:2108,2146`) check only that each key column exists; PRD §4.13 has no
-nullability rule. Validate also never sees a view column's nullability: `toSchemaViews`
-(`cmd/sqlgen/cli/pipeline.go:421`) copies only Name, Type and PrimaryKey into `config.SchemaColumn`.
-
-**Suggested fix.**
-- Ruling (user, 2026-10-12, backlog sweep Q3): follow the explicit-strict / inherited-lenient split
-  (`docs/PRD.md:1257`). An explicitly configured nullable cursor key is a config error; an inherited key
-  resolving to a nullable column counts as unresolved — a table falls back to its PK, a PK-less table or a
-  view omits `Connection` with a warning (escape hatches: a NOT NULL column, or `@type`/`@pk` on a view
-  column).
-- `config.ResolveTableConnection` / `ResolveViewConnection` take `columns []SchemaColumn` (name +
-  nullability) instead of `[]string` (CLI-module signature only); new helpers `checkExplicitCursorKeys`,
-  `unresolvedCursorKeys`, `inheritedCursorKeys`, `columnsByName`; `missingColumns` goes. Error: `cursor_keys:
-  column "X" in table|view Y is nullable; a cursor key must be NOT NULL`.
-- Callers pass nullability: validate (`validateCursorKeys`, `resolvedCursorKeys` on the post-`exclude_columns`
-  set), gen (`context_table.go` / `context_view.go` via `cursorKeyCandidates([]ColumnContext)`), and
-  `toSchemaViews` copies `Nullable`.
-- PRD: §4.13 rows "Explicit `cursor_keys` naming a nullable column" (Error) and "Inherited `cursor_keys`
-  naming a nullable column" (handled as missing; `@type`/`@pk` escape hatches); fallback rules 1-5 read
-  "missing or nullable"; §15 config-test list +2; §4.6 / table / view `cursor_keys` rows and §14.2 bullets say
-  "and be NOT NULL"; `v1.json` view `cursor_keys` description matches.
-- Tests: config `TestValidatePostParse_CursorKeys_Nullable`,
-  `TestResolveTableConnection_NullableInheritedKeyFallsBackToPK`; gen
-  `TestBuildContexts_NullableInheritedCursorKey`; cli `TestValidate_NullableCursorKey` (sqlite; explicit table
-  key under both `use_pointers` settings — the `sql.Null*` case as a config error; explicit view key on a LEFT
-  JOIN outer column; inherited view key warning).
-- Coverage: `postgres_stdlib` gets `tables.categories.cursor_keys: [created_at, id]` (TIMESTAMPTZ NOT NULL →
-  `time.Time`) and `TestConnection_TimeCursorKey` in `tests/pagination_test.go` (forward and backward one row
-  at a time; data with a created_at tie and an order differing from id). A SQLite example cannot host it:
-  SQLite DATETIME resolves to `types.DateTime`, whose keyset comparison is broken (separate candidate FIX).
-- Corrected vs. the original suggestion (vet 2026-10-12): adds the `toSchemaViews` Nullable threading
-  (without it validate and gen disagree for views), and the coverage example is `postgres_stdlib` (no
-  graphql, no manifest), not a SQLite one.
-- Auto-accepted the recommended option on 2026-10-12 (`/fix` auto-accept rule): the warning names the reason
-  — "inherited default does not resolve on table|view X (column \"c\" is missing|nullable)" instead of "does
-  not match" — prototyped green, no golden or test captures the old text, CLI message only, §4.13 only
-  requires naming the entity.
-- Auto-accepted the recommended option on 2026-10-12 (`/fix` auto-accept rule): keep `cursorValueIsNull` as a
-  defence — still reachable, since §16.3 says a view column falling back to `any` "can hold NULL whatever its
-  flag"; removing it would churn every `decode<T>Cursor`; keeping it churns nothing.
-- Prototype results, run at `9b58288b` on 2026-10-12: sibling sqlite example, `zz_cur(id INTEGER PRIMARY KEY,
-  description TEXT)`, `cursor_keys: [description, id]`, rows NULL/a/b → page 1 endCursor
-  `{"description":null,"id":1}`, page 2 `sqlgen: invalid cursor`; `use_pointers: false` → endCursor
-  `{"description":{"String":"","Valid":false},"id":1}`, page 2 the same error. Gates: cmd/sqlgen `go test
-  -race ./config/... ./gen/... ./cli/...` ok; `golangci-lint` 0 issues; gofumpt clean; `make refs-check` ok;
-  `make update-golden` no changes; `make update-golden-e2e` only postgres_stdlib; `TestE2EGoldenFiles` PASS
-  for all 16 examples; postgres_stdlib `GOWORK=off go test -race ./...` ok and golangci-lint 0 issues.
-  Example sweep: `sqlgen validate` on all 12 files-sourced examples, base vs patched → exit 0 everywhere; only
-  the wording of 6 pre-existing "missing id" view warnings differs. Fail-first: explicit nullable branch
-  disabled → `ValidatePostParse() error = "", want "cursor_keys: column \"shipped_at\" in table public.orders
-  is nullable; a cursor key must be NOT NULL"` and the cli cases "validate succeeded, want …"; inherited
-  branch disabled → warnings mismatch, PK fallback mismatch, `view HasConnection = true, want false`;
-  `toSchemaViews` Nullable removed → explicit and inherited view cases fail; `cursorKeyCandidates` Nullable
-  dropped → gen test fails; coverage key reverted → `forward pages = [...c001 ...c002 ...c003], want [...c002
-  ...c003 ...c001]`; existing suite without the fix passes. Golden churn: postgres_stdlib +0/~2
-  (`models/models_gen.go` and `expected/models_gen.go`, each +4/-1: `cursorKeys: []string{"created_at", "id"}`
-  and `case "created_at"` in `decodeCategoryCursor`), plus its `sqlgen.yml` (+6) and
-  `tests/pagination_test.go` (+75). Patch: `.claude/prototypes/FIX-321.patch` (15 files, +451/-77).
-
-**References.**
-- PRD §4.13, §9.8 (Connection, cursors), §16 (view nullability).
-- Backlog lines absorbed: 2026-10-08 nullable cursor_keys (FIX-293); 2026-10-09 `sql.Null*` cursor key
-  (FIX-295); 2026-10-09 no Null/array/time cursor-key coverage (FIX-295).
-- FIX-293, FIX-295.
-
-**Resolution notes.** _Filled in by /fix resolve._
-
 ### FIX-322
 
 - **Status:** Open
@@ -1551,6 +1467,90 @@ DEFAULT.
 ## Resolved
 
 <!-- fixes:resolved:begin -->
+
+### FIX-321
+
+- **Status:** Resolved
+- **Severity:** tracked
+- **Origin:** phase 5, `cmd/sqlgen/config` (cursor key resolution)
+- **Surfaced by:** backlog sweep 2026-10-12 (backlog lines from FIX-293, FIX-295)
+- **Vetted:** corrected at `9b58288b` (2026-10-12)
+
+**Issue.** A nullable `cursor_keys` column breaks paging. Measured on SQLite: `zz_cur(id INTEGER
+PRIMARY KEY, description TEXT)`, `cursor_keys: [description, id]`, rows NULL/a/b → page 1 cursor
+`{"description":null,"id":1}`, page 2 `sqlgen: invalid cursor`; with `use_pointers: false` the cursor
+is `{"description":{"String":"","Valid":false},"id":1}` and page 2 is the same error. Rows past a NULL
+key cannot be paged in either mode. No example configures a `sql.Null*`, array or `time.Time` cursor
+key (all 189 committed `decode<T>Cursor` cases are ID/PK-style), so those decode paths and
+`cursorValueIsNull`'s true branch never run in a test.
+
+**Root cause.** `ResolveTableConnection` / `ResolveViewConnection`
+(`cmd/sqlgen/config/config.go:2114,2150`) check only that each key column exists; PRD §4.13 has no
+nullability rule. Validate also never sees a view column's nullability: `toSchemaViews`
+(`cmd/sqlgen/cli/pipeline.go:422`) copies only Name, Type and PrimaryKey into `config.SchemaColumn`.
+
+**Suggested fix.**
+- Ruling (user, 2026-10-12, backlog sweep Q3): follow the explicit-strict / inherited-lenient split
+  (`docs/PRD.md:1259`). An explicitly configured nullable cursor key is a config error; an inherited key
+  resolving to a nullable column counts as unresolved — a table falls back to its PK, a PK-less table or a
+  view omits `Connection` with a warning (escape hatches: a NOT NULL column, or `@type`/`@pk` on a view
+  column).
+- `config.ResolveTableConnection` / `ResolveViewConnection` take `columns []SchemaColumn` (name +
+  nullability) instead of `[]string` (CLI-module signature only); new helpers `checkExplicitCursorKeys`,
+  `unresolvedCursorKeys`, `inheritedCursorKeys`, `columnsByName`; `missingColumns` goes. Error: `cursor_keys:
+  column "X" in table|view Y is nullable; a cursor key must be NOT NULL`.
+- Callers pass nullability: validate (`validateCursorKeys`, `resolvedCursorKeys` on the post-`exclude_columns`
+  set), gen (`context_table.go` / `context_view.go` via `cursorKeyCandidates([]ColumnContext)`), and
+  `toSchemaViews` copies `Nullable`.
+- PRD: §4.13 rows "Explicit `cursor_keys` naming a nullable column" (Error) and "Inherited `cursor_keys`
+  naming a nullable column" (handled as missing; `@type`/`@pk` escape hatches); fallback rules 1-5 read
+  "missing or nullable"; §8.1.7 config-test list +2; §4.6 / table / view `cursor_keys` rows and §14.2 bullets say
+  "and be NOT NULL"; `v1.json` view `cursor_keys` description matches.
+- Tests: config `TestValidatePostParse_CursorKeys_Nullable`,
+  `TestResolveTableConnection_NullableInheritedKeyFallsBackToPK`; gen
+  `TestBuildContexts_NullableInheritedCursorKey`; cli `TestValidate_NullableCursorKey` (sqlite; explicit table
+  key under both `use_pointers` settings — the `sql.Null*` case as a config error; explicit view key on a LEFT
+  JOIN outer column; inherited view key warning).
+- Coverage: `postgres_stdlib` gets `tables.categories.cursor_keys: [created_at, id]` (TIMESTAMPTZ NOT NULL →
+  `time.Time`) and `TestConnection_TimeCursorKey` in `tests/pagination_test.go` (forward and backward one row
+  at a time; data with a created_at tie and an order differing from id). A SQLite example cannot host it:
+  SQLite DATETIME resolves to `types.DateTime`, whose keyset comparison is broken (separate candidate FIX).
+- Corrected vs. the original suggestion (vet 2026-10-12): adds the `toSchemaViews` Nullable threading
+  (without it validate and gen disagree for views), and the coverage example is `postgres_stdlib` (no
+  graphql, no manifest), not a SQLite one.
+- Auto-accepted the recommended option on 2026-10-12 (`/fix` auto-accept rule): the warning names the reason
+  — "inherited default does not resolve on table|view X (column \"c\" is missing|nullable)" instead of "does
+  not match" — prototyped green, no golden or test captures the old text, CLI message only, §4.13 only
+  requires naming the entity.
+- Auto-accepted the recommended option on 2026-10-12 (`/fix` auto-accept rule): keep `cursorValueIsNull` as a
+  defence — still reachable, since §16.3 says a view column falling back to `any` "can hold NULL whatever its
+  flag"; removing it would churn every `decode<T>Cursor`; keeping it churns nothing.
+- Prototype results, run at `9b58288b` on 2026-10-12: sibling sqlite example, `zz_cur(id INTEGER PRIMARY KEY,
+  description TEXT)`, `cursor_keys: [description, id]`, rows NULL/a/b → page 1 endCursor
+  `{"description":null,"id":1}`, page 2 `sqlgen: invalid cursor`; `use_pointers: false` → endCursor
+  `{"description":{"String":"","Valid":false},"id":1}`, page 2 the same error. Gates: cmd/sqlgen `go test
+  -race ./config/... ./gen/... ./cli/...` ok; `golangci-lint` 0 issues; gofumpt clean; `make refs-check` ok;
+  `make update-golden` no changes; `make update-golden-e2e` only postgres_stdlib; `TestE2EGoldenFiles` PASS
+  for all 16 examples; postgres_stdlib `GOWORK=off go test -race ./...` ok and golangci-lint 0 issues.
+  Example sweep: `sqlgen validate` on all 12 files-sourced examples, base vs patched → exit 0 everywhere; only
+  the wording of 6 pre-existing "missing id" view warnings differs. Fail-first: explicit nullable branch
+  disabled → `ValidatePostParse() error = "", want "cursor_keys: column \"shipped_at\" in table public.orders
+  is nullable; a cursor key must be NOT NULL"` and the cli cases "validate succeeded, want …"; inherited
+  branch disabled → warnings mismatch, PK fallback mismatch, `view HasConnection = true, want false`;
+  `toSchemaViews` Nullable removed → explicit and inherited view cases fail; `cursorKeyCandidates` Nullable
+  dropped → gen test fails; coverage key reverted → `forward pages = [...c001 ...c002 ...c003], want [...c002
+  ...c003 ...c001]`; existing suite without the fix passes. Golden churn: postgres_stdlib +0/~2
+  (`models/models_gen.go` and `expected/models_gen.go`, each +4/-1: `cursorKeys: []string{"created_at", "id"}`
+  and `case "created_at"` in `decodeCategoryCursor`), plus its `sqlgen.yml` (+6) and
+  `tests/pagination_test.go` (+75). Patch: `.claude/prototypes/FIX-321.patch` (15 files, +451/-77).
+
+**References.**
+- PRD §4.13, §9.8 (Connection, cursors), §16 (view nullability).
+- Backlog lines absorbed: 2026-10-08 nullable cursor_keys (FIX-293); 2026-10-09 `sql.Null*` cursor key
+  (FIX-295); 2026-10-09 no Null/array/time cursor-key coverage (FIX-295).
+- FIX-293, FIX-295.
+
+**Resolution notes.** Landed from the vetted prototype (applied clean at `056f9fd4`, source hunks only; goldens regenerated). An explicit `cursor_keys` naming a nullable column is a config error (`cursor_keys: column "X" in table|view Y is nullable; a cursor key must be NOT NULL`); an inherited key naming one counts as unresolved, as a missing one does (table → PK fallback; PK-less table or view → `Connection` omitted, warning naming the reason). `ResolveTableConnection` / `ResolveViewConnection` take `[]SchemaColumn`; validate passes the table's columns (post-`exclude_columns` in `resolvedCursorKeys`), gen passes `cursorKeyCandidates(columns)`, and `toSchemaViews` copies `Nullable`. PRD §4.6 / table / view `cursor_keys` rows, §4.13 (two rows, fallback rules 1-5), §14.2 bullets and §8.1.7 config-test list updated; `v1.json` view `cursor_keys` description matches. Coverage: `postgres_stdlib` `categories.cursor_keys: [created_at, id]` with `TestConnection_TimeCursorKey`. Inline: moved `cursorKeyCandidates` above `columnContextNames`'s doc comment, which the prototype had split from its function. Verify inline: deleted the now-uncalled `config.columnNames`; corrected the `ResolveTableConnection` comment (a NULL-key cursor is rejected as invalid) and three PRD sentences (§4.6 Operations view row, §4.13 schema-level phase, §14.2 `generation.cursor_keys` bullet) to say "or nullable"; logged the pre-existing explicit `cursor_keys` vs `exclude_columns` disagreement to backlog.md. Golden churn matches the vet (postgres_stdlib `models/` and `expected/` `models_gen.go`, +4/-1 each). Fail-first re-run on the final code: nullable branches disabled → config, gen and cli tests fail; `toSchemaViews` Nullable dropped → cli view cases fail; `cursorKeyCandidates` Nullable dropped → gen test fails; HEAD `models_gen.go` → `TestConnection_TimeCursorKey` page-order mismatch.
 
 ### FIX-320
 
