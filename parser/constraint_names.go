@@ -38,6 +38,13 @@ func DerivePostgresConstraintName(table string, c Constraint, taken func(string)
 	return ""
 }
 
+// DerivePostgresSequenceName returns the name PostgreSQL gives the sequence
+// it creates for a serial or identity column: <table>_<column>_seq, or
+// <table>_<column>_seq1, … when taken reports the name in use by a relation.
+func DerivePostgresSequenceName(table, column string, taken func(string) bool) string {
+	return choosePostgresName(table, column, "seq", taken)
+}
+
 // PostgresIndexColumnNames returns the names PostgreSQL uses for an index's
 // columns when it names the index: a column that repeats an earlier one gets a
 // numeric suffix, so (a, a) names as a_a1.

@@ -2635,3 +2635,179 @@ func TestParseViewSQL_ColumnNames(t *testing.T) {
 		})
 	}
 }
+
+func TestAlterColumnExpression(t *testing.T) {
+	sql := `
+		CREATE TABLE t (a int, b int GENERATED ALWAYS AS (a * 2) STORED, c int GENERATED ALWAYS AS (a * 3) STORED);
+		ALTER TABLE t ALTER COLUMN b DROP EXPRESSION;
+		ALTER TABLE t ALTER COLUMN c SET EXPRESSION AS (a * 4);
+		ALTER TABLE t ALTER COLUMN a DROP EXPRESSION IF EXISTS;
+	`
+	p := postgres.New("")
+	if err := p.Parse("test.sql", []byte(sql)); err != nil {
+		t.Fatalf("Parse() error: %v", err)
+	}
+	cols := p.Schema().Tables[0].Columns
+	got := make([]string, 0, len(cols))
+	for _, c := range cols {
+		got = append(got, fmt.Sprintf("%s %q %q", c.Name, c.GeneratedExpr, c.GeneratedStorage))
+	}
+	// PostgreSQL 17: b is a plain column and c is generated as a * 4.
+	want := []string{`a "" ""`, `b "" ""`, `c "a * 4" "STORED"`}
+	if diff := cmp.Diff(want, got); diff != "" {
+		t.Errorf("generated columns mismatch (-want +got):\n%s", diff)
+	}
+}
+
+func TestAlterTablePartitions(t *testing.T) {
+	sql := `
+		CREATE TABLE p (id int NOT NULL, k int NOT NULL, PRIMARY KEY (id, k)) PARTITION BY LIST (k);
+		CREATE TABLE c1 (id int NOT NULL, k int NOT NULL, PRIMARY KEY (id, k));
+		CREATE TABLE r (id int, k int, FOREIGN KEY (id, k) REFERENCES c1 (id, k));
+		CREATE TABLE c2 PARTITION OF p FOR VALUES IN (2);
+		ALTER TABLE c2 ADD CONSTRAINT c2_k CHECK (k = 2);
+		ALTER TABLE ONLY p ATTACH PARTITION c1 FOR VALUES IN (1);
+		ALTER TABLE ONLY c1 ADD CONSTRAINT c1_k CHECK (k = 1);
+		COMMENT ON TABLE c1 IS 'partition';
+		COMMENT ON COLUMN c1.k IS 'key';
+		ALTER TABLE p DETACH PARTITION c2;
+		ALTER TABLE p ADD COLUMN extra int;
+		CREATE INDEX ON c1 (k);
+		CREATE INDEX ON c2 (k);
+	`
+	p := postgres.New("")
+	if err := p.Parse("test.sql", []byte(sql)); err != nil {
+		t.Fatalf("Parse() error: %v", err)
+	}
+	tables := make([]string, 0, len(p.Schema().Tables))
+	for _, tbl := range p.Schema().Tables {
+		cols := make([]string, 0, len(tbl.Columns))
+		for _, c := range tbl.Columns {
+			cols = append(cols, c.Name)
+		}
+		tables = append(tables, tbl.Name+" "+strings.Join(cols, ","))
+	}
+	// The attached c1 is a partition, which the introspector skips; a foreign
+	// key that references it stays. The detached c2 is a table again, which
+	// the parser warns it does not model.
+	if diff := cmp.Diff([]string{"p id,k,extra", "r id,k"}, tables); diff != "" {
+		t.Errorf("tables mismatch (-want +got):\n%s", diff)
+	}
+	// Both still take an index, as PostgreSQL allows; only c1 is a partition.
+	c1 := parser.Partition{Schema: "public", Name: "c1", ParentSchema: "public", ParentName: "p"}
+	if diff := cmp.Diff([]parser.Partition{c1}, p.Schema().Partitions); diff != "" {
+		t.Errorf("partitions mismatch (-want +got):\n%s", diff)
+	}
+	// A detached table attached again is a partition again.
+	if err := p.Parse("reattach.sql", []byte("ALTER TABLE p ATTACH PARTITION c2 FOR VALUES IN (2);")); err != nil {
+		t.Fatalf("Parse() error: %v", err)
+	}
+	c2 := parser.Partition{Schema: "public", Name: "c2", ParentSchema: "public", ParentName: "p"}
+	if diff := cmp.Diff([]parser.Partition{c1, c2}, p.Schema().Partitions); diff != "" {
+		t.Errorf("partitions after reattach mismatch (-want +got):\n%s", diff)
+	}
+	wantWarnings := []string{
+		"CREATE TABLE c2 PARTITION OF p skipped in DDL file — the partitioned table is the entity",
+		"ALTER TABLE p ATTACH PARTITION c1: the partition is dropped from the model — the partitioned table is the entity",
+		"ALTER TABLE p DETACH PARTITION c2 skipped in DDL file — the detached table is not modelled under files; use introspection",
+	}
+	if diff := cmp.Diff(wantWarnings, p.Schema().Warnings); diff != "" {
+		t.Errorf("warnings mismatch (-want +got):\n%s", diff)
+	}
+}
+
+func TestAttachSubPartition(t *testing.T) {
+	sql := `
+		CREATE TABLE p (id int, s int) PARTITION BY LIST (s);
+		CREATE TABLE c1 PARTITION OF p FOR VALUES IN (1) PARTITION BY LIST (id);
+		CREATE TABLE gc (id int, s int);
+		ALTER TABLE ONLY c1 ATTACH PARTITION gc FOR VALUES IN (1);
+	`
+	p := postgres.New("")
+	if err := p.Parse("test.sql", []byte(sql)); err != nil {
+		t.Fatalf("Parse() error: %v", err)
+	}
+	if n := len(p.Schema().Tables); n != 1 || p.Schema().Tables[0].Name != "p" {
+		t.Errorf("tables = %d, want only p", n)
+	}
+	want := []parser.Partition{
+		{Schema: "public", Name: "c1", ParentSchema: "public", ParentName: "p"},
+		{Schema: "public", Name: "gc", ParentSchema: "public", ParentName: "c1"},
+	}
+	if diff := cmp.Diff(want, p.Schema().Partitions); diff != "" {
+		t.Errorf("partitions mismatch (-want +got):\n%s", diff)
+	}
+}
+
+func TestAlterDomainConstraints(t *testing.T) {
+	sql := `
+		CREATE DOMAIN posint AS integer CHECK (VALUE < 1000);
+		CREATE TABLE t (x int, CONSTRAINT posint_check1 CHECK (x > 0));
+		ALTER DOMAIN posint ADD CHECK (VALUE <> 5);
+		ALTER DOMAIN posint ADD CONSTRAINT pos CHECK (VALUE > 0);
+		ALTER DOMAIN posint DROP CONSTRAINT posint_check;
+		ALTER DOMAIN posint DROP CONSTRAINT IF EXISTS nope;
+		ALTER DOMAIN posint RENAME CONSTRAINT pos TO positive;
+		ALTER DOMAIN posint ADD CHECK (VALUE <> 7);
+		ALTER DOMAIN posint ADD NOT NULL;
+		ALTER DOMAIN posint SET DEFAULT 1;
+	`
+	p := postgres.New("")
+	if err := p.Parse("test.sql", []byte(sql)); err != nil {
+		t.Fatalf("Parse() error: %v", err)
+	}
+	checks := p.Schema().DomainTypes[0].Constraints
+	got := make([]string, 0, len(checks))
+	for _, c := range checks {
+		got = append(got, c.Name+" "+c.CheckExpression)
+	}
+	// PostgreSQL 17 names the checks as CREATE DOMAIN does, against every
+	// constraint name in the schema.
+	want := []string{"posint_check2 value <> 5", "positive value > 0", "posint_check value <> 7"}
+	if diff := cmp.Diff(want, got); diff != "" {
+		t.Errorf("domain constraints mismatch (-want +got):\n%s", diff)
+	}
+
+	for _, stmt := range []string{
+		`ALTER DOMAIN nope ADD CHECK (VALUE > 0);`,
+		`ALTER DOMAIN nope RENAME CONSTRAINT a TO b;`,
+	} {
+		err := postgres.New("").Parse("test.sql", []byte(stmt))
+		if err == nil || !strings.Contains(err.Error(), "unknown domain public.nope") {
+			t.Errorf("Parse(%q) error = %v, want unknown domain public.nope", stmt, err)
+		}
+	}
+}
+
+func TestRenameConstraintAndIndex(t *testing.T) {
+	sql := `
+		CREATE TABLE ri (a int, b int, c int, CONSTRAINT uq UNIQUE (a), CONSTRAINT pk PRIMARY KEY (b), CONSTRAINT ck CHECK (c > 0));
+		CREATE INDEX ix ON ri (c);
+		CREATE INDEX ON ri ((a + 1));
+		ALTER TABLE ri RENAME CONSTRAINT uq TO uq2;
+		ALTER TABLE ri RENAME CONSTRAINT pk TO pk2;
+		ALTER TABLE ri RENAME CONSTRAINT ck TO ck2;
+		ALTER TABLE IF EXISTS nope RENAME CONSTRAINT a TO b;
+		ALTER INDEX ix RENAME TO ix2;
+		ALTER INDEX uq2 RENAME TO uq3;
+		ALTER INDEX IF EXISTS nope RENAME TO nope2;
+		ALTER INDEX ri_expr_idx RENAME TO ri_c_idx;
+		CREATE INDEX ON ri (c);
+	`
+	p := postgres.New("")
+	if err := p.Parse("test.sql", []byte(sql)); err != nil {
+		t.Fatalf("Parse() error: %v", err)
+	}
+	constraints := p.Schema().Tables[0].Constraints
+	got := make([]string, 0, len(constraints))
+	for _, c := range constraints {
+		got = append(got, c.Type.String()+" "+c.Name)
+	}
+	// PostgreSQL 17 renames the index behind a UNIQUE or PRIMARY KEY with its
+	// constraint, and the other way round. The expression index renamed to
+	// ri_c_idx keeps the last index from that name.
+	want := []string{"UNIQUE uq3", "PRIMARY KEY pk2", "CHECK ck2", "INDEX ix2", "INDEX ri_c_idx1"}
+	if diff := cmp.Diff(want, got); diff != "" {
+		t.Errorf("constraints mismatch (-want +got):\n%s", diff)
+	}
+}

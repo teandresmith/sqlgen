@@ -25,6 +25,8 @@ type Parser struct {
 	// The value reports whether PostgreSQL can index the relation: false
 	// for a view, true for the rest.
 	skipped map[string]bool
+	// sequences holds the sequences the DDL creates, in creation order.
+	sequences []*pgSequence
 }
 
 // New creates a new PostgreSQL parser. If defaultSchema is empty, "public" is used.
@@ -107,6 +109,23 @@ func (p *Parser) processStmt(node *pg_query.Node) error {
 		return p.parseCompositeType(n.CompositeTypeStmt)
 	case *pg_query.Node_CreateDomainStmt:
 		return p.parseCreateDomain(n.CreateDomainStmt)
+	default:
+		return p.processAlterStmt(node)
+	}
+}
+
+// processAlterStmt applies the ALTER DOMAIN, ALTER TYPE … ADD VALUE / RENAME
+// VALUE and sequence statements, and records the relations the parser skips.
+func (p *Parser) processAlterStmt(node *pg_query.Node) error {
+	switch n := node.Node.(type) {
+	case *pg_query.Node_AlterEnumStmt:
+		return p.parseAlterEnum(n.AlterEnumStmt)
+	case *pg_query.Node_AlterDomainStmt:
+		return p.parseAlterDomain(n.AlterDomainStmt)
+	case *pg_query.Node_CreateSeqStmt:
+		return p.parseCreateSequence(n.CreateSeqStmt)
+	case *pg_query.Node_AlterSeqStmt:
+		return p.parseAlterSequence(n.AlterSeqStmt)
 	default:
 		p.skipRelation(node)
 	}
@@ -200,7 +219,13 @@ func (p *Parser) parseCreateTable(stmt *pg_query.CreateStmt) error {
 
 	p.tableIndex[key] = len(p.schema.Tables)
 	p.schema.Tables = append(p.schema.Tables, table)
-	p.addConstraints(&p.schema.Tables[len(p.schema.Tables)-1], mergeDuplicateIndexes(constraints))
+	created := &p.schema.Tables[len(p.schema.Tables)-1]
+	for _, elt := range stmt.TableElts {
+		if cd := elt.GetColumnDef(); cd != nil {
+			p.addColumnSequence(created, cd)
+		}
+	}
+	p.addConstraints(created, mergeDuplicateIndexes(constraints))
 
 	return nil
 }
@@ -264,9 +289,9 @@ func (p *Parser) addConstraints(table *parser.Table, constraints []parser.Constr
 }
 
 // pgNamespace holds the names in use in one schema. An index, or the index
-// behind a PRIMARY KEY or UNIQUE, needs a name no table, view, composite type
-// or index in the schema has. A constraint needs a name no constraint in the
-// schema has, on any table or domain.
+// behind a PRIMARY KEY or UNIQUE, needs a name no table, view, composite
+// type, sequence or index in the schema has. A constraint needs a name no
+// constraint in the schema has, on any table or domain.
 type pgNamespace struct {
 	relations   map[string]bool
 	constraints map[string]bool
@@ -302,6 +327,11 @@ func (p *Parser) namespace(schema string) pgNamespace {
 		}
 		for _, c := range dt.Constraints {
 			ns.constraints[c.Name] = true
+		}
+	}
+	for _, s := range p.sequences {
+		if s.schema == schema {
+			ns.relations[s.name] = true
 		}
 	}
 	return ns
@@ -423,6 +453,32 @@ func (p *Parser) parseCreateDomain(stmt *pg_query.CreateDomainStmt) error {
 	}
 
 	p.schema.DomainTypes = append(p.schema.DomainTypes, dt)
+	return nil
+}
+
+// parseAlterDomain applies ALTER DOMAIN … ADD CHECK, named as CREATE DOMAIN
+// names one, and DROP CONSTRAINT [IF EXISTS]. Defaults, NOT NULL and VALIDATE
+// change nothing the model holds.
+func (p *Parser) parseAlterDomain(stmt *pg_query.AlterDomainStmt) error {
+	schema, name := p.splitQualifiedName(extractStringList(stmt.TypeName))
+	dt := p.findDomainByName(schema, name)
+	if dt == nil {
+		return fmt.Errorf("alter domain: unknown domain %s.%s", schema, name)
+	}
+	switch stmt.Subtype {
+	case "C":
+		c := stmt.Def.GetConstraint()
+		if c == nil || c.Contype != pg_query.ConstrType_CONSTR_CHECK {
+			return nil
+		}
+		check := p.parseConstraintNode(c)
+		if check.Name == "" {
+			check.Name = parser.DerivePostgresConstraintName(name, parser.Constraint{Type: parser.Check}, p.namespace(schema).taken(parser.Check))
+		}
+		dt.Constraints = append(dt.Constraints, check)
+	case "X":
+		dt.Constraints = slices.DeleteFunc(dt.Constraints, func(c parser.Constraint) bool { return c.Name == stmt.Name })
+	}
 	return nil
 }
 
@@ -638,7 +694,7 @@ func indexElemColumn(e *pg_query.IndexElem) string {
 }
 
 func (p *Parser) parseRename(stmt *pg_query.RenameStmt) error {
-	switch stmt.RenameType { //nolint:exhaustive // only TABLE, COLUMN and view renames are relevant
+	switch stmt.RenameType { //nolint:exhaustive // only renames of what the model or the namespace holds are relevant
 	case pg_query.ObjectType_OBJECT_VIEW, pg_query.ObjectType_OBJECT_MATVIEW:
 		if stmt.Relation != nil {
 			p.moveSkipped(p.relationKey(stmt.Relation), cmp.Or(stmt.Relation.Schemaname, p.defaultSchema)+"."+stmt.Newname)
@@ -666,9 +722,25 @@ func (p *Parser) parseRename(stmt *pg_query.RenameStmt) error {
 		parser.RenameTableReferences(p.schema.Tables, "postgres", table.Schema, table.Name, stmt.Newname)
 		table.Name = stmt.Newname
 		p.moveTableKey(oldKey, newKey)
+		p.moveSequences(oldKey, newKey, table.Schema)
 
 	case pg_query.ObjectType_OBJECT_COLUMN:
 		return p.renameColumn(stmt)
+
+	case pg_query.ObjectType_OBJECT_TABCONSTRAINT:
+		return p.renameTableConstraint(stmt)
+
+	case pg_query.ObjectType_OBJECT_INDEX:
+		p.renameIndex(stmt.Relation, stmt.Newname)
+
+	case pg_query.ObjectType_OBJECT_DOMCONSTRAINT:
+		return p.renameDomainConstraint(stmt)
+
+	case pg_query.ObjectType_OBJECT_SEQUENCE:
+		p.renameSequence(stmt.Relation, stmt.Newname)
+
+	default:
+		return p.renameTypeObject(stmt)
 	}
 	return nil
 }
@@ -698,7 +770,88 @@ func (p *Parser) renameColumn(stmt *pg_query.RenameStmt) error {
 			}
 		}
 	}
+	p.renameSequenceColumn(table.Schema+"."+table.Name, stmt.Subname, stmt.Newname)
 	return nil
+}
+
+// renameTypeObject applies the renames of a type, a domain or a composite
+// type's attribute.
+func (p *Parser) renameTypeObject(stmt *pg_query.RenameStmt) error {
+	switch stmt.RenameType { //nolint:exhaustive // parseRename handles the rest
+	case pg_query.ObjectType_OBJECT_TYPE, pg_query.ObjectType_OBJECT_DOMAIN:
+		return p.renameType(stmt)
+	case pg_query.ObjectType_OBJECT_ATTRIBUTE:
+		return p.renameAttribute(stmt)
+	}
+	return nil
+}
+
+// renameDomainConstraint applies ALTER DOMAIN … RENAME CONSTRAINT.
+func (p *Parser) renameDomainConstraint(stmt *pg_query.RenameStmt) error {
+	schema, name := p.splitQualifiedName(extractObjectNames(stmt.Object))
+	dt := p.findDomainByName(schema, name)
+	if dt == nil {
+		return fmt.Errorf("alter domain: unknown domain %s.%s", schema, name)
+	}
+	for i := range dt.Constraints {
+		if dt.Constraints[i].Name == stmt.Subname {
+			dt.Constraints[i].Name = stmt.Newname
+		}
+	}
+	return nil
+}
+
+// renameTableConstraint applies ALTER TABLE … RENAME CONSTRAINT. The index
+// behind a PRIMARY KEY or UNIQUE takes the new name too, so the model's one
+// entry is renamed. A name the model does not hold is skipped.
+func (p *Parser) renameTableConstraint(stmt *pg_query.RenameStmt) error {
+	if stmt.Relation == nil {
+		return nil
+	}
+	table, err := p.lookupTable(stmt.Relation)
+	if err != nil {
+		if stmt.MissingOk {
+			return nil
+		}
+		return err
+	}
+	for i := range table.Constraints {
+		if c := &table.Constraints[i]; c.Name == stmt.Subname && c.Type != parser.Index {
+			c.Name = stmt.Newname
+			parser.CanonicalizeConstraints(table, "postgres")
+			return nil
+		}
+	}
+	return nil
+}
+
+// renameIndex applies ALTER INDEX … RENAME TO. Renaming the index behind a
+// PRIMARY KEY or UNIQUE renames the constraint too.
+func (p *Parser) renameIndex(rv *pg_query.RangeVar, newName string) {
+	if rv == nil {
+		return
+	}
+	schema := cmp.Or(rv.Schemaname, p.defaultSchema)
+	for ti := range p.schema.Tables {
+		table := &p.schema.Tables[ti]
+		if table.Schema != schema {
+			continue
+		}
+		for i := range table.Constraints {
+			c := &table.Constraints[i]
+			if c.Name == rv.Relname && (c.Type == parser.Index || c.Type == parser.Unique || c.Type == parser.PrimaryKey) {
+				c.Name = newName
+				parser.CanonicalizeConstraints(table, "postgres")
+				return
+			}
+		}
+		for i := range table.ExpressionIndexes {
+			if ix := &table.ExpressionIndexes[i]; ix.Name == rv.Relname {
+				ix.Name = newName
+				return
+			}
+		}
+	}
 }
 
 // parseAlterObjectSchema applies ALTER TABLE … SET SCHEMA, which pg_query
@@ -739,6 +892,7 @@ func (p *Parser) parseAlterObjectSchema(stmt *pg_query.AlterObjectSchemaStmt) er
 	}
 	table.Schema = stmt.Newschema
 	p.moveTableKey(oldKey, newKey)
+	p.moveSequences(oldKey, newKey, stmt.Newschema)
 	return nil
 }
 
@@ -775,6 +929,9 @@ func (p *Parser) parseDrop(stmt *pg_query.DropStmt) error {
 		case pg_query.ObjectType_OBJECT_INDEX:
 			schema, name := p.splitQualifiedName(names)
 			p.dropIndex(schema, name)
+		case pg_query.ObjectType_OBJECT_SEQUENCE:
+			schema, name := p.splitQualifiedName(names)
+			p.dropSequence(schema, name, stmt.Behavior == pg_query.DropBehavior_DROP_CASCADE)
 		default:
 			// Other object types are not handled.
 		}
@@ -805,14 +962,21 @@ func extractDropObjectNames(node *pg_query.Node) []string {
 func (p *Parser) dropTable(schema, name string) error {
 	p.dropPartitions(schema, name)
 	key := schema + "." + name
-	idx, ok := p.tableIndex[key]
-	if !ok {
+	if _, ok := p.tableIndex[key]; !ok {
 		delete(p.skipped, key) // a skipped relation
 		return nil
 	}
 	if err := parser.CheckTableDropRefs(p.schema.Tables, "postgres", schema, name); err != nil {
 		return fmt.Errorf("drop table %s.%s: %w", schema, name, err)
 	}
+	p.removeTable(key)
+	p.dropOwnedSequences(key, "")
+	return nil
+}
+
+// removeTable removes the table key from the model.
+func (p *Parser) removeTable(key string) {
+	idx := p.tableIndex[key]
 	p.schema.Tables = slices.Delete(p.schema.Tables, idx, idx+1)
 	delete(p.tableIndex, key)
 	// Shift indices for tables after the removed one.
@@ -821,7 +985,15 @@ func (p *Parser) dropTable(schema, name string) error {
 			p.tableIndex[k] = v - 1
 		}
 	}
-	return nil
+}
+
+// skippedTable reports whether names is a relation the parser skips that
+// PostgreSQL can index: a partition, materialized view or CREATE TABLE AS /
+// SELECT … INTO table. ALTER TABLE and COMMENT ON of one are skipped with it,
+// as CREATE INDEX on one is.
+func (p *Parser) skippedTable(names []string) bool {
+	schema, name := p.splitQualifiedName(names)
+	return p.skipped[schema+"."+name]
 }
 
 // moveSkipped rekeys a renamed or moved view or materialized view, so a later
@@ -912,28 +1084,15 @@ func (p *Parser) parseComment(stmt *pg_query.CommentStmt) error {
 		names := extractObjectNames(stmt.Object)
 		table := p.findTableByNames(names)
 		if table == nil {
+			if p.skippedTable(names) {
+				return nil
+			}
 			return fmt.Errorf("comment on unknown table %s", strings.Join(names, "."))
 		}
 		table.Comment = stmt.Comment
 
 	case pg_query.ObjectType_OBJECT_COLUMN:
-		names := extractObjectNames(stmt.Object)
-		if len(names) < 2 {
-			return fmt.Errorf("comment on column: invalid name %s", strings.Join(names, "."))
-		}
-		colName := names[len(names)-1]
-		tableNames := names[:len(names)-1]
-		table := p.findTableByNames(tableNames)
-		if table == nil {
-			return fmt.Errorf("comment on column of unknown table %s", strings.Join(tableNames, "."))
-		}
-		for i := range table.Columns {
-			if table.Columns[i].Name == colName {
-				table.Columns[i].Comment = stmt.Comment
-				return nil
-			}
-		}
-		return fmt.Errorf("comment on unknown column %s.%s", strings.Join(tableNames, "."), colName)
+		return p.commentOnColumn(stmt)
 
 	case pg_query.ObjectType_OBJECT_TYPE:
 		names := extractTypeObjectNames(stmt.Object)
@@ -963,9 +1122,37 @@ func (p *Parser) parseComment(stmt *pg_query.CommentStmt) error {
 	return nil
 }
 
+// commentOnColumn applies COMMENT ON COLUMN.
+func (p *Parser) commentOnColumn(stmt *pg_query.CommentStmt) error {
+	names := extractObjectNames(stmt.Object)
+	if len(names) < 2 {
+		return fmt.Errorf("comment on column: invalid name %s", strings.Join(names, "."))
+	}
+	colName := names[len(names)-1]
+	tableNames := names[:len(names)-1]
+	table := p.findTableByNames(tableNames)
+	if table == nil {
+		if p.skippedTable(tableNames) {
+			return nil
+		}
+		return fmt.Errorf("comment on column of unknown table %s", strings.Join(tableNames, "."))
+	}
+	for i := range table.Columns {
+		if table.Columns[i].Name == colName {
+			table.Columns[i].Comment = stmt.Comment
+			return nil
+		}
+	}
+	return fmt.Errorf("comment on unknown column %s.%s", strings.Join(tableNames, "."), colName)
+}
+
 func (p *Parser) parseAlterTable(stmt *pg_query.AlterTableStmt) error {
 	table, err := p.lookupTable(stmt.Relation)
 	if err != nil {
+		if p.skipped[p.relationKey(stmt.Relation)] {
+			p.alterSkippedTable(stmt)
+			return nil
+		}
 		if stmt.MissingOk {
 			return nil // ALTER TABLE IF EXISTS — table doesn't exist, skip
 		}
@@ -985,12 +1172,28 @@ func (p *Parser) parseAlterTable(stmt *pg_query.AlterTableStmt) error {
 	return nil
 }
 
+// alterSkippedTable applies ALTER TABLE to a relation the parser skips. Only
+// ATTACH and DETACH PARTITION change the model, when the skipped relation is
+// itself a partitioned partition.
+func (p *Parser) alterSkippedTable(stmt *pg_query.AlterTableStmt) {
+	parent := &parser.Table{Schema: cmp.Or(stmt.Relation.Schemaname, p.defaultSchema), Name: stmt.Relation.Relname}
+	for _, cmd := range stmt.Cmds {
+		switch c := cmd.GetAlterTableCmd(); c.GetSubtype() { //nolint:exhaustive // the other subtypes change only the skipped relation
+		case pg_query.AlterTableType_AT_AttachPartition:
+			p.attachPartition(parent, c.Def.GetPartitionCmd())
+		case pg_query.AlterTableType_AT_DetachPartition:
+			p.detachPartition(parent, c.Def.GetPartitionCmd())
+		}
+	}
+}
+
 func (p *Parser) applyAlterCmd(table *parser.Table, cmd *pg_query.AlterTableCmd) error {
 	switch cmd.Subtype {
 	case pg_query.AlterTableType_AT_AddColumn:
 		return p.alterAddColumn(table, cmd)
 	case pg_query.AlterTableType_AT_DropColumn:
 		alterDropColumn(table, cmd)
+		p.dropOwnedSequences(table.Schema+"."+table.Name, cmd.Name)
 	case pg_query.AlterTableType_AT_AddConstraint:
 		p.alterAddConstraint(table, cmd)
 	case pg_query.AlterTableType_AT_DropConstraint:
@@ -1004,14 +1207,40 @@ func (p *Parser) applyAlterCmd(table *parser.Table, cmd *pg_query.AlterTableCmd)
 			col.Nullable = true
 		}
 	case pg_query.AlterTableType_AT_ColumnDefault:
-		alterColumnDefault(table, cmd)
+		p.alterColumnDefault(table, cmd)
 	case pg_query.AlterTableType_AT_AlterColumnType:
 		p.alterColumnType(table, cmd)
 	default:
-		// Other ALTER TABLE subtypes are not supported yet.
+		p.applyAlterStateCmd(table, cmd)
 	}
 
 	return nil
+}
+
+// applyAlterStateCmd applies the identity, generation-expression and
+// partition subtypes of ALTER TABLE.
+func (p *Parser) applyAlterStateCmd(table *parser.Table, cmd *pg_query.AlterTableCmd) {
+	switch cmd.Subtype { //nolint:exhaustive // applyAlterCmd handles the rest
+	case pg_query.AlterTableType_AT_AddIdentity:
+		p.alterAddIdentity(table, cmd)
+	case pg_query.AlterTableType_AT_DropIdentity:
+		p.alterDropIdentity(table, cmd)
+	case pg_query.AlterTableType_AT_DropExpression:
+		// DROP EXPRESSION [IF EXISTS] leaves a plain column holding the values.
+		if col := parser.ColumnByName(table, cmd.Name); col != nil {
+			col.GeneratedExpr, col.GeneratedStorage = "", ""
+		}
+	case pg_query.AlterTableType_AT_SetExpression:
+		if col := parser.ColumnByName(table, cmd.Name); col != nil {
+			col.GeneratedExpr = deparseExpr(cmd.Def)
+		}
+	case pg_query.AlterTableType_AT_AttachPartition:
+		p.attachPartition(table, cmd.Def.GetPartitionCmd())
+	case pg_query.AlterTableType_AT_DetachPartition:
+		p.detachPartition(table, cmd.Def.GetPartitionCmd())
+	default:
+		// Other ALTER TABLE subtypes are not supported yet.
+	}
 }
 
 func (p *Parser) alterAddColumn(table *parser.Table, cmd *pg_query.AlterTableCmd) error {
@@ -1027,6 +1256,7 @@ func (p *Parser) alterAddColumn(table *parser.Table, cmd *pg_query.AlterTableCmd
 	}
 	col, constraints := p.parseColumnDef(cd.ColumnDef, table.Schema)
 	table.Columns = append(table.Columns, col)
+	p.addColumnSequence(table, cd.ColumnDef)
 	p.addConstraints(table, constraints)
 	return nil
 }
@@ -1074,14 +1304,50 @@ func alterDropConstraint(table *parser.Table, cmd *pg_query.AlterTableCmd) {
 	removeConstraintFromColumns(table, cmd.Name)
 }
 
-func alterColumnDefault(table *parser.Table, cmd *pg_query.AlterTableCmd) {
-	if col := parser.ColumnByName(table, cmd.Name); col != nil {
-		if cmd.Def != nil {
-			col.Default = deparseExpr(cmd.Def)
-		} else {
-			col.Default = "" // DROP DEFAULT
-		}
+// attachPartition applies ATTACH PARTITION: the attached table becomes a
+// partition of parent, which the model lists as a partition and does not hold
+// as a table (PRD §5.2). A foreign key that references it keeps referencing
+// it, as in PostgreSQL.
+func (p *Parser) attachPartition(parent *parser.Table, cmd *pg_query.PartitionCmd) {
+	rv := cmd.GetName()
+	if rv == nil {
+		return
 	}
+	key := cmp.Or(rv.Schemaname, p.defaultSchema) + "." + rv.Relname
+	if _, ok := p.tableIndex[key]; ok {
+		p.schema.Warnings = append(p.schema.Warnings,
+			fmt.Sprintf("ALTER TABLE %s ATTACH PARTITION %s: the partition is dropped from the model — the partitioned table is the entity",
+				parent.Name, rv.Relname))
+		p.removeTable(key)
+	} else if !p.skipped[key] {
+		return
+	}
+	p.skipped[key] = true
+	p.schema.Partitions = append(p.schema.Partitions, parser.Partition{
+		Schema:       cmp.Or(rv.Schemaname, p.defaultSchema),
+		Name:         rv.Relname,
+		ParentSchema: parent.Schema,
+		ParentName:   parent.Name,
+	})
+}
+
+// detachPartition applies DETACH PARTITION. The detached table keeps the
+// partition's indexes and constraints, under names PostgreSQL derives as it
+// clones them, which the parser does not reproduce, so it stays a skipped
+// relation that is no longer a partition of parent.
+func (p *Parser) detachPartition(parent *parser.Table, cmd *pg_query.PartitionCmd) {
+	rv := cmd.GetName()
+	schema := cmp.Or(rv.GetSchemaname(), p.defaultSchema)
+	p.schema.Partitions = slices.DeleteFunc(p.schema.Partitions, func(part parser.Partition) bool {
+		return part.Schema == schema && part.Name == rv.GetRelname() &&
+			part.ParentSchema == parent.Schema && part.ParentName == parent.Name
+	})
+	if len(p.schema.Partitions) == 0 {
+		p.schema.Partitions = nil // as the introspector leaves it
+	}
+	p.schema.Warnings = append(p.schema.Warnings,
+		fmt.Sprintf("ALTER TABLE %s DETACH PARTITION %s skipped in DDL file — the detached table is not modelled under files; use introspection",
+			parent.Name, rv.GetRelname()))
 }
 
 func (p *Parser) alterColumnType(table *parser.Table, cmd *pg_query.AlterTableCmd) {
