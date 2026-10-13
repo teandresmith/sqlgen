@@ -22,61 +22,6 @@
 ## Open
 
 <!-- fixes:open:begin -->
-### FIX-311
-
-- **Status:** Open
-- **Severity:** tracked
-- **Origin:** phase 30, `parser/postgres` (index parts)
-- **Surfaced by:** backlog sweep 2026-10-12 (backlog line from FIX-276)
-- **Vetted:** ready at `9b58288b` (2026-10-12)
-
-**Issue.** An index part that casts a column to its own exact type is stored by PostgreSQL as a
-plain column, but the file parser treats it as an expression and skips the index, so under `files`
-the index (and a UNIQUE's conflict target) is missing. Measured on PG17: `CREATE INDEX ON r
-((x::text))` on a text column → database `r_x_idx INDEX [x]`, files none; UNIQUE `((y::integer))` on
-an int column → database `r_y_idx UNIQUE [y]`, `y.Unique=true`, files none. PG drops the cast only on
-an exact type and typmod match (`w::varchar(10)` on `varchar(10)`, `i::int4` on `int`,
-`(j::int)::int`); `v::varchar` on `varchar(10)`, `q::text` on `varchar`, or a cast to a domain's base
-stay expressions.
-
-**Root cause.** `indexElemColumn` / `indexParamColumns` (`parser/postgres/postgres.go:513-547`) count
-any `TypeCast` as an expression.
-
-**Suggested fix.**
-- Pass the table in; unwrap a `TypeCast` (repeatedly, through COLLATE) when
-  `p.typeName(cast.TypeName, schema)` equals the column's type exactly. Naming is unchanged.
-- Fail-first parity tests for the plain and kept-expression cases above.
-- Every cast in a chain must match, not only the outermost (`(b::int)::bigint` on a bigint stays an
-  expression). `indexParamColumns` / `indexElemColumn` become `*Parser` methods taking the table; COLLATE
-  and TypeCast layers peel in any order; a cast of an unknown column is an expression.
-- Composition with FIX-303 (not landed): `git apply --3way` merges postgres.go cleanly; the integration
-  test file has a trivial conflict (both insert before `TestPostgresIntrospect_NoSearchPath` — keep both);
-  FIX-303's `indexReads(table, stmt)` calls the free `indexElemColumn(e)`, so whichever lands second makes
-  it `(p *Parser) indexReads` calling `p.indexElemColumn(table, e)`.
-- Prototype results, run at `9b58288b` on 2026-10-12: postgres:17, table r with 27 indexes, read
-  `pg_index.indkey` / `indexprs` → plain column: `x::text`, `y::integer` UNIQUE, `w::varchar(10)`,
-  `i::int4`, `(j::int)::int`, `d::dint`, `e::mood`, `n::numeric(10,2)`, `a::int[]`, `c::char`,
-  `t::timestamp(3)`, `x::pg_catalog.text`, three COLLATE forms (→ `(x COLLATE "C")`), `((x::text), y)` →
-  indkey "1 2"; kept as expression: `v::varchar` on varchar(10), `q::text` on varchar, `n::numeric`,
-  `t::timestamp`, `c::bpchar`, `d::int`, `i::dint`, `(b::int)::bigint`. Files at HEAD gave only
-  `unnamed_dummy INDEX [y]` — all 18 plain-column indexes missing; with the fix exactly the database's 18.
-  Tests: `TestCreateIndex_SameTypeCast` (9 plain + 9 expression cases, constraints and `col.Unique`),
-  `TestPostgresIntrospect_SameTypeCastIndexes` (schema pgi_samecast, parity). Gates: `gofumpt -l` clean;
-  `go vet` clean; parser `go test -race -short ./...` ok; `go test -race ./introspect/` (integration) ok;
-  `golangci-lint ./postgres/... ./introspect/...` 0 issues. Fail-first: change reverted → 9 plain
-  subtests fail (`- {{Name: "r_x_idx", Type: s"INDEX", Columns: []string{"x"}, …}}, + nil`) and the parity
-  test fails (`- Unique: false, + Unique: true … + {Name: "r_y_idx", Type: s"UNIQUE", …}`); typeName check
-  removed → 9 expression subtests fail (`+ {{Name: "r_q_idx", …}}`); outermost-only check →
-  `cast_away_and_back` fails; existing suite without the fix passes. Golden churn: none. Patch:
-  `.claude/prototypes/FIX-311.patch` (3 files, +184/-14).
-
-**References.**
-- PRD §5.2, §6.1, §30.7.
-- Backlog line absorbed: 2026-10-08 same-type cast counted as expression (FIX-276).
-- FIX-276.
-
-**Resolution notes.** _Filled in by /fix resolve._
-
 ### FIX-312
 
 - **Status:** Open
@@ -2154,6 +2099,61 @@ DEFAULT.
 ## Resolved
 
 <!-- fixes:resolved:begin -->
+
+### FIX-311
+
+- **Status:** Resolved
+- **Severity:** tracked
+- **Origin:** phase 30, `parser/postgres` (index parts)
+- **Surfaced by:** backlog sweep 2026-10-12 (backlog line from FIX-276)
+- **Vetted:** ready at `9b58288b` (2026-10-12)
+
+**Issue.** An index part that casts a column to its own exact type is stored by PostgreSQL as a
+plain column, but the file parser treats it as an expression and skips the index, so under `files`
+the index (and a UNIQUE's conflict target) is missing. Measured on PG17: `CREATE INDEX ON r
+((x::text))` on a text column → database `r_x_idx INDEX [x]`, files none; UNIQUE `((y::integer))` on
+an int column → database `r_y_idx UNIQUE [y]`, `y.Unique=true`, files none. PG drops the cast only on
+an exact type and typmod match (`w::varchar(10)` on `varchar(10)`, `i::int4` on `int`,
+`(j::int)::int`); `v::varchar` on `varchar(10)`, `q::text` on `varchar`, or a cast to a domain's base
+stay expressions.
+
+**Root cause.** `indexElemColumn` / `indexParamColumns` (`parser/postgres/postgres.go:732-792`) count
+any `TypeCast` as an expression.
+
+**Suggested fix.**
+- Pass the table in; unwrap a `TypeCast` (repeatedly, through COLLATE) when
+  `p.typeName(cast.TypeName, schema)` equals the column's type exactly. Naming is unchanged.
+- Fail-first parity tests for the plain and kept-expression cases above.
+- Every cast in a chain must match, not only the outermost (`(b::int)::bigint` on a bigint stays an
+  expression). `indexParamColumns` / `indexElemColumn` become `*Parser` methods taking the table; COLLATE
+  and TypeCast layers peel in any order; a cast of an unknown column is an expression.
+- Composition with FIX-303 (not landed): `git apply --3way` merges postgres.go cleanly; the integration
+  test file has a trivial conflict (both insert before `TestPostgresIntrospect_NoSearchPath` — keep both);
+  FIX-303's `indexReads(table, stmt)` calls the free `indexElemColumn(e)`, so whichever lands second makes
+  it `(p *Parser) indexReads` calling `p.indexElemColumn(table, e)`.
+- Prototype results, run at `9b58288b` on 2026-10-12: postgres:17, table r with 27 indexes, read
+  `pg_index.indkey` / `indexprs` → plain column: `x::text`, `y::integer` UNIQUE, `w::varchar(10)`,
+  `i::int4`, `(j::int)::int`, `d::dint`, `e::mood`, `n::numeric(10,2)`, `a::int[]`, `c::char`,
+  `t::timestamp(3)`, `x::pg_catalog.text`, three COLLATE forms (→ `(x COLLATE "C")`), `((x::text), y)` →
+  indkey "1 2"; kept as expression: `v::varchar` on varchar(10), `q::text` on varchar, `n::numeric`,
+  `t::timestamp`, `c::bpchar`, `d::int`, `i::dint`, `(b::int)::bigint`. Files at HEAD gave only
+  `unnamed_dummy INDEX [y]` — all 18 plain-column indexes missing; with the fix exactly the database's 18.
+  Tests: `TestCreateIndex_SameTypeCast` (9 plain + 9 expression cases, constraints and `col.Unique`),
+  `TestPostgresIntrospect_SameTypeCastIndexes` (schema pgi_samecast, parity). Gates: `gofumpt -l` clean;
+  `go vet` clean; parser `go test -race -short ./...` ok; `go test -race ./introspect/` (integration) ok;
+  `golangci-lint ./postgres/... ./introspect/...` 0 issues. Fail-first: change reverted → 9 plain
+  subtests fail (`- {{Name: "r_x_idx", Type: s"INDEX", Columns: []string{"x"}, …}}, + nil`) and the parity
+  test fails (`- Unique: false, + Unique: true … + {Name: "r_y_idx", Type: s"UNIQUE", …}`); typeName check
+  removed → 9 expression subtests fail (`+ {{Name: "r_q_idx", …}}`); outermost-only check →
+  `cast_away_and_back` fails; existing suite without the fix passes. Golden churn: none. Patch:
+  `.claude/prototypes/FIX-311.patch` (3 files, +184/-14).
+
+**References.**
+- PRD §5.2, §6.1, §30.7.
+- Backlog line absorbed: 2026-10-08 same-type cast counted as expression (FIX-276).
+- FIX-276.
+
+**Resolution notes.** Resolved 2026-10-13 from the vetted prototype, applied with `git apply --3way` (postgres.go and postgres_test.go clean; the integration test file conflicted only because FIX-303 inserted `TestPostgresIntrospect_BothModeExpressionIndexes` at the same spot, kept both). `indexElemColumn` (`parser/postgres/postgres.go`) peels COLLATE and TypeCast layers in any order and keeps the part a plain column only when the column exists and every cast in the chain resolves via `p.typeName` to the column's exact type; `indexParamColumns`, `indexElemColumn` and FIX-303's `indexReads` became `*Parser` methods taking the table, per the composition note. Tests: `TestCreateIndex_SameTypeCast` (9 plain + 9 kept-expression cases) and `TestPostgresIntrospect_SameTypeCastIndexes` (parity on PG17). Fail-first reproduced as vetted: fix reverted → 9 plain subtests and the parity test fail; typeName check removed → 9 expression subtests fail; outermost cast only → `cast_away_and_back` fails. Gates: `make check` ok; `go test -race ./introspect/ ./postgres/` (integration) ok; `make update-golden-e2e` no churn; `make check-examples` ok. Verify: Root cause line ref corrected inline (`:513-547` → `:732-792`); two adjacent reviewer findings (undeclared-type spelling mismatch, index on a missing column) went to the backlog.
 
 ### FIX-310
 

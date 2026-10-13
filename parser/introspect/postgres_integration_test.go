@@ -420,6 +420,59 @@ CREATE INDEX ON pgi_seedix.r (a, lower)`
 	assertSchemaParity(t, "postgres", parsePG(t, base+";"+migration), introspected, pgSkippedStatementExceptions...)
 }
 
+// TestPostgresIntrospect_SameTypeCastIndexes pins that both sources keep an
+// index whose parts cast a column to its own type and typmod as an index over
+// the column, since PostgreSQL drops the cast, and skip one with any other
+// cast.
+func TestPostgresIntrospect_SameTypeCastIndexes(t *testing.T) {
+	requireDatabases(t)
+	ddl := `
+CREATE SCHEMA pgi_samecast;
+CREATE DOMAIN pgi_samecast.dint AS int;
+CREATE TYPE pgi_samecast.mood AS ENUM ('a', 'b');
+CREATE TABLE pgi_samecast.r (x text, y int, w varchar(10), q varchar, d pgi_samecast.dint,
+	e pgi_samecast.mood, n numeric(10,2), a int[], c char, b bigint, t timestamp(3));
+CREATE INDEX ON pgi_samecast.r ((x::text));
+CREATE UNIQUE INDEX ON pgi_samecast.r ((y::integer));
+CREATE INDEX i4 ON pgi_samecast.r (((y::int4)::int));
+CREATE INDEX tm ON pgi_samecast.r ((w::varchar(10)), (n::numeric(10,2)), (t::timestamp(3)), (c::char));
+CREATE INDEX ud ON pgi_samecast.r ((a::int[]), (e::pgi_samecast.mood), (d::pgi_samecast.dint), (x::pg_catalog.text));
+CREATE INDEX co ON pgi_samecast.r (((x COLLATE "C")::text), (x::text COLLATE "C"), (((x::text) COLLATE "C")::text));
+CREATE INDEX ON pgi_samecast.r ((x::text), y);
+CREATE INDEX ON pgi_samecast.r ((w::varchar));
+CREATE INDEX ON pgi_samecast.r ((q::text));
+CREATE INDEX ON pgi_samecast.r ((n::numeric));
+CREATE INDEX ON pgi_samecast.r ((t::timestamp));
+CREATE INDEX ON pgi_samecast.r ((c::bpchar));
+CREATE INDEX ON pgi_samecast.r ((d::int));
+CREATE INDEX ON pgi_samecast.r ((y::pgi_samecast.dint));
+CREATE INDEX ON pgi_samecast.r (((b::int)::bigint));
+CREATE UNIQUE INDEX ON pgi_samecast.r ((x::text), (y::bigint))`
+	parsed, introspected := pgParityCase(t, "DROP SCHEMA IF EXISTS pgi_samecast CASCADE", ddl, "pgi_samecast")
+
+	want := []parser.Constraint{
+		{Name: "r_x_idx", Type: parser.Index, Columns: []string{"x"}, Method: "btree"},
+		{Name: "r_y_idx", Type: parser.Unique, Columns: []string{"y"}, Method: "btree"},
+		{Name: "i4", Type: parser.Index, Columns: []string{"y"}, Method: "btree"},
+		{Name: "tm", Type: parser.Index, Columns: []string{"w", "n", "t", "c"}, Method: "btree"},
+		{Name: "ud", Type: parser.Index, Columns: []string{"a", "e", "d", "x"}, Method: "btree"},
+		{Name: "co", Type: parser.Index, Columns: []string{"x", "x", "x"}, Method: "btree"},
+		{Name: "r_x_y_idx", Type: parser.Index, Columns: []string{"x", "y"}, Method: "btree"},
+	}
+	got := findTable(t, introspected, "r")
+	sortConstraints(want)
+	sortConstraints(got.Constraints)
+	if diff := cmp.Diff(want, got.Constraints); diff != "" {
+		t.Errorf("introspected constraints mismatch (-want +got):\n%s", diff)
+	}
+	for _, col := range got.Columns {
+		if col.Unique != (col.Name == "y") {
+			t.Errorf("introspected r.%s: Unique = %v", col.Name, col.Unique)
+		}
+	}
+	assertSchemaParity(t, "postgres", parsed, introspected)
+}
+
 // TestPostgresIntrospect_NoSearchPath introspects the probe fixture with no
 // search_path and with search paths that put either schema first. Each gives
 // the parsed schema: a type in the column's own schema is bare, and one in

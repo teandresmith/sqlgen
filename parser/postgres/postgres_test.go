@@ -2065,6 +2065,97 @@ func TestCreateIndex_ExpressionParts(t *testing.T) {
 	}
 }
 
+// TestCreateIndex_SameTypeCast pins that an index part casting a column to its
+// own type and typmod is a plain column, as PostgreSQL drops the cast, through
+// nested casts and COLLATE, and that any other cast is an expression: a
+// different typmod, a domain's base type, or a domain over the column's type.
+func TestCreateIndex_SameTypeCast(t *testing.T) {
+	const table = `CREATE DOMAIN dint AS int;
+CREATE TYPE mood AS ENUM ('a', 'b');
+CREATE TABLE r (x text, y int, w varchar(10), q varchar, d dint, e mood,
+	n numeric(10,2), a int[], c char, b bigint, t timestamp(3));
+`
+	tests := []struct {
+		name   string
+		index  string
+		want   []parser.Constraint
+		unique string // the one column marked Unique
+	}{
+		{
+			name:  "text to text",
+			index: `CREATE INDEX ON r ((x::text))`,
+			want:  []parser.Constraint{{Name: "r_x_idx", Type: parser.Index, Columns: []string{"x"}, Method: "btree"}},
+		},
+		{
+			name:   "unique int to integer",
+			index:  `CREATE UNIQUE INDEX ON r ((y::integer))`,
+			want:   []parser.Constraint{{Name: "r_y_idx", Type: parser.Unique, Columns: []string{"y"}, Method: "btree"}},
+			unique: "y",
+		},
+		{
+			name:  "int to int4",
+			index: `CREATE INDEX iy ON r ((y::int4))`,
+			want:  []parser.Constraint{{Name: "iy", Type: parser.Index, Columns: []string{"y"}, Method: "btree"}},
+		},
+		{
+			name:  "nested same-type casts",
+			index: `CREATE INDEX iy ON r (((y::int)::int))`,
+			want:  []parser.Constraint{{Name: "iy", Type: parser.Index, Columns: []string{"y"}, Method: "btree"}},
+		},
+		{
+			name:  "same typmod",
+			index: `CREATE INDEX iw ON r ((w::varchar(10)), (n::numeric(10,2)), (t::timestamp(3)), (c::char))`,
+			want:  []parser.Constraint{{Name: "iw", Type: parser.Index, Columns: []string{"w", "n", "t", "c"}, Method: "btree"}},
+		},
+		{
+			name:  "schema-qualified type",
+			index: `CREATE INDEX ix ON r ((x::pg_catalog.text))`,
+			want:  []parser.Constraint{{Name: "ix", Type: parser.Index, Columns: []string{"x"}, Method: "btree"}},
+		},
+		{
+			name:  "array, enum and domain to their own type",
+			index: `CREATE INDEX ia ON r ((a::int[]), (e::mood), (d::dint))`,
+			want:  []parser.Constraint{{Name: "ia", Type: parser.Index, Columns: []string{"a", "e", "d"}, Method: "btree"}},
+		},
+		{
+			name:  "collate inside, outside and between casts",
+			index: `CREATE INDEX ix ON r (((x COLLATE "C")::text), (x::text COLLATE "C"), (((x::text) COLLATE "C")::text))`,
+			want:  []parser.Constraint{{Name: "ix", Type: parser.Index, Columns: []string{"x", "x", "x"}, Method: "btree"}},
+		},
+		{
+			name:  "cast and plain column",
+			index: `CREATE INDEX ON r ((x::text), y)`,
+			want:  []parser.Constraint{{Name: "r_x_y_idx", Type: parser.Index, Columns: []string{"x", "y"}, Method: "btree"}},
+		},
+		{name: "varchar(10) to varchar", index: `CREATE INDEX ON r ((w::varchar))`},
+		{name: "varchar to text", index: `CREATE INDEX ON r ((q::text))`},
+		{name: "numeric(10,2) to numeric", index: `CREATE INDEX ON r ((n::numeric))`},
+		{name: "timestamp(3) to timestamp", index: `CREATE INDEX ON r ((t::timestamp))`},
+		{name: "char to bpchar", index: `CREATE INDEX ON r ((c::bpchar))`},
+		{name: "domain to its base", index: `CREATE INDEX ON r ((d::int))`},
+		{name: "int to a domain over int", index: `CREATE INDEX ON r ((y::dint))`},
+		{name: "cast away and back", index: `CREATE INDEX ON r (((b::int)::bigint))`},
+		{name: "one cast part of two", index: `CREATE UNIQUE INDEX ON r ((x::text), (y::bigint))`},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			p := postgres.New("")
+			if err := p.Parse("test.sql", []byte(table+tt.index)); err != nil {
+				t.Fatalf("Parse() error: %v", err)
+			}
+			got := p.Schema().Tables[0]
+			if diff := cmp.Diff(tt.want, got.Constraints); diff != "" {
+				t.Errorf("constraints mismatch (-want +got):\n%s", diff)
+			}
+			for _, col := range got.Columns {
+				if col.Unique != (col.Name == tt.unique) {
+					t.Errorf("column %s: Unique = %v, want %v", col.Name, col.Unique, !col.Unique)
+				}
+			}
+		})
+	}
+}
+
 // TestDropConstraintRecomputesColumnUnique pins that dropping a UNIQUE
 // constraint re-derives col.Unique from the unconditional UNIQUEs that
 // remain, an inline one included, rather than unconditionally clearing it.

@@ -588,7 +588,7 @@ func (p *Parser) parseCreateIndex(stmt *pg_query.IndexStmt) error {
 		cType = parser.Unique
 	}
 
-	cols, plain := indexParamColumns(stmt.IndexParams)
+	cols, plain := p.indexParamColumns(table, stmt.IndexParams)
 	c := parser.Constraint{
 		Name:    stmt.Idxname,
 		Type:    cType,
@@ -606,7 +606,7 @@ func (p *Parser) parseCreateIndex(stmt *pg_query.IndexStmt) error {
 	if !plain {
 		table.ExpressionIndexes = append(table.ExpressionIndexes, parser.ExpressionIndex{
 			Name:    c.Name,
-			Columns: indexReads(table, stmt),
+			Columns: p.indexReads(table, stmt),
 		})
 		return nil
 	}
@@ -618,7 +618,7 @@ func (p *Parser) parseCreateIndex(stmt *pg_query.IndexStmt) error {
 // indexReads returns the columns of table that the index stmt reads, in table
 // order: its key and INCLUDE columns and those its expressions and WHERE
 // predicate reference.
-func indexReads(table *parser.Table, stmt *pg_query.IndexStmt) []string {
+func (p *Parser) indexReads(table *parser.Table, stmt *pg_query.IndexStmt) []string {
 	read := make(map[string]bool)
 	exprs := []string{deparseExpr(stmt.WhereClause)}
 	for _, n := range slices.Concat(stmt.IndexParams, stmt.IndexIncludingParams) {
@@ -626,7 +626,7 @@ func indexReads(table *parser.Table, stmt *pg_query.IndexStmt) []string {
 		if e == nil {
 			continue
 		}
-		if col := indexElemColumn(e); col != "" {
+		if col := p.indexElemColumn(table, e); col != "" {
 			read[col] = true
 			continue
 		}
@@ -729,16 +729,17 @@ func fixedColname(node *pg_query.Node) string {
 	return ""
 }
 
-// indexParamColumns extracts column names from a CREATE INDEX parameter list.
-// It reports false when a part is an expression (lower(x), (a + b)).
-func indexParamColumns(params []*pg_query.Node) ([]string, bool) {
+// indexParamColumns extracts the column names from the CREATE INDEX parameter
+// list of an index on table. It reports false when a part is an expression
+// (lower(x), (a + b)).
+func (p *Parser) indexParamColumns(table *parser.Table, params []*pg_query.Node) ([]string, bool) {
 	cols := make([]string, 0, len(params))
-	for _, p := range params {
-		e, ok := p.Node.(*pg_query.Node_IndexElem)
+	for _, n := range params {
+		e, ok := n.Node.(*pg_query.Node_IndexElem)
 		if !ok || e.IndexElem == nil {
 			continue
 		}
-		name := indexElemColumn(e.IndexElem)
+		name := p.indexElemColumn(table, e.IndexElem)
 		if name == "" {
 			return nil, false
 		}
@@ -747,22 +748,47 @@ func indexParamColumns(params []*pg_query.Node) ([]string, bool) {
 	return cols, true
 }
 
-// indexElemColumn returns the column an index part names, or "" for an
-// expression. A column written as an expression, (a) or (a COLLATE "C"), is
-// stored by PostgreSQL as a plain column.
-func indexElemColumn(e *pg_query.IndexElem) string {
+// indexElemColumn returns the column of table an index part names, or "" for
+// an expression. A column written as an expression is stored by PostgreSQL as
+// a plain column: (a), (a COLLATE "C"), and (a::text) when a is a text column,
+// since PostgreSQL drops a cast to the column's own type and typmod. A cast to
+// any other type, a domain's base type included, stays an expression.
+func (p *Parser) indexElemColumn(table *parser.Table, e *pg_query.IndexElem) string {
 	if e.Name != "" {
 		return e.Name
 	}
 	expr := e.Expr
-	for expr.GetCollateClause() != nil {
-		expr = expr.GetCollateClause().Arg
+	var casts []*pg_query.TypeName
+	for {
+		if c := expr.GetCollateClause(); c != nil {
+			expr = c.Arg
+			continue
+		}
+		if c := expr.GetTypeCast(); c != nil {
+			casts = append(casts, c.TypeName)
+			expr = c.Arg
+			continue
+		}
+		break
 	}
 	fields := expr.GetColumnRef().GetFields()
 	if len(fields) == 0 {
 		return ""
 	}
-	return fields[len(fields)-1].GetString_().GetSval()
+	name := fields[len(fields)-1].GetString_().GetSval()
+	if len(casts) == 0 {
+		return name
+	}
+	col := parser.ColumnByName(table, name)
+	if col == nil {
+		return ""
+	}
+	for _, tn := range casts {
+		if p.typeName(tn, table.Schema) != col.Type {
+			return ""
+		}
+	}
+	return name
 }
 
 func (p *Parser) parseRename(stmt *pg_query.RenameStmt) error {
