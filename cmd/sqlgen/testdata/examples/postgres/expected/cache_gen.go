@@ -39,7 +39,7 @@ const fingerprintProfile = "23601e6c"
 const fingerprintPublicNote = "cdc6db6d"
 const fingerprintPublicUser = "8e4b4a70"
 const fingerprintRateLimit = "9fc9645b"
-const fingerprintSequenceRow = "0cfdca44"
+const fingerprintSequenceRow = "4ccd7440"
 const fingerprintSluggedRow = "910e56d5"
 const fingerprintTag = "145e5547"
 const fingerprintUserCategory = "e8982915"
@@ -5349,6 +5349,7 @@ func hasAnyRelationshipSequenceRow(fo any) bool {
 func fullParentFieldOptionsSequenceRow() *SequenceRowFieldOptions {
 	return &SequenceRowFieldOptions{
 		ID:      true,
+		Code:    true,
 		Seq:     true,
 		Ticket:  true,
 		AuditNo: true,

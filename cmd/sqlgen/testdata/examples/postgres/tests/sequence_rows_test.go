@@ -55,3 +55,42 @@ func TestSequenceRows_NonKeySequenceColumnsOptional(t *testing.T) {
 		t.Errorf("CreateMany(mixed) row 1 Seq = %d, want a sequence value", many[1].Seq)
 	}
 }
+
+// TestSequenceRows_UpsertManyKeepsSequenceColumns covers PRD §9.5: UpsertMany
+// leaves non-key sequence columns out of its update half. Every row binds
+// DEFAULT for an unset one, so setting them there would fail every call on the
+// GENERATED ALWAYS column (SQLSTATE 428C9) and redraw the others on a conflict.
+func TestSequenceRows_UpsertManyKeepsSequenceColumns(t *testing.T) {
+	ctx := context.Background()
+	c := newClient().SequenceRows()
+
+	inserted, err := c.UpsertMany(ctx, []*models.CreateSequenceRowInput{
+		{Code: omittable.Set(new("upsert-many-a")), Note: "first"},
+	}, models.SequenceRowConflictCode)
+	if err != nil {
+		t.Fatalf("UpsertMany(insert): %v", err)
+	}
+	if len(inserted) != 1 {
+		t.Fatalf("UpsertMany(insert) returned %d rows, want 1", len(inserted))
+	}
+	before := inserted[0]
+
+	updated, err := c.UpsertMany(ctx, []*models.CreateSequenceRowInput{
+		{Code: omittable.Set(new("upsert-many-a")), Note: "second"},
+	}, models.SequenceRowConflictCode)
+	if err != nil {
+		t.Fatalf("UpsertMany(conflict): %v", err)
+	}
+	if len(updated) != 1 {
+		t.Fatalf("UpsertMany(conflict) returned %d rows, want 1", len(updated))
+	}
+	after := updated[0]
+
+	if after.Note != "second" {
+		t.Errorf("UpsertMany(conflict) Note = %q, want %q", after.Note, "second")
+	}
+	if after.ID != before.ID || after.Seq != before.Seq || after.Ticket != before.Ticket || after.AuditNo != before.AuditNo {
+		t.Errorf("UpsertMany(conflict) = {ID:%d Seq:%d Ticket:%d AuditNo:%d}, want the row's own {ID:%d Seq:%d Ticket:%d AuditNo:%d}",
+			after.ID, after.Seq, after.Ticket, after.AuditNo, before.ID, before.Seq, before.Ticket, before.AuditNo)
+	}
+}

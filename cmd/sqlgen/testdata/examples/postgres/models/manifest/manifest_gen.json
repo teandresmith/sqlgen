@@ -10796,6 +10796,14 @@
       "comment": "",
       "indexes": [
         {
+          "name": "sequence_rows_code_key",
+          "columns": [
+            "code"
+          ],
+          "unique": true,
+          "method": "btree"
+        },
+        {
           "name": "sequence_rows_pkey",
           "columns": [
             "id"
@@ -10851,6 +10859,17 @@
           "unique": false,
           "auto": "insert",
           "comparator": "comparator.Number[int64]",
+          "comment": ""
+        },
+        {
+          "name": "code",
+          "go_field": "Code",
+          "go_type": "*string",
+          "db_type": "text",
+          "nullable": true,
+          "pk": false,
+          "unique": true,
+          "comparator": "comparator.NullableString",
           "comment": ""
         },
         {
@@ -10918,7 +10937,7 @@
             ],
             "notes": "Delegates to GetMany with a primary-key filter; returns ErrNotFound when no row matches.",
             "sql_bodies": {
-              "postgres": "SELECT \"audit_no\", \"id\", \"note\", \"seq\", \"ticket\" FROM \"public\".\"sequence_rows\" WHERE \"id\" = $1 LIMIT 1"
+              "postgres": "SELECT \"audit_no\", \"code\", \"id\", \"note\", \"seq\", \"ticket\" FROM \"public\".\"sequence_rows\" WHERE \"id\" = $1 LIMIT 1"
             }
           },
           {
@@ -10932,7 +10951,7 @@
             "returns": "[]*SequenceRow",
             "errors": [],
             "sql_bodies": {
-              "postgres": "SELECT \"audit_no\", \"id\", \"note\", \"seq\", \"ticket\" FROM \"public\".\"sequence_rows\" WHERE <filter> ORDER BY <sort> LIMIT <limit>"
+              "postgres": "SELECT \"audit_no\", \"code\", \"id\", \"note\", \"seq\", \"ticket\" FROM \"public\".\"sequence_rows\" WHERE <filter> ORDER BY <sort> LIMIT <limit>"
             }
           },
           {
@@ -11015,7 +11034,7 @@
             "errors": [],
             "notes": "Scalars only — no relationship loading, cache always bypassed. Errors surface through the iterator's second value.",
             "sql_bodies": {
-              "postgres": "SELECT \"audit_no\", \"id\", \"note\", \"seq\", \"ticket\" FROM \"public\".\"sequence_rows\" WHERE <filter> ORDER BY <sort>"
+              "postgres": "SELECT \"audit_no\", \"code\", \"id\", \"note\", \"seq\", \"ticket\" FROM \"public\".\"sequence_rows\" WHERE <filter> ORDER BY <sort>"
             }
           }
         ],
@@ -11241,6 +11260,10 @@
             "type": "*comparator.Number[int32]"
           },
           {
+            "name": "Code",
+            "type": "*comparator.NullableString"
+          },
+          {
             "name": "ID",
             "type": "*comparator.Number[int64]"
           },
@@ -11270,6 +11293,7 @@
         "type": "SequenceRowSort",
         "fields": [
           "AuditNo",
+          "Code",
           "ID",
           "Note",
           "Seq",

@@ -42105,11 +42105,12 @@ type GetRateLimitsInput struct {
 }
 
 type SequenceRow struct {
-	ID      int64  `db:"id" json:"id"`
-	Seq     int32  `db:"seq" json:"seq"`
-	Ticket  int64  `db:"ticket" json:"ticket"`
-	AuditNo int32  `db:"audit_no" json:"audit_no"`
-	Note    string `db:"note" json:"note"`
+	ID      int64   `db:"id" json:"id"`
+	Code    *string `db:"code" json:"code"`
+	Seq     int32   `db:"seq" json:"seq"`
+	Ticket  int64   `db:"ticket" json:"ticket"`
+	AuditNo int32   `db:"audit_no" json:"audit_no"`
+	Note    string  `db:"note" json:"note"`
 }
 
 // SequenceRowClient provides type-safe operations for the sequence_rows table.
@@ -42251,7 +42252,7 @@ func (c *sequenceRowClient) executeQuery(ctx context.Context, skipHooks bool, qc
 }
 
 // sequenceRowAllColumns is the column list for full-entity reads, sorted for determinism.
-var sequenceRowAllColumns = []string{"audit_no", "id", "note", "seq", "ticket"}
+var sequenceRowAllColumns = []string{"audit_no", "code", "id", "note", "seq", "ticket"}
 
 // scanSequenceRows scans rows into SequenceRow entities using a column-name switch.
 // Handles both scan target shapes (direct, wrapped) without reflection.
@@ -42265,6 +42266,8 @@ func scanSequenceRows(rows database.Rows, columns []string) ([]*SequenceRow, err
 			switch col {
 			case "id":
 				targets[idx] = &s.ID
+			case "code":
+				targets[idx] = &s.Code
 			case "seq":
 				targets[idx] = &s.Seq
 			case "ticket":
@@ -42460,6 +42463,11 @@ func (c *sequenceRowClient) Create(ctx context.Context, input *CreateSequenceRow
 		columns := []string{"note"}
 		args := []any{input.Note}
 
+		if v, ok := input.Code.Get(); ok {
+			columns = append(columns, "code")
+			args = append(args, v)
+		}
+
 		if v, ok := input.Seq.Get(); ok {
 			columns = append(columns, "seq")
 			args = append(args, v)
@@ -42531,9 +42539,13 @@ func (c *sequenceRowClient) CreateMany(ctx context.Context, inputs []*CreateSequ
 			end := min(start+c.batchSize, len(inputs))
 			batch := inputs[start:end]
 
-			columns := []string{"seq", "ticket", "audit_no", "note"}
+			columns := []string{"code", "seq", "ticket", "audit_no", "note"}
 			var valueRows [][]any
 			for _, input := range batch {
+				var code any = sql.Default
+				if v, ok := input.Code.Get(); ok {
+					code = v
+				}
 				var seq any = sql.Default
 				if v, ok := input.Seq.Get(); ok {
 					seq = v
@@ -42548,6 +42560,7 @@ func (c *sequenceRowClient) CreateMany(ctx context.Context, inputs []*CreateSequ
 				}
 
 				valueRows = append(valueRows, []any{
+					code,
 					seq,
 					ticket,
 					auditNo,
@@ -42650,6 +42663,9 @@ func (c *sequenceRowClient) Update(ctx context.Context, id int64, input *UpdateS
 
 		// Build SET clause from omittable fields — explicit per-field checks, no reflection
 		setClauses := make(map[string]any)
+		if v, ok := input.Code.Get(); ok {
+			setClauses["code"] = v
+		}
 		if v, ok := input.Seq.Get(); ok {
 			setClauses["seq"] = v
 		}
@@ -42758,6 +42774,9 @@ func (c *sequenceRowClient) UpdateMany(ctx context.Context, items []UpdateSequen
 			var batchArgs [][]any
 			for _, item := range batch {
 				setClauses := make(map[string]any)
+				if v, ok := item.Input.Code.Get(); ok {
+					setClauses["code"] = v
+				}
 				if v, ok := item.Input.Seq.Get(); ok {
 					setClauses["seq"] = v
 				}
@@ -42864,6 +42883,9 @@ func (c *sequenceRowClient) UpdateWhere(ctx context.Context, filter *SequenceRow
 
 		// Build SET clause (same per-field checks as Update)
 		setClauses := make(map[string]any)
+		if v, ok := input.Code.Get(); ok {
+			setClauses["code"] = v
+		}
 		if v, ok := input.Seq.Get(); ok {
 			setClauses["seq"] = v
 		}
@@ -43042,12 +43064,14 @@ func (c *sequenceRowClient) HardDeleteWhere(ctx context.Context, filter *Sequenc
 type SequenceRowConflictTarget int
 
 const (
-	SequenceRowConflictPK SequenceRowConflictTarget = iota // PRIMARY KEY (id)
+	SequenceRowConflictCode SequenceRowConflictTarget = iota // UNIQUE (code)
+	SequenceRowConflictPK                                    // PRIMARY KEY (id)
 )
 
 // sequenceRowConflictColumns maps each conflict target to its column set.
 var sequenceRowConflictColumns = map[SequenceRowConflictTarget][]string{
-	SequenceRowConflictPK: {"id"},
+	SequenceRowConflictCode: {"code"},
+	SequenceRowConflictPK:   {"id"},
 }
 
 // Upsert inserts a sequence_row or updates it if a row matching the conflict target already
@@ -43075,6 +43099,11 @@ func (c *sequenceRowClient) Upsert(ctx context.Context, input *CreateSequenceRow
 
 		columns := []string{"note"}
 		args := []any{input.Note}
+
+		if v, ok := input.Code.Get(); ok {
+			columns = append(columns, "code")
+			args = append(args, v)
+		}
 
 		if v, ok := input.Seq.Get(); ok {
 			columns = append(columns, "seq")
@@ -43271,15 +43300,19 @@ func (c *sequenceRowClient) UpsertMany(ctx context.Context, inputs []*CreateSequ
 		// Resolve conflict target and update columns. Tenant column is excluded
 		// from the UPDATE-set half of the conflict clause — a
 		// row's tenant is not a mutable attribute under normal operation.
+		// So is every non-key sequence column. A row that leaves one unset
+		// would redraw it on every conflict, and PostgreSQL rejects the clause
+		// outright on a GENERATED ALWAYS identity. A set value applies on
+		// insert only.
 		//
 		// UpsertResolvePKColumn is deliberately not set: it exists so a
 		// single-row MySQL upsert can republish the conflicting row's id into
 		// the OK packet, and after a batch that packet names at most one row.
 		// Nothing here reads LastInsertId, so requesting it would
 		// only add a misleading assignment to the SET list.
-		columns := []string{"seq", "ticket", "audit_no", "note"}
+		columns := []string{"code", "seq", "ticket", "audit_no", "note"}
 		conflictColumns := sequenceRowConflictColumns[target]
-		updateColumns := excludeColumns(columns, append(conflictColumns, "id"))
+		updateColumns := excludeColumns(columns, append(conflictColumns, "id", "seq", "ticket", "audit_no"))
 		conflictPositions, haveConflictKey := upsertConflictPositions(columns, conflictColumns)
 		if !haveConflictKey {
 			return nil, fmt.Errorf("upsert sequence_rows: conflict target names a column the input does not supply, so the written rows cannot be identified")
@@ -43292,6 +43325,10 @@ func (c *sequenceRowClient) UpsertMany(ctx context.Context, inputs []*CreateSequ
 		rowInputs := make([]*CreateSequenceRowInput, 0, len(inputs))
 		var rowIDs []int64
 		for _, input := range inputs {
+			var code any = sql.Default
+			if v, ok := input.Code.Get(); ok {
+				code = v
+			}
 			var seq any = sql.Default
 			if v, ok := input.Seq.Get(); ok {
 				seq = v
@@ -43306,6 +43343,7 @@ func (c *sequenceRowClient) UpsertMany(ctx context.Context, inputs []*CreateSequ
 			}
 
 			valueRows = append(valueRows, []any{
+				code,
 				seq,
 				ticket,
 				auditNo,
@@ -43507,6 +43545,8 @@ func sequenceRowColumnValue(s *SequenceRow, column string) any {
 	switch column {
 	case "id":
 		return s.ID
+	case "code":
+		return s.Code
 	case "seq":
 		return s.Seq
 	case "ticket":
@@ -43811,6 +43851,8 @@ func encodeSequenceRowCursor(keys []string, s *SequenceRow) (string, error) {
 		switch key {
 		case "id":
 			out["id"] = s.ID
+		case "code":
+			out["code"] = s.Code
 		case "seq":
 			out["seq"] = s.Seq
 		case "ticket":
@@ -43865,6 +43907,7 @@ type StreamSequenceRowsInput struct {
 // Stream cannot load relationships — only scalar columns are selectable.
 type StreamSequenceRowFieldOptions struct {
 	ID      bool `json:"id"`
+	Code    bool `json:"code"`
 	Seq     bool `json:"seq"`
 	Ticket  bool `json:"ticket"`
 	AuditNo bool `json:"audit_no"`
@@ -43877,6 +43920,9 @@ func (fo *StreamSequenceRowFieldOptions) Columns() []string {
 	var cols []string
 	if fo.ID {
 		cols = append(cols, "id")
+	}
+	if fo.Code {
+		cols = append(cols, "code")
 	}
 	if fo.Seq {
 		cols = append(cols, "seq")
@@ -43897,6 +43943,9 @@ func (fo *StreamSequenceRowFieldOptions) Columns() []string {
 // HasSelectedColumns reports whether any column is selected.
 func (fo *StreamSequenceRowFieldOptions) HasSelectedColumns() bool {
 	if fo.ID {
+		return true
+	}
+	if fo.Code {
 		return true
 	}
 	if fo.Seq {
@@ -43924,6 +43973,8 @@ func scanSequenceRowRow(rows database.Rows, columns []string) (*SequenceRow, err
 		switch col {
 		case "id":
 			targets[idx] = &s.ID
+		case "code":
+			targets[idx] = &s.Code
 		case "seq":
 			targets[idx] = &s.Seq
 		case "ticket":
@@ -44054,13 +44105,14 @@ func (c *sequenceRowClient) Stream(ctx context.Context, input *StreamSequenceRow
 
 // SequenceRowFilter provides type-safe filtering for the sequence_rows table.
 type SequenceRowFilter struct {
-	AuditNo *comparator.Number[int32] `json:"audit_no"`
-	ID      *comparator.Number[int64] `json:"id"`
-	Note    *comparator.String        `json:"note"`
-	Seq     *comparator.Number[int32] `json:"seq"`
-	Ticket  *comparator.Number[int64] `json:"ticket"`
-	And     []*SequenceRowFilter      `json:"and"`
-	Or      []*SequenceRowFilter      `json:"or"`
+	AuditNo *comparator.Number[int32]  `json:"audit_no"`
+	Code    *comparator.NullableString `json:"code"`
+	ID      *comparator.Number[int64]  `json:"id"`
+	Note    *comparator.String         `json:"note"`
+	Seq     *comparator.Number[int32]  `json:"seq"`
+	Ticket  *comparator.Number[int64]  `json:"ticket"`
+	And     []*SequenceRowFilter       `json:"and"`
+	Or      []*SequenceRowFilter       `json:"or"`
 }
 
 // ToConditions converts the filter to a slice of SQL conditions.
@@ -44080,6 +44132,10 @@ func (f *SequenceRowFilter) ToConditions(dialect sql.Dialect, opts ...FilterOpti
 
 	if f.AuditNo != nil {
 		conds = append(conds, f.AuditNo.Parse(dialect.QuoteIdentifier("audit_no"), dialect)...)
+	}
+
+	if f.Code != nil {
+		conds = append(conds, f.Code.Parse(dialect.QuoteIdentifier("code"), dialect)...)
 	}
 
 	if f.ID != nil {
@@ -44132,6 +44188,7 @@ func (f *SequenceRowFilter) ToConditions(dialect sql.Dialect, opts ...FilterOpti
 // SequenceRowFieldOptions controls column selection and relationship loading for sequence_rows queries.
 type SequenceRowFieldOptions struct {
 	ID      bool `json:"id"`
+	Code    bool `json:"code"`
 	Seq     bool `json:"seq"`
 	Ticket  bool `json:"ticket"`
 	AuditNo bool `json:"audit_no"`
@@ -44144,6 +44201,9 @@ func (fo *SequenceRowFieldOptions) Columns() []string {
 	var cols []string
 	if fo.ID {
 		cols = append(cols, "id")
+	}
+	if fo.Code {
+		cols = append(cols, "code")
 	}
 	if fo.Seq {
 		cols = append(cols, "seq")
@@ -44165,6 +44225,7 @@ func (fo *SequenceRowFieldOptions) Columns() []string {
 func (fo *SequenceRowFieldOptions) ColumnMap() map[string]string {
 	return map[string]string{
 		"ID":      "id",
+		"Code":    "code",
 		"Seq":     "seq",
 		"Ticket":  "ticket",
 		"AuditNo": "audit_no",
@@ -44175,6 +44236,9 @@ func (fo *SequenceRowFieldOptions) ColumnMap() map[string]string {
 // HasSelectedColumns reports whether any column or relationship is selected.
 func (fo *SequenceRowFieldOptions) HasSelectedColumns() bool {
 	if fo.ID {
+		return true
+	}
+	if fo.Code {
 		return true
 	}
 	if fo.Seq {
@@ -44194,19 +44258,21 @@ func (fo *SequenceRowFieldOptions) HasSelectedColumns() bool {
 
 // CreateSequenceRowInput holds the fields for creating a sequence_rows record.
 type CreateSequenceRowInput struct {
-	Seq     omittable.Value[int32] `json:"seq,omitzero"`
-	Ticket  omittable.Value[int64] `json:"ticket,omitzero"`
-	AuditNo omittable.Value[int32] `json:"audit_no,omitzero"`
-	Note    string                 `json:"note"`
+	Code    omittable.Value[*string] `json:"code,omitzero"`
+	Seq     omittable.Value[int32]   `json:"seq,omitzero"`
+	Ticket  omittable.Value[int64]   `json:"ticket,omitzero"`
+	AuditNo omittable.Value[int32]   `json:"audit_no,omitzero"`
+	Note    string                   `json:"note"`
 }
 
 // UpdateSequenceRowInput holds the fields for updating a sequence_rows record.
 // All fields use omittable.Value to distinguish "not set" from "set to zero".
 type UpdateSequenceRowInput struct {
-	Seq     omittable.Value[int32]  `json:"seq,omitzero"`
-	Ticket  omittable.Value[int64]  `json:"ticket,omitzero"`
-	AuditNo omittable.Value[int32]  `json:"audit_no,omitzero"`
-	Note    omittable.Value[string] `json:"note,omitzero"`
+	Code    omittable.Value[*string] `json:"code,omitzero"`
+	Seq     omittable.Value[int32]   `json:"seq,omitzero"`
+	Ticket  omittable.Value[int64]   `json:"ticket,omitzero"`
+	AuditNo omittable.Value[int32]   `json:"audit_no,omitzero"`
+	Note    omittable.Value[string]  `json:"note,omitzero"`
 }
 
 // GetSequenceRowsInput holds query parameters for retrieving sequence_rows records.

@@ -2317,11 +2317,12 @@ func buildCreateInputFields(columns []ColumnContext, pkStrategy config.PKStrateg
 			continue
 		}
 
+		field := requiredInputField(col)
 		if createInputOmittable(col, updateSet, softDeleteCol) {
-			fields = append(fields, omittableInputField(col))
-		} else {
-			fields = append(fields, requiredInputField(col))
+			field = omittableInputField(col)
 		}
+		field.AutoIncrement = col.AutoIncrement
+		fields = append(fields, field)
 	}
 	return fields
 }

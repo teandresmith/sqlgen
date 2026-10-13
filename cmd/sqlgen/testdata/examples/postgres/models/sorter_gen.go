@@ -632,6 +632,11 @@ func (s SequenceRowSorter) AuditNo(direction sql.SortDirection) sql.Sort {
 	return sql.Sort{Column: "audit_no", Direction: direction}
 }
 
+// Code returns a sort for the code column in the given direction.
+func (s SequenceRowSorter) Code(direction sql.SortDirection) sql.Sort {
+	return sql.Sort{Column: "code", Direction: direction}
+}
+
 // ID returns a sort for the id column in the given direction.
 func (s SequenceRowSorter) ID(direction sql.SortDirection) sql.Sort {
 	return sql.Sort{Column: "id", Direction: direction}

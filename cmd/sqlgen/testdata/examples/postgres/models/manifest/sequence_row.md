@@ -17,6 +17,7 @@
 | Name | Go field | Go type | DB type | Null | PK | Unique | Default | Comparator | Comment |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
 | `id` | ID | `int64` | `bigint` |  | yes |  |  | `comparator.Number[int64]` |  |
+| `code` | Code | `*string` | `text` | yes |  | yes |  | `comparator.NullableString` |  |
 | `seq` | Seq | `int32` | `integer` |  |  |  |  | `comparator.Number[int32]` |  |
 | `ticket` | Ticket | `int64` | `bigint` |  |  |  |  | `comparator.Number[int64]` |  |
 | `audit_no` | AuditNo | `int32` | `integer` |  |  |  |  | `comparator.Number[int32]` |  |
@@ -26,6 +27,7 @@
 
 | Name | Columns | Unique | Method | Where |
 | --- | --- | --- | --- | --- |
+| `sequence_rows_code_key` | code | yes | btree |  |
 | `sequence_rows_pkey` | id | yes | btree |  |
 
 ## Query methods
@@ -42,7 +44,7 @@ Generated SQL:
 postgres:
 
 ```sql
-SELECT "audit_no", "id", "note", "seq", "ticket" FROM "public"."sequence_rows" WHERE "id" = $1 LIMIT 1
+SELECT "audit_no", "code", "id", "note", "seq", "ticket" FROM "public"."sequence_rows" WHERE "id" = $1 LIMIT 1
 ```
 
 ### GetMany
@@ -55,7 +57,7 @@ Generated SQL:
 postgres:
 
 ```sql
-SELECT "audit_no", "id", "note", "seq", "ticket" FROM "public"."sequence_rows" WHERE <filter> ORDER BY <sort> LIMIT <limit>
+SELECT "audit_no", "code", "id", "note", "seq", "ticket" FROM "public"."sequence_rows" WHERE <filter> ORDER BY <sort> LIMIT <limit>
 ```
 
 ### Count
@@ -121,7 +123,7 @@ Generated SQL:
 postgres:
 
 ```sql
-SELECT "audit_no", "id", "note", "seq", "ticket" FROM "public"."sequence_rows" WHERE <filter> ORDER BY <sort>
+SELECT "audit_no", "code", "id", "note", "seq", "ticket" FROM "public"."sequence_rows" WHERE <filter> ORDER BY <sort>
 ```
 
 ## Mutation methods
@@ -295,6 +297,7 @@ Type `SequenceRowFilter`.
 | Field | Type |
 | --- | --- |
 | AuditNo | `*comparator.Number[int32]` |
+| Code | `*comparator.NullableString` |
 | ID | `*comparator.Number[int64]` |
 | Note | `*comparator.String` |
 | Seq | `*comparator.Number[int32]` |
@@ -306,4 +309,4 @@ Type `SequenceRowFilter`.
 
 Type `SequenceRowSort`.
 
-Fields: AuditNo, ID, Note, Seq, Ticket
+Fields: AuditNo, Code, ID, Note, Seq, Ticket

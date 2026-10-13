@@ -587,6 +587,12 @@ type InputFieldContext struct {
 	// or auto-increment columns without a default. Empty when the column has no
 	// fallback.
 	DefaultExpr string
+	// AutoIncrement marks a non-key column the database draws from a
+	// sequence: serial, identity, a nextval() default, MySQL AUTO_INCREMENT,
+	// or a SQLite rowid alias that primary_key.columns demoted. UpsertMany
+	// leaves it out of the update half of its conflict clause (PRD §9.5).
+	// Never set on a key column, which that clause leaves out anyway.
+	AutoIncrement bool
 }
 
 // ScanShapeContext holds scan target information for a column.

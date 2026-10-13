@@ -1080,11 +1080,11 @@ func resolveNestedJunction(rel RelationshipContext, byTable tableIndex) (*TableC
 	// The junction carries no column beyond its two FKs. A required one
 	// is a column a nested link row cannot populate. An optional one is
 	// worse, because it fails silently: the link step upserts on the
-	// junction's key and UpsertMany puts every other insert column in the
-	// update half, so re-linking an existing pair resets the column to its
-	// default and reports success. Measured on the mysql example:
-	// re-connecting a linked category took `user_categories.slot` from 7 to
-	// NULL.
+	// junction's key and UpsertMany puts every other insert column but a
+	// sequence column in the update half, so re-linking an existing pair
+	// resets the column to its default and reports success. Measured on the
+	// mysql example: re-connecting a linked category took
+	// `user_categories.slot` from 7 to NULL.
 	for _, f := range junction.CreateInputFields {
 		if f.ColumnName == rel.JunctionLocalFK || f.ColumnName == rel.JunctionReferenceFK {
 			continue
@@ -1095,6 +1095,12 @@ func resolveNestedJunction(rel RelationshipContext, byTable tableIndex) (*TableC
 		if junctionColumnSurvivesRelink(junction, f.ColumnName) {
 			continue
 		}
+		if f.AutoIncrement {
+			// UpsertMany leaves a sequence column out of the update half, so
+			// a re-link does not reset it, but a nested M2M edge still needs a
+			// junction with no column beyond its two FKs (PRD §9.9.4).
+			return reject(fmt.Sprintf("the junction carries sequence column %q beyond its two foreign keys, and a nested M2M edge needs a junction with no column beyond them", f.ColumnName))
+		}
 		return reject(fmt.Sprintf("the junction carries column %q beyond its two foreign keys, which the link step's upsert would reset to its default on every re-link", f.ColumnName))
 	}
 	return junction, nil
@@ -1103,9 +1109,12 @@ func resolveNestedJunction(rel RelationshipContext, byTable tableIndex) (*TableC
 // junctionColumnSurvivesRelink reports whether an optional junction column is
 // safe under the link step's upsert.
 //
-// Two kinds are never reset: the primary-key columns, because a row's identity
-// is not a mutable attribute (PRD §9.5), and the tenant column (PRD §29.4.2).
-// UpsertMany keeps both out of its conflict clause's update half.
+// Two kinds are admitted because they are never reset: the primary-key
+// columns, because a row's identity is not a mutable attribute (PRD §9.5), and
+// the tenant column (PRD §29.4.2). UpsertMany keeps both out of its conflict
+// clause's update half. It keeps a sequence column out too, but the junction
+// rule (PRD §9.9.4) does not exempt one, so resolveNestedJunction still
+// rejects it.
 //
 // The soft-delete column is reset, and resetting it is correct. Its default is
 // the not-deleted state, so re-linking a soft-deleted pair restores the link.

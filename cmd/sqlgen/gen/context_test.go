@@ -2230,7 +2230,8 @@ func TestCreateInputFieldClassification_autoIncrementPKExcluded(t *testing.T) {
 
 // The parser gives a serial or identity column no Default, only AutoIncrement.
 // SQLite's CreateMany sends DefaultExpr for an unset field; NULL makes a rowid
-// alias draw the next rowid.
+// alias draw the next rowid. The field carries AutoIncrement so UpsertMany can
+// keep it out of its conflict clause's update half (PRD §9.5).
 func TestCreateInputFieldClassification_autoIncrementNonPKOmittable(t *testing.T) {
 	tests := []struct {
 		name string
@@ -2261,16 +2262,16 @@ func TestCreateInputFieldClassification_autoIncrementNonPKOmittable(t *testing.T
 			}
 
 			type field struct {
-				Column              string
-				Required, Omittable bool
-				DefaultExpr         string
+				Column                             string
+				Required, Omittable, AutoIncrement bool
+				DefaultExpr                        string
 			}
 			var got []field
 			for _, f := range contexts[0].CreateInputFields {
-				got = append(got, field{f.ColumnName, f.Required, f.Omittable, f.DefaultExpr})
+				got = append(got, field{f.ColumnName, f.Required, f.Omittable, f.AutoIncrement, f.DefaultExpr})
 			}
 			want := []field{
-				{Column: "seq", Omittable: true, DefaultExpr: "NULL"},
+				{Column: "seq", Omittable: true, AutoIncrement: true, DefaultExpr: "NULL"},
 				{Column: "note", Required: true},
 			}
 			if diff := cmp.Diff(want, got); diff != "" {

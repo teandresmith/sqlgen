@@ -309,6 +309,8 @@ Upsert syntax is one of the sharpest dialect differences.
 
 The `DO UPDATE SET` clause includes all non-PK, non-conflict-key columns from `CreateInput`. Primary key columns and conflict target columns are excluded from `SET` — they are the identity, not the payload.
 
+`UpsertMany` also excludes every non-PK auto-increment column (serial, identity, MySQL `AUTO_INCREMENT`, a `nextval(…)` default, a SQLite rowid alias demoted by `primary_key.columns`). Every batch row binds `DEFAULT` (`NULL` on SQLite) for an unset one, so setting it would redraw it on each conflict, and PostgreSQL rejects the clause outright on a `GENERATED ALWAYS` identity (PRD §9.5).
+
 ### Preserving the PK Through a No-Op Conflict
 
 `UpsertClauseOptions.ResolvePKColumn` names the single-column PK the caller has to read back from the statement, and is `""` when the caller already knows it (composite, app-, or caller-generated). It exists because a conflict that changes nothing still has to yield the conflicting row's PK, and each dialect loses that differently:

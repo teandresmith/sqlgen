@@ -22,6 +22,8 @@
        neither RETURNING nor LAST_INSERT_ID() is available, so the
        read-back is the only mechanism. */ -}}
 {{- $keyKnownBeforeWrite := or .CompositePK (ne .PKStrategy "db") -}}
+{{- $hasSequenceInput := false -}}
+{{- range .CreateInputFields }}{{ if .AutoIncrement }}{{ $hasSequenceInput = true }}{{ end }}{{ end -}}
 {{- $anyTargetMissesPK := false -}}
 {{- range .ConflictTargets }}{{ if not .CoversPK }}{{ $anyTargetMissesPK = true }}{{ end }}{{ end -}}
 {{- /* Statically true when every declared target covers the key: the set of
@@ -145,6 +147,12 @@ func (c *{{ $structCamel }}Client) UpsertMany(ctx context.Context, inputs []*Cre
 		// Resolve conflict target and update columns. Tenant column is excluded
 		// from the UPDATE-set half of the conflict clause — a
 		// row's tenant is not a mutable attribute under normal operation.
+{{- if $hasSequenceInput }}
+		// So is every non-key sequence column. A row that leaves one unset
+		// would redraw it on every conflict, and PostgreSQL rejects the clause
+		// outright on a GENERATED ALWAYS identity. A set value applies on
+		// insert only.
+{{- end }}
 		//
 		// UpsertResolvePKColumn is deliberately not set: it exists so a
 		// single-row MySQL upsert can republish the conflicting row's id into
@@ -153,7 +161,7 @@ func (c *{{ $structCamel }}Client) UpsertMany(ctx context.Context, inputs []*Cre
 		// only add a misleading assignment to the SET list.
 		columns := []string{ {{- range .CreateInputFields }}{{ printf "%q" .ColumnName }}, {{ end -}} }
 		conflictColumns := {{ $structCamel }}ConflictColumns[target]
-		updateColumns := excludeColumns(columns, append(conflictColumns, {{ range $i, $col := .PKColumns }}{{ if $i }}, {{ end }}{{ printf "%q" $col.Name }}{{ end }}{{ if and .Tenancy .Tenancy.Tenanted }}, {{ printf "%q" .Tenancy.Column }}{{ end }}))
+		updateColumns := excludeColumns(columns, append(conflictColumns, {{ range $i, $col := .PKColumns }}{{ if $i }}, {{ end }}{{ printf "%q" $col.Name }}{{ end }}{{ if and .Tenancy .Tenancy.Tenanted }}, {{ printf "%q" .Tenancy.Column }}{{ end }}{{ range .CreateInputFields }}{{ if .AutoIncrement }}, {{ printf "%q" .ColumnName }}{{ end }}{{ end }}))
 		conflictPositions, haveConflictKey := upsertConflictPositions(columns, conflictColumns)
 {{- if $mayReadBack }}
 

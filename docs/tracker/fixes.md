@@ -22,91 +22,6 @@
 ## Open
 
 <!-- fixes:open:begin -->
-### FIX-320
-
-- **Status:** Open
-- **Severity:** tracked
-- **Origin:** phase 6, `cmd/sqlgen/gen` (`table/upsert_many.go.tmpl`)
-- **Surfaced by:** backlog sweep 2026-10-12 (backlog lines from FIX-272)
-- **Vetted:** corrected at `9b58288b` (2026-10-12)
-
-**Issue.** UpsertMany's `ON CONFLICT … DO UPDATE SET` carries every non-PK, non-conflict input column,
-including sequence columns. Measured on PG17: with a non-PK `GENERATED ALWAYS AS IDENTITY` column,
-every UpsertMany call fails, conflicting or not (`upsert zz_item batch: exec: ERROR: column
-"audit_no" can only be updated to DEFAULT (SQLSTATE 428C9)`); with a non-PK serial / BY DEFAULT
-identity, a conflict redraws it (`seq` 1 → 4, `ticket` 1 → 4) while single-row `Upsert` keeps it;
-on SQLite a rowid alias demoted by `primary_key.columns` re-keys the row (`id` 1 → 3); MySQL
-`AUTO_INCREMENT` is the same class.
-
-**Root cause.** `upsert_many.go.tmpl` builds `updateColumns := excludeColumns(columns, conflict + PK +
-tenant)` from every `CreateInputField`, per PRD §9.5 "Update columns in upsert" and §9.9 E5.
-
-**Suggested fix.**
-- Ruling (user, 2026-10-12, backlog sweep Q2): keep the §9.5 rule but also exclude every non-PK
-  auto-increment column (serial, BY DEFAULT / ALWAYS identity, MySQL `AUTO_INCREMENT`, a SQLite rowid alias
-  demoted by `primary_key.columns`) from UpsertMany's SET list. Single-row `Upsert` is unchanged (it sees set
-  vs unset, so the asymmetry is deliberate). A caller-set value for such a column applies on insert, not on
-  conflict.
-- `gen/context.go` + `context_table.go`: new `InputFieldContext.AutoIncrement`, set to `col.AutoIncrement` for
-  non-PK create-input fields (a demoted SQLite rowid alias keeps the parser's flag through
-  `applyPrimaryKeyOverrides`, so the same flag covers it).
-- `table/upsert_many.go.tmpl`: the `excludeColumns(...)` call appends every AutoIncrement field after the PK
-  and tenant columns; a 4-line generated comment appears only when the table has such a field.
-- `context_nested.go`: E5 eligibility unchanged, but a junction with a sequence column gets an accurate
-  rejection reason (the old "would reset to its default on every re-link" would become false); two related
-  comments updated.
-- Docs: PRD §9.5 "Update columns in upsert" (`docs/PRD.md:3727`) gains the UpsertMany exclusion and why
-  (428C9, redraw, re-key; a caller-set value applies on insert only; single-row Upsert unchanged); §9.9.4 E5
-  (`:7595`) text amended, rule kept; §10.3 table row amended; `guidelines/SQL.md` "Update Columns in Upsert"
-  gains a paragraph.
-- Tests: gen `TestUpsertManyTemplate_excludesNonKeySequenceColumns` (pg/mysql/sqlite + a no-sequence
-  control); `TestCreateInputFieldClassification_autoIncrementNonPKOmittable` asserts AutoIncrement; nested
-  subtest "a sequence column is refused without claiming a reset"; cli
-  `TestGeneratePipeline_DemotedRowIDAliasStaysOutOfUpsertManySet` (real SQLite generate with a demoted
-  INTEGER PRIMARY KEY); postgres example `TestSequenceRows_UpsertManyKeepsSequenceColumns` (insert, then
-  conflict on code; note updates while id/seq/ticket/audit_no stay).
-- Corrected vs. the original suggestion (vet 2026-10-12): at base `sequence_rows.UpsertMany` can never run —
-  its only target is `SequenceRowConflictPK` on a BIGSERIAL key the input never supplies ("conflict target
-  names a column the input does not supply") — so the example gains `code TEXT UNIQUE` (nullable; existing
-  Create calls unaffected) to carry the PG integration test, adding `SequenceRowConflictCode` and a `Code`
-  field to its generated code (veto option: a separate table instead); the SQLite demoted-rowid case is pinned
-  by a cli generate-pipeline test rather than a sqlite-example table (which would churn far more); the E5
-  rejection message is reworded.
-- The user confirmed on 2026-10-12 (veto check, backlog sweep Step 5): the postgres example's `sequence_rows`
-  gains `code TEXT UNIQUE` for the PG regression test (~10 golden files), not a separate table.
-- Auto-accepted the recommended option on 2026-10-12 (`/fix` auto-accept rule): E5 keeps rejecting an M2M
-  junction carrying a non-PK auto-increment column (status quo, accurate reason) rather than exempting it now
-  that the link step never resets it; prototyped green, no churn vs the alternative (no example junction has
-  one), no public surface (exempting would add nested M2M surface), E5 rule unchanged.
-- Prototype results, run at `9b58288b` on 2026-10-12 (probe copies, generator at base, `GOWORK=off`): PG17
-  `zz_always` (non-PK ALWAYS identity) → "ALWAYS fresh UpsertMany: err = upsert zz_always batch: exec: ERROR:
-  column \"audit_no\" can only be updated to DEFAULT (SQLSTATE 428C9)" (conflict likewise); `zz_redraw` →
-  "redraw conflict UpsertMany: id=1 seq 1 -> 2, ticket 1 -> 2" while single Upsert keeps them; SQLite demoted
-  rowid → "conflict UpsertMany: a.id 1 -> 3"; MySQL 8.0 non-PK AUTO_INCREMENT UNIQUE → "a.seq 1 -> 3". After
-  the fix: PG17 "ALWAYS fresh UpsertMany: ok audit_no=1", "audit_no 2 -> 2", "seq 1 -> 1, ticket 1 -> 1";
-  SQLite "a.id 1 -> 1"; MySQL "a.seq 1 -> 1". Gates: cmd/sqlgen `go test -race -short ./...` ok;
-  `TestE2EGoldenFiles` ok; `golangci-lint ./gen/... ./cli/...` 0 issues; postgres example `GOWORK=off go test
-  -race ./...` ok and golangci-lint 0 issues; `make update-golden` no unit churn; `update-golden-e2e` ok;
-  `make refs-check` ok; gofumpt clean. Fail-first: template append reverted → the three template subtests
-  fail ("output missing \"updateColumns := excludeColumns(columns, append(conflictColumns, \\\"id\\\",
-  \\\"seq\\\"))\""), the cli test fails ("…the demoted rowid alias must stay out of the update half"), and the
-  postgres example test fails with 428C9; `field.AutoIncrement` removed → "- AutoIncrement: true, +
-  AutoIncrement: false"; nested branch removed → old reset wording; existing suite without the fix passes.
-  Golden churn: template alone → postgres `models/models_gen.go` and `expected/models_gen.go` (+5/-1 each);
-  with the `code TEXT UNIQUE` regression schema → postgres ~5 files in each of `expected/` and `models/`
-  (`models_gen.go` ±118, `manifest_gen.json` 30, `manifest/sequence_row.md` 11, `sorter_gen.go` +5,
-  `cache_gen.go` 3), no new files; no other example. Patch: `.claude/prototypes/FIX-320.patch` (22 files,
-  +474/-87).
-
-**References.**
-- PRD §9.5, §9.9 (E5), §10.3.
-- Backlog lines absorbed: 2026-10-08 UpsertMany SET list with ALWAYS identity (FIX-272); 2026-10-08
-  UpsertMany SET overwrites sequence columns (FIX-272). The sibling `Update<T>Input` line is a doc fix
-  applied with the backlog sweep (PRD §10.3), per FIX-272's ruling.
-- FIX-272.
-
-**Resolution notes.** _Filled in by /fix resolve._
-
 ### FIX-321
 
 - **Status:** Open
@@ -1636,6 +1551,92 @@ DEFAULT.
 ## Resolved
 
 <!-- fixes:resolved:begin -->
+
+### FIX-320
+
+- **Status:** Resolved
+- **Severity:** tracked
+- **Origin:** phase 6, `cmd/sqlgen/gen` (`table/upsert_many.go.tmpl`)
+- **Surfaced by:** backlog sweep 2026-10-12 (backlog lines from FIX-272)
+- **Vetted:** corrected at `9b58288b` (2026-10-12)
+
+**Issue.** UpsertMany's `ON CONFLICT … DO UPDATE SET` carries every non-PK, non-conflict input column,
+including sequence columns. Measured on PG17: with a non-PK `GENERATED ALWAYS AS IDENTITY` column,
+every UpsertMany call fails, conflicting or not (`upsert zz_item batch: exec: ERROR: column
+"audit_no" can only be updated to DEFAULT (SQLSTATE 428C9)`); with a non-PK serial / BY DEFAULT
+identity, a conflict redraws it (`seq` 1 → 4, `ticket` 1 → 4) while single-row `Upsert` keeps it;
+on SQLite a rowid alias demoted by `primary_key.columns` re-keys the row (`id` 1 → 3); MySQL
+`AUTO_INCREMENT` is the same class.
+
+**Root cause.** `upsert_many.go.tmpl` builds `updateColumns := excludeColumns(columns, conflict + PK +
+tenant)` from every `CreateInputField`, per PRD §9.5 "Update columns in upsert" and §9.9 E5.
+
+**Suggested fix.**
+- Ruling (user, 2026-10-12, backlog sweep Q2): keep the §9.5 rule but also exclude every non-PK
+  auto-increment column (serial, BY DEFAULT / ALWAYS identity, MySQL `AUTO_INCREMENT`, a SQLite rowid alias
+  demoted by `primary_key.columns`) from UpsertMany's SET list. Single-row `Upsert` is unchanged (it sees set
+  vs unset, so the asymmetry is deliberate). A caller-set value for such a column applies on insert, not on
+  conflict.
+- `gen/context.go` + `context_table.go`: new `InputFieldContext.AutoIncrement`, set to `col.AutoIncrement` for
+  non-PK create-input fields (a demoted SQLite rowid alias keeps the parser's flag through
+  `applyPrimaryKeyOverrides`, so the same flag covers it).
+- `table/upsert_many.go.tmpl`: the `excludeColumns(...)` call appends every AutoIncrement field after the PK
+  and tenant columns; a 4-line generated comment appears only when the table has such a field.
+- `context_nested.go`: E5 eligibility unchanged, but a junction with a sequence column gets an accurate
+  rejection reason (the old "would reset to its default on every re-link" would become false); two related
+  comments updated.
+- Docs: PRD §9.5 "Update columns in upsert" (`docs/PRD.md:3736`) gains the UpsertMany exclusion and why
+  (428C9, redraw, re-key; a caller-set value applies on insert only; single-row Upsert unchanged); §9.9.4 E5
+  (`:7604`) text amended, rule kept; §10.3 table row amended; `guidelines/SQL.md` "Update Columns in Upsert"
+  gains a paragraph.
+- Tests: gen `TestUpsertManyTemplate_excludesNonKeySequenceColumns` (pg/mysql/sqlite + a no-sequence
+  control); `TestCreateInputFieldClassification_autoIncrementNonPKOmittable` asserts AutoIncrement; nested
+  subtest "a sequence column is refused without claiming a reset"; cli
+  `TestGeneratePipeline_DemotedRowIDAliasStaysOutOfUpsertManySet` (real SQLite generate with a demoted
+  INTEGER PRIMARY KEY); postgres example `TestSequenceRows_UpsertManyKeepsSequenceColumns` (insert, then
+  conflict on code; note updates while id/seq/ticket/audit_no stay).
+- Corrected vs. the original suggestion (vet 2026-10-12): at base `sequence_rows.UpsertMany` can never run —
+  its only target is `SequenceRowConflictPK` on a BIGSERIAL key the input never supplies ("conflict target
+  names a column the input does not supply") — so the example gains `code TEXT UNIQUE` (nullable; existing
+  Create calls unaffected) to carry the PG integration test, adding `SequenceRowConflictCode` and a `Code`
+  field to its generated code (veto option: a separate table instead); the SQLite demoted-rowid case is pinned
+  by a cli generate-pipeline test rather than a sqlite-example table (which would churn far more); the E5
+  rejection message is reworded.
+- The user confirmed on 2026-10-12 (veto check, backlog sweep Step 5): the postgres example's `sequence_rows`
+  gains `code TEXT UNIQUE` for the PG regression test (~10 golden files), not a separate table.
+- Auto-accepted the recommended option on 2026-10-12 (`/fix` auto-accept rule): E5 keeps rejecting an M2M
+  junction carrying a non-PK auto-increment column (status quo, accurate reason) rather than exempting it now
+  that the link step never resets it; prototyped green, no churn vs the alternative (no example junction has
+  one), no public surface (exempting would add nested M2M surface), E5 rule unchanged.
+- Prototype results, run at `9b58288b` on 2026-10-12 (probe copies, generator at base, `GOWORK=off`): PG17
+  `zz_always` (non-PK ALWAYS identity) → "ALWAYS fresh UpsertMany: err = upsert zz_always batch: exec: ERROR:
+  column \"audit_no\" can only be updated to DEFAULT (SQLSTATE 428C9)" (conflict likewise); `zz_redraw` →
+  "redraw conflict UpsertMany: id=1 seq 1 -> 2, ticket 1 -> 2" while single Upsert keeps them; SQLite demoted
+  rowid → "conflict UpsertMany: a.id 1 -> 3"; MySQL 8.0 non-PK AUTO_INCREMENT UNIQUE → "a.seq 1 -> 3". After
+  the fix: PG17 "ALWAYS fresh UpsertMany: ok audit_no=1", "audit_no 2 -> 2", "seq 1 -> 1, ticket 1 -> 1";
+  SQLite "a.id 1 -> 1"; MySQL "a.seq 1 -> 1". Gates: cmd/sqlgen `go test -race -short ./...` ok;
+  `TestE2EGoldenFiles` ok; `golangci-lint ./gen/... ./cli/...` 0 issues; postgres example `GOWORK=off go test
+  -race ./...` ok and golangci-lint 0 issues; `make update-golden` no unit churn; `update-golden-e2e` ok;
+  `make refs-check` ok; gofumpt clean. Fail-first: template append reverted → the three template subtests
+  fail ("output missing \"updateColumns := excludeColumns(columns, append(conflictColumns, \\\"id\\\",
+  \\\"seq\\\"))\""), the cli test fails ("…the demoted rowid alias must stay out of the update half"), and the
+  postgres example test fails with 428C9; `field.AutoIncrement` removed → "- AutoIncrement: true, +
+  AutoIncrement: false"; nested branch removed → old reset wording; existing suite without the fix passes.
+  Golden churn: template alone → postgres `models/models_gen.go` and `expected/models_gen.go` (+5/-1 each);
+  with the `code TEXT UNIQUE` regression schema → postgres ~5 files in each of `expected/` and `models/`
+  (`models_gen.go` ±118, `manifest_gen.json` 30, `manifest/sequence_row.md` 11, `sorter_gen.go` +5,
+  `cache_gen.go` 3), no new files; no other example. Patch: `.claude/prototypes/FIX-320.patch` (22 files,
+  +474/-87).
+
+**References.**
+- PRD §9.5, §9.9 (E5), §10.3.
+- Backlog lines absorbed: 2026-10-08 UpsertMany SET list with ALWAYS identity (FIX-272); 2026-10-08
+  UpsertMany SET overwrites sequence columns (FIX-272). The sibling `Update<T>Input` line is a doc fix
+  applied with the backlog sweep (PRD §10.3), per FIX-272's ruling.
+- FIX-272.
+
+**Resolution notes.** UpsertMany now leaves every non-PK auto-increment column (serial, BY DEFAULT / ALWAYS identity, MySQL `AUTO_INCREMENT`, a SQLite rowid alias demoted by `primary_key.columns`) out of its conflict clause's update half: `InputFieldContext.AutoIncrement` is set from `col.AutoIncrement` in `buildCreateInputFields`, and `table/upsert_many.go.tmpl` appends those columns to the `excludeColumns` call, with a generated comment only when the table has one. Single-row `Upsert` is unchanged. E5 still rejects an M2M junction with such a column, with an accurate reason (`context_nested.go`). PRD §9.5, §9.9.4 E5 and §10.3 and `guidelines/SQL.md` amended. The postgres example's `sequence_rows` gains `code TEXT UNIQUE` (user ruling) to carry `TestSequenceRows_UpsertManyKeepsSequenceColumns`; unit tests `TestUpsertManyTemplate_excludesNonKeySequenceColumns`, the AutoIncrement assertion in `TestCreateInputFieldClassification_autoIncrementNonPKOmittable`, the nested subtest "a sequence column is refused without claiming a reset", and cli `TestGeneratePipeline_DemotedRowIDAliasStaysOutOfUpsertManySet`. Prototype applied clean at `29c96dfc`; golden churn identical to the vet (postgres `expected/` and `models/`, 5 files each). Fail-first re-run on the final code: with the template append reverted the three template subtests and the cli test fail. Gates: `make check` ok, `make check-examples` ok. Applied from `/verify`: dropped the `E5` labels from the `context_nested.go` comments and reworded the sequence-column rejection without "v1"; shortened the new template test's comment; PRD §9.5, `guidelines/SQL.md` and the `InputFieldContext.AutoIncrement` comment now list a `nextval(…)` default, which the parser also flags `AutoIncrement`; corrected this entry's PRD line refs.
+
 ### FIX-319
 
 - **Status:** Resolved
