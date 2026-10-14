@@ -22,48 +22,6 @@
 ## Open
 
 <!-- fixes:open:begin -->
-### FIX-340
-
-- **Status:** Open
-- **Severity:** tracked
-- **Origin:** phase 5, `cmd/sqlgen/config` (`isValidRelationshipSide`) + `cmd/sqlgen/gen` (`parseRelationshipSide`)
-- **Surfaced by:** FIX-329 vet (2026-10-12), filed at the backlog sweep's second Step 5
-- **Vetted:** ready at `f9a460a5` (2026-10-12)
-
-**Issue.** A padded relationship `side` passes validation and silently generates the edge parent-side. Measured:
-`side: " child "` (type o2o, fk set) → `LoadConfig=<nil> ValidatePreParse=<nil>`; manifest probe
-(`TestBuild_O2OSideDisambiguation` fixture with Side varied) → `side="child"` / `"Child"` / `"CHILD"` → `Profile
-kinds=[m2o]`, `side=" child "` / `"child "` → `Profile kinds=[o2o]`, with no diagnostic.
-
-**Root cause.** `isValidRelationshipSide` (`cmd/sqlgen/config/validate.go:765`) does
-`strings.ToLower(strings.TrimSpace(s))`, while `parseRelationshipSide` (`cmd/sqlgen/gen/context_table.go:1674`) only
-lowercases, so an unknown value falls back to `SideParent`.
-
-**Suggested fix.**
-- Drop the `TrimSpace` in `isValidRelationshipSide`, as `isValidRelationshipType` already does (its doc comment gives
-  the reason), so a padded side is a validation error; the FIX-329 schema already rejects it.
-- Tests: validate cases for `" child "` / `"child "`; keep the case-insensitive spellings valid.
-
-- Prototype results, run at `f9a460a5` on 2026-10-12: probes (`config`, `manifest`) → `ValidatePreParse side=" child "
-  -> <nil>` (also `"child "`, `"\tchild"`, `"Child"`, `"CHILD"`); `"chld"` → `tables.asset.relationships[0].side: "chld"
-  is not a valid value (allowed: parent, child; default: parent) (PRD §4.8)`; YAML `side: " child "` → `LoadConfig ->
-  <nil>`; manifest `side="child"/"Child"/"CHILD" -> Profile kinds=[m2o]`, `" child "/"child " -> Profile kinds=[o2o]`.
-  Prototype: `isValidRelationshipSide` switches on `strings.ToLower(s)`, doc comment updated; three
-  `TestValidatePreParse_Relationships_DedupRules` cases (`"CHILD"` allowed; `" child "`, `"child "` errors). Only
-  `parseRelationshipSide` reads the raw string (feeds `context_table.go:1562` → manifest `relationshipKind`); `isM2M`
-  (`validate.go:736`) trims but never sees a padded type. Gates: `go test -race -count=1 ./config/... ./manifest/...
-  ./gen/...` ok; golangci-lint 0 issues; gofumpt clean; with FIX-329 then FIX-340 applied, `./config/...` ok. Fail-first:
-  `TrimSpace` restored → `padded_side_→_error` "ValidatePreParse() error = nil, want error containing
-  \"tables.asset.relationships[0].side: \\\" child \\\" is not a valid value\"" (and the trailing-space case); existing
-  suite passes at base. Golden churn none. FIX-321 / FIX-324 touch validate.go elsewhere; all apply. Patch:
-  `.claude/prototypes/FIX-340.patch` (2 files, +32/-2).
-
-**References.**
-- PRD §4.8 (`side`), §4.13.
-- FIX-329 (schema side pattern; lands first).
-
-**Resolution notes.** _Filled in by /fix resolve._
-
 ### FIX-341
 
 - **Status:** Open
@@ -322,6 +280,57 @@ DEFAULT.
 ## Resolved
 
 <!-- fixes:resolved:begin -->
+### FIX-340
+
+- **Status:** Resolved
+- **Severity:** tracked
+- **Origin:** phase 5, `cmd/sqlgen/config` (`isValidRelationshipSide`) + `cmd/sqlgen/gen` (`parseRelationshipSide`)
+- **Surfaced by:** FIX-329 vet (2026-10-12), filed at the backlog sweep's second Step 5
+- **Vetted:** ready at `f9a460a5` (2026-10-12)
+
+**Issue.** A padded relationship `side` passes validation and silently generates the edge parent-side. Measured:
+`side: " child "` (type o2o, fk set) → `LoadConfig=<nil> ValidatePreParse=<nil>`; manifest probe
+(`TestBuild_O2OSideDisambiguation` fixture with Side varied) → `side="child"` / `"Child"` / `"CHILD"` → `Profile
+kinds=[m2o]`, `side=" child "` / `"child "` → `Profile kinds=[o2o]`, with no diagnostic.
+
+**Root cause.** `isValidRelationshipSide` (`cmd/sqlgen/config/validate.go:767`) does
+`strings.ToLower(strings.TrimSpace(s))`, while `parseRelationshipSide` (`cmd/sqlgen/gen/context_table.go:1688`) only
+lowercases, so an unknown value falls back to `SideParent`.
+
+**Suggested fix.**
+- Drop the `TrimSpace` in `isValidRelationshipSide`, as `isValidRelationshipType` already does (its doc comment gives
+  the reason), so a padded side is a validation error; the FIX-329 schema already rejects it.
+- Tests: validate cases for `" child "` / `"child "`; keep the case-insensitive spellings valid.
+
+- Prototype results, run at `f9a460a5` on 2026-10-12: probes (`config`, `manifest`) → `ValidatePreParse side=" child "
+  -> <nil>` (also `"child "`, `"\tchild"`, `"Child"`, `"CHILD"`); `"chld"` → `tables.asset.relationships[0].side: "chld"
+  is not a valid value (allowed: parent, child; default: parent) (PRD §4.8)`; YAML `side: " child "` → `LoadConfig ->
+  <nil>`; manifest `side="child"/"Child"/"CHILD" -> Profile kinds=[m2o]`, `" child "/"child " -> Profile kinds=[o2o]`.
+  Prototype: `isValidRelationshipSide` switches on `strings.ToLower(s)`, doc comment updated; three
+  `TestValidatePreParse_Relationships_DedupRules` cases (`"CHILD"` allowed; `" child "`, `"child "` errors). Only
+  `parseRelationshipSide` reads the raw string (feeds `context_table.go:1562` → manifest `relationshipKind`); `isM2M`
+  (`validate.go:736`) trims but never sees a padded type. Gates: `go test -race -count=1 ./config/... ./manifest/...
+  ./gen/...` ok; golangci-lint 0 issues; gofumpt clean; with FIX-329 then FIX-340 applied, `./config/...` ok. Fail-first:
+  `TrimSpace` restored → `padded_side_→_error` "ValidatePreParse() error = nil, want error containing
+  \"tables.asset.relationships[0].side: \\\" child \\\" is not a valid value\"" (and the trailing-space case); existing
+  suite passes at base. Golden churn none. FIX-321 / FIX-324 touch validate.go elsewhere; all apply. Patch:
+  `.claude/prototypes/FIX-340.patch` (2 files, +32/-2).
+
+**References.**
+- PRD §4.8 (`side`), §4.13.
+- FIX-329 (schema side pattern; lands first).
+
+**Resolution notes.** `isValidRelationshipSide` (`cmd/sqlgen/config/validate.go`) now switches on `strings.ToLower(s)`
+without `TrimSpace`, folding case as `parseRelationshipSide` does and, like `isValidRelationshipType`, rejecting a
+padded spelling that would otherwise generate the parent side; doc comment updated. Three
+`TestValidatePreParse_Relationships_DedupRules` cases: `"CHILD"` allowed, `" child "` and `"child "` rejected with the
+§4.8 message. The FIX-329 schema pattern already rejects padding, so schema and validator agree. Vetted prototype
+applied clean at `1fb3555c`. Fail-first: `TrimSpace` restored → both padded cases fail with "ValidatePreParse() error
+= nil". Gates: `make check` ok, `make check-examples` ok (path-triggered by `config/validate.go`); golden churn none,
+matching the vet. /verify: reviewer confirmed fail-first and a byte-identical match with the prototype; applied its
+doc corrections inline (Root cause line refs `validate.go:767` / `context_table.go:1688`, the doc comment reworded so
+"that function" names `parseRelationshipSide`) and removed the 2026-10-02 `backlog.md` line for this finding.
+
 ### FIX-339
 
 - **Status:** Resolved

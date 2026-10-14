@@ -1792,6 +1792,34 @@ func TestValidatePreParse_Relationships_DedupRules(t *testing.T) {
 			wantErr: false,
 		},
 		{
+			// parseRelationshipSide folds case, so the validator does too.
+			name: "upper-case side: CHILD → allowed",
+			rels: []config.TableRelationship{
+				{Name: "User", Type: "o2o", Table: "users", FK: "profile_id", Side: "CHILD"},
+			},
+			wantErr: false,
+		},
+		{
+			// parseRelationshipSide does not trim, so " child " would
+			// generate the parent side; it must fail here rather than pass.
+			name: "padded side → error",
+			rels: []config.TableRelationship{
+				{Name: "User", Type: "o2o", Table: "users", FK: "profile_id", Side: " child "},
+			},
+			wantErr:     true,
+			wantSubstr:  `tables.asset.relationships[0].side: " child " is not a valid value`,
+			wantSubstr2: "PRD §4.8",
+		},
+		{
+			name: "trailing-space side → error",
+			rels: []config.TableRelationship{
+				{Name: "User", Type: "o2o", Table: "users", FK: "profile_id", Side: "child "},
+			},
+			wantErr:     true,
+			wantSubstr:  `tables.asset.relationships[0].side: "child " is not a valid value`,
+			wantSubstr2: "PRD §4.8",
+		},
+		{
 			name: "omitted side → allowed (defaults to parent)",
 			rels: []config.TableRelationship{
 				{Name: "Profile", Type: "o2o", Table: "profiles", FK: "profile_id"},

@@ -760,9 +760,11 @@ func isValidRelationshipType(t string) bool {
 // resolves to "parent" (default); `parent` / `child` are explicit. Anything
 // else silently defaulted to "parent" without this gate, so a typo like
 // `side: chld` could flip an inverse-side entry's manifest kind from `m2o`
-// back to `o2o` without diagnosis.
+// back to `o2o` without diagnosis. Like `parseRelationshipSide`, it folds case
+// but does not trim; that function reads " child " as the parent side, so the
+// padded spelling is rejected here.
 func isValidRelationshipSide(s string) bool {
-	switch strings.ToLower(strings.TrimSpace(s)) {
+	switch strings.ToLower(s) {
 	case "", "parent", "child":
 		return true
 	}
