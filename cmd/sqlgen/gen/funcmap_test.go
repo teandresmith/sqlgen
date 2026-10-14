@@ -1,11 +1,13 @@
 package gen_test
 
 import (
+	"fmt"
 	"testing"
 
 	"github.com/teandresmith/sqlgen/cmd/sqlgen/config"
 	"github.com/teandresmith/sqlgen/cmd/sqlgen/gen"
 	"github.com/teandresmith/sqlgen/cmd/sqlgen/gotype"
+	"github.com/teandresmith/sqlgen/comparator"
 	"github.com/teandresmith/sqlgen/sql"
 )
 
@@ -285,6 +287,46 @@ func TestFuncSoftDeleteRestoreGoValue(t *testing.T) {
 			got := restoreGoValue(tt.strategy)
 			if got != tt.want {
 				t.Errorf("softDeleteRestoreGoValue(%q) = %q, want %q", tt.strategy, got, tt.want)
+			}
+		})
+	}
+}
+
+// TestFuncSoftDeleteFilterOverride pins the literal per comparator a soft
+// delete column resolves to, one row per integer width. Each row's compiled
+// field is the want text written as Go, so a literal that does not type-check
+// (an untyped new(0) against Number[int8]) fails the build. Edit the two
+// together.
+func TestFuncSoftDeleteFilterOverride(t *testing.T) {
+	tests := []struct {
+		ctype    string
+		want     string
+		compiled any
+	}{
+		{"*comparator.Number[int8]", "&comparator.Number[int8]{Neq: new(int8(0))}", &comparator.Number[int8]{Neq: new(int8(0))}},
+		{"*comparator.Number[int16]", "&comparator.Number[int16]{Neq: new(int16(0))}", &comparator.Number[int16]{Neq: new(int16(0))}},
+		{"*comparator.Number[int32]", "&comparator.Number[int32]{Neq: new(int32(0))}", &comparator.Number[int32]{Neq: new(int32(0))}},
+		{"*comparator.Number[int64]", "&comparator.Number[int64]{Neq: new(int64(0))}", &comparator.Number[int64]{Neq: new(int64(0))}},
+		{"*comparator.Number[uint8]", "&comparator.Number[uint8]{Neq: new(uint8(0))}", &comparator.Number[uint8]{Neq: new(uint8(0))}},
+		{"*comparator.Number[uint16]", "&comparator.Number[uint16]{Neq: new(uint16(0))}", &comparator.Number[uint16]{Neq: new(uint16(0))}},
+		{"*comparator.Number[uint32]", "&comparator.Number[uint32]{Neq: new(uint32(0))}", &comparator.Number[uint32]{Neq: new(uint32(0))}},
+		{"*comparator.NullableNumber[int8]", "&comparator.NullableNumber[int8]{Null: new(false)}", &comparator.NullableNumber[int8]{Null: new(false)}},
+		{"*comparator.Bool", "&comparator.Bool{Eq: new(true)}", &comparator.Bool{Eq: new(true)}},
+		{"*comparator.NullableBool", "&comparator.NullableBool{Null: new(false)}", &comparator.NullableBool{Null: new(false)}},
+		{"*comparator.NullableTime", "&comparator.NullableTime{Null: new(false)}", &comparator.NullableTime{Null: new(false)}},
+	}
+
+	fm := gen.FuncMap(sql.NewPostgresDialect())
+	override := fm["softDeleteFilterOverride"].(func(gen.FilterFieldContext) string)
+
+	for _, tt := range tests {
+		t.Run(tt.ctype, func(t *testing.T) {
+			got := override(gen.FilterFieldContext{ComparatorType: tt.ctype, IsSoftDeleteColumn: true})
+			if got != tt.want {
+				t.Errorf("softDeleteFilterOverride(%q) = %q, want %q", tt.ctype, got, tt.want)
+			}
+			if typ := fmt.Sprintf("%T", tt.compiled); typ != tt.ctype {
+				t.Errorf("compiled literal has type %s, want %s", typ, tt.ctype)
 			}
 		})
 	}

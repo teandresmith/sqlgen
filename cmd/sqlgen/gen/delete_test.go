@@ -252,7 +252,7 @@ func TestDeleteTemplate_softDelete_integer(t *testing.T) {
 	wantPatterns := []string{
 		"sql.SoftDeleteInteger",
 		`"deleted"`,
-		"Deleted: &comparator.Number[int32]{Neq: new(0)}",
+		"Deleted: &comparator.Number[int32]{Neq: new(int32(0))}",
 	}
 	for _, want := range wantPatterns {
 		if !strings.Contains(output, want) {

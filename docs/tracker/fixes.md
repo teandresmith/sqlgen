@@ -22,60 +22,6 @@
 ## Open
 
 <!-- fixes:open:begin -->
-### FIX-336
-
-- **Status:** Open
-- **Severity:** tracked
-- **Origin:** phase 6, `cmd/sqlgen/gen` (`funcmap.go` `funcSoftDeleteFilterOverride`)
-- **Surfaced by:** FIX-324 vet (2026-10-12), filed at the backlog sweep's Step 5
-- **Vetted:** corrected at `02000941` (2026-10-12)
-
-**Issue.** An integer soft delete on a NOT NULL integer column generates code that does not compile, on every
-dialect: no SQL type resolves to Go `int` (PG smallint/integer → int16/int32; MySQL tinyint/smallint/int and
-unsigned forms → int8/int16/int32/uint8/uint16/uint32; every SQLite integer → int64), and bigint/mediumint are
-rejected under `type: integer` by validation (PRD §4.6). Measured (sibling example copies, `go build -gcflags=-e
-./models/`): PG SMALLINT/INTEGER NOT NULL → generate exit 0, "models_gen.go:57212:43: cannot use new(0) (value of
-type *int) as *int16 value in struct literal" (9 sites); MySQL → generate exit 1 ("gqlgen subprocess failed"), 21
-sites (`*int8` … `*uint32`); SQLite → exit 1, "zz_t1_gen.go:861:43: cannot use new(0) (value of type *int) as
-*int64 value in struct literal" (12 sites). Nullable variants compile (`NullableNumber[T]{Null: new(false)}`).
-A plain `tinyint` configured `type: bool` (MySQL, SQLite) fails identically at base and with FIX-324 (`Number[int8]`
-/ `Number[int64]{Neq: new(0)}`). `TestDeleteTemplate_softDelete_integer` (`cmd/sqlgen/gen/delete_test.go:255`) pins
-the broken string `Deleted: &comparator.Number[int32]{Neq: new(0)}`.
-
-**Root cause.** `funcSoftDeleteFilterOverride` (`cmd/sqlgen/gen/funcmap.go:591-593`) emits
-`&comparator.Number[T]{Neq: new(0)}`; the untyped `0` gives `*int`.
-
-**Suggested fix.**
-- Emit `&comparator.Number[T]{Neq: new(T(0))}`, T cut from the `comparator.Number[...]` type argument; the doc
-  comment says the literal follows the comparator type, not the strategy.
-- New table-driven `TestFuncSoftDeleteFilterOverride` (funcmap_test.go): one row per reachable width (int8/16/32/64,
-  uint8/16/32) plus NullableNumber, Bool, NullableBool, NullableTime; each row's expression is also compiled against
-  the real `comparator` package with a `%T` check (the generated-code compile pin). `TestDeleteTemplate_softDelete_integer`
-  expects `Neq: new(int32(0))`. No example table.
-- Corrected from the original: dropped "key the override on the soft-delete strategy" — the literal is assigned into
-  a field of the comparator type, so it must key on that (strategy-keyed would put `{Eq: new(true)}` into
-  `Number[int8]` and `{Neq: …}` into `comparator.Bool`); the comparator-keyed literals are right under both strategies
-  since deleted is 1/TRUE. The "every non-int width" and "after FIX-324" facts were restated (above).
-- Prototype results, run at `02000941` + FIX-324.patch on 2026-10-12: reproduction above. With the prototype, runtime
-  round trips (SoftDelete → GetMany → Restore): SQLite INTEGER + integer → ZzSd1=1, 0 rows, 0 (SoftDeleteMany 1);
-  SQLite TINYINT + bool → 1, 0 rows, 0; MySQL 8 TINYINT + bool → 1, 0 rows, 0; MySQL TINYINT(1) + integer → true,
-  0 rows, false; PG SMALLINT + integer → 1, 0 rows, 0. Gates: `go test -race -count=1 ./gen/...` ok; golangci-lint 0
-  issues; gofumpt clean; `TestE2EGoldenFiles` compare mode PASS; the 5 probe copies generate exit 0, `go build ./...`
-  and `go vet ./models/...` exit 0. `make update-golden*` not run (permission classifier denied it in the vet sandbox);
-  churn measured by the passing golden comparisons instead — `/fix-implement` must run them. Fail-first: override
-  reverted → `softDeleteFilterOverride("*comparator.Number[int8]") = "&comparator.Number[int8]{Neq: new(0)}", want
-  "&comparator.Number[int8]{Neq: new(int8(0))}"` (7 rows) and `TestDeleteTemplate_softDelete_integer` "output missing
-  SoftDelete integer pattern"; existing suite passes at base+324. Golden churn none (no example uses `type:
-  integer`). Stacked on FIX-324 by sequence only — it touches none of FIX-324's files and `git apply --check` passes
-  on plain `02000941`. Patch: `.claude/prototypes/FIX-336.patch` (3 files, +51/-6).
-
-**References.**
-- PRD §4.6, §5.4 (soft delete strategies).
-- FIX-324 (soft-delete strategy from config; lands first).
-- `cmd/sqlgen/gen/delete_test.go:255`.
-
-**Resolution notes.** _Filled in by /fix resolve._
-
 ### FIX-337
 
 - **Status:** Open
@@ -550,6 +496,60 @@ DEFAULT.
 ## Resolved
 
 <!-- fixes:resolved:begin -->
+
+### FIX-336
+
+- **Status:** Resolved
+- **Severity:** tracked
+- **Origin:** phase 6, `cmd/sqlgen/gen` (`funcmap.go` `funcSoftDeleteFilterOverride`)
+- **Surfaced by:** FIX-324 vet (2026-10-12), filed at the backlog sweep's Step 5
+- **Vetted:** corrected at `02000941` (2026-10-12)
+
+**Issue.** An integer soft delete on a NOT NULL integer column generates code that does not compile, on every
+dialect: no SQL type resolves to Go `int` (PG smallint/integer → int16/int32; MySQL tinyint/smallint/int and
+unsigned forms → int8/int16/int32/uint8/uint16/uint32; every SQLite integer → int64), and bigint/mediumint are
+rejected under `type: integer` by validation (PRD §4.6). Measured (sibling example copies, `go build -gcflags=-e
+./models/`): PG SMALLINT/INTEGER NOT NULL → generate exit 0, "models_gen.go:57212:43: cannot use new(0) (value of
+type *int) as *int16 value in struct literal" (9 sites); MySQL → generate exit 1 ("gqlgen subprocess failed"), 21
+sites (`*int8` … `*uint32`); SQLite → exit 1, "zz_t1_gen.go:861:43: cannot use new(0) (value of type *int) as
+*int64 value in struct literal" (12 sites). Nullable variants compile (`NullableNumber[T]{Null: new(false)}`).
+A plain `tinyint` configured `type: bool` (MySQL, SQLite) fails identically at base and with FIX-324 (`Number[int8]`
+/ `Number[int64]{Neq: new(0)}`). `TestDeleteTemplate_softDelete_integer` (`cmd/sqlgen/gen/delete_test.go:255`) pins
+the broken string `Deleted: &comparator.Number[int32]{Neq: new(0)}`.
+
+**Root cause.** `funcSoftDeleteFilterOverride` (`cmd/sqlgen/gen/funcmap.go:591-593` at `75b7560f`) emits
+`&comparator.Number[T]{Neq: new(0)}`; the untyped `0` gives `*int`.
+
+**Suggested fix.**
+- Emit `&comparator.Number[T]{Neq: new(T(0))}`, T cut from the `comparator.Number[...]` type argument; the doc
+  comment says the literal follows the comparator type, not the strategy.
+- New table-driven `TestFuncSoftDeleteFilterOverride` (funcmap_test.go): one row per reachable width (int8/16/32/64,
+  uint8/16/32) plus NullableNumber, Bool, NullableBool, NullableTime; each row's expression is also compiled against
+  the real `comparator` package with a `%T` check (the generated-code compile pin). `TestDeleteTemplate_softDelete_integer`
+  expects `Neq: new(int32(0))`. No example table.
+- Corrected from the original: dropped "key the override on the soft-delete strategy" — the literal is assigned into
+  a field of the comparator type, so it must key on that (strategy-keyed would put `{Eq: new(true)}` into
+  `Number[int8]` and `{Neq: …}` into `comparator.Bool`); the comparator-keyed literals are right under both strategies
+  since deleted is 1/TRUE. The "every non-int width" and "after FIX-324" facts were restated (above).
+- Prototype results, run at `02000941` + FIX-324.patch on 2026-10-12: reproduction above. With the prototype, runtime
+  round trips (SoftDelete → GetMany → Restore): SQLite INTEGER + integer → ZzSd1=1, 0 rows, 0 (SoftDeleteMany 1);
+  SQLite TINYINT + bool → 1, 0 rows, 0; MySQL 8 TINYINT + bool → 1, 0 rows, 0; MySQL TINYINT(1) + integer → true,
+  0 rows, false; PG SMALLINT + integer → 1, 0 rows, 0. Gates: `go test -race -count=1 ./gen/...` ok; golangci-lint 0
+  issues; gofumpt clean; `TestE2EGoldenFiles` compare mode PASS; the 5 probe copies generate exit 0, `go build ./...`
+  and `go vet ./models/...` exit 0. `make update-golden*` not run (permission classifier denied it in the vet sandbox);
+  churn measured by the passing golden comparisons instead — `/fix-implement` must run them. Fail-first: override
+  reverted → `softDeleteFilterOverride("*comparator.Number[int8]") = "&comparator.Number[int8]{Neq: new(0)}", want
+  "&comparator.Number[int8]{Neq: new(int8(0))}"` (7 rows) and `TestDeleteTemplate_softDelete_integer` "output missing
+  SoftDelete integer pattern"; existing suite passes at base+324. Golden churn none (no example uses `type:
+  integer`). Stacked on FIX-324 by sequence only — it touches none of FIX-324's files and `git apply --check` passes
+  on plain `02000941`. Patch: `.claude/prototypes/FIX-336.patch` (3 files, +51/-6).
+
+**References.**
+- PRD §4.6, §5.4 (soft delete strategies).
+- FIX-324 (soft-delete strategy from config; lands first).
+- `cmd/sqlgen/gen/delete_test.go:255`.
+
+**Resolution notes.** Corrected suggested fix as vetted. `funcSoftDeleteFilterOverride` (`cmd/sqlgen/gen/funcmap.go`) cuts T from `comparator.Number[T]` and emits `&comparator.Number[T]{Neq: new(T(0))}`; its doc comment says the literal follows the comparator type, not the strategy. Tests: new table-driven `TestFuncSoftDeleteFilterOverride` (`cmd/sqlgen/gen/funcmap_test.go`), one row per reachable width (int8/16/32/64, uint8/16/32) plus NullableNumber, Bool, NullableBool and NullableTime, each row's want also written as a compiled Go literal against the real `comparator` package with a `%T` check; `TestDeleteTemplate_softDelete_integer` now expects `Neq: new(int32(0))`. Prototype applied clean. Golden churn: none (`make update-golden-e2e` and `make update-golden` regenerate nothing; no example uses `type: integer`), matching the vet. Fail-first on the final code: funcmap.go reverted → 7 `TestFuncSoftDeleteFilterOverride` rows fail (`= "&comparator.Number[int8]{Neq: new(0)}", want "&comparator.Number[int8]{Neq: new(int8(0))}"`) and `TestDeleteTemplate_softDelete_integer` "output missing SoftDelete integer pattern"; restored → pass. End-to-end re-check at `75b7560f` (sibling copy of the sqlite example, `zz_t1.zz_sd1 INTEGER NOT NULL` under `type: integer`): base → generate exit 1, "models/zz_t1_gen.go:870:43: cannot use new(0) (value of type *int) as *int64 value in struct literal"; fixed → generate exit 0, `go build ./...` and `go vet ./models/...` exit 0, emitting `ZzSd1: &comparator.Number[int64]{Neq: new(int64(0))}`. Gates: `make check` ok; `make check-examples` ok. `/verify` reviewer agreed (PRD 3/3, landed source identical to the prototype, fail-first confirmed); applied inline: the doc comment says "a tinyint" rather than "a MySQL tinyint" (SQLite TINYINT under `type: bool` takes the same branch), and Root cause's line ref is marked as at `75b7560f`; the example-coverage gap went to the backlog; `make check` and `make check-examples` re-run ok.
 
 ### FIX-335
 
