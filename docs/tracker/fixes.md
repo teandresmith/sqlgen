@@ -22,62 +22,6 @@
 ## Open
 
 <!-- fixes:open:begin -->
-### FIX-343
-
-- **Status:** Open
-- **Severity:** nit
-- **Origin:** phase 6, `cmd/sqlgen/gotype` (SQLite `date` mapping) + runtime SQLite time binds
-- **Surfaced by:** FIX-335 vet (2026-10-12), filed at the backlog sweep's second Step 5
-- **Vetted:** ready at `f9a460a5` (2026-10-12; doc-only, so no fail-first applies)
-
-**Issue.** A SQLite `date` column resolves to `types.DateTime`, so sqlgen writes and binds datetime text while a
-`date()` / `CURRENT_DATE` default stores `YYYY-MM-DD`; filters and cursors over a mix of the two are wrong. Measured
-(events probe copy, `day DATE NOT NULL DEFAULT (date('now'))`, `cursor_keys: [day, id]`; A, B via `date('2026-01-01')`,
-C via `Create` at 2026-01-01 00:00 UTC, D via `date('2026-01-02')`): at base C stores "2026-01-01T00:00:00Z" (EST
-midnight "2026-01-01T00:00:00-05:00"); Eq → [], In → [], Lte → [A B], Gte&Lt(next day) → [C D]; cursor forward
-[A C D], backward [D D D D D D D D]. With FIX-335 (ruled option) C stores "2026-01-01 00:00:00" (EST midnight
-"2026-01-01 05:00:00"); Eq → [C] (want A B C), In → [C], Gte&Lt → [C D]; cursor forward [A C D] (B skipped), backward
-returns D on every page with HasPreviousPage true, never ending. With the workaround default `datetime(?, 'start of
-day')` everything is correct ([A B C], cursors [A B C D] both ways). No SQLite example has a `date` column.
-
-**Root cause.** `gotype.registerDialectDefaults` (`cmd/sqlgen/gotype/gotype.go:280-296`) maps SQLite `date` like
-datetime/timestamp, and no bind path knows a
-column is a date.
-
-**Suggested fix.**
-- Prototyped (`.claude/prototypes/FIX-343.patch`, doc-only, stacked on FIX-335.patch): PRD §7.2's SQLite paragraph
-  (replacing FIX-335's last sentence, which already notes the gap) says a SQLite `date` column is a `types.DateTime`
-  bound as `YYYY-MM-DD HH:MM:SS` UTC (a non-UTC midnight binds as its UTC instant), lists the failures against
-  `date()` / `CURRENT_DATE` rows (Eq / In miss, Gte/Lt boundaries shift a day, a cursor key skips forward and repeats a
-  row on every page backward), and gives the remedy: `DEFAULT (datetime('now', 'start of day'))` and dates passed as
-  UTC midnight.
-- The user ruled on 2026-10-12: (c) — document the limit and the workaround in PRD §7.2 (the prototyped patch); (b), a
-  `types.Date` runtime type, is not pursued. The question as asked — Q1, how should FIX-343 close the SQLite `date` gap?
-  - (c, recommended, prototyped) document the limit and workaround in PRD §7.2 only: no code, churn or surface; rows
-    written by `date()` / `CURRENT_DATE` stay wrong as measured; the documented default makes Eq, In, ranges and cursors
-    correct both ways (measured). No fail-first is possible for a doc-only change.
-  - (c+) (c) plus a generate-time warning or error when a SQLite `date` column is in a table's resolved `cursor_keys`
-    (new §4.13 row in `validateCursorKeys`, `cmd/sqlgen/config/validate.go:1721`), the loud signal for the never-ending
-    backward paging; flags a config that works when every row is in sqlgen's text; no example churn; not prototyped.
-  - (b) new exported `types.Date` / `types.NullDate` (Value() "2006-01-02") mapped from SQLite `date`; filters still
-    need a date comparator (comparator operands are `time.Time`), a GraphQL Date scalar and comparator input,
-    scalar-table rows (`gen/context_api.go:1300ff`), a `resolveSimpleComparator` arm (`gen/context_table.go:2207`),
-    `cli/graphql.go`, `sql/time.go`, PRD §7.2 / §11 / GraphQL changes; public surface; not prototyped.
-  - (a) generated code converts per column (~9 bind sites per date column; the filter path still needs a runtime hook,
-    since `comparator.Time.Parse` sees only the column name) — no cheaper than (b); not recommended.
-  - Vetter's recommendation: (c) (nit, no example or known schema has a SQLite `date` column, the documented default is
-    measured correct; (b) to the backlog); (c+) if a loud signal for date cursor keys is wanted.
-- Prototype results, run at `f9a460a5` (+ FIX-335.patch) on 2026-10-12: the reproduction above
-  (`GOWORK=off go test -count=1 -run TestZZProbeFIX343 -v ./tests/` on the probe copy; stored text read with `day || ''`,
-  since modernc scans DATE into `time.Time`). Gates: `make refs-check` ok; code gates n/a. Golden churn none. Must land
-  after FIX-335 (edits its PRD hunk ~:1796).
-
-**References.**
-- PRD §7.2.
-- FIX-335 (lands first).
-
-**Resolution notes.** _Filled in by /fix resolve._
-
 ### FIX-344
 
 - **Status:** Open
@@ -151,6 +95,62 @@ DEFAULT.
 ## Resolved
 
 <!-- fixes:resolved:begin -->
+### FIX-343
+
+- **Status:** Resolved
+- **Severity:** nit
+- **Origin:** phase 6, `cmd/sqlgen/gotype` (SQLite `date` mapping) + runtime SQLite time binds
+- **Surfaced by:** FIX-335 vet (2026-10-12), filed at the backlog sweep's second Step 5
+- **Vetted:** ready at `f9a460a5` (2026-10-12; doc-only, so no fail-first applies)
+
+**Issue.** A SQLite `date` column resolves to `types.DateTime`, so sqlgen writes and binds datetime text while a
+`date()` / `CURRENT_DATE` default stores `YYYY-MM-DD`; filters and cursors over a mix of the two are wrong. Measured
+(events probe copy, `day DATE NOT NULL DEFAULT (date('now'))`, `cursor_keys: [day, id]`; A, B via `date('2026-01-01')`,
+C via `Create` at 2026-01-01 00:00 UTC, D via `date('2026-01-02')`): at base C stores "2026-01-01T00:00:00Z" (EST
+midnight "2026-01-01T00:00:00-05:00"); Eq → [], In → [], Lte → [A B], Gte&Lt(next day) → [C D]; cursor forward
+[A C D], backward [D D D D D D D D]. With FIX-335 (ruled option) C stores "2026-01-01 00:00:00" (EST midnight
+"2026-01-01 05:00:00"); Eq → [C] (want A B C), In → [C], Gte&Lt → [C D]; cursor forward [A C D] (B skipped), backward
+returns D on every page with HasPreviousPage true, never ending. With the workaround default `datetime(?, 'start of
+day')` everything is correct ([A B C], cursors [A B C D] both ways). No SQLite example has a `date` column.
+
+**Root cause.** `gotype.registerDialectDefaults` (`cmd/sqlgen/gotype/gotype.go:280-296`) maps SQLite `date` like
+datetime/timestamp, and no bind path knows a
+column is a date.
+
+**Suggested fix.**
+- Prototyped (`.claude/prototypes/FIX-343.patch`, doc-only, stacked on FIX-335.patch): PRD §7.2's SQLite paragraph
+  (replacing FIX-335's last sentence, which already notes the gap) says a SQLite `date` column is a `types.DateTime`
+  bound as `YYYY-MM-DD HH:MM:SS` UTC (a non-UTC midnight binds as its UTC instant), lists the failures against
+  `date()` / `CURRENT_DATE` rows (Eq / In miss, Gte/Lt boundaries shift a day, a cursor key skips forward and repeats a
+  row on every page backward), and gives the remedy: `DEFAULT (datetime('now', 'start of day'))` and dates passed as
+  UTC midnight.
+- The user ruled on 2026-10-12: (c) — document the limit and the workaround in PRD §7.2 (the prototyped patch); (b), a
+  `types.Date` runtime type, is not pursued. The question as asked — Q1, how should FIX-343 close the SQLite `date` gap?
+  - (c, recommended, prototyped) document the limit and workaround in PRD §7.2 only: no code, churn or surface; rows
+    written by `date()` / `CURRENT_DATE` stay wrong as measured; the documented default makes Eq, In, ranges and cursors
+    correct both ways (measured). No fail-first is possible for a doc-only change.
+  - (c+) (c) plus a generate-time warning or error when a SQLite `date` column is in a table's resolved `cursor_keys`
+    (new §4.13 row in `validateCursorKeys`, `cmd/sqlgen/config/validate.go:1721`), the loud signal for the never-ending
+    backward paging; flags a config that works when every row is in sqlgen's text; no example churn; not prototyped.
+  - (b) new exported `types.Date` / `types.NullDate` (Value() "2006-01-02") mapped from SQLite `date`; filters still
+    need a date comparator (comparator operands are `time.Time`), a GraphQL Date scalar and comparator input,
+    scalar-table rows (`gen/context_api.go:1300ff`), a `resolveSimpleComparator` arm (`gen/context_table.go:2207`),
+    `cli/graphql.go`, `sql/time.go`, PRD §7.2 / §11 / GraphQL changes; public surface; not prototyped.
+  - (a) generated code converts per column (~9 bind sites per date column; the filter path still needs a runtime hook,
+    since `comparator.Time.Parse` sees only the column name) — no cheaper than (b); not recommended.
+  - Vetter's recommendation: (c) (nit, no example or known schema has a SQLite `date` column, the documented default is
+    measured correct; (b) to the backlog); (c+) if a loud signal for date cursor keys is wanted.
+- Prototype results, run at `f9a460a5` (+ FIX-335.patch) on 2026-10-12: the reproduction above
+  (`GOWORK=off go test -count=1 -run TestZZProbeFIX343 -v ./tests/` on the probe copy; stored text read with `day || ''`,
+  since modernc scans DATE into `time.Time`). Gates: `make refs-check` ok; code gates n/a. Golden churn none. Must land
+  after FIX-335 (edits its PRD hunk ~:1796).
+
+**References.**
+- PRD §7.2.
+- FIX-335 (lands first).
+
+**Resolution notes.** Doc-only, per the user's 2026-10-12 ruling (c). PRD §7.2's SQLite Type Mappings now end FIX-335's paragraph at the `types.SetOutputLayout` sentence (dropping its one-line `date` caveat) and add a paragraph: a SQLite `date` column is a `types.DateTime` bound as `YYYY-MM-DD HH:MM:SS` UTC text (a non-UTC midnight binds as its UTC instant), so rows `date()` / `CURRENT_DATE` wrote miss `Eq` / `In`, shift `Gte` / `Lt` boundaries by a day and break `date` cursor keys (skip forward, repeat backward); the remedy is `DEFAULT (datetime('now', 'start of day'))` and dates passed as UTC midnight. The prototype applied with `git apply --3way`: the one conflict was the §7.2 SQLite paragraph, which FIX-342 (`e64193bf`) had reworded after the vet (MySQL now binds a `types.DateTime` as its `time.Time`); the landed text keeps FIX-342's wording and replaces only the last sentence. The claim that the bind site has no column type was re-checked against `sql/time.go` `bindArgs` / `sqliteTime` at HEAD. Gates: `make check` ok; `check-examples` not triggered (docs only); no golden churn, as vetted. `/verify` reviewer nit applied inline: the `Lt` clause now says it includes the next day's `date()` rows (a next-day row in sqlgen's text is not included).
+
 ### FIX-342
 
 - **Status:** Resolved
