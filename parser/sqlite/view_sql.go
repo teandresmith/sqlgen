@@ -64,12 +64,9 @@ func parseCreateViewStmt(cv *rsql.CreateViewStatement) (parser.ViewSQL, error) {
 		return parser.ViewSQL{}, &parser.ViewQueryError{Name: name, Err: fmt.Errorf("CREATE VIEW query is not a simple SELECT")}
 	}
 
-	aliases := make(map[string]string)
-	outer := make(map[string]bool)
-	if sel.Source != nil {
-		if err := collectSourceAliases(sel.Source, false, aliases, outer); err != nil {
-			return parser.ViewSQL{}, &parser.ViewQueryError{Name: name, Err: err}
-		}
+	def, err := extractSourceAliases(sel)
+	if err != nil {
+		return parser.ViewSQL{}, &parser.ViewQueryError{Name: name, Err: err}
 	}
 
 	columns, err := extractResultColumns(name, sel.Columns, cv.Columns)
@@ -77,12 +74,64 @@ func parseCreateViewStmt(cv *rsql.CreateViewStatement) (parser.ViewSQL, error) {
 		return parser.ViewSQL{}, &parser.ViewQueryError{Name: name, Err: err}
 	}
 
-	return parser.ViewSQL{
-		Name:         name,
-		Columns:      columns,
-		TableAliases: aliases,
-		OuterAliases: outer,
-	}, nil
+	def.Name, def.Columns = name, columns
+	return def, nil
+}
+
+// extractSourceAliases reads sel's FROM and WITH clauses into a ViewSQL's
+// TableAliases, OuterAliases, QualifiedAliases, Subqueries and CTEs (each
+// of the last three nil when it is empty).
+func extractSourceAliases(sel *rsql.SelectStatement) (parser.ViewSQL, error) {
+	from := parser.ViewSQL{
+		TableAliases: make(map[string]string),
+		OuterAliases: make(map[string]bool),
+	}
+	if sel.Source != nil {
+		if err := collectSourceAliases(sel.Source, false, &from); err != nil {
+			return parser.ViewSQL{}, err
+		}
+	}
+	if sel.WithClause != nil && len(sel.WithClause.CTEs) > 0 {
+		from.CTEs = make(map[string]parser.ViewSQL, len(sel.WithClause.CTEs))
+		for _, cte := range sel.WithClause.CTEs {
+			from.CTEs[rsql.IdentName(cte.TableName)] = readSubquery(cte.Select, cte.Columns)
+		}
+	}
+	return from, nil
+}
+
+// readSubquery reads the query of a derived table or common table
+// expression for parser.ViewSQL.Subqueries or CTEs, its columns named by
+// names where it has them. It returns an empty query for one it cannot
+// read: a compound one, one with a RIGHT or FULL join, or one that names *
+// alongside a column list.
+func readSubquery(sel *rsql.SelectStatement, names []*rsql.Ident) parser.ViewSQL {
+	if sel == nil || sel.Compound != nil {
+		return parser.ViewSQL{}
+	}
+	columns := make([]parser.ViewSelectColumn, 0, len(sel.Columns))
+	for i, rc := range sel.Columns {
+		col := extractResultColumn(rc)
+		if isStar(rc) {
+			if len(names) > 0 {
+				return parser.ViewSQL{}
+			}
+			col = parser.ViewSelectColumn{SourceColumn: "*"}
+			if ref, ok := rc.Expr.(*rsql.QualifiedRef); ok && ref.Table != nil {
+				col.SourceTable = rsql.IdentName(ref.Table)
+			}
+		}
+		if i < len(names) {
+			col.Alias, col.Unaliased = rsql.IdentName(names[i]), false
+		}
+		columns = append(columns, col)
+	}
+	q, err := extractSourceAliases(sel)
+	if err != nil {
+		return parser.ViewSQL{}
+	}
+	q.Columns = columns
+	return q
 }
 
 // extractResultColumns converts rqlite ResultColumns into ViewSelectColumns,
@@ -189,19 +238,17 @@ func extractCallArg(arg rsql.Expr, col *parser.ViewSelectColumn) {
 	}
 }
 
-// collectSourceAliases recursively collects table aliases from a FROM clause
-// Source. isOuter marks a source on the outer side of an enclosing join.
-func collectSourceAliases(src rsql.Source, isOuter bool, aliases map[string]string, outer map[string]bool) error {
+// collectSourceAliases recursively collects table aliases and derived
+// tables from a FROM clause Source into from. isOuter marks a source on the
+// outer side of an enclosing join.
+func collectSourceAliases(src rsql.Source, isOuter bool, from *parser.ViewSQL) error {
 	switch s := src.(type) {
 	case *rsql.QualifiedTableName:
 		key := rsql.IdentName(s.Name)
 		if s.Alias != nil {
 			key = rsql.IdentName(s.Alias)
 		}
-		aliases[key] = rsql.IdentName(s.Name)
-		if isOuter {
-			outer[key] = true
-		}
+		addTableAlias(from, key, rsql.IdentName(s.Name), isOuter, s.Schema != nil)
 
 	case *rsql.JoinClause:
 		if s.Operator != nil && (s.Operator.Right.IsValid() || s.Operator.Full.IsValid()) {
@@ -210,15 +257,46 @@ func collectSourceAliases(src rsql.Source, isOuter bool, aliases map[string]stri
 				Advice: "RIGHT and FULL joins are not supported",
 			}
 		}
-		if err := collectSourceAliases(s.X, isOuter, aliases, outer); err != nil {
+		if err := collectSourceAliases(s.X, isOuter, from); err != nil {
 			return err
 		}
-		return collectSourceAliases(s.Y, isOuter || (s.Operator != nil && s.Operator.Left.IsValid()), aliases, outer)
+		return collectSourceAliases(s.Y, isOuter || (s.Operator != nil && s.Operator.Left.IsValid()), from)
 
 	case *rsql.ParenSource:
+		if sel, ok := s.X.(*rsql.SelectStatement); ok {
+			addDerivedTable(sel, s.Alias, from)
+			return nil
+		}
 		if s.X != nil {
-			return collectSourceAliases(s.X, isOuter, aliases, outer)
+			return collectSourceAliases(s.X, isOuter, from)
 		}
 	}
 	return nil
+}
+
+// addTableAlias records in from that FROM-clause key reads table name,
+// whether it is on the outer side of a join and whether name is qualified.
+func addTableAlias(from *parser.ViewSQL, key, name string, isOuter, qualified bool) {
+	from.TableAliases[key] = name
+	if isOuter {
+		from.OuterAliases[key] = true
+	}
+	if qualified {
+		if from.QualifiedAliases == nil {
+			from.QualifiedAliases = make(map[string]bool)
+		}
+		from.QualifiedAliases[key] = true
+	}
+}
+
+// addDerivedTable records the query of a derived table under its alias in
+// from, as readSubquery reads it, when it has an alias.
+func addDerivedTable(sel *rsql.SelectStatement, alias *rsql.Ident, from *parser.ViewSQL) {
+	if alias == nil {
+		return
+	}
+	if from.Subqueries == nil {
+		from.Subqueries = make(map[string]parser.ViewSQL)
+	}
+	from.Subqueries[rsql.IdentName(alias)] = readSubquery(sel, nil)
 }

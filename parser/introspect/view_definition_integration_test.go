@@ -295,6 +295,54 @@ func TestMerge_ViewColumnRenameAndDrop(t *testing.T) {
 			})
 		}
 	}
+	// The *Sub bases hold views that read users through a derived table or
+	// a common table expression.
+	pgSub := func(views string) func(*testing.T) *parser.Schema {
+		return func(t *testing.T) *parser.Schema {
+			conn := pgConnStr + "&search_path=view_def"
+			execAll(t, "pgx", conn, `DROP SCHEMA IF EXISTS view_def CASCADE; CREATE SCHEMA view_def;
+				CREATE TYPE role_t AS ENUM ('a', 'b');
+				CREATE TABLE users (id int PRIMARY KEY, role role_t NOT NULL, email text);`+views)
+			t.Cleanup(func() { execAll(t, "pgx", conn, "DROP SCHEMA IF EXISTS view_def CASCADE") })
+			return introspectWith(t, introspect.NewPostgresIntrospector(), conn, introspect.IntrospectionOptions{Schemas: []string{"view_def"}})
+		}
+	}
+	const (
+		pgDerived = "CREATE VIEW vd AS SELECT r FROM (SELECT role AS r FROM users) d;"
+		// A common table expression that reads another one.
+		pgCTE = "CREATE VIEW vc AS WITH a AS (SELECT role FROM users), c AS (SELECT role AS r FROM a) SELECT r FROM c;"
+		// A CTE named after the table it reads, whose role is the table's
+		// email.
+		pgCTENamedAfterTable = "CREATE VIEW vt AS WITH users AS (SELECT email AS role FROM users) SELECT role FROM users;"
+	)
+	sqliteSub := func(views string) func(*testing.T) *parser.Schema {
+		return func(t *testing.T) *parser.Schema {
+			return introspectSQLite(t, applySQLite(t, "CREATE TABLE users (id INTEGER PRIMARY KEY NOT NULL, role TEXT NOT NULL, email TEXT);"+views), introspect.IntrospectionOptions{})
+		}
+	}
+	mysqlSub := func(views ...string) func(*testing.T) *parser.Schema {
+		return func(t *testing.T) *parser.Schema {
+			const reset = "DROP VIEW IF EXISTS vr_vd, vr_vc, vr_vq, vr_vt; DROP TABLE IF EXISTS vr_users"
+			ddl := map[string]string{
+				"vr_vd": "CREATE VIEW vr_vd AS SELECT r FROM (SELECT role AS r FROM vr_users) d",
+				"vr_vc": "CREATE VIEW vr_vc AS WITH c AS (SELECT role FROM vr_users) SELECT role FROM c",
+				// A derived table and a CTE named after the table they read,
+				// whose role is the table's email.
+				"vr_vq": "CREATE VIEW vr_vq AS SELECT vr_users.role FROM (SELECT email AS role FROM vr_users) vr_users",
+				"vr_vt": "CREATE VIEW vr_vt AS WITH vr_users AS (SELECT email AS role FROM vr_users) SELECT role FROM vr_users",
+			}
+			stmts := make([]string, 0, 2+len(views))
+			stmts = append(stmts, reset, "CREATE TABLE vr_users (id int PRIMARY KEY, role enum('a', 'b') NOT NULL, email text)")
+			for _, v := range views {
+				stmts = append(stmts, ddl[v])
+			}
+			execAll(t, "mysql", mysqlConnStr, strings.Join(stmts, ";"))
+			t.Cleanup(func() { execAll(t, "mysql", mysqlConnStr, reset) })
+			return introspectWith(t, introspect.NewMySQLIntrospector(), mysqlConnStr, introspect.IntrospectionOptions{
+				Tables: append([]string{"vr_users"}, views...),
+			})
+		}
+	}
 	newPostgres := func(*testing.T) introspect.Seedable { return postgres.New("view_def") }
 	newSQLite := func(*testing.T) introspect.Seedable { return sqlite.New() }
 	newMySQL := func(t *testing.T) introspect.Seedable {
@@ -486,6 +534,243 @@ func TestMerge_ViewColumnRenameAndDrop(t *testing.T) {
 				CREATE TABLE vr_users (id bigint PRIMARY KEY, role text NOT NULL);`,
 			want: map[string][]col{
 				"vr_v": {{"id", "bigint", false}, {"role", "text", false}},
+			},
+		},
+		// A column a view reads through a derived table or a common table
+		// expression is followed to its table. Its type stays the catalog's.
+		{
+			name:      "postgres/rename under a derived table and a CTE",
+			base:      pgSub(pgDerived + pgCTE),
+			parser:    newPostgres,
+			migration: "ALTER TABLE users RENAME COLUMN role TO kind;",
+			want: map[string][]col{
+				"vd": {{"r", "role_t", true}},
+				"vc": {{"r", "role_t", true}},
+			},
+		},
+		{
+			name:      "postgres/drop under a derived table",
+			base:      pgSub(pgDerived),
+			parser:    newPostgres,
+			migration: "ALTER TABLE users DROP COLUMN role;",
+			wantErr:   "merge both mode: view view_def.vd: column r reads column role of table view_def.users" + stands,
+		},
+		{
+			name:      "postgres/drop under a CTE",
+			base:      pgSub(pgCTE),
+			parser:    newPostgres,
+			migration: "ALTER TABLE users DROP COLUMN role;",
+			wantErr:   "merge both mode: view view_def.vc: column r reads column role of table view_def.users" + stands,
+		},
+		{
+			name:      "postgres/drop a column no view reads",
+			base:      pgSub(pgDerived + pgCTE),
+			parser:    newPostgres,
+			migration: "ALTER TABLE users DROP COLUMN email;",
+			want: map[string][]col{
+				"vd": {{"r", "role_t", true}},
+				"vc": {{"r", "role_t", true}},
+			},
+		},
+		{
+			name:      "postgres/rename table under a derived table and a CTE",
+			base:      pgSub(pgDerived + pgCTE),
+			parser:    newPostgres,
+			migration: "ALTER TABLE users RENAME TO people;",
+			want: map[string][]col{
+				"vd": {{"r", "role_t", true}},
+				"vc": {{"r", "role_t", true}},
+			},
+		},
+		{
+			name:      "postgres/drop table under a CTE",
+			base:      pgSub(pgCTE),
+			parser:    newPostgres,
+			migration: "DROP TABLE users;",
+			wantErr:   "merge both mode: view view_def.vc reads table view_def.users" + stands,
+		},
+		{
+			// SQLite renames the column inside the subquery, and the view
+			// still reads it under the name the subquery gives it.
+			name:      "sqlite/rename under an aliased derived table and a CTE column list",
+			base:      sqliteSub("CREATE VIEW vd AS SELECT r FROM (SELECT role AS r FROM users) d; CREATE VIEW vc AS WITH c (r) AS (SELECT role FROM users) SELECT r FROM c;"),
+			parser:    newSQLite,
+			migration: "ALTER TABLE users RENAME COLUMN role TO kind;",
+			want: map[string][]col{
+				"vd": {{"r", "text", true}},
+				"vc": {{"r", "text", true}},
+			},
+		},
+		{
+			// SQLite renames the subquery's column too, so the view no
+			// longer finds it, and SQLite refuses the rename.
+			name:      "sqlite/rename under an unaliased derived table",
+			base:      sqliteSub("CREATE VIEW vd AS SELECT role FROM (SELECT role FROM users) d;"),
+			parser:    newSQLite,
+			migration: "ALTER TABLE users RENAME COLUMN role TO kind;",
+			wantErr:   "merge both mode: view vd: column role reads column role of table users" + stands,
+		},
+		{
+			name:      "sqlite/rename under an unaliased CTE",
+			base:      sqliteSub("CREATE VIEW vc AS WITH c AS (SELECT role FROM users) SELECT role FROM c;"),
+			parser:    newSQLite,
+			migration: "ALTER TABLE users RENAME COLUMN role TO kind;",
+			wantErr:   "merge both mode: view vc: column role reads column role of table users" + stands,
+		},
+		{
+			name:      "sqlite/rename under a derived table selecting *",
+			base:      sqliteSub("CREATE VIEW vs AS SELECT role FROM (SELECT * FROM users) d;"),
+			parser:    newSQLite,
+			migration: "ALTER TABLE users RENAME COLUMN role TO kind;",
+			wantErr:   "merge both mode: view vs: column role reads column role of table users" + stands,
+		},
+		{
+			name:      "sqlite/drop under a derived table",
+			base:      sqliteSub("CREATE VIEW vd AS SELECT r FROM (SELECT role AS r FROM users) d;"),
+			parser:    newSQLite,
+			migration: "ALTER TABLE users DROP COLUMN role;",
+			wantErr:   "merge both mode: view vd: column r reads column role of table users" + stands,
+		},
+		{
+			name:      "sqlite/drop under a CTE",
+			base:      sqliteSub("CREATE VIEW vc AS WITH c (r) AS (SELECT role FROM users) SELECT r FROM c;"),
+			parser:    newSQLite,
+			migration: "ALTER TABLE users DROP COLUMN role;",
+			wantErr:   "merge both mode: view vc: column r reads column role of table users" + stands,
+		},
+		{
+			name:      "sqlite/rename table under a derived table",
+			base:      sqliteSub("CREATE VIEW vd AS SELECT r FROM (SELECT role AS r FROM users) d;"),
+			parser:    newSQLite,
+			migration: "ALTER TABLE users RENAME TO people;",
+			want:      map[string][]col{"vd": {{"r", "text", true}}},
+		},
+		{
+			name:      "sqlite/drop table under a CTE",
+			base:      sqliteSub("CREATE VIEW vc AS WITH c (r) AS (SELECT role FROM users) SELECT r FROM c;"),
+			parser:    newSQLite,
+			migration: "DROP TABLE users;",
+			wantErr:   "merge both mode: view vc reads table users" + stands,
+		},
+		{
+			name:      "mysql/rename under a CTE",
+			base:      mysqlSub("vr_vc"),
+			parser:    newMySQL,
+			migration: "ALTER TABLE vr_users RENAME COLUMN role TO kind;",
+			wantErr:   "merge both mode: view vr_vc: column role reads column role of table vr_users" + stands,
+		},
+		{
+			name:      "mysql/drop under a CTE",
+			base:      mysqlSub("vr_vc"),
+			parser:    newMySQL,
+			migration: "ALTER TABLE vr_users DROP COLUMN role;",
+			wantErr:   "merge both mode: view vr_vc: column role reads column role of table vr_users" + stands,
+		},
+		{
+			name:      "mysql/rename under a derived table",
+			base:      mysqlSub("vr_vd"),
+			parser:    newMySQL,
+			migration: "ALTER TABLE vr_users RENAME COLUMN role TO kind;",
+			wantErr:   "merge both mode: view vr_vd: column r reads column role of table vr_users" + stands,
+		},
+		{
+			name:      "mysql/drop under a derived table",
+			base:      mysqlSub("vr_vd"),
+			parser:    newMySQL,
+			migration: "ALTER TABLE vr_users DROP COLUMN role;",
+			wantErr:   "merge both mode: view vr_vd: column r reads column role of table vr_users" + stands,
+		},
+		{
+			name:      "mysql/rename table under a derived table",
+			base:      mysqlSub("vr_vd"),
+			parser:    newMySQL,
+			migration: "RENAME TABLE vr_users TO vr_people;",
+			wantErr:   "merge both mode: view vr_vd reads table vr_users" + stands,
+		},
+		// A derived table or CTE named after a table is read before the
+		// table, so a column it renames is followed to the table's column.
+		{
+			name:      "postgres/drop under a CTE named after its table",
+			base:      pgSub(pgCTENamedAfterTable),
+			parser:    newPostgres,
+			migration: "ALTER TABLE users DROP COLUMN email;",
+			wantErr:   "merge both mode: view view_def.vt: column role reads column email of table view_def.users" + stands,
+		},
+		{
+			// The CTE follows the rename, and the view still reads the CTE.
+			name:      "postgres/rename table under a CTE named after it",
+			base:      pgSub(pgCTENamedAfterTable),
+			parser:    newPostgres,
+			migration: "ALTER TABLE users RENAME TO people;",
+			want:      map[string][]col{"vt": {{"role", "text", true}}},
+		},
+		{
+			// PostgreSQL writes the table qualified beside a CTE of its name.
+			name:      "postgres/drop under a table beside a CTE of its name",
+			base:      pgSub("CREATE VIEW vb AS WITH users AS (SELECT email AS role FROM users) SELECT u2.role FROM users JOIN view_def.users u2 ON true;"),
+			parser:    newPostgres,
+			migration: "ALTER TABLE users DROP COLUMN role;",
+			wantErr:   "merge both mode: view view_def.vb: column role reads column role of table view_def.users" + stands,
+		},
+		{
+			name:      "sqlite/drop under a derived table named after its table",
+			base:      sqliteSub("CREATE VIEW vq AS SELECT users.role FROM (SELECT email AS role FROM users) users;"),
+			parser:    newSQLite,
+			migration: "ALTER TABLE users DROP COLUMN email;",
+			wantErr:   "merge both mode: view vq: column role reads column email of table users" + stands,
+		},
+		{
+			name:      "sqlite/rename under an unaliased derived table named after its table",
+			base:      sqliteSub("CREATE VIEW vq AS SELECT users.role FROM (SELECT role FROM users WHERE id > 0) users;"),
+			parser:    newSQLite,
+			migration: "ALTER TABLE users RENAME COLUMN role TO kind;",
+			wantErr:   "merge both mode: view vq: column role reads column role of table users" + stands,
+		},
+		{
+			name:      "sqlite/drop under a CTE named after its table",
+			base:      sqliteSub("CREATE VIEW vt AS WITH users AS (SELECT email AS role FROM main.users) SELECT role FROM users;"),
+			parser:    newSQLite,
+			migration: "ALTER TABLE users DROP COLUMN email;",
+			wantErr:   "merge both mode: view vt: column role reads column email of table users" + stands,
+		},
+		{
+			// The compound query cannot be traced, but its role is not the
+			// table's, which SQLite drops.
+			name:      "sqlite/drop a column a compound derived table named after its table does not read",
+			base:      sqliteSub("CREATE VIEW vu AS SELECT users.role FROM (SELECT email AS role FROM users UNION ALL SELECT email FROM users) users;"),
+			parser:    newSQLite,
+			migration: "ALTER TABLE users DROP COLUMN role;",
+			want:      map[string][]col{"vu": {{"role", "text", true}}},
+		},
+		{
+			name:      "mysql/drop under a derived table named after its table",
+			base:      mysqlSub("vr_vq"),
+			parser:    newMySQL,
+			migration: "ALTER TABLE vr_users DROP COLUMN email;",
+			wantErr:   "merge both mode: view vr_vq: column role reads column email of table vr_users" + stands,
+		},
+		{
+			name:      "mysql/rename under a derived table named after its table",
+			base:      mysqlSub("vr_vq"),
+			parser:    newMySQL,
+			migration: "ALTER TABLE vr_users RENAME COLUMN email TO kind;",
+			wantErr:   "merge both mode: view vr_vq: column role reads column email of table vr_users" + stands,
+		},
+		{
+			name:      "mysql/drop under a CTE named after its table",
+			base:      mysqlSub("vr_vt"),
+			parser:    newMySQL,
+			migration: "ALTER TABLE vr_users DROP COLUMN email;",
+			wantErr:   "merge both mode: view vr_vt: column role reads column email of table vr_users" + stands,
+		},
+		{
+			name:      "mysql/drop a column no view reads",
+			base:      mysqlSub("vr_vd", "vr_vc"),
+			parser:    newMySQL,
+			migration: "ALTER TABLE vr_users DROP COLUMN email;",
+			want: map[string][]col{
+				"vr_vd": {{"r", "vr_vd__r_enum", false}},
+				"vr_vc": {{"role", "vr_vc__role_enum", false}},
 			},
 		},
 	}

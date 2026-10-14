@@ -3677,3 +3677,52 @@ func TestParseViewSQL_ColumnNames(t *testing.T) {
 		})
 	}
 }
+
+// TestViewColumnSources_SubqueryNamedAfterItsTable checks that a derived
+// table or common table expression named after the table it reads ends the
+// trace when the table lacks the column, in forms MySQL accepts.
+func TestViewColumnSources_SubqueryNamedAfterItsTable(t *testing.T) {
+	p, err := mysql.New()
+	if err != nil {
+		t.Fatalf("New() error: %v", err)
+	}
+	if err := p.Parse("schema.sql", []byte(`CREATE TABLE users (id int PRIMARY KEY, name text, role text); CREATE TABLE posts (id int PRIMARY KEY, title text);`)); err != nil {
+		t.Fatalf("Parse() error: %v", err)
+	}
+	tests := []struct {
+		name string
+		sql  string
+		want []string
+	}{
+		{name: "derived table", sql: "CREATE VIEW `v` AS select `users`.`role` AS `role` from (select `users`.`role` AS `role` from `users` where (`users`.`id` > 0)) `users`", want: []string{"users.role"}},
+		{name: "derived table lacking the column", sql: "CREATE VIEW `v` AS select `users`.`email` AS `email` from (select `users`.`email` AS `email` from `users` where (`users`.`id` > 0)) `users`", want: []string{""}},
+		{name: "CTE lacking the column", sql: "CREATE VIEW `v` AS with `users` as (select `users`.`email` AS `email` from `users`) select `users`.`email` AS `email` from `users`", want: []string{""}},
+		// The subquery's column has another name than the table's column of
+		// its name, so only the subquery gives the right one.
+		{name: "derived table renaming a column", sql: "CREATE VIEW `v` AS select `users`.`role` AS `role` from (select `db`.`users`.`name` AS `role` from `db`.`users`) `users`", want: []string{"users.name"}},
+		{name: "derived table named after another table", sql: "CREATE VIEW `v` AS select `posts`.`title` AS `title` from (select `db`.`users`.`name` AS `title` from `db`.`users`) `posts`", want: []string{"users.name"}},
+		{name: "compound derived table", sql: "CREATE VIEW `v` AS select `users`.`role` AS `role` from (select `db`.`users`.`name` AS `role` from `db`.`users` union all select `db`.`users`.`name` AS `name` from `db`.`users`) `users`", want: []string{""}},
+		{name: "CTE renaming a column", sql: "CREATE VIEW `v` AS with `users` as (select `db`.`users`.`name` AS `role` from `db`.`users`) select `users`.`role` AS `role` from `users`", want: []string{"users.name"}},
+		{name: "derived table reading an enclosing CTE", sql: "CREATE VIEW `v` AS with `users` as (select `db`.`users`.`name` AS `role` from `db`.`users`) select `d`.`role` AS `role` from (select `users`.`role` AS `role` from `users`) `d`", want: []string{"users.name"}},
+		{name: "database-qualified table beside a CTE of its name", sql: "CREATE VIEW `v` AS with `users` as (select `db`.`users`.`name` AS `role` from `db`.`users`) select `u2`.`role` AS `role` from (`users` join `db`.`users` `u2`)", want: []string{"users.role"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			def, err := mysql.ParseViewSQL([]byte(tt.sql))
+			if err != nil {
+				t.Fatalf("ParseViewSQL() error: %v", err)
+			}
+			var got []string
+			for _, src := range parser.ViewColumnSources(def, p.Schema()) {
+				if src.Table == nil {
+					got = append(got, "")
+					continue
+				}
+				got = append(got, src.Table.Name+"."+src.Column)
+			}
+			if diff := cmp.Diff(tt.want, got); diff != "" {
+				t.Errorf("ViewColumnSources() mismatch (-want +got):\n%s", diff)
+			}
+		})
+	}
+}

@@ -32,17 +32,24 @@ func columnsFromDefinition(view *parser.View, ddl string, parse viewSQLParser, s
 // viewReads records what the introspected views read before the SQL files
 // are applied.
 type viewReads struct {
-	// tables holds, by viewKey, the table each column of a view with a
-	// Definition reads; a zero tableRef for a column that reads none.
-	tables map[string][]tableRef
+	// columns holds, by viewKey, the table column each column of a view
+	// with a Definition reads (parser.ViewColumnSources); a zero columnRef
+	// for a column that reads none.
+	columns map[string][]columnRef
 	// from holds, by viewKey, the table each FROM-clause key of a view with
-	// a Definition names, for the keys that name a table.
+	// a Definition, or of a derived table or common table expression it
+	// reads, names (parser.ViewFromTables), for the keys that name a table.
 	from map[string]map[string]tableRef
 	// types holds every ENUM and SET type name, bare and schema-qualified.
 	types map[string]bool
 }
 
 type tableRef struct{ schema, name string }
+
+type columnRef struct {
+	table  tableRef
+	column string
+}
 
 func (r tableRef) String() string {
 	if r.schema == "" {
@@ -53,9 +60,9 @@ func (r tableRef) String() string {
 
 func readViewSources(schema *parser.Schema) viewReads {
 	reads := viewReads{
-		tables: make(map[string][]tableRef),
-		from:   make(map[string]map[string]tableRef),
-		types:  enumAndSetNames(schema),
+		columns: make(map[string][]columnRef),
+		from:    make(map[string]map[string]tableRef),
+		types:   enumAndSetNames(schema),
 	}
 	for _, view := range schema.Views {
 		if view.Definition == nil {
@@ -68,14 +75,14 @@ func readViewSources(schema *parser.Schema) viewReads {
 			}
 		}
 		reads.from[viewKey(view)] = from
-		tables := parser.ViewSourceTables(*view.Definition, schema)
-		refs := make([]tableRef, len(tables))
-		for i, t := range tables {
-			if t != nil {
-				refs[i] = tableRef{t.Schema, t.Name}
+		sources := parser.ViewColumnSources(*view.Definition, schema)
+		refs := make([]columnRef, len(sources))
+		for i, src := range sources {
+			if src.Table != nil {
+				refs[i] = columnRef{tableRef{src.Table.Schema, src.Table.Name}, src.Column}
 			}
 		}
-		reads.tables[viewKey(view)] = refs
+		reads.columns[viewKey(view)] = refs
 	}
 	return reads
 }
@@ -117,8 +124,10 @@ func viewKey(view parser.View) string {
 // leaves the view invalid when its table is dropped, and MySQL leaves the
 // view invalid on any of them. A rename PostgreSQL and SQLite carry into
 // the view has already been applied to its Definition by the file parser.
-// A view whose columns come from the catalog cannot be traced, so it is an
-// error only when one of its ENUM or SET types is gone.
+// A table or column read through a derived table or common table
+// expression counts the same. A view whose columns come from the catalog
+// cannot be traced, so it is an error only when one of its ENUM or SET
+// types is gone.
 func refreshViewColumns(schema *parser.Schema, reads viewReads) error {
 	types := enumAndSetNames(schema)
 	for i := range schema.Views {
@@ -140,13 +149,12 @@ func refreshViewColumns(schema *parser.Schema, reads viewReads) error {
 		}
 		// Every table the view read still resolves, so a column that no
 		// longer finds its source column lost it.
-		now := parser.ViewSourceTables(*view.Definition, schema)
-		for j, ref := range reads.tables[viewKey(*view)] {
-			if ref.name == "" || now[j] != nil {
+		now := parser.ViewColumnSources(*view.Definition, schema)
+		for j, ref := range reads.columns[viewKey(*view)] {
+			if ref.table.name == "" || now[j].Table != nil {
 				continue
 			}
-			sc := view.Definition.Columns[j]
-			return fmt.Errorf("view %s: column %s reads column %s of table %s, which the SQL files drop or rename; under source: both the database's view stands, so change it in the database first", viewKey(*view), sc.Alias, sc.SourceColumn, ref)
+			return fmt.Errorf("view %s: column %s reads column %s of table %s, which the SQL files drop or rename; under source: both the database's view stands, so change it in the database first", viewKey(*view), view.Definition.Columns[j].Alias, ref.column, ref.table)
 		}
 		built, err := parser.BuildView(*view.Definition, view.SQL, &parser.ViewAnnotations{}, schema)
 		if err != nil {

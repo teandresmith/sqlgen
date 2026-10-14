@@ -3553,3 +3553,75 @@ func TestRenameConstraintAndIndex(t *testing.T) {
 		t.Errorf("constraints mismatch (-want +got):\n%s", diff)
 	}
 }
+
+// TestViewColumnSources_SubqueryNamedAfterItsTable checks that a derived
+// table or common table expression named after the table it reads ends the
+// trace when the table lacks the column, in forms PostgreSQL accepts.
+func TestViewColumnSources_SubqueryNamedAfterItsTable(t *testing.T) {
+	p := postgres.New("public")
+	if err := p.Parse("schema.sql", []byte(`CREATE TABLE users (id int PRIMARY KEY, name text, role text); CREATE TABLE posts (id int PRIMARY KEY, title text);`)); err != nil {
+		t.Fatalf("Parse() error: %v", err)
+	}
+	tests := []struct {
+		name string
+		sql  string
+		want []string
+	}{
+		{name: "derived table", sql: `CREATE VIEW v AS SELECT users.role FROM (SELECT users_1.role FROM users users_1) users;`, want: []string{"users.role"}},
+		{name: "derived table lacking the column", sql: `CREATE VIEW v AS SELECT users.email FROM (SELECT users_1.email FROM users users_1) users;`, want: []string{""}},
+		{name: "CTE lacking the column", sql: `CREATE VIEW v AS WITH users AS (SELECT users_1.email FROM users users_1) SELECT users.email FROM users;`, want: []string{""}},
+		// The subquery's column has another name than the table's column of
+		// its name, so only the subquery gives the right one.
+		{name: "derived table renaming a column", sql: `CREATE VIEW v AS SELECT users.role FROM (SELECT name AS role FROM users) users;`, want: []string{"users.name"}},
+		{name: "derived table named after another table", sql: `CREATE VIEW v AS SELECT posts.title FROM (SELECT name AS title FROM users) posts;`, want: []string{"users.name"}},
+		{name: "compound derived table", sql: `CREATE VIEW v AS SELECT users.role FROM (SELECT name AS role FROM users UNION ALL SELECT name FROM users) users;`, want: []string{""}},
+		{name: "CTE renaming a column", sql: `CREATE VIEW v AS WITH users AS (SELECT users_1.name AS role FROM public.users users_1) SELECT role FROM users;`, want: []string{"users.name"}},
+		{name: "derived table reading an enclosing CTE", sql: `CREATE VIEW v AS WITH users AS (SELECT users.name AS role FROM public.users) SELECT role FROM (SELECT users.role FROM users) d;`, want: []string{"users.name"}},
+		{name: "inner CTE shadowing an outer one", sql: `CREATE VIEW v AS WITH users AS (SELECT users_1.role FROM public.users users_1) SELECT role FROM (WITH users AS (SELECT users_1.name AS role FROM public.users users_1) SELECT role FROM users) d;`, want: []string{"users.name"}},
+		{name: "schema-qualified table beside a CTE of its name", sql: `CREATE VIEW v AS WITH users AS (SELECT users_1.name AS role FROM public.users users_1) SELECT u2.role FROM (users JOIN public.users u2 ON (true));`, want: []string{"users.role"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			def, err := postgres.ParseViewSQL([]byte(tt.sql), "public")
+			if err != nil {
+				t.Fatalf("ParseViewSQL() error: %v", err)
+			}
+			var got []string
+			for _, src := range parser.ViewColumnSources(def, p.Schema()) {
+				if src.Table == nil {
+					got = append(got, "")
+					continue
+				}
+				got = append(got, src.Table.Name+"."+src.Column)
+			}
+			if diff := cmp.Diff(tt.want, got); diff != "" {
+				t.Errorf("ViewColumnSources() mismatch (-want +got):\n%s", diff)
+			}
+		})
+	}
+}
+
+// TestViewFromTables_CTEReadingTableOfItsName checks that a common table
+// expression's FROM clause names the table the expression is named after,
+// as an expression cannot read itself, while the query that reads the
+// expression names no table.
+func TestViewFromTables_CTEReadingTableOfItsName(t *testing.T) {
+	p := postgres.New("public")
+	if err := p.Parse("schema.sql", []byte(`CREATE TABLE users (id int PRIMARY KEY, name text);`)); err != nil {
+		t.Fatalf("Parse() error: %v", err)
+	}
+	def, err := postgres.ParseViewSQL([]byte(`CREATE VIEW v AS WITH users AS (SELECT name AS role FROM users) SELECT role FROM users;`), "public")
+	if err != nil {
+		t.Fatalf("ParseViewSQL() error: %v", err)
+	}
+	got := make(map[string]string)
+	for key, table := range parser.ViewFromTables(def, p.Schema()) {
+		got[key] = ""
+		if table != nil {
+			got[key] = table.Name
+		}
+	}
+	if diff := cmp.Diff(map[string]string{"users": "", "with:users/users": "users"}, got); diff != "" {
+		t.Errorf("ViewFromTables() mismatch (-want +got):\n%s", diff)
+	}
+}

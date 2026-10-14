@@ -2180,6 +2180,71 @@ func TestParseViewSQL_OuterAliases(t *testing.T) {
 	}
 }
 
+// TestViewColumnSources_Subqueries checks that a view column read through
+// a derived table or common table expression is followed to its table, and
+// that a subquery named after the table it reads ends the trace when the
+// table lacks the column.
+func TestViewColumnSources_Subqueries(t *testing.T) {
+	p := sqlite.New()
+	if err := p.Parse("schema.sql", []byte(`CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT, role TEXT);
+		CREATE TABLE posts (id INTEGER PRIMARY KEY, title TEXT);`)); err != nil {
+		t.Fatalf("Parse() error: %v", err)
+	}
+	tests := []struct {
+		name string
+		sql  string
+		want []string
+	}{
+		{name: "aliased derived table", sql: `CREATE VIEW v AS SELECT r FROM (SELECT role AS r FROM users) d;`, want: []string{"users.role"}},
+		{name: "qualified derived table column", sql: `CREATE VIEW v AS SELECT d.role FROM (SELECT role FROM users) d;`, want: []string{"users.role"}},
+		{name: "CTE reading a CTE", sql: `CREATE VIEW v AS WITH a AS (SELECT role FROM users), c AS (SELECT role AS r FROM a) SELECT r FROM c;`, want: []string{"users.role"}},
+		{name: "CTE column list", sql: `CREATE VIEW v AS WITH c (r) AS (SELECT role FROM users) SELECT r FROM c;`, want: []string{"users.role"}},
+		{name: "derived table selecting *", sql: `CREATE VIEW v AS SELECT role FROM (SELECT * FROM users) d;`, want: []string{"users.role"}},
+		{
+			name: "unqualified column reads only the FROM clause's CTE",
+			sql:  `CREATE VIEW v AS WITH a AS (SELECT id, title AS label FROM posts), b AS (SELECT users.id AS id, users.name AS label FROM users JOIN a ON a.id = users.id) SELECT label FROM b;`,
+			want: []string{"users.name"},
+		},
+		{name: "derived table named after its table", sql: `CREATE VIEW v AS SELECT role FROM (SELECT role FROM users WHERE id > 0) users;`, want: []string{"users.role"}},
+		{name: "derived table named after its table lacking the column", sql: `CREATE VIEW v AS SELECT email FROM (SELECT email FROM users WHERE id > 0) users;`, want: []string{""}},
+		{name: "CTE named after its table lacking the column", sql: `CREATE VIEW v AS WITH users AS (SELECT email FROM users) SELECT email FROM users;`, want: []string{""}},
+		{
+			name: "sibling CTEs with nested CTEs of one name",
+			sql:  `CREATE VIEW v AS WITH y AS (WITH x AS (SELECT role FROM users) SELECT role FROM x), z AS (WITH x AS (SELECT role FROM y) SELECT role FROM x) SELECT role FROM z;`,
+			want: []string{"users.role"},
+		},
+		{name: "derived table reading an unknown table", sql: `CREATE VIEW v AS SELECT role FROM (SELECT role FROM people) d;`, want: []string{""}},
+		// The subquery's column has another name than the table's column of
+		// its name, so only the subquery gives the right one.
+		{name: "derived table named after its table renaming a column", sql: `CREATE VIEW v AS SELECT users.role FROM (SELECT name AS role FROM users) users;`, want: []string{"users.name"}},
+		{name: "derived table named after another table", sql: `CREATE VIEW v AS SELECT posts.title FROM (SELECT name AS title FROM users) posts;`, want: []string{"users.name"}},
+		{name: "compound derived table named after its table", sql: `CREATE VIEW v AS SELECT users.role FROM (SELECT name AS role FROM users UNION ALL SELECT name FROM users) users;`, want: []string{""}},
+		{name: "CTE named after its table renaming a column", sql: `CREATE VIEW v AS WITH users AS (SELECT name AS role FROM main.users) SELECT role FROM users;`, want: []string{"users.name"}},
+		{name: "derived table reading an enclosing CTE", sql: `CREATE VIEW v AS WITH users AS (SELECT name AS role FROM main.users) SELECT role FROM (SELECT users.role FROM users) d;`, want: []string{"users.name"}},
+		{name: "inner CTE shadowing an outer one", sql: `CREATE VIEW v AS WITH users AS (SELECT role FROM main.users), d AS (WITH users AS (SELECT name AS role FROM main.users) SELECT role FROM users) SELECT role FROM d;`, want: []string{"users.name"}},
+		{name: "schema-qualified table beside a CTE of its name", sql: `CREATE VIEW v AS WITH users AS (SELECT name AS role FROM main.users) SELECT u2.role FROM users JOIN main.users u2;`, want: []string{"users.role"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			def, err := sqlite.ParseViewSQL([]byte(tt.sql))
+			if err != nil {
+				t.Fatalf("ParseViewSQL() error: %v", err)
+			}
+			var got []string
+			for _, src := range parser.ViewColumnSources(def, p.Schema()) {
+				if src.Table == nil {
+					got = append(got, "")
+					continue
+				}
+				got = append(got, src.Table.Name+"."+src.Column)
+			}
+			if diff := cmp.Diff(tt.want, got); diff != "" {
+				t.Errorf("ViewColumnSources() mismatch (-want +got):\n%s", diff)
+			}
+		})
+	}
+}
+
 func TestParseViewSQL_CompoundSelectRejected(t *testing.T) {
 	for _, sql := range []string{
 		"CREATE VIEW v AS SELECT id FROM a UNION SELECT id FROM b;",

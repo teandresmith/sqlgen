@@ -22,109 +22,6 @@
 ## Open
 
 <!-- fixes:open:begin -->
-### FIX-347
-
-- **Status:** Open
-- **Severity:** tracked
-- **Origin:** phase 30, parser/introspect
-- **Surfaced by:** /fix-loop FIX-309 verify reviewer (2026-10-13)
-- **Vetted:** corrected at `481842f0` (2026-10-14)
-
-**Issue.** Under `source: both`, a file migration that renames or drops a
-column, or renames or drops a table, that a database view reads through a
-derived table or CTE passes `Merge` silently. Measured: MySQL `q_vd AS
-SELECT role FROM (SELECT role FROM q_users) d` and the CTE twin `q_vc`,
-RENAME COLUMN role TO kind or DROP COLUMN role → `Merge err=<nil>`, the
-views keep `q_vd__role_enum` / `q_vc__role_enum`, and MySQL then gives
-"Error 1356 (HY000): View 'sqlgen_test.q_vd' references invalid table(s) or
-column(s)…". PostgreSQL DROP COLUMN role → `Merge err=<nil>` while PG says
-"cannot drop column role of table users because other objects depend on it
-(SQLSTATE 2BP01)" (a PG RENAME is followed, correctly: PG rewrites the view
-to `SELECT users.kind AS role`). SQLite DROP → `Merge err=<nil>` while
-SQLite says "error in view vd after drop column: no such column: role (1)";
-SQLite also refuses a RENAME when the subquery or CTE selects the column
-with no AS and no column list ("error in view v after rename: no such
-column: role (1)", also for `SELECT d.role`, `SELECT role AS x FROM (SELECT
-role …) d` and `(SELECT * FROM users) d`), and follows it when the subquery
-aliases the column or a CTE has a column list. Table RENAME/DROP under a
-subquery is silent too (MySQL 1356; PG "cannot drop table users because
-other objects depend on it"; SQLite "no such table: main.users"). PRD §6.1
-states that dropping a column a view reads is an error.
-
-**Root cause.** The FIX-309/FIX-333 checks (`readViewSources` and
-`refreshViewColumns`, `parser/introspect/views.go:54`, `:122`) trace a view
-column only to a base table named in its FROM clause
-(`parser.ViewFromTables` / `viewSources.sourceTable`, `parser/view.go:346`,
-`:402`). The view SQL readers record nothing about a derived table or CTE,
-so a column or table read through one has no source and is never checked,
-and the rename helpers never rewrite inside one.
-
-**Suggested fix.**
-- `parser.ViewSQL` gains `Subqueries map[string]ViewSQL`; each dialect's
-  `view_sql.go` records derived tables (by alias) and CTEs (by name),
-  recursively, applying derived and CTE column lists; a `*` is stored as
-  `SourceColumn "*"` (matters for SQLite only; PG and MySQL expand `*` in
-  their stored definitions). Compound queries are left out.
-- `parser/view.go`: new `ViewColumnSources` / `ViewColumnSource{Table,
-  Column}` follow a column through `Subqueries`, including a CTE that reads
-  an earlier CTE; `RenameViewColumnReferences` and
-  `RenameViewTableReferences` recurse into subqueries. `BuildView` typing is
-  unchanged (a column read through a subquery still takes the catalog type).
-- `parser/introspect/views.go`: `readViewSources` and `refreshViewColumns`
-  use `ViewColumnSources` and check subqueries' FROM tables too
-  (`viewFromTables`); the column error names the base column ("view vd:
-  column r reads column role of table users, …").
-- PRD §6.1 (`docs/PRD.md:1651`): a column read through a derived table or
-  CTE is followed to its table and treated the same way; a SQLite rename of a
-  column the subquery selects with no AS or column list is an error.
-- Tests: `TestMerge_ViewColumnRenameAndDrop` grows from 19 to 39 cases (PG 6,
-  SQLite 8, MySQL 6 new: rename, drop, rename table, drop table, unread-column
-  drop, CTE chain, SQLite `*`).
-- Corrected from the original: option 1 (trace through the subquery) is
-  chosen; widened, by the scope cap (same root cause, same fix site), to the
-  SQLite unaliased-rename refusal, table rename/drop through subqueries,
-  SQLite `SELECT *` subqueries, CTE-to-CTE chains and derived/CTE column
-  lists. The nested table-rename recursion is required: without it PG and
-  SQLite table renames under a subquery view fail `Merge` with a false
-  error.
-- Auto-accepted the recommended option on 2026-10-14 (`/fix` auto-accept
-  rule): trace through the subquery, or treat untraceable sources
-  conservatively? → trace through the subquery, because it was prototyped
-  with gates green, neither option churns goldens, the new exported
-  identifiers (`ViewSQL.Subqueries`, `ViewColumnSources`,
-  `ViewColumnSource`) are in the parser module, not runtime or generated
-  code (as with FIX-309/333), and it reverses no ruling or PRD text, whereas
-  the conservative option over-rejects what the databases accept and PRD
-  §6.1 allows (PG RENAME of a read column, SQLite aliased renames, DROP or
-  RENAME of an unread column such as `email`, all measured).
-- Prototype results, run at `481842f0` on 2026-10-14: probe
-  `parser/introspect/zz_probe_fix347_test.go` (postgres:16-alpine,
-  mysql:8.0, modernc SQLite) reproduced every Issue line above; DROP or
-  RENAME of `email`, which no view reads, succeeds on all three databases.
-  Gates: parser gofumpt clean; `golangci-lint run ./...` → 0 issues; `go
-  test -race -count=1 ./...` (containers) → ok; `cd cmd/sqlgen && go test
-  -race -count=1 -run TestE2E .` → ok (169s); `make refs-check` → ok.
-  Fail-first: subquery following disabled → 11 cases fail, e.g.
-  postgres/drop_under_a_derived_table "Merge() error = <nil>, want one
-  containing \"merge both mode: view view_def.vd: column r reads column role
-  of table view_def.users, …\""; column-rename recursion removed →
-  postgres/rename_under_a_derived_table_and_a_CTE fails with a false error;
-  table-rename recursion removed → postgres/rename_table_under_… "view
-  view_def.vc reads table view_def.users, …"; `viewFromTables` recursion
-  removed → drop-table cases report the column message instead of the table
-  one; enclosing-scope CTE lookup removed → postgres/drop_under_a_CTE
-  `<nil>`; star pass-through removed → sqlite/rename_under_a_derived_table_
-  selecting_* `<nil>`; each dialect's parser without `Subqueries` → MySQL 5,
-  PG 3, SQLite 6 cases fail; existing suite (19 subtests) without the fix
-  passes. Golden churn: none. Patch: `.claude/prototypes/FIX-347.patch`
-  (7 files, +629/-89).
-
-**References.**
-- PRD §6.1 (view columns under `both`).
-- FIX-309 (`accaf642`; its entry records keeping the PRD sentence and
-  reporting this gap), FIX-333 (`f4bc470c`), FIX-308 (`8edbaeac`).
-
-**Resolution notes.** _Filled in by /fix resolve._
 
 ### FIX-348
 
@@ -350,6 +247,112 @@ them against.
 ## Resolved
 
 <!-- fixes:resolved:begin -->
+
+### FIX-347
+
+- **Status:** Resolved
+- **Severity:** tracked
+- **Origin:** phase 30, parser/introspect
+- **Surfaced by:** /fix-loop FIX-309 verify reviewer (2026-10-13)
+- **Vetted:** corrected at `481842f0` (2026-10-14)
+
+**Issue.** Under `source: both`, a file migration that renames or drops a
+column, or renames or drops a table, that a database view reads through a
+derived table or CTE passes `Merge` silently. Measured: MySQL `q_vd AS
+SELECT role FROM (SELECT role FROM q_users) d` and the CTE twin `q_vc`,
+RENAME COLUMN role TO kind or DROP COLUMN role → `Merge err=<nil>`, the
+views keep `q_vd__role_enum` / `q_vc__role_enum`, and MySQL then gives
+"Error 1356 (HY000): View 'sqlgen_test.q_vd' references invalid table(s) or
+column(s)…". PostgreSQL DROP COLUMN role → `Merge err=<nil>` while PG says
+"cannot drop column role of table users because other objects depend on it
+(SQLSTATE 2BP01)" (a PG RENAME is followed, correctly: PG rewrites the view
+to `SELECT users.kind AS role`). SQLite DROP → `Merge err=<nil>` while
+SQLite says "error in view vd after drop column: no such column: role (1)";
+SQLite also refuses a RENAME when the subquery or CTE selects the column
+with no AS and no column list ("error in view v after rename: no such
+column: role (1)", also for `SELECT d.role`, `SELECT role AS x FROM (SELECT
+role …) d` and `(SELECT * FROM users) d`), and follows it when the subquery
+aliases the column or a CTE has a column list. Table RENAME/DROP under a
+subquery is silent too (MySQL 1356; PG "cannot drop table users because
+other objects depend on it"; SQLite "no such table: main.users"). PRD §6.1
+states that dropping a column a view reads is an error.
+
+**Root cause.** The FIX-309/FIX-333 checks (`readViewSources` and
+`refreshViewColumns`, `parser/introspect/views.go:54`, `:122` at
+`069c8b62`) trace a view
+column only to a base table named in its FROM clause
+(`viewSources.sourceTable` / `parser.ViewFromTables`, `parser/view.go:346`,
+`:402`). The view SQL readers record nothing about a derived table or CTE,
+so a column or table read through one has no source and is never checked,
+and the rename helpers never rewrite inside one.
+
+**Suggested fix.**
+- `parser.ViewSQL` gains `Subqueries map[string]ViewSQL`; each dialect's
+  `view_sql.go` records derived tables (by alias) and CTEs (by name),
+  recursively, applying derived and CTE column lists; a `*` is stored as
+  `SourceColumn "*"` (matters for SQLite only; PG and MySQL expand `*` in
+  their stored definitions). Compound queries are left out.
+- `parser/view.go`: new `ViewColumnSources` / `ViewColumnSource{Table,
+  Column}` follow a column through `Subqueries`, including a CTE that reads
+  an earlier CTE; `RenameViewColumnReferences` and
+  `RenameViewTableReferences` recurse into subqueries. `BuildView` typing is
+  unchanged (a column read through a subquery still takes the catalog type).
+- `parser/introspect/views.go`: `readViewSources` and `refreshViewColumns`
+  use `ViewColumnSources` and check subqueries' FROM tables too
+  (`viewFromTables`); the column error names the base column ("view vd:
+  column r reads column role of table users, …").
+- PRD §6.1 (`docs/PRD.md:1651`): a column read through a derived table or
+  CTE is followed to its table and treated the same way; a SQLite rename of a
+  column the subquery selects with no AS or column list is an error.
+- Tests: `TestMerge_ViewColumnRenameAndDrop` grows from 19 to 39 cases (PG 6,
+  SQLite 8, MySQL 6 new: rename, drop, rename table, drop table, unread-column
+  drop, CTE chain, SQLite `*`).
+- Corrected from the original: option 1 (trace through the subquery) is
+  chosen; widened, by the scope cap (same root cause, same fix site), to the
+  SQLite unaliased-rename refusal, table rename/drop through subqueries,
+  SQLite `SELECT *` subqueries, CTE-to-CTE chains and derived/CTE column
+  lists. The nested table-rename recursion is required: without it PG and
+  SQLite table renames under a subquery view fail `Merge` with a false
+  error.
+- Auto-accepted the recommended option on 2026-10-14 (`/fix` auto-accept
+  rule): trace through the subquery, or treat untraceable sources
+  conservatively? → trace through the subquery, because it was prototyped
+  with gates green, neither option churns goldens, the new exported
+  identifiers (`ViewSQL.Subqueries`, `ViewColumnSources`,
+  `ViewColumnSource`) are in the parser module, not runtime or generated
+  code (as with FIX-309/333), and it reverses no ruling or PRD text, whereas
+  the conservative option over-rejects what the databases accept and PRD
+  §6.1 allows (PG RENAME of a read column, SQLite aliased renames, DROP or
+  RENAME of an unread column such as `email`, all measured).
+- Prototype results, run at `481842f0` on 2026-10-14: probe
+  `parser/introspect/zz_probe_fix347_test.go` (postgres:16-alpine,
+  mysql:8.0, modernc SQLite) reproduced every Issue line above; DROP or
+  RENAME of `email`, which no view reads, succeeds on all three databases.
+  Gates: parser gofumpt clean; `golangci-lint run ./...` → 0 issues; `go
+  test -race -count=1 ./...` (containers) → ok; `cd cmd/sqlgen && go test
+  -race -count=1 -run TestE2E .` → ok (169s); `make refs-check` → ok.
+  Fail-first: subquery following disabled → 11 cases fail, e.g.
+  postgres/drop_under_a_derived_table "Merge() error = <nil>, want one
+  containing \"merge both mode: view view_def.vd: column r reads column role
+  of table view_def.users, …\""; column-rename recursion removed →
+  postgres/rename_under_a_derived_table_and_a_CTE fails with a false error;
+  table-rename recursion removed → postgres/rename_table_under_… "view
+  view_def.vc reads table view_def.users, …"; `viewFromTables` recursion
+  removed → drop-table cases report the column message instead of the table
+  one; enclosing-scope CTE lookup removed → postgres/drop_under_a_CTE
+  `<nil>`; star pass-through removed → sqlite/rename_under_a_derived_table_
+  selecting_* `<nil>`; each dialect's parser without `Subqueries` → MySQL 5,
+  PG 3, SQLite 6 cases fail; existing suite (19 subtests) without the fix
+  passes. Golden churn: none. Patch: `.claude/prototypes/FIX-347.patch`
+  (7 files, +629/-89).
+
+**References.**
+- PRD §6.1 (view columns under `both`).
+- FIX-309 (`accaf642`; its entry records keeping the PRD sentence and
+  reporting this gap), FIX-333 (`f4bc470c`), FIX-308 (`8edbaeac`).
+
+**Resolution notes.** Landed the vetted prototype (it applied cleanly with `git apply --3way`; `docs/PRD.md` had moved since the vet only in §5.2, outside the patch's hunk). `parser.ViewSQL` gains `Subqueries` (derived tables by alias) and `CTEs` (by name), read recursively with their column lists (`*` kept as `SourceColumn "*"`), recorded by each dialect's `view_sql.go`; `parser.ViewColumnSources` follows a view column through them to its base table column, and `RenameViewColumnReferences` / `RenameViewTableReferences` recurse into them; `parser/introspect/views.go` checks the traced column and every subquery's FROM tables (`parser.ViewFromTables`), naming the base column in the error. PRD §6.1 states the subquery rule and the SQLite unaliased-rename error. `TestMerge_ViewColumnRenameAndDrop` grows from 19 to 39 cases; with the source changes reverted 14 of them fail (PG 3, SQLite 6, MySQL 5). Gates: `make check` ok; parser `go test -race ./...` with containers ok; `cd cmd/sqlgen && go test -race -run TestE2E .` ok; `make check-examples` ok. Golden churn: none, as recorded at the vet. Changed from the prototype after the /verify reviewer measured two defects in it: (1) `subquery()` looked a FROM key's table name up among enclosing scopes' derived tables as well as CTEs, so `(SELECT role FROM users) users` or `WITH users AS (SELECT … FROM users)` resolved to itself and overflowed the stack whenever the inner column was not in the schema (a dropped column, or a table filtered out or a view read inside the subquery), on every dialect; (2) the candidate keys for an unqualified column took every CTE name, not only the FROM keys, so SQLite `WITH a AS (… title AS label FROM posts), b AS (… users.name AS label FROM users JOIN a …) SELECT label FROM b` traced `label` to `posts.title` and missed a `DROP COLUMN users.name`. Fix: `ViewSQL.CTEs` now holds the common table expressions apart from `Subqueries` (derived tables only); only CTEs are looked up by name, and a CTE already being traced is skipped (`tracing`, keyed by the CTE's lexical path of FROM keys and `with:<name>` steps, `traceScope.path`), as a CTE cannot read itself; a second /verify pass measured that keying it by scope depth and name instead made sibling CTEs' same-named inner CTEs collide (`WITH y AS (WITH x AS (… FROM users) …), z AS (WITH x AS (… FROM y) …) SELECT role FROM z` traced to nothing), covered by a new subtest; the FROM-table walk and the rename recursion walk both maps. New Docker-free unit tests `TestViewColumnSources_Subqueries` (SQLite, 11 cases) and `TestViewColumnSources_SubqueryNamedAfterItsTable` (PostgreSQL and MySQL stored forms, 3 cases each); against the prototype code all three packages die with "fatal error: stack overflow" and the SQLite unqualified-CTE case gets `posts.title`. The user ruled on 2026-10-14: fix the derived-alias case and its CTE twin in FIX-347 (surfaced by an extra post-verify review). (1) Derived-alias case: `viewSources.table` read a FROM key absent from `TableAliases` as a table name, so a derived table aliased like a table, read qualified, matched the table before `traceViewColumn` looked at `Subqueries`: MySQL `SELECT role FROM (SELECT email AS role FROM vr_users) vr_users` (stored `` select `vr_users`.`role` … `vr_users` ``) + DROP or RENAME email, and SQLite `SELECT users.role FROM (SELECT email AS role FROM users) users` + DROP email or `(SELECT role FROM users WHERE id > 0) users` + RENAME role, passed `Merge` while MySQL errors 1356 and SQLite "no such column"; `ViewColumnSources` gave `users.role`, not the subquery's column, on all three dialects. (2) CTE twin (the backlog line, now deleted): `WITH users AS (SELECT email AS role FROM users) SELECT role FROM users` resolved `users` to the table in `BuildView` and in the tracing, rename and drop checks: PG and MySQL DROP email passed `Merge` (PG refuses it with 2BP01, MySQL 1356), SQLite (written `FROM main.users`; unqualified, SQLite reads the CTE itself, "circular reference") likewise, and a PG table rename typed the view column `role_t` NOT NULL instead of the catalog's `text`. Fix: a FROM key that names a derived table of its query, or a common table expression in scope, names no table (`viewSources.queries`, built by `scopeSources` from the scope chain); `cteScopes` finds the innermost CTE of the name, skipping one the key is inside (lexically, by `traceScope.path`) or that `tracing` holds (the cycle guard is unchanged), and never for a key whose table is qualified, which the parsers now record in `ViewSQL.QualifiedAliases` (PG (read with an empty search_path) and MySQL store every base table qualified: `JOIN view_def.users u2`); `ViewFromTables` walks every scope itself (the `viewFromTables` helper in `parser/introspect/views.go` is gone) and the rename helpers walk the same scopes (`viewScopes`); `ViewSourceTables`, now unused, is removed. Each dialect's `readSubquery` records a query it cannot read (a compound one) as an empty `ViewSQL`, so its alias still names no table (SQLite `(… UNION ALL …) users` + DROP role: SQLite accepts it, `Merge` used to fail falsely). Tests: `TestMerge_ViewColumnRenameAndDrop` grows from 39 to 49 cases (PG 3, SQLite 4, MySQL 3), each measured against postgres:16-alpine, mysql:8.0 and modernc SQLite; `TestViewColumnSources_SubqueryNamedAfterItsTable` (PG 7, MySQL 6 new cases) and `TestViewColumnSources_Subqueries` (SQLite 7 new cases) add derived tables and CTEs whose column has another name than the table's, a derived table named after another table, a compound derived table, a derived table reading an enclosing CTE, an inner CTE shadowing an outer one and a qualified table beside a CTE of its name; `TestViewFromTables_CTEReadingTableOfItsName` (PG). Fail-first: against the code before this change all 10 new Merge cases fail, and with only the derived/CTE key hiding removed 9 Merge and 17 unit cases fail (e.g. mysql/drop_under_a_derived_table_named_after_its_table "Merge() error = <nil>, want one containing \"merge both mode: view vr_vq: column role reads column email of table vr_users, …\"", SQLite "derived table named after another table" `posts.title` for `users.name`); without the `QualifiedAliases` check postgres/drop_under_a_table_beside_a_CTE_of_its_name gets `<nil>` and the qualified and shadowing unit cases fail; searching the outermost CTE first fails the shadowing cases; without the lexical self-skip the `ViewFromTables` test gets `"with:users/users": ""`.
+
 ### FIX-346
 
 - **Status:** Resolved
