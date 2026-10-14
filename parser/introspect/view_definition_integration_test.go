@@ -124,7 +124,7 @@ func TestIntrospectViews_ColumnsFromDefinition(t *testing.T) {
 			if err != nil {
 				t.Fatalf("ParseViewSQL() error: %v", err)
 			}
-			want, err := parser.BuildView(parsed, traced, &parser.ViewAnnotations{}, files)
+			want, err := parser.BuildView(parsed, traced, &parser.ViewAnnotations{}, files, parser.SearchPath{})
 			if err != nil {
 				t.Fatalf("BuildView() error: %v", err)
 			}

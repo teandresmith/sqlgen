@@ -190,22 +190,29 @@ func (p *Parser) renameType(stmt *pg_query.RenameStmt) error {
 	dt := p.findDomainByName(schema, name)
 	e := p.findEnumByName(schema, name)
 	ct := p.findCompositeTypeByName(schema, name)
+	var typName *string
 	switch {
 	case dt != nil:
-		dt.Name = newName
+		typName = &dt.Name
 	case stmt.RenameType == pg_query.ObjectType_OBJECT_DOMAIN:
 		return fmt.Errorf("alter domain %s: unknown domain", qualified)
 	case e != nil:
-		e.Name = newName
+		typName = &e.Name
 	case ct != nil:
 		if p.namespace(schema).relations[newName] {
 			return fmt.Errorf("alter type %s: relation %s.%s already exists", qualified, schema, newName)
 		}
-		ct.Name = newName
+		typName = &ct.Name
 	default:
 		return fmt.Errorf("alter type %s: unknown type", qualified)
 	}
+	// A type on the search_path the new name shadows is qualified before the
+	// renamed type's references take the name, and one the old name shadowed
+	// is bare again after.
+	p.shadowTypeReferences(schema, newName, true)
+	*typName = newName
 	p.renameTypeReferences(schema, name, newName)
+	p.shadowTypeReferences(schema, name, false)
 	return nil
 }
 
@@ -226,28 +233,7 @@ func (p *Parser) renameTypeReferences(schema, oldName, newName string) {
 		}
 		return out
 	}
-	for i := range p.schema.Tables {
-		t := &p.schema.Tables[i]
-		for j := range t.Columns {
-			t.Columns[j].Type = retype(t.Columns[j].Type, t.Schema)
-		}
-	}
-	for i := range p.schema.Views {
-		v := &p.schema.Views[i]
-		for j := range v.Columns {
-			v.Columns[j].Type = retype(v.Columns[j].Type, v.Schema)
-		}
-	}
-	for i := range p.schema.CompositeTypes {
-		ct := &p.schema.CompositeTypes[i]
-		for j := range ct.Attributes {
-			ct.Attributes[j].Type = retype(ct.Attributes[j].Type, ct.Schema)
-		}
-	}
-	for i := range p.schema.DomainTypes {
-		dt := &p.schema.DomainTypes[i]
-		dt.BaseType = retype(dt.BaseType, dt.Schema)
-	}
+	p.retypeAll(retype)
 }
 
 // renameAttribute applies ALTER TYPE … RENAME ATTRIBUTE.

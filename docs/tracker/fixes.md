@@ -23,111 +23,6 @@
 
 <!-- fixes:open:begin -->
 
-### FIX-348
-
-- **Status:** Open
-- **Severity:** tracked
-- **Origin:** phase 30, parser/postgres + parser/introspect
-- **Surfaced by:** /fix-loop FIX-312 verify reviewer (2026-10-13)
-- **Vetted:** corrected at `481842f0` (2026-10-14; ruled the same day, the prototype is the chosen option)
-
-**Issue.** A column whose type is a default-schema type (`public.r`, a
-`citext` extension type) is written bare in a schema that declares an enum,
-domain or composite type of the same name, so every consumer reads it as the
-owner schema's type. Measured on postgres:17.11 (`CREATE TABLE r(x int);
-CREATE TYPE app.r AS ENUM('a'); CREATE TABLE app.t(id int, rr public.r)`):
-- `DROP TYPE app.r` → parser "parsing t.sql: drop type: cannot drop type
-  app.r: column app.t.rr uses it"; PG17 accepts the drop. The same false
-  refusal hits a bare `rr r` column, a `citext` column beside an
-  `app.citext` domain (DROP DOMAIN), a domain over `public.r`, a composite
-  attribute of type `public.r`, a type renamed to `r`, and a table moved
-  into `app`.
-- Go types: `sqlgen generate` (files and database) gives `Rr *AppR` and
-  `Ci *int32`, and at runtime `client.Ts().Get(ctx, 1)` → "scan t: pgx scan:
-  can't scan into dest[1] (col: ci): strconv.ParseInt: parsing \"Hello\":
-  invalid syntax".
-- `ALTER TYPE app.r RENAME TO y` rewrites a `public.r` column in `app` to
-  `y` (`renameTypeReferences`).
-The introspector writes the same bare names (`rr` = "r", `ra` = "r[]", `ci`
-= "citext"), so files and database agree and both are wrong. FIX-312
-(`30df7e1c`) introduced the collision for a DDL-qualified `public.r`; it
-already existed for an unqualified DDL name and for every column read from
-the database (measured at `a07d4009`).
-
-**Root cause.** `typeName` (`parser/postgres/postgres.go:1750`) writes a
-default-schema type the DDL does not declare without its `input.schema.`
-qualifier, and `columnType` (`parser/introspect/postgres.go:470-482`) keeps
-format_type's search_path-relative name. A bare name is then resolved in the
-owner's schema (`parser.ResolveTypeRef`, `parser/schema.go:540`, and
-`gotype` `ForSchema`), so it collides with a user type of the same name in
-the column's own schema. The name is computed when the column is read, so a
-shadowing type declared later (CREATE TYPE after the column, ALTER TYPE …
-RENAME TO, ALTER TABLE … SET SCHEMA) collides too.
-
-**Suggested fix.**
-- The user ruled on 2026-10-14: Q1 → (A) qualify a default-schema type
-  with `input.schema` in both sources whenever the owner schema declares a
-  same-named enum, domain or composite type, whatever the statement order,
-  and add the exception sentence to PRD §5.2 (this narrows the FIX-312
-  ruling: `overrides.types.public.citext`, not `citext`, reaches such a
-  column); Q2 → (a) the built-in collision (an `app.text` enum beside a
-  `text` column) stays a stated gap in PRD §5.2. Options considered: (B)
-  a loud error on a shadowed name, (C) document only, (D) revert FIX-312's
-  strip; for Q2, (b) a built-in type-name list.
-- Prototype (option A, `.claude/prototypes/FIX-348.patch`): `typeName`
-  passes a default-schema non-user type through a new `shadowTypeName`
-  (adds `<input.schema>.` when the owner schema declares a same-named enum,
-  domain or composite; qualified and unqualified DDL, arrays, typmods); new
-  `shadowTypeReferences` re-qualifies or un-qualifies references after
-  CREATE TYPE (enum, composite), CREATE DOMAIN and per object in
-  `dropTypes`; `retargetTypeName` re-spells non-user types on SET SCHEMA;
-  `renameType` shadows the new name before and un-shadows the old name
-  after; new `retypeAll` holds the loops from `renameTypeReferences`. The
-  introspector's `userTypeJoin` adds the schema of a non-user type (or its
-  element type) when not pg_catalog and the owner schema has a same-named
-  type (`tt.own_ns` at 4 sites plus a pg_class join for composite
-  attributes), and `columnType` takes a `shadowSchema` argument. Tests: 9
-  new `TestDropTypeReferences` cases (7 accepted, 2 refused, matching PG17),
-  `TestTypeNamesShadowedDefaultSchema` (5 cases), 4 `TestColumnType` rows,
-  `TestPostgresIntrospect_ShadowedDefaultSchemaTypes` (parity with `citext`
-  and a `pgi_shadow.citext` domain).
-- Corrected from the original: it also qualifies unqualified DDL names; it
-  keeps the qualifier correct as types are created, renamed, dropped or
-  moved; the introspector qualifies with the type's real schema; pg_catalog
-  types stay unqualified; the gotype mis-resolution and rename mis-retarget
-  are absorbed (same root cause, same fix site).
-- Prototype results, run at `481842f0` on 2026-10-14: with the prototype,
-  introspected and parsed types are identical (`rr`, `rb` = "public.r";
-  `ra` = "public.r[]"; `ci` = "public.citext"; `mine` = "r"; `dr` and the
-  attribute = "public.r"); generation (files and database) gives `Rr
-  *string`, `Ci *string`, `Mine *AppR`, `C2 *int32`; `Get(1)` →
-  `err=<nil>`; the only parity gap left is the Q2 built-in case. Gates:
-  parser gofumpt clean, `golangci-lint run ./...` 0 issues, `go test -race
-  -count=1 ./...` (PG16 containers) ok; `make update-golden` and `make
-  update-golden-e2e` no changes; cmd/sqlgen `go test ./cli/... ./gotype/...
-  ./config/...` ok; `make refs-check` ok. Fail-first: `typeName` shadowing
-  reverted → TestDropTypeReferences "Parse() error = \"parsing test.sql:
-  drop type: cannot drop type app.r: column app.t.rr uses it\", want \"\""
-  (and the unqualified, domain/composite, citext cases); create hooks
-  removed → "a shadowed type used before the shadowing type is declared"
-  fails the same way; `renameType` new-name hook removed → "a type renamed
-  to shadow…" fails; old-name hook removed → "renamed away" `"r"` →
-  `"public.r"`; `dropTypes` hook removed → "dropped" fails; non-user
-  `retargetTypeName` path reverted → "a table moved into a schema…" fails;
-  `columnType` qualification removed → `columnType("r", "", "", "public",
-  "app") = "r", want "public.r"` and the integration test reports
-  "introspected schema differs from the file parser's"; existing suite
-  without the fix passes. Golden churn: none. Patch 8 files, +320/-68.
-
-**References.**
-- PRD §5.2 (type names), §5.6 (DROP TYPE / DROP DOMAIN checks), §7.1
-  (overrides.types keys).
-- FIX-312 (`30df7e1c`, the input.schema strip ruling), FIX-305
-  (`c695fd6f`), FIX-338 (`afdb75a4`, `typeUses` reads types with
-  `ResolveTypeRef`).
-
-**Resolution notes.** _Filled in by /fix resolve._
-
 ### FIX-349
 
 - **Status:** Open
@@ -247,6 +142,113 @@ them against.
 ## Resolved
 
 <!-- fixes:resolved:begin -->
+
+### FIX-348
+
+- **Status:** Resolved
+- **Severity:** tracked
+- **Origin:** phase 30, parser/postgres + parser/introspect
+- **Surfaced by:** /fix-loop FIX-312 verify reviewer (2026-10-13)
+- **Vetted:** corrected at `481842f0` (2026-10-14; ruled the same day, the prototype is the chosen option)
+
+**Issue.** A column whose type is a default-schema type (`public.r`, a
+`citext` extension type) is written bare in a schema that declares an enum,
+domain or composite type of the same name, so every consumer reads it as the
+owner schema's type. Measured on postgres:17.11 (`CREATE TABLE r(x int);
+CREATE TYPE app.r AS ENUM('a'); CREATE TABLE app.t(id int, rr public.r)`):
+- `DROP TYPE app.r` → parser "parsing t.sql: drop type: cannot drop type
+  app.r: column app.t.rr uses it"; PG17 accepts the drop. The same false
+  refusal hits a bare `rr r` column, a `citext` column beside an
+  `app.citext` domain (DROP DOMAIN), a domain over `public.r`, a composite
+  attribute of type `public.r`, a type renamed to `r`, and a table moved
+  into `app`.
+- Go types: `sqlgen generate` (files and database) gives `Rr *AppR` and
+  `Ci *int32`, and at runtime `client.Ts().Get(ctx, 1)` → "scan t: pgx scan:
+  can't scan into dest[1] (col: ci): strconv.ParseInt: parsing \"Hello\":
+  invalid syntax".
+- `ALTER TYPE app.r RENAME TO y` rewrites a `public.r` column in `app` to
+  `y` (`renameTypeReferences`).
+The introspector writes the same bare names (`rr` = "r", `ra` = "r[]", `ci`
+= "citext"), so files and database agree and both are wrong. FIX-312
+(`30df7e1c`) introduced the collision for a DDL-qualified `public.r`; it
+already existed for an unqualified DDL name and for every column read from
+the database (measured at `a07d4009`).
+
+**Root cause.** `typeName` (`parser/postgres/postgres.go:1776`) writes a
+default-schema type the DDL does not declare without its `input.schema.`
+qualifier, and `columnType` (`parser/introspect/postgres.go:485-501`) keeps
+format_type's search_path-relative name. A bare name is then resolved in the
+owner's schema (`parser.ResolveTypeRef`, `parser/schema.go:540`, and
+`gotype` `ForSchema`), so it collides with a user type of the same name in
+the column's own schema. The name is computed when the column is read, so a
+shadowing type declared later (CREATE TYPE after the column, ALTER TYPE …
+RENAME TO, ALTER TABLE … SET SCHEMA) collides too.
+
+**Suggested fix.**
+- The user ruled on 2026-10-14: Q1 → (A) qualify a default-schema type
+  with `input.schema` in both sources whenever the owner schema declares a
+  same-named enum, domain or composite type, whatever the statement order,
+  and add the exception sentence to PRD §5.2 (this narrows the FIX-312
+  ruling: `overrides.types.public.citext`, not `citext`, reaches such a
+  column); Q2 → (a) the built-in collision (an `app.text` enum beside a
+  `text` column) stays a stated gap in PRD §5.2. Options considered: (B)
+  a loud error on a shadowed name, (C) document only, (D) revert FIX-312's
+  strip; for Q2, (b) a built-in type-name list.
+- Prototype (option A, `.claude/prototypes/FIX-348.patch`): `typeName`
+  passes a default-schema non-user type through a new `shadowTypeName`
+  (adds `<input.schema>.` when the owner schema declares a same-named enum,
+  domain or composite; qualified and unqualified DDL, arrays, typmods); new
+  `shadowTypeReferences` re-qualifies or un-qualifies references after
+  CREATE TYPE (enum, composite), CREATE DOMAIN and per object in
+  `dropTypes`; `retargetTypeName` re-spells non-user types on SET SCHEMA;
+  `renameType` shadows the new name before and un-shadows the old name
+  after; new `retypeAll` holds the loops from `renameTypeReferences`. The
+  introspector's `userTypeJoin` adds the schema of a non-user type (or its
+  element type) when not pg_catalog and the owner schema has a same-named
+  type (`tt.own_ns` at 4 sites plus a pg_class join for composite
+  attributes), and `columnType` takes a `shadowSchema` argument. Tests: 9
+  new `TestDropTypeReferences` cases (7 accepted, 2 refused, matching PG17),
+  `TestTypeNamesShadowedDefaultSchema` (5 cases), 4 `TestColumnType` rows,
+  `TestPostgresIntrospect_ShadowedDefaultSchemaTypes` (parity with `citext`
+  and a `pgi_shadow.citext` domain).
+- Auto-accepted the recommended option on 2026-10-14 (`/fix` auto-accept rule): the second /verify pass asked whether to fix the pg_catalog grammar types (`int`, `varchar(3)`) the create and SET SCHEMA hooks qualified when the shadowing type came after, or to make the PRD §5.2 clause order-dependent → fix it by recording the names `typeName` writes through `shadowTypeName` (`searchPathTypes`), no built-in name list, because it was prototyped with green gates, causes no golden churn, adds no public surface (an unexported parser field), and reverses no ruling (Q2 (b) rejected a built-in name list; the `text` gap of Q2 (a) is unchanged) and no PRD-stated behavior (it makes the clause this change added true). It did not by itself restore the behavior at HEAD: a bare `timestamptz` or `timetz` anywhere recorded the name the grammar writes for `timestamp with time zone`, so those columns were still qualified; the post-verify `builtinTypeName` check (see the Resolution notes) keeps every pg_catalog type bare as at HEAD.
+- Auto-accepted the recommended option on 2026-10-14 (`/fix` auto-accept rule): built-in name beside a same-named owner-schema type → state it as the Q2 (a) gap in PRD §5.2 rather than fix, because it matches the user's Q2 (a) ruling, adds no surface, causes no golden churn, and is HEAD behavior.
+- Corrected from the original: it also qualifies unqualified DDL names; it
+  keeps the qualifier correct as types are created, renamed, dropped or
+  moved; the introspector qualifies with the type's real schema; pg_catalog
+  types stay unqualified; the gotype mis-resolution and rename mis-retarget
+  are absorbed (same root cause, same fix site).
+- Prototype results, run at `481842f0` on 2026-10-14: with the prototype,
+  introspected and parsed types are identical (`rr`, `rb` = "public.r";
+  `ra` = "public.r[]"; `ci` = "public.citext"; `mine` = "r"; `dr` and the
+  attribute = "public.r"); generation (files and database) gives `Rr
+  *string`, `Ci *string`, `Mine *AppR`, `C2 *int32`; `Get(1)` →
+  `err=<nil>`; the only parity gap left is the Q2 built-in case. Gates:
+  parser gofumpt clean, `golangci-lint run ./...` 0 issues, `go test -race
+  -count=1 ./...` (PG16 containers) ok; `make update-golden` and `make
+  update-golden-e2e` no changes; cmd/sqlgen `go test ./cli/... ./gotype/...
+  ./config/...` ok; `make refs-check` ok. Fail-first: `typeName` shadowing
+  reverted → TestDropTypeReferences "Parse() error = \"parsing test.sql:
+  drop type: cannot drop type app.r: column app.t.rr uses it\", want \"\""
+  (and the unqualified, domain/composite, citext cases); create hooks
+  removed → "a shadowed type used before the shadowing type is declared"
+  fails the same way; `renameType` new-name hook removed → "a type renamed
+  to shadow…" fails; old-name hook removed → "renamed away" `"r"` →
+  `"public.r"`; `dropTypes` hook removed → "dropped" fails; non-user
+  `retargetTypeName` path reverted → "a table moved into a schema…" fails;
+  `columnType` qualification removed → `columnType("r", "", "", "public",
+  "app") = "r", want "public.r"` and the integration test reports
+  "introspected schema differs from the file parser's"; existing suite
+  without the fix passes. Golden churn: none. Patch 8 files, +320/-68.
+
+**References.**
+- PRD §5.2 (type names), §5.6 (DROP TYPE / DROP DOMAIN checks), §7.1
+  (overrides.types keys).
+- FIX-312 (`30df7e1c`, the input.schema strip ruling), FIX-305
+  (`c695fd6f`), FIX-338 (`afdb75a4`, `typeUses` reads types with
+  `ResolveTypeRef`).
+
+**Resolution notes.** Landed the vetted prototype (option A, as ruled on 2026-10-14); it applied cleanly at `c007a487`. `typeName` (`parser/postgres/postgres.go`) passes a default-schema type the DDL does not declare through the new `shadowTypeName`, which writes it `input.schema`-qualified when the owner schema declares an enum, domain or composite type by the same name (qualified or unqualified DDL, arrays, typmods); the new `shadowTypeReferences` re-qualifies or un-qualifies existing references after CREATE TYPE (enum, composite), CREATE DOMAIN, `ALTER TYPE … RENAME TO` (new name before, old name after, `parser/postgres/alter_type.go`) and each `dropTypes` object; `retargetTypeName` re-spells such a type on `ALTER TABLE … SET SCHEMA`; the loops of `renameTypeReferences` move to the new `retypeAll`. The introspector's `userTypeJoin` (`parser/introspect/postgres.go`) returns the schema of a non-user type (or its element type) that is not pg_catalog when the owner schema (`tt.own_ns`, at 4 sites; composite attributes join pg_class for it) declares a same-named user type, and `columnType` qualifies the bare format_type name with it. PRD §5.2 states the exception and the built-in gap (Q2 (a)), worded after the /verify reviewer measured that a type the grammar qualifies with pg_catalog (`int`, `varchar(3)`) stays bare under both sources and only a bare built-in such as `text` hits the gap. Tests: 9 new `TestDropTypeReferences` cases (7 accepted, 2 refused, as PG17), `TestTypeNamesShadowedDefaultSchema` (8 cases), 4 `TestColumnType` rows, `TestPostgresIntrospect_ShadowedDefaultSchemaTypes`. Changed from the prototype after the /verify reviewer measured that `shadowTypeReferences` compared a type with its modifier, so `vector(3)` and `vector(3)[]` in `app` stayed bare when `app.vector` was declared after them and stayed `public.vector(3)` after `DROP DOMAIN app.vector`, while the introspector writes `public.vector(3)`: it now compares the name before `(` or `[` and keeps the tail; two new `TestTypeNamesShadowedDefaultSchema` cases cover it, and without the change both fail (after the drop `app.t.v` is `public.vector(3)`, want `vector(3)`; declared after, it is `vector(3)`, want `public.vector(3)`). The second /verify pass measured that the create and SET SCHEMA hooks also qualified a type the grammar writes from pg_catalog (`CREATE TABLE app.t (a varchar(3), b int); CREATE DOMAIN app.varchar AS int; CREATE DOMAIN app.integer AS int;` gave `public.varchar(3)` and `public.integer`, bare when the domains came first and at HEAD in either order, and gotype reads `public.integer` as `string`), since a written name does not say where it came from: the parser now records in `searchPathTypes` the names `typeName` writes through `shadowTypeName`, and `shadowTypeReferences` and `retargetTypeName` touch only those. The new `TestTypeNamesShadowedDefaultSchema` case "grammar types a type declared after or a move shadows" fails without it (`app.t.b` is `public.integer`, want `integer`, and likewise `varchar(3)`, `timestamptz(3)`, `varchar(3)[]` and a table moved into `app`). Fail-first re-run on the landed code: `shadowTypeName` short-circuited → 6 `TestDropTypeReferences` and 4 `TestTypeNamesShadowedDefaultSchema` cases fail ("Parse() error = \"parsing test.sql: drop type: cannot drop type app.r: column app.t.rr uses it\", want \"\""); `columnType` qualification disabled → 3 `TestColumnType` rows and `TestPostgresIntrospect_ShadowedDefaultSchemaTypes` fail. Gates: `make check` ok; parser `go test -race -count=1 ./...` with containers ok; `make update-golden` and `make update-golden-e2e` no changes (golden churn: none, as recorded at the vet); `make check-examples` ok; all re-run after each post-verify change, with no golden churn. The user ruled on 2026-10-14: fix the timestamptz/timetz re-spelling and serial regressions and extend the rule to view columns in FIX-348 (surfaced by an extra post-verify review). (1) `searchPathTypes` was keyed by the DDL name and never pruned, so a bare `timestamptz` or `timetz` column anywhere, even in a table dropped since, recorded the name the grammar writes for `timestamp with time zone`, and a later `CREATE DOMAIN app.timestamptz` or a move into `app` qualified every such column (`public.timestamptz`, `public.timetz(2)`; the database writes them bare, from pg_catalog); with the domain declared first a bare `timestamptz(3)` or `int4` was qualified too. The new `builtinTypeName` (`parser/postgres/postgres.go`) reports a name the grammar reads as a pg_catalog type or one of `catalogSpellings` (the former `pgCatalogToSQL` switch, now a map); `typeName` writes such a name bare and does not record it, so `searchPathTypes` never holds a pg_catalog spelling (true once `varbit` joined `catalogSpellings`, below) and a stale entry is harmless. This is no hand-kept built-in list: a built-in the grammar reads bare (`text`, `uuid`, `date`) is still the Q2 (a) gap, and the `int4` order dependence is gone. (2) `CREATE DOMAIN app.serial AS int; CREATE TABLE app.t (id serial)` gave `public.serial`, not auto-increment, with no implicit sequence, since `typeName` shadowed `serial` before serial detection: the new `serialType` (`parser/postgres/sequences.go`) detects every serial spelling from the unqualified raw name, before `typeName`, in `parseColumnDef` and `addColumnSequence` (replacing `isSerial`). (3) A view column's type ignored the rule: `app.v AS SELECT rr FROM public.t` with `app.r` declared gave `r` (`app.r`), and with `other.t.rr` written `public.r` a view in a schema without `r` gave `public.r`. The new `parser.SearchPath` (input.schema and a built-in predicate) is a new last argument of `parser.BuildView`; `relativeType` writes a bare or input.schema-qualified non-user type through `searchPathType`, as a table column's type in the view's schema. Callers: `cmd/sqlgen/cli/pipeline.go` (`postgres.SearchPath(input.schema)` for PostgreSQL view files), `parser/introspect` (`viewColumnsFromDefinition`, `columnsFromDefinition`, `refreshViewColumns`; PostgreSQL passes `postgres.SearchPath(opts.DefaultSchema)`, MySQL and SQLite the zero value; `Merge` takes it from the parser's new `SearchPath` method), and the tests; `IntrospectionOptions` gains `DefaultSchema`, which `cmd/sqlgen/cli/connection.go` sets from input.schema. The reviewer's `sqlgen generate` repro (`CREATE DOMAIN app.citext AS int; CREATE TABLE m (id int PRIMARY KEY, ci citext); CREATE VIEW app.v AS SELECT id, ci FROM public.m`) now gives the view `Ci *string` (`public.citext`); the table's `Ci *int32` in models_gen.go is gotype's separate bare-name fallback, out of scope. Tests: `TestTypeNamesShadowedDefaultSchema` (9 cases; the "grammar types…" case gains bare `timestamptz`/`timetz`/`int4` tables and a move, and "built-in types a type declared before shadows" is new), 3 `TestSerialTypes` cases and 1 `TestSequenceOwnership` case, `TestBuildView_SearchPathTypesInViewSchema` (5 cases), and the Docker parity tests `TestPostgresIntrospect_BuiltinTypesStayBare`, `TestPostgresIntrospect_SerialBesideSerialType` and `TestPostgresIntrospect_ViewSearchPathTypes` (files, database and source: both against the catalog's type schemas). Fail-first: `builtinTypeName` check disabled → the two type-name cases (`app.t.c` is `public.timestamptz(3)`, `app.t.a` is `public.integer`, want bare) and the parity test ("parsed column types mismatch"); old serial detection → "type = \"public.serial\", want \"integer\"", the sequence case, and the parity test; `searchPathType` reverted → the view cases (`rr` is `r`, want `public.r`; `public.r`, want `r`) and the parity test for files and database; its `Builtin` check removed → `n` is `public.integer`; `Merge`'s search path dropped → the "both" leg fails. A final review measured two more, both fixed: `bit varying` was still qualified after a later `CREATE DOMAIN app.varbit` once any bare `varbit` column had recorded `varbit` (files `public.varbit(4)`, database `varbit(4)`), since the grammar reads `varbit` bare, so `varbit` joins `catalogSpellings` and the new `TestBuiltinTypeNameCoversGrammarSpellings` asserts that the name the parser writes for every type the grammar qualifies with pg_catalog (each `SystemTypeName` type but `record`; `varbit` was the only miss) is a `builtinTypeName`; and `relativeType`'s user-type branch ignored `SearchPath.Builtin`, so a view reading `int` from a schema declaring `integer` named that domain under all three sources, and now checks it — tests: the "grammar types…" case and `TestPostgresIntrospect_BuiltinTypesStayBare` gain `bit varying(4)`, bare `varbit` and an `app.varbit` domain, `TestBuildView_SearchPathTypesInViewSchema` has 6 cases and `TestPostgresIntrospect_ViewSearchPathTypes` gains `pgi_vw_d.v3`; fail-first: "\"bit varying(4)\": the parser writes \"varbit(4)\", whose name is not a builtinTypeName", `app.t.p` is `public.varbit(4)`, "parsed column types mismatch", `id` is `app.integer` (want `integer`), and `pgi_vw_d.v3.id` is `pgi_vw.integer` under files, database and both. PRD §5.2 now states the bare built-in collision as the Q2 (a) gap, measured on postgres:16 (refused `DROP DOMAIN`, retyping `RENAME`, the domain's Go type), and `builtinTypeName` caches its answer per name in a `sync.Map`.
 
 ### FIX-347
 

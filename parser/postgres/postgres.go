@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"slices"
 	"strings"
+	"sync"
 
 	pg_query "github.com/pganalyze/pg_query_go/v6"
 
@@ -31,6 +32,14 @@ type Parser struct {
 	// added with no referenced column list; resolveImplicitRefs gives them
 	// the referenced table's primary key once the statement is applied.
 	implicitRefs []string
+	// searchPathTypes holds each name the DDL has given, bare or
+	// default-schema qualified, to a type it does not declare and that is not
+	// a builtinTypeName: the names of the types on the search_path that a
+	// same-named type in another schema shadows. A type the grammar writes
+	// from pg_catalog, such as integer, varchar or timestamptz, is never
+	// among them. A name stays after the columns that used it are dropped;
+	// it still names no type the DDL declares.
+	searchPathTypes map[string]bool
 }
 
 // New creates a new PostgreSQL parser. If defaultSchema is empty, "public" is used.
@@ -39,10 +48,11 @@ func New(defaultSchema string) *Parser {
 		defaultSchema = "public"
 	}
 	return &Parser{
-		schema:        &parser.Schema{},
-		defaultSchema: defaultSchema,
-		tableIndex:    make(map[string]int),
-		skipped:       make(map[string]bool),
+		schema:          &parser.Schema{},
+		defaultSchema:   defaultSchema,
+		tableIndex:      make(map[string]int),
+		skipped:         make(map[string]bool),
+		searchPathTypes: make(map[string]bool),
 	}
 }
 
@@ -464,6 +474,7 @@ func (p *Parser) parseCreateEnum(stmt *pg_query.CreateEnumStmt) error {
 		Schema: schema,
 		Values: values,
 	})
+	p.shadowTypeReferences(schema, name, true)
 	return nil
 }
 
@@ -495,6 +506,7 @@ func (p *Parser) parseCompositeType(stmt *pg_query.CompositeTypeStmt) error {
 	}
 
 	p.schema.CompositeTypes = append(p.schema.CompositeTypes, ct)
+	p.shadowTypeReferences(schema, ct.Name, true)
 	return nil
 }
 
@@ -532,6 +544,7 @@ func (p *Parser) parseCreateDomain(stmt *pg_query.CreateDomainStmt) error {
 	}
 
 	p.schema.DomainTypes = append(p.schema.DomainTypes, dt)
+	p.shadowTypeReferences(schema, name, true)
 	return nil
 }
 
@@ -1238,6 +1251,7 @@ func (p *Parser) dropTypes(refs []parser.TypeRef, kind string) error {
 		p.schema.CompositeTypes = slices.DeleteFunc(p.schema.CompositeTypes, func(ct parser.CompositeType) bool {
 			return ct.Schema == ref.Schema && ct.Name == ref.Name
 		})
+		p.shadowTypeReferences(ref.Schema, ref.Name, false)
 	}
 	return nil
 }
@@ -1577,22 +1591,10 @@ func (p *Parser) parseColumnDef(cd *pg_query.ColumnDef, schema string) (parser.C
 		Nullable: true,
 	}
 
-	col.Type = p.typeName(cd.TypeName, schema)
-
-	// Detect serial types (preserved as-is in the raw parse tree).
-	switch strings.ToLower(col.Type) {
-	case "serial", "serial4":
-		col.Type = "integer"
-		col.AutoIncrement = true
-		col.Nullable = false
-	case "bigserial", "serial8":
-		col.Type = "bigint"
-		col.AutoIncrement = true
-		col.Nullable = false
-	case "smallserial", "serial2":
-		col.Type = "smallint"
-		col.AutoIncrement = true
-		col.Nullable = false
+	if typ, ok := serialType(cd.TypeName); ok {
+		col.Type, col.AutoIncrement, col.Nullable = typ, true, false
+	} else {
+		col.Type = p.typeName(cd.TypeName, schema)
 	}
 
 	if cd.IsNotNull {
@@ -1766,27 +1768,35 @@ func removeConstraintFromColumns(table *parser.Table, constraintName string) {
 // writes it, less a default-schema qualifier: the introspector writes such a
 // type with format_type, which leaves out the schema of a type on the
 // connection's search_path, and that search_path is assumed to resolve the
-// default schema, as an unqualified name in the DDL does.
+// default schema, as an unqualified name in the DDL does. The qualifier is
+// kept, and added to an unqualified name, when schema declares a type by the
+// same name, since the bare name means that type (see shadowTypeName),
+// unless the name is a builtinTypeName, which PostgreSQL finds in pg_catalog
+// first.
 func (p *Parser) typeName(tn *pg_query.TypeName, schema string) string {
 	written := typeNameToString(tn)
 	if tn == nil {
 		return written
 	}
 	var typSchema, typName string
-	qualified := false
 	switch names := extractStringList(tn.Names); len(names) {
 	case 1:
 		typSchema, typName = p.defaultSchema, names[0]
 	case 2:
-		typSchema, typName, qualified = names[0], names[1], true
+		typSchema, typName = names[0], names[1]
 	default:
 		return written
 	}
 	if !p.isUserType(typSchema, typName) {
-		if qualified && typSchema == p.defaultSchema {
-			return strings.TrimPrefix(written, typSchema+".")
+		if typSchema != p.defaultSchema {
+			return written
 		}
-		return written
+		bare := strings.TrimPrefix(written, typSchema+".")
+		if builtinTypeName(typeBaseName(bare)) {
+			return bare
+		}
+		p.searchPathTypes[typName] = true
+		return p.shadowTypeName(bare, schema)
 	}
 	name := relativeTypeName(typSchema, typName, schema)
 	if len(tn.ArrayBounds) > 0 {
@@ -1795,12 +1805,93 @@ func (p *Parser) typeName(tn *pg_query.TypeName, schema string) string {
 	return name
 }
 
+// shadowTypeName writes typ, a type the DDL does not declare that lives in the
+// default schema, written bare, for schema: bare, or default-schema qualified
+// when schema is another schema that declares a type by the same name.
+// ResolveTypeRef reads a bare name as a type in its owner's schema, so the
+// bare name would name that type, as it does in PostgreSQL's format_type when
+// schema is on the search_path.
+func (p *Parser) shadowTypeName(typ, schema string) string {
+	if schema == p.defaultSchema {
+		return typ
+	}
+	if !p.isUserType(schema, typeBaseName(typ)) {
+		return typ
+	}
+	return p.defaultSchema + "." + typ
+}
+
+// typeBaseName returns typ less its modifiers and array suffix.
+func typeBaseName(typ string) string {
+	if i := strings.IndexAny(typ, "(["); i >= 0 {
+		return typ[:i]
+	}
+	return typ
+}
+
+// shadowTypeReferences rewrites the types in schema that name the default
+// schema's type name, one of searchPathTypes, when schema gains
+// (shadowed) or loses a type by that name, so each is written as
+// shadowTypeName writes it.
+func (p *Parser) shadowTypeReferences(schema, name string, shadowed bool) {
+	if schema == p.defaultSchema || !p.searchPathTypes[name] || p.isUserType(p.defaultSchema, name) {
+		return
+	}
+	from, to := name, p.defaultSchema+"."+name
+	if !shadowed {
+		from, to = to, from
+	}
+	retype := func(typ, own string) string {
+		if own != schema {
+			return typ
+		}
+		if typeBaseName(typ) != from {
+			return typ
+		}
+		return to + typ[len(from):]
+	}
+	p.retypeAll(retype)
+}
+
+// retypeAll rewrites every type with retype(type, owner schema): column types
+// of tables and views, composite attributes and domain base types.
+func (p *Parser) retypeAll(retype func(typ, own string) string) {
+	for i := range p.schema.Tables {
+		t := &p.schema.Tables[i]
+		for j := range t.Columns {
+			t.Columns[j].Type = retype(t.Columns[j].Type, t.Schema)
+		}
+	}
+	for i := range p.schema.Views {
+		v := &p.schema.Views[i]
+		for j := range v.Columns {
+			v.Columns[j].Type = retype(v.Columns[j].Type, v.Schema)
+		}
+	}
+	for i := range p.schema.CompositeTypes {
+		ct := &p.schema.CompositeTypes[i]
+		for j := range ct.Attributes {
+			ct.Attributes[j].Type = retype(ct.Attributes[j].Type, ct.Schema)
+		}
+	}
+	for i := range p.schema.DomainTypes {
+		dt := &p.schema.DomainTypes[i]
+		dt.BaseType = retype(dt.BaseType, dt.Schema)
+	}
+}
+
 // retargetTypeName rewrites a type typeName wrote for schema from as it is
 // written for schema to.
 func (p *Parser) retargetTypeName(typ, from, to string) string {
 	ref, isArray := parser.ResolveTypeRef(typ, from)
 	if !p.isUserType(ref.Schema, ref.Name) {
-		return typ
+		// A bare name, or one the default schema qualifies, is a type on the
+		// search_path; one another schema qualifies stays as written.
+		base := strings.TrimPrefix(typ, p.defaultSchema+".")
+		if strings.Contains(base, ".") || !p.searchPathTypes[typeBaseName(base)] {
+			return typ
+		}
+		return p.shadowTypeName(base, to)
 	}
 	name := relativeTypeName(ref.Schema, ref.Name, to)
 	if isArray {
@@ -1859,32 +1950,80 @@ func typeNameToString(tn *pg_query.TypeName) string {
 	return typeName
 }
 
+// catalogSpellings maps the names of pg_catalog types to the names the
+// parser writes for them, as the catalog does.
+var catalogSpellings = map[string]string{
+	"int2":        "smallint",
+	"int4":        "integer",
+	"int8":        "bigint",
+	"float4":      "real",
+	"float8":      "double precision",
+	"bool":        "boolean",
+	"varchar":     "varchar",
+	"bpchar":      "char",
+	"timestamptz": "timestamptz",
+	"timetz":      "timetz",
+	"varbit":      "varbit",
+}
+
 // pgCatalogToSQL maps PostgreSQL internal type names to SQL-friendly names.
 func pgCatalogToSQL(internal string) string {
-	switch internal {
-	case "int2":
-		return "smallint"
-	case "int4":
-		return "integer"
-	case "int8":
-		return "bigint"
-	case "float4":
-		return "real"
-	case "float8":
-		return "double precision"
-	case "bool":
-		return "boolean"
-	case "varchar":
-		return "varchar"
-	case "bpchar":
-		return "char"
-	case "timestamptz":
-		return "timestamptz"
-	case "timetz":
-		return "timetz"
-	default:
-		return internal
+	if name, ok := catalogSpellings[internal]; ok {
+		return name
 	}
+	return internal
+}
+
+// builtinTypeName reports whether name, a type name without a schema,
+// modifiers or array suffix, names a pg_catalog type when written bare: the
+// grammar reads it as one (integer, varchar, json), or it is a name
+// catalogSpellings maps (int4, timestamptz, varbit), whose spellings the
+// grammar reads as one or are among its names. PostgreSQL searches pg_catalog before
+// the search_path, so a type by that name in another schema does not shadow
+// it. A pg_catalog type the grammar reads bare, such as text, is not
+// recognized. Each answer is kept in builtinTypeNames, so a name is parsed
+// once per process.
+func builtinTypeName(name string) bool {
+	if _, ok := catalogSpellings[name]; ok {
+		return true
+	}
+	if known, ok := builtinTypeNames.Load(name); ok {
+		return known.(bool)
+	}
+	builtin := grammarBuiltinTypeName(name)
+	builtinTypeNames.Store(name, builtin)
+	return builtin
+}
+
+// builtinTypeNames caches builtinTypeName's answer by name (string → bool).
+var builtinTypeNames sync.Map
+
+// grammarBuiltinTypeName reports whether the grammar reads name, written
+// bare, as a pg_catalog type.
+func grammarBuiltinTypeName(name string) bool {
+	tree, err := pg_query.Parse("SELECT NULL::" + name)
+	if err != nil || len(tree.GetStmts()) != 1 {
+		return false
+	}
+	targets := tree.GetStmts()[0].GetStmt().GetSelectStmt().GetTargetList()
+	if len(targets) != 1 || targets[0].GetResTarget().GetName() != "" {
+		return false
+	}
+	names := extractStringList(targets[0].GetResTarget().GetVal().GetTypeCast().GetTypeName().GetNames())
+	return len(names) == 2 && names[0] == "pg_catalog"
+}
+
+// SearchPath returns how a PostgreSQL view names a type on the search_path
+// (see parser.SearchPath) when unqualified names resolve to defaultSchema,
+// "public" if empty.
+func SearchPath(defaultSchema string) parser.SearchPath {
+	return parser.SearchPath{Schema: cmp.Or(defaultSchema, "public"), Builtin: builtinTypeName}
+}
+
+// SearchPath returns how a view names a type on the search_path when
+// unqualified names resolve to the parser's default schema.
+func (p *Parser) SearchPath() parser.SearchPath {
+	return SearchPath(p.defaultSchema)
 }
 
 // formatTypmods formats type modifier values as the catalog writes them, with

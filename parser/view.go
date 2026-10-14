@@ -183,10 +183,26 @@ func parseTypeDirective(annotations *ViewAnnotations, colName, value string) err
 	return nil
 }
 
+// SearchPath is how PostgreSQL resolves a type name a column writes bare,
+// which BuildView needs to write a view column's type in the view's schema
+// (PRD §5.2). The zero value, for MySQL and SQLite, writes such a type as its
+// source column does.
+type SearchPath struct {
+	// Schema is input.schema, the schema of a type a column names bare
+	// unless Builtin reports it.
+	Schema string
+	// Builtin reports whether a bare type name, without modifiers, names a
+	// pg_catalog type, which PostgreSQL finds before a type of the same name
+	// in any other schema.
+	Builtin func(name string) bool
+}
+
 // BuildView constructs a View from pre-parsed SQL metadata, annotations, and
 // schema parsed so far. The parsed field is produced by a dialect-specific
 // parser's ParseViewSQL method; annotations come from ParseViewAnnotations.
-func BuildView(parsed ViewSQL, rawSQL string, annotations *ViewAnnotations, schema *Schema) (*View, error) {
+// A column's type is written for the view's schema as a table column's is
+// there, which for PostgreSQL takes searchPath.
+func BuildView(parsed ViewSQL, rawSQL string, annotations *ViewAnnotations, schema *Schema, searchPath SearchPath) (*View, error) {
 	colSet := make(map[string]bool, len(parsed.Columns))
 	for _, col := range parsed.Columns {
 		colSet[col.Alias] = true
@@ -195,7 +211,9 @@ func BuildView(parsed ViewSQL, rawSQL string, annotations *ViewAnnotations, sche
 		return nil, err
 	}
 
-	viewColumns := resolveViewColumns(parsed.Columns, newViewSources(parsed, schema), annotations)
+	sources := newViewSources(parsed, schema)
+	sources.searchPath = searchPath
+	viewColumns := resolveViewColumns(parsed.Columns, sources, annotations)
 
 	// An annotation-file matview has no live unique index to discover, so @pk
 	// doubles as the user's assertion that a unique key exists — the same
@@ -318,6 +336,8 @@ type viewSources struct {
 	tables  []Table
 	// userTypes holds "schema.name" for every enum, SET, composite and domain type.
 	userTypes map[string]bool
+	// searchPath writes a type on the search_path for the view's schema.
+	searchPath SearchPath
 }
 
 // newViewSources returns the viewSources of a view's query.
@@ -655,8 +675,11 @@ func (vs *viewSources) table(key string) *Table {
 
 // relativeType rewrites typ, written relative to the schema declared, so it
 // reads relative to the view's schema, as a table column's type does: a
-// user-defined type of declared is qualified, and a type qualified with the
-// view's schema is written bare. Array suffixes are kept.
+// user-defined type of declared is qualified, unless its bare name is a
+// pg_catalog type's, which PostgreSQL finds first, and a type qualified with
+// the view's schema is written bare. Any other type written bare or qualified
+// with searchPath.Schema is a type on the search_path, written as
+// searchPathType writes it. Array suffixes are kept.
 func (vs *viewSources) relativeType(typ, declared string) string {
 	if declared == "" || vs.viewSchema == "" || declared == vs.viewSchema {
 		return typ
@@ -667,12 +690,35 @@ func (vs *viewSources) relativeType(typ, declared string) string {
 		if base[:i] == vs.viewSchema {
 			return base[i+1:] + suffix
 		}
+		if base[:i] == vs.searchPath.Schema && !vs.userTypes[base] {
+			return vs.searchPathType(base[i+1:]) + suffix
+		}
 		return typ
 	}
-	if vs.userTypes[declared+"."+base] {
+	if vs.userTypes[declared+"."+base] && !vs.builtin(base) {
 		return declared + "." + base + suffix
 	}
-	return typ
+	return vs.searchPathType(base) + suffix
+}
+
+// searchPathType writes typ, a type on the search_path written bare, for the
+// view's schema: qualified with searchPath.Schema when the view's schema
+// declares a type by the same name, which the bare name would name, unless
+// it is a pg_catalog type.
+func (vs *viewSources) searchPathType(typ string) string {
+	name, _, _ := strings.Cut(typ, "(")
+	shadowed := vs.searchPath.Schema != "" && vs.viewSchema != vs.searchPath.Schema && vs.userTypes[vs.viewSchema+"."+name]
+	if !shadowed || vs.builtin(name) {
+		return typ
+	}
+	return vs.searchPath.Schema + "." + typ
+}
+
+// builtin reports whether typ, written bare, names a pg_catalog type, which
+// PostgreSQL finds before a type by the same name in any other schema.
+func (vs *viewSources) builtin(typ string) bool {
+	name, _, _ := strings.Cut(typ, "(")
+	return vs.searchPath.Builtin != nil && vs.searchPath.Builtin(name)
 }
 
 // inferAggregateType returns the type for an aggregate function per PRD 16.3.

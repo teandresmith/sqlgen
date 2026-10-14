@@ -631,6 +631,27 @@ func TestSerialTypes(t *testing.T) {
 			wantNullable: false,
 		},
 		{
+			name:         "serial beside a serial type declared before",
+			sql:          "CREATE DOMAIN app.serial AS int; CREATE TABLE app.t (id serial);",
+			wantType:     "integer",
+			wantAutoIncr: true,
+			wantNullable: false,
+		},
+		{
+			name:         "bigserial beside a bigserial type declared after",
+			sql:          "CREATE TABLE app.t (id bigserial); CREATE DOMAIN app.bigserial AS bigint;",
+			wantType:     "bigint",
+			wantAutoIncr: true,
+			wantNullable: false,
+		},
+		{
+			name:         "serial2 beside a serial2 type declared before",
+			sql:          "CREATE DOMAIN app.serial2 AS int; CREATE TABLE app.t (id serial2);",
+			wantType:     "smallint",
+			wantAutoIncr: true,
+			wantNullable: false,
+		},
+		{
 			name:         "generated always as identity",
 			sql:          "CREATE TABLE t (id integer GENERATED ALWAYS AS IDENTITY);",
 			wantType:     "integer",
@@ -1486,6 +1507,52 @@ func TestDropTypeReferences(t *testing.T) {
 		{
 			name: "a domain dropped with its base domain",
 			sql:  `CREATE DOMAIN d1 AS int; CREATE DOMAIN d2 AS d1; DROP DOMAIN d1, d2;`,
+		},
+		{
+			name: "a default-schema row type the dropped type shadows",
+			sql: `CREATE TABLE r (x int); CREATE TYPE app.r AS ENUM ('a');
+				CREATE TABLE app.t (rr public.r, ra public.r[]); DROP TYPE app.r;`,
+		},
+		{
+			name: "a shadowed type used before the shadowing type is declared",
+			sql: `CREATE TABLE r (x int); CREATE TABLE app.t (rr public.r);
+				CREATE TYPE app.r AS ENUM ('a'); DROP TYPE app.r;`,
+		},
+		{
+			name: "an unqualified shadowed type",
+			sql:  `CREATE TABLE r (x int); CREATE TYPE app.r AS ENUM ('a'); CREATE TABLE app.t (rr r); DROP TYPE app.r;`,
+		},
+		{
+			name: "a shadowed type as a domain base and composite attribute",
+			sql: `CREATE TABLE r (x int); CREATE TYPE app.r AS ENUM ('a');
+				CREATE DOMAIN app.dr AS public.r; CREATE TYPE app.comp AS (rr public.r); DROP TYPE app.r;`,
+		},
+		{
+			name: "a shadowed extension type and a dropped domain",
+			sql: `CREATE DOMAIN app.citext AS int;
+				CREATE TABLE app.t (c public.citext, c2 citext, c3 public.citext[]); DROP DOMAIN app.citext;`,
+		},
+		{
+			name: "a type renamed to shadow a default-schema type",
+			sql: `CREATE TABLE r (x int); CREATE TYPE app.x AS ENUM ('a'); CREATE TABLE app.t (rr public.r);
+				ALTER TYPE app.x RENAME TO r; DROP TYPE app.r;`,
+		},
+		{
+			name: "a table moved into a schema that shadows its column's type",
+			sql: `CREATE TABLE r (x int); CREATE TYPE app.r AS ENUM ('a'); CREATE TABLE m (rr r);
+				ALTER TABLE m SET SCHEMA app; DROP TYPE app.r;`,
+		},
+		{
+			name: "a shadowing type its own schema uses",
+			sql: `CREATE TABLE r (x int); CREATE TYPE app.r AS ENUM ('a');
+				CREATE TABLE app.t (rr public.r, mine app.r); DROP TYPE app.r;`,
+			wantErr: "parsing test.sql: drop type: cannot drop type app.r: column app.t.mine uses it",
+		},
+		{
+			name: "a shadowing type renamed from one its own schema uses",
+			sql: `CREATE TABLE r (x int); CREATE TYPE app.x AS ENUM ('a'); CREATE TABLE app.t (rr public.r, xx app.x);
+				ALTER TYPE app.x RENAME TO r; DROP TYPE app.r;`,
+			wantErr: "parsing test.sql: drop type: cannot drop type app.r: column app.t.xx uses it",
 		},
 	}
 	for _, tt := range tests {

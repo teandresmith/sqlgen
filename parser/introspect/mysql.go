@@ -168,7 +168,7 @@ func (mi *MySQLIntrospector) introspectViews(ctx context.Context, schema *parser
 		// A catalog ENUM / SET column may add a type to schema, so a catalog
 		// column is built only where it is used.
 		ddl := "CREATE VIEW " + quoteMySQLIdent(view.Name) + mysqlColumnList(names) + " AS " + ref.definition
-		view.Definition, view.Columns, err = viewColumnsFromDefinition(ddl, mysql.ParseViewSQL, schema, names, func(i int) (parser.Column, bool) {
+		view.Definition, view.Columns, err = viewColumnsFromDefinition(ddl, mysql.ParseViewSQL, schema, parser.SearchPath{}, names, func(i int) (parser.Column, bool) {
 			return viewColumnFromCatalog(view.Name, catalog[i], schema), true
 		})
 		if err != nil {

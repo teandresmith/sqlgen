@@ -230,7 +230,7 @@ func (pi *PostgresIntrospector) introspectViews(ctx context.Context, schema *par
 		if err := pi.introspectViewColumns(ctx, &view); err != nil {
 			return err
 		}
-		pi.columnsFromDefinition(&view, definitions, schema)
+		pi.columnsFromDefinition(&view, definitions, schema, opts)
 
 		schema.Views = append(schema.Views, view)
 	}
@@ -279,11 +279,11 @@ func (pi *PostgresIntrospector) viewDefinitions(ctx context.Context) (map[string
 }
 
 // columnsFromDefinition reads view's columns from its definition (PRD §16.2).
-func (pi *PostgresIntrospector) columnsFromDefinition(view *parser.View, definitions map[string]string, schema *parser.Schema) {
+func (pi *PostgresIntrospector) columnsFromDefinition(view *parser.View, definitions map[string]string, schema *parser.Schema, opts IntrospectionOptions) {
 	ddl := "CREATE VIEW " + quotePostgresIdent(view.Schema) + "." + quotePostgresIdent(view.Name) + " AS " + definitions[view.Schema+"."+view.Name]
 	parse := func(sql []byte) (parser.ViewSQL, error) { return postgres.ParseViewSQL(sql, view.Schema) }
 	catalog := view.Columns
-	columnsFromDefinition(view, ddl, parse, schema, func(i int) (parser.Column, bool) {
+	columnsFromDefinition(view, ddl, parse, schema, postgres.SearchPath(opts.DefaultSchema), func(i int) (parser.Column, bool) {
 		return catalog[i], true
 	})
 }
@@ -345,7 +345,7 @@ func (pi *PostgresIntrospector) introspectMaterializedViews(ctx context.Context,
 		if err := pi.introspectViewColumns(ctx, &view); err != nil {
 			return err
 		}
-		pi.columnsFromDefinition(&view, definitions, schema)
+		pi.columnsFromDefinition(&view, definitions, schema, opts)
 		if err := pi.introspectMatviewUniqueIndexes(ctx, &view); err != nil {
 			return err
 		}
@@ -452,7 +452,10 @@ func chooseMatviewPK(indexes []matviewUniqueIndex) []string {
 // tt.type_oid, its element type when it is an array (et) and that type's
 // schema (tn). Both are NULL unless the type is an enum, a domain or a
 // standalone composite type, the user types columnType writes relative to the
-// column's schema.
+// column's schema. For any other type, vn is the schema of the type (or of its
+// element type) when that is neither pg_catalog nor the schema the query
+// exposes as tt.own_ns, the owner's, and the owner's schema declares a user
+// type by the same name, which the bare name would then name.
 const userTypeJoin = `
 		LEFT JOIN pg_catalog.pg_type ty ON ty.oid = tt.type_oid
 		LEFT JOIN pg_catalog.pg_type et
@@ -460,16 +463,32 @@ const userTypeJoin = `
 		 AND (et.typtype IN ('e', 'd')
 		      OR (et.typtype = 'c' AND EXISTS (
 		          SELECT 1 FROM pg_catalog.pg_class tc WHERE tc.oid = et.typrelid AND tc.relkind = 'c')))
-		LEFT JOIN pg_catalog.pg_namespace tn ON tn.oid = et.typnamespace`
+		LEFT JOIN pg_catalog.pg_namespace tn ON tn.oid = et.typnamespace
+		LEFT JOIN pg_catalog.pg_type vt
+		  ON et.oid IS NULL
+		 AND vt.oid = CASE WHEN ty.typelem <> 0 AND ty.typlen = -1 THEN ty.typelem ELSE ty.oid END
+		 AND vt.typnamespace NOT IN (tt.own_ns, 'pg_catalog'::regnamespace)
+		 AND EXISTS (
+		     SELECT 1 FROM pg_catalog.pg_type ut
+		     LEFT JOIN pg_catalog.pg_class uc ON uc.oid = ut.typrelid
+		     WHERE ut.typnamespace = tt.own_ns AND ut.typname = vt.typname
+		       AND (ut.typtype IN ('e', 'd') OR (ut.typtype = 'c' AND uc.relkind = 'c')))
+		LEFT JOIN pg_catalog.pg_namespace vn ON vn.oid = vt.typnamespace`
 
 // columnType writes the type of a column, attribute or domain base type that
 // belongs to schema own, as the parser writes it. format_type qualifies a type
 // whose schema is not on the connection's search_path; an enum, domain or
 // composite type (typSchema set) is instead written bare when it lives in own
 // and qualified when it lives in another schema, whatever the search_path.
-func columnType(formatType, typSchema, typName, own string) string {
+// Any other type format_type writes bare is qualified with shadowSchema, its
+// schema, when that is set: own declares a type by the same name.
+func columnType(formatType, typSchema, typName, shadowSchema, own string) string {
 	if typSchema == "" {
-		return normalizePostgresType(formatType)
+		typ := normalizePostgresType(formatType)
+		if name, _, _ := strings.Cut(typ, "("); shadowSchema != "" && !strings.Contains(name, ".") {
+			typ = shadowSchema + "." + typ
+		}
+		return typ
 	}
 	name := typName
 	if typSchema != own {
@@ -488,11 +507,12 @@ func (pi *PostgresIntrospector) introspectViewColumns(ctx context.Context, view 
 			format_type(a.atttypid, a.atttypmod),
 			COALESCE(tn.nspname, ''),
 			COALESCE(et.typname, ''),
+			COALESCE(vn.nspname, ''),
 			NOT a.attnotnull
 		FROM pg_catalog.pg_attribute a
 		JOIN pg_catalog.pg_class c ON a.attrelid = c.oid
 		JOIN pg_catalog.pg_namespace n ON c.relnamespace = n.oid
-		CROSS JOIN LATERAL (SELECT a.atttypid AS type_oid) tt`+userTypeJoin+`
+		CROSS JOIN LATERAL (SELECT a.atttypid AS type_oid, c.relnamespace AS own_ns) tt`+userTypeJoin+`
 		WHERE n.nspname = $1
 		  AND c.relname = $2
 		  AND a.attnum > 0
@@ -505,15 +525,15 @@ func (pi *PostgresIntrospector) introspectViewColumns(ctx context.Context, view 
 
 	for rows.Next() {
 		var (
-			col                            parser.Column
-			formatType, typSchema, typName string
-			nullable                       bool
+			col                                    parser.Column
+			formatType, typSchema, typName, shadow string
+			nullable                               bool
 		)
-		if err := rows.Scan(&col.Name, &formatType, &typSchema, &typName, &nullable); err != nil {
+		if err := rows.Scan(&col.Name, &formatType, &typSchema, &typName, &shadow, &nullable); err != nil {
 			return fmt.Errorf("introspect postgres view columns %s.%s: scanning: %w", view.Schema, view.Name, err)
 		}
 
-		col.Type = columnType(formatType, typSchema, typName, view.Schema)
+		col.Type = columnType(formatType, typSchema, typName, shadow, view.Schema)
 		col.Nullable = nullable
 
 		view.Columns = append(view.Columns, col)
@@ -542,6 +562,7 @@ func (pi *PostgresIntrospector) introspectColumns(ctx context.Context, table *pa
 			format_type(a.atttypid, a.atttypmod),
 			COALESCE(tn.nspname, ''),
 			COALESCE(et.typname, ''),
+			COALESCE(vn.nspname, ''),
 			NOT a.attnotnull,
 			pg_get_expr(ad.adbin, ad.adrelid),
 			a.attidentity,
@@ -559,7 +580,7 @@ func (pi *PostgresIntrospector) introspectColumns(ctx context.Context, table *pa
 		JOIN pg_catalog.pg_class c ON a.attrelid = c.oid
 		JOIN pg_catalog.pg_namespace n ON c.relnamespace = n.oid
 		LEFT JOIN pg_catalog.pg_attrdef ad ON a.attrelid = ad.adrelid AND a.attnum = ad.adnum
-		CROSS JOIN LATERAL (SELECT a.atttypid AS type_oid) tt`+userTypeJoin+`
+		CROSS JOIN LATERAL (SELECT a.atttypid AS type_oid, c.relnamespace AS own_ns) tt`+userTypeJoin+`
 		WHERE n.nspname = $1
 		  AND c.relname = $2
 		  AND a.attnum > 0
@@ -573,18 +594,18 @@ func (pi *PostgresIntrospector) introspectColumns(ctx context.Context, table *pa
 	var exprs []columnExpr
 	for rows.Next() {
 		var (
-			col                            parser.Column
-			formatType, typSchema, typName string
-			nullable                       bool
-			dflt                           sql.NullString
-			identity                       string
-			expr                           columnExpr
+			col                                    parser.Column
+			formatType, typSchema, typName, shadow string
+			nullable                               bool
+			dflt                                   sql.NullString
+			identity                               string
+			expr                                   columnExpr
 		)
-		if err := rows.Scan(&col.Name, &formatType, &typSchema, &typName, &nullable, &dflt, &identity, &expr.generated, &expr.serial); err != nil {
+		if err := rows.Scan(&col.Name, &formatType, &typSchema, &typName, &shadow, &nullable, &dflt, &identity, &expr.generated, &expr.serial); err != nil {
 			return fmt.Errorf("introspect postgres columns %s.%s: scanning: %w", table.Schema, table.Name, err)
 		}
 
-		col.Type = columnType(formatType, typSchema, typName, table.Schema)
+		col.Type = columnType(formatType, typSchema, typName, shadow, table.Schema)
 		col.Nullable = nullable
 		col.AutoIncrement = identity != ""
 		expr.text = dflt.String
@@ -1081,9 +1102,11 @@ func (pi *PostgresIntrospector) introspectCompositeTypes(ctx context.Context, sc
 		}
 
 		attrRows, err := pi.db.QueryContext(ctx, `
-			SELECT a.attname, format_type(a.atttypid, a.atttypmod), COALESCE(tn.nspname, ''), COALESCE(et.typname, '')
+			SELECT a.attname, format_type(a.atttypid, a.atttypmod), COALESCE(tn.nspname, ''), COALESCE(et.typname, ''),
+			       COALESCE(vn.nspname, '')
 			FROM pg_catalog.pg_attribute a
-			CROSS JOIN LATERAL (SELECT a.atttypid AS type_oid) tt`+userTypeJoin+`
+			JOIN pg_catalog.pg_class c ON c.oid = a.attrelid
+			CROSS JOIN LATERAL (SELECT a.atttypid AS type_oid, c.relnamespace AS own_ns) tt`+userTypeJoin+`
 			WHERE a.attrelid = $1
 			  AND a.attnum > 0
 			  AND NOT a.attisdropped
@@ -1111,11 +1134,11 @@ func (pi *PostgresIntrospector) introspectDomainTypes(ctx context.Context, schem
 	rows, err := pi.db.QueryContext(ctx, `
 		SELECT n.nspname, t.typname,
 		       format_type(t.typbasetype, t.typtypmod),
-		       COALESCE(tn.nspname, ''), COALESCE(et.typname, ''),
+		       COALESCE(tn.nspname, ''), COALESCE(et.typname, ''), COALESCE(vn.nspname, ''),
 		       t.oid
 		FROM pg_catalog.pg_type t
 		JOIN pg_catalog.pg_namespace n ON t.typnamespace = n.oid
-		CROSS JOIN LATERAL (SELECT t.typbasetype AS type_oid) tt`+userTypeJoin+`
+		CROSS JOIN LATERAL (SELECT t.typbasetype AS type_oid, t.typnamespace AS own_ns) tt`+userTypeJoin+`
 		WHERE t.typtype = 'd'
 		  AND n.nspname NOT IN ('pg_catalog', 'information_schema')
 		ORDER BY n.nspname, t.typname`)
@@ -1130,14 +1153,14 @@ func (pi *PostgresIntrospector) introspectDomainTypes(ctx context.Context, schem
 	)
 	for rows.Next() {
 		var (
-			dt                             parser.DomainType
-			formatType, typSchema, typName string
-			oid                            int64
+			dt                                     parser.DomainType
+			formatType, typSchema, typName, shadow string
+			oid                                    int64
 		)
-		if err := rows.Scan(&dt.Schema, &dt.Name, &formatType, &typSchema, &typName, &oid); err != nil {
+		if err := rows.Scan(&dt.Schema, &dt.Name, &formatType, &typSchema, &typName, &shadow, &oid); err != nil {
 			return nil, fmt.Errorf("introspect postgres domain types: scanning: %w", err)
 		}
-		dt.BaseType = columnType(formatType, typSchema, typName, dt.Schema)
+		dt.BaseType = columnType(formatType, typSchema, typName, shadow, dt.Schema)
 		all = append(all, dt)
 		oids = append(oids, oid)
 	}
@@ -1301,13 +1324,13 @@ func scanCompositeAttributes(rows *sql.Rows, ct *parser.CompositeType) error {
 
 	for rows.Next() {
 		var (
-			attr                           parser.Attribute
-			formatType, typSchema, typName string
+			attr                                   parser.Attribute
+			formatType, typSchema, typName, shadow string
 		)
-		if err := rows.Scan(&attr.Name, &formatType, &typSchema, &typName); err != nil {
+		if err := rows.Scan(&attr.Name, &formatType, &typSchema, &typName, &shadow); err != nil {
 			return fmt.Errorf("scanning: %w", err)
 		}
-		attr.Type = columnType(formatType, typSchema, typName, ct.Schema)
+		attr.Type = columnType(formatType, typSchema, typName, shadow, ct.Schema)
 		ct.Attributes = append(ct.Attributes, attr)
 	}
 

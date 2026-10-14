@@ -300,6 +300,10 @@ func parseViewFiles(dialect config.Dialect, defaultSchema string, viewPaths []st
 	if err != nil {
 		return nil, nil, err
 	}
+	var searchPath parser.SearchPath
+	if dialect == config.DialectPostgres {
+		searchPath = postgres.SearchPath(defaultSchema)
+	}
 
 	files, err := parser.DiscoverFiles(viewPaths)
 	if err != nil {
@@ -330,7 +334,7 @@ func parseViewFiles(dialect config.Dialect, defaultSchema string, viewPaths []st
 		key := viewKey(parsed.Schema, parsed.Name)
 		view := &parser.View{Schema: parsed.Schema, Name: parsed.Name}
 		if !inDatabase[key] {
-			if view, err = parser.BuildView(parsed, string(data), annotations, schema); err != nil {
+			if view, err = parser.BuildView(parsed, string(data), annotations, schema, searchPath); err != nil {
 				return nil, nil, fmt.Errorf("building view from %s: %w", file, err)
 			}
 		}

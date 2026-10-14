@@ -73,6 +73,10 @@ func introspectSchema(ctx context.Context, cfg *config.RootConfig) (*parser.Sche
 			Tables:         in.Tables,
 		}
 	}
+	// input.schema's default, "*", leaves the dialect's own default.
+	if cfg.Input.Schema != "*" {
+		opts.DefaultSchema = cfg.Input.Schema
+	}
 
 	schema := &parser.Schema{}
 	if err := intro.Introspect(ctx, conn, schema, opts); err != nil {

@@ -163,6 +163,123 @@ CREATE TYPE comp AS (c app.citext[]);
 	}
 }
 
+// TestTypeNamesShadowedDefaultSchema pins the spelling of a default-schema
+// type the DDL does not declare in a schema that declares a type by the same
+// name: default-schema qualified while the shadowing type exists, whatever
+// the statement order, and bare again once it is renamed, dropped or the
+// table leaves the schema, as the introspector writes it.
+func TestTypeNamesShadowedDefaultSchema(t *testing.T) {
+	tests := []struct {
+		name string
+		ddl  string
+		want map[string]string
+	}{
+		{
+			name: "shadowed by a type declared before or after",
+			ddl: `CREATE TABLE r (x int); CREATE TABLE app.t (rr public.r, rb r, ra r[]);
+				CREATE TYPE app.r AS ENUM ('a'); CREATE TABLE app.u (mine app.r, rr public.r);
+				CREATE DOMAIN app.dr AS public.r; CREATE TYPE app.comp AS (rr r);`,
+			want: map[string]string{
+				"public.r.x": "integer", "app.t.rr": "public.r", "app.t.rb": "public.r", "app.t.ra": "public.r[]",
+				"app.u.mine": "r", "app.u.rr": "public.r", "domain app.dr": "public.r", "attr app.comp.rr": "public.r",
+			},
+		},
+		{
+			name: "renamed away",
+			ddl: `CREATE TABLE r (x int); CREATE TYPE app.r AS ENUM ('a');
+				CREATE TABLE app.t (rr public.r, mine app.r); ALTER TYPE app.r RENAME TO y;`,
+			want: map[string]string{"public.r.x": "integer", "app.t.rr": "r", "app.t.mine": "y"},
+		},
+		{
+			name: "dropped",
+			ddl:  `CREATE TABLE r (x int); CREATE TYPE app.r AS ENUM ('a'); CREATE TABLE app.t (rr public.r); DROP TYPE app.r;`,
+			want: map[string]string{"public.r.x": "integer", "app.t.rr": "r"},
+		},
+		{
+			name: "table moved in and out",
+			ddl: `CREATE TABLE r (x int); CREATE TYPE app.r AS ENUM ('a'); CREATE TABLE m (rr r);
+				ALTER TABLE m SET SCHEMA app; CREATE TABLE app.n (rr r); ALTER TABLE app.n SET SCHEMA public;`,
+			want: map[string]string{"public.r.x": "integer", "app.m.rr": "public.r", "public.n.rr": "r"},
+		},
+		{
+			name: "type modifiers shadowed by a type declared before, then dropped",
+			ddl: `CREATE DOMAIN app.vector AS int; CREATE TABLE app.t (v vector(3), va vector(3)[]);
+				CREATE TABLE app.u (v public.vector(3));
+				CREATE TABLE app.w (v vector(3), va vector(3)[]); DROP DOMAIN app.vector;`,
+			want: map[string]string{
+				"app.t.v": "vector(3)", "app.t.va": "vector(3)[]", "app.u.v": "vector(3)",
+				"app.w.v": "vector(3)", "app.w.va": "vector(3)[]",
+			},
+		},
+		{
+			name: "type modifiers shadowed by a type declared after",
+			ddl:  `CREATE TABLE app.t (v vector(3), va vector(3)[]); CREATE DOMAIN app.vector AS int;`,
+			want: map[string]string{
+				"app.t.v": "public.vector(3)", "app.t.va": "public.vector(3)[]", "domain app.vector": "integer",
+			},
+		},
+		{
+			name: "grammar types a type declared after or a move shadows",
+			ddl: `CREATE TABLE x (created timestamptz, e timetz); CREATE TABLE app.y (e timestamptz(3), f int4);
+				CREATE TABLE vb (b varbit); CREATE TABLE app.vb (b varbit(2));
+				CREATE TABLE app.t (a varchar(3), b int, c timestamp(3) with time zone, d varchar(3)[], e time(2) with time zone,
+					p bit varying(4));
+				CREATE TABLE m (a varchar(3), c timestamp with time zone, e timestamptz(3), p bit varying(4));
+				CREATE DOMAIN app.varchar AS int; CREATE DOMAIN app.integer AS int; CREATE DOMAIN app.timestamptz AS int;
+				CREATE DOMAIN app.timetz AS int; CREATE DOMAIN app.varbit AS int; ALTER TABLE m SET SCHEMA app;`,
+			want: map[string]string{
+				"public.x.created": "timestamptz", "public.x.e": "timetz", "app.y.e": "timestamptz(3)", "app.y.f": "integer",
+				"public.vb.b": "varbit", "app.vb.b": "varbit(2)",
+				"app.t.a": "varchar(3)", "app.t.b": "integer", "app.t.c": "timestamptz(3)", "app.t.d": "varchar(3)[]",
+				"app.t.e": "timetz(2)", "app.t.p": "varbit(4)", "app.m.a": "varchar(3)", "app.m.c": "timestamptz",
+				"app.m.e": "timestamptz(3)", "app.m.p": "varbit(4)",
+				"domain app.varchar": "integer", "domain app.integer": "integer", "domain app.timestamptz": "integer",
+				"domain app.timetz": "integer", "domain app.varbit": "integer",
+			},
+		},
+		{
+			name: "built-in types a type declared before shadows",
+			ddl: `CREATE DOMAIN app.integer AS int; CREATE DOMAIN app.timestamptz AS int;
+				CREATE TABLE app.t (a int4, b timestamptz(3), c timestamp with time zone);`,
+			want: map[string]string{
+				"app.t.a": "integer", "app.t.b": "timestamptz(3)", "app.t.c": "timestamptz",
+				"domain app.integer": "integer", "domain app.timestamptz": "integer",
+			},
+		},
+		{
+			name: "default schema and other-schema qualifiers",
+			ddl:  `CREATE TYPE app.citext AS ENUM ('a'); CREATE TABLE t (c citext); CREATE TABLE app.t (c ext.citext);`,
+			want: map[string]string{"public.t.c": "citext", "app.t.c": "ext.citext"},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			p := postgres.New("public")
+			if err := p.Parse("test.sql", []byte(tt.ddl)); err != nil {
+				t.Fatalf("Parse() error: %v", err)
+			}
+			s := p.Schema()
+			got := make(map[string]string)
+			for _, tbl := range s.Tables {
+				for _, c := range tbl.Columns {
+					got[tbl.Schema+"."+tbl.Name+"."+c.Name] = c.Type
+				}
+			}
+			for _, d := range s.DomainTypes {
+				got["domain "+d.Schema+"."+d.Name] = d.BaseType
+			}
+			for _, ct := range s.CompositeTypes {
+				for _, a := range ct.Attributes {
+					got["attr "+ct.Schema+"."+ct.Name+"."+a.Name] = a.Type
+				}
+			}
+			if diff := cmp.Diff(tt.want, got); diff != "" {
+				t.Errorf("type names mismatch (-want +got):\n%s", diff)
+			}
+		})
+	}
+}
+
 // TestDomainCheckNames pins the names PostgreSQL 16 gave the same domains: an
 // unnamed CHECK is <domain>_check, a name already taken by any constraint in
 // the schema gets a numeric suffix, and a long name is cut to 63 bytes.

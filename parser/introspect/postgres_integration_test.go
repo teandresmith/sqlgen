@@ -2,6 +2,7 @@ package introspect_test
 
 import (
 	"context"
+	"database/sql"
 	"strconv"
 	"strings"
 	"testing"
@@ -173,6 +174,252 @@ CREATE TABLE pgi_qual.t (
 		}
 	}
 	assertSchemaParity(t, "postgres", parsed, introspected)
+}
+
+// TestPostgresIntrospect_ShadowedDefaultSchemaTypes pins a default-schema
+// type in a schema that declares a type by the same name: both sources
+// qualify it, whether the DDL qualifies it or not and whether the shadowing
+// type is declared before or after, while the schema's own type stays bare.
+func TestPostgresIntrospect_ShadowedDefaultSchemaTypes(t *testing.T) {
+	requireDatabases(t)
+	ddl := `
+CREATE EXTENSION IF NOT EXISTS citext;
+CREATE SCHEMA pgi_shadow;
+CREATE TABLE pgi_shadow.t (id int PRIMARY KEY, c public.citext, b citext, cs public.citext[]);
+CREATE DOMAIN pgi_shadow.citext AS int;
+CREATE TABLE pgi_shadow.u (id int PRIMARY KEY, mine pgi_shadow.citext, c citext);
+CREATE TYPE pgi_shadow.comp AS (c public.citext);
+CREATE DOMAIN pgi_shadow.dc AS citext`
+	parsed, introspected := pgParityCase(t, "DROP SCHEMA IF EXISTS pgi_shadow CASCADE", ddl, "pgi_shadow")
+	typeOf := func(c parser.Column) string { return c.Type }
+	for _, side := range []struct {
+		name   string
+		schema *parser.Schema
+	}{{"parsed", parsed}, {"introspected", introspected}} {
+		got := map[string]map[string]string{
+			"t": qualifiedColumnField(t, side.schema, "pgi_shadow", "t", typeOf),
+			"u": qualifiedColumnField(t, side.schema, "pgi_shadow", "u", typeOf),
+		}
+		want := map[string]map[string]string{
+			"t": {"id": "integer", "c": "public.citext", "b": "public.citext", "cs": "public.citext[]"},
+			"u": {"id": "integer", "mine": "citext", "c": "public.citext"},
+		}
+		if diff := cmp.Diff(want, got); diff != "" {
+			t.Errorf("%s column types mismatch (-want +got):\n%s", side.name, diff)
+		}
+	}
+	assertSchemaParity(t, "postgres", parsed, introspected)
+}
+
+// TestPostgresIntrospect_BuiltinTypesStayBare pins a pg_catalog type in a
+// schema that declares a type by the same name: PostgreSQL finds the
+// pg_catalog type first, so both sources write it bare, whether the DDL
+// names it bare (timestamptz, int4, varbit) or the grammar does (timestamp
+// with time zone, bit varying), and whether the shadowing type is declared
+// before or after, or the table moves in.
+func TestPostgresIntrospect_BuiltinTypesStayBare(t *testing.T) {
+	requireDatabases(t)
+	ddl := `
+CREATE SCHEMA pgi_bt;
+CREATE SCHEMA pgi_bt2;
+CREATE TABLE pgi_bt.x (id int PRIMARY KEY, created timestamptz, e timetz, vb varbit);
+CREATE TABLE pgi_bt.t (id int PRIMARY KEY, c timestamp with time zone, d time(2) with time zone, e timestamptz(3), f int4, p bit varying(4));
+CREATE TABLE pgi_bt2.m (id int PRIMARY KEY, c timestamp with time zone, e timestamptz(3), p bit varying(4));
+CREATE DOMAIN pgi_bt.timestamptz AS int;
+CREATE DOMAIN pgi_bt.timetz AS int;
+CREATE DOMAIN pgi_bt.integer AS int;
+CREATE DOMAIN pgi_bt.varbit AS int;
+ALTER TABLE pgi_bt2.m SET SCHEMA pgi_bt;
+CREATE TABLE pgi_bt.u (id int PRIMARY KEY, e timestamptz(3), f int4)`
+	parsed, introspected := pgParityCase(t, "DROP SCHEMA IF EXISTS pgi_bt CASCADE; DROP SCHEMA IF EXISTS pgi_bt2 CASCADE", ddl, "pgi_bt", "pgi_bt2")
+	want := map[string]map[string]string{
+		"x": {"id": "integer", "created": "timestamptz", "e": "timetz", "vb": "varbit"},
+		"t": {"id": "integer", "c": "timestamptz", "d": "timetz(2)", "e": "timestamptz(3)", "f": "integer", "p": "varbit(4)"},
+		"m": {"id": "integer", "c": "timestamptz", "e": "timestamptz(3)", "p": "varbit(4)"},
+		"u": {"id": "integer", "e": "timestamptz(3)", "f": "integer"},
+	}
+	typeOf := func(c parser.Column) string { return c.Type }
+	for _, side := range []struct {
+		name   string
+		schema *parser.Schema
+	}{{"parsed", parsed}, {"introspected", introspected}} {
+		got := make(map[string]map[string]string)
+		for table := range want {
+			got[table] = qualifiedColumnField(t, side.schema, "pgi_bt", table, typeOf)
+		}
+		if diff := cmp.Diff(want, got); diff != "" {
+			t.Errorf("%s column types mismatch (-want +got):\n%s", side.name, diff)
+		}
+	}
+	for table := range want {
+		for col, nsp := range pgColumnTypeSchemas(t, "pgi_bt", table) {
+			if nsp != "pg_catalog" {
+				t.Errorf("catalog type of pgi_bt.%s.%s is in schema %s, want pg_catalog", table, col, nsp)
+			}
+		}
+	}
+	assertSchemaParity(t, "postgres", parsed, introspected)
+}
+
+// TestPostgresIntrospect_SerialBesideSerialType pins that an unqualified
+// serial or bigserial column is an auto-increment integer under both
+// sources when its schema declares a type named serial or bigserial, before
+// or after the column: PostgreSQL expands the serial name before it looks a
+// type up.
+func TestPostgresIntrospect_SerialBesideSerialType(t *testing.T) {
+	requireDatabases(t)
+	ddl := `
+CREATE SCHEMA pgi_ser;
+CREATE TABLE pgi_ser.a (id serial PRIMARY KEY, b bigserial);
+CREATE DOMAIN pgi_ser.serial AS int;
+CREATE DOMAIN pgi_ser.bigserial AS bigint;
+CREATE TABLE pgi_ser.c (id serial PRIMARY KEY, b bigserial)`
+	parsed, introspected := pgParityCase(t, "DROP SCHEMA IF EXISTS pgi_ser CASCADE", ddl, "pgi_ser")
+	field := func(c parser.Column) string { return c.Type + " auto_increment=" + strconv.FormatBool(c.AutoIncrement) }
+	want := map[string]string{"id": "integer auto_increment=true", "b": "bigint auto_increment=true"}
+	for _, side := range []struct {
+		name   string
+		schema *parser.Schema
+	}{{"parsed", parsed}, {"introspected", introspected}} {
+		for _, table := range []string{"a", "c"} {
+			if diff := cmp.Diff(want, qualifiedColumnField(t, side.schema, "pgi_ser", table, field)); diff != "" {
+				t.Errorf("%s pgi_ser.%s columns mismatch (-want +got):\n%s", side.name, table, diff)
+			}
+		}
+	}
+	assertSchemaParity(t, "postgres", parsed, introspected)
+}
+
+// TestPostgresIntrospect_ViewSearchPathTypes pins a view column's type in
+// the view's schema under both sources: a type on the search_path is
+// qualified with input.schema there when the view's schema declares a type
+// by the same name, and bare otherwise, as a table column's is, and a
+// pg_catalog type stays bare, also when read from a schema that declares a
+// type by its name. The catalog's view columns name the same types.
+func TestPostgresIntrospect_ViewSearchPathTypes(t *testing.T) {
+	requireDatabases(t)
+	const reset = "DROP SCHEMA IF EXISTS pgi_vw CASCADE; DROP SCHEMA IF EXISTS pgi_vw_n CASCADE; DROP SCHEMA IF EXISTS pgi_vw_o CASCADE; DROP SCHEMA IF EXISTS pgi_vw_d CASCADE"
+	tables := `
+CREATE SCHEMA pgi_vw_d;
+CREATE SCHEMA pgi_vw;
+CREATE SCHEMA pgi_vw_o;
+CREATE SCHEMA pgi_vw_n;
+CREATE TABLE pgi_vw_d.r (x int);
+CREATE TABLE pgi_vw_d.m (id int PRIMARY KEY, rr pgi_vw_d.r, n int, ts timestamp with time zone);
+CREATE TYPE pgi_vw.r AS ENUM ('a');
+CREATE DOMAIN pgi_vw.integer AS int;
+CREATE DOMAIN pgi_vw.timestamptz AS int;
+CREATE TYPE pgi_vw_o.r AS ENUM ('b');
+CREATE TABLE pgi_vw_o.t (id int PRIMARY KEY, rr pgi_vw_d.r);
+CREATE TABLE pgi_vw.tab (id int PRIMARY KEY, ts timestamp with time zone)`
+	views := []string{
+		"CREATE VIEW pgi_vw.v AS SELECT id, rr, n, ts FROM pgi_vw_d.m",
+		"CREATE VIEW pgi_vw_n.w AS SELECT id, rr FROM pgi_vw_o.t",
+		"CREATE VIEW pgi_vw.wo AS SELECT id, rr FROM pgi_vw_o.t",
+		"CREATE VIEW pgi_vw_d.v3 AS SELECT id, ts FROM pgi_vw.tab",
+	}
+	applyParityFixture(t, "pgx", pgConnStr, reset, tables+";"+strings.Join(views, ";"))
+
+	files := parseStatements(t, postgres.New("pgi_vw_d"), tables)
+	for _, ddl := range views {
+		parsed, err := postgres.ParseViewSQL([]byte(ddl), "pgi_vw_d")
+		if err != nil {
+			t.Fatalf("ParseViewSQL(%q) error: %v", ddl, err)
+		}
+		view, err := parser.BuildView(parsed, ddl, &parser.ViewAnnotations{}, files, postgres.SearchPath("pgi_vw_d"))
+		if err != nil {
+			t.Fatalf("BuildView(%q) error: %v", ddl, err)
+		}
+		files.Views = append(files.Views, *view)
+	}
+
+	introspectViews := func() *parser.Schema {
+		intro := introspect.NewPostgresIntrospector()
+		defer intro.Close() //nolint:errcheck // test cleanup
+		s := &parser.Schema{}
+		opts := introspect.IntrospectionOptions{Schemas: []string{"pgi_vw_d", "pgi_vw", "pgi_vw_o", "pgi_vw_n"}, DefaultSchema: "pgi_vw_d"}
+		if err := intro.Introspect(context.Background(), pgConnStr+"&search_path=pgi_vw_d", s, opts); err != nil {
+			t.Fatalf("Introspect() error: %v", err)
+		}
+		return s
+	}
+	database := introspectViews()
+	// source: both reads the views again once the SQL files are applied.
+	both := postgres.New("pgi_vw_d")
+	if err := introspect.Merge(introspectViews(), both, nil); err != nil {
+		t.Fatalf("Merge() error: %v", err)
+	}
+
+	want := map[string]map[string]string{
+		"pgi_vw.v":    {"id": "integer", "rr": "pgi_vw_d.r", "n": "integer", "ts": "timestamptz"},
+		"pgi_vw_n.w":  {"id": "integer", "rr": "r"},
+		"pgi_vw.wo":   {"id": "integer", "rr": "pgi_vw_d.r"},
+		"pgi_vw_d.v3": {"id": "integer", "ts": "timestamptz"},
+	}
+	wantSchemas := map[string]map[string]string{
+		"pgi_vw.v":    {"id": "pg_catalog", "rr": "pgi_vw_d", "n": "pg_catalog", "ts": "pg_catalog"},
+		"pgi_vw_n.w":  {"id": "pg_catalog", "rr": "pgi_vw_d"},
+		"pgi_vw.wo":   {"id": "pg_catalog", "rr": "pgi_vw_d"},
+		"pgi_vw_d.v3": {"id": "pg_catalog", "ts": "pg_catalog"},
+	}
+	for _, side := range []struct {
+		name   string
+		schema *parser.Schema
+	}{{"files", files}, {"database", database}, {"both", both.Schema()}} {
+		got := make(map[string]map[string]string)
+		for _, v := range side.schema.Views {
+			cols := make(map[string]string, len(v.Columns))
+			for _, c := range v.Columns {
+				cols[c.Name] = c.Type
+			}
+			got[v.Schema+"."+v.Name] = cols
+		}
+		if diff := cmp.Diff(want, got); diff != "" {
+			t.Errorf("%s view column types mismatch (-want +got):\n%s", side.name, diff)
+		}
+	}
+	gotSchemas := make(map[string]map[string]string)
+	for key := range want {
+		schema, name, _ := strings.Cut(key, ".")
+		gotSchemas[key] = pgColumnTypeSchemas(t, schema, name)
+	}
+	if diff := cmp.Diff(wantSchemas, gotSchemas); diff != "" {
+		t.Errorf("catalog view column type schemas mismatch (-want +got):\n%s", diff)
+	}
+}
+
+// pgColumnTypeSchemas returns, for every column of the relation
+// schema.name, the schema of its type as the catalog records it.
+func pgColumnTypeSchemas(t *testing.T, schema, name string) map[string]string {
+	t.Helper()
+	db, err := sql.Open("pgx", pgConnStr)
+	if err != nil {
+		t.Fatalf("opening pgx: %v", err)
+	}
+	defer db.Close() //nolint:errcheck // test cleanup
+	rows, err := db.QueryContext(context.Background(), `
+		SELECT a.attname, tn.nspname
+		FROM pg_catalog.pg_attribute a
+		JOIN pg_catalog.pg_type ty ON ty.oid = a.atttypid
+		JOIN pg_catalog.pg_namespace tn ON tn.oid = ty.typnamespace
+		WHERE a.attrelid = (quote_ident($1) || '.' || quote_ident($2))::regclass
+		  AND a.attnum > 0 AND NOT a.attisdropped`, schema, name)
+	if err != nil {
+		t.Fatalf("reading the column types of %s.%s: %v", schema, name, err)
+	}
+	defer rows.Close() //nolint:errcheck // test cleanup
+	out := make(map[string]string)
+	for rows.Next() {
+		var col, nsp string
+		if err := rows.Scan(&col, &nsp); err != nil {
+			t.Fatalf("scanning the column types of %s.%s: %v", schema, name, err)
+		}
+		out[col] = nsp
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatalf("reading the column types of %s.%s: %v", schema, name, err)
+	}
+	return out
 }
 
 func TestPostgresIntrospect_Defaults(t *testing.T) {

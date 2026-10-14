@@ -260,7 +260,7 @@ func (si *SQLiteIntrospector) introspectViews(ctx context.Context, schema *parse
 		}
 		// SQLite reports no type for an expression column; that one stays any.
 		catalog := view.Columns
-		columnsFromDefinition(&view, ref.sql, sqlite.ParseViewSQL, schema, func(i int) (parser.Column, bool) {
+		columnsFromDefinition(&view, ref.sql, sqlite.ParseViewSQL, schema, parser.SearchPath{}, func(i int) (parser.Column, bool) {
 			return catalog[i], declared[i] != ""
 		})
 

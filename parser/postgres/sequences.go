@@ -50,7 +50,7 @@ func (p *Parser) ownedSequence(table, column string, identity bool) *pgSequence 
 // addColumnSequence records the sequence PostgreSQL creates for a serial or
 // identity column cd of table. PostgreSQL names it before the table's indexes.
 func (p *Parser) addColumnSequence(table *parser.Table, cd *pg_query.ColumnDef) {
-	if isSerial(p.typeName(cd.TypeName, table.Schema)) {
+	if _, ok := serialType(cd.TypeName); ok {
 		p.addImplicitSequence(table, cd.Colname, false, nil)
 	}
 	for _, c := range cd.Constraints {
@@ -87,12 +87,24 @@ func sequenceNameOption(options []*pg_query.Node) []string {
 	return nil
 }
 
-func isSerial(typ string) bool {
-	switch strings.ToLower(typ) {
-	case "serial", "serial4", "bigserial", "serial8", "smallserial", "serial2":
-		return true
+// serialType returns the integer type of the serial pseudo-type tn names,
+// and whether it names one. PostgreSQL expands an unqualified serial name
+// before it looks the type up, so a serial type the column's schema declares
+// does not shadow it.
+func serialType(tn *pg_query.TypeName) (string, bool) {
+	names := extractStringList(tn.GetNames())
+	if len(names) != 1 || len(tn.GetTypmods()) > 0 || len(tn.GetArrayBounds()) > 0 {
+		return "", false
 	}
-	return false
+	switch strings.ToLower(names[0]) {
+	case "serial", "serial4":
+		return "integer", true
+	case "bigserial", "serial8":
+		return "bigint", true
+	case "smallserial", "serial2":
+		return "smallint", true
+	}
+	return "", false
 }
 
 func isNextval(expr string) bool {

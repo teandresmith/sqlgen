@@ -50,6 +50,12 @@ type IntrospectionOptions struct {
 
 	// Tables to exclude. Supports * and ? wildcards. Applied after include filter.
 	ExcludeTables []string
+
+	// DefaultSchema is input.schema, the schema PostgreSQL's search_path is
+	// assumed to resolve (PRD §5.2); "public" if empty. A view column's type
+	// on the search_path is written relative to it, as the file parser
+	// writes it.
+	DefaultSchema string
 }
 
 // matchesFilter checks whether name passes the include/exclude filter lists.

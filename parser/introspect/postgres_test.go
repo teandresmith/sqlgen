@@ -187,7 +187,7 @@ func TestColumnType(t *testing.T) {
 	tests := []struct {
 		name                           string
 		formatType, typSchema, typName string
-		own                            string
+		shadow, own                    string
 		want                           string
 	}{
 		{name: "built-in type", formatType: "character varying(255)", own: "app", want: "varchar(255)"},
@@ -198,11 +198,15 @@ func TestColumnType(t *testing.T) {
 		{name: "cross-schema enum on the search_path", formatType: "region", typSchema: "other", typName: "region", own: "app", want: "other.region"},
 		{name: "cross-schema domain array", formatType: "other.dom[]", typSchema: "other", typName: "dom", own: "app", want: "other.dom[]"},
 		{name: "quoted mixed-case name", formatType: `app."Mood"`, typSchema: "app", typName: "Mood", own: "public", want: "app.Mood"},
+		{name: "search_path type an own-schema type shadows", formatType: "r", shadow: "public", own: "app", want: "public.r"},
+		{name: "search_path array an own-schema type shadows", formatType: "r[]", shadow: "public", own: "app", want: "public.r[]"},
+		{name: "shadowed type with a modifier", formatType: "vector(3)", shadow: "public", own: "app", want: "public.vector(3)"},
+		{name: "shadowed type format_type qualifies", formatType: "ext.citext", shadow: "ext", own: "app", want: "ext.citext"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			if got := columnType(tt.formatType, tt.typSchema, tt.typName, tt.own); got != tt.want {
-				t.Errorf("columnType(%q, %q, %q, %q) = %q, want %q", tt.formatType, tt.typSchema, tt.typName, tt.own, got, tt.want)
+			if got := columnType(tt.formatType, tt.typSchema, tt.typName, tt.shadow, tt.own); got != tt.want {
+				t.Errorf("columnType(%q, %q, %q, %q, %q) = %q, want %q", tt.formatType, tt.typSchema, tt.typName, tt.shadow, tt.own, got, tt.want)
 			}
 		})
 	}

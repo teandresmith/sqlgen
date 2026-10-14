@@ -16,8 +16,8 @@ type viewSQLParser func(sql []byte) (parser.ViewSQL, error)
 // columnsFromDefinition sets view's columns from ddl, its CREATE VIEW
 // statement (see viewColumnsFromDefinition), or keeps the catalog's and
 // records a warning.
-func columnsFromDefinition(view *parser.View, ddl string, parse viewSQLParser, schema *parser.Schema, catalogColumn func(i int) (parser.Column, bool)) {
-	def, cols, err := viewColumnsFromDefinition(ddl, parse, schema, columnNames(view.Columns), catalogColumn)
+func columnsFromDefinition(view *parser.View, ddl string, parse viewSQLParser, schema *parser.Schema, searchPath parser.SearchPath, catalogColumn func(i int) (parser.Column, bool)) {
+	def, cols, err := viewColumnsFromDefinition(ddl, parse, schema, searchPath, columnNames(view.Columns), catalogColumn)
 	if err != nil {
 		name := view.Name
 		if view.Schema != "" {
@@ -128,7 +128,7 @@ func viewKey(view parser.View) string {
 // expression counts the same. A view whose columns come from the catalog
 // cannot be traced, so it is an error only when one of its ENUM or SET
 // types is gone.
-func refreshViewColumns(schema *parser.Schema, reads viewReads) error {
+func refreshViewColumns(schema *parser.Schema, searchPath parser.SearchPath, reads viewReads) error {
 	types := enumAndSetNames(schema)
 	for i := range schema.Views {
 		view := &schema.Views[i]
@@ -156,7 +156,7 @@ func refreshViewColumns(schema *parser.Schema, reads viewReads) error {
 			}
 			return fmt.Errorf("view %s: column %s reads column %s of table %s, which the SQL files drop or rename; under source: both the database's view stands, so change it in the database first", viewKey(*view), view.Definition.Columns[j].Alias, ref.column, ref.table)
 		}
-		built, err := parser.BuildView(*view.Definition, view.SQL, &parser.ViewAnnotations{}, schema)
+		built, err := parser.BuildView(*view.Definition, view.SQL, &parser.ViewAnnotations{}, schema, searchPath)
 		if err != nil {
 			return fmt.Errorf("view %s: %w", view.Name, err)
 		}
@@ -181,12 +181,12 @@ func refreshViewColumns(schema *parser.Schema, reads viewReads) error {
 // catalog's column instead, when catalogColumn has a type for it. It fails
 // when the parser cannot read ddl or reads other column names than
 // catalogNames, the catalog's.
-func viewColumnsFromDefinition(ddl string, parse viewSQLParser, schema *parser.Schema, catalogNames []string, catalogColumn func(i int) (parser.Column, bool)) (*parser.ViewSQL, []parser.Column, error) {
+func viewColumnsFromDefinition(ddl string, parse viewSQLParser, schema *parser.Schema, searchPath parser.SearchPath, catalogNames []string, catalogColumn func(i int) (parser.Column, bool)) (*parser.ViewSQL, []parser.Column, error) {
 	parsed, err := parse([]byte(ddl))
 	if err != nil {
 		return nil, nil, err
 	}
-	built, err := parser.BuildView(parsed, ddl, &parser.ViewAnnotations{}, schema)
+	built, err := parser.BuildView(parsed, ddl, &parser.ViewAnnotations{}, schema, searchPath)
 	if err != nil {
 		return nil, nil, fmt.Errorf("building view: %w", err)
 	}
