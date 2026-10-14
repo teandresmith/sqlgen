@@ -22,64 +22,6 @@
 ## Open
 
 <!-- fixes:open:begin -->
-### FIX-339
-
-- **Status:** Open
-- **Severity:** nit
-- **Origin:** phase 4, `parser/postgres` (`parseDrop` / `dropTables` CASCADE)
-- **Surfaced by:** FIX-332 vet (2026-10-12), filed at the backlog sweep's second Step 5
-- **Vetted:** corrected at `f9a460a5` (2026-10-12)
-
-**Issue.** PG `DROP TABLE a CASCADE`, where `b` references `a`, is a parser error, while PostgreSQL drops `a` and
-only `b`'s foreign key. Measured: `CREATE TABLE a (id int PRIMARY KEY); CREATE TABLE b (id int PRIMARY KEY, a_id int
-REFERENCES a(id)); DROP TABLE a CASCADE;` → "drop table public.a: cannot drop table public.a: column public.b.a_id
-references it via foreign key"; PG17.11 → "NOTICE: drop cascades to constraint b_a_id_fkey on table b / DROP TABLE",
-and `\d b` keeps columns id and a_id with no FK. MySQL ignores CASCADE (ERROR 3730), which the MySQL parser already
-matches.
-
-**Root cause.** The PG parser ignores `DropStmt.Behavior`; the drop-reference check always errors.
-
-**Suggested fix.**
-- `parser/postgres/postgres.go` `dropTables` (FIX-332): under `stmt.Behavior == pg_query.DropBehavior_DROP_CASCADE` call
-  a new `dropReferencingKeys(refs)` instead of `CheckTableDropRefs`; RESTRICT and the default still error.
-  `dropReferencingKeys` deletes every ForeignKey constraint whose ReferenceSchema/ReferenceTable is in the drop set,
-  clears any column FKReference pointing into it, then re-applies the remaining single-column FK constraints (so a column
-  with a second FK keeps it). Unique constraints and indexes stay (PG17.11 keeps `b_a_id_key` UNIQUE and `b_a_idx`).
-- PRD §5.6 (`docs/PRD.md:1593-1595` on the stack) gains: "On PostgreSQL, `DROP TABLE … CASCADE` drops the foreign keys
-  that reference the dropped tables instead, as PostgreSQL does; the referencing columns stay, with their unique
-  constraints and indexes (MySQL ignores `CASCADE`)."
-- Tests: `TestDropTableCascade` (9 cases: one and two referencing tables, table constraint with UNIQUE and index kept,
-  composite, self-reference, cross-schema, `DROP TABLE a, b CASCADE` with c→b, second key stays, RESTRICT errors with
-  nothing dropped), asserting every remaining table's constraints, unique flags and FKReference.
-- Auto-accepted the recommended option on 2026-10-12 (`/fix` auto-accept rule): under `source: both`, a database view PG's
-  CASCADE would drop gets no FIX-339 code — the view stands and FIX-333's merge check reports it ("view V reads table T,
-  which the SQL files drop or rename; …"), per PRD §6.1 ("the database's view stands") — because it needs no code, causes
-  no churn, adds no surface and reverses nothing. Not measured (the 308+309+333 stack was not applied in the vet); until
-  FIX-333 lands, CASCADE under `both` leaves the view stale as plain DROP TABLE does.
-- Corrected from the original: no Unique recompute (FKs feed only FKReference, measured); widened to the FKReference
-  fallback (same site); owned sequences need nothing (FIX-305's `dropOwnedSequences` drops them with or without
-  CASCADE); `DROP TYPE` / `DROP DOMAIN … CASCADE` not absorbed — same root cause but a different site (`dropTypes` /
-  `CheckTypeDropRefs`) and a column-drop cascade that does not exist yet (backlog, refreshed).
-- Prototype results, run at `f9a460a5` + FIX-301 + FIX-312 + FIX-332 on 2026-10-12: probe at base → "drop table public.a:
-  cannot drop table public.a: column public.b.a_id references it via foreign key" (composite: "… table public.b has a foreign
-  key constraint referencing it"; RESTRICT, two referencing tables, self-reference, `a, b CASCADE` with c→b alike); on the
-  stack the same with FIX-332's "drop table: …" prefix. PG17.11 (`vet-FIX-339-pg`): each case "NOTICE: drop cascades to
-  constraint <fk> on table b", referencing columns stay; two tables "drop cascades to 2 other objects"; RESTRICT "cannot
-  drop table a because other objects depend on it"; a view "drop cascades to view v". Gates: parser gofumpt clean,
-  golangci-lint 0 issues, `go test -race -count=1 ./...` ok; cmd/sqlgen `TestE2EGoldenFiles` ok; `make refs-check` ok.
-  Fail-first: CASCADE branch removed → 8 of 9 fail ("drop table: cannot drop table public.a: …"); FK deletion disabled →
-  "+ \"public.b: b_pkey PRIMARY KEY, b_a_id_fkey FOREIGN KEY\""; FKReference clearing disabled → 7 fail ("+ \"a_id ->
-  public.a.id\""); fallback disabled → `a_second_key_on_the_column_stays` "- \"k -> public.x.id\", + \"k\""; existing suite
-  passes. Golden churn none. Stacked on FIX-301 + FIX-312 + FIX-332 (changes only the check call in `dropTables`; PRD
-  sentence after FIX-332's, before FIX-312's type sentences); FIX-303/304/305 merges mechanical with `--3way`. Patch:
-  `.claude/prototypes/FIX-339.patch` (3 files, +148/-3).
-
-**References.**
-- PRD §5.6 (drop validation), §6.1.
-- FIX-332 (`dropTables`, set-based `CheckTableDropRefs`; lands first), FIX-312, FIX-333.
-
-**Resolution notes.** _Filled in by /fix resolve._
-
 ### FIX-340
 
 - **Status:** Open
@@ -380,6 +322,64 @@ DEFAULT.
 ## Resolved
 
 <!-- fixes:resolved:begin -->
+### FIX-339
+
+- **Status:** Resolved
+- **Severity:** nit
+- **Origin:** phase 4, `parser/postgres` (`parseDrop` / `dropTables` CASCADE)
+- **Surfaced by:** FIX-332 vet (2026-10-12), filed at the backlog sweep's second Step 5
+- **Vetted:** corrected at `f9a460a5` (2026-10-12)
+
+**Issue.** PG `DROP TABLE a CASCADE`, where `b` references `a`, is a parser error, while PostgreSQL drops `a` and
+only `b`'s foreign key. Measured: `CREATE TABLE a (id int PRIMARY KEY); CREATE TABLE b (id int PRIMARY KEY, a_id int
+REFERENCES a(id)); DROP TABLE a CASCADE;` → "drop table public.a: cannot drop table public.a: column public.b.a_id
+references it via foreign key"; PG17.11 → "NOTICE: drop cascades to constraint b_a_id_fkey on table b / DROP TABLE",
+and `\d b` keeps columns id and a_id with no FK. MySQL ignores CASCADE (ERROR 3730), which the MySQL parser already
+matches.
+
+**Root cause.** The PG parser ignores `DropStmt.Behavior`; the drop-reference check always errors.
+
+**Suggested fix.**
+- `parser/postgres/postgres.go` `dropTables` (FIX-332): under `stmt.Behavior == pg_query.DropBehavior_DROP_CASCADE` call
+  a new `dropReferencingKeys(refs)` instead of `CheckTableDropRefs`; RESTRICT and the default still error.
+  `dropReferencingKeys` deletes every ForeignKey constraint whose ReferenceSchema/ReferenceTable is in the drop set,
+  clears any column FKReference pointing into it, then re-applies the remaining single-column FK constraints (so a column
+  with a second FK keeps it). Unique constraints and indexes stay (PG17.11 keeps `b_a_id_key` UNIQUE and `b_a_idx`).
+- PRD §5.6 (`docs/PRD.md:1593-1595` on the stack) gains: "On PostgreSQL, `DROP TABLE … CASCADE` drops the foreign keys
+  that reference the dropped tables instead, as PostgreSQL does; the referencing columns stay, with their unique
+  constraints and indexes (MySQL ignores `CASCADE`)."
+- Tests: `TestDropTableCascade` (9 cases: one and two referencing tables, table constraint with UNIQUE and index kept,
+  composite, self-reference, cross-schema, `DROP TABLE a, b CASCADE` with c→b, second key stays, RESTRICT errors with
+  nothing dropped), asserting every remaining table's constraints, unique flags and FKReference.
+- Auto-accepted the recommended option on 2026-10-12 (`/fix` auto-accept rule): under `source: both`, a database view PG's
+  CASCADE would drop gets no FIX-339 code — the view stands and FIX-333's merge check reports it ("view V reads table T,
+  which the SQL files drop or rename; …"), per PRD §6.1 ("the database's view stands") — because it needs no code, causes
+  no churn, adds no surface and reverses nothing. Not measured (the 308+309+333 stack was not applied in the vet); until
+  FIX-333 lands, CASCADE under `both` leaves the view stale as plain DROP TABLE does.
+- Corrected from the original: no Unique recompute (FKs feed only FKReference, measured); widened to the FKReference
+  fallback (same site); owned sequences need nothing (FIX-305's `dropOwnedSequences` drops them with or without
+  CASCADE); `DROP TYPE` / `DROP DOMAIN … CASCADE` not absorbed — same root cause but a different site (`dropTypes` /
+  `CheckTypeDropRefs`) and a column-drop cascade that does not exist yet (backlog, refreshed).
+- Prototype results, run at `f9a460a5` + FIX-301 + FIX-312 + FIX-332 on 2026-10-12: probe at base → "drop table public.a:
+  cannot drop table public.a: column public.b.a_id references it via foreign key" (composite: "… table public.b has a foreign
+  key constraint referencing it"; RESTRICT, two referencing tables, self-reference, `a, b CASCADE` with c→b alike); on the
+  stack the same with FIX-332's "drop table: …" prefix. PG17.11 (`vet-FIX-339-pg`): each case "NOTICE: drop cascades to
+  constraint <fk> on table b", referencing columns stay; two tables "drop cascades to 2 other objects"; RESTRICT "cannot
+  drop table a because other objects depend on it"; a view "drop cascades to view v". Gates: parser gofumpt clean,
+  golangci-lint 0 issues, `go test -race -count=1 ./...` ok; cmd/sqlgen `TestE2EGoldenFiles` ok; `make refs-check` ok.
+  Fail-first: CASCADE branch removed → 8 of 9 fail ("drop table: cannot drop table public.a: …"); FK deletion disabled →
+  "+ \"public.b: b_pkey PRIMARY KEY, b_a_id_fkey FOREIGN KEY\""; FKReference clearing disabled → 7 fail ("+ \"a_id ->
+  public.a.id\""); fallback disabled → `a_second_key_on_the_column_stays` "- \"k -> public.x.id\", + \"k\""; existing suite
+  passes. Golden churn none. Stacked on FIX-301 + FIX-312 + FIX-332 (changes only the check call in `dropTables`; PRD
+  sentence after FIX-332's, before FIX-312's type sentences); FIX-303/304/305 merges mechanical with `--3way`. Patch:
+  `.claude/prototypes/FIX-339.patch` (3 files, +148/-3).
+
+**References.**
+- PRD §5.6 (drop validation), §6.1.
+- FIX-332 (`dropTables`, set-based `CheckTableDropRefs`; lands first), FIX-312, FIX-333.
+
+**Resolution notes.** PostgreSQL `DROP TABLE … CASCADE` now drops the foreign keys that reference the dropped tables instead of failing the drop-reference check: `dropTables` (`parser/postgres/postgres.go`) calls the new `dropReferencingKeys` under `DropBehavior_DROP_CASCADE`, while RESTRICT and the default still run `CheckTableDropRefs`. `dropReferencingKeys` deletes each FOREIGN KEY whose reference is in the drop set, clears any column FKReference into it, and re-canonicalizes the table, so a remaining single-column key gives the column its FKReference; unique constraints and indexes stay. PRD §5.6 gains the CASCADE sentence. `TestDropTableCascade` (9 cases) added. Prototype applied with `--3way`: conflicts in the `dropTables` doc comment (landed FIX-332's "relation the schema does not model" wording kept), the `removeTable` comment (HEAD's kept) and the PRD paragraph (sentence placed after FIX-332's, before the type sentences, keeping FIX-312's trailing DROP DOMAIN sentence). Diverges from the prototype in one place: since FIX-302 derives FKReference in `CanonicalizeConstraints` and `ApplyConstraintToColumns` no longer sets it for a FOREIGN KEY, the prototype's re-apply loop was a no-op, so it is replaced by `parser.CanonicalizeConstraints(t, "postgres")` on each table that lost a key (the pattern the `ALTER TABLE … DROP CONSTRAINT` path uses). Fail-first on the final code: CASCADE branch removed → 8 of 9 fail; FK deletion disabled → `+ "public.b: b_pkey PRIMARY KEY, b_a_id_fkey FOREIGN KEY"`; FKReference clearing disabled → canonicalization restores an unnamed key (`+ "public.b: b_pkey PRIMARY KEY,  FOREIGN KEY"`, `+ "a_id -> public.a.id"`); re-canonicalization disabled → `a_second_key_on_the_column_stays` fails. Gates: `make check` ok, `make update-golden-e2e` / `make update-golden` no churn (matches vet), `make check-examples` ok. The `source: both` auto-accept measured on the final code: a temporary `DROP TABLE users CASCADE;` case in `TestMerge_ViewColumnRenameAndDrop` returned FIX-333's "merge both mode: view view_def.v reads table view_def.users" error (case not kept); the matching clause of the FIX-333 backlog line was removed.
+
 ### FIX-338
 
 - **Status:** Resolved

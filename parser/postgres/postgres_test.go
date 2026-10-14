@@ -1190,6 +1190,121 @@ func TestDropTablesTogether(t *testing.T) {
 	}
 }
 
+// TestDropTableCascade mirrors PostgreSQL 17: DROP TABLE … CASCADE drops the
+// foreign keys that reference the dropped tables and keeps the referencing
+// columns with their unique constraints and indexes.
+func TestDropTableCascade(t *testing.T) {
+	const ab = `CREATE TABLE a (id int PRIMARY KEY);
+		CREATE TABLE b (id int PRIMARY KEY, a_id int REFERENCES a(id));`
+	tests := []struct {
+		name    string
+		sql     string
+		wantErr string
+		want    []string // each remaining table's constraints, then columns with their FKReference
+	}{
+		{
+			name: "one referencing table",
+			sql:  ab + `DROP TABLE a CASCADE;`,
+			want: []string{"public.b: b_pkey PRIMARY KEY", "id", "a_id"},
+		},
+		{
+			name: "two referencing tables",
+			sql: ab + `CREATE TABLE c (id int PRIMARY KEY, a_id int REFERENCES a);
+				DROP TABLE a CASCADE;`,
+			want: []string{"public.b: b_pkey PRIMARY KEY", "id", "a_id", "public.c: c_pkey PRIMARY KEY", "id", "a_id"},
+		},
+		{
+			name: "table constraint, unique constraint and index stay",
+			sql: `CREATE TABLE a (id int PRIMARY KEY);
+				CREATE TABLE b (id int PRIMARY KEY, a_id int UNIQUE,
+					CONSTRAINT b_fk FOREIGN KEY (a_id) REFERENCES a(id));
+				CREATE INDEX b_a_idx ON b (a_id);
+				DROP TABLE a CASCADE;`,
+			want: []string{"public.b: b_pkey PRIMARY KEY, b_a_id_key UNIQUE, b_a_idx INDEX", "id", "a_id unique"},
+		},
+		{
+			name: "composite key",
+			sql: `CREATE TABLE a (x int, y int, PRIMARY KEY (x, y));
+				CREATE TABLE b (id int PRIMARY KEY, x int, y int, FOREIGN KEY (x, y) REFERENCES a(x, y));
+				DROP TABLE a CASCADE;`,
+			want: []string{"public.b: b_pkey PRIMARY KEY", "id", "x", "y"},
+		},
+		{
+			name: "self reference",
+			sql: `CREATE TABLE a (id int PRIMARY KEY, parent int REFERENCES a(id));
+				CREATE TABLE b (id int PRIMARY KEY, a_id int REFERENCES a(id));
+				DROP TABLE a CASCADE;`,
+			want: []string{"public.b: b_pkey PRIMARY KEY", "id", "a_id"},
+		},
+		{
+			name: "referencing table in another schema",
+			sql: `CREATE SCHEMA s2; CREATE TABLE a (id int PRIMARY KEY);
+				CREATE TABLE s2.b (id int PRIMARY KEY, a_id int REFERENCES public.a(id));
+				DROP TABLE a CASCADE;`,
+			want: []string{"s2.b: b_pkey PRIMARY KEY", "id", "a_id"},
+		},
+		{
+			name: "two tables, a third references the second",
+			sql: ab + `CREATE TABLE c (id int PRIMARY KEY, b_id int REFERENCES b(id));
+				DROP TABLE a, b CASCADE;`,
+			want: []string{"public.c: c_pkey PRIMARY KEY", "id", "b_id"},
+		},
+		{
+			name: "a second key on the column stays",
+			sql: `CREATE TABLE a (id int PRIMARY KEY); CREATE TABLE x (id int PRIMARY KEY);
+				CREATE TABLE b (id int PRIMARY KEY, k int REFERENCES a(id),
+					CONSTRAINT b_k_x FOREIGN KEY (k) REFERENCES x(id));
+				DROP TABLE a CASCADE;`,
+			want: []string{
+				"public.x: x_pkey PRIMARY KEY", "id",
+				"public.b: b_pkey PRIMARY KEY, b_k_x FOREIGN KEY", "id", "k -> public.x.id",
+			},
+		},
+		{
+			name:    "RESTRICT",
+			sql:     ab + `DROP TABLE a RESTRICT;`,
+			wantErr: "drop table: cannot drop table public.a: column public.b.a_id references it via foreign key",
+			want: []string{
+				"public.a: a_pkey PRIMARY KEY", "id",
+				"public.b: b_pkey PRIMARY KEY, b_a_id_fkey FOREIGN KEY", "id", "a_id -> public.a.id",
+			},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			p := postgres.New("")
+			err := p.Parse("test.sql", []byte(tt.sql))
+			if tt.wantErr == "" && err != nil {
+				t.Fatalf("Parse() error = %v", err)
+			}
+			if tt.wantErr != "" && (err == nil || !strings.Contains(err.Error(), tt.wantErr)) {
+				t.Fatalf("Parse() error = %v, want %q", err, tt.wantErr)
+			}
+			var got []string
+			for _, tbl := range p.Schema().Tables {
+				cons := make([]string, 0, len(tbl.Constraints))
+				for _, c := range tbl.Constraints {
+					cons = append(cons, c.Name+" "+c.Type.String())
+				}
+				got = append(got, tbl.Schema+"."+tbl.Name+": "+strings.Join(cons, ", "))
+				for _, col := range tbl.Columns {
+					line := col.Name
+					if col.Unique {
+						line += " unique"
+					}
+					if ref := col.FKReference; ref != nil {
+						line += " -> " + ref.Schema + "." + ref.Table + "." + ref.Column
+					}
+					got = append(got, line)
+				}
+			}
+			if diff := cmp.Diff(tt.want, got); diff != "" {
+				t.Errorf("schema mismatch (-want +got):\n%s", diff)
+			}
+		})
+	}
+}
+
 func TestDropEnum(t *testing.T) {
 	sql := `
 		CREATE TYPE status AS ENUM ('active', 'inactive');

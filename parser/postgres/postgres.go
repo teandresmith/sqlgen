@@ -1075,7 +1075,9 @@ func extractDropObjectNames(node *pg_query.Node) []string {
 
 // dropTables drops the tables of one DROP TABLE statement. PostgreSQL drops
 // them together, so a foreign key from one to another does not block the
-// drop. A relation the schema does not model is skipped.
+// drop. A relation the schema does not model is skipped. A foreign key from
+// another table blocks the drop, unless the statement says CASCADE, which
+// drops that key instead.
 func (p *Parser) dropTables(stmt *pg_query.DropStmt) error {
 	refs := make([]parser.TableRef, 0, len(stmt.Objects))
 	for _, obj := range stmt.Objects {
@@ -1087,7 +1089,9 @@ func (p *Parser) dropTables(stmt *pg_query.DropStmt) error {
 		}
 		refs = append(refs, parser.TableRef{Schema: schema, Name: name})
 	}
-	if err := parser.CheckTableDropRefs(p.schema.Tables, "postgres", refs); err != nil {
+	if stmt.Behavior == pg_query.DropBehavior_DROP_CASCADE {
+		p.dropReferencingKeys(refs)
+	} else if err := parser.CheckTableDropRefs(p.schema.Tables, "postgres", refs); err != nil {
 		return fmt.Errorf("drop table: %w", err)
 	}
 	for _, ref := range refs {
@@ -1099,6 +1103,33 @@ func (p *Parser) dropTables(stmt *pg_query.DropStmt) error {
 		p.dropOwnedSequences(key, "")
 	}
 	return nil
+}
+
+// dropReferencingKeys drops every foreign key that references a table in
+// drop, as DROP TABLE … CASCADE does. The referencing columns keep their
+// unique constraints and indexes, and a column's FKReference falls back to a
+// remaining single-column key, if it has one.
+func (p *Parser) dropReferencingKeys(drop []parser.TableRef) {
+	dropped := func(schema, name string) bool {
+		return slices.Contains(drop, parser.TableRef{Schema: schema, Name: name})
+	}
+	for i := range p.schema.Tables {
+		t := &p.schema.Tables[i]
+		n := len(t.Constraints)
+		t.Constraints = slices.DeleteFunc(t.Constraints, func(c parser.Constraint) bool {
+			return c.Type == parser.ForeignKey && dropped(c.ReferenceSchema, c.ReferenceTable)
+		})
+		if len(t.Constraints) == n {
+			continue
+		}
+		// Canonicalization would restore a key from a reference left in place.
+		for j := range t.Columns {
+			if ref := t.Columns[j].FKReference; ref != nil && dropped(ref.Schema, ref.Table) {
+				t.Columns[j].FKReference = nil
+			}
+		}
+		parser.CanonicalizeConstraints(t, "postgres")
+	}
 }
 
 // removeTable removes the table key from the model.
