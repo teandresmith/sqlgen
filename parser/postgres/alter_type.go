@@ -271,3 +271,128 @@ func (p *Parser) renameAttribute(stmt *pg_query.RenameStmt) error {
 	}
 	return fmt.Errorf("alter type %s.%s: unknown attribute %s", schema, name, stmt.Subname)
 }
+
+// alterCompositeType applies ALTER TYPE … ADD ATTRIBUTE, DROP ATTRIBUTE [IF
+// EXISTS] and ALTER ATTRIBUTE … [SET DATA] TYPE, which pg_query reads as an
+// ALTER TABLE of OBJECT_TYPE, and fails where PostgreSQL fails. PostgreSQL
+// applies the subcommands in passes, wherever each sits in the statement:
+// every DROP, then every ALTER … TYPE, then every ADD. It refuses ALTER
+// ATTRIBUTE … TYPE while a table column uses the type, CASCADE or not; ADD
+// and DROP leave such columns as they are.
+func (p *Parser) alterCompositeType(stmt *pg_query.AlterTableStmt) error {
+	schema, name := cmp.Or(stmt.Relation.Schemaname, p.defaultSchema), stmt.Relation.Relname
+	ct := p.findCompositeTypeByName(schema, name)
+	if ct == nil {
+		return fmt.Errorf("alter type %s.%s: unknown composite type", schema, name)
+	}
+	var cmds []*pg_query.AlterTableCmd
+	for _, node := range stmt.Cmds {
+		if cmd := node.GetAlterTableCmd(); cmd != nil {
+			cmds = append(cmds, cmd)
+		}
+	}
+	pass := map[pg_query.AlterTableType]int{
+		pg_query.AlterTableType_AT_DropColumn:      0,
+		pg_query.AlterTableType_AT_AlterColumnType: 1,
+		pg_query.AlterTableType_AT_AddColumn:       2,
+	}
+	slices.SortStableFunc(cmds, func(a, b *pg_query.AlterTableCmd) int {
+		return cmp.Compare(pass[a.Subtype], pass[b.Subtype])
+	})
+	for _, cmd := range cmds {
+		var err error
+		switch cmd.Subtype {
+		case pg_query.AlterTableType_AT_AddColumn:
+			err = p.addAttribute(ct, cmd)
+		case pg_query.AlterTableType_AT_DropColumn:
+			err = dropAttribute(ct, cmd)
+		case pg_query.AlterTableType_AT_AlterColumnType:
+			err = p.alterAttributeType(ct, cmd)
+		default:
+			// The ALTER TYPE grammar has no other attribute subcommand.
+		}
+		if err != nil {
+			return fmt.Errorf("alter type %s.%s: %w", schema, name, err)
+		}
+	}
+	return nil
+}
+
+func (p *Parser) addAttribute(ct *parser.CompositeType, cmd *pg_query.AlterTableCmd) error {
+	cd := cmd.GetDef().GetColumnDef()
+	if cd == nil {
+		return nil
+	}
+	if slices.ContainsFunc(ct.Attributes, func(a parser.Attribute) bool { return a.Name == cd.Colname }) {
+		return fmt.Errorf("attribute %s already exists", cd.Colname)
+	}
+	typ := p.typeName(cd.TypeName, ct.Schema)
+	if p.typeUses(typ, ct.Schema, ct, map[parser.TypeRef]bool{}) {
+		return fmt.Errorf("composite type %s cannot be made a member of itself", ct.Name)
+	}
+	ct.Attributes = append(ct.Attributes, parser.Attribute{Name: cd.Colname, Type: typ})
+	return nil
+}
+
+func dropAttribute(ct *parser.CompositeType, cmd *pg_query.AlterTableCmd) error {
+	i := slices.IndexFunc(ct.Attributes, func(a parser.Attribute) bool { return a.Name == cmd.Name })
+	switch {
+	case i >= 0:
+		ct.Attributes = slices.Delete(ct.Attributes, i, i+1)
+		if len(ct.Attributes) == 0 {
+			ct.Attributes = nil // as a composite type with no attributes introspects
+		}
+	case !cmd.MissingOk:
+		return fmt.Errorf("unknown attribute %s", cmd.Name)
+	}
+	return nil
+}
+
+func (p *Parser) alterAttributeType(ct *parser.CompositeType, cmd *pg_query.AlterTableCmd) error {
+	i := slices.IndexFunc(ct.Attributes, func(a parser.Attribute) bool { return a.Name == cmd.Name })
+	if i < 0 {
+		return fmt.Errorf("unknown attribute %s", cmd.Name)
+	}
+	cd := cmd.GetDef().GetColumnDef()
+	if cd == nil {
+		return nil
+	}
+	typ := p.typeName(cd.TypeName, ct.Schema)
+	if p.typeUses(typ, ct.Schema, ct, map[parser.TypeRef]bool{}) {
+		return fmt.Errorf("composite type %s cannot be made a member of itself", ct.Name)
+	}
+	for _, t := range p.schema.Tables {
+		for _, c := range t.Columns {
+			if p.typeUses(c.Type, t.Schema, ct, map[parser.TypeRef]bool{}) {
+				return fmt.Errorf("cannot alter attribute %s because column %s.%s.%s uses the type", cmd.Name, t.Schema, t.Name, c.Name)
+			}
+		}
+	}
+	ct.Attributes[i].Type = typ
+	return nil
+}
+
+// typeUses reports whether typ, written for schema, is ct or is built on it:
+// an array of it, a domain over such a type, or a composite type with an
+// attribute of such a type. seen holds the types already followed.
+func (p *Parser) typeUses(typ, schema string, ct *parser.CompositeType, seen map[parser.TypeRef]bool) bool {
+	ref, _ := parser.ResolveTypeRef(typ, schema)
+	if ref == (parser.TypeRef{Schema: ct.Schema, Name: ct.Name}) {
+		return true
+	}
+	if seen[ref] {
+		return false
+	}
+	seen[ref] = true
+	if d := p.findDomainByName(ref.Schema, ref.Name); d != nil {
+		return p.typeUses(d.BaseType, d.Schema, ct, seen)
+	}
+	if c := p.findCompositeTypeByName(ref.Schema, ref.Name); c != nil {
+		for _, a := range c.Attributes {
+			if p.typeUses(a.Type, c.Schema, ct, seen) {
+				return true
+			}
+		}
+	}
+	return false
+}

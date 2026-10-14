@@ -1280,6 +1280,9 @@ func (p *Parser) commentOnColumn(stmt *pg_query.CommentStmt) error {
 }
 
 func (p *Parser) parseAlterTable(stmt *pg_query.AlterTableStmt) error {
+	if stmt.Objtype == pg_query.ObjectType_OBJECT_TYPE {
+		return p.alterCompositeType(stmt)
+	}
 	table, err := p.lookupTable(stmt.Relation)
 	if err != nil {
 		if p.skipped[p.relationKey(stmt.Relation)] {

@@ -954,3 +954,48 @@ func TestPostgresIntrospect_ImplicitReferenceColumns(t *testing.T) {
 		})
 	}
 }
+
+// TestPostgresIntrospect_AlterCompositeAttributes pins that the parser applies
+// ALTER TYPE … ADD ATTRIBUTE, DROP ATTRIBUTE [IF EXISTS] and ALTER ATTRIBUTE …
+// [SET DATA] TYPE as PostgreSQL does: several subcommands to a statement,
+// applied as drops, then retypes, then adds; in a type a table column uses and
+// in another schema; down to no attributes.
+func TestPostgresIntrospect_AlterCompositeAttributes(t *testing.T) {
+	requireDatabases(t)
+	ddl := `
+CREATE SCHEMA pgi_attr;
+CREATE SCHEMA pgi_attr2;
+CREATE TYPE pgi_attr.mood AS ENUM ('ok');
+CREATE TYPE pgi_attr.comp AS (a int, b text, c int);
+CREATE TABLE pgi_attr.t (id int PRIMARY KEY, c pgi_attr.comp, cs pgi_attr.comp[]);
+ALTER TYPE pgi_attr.comp ADD ATTRIBUTE d pgi_attr.mood;
+ALTER TYPE pgi_attr.comp DROP ATTRIBUTE b;
+ALTER TYPE pgi_attr.comp DROP ATTRIBUTE IF EXISTS nosuch;
+ALTER TYPE pgi_attr.comp ADD ATTRIBUTE e numeric(12,2) CASCADE, DROP ATTRIBUTE c RESTRICT, ADD ATTRIBUTE c text COLLATE "C";
+CREATE TYPE pgi_attr2.pair AS (x int, y int);
+ALTER TYPE pgi_attr2.pair ALTER ATTRIBUTE x TYPE bigint, ALTER ATTRIBUTE y SET DATA TYPE varchar(10), ADD ATTRIBUTE m pgi_attr.mood;
+CREATE TYPE pgi_attr.single AS (v int);
+ALTER TYPE pgi_attr.single DROP ATTRIBUTE v;
+CREATE TYPE pgi_attr.ordered AS (a int, b text);
+ALTER TYPE pgi_attr.ordered ADD ATTRIBUTE b numeric, ADD ATTRIBUTE z int, ALTER ATTRIBUTE a TYPE bigint, DROP ATTRIBUTE b`
+	parsed, introspected := pgParityCase(t, "DROP SCHEMA IF EXISTS pgi_attr, pgi_attr2 CASCADE", ddl, "pgi_attr", "pgi_attr2")
+
+	got := map[string]string{}
+	for _, ct := range introspected.CompositeTypes {
+		var attrs []string
+		for _, a := range ct.Attributes {
+			attrs = append(attrs, a.Name+" "+a.Type)
+		}
+		got[ct.Schema+"."+ct.Name] = strings.Join(attrs, ", ")
+	}
+	want := map[string]string{
+		"pgi_attr.comp":    "a integer, d mood, e numeric(12,2), c text",
+		"pgi_attr2.pair":   "x bigint, y varchar(10), m pgi_attr.mood",
+		"pgi_attr.single":  "",
+		"pgi_attr.ordered": "a bigint, b numeric, z integer",
+	}
+	if diff := cmp.Diff(want, got); diff != "" {
+		t.Errorf("introspected composite types mismatch (-want +got):\n%s", diff)
+	}
+	assertSchemaParity(t, "postgres", parsed, introspected, pgSkippedStatementExceptions...)
+}

@@ -22,65 +22,6 @@
 ## Open
 
 <!-- fixes:open:begin -->
-### FIX-338
-
-- **Status:** Open
-- **Severity:** nit
-- **Origin:** phase 4, `parser/postgres` (`parseAlterTable` on a composite type)
-- **Surfaced by:** FIX-305 vet (2026-10-12), filed at the backlog sweep's second Step 5
-- **Vetted:** corrected at `f9a460a5` (2026-10-12)
-
-**Issue.** `ALTER TYPE comp ADD ATTRIBUTE c int` (and DROP ATTRIBUTE / ALTER ATTRIBUTE … TYPE) is valid PostgreSQL
-DDL, but the PG parser fails on it, so generation stops. Measured: `p.Parse("x.sql", "CREATE TYPE comp AS (a int);
-ALTER TYPE comp ADD ATTRIBUTE c int")` → "parsing x.sql: table public.comp not found" (DROP ATTRIBUTE [IF EXISTS], ALTER
-ATTRIBUTE [SET DATA] TYPE and multi-subcommand statements alike, at base and with FIX-305). Worse, `CREATE TABLE tb (id
-int PRIMARY KEY); ALTER TYPE tb ADD ATTRIBUTE c int` → err=<nil> and silently adds column c to table tb (PG17: "tb" is
-not a composite type).
-
-**Root cause.** pg_query parses these as an `AlterTableStmt` with `objtype OBJECT_TYPE`, and `parseAlterTable` looks
-the name up as a table.
-
-**Suggested fix.**
-- `parseAlterTable`: `Objtype == OBJECT_TYPE` routes to `alterCompositeType` (in `alter_type.go`, beside
-  `renameAttribute`), so ALTER TYPE never reaches a table. It errors "unknown composite type" for a missing type, an enum
-  or a table, and applies subcommands in PG's passes (stable sort: DROP, then ALTER TYPE, then ADD — measured: `ADD
-  ATTRIBUTE b numeric, DROP ATTRIBUTE b` → `a integer, b numeric`; `ADD c, DROP c` → `column "c" … does not exist`).
-  `addAttribute` errors on an existing name and on self-membership; `dropAttribute` honours IF EXISTS and sets an emptied
-  list to nil (introspection reads a zero-attribute type as `Attributes: nil`); `alterAttributeType` errors on an unknown
-  attribute, self-membership, and "cannot alter attribute a because column public.u.x uses the type" (PG17: `cannot alter
-  type "comp" because column "t1.c" uses it`, with or without CASCADE, even for a no-op retype, through comp[], a domain, a
-  nested composite or another schema; a plain view or bare domain/composite user does not block). A `typeUses` helper
-  follows arrays, domains and composite attributes with a seen set. PG17 has no `ADD ATTRIBUTE IF NOT EXISTS`, `ALTER TYPE
-  IF EXISTS` or `… TYPE … USING` (syntax errors in PG17 and pg_query).
-- PRD §5.2 ALTER TYPE bullet (FIX-305's) also lists ADD ATTRIBUTE, DROP ATTRIBUTE [IF EXISTS], ALTER ATTRIBUTE …
-  [SET DATA] TYPE, the drop → retype → add order and the column-uses error.
-- Tests: `TestAlterCompositeAttributes`, `TestAlterCompositeAttributeErrors` (20 cases),
-  `TestPostgresIntrospect_AlterCompositeAttributes` (parity via `pgParityCase` + `assertSchemaParity`).
-- Auto-accepted the recommended option on 2026-10-12 (`/fix` auto-accept rule): ALTER ATTRIBUTE … TYPE while a table
-  column uses the composite → error, as PG17 does, because it was prototyped green, causes no golden churn, adds no public
-  surface, and adds PRD text for an unspecified case (the Suggested fix already said "erroring where PG17 does").
-- Corrected from the original: PG's pass order instead of written order; two more PG errors (self-membership; retype
-  while a column uses the type — the measured RESTRICT/CASCADE answer, since typed tables are not modelled); the emptied
-  list is nil; the routing also fixes ALTER TYPE silently altering a same-named table.
-- Prototype results, run at `f9a460a5` + FIX-305.patch on 2026-10-12: probe at base and base+305 as in the Issue; PG17.11
-  ground truth on `vet-FIX-338-pg17` as above (another schema: `ALTER TYPE app.comp ADD ATTRIBUTE c app.e, ALTER ATTRIBUTE
-  a TYPE numeric(12,2), ADD ATTRIBUTE d text[] COLLATE "C"` → `a numeric(12,2), c app.e, d text[]`). Gates: parser `go
-  test -race -count=1 ./postgres/... ./introspect/...` ok (testcontainers runs postgres:16-alpine; PG17 measured by hand);
-  golangci-lint 0 issues; gofumpt clean. Fail-first: routing removed → 17 error subtests and `TestAlterCompositeAttributes`
-  fail ("Parse() error: parsing test.sql: table public.comp not found"; the table subtest "error = <nil>, want … \"alter
-  type public.tb: unknown composite type\"") and parity "parsing stmt_05.sql: table pgi_attr.comp not found"; column-uses
-  check removed → 6 retype subtests fail; `typeUses` recursion removed → 4 fail ("composite type comp cannot be made a member
-  of itself"); ADD self-member check, nil normalization (parity `Attributes: []parser.Attribute{}`), DROP IF EXISTS skip and
-  pass-order sort (parity "attribute b already exists") each fail their tests; existing suite (base+305) passes. Golden
-  churn none. Stacked on FIX-305; FIX-310 / FIX-331 touch PG `parseAlterTable` elsewhere (they already conflict with base+305
-  without FIX-338). Patch: `.claude/prototypes/FIX-338.patch` (5 files, +262/-1).
-
-**References.**
-- PRD §5.2 (PG DDL coverage).
-- FIX-305 (ALTER TYPE RENAME ATTRIBUTE and the composite rename paths; lands first).
-
-**Resolution notes.** _Filled in by /fix resolve._
-
 ### FIX-339
 
 - **Status:** Open
@@ -439,6 +380,64 @@ DEFAULT.
 ## Resolved
 
 <!-- fixes:resolved:begin -->
+### FIX-338
+
+- **Status:** Resolved
+- **Severity:** nit
+- **Origin:** phase 4, `parser/postgres` (`parseAlterTable` on a composite type)
+- **Surfaced by:** FIX-305 vet (2026-10-12), filed at the backlog sweep's second Step 5
+- **Vetted:** corrected at `f9a460a5` (2026-10-12)
+
+**Issue.** `ALTER TYPE comp ADD ATTRIBUTE c int` (and DROP ATTRIBUTE / ALTER ATTRIBUTE … TYPE) is valid PostgreSQL
+DDL, but the PG parser fails on it, so generation stops. Measured: `p.Parse("x.sql", "CREATE TYPE comp AS (a int);
+ALTER TYPE comp ADD ATTRIBUTE c int")` → "parsing x.sql: table public.comp not found" (DROP ATTRIBUTE [IF EXISTS], ALTER
+ATTRIBUTE [SET DATA] TYPE and multi-subcommand statements alike, at base and with FIX-305). Worse, `CREATE TABLE tb (id
+int PRIMARY KEY); ALTER TYPE tb ADD ATTRIBUTE c int` → err=<nil> and silently adds column c to table tb (PG17: "tb" is
+not a composite type).
+
+**Root cause.** pg_query parses these as an `AlterTableStmt` with `objtype OBJECT_TYPE`, and `parseAlterTable` looks
+the name up as a table.
+
+**Suggested fix.**
+- `parseAlterTable`: `Objtype == OBJECT_TYPE` routes to `alterCompositeType` (in `alter_type.go`, beside
+  `renameAttribute`), so ALTER TYPE never reaches a table. It errors "unknown composite type" for a missing type, an enum
+  or a table, and applies subcommands in PG's passes (stable sort: DROP, then ALTER TYPE, then ADD — measured: `ADD
+  ATTRIBUTE b numeric, DROP ATTRIBUTE b` → `a integer, b numeric`; `ADD c, DROP c` → `column "c" … does not exist`).
+  `addAttribute` errors on an existing name and on self-membership; `dropAttribute` honours IF EXISTS and sets an emptied
+  list to nil (introspection reads a zero-attribute type as `Attributes: nil`); `alterAttributeType` errors on an unknown
+  attribute, self-membership, and "cannot alter attribute a because column public.u.x uses the type" (PG17: `cannot alter
+  type "comp" because column "t1.c" uses it`, with or without CASCADE, even for a no-op retype, through comp[], a domain, a
+  nested composite or another schema; a plain view or bare domain/composite user does not block). A `typeUses` helper
+  follows arrays, domains and composite attributes with a seen set. PG17 has no `ADD ATTRIBUTE IF NOT EXISTS`, `ALTER TYPE
+  IF EXISTS` or `… TYPE … USING` (syntax errors in PG17 and pg_query).
+- PRD §5.2 ALTER TYPE bullet (FIX-305's) also lists ADD ATTRIBUTE, DROP ATTRIBUTE [IF EXISTS], ALTER ATTRIBUTE …
+  [SET DATA] TYPE, the drop → retype → add order and the column-uses error.
+- Tests: `TestAlterCompositeAttributes`, `TestAlterCompositeAttributeErrors` (20 cases),
+  `TestPostgresIntrospect_AlterCompositeAttributes` (parity via `pgParityCase` + `assertSchemaParity`).
+- Auto-accepted the recommended option on 2026-10-12 (`/fix` auto-accept rule): ALTER ATTRIBUTE … TYPE while a table
+  column uses the composite → error, as PG17 does, because it was prototyped green, causes no golden churn, adds no public
+  surface, and adds PRD text for an unspecified case (the Suggested fix already said "erroring where PG17 does").
+- Corrected from the original: PG's pass order instead of written order; two more PG errors (self-membership; retype
+  while a column uses the type — the measured RESTRICT/CASCADE answer, since typed tables are not modelled); the emptied
+  list is nil; the routing also fixes ALTER TYPE silently altering a same-named table.
+- Prototype results, run at `f9a460a5` + FIX-305.patch on 2026-10-12: probe at base and base+305 as in the Issue; PG17.11
+  ground truth on `vet-FIX-338-pg17` as above (another schema: `ALTER TYPE app.comp ADD ATTRIBUTE c app.e, ALTER ATTRIBUTE
+  a TYPE numeric(12,2), ADD ATTRIBUTE d text[] COLLATE "C"` → `a numeric(12,2), c app.e, d text[]`). Gates: parser `go
+  test -race -count=1 ./postgres/... ./introspect/...` ok (testcontainers runs postgres:16-alpine; PG17 measured by hand);
+  golangci-lint 0 issues; gofumpt clean. Fail-first: routing removed → 17 error subtests and `TestAlterCompositeAttributes`
+  fail ("Parse() error: parsing test.sql: table public.comp not found"; the table subtest "error = <nil>, want … \"alter
+  type public.tb: unknown composite type\"") and parity "parsing stmt_05.sql: table pgi_attr.comp not found"; column-uses
+  check removed → 6 retype subtests fail; `typeUses` recursion removed → 4 fail ("composite type comp cannot be made a member
+  of itself"); ADD self-member check, nil normalization (parity `Attributes: []parser.Attribute{}`), DROP IF EXISTS skip and
+  pass-order sort (parity "attribute b already exists") each fail their tests; existing suite (base+305) passes. Golden
+  churn none. Stacked on FIX-305; FIX-310 / FIX-331 touch PG `parseAlterTable` elsewhere (they already conflict with base+305
+  without FIX-338). Patch: `.claude/prototypes/FIX-338.patch` (5 files, +262/-1).
+
+**References.**
+- PRD §5.2 (PG DDL coverage).
+- FIX-305 (ALTER TYPE RENAME ATTRIBUTE and the composite rename paths; lands first).
+
+**Resolution notes.** Landed from the vetted prototype with `git apply --3way` on `4603da0d`: the only conflict was `parser/introspect/postgres_integration_test.go`, where FIX-310's `TestPostgresIntrospect_ImplicitReferenceColumns` now ends the file, and both tests are kept. `parseAlterTable` routes `OBJECT_TYPE` to `alterCompositeType` (`parser/postgres/alter_type.go`), which applies DROP, then ALTER … TYPE, then ADD ATTRIBUTE as PostgreSQL does, and errors on an unknown composite type (an enum or a table too), an existing or unknown attribute, self-membership, and a retype while a table column uses the type. One divergence from the prototype: `typeUses` reads each type with `parser.ResolveTypeRef` (added by FIX-312) and keys its seen set on `parser.TypeRef`, instead of splitting the string by hand. PRD §5.2's ALTER TYPE bullet lists the attribute subcommands, the pass order and the column-uses error. Tests: `TestAlterCompositeAttributes`, `TestAlterCompositeAttributeErrors` (20 cases), `TestPostgresIntrospect_AlterCompositeAttributes`. Fail-first: routing removed → both new unit tests fail, including all 20 error subtests (22 FAIL lines). `make check` and `make check-examples` pass; no golden churn.
 
 ### FIX-337
 

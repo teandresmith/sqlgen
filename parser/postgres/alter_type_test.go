@@ -251,3 +251,86 @@ func TestRenameTypeErrors(t *testing.T) {
 		})
 	}
 }
+
+func TestAlterCompositeAttributes(t *testing.T) {
+	sql := `
+		CREATE SCHEMA s2;
+		CREATE TYPE mood AS ENUM ('ok');
+		CREATE TYPE comp AS (a int, b text, c int);
+		CREATE TABLE t (id int, c comp, cs comp[]);
+		ALTER TYPE comp ADD ATTRIBUTE d mood;
+		ALTER TYPE comp DROP ATTRIBUTE b;
+		ALTER TYPE comp DROP ATTRIBUTE IF EXISTS nosuch;
+		ALTER TYPE comp ADD ATTRIBUTE e numeric(12,2) CASCADE, DROP ATTRIBUTE c RESTRICT, ADD ATTRIBUTE c text COLLATE "C";
+		CREATE TYPE s2.pair AS (x int, y int);
+		ALTER TYPE s2.pair ALTER ATTRIBUTE x TYPE bigint, ALTER ATTRIBUTE y SET DATA TYPE varchar(10), ADD ATTRIBUTE m mood;
+		CREATE TYPE single AS (v int);
+		ALTER TYPE single DROP ATTRIBUTE v;
+		CREATE TYPE ordered AS (a int, b text);
+		ALTER TYPE ordered ADD ATTRIBUTE b numeric, ADD ATTRIBUTE z int, ALTER ATTRIBUTE a TYPE bigint, DROP ATTRIBUTE b;
+	`
+	p := postgres.New("")
+	if err := p.Parse("test.sql", []byte(sql)); err != nil {
+		t.Fatalf("Parse() error: %v", err)
+	}
+	// PostgreSQL 17's format_type, written relative to the type's schema. ADD
+	// and DROP leave the table columns of the type as they are, a type can
+	// lose every attribute, and a statement drops, then retypes, then adds.
+	want := []parser.CompositeType{
+		{Name: "comp", Schema: "public", Attributes: []parser.Attribute{
+			{Name: "a", Type: "integer"}, {Name: "d", Type: "mood"}, {Name: "e", Type: "numeric(12,2)"}, {Name: "c", Type: "text"},
+		}},
+		{Name: "pair", Schema: "s2", Attributes: []parser.Attribute{
+			{Name: "x", Type: "bigint"}, {Name: "y", Type: "varchar(10)"}, {Name: "m", Type: "public.mood"},
+		}},
+		{Name: "single", Schema: "public"},
+		{Name: "ordered", Schema: "public", Attributes: []parser.Attribute{
+			{Name: "a", Type: "bigint"}, {Name: "b", Type: "numeric"}, {Name: "z", Type: "integer"},
+		}},
+	}
+	if diff := cmp.Diff(want, p.Schema().CompositeTypes); diff != "" {
+		t.Errorf("composite types mismatch (-want +got):\n%s", diff)
+	}
+	if got := p.Schema().Tables[0].Columns[1].Type; got != "comp" {
+		t.Errorf("t.c type = %q, want comp", got)
+	}
+}
+
+func TestAlterCompositeAttributeErrors(t *testing.T) {
+	tests := []struct {
+		name string
+		stmt string
+		want string
+	}{
+		{"unknown type", "ALTER TYPE nosuch ADD ATTRIBUTE c int", "alter type public.nosuch: unknown composite type"},
+		{"an enum", "ALTER TYPE mood ADD ATTRIBUTE c int", "alter type public.mood: unknown composite type"},
+		{"a table", "ALTER TYPE tb ADD ATTRIBUTE c int", "alter type public.tb: unknown composite type"},
+		{"add an existing attribute", "ALTER TYPE comp ADD ATTRIBUTE a text", "alter type public.comp: attribute a already exists"},
+		{"add twice in one statement", "ALTER TYPE comp ADD ATTRIBUTE c int, ADD ATTRIBUTE c text", "attribute c already exists"},
+		{"drop before the add", "ALTER TYPE comp ADD ATTRIBUTE c int, DROP ATTRIBUTE c", "alter type public.comp: unknown attribute c"},
+		{"retype before the add", "ALTER TYPE comp ADD ATTRIBUTE c int, ALTER ATTRIBUTE c TYPE bigint", "alter type public.comp: unknown attribute c"},
+		{"drop before the retype", "ALTER TYPE comp ALTER ATTRIBUTE a TYPE bigint, DROP ATTRIBUTE a", "alter type public.comp: unknown attribute a"},
+		{"drop an unknown attribute", "ALTER TYPE comp DROP ATTRIBUTE z", "alter type public.comp: unknown attribute z"},
+		{"retype an unknown attribute", "ALTER TYPE comp ALTER ATTRIBUTE z TYPE bigint", "alter type public.comp: unknown attribute z"},
+		{"add itself", "ALTER TYPE comp ADD ATTRIBUTE c comp[]", "composite type comp cannot be made a member of itself"},
+		{"add itself through a domain", "ALTER TYPE comp ADD ATTRIBUTE c dcomp", "composite type comp cannot be made a member of itself"},
+		{"add itself through a composite", "ALTER TYPE comp ADD ATTRIBUTE c outer_t", "composite type comp cannot be made a member of itself"},
+		{"retype to itself", "ALTER TYPE comp ALTER ATTRIBUTE a TYPE comp", "composite type comp cannot be made a member of itself"},
+		{"retype under a column", "CREATE TABLE u (x comp); ALTER TYPE comp ALTER ATTRIBUTE a TYPE bigint", "cannot alter attribute a because column public.u.x uses the type"},
+		{"retype under a column, CASCADE", "CREATE TABLE u (x comp); ALTER TYPE comp ALTER ATTRIBUTE a TYPE bigint CASCADE", "column public.u.x uses the type"},
+		{"retype under an array column", "CREATE TABLE u (x comp[]); ALTER TYPE comp ALTER ATTRIBUTE a TYPE bigint", "column public.u.x uses the type"},
+		{"retype under a domain column", "CREATE TABLE u (x dcomp); ALTER TYPE comp ALTER ATTRIBUTE a TYPE bigint", "column public.u.x uses the type"},
+		{"retype under a nested column", "CREATE TABLE u (x outer_t); ALTER TYPE comp ALTER ATTRIBUTE a TYPE bigint", "column public.u.x uses the type"},
+		{"retype under a column in another schema", "CREATE SCHEMA s2; CREATE TABLE s2.u (x public.comp); ALTER TYPE comp ALTER ATTRIBUTE a TYPE integer", "column s2.u.x uses the type"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			sql := "CREATE TYPE mood AS ENUM ('ok'); CREATE TYPE comp AS (a int, b int); CREATE DOMAIN dcomp AS comp; " +
+				"CREATE TYPE outer_t AS (o comp); CREATE TABLE tb (id int PRIMARY KEY); " + tt.stmt
+			err := postgres.New("").Parse("test.sql", []byte(sql))
+			if err == nil || !strings.Contains(err.Error(), tt.want) {
+				t.Errorf("Parse() error = %v, want it to contain %q", err, tt.want)
+			}
+		})
+	}
+}
