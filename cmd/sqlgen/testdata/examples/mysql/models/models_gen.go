@@ -42119,8 +42119,10 @@ type Warehouse struct {
 	Price decimal.Decimal `db:"price" json:"price"`
 	// NullablePrice - Optional secondary price
 	NullablePrice decimal.NullDecimal `db:"nullable_price" json:"nullable_price"`
+	// InspectedAt - Most recent inspection time
+	InspectedAt types.NullDateTime `db:"inspected_at" json:"inspected_at"`
 	// CreatedAt - Row creation timestamp
-	CreatedAt time.Time `db:"created_at" json:"created_at"`
+	CreatedAt types.DateTime `db:"created_at" json:"created_at"`
 }
 
 // WarehouseClient provides type-safe operations for the warehouses table.
@@ -42234,7 +42236,7 @@ func newWarehouseClient(querier database.Querier, mutationHooks []hook.MutationH
 		batchSize:     200,
 		queryLimit:    1000,
 		pageSize:      100,
-		cursorKeys:    []string{"id"},
+		cursorKeys:    []string{"created_at", "id"},
 		strictUpdates: true,
 		mutationHooks: mutationHooks,
 		queryHooks:    queryHooks,
@@ -42264,7 +42266,7 @@ func (c *warehouseClient) executeQuery(ctx context.Context, skipHooks bool, qc *
 }
 
 // warehouseAllColumns is the column list for full-entity reads, sorted for determinism.
-var warehouseAllColumns = []string{"created_at", "external_id", "id", "name", "nullable_price", "price"}
+var warehouseAllColumns = []string{"created_at", "external_id", "id", "inspected_at", "name", "nullable_price", "price"}
 
 // scanWarehouses scans rows into Warehouse entities using a column-name switch.
 // Handles both scan target shapes (direct, wrapped) without reflection.
@@ -42286,6 +42288,8 @@ func scanWarehouses(rows database.Rows, columns []string) ([]*Warehouse, error) 
 				targets[idx] = &w.Price
 			case "nullable_price":
 				targets[idx] = &w.NullablePrice
+			case "inspected_at":
+				targets[idx] = &w.InspectedAt
 			case "created_at":
 				targets[idx] = &w.CreatedAt
 			}
@@ -42498,6 +42502,11 @@ func (c *warehouseClient) Create(ctx context.Context, input *CreateWarehouseInpu
 			args = append(args, v)
 		}
 
+		if v, ok := input.InspectedAt.Get(); ok {
+			columns = append(columns, "inspected_at")
+			args = append(args, v)
+		}
+
 		if v, ok := input.CreatedAt.Get(); ok {
 			columns = append(columns, "created_at")
 			args = append(args, v)
@@ -42559,12 +42568,16 @@ func (c *warehouseClient) CreateMany(ctx context.Context, inputs []*CreateWareho
 			end := min(start+c.batchSize, len(inputs))
 			batch := inputs[start:end]
 
-			columns := []string{"external_id", "name", "price", "nullable_price", "created_at"}
+			columns := []string{"external_id", "name", "price", "nullable_price", "inspected_at", "created_at"}
 			var valueRows [][]any
 			for _, input := range batch {
 				var nullablePrice any = sql.Default
 				if v, ok := input.NullablePrice.Get(); ok {
 					nullablePrice = v
+				}
+				var inspectedAt any = sql.Default
+				if v, ok := input.InspectedAt.Get(); ok {
+					inspectedAt = v
 				}
 				var createdAt any = sql.Default
 				if v, ok := input.CreatedAt.Get(); ok {
@@ -42576,6 +42589,7 @@ func (c *warehouseClient) CreateMany(ctx context.Context, inputs []*CreateWareho
 					input.Name,
 					input.Price,
 					nullablePrice,
+					inspectedAt,
 					createdAt,
 				})
 			}
@@ -42722,6 +42736,9 @@ func (c *warehouseClient) Update(ctx context.Context, id int64, input *UpdateWar
 		if v, ok := input.NullablePrice.Get(); ok {
 			setClauses["nullable_price"] = v
 		}
+		if v, ok := input.InspectedAt.Get(); ok {
+			setClauses["inspected_at"] = v
+		}
 		if v, ok := input.CreatedAt.Get(); ok {
 			setClauses["created_at"] = v
 		}
@@ -42829,6 +42846,9 @@ func (c *warehouseClient) UpdateMany(ctx context.Context, items []UpdateWarehous
 				if v, ok := item.Input.NullablePrice.Get(); ok {
 					setClauses["nullable_price"] = v
 				}
+				if v, ok := item.Input.InspectedAt.Get(); ok {
+					setClauses["inspected_at"] = v
+				}
 				if v, ok := item.Input.CreatedAt.Get(); ok {
 					setClauses["created_at"] = v
 				}
@@ -42915,6 +42935,9 @@ func (c *warehouseClient) UpdateWhere(ctx context.Context, filter *WarehouseFilt
 		}
 		if v, ok := input.NullablePrice.Get(); ok {
 			setClauses["nullable_price"] = v
+		}
+		if v, ok := input.InspectedAt.Get(); ok {
+			setClauses["inspected_at"] = v
 		}
 		if v, ok := input.CreatedAt.Get(); ok {
 			setClauses["created_at"] = v
@@ -43133,6 +43156,11 @@ func (c *warehouseClient) Upsert(ctx context.Context, input *CreateWarehouseInpu
 			args = append(args, v)
 		}
 
+		if v, ok := input.InspectedAt.Get(); ok {
+			columns = append(columns, "inspected_at")
+			args = append(args, v)
+		}
+
 		if v, ok := input.CreatedAt.Get(); ok {
 			columns = append(columns, "created_at")
 			args = append(args, v)
@@ -43255,7 +43283,7 @@ func (c *warehouseClient) UpsertMany(ctx context.Context, inputs []*CreateWareho
 		// the OK packet, and after a batch that packet names at most one row.
 		// Nothing here reads LastInsertId, so requesting it would
 		// only add a misleading assignment to the SET list.
-		columns := []string{"external_id", "name", "price", "nullable_price", "created_at"}
+		columns := []string{"external_id", "name", "price", "nullable_price", "inspected_at", "created_at"}
 		conflictColumns := warehouseConflictColumns[target]
 		updateColumns := excludeColumns(columns, append(conflictColumns, "id"))
 		conflictPositions, haveConflictKey := upsertConflictPositions(columns, conflictColumns)
@@ -43274,6 +43302,10 @@ func (c *warehouseClient) UpsertMany(ctx context.Context, inputs []*CreateWareho
 			if v, ok := input.NullablePrice.Get(); ok {
 				nullablePrice = v
 			}
+			var inspectedAt any = sql.Default
+			if v, ok := input.InspectedAt.Get(); ok {
+				inspectedAt = v
+			}
 			var createdAt any = sql.Default
 			if v, ok := input.CreatedAt.Get(); ok {
 				createdAt = v
@@ -43284,6 +43316,7 @@ func (c *warehouseClient) UpsertMany(ctx context.Context, inputs []*CreateWareho
 				input.Name,
 				input.Price,
 				nullablePrice,
+				inspectedAt,
 				createdAt,
 			})
 			rowInputs = append(rowInputs, input)
@@ -43490,6 +43523,8 @@ func warehouseColumnValue(w *Warehouse, column string) any {
 		return w.Price
 	case "nullable_price":
 		return w.NullablePrice
+	case "inspected_at":
+		return w.InspectedAt
 	case "created_at":
 		return w.CreatedAt
 	}
@@ -43804,6 +43839,8 @@ func encodeWarehouseCursor(keys []string, w *Warehouse) (string, error) {
 			out["price"] = w.Price
 		case "nullable_price":
 			out["nullable_price"] = w.NullablePrice
+		case "inspected_at":
+			out["inspected_at"] = w.InspectedAt
 		case "created_at":
 			out["created_at"] = w.CreatedAt
 		}
@@ -43826,6 +43863,9 @@ func decodeWarehouseCursor(encoded string, keys []string) (map[string]any, error
 	out := make(map[string]any, len(keys))
 	for _, key := range keys {
 		switch key {
+		case "created_at":
+			err = json.Unmarshal(raw[key], &row.CreatedAt)
+			out[key] = row.CreatedAt
 		case "id":
 			err = json.Unmarshal(raw[key], &row.ID)
 			out[key] = row.ID
@@ -43856,6 +43896,7 @@ type StreamWarehouseFieldOptions struct {
 	Name          bool `json:"name"`
 	Price         bool `json:"price"`
 	NullablePrice bool `json:"nullable_price"`
+	InspectedAt   bool `json:"inspected_at"`
 	CreatedAt     bool `json:"created_at"`
 }
 
@@ -43877,6 +43918,9 @@ func (fo *StreamWarehouseFieldOptions) Columns() []string {
 	}
 	if fo.NullablePrice {
 		cols = append(cols, "nullable_price")
+	}
+	if fo.InspectedAt {
+		cols = append(cols, "inspected_at")
 	}
 	if fo.CreatedAt {
 		cols = append(cols, "created_at")
@@ -43900,6 +43944,9 @@ func (fo *StreamWarehouseFieldOptions) HasSelectedColumns() bool {
 		return true
 	}
 	if fo.NullablePrice {
+		return true
+	}
+	if fo.InspectedAt {
 		return true
 	}
 	if fo.CreatedAt {
@@ -43926,6 +43973,8 @@ func scanWarehouseRow(rows database.Rows, columns []string) (*Warehouse, error) 
 			targets[idx] = &w.Price
 		case "nullable_price":
 			targets[idx] = &w.NullablePrice
+		case "inspected_at":
+			targets[idx] = &w.InspectedAt
 		case "created_at":
 			targets[idx] = &w.CreatedAt
 		}
@@ -44053,6 +44102,7 @@ type WarehouseFilter struct {
 	CreatedAt     *comparator.Time           `json:"created_at"`
 	ExternalID    *comparator.String         `json:"external_id"`
 	ID            *comparator.Number[int64]  `json:"id"`
+	InspectedAt   *comparator.NullableTime   `json:"inspected_at"`
 	Name          *comparator.String         `json:"name"`
 	NullablePrice *comparator.NullableString `json:"nullable_price"`
 	Price         *comparator.String         `json:"price"`
@@ -44085,6 +44135,10 @@ func (f *WarehouseFilter) ToConditions(dialect sql.Dialect, opts ...FilterOption
 
 	if f.ID != nil {
 		conds = append(conds, f.ID.Parse(dialect.QuoteIdentifier("id"), dialect)...)
+	}
+
+	if f.InspectedAt != nil {
+		conds = append(conds, f.InspectedAt.Parse(dialect.QuoteIdentifier("inspected_at"), dialect)...)
 	}
 
 	if f.Name != nil {
@@ -44137,6 +44191,7 @@ type WarehouseFieldOptions struct {
 	Name          bool `json:"name"`
 	Price         bool `json:"price"`
 	NullablePrice bool `json:"nullable_price"`
+	InspectedAt   bool `json:"inspected_at"`
 	CreatedAt     bool `json:"created_at"`
 }
 
@@ -44159,6 +44214,9 @@ func (fo *WarehouseFieldOptions) Columns() []string {
 	if fo.NullablePrice {
 		cols = append(cols, "nullable_price")
 	}
+	if fo.InspectedAt {
+		cols = append(cols, "inspected_at")
+	}
 	if fo.CreatedAt {
 		cols = append(cols, "created_at")
 	}
@@ -44174,6 +44232,7 @@ func (fo *WarehouseFieldOptions) ColumnMap() map[string]string {
 		"Name":          "name",
 		"Price":         "price",
 		"NullablePrice": "nullable_price",
+		"InspectedAt":   "inspected_at",
 		"CreatedAt":     "created_at",
 	}
 }
@@ -44195,6 +44254,9 @@ func (fo *WarehouseFieldOptions) HasSelectedColumns() bool {
 	if fo.NullablePrice {
 		return true
 	}
+	if fo.InspectedAt {
+		return true
+	}
 	if fo.CreatedAt {
 		return true
 	}
@@ -44211,8 +44273,10 @@ type CreateWarehouseInput struct {
 	Price decimal.Decimal `json:"price"`
 	// NullablePrice - Optional secondary price
 	NullablePrice omittable.Value[decimal.NullDecimal] `json:"nullable_price,omitzero"`
+	// InspectedAt - Most recent inspection time
+	InspectedAt omittable.Value[types.NullDateTime] `json:"inspected_at,omitzero"`
 	// CreatedAt - Row creation timestamp
-	CreatedAt omittable.Value[time.Time] `json:"created_at,omitzero"`
+	CreatedAt omittable.Value[types.DateTime] `json:"created_at,omitzero"`
 }
 
 // UpdateWarehouseInput holds the fields for updating a warehouses record.
@@ -44226,8 +44290,10 @@ type UpdateWarehouseInput struct {
 	Price omittable.Value[decimal.Decimal] `json:"price,omitzero"`
 	// NullablePrice - Optional secondary price
 	NullablePrice omittable.Value[decimal.NullDecimal] `json:"nullable_price,omitzero"`
+	// InspectedAt - Most recent inspection time
+	InspectedAt omittable.Value[types.NullDateTime] `json:"inspected_at,omitzero"`
 	// CreatedAt - Row creation timestamp
-	CreatedAt omittable.Value[time.Time] `json:"created_at,omitzero"`
+	CreatedAt omittable.Value[types.DateTime] `json:"created_at,omitzero"`
 }
 
 // GetWarehousesInput holds query parameters for retrieving warehouses records.

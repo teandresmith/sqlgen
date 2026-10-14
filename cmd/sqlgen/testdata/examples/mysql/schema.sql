@@ -159,13 +159,15 @@ CREATE TABLE asset_document_links (
     FOREIGN KEY (document_id) REFERENCES documents(id) ON DELETE CASCADE
 ) COMMENT='Junction table for m2m sub-categorized polymorphism';
 
--- warehouses: type override testing (decimal → decimal.Decimal, text → ksuid.KSUID)
+-- warehouses: type override testing (decimal → decimal.Decimal, text → ksuid.KSUID,
+-- timestamp and datetime(6) → types.DateTime / types.NullDateTime)
 CREATE TABLE warehouses (
     id BIGINT AUTO_INCREMENT PRIMARY KEY COMMENT 'Unique identifier',
     external_id TEXT NOT NULL COMMENT 'External reference ID (KSUID)',
     name VARCHAR(255) NOT NULL COMMENT 'Warehouse name',
     price DECIMAL(10, 2) NOT NULL COMMENT 'Operational cost',
     nullable_price DECIMAL(10, 2) COMMENT 'Optional secondary price',
+    inspected_at DATETIME(6) COMMENT 'Most recent inspection time',
     created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT 'Row creation timestamp'
 ) COMMENT='Storage warehouses with type-overridden columns';
 

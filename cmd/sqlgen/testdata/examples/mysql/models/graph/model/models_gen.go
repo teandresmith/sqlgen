@@ -323,7 +323,8 @@ type CreateWarehouseInput struct {
 	Name          string               `json:"name"`
 	Price         decimal.Decimal      `json:"price"`
 	NullablePrice *decimal.NullDecimal `json:"nullablePrice,omitempty"`
-	CreatedAt     time.Time            `json:"createdAt"`
+	InspectedAt   *types.NullDateTime  `json:"inspectedAt,omitempty"`
+	CreatedAt     types.DateTime       `json:"createdAt"`
 }
 
 type DecimalComparator struct {
@@ -865,7 +866,8 @@ type UpdateWarehouseInput struct {
 	NullablePrice    *decimal.NullDecimal `json:"nullablePrice,omitempty"`
 	NullablePriceInc *int                 `json:"nullablePrice_inc,omitempty"`
 	NullablePriceDec *int                 `json:"nullablePrice_dec,omitempty"`
-	CreatedAt        *time.Time           `json:"createdAt,omitempty"`
+	InspectedAt      *types.NullDateTime  `json:"inspectedAt,omitempty"`
+	CreatedAt        *types.DateTime      `json:"createdAt,omitempty"`
 }
 
 type UpsertAssetWithRelatedInput struct {
@@ -1017,6 +1019,7 @@ type WarehouseFilter struct {
 	Name          *StringComparator          `json:"name,omitempty"`
 	Price         *DecimalComparator         `json:"price,omitempty"`
 	NullablePrice *NullableDecimalComparator `json:"nullablePrice,omitempty"`
+	InspectedAt   *NullableTimeComparator    `json:"inspectedAt,omitempty"`
 	CreatedAt     *TimeComparator            `json:"createdAt,omitempty"`
 	And           []*WarehouseFilter         `json:"and,omitempty"`
 	Or            []*WarehouseFilter         `json:"or,omitempty"`
@@ -2583,6 +2586,7 @@ const (
 	WarehouseSortFieldName          WarehouseSortField = "NAME"
 	WarehouseSortFieldPrice         WarehouseSortField = "PRICE"
 	WarehouseSortFieldNullablePrice WarehouseSortField = "NULLABLE_PRICE"
+	WarehouseSortFieldInspectedAt   WarehouseSortField = "INSPECTED_AT"
 	WarehouseSortFieldCreatedAt     WarehouseSortField = "CREATED_AT"
 )
 
@@ -2592,12 +2596,13 @@ var AllWarehouseSortField = []WarehouseSortField{
 	WarehouseSortFieldName,
 	WarehouseSortFieldPrice,
 	WarehouseSortFieldNullablePrice,
+	WarehouseSortFieldInspectedAt,
 	WarehouseSortFieldCreatedAt,
 }
 
 func (e WarehouseSortField) IsValid() bool {
 	switch e {
-	case WarehouseSortFieldID, WarehouseSortFieldExternalID, WarehouseSortFieldName, WarehouseSortFieldPrice, WarehouseSortFieldNullablePrice, WarehouseSortFieldCreatedAt:
+	case WarehouseSortFieldID, WarehouseSortFieldExternalID, WarehouseSortFieldName, WarehouseSortFieldPrice, WarehouseSortFieldNullablePrice, WarehouseSortFieldInspectedAt, WarehouseSortFieldCreatedAt:
 		return true
 	}
 	return false

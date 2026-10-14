@@ -22,76 +22,6 @@
 ## Open
 
 <!-- fixes:open:begin -->
-### FIX-342
-
-- **Status:** Open
-- **Severity:** tracked
-- **Origin:** runtime `sql/` (`bindArgs` on MySQL; `types.DateTime.Value` is what it binds today)
-- **Surfaced by:** FIX-335 vet (2026-10-12), filed at the backlog sweep's second Step 5
-- **Vetted:** ready at `f9a460a5` (2026-10-12)
-
-**Issue.** A MySQL column overridden to `types.DateTime` cannot store a UTC time: the RFC3339Nano text `Value()` binds
-is rejected. Measured on mysql:8.0: `INSERT … VALUES (?, ?)` with `types.DateTime{2026-01-01T12:30:00.5Z}` → "Error 1292
-(22007): Incorrect datetime value: '2026-01-01T12:30:00.5Z' for column 'dt' at row 1", under `parseTime=true` with
-loc=UTC or Local and session time_zone '+00:00' or '-05:00'. A zoned value is accepted but stored as wall time in the
-session zone (DATETIME "07:30:00.5" under '-05:00').
-
-**Root cause.** `types.DateTime.Value()` returns RFC3339Nano text for every dialect; MySQL rejects the `Z` suffix and
-moves any other offset to the session time_zone, while go-sql-driver parses a DATETIME back in its DSN `loc`, so zoned
-values break whenever loc ≠ session tz.
-
-**Suggested fix.**
-- `sql/time.go` (after FIX-335): `bindArgs` switches on `d.Name()`; "sqlite" keeps FIX-335's `sqliteTime`; new "mysql"
-  case → unexported `mysqlTime` binding `types.DateTime` → `.Time`, `*types.DateTime` → `.Time` or nil,
-  `types.NullDateTime` → `.Time` or nil, everything else (`time.Time` included) unchanged, copy-on-write; PG untouched.
-  Rewrite `bindArgs`' doc comment; `types.SetOutputLayout`'s doc says it affects neither SQLite nor MySQL builder
-  statements (`types/datetime.go`, comment only).
-- `sql/time_test.go`: FIX-335's tests become `TestBuild_TimeArgs` / `TestBuild_TimeArgs_EveryBuilder`; the MySQL row
-  becomes `mysqlWant` (types.* → time.Time, null → nil); EveryBuilder runs on sqlite and mysql.
-- mysql example: `warehouses` gains `inspected_at DATETIME(6)`, table-scoped overrides `timestamp` / `datetime(6)` →
-  `types.DateTime` / `types.NullDateTime`, `cursor_keys: [created_at, id]`; new `tests/datetime_override_test.go`
-  `TestDateTimeOverrideRoundTrip` (loc UTC/Local × time_zone +00:00/-05:00, each its own pool: Create UTC/EST/UTC+1h rows,
-  Get, Update with an EST NullDateTime, Eq filters, Connection First:1 forward and Last:1 backward).
-- PRD §7.2: a paragraph under MySQL Type Mappings stating the bind rule and why RFC 3339 text fails (also say that
-  `datetime(N)` / `timestamp(N)` keep their precision in the `overrides.types` key — measured, `datetime(6)` matched
-  `DATETIME(6)` and plain `datetime` would not); FIX-335's SQLite sentence "PostgreSQL and MySQL bind the value
-  unchanged… does not affect a SQLite statement" becomes "PostgreSQL binds the value unchanged, and MySQL binds a
-  `types.DateTime` as the MySQL Type Mappings above describe… does not affect a SQLite or MySQL statement".
-- Auto-accepted the recommended option on 2026-10-12 (`/fix` auto-accept rule): MySQL bind of `types.DateTime` → (A) the
-  wrapped `time.Time`, so the driver's `loc` applies as for a `time.Time` column, rather than (B) offset text
-  "2006-01-02 15:04:05.999999999-07:00" (measured: B reads a DATETIME back shifted under loc ≠ session tz, `Eq(scanned)=0`,
-  and under loc=UTC / session -05:00 `Gt(scanned)=1`, so the cursor repeats rows), because it was prototyped green, both
-  options use the same fixture (no churn difference), it adds no exported identifier or config key, and it reverses no
-  ruling (FIX-335 ruled where the SQLite text applies). Veto point: it edits FIX-335's not-yet-landed PRD sentence, and
-  `SetOutputLayout` stops affecting MySQL builder statements.
-- Prototype results, run at `f9a460a5` + FIX-335.patch on 2026-10-12: probe `zz_probe_fix342_test.go` in the mysql example
-  module against `vet-FIX-342-mysql` (mysql:8.0), DATETIME(6) / TIMESTAMP(6), BuildInsert / BuildUpdate / BuildCount Eq/Gt
-  (original and scanned operands) across loc {UTC, Local (MST)} × time_zone {+00:00, -05:00} → identical at base and
-  base+335, 24 errors: UTC `types.DateTime` / `*types.DateTime` / `NullDateTime` Create and Update "Error 1292 (22007):
-  Incorrect datetime value: '2026-01-01T12:30:00.5Z' for column 'dt' at row 1" in all 4 configs; EST under loc=UTC/-05:00
-  stored "2026-01-01 07:30:00.500000", "scanned dt==inst false"; loc=Local "dt Eq(scanned)=0", "ts Eq(scanned)=0"; plain
-  `time.Time` all ok. With the fix: 0 errors, all 6 kinds match the `time.Time` rows, every Eq=1/Gt=0. Gates: gofumpt
-  clean; go vet; root `go test -race -count=1 -short ./...` ok; `./sql/... ./types/...` ok; golangci-lint 0 issues; `make
-  update-golden` no churn; `make update-golden-e2e` PASS, then `TestE2EGoldenFiles` ok; mysql example vet / `go test -race`
-  / golangci-lint ok; tenancy_mysql, introspect_mysql ok. Fail-first: mysql case disabled → 11 unit subtests fail (BuildUpdate
-  "- time.Time{ext: 63902867400}, + types.DateTime{Time: time.Time{ext: 63902867400}}"), `TestDateTimeOverrideRoundTrip`
-  4/4 "Create dt-a: create warehouse: exec: Error 1292 (22007): Incorrect datetime value: '2026-01-01T12:30:00Z' …", and
-  the existing `TestGraphQLKSUIDScalar` fails with the new fixture; an all-EST-writes variant fails 3/4 ("dt-a created_at =
-  2026-01-01 07:30:00 +0000 UTC, want 2026-01-01 12:30:00 +0000 UTC", filter matched [], forward pages skip 8, 9, backward
-  repeats 9); existing suite passes at base+335. Golden churn: mysql ~12 files in each of `expected/` and `models/`
-  (+258/-30 per side: models_gen, sorter_gen, graph generated / filter / input / sort translate, graph/model, shared and
-  warehouse `.graphqls`, sqlgenresolver field_options, manifest json + warehouse.md; the GraphQL schema gains DateTime /
-  NullDateTime scalars and warehouse createdAt Time → DateTime); no other example. Stacks on FIX-335.patch (same files; renames
-  its tests). Conflicts textually with FIX-343.patch on PRD ~:1798 (whichever lands second re-applies the wording). Note:
-  loc=Local differs from UTC only on a non-UTC host; the -05:00 subtests diverge on a UTC CI host too. Patch:
-  `.claude/prototypes/FIX-342.patch` (31 files, +806/-106; 24 are mysql goldens).
-
-**References.**
-- PRD §7 (type overrides).
-- FIX-335 (`sql/time.go` `bindArgs`; lands first).
-
-**Resolution notes.** _Filled in by /fix resolve._
-
 ### FIX-343
 
 - **Status:** Open
@@ -221,6 +151,76 @@ DEFAULT.
 ## Resolved
 
 <!-- fixes:resolved:begin -->
+### FIX-342
+
+- **Status:** Resolved
+- **Severity:** tracked
+- **Origin:** runtime `sql/` (`bindArgs` on MySQL; `types.DateTime.Value` is what it binds today)
+- **Surfaced by:** FIX-335 vet (2026-10-12), filed at the backlog sweep's second Step 5
+- **Vetted:** ready at `f9a460a5` (2026-10-12)
+
+**Issue.** A MySQL column overridden to `types.DateTime` cannot store a UTC time: the RFC3339Nano text `Value()` binds
+is rejected. Measured on mysql:8.0: `INSERT … VALUES (?, ?)` with `types.DateTime{2026-01-01T12:30:00.5Z}` → "Error 1292
+(22007): Incorrect datetime value: '2026-01-01T12:30:00.5Z' for column 'dt' at row 1", under `parseTime=true` with
+loc=UTC or Local and session time_zone '+00:00' or '-05:00'. A zoned value is accepted but stored as wall time in the
+session zone (DATETIME "07:30:00.5" under '-05:00').
+
+**Root cause.** `types.DateTime.Value()` returns RFC3339Nano text for every dialect; MySQL rejects the `Z` suffix and
+moves any other offset to the session time_zone, while go-sql-driver parses a DATETIME back in its DSN `loc`, so zoned
+values break whenever loc ≠ session tz.
+
+**Suggested fix.**
+- `sql/time.go` (after FIX-335): `bindArgs` switches on `d.Name()`; "sqlite" keeps FIX-335's `sqliteTime`; new "mysql"
+  case → unexported `mysqlTime` binding `types.DateTime` → `.Time`, `*types.DateTime` → `.Time` or nil,
+  `types.NullDateTime` → `.Time` or nil, everything else (`time.Time` included) unchanged, copy-on-write; PG untouched.
+  Rewrite `bindArgs`' doc comment; `types.SetOutputLayout`'s doc says it affects neither SQLite nor MySQL builder
+  statements (`types/datetime.go`, comment only).
+- `sql/time_test.go`: FIX-335's tests become `TestBuild_TimeArgs` / `TestBuild_TimeArgs_EveryBuilder`; the MySQL row
+  becomes `mysqlWant` (types.* → time.Time, null → nil); EveryBuilder runs on sqlite and mysql.
+- mysql example: `warehouses` gains `inspected_at DATETIME(6)`, table-scoped overrides `timestamp` / `datetime(6)` →
+  `types.DateTime` / `types.NullDateTime`, `cursor_keys: [created_at, id]`; new `tests/datetime_override_test.go`
+  `TestDateTimeOverrideRoundTrip` (loc UTC/Local × time_zone +00:00/-05:00, each its own pool: Create UTC/EST/UTC+1h rows,
+  Get, Update with an EST NullDateTime, Eq filters, Connection First:1 forward and Last:1 backward).
+- PRD §7.2: a paragraph under MySQL Type Mappings stating the bind rule and why RFC 3339 text fails (also say that
+  `datetime(N)` / `timestamp(N)` keep their precision in the `overrides.types` key — measured, `datetime(6)` matched
+  `DATETIME(6)` and plain `datetime` would not); FIX-335's SQLite sentence "PostgreSQL and MySQL bind the value
+  unchanged… does not affect a SQLite statement" becomes "PostgreSQL binds the value unchanged, and MySQL binds a
+  `types.DateTime` as the MySQL Type Mappings above describe… does not affect a SQLite or MySQL statement".
+- Auto-accepted the recommended option on 2026-10-12 (`/fix` auto-accept rule): MySQL bind of `types.DateTime` → (A) the
+  wrapped `time.Time`, so the driver's `loc` applies as for a `time.Time` column, rather than (B) offset text
+  "2006-01-02 15:04:05.999999999-07:00" (measured: B reads a DATETIME back shifted under loc ≠ session tz, `Eq(scanned)=0`,
+  and under loc=UTC / session -05:00 `Gt(scanned)=1`, so the cursor repeats rows), because it was prototyped green, both
+  options use the same fixture (no churn difference), it adds no exported identifier or config key, and it reverses no
+  ruling (FIX-335 ruled where the SQLite text applies). Veto point: it edits FIX-335's PRD sentence, and
+  `SetOutputLayout` stops affecting MySQL builder statements.
+- Prototype results, run at `f9a460a5` + FIX-335.patch on 2026-10-12: probe `zz_probe_fix342_test.go` in the mysql example
+  module against `vet-FIX-342-mysql` (mysql:8.0), DATETIME(6) / TIMESTAMP(6), BuildInsert / BuildUpdate / BuildCount Eq/Gt
+  (original and scanned operands) across loc {UTC, Local (MST)} × time_zone {+00:00, -05:00} → identical at base and
+  base+335, 24 errors: UTC `types.DateTime` / `*types.DateTime` / `NullDateTime` Create and Update "Error 1292 (22007):
+  Incorrect datetime value: '2026-01-01T12:30:00.5Z' for column 'dt' at row 1" in all 4 configs; EST under loc=UTC/-05:00
+  stored "2026-01-01 07:30:00.500000", "scanned dt==inst false"; loc=Local "dt Eq(scanned)=0", "ts Eq(scanned)=0"; plain
+  `time.Time` all ok. With the fix: 0 errors, all 6 kinds match the `time.Time` rows, every Eq=1/Gt=0. Gates: gofumpt
+  clean; go vet; root `go test -race -count=1 -short ./...` ok; `./sql/... ./types/...` ok; golangci-lint 0 issues; `make
+  update-golden` no churn; `make update-golden-e2e` PASS, then `TestE2EGoldenFiles` ok; mysql example vet / `go test -race`
+  / golangci-lint ok; tenancy_mysql, introspect_mysql ok. Fail-first: mysql case disabled → 11 unit subtests fail (BuildUpdate
+  "- time.Time{ext: 63902867400}, + types.DateTime{Time: time.Time{ext: 63902867400}}"), `TestDateTimeOverrideRoundTrip`
+  4/4 "Create dt-a: create warehouse: exec: Error 1292 (22007): Incorrect datetime value: '2026-01-01T12:30:00Z' …", and
+  the existing `TestGraphQLKSUIDScalar` fails with the new fixture; an all-EST-writes variant fails 3/4 ("dt-a created_at =
+  2026-01-01 07:30:00 +0000 UTC, want 2026-01-01 12:30:00 +0000 UTC", filter matched [], forward pages skip 8, 9, backward
+  repeats 9); existing suite passes at base+335. Golden churn: mysql ~12 files in each of `expected/` and `models/`
+  (+258/-30 per side: models_gen, sorter_gen, graph generated / filter / input / sort translate, graph/model, shared and
+  warehouse `.graphqls`, sqlgenresolver field_options, manifest json + warehouse.md; the GraphQL schema gains DateTime /
+  NullDateTime scalars and warehouse createdAt Time → DateTime); no other example. Stacks on FIX-335.patch (same files; renames
+  its tests). Conflicts textually with FIX-343.patch on PRD ~:1798 (whichever lands second re-applies the wording). Note:
+  loc=Local differs from UTC only on a non-UTC host; the -05:00 subtests diverge on a UTC CI host too. Patch:
+  `.claude/prototypes/FIX-342.patch` (31 files, +806/-106; 24 are mysql goldens).
+
+**References.**
+- PRD §7 (type overrides).
+- FIX-335 (`sql/time.go` `bindArgs`; lands first).
+
+**Resolution notes.** `sql/time.go` `bindArgs` now picks a per-dialect binder: SQLite keeps `sqliteTime`; MySQL uses the new unexported `mysqlTime`, which binds `types.DateTime` / `*types.DateTime` / `types.NullDateTime` as the wrapped `time.Time` (nil for a null) and leaves everything else, `time.Time` included, to the driver; PostgreSQL is unchanged. `types.SetOutputLayout`'s doc now says it affects neither SQLite nor MySQL builder statements. PRD §7.2 gains the MySQL bind paragraph (including that a `datetime(6)` `overrides.types` key keeps its precision) and FIX-335's SQLite sentence now points PostgreSQL/MySQL at it. Tests: `TestBuild_TimeArgs` (MySQL row `mysqlWant`), `TestBuild_TimeArgs_EveryBuilder` on sqlite and mysql, and FIX-335's landed `TestBuild_SQLiteTimeArgs_ListAndSubquery` widened to `TestBuild_TimeArgs_ListAndSubquery` (IN / BETWEEN / subquery args on sqlite and mysql); mysql example `warehouses.inspected_at DATETIME(6)`, table-scoped `timestamp` / `datetime(6)` overrides, `cursor_keys: [created_at, id]` and `tests/datetime_override_test.go` `TestDateTimeOverrideRoundTrip` (loc UTC/Local × time_zone +00:00/-05:00). Prototype applied with `--3way`: the only conflict was `bindArgs`' doc comment (FIX-335 landed a shorter wording), taken from the prototype. Fail-first: MySQL case disabled → 14 unit subtests fail (17 FAIL lines with the 3 parent tests) and `TestDateTimeOverrideRoundTrip` 4/4 "Error 1292 (22007): Incorrect datetime value: '2026-01-01T12:30:00Z' for column 'created_at'". Gates: `make check` ok, `make update-golden` no churn, `make update-golden-e2e` 24 mysql files (per-file numstat identical to the vet), `make check-examples` ok.
+
 ### FIX-341
 
 - **Status:** Resolved

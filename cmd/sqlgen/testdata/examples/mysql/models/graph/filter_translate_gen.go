@@ -883,6 +883,9 @@ func translateWarehouseFilter(in *gqlmodel.WarehouseFilter) *models.WarehouseFil
 	if in.ExternalID != nil {
 		out.ExternalID = translateStringComparator(in.ExternalID)
 	}
+	if in.InspectedAt != nil {
+		out.InspectedAt = translateNullableTimeComparator(in.InspectedAt)
+	}
 	if in.Name != nil {
 		out.Name = translateStringComparator(in.Name)
 	}

@@ -9357,9 +9357,20 @@
           "comment": "Optional secondary price"
         },
         {
+          "name": "inspected_at",
+          "go_field": "InspectedAt",
+          "go_type": "types.NullDateTime",
+          "db_type": "datetime(6)",
+          "nullable": true,
+          "pk": false,
+          "unique": false,
+          "comparator": "comparator.NullableTime",
+          "comment": "Most recent inspection time"
+        },
+        {
           "name": "created_at",
           "go_field": "CreatedAt",
-          "go_type": "time.Time",
+          "go_type": "types.DateTime",
           "db_type": "timestamp",
           "nullable": false,
           "pk": false,
@@ -9387,7 +9398,7 @@
             ],
             "notes": "Delegates to GetMany with a primary-key filter; returns ErrNotFound when no row matches.",
             "sql_bodies": {
-              "mysql": "SELECT `created_at`, `external_id`, `id`, `name`, `nullable_price`, `price` FROM `warehouses` WHERE `id` = ? LIMIT 1"
+              "mysql": "SELECT `created_at`, `external_id`, `id`, `inspected_at`, `name`, `nullable_price`, `price` FROM `warehouses` WHERE `id` = ? LIMIT 1"
             }
           },
           {
@@ -9401,7 +9412,7 @@
             "returns": "[]*Warehouse",
             "errors": [],
             "sql_bodies": {
-              "mysql": "SELECT `created_at`, `external_id`, `id`, `name`, `nullable_price`, `price` FROM `warehouses` WHERE <filter> ORDER BY <sort> LIMIT <limit>"
+              "mysql": "SELECT `created_at`, `external_id`, `id`, `inspected_at`, `name`, `nullable_price`, `price` FROM `warehouses` WHERE <filter> ORDER BY <sort> LIMIT <limit>"
             }
           },
           {
@@ -9484,7 +9495,7 @@
             "errors": [],
             "notes": "Scalars only — no relationship loading, cache always bypassed. Errors surface through the iterator's second value.",
             "sql_bodies": {
-              "mysql": "SELECT `created_at`, `external_id`, `id`, `name`, `nullable_price`, `price` FROM `warehouses` WHERE <filter> ORDER BY <sort>"
+              "mysql": "SELECT `created_at`, `external_id`, `id`, `inspected_at`, `name`, `nullable_price`, `price` FROM `warehouses` WHERE <filter> ORDER BY <sort>"
             }
           }
         ],
@@ -9718,6 +9729,10 @@
             "type": "*comparator.Number[int64]"
           },
           {
+            "name": "InspectedAt",
+            "type": "*comparator.NullableTime"
+          },
+          {
             "name": "Name",
             "type": "*comparator.String"
           },
@@ -9745,6 +9760,7 @@
           "CreatedAt",
           "ExternalID",
           "ID",
+          "InspectedAt",
           "Name",
           "NullablePrice",
           "Price"

@@ -12,8 +12,10 @@ type Warehouse {
   price: Decimal!
   "Optional secondary price"
   nullablePrice: NullDecimal
+  "Most recent inspection time"
+  inspectedAt: NullDateTime
   "Row creation timestamp"
-  createdAt: Time!
+  createdAt: DateTime!
 }
 
 type WarehouseConnection {
@@ -40,6 +42,7 @@ input WarehouseFilter {
   name: StringComparator
   price: DecimalComparator
   nullablePrice: NullableDecimalComparator
+  inspectedAt: NullableTimeComparator
   createdAt: TimeComparator
   and: [WarehouseFilter!]
   or:  [WarehouseFilter!]
@@ -51,6 +54,7 @@ enum WarehouseSortField {
   NAME
   PRICE
   NULLABLE_PRICE
+  INSPECTED_AT
   CREATED_AT
 }
 
@@ -63,7 +67,8 @@ input CreateWarehouseInput {
   name: String!
   price: Decimal!
   nullablePrice: NullDecimal
-  createdAt: Time!
+  inspectedAt: NullDateTime
+  createdAt: DateTime!
 }
 input UpdateWarehouseInput {
   externalID: KSUID
@@ -74,7 +79,8 @@ input UpdateWarehouseInput {
   nullablePrice: NullDecimal
   nullablePrice_inc: Int
   nullablePrice_dec: Int
-  createdAt: Time
+  inspectedAt: NullDateTime
+  createdAt: DateTime
 }
 
 extend type Query {
