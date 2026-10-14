@@ -3341,6 +3341,79 @@ func TestAttachSubPartition(t *testing.T) {
 	}
 }
 
+// TestAlterRelationsOtherThanTables checks the ALTER SEQUENCE, ALTER INDEX,
+// ALTER FOREIGN TABLE and ALTER VIEW forms pg_query reads as ALTER TABLE,
+// each of which PostgreSQL 17 accepts after the base DDL (with file_fdw
+// installed). None changes the model. The base is in pg_dump's spelling.
+func TestAlterRelationsOtherThanTables(t *testing.T) {
+	const base = `
+		CREATE TABLE public.p (id bigint NOT NULL, k integer NOT NULL) PARTITION BY RANGE (k);
+		CREATE SEQUENCE public.p_id_seq START WITH 1 INCREMENT BY 1 NO MINVALUE NO MAXVALUE CACHE 1;
+		ALTER SEQUENCE public.p_id_seq OWNED BY public.p.id;
+		CREATE TABLE public.c1 (id bigint DEFAULT nextval('public.p_id_seq'::regclass) NOT NULL, k integer NOT NULL);
+		ALTER TABLE ONLY public.p ATTACH PARTITION public.c1 FOR VALUES FROM (0) TO (10);
+		ALTER TABLE ONLY public.p ALTER COLUMN id SET DEFAULT nextval('public.p_id_seq'::regclass);
+		ALTER TABLE ONLY public.p ADD CONSTRAINT p_pkey PRIMARY KEY (id, k);
+		ALTER TABLE ONLY public.c1 ADD CONSTRAINT c1_pkey PRIMARY KEY (id, k);
+		CREATE INDEX p_k_idx ON ONLY public.p USING btree (k);
+		CREATE INDEX c1_k_idx ON public.c1 USING btree (k);
+		CREATE INDEX p_expr_idx ON public.p USING btree (((id + k)));
+		CREATE SEQUENCE s;
+		CREATE SERVER files FOREIGN DATA WRAPPER file_fdw;
+		CREATE FOREIGN TABLE ft (a int) SERVER files OPTIONS (filename '/dev/null');
+		CREATE VIEW v AS SELECT id, k FROM p;
+		CREATE MATERIALIZED VIEW mv AS SELECT id FROM p;
+	`
+	tests := []struct {
+		name    string
+		sql     string
+		wantErr string
+	}{
+		{name: "sequence owner", sql: `ALTER SEQUENCE public.s OWNER TO postgres;`},
+		{name: "serial sequence owner", sql: `ALTER SEQUENCE public.p_id_seq OWNER TO postgres;`},
+		{name: "sequence unlogged", sql: `ALTER SEQUENCE s SET UNLOGGED;`},
+		{name: "index attach partition", sql: `ALTER INDEX public.p_k_idx ATTACH PARTITION public.c1_k_idx;`},
+		{name: "primary key index attach partition", sql: `ALTER INDEX public.p_pkey ATTACH PARTITION public.c1_pkey;`},
+		{name: "index set statistics", sql: `ALTER INDEX public.p_expr_idx ALTER COLUMN 1 SET STATISTICS 500;`},
+		{name: "index set storage parameter", sql: `ALTER INDEX c1_k_idx SET (fillfactor = 70);`},
+		{name: "foreign table owner", sql: `ALTER FOREIGN TABLE public.ft OWNER TO postgres;`},
+		{name: "foreign table add column", sql: `ALTER FOREIGN TABLE ft ADD COLUMN b text;`},
+		{name: "view owner", sql: `ALTER VIEW public.v OWNER TO postgres;`},
+		{name: "view column default", sql: `ALTER TABLE ONLY public.v ALTER COLUMN k SET DEFAULT 7;`},
+		{name: "materialized view owner", sql: `ALTER MATERIALIZED VIEW public.mv OWNER TO postgres;`},
+		{name: "unknown view", sql: `ALTER VIEW nope OWNER TO postgres;`, wantErr: "table public.nope not found"},
+	}
+	want := parsePGSchema(t, base)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			p := postgres.New("")
+			err := p.Parse("test.sql", []byte(base+tt.sql))
+			if tt.wantErr != "" {
+				if err == nil || !strings.Contains(err.Error(), tt.wantErr) {
+					t.Fatalf("Parse() error = %v, want %q", err, tt.wantErr)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("Parse() error: %v", err)
+			}
+			if diff := cmp.Diff(want, p.Schema()); diff != "" {
+				t.Errorf("schema mismatch (-base +got):\n%s", diff)
+			}
+		})
+	}
+}
+
+// parsePGSchema parses sql with the default schema.
+func parsePGSchema(t *testing.T, sql string) *parser.Schema {
+	t.Helper()
+	p := postgres.New("")
+	if err := p.Parse("base.sql", []byte(sql)); err != nil {
+		t.Fatalf("Parse() error: %v", err)
+	}
+	return p.Schema()
+}
+
 func TestAlterDomainConstraints(t *testing.T) {
 	sql := `
 		CREATE DOMAIN posint AS integer CHECK (VALUE < 1000);

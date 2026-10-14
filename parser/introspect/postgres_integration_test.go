@@ -999,3 +999,87 @@ ALTER TYPE pgi_attr.ordered ADD ATTRIBUTE b numeric, ADD ATTRIBUTE z int, ALTER 
 	}
 	assertSchemaParity(t, "postgres", parsed, introspected, pgSkippedStatementExceptions...)
 }
+
+// TestPostgresIntrospect_PgDumpOutput parses the statements PostgreSQL 17's
+// pg_dump -s writes for a partitioned table with a serial column, its indexes,
+// a sequence, a view and a materialized view, owner statements included (the
+// owner is the role the test connects as). pg_dump's comments, SET lines and
+// \restrict lines are left out.
+func TestPostgresIntrospect_PgDumpOutput(t *testing.T) {
+	requireDatabases(t)
+	ddl := `
+CREATE SCHEMA pgi_dump;
+ALTER SCHEMA pgi_dump OWNER TO test;
+CREATE TABLE pgi_dump.events (
+    id bigint NOT NULL,
+    k integer NOT NULL,
+    note text
+)
+PARTITION BY RANGE (k);
+ALTER TABLE pgi_dump.events OWNER TO test;
+CREATE MATERIALIZED VIEW pgi_dump.counts AS
+ SELECT k,
+    count(*) AS n
+   FROM pgi_dump.events
+  GROUP BY k
+  WITH NO DATA;
+ALTER MATERIALIZED VIEW pgi_dump.counts OWNER TO test;
+CREATE SEQUENCE pgi_dump.events_id_seq
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1;
+ALTER SEQUENCE pgi_dump.events_id_seq OWNER TO test;
+ALTER SEQUENCE pgi_dump.events_id_seq OWNED BY pgi_dump.events.id;
+CREATE TABLE pgi_dump.events_1 (
+    id bigint DEFAULT nextval('pgi_dump.events_id_seq'::regclass) NOT NULL,
+    k integer NOT NULL,
+    note text
+);
+ALTER TABLE pgi_dump.events_1 OWNER TO test;
+CREATE VIEW pgi_dump.recent AS
+ SELECT id,
+    k
+   FROM pgi_dump.events;
+ALTER VIEW pgi_dump.recent OWNER TO test;
+CREATE SEQUENCE pgi_dump.tickets
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1;
+ALTER SEQUENCE pgi_dump.tickets OWNER TO test;
+ALTER TABLE ONLY pgi_dump.events ATTACH PARTITION pgi_dump.events_1 FOR VALUES FROM (0) TO (10);
+ALTER TABLE ONLY pgi_dump.events ALTER COLUMN id SET DEFAULT nextval('pgi_dump.events_id_seq'::regclass);
+ALTER TABLE ONLY pgi_dump.recent ALTER COLUMN k SET DEFAULT 1;
+ALTER TABLE ONLY pgi_dump.events
+    ADD CONSTRAINT events_pkey PRIMARY KEY (id, k);
+ALTER TABLE ONLY pgi_dump.events_1
+    ADD CONSTRAINT events_1_pkey PRIMARY KEY (id, k);
+CREATE INDEX events_expr_idx ON ONLY pgi_dump.events USING btree (((k + 1)));
+ALTER INDEX pgi_dump.events_expr_idx ALTER COLUMN 1 SET STATISTICS 500;
+CREATE INDEX events_1_expr_idx ON pgi_dump.events_1 USING btree (((k + 1)));
+ALTER INDEX pgi_dump.events_1_expr_idx ALTER COLUMN 1 SET STATISTICS 500;
+CREATE INDEX events_k_idx ON ONLY pgi_dump.events USING btree (k);
+CREATE INDEX events_1_k_idx ON pgi_dump.events_1 USING btree (k);
+ALTER INDEX pgi_dump.events_expr_idx ATTACH PARTITION pgi_dump.events_1_expr_idx;
+ALTER INDEX pgi_dump.events_k_idx ATTACH PARTITION pgi_dump.events_1_k_idx;
+ALTER INDEX pgi_dump.events_pkey ATTACH PARTITION pgi_dump.events_1_pkey`
+	parsed, introspected := pgParityCase(t, "DROP SCHEMA IF EXISTS pgi_dump CASCADE", ddl, "pgi_dump")
+
+	autoIncrement := func(c parser.Column) string { return strconv.FormatBool(c.AutoIncrement) + " " + c.Default }
+	if diff := cmp.Diff(map[string]string{"id": "true ", "k": "false ", "note": "false "},
+		qualifiedColumnField(t, parsed, "pgi_dump", "events", autoIncrement)); diff != "" {
+		t.Errorf("parsed events columns mismatch (-want +got):\n%s", diff)
+	}
+	wantWarnings := []string{
+		"CREATE MATERIALIZED VIEW counts skipped in DDL file — use introspection or define the view in input.views",
+		"CREATE VIEW recent skipped in DDL file — use introspection or define the view in input.views",
+		"ALTER TABLE events ATTACH PARTITION events_1: the partition is dropped from the model — the partitioned table is the entity",
+	}
+	if diff := cmp.Diff(wantWarnings, parsed.Warnings); diff != "" {
+		t.Errorf("parser warnings mismatch (-want +got):\n%s", diff)
+	}
+	assertSchemaParity(t, "postgres", parsed, introspected, pgSkippedStatementExceptions...)
+}

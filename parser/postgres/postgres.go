@@ -1147,8 +1147,8 @@ func (p *Parser) removeTable(key string) {
 
 // skippedTable reports whether names is a relation the parser skips that
 // PostgreSQL can index: a partition, materialized view or CREATE TABLE AS /
-// SELECT … INTO table. ALTER TABLE and COMMENT ON of one are skipped with it,
-// as CREATE INDEX on one is.
+// SELECT … INTO table. COMMENT ON of one is skipped with it, as CREATE INDEX
+// on one is.
 func (p *Parser) skippedTable(names []string) bool {
 	schema, name := p.splitQualifiedName(names)
 	return p.skipped[schema+"."+name]
@@ -1311,12 +1311,21 @@ func (p *Parser) commentOnColumn(stmt *pg_query.CommentStmt) error {
 }
 
 func (p *Parser) parseAlterTable(stmt *pg_query.AlterTableStmt) error {
-	if stmt.Objtype == pg_query.ObjectType_OBJECT_TYPE {
+	switch stmt.Objtype { //nolint:exhaustive // a table, view or materialized view is altered below
+	case pg_query.ObjectType_OBJECT_TYPE:
 		return p.alterCompositeType(stmt)
+	case pg_query.ObjectType_OBJECT_SEQUENCE, pg_query.ObjectType_OBJECT_INDEX, pg_query.ObjectType_OBJECT_FOREIGN_TABLE:
+		// No subcommand here changes the model (OWNED BY and RENAME TO are
+		// statements of their own), and the parser tracks no partition's index
+		// and no foreign table, so an unknown name is not an error. pg_dump
+		// writes ALTER SEQUENCE … OWNER TO and ALTER INDEX … ATTACH PARTITION.
+		return nil
 	}
 	table, err := p.lookupTable(stmt.Relation)
 	if err != nil {
-		if p.skipped[p.relationKey(stmt.Relation)] {
+		// A plain view counts: pg_dump writes ALTER VIEW … OWNER TO and ALTER
+		// TABLE ONLY … ALTER COLUMN … SET DEFAULT for one.
+		if _, skipped := p.skipped[p.relationKey(stmt.Relation)]; skipped {
 			p.alterSkippedTable(stmt)
 			return nil
 		}

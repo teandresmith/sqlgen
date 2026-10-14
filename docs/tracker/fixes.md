@@ -22,97 +22,6 @@
 ## Open
 
 <!-- fixes:open:begin -->
-### FIX-345
-
-- **Status:** Open
-- **Severity:** tracked
-- **Origin:** phase 30, parser/postgres
-- **Surfaced by:** /fix-loop FIX-305 verify reviewer (2026-10-13)
-- **Vetted:** corrected at `481842f0` (2026-10-14)
-
-**Issue.** The PostgreSQL file parser fails on `pg_dump` schema output. A
-default dump of a database with a serial column stops at `ALTER SEQUENCE
-public.p_id_seq OWNER TO postgres` → "table public.p_id_seq not found"; a
-no-owner dump (`pg_dump -s -O`) of a partitioned table with an index stops
-at `ALTER INDEX public.p_k_idx ATTACH PARTITION public.c1_k_idx;` → "table
-public.p_k_idx not found". A foreign table (`ALTER FOREIGN TABLE … OWNER
-TO`) and a plain view (`ALTER VIEW public.v OWNER TO …`, and `ALTER TABLE
-ONLY public.v ALTER COLUMN k SET DEFAULT 7`, which pg_dump writes even with
-`-O`) fail the same way. Measured on postgres:17 (17.11); PostgreSQL
-accepts every one of these statements.
-
-**Root cause.** pg_query reads `ALTER SEQUENCE`, `ALTER INDEX`, `ALTER
-FOREIGN TABLE` and `ALTER VIEW` subcommands as an `AlterTableStmt` with
-`Objtype` `OBJECT_SEQUENCE` / `OBJECT_INDEX` / `OBJECT_FOREIGN_TABLE` /
-`OBJECT_VIEW`. `parseAlterTable` (`parser/postgres/postgres.go:1313`)
-routes only `OBJECT_TYPE` (FIX-338) and sends the rest to `lookupTable`,
-which fails on those names. Its skipped-relation fallback tests the map
-value `p.skipped[key]`, which is `false` for a plain view (not indexable),
-so a view statement also falls through to the error; a materialized view
-already works.
-
-**Suggested fix.**
-- In `parseAlterTable`, switch on `stmt.Objtype`: `OBJECT_TYPE` still goes
-  to `alterCompositeType`; `OBJECT_SEQUENCE`, `OBJECT_INDEX` and
-  `OBJECT_FOREIGN_TABLE` return nil, since no subcommand that arrives as an
-  `AlterTableStmt` for them changes the model (OWNED BY and RESTART come as
-  `AlterSeqStmt`, RENAME as `RenameStmt`; only AT_ChangeOwner,
-  AT_SetLogged/UnLogged, SET STATISTICS, ATTACH PARTITION and the like come
-  here), the parser tracks no partition index or foreign table, and the
-  introspector excludes foreign tables.
-- Make the skipped-relation fallback test key presence (`_, skipped :=
-  p.skipped[key]`), so a plain view is absorbed like a materialized view or
-  partition; an unknown view without IF EXISTS is still an error. Drop "ALTER
-  TABLE and" from the `skippedTable` doc comment.
-- Tests: `TestAlterRelationsOtherThanTables` in
-  `parser/postgres/postgres_test.go` (13 cases on a pg_dump-shaped base: 12
-  leave the schema equal under `cmp.Diff`, 1 errors) with a
-  `parsePGSchema` helper; parity test `TestPostgresIntrospect_PgDumpOutput`
-  in `parser/introspect/postgres_integration_test.go` built from verbatim
-  postgres:17 `pg_dump -s -n pgi_dump` statements.
-- Corrected from the original: nothing from `sequences.go` is applied (no
-  registry subcommand reaches this path); "unknown name → error" is dropped,
-  because no subcommand of these object types has a model effect, partition
-  indexes and DB-only sequences are never modelled under `both`, and
-  `renameIndex`/`dropIndex`/`renameSequence`/`dropSequence` already skip
-  unknown names; widened to plain views (same root cause and fix site,
-  real pg_dump output); `OBJECT_FOREIGN_TABLE` is a no-op; no PRD change
-  (§5.2 already says statements apply as PostgreSQL applies them).
-- Landing note: FIX-346's patch also changes the skipped-relation presence
-  test and the `skippedTable` doc comment; applied after this one,
-  `git apply --3way` leaves one conflict in `parser/postgres/postgres.go`
-  (measured at `481842f0`).
-- Prototype results, run at `481842f0` on 2026-10-14: postgres:17.11
-  fixture (enum, composite, domain, owned and free sequences, serial,
-  identity, bigserial partitioned table with 2 partitions and an index, a
-  view, a matview with an index) dumped with `pg_dump -s`, `\restrict`
-  lines removed, fed to `postgres.New("public").Parse` → default dump
-  "parsing dump.sql: table public.p_id_seq not found"; `-s -O` dump "table
-  public.p_k_idx not found"; a second DB with a file_fdw foreign table, an
-  unlogged sequence and `ALTER INDEX … ALTER COLUMN 1 SET STATISTICS 500`
-  → "table public.ft not found"; with only the sequence/index/foreign case
-  fixed, the default dump fails next at "table public.v not found"; with
-  the full prototype all three dumps parse. Gates: `cd parser && go test
-  -race -count=1 ./...` (testcontainers) → ok; `golangci-lint run
-  ./postgres/... ./introspect/...` → 0 issues; gofumpt clean. Fail-first:
-  sequence/index/foreign case reverted → 9 subtests fail, e.g.
-  serial_sequence_owner "table public.p_id_seq not found", and the parity
-  test fails "parsing stmt_07.sql: table pgi_dump.events_id_seq not
-  found"; view fallback reverted to `if p.skipped[...]` → view_owner and
-  view_column_default fail "table public.v not found", parity fails at
-  "ALTER VIEW pgi_dump.recent OWNER TO test"; existing suite without the
-  fix passes. Golden churn: none. Patch: `.claude/prototypes/FIX-345.patch`
-  (3 files, +170/-4).
-
-**References.**
-- PRD §5.2 (PostgreSQL file DDL coverage), §6.3.
-- FIX-305 (`c695fd6f`, sequence registry, ALTER handling), FIX-338
-  (`afdb75a4`, OBJECT_TYPE routing in the same function), FIX-346 (same
-  presence-test change, COMMENT ON COLUMN).
-- Backlog line on pg_dump 17.6+ `\restrict` (still live on 17.11).
-
-**Resolution notes.** _Filled in by /fix resolve._
-
 ### FIX-346
 
 - **Status:** Open
@@ -533,6 +442,104 @@ them against.
 ## Resolved
 
 <!-- fixes:resolved:begin -->
+### FIX-345
+
+- **Status:** Resolved
+- **Severity:** tracked
+- **Origin:** phase 30, parser/postgres
+- **Surfaced by:** /fix-loop FIX-305 verify reviewer (2026-10-13)
+- **Vetted:** corrected at `481842f0` (2026-10-14)
+
+**Issue.** The PostgreSQL file parser fails on `pg_dump` schema output. A
+default dump of a database with a serial column stops at `ALTER SEQUENCE
+public.p_id_seq OWNER TO postgres` → "table public.p_id_seq not found"; a
+no-owner dump (`pg_dump -s -O`) of a partitioned table with an index stops
+at `ALTER INDEX public.p_k_idx ATTACH PARTITION public.c1_k_idx;` → "table
+public.p_k_idx not found". A foreign table (`ALTER FOREIGN TABLE … OWNER
+TO`) and a plain view (`ALTER VIEW public.v OWNER TO …`, and `ALTER TABLE
+ONLY public.v ALTER COLUMN k SET DEFAULT 7`, which pg_dump writes even with
+`-O`) fail the same way. Measured on postgres:17 (17.11); PostgreSQL
+accepts every one of these statements.
+
+**Root cause.** pg_query reads `ALTER SEQUENCE`, `ALTER INDEX`, `ALTER
+FOREIGN TABLE` and `ALTER VIEW` subcommands as an `AlterTableStmt` with
+`Objtype` `OBJECT_SEQUENCE` / `OBJECT_INDEX` / `OBJECT_FOREIGN_TABLE` /
+`OBJECT_VIEW`. `parseAlterTable` (`parser/postgres/postgres.go:1313`)
+routes only `OBJECT_TYPE` (FIX-338) and sends the rest to `lookupTable`,
+which fails on those names. Its skipped-relation fallback tests the map
+value `p.skipped[key]`, which is `false` for a plain view (not indexable),
+so a view statement also falls through to the error; a materialized view
+already works.
+
+**Suggested fix.**
+- In `parseAlterTable`, switch on `stmt.Objtype`: `OBJECT_TYPE` still goes
+  to `alterCompositeType`; `OBJECT_SEQUENCE`, `OBJECT_INDEX` and
+  `OBJECT_FOREIGN_TABLE` return nil, since no subcommand that arrives as an
+  `AlterTableStmt` for them changes the model (OWNED BY and RESTART come as
+  `AlterSeqStmt`, RENAME as `RenameStmt`; only AT_ChangeOwner,
+  AT_SetLogged/UnLogged, SET STATISTICS, ATTACH PARTITION and the like come
+  here), the parser tracks no partition index or foreign table, and the
+  introspector excludes foreign tables.
+- Make the skipped-relation fallback test key presence (`_, skipped :=
+  p.skipped[key]`), so a plain view is absorbed like a materialized view or
+  partition; an unknown view without IF EXISTS is still an error. Drop "ALTER
+  TABLE and" from the `skippedTable` doc comment.
+- Tests: `TestAlterRelationsOtherThanTables` in
+  `parser/postgres/postgres_test.go` (13 cases on a pg_dump-shaped base: 12
+  leave the schema equal under `cmp.Diff`, 1 errors) with a
+  `parsePGSchema` helper; parity test `TestPostgresIntrospect_PgDumpOutput`
+  in `parser/introspect/postgres_integration_test.go` built from verbatim
+  postgres:17 `pg_dump -s -n pgi_dump` statements.
+- Corrected from the original: nothing from `sequences.go` is applied (no
+  registry subcommand reaches this path); "unknown name → error" is dropped,
+  because no subcommand of these object types has a model effect, partition
+  indexes and DB-only sequences are never modelled under `both`, and
+  `renameIndex`/`dropIndex`/`renameSequence`/`dropSequence` already skip
+  unknown names; widened to plain views (same root cause and fix site,
+  real pg_dump output); `OBJECT_FOREIGN_TABLE` is a no-op; no PRD change
+  (§5.2 already says statements apply as PostgreSQL applies them).
+- Landing note: FIX-346's patch also changes the skipped-relation presence
+  test and the `skippedTable` doc comment; applied after this one,
+  `git apply --3way` leaves one conflict in `parser/postgres/postgres.go`
+  (measured at `481842f0`).
+- Auto-accepted the recommended option on 2026-10-14 (`/fix` auto-accept
+  rule): should `alterSkippedTable` refuse ATTACH/DETACH PARTITION (and
+  ADD COLUMN) on a skipped relation that is not a partition, now that a
+  plain view reaches it → keep the landed behavior, which matches the
+  existing materialized-view leniency, and backlog the tightening, because
+  the prototype's gates are green, there is no golden churn, no public
+  surface changes, and no ruling or PRD behavior is reversed.
+- Prototype results, run at `481842f0` on 2026-10-14: postgres:17.11
+  fixture (enum, composite, domain, owned and free sequences, serial,
+  identity, bigserial partitioned table with 2 partitions and an index, a
+  view, a matview with an index) dumped with `pg_dump -s`, `\restrict`
+  lines removed, fed to `postgres.New("public").Parse` → default dump
+  "parsing dump.sql: table public.p_id_seq not found"; `-s -O` dump "table
+  public.p_k_idx not found"; a second DB with a file_fdw foreign table, an
+  unlogged sequence and `ALTER INDEX … ALTER COLUMN 1 SET STATISTICS 500`
+  → "table public.ft not found"; with only the sequence/index/foreign case
+  fixed, the default dump fails next at "table public.v not found"; with
+  the full prototype all three dumps parse. Gates: `cd parser && go test
+  -race -count=1 ./...` (testcontainers) → ok; `golangci-lint run
+  ./postgres/... ./introspect/...` → 0 issues; gofumpt clean. Fail-first:
+  sequence/index/foreign case reverted → 9 subtests fail, e.g.
+  serial_sequence_owner "table public.p_id_seq not found", and the parity
+  test fails "parsing stmt_07.sql: table pgi_dump.events_id_seq not
+  found"; view fallback reverted to `if p.skipped[...]` → view_owner and
+  view_column_default fail "table public.v not found", parity fails at
+  "ALTER VIEW pgi_dump.recent OWNER TO test"; existing suite without the
+  fix passes. Golden churn: none. Patch: `.claude/prototypes/FIX-345.patch`
+  (3 files, +170/-4).
+
+**References.**
+- PRD §5.2 (PostgreSQL file DDL coverage), §6.3.
+- FIX-305 (`c695fd6f`, sequence registry, ALTER handling), FIX-338
+  (`afdb75a4`, OBJECT_TYPE routing in the same function), FIX-346 (same
+  presence-test change, COMMENT ON COLUMN).
+- Backlog line on pg_dump 17.6+ `\restrict` (still live on 17.11).
+
+**Resolution notes.** Resolved on 2026-10-14 from the vetted prototype, which applied clean at `d86db304` (no commits since the vet). `parseAlterTable` (`parser/postgres/postgres.go`) now switches on `stmt.Objtype`: `OBJECT_TYPE` still goes to `alterCompositeType`, and `OBJECT_SEQUENCE`, `OBJECT_INDEX` and `OBJECT_FOREIGN_TABLE` return nil, since no subcommand that reaches this path changes the model. The skipped-relation fallback tests key presence, so a plain view is absorbed like a materialized view or partition; an unknown view without IF EXISTS still errors. The `skippedTable` doc comment drops "ALTER TABLE and". Tests: `TestAlterRelationsOtherThanTables` (13 cases, with a `parsePGSchema` helper) in `parser/postgres/postgres_test.go`, and the parity test `TestPostgresIntrospect_PgDumpOutput` in `parser/introspect/postgres_integration_test.go`. Fail-first re-run on the final code: with the sequence/index/foreign case removed, 9 subtests fail (for example serial_sequence_owner "table public.p_id_seq not found") and the parity test fails "parsing stmt_07.sql: table pgi_dump.events_id_seq not found"; with the fallback back on `if p.skipped[…]`, view_owner and view_column_default fail "table public.v not found" and the parity test fails at "ALTER VIEW pgi_dump.recent OWNER TO test". Gates: `make check` ok; `cd parser && go test -race -count=1 ./...` (testcontainers) ok; `golangci-lint run ./postgres/... ./introspect/...` 0 issues; `make check-examples` ok. Golden churn: none, matching the vet. Verify reviewer's doc correction applied inline: PRD §5.2 "A `CREATE INDEX` needs its table" now says ALTER TABLE / ALTER VIEW actions on a plain view are skipped and the ALTER SEQUENCE / ALTER INDEX / ALTER FOREIGN TABLE subcommands pg_dump writes change nothing (the vet's "no PRD change" left that paragraph implying an ALTER on a plain view errors).
+
 ### FIX-344
 
 - **Status:** Resolved
