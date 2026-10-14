@@ -29,7 +29,7 @@
 - **Severity:** tracked
 - **Origin:** phase 30, parser/introspect
 - **Surfaced by:** FIX-347 vet (2026-10-14)
-- **Vetted:** corrected at `481842f0` + FIX-347.patch (2026-10-14)
+- **Vetted:** corrected at `4754ed19` (2026-10-14; refreshed after FIX-347 landed)
 
 **Issue.** Under `source: both`, a file migration that drops or renames a
 column a database view reads, but does not pass straight through its select
@@ -49,7 +49,7 @@ in view v after drop column: no such column: role (1)".
 
 **Root cause.** The view SQL readers (`parser/{postgres,mysql,sqlite}/
 view_sql.go`) record only select-list columns (`ViewSQL.Columns`,
-`parser/view.go:38-54`), each with at most one pass-through source column.
+`parser/view.go:37-71`), each with at most one pass-through source column.
 Columns referenced in WHERE, JOIN conditions, GROUP BY/HAVING, ORDER BY or
 inside a select-list expression are never recorded, so `readViewSources` /
 `refreshViewColumns` (`parser/introspect/views.go`) have nothing to check
@@ -58,78 +58,91 @@ them against.
 **Suggested fix.**
 - `parser/view.go`: new `ViewColumnRef{Table, Column}`; `ViewSQL.Reads`
   (column references outside the select list) and `ViewSQL.Nested`
-  (subqueries in expressions); new `ViewReadSources` resolves each read in
-  its own query, then outward from an expression subquery (correlation),
-  and traces it through derived tables and CTEs with FIX-347's
-  `traceViewColumn`. `RenameViewColumnReferences` repoints a read of the
-  renamed table column (resolving every read before any subquery column is
-  renamed); `RenameViewTableReferences` recurses into `Nested`.
+  (subqueries in expressions). `walkScopes` also yields each `Nested` query
+  as `traceScope{nested: true, path: …/#i}`, which puts expression
+  subqueries into `ViewFromTables` (keys `#i/key`),
+  `RenameViewTableReferences` and `RenameViewColumnReferences` at once.
+  `traceViewColumn` also reports whether the FROM clause has the column; a
+  new `readScope` resolves a read in its own query, then outward while the
+  scope is `nested` (correlation), reusing FIX-347's `subquery`/`cteScopes`
+  and lexical-path cycle guard. New `ViewReadSources`, and
+  `tableColumnReads`, which resolves every read before any column is renamed
+  (wired into `RenameViewColumnReferences`).
 - Each dialect's `view_sql.go` gains `queryReads`, `readNested` and a read
   collector over non-bare select-list expressions, WHERE, join ON, GROUP BY,
   HAVING, windows and ORDER BY; a subquery in an expression is read as
   `Nested` with its select-list columns as reads. PostgreSQL walks the node
-  tree with protoreflect, plus USING (makes `google.golang.org/protobuf`,
-  already v1.36.9 in the graph, a direct require in `parser/go.mod`);
-  MySQL uses `sqlparser.Walk` (MySQL stores USING as ON); SQLite uses
-  `rsql.Walk`, skipping function, type, collation and window names, plus
-  USING, and skips a bare ORDER BY name that matches a select-list alias
-  (PG and MySQL store an alias ORDER BY as the expression).
+  tree with protoreflect (hooked into `extractFromAliases`), plus USING via
+  `fromKey` — this makes `google.golang.org/protobuf` (already v1.36.9
+  indirect) a direct require in `parser/go.mod`; MySQL uses `sqlparser.Walk`,
+  ON only (MySQL stores a view's USING as ON, measured: "… join
+  `sqlgen_test`.`pz_users` `u` on((`p`.`email` = `u`.`email`))"), at both
+  `ParseViewSQL` and `readSubquery`; SQLite uses `rsql.Walk` (hooked into
+  `extractSourceAliases`), skipping function, type, collation and window
+  names and time keywords, plus USING, and skips a bare ORDER BY name that
+  matches a select-list alias (PG and MySQL store an alias ORDER BY as the
+  expression). Since FIX-347 `readSubquery` stores unreadable SQL as an empty
+  query, so `readNested` has no ok flag.
 - `parser/introspect/views.go`: `readViewSources` records each view's read
   sources; new `checkViewReads` (split from `refreshViewColumns` for cyclop)
-  runs the table check, the column check, then the read check ("view v
-  reads column role of table users, which the SQL files drop or rename;
-  under source: both …"); `viewFromTables` recurses into `Nested`.
+  runs the table check, the column check, then the read check ("view %s
+  reads column %s of table %s, which the SQL files drop or rename; under
+  source: both …").
 - PRD §6.1 (`docs/PRD.md:1651`): a column the query reads outside its
   select list (WHERE, JOIN ON/USING, GROUP BY, HAVING, ORDER BY, windows,
   select-list expressions, IN/EXISTS/scalar subqueries, including an
   enclosing query's column such a subquery reads) is treated the same way,
   with an error naming the view and the table column; a table a view reads,
   including one only a subquery reads, likewise.
-- Tests: `TestMerge_ViewColumnRenameAndDrop` grows from 39 to 61 subtests
-  (PG 9, SQLite 7, MySQL 6 new).
-- Lands after FIX-347: the patch is the delta on top of FIX-347.patch.
+- Tests: `TestMerge_ViewColumnRenameAndDrop` grows from 49 to 74 subtests
+  (PG 10, SQLite 8, MySQL 7 new), including "drop a column an IN subquery
+  selects" per dialect.
 - Corrected from the original: widened under the scope cap (same root
   cause, same fix site) to subqueries in expressions (their tables and
   table renames too), correlated outer reads, JOIN USING and window
   clauses, all measured to fail silently; rename handling needs no ruling,
   since PRD §6.1 already says a rename is applied as the database applies
-  it (PG follows every rename; MySQL leaves the view invalid → error;
-  SQLite rewrites, refusing only a read through an unaliased subquery
-  column, FIX-347's rule); the read error has its own wording because no
-  view column is involved.
-- Prototype results, run at `481842f0` + FIX-347.patch (throwaway worktree
-  commit) on 2026-10-14: probe `zz_probe_fix349_test.go` (postgres:16-alpine,
-  mysql:8.0, modernc SQLite), 19 views × 7 migrations × 3 dialects = 399
-  cases, each running Merge and then the same migration on the database →
-  146 disagreements, all `Merge err=<nil>` where the database refuses or the
-  view breaks: MySQL `pz_v … WHERE role = 'a'` DROP/RENAME role → "Error
-  1356 (HY000): View 'sqlgen_test.pz_v' references invalid table(s) or
-  column(s) or function(s)…" (JOIN ON: "Error 1054 (42S22): Unknown column
-  'u.role' in 'on clause'"); PG DROP role under WHERE, JOIN ON, GROUP BY,
-  HAVING, ORDER BY, EXISTS or an expression → "cannot drop column role of
-  table users because other objects depend on it (SQLSTATE 2BP01)", DROP
-  TABLE posts under an IN subquery → "cannot drop table posts because other
-  objects depend on it"; SQLite → "error in view v after drop column: no
-  such column: role (1)" and "no such table: main.posts (1)". With the
-  prototype, an extended matrix (22 views × 10 migrations × 3 = 660 cases,
-  adding USING, ORDER BY alias, window, table RENAME) → "660 cases, 0 where
-  sqlgen and the database disagree". Gates: parser gofumpt clean,
-  `golangci-lint run ./...` 0 issues, `go mod tidy` (protobuf indirect →
-  direct only), `go test -race -count=1 ./...` (containers) ok; cmd/sqlgen
-  `go test -race -run TestE2E .` ok (195s), `go test -short ./...` ok;
-  `make refs-check` ok. Fail-first: all production files at the FIX-347
-  base → 19 of 61 subtests fail, e.g. postgres/drop_a_column_read_in_WHERE
-  "Merge() error = <nil>, want one containing \"merge both mode: view
-  view_def.r reads column role of table view_def.users, which the SQL files
-  drop or rename; …\""; each dialect's `queryReads` returning nil → PG 8,
-  MySQL 5, SQLite 6 fail; `checkViewReads` read loop disabled → 17 fail;
-  read rename removed → PG and SQLite rename cases fail with a false error;
-  `Nested` recursion removed in `renameViewTables` / `viewFromTables` →
-  table cases fail; correlated lookup, PG USING, SQLite ORDER BY alias skip
-  and nested select-list reads each removed → their case fails; the 39
-  pre-existing subtests pass without the fix. Golden churn: none. Patch:
-  `.claude/prototypes/FIX-349.patch` (8 files, +805/-41; apply
-  FIX-347.patch first).
+  it; the read error has its own wording because no view column is
+  involved. Refreshed on 2026-10-14 after FIX-347 (`c007a487`) and FIX-348
+  (`85c58bb9`) landed: rebuilt on the landed FIX-347 design (`Nested` goes
+  into `walkScopes`; `readScope` plus `traceViewColumn`'s found result
+  replace the old `eachViewRead`/`resolveRead`/`fromClauseHas`; the
+  introspect `viewFromTables` hunk, whose helper is gone, is dropped); added
+  the PG and MySQL "IN subquery selects" cases, because without them
+  removing `readNested`'s select-list reads left every subtest passing;
+  dropped vitess USING handling, since MySQL never stores USING.
+- Prototype results, run at `4754ed19` on 2026-10-14 (refresh): probe
+  `zz_probe_fix349_test.go` (postgres:16-alpine, mysql:8.0, modernc SQLite;
+  22 views × 10 migrations × 3 dialects, each running Merge and then the
+  same migration on the database) → "660 cases, 174 where sqlgen and the
+  database disagree" (PG 49, MySQL 74, SQLite 51), all `Merge err=<nil>`
+  where the database refuses or the view breaks: mysql/where DROP/RENAME
+  role → "Error 1356 (HY000): View 'sqlgen_test.pz_v' references invalid
+  table(s) or column(s) or function(s)…"; postgres/sub-expr DROP role →
+  "cannot drop column role of table users because other objects depend on
+  it (SQLSTATE 2BP01)"; sqlite/sub-expr DROP role → "error in view v after
+  drop column: no such column: role (1)". With the prototype: "660 cases, 0
+  where sqlgen and the database disagree", and no view falls back to catalog
+  columns. Gates: parser gofumpt clean, `golangci-lint run ./...` 0 issues,
+  `go mod tidy` (protobuf indirect → direct only), `go test -race -count=1
+  ./...` (containers) ok; cmd/sqlgen `go test -race -run TestE2E .` ok,
+  `go test -short ./...` ok; `make refs-check` ok. Fail-first (74
+  subtests): all production files at `4754ed19` → 21 fail, e.g.
+  postgres/drop_a_column_read_in_WHERE "Merge() error = <nil>, want one
+  containing \"merge both mode: view view_def.r reads column role of table
+  view_def.users, which the SQL files drop or rename; …\""; PG `queryReads`
+  hook removed → 9 fail, MySQL → 6, SQLite → 6; `checkViewReads` read loop
+  disabled → 19 fail; `tableColumnReads` repoint removed → PG and SQLite
+  "rename a column and a table read outside the select list" fail with a
+  false error; `Nested` loop in `walkScopes` removed → 7 fail; correlated
+  outward lookup removed → postgres/drop_a_column_read_in_a_correlated_EXISTS
+  fails; PG USING removed → postgres/drop_a_column_read_in_JOIN_USING fails;
+  SQLite ORDER BY alias skip removed → sqlite/drop_a_column_an_ORDER_BY_
+  alias_shadows fails with a false error; `readNested` select-list reads
+  removed → each dialect's "drop a column an IN subquery selects" fails; the
+  49 pre-existing subtests pass without the fix. Golden churn: none. Patch:
+  `.claude/prototypes/FIX-349.patch` (8 files, +788/-62; applies to HEAD
+  directly).
 
 **References.**
 - PRD §6.1 (view columns under `both`).
