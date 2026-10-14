@@ -22,98 +22,6 @@
 ## Open
 
 <!-- fixes:open:begin -->
-### FIX-346
-
-- **Status:** Open
-- **Severity:** tracked
-- **Origin:** phase 30, parser/postgres
-- **Surfaced by:** /fix-loop FIX-305 third verify pass (2026-10-13)
-- **Vetted:** corrected at `481842f0` (2026-10-14)
-
-**Issue.** The PostgreSQL file parser rejects `COMMENT ON COLUMN` on a
-column of a plain view, or on an attribute of a composite type, both of
-which PostgreSQL accepts and `pg_dump` writes. `CREATE TABLE t (a int);
-CREATE VIEW v AS SELECT a FROM t; COMMENT ON COLUMN v.a IS 'x';` →
-"parsing x.sql: comment on column of unknown table v"; PG16 → `COMMENT`.
-`pg_dump --schema-only` writes `COMMENT ON COLUMN public.v.a IS 'x';` and,
-for a composite type, `COMMENT ON COLUMN public.ct.f …`. Predates FIX-305.
-
-**Root cause.** `commentOnColumn` (`parser/postgres/postgres.go:1290-1311`)
-looks the relation up with `findTableByNames`, then `skippedTable`. A plain
-view is in `p.skipped`, but with the value `false` (not indexable), and
-`skippedTable` returns that flag rather than whether the name is present,
-so the view reads as unknown. A materialized view, partition or CTAS table
-maps to `true`, which is why only a plain view fails; `Seed` likewise maps a
-plain view seeded under `both` to `false`. A composite type is never looked
-up at all. The file parser models no view columns (`skipRelation` records
-only the name for CREATE VIEW), and the introspector reads no view column
-comment (`introspectViewColumns` never reads `pg_description`; the
-generator's `buildViewColumns` sets no Description), so there is nothing to
-record the comment on.
-
-**Suggested fix.**
-- In `commentOnColumn`, when no table matches, skip any name present in
-  `p.skipped` (presence, not the indexable flag), covering plain and
-  materialized views, partitions and CTAS tables under `files` and `both`.
-- Then look up a composite type of that name: skip a comment on an existing
-  attribute; error "comment on unknown column ct.nope" on a missing one, as
-  PG16 does (`column "nope" of relation "ct" does not exist`).
-- A relation nothing created still errors "comment on column of unknown
-  table". Reword the `skippedTable` doc comment to say it covers COMMENT ON
-  TABLE only (which still rejects a view, as PostgreSQL does).
-- Tests: `TestCommentOnColumnOfView` (11 cases checked against PG16: view,
-  qualified view, view in another schema, renamed view, materialized view,
-  composite attribute, unknown composite attribute, dropped view, old name
-  of a renamed view, unknown relation, COMMENT ON TABLE of a view) and
-  `TestCommentOnColumnOfSeededView` (plain and materialized view under
-  `both`) in `parser/postgres/postgres_test.go`; parity test
-  `TestPostgresIntrospect_CommentOnViewColumn` in
-  `parser/introspect/postgres_integration_test.go`.
-- PRD §5.2 ("A `CREATE INDEX` needs its table" paragraph): one sentence that
-  COMMENT ON COLUMN of a plain view or composite type attribute is skipped,
-  and one on a missing attribute is an error.
-- Corrected from the original: the comment is always skipped rather than
-  applied to a view column, because the file parser models no view columns
-  and the introspector reads no view column comment (measured parity); the
-  "error on an unknown column of a known view" bullet is dropped (see the
-  auto-accept); widened to composite type attributes, which share the root
-  cause and fix site (the `table == nil` branch).
-- Auto-accepted the recommended option on 2026-10-14 (`/fix` auto-accept
-  rule): error on an unknown column of a known view? → no, skip every
-  COMMENT ON COLUMN of a view whatever the column, because checking only
-  views seeded under `both` would split `files` from `both` and contradict
-  the materialized-view behavior at HEAD (`mv.nope` → nil); prototyped with
-  gates green, no golden churn either way, no public surface, no ruling or
-  stated PRD behavior reversed (adds PRD text for an unspecified case).
-- Landing note: FIX-345's patch makes the same presence-test change in
-  `parseAlterTable` and edits the `skippedTable` doc comment; applied after
-  it, this patch's `git apply --3way` leaves one conflict in
-  `parser/postgres/postgres.go` (measured at `481842f0`).
-- Prototype results, run at `481842f0` on 2026-10-14: probe at HEAD →
-  `COMMENT ON COLUMN v.a` "parsing x.sql: comment on column of unknown table
-  v"; `public.v.a`, renamed `v2.a`, seeded `sv.a` and composite `ct.f` fail
-  the same way; `mv.a`, `mv.nope` and `COMMENT ON VIEW v` → nil. Introspector
-  on postgres:16-alpine: view column commented 'view col' → `comment=""`;
-  materialized view → `comment=""`; composite `attrs=[{Name:f
-  Type:integer}]` (no Comment field). Gates: `cd parser && go test -race
-  -count=1 ./...` (with Docker) → 5 packages ok; `golangci-lint run
-  ./postgres/... ./introspect/...` → 0 issues; gofumpt clean; `go test -run
-  TestE2EGoldenFiles` → ok. Fail-first: presence check reverted to `if
-  p.skipped[key]` → `TestCommentOnColumnOfView/view` fails "comment on
-  column of unknown table v" (qualified, other-schema and renamed cases and
-  the seeded test too); composite branch removed →
-  `composite_type_attribute` fails "comment on column of unknown table ct";
-  whole fix reverted → `TestPostgresIntrospect_CommentOnViewColumn` fails
-  "comment on column of unknown table pgi_vcomment.v"; existing suite
-  without the fix passes. Golden churn: none. Patch:
-  `.claude/prototypes/FIX-346.patch` (4 files, +116/-5).
-
-**References.**
-- PRD §5.2; FIX-305 (`c695fd6f`) skip handling for COMMENT ON a skipped
-  relation; FIX-345 (other pg_dump statements the parser rejects).
-
-**Resolution notes.** _Filled in by /fix resolve._
-
 ### FIX-347
 
 - **Status:** Open
@@ -442,6 +350,98 @@ them against.
 ## Resolved
 
 <!-- fixes:resolved:begin -->
+### FIX-346
+
+- **Status:** Resolved
+- **Severity:** tracked
+- **Origin:** phase 30, parser/postgres
+- **Surfaced by:** /fix-loop FIX-305 third verify pass (2026-10-13)
+- **Vetted:** corrected at `481842f0` (2026-10-14)
+
+**Issue.** The PostgreSQL file parser rejects `COMMENT ON COLUMN` on a
+column of a plain view, or on an attribute of a composite type, both of
+which PostgreSQL accepts and `pg_dump` writes. `CREATE TABLE t (a int);
+CREATE VIEW v AS SELECT a FROM t; COMMENT ON COLUMN v.a IS 'x';` →
+"parsing x.sql: comment on column of unknown table v"; PG16 → `COMMENT`.
+`pg_dump --schema-only` writes `COMMENT ON COLUMN public.v.a IS 'x';` and,
+for a composite type, `COMMENT ON COLUMN public.ct.f …`. Predates FIX-305.
+
+**Root cause.** `commentOnColumn` (`parser/postgres/postgres.go:1290-1311`)
+looks the relation up with `findTableByNames`, then `skippedTable`. A plain
+view is in `p.skipped`, but with the value `false` (not indexable), and
+`skippedTable` returns that flag rather than whether the name is present,
+so the view reads as unknown. A materialized view, partition or CTAS table
+maps to `true`, which is why only a plain view fails; `Seed` likewise maps a
+plain view seeded under `both` to `false`. A composite type is never looked
+up at all. The file parser models no view columns (`skipRelation` records
+only the name for CREATE VIEW), and the introspector reads no view column
+comment (`introspectViewColumns` never reads `pg_description`; the
+generator's `buildViewColumns` sets no Description), so there is nothing to
+record the comment on.
+
+**Suggested fix.**
+- In `commentOnColumn`, when no table matches, skip any name present in
+  `p.skipped` (presence, not the indexable flag), covering plain and
+  materialized views, partitions and CTAS tables under `files` and `both`.
+- Then look up a composite type of that name: skip a comment on an existing
+  attribute; error "comment on unknown column ct.nope" on a missing one, as
+  PG16 does (`column "nope" of relation "ct" does not exist`).
+- A relation nothing created still errors "comment on column of unknown
+  table". Reword the `skippedTable` doc comment to say it covers COMMENT ON
+  TABLE only (which still rejects a view, as PostgreSQL does).
+- Tests: `TestCommentOnColumnOfView` (11 cases checked against PG16: view,
+  qualified view, view in another schema, renamed view, materialized view,
+  composite attribute, unknown composite attribute, dropped view, old name
+  of a renamed view, unknown relation, COMMENT ON TABLE of a view) and
+  `TestCommentOnColumnOfSeededView` (plain and materialized view under
+  `both`) in `parser/postgres/postgres_test.go`; parity test
+  `TestPostgresIntrospect_CommentOnViewColumn` in
+  `parser/introspect/postgres_integration_test.go`.
+- PRD §5.2 ("A `CREATE INDEX` needs its table" paragraph): one sentence that
+  COMMENT ON COLUMN of a plain view or composite type attribute is skipped,
+  and one on a missing attribute is an error.
+- Corrected from the original: the comment is always skipped rather than
+  applied to a view column, because the file parser models no view columns
+  and the introspector reads no view column comment (measured parity); the
+  "error on an unknown column of a known view" bullet is dropped (see the
+  auto-accept); widened to composite type attributes, which share the root
+  cause and fix site (the `table == nil` branch).
+- Auto-accepted the recommended option on 2026-10-14 (`/fix` auto-accept
+  rule): error on an unknown column of a known view? → no, skip every
+  COMMENT ON COLUMN of a view whatever the column, because checking only
+  views seeded under `both` would split `files` from `both` and contradict
+  the materialized-view behavior at HEAD (`mv.nope` → nil); prototyped with
+  gates green, no golden churn either way, no public surface, no ruling or
+  stated PRD behavior reversed (adds PRD text for an unspecified case).
+- Landing note: FIX-345's patch makes the same presence-test change in
+  `parseAlterTable` and edits the `skippedTable` doc comment; applied after
+  it, this patch's `git apply --3way` leaves one conflict in
+  `parser/postgres/postgres.go` (measured at `481842f0`).
+- Prototype results, run at `481842f0` on 2026-10-14: probe at HEAD →
+  `COMMENT ON COLUMN v.a` "parsing x.sql: comment on column of unknown table
+  v"; `public.v.a`, renamed `v2.a`, seeded `sv.a` and composite `ct.f` fail
+  the same way; `mv.a`, `mv.nope` and `COMMENT ON VIEW v` → nil. Introspector
+  on postgres:16-alpine: view column commented 'view col' → `comment=""`;
+  materialized view → `comment=""`; composite `attrs=[{Name:f
+  Type:integer}]` (no Comment field). Gates: `cd parser && go test -race
+  -count=1 ./...` (with Docker) → 5 packages ok; `golangci-lint run
+  ./postgres/... ./introspect/...` → 0 issues; gofumpt clean; `go test -run
+  TestE2EGoldenFiles` → ok. Fail-first: presence check reverted to `if
+  p.skipped[key]` → `TestCommentOnColumnOfView/view` fails "comment on
+  column of unknown table v" (qualified, other-schema and renamed cases and
+  the seeded test too); composite branch removed →
+  `composite_type_attribute` fails "comment on column of unknown table ct";
+  whole fix reverted → `TestPostgresIntrospect_CommentOnViewColumn` fails
+  "comment on column of unknown table pgi_vcomment.v"; existing suite
+  without the fix passes. Golden churn: none. Patch:
+  `.claude/prototypes/FIX-346.patch` (4 files, +116/-5).
+
+**References.**
+- PRD §5.2; FIX-305 (`c695fd6f`) skip handling for COMMENT ON a skipped
+  relation; FIX-345 (other pg_dump statements the parser rejects).
+
+**Resolution notes.** `commentOnColumn` (`parser/postgres/postgres.go`) now, when no table matches, skips the comment for any name present in `p.skipped` (key presence, not the indexable flag), so a plain view, materialized view, partition or CTAS table under `files` or `both` is skipped; then skips a comment on an existing composite type attribute and errors "comment on unknown column ct.nope" on a missing one. An uncreated relation still errors "comment on column of unknown table". The `skippedTable` doc comment now says it covers COMMENT ON TABLE. PRD §5.2 gains the sentences on COMMENT ON COLUMN of a plain view or composite attribute. Tests: `TestCommentOnColumnOfView`, `TestCommentOnColumnOfSeededView`, `TestPostgresIntrospect_CommentOnViewColumn`. The vetted prototype applied with `git apply --3way`; its conflicts with FIX-345 (`02e610ce`) in the `skippedTable` doc comment and the PRD §5.2 paragraph were merged keeping both changes. Fail-first re-run on the final code: presence check reverted → view, qualified, other-schema, renamed and seeded cases fail "comment on column of unknown table"; composite branch removed → both composite cases fail; whole `postgres.go` reverted → the introspect parity test fails. Gates: `make check` ok, `make check-examples` ok, `TestE2EGoldenFiles` ok; golden churn none, as vetted. Verify inline: the parity test now checks the parser's view and materialized-view skip warnings, which `pgSkippedStatementExceptions` requires a caller to check, and the `TestCommentOnColumnOfView` doc comment is trimmed.
+
 ### FIX-345
 
 - **Status:** Resolved

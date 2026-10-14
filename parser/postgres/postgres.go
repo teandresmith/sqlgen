@@ -1147,8 +1147,8 @@ func (p *Parser) removeTable(key string) {
 
 // skippedTable reports whether names is a relation the parser skips that
 // PostgreSQL can index: a partition, materialized view or CREATE TABLE AS /
-// SELECT … INTO table. COMMENT ON of one is skipped with it, as CREATE INDEX
-// on one is.
+// SELECT … INTO table. COMMENT ON TABLE of one is skipped with it, as CREATE
+// INDEX on one is.
 func (p *Parser) skippedTable(names []string) bool {
 	schema, name := p.splitQualifiedName(names)
 	return p.skipped[schema+"."+name]
@@ -1286,7 +1286,11 @@ func (p *Parser) parseComment(stmt *pg_query.CommentStmt) error {
 	return nil
 }
 
-// commentOnColumn applies COMMENT ON COLUMN.
+// commentOnColumn applies COMMENT ON COLUMN. PostgreSQL also takes one on a
+// column of a view or composite type, and pg_dump writes it; the model keeps
+// no comment there and the introspector reads none, so it is skipped, as it
+// is on a column of any relation the parser skips. One on an attribute the
+// composite type lacks is an error, as in PostgreSQL.
 func (p *Parser) commentOnColumn(stmt *pg_query.CommentStmt) error {
 	names := extractObjectNames(stmt.Object)
 	if len(names) < 2 {
@@ -1296,8 +1300,15 @@ func (p *Parser) commentOnColumn(stmt *pg_query.CommentStmt) error {
 	tableNames := names[:len(names)-1]
 	table := p.findTableByNames(tableNames)
 	if table == nil {
-		if p.skippedTable(tableNames) {
+		schema, name := p.splitQualifiedName(tableNames)
+		if _, skipped := p.skipped[schema+"."+name]; skipped {
 			return nil
+		}
+		if ct := p.findCompositeTypeByName(schema, name); ct != nil {
+			if slices.ContainsFunc(ct.Attributes, func(a parser.Attribute) bool { return a.Name == colName }) {
+				return nil
+			}
+			return fmt.Errorf("comment on unknown column %s.%s", strings.Join(tableNames, "."), colName)
 		}
 		return fmt.Errorf("comment on column of unknown table %s", strings.Join(tableNames, "."))
 	}

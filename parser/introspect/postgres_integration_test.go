@@ -870,6 +870,43 @@ ALTER TABLE pgi_state.g ADD UNIQUE (a)`
 	assertSchemaParity(t, "postgres", parsed, introspected, pgSkippedStatementExceptions...)
 }
 
+// TestPostgresIntrospect_CommentOnViewColumn checks the parser against the
+// introspector for the COMMENT ON COLUMN pg_dump writes on a view, materialized
+// view or composite type column: the introspector reads no comment for any of
+// them, and the parser skips each.
+func TestPostgresIntrospect_CommentOnViewColumn(t *testing.T) {
+	requireDatabases(t)
+	ddl := `
+CREATE SCHEMA pgi_vcomment;
+CREATE TABLE pgi_vcomment.t (a int);
+COMMENT ON COLUMN pgi_vcomment.t.a IS 'table column';
+CREATE VIEW pgi_vcomment.v AS SELECT a FROM pgi_vcomment.t;
+COMMENT ON COLUMN pgi_vcomment.v.a IS 'view column';
+CREATE MATERIALIZED VIEW pgi_vcomment.mv AS SELECT a FROM pgi_vcomment.t;
+COMMENT ON COLUMN pgi_vcomment.mv.a IS 'materialized view column';
+CREATE TYPE pgi_vcomment.ct AS (f int);
+COMMENT ON COLUMN pgi_vcomment.ct.f IS 'attribute'`
+	parsed, introspected := pgParityCase(t, "DROP SCHEMA IF EXISTS pgi_vcomment CASCADE", ddl, "pgi_vcomment")
+
+	got := map[string]string{}
+	for _, v := range introspected.Views {
+		for _, c := range v.Columns {
+			got[v.Name+"."+c.Name] = c.Comment
+		}
+	}
+	if diff := cmp.Diff(map[string]string{"v.a": "", "mv.a": ""}, got); diff != "" {
+		t.Errorf("introspected view column comments mismatch (-want +got):\n%s", diff)
+	}
+	wantWarnings := []string{
+		"CREATE VIEW v skipped in DDL file — use introspection or define the view in input.views",
+		"CREATE MATERIALIZED VIEW mv skipped in DDL file — use introspection or define the view in input.views",
+	}
+	if diff := cmp.Diff(wantWarnings, parsed.Warnings); diff != "" {
+		t.Errorf("parser warnings mismatch (-want +got):\n%s", diff)
+	}
+	assertSchemaParity(t, "postgres", parsed, introspected, pgSkippedStatementExceptions...)
+}
+
 // TestPostgresIntrospect_AlterTypeDDL checks the parser against the
 // introspector after ALTER TYPE and ALTER DOMAIN renames and enum label changes.
 func TestPostgresIntrospect_AlterTypeDDL(t *testing.T) {

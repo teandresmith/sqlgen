@@ -366,6 +366,73 @@ func TestCommentOnTypeAndDomain(t *testing.T) {
 	}
 }
 
+// TestCommentOnColumnOfView pins COMMENT ON COLUMN on a view, materialized
+// view and composite type against PostgreSQL 16: the parser skips each one
+// PostgreSQL takes and errors where PostgreSQL does.
+func TestCommentOnColumnOfView(t *testing.T) {
+	const base = `CREATE TABLE t (a int);
+CREATE VIEW v AS SELECT a FROM t;
+CREATE MATERIALIZED VIEW mv AS SELECT a FROM t;
+CREATE SCHEMA s;
+CREATE VIEW s.v AS SELECT a FROM t;
+CREATE TYPE ct AS (f int);
+`
+	tests := []struct {
+		name    string
+		ddl     string
+		wantErr string
+	}{
+		{name: "view", ddl: `COMMENT ON COLUMN v.a IS 'x';`},
+		{name: "qualified view", ddl: `COMMENT ON COLUMN public.v.a IS 'x';`},
+		{name: "view in another schema", ddl: `COMMENT ON COLUMN s.v.a IS 'x';`},
+		{name: "renamed view", ddl: `ALTER VIEW v RENAME TO v2; COMMENT ON COLUMN v2.a IS 'x';`},
+		{name: "materialized view", ddl: `COMMENT ON COLUMN mv.a IS 'x';`},
+		{name: "composite type attribute", ddl: `COMMENT ON COLUMN ct.f IS 'x';`},
+		{name: "unknown composite type attribute", ddl: `COMMENT ON COLUMN ct.nope IS 'x';`, wantErr: "comment on unknown column ct.nope"},
+		{name: "dropped view", ddl: `DROP VIEW v; COMMENT ON COLUMN v.a IS 'x';`, wantErr: "comment on column of unknown table v"},
+		{name: "old name of a renamed view", ddl: `ALTER VIEW v RENAME TO v2; COMMENT ON COLUMN v.a IS 'x';`, wantErr: "comment on column of unknown table v"},
+		{name: "unknown relation", ddl: `COMMENT ON COLUMN nope.a IS 'x';`, wantErr: "comment on column of unknown table nope"},
+		{name: "view comment on table", ddl: `COMMENT ON TABLE v IS 'x';`, wantErr: "comment on unknown table v"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			p := postgres.New("")
+			err := p.Parse("test.sql", []byte(base+tt.ddl))
+			if tt.wantErr == "" {
+				if err != nil {
+					t.Fatalf("Parse(%q) error: %v", tt.ddl, err)
+				}
+				if got := p.Schema().Tables[0].Columns[0].Comment; got != "" {
+					t.Errorf("Parse(%q): t.a comment = %q, want none", tt.ddl, got)
+				}
+				return
+			}
+			if err == nil || !strings.Contains(err.Error(), tt.wantErr) {
+				t.Errorf("Parse(%q) error = %v, want containing %q", tt.ddl, err, tt.wantErr)
+			}
+		})
+	}
+}
+
+// TestCommentOnColumnOfSeededView pins that under source: both a COMMENT ON
+// COLUMN on the database's view or materialized view is skipped, as it is
+// under files.
+func TestCommentOnColumnOfSeededView(t *testing.T) {
+	for _, view := range []parser.View{
+		{Schema: "public", Name: "v", Columns: []parser.Column{{Name: "a", Type: "integer"}}},
+		{Schema: "public", Name: "v", Materialized: true, Columns: []parser.Column{{Name: "a", Type: "integer"}}},
+	} {
+		p := postgres.New("")
+		p.Seed(&parser.Schema{Views: []parser.View{view}})
+		if err := p.Parse("test.sql", []byte(`COMMENT ON COLUMN v.a IS 'x';`)); err != nil {
+			t.Errorf("Parse() on seeded view (materialized %v) error: %v", view.Materialized, err)
+		}
+		if got := p.Schema().Views[0].Columns[0].Comment; got != "" {
+			t.Errorf("seeded view (materialized %v) column comment = %q, want none", view.Materialized, got)
+		}
+	}
+}
+
 func TestAlterTableAddDropColumn(t *testing.T) {
 	sql := `
 		CREATE TABLE users (
