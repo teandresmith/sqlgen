@@ -67,6 +67,37 @@ func TestToSchemaTables_PartialUniqueExcludedFromUniqueGroups(t *testing.T) {
 	}
 }
 
+// TestToSchemaTables_HasDefault pins that an explicit DEFAULT NULL is no
+// default. The PostgreSQL and SQLite file parsers (and SQLite's catalog) keep
+// it as the text "NULL" while the PostgreSQL and MySQL catalogs (and the MySQL
+// file parser) record none, and
+// the soft delete nullability rule must not differ by source.
+func TestToSchemaTables_HasDefault(t *testing.T) {
+	tests := []struct {
+		name string
+		col  parser.Column
+		want bool
+	}{
+		{name: "no default", col: parser.Column{Name: "c", Type: "boolean", Nullable: true}, want: false},
+		{name: "DEFAULT NULL", col: parser.Column{Name: "c", Type: "boolean", Nullable: true, Default: "NULL"}, want: false},
+		{name: "DEFAULT null", col: parser.Column{Name: "c", Type: "boolean", Nullable: true, Default: "null"}, want: false},
+		{name: "DEFAULT NULL::boolean", col: parser.Column{Name: "c", Type: "boolean", Nullable: true, Default: "NULL::boolean"}, want: false},
+		{name: "DEFAULT ((NULL))", col: parser.Column{Name: "c", Type: "boolean", Nullable: true, Default: "(NULL)"}, want: false},
+		{name: "DEFAULT (NULL::boolean)", col: parser.Column{Name: "c", Type: "boolean", Nullable: true, Default: "(NULL::boolean)"}, want: false},
+		{name: "DEFAULT false", col: parser.Column{Name: "c", Type: "boolean", Nullable: true, Default: "false"}, want: true},
+		{name: "DEFAULT 'NULL' string", col: parser.Column{Name: "c", Type: "text", Nullable: true, Default: "'NULL'"}, want: true},
+		{name: "generated", col: parser.Column{Name: "c", Type: "integer", GeneratedExpr: "a + 1"}, want: true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			schema := &parser.Schema{Tables: []parser.Table{{Name: "t", Schema: "public", Columns: []parser.Column{tt.col}}}}
+			if got := toSchemaTables(schema)[0].Columns[0].HasDefault; got != tt.want {
+				t.Errorf("HasDefault = %v, want %v (Default %q)", got, tt.want, tt.col.Default)
+			}
+		})
+	}
+}
+
 // writeSchemaProject writes a sqlgen.yml for dialect and one DDL file holding
 // sql into a fresh directory, and returns the config path.
 func writeSchemaProject(t *testing.T, dialect config.Dialect, sql string) string {

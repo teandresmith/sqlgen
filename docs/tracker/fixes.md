@@ -22,9 +22,15 @@
 ## Open
 
 <!-- fixes:open:begin -->
+_No open fixes._
+<!-- fixes:open:end -->
+
+## Resolved
+
+<!-- fixes:resolved:begin -->
 ### FIX-344
 
-- **Status:** Open
+- **Status:** Resolved
 - **Severity:** tracked
 - **Origin:** phase 6, `cmd/sqlgen/config` (soft-delete validation) + `cmd/sqlgen/cli` (`toSchemaTables` HasDefault)
 - **Surfaced by:** FIX-341 vet (2026-10-12), filed at the backlog sweep's third Step 5
@@ -51,7 +57,7 @@ DEFAULT.
 - `cmd/sqlgen/cli/pipeline.go` `toSchemaTables`: `HasDefault` treats a literal `DEFAULT NULL` (any case, optional `::type`)
   as no default via unexported `isNullDefault` — the PG / SQLite file parsers keep "NULL" while the PG catalog and the MySQL
   parser record none, so without it `DEFAULT NULL` passed under `files` and errored under `database`. The only other
-  `HasDefault` consumer (§32.4, `validate.go:1582`) ORs it with `Nullable`.
+  `HasDefault` consumer (§32.4, `validate.go:1584`) ORs it with `Nullable`.
 - PRD: §4.6 sentence (nullable bool/integer with no DEFAULT is an error; DEFAULT NULL counts as none; NOT NULL not
   required), §4.13 row after FIX-341's, the phase-2 list and the §8 validate-test list.
 - Tests: config `TestValidatePostParse_SoftDeleteFlagNullability` (9 rows); cli `TestToSchemaTables_HasDefault` (7);
@@ -88,13 +94,8 @@ DEFAULT.
 - PRD §4.6, §5.4, §17.2.
 - FIX-324, FIX-336, FIX-341 (soft-delete detection, filter literal, timestamp nullability; land first).
 
-**Resolution notes.** _Filled in by /fix resolve._
+**Resolution notes.** `cmd/sqlgen/config/validate.go` `validateSoftDeleteTypes` gains a third case after FIX-341's NOT NULL timestamp check: a matched `bool` / `integer` column that is nullable with no DEFAULT is an error naming the column, the table, the type and its live value (`FALSE` / `0`); the switch keeps the type mismatch first, so an incompatible column reports only that, a timestamp column never reaches the new case, and only the first matching `soft_delete_columns` entry is checked. `cmd/sqlgen/cli/pipeline.go` `toSchemaTables` now treats a literal `DEFAULT NULL` (any case, optional `::type`) as no default via unexported `isNullDefault`, so `source: files` and `source: database` agree; it also strips outer parentheses, since SQLite records `DEFAULT ((NULL))` as "(NULL)" in both its file parser and PRAGMA (a `/verify` reviewer probe; not in the prototype). The `SchemaColumn.HasDefault` doc comment now excludes DEFAULT NULL and names its new consumer (not in the prototype), and PRD §5.4's lead sentence names the new rule (`/verify` doc corrections). PRD §4.6 sentence, a §4.13 row after FIX-341's, the phase-2 list and the §8 validate-test list. Tests: `TestValidatePostParse_SoftDeleteFlagNullability` (9 rows, including a nullable timestamp that stays valid), `TestToSchemaTables_HasDefault`, `TestGenerate_nullableNoDefaultFlagSoftDeleteRejected` (bool, bool DEFAULT NULL, integer); `TestValidatePostParse_SoftDeleteTypeMatch` rows gain `HasDefault: true`. Prototype applied with `--3way`: the one conflict was PRD's phase-2 list, where FIX-321 (`88a62484`) had added "and nullability" to cursor_keys; the landed line keeps it and adds this rule beside FIX-341's. Fail-first: new case disabled → `TestValidatePostParse_SoftDeleteFlagNullability` and `TestGenerate_nullableNoDefaultFlagSoftDeleteRejected` fail; `isNullDefault` bypassed → `TestToSchemaTables_HasDefault/DEFAULT_NULL`, `/DEFAULT_null`, `/DEFAULT_NULL::boolean` and `…Rejected/bool_DEFAULT_NULL` fail. Gates: `make check` ok, `make update-golden` / `update-golden-e2e` no churn (as vetted), `make check-examples` ok.
 
-<!-- fixes:open:end -->
-
-## Resolved
-
-<!-- fixes:resolved:begin -->
 ### FIX-343
 
 - **Status:** Resolved

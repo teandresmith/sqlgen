@@ -368,6 +368,14 @@ func newParser(dialect config.Dialect, defaultSchema string) (introspect.Seedabl
 	}
 }
 
+// isNullDefault reports whether a parsed DEFAULT expression is the NULL
+// literal, optionally parenthesized (SQLite keeps `((NULL))` as "(NULL)") or
+// cast (PostgreSQL `NULL::boolean`).
+func isNullDefault(def string) bool {
+	lit, _, _ := strings.Cut(strings.Trim(def, "() "), "::")
+	return strings.EqualFold(strings.Trim(lit, "() "), "NULL")
+}
+
 // toSchemaTables converts parsed tables to the lightweight SchemaTable type
 // used by post-parse validation. UniqueGroups gathers every table-level UNIQUE
 // or PRIMARY KEY constraint's column set so the primary_key.columns override
@@ -386,7 +394,10 @@ func toSchemaTables(schema *parser.Schema) []config.SchemaTable {
 				Unique:     c.Unique,
 				// GENERATED ALWAYS columns count as defaulted: either way
 				// the INSERT may omit them (§32.4 required-on-create rule).
-				HasDefault:    c.Default != "" || c.GeneratedExpr != "",
+				// DEFAULT NULL does not: it is the absence of a default, and
+				// the PostgreSQL and MySQL catalogs (and the MySQL file
+				// parser) record none, so both sources agree.
+				HasDefault:    (c.Default != "" && !isNullDefault(c.Default)) || c.GeneratedExpr != "",
 				AutoIncrement: c.AutoIncrement,
 			})
 		}

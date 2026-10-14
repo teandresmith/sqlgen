@@ -1404,9 +1404,9 @@ type SchemaColumn struct {
 	PrimaryKey bool
 	Nullable   bool
 	Unique     bool
-	// HasDefault reports whether an INSERT may omit the column: it has a
-	// DEFAULT expression or is GENERATED ALWAYS. Feeds the §32.4
-	// required-on-create access rule.
+	// HasDefault reports whether the column has a DEFAULT other than NULL or
+	// is GENERATED ALWAYS. Feeds the §32.4 required-on-create access rule and
+	// the bool / integer soft delete nullability rule.
 	HasDefault bool
 	// AutoIncrement reports serial / auto_increment columns.
 	AutoIncrement bool
@@ -1768,7 +1768,11 @@ func validateCursorKeys(cfg *RootConfig, tables []SchemaTable, views []SchemaVie
 // types (see isSoftDeleteTypeCompatible) and that a timestamp soft delete
 // column is nullable: the strategy marks a live row with NULL (PRD §4.6), so a
 // NOT NULL column can never be live again — Restore violates the constraint
-// and the default "is not deleted" filter (IS NULL) matches no row.
+// and the default "is not deleted" filter (IS NULL) matches no row. A bool or
+// integer column is the mirror case: the strategy marks a live row with FALSE
+// / 0 and its filter compares to that value, which excludes NULL, so a
+// nullable column with no DEFAULT hides every row inserted without it (PRD
+// §17.2). A DEFAULT, or NOT NULL, gives such a row the live value.
 func validateSoftDeleteTypes(cfg *RootConfig, tables []SchemaTable, errs *[]error) {
 	sdCols := cfg.Generation.SoftDeleteColumns
 	if len(sdCols) == 0 {
@@ -1795,6 +1799,15 @@ func validateSoftDeleteTypes(cfg *RootConfig, tables []SchemaTable, errs *[]erro
 				*errs = append(*errs, fmt.Errorf(
 					"soft_delete_columns: column %q in table %s is NOT NULL, but a timestamp soft delete marks a live row with NULL (make it nullable, or soft delete with a bool or integer column)",
 					sd.Name, qualifiedTableName(table),
+				))
+			case sd.Type != SoftDeleteTimestamp && col.Nullable && !col.HasDefault:
+				live := "FALSE"
+				if sd.Type == SoftDeleteInteger {
+					live = "0"
+				}
+				*errs = append(*errs, fmt.Errorf(
+					"soft_delete_columns: column %q in table %s is nullable with no DEFAULT, but soft delete type %q marks a live row with %s, so a row created without it is hidden (make it NOT NULL, or give it DEFAULT %s)",
+					sd.Name, qualifiedTableName(table), sd.Type, live, live,
 				))
 			}
 			break // first match determines the soft delete column for this table

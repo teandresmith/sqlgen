@@ -204,6 +204,62 @@ func TestGenerate_notNullTimestampSoftDeleteRejected(t *testing.T) {
 	}
 }
 
+// A bool / integer soft delete marks a live row with FALSE / 0, so a nullable
+// column with no DEFAULT (DEFAULT NULL included) would hide every row created
+// without it; generate rejects it before writing anything.
+func TestGenerate_nullableNoDefaultFlagSoftDeleteRejected(t *testing.T) {
+	tests := []struct {
+		name   string
+		sdType string
+		ddl    string
+		want   string
+	}{
+		{
+			name:   "bool",
+			sdType: "bool",
+			ddl:    "CREATE TABLE zz_c (id serial PRIMARY KEY, zz_del boolean);",
+			want:   `column "zz_del" in table public.zz_c is nullable with no DEFAULT, but soft delete type "bool" marks a live row with FALSE`,
+		},
+		{
+			name:   "bool DEFAULT NULL",
+			sdType: "bool",
+			ddl:    "CREATE TABLE zz_c (id serial PRIMARY KEY, zz_del boolean DEFAULT NULL);",
+			want:   `column "zz_del" in table public.zz_c is nullable with no DEFAULT, but soft delete type "bool" marks a live row with FALSE`,
+		},
+		{
+			name:   "integer",
+			sdType: "integer",
+			ddl:    "CREATE TABLE zz_c (id serial PRIMARY KEY, zz_del smallint);",
+			want:   `column "zz_del" in table public.zz_c is nullable with no DEFAULT, but soft delete type "integer" marks a live row with 0`,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			dir := t.TempDir()
+			cfgPath := filepath.Join(dir, "sqlgen.yml")
+			sqlDir := filepath.Join(dir, "migrations")
+			if err := os.MkdirAll(sqlDir, 0o750); err != nil {
+				t.Fatalf("creating migrations dir: %v", err)
+			}
+			outputDir := filepath.Join(dir, "output")
+			writeValidateConfig(t, cfgPath, sqlDir, outputDir,
+				"generation:\n  soft_delete_columns:\n    - name: zz_del\n      type: "+tt.sdType+"\n")
+			writeSQLFile(t, sqlDir, tt.ddl)
+
+			_, stderr, err := executeCommand("generate", "--config", cfgPath)
+			if ee, ok := errors.AsType[*exitError](err); !ok || ee.code != ExitConfig {
+				t.Fatalf("generate error = %v, want exit code %d (config)", err, ExitConfig)
+			}
+			if want := "Post-parse validation error: soft_delete_columns: " + tt.want; !strings.Contains(stderr, want) {
+				t.Errorf("stderr = %q, want %q", stderr, want)
+			}
+			if _, err := os.Stat(outputDir); !os.IsNotExist(err) {
+				t.Error("generate wrote the output directory")
+			}
+		})
+	}
+}
+
 // Post-parse validation is the only soft delete type check, so every command
 // that builds generation contexts must run it first and stop there.
 func TestSoftDeleteTypeMismatchStopsEveryContextBuilder(t *testing.T) {

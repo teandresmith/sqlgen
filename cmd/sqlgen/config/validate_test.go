@@ -784,7 +784,9 @@ func TestValidatePostParse_SoftDeleteTypeMatch(t *testing.T) {
 					Schema: "public",
 					Columns: []config.SchemaColumn{
 						{Name: "id", Type: "bigint"},
-						{Name: "soft_col", Type: tt.colType, Nullable: true},
+						// Nullable with a DEFAULT passes every strategy's
+						// nullability rule, so only the type is under test.
+						{Name: "soft_col", Type: tt.colType, Nullable: true, HasDefault: true},
 					},
 				},
 			}
@@ -850,6 +852,105 @@ func TestValidatePostParse_SoftDeleteTimestampNullability(t *testing.T) {
 			name:    "NOT NULL incompatible type reports the type only",
 			sdCols:  []config.SoftDeleteConfig{{Name: "soft_col", Type: config.SoftDeleteTimestamp}},
 			columns: []config.SchemaColumn{{Name: "soft_col", Type: "text"}},
+			wantErr: `soft_delete_columns: column "soft_col" in table public.items has incompatible type "text"`,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg := validConfig()
+			cfg.Generation.SoftDeleteColumns = tt.sdCols
+			tables := []config.SchemaTable{{
+				Name:    "items",
+				Schema:  "public",
+				Columns: append([]config.SchemaColumn{{Name: "id", Type: "bigint", PrimaryKey: true}}, tt.columns...),
+			}}
+
+			_, err := config.ValidatePostParse(cfg, tables, nil)
+			if tt.wantErr == "" {
+				if err != nil {
+					t.Errorf("ValidatePostParse() unexpected error: %v", err)
+				}
+				return
+			}
+			if err == nil || !strings.Contains(err.Error(), tt.wantErr) {
+				t.Fatalf("ValidatePostParse() error = %v, want %q", err, tt.wantErr)
+			}
+			if got := strings.Count(err.Error(), "soft_delete_columns:"); got != 1 {
+				t.Errorf("ValidatePostParse() error = %v, want one soft_delete_columns error, got %d", err, got)
+			}
+		})
+	}
+}
+
+// TestValidatePostParse_SoftDeleteFlagNullability pins the bool / integer
+// mirror of the timestamp rule: those strategies mark a live row with FALSE /
+// 0, so a nullable column with no DEFAULT would hide every row created
+// without it (PRD §4.6, §17.2).
+func TestValidatePostParse_SoftDeleteFlagNullability(t *testing.T) {
+	const (
+		boolErr = `soft_delete_columns: column "soft_col" in table public.items is nullable with no DEFAULT, but soft delete type "bool" marks a live row with FALSE`
+		intErr  = `soft_delete_columns: column "soft_col" in table public.items is nullable with no DEFAULT, but soft delete type "integer" marks a live row with 0`
+	)
+	tests := []struct {
+		name    string
+		sdCols  []config.SoftDeleteConfig
+		columns []config.SchemaColumn
+		wantErr string
+	}{
+		{
+			name:    "nullable bool, no DEFAULT",
+			sdCols:  []config.SoftDeleteConfig{{Name: "soft_col", Type: config.SoftDeleteBool}},
+			columns: []config.SchemaColumn{{Name: "soft_col", Type: "boolean", Nullable: true}},
+			wantErr: boolErr,
+		},
+		{
+			name:    "nullable MySQL tinyint(1) bool, no DEFAULT",
+			sdCols:  []config.SoftDeleteConfig{{Name: "soft_col", Type: config.SoftDeleteBool}},
+			columns: []config.SchemaColumn{{Name: "soft_col", Type: "tinyint(1)", Nullable: true}},
+			wantErr: boolErr,
+		},
+		{
+			name:    "nullable integer, no DEFAULT",
+			sdCols:  []config.SoftDeleteConfig{{Name: "soft_col", Type: config.SoftDeleteInteger}},
+			columns: []config.SchemaColumn{{Name: "soft_col", Type: "smallint", Nullable: true}},
+			wantErr: intErr,
+		},
+		{
+			name:    "nullable bool with DEFAULT",
+			sdCols:  []config.SoftDeleteConfig{{Name: "soft_col", Type: config.SoftDeleteBool}},
+			columns: []config.SchemaColumn{{Name: "soft_col", Type: "boolean", Nullable: true, HasDefault: true}},
+		},
+		{
+			name:    "nullable integer with DEFAULT",
+			sdCols:  []config.SoftDeleteConfig{{Name: "soft_col", Type: config.SoftDeleteInteger}},
+			columns: []config.SchemaColumn{{Name: "soft_col", Type: "integer", Nullable: true, HasDefault: true}},
+		},
+		{
+			name:    "NOT NULL bool, no DEFAULT",
+			sdCols:  []config.SoftDeleteConfig{{Name: "soft_col", Type: config.SoftDeleteBool}},
+			columns: []config.SchemaColumn{{Name: "soft_col", Type: "boolean"}},
+		},
+		{
+			name:    "nullable timestamp, no DEFAULT",
+			sdCols:  []config.SoftDeleteConfig{{Name: "soft_col", Type: config.SoftDeleteTimestamp}},
+			columns: []config.SchemaColumn{{Name: "soft_col", Type: "timestamptz", Nullable: true}},
+		},
+		{
+			name: "nullable bool behind an earlier match",
+			sdCols: []config.SoftDeleteConfig{
+				{Name: "deleted_at", Type: config.SoftDeleteTimestamp},
+				{Name: "soft_col", Type: config.SoftDeleteBool},
+			},
+			columns: []config.SchemaColumn{
+				{Name: "deleted_at", Type: "timestamptz", Nullable: true},
+				{Name: "soft_col", Type: "boolean", Nullable: true},
+			},
+		},
+		{
+			name:    "nullable incompatible type reports the type only",
+			sdCols:  []config.SoftDeleteConfig{{Name: "soft_col", Type: config.SoftDeleteBool}},
+			columns: []config.SchemaColumn{{Name: "soft_col", Type: "text", Nullable: true}},
 			wantErr: `soft_delete_columns: column "soft_col" in table public.items has incompatible type "text"`,
 		},
 	}
