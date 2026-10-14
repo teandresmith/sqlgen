@@ -22,7 +22,156 @@
 ## Open
 
 <!-- fixes:open:begin -->
-_No open fixes._
+### FIX-345
+
+- **Status:** Open
+- **Severity:** tracked
+- **Origin:** phase 30, parser/postgres
+- **Surfaced by:** /fix-loop FIX-305 verify reviewer (2026-10-13)
+
+**Issue.** The PostgreSQL file parser fails on default (owner-preserving)
+`pg_dump` output. `ALTER SEQUENCE public.s_id_seq OWNER TO postgres` and
+`ALTER INDEX p_pkey ATTACH PARTITION c1_pkey` both stop the parse with
+"table public.s_id_seq not found" / "table … not found" (reviewer-measured
+on postgres:17, before and after FIX-305). PostgreSQL accepts both, and
+pg_dump writes them by default.
+
+**Root cause.** pg_query reads `ALTER SEQUENCE …` and `ALTER INDEX …` as an
+`AlterTableStmt` with `Objtype` `OBJECT_SEQUENCE` / `OBJECT_INDEX`.
+`parseAlterTable` (`parser/postgres/postgres.go:1313`) routes only
+`OBJECT_TYPE` (FIX-338) and sends every other object type to
+`lookupTable`, which fails on a sequence or index name.
+
+**Suggested fix.**
+- In `parseAlterTable`, switch on `stmt.Objtype` before `lookupTable`:
+  `OBJECT_SEQUENCE` → apply the sequence-registry subcommands FIX-305 added
+  (`sequences.go`) and ignore OWNER TO; `OBJECT_INDEX` → apply or ignore
+  ATTACH PARTITION / SET TABLESPACE / OWNER TO with no schema effect;
+  check `OBJECT_VIEW`, `OBJECT_MATVIEW` and `OBJECT_FOREIGN_TABLE` in the
+  same switch.
+- Unknown sequence or index under a subcommand with a schema effect → error
+  as PostgreSQL does; `IF EXISTS` (`MissingOk`) → skip.
+- Tests: `parser/postgres` table cases for each statement; a parity case in
+  `parser/introspect/postgres_integration_test.go` built from a real
+  `pg_dump` of a partitioned table with a serial column.
+
+**References.**
+- PRD §5.2 (PostgreSQL file DDL coverage), §6.3.
+- FIX-305 (`c695fd6f`, sequence registry, ALTER handling), FIX-338
+  (`afdb75a4`, OBJECT_TYPE routing in the same function).
+- Backlog line on pg_dump 17.6+ `\restrict` (sweep Step 2 finding 9).
+
+**Resolution notes.** _Filled in by /fix resolve._
+
+### FIX-346
+
+- **Status:** Open
+- **Severity:** tracked
+- **Origin:** phase 30, parser/postgres
+- **Surfaced by:** /fix-loop FIX-305 third verify pass (2026-10-13)
+
+**Issue.** The PostgreSQL file parser rejects `COMMENT ON COLUMN` on a
+column of a plain view, which PostgreSQL accepts and `pg_dump` writes.
+`CREATE TABLE t (a int); CREATE VIEW v AS SELECT a FROM t; COMMENT ON
+COLUMN v.a IS 'x';` → "parsing x.sql: comment on column of unknown table
+v"; PG16 → `COMMENT`. Predates FIX-305.
+
+**Root cause.** `commentOnColumn` (`parser/postgres/postgres.go:1288-1310`)
+looks the relation up with `findTableByNames` only, then `skippedTable`;
+a view is neither, so it falls through to the "unknown table" error.
+
+**Suggested fix.**
+- In `commentOnColumn`, look the relation up among the schema's views when
+  no table matches, and apply the comment to the view column (or accept it
+  as a no-op if `parser.View` columns carry no comment the generator uses,
+  matching what the introspector reads for view columns).
+- Keep the error for a relation that is neither a table, a view nor
+  skipped, and for an unknown column of a known view.
+- Tests: `parser/postgres` cases for view, materialized view (skipped) and
+  unknown view column; parity case against introspection.
+
+**References.**
+- PRD §5.2; FIX-305 (`c695fd6f`) skip handling for COMMENT ON a skipped
+  relation; FIX-345 (other pg_dump statements the parser rejects).
+
+**Resolution notes.** _Filled in by /fix resolve._
+
+### FIX-347
+
+- **Status:** Open
+- **Severity:** tracked
+- **Origin:** phase 30, parser/introspect
+- **Surfaced by:** /fix-loop FIX-309 verify reviewer (2026-10-13)
+
+**Issue.** Under `source: both`, a file migration that renames or drops a
+column a database view reads through a derived table or CTE passes `Merge`
+silently. Measured by the reviewer: MySQL `q_vd AS SELECT role FROM (SELECT
+role FROM q_users) d` (and a CTE twin) with RENAME or DROP COLUMN role →
+`Merge err=<nil>`, the view keeps `q_vd__role_enum`, and MySQL then returns
+ERROR 1356 for the view. The PostgreSQL and SQLite derived-table views →
+`Merge err=<nil>` on DROP COLUMN, which both databases refuse. PRD §6.1
+states that dropping a column a view reads is an error.
+
+**Root cause.** The FIX-309/FIX-333 checks (`readViewSources` and
+`refreshViewColumns`, `parser/introspect/views.go:54`, `:122`) trace a
+view column only to a base table named in its FROM clause
+(`parser.ViewFromTables` / `viewSources.sourceTable`,
+`parser/view.go:346`, `:402`). A column read from a subquery or CTE has no
+FROM-clause table, so it records no source and nothing is checked.
+
+**Suggested fix.**
+- Have the view SQL readers (`parser/{postgres,mysql,sqlite}/view_sql.go`)
+  record, for a derived-table or CTE source, the base table column it
+  passes through unchanged, so `ViewSourceTables` can follow it; or treat a
+  view with an untraceable source as reading every column of the tables its
+  subqueries name, and error on a rename or drop of any of them.
+- Tests: extend `TestMerge_ViewColumnRenameAndDrop` with derived-table and
+  CTE cases per dialect (RENAME and DROP COLUMN), and a MySQL CTE case.
+
+**References.**
+- PRD §6.1 (view columns under `both`).
+- FIX-309 (`accaf642`; its entry records keeping the PRD sentence and
+  reporting this gap), FIX-333 (`f4bc470c`), FIX-308 (`8edbaeac`).
+
+**Resolution notes.** _Filled in by /fix resolve._
+
+### FIX-348
+
+- **Status:** Open
+- **Severity:** tracked
+- **Origin:** phase 30, parser/postgres + parser/introspect
+- **Surfaced by:** /fix-loop FIX-312 verify reviewer (2026-10-13)
+
+**Issue.** Since FIX-312, `DROP TYPE` can be refused when PostgreSQL accepts
+it. In schema `app`, a column whose type is the row type of `public.r` is
+written `r`, then read as the enum `app.r` when one exists, so `DROP TYPE
+app.r` → "drop type: cannot drop type app.r: column app.t.rr uses it"
+(reviewer probe; PG17 accepts the drop). The introspector writes the same
+`r`, so files and database agree, and both are wrong in the same way.
+
+**Root cause.** `typeName` (`parser/postgres/postgres.go:1750`) drops an
+`input.schema.` qualifier from a type the DDL does not declare, and
+`columnType` (`parser/introspect/postgres.go:466-480`) keeps format_type's
+search_path-relative name. A bare name is then resolved in the owner's
+schema by `parser.ResolveTypeRef` (`parser/schema.go:540`), so the
+stripped `public.r` collides with a user type `r` in the column's own
+schema.
+
+**Suggested fix.**
+- Keep the default-schema qualifier, in both `typeName` and `columnType`,
+  when the owner schema is not the default schema and declares a user type
+  of the same name, so the bare form never shadows; check the user's
+  FIX-312 ruling on `format_type` parity before choosing, since this
+  narrows it.
+- Tests: `parser/postgres` DROP TYPE case for the shadowed row type, and a
+  parity case in `parser/introspect/postgres_integration_test.go`.
+
+**References.**
+- PRD §5.6 (DROP TYPE / DROP DOMAIN checks).
+- FIX-312 (`30df7e1c`), FIX-305 (`c695fd6f`), FIX-338 (`afdb75a4`,
+  `typeUses` reads types with `ResolveTypeRef`).
+
+**Resolution notes.** _Filled in by /fix resolve._
 <!-- fixes:open:end -->
 
 ## Resolved
