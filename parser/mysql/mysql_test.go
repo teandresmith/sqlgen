@@ -1858,6 +1858,109 @@ func TestAddColumnOntoExistingName(t *testing.T) {
 	}
 }
 
+// TestColumnNameClash pins that a CREATE TABLE naming a column twice, and a
+// CHANGE COLUMN onto a name another column has, are errors, as they are in
+// MySQL (measured on 8.0: ERROR 1060 "Duplicate column name"), with names
+// compared case-insensitively, non-ASCII case included. CHANGE COLUMN onto the
+// column's own name, in any case, is fine.
+func TestColumnNameClash(t *testing.T) {
+	const r = "CREATE TABLE r (id INT PRIMARY KEY, a INT, b INT);"
+	tests := []struct {
+		name    string
+		sql     string
+		want    []string
+		wantErr string
+	}{
+		{
+			name:    "CREATE TABLE with the same name twice",
+			sql:     "CREATE TABLE t (id INT PRIMARY KEY, a INT, a TEXT);",
+			wantErr: "create table t: duplicate column name a",
+		},
+		{
+			name:    "CREATE TABLE with a name in another case",
+			sql:     "CREATE TABLE t (id INT PRIMARY KEY, a INT, A TEXT);",
+			wantErr: "create table t: duplicate column name A",
+		},
+		{
+			name:    "CREATE TABLE with a name in another non-ASCII case",
+			sql:     "CREATE TABLE t (id INT PRIMARY KEY, `é` INT, `É` TEXT);",
+			wantErr: "create table t: duplicate column name É",
+		},
+		{
+			name: "CREATE TABLE with names differing in an accent",
+			sql:  "CREATE TABLE t (id INT PRIMARY KEY, e INT, `É` TEXT);",
+			want: []string{"id int", "e int", "É text"},
+		},
+		{
+			name:    "CHANGE COLUMN onto another column",
+			sql:     r + "ALTER TABLE r CHANGE COLUMN a b BIGINT;",
+			wantErr: "change column a to b in r: column already exists",
+		},
+		{
+			name:    "CHANGE COLUMN onto another column in another case",
+			sql:     r + "ALTER TABLE r CHANGE COLUMN a B BIGINT;",
+			wantErr: "change column a to B in r: column already exists",
+		},
+		{
+			name:    "CHANGE COLUMN onto another column in another non-ASCII case",
+			sql:     "CREATE TABLE t (a INT, `é` INT); ALTER TABLE t CHANGE COLUMN a `É` INT;",
+			wantErr: "change column a to É in t: column already exists",
+		},
+		{
+			name:    "CHANGE COLUMN onto a column the same statement adds",
+			sql:     r + "ALTER TABLE r ADD COLUMN c INT, CHANGE COLUMN a c BIGINT;",
+			wantErr: "change column a to c in r: column already exists",
+		},
+		{
+			name:    "two CHANGE COLUMNs onto one name",
+			sql:     r + "ALTER TABLE r CHANGE COLUMN a c BIGINT, CHANGE COLUMN b c INT;",
+			wantErr: "change column b to c in r: column already exists",
+		},
+		{
+			name: "CHANGE COLUMN onto its own name",
+			sql:  r + "ALTER TABLE r CHANGE COLUMN a a BIGINT;",
+			want: []string{"id int", "a bigint", "b int"},
+		},
+		{
+			name: "CHANGE COLUMN onto its own name in another case",
+			sql:  r + "ALTER TABLE r CHANGE COLUMN A A BIGINT;",
+			want: []string{"id int", "A bigint", "b int"},
+		},
+		{
+			name: "CHANGE COLUMN onto a column the same statement drops",
+			sql:  r + "ALTER TABLE r CHANGE COLUMN a b BIGINT, DROP COLUMN b;",
+			want: []string{"id int", "b bigint"},
+		},
+		{
+			name:    "CHANGE COLUMN of a missing column",
+			sql:     r + "ALTER TABLE r CHANGE COLUMN z b BIGINT;",
+			wantErr: "column z not found in table r",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			p := newParser(t)
+			err := p.Parse("test.sql", []byte(tt.sql))
+			if tt.wantErr != "" {
+				if err == nil || !strings.Contains(err.Error(), tt.wantErr) {
+					t.Fatalf("Parse() error = %v, want it to contain %q", err, tt.wantErr)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("Parse() error: %v", err)
+			}
+			var got []string
+			for _, c := range p.Schema().Tables[0].Columns {
+				got = append(got, c.Name+" "+c.Type)
+			}
+			if diff := cmp.Diff(tt.want, got); diff != "" {
+				t.Errorf("columns mismatch (-want +got):\n%s", diff)
+			}
+		})
+	}
+}
+
 // TestReferenceColumnInAnotherCase pins that a foreign key naming its
 // referenced column in another case follows a rename of that column, as MySQL
 // does (measured on 8.0: REFERENCES rp (B) is stored as `rp` (`b`), and

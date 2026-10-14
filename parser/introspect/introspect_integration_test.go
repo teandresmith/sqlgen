@@ -1964,6 +1964,35 @@ func TestBothModeColumnConflict(t *testing.T) {
 					}
 				})
 			}
+
+			// A same-type duplicate from CREATE TABLE or CHANGE COLUMN would
+			// pass the conflict rule too; the parser refuses it first.
+			t.Run("CREATE TABLE repeating a column errors", func(t *testing.T) {
+				migration := writeMigration(t, "CREATE TABLE extra (id integer PRIMARY KEY, a integer, A integer);")
+				want := map[string]string{
+					"postgres": "create table both_mode.extra: column a specified more than once",
+					"mysql":    "create table extra: duplicate column name A",
+					"sqlite":   "table extra: duplicate column name: A",
+				}[d.name]
+
+				err := introspect.Merge(base(d.schema), d.newParser(t), []string{migration})
+				if err == nil || !strings.Contains(err.Error(), want) {
+					t.Errorf("Merge() error = %v, want error containing %q", err, want)
+				}
+			})
+			if d.name == "mysql" {
+				// Both columns come from the file, so their types match; an
+				// introspected column's type would differ.
+				t.Run("CHANGE COLUMN onto an existing column errors", func(t *testing.T) {
+					migration := writeMigration(t, "ALTER TABLE items ADD COLUMN x integer, ADD COLUMN y integer;\nALTER TABLE items CHANGE COLUMN x y integer;")
+					want := "change column x to y in items: column already exists"
+
+					err := introspect.Merge(base(d.schema), d.newParser(t), []string{migration})
+					if err == nil || !strings.Contains(err.Error(), want) {
+						t.Errorf("Merge() error = %v, want error containing %q", err, want)
+					}
+				})
+			}
 		})
 	}
 }

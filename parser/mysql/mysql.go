@@ -450,6 +450,9 @@ func (p *Parser) parseCreateTable(stmt *sqlparser.CreateTable, sql string) error
 		}
 	}
 
+	if name, ok := repeatedColumn(stmt.TableSpec.Columns); ok {
+		return fmt.Errorf("create table %s: duplicate column name %s", tableName, name)
+	}
 	elements, columnKeys, err := p.tableElements(sql, stmt.TableSpec)
 	if err != nil {
 		return fmt.Errorf("create table %s: %w", tableName, err)
@@ -470,6 +473,21 @@ func (p *Parser) parseCreateTable(stmt *sqlparser.CreateTable, sql string) error
 	p.schema.Tables = append(p.schema.Tables, table)
 
 	return nil
+}
+
+// repeatedColumn returns the first column of defs whose name an earlier one
+// already has, in any case, and true. MySQL refuses such a CREATE TABLE
+// (ERROR 1060 "Duplicate column name").
+func repeatedColumn(defs []*sqlparser.ColumnDefinition) (string, bool) {
+	for i, def := range defs {
+		name := def.Name.String()
+		if slices.ContainsFunc(defs[:i], func(d *sqlparser.ColumnDefinition) bool {
+			return parser.SameColumnName("mysql", d.Name.String(), name)
+		}) {
+			return name, true
+		}
+	}
+	return "", false
 }
 
 // tableKey is a key of a new table: a declared key, or an index MySQL builds
@@ -1301,14 +1319,26 @@ func alterDropColumn(table *parser.Table, colName string) {
 	parser.CanonicalizeConstraints(table, "mysql")
 }
 
+// alterChangeColumn applies CHANGE COLUMN old new …: it redefines old as new.
+// A new name another column of the table already has, in any case, is an
+// error (MySQL's ERROR 1060), while the column's own name in any case is not.
+// MySQL checks the columns the whole statement leaves, so it also accepts a
+// swap this refuses.
 func (p *Parser) alterChangeColumn(table *parser.Table, o *sqlparser.ChangeColumn) error {
 	if o.NewColDefinition == nil {
 		return nil
 	}
-	oldName := o.OldColumn.Name.String()
-	if !p.replaceColumn(table, oldName, o.NewColDefinition) {
+	oldName := declaredColumn(table, o.OldColumn.Name.String())
+	if parser.ColumnByName(table, oldName) == nil {
 		return fmt.Errorf("column %s not found in table %s", oldName, table.Name)
 	}
+	newName := o.NewColDefinition.Name.String()
+	if slices.ContainsFunc(table.Columns, func(c parser.Column) bool {
+		return c.Name != oldName && parser.SameColumnName("mysql", c.Name, newName)
+	}) {
+		return fmt.Errorf("change column %s to %s in %s: column already exists", oldName, newName, table.Name)
+	}
+	p.replaceColumn(table, oldName, o.NewColDefinition)
 	return nil
 }
 

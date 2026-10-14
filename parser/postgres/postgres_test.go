@@ -1440,6 +1440,62 @@ func TestAddColumnOntoExistingName(t *testing.T) {
 	}
 }
 
+// TestCreateTableRepeatedColumn pins that a CREATE TABLE naming a column twice
+// is an error, as it is in PostgreSQL (measured on 17: `column "a" specified
+// more than once`), with names compared after folding: a and A clash, a and
+// "A" are two columns.
+func TestCreateTableRepeatedColumn(t *testing.T) {
+	tests := []struct {
+		name    string
+		sql     string
+		want    []string
+		wantErr string
+	}{
+		{
+			name:    "the same name",
+			sql:     "CREATE TABLE r (id int PRIMARY KEY, a int, a text);",
+			wantErr: "create table public.r: column a specified more than once",
+		},
+		{
+			name:    "an unquoted name in another case",
+			sql:     "CREATE TABLE r (id int PRIMARY KEY, a int, A text);",
+			wantErr: "create table public.r: column a specified more than once",
+		},
+		{
+			name:    "a quoted name that matches the folded one",
+			sql:     `CREATE TABLE r (id int PRIMARY KEY, "a" int, a text);`,
+			wantErr: "create table public.r: column a specified more than once",
+		},
+		{
+			name: "a quoted name in another case",
+			sql:  `CREATE TABLE r (id int PRIMARY KEY, a int, "A" text);`,
+			want: []string{"id integer", "a integer", "A text"},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			p := postgres.New("")
+			err := p.Parse("test.sql", []byte(tt.sql))
+			if tt.wantErr != "" {
+				if err == nil || !strings.Contains(err.Error(), tt.wantErr) {
+					t.Fatalf("Parse() error = %v, want it to contain %q", err, tt.wantErr)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("Parse() error: %v", err)
+			}
+			var got []string
+			for _, c := range p.Schema().Tables[0].Columns {
+				got = append(got, c.Name+" "+c.Type)
+			}
+			if diff := cmp.Diff(tt.want, got); diff != "" {
+				t.Errorf("columns after CREATE TABLE mismatch (-want +got):\n%s", diff)
+			}
+		})
+	}
+}
+
 func TestDropConstraintIfExists(t *testing.T) {
 	sql := `
 		CREATE TABLE users (

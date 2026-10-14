@@ -1471,6 +1471,16 @@ func TestIdentifierCase(t *testing.T) {
 			sql:  `CREATE TABLE t ("é" INTEGER, "É" INTEGER, CHECK ("é" > 0));`,
 			want: []string{"t(é, É) CHECK[é]"},
 		},
+		{
+			name:    "CREATE TABLE with the same column twice",
+			sql:     `CREATE TABLE t (id INTEGER PRIMARY KEY, a INT, a TEXT);`,
+			wantErr: "table t: duplicate column name: a",
+		},
+		{
+			name:    "CREATE TABLE with a column in another case",
+			sql:     `CREATE TABLE t (id INTEGER PRIMARY KEY, a INT, A TEXT);`,
+			wantErr: "table t: duplicate column name: A",
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

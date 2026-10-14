@@ -213,6 +213,13 @@ func (p *Parser) parseCreateTable(stmt *pg_query.CreateStmt) error {
 	for _, elt := range stmt.TableElts {
 		switch n := elt.Node.(type) {
 		case *pg_query.Node_ColumnDef:
+			// PostgreSQL refuses a column name the definition list already
+			// holds, compared exactly: unquoted names are already folded, so
+			// a and A clash while a and "A" do not.
+			name := n.ColumnDef.Colname
+			if slices.ContainsFunc(table.Columns, func(c parser.Column) bool { return parser.SameColumnName("postgres", c.Name, name) }) {
+				return fmt.Errorf("create table %s: column %s specified more than once", key, name)
+			}
 			col, colConstraints := p.parseColumnDef(n.ColumnDef, schema)
 			table.Columns = append(table.Columns, col)
 			constraints = append(constraints, colConstraints...)

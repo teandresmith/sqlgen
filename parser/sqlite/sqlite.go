@@ -315,6 +315,9 @@ func (p *Parser) parseCreateTable(stmt *rsql.CreateTableStatement, src []rune) e
 		if err != nil {
 			return fmt.Errorf("table %s: %w", tableName, err)
 		}
+		if columnIndex(&table, c.Name) >= 0 {
+			return fmt.Errorf("table %s: duplicate column name: %s", tableName, c.Name)
+		}
 		if primaryKeyDesc(col.Constraints) {
 			descKey = c.Name
 		}

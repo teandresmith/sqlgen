@@ -22,63 +22,6 @@
 ## Open
 
 <!-- fixes:open:begin -->
-### FIX-337
-
-- **Status:** Open
-- **Severity:** nit
-- **Origin:** phase 4, `parser/mysql` (`alterChangeColumn` / `replaceColumn`) + CREATE TABLE in all three parsers
-- **Surfaced by:** FIX-331 vet (2026-10-12), filed at the backlog sweep's second Step 5
-- **Vetted:** ready at `f9a460a5` (2026-10-12)
-
-**Issue.** Statements other than ADD COLUMN that leave a table with two columns of the same name are accepted, and
-the generated struct does not compile. Measured: MySQL `CREATE TABLE r1 (id int PRIMARY KEY, a int, b int); ALTER
-TABLE r1 CHANGE COLUMN a b bigint;` → `sqlgen generate` exit 0, `B *int64` and `B *int32`, "models_gen.go:22:2: B
-redeclared" (MySQL 8.0: ERROR 1060 "Duplicate column name 'b'"); PG `CREATE TABLE r1 (id int PRIMARY KEY, a int, a
-text)` → exit 0, "A redeclared" (PG17: `column "a" specified more than once`); MySQL `(… a int, A text)` → "A
-redeclared" (ERROR 1060 "Duplicate column name 'A'"); the SQLite parser accepts `(id INTEGER PRIMARY KEY, a INT, A
-TEXT)` → columns [id a A] (modernc: "duplicate column name: A (1)"). Under `both`, `validateColumnConflicts` catches
-only the different-type variants.
-
-**Root cause.** Only ADD COLUMN (FIX-331) and RENAME COLUMN check the table's existing column names; CREATE TABLE in
-each parser and MySQL CHANGE COLUMN do not.
-
-**Suggested fix.**
-- PG `parseCreateTable`: before each ColumnDef, `SameColumnName("postgres")` against columns already added → `create
-  table <schema>.<t>: column <c> specified more than once` (PG17 text; `(a int, "A" text)` stays legal).
-- MySQL `parseCreateTable`: new `repeatedColumn(defs)` pre-check (`SameColumnName("mysql")`, Unicode fold) before
-  `tableElements` → `create table <t>: duplicate column name <c>`. `alterChangeColumn`: resolve the old column
-  (`declaredColumn`; a missing one keeps "column X not found in table T"), then error when another column has the new
-  name → `change column <old> to <new> in <t>: column already exists`; the column's own name in any case stays legal
-  (MySQL accepts `CHANGE a A`). MODIFY is unaffected.
-- SQLite `parseCreateTable`: `columnIndex` (ASCII fold) after `parseColumn` → `table <t>: duplicate column name: <c>`
-  (modernc's text); the PRIMARY KEY ASC/DESC pseudo-column branch `continue`s first.
-- Tests: postgres `TestCreateTableRepeatedColumn` (4); mysql `TestColumnNameClash` (13: CREATE same / case / É-é / e-É
-  allowed; CHANGE onto other / other case / É / a column ADDed in the same statement / two CHANGEs to one name / own name /
-  own name other case / a column the statement DROPs / missing column); sqlite 2 `TestIdentifierCase` cases;
-  `TestBothModeColumnConflict` gains "CREATE TABLE repeating a column errors" on all three dialects and a MySQL
-  same-type "CHANGE COLUMN onto an existing column errors".
-- Prototype results, run at `f9a460a5` + FIX-301 + FIX-331 on 2026-10-12: parser probe (plain base and stack alike) → PG
-  `(a int, a text)` / `(a int, A text)` / `("a" int, a text)` → [a a]; MySQL `(a int, A text)` → [a A], `CHANGE COLUMN a b
-  bigint` with b → [id b:bigint b:int], `CHANGE a c, CHANGE b c` → [c c]; SQLite `(a INT, A TEXT)` → [a A]. E2E scratch
-  projects → "generate exit=0", then "models_gen.go:22:2: B redeclared" / "A redeclared". Ground truth: PG17 `ERROR:
-  column "a" specified more than once`; MySQL 8.0 ERROR 1060 for each case, `CHANGE a a` / `CHANGE a A` accepted, `CHANGE
-  a b, DROP b` → [id, b bigint]; modernc "duplicate column name: A (1)". Gates: parser `go test -race -count=1 ./...` ok
-  (testcontainers), golangci-lint 0 issues, gofumpt clean; cmd/sqlgen `go test -race -count=1 ./...` ok incl.
-  `TestE2EGoldenFiles`; prototype binary → exit 3 with each error; `CHANGE COLUMN a A bigint` → exit 0, `A *int64`.
-  Fail-first: PG check reverted → 3 cases "Parse() error = <nil>, want it to contain \"create table public.r: column a
-  specified more than once\"" and both/postgres; MySQL `repeatedColumn` reverted → 3 cases and both/mysql; SQLite check
-  reverted → `TestIdentifierCase` "want \"table t: duplicate column name: A\"" and both/sqlite; MySQL CHANGE check reverted
-  → 5 cases ("want it to contain \"change column a to b in r: column already exists\"") and both/mysql CHANGE; existing
-  suite passes. Golden churn none. Stacked on FIX-301 + FIX-331. Hand merges: FIX-300 rewrites the SQLite column loop (put
-  the check after the new `parseColumn(col, src)`); FIX-307 adjacent-line conflicts in mysql.go (`tableElements` line,
-  `readAlterColumnKeys` hunk); no semantic conflicts. Patch: `.claude/prototypes/FIX-337.patch` (7 files, +240/-2).
-
-**References.**
-- PRD §5.2, §6.1.
-- FIX-301 (`SameColumnName`), FIX-331 (ADD COLUMN twin; lands first).
-
-**Resolution notes.** _Filled in by /fix resolve._
-
 ### FIX-338
 
 - **Status:** Open
@@ -496,6 +439,63 @@ DEFAULT.
 ## Resolved
 
 <!-- fixes:resolved:begin -->
+
+### FIX-337
+
+- **Status:** Resolved
+- **Severity:** nit
+- **Origin:** phase 4, `parser/mysql` (`alterChangeColumn` / `replaceColumn`) + CREATE TABLE in all three parsers
+- **Surfaced by:** FIX-331 vet (2026-10-12), filed at the backlog sweep's second Step 5
+- **Vetted:** ready at `f9a460a5` (2026-10-12)
+
+**Issue.** Statements other than ADD COLUMN that leave a table with two columns of the same name are accepted, and
+the generated struct does not compile. Measured: MySQL `CREATE TABLE r1 (id int PRIMARY KEY, a int, b int); ALTER
+TABLE r1 CHANGE COLUMN a b bigint;` → `sqlgen generate` exit 0, `B *int64` and `B *int32`, "models_gen.go:22:2: B
+redeclared" (MySQL 8.0: ERROR 1060 "Duplicate column name 'b'"); PG `CREATE TABLE r1 (id int PRIMARY KEY, a int, a
+text)` → exit 0, "A redeclared" (PG17: `column "a" specified more than once`); MySQL `(… a int, A text)` → "A
+redeclared" (ERROR 1060 "Duplicate column name 'A'"); the SQLite parser accepts `(id INTEGER PRIMARY KEY, a INT, A
+TEXT)` → columns [id a A] (modernc: "duplicate column name: A (1)"). Under `both`, `validateColumnConflicts` catches
+only the different-type variants.
+
+**Root cause.** Only ADD COLUMN (FIX-331) and RENAME COLUMN check the table's existing column names; CREATE TABLE in
+each parser and MySQL CHANGE COLUMN do not.
+
+**Suggested fix.**
+- PG `parseCreateTable`: before each ColumnDef, `SameColumnName("postgres")` against columns already added → `create
+  table <schema>.<t>: column <c> specified more than once` (PG17 text; `(a int, "A" text)` stays legal).
+- MySQL `parseCreateTable`: new `repeatedColumn(defs)` pre-check (`SameColumnName("mysql")`, Unicode fold) before
+  `tableElements` → `create table <t>: duplicate column name <c>`. `alterChangeColumn`: resolve the old column
+  (`declaredColumn`; a missing one keeps "column X not found in table T"), then error when another column has the new
+  name → `change column <old> to <new> in <t>: column already exists`; the column's own name in any case stays legal
+  (MySQL accepts `CHANGE a A`). MODIFY is unaffected.
+- SQLite `parseCreateTable`: `columnIndex` (ASCII fold) after `parseColumn` → `table <t>: duplicate column name: <c>`
+  (modernc's text); the PRIMARY KEY ASC/DESC pseudo-column branch `continue`s first.
+- Tests: postgres `TestCreateTableRepeatedColumn` (4); mysql `TestColumnNameClash` (13: CREATE same / case / É-é / e-É
+  allowed; CHANGE onto other / other case / É / a column ADDed in the same statement / two CHANGEs to one name / own name /
+  own name other case / a column the statement DROPs / missing column); sqlite 2 `TestIdentifierCase` cases;
+  `TestBothModeColumnConflict` gains "CREATE TABLE repeating a column errors" on all three dialects and a MySQL
+  same-type "CHANGE COLUMN onto an existing column errors".
+- Prototype results, run at `f9a460a5` + FIX-301 + FIX-331 on 2026-10-12: parser probe (plain base and stack alike) → PG
+  `(a int, a text)` / `(a int, A text)` / `("a" int, a text)` → [a a]; MySQL `(a int, A text)` → [a A], `CHANGE COLUMN a b
+  bigint` with b → [id b:bigint b:int], `CHANGE a c, CHANGE b c` → [c c]; SQLite `(a INT, A TEXT)` → [a A]. E2E scratch
+  projects → "generate exit=0", then "models_gen.go:22:2: B redeclared" / "A redeclared". Ground truth: PG17 `ERROR:
+  column "a" specified more than once`; MySQL 8.0 ERROR 1060 for each case, `CHANGE a a` / `CHANGE a A` accepted, `CHANGE
+  a b, DROP b` → [id, b bigint]; modernc "duplicate column name: A (1)". Gates: parser `go test -race -count=1 ./...` ok
+  (testcontainers), golangci-lint 0 issues, gofumpt clean; cmd/sqlgen `go test -race -count=1 ./...` ok incl.
+  `TestE2EGoldenFiles`; prototype binary → exit 3 with each error; `CHANGE COLUMN a A bigint` → exit 0, `A *int64`.
+  Fail-first: PG check reverted → 3 cases "Parse() error = <nil>, want it to contain \"create table public.r: column a
+  specified more than once\"" and both/postgres; MySQL `repeatedColumn` reverted → 3 cases and both/mysql; SQLite check
+  reverted → `TestIdentifierCase` "want \"table t: duplicate column name: A\"" and both/sqlite; MySQL CHANGE check reverted
+  → 5 cases ("want it to contain \"change column a to b in r: column already exists\"") and both/mysql CHANGE; existing
+  suite passes. Golden churn none. Stacked on FIX-301 + FIX-331. Hand merges: FIX-300 rewrites the SQLite column loop (put
+  the check after the new `parseColumn(col, src)`); FIX-307 adjacent-line conflicts in mysql.go (`tableElements` line,
+  `readAlterColumnKeys` hunk); no semantic conflicts. Patch: `.claude/prototypes/FIX-337.patch` (7 files, +240/-2).
+
+**References.**
+- PRD §5.2, §6.1.
+- FIX-301 (`SameColumnName`), FIX-331 (ADD COLUMN twin; lands first).
+
+**Resolution notes.** Suggested fix as vetted. PostgreSQL `parseCreateTable` refuses a ColumnDef whose name an earlier one has under `SameColumnName("postgres")` (`create table <schema>.<t>: column <c> specified more than once`); MySQL `parseCreateTable` runs the new `repeatedColumn(defs)` pre-check before `tableElements` (`create table <t>: duplicate column name <c>`), and `alterChangeColumn` resolves the old column with `declaredColumn`, keeps "column X not found in table T" for a missing one, and refuses a new name another column has in any case (`change column <old> to <new> in <t>: column already exists`); SQLite `parseCreateTable` checks `columnIndex` after `parseColumn` (`table <t>: duplicate column name: <c>`). Tests: postgres `TestCreateTableRepeatedColumn` (4), mysql `TestColumnNameClash` (13), sqlite 2 `TestIdentifierCase` cases, `TestBothModeColumnConflict` "CREATE TABLE repeating a column errors" on all three dialects plus mysql "CHANGE COLUMN onto an existing column errors". Prototype applied with `--3way`: two source conflicts, both the hand merges the vet named, resolved by hand: mysql.go keeps HEAD's three-value `tableElements` (FIX-307) below the `repeatedColumn` check; in sqlite.go the duplicate check sits after `parseColumn` and before FIX-300's `primaryKeyDesc` line (the Suggested fix's "pseudo-column branch `continue`s first" no longer exists at HEAD; that branch became the `descKey` record). FIX-332 and FIX-333 touched other hunks of these files only. Golden churn: none (`make check-examples` regenerates nothing), matching the vet. Fail-first on the final code: each check disabled → postgres 3 `TestCreateTableRepeatedColumn` cases, mysql 3 CREATE and 5 CHANGE `TestColumnNameClash` cases, sqlite 2 `TestIdentifierCase` cases fail; restored → pass, and `TestBothModeColumnConflict` passes on all three dialects. Gates: `make check` ok; `make check-examples` ok. `/verify` reviewer agreed (PRD 3/3, added lines identical to the prototype, fail-first confirmed); applied inline: the `alterChangeColumn` comment says MySQL checks the columns the whole statement leaves and so accepts a swap this refuses (already `backlog.md`'s CHANGE-swap line), and a shorter comment on the both-mode CHANGE test; `make check` re-run ok.
 
 ### FIX-336
 
