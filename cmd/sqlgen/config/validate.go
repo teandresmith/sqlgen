@@ -1765,7 +1765,10 @@ func validateCursorKeys(cfg *RootConfig, tables []SchemaTable, views []SchemaVie
 }
 
 // validateSoftDeleteTypes checks that soft delete columns have compatible SQL
-// types (see isSoftDeleteTypeCompatible).
+// types (see isSoftDeleteTypeCompatible) and that a timestamp soft delete
+// column is nullable: the strategy marks a live row with NULL (PRD §4.6), so a
+// NOT NULL column can never be live again — Restore violates the constraint
+// and the default "is not deleted" filter (IS NULL) matches no row.
 func validateSoftDeleteTypes(cfg *RootConfig, tables []SchemaTable, errs *[]error) {
 	sdCols := cfg.Generation.SoftDeleteColumns
 	if len(sdCols) == 0 {
@@ -1773,16 +1776,25 @@ func validateSoftDeleteTypes(cfg *RootConfig, tables []SchemaTable, errs *[]erro
 	}
 
 	for _, table := range tables {
-		colTypes := columnTypeMap(table)
+		cols := make(map[string]SchemaColumn, len(table.Columns))
+		for _, col := range table.Columns {
+			cols[col.Name] = col
+		}
 		for _, sd := range sdCols {
-			sqlType, ok := colTypes[sd.Name]
+			col, ok := cols[sd.Name]
 			if !ok {
 				continue // column doesn't exist in this table, try next
 			}
-			if !isSoftDeleteTypeCompatible(sd.Type, sqlType) {
+			switch {
+			case !isSoftDeleteTypeCompatible(sd.Type, col.Type):
 				*errs = append(*errs, fmt.Errorf(
 					"soft_delete_columns: column %q in table %s has incompatible type %q (expected %s-compatible type)",
-					sd.Name, qualifiedTableName(table), sqlType, sd.Type,
+					sd.Name, qualifiedTableName(table), col.Type, sd.Type,
+				))
+			case sd.Type == SoftDeleteTimestamp && !col.Nullable:
+				*errs = append(*errs, fmt.Errorf(
+					"soft_delete_columns: column %q in table %s is NOT NULL, but a timestamp soft delete marks a live row with NULL (make it nullable, or soft delete with a bool or integer column)",
+					sd.Name, qualifiedTableName(table),
 				))
 			}
 			break // first match determines the soft delete column for this table

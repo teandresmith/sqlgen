@@ -22,65 +22,6 @@
 ## Open
 
 <!-- fixes:open:begin -->
-### FIX-341
-
-- **Status:** Open
-- **Severity:** tracked
-- **Origin:** phase 6, `cmd/sqlgen/config` (soft-delete validation) + `cmd/sqlgen/gen` (`funcSoftDeleteFilterOverride`)
-- **Surfaced by:** FIX-336 vet (2026-10-12), filed at the backlog sweep's second Step 5
-- **Vetted:** ready at `f9a460a5` (2026-10-12)
-
-**Issue.** A NOT NULL timestamp soft-delete column passes validation but generates code that does not compile, and
-its default "not deleted" filter `IS NULL` could never match anyway. Measured on a postgres copy with `zz_ts1
-TIMESTAMPTZ NOT NULL DEFAULT now()` and `type: timestamp`: `sqlgen generate` → "generated 13 files", exit 0; `go build
--gcflags=-e ./models/` → "models_gen.go:57208:29: unknown field Null in struct literal of type comparator.Time" (3
-sites). Even with the literals hand-patched to compile (postgres:17): `Create` → "sqlgen: resource not found" though
-the row is inserted; `Get(1)` not found; `GetMany(nil)` 0 rows; `Count` 0; `Restore(1)` → "not_null constraint
-violation (column zz_ts1)". The column is unusable.
-
-**Root cause.** Validation checks the soft-delete column's type, not its nullability; `funcSoftDeleteFilterOverride`'s
-fallback branch then emits `{Null: new(false)}` for a non-nullable comparator.
-
-**Suggested fix.**
-- `cmd/sqlgen/config/validate.go` `validateSoftDeleteTypes`: look up the first-matching column as a `SchemaColumn`
-  (`Nullable` comes from `cli/pipeline.go` `toSchemaTables` for every source); an incompatible type still gives only the
-  existing error; otherwise `sd.Type == SoftDeleteTimestamp && !col.Nullable` → `soft_delete_columns: column "<c>" in
-  table <t> is NOT NULL, but a timestamp soft delete marks a live row with NULL (make it nullable, or soft delete with a
-  bool or integer column)`.
-- `gen/funcmap.go`: comment only — validation keeps the built-in types out of the fallback.
-- PRD: §4.6 sentence (a `timestamp` column must be nullable; NOT NULL is a validation error naming the column; `bool` /
-  `integer` may be NOT NULL); §4.13 row "`NOT NULL` `timestamp` soft delete column | Error"; the phase-2 list and the §8
-  validate-test list mention the rule. The PRD implied it (§4.6 Restore `SET col = NULL`, §17.2 zero value NULL, §9
-  "Nullable timestamp column matching `soft_delete_columns`") but stated no rule.
-- Tests: `TestValidatePostParse_SoftDeleteTimestampNullability` (7 rows: NOT NULL timestamptz and datetime(3) error;
-  nullable timestamp, NOT NULL bool, NOT NULL integer, a NOT NULL timestamp behind an earlier match pass; an
-  incompatible NOT NULL type reports one error only); cli `TestGenerate_notNullTimestampSoftDeleteRejected` (exit 2, no
-  output dir); `TestValidatePostParse_SoftDeleteTypeMatch` rows set `Nullable: true`.
-- Auto-accepted the recommended option on 2026-10-12 (`/fix` auto-accept rule): NOT NULL timestamp soft-delete column →
-  error, not warning (a warning still emits non-compiling code; matches the sibling type-mismatch Error row), because it
-  was prototyped green, neither option churns goldens, it adds no exported identifier or config key, and it reverses no
-  ruling or PRD text (adds text for an unspecified case).
-- Prototype results, run at `f9a460a5` + FIX-324 + FIX-336 on 2026-10-12: probe copy `probe_pg341` (`zz_t1 … zz_ts1
-  TIMESTAMPTZ NOT NULL DEFAULT now()`, `type: timestamp`) → at plain base and base+324+336 "sqlgen: generated 13 files (26
-  tables, 3 views)", exit 0, then `go build -gcflags=-e ./models/` → "models/models_gen.go:57208:29: unknown field Null in
-  struct literal of type comparator.Time" (+ :57269, :57345); runtime semantics as in the Issue (vet-FIX-341-pg,
-  postgres:17-alpine). With the fix: generate exits 2 "Post-parse validation error: …", no models/; the nullable variant
-  generates, builds, emits `NullableTime{Null: new(false)}` ×6. Gates: `go test -race -count=1 ./config/... ./cli/...
-  ./gen/... ./manifest/... ./mcp/...` ok; `TestE2EGoldenFiles` PASS (all 15 examples, both introspect sources — no example
-  column trips the rule); golangci-lint 0 issues; gofumpt clean; `make refs-check` ok. Fail-first: validation reverted →
-  `…/NOT_NULL_timestamp` and `/NOT_NULL_datetime` "ValidatePostParse() error = <nil>, want \"soft_delete_columns: column
-  \\\"soft_col\\\" in table public.items is NOT NULL, but a timestamp soft delete marks a live row with NULL\"" and
-  `TestGenerate_notNullTimestampSoftDeleteRejected` "generate error = <nil>, want exit code 2 (config)"; existing suite
-  passes. Golden churn none. Stacked on FIX-324 + FIX-336. Overlap: FIX-328's §4.13 row hunk (@@ -1191) sits beside this
-  row — trivial adjacent-row rebase for whichever lands second; FIX-321 / FIX-340 touch validate.go elsewhere. Patch:
-  `.claude/prototypes/FIX-341.patch` (5 files, +137/-9).
-
-**References.**
-- PRD §4.6, §5.4.
-- FIX-324, FIX-336 (same function; land first).
-
-**Resolution notes.** _Filled in by /fix resolve._
-
 ### FIX-342
 
 - **Status:** Open
@@ -280,6 +221,65 @@ DEFAULT.
 ## Resolved
 
 <!-- fixes:resolved:begin -->
+### FIX-341
+
+- **Status:** Resolved
+- **Severity:** tracked
+- **Origin:** phase 6, `cmd/sqlgen/config` (soft-delete validation) + `cmd/sqlgen/gen` (`funcSoftDeleteFilterOverride`)
+- **Surfaced by:** FIX-336 vet (2026-10-12), filed at the backlog sweep's second Step 5
+- **Vetted:** ready at `f9a460a5` (2026-10-12)
+
+**Issue.** A NOT NULL timestamp soft-delete column passes validation but generates code that does not compile, and
+its default "not deleted" filter `IS NULL` could never match anyway. Measured on a postgres copy with `zz_ts1
+TIMESTAMPTZ NOT NULL DEFAULT now()` and `type: timestamp`: `sqlgen generate` → "generated 13 files", exit 0; `go build
+-gcflags=-e ./models/` → "models_gen.go:57208:29: unknown field Null in struct literal of type comparator.Time" (3
+sites). Even with the literals hand-patched to compile (postgres:17): `Create` → "sqlgen: resource not found" though
+the row is inserted; `Get(1)` not found; `GetMany(nil)` 0 rows; `Count` 0; `Restore(1)` → "not_null constraint
+violation (column zz_ts1)". The column is unusable.
+
+**Root cause.** Validation checks the soft-delete column's type, not its nullability; `funcSoftDeleteFilterOverride`'s
+fallback branch then emits `{Null: new(false)}` for a non-nullable comparator.
+
+**Suggested fix.**
+- `cmd/sqlgen/config/validate.go` `validateSoftDeleteTypes`: look up the first-matching column as a `SchemaColumn`
+  (`Nullable` comes from `cli/pipeline.go` `toSchemaTables` for every source); an incompatible type still gives only the
+  existing error; otherwise `sd.Type == SoftDeleteTimestamp && !col.Nullable` → `soft_delete_columns: column "<c>" in
+  table <t> is NOT NULL, but a timestamp soft delete marks a live row with NULL (make it nullable, or soft delete with a
+  bool or integer column)`.
+- `gen/funcmap.go`: comment only — validation keeps the built-in types out of the fallback.
+- PRD: §4.6 sentence (a `timestamp` column must be nullable; NOT NULL is a validation error naming the column; `bool` /
+  `integer` may be NOT NULL); §4.13 row "`NOT NULL` `timestamp` soft delete column | Error"; the phase-2 list and the §8
+  validate-test list mention the rule. The PRD implied it (§4.6 Restore `SET col = NULL`, §17.2 zero value NULL, §9
+  "Nullable timestamp column matching `soft_delete_columns`") but stated no rule.
+- Tests: `TestValidatePostParse_SoftDeleteTimestampNullability` (7 rows: NOT NULL timestamptz and datetime(3) error;
+  nullable timestamp, NOT NULL bool, NOT NULL integer, a NOT NULL timestamp behind an earlier match pass; an
+  incompatible NOT NULL type reports one error only); cli `TestGenerate_notNullTimestampSoftDeleteRejected` (exit 2, no
+  output dir); `TestValidatePostParse_SoftDeleteTypeMatch` rows set `Nullable: true`.
+- Auto-accepted the recommended option on 2026-10-12 (`/fix` auto-accept rule): NOT NULL timestamp soft-delete column →
+  error, not warning (a warning still emits non-compiling code; matches the sibling type-mismatch Error row), because it
+  was prototyped green, neither option churns goldens, it adds no exported identifier or config key, and it reverses no
+  ruling or PRD text (adds text for an unspecified case).
+- Prototype results, run at `f9a460a5` + FIX-324 + FIX-336 on 2026-10-12: probe copy `probe_pg341` (`zz_t1 … zz_ts1
+  TIMESTAMPTZ NOT NULL DEFAULT now()`, `type: timestamp`) → at plain base and base+324+336 "sqlgen: generated 13 files (26
+  tables, 3 views)", exit 0, then `go build -gcflags=-e ./models/` → "models/models_gen.go:57208:29: unknown field Null in
+  struct literal of type comparator.Time" (+ :57269, :57345); runtime semantics as in the Issue (vet-FIX-341-pg,
+  postgres:17-alpine). With the fix: generate exits 2 "Post-parse validation error: …", no models/; the nullable variant
+  generates, builds, emits `NullableTime{Null: new(false)}` ×6. Gates: `go test -race -count=1 ./config/... ./cli/...
+  ./gen/... ./manifest/... ./mcp/...` ok; `TestE2EGoldenFiles` PASS (all 15 examples, both introspect sources — no example
+  column trips the rule); golangci-lint 0 issues; gofumpt clean; `make refs-check` ok. Fail-first: validation reverted →
+  `…/NOT_NULL_timestamp` and `/NOT_NULL_datetime` "ValidatePostParse() error = <nil>, want \"soft_delete_columns: column
+  \\\"soft_col\\\" in table public.items is NOT NULL, but a timestamp soft delete marks a live row with NULL\"" and
+  `TestGenerate_notNullTimestampSoftDeleteRejected` "generate error = <nil>, want exit code 2 (config)"; existing suite
+  passes. Golden churn none. Stacked on FIX-324 + FIX-336. Overlap: FIX-328's §4.13 row hunk (@@ -1191) sits beside this
+  row — trivial adjacent-row rebase for whichever lands second; FIX-321 / FIX-340 touch validate.go elsewhere. Patch:
+  `.claude/prototypes/FIX-341.patch` (5 files, +137/-9).
+
+**References.**
+- PRD §4.6, §5.4.
+- FIX-324, FIX-336 (same function; land first).
+
+**Resolution notes.** `cmd/sqlgen/config/validate.go` `validateSoftDeleteTypes` now looks the first-matching column up as a `SchemaColumn`: an incompatible type still reports only the type error; otherwise a `timestamp` strategy on a NOT NULL column is an Error naming the column and table ("… is NOT NULL, but a timestamp soft delete marks a live row with NULL (make it nullable, or soft delete with a bool or integer column)"). `gen/funcmap.go` `funcSoftDeleteFilterOverride` fallback comment states that validation keeps the built-in types out of it. PRD §4.6 states the nullability rule (`bool` / `integer` may be NOT NULL), §4.13 gains the "`NOT NULL` `timestamp` soft delete column | Error" row, and the phase-2 list and §8 validate-test list name it. Tests: `TestValidatePostParse_SoftDeleteTimestampNullability` (7 rows), cli `TestGenerate_notNullTimestampSoftDeleteRejected` (exit 2, no output dir); `TestValidatePostParse_SoftDeleteTypeMatch` rows set `Nullable: true`. Prototype applied with `--3way`: the source hunks applied clean; `docs/PRD.md` conflicted only on the phase-2 list line, merged to keep "cursor_keys existence and nullability" from HEAD alongside the new soft-delete clause. Fail-first re-run on the final code (validation case disabled → both new tests fail as recorded). `make check` ok; `make update-golden-e2e` + `make update-golden` → no churn (matches vet); `make check-examples` ok. Verify inline doc fix: PRD §5.4 detection sentence now also says a `timestamp` column must be nullable.
+
 ### FIX-340
 
 - **Status:** Resolved

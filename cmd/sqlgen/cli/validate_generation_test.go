@@ -176,6 +176,34 @@ func TestValidate_softDeleteTypeMismatchReportedOnce(t *testing.T) {
 	}
 }
 
+// A NOT NULL timestamp soft delete column stops generate at validation, before
+// funcSoftDeleteFilterOverride's fallback emits a Null field into the
+// non-nullable comparator.Time, which does not compile.
+func TestGenerate_notNullTimestampSoftDeleteRejected(t *testing.T) {
+	dir := t.TempDir()
+	cfgPath := filepath.Join(dir, "sqlgen.yml")
+	sqlDir := filepath.Join(dir, "migrations")
+	if err := os.MkdirAll(sqlDir, 0o750); err != nil {
+		t.Fatalf("creating migrations dir: %v", err)
+	}
+	outputDir := filepath.Join(dir, "output")
+	writeValidateConfig(t, cfgPath, sqlDir, outputDir,
+		"generation:\n  soft_delete_columns:\n    - name: zz_ts\n      type: timestamp\n")
+	writeSQLFile(t, sqlDir, "CREATE TABLE zz_c (id serial PRIMARY KEY, zz_ts timestamptz NOT NULL DEFAULT now());")
+
+	_, stderr, err := executeCommand("generate", "--config", cfgPath)
+	if ee, ok := errors.AsType[*exitError](err); !ok || ee.code != ExitConfig {
+		t.Fatalf("generate error = %v, want exit code %d (config)", err, ExitConfig)
+	}
+	const want = `Post-parse validation error: soft_delete_columns: column "zz_ts" in table public.zz_c is NOT NULL`
+	if !strings.Contains(stderr, want) {
+		t.Errorf("stderr = %q, want %q", stderr, want)
+	}
+	if _, err := os.Stat(outputDir); !os.IsNotExist(err) {
+		t.Error("generate wrote the output directory")
+	}
+}
+
 // Post-parse validation is the only soft delete type check, so every command
 // that builds generation contexts must run it first and stop there.
 func TestSoftDeleteTypeMismatchStopsEveryContextBuilder(t *testing.T) {

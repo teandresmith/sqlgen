@@ -784,7 +784,7 @@ func TestValidatePostParse_SoftDeleteTypeMatch(t *testing.T) {
 					Schema: "public",
 					Columns: []config.SchemaColumn{
 						{Name: "id", Type: "bigint"},
-						{Name: "soft_col", Type: tt.colType},
+						{Name: "soft_col", Type: tt.colType, Nullable: true},
 					},
 				},
 			}
@@ -792,6 +792,90 @@ func TestValidatePostParse_SoftDeleteTypeMatch(t *testing.T) {
 			_, err := config.ValidatePostParse(cfg, tables, nil)
 			if err != nil {
 				t.Errorf("ValidatePostParse() unexpected error: %v", err)
+			}
+		})
+	}
+}
+
+// A timestamp soft delete marks a live row with NULL, so its column must be
+// nullable (PRD §4.6). Bool and integer mark a live row with FALSE / 0 and
+// accept a NOT NULL column. Only the table's first matching column counts.
+func TestValidatePostParse_SoftDeleteTimestampNullability(t *testing.T) {
+	const notNullErr = `soft_delete_columns: column "soft_col" in table public.items is NOT NULL, but a timestamp soft delete marks a live row with NULL`
+	tests := []struct {
+		name    string
+		sdCols  []config.SoftDeleteConfig
+		columns []config.SchemaColumn
+		wantErr string
+	}{
+		{
+			name:    "NOT NULL timestamp",
+			sdCols:  []config.SoftDeleteConfig{{Name: "soft_col", Type: config.SoftDeleteTimestamp}},
+			columns: []config.SchemaColumn{{Name: "soft_col", Type: "timestamptz"}},
+			wantErr: notNullErr,
+		},
+		{
+			name:    "NOT NULL datetime",
+			sdCols:  []config.SoftDeleteConfig{{Name: "soft_col", Type: config.SoftDeleteTimestamp}},
+			columns: []config.SchemaColumn{{Name: "soft_col", Type: "datetime(3)"}},
+			wantErr: notNullErr,
+		},
+		{
+			name:    "nullable timestamp",
+			sdCols:  []config.SoftDeleteConfig{{Name: "soft_col", Type: config.SoftDeleteTimestamp}},
+			columns: []config.SchemaColumn{{Name: "soft_col", Type: "timestamptz", Nullable: true}},
+		},
+		{
+			name:    "NOT NULL bool",
+			sdCols:  []config.SoftDeleteConfig{{Name: "soft_col", Type: config.SoftDeleteBool}},
+			columns: []config.SchemaColumn{{Name: "soft_col", Type: "boolean"}},
+		},
+		{
+			name:    "NOT NULL integer",
+			sdCols:  []config.SoftDeleteConfig{{Name: "soft_col", Type: config.SoftDeleteInteger}},
+			columns: []config.SchemaColumn{{Name: "soft_col", Type: "smallint"}},
+		},
+		{
+			name: "NOT NULL timestamp behind an earlier match",
+			sdCols: []config.SoftDeleteConfig{
+				{Name: "is_deleted", Type: config.SoftDeleteBool},
+				{Name: "soft_col", Type: config.SoftDeleteTimestamp},
+			},
+			columns: []config.SchemaColumn{
+				{Name: "is_deleted", Type: "boolean"},
+				{Name: "soft_col", Type: "timestamptz"},
+			},
+		},
+		{
+			name:    "NOT NULL incompatible type reports the type only",
+			sdCols:  []config.SoftDeleteConfig{{Name: "soft_col", Type: config.SoftDeleteTimestamp}},
+			columns: []config.SchemaColumn{{Name: "soft_col", Type: "text"}},
+			wantErr: `soft_delete_columns: column "soft_col" in table public.items has incompatible type "text"`,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg := validConfig()
+			cfg.Generation.SoftDeleteColumns = tt.sdCols
+			tables := []config.SchemaTable{{
+				Name:    "items",
+				Schema:  "public",
+				Columns: append([]config.SchemaColumn{{Name: "id", Type: "bigint", PrimaryKey: true}}, tt.columns...),
+			}}
+
+			_, err := config.ValidatePostParse(cfg, tables, nil)
+			if tt.wantErr == "" {
+				if err != nil {
+					t.Errorf("ValidatePostParse() unexpected error: %v", err)
+				}
+				return
+			}
+			if err == nil || !strings.Contains(err.Error(), tt.wantErr) {
+				t.Fatalf("ValidatePostParse() error = %v, want %q", err, tt.wantErr)
+			}
+			if got := strings.Count(err.Error(), "soft_delete_columns:"); got != 1 {
+				t.Errorf("ValidatePostParse() error = %v, want one soft_delete_columns error, got %d", err, got)
 			}
 		})
 	}

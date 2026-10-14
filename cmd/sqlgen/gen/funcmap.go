@@ -596,7 +596,9 @@ func funcSoftDeleteFilterOverride(f FilterFieldContext) string {
 		return "&" + ctype + "{Neq: new(" + elem + "(0))}"
 	}
 
-	// Fallback (shouldn't happen for valid soft delete configs).
+	// Fallback. Validation keeps the built-in types out of it: a timestamp
+	// column must be nullable (NullableTime), and bool / integer columns
+	// resolve to the cases above.
 	return "&" + ctype + "{Null: new(false)}"
 }
 
