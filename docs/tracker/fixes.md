@@ -28,38 +28,88 @@
 - **Severity:** tracked
 - **Origin:** phase 30, parser/postgres
 - **Surfaced by:** /fix-loop FIX-305 verify reviewer (2026-10-13)
+- **Vetted:** corrected at `481842f0` (2026-10-14)
 
-**Issue.** The PostgreSQL file parser fails on default (owner-preserving)
-`pg_dump` output. `ALTER SEQUENCE public.s_id_seq OWNER TO postgres` and
-`ALTER INDEX p_pkey ATTACH PARTITION c1_pkey` both stop the parse with
-"table public.s_id_seq not found" / "table … not found" (reviewer-measured
-on postgres:17, before and after FIX-305). PostgreSQL accepts both, and
-pg_dump writes them by default.
+**Issue.** The PostgreSQL file parser fails on `pg_dump` schema output. A
+default dump of a database with a serial column stops at `ALTER SEQUENCE
+public.p_id_seq OWNER TO postgres` → "table public.p_id_seq not found"; a
+no-owner dump (`pg_dump -s -O`) of a partitioned table with an index stops
+at `ALTER INDEX public.p_k_idx ATTACH PARTITION public.c1_k_idx;` → "table
+public.p_k_idx not found". A foreign table (`ALTER FOREIGN TABLE … OWNER
+TO`) and a plain view (`ALTER VIEW public.v OWNER TO …`, and `ALTER TABLE
+ONLY public.v ALTER COLUMN k SET DEFAULT 7`, which pg_dump writes even with
+`-O`) fail the same way. Measured on postgres:17 (17.11); PostgreSQL
+accepts every one of these statements.
 
-**Root cause.** pg_query reads `ALTER SEQUENCE …` and `ALTER INDEX …` as an
-`AlterTableStmt` with `Objtype` `OBJECT_SEQUENCE` / `OBJECT_INDEX`.
-`parseAlterTable` (`parser/postgres/postgres.go:1313`) routes only
-`OBJECT_TYPE` (FIX-338) and sends every other object type to
-`lookupTable`, which fails on a sequence or index name.
+**Root cause.** pg_query reads `ALTER SEQUENCE`, `ALTER INDEX`, `ALTER
+FOREIGN TABLE` and `ALTER VIEW` subcommands as an `AlterTableStmt` with
+`Objtype` `OBJECT_SEQUENCE` / `OBJECT_INDEX` / `OBJECT_FOREIGN_TABLE` /
+`OBJECT_VIEW`. `parseAlterTable` (`parser/postgres/postgres.go:1313`)
+routes only `OBJECT_TYPE` (FIX-338) and sends the rest to `lookupTable`,
+which fails on those names. Its skipped-relation fallback tests the map
+value `p.skipped[key]`, which is `false` for a plain view (not indexable),
+so a view statement also falls through to the error; a materialized view
+already works.
 
 **Suggested fix.**
-- In `parseAlterTable`, switch on `stmt.Objtype` before `lookupTable`:
-  `OBJECT_SEQUENCE` → apply the sequence-registry subcommands FIX-305 added
-  (`sequences.go`) and ignore OWNER TO; `OBJECT_INDEX` → apply or ignore
-  ATTACH PARTITION / SET TABLESPACE / OWNER TO with no schema effect;
-  check `OBJECT_VIEW`, `OBJECT_MATVIEW` and `OBJECT_FOREIGN_TABLE` in the
-  same switch.
-- Unknown sequence or index under a subcommand with a schema effect → error
-  as PostgreSQL does; `IF EXISTS` (`MissingOk`) → skip.
-- Tests: `parser/postgres` table cases for each statement; a parity case in
-  `parser/introspect/postgres_integration_test.go` built from a real
-  `pg_dump` of a partitioned table with a serial column.
+- In `parseAlterTable`, switch on `stmt.Objtype`: `OBJECT_TYPE` still goes
+  to `alterCompositeType`; `OBJECT_SEQUENCE`, `OBJECT_INDEX` and
+  `OBJECT_FOREIGN_TABLE` return nil, since no subcommand that arrives as an
+  `AlterTableStmt` for them changes the model (OWNED BY and RESTART come as
+  `AlterSeqStmt`, RENAME as `RenameStmt`; only AT_ChangeOwner,
+  AT_SetLogged/UnLogged, SET STATISTICS, ATTACH PARTITION and the like come
+  here), the parser tracks no partition index or foreign table, and the
+  introspector excludes foreign tables.
+- Make the skipped-relation fallback test key presence (`_, skipped :=
+  p.skipped[key]`), so a plain view is absorbed like a materialized view or
+  partition; an unknown view without IF EXISTS is still an error. Drop "ALTER
+  TABLE and" from the `skippedTable` doc comment.
+- Tests: `TestAlterRelationsOtherThanTables` in
+  `parser/postgres/postgres_test.go` (13 cases on a pg_dump-shaped base: 12
+  leave the schema equal under `cmp.Diff`, 1 errors) with a
+  `parsePGSchema` helper; parity test `TestPostgresIntrospect_PgDumpOutput`
+  in `parser/introspect/postgres_integration_test.go` built from verbatim
+  postgres:17 `pg_dump -s -n pgi_dump` statements.
+- Corrected from the original: nothing from `sequences.go` is applied (no
+  registry subcommand reaches this path); "unknown name → error" is dropped,
+  because no subcommand of these object types has a model effect, partition
+  indexes and DB-only sequences are never modelled under `both`, and
+  `renameIndex`/`dropIndex`/`renameSequence`/`dropSequence` already skip
+  unknown names; widened to plain views (same root cause and fix site,
+  real pg_dump output); `OBJECT_FOREIGN_TABLE` is a no-op; no PRD change
+  (§5.2 already says statements apply as PostgreSQL applies them).
+- Landing note: FIX-346's patch also changes the skipped-relation presence
+  test and the `skippedTable` doc comment; applied after this one,
+  `git apply --3way` leaves one conflict in `parser/postgres/postgres.go`
+  (measured at `481842f0`).
+- Prototype results, run at `481842f0` on 2026-10-14: postgres:17.11
+  fixture (enum, composite, domain, owned and free sequences, serial,
+  identity, bigserial partitioned table with 2 partitions and an index, a
+  view, a matview with an index) dumped with `pg_dump -s`, `\restrict`
+  lines removed, fed to `postgres.New("public").Parse` → default dump
+  "parsing dump.sql: table public.p_id_seq not found"; `-s -O` dump "table
+  public.p_k_idx not found"; a second DB with a file_fdw foreign table, an
+  unlogged sequence and `ALTER INDEX … ALTER COLUMN 1 SET STATISTICS 500`
+  → "table public.ft not found"; with only the sequence/index/foreign case
+  fixed, the default dump fails next at "table public.v not found"; with
+  the full prototype all three dumps parse. Gates: `cd parser && go test
+  -race -count=1 ./...` (testcontainers) → ok; `golangci-lint run
+  ./postgres/... ./introspect/...` → 0 issues; gofumpt clean. Fail-first:
+  sequence/index/foreign case reverted → 9 subtests fail, e.g.
+  serial_sequence_owner "table public.p_id_seq not found", and the parity
+  test fails "parsing stmt_07.sql: table pgi_dump.events_id_seq not
+  found"; view fallback reverted to `if p.skipped[...]` → view_owner and
+  view_column_default fail "table public.v not found", parity fails at
+  "ALTER VIEW pgi_dump.recent OWNER TO test"; existing suite without the
+  fix passes. Golden churn: none. Patch: `.claude/prototypes/FIX-345.patch`
+  (3 files, +170/-4).
 
 **References.**
 - PRD §5.2 (PostgreSQL file DDL coverage), §6.3.
 - FIX-305 (`c695fd6f`, sequence registry, ALTER handling), FIX-338
-  (`afdb75a4`, OBJECT_TYPE routing in the same function).
-- Backlog line on pg_dump 17.6+ `\restrict` (sweep Step 2 finding 9).
+  (`afdb75a4`, OBJECT_TYPE routing in the same function), FIX-346 (same
+  presence-test change, COMMENT ON COLUMN).
+- Backlog line on pg_dump 17.6+ `\restrict` (still live on 17.11).
 
 **Resolution notes.** _Filled in by /fix resolve._
 
@@ -69,26 +119,85 @@ pg_dump writes them by default.
 - **Severity:** tracked
 - **Origin:** phase 30, parser/postgres
 - **Surfaced by:** /fix-loop FIX-305 third verify pass (2026-10-13)
+- **Vetted:** corrected at `481842f0` (2026-10-14)
 
 **Issue.** The PostgreSQL file parser rejects `COMMENT ON COLUMN` on a
-column of a plain view, which PostgreSQL accepts and `pg_dump` writes.
-`CREATE TABLE t (a int); CREATE VIEW v AS SELECT a FROM t; COMMENT ON
-COLUMN v.a IS 'x';` → "parsing x.sql: comment on column of unknown table
-v"; PG16 → `COMMENT`. Predates FIX-305.
+column of a plain view, or on an attribute of a composite type, both of
+which PostgreSQL accepts and `pg_dump` writes. `CREATE TABLE t (a int);
+CREATE VIEW v AS SELECT a FROM t; COMMENT ON COLUMN v.a IS 'x';` →
+"parsing x.sql: comment on column of unknown table v"; PG16 → `COMMENT`.
+`pg_dump --schema-only` writes `COMMENT ON COLUMN public.v.a IS 'x';` and,
+for a composite type, `COMMENT ON COLUMN public.ct.f …`. Predates FIX-305.
 
-**Root cause.** `commentOnColumn` (`parser/postgres/postgres.go:1288-1310`)
-looks the relation up with `findTableByNames` only, then `skippedTable`;
-a view is neither, so it falls through to the "unknown table" error.
+**Root cause.** `commentOnColumn` (`parser/postgres/postgres.go:1290-1311`)
+looks the relation up with `findTableByNames`, then `skippedTable`. A plain
+view is in `p.skipped`, but with the value `false` (not indexable), and
+`skippedTable` returns that flag rather than whether the name is present,
+so the view reads as unknown. A materialized view, partition or CTAS table
+maps to `true`, which is why only a plain view fails; `Seed` likewise maps a
+plain view seeded under `both` to `false`. A composite type is never looked
+up at all. The file parser models no view columns (`skipRelation` records
+only the name for CREATE VIEW), and the introspector reads no view column
+comment (`introspectViewColumns` never reads `pg_description`; the
+generator's `buildViewColumns` sets no Description), so there is nothing to
+record the comment on.
 
 **Suggested fix.**
-- In `commentOnColumn`, look the relation up among the schema's views when
-  no table matches, and apply the comment to the view column (or accept it
-  as a no-op if `parser.View` columns carry no comment the generator uses,
-  matching what the introspector reads for view columns).
-- Keep the error for a relation that is neither a table, a view nor
-  skipped, and for an unknown column of a known view.
-- Tests: `parser/postgres` cases for view, materialized view (skipped) and
-  unknown view column; parity case against introspection.
+- In `commentOnColumn`, when no table matches, skip any name present in
+  `p.skipped` (presence, not the indexable flag), covering plain and
+  materialized views, partitions and CTAS tables under `files` and `both`.
+- Then look up a composite type of that name: skip a comment on an existing
+  attribute; error "comment on unknown column ct.nope" on a missing one, as
+  PG16 does (`column "nope" of relation "ct" does not exist`).
+- A relation nothing created still errors "comment on column of unknown
+  table". Reword the `skippedTable` doc comment to say it covers COMMENT ON
+  TABLE only (which still rejects a view, as PostgreSQL does).
+- Tests: `TestCommentOnColumnOfView` (11 cases checked against PG16: view,
+  qualified view, view in another schema, renamed view, materialized view,
+  composite attribute, unknown composite attribute, dropped view, old name
+  of a renamed view, unknown relation, COMMENT ON TABLE of a view) and
+  `TestCommentOnColumnOfSeededView` (plain and materialized view under
+  `both`) in `parser/postgres/postgres_test.go`; parity test
+  `TestPostgresIntrospect_CommentOnViewColumn` in
+  `parser/introspect/postgres_integration_test.go`.
+- PRD §5.2 ("A `CREATE INDEX` needs its table" paragraph): one sentence that
+  COMMENT ON COLUMN of a plain view or composite type attribute is skipped,
+  and one on a missing attribute is an error.
+- Corrected from the original: the comment is always skipped rather than
+  applied to a view column, because the file parser models no view columns
+  and the introspector reads no view column comment (measured parity); the
+  "error on an unknown column of a known view" bullet is dropped (see the
+  auto-accept); widened to composite type attributes, which share the root
+  cause and fix site (the `table == nil` branch).
+- Auto-accepted the recommended option on 2026-10-14 (`/fix` auto-accept
+  rule): error on an unknown column of a known view? → no, skip every
+  COMMENT ON COLUMN of a view whatever the column, because checking only
+  views seeded under `both` would split `files` from `both` and contradict
+  the materialized-view behavior at HEAD (`mv.nope` → nil); prototyped with
+  gates green, no golden churn either way, no public surface, no ruling or
+  stated PRD behavior reversed (adds PRD text for an unspecified case).
+- Landing note: FIX-345's patch makes the same presence-test change in
+  `parseAlterTable` and edits the `skippedTable` doc comment; applied after
+  it, this patch's `git apply --3way` leaves one conflict in
+  `parser/postgres/postgres.go` (measured at `481842f0`).
+- Prototype results, run at `481842f0` on 2026-10-14: probe at HEAD →
+  `COMMENT ON COLUMN v.a` "parsing x.sql: comment on column of unknown table
+  v"; `public.v.a`, renamed `v2.a`, seeded `sv.a` and composite `ct.f` fail
+  the same way; `mv.a`, `mv.nope` and `COMMENT ON VIEW v` → nil. Introspector
+  on postgres:16-alpine: view column commented 'view col' → `comment=""`;
+  materialized view → `comment=""`; composite `attrs=[{Name:f
+  Type:integer}]` (no Comment field). Gates: `cd parser && go test -race
+  -count=1 ./...` (with Docker) → 5 packages ok; `golangci-lint run
+  ./postgres/... ./introspect/...` → 0 issues; gofumpt clean; `go test -run
+  TestE2EGoldenFiles` → ok. Fail-first: presence check reverted to `if
+  p.skipped[key]` → `TestCommentOnColumnOfView/view` fails "comment on
+  column of unknown table v" (qualified, other-schema and renamed cases and
+  the seeded test too); composite branch removed →
+  `composite_type_attribute` fails "comment on column of unknown table ct";
+  whole fix reverted → `TestPostgresIntrospect_CommentOnViewColumn` fails
+  "comment on column of unknown table pgi_vcomment.v"; existing suite
+  without the fix passes. Golden churn: none. Patch:
+  `.claude/prototypes/FIX-346.patch` (4 files, +116/-5).
 
 **References.**
 - PRD §5.2; FIX-305 (`c695fd6f`) skip handling for COMMENT ON a skipped
@@ -102,31 +211,96 @@ a view is neither, so it falls through to the "unknown table" error.
 - **Severity:** tracked
 - **Origin:** phase 30, parser/introspect
 - **Surfaced by:** /fix-loop FIX-309 verify reviewer (2026-10-13)
+- **Vetted:** corrected at `481842f0` (2026-10-14)
 
 **Issue.** Under `source: both`, a file migration that renames or drops a
-column a database view reads through a derived table or CTE passes `Merge`
-silently. Measured by the reviewer: MySQL `q_vd AS SELECT role FROM (SELECT
-role FROM q_users) d` (and a CTE twin) with RENAME or DROP COLUMN role →
-`Merge err=<nil>`, the view keeps `q_vd__role_enum`, and MySQL then returns
-ERROR 1356 for the view. The PostgreSQL and SQLite derived-table views →
-`Merge err=<nil>` on DROP COLUMN, which both databases refuse. PRD §6.1
+column, or renames or drops a table, that a database view reads through a
+derived table or CTE passes `Merge` silently. Measured: MySQL `q_vd AS
+SELECT role FROM (SELECT role FROM q_users) d` and the CTE twin `q_vc`,
+RENAME COLUMN role TO kind or DROP COLUMN role → `Merge err=<nil>`, the
+views keep `q_vd__role_enum` / `q_vc__role_enum`, and MySQL then gives
+"Error 1356 (HY000): View 'sqlgen_test.q_vd' references invalid table(s) or
+column(s)…". PostgreSQL DROP COLUMN role → `Merge err=<nil>` while PG says
+"cannot drop column role of table users because other objects depend on it
+(SQLSTATE 2BP01)" (a PG RENAME is followed, correctly: PG rewrites the view
+to `SELECT users.kind AS role`). SQLite DROP → `Merge err=<nil>` while
+SQLite says "error in view vd after drop column: no such column: role (1)";
+SQLite also refuses a RENAME when the subquery or CTE selects the column
+with no AS and no column list ("error in view v after rename: no such
+column: role (1)", also for `SELECT d.role`, `SELECT role AS x FROM (SELECT
+role …) d` and `(SELECT * FROM users) d`), and follows it when the subquery
+aliases the column or a CTE has a column list. Table RENAME/DROP under a
+subquery is silent too (MySQL 1356; PG "cannot drop table users because
+other objects depend on it"; SQLite "no such table: main.users"). PRD §6.1
 states that dropping a column a view reads is an error.
 
 **Root cause.** The FIX-309/FIX-333 checks (`readViewSources` and
-`refreshViewColumns`, `parser/introspect/views.go:54`, `:122`) trace a
-view column only to a base table named in its FROM clause
-(`parser.ViewFromTables` / `viewSources.sourceTable`,
-`parser/view.go:346`, `:402`). A column read from a subquery or CTE has no
-FROM-clause table, so it records no source and nothing is checked.
+`refreshViewColumns`, `parser/introspect/views.go:54`, `:122`) trace a view
+column only to a base table named in its FROM clause
+(`parser.ViewFromTables` / `viewSources.sourceTable`, `parser/view.go:346`,
+`:402`). The view SQL readers record nothing about a derived table or CTE,
+so a column or table read through one has no source and is never checked,
+and the rename helpers never rewrite inside one.
 
 **Suggested fix.**
-- Have the view SQL readers (`parser/{postgres,mysql,sqlite}/view_sql.go`)
-  record, for a derived-table or CTE source, the base table column it
-  passes through unchanged, so `ViewSourceTables` can follow it; or treat a
-  view with an untraceable source as reading every column of the tables its
-  subqueries name, and error on a rename or drop of any of them.
-- Tests: extend `TestMerge_ViewColumnRenameAndDrop` with derived-table and
-  CTE cases per dialect (RENAME and DROP COLUMN), and a MySQL CTE case.
+- `parser.ViewSQL` gains `Subqueries map[string]ViewSQL`; each dialect's
+  `view_sql.go` records derived tables (by alias) and CTEs (by name),
+  recursively, applying derived and CTE column lists; a `*` is stored as
+  `SourceColumn "*"` (matters for SQLite only; PG and MySQL expand `*` in
+  their stored definitions). Compound queries are left out.
+- `parser/view.go`: new `ViewColumnSources` / `ViewColumnSource{Table,
+  Column}` follow a column through `Subqueries`, including a CTE that reads
+  an earlier CTE; `RenameViewColumnReferences` and
+  `RenameViewTableReferences` recurse into subqueries. `BuildView` typing is
+  unchanged (a column read through a subquery still takes the catalog type).
+- `parser/introspect/views.go`: `readViewSources` and `refreshViewColumns`
+  use `ViewColumnSources` and check subqueries' FROM tables too
+  (`viewFromTables`); the column error names the base column ("view vd:
+  column r reads column role of table users, …").
+- PRD §6.1 (`docs/PRD.md:1651`): a column read through a derived table or
+  CTE is followed to its table and treated the same way; a SQLite rename of a
+  column the subquery selects with no AS or column list is an error.
+- Tests: `TestMerge_ViewColumnRenameAndDrop` grows from 19 to 39 cases (PG 6,
+  SQLite 8, MySQL 6 new: rename, drop, rename table, drop table, unread-column
+  drop, CTE chain, SQLite `*`).
+- Corrected from the original: option 1 (trace through the subquery) is
+  chosen; widened, by the scope cap (same root cause, same fix site), to the
+  SQLite unaliased-rename refusal, table rename/drop through subqueries,
+  SQLite `SELECT *` subqueries, CTE-to-CTE chains and derived/CTE column
+  lists. The nested table-rename recursion is required: without it PG and
+  SQLite table renames under a subquery view fail `Merge` with a false
+  error.
+- Auto-accepted the recommended option on 2026-10-14 (`/fix` auto-accept
+  rule): trace through the subquery, or treat untraceable sources
+  conservatively? → trace through the subquery, because it was prototyped
+  with gates green, neither option churns goldens, the new exported
+  identifiers (`ViewSQL.Subqueries`, `ViewColumnSources`,
+  `ViewColumnSource`) are in the parser module, not runtime or generated
+  code (as with FIX-309/333), and it reverses no ruling or PRD text, whereas
+  the conservative option over-rejects what the databases accept and PRD
+  §6.1 allows (PG RENAME of a read column, SQLite aliased renames, DROP or
+  RENAME of an unread column such as `email`, all measured).
+- Prototype results, run at `481842f0` on 2026-10-14: probe
+  `parser/introspect/zz_probe_fix347_test.go` (postgres:16-alpine,
+  mysql:8.0, modernc SQLite) reproduced every Issue line above; DROP or
+  RENAME of `email`, which no view reads, succeeds on all three databases.
+  Gates: parser gofumpt clean; `golangci-lint run ./...` → 0 issues; `go
+  test -race -count=1 ./...` (containers) → ok; `cd cmd/sqlgen && go test
+  -race -count=1 -run TestE2E .` → ok (169s); `make refs-check` → ok.
+  Fail-first: subquery following disabled → 11 cases fail, e.g.
+  postgres/drop_under_a_derived_table "Merge() error = <nil>, want one
+  containing \"merge both mode: view view_def.vd: column r reads column role
+  of table view_def.users, …\""; column-rename recursion removed →
+  postgres/rename_under_a_derived_table_and_a_CTE fails with a false error;
+  table-rename recursion removed → postgres/rename_table_under_… "view
+  view_def.vc reads table view_def.users, …"; `viewFromTables` recursion
+  removed → drop-table cases report the column message instead of the table
+  one; enclosing-scope CTE lookup removed → postgres/drop_under_a_CTE
+  `<nil>`; star pass-through removed → sqlite/rename_under_a_derived_table_
+  selecting_* `<nil>`; each dialect's parser without `Subqueries` → MySQL 5,
+  PG 3, SQLite 6 cases fail; existing suite (19 subtests) without the fix
+  passes. Golden churn: none. Patch: `.claude/prototypes/FIX-347.patch`
+  (7 files, +629/-89).
 
 **References.**
 - PRD §6.1 (view columns under `both`).
@@ -141,35 +315,217 @@ FROM-clause table, so it records no source and nothing is checked.
 - **Severity:** tracked
 - **Origin:** phase 30, parser/postgres + parser/introspect
 - **Surfaced by:** /fix-loop FIX-312 verify reviewer (2026-10-13)
+- **Vetted:** corrected at `481842f0` (2026-10-14; ruled the same day, the prototype is the chosen option)
 
-**Issue.** Since FIX-312, `DROP TYPE` can be refused when PostgreSQL accepts
-it. In schema `app`, a column whose type is the row type of `public.r` is
-written `r`, then read as the enum `app.r` when one exists, so `DROP TYPE
-app.r` → "drop type: cannot drop type app.r: column app.t.rr uses it"
-(reviewer probe; PG17 accepts the drop). The introspector writes the same
-`r`, so files and database agree, and both are wrong in the same way.
+**Issue.** A column whose type is a default-schema type (`public.r`, a
+`citext` extension type) is written bare in a schema that declares an enum,
+domain or composite type of the same name, so every consumer reads it as the
+owner schema's type. Measured on postgres:17.11 (`CREATE TABLE r(x int);
+CREATE TYPE app.r AS ENUM('a'); CREATE TABLE app.t(id int, rr public.r)`):
+- `DROP TYPE app.r` → parser "parsing t.sql: drop type: cannot drop type
+  app.r: column app.t.rr uses it"; PG17 accepts the drop. The same false
+  refusal hits a bare `rr r` column, a `citext` column beside an
+  `app.citext` domain (DROP DOMAIN), a domain over `public.r`, a composite
+  attribute of type `public.r`, a type renamed to `r`, and a table moved
+  into `app`.
+- Go types: `sqlgen generate` (files and database) gives `Rr *AppR` and
+  `Ci *int32`, and at runtime `client.Ts().Get(ctx, 1)` → "scan t: pgx scan:
+  can't scan into dest[1] (col: ci): strconv.ParseInt: parsing \"Hello\":
+  invalid syntax".
+- `ALTER TYPE app.r RENAME TO y` rewrites a `public.r` column in `app` to
+  `y` (`renameTypeReferences`).
+The introspector writes the same bare names (`rr` = "r", `ra` = "r[]", `ci`
+= "citext"), so files and database agree and both are wrong. FIX-312
+(`30df7e1c`) introduced the collision for a DDL-qualified `public.r`; it
+already existed for an unqualified DDL name and for every column read from
+the database (measured at `a07d4009`).
 
-**Root cause.** `typeName` (`parser/postgres/postgres.go:1750`) drops an
-`input.schema.` qualifier from a type the DDL does not declare, and
-`columnType` (`parser/introspect/postgres.go:466-480`) keeps format_type's
-search_path-relative name. A bare name is then resolved in the owner's
-schema by `parser.ResolveTypeRef` (`parser/schema.go:540`), so the
-stripped `public.r` collides with a user type `r` in the column's own
-schema.
+**Root cause.** `typeName` (`parser/postgres/postgres.go:1750`) writes a
+default-schema type the DDL does not declare without its `input.schema.`
+qualifier, and `columnType` (`parser/introspect/postgres.go:470-482`) keeps
+format_type's search_path-relative name. A bare name is then resolved in the
+owner's schema (`parser.ResolveTypeRef`, `parser/schema.go:540`, and
+`gotype` `ForSchema`), so it collides with a user type of the same name in
+the column's own schema. The name is computed when the column is read, so a
+shadowing type declared later (CREATE TYPE after the column, ALTER TYPE …
+RENAME TO, ALTER TABLE … SET SCHEMA) collides too.
 
 **Suggested fix.**
-- Keep the default-schema qualifier, in both `typeName` and `columnType`,
-  when the owner schema is not the default schema and declares a user type
-  of the same name, so the bare form never shadows; check the user's
-  FIX-312 ruling on `format_type` parity before choosing, since this
-  narrows it.
-- Tests: `parser/postgres` DROP TYPE case for the shadowed row type, and a
-  parity case in `parser/introspect/postgres_integration_test.go`.
+- The user ruled on 2026-10-14: Q1 → (A) qualify a default-schema type
+  with `input.schema` in both sources whenever the owner schema declares a
+  same-named enum, domain or composite type, whatever the statement order,
+  and add the exception sentence to PRD §5.2 (this narrows the FIX-312
+  ruling: `overrides.types.public.citext`, not `citext`, reaches such a
+  column); Q2 → (a) the built-in collision (an `app.text` enum beside a
+  `text` column) stays a stated gap in PRD §5.2. Options considered: (B)
+  a loud error on a shadowed name, (C) document only, (D) revert FIX-312's
+  strip; for Q2, (b) a built-in type-name list.
+- Prototype (option A, `.claude/prototypes/FIX-348.patch`): `typeName`
+  passes a default-schema non-user type through a new `shadowTypeName`
+  (adds `<input.schema>.` when the owner schema declares a same-named enum,
+  domain or composite; qualified and unqualified DDL, arrays, typmods); new
+  `shadowTypeReferences` re-qualifies or un-qualifies references after
+  CREATE TYPE (enum, composite), CREATE DOMAIN and per object in
+  `dropTypes`; `retargetTypeName` re-spells non-user types on SET SCHEMA;
+  `renameType` shadows the new name before and un-shadows the old name
+  after; new `retypeAll` holds the loops from `renameTypeReferences`. The
+  introspector's `userTypeJoin` adds the schema of a non-user type (or its
+  element type) when not pg_catalog and the owner schema has a same-named
+  type (`tt.own_ns` at 4 sites plus a pg_class join for composite
+  attributes), and `columnType` takes a `shadowSchema` argument. Tests: 9
+  new `TestDropTypeReferences` cases (7 accepted, 2 refused, matching PG17),
+  `TestTypeNamesShadowedDefaultSchema` (5 cases), 4 `TestColumnType` rows,
+  `TestPostgresIntrospect_ShadowedDefaultSchemaTypes` (parity with `citext`
+  and a `pgi_shadow.citext` domain).
+- Corrected from the original: it also qualifies unqualified DDL names; it
+  keeps the qualifier correct as types are created, renamed, dropped or
+  moved; the introspector qualifies with the type's real schema; pg_catalog
+  types stay unqualified; the gotype mis-resolution and rename mis-retarget
+  are absorbed (same root cause, same fix site).
+- Prototype results, run at `481842f0` on 2026-10-14: with the prototype,
+  introspected and parsed types are identical (`rr`, `rb` = "public.r";
+  `ra` = "public.r[]"; `ci` = "public.citext"; `mine` = "r"; `dr` and the
+  attribute = "public.r"); generation (files and database) gives `Rr
+  *string`, `Ci *string`, `Mine *AppR`, `C2 *int32`; `Get(1)` →
+  `err=<nil>`; the only parity gap left is the Q2 built-in case. Gates:
+  parser gofumpt clean, `golangci-lint run ./...` 0 issues, `go test -race
+  -count=1 ./...` (PG16 containers) ok; `make update-golden` and `make
+  update-golden-e2e` no changes; cmd/sqlgen `go test ./cli/... ./gotype/...
+  ./config/...` ok; `make refs-check` ok. Fail-first: `typeName` shadowing
+  reverted → TestDropTypeReferences "Parse() error = \"parsing test.sql:
+  drop type: cannot drop type app.r: column app.t.rr uses it\", want \"\""
+  (and the unqualified, domain/composite, citext cases); create hooks
+  removed → "a shadowed type used before the shadowing type is declared"
+  fails the same way; `renameType` new-name hook removed → "a type renamed
+  to shadow…" fails; old-name hook removed → "renamed away" `"r"` →
+  `"public.r"`; `dropTypes` hook removed → "dropped" fails; non-user
+  `retargetTypeName` path reverted → "a table moved into a schema…" fails;
+  `columnType` qualification removed → `columnType("r", "", "", "public",
+  "app") = "r", want "public.r"` and the integration test reports
+  "introspected schema differs from the file parser's"; existing suite
+  without the fix passes. Golden churn: none. Patch 8 files, +320/-68.
 
 **References.**
-- PRD §5.6 (DROP TYPE / DROP DOMAIN checks).
-- FIX-312 (`30df7e1c`), FIX-305 (`c695fd6f`), FIX-338 (`afdb75a4`,
-  `typeUses` reads types with `ResolveTypeRef`).
+- PRD §5.2 (type names), §5.6 (DROP TYPE / DROP DOMAIN checks), §7.1
+  (overrides.types keys).
+- FIX-312 (`30df7e1c`, the input.schema strip ruling), FIX-305
+  (`c695fd6f`), FIX-338 (`afdb75a4`, `typeUses` reads types with
+  `ResolveTypeRef`).
+
+**Resolution notes.** _Filled in by /fix resolve._
+
+### FIX-349
+
+- **Status:** Open
+- **Severity:** tracked
+- **Origin:** phase 30, parser/introspect
+- **Surfaced by:** FIX-347 vet (2026-10-14)
+- **Vetted:** corrected at `481842f0` + FIX-347.patch (2026-10-14)
+
+**Issue.** Under `source: both`, a file migration that drops or renames a
+column a database view reads, but does not pass straight through its select
+list (a column used only in `WHERE`, `JOIN … ON`, or inside an expression,
+at top level or inside a derived table or CTE), passes `Merge` silently.
+PRD §6.1 says dropping a column a view reads is an error. Measured during
+the FIX-347 vet: MySQL `q_vw AS SELECT id FROM q_users WHERE role = 'a'`,
+DROP COLUMN role or RENAME COLUMN role TO kind → `Merge err=<nil>`, then
+`SELECT * FROM q_vw` → "Error 1356 (HY000): View 'sqlgen_test.q_vw'
+references invalid table(s) or column(s)…". PostgreSQL `v AS SELECT u FROM
+(SELECT upper(role::text) AS u FROM users) d`, DROP COLUMN role → `Merge
+err=<nil>` (with the FIX-347 prototype applied), while PostgreSQL says
+"cannot drop column role of table users because other objects depend on it
+(SQLSTATE 2BP01)". SQLite `SELECT u FROM (SELECT upper(role) AS u FROM
+users) d`, DROP COLUMN role → `Merge err=<nil>`, while SQLite says "error
+in view v after drop column: no such column: role (1)".
+
+**Root cause.** The view SQL readers (`parser/{postgres,mysql,sqlite}/
+view_sql.go`) record only select-list columns (`ViewSQL.Columns`,
+`parser/view.go:38-54`), each with at most one pass-through source column.
+Columns referenced in WHERE, JOIN conditions, GROUP BY/HAVING, ORDER BY or
+inside a select-list expression are never recorded, so `readViewSources` /
+`refreshViewColumns` (`parser/introspect/views.go`) have nothing to check
+them against.
+
+**Suggested fix.**
+- `parser/view.go`: new `ViewColumnRef{Table, Column}`; `ViewSQL.Reads`
+  (column references outside the select list) and `ViewSQL.Nested`
+  (subqueries in expressions); new `ViewReadSources` resolves each read in
+  its own query, then outward from an expression subquery (correlation),
+  and traces it through derived tables and CTEs with FIX-347's
+  `traceViewColumn`. `RenameViewColumnReferences` repoints a read of the
+  renamed table column (resolving every read before any subquery column is
+  renamed); `RenameViewTableReferences` recurses into `Nested`.
+- Each dialect's `view_sql.go` gains `queryReads`, `readNested` and a read
+  collector over non-bare select-list expressions, WHERE, join ON, GROUP BY,
+  HAVING, windows and ORDER BY; a subquery in an expression is read as
+  `Nested` with its select-list columns as reads. PostgreSQL walks the node
+  tree with protoreflect, plus USING (makes `google.golang.org/protobuf`,
+  already v1.36.9 in the graph, a direct require in `parser/go.mod`);
+  MySQL uses `sqlparser.Walk` (MySQL stores USING as ON); SQLite uses
+  `rsql.Walk`, skipping function, type, collation and window names, plus
+  USING, and skips a bare ORDER BY name that matches a select-list alias
+  (PG and MySQL store an alias ORDER BY as the expression).
+- `parser/introspect/views.go`: `readViewSources` records each view's read
+  sources; new `checkViewReads` (split from `refreshViewColumns` for cyclop)
+  runs the table check, the column check, then the read check ("view v
+  reads column role of table users, which the SQL files drop or rename;
+  under source: both …"); `viewFromTables` recurses into `Nested`.
+- PRD §6.1 (`docs/PRD.md:1651`): a column the query reads outside its
+  select list (WHERE, JOIN ON/USING, GROUP BY, HAVING, ORDER BY, windows,
+  select-list expressions, IN/EXISTS/scalar subqueries, including an
+  enclosing query's column such a subquery reads) is treated the same way,
+  with an error naming the view and the table column; a table a view reads,
+  including one only a subquery reads, likewise.
+- Tests: `TestMerge_ViewColumnRenameAndDrop` grows from 39 to 61 subtests
+  (PG 9, SQLite 7, MySQL 6 new).
+- Lands after FIX-347: the patch is the delta on top of FIX-347.patch.
+- Corrected from the original: widened under the scope cap (same root
+  cause, same fix site) to subqueries in expressions (their tables and
+  table renames too), correlated outer reads, JOIN USING and window
+  clauses, all measured to fail silently; rename handling needs no ruling,
+  since PRD §6.1 already says a rename is applied as the database applies
+  it (PG follows every rename; MySQL leaves the view invalid → error;
+  SQLite rewrites, refusing only a read through an unaliased subquery
+  column, FIX-347's rule); the read error has its own wording because no
+  view column is involved.
+- Prototype results, run at `481842f0` + FIX-347.patch (throwaway worktree
+  commit) on 2026-10-14: probe `zz_probe_fix349_test.go` (postgres:16-alpine,
+  mysql:8.0, modernc SQLite), 19 views × 7 migrations × 3 dialects = 399
+  cases, each running Merge and then the same migration on the database →
+  146 disagreements, all `Merge err=<nil>` where the database refuses or the
+  view breaks: MySQL `pz_v … WHERE role = 'a'` DROP/RENAME role → "Error
+  1356 (HY000): View 'sqlgen_test.pz_v' references invalid table(s) or
+  column(s) or function(s)…" (JOIN ON: "Error 1054 (42S22): Unknown column
+  'u.role' in 'on clause'"); PG DROP role under WHERE, JOIN ON, GROUP BY,
+  HAVING, ORDER BY, EXISTS or an expression → "cannot drop column role of
+  table users because other objects depend on it (SQLSTATE 2BP01)", DROP
+  TABLE posts under an IN subquery → "cannot drop table posts because other
+  objects depend on it"; SQLite → "error in view v after drop column: no
+  such column: role (1)" and "no such table: main.posts (1)". With the
+  prototype, an extended matrix (22 views × 10 migrations × 3 = 660 cases,
+  adding USING, ORDER BY alias, window, table RENAME) → "660 cases, 0 where
+  sqlgen and the database disagree". Gates: parser gofumpt clean,
+  `golangci-lint run ./...` 0 issues, `go mod tidy` (protobuf indirect →
+  direct only), `go test -race -count=1 ./...` (containers) ok; cmd/sqlgen
+  `go test -race -run TestE2E .` ok (195s), `go test -short ./...` ok;
+  `make refs-check` ok. Fail-first: all production files at the FIX-347
+  base → 19 of 61 subtests fail, e.g. postgres/drop_a_column_read_in_WHERE
+  "Merge() error = <nil>, want one containing \"merge both mode: view
+  view_def.r reads column role of table view_def.users, which the SQL files
+  drop or rename; …\""; each dialect's `queryReads` returning nil → PG 8,
+  MySQL 5, SQLite 6 fail; `checkViewReads` read loop disabled → 17 fail;
+  read rename removed → PG and SQLite rename cases fail with a false error;
+  `Nested` recursion removed in `renameViewTables` / `viewFromTables` →
+  table cases fail; correlated lookup, PG USING, SQLite ORDER BY alias skip
+  and nested select-list reads each removed → their case fails; the 39
+  pre-existing subtests pass without the fix. Golden churn: none. Patch:
+  `.claude/prototypes/FIX-349.patch` (8 files, +805/-41; apply
+  FIX-347.patch first).
+
+**References.**
+- PRD §6.1 (view columns under `both`).
+- FIX-347 (derived tables and CTEs), FIX-309 (`accaf642`), FIX-333
+  (`f4bc470c`).
 
 **Resolution notes.** _Filled in by /fix resolve._
 <!-- fixes:open:end -->
