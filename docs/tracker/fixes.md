@@ -122,6 +122,8 @@ check in `checkViewReads` (`parser/introspect/views.go:188-193`), and
   - One PostgreSQL and one SQLite rename control where the database follows
     the rename and Merge accepts.
 
+- Hold (2026-10-15): FIX-354 would narrow this to MySQL column cases (its PostgreSQL and SQLite cases, and MySQL table drops via `VIEW_TABLE_USAGE`, would be covered there); decide FIX-354 first.
+
 **References.**
 - PRD §6.1 (view tables and columns under `source: both`).
 - FIX-347: derived tables and CTEs. It stores a compound query as an empty
@@ -217,6 +219,8 @@ databases:
   - A PostgreSQL rename control: LATERAL VALUES + RENAME role, which the view
     follows, so Merge accepts it.
   - `mysqlReads` has no tags table. The MySQL cases need only `vr_users`.
+
+- Hold (2026-10-15): FIX-354 would narrow this to MySQL column cases; decide FIX-354 first.
 
 **References.**
 - PRD §6.1 (columns a view reads outside its select list).
@@ -318,6 +322,8 @@ ruled on 2026-10-14 to file one SQLite CTE-scoping item.
   - PostgreSQL control: shape B + RENAME role → Merge nil, as PostgreSQL
     follows.
 
+- Hold (2026-10-15): FIX-354 would supersede this (SQLite replay); decide FIX-354 first.
+
 **References.**
 - PRD §6.1 (columns a view reads; a rename applied as the database applies
   it).
@@ -398,6 +404,8 @@ or json_each's `value`.
     as `email`, + DROP users.email. Measure it against SQLite before pinning
     it.
 
+- Hold (2026-10-15): FIX-354 would supersede this (SQLite replay); decide FIX-354 first.
+
 **References.**
 - PRD §6.1 (columns a view reads, including an enclosing query's column a
   subquery reads).
@@ -406,6 +414,118 @@ or json_each's `value`.
   qualified-storage note for PostgreSQL and MySQL.
 
 **Resolution notes.** _Filled in by `/fix resolve`._
+
+### FIX-354
+
+- **Status:** Open
+- **Severity:** tracked
+- **Origin:** phase 30, parser/introspect
+- **Surfaced by:** user review of FIX-349 and FIX-350..353 (2026-10-15)
+
+**Issue.** Under `source: both`, sqlgen decides whether a file migration
+drops or renames something a database view reads (PRD §6.1) by parsing
+each view's definition and re-implementing every dialect's name
+resolution (FIX-347, FIX-349): scopes, LATERAL, CTE scoping, select-list
+aliases in GROUP BY/HAVING, re-binds. It does not converge. FIX-349 grew
+from an 805-line prototype to about 1,500 lines and 123 subtests, every
+review round against the real databases found new shapes, and it left
+FIX-350..353 behind plus false errors HEAD never had (FIX-353; the SQLite
+`HAVING EXISTS (… WHERE p.title = role)` outer-alias case). A probe at
+`5fd51324` (2026-10-15) measured that PostgreSQL and SQLite can answer the
+question themselves, exactly:
+- PostgreSQL `pg_depend` (postgres:16): 78 view shapes, 4056 checks (DROP
+  COLUMN, ALTER TYPE, RENAME COLUMN per column, DROP/RENAME TABLE, DROP
+  TYPE/DOMAIN/composite, DROP CONSTRAINT). DROP COLUMN is refused (2BP01)
+  and ALTER TYPE (0A000) exactly when `pg_depend` lists the column, and
+  DROP TABLE exactly when any row names the table (subid 0 included). The
+  only 4 disagreements are one shape, a view over a string-body `LANGUAGE
+  sql` function, where PostgreSQL itself applies the drop and the view
+  fails only when run (42703 / 42P01). RENAME COLUMN and RENAME TABLE are
+  rewritten into the view in every shape. It also records refusals the
+  parser does not model: `DROP CONSTRAINT users_pkey` under a GROUP BY
+  that depends on the key, `DROP TYPE` under a `'a'::role_t` cast, a
+  composite attribute read as `(addr).city`.
+- SQLite replay (modernc): copy the database's schema into `:memory:`,
+  run each migration file, and check every view still reads. 74 shapes ×
+  32 migrations = 2368 checks, 0 disagreements with the real file
+  database, including every FIX-350..353 shape. About 37ms for 200
+  tables, 200 indexes, 50 views and 20 triggers.
+- MySQL 8.0 has nothing column-level. `information_schema.VIEW_TABLE_USAGE`
+  lists every table a view reads (subqueries, CTEs, recursive CTEs,
+  derived tables, UNION arms, LATERAL, `VALUES ROW`, JSON_TABLE, scalar
+  subqueries; direct only for view over view; it also lists a table read
+  inside a stored function's body). A scratch-schema replay works only
+  with CREATE DATABASE privileges the default user lacks (1044) and would
+  need a config switch the PRD does not have.
+
+**Root cause.** The dependency check is derived from the view SQL
+(`parser/{postgres,mysql,sqlite}/view_sql.go` read collectors;
+`parser/view.go` `ViewReadSources`/`readScope`/`tableColumnReads`;
+`parser/introspect/views.go` `readViewSources` :72, `refreshViewColumns`
+:150, `checkViewReads` :186) instead of from the database, which already
+enforces it. Each dialect's resolution rules are a moving target, so the
+parser both misses reads and invents false ones.
+
+**Suggested fix.**
+- PostgreSQL: the introspector runs the recursive `pg_depend` query
+  (through `pg_rewrite` for views and materialized views, recursing through
+  `pg_proc` for `BEGIN ATOMIC` function bodies; `deptype = 'n'`; references
+  to `pg_class`, `pg_type` and `pg_constraint`; `refobjsubid` 0 = the whole
+  relation) for every view in the database, not filtered by
+  `opts.Tables` or schema, and stores the dependencies on the schema model.
+  `Merge` errors when a file migration drops a column, table, type or
+  constraint, or changes a column's type, that a view depends on, naming
+  the view and the object. Renames need no check: PostgreSQL rewrites the
+  view.
+- SQLite: the introspector keeps the raw `sqlite_master` rows (`sql IS NOT
+  NULL`, not `sqlite_%`) and the shadow-table list (`pragma_table_list`
+  `type='shadow'`). `Merge` replays them into a `:memory:` database
+  (tables incl. virtual, then indexes, views, triggers), records which
+  views read cleanly (`SELECT * FROM v LIMIT 0`), runs each file's raw
+  text in a transaction, then errors, naming the file, on SQLite's own
+  refusal or on a view that read cleanly before and fails after. A
+  virtual table whose module is not loaded is skipped with a warning
+  naming the views that read it. Consider re-reading view columns from the
+  replay's rewritten view SQL (`pragma_table_xinfo`) instead of following
+  renames in the parser.
+- MySQL: the introspector reads `VIEW_TABLE_USAGE`; `Merge` errors on a
+  DROP TABLE or RENAME TABLE of a table any view reads. Column checks keep
+  FIX-349's parser path.
+- Delete what the database now answers: the PostgreSQL and SQLite read
+  collectors (`queryReads`, `readNested`, `readCollector`, `fromKeys` and
+  kin), the SQLite-only parts of `parser/view.go` (`ViewColumnRef.Alias`,
+  `Using`, the SQLite branches of `tableColumnReads` and
+  `RenameViewColumnReferences`), and the PostgreSQL and SQLite read checks.
+  Keep `BuildView`'s select-list tracing (view column types and
+  nullability) and the whole MySQL path.
+- PRD §6.1: state how each database is checked and the limits, each
+  measured: a view over a string-body SQL function (PostgreSQL itself
+  allows the drop); SQLite `PRAGMA legacy_alter_table` set on the
+  migration tool's connection (a table rename then breaks the view and the
+  replay misses it; a PRAGMA inside a file is replayed); data-dependent
+  failures an empty copy cannot see (dropping a parent table that has
+  child rows); a SQLite trigger on another table that reads the dropped
+  column (SQLite checks it only when the trigger fires); MySQL column
+  checks stay best-effort. The SQLite replay also reports non-view
+  refusals (e.g. dropping a generated column's source), which is new
+  Merge behavior.
+- Tests: integration tests that compare Merge's verdict with the
+  database's for the probe corpus, per dialect; trim the PostgreSQL and
+  SQLite subtests of `TestMerge_ViewColumnRenameAndDrop` that the oracle
+  now covers, keep the MySQL ones.
+- Tracker: on landing, resolve FIX-352 and FIX-353 (SQLite-only) as
+  superseded, and narrow FIX-350 and FIX-351 to MySQL column cases.
+
+**References.**
+- PRD §6.1 (source modes; view columns under `both`).
+- FIX-347 (`c007a487`), FIX-349 (`ba7a0b53`), FIX-350, FIX-351, FIX-352,
+  FIX-353.
+- `parser/introspect/merge.go:26` (`Merge` gets file paths;
+  `parser.ParseFiles` reads each whole file, so the raw text is available
+  to replay); `parser/introspect` already imports pgx and
+  `modernc.org/sqlite`.
+
+**Resolution notes.** _Filled in by /fix resolve._
 
 <!-- fixes:open:end -->
 
