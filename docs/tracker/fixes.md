@@ -421,7 +421,7 @@ or json_each's `value`.
 - **Severity:** tracked
 - **Origin:** phase 30, parser/introspect
 - **Surfaced by:** user review of FIX-349 and FIX-350..353 (2026-10-15)
-- **Vetted:** corrected at `22bc55c4` (2026-10-15)
+- **Vetted:** needs ruling at `bccf5765` (2026-10-15; parked by /fix-loop)
 
 **Issue.** Under `source: both`, sqlgen decides whether a file migration
 drops or renames something a database view reads (PRD §6.1) by parsing
@@ -661,6 +661,42 @@ parser both misses reads and invents false ones.
     also clears the HAVING-alias and FIX-353 false errors. (b) Keep the
     error: needs the SQLite read tracing (about 300 lines) back, which
     defeats the fix.
+
+- Pending the user's ruling (raised by /fix-loop's verify pass, 2026-10-15):
+  - Q3. The replay re-runs each `sqlite_master` statement, so a database
+    whose schema names an app-registered collation or function now fails
+    all of `source: both`, where HEAD merged: `COLLATE nosuchcoll` →
+    "merge both mode: replaying the database's table users: SQL logic
+    error: no such collation sequence: nosuchcoll (257)"; an index `ON users
+    (myfn(role))` → "…replaying the database's index ix: … no such
+    function: myfn (1)". SQLite itself loads such a schema and runs most
+    migrations (sqlite3 3.51: ADD/DROP/RENAME COLUMN and DROP/RENAME TABLE
+    succeed; DROP COLUMN email under that index → "error in index ix after
+    drop column: no such column: email"; only `SELECT * FROM v` over the
+    column fails, "no such collation sequence"). Options: (d) on such a
+    failure create a placeholder object of the same name and type, write
+    the original SQL over it with `PRAGMA writable_schema` and `RESET`: the
+    copy then matched the real file on 10/10 statements (sqlite3 3.51), and
+    modernc runs it (DROP COLUMN email → "error in index ix after drop
+    column: no such column: email (1)"); per connection, nothing leaks; not
+    in the patch. (a) Register stub collations/functions and retry:
+    modernc v1.48.2 registers only process-wide and permanently (no
+    per-connection API; a second registration of a name errors), and the
+    names come from parsing error text. (b) Skip the statement with a
+    warning, as for virtual tables: a skipped table cascades (its views
+    leave the copy, and any file touching it fails "no such table"). (c)
+    Keep the error and state the limit in PRD §6.1: those databases lose
+    `source: both`.
+  - Q4. A pending file statement that needs a collation, function or
+    virtual-table module the copy lacks (the migration tool has it) now
+    fails Merge, a false error. Options: warn naming the name and the file
+    and stop checking from that file on; or keep it an error and state the
+    limit (no workaround short of another source mode).
+- Parked by `/fix-loop` at `bccf5765` on 2026-10-15. The work in progress
+  is in `.claude/prototypes/FIX-354.wip.patch` (verify passed apart from
+  this; gates green; no golden churn); its backlog edits are in
+  `.claude/prototypes/FIX-354.backlog.patch` and its resolution text in
+  `.claude/prototypes/FIX-354.fixes-at-park.patch`.
 
 **References.**
 - PRD §6.1 (source modes; view columns under `both`).
