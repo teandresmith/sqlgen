@@ -23,9 +23,17 @@
 
 <!-- fixes:open:begin -->
 
+_No open fixes._
+
+<!-- fixes:open:end -->
+
+## Resolved
+
+<!-- fixes:resolved:begin -->
+
 ### FIX-349
 
-- **Status:** Open
+- **Status:** Resolved
 - **Severity:** tracked
 - **Origin:** phase 30, parser/introspect
 - **Surfaced by:** FIX-347 vet (2026-10-14)
@@ -49,7 +57,7 @@ in view v after drop column: no such column: role (1)".
 
 **Root cause.** The view SQL readers (`parser/{postgres,mysql,sqlite}/
 view_sql.go`) record only select-list columns (`ViewSQL.Columns`,
-`parser/view.go:37-71`), each with at most one pass-through source column.
+`parser/view.go:46-91`), each with at most one pass-through source column.
 Columns referenced in WHERE, JOIN conditions, GROUP BY/HAVING, ORDER BY or
 inside a select-list expression are never recorded, so `readViewSources` /
 `refreshViewColumns` (`parser/introspect/views.go`) have nothing to check
@@ -143,18 +151,133 @@ them against.
   49 pre-existing subtests pass without the fix. Golden churn: none. Patch:
   `.claude/prototypes/FIX-349.patch` (8 files, +788/-62; applies to HEAD
   directly).
+- Auto-accepted the recommended option on 2026-10-14 (`/fix` auto-accept
+  rule): a MySQL or SQLite view whose dropped column the database re-binds to
+  another table's same-named column (`FROM users x WHERE EXISTS (SELECT 1
+  FROM posts x WHERE x.status = 'a')`, an unqualified name in a derived table
+  inside EXISTS, a SQLite select-list alias or double-quoted string read in
+  WHERE) → keep the error rather than follow the re-bind, because it needs no
+  code change, causes no golden churn, adds no public surface, and matches
+  PRD §6.1's rule that dropping a column a view reads is an error (the view
+  keeps running with a changed meaning). Auto-accepted the same day: the
+  compound-subquery gap (`IN (SELECT … UNION …)`) stays in the backlog
+  rather than gaining a PRD carve-out, because §6.1 states the intended
+  behavior and the gap is a known defect, with no code, golden or surface
+  change.
 
 **References.**
 - PRD §6.1 (view columns under `both`).
 - FIX-347 (derived tables and CTEs), FIX-309 (`accaf642`), FIX-333
   (`f4bc470c`).
 
-**Resolution notes.** _Filled in by /fix resolve._
-<!-- fixes:open:end -->
-
-## Resolved
-
-<!-- fixes:resolved:begin -->
+**Resolution notes.** Each dialect's view reader now records the columns a view's query reads outside its select list (`ViewSQL.Reads`: WHERE, JOIN ON and, on PostgreSQL and SQLite, USING, GROUP BY, HAVING, ORDER BY, windows and select-list expressions) and each IN/EXISTS/scalar subquery in an expression (`ViewSQL.Nested`, its select-list columns as reads). `walkScopes` yields nested subqueries, `readScope` resolves a read in its own query and then outward for a correlated reference, `ViewReadSources` resolves them, `tableColumnReads` repoints reads on a rename, and `checkViewReads` errors under `source: both` when a read's table column is dropped or renamed away. PRD §6.1 states it. `google.golang.org/protobuf` is now a direct `parser` require. Prototype applied clean at `057c3b8e`; fail-first reproduced 21/74 `TestMerge_ViewColumnRenameAndDrop` subtests failing without the production change; `make check`, `parser` `go test -race ./...` (containers) and `make check-examples` green; golden churn none, as vetted. The /verify
+reviewer's probes against the three databases found three silent passes in
+the new code, fixed in this change: SQLite renaming a USING column (SQLite
+does not rename USING names, so `tableColumnReads` no longer repoints a
+`ViewColumnRef.Using` read there, and the view no longer finds it); USING
+whose side is itself a join (PostgreSQL and SQLite `fromKeys` now record the
+read through every key of a joined side); and a read from a derived table
+into an enclosing query (a LATERAL derived table, or a derived table inside
+an expression subquery: `readScope` now searches every enclosing scope, so
+`traceScope.nested` is gone), plus the arguments of a function in FROM
+(PostgreSQL `RangeFunction`, SQLite table-valued functions, MySQL
+`JSON_TABLE`). 13 subtests added (87 in all), each error case measured
+against the database (PG 2BP01, MySQL 1356, SQLite "error in view r after
+…"), the two rename controls accepted by it; the 11 error cases fail on the
+prototype code. PRD §6.1 names the FROM-function and LATERAL reads and the
+SQLite USING rename. The second /verify pass found that widening `readScope` to every
+enclosing scope also binds a read a non-LATERAL derived table or CTE cannot
+resolve to the containing query's FROM: 11 false errors and 1 silent pass on
+SQLite and MySQL that the prototype did not have. The user ruled on
+2026-10-14: option (a) — an enclosing FROM is visible only from an
+expression subquery or a LATERAL derived table (surfaced by the second
+verify pass). `ViewSQL.Lateral` marks a LATERAL derived table (PostgreSQL
+`RangeSubselect.Lateral`, vitess `DerivedTable.Lateral`; SQLite has none),
+each scope records whether it is correlated, and `readScope` skips the FROM
+of the query a non-LATERAL derived table or a CTE is in while still reaching
+the queries further out that that query can read (measured: a derived table
+or CTE inside EXISTS reads the outer query's column on all three databases;
+a CTE body reading the FROM of the query that uses it, or an expression
+subquery inside a non-LATERAL derived table reading past it, is refused by
+all three; but SQLite resolves a CTE body where the CTE is used, so one used
+inside an expression subquery can read the enclosing query — see the third
+verify pass below). `ViewReadSources` now also reports the query a read resolves in
+(`ViewReadSource.Scope`), and `checkViewReads` errors when a read resolves
+further out after the migration: SQLite then re-binds the unqualified name
+to the outer query's column of that name, which, per the auto-accepted
+re-bind rule above, stays an error (PostgreSQL and MySQL store the name
+qualified). 19 subtests added (106 in all): the 11 false errors (SQLite 5,
+MySQL 6: GROUP BY or ORDER BY aliases and SQLite double-quoted strings in a
+CTE or derived table, each accepted by the database) and the SQLite silent
+pass ("no such column: email"), LATERAL reads on PostgreSQL and MySQL 8
+(stored qualified by both databases, and from a derived table inside the
+LATERAL one, 2BP01 / 1356; a PostgreSQL rename it follows), a CTE inside EXISTS reading the
+enclosing query (2BP01), and two SQLite re-binds. Fail-first: the widened
+climb → the 11 false-error subtests fail (the silent pass also needs the
+outward check removed, which catches it too); the prototype's nested-only
+climb → 9 fail (the 4 new LATERAL and CTE-in-EXISTS cases, plus 5 earlier
+ones); the outward check removed → the 2 re-bind subtests fail (both
+confirmed by the third verify reviewer). The backlog line on NATURAL JOIN is
+dropped: PostgreSQL and MySQL store NATURAL as USING / ON, which is read, and
+SQLite recomputes the join and accepts the drop (measured by the reviewer).
+`make check`, `make check-examples` and `parser` `go test -race -count=1
+./...` (containers) green; golden churn none. The third /verify pass found a
+SQLite silent pass that pass 2's wider climb had caught: `WITH c AS (SELECT
+uid FROM posts WHERE role = 'a') SELECT u.id FROM users u WHERE EXISTS
+(SELECT 1 FROM c WHERE c.uid = u.id)` + `ALTER TABLE users DROP COLUMN role`
+→ `Merge err=<nil>`, SQLite "error in view r after drop column: no such
+column: role (1)" (PostgreSQL and MySQL refuse to create the view), because
+`readScope` follows the CTE's defining scope chain; it goes to a separate
+FIX per the ruling below. The user ruled on 2026-10-14: fix the select-list
+alias false errors (GROUP BY/HAVING) in FIX-349; file the SQLite use-site
+CTE scoping, VALUES-list and LIMIT-subquery gaps as separate FIXes; keep the
+re-bind check outward-only (the inward SQLite ADD+DROP case is in
+`backlog.md`). The two alias false errors came from the new read checks:
+`SELECT u.id FROM users u WHERE u.id IN (SELECT upper(p.title) AS role FROM
+posts p GROUP BY role)` and `SELECT max(id) AS role FROM users GROUP BY email
+HAVING role > 0`, each + `DROP COLUMN role` → "view r reads column role of
+table users…" while MySQL and SQLite keep the view running. Measured per
+dialect, the read collectors now skip a name a select-list alias stands in
+for, at every query level: MySQL stores a GROUP BY, HAVING or ORDER BY name
+it binds to a column qualified and one it binds to an alias bare (``group by
+`role` ``, ``having (`role` > 0)``; HAVING prefers the alias, GROUP BY the
+column), so a bare name an alias has is skipped; SQLite binds a GROUP BY or
+HAVING name, or one in an ORDER BY expression, to a FROM column first and to
+the alias once that column is dropped, so it is skipped unless SQLite refuses
+the alias there (an aggregate alias in GROUP BY, "aggregate functions are not
+allowed in the GROUP BY clause", or inside an aggregate call, "misuse of
+aliased aggregate role"; a window alias outside ORDER BY or inside a call,
+"misuse of aliased window function role"), which keeps those drops an error;
+PostgreSQL stores a GROUP BY or ORDER BY alias as the expression, binds a
+GROUP BY name to an input column first and refuses an alias in HAVING, so
+its collector is unchanged. The SQLite HAVING case is a re-bind (HAVING role
+reads users.role until the drop) that the ruling accepts; a WHERE alias
+re-bind stays an error under the auto-accepted rule. PRD §6.1 states it. 14
+subtests added (120 in all; PG 2, SQLite 8, MySQL 4), each measured against
+the database: the two cases and a nested HAVING, ORDER BY or GROUP BY alias
+per dialect where the database accepts the view, the SQLite GROUP BY and
+ORDER BY-expression aliases a column of the same name shadows, and the
+precedence cases where the database binds the name to the column (PG and
+MySQL GROUP BY, 2BP01 / 1356) or refuses the alias (SQLite aggregate and
+window aliases). Fail-first: alias handling reverted → the 8 no-error
+subtests (SQLite 5, MySQL 3) fail, e.g. "Merge() error: merge both mode:
+view r reads column role of table users, which the SQL files drop or rename; …";
+SQLite alias kinds ignored → the 3 refused-alias subtests fail with "Merge()
+error = <nil>, want one containing …". `make check`, `make check-examples`
+and `parser` `go test -race -count=1 ./...` (containers) green; golden churn
+none. The narrow re-check (one reviewer on the alias delta, 42 probes
+against the three databases) found three SQLite silent passes the skip
+caused, fixed here: a rename then drop of the column (`GROUP BY role` +
+`RENAME COLUMN role TO r2; DROP COLUMN r2` → "no such column: r2"), because
+SQLite renames a name it binds to the column, so the SQLite reader now keeps
+such a read marked with the alias (`ViewColumnRef.Alias`) and
+`checkViewReads` skips it only while it still has the alias's name; two
+same-named aliases (SQLite binds the first); and an aggregate inside a
+subquery of the alias's expression that aggregates the outer query (`(SELECT
+max(u.id)) AS role … GROUP BY role`), which `kindOf` now counts. 3 subtests
+added (123 in all), each failing with "Merge() error = <nil>, want one
+containing …" when its fix is reverted; gates re-run green. MySQL and
+PostgreSQL matched the databases on every probe.
 
 ### FIX-348
 

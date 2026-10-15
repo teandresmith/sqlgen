@@ -11,6 +11,7 @@ require (
 	github.com/testcontainers/testcontainers-go v0.42.0
 	github.com/testcontainers/testcontainers-go/modules/mysql v0.42.0
 	github.com/testcontainers/testcontainers-go/modules/postgres v0.42.0
+	google.golang.org/protobuf v1.36.9
 	modernc.org/sqlite v1.48.2
 	vitess.io/vitess v0.23.3
 )
@@ -80,7 +81,6 @@ require (
 	golang.org/x/text v0.34.0 // indirect
 	google.golang.org/genproto/googleapis/rpc v0.0.0-20250929231259-57b25ae835d4 // indirect
 	google.golang.org/grpc v1.75.1 // indirect
-	google.golang.org/protobuf v1.36.9 // indirect
 	gopkg.in/yaml.v3 v3.0.1 // indirect
 	modernc.org/libc v1.70.0 // indirect
 	modernc.org/mathutil v1.7.1 // indirect

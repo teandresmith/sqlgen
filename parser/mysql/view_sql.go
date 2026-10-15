@@ -48,6 +48,7 @@ func ParseViewSQL(sql []byte) (parser.ViewSQL, error) {
 
 	def := extractTableAliases(sel.From)
 	def.Name, def.Columns, def.CTEs = name, columns, readCTEs(sel.With)
+	def.Reads, def.Nested = queryReads(sel)
 	return def, nil
 }
 
@@ -82,7 +83,121 @@ func readSubquery(stmt sqlparser.TableStatement, names sqlparser.Columns) parser
 	}
 	q := extractTableAliases(sel.From)
 	q.Columns, q.CTEs = columns, readCTEs(sel.With)
+	q.Reads, q.Nested = queryReads(sel)
 	return q
+}
+
+// readNested reads a subquery in an expression for parser.ViewSQL.Nested:
+// the columns its select list reads go to its Reads, since no view column
+// reads them.
+func readNested(stmt sqlparser.TableStatement) parser.ViewSQL {
+	q := readSubquery(stmt, nil)
+	for _, c := range q.Columns {
+		if c.SourceColumn != "" && c.SourceColumn != "*" {
+			q.Reads = append(q.Reads, parser.ViewColumnRef{Table: c.SourceTable, Column: c.SourceColumn})
+		}
+	}
+	q.Columns = nil
+	return q
+}
+
+// queryReads returns the columns sel reads other than as a bare column of
+// its select list, and the subqueries in its expressions, for
+// parser.ViewSQL.Reads and Nested.
+func queryReads(sel *sqlparser.Select) ([]parser.ViewColumnRef, []parser.ViewSQL) {
+	r := &readCollector{}
+	aliases := make(map[string]bool)
+	for _, expr := range sel.SelectExprs.Exprs {
+		ae, ok := expr.(*sqlparser.AliasedExpr)
+		if !ok {
+			continue
+		}
+		if !ae.As.IsEmpty() {
+			aliases[parser.FoldASCII(ae.As.String())] = true
+		}
+		if _, bare := ae.Expr.(*sqlparser.ColName); !bare {
+			r.walk(ae.Expr)
+		}
+	}
+	for _, te := range sel.From {
+		r.walkJoins(te)
+	}
+	if sel.Where != nil {
+		r.walk(sel.Where.Expr)
+	}
+	// MySQL stores a name in GROUP BY, HAVING or ORDER BY that it binds to
+	// a table column qualified and one it binds to a select-list alias
+	// bare, so a bare name there that an alias has is not a read. (It
+	// stores an ORDER BY alias of the view's own query as the expression.)
+	if sel.GroupBy != nil {
+		for _, e := range sel.GroupBy.Exprs {
+			r.walkAliased(e, aliases)
+		}
+	}
+	if sel.Having != nil {
+		r.walkAliased(sel.Having.Expr, aliases)
+	}
+	r.walk(sel.Windows)
+	r.walkAliased(sel.OrderBy, aliases)
+	return r.reads, r.nested
+}
+
+// readCollector collects the column references and subqueries of
+// expressions.
+type readCollector struct {
+	reads  []parser.ViewColumnRef
+	nested []parser.ViewSQL
+	// aliases holds the query's select-list aliases while walkAliased
+	// walks, and is nil otherwise.
+	aliases map[string]bool
+}
+
+// walkAliased walks node as walk does, where a bare name can be one of the
+// select-list aliases.
+func (r *readCollector) walkAliased(node sqlparser.SQLNode, aliases map[string]bool) {
+	r.aliases = aliases
+	r.walk(node)
+	r.aliases = nil
+}
+
+// walk records every column reference in node and reads every subquery in
+// it.
+func (r *readCollector) walk(node sqlparser.SQLNode) {
+	// The visit function never returns an error.
+	_ = sqlparser.Walk(func(n sqlparser.SQLNode) (bool, error) {
+		switch n := n.(type) {
+		case *sqlparser.ColName:
+			if n.Qualifier.IsEmpty() && r.aliases[parser.FoldASCII(n.Name.String())] {
+				return false, nil
+			}
+			r.reads = append(r.reads, parser.ViewColumnRef{Table: n.Qualifier.Name.String(), Column: n.Name.String()})
+			return false, nil
+		case *sqlparser.Subquery:
+			r.nested = append(r.nested, readNested(n.Select))
+			return false, nil
+		}
+		return true, nil
+	}, node)
+}
+
+// walkJoins records the columns the ON expressions of a FROM-clause item
+// read, and those the JSON_TABLE expression reads. MySQL stores a view's
+// USING join as ON.
+func (r *readCollector) walkJoins(te sqlparser.TableExpr) {
+	switch t := te.(type) {
+	case *sqlparser.JSONTableExpr:
+		r.walk(t.Expr)
+	case *sqlparser.JoinTableExpr:
+		r.walkJoins(t.LeftExpr)
+		r.walkJoins(t.RightExpr)
+		if t.Condition != nil && t.Condition.On != nil {
+			r.walk(t.Condition.On)
+		}
+	case *sqlparser.ParenTableExpr:
+		for _, expr := range t.Exprs {
+			r.walkJoins(expr)
+		}
+	}
 }
 
 // readCTEs returns the query of each common table expression of with, as
@@ -251,7 +366,9 @@ func collectTableAliases(te sqlparser.TableExpr, isOuter bool, from *parser.View
 			if from.Subqueries == nil {
 				from.Subqueries = make(map[string]parser.ViewSQL)
 			}
-			from.Subqueries[t.As.String()] = readSubquery(expr.Select, t.Columns)
+			sub := readSubquery(expr.Select, t.Columns)
+			sub.Lateral = expr.Lateral
+			from.Subqueries[t.As.String()] = sub
 		}
 
 	case *sqlparser.JoinTableExpr:

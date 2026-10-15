@@ -5,6 +5,7 @@ import (
 	"iter"
 	"maps"
 	"slices"
+	"strconv"
 	"strings"
 )
 
@@ -32,6 +33,19 @@ type ViewSelectColumn struct {
 	// and no view column list. SQLite renames such a column when its source
 	// column is renamed, so only the SQLite view parser sets it.
 	Unaliased bool
+}
+
+// ViewColumnRef is a column reference in a view's query: Table is the
+// FROM-clause key that qualifies it, "" when it is unqualified. Using
+// reports a JOIN … USING column, whose name SQLite does not rename. Alias,
+// set only by the SQLite view parser, is the folded name of the select-list
+// alias SQLite binds an unqualified name to once no FROM-clause column has
+// it, so the reference stops reading a column, rather than failing, while
+// it keeps that name.
+type ViewColumnRef struct {
+	Table, Column string
+	Using         bool
+	Alias         string
 }
 
 // ViewSQL holds the metadata extracted from a CREATE VIEW or CREATE
@@ -64,6 +78,21 @@ type ViewSQL struct {
 	// table or a common table expression in scope names no table.
 	Subqueries map[string]ViewSQL
 	CTEs       map[string]ViewSQL
+	// Lateral reports a derived table declared LATERAL (PostgreSQL, MySQL),
+	// which, unlike any other derived table or a common table expression,
+	// can read the FROM clause of the query it is in.
+	Lateral bool
+	// Reads holds every column the query reads other than as a column of
+	// its select list: in WHERE, JOIN … ON or USING, GROUP BY, HAVING,
+	// ORDER BY and window clauses, inside a select-list expression, and in
+	// the arguments of a function in FROM. An ORDER BY name SQLite reads as
+	// a select-list alias is left out.
+	Reads []ViewColumnRef
+	// Nested holds each subquery in an expression (IN, EXISTS, a scalar
+	// subquery), read as Subqueries are, with the columns its select list
+	// reads in its Reads and no Columns. A column it reads can be one of an
+	// enclosing query's FROM clause.
+	Nested []ViewSQL
 
 	// Materialized reports whether the statement was CREATE MATERIALIZED VIEW
 	// (PostgreSQL-only; the MySQL/SQLite parsers reject the syntax).
@@ -435,29 +464,36 @@ func ViewColumnSources(def ViewSQL, schema *Schema) []ViewColumnSource {
 	vs := newViewSources(def, schema)
 	sources := make([]ViewColumnSource, len(def.Columns))
 	for i, sc := range def.Columns {
-		sources[i] = traceViewColumn(sc, vs, []traceScope{{query: def}}, make(map[string]bool), schema)
+		sources[i], _ = traceViewColumn(sc, vs, []traceScope{{query: def}}, make(map[string]bool), schema)
 	}
 	return sources
 }
 
 // traceScope is a query on the path ViewColumnSources follows, and path the
-// FROM-clause keys and common table expression names ("with:<name>") that
-// lead to it from the view, which identify it.
+// FROM-clause keys, common table expression names ("with:<name>") and
+// expression subquery indexes ("#<i>") that lead to it from the view, which
+// identify it. correlated reports whether the query can read the FROM
+// clause of the scope before it, as an expression subquery or a LATERAL
+// derived table can, and a common table expression or any other derived
+// table cannot.
 type traceScope struct {
-	query ViewSQL
-	path  string
+	query      ViewSQL
+	path       string
+	correlated bool
 }
 
 // traceViewColumn returns the table column sc reads in the innermost of
-// scopes, whose FROM clause vs reads. The enclosing scopes are the queries
-// whose common table expressions it can read, and tracing holds the paths
-// of the common table expressions it is already inside.
-func traceViewColumn(sc ViewSelectColumn, vs *viewSources, scopes []traceScope, tracing map[string]bool, schema *Schema) ViewColumnSource {
+// scopes, whose FROM clause vs reads, and whether that FROM clause has sc's
+// column at all: a table that has it, or a subquery that selects it. The
+// enclosing scopes are the queries whose common table expressions it can
+// read, and tracing holds the paths of the common table expressions it is
+// already inside.
+func traceViewColumn(sc ViewSelectColumn, vs *viewSources, scopes []traceScope, tracing map[string]bool, schema *Schema) (ViewColumnSource, bool) {
 	if t, _ := vs.sourceTable(sc); t != nil {
-		return ViewColumnSource{Table: t, Column: sc.SourceColumn}
+		return ViewColumnSource{Table: t, Column: sc.SourceColumn}, true
 	}
 	if sc.SourceColumn == "" || sc.SourceColumn == "*" {
-		return ViewColumnSource{}
+		return ViewColumnSource{}, false
 	}
 	def := scopes[len(scopes)-1].query
 	keys := []string{sc.SourceTable}
@@ -478,10 +514,10 @@ func traceViewColumn(sc ViewSelectColumn, vs *viewSources, scopes []traceScope, 
 		src, found := traceSubqueryColumn(sc.SourceColumn, inner, tracing, schema)
 		delete(tracing, path)
 		if found {
-			return src
+			return src, true
 		}
 	}
-	return ViewColumnSource{}
+	return ViewColumnSource{}, false
 }
 
 // traceSubqueryColumn returns the table column that column of the
@@ -492,11 +528,12 @@ func traceSubqueryColumn(column string, scopes []traceScope, tracing map[string]
 	for _, c := range q.Columns {
 		switch {
 		case c.SourceColumn == "*":
-			if src := traceViewColumn(ViewSelectColumn{SourceTable: c.SourceTable, SourceColumn: column}, qs, scopes, tracing, schema); src.Table != nil {
+			if src, _ := traceViewColumn(ViewSelectColumn{SourceTable: c.SourceTable, SourceColumn: column}, qs, scopes, tracing, schema); src.Table != nil {
 				return src, true
 			}
 		case c.Alias == column:
-			return traceViewColumn(c, qs, scopes, tracing, schema), true
+			src, _ := traceViewColumn(c, qs, scopes, tracing, schema)
+			return src, true
 		}
 	}
 	return ViewColumnSource{}, false
@@ -509,7 +546,7 @@ func traceSubqueryColumn(column string, scopes []traceScope, tracing map[string]
 func subquery(key string, scopes []traceScope, tracing map[string]bool) (inner []traceScope, cte, ok bool) {
 	last := scopes[len(scopes)-1]
 	if q, ok := last.query.Subqueries[key]; ok {
-		return append(slices.Clip(scopes), traceScope{q, last.path + "/" + key}), false, true
+		return append(slices.Clip(scopes), traceScope{query: q, path: last.path + "/" + key, correlated: q.Lateral}), false, true
 	}
 	inner, ok = cteScopes(key, scopes, tracing)
 	return inner, ok, ok
@@ -532,14 +569,15 @@ func cteScopes(key string, scopes []traceScope, tracing map[string]bool) ([]trac
 		q, ok := scopes[i].query.CTEs[name]
 		inside := last.path == path || strings.HasPrefix(last.path, path+"/")
 		if ok && !inside && !tracing[path] {
-			return append(slices.Clip(scopes[:i+1]), traceScope{q, path}), true
+			return append(slices.Clip(scopes[:i+1]), traceScope{query: q, path: path}), true
 		}
 	}
 	return nil, false
 }
 
-// viewScopes yields the scopes of def and of each derived table and common
-// table expression it reads, at any depth, each ending with that query.
+// viewScopes yields the scopes of def and of each derived table, common
+// table expression and expression subquery it reads, at any depth, each
+// ending with that query.
 func viewScopes(def ViewSQL) iter.Seq[[]traceScope] {
 	return func(yield func([]traceScope) bool) {
 		walkScopes([]traceScope{{query: def}}, yield)
@@ -556,12 +594,78 @@ func walkScopes(scopes []traceScope, yield func([]traceScope) bool) bool {
 		queries map[string]ViewSQL
 	}{{"/", last.query.Subqueries}, {"/with:", last.query.CTEs}} {
 		for _, key := range slices.Sorted(maps.Keys(step.queries)) {
-			if !walkScopes(append(slices.Clip(scopes), traceScope{step.queries[key], last.path + step.prefix + key}), yield) {
+			q := step.queries[key]
+			if !walkScopes(append(slices.Clip(scopes), traceScope{query: q, path: last.path + step.prefix + key, correlated: q.Lateral}), yield) {
 				return false
 			}
 		}
 	}
+	for i, q := range last.query.Nested {
+		if !walkScopes(append(slices.Clip(scopes), traceScope{query: q, path: last.path + "/#" + strconv.Itoa(i), correlated: true}), yield) {
+			return false
+		}
+	}
 	return true
+}
+
+// ViewReadSource is the table column a column reference in a view's query
+// reads, and Scope the query whose FROM clause it reads: "" for the view's
+// own query, else the FROM-clause keys, common table expression names
+// ("with:<name>") and expression subquery indexes ("#<i>") that lead to it
+// from the view, each after a "/". Ref is the reference.
+type ViewReadSource struct {
+	ViewColumnSource
+	Scope string
+	Ref   ViewColumnRef
+}
+
+// ViewReadSources returns the table column each column reference in the
+// Reads of def, and of each derived table, common table expression and
+// expression subquery it reads, at any depth, reads, in the order
+// viewScopes yields them, resolved against schema as ViewColumnSources
+// resolves a view column. Table is nil for a reference that reads no table
+// column.
+func ViewReadSources(def ViewSQL, schema *Schema) []ViewReadSource {
+	var sources []ViewReadSource
+	for scopes := range viewScopes(def) {
+		for _, ref := range scopes[len(scopes)-1].query.Reads {
+			src := ViewReadSource{Ref: ref}
+			if inner, vs, ok := readScope(ref, scopes, schema); ok {
+				src.ViewColumnSource, _ = traceViewColumn(ViewSelectColumn{SourceTable: ref.Table, SourceColumn: ref.Column}, vs, inner, make(map[string]bool), schema)
+				src.Scope = inner[len(inner)-1].path
+			}
+			sources = append(sources, src)
+		}
+	}
+	return sources
+}
+
+// readScope returns the scopes of the query whose FROM clause ref, a column
+// reference in the innermost of scopes, reads, ending with that query, and
+// the viewSources of that FROM clause: the innermost query when its FROM
+// clause has ref (its qualifier names a key there, or, unqualified, a table
+// there has the column or a subquery there selects it), else the nearest
+// enclosing query whose FROM clause both has ref and is visible, as SQL
+// scopes a name. An enclosing query's FROM clause is visible when the
+// scope right inside it is correlated (an expression subquery or a LATERAL
+// derived table), so a derived table or common table expression skips the
+// FROM clause of the query it is in but can read those further out that
+// the query itself can. ok is false when none has it.
+func readScope(ref ViewColumnRef, scopes []traceScope, schema *Schema) ([]traceScope, *viewSources, bool) {
+	for i := len(scopes) - 1; i >= 0; i-- {
+		if i < len(scopes)-1 && !scopes[i+1].correlated {
+			continue
+		}
+		inner, q := scopes[:i+1], scopes[i].query
+		vs := scopeSources(inner, nil, schema)
+		_, table := q.TableAliases[ref.Table]
+		_, sub := q.Subqueries[ref.Table]
+		_, found := traceViewColumn(ViewSelectColumn{SourceTable: ref.Table, SourceColumn: ref.Column}, vs, inner, make(map[string]bool), schema)
+		if table || sub || ref.Table == "" && found {
+			return inner, vs, true
+		}
+	}
+	return nil, nil, false
 }
 
 // RenameViewColumnReferences repoints every view column whose Definition
@@ -571,13 +675,20 @@ func walkScopes(scopes []traceScope, yield func([]traceScope) bool) bool {
 // column also takes the new name, as SQLite renames it. The columns of a
 // derived table or common table expression the view reads are repointed
 // the same way, so a view column read through one whose name changes no
-// longer finds it, as SQLite then refuses the rename. Call it before the
+// longer finds it, as SQLite then refuses the rename. A column reference in
+// the Reads of the view or of a subquery it reads that reads the column
+// directly is repointed too, except a USING column on SQLite, which then no
+// longer finds it, as SQLite leaves the view invalid. Call it before the
 // table's column is renamed.
 func RenameViewColumnReferences(schema *Schema, table *Table, dialect, oldName, newName string) {
 	for i := range schema.Views {
 		def := schema.Views[i].Definition
 		if def == nil {
 			continue
+		}
+		// Each reference is resolved before any subquery column is renamed.
+		for _, ref := range tableColumnReads(*def, schema, table, dialect, oldName) {
+			ref.Column = newName
 		}
 		for scopes := range viewScopes(*def) {
 			// The scope's query shares its Columns with def or the map's entry.
@@ -597,12 +708,35 @@ func RenameViewColumnReferences(schema *Schema, table *Table, dialect, oldName, 
 	}
 }
 
+// tableColumnReads returns the column references in the Reads of def, and
+// of each subquery it reads, that read column oldName of table directly,
+// other than the USING columns SQLite does not rename.
+func tableColumnReads(def ViewSQL, schema *Schema, table *Table, dialect, oldName string) []*ViewColumnRef {
+	var reads []*ViewColumnRef
+	for scopes := range viewScopes(def) {
+		// The scope's query shares its Reads with def or its subquery.
+		q := scopes[len(scopes)-1].query
+		for j := range q.Reads {
+			ref := &q.Reads[j]
+			_, vs, ok := readScope(*ref, scopes, schema)
+			if !ok || ref.Using && dialect == "sqlite" {
+				continue
+			}
+			if t, _ := vs.sourceTable(ViewSelectColumn{SourceTable: ref.Table, SourceColumn: ref.Column}); t == table && SameColumnName(dialect, ref.Column, oldName) {
+				reads = append(reads, ref)
+			}
+		}
+	}
+	return reads
+}
+
 // ViewFromTables returns, by FROM-clause key, the table each key of def
 // names, resolved against schema as BuildView resolves it, or nil for a key
 // that names no table in schema (a common table expression, a view, or a
-// table schema lacks). The keys of each derived table and common table
-// expression def reads, at any depth, are listed too, under the path that
-// leads to it: "<alias>/<key>" and "with:<name>/<key>".
+// table schema lacks). The keys of each derived table, common table
+// expression and expression subquery def reads, at any depth, are listed
+// too, under the path that leads to it: "<alias>/<key>", "with:<name>/<key>"
+// and "#<i>/<key>".
 func ViewFromTables(def ViewSQL, schema *Schema) map[string]*Table {
 	tables := make(map[string]*Table)
 	for scopes := range viewScopes(def) {
@@ -617,11 +751,10 @@ func ViewFromTables(def ViewSQL, schema *Schema) map[string]*Table {
 }
 
 // RenameViewTableReferences repoints every FROM-clause key of a view
-// Definition, or of a derived table or common table expression it reads,
-// that names table at (newSchema, newName), as PostgreSQL does on a table
-// rename or SET SCHEMA and SQLite on a table rename, so the view's columns
-// can be read again after the change. Call it before the table is renamed
-// or moved.
+// Definition, or of a subquery it reads, that names table at (newSchema,
+// newName), as PostgreSQL does on a table rename or SET SCHEMA and SQLite on
+// a table rename, so the view's columns can be read again after the change.
+// Call it before the table is renamed or moved.
 func RenameViewTableReferences(schema *Schema, table *Table, newSchema, newName string) {
 	for i := range schema.Views {
 		def := schema.Views[i].Definition

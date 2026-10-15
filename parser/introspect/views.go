@@ -36,9 +36,13 @@ type viewReads struct {
 	// with a Definition reads (parser.ViewColumnSources); a zero columnRef
 	// for a column that reads none.
 	columns map[string][]columnRef
+	// reads holds, by viewKey, the table column each column reference of a
+	// view with a Definition reads, and the query whose FROM clause it reads
+	// (parser.ViewReadSources); a zero columnRef for one that reads none.
+	reads map[string][]readRef
 	// from holds, by viewKey, the table each FROM-clause key of a view with
-	// a Definition, or of a derived table or common table expression it
-	// reads, names (parser.ViewFromTables), for the keys that name a table.
+	// a Definition, or of a subquery it reads, names
+	// (parser.ViewFromTables), for the keys that name a table.
 	from map[string]map[string]tableRef
 	// types holds every ENUM and SET type name, bare and schema-qualified.
 	types map[string]bool
@@ -51,6 +55,13 @@ type columnRef struct {
 	column string
 }
 
+// readRef is a columnRef a view's query reads outside its select list, and
+// scope the query whose FROM clause it reads (parser.ViewReadSource).
+type readRef struct {
+	columnRef
+	scope string
+}
+
 func (r tableRef) String() string {
 	if r.schema == "" {
 		return r.name
@@ -61,6 +72,7 @@ func (r tableRef) String() string {
 func readViewSources(schema *parser.Schema) viewReads {
 	reads := viewReads{
 		columns: make(map[string][]columnRef),
+		reads:   make(map[string][]readRef),
 		from:    make(map[string]map[string]tableRef),
 		types:   enumAndSetNames(schema),
 	}
@@ -75,16 +87,23 @@ func readViewSources(schema *parser.Schema) viewReads {
 			}
 		}
 		reads.from[viewKey(view)] = from
-		sources := parser.ViewColumnSources(*view.Definition, schema)
-		refs := make([]columnRef, len(sources))
-		for i, src := range sources {
-			if src.Table != nil {
-				refs[i] = columnRef{tableRef{src.Table.Schema, src.Table.Name}, src.Column}
-			}
+		for _, src := range parser.ViewColumnSources(*view.Definition, schema) {
+			reads.columns[viewKey(view)] = append(reads.columns[viewKey(view)], newColumnRef(src))
 		}
-		reads.columns[viewKey(view)] = refs
+		for _, src := range parser.ViewReadSources(*view.Definition, schema) {
+			reads.reads[viewKey(view)] = append(reads.reads[viewKey(view)], readRef{newColumnRef(src.ViewColumnSource), src.Scope})
+		}
 	}
 	return reads
+}
+
+// newColumnRef returns the table column src reads, by name; a zero
+// columnRef when it reads none.
+func newColumnRef(src parser.ViewColumnSource) columnRef {
+	if src.Table == nil {
+		return columnRef{}
+	}
+	return columnRef{tableRef{src.Table.Schema, src.Table.Name}, src.Column}
 }
 
 func enumAndSetNames(schema *parser.Schema) map[string]bool {
@@ -124,8 +143,8 @@ func viewKey(view parser.View) string {
 // leaves the view invalid when its table is dropped, and MySQL leaves the
 // view invalid on any of them. A rename PostgreSQL and SQLite carry into
 // the view has already been applied to its Definition by the file parser.
-// A table or column read through a derived table or common table
-// expression counts the same. A view whose columns come from the catalog
+// A table or column read through a subquery, or a column read outside the
+// select list, counts the same. A view whose columns come from the catalog
 // cannot be traced, so it is an error only when one of its ENUM or SET
 // types is gone.
 func refreshViewColumns(schema *parser.Schema, searchPath parser.SearchPath, reads viewReads) error {
@@ -141,20 +160,8 @@ func refreshViewColumns(schema *parser.Schema, searchPath parser.SearchPath, rea
 			}
 			continue
 		}
-		from, nowFrom := reads.from[viewKey(*view)], parser.ViewFromTables(*view.Definition, schema)
-		for _, key := range slices.Sorted(maps.Keys(from)) {
-			if nowFrom[key] == nil {
-				return fmt.Errorf("view %s reads table %s, which the SQL files drop or rename; under source: both the database's view stands, so change it in the database first", viewKey(*view), from[key])
-			}
-		}
-		// Every table the view read still resolves, so a column that no
-		// longer finds its source column lost it.
-		now := parser.ViewColumnSources(*view.Definition, schema)
-		for j, ref := range reads.columns[viewKey(*view)] {
-			if ref.table.name == "" || now[j].Table != nil {
-				continue
-			}
-			return fmt.Errorf("view %s: column %s reads column %s of table %s, which the SQL files drop or rename; under source: both the database's view stands, so change it in the database first", viewKey(*view), view.Definition.Columns[j].Alias, ref.column, ref.table)
+		if err := checkViewReads(*view, schema, reads); err != nil {
+			return err
 		}
 		built, err := parser.BuildView(*view.Definition, view.SQL, &parser.ViewAnnotations{}, schema, searchPath)
 		if err != nil {
@@ -168,6 +175,46 @@ func refreshViewColumns(schema *parser.Schema, searchPath parser.SearchPath, rea
 				col.PrimaryKey, col.Nullable = true, false
 			}
 			view.Columns[j] = col
+		}
+	}
+	return nil
+}
+
+// checkViewReads returns an error for a table or table column that view,
+// which has a Definition, read before the SQL files were applied and no
+// longer finds.
+func checkViewReads(view parser.View, schema *parser.Schema, reads viewReads) error {
+	const stands = ", which the SQL files drop or rename; under source: both the database's view stands, so change it in the database first"
+	from, nowFrom := reads.from[viewKey(view)], parser.ViewFromTables(*view.Definition, schema)
+	for _, key := range slices.Sorted(maps.Keys(from)) {
+		if nowFrom[key] == nil {
+			return fmt.Errorf("view %s reads table %s%s", viewKey(view), from[key], stands)
+		}
+	}
+	// Every table the view read still resolves, so a column that no longer
+	// finds its source column lost it.
+	now := parser.ViewColumnSources(*view.Definition, schema)
+	for j, ref := range reads.columns[viewKey(view)] {
+		if ref.table.name != "" && now[j].Table == nil {
+			return fmt.Errorf("view %s: column %s reads column %s of table %s%s", viewKey(view), view.Definition.Columns[j].Alias, ref.column, ref.table, stands)
+		}
+	}
+	// So does a column the query reads outside its select list. One that
+	// now resolves in the FROM clause of a query further out lost its
+	// column too: SQLite binds the unqualified name to that query's column
+	// instead, which changes what the view means. Every scope a read
+	// resolves in is on the path to its own query, so a shorter path is
+	// further out.
+	nowReads := parser.ViewReadSources(*view.Definition, schema)
+	for j, ref := range reads.reads[viewKey(view)] {
+		// A name a select-list alias stands in for binds to the alias
+		// instead, unless a rename gave it another name.
+		if r := nowReads[j].Ref; r.Alias != "" && parser.FoldASCII(r.Column) == r.Alias {
+			continue
+		}
+		movedOut := len(nowReads[j].Scope) < len(ref.scope)
+		if ref.table.name != "" && (nowReads[j].Table == nil || movedOut) {
+			return fmt.Errorf("view %s reads column %s of table %s%s", viewKey(view), ref.column, ref.table, stands)
 		}
 	}
 	return nil

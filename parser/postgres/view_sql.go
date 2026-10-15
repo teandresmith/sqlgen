@@ -3,9 +3,11 @@ package postgres
 import (
 	"cmp"
 	"fmt"
+	"slices"
 	"strings"
 
 	pg_query "github.com/pganalyze/pg_query_go/v6"
+	"google.golang.org/protobuf/reflect/protoreflect"
 
 	"github.com/teandresmith/sqlgen/parser"
 )
@@ -274,8 +276,9 @@ func extractFuncName(fc *pg_query.FuncCall) string {
 
 // extractFromAliases reads sel's FROM and WITH clauses into a ViewSQL's
 // TableAliases, TableSchemas, OuterAliases, QualifiedAliases, Subqueries
-// and CTEs (each of the last three nil when it is empty). An unqualified
-// table is in defaultSchema, as an unqualified CREATE TABLE is.
+// and CTEs (each of the last three nil when it is empty), and the columns
+// sel reads outside its select list into Reads and Nested (queryReads). An
+// unqualified table is in defaultSchema, as an unqualified CREATE TABLE is.
 func extractFromAliases(sel *pg_query.SelectStmt, defaultSchema string) parser.ViewSQL {
 	from := parser.ViewSQL{
 		TableAliases: make(map[string]string),
@@ -292,7 +295,155 @@ func extractFromAliases(sel *pg_query.SelectStmt, defaultSchema string) parser.V
 		}
 		from.CTEs[cte.Ctename] = readSubquery(cte.GetCtequery(), cte.GetAliascolnames(), defaultSchema)
 	}
+	from.Reads, from.Nested = queryReads(sel, defaultSchema)
 	return from
+}
+
+// queryReads returns the columns sel reads other than as a bare column of
+// its select list, and the subqueries in its expressions, for
+// parser.ViewSQL.Reads and Nested.
+func queryReads(sel *pg_query.SelectStmt, defaultSchema string) ([]parser.ViewColumnRef, []parser.ViewSQL) {
+	r := &readCollector{defaultSchema: defaultSchema}
+	for _, n := range sel.TargetList {
+		if rt := n.GetResTarget(); rt != nil && rt.Val.GetColumnRef() == nil {
+			r.walk(rt.Val)
+		}
+	}
+	for _, n := range sel.FromClause {
+		r.walkJoins(n)
+	}
+	r.walk(sel.WhereClause)
+	r.walk(sel.HavingClause)
+	// pg_get_viewdef writes a GROUP BY or ORDER BY of a select-list alias
+	// as the expression, and HAVING cannot name an alias, so a name there
+	// is a table column.
+	for _, n := range slices.Concat(sel.GroupClause, sel.WindowClause, sel.DistinctClause, sel.SortClause) {
+		r.walk(n)
+	}
+	return r.reads, r.nested
+}
+
+// readNested reads a subquery in an expression for parser.ViewSQL.Nested:
+// the columns its select list reads go to its Reads, since no view column
+// reads them.
+func readNested(node *pg_query.Node, defaultSchema string) parser.ViewSQL {
+	q := readSubquery(node, nil, defaultSchema)
+	for _, c := range q.Columns {
+		if c.SourceColumn != "" && c.SourceColumn != "*" {
+			q.Reads = append(q.Reads, parser.ViewColumnRef{Table: c.SourceTable, Column: c.SourceColumn})
+		}
+	}
+	q.Columns = nil
+	return q
+}
+
+// readCollector collects the column references and subqueries of
+// expressions.
+type readCollector struct {
+	defaultSchema string
+	reads         []parser.ViewColumnRef
+	nested        []parser.ViewSQL
+}
+
+// walk records every column reference in n and reads every subquery in it.
+// It reaches every node below n, whatever its kind.
+func (r *readCollector) walk(n *pg_query.Node) {
+	if n == nil {
+		return
+	}
+	switch x := n.Node.(type) {
+	case *pg_query.Node_ColumnRef:
+		r.columnRef(x.ColumnRef)
+		return
+	case *pg_query.Node_SubLink:
+		r.walk(x.SubLink.Testexpr)
+		r.nested = append(r.nested, readNested(x.SubLink.Subselect, r.defaultSchema))
+		return
+	}
+	r.walkFields(n.ProtoReflect())
+}
+
+// walkFields walks every message field of m.
+func (r *readCollector) walkFields(m protoreflect.Message) {
+	m.Range(func(fd protoreflect.FieldDescriptor, v protoreflect.Value) bool {
+		switch {
+		case fd.Message() == nil || fd.IsMap():
+		case fd.IsList():
+			for i := range v.List().Len() {
+				r.visit(v.List().Get(i).Message())
+			}
+		default:
+			r.visit(v.Message())
+		}
+		return true
+	})
+}
+
+func (r *readCollector) visit(m protoreflect.Message) {
+	switch x := m.Interface().(type) {
+	case *pg_query.Node:
+		r.walk(x)
+	case *pg_query.ColumnRef:
+		r.columnRef(x)
+	default:
+		r.walkFields(m)
+	}
+}
+
+// columnRef records a column reference, keyed by its table: the last name
+// before the column's.
+func (r *readCollector) columnRef(cr *pg_query.ColumnRef) {
+	var names []string
+	for _, f := range cr.Fields {
+		s := nodeString(f)
+		if s == "" {
+			return // table.* or *
+		}
+		names = append(names, s)
+	}
+	ref := parser.ViewColumnRef{Column: names[len(names)-1]}
+	if len(names) > 1 {
+		ref.Table = names[len(names)-2]
+	}
+	r.reads = append(r.reads, ref)
+}
+
+// walkJoins records the columns the join conditions of a FROM-clause item
+// read, an ON expression and each USING column, read through every
+// FROM-clause key on both sides, and the columns the arguments of a
+// function in FROM read.
+func (r *readCollector) walkJoins(n *pg_query.Node) {
+	if n.GetRangeFunction() != nil {
+		r.walk(n)
+		return
+	}
+	join := n.GetJoinExpr()
+	if join == nil {
+		return
+	}
+	r.walkJoins(join.Larg)
+	r.walkJoins(join.Rarg)
+	r.walk(join.Quals)
+	for _, u := range join.UsingClause {
+		for _, key := range slices.Concat(fromKeys(join.Larg), fromKeys(join.Rarg)) {
+			r.reads = append(r.reads, parser.ViewColumnRef{Table: key, Column: nodeString(u), Using: true})
+		}
+	}
+}
+
+// fromKeys returns the keys a FROM-clause item is read by: a table's alias
+// or name, a derived table's alias, or those of each item a join joins.
+func fromKeys(n *pg_query.Node) []string {
+	if rv := n.GetRangeVar(); rv != nil {
+		return []string{cmp.Or(rv.GetAlias().GetAliasname(), rv.Relname)}
+	}
+	if alias := n.GetRangeSubselect().GetAlias().GetAliasname(); alias != "" {
+		return []string{alias}
+	}
+	if join := n.GetJoinExpr(); join != nil {
+		return slices.Concat(fromKeys(join.Larg), fromKeys(join.Rarg))
+	}
+	return nil
 }
 
 // collectFromAliases recursively collects table aliases from FROM clause nodes
@@ -329,7 +480,9 @@ func collectFromAliases(node *pg_query.Node, defaultSchema string, isOuter bool,
 		if from.Subqueries == nil {
 			from.Subqueries = make(map[string]parser.ViewSQL)
 		}
-		from.Subqueries[rs.Alias.Aliasname] = readSubquery(rs.Subquery, rs.Alias.Colnames, defaultSchema)
+		sub := readSubquery(rs.Subquery, rs.Alias.Colnames, defaultSchema)
+		sub.Lateral = rs.Lateral
+		from.Subqueries[rs.Alias.Aliasname] = sub
 	}
 }
 
