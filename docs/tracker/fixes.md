@@ -421,6 +421,7 @@ or json_each's `value`.
 - **Severity:** tracked
 - **Origin:** phase 30, parser/introspect
 - **Surfaced by:** user review of FIX-349 and FIX-350..353 (2026-10-15)
+- **Vetted:** needs ruling at `22bc55c4` (2026-10-15)
 
 **Issue.** Under `source: both`, sqlgen decides whether a file migration
 drops or renames something a database view reads (PRD §6.1) by parsing
@@ -476,16 +477,25 @@ parser both misses reads and invents false ones.
   `Merge` errors when a file migration drops a column, table, type or
   constraint, or changes a column's type, that a view depends on, naming
   the view and the object. Renames need no check: PostgreSQL rewrites the
-  view.
+  view; the parser carries the dependencies along with the rename. Widened
+  at the vet (same root cause, same fix site): partitions. DROP TABLE of a
+  partition a view reads (one the introspector skips included), of its
+  partitioned table, or of a column above it, is refused the same way,
+  since PostgreSQL answers 2BP01.
 - SQLite: the introspector keeps the raw `sqlite_master` rows (`sql IS NOT
   NULL`, not `sqlite_%`) and the shadow-table list (`pragma_table_list`
   `type='shadow'`). `Merge` replays them into a `:memory:` database
   (tables incl. virtual, then indexes, views, triggers), records which
   views read cleanly (`SELECT * FROM v LIMIT 0`), runs each file's raw
-  text in a transaction, then errors, naming the file, on SQLite's own
-  refusal or on a view that read cleanly before and fails after. A
-  virtual table whose module is not loaded is skipped with a warning
-  naming the views that read it. Consider re-reading view columns from the
+  text as written, then errors, naming the file, on SQLite's own refusal
+  or on a view that read cleanly before and fails after. No transaction
+  wrapper: a file's own BEGIN/COMMIT runs as written (modernc `Exec` runs
+  `…BEGIN; ALTER TABLE b ADD COLUMN w int; COMMIT;` in one call), and the
+  copy is thrown away anyway. A virtual table whose module is not loaded
+  is skipped with a warning naming the views that read it, and those views
+  are dropped from the copy, since SQLite checks every view on ALTER TABLE
+  ("error in view vw: no such table: main.words (1)" on every migration
+  otherwise). A view a file drops is not checked. Consider re-reading view columns from the
   replay's rewritten view SQL (`pragma_table_xinfo`) instead of following
   renames in the parser.
 - MySQL: the introspector reads `VIEW_TABLE_USAGE`; `Merge` errors on a
@@ -494,8 +504,10 @@ parser both misses reads and invents false ones.
 - Delete what the database now answers: the PostgreSQL and SQLite read
   collectors (`queryReads`, `readNested`, `readCollector`, `fromKeys` and
   kin), the SQLite-only parts of `parser/view.go` (`ViewColumnRef.Alias`,
-  `Using`, the SQLite branches of `tableColumnReads` and
+  `Using`, `tableColumnReads` whole, since PostgreSQL's reads were its only
+  other caller, the `ViewReadSource` type, and
   `RenameViewColumnReferences`), and the PostgreSQL and SQLite read checks.
+  MySQL's reads become `[]ViewColumnSource`.
   Keep `BuildView`'s select-list tracing (view column types and
   nullability) and the whole MySQL path.
 - PRD §6.1: state how each database is checked and the limits, each
@@ -503,8 +515,11 @@ parser both misses reads and invents false ones.
   allows the drop); SQLite `PRAGMA legacy_alter_table` set on the
   migration tool's connection (a table rename then breaks the view and the
   replay misses it; a PRAGMA inside a file is replayed); data-dependent
-  failures an empty copy cannot see (dropping a parent table that has
-  child rows); a SQLite trigger on another table that reads the dropped
+  failures an empty copy cannot see (`CREATE UNIQUE INDEX` over duplicate
+  rows: the database says "UNIQUE constraint failed: u.e (2067)", Merge
+  returns nil; dropping a parent table with child rows is not one, since
+  the SQLite file parser already refuses it with "drop table par: cannot
+  drop table par: column ch.pid references it via foreign key"); a SQLite trigger on another table that reads the dropped
   column (SQLite checks it only when the trigger fires); MySQL column
   checks stay best-effort. The SQLite replay also reports non-view
   refusals (e.g. dropping a generated column's source), which is new
@@ -515,6 +530,120 @@ parser both misses reads and invents false ones.
   now covers, keep the MySQL ones.
 - Tracker: on landing, resolve FIX-352 and FIX-353 (SQLite-only) as
   superseded, and narrow FIX-350 and FIX-351 to MySQL column cases.
+  FIX-350's MySQL table drops and renames (IN UNION, derived UNION, CTE
+  UNION ALL) agree with MySQL in the oracle through `VIEW_TABLE_USAGE`.
+- Prototype results, run at `22bc55c4` on 2026-10-15:
+  - Reproduction: `go test -count=1 -run
+    'TestMerge_View(DependenciesMatch|TablesMatch)' ./introspect/` (the new
+    oracle test over HEAD's production code) compares Merge's verdict with
+    the database's over 2486 checks (PG 53 shapes × 26 migrations + 3,
+    SQLite 59 × 18 + 3, MySQL 8 × 5). HEAD has 217 disagreements: PG 146
+    silent passes; SQLite 45 silent passes and 8 false errors; MySQL 18
+    silent table passes. Examples: PG FIX-350 `IN (… UNION …)` + DROP
+    TABLE tags: Merge `<nil>`, PG "cannot drop table tags because other
+    objects depend on it (SQLSTATE 2BP01)"; PG same-type `ALTER COLUMN role
+    TYPE text`: `<nil>` vs "cannot alter type of a column used by a view or
+    rule (SQLSTATE 0A000)"; SQLite FIX-352 shape A + DROP role: `<nil>` vs
+    "error in view r after drop column: no such column: role (1)"; SQLite
+    FIX-353 EXISTS over a view + DROP: Merge "view r reads column role of
+    table users…" while SQLite accepts; SQLite trigger: `<nil>` vs "error
+    in trigger tr after drop column: no such column: NEW.role (1)"; MySQL
+    IN UNION + DROP vo_tags: `<nil>` vs "Error 1356 (HY000): View
+    'sqlgen_test.vo_r' references invalid table(s)…". With the prototype:
+    0 disagreements, apart from 4 pinned known limits (PG string-body
+    function 3, SQLite unique index over duplicate rows 1).
+  - Prototype: `parser/view_dependency.go` (`ViewDependency`,
+    `DependencyObject`, `DependencyKind`, `CheckViewDependents`,
+    `RenameDependencies`); `Schema.ViewDependencies` and
+    `Schema.SQLiteSchema []SchemaStatement`, filled only by the
+    introspectors, no config key (the `Partitions` precedent). PG: the
+    recursive pg_depend query in the introspector (an array counts as its
+    element type; pg_catalog and views skipped); the PG parser refuses at
+    statement time, CASCADE or not, DROP TABLE/COLUMN, ALTER COLUMN TYPE,
+    DROP CONSTRAINT, DROP TYPE/DOMAIN, ALTER TYPE DROP/ALTER ATTRIBUTE,
+    with "cannot drop column role of table view_def.users: view
+    view_def.v depends on it; under source: both the database's view
+    stands…"; table, column, type, attribute and constraint renames carry
+    the dependencies; PG read collectors deleted (−151 net), protobuf back
+    to indirect. SQLite: `parser/introspect/sqlite_replay.go`, erroring
+    "<file>: SQLite refuses it: …" and "<file> leaves view vt failing: …";
+    view columns re-read from the replay (question 1); the SQLite read
+    collectors, `Unaliased`, `ViewColumnRef.Using`/`Alias` and the
+    view-rename calls deleted (−290 net in `sqlite/view_sql.go`). MySQL:
+    `VIEW_TABLE_USAGE` in the introspector; Merge errors "view X reads
+    table Y, which the SQL files drop or rename…" when a read table
+    disappears (one created again under the name passes); the parser path
+    and its 38 subtests unchanged. PRD §6.1 rewritten, one bullet per
+    dialect, every limit measured.
+  - Tests: new `view_dependency_integration_test.go` (oracle),
+    `TestCheckViewDependents`, `TestRenameDependencies`,
+    `TestMerge_SQLiteReplay`. `TestMerge_ViewColumnRenameAndDrop` keeps 68
+    of 123 subtests (MySQL 38, plus PG 11 and SQLite 19 that check the
+    refreshed view columns); the 55 removed (PG 25, SQLite 30 error cases)
+    were folded into the oracle corpus first. `TestBothModeColumnConflict`'s
+    hand-built base carries `SQLiteSchema`. One parity exception per
+    dialect for the new fields.
+  - Production delta: +611/−589 (+443/−405 without comments and blank
+    lines, net about +22). The tracing deletions are roughly offset by the
+    new mechanisms (replay 155, dependency helpers 94, pg_depend
+    introspection 78, Merge +60, PG hooks +51, MySQL 33): no net deletion.
+  - Gates: parser `gofumpt -l` clean; `golangci-lint run ./...` 0 issues;
+    `go mod tidy` moves protobuf direct → indirect only; parser `go test
+    -race -count=1 ./...` ok (introspect 116s); cmd/sqlgen `go test -race
+    -count=1 -run TestE2E .` ok; `make update-golden`, `make
+    update-golden-e2e` and `make refs-check` ok.
+  - Fail-first, each site reverted alone: PG ALTER TABLE hook → 212
+    disagreements ("drop users.role: Merge <nil>, database 'refused: …
+    cannot drop column role of table users … (SQLSTATE 2BP01)'"); DROP
+    TABLE check → 89; partition recursion → 2; skipped-partition check →
+    1; DROP TYPE check → 2; DROP ATTRIBUTE check → 1; `RenameDependencies`
+    as a no-op → 71; pg_depend introspection → 304; SQLite replay → 207
+    (and `TestMerge_SQLiteReplay`: "Merge() error = <nil>, want one
+    containing ': SQLite refuses it: SQL logic error: error in view v after
+    drop column: no such column: role (1)'"); replay re-read →
+    sqlite/rename and sqlite/rename_in_another_case fail (want "kind", got
+    "role"); vtable skip → "replaying the database's table words: SQL
+    logic error: no such module: nosuchmodule (1)"; failing-view drop →
+    "SQLite refuses it: … error in view vw: no such table: main.words (1)";
+    MySQL `VIEW_TABLE_USAGE` check → 18 ("drop tags: Merge <nil> … Error
+    1356"). The existing suite without the fix passes (HEAD parser `go test
+    -count=1 ./...` ok, the 123-subtest test included) while the oracle
+    finds 217 disagreements.
+  - Golden churn: none. Patch: `.claude/prototypes/FIX-354.patch` (21
+    files, +1381/−1018).
+- Auto-accepted the recommended option on 2026-10-15 (`/fix` auto-accept
+  rule): MySQL older than 8.0.13 (no `VIEW_TABLE_USAGE`, error 1109) →
+  record no table dependencies, as CHECK introspection does before 8.0.16,
+  with PRD text naming 8.0.13, because it was prototyped with gates green,
+  causes no golden churn, adds no runtime or generated public surface or
+  config key, and only adds PRD text for an unspecified case.
+- Auto-accepted the recommended option on 2026-10-15 (`/fix` auto-accept
+  rule): a view a migration drops → not checked (the database's view
+  stands, as at HEAD), because the same conditions held.
+- Pending the user's ruling:
+  - Q1. Should SQLite view columns be re-read from the replay? (a,
+    prototyped, recommended) Read them from the view as the copy leaves
+    it: renames give the same columns as HEAD (RENAME role → v [id, kind])
+    and it enables the SQLite deletions. But a file that drops and
+    re-creates a view changes it: `DROP VIEW v; ALTER TABLE users DROP
+    COLUMN role; CREATE VIEW v AS SELECT id, email FROM users;` gives Merge
+    nil with v [id integer, email text], where HEAD errors "view v: column
+    role reads column role of table users, which the SQL files drop or
+    rename…". That is a SQLite exception to PRD §6.1's "a pending change to
+    a view does not apply", stated in the patch's PRD text. (b) Keep the
+    parser's rename-following and use the replay only as a check: about 30
+    lines back (`Unaliased`, the RenameView* calls, the SQLite branches);
+    the same migration then passes with stale columns [id, role] that the
+    migrated view lacks, a silently wrong model.
+  - Q2. SQLite re-binds: should Merge follow the database? This reverses
+    the 2026-10-14 auto-accept to keep the error and the user's ruling to
+    keep the outward-only re-bind check. `…WHERE EXISTS (SELECT 1 FROM
+    posts WHERE email <> '')` + DROP posts.email: SQLite accepts and the
+    view keeps running, now reading users.email; HEAD errors. (a,
+    prototyped, recommended) Follow SQLite: removes 3 SQLite subtests and
+    also clears the HAVING-alias and FIX-353 false errors. (b) Keep the
+    error: needs the SQLite read tracing (about 300 lines) back, which
+    defeats the fix.
 
 **References.**
 - PRD §6.1 (source modes; view columns under `both`).
