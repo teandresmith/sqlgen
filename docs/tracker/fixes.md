@@ -421,7 +421,7 @@ or json_each's `value`.
 - **Severity:** tracked
 - **Origin:** phase 30, parser/introspect
 - **Surfaced by:** user review of FIX-349 and FIX-350..353 (2026-10-15)
-- **Vetted:** needs ruling at `22bc55c4` (2026-10-15)
+- **Vetted:** corrected at `22bc55c4` (2026-10-15)
 
 **Issue.** Under `source: both`, sqlgen decides whether a file migration
 drops or renames something a database view reads (PRD §6.1) by parsing
@@ -495,9 +495,13 @@ parser both misses reads and invents false ones.
   is skipped with a warning naming the views that read it, and those views
   are dropped from the copy, since SQLite checks every view on ALTER TABLE
   ("error in view vw: no such table: main.words (1)" on every migration
-  otherwise). A view a file drops is not checked. Consider re-reading view columns from the
-  replay's rewritten view SQL (`pragma_table_xinfo`) instead of following
-  renames in the parser.
+  otherwise). A view a file drops is not checked. View columns are re-read
+  from the view as the copy leaves it, instead of following renames in the
+  parser (ruled 2026-10-15, Q1), so a file that drops and re-creates a
+  SQLite view changes the model: a SQLite exception to PRD §6.1's "a
+  pending change to a view does not apply", stated in the PRD. Merge
+  accepts what SQLite accepts, including a subquery name that re-binds to
+  an outer table's column after a drop (ruled 2026-10-15, Q2).
 - MySQL: the introspector reads `VIEW_TABLE_USAGE`; `Merge` errors on a
   DROP TABLE or RENAME TABLE of a table any view reads. Column checks keep
   FIX-349's parser path.
@@ -532,6 +536,16 @@ parser both misses reads and invents false ones.
   superseded, and narrow FIX-350 and FIX-351 to MySQL column cases.
   FIX-350's MySQL table drops and renames (IN UNION, derived UNION, CTE
   UNION ALL) agree with MySQL in the oracle through `VIEW_TABLE_USAGE`.
+  Remove the 2026-10-14 backlog line from FIX-349 on the SQLite inward
+  re-bind (a column of the dropped name added further in), which the Q2
+  ruling makes moot.
+- Changed from the original at the vet: no transaction wrapper around a
+  replayed file; views failing after a skipped virtual table are dropped
+  from the copy; `tableColumnReads` and `ViewReadSource` go whole;
+  PostgreSQL partitions are covered (same root cause, same fix site); the
+  measured data-dependent limit is a unique index over duplicate rows, not
+  a parent-table drop; the two rulings above decide the SQLite column
+  source and re-binds.
 - Prototype results, run at `22bc55c4` on 2026-10-15:
   - Reproduction: `go test -count=1 -run
     'TestMerge_View(DependenciesMatch|TablesMatch)' ./introspect/` (the new
@@ -620,7 +634,10 @@ parser both misses reads and invents false ones.
 - Auto-accepted the recommended option on 2026-10-15 (`/fix` auto-accept
   rule): a view a migration drops → not checked (the database's view
   stands, as at HEAD), because the same conditions held.
-- Pending the user's ruling:
+- The user ruled on 2026-10-15: Q1 → (a), re-read SQLite view columns
+  from the replay; Q2 → (a), follow SQLite on re-binds. Both are the
+  prototyped options, so the patch stands unchanged and its files are
+  unchanged since `22bc55c4`; no second vet wave. The questions as asked:
   - Q1. Should SQLite view columns be re-read from the replay? (a,
     prototyped, recommended) Read them from the view as the copy leaves
     it: renames give the same columns as HEAD (RENAME role → v [id, kind])
