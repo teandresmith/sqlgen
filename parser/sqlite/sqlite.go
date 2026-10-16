@@ -16,7 +16,7 @@ import (
 // It uses rqlite/sql (pure Go) to parse SQLite SQL statements.
 type Parser struct {
 	schema     *parser.Schema
-	tableIndex map[string]int // table name → index in schema.Tables
+	tableIndex map[string]int // parser.FoldASCII(table name) → index in schema.Tables
 }
 
 // New creates a new SQLite parser.
@@ -33,7 +33,7 @@ func (p *Parser) Seed(base *parser.Schema) {
 	p.schema = base
 	p.tableIndex = make(map[string]int, len(base.Tables))
 	for i, t := range base.Tables {
-		p.tableIndex[t.Name] = i
+		p.tableIndex[parser.FoldASCII(t.Name)] = i
 	}
 }
 
@@ -46,11 +46,14 @@ func (p *Parser) Parse(filename string, sql []byte) error {
 		return fmt.Errorf("parsing %s: %w", filename, err)
 	}
 
+	// rqlite/sql positions count runes.
+	src := []rune(string(sql))
 	for _, stmt := range stmts {
-		if err := p.processStmt(stmt); err != nil {
+		if err := p.processStmt(stmt, src); err != nil {
 			return fmt.Errorf("parsing %s: %w", filename, err)
 		}
 	}
+	p.resolveImplicitReferences()
 
 	return nil
 }
@@ -60,40 +63,55 @@ func (p *Parser) Schema() *parser.Schema {
 	return p.schema
 }
 
-func (p *Parser) processStmt(stmt rsql.Statement) error {
+func (p *Parser) processStmt(stmt rsql.Statement, src []rune) error {
 	switch s := stmt.(type) {
 	case *rsql.CreateTableStatement:
-		return p.parseCreateTable(s)
+		return p.parseCreateTable(s, src)
 	case *rsql.AlterTableStatement:
-		return p.parseAlterTable(s)
+		return p.parseAlterTable(s, src)
 	case *rsql.DropTableStatement:
 		return p.parseDropTable(s)
 	case *rsql.CreateIndexStatement:
 		return p.parseCreateIndex(s)
+	case *rsql.DropIndexStatement:
+		p.parseDropIndex(s)
 	case *rsql.CreateViewStatement:
 		p.schema.Warnings = append(p.schema.Warnings,
 			fmt.Sprintf("CREATE VIEW %s skipped in DDL file — use introspection or define the view in input.views",
 				rsql.IdentName(s.Name)))
+	case *rsql.CreateVirtualTableStatement:
+		p.schema.Warnings = append(p.schema.Warnings, VirtualTableWarning(rsql.IdentName(s.Name)))
 	case *rsql.DropViewStatement:
 		// DROP VIEW is skipped gracefully — views are not tracked in DDL parsing.
 	}
 	return nil
 }
 
+// VirtualTableWarning is the schema warning for a skipped virtual table (FTS5,
+// R*Tree, …). The introspector skips virtual tables with the same warning.
+func VirtualTableWarning(table string) string {
+	return fmt.Sprintf("CREATE VIRTUAL TABLE %s skipped — virtual tables are not generated", table)
+}
+
 // parseCreateIndex records a standalone CREATE [UNIQUE] INDEX as a Constraint
 // on the target table. SQLite indexes are always btree, but partial indexes
 // (CREATE INDEX ... WHERE expr) need to surface their predicate via the
-// Constraint.Where field for the manifest's index surface (PRD §30.7).
+// Constraint.Where field for the manifest's index surface (PRD §30.7). An
+// index with an expression part is skipped, as the introspector skips it. An
+// index on a table no earlier statement created is an error, as it is in
+// SQLite, which cannot index a view or a virtual table either.
 func (p *Parser) parseCreateIndex(stmt *rsql.CreateIndexStatement) error {
 	if stmt == nil || stmt.Table == nil {
 		return nil
 	}
-	tableName := rsql.IdentName(stmt.Table)
-	idx, ok := p.tableIndex[tableName]
+	table, ok := p.lookupTable(rsql.IdentName(stmt.Table))
+	if !ok {
+		return fmt.Errorf("create index %s: table %s not found", rsql.IdentName(stmt.Name), rsql.IdentName(stmt.Table))
+	}
+	cols, ok := indexedColumnNames(stmt.Columns, false)
 	if !ok {
 		return nil
 	}
-	table := &p.schema.Tables[idx]
 
 	cType := parser.Index
 	if stmt.Unique.IsValid() {
@@ -103,28 +121,167 @@ func (p *Parser) parseCreateIndex(stmt *rsql.CreateIndexStatement) error {
 	c := parser.Constraint{
 		Name:    rsql.IdentName(stmt.Name),
 		Type:    cType,
-		Columns: indexedColumnNames(stmt.Columns),
+		Columns: cols,
 		Method:  "btree",
 	}
-	if stmt.WhereExpr != nil {
-		c.Where = rsql.ExprString(stmt.WhereExpr)
+	where, err := indexWhere(stmt)
+	if err != nil {
+		return fmt.Errorf("index %s: %w", c.Name, err)
 	}
+	c.Where = where
 	table.Constraints = append(table.Constraints, c)
-	parser.ApplyConstraintToColumns(table, c)
+	parser.CanonicalizeConstraints(table, "sqlite")
 	return nil
 }
 
+// parseDropIndex drops the index a CREATE INDEX made, wherever its table is:
+// SQLite names an index without its table. The index of a UNIQUE or PRIMARY
+// KEY constraint carries an auto-index name and cannot be dropped, so only a
+// CREATE INDEX index (Method btree) matches. An index the parser never
+// recorded, such as one with an expression part, leaves the schema as it is.
+func (p *Parser) parseDropIndex(stmt *rsql.DropIndexStatement) {
+	name := parser.FoldASCII(rsql.IdentName(stmt.Name))
+	for i := range p.schema.Tables {
+		table := &p.schema.Tables[i]
+		idx := slices.IndexFunc(table.Constraints, func(c parser.Constraint) bool {
+			return c.Method == "btree" && parser.FoldASCII(c.Name) == name
+		})
+		if idx < 0 {
+			continue
+		}
+		c := table.Constraints[idx]
+		table.Constraints = slices.Delete(table.Constraints, idx, idx+1)
+		if c.Type == parser.Unique && len(c.Columns) == 1 {
+			parser.RecomputeColumnUnique(table, c.Columns[0])
+		}
+		return
+	}
+}
+
+// IndexWhere returns the WHERE predicate of one CREATE INDEX statement as the
+// parser records it in Constraint.Where, or "" for an index that is not
+// partial, so introspection can give the same text as the files source
+// (PRD §6.1).
+func IndexWhere(ddl string) (string, error) {
+	stmts, err := rsql.NewParser(strings.NewReader(ddl)).ParseStatements()
+	if err != nil {
+		return "", fmt.Errorf("parsing CREATE INDEX: %w", err)
+	}
+	if len(stmts) != 1 {
+		return "", fmt.Errorf("parsing CREATE INDEX: got %d statements, want 1", len(stmts))
+	}
+	stmt, ok := stmts[0].(*rsql.CreateIndexStatement)
+	if !ok {
+		return "", fmt.Errorf("parsing CREATE INDEX: got %T", stmts[0])
+	}
+	return indexWhere(stmt)
+}
+
+// indexWhere renders a CREATE INDEX statement's WHERE predicate, or "" when it
+// has none. A predicate exprString cannot render is a schema error on both
+// sources (PRD §6.3), not a crash.
+func indexWhere(stmt *rsql.CreateIndexStatement) (string, error) {
+	if stmt.WhereExpr == nil {
+		return "", nil
+	}
+	return exprString(stmt.WhereExpr, "CREATE INDEX predicate")
+}
+
+// exprString renders e as rsql.ExprString does, with its time keywords
+// unquoted (timeKeywords); what names e in an error.
+// rqlite/sql panics rendering a node it has no text for; the panic is
+// returned as an error.
+func exprString(e rsql.Expr, what string) (s string, err error) {
+	defer func() {
+		if r := recover(); r != nil {
+			s, err = "", fmt.Errorf("rendering %s: %v", what, r)
+		}
+	}()
+	return rsql.ExprString(timeKeywords(e)), nil
+}
+
+// timeKeywords returns e with each CURRENT_TIME, CURRENT_DATE and
+// CURRENT_TIMESTAMP it names as an operand made the keyword SQLite reads
+// there. rqlite/sql parses those keywords in an expression as an identifier,
+// which renders quoted: SQLite then reads "CURRENT_TIMESTAMP" as a string, and
+// "t"."CURRENT_TIMESTAMP" as a missing column.
+func timeKeywords(e rsql.Expr) rsql.Expr {
+	if e == nil {
+		return nil
+	}
+	e = timeKeyword(e)
+	// The visitor never returns an error.
+	_, _ = rsql.Walk(timeKeywordVisitor{}, e)
+	return e
+}
+
+// timeKeyword returns e as a time keyword when it is one written as an
+// unquoted identifier, and e otherwise. A quoted identifier is a name in
+// SQLite, as is a name after a dot, which is never an operand.
+func timeKeyword(e rsql.Expr) rsql.Expr {
+	ident, ok := e.(*rsql.Ident)
+	if !ok || ident.Quoted {
+		return e
+	}
+	switch parser.FoldASCII(ident.Name) {
+	case "current_time", "current_date", "current_timestamp":
+		return &rsql.TimestampLit{ValuePos: ident.NamePos, Value: ident.Name}
+	}
+	return e
+}
+
+// timeKeywordVisitor makes each operand of an expression node a time keyword
+// when it is one. It replaces operands from the parent: rsql.Walk requires a
+// node in an identifier's place, such as a function's name, to stay one.
+type timeKeywordVisitor struct{}
+
+// Visit makes the operands of n time keywords when they are ones.
+func (v timeKeywordVisitor) Visit(n rsql.Node) (rsql.Visitor, rsql.Node, error) {
+	switch n := n.(type) {
+	case *rsql.BinaryExpr:
+		n.X, n.Y, n.EscapeExpr = timeKeyword(n.X), timeKeyword(n.Y), timeKeyword(n.EscapeExpr)
+	case *rsql.UnaryExpr:
+		n.X = timeKeyword(n.X)
+	case *rsql.ParenExpr:
+		n.X = timeKeyword(n.X)
+	case *rsql.Range:
+		n.X, n.Y = timeKeyword(n.X), timeKeyword(n.Y)
+	case *rsql.ExprList:
+		for i, x := range n.Exprs {
+			n.Exprs[i] = timeKeyword(x)
+		}
+	case *rsql.Call:
+		for i, x := range n.Args {
+			n.Args[i] = timeKeyword(x)
+		}
+	case *rsql.CaseExpr:
+		n.Operand, n.ElseExpr = timeKeyword(n.Operand), timeKeyword(n.ElseExpr)
+	case *rsql.CaseBlock:
+		n.Condition, n.Body = timeKeyword(n.Condition), timeKeyword(n.Body)
+	case *rsql.CastExpr:
+		n.X = timeKeyword(n.X)
+	case *rsql.CollateExpr:
+		n.X = timeKeyword(n.X)
+	case *rsql.Null:
+		n.X = timeKeyword(n.X)
+	}
+	return v, n, nil
+}
+
+// VisitEnd returns n unchanged.
+func (v timeKeywordVisitor) VisitEnd(n rsql.Node) (rsql.Node, error) { return n, nil }
+
 func (p *Parser) parseDropTable(stmt *rsql.DropTableStatement) error {
 	name := rsql.IdentName(stmt.Name)
-	idx, ok := p.tableIndex[name]
+	idx, ok := p.tableIndex[parser.FoldASCII(name)]
 	if !ok {
 		return nil
 	}
-	if err := parser.CheckTableDropRefs(p.schema.Tables, "", name); err != nil {
+	if err := parser.CheckTableDropRefs(p.schema.Tables, "sqlite", []parser.TableRef{{Name: p.schema.Tables[idx].Name}}); err != nil {
 		return fmt.Errorf("drop table %s: %w", name, err)
 	}
 	p.schema.Tables = slices.Delete(p.schema.Tables, idx, idx+1)
-	delete(p.tableIndex, name)
+	delete(p.tableIndex, parser.FoldASCII(name))
 	for k, v := range p.tableIndex {
 		if v > idx {
 			p.tableIndex[k] = v - 1
@@ -135,118 +292,321 @@ func (p *Parser) parseDropTable(stmt *rsql.DropTableStatement) error {
 
 // --- CREATE TABLE ---
 
-func (p *Parser) parseCreateTable(stmt *rsql.CreateTableStatement) error {
+func (p *Parser) parseCreateTable(stmt *rsql.CreateTableStatement, src []rune) error {
 	tableName := rsql.IdentName(stmt.Name)
-	if _, exists := p.tableIndex[tableName]; exists {
+	if _, exists := p.tableIndex[parser.FoldASCII(tableName)]; exists {
 		if stmt.IfNotExists.IsValid() {
 			return nil
 		}
 		return fmt.Errorf("table %s already exists", tableName)
 	}
-
-	withoutRowID := stmt.Without.IsValid()
-	strict := stmt.Strict.IsValid()
+	if stmt.Select != nil {
+		return fmt.Errorf("create table %s: CREATE TABLE … AS SELECT %s", tableName, parser.UnreadColumns)
+	}
 
 	table := parser.Table{
 		Name:         tableName,
-		WithoutRowID: withoutRowID,
-		Strict:       strict,
+		WithoutRowID: stmt.Without.IsValid(),
+		Strict:       stmt.Strict.IsValid(),
 	}
 
 	// Parse columns.
+	var descKey string // the column whose PRIMARY KEY is declared DESC
+	coll := indexCollations{columns: make(map[string]string), explicit: make(map[int][]string)}
 	for _, col := range stmt.Columns {
-		c := parseColumn(col, withoutRowID)
-		table.Columns = append(table.Columns, c)
-	}
-
-	// Parse table-level constraints.
-	for _, constraint := range stmt.Constraints {
-		c := parseTableConstraint(constraint)
-		if c.Type != 0 {
-			table.Constraints = append(table.Constraints, c)
+		c, constraints, err := parseColumn(col, src)
+		if err != nil {
+			return fmt.Errorf("table %s: %w", tableName, err)
 		}
+		if columnIndex(&table, c.Name) >= 0 {
+			return fmt.Errorf("table %s: duplicate column name: %s", tableName, c.Name)
+		}
+		if primaryKeyDesc(col.Constraints) {
+			descKey = c.Name
+		}
+		table.Columns = append(table.Columns, c)
+		table.Constraints = append(table.Constraints, constraints...)
+		coll.addColumn(c.Name, col.Constraints)
 	}
 
-	parser.ApplyTableConstraints(&table)
+	if err := addTableConstraints(&table, stmt.Constraints, coll); err != nil {
+		return fmt.Errorf("table %s: %w", tableName, err)
+	}
 
-	p.tableIndex[tableName] = len(p.schema.Tables)
+	// CanonicalizeConstraints only appends, so coll.explicit's positions hold.
+	parser.CanonicalizeConstraints(&table, "sqlite")
+	alias := rowIDAlias(&table, descKey)
+	if col := parser.ColumnByName(&table, alias); col != nil {
+		col.AutoIncrement = true
+	}
+	dropDuplicateUniques(&table, alias, coll)
+
+	p.tableIndex[parser.FoldASCII(tableName)] = len(p.schema.Tables)
 	p.schema.Tables = append(p.schema.Tables, table)
 
 	return nil
 }
 
-func parseColumn(col *rsql.ColumnDefinition, withoutRowID bool) parser.Column {
+// addTableConstraints appends the table-level constraints to table, recording
+// each UNIQUE's explicit collations in coll.
+func addTableConstraints(table *parser.Table, constraints []rsql.Constraint, coll indexCollations) error {
+	for _, constraint := range constraints {
+		c, err := parseTableConstraint(constraint)
+		if err != nil {
+			return err
+		}
+		if c.Type == 0 {
+			continue
+		}
+		if u, ok := constraint.(*rsql.UniqueConstraint); ok {
+			coll.explicit[len(table.Constraints)] = indexedColumnCollations(u.Columns)
+		}
+		table.Constraints = append(table.Constraints, c)
+	}
+	return nil
+}
+
+// primaryKeyDesc reports whether constraints, a column's, declare its
+// PRIMARY KEY DESC.
+func primaryKeyDesc(constraints []rsql.Constraint) bool {
+	for _, c := range constraints {
+		if pk, ok := c.(*rsql.PrimaryKeyConstraint); ok && pk.Desc.IsValid() {
+			return true
+		}
+	}
+	return false
+}
+
+// indexCollations holds the collations SQLite compares when it decides two
+// indexes over the same columns are one: each column's declared COLLATE (keyed
+// by the column name with its ASCII case folded, as SQLite matches it), and
+// the per-column COLLATE of each table-level UNIQUE, keyed by its position in
+// table.Constraints ("" where none is written).
+type indexCollations struct {
+	columns  map[string]string
+	explicit map[int][]string
+}
+
+// addColumn records the COLLATE among column's constraints, if any.
+func (ic indexCollations) addColumn(column string, constraints []rsql.Constraint) {
+	for _, c := range constraints {
+		if cc, ok := c.(*rsql.CollateConstraint); ok && cc.Collation != nil {
+			ic.columns[parser.FoldASCII(column)] = strings.ToUpper(cc.Collation.Name)
+		}
+	}
+}
+
+// key identifies the index behind constraint i, c: its columns, each with the
+// collation it is indexed under (the explicit one, else the column's, else
+// BINARY). Sort order is not part of it.
+func (ic indexCollations) key(i int, c parser.Constraint) string {
+	var b strings.Builder
+	explicit := ic.explicit[i]
+	for k, col := range c.Columns {
+		collation := ""
+		if k < len(explicit) {
+			collation = explicit[k]
+		}
+		if collation == "" {
+			collation = ic.columns[parser.FoldASCII(col)]
+		}
+		if collation == "" {
+			collation = "BINARY"
+		}
+		b.WriteString(parser.FoldASCII(col) + "\x00" + collation + "\x00")
+	}
+	return b.String()
+}
+
+// dropDuplicateUniques drops each UNIQUE whose index SQLite never builds:
+// one over the same columns, in the same order and under the same
+// collations, as the primary key's index or an earlier UNIQUE. A primary key
+// on alias, the rowid-alias column (see rowIDAlias), has no index, so a
+// UNIQUE on it stays.
+func dropDuplicateUniques(table *parser.Table, alias string, coll indexCollations) {
+	indexed := make(map[string]bool)
+	for i, c := range table.Constraints {
+		if c.Type == parser.PrimaryKey && !slices.Equal(c.Columns, []string{alias}) {
+			indexed[coll.key(i, c)] = true
+		}
+	}
+	kept := table.Constraints[:0]
+	for i, c := range table.Constraints {
+		if c.Type == parser.Unique {
+			k := coll.key(i, c)
+			if indexed[k] {
+				continue
+			}
+			indexed[k] = true
+		}
+		kept = append(kept, c)
+	}
+	table.Constraints = kept
+	for i := range table.Columns {
+		parser.RecomputeColumnUnique(table, table.Columns[i].Name)
+	}
+}
+
+// rowIDAlias returns the column that aliases the table's rowid, or "" when
+// none does. It is the one column of an INTEGER primary key in a table with a
+// rowid, unless the column declares its key DESC (descKey). Only that key gets
+// an automatic value, and SQLite builds no index for it.
+func rowIDAlias(table *parser.Table, descKey string) string {
+	if table.WithoutRowID {
+		return ""
+	}
+	for _, c := range table.Constraints {
+		if c.Type != parser.PrimaryKey || len(c.Columns) != 1 || c.Columns[0] == descKey {
+			continue
+		}
+		if col := parser.ColumnByName(table, c.Columns[0]); col != nil && col.Type == "integer" {
+			return col.Name
+		}
+	}
+	return ""
+}
+
+// parseColumn returns the column col defines and the constraints declared
+// inline on it, as table constraints over the column.
+func parseColumn(col *rsql.ColumnDefinition, src []rune) (parser.Column, []parser.Constraint, error) {
+	if quotedTypeName(col.Type, src) {
+		return parser.Column{}, nil, fmt.Errorf("column %s: %s: a quoted type name cannot be read",
+			rsql.IdentName(col.Name), col.Type.Name.NamePos)
+	}
 	c := parser.Column{
 		Name:     rsql.IdentName(col.Name),
 		Type:     buildTypeString(col.Type),
 		Nullable: true,
 	}
-
-	for _, constraint := range col.Constraints {
-		applyColumnConstraint(&c, constraint)
+	constraints, err := applyColumnConstraints(&c, col.Constraints)
+	if err != nil {
+		return parser.Column{}, nil, err
 	}
-
-	// INTEGER PRIMARY KEY is auto-increment (rowid alias) unless WITHOUT ROWID.
-	if c.PrimaryKey && c.Type == "integer" && !withoutRowID {
-		c.AutoIncrement = true
-	}
-
-	return c
+	return c, constraints, nil
 }
 
-func applyColumnConstraint(c *parser.Column, constraint rsql.Constraint) {
+// applyColumnConstraints applies each inline column constraint to c and
+// returns those that are also table constraints over the column.
+func applyColumnConstraints(c *parser.Column, constraints []rsql.Constraint) ([]parser.Constraint, error) {
+	var tcs []parser.Constraint
+	for _, constraint := range constraints {
+		tc, ok, err := applyColumnConstraint(c, constraint)
+		if err != nil {
+			return nil, fmt.Errorf("column %s: %w", c.Name, err)
+		}
+		if ok {
+			tcs = append(tcs, tc)
+		}
+	}
+	return tcs, nil
+}
+
+// applyColumnConstraint applies an inline column constraint to c. A PRIMARY
+// KEY, UNIQUE, REFERENCES or CHECK is also returned as a table constraint over
+// the column.
+func applyColumnConstraint(c *parser.Column, constraint rsql.Constraint) (parser.Constraint, bool, error) {
 	switch ct := constraint.(type) {
 	case *rsql.PrimaryKeyConstraint:
 		c.PrimaryKey = true
 		c.Nullable = false
-		if ct.Autoincrement.IsValid() {
-			c.AutoIncrement = true
-		}
+		return parser.Constraint{Name: rsql.IdentName(ct.Name), Type: parser.PrimaryKey, Columns: []string{c.Name}}, true, nil
 	case *rsql.NotNullConstraint:
 		c.Nullable = false
 	case *rsql.UniqueConstraint:
-		c.Unique = true
-		c.InlineUnique = true
+		return parser.Constraint{Name: rsql.IdentName(ct.Name), Type: parser.Unique, Columns: []string{c.Name}}, true, nil
 	case *rsql.DefaultConstraint:
-		c.Default = rsql.ExprString(ct.Expr)
+		def, err := exprString(ct.Expr, "DEFAULT")
+		if err != nil {
+			return parser.Constraint{}, false, err
+		}
+		c.Default = def
 	case *rsql.ForeignKeyConstraint:
 		if ct.ForeignTable != nil {
-			var refCol string
-			if len(ct.ForeignColumns) > 0 {
-				refCol = rsql.IdentName(ct.ForeignColumns[0])
-			}
-			c.FKReference = &parser.FKReference{
-				Table:  rsql.IdentName(ct.ForeignTable),
-				Column: refCol,
-			}
+			return parser.Constraint{
+				Name:             rsql.IdentName(ct.Name),
+				Type:             parser.ForeignKey,
+				Columns:          []string{c.Name},
+				ReferenceTable:   rsql.IdentName(ct.ForeignTable),
+				ReferenceColumns: identNames(ct.ForeignColumns),
+			}, true, nil
 		}
 	case *rsql.GeneratedConstraint:
-		c.GeneratedExpr = rsql.ExprString(ct.Expr)
+		expr, err := exprString(ct.Expr, "generated column expression")
+		if err != nil {
+			return parser.Constraint{}, false, err
+		}
+		c.GeneratedExpr = expr
 		if ct.Stored.IsValid() {
 			c.GeneratedStorage = "STORED"
 		} else {
 			c.GeneratedStorage = "VIRTUAL"
 		}
-	case *rsql.CheckConstraint, *rsql.CollateConstraint:
-		// CHECK is captured at table level; COLLATE is not stored.
+	case *rsql.CheckConstraint:
+		check, err := exprString(ct.Expr, "CHECK")
+		if err != nil {
+			return parser.Constraint{}, false, err
+		}
+		return parser.Constraint{Name: rsql.IdentName(ct.Name), Type: parser.Check, CheckExpression: check}, true, nil
+	case *rsql.CollateConstraint:
+		// COLLATE is not stored.
 	}
+	return parser.Constraint{}, false, nil
 }
 
-// buildTypeString returns the lowercased SQL type string from a rqlite/sql Type.
-// Unrecognized type names default to "blob"; SQLite itself gives such a
-// column NUMERIC affinity (BLOB affinity goes only to a declared type that
-// contains "BLOB", or to a column with none).
+// quotedTypeName reports whether typ, a column's declared type, has a quoted
+// part ("my type", 'text', [text]). SQLite keeps such a type in a form the
+// parser does not reproduce (PRAGMA table_info reports "varchar"(10) as
+// varchar, INT "x" as INT "x"), so it would differ by source.
+func quotedTypeName(typ *rsql.Type, src []rune) bool {
+	if typ == nil || typ.Name == nil {
+		return false
+	}
+	from := typ.Name.NamePos.Offset
+	if from < 0 || from > len(src) {
+		return false
+	}
+	// rqlite/sql joins the type's tokens with a space; scan that many.
+	s := rsql.NewScanner(strings.NewReader(string(src[from:])))
+	for n := 0; n < len(typ.Name.Name); {
+		_, tok, lit := s.Scan()
+		if tok == rsql.EOF {
+			return false
+		}
+		if tok == rsql.QIDENT || tok == rsql.BIDENT || tok == rsql.STRING {
+			return true
+		}
+		if tok != rsql.COMMENT {
+			n += len(lit) + 1
+		}
+	}
+	return false
+}
+
+// buildTypeString returns the type string for a rqlite/sql Type, by the rule
+// NormalizeType states.
 func buildTypeString(typ *rsql.Type) string {
 	if typ == nil || typ.Name == nil {
 		return "blob"
 	}
+	return NormalizeType(typ.String())
+}
 
-	baseName := strings.ToLower(typ.Name.Name)
-	if !isRecognizedType(baseName) {
+// NormalizeType returns the type the parser records for a column declared
+// with type declared: lower case, a type modifier written without spaces, and
+// blob for an empty or unrecognized type. SQLite itself gives an unrecognized
+// type NUMERIC affinity (BLOB affinity goes only to a declared type that
+// contains "BLOB", or to a column with none). The introspector applies it to
+// the declared type the catalog reports, so both sources agree.
+func NormalizeType(declared string) string {
+	base, mods, hasMods := strings.Cut(strings.ToLower(declared), "(")
+	base = strings.Join(strings.Fields(base), " ")
+	if base == "" || !isRecognizedType(base) {
 		return "blob"
 	}
-
-	return strings.ToLower(typ.String())
+	if !hasMods {
+		return base
+	}
+	return base + "(" + strings.Join(strings.Fields(mods), "")
 }
 
 // exactTypes are type names recognized by exact match (not substring).
@@ -275,20 +635,32 @@ func isRecognizedType(name string) bool {
 	return false
 }
 
-func parseTableConstraint(constraint rsql.Constraint) parser.Constraint {
+func parseTableConstraint(constraint rsql.Constraint) (parser.Constraint, error) {
 	switch ct := constraint.(type) {
 	case *rsql.PrimaryKeyConstraint:
+		// SQLite rejects an expression in a PRIMARY KEY; left in, it would
+		// be a key over no columns.
+		cols, ok := indexedColumnNames(ct.Columns, true)
+		if !ok {
+			return parser.Constraint{}, fmt.Errorf("PRIMARY KEY has an expression part: expressions prohibited in PRIMARY KEY")
+		}
 		return parser.Constraint{
 			Name:    rsql.IdentName(ct.Name),
 			Type:    parser.PrimaryKey,
-			Columns: identNames(ct.Columns),
-		}
+			Columns: cols,
+		}, nil
 	case *rsql.UniqueConstraint:
+		// SQLite rejects an expression in a UNIQUE constraint; left in, it
+		// would be a UNIQUE over no columns.
+		cols, ok := indexedColumnNames(ct.Columns, false)
+		if !ok {
+			return parser.Constraint{}, fmt.Errorf("UNIQUE has an expression part: expressions prohibited in UNIQUE")
+		}
 		return parser.Constraint{
 			Name:    rsql.IdentName(ct.Name),
 			Type:    parser.Unique,
-			Columns: indexedColumnNames(ct.Columns),
-		}
+			Columns: cols,
+		}, nil
 	case *rsql.ForeignKeyConstraint:
 		return parser.Constraint{
 			Name:             rsql.IdentName(ct.Name),
@@ -296,20 +668,24 @@ func parseTableConstraint(constraint rsql.Constraint) parser.Constraint {
 			Columns:          identNames(ct.Columns),
 			ReferenceTable:   rsql.IdentName(ct.ForeignTable),
 			ReferenceColumns: identNames(ct.ForeignColumns),
-		}
+		}, nil
 	case *rsql.CheckConstraint:
+		check, err := exprString(ct.Expr, "CHECK")
+		if err != nil {
+			return parser.Constraint{}, err
+		}
 		return parser.Constraint{
 			Name:            rsql.IdentName(ct.Name),
 			Type:            parser.Check,
-			CheckExpression: rsql.ExprString(ct.Expr),
-		}
+			CheckExpression: check,
+		}, nil
 	}
-	return parser.Constraint{}
+	return parser.Constraint{}, nil
 }
 
 // --- ALTER TABLE ---
 
-func (p *Parser) parseAlterTable(stmt *rsql.AlterTableStatement) error {
+func (p *Parser) parseAlterTable(stmt *rsql.AlterTableStatement, src []rune) error {
 	tableName := rsql.IdentName(stmt.Name)
 
 	switch {
@@ -319,8 +695,9 @@ func (p *Parser) parseAlterTable(stmt *rsql.AlterTableStatement) error {
 		if !ok {
 			return fmt.Errorf("table %s not found", tableName)
 		}
-		c := parseColumn(stmt.ColumnDef, table.WithoutRowID)
-		table.Columns = append(table.Columns, c)
+		if err := addColumn(table, stmt.ColumnDef, src); err != nil {
+			return fmt.Errorf("table %s: %w", tableName, err)
+		}
 
 	case stmt.DropColumnName != nil:
 		// DROP COLUMN (SQLite 3.35+)
@@ -328,10 +705,9 @@ func (p *Parser) parseAlterTable(stmt *rsql.AlterTableStatement) error {
 		if !ok {
 			return fmt.Errorf("table %s not found", tableName)
 		}
-		colName := rsql.IdentName(stmt.DropColumnName)
-		table.Columns = slices.DeleteFunc(table.Columns, func(c parser.Column) bool {
-			return c.Name == colName
-		})
+		if err := dropColumn(table, rsql.IdentName(stmt.DropColumnName)); err != nil {
+			return fmt.Errorf("table %s: %w", tableName, err)
+		}
 
 	case stmt.ColumnName != nil && stmt.NewColumnName != nil:
 		// RENAME COLUMN
@@ -340,10 +716,15 @@ func (p *Parser) parseAlterTable(stmt *rsql.AlterTableStatement) error {
 			return fmt.Errorf("table %s not found", tableName)
 		}
 		oldName, newName := rsql.IdentName(stmt.ColumnName), rsql.IdentName(stmt.NewColumnName)
-		if err := parser.RenameColumn(table, oldName, newName); err != nil {
+		// Under source: both the views are read again from SQLite, which
+		// rewrites a view that reads the column (introspect.Merge).
+		if err := parser.RenameColumn(table, "sqlite", oldName, newName); err != nil {
 			return fmt.Errorf("rename column %s: %w", tableName, err)
 		}
-		parser.RenameColumnReferences(p.schema.Tables, table.Schema, table.Name, oldName, newName)
+		parser.RenameColumnReferences(p.schema.Tables, "sqlite", table.Schema, table.Name, oldName, newName)
+		if err := renameColumnInExpressions(table, oldName, newName); err != nil {
+			return fmt.Errorf("rename column %s: %w", tableName, err)
+		}
 		return nil
 
 	case stmt.Rename.IsValid() && stmt.NewName != nil:
@@ -357,28 +738,206 @@ func (p *Parser) parseAlterTable(stmt *rsql.AlterTableStatement) error {
 	return nil
 }
 
+// addColumn adds the column def defines to table. A name the table already
+// has, in any ASCII case, is an error, as it is in SQLite.
+func addColumn(table *parser.Table, def *rsql.ColumnDefinition, src []rune) error {
+	c, constraints, err := parseColumn(def, src)
+	if err != nil {
+		return err
+	}
+	if columnIndex(table, c.Name) >= 0 {
+		return fmt.Errorf("duplicate column name: %s", c.Name)
+	}
+	table.Columns = append(table.Columns, c)
+	table.Constraints = append(table.Constraints, constraints...)
+	parser.CanonicalizeConstraints(table, "sqlite")
+	return nil
+}
+
+// dropColumn drops the column of table that name names in any ASCII case. A
+// column the table does not have is an error, as it is in SQLite.
+func dropColumn(table *parser.Table, name string) error {
+	i := columnIndex(table, name)
+	if i < 0 {
+		return fmt.Errorf("no such column: %s", name)
+	}
+	table.Columns = slices.Delete(table.Columns, i, i+1)
+	return nil
+}
+
+// renameColumnInExpressions rewrites column oldName to newName in the table's
+// CHECK, generated-column and partial-index expressions. SQLite rewrites the
+// stored DDL the same way on RENAME COLUMN, and introspection reads that DDL,
+// so left on the old name the text differs by source (PRD §6.1).
+func renameColumnInExpressions(table *parser.Table, oldName, newName string) error {
+	for i := range table.Columns {
+		c := &table.Columns[i]
+		expr, err := renameColumnInExpr(c.GeneratedExpr, oldName, newName)
+		if err != nil {
+			return fmt.Errorf("generated column %s: %w", c.Name, err)
+		}
+		c.GeneratedExpr = expr
+	}
+	for i := range table.Constraints {
+		c := &table.Constraints[i]
+		check, err := renameColumnInExpr(c.CheckExpression, oldName, newName)
+		if err != nil {
+			return fmt.Errorf("check constraint: %w", err)
+		}
+		where, err := renameColumnInExpr(c.Where, oldName, newName)
+		if err != nil {
+			return fmt.Errorf("index %s: %w", c.Name, err)
+		}
+		c.CheckExpression, c.Where = check, where
+	}
+	return nil
+}
+
+// renameColumnInExpr returns expr, as the parser renders it, with every
+// reference to column oldName renamed to newName. Names match without regard
+// to ASCII case, as SQLite matches them. Function, type, collation and table
+// names are left alone, and expr comes back unchanged when it does not name
+// the column.
+func renameColumnInExpr(expr, oldName, newName string) (string, error) {
+	if expr == "" {
+		return "", nil
+	}
+	x, err := rsql.ParseExprString(expr)
+	if err != nil {
+		return "", fmt.Errorf("parsing %q: %w", expr, err)
+	}
+	r := &columnRenamer{oldName: oldName, newName: newName, skip: make(map[*rsql.Ident]bool)}
+	if _, err := rsql.Walk(r, x); err != nil {
+		return "", fmt.Errorf("renaming in %q: %w", expr, err)
+	}
+	if !r.renamed {
+		return expr, nil
+	}
+	return exprString(x, "renamed expression")
+}
+
+// columnRenamer renames the column references in an expression. The walk
+// reaches every identifier, so the ones that name something other than a
+// column are marked to skip when their parent is visited.
+type columnRenamer struct {
+	oldName, newName string
+	skip             map[*rsql.Ident]bool
+	renamed          bool
+}
+
+// Visit renames n when it is a reference to the column, and marks the
+// identifiers below n that name something else. An unquoted CURRENT_DATE
+// is the keyword even beside a column of that name.
+func (r *columnRenamer) Visit(n rsql.Node) (rsql.Visitor, rsql.Node, error) {
+	switch n := n.(type) {
+	case *rsql.Call:
+		r.skip[n.Name] = true
+		if n.Over != nil {
+			r.skip[n.Over.Name] = true
+		}
+	case *rsql.Type:
+		r.skip[n.Name] = true
+	case *rsql.CollateExpr:
+		if n.Collation != nil {
+			r.skip[n.Collation.Name] = true
+		}
+	case *rsql.QualifiedRef:
+		r.skip[n.Schema] = true
+		r.skip[n.Table] = true
+	case *rsql.Ident:
+		if !r.skip[n] && timeKeyword(n) == n && parser.SameColumnName("sqlite", n.Name, r.oldName) {
+			n.Name = r.newName
+			r.renamed = true
+		}
+	}
+	return r, n, nil
+}
+
+// VisitEnd returns n unchanged.
+func (r *columnRenamer) VisitEnd(n rsql.Node) (rsql.Node, error) { return n, nil }
+
 func (p *Parser) renameTable(oldName, newName string) error {
-	idx, ok := p.tableIndex[oldName]
+	idx, ok := p.tableIndex[parser.FoldASCII(oldName)]
 	if !ok {
 		return fmt.Errorf("table %s not found", oldName)
 	}
+	// SQLite refuses a name another table holds in any ASCII case, the
+	// table's own included: Users cannot be renamed to users.
+	if _, exists := p.tableIndex[parser.FoldASCII(newName)]; exists {
+		return fmt.Errorf("table %s already exists", newName)
+	}
 	// Keys referencing the table follow it to its new name, as they do in the
 	// database; left on the old name, relationship detection drops the edge.
-	parser.RenameTableReferences(p.schema.Tables, p.schema.Tables[idx].Schema, oldName, newName)
-	p.schema.Tables[idx].Name = newName
-	delete(p.tableIndex, oldName)
-	p.tableIndex[newName] = idx
+	// Under source: both the views are read again from SQLite, which
+	// rewrites a view that reads the table (introspect.Merge).
+	table := &p.schema.Tables[idx]
+	parser.RenameTableReferences(p.schema.Tables, "sqlite", table.Schema, table.Name, newName)
+	table.Name = newName
+	delete(p.tableIndex, parser.FoldASCII(oldName))
+	p.tableIndex[parser.FoldASCII(newName)] = idx
 	return nil
+}
+
+// resolveImplicitReferences gives each foreign key written with no column
+// list (REFERENCES p) its parent's primary key columns, as SQLite reads it. A
+// parent defined later is resolved by a later Parse, since SQLite accepts a
+// forward reference.
+func (p *Parser) resolveImplicitReferences() {
+	for i := range p.schema.Tables {
+		t := &p.schema.Tables[i]
+		resolved := false
+		for j := range t.Constraints {
+			c := &t.Constraints[j]
+			if c.Type != parser.ForeignKey || len(c.ReferenceColumns) > 0 {
+				continue
+			}
+			parent, ok := p.lookupTable(c.ReferenceTable)
+			if !ok {
+				continue
+			}
+			var key []string
+			for _, pc := range parent.Constraints {
+				if pc.Type == parser.PrimaryKey {
+					key = pc.Columns
+				}
+			}
+			c.ReferenceColumns = ImplicitReferenceColumns(c.Columns, key)
+			resolved = resolved || len(c.ReferenceColumns) > 0
+		}
+		if resolved {
+			// The resolved key gives the column its FKReference.
+			parser.CanonicalizeConstraints(t, "sqlite")
+		}
+	}
+}
+
+// ImplicitReferenceColumns returns the columns a foreign key over columns
+// written with no column list references: parentKey, its parent's primary
+// key, when that has as many columns. Otherwise it returns none, and SQLite
+// reports an error when it enforces the key.
+func ImplicitReferenceColumns(columns, parentKey []string) []string {
+	if len(parentKey) != len(columns) {
+		return []string{}
+	}
+	return slices.Clone(parentKey)
 }
 
 // --- Helpers ---
 
 func (p *Parser) lookupTable(name string) (*parser.Table, bool) {
-	idx, ok := p.tableIndex[name]
+	idx, ok := p.tableIndex[parser.FoldASCII(name)]
 	if !ok {
 		return nil, false
 	}
 	return &p.schema.Tables[idx], true
+}
+
+// columnIndex returns the index of the column of table that name names, as
+// SQLite matches column names (ignoring ASCII case), or -1.
+func columnIndex(table *parser.Table, name string) int {
+	return slices.IndexFunc(table.Columns, func(c parser.Column) bool {
+		return parser.SameColumnName("sqlite", c.Name, name)
+	})
 }
 
 func identNames(idents []*rsql.Ident) []string {
@@ -389,14 +948,55 @@ func identNames(idents []*rsql.Ident) []string {
 	return names
 }
 
-func indexedColumnNames(cols []*rsql.IndexedColumn) []string {
-	names := make([]string, len(cols))
+// indexedColumnCollations returns each indexed column's explicit COLLATE, upper
+// case, or "" where none is written. The outermost COLLATE counts, inside
+// parentheses or not.
+func indexedColumnCollations(cols []*rsql.IndexedColumn) []string {
+	collations := make([]string, len(cols))
 	for i, col := range cols {
-		if ident, ok := col.X.(*rsql.Ident); ok {
-			names[i] = ident.Name
-		} else {
-			names[i] = rsql.ExprString(col.X)
+		x := col.X
+		for paren, ok := x.(*rsql.ParenExpr); ok; paren, ok = x.(*rsql.ParenExpr) {
+			x = paren.X
+		}
+		if collate, ok := x.(*rsql.CollateExpr); ok && collate.Collation != nil && collate.Collation.Name != nil {
+			collations[i] = strings.ToUpper(collate.Collation.Name.Name)
 		}
 	}
-	return names
+	return collations
+}
+
+// indexedColumnNames returns the column each indexed column names, and false
+// when a part is an expression, which names no column. A collation and
+// parentheses are not part of the name: SQLite indexes (a) as column a. A
+// string literal is a name too: SQLite reads 'a' there as the column a, under
+// any number of COLLATEs in a PRIMARY KEY but at most one elsewhere.
+func indexedColumnNames(cols []*rsql.IndexedColumn, primaryKey bool) ([]string, bool) {
+	names := make([]string, len(cols))
+	for i, col := range cols {
+		x := col.X
+		collations := 0
+		for unwrapped := false; !unwrapped; {
+			switch e := x.(type) {
+			case *rsql.CollateExpr:
+				x = e.X
+				collations++
+			case *rsql.ParenExpr:
+				x = e.X
+			default:
+				unwrapped = true
+			}
+		}
+		switch e := x.(type) {
+		case *rsql.Ident:
+			names[i] = e.Name
+		case *rsql.StringLit:
+			if collations > 1 && !primaryKey {
+				return nil, false
+			}
+			names[i] = e.Value
+		default:
+			return nil, false
+		}
+	}
+	return names, true
 }

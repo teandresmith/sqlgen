@@ -19,7 +19,7 @@
 | `id` | ID | `uuid.UUID` | `uuid` |  | yes |  | `gen_random_uuid()` | `comparator.ID` |  |
 | `name` | Name | `string` | `text` |  |  |  |  | `comparator.String` |  |
 | `description` | Description | `*string` | `text` | yes |  |  |  | `comparator.NullableString` |  |
-| `price` | Price | `decimal.Decimal` | `numeric(12, 2)` |  |  |  |  | `comparator.String` |  |
+| `price` | Price | `decimal.Decimal` | `numeric(12,2)` |  |  |  |  | `comparator.String` |  |
 | `stock` | Stock | `int32` | `integer` |  |  |  | `0` | `comparator.Number[int32]` |  |
 | `category_id` | CategoryID | `int64` | `bigint` |  |  |  |  | `comparator.Number[int64]` |  |
 | `created_at` | CreatedAt | `time.Time` | `timestamptz` |  |  |  | `current_timestamp` | `comparator.Time` |  |

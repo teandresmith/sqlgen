@@ -2335,6 +2335,37 @@ func TestRaw_NumberedPlaceholders(t *testing.T) {
 	}
 }
 
+// A lone nil arg must still bind: dropping it leaves a bare "$" in the SQL,
+// which SQLite rejects with `unrecognized token: "$"`.
+func TestRaw_NilArg(t *testing.T) {
+	cond := sql.Raw("owner_id IS NOT DISTINCT FROM $", nil)
+	tests := []struct {
+		name string
+		d    sql.Dialect
+		tbl  sql.Table
+		sql  string
+	}{
+		{"postgres", pg, pgTbl, `SELECT * FROM "public"."users" WHERE active = $1 AND (owner_id IS NOT DISTINCT FROM $2) AND age > $3`},
+		{"postgres stdlib", pgStd, pgTbl, `SELECT * FROM "public"."users" WHERE active = $1 AND (owner_id IS NOT DISTINCT FROM $2) AND age > $3`},
+		{"mysql", my, myTbl, "SELECT * FROM `users` WHERE active = ? AND (owner_id IS NOT DISTINCT FROM ?) AND age > ?"},
+		{"sqlite", lite, ltTbl, `SELECT * FROM "users" WHERE active = ? AND (owner_id IS NOT DISTINCT FROM ?) AND age > ?`},
+	}
+	wantArgs := []any{true, nil, 3}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			gotSQL, gotArgs := sql.BuildSelect(tt.d, tt.tbl, sql.SelectOptions{
+				Conditions: []sql.Condition{sql.Where("active").Eq(true), cond, sql.Where("age").Gt(3)},
+			})
+			if gotSQL != tt.sql {
+				t.Errorf("BuildSelect sql =\n  %q\nwant\n  %q", gotSQL, tt.sql)
+			}
+			if diff := cmp.Diff(wantArgs, gotArgs); diff != "" {
+				t.Errorf("BuildSelect args mismatch (-want +got):\n%s", diff)
+			}
+		})
+	}
+}
+
 // --- Composite PK ---
 
 func TestBuildCompositePKConditions(t *testing.T) {

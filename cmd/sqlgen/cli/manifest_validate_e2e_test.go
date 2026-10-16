@@ -49,6 +49,9 @@ func TestManifestValidate_E2EExamples(t *testing.T) {
 		// validate against the frozen v1 schema with no edit and no version
 		// bump (PRD §30.4.2 / §30.5).
 		{name: "tenancy_postgres", perEntity: true},
+		// Generated under source: both, so its view source is the definition
+		// MySQL stores, qualified with the database name.
+		{name: "introspect_mysql"},
 	}
 
 	for _, ex := range examples {

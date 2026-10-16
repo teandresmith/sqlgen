@@ -440,14 +440,14 @@ func (c *articleStatClient) Connection(ctx context.Context, input ConnectionInpu
 		// Decode cursors and build keyset conditions
 		var keysetConds []sql.Condition
 		if input.After != nil {
-			cursor, err := decodeCursor(*input.After)
+			cursor, err := decodeArticleStatCursor(*input.After, c.cursorKeys)
 			if err != nil {
 				return nil, ErrInvalidCursor
 			}
 			keysetConds = append(keysetConds, cursorKeyset(c.dialect, c.cursorKeys, cursor, ">"))
 		}
 		if input.Before != nil {
-			cursor, err := decodeCursor(*input.Before)
+			cursor, err := decodeArticleStatCursor(*input.Before, c.cursorKeys)
 			if err != nil {
 				return nil, ErrInvalidCursor
 			}
@@ -544,6 +544,31 @@ func encodeArticleStatCursor(keys []string, a *ArticleStat) (string, error) {
 		return "", fmt.Errorf("encode article_stat cursor: %w", err)
 	}
 	return base64.StdEncoding.EncodeToString(data), nil
+}
+
+// decodeArticleStatCursor decodes a cursor string into its key values,
+// each unmarshaled into the key column's Go type.
+func decodeArticleStatCursor(encoded string, keys []string) (map[string]any, error) {
+	raw, err := decodeCursor(encoded, keys)
+	if err != nil {
+		return nil, err
+	}
+	var row ArticleStat
+	out := make(map[string]any, len(keys))
+	for _, key := range keys {
+		switch key {
+		case "id":
+			err = json.Unmarshal(raw[key], &row.ID)
+			out[key] = row.ID
+		}
+		if err != nil {
+			return nil, err
+		}
+		if cursorValueIsNull(out[key]) {
+			return nil, ErrInvalidCursor
+		}
+	}
+	return out, nil
 }
 
 // ArticleStatFilter provides type-safe filtering for the article_stats table.

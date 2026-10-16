@@ -1,0 +1,16 @@
+{
+  "mcpServers": {
+    "sqlgen": {
+      "args": [
+        "mcp",
+        "serve",
+        "--manifest",
+        "./models/manifest/manifest_gen.json"
+      ],
+      "command": "sqlgen",
+      "x-sqlgen-generator-version": "dev",
+      "x-sqlgen-managed": true,
+      "x-sqlgen-manifest": "./models/manifest/manifest_gen.json"
+    }
+  }
+}

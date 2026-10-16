@@ -160,12 +160,113 @@ func TestSchemaV1_rejectsKnownMistakes(t *testing.T) {
 			name: "removed errors package block",
 			yaml: "generation:\n  errors:\n    package: github.com/cockroachdb/errors\n",
 		},
+		// PRD §4.8 marks a relationship's name, type and table required, fk
+		// required on o2o / o2m and junction on m2m; `sqlgen validate`
+		// rejects each omission (§4.13).
+		{
+			name: "relationship missing name",
+			yaml: "tables:\n  assets:\n    relationships:\n      - type: o2m\n        table: documents\n        fk: asset_id\n",
+		},
+		{
+			name: "relationship missing type",
+			yaml: "tables:\n  assets:\n    relationships:\n      - name: Documents\n        table: documents\n        fk: asset_id\n",
+		},
+		{
+			name: "relationship missing table",
+			yaml: "tables:\n  assets:\n    relationships:\n      - name: Documents\n        type: o2m\n        fk: asset_id\n",
+		},
+		{
+			name: "o2o relationship missing fk",
+			yaml: "tables:\n  assets:\n    relationships:\n      - name: Document\n        type: o2o\n        table: documents\n",
+		},
+		{
+			name: "one_to_one relationship missing fk",
+			yaml: "tables:\n  assets:\n    relationships:\n      - name: Document\n        type: one_to_one\n        side: child\n        table: documents\n",
+		},
+		{
+			name: "o2m relationship missing fk",
+			yaml: "tables:\n  assets:\n    relationships:\n      - name: Documents\n        type: o2m\n        table: documents\n",
+		},
+		{
+			name: "one_to_many relationship missing fk",
+			yaml: "tables:\n  assets:\n    relationships:\n      - name: Documents\n        type: one_to_many\n        table: documents\n",
+		},
+		{
+			name: "m2m relationship missing junction",
+			yaml: "tables:\n  assets:\n    relationships:\n      - name: Tags\n        type: m2m\n        table: tags\n",
+		},
+		{
+			name: "many_to_many relationship missing junction",
+			yaml: "tables:\n  assets:\n    relationships:\n      - name: Tags\n        type: many_to_many\n        table: tags\n        junction_local_fk: asset_id\n",
+		},
+		{
+			// parseRelationshipSide folds case but does not trim, so a padded
+			// `side` generates a parent-side edge.
+			name: "relationship side with surrounding spaces",
+			yaml: "tables:\n  assets:\n    relationships:\n      - name: Document\n        type: o2o\n        side: \" child \"\n        table: documents\n        fk: asset_id\n",
+		},
+		{
+			name: "misspelled relationship side",
+			yaml: "tables:\n  assets:\n    relationships:\n      - name: Document\n        type: o2o\n        side: chld\n        table: documents\n        fk: asset_id\n",
+		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			if err := sch.Validate(yamlToJSONValue(t, []byte(tt.yaml))); err == nil {
 				t.Errorf("Validate(%q) = nil, want a validation error", tt.yaml)
+			}
+		})
+	}
+}
+
+// TestSchemaV1_relationshipSpellingsMatchValidate pins the schema's verdict
+// on a relationship's `type` / `side` spelling and its fk / junction rule to
+// ValidatePreParse's: both fold case, and neither trims `type`. Each case
+// runs through both the schema and LoadConfig + ValidatePreParse.
+func TestSchemaV1_relationshipSpellingsMatchValidate(t *testing.T) {
+	sch := compileSchema(t)
+
+	const header = "input:\n  dialect: postgres\n  paths: [\"./migrations\"]\noutput:\n  dir: ./internal/models\ntables:\n  assets:\n    relationships:\n"
+	tests := []struct {
+		name  string
+		rel   string
+		valid bool
+	}{
+		{"O2O with fk", "      - name: Document\n        type: O2O\n        table: documents\n        fk: asset_id\n", true},
+		{"One_To_One with fk", "      - name: Document\n        type: One_To_One\n        table: documents\n        fk: asset_id\n", true},
+		{"O2m with fk", "      - name: Documents\n        type: O2m\n        table: documents\n        fk: asset_id\n", true},
+		{"ONE_TO_MANY with fk", "      - name: Documents\n        type: ONE_TO_MANY\n        table: documents\n        fk: asset_id\n", true},
+		{"M2M with junction", "      - name: Tags\n        type: M2M\n        table: tags\n        junction: asset_tags\n", true},
+		{"Many_To_Many with junction", "      - name: Tags\n        type: Many_To_Many\n        table: tags\n        junction: asset_tags\n", true},
+		{"side Child", "      - name: Document\n        type: o2o\n        side: Child\n        table: documents\n        fk: asset_id\n", true},
+		{"side PARENT", "      - name: Document\n        type: o2o\n        side: PARENT\n        table: documents\n        fk: asset_id\n", true},
+		{"empty side", "      - name: Document\n        type: o2o\n        side: \"\"\n        table: documents\n        fk: asset_id\n", true},
+		{"O2M without fk", "      - name: Documents\n        type: O2M\n        table: documents\n", false},
+		{"One_To_One without fk", "      - name: Document\n        type: One_To_One\n        side: child\n        table: documents\n", false},
+		{"M2M without junction", "      - name: Tags\n        type: M2M\n        table: tags\n", false},
+		{"MANY_TO_MANY without junction", "      - name: Tags\n        type: MANY_TO_MANY\n        table: tags\n", false},
+		{"type with surrounding spaces", "      - name: Documents\n        type: \" o2m \"\n        table: documents\n        fk: asset_id\n", false},
+		{"type with a trailing space", "      - name: Documents\n        type: \"o2m \"\n        table: documents\n        fk: asset_id\n", false},
+		{"hyphenated type", "      - name: Documents\n        type: one-to-many\n        table: documents\n        fk: asset_id\n", false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			src := header + tt.rel
+
+			schemaErr := sch.Validate(yamlToJSONValue(t, []byte(src)))
+			if got := schemaErr == nil; got != tt.valid {
+				t.Errorf("schema Validate = %v, want valid=%v", schemaErr, tt.valid)
+			}
+
+			cfg, err := config.LoadConfig(writeTestConfig(t, src))
+			if err != nil {
+				t.Fatalf("LoadConfig = %v, want nil", err)
+			}
+			_, validateErr := config.ValidatePreParse(cfg)
+			if got := validateErr == nil; got != tt.valid {
+				t.Errorf("ValidatePreParse = %v, want valid=%v", validateErr, tt.valid)
 			}
 		})
 	}

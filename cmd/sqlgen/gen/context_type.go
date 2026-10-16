@@ -20,8 +20,9 @@ func buildCompositeContexts(input *GenerateInput, _ map[string]bool) []Composite
 	contexts := make([]CompositeTypeContext, 0, len(input.Schema.CompositeTypes))
 	for _, ct := range input.Schema.CompositeTypes {
 		fields := make([]CompositeFieldContext, 0, len(ct.Attributes))
+		resolver := input.Resolver.ForSchema(ct.Schema)
 		for _, attr := range ct.Attributes {
-			gt := input.Resolver.Resolve(attr.Type, false, attr.Name, nil, nil)
+			gt := resolver.Resolve(attr.Type, false, attr.Name, nil, nil)
 			fields = append(fields, CompositeFieldContext{
 				FieldName: FieldName(attr.Name),
 				GoType:    gt.Name,
@@ -49,7 +50,7 @@ func buildCompositeContexts(input *GenerateInput, _ map[string]bool) []Composite
 func buildDomainContexts(input *GenerateInput, _ map[string]bool) []DomainTypeContext {
 	contexts := make([]DomainTypeContext, 0, len(input.Schema.DomainTypes))
 	for _, dt := range input.Schema.DomainTypes {
-		gt := input.Resolver.Resolve(dt.BaseType, false, "", nil, nil)
+		gt := input.Resolver.ForSchema(dt.Schema).Resolve(dt.BaseType, false, "", nil, nil)
 		contexts = append(contexts, DomainTypeContext{
 			Name:       dt.Name,
 			Schema:     dt.Schema,

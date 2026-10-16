@@ -1054,6 +1054,8 @@ func warehouseFieldOptionsFromCollected(opCtx *graphql.OperationContext, fields 
 			fo.Price = true
 		case "nullablePrice":
 			fo.NullablePrice = true
+		case "inspectedAt":
+			fo.InspectedAt = true
 		case "createdAt":
 			fo.CreatedAt = true
 		}

@@ -3,10 +3,12 @@ package manifest
 import (
 	"fmt"
 	"path/filepath"
+	"regexp"
 	"slices"
 	"sort"
 	"strings"
 	"unicode"
+	"unicode/utf8"
 
 	"github.com/teandresmith/sqlgen/cmd/sqlgen/config"
 	"github.com/teandresmith/sqlgen/cmd/sqlgen/gen"
@@ -416,7 +418,7 @@ func buildTableEntity(in BuildInput, tc gen.TableContext, layout config.Layout, 
 	parserTable := findParserTable(in.Schema, tc.TableName, tc.Schema)
 	tCfg := findTableConfig(in.Config, tc.TableName, tc.Schema)
 
-	cols := buildColumns(tc.Columns, parserTable, tc.FilterFields)
+	cols := buildColumns(tc.Columns, parserTable, tc.FilterFields, in.Config.Input.Dialect)
 	rels := buildRelationships(tc, in.Tables)
 	indexes := buildIndexes(parserTable, tc)
 	features := buildFeatures(tc, tCfg, in.Config)
@@ -447,7 +449,7 @@ func buildTableEntity(in BuildInput, tc gen.TableContext, layout config.Layout, 
 func buildViewEntity(in BuildInput, vc gen.ViewContext, layout config.Layout) Entity {
 	parserView := findParserView(in.Schema, vc.ViewName, vc.Schema)
 
-	cols := buildColumns(vc.Columns, nil, vc.FilterFields)
+	cols := buildColumns(vc.Columns, nil, vc.FilterFields, in.Config.Input.Dialect)
 	for i := range cols {
 		// Views surface comments via the parser as adjacent line-comments.
 		// Lift them onto the column entries when present.
@@ -581,7 +583,7 @@ func viewFiles(vc gen.ViewContext, layout config.Layout) []string {
 // publishing a comparator for a column whose `filter.fields` correctly
 // omitted it. Same class as the old file-name recomputation and the enum
 // `go_type` fix: a second derivation of a fact the generator already owns.
-func buildColumns(cols []gen.ColumnContext, parserTable *parser.Table, filterFields []gen.FilterFieldContext) []Column {
+func buildColumns(cols []gen.ColumnContext, parserTable *parser.Table, filterFields []gen.FilterFieldContext, dialect config.Dialect) []Column {
 	comparators := make(map[string]string, len(filterFields))
 	for _, ff := range filterFields {
 		if !ff.Filterable {
@@ -609,7 +611,7 @@ func buildColumns(cols []gen.ColumnContext, parserTable *parser.Table, filterFie
 		}
 		if c.HasDefault {
 			col.Default = defaultLiteral(pc, c.DefaultExpr)
-			col.DefaultKind = classifyDefaultKind(col.Default)
+			col.DefaultKind = classifyDefaultKind(col.Default, dialect)
 		}
 		if c.AutoIncrement {
 			col.Auto = "insert"
@@ -663,94 +665,229 @@ func defaultLiteral(pc *parser.Column, fallback string) string {
 }
 
 // classifyDefaultKind triages a raw default expression into one of `literal`,
-// `function`, or `expression`. PRD §30.7: lets consumers distinguish "you must
-// provide this" from "the database provides this."
-func classifyDefaultKind(def string) string {
-	if def == "" {
+// `function`, or `expression` (PRD §30.7): `literal` only for a constant value,
+// `function` for a call, and `expression` for anything else.
+//
+// Outer parentheses and trailing `::type` casts are peeled first. SQLite
+// requires `DEFAULT (datetime('now'))`, and a cast only labels the operand's
+// type, so `'pending'::text` stays a literal and `now()::date` a function. The
+// text is the parser's form, which introspection converges on. A MySQL string
+// escapes an embedded quote as `\'` where PostgreSQL and SQLite double it, so
+// only MySQL text is scanned with backslash escapes.
+func classifyDefaultKind(def string, dialect config.Dialect) string {
+	s := strings.TrimSpace(def)
+	if s == "" {
 		return ""
 	}
-	trimmed := strings.TrimSpace(def)
-	// Function calls end with `)` and contain `(` — e.g. gen_random_uuid().
-	// CURRENT_TIMESTAMP is also classified as a function (callable in DDL).
-	upper := strings.ToUpper(trimmed)
-	if upper == "CURRENT_TIMESTAMP" || upper == "CURRENT_DATE" || upper == "CURRENT_TIME" || upper == "NOW" {
-		return "function"
-	}
-	if strings.Contains(trimmed, "(") && strings.HasSuffix(trimmed, ")") {
-		// A leading `(` may wrap either a function default — SQLite requires
-		// `DEFAULT (datetime('now'))`, and `(now())` is common — or a genuine
-		// parenthesized expression like `(price * quantity)`. Strip a single
-		// balanced outer wrapper and re-test the unwrapped form.
-		if inner, ok := stripOuterParens(trimmed); ok {
-			if containsOperator(inner) {
-				return "expression"
-			}
-			if isFunctionShape(inner) {
-				return "function"
-			}
-			return "expression"
+	esc := dialect == config.DialectMySQL
+	for {
+		if inner, ok := stripOuterParens(s, esc); ok {
+			s = strings.TrimSpace(inner)
+			continue
 		}
-		// Non-wrapped call — `gen_random_uuid()`, `nextval('seq')`. An
-		// operator inside marks a parenthesized expression instead.
-		if containsOperator(trimmed[1 : len(trimmed)-1]) {
-			return "expression"
+		if operand, ok := stripTrailingCast(s, esc); ok {
+			s = operand
+			continue
 		}
-		return "function"
+		break
 	}
-	// Quoted literals or bare numbers / booleans.
-	return "literal"
+	switch {
+	case isConstantDefault(s, esc):
+		return "literal"
+	case sqlValueFunctions[strings.ToLower(s)], isFunctionShape(s, esc):
+		return "function"
+	default:
+		return "expression"
+	}
 }
 
-// stripOuterParens removes a single balanced outer paren wrapper from s,
-// returning the inner content. ok is false when s is not wrapped in exactly one
-// balanced pair — e.g. `(a) + (b)`, where the leading `(` closes before the
-// final `)`. It unwraps a single layer only and is not string-literal-aware, so
-// nested wrappers (`((now()))`) or parens inside quoted text fall back to the
-// non-wrapped classification path — acceptable for the default-expression forms
-// real DDL declares.
-func stripOuterParens(s string) (string, bool) {
-	if len(s) < 2 || s[0] != '(' || s[len(s)-1] != ')' {
-		return s, false
+// sqlValueFunctions are the SQL-standard niladic functions written without
+// parentheses. PRD §30.7 names CURRENT_TIMESTAMP a function; PostgreSQL keeps
+// these bare, MySQL's parser renders them as calls, and SQLite accepts the
+// first three.
+var sqlValueFunctions = map[string]bool{
+	"current_timestamp": true,
+	"current_date":      true,
+	"current_time":      true,
+	"localtimestamp":    true,
+	"localtime":         true,
+	"current_user":      true,
+	"current_role":      true,
+	"session_user":      true,
+	"user":              true,
+	"current_catalog":   true,
+	"current_schema":    true,
+}
+
+// numericLiteral matches a signed decimal, float, hex (`0x1F`) or MySQL binary
+// (`0b101`) number. The sign may stand apart from the digits, as PostgreSQL
+// renders `-1::integer` (`- 1::int`).
+var numericLiteral = regexp.MustCompile(`^[+-]?\s*(?:(?:\d+\.?\d*|\.\d+)(?:[eE][+-]?\d+)?|0[xX][0-9a-fA-F]+|0[bB][01]+)$`)
+
+// typedLiteral matches the keyword of a typed string literal, such as MySQL's
+// rendering of `DATE '2020-01-01'` as `date'2020-01-01'`.
+var typedLiteral = regexp.MustCompile(`^(?i:date|time|timestamp|interval)\s*'`)
+
+// isConstantDefault reports whether s is a single constant: NULL, a boolean,
+// a number, or one string literal with an optional prefix (PostgreSQL
+// `E'…'`/`B'…'`/`X'…'`, MySQL and SQLite `X'…'`, `N'…'`) or type keyword
+// (`date'…'`).
+func isConstantDefault(s string, esc bool) bool {
+	switch strings.ToLower(s) {
+	case "null", "true", "false":
+		return true
 	}
-	depth := 0
-	for i, r := range s {
-		switch r {
-		case '(':
-			depth++
-		case ')':
-			depth--
-			if depth == 0 && i != len(s)-1 {
-				return s, false
+	if numericLiteral.MatchString(s) {
+		return true
+	}
+	if m := typedLiteral.FindStringIndex(s); m != nil {
+		s = s[m[1]-1:]
+	} else if len(s) > 1 && strings.IndexByte("eEbBxXnN", s[0]) >= 0 && s[1] == '\'' {
+		s = s[1:]
+	}
+	return s != "" && s[0] == '\'' && quoteEnd(s, 0, esc) == len(s)
+}
+
+// isFunctionShape reports whether s is one call: a possibly qualified or
+// quoted name followed by an argument list that runs to the end of s, e.g.
+// `now()`, `datetime('now', '+1 day')` or `public."MyFunc"()`.
+func isFunctionShape(s string, esc bool) bool {
+	open := -1
+	for i := 0; i < len(s) && open < 0; i++ {
+		switch c := s[i]; {
+		case c == '"' || c == '`':
+			end := quoteEnd(s, i, esc)
+			if end < 0 {
+				return false
 			}
+			i = end - 1
+		case c == '(':
+			open = i
+		case c == '.' || isWordByte(c):
+		default:
+			return false
 		}
+	}
+	return open > 0 && closeParen(s, open, esc) == len(s)-1
+}
+
+// stripOuterParens removes one balanced paren pair that wraps all of s. ok is
+// false for `(a) + (b)`, where the leading `(` closes before the end.
+func stripOuterParens(s string, esc bool) (string, bool) {
+	if len(s) < 2 || s[0] != '(' || closeParen(s, 0, esc) != len(s)-1 {
+		return s, false
 	}
 	return s[1 : len(s)-1], true
 }
 
-// isFunctionShape reports whether s looks like a function call — an identifier
-// followed by a parenthesized argument list, e.g. `now()` or `datetime('now')`.
-func isFunctionShape(s string) bool {
-	s = strings.TrimSpace(s)
-	open := strings.IndexByte(s, '(')
-	if open <= 0 || !strings.HasSuffix(s, ")") {
+// stripTrailingCast removes the last top-level `::type` from s. ok is false
+// when s has none, or when the text after the last `::` is not a type name, as
+// in `'1'::int + 1`.
+func stripTrailingCast(s string, esc bool) (string, bool) {
+	cast := lastTopLevelCast(s, esc)
+	if cast <= 0 || !isTypeName(s[cast+2:], esc) {
+		return s, false
+	}
+	return strings.TrimSpace(s[:cast]), true
+}
+
+// lastTopLevelCast returns the index of the last `::` in s outside quotes,
+// parentheses and brackets, or -1 when it has none.
+func lastTopLevelCast(s string, esc bool) int {
+	cast, depth := -1, 0
+	for i := 0; i < len(s); i++ {
+		switch c := s[i]; {
+		case c == '\'' || c == '"' || c == '`':
+			end := quoteEnd(s, i, esc)
+			if end < 0 {
+				return -1
+			}
+			i = end - 1
+		case c == '(' || c == '[':
+			depth++
+		case c == ')' || c == ']':
+			depth--
+		case c == ':' && depth == 0 && i+1 < len(s) && s[i+1] == ':':
+			cast = i
+			i++
+		}
+	}
+	return cast
+}
+
+// isTypeName reports whether t reads as a cast's target type: words, a
+// qualified or quoted name, modifiers and array brackets, e.g.
+// `timestamp with time zone`, `public."MyType"`, `numeric(4, 2)` or
+// `varchar(10)[]`.
+func isTypeName(t string, esc bool) bool {
+	t = strings.TrimSpace(t)
+	if t == "" || (t[0] != '"' && !isWordByte(t[0])) {
 		return false
 	}
-	for _, r := range s[:open] {
-		if r != '_' && r != '.' && !unicode.IsLetter(r) && !unicode.IsDigit(r) {
+	for i := 0; i < len(t); i++ {
+		switch c := t[i]; {
+		case c == '"':
+			end := quoteEnd(t, i, esc)
+			if end < 0 {
+				return false
+			}
+			i = end - 1
+		case isWordByte(c), strings.IndexByte(" .,()[]", c) >= 0:
+		default:
 			return false
 		}
 	}
 	return true
 }
 
-func containsOperator(s string) bool {
-	for _, r := range s {
-		switch r {
-		case '+', '-', '*', '/', '%', '<', '>', '=':
-			return true
+// isWordByte reports whether c may appear in an unquoted identifier. Bytes of
+// a multi-byte UTF-8 rune count as word bytes.
+func isWordByte(c byte) bool {
+	return c == '_' || c >= '0' && c <= '9' || c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z' || c >= utf8.RuneSelf
+}
+
+// closeParen returns the index of the `)` matching the `(` at open, skipping
+// quoted text, or -1 when it has none.
+func closeParen(s string, open int, esc bool) int {
+	depth := 0
+	for i := open; i < len(s); i++ {
+		switch s[i] {
+		case '\'', '"', '`':
+			end := quoteEnd(s, i, esc)
+			if end < 0 {
+				return -1
+			}
+			i = end - 1
+		case '(':
+			depth++
+		case ')':
+			depth--
+			if depth == 0 {
+				return i
+			}
 		}
 	}
-	return false
+	return -1
+}
+
+// quoteEnd returns the index just past the quote that closes the one at
+// s[i], or -1 when it is unclosed. A doubled quote is an escaped quote; with
+// esc, a backslash also escapes the next byte inside a single-quoted string.
+func quoteEnd(s string, i int, esc bool) int {
+	q := s[i]
+	for j := i + 1; j < len(s); j++ {
+		switch {
+		case esc && q == '\'' && s[j] == '\\':
+			j++
+		case s[j] == q:
+			if j+1 < len(s) && s[j+1] == q {
+				j++
+				continue
+			}
+			return j + 1
+		}
+	}
+	return -1
 }
 
 // checkExpressionForColumn flattens any multi-column CHECK constraint onto each
@@ -771,11 +908,8 @@ func checkExpressionForColumn(t *parser.Table, colName string) string {
 }
 
 // checkConstraintColumns resolves the columns a CHECK constraint participates
-// in. The dialect parsers populate CheckExpression but never Constraint.Columns
-// for CHECK-typed constraints (they cannot cheaply map the boolean expression
-// back onto columns), so when Columns is empty we derive the set by matching
-// identifier tokens in the expression against the table's real column names.
-// An explicit Columns list — set by tests or a future parser — takes priority.
+// in. Parsers and introspectors set Columns on every CHECK; the expression scan
+// covers a hand-built table that leaves it empty.
 func checkConstraintColumns(t *parser.Table, c parser.Constraint) []string {
 	if len(c.Columns) > 0 {
 		return c.Columns
@@ -904,7 +1038,7 @@ func buildIndexes(t *parser.Table, tc gen.TableContext) []Index {
 			pkCols = append(pkCols, c.Name)
 		}
 		out = append(out, Index{
-			Name:    pkIndexName(t.Name),
+			Name:    pkIndexName(t),
 			Columns: pkCols,
 			Unique:  true,
 			Method:  "btree",
@@ -914,7 +1048,7 @@ func buildIndexes(t *parser.Table, tc gen.TableContext) []Index {
 		switch c.Type {
 		case parser.Unique:
 			out = append(out, Index{
-				Name:    indexNameOrDerived(c, t.Name),
+				Name:    uniqueIndexName(c, t.Name),
 				Columns: append([]string(nil), c.Columns...),
 				Unique:  true,
 				Method:  indexMethodOrDefault(c.Method),
@@ -922,7 +1056,7 @@ func buildIndexes(t *parser.Table, tc gen.TableContext) []Index {
 			})
 		case parser.Index:
 			out = append(out, Index{
-				Name:    indexNameOrDerived(c, t.Name),
+				Name:    c.Name,
 				Columns: append([]string(nil), c.Columns...),
 				Unique:  false,
 				Method:  indexMethodOrDefault(c.Method),
@@ -932,34 +1066,28 @@ func buildIndexes(t *parser.Table, tc gen.TableContext) []Index {
 			// already covered (PK) or not an index
 		}
 	}
-	// An inline column UNIQUE (`email text UNIQUE`) is recorded on the column,
-	// not in t.Constraints, but the database builds an index for it all the
-	// same (PRD §30.7 "All declared indexes"). It has no declared name, so it
-	// takes PostgreSQL's default, as the PK index takes `<table>_pkey`.
-	for _, col := range t.Columns {
-		if !col.InlineUnique {
-			continue
-		}
-		out = append(out, Index{
-			Name:    inlineUniqueIndexName(t.Name, col.Name),
-			Columns: []string{col.Name},
-			Unique:  true,
-			Method:  "btree",
-		})
-	}
 	sort.SliceStable(out, func(i, j int) bool { return out[i].Name < out[j].Name })
 	return out
 }
 
-func pkIndexName(table string) string { return table + "_pkey" }
+// pkIndexName and uniqueIndexName list an index under its constraint's name.
+// PostgreSQL and MySQL name every constraint; SQLite stores no name for an
+// unnamed one, which is listed as <table>_pkey or <table>_<cols>_key
+// (PRD §30.7).
+func pkIndexName(t *parser.Table) string {
+	for _, c := range t.Constraints {
+		if c.Type == parser.PrimaryKey && c.Name != "" {
+			return c.Name
+		}
+	}
+	return t.Name + "_pkey"
+}
 
-func inlineUniqueIndexName(table, column string) string { return table + "_" + column + "_key" }
-
-func indexNameOrDerived(c parser.Constraint, table string) string {
+func uniqueIndexName(c parser.Constraint, table string) string {
 	if c.Name != "" {
 		return c.Name
 	}
-	return table + "_" + strings.Join(c.Columns, "_") + "_idx"
+	return table + "_" + strings.Join(c.Columns, "_") + "_key"
 }
 
 // indexMethodOrDefault returns the parser-declared access method when set,

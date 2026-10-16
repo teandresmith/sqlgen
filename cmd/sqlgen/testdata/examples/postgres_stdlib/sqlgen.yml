@@ -54,6 +54,12 @@ tables:
   order_items:
     type_map:
       quantity: int32
+  # A time.Time cursor key: every page after the first decodes it from the
+  # cursor and binds it into the keyset condition.
+  categories:
+    cursor_keys:
+      - created_at
+      - id
   user_categories:
     cursor_keys:
       - user_id

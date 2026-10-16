@@ -4,6 +4,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/google/go-cmp/cmp"
+
 	"github.com/teandresmith/sqlgen/cmd/sqlgen/config"
 )
 
@@ -700,6 +702,48 @@ func TestValidatePostParse_SoftDeleteTypeMismatch(t *testing.T) {
 	}
 }
 
+// Only the types PRD §4.6 lists are compatible: generation rejects any other,
+// so validation must too.
+func TestValidatePostParse_SoftDeleteTypeOutsideList(t *testing.T) {
+	tests := []struct {
+		colType string
+		sdType  config.SoftDeleteType
+	}{
+		{colType: "bigint", sdType: config.SoftDeleteInteger},
+		{colType: "mediumint", sdType: config.SoftDeleteInteger},
+		{colType: "interval", sdType: config.SoftDeleteInteger},
+		{colType: "point", sdType: config.SoftDeleteInteger},
+		{colType: "varchar(255)", sdType: config.SoftDeleteTimestamp},
+		{colType: "text", sdType: config.SoftDeleteBool},
+		{colType: "timestamptz[]", sdType: config.SoftDeleteTimestamp},
+		{colType: "boolean[]", sdType: config.SoftDeleteBool},
+		{colType: "timestamptz(3)[]", sdType: config.SoftDeleteTimestamp},
+		{colType: "int(10)[]", sdType: config.SoftDeleteInteger},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.colType, func(t *testing.T) {
+			cfg := validConfig()
+			cfg.Generation.SoftDeleteColumns = []config.SoftDeleteConfig{
+				{Name: "soft_col", Type: tt.sdType},
+			}
+			tables := []config.SchemaTable{{
+				Name:   "items",
+				Schema: "public",
+				Columns: []config.SchemaColumn{
+					{Name: "id", Type: "bigint"},
+					{Name: "soft_col", Type: tt.colType},
+				},
+			}}
+
+			_, err := config.ValidatePostParse(cfg, tables, nil)
+			if err == nil || !strings.Contains(err.Error(), "incompatible type") {
+				t.Errorf("ValidatePostParse() error = %v, want an incompatible type error", err)
+			}
+		})
+	}
+}
+
 func TestValidatePostParse_SoftDeleteTypeMatch(t *testing.T) {
 	tests := []struct {
 		name    string
@@ -713,6 +757,18 @@ func TestValidatePostParse_SoftDeleteTypeMatch(t *testing.T) {
 		{name: "boolean matches bool", colType: "boolean", sdType: config.SoftDeleteBool},
 		{name: "bool matches bool", colType: "bool", sdType: config.SoftDeleteBool},
 		{name: "tinyint matches bool", colType: "tinyint", sdType: config.SoftDeleteBool},
+		{name: "tinyint(1) matches bool", colType: "tinyint(1)", sdType: config.SoftDeleteBool},
+		{name: "tinyint matches integer", colType: "tinyint", sdType: config.SoftDeleteInteger},
+		{name: "tinyint(1) matches integer", colType: "tinyint(1)", sdType: config.SoftDeleteInteger},
+		{name: "integer matches integer", colType: "integer", sdType: config.SoftDeleteInteger},
+		{name: "timestamp without time zone matches timestamp", colType: "timestamp without time zone", sdType: config.SoftDeleteTimestamp},
+		{name: "timestamp(6) matches timestamp", colType: "timestamp(6)", sdType: config.SoftDeleteTimestamp},
+		{name: "timestamptz(3) matches timestamp", colType: "timestamptz(3)", sdType: config.SoftDeleteTimestamp},
+		{name: "timestamp(6) with time zone matches timestamp", colType: "timestamp(6) with time zone", sdType: config.SoftDeleteTimestamp},
+		{name: "datetime(3) matches timestamp", colType: "datetime(3)", sdType: config.SoftDeleteTimestamp},
+		{name: "timestamptz(6) matches timestamp", colType: "timestamptz(6)", sdType: config.SoftDeleteTimestamp},
+		{name: "int(10) unsigned zerofill matches integer", colType: "int(10) unsigned zerofill", sdType: config.SoftDeleteInteger},
+		{name: "smallint matches integer", colType: "smallint", sdType: config.SoftDeleteInteger},
 	}
 
 	for _, tt := range tests {
@@ -728,7 +784,9 @@ func TestValidatePostParse_SoftDeleteTypeMatch(t *testing.T) {
 					Schema: "public",
 					Columns: []config.SchemaColumn{
 						{Name: "id", Type: "bigint"},
-						{Name: "soft_col", Type: tt.colType},
+						// Nullable with a DEFAULT passes every strategy's
+						// nullability rule, so only the type is under test.
+						{Name: "soft_col", Type: tt.colType, Nullable: true, HasDefault: true},
 					},
 				},
 			}
@@ -736,6 +794,189 @@ func TestValidatePostParse_SoftDeleteTypeMatch(t *testing.T) {
 			_, err := config.ValidatePostParse(cfg, tables, nil)
 			if err != nil {
 				t.Errorf("ValidatePostParse() unexpected error: %v", err)
+			}
+		})
+	}
+}
+
+// A timestamp soft delete marks a live row with NULL, so its column must be
+// nullable (PRD §4.6). Bool and integer mark a live row with FALSE / 0 and
+// accept a NOT NULL column. Only the table's first matching column counts.
+func TestValidatePostParse_SoftDeleteTimestampNullability(t *testing.T) {
+	const notNullErr = `soft_delete_columns: column "soft_col" in table public.items is NOT NULL, but a timestamp soft delete marks a live row with NULL`
+	tests := []struct {
+		name    string
+		sdCols  []config.SoftDeleteConfig
+		columns []config.SchemaColumn
+		wantErr string
+	}{
+		{
+			name:    "NOT NULL timestamp",
+			sdCols:  []config.SoftDeleteConfig{{Name: "soft_col", Type: config.SoftDeleteTimestamp}},
+			columns: []config.SchemaColumn{{Name: "soft_col", Type: "timestamptz"}},
+			wantErr: notNullErr,
+		},
+		{
+			name:    "NOT NULL datetime",
+			sdCols:  []config.SoftDeleteConfig{{Name: "soft_col", Type: config.SoftDeleteTimestamp}},
+			columns: []config.SchemaColumn{{Name: "soft_col", Type: "datetime(3)"}},
+			wantErr: notNullErr,
+		},
+		{
+			name:    "nullable timestamp",
+			sdCols:  []config.SoftDeleteConfig{{Name: "soft_col", Type: config.SoftDeleteTimestamp}},
+			columns: []config.SchemaColumn{{Name: "soft_col", Type: "timestamptz", Nullable: true}},
+		},
+		{
+			name:    "NOT NULL bool",
+			sdCols:  []config.SoftDeleteConfig{{Name: "soft_col", Type: config.SoftDeleteBool}},
+			columns: []config.SchemaColumn{{Name: "soft_col", Type: "boolean"}},
+		},
+		{
+			name:    "NOT NULL integer",
+			sdCols:  []config.SoftDeleteConfig{{Name: "soft_col", Type: config.SoftDeleteInteger}},
+			columns: []config.SchemaColumn{{Name: "soft_col", Type: "smallint"}},
+		},
+		{
+			name: "NOT NULL timestamp behind an earlier match",
+			sdCols: []config.SoftDeleteConfig{
+				{Name: "is_deleted", Type: config.SoftDeleteBool},
+				{Name: "soft_col", Type: config.SoftDeleteTimestamp},
+			},
+			columns: []config.SchemaColumn{
+				{Name: "is_deleted", Type: "boolean"},
+				{Name: "soft_col", Type: "timestamptz"},
+			},
+		},
+		{
+			name:    "NOT NULL incompatible type reports the type only",
+			sdCols:  []config.SoftDeleteConfig{{Name: "soft_col", Type: config.SoftDeleteTimestamp}},
+			columns: []config.SchemaColumn{{Name: "soft_col", Type: "text"}},
+			wantErr: `soft_delete_columns: column "soft_col" in table public.items has incompatible type "text"`,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg := validConfig()
+			cfg.Generation.SoftDeleteColumns = tt.sdCols
+			tables := []config.SchemaTable{{
+				Name:    "items",
+				Schema:  "public",
+				Columns: append([]config.SchemaColumn{{Name: "id", Type: "bigint", PrimaryKey: true}}, tt.columns...),
+			}}
+
+			_, err := config.ValidatePostParse(cfg, tables, nil)
+			if tt.wantErr == "" {
+				if err != nil {
+					t.Errorf("ValidatePostParse() unexpected error: %v", err)
+				}
+				return
+			}
+			if err == nil || !strings.Contains(err.Error(), tt.wantErr) {
+				t.Fatalf("ValidatePostParse() error = %v, want %q", err, tt.wantErr)
+			}
+			if got := strings.Count(err.Error(), "soft_delete_columns:"); got != 1 {
+				t.Errorf("ValidatePostParse() error = %v, want one soft_delete_columns error, got %d", err, got)
+			}
+		})
+	}
+}
+
+// TestValidatePostParse_SoftDeleteFlagNullability pins the bool / integer
+// mirror of the timestamp rule: those strategies mark a live row with FALSE /
+// 0, so a nullable column with no DEFAULT would hide every row created
+// without it (PRD §4.6, §17.2).
+func TestValidatePostParse_SoftDeleteFlagNullability(t *testing.T) {
+	const (
+		boolErr = `soft_delete_columns: column "soft_col" in table public.items is nullable with no DEFAULT, but soft delete type "bool" marks a live row with FALSE`
+		intErr  = `soft_delete_columns: column "soft_col" in table public.items is nullable with no DEFAULT, but soft delete type "integer" marks a live row with 0`
+	)
+	tests := []struct {
+		name    string
+		sdCols  []config.SoftDeleteConfig
+		columns []config.SchemaColumn
+		wantErr string
+	}{
+		{
+			name:    "nullable bool, no DEFAULT",
+			sdCols:  []config.SoftDeleteConfig{{Name: "soft_col", Type: config.SoftDeleteBool}},
+			columns: []config.SchemaColumn{{Name: "soft_col", Type: "boolean", Nullable: true}},
+			wantErr: boolErr,
+		},
+		{
+			name:    "nullable MySQL tinyint(1) bool, no DEFAULT",
+			sdCols:  []config.SoftDeleteConfig{{Name: "soft_col", Type: config.SoftDeleteBool}},
+			columns: []config.SchemaColumn{{Name: "soft_col", Type: "tinyint(1)", Nullable: true}},
+			wantErr: boolErr,
+		},
+		{
+			name:    "nullable integer, no DEFAULT",
+			sdCols:  []config.SoftDeleteConfig{{Name: "soft_col", Type: config.SoftDeleteInteger}},
+			columns: []config.SchemaColumn{{Name: "soft_col", Type: "smallint", Nullable: true}},
+			wantErr: intErr,
+		},
+		{
+			name:    "nullable bool with DEFAULT",
+			sdCols:  []config.SoftDeleteConfig{{Name: "soft_col", Type: config.SoftDeleteBool}},
+			columns: []config.SchemaColumn{{Name: "soft_col", Type: "boolean", Nullable: true, HasDefault: true}},
+		},
+		{
+			name:    "nullable integer with DEFAULT",
+			sdCols:  []config.SoftDeleteConfig{{Name: "soft_col", Type: config.SoftDeleteInteger}},
+			columns: []config.SchemaColumn{{Name: "soft_col", Type: "integer", Nullable: true, HasDefault: true}},
+		},
+		{
+			name:    "NOT NULL bool, no DEFAULT",
+			sdCols:  []config.SoftDeleteConfig{{Name: "soft_col", Type: config.SoftDeleteBool}},
+			columns: []config.SchemaColumn{{Name: "soft_col", Type: "boolean"}},
+		},
+		{
+			name:    "nullable timestamp, no DEFAULT",
+			sdCols:  []config.SoftDeleteConfig{{Name: "soft_col", Type: config.SoftDeleteTimestamp}},
+			columns: []config.SchemaColumn{{Name: "soft_col", Type: "timestamptz", Nullable: true}},
+		},
+		{
+			name: "nullable bool behind an earlier match",
+			sdCols: []config.SoftDeleteConfig{
+				{Name: "deleted_at", Type: config.SoftDeleteTimestamp},
+				{Name: "soft_col", Type: config.SoftDeleteBool},
+			},
+			columns: []config.SchemaColumn{
+				{Name: "deleted_at", Type: "timestamptz", Nullable: true},
+				{Name: "soft_col", Type: "boolean", Nullable: true},
+			},
+		},
+		{
+			name:    "nullable incompatible type reports the type only",
+			sdCols:  []config.SoftDeleteConfig{{Name: "soft_col", Type: config.SoftDeleteBool}},
+			columns: []config.SchemaColumn{{Name: "soft_col", Type: "text", Nullable: true}},
+			wantErr: `soft_delete_columns: column "soft_col" in table public.items has incompatible type "text"`,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg := validConfig()
+			cfg.Generation.SoftDeleteColumns = tt.sdCols
+			tables := []config.SchemaTable{{
+				Name:    "items",
+				Schema:  "public",
+				Columns: append([]config.SchemaColumn{{Name: "id", Type: "bigint", PrimaryKey: true}}, tt.columns...),
+			}}
+
+			_, err := config.ValidatePostParse(cfg, tables, nil)
+			if tt.wantErr == "" {
+				if err != nil {
+					t.Errorf("ValidatePostParse() unexpected error: %v", err)
+				}
+				return
+			}
+			if err == nil || !strings.Contains(err.Error(), tt.wantErr) {
+				t.Fatalf("ValidatePostParse() error = %v, want %q", err, tt.wantErr)
+			}
+			if got := strings.Count(err.Error(), "soft_delete_columns:"); got != 1 {
+				t.Errorf("ValidatePostParse() error = %v, want one soft_delete_columns error, got %d", err, got)
 			}
 		})
 	}
@@ -941,6 +1182,71 @@ func TestValidatePostParse_PrimaryKeyOverride_CompositeUniqueCovered(t *testing.
 		if strings.Contains(w.Message, "no UNIQUE constraint covers") {
 			t.Errorf("ValidatePostParse() emitted no-UNIQUE warning despite covering UniqueGroup: %q", w.Message)
 		}
+	}
+}
+
+// TestValidatePostParse_PrimaryKeyOverride_PKMemberCoverage pins that a
+// single-column override is covered by the schema PRIMARY KEY only when that
+// key is the column alone: one member of a composite key is not unique.
+func TestValidatePostParse_PrimaryKeyOverride_PKMemberCoverage(t *testing.T) {
+	tests := []struct {
+		name     string
+		columns  []config.SchemaColumn
+		groups   [][]string
+		wantWarn bool
+	}{
+		{
+			name: "member of a composite PK",
+			columns: []config.SchemaColumn{
+				{Name: "id", Type: "bigint", PrimaryKey: true},
+				{Name: "created_at", Type: "timestamptz", PrimaryKey: true},
+			},
+			groups:   [][]string{{"id", "created_at"}},
+			wantWarn: true,
+		},
+		{
+			name: "member of a composite PK with its own UNIQUE",
+			columns: []config.SchemaColumn{
+				{Name: "id", Type: "bigint", PrimaryKey: true, Unique: true},
+				{Name: "created_at", Type: "timestamptz", PrimaryKey: true},
+			},
+			groups: [][]string{{"id", "created_at"}},
+		},
+		{
+			name: "single-column PK",
+			columns: []config.SchemaColumn{
+				{Name: "id", Type: "bigint", PrimaryKey: true},
+				{Name: "created_at", Type: "timestamptz"},
+			},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg := validConfig()
+			cfg.Tables["timeline_events"] = config.TableConfig{
+				PrimaryKey: &config.TablePrimaryKeyConfig{Columns: []string{"id"}},
+			}
+			tables := []config.SchemaTable{{
+				Name:         "timeline_events",
+				Schema:       "public",
+				Columns:      tt.columns,
+				UniqueGroups: tt.groups,
+			}}
+
+			warnings, err := config.ValidatePostParse(cfg, tables, nil)
+			if err != nil {
+				t.Fatalf("ValidatePostParse() unexpected error: %v", err)
+			}
+			gotWarn := false
+			for _, w := range warnings {
+				if strings.Contains(w.Message, "tables.public.timeline_events.primary_key.columns: no UNIQUE constraint covers") {
+					gotWarn = true
+				}
+			}
+			if gotWarn != tt.wantWarn {
+				t.Errorf("no-UNIQUE-coverage warning = %v, want %v; warnings = %v", gotWarn, tt.wantWarn, warnings)
+			}
+		})
 	}
 }
 
@@ -1671,6 +1977,34 @@ func TestValidatePreParse_Relationships_DedupRules(t *testing.T) {
 			wantErr: false,
 		},
 		{
+			// parseRelationshipSide folds case, so the validator does too.
+			name: "upper-case side: CHILD → allowed",
+			rels: []config.TableRelationship{
+				{Name: "User", Type: "o2o", Table: "users", FK: "profile_id", Side: "CHILD"},
+			},
+			wantErr: false,
+		},
+		{
+			// parseRelationshipSide does not trim, so " child " would
+			// generate the parent side; it must fail here rather than pass.
+			name: "padded side → error",
+			rels: []config.TableRelationship{
+				{Name: "User", Type: "o2o", Table: "users", FK: "profile_id", Side: " child "},
+			},
+			wantErr:     true,
+			wantSubstr:  `tables.asset.relationships[0].side: " child " is not a valid value`,
+			wantSubstr2: "PRD §4.8",
+		},
+		{
+			name: "trailing-space side → error",
+			rels: []config.TableRelationship{
+				{Name: "User", Type: "o2o", Table: "users", FK: "profile_id", Side: "child "},
+			},
+			wantErr:     true,
+			wantSubstr:  `tables.asset.relationships[0].side: "child " is not a valid value`,
+			wantSubstr2: "PRD §4.8",
+		},
+		{
 			name: "omitted side → allowed (defaults to parent)",
 			rels: []config.TableRelationship{
 				{Name: "Profile", Type: "o2o", Table: "profiles", FK: "profile_id"},
@@ -1872,6 +2206,57 @@ func TestValidatePreParse_RelationshipLinkKeyRequired(t *testing.T) {
 	}
 }
 
+// Each relationship type, and a name and type both missing (PRD §4.8).
+func TestValidatePreParse_RelationshipNameRequired(t *testing.T) {
+	const required = ".name: required — it names the relationship's Go field on the entity struct (PRD §4.8)"
+	tests := []struct {
+		name string
+		rel  config.TableRelationship
+		want []string // nil means the config validates
+	}{
+		{
+			name: "o2o without name",
+			rel:  config.TableRelationship{Type: "o2o", Table: "owner_profiles", FK: "owner_id"},
+			want: []string{"tables.owners.relationships[0]" + required},
+		},
+		{
+			name: "o2m without name",
+			rel:  config.TableRelationship{Type: "o2m", Table: "owner_profiles", FK: "owner_id", Filter: "bio IS NOT NULL"},
+			want: []string{"tables.owners.relationships[0]" + required},
+		},
+		{
+			name: "m2m without name",
+			rel:  config.TableRelationship{Type: "m2m", Table: "tags", Junction: "owner_tags"},
+			want: []string{"tables.owners.relationships[0]" + required},
+		},
+		{
+			// The name rule does not depend on the type, so both are reported.
+			name: "neither name nor type",
+			rel:  config.TableRelationship{Table: "owner_profiles", FK: "owner_id"},
+			want: []string{"tables.owners.relationships[0]" + required, "tables.owners.relationships[0].type: required"},
+		},
+		{
+			name: "o2m with name",
+			rel:  config.TableRelationship{Name: "Profiles", Type: "o2m", Table: "owner_profiles", FK: "owner_id"},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg := validConfig()
+			cfg.Tables["owners"] = config.TableConfig{Relationships: []config.TableRelationship{tt.rel}}
+
+			_, err := config.ValidatePreParse(cfg)
+			if tt.want == nil {
+				if err != nil {
+					t.Errorf("ValidatePreParse() = %v, want nil", err)
+				}
+				return
+			}
+			assertErrContains(t, err, "ValidatePreParse()", tt.want...)
+		})
+	}
+}
+
 // ownersSchema mirrors the sqlite example's has-one pair: the parent
 // spells its key owner_key, and owner_profiles carries the owner_id FK. The
 // parent's profile_id stands in for a belongs-to FK on this side.
@@ -1960,5 +2345,352 @@ func TestValidatePostParse_RelationshipFKColumn(t *testing.T) {
 			}
 			assertErrContains(t, err, "ValidatePostParse()", tt.want...)
 		})
+	}
+}
+
+func TestValidatePreParse_ConnectionFields(t *testing.T) {
+	tests := []struct {
+		name          string
+		dialect       config.Dialect
+		source        config.Source
+		connection    *config.ConnectionConfig
+		wantErrFields []string
+	}{
+		{name: "postgres with no fields reports all three", dialect: config.DialectPostgres, source: config.SourceDatabase, connection: &config.ConnectionConfig{}, wantErrFields: []string{"host", "user", "database"}},
+		{name: "mysql with no fields reports all three", dialect: config.DialectMySQL, source: config.SourceDatabase, connection: &config.ConnectionConfig{}, wantErrFields: []string{"host", "user", "database"}},
+		{name: "sqlite needs only database", dialect: config.DialectSQLite, source: config.SourceDatabase, connection: &config.ConnectionConfig{}, wantErrFields: []string{"database"}},
+		{name: "postgres missing host", dialect: config.DialectPostgres, source: config.SourceBoth, connection: &config.ConnectionConfig{User: "app", Database: "app"}, wantErrFields: []string{"host"}},
+		{name: "postgres missing user", dialect: config.DialectPostgres, source: config.SourceDatabase, connection: &config.ConnectionConfig{Host: "localhost", Database: "app"}, wantErrFields: []string{"user"}},
+		{name: "mysql missing database", dialect: config.DialectMySQL, source: config.SourceBoth, connection: &config.ConnectionConfig{Host: "localhost", User: "app"}, wantErrFields: []string{"database"}},
+		{name: "port is not required", dialect: config.DialectMySQL, source: config.SourceDatabase, connection: &config.ConnectionConfig{Host: "localhost", User: "app", Database: "app"}},
+		{name: "sqlite ignores host and user", dialect: config.DialectSQLite, source: config.SourceDatabase, connection: &config.ConnectionConfig{Database: "app.db"}},
+		{name: "mysql user containing a colon", dialect: config.DialectMySQL, source: config.SourceDatabase, connection: &config.ConnectionConfig{Host: "localhost", User: "ap:p", Database: "app"}, wantErrFields: []string{"user"}},
+		{name: "mysql user containing a colon and missing host", dialect: config.DialectMySQL, source: config.SourceDatabase, connection: &config.ConnectionConfig{User: "ap:p", Database: "app"}, wantErrFields: []string{"host", "user"}},
+		{name: "mysql url skips the colon rule", dialect: config.DialectMySQL, source: config.SourceDatabase, connection: &config.ConnectionConfig{URL: "u@tcp(h)/d", User: "ap:p"}},
+		{name: "postgres user containing a colon", dialect: config.DialectPostgres, source: config.SourceDatabase, connection: &config.ConnectionConfig{Host: "localhost", User: "ap:p", Database: "app"}},
+		{name: "postgres socket host", dialect: config.DialectPostgres, source: config.SourceDatabase, connection: &config.ConnectionConfig{Host: "/var/run/postgresql", User: "app", Database: "app"}},
+		{name: "url skips the rule", dialect: config.DialectPostgres, source: config.SourceDatabase, connection: &config.ConnectionConfig{URL: "postgres://localhost/app"}},
+		{name: "files source does not read the connection", dialect: config.DialectPostgres, source: config.SourceFiles, connection: &config.ConnectionConfig{}},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg := validConfig()
+			cfg.Input.Dialect = tt.dialect
+			cfg.Input.Source = tt.source
+			cfg.Input.Connection = tt.connection
+			cfg.Output.Driver = "stdlib"
+
+			_, err := config.ValidatePreParse(cfg)
+			var got []string
+			if err != nil {
+				for line := range strings.SplitSeq(err.Error(), "\n") {
+					field, ok := strings.CutPrefix(line, "input.connection.")
+					if !ok {
+						t.Errorf("ValidatePreParse() unexpected error: %s", line)
+						continue
+					}
+					name, _, _ := strings.Cut(field, " ")
+					got = append(got, name)
+				}
+			}
+			if diff := cmp.Diff(tt.wantErrFields, got); diff != "" {
+				t.Errorf("ValidatePreParse() connection field errors mismatch (-want +got):\n%s\nerror: %v", diff, err)
+			}
+		})
+	}
+}
+
+// TestLoadConfig_SQLGENDBURLSatisfiesConnectionFields checks the env var is a
+// `url` for the required-field rule, with or without a connection block.
+func TestLoadConfig_SQLGENDBURLSatisfiesConnectionFields(t *testing.T) {
+	tests := []struct {
+		name    string
+		yaml    string
+		envURL  string
+		wantErr bool
+	}{
+		{name: "no connection block, env url set", yaml: "input:\n  source: database\n", envURL: "postgres://env/db"},
+		{name: "partial fields, env url set", yaml: "input:\n  source: database\n  connection:\n    host: localhost\n", envURL: "postgres://env/db"},
+		{name: "partial fields, env url unset", yaml: "input:\n  source: database\n  connection:\n    host: localhost\n", wantErr: true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Setenv("SQLGEN_DB_URL", tt.envURL)
+			cfg, err := config.LoadConfig(writeTestConfig(t, tt.yaml+"output:\n  dir: ./models\n"))
+			if err != nil {
+				t.Fatalf("LoadConfig() unexpected error: %v", err)
+			}
+			_, err = config.ValidatePreParse(cfg)
+			if gotErr := err != nil; gotErr != tt.wantErr {
+				t.Errorf("ValidatePreParse() error = %v, want error %v", err, tt.wantErr)
+			}
+		})
+	}
+}
+
+func TestValidatePreParse_IgnoredInputKeys(t *testing.T) {
+	const conn = "  connection:\n    url: postgres://localhost/app\n"
+	tests := []struct {
+		name  string
+		input string
+		want  []string
+	}{
+		{name: "database with explicit paths", input: "  source: database\n  paths: [./migrations]\n" + conn, want: []string{"input.paths is ignored under input.source: database"}},
+		{name: "database with explicit default paths", input: "  source: database\n  paths: [\".\"]\n" + conn, want: []string{"input.paths is ignored under input.source: database"}},
+		{name: "database with empty paths", input: "  source: database\n  paths: []\n" + conn, want: []string{"input.paths is ignored under input.source: database"}},
+		{name: "database with null paths", input: "  source: database\n  paths: ~\n" + conn, want: []string{"input.paths is ignored under input.source: database"}},
+		{name: "database with defaulted paths", input: "  source: database\n" + conn},
+		{name: "database with introspect", input: "  source: database\n  introspect:\n    tables: [users]\n" + conn},
+		{name: "files with introspect tables", input: "  source: files\n  introspect:\n    tables: [users]\n", want: []string{"input.introspect.tables is ignored under input.source: files"}},
+		{
+			name:  "files with every introspect field",
+			input: "  source: files\n  introspect:\n    schemas: [public]\n    exclude_schemas: [audit]\n    tables: [users]\n",
+			want: []string{
+				"input.introspect.schemas is ignored under input.source: files",
+				"input.introspect.exclude_schemas is ignored under input.source: files",
+				"input.introspect.tables is ignored under input.source: files",
+			},
+		},
+		{name: "files with an empty introspect block", input: "  source: files\n  introspect: {}\n"},
+		{name: "files with no introspect", input: "  source: files\n  paths: [./migrations]\n"},
+		{name: "both reads paths and introspect", input: "  source: both\n  paths: [./migrations]\n  introspect:\n    tables: [users]\n" + conn},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg, err := config.LoadConfig(writeTestConfig(t, "input:\n"+tt.input+"output:\n  dir: ./models\n"))
+			if err != nil {
+				t.Fatalf("LoadConfig() unexpected error: %v", err)
+			}
+			warnings, err := config.ValidatePreParse(cfg)
+			if err != nil {
+				t.Fatalf("ValidatePreParse() unexpected error: %v", err)
+			}
+			var got []string
+			for _, w := range warnings {
+				if strings.Contains(w.Message, "is ignored under input.source") {
+					got = append(got, w.Message)
+				}
+			}
+			if diff := cmp.Diff(tt.want, got); diff != "" {
+				t.Errorf("ValidatePreParse() ignored-key warnings mismatch (-want +got):\n%s", diff)
+			}
+		})
+	}
+}
+
+func TestValidatePreParse_IgnoredIntrospectSchemas(t *testing.T) {
+	const schemas = "  introspect:\n    schemas: [app]\n    exclude_schemas: [audit]\n    tables: [users]\n"
+	tests := []struct {
+		name  string
+		input string
+		want  []string
+	}{
+		{
+			name:  "mysql database",
+			input: "  dialect: mysql\n  source: database\n  connection:\n    url: app@tcp(db)/app\n" + schemas,
+			want: []string{
+				"input.introspect.schemas is ignored on mysql, which has no schemas",
+				"input.introspect.exclude_schemas is ignored on mysql, which has no schemas",
+			},
+		},
+		{
+			name:  "sqlite both",
+			input: "  dialect: sqlite\n  source: both\n  connection:\n    database: app.db\n" + schemas,
+			want: []string{
+				"input.introspect.schemas is ignored on sqlite, which has no schemas",
+				"input.introspect.exclude_schemas is ignored on sqlite, which has no schemas",
+			},
+		},
+		{name: "sqlite tables only", input: "  dialect: sqlite\n  source: database\n  connection:\n    database: app.db\n  introspect:\n    tables: [users]\n"},
+		{name: "postgres reads schemas", input: "  dialect: postgres\n  source: database\n  connection:\n    url: postgres://db/app\n" + schemas},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg, err := config.LoadConfig(writeTestConfig(t, "input:\n"+tt.input+"output:\n  driver: stdlib\n  dir: ./models\n"))
+			if err != nil {
+				t.Fatalf("LoadConfig() unexpected error: %v", err)
+			}
+			warnings, err := config.ValidatePreParse(cfg)
+			if err != nil {
+				t.Fatalf("ValidatePreParse() unexpected error: %v", err)
+			}
+			var got []string
+			for _, w := range warnings {
+				if strings.Contains(w.Message, "which has no schemas") {
+					got = append(got, w.Message)
+				}
+			}
+			if diff := cmp.Diff(tt.want, got); diff != "" {
+				t.Errorf("ValidatePreParse() warnings mismatch (-want +got):\n%s", diff)
+			}
+		})
+	}
+}
+
+func TestValidatePreParse_IgnoredPasswordEnv(t *testing.T) {
+	const warning = "SQLGEN_DB_PASSWORD is ignored: the connection comes from "
+	tests := []struct {
+		name     string
+		input    string
+		envURL   string
+		envPW    string
+		wantFrom string // empty: no warning
+	}{
+		{name: "config url without the reference", input: "  source: database\n  connection:\n    url: postgres://app@db/app\n", envPW: "s3cret", wantFrom: "input.connection.url"},
+		{name: "config url with the reference", input: "  source: database\n  connection:\n    url: postgres://app:${SQLGEN_DB_PASSWORD}@db/app\n", envPW: "s3cret"},
+		{name: "env url", input: "  source: both\n  connection:\n    host: db\n", envURL: "postgres://app@db/app", envPW: "s3cret", wantFrom: "SQLGEN_DB_URL"},
+		{name: "env url replaces a config url with the reference", input: "  source: database\n  connection:\n    url: postgres://app:${SQLGEN_DB_PASSWORD}@db/app\n", envURL: "postgres://app@db/app", envPW: "s3cret", wantFrom: "SQLGEN_DB_URL"},
+		{name: "individual fields", input: "  source: database\n  connection:\n    host: db\n    user: app\n    database: app\n", envPW: "s3cret"},
+		{name: "files source", input: "  source: files\n  connection:\n    url: postgres://app@db/app\n", envPW: "s3cret"},
+		{name: "password unset", input: "  source: database\n  connection:\n    url: postgres://app@db/app\n"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Setenv("SQLGEN_DB_URL", tt.envURL)
+			t.Setenv("SQLGEN_DB_PASSWORD", tt.envPW)
+			cfg, err := config.LoadConfig(writeTestConfig(t, "input:\n"+tt.input+"output:\n  dir: ./models\n"))
+			if err != nil {
+				t.Fatalf("LoadConfig() unexpected error: %v", err)
+			}
+			warnings, err := config.ValidatePreParse(cfg)
+			if err != nil {
+				t.Fatalf("ValidatePreParse() unexpected error: %v", err)
+			}
+			var got []string
+			for _, w := range warnings {
+				if strings.Contains(w.Message, "SQLGEN_DB_PASSWORD") {
+					got = append(got, w.Message)
+				}
+			}
+			switch {
+			case tt.wantFrom == "" && len(got) > 0:
+				t.Errorf("warnings = %q, want no SQLGEN_DB_PASSWORD warning", got)
+			case tt.wantFrom != "" && (len(got) != 1 || !strings.Contains(got[0], warning+tt.wantFrom)):
+				t.Errorf("warnings = %q, want one containing %q", got, warning+tt.wantFrom)
+			}
+		})
+	}
+}
+
+// TestValidatePostParse_CursorKeys_Nullable pins that a nullable column never
+// resolves as a cursor key (PRD §4.13): a NULL key value encodes into a cursor
+// that cannot be decoded back, so every row past it is unreachable. An
+// explicit key naming one is an error; an inherited key naming one is
+// unresolved, and takes the missing-column path.
+func TestValidatePostParse_CursorKeys_Nullable(t *testing.T) {
+	tables := []config.SchemaTable{
+		{
+			Name:   "orders",
+			Schema: "public",
+			Columns: []config.SchemaColumn{
+				{Name: "id", Type: "bigint", PrimaryKey: true},
+				{Name: "shipped_at", Type: "timestamp", Nullable: true},
+			},
+		},
+		{
+			Name:   "audit_events",
+			Schema: "public",
+			Columns: []config.SchemaColumn{
+				{Name: "shipped_at", Type: "timestamp", Nullable: true},
+			},
+		},
+	}
+	views := []config.SchemaView{
+		{
+			Name:   "order_totals",
+			Schema: "public",
+			Columns: []config.SchemaColumn{
+				{Name: "shipped_at", Type: "timestamp", Nullable: true},
+			},
+		},
+	}
+	tests := []struct {
+		name         string
+		inherited    []string
+		tableKeys    []string
+		viewKeys     []string
+		wantErr      string
+		wantWarnings []string
+	}{
+		{
+			name:      "explicit table key",
+			inherited: []string{"id"},
+			tableKeys: []string{"shipped_at", "id"},
+			wantErr:   `cursor_keys: column "shipped_at" in table public.orders is nullable; a cursor key must be NOT NULL`,
+			wantWarnings: []string{
+				`cursor_keys: inherited default does not resolve on table public.audit_events (column "id" is missing) and no primary key is available; Connection method omitted`,
+				`cursor_keys: inherited default does not resolve on view public.order_totals (column "id" is missing); Connection method omitted (views have no primary key fallback)`,
+			},
+		},
+		{
+			name:      "explicit view key",
+			inherited: []string{"id"},
+			viewKeys:  []string{"shipped_at"},
+			wantErr:   `cursor_keys: column "shipped_at" in view public.order_totals is nullable; a cursor key must be NOT NULL`,
+			wantWarnings: []string{
+				`cursor_keys: inherited default does not resolve on table public.audit_events (column "id" is missing) and no primary key is available; Connection method omitted`,
+			},
+		},
+		{
+			// orders falls back to its PK silently; the PK-less table and
+			// the view omit Connection with a warning.
+			name:      "inherited key",
+			inherited: []string{"shipped_at"},
+			wantWarnings: []string{
+				`cursor_keys: inherited default does not resolve on table public.audit_events (column "shipped_at" is nullable) and no primary key is available; Connection method omitted`,
+				`cursor_keys: inherited default does not resolve on view public.order_totals (column "shipped_at" is nullable); Connection method omitted (views have no primary key fallback)`,
+			},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg := validConfig()
+			cfg.Generation.CursorKeys = tt.inherited
+			if tt.tableKeys != nil {
+				cfg.Tables["public.orders"] = config.TableConfig{CursorKeys: tt.tableKeys}
+			}
+			if tt.viewKeys != nil {
+				cfg.Views["public.order_totals"] = config.ViewConfig{CursorKeys: tt.viewKeys}
+			}
+
+			warnings, err := config.ValidatePostParse(cfg, tables, views)
+			gotErr := ""
+			if err != nil {
+				gotErr = err.Error()
+			}
+			if gotErr != tt.wantErr {
+				t.Errorf("ValidatePostParse() error = %q, want %q", gotErr, tt.wantErr)
+			}
+			var gotWarnings []string
+			for _, w := range warnings {
+				if strings.Contains(w.Message, "cursor_keys") {
+					gotWarnings = append(gotWarnings, w.Message)
+				}
+			}
+			if diff := cmp.Diff(tt.wantWarnings, gotWarnings); diff != "" {
+				t.Errorf("ValidatePostParse() cursor_keys warnings mismatch (-want +got):\n%s", diff)
+			}
+		})
+	}
+}
+
+// TestResolveTableConnection_NullableInheritedKeyFallsBackToPK pins the keys
+// an unresolved inherited key falls back to: the table's PK, never the
+// subset of keys that would resolve.
+func TestResolveTableConnection_NullableInheritedKeyFallsBackToPK(t *testing.T) {
+	global := config.GenerationConfig{CursorKeys: []string{"created_at", "id"}}
+	columns := []config.SchemaColumn{
+		{Name: "id", PrimaryKey: true},
+		{Name: "created_at", Nullable: true},
+	}
+	got := config.ResolveTableConnection(config.TableConfig{}, global, "public.orders", columns, []string{"id"})
+	want := config.CursorKeysDecision{Keys: []string{"id"}, Emit: true}
+	if diff := cmp.Diff(want, got); diff != "" {
+		t.Errorf("ResolveTableConnection() mismatch (-want +got):\n%s", diff)
 	}
 }

@@ -49,7 +49,9 @@ func RegisterLayout(layout string) {
 
 // SetOutputLayout sets the time layout used by DateTime.Value and
 // NullDateTime.Value when marshaling to the database. The default is
-// time.RFC3339Nano.
+// time.RFC3339Nano. A statement sqlgen's SQL builders produce for SQLite or
+// MySQL does not call Value: SQLite binds the time as the text SQLite's
+// datetime() writes, and MySQL binds the time.Time itself.
 //
 // SetOutputLayout is safe for concurrent use.
 func SetOutputLayout(layout string) {

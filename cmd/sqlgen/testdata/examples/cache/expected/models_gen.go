@@ -1988,14 +1988,14 @@ func (c *articleClient) Connection(ctx context.Context, input ConnectionInput[Ar
 		// Decode cursors and build keyset conditions
 		var keysetConds []sql.Condition
 		if input.After != nil {
-			cursor, err := decodeCursor(*input.After)
+			cursor, err := decodeArticleCursor(*input.After, c.cursorKeys)
 			if err != nil {
 				return nil, ErrInvalidCursor
 			}
 			keysetConds = append(keysetConds, cursorKeyset(c.dialect, c.cursorKeys, cursor, ">"))
 		}
 		if input.Before != nil {
-			cursor, err := decodeCursor(*input.Before)
+			cursor, err := decodeArticleCursor(*input.Before, c.cursorKeys)
 			if err != nil {
 				return nil, ErrInvalidCursor
 			}
@@ -2094,6 +2094,31 @@ func encodeArticleCursor(keys []string, a *Article) (string, error) {
 		return "", fmt.Errorf("encode article cursor: %w", err)
 	}
 	return base64.StdEncoding.EncodeToString(data), nil
+}
+
+// decodeArticleCursor decodes a cursor string into its key values,
+// each unmarshaled into the key column's Go type.
+func decodeArticleCursor(encoded string, keys []string) (map[string]any, error) {
+	raw, err := decodeCursor(encoded, keys)
+	if err != nil {
+		return nil, err
+	}
+	var row Article
+	out := make(map[string]any, len(keys))
+	for _, key := range keys {
+		switch key {
+		case "id":
+			err = json.Unmarshal(raw[key], &row.ID)
+			out[key] = row.ID
+		}
+		if err != nil {
+			return nil, err
+		}
+		if cursorValueIsNull(out[key]) {
+			return nil, ErrInvalidCursor
+		}
+	}
+	return out, nil
 }
 
 // StreamArticlesInput holds query parameters for streaming articles records.
@@ -3967,14 +3992,14 @@ func (c *auditLogClient) Connection(ctx context.Context, input ConnectionInput[A
 		// Decode cursors and build keyset conditions
 		var keysetConds []sql.Condition
 		if input.After != nil {
-			cursor, err := decodeCursor(*input.After)
+			cursor, err := decodeAuditLogCursor(*input.After, c.cursorKeys)
 			if err != nil {
 				return nil, ErrInvalidCursor
 			}
 			keysetConds = append(keysetConds, cursorKeyset(c.dialect, c.cursorKeys, cursor, ">"))
 		}
 		if input.Before != nil {
-			cursor, err := decodeCursor(*input.Before)
+			cursor, err := decodeAuditLogCursor(*input.Before, c.cursorKeys)
 			if err != nil {
 				return nil, ErrInvalidCursor
 			}
@@ -4067,6 +4092,31 @@ func encodeAuditLogCursor(keys []string, a *AuditLog) (string, error) {
 		return "", fmt.Errorf("encode audit_log cursor: %w", err)
 	}
 	return base64.StdEncoding.EncodeToString(data), nil
+}
+
+// decodeAuditLogCursor decodes a cursor string into its key values,
+// each unmarshaled into the key column's Go type.
+func decodeAuditLogCursor(encoded string, keys []string) (map[string]any, error) {
+	raw, err := decodeCursor(encoded, keys)
+	if err != nil {
+		return nil, err
+	}
+	var row AuditLog
+	out := make(map[string]any, len(keys))
+	for _, key := range keys {
+		switch key {
+		case "id":
+			err = json.Unmarshal(raw[key], &row.ID)
+			out[key] = row.ID
+		}
+		if err != nil {
+			return nil, err
+		}
+		if cursorValueIsNull(out[key]) {
+			return nil, ErrInvalidCursor
+		}
+	}
+	return out, nil
 }
 
 // StreamAuditLogsInput holds query parameters for streaming audit_logs records.
@@ -5655,14 +5705,14 @@ func (c *orderItemClient) Connection(ctx context.Context, input ConnectionInput[
 		// Decode cursors and build keyset conditions
 		var keysetConds []sql.Condition
 		if input.After != nil {
-			cursor, err := decodeCursor(*input.After)
+			cursor, err := decodeOrderItemCursor(*input.After, c.cursorKeys)
 			if err != nil {
 				return nil, ErrInvalidCursor
 			}
 			keysetConds = append(keysetConds, cursorKeyset(c.dialect, c.cursorKeys, cursor, ">"))
 		}
 		if input.Before != nil {
-			cursor, err := decodeCursor(*input.Before)
+			cursor, err := decodeOrderItemCursor(*input.Before, c.cursorKeys)
 			if err != nil {
 				return nil, ErrInvalidCursor
 			}
@@ -5757,6 +5807,34 @@ func encodeOrderItemCursor(keys []string, o *OrderItem) (string, error) {
 		return "", fmt.Errorf("encode order_item cursor: %w", err)
 	}
 	return base64.StdEncoding.EncodeToString(data), nil
+}
+
+// decodeOrderItemCursor decodes a cursor string into its key values,
+// each unmarshaled into the key column's Go type.
+func decodeOrderItemCursor(encoded string, keys []string) (map[string]any, error) {
+	raw, err := decodeCursor(encoded, keys)
+	if err != nil {
+		return nil, err
+	}
+	var row OrderItem
+	out := make(map[string]any, len(keys))
+	for _, key := range keys {
+		switch key {
+		case "order_id":
+			err = json.Unmarshal(raw[key], &row.OrderID)
+			out[key] = row.OrderID
+		case "product_id":
+			err = json.Unmarshal(raw[key], &row.ProductID)
+			out[key] = row.ProductID
+		}
+		if err != nil {
+			return nil, err
+		}
+		if cursorValueIsNull(out[key]) {
+			return nil, ErrInvalidCursor
+		}
+	}
+	return out, nil
 }
 
 // StreamOrderItemsInput holds query parameters for streaming order_items records.
@@ -7701,14 +7779,14 @@ func (c *productClient) Connection(ctx context.Context, input ConnectionInput[Pr
 		// Decode cursors and build keyset conditions
 		var keysetConds []sql.Condition
 		if input.After != nil {
-			cursor, err := decodeCursor(*input.After)
+			cursor, err := decodeProductCursor(*input.After, c.cursorKeys)
 			if err != nil {
 				return nil, ErrInvalidCursor
 			}
 			keysetConds = append(keysetConds, cursorKeyset(c.dialect, c.cursorKeys, cursor, ">"))
 		}
 		if input.Before != nil {
-			cursor, err := decodeCursor(*input.Before)
+			cursor, err := decodeProductCursor(*input.Before, c.cursorKeys)
 			if err != nil {
 				return nil, ErrInvalidCursor
 			}
@@ -7807,6 +7885,31 @@ func encodeProductCursor(keys []string, p *Product) (string, error) {
 		return "", fmt.Errorf("encode product cursor: %w", err)
 	}
 	return base64.StdEncoding.EncodeToString(data), nil
+}
+
+// decodeProductCursor decodes a cursor string into its key values,
+// each unmarshaled into the key column's Go type.
+func decodeProductCursor(encoded string, keys []string) (map[string]any, error) {
+	raw, err := decodeCursor(encoded, keys)
+	if err != nil {
+		return nil, err
+	}
+	var row Product
+	out := make(map[string]any, len(keys))
+	for _, key := range keys {
+		switch key {
+		case "id":
+			err = json.Unmarshal(raw[key], &row.ID)
+			out[key] = row.ID
+		}
+		if err != nil {
+			return nil, err
+		}
+		if cursorValueIsNull(out[key]) {
+			return nil, ErrInvalidCursor
+		}
+	}
+	return out, nil
 }
 
 // StreamProductsInput holds query parameters for streaming products records.
@@ -9713,14 +9816,14 @@ func (c *profileClient) Connection(ctx context.Context, input ConnectionInput[Pr
 		// Decode cursors and build keyset conditions
 		var keysetConds []sql.Condition
 		if input.After != nil {
-			cursor, err := decodeCursor(*input.After)
+			cursor, err := decodeProfileCursor(*input.After, c.cursorKeys)
 			if err != nil {
 				return nil, ErrInvalidCursor
 			}
 			keysetConds = append(keysetConds, cursorKeyset(c.dialect, c.cursorKeys, cursor, ">"))
 		}
 		if input.Before != nil {
-			cursor, err := decodeCursor(*input.Before)
+			cursor, err := decodeProfileCursor(*input.Before, c.cursorKeys)
 			if err != nil {
 				return nil, ErrInvalidCursor
 			}
@@ -9813,6 +9916,31 @@ func encodeProfileCursor(keys []string, p *Profile) (string, error) {
 		return "", fmt.Errorf("encode profile cursor: %w", err)
 	}
 	return base64.StdEncoding.EncodeToString(data), nil
+}
+
+// decodeProfileCursor decodes a cursor string into its key values,
+// each unmarshaled into the key column's Go type.
+func decodeProfileCursor(encoded string, keys []string) (map[string]any, error) {
+	raw, err := decodeCursor(encoded, keys)
+	if err != nil {
+		return nil, err
+	}
+	var row Profile
+	out := make(map[string]any, len(keys))
+	for _, key := range keys {
+		switch key {
+		case "id":
+			err = json.Unmarshal(raw[key], &row.ID)
+			out[key] = row.ID
+		}
+		if err != nil {
+			return nil, err
+		}
+		if cursorValueIsNull(out[key]) {
+			return nil, ErrInvalidCursor
+		}
+	}
+	return out, nil
 }
 
 // StreamProfilesInput holds query parameters for streaming profiles records.
@@ -11829,14 +11957,14 @@ func (c *userClient) Connection(ctx context.Context, input ConnectionInput[UserF
 		// Decode cursors and build keyset conditions
 		var keysetConds []sql.Condition
 		if input.After != nil {
-			cursor, err := decodeCursor(*input.After)
+			cursor, err := decodeUserCursor(*input.After, c.cursorKeys)
 			if err != nil {
 				return nil, ErrInvalidCursor
 			}
 			keysetConds = append(keysetConds, cursorKeyset(c.dialect, c.cursorKeys, cursor, ">"))
 		}
 		if input.Before != nil {
-			cursor, err := decodeCursor(*input.Before)
+			cursor, err := decodeUserCursor(*input.Before, c.cursorKeys)
 			if err != nil {
 				return nil, ErrInvalidCursor
 			}
@@ -11929,6 +12057,31 @@ func encodeUserCursor(keys []string, u *User) (string, error) {
 		return "", fmt.Errorf("encode user cursor: %w", err)
 	}
 	return base64.StdEncoding.EncodeToString(data), nil
+}
+
+// decodeUserCursor decodes a cursor string into its key values,
+// each unmarshaled into the key column's Go type.
+func decodeUserCursor(encoded string, keys []string) (map[string]any, error) {
+	raw, err := decodeCursor(encoded, keys)
+	if err != nil {
+		return nil, err
+	}
+	var row User
+	out := make(map[string]any, len(keys))
+	for _, key := range keys {
+		switch key {
+		case "id":
+			err = json.Unmarshal(raw[key], &row.ID)
+			out[key] = row.ID
+		}
+		if err != nil {
+			return nil, err
+		}
+		if cursorValueIsNull(out[key]) {
+			return nil, ErrInvalidCursor
+		}
+	}
+	return out, nil
 }
 
 // StreamUsersInput holds query parameters for streaming users records.

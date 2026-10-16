@@ -1642,14 +1642,14 @@ func (c *eventClient) Connection(ctx context.Context, input ConnectionInput[Even
 		// Decode cursors and build keyset conditions
 		var keysetConds []sql.Condition
 		if input.After != nil {
-			cursor, err := decodeCursor(*input.After)
+			cursor, err := decodeEventCursor(*input.After, c.cursorKeys)
 			if err != nil {
 				return nil, ErrInvalidCursor
 			}
 			keysetConds = append(keysetConds, cursorKeyset(c.dialect, c.cursorKeys, cursor, ">"))
 		}
 		if input.Before != nil {
-			cursor, err := decodeCursor(*input.Before)
+			cursor, err := decodeEventCursor(*input.Before, c.cursorKeys)
 			if err != nil {
 				return nil, ErrInvalidCursor
 			}
@@ -1744,6 +1744,31 @@ func encodeEventCursor(keys []string, e *Event) (string, error) {
 		return "", fmt.Errorf("encode event cursor: %w", err)
 	}
 	return base64.StdEncoding.EncodeToString(data), nil
+}
+
+// decodeEventCursor decodes a cursor string into its key values,
+// each unmarshaled into the key column's Go type.
+func decodeEventCursor(encoded string, keys []string) (map[string]any, error) {
+	raw, err := decodeCursor(encoded, keys)
+	if err != nil {
+		return nil, err
+	}
+	var row Event
+	out := make(map[string]any, len(keys))
+	for _, key := range keys {
+		switch key {
+		case "id":
+			err = json.Unmarshal(raw[key], &row.ID)
+			out[key] = row.ID
+		}
+		if err != nil {
+			return nil, err
+		}
+		if cursorValueIsNull(out[key]) {
+			return nil, ErrInvalidCursor
+		}
+	}
+	return out, nil
 }
 
 // StreamEventsInput holds query parameters for streaming events records.
@@ -3599,14 +3624,14 @@ func (c *noteWatcherClient) Connection(ctx context.Context, input ConnectionInpu
 		// Decode cursors and build keyset conditions
 		var keysetConds []sql.Condition
 		if input.After != nil {
-			cursor, err := decodeCursor(*input.After)
+			cursor, err := decodeNoteWatcherCursor(*input.After, c.cursorKeys)
 			if err != nil {
 				return nil, ErrInvalidCursor
 			}
 			keysetConds = append(keysetConds, cursorKeyset(c.dialect, c.cursorKeys, cursor, ">"))
 		}
 		if input.Before != nil {
-			cursor, err := decodeCursor(*input.Before)
+			cursor, err := decodeNoteWatcherCursor(*input.Before, c.cursorKeys)
 			if err != nil {
 				return nil, ErrInvalidCursor
 			}
@@ -3697,6 +3722,34 @@ func encodeNoteWatcherCursor(keys []string, n *NoteWatcher) (string, error) {
 		return "", fmt.Errorf("encode note_watcher cursor: %w", err)
 	}
 	return base64.StdEncoding.EncodeToString(data), nil
+}
+
+// decodeNoteWatcherCursor decodes a cursor string into its key values,
+// each unmarshaled into the key column's Go type.
+func decodeNoteWatcherCursor(encoded string, keys []string) (map[string]any, error) {
+	raw, err := decodeCursor(encoded, keys)
+	if err != nil {
+		return nil, err
+	}
+	var row NoteWatcher
+	out := make(map[string]any, len(keys))
+	for _, key := range keys {
+		switch key {
+		case "user_id":
+			err = json.Unmarshal(raw[key], &row.UserID)
+			out[key] = row.UserID
+		case "note_id":
+			err = json.Unmarshal(raw[key], &row.NoteID)
+			out[key] = row.NoteID
+		}
+		if err != nil {
+			return nil, err
+		}
+		if cursorValueIsNull(out[key]) {
+			return nil, ErrInvalidCursor
+		}
+	}
+	return out, nil
 }
 
 // StreamNoteWatchersInput holds query parameters for streaming note_watchers records.
@@ -5570,14 +5623,14 @@ func (c *auditNoteClient) Connection(ctx context.Context, input ConnectionInput[
 		// Decode cursors and build keyset conditions
 		var keysetConds []sql.Condition
 		if input.After != nil {
-			cursor, err := decodeCursor(*input.After)
+			cursor, err := decodeAuditNoteCursor(*input.After, c.cursorKeys)
 			if err != nil {
 				return nil, ErrInvalidCursor
 			}
 			keysetConds = append(keysetConds, cursorKeyset(c.dialect, c.cursorKeys, cursor, ">"))
 		}
 		if input.Before != nil {
-			cursor, err := decodeCursor(*input.Before)
+			cursor, err := decodeAuditNoteCursor(*input.Before, c.cursorKeys)
 			if err != nil {
 				return nil, ErrInvalidCursor
 			}
@@ -5672,6 +5725,31 @@ func encodeAuditNoteCursor(keys []string, a *AuditNote) (string, error) {
 		return "", fmt.Errorf("encode note cursor: %w", err)
 	}
 	return base64.StdEncoding.EncodeToString(data), nil
+}
+
+// decodeAuditNoteCursor decodes a cursor string into its key values,
+// each unmarshaled into the key column's Go type.
+func decodeAuditNoteCursor(encoded string, keys []string) (map[string]any, error) {
+	raw, err := decodeCursor(encoded, keys)
+	if err != nil {
+		return nil, err
+	}
+	var row AuditNote
+	out := make(map[string]any, len(keys))
+	for _, key := range keys {
+		switch key {
+		case "id":
+			err = json.Unmarshal(raw[key], &row.ID)
+			out[key] = row.ID
+		}
+		if err != nil {
+			return nil, err
+		}
+		if cursorValueIsNull(out[key]) {
+			return nil, ErrInvalidCursor
+		}
+	}
+	return out, nil
 }
 
 // StreamAuditNotesInput holds query parameters for streaming notes records.
@@ -7886,14 +7964,14 @@ func (c *auditUserClient) Connection(ctx context.Context, input ConnectionInput[
 		// Decode cursors and build keyset conditions
 		var keysetConds []sql.Condition
 		if input.After != nil {
-			cursor, err := decodeCursor(*input.After)
+			cursor, err := decodeAuditUserCursor(*input.After, c.cursorKeys)
 			if err != nil {
 				return nil, ErrInvalidCursor
 			}
 			keysetConds = append(keysetConds, cursorKeyset(c.dialect, c.cursorKeys, cursor, ">"))
 		}
 		if input.Before != nil {
-			cursor, err := decodeCursor(*input.Before)
+			cursor, err := decodeAuditUserCursor(*input.Before, c.cursorKeys)
 			if err != nil {
 				return nil, ErrInvalidCursor
 			}
@@ -7990,6 +8068,31 @@ func encodeAuditUserCursor(keys []string, a *AuditUser) (string, error) {
 		return "", fmt.Errorf("encode user cursor: %w", err)
 	}
 	return base64.StdEncoding.EncodeToString(data), nil
+}
+
+// decodeAuditUserCursor decodes a cursor string into its key values,
+// each unmarshaled into the key column's Go type.
+func decodeAuditUserCursor(encoded string, keys []string) (map[string]any, error) {
+	raw, err := decodeCursor(encoded, keys)
+	if err != nil {
+		return nil, err
+	}
+	var row AuditUser
+	out := make(map[string]any, len(keys))
+	for _, key := range keys {
+		switch key {
+		case "id":
+			err = json.Unmarshal(raw[key], &row.ID)
+			out[key] = row.ID
+		}
+		if err != nil {
+			return nil, err
+		}
+		if cursorValueIsNull(out[key]) {
+			return nil, ErrInvalidCursor
+		}
+	}
+	return out, nil
 }
 
 // StreamAuditUsersInput holds query parameters for streaming users records.
@@ -10419,14 +10522,14 @@ func (c *articleClient) Connection(ctx context.Context, input ConnectionInput[Ar
 		// Decode cursors and build keyset conditions
 		var keysetConds []sql.Condition
 		if input.After != nil {
-			cursor, err := decodeCursor(*input.After)
+			cursor, err := decodeArticleCursor(*input.After, c.cursorKeys)
 			if err != nil {
 				return nil, ErrInvalidCursor
 			}
 			keysetConds = append(keysetConds, cursorKeyset(c.dialect, c.cursorKeys, cursor, ">"))
 		}
 		if input.Before != nil {
-			cursor, err := decodeCursor(*input.Before)
+			cursor, err := decodeArticleCursor(*input.Before, c.cursorKeys)
 			if err != nil {
 				return nil, ErrInvalidCursor
 			}
@@ -10525,6 +10628,31 @@ func encodeArticleCursor(keys []string, a *Article) (string, error) {
 		return "", fmt.Errorf("encode article cursor: %w", err)
 	}
 	return base64.StdEncoding.EncodeToString(data), nil
+}
+
+// decodeArticleCursor decodes a cursor string into its key values,
+// each unmarshaled into the key column's Go type.
+func decodeArticleCursor(encoded string, keys []string) (map[string]any, error) {
+	raw, err := decodeCursor(encoded, keys)
+	if err != nil {
+		return nil, err
+	}
+	var row Article
+	out := make(map[string]any, len(keys))
+	for _, key := range keys {
+		switch key {
+		case "id":
+			err = json.Unmarshal(raw[key], &row.ID)
+			out[key] = row.ID
+		}
+		if err != nil {
+			return nil, err
+		}
+		if cursorValueIsNull(out[key]) {
+			return nil, ErrInvalidCursor
+		}
+	}
+	return out, nil
 }
 
 // StreamArticlesInput holds query parameters for streaming articles records.
@@ -12156,14 +12284,14 @@ func (c *assetDocumentLinkClient) Connection(ctx context.Context, input Connecti
 		// Decode cursors and build keyset conditions
 		var keysetConds []sql.Condition
 		if input.After != nil {
-			cursor, err := decodeCursor(*input.After)
+			cursor, err := decodeAssetDocumentLinkCursor(*input.After, c.cursorKeys)
 			if err != nil {
 				return nil, ErrInvalidCursor
 			}
 			keysetConds = append(keysetConds, cursorKeyset(c.dialect, c.cursorKeys, cursor, ">"))
 		}
 		if input.Before != nil {
-			cursor, err := decodeCursor(*input.Before)
+			cursor, err := decodeAssetDocumentLinkCursor(*input.Before, c.cursorKeys)
 			if err != nil {
 				return nil, ErrInvalidCursor
 			}
@@ -12254,6 +12382,34 @@ func encodeAssetDocumentLinkCursor(keys []string, a *AssetDocumentLink) (string,
 		return "", fmt.Errorf("encode asset_document_link cursor: %w", err)
 	}
 	return base64.StdEncoding.EncodeToString(data), nil
+}
+
+// decodeAssetDocumentLinkCursor decodes a cursor string into its key values,
+// each unmarshaled into the key column's Go type.
+func decodeAssetDocumentLinkCursor(encoded string, keys []string) (map[string]any, error) {
+	raw, err := decodeCursor(encoded, keys)
+	if err != nil {
+		return nil, err
+	}
+	var row AssetDocumentLink
+	out := make(map[string]any, len(keys))
+	for _, key := range keys {
+		switch key {
+		case "asset_id":
+			err = json.Unmarshal(raw[key], &row.AssetID)
+			out[key] = row.AssetID
+		case "document_id":
+			err = json.Unmarshal(raw[key], &row.DocumentID)
+			out[key] = row.DocumentID
+		}
+		if err != nil {
+			return nil, err
+		}
+		if cursorValueIsNull(out[key]) {
+			return nil, ErrInvalidCursor
+		}
+	}
+	return out, nil
 }
 
 // StreamAssetDocumentLinksInput holds query parameters for streaming asset_document_links records.
@@ -14640,14 +14796,14 @@ func (c *assetClient) Connection(ctx context.Context, input ConnectionInput[Asse
 		// Decode cursors and build keyset conditions
 		var keysetConds []sql.Condition
 		if input.After != nil {
-			cursor, err := decodeCursor(*input.After)
+			cursor, err := decodeAssetCursor(*input.After, c.cursorKeys)
 			if err != nil {
 				return nil, ErrInvalidCursor
 			}
 			keysetConds = append(keysetConds, cursorKeyset(c.dialect, c.cursorKeys, cursor, ">"))
 		}
 		if input.Before != nil {
-			cursor, err := decodeCursor(*input.Before)
+			cursor, err := decodeAssetCursor(*input.Before, c.cursorKeys)
 			if err != nil {
 				return nil, ErrInvalidCursor
 			}
@@ -14740,6 +14896,31 @@ func encodeAssetCursor(keys []string, a *Asset) (string, error) {
 		return "", fmt.Errorf("encode asset cursor: %w", err)
 	}
 	return base64.StdEncoding.EncodeToString(data), nil
+}
+
+// decodeAssetCursor decodes a cursor string into its key values,
+// each unmarshaled into the key column's Go type.
+func decodeAssetCursor(encoded string, keys []string) (map[string]any, error) {
+	raw, err := decodeCursor(encoded, keys)
+	if err != nil {
+		return nil, err
+	}
+	var row Asset
+	out := make(map[string]any, len(keys))
+	for _, key := range keys {
+		switch key {
+		case "id":
+			err = json.Unmarshal(raw[key], &row.ID)
+			out[key] = row.ID
+		}
+		if err != nil {
+			return nil, err
+		}
+		if cursorValueIsNull(out[key]) {
+			return nil, ErrInvalidCursor
+		}
+	}
+	return out, nil
 }
 
 // StreamAssetsInput holds query parameters for streaming assets records.
@@ -17267,14 +17448,14 @@ func (c *categoryClient) Connection(ctx context.Context, input ConnectionInput[C
 		// Decode cursors and build keyset conditions
 		var keysetConds []sql.Condition
 		if input.After != nil {
-			cursor, err := decodeCursor(*input.After)
+			cursor, err := decodeCategoryCursor(*input.After, c.cursorKeys)
 			if err != nil {
 				return nil, ErrInvalidCursor
 			}
 			keysetConds = append(keysetConds, cursorKeyset(c.dialect, c.cursorKeys, cursor, ">"))
 		}
 		if input.Before != nil {
-			cursor, err := decodeCursor(*input.Before)
+			cursor, err := decodeCategoryCursor(*input.Before, c.cursorKeys)
 			if err != nil {
 				return nil, ErrInvalidCursor
 			}
@@ -17369,6 +17550,31 @@ func encodeCategoryCursor(keys []string, c *Category) (string, error) {
 		return "", fmt.Errorf("encode category cursor: %w", err)
 	}
 	return base64.StdEncoding.EncodeToString(data), nil
+}
+
+// decodeCategoryCursor decodes a cursor string into its key values,
+// each unmarshaled into the key column's Go type.
+func decodeCategoryCursor(encoded string, keys []string) (map[string]any, error) {
+	raw, err := decodeCursor(encoded, keys)
+	if err != nil {
+		return nil, err
+	}
+	var row Category
+	out := make(map[string]any, len(keys))
+	for _, key := range keys {
+		switch key {
+		case "id":
+			err = json.Unmarshal(raw[key], &row.ID)
+			out[key] = row.ID
+		}
+		if err != nil {
+			return nil, err
+		}
+		if cursorValueIsNull(out[key]) {
+			return nil, ErrInvalidCursor
+		}
+	}
+	return out, nil
 }
 
 // StreamCategoriesInput holds query parameters for streaming categories records.
@@ -19518,14 +19724,14 @@ func (c *counterClient) Connection(ctx context.Context, input ConnectionInput[Co
 		// Decode cursors and build keyset conditions
 		var keysetConds []sql.Condition
 		if input.After != nil {
-			cursor, err := decodeCursor(*input.After)
+			cursor, err := decodeCounterCursor(*input.After, c.cursorKeys)
 			if err != nil {
 				return nil, ErrInvalidCursor
 			}
 			keysetConds = append(keysetConds, cursorKeyset(c.dialect, c.cursorKeys, cursor, ">"))
 		}
 		if input.Before != nil {
-			cursor, err := decodeCursor(*input.Before)
+			cursor, err := decodeCounterCursor(*input.Before, c.cursorKeys)
 			if err != nil {
 				return nil, ErrInvalidCursor
 			}
@@ -19620,6 +19826,31 @@ func encodeCounterCursor(keys []string, c *Counter) (string, error) {
 		return "", fmt.Errorf("encode counter cursor: %w", err)
 	}
 	return base64.StdEncoding.EncodeToString(data), nil
+}
+
+// decodeCounterCursor decodes a cursor string into its key values,
+// each unmarshaled into the key column's Go type.
+func decodeCounterCursor(encoded string, keys []string) (map[string]any, error) {
+	raw, err := decodeCursor(encoded, keys)
+	if err != nil {
+		return nil, err
+	}
+	var row Counter
+	out := make(map[string]any, len(keys))
+	for _, key := range keys {
+		switch key {
+		case "key":
+			err = json.Unmarshal(raw[key], &row.Key)
+			out[key] = row.Key
+		}
+		if err != nil {
+			return nil, err
+		}
+		if cursorValueIsNull(out[key]) {
+			return nil, ErrInvalidCursor
+		}
+	}
+	return out, nil
 }
 
 // StreamCountersInput holds query parameters for streaming counters records.
@@ -21578,14 +21809,14 @@ func (c *defaultOnlyRowClient) Connection(ctx context.Context, input ConnectionI
 		// Decode cursors and build keyset conditions
 		var keysetConds []sql.Condition
 		if input.After != nil {
-			cursor, err := decodeCursor(*input.After)
+			cursor, err := decodeDefaultOnlyRowCursor(*input.After, c.cursorKeys)
 			if err != nil {
 				return nil, ErrInvalidCursor
 			}
 			keysetConds = append(keysetConds, cursorKeyset(c.dialect, c.cursorKeys, cursor, ">"))
 		}
 		if input.Before != nil {
-			cursor, err := decodeCursor(*input.Before)
+			cursor, err := decodeDefaultOnlyRowCursor(*input.Before, c.cursorKeys)
 			if err != nil {
 				return nil, ErrInvalidCursor
 			}
@@ -21680,6 +21911,31 @@ func encodeDefaultOnlyRowCursor(keys []string, d *DefaultOnlyRow) (string, error
 		return "", fmt.Errorf("encode default_only_row cursor: %w", err)
 	}
 	return base64.StdEncoding.EncodeToString(data), nil
+}
+
+// decodeDefaultOnlyRowCursor decodes a cursor string into its key values,
+// each unmarshaled into the key column's Go type.
+func decodeDefaultOnlyRowCursor(encoded string, keys []string) (map[string]any, error) {
+	raw, err := decodeCursor(encoded, keys)
+	if err != nil {
+		return nil, err
+	}
+	var row DefaultOnlyRow
+	out := make(map[string]any, len(keys))
+	for _, key := range keys {
+		switch key {
+		case "id":
+			err = json.Unmarshal(raw[key], &row.ID)
+			out[key] = row.ID
+		}
+		if err != nil {
+			return nil, err
+		}
+		if cursorValueIsNull(out[key]) {
+			return nil, ErrInvalidCursor
+		}
+	}
+	return out, nil
 }
 
 // StreamDefaultOnlyRowsInput holds query parameters for streaming default_only_rows records.
@@ -23767,14 +24023,14 @@ func (c *documentClient) Connection(ctx context.Context, input ConnectionInput[D
 		// Decode cursors and build keyset conditions
 		var keysetConds []sql.Condition
 		if input.After != nil {
-			cursor, err := decodeCursor(*input.After)
+			cursor, err := decodeDocumentCursor(*input.After, c.cursorKeys)
 			if err != nil {
 				return nil, ErrInvalidCursor
 			}
 			keysetConds = append(keysetConds, cursorKeyset(c.dialect, c.cursorKeys, cursor, ">"))
 		}
 		if input.Before != nil {
-			cursor, err := decodeCursor(*input.Before)
+			cursor, err := decodeDocumentCursor(*input.Before, c.cursorKeys)
 			if err != nil {
 				return nil, ErrInvalidCursor
 			}
@@ -23871,6 +24127,31 @@ func encodeDocumentCursor(keys []string, d *Document) (string, error) {
 		return "", fmt.Errorf("encode document cursor: %w", err)
 	}
 	return base64.StdEncoding.EncodeToString(data), nil
+}
+
+// decodeDocumentCursor decodes a cursor string into its key values,
+// each unmarshaled into the key column's Go type.
+func decodeDocumentCursor(encoded string, keys []string) (map[string]any, error) {
+	raw, err := decodeCursor(encoded, keys)
+	if err != nil {
+		return nil, err
+	}
+	var row Document
+	out := make(map[string]any, len(keys))
+	for _, key := range keys {
+		switch key {
+		case "id":
+			err = json.Unmarshal(raw[key], &row.ID)
+			out[key] = row.ID
+		}
+		if err != nil {
+			return nil, err
+		}
+		if cursorValueIsNull(out[key]) {
+			return nil, ErrInvalidCursor
+		}
+	}
+	return out, nil
 }
 
 // StreamDocumentsInput holds query parameters for streaming documents records.
@@ -25759,14 +26040,14 @@ func (c *keyOnlyRowClient) Connection(ctx context.Context, input ConnectionInput
 		// Decode cursors and build keyset conditions
 		var keysetConds []sql.Condition
 		if input.After != nil {
-			cursor, err := decodeCursor(*input.After)
+			cursor, err := decodeKeyOnlyRowCursor(*input.After, c.cursorKeys)
 			if err != nil {
 				return nil, ErrInvalidCursor
 			}
 			keysetConds = append(keysetConds, cursorKeyset(c.dialect, c.cursorKeys, cursor, ">"))
 		}
 		if input.Before != nil {
-			cursor, err := decodeCursor(*input.Before)
+			cursor, err := decodeKeyOnlyRowCursor(*input.Before, c.cursorKeys)
 			if err != nil {
 				return nil, ErrInvalidCursor
 			}
@@ -25855,6 +26136,31 @@ func encodeKeyOnlyRowCursor(keys []string, k *KeyOnlyRow) (string, error) {
 		return "", fmt.Errorf("encode key_only_row cursor: %w", err)
 	}
 	return base64.StdEncoding.EncodeToString(data), nil
+}
+
+// decodeKeyOnlyRowCursor decodes a cursor string into its key values,
+// each unmarshaled into the key column's Go type.
+func decodeKeyOnlyRowCursor(encoded string, keys []string) (map[string]any, error) {
+	raw, err := decodeCursor(encoded, keys)
+	if err != nil {
+		return nil, err
+	}
+	var row KeyOnlyRow
+	out := make(map[string]any, len(keys))
+	for _, key := range keys {
+		switch key {
+		case "id":
+			err = json.Unmarshal(raw[key], &row.ID)
+			out[key] = row.ID
+		}
+		if err != nil {
+			return nil, err
+		}
+		if cursorValueIsNull(out[key]) {
+			return nil, ErrInvalidCursor
+		}
+	}
+	return out, nil
 }
 
 // StreamKeyOnlyRowsInput holds query parameters for streaming key_only_rows records.
@@ -27691,14 +27997,14 @@ func (c *publicNoteClient) Connection(ctx context.Context, input ConnectionInput
 		// Decode cursors and build keyset conditions
 		var keysetConds []sql.Condition
 		if input.After != nil {
-			cursor, err := decodeCursor(*input.After)
+			cursor, err := decodePublicNoteCursor(*input.After, c.cursorKeys)
 			if err != nil {
 				return nil, ErrInvalidCursor
 			}
 			keysetConds = append(keysetConds, cursorKeyset(c.dialect, c.cursorKeys, cursor, ">"))
 		}
 		if input.Before != nil {
-			cursor, err := decodeCursor(*input.Before)
+			cursor, err := decodePublicNoteCursor(*input.Before, c.cursorKeys)
 			if err != nil {
 				return nil, ErrInvalidCursor
 			}
@@ -27793,6 +28099,31 @@ func encodePublicNoteCursor(keys []string, p *PublicNote) (string, error) {
 		return "", fmt.Errorf("encode note cursor: %w", err)
 	}
 	return base64.StdEncoding.EncodeToString(data), nil
+}
+
+// decodePublicNoteCursor decodes a cursor string into its key values,
+// each unmarshaled into the key column's Go type.
+func decodePublicNoteCursor(encoded string, keys []string) (map[string]any, error) {
+	raw, err := decodeCursor(encoded, keys)
+	if err != nil {
+		return nil, err
+	}
+	var row PublicNote
+	out := make(map[string]any, len(keys))
+	for _, key := range keys {
+		switch key {
+		case "id":
+			err = json.Unmarshal(raw[key], &row.ID)
+			out[key] = row.ID
+		}
+		if err != nil {
+			return nil, err
+		}
+		if cursorValueIsNull(out[key]) {
+			return nil, ErrInvalidCursor
+		}
+	}
+	return out, nil
 }
 
 // StreamPublicNotesInput holds query parameters for streaming notes records.
@@ -29801,14 +30132,14 @@ func (c *orderItemClient) Connection(ctx context.Context, input ConnectionInput[
 		// Decode cursors and build keyset conditions
 		var keysetConds []sql.Condition
 		if input.After != nil {
-			cursor, err := decodeCursor(*input.After)
+			cursor, err := decodeOrderItemCursor(*input.After, c.cursorKeys)
 			if err != nil {
 				return nil, ErrInvalidCursor
 			}
 			keysetConds = append(keysetConds, cursorKeyset(c.dialect, c.cursorKeys, cursor, ">"))
 		}
 		if input.Before != nil {
-			cursor, err := decodeCursor(*input.Before)
+			cursor, err := decodeOrderItemCursor(*input.Before, c.cursorKeys)
 			if err != nil {
 				return nil, ErrInvalidCursor
 			}
@@ -29907,6 +30238,31 @@ func encodeOrderItemCursor(keys []string, o *OrderItem) (string, error) {
 		return "", fmt.Errorf("encode order_item cursor: %w", err)
 	}
 	return base64.StdEncoding.EncodeToString(data), nil
+}
+
+// decodeOrderItemCursor decodes a cursor string into its key values,
+// each unmarshaled into the key column's Go type.
+func decodeOrderItemCursor(encoded string, keys []string) (map[string]any, error) {
+	raw, err := decodeCursor(encoded, keys)
+	if err != nil {
+		return nil, err
+	}
+	var row OrderItem
+	out := make(map[string]any, len(keys))
+	for _, key := range keys {
+		switch key {
+		case "id":
+			err = json.Unmarshal(raw[key], &row.ID)
+			out[key] = row.ID
+		}
+		if err != nil {
+			return nil, err
+		}
+		if cursorValueIsNull(out[key]) {
+			return nil, ErrInvalidCursor
+		}
+	}
+	return out, nil
 }
 
 // StreamOrderItemsInput holds query parameters for streaming order_items records.
@@ -32149,14 +32505,14 @@ func (c *orderClient) Connection(ctx context.Context, input ConnectionInput[Orde
 		// Decode cursors and build keyset conditions
 		var keysetConds []sql.Condition
 		if input.After != nil {
-			cursor, err := decodeCursor(*input.After)
+			cursor, err := decodeOrderCursor(*input.After, c.cursorKeys)
 			if err != nil {
 				return nil, ErrInvalidCursor
 			}
 			keysetConds = append(keysetConds, cursorKeyset(c.dialect, c.cursorKeys, cursor, ">"))
 		}
 		if input.Before != nil {
-			cursor, err := decodeCursor(*input.Before)
+			cursor, err := decodeOrderCursor(*input.Before, c.cursorKeys)
 			if err != nil {
 				return nil, ErrInvalidCursor
 			}
@@ -32257,6 +32613,31 @@ func encodeOrderCursor(keys []string, o *Order) (string, error) {
 		return "", fmt.Errorf("encode order cursor: %w", err)
 	}
 	return base64.StdEncoding.EncodeToString(data), nil
+}
+
+// decodeOrderCursor decodes a cursor string into its key values,
+// each unmarshaled into the key column's Go type.
+func decodeOrderCursor(encoded string, keys []string) (map[string]any, error) {
+	raw, err := decodeCursor(encoded, keys)
+	if err != nil {
+		return nil, err
+	}
+	var row Order
+	out := make(map[string]any, len(keys))
+	for _, key := range keys {
+		switch key {
+		case "id":
+			err = json.Unmarshal(raw[key], &row.ID)
+			out[key] = row.ID
+		}
+		if err != nil {
+			return nil, err
+		}
+		if cursorValueIsNull(out[key]) {
+			return nil, ErrInvalidCursor
+		}
+	}
+	return out, nil
 }
 
 // StreamOrdersInput holds query parameters for streaming orders records.
@@ -34018,14 +34399,14 @@ func (c *productTagLabelClient) Connection(ctx context.Context, input Connection
 		// Decode cursors and build keyset conditions
 		var keysetConds []sql.Condition
 		if input.After != nil {
-			cursor, err := decodeCursor(*input.After)
+			cursor, err := decodeProductTagLabelCursor(*input.After, c.cursorKeys)
 			if err != nil {
 				return nil, ErrInvalidCursor
 			}
 			keysetConds = append(keysetConds, cursorKeyset(c.dialect, c.cursorKeys, cursor, ">"))
 		}
 		if input.Before != nil {
-			cursor, err := decodeCursor(*input.Before)
+			cursor, err := decodeProductTagLabelCursor(*input.Before, c.cursorKeys)
 			if err != nil {
 				return nil, ErrInvalidCursor
 			}
@@ -34120,6 +34501,37 @@ func encodeProductTagLabelCursor(keys []string, p *ProductTagLabel) (string, err
 		return "", fmt.Errorf("encode product_tag_label cursor: %w", err)
 	}
 	return base64.StdEncoding.EncodeToString(data), nil
+}
+
+// decodeProductTagLabelCursor decodes a cursor string into its key values,
+// each unmarshaled into the key column's Go type.
+func decodeProductTagLabelCursor(encoded string, keys []string) (map[string]any, error) {
+	raw, err := decodeCursor(encoded, keys)
+	if err != nil {
+		return nil, err
+	}
+	var row ProductTagLabel
+	out := make(map[string]any, len(keys))
+	for _, key := range keys {
+		switch key {
+		case "product_id":
+			err = json.Unmarshal(raw[key], &row.ProductID)
+			out[key] = row.ProductID
+		case "tag_name":
+			err = json.Unmarshal(raw[key], &row.TagName)
+			out[key] = row.TagName
+		case "label":
+			err = json.Unmarshal(raw[key], &row.Label)
+			out[key] = row.Label
+		}
+		if err != nil {
+			return nil, err
+		}
+		if cursorValueIsNull(out[key]) {
+			return nil, ErrInvalidCursor
+		}
+	}
+	return out, nil
 }
 
 // StreamProductTagLabelsInput holds query parameters for streaming product_tag_labels records.
@@ -36508,14 +36920,14 @@ func (c *productClient) Connection(ctx context.Context, input ConnectionInput[Pr
 		// Decode cursors and build keyset conditions
 		var keysetConds []sql.Condition
 		if input.After != nil {
-			cursor, err := decodeCursor(*input.After)
+			cursor, err := decodeProductCursor(*input.After, c.cursorKeys)
 			if err != nil {
 				return nil, ErrInvalidCursor
 			}
 			keysetConds = append(keysetConds, cursorKeyset(c.dialect, c.cursorKeys, cursor, ">"))
 		}
 		if input.Before != nil {
-			cursor, err := decodeCursor(*input.Before)
+			cursor, err := decodeProductCursor(*input.Before, c.cursorKeys)
 			if err != nil {
 				return nil, ErrInvalidCursor
 			}
@@ -36624,6 +37036,31 @@ func encodeProductCursor(keys []string, p *Product) (string, error) {
 		return "", fmt.Errorf("encode product cursor: %w", err)
 	}
 	return base64.StdEncoding.EncodeToString(data), nil
+}
+
+// decodeProductCursor decodes a cursor string into its key values,
+// each unmarshaled into the key column's Go type.
+func decodeProductCursor(encoded string, keys []string) (map[string]any, error) {
+	raw, err := decodeCursor(encoded, keys)
+	if err != nil {
+		return nil, err
+	}
+	var row Product
+	out := make(map[string]any, len(keys))
+	for _, key := range keys {
+		switch key {
+		case "id":
+			err = json.Unmarshal(raw[key], &row.ID)
+			out[key] = row.ID
+		}
+		if err != nil {
+			return nil, err
+		}
+		if cursorValueIsNull(out[key]) {
+			return nil, ErrInvalidCursor
+		}
+	}
+	return out, nil
 }
 
 // StreamProductsInput holds query parameters for streaming products records.
@@ -38983,14 +39420,14 @@ func (c *profileClient) Connection(ctx context.Context, input ConnectionInput[Pr
 		// Decode cursors and build keyset conditions
 		var keysetConds []sql.Condition
 		if input.After != nil {
-			cursor, err := decodeCursor(*input.After)
+			cursor, err := decodeProfileCursor(*input.After, c.cursorKeys)
 			if err != nil {
 				return nil, ErrInvalidCursor
 			}
 			keysetConds = append(keysetConds, cursorKeyset(c.dialect, c.cursorKeys, cursor, ">"))
 		}
 		if input.Before != nil {
-			cursor, err := decodeCursor(*input.Before)
+			cursor, err := decodeProfileCursor(*input.Before, c.cursorKeys)
 			if err != nil {
 				return nil, ErrInvalidCursor
 			}
@@ -39091,6 +39528,31 @@ func encodeProfileCursor(keys []string, p *Profile) (string, error) {
 		return "", fmt.Errorf("encode profile cursor: %w", err)
 	}
 	return base64.StdEncoding.EncodeToString(data), nil
+}
+
+// decodeProfileCursor decodes a cursor string into its key values,
+// each unmarshaled into the key column's Go type.
+func decodeProfileCursor(encoded string, keys []string) (map[string]any, error) {
+	raw, err := decodeCursor(encoded, keys)
+	if err != nil {
+		return nil, err
+	}
+	var row Profile
+	out := make(map[string]any, len(keys))
+	for _, key := range keys {
+		switch key {
+		case "id":
+			err = json.Unmarshal(raw[key], &row.ID)
+			out[key] = row.ID
+		}
+		if err != nil {
+			return nil, err
+		}
+		if cursorValueIsNull(out[key]) {
+			return nil, ErrInvalidCursor
+		}
+	}
+	return out, nil
 }
 
 // StreamProfilesInput holds query parameters for streaming profiles records.
@@ -41144,14 +41606,14 @@ func (c *rateLimitClient) Connection(ctx context.Context, input ConnectionInput[
 		// Decode cursors and build keyset conditions
 		var keysetConds []sql.Condition
 		if input.After != nil {
-			cursor, err := decodeCursor(*input.After)
+			cursor, err := decodeRateLimitCursor(*input.After, c.cursorKeys)
 			if err != nil {
 				return nil, ErrInvalidCursor
 			}
 			keysetConds = append(keysetConds, cursorKeyset(c.dialect, c.cursorKeys, cursor, ">"))
 		}
 		if input.Before != nil {
-			cursor, err := decodeCursor(*input.Before)
+			cursor, err := decodeRateLimitCursor(*input.Before, c.cursorKeys)
 			if err != nil {
 				return nil, ErrInvalidCursor
 			}
@@ -41246,6 +41708,34 @@ func encodeRateLimitCursor(keys []string, r *RateLimit) (string, error) {
 		return "", fmt.Errorf("encode rate_limit cursor: %w", err)
 	}
 	return base64.StdEncoding.EncodeToString(data), nil
+}
+
+// decodeRateLimitCursor decodes a cursor string into its key values,
+// each unmarshaled into the key column's Go type.
+func decodeRateLimitCursor(encoded string, keys []string) (map[string]any, error) {
+	raw, err := decodeCursor(encoded, keys)
+	if err != nil {
+		return nil, err
+	}
+	var row RateLimit
+	out := make(map[string]any, len(keys))
+	for _, key := range keys {
+		switch key {
+		case "org_id":
+			err = json.Unmarshal(raw[key], &row.OrgID)
+			out[key] = row.OrgID
+		case "bucket":
+			err = json.Unmarshal(raw[key], &row.Bucket)
+			out[key] = row.Bucket
+		}
+		if err != nil {
+			return nil, err
+		}
+		if cursorValueIsNull(out[key]) {
+			return nil, ErrInvalidCursor
+		}
+	}
+	return out, nil
 }
 
 // StreamRateLimitsInput holds query parameters for streaming rate_limits records.
@@ -41605,6 +42095,2193 @@ type GetRateLimitsInput struct {
 	Limit  *int             `json:"limit"`
 	Offset *int             `json:"offset"`
 	Sorts  []sql.Sort       `json:"sorts"`
+	// conditions holds additional SQL conditions injected by internal callers
+	// (e.g., Connection keyset conditions). Not part of the public API.
+	conditions []sql.Condition
+	// requiredColumns holds columns an internal caller needs read back even
+	// when FieldOptions narrows the projection (e.g., Connection cursor keys).
+	// Not part of the public API.
+	requiredColumns []string
+}
+
+type SequenceRow struct {
+	ID      int64   `db:"id" json:"id"`
+	Code    *string `db:"code" json:"code"`
+	Seq     int32   `db:"seq" json:"seq"`
+	Ticket  int64   `db:"ticket" json:"ticket"`
+	AuditNo int32   `db:"audit_no" json:"audit_no"`
+	Note    string  `db:"note" json:"note"`
+}
+
+// SequenceRowClient provides type-safe operations for the sequence_rows table.
+type SequenceRowClient interface {
+	// --- Read Operations ---
+
+	// Get returns a single sequenceRow by primary key.
+	Get(ctx context.Context, id int64, opts ...func(*CallOptions[SequenceRowFieldOptions])) (*SequenceRow, error)
+
+	// GetMany returns sequence_rows matching the given filter, field selection, and sort criteria.
+	GetMany(ctx context.Context, input *GetSequenceRowsInput, opts ...func(*CallOptions[SequenceRowFieldOptions])) ([]*SequenceRow, error)
+
+	// Exists returns true if a sequenceRow with the given primary key exists.
+	Exists(ctx context.Context, id int64, opts ...func(*CallOptions[SequenceRowFieldOptions])) (bool, error)
+
+	// ExistsWhere returns true if any sequenceRow matches the given filter.
+	ExistsWhere(ctx context.Context, filter *SequenceRowFilter, opts ...func(*CallOptions[SequenceRowFieldOptions])) (bool, error)
+
+	// Count returns the number of sequence_rows matching the given filter.
+	Count(ctx context.Context, filter *SequenceRowFilter, opts ...func(*CallOptions[SequenceRowFieldOptions])) (int64, error)
+
+	// --- Write Operations ---
+
+	// Create inserts a new sequenceRow and returns the created entity.
+	Create(ctx context.Context, input *CreateSequenceRowInput, opts ...func(*CallOptions[SequenceRowFieldOptions])) (*SequenceRow, error)
+
+	// CreateMany inserts multiple sequence_rows in batches and returns all created entities.
+	// Sub-batches are not automatically rolled back on failure — wrap in a transaction for atomicity.
+	CreateMany(ctx context.Context, inputs []*CreateSequenceRowInput, opts ...func(*CallOptions[SequenceRowFieldOptions])) ([]*SequenceRow, error)
+
+	// Update partially updates a sequenceRow by primary key and returns the updated entity.
+	// Only fields where IsSet() is true are included in the SET clause.
+	// Returns ErrNotFound if the primary key does not exist.
+	Update(ctx context.Context, id int64, input *UpdateSequenceRowInput, opts ...func(*CallOptions[SequenceRowFieldOptions])) (*SequenceRow, error)
+
+	// UpdateMany updates multiple sequence_rows and returns the updated entities.
+	UpdateMany(ctx context.Context, items []UpdateSequenceRowItem, opts ...func(*CallOptions[SequenceRowFieldOptions])) ([]*SequenceRow, error)
+
+	// UpdateWhere updates all sequence_rows matching the filter and returns the updated entities.
+	// Idempotent — returns empty slice when no rows match.
+	UpdateWhere(ctx context.Context, filter *SequenceRowFilter, input *UpdateSequenceRowInput, opts ...func(*CallOptions[SequenceRowFieldOptions])) ([]*SequenceRow, error)
+
+	// Upsert inserts a sequenceRow or updates it on conflict and returns the resulting entity.
+	Upsert(ctx context.Context, input *CreateSequenceRowInput, target SequenceRowConflictTarget, opts ...func(*CallOptions[SequenceRowFieldOptions])) (*SequenceRow, error)
+
+	// UpsertMany inserts or updates multiple sequence_rows in batches and returns all resulting entities.
+	// Inputs resolving to the same conflict target are deduped, last occurrence wins.
+	UpsertMany(ctx context.Context, inputs []*CreateSequenceRowInput, target SequenceRowConflictTarget, opts ...func(*CallOptions[SequenceRowFieldOptions])) ([]*SequenceRow, error)
+
+	// Increment atomically increments or decrements a numeric column on a sequenceRow.
+	// Returns ErrNotFound if the primary key does not exist.
+	Increment(ctx context.Context, id int64, input IncrementInput[SequenceRowIncrementColumn], opts ...func(*CallOptions[SequenceRowFieldOptions])) error
+
+	// --- Hard Delete Operations ---
+
+	// HardDelete permanently removes a sequenceRow from the database.
+	// Idempotent — returns nil if the primary key does not exist.
+	HardDelete(ctx context.Context, id int64, opts ...func(*CallOptions[SequenceRowFieldOptions])) error
+
+	// HardDeleteMany permanently removes multiple sequence_rows from the database.
+	HardDeleteMany(ctx context.Context, ids []int64, opts ...func(*CallOptions[SequenceRowFieldOptions])) error
+
+	// HardDeleteWhere permanently removes all sequence_rows matching the filter.
+	// Idempotent — returns nil when no rows match.
+	HardDeleteWhere(ctx context.Context, filter *SequenceRowFilter, opts ...func(*CallOptions[SequenceRowFieldOptions])) error
+
+	// --- Pagination Operations ---
+
+	// Paginate returns a page of sequence_rows with total count for offset-based pagination.
+	Paginate(ctx context.Context, input PaginateInput[SequenceRowFilter], opts ...func(*CallOptions[SequenceRowFieldOptions])) (*PaginateResult[SequenceRow], error)
+
+	// Connection returns a Relay-style cursor-paginated connection of sequence_rows.
+	// Sort order is determined by cursor_keys — custom sorts are not supported.
+	// Use Paginate for custom sort orders.
+	Connection(ctx context.Context, input ConnectionInput[SequenceRowFilter], opts ...func(*CallOptions[SequenceRowFieldOptions])) (*Connection[SequenceRow], error)
+
+	// Stream returns an iterator over sequence_rows matching the filter and sort criteria.
+	// Rows are yielded as the driver returns them; cache is bypassed.
+	// Stream cannot load relationships.
+	//
+	// Stream refuses an active transaction unless CallOptions.AllowInTransaction
+	// is set, and the opt-in commits the caller to issuing nothing else on that
+	// txCtx: the one rule that remains the caller's — drain or close a result set
+	// before issuing the next statement on that txCtx — applied to a loop whose
+	// body is caller code.
+	Stream(ctx context.Context, input *StreamSequenceRowsInput, opts ...func(*CallOptions[StreamSequenceRowFieldOptions])) iter.Seq2[*SequenceRow, error]
+}
+
+// sequenceRowClient implements the SequenceRowClient interface.
+type sequenceRowClient struct {
+	querier       database.Querier
+	dialect       sql.Dialect
+	table         sql.Table
+	batchSize     int
+	queryLimit    int
+	pageSize      int
+	cursorKeys    []string
+	strictUpdates bool
+	mutationHooks []hook.MutationHook
+	queryHooks    []hook.QueryHook
+	panicHandler  hook.PanicHandler
+}
+
+// newSequenceRowClient creates a new sequenceRowClient.
+func newSequenceRowClient(querier database.Querier, mutationHooks []hook.MutationHook, queryHooks []hook.QueryHook, panicHandler hook.PanicHandler) *sequenceRowClient {
+	return &sequenceRowClient{
+		querier:       querier,
+		dialect:       sql.NewPostgresDialect(),
+		table:         sql.Table{Schema: "public", Name: "sequence_rows"},
+		batchSize:     200,
+		queryLimit:    1000,
+		pageSize:      100,
+		cursorKeys:    []string{"id"},
+		strictUpdates: true,
+		mutationHooks: mutationHooks,
+		queryHooks:    queryHooks,
+		panicHandler:  panicHandler,
+	}
+}
+
+// executeMutation runs fn through the mutation hook chain.
+// When skipHooks is true, only panic recovery wraps the call.
+func (c *sequenceRowClient) executeMutation(ctx context.Context, skipHooks bool, mc *hook.MutationContext, fn hook.MutationHandler) (any, error) {
+	var hooks []hook.MutationHook
+	if !skipHooks {
+		hooks = c.mutationHooks
+	}
+	return hook.BuildMutationChain(c.panicHandler, hooks, fn)(ctx, mc)
+}
+
+// executeQuery runs fn through the query hook chain.
+// When skipHooks is true, only panic recovery wraps the call.
+func (c *sequenceRowClient) executeQuery(ctx context.Context, skipHooks bool, qc *hook.QueryContext, fn hook.QueryHandler) (any, error) {
+	var hooks []hook.QueryHook
+	if !skipHooks {
+		hooks = c.queryHooks
+	}
+	return hook.BuildQueryChain(c.panicHandler, hooks, fn)(ctx, qc)
+}
+
+// sequenceRowAllColumns is the column list for full-entity reads, sorted for determinism.
+var sequenceRowAllColumns = []string{"audit_no", "code", "id", "note", "seq", "ticket"}
+
+// scanSequenceRows scans rows into SequenceRow entities using a column-name switch.
+// Handles both scan target shapes (direct, wrapped) without reflection.
+func scanSequenceRows(rows database.Rows, columns []string) ([]*SequenceRow, error) {
+	var result []*SequenceRow
+	for rows.Next() {
+		s := &SequenceRow{}
+
+		targets := make([]any, len(columns))
+		for idx, col := range columns {
+			switch col {
+			case "id":
+				targets[idx] = &s.ID
+			case "code":
+				targets[idx] = &s.Code
+			case "seq":
+				targets[idx] = &s.Seq
+			case "ticket":
+				targets[idx] = &s.Ticket
+			case "audit_no":
+				targets[idx] = &s.AuditNo
+			case "note":
+				targets[idx] = &s.Note
+			}
+		}
+
+		if err := rows.Scan(targets...); err != nil {
+			return nil, fmt.Errorf("scan sequence_row: %w", err)
+		}
+
+		result = append(result, s)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate sequence_row rows: %w", err)
+	}
+	return result, nil
+}
+
+// Get returns a single sequence_row by primary key with optional field selection.
+// If fieldOptions is provided, only the selected columns are returned and
+// relationships with non-nil FieldOptions are loaded.
+func (c *sequenceRowClient) Get(ctx context.Context, id int64, opts ...func(*CallOptions[SequenceRowFieldOptions])) (*SequenceRow, error) {
+	options := resolveCallOptions(opts)
+
+	if options.LockMode != sql.LockNone {
+		if !database.InTransaction(ctx) {
+			return nil, fmt.Errorf("get sequence_row: LockMode requires an active transaction")
+		}
+		options.SkipCache = true
+	}
+	qctx := &hook.QueryContext{
+		Op: hook.OpGet, Table: TableSequenceRows, Schema: "public",
+		PK: id, CallOptions: options,
+	}
+	result, err := c.executeQuery(ctx, options.SkipHooks, qctx, func(ctx context.Context, q *hook.QueryContext) (any, error) {
+		// Hooks may mutate q.CallOptions (e.g. the cache hook's hydration
+		// path overrides FieldOptions for a full-entity refill). Prefer
+		// those overrides when present; otherwise fall back to the
+		// caller-supplied options captured at Get() time.
+		effectiveOpts := options
+		if qOpts, ok := q.CallOptions.(CallOptions[SequenceRowFieldOptions]); ok {
+			effectiveOpts = qOpts
+		}
+		// Internal GetMany call with SkipHooks to prevent nested hook invocation
+		internalOpts := func(o *CallOptions[SequenceRowFieldOptions]) {
+			*o = effectiveOpts
+			o.SkipHooks = true
+		}
+		sequenceRows, err := c.GetMany(ctx, &GetSequenceRowsInput{
+			Filter: &SequenceRowFilter{
+				ID: &comparator.Number[int64]{Eq: new(id)},
+			},
+			Limit: new(1),
+		}, internalOpts)
+		if err != nil {
+			return nil, err
+		}
+		if len(sequenceRows) == 0 {
+			return nil, ErrNotFound
+		}
+		return sequenceRows[0], nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	if result == nil {
+		return nil, nil
+	}
+	return result.(*SequenceRow), nil
+}
+
+// GetMany returns sequence_rows matching the given filter, field selection, and sort criteria.
+func (c *sequenceRowClient) GetMany(ctx context.Context, input *GetSequenceRowsInput, opts ...func(*CallOptions[SequenceRowFieldOptions])) ([]*SequenceRow, error) {
+	// A nil input is the zero-value input — no filter, no sorts, no
+	// limit. Normalized before the hook context is built, so a hook never sees
+	// a nil Input either.
+	if input == nil {
+		input = &GetSequenceRowsInput{}
+	}
+	options := resolveCallOptions(opts)
+
+	if options.LockMode != sql.LockNone {
+		if !database.InTransaction(ctx) {
+			return nil, fmt.Errorf("get sequence_rows: LockMode requires an active transaction")
+		}
+		options.SkipCache = true
+	}
+	result, err := c.executeQuery(ctx, options.SkipHooks, &hook.QueryContext{
+		Op: hook.OpGetMany, Table: TableSequenceRows, Schema: "public",
+		Input: input, CallOptions: options,
+	}, func(ctx context.Context, q *hook.QueryContext) (any, error) {
+		conn := database.Conn(ctx, c.querier)
+
+		// FieldOptions from CallOptions — nil means all columns
+		fieldOptions := options.FieldOptions
+
+		// Nothing selected — return early
+		if fieldOptions != nil && !fieldOptions.HasSelectedColumns() {
+			return nil, nil
+		}
+
+		// Determine columns from FieldOptions. A narrowed projection still
+		// carries the columns this call structurally requires — the cursor keys
+		// an internal caller declares. An all-false FieldOptions is
+		// untouched: it short-circuits above.
+		columns := sequenceRowAllColumns
+		if fieldOptions != nil {
+			if selected := fieldOptions.Columns(); len(selected) > 0 {
+				columns = unionColumns(selected, input.requiredColumns...)
+			}
+		}
+
+		// Build conditions from filter
+		var conds []sql.Condition
+		if input.Filter != nil {
+			conds = input.Filter.ToConditions(c.dialect)
+		}
+
+		// Append internal conditions (e.g., keyset conditions from Connection)
+		conds = append(conds, input.conditions...)
+
+		// Resolve limit/offset to pointers for the builder.
+		// nil → no clause, *0 (via new(0)) → no clause, *N → LIMIT/OFFSET N.
+		var limitPtr *int
+		if input.Limit != nil {
+			if v := *input.Limit; v > 0 {
+				limitPtr = new(v)
+			}
+		} else if c.queryLimit > 0 {
+			limitPtr = new(c.queryLimit)
+		}
+		var offsetPtr *int
+		if input.Offset != nil {
+			if v := *input.Offset; v > 0 {
+				offsetPtr = new(v)
+			}
+		}
+
+		var sequenceRows []*SequenceRow
+		query, args := sql.BuildSelect(c.dialect, c.table, sql.SelectOptions{
+			Columns:    columns,
+			Conditions: conds,
+			OrderBy:    input.Sorts,
+			Limit:      limitPtr,
+			Offset:     offsetPtr,
+			LockMode:   options.LockMode,
+		})
+
+		rows, err := conn.Query(ctx, query, args...)
+		if err != nil {
+			return nil, fmt.Errorf("get sequence_rows: %w", err)
+		}
+		defer rows.Close()
+
+		sequenceRows, err = scanSequenceRows(rows, columns)
+		if err != nil {
+			return nil, err
+		}
+
+		return sequenceRows, nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	if result == nil {
+		return nil, nil
+	}
+	return result.([]*SequenceRow), nil
+}
+
+// Create inserts a new sequence_row and returns the created entity.
+func (c *sequenceRowClient) Create(ctx context.Context, input *CreateSequenceRowInput, opts ...func(*CallOptions[SequenceRowFieldOptions])) (*SequenceRow, error) {
+	// A write cannot normalize nil to the zero value the way a read
+	// does — a zero CreateSequenceRowInput legally writes a row (each required
+	// field's zero value, or with no required field, every column's default), so
+	// that would turn a caller's mistake into a silently written one. Guarded
+	// before the executor, so nil fires no hook and publishes no event.
+	if input == nil {
+		return nil, ErrNilInput
+	}
+	options := resolveCallOptions(opts)
+	result, err := c.executeMutation(ctx, options.SkipHooks, &hook.MutationContext{
+		Op: hook.OpCreate, Table: TableSequenceRows, Schema: "public",
+		Input: input, CallOptions: options,
+	}, func(ctx context.Context, m *hook.MutationContext) (any, error) {
+		conn := database.Conn(ctx, c.querier)
+
+		columns := []string{"note"}
+		args := []any{input.Note}
+
+		if v, ok := input.Code.Get(); ok {
+			columns = append(columns, "code")
+			args = append(args, v)
+		}
+
+		if v, ok := input.Seq.Get(); ok {
+			columns = append(columns, "seq")
+			args = append(args, v)
+		}
+
+		if v, ok := input.Ticket.Get(); ok {
+			columns = append(columns, "ticket")
+			args = append(args, v)
+		}
+
+		if v, ok := input.AuditNo.Get(); ok {
+			columns = append(columns, "audit_no")
+			args = append(args, v)
+		}
+
+		id, err := c.insertAndResolveID(ctx, conn, columns, args)
+		if err != nil {
+			return nil, fmt.Errorf("create sequence_row: %w", err)
+		}
+		m.AffectedPKs = []any{id}
+
+		// Empty FieldOptions — caller doesn't need the result
+		if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
+			return nil, nil
+		}
+
+		return c.Get(ctx, id, func(o *CallOptions[SequenceRowFieldOptions]) {
+			*o = options
+			o.SkipHooks = true
+			o.LockMode = sql.LockNone
+		})
+	})
+	if err != nil {
+		return nil, err
+	}
+	if result == nil {
+		return nil, nil
+	}
+	return result.(*SequenceRow), nil
+}
+
+// CreateMany inserts multiple sequence_rows in batches and returns all created entities.
+// Sub-batches are not automatically rolled back on failure — wrap in a transaction for atomicity.
+func (c *sequenceRowClient) CreateMany(ctx context.Context, inputs []*CreateSequenceRowInput, opts ...func(*CallOptions[SequenceRowFieldOptions])) ([]*SequenceRow, error) {
+	// A nil *slice* is simply no rows, but a nil *element* is the
+	// same caller error a nil Create argument is — and skipping it silently
+	// would drop a row the caller asked for. Rejected before the executor.
+	for _, in := range inputs {
+		if in == nil {
+			return nil, ErrNilInput
+		}
+	}
+	options := resolveCallOptions(opts)
+	result, err := c.executeMutation(ctx, options.SkipHooks, &hook.MutationContext{
+		Op: hook.OpCreateMany, Table: TableSequenceRows, Schema: "public",
+		Input: inputs, CallOptions: options,
+	}, func(ctx context.Context, m *hook.MutationContext) (any, error) {
+		conn := database.Conn(ctx, c.querier)
+		// An empty batch writes nothing and must read nothing. The trailing
+		// re-fetch below filters on the keys this call touched, and every
+		// generated key filter treats an empty set as *no condition* — so
+		// without this guard the re-fetch degrades to an unfiltered SELECT and
+		// returns the whole table as if this call had produced it.
+		if len(inputs) == 0 {
+			return []*SequenceRow{}, nil
+		}
+		var allIDs []int64
+		for start := 0; start < len(inputs); start += c.batchSize {
+			end := min(start+c.batchSize, len(inputs))
+			batch := inputs[start:end]
+
+			columns := []string{"code", "seq", "ticket", "audit_no", "note"}
+			var valueRows [][]any
+			for _, input := range batch {
+				var code any = sql.Default
+				if v, ok := input.Code.Get(); ok {
+					code = v
+				}
+				var seq any = sql.Default
+				if v, ok := input.Seq.Get(); ok {
+					seq = v
+				}
+				var ticket any = sql.Default
+				if v, ok := input.Ticket.Get(); ok {
+					ticket = v
+				}
+				var auditNo any = sql.Default
+				if v, ok := input.AuditNo.Get(); ok {
+					auditNo = v
+				}
+
+				valueRows = append(valueRows, []any{
+					code,
+					seq,
+					ticket,
+					auditNo,
+					input.Note,
+				})
+			}
+
+			ids, err := c.multiInsertAndResolveIDs(ctx, conn, columns, valueRows)
+			if err != nil {
+				return nil, fmt.Errorf("create sequence_rows batch: %w", err)
+			}
+			allIDs = append(allIDs, ids...)
+		}
+
+		m.AffectedPKs = toAnySlice(allIDs)
+
+		// Empty FieldOptions — skip fetch
+		if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
+			return nil, nil
+		}
+		return c.GetMany(ctx, &GetSequenceRowsInput{
+			Filter: &SequenceRowFilter{
+				ID: &comparator.Number[int64]{In: allIDs},
+			},
+			Limit: new(0),
+		}, func(o *CallOptions[SequenceRowFieldOptions]) {
+			*o = options
+			o.SkipHooks = true
+			o.LockMode = sql.LockNone
+		})
+	})
+	if err != nil {
+		return nil, err
+	}
+	if result == nil {
+		return nil, nil
+	}
+	return result.([]*SequenceRow), nil
+}
+
+// insertAndResolveID performs the INSERT and resolves the generated primary key.
+func (c *sequenceRowClient) insertAndResolveID(ctx context.Context, conn database.Querier, columns []string, args []any) (int64, error) {
+	query, queryArgs := sql.BuildInsert(c.dialect, c.table, sql.InsertOptions{
+		Columns:          columns,
+		Values:           args,
+		ReturningColumns: []string{"id"},
+	})
+	var id int64
+	if err := conn.QueryRow(ctx, query, queryArgs...).Scan(&id); err != nil {
+		return 0, err
+	}
+	return id, nil
+}
+
+// multiInsertAndResolveIDs performs a multi-row INSERT and resolves all generated primary keys.
+func (c *sequenceRowClient) multiInsertAndResolveIDs(ctx context.Context, conn database.Querier, columns []string, valueRows [][]any) ([]int64, error) {
+	query, args := sql.BuildMultiInsert(c.dialect, c.table, sql.MultiInsertOptions{
+		Columns:          columns,
+		ValueRows:        valueRows,
+		ReturningColumns: []string{"id"},
+	})
+
+	rows, err := conn.Query(ctx, query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var ids []int64
+	for rows.Next() {
+		var id int64
+		if err := rows.Scan(&id); err != nil {
+			return nil, fmt.Errorf("scan sequence_row id: %w", err)
+		}
+		ids = append(ids, id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return ids, nil
+}
+
+// Update partially updates a sequence_row by primary key and returns the updated entity.
+// Only fields where IsSet() is true are included in the SET clause. If no fields are
+// set, no UPDATE is executed and the current entity is returned unchanged.
+// Returns ErrNotFound if the primary key does not exist (strict_updates is enabled).
+func (c *sequenceRowClient) Update(ctx context.Context, id int64, input *UpdateSequenceRowInput, opts ...func(*CallOptions[SequenceRowFieldOptions])) (*SequenceRow, error) {
+	// Nil is a caller error, distinct from an empty-but-non-nil
+	// input — that one is the documented no-op returning the entity unchanged.
+	// Guarded before the executor, so nil fires no hook and publishes no event.
+	if input == nil {
+		return nil, ErrNilInput
+	}
+	options := resolveCallOptions(opts)
+	result, err := c.executeMutation(ctx, options.SkipHooks, &hook.MutationContext{
+		Op: hook.OpUpdate, Table: TableSequenceRows, Schema: "public",
+		PK: id, Input: input, CallOptions: options,
+	}, func(ctx context.Context, m *hook.MutationContext) (any, error) {
+		conn := database.Conn(ctx, c.querier)
+
+		// Build SET clause from omittable fields — explicit per-field checks, no reflection
+		setClauses := make(map[string]any)
+		if v, ok := input.Code.Get(); ok {
+			setClauses["code"] = v
+		}
+		if v, ok := input.Seq.Get(); ok {
+			setClauses["seq"] = v
+		}
+		if v, ok := input.Ticket.Get(); ok {
+			setClauses["ticket"] = v
+		}
+		if v, ok := input.AuditNo.Get(); ok {
+			setClauses["audit_no"] = v
+		}
+		if v, ok := input.Note.Get(); ok {
+			setClauses["note"] = v
+		}
+
+		// Empty update — no fields set, return current entity unchanged
+		if len(setClauses) == 0 {
+			// Empty FieldOptions — caller doesn't need the result
+			if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
+				return nil, nil
+			}
+
+			return c.Get(ctx, id, func(o *CallOptions[SequenceRowFieldOptions]) {
+				*o = options
+				o.SkipHooks = true
+				o.LockMode = sql.LockNone
+			})
+		}
+
+		query, args := sql.BuildUpdate(c.dialect, c.table, sql.UpdateOptions{
+			SetClauses: setClauses,
+			Conditions: []sql.Condition{sql.Where(c.dialect.QuoteIdentifier("id")).Eq(id)},
+		})
+
+		execResult, err := conn.Exec(ctx, query, args...)
+		if err != nil {
+			return nil, fmt.Errorf("update sequence_row: %w", err)
+		}
+		count, err := execResult.RowsAffected()
+		if err != nil {
+			return nil, fmt.Errorf("update sequence_row rows affected: %w", err)
+		}
+		if count == 0 {
+			return nil, ErrNotFound
+		}
+		m.AffectedPKs = []any{id}
+
+		// Empty FieldOptions — caller doesn't need the result
+		if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
+			return nil, nil
+		}
+
+		return c.Get(ctx, id, func(o *CallOptions[SequenceRowFieldOptions]) {
+			*o = options
+			o.SkipHooks = true
+			o.LockMode = sql.LockNone
+		})
+	})
+	if err != nil {
+		return nil, err
+	}
+	if result == nil {
+		return nil, nil
+	}
+	return result.(*SequenceRow), nil
+}
+
+// UpdateSequenceRowItem pairs a primary key with an update input for batch updates.
+type UpdateSequenceRowItem struct {
+	ID    int64                   `json:"id"`
+	Input *UpdateSequenceRowInput `json:"input"`
+}
+
+// UpdateMany partially updates multiple sequence_rows and returns the updated entities.
+// Each item is a (PK, UpdateInput) pair. Splits into batches of batchSize.
+// On pgx, uses SendBatch for pipelined execution within each batch.
+func (c *sequenceRowClient) UpdateMany(ctx context.Context, items []UpdateSequenceRowItem, opts ...func(*CallOptions[SequenceRowFieldOptions])) ([]*SequenceRow, error) {
+	// UpdateSequenceRowItem.Input is a pointer, so a zero-valued item
+	// carries a nil one — a shape that compiles naturally. Rejected before the
+	// executor, like every other nil write input.
+	for _, item := range items {
+		if item.Input == nil {
+			return nil, ErrNilInput
+		}
+	}
+	options := resolveCallOptions(opts)
+	result, err := c.executeMutation(ctx, options.SkipHooks, &hook.MutationContext{
+		Op: hook.OpUpdateMany, Table: TableSequenceRows, Schema: "public",
+		Input: items, CallOptions: options,
+	}, func(ctx context.Context, m *hook.MutationContext) (any, error) {
+		conn := database.Conn(ctx, c.querier)
+		// An empty batch writes nothing and must read nothing. The trailing
+		// re-fetch below filters on the keys this call touched, and every
+		// generated key filter treats an empty set as *no condition* — so
+		// without this guard the re-fetch degrades to an unfiltered SELECT and
+		// returns the whole table as if this call had produced it.
+		if len(items) == 0 {
+			return []*SequenceRow{}, nil
+		}
+		var allIDs []int64
+		for start := 0; start < len(items); start += c.batchSize {
+			end := min(start+c.batchSize, len(items))
+			batch := items[start:end]
+
+			// Build all UPDATE statements for this batch
+			pgxBatch := &pgx.Batch{}
+			var batchQueries []string
+			var batchArgs [][]any
+			for _, item := range batch {
+				setClauses := make(map[string]any)
+				if v, ok := item.Input.Code.Get(); ok {
+					setClauses["code"] = v
+				}
+				if v, ok := item.Input.Seq.Get(); ok {
+					setClauses["seq"] = v
+				}
+				if v, ok := item.Input.Ticket.Get(); ok {
+					setClauses["ticket"] = v
+				}
+				if v, ok := item.Input.AuditNo.Get(); ok {
+					setClauses["audit_no"] = v
+				}
+				if v, ok := item.Input.Note.Get(); ok {
+					setClauses["note"] = v
+				}
+
+				// Skip no-op updates
+				if len(setClauses) == 0 {
+					allIDs = append(allIDs, item.ID)
+					continue
+				}
+
+				query, args := sql.BuildUpdate(c.dialect, c.table, sql.UpdateOptions{
+					SetClauses: setClauses,
+					Conditions: []sql.Condition{sql.Where(c.dialect.QuoteIdentifier("id")).Eq(item.ID)},
+				})
+				pgxBatch.Queue(query, args...)
+				batchQueries = append(batchQueries, query)
+				batchArgs = append(batchArgs, args)
+				allIDs = append(allIDs, item.ID)
+			}
+
+			// Send all UPDATEs — pipelined if supported, sequential otherwise
+			if pgxBatch.Len() > 0 {
+				if batcher, ok := conn.(interface {
+					SendBatch(ctx context.Context, b *pgx.Batch) pgx.BatchResults
+				}); ok {
+					br := batcher.SendBatch(ctx, pgxBatch)
+					for range pgxBatch.Len() {
+						if _, err := br.Exec(); err != nil {
+							br.Close()
+							return nil, fmt.Errorf("update sequence_rows batch: %w", err)
+						}
+					}
+					if err := br.Close(); err != nil {
+						return nil, fmt.Errorf("close update batch: %w", err)
+					}
+				} else {
+					for i, q := range batchQueries {
+						if _, err := conn.Exec(ctx, q, batchArgs[i]...); err != nil {
+							return nil, fmt.Errorf("update sequence_rows batch: %w", err)
+						}
+					}
+				}
+			}
+		}
+
+		m.AffectedPKs = toAnySlice(allIDs)
+
+		// Empty FieldOptions — skip fetch
+		if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
+			return nil, nil
+		}
+		return c.GetMany(ctx, &GetSequenceRowsInput{
+			Filter: &SequenceRowFilter{
+				ID: &comparator.Number[int64]{In: allIDs},
+			},
+			Limit: new(0),
+		}, func(o *CallOptions[SequenceRowFieldOptions]) {
+			*o = options
+			o.SkipHooks = true
+			o.LockMode = sql.LockNone
+		})
+	})
+	if err != nil {
+		return nil, err
+	}
+	if result == nil {
+		return nil, nil
+	}
+	return result.([]*SequenceRow), nil
+}
+
+// UpdateWhere updates all sequence_rows matching the filter and returns the updated entities.
+// Idempotent — returns empty slice when no rows match.
+// Returns ErrNilInput when input is nil, checked before the filter.
+// Returns ErrEmptyFilter when the filter is nil or produces no conditions.
+func (c *sequenceRowClient) UpdateWhere(ctx context.Context, filter *SequenceRowFilter, input *UpdateSequenceRowInput, opts ...func(*CallOptions[SequenceRowFieldOptions])) ([]*SequenceRow, error) {
+	// Argument validity is checked before the filter's bulk-op
+	// safety guard, and before the executor, so a nil input fires no hook and
+	// publishes no event. ErrEmptyFilter still covers a non-nil input with an
+	// empty filter.
+	if input == nil {
+		return nil, ErrNilInput
+	}
+	options := resolveCallOptions(opts)
+	result, err := c.executeMutation(ctx, options.SkipHooks, &hook.MutationContext{
+		Op: hook.OpUpdateWhere, Table: TableSequenceRows, Schema: "public",
+		Input: input, CallOptions: options,
+	}, func(ctx context.Context, m *hook.MutationContext) (any, error) {
+		conn := database.Conn(ctx, c.querier)
+
+		conds := filter.ToConditions(c.dialect)
+		if len(conds) == 0 {
+			return nil, ErrEmptyFilter
+		}
+
+		// Build SET clause (same per-field checks as Update)
+		setClauses := make(map[string]any)
+		if v, ok := input.Code.Get(); ok {
+			setClauses["code"] = v
+		}
+		if v, ok := input.Seq.Get(); ok {
+			setClauses["seq"] = v
+		}
+		if v, ok := input.Ticket.Get(); ok {
+			setClauses["ticket"] = v
+		}
+		if v, ok := input.AuditNo.Get(); ok {
+			setClauses["audit_no"] = v
+		}
+		if v, ok := input.Note.Get(); ok {
+			setClauses["note"] = v
+		}
+
+		// No fields set — return matching entities unchanged
+		if len(setClauses) == 0 {
+			if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
+				return nil, nil
+			}
+			return c.GetMany(ctx, &GetSequenceRowsInput{
+				Filter: filter,
+				Limit:  new(0),
+			}, func(o *CallOptions[SequenceRowFieldOptions]) {
+				*o = options
+				o.SkipHooks = true
+				o.LockMode = sql.LockNone
+			})
+		}
+
+		// UPDATE with RETURNING "id" — get affected IDs in one round-trip
+		query, args := sql.BuildUpdate(c.dialect, c.table, sql.UpdateOptions{
+			SetClauses:       setClauses,
+			Conditions:       conds,
+			ReturningColumns: []string{"id"},
+		})
+
+		rows, err := conn.Query(ctx, query, args...)
+		if err != nil {
+			return nil, fmt.Errorf("update sequence_rows where: %w", err)
+		}
+		defer rows.Close()
+		var ids []int64
+		for rows.Next() {
+			var id int64
+			if err := rows.Scan(&id); err != nil {
+				return nil, fmt.Errorf("scan updated sequence_row id: %w", err)
+			}
+			ids = append(ids, id)
+		}
+		if err := rows.Err(); err != nil {
+			return nil, err
+		}
+		if len(ids) == 0 {
+			return nil, nil
+		}
+		m.AffectedPKs = toAnySlice(ids)
+
+		// Empty FieldOptions — skip fetch
+		if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
+			return nil, nil
+		}
+
+		// Fetch affected entities with FieldOptions
+		return c.GetMany(ctx, &GetSequenceRowsInput{
+			Filter: &SequenceRowFilter{
+				ID: &comparator.Number[int64]{In: ids},
+			},
+			Limit: new(0),
+		}, func(o *CallOptions[SequenceRowFieldOptions]) {
+			*o = options
+			o.SkipHooks = true
+			o.LockMode = sql.LockNone
+		})
+	})
+	if err != nil {
+		return nil, err
+	}
+	if result == nil {
+		return nil, nil
+	}
+	return result.([]*SequenceRow), nil
+}
+
+// HardDelete permanently removes a sequence_row from the database.
+// Idempotent — returns nil if the primary key does not exist.
+func (c *sequenceRowClient) HardDelete(ctx context.Context, id int64, opts ...func(*CallOptions[SequenceRowFieldOptions])) error {
+	options := resolveCallOptions(opts)
+	_, err := c.executeMutation(ctx, options.SkipHooks, &hook.MutationContext{
+		Op: hook.OpHardDelete, Table: TableSequenceRows, Schema: "public",
+		PK: id, CallOptions: options,
+	}, func(ctx context.Context, m *hook.MutationContext) (any, error) {
+		conn := database.Conn(ctx, c.querier)
+		query, args := sql.BuildHardDelete(c.dialect, c.table, sql.HardDeleteOptions{
+			Conditions: []sql.Condition{sql.Where(c.dialect.QuoteIdentifier("id")).Eq(id)},
+		})
+
+		_, err := conn.Exec(ctx, query, args...)
+		if err != nil {
+			return nil, fmt.Errorf("hard delete sequence_row: %w", err)
+		}
+		m.AffectedPKs = []any{id}
+		return nil, nil
+	})
+	return err
+}
+
+// HardDeleteMany permanently removes multiple sequence_rows from the database.
+func (c *sequenceRowClient) HardDeleteMany(ctx context.Context, ids []int64, opts ...func(*CallOptions[SequenceRowFieldOptions])) error {
+	options := resolveCallOptions(opts)
+	_, err := c.executeMutation(ctx, options.SkipHooks, &hook.MutationContext{
+		Op: hook.OpHardDeleteMany, Table: TableSequenceRows, Schema: "public",
+		Input: ids, CallOptions: options,
+	}, func(ctx context.Context, m *hook.MutationContext) (any, error) {
+		conn := database.Conn(ctx, c.querier)
+
+		query, args := sql.BuildHardDelete(c.dialect, c.table, sql.HardDeleteOptions{
+			Conditions: []sql.Condition{
+				sql.Where(c.dialect.QuoteIdentifier("id")).In(toAnySlice(ids)...),
+			},
+		})
+
+		_, err := conn.Exec(ctx, query, args...)
+		if err != nil {
+			return nil, fmt.Errorf("hard delete sequence_rows: %w", err)
+		}
+		m.AffectedPKs = toAnySlice(ids)
+		return nil, nil
+	})
+	return err
+}
+
+// HardDeleteWhere permanently removes all sequence_rows matching the filter.
+// Idempotent — returns nil when no rows match.
+// Returns ErrEmptyFilter when the filter is nil or produces no conditions.
+func (c *sequenceRowClient) HardDeleteWhere(ctx context.Context, filter *SequenceRowFilter, opts ...func(*CallOptions[SequenceRowFieldOptions])) error {
+	options := resolveCallOptions(opts)
+	_, err := c.executeMutation(ctx, options.SkipHooks, &hook.MutationContext{
+		Op: hook.OpHardDeleteWhere, Table: TableSequenceRows, Schema: "public",
+		Input: filter, CallOptions: options,
+	}, func(ctx context.Context, m *hook.MutationContext) (any, error) {
+		conn := database.Conn(ctx, c.querier)
+
+		conds := filter.ToConditions(c.dialect)
+		if len(conds) == 0 {
+			return nil, ErrEmptyFilter
+		}
+
+		// DELETE with RETURNING "id" — get affected IDs in one round-trip
+		query, args := sql.BuildHardDelete(c.dialect, c.table, sql.HardDeleteOptions{
+			Conditions:       conds,
+			ReturningColumns: []string{"id"},
+		})
+
+		rows, err := conn.Query(ctx, query, args...)
+		if err != nil {
+			return nil, fmt.Errorf("hard delete sequence_rows where: %w", err)
+		}
+		defer rows.Close()
+		var ids []int64
+		for rows.Next() {
+			var id int64
+			if err := rows.Scan(&id); err != nil {
+				return nil, fmt.Errorf("scan deleted sequence_row id: %w", err)
+			}
+			ids = append(ids, id)
+		}
+		if err := rows.Err(); err != nil {
+			return nil, err
+		}
+		m.AffectedPKs = toAnySlice(ids)
+		return nil, nil
+	})
+	return err
+}
+
+// SequenceRowConflictTarget identifies a unique constraint for upsert conflict detection.
+type SequenceRowConflictTarget int
+
+const (
+	SequenceRowConflictCode SequenceRowConflictTarget = iota // UNIQUE (code)
+	SequenceRowConflictPK                                    // PRIMARY KEY (id)
+)
+
+// sequenceRowConflictColumns maps each conflict target to its column set.
+var sequenceRowConflictColumns = map[SequenceRowConflictTarget][]string{
+	SequenceRowConflictCode: {"code"},
+	SequenceRowConflictPK:   {"id"},
+}
+
+// Upsert inserts a sequence_row or updates it if a row matching the conflict target already
+// exists. Returns the resulting entity with optional field selection and relationship loading.
+// The conflict target determines which unique constraint triggers an update
+// instead of an insert. Non-PK, non-conflict columns are included in the SET clause.
+func (c *sequenceRowClient) Upsert(ctx context.Context, input *CreateSequenceRowInput, target SequenceRowConflictTarget, opts ...func(*CallOptions[SequenceRowFieldOptions])) (*SequenceRow, error) {
+	// A write cannot normalize nil to the zero value the way a read
+	// does — a zero CreateSequenceRowInput legally writes a row (each required
+	// field's zero value, or with no required field, every column's default).
+	// Guarded before the executor, so nil fires no hook and publishes no event.
+	// An input that supplies no column gets no conflict clause on any dialect:
+	// it is a plain insert, so a conflict on a UNIQUE column with a
+	// DEFAULT is a unique violation, including on MySQL, where ON DUPLICATE KEY
+	// UPDATE would have returned the existing row.
+	if input == nil {
+		return nil, ErrNilInput
+	}
+	options := resolveCallOptions(opts)
+	result, err := c.executeMutation(ctx, options.SkipHooks, &hook.MutationContext{
+		Op: hook.OpUpsert, Table: TableSequenceRows, Schema: "public",
+		Input: input, CallOptions: options,
+	}, func(ctx context.Context, m *hook.MutationContext) (any, error) {
+		conn := database.Conn(ctx, c.querier)
+
+		columns := []string{"note"}
+		args := []any{input.Note}
+
+		if v, ok := input.Code.Get(); ok {
+			columns = append(columns, "code")
+			args = append(args, v)
+		}
+
+		if v, ok := input.Seq.Get(); ok {
+			columns = append(columns, "seq")
+			args = append(args, v)
+		}
+
+		if v, ok := input.Ticket.Get(); ok {
+			columns = append(columns, "ticket")
+			args = append(args, v)
+		}
+
+		if v, ok := input.AuditNo.Get(); ok {
+			columns = append(columns, "audit_no")
+			args = append(args, v)
+		}
+
+		// Resolve conflict target and update columns. Tenant column is excluded
+		// from the UPDATE-set half of the conflict clause — a
+		// row's tenant is not a mutable attribute under normal operation.
+		conflictColumns := sequenceRowConflictColumns[target]
+		updateColumns := excludeColumns(columns, append(conflictColumns, "id"))
+
+		id, err := c.insertUpsertAndResolveID(ctx, conn, columns, args, conflictColumns, updateColumns)
+		if err != nil {
+			return nil, fmt.Errorf("upsert sequence_row: %w", err)
+		}
+		m.AffectedPKs = []any{id}
+
+		// Empty FieldOptions — caller doesn't need the result
+		if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
+			return nil, nil
+		}
+
+		return c.Get(ctx, id, func(o *CallOptions[SequenceRowFieldOptions]) {
+			*o = options
+			o.SkipHooks = true
+			o.LockMode = sql.LockNone
+		})
+	})
+	if err != nil {
+		return nil, err
+	}
+	if result == nil {
+		return nil, nil
+	}
+	return result.(*SequenceRow), nil
+}
+
+// insertUpsertAndResolveID performs the INSERT with upsert clause and resolves the generated primary key.
+func (c *sequenceRowClient) insertUpsertAndResolveID(ctx context.Context, conn database.Querier, columns []string, args []any, conflictColumns, updateColumns []string) (int64, error) {
+	query, queryArgs := sql.BuildInsert(c.dialect, c.table, sql.InsertOptions{
+		Columns:               columns,
+		Values:                args,
+		UpsertConflictKeys:    conflictColumns,
+		UpsertUpdateColumns:   updateColumns,
+		UpsertResolvePKColumn: "id",
+		ReturningColumns:      []string{"id"},
+	})
+	rows, err := conn.Query(ctx, query, queryArgs...)
+	if err != nil {
+		return 0, err
+	}
+	var id int64
+	found := rows.Next()
+	if found {
+		err = rows.Scan(&id)
+	}
+	if err == nil {
+		err = rows.Err()
+	}
+	// Closed before the fallback below issues its own statement: conn may be a
+	// transaction, where an open result set blocks the next statement on the
+	// same connection.
+	if cerr := rows.Close(); err == nil {
+		err = cerr
+	}
+	if err != nil {
+		return 0, err
+	}
+	if found {
+		return id, nil
+	}
+	return c.resolveUpsertConflictRow(ctx, conn, columns, args, conflictColumns)
+}
+
+// resolveUpsertConflictRow resolves the row an upsert conflicted with, for the
+// case where the statement returned nothing.
+//
+// A conflict target that covers every inserted column leaves no column to
+// assign, so the dialect emits DO NOTHING — and DO NOTHING returns
+// no row, which leaves the RETURNING branch above with no PK for a write that
+// did resolve to a row. The conflicting row is looked up by the same conflict
+// columns the statement targeted; unlike MySQL's ON DUPLICATE KEY UPDATE, an
+// explicit ON CONFLICT target can only have fired on those columns, so the
+// lookup identifies the same row the statement did.
+//
+// The lookup does not exclude soft-deleted rows: the unique index matched
+// regardless of the soft-delete column, so a soft-deleted row is still the row
+// that conflicted and still the row whose PK this resolves. (The terminal Get
+// then applies the read path's own soft-delete filter, exactly as it does on
+// the DO UPDATE SET branch.)
+//
+// This is a second statement, so a concurrent delete between the insert and
+// this lookup surfaces as ErrNotFound. Run the upsert inside a transaction
+// where the pair has to be atomic.
+func (c *sequenceRowClient) resolveUpsertConflictRow(ctx context.Context, conn database.Querier, columns []string, args []any, conflictColumns []string) (int64, error) {
+	conds := make([]sql.Condition, 0, len(conflictColumns))
+	for _, col := range conflictColumns {
+		i := slices.Index(columns, col)
+		if i < 0 {
+			// A conflict column the statement never supplied cannot have
+			// produced the conflict, so there is no row to look up.
+			return 0, ErrNotFound
+		}
+		conds = append(conds, sql.Where(c.dialect.QuoteIdentifier(col)).Eq(args[i]))
+	}
+
+	query, queryArgs := sql.BuildSelect(c.dialect, c.table, sql.SelectOptions{
+		Columns:    []string{"id"},
+		Conditions: conds,
+		Limit:      new(1),
+	})
+	rows, err := conn.Query(ctx, query, queryArgs...)
+	if err != nil {
+		return 0, err
+	}
+	defer rows.Close()
+
+	var id int64
+	if !rows.Next() {
+		if err := rows.Err(); err != nil {
+			return 0, err
+		}
+		// The conflicting row is gone — deleted between the two statements.
+		return 0, ErrNotFound
+	}
+	if err := rows.Scan(&id); err != nil {
+		return 0, err
+	}
+	return id, rows.Err()
+}
+
+// UpsertMany inserts or updates multiple sequence_rows in batches and returns all
+// resulting entities. One conflict target applies to the whole batch, drawn from
+// the same enum Upsert takes. Sub-batches are not automatically rolled back on
+// failure — wrap in a transaction for atomicity.
+//
+// Inputs resolving to the same conflict target are deduped before the statement
+// is built, last occurrence wins. PostgreSQL rejects an
+// ON CONFLICT ... DO UPDATE that would affect one row twice; MySQL and SQLite
+// accept it and keep the last row. The dedupe is what makes one spelling behave
+// identically on all three. A row carrying no definite, non-NULL value for every
+// conflict column is exempt: a NULL never matches under a unique index on any of
+// the three dialects, so two such rows are two rows, not a duplicate.
+//
+// The returned slice carries one entity per deduped input on every dialect,
+// including the DO NOTHING branch a conflict target covering every inserted
+// column produces. The entities come from a re-fetch by primary key, never from
+// RETURNING — RETURNING yields only the rows actually inserted, so a batch that
+// conflicted would come back short. Row order is GetMany's, as with
+// CreateMany.
+//
+// sequence_rows.id is database-generated, so the rows written by each
+// sub-batch are read back by the conflict target they targeted — two statements
+// per sub-batch rather than one. No dialect can report them from the
+// statement itself: MySQL's LAST_INSERT_ID() after a mixed batch names the first
+// *newly inserted* row, not the batch's first row, so fabricating ids from it is
+// unsound, and RETURNING drops every row that took the DO NOTHING branch. The
+// conflict target must therefore name columns the input carries; one that does
+// not is an error before anything is written.
+func (c *sequenceRowClient) UpsertMany(ctx context.Context, inputs []*CreateSequenceRowInput, target SequenceRowConflictTarget, opts ...func(*CallOptions[SequenceRowFieldOptions])) ([]*SequenceRow, error) {
+	// A nil *slice* is simply no rows, but a nil *element* is the
+	// same caller error a nil Upsert argument is — and skipping it silently
+	// would drop a row the caller asked for. Rejected before the executor.
+	for _, in := range inputs {
+		if in == nil {
+			return nil, ErrNilInput
+		}
+	}
+	options := resolveCallOptions(opts)
+	result, err := c.executeMutation(ctx, options.SkipHooks, &hook.MutationContext{
+		Op: hook.OpUpsertMany, Table: TableSequenceRows, Schema: "public",
+		Input: inputs, CallOptions: options,
+	}, func(ctx context.Context, m *hook.MutationContext) (any, error) {
+		// No rows means no statement and nothing affected. Guarded here because
+		// the terminal GetMany filters on the written keys, and a key filter
+		// built from an empty set contributes no condition — an unguarded empty
+		// call would read the whole table back.
+		if len(inputs) == 0 {
+			return []*SequenceRow{}, nil
+		}
+		conn := database.Conn(ctx, c.querier)
+
+		// Resolve conflict target and update columns. Tenant column is excluded
+		// from the UPDATE-set half of the conflict clause — a
+		// row's tenant is not a mutable attribute under normal operation.
+		// So is every non-key sequence column. A row that leaves one unset
+		// would redraw it on every conflict, and PostgreSQL rejects the clause
+		// outright on a GENERATED ALWAYS identity. A set value applies on
+		// insert only.
+		//
+		// UpsertResolvePKColumn is deliberately not set: it exists so a
+		// single-row MySQL upsert can republish the conflicting row's id into
+		// the OK packet, and after a batch that packet names at most one row.
+		// Nothing here reads LastInsertId, so requesting it would
+		// only add a misleading assignment to the SET list.
+		columns := []string{"code", "seq", "ticket", "audit_no", "note"}
+		conflictColumns := sequenceRowConflictColumns[target]
+		updateColumns := excludeColumns(columns, append(conflictColumns, "id", "seq", "ticket", "audit_no"))
+		conflictPositions, haveConflictKey := upsertConflictPositions(columns, conflictColumns)
+		if !haveConflictKey {
+			return nil, fmt.Errorf("upsert sequence_rows: conflict target names a column the input does not supply, so the written rows cannot be identified")
+		}
+
+		// One value row per input, built before any statement runs: the dedupe
+		// spans the whole call, not a sub-batch (ceil(M/batch_size)
+		// statements for M inputs, *after* the dedupe).
+		valueRows := make([][]any, 0, len(inputs))
+		rowInputs := make([]*CreateSequenceRowInput, 0, len(inputs))
+		var rowIDs []int64
+		for _, input := range inputs {
+			var code any = sql.Default
+			if v, ok := input.Code.Get(); ok {
+				code = v
+			}
+			var seq any = sql.Default
+			if v, ok := input.Seq.Get(); ok {
+				seq = v
+			}
+			var ticket any = sql.Default
+			if v, ok := input.Ticket.Get(); ok {
+				ticket = v
+			}
+			var auditNo any = sql.Default
+			if v, ok := input.AuditNo.Get(); ok {
+				auditNo = v
+			}
+
+			valueRows = append(valueRows, []any{
+				code,
+				seq,
+				ticket,
+				auditNo,
+				input.Note,
+			})
+			rowInputs = append(rowInputs, input)
+		}
+
+		// Dedupe by conflict target, last occurrence wins, first-appearance
+		// order preserved.
+		if haveConflictKey {
+			seen := make(map[string]int, len(valueRows))
+			dedupedRows := make([][]any, 0, len(valueRows))
+			dedupedInputs := make([]*CreateSequenceRowInput, 0, len(rowInputs))
+			for i, row := range valueRows {
+				key, keyed := upsertDedupeKey(row, conflictPositions)
+				if !keyed {
+					// The row cannot be read back by the conflict target, so
+					// its database-generated primary key would be unknowable.
+					// Refused before anything is written rather than returned
+					// short.
+					return nil, fmt.Errorf("upsert sequence_rows: input %d supplies no definite value for every conflict column, so its generated id cannot be resolved", i)
+				}
+				if keyed {
+					if j, ok := seen[key]; ok {
+						dedupedRows[j] = row
+						dedupedInputs[j] = rowInputs[i]
+						continue
+					}
+					seen[key] = len(dedupedRows)
+				}
+				dedupedRows = append(dedupedRows, row)
+				dedupedInputs = append(dedupedInputs, rowInputs[i])
+			}
+			valueRows = dedupedRows
+			rowInputs = dedupedInputs
+		}
+		// The published input is the deduped slice, so it stays index-aligned
+		// with m.AffectedPKs: an event fanned out per affected row carries the
+		// input that actually wrote that row.
+		m.Input = rowInputs
+
+		for start := 0; start < len(valueRows); start += c.batchSize {
+			end := min(start+c.batchSize, len(valueRows))
+			batch := valueRows[start:end]
+
+			query, queryArgs := sql.BuildMultiInsert(c.dialect, c.table, sql.MultiInsertOptions{
+				Columns:             columns,
+				ValueRows:           batch,
+				UpsertConflictKeys:  conflictColumns,
+				UpsertUpdateColumns: updateColumns,
+			})
+			if _, err := conn.Exec(ctx, query, queryArgs...); err != nil {
+				return nil, fmt.Errorf("upsert sequence_rows batch: %w", err)
+			}
+
+			batchIDs, err := c.resolveUpsertManyRows(ctx, conn, conflictColumns, conflictPositions, batch)
+			if err != nil {
+				return nil, fmt.Errorf("upsert sequence_rows batch: %w", err)
+			}
+			rowIDs = append(rowIDs, batchIDs...)
+		}
+
+		m.AffectedPKs = toAnySlice(rowIDs)
+
+		// Empty FieldOptions — skip fetch
+		if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
+			return nil, nil
+		}
+
+		return c.GetMany(ctx, &GetSequenceRowsInput{
+			Filter: &SequenceRowFilter{
+				ID: &comparator.Number[int64]{In: rowIDs},
+			},
+			Limit: new(0),
+		}, func(o *CallOptions[SequenceRowFieldOptions]) {
+			*o = options
+			o.SkipHooks = true
+			o.LockMode = sql.LockNone
+		})
+	})
+	if err != nil {
+		return nil, err
+	}
+	if result == nil {
+		return nil, nil
+	}
+	return result.([]*SequenceRow), nil
+}
+
+// resolveUpsertManyRows reads back the rows one UpsertMany sub-batch wrote,
+// keyed on the conflict target the statement used, and returns each row's
+// primary key in the batch's own order.
+//
+// It exists because no dialect reports a batch's keys: MySQL's LAST_INSERT_ID()
+// names the first *newly inserted* row after a mixed batch — not the batch's
+// first row, so fabricating ids as firstID+i is unsound — and RETURNING omits
+// every row that took the DO NOTHING branch. Reading back by
+// the conflict columns is unambiguous for the same reason
+// resolveUpsertConflictRow's lookup is: an explicit conflict target can only
+// have fired on those columns.
+//
+// sequence_rows.id is database-generated, so every call takes this path.
+//
+// The lookup applies neither the soft-delete filter nor a tenant predicate. The
+// unique index matched regardless of either, so a soft-deleted or other-tenant
+// row is still the row that conflicted and still the row whose key this
+// resolves; the terminal GetMany then applies the read path's own filters,
+// exactly as on the DO UPDATE SET branch.
+//
+// It is a second statement, so a concurrent delete between the two leaves a row
+// unmatched. That is reported rather than silently returned short.
+func (c *sequenceRowClient) resolveUpsertManyRows(ctx context.Context, conn database.Querier, conflictColumns []string, positions []int, rows [][]any) ([]int64, error) {
+	if len(rows) == 0 {
+		return nil, nil
+	}
+	keySets := make([][]any, len(rows))
+	for i, row := range rows {
+		vals := make([]any, len(positions))
+		for j, pos := range positions {
+			vals[j] = row[pos]
+		}
+		keySets[i] = vals
+	}
+
+	// Copied rather than sorted in place: conflictColumns aliases the
+	// package-level sequenceRowConflictColumns entry, and BuildSelect
+	// emits its column list sorted, so scanSequenceRows
+	// must be handed the same sorted list to bind targets against.
+	lookupColumns := make([]string, 0, len(conflictColumns)+2)
+	lookupColumns = append(lookupColumns, conflictColumns...)
+	for _, required := range []string{"id"} {
+		if !slices.Contains(lookupColumns, required) {
+			lookupColumns = append(lookupColumns, required)
+		}
+	}
+	slices.Sort(lookupColumns)
+
+	query, args := sql.BuildSelect(c.dialect, c.table, sql.SelectOptions{
+		Columns:    lookupColumns,
+		Conditions: []sql.Condition{sql.BuildCompositePKBatchCondition(c.dialect, conflictColumns, keySets)},
+	})
+	queried, err := conn.Query(ctx, query, args...)
+	if err != nil {
+		return nil, err
+	}
+	found, err := scanSequenceRows(queried, lookupColumns)
+	if cerr := queried.Close(); err == nil {
+		err = cerr
+	}
+	if err != nil {
+		return nil, err
+	}
+
+	// The read-back row is keyed by the same function the value rows are, over
+	// the conflict columns in their own order — so keyPositions is the identity.
+	keyPositions := make([]int, len(conflictColumns))
+	for i := range keyPositions {
+		keyPositions[i] = i
+	}
+	type resolvedRow struct {
+		pk int64
+	}
+	byKey := make(map[string]resolvedRow, len(found))
+	for _, entity := range found {
+		keyRow := make([]any, len(conflictColumns))
+		for i, col := range conflictColumns {
+			keyRow[i] = sequenceRowColumnValue(entity, col)
+		}
+		key, ok := upsertDedupeKey(keyRow, keyPositions)
+		if !ok {
+			continue
+		}
+		byKey[key] = resolvedRow{pk: entity.ID}
+	}
+
+	pks := make([]int64, len(rows))
+	for i, row := range rows {
+		key, ok := upsertDedupeKey(row, positions)
+		if !ok {
+			return nil, fmt.Errorf("row %d carries no definite conflict-target value", i)
+		}
+		resolved, ok := byKey[key]
+		if !ok {
+			return nil, fmt.Errorf("row %d was written but could not be read back by conflict target %v: the stored value differs from the one supplied (a case-insensitive collation, CHAR padding or a timestamp precision the column truncates), or the row was deleted concurrently", i, conflictColumns)
+		}
+		pks[i] = resolved.pk
+	}
+	return pks, nil
+}
+
+// sequenceRowColumnValue returns one column's value off a scanned
+// SequenceRow, so a row read back by resolveUpsertManyRows can be keyed
+// against the value row that wrote it. The conflict target is a runtime
+// argument, so the column cannot be selected at generation time — but its Go
+// type can, which is what keeps this switch free of reflection, like
+// scanSequenceRows.
+func sequenceRowColumnValue(s *SequenceRow, column string) any {
+	switch column {
+	case "id":
+		return s.ID
+	case "code":
+		return s.Code
+	case "seq":
+		return s.Seq
+	case "ticket":
+		return s.Ticket
+	case "audit_no":
+		return s.AuditNo
+	case "note":
+		return s.Note
+	}
+	return nil
+}
+
+// SequenceRowIncrementColumn identifies a numeric column eligible for atomic increment/decrement.
+type SequenceRowIncrementColumn string
+
+const (
+	SequenceRowIncrementSeq     SequenceRowIncrementColumn = "seq"
+	SequenceRowIncrementTicket  SequenceRowIncrementColumn = "ticket"
+	SequenceRowIncrementAuditNo SequenceRowIncrementColumn = "audit_no"
+)
+
+// Increment atomically increments or decrements a numeric column on a sequence_row.
+// A negative amount performs a decrement.
+// Returns ErrNotFound if the primary key does not exist.
+func (c *sequenceRowClient) Increment(ctx context.Context, id int64, input IncrementInput[SequenceRowIncrementColumn], opts ...func(*CallOptions[SequenceRowFieldOptions])) error {
+	options := resolveCallOptions(opts)
+	_, err := c.executeMutation(ctx, options.SkipHooks, &hook.MutationContext{
+		Op: hook.OpIncrement, Table: TableSequenceRows, Schema: "public",
+		PK: id, Input: input, CallOptions: options,
+	}, func(ctx context.Context, m *hook.MutationContext) (any, error) {
+		conn := database.Conn(ctx, c.querier)
+		query, args := sql.BuildIncrement(c.dialect, c.table, string(input.Column), input.Amount, []sql.Condition{
+			sql.Where(c.dialect.QuoteIdentifier("id")).Eq(id),
+		})
+
+		execResult, err := conn.Exec(ctx, query, args...)
+		if err != nil {
+			return nil, fmt.Errorf("increment sequence_row %s: %w", input.Column, err)
+		}
+
+		count, err := execResult.RowsAffected()
+		if err != nil {
+			return nil, fmt.Errorf("increment sequence_row rows affected: %w", err)
+		}
+		if count == 0 {
+			return nil, ErrNotFound
+		}
+		m.AffectedPKs = []any{id}
+		return nil, nil
+	})
+	return err
+}
+
+// Exists returns true if a sequence_row with the given primary key exists.
+func (c *sequenceRowClient) Exists(ctx context.Context, id int64, opts ...func(*CallOptions[SequenceRowFieldOptions])) (bool, error) {
+	options := resolveCallOptions(opts)
+	result, err := c.executeQuery(ctx, options.SkipHooks, &hook.QueryContext{
+		Op: hook.OpExists, Table: TableSequenceRows, Schema: "public",
+		PK: id, CallOptions: options,
+	}, func(ctx context.Context, q *hook.QueryContext) (any, error) {
+		conn := database.Conn(ctx, c.querier)
+		conds := []sql.Condition{sql.Where(c.dialect.QuoteIdentifier("id")).Eq(id)}
+
+		query, args := sql.BuildExists(c.dialect, c.table, conds)
+
+		var exists bool
+		if err := conn.QueryRow(ctx, query, args...).Scan(&exists); err != nil {
+			return false, fmt.Errorf("exists sequence_row: %w", err)
+		}
+		return exists, nil
+	})
+	if err != nil {
+		return false, err
+	}
+	return result.(bool), nil
+}
+
+// ExistsWhere returns true if any sequence_row matches the given filter.
+func (c *sequenceRowClient) ExistsWhere(ctx context.Context, filter *SequenceRowFilter, opts ...func(*CallOptions[SequenceRowFieldOptions])) (bool, error) {
+	options := resolveCallOptions(opts)
+	result, err := c.executeQuery(ctx, options.SkipHooks, &hook.QueryContext{
+		Op: hook.OpExists, Table: TableSequenceRows, Schema: "public",
+		Input: filter, CallOptions: options,
+	}, func(ctx context.Context, q *hook.QueryContext) (any, error) {
+		conn := database.Conn(ctx, c.querier)
+
+		var conds []sql.Condition
+		if filter != nil {
+			conds = filter.ToConditions(c.dialect)
+		}
+
+		query, args := sql.BuildExists(c.dialect, c.table, conds)
+
+		var exists bool
+		if err := conn.QueryRow(ctx, query, args...).Scan(&exists); err != nil {
+			return false, fmt.Errorf("exists sequence_row where: %w", err)
+		}
+		return exists, nil
+	})
+	if err != nil {
+		return false, err
+	}
+	return result.(bool), nil
+}
+
+// Count returns the number of sequence_rows matching the given filter.
+// A nil filter counts all sequence_rows.
+func (c *sequenceRowClient) Count(ctx context.Context, filter *SequenceRowFilter, opts ...func(*CallOptions[SequenceRowFieldOptions])) (int64, error) {
+	options := resolveCallOptions(opts)
+	result, err := c.executeQuery(ctx, options.SkipHooks, &hook.QueryContext{
+		Op: hook.OpCount, Table: TableSequenceRows, Schema: "public",
+		Input: filter, CallOptions: options,
+	}, func(ctx context.Context, q *hook.QueryContext) (any, error) {
+		conn := database.Conn(ctx, c.querier)
+
+		var conds []sql.Condition
+		if filter != nil {
+			conds = filter.ToConditions(c.dialect)
+		}
+
+		query, args := sql.BuildCount(c.dialect, c.table, conds)
+
+		var count int64
+		if err := conn.QueryRow(ctx, query, args...).Scan(&count); err != nil {
+			return int64(0), fmt.Errorf("count sequence_rows: %w", err)
+		}
+		return count, nil
+	})
+	if err != nil {
+		return 0, err
+	}
+	return result.(int64), nil
+}
+
+// Paginate returns a page of sequence_rows with total count for offset-based pagination.
+// A nil filter paginates all sequence_rows.
+func (c *sequenceRowClient) Paginate(ctx context.Context, input PaginateInput[SequenceRowFilter], opts ...func(*CallOptions[SequenceRowFieldOptions])) (*PaginateResult[SequenceRow], error) {
+	options := resolveCallOptions(opts)
+	result, err := c.executeQuery(ctx, options.SkipHooks, &hook.QueryContext{
+		Op: hook.OpPaginate, Table: TableSequenceRows, Schema: "public",
+		Input: input, CallOptions: options,
+	}, func(ctx context.Context, q *hook.QueryContext) (any, error) {
+		// Internal calls with SkipHooks to prevent nested hook invocation
+		internalOpts := func(o *CallOptions[SequenceRowFieldOptions]) {
+			*o = options
+			o.SkipHooks = true
+		}
+
+		// Total count (delegates to Count — both are always generated)
+		totalCount, err := c.Count(ctx, input.Filter, internalOpts)
+		if err != nil {
+			return nil, fmt.Errorf("paginate sequence_rows count: %w", err)
+		}
+
+		// Page data via GetMany (handles FieldOptions and relationships)
+		sequenceRows, err := c.GetMany(ctx, &GetSequenceRowsInput{
+			Filter: input.Filter,
+			Sorts:  input.Sort,
+			Limit:  &input.Limit,
+			Offset: &input.Offset,
+		}, internalOpts)
+		if err != nil {
+			return nil, fmt.Errorf("paginate sequence_rows: %w", err)
+		}
+
+		return &PaginateResult[SequenceRow]{
+			Items:      sequenceRows,
+			TotalCount: totalCount,
+			Offset:     input.Offset,
+			Limit:      input.Limit,
+			HasMore:    int64(input.Offset+input.Limit) < totalCount,
+		}, nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	return result.(*PaginateResult[SequenceRow]), nil
+}
+
+// Connection returns a Relay-style cursor-paginated connection of sequence_rows.
+// Sort order is determined by cursor_keys — custom sorts are not supported.
+// Use Paginate for custom sort orders.
+func (c *sequenceRowClient) Connection(ctx context.Context, input ConnectionInput[SequenceRowFilter], opts ...func(*CallOptions[SequenceRowFieldOptions])) (*Connection[SequenceRow], error) {
+	options := resolveCallOptions(opts)
+
+	if options.LockMode != sql.LockNone {
+		if !database.InTransaction(ctx) {
+			return nil, fmt.Errorf("connection sequence_rows: LockMode requires an active transaction")
+		}
+		options.SkipCache = true
+	}
+	result, err := c.executeQuery(ctx, options.SkipHooks, &hook.QueryContext{
+		Op: hook.OpConnection, Table: TableSequenceRows, Schema: "public",
+		Input: input, CallOptions: options,
+	}, func(ctx context.Context, q *hook.QueryContext) (any, error) {
+		// Internal calls with SkipHooks to prevent nested hook invocation
+		internalOpts := func(o *CallOptions[SequenceRowFieldOptions]) {
+			*o = options
+			o.SkipHooks = true
+		}
+
+		// Validate: first and last are mutually exclusive
+		if input.First != nil && input.Last != nil {
+			return nil, ErrInvalidCursor
+		}
+
+		// Total count (separate COUNT query — no cursor conditions)
+		totalCount, err := c.Count(ctx, input.Filter, internalOpts)
+		if err != nil {
+			return nil, fmt.Errorf("connection sequence_rows count: %w", err)
+		}
+
+		// Decode cursors and build keyset conditions
+		var keysetConds []sql.Condition
+		if input.After != nil {
+			cursor, err := decodeSequenceRowCursor(*input.After, c.cursorKeys)
+			if err != nil {
+				return nil, ErrInvalidCursor
+			}
+			keysetConds = append(keysetConds, cursorKeyset(c.dialect, c.cursorKeys, cursor, ">"))
+		}
+		if input.Before != nil {
+			cursor, err := decodeSequenceRowCursor(*input.Before, c.cursorKeys)
+			if err != nil {
+				return nil, ErrInvalidCursor
+			}
+			keysetConds = append(keysetConds, cursorKeyset(c.dialect, c.cursorKeys, cursor, "<"))
+		}
+
+		// Direction and limit
+		limit := c.pageSize
+		ascending := true
+		if input.First != nil {
+			limit = *input.First
+		} else if input.Last != nil {
+			limit = *input.Last
+			ascending = false
+		}
+
+		// Fetch limit+1 rows via GetMany (handles FieldOptions, O2O joins, relationships, soft delete)
+		connLimit := limit + 1
+		sequenceRows, err := c.GetMany(ctx, &GetSequenceRowsInput{
+			Filter:     input.Filter,
+			Sorts:      cursorSorts(c.cursorKeys, ascending),
+			Limit:      &connLimit,
+			conditions: keysetConds,
+			// Each edge's cursor is encoded from the row it wraps, so the cursor
+			// keys have to survive a narrowed FieldOptions — otherwise the
+			// encoder reads fields the SELECT never filled and every cursor
+			// carries zero values.
+			requiredColumns: c.cursorKeys,
+		}, internalOpts)
+		if err != nil {
+			return nil, fmt.Errorf("connection sequence_rows: %w", err)
+		}
+
+		// Trim extra row and determine page boundaries
+		hasMore := len(sequenceRows) > limit
+		if hasMore {
+			sequenceRows = sequenceRows[:limit]
+		}
+
+		// Backward pagination: reverse for ascending cursor order
+		if !ascending {
+			slices.Reverse(sequenceRows)
+		}
+
+		// Build edges with encoded cursors
+		edges := make([]Edge[SequenceRow], len(sequenceRows))
+		for i, row := range sequenceRows {
+			cursor, err := encodeSequenceRowCursor(c.cursorKeys, row)
+			if err != nil {
+				return nil, err
+			}
+			edges[i] = Edge[SequenceRow]{
+				Node:   row,
+				Cursor: cursor,
+			}
+		}
+
+		pageInfo := PageInfo{
+			HasNextPage:     (ascending && hasMore) || (!ascending && input.Before != nil),
+			HasPreviousPage: (!ascending && hasMore) || (ascending && input.After != nil),
+		}
+		if len(edges) > 0 {
+			pageInfo.StartCursor = &edges[0].Cursor
+			pageInfo.EndCursor = &edges[len(edges)-1].Cursor
+		}
+
+		return &Connection[SequenceRow]{Edges: edges, PageInfo: pageInfo, TotalCount: totalCount}, nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	return result.(*Connection[SequenceRow]), nil
+}
+
+// encodeSequenceRowCursor encodes cursor key values as a base64 JSON string.
+func encodeSequenceRowCursor(keys []string, s *SequenceRow) (string, error) {
+	out := make(map[string]any, len(keys))
+	for _, key := range keys {
+		switch key {
+		case "id":
+			out["id"] = s.ID
+		case "code":
+			out["code"] = s.Code
+		case "seq":
+			out["seq"] = s.Seq
+		case "ticket":
+			out["ticket"] = s.Ticket
+		case "audit_no":
+			out["audit_no"] = s.AuditNo
+		case "note":
+			out["note"] = s.Note
+		}
+	}
+	data, err := json.Marshal(out)
+	if err != nil {
+		return "", fmt.Errorf("encode sequence_row cursor: %w", err)
+	}
+	return base64.StdEncoding.EncodeToString(data), nil
+}
+
+// decodeSequenceRowCursor decodes a cursor string into its key values,
+// each unmarshaled into the key column's Go type.
+func decodeSequenceRowCursor(encoded string, keys []string) (map[string]any, error) {
+	raw, err := decodeCursor(encoded, keys)
+	if err != nil {
+		return nil, err
+	}
+	var row SequenceRow
+	out := make(map[string]any, len(keys))
+	for _, key := range keys {
+		switch key {
+		case "id":
+			err = json.Unmarshal(raw[key], &row.ID)
+			out[key] = row.ID
+		}
+		if err != nil {
+			return nil, err
+		}
+		if cursorValueIsNull(out[key]) {
+			return nil, ErrInvalidCursor
+		}
+	}
+	return out, nil
+}
+
+// StreamSequenceRowsInput holds query parameters for streaming sequence_rows records.
+// Stream is iterator-style and intentionally has no Limit/Offset.
+// Field selection is controlled via CallOptions.FieldOptions, not this struct.
+type StreamSequenceRowsInput struct {
+	Filter *SequenceRowFilter `json:"filter"`
+	Sorts  []sql.Sort         `json:"sorts"`
+}
+
+// StreamSequenceRowFieldOptions controls scalar column selection for sequence_rows streams.
+// Stream cannot load relationships — only scalar columns are selectable.
+type StreamSequenceRowFieldOptions struct {
+	ID      bool `json:"id"`
+	Code    bool `json:"code"`
+	Seq     bool `json:"seq"`
+	Ticket  bool `json:"ticket"`
+	AuditNo bool `json:"audit_no"`
+	Note    bool `json:"note"`
+}
+
+// Columns returns the SQL column names for all selected columns, sorted alphabetically
+// to match the SQL builder's deterministic column ordering.
+func (fo *StreamSequenceRowFieldOptions) Columns() []string {
+	var cols []string
+	if fo.ID {
+		cols = append(cols, "id")
+	}
+	if fo.Code {
+		cols = append(cols, "code")
+	}
+	if fo.Seq {
+		cols = append(cols, "seq")
+	}
+	if fo.Ticket {
+		cols = append(cols, "ticket")
+	}
+	if fo.AuditNo {
+		cols = append(cols, "audit_no")
+	}
+	if fo.Note {
+		cols = append(cols, "note")
+	}
+	slices.Sort(cols)
+	return cols
+}
+
+// HasSelectedColumns reports whether any column is selected.
+func (fo *StreamSequenceRowFieldOptions) HasSelectedColumns() bool {
+	if fo.ID {
+		return true
+	}
+	if fo.Code {
+		return true
+	}
+	if fo.Seq {
+		return true
+	}
+	if fo.Ticket {
+		return true
+	}
+	if fo.AuditNo {
+		return true
+	}
+	if fo.Note {
+		return true
+	}
+	return false
+}
+
+// scanSequenceRowRow scans a single row into a SequenceRow entity.
+// Used by Stream to yield rows one at a time without materializing the result set.
+func scanSequenceRowRow(rows database.Rows, columns []string) (*SequenceRow, error) {
+	s := &SequenceRow{}
+
+	targets := make([]any, len(columns))
+	for idx, col := range columns {
+		switch col {
+		case "id":
+			targets[idx] = &s.ID
+		case "code":
+			targets[idx] = &s.Code
+		case "seq":
+			targets[idx] = &s.Seq
+		case "ticket":
+			targets[idx] = &s.Ticket
+		case "audit_no":
+			targets[idx] = &s.AuditNo
+		case "note":
+			targets[idx] = &s.Note
+		}
+	}
+
+	if err := rows.Scan(targets...); err != nil {
+		return nil, fmt.Errorf("scan sequence_row: %w", err)
+	}
+
+	return s, nil
+}
+
+// Stream returns an iterator over sequence_rows matching the given filter and sort criteria.
+// Rows are yielded as the driver returns them, without materializing the full
+// result set. Cache is bypassed regardless of caller setting.
+// Stream cannot load relationships — use Connection in a loop when relationships
+// are required.
+//
+// Stream refuses an active transaction. It runs consumer code inside an open
+// result set, which inside a transaction is the transaction's only connection,
+// held for the whole iteration — so a statement issued from the loop body on the
+// same txCtx waits on a reservation the loop itself holds. Set
+// CallOptions.AllowInTransaction for a snapshot-consistent stream that issues
+// nothing else on that txCtx. That obligation is the one rule that remains the
+// caller's — drain or close a result set before issuing the next statement on
+// that txCtx — applied to a loop whose body is caller code.
+func (c *sequenceRowClient) Stream(ctx context.Context, input *StreamSequenceRowsInput, opts ...func(*CallOptions[StreamSequenceRowFieldOptions])) iter.Seq2[*SequenceRow, error] {
+	return func(yield func(*SequenceRow, error) bool) {
+		// A nil input is the zero-value input. Without it, an
+		// unguarded nil dereference in the handler would be recovered by the
+		// panic wrapper and reported as an error instead of streaming the table.
+		if input == nil {
+			input = &StreamSequenceRowsInput{}
+		}
+		options := resolveCallOptions(opts)
+		options.SkipCache = true
+
+		// Stream's contract is that the connection stays open across
+		// caller code; a transaction's is one connection, one statement at a
+		// time. The two cannot both hold, so Stream refuses a transaction unless
+		// the caller opts in. Refused before any SQL is issued and before the
+		// hook chain is built, mirroring the LockMode precondition, and
+		// surfaced through yield because Stream returns an iterator and has no
+		// error return.
+		if database.InTransaction(ctx) && !options.AllowInTransaction {
+			yield(nil, fmt.Errorf("stream sequence_rows: unsupported inside a transaction — use Connection in a loop, "+
+				"or set AllowInTransaction for a snapshot-consistent stream that issues nothing else on this txCtx"))
+			return
+		}
+
+		// stopped is true while the consumer's loop body runs, and stays true
+		// once the body breaks (yield returned false) or panics out of yield.
+		// Calling yield again after either makes the Go runtime panic, so the
+		// chain's error below is yielded only while stopped is false.
+		var stopped bool
+		emit := func(row *SequenceRow, err error) bool {
+			stopped = true
+			if !yield(row, err) {
+				return false
+			}
+			stopped = false
+			return true
+		}
+
+		// A recovered panic and a hook's abort error are the
+		// chain's return value. Stream has no error return, so it yields that
+		// error once, after anything the handler yielded.
+		_, err := c.executeQuery(ctx, options.SkipHooks, &hook.QueryContext{
+			Op: hook.OpStream, Table: TableSequenceRows, Schema: "public",
+			Input: input, CallOptions: options,
+		}, func(ctx context.Context, q *hook.QueryContext) (any, error) {
+			conn := database.Conn(ctx, c.querier)
+
+			fieldOptions := options.FieldOptions
+			columns := sequenceRowAllColumns
+			if fieldOptions != nil {
+				if selected := fieldOptions.Columns(); len(selected) > 0 {
+					columns = selected
+				}
+			}
+
+			var conds []sql.Condition
+			if input.Filter != nil {
+				conds = input.Filter.ToConditions(c.dialect)
+			}
+
+			query, args := sql.BuildSelect(c.dialect, c.table, sql.SelectOptions{
+				Columns:    columns,
+				Conditions: conds,
+				OrderBy:    input.Sorts,
+			})
+
+			rows, err := conn.Query(ctx, query, args...)
+			if err != nil {
+				emit(nil, fmt.Errorf("stream sequence_rows: %w", err))
+				return nil, nil
+			}
+			defer rows.Close()
+
+			for rows.Next() {
+				s, err := scanSequenceRowRow(rows, columns)
+				if err != nil {
+					if !emit(nil, err) {
+						return nil, nil
+					}
+					continue
+				}
+				if !emit(s, nil) {
+					return nil, nil
+				}
+			}
+			if err := rows.Err(); err != nil {
+				emit(nil, fmt.Errorf("iterate sequence_row rows: %w", err))
+			}
+			return nil, nil
+		})
+		if err != nil && !stopped {
+			yield(nil, err)
+		}
+	}
+}
+
+// SequenceRowFilter provides type-safe filtering for the sequence_rows table.
+type SequenceRowFilter struct {
+	AuditNo *comparator.Number[int32]  `json:"audit_no"`
+	Code    *comparator.NullableString `json:"code"`
+	ID      *comparator.Number[int64]  `json:"id"`
+	Note    *comparator.String         `json:"note"`
+	Seq     *comparator.Number[int32]  `json:"seq"`
+	Ticket  *comparator.Number[int64]  `json:"ticket"`
+	And     []*SequenceRowFilter       `json:"and"`
+	Or      []*SequenceRowFilter       `json:"or"`
+}
+
+// ToConditions converts the filter to a slice of SQL conditions.
+//
+// A nil receiver contributes no conditions. Two callers depend on that. The
+// *Where methods dereference their filter only here and document a nil one as
+// the empty-filter case, so this is what makes ErrEmptyFilter reachable instead
+// of a nil dereference. And a nil entry inside and / or is skipped rather than
+// fatal, matching the "an unset member contributes no SQL" rule the
+// relationship members already follow.
+func (f *SequenceRowFilter) ToConditions(dialect sql.Dialect, opts ...FilterOption) []sql.Condition {
+	if f == nil {
+		return nil
+	}
+
+	var conds []sql.Condition
+
+	if f.AuditNo != nil {
+		conds = append(conds, f.AuditNo.Parse(dialect.QuoteIdentifier("audit_no"), dialect)...)
+	}
+
+	if f.Code != nil {
+		conds = append(conds, f.Code.Parse(dialect.QuoteIdentifier("code"), dialect)...)
+	}
+
+	if f.ID != nil {
+		conds = append(conds, f.ID.Parse(dialect.QuoteIdentifier("id"), dialect)...)
+	}
+
+	if f.Note != nil {
+		conds = append(conds, f.Note.Parse(dialect.QuoteIdentifier("note"), dialect)...)
+	}
+
+	if f.Seq != nil {
+		conds = append(conds, f.Seq.Parse(dialect.QuoteIdentifier("seq"), dialect)...)
+	}
+
+	if f.Ticket != nil {
+		conds = append(conds, f.Ticket.Parse(dialect.QuoteIdentifier("ticket"), dialect)...)
+	}
+
+	for _, sub := range f.And {
+		subConds := sub.ToConditions(dialect, opts...)
+		if len(subConds) > 0 {
+			conds = append(conds, sql.And(subConds...))
+		}
+	}
+
+	// A filter object's own fields are always conjunctive, so each or member
+	// contributes sql.And of its own conditions and the members are OR-ed
+	// together as ONE group condition. Appending a per-member
+	// sql.Or instead hands the caller N conditions, and buildWhere joins those
+	// with AND — turning or: [A, B] into A AND B, while simultaneously OR-ing a
+	// single member's own fields against each other.
+	//
+	// The group is appended only when some member compiled to something:
+	// sql.Or of nothing expands to a literal "()", which buildWhere keeps
+	// because it is not the empty string, yielding invalid SQL.
+	var orGroup []sql.Condition
+	for _, sub := range f.Or {
+		subConds := sub.ToConditions(dialect, opts...)
+		if len(subConds) > 0 {
+			orGroup = append(orGroup, sql.And(subConds...))
+		}
+	}
+	if len(orGroup) > 0 {
+		conds = append(conds, sql.Or(orGroup...))
+	}
+
+	return conds
+}
+
+// SequenceRowFieldOptions controls column selection and relationship loading for sequence_rows queries.
+type SequenceRowFieldOptions struct {
+	ID      bool `json:"id"`
+	Code    bool `json:"code"`
+	Seq     bool `json:"seq"`
+	Ticket  bool `json:"ticket"`
+	AuditNo bool `json:"audit_no"`
+	Note    bool `json:"note"`
+}
+
+// Columns returns the SQL column names for all selected columns, sorted alphabetically
+// to match the SQL builder's deterministic column ordering.
+func (fo *SequenceRowFieldOptions) Columns() []string {
+	var cols []string
+	if fo.ID {
+		cols = append(cols, "id")
+	}
+	if fo.Code {
+		cols = append(cols, "code")
+	}
+	if fo.Seq {
+		cols = append(cols, "seq")
+	}
+	if fo.Ticket {
+		cols = append(cols, "ticket")
+	}
+	if fo.AuditNo {
+		cols = append(cols, "audit_no")
+	}
+	if fo.Note {
+		cols = append(cols, "note")
+	}
+	slices.Sort(cols)
+	return cols
+}
+
+// ColumnMap returns a mapping of Go field name to SQL column name for all columns.
+func (fo *SequenceRowFieldOptions) ColumnMap() map[string]string {
+	return map[string]string{
+		"ID":      "id",
+		"Code":    "code",
+		"Seq":     "seq",
+		"Ticket":  "ticket",
+		"AuditNo": "audit_no",
+		"Note":    "note",
+	}
+}
+
+// HasSelectedColumns reports whether any column or relationship is selected.
+func (fo *SequenceRowFieldOptions) HasSelectedColumns() bool {
+	if fo.ID {
+		return true
+	}
+	if fo.Code {
+		return true
+	}
+	if fo.Seq {
+		return true
+	}
+	if fo.Ticket {
+		return true
+	}
+	if fo.AuditNo {
+		return true
+	}
+	if fo.Note {
+		return true
+	}
+	return false
+}
+
+// CreateSequenceRowInput holds the fields for creating a sequence_rows record.
+type CreateSequenceRowInput struct {
+	Code    omittable.Value[*string] `json:"code,omitzero"`
+	Seq     omittable.Value[int32]   `json:"seq,omitzero"`
+	Ticket  omittable.Value[int64]   `json:"ticket,omitzero"`
+	AuditNo omittable.Value[int32]   `json:"audit_no,omitzero"`
+	Note    string                   `json:"note"`
+}
+
+// UpdateSequenceRowInput holds the fields for updating a sequence_rows record.
+// All fields use omittable.Value to distinguish "not set" from "set to zero".
+type UpdateSequenceRowInput struct {
+	Code    omittable.Value[*string] `json:"code,omitzero"`
+	Seq     omittable.Value[int32]   `json:"seq,omitzero"`
+	Ticket  omittable.Value[int64]   `json:"ticket,omitzero"`
+	AuditNo omittable.Value[int32]   `json:"audit_no,omitzero"`
+	Note    omittable.Value[string]  `json:"note,omitzero"`
+}
+
+// GetSequenceRowsInput holds query parameters for retrieving sequence_rows records.
+// Field selection is controlled via CallOptions.FieldOptions, not this struct.
+type GetSequenceRowsInput struct {
+	Filter *SequenceRowFilter `json:"filter"`
+	Limit  *int               `json:"limit"`
+	Offset *int               `json:"offset"`
+	Sorts  []sql.Sort         `json:"sorts"`
 	// conditions holds additional SQL conditions injected by internal callers
 	// (e.g., Connection keyset conditions). Not part of the public API.
 	conditions []sql.Condition
@@ -43139,14 +45816,14 @@ func (c *sluggedRowClient) Connection(ctx context.Context, input ConnectionInput
 		// Decode cursors and build keyset conditions
 		var keysetConds []sql.Condition
 		if input.After != nil {
-			cursor, err := decodeCursor(*input.After)
+			cursor, err := decodeSluggedRowCursor(*input.After, c.cursorKeys)
 			if err != nil {
 				return nil, ErrInvalidCursor
 			}
 			keysetConds = append(keysetConds, cursorKeyset(c.dialect, c.cursorKeys, cursor, ">"))
 		}
 		if input.Before != nil {
-			cursor, err := decodeCursor(*input.Before)
+			cursor, err := decodeSluggedRowCursor(*input.Before, c.cursorKeys)
 			if err != nil {
 				return nil, ErrInvalidCursor
 			}
@@ -43239,6 +45916,31 @@ func encodeSluggedRowCursor(keys []string, s *SluggedRow) (string, error) {
 		return "", fmt.Errorf("encode slugged_row cursor: %w", err)
 	}
 	return base64.StdEncoding.EncodeToString(data), nil
+}
+
+// decodeSluggedRowCursor decodes a cursor string into its key values,
+// each unmarshaled into the key column's Go type.
+func decodeSluggedRowCursor(encoded string, keys []string) (map[string]any, error) {
+	raw, err := decodeCursor(encoded, keys)
+	if err != nil {
+		return nil, err
+	}
+	var row SluggedRow
+	out := make(map[string]any, len(keys))
+	for _, key := range keys {
+		switch key {
+		case "id":
+			err = json.Unmarshal(raw[key], &row.ID)
+			out[key] = row.ID
+		}
+		if err != nil {
+			return nil, err
+		}
+		if cursorValueIsNull(out[key]) {
+			return nil, ErrInvalidCursor
+		}
+	}
+	return out, nil
 }
 
 // StreamSluggedRowsInput holds query parameters for streaming slugged_rows records.
@@ -45535,14 +48237,14 @@ func (c *tagClient) Connection(ctx context.Context, input ConnectionInput[TagFil
 		// Decode cursors and build keyset conditions
 		var keysetConds []sql.Condition
 		if input.After != nil {
-			cursor, err := decodeCursor(*input.After)
+			cursor, err := decodeTagCursor(*input.After, c.cursorKeys)
 			if err != nil {
 				return nil, ErrInvalidCursor
 			}
 			keysetConds = append(keysetConds, cursorKeyset(c.dialect, c.cursorKeys, cursor, ">"))
 		}
 		if input.Before != nil {
-			cursor, err := decodeCursor(*input.Before)
+			cursor, err := decodeTagCursor(*input.Before, c.cursorKeys)
 			if err != nil {
 				return nil, ErrInvalidCursor
 			}
@@ -45635,6 +48337,31 @@ func encodeTagCursor(keys []string, t *Tag) (string, error) {
 		return "", fmt.Errorf("encode tag cursor: %w", err)
 	}
 	return base64.StdEncoding.EncodeToString(data), nil
+}
+
+// decodeTagCursor decodes a cursor string into its key values,
+// each unmarshaled into the key column's Go type.
+func decodeTagCursor(encoded string, keys []string) (map[string]any, error) {
+	raw, err := decodeCursor(encoded, keys)
+	if err != nil {
+		return nil, err
+	}
+	var row Tag
+	out := make(map[string]any, len(keys))
+	for _, key := range keys {
+		switch key {
+		case "id":
+			err = json.Unmarshal(raw[key], &row.ID)
+			out[key] = row.ID
+		}
+		if err != nil {
+			return nil, err
+		}
+		if cursorValueIsNull(out[key]) {
+			return nil, ErrInvalidCursor
+		}
+	}
+	return out, nil
 }
 
 // StreamTagsInput holds query parameters for streaming tags records.
@@ -47198,14 +49925,14 @@ func (c *userCategoryClient) Connection(ctx context.Context, input ConnectionInp
 		// Decode cursors and build keyset conditions
 		var keysetConds []sql.Condition
 		if input.After != nil {
-			cursor, err := decodeCursor(*input.After)
+			cursor, err := decodeUserCategoryCursor(*input.After, c.cursorKeys)
 			if err != nil {
 				return nil, ErrInvalidCursor
 			}
 			keysetConds = append(keysetConds, cursorKeyset(c.dialect, c.cursorKeys, cursor, ">"))
 		}
 		if input.Before != nil {
-			cursor, err := decodeCursor(*input.Before)
+			cursor, err := decodeUserCategoryCursor(*input.Before, c.cursorKeys)
 			if err != nil {
 				return nil, ErrInvalidCursor
 			}
@@ -47296,6 +50023,34 @@ func encodeUserCategoryCursor(keys []string, u *UserCategory) (string, error) {
 		return "", fmt.Errorf("encode user_category cursor: %w", err)
 	}
 	return base64.StdEncoding.EncodeToString(data), nil
+}
+
+// decodeUserCategoryCursor decodes a cursor string into its key values,
+// each unmarshaled into the key column's Go type.
+func decodeUserCategoryCursor(encoded string, keys []string) (map[string]any, error) {
+	raw, err := decodeCursor(encoded, keys)
+	if err != nil {
+		return nil, err
+	}
+	var row UserCategory
+	out := make(map[string]any, len(keys))
+	for _, key := range keys {
+		switch key {
+		case "user_id":
+			err = json.Unmarshal(raw[key], &row.UserID)
+			out[key] = row.UserID
+		case "category_id":
+			err = json.Unmarshal(raw[key], &row.CategoryID)
+			out[key] = row.CategoryID
+		}
+		if err != nil {
+			return nil, err
+		}
+		if cursorValueIsNull(out[key]) {
+			return nil, ErrInvalidCursor
+		}
+	}
+	return out, nil
 }
 
 // StreamUserCategoriesInput holds query parameters for streaming user_categories records.
@@ -49849,14 +52604,14 @@ func (c *publicUserClient) Connection(ctx context.Context, input ConnectionInput
 		// Decode cursors and build keyset conditions
 		var keysetConds []sql.Condition
 		if input.After != nil {
-			cursor, err := decodeCursor(*input.After)
+			cursor, err := decodePublicUserCursor(*input.After, c.cursorKeys)
 			if err != nil {
 				return nil, ErrInvalidCursor
 			}
 			keysetConds = append(keysetConds, cursorKeyset(c.dialect, c.cursorKeys, cursor, ">"))
 		}
 		if input.Before != nil {
-			cursor, err := decodeCursor(*input.Before)
+			cursor, err := decodePublicUserCursor(*input.Before, c.cursorKeys)
 			if err != nil {
 				return nil, ErrInvalidCursor
 			}
@@ -49959,6 +52714,31 @@ func encodePublicUserCursor(keys []string, p *PublicUser) (string, error) {
 		return "", fmt.Errorf("encode user cursor: %w", err)
 	}
 	return base64.StdEncoding.EncodeToString(data), nil
+}
+
+// decodePublicUserCursor decodes a cursor string into its key values,
+// each unmarshaled into the key column's Go type.
+func decodePublicUserCursor(encoded string, keys []string) (map[string]any, error) {
+	raw, err := decodeCursor(encoded, keys)
+	if err != nil {
+		return nil, err
+	}
+	var row PublicUser
+	out := make(map[string]any, len(keys))
+	for _, key := range keys {
+		switch key {
+		case "id":
+			err = json.Unmarshal(raw[key], &row.ID)
+			out[key] = row.ID
+		}
+		if err != nil {
+			return nil, err
+		}
+		if cursorValueIsNull(out[key]) {
+			return nil, ErrInvalidCursor
+		}
+	}
+	return out, nil
 }
 
 // StreamPublicUsersInput holds query parameters for streaming users records.
@@ -52888,14 +55668,14 @@ func (c *warehouseClient) Connection(ctx context.Context, input ConnectionInput[
 		// Decode cursors and build keyset conditions
 		var keysetConds []sql.Condition
 		if input.After != nil {
-			cursor, err := decodeCursor(*input.After)
+			cursor, err := decodeWarehouseCursor(*input.After, c.cursorKeys)
 			if err != nil {
 				return nil, ErrInvalidCursor
 			}
 			keysetConds = append(keysetConds, cursorKeyset(c.dialect, c.cursorKeys, cursor, ">"))
 		}
 		if input.Before != nil {
-			cursor, err := decodeCursor(*input.Before)
+			cursor, err := decodeWarehouseCursor(*input.Before, c.cursorKeys)
 			if err != nil {
 				return nil, ErrInvalidCursor
 			}
@@ -53004,6 +55784,31 @@ func encodeWarehouseCursor(keys []string, w *Warehouse) (string, error) {
 		return "", fmt.Errorf("encode warehouse cursor: %w", err)
 	}
 	return base64.StdEncoding.EncodeToString(data), nil
+}
+
+// decodeWarehouseCursor decodes a cursor string into its key values,
+// each unmarshaled into the key column's Go type.
+func decodeWarehouseCursor(encoded string, keys []string) (map[string]any, error) {
+	raw, err := decodeCursor(encoded, keys)
+	if err != nil {
+		return nil, err
+	}
+	var row Warehouse
+	out := make(map[string]any, len(keys))
+	for _, key := range keys {
+		switch key {
+		case "id":
+			err = json.Unmarshal(raw[key], &row.ID)
+			out[key] = row.ID
+		}
+		if err != nil {
+			return nil, err
+		}
+		if cursorValueIsNull(out[key]) {
+			return nil, ErrInvalidCursor
+		}
+	}
+	return out, nil
 }
 
 // StreamWarehousesInput holds query parameters for streaming warehouses records.

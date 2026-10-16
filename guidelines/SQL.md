@@ -187,6 +187,7 @@ They return the SQL string and the argument slice. They never execute queries.
 - Builders compose `WHERE` clauses from `[]sql.Condition`. They do not build conditions — that is the comparator's job.
 - `RETURNING` is appended only when `Dialect.SupportsReturning()` returns true.
 - Column lists are always sorted to ensure deterministic SQL output.
+- **A builder that returns args returns them through `bindArgs`.** On SQLite it binds each time value (`time.Time`, `sql.NullTime`, `types.DateTime`, their pointer and null forms) as the UTC text `datetime()` writes (PRD §7.2); the other dialects get the args unchanged. A builder that skips it still passes every PostgreSQL and MySQL test and fails only on SQLite.
 - **`Limit`/`Offset` are `*int` pointers.** `nil` means omit the clause entirely. The builder emits the clause only when the pointer is non-nil. It does **not** interpret `0` specially — `LIMIT 0` returns zero rows in SQL. The "0 means no limit" semantic is the generated code's responsibility: resolve `new(0)` → `nil` before calling the builder.
 
 ---
@@ -309,6 +310,8 @@ Upsert syntax is one of the sharpest dialect differences.
 
 The `DO UPDATE SET` clause includes all non-PK, non-conflict-key columns from `CreateInput`. Primary key columns and conflict target columns are excluded from `SET` — they are the identity, not the payload.
 
+`UpsertMany` also excludes every non-PK auto-increment column (serial, identity, MySQL `AUTO_INCREMENT`, a `nextval(…)` default, a SQLite rowid alias demoted by `primary_key.columns`). Every batch row binds `DEFAULT` (`NULL` on SQLite) for an unset one, so setting it would redraw it on each conflict, and PostgreSQL rejects the clause outright on a `GENERATED ALWAYS` identity (PRD §9.5).
+
 ### Preserving the PK Through a No-Op Conflict
 
 `UpsertClauseOptions.ResolvePKColumn` names the single-column PK the caller has to read back from the statement, and is `""` when the caller already knows it (composite, app-, or caller-generated). It exists because a conflict that changes nothing still has to yield the conflicting row's PK, and each dialect loses that differently:
@@ -399,7 +402,7 @@ All batch operations split input into sub-batches of `generation.batch_size` (de
 
 ### SQLite DEFAULT Limitation
 
-SQLite does not support the `DEFAULT` keyword as a value expression in `INSERT ... VALUES(...)`. The `sql.Default` sentinel used by PostgreSQL and MySQL causes a syntax error on SQLite. Instead, the code generator emits `sql.DefaultExpr` for SQLite — a sentinel that carries the raw SQL default expression (e.g., `datetime('now')`, `'viewer'`, `0`). For nullable columns without a DEFAULT clause, the expression is `NULL`. `BuildMultiInsert` writes the expression inline instead of the `DEFAULT` keyword.
+SQLite does not support the `DEFAULT` keyword as a value expression in `INSERT ... VALUES(...)`. The `sql.Default` sentinel used by PostgreSQL and MySQL causes a syntax error on SQLite. Instead, the code generator emits `sql.DefaultExpr` for SQLite — a sentinel that carries the raw SQL default expression (e.g., `datetime('now')`, `'viewer'`, `0`). For a column without a DEFAULT clause, the expression is `NULL`, SQLite's implicit default: a nullable column stores `NULL`, a rowid-alias auto-increment column draws the next rowid, and a NOT NULL column fails with a NOT NULL violation. `BuildMultiInsert` writes the expression inline instead of the `DEFAULT` keyword.
 
 | Dialect | Omittable field not set | Sentinel | SQL output |
 |---------|------------------------|----------|------------|

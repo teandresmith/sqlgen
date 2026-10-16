@@ -721,7 +721,7 @@ tables:
 	if got := config.ResolveTablePageSize(products, cfg.Generation); got != 50 {
 		t.Errorf("ResolveTablePageSize(products) = %d, want 50 (falls through to global)", got)
 	}
-	productsDecision := config.ResolveTableConnection(products, cfg.Generation, "public.products", []string{"id", "name"}, []string{"id"})
+	productsDecision := config.ResolveTableConnection(products, cfg.Generation, "public.products", []config.SchemaColumn{{Name: "id"}, {Name: "name"}}, []string{"id"})
 	if diff := cmp.Diff([]string{"id"}, productsDecision.Keys); diff != "" {
 		t.Errorf("ResolveTableConnection(products) keys mismatch (-want +got):\n%s", diff)
 	}
@@ -742,7 +742,7 @@ tables:
 	if got := config.ResolveTablePageSize(orders, cfg.Generation); got != 50 {
 		t.Errorf("ResolveTablePageSize(orders) = %d, want 50", got)
 	}
-	ordersDecision := config.ResolveTableConnection(orders, cfg.Generation, "public.orders", []string{"id", "created_at", "user_id"}, []string{"id"})
+	ordersDecision := config.ResolveTableConnection(orders, cfg.Generation, "public.orders", []config.SchemaColumn{{Name: "id"}, {Name: "created_at"}, {Name: "user_id"}}, []string{"id"})
 	if diff := cmp.Diff([]string{"id", "created_at"}, ordersDecision.Keys); diff != "" {
 		t.Errorf("ResolveTableConnection(orders) keys mismatch (-want +got):\n%s", diff)
 	}

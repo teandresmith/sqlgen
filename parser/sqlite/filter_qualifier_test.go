@@ -1,8 +1,13 @@
 package sqlite
 
 import (
+	"context"
+	"database/sql"
 	"strings"
 	"testing"
+
+	rsql "github.com/rqlite/sql"
+	_ "modernc.org/sqlite"
 )
 
 func TestQualifyFilterIdentifiers(t *testing.T) {
@@ -13,7 +18,7 @@ func TestQualifyFilterIdentifiers(t *testing.T) {
 		expr    string
 		alias   string
 		want    string
-		wantErr bool
+		wantErr string // a substring of the error; "" means no error
 	}{
 		{
 			name:  "single column equality",
@@ -90,22 +95,54 @@ func TestQualifyFilterIdentifiers(t *testing.T) {
 			want:  `"d"."name" GLOB 'photo_*'`,
 		},
 		{
+			// rqlite/sql parses these keywords as identifiers; qualified, SQLite
+			// reports "no such column: d.CURRENT_TIMESTAMP".
+			name:  "time keywords are not columns",
+			expr:  "expires_at > CURRENT_TIMESTAMP AND date(expires_at) <= current_date AND CURRENT_TIME IS NOT NULL",
+			alias: "d",
+			want:  `"d"."expires_at" > CURRENT_TIMESTAMP AND date("d"."expires_at") <= current_date AND CURRENT_TIME NOT NULL`,
+		},
+		{
+			name:  "a quoted time keyword is a column",
+			expr:  `"CURRENT_TIMESTAMP" > 0 AND ` + "`current_date`" + ` > 0`,
+			alias: "d",
+			want:  `"d"."CURRENT_TIMESTAMP" > 0 AND "d"."current_date" > 0`,
+		},
+		{
 			name:    "unparseable expression errors",
 			expr:    "WHERE AND OR",
 			alias:   "d",
-			wantErr: true,
+			wantErr: "qualify filter: parsing",
+		},
+		{
+			name:  "LIKE ESCAPE",
+			expr:  `name LIKE 'x\%' ESCAPE '\'`,
+			alias: "d",
+			want:  `"d"."name" LIKE 'x\%' ESCAPE '\'`,
+		},
+		{
+			name:  "ESCAPE reading a column",
+			expr:  `name NOT LIKE pattern ESCAPE esc`,
+			alias: "d",
+			want:  `"d"."name" NOT LIKE "d"."pattern" ESCAPE "d"."esc"`,
+		},
+		{
+			name:  "IS NOT DISTINCT FROM",
+			expr:  `name IS NOT DISTINCT FROM other`,
+			alias: "d",
+			want:  `"d"."name" IS NOT DISTINCT FROM "d"."other"`,
 		},
 		{
 			name:    "empty expression errors",
 			expr:    "   ",
 			alias:   "d",
-			wantErr: true,
+			wantErr: "qualify filter: empty expression",
 		},
 		{
 			name:    "empty alias errors",
 			expr:    "name = 'x'",
 			alias:   "",
-			wantErr: true,
+			wantErr: "qualify filter: empty alias",
 		},
 	}
 
@@ -113,11 +150,14 @@ func TestQualifyFilterIdentifiers(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 			got, err := QualifyFilterIdentifiers(tt.expr, tt.alias)
-			if (err != nil) != tt.wantErr {
-				t.Fatalf("QualifyFilterIdentifiers(%q, %q) err = %v, wantErr = %v", tt.expr, tt.alias, err, tt.wantErr)
-			}
-			if tt.wantErr {
+			if tt.wantErr != "" {
+				if err == nil || !strings.Contains(err.Error(), tt.wantErr) {
+					t.Fatalf("QualifyFilterIdentifiers(%q, %q) err = %v, want an error containing %q", tt.expr, tt.alias, err, tt.wantErr)
+				}
 				return
+			}
+			if err != nil {
+				t.Fatalf("QualifyFilterIdentifiers(%q, %q) = %v", tt.expr, tt.alias, err)
 			}
 			if normalizeWS(got) != normalizeWS(tt.want) {
 				t.Errorf("QualifyFilterIdentifiers(%q, %q):\n  got:  %s\n  want: %s", tt.expr, tt.alias, got, tt.want)
@@ -198,5 +238,49 @@ func TestQualifyFilterIdentifiers_QuotingIsDialectSpecific(t *testing.T) {
 				t.Errorf("QualifyFilterIdentifiers(%q, %q):\n  got:  %s\n  want: %s", tt.expr, "d", got, tt.want)
 			}
 		})
+	}
+}
+
+// rqlite/sql panics rendering a node it has no text for; exprString returns
+// that as an error, so generation fails instead of crashing.
+func TestExprString_Panic(t *testing.T) {
+	x := &rsql.BinaryExpr{X: &rsql.Ident{Name: "a"}, Op: rsql.ILLEGAL, Y: &rsql.Ident{Name: "b"}}
+	_, err := exprString(x, "CHECK")
+	const want = "rendering CHECK: sql.BinaryExpr.String(): invalid op ILLEGAL"
+	if err == nil || err.Error() != want {
+		t.Errorf("exprString() error = %v, want %q", err, want)
+	}
+}
+
+// TestQualifyFilterIdentifiers_TimeKeywordRuns runs a qualified filter that
+// compares with CURRENT_TIMESTAMP on SQLite. Rendered as the identifier
+// "d"."CURRENT_TIMESTAMP", it fails with "no such column".
+func TestQualifyFilterIdentifiers_TimeKeywordRuns(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping integration test in short mode")
+	}
+	t.Parallel()
+
+	db, err := sql.Open("sqlite", ":memory:")
+	if err != nil {
+		t.Fatalf("opening sqlite: %v", err)
+	}
+	defer db.Close() //nolint:errcheck // test cleanup
+	ctx := context.Background()
+	if _, err := db.ExecContext(ctx, `CREATE TABLE docs (expires_at TEXT);
+		INSERT INTO docs VALUES ('2000-01-01 00:00:00'), ('2999-01-01 00:00:00')`); err != nil {
+		t.Fatalf("seeding: %v", err)
+	}
+
+	where, err := QualifyFilterIdentifiers("expires_at > CURRENT_TIMESTAMP", "d")
+	if err != nil {
+		t.Fatalf("QualifyFilterIdentifiers: %v", err)
+	}
+	var n int
+	if err := db.QueryRowContext(ctx, `SELECT count(*) FROM docs AS "d" WHERE `+where).Scan(&n); err != nil {
+		t.Fatalf("filter %s: %v", where, err)
+	}
+	if n != 1 {
+		t.Errorf("filter %s matched %d rows, want 1", where, n)
 	}
 }

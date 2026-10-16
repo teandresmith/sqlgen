@@ -2,6 +2,10 @@ package parser
 
 import (
 	"fmt"
+	"iter"
+	"maps"
+	"slices"
+	"strconv"
 	"strings"
 )
 
@@ -27,6 +31,12 @@ type ViewSelectColumn struct {
 	Aggregate    string // aggregate function name (uppercase), empty if not aggregate
 }
 
+// ViewColumnRef is a column reference in a view's query: Table is the
+// FROM-clause key that qualifies it, "" when it is unqualified.
+type ViewColumnRef struct {
+	Table, Column string
+}
+
 // ViewSQL holds the metadata extracted from a CREATE VIEW or CREATE
 // MATERIALIZED VIEW statement by a dialect-specific parser.
 type ViewSQL struct {
@@ -34,11 +44,82 @@ type ViewSQL struct {
 	Schema       string
 	Columns      []ViewSelectColumn
 	TableAliases map[string]string
+	// TableSchemas maps the same keys as TableAliases to the table's schema,
+	// for a dialect with schemas (PostgreSQL); nil otherwise.
+	TableSchemas map[string]string
+	// OuterAliases holds the TableAliases keys on the outer side of a join,
+	// whose columns are NULL when no row matches: the right side of a LEFT
+	// JOIN, the left side of a RIGHT JOIN, both sides of a FULL JOIN.
+	OuterAliases map[string]bool
+	// QualifiedAliases holds the TableAliases keys whose table name is
+	// qualified with a schema (a MySQL database), which name a table even
+	// where a common table expression has that name.
+	QualifiedAliases map[string]bool
+	// Subqueries holds the query of each derived table the SELECT reads, by
+	// its alias, and CTEs the query of each common table expression of its
+	// WITH clause, by its name. Each is read as a view's query is, so
+	// ViewColumnSources can follow a column through it to its table. In
+	// such a query a column whose SourceColumn is "*" selects every column
+	// of its SourceTable's table, or of every FROM-clause table when
+	// SourceTable is empty, under its own name. A query the parser cannot
+	// read, such as a compound one outside MySQL, is recorded with no
+	// columns, so its name still names no table. A FROM-clause key that
+	// names a derived table or a common table expression in scope names no
+	// table.
+	Subqueries map[string]ViewSQL
+	CTEs       map[string]ViewSQL
+	// Lateral reports a derived table declared LATERAL (PostgreSQL, MySQL),
+	// which, unlike any other derived table or a common table expression,
+	// can read the FROM clause of the query it is in.
+	Lateral bool
+	// Reads holds every column the query reads other than as a column of
+	// its select list: in WHERE, JOIN … ON, GROUP BY, HAVING, ORDER BY and
+	// window clauses, inside a select-list expression, in the arguments of
+	// a function in FROM, and, for a VALUES statement, in its rows. Only
+	// the MySQL view parser records it, since MySQL records no column a
+	// view reads (PRD §6.1).
+	Reads []ViewColumnRef
+	// Nested holds each subquery in an expression (IN, EXISTS, a scalar
+	// subquery), read as Subqueries are, with the columns its select list
+	// reads in its Reads and no Columns. A column it reads can be one of an
+	// enclosing query's FROM clause. Only the MySQL view parser records it.
+	Nested []ViewSQL
+	// Compound holds the arms after the first of a compound query, which
+	// the query itself is, each read as a Nested query is. An arm reads
+	// neither the first arm's FROM clause nor, unless the compound can, an
+	// enclosing query's. Only the MySQL view parser records it.
+	Compound []ViewSQL
+	// Recursive reports a common table expression of a WITH RECURSIVE
+	// clause, whose further arms read it under its own name. Only the
+	// MySQL view parser records it.
+	Recursive bool
 
 	// Materialized reports whether the statement was CREATE MATERIALIZED VIEW
 	// (PostgreSQL-only; the MySQL/SQLite parsers reject the syntax).
 	Materialized bool
 }
+
+// ViewQueryError reports a CREATE VIEW whose name a dialect's ParseViewSQL
+// read but whose query it cannot, such as a compound SELECT. An annotation
+// file for a view the database defines needs only the name (PRD §16.2).
+type ViewQueryError struct {
+	Schema, Name string
+	Err          error
+}
+
+func (e *ViewQueryError) Error() string { return e.Err.Error() }
+
+func (e *ViewQueryError) Unwrap() error { return e.Err }
+
+// ViewParseError reports a view query a dialect's ParseViewSQL cannot read,
+// such as one that selects *. Reason says what it cannot read; Advice is what
+// the error adds for a view file's author, which does not apply to a view the
+// database defines, since its query is not the user's to change.
+type ViewParseError struct {
+	Reason, Advice string
+}
+
+func (e *ViewParseError) Error() string { return e.Reason + "; " + e.Advice }
 
 // ParseViewAnnotations extracts @pk, @type, and @nullable directives from
 // SQL line comments at the top of a view annotation file.
@@ -131,32 +212,37 @@ func parseTypeDirective(annotations *ViewAnnotations, colName, value string) err
 	return nil
 }
 
+// SearchPath is how PostgreSQL resolves a type name a column writes bare,
+// which BuildView needs to write a view column's type in the view's schema
+// (PRD §5.2). The zero value, for MySQL and SQLite, writes such a type as its
+// source column does.
+type SearchPath struct {
+	// Schema is input.schema, the schema of a type a column names bare
+	// unless Builtin reports it.
+	Schema string
+	// Builtin reports whether a bare type name, without modifiers, names a
+	// pg_catalog type, which PostgreSQL finds before a type of the same name
+	// in any other schema.
+	Builtin func(name string) bool
+}
+
 // BuildView constructs a View from pre-parsed SQL metadata, annotations, and
-// known tables. The parsed field is produced by a dialect-specific parser's
-// ParseViewSQL method; annotations come from ParseViewAnnotations.
-func BuildView(parsed ViewSQL, rawSQL string, annotations *ViewAnnotations, tables []Table) (*View, error) {
-	// Validate annotation column references against parsed columns.
+// schema parsed so far. The parsed field is produced by a dialect-specific
+// parser's ParseViewSQL method; annotations come from ParseViewAnnotations.
+// A column's type is written for the view's schema as a table column's is
+// there, which for PostgreSQL takes searchPath.
+func BuildView(parsed ViewSQL, rawSQL string, annotations *ViewAnnotations, schema *Schema, searchPath SearchPath) (*View, error) {
 	colSet := make(map[string]bool, len(parsed.Columns))
 	for _, col := range parsed.Columns {
 		colSet[col.Alias] = true
 	}
-	for _, pk := range annotations.PKColumns {
-		if !colSet[pk] {
-			return nil, fmt.Errorf("@pk references unknown column %q", pk)
-		}
-	}
-	for col := range annotations.TypeOverrides {
-		if !colSet[col] {
-			return nil, fmt.Errorf("@type references unknown column %q", col)
-		}
-	}
-	for _, col := range annotations.NullableColumns {
-		if !colSet[col] {
-			return nil, fmt.Errorf("@nullable references unknown column %q", col)
-		}
+	if err := checkAnnotationColumns(colSet, annotations); err != nil {
+		return nil, err
 	}
 
-	viewColumns := resolveViewColumns(parsed.Columns, parsed.TableAliases, tables, annotations)
+	sources := newViewSources(parsed, schema)
+	sources.searchPath = searchPath
+	viewColumns := resolveViewColumns(parsed.Columns, sources, annotations)
 
 	// An annotation-file matview has no live unique index to discover, so @pk
 	// doubles as the user's assertion that a unique key exists — the same
@@ -188,17 +274,7 @@ func IsAggregateFunction(funcName string) bool {
 
 // resolveViewColumns resolves Go types for view columns using the PRD 16.3 chain:
 // @type annotation → aggregate inference → schema matching → any fallback.
-func resolveViewColumns(
-	selectCols []ViewSelectColumn,
-	tableAliases map[string]string,
-	tables []Table,
-	annotations *ViewAnnotations,
-) []Column {
-	tableMap := make(map[string]*Table, len(tables))
-	for i := range tables {
-		tableMap[tables[i].Name] = &tables[i]
-	}
-
+func resolveViewColumns(selectCols []ViewSelectColumn, sources *viewSources, annotations *ViewAnnotations) []Column {
 	nullableSet := make(map[string]bool, len(annotations.NullableColumns))
 	for _, col := range annotations.NullableColumns {
 		nullableSet[col] = true
@@ -212,7 +288,7 @@ func resolveViewColumns(
 	result := make([]Column, 0, len(selectCols))
 	for _, sc := range selectCols {
 		col := Column{Name: sc.Alias}
-		col.Type, col.Nullable = resolveColumnType(sc, tableAliases, tableMap, annotations)
+		col.Type, col.Nullable = resolveColumnType(sc, sources, annotations)
 
 		// Mark columns whose Type is already a Go type literal (from @type or
 		// aggregate inference). The code generator uses GoTypeLiteral directly
@@ -227,8 +303,7 @@ func resolveViewColumns(
 			// resolver (ARRAY_AGG returns the array form, e.g. text[]).
 			switch sc.Aggregate {
 			case "SUM", "MIN", "MAX", "ARRAY_AGG":
-				baseSQL := resolveFromSchema(sc, tableAliases, tableMap)
-				if baseSQL == "" {
+				if typ, _ := sources.column(sc); typ == "" {
 					col.GoTypeLiteral = col.Type // fallback "any"
 				} else {
 					// Flows through the SQL-to-Go resolver; record the aggregate
@@ -259,52 +334,489 @@ func resolveViewColumns(
 
 // resolveColumnType applies the PRD 16.3 resolution chain for a single column:
 // @type annotation → aggregate inference → schema matching → any fallback.
-func resolveColumnType(
-	sc ViewSelectColumn,
-	tableAliases map[string]string,
-	tableMap map[string]*Table,
-	annotations *ViewAnnotations,
-) (string, bool) {
+// A schema-matched column is nullable when its source column is, or when its
+// table is on the outer side of a join.
+func resolveColumnType(sc ViewSelectColumn, sources *viewSources, annotations *ViewAnnotations) (string, bool) {
 	if ta, ok := annotations.TypeOverrides[sc.Alias]; ok {
 		return ta.GoType, false
 	}
 	if sc.Aggregate != "" {
-		baseType := resolveFromSchema(sc, tableAliases, tableMap)
+		baseType, _ := sources.column(sc)
 		return inferAggregateType(sc.Aggregate, baseType), isAggregateNullable(sc.Aggregate)
 	}
 	if sc.SourceColumn != "" {
-		if resolved := resolveFromSchema(sc, tableAliases, tableMap); resolved != "" {
-			return resolved, false
+		if resolved, nullable := sources.column(sc); resolved != "" {
+			return resolved, nullable
 		}
 	}
 	return "any", false
 }
 
-// resolveFromSchema attempts to find the column type from a known table.
-func resolveFromSchema(sc ViewSelectColumn, tableAliases map[string]string, tableMap map[string]*Table) string {
+// viewSources finds a view column's source column and writes its type
+// relative to the view's schema.
+type viewSources struct {
+	viewSchema string
+	aliases    map[string]string
+	schemas    map[string]string
+	outer      map[string]bool
+	// queries holds the FROM-clause keys that name a derived table or a
+	// common table expression, and so no table.
+	queries map[string]bool
+	tables  []Table
+	// userTypes holds "schema.name" for every enum, SET, composite and domain type.
+	userTypes map[string]bool
+	// searchPath writes a type on the search_path for the view's schema.
+	searchPath SearchPath
+}
+
+// newViewSources returns the viewSources of a view's query.
+func newViewSources(parsed ViewSQL, schema *Schema) *viewSources {
+	return scopeSources([]traceScope{{query: parsed}}, nil, schema)
+}
+
+// scopeSources returns the viewSources of the innermost of scopes, whose
+// enclosing scopes hold the common table expressions it can read; tracing
+// is as subquery takes it.
+func scopeSources(scopes []traceScope, tracing map[string]bool, schema *Schema) *viewSources {
+	parsed := scopes[len(scopes)-1].query
+	vs := &viewSources{
+		viewSchema: scopes[0].query.Schema,
+		aliases:    parsed.TableAliases,
+		schemas:    parsed.TableSchemas,
+		outer:      parsed.OuterAliases,
+		queries:    make(map[string]bool),
+		userTypes:  make(map[string]bool),
+	}
+	for key := range parsed.Subqueries {
+		vs.queries[key] = true
+	}
+	for key := range parsed.TableAliases {
+		if _, ok := cteScopes(key, scopes, tracing); ok {
+			vs.queries[key] = true
+		}
+	}
+	if schema == nil {
+		return vs
+	}
+	vs.tables = schema.Tables
+	for _, e := range schema.Enums {
+		vs.userTypes[e.Schema+"."+e.Name] = true
+	}
+	for _, st := range schema.Sets {
+		vs.userTypes[st.Schema+"."+st.Name] = true
+	}
+	for _, ct := range schema.CompositeTypes {
+		vs.userTypes[ct.Schema+"."+ct.Name] = true
+	}
+	for _, d := range schema.DomainTypes {
+		vs.userTypes[d.Schema+"."+d.Name] = true
+	}
+	return vs
+}
+
+// column returns the type of sc's source column, written relative to the
+// view's schema, and whether the view can read it as NULL: the column is
+// nullable or its table is on the outer side of a join. typ is "" when no
+// source column is found.
+func (vs *viewSources) column(sc ViewSelectColumn) (typ string, nullable bool) {
+	t, key := vs.sourceTable(sc)
+	if t == nil {
+		return "", false
+	}
+	col := ColumnByName(t, sc.SourceColumn)
+	return vs.relativeType(col.Type, t.Schema), col.Nullable || vs.outer[key]
+}
+
+// sourceTable returns the table that has sc's source column, and the
+// FROM-clause key it is read through, or nil when no table has it. An
+// unqualified column is looked up in the FROM-clause tables, in key order.
+func (vs *viewSources) sourceTable(sc ViewSelectColumn) (*Table, string) {
 	if sc.SourceColumn == "" {
-		return ""
+		return nil, ""
 	}
-	tableName := sc.SourceTable
-	if alias, ok := tableAliases[tableName]; ok {
-		tableName = alias
+	keys := []string{sc.SourceTable}
+	if sc.SourceTable == "" {
+		keys = slices.Sorted(maps.Keys(vs.aliases))
 	}
-	if tableName == "" {
-		for _, t := range tableMap {
-			if col := ColumnByName(t, sc.SourceColumn); col != nil {
-				return col.Type
+	for _, key := range keys {
+		if t := vs.table(key); t != nil && ColumnByName(t, sc.SourceColumn) != nil {
+			return t, key
+		}
+	}
+	return nil, ""
+}
+
+// ViewColumnSource is the table column a view column reads.
+type ViewColumnSource struct {
+	// Table is nil for a view column that reads no table column.
+	Table  *Table
+	Column string
+}
+
+// ViewColumnSources returns, for each column of def, the table column it
+// reads, resolved against schema: one of a FROM-clause table, as BuildView
+// resolves it, or one a derived table or common table expression of def
+// selects, followed through it. A FROM-clause key that names a derived
+// table, or a common table expression in scope, names it rather than a
+// table of that name. It does not change how BuildView types a column read
+// through a subquery.
+func ViewColumnSources(def ViewSQL, schema *Schema) []ViewColumnSource {
+	vs := newViewSources(def, schema)
+	sources := make([]ViewColumnSource, len(def.Columns))
+	for i, sc := range def.Columns {
+		sources[i], _ = traceViewColumn(sc, vs, []traceScope{{query: def}}, make(map[string]bool), schema)
+	}
+	return sources
+}
+
+// traceScope is a query on the path ViewColumnSources follows, and path the
+// FROM-clause keys, common table expression names ("with:<name>"),
+// expression subquery indexes ("#<i>") and compound arm indexes ("|<i>")
+// that lead to it from the view, which identify it. correlated reports
+// whether the query can read the FROM clause of the scope before it, as an
+// expression subquery or a LATERAL derived table can, and a common table
+// expression, a compound's arm or any other derived table cannot.
+type traceScope struct {
+	query      ViewSQL
+	path       string
+	correlated bool
+}
+
+// traceViewColumn returns the table column sc reads in the innermost of
+// scopes, whose FROM clause vs reads, and whether that FROM clause has sc's
+// column at all: a table that has it, or a subquery that selects it. The
+// enclosing scopes are the queries whose common table expressions it can
+// read, and tracing holds the paths of the common table expressions it is
+// already inside.
+func traceViewColumn(sc ViewSelectColumn, vs *viewSources, scopes []traceScope, tracing map[string]bool, schema *Schema) (ViewColumnSource, bool) {
+	if t, _ := vs.sourceTable(sc); t != nil {
+		return ViewColumnSource{Table: t, Column: sc.SourceColumn}, true
+	}
+	if sc.SourceColumn == "" || sc.SourceColumn == "*" {
+		return ViewColumnSource{}, false
+	}
+	def := scopes[len(scopes)-1].query
+	keys := []string{sc.SourceTable}
+	if sc.SourceTable == "" {
+		keys = slices.Concat(slices.Collect(maps.Keys(def.Subqueries)), slices.Collect(maps.Keys(def.TableAliases)))
+		slices.Sort(keys)
+		keys = slices.Compact(keys)
+	}
+	for _, key := range keys {
+		inner, cte, ok := subquery(key, scopes, tracing)
+		if !ok {
+			continue
+		}
+		path := inner[len(inner)-1].path
+		if cte {
+			tracing[path] = true
+		}
+		src, found := traceSubqueryColumn(sc.SourceColumn, inner, tracing, schema)
+		delete(tracing, path)
+		if found {
+			return src, true
+		}
+	}
+	return ViewColumnSource{}, false
+}
+
+// traceSubqueryColumn returns the table column that column of the
+// innermost of scopes reads, and whether that query selects column at all.
+func traceSubqueryColumn(column string, scopes []traceScope, tracing map[string]bool, schema *Schema) (ViewColumnSource, bool) {
+	q := scopes[len(scopes)-1].query
+	qs := scopeSources(scopes, tracing, schema)
+	for _, c := range q.Columns {
+		switch {
+		case c.SourceColumn == "*":
+			if src, _ := traceViewColumn(ViewSelectColumn{SourceTable: c.SourceTable, SourceColumn: column}, qs, scopes, tracing, schema); src.Table != nil {
+				return src, true
+			}
+		case c.Alias == column:
+			src, _ := traceViewColumn(c, qs, scopes, tracing, schema)
+			return src, true
+		}
+	}
+	return ViewColumnSource{}, false
+}
+
+// subquery returns the scopes of the query a FROM-clause key of the
+// innermost of scopes reads when the key names no table, ending with that
+// query: a derived table of the innermost query, or a common table
+// expression as cteScopes finds it. cte reports the latter.
+func subquery(key string, scopes []traceScope, tracing map[string]bool) (inner []traceScope, cte, ok bool) {
+	last := scopes[len(scopes)-1]
+	if q, ok := last.query.Subqueries[key]; ok {
+		return append(slices.Clip(scopes), traceScope{query: q, path: last.path + "/" + key, correlated: q.Lateral}), false, true
+	}
+	inner, ok = cteScopes(key, scopes, tracing)
+	return inner, ok, ok
+}
+
+// cteScopes returns the scopes of the common table expression a
+// FROM-clause key of the innermost of scopes names, ending with its query:
+// the innermost one of the key's name, of that query or of an enclosing
+// one, that the key is not inside and tracing does not hold, as a common
+// table expression cannot read itself, except in a further arm of a
+// recursive one. A key whose table name is qualified names a table.
+func cteScopes(key string, scopes []traceScope, tracing map[string]bool) ([]traceScope, bool) {
+	last := scopes[len(scopes)-1]
+	name, ok := last.query.TableAliases[key]
+	if !ok || last.query.QualifiedAliases[key] {
+		return nil, false
+	}
+	for i := len(scopes) - 1; i >= 0; i-- {
+		path := scopes[i].path + "/with:" + name
+		q, ok := scopes[i].query.CTEs[name]
+		inside := last.path == path || strings.HasPrefix(last.path, path+"/")
+		self := q.Recursive && strings.HasPrefix(last.path, path+"/|")
+		if ok && (!inside || self) && !tracing[path] {
+			return append(slices.Clip(scopes[:i+1]), traceScope{query: q, path: path}), true
+		}
+	}
+	return nil, false
+}
+
+// viewScopes yields the scopes of def and of each derived table, common
+// table expression, expression subquery and compound arm it reads, at any
+// depth, each ending with that query.
+func viewScopes(def ViewSQL) iter.Seq[[]traceScope] {
+	return func(yield func([]traceScope) bool) {
+		walkScopes([]traceScope{{query: def}}, yield)
+	}
+}
+
+func walkScopes(scopes []traceScope, yield func([]traceScope) bool) bool {
+	if !yield(scopes) {
+		return false
+	}
+	last := scopes[len(scopes)-1]
+	for _, step := range []struct {
+		prefix  string
+		queries map[string]ViewSQL
+	}{{"/", last.query.Subqueries}, {"/with:", last.query.CTEs}} {
+		for _, key := range slices.Sorted(maps.Keys(step.queries)) {
+			q := step.queries[key]
+			if !walkScopes(append(slices.Clip(scopes), traceScope{query: q, path: last.path + step.prefix + key, correlated: q.Lateral}), yield) {
+				return false
 			}
 		}
-		return ""
 	}
-	t, ok := tableMap[tableName]
-	if !ok {
-		return ""
+	for i, q := range last.query.Nested {
+		if !walkScopes(append(slices.Clip(scopes), traceScope{query: q, path: last.path + "/#" + strconv.Itoa(i), correlated: true}), yield) {
+			return false
+		}
 	}
-	if col := ColumnByName(t, sc.SourceColumn); col != nil {
-		return col.Type
+	for i, q := range last.query.Compound {
+		if !walkScopes(append(slices.Clip(scopes), traceScope{query: q, path: last.path + "/|" + strconv.Itoa(i)}), yield) {
+			return false
+		}
 	}
-	return ""
+	return true
+}
+
+// ViewReadSources returns the table column each column reference in the
+// Reads of def, and of each derived table, common table expression,
+// expression subquery and compound arm it reads, at any depth, reads, in
+// the order viewScopes yields them, resolved against schema as
+// ViewColumnSources resolves a view column. Table is nil for a reference
+// that reads no table column.
+func ViewReadSources(def ViewSQL, schema *Schema) []ViewColumnSource {
+	var sources []ViewColumnSource
+	for scopes := range viewScopes(def) {
+		for _, ref := range scopes[len(scopes)-1].query.Reads {
+			var src ViewColumnSource
+			if inner, vs, ok := readScope(ref, scopes, schema); ok {
+				src, _ = traceViewColumn(ViewSelectColumn{SourceTable: ref.Table, SourceColumn: ref.Column}, vs, inner, make(map[string]bool), schema)
+			}
+			sources = append(sources, src)
+		}
+	}
+	return sources
+}
+
+// readScope returns the scopes of the query whose FROM clause ref, a column
+// reference in the innermost of scopes, reads, ending with that query, and
+// the viewSources of that FROM clause: the innermost query when its FROM
+// clause has ref (its qualifier names a key there, or, unqualified, a table
+// there has the column or a subquery there selects it), else the nearest
+// enclosing query whose FROM clause both has ref and is visible, as SQL
+// scopes a name. An enclosing query's FROM clause is visible when the
+// scope right inside it is correlated (an expression subquery or a LATERAL
+// derived table), so a derived table or common table expression skips the
+// FROM clause of the query it is in but can read those further out that
+// the query itself can. ok is false when none has it.
+func readScope(ref ViewColumnRef, scopes []traceScope, schema *Schema) ([]traceScope, *viewSources, bool) {
+	for i := len(scopes) - 1; i >= 0; i-- {
+		if i < len(scopes)-1 && !scopes[i+1].correlated {
+			continue
+		}
+		inner, q := scopes[:i+1], scopes[i].query
+		vs := scopeSources(inner, nil, schema)
+		_, table := q.TableAliases[ref.Table]
+		_, sub := q.Subqueries[ref.Table]
+		_, found := traceViewColumn(ViewSelectColumn{SourceTable: ref.Table, SourceColumn: ref.Column}, vs, inner, make(map[string]bool), schema)
+		if table || sub || ref.Table == "" && found {
+			return inner, vs, true
+		}
+	}
+	return nil, nil, false
+}
+
+// RenameViewColumnReferences repoints every view column whose Definition
+// reads column oldName of table at newName, as PostgreSQL does on RENAME
+// COLUMN, so the view's columns can be read again after the rename, and
+// each dependency on the column (RenameDependencies). The columns of a
+// derived table or common table expression the view reads are repointed
+// the same way. Call it before the table's column is renamed.
+func RenameViewColumnReferences(schema *Schema, table *Table, oldName, newName string) {
+	RenameDependencies(schema,
+		DependencyObject{Kind: ColumnDependency, Schema: table.Schema, Name: table.Name, Part: oldName},
+		DependencyObject{Kind: ColumnDependency, Schema: table.Schema, Name: table.Name, Part: newName})
+	for i := range schema.Views {
+		def := schema.Views[i].Definition
+		if def == nil {
+			continue
+		}
+		for scopes := range viewScopes(*def) {
+			// The scope's query shares its Columns with def or the map's entry.
+			q := scopes[len(scopes)-1].query
+			vs := scopeSources(scopes, nil, schema)
+			for j := range q.Columns {
+				sc := &q.Columns[j]
+				if t, _ := vs.sourceTable(*sc); t == table && sc.SourceColumn == oldName {
+					sc.SourceColumn = newName
+				}
+			}
+		}
+	}
+}
+
+// ViewFromTables returns, by FROM-clause key, the table each key of def
+// names, resolved against schema as BuildView resolves it, or nil for a key
+// that names no table in schema (a common table expression, a view, or a
+// table schema lacks). The keys of each derived table, common table
+// expression, expression subquery and compound arm def reads, at any depth,
+// are listed too, under the path that leads to it: "<alias>/<key>",
+// "with:<name>/<key>", "#<i>/<key>" and "|<i>/<key>".
+func ViewFromTables(def ViewSQL, schema *Schema) map[string]*Table {
+	tables := make(map[string]*Table)
+	for scopes := range viewScopes(def) {
+		last := scopes[len(scopes)-1]
+		vs := scopeSources(scopes, nil, schema)
+		prefix := strings.TrimPrefix(last.path+"/", "/")
+		for key := range last.query.TableAliases {
+			tables[prefix+key] = vs.table(key)
+		}
+	}
+	return tables
+}
+
+// RenameViewTableReferences repoints every FROM-clause key of a view
+// Definition, or of a subquery it reads, that names table at (newSchema,
+// newName), as PostgreSQL does on a table rename or SET SCHEMA, so the
+// view's columns can be read again after the change, and each dependency
+// on the table or a part of it (RenameDependencies). Call it before the
+// table is renamed or moved.
+func RenameViewTableReferences(schema *Schema, table *Table, newSchema, newName string) {
+	RenameDependencies(schema,
+		DependencyObject{Kind: TableDependency, Schema: table.Schema, Name: table.Name},
+		DependencyObject{Kind: TableDependency, Schema: newSchema, Name: newName})
+	for i := range schema.Views {
+		def := schema.Views[i].Definition
+		if def == nil {
+			continue
+		}
+		for scopes := range viewScopes(*def) {
+			// The scope's query shares its maps with def or the map's entry.
+			q := scopes[len(scopes)-1].query
+			vs := scopeSources(scopes, nil, schema)
+			for key := range q.TableAliases {
+				if vs.table(key) != table {
+					continue
+				}
+				q.TableAliases[key] = newName
+				if q.TableSchemas != nil {
+					q.TableSchemas[key] = newSchema
+				}
+			}
+		}
+	}
+}
+
+// table returns the table a FROM-clause key (alias or table name) names: the
+// one in the recorded schema when there is one, else one with no schema, or
+// nil when the key names a derived table or common table expression.
+func (vs *viewSources) table(key string) *Table {
+	if vs.queries[key] {
+		return nil
+	}
+	name := key
+	if n, ok := vs.aliases[key]; ok {
+		name = n
+	}
+	schema := vs.schemas[key]
+	var schemaless *Table
+	for i := range vs.tables {
+		t := &vs.tables[i]
+		if t.Name != name {
+			continue
+		}
+		if schema == "" || t.Schema == schema {
+			return t
+		}
+		if t.Schema == "" && schemaless == nil {
+			schemaless = t
+		}
+	}
+	return schemaless
+}
+
+// relativeType rewrites typ, written relative to the schema declared, so it
+// reads relative to the view's schema, as a table column's type does: a
+// user-defined type of declared is qualified, unless its bare name is a
+// pg_catalog type's, which PostgreSQL finds first, and a type qualified with
+// the view's schema is written bare. Any other type written bare or qualified
+// with searchPath.Schema is a type on the search_path, written as
+// searchPathType writes it. Array suffixes are kept.
+func (vs *viewSources) relativeType(typ, declared string) string {
+	if declared == "" || vs.viewSchema == "" || declared == vs.viewSchema {
+		return typ
+	}
+	base := strings.TrimRight(typ, "[]")
+	suffix := typ[len(base):]
+	if i := strings.LastIndexByte(base, '.'); i > 0 {
+		if base[:i] == vs.viewSchema {
+			return base[i+1:] + suffix
+		}
+		if base[:i] == vs.searchPath.Schema && !vs.userTypes[base] {
+			return vs.searchPathType(base[i+1:]) + suffix
+		}
+		return typ
+	}
+	if vs.userTypes[declared+"."+base] && !vs.builtin(base) {
+		return declared + "." + base + suffix
+	}
+	return vs.searchPathType(base) + suffix
+}
+
+// searchPathType writes typ, a type on the search_path written bare, for the
+// view's schema: qualified with searchPath.Schema when the view's schema
+// declares a type by the same name, which the bare name would name, unless
+// it is a pg_catalog type.
+func (vs *viewSources) searchPathType(typ string) string {
+	name, _, _ := strings.Cut(typ, "(")
+	shadowed := vs.searchPath.Schema != "" && vs.viewSchema != vs.searchPath.Schema && vs.userTypes[vs.viewSchema+"."+name]
+	if !shadowed || vs.builtin(name) {
+		return typ
+	}
+	return vs.searchPath.Schema + "." + typ
+}
+
+// builtin reports whether typ, written bare, names a pg_catalog type, which
+// PostgreSQL finds before a type by the same name in any other schema.
+func (vs *viewSources) builtin(typ string) bool {
+	name, _, _ := strings.Cut(typ, "(")
+	return vs.searchPath.Builtin != nil && vs.searchPath.Builtin(name)
 }
 
 // inferAggregateType returns the type for an aggregate function per PRD 16.3.
@@ -377,10 +889,33 @@ func isAggregateNullable(aggregate string) bool {
 	}
 }
 
+// checkAnnotationColumns returns an error for an annotation that names a
+// column not in columns.
+func checkAnnotationColumns(columns map[string]bool, annotations *ViewAnnotations) error {
+	for _, pk := range annotations.PKColumns {
+		if !columns[pk] {
+			return fmt.Errorf("@pk references unknown column %q", pk)
+		}
+	}
+	for _, col := range slices.Sorted(maps.Keys(annotations.TypeOverrides)) {
+		if !columns[col] {
+			return fmt.Errorf("@type references unknown column %q", col)
+		}
+	}
+	for _, col := range annotations.NullableColumns {
+		if !columns[col] {
+			return fmt.Errorf("@nullable references unknown column %q", col)
+		}
+	}
+	return nil
+}
+
 // MergeViewAnnotations merges annotation overlays onto introspected views.
 // For each view that has a matching annotation file, annotation @pk, @type,
-// and @nullable take precedence over introspected values.
-func MergeViewAnnotations(introspected []View, annotated []View, annotationMap map[string]*ViewAnnotations) []View {
+// and @nullable take precedence over introspected values. The introspected
+// view's columns stand (PRD §16.2), so an annotation naming a column it
+// lacks is an error.
+func MergeViewAnnotations(introspected []View, annotated []View, annotationMap map[string]*ViewAnnotations) ([]View, error) {
 	annotatedMap := make(map[string]int, len(annotated))
 	for i, v := range annotated {
 		key := viewKey(v.Schema, v.Name)
@@ -393,7 +928,10 @@ func MergeViewAnnotations(introspected []View, annotated []View, annotationMap m
 	for _, iv := range introspected {
 		key := viewKey(iv.Schema, iv.Name)
 		if _, ok := annotatedMap[key]; ok {
-			mergedView := mergeView(iv, annotationMap[key])
+			mergedView, err := mergeView(iv, annotationMap[key])
+			if err != nil {
+				return nil, fmt.Errorf("view %s: %w", key, err)
+			}
 			result = append(result, mergedView)
 			merged[key] = true
 		} else {
@@ -408,7 +946,7 @@ func MergeViewAnnotations(introspected []View, annotated []View, annotationMap m
 		}
 	}
 
-	return result
+	return result, nil
 }
 
 func viewKey(schema, name string) string {
@@ -419,9 +957,16 @@ func viewKey(schema, name string) string {
 }
 
 // mergeView merges an introspected view with annotation overrides.
-func mergeView(introspected View, annotations *ViewAnnotations) View {
+func mergeView(introspected View, annotations *ViewAnnotations) (View, error) {
 	if annotations == nil {
-		return introspected
+		return introspected, nil
+	}
+	columns := make(map[string]bool, len(introspected.Columns))
+	for _, col := range introspected.Columns {
+		columns[col.Name] = true
+	}
+	if err := checkAnnotationColumns(columns, annotations); err != nil {
+		return View{}, err
 	}
 
 	result := introspected
@@ -449,19 +994,24 @@ func mergeView(introspected View, annotations *ViewAnnotations) View {
 		}
 	}
 
+	// The same precedence BuildView applies: a @type column is NOT NULL,
+	// @nullable makes it nullable, and @pk wins over both.
 	for i := range result.Columns {
 		col := &result.Columns[i]
-		if pkSet[col.Name] {
-			col.PrimaryKey = true
-			col.Nullable = false
-		}
 		if ta, ok := annotations.TypeOverrides[col.Name]; ok {
 			col.Type = ta.GoType
+			col.GoTypeLiteral = ta.GoType
+			col.GoTypeImport = ta.ImportPath
+			col.Nullable = false
 		}
 		if nullableSet[col.Name] {
 			col.Nullable = true
 		}
+		if pkSet[col.Name] {
+			col.PrimaryKey = true
+			col.Nullable = false
+		}
 	}
 
-	return result
+	return result, nil
 }

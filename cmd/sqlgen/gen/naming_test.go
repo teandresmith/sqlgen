@@ -192,6 +192,8 @@ func TestToSingular(t *testing.T) {
 		{name: "already singular", input: "user", want: "user"},
 		{name: "singular ss", input: "boss", want: "boss"},
 		{name: "empty", input: "", want: ""},
+		{name: "only the suffix", input: "s", want: "s"},
+		{name: "only the suffix after a delimiter", input: "_s", want: "_s"},
 		{name: "uncountable", input: "sheep", want: "sheep"},
 		{name: "irregular", input: "people", want: "person"},
 		{name: "order_items", input: "order_items", want: "order_item"},
@@ -288,6 +290,8 @@ func TestStructName(t *testing.T) {
 		{name: "companies no collision", table: "companies", schema: "public", collisions: nil, want: "Company"},
 		{name: "statuses no collision", table: "statuses", schema: "public", collisions: nil, want: "Status"},
 		{name: "addresses no collision", table: "addresses", schema: "public", collisions: nil, want: "Address"},
+		{name: "only the suffix", table: "s", schema: "public", collisions: nil, want: "S"},
+		{name: "only the suffix after a delimiter", table: "_s", schema: "public", collisions: nil, want: "S"},
 
 		// Colliding name — prefix with schema
 		{name: "public users collide", table: "users", schema: "public", collisions: map[string]bool{"users": true}, want: "PublicUser"},

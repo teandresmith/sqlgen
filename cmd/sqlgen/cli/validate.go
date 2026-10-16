@@ -43,12 +43,15 @@ func makeValidateRunE(flags *cliFlags) func(*cobra.Command, []string) error {
 
 		// 3. Parse schema — attempt even if pre-parse had errors to collect
 		// as much feedback as possible.
-		schema, err := parseSchema(cfg)
-		if err != nil {
-			if exitCode == ExitSuccess {
-				exitCode = ExitSchema
+		var schema *parser.Schema
+		if !connectionRejected(cfg) {
+			schema, err = parseSchema(cmd.Context(), cfg)
+			if err != nil {
+				if exitCode == ExitSuccess {
+					exitCode = parseExitCode(err)
+				}
+				allErrors = append(allErrors, splitJoinedErrors(err)...)
 			}
-			allErrors = append(allErrors, splitJoinedErrors(err)...)
 		}
 
 		// 4. Post-parse validation, whenever there is a schema to check. An
@@ -79,11 +82,10 @@ func makeValidateRunE(flags *cliFlags) func(*cobra.Command, []string) error {
 			// 4b. Generation-phase validation. `validate` used to stop at the
 			// two config passes above, so a config that only `generate`
 			// rejects — a resolved-field-name collision, a per-column type
-			// literal with no importable package, an ambiguous soft-delete
-			// column — printed "config and schema are valid" and then failed
-			// on the next generate. ValidateGeneration builds the
-			// contexts in memory and discards them: no templates are loaded
-			// and no files are written.
+			// literal with no importable package — printed "config and
+			// schema are valid" and then failed on the next generate.
+			// ValidateGeneration builds the contexts in memory and discards
+			// them: no templates are loaded and no files are written.
 			genWarnings, err := gen.ValidateGeneration(schema, cfg)
 			allGenWarnings = append(allGenWarnings, genWarnings...)
 			if err != nil {
@@ -110,4 +112,12 @@ func makeValidateRunE(flags *cliFlags) func(*cobra.Command, []string) error {
 		}
 		return nil
 	}
+}
+
+// connectionRejected reports that the source reads the database and
+// pre-parse rejected the connection block. validate does not try it, since
+// its errors are already reported.
+func connectionRejected(cfg *config.RootConfig) bool {
+	introspected := cfg.Input.Source == config.SourceDatabase || cfg.Input.Source == config.SourceBoth
+	return introspected && len(cfg.Input.Connection.Errors(cfg.Input.Dialect)) > 0
 }

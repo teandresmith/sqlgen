@@ -21,7 +21,7 @@ Catalog of products available for sale
 | `id` | ID | `uuid.UUID` | `uuid` |  | yes |  | `gen_random_uuid()` | `comparator.ID` | Unique identifier |
 | `name` | Name | `string` | `text` |  |  |  |  | `comparator.String` | Product display name |
 | `description` | Description | `*string` | `text` | yes |  |  |  | `comparator.NullableString` | Optional long-form description |
-| `price` | Price | `float64` | `numeric(10, 2)` |  |  |  |  | `comparator.Number[float64]` | Unit price in the default currency |
+| `price` | Price | `float64` | `numeric(10,2)` |  |  |  |  | `comparator.Number[float64]` | Unit price in the default currency |
 | `quantity` | Quantity | `int32` | `positive_int` |  |  |  | `1` | `comparator.Number[int32]` | Available stock count |
 | `is_active` | IsActive | `bool` | `boolean` |  |  |  | `true` | `comparator.Bool` | Whether the product is currently available |
 | `category_id` | CategoryID | `uuid.UUID` | `uuid` |  |  |  |  | `comparator.ID` | Parent category reference |

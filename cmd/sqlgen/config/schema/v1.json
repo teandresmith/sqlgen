@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://raw.githubusercontent.com/teandresmith/sqlgen/main/cmd/sqlgen/config/schema/v1.json",
   "title": "sqlgen configuration",
-  "description": "Shape of a sqlgen.yml configuration file. Editor hinting only: this schema checks structure, key names and closed value sets. It cannot express sqlgen's cross-field rules (driver/dialect pairing, required connection, soft-delete column type compatibility, cursor-key existence) — run `sqlgen validate` for those.",
+  "description": "Shape of a sqlgen.yml configuration file. Editor hinting only: this schema checks structure, key names and closed value sets. Of sqlgen's cross-field rules it checks only a relationship's link key (fk for o2o and o2m, junction for m2m); the others, such as driver/dialect pairing, required connection, soft-delete column type compatibility and cursor-key existence, need `sqlgen validate`.",
   "type": "object",
   "additionalProperties": false,
   "properties": {
@@ -111,7 +111,7 @@
         },
         "paths": {
           "type": "array",
-          "description": "SQL files or directories to parse, when source is `files` or `both`.",
+          "description": "SQL files or directories to parse, when source is `files` or `both`. Not read under `database`, and setting it there warns.",
           "items": { "type": "string" }
         },
         "views": {
@@ -134,18 +134,18 @@
       "description": "Database connection. Overridden by the SQLGEN_DB_URL and SQLGEN_DB_PASSWORD environment variables, which take highest precedence.",
       "additionalProperties": false,
       "properties": {
-        "url": { "type": "string", "description": "Full connection URL. Takes precedence over the individual fields." },
-        "host": { "type": "string", "description": "Required for postgres/mysql when `url` is empty." },
-        "port": { "type": "integer", "description": "Required for postgres/mysql when `url` is empty." },
-        "user": { "type": "string", "description": "Required for postgres/mysql when `url` is empty." },
-        "password": { "type": "string", "description": "Prefer SQLGEN_DB_PASSWORD over committing this." },
-        "database": { "type": "string", "description": "Database name, or the file path for SQLite." },
+        "url": { "type": "string", "description": "Full connection URL. Takes precedence over the individual fields, `password` and SQLGEN_DB_PASSWORD included. Reference a secret with ${NAME}, e.g. postgres://app:${SQLGEN_DB_PASSWORD}@host/db; substitution is literal, so a postgres password with / ? # or % must be stored percent-encoded." },
+        "host": { "type": "string", "description": "Required for postgres/mysql when `url` is empty. A value starting with `/` is a Unix socket: the socket directory on postgres, the socket file on mysql." },
+        "port": { "type": "integer", "description": "Defaults to 5432 on postgres, 3306 on mysql. Ignored on SQLite, and on mysql when `host` is a socket file." },
+        "user": { "type": "string", "description": "Required for postgres/mysql when `url` is empty. On mysql it cannot contain `:`, which the DSN has no escape for." },
+        "password": { "type": "string", "description": "Don't commit a password: reference one with ${NAME}, e.g. ${DB_PASSWORD}, or set SQLGEN_DB_PASSWORD. Ignored when `url` is set." },
+        "database": { "type": "string", "description": "Database name, or the file path for SQLite. Required when `url` is empty." },
         "ssl_mode": { "type": "string", "description": "TLS/SSL mode. Defaults to `disable` on postgres, `false` on mysql." }
       }
     },
     "introspect": {
       "type": "object",
-      "description": "Schema and table filtering applied during database introspection.",
+      "description": "Schema and table filtering applied during database introspection. Has no effect under source `files`, and setting it there warns.",
       "additionalProperties": false,
       "properties": {
         "schemas": { "type": "array", "description": "Schemas to include. Empty means all non-system schemas.", "items": { "type": "string" } },
@@ -435,17 +435,35 @@
       "type": "object",
       "description": "An explicitly declared relationship.",
       "additionalProperties": false,
+      "required": ["name", "type", "table"],
+      "allOf": [
+        {
+          "if": { "required": ["type"], "properties": { "type": { "$ref": "#/$defs/relationshipTypeLinkedByFK" } } },
+          "then": { "required": ["fk"] }
+        },
+        {
+          "if": { "required": ["type"], "properties": { "type": { "$ref": "#/$defs/relationshipTypeLinkedByJunction" } } },
+          "then": { "required": ["junction"] }
+        }
+      ],
       "properties": {
         "name": { "type": "string", "description": "Go field name for the relationship." },
         "type": {
           "type": "string",
-          "description": "Relationship cardinality.",
-          "enum": ["o2o", "one_to_one", "o2m", "one_to_many", "m2m", "many_to_many"]
+          "description": "Relationship cardinality. Case-insensitive.",
+          "anyOf": [
+            { "enum": ["o2o", "one_to_one", "o2m", "one_to_many", "m2m", "many_to_many"] },
+            { "$ref": "#/$defs/relationshipTypeLinkedByFK" },
+            { "$ref": "#/$defs/relationshipTypeLinkedByJunction" }
+          ]
         },
         "side": {
           "type": "string",
-          "description": "Which side of the edge this entry describes. Defaults to parent, the foreign-key holder.",
-          "enum": ["parent", "child"]
+          "description": "Which side of the edge this entry describes. Defaults to parent, the foreign-key holder. Case-insensitive.",
+          "anyOf": [
+            { "enum": ["parent", "child"] },
+            { "pattern": "^([pP][aA][rR][eE][nN][tT]|[cC][hH][iI][lL][dD])?$" }
+          ]
         },
         "table": { "type": "string", "description": "Target table." },
         "fk": { "type": "string", "description": "Foreign-key column that creates the link. Required for o2o and o2m; m2m links through its junction instead." },
@@ -457,6 +475,16 @@
         "sort": { "type": "array", "description": "Default ordering applied by the O2M / M2M loader when the caller passes no Sorts. Rejected on an o2o relationship, which is loaded by a LEFT JOIN in the parent query.", "items": { "$ref": "#/$defs/relationshipSort" } },
         "description": { "type": "string", "description": "Go doc comment on the generated field." }
       }
+    },
+    "relationshipTypeLinkedByFK": {
+      "type": "string",
+      "description": "A relationship type linked through `fk`: o2o, one_to_one, o2m or one_to_many, in any case. A JSON Schema pattern has no case-insensitive flag, so each letter is a character class.",
+      "pattern": "^([oO]2[oOmM]|[oO][nN][eE]_[tT][oO]_([oO][nN][eE]|[mM][aA][nN][yY]))$"
+    },
+    "relationshipTypeLinkedByJunction": {
+      "type": "string",
+      "description": "A relationship type linked through `junction`: m2m or many_to_many, in any case.",
+      "pattern": "^([mM]2[mM]|[mM][aA][nN][yY]_[tT][oO]_[mM][aA][nN][yY])$"
     },
     "relationshipDiscriminator": {
       "type": "object",
@@ -529,7 +557,7 @@
         "invalidate_on": { "type": "array", "description": "Tables whose mutations invalidate this view's cached reads.", "items": { "type": "string" } },
         "cursor_keys": {
           "type": "array",
-          "description": "Cursor keys for this view. When set explicitly every column must exist on the view. Views have no primary key, so there is no PK fallback.",
+          "description": "Cursor keys for this view. When set explicitly every column must exist on the view and be NOT NULL. Views have no primary key, so there is no PK fallback.",
           "items": { "type": "string" }
         },
         "tenancy": { "$ref": "#/$defs/entityTenancy" },

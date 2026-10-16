@@ -571,10 +571,12 @@ func funcSoftDeleteRestoreGoValue(strategy config.SoftDeleteType) string {
 // The ComparatorType from FilterFieldContext includes a `*` prefix (for use in
 // struct field declarations). This function strips it for the literal.
 //
-// Strategy-dependent output:
+// The literal follows the comparator type, not the strategy: a tinyint can
+// carry either strategy, and each form below matches a deleted row under
+// both (the deleted value is 1 / TRUE).
 //   - Nullable types (NullableTime, NullableNumber, NullableBool): {Null: new(false)} — "IS NOT NULL"
 //   - Bool: {Eq: new(true)} — "= true"
-//   - Number: {Neq: new(0)} — "!= 0"
+//   - Number[T]: {Neq: new(T(0))} — "!= 0"; an untyped new(0) would be *int
 func funcSoftDeleteFilterOverride(f FilterFieldContext) string {
 	ctype := strings.TrimPrefix(f.ComparatorType, "*")
 
@@ -588,12 +590,15 @@ func funcSoftDeleteFilterOverride(f FilterFieldContext) string {
 		return "&comparator.Bool{Eq: new(true)}"
 	}
 
-	// Non-nullable Number (integer soft delete) — use Neq: new(0) to match deleted rows.
-	if strings.HasPrefix(ctype, "comparator.Number") {
-		return "&" + ctype + "{Neq: new(0)}"
+	// Non-nullable Number — a zero of the type argument, matching deleted rows.
+	if elem, ok := strings.CutPrefix(ctype, "comparator.Number["); ok {
+		elem = strings.TrimSuffix(elem, "]")
+		return "&" + ctype + "{Neq: new(" + elem + "(0))}"
 	}
 
-	// Fallback (shouldn't happen for valid soft delete configs).
+	// Fallback. Validation keeps the built-in types out of it: a timestamp
+	// column must be nullable (NullableTime), and bool / integer columns
+	// resolve to the cases above.
 	return "&" + ctype + "{Null: new(false)}"
 }
 

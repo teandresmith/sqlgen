@@ -20,7 +20,7 @@
 | `order_id` | OrderID | `uuid.UUID` | `uuid` |  |  |  |  | `comparator.ID` |  |
 | `product_id` | ProductID | `uuid.UUID` | `uuid` |  |  |  |  | `comparator.ID` |  |
 | `quantity` | Quantity | `int32` | `integer` |  |  |  | `1` | `comparator.Number[int32]` |  |
-| `unit_price` | UnitPrice | `decimal.Decimal` | `numeric(12, 2)` |  |  |  |  | `comparator.String` |  |
+| `unit_price` | UnitPrice | `decimal.Decimal` | `numeric(12,2)` |  |  |  |  | `comparator.String` |  |
 | `external_ref` | ExternalRef | `*string` | `text` | yes |  |  |  | `comparator.NullableString` |  |
 | `source_ip` | SourceIP | `*netip.Addr` | `inet` | yes |  |  |  | `comparator.NullableString` |  |
 | `created_at` | CreatedAt | `time.Time` | `timestamptz` |  |  |  | `current_timestamp` | `comparator.Time` |  |

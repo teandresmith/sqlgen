@@ -21,7 +21,7 @@ Customer purchase orders
 | `id` | ID | `uuid.UUID` | `uuid` |  | yes |  | `gen_random_uuid()` | `comparator.ID` | Unique identifier |
 | `user_id` | UserID | `uuid.UUID` | `uuid` |  |  |  |  | `comparator.ID` | Ordering user reference |
 | `status` | Status | `OrderStatus` | `order_status` |  |  |  | `'pending'` | `comparator.Enum[OrderStatus]` | Current lifecycle state |
-| `total` | Total | `float64` | `numeric(10, 2)` |  |  |  | `0` | `comparator.Number[float64]` | Order total in the default currency |
+| `total` | Total | `float64` | `numeric(10,2)` |  |  |  | `0` | `comparator.Number[float64]` | Order total in the default currency |
 | `notes` | Notes | `*string` | `text` | yes |  |  |  | `comparator.NullableString` | Optional order notes from the customer |
 | `created_at` | CreatedAt | `time.Time` | `timestamptz` |  |  |  | `current_timestamp` | `comparator.Time` | Row creation timestamp |
 | `updated_at` | UpdatedAt | `*time.Time` | `timestamptz` | yes |  |  | `current_timestamp` | `comparator.NullableTime` | Last modification timestamp |

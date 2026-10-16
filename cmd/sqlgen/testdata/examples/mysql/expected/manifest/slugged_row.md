@@ -24,8 +24,8 @@
 
 | Name | Columns | Unique | Method | Where |
 | --- | --- | --- | --- | --- |
-| `slugged_rows_pkey` | id | yes | btree |  |
-| `slugged_rows_slug_key` | slug | yes | btree |  |
+| `PRIMARY` | id | yes | btree |  |
+| `slug` | slug | yes | btree |  |
 
 ## Query methods
 

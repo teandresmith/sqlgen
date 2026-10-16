@@ -32,6 +32,8 @@ func ValidatePreParse(cfg *RootConfig) ([]Warning, error) {
 	validateRemovedOperations(cfg, &errs)
 	validateNullableVariants(cfg, &errs)
 	validateSchemaDialect(cfg, &warnings)
+	validateIgnoredInputKeys(cfg, &warnings)
+	validateIgnoredPasswordEnv(cfg, &warnings)
 	validateOutputDir(cfg, &warnings)
 	validateCacheConfig(cfg, &errs, &warnings)
 	validateViewCacheConfig(cfg, &errs)
@@ -356,8 +358,9 @@ func validateColumnOverridesSchema(cfg *RootConfig, tables []SchemaTable, errs *
 // identical filters written differently are accepted as distinct sub-categories.
 // The `discriminator:` portion is its column and value, compared the same way.
 //
-// It rejects a missing or unknown `type:`, a missing o2o / o2m `fk:` or m2m
-// `junction:`, and an unknown `side:` (validateRelationshipKeys).
+// It rejects a missing `name:`, a missing or unknown `type:`, a missing
+// o2o / o2m `fk:` or m2m `junction:`, and an unknown `side:`
+// (validateRelationshipKeys).
 //
 // It also enforces the §4.13 mutual exclusion of `filter:` and
 // `discriminator:` on one relationship: composed, their write-side inverse
@@ -418,6 +421,10 @@ func validateRelationships(cfg *RootConfig, errs *[]error) {
 
 // validateRelationshipKeys checks the keys PRD §4.8 constrains on their own:
 //
+//   - `name:` is required: it is the relationship's Go field on the entity
+//     struct. The generator skips a nameless edge (`sqlgen validate` still
+//     builds its contexts after this rule fails), so this is the one place
+//     the missing key is reported.
 //   - `type:` is required and one of the six spellings the generator maps; it
 //     would otherwise be read as o2m.
 //   - `fk:` is required on an o2o or o2m edge, and `junction:` on an m2m one.
@@ -429,6 +436,12 @@ func validateRelationships(cfg *RootConfig, errs *[]error) {
 //     rules depend on it.
 //   - `side:` is parent, child or empty.
 func validateRelationshipKeys(tableName string, i int, r TableRelationship, errs *[]error) {
+	if r.Name == "" {
+		*errs = append(*errs, fmt.Errorf(
+			"tables.%s.relationships[%d].name: required — it names the relationship's Go field on the entity struct (PRD §4.8)",
+			tableName, i,
+		))
+	}
 	switch {
 	case r.Type == "":
 		*errs = append(*errs, fmt.Errorf(
@@ -747,9 +760,11 @@ func isValidRelationshipType(t string) bool {
 // resolves to "parent" (default); `parent` / `child` are explicit. Anything
 // else silently defaulted to "parent" without this gate, so a typo like
 // `side: chld` could flip an inverse-side entry's manifest kind from `m2o`
-// back to `o2o` without diagnosis.
+// back to `o2o` without diagnosis. Like `parseRelationshipSide`, it folds case
+// but does not trim; that function reads " child " as the parent side, so the
+// padded spelling is rejected here.
 func isValidRelationshipSide(s string) bool {
-	switch strings.ToLower(strings.TrimSpace(s)) {
+	switch strings.ToLower(s) {
 	case "", "parent", "child":
 		return true
 	}
@@ -1123,9 +1138,70 @@ func validateDriverDialect(cfg *RootConfig, errs *[]error) {
 // validateConnectionRequired checks that connection is present when source requires it.
 func validateConnectionRequired(cfg *RootConfig, errs *[]error) {
 	needsConnection := cfg.Input.Source == SourceDatabase || cfg.Input.Source == SourceBoth
-	if needsConnection && cfg.Input.Connection == nil {
-		*errs = append(*errs, fmt.Errorf("input.connection is required when input.source is %q", cfg.Input.Source))
+	if !needsConnection {
+		return
 	}
+	if cfg.Input.Connection == nil {
+		*errs = append(*errs, fmt.Errorf("input.connection is required when input.source is %q", cfg.Input.Source))
+		return
+	}
+	*errs = append(*errs, cfg.Input.Connection.Errors(cfg.Input.Dialect)...)
+}
+
+// validateIgnoredInputKeys warns about an input key the source never reads
+// (PRD §4.13): an explicit `paths` under `source: database`, a non-empty
+// `introspect` field under `source: files`, or `introspect.schemas` /
+// `exclude_schemas` on a dialect without schemas. The defaulted `paths`
+// stays quiet.
+func validateIgnoredInputKeys(cfg *RootConfig, warnings *[]Warning) {
+	in := cfg.Input
+	if in.Source == SourceDatabase && in.pathsSet {
+		*warnings = append(*warnings, Warning{Message: fmt.Sprintf("input.paths is ignored under input.source: %s", in.Source)})
+	}
+	if in.Introspect == nil {
+		return
+	}
+	fields := []struct {
+		key    string
+		values []string
+	}{
+		{"input.introspect.schemas", in.Introspect.Schemas},
+		{"input.introspect.exclude_schemas", in.Introspect.ExcludeSchemas},
+		{"input.introspect.tables", in.Introspect.Tables},
+	}
+	var msg string
+	switch {
+	case in.Source == SourceFiles:
+		msg = fmt.Sprintf("%%s is ignored under input.source: %s", in.Source)
+	case in.Dialect != DialectPostgres:
+		msg = fmt.Sprintf("%%s is ignored on %s, which has no schemas", in.Dialect)
+		fields = fields[:2]
+	default:
+		return
+	}
+	for _, f := range fields {
+		if len(f.values) > 0 {
+			*warnings = append(*warnings, Warning{Message: fmt.Sprintf(msg, f.key)})
+		}
+	}
+}
+
+// validateIgnoredPasswordEnv warns when SQLGEN_DB_PASSWORD is set but the
+// connection comes from a url that doesn't reference it (PRD §4.13). The url
+// wins (§4.3), so the password never reaches the driver, and the only other
+// symptom is a login failure.
+func validateIgnoredPasswordEnv(cfg *RootConfig, warnings *[]Warning) {
+	in := cfg.Input
+	if in.Source != SourceDatabase && in.Source != SourceBoth || in.Connection == nil || in.Connection.passwordEnvIgnoredBy == "" {
+		return
+	}
+	hint := "write ${SQLGEN_DB_PASSWORD} into the url to use it"
+	if in.Connection.passwordEnvIgnoredBy == "SQLGEN_DB_URL" {
+		hint = "put the password in SQLGEN_DB_URL, or unset it and write ${SQLGEN_DB_PASSWORD} into input.connection.url"
+	}
+	*warnings = append(*warnings, Warning{Message: fmt.Sprintf(
+		"SQLGEN_DB_PASSWORD is ignored: the connection comes from %s, which takes precedence over the password (PRD §4.3); %s",
+		in.Connection.passwordEnvIgnoredBy, hint)})
 }
 
 // validateRemovedOperations rejects a leftover client `operations` key under
@@ -1300,9 +1376,9 @@ func validateSchemaDialect(cfg *RootConfig, warnings *[]Warning) {
 
 // SchemaTable holds the minimal table information needed for post-parse validation.
 //
-// UniqueGroups carries column-name groupings covered by table-level UNIQUE
-// constraints (CREATE UNIQUE INDEX, ADD CONSTRAINT ... UNIQUE (a, b)). Per-column
-// inline UNIQUE shows up on SchemaColumn.Unique instead. Both feed the
+// UniqueGroups carries the column groups of the table's PRIMARY KEY and UNIQUE
+// constraints, inline or table-level (CREATE UNIQUE INDEX, ADD CONSTRAINT ...
+// UNIQUE (a, b)). SchemaColumn.Unique carries the column flag. Both feed the
 // primary_key.columns "no UNIQUE coverage" validation.
 type SchemaTable struct {
 	Name         string
@@ -1328,9 +1404,9 @@ type SchemaColumn struct {
 	PrimaryKey bool
 	Nullable   bool
 	Unique     bool
-	// HasDefault reports whether an INSERT may omit the column: it has a
-	// DEFAULT expression or is GENERATED ALWAYS. Feeds the §32.4
-	// required-on-create access rule.
+	// HasDefault reports whether the column has a DEFAULT other than NULL or
+	// is GENERATED ALWAYS. Feeds the §32.4 required-on-create access rule and
+	// the bool / integer soft delete nullability rule.
 	HasDefault bool
 	// AutoIncrement reports serial / auto_increment columns.
 	AutoIncrement bool
@@ -1554,10 +1630,10 @@ func resolvedPKColumns(tc TableConfig, table SchemaTable) []string {
 // cursor ever carries.
 func resolvedCursorKeys(cfg *RootConfig, tc TableConfig, table SchemaTable) (map[string]bool, string) {
 	excluded := stringSet(ResolveTableExcludeColumns(tc, cfg.Generation))
-	var present []string
-	for _, name := range columnNames(table.Columns) {
-		if !excluded[name] {
-			present = append(present, name)
+	var present []SchemaColumn
+	for _, col := range table.Columns {
+		if !excluded[col.Name] {
+			present = append(present, col)
 		}
 	}
 	decision := ResolveTableConnection(
@@ -1641,7 +1717,7 @@ func apiCreateOpsEnabled(cfg *RootConfig, tc TableConfig) bool {
 func opOn(p *bool) bool { return p != nil && *p }
 
 // validateCursorKeys delegates to the per-entity resolvers and surfaces their
-// decisions as errors (explicit override pointing at a missing column) or
+// decisions as errors (explicit override naming a missing or nullable column) or
 // warnings (inherited default forcing a Connection omission). Silent PK
 // fallback produces neither — see PRD §4.13.
 func validateCursorKeys(cfg *RootConfig, tables []SchemaTable, views []SchemaView, errs *[]error, warnings *[]Warning) {
@@ -1660,7 +1736,7 @@ func validateCursorKeys(cfg *RootConfig, tables []SchemaTable, views []SchemaVie
 			tc,
 			cfg.Generation,
 			qualifiedTableName(table),
-			columnNames(table.Columns),
+			table.Columns,
 			resolvedPKColumns(tc, table),
 		)
 		if decision.Err != nil {
@@ -1677,7 +1753,7 @@ func validateCursorKeys(cfg *RootConfig, tables []SchemaTable, views []SchemaVie
 			vc,
 			cfg.Generation,
 			qualifiedViewName(view),
-			columnNames(view.Columns),
+			view.Columns,
 		)
 		if decision.Err != nil {
 			*errs = append(*errs, decision.Err)
@@ -1688,8 +1764,15 @@ func validateCursorKeys(cfg *RootConfig, tables []SchemaTable, views []SchemaVie
 	}
 }
 
-// validateSoftDeleteTypes checks that soft delete columns have compatible SQL types.
-// Compatible categories: "timestamp" (timestamp*, datetime), "bool" (bool*, tinyint).
+// validateSoftDeleteTypes checks that soft delete columns have compatible SQL
+// types (see isSoftDeleteTypeCompatible) and that a timestamp soft delete
+// column is nullable: the strategy marks a live row with NULL (PRD §4.6), so a
+// NOT NULL column can never be live again — Restore violates the constraint
+// and the default "is not deleted" filter (IS NULL) matches no row. A bool or
+// integer column is the mirror case: the strategy marks a live row with FALSE
+// / 0 and its filter compares to that value, which excludes NULL, so a
+// nullable column with no DEFAULT hides every row inserted without it (PRD
+// §17.2). A DEFAULT, or NOT NULL, gives such a row the live value.
 func validateSoftDeleteTypes(cfg *RootConfig, tables []SchemaTable, errs *[]error) {
 	sdCols := cfg.Generation.SoftDeleteColumns
 	if len(sdCols) == 0 {
@@ -1697,16 +1780,34 @@ func validateSoftDeleteTypes(cfg *RootConfig, tables []SchemaTable, errs *[]erro
 	}
 
 	for _, table := range tables {
-		colTypes := columnTypeMap(table)
+		cols := make(map[string]SchemaColumn, len(table.Columns))
+		for _, col := range table.Columns {
+			cols[col.Name] = col
+		}
 		for _, sd := range sdCols {
-			sqlType, ok := colTypes[sd.Name]
+			col, ok := cols[sd.Name]
 			if !ok {
 				continue // column doesn't exist in this table, try next
 			}
-			if !isSoftDeleteTypeCompatible(sd.Type, sqlType) {
+			switch {
+			case !isSoftDeleteTypeCompatible(sd.Type, col.Type):
 				*errs = append(*errs, fmt.Errorf(
 					"soft_delete_columns: column %q in table %s has incompatible type %q (expected %s-compatible type)",
-					sd.Name, qualifiedTableName(table), sqlType, sd.Type,
+					sd.Name, qualifiedTableName(table), col.Type, sd.Type,
+				))
+			case sd.Type == SoftDeleteTimestamp && !col.Nullable:
+				*errs = append(*errs, fmt.Errorf(
+					"soft_delete_columns: column %q in table %s is NOT NULL, but a timestamp soft delete marks a live row with NULL (make it nullable, or soft delete with a bool or integer column)",
+					sd.Name, qualifiedTableName(table),
+				))
+			case sd.Type != SoftDeleteTimestamp && col.Nullable && !col.HasDefault:
+				live := "FALSE"
+				if sd.Type == SoftDeleteInteger {
+					live = "0"
+				}
+				*errs = append(*errs, fmt.Errorf(
+					"soft_delete_columns: column %q in table %s is nullable with no DEFAULT, but soft delete type %q marks a live row with %s, so a row created without it is hidden (make it NOT NULL, or give it DEFAULT %s)",
+					sd.Name, qualifiedTableName(table), sd.Type, live, live,
 				))
 			}
 			break // first match determines the soft delete column for this table
@@ -1821,19 +1922,27 @@ func validateCompositePKStrategy(cfg *RootConfig, tables []SchemaTable, errs *[]
 }
 
 // uniqueCovers reports whether any UNIQUE constraint (table-level UniqueGroups,
-// inline column Unique, or a column listed as PrimaryKey at the column level)
-// exactly matches the override column set. Set-equality is required: a covering
+// inline column Unique, or the column of a single-column PrimaryKey) exactly
+// matches the override column set. Set-equality is required: a covering
 // UNIQUE must have the same column membership as the override (order-independent).
 // A composite override matched by a single-column UNIQUE is NOT covered (a
-// per-column UNIQUE on `(a)` does not make `(a, b)` unique).
+// per-column UNIQUE on `(a)` makes `(a, b)` unique but is no conflict target
+// for `(a, b)`, which is what {Table}ConflictPK needs), and neither is a
+// single-column override over one member of a composite PK.
 func uniqueCovers(table SchemaTable, override []string) bool {
 	want := make(map[string]bool, len(override))
 	for _, c := range override {
 		want[c] = true
 	}
 	if len(override) == 1 {
+		pkCols := 0
 		for _, c := range table.Columns {
-			if (c.Unique || c.PrimaryKey) && c.Name == override[0] {
+			if c.PrimaryKey {
+				pkCols++
+			}
+		}
+		for _, c := range table.Columns {
+			if c.Name == override[0] && (c.Unique || (c.PrimaryKey && pkCols == 1)) {
 				return true
 			}
 		}
@@ -2043,16 +2152,6 @@ func findViewConfig(cfg *RootConfig, view SchemaView) ViewConfig {
 	return ViewConfig{}
 }
 
-// columnNames returns the flat list of column names from a slice of
-// SchemaColumn values (tables and views share the column type).
-func columnNames(cols []SchemaColumn) []string {
-	names := make([]string, len(cols))
-	for i, col := range cols {
-		names[i] = col.Name
-	}
-	return names
-}
-
 // pkColumnNames returns the subset of column names marked PrimaryKey, in
 // declaration order.
 func pkColumnNames(cols []SchemaColumn) []string {
@@ -2075,16 +2174,24 @@ func columnTypeMap(table SchemaTable) map[string]string {
 }
 
 // isSoftDeleteTypeCompatible checks if a SQL column type is compatible with the
-// configured soft delete type category.
+// configured soft delete type category. It matches the base type name against
+// the PRD §4.6 list. Arrays never match. Generation takes the strategy from the
+// configured type and does not check the column again, so this is the only
+// compatibility check.
 func isSoftDeleteTypeCompatible(configType SoftDeleteType, sqlType string) bool {
-	lower := strings.ToLower(sqlType)
+	lower := strings.ToLower(strings.TrimSpace(sqlType))
+	if strings.Contains(lower, "[") {
+		return false
+	}
+	base, _, _ := strings.Cut(lower, " ")
+	base, _, _ = strings.Cut(base, "(")
 	switch configType {
 	case SoftDeleteTimestamp:
-		return strings.Contains(lower, "timestamp") || strings.Contains(lower, "datetime")
+		return base == "timestamp" || base == "timestamptz" || base == "datetime"
 	case SoftDeleteBool:
-		return strings.Contains(lower, "bool") || lower == "tinyint" || lower == "tinyint(1)"
+		return base == "bool" || base == "boolean" || lower == "tinyint" || lower == "tinyint(1)"
 	case SoftDeleteInteger:
-		return strings.Contains(lower, "int") || strings.Contains(lower, "serial")
+		return base == "int" || base == "integer" || base == "smallint" || base == "tinyint"
 	default:
 		return false
 	}

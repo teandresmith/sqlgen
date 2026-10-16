@@ -69,34 +69,43 @@ func Where(column string) ConditionBuilder {
 	return ConditionBuilder{column: column}
 }
 
-// Eq produces a "col = $" condition.
+// Eq produces a "col = $" condition, or "col IS NULL" for a nil v, since
+// "col = NULL" matches no row. A typed nil, such as a nil *int, is not nil as
+// an any: it is bound, and the driver sends NULL.
 func (b ConditionBuilder) Eq(v any) Condition {
+	if v == nil {
+		return b.IsNull()
+	}
 	return Condition{Clause: b.column + " = $", Value: v, Column: b.column}
 }
 
-// Neq produces a "col != $" condition.
+// Neq produces a "col != $" condition, or "col IS NOT NULL" for a nil v. A
+// typed nil is bound, as for [ConditionBuilder.Eq].
 func (b ConditionBuilder) Neq(v any) Condition {
+	if v == nil {
+		return b.IsNotNull()
+	}
 	return Condition{Clause: b.column + " != $", Value: v, Column: b.column}
 }
 
-// Gt produces a "col > $" condition.
+// Gt produces a "col > $" condition. A nil v binds NULL and matches no row.
 func (b ConditionBuilder) Gt(v any) Condition {
-	return Condition{Clause: b.column + " > $", Value: v, Column: b.column}
+	return Condition{Clause: b.column + " > $", Value: operand(v), Column: b.column}
 }
 
-// Gte produces a "col >= $" condition.
+// Gte produces a "col >= $" condition. A nil v binds NULL and matches no row.
 func (b ConditionBuilder) Gte(v any) Condition {
-	return Condition{Clause: b.column + " >= $", Value: v, Column: b.column}
+	return Condition{Clause: b.column + " >= $", Value: operand(v), Column: b.column}
 }
 
-// Lt produces a "col < $" condition.
+// Lt produces a "col < $" condition. A nil v binds NULL and matches no row.
 func (b ConditionBuilder) Lt(v any) Condition {
-	return Condition{Clause: b.column + " < $", Value: v, Column: b.column}
+	return Condition{Clause: b.column + " < $", Value: operand(v), Column: b.column}
 }
 
-// Lte produces a "col <= $" condition.
+// Lte produces a "col <= $" condition. A nil v binds NULL and matches no row.
 func (b ConditionBuilder) Lte(v any) Condition {
-	return Condition{Clause: b.column + " <= $", Value: v, Column: b.column}
+	return Condition{Clause: b.column + " <= $", Value: operand(v), Column: b.column}
 }
 
 // In produces a "col IN $" condition. The values are stored as []any and
@@ -127,14 +136,24 @@ func listOrSubquery(vals []any) any {
 	return vals
 }
 
-// Like produces a "col LIKE $" condition.
+// Like produces a "col LIKE $" condition. A nil v binds NULL and matches no row.
 func (b ConditionBuilder) Like(v any) Condition {
-	return Condition{Clause: b.column + " LIKE $", Value: v, Column: b.column}
+	return Condition{Clause: b.column + " LIKE $", Value: operand(v), Column: b.column}
 }
 
-// NLike produces a "col NOT LIKE $" condition.
+// NLike produces a "col NOT LIKE $" condition. A nil v binds NULL and matches no row.
 func (b ConditionBuilder) NLike(v any) Condition {
-	return Condition{Clause: b.column + " NOT LIKE $", Value: v, Column: b.column}
+	return Condition{Clause: b.column + " NOT LIKE $", Value: operand(v), Column: b.column}
+}
+
+// operand is the stored Value of a one-arg condition. The builder reads a nil
+// Value as a clause with no args, so a nil v is wrapped in a one-element slice
+// that binds NULL to the clause's one token.
+func operand(v any) any {
+	if v == nil {
+		return []any{nil}
+	}
+	return v
 }
 
 // Between produces a "col BETWEEN $ AND $" condition with a Range value.
@@ -306,12 +325,14 @@ func isIdentifierByte(b byte) bool {
 // [Condition.Raw] and renders parenthesised — without it a clause whose
 // top-level operator is OR would break out of its own term once a caller
 // AND-joined it with others.
+//
+// A single nil arg binds NULL to the clause's one token.
 func Raw(clause string, args ...any) Condition {
 	switch len(args) {
 	case 0:
 		return Condition{Clause: clause, Value: nil, Raw: true}
 	case 1:
-		return Condition{Clause: clause, Value: args[0], Raw: true}
+		return Condition{Clause: clause, Value: operand(args[0]), Raw: true}
 	default:
 		return Condition{Clause: clause, Value: args, Raw: true}
 	}

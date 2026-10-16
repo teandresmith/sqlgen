@@ -45,50 +45,150 @@ func ParseViewSQL(sql []byte, defaultSchema string) (parser.ViewSQL, error) {
 }
 
 func parseViewStmt(vs *pg_query.ViewStmt, defaultSchema string) (parser.ViewSQL, error) {
+	schema := cmp.Or(vs.View.Schemaname, defaultSchema)
 	selectStmt, ok := vs.Query.Node.(*pg_query.Node_SelectStmt)
 	if !ok {
-		return parser.ViewSQL{}, fmt.Errorf("CREATE VIEW query is not a SELECT statement")
+		return parser.ViewSQL{}, &parser.ViewQueryError{Schema: schema, Name: vs.View.Relname, Err: fmt.Errorf("CREATE VIEW query is not a SELECT statement")}
 	}
 	sel := selectStmt.SelectStmt
+	// A UNION, INTERSECT or EXCEPT has no single SELECT list whose columns
+	// can be traced to a table.
+	if sel.Op != pg_query.SetOperation_SETOP_NONE {
+		return parser.ViewSQL{}, &parser.ViewQueryError{Schema: schema, Name: vs.View.Relname, Err: fmt.Errorf("CREATE VIEW query is not a simple SELECT")}
+	}
 
-	return parser.ViewSQL{
-		Name:         vs.View.Relname,
-		Schema:       cmp.Or(vs.View.Schemaname, defaultSchema),
-		Columns:      extractResTargets(sel.TargetList),
-		TableAliases: extractFromAliases(sel.FromClause),
-	}, nil
+	columns, err := extractResTargets(vs.View.Relname, sel.TargetList, vs.Aliases)
+	if err != nil {
+		return parser.ViewSQL{}, &parser.ViewQueryError{Schema: schema, Name: vs.View.Relname, Err: err}
+	}
+
+	def := extractFromAliases(sel, defaultSchema)
+	def.Name, def.Schema, def.Columns = vs.View.Relname, schema, columns
+	return def, nil
 }
 
 func parseMatviewStmt(cs *pg_query.CreateTableAsStmt, defaultSchema string) (parser.ViewSQL, error) {
+	schema := cmp.Or(cs.Into.Rel.Schemaname, defaultSchema)
 	selectStmt, ok := cs.Query.Node.(*pg_query.Node_SelectStmt)
 	if !ok {
-		return parser.ViewSQL{}, fmt.Errorf("CREATE MATERIALIZED VIEW query is not a SELECT statement")
+		return parser.ViewSQL{}, &parser.ViewQueryError{Schema: schema, Name: cs.Into.Rel.Relname, Err: fmt.Errorf("CREATE MATERIALIZED VIEW query is not a SELECT statement")}
 	}
 	sel := selectStmt.SelectStmt
+	// A UNION, INTERSECT or EXCEPT has no single SELECT list whose columns
+	// can be traced to a table.
+	if sel.Op != pg_query.SetOperation_SETOP_NONE {
+		return parser.ViewSQL{}, &parser.ViewQueryError{Schema: schema, Name: cs.Into.Rel.Relname, Err: fmt.Errorf("CREATE MATERIALIZED VIEW query is not a simple SELECT")}
+	}
 
-	return parser.ViewSQL{
-		Name:         cs.Into.Rel.Relname,
-		Schema:       cmp.Or(cs.Into.Rel.Schemaname, defaultSchema),
-		Columns:      extractResTargets(sel.TargetList),
-		TableAliases: extractFromAliases(sel.FromClause),
-		Materialized: true,
-	}, nil
+	columns, err := extractResTargets(cs.Into.Rel.Relname, sel.TargetList, cs.Into.ColNames)
+	if err != nil {
+		return parser.ViewSQL{}, &parser.ViewQueryError{Schema: schema, Name: cs.Into.Rel.Relname, Err: err}
+	}
+
+	def := extractFromAliases(sel, defaultSchema)
+	def.Name, def.Schema, def.Columns, def.Materialized = cs.Into.Rel.Relname, schema, columns, true
+	return def, nil
 }
 
-// extractResTargets converts pg_query ResTarget nodes into ViewSelectColumns.
-func extractResTargets(targets []*pg_query.Node) []parser.ViewSelectColumn {
+// readSubquery reads the query of a derived table or common table
+// expression for parser.ViewSQL.Subqueries or CTEs, its columns named by
+// names where it has them. It returns an empty query for one it cannot
+// read: one that is not a simple SELECT, or that names * alongside a
+// column list.
+func readSubquery(node *pg_query.Node, names []*pg_query.Node, defaultSchema string) parser.ViewSQL {
+	sel := node.GetSelectStmt()
+	if sel == nil || sel.Op != pg_query.SetOperation_SETOP_NONE {
+		return parser.ViewSQL{}
+	}
+	var columns []parser.ViewSelectColumn
+	for i, n := range sel.TargetList {
+		rt := n.GetResTarget()
+		if rt == nil {
+			continue
+		}
+		col := extractColumn(rt)
+		if isStar(rt) {
+			if len(names) > 0 {
+				return parser.ViewSQL{}
+			}
+			col = parser.ViewSelectColumn{SourceColumn: "*"}
+			if fields := rt.Val.GetColumnRef().GetFields(); len(fields) == 2 {
+				col.SourceTable = nodeString(fields[0])
+			}
+		}
+		if i < len(names) {
+			col.Alias = nodeString(names[i])
+		}
+		columns = append(columns, col)
+	}
+	q := extractFromAliases(sel, defaultSchema)
+	q.Columns = columns
+	return q
+}
+
+// extractResTargets converts pg_query ResTarget nodes into ViewSelectColumns,
+// named by the view's column list where it has one. PostgreSQL lets the list
+// name fewer columns than the SELECT has, and the rest keep their own names.
+// Every column must have a name (PRD §16.1), and * is refused, since the
+// parser cannot list the columns it selects.
+func extractResTargets(view string, targets, names []*pg_query.Node) ([]parser.ViewSelectColumn, error) {
 	columns := make([]parser.ViewSelectColumn, 0, len(targets))
-	for _, node := range targets {
+	for i, node := range targets {
 		rt, ok := node.Node.(*pg_query.Node_ResTarget)
 		if !ok {
 			continue
 		}
+		if isStar(rt.ResTarget) {
+			return nil, &parser.ViewParseError{
+				Reason: fmt.Sprintf("view %s selects %s, whose columns the view parser cannot list", view, exprSQL(rt.ResTarget)),
+				Advice: "name each column",
+			}
+		}
 		col := extractColumn(rt.ResTarget)
-		if col.Alias != "" {
-			columns = append(columns, col)
+		if i < len(names) {
+			col.Alias = nodeString(names[i])
+		}
+		if col.Alias == "" {
+			return nil, &parser.ViewParseError{
+				Reason: fmt.Sprintf("view %s selects %s with no alias and no column name", view, exprSQL(rt.ResTarget)),
+				Advice: "name it with AS",
+			}
+		}
+		columns = append(columns, col)
+	}
+	if len(names) > len(columns) {
+		return nil, fmt.Errorf("view %s names %d columns in its column list but selects %d", view, len(names), len(columns))
+	}
+	return columns, nil
+}
+
+// isStar reports whether rt selects * or table.*.
+func isStar(rt *pg_query.ResTarget) bool {
+	cr, ok := rt.Val.GetNode().(*pg_query.Node_ColumnRef)
+	if !ok {
+		return false
+	}
+	for _, f := range cr.ColumnRef.Fields {
+		if _, ok := f.Node.(*pg_query.Node_AStar); ok {
+			return true
 		}
 	}
-	return columns
+	return false
+}
+
+// exprSQL writes rt's expression as SQL, for an error message.
+func exprSQL(rt *pg_query.ResTarget) string {
+	sel := &pg_query.SelectStmt{
+		TargetList:  []*pg_query.Node{{Node: &pg_query.Node_ResTarget{ResTarget: &pg_query.ResTarget{Val: rt.Val}}}},
+		Op:          pg_query.SetOperation_SETOP_NONE,
+		LimitOption: pg_query.LimitOption_LIMIT_OPTION_DEFAULT,
+	}
+	tree := &pg_query.ParseResult{Stmts: []*pg_query.RawStmt{{Stmt: &pg_query.Node{Node: &pg_query.Node_SelectStmt{SelectStmt: sel}}}}}
+	out, err := pg_query.Deparse(tree)
+	if err != nil {
+		return "an expression"
+	}
+	return strings.TrimPrefix(out, "SELECT ")
 }
 
 // extractColumn extracts a ViewSelectColumn from a single ResTarget.
@@ -172,18 +272,34 @@ func extractFuncName(fc *pg_query.FuncCall) string {
 	return ""
 }
 
-// extractFromAliases builds a map of table alias → table name from the FROM clause.
-func extractFromAliases(fromClause []*pg_query.Node) map[string]string {
-	aliases := make(map[string]string)
-	for _, node := range fromClause {
-		collectFromAliases(node, aliases)
+// extractFromAliases reads sel's FROM and WITH clauses into a ViewSQL's
+// TableAliases, TableSchemas, OuterAliases, QualifiedAliases, Subqueries
+// and CTEs (each of the last three nil when it is empty). An unqualified
+// table is in defaultSchema, as an unqualified CREATE TABLE is.
+func extractFromAliases(sel *pg_query.SelectStmt, defaultSchema string) parser.ViewSQL {
+	from := parser.ViewSQL{
+		TableAliases: make(map[string]string),
+		TableSchemas: make(map[string]string),
+		OuterAliases: make(map[string]bool),
 	}
-	return aliases
+	for _, node := range sel.FromClause {
+		collectFromAliases(node, defaultSchema, false, &from)
+	}
+	for _, node := range sel.GetWithClause().GetCtes() {
+		cte := node.GetCommonTableExpr()
+		if from.CTEs == nil {
+			from.CTEs = make(map[string]parser.ViewSQL)
+		}
+		from.CTEs[cte.Ctename] = readSubquery(cte.GetCtequery(), cte.GetAliascolnames(), defaultSchema)
+	}
+	return from
 }
 
 // collectFromAliases recursively collects table aliases from FROM clause nodes
-// (handles RangeVar for plain tables and JoinExpr for JOINs).
-func collectFromAliases(node *pg_query.Node, aliases map[string]string) {
+// into from (handles RangeVar for plain tables, RangeSubselect for derived
+// tables and JoinExpr for JOINs). isOuter marks a node on the outer side of
+// an enclosing join.
+func collectFromAliases(node *pg_query.Node, defaultSchema string, isOuter bool, from *parser.ViewSQL) {
 	if node == nil {
 		return
 	}
@@ -191,16 +307,46 @@ func collectFromAliases(node *pg_query.Node, aliases map[string]string) {
 	switch n := node.Node.(type) {
 	case *pg_query.Node_RangeVar:
 		rv := n.RangeVar
-		tableName := rv.Relname
+		key := rv.Relname
 		if rv.Alias != nil && rv.Alias.Aliasname != "" {
-			aliases[rv.Alias.Aliasname] = tableName
-		} else {
-			aliases[tableName] = tableName
+			key = rv.Alias.Aliasname
 		}
+		from.TableSchemas[key] = cmp.Or(rv.Schemaname, defaultSchema)
+		addTableAlias(from, key, rv.Relname, isOuter, rv.Schemaname != "")
 
 	case *pg_query.Node_JoinExpr:
-		collectFromAliases(n.JoinExpr.Larg, aliases)
-		collectFromAliases(n.JoinExpr.Rarg, aliases)
+		join := n.JoinExpr.Jointype
+		left := isOuter || join == pg_query.JoinType_JOIN_RIGHT || join == pg_query.JoinType_JOIN_FULL
+		right := isOuter || join == pg_query.JoinType_JOIN_LEFT || join == pg_query.JoinType_JOIN_FULL
+		collectFromAliases(n.JoinExpr.Larg, defaultSchema, left, from)
+		collectFromAliases(n.JoinExpr.Rarg, defaultSchema, right, from)
+
+	case *pg_query.Node_RangeSubselect:
+		rs := n.RangeSubselect
+		if rs.Alias == nil || rs.Alias.Aliasname == "" {
+			return
+		}
+		if from.Subqueries == nil {
+			from.Subqueries = make(map[string]parser.ViewSQL)
+		}
+		sub := readSubquery(rs.Subquery, rs.Alias.Colnames, defaultSchema)
+		sub.Lateral = rs.Lateral
+		from.Subqueries[rs.Alias.Aliasname] = sub
+	}
+}
+
+// addTableAlias records in from that FROM-clause key reads table name,
+// whether it is on the outer side of a join and whether name is qualified.
+func addTableAlias(from *parser.ViewSQL, key, name string, isOuter, qualified bool) {
+	from.TableAliases[key] = name
+	if isOuter {
+		from.OuterAliases[key] = true
+	}
+	if qualified {
+		if from.QualifiedAliases == nil {
+			from.QualifiedAliases = make(map[string]bool)
+		}
+		from.QualifiedAliases[key] = true
 	}
 }
 

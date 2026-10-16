@@ -1,6 +1,7 @@
 package gen_test
 
 import (
+	"maps"
 	"slices"
 	"strings"
 	"testing"
@@ -52,8 +53,8 @@ func buildIncrementGuardTable(t *testing.T, tableCfg config.TableConfig) (gen.Ta
 	input := testInput(incrementGuardSchema())
 	// Mirrors registerSchemaTypes, which runs before BuildTableContexts on
 	// both real entry points (orchestrate.go:67, :1786).
-	input.Resolver.RegisterDomain("email", "text")
-	input.Resolver.RegisterDomain("positive_int", "integer")
+	input.Resolver.RegisterDomain("", "email", "text")
+	input.Resolver.RegisterDomain("", "positive_int", "integer")
 	input.Config.Tables["invoices"] = tableCfg
 	contexts, err := gen.BuildTableContexts(input, nil)
 	if err != nil {
@@ -247,8 +248,8 @@ func TestAPIIncrementSurfaceFollowsOperations(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			input := apiTestInput(t, incrementGuardSchema())
-			input.Resolver.RegisterDomain("email", "text")
-			input.Resolver.RegisterDomain("positive_int", "integer")
+			input.Resolver.RegisterDomain("", "email", "text")
+			input.Resolver.RegisterDomain("", "positive_int", "integer")
 
 			tables, err := gen.BuildTableContexts(input, nil)
 			if err != nil {
@@ -288,6 +289,99 @@ func TestAPIIncrementSurfaceFollowsOperations(t *testing.T) {
 			}
 			if got := len(numeric) > 0; got != tt.wantOps {
 				t.Errorf("numeric fields = %v, want any = %v", numeric, tt.wantOps)
+			}
+		})
+	}
+}
+
+// TestIncrementSQLTypeGuardNamesMatchedOverrideKey pins that the warning names
+// the overrides.types key the resolver matched, as written and at the scope it
+// was written in. A key spelled as a domain, schema-qualified, or without the
+// column's modifiers is the line to edit; the domain's base or the column's
+// own spelling names a line that is not in the config.
+func TestIncrementSQLTypeGuardNamesMatchedOverrideKey(t *testing.T) {
+	tests := []struct {
+		name        string
+		columnType  string
+		globalTypes map[string]config.TypeOverride
+		tableTypes  map[string]config.TypeOverride
+		wantPrefix  string
+	}{
+		{
+			name:        "global key on the domain",
+			columnType:  "email",
+			globalTypes: map[string]config.TypeOverride{"email": {Type: "int64"}},
+			wantPrefix:  `overrides.types.email: "int64"`,
+		},
+		{
+			name:        "global key on the schema-qualified domain",
+			columnType:  "email",
+			globalTypes: map[string]config.TypeOverride{"app.email": {Type: "int64"}},
+			wantPrefix:  `overrides.types.app.email: "int64"`,
+		},
+		{
+			name:       "table-scoped key on the schema-qualified domain",
+			columnType: "email",
+			tableTypes: map[string]config.TypeOverride{"app.email": {Type: "int64"}},
+			wantPrefix: `tables.app.invoices.overrides.types.app.email: "int64"`,
+		},
+		{
+			name:        "global key on the domain a domain is over",
+			columnType:  "work_email",
+			globalTypes: map[string]config.TypeOverride{"app.email": {Type: "int64"}},
+			wantPrefix:  `overrides.types.app.email: "int64"`,
+		},
+		{
+			name:        "global bare key on the domain a domain is over",
+			columnType:  "work_email",
+			globalTypes: map[string]config.TypeOverride{"email": {Type: "int64"}},
+			wantPrefix:  `overrides.types.email: "int64"`,
+		},
+		{
+			name:        "global key without the column's modifiers",
+			columnType:  "varchar(255)",
+			globalTypes: map[string]config.TypeOverride{"varchar": {Type: "int64"}},
+			wantPrefix:  `overrides.types.varchar: "int64"`,
+		},
+		{
+			name:       "table-scoped key without the column's modifiers",
+			columnType: "varchar(255)",
+			tableTypes: map[string]config.TypeOverride{"varchar": {Type: "int64"}},
+			wantPrefix: `tables.app.invoices.overrides.types.varchar: "int64"`,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			input := testInput(&parser.Schema{Tables: []parser.Table{{
+				Schema: "app",
+				Name:   "invoices",
+				Columns: []parser.Column{
+					{Name: "id", Type: "bigint", PrimaryKey: true},
+					{Name: "note", Type: tt.columnType},
+				},
+			}}})
+			// The resolver holds this map, so these are its global overrides.
+			maps.Copy(input.Config.Overrides.Types, tt.globalTypes)
+			input.Resolver.RegisterDomain("app", "email", "text")
+			input.Resolver.RegisterDomain("app", "work_email", "email")
+			var tableCfg config.TableConfig
+			if tt.tableTypes != nil {
+				tableCfg.Overrides = &config.OverrideConfig{Types: tt.tableTypes}
+			}
+			input.Config.Tables["app.invoices"] = tableCfg
+
+			if _, err := gen.BuildTableContexts(input, nil); err != nil {
+				t.Fatalf("BuildTableContexts() error = %v", err)
+			}
+			var got []string
+			for _, w := range input.Warnings {
+				if strings.Contains(w, "is not offered for increment") {
+					got = append(got, w)
+				}
+			}
+			if len(got) != 1 || !strings.HasPrefix(got[0], tt.wantPrefix) {
+				t.Errorf("increment warnings = %q, want one starting %q", got, tt.wantPrefix)
 			}
 		})
 	}

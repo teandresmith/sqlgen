@@ -33,6 +33,7 @@ Features: audit_columns, cache, events, soft_delete, views
 | PublicNote | `notes` | table | [public_note.md](public_note.md) |  |
 | PublicUser | `users` | table | [public_user.md](public_user.md) | Registered user accounts |
 | RateLimit | `rate_limits` | table | [rate_limit.md](rate_limit.md) | Per-org rate-limit buckets keyed via primary_key.columns override (composite PK) |
+| SequenceRow | `sequence_rows` | table | [sequence_row.md](sequence_row.md) |  |
 | SluggedRow | `slugged_rows` | table | [slugged_row.md](slugged_row.md) |  |
 | Tag | `tags` | table | [tag.md](tag.md) | Content tags with boolean soft delete |
 | UserCategory | `user_categories` | table | [user_category.md](user_category.md) | Junction table linking users to their preferred categories |

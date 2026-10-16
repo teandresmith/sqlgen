@@ -21,11 +21,11 @@ Registered user accounts
 | `id` | ID | `int64` | `bigint` |  | yes |  |  | `comparator.Number[int64]` | Unique identifier |
 | `name` | Name | `string` | `varchar(255)` |  |  |  |  | `comparator.String` | Display name |
 | `email` | Email | `string` | `varchar(255)` |  |  | yes |  | `comparator.String` | Login email address |
-| `role` | Role | `UsersRoleEnum` | `users_role_enum` |  |  |  | `'viewer'` | `comparator.Enum[UsersRoleEnum]` | Authorization level |
-| `permissions` | Permissions | `UsersPermissionsSet` | `users_permissions_set` |  |  |  | `'read'` | `comparator.String` | Granted permission flags |
+| `role` | Role | `UsersRoleEnum` | `users__role_enum` |  |  |  | `'viewer'` | `comparator.Enum[UsersRoleEnum]` | Authorization level |
+| `permissions` | Permissions | `UsersPermissionsSet` | `users__permissions_set` |  |  |  | `'read'` | `comparator.String` | Granted permission flags |
 | `age` | Age | `*int16` | `smallint` | yes |  |  |  | `comparator.NullableNumber[int16]` | User age in years |
 | `bio` | Bio | `*string` | `text` | yes |  |  |  | `comparator.NullableString` | Short biography |
-| `is_active` | IsActive | `bool` | `boolean` |  |  |  | `true` | `comparator.Bool` | Whether the account is active |
+| `is_active` | IsActive | `bool` | `tinyint(1)` |  |  |  | `true` | `comparator.Bool` | Whether the account is active |
 | `balance` | Balance | `float64` | `decimal(12,2)` |  |  |  |  | `comparator.Number[float64]` | Account balance in default currency |
 | `login_count` | LoginCount | `int32` | `int` |  |  |  | `0` | `comparator.Number[int32]` | Total number of logins |
 | `avatar` | Avatar | `[]byte` | `blob` | yes |  |  |  | `comparator.NullableOpaque[[]byte]` | Profile image binary data |
@@ -44,8 +44,8 @@ Registered user accounts
 
 | Name | Columns | Unique | Method | Where |
 | --- | --- | --- | --- | --- |
-| `users_email_key` | email | yes | btree |  |
-| `users_pkey` | id | yes | btree |  |
+| `PRIMARY` | id | yes | btree |  |
+| `email` | email | yes | btree |  |
 
 ## Relationships
 

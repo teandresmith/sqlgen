@@ -2193,6 +2193,9 @@ func translateCreateWarehouseInput(in gqlmodel.CreateWarehouseInput) *models.Cre
 	if in.NullablePrice != nil {
 		out.NullablePrice = omittable.Set(*in.NullablePrice)
 	}
+	if in.InspectedAt != nil {
+		out.InspectedAt = omittable.Set(*in.InspectedAt)
+	}
 	out.CreatedAt = omittable.Set(in.CreatedAt)
 
 	return out
@@ -2219,6 +2222,9 @@ func translateUpdateWarehouseInput(in gqlmodel.UpdateWarehouseInput) *models.Upd
 	if in.NullablePrice != nil {
 		out.NullablePrice = omittable.Set(*in.NullablePrice)
 	}
+	if in.InspectedAt != nil {
+		out.InspectedAt = omittable.Set(*in.InspectedAt)
+	}
 	if in.CreatedAt != nil {
 		out.CreatedAt = omittable.Set(*in.CreatedAt)
 	}
@@ -2240,6 +2246,9 @@ func hasUpdateWarehouseSetFields(in gqlmodel.UpdateWarehouseInput) bool {
 		return true
 	}
 	if in.NullablePrice != nil {
+		return true
+	}
+	if in.InspectedAt != nil {
 		return true
 	}
 	if in.CreatedAt != nil {

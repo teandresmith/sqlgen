@@ -63,6 +63,8 @@ var (
 	goInt16    = typeInfo{name: "int16", zero: "0", null: "sql.NullInt16", nullImp: "database/sql", kind: nullSQL, fk: FKStringSprint}
 	goInt32    = typeInfo{name: "int32", zero: "0", null: "sql.NullInt32", nullImp: "database/sql", kind: nullSQL, fk: FKStringSprint}
 	goInt64    = typeInfo{name: "int64", zero: "0", null: "sql.NullInt64", nullImp: "database/sql", kind: nullSQL, fk: FKStringSprint}
+	goUint8    = typeInfo{name: "uint8", zero: "0", null: "sql.NullInt16", nullImp: "database/sql", kind: nullSQL, fk: FKStringSprint}
+	goUint16   = typeInfo{name: "uint16", zero: "0", null: "sql.NullInt32", nullImp: "database/sql", kind: nullSQL, fk: FKStringSprint}
 	goUint32   = typeInfo{name: "uint32", zero: "0", null: "sql.NullInt64", nullImp: "database/sql", kind: nullSQL, fk: FKStringSprint}
 	goUint64   = typeInfo{name: "uint64", zero: "0", null: "sql.NullInt64", nullImp: "database/sql", kind: nullSQL, fk: FKStringSprint}
 	goFloat32  = typeInfo{name: "float32", zero: "0", null: "sql.NullFloat64", nullImp: "database/sql", kind: nullSQL, fk: FKStringSprint}
@@ -111,9 +113,11 @@ var postgresMappings = map[string]typeInfo{
 var mysqlMappings = map[string]typeInfo{
 	// Integer types
 	"tinyint": goInt8, "smallint": goInt16,
-	"int": goInt32, "integer": goInt32, "mediumint": goInt32,
-	"bigint":       goInt64,
-	"int unsigned": goUint32, "bigint unsigned": goUint64,
+	"int": goInt32, "mediumint": goInt32,
+	"bigint":           goInt64,
+	"tinyint unsigned": goUint8, "smallint unsigned": goUint16,
+	"int unsigned": goUint32, "mediumint unsigned": goUint32,
+	"bigint unsigned": goUint64,
 	// Float types
 	"float":  goFloat32,
 	"double": goFloat64, "decimal": goFloat64,
@@ -129,7 +133,7 @@ var mysqlMappings = map[string]typeInfo{
 	"blob": goBytes, "binary": goBytes, "varbinary": goBytes,
 	"tinyblob": goBytes, "mediumblob": goBytes, "longblob": goBytes,
 	// Boolean
-	"bool": goBool, "boolean": goBool, "bit(1)": goBool,
+	"tinyint(1)": goBool, "bit(1)": goBool,
 	// Year
 	"year": goInt16,
 }
@@ -197,9 +201,17 @@ type Resolver struct {
 	usePointers     bool
 	globalOverrides map[string]config.TypeOverride
 	integrations    map[string]config.TypeOverride
-	enums           map[string]string // SQL enum name → PascalCase Go type name
-	sets            map[string]string // SQL set name → PascalCase Go set type name
-	domains         map[string]string // SQL domain name → base SQL type
+	enums           map[string]string     // SQL enum name → PascalCase Go type name
+	sets            map[string]string     // SQL set name → PascalCase Go set type name
+	domains         map[string]domainBase // SQL domain name → base SQL type
+	// bareOwners maps each bare enum, SET or domain name to the schema that
+	// registered it, and sharedBare holds the names more than one schema
+	// registered. A shared name answers only to its qualified keys.
+	bareOwners map[string]string
+	sharedBare map[string]bool
+	// ownerSchema is the schema of the table, view, composite or domain whose
+	// types are being resolved (see ForSchema), or "" for none.
+	ownerSchema string
 	// userWrappers holds Null-wrapper extraction info for types declared in
 	// sqlgen.yml overrides whose Nullable.UnderlyingField is set. Built-in
 	// wrappers (sql.NullX, uuid.NullUUID, decimal.NullDecimal,
@@ -239,7 +251,9 @@ func NewResolver(dialect config.Dialect, usePointers bool, globalOverrides map[s
 		integrations:    make(map[string]config.TypeOverride),
 		enums:           make(map[string]string),
 		sets:            make(map[string]string),
-		domains:         make(map[string]string),
+		domains:         make(map[string]domainBase),
+		bareOwners:      make(map[string]string),
+		sharedBare:      make(map[string]bool),
 	}
 	r.detectIntegrations()
 	r.registerDialectDefaults()
@@ -425,10 +439,43 @@ func (r *Resolver) RegisterIntegration(sqlType string, override config.TypeOverr
 	r.integrations[strings.ToLower(sqlType)] = override
 }
 
-// RegisterEnum registers a schema enum type so that columns using this enum
-// resolve to the generated Go type instead of falling through to string.
-func (r *Resolver) RegisterEnum(sqlName, goTypeName string) {
-	r.enums[strings.ToLower(sqlName)] = goTypeName
+// RegisterEnum registers the enum schema.sqlName so that columns using it
+// resolve to the generated Go type instead of falling through to string. The
+// enum answers to schema.sqlName, and to sqlName alone while no other schema
+// registers an enum, SET or domain by that name (PRD §7.1). An empty schema
+// registers the bare name only.
+func (r *Resolver) RegisterEnum(schema, sqlName, goTypeName string) {
+	registerSchemaType(r, r.enums, schema, sqlName, goTypeName)
+}
+
+// domainBase is a registered domain's base type and the schema the domain
+// lives in, which a bare base type name is relative to.
+type domainBase struct {
+	base   string
+	schema string
+}
+
+// registerSchemaType adds value to m under schema.name and, while no other
+// schema has registered a type by that name, under name. A name a second
+// schema registers is dropped from every type map; each schema's type keeps
+// its qualified key.
+func registerSchemaType[V any](r *Resolver, m map[string]V, schema, name string, value V) {
+	schema, name = strings.ToLower(schema), strings.ToLower(name)
+	if schema != "" {
+		m[schema+"."+name] = value
+	}
+	if r.sharedBare[name] {
+		return
+	}
+	if owner, ok := r.bareOwners[name]; ok && owner != schema {
+		r.sharedBare[name] = true
+		delete(r.enums, name)
+		delete(r.sets, name)
+		delete(r.domains, name)
+		return
+	}
+	r.bareOwners[name] = schema
+	m[name] = value
 }
 
 // IsEnumGoType reports whether goType is the Go type name of a registered
@@ -447,22 +494,86 @@ func (r *Resolver) IsEnumGoType(goType string) bool {
 	return false
 }
 
-// RegisterSet registers a MySQL SET type so that columns using this set
-// resolve to the generated Go set type (a named []ValueType slice).
-func (r *Resolver) RegisterSet(sqlName, goTypeName string) {
-	r.sets[strings.ToLower(sqlName)] = goTypeName
+// RegisterSet registers the MySQL SET type schema.sqlName so that columns
+// using it resolve to the generated Go set type (a named []ValueType slice).
+// It answers to the same names as an enum (see RegisterEnum).
+func (r *Resolver) RegisterSet(schema, sqlName, goTypeName string) {
+	registerSchemaType(r, r.sets, schema, sqlName, goTypeName)
 }
 
 // IsSet reports whether the given SQL type name is a registered SET type.
 func (r *Resolver) IsSet(sqlType string) bool {
-	_, ok := r.sets[strings.ToLower(normalizeSQL(sqlType))]
+	_, ok := r.sets[r.schemaTypeKey(normalizeSQL(sqlType))]
 	return ok
 }
 
-// RegisterDomain registers a schema domain type so that columns using this
-// domain resolve to the domain's base SQL type through the normal chain.
-func (r *Resolver) RegisterDomain(sqlName, baseSQLType string) {
-	r.domains[strings.ToLower(sqlName)] = strings.ToLower(baseSQLType)
+// ForSchema returns a resolver for the types of a table, view, composite type
+// or domain in schema. It resolves a bare enum, SET or domain name as
+// schema.name first and as the bare name second, so a column whose type lives
+// in its own schema resolves even when another schema has a type by the same
+// name (PRD §7.1). Override and integration keys are tried as schema.type
+// before type, for the same reason (see lookupOverride). Built-in mappings are
+// unchanged.
+func (r *Resolver) ForSchema(schema string) *Resolver {
+	if r == nil {
+		return nil
+	}
+	scoped := *r
+	scoped.ownerSchema = strings.ToLower(schema)
+	return &scoped
+}
+
+// schemaTypeKey returns the key the enum, SET and domain maps hold a bare
+// sqlType under for the owner schema: ownerSchema.sqlType when that is
+// registered, sqlType otherwise. A qualified sqlType is returned as given.
+func (r *Resolver) schemaTypeKey(sqlType string) string {
+	if r.ownerSchema == "" || strings.Contains(sqlType, ".") {
+		return sqlType
+	}
+	qualified := r.ownerSchema + "." + sqlType
+	_, isEnum := r.enums[qualified]
+	_, isSet := r.sets[qualified]
+	_, isDomain := r.domains[qualified]
+	if isEnum || isSet || isDomain {
+		return qualified
+	}
+	return sqlType
+}
+
+// RegisterDomain registers the domain schema.sqlName so that columns using it
+// resolve to the domain's base SQL type through the normal chain. It answers
+// to the same names as an enum (see RegisterEnum). A bare baseSQLType that
+// names an enum, SET or domain is taken to be in the domain's schema.
+func (r *Resolver) RegisterDomain(schema, sqlName, baseSQLType string) {
+	registerSchemaType(r, r.domains, schema, sqlName, domainBase{
+		base:   strings.ToLower(baseSQLType),
+		schema: strings.ToLower(schema),
+	})
+}
+
+// domainBaseType returns the base SQL type of the registered domain sqlType.
+// A bare base is qualified with the domain's schema when that names a
+// registered enum, SET or domain, since the base was written relative to it.
+func (r *Resolver) domainBaseType(sqlType string) (string, bool) {
+	d, ok := r.domains[sqlType]
+	if !ok {
+		return "", false
+	}
+	if d.schema == "" || strings.Contains(d.base, ".") {
+		return d.base, true
+	}
+	elem, isArray := strings.CutSuffix(d.base, "[]")
+	qualified := d.schema + "." + elem
+	_, isEnum := r.enums[qualified]
+	_, isSet := r.sets[qualified]
+	_, isDomain := r.domains[qualified]
+	if !isEnum && !isSet && !isDomain {
+		return d.base, true
+	}
+	if isArray {
+		qualified += "[]"
+	}
+	return qualified, true
 }
 
 // Resolve resolves a SQL column type to a Go type using the resolution chain:
@@ -535,9 +646,12 @@ func (r *Resolver) BaseSQLType(sqlType string) string {
 // (e.g. positive_int → integer), so aggregate widening keys on the real base
 // rather than the domain name. Bounded to guard against pathological cycles.
 func (r *Resolver) resolveDomainBase(sqlType string) string {
-	t := sqlType
+	t := r.schemaTypeKey(sqlType)
+	if _, ok := r.domainBaseType(t); !ok {
+		return sqlType
+	}
 	for range 16 {
-		base, ok := r.domains[t]
+		base, ok := r.domainBaseType(t)
 		if !ok {
 			return t
 		}
@@ -561,9 +675,9 @@ func (r *Resolver) widenSumBase(base string) string {
 		}
 	case config.DialectMySQL:
 		switch base {
-		case "tinyint", "smallint", "mediumint", "int", "integer", "bigint",
+		case "tinyint", "smallint", "mediumint", "int", "bigint",
 			"tinyint unsigned", "smallint unsigned", "mediumint unsigned",
-			"int unsigned", "integer unsigned", "bigint unsigned":
+			"int unsigned", "bigint unsigned":
 			// MySQL returns DECIMAL for SUM over any exact-value integer,
 			// signed or unsigned — the unsigned variants would otherwise leave
 			// a uint32/uint64 scan target too narrow for the returned decimal.
@@ -578,21 +692,85 @@ func (r *Resolver) widenSumBase(base string) string {
 
 // lookupOverride searches an override map for a SQL type, trying the exact
 // type first and then falling back to the base type with modifiers stripped
-// (e.g., numeric(10,2) → numeric).
-func lookupOverride(m map[string]config.TypeOverride, sqlType string) (config.TypeOverride, bool) {
-	if override, ok := m[sqlType]; ok {
-		return override, true
+// (e.g., numeric(10,2) → numeric). For a resolver scoped by ForSchema, a bare
+// type is first looked up qualified with the owner schema: both schema sources
+// write a type in the column's own schema bare, so without this a key written
+// app.status_enum would never reach the app schema's own columns (PRD §7.1).
+func (r *Resolver) lookupOverride(m map[string]config.TypeOverride, sqlType string) (config.TypeOverride, string, bool) {
+	keys := lookupKeys(sqlType)
+	if r.ownerSchema != "" && !strings.Contains(sqlType, ".") {
+		qualified := make([]string, 0, 2*len(keys))
+		for _, key := range keys {
+			qualified = append(qualified, r.ownerSchema+"."+key)
+		}
+		keys = append(qualified, keys...)
 	}
-	if base := stripModifiers(sqlType); base != sqlType {
-		if override, ok := m[base]; ok {
-			return override, true
+	for _, key := range keys {
+		if override, ok := m[key]; ok {
+			return override, key, true
 		}
 	}
-	return config.TypeOverride{}, false
+	return config.TypeOverride{}, "", false
+}
+
+// mysqlIntegerBases are the integer bases whose unsigned form never falls
+// back to the signed base: MySQL's, and SQLite's integer.
+var mysqlIntegerBases = map[string]bool{
+	"tinyint": true, "smallint": true, "mediumint": true, "int": true, "integer": true, "bigint": true,
+}
+
+// lookupKeys returns the keys a SQL type is matched under, in order: as
+// written, then without its modifiers (numeric(10,2) → numeric). A MySQL
+// unsigned type is matched next as <base> unsigned. An integer one stops
+// there: a ZEROFILL integer keeps its width, so int(10) unsigned zerofill is
+// matched as int unsigned, and never as the signed int. Any other one falls
+// back to its signed base, which has the same Go type, so double unsigned
+// zerofill is matched as double unsigned, then double.
+func lookupKeys(sqlType string) []string {
+	if before, _, ok := strings.Cut(sqlType, " unsigned"); ok {
+		base := stripModifiers(before)
+		keys := []string{sqlType}
+		if unsigned := base + " unsigned"; unsigned != sqlType {
+			keys = append(keys, unsigned)
+		}
+		if !mysqlIntegerBases[base] {
+			keys = append(keys, base)
+		}
+		return keys
+	}
+	base := stripModifiers(sqlType)
+	if base == sqlType {
+		return []string{sqlType}
+	}
+	return []string{sqlType, base}
+}
+
+// OverrideSource reports the `overrides.types` key that gives sqlType its Go
+// type, as written in the config: the key the resolution chain matched, which
+// for a domain is whichever link of the domain chain carried the entry. It
+// reports whether that key is in tableOverrides rather than the global map,
+// and ok is false when no `overrides.types` entry resolves sqlType.
+func (r *Resolver) OverrideSource(sqlType string, tableOverrides map[string]config.TypeOverride) (key string, tableScoped, ok bool) {
+	_, source := r.resolveByTypeSource(normalizeSQL(sqlType), false, tableOverrides)
+	return source.key, source.tableScoped, source.key != ""
+}
+
+// overrideSource is the `overrides.types` entry a resolution matched. The
+// zero value means none did.
+type overrideSource struct {
+	key         string
+	tableScoped bool
 }
 
 // resolveByType implements steps 2-5 of the resolution chain.
 func (r *Resolver) resolveByType(sqlType string, nullable bool, tableOverrides map[string]config.TypeOverride) GoType {
+	gt, _ := r.resolveByTypeSource(sqlType, nullable, tableOverrides)
+	return gt
+}
+
+// resolveByTypeSource is resolveByType, also reporting the override entry the
+// Go type came from.
+func (r *Resolver) resolveByTypeSource(sqlType string, nullable bool, tableOverrides map[string]config.TypeOverride) (GoType, overrideSource) {
 	// A table-scoped overrides.types map activates the integrations it names,
 	// exactly as the global map does at resolver construction — nesting depth
 	// is not part of the resolution (PRD §7.4). The two halves land at
@@ -602,27 +780,28 @@ func (r *Resolver) resolveByType(sqlType string, nullable bool, tableOverrides m
 	scopedOverrides, scopedIntegrations := scopeIntegrations(tableOverrides)
 
 	// Step 2: Table-level overrides.types
-	if override, ok := lookupOverride(scopedOverrides, sqlType); ok {
-		return FromOverride(override, nullable)
+	if override, key, ok := r.lookupOverride(scopedOverrides, sqlType); ok {
+		return FromOverride(override, nullable), overrideSource{key: key, tableScoped: true}
 	}
 
 	// Step 3: Global overrides.types
-	if override, ok := lookupOverride(r.globalOverrides, sqlType); ok {
-		return FromOverride(override, nullable)
+	if override, key, ok := r.lookupOverride(r.globalOverrides, sqlType); ok {
+		return FromOverride(override, nullable), overrideSource{key: key}
 	}
 
 	// Step 4: Built-in integrations. A table-scoped activation is the more
 	// specific of the two, so it is consulted first; both sit below every
 	// explicit override, per the chain in PRD §7.1.
-	if override, ok := lookupOverride(scopedIntegrations, sqlType); ok {
-		return FromOverride(override, nullable)
+	if override, _, ok := r.lookupOverride(scopedIntegrations, sqlType); ok {
+		return FromOverride(override, nullable), overrideSource{}
 	}
-	if override, ok := lookupOverride(r.integrations, sqlType); ok {
-		return FromOverride(override, nullable)
+	if override, _, ok := r.lookupOverride(r.integrations, sqlType); ok {
+		return FromOverride(override, nullable), overrideSource{}
 	}
 
-	// Step 4.5: Schema enums, sets, and domains
-	if goTypeName, ok := r.enums[sqlType]; ok {
+	// Step 4.5: Schema enums, sets, and domains, owner schema first
+	key := r.schemaTypeKey(sqlType)
+	if goTypeName, ok := r.enums[key]; ok {
 		gt := GoType{
 			Name:      goTypeName,
 			ZeroValue: `""`,
@@ -632,9 +811,9 @@ func (r *Resolver) resolveByType(sqlType string, nullable bool, tableOverrides m
 			gt.Name = "*" + goTypeName
 			gt.ZeroValue = "nil"
 		}
-		return gt
+		return gt, overrideSource{}
 	}
-	if goTypeName, ok := r.sets[sqlType]; ok {
+	if goTypeName, ok := r.sets[key]; ok {
 		// SET types are named slices (reference types), so nullable uses the same type.
 		//
 		// IsSlice stays false: the model side treats a SET as an opaque named
@@ -648,10 +827,16 @@ func (r *Resolver) resolveByType(sqlType string, nullable bool, tableOverrides m
 			ZeroValue:     "nil",
 			SliceElemType: goTypeName + "Value",
 			FKConvert:     FKStringSprint,
-		}
+		}, overrideSource{}
 	}
-	if baseSQLType, ok := r.domains[sqlType]; ok {
-		return r.resolveByType(baseSQLType, nullable, tableOverrides)
+	if d, ok := r.domains[key]; ok {
+		// A domain's base resolves as a column of the domain, in the
+		// domain's schema (PRD §7.1).
+		scope := r
+		if d.schema != "" && d.schema != r.ownerSchema {
+			scope = r.ForSchema(d.schema)
+		}
+		return scope.resolveByTypeSource(d.base, nullable, tableOverrides)
 	}
 
 	// Handle PostgreSQL array types: strip [] suffix and resolve base type.
@@ -662,41 +847,37 @@ func (r *Resolver) resolveByType(sqlType string, nullable bool, tableOverrides m
 			// Enum arrays use a named slice type (e.g., UserRoleSlice) with
 			// Scan/Value methods so pgx can handle the custom OID without
 			// manual type registration.
-			if goTypeName, ok := r.enums[baseType]; ok {
+			if goTypeName, ok := r.enums[r.schemaTypeKey(baseType)]; ok {
 				return GoType{
 					Name:          goTypeName + "Slice",
 					ZeroValue:     "nil",
 					IsSlice:       true,
 					SliceElemType: goTypeName,
 					FKConvert:     FKStringSprint,
-				}
+				}, overrideSource{}
 			}
 
-			base := r.resolveByType(baseType, false, tableOverrides)
+			base, source := r.resolveByTypeSource(baseType, false, tableOverrides)
 			return GoType{
 				Name:      "[]" + base.Name,
 				Import:    base.Import,
 				ZeroValue: "nil",
 				IsSlice:   true,
 				FKConvert: FKStringSprint,
-			}
+			}, source
 		}
 	}
 
 	// Step 5: Built-in dialect mapping
-	return r.builtinResolve(sqlType, nullable)
+	return r.builtinResolve(sqlType, nullable), overrideSource{}
 }
 
 // builtinResolve looks up the built-in dialect mapping for a SQL type.
 func (r *Resolver) builtinResolve(sqlType string, nullable bool) GoType {
 	if mappings, ok := dialectMappings[r.dialect]; ok {
-		// Try exact match first (handles bit(1), etc.).
-		if info, ok := mappings[sqlType]; ok {
-			return r.goTypeFromInfo(info, nullable)
-		}
-		// Try stripping type modifiers: numeric(10,2) → numeric.
-		if base := stripModifiers(sqlType); base != sqlType {
-			if info, ok := mappings[base]; ok {
+		// The exact key first handles bit(1).
+		for _, key := range lookupKeys(sqlType) {
+			if info, ok := mappings[key]; ok {
 				return r.goTypeFromInfo(info, nullable)
 			}
 		}

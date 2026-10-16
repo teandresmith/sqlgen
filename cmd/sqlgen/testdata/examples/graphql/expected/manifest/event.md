@@ -21,7 +21,7 @@
 | `action` | Action | `string` | `text` |  |  |  |  | `comparator.String` |  |
 | `occurred_at` | OccurredAt | `types.DateTime` | `timestamptz` |  |  |  |  | `comparator.Time` |  |
 | `processed_at` | ProcessedAt | `types.NullDateTime` | `timestamptz` | yes |  |  |  | `comparator.NullableTime` |  |
-| `adjustment` | Adjustment | `decimal.NullDecimal` | `numeric(12, 2)` | yes |  |  |  | `comparator.NullableString` |  |
+| `adjustment` | Adjustment | `decimal.NullDecimal` | `numeric(12,2)` | yes |  |  |  | `comparator.NullableString` |  |
 | `retry_count` | RetryCount | `*int32` | `integer` | yes |  |  |  | `comparator.NullableNumber[int32]` |  |
 | `succeeded` | Succeeded | `*bool` | `boolean` | yes |  |  |  | `comparator.NullableBool` |  |
 | `mac` | MAC | `*string` | `text` | yes |  |  |  | `comparator.NullableString` |  |

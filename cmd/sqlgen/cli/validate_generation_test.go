@@ -95,3 +95,188 @@ output:
 		t.Fatalf("writing test config: %v", err)
 	}
 }
+
+// validate builds the generation contexts even after the config rules fail,
+// so a relationship with no `name:` (required, PRD §4.8) must yield only the
+// config error: no panic for an O2O edge, and no api-context error for an
+// O2M edge's filter member.
+func TestValidate_relationshipWithoutName(t *testing.T) {
+	const schema = `CREATE TABLE owners (id serial PRIMARY KEY);
+CREATE TABLE owner_profiles (id serial PRIMARY KEY, owner_id int NOT NULL UNIQUE REFERENCES owners(id), bio text);
+CREATE TABLE tags (id serial PRIMARY KEY);
+CREATE TABLE owner_tags (owner_id int NOT NULL REFERENCES owners(id), tag_id int NOT NULL REFERENCES tags(id), PRIMARY KEY (owner_id, tag_id));`
+	tests := []struct {
+		name string
+		rel  string
+	}{
+		{name: "o2o", rel: "type: o2o\n        table: owner_profiles\n        fk: owner_id\n"},
+		{name: "o2m", rel: "type: o2m\n        table: owner_profiles\n        fk: owner_id\n        filter: \"bio IS NOT NULL\"\n"},
+		{name: "m2m", rel: "type: m2m\n        table: tags\n        junction: owner_tags\n"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			dir := t.TempDir()
+			cfgPath := filepath.Join(dir, "sqlgen.yml")
+			sqlDir := filepath.Join(dir, "migrations")
+			if err := os.MkdirAll(sqlDir, 0o750); err != nil {
+				t.Fatalf("creating migrations dir: %v", err)
+			}
+			// The api block builds the filter members a nameless edge would
+			// render only half of.
+			writeValidateConfig(t, cfgPath, sqlDir, filepath.Join(dir, "output"),
+				"api:\n  enabled: true\n  graphql:\n    enabled: true\n    schema_dir: ./graph\n    resolver_dir: ./graph\n    package: graph\n"+
+					"tables:\n  owners:\n    relationships:\n      - "+tt.rel)
+			writeSQLFile(t, sqlDir, schema)
+
+			_, stderr, err := executeCommand("validate", "--config", cfgPath)
+			var ee *exitError
+			if !errors.As(err, &ee) || ee.code != ExitConfig {
+				t.Fatalf("validate error = %v, want exit code %d (config)", err, ExitConfig)
+			}
+			const want = "Error: tables.owners.relationships[0].name: required"
+			if got := strings.Count(stderr, "Error: "); got != 1 || !strings.Contains(stderr, want) {
+				t.Errorf("stderr = %q, want the one error %q", stderr, want)
+			}
+		})
+	}
+}
+
+const softDeleteMismatchErr = `soft_delete_columns: column "zz_bad" in table public.zz_c has incompatible type "varchar(10)"`
+
+// writeSoftDeleteMismatchProject writes a project whose soft delete column has
+// a SQL type its configured type does not accept, and returns the config path
+// and the output dir.
+func writeSoftDeleteMismatchProject(t *testing.T) (cfgPath, outputDir string) {
+	t.Helper()
+	dir := t.TempDir()
+	cfgPath = filepath.Join(dir, "sqlgen.yml")
+	sqlDir := filepath.Join(dir, "migrations")
+	if err := os.MkdirAll(sqlDir, 0o750); err != nil {
+		t.Fatalf("creating migrations dir: %v", err)
+	}
+	outputDir = filepath.Join(dir, "output")
+	writeValidateConfig(t, cfgPath, sqlDir, outputDir,
+		"generation:\n  soft_delete_columns:\n    - name: zz_bad\n      type: integer\n")
+	writeSQLFile(t, sqlDir, "CREATE TABLE zz_c (id serial PRIMARY KEY, zz_bad varchar(10) NOT NULL);")
+	return cfgPath, outputDir
+}
+
+// A soft delete column whose SQL type does not fit its configured type is one
+// config error. Generation does not check the type a second time, so validate,
+// which builds the contexts after the config rules fail, reports it once.
+func TestValidate_softDeleteTypeMismatchReportedOnce(t *testing.T) {
+	cfgPath, _ := writeSoftDeleteMismatchProject(t)
+
+	_, stderr, err := executeCommand("validate", "--config", cfgPath)
+	if ee, ok := errors.AsType[*exitError](err); !ok || ee.code != ExitConfig {
+		t.Fatalf("validate error = %v, want exit code %d (config)", err, ExitConfig)
+	}
+	if got := strings.Count(stderr, "Error: "); got != 1 || !strings.Contains(stderr, "Error: "+softDeleteMismatchErr) {
+		t.Errorf("stderr = %q, want the one error %q", stderr, softDeleteMismatchErr)
+	}
+}
+
+// A NOT NULL timestamp soft delete column stops generate at validation, before
+// funcSoftDeleteFilterOverride's fallback emits a Null field into the
+// non-nullable comparator.Time, which does not compile.
+func TestGenerate_notNullTimestampSoftDeleteRejected(t *testing.T) {
+	dir := t.TempDir()
+	cfgPath := filepath.Join(dir, "sqlgen.yml")
+	sqlDir := filepath.Join(dir, "migrations")
+	if err := os.MkdirAll(sqlDir, 0o750); err != nil {
+		t.Fatalf("creating migrations dir: %v", err)
+	}
+	outputDir := filepath.Join(dir, "output")
+	writeValidateConfig(t, cfgPath, sqlDir, outputDir,
+		"generation:\n  soft_delete_columns:\n    - name: zz_ts\n      type: timestamp\n")
+	writeSQLFile(t, sqlDir, "CREATE TABLE zz_c (id serial PRIMARY KEY, zz_ts timestamptz NOT NULL DEFAULT now());")
+
+	_, stderr, err := executeCommand("generate", "--config", cfgPath)
+	if ee, ok := errors.AsType[*exitError](err); !ok || ee.code != ExitConfig {
+		t.Fatalf("generate error = %v, want exit code %d (config)", err, ExitConfig)
+	}
+	const want = `Post-parse validation error: soft_delete_columns: column "zz_ts" in table public.zz_c is NOT NULL`
+	if !strings.Contains(stderr, want) {
+		t.Errorf("stderr = %q, want %q", stderr, want)
+	}
+	if _, err := os.Stat(outputDir); !os.IsNotExist(err) {
+		t.Error("generate wrote the output directory")
+	}
+}
+
+// A bool / integer soft delete marks a live row with FALSE / 0, so a nullable
+// column with no DEFAULT (DEFAULT NULL included) would hide every row created
+// without it; generate rejects it before writing anything.
+func TestGenerate_nullableNoDefaultFlagSoftDeleteRejected(t *testing.T) {
+	tests := []struct {
+		name   string
+		sdType string
+		ddl    string
+		want   string
+	}{
+		{
+			name:   "bool",
+			sdType: "bool",
+			ddl:    "CREATE TABLE zz_c (id serial PRIMARY KEY, zz_del boolean);",
+			want:   `column "zz_del" in table public.zz_c is nullable with no DEFAULT, but soft delete type "bool" marks a live row with FALSE`,
+		},
+		{
+			name:   "bool DEFAULT NULL",
+			sdType: "bool",
+			ddl:    "CREATE TABLE zz_c (id serial PRIMARY KEY, zz_del boolean DEFAULT NULL);",
+			want:   `column "zz_del" in table public.zz_c is nullable with no DEFAULT, but soft delete type "bool" marks a live row with FALSE`,
+		},
+		{
+			name:   "integer",
+			sdType: "integer",
+			ddl:    "CREATE TABLE zz_c (id serial PRIMARY KEY, zz_del smallint);",
+			want:   `column "zz_del" in table public.zz_c is nullable with no DEFAULT, but soft delete type "integer" marks a live row with 0`,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			dir := t.TempDir()
+			cfgPath := filepath.Join(dir, "sqlgen.yml")
+			sqlDir := filepath.Join(dir, "migrations")
+			if err := os.MkdirAll(sqlDir, 0o750); err != nil {
+				t.Fatalf("creating migrations dir: %v", err)
+			}
+			outputDir := filepath.Join(dir, "output")
+			writeValidateConfig(t, cfgPath, sqlDir, outputDir,
+				"generation:\n  soft_delete_columns:\n    - name: zz_del\n      type: "+tt.sdType+"\n")
+			writeSQLFile(t, sqlDir, tt.ddl)
+
+			_, stderr, err := executeCommand("generate", "--config", cfgPath)
+			if ee, ok := errors.AsType[*exitError](err); !ok || ee.code != ExitConfig {
+				t.Fatalf("generate error = %v, want exit code %d (config)", err, ExitConfig)
+			}
+			if want := "Post-parse validation error: soft_delete_columns: " + tt.want; !strings.Contains(stderr, want) {
+				t.Errorf("stderr = %q, want %q", stderr, want)
+			}
+			if _, err := os.Stat(outputDir); !os.IsNotExist(err) {
+				t.Error("generate wrote the output directory")
+			}
+		})
+	}
+}
+
+// Post-parse validation is the only soft delete type check, so every command
+// that builds generation contexts must run it first and stop there.
+func TestSoftDeleteTypeMismatchStopsEveryContextBuilder(t *testing.T) {
+	for _, args := range [][]string{{"generate"}, {"diff"}, {"lint"}, {"graphql", "gen"}} {
+		t.Run(strings.Join(args, " "), func(t *testing.T) {
+			cfgPath, outputDir := writeSoftDeleteMismatchProject(t)
+
+			_, stderr, err := executeCommand(append(args, "--config", cfgPath)...)
+			if ee, ok := errors.AsType[*exitError](err); !ok || ee.code != ExitConfig {
+				t.Fatalf("error = %v, want exit code %d (config)", err, ExitConfig)
+			}
+			if want := "Post-parse validation error: " + softDeleteMismatchErr; !strings.Contains(stderr, want) {
+				t.Errorf("stderr = %q, want %q", stderr, want)
+			}
+			if _, err := os.Stat(outputDir); !os.IsNotExist(err) {
+				t.Error("the command wrote the output directory")
+			}
+		})
+	}
+}

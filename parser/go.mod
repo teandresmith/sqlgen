@@ -7,7 +7,7 @@ require (
 	github.com/google/go-cmp v0.7.0
 	github.com/jackc/pgx/v5 v5.9.1
 	github.com/pganalyze/pg_query_go/v6 v6.2.2
-	github.com/rqlite/sql v0.0.0-20260224021119-1b2524a41372
+	github.com/rqlite/sql v0.0.0-20261009033234-4555bb784427
 	github.com/testcontainers/testcontainers-go v0.42.0
 	github.com/testcontainers/testcontainers-go/modules/mysql v0.42.0
 	github.com/testcontainers/testcontainers-go/modules/postgres v0.42.0

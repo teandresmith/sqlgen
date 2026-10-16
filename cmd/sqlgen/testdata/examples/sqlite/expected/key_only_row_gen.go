@@ -1438,14 +1438,14 @@ func (c *keyOnlyRowClient) Connection(ctx context.Context, input ConnectionInput
 		// Decode cursors and build keyset conditions
 		var keysetConds []sql.Condition
 		if input.After != nil {
-			cursor, err := decodeCursor(*input.After)
+			cursor, err := decodeKeyOnlyRowCursor(*input.After, c.cursorKeys)
 			if err != nil {
 				return nil, ErrInvalidCursor
 			}
 			keysetConds = append(keysetConds, cursorKeyset(c.dialect, c.cursorKeys, cursor, ">"))
 		}
 		if input.Before != nil {
-			cursor, err := decodeCursor(*input.Before)
+			cursor, err := decodeKeyOnlyRowCursor(*input.Before, c.cursorKeys)
 			if err != nil {
 				return nil, ErrInvalidCursor
 			}
@@ -1534,6 +1534,31 @@ func encodeKeyOnlyRowCursor(keys []string, k *KeyOnlyRow) (string, error) {
 		return "", fmt.Errorf("encode key_only_row cursor: %w", err)
 	}
 	return base64.StdEncoding.EncodeToString(data), nil
+}
+
+// decodeKeyOnlyRowCursor decodes a cursor string into its key values,
+// each unmarshaled into the key column's Go type.
+func decodeKeyOnlyRowCursor(encoded string, keys []string) (map[string]any, error) {
+	raw, err := decodeCursor(encoded, keys)
+	if err != nil {
+		return nil, err
+	}
+	var row KeyOnlyRow
+	out := make(map[string]any, len(keys))
+	for _, key := range keys {
+		switch key {
+		case "id":
+			err = json.Unmarshal(raw[key], &row.ID)
+			out[key] = row.ID
+		}
+		if err != nil {
+			return nil, err
+		}
+		if cursorValueIsNull(out[key]) {
+			return nil, ErrInvalidCursor
+		}
+	}
+	return out, nil
 }
 
 // StreamKeyOnlyRowsInput holds query parameters for streaming key_only_rows records.

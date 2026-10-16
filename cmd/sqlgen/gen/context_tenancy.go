@@ -149,7 +149,7 @@ func resolveTableTenancy(cfg *config.RootConfig, table *parser.Table, resolver *
 		)}
 	}
 
-	goType, imp, typeErr := resolveTenantColumnType(tc, cfg.Tenancy, col, resolver)
+	goType, imp, typeErr := resolveTenantColumnType(tc, cfg.Tenancy, col, resolver.ForSchema(table.Schema))
 	if typeErr != nil {
 		return TenancyContext{Tenanted: false}, nil, []error{fmt.Errorf(
 			"tenancy: table %s tenant column %q: %w",
@@ -238,7 +238,7 @@ func resolveViewTenancy(cfg *config.RootConfig, view *parser.View, resolver *got
 		))
 	}
 
-	goType, imp, typeErr := resolveViewTenantColumnType(vc, cfg.Tenancy, col, resolver)
+	goType, imp, typeErr := resolveViewTenantColumnType(vc, cfg.Tenancy, col, resolver.ForSchema(view.Schema))
 	if typeErr != nil {
 		return TenancyContext{Tenanted: false}, nil, warnings, []error{fmt.Errorf(
 			"tenancy: view %s tenant column %q: %w", qualified, effectiveColumn, typeErr,

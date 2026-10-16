@@ -1,17 +1,20 @@
 package cli
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"io"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"time"
 
 	"github.com/teandresmith/sqlgen/cmd/sqlgen/config"
 	"github.com/teandresmith/sqlgen/cmd/sqlgen/gen"
 	"github.com/teandresmith/sqlgen/parser"
+	"github.com/teandresmith/sqlgen/parser/introspect"
 	"github.com/teandresmith/sqlgen/parser/mysql"
 	"github.com/teandresmith/sqlgen/parser/postgres"
 	"github.com/teandresmith/sqlgen/parser/sqlite"
@@ -24,7 +27,7 @@ import (
 // Post-parse validation runs against the *raw* schema, before
 // applyPrimaryKeyOverrides — see that function for why the order is
 // load-bearing in both directions.
-func loadAndValidate(flags *cliFlags, errOut io.Writer) (*config.RootConfig, *parser.Schema, error) {
+func loadAndValidate(ctx context.Context, flags *cliFlags, errOut io.Writer) (*config.RootConfig, *parser.Schema, error) {
 	cfg, err := config.LoadConfig(flags.config)
 	if err != nil {
 		_, _ = fmt.Fprintf(errOut, "Error: %v\n", err)
@@ -41,14 +44,10 @@ func loadAndValidate(flags *cliFlags, errOut io.Writer) (*config.RootConfig, *pa
 	}
 	printWarnings(errOut, warnings, flags.quiet)
 
-	schema, err := parseSchema(cfg)
+	schema, err := parseSchema(ctx, cfg)
 	if err != nil {
-		code := ExitSchema
-		if cfg.Input.Source == config.SourceDatabase || cfg.Input.Source == config.SourceBoth {
-			code = ExitConnection
-		}
-		printSchemaError(errOut, err)
-		return nil, nil, &exitError{code: code, err: err}
+		printParseError(errOut, err)
+		return nil, nil, &exitError{code: parseExitCode(err), err: err}
 	}
 	// Statements the parser skipped, e.g. CREATE VIEW in DDL (PRD §16).
 	printManifestWarnings(errOut, schema.Warnings, flags.quiet)
@@ -89,10 +88,10 @@ func loadAndValidate(flags *cliFlags, errOut io.Writer) (*config.RootConfig, *pa
 // Ordering is load-bearing on both sides and is not enforced by the type system:
 //
 //   - It must run AFTER config.ValidatePostParse. That pass reads the raw
-//     PK flags through toSchemaTables, and uniqueCovers treats a PrimaryKey
-//     column as self-covering. Resolving first would make every single-column
-//     override satisfy its own UNIQUE-coverage check and silently drop the
-//     §8.6 warning that exists for exactly that case.
+//     PK flags through toSchemaTables, and uniqueCovers treats the column of a
+//     single-column PrimaryKey as self-covering. Resolving first would make
+//     every single-column override satisfy its own UNIQUE-coverage check and
+//     silently drop the §8.6 warning that exists for exactly that case.
 //   - It must run BEFORE parser.DetectRelationships, which is the consumer
 //     this exists to correct.
 //
@@ -146,25 +145,30 @@ func lookupTableConfig(cfg *config.RootConfig, table *parser.Table) (config.Tabl
 	return tableCfg, ok
 }
 
-// printSchemaError writes a parseSchema error with the "Schema error:" prefix
-// on every line, so each of several joined unresolved-FK errors carries it,
-// as `validate` prefixes each line "Error:".
-func printSchemaError(w io.Writer, err error) {
+// printParseError writes a parseSchema error with a prefix on every line,
+// so each of several joined unresolved-FK errors carries it, as `validate`
+// prefixes each line "Error:". The prefix follows the exit code:
+// "Connection error:" for 4, "Schema error:" for 3.
+func printParseError(w io.Writer, err error) {
+	prefix := "Schema error"
+	if parseExitCode(err) == ExitConnection {
+		prefix = "Connection error"
+	}
 	for _, line := range splitJoinedErrors(err) {
-		_, _ = fmt.Fprintf(w, "Schema error: %s\n", line)
+		_, _ = fmt.Fprintf(w, "%s: %s\n", prefix, line)
 	}
 }
 
-// parseSchema creates the appropriate parser, discovers files, parses DDL
-// and view annotation files, and returns the complete schema.
+// parseSchema reads the schema from input.source (PRD §6.1) and the view
+// annotation files, and returns the complete schema.
 //
-// A PostgreSQL foreign key whose target no parsed table defines is the one
+// A PostgreSQL foreign key whose target no table defines is the one
 // error returned alongside a non-nil schema: the schema is otherwise whole,
 // so `validate` keeps running its post-parse and generation-phase checks and
 // reports every error together (PRD §4.13, §8.1.7). Every other
 // error returns a nil schema, and `generate` and loadAndValidate stop on any
 // error.
-func parseSchema(cfg *config.RootConfig) (*parser.Schema, error) {
+func parseSchema(ctx context.Context, cfg *config.RootConfig) (*parser.Schema, error) {
 	// input.schema filters nothing: it names the schema that unqualified
 	// names resolve to (PRD §4.2, §5.5). Its default, "*", passes empty so
 	// the parser uses its dialect default ("public" for PostgreSQL).
@@ -172,40 +176,96 @@ func parseSchema(cfg *config.RootConfig) (*parser.Schema, error) {
 	if schemaDefault == "*" {
 		schemaDefault = ""
 	}
-	p, err := newParser(cfg.Input.Dialect, schemaDefault)
-	if err != nil {
-		return nil, err
+
+	introspected := cfg.Input.Source == config.SourceDatabase || cfg.Input.Source == config.SourceBoth
+
+	var schema *parser.Schema
+	// Foreign keys the database already holds. Their targets exist even when
+	// input.introspect leaves them out, so only the keys the files add are
+	// checked below.
+	inDatabase := make(map[string]bool)
+	if introspected {
+		var err error
+		if schema, err = introspectSchema(ctx, cfg); err != nil {
+			return nil, err
+		}
+		for _, e := range parser.UnresolvedForeignKeys(schema.Tables, string(cfg.Input.Dialect)) {
+			inDatabase[e.Error()] = true
+		}
 	}
 
-	files, err := parser.DiscoverFiles(cfg.Input.Paths)
-	if err != nil {
-		return nil, fmt.Errorf("discovering schema files: %w", err)
+	if cfg.Input.Source != config.SourceDatabase {
+		p, err := newParser(cfg.Input.Dialect, schemaDefault)
+		if err != nil {
+			return nil, err
+		}
+		files, err := parser.DiscoverFiles(cfg.Input.Paths)
+		if err != nil {
+			return nil, fmt.Errorf("discovering schema files: %w", err)
+		}
+		if schema != nil {
+			// source: both. The files apply on top of the introspected schema.
+			err = introspect.Merge(schema, p, files)
+		} else {
+			err = parser.ParseFiles(p, files)
+		}
+		if err != nil {
+			return nil, fmt.Errorf("parsing schema files: %w", err)
+		}
+		schema = p.Schema()
 	}
 
-	if err := parser.ParseFiles(p, files); err != nil {
-		return nil, fmt.Errorf("parsing schema files: %w", err)
-	}
-
-	schema := p.Schema()
+	// Every source's schema is whole here, whichever wrote it: spell each
+	// foreign key's target as that table declares it, so relationship
+	// detection finds a parent named in another case and both sources agree
+	// (PRD §6.1).
+	parser.ResolveReferenceNames(schema, string(cfg.Input.Dialect))
 
 	// PostgreSQL rejects a REFERENCES target that does not exist, so a
-	// foreign key whose target no parsed table defines is a schema error.
+	// foreign key whose target no table defines is a schema error.
 	// Left in, relationship detection would drop its edge without a trace.
 	// MySQL (FOREIGN_KEY_CHECKS=0) and SQLite accept such DDL.
 	var fkErr error
 	if cfg.Input.Dialect == config.DialectPostgres {
-		fkErr = errors.Join(parser.UnresolvedForeignKeys(schema.Tables)...)
+		errs := parser.UnresolvedForeignKeys(schema.Tables, string(cfg.Input.Dialect))
+		errs = slices.DeleteFunc(errs, func(e error) bool { return inDatabase[e.Error()] })
+		fkErr = errors.Join(errs...)
 	}
 
-	// Parse view annotation files (input.views) — separate from DDL paths.
-	if len(cfg.Input.Views) > 0 {
-		if err := parseViewFiles(cfg.Input.Dialect, schemaDefault, cfg.Input.Views, schema); err != nil {
-			return nil, errors.Join(fkErr, fmt.Errorf("parsing views: %w", err))
-		}
+	if err := addViewFiles(cfg, schemaDefault, introspected, schema); err != nil {
+		return nil, errors.Join(fkErr, fmt.Errorf("parsing views: %w", err))
 	}
 
 	schema.Sort()
 	return schema, fkErr
+}
+
+// addViewFiles adds the views in the input.views annotation files to schema.
+// An annotation file for a view the database defines overlays it (PRD
+// §16.2): the database's columns stand and the file adds annotations.
+func addViewFiles(cfg *config.RootConfig, schemaDefault string, introspected bool, schema *parser.Schema) error {
+	if len(cfg.Input.Views) == 0 {
+		return nil
+	}
+	var inDatabase map[string]bool
+	if introspected {
+		inDatabase = make(map[string]bool, len(schema.Views))
+		for _, v := range schema.Views {
+			inDatabase[viewKey(v.Schema, v.Name)] = true
+		}
+	}
+	views, annotations, err := parseViewFiles(cfg.Input.Dialect, schemaDefault, cfg.Input.Views, schema, inDatabase)
+	if err != nil {
+		return err
+	}
+	if !introspected {
+		schema.Views = append(schema.Views, views...)
+		return nil
+	}
+	if schema.Views, err = parser.MergeViewAnnotations(schema.Views, views, annotations); err != nil {
+		return fmt.Errorf("annotating database views: %w", err)
+	}
+	return nil
 }
 
 // viewSQLParser is the function signature for dialect-specific view SQL parsers.
@@ -229,49 +289,73 @@ func viewParserForDialect(dialect config.Dialect, defaultSchema string) (viewSQL
 	}
 }
 
-// parseViewFiles discovers and parses view annotation files, appending the
-// resulting views to the schema. Each file contains a CREATE VIEW statement
-// with optional annotation comments (@pk, @type, @nullable).
-func parseViewFiles(dialect config.Dialect, defaultSchema string, viewPaths []string, schema *parser.Schema) error {
+// parseViewFiles discovers and parses view annotation files. Each file
+// contains a CREATE VIEW statement with optional annotation comments (@pk,
+// @type, @nullable). It returns the views and their annotations, keyed by
+// the view's schema-qualified name. A file for a view in inDatabase gives
+// only the view's name and annotations, since the database's view stands,
+// so its query need not be one the view parser can read.
+func parseViewFiles(dialect config.Dialect, defaultSchema string, viewPaths []string, schema *parser.Schema, inDatabase map[string]bool) ([]parser.View, map[string]*parser.ViewAnnotations, error) {
 	parseSQL, err := viewParserForDialect(dialect, defaultSchema)
 	if err != nil {
-		return err
+		return nil, nil, err
+	}
+	var searchPath parser.SearchPath
+	if dialect == config.DialectPostgres {
+		searchPath = postgres.SearchPath(defaultSchema)
 	}
 
 	files, err := parser.DiscoverFiles(viewPaths)
 	if err != nil {
-		return fmt.Errorf("discovering view files: %w", err)
+		return nil, nil, fmt.Errorf("discovering view files: %w", err)
 	}
 
+	views := make([]parser.View, 0, len(files))
+	annotationsByView := make(map[string]*parser.ViewAnnotations, len(files))
 	for _, file := range files {
 		data, err := os.ReadFile(filepath.Clean(file))
 		if err != nil {
-			return fmt.Errorf("reading view file %s: %w", file, err)
+			return nil, nil, fmt.Errorf("reading view file %s: %w", file, err)
 		}
 
 		annotations, err := parser.ParseViewAnnotations(string(data))
 		if err != nil {
-			return fmt.Errorf("parsing annotations in %s: %w", file, err)
+			return nil, nil, fmt.Errorf("parsing annotations in %s: %w", file, err)
 		}
 
 		parsed, err := parseSQL(data)
+		if qe, ok := errors.AsType[*parser.ViewQueryError](err); ok && inDatabase[viewKey(qe.Schema, qe.Name)] {
+			parsed, err = parser.ViewSQL{Schema: qe.Schema, Name: qe.Name}, nil
+		}
 		if err != nil {
-			return fmt.Errorf("parsing view SQL in %s: %w", file, err)
+			return nil, nil, fmt.Errorf("parsing view SQL in %s: %w", file, err)
 		}
 
-		view, err := parser.BuildView(parsed, string(data), annotations, schema.Tables)
-		if err != nil {
-			return fmt.Errorf("building view from %s: %w", file, err)
+		key := viewKey(parsed.Schema, parsed.Name)
+		view := &parser.View{Schema: parsed.Schema, Name: parsed.Name}
+		if !inDatabase[key] {
+			if view, err = parser.BuildView(parsed, string(data), annotations, schema, searchPath); err != nil {
+				return nil, nil, fmt.Errorf("building view from %s: %w", file, err)
+			}
 		}
 
-		schema.Views = append(schema.Views, *view)
+		views = append(views, *view)
+		annotationsByView[key] = annotations
 	}
 
-	return nil
+	return views, annotationsByView, nil
 }
 
-// newParser creates a dialect-specific parser.
-func newParser(dialect config.Dialect, defaultSchema string) (parser.Parser, error) {
+func viewKey(schema, name string) string {
+	if schema == "" {
+		return name
+	}
+	return schema + "." + name
+}
+
+// newParser creates a dialect-specific parser. Each one can be seeded with
+// an introspected schema for `source: both`.
+func newParser(dialect config.Dialect, defaultSchema string) (introspect.Seedable, error) {
 	switch dialect {
 	case config.DialectPostgres:
 		return postgres.New(defaultSchema), nil
@@ -286,6 +370,14 @@ func newParser(dialect config.Dialect, defaultSchema string) (parser.Parser, err
 	default:
 		return nil, fmt.Errorf("unsupported dialect: %q", dialect)
 	}
+}
+
+// isNullDefault reports whether a parsed DEFAULT expression is the NULL
+// literal, optionally parenthesized (SQLite keeps `((NULL))` as "(NULL)") or
+// cast (PostgreSQL `NULL::boolean`).
+func isNullDefault(def string) bool {
+	lit, _, _ := strings.Cut(strings.Trim(def, "() "), "::")
+	return strings.EqualFold(strings.Trim(lit, "() "), "NULL")
 }
 
 // toSchemaTables converts parsed tables to the lightweight SchemaTable type
@@ -306,7 +398,10 @@ func toSchemaTables(schema *parser.Schema) []config.SchemaTable {
 				Unique:     c.Unique,
 				// GENERATED ALWAYS columns count as defaulted: either way
 				// the INSERT may omit them (§32.4 required-on-create rule).
-				HasDefault:    c.Default != "" || c.GeneratedExpr != "",
+				// DEFAULT NULL does not: it is the absence of a default, and
+				// the PostgreSQL and MySQL catalogs (and the MySQL file
+				// parser) record none, so both sources agree.
+				HasDefault:    (c.Default != "" && !isNullDefault(c.Default)) || c.GeneratedExpr != "",
 				AutoIncrement: c.AutoIncrement,
 			})
 		}
@@ -348,6 +443,7 @@ func toSchemaViews(schema *parser.Schema) []config.SchemaView {
 				Name:       c.Name,
 				Type:       c.Type,
 				PrimaryKey: c.PrimaryKey,
+				Nullable:   c.Nullable,
 			})
 		}
 		views = append(views, config.SchemaView{

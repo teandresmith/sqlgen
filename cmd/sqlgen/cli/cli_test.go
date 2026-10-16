@@ -1184,6 +1184,55 @@ output:
 	}
 }
 
+// testSource is the input block writeTestConfigWithSource writes. Empty
+// fields are left out of the config.
+type testSource struct {
+	dialect        string
+	driver         string
+	source         string
+	url            string
+	paths          []string
+	views          []string
+	tables         []string
+	schemas        []string
+	excludeSchemas []string
+	outputDir      string
+}
+
+// writeTestConfigWithSource writes a config that reads the schema under
+// src.source, with the manifest enabled.
+func writeTestConfigWithSource(t *testing.T, path string, src testSource) {
+	t.Helper()
+	var b strings.Builder
+	list := func(indent, key string, values []string) {
+		if len(values) == 0 {
+			return
+		}
+		b.WriteString(indent + key + ":\n")
+		for _, v := range values {
+			b.WriteString(indent + "  - \"" + filepath.ToSlash(v) + "\"\n")
+		}
+	}
+	b.WriteString("input:\n  dialect: " + src.dialect + "\n  source: " + src.source + "\n")
+	if src.url != "" {
+		b.WriteString("  connection:\n    url: \"" + filepath.ToSlash(src.url) + "\"\n")
+	}
+	list("  ", "paths", src.paths)
+	list("  ", "views", src.views)
+	if len(src.tables)+len(src.schemas)+len(src.excludeSchemas) > 0 {
+		b.WriteString("  introspect:\n")
+		list("    ", "tables", src.tables)
+		list("    ", "schemas", src.schemas)
+		list("    ", "exclude_schemas", src.excludeSchemas)
+	}
+	b.WriteString("output:\n  driver: " + src.driver + "\n  dir: \"" + filepath.ToSlash(src.outputDir) +
+		"\"\n  package: models\n  layout: file_per_table\n" +
+		"generation:\n  manifest:\n    enabled: true\n    json_layout: single\n")
+	if err := os.WriteFile(path, []byte(b.String()), 0o600); err != nil {
+		t.Fatalf("writing test config: %v", err)
+	}
+}
+
 func writeTestConfigWithDir(t *testing.T, path, sqlDir, outputDir string) {
 	t.Helper()
 	content := []byte(`input:

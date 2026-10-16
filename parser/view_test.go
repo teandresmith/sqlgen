@@ -129,7 +129,7 @@ func TestBuildView_TypeResolution(t *testing.T) {
 	parsed := parser.ViewSQL{
 		Name: "product_summary", Columns: columns, TableAliases: aliases,
 	}
-	view, err := parser.BuildView(parsed, "CREATE VIEW ...", annotations, tables)
+	view, err := parser.BuildView(parsed, "CREATE VIEW ...", annotations, &parser.Schema{Tables: tables}, parser.SearchPath{})
 	if err != nil {
 		t.Fatalf("BuildView() error: %v", err)
 	}
@@ -221,7 +221,7 @@ func TestBuildView_AggregateInference(t *testing.T) {
 			parsed := parser.ViewSQL{
 				Name: "test", Columns: []parser.ViewSelectColumn{tt.col}, TableAliases: aliases,
 			}
-			view, err := parser.BuildView(parsed, "", annotations, tables)
+			view, err := parser.BuildView(parsed, "", annotations, &parser.Schema{Tables: tables}, parser.SearchPath{})
 			if err != nil {
 				t.Fatalf("BuildView() error: %v", err)
 			}
@@ -287,7 +287,7 @@ func TestBuildView_ArrayAggRouting(t *testing.T) {
 				TableAliases: map[string]string{"o": "orders"},
 			}
 
-			view, err := parser.BuildView(parsed, "", annotations, tables)
+			view, err := parser.BuildView(parsed, "", annotations, &parser.Schema{Tables: tables}, parser.SearchPath{})
 			if err != nil {
 				t.Fatalf("BuildView() error: %v", err)
 			}
@@ -306,12 +306,224 @@ func TestBuildView_ArrayAggRouting(t *testing.T) {
 	}
 }
 
+// A view column copies its source column's type, written relative to the
+// view's schema the way a table column's type is: bare in its own schema,
+// qualified in any other.
+func TestBuildView_TypesRelativeToViewSchema(t *testing.T) {
+	schema := &parser.Schema{
+		Enums: []parser.Enum{
+			{Name: "status", Schema: "app"},
+			{Name: "status", Schema: "billing"},
+		},
+		DomainTypes: []parser.DomainType{{Name: "money_d", Schema: "app", BaseType: "numeric"}},
+		Tables: []parser.Table{
+			{Name: "accounts", Schema: "app", Columns: []parser.Column{
+				{Name: "status", Type: "status"},
+				{Name: "statuses", Type: "status[]"},
+				{Name: "other", Type: "billing.status"},
+				{Name: "amount", Type: "money_d"},
+				{Name: "note", Type: "text"},
+				{Name: "tags", Type: "text[]"},
+			}},
+			{Name: "accounts", Schema: "billing", Columns: []parser.Column{
+				{Name: "status", Type: "status"},
+			}},
+		},
+	}
+	sourceCols := []string{"status", "statuses", "other", "amount", "note", "tags"}
+	tests := []struct {
+		name       string
+		viewSchema string
+		table      string
+		tblSchema  string
+		want       map[string]string
+	}{
+		{
+			name: "view in the source table's schema", viewSchema: "app", table: "accounts", tblSchema: "app",
+			want: map[string]string{
+				"status": "status", "statuses": "status[]", "other": "billing.status",
+				"amount": "money_d", "note": "text", "tags": "text[]",
+			},
+		},
+		{
+			name: "view in the schema a qualified type names", viewSchema: "billing", table: "accounts", tblSchema: "app",
+			want: map[string]string{
+				"status": "app.status", "statuses": "app.status[]", "other": "status",
+				"amount": "app.money_d", "note": "text", "tags": "text[]",
+			},
+		},
+		{
+			name: "view in a third schema", viewSchema: "public", table: "accounts", tblSchema: "app",
+			want: map[string]string{
+				"status": "app.status", "statuses": "app.status[]", "other": "billing.status",
+				"amount": "app.money_d", "note": "text", "tags": "text[]",
+			},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cols := make([]parser.ViewSelectColumn, 0, len(sourceCols))
+			for _, c := range sourceCols {
+				cols = append(cols, parser.ViewSelectColumn{Alias: c, SourceTable: "a", SourceColumn: c})
+			}
+			parsed := parser.ViewSQL{
+				Name: "v", Schema: tt.viewSchema, Columns: cols,
+				TableAliases: map[string]string{"a": tt.table},
+				TableSchemas: map[string]string{"a": tt.tblSchema},
+			}
+			view, err := parser.BuildView(parsed, "", &parser.ViewAnnotations{}, schema, parser.SearchPath{})
+			if err != nil {
+				t.Fatalf("BuildView() error: %v", err)
+			}
+			got := make(map[string]string, len(view.Columns))
+			for _, c := range view.Columns {
+				got[c.Name] = c.Type
+			}
+			if diff := cmp.Diff(tt.want, got); diff != "" {
+				t.Errorf("column types mismatch (-want +got):\n%s", diff)
+			}
+		})
+	}
+}
+
+// A view column of a type on the search_path is written for the view's
+// schema as a table column's is there: qualified with the search path's
+// schema when the view's schema declares a type by the same name, unless it
+// is a pg_catalog type, and bare otherwise. The zero SearchPath leaves such
+// a type as the source column writes it.
+func TestBuildView_SearchPathTypesInViewSchema(t *testing.T) {
+	schema := &parser.Schema{
+		Enums: []parser.Enum{{Name: "r", Schema: "app"}, {Name: "r", Schema: "other"}},
+		DomainTypes: []parser.DomainType{
+			{Name: "citext", Schema: "app", BaseType: "integer"},
+			{Name: "vector", Schema: "app", BaseType: "integer"},
+			{Name: "integer", Schema: "app", BaseType: "integer"},
+			{Name: "timestamptz", Schema: "app", BaseType: "integer"},
+		},
+		Tables: []parser.Table{
+			{Name: "m", Schema: "public", Columns: []parser.Column{
+				{Name: "rr", Type: "r"},
+				{Name: "ci", Type: "citext"},
+				{Name: "ca", Type: "citext[]"},
+				{Name: "v", Type: "vector(3)"},
+				{Name: "n", Type: "integer"},
+				{Name: "ts", Type: "timestamptz(3)"},
+				{Name: "h", Type: "ext.hstore"},
+			}},
+			{Name: "t", Schema: "other", Columns: []parser.Column{
+				{Name: "rr", Type: "public.r"}, {Name: "ci", Type: "citext"}, {Name: "mine", Type: "r"},
+			}},
+			{Name: "tab", Schema: "app", Columns: []parser.Column{
+				{Name: "id", Type: "integer"}, {Name: "ts", Type: "timestamptz"}, {Name: "ci", Type: "citext"},
+			}},
+		},
+	}
+	builtin := func(name string) bool { return name == "integer" || name == "timestamptz" }
+	tests := []struct {
+		name       string
+		viewSchema string
+		tblSchema  string
+		table      string
+		columns    []string
+		searchPath parser.SearchPath
+		want       map[string]string
+	}{
+		{
+			name: "default-schema table read from a schema that shadows its types", viewSchema: "app", tblSchema: "public", table: "m",
+			columns:    []string{"rr", "ci", "ca", "v", "n", "ts", "h"},
+			searchPath: parser.SearchPath{Schema: "public", Builtin: builtin},
+			want: map[string]string{
+				"rr": "public.r", "ci": "public.citext", "ca": "public.citext[]", "v": "public.vector(3)",
+				"n": "integer", "ts": "timestamptz(3)", "h": "ext.hstore",
+			},
+		},
+		{
+			name: "shadowed column read from a schema that does not shadow it", viewSchema: "plain", tblSchema: "other", table: "t",
+			columns:    []string{"rr", "ci", "mine"},
+			searchPath: parser.SearchPath{Schema: "public", Builtin: builtin},
+			want:       map[string]string{"rr": "r", "ci": "citext", "mine": "other.r"},
+		},
+		{
+			name: "shadowed column read from a schema that shadows it too", viewSchema: "app", tblSchema: "other", table: "t",
+			columns:    []string{"rr", "ci", "mine"},
+			searchPath: parser.SearchPath{Schema: "public", Builtin: builtin},
+			want:       map[string]string{"rr": "public.r", "ci": "public.citext", "mine": "other.r"},
+		},
+		{
+			name: "shadowed column read into the default schema", viewSchema: "public", tblSchema: "other", table: "t",
+			columns:    []string{"rr", "ci", "mine"},
+			searchPath: parser.SearchPath{Schema: "public", Builtin: builtin},
+			want:       map[string]string{"rr": "r", "ci": "citext", "mine": "other.r"},
+		},
+		{
+			name: "built-in column read from a schema that declares a type by its name", viewSchema: "public", tblSchema: "app", table: "tab",
+			columns:    []string{"id", "ts", "ci"},
+			searchPath: parser.SearchPath{Schema: "public", Builtin: builtin},
+			want:       map[string]string{"id": "integer", "ts": "timestamptz", "ci": "app.citext"},
+		},
+		{
+			name: "zero search path", viewSchema: "app", tblSchema: "public", table: "m",
+			columns: []string{"rr", "ci", "n"},
+			want:    map[string]string{"rr": "r", "ci": "citext", "n": "integer"},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cols := make([]parser.ViewSelectColumn, 0, len(tt.columns))
+			for _, c := range tt.columns {
+				cols = append(cols, parser.ViewSelectColumn{Alias: c, SourceTable: "a", SourceColumn: c})
+			}
+			parsed := parser.ViewSQL{
+				Name: "v", Schema: tt.viewSchema, Columns: cols,
+				TableAliases: map[string]string{"a": tt.table},
+				TableSchemas: map[string]string{"a": tt.tblSchema},
+			}
+			view, err := parser.BuildView(parsed, "", &parser.ViewAnnotations{}, schema, tt.searchPath)
+			if err != nil {
+				t.Fatalf("BuildView() error: %v", err)
+			}
+			got := make(map[string]string, len(view.Columns))
+			for _, c := range view.Columns {
+				got[c.Name] = c.Type
+			}
+			if diff := cmp.Diff(tt.want, got); diff != "" {
+				t.Errorf("BuildView(view %s.v from %s.%s) column types mismatch (-want +got):\n%s", tt.viewSchema, tt.tblSchema, tt.table, diff)
+			}
+		})
+	}
+}
+
+// The source table is looked up in the FROM clause's schema, so a view over
+// billing.accounts does not read app.accounts.
+func TestBuildView_SourceTableBySchema(t *testing.T) {
+	schema := &parser.Schema{Tables: []parser.Table{
+		{Name: "accounts", Schema: "app", Columns: []parser.Column{{Name: "code", Type: "text"}}},
+		{Name: "accounts", Schema: "billing", Columns: []parser.Column{{Name: "code", Type: "integer"}}},
+	}}
+	for _, tblSchema := range []string{"app", "billing"} {
+		parsed := parser.ViewSQL{
+			Name: "v", Schema: "public",
+			Columns:      []parser.ViewSelectColumn{{Alias: "code", SourceColumn: "code"}},
+			TableAliases: map[string]string{"accounts": "accounts"},
+			TableSchemas: map[string]string{"accounts": tblSchema},
+		}
+		view, err := parser.BuildView(parsed, "", &parser.ViewAnnotations{}, schema, parser.SearchPath{})
+		if err != nil {
+			t.Fatalf("BuildView() error: %v", err)
+		}
+		want := map[string]string{"app": "text", "billing": "integer"}[tblSchema]
+		if got := view.Columns[0].Type; got != want {
+			t.Errorf("FROM %s.accounts: code Type = %q, want %q", tblSchema, got, want)
+		}
+	}
+}
+
 func TestBuildView_FallbackToAny(t *testing.T) {
 	col := parser.ViewSelectColumn{Alias: "computed"}
 	annotations := &parser.ViewAnnotations{TypeOverrides: map[string]parser.ViewTypeAnnotation{}}
 	parsed := parser.ViewSQL{Name: "test", Columns: []parser.ViewSelectColumn{col}}
 
-	view, err := parser.BuildView(parsed, "", annotations, nil)
+	view, err := parser.BuildView(parsed, "", annotations, nil, parser.SearchPath{})
 	if err != nil {
 		t.Fatalf("BuildView() error: %v", err)
 	}
@@ -328,7 +540,7 @@ func TestBuildView_UnknownColumnInAnnotation(t *testing.T) {
 	}
 	parsed := parser.ViewSQL{Name: "test", Columns: []parser.ViewSelectColumn{col}}
 
-	_, err := parser.BuildView(parsed, "", annotations, nil)
+	_, err := parser.BuildView(parsed, "", annotations, nil, parser.SearchPath{})
 	if err == nil {
 		t.Fatal("expected error for @pk referencing unknown column, got nil")
 	}
@@ -367,7 +579,10 @@ func TestMergeViewAnnotations_AnnotationWins(t *testing.T) {
 		},
 	}
 
-	result := parser.MergeViewAnnotations(introspected, annotated, annotationMap)
+	result, err := parser.MergeViewAnnotations(introspected, annotated, annotationMap)
+	if err != nil {
+		t.Fatalf("MergeViewAnnotations() error: %v", err)
+	}
 
 	if len(result) != 1 {
 		t.Fatalf("merged views = %d, want 1", len(result))
@@ -383,6 +598,11 @@ func TestMergeViewAnnotations_AnnotationWins(t *testing.T) {
 	if view.Columns[1].Type != "decimal.Decimal" {
 		t.Errorf("total Type = %q, want %q", view.Columns[1].Type, "decimal.Decimal")
 	}
+	// The generator reads a @type override from GoTypeLiteral, as BuildView sets it.
+	if view.Columns[1].GoTypeLiteral != "decimal.Decimal" || view.Columns[1].GoTypeImport != "github.com/shopspring/decimal" {
+		t.Errorf("total GoTypeLiteral, GoTypeImport = %q, %q, want %q, %q", view.Columns[1].GoTypeLiteral,
+			view.Columns[1].GoTypeImport, "decimal.Decimal", "github.com/shopspring/decimal")
+	}
 	if !view.Columns[1].Nullable {
 		t.Error("total Nullable = false, want true")
 	}
@@ -393,7 +613,10 @@ func TestMergeViewAnnotations_AnnotationOnlyView(t *testing.T) {
 		{Name: "my_view", Columns: []parser.Column{{Name: "x", Type: "text"}}},
 	}
 
-	result := parser.MergeViewAnnotations(nil, annotated, nil)
+	result, err := parser.MergeViewAnnotations(nil, annotated, nil)
+	if err != nil {
+		t.Fatalf("MergeViewAnnotations() error: %v", err)
+	}
 	if len(result) != 1 {
 		t.Fatalf("merged views = %d, want 1", len(result))
 	}
@@ -449,7 +672,7 @@ func TestBuildView_Materialized(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			view, err := parser.BuildView(parsed, "raw sql", tt.annotations, tables)
+			view, err := parser.BuildView(parsed, "raw sql", tt.annotations, &parser.Schema{Tables: tables}, parser.SearchPath{})
 			if err != nil {
 				t.Fatalf("BuildView() error: %v", err)
 			}
@@ -490,7 +713,7 @@ func TestBuildView_RegularViewNeverConcurrentlyRefreshable(t *testing.T) {
 		TypeOverrides: map[string]parser.ViewTypeAnnotation{},
 	}
 
-	view, err := parser.BuildView(parsed, "raw sql", annotations, nil)
+	view, err := parser.BuildView(parsed, "raw sql", annotations, nil, parser.SearchPath{})
 	if err != nil {
 		t.Fatalf("BuildView() error: %v", err)
 	}
@@ -537,7 +760,10 @@ func TestMergeViewAnnotations_MatviewPKOverride(t *testing.T) {
 		},
 	}
 
-	result := parser.MergeViewAnnotations(introspected, annotated, annotationMap)
+	result, err := parser.MergeViewAnnotations(introspected, annotated, annotationMap)
+	if err != nil {
+		t.Fatalf("MergeViewAnnotations() error: %v", err)
+	}
 	if len(result) != 1 {
 		t.Fatalf("merged views = %d, want 1", len(result))
 	}
@@ -586,7 +812,10 @@ func TestMergeViewAnnotations_MatviewNoPKOverlayKeepsDiscovered(t *testing.T) {
 		{Name: "order_totals", Schema: "public", Materialized: true},
 	}
 
-	result := parser.MergeViewAnnotations(introspected, annotated, annotationMap)
+	result, err := parser.MergeViewAnnotations(introspected, annotated, annotationMap)
+	if err != nil {
+		t.Fatalf("MergeViewAnnotations() error: %v", err)
+	}
 	if len(result) != 1 {
 		t.Fatalf("merged views = %d, want 1", len(result))
 	}
@@ -600,5 +829,99 @@ func TestMergeViewAnnotations_MatviewNoPKOverlayKeepsDiscovered(t *testing.T) {
 	}
 	if view.Columns[1].Type != "decimal.Decimal" {
 		t.Errorf("total Type = %q, want %q", view.Columns[1].Type, "decimal.Decimal")
+	}
+}
+
+// TestBuildView_Nullability pins when a view column can hold NULL: a NULL
+// scanned into a non-nullable Go field fails, so a column is NOT NULL only
+// when its source column is NOT NULL and its table is on no outer side of a
+// join, or when an annotation or aggregate says so.
+func TestBuildView_Nullability(t *testing.T) {
+	schema := &parser.Schema{Tables: []parser.Table{
+		{Name: "products", Columns: []parser.Column{
+			{Name: "id", Type: "integer"},
+			{Name: "name", Type: "text"},
+			{Name: "discount", Type: "numeric", Nullable: true},
+		}},
+		{Name: "reviews", Columns: []parser.Column{
+			{Name: "id", Type: "integer"},
+			{Name: "rating", Type: "integer"},
+		}},
+	}}
+	aliases := map[string]string{"p": "products", "r": "reviews"}
+
+	tests := []struct {
+		name        string
+		column      parser.ViewSelectColumn
+		outer       map[string]bool
+		annotations *parser.ViewAnnotations
+		want        bool
+	}{
+		{name: "NOT NULL column", column: parser.ViewSelectColumn{Alias: "name", SourceTable: "p", SourceColumn: "name"}},
+		{name: "nullable column", column: parser.ViewSelectColumn{Alias: "discount", SourceTable: "p", SourceColumn: "discount"}, want: true},
+		{name: "NOT NULL column on the outer side", column: parser.ViewSelectColumn{Alias: "rating", SourceTable: "r", SourceColumn: "rating"}, outer: map[string]bool{"r": true}, want: true},
+		{name: "unqualified column on the outer side", column: parser.ViewSelectColumn{Alias: "rating", SourceColumn: "rating"}, outer: map[string]bool{"r": true}, want: true},
+		{name: "outer side elsewhere", column: parser.ViewSelectColumn{Alias: "name", SourceTable: "p", SourceColumn: "name"}, outer: map[string]bool{"r": true}},
+		{name: "COUNT over the outer side", column: parser.ViewSelectColumn{Alias: "n", Aggregate: "COUNT", SourceTable: "r", SourceColumn: "id"}, outer: map[string]bool{"r": true}},
+		{name: "SUM", column: parser.ViewSelectColumn{Alias: "total", Aggregate: "SUM", SourceTable: "r", SourceColumn: "rating"}, want: true},
+		{name: "unresolved column", column: parser.ViewSelectColumn{Alias: "x", SourceTable: "p", SourceColumn: "missing"}},
+		{
+			name:        "@type on the outer side",
+			column:      parser.ViewSelectColumn{Alias: "rating", SourceTable: "r", SourceColumn: "rating"},
+			outer:       map[string]bool{"r": true},
+			annotations: &parser.ViewAnnotations{TypeOverrides: map[string]parser.ViewTypeAnnotation{"rating": {GoType: "int64"}}},
+		},
+		{
+			name:        "@nullable on a NOT NULL column",
+			column:      parser.ViewSelectColumn{Alias: "name", SourceTable: "p", SourceColumn: "name"},
+			annotations: &parser.ViewAnnotations{NullableColumns: []string{"name"}},
+			want:        true,
+		},
+		{
+			name:        "@pk on a nullable column",
+			column:      parser.ViewSelectColumn{Alias: "discount", SourceTable: "p", SourceColumn: "discount"},
+			annotations: &parser.ViewAnnotations{PKColumns: []string{"discount"}},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			annotations := tt.annotations
+			if annotations == nil {
+				annotations = &parser.ViewAnnotations{}
+			}
+			parsed := parser.ViewSQL{
+				Name: "v", Columns: []parser.ViewSelectColumn{tt.column}, TableAliases: aliases, OuterAliases: tt.outer,
+			}
+			view, err := parser.BuildView(parsed, "CREATE VIEW ...", annotations, schema, parser.SearchPath{})
+			if err != nil {
+				t.Fatalf("BuildView() error: %v", err)
+			}
+			if got := view.Columns[0].Nullable; got != tt.want {
+				t.Errorf("Nullable = %t, want %t", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestMergeViewAnnotations_UnknownColumn(t *testing.T) {
+	introspected := []parser.View{{Name: "v", Schema: "public", Columns: []parser.Column{{Name: "id", Type: "integer"}}}}
+	tests := []struct {
+		name        string
+		annotations *parser.ViewAnnotations
+		want        string
+	}{
+		{name: "@pk", annotations: &parser.ViewAnnotations{PKColumns: []string{"uid"}}, want: `view public.v: @pk references unknown column "uid"`},
+		{name: "@type", annotations: &parser.ViewAnnotations{TypeOverrides: map[string]parser.ViewTypeAnnotation{"uid": {GoType: "string"}}}, want: `view public.v: @type references unknown column "uid"`},
+		{name: "@nullable", annotations: &parser.ViewAnnotations{NullableColumns: []string{"uid"}}, want: `view public.v: @nullable references unknown column "uid"`},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// The annotation file's own SELECT has uid; the database's view does not.
+			annotated := []parser.View{{Name: "v", Schema: "public", Columns: []parser.Column{{Name: "uid", Type: "integer"}}}}
+			_, err := parser.MergeViewAnnotations(introspected, annotated, map[string]*parser.ViewAnnotations{"public.v": tt.annotations})
+			if err == nil || err.Error() != tt.want {
+				t.Errorf("MergeViewAnnotations() error = %v, want %q", err, tt.want)
+			}
+		})
 	}
 }

@@ -581,6 +581,11 @@ func (s WarehouseSorter) ID(direction sql.SortDirection) sql.Sort {
 	return sql.Sort{Column: "id", Direction: direction}
 }
 
+// InspectedAt returns a sort for the inspected_at column in the given direction.
+func (s WarehouseSorter) InspectedAt(direction sql.SortDirection) sql.Sort {
+	return sql.Sort{Column: "inspected_at", Direction: direction}
+}
+
 // Name returns a sort for the name column in the given direction.
 func (s WarehouseSorter) Name(direction sql.SortDirection) sql.Sort {
 	return sql.Sort{Column: "name", Direction: direction}

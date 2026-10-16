@@ -2,6 +2,7 @@ package gen_test
 
 import (
 	"maps"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -434,10 +435,8 @@ func TestPKStrategyDetection(t *testing.T) {
 			want: config.PKStrategyCaller,
 		},
 		{
-			// A referenced column list is optional in SQLite DDL
-			// (`REFERENCES users`), which leaves Column empty on a perfectly
-			// real foreign key. Detection must key on the reference existing,
-			// never on Column being populated.
+			// Detection keys on the reference existing, never on Column
+			// being populated.
 			name:    "sqlite FK PK with no referenced column → caller",
 			dialect: "sqlite",
 			columns: []parser.Column{
@@ -1006,6 +1005,7 @@ func TestIncrementColumnDetection(t *testing.T) {
 					{Name: "name", Type: "text"},
 					{Name: "price", Type: "numeric"},
 					{Name: "stock", Type: "integer"},
+					{Name: "doubled", Type: "integer", GeneratedExpr: "stock * 2", GeneratedStorage: "STORED"},
 				},
 			},
 		},
@@ -1019,6 +1019,13 @@ func TestIncrementColumnDetection(t *testing.T) {
 	}
 
 	tc := contexts[0]
+
+	// Generated column excluded: the database computes it.
+	for _, col := range tc.IncrementColumns {
+		if col.Name == "doubled" {
+			t.Error("doubled (generated) should be excluded from IncrementColumns")
+		}
+	}
 
 	// PK excluded from increment.
 	for _, col := range tc.IncrementColumns {
@@ -1103,10 +1110,41 @@ func TestConflictTargetGeneration(t *testing.T) {
 	}
 }
 
+// TestConflictTargetDuplicateUnique pins one conflict target for two UNIQUE
+// constraints over the same columns, as MySQL keeps them (email, email_2).
+func TestConflictTargetDuplicateUnique(t *testing.T) {
+	schema := &parser.Schema{
+		Tables: []parser.Table{
+			{
+				Name: "users",
+				Columns: []parser.Column{
+					{Name: "id", Type: "bigint", PrimaryKey: true, AutoIncrement: true},
+					{Name: "email", Type: "varchar", Unique: true},
+				},
+				Constraints: []parser.Constraint{
+					{Name: "PRIMARY", Type: parser.PrimaryKey, Columns: []string{"id"}},
+					{Name: "email", Type: parser.Unique, Columns: []string{"email"}},
+					{Name: "email_2", Type: parser.Unique, Columns: []string{"email"}},
+				},
+			},
+		},
+	}
+	contexts, err := gen.BuildTableContexts(testInput(schema), nil)
+	if err != nil {
+		t.Fatalf("BuildTableContexts() error: %v", err)
+	}
+	got := make([]string, 0, len(contexts[0].ConflictTargets))
+	for _, target := range contexts[0].ConflictTargets {
+		got = append(got, target.ConstantName)
+	}
+	if diff := cmp.Diff([]string{"UserConflictEmail", "UserConflictPK"}, got); diff != "" {
+		t.Errorf("ConflictTargets mismatch (-want +got):\n%s", diff)
+	}
+}
+
 func TestConflictTargetInlineUnique(t *testing.T) {
-	// Inline UNIQUE columns (col.Unique = true) without a table-level
-	// Constraint entry — this is how MySQL and PostgreSQL parsers represent
-	// column-level UNIQUE declarations.
+	// Unique columns with no UNIQUE constraint entry, as a hand-built schema
+	// can carry, still get a conflict target.
 	schema := &parser.Schema{
 		Tables: []parser.Table{
 			{
@@ -1320,7 +1358,7 @@ func TestBuildViewContexts_enumSliceColumn(t *testing.T) {
 
 	input := testInput(schema)
 	input.Resolver = gotype.NewResolver(config.DialectPostgres, true, input.Config.Overrides.Types)
-	input.Resolver.RegisterEnum("user_role", "UserRole")
+	input.Resolver.RegisterEnum("", "user_role", "UserRole")
 	input.Config.Output.Driver = "stdlib"
 
 	contexts, err := gen.BuildViewContexts(input, nil)
@@ -1781,7 +1819,7 @@ func TestBuildTableContexts_relationshipFKOnTarget(t *testing.T) {
 				Schema: "public",
 				Columns: []parser.Column{
 					{Name: "id", Type: "uuid", PrimaryKey: true},
-					{Name: "user_id", Type: "uuid", Unique: true, InlineUnique: true, FKReference: &parser.FKReference{Table: "users", Schema: "public", Column: "id"}},
+					{Name: "user_id", Type: "uuid", Unique: true, FKReference: &parser.FKReference{Table: "users", Schema: "public", Column: "id"}},
 				},
 			},
 			{
@@ -1945,7 +1983,7 @@ func TestBuildO2OJoinDetails_chainedFKOnTarget(t *testing.T) {
 				Schema: "public",
 				Columns: []parser.Column{
 					{Name: "id", Type: "uuid", PrimaryKey: true},
-					{Name: "customer_id", Type: "uuid", Unique: true, InlineUnique: true, FKReference: &parser.FKReference{Table: "customers", Schema: "public", Column: "id"}},
+					{Name: "customer_id", Type: "uuid", Unique: true, FKReference: &parser.FKReference{Table: "customers", Schema: "public", Column: "id"}},
 				},
 			},
 			{
@@ -2190,6 +2228,59 @@ func TestCreateInputFieldClassification_autoIncrementPKExcluded(t *testing.T) {
 	}
 }
 
+// The parser gives a serial or identity column no Default, only AutoIncrement.
+// SQLite's CreateMany sends DefaultExpr for an unset field; NULL makes a rowid
+// alias draw the next rowid. The field carries AutoIncrement so UpsertMany can
+// keep it out of its conflict clause's update half (PRD §9.5).
+func TestCreateInputFieldClassification_autoIncrementNonPKOmittable(t *testing.T) {
+	tests := []struct {
+		name string
+		col  parser.Column
+	}{
+		{name: "serial or integer identity", col: parser.Column{Name: "seq", Type: "integer", AutoIncrement: true}},
+		{name: "bigserial or bigint identity", col: parser.Column{Name: "seq", Type: "bigint", AutoIncrement: true}},
+		{name: "smallserial", col: parser.Column{Name: "seq", Type: "smallint", AutoIncrement: true}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			schema := &parser.Schema{
+				Tables: []parser.Table{
+					{
+						Name: "items",
+						Columns: []parser.Column{
+							{Name: "id", Type: "bigint", PrimaryKey: true, AutoIncrement: true},
+							tt.col,
+							{Name: "note", Type: "text"},
+						},
+					},
+				},
+			}
+
+			contexts, err := gen.BuildTableContexts(testInput(schema), nil)
+			if err != nil {
+				t.Fatalf("BuildTableContexts() error: %v", err)
+			}
+
+			type field struct {
+				Column                             string
+				Required, Omittable, AutoIncrement bool
+				DefaultExpr                        string
+			}
+			var got []field
+			for _, f := range contexts[0].CreateInputFields {
+				got = append(got, field{f.ColumnName, f.Required, f.Omittable, f.AutoIncrement, f.DefaultExpr})
+			}
+			want := []field{
+				{Column: "seq", Omittable: true, AutoIncrement: true, DefaultExpr: "NULL"},
+				{Column: "note", Required: true},
+			}
+			if diff := cmp.Diff(want, got); diff != "" {
+				t.Errorf("CreateInputFields mismatch (-want +got):\n%s", diff)
+			}
+		})
+	}
+}
+
 func TestCreateInputFieldClassification_updateColumnsOmittable(t *testing.T) {
 	schema := &parser.Schema{
 		Tables: []parser.Table{
@@ -2224,6 +2315,52 @@ func TestCreateInputFieldClassification_updateColumnsOmittable(t *testing.T) {
 	}
 	if !updatedAt.Omittable {
 		t.Error("updated_at field should be Omittable (update_column)")
+	}
+}
+
+// SQLite's CreateMany and UpsertMany inline an unset omittable field's
+// DefaultExpr; an empty one would render `VALUES (?, )`. A NOT NULL update or
+// soft-delete column without a DEFAULT must get NULL.
+func TestCreateInputFieldClassification_defaultExprFallsBackToNULL(t *testing.T) {
+	schema := &parser.Schema{
+		Tables: []parser.Table{
+			{
+				Name: "items",
+				Columns: []parser.Column{
+					{Name: "id", Type: "integer", PrimaryKey: true, AutoIncrement: true},
+					{Name: "code", Type: "text"},
+					{Name: "note", Type: "text", Nullable: true},
+					{Name: "status", Type: "text", Default: "'new'"},
+					{Name: "updated_at", Type: "timestamp"},
+					{Name: "deleted_at", Type: "timestamp"},
+				},
+			},
+		},
+	}
+
+	contexts, err := gen.BuildTableContexts(testInput(schema), nil)
+	if err != nil {
+		t.Fatalf("BuildTableContexts() error: %v", err)
+	}
+
+	type field struct {
+		Column              string
+		Required, Omittable bool
+		DefaultExpr         string
+	}
+	got := make([]field, 0, len(contexts[0].CreateInputFields))
+	for _, f := range contexts[0].CreateInputFields {
+		got = append(got, field{f.ColumnName, f.Required, f.Omittable, f.DefaultExpr})
+	}
+	want := []field{
+		{Column: "code", Required: true},
+		{Column: "note", Omittable: true, DefaultExpr: "NULL"},
+		{Column: "status", Omittable: true, DefaultExpr: "'new'"},
+		{Column: "updated_at", Omittable: true, DefaultExpr: "NULL"},
+		{Column: "deleted_at", Omittable: true, DefaultExpr: "NULL"},
+	}
+	if diff := cmp.Diff(want, got); diff != "" {
+		t.Errorf("CreateInputFields mismatch (-want +got):\n%s", diff)
 	}
 }
 
@@ -2378,6 +2515,42 @@ func TestOperations_ResolvedSetIsTheSchemaFacts(t *testing.T) {
 	})
 }
 
+// TestBuildContexts_NullableInheritedCursorKey pins that the generator reads
+// a nullable inherited cursor key as unresolved, as validate does (PRD
+// §4.13): a table falls back to its PK, and a view, having no PK to fall
+// back to, gets no Connection.
+func TestBuildContexts_NullableInheritedCursorKey(t *testing.T) {
+	input := testInput(&parser.Schema{
+		Tables: []parser.Table{{Name: "orders", Columns: []parser.Column{
+			{Name: "id", Type: "bigint", PrimaryKey: true},
+			{Name: "shipped_at", Type: "timestamptz", Nullable: true},
+		}}},
+		Views: []parser.View{{Name: "order_totals", Columns: []parser.Column{
+			{Name: "shipped_at", Type: "timestamptz", Nullable: true},
+		}}},
+	})
+	input.Config.Generation.CursorKeys = []string{"shipped_at"}
+
+	tables, err := gen.BuildTableContexts(input, nil)
+	if err != nil {
+		t.Fatalf("BuildTableContexts() error: %v", err)
+	}
+	if diff := cmp.Diff([]string{"id"}, tables[0].CursorKeys); diff != "" {
+		t.Errorf("table CursorKeys mismatch (-want +got):\n%s", diff)
+	}
+	if !tables[0].Operations.Connection {
+		t.Error("table Operations.Connection = false, want true")
+	}
+
+	views, err := gen.BuildViewContexts(input, nil)
+	if err != nil {
+		t.Fatalf("BuildViewContexts() error: %v", err)
+	}
+	if views[0].HasConnection {
+		t.Error("view HasConnection = true, want false")
+	}
+}
+
 // --- ExcludeDeleted tests ---
 
 func TestExcludeDeleted_defaultTrueWhenSoftDeletePresent(t *testing.T) {
@@ -2408,6 +2581,88 @@ func TestExcludeDeleted_defaultTrueWhenSoftDeletePresent(t *testing.T) {
 	}
 	if !tc.ExcludeDeleted {
 		t.Error("ExcludeDeleted should default to true when SoftDelete is present")
+	}
+}
+
+// A soft-delete column whose type carries a precision is still detected, and
+// its table generates the soft-delete methods.
+func TestGenerate_SoftDeleteColumnWithPrecision(t *testing.T) {
+	outDir := t.TempDir()
+	cfg := loadLayoutConfig(t, outDir, "single_file")
+	cfg.Input.Dialect = config.DialectMySQL
+	cfg.Output.Driver = "stdlib"
+	schema := &parser.Schema{
+		Tables: []parser.Table{{
+			Name: "posts",
+			Columns: []parser.Column{
+				{Name: "id", Type: "bigint", PrimaryKey: true, AutoIncrement: true},
+				tableCol("title", "varchar(255)", false, false),
+				tableCol("deleted_at", "datetime(3)", true, false),
+			},
+		}},
+	}
+
+	if _, err := gen.Generate(schema, cfg, "test"); err != nil {
+		t.Fatalf("Generate() error = %v", err)
+	}
+
+	body := readGenerated(t, filepath.Join(outDir, "models_gen.go"))
+	for _, want := range []string{
+		"func (c *postClient) SoftDelete(",
+		"func (c *postClient) Restore(",
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("models_gen.go missing %q", want)
+		}
+	}
+}
+
+// The soft delete strategy is the configured type (PRD §5.4), not one inferred
+// from the column's SQL type. A MySQL tinyint and tinyint(1) are each
+// compatible with both bool and integer (PRD §4.6).
+func TestBuildTableContexts_SoftDeleteStrategyFromConfiguredType(t *testing.T) {
+	tests := []struct {
+		name    string
+		sqlType string
+		sdType  config.SoftDeleteType
+	}{
+		{name: "tinyint configured as bool", sqlType: "tinyint", sdType: config.SoftDeleteBool},
+		{name: "tinyint configured as integer", sqlType: "tinyint", sdType: config.SoftDeleteInteger},
+		{name: "tinyint(1) configured as integer", sqlType: "tinyint(1)", sdType: config.SoftDeleteInteger},
+		{name: "tinyint(1) configured as bool", sqlType: "tinyint(1)", sdType: config.SoftDeleteBool},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			schema := &parser.Schema{
+				Tables: []parser.Table{{
+					Name: "flags",
+					Columns: []parser.Column{
+						{Name: "id", Type: "bigint", PrimaryKey: true, AutoIncrement: true},
+						{Name: "zz_deleted", Type: tt.sqlType},
+					},
+				}},
+			}
+			input := testInput(schema)
+			input.Config.Input.Dialect = config.DialectMySQL
+			input.Config.Output.Driver = "stdlib"
+			input.Config.Generation.SoftDeleteColumns = []config.SoftDeleteConfig{
+				{Name: "zz_deleted", Type: tt.sdType},
+			}
+			input.Resolver = gotype.NewResolver("mysql", true, input.Config.Overrides.Types)
+
+			contexts, err := gen.BuildTableContexts(input, nil)
+			if err != nil {
+				t.Fatalf("BuildTableContexts() error: %v", err)
+			}
+			sd := contexts[0].SoftDelete
+			if sd == nil {
+				t.Fatal("SoftDelete = nil, want zz_deleted")
+			}
+			if sd.Strategy != tt.sdType {
+				t.Errorf("SoftDelete.Strategy = %q, want %q", sd.Strategy, tt.sdType)
+			}
+		})
 	}
 }
 
@@ -2750,5 +3005,61 @@ func TestBuildViewContexts_SumAggregateWidening(t *testing.T) {
 	}
 	if got := byName["raw_qty"].GoType; got != "*int32" {
 		t.Errorf("plain integer column GoType = %q, want *int32 (not widened)", got)
+	}
+}
+
+// TestBuildContexts_StructNameMustBeExported pins that a table or view whose
+// struct name is not an exported Go identifier, derived or overridden, is an
+// error naming its struct_name key, not a crash or an unexported type.
+func TestBuildContexts_StructNameMustBeExported(t *testing.T) {
+	tests := []struct {
+		name     string
+		view     bool
+		sqlName  string
+		override string
+		wantErr  string
+	}{
+		{name: "table with no letter", sqlName: "_", wantErr: `table public._: its name gives no exported Go struct name (""); set one with tables.public._.struct_name`},
+		{name: "table with a symbol name", sqlName: "$", wantErr: `table public.$: its name gives no exported Go struct name (""); set one with tables.public.$.struct_name`},
+		{name: "table with no upper case", sqlName: "ß", wantErr: `table public.ß: its name gives no exported Go struct name ("ß")`},
+		{name: "table named after its suffix", sqlName: "s"},
+		{name: "table override", sqlName: "_", override: "Underscore"},
+		{name: "table override not exported", sqlName: "things", override: "thing", wantErr: `tables.public.things.struct_name: "thing" is not an exported Go identifier`},
+		{name: "view with no letter", view: true, sqlName: "_", wantErr: `view public._: its name gives no exported Go struct name (""); set one with views.public._.struct_name`},
+		{name: "view override", view: true, sqlName: "_", override: "Underscore"},
+		{name: "view override not an identifier", view: true, sqlName: "v", override: "Not Valid", wantErr: `views.public.v.struct_name: "Not Valid" is not an exported Go identifier`},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			columns := []parser.Column{{Name: "id", Type: "bigint", PrimaryKey: true}}
+			schema := &parser.Schema{}
+			if tt.view {
+				schema.Views = []parser.View{{Name: tt.sqlName, Schema: "public", Columns: columns}}
+			} else {
+				schema.Tables = []parser.Table{{Name: tt.sqlName, Schema: "public", Columns: columns}}
+			}
+			in := testInput(schema)
+			var err error
+			if tt.view {
+				if tt.override != "" {
+					in.Config.Views["public."+tt.sqlName] = config.ViewConfig{StructName: tt.override}
+				}
+				_, err = gen.BuildViewContexts(in, nil)
+			} else {
+				if tt.override != "" {
+					in.Config.Tables["public."+tt.sqlName] = config.TableConfig{StructName: tt.override}
+				}
+				_, err = gen.BuildTableContexts(in, nil)
+			}
+			if tt.wantErr == "" {
+				if err != nil {
+					t.Fatalf("build error: %v", err)
+				}
+				return
+			}
+			if err == nil || !strings.Contains(err.Error(), tt.wantErr) {
+				t.Fatalf("build error = %v, want containing %q", err, tt.wantErr)
+			}
+		})
 	}
 }

@@ -54,6 +54,9 @@ func buildSingleViewContext(input *GenerateInput, view *parser.View, collisions 
 		structNameOverride = viewCfg.StructName
 	}
 	structName := structNameFor(view.Name, view.Schema, structNameOverride, collisions)
+	if err := checkStructName("view", qualifiedViewOrName(view), structName, structNameOverride); err != nil {
+		return ViewContext{}, err
+	}
 	snakeName := snakeNameFor(view.Name, view.Schema, structNameOverride, collisions)
 
 	columns := buildViewColumns(input, view, viewCfg)
@@ -90,7 +93,7 @@ func buildSingleViewContext(input *GenerateInput, view *parser.View, collisions 
 		viewCfg,
 		cfg.Generation,
 		qualifiedViewOrName(view),
-		columnContextNames(columns),
+		cursorKeyCandidates(columns),
 	)
 
 	return ViewContext{
@@ -114,6 +117,7 @@ func buildSingleViewContext(input *GenerateInput, view *parser.View, collisions 
 		PageSize:                ptrInt(cfg.Generation.PageSize, 100),
 		QueryLimit:              ptrInt(cfg.Generation.QueryLimit, 1000),
 		CursorKeys:              cursorDecision.Keys,
+		CursorKeyColumns:        buildCursorKeyColumns(columns, cursorDecision.Keys),
 		HasConnection:           cursorDecision.Emit,
 		Imports:                 imports,
 		Package:                 cfg.Output.Package,
@@ -162,7 +166,7 @@ func buildViewColumns(input *GenerateInput, view *parser.View, viewCfg config.Vi
 		// literal / aggregate / resolver cascade).
 		gt, tenantTyped := viewTenantTypeOverride(&col, viewCfg, input.Config.Tenancy)
 		if !tenantTyped {
-			gt = viewColumnGoType(input.Resolver, &col, col.Nullable)
+			gt = viewColumnGoType(input.Resolver.ForSchema(view.Schema), &col, col.Nullable)
 		}
 		columns = append(columns, ColumnContext{
 			Name:       col.Name,

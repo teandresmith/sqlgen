@@ -39,6 +39,7 @@ const fingerprintProfile = "23601e6c"
 const fingerprintPublicNote = "cdc6db6d"
 const fingerprintPublicUser = "8e4b4a70"
 const fingerprintRateLimit = "9fc9645b"
+const fingerprintSequenceRow = "4ccd7440"
 const fingerprintSluggedRow = "910e56d5"
 const fingerprintTag = "145e5547"
 const fingerprintUserCategory = "e8982915"
@@ -5317,6 +5318,260 @@ func (c *Cache) hydrateRateLimit(pk RateLimitPK, next hook.QueryHandler) {
 	}()
 }
 
+// keyForSequenceRow builds the cache key for SequenceRow by PK.
+func (c *Cache) keyForSequenceRow(pk int64) string {
+	return cache.BuildKey(c.prefix, "public", "sequence_rows", fingerprintSequenceRow, pk)
+}
+
+// ttlForSequenceRow returns the resolved TTL for SequenceRow cache entries.
+func (c *Cache) ttlForSequenceRow() time.Duration {
+	return time.Duration(3600000000000)
+}
+
+// hasAnyRelationshipSequenceRow reports whether fo has any relationship-typed
+// flag set. Returns false when fo is nil or when only column flags are set.
+func hasAnyRelationshipSequenceRow(fo any) bool {
+	if fo == nil {
+		return false
+	}
+	typed, ok := fo.(*SequenceRowFieldOptions)
+	if !ok || typed == nil {
+		return false
+	}
+	_ = typed
+	return false
+}
+
+// fullParentFieldOptionsSequenceRow returns a FieldOptions with every column
+// flag set to true and every relationship flag nil — used by hydration to
+// guarantee parent-only results regardless of nil-FieldOptions semantics
+// elsewhere.
+func fullParentFieldOptionsSequenceRow() *SequenceRowFieldOptions {
+	return &SequenceRowFieldOptions{
+		ID:      true,
+		Code:    true,
+		Seq:     true,
+		Ticket:  true,
+		AuditNo: true,
+		Note:    true,
+	}
+}
+
+// readThroughSequenceRow implements the cache read-through path for SequenceRow:
+// probe cache → hit returns decoded entity, miss runs the DB query under
+// singleflight dedup and populates cache. Every backend call is breaker-gated;
+// errors are routed through cache.RouteError and fall through to the DB so
+// a cache outage never breaks the caller.
+func (c *Cache) readThroughSequenceRow(ctx context.Context, pk int64, q *hook.QueryContext, next hook.QueryHandler) (any, error) {
+	key := c.keyForSequenceRow(pk)
+	schema := "public"
+
+	if c.breaker == nil || c.breaker.Allow() {
+		getStart := time.Now()
+		entity, hit, err := cache.GetAs[*SequenceRow](ctx, c.backend, c.serializer, key)
+		if c.metrics != nil {
+			c.metrics.GetLatency(schema, TableSequenceRows, time.Since(getStart))
+		}
+		if err != nil {
+			cache.RouteError(ctx, c.metrics, c.onError, c.breaker, "get", schema, TableSequenceRows, err)
+		} else if hit {
+			if c.metrics != nil {
+				c.metrics.Hit(schema, TableSequenceRows)
+			}
+			if c.breaker != nil {
+				c.breaker.RecordSuccess()
+			}
+			return entity, nil
+		} else {
+			if c.metrics != nil {
+				c.metrics.Miss(schema, TableSequenceRows)
+			}
+			// A clean miss is a successful backend round-trip — it resets
+			// the consecutive-failure counter and closes a HalfOpen probe.
+			if c.breaker != nil {
+				c.breaker.RecordSuccess()
+			}
+		}
+	} else if c.metrics != nil {
+		c.metrics.Miss(schema, TableSequenceRows)
+	}
+
+	// Partial fetches must not write back to cache (invariant:
+	// only full entities). On miss, run the DB through `next` with the
+	// caller's partial FieldOptions, kick off fire-and-forget hydration to
+	// refill the cache with the full entity, and return the
+	// partial result directly. The partial + hydration-disabled case is
+	// filtered out earlier in QueryHook.
+	if extractFieldOptions(q.CallOptions) != nil {
+		result, err := next(ctx, q)
+		if err != nil {
+			return nil, err
+		}
+		c.hydrateSequenceRow(pk, next)
+		return result, nil
+	}
+
+	ch := c.sf.DoChan(key, func() (any, error) {
+		// In-flight cache re-check: a sibling flight may have populated the
+		// cache between this caller's outer Get-miss and entering the flight.
+		// Without this, late stragglers that arrive after the sibling flight
+		// completed would register a new flight and run a duplicate DB query.
+		// The outer probe already recorded the Miss / breaker success; this
+		// inner re-check is dedup machinery, not an observable cache event, so
+		// it emits no metrics.
+		if c.breaker == nil || c.breaker.Allow() {
+			if entity, hit, err := cache.GetAs[*SequenceRow](ctx, c.backend, c.serializer, key); err == nil && hit {
+				return entity, nil
+			}
+		}
+		result, fetchErr := next(ctx, q)
+		if fetchErr != nil {
+			return nil, fetchErr
+		}
+		entity, ok := result.(*SequenceRow)
+		if !ok || entity == nil {
+			return result, nil
+		}
+		if c.breaker != nil && !c.breaker.Allow() {
+			return result, nil
+		}
+		setStart := time.Now()
+		setErr := cache.SetAs(ctx, c.backend, c.serializer, key, entity, c.ttlForSequenceRow())
+		if c.metrics != nil {
+			c.metrics.SetLatency(schema, TableSequenceRows, time.Since(setStart))
+		}
+		if setErr != nil {
+			cache.RouteError(ctx, c.metrics, c.onError, c.breaker, "set", schema, TableSequenceRows, setErr)
+			return result, nil
+		}
+		if c.breaker != nil {
+			c.breaker.RecordSuccess()
+		}
+		if c.metrics != nil {
+			c.metrics.Set(schema, TableSequenceRows)
+		}
+		return result, nil
+	})
+
+	select {
+	case res := <-ch:
+		return res.Val, res.Err
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	}
+}
+
+// setSequenceRow caches a full SequenceRow entity. Called by the mutation hook
+// after a successful Create / CreateMany to populate the cache with the new
+// entity. The PK is read from the entity itself so this never
+// depends on parallel ordering with m.AffectedPKs (GetMany does not guarantee
+// result order). Failures route through cache.RouteError and never surface to
+// the caller path; a cache outage can delay the next Get but never breaks a
+// mutation.
+func (c *Cache) setSequenceRow(ctx context.Context, entity *SequenceRow) {
+	if entity == nil {
+		return
+	}
+	if c.breaker != nil && !c.breaker.Allow() {
+		return
+	}
+	key := c.keyForSequenceRow(entity.ID)
+	schema := "public"
+	setStart := time.Now()
+	err := cache.SetAs(ctx, c.backend, c.serializer, key, entity, c.ttlForSequenceRow())
+	if c.metrics != nil {
+		c.metrics.SetLatency(schema, TableSequenceRows, time.Since(setStart))
+	}
+	if err != nil {
+		cache.RouteError(ctx, c.metrics, c.onError, c.breaker, "set", schema, TableSequenceRows, err)
+		return
+	}
+	if c.breaker != nil {
+		c.breaker.RecordSuccess()
+	}
+	if c.metrics != nil {
+		c.metrics.Set(schema, TableSequenceRows)
+	}
+}
+
+// hydrateSequenceRow launches at most one background hydration per (table, pk).
+// Runs with a fresh context.Background() timeout — does NOT inherit the
+// caller's ctx. Re-runs the Get through the
+// downstream chain with full-parent FieldOptions (every column true, every
+// relationship nil) and SkipHooks: true so the refill pulls a full entity,
+// then serializes and populates the cache under the full-entity key. Errors
+// surface via metrics.HydrationComplete + cache.RouteError; the caller path
+// is never affected.
+func (c *Cache) hydrateSequenceRow(pk int64, next hook.QueryHandler) {
+	if !c.hydrationEnabled {
+		return
+	}
+	key := c.keyForSequenceRow(pk)
+	if _, loaded := c.hydrating.LoadOrStore(key, struct{}{}); loaded {
+		return
+	}
+	go func() {
+		defer c.hydrating.Delete(key)
+		ctx, cancel := context.WithTimeout(context.Background(), c.hydrationTimeout)
+		defer cancel()
+		schema := "public"
+		if c.metrics != nil {
+			c.metrics.HydrationStart(schema, TableSequenceRows)
+		}
+
+		q := &hook.QueryContext{
+			Op:     hook.OpGet,
+			Table:  TableSequenceRows,
+			Schema: schema,
+			PK:     pk,
+			CallOptions: CallOptions[SequenceRowFieldOptions]{
+				FieldOptions: fullParentFieldOptionsSequenceRow(),
+				SkipHooks:    true,
+			},
+		}
+		result, err := next(ctx, q)
+		if err != nil {
+			if c.metrics != nil {
+				c.metrics.HydrationComplete(schema, TableSequenceRows, err)
+			}
+			return
+		}
+		entity, ok := result.(*SequenceRow)
+		if !ok || entity == nil {
+			if c.metrics != nil {
+				c.metrics.HydrationComplete(schema, TableSequenceRows, nil)
+			}
+			return
+		}
+
+		if c.breaker != nil && !c.breaker.Allow() {
+			if c.metrics != nil {
+				c.metrics.HydrationComplete(schema, TableSequenceRows, nil)
+			}
+			return
+		}
+		setStart := time.Now()
+		setErr := cache.SetAs(ctx, c.backend, c.serializer, key, entity, c.ttlForSequenceRow())
+		if c.metrics != nil {
+			c.metrics.SetLatency(schema, TableSequenceRows, time.Since(setStart))
+		}
+		if setErr != nil {
+			cache.RouteError(ctx, c.metrics, c.onError, c.breaker, "set", schema, TableSequenceRows, setErr)
+			if c.metrics != nil {
+				c.metrics.HydrationComplete(schema, TableSequenceRows, setErr)
+			}
+			return
+		}
+		if c.breaker != nil {
+			c.breaker.RecordSuccess()
+		}
+		if c.metrics != nil {
+			c.metrics.Set(schema, TableSequenceRows)
+			c.metrics.HydrationComplete(schema, TableSequenceRows, nil)
+		}
+	}()
+}
+
 // keyForSluggedRow builds the cache key for SluggedRow by PK.
 func (c *Cache) keyForSluggedRow(pk int64) string {
 	return cache.BuildKey(c.prefix, "public", "slugged_rows", fingerprintSluggedRow, pk)
@@ -6407,6 +6662,8 @@ func (c *Cache) InvalidateMany(ctx context.Context, table hook.TableName, pks []
 		keys, err = cache.KeysFromAny(pks, c.keyForPublicUser)
 	case TableRateLimits:
 		keys, err = cache.KeysFromAny(pks, c.keyForRateLimit)
+	case TableSequenceRows:
+		keys, err = cache.KeysFromAny(pks, c.keyForSequenceRow)
 	case TableSluggedRows:
 		keys, err = cache.KeysFromAny(pks, c.keyForSluggedRow)
 	case TableTags:
@@ -6483,6 +6740,8 @@ func cacheRelationFor(table hook.TableName) (schema, name string, ok bool) {
 		return "public", "users", true
 	case TableRateLimits:
 		return "public", "rate_limits", true
+	case TableSequenceRows:
+		return "public", "sequence_rows", true
 	case TableSluggedRows:
 		return "public", "slugged_rows", true
 	case TableTags:
@@ -6720,6 +6979,12 @@ func (c *Cache) QueryHook() hook.QueryHook {
 					return next(ctx, q)
 				}
 				return c.readThroughRateLimit(ctx, pk, q, next)
+			case TableSequenceRows:
+				pk, ok := q.PK.(int64)
+				if !ok {
+					return next(ctx, q)
+				}
+				return c.readThroughSequenceRow(ctx, pk, q, next)
 			case TableSluggedRows:
 				pk, ok := q.PK.(int64)
 				if !ok {
@@ -6871,6 +7136,10 @@ func (c *Cache) dispatchMutation(ctx context.Context, m *hook.MutationContext, r
 				if entity, ok := result.(*RateLimit); ok {
 					c.setRateLimit(ctx, entity)
 				}
+			case TableSequenceRows:
+				if entity, ok := result.(*SequenceRow); ok {
+					c.setSequenceRow(ctx, entity)
+				}
 			case TableSluggedRows:
 				if entity, ok := result.(*SluggedRow); ok {
 					c.setSluggedRow(ctx, entity)
@@ -7012,6 +7281,12 @@ func (c *Cache) dispatchMutation(ctx context.Context, m *hook.MutationContext, r
 				if entities, ok := result.([]*RateLimit); ok {
 					for _, entity := range entities {
 						c.setRateLimit(ctx, entity)
+					}
+				}
+			case TableSequenceRows:
+				if entities, ok := result.([]*SequenceRow); ok {
+					for _, entity := range entities {
+						c.setSequenceRow(ctx, entity)
 					}
 				}
 			case TableSluggedRows:
@@ -7172,6 +7447,8 @@ func hasAnyRelationshipFieldOptions(table hook.TableName, callOpts any) bool {
 		return hasAnyRelationshipPublicUser(fo)
 	case TableRateLimits:
 		return hasAnyRelationshipRateLimit(fo)
+	case TableSequenceRows:
+		return hasAnyRelationshipSequenceRow(fo)
 	case TableSluggedRows:
 		return hasAnyRelationshipSluggedRow(fo)
 	case TableTags:

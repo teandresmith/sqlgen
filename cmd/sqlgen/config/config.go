@@ -238,6 +238,10 @@ type RootConfig struct {
 	// (either unset or explicit ""). ValidatePreParse reads this flag
 	// to emit the defaulted-key_prefix stderr warning.
 	CacheKeyPrefixDefaulted bool `yaml:"-"`
+
+	// envVars maps a dotted path to the environment variables its value
+	// referenced (PRD §4.1.1).
+	envVars map[string][]string
 }
 
 // InputConfig controls where the schema is read from.
@@ -250,6 +254,10 @@ type InputConfig struct {
 	ParseMode  ParseMode         `yaml:"parse_mode"`
 	Connection *ConnectionConfig `yaml:"connection"`
 	Introspect *IntrospectConfig `yaml:"introspect"`
+
+	// pathsSet records that the YAML names `paths`, so an explicit ["."] can be
+	// told from the default applyInputDefaults fills in.
+	pathsSet bool
 }
 
 // ConnectionConfig holds database connection parameters.
@@ -261,6 +269,41 @@ type ConnectionConfig struct {
 	Password string `yaml:"password"` //nolint:gosec // config field, not a hardcoded credential
 	Database string `yaml:"database"`
 	SSLMode  string `yaml:"ssl_mode"`
+
+	// passwordEnvIgnoredBy names the url, SQLGEN_DB_URL or input.connection.url,
+	// when SQLGEN_DB_PASSWORD is set and that url doesn't reference it.
+	passwordEnvIgnoredBy string
+}
+
+// Errors returns every PRD §4.3 problem with the fields sqlgen builds a
+// connection string from, in config order. With `url` set nothing is built,
+// so there is nothing to check.
+func (c *ConnectionConfig) Errors(dialect Dialect) []error {
+	if c == nil {
+		c = &ConnectionConfig{}
+	}
+	if c.URL != "" {
+		return nil
+	}
+	const required = "input.connection.%s is required on %s when input.connection.url and SQLGEN_DB_URL are empty"
+	var errs []error
+	if dialect != DialectSQLite {
+		if c.Host == "" {
+			errs = append(errs, fmt.Errorf(required, "host", dialect))
+		}
+		if c.User == "" {
+			errs = append(errs, fmt.Errorf(required, "user", dialect))
+		}
+	}
+	// The go-sql-driver DSN has no escape for the user: it splits user from
+	// password at the first ':', and the server would see a different user.
+	if dialect == DialectMySQL && strings.Contains(c.User, ":") {
+		errs = append(errs, errors.New("input.connection.user cannot contain ':' on mysql: the driver splits the user from the password at the first ':'"))
+	}
+	if c.Database == "" {
+		errs = append(errs, fmt.Errorf(required, "database", dialect))
+	}
+	return errs
 }
 
 // IntrospectConfig controls schema/table filtering for database introspection.
@@ -528,6 +571,11 @@ func (o *Operations) UnmarshalYAML(value *yaml.Node) error {
 	type operationsAlias Operations
 	var alias operationsAlias
 	if err := value.Decode(&alias); err != nil {
+		// yaml.v3 collects a returned *TypeError with the rest of the file's
+		// errors, but aborts the whole decode on any other error.
+		if terr, ok := errors.AsType[*yaml.TypeError](err); ok {
+			return terr
+		}
 		return fmt.Errorf("decoding operations: %w", err)
 	}
 	*o = Operations(alias)
@@ -588,6 +636,10 @@ func (n *NullableVariant) UnmarshalYAML(value *yaml.Node) error {
 	type nullableAlias NullableVariant
 	var alias nullableAlias
 	if err := value.Decode(&alias); err != nil {
+		// Returned as is so yaml.v3 collects it; see Operations.UnmarshalYAML.
+		if terr, ok := errors.AsType[*yaml.TypeError](err); ok {
+			return terr
+		}
 		return fmt.Errorf("decoding nullable variant: %w", err)
 	}
 	*n = NullableVariant(alias)
@@ -1596,20 +1648,53 @@ func LoadConfig(path string) (*RootConfig, error) {
 // directory and takes every generated file, and every stale-artifact removal,
 // with it.
 //
-// Known gap: keys nested inside a type with its own UnmarshalYAML (Operations,
-// NullableVariant) are still accepted, because yaml.Node.Decode builds a fresh
-// non-strict decoder that this setting cannot reach.
+// ${NAME} references in values are expanded first (PRD §4.1.1). A config
+// without any takes the single strict decode; one with references is decoded
+// by decodeExpanded.
+//
+// Known gap, on both paths: keys nested inside a type with its own
+// UnmarshalYAML (Operations, NullableVariant) are still accepted, because
+// yaml.Node.Decode builds a fresh non-strict decoder that this setting cannot
+// reach.
 func decodeConfig(data []byte) (*RootConfig, error) {
-	dec := yaml.NewDecoder(bytes.NewReader(data))
-	dec.KnownFields(true)
+	var (
+		root yaml.Node
+		exp  expansion
+	)
+	// A parse error is left for the strict decode below to report.
+	if bytes.Contains(data, []byte("${")) && yaml.NewDecoder(bytes.NewReader(data)).Decode(&root) == nil {
+		var err error
+		if exp, err = expandEnv(&root); err != nil {
+			return nil, fmt.Errorf("parsing config: %w", err)
+		}
+	}
 
 	var cfg RootConfig
-	// An empty document is a valid (if useless) config, and Decode reports it
-	// as io.EOF where yaml.Unmarshal reported no error at all — keep the
-	// permissive reading so validation, not the parser, names what is missing.
-	if err := dec.Decode(&cfg); err != nil && !errors.Is(err, io.EOF) {
+	if len(exp.refs) > 0 {
+		if err := decodeExpanded(data, &root, exp, &cfg); err != nil {
+			return nil, fmt.Errorf("parsing config: %w", err)
+		}
+	} else {
+		dec := yaml.NewDecoder(bytes.NewReader(data))
+		dec.KnownFields(true)
+		// An empty document is a valid (if useless) config, and Decode reports it
+		// as io.EOF where yaml.Unmarshal reported no error at all — keep the
+		// permissive reading so validation, not the parser, names what is missing.
+		if err := dec.Decode(&cfg); err != nil && !errors.Is(err, io.EOF) {
+			return nil, fmt.Errorf("parsing config: %w", err)
+		}
+	}
+	cfg.envVars = exp.vars
+
+	var present struct {
+		Input struct {
+			Paths yaml.Node `yaml:"paths"`
+		} `yaml:"input"`
+	}
+	if err := yaml.Unmarshal(data, &present); err != nil {
 		return nil, fmt.Errorf("parsing config: %w", err)
 	}
+	cfg.Input.pathsSet = present.Input.Paths.Kind != 0
 	return &cfg, nil
 }
 
@@ -1933,7 +2018,9 @@ func applyMapDefaults(cfg *RootConfig) {
 
 // applyEnvOverrides applies environment variable overrides to the config.
 func applyEnvOverrides(cfg *RootConfig) {
+	urlFromEnv := false
 	if url := os.Getenv("SQLGEN_DB_URL"); url != "" {
+		urlFromEnv = true
 		if cfg.Input.Connection == nil {
 			cfg.Input.Connection = &ConnectionConfig{}
 		}
@@ -1950,7 +2037,16 @@ func applyEnvOverrides(cfg *RootConfig) {
 		if cfg.Input.Connection == nil {
 			cfg.Input.Connection = &ConnectionConfig{}
 		}
-		cfg.Input.Connection.Password = pw
+		c := cfg.Input.Connection
+		c.Password = pw
+		// A url wins over the password (PRD §4.3), and SQLGEN_DB_URL is never
+		// expanded, so only a file url that references the variable uses it.
+		switch {
+		case urlFromEnv:
+			c.passwordEnvIgnoredBy = "SQLGEN_DB_URL"
+		case c.URL != "" && !slices.Contains(cfg.envVars["input.connection.url"], "SQLGEN_DB_PASSWORD"):
+			c.passwordEnvIgnoredBy = "input.connection.url"
+		}
 	}
 }
 
@@ -1982,7 +2078,7 @@ func ResolveTablePageSize(table TableConfig, global GenerationConfig) int {
 // CursorKeysDecision is the outcome of cursor_keys resolution for one table or
 // view. It carries the effective keys, whether Connection should be emitted,
 // an optional warning for fallback paths, and an error when an explicit
-// override references missing columns. See PRD §4.13.
+// override names a missing or nullable column. See PRD §4.13.
 type CursorKeysDecision struct {
 	// Keys is the effective cursor key column list. Empty when Emit is false.
 	Keys []string
@@ -1991,41 +2087,41 @@ type CursorKeysDecision struct {
 	// Warning is a human-readable diagnostic when resolution relied on a
 	// PK-less omit. Empty on clean resolution and on silent PK fallback.
 	Warning string
-	// Err is non-nil when an explicit table/view-level override references a
-	// column that does not exist on the entity (hard validation error).
+	// Err is non-nil when an explicit table/view-level override names a
+	// column that does not exist on the entity or is nullable (hard
+	// validation error).
 	Err error
 }
 
 // ResolveTableConnection applies the §4.13 cursor_keys resolution rules for a
 // table. The rules are:
 //
-//  1. Explicit table-level cursor_keys with any missing column → Err.
-//  2. Inherited (global) cursor_keys fully present → use them silently.
-//  3. Inherited cursor_keys partially or fully missing, table has PK → fall
-//     back to the PK column list silently (no warning).
-//  4. Inherited cursor_keys partially or fully missing, table has no PK →
-//     Emit is false and Warning is populated naming the table.
+//  1. Explicit table-level cursor_keys with any missing or nullable column →
+//     Err.
+//  2. Inherited (global) cursor_keys all present and NOT NULL → use them
+//     silently.
+//  3. Inherited cursor_keys with any column missing or nullable, table has
+//     PK → fall back to the PK column list silently (no warning).
+//  4. Inherited cursor_keys with any column missing or nullable, table has no
+//     PK → Emit is false and Warning is populated naming the table.
+//
+// A nullable key cannot resolve: a cursor holding a NULL key is rejected as
+// invalid, so every row past it is unreachable.
 //
 // qualifiedName is used in the warning / error message (e.g. "public.products").
-// columns must list every column name on the table; pk must list the PK
-// column names in declaration order.
-func ResolveTableConnection(table TableConfig, global GenerationConfig, qualifiedName string, columns, pk []string) CursorKeysDecision {
-	colSet := stringSet(columns)
-
+// columns must list every column on the table; pk must list the PK column
+// names in declaration order.
+func ResolveTableConnection(table TableConfig, global GenerationConfig, qualifiedName string, columns []SchemaColumn, pk []string) CursorKeysDecision {
 	if len(table.CursorKeys) > 0 {
-		if missing := missingColumns(table.CursorKeys, colSet); len(missing) > 0 {
-			return CursorKeysDecision{
-				Err: fmt.Errorf("cursor_keys: column %q does not exist in table %s", missing[0], qualifiedName),
-			}
+		if err := checkExplicitCursorKeys(table.CursorKeys, columns, "table", qualifiedName); err != nil {
+			return CursorKeysDecision{Err: err}
 		}
 		return CursorKeysDecision{Keys: table.CursorKeys, Emit: true}
 	}
 
-	inherited := global.CursorKeys
-	if len(inherited) == 0 {
-		inherited = []string{"id"}
-	}
-	if len(missingColumns(inherited, colSet)) == 0 {
+	inherited := inheritedCursorKeys(global)
+	reason := unresolvedCursorKeys(inherited, columns)
+	if reason == "" {
 		return CursorKeysDecision{Keys: inherited, Emit: true}
 	}
 	if len(pk) > 0 {
@@ -2033,43 +2129,90 @@ func ResolveTableConnection(table TableConfig, global GenerationConfig, qualifie
 	}
 	return CursorKeysDecision{
 		Emit:    false,
-		Warning: fmt.Sprintf("cursor_keys: inherited default does not match table %s and no primary key is available; Connection method omitted", qualifiedName),
+		Warning: fmt.Sprintf("cursor_keys: inherited default does not resolve on table %s (%s) and no primary key is available; Connection method omitted", qualifiedName, reason),
 	}
 }
 
 // ResolveViewConnection applies the §4.13 cursor_keys resolution rules for a
 // view. The rules are:
 //
-//  1. Explicit view-level cursor_keys with any missing column → Err.
-//  2. Inherited (global) cursor_keys fully present → use them silently.
-//  3. Inherited cursor_keys partially or fully missing → Emit is false and
-//     Warning is populated naming the view. Views have no PK fallback.
+//  1. Explicit view-level cursor_keys with any missing or nullable column →
+//     Err.
+//  2. Inherited (global) cursor_keys all present and NOT NULL → use them
+//     silently.
+//  3. Inherited cursor_keys with any column missing or nullable → Emit is
+//     false and Warning is populated naming the view. Views have no PK
+//     fallback.
 //
 // qualifiedName is used in the warning / error message (e.g. "public.view_summary").
-// columns must list every column name on the view.
-func ResolveViewConnection(view ViewConfig, global GenerationConfig, qualifiedName string, columns []string) CursorKeysDecision {
-	colSet := stringSet(columns)
-
+// columns must list every column on the view, with its resolved (§16.3)
+// nullability.
+func ResolveViewConnection(view ViewConfig, global GenerationConfig, qualifiedName string, columns []SchemaColumn) CursorKeysDecision {
 	if len(view.CursorKeys) > 0 {
-		if missing := missingColumns(view.CursorKeys, colSet); len(missing) > 0 {
-			return CursorKeysDecision{
-				Err: fmt.Errorf("cursor_keys: column %q does not exist in view %s", missing[0], qualifiedName),
-			}
+		if err := checkExplicitCursorKeys(view.CursorKeys, columns, "view", qualifiedName); err != nil {
+			return CursorKeysDecision{Err: err}
 		}
 		return CursorKeysDecision{Keys: view.CursorKeys, Emit: true}
 	}
 
-	inherited := global.CursorKeys
-	if len(inherited) == 0 {
-		inherited = []string{"id"}
-	}
-	if len(missingColumns(inherited, colSet)) == 0 {
+	inherited := inheritedCursorKeys(global)
+	reason := unresolvedCursorKeys(inherited, columns)
+	if reason == "" {
 		return CursorKeysDecision{Keys: inherited, Emit: true}
 	}
 	return CursorKeysDecision{
 		Emit:    false,
-		Warning: fmt.Sprintf("cursor_keys: inherited default does not match view %s; Connection method omitted (views have no primary key fallback)", qualifiedName),
+		Warning: fmt.Sprintf("cursor_keys: inherited default does not resolve on view %s (%s); Connection method omitted (views have no primary key fallback)", qualifiedName, reason),
 	}
+}
+
+// inheritedCursorKeys returns generation.cursor_keys, or the built-in ["id"]
+// default when it is unset.
+func inheritedCursorKeys(global GenerationConfig) []string {
+	if len(global.CursorKeys) == 0 {
+		return []string{"id"}
+	}
+	return global.CursorKeys
+}
+
+// checkExplicitCursorKeys reports the first explicit key that names a missing
+// or nullable column.
+func checkExplicitCursorKeys(keys []string, columns []SchemaColumn, kind, qualifiedName string) error {
+	byName := columnsByName(columns)
+	for _, k := range keys {
+		col, ok := byName[k]
+		if !ok {
+			return fmt.Errorf("cursor_keys: column %q does not exist in %s %s", k, kind, qualifiedName)
+		}
+		if col.Nullable {
+			return fmt.Errorf("cursor_keys: column %q in %s %s is nullable; a cursor key must be NOT NULL", k, kind, qualifiedName)
+		}
+	}
+	return nil
+}
+
+// unresolvedCursorKeys returns why inherited keys do not resolve against
+// columns — the first missing or nullable key — or "" when they all resolve.
+func unresolvedCursorKeys(keys []string, columns []SchemaColumn) string {
+	byName := columnsByName(columns)
+	for _, k := range keys {
+		col, ok := byName[k]
+		if !ok {
+			return fmt.Sprintf("column %q is missing", k)
+		}
+		if col.Nullable {
+			return fmt.Sprintf("column %q is nullable", k)
+		}
+	}
+	return ""
+}
+
+func columnsByName(columns []SchemaColumn) map[string]SchemaColumn {
+	byName := make(map[string]SchemaColumn, len(columns))
+	for _, c := range columns {
+		byName[c.Name] = c
+	}
+	return byName
 }
 
 func stringSet(values []string) map[string]bool {
@@ -2078,17 +2221,6 @@ func stringSet(values []string) map[string]bool {
 		set[v] = true
 	}
 	return set
-}
-
-// missingColumns returns the subset of keys that are not present in colSet.
-func missingColumns(keys []string, colSet map[string]bool) []string {
-	var missing []string
-	for _, k := range keys {
-		if !colSet[k] {
-			missing = append(missing, k)
-		}
-	}
-	return missing
 }
 
 // ResolveTableStrictUpdates returns the effective strict_updates for a table.

@@ -30,7 +30,7 @@ Product tag labels with 3-column composite primary key
 
 | Name | Columns | Unique | Method | Where |
 | --- | --- | --- | --- | --- |
-| `product_tag_labels_pkey` | product_id, tag_name, label | yes | btree |  |
+| `PRIMARY` | product_id, tag_name, label | yes | btree |  |
 
 ## Query methods
 

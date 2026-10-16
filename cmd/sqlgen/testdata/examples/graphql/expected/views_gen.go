@@ -358,14 +358,14 @@ func (c *categoryPriceTotalClient) Connection(ctx context.Context, input Connect
 		// Decode cursors and build keyset conditions
 		var keysetConds []sql.Condition
 		if input.After != nil {
-			cursor, err := decodeCursor(*input.After)
+			cursor, err := decodeCategoryPriceTotalCursor(*input.After, c.cursorKeys)
 			if err != nil {
 				return nil, ErrInvalidCursor
 			}
 			keysetConds = append(keysetConds, cursorKeyset(c.dialect, c.cursorKeys, cursor, ">"))
 		}
 		if input.Before != nil {
-			cursor, err := decodeCursor(*input.Before)
+			cursor, err := decodeCategoryPriceTotalCursor(*input.Before, c.cursorKeys)
 			if err != nil {
 				return nil, ErrInvalidCursor
 			}
@@ -460,6 +460,31 @@ func encodeCategoryPriceTotalCursor(keys []string, c *CategoryPriceTotal) (strin
 		return "", fmt.Errorf("encode category_price_total cursor: %w", err)
 	}
 	return base64.StdEncoding.EncodeToString(data), nil
+}
+
+// decodeCategoryPriceTotalCursor decodes a cursor string into its key values,
+// each unmarshaled into the key column's Go type.
+func decodeCategoryPriceTotalCursor(encoded string, keys []string) (map[string]any, error) {
+	raw, err := decodeCursor(encoded, keys)
+	if err != nil {
+		return nil, err
+	}
+	var row CategoryPriceTotal
+	out := make(map[string]any, len(keys))
+	for _, key := range keys {
+		switch key {
+		case "category_id":
+			err = json.Unmarshal(raw[key], &row.CategoryID)
+			out[key] = row.CategoryID
+		}
+		if err != nil {
+			return nil, err
+		}
+		if cursorValueIsNull(out[key]) {
+			return nil, ErrInvalidCursor
+		}
+	}
+	return out, nil
 }
 
 // Refresh recomputes the category_price_totals materialized view, replacing its
@@ -1075,14 +1100,14 @@ func (c *workspaceNoteSummaryClient) Connection(ctx context.Context, input Conne
 		// Decode cursors and build keyset conditions
 		var keysetConds []sql.Condition
 		if input.After != nil {
-			cursor, err := decodeCursor(*input.After)
+			cursor, err := decodeWorkspaceNoteSummaryCursor(*input.After, c.cursorKeys)
 			if err != nil {
 				return nil, ErrInvalidCursor
 			}
 			keysetConds = append(keysetConds, cursorKeyset(c.dialect, c.cursorKeys, cursor, ">"))
 		}
 		if input.Before != nil {
-			cursor, err := decodeCursor(*input.Before)
+			cursor, err := decodeWorkspaceNoteSummaryCursor(*input.Before, c.cursorKeys)
 			if err != nil {
 				return nil, ErrInvalidCursor
 			}
@@ -1183,6 +1208,31 @@ func encodeWorkspaceNoteSummaryCursor(keys []string, w *WorkspaceNoteSummary) (s
 		return "", fmt.Errorf("encode workspace_note_summary cursor: %w", err)
 	}
 	return base64.StdEncoding.EncodeToString(data), nil
+}
+
+// decodeWorkspaceNoteSummaryCursor decodes a cursor string into its key values,
+// each unmarshaled into the key column's Go type.
+func decodeWorkspaceNoteSummaryCursor(encoded string, keys []string) (map[string]any, error) {
+	raw, err := decodeCursor(encoded, keys)
+	if err != nil {
+		return nil, err
+	}
+	var row WorkspaceNoteSummary
+	out := make(map[string]any, len(keys))
+	for _, key := range keys {
+		switch key {
+		case "id":
+			err = json.Unmarshal(raw[key], &row.ID)
+			out[key] = row.ID
+		}
+		if err != nil {
+			return nil, err
+		}
+		if cursorValueIsNull(out[key]) {
+			return nil, ErrInvalidCursor
+		}
+	}
+	return out, nil
 }
 
 // WorkspaceNoteSummaryFilter provides type-safe filtering for the workspace_note_summary table.

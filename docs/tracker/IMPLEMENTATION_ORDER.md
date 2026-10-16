@@ -3588,6 +3588,121 @@ Closure is `/close-phase 29`, with no sub-item of its own.
 
 **Out of scope:** a table-level write policy (such as `writes: none | append`), deferred until a real need appears; changes to `api.operations` presets beyond the FIX-224 key rename; the other findings from the dependency map (`update<T>s` dropping `_inc` / `_dec`, `validateIncDecNamespace` ignoring `increment`) unless they are logged as FIX entries.
 
+## Phase 30: Database Introspection — CLI Wiring & Introspector Parity
+
+> **Status: Complete (closed 2026-10-08).** Design doc `docs/design/INTROSPECTION.md` (SYNCED 2026-10-08; DRAFT 2026-10-05; all 14 design questions resolved in its §10; probe results in its §4.0). Wires `parser/introspect` into the CLI so `input.source: database | both` (PRD §6.1) actually reads the database, and brings the PostgreSQL, MySQL and SQLite introspectors to parity with the file parsers.
+
+**Why.**
+- **`source: database | both` does nothing today.** No `cmd/sqlgen` package imports `parser/introspect`. `cli/pipeline.go` `parseSchema` parses `input.paths` in every mode, so `database` silently generates from whatever `.sql` files sit under `paths` (default `.`). This was noted while vetting FIX-243 (Q3, 2026-09-29) and never tracked.
+- **The introspectors don't match the file parsers.** A live-database probe on 2026-10-05 (PG 16, MySQL 8.0, modernc SQLite) confirmed 20 of 22 suspected defects and found 12 more. Nine of those are file-parser bugs that also affect `files` mode. Highlights:
+  - **Generated columns:** none of the three introspectors, and neither the PG nor the MySQL file parser, populates `GeneratedExpr`. On PG and MySQL the column is generated into `Create<T>Input` / `Update<T>Input`; on SQLite it is dropped. Either way the database output is wrong.
+  - **SQLite crashes and aborts:** introspection crashes on `REFERENCES t` with no column, and a single table with a `"` in its name aborts the whole run.
+  - **Schema-qualified enums:** a PG enum column written `app.status_enum` generates as `string`, even in `files` mode.
+  - **MySQL defaults:** `DEFAULT ''` is lost, which makes the column required.
+  - **SQLite composite keys:** PK order is reversed.
+  - **SQLite virtual tables:** FTS5 and R*Tree shadow tables are generated as entities.
+- **The existing tests could not catch it.** `TestSQLiteIntrospect` never compares `Type`, and `TestMySQLIntrospect` never compares defaults, `Unique`, FK references or comments. Each dialect hand-picks its fields.
+
+**Normative spec:** PRD §4.2–§4.4, §6, §16.2 (already specified), plus the edits in the design doc's §8, written by 30.0: §5.2 (generated-column syntax for PG and MySQL, `PARTITION OF` and `CREATE VIRTUAL TABLE` skipped with a warning, the canonical constraint model), §6.1 (default and CHECK normalization), §6.3 (partitions, virtual tables, SQLite UNIQUE/CHECK to "Yes", MySQL CHECK footnote), §7 (bare and schema-qualified type resolution, typmods written without a space), §8.1.7 (exit 4 is connection-only), and §30.7 (manifest index names follow the database's names).
+
+**Depends on:** nothing open. **Settles FIX-243 Q3** as option (b) (30.9). **Resolves two FIX-240 backlog lines** (2026-10-02: unnamed UNIQUE named `_idx` where PG says `_key`; the PG parser dropping an inline `CONSTRAINT <name> UNIQUE` name) in 30.2.
+
+**Sub-items** (`docs/tracker/phase-30.md`):
+- **30.0** — **PRD sync.** No code. Lands every design-doc §8 edit. *Blocks every other sub-item.*
+- **30.1** — **Parity harness, fixtures and unit tests.** Adds the shared `assertSchemaParity` helper, which compares the full schema and allows only named, reasoned exceptions, and moves the three main introspection tests onto it. Turns the probe DDL (kept in `.claude/prototypes/introspection-probe/`) into fixtures, adds unit tests for the pure helpers on all three dialects, and fixes the small isolated defects inline: D2 (PG `NOT VALID` CHECK text), M3 (MySQL enum value splitting), M8 (MySQL parser `''` escape), S6 (SQLite error-check order), S10 (SQLite parser phantom `DESC` column). *Depends on 30.0.*
+- **30.2** — **Canonical constraint model (X1).** A shared `parser.CanonicalizeConstraints` runs on every parse and every introspection. Every PK, FK, UNIQUE and CHECK becomes both a table constraint and the column flags; `Method` defaults to `btree` on PG/MySQL; CHECK `Columns` is populated. The parsers give each unnamed constraint the name its database would (PG with 63-byte truncation and collision suffixes, MySQL `PRIMARY` / `_ibfk_N` / `_chk_N`). Manifest goldens regenerate. *Depends on 30.1.*
+- **30.3** — **Generated columns, all dialects (D4, M1, S1).** The PG and MySQL file parsers learn the generated-column syntax. The PG introspector reads `attgenerated`, MySQL reads `extra` and `generation_expression`, and SQLite switches to `PRAGMA table_xinfo`. Confirms the generator's `IsComputed` path excludes these columns from create and update inputs on every dialect. *Depends on 30.1.*
+- **30.4** — **PostgreSQL parity.**
+  - D1 / D6: canonical type form in the introspector and the parser, plus `schema.name` keys in the `cmd/sqlgen/gotype` resolver.
+  - D3 / D9: partitions skipped (parent only), with a parser warning on `PARTITION OF`.
+  - D5: column-less CHECK no longer dropped.
+  - D7: typmods written without a space.
+  - Q5 / Q13: defaults and CHECK text normalized through `pg_query` with implicit casts stripped (D8).
+  - *Depends on 30.2, 30.3.*
+- **30.5** — **MySQL parity.**
+  - M2 / M9: defaults normalized and re-quoted from `column_type`.
+  - M4: only error 1109 falls back; every other CHECK query error is returned.
+  - M5: integer display widths.
+  - M6: enum view columns.
+  - M7: CHECK text normalized.
+  - *Depends on 30.2, 30.3.*
+- **30.6** — **SQLite parity.** PRAGMAs for the catalog facts, plus a re-parse of `sqlite_master.sql` with the existing parser for names, CHECKs and expressions (Q10).
+  - S2: PK order.
+  - S3: implicit FK target.
+  - S4: no duplicate PK autoindex; declared UNIQUE names.
+  - S5: virtual and shadow tables skipped, with a warning on both paths.
+  - S7: identifier quoting.
+  - S8: CHECKs.
+  - S9 / S11: rowid-alias detection (`WITHOUT ROWID`, `DESC`) on both paths.
+  - S12: `WITHOUT ROWID` / `STRICT` flags.
+  - *Depends on 30.2, 30.3.*
+- **30.7** — **Connection string + §4.3 validation.** `cli/connection.go` `connString` for all three dialects (`url` precedence, escaping, `ssl_mode` defaults). Config validation enforces the §4.3 required fields when `url` is empty. *Depends on 30.0.*
+- **30.7a** — **`${VAR}` references in `sqlgen.yml`.** Every scalar value may reference an environment variable. An unset one is a config error (exit 2), values never appear in errors, and keys aren't expanded. `decodeConfig` keeps strict unknown-key checking at real line numbers. An ignored `SQLGEN_DB_PASSWORD` warns. Design: `docs/design/CONFIG_ENV.md`. *Depends on 30.7.*
+- **30.8** — **`parseSchema` wiring.** `parseSchema(ctx, cfg)` gets two new branches: `database` (introspect only; `paths` ignored) and `both` (introspect, then `introspect.Merge`). `input.introspect.*` maps to `IntrospectionOptions`. Views overlay via `parser.MergeViewAnnotations` (§16.2). The PG unresolved-FK check runs on the merged schema. `ctx` is threaded through `generate`, `validate` and `loadAndValidate`. *Depends on 30.7a.*
+- **30.9** — **Exit-code split.** A typed `*connectionError` exits 4; every other `parseSchema` error exits 3, in all three callers. Records the FIX-243 Q3(b) outcome. *Depends on 30.8.*
+- **30.10** — **CLI live-database suite, all dialects.** `cli/introspect_integration_test.go` starts PG16 and MySQL 8.0 lazily (testcontainers become a test-only dependency of `cmd/sqlgen`) and uses a temp file for SQLite. One fixture table runs every test as `postgres` / `mysql` / `sqlite` subtests. *Depends on 30.4, 30.5, 30.6, 30.8, 30.9.*
+
+Closure is `/close-phase 30`, with no sub-item of its own. It flips the design doc to SYNCED and archives it.
+
+**Tests required:**
+- **Parity harness:** `assertSchemaParity` covers all three main introspection tests. Every exception names its field and catalog reason.
+- **Parity matrix:** every row of the design doc's §6.5 has a test on each dialect where the feature exists, or a stated "—".
+- **Fail-first:** every defect (D1–D9, M1–M9, S1–S12, X1) has a test that failed before its fix. M4 is triggered mid-run, since a context cancelled up front fails at ping.
+- **Generated columns:** a generated column is absent from `Create<T>Input` / `Update<T>Input` on all three dialects, in both `files` and `database` mode.
+- **CLI differential:** `TestGenerate_DatabaseSourceMatchesFiles` gives byte-identical output, manifest included, for `postgres`, `mysql` and `sqlite`.
+- **Compile check:** `TestGenerate_DatabaseSourceCompiles` builds each dialect's `database` output.
+- **`both`-mode tests:** the overlay and `CREATE`-conflict tests (exit 3) run on all three dialects.
+- **CLI behavior:**
+  - database mode ignores `paths`
+  - introspect filters narrow the generated set
+  - an introspected view plus an annotation gives one view
+  - a connection failure exits 4 for `generate` and `validate`
+- **Unit:** `TestConnString`, the constraint-name derivation (truncation, collisions), and each implicit-cast removal rule.
+- **Sweep:** `make check` and `make test-integration` are green. Example goldens regenerate for X1 (manifest index and constraint names) and D7 (typmod spacing, e.g. the `postgres` example's `numeric(12, 2)` manifest entries) only. No example uses generated columns, qualified types, partitions or the SQLite rowid edge cases, so any other golden change is unexpected and must be explained in the sub-item's Completion Record.
+
+**Out of scope:**
+- **A database version matrix.** PG 16 and MySQL 8.0 only, matching every other integration test.
+- **New config fields.**
+- **Generating clients for virtual tables.**
+- **A stated minimum MySQL version.** Q7 keeps a narrow fallback instead.
+
+## Phase 31: Introspection Examples — `source: database` and `both` End to End
+
+> **Status: Complete (closed 2026-10-12).** Design doc `docs/design/INTROSPECTION_EXAMPLES.md` (SYNCED 2026-10-12; ACCEPTED 2026-10-11; the four questions in its §8 were ruled on 2026-10-11, each matching its recommendation; probe results in its §2). All 5 sub-items (31.0–31.4) landed. Normative spec PRD §6.1/§6.3/§8.1.7, with `guidelines/TESTING.md` §10. Full sweep clean under `-race` (check 100s / check-examples 149s / test-integration 206s), no flakes. 1 FIX originated in the phase (FIX-299, MySQL named UNIQUE keys, surfaced by the 31.4 probe) and was resolved within it; none carried forward.
+
+**Why.**
+- **No test runs code generated from a live database.** Every E2E example uses `source: files`. The CLI live-database suite (30.10) generates from one small fixture per dialect and only builds the output. PRD §6.1 promises that `database` and `files` give "the same generated code and manifest", and that `both` generates the *future* schema. Neither claim is measured at example scale.
+- **The 2026-10-11 probe found one defect.** All 12 examples were regenerated from a live database (PG 16, MySQL 8.0, SQLite) and diffed against their goldens. Ten gave identical Go code. The two PostgreSQL ones lost every type comment: the PG introspector reads `pg_description` only for tables and columns, so an enum, composite or domain comment is dropped and its Go doc comment falls back to the default (design doc P1). The manifests differed only where PRD §6.1 already allows it: a view's `source`, and MySQL storing `TRUE` as `1`.
+
+**Normative spec:** PRD §6.1, §6.3 ("Comments: `pg_description`") and §8.1.7, already specified. 31.0 adds one sentence to §8.1.7 about the database twin and the `both` examples. No behavior change.
+
+**Depends on:** Phase 30 closed, with its FIX queue drained (0 open at `5b1a3573`). **Resolves** the 2026-10-11 backlog line on PostgreSQL type comments (31.1; promoted into the phase and removed from the backlog).
+
+**Sub-items** (`docs/tracker/phase-31.md`):
+- **31.0** — **PRD and guideline sync.** No code. The PRD §8.1.7 sentence, plus `guidelines/TESTING.md` §10: the new modules, the setup convention, Docker for `both` goldens, and the new test. *Blocks every other sub-item.*
+- **31.1** — **PostgreSQL type comments (P1).** The introspector reads `COMMENT ON TYPE` / `COMMENT ON DOMAIN` from `pg_description` and sets `Comment` on every enum, composite and domain. The PG parity fixture and the CLI fixture gain type comments, so `assertSchemaParity` and `TestGenerate_DatabaseSourceMatchesFiles` pin them. *Depends on 31.0.*
+- **31.2** — **Shared live-database test package.** `cmd/sqlgen/internal/livedb` holds the container starters, the per-test database creators, the setup applier and the parity exceptions, and the CLI suite moves onto it. The view-`source` exception covers the split manifest layout, and a new MySQL literal-default exception covers PRD §6.1's stored-value rule. Each exception has a test that fails without it. *Depends on 31.0; runs alongside 31.1.*
+- **31.3** — **Database twin.** `TestE2EDatabaseTwin` regenerates every `files` example from a live database built from its own setup files and compares it with `expected/`, applying only the shared exceptions. It also adds the `after_views.sql` convention, which the `postgres` example's `order_totals` index moves into. *Depends on 31.1, 31.2.*
+- **31.4** — **`source: both` examples.** `introspect_postgres`, `introspect_mysql` and `introspect_sqlite` each have:
+  - a base schema in the database and pending migrations in `migrations/`;
+  - a runtime suite that runs against the migrated database.
+
+  `TestE2EGoldenFiles` learns each example's source. For a `both` example it checks three things: `both` gives the golden byte for byte, `database` on the migrated database matches it, and `files` on schema plus migrations matches it. Under `-short` it skips, like every example. *Depends on 31.2; its three modules run in parallel.*
+
+Closure is `/close-phase 31`, with no sub-item of its own. It flips the design doc to SYNCED.
+
+**Tests required:**
+- **Fail-first:** P1 has a parity test that failed before the fix, and every parity exception has a test that fails without it.
+- **Twin:** `TestE2EDatabaseTwin` passes for all 12 `files` examples.
+- **`both` examples:** each one's `both` output equals `expected/`, and its `database` and `files` twins equal it after normalization.
+- **Runtime:** each `introspect_*` suite covers every overlay shape the design doc's §5.3 marks ✓ for its dialect.
+- **Sweep:** `make check`, `make check-examples` and `make test-integration` are green. P1 changes no `files` output, so no existing golden should churn. Any golden change outside the new modules must be explained in the sub-item's Completion Record.
+
+**Out of scope:**
+- **New introspection behavior,** and the by-source divergences in `docs/tracker/backlog.md`. A twin or example that trips one goes through findings triage (ruling Q4).
+- **`go:generate` for the new examples.** Generating needs a live database.
+- **A database version matrix.** PG 16 and MySQL 8.0 only.
+
 ## Deferred Features
 
 These remain deferred until consumer demand justifies the implementation cost. Phase 15 establishes the unified client surface as feature-complete for direct Go consumers; Phase 16 extends it to GraphQL consumers. The deferred items below extend further or address adjacent surfaces.

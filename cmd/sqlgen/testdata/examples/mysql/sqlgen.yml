@@ -113,6 +113,10 @@ tables:
       - tag_name
       - label
   warehouses:
+    # Pages on the types.DateTime column, so a cursor's keyset binds one.
+    cursor_keys:
+      - created_at
+      - id
     overrides:
       types:
         decimal:
@@ -122,6 +126,16 @@ tables:
         text:
           type: ksuid.KSUID
           import: github.com/segmentio/ksuid
+        # types.DateTime on MySQL binds as the time.Time it wraps, so the
+        # driver's loc applies as it does to a time.Time column.
+        timestamp:
+          type: types.DateTime
+          import: github.com/teandresmith/sqlgen/types
+          nullable: types.NullDateTime
+        datetime(6):
+          type: types.DateTime
+          import: github.com/teandresmith/sqlgen/types
+          nullable: types.NullDateTime
 
 # Enable the GraphQL API surface on a SECOND dialect.
 #

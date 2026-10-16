@@ -1468,14 +1468,14 @@ func (c *binaryKeyEventClient) Connection(ctx context.Context, input ConnectionI
 		// Decode cursors and build keyset conditions
 		var keysetConds []sql.Condition
 		if input.After != nil {
-			cursor, err := decodeCursor(*input.After)
+			cursor, err := decodeBinaryKeyEventCursor(*input.After, c.cursorKeys)
 			if err != nil {
 				return nil, ErrInvalidCursor
 			}
 			keysetConds = append(keysetConds, cursorKeyset(c.dialect, c.cursorKeys, cursor, ">"))
 		}
 		if input.Before != nil {
-			cursor, err := decodeCursor(*input.Before)
+			cursor, err := decodeBinaryKeyEventCursor(*input.Before, c.cursorKeys)
 			if err != nil {
 				return nil, ErrInvalidCursor
 			}
@@ -1568,6 +1568,31 @@ func encodeBinaryKeyEventCursor(keys []string, b *BinaryKeyEvent) (string, error
 		return "", fmt.Errorf("encode binary_key_event cursor: %w", err)
 	}
 	return base64.StdEncoding.EncodeToString(data), nil
+}
+
+// decodeBinaryKeyEventCursor decodes a cursor string into its key values,
+// each unmarshaled into the key column's Go type.
+func decodeBinaryKeyEventCursor(encoded string, keys []string) (map[string]any, error) {
+	raw, err := decodeCursor(encoded, keys)
+	if err != nil {
+		return nil, err
+	}
+	var row BinaryKeyEvent
+	out := make(map[string]any, len(keys))
+	for _, key := range keys {
+		switch key {
+		case "id":
+			err = json.Unmarshal(raw[key], &row.ID)
+			out[key] = row.ID
+		}
+		if err != nil {
+			return nil, err
+		}
+		if cursorValueIsNull(out[key]) {
+			return nil, ErrInvalidCursor
+		}
+	}
+	return out, nil
 }
 
 // StreamBinaryKeyEventsInput holds query parameters for streaming binary_key_events records.

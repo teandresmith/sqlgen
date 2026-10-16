@@ -777,6 +777,7 @@ type ComplexityRoot struct {
 		CreatedAt     func(childComplexity int) int
 		ExternalID    func(childComplexity int) int
 		ID            func(childComplexity int) int
+		InspectedAt   func(childComplexity int) int
 		Name          func(childComplexity int) int
 		NullablePrice func(childComplexity int) int
 		Price         func(childComplexity int) int
@@ -4971,6 +4972,12 @@ func (e *executableSchema) Complexity(ctx context.Context, typeName, field strin
 		}
 
 		return e.ComplexityRoot.Warehouse.ID(childComplexity), true
+	case "Warehouse.inspectedAt":
+		if e.ComplexityRoot.Warehouse.InspectedAt == nil {
+			break
+		}
+
+		return e.ComplexityRoot.Warehouse.InspectedAt(childComplexity), true
 	case "Warehouse.name":
 		if e.ComplexityRoot.Warehouse.Name == nil {
 			break
@@ -6400,6 +6407,8 @@ func (ec *executionContext) childFields_Warehouse(ctx context.Context, field gra
 		return ec.fieldContext_Warehouse_price(ctx, field)
 	case "nullablePrice":
 		return ec.fieldContext_Warehouse_nullablePrice(ctx, field)
+	case "inspectedAt":
+		return ec.fieldContext_Warehouse_inspectedAt(ctx, field)
 	case "createdAt":
 		return ec.fieldContext_Warehouse_createdAt(ctx, field)
 	}
@@ -26873,6 +26882,29 @@ func (ec *executionContext) fieldContext_Warehouse_nullablePrice(_ context.Conte
 	return graphql.NewScalarFieldContext("Warehouse", field, false, false, errors.New("field of type NullDecimal does not have child fields"))
 }
 
+func (ec *executionContext) _Warehouse_inspectedAt(ctx context.Context, field graphql.CollectedField, obj *models.Warehouse) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.fieldContext_Warehouse_inspectedAt(ctx, field)
+		},
+		func(ctx context.Context) (any, error) {
+			return obj.InspectedAt, nil
+		},
+		nil,
+		func(ctx context.Context, selections ast.SelectionSet, v types.NullDateTime) graphql.Marshaler {
+			return ec.marshalONullDateTime2githubᚗcomᚋteandresmithᚋsqlgenᚋtypesᚐNullDateTime(ctx, selections, v)
+		},
+		true,
+		false,
+	)
+}
+func (ec *executionContext) fieldContext_Warehouse_inspectedAt(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	return graphql.NewScalarFieldContext("Warehouse", field, false, false, errors.New("field of type NullDateTime does not have child fields"))
+}
+
 func (ec *executionContext) _Warehouse_createdAt(ctx context.Context, field graphql.CollectedField, obj *models.Warehouse) (ret graphql.Marshaler) {
 	return graphql.ResolveField(
 		ctx,
@@ -26885,15 +26917,15 @@ func (ec *executionContext) _Warehouse_createdAt(ctx context.Context, field grap
 			return obj.CreatedAt, nil
 		},
 		nil,
-		func(ctx context.Context, selections ast.SelectionSet, v time.Time) graphql.Marshaler {
-			return ec.marshalNTime2timeᚐTime(ctx, selections, v)
+		func(ctx context.Context, selections ast.SelectionSet, v types.DateTime) graphql.Marshaler {
+			return ec.marshalNDateTime2githubᚗcomᚋteandresmithᚋsqlgenᚋtypesᚐDateTime(ctx, selections, v)
 		},
 		true,
 		true,
 	)
 }
 func (ec *executionContext) fieldContext_Warehouse_createdAt(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
-	return graphql.NewScalarFieldContext("Warehouse", field, false, false, errors.New("field of type Time does not have child fields"))
+	return graphql.NewScalarFieldContext("Warehouse", field, false, false, errors.New("field of type DateTime does not have child fields"))
 }
 
 func (ec *executionContext) _WarehouseConnection_edges(ctx context.Context, field graphql.CollectedField, obj *models.Connection[models.Warehouse]) (ret graphql.Marshaler) {
@@ -30447,7 +30479,7 @@ func (ec *executionContext) unmarshalInputCreateWarehouseInput(ctx context.Conte
 		asMap[k] = v
 	}
 
-	fieldsInOrder := [...]string{"externalID", "name", "price", "nullablePrice", "createdAt"}
+	fieldsInOrder := [...]string{"externalID", "name", "price", "nullablePrice", "inspectedAt", "createdAt"}
 	for _, k := range fieldsInOrder {
 		v, ok := asMap[k]
 		if !ok {
@@ -30482,9 +30514,16 @@ func (ec *executionContext) unmarshalInputCreateWarehouseInput(ctx context.Conte
 				return it, err
 			}
 			it.NullablePrice = data
+		case "inspectedAt":
+			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("inspectedAt"))
+			data, err := ec.unmarshalONullDateTime2ᚖgithubᚗcomᚋteandresmithᚋsqlgenᚋtypesᚐNullDateTime(ctx, v)
+			if err != nil {
+				return it, err
+			}
+			it.InspectedAt = data
 		case "createdAt":
 			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("createdAt"))
-			data, err := ec.unmarshalNTime2timeᚐTime(ctx, v)
+			data, err := ec.unmarshalNDateTime2githubᚗcomᚋteandresmithᚋsqlgenᚋtypesᚐDateTime(ctx, v)
 			if err != nil {
 				return it, err
 			}
@@ -34305,7 +34344,7 @@ func (ec *executionContext) unmarshalInputUpdateWarehouseInput(ctx context.Conte
 		asMap[k] = v
 	}
 
-	fieldsInOrder := [...]string{"externalID", "name", "price", "price_inc", "price_dec", "nullablePrice", "nullablePrice_inc", "nullablePrice_dec", "createdAt"}
+	fieldsInOrder := [...]string{"externalID", "name", "price", "price_inc", "price_dec", "nullablePrice", "nullablePrice_inc", "nullablePrice_dec", "inspectedAt", "createdAt"}
 	for _, k := range fieldsInOrder {
 		v, ok := asMap[k]
 		if !ok {
@@ -34368,9 +34407,16 @@ func (ec *executionContext) unmarshalInputUpdateWarehouseInput(ctx context.Conte
 				return it, err
 			}
 			it.NullablePriceDec = data
+		case "inspectedAt":
+			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("inspectedAt"))
+			data, err := ec.unmarshalONullDateTime2ᚖgithubᚗcomᚋteandresmithᚋsqlgenᚋtypesᚐNullDateTime(ctx, v)
+			if err != nil {
+				return it, err
+			}
+			it.InspectedAt = data
 		case "createdAt":
 			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("createdAt"))
-			data, err := ec.unmarshalOTime2ᚖtimeᚐTime(ctx, v)
+			data, err := ec.unmarshalODateTime2ᚖgithubᚗcomᚋteandresmithᚋsqlgenᚋtypesᚐDateTime(ctx, v)
 			if err != nil {
 				return it, err
 			}
@@ -35443,7 +35489,7 @@ func (ec *executionContext) unmarshalInputWarehouseFilter(ctx context.Context, o
 		asMap[k] = v
 	}
 
-	fieldsInOrder := [...]string{"externalID", "name", "price", "nullablePrice", "createdAt", "and", "or"}
+	fieldsInOrder := [...]string{"externalID", "name", "price", "nullablePrice", "inspectedAt", "createdAt", "and", "or"}
 	for _, k := range fieldsInOrder {
 		v, ok := asMap[k]
 		if !ok {
@@ -35478,6 +35524,13 @@ func (ec *executionContext) unmarshalInputWarehouseFilter(ctx context.Context, o
 				return it, err
 			}
 			it.NullablePrice = data
+		case "inspectedAt":
+			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("inspectedAt"))
+			data, err := ec.unmarshalONullableTimeComparator2ᚖgithubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋmysqlᚋmodelsᚋgraphᚋmodelᚐNullableTimeComparator(ctx, v)
+			if err != nil {
+				return it, err
+			}
+			it.InspectedAt = data
 		case "createdAt":
 			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("createdAt"))
 			data, err := ec.unmarshalOTimeComparator2ᚖgithubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋmysqlᚋmodelsᚋgraphᚋmodelᚐTimeComparator(ctx, v)
@@ -41920,6 +41973,11 @@ func (ec *executionContext) _Warehouse(ctx context.Context, sel ast.SelectionSet
 			if out.Values[i] == graphql.RequiredNull {
 				out.Invalids++
 			}
+		case "inspectedAt":
+			out.Values[i] = ec._Warehouse_inspectedAt(ctx, field, obj)
+			if out.Values[i] == graphql.RequiredNull {
+				out.Invalids++
+			}
 		case "createdAt":
 			out.Values[i] = ec._Warehouse_createdAt(ctx, field, obj)
 			if out.Values[i] == graphql.Null {
@@ -43431,6 +43489,16 @@ func (ec *executionContext) unmarshalNCreateWarehouseInput2ᚕᚖgithubᚗcomᚋ
 func (ec *executionContext) unmarshalNCreateWarehouseInput2ᚖgithubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋmysqlᚋmodelsᚋgraphᚋmodelᚐCreateWarehouseInput(ctx context.Context, v any) (*model.CreateWarehouseInput, error) {
 	res, err := ec.unmarshalInputCreateWarehouseInput(ctx, v)
 	return &res, graphql.ErrorOnPath(ctx, err)
+}
+
+func (ec *executionContext) unmarshalNDateTime2githubᚗcomᚋteandresmithᚋsqlgenᚋtypesᚐDateTime(ctx context.Context, v any) (types.DateTime, error) {
+	var res types.DateTime
+	err := res.UnmarshalGQL(v)
+	return res, graphql.ErrorOnPath(ctx, err)
+}
+
+func (ec *executionContext) marshalNDateTime2githubᚗcomᚋteandresmithᚋsqlgenᚋtypesᚐDateTime(ctx context.Context, sel ast.SelectionSet, v types.DateTime) graphql.Marshaler {
+	return v
 }
 
 func (ec *executionContext) unmarshalNDecimal2githubᚗcomᚋshopspringᚋdecimalᚐDecimal(ctx context.Context, v any) (decimal.Decimal, error) {
@@ -45934,6 +46002,22 @@ func (ec *executionContext) unmarshalOCreateDocumentInput2ᚕᚖgithubᚗcomᚋt
 	return res, nil
 }
 
+func (ec *executionContext) unmarshalODateTime2ᚖgithubᚗcomᚋteandresmithᚋsqlgenᚋtypesᚐDateTime(ctx context.Context, v any) (*types.DateTime, error) {
+	if v == nil {
+		return nil, nil
+	}
+	var res = new(types.DateTime)
+	err := res.UnmarshalGQL(v)
+	return res, graphql.ErrorOnPath(ctx, err)
+}
+
+func (ec *executionContext) marshalODateTime2ᚖgithubᚗcomᚋteandresmithᚋsqlgenᚋtypesᚐDateTime(ctx context.Context, sel ast.SelectionSet, v *types.DateTime) graphql.Marshaler {
+	if v == nil {
+		return graphql.Null
+	}
+	return v
+}
+
 func (ec *executionContext) unmarshalODecimal2ᚕᚖgithubᚗcomᚋshopspringᚋdecimalᚐDecimalᚄ(ctx context.Context, v any) ([]*decimal.Decimal, error) {
 	if v == nil {
 		return nil, nil
@@ -46471,6 +46555,32 @@ func (ec *executionContext) unmarshalOKeyOnlyRowSort2ᚕᚖgithubᚗcomᚋteandr
 		}
 	}
 	return res, nil
+}
+
+func (ec *executionContext) unmarshalONullDateTime2githubᚗcomᚋteandresmithᚋsqlgenᚋtypesᚐNullDateTime(ctx context.Context, v any) (types.NullDateTime, error) {
+	var res types.NullDateTime
+	err := res.UnmarshalGQL(v)
+	return res, graphql.ErrorOnPath(ctx, err)
+}
+
+func (ec *executionContext) marshalONullDateTime2githubᚗcomᚋteandresmithᚋsqlgenᚋtypesᚐNullDateTime(ctx context.Context, sel ast.SelectionSet, v types.NullDateTime) graphql.Marshaler {
+	return v
+}
+
+func (ec *executionContext) unmarshalONullDateTime2ᚖgithubᚗcomᚋteandresmithᚋsqlgenᚋtypesᚐNullDateTime(ctx context.Context, v any) (*types.NullDateTime, error) {
+	if v == nil {
+		return nil, nil
+	}
+	var res = new(types.NullDateTime)
+	err := res.UnmarshalGQL(v)
+	return res, graphql.ErrorOnPath(ctx, err)
+}
+
+func (ec *executionContext) marshalONullDateTime2ᚖgithubᚗcomᚋteandresmithᚋsqlgenᚋtypesᚐNullDateTime(ctx context.Context, sel ast.SelectionSet, v *types.NullDateTime) graphql.Marshaler {
+	if v == nil {
+		return graphql.Null
+	}
+	return v
 }
 
 func (ec *executionContext) unmarshalONullDecimal2githubᚗcomᚋshopspringᚋdecimalᚐNullDecimal(ctx context.Context, v any) (decimal.NullDecimal, error) {

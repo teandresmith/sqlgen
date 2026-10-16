@@ -35,7 +35,7 @@ GROUP BY p.id, p.name, p.price, p.description, c.name;
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
 | `id` | ID | `uuid.UUID` | `uuid` |  | yes |  |  | `comparator.ID` |  |
 | `name` | Name | `string` | `text` |  |  |  |  | `comparator.String` |  |
-| `price` | Price | `float64` | `numeric(10, 2)` |  |  |  |  | `comparator.Number[float64]` |  |
+| `price` | Price | `float64` | `numeric(10,2)` |  |  |  |  | `comparator.Number[float64]` |  |
 | `description` | Description | `*string` | `text` | yes |  |  |  | `comparator.NullableString` |  |
 | `category_name` | CategoryName | `string` | `text` |  |  |  |  | `comparator.String` |  |
 | `order_count` | OrderCount | `int32` | `int32` |  |  |  |  | `comparator.Number[int32]` |  |

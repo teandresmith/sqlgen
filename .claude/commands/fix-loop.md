@@ -25,7 +25,7 @@ Recognize these flags anywhere in `$ARGUMENTS`:
 Stop and report if any of these fails. Do not work around them.
 
 - **Clean tree.** `git status --porcelain` must print nothing. The loop commits `docs/tracker/fixes.md` with every fix, so uncommitted tracker edits (for example an uncommitted `/fix-vet` run) would be swept into the first fix's commit. Suggest the user commit them first.
-- **Branch.** Must be `main`. This repo commits fixes directly to main.
+- **Branch.** Commit on whatever branch is checked out; never create or switch branches. A detached HEAD fails preflight. Name the branch in the plan (Step 2) so the user sees where fixes land.
 - **Docker.** `docker info` must succeed. Nearly every fix trips the path-based `check-examples` trigger.
 - **Tool versions.** Run `/fix-implement` Step 3.5's check. It warns and does not block.
 - **Notifications.** Load `PushNotification` with ToolSearch. If it is unavailable, say so once and continue; the loop still works, it just cannot ping the user.

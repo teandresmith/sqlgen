@@ -278,6 +278,62 @@ output:
 | `cache` | `CacheConfig` | disabled | No | Cache configuration: TTL, serialization, hydration. See [Section 27](#27-caching). |
 | `events` | `EventConfig` | disabled | No | Event publishing: mutation lifecycle events. See [Section 28](#28-event-system). |
 
+#### 4.1.1 Environment variable references
+
+Any scalar value in `sqlgen.yml` can reference an environment variable. Keys are never expanded,
+because table, column and override keys name schema objects.
+
+```yaml
+input:
+  connection:
+    url: postgres://app:${DB_PASSWORD}@${DB_HOST}/appdb?sslmode=require
+```
+
+| Text in a value | Result |
+|---|---|
+| `${NAME}` | The value of environment variable `NAME`. `NAME` is `[A-Za-z_][A-Za-z0-9_]*`. |
+| `$${` | A literal `${`. This is the only escape. |
+| Any other `$` | Kept as written: `$1`, `$HOME`, `a$` and `$$x` are unchanged. |
+
+- A value can hold any number of references mixed with literal text.
+- Anything else between `${` and `}` is an invalid reference, including `${}`, `${1X}` and
+  `${X:-default}`: there are no defaults or fallbacks. A `${` with no closing `}` is an
+  unterminated reference. Both are config errors ([4.13](#413-config-validation-rules)).
+- An **unset** variable is a config error. A variable **set to the empty string** substitutes the
+  empty string; required-field rules still apply to the result.
+- Expansion runs once, while the config loads, for every command that loads it (`validate`
+  included), and before the `SQLGEN_DB_*` overrides in [4.3](#43-connectionconfig). It is a
+  single pass: text that came from a variable is never expanded again.
+- References are replaced in the parsed YAML, not in the raw text, so a value can never add keys,
+  items or documents. A value containing `: `, `#` or a newline stays one string.
+- An anchored scalar is expanded where it is defined, and every alias of it sees the result.
+- **Types.** A reference in a plain (unquoted) scalar is typed by its expanded text, as YAML types
+  any plain scalar: `port: ${DB_PORT}` with `DB_PORT=6543` is the integer 6543. An expansion is
+  never typed as null, so a value of `null`, `~` or the empty string stays a string. A reference
+  in a quoted or block scalar is always a string, so `port: "${DB_PORT}"` is a type error.
+  Inside a flow collection (`[…]`, `{…}`) a reference must be quoted, because `{` and `}` are
+  YAML syntax there: write `paths: ["${DIR}", b]`. A reference in a value with an explicit tag
+  other than `!!str` (`port: !!int ${DB_PORT}`) is a config error; leave it untagged.
+- **Errors** start with the YAML line, then give the dotted path (sequence items as `[i]`):
+
+  ```
+  line 3: input.connection.password: environment variable DB_PASSWORD is not set
+  line 6: input.paths[1]: invalid reference "${1X}": a name is letters, digits and '_', not starting with a digit
+  line 7: input.connection.host: unterminated reference "${DB_HOST"
+  ```
+
+  Every unset, invalid and unterminated reference is reported together, before anything is
+  decoded.
+- **Redaction.** No error from loading the config contains an expanded value. A type error on a line that holds a
+  reference names the reference instead of the value:
+  `line 3: input.connection.port: cannot unmarshal the expansion of "${DB_PORT}" into int`.
+- **Generated output.** `input.connection` never reaches generated code or the manifest. A
+  reference in any other field does, which makes the output depend on the environment that ran
+  `generate`. When generated files are committed and drift-checked, keep references to
+  connection and deployment settings.
+
+Only `sqlgen.yml` is expanded. The gqlgen config sqlgen reads and merges is not.
+
 ### 4.2 InputConfig
 
 Controls where the schema is read from.
@@ -287,22 +343,22 @@ Controls where the schema is read from.
 | `dialect` | `string` | `"postgres"` | `postgres`, `mysql`, `sqlite` | SQL dialect for parsing. |
 | `source` | `string` | `"files"` | `files`, `database`, `both` | Schema source mode. |
 | `schema` | `string` | `"*"` | — | PostgreSQL only: the schema that an unqualified table name, view name or `REFERENCES` target resolves to when parsing SQL files. `"*"` resolves to `public`. It does not filter which schemas are parsed or generated; `introspect.schemas` filters introspection. On MySQL/SQLite a value other than `"*"` is ignored with a warning ([4.13](#413-config-validation-rules)). See [5.5](#55-schema-qualification--table-naming). |
-| `paths` | `[]string` | `["."]` | — | SQL file/directory paths to parse (when source is `files` or `both`). |
+| `paths` | `[]string` | `["."]` | — | SQL file/directory paths to parse (when source is `files` or `both`). Ignored under `source: database`, including the `["."]` default: no file is read. Setting it explicitly there warns ([4.13](#413-config-validation-rules)). |
 | `views` | `[]string` | `[]` | — | Paths to view annotation files or directories containing them. Files here are parsed exclusively as views — not as DDL. See [Section 16.1](#161-annotation-files-file-sourced-views). |
 | `parse_mode` | `string` | `"strict"` | `strict`, `merge` | How duplicate table definitions across files are handled. See [5.6](#56-multi-file-parsing-order). |
 | `connection` | `ConnectionConfig` | — | — | Required when `source` is `database` or `both`. |
-| `introspect` | `IntrospectConfig` | — | — | Schema/table filtering for introspection. |
+| `introspect` | `IntrospectConfig` | — | — | Schema/table filtering for introspection. Has no effect under `source: files`, and setting it there warns ([4.13](#413-config-validation-rules)). |
 
 ### 4.3 ConnectionConfig
 
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
 | `url` | `string` | — | Full connection URL. Takes precedence over individual fields. |
-| `host` | `string` | — | Database host. Required for postgres/mysql when `url` is empty. |
-| `port` | `int` | — | Database port. Required for postgres/mysql when `url` is empty. |
-| `user` | `string` | — | Username. Required for postgres/mysql when `url` is empty. |
+| `host` | `string` | — | Database host. Required for postgres/mysql when `url` is empty. A value starting with `/` is a Unix socket: the socket directory on postgres, the socket file on mysql. |
+| `port` | `int` | `5432` (pg), `3306` (mysql) | Database port. Ignored on SQLite, and on mysql when `host` is a socket file. |
+| `user` | `string` | — | Username. Required for postgres/mysql when `url` is empty. On mysql it cannot contain `:`, which the DSN has no escape for. |
 | `password` | `string` | — | Password. Can be overridden by `SQLGEN_DB_PASSWORD` env var. |
-| `database` | `string` | — | Database name (or SQLite file path). Required when `url` is empty. |
+| `database` | `string` | — | Database name (or SQLite file path). Required when `url` is empty. A SQLite file that does not exist is a connection error; sqlgen does not create it. A `file:` URI that sets `mode` is opened as that mode says. |
 | `ssl_mode` | `string` | `"disable"` (pg), `"false"` (mysql) | TLS/SSL mode. |
 
 **Environment variable overrides:**
@@ -312,12 +368,24 @@ Controls where the schema is read from.
 | `SQLGEN_DB_URL` | `connection.url` and all individual fields | Highest |
 | `SQLGEN_DB_PASSWORD` | `connection.password` | Highest |
 
+Both are applied after `${VAR}` expansion ([4.1.1](#411-environment-variable-references)), and
+neither variable's value is expanded. Because `url` takes precedence, `SQLGEN_DB_PASSWORD` has no
+effect on a connection that comes from a `url`. Write the reference into the URL instead
+(`url: postgres://app:${SQLGEN_DB_PASSWORD}@db.internal/appdb`). sqlgen warns when the variable
+is set and a `url` ignores it ([4.13](#413-config-validation-rules)).
+
+**Secrets.** `url` and `password` usually take a reference, so the secret stays out of the
+committed file. Substitution is literal: a password containing `/`, `?`, `#` or `%` breaks a
+postgres URL. Either use the individual fields (`password: ${DB_PASSWORD}`), which sqlgen escapes
+when it builds the URL, or store the secret percent-encoded and reference it in `url`. The MySQL
+DSN takes the password unescaped, so it has no such problem.
+
 ### 4.4 IntrospectConfig
 
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
-| `schemas` | `[]string` | `[]` (all) | Schemas to include. Empty means all non-system schemas. |
-| `exclude_schemas` | `[]string` | `[]` | Schemas to exclude. Applied after inclusion. |
+| `schemas` | `[]string` | `[]` (all) | Schemas to include. Empty means all non-system schemas. PostgreSQL only; ignored with a warning on MySQL/SQLite ([4.13](#413-config-validation-rules)). |
+| `exclude_schemas` | `[]string` | `[]` | Schemas to exclude. Applied after inclusion. PostgreSQL only; ignored with a warning on MySQL/SQLite. |
 | `tables` | `[]string` | `[]` (all) | Tables to include. Empty means all in selected schemas. |
 
 To filter tables out of generation, use the top-level `exclude_tables` field (next subsection). It applies to introspected schemas and file-based inputs alike.
@@ -390,7 +458,7 @@ Resolution order for any generation field:
 | `query_limit` | `int` | `1000` | Default LIMIT for GetMany when none specified. |
 | `batch_size` | `int` | `200` | Number of rows per batch in CreateMany/UpdateMany/DeleteMany. |
 | `page_size` | `int` | `100` | Default page size for pagination when none specified. |
-| `cursor_keys` | `[]string` | `["id"]` | Columns used for cursor encoding in keyset pagination. Applied as the default to every table and view unless overridden. When inherited (i.e. not explicitly set on a table/view), missing columns trigger a fallback instead of an error — see [4.13](#413-config-validation-rules). |
+| `cursor_keys` | `[]string` | `["id"]` | Columns used for cursor encoding in keyset pagination. Applied as the default to every table and view unless overridden. When inherited (i.e. not explicitly set on a table/view), missing or nullable columns trigger a fallback instead of an error — see [4.13](#413-config-validation-rules). |
 | `uuid_version` | `string` | `"v4"` | UUID generation strategy for app-generated UUID PKs. `v4` = random, `v7` = time-ordered. |
 | `strict_updates` | `bool` | `true` | When true, `Update` and `Increment` return `ErrNotFound` if the target PK does not exist. When false, they return `nil` (idempotent). See [9.5](#95-edge-case-behaviors). |
 
@@ -416,10 +484,10 @@ Resolution order for any generation field:
 | Type | SQL on Soft Delete | SQL on Restore | Compatible SQL Types |
 |------|-------------------|----------------|---------------------|
 | `timestamp` | `SET col = CURRENT_TIMESTAMP` | `SET col = NULL` | `timestamp`, `timestamptz`, `datetime` |
-| `bool` | `SET col = TRUE` | `SET col = FALSE` | `bool`, `boolean` |
+| `bool` | `SET col = TRUE` | `SET col = FALSE` | `bool`, `boolean`, `tinyint`, MySQL `tinyint(1)` (`BOOL` / `BOOLEAN`) |
 | `integer` | `SET col = 1` | `SET col = 0` | `int`, `integer`, `smallint`, `tinyint` |
 
-The `integer` type supports `0`/`1` soft delete patterns common in legacy schemas. If a configured soft delete column exists in the table but has an incompatible type (e.g., `varchar`, `text`, `uuid`), it is a **validation error**.
+The `integer` type supports `0`/`1` soft delete patterns common in legacy schemas. If a configured soft delete column exists in the table but has an incompatible type (e.g., `varchar`, `text`, `uuid`), it is a **validation error**. A type compatible with more than one row, such as MySQL `tinyint` or `tinyint(1)`, takes the strategy of the configured `type` ([5.4](#54-soft-delete-column-detection)). A `timestamp` soft delete column must be **nullable**: the strategy marks a live row with `NULL` and Restore sets the column back to `NULL`, so a `NOT NULL` column is a **validation error** naming the column. A `bool` or `integer` column is the mirror case: the strategy marks a live row with `FALSE` / `0` ([17.2](#172-column-types)) and the default "is not deleted" filter compares to that value, which excludes `NULL`. So a **nullable `bool` or `integer` column with no `DEFAULT`** is a **validation error** naming the column, because every row created without it would be hidden. A `DEFAULT` (`DEFAULT NULL` counts as none), or `NOT NULL`, makes it valid; `NOT NULL` is not required.
 
 Custom soft delete value mappings — `varchar` columns carrying `"yes"`/`"no"` or `"active"`/`"deleted"` — are out of scope. The supported column types are those listed above, and no other.
 
@@ -437,7 +505,7 @@ There is no operations setting. The client generates **every method the schema a
 
 | Schema fact | Methods it gates |
 |-------------|------------------|
-| The entity is a **view** | A view gets a read client and no write method; [16.4](#164-generated-artifacts-views-vs-tables) lists its methods (`Get` only when the view declares a key, `Refresh` only on a materialized view). Its `Connection` is omitted when inherited `cursor_keys` name a column the view lacks ([4.13](#413-config-validation-rules)). |
+| The entity is a **view** | A view gets a read client and no write method; [16.4](#164-generated-artifacts-views-vs-tables) lists its methods (`Get` only when the view declares a key, `Refresh` only on a materialized view). Its `Connection` is omitted when inherited `cursor_keys` name a column the view lacks or a nullable one ([4.13](#413-config-validation-rules)). |
 | The table has **no primary key** after override resolution | Nothing is generated for the table: no client, model, filter, cache entry or event hook ([9.4b](#94b-no-pk-tables-are-skipped)). |
 | The table has **no soft-delete column** ([5.4](#54-soft-delete-column-detection)) | `SoftDelete`, `SoftDeleteMany`, `SoftDeleteWhere`, `Restore`, `RestoreMany` and `RestoreWhere` are not generated. Hard deletes always are. |
 | The table has **no incrementable column** ([9.8.9a](#989a-increment)) | `Increment` and its `<Table>IncrementColumn` enum are not generated. |
@@ -616,7 +684,7 @@ Any field from `generation` can be set per-table to override the global default.
 | `query_limit` | `int` | Override `generation.query_limit` for this table. |
 | `batch_size` | `int` | Override `generation.batch_size` for this table. |
 | `page_size` | `int` | Override `generation.page_size` for this table. |
-| `cursor_keys` | `[]string` | Override `generation.cursor_keys` for this table. When set explicitly, every listed column must exist on this table (hard error). When inherited from `generation.cursor_keys`, missing columns fall back to the table's primary key — or, if the table has no PK, the table's `Connection` method is omitted with a warning. See [4.13](#413-config-validation-rules). |
+| `cursor_keys` | `[]string` | Override `generation.cursor_keys` for this table. When set explicitly, every listed column must exist on this table and be NOT NULL (hard error). When inherited from `generation.cursor_keys`, missing or nullable columns fall back to the table's primary key — or, if the table has no PK, the table's `Connection` method is omitted with a warning. See [4.13](#413-config-validation-rules). |
 | `exclude_columns` | `[]string` | Merged with `generation.exclude_columns` (union of both lists). |
 | `strict_updates` | `bool` | Override `generation.strict_updates` for this table. |
 
@@ -731,7 +799,7 @@ When both `column_map` and `type_map` specify a type for the same column, `colum
 |-------|------|----------|-------------|
 | `name` | `string` | Yes | Go field name for the relationship (e.g., `"Tags"`). |
 | `type` | `string` | Yes | Relationship cardinality: `o2o`, `o2m`, `m2m`, or the long spellings `one_to_one`, `one_to_many`, `many_to_many` (case-insensitive). Any other value, or an omitted `type`, is a config error. |
-| `side` | `string` | No (O2O only) | Which end of the edge this entry represents. `parent` (default) for the FK-holder side; `child` for the inverse view from the referenced side. The manifest emits `kind: "o2o"` for `parent` and `kind: "m2o"` for `child`. Ignored for `o2m` and `m2m` (auto-detection emits both peers as parent-side). |
+| `side` | `string` | No (O2O only) | Which end of the edge this entry represents. `parent` (default) for the FK-holder side; `child` for the inverse view from the referenced side. Either value is case-insensitive. The manifest emits `kind: "o2o"` for `parent` and `kind: "m2o"` for `child`. Ignored for `o2m` and `m2m` (auto-detection emits both peers as parent-side). |
 | `table` | `string` | Yes | Related table name (bare or schema-qualified). |
 | `fk` | `string` | Yes (O2O/O2M) | The FK column that creates the link. For O2M: column on the **related** table pointing to this table's PK. For O2O: column on **this** table pointing to the related table's PK (belongs-to), or on the **related** table pointing to this table's PK (has-one); which one is derived from where the column is declared ([13.1](#131-relationship-types)). |
 | `junction` | `string` | Yes (M2M) | Junction table name (bare or schema-qualified). FK column names are inferred from the linked table names (e.g., `product_id`, `tag_id`). |
@@ -869,7 +937,7 @@ WHERE "commentable_id" = ANY($1)
 
 - The `filter` field supports the **parent → child** direction only (e.g., post → comments). This is the common access pattern.
 - The **child → parent** direction (e.g., comment → its parent post/photo/video) is not supported via relationships because the return type varies per row. Consumers should query the parent table directly using the `commentable_type` and `commentable_id` values from the child entity.
-- The `filter` value is raw SQL. It is not validated against the schema — the consumer is responsible for correctness. Invalid SQL will produce a runtime database error.
+- The `filter` value is raw SQL. It is not validated against the schema — the consumer is responsible for correctness. Codegen parses the filter of every `o2m` and `m2m` relationship, and of every `o2o` relationship to a table, and a filter the dialect's parser cannot read is a generation error ([13.7.4](#1374-validation-boundaries)). SQL that parses but is still wrong, such as a column the target table lacks, produces a runtime database error.
 - The `filter` field works with any relationship type (`o2o`, `o2m`, `m2m`) but is most commonly used with `o2m` for polymorphic patterns.
 
 #### Nested mutations per table
@@ -909,7 +977,7 @@ Each entry in the `views` map defines a read-only view. Key is view identifier.
 | `sql` | `string` | Yes | Path to SQL file containing the SELECT statement. |
 | `cache` | `ViewCacheConfig` | No | View cache overrides (`enabled`, `ttl` — tri-state pointers). **Opt-in:** views do NOT inherit global `cache.enabled`; a view is cached only when `view.cache.enabled: true` is set explicitly AND `invalidate_on` is non-empty. See [Section 27](#27-caching). |
 | `invalidate_on` | `[]string` | Conditional | Table names whose mutations invalidate this view's cache. **Required** when `cache.enabled: true` (hard validation error if missing). Table names must resolve to parsed tables that are included in generation (excluded tables are a hard error — no mutation hook fires for them). See [27.11](#2711-view-cache-invalidation). |
-| `cursor_keys` | `[]string` | No | Override `generation.cursor_keys` for this view. When set explicitly, every listed column must exist on this view (hard error). When omitted, the global value is applied if all its columns exist on the view; otherwise the view's `Connection` method is omitted with a warning. Views have no primary key, so there is no PK fallback. See [4.13](#413-config-validation-rules). |
+| `cursor_keys` | `[]string` | No | Override `generation.cursor_keys` for this view. When set explicitly, every listed column must exist on this view and be NOT NULL (hard error). When omitted, the global value is applied if all its columns exist on the view and are NOT NULL; otherwise the view's `Connection` method is omitted with a warning. Views have no primary key, so there is no PK fallback. See [4.13](#413-config-validation-rules). |
 | `tenancy` | `TableTenancyConfig` | No | Per-view tenancy overrides (`enabled`, `column`, `required`, `type` — tri-state pointers, same shape and precedence as `tables.<name>.tenancy`). A view carrying the tenant column is scoped by **detection**, so this block is only needed to opt out or to name a non-standard column. Read path only. See [29.2.5](#2925-view-tenancy). |
 | `api` | `ViewAPIConfig` | No | Per-view API exposure. `enabled` (`*bool`, nil = inherit global `api.enabled`) excludes the view from the GraphQL surface when false. `operations` (`*Operations`) narrows the view's read operations subtractively — only `get`, `paginate`, `connection` are expressible; naming any mutation operation, or a client-only key such as `get_many`, is a validation error. See [26.4](#views-on-the-graphql-surface). |
 
@@ -935,7 +1003,7 @@ Each entry in the `extras` map defines a custom Go struct (e.g., for JSONB colum
 
 ### 4.11 Enum Overrides
 
-Per-enum overrides live in the **top-level `enums:` map**, a sibling of `tables:` and `views:` rather than a member of `overrides:`. `overrides:` maps SQL *types* onto Go types; this block names a generated *identity*, which is what `tables:` / `views:` do with `struct_name`. Each entry is keyed by SQL enum name, bare or schema-qualified, following the same resolution as `tables:` ([5.5](#55-schema-qualification--table-naming)).
+Per-enum overrides live in the **top-level `enums:` map**, a sibling of `tables:` and `views:` rather than a member of `overrides:`. `overrides:` maps SQL *types* onto Go types; this block names a generated *identity*, which is what `tables:` / `views:` do with `struct_name`. Each entry is keyed by SQL enum name, bare or schema-qualified, following the same resolution as `tables:` ([5.5](#55-schema-qualification--table-naming)). A key that matches no enum in the schema warns ([4.13](#413-config-validation-rules)).
 
 | Field | Type | Description |
 |-------|------|-------------|
@@ -1106,13 +1174,15 @@ The config is validated immediately after loading, before parsing or generation 
 | **Driver/dialect mismatch** | Error | `output.driver: pgx` is only compatible with `input.dialect: postgres`. Using pgx with MySQL or SQLite is a validation error. |
 | **Table-level `cursor_keys` referencing non-existent columns** | Error | When `tables.<name>.cursor_keys` is set explicitly, every listed column must exist on that table. |
 | **View-level `cursor_keys` referencing non-existent columns** | Error | When `views.<name>.cursor_keys` is set explicitly, every listed column must exist on that view. |
+| **Explicit `cursor_keys` naming a nullable column** | Error | When `tables.<name>.cursor_keys` or `views.<name>.cursor_keys` is set explicitly, every listed column must be NOT NULL: a NULL key value encodes into a cursor that cannot be decoded back, so no row past it can be paged to. A view column's nullability is the one [16.3](#163-column-type-resolution) resolves. The error names the table or view and the column. |
+| **Inherited `cursor_keys` naming a nullable column** | As a missing column | An inherited key that names a nullable column does not resolve, exactly as a missing one does: a table falls back to its primary key, a table without one and a view omit `Connection` with a warning (rules below). On a view, `@type` or `@pk` on the column makes it NOT NULL ([16.3](#163-column-type-resolution)). |
 | **Inherited `cursor_keys` missing on a table with a PK** | Silent fallback | When a table inherits `generation.cursor_keys` and any listed column is missing, the table falls back to its primary key (single or composite) for cursor pagination. No warning. |
 | **Resolved `cursor_keys` naming an access-restricted column** | Error | Every column in a table's resolved `cursor_keys` must carry `access ∈ {public, read_only}` — cursor key values are encoded into every edge cursor and accepted back as `after` / `before`. Applies to explicit and inherited keys alike, and regardless of whether an API is generated; exempt when the keys do not resolve, since `Connection` is then omitted. See [32.4](#324-validation). |
 | **Inherited `cursor_keys` missing on a table without a PK** | Warning | When a table inherits `generation.cursor_keys`, any listed column is missing, and the table has no primary key, the table's `Connection` method is omitted. A warning is emitted naming the table. |
 | **Table has no primary key after override resolution** | Warning | When a table has no `PRIMARY KEY` clause and no `tables.<name>.primary_key.columns` override, the table is skipped from generation entirely (see [No-PK tables are skipped](#94b-no-pk-tables-are-skipped)). No client, model, filter type, cache entry, or event hook is emitted; other tables are unaffected. Warning text: `table %s has no primary key; skipped from generation`. Use `tables.<name>.primary_key.columns` to declare a PK or `exclude_tables` to silence the warning. |
 | **`primary_key.columns` references non-existent column** | Error | Every column listed in `tables.<name>.primary_key.columns` must exist on the table after `exclude_columns` is applied. |
 | **`primary_key.columns` lists a nullable column** | Error | Primary key columns must be NOT NULL. A nullable column in `primary_key.columns` is a validation error. |
-| **`primary_key.columns` has no UNIQUE coverage** | Warning | When none of the columns in `tables.<name>.primary_key.columns` are covered by a UNIQUE constraint at the DB level, a warning is emitted: `no UNIQUE constraint covers the declared PK; sqlgen assumes uniqueness — enforce it at the application level if not at the DB level`. The user is the only one who knows whether uniqueness is enforced in app code; sqlgen does not block on this. |
+| **`primary_key.columns` has no UNIQUE coverage** | Warning | When no `PRIMARY KEY` or non-partial `UNIQUE` constraint at the DB level has exactly the column set in `tables.<name>.primary_key.columns` (order-independent; for a single-column override an inline `UNIQUE` on that column also counts), a warning is emitted: `no UNIQUE constraint covers the declared PK; sqlgen assumes uniqueness — enforce it at the application level if not at the DB level`. The test is set equality, the same evidence the `{Table}ConflictPK` target needs ([9.5](#95-edge-case-behaviors)): a `UNIQUE` on `(a)` makes `(a, b)` unique but gives `ON CONFLICT (a, b)` no index to match, so that override still warns. The user is the only one who knows whether uniqueness is enforced in app code; sqlgen does not block on this. |
 | **`primary_key.strategy: db` or `app` on a composite key** | Error *(schema-level)* | A composite key is always `caller` ([8.6](#86-primary-key-strategy)). The generator has no per-column strategy: `Create`, `CreateMany`, `Upsert` and `UpsertMany` build the returned key from the create input's key fields, which `db` drops and `app` wraps in `omittable.Value`, so the generated package would not compile. The key is resolved as the generator resolves it, so a composite `primary_key.columns` override is covered too. The error names the table, the strategy and the key columns, and points at a single-column `primary_key.columns` override for a key the database generates. |
 | **Inherited `cursor_keys` missing on a view** | Warning | When a view inherits `generation.cursor_keys` and any listed column is missing on the view, the view's `Connection` method is omitted. A warning is emitted naming the view. Views have no primary key, so there is no PK fallback. |
 | **`views.<name>.tenancy.enabled: true` with the tenant column absent from the view** | Error | Mirrors the table rule ([29.2.3](#2923-detection) rule 5). The error names the view and the expected column. |
@@ -1122,19 +1192,30 @@ The config is validated immediately after loading, before parsing or generation 
 | **Mutation operation named in `views.<name>.api.operations`** | Error | A view is read-only ([16.4](#164-generated-artifacts-views-vs-tables)); only `get`, `paginate`, `connection` are expressible. Silently ignoring a knob the user deliberately turned is worse than rejecting it. |
 | **`views.<name>.api.enabled: true` with global `api.enabled: false`** | Error | Per-view flag is opt-*out* only, matching the `tables.<name>.manifest` precedent — a single entity cannot be opted in without the package-level opt-in. |
 | **`soft_delete_columns` type mismatch** | Error | If a configured soft delete column name matches a table column but the column's SQL type is not compatible (`timestamp`, `bool`, or `integer` — see [4.6](#46-generationconfig)), it is a validation error. Incompatible types include `varchar`, `text`, `uuid`, `json`, etc. |
+| **`NOT NULL` `timestamp` soft delete column** | Error | A `timestamp` soft delete column marks a live row with `NULL` ([4.6](#46-generationconfig)), so a `NOT NULL` one can never hold a live row: the default "is not deleted" filter (`IS NULL`) matches nothing and Restore violates the constraint. The error names the column and the table; make the column nullable or soft delete with a `bool` or `integer` column. |
+| **Nullable `bool` / `integer` soft delete column with no `DEFAULT`** | Error | These strategies mark a live row with `FALSE` / `0` ([4.6](#46-generationconfig)), and the default "is not deleted" filter (`= FALSE` / `= 0`) excludes `NULL`, so every row created without the column is hidden: `Create` returns `ErrNotFound` for the row it just inserted. The error names the column and the table; make the column `NOT NULL` or give it `DEFAULT FALSE` / `DEFAULT 0`. `DEFAULT NULL` counts as no default. |
 | **Resolved name collisions** | Error (resolution-level) | If two schema entities — tables, views, enums, SET types, composite types, domain types — resolve to the same Go type name, the same file stem, or the same `hook.TableName` constant, it is a validation error. Singularization is what makes this reachable: `users` and `user`, or `people` and `person`, are different SQL names that land on one `User` / `Person`. Guidance: use `tables.<table>.struct_name` / `views.<view>.struct_name` / `enums.<enum>.struct_name` ([4.11](#411-enum-overrides)) to disambiguate. See [8.5](#85-naming-rules) "Resolved type names and file stems". |
+| **An `enums:` key that matches no enum** | Warning *(schema-level)* | An `enums.<name>` entry is looked up by each schema enum's schema-qualified name, then its bare one ([4.11](#411-enum-overrides)), so a key no enum answers to — a typo, or a MySQL key in the `<table>_<column>_enum` form rather than `<table>__<column>_enum` ([8.3](#83-generated-artifacts--other)) — would do nothing. It warns under `sqlgen validate` and `sqlgen generate`, naming the key; a key naming a MySQL SET type says instead that a SET takes no override. A warning rather than an error, because a schema narrowed by `introspect.schemas` or `introspect.tables` can legitimately leave a key unmatched. |
 | **A resolved name sqlgen already declares** | Error (resolution-level) | If an entity resolves to a Go type name or a file stem the generated package emits on its own behalf — `Client`, `Connection`, `Edge`, `ErrNotFound`, `sorter_gen.go`, … — it is a validation error. A table named `clients` or `connections` is the shape this catches. See [8.5](#85-naming-rules) "Resolved type names and file stems". |
 | **A nested-mutation name colliding with an entity's** | Error (resolution-level) | The nested-mutation type names ([9.9.5](#995-generated-surface)) key on a **(parent, edge)** pair, so they are injective in no entity's primary name and the two rules above cannot see them. A collision against an entity's Go type name, or against the `Create<T>Input` / `Update<T>Input` a table derives, is an error naming both the relationship and the entity. The claim is structural — it does not consult `nested_mutations.enabled` or the `api.operations` mask, so enabling the feature later never turns a valid config invalid. Guidance: `tables.<table>.struct_name` on either entity — the wrapper names are spelled from the parent's struct name alone, so renaming the parent fixes those; a per-edge name can also be moved by renaming the relationship under `tables.<parent>.relationships`. See [8.5](#85-naming-rules). |
 | **Two claims on one GraphQL type name** | Error (codegen-level) | When the GraphQL surface is generated, two entities resolving to the same GraphQL type name — an enum against a declared scalar, a table against another table, an enum against `PageInfo`, a consumer scalar against a comparator input — is a generation error naming both claimants. Distinct from the Go rule above: the namespaces differ, and a document valid in Go can be invalid in GraphQL (a SQL enum named `duration` gives a legal Go `Duration` beside a `Duration` scalar that gqlparser rejects). Guidance: `enums.<enum>.struct_name`, `tables.<table>.struct_name`, `views.<view>.struct_name`, or rename the `api.graphql.scalars` entry. See [26.4](#graphql-type-name-ownership). |
 | **`exclude_columns` removes all columns** | Warning | If global + table-level `exclude_columns` removes every column from a table, a warning is printed and the table is skipped (no code generated). This is not an error — the consumer may intentionally exclude a table this way. |
 | **`input.schema` on MySQL/SQLite** | Warning | MySQL and SQLite do not support schemas. If `input.schema` is set for these dialects, it is ignored and a warning is printed. |
+| **`input.introspect.schemas` / `exclude_schemas` on MySQL/SQLite** | Warning | MySQL and SQLite do not support schemas, so under `source: database` or `both` these filters are ignored and a warning names the key and the dialect. Use `introspect.tables` to narrow introspection there. |
+| **Input key the source does not read** | Warning | `input.paths` set explicitly under `source: database`, or any `input.introspect` field set under `source: files`, is ignored, and a warning names the key and the source. The `["."]` default for `paths` is not an explicit setting and does not warn. |
 | **Missing `connection` for `database`/`both` source** | Error | `input.connection` is required when `input.source` is `database` or `both`. |
+| **Unset environment variable** | Error | A `${NAME}` reference to a variable that is not set ([4.1.1](#411-environment-variable-references)). Every unset reference is reported, each with its line, path and variable. A variable set to the empty string is not unset. |
+| **Invalid environment variable reference** | Error | A `${…}` whose name is not `[A-Za-z_][A-Za-z0-9_]*`, such as `${}`, `${1X}` or `${X:-default}`. Write `$${` for a literal `${`. |
+| **Unterminated environment variable reference** | Error | A `${` with no closing `}`. |
+| **Environment variable reference in a tagged value** | Error | A `${…}` in a value with an explicit YAML tag other than `!!str`, such as `!!int`. An untagged reference is already typed by its value ([4.1.1](#411-environment-variable-references)). |
+| **`SQLGEN_DB_PASSWORD` ignored by a `url`** | Warning | Under `source: database` or `both`, `SQLGEN_DB_PASSWORD` is set and non-empty, and the connection comes from a `url` (`SQLGEN_DB_URL` or `input.connection.url`) that doesn't reference `${SQLGEN_DB_PASSWORD}`. The `url` wins ([4.3](#43-connectionconfig)), so the password is not used. The warning names the variable and the `url`'s source, and suggests writing the reference into the `url`, or, when the `url` is `SQLGEN_DB_URL`, putting the password in it. |
 | **Duplicate `struct_name` overrides** | Error (resolution-level) | Two tables setting the same `struct_name` is one case of the resolved-name collision rule above, which is checked against auto-derived names too: `tables.accounts.struct_name: User` beside a `users` table collides just as surely as two identical overrides. |
 | **A relationship declares both `filter` and `discriminator`** | Error | The two are mutually exclusive on one relationship ([13.4.1](#1341-discriminator--the-structured-form-of-a-polymorphic-edge)). The error names the relationship and both keys. |
 | **`discriminator.column` is not a column on the related table** | Error *(schema-level)* | The discriminator compiles to a predicate on the related table, and on the write side a nested `create` sets it; a column that does not exist can do neither. The error names the relationship, the column, and the related table. |
 | **A `discriminator.value` the read paths cannot compare with its column** | Error *(resolution-level)* | A value of the wrong kind for a basic or enum column, a PostgreSQL `json` / `jsonb` column, or a SQLite column bound to `[]byte` or `types.JSON`. Each fails, or silently matches the wrong rows, on the edge's first read ([13.4.1](#1341-discriminator--the-structured-form-of-a-polymorphic-edge) **Validation**). The column's resolved Go binding decides it, so the rule runs after type resolution. The error names the relationship, the column, the value and the reason. |
 | **`sort` on an O2O relationship, or a malformed `sort` entry** | Error | An O2O edge is loaded by a `LEFT JOIN` in the parent query ([13.2](#132-loading-strategy)) and has no loader query of its own, so a static `sort` there would be ignored — the accept-and-drop shape. On O2M and M2M, every entry needs a `column`, and `direction` is `asc` or `desc` (either case); an empty column or an unknown direction would otherwise surface only as an SQL error on every load. The error names the relationship and the entry. |
 | **A `sort` column is not a column on the related table** | Error *(schema-level)* | The loader hands the static sort to the related table's query, so an unknown column would fail every relationship load at runtime. The error names the relationship, the column, and the related table. The check reads the parsed tables only, as the `discriminator.column` row's does: a target absent from them is left to relationship resolution, and a view target's sort column is not checked here — a bad one fails as an SQL error on the edge's first load. |
+| **A relationship missing `name`** | Error | [4.8](#48-tableconfig-per-table) marks `name` required: it is the relationship's Go field on the entity struct. Without it an `o2o` edge panics the generator, and an `o2m` or `m2m` edge emits an entity-struct field with no name, so the generated package does not parse. The error names the relationship and the key, and is reported alongside a missing or invalid `type`. |
 | **A relationship missing the link key its type requires** | Error | [4.8](#48-tableconfig-per-table) marks `fk` required on `o2o` and `o2m`, and `junction` on `m2m`: each names what creates the link. Without `fk` an `o2m` edge generates a filter field on an empty column name and the generated package does not parse, and an `o2o` edge generates a `LEFT JOIN` on an empty identifier that fails on its first load; without `junction` an `m2m` edge generates a package that does not compile. The error names the relationship and the key. An entry whose `type` is missing or invalid reports the type error instead of a link-key error. |
 | **A relationship's `fk` is not a column where its type puts it** | Error *(schema-level)* | An `o2m` `fk` must be a column on the related table; an `o2o` `fk` must be a column on this table (belongs-to) or on the related table (has-one), since [13.1](#131-relationship-types) derives which one from where it is declared ([4.8](#48-tableconfig-per-table)). A column on neither side would otherwise be read as belongs-to: an `o2m` edge then fails in the Go compile of the generated package, and an `o2o` edge on its first load. The error names the relationship, the column, and the table or tables it was looked up on. `m2m` is not checked, since its link columns are the junction's own fields. The check reads the parsed tables only, as the `sort` row's does: a target absent from them, a view target included, is left to relationship resolution. |
 | **A declared relationship's `table:` resolves to no generated entity** | Error *(resolution-level — see phase 3 below)* | A `tables.<name>.relationships` entry must target a table or view that generates. A table excluded by `exclude_tables` ([6.4](#64-filtering)), a table with no primary key ([9.4b](#94b-no-pk-tables-are-skipped)), or a name not in the schema is an error. It names the table, the relationship, the target and the three causes, because the user declared the edge by name. Every such entry is reported in one pass. The FK-inferred counterpart is silently omitted instead, by the same listed / auto-included rule as nested-mutation edges below: an FK into a skipped table was never asked for, so it cannot break the tables that reference it. The same row covers the ambiguity rule in [5.5](#55-schema-qualification--table-naming): a bare `table:` or `junction:` that names an entity in more than one schema is an error, and the message names each qualified spelling. |
@@ -1175,16 +1256,18 @@ The config is validated immediately after loading, before parsing or generation 
 
 Validation runs in three phases:
 1. **Config-level** (before parsing) — driver/dialect mismatch, missing connection, invalid `api.operations` presets, a leftover client `operations` key, client-only keys in an `api.operations` mask, duplicate struct names
-2. **Schema-level** (after parsing) — cursor_keys existence, soft_delete type mismatch, struct name collisions from auto-detection, exclude_columns exhaustion
+2. **Schema-level** (after parsing) — cursor_keys existence and nullability, soft_delete type mismatch, `NOT NULL` timestamp column and nullable no-`DEFAULT` bool / integer column, struct name collisions from auto-detection, exclude_columns exhaustion
 3. **Resolution-level** (during generation) — the few rules that need the naming or type engine to have run, and so cannot be answered from the config text alone: the `api.operations` over-reach warning (which reads each table's resolved operations), the resolved-field-name rules (collision and reserved name), whether a declared relationship's target generates at all (which needs `exclude_tables` and the primary-key rule applied, and the target's `struct_name` resolved), the two rules that ask whether a Go type literal needs an explicit import, and the one-UUID-library-per-package rule, which has to collect the import path every column actually resolved to across the whole package before it can count them. They live in the generator rather than in config validation, and the table above marks them — but `sqlgen validate` still reports them: it builds the table, view and API contexts in memory and discards them, so every phase-3 rule is answered at validate time without loading a template or writing a file.
 
 **Cursor key resolution — fallback semantics.** `cursor_keys` resolution is lenient for inherited values and strict for explicit values. The rationale: explicit configuration is a user assertion that must be honored or flagged; an inherited default should degrade gracefully because the global default cannot know every table's schema shape. Partial matches (some columns present, others missing) always trigger a full fallback — never a subset — because a partial cursor would silently change sort semantics. Resolution rules:
 
-1. **Table, inherited, any column missing, PK present** → use table PK (single or composite). No warning.
-2. **Table, inherited, any column missing, no PK** → omit `Connection`. Warning.
-3. **Table, explicit, any column missing** → error.
-4. **View, inherited, any column missing** → omit `Connection`. Warning. (Views have no PK fallback.)
-5. **View, explicit, any column missing** → error.
+1. **Table, inherited, any column missing or nullable, PK present** → use table PK (single or composite). No warning.
+2. **Table, inherited, any column missing or nullable, no PK** → omit `Connection`. Warning.
+3. **Table, explicit, any column missing or nullable** → error.
+4. **View, inherited, any column missing or nullable** → omit `Connection`. Warning. (Views have no PK fallback.)
+5. **View, explicit, any column missing or nullable** → error.
+
+A nullable column counts as unresolved because a cursor cannot carry NULL: the keyset condition `cursor_keys > cursor_values` has no value to compare a NULL key against, so a cursor holding one is rejected as invalid.
 
 ### 4.14 Config JSON Schema (editor support)
 
@@ -1198,11 +1281,18 @@ filename.
 structure, key names, value types, and closed value sets (`dialect`, `driver`,
 `layout`, `uuid_version`, soft-delete `type`, operations presets, column
 `access` roles, GraphQL `field_casing`, scalar `marshaling`, cache
-`serializer`, manifest `json_layout`, relationship `type` / `side`). It does not
-express sqlgen's cross-field rules — driver/dialect pairing, `connection`
-required by `source`, soft-delete column type compatibility, cursor-key
-existence, `marshaler_package` required when `marshaling: external`. Those stay
-in [§4.13](#413-config-validation-rules) and remain the job of `sqlgen validate`.
+`serializer`, manifest `json_layout`, relationship `type` / `side`). Of
+sqlgen's cross-field rules it expresses only a relationship's link key (`fk`
+for `o2o` / `o2m`, `junction` for `m2m`); it does not express the others, such
+as driver/dialect pairing, `connection` required by `source`, soft-delete
+column type compatibility, cursor-key existence, `marshaler_package` required
+when `marshaling: external`. Those stay in
+[§4.13](#413-config-validation-rules) and remain the job of `sqlgen validate`.
+
+**Environment variable references.** The schema types integer and boolean fields strictly, so an
+editor flags `port: ${DB_PORT}` as a type error even though sqlgen accepts it
+([4.1.1](#411-environment-variable-references)). References go mostly in string fields, which the
+schema accepts as written.
 
 **Strictness.** Every object sets `"additionalProperties": false`. This is the
 opposite choice from the manifest schema, which tolerates unknown properties for
@@ -1286,21 +1376,31 @@ Each dialect parser lives in the **parser module** (`github.com/teandresmith/sql
 
 **PostgreSQL** (`pg_query_go/v6`):
 - Statements apply one at a time, in file order, as PostgreSQL applies them (see [5.6](#56-multi-file-parsing-order)). A statement sees only what the statements before it left: `COMMENT ON`, or `ALTER TABLE` without `IF EXISTS`, before the table's `CREATE TABLE` is an error, a table moved or renamed mid-file no longer answers to its old name, and that name is free for a later `CREATE`
-- ALTER TABLE: ADD/DROP COLUMN, ADD/DROP CONSTRAINT, RENAME COLUMN, RENAME TABLE, SET SCHEMA
-- ALTER COLUMN: SET/DROP NOT NULL, SET/DROP DEFAULT, ALTER TYPE
+- ALTER TABLE: ADD/DROP COLUMN, ADD/DROP CONSTRAINT, RENAME COLUMN, RENAME TABLE, RENAME CONSTRAINT, SET SCHEMA, ATTACH/DETACH PARTITION; `ALTER INDEX … RENAME TO`. Renaming a PRIMARY KEY or UNIQUE renames its index, and renaming the index renames the constraint
+- ALTER COLUMN: SET/DROP NOT NULL, SET/DROP DEFAULT, ALTER TYPE, ADD GENERATED … AS IDENTITY, DROP IDENTITY, DROP EXPRESSION, SET EXPRESSION
+- ALTER DOMAIN: ADD CHECK (an unnamed one is named as `CREATE DOMAIN` names it), DROP CONSTRAINT, RENAME CONSTRAINT, RENAME TO
+- ALTER TYPE: ADD VALUE [IF NOT EXISTS] [BEFORE | AFTER], RENAME VALUE, ADD ATTRIBUTE, DROP ATTRIBUTE [IF EXISTS], ALTER ATTRIBUTE … [SET DATA] TYPE, RENAME ATTRIBUTE, RENAME TO (of an enum, composite type or domain). A statement's attribute subcommands apply as PostgreSQL applies them, every DROP first, then every ALTER … TYPE, then every ADD, and ALTER ATTRIBUTE … TYPE is an error while a table column uses the composite type, directly or through an array, domain or other composite type, as PostgreSQL refuses it whether or not CASCADE is given. A renamed type is renamed in every column, composite attribute and domain that uses it, and a renamed enum label is renamed in each default, CHECK, generation expression and partial-index predicate where it is a constant of the enum (cast to it, compared with or listed against a column of the enum's type, or the whole default of such a column), as the catalog reads them
+- Sequences: `CREATE SEQUENCE`, `ALTER SEQUENCE … OWNED BY` and `RENAME TO`, and `DROP SEQUENCE` are read for what they change in the model. A sequence's name is taken, so an index cannot have it. A column that owns a sequence (`OWNED BY`, or a serial column) and has a `nextval(…)` default is auto-increment with no default, as introspection reads it, whatever order the statements come in. This is the form `pg_dump` writes a serial column in; it writes an identity column as `ALTER COLUMN … ADD GENERATED … AS IDENTITY`
 - IF EXISTS / IF NOT EXISTS: ALTER TABLE IF EXISTS, ADD COLUMN IF NOT EXISTS, DROP COLUMN IF EXISTS, DROP CONSTRAINT IF EXISTS
 - Parses composite type attributes, domain type constraints, enum values
+- An unnamed domain CHECK is named `<domain>_check`, as PostgreSQL names it: the name is cut to 63 bytes like a table constraint's, and a name any constraint in the schema already holds gets a numeric suffix (`<domain>_check1`). A domain's `NOT NULL` is not a domain constraint in the model
 - Detects auto-increment columns: `serial`/`bigserial`/`smallserial` and `GENERATED { ALWAYS | BY DEFAULT } AS IDENTITY` (SQL-standard identity columns, PostgreSQL 10+)
+- Generated columns: `GENERATED ALWAYS AS (expr) STORED` (PostgreSQL 12+). PostgreSQL 18's VIRTUAL generated columns are a parse error: `pg_query_go` ships the PostgreSQL 17 grammar. Introspection reads them ([6.3](#63-dialect-introspection-capabilities))
+- `CREATE TABLE … PARTITION OF` is skipped with a warning, like `CREATE VIEW`. The partitioned parent (`PARTITION BY`) is the entity; a partition is not. `ALTER TABLE … ATTACH PARTITION` drops the attached table from the model with a warning; it is a partition from then on. `DETACH PARTITION` is skipped with a warning: the detached table is a table again, but its indexes and constraints are clones PostgreSQL names on its own, so it is modelled only by introspection (an index on it is skipped, as on a partition)
+- Type modifiers are written without a space: `numeric(12,2)`, `varchar(255)`, as the catalog writes them. That is the spelling an `overrides.types` key matches ([7.1](#71-type-resolution-chain))
+- A type the DDL does not declare, such as an extension's type or a table's row type, is written as the DDL spells it, less an `input.schema` qualifier: with the default `public`, `public.hstore` is written `hstore` and `ext.citext` stays `ext.citext`. The introspector writes such a type with `format_type`, which leaves out a schema on the connection's `search_path`, and that `search_path` is assumed to resolve `input.schema`, as an unqualified name in the DDL does ([5.5](#55-schema-qualification--table-naming)). So an `overrides.types.hstore` key matches a `public.hstore` column under both sources. The exception is a schema that declares an enum, domain or composite type by the same name, where the bare name names that type: there the type is written `input.schema`-qualified, whether or not the DDL qualifies it and whichever is declared first, so in `app`, with `app.r` declared, `public.r` and `r` are both written `public.r` and match the key `public.r`, not `r`. The introspector qualifies such a type with its schema. A `pg_catalog` type keeps its bare spelling, which PostgreSQL resolves to `pg_catalog` before any other schema: the parser recognizes one the grammar qualifies with `pg_catalog`, such as `int`, `varchar(3)`, `bit varying(4)` or `timestamp with time zone`, and a catalog name it writes, such as `int4`, `varbit` or `timestamptz`, whether the same-named type is declared before or after. Only the spelling is kept: sqlgen reads a bare name as the owner schema's type, so a built-in written bare beside a same-named type in the owner's schema (`int` beside `app.integer`, `timestamptz` beside `app.timestamptz`) is a known gap. `DROP DOMAIN app.integer` is refused ("cannot drop type app.integer: column app.t.a uses it") though PostgreSQL accepts it, `ALTER DOMAIN app.integer RENAME TO …` retypes such columns to the new name, and the Go type is the domain's (`*string` for an `int` column beside `app.integer AS text`). It takes any other unqualified name to be in `input.schema`, so a built-in type the DDL names bare, such as `text` beside an `app.text` enum, is written `public.text` under files and `text` under database; a view column of that type in `app` read from an `input.schema` table is `public.text` under both (read from an `app` table, it keeps the table column's spelling), and a view in another schema reading it from an `app` table is `text` under files and `app.text` under database. A view column's type follows the same rule in the view's schema: in `app`, a column read from a `public` table of type `r` or `citext` is `public.r` or `public.citext` under both sources
 - `pg_query_go` links against `libpg_query` via CGO. Building the CLI from source therefore requires a C compiler; the pre-built release binaries do not.
 
 **MySQL** (`vitess/sqlparser`):
 - Parses CREATE TABLE with columns, constraints, indexes, inline comments
-- Inline ENUM values from column type definitions (table-scoped naming: `<table>_<column>_enum`, auto-resolved via `RegisterEnum`)
-- Inline SET values from column type definitions (table-scoped naming: `<table>_<column>_set`, auto-resolved via `RegisterSet`)
-- ALTER TABLE: ADD/DROP/MODIFY COLUMN, ADD/DROP INDEX, ADD/DROP CONSTRAINT, RENAME COLUMN, RENAME TABLE, CHANGE COLUMN
+- Inline ENUM values from column type definitions (table-scoped naming: `<table>__<column>_enum`, auto-resolved via `RegisterEnum`)
+- Inline SET values from column type definitions (table-scoped naming: `<table>__<column>_set`, auto-resolved via `RegisterSet`)
+- Generated columns: `GENERATED ALWAYS AS (expr) [VIRTUAL|STORED]` and shorthand `AS (expr)` (5.7+)
+- ALTER TABLE: ADD/DROP/MODIFY COLUMN, ADD/DROP INDEX, ADD/DROP CONSTRAINT, RENAME COLUMN, RENAME INDEX / KEY, RENAME TABLE, CHANGE COLUMN. `DROP CONSTRAINT` drops the CHECK, FOREIGN KEY, UNIQUE or `PRIMARY` key of that name, as MySQL 8.0.19+ does. As in MySQL, a statement's key drops and then its key renames apply before any key it adds, whatever the clause order
 - Standalone `RENAME TABLE a TO b [, c TO d ...]`, applied pair by pair, left to right
 - No native enum type, composite type, or domain type support
 - Uses databases instead of schemas
+- **DDL the file parser cannot read.** The vitess grammar (v0.23.3; v0.24.4 is the same) rejects some DDL MySQL 8.0 accepts, and each is a parse error under `files`: the type synonyms `DEC`, `FIXED`, `DOUBLE PRECISION`, `NCHAR`, `NATIONAL CHAR` / `NATIONAL VARCHAR`, `NVARCHAR`, `CHARACTER`, `CHARACTER VARYING`, `INT1`–`INT8`, `MIDDLEINT`, `LONG`, `LONG VARCHAR`, `LONG VARBINARY` and `SERIAL`; the column attribute `SERIAL DEFAULT VALUE`; a key, `PRIMARY KEY`, `UNIQUE` or `FOREIGN KEY` as the first entry of a `CREATE TABLE` (a table-level `CHECK` first is fine); a `CHECK` on the first column; two `CHECK`s on one column; a column attribute after an inline `CHECK` (`b int CHECK (b > 0) NOT NULL`); and an inline `CHECK` in `ALTER TABLE … ADD COLUMN` or `MODIFY COLUMN`. MySQL introspection reads `information_schema` and never re-parses table DDL, so `database` reads all of them ([6.3](#63-dialect-introspection-capabilities))
 
 **SQLite** (`rqlite/sql`):
 - Parses CREATE TABLE with columns and constraints
@@ -1308,8 +1408,30 @@ Each dialect parser lives in the **parser module** (`github.com/teandresmith/sql
 - Generated columns: `GENERATED ALWAYS AS (expr) VIRTUAL|STORED` and shorthand `AS (expr)` (3.31+)
 - STRICT tables: recognizes `CREATE TABLE ... STRICT` modifier (3.37+)
 - WITHOUT ROWID tables: recognizes `CREATE TABLE ... WITHOUT ROWID` modifier (3.8.2+)
+- `INTEGER PRIMARY KEY` is auto-increment only when it is a rowid alias. It is not one in a `WITHOUT ROWID` table, nor when declared `INTEGER PRIMARY KEY DESC`; such a key gets no automatic value and the caller supplies it. A table-level `PRIMARY KEY (id)` over one `INTEGER` column is a rowid alias too
+- `CREATE VIRTUAL TABLE` (FTS5, R*Tree, …) is skipped with a warning, like `CREATE VIEW`
 - No MODIFY COLUMN, enum, composite, or domain support
 - Type affinity handling (defaults to BLOB)
+
+**Constraints (all dialects).** Every PRIMARY KEY, UNIQUE, FOREIGN KEY and CHECK, whether declared inline on a column or at table level, is a table constraint, and it also sets the column flags (primary key, unique, FK reference). Parsing a `CREATE TABLE` and introspecting the table it creates give the same constraint set, with the same names. An unnamed constraint gets the name its database would assign:
+
+| Dialect | PRIMARY KEY | UNIQUE | FOREIGN KEY | CHECK |
+|---------|-------------|--------|-------------|-------|
+| PostgreSQL | `<table>_pkey` | `<table>_<cols>_key` | `<table>_<cols>_fkey` | `<table>_<col>_check`, or `<table>_check` when the expression references no column or more than one |
+| MySQL | `PRIMARY` | its first column's name, then `_2`, `_3`, … on collision | `<table>_ibfk_<n>` | `<table>_chk_<n>` |
+| SQLite | declared names only | declared names only | declared names only | declared names only |
+
+PostgreSQL names follow its own rules: `<cols>` joins the column names with `_`, a name past 63 bytes is truncated as PostgreSQL truncates it, and a name already taken gets a numeric suffix. On MySQL `<n>` counts the unnamed ones from 1 in declaration order, an `ALTER TABLE` continues from the highest `<n>` the table has, and a PRIMARY KEY is always `PRIMARY`, even when declared with a name. SQLite stores no name for an unnamed constraint, so none is derived; an unnamed SQLite constraint stays unnamed on both paths. A name is fixed when the constraint is created. PostgreSQL keeps it across a later table or column rename, while MySQL renames a `<table>_ibfk_<n>` or `<table>_chk_<n>` name along with its table. A UNIQUE that repeats the primary key or an earlier UNIQUE over the same columns follows the database:
+
+- **PostgreSQL** merges duplicates declared in one `CREATE TABLE` into the first, which takes the first name declared among them. So `id int PRIMARY KEY, CONSTRAINT u UNIQUE (id)` is one primary key named `u`. A duplicate added later by `ALTER TABLE … ADD` is a second constraint, named with the collision suffix.
+- **SQLite** drops a UNIQUE only when an identical index already exists. A rowid-alias `INTEGER PRIMARY KEY` has no index, so a UNIQUE on it is kept.
+- **MySQL** keeps every duplicate.
+
+**Indexes get the database's names too.** SQLite requires every `CREATE INDEX` to be named. On PostgreSQL an unnamed `CREATE INDEX` is `<table>_<cols>_idx`, with the collision suffix. On MySQL an unnamed `KEY` / `INDEX` takes its first column's name, numbered together with the unnamed UNIQUEs (`c`, `c_2`, `c_3`). MySQL also builds an index for a FOREIGN KEY when no existing index starts with the key's columns, and drops it once a later index does. That index is named after the constraint when the constraint is named, then after the index name a `FOREIGN KEY <name> (…)` clause declares, and after the key's first column otherwise. The MySQL parser adds it as well, so both paths list it. UNIQUE and index `method` defaults to `btree` on PostgreSQL and MySQL, and a CHECK's columns are the columns its expression references.
+
+**A table states its columns.** A `CREATE TABLE` whose columns come from another table, a type or a query is a parse error on every dialect, temporary tables included, since the file parser does not read those columns: PostgreSQL `LIKE`, `INHERITS` (outside `PARTITION OF`), `CREATE TABLE … OF type`, `CREATE TABLE … AS` and `SELECT … INTO`; MySQL `LIKE` and `CREATE TABLE … [AS] SELECT`; SQLite `CREATE TABLE … AS SELECT`. The error says to write the columns out, or to create the table in the database and read it from there (`source: database` or `both`), since the catalog holds its columns. A PostgreSQL `CREATE MATERIALIZED VIEW`, which has the same form as `CREATE TABLE … AS`, is skipped as a view.
+
+**A `CREATE INDEX` needs its table.** On every dialect a `CREATE INDEX` on a table no earlier statement created is an error, as the database rejects it, and so is one on a view, which no database indexes. A PostgreSQL materialized view or partition is the exception: the parser skips it, and an index on it is skipped with it, as are `COMMENT ON` it and the `ALTER TABLE` actions on it (`ADD`, `DROP`, `ALTER COLUMN`, `ATTACH` / `DETACH PARTITION` and the like). `COMMENT ON COLUMN` of a plain view or a composite type's attribute, which PostgreSQL accepts and `pg_dump` writes, is skipped as well: the model keeps no comment for either and introspection reads none. One on a composite type attribute that does not exist is an error. The `ALTER TABLE` / `ALTER VIEW` actions on a plain view are skipped too, and the `ALTER SEQUENCE`, `ALTER INDEX` and `ALTER FOREIGN TABLE` subcommands that `pg_dump` writes (`OWNER TO`, `ATTACH PARTITION`, `SET STATISTICS` and the like) change nothing in the model. Under `both` the database's materialized views and partitions count, so a migration can index them. `DROP INDEX` removes a `CREATE INDEX` index from its table and re-derives the UNIQUE flag it set. Dropping an expression index frees its name for a later unnamed index. A name the parser holds no index for (an index on a skipped relation, or a name nothing created) changes nothing.
 
 ### 5.3 Relationship Detection
 
@@ -1332,10 +1454,11 @@ Relationships can also be manually configured via `tables.<table>.relationships`
 
 ### 5.4 Soft Delete Column Detection
 
-For each table, columns are checked against the `soft_delete_columns` list in priority order. The first match determines the soft delete strategy:
+For each table, columns are checked against the `soft_delete_columns` list in priority order, by name. The first match's configured `type` determines the soft delete strategy; its SQL type only has to be compatible with that `type`, a `timestamp` column must be nullable, and a nullable `bool` or `integer` column must have a `DEFAULT` ([4.6](#46-generationconfig)):
 
 - **Timestamp type:** Sets column to `CURRENT_TIMESTAMP` on soft delete
 - **Bool type:** Sets column to `true` on soft delete
+- **Integer type:** Sets column to `1` on soft delete
 
 If no configured column matches any table column, that table has no soft delete support. Hard delete operations are always generated.
 
@@ -1354,7 +1477,7 @@ SQL tables may or may not include a schema prefix depending on the dialect and h
 | `CREATE TABLE products (...)` | SQLite | N/A | `products` |
 
 - **PostgreSQL:** If the SQL omits the schema, the table is assigned the `input.schema` value. The default, `"*"`, assigns `"public"`.
-- **PostgreSQL foreign keys:** An unqualified `REFERENCES` target resolves the same way, to the `input.schema` value, and not to the schema of the table that declares the key. `CREATE TABLE audit.labels (document_id uuid REFERENCES documents(id))` references `public.documents`, as PostgreSQL's default `search_path` resolves it. A foreign key whose target no parsed table defines is a schema error, because PostgreSQL rejects that DDL too. MySQL (under `FOREIGN_KEY_CHECKS=0`) and SQLite accept such a key, so for them it is not an error and produces no relationship.
+- **PostgreSQL foreign keys:** An unqualified `REFERENCES` target resolves the same way, to the `input.schema` value, and not to the schema of the table that declares the key. `CREATE TABLE audit.labels (document_id uuid REFERENCES documents(id))` references `public.documents`, as PostgreSQL's default `search_path` resolves it. A foreign key whose target no parsed table defines is a schema error, because PostgreSQL rejects that DDL too. Under `source: database` or `both` ([6.1](#61-source-modes)) only the keys the SQL files add are checked: a key the database holds has a target, even one `input.introspect` leaves out, and its relationship is omitted like one into an `exclude_tables` table ([6.4](#64-filtering)). A file's key into a table the introspected schema includes resolves. A table `input.introspect` leaves out is not in the schema at all, so a file's key into it is unresolved and a file's `ALTER TABLE` on it fails. MySQL (under `FOREIGN_KEY_CHECKS=0`) and SQLite accept such a key, so for them it is not an error and produces no relationship.
 - **PostgreSQL views:** An unqualified `CREATE VIEW` or `CREATE MATERIALIZED VIEW` name in an `input.views` annotation file ([16.1](#161-annotation-files-file-sourced-views)) resolves the same way, to the `input.schema` value. A view always has a schema, as a table does, so its `hook.TableName` value and its generated SQL are schema-qualified.
 - **MySQL/SQLite:** Tables have no schema. The name is always bare.
 
@@ -1485,7 +1608,7 @@ If a `CREATE TABLE`, `CREATE TYPE`, `CREATE DOMAIN`, or other `CREATE` statement
 
 **Drop validation:**
 
-`DROP TABLE` and `DROP TYPE` validate that no other schema element references the object being dropped. Dropping a table that is referenced by a foreign key, or dropping a type that is used by a column, is a validation error — matching real database behavior.
+`DROP TABLE` and `DROP TYPE` validate that no other schema element references the object being dropped. Dropping a table that is referenced by a foreign key, or dropping a type that is used by a column, is a validation error — matching real database behavior. A table dropped in the same `DROP TABLE` statement does not block the drop, as PostgreSQL and MySQL drop a statement's tables together (`DROP TABLE a, b` succeeds when `b` references `a`, in either order); a reference from a table outside the statement still fails it, and nothing is dropped. On PostgreSQL, `DROP TABLE … CASCADE` drops the foreign keys that reference the dropped tables instead, as PostgreSQL does; the referencing columns stay, with their unique constraints and indexes (MySQL ignores `CASCADE`). On PostgreSQL a type is used by a table or view column, a domain's base type or a composite type's attribute that names it or an array of it, and a type name is read in the schema of the object it belongs to, so a drop of `s2.st` is not blocked by an `s1.st` column. A domain or composite type dropped in the same `DROP TYPE` or `DROP DOMAIN` statement does not block the drop, as PostgreSQL drops a statement's objects together. `DROP TYPE` drops a domain too, and a `DROP DOMAIN` that names an enum or composite type is an error, as on PostgreSQL.
 
 ### 5.7 Deterministic Output
 
@@ -1500,8 +1623,12 @@ All schema elements (tables, columns, enums, types) are sorted before generation
 | Mode | Behavior |
 |------|----------|
 | `files` | Parse SQL files from `paths` config. Default. |
-| `database` | Connect to live database via `connection` config and introspect schema. |
+| `database` | Connect to live database via `connection` config and introspect schema. `paths` is not read. |
 | `both` | Introspect database first (source of truth), then merge file-based changes on top. See below. |
+
+**Both sources describe a schema the same way.** Introspected column defaults, CHECK expressions and domain constraints are normalized to the form the file parser produces for the same DDL. Catalog text is put through the same deparser the parser uses, and the casts the database adds on its own are removed: a domain cast to its base type, a literal cast to its column's type. MySQL backticks and charset introducers are dropped, and a MySQL synonym of a current-time function takes its standard name under both sources (`NOW(3)` and `LOCALTIMESTAMP(3)` are both `current_timestamp(3)`, `CURDATE()` is `current_date()`, `CURTIME()` is `current_time()`). A MySQL column type is written as the catalog stores it under both sources, so a type synonym takes its stored form (`BOOLEAN` is `tinyint(1)`, `NUMERIC(8,3)` is `decimal(8,3)`, `REAL` is `double`; [7.2](#72-built-in-type-mappings)). The MySQL file parser reads DDL as the default `sql_mode` does: under `REAL_AS_FLOAT` (also part of `ANSI` mode) MySQL stores `REAL` as `float`, so such a column is `float` under `database` and `double` under `files`. A PostgreSQL `serial` or identity column carries no default, only auto-increment, as when parsed. So `database` and `files` describe a schema identically: the same columns, types, defaults, constraints and constraint names ([5.2](#52-dialect-parsers)), and the same generated code and manifest. A view's columns come from its definition under both sources ([16.2](#162-introspected-views-db-sourced-views)), except that a column the definition cannot trace to a table is `any` under `files` and takes the catalog's type under `database`. A view's manifest `source` ([30.4.2](#3042-entity-shape)) also differs by source: under `files` it is the view file's text, annotation comments included, and under `database` it is the definition as the database stores it, which is PostgreSQL's `pg_get_viewdef` deparse, MySQL's qualified and backquoted text, or SQLite's statement without its terminator. One exception is deliberate: MySQL ignores a foreign key written inline on a column (`pid INT REFERENCES p(id)`), but the MySQL file parser keeps it as a foreign key, named and indexed like any other, so its relationship is generated. Under `files` such a table has that extra key, and its unnamed foreign keys are numbered with it included; the database has neither. MySQL's catalog also stores some text in a form the DDL cannot recover, so on MySQL that text differs by source: a `CAST` to a character type gains the connection charset (`cast(x as char)` reads back as `cast(x as char character set utf8mb4)`), a hex string literal reads back as `0x…` (`x'41'` as `0x41`), and a literal default is stored converted to its column's type (`1.5` on `decimal(10,2)` reads back as `1.50`, `1e3` on `double` as `1000`, `TRUE` as `1`, `'5'` on an integer column as `5`, `'ab'` on a binary column as `0x6162`). In a stored expression (a CHECK, a generated column or an expression default), `REGEXP` and `RLIKE` read back as `regexp_like(…)` (`m regexp 'x'` as `regexp_like(m, 'x')`, `m not regexp 'x'` as `not regexp_like(m, 'x')`), and a `NOT` is folded into the expression it negates: a comparison is inverted (`not (u > 200)` reads back as `u <= 200`), `IN`, `BETWEEN` and `IS NULL` gain or lose their `NOT`, a double `NOT` cancels, a `NOT` over `AND` or `OR` is distributed (`not (a > 1 and b > 1)` as `a <= 1 or b <= 1`), and `not x` on a bare value reads back as `0 = x`. A `NOT` over `LIKE` or `REGEXP` is kept. DDL the file parser cannot read is an error under `files`, not a difference: a PostgreSQL 18 VIRTUAL generated column introspects but does not parse ([6.3](#63-dialect-introspection-capabilities)), and so does the MySQL DDL the vitess grammar rejects ([5.2](#52-dialect-parsers)).
+
+**PostgreSQL expression text the catalog rewrites.** PostgreSQL stores some expressions in a form that cannot be turned back into the DDL's, so a CHECK, column default, generated-column or partial-index expression can read differently by source. `IN (…)` is stored as `= ANY(ARRAY[…])`, `BETWEEN` as two comparisons joined by `AND`, and `SIMILAR TO` and `LIKE … ESCAPE` as calls to `similar_to_escape` and `like_escape`. A date or time literal is printed in the server's output format: `'2000-01-01'` compared with a `timestamptz` column reads `'2000-01-01 00:00:00+00'`. A cast the DDL writes on a literal (`'{}'::jsonb`), or on a column to the type PostgreSQL would cast it to anyway (`code::text` on a `varchar` column), is stored the same as the cast the catalog adds, so introspection removes it.
 
 #### `both` Mode — Merge Strategy
 
@@ -1523,7 +1650,19 @@ The database is the **source of truth**. File-based changes are applied as an ov
 
 **Use case:** The database contains the production schema, and the SQL files contain pending migrations that haven't been applied yet. `both` mode lets the generator produce code that reflects the *future* schema (after migrations run), while the database provides the *current* baseline.
 
+`paths` therefore holds only the migrations the database has not run. An applied migration's `CREATE TABLE` names a table the database already has, which is the validation error above. A pending migration changes an existing table with `ALTER TABLE`, or with `DROP TABLE` followed by `CREATE TABLE`. It can change only tables the introspected schema includes ([6.4](#64-filtering)). A pending change to a view does not apply: the database's view stands ([16.2](#162-introspected-views-db-sourced-views)), but its columns are read again against the migrated tables, so a pending change to a table a view reads reaches the view. A pending rename of a table or column a view reads is applied to the view as the database applies it: PostgreSQL keeps the view's column name and reads the renamed table or column (a table's `SET SCHEMA` too), and SQLite does the same, except that a view column named after the column it reads, with no `AS` and no view column list, takes the new name.
+
+A pending migration that breaks a view the database has is an error. The database decides which migrations do, where it can, and the check covers every view in the database, whatever `introspect` leaves out ([6.4](#64-filtering)), except MySQL's column check, which covers only the views `introspect` includes:
+
+- **PostgreSQL** records what each view and materialized view depends on (`pg_depend`): every table, column, constraint and type its query uses, and a composite type's attribute it reads, including through a SQL function with a `BEGIN ATOMIC` body it calls. A migration that drops one (`DROP TABLE`, `DROP COLUMN`, `DROP CONSTRAINT`, `DROP TYPE`, `DROP DOMAIN`, `ALTER TYPE … DROP ATTRIBUTE`) or changes the type of such a column or attribute, even to the type it has, is an error naming the view and the object, as PostgreSQL refuses it, `CASCADE` or not. That includes a table or column dropped and then created again under its name, a partition ([5.2](#52-dialect-parsers)) or the partitioned table or column above one a view reads, and the primary key a view's `GROUP BY` relies on. A rename is not, since PostgreSQL carries it into the view, and a dependency follows the renamed object. The one shape this misses is a view that reads a table only inside a SQL function with a string body: PostgreSQL records nothing the body reads, so it accepts the drop or rename, and the view fails when it runs.
+- **SQLite** is checked by SQLite itself. The database's schema statements are run in an in-memory database, then each file in `paths`, in order. A statement SQLite refuses is an error naming the file, with SQLite's message (`error in view r after drop column: no such column: role`), and so is a view that ran before a file and fails after it (a dropped table it reads). A refusal that involves no view is reported the same way, such as dropping a column a generated column or a trigger on its table reads. Each view's columns are then read from the view as SQLite leaves it, so a file that drops and creates a view again changes the view's columns. The copy has the database's schema but none of its rows, and SQLite's default settings, so it misses a failure that depends on the data (`CREATE UNIQUE INDEX` over duplicate values), a table rename under `PRAGMA legacy_alter_table` set on the connection that runs the migrations, which leaves a view reading the old name (the same `PRAGMA` inside a file is run with it), and a trigger on another table that reads a dropped column, which SQLite checks only when the trigger fires. A table or index the database has that names a collation or function only the application registers (`COLLATE nocase_tr`, an index on `myfn(email)`, a `CHECK` that calls one), or a virtual table whose module sqlgen's SQLite lacks, is copied as the database stores it, so dropping a column such an index reads is the error SQLite gives (`error in index ix after drop column: no such column: email`). A view that does not run in the copy before the files, such as one comparing a column whose collation is missing (`no such collation sequence`), is not checked after them, though SQLite's own check when a column is dropped or renamed still covers it. A view that reads a virtual table whose module is missing is replaced in the copy by one that reads nothing, with a warning, since SQLite would otherwise refuse every `ALTER TABLE`. A file that needs a collation, function or virtual-table module sqlgen's SQLite lacks, which the tool that runs the migrations may have, is a warning naming the file and the name, not an error, and that file and the files after it are not checked: a statement that names one, an `INSERT` into a table with an index on such a function, a `DROP TABLE` of such a virtual table, or any `ALTER TABLE` in a database with an index on a column whose collation is missing, which SQLite cannot check without it. A file that runs `ATTACH DATABASE` or `VACUUM` (`VACUUM INTO` included) is also a warning naming the file, and stops the check the same way, since the copy attaches no database, so neither writes a file. After such a warning the views' columns do not follow the files left unchecked: they are read from the copy as it stood when SQLite stopped, so a rename after that point does not reach a view.
+- **MySQL** records only the tables a view reads (`information_schema.VIEW_TABLE_USAGE`, MySQL 8.0.13 and later). Dropping or renaming one is an error naming the view and the table, as MySQL leaves the view invalid; a table created again under the name satisfies it. The columns a view reads are found by reading its definition, which is best-effort. Dropping or renaming a column the view's select list reads, through a derived table or a common table expression too, is an error naming the view and its column. A column the query reads elsewhere is treated the same way: one in `WHERE`, `JOIN … ON`, `GROUP BY`, `HAVING`, `ORDER BY` or a window, inside a select-list expression, in the arguments of a function in `FROM`, in the select list of a derived table or common table expression whether or not the view selects it, in any arm of a compound (`UNION`) subquery, in a subquery in an expression (`IN`, `EXISTS`, a scalar subquery), or in a `VALUES` statement, including an enclosing query's column such a subquery, a `LATERAL` derived table or a subquery inside either reads; that error names the view and the table column. A name in `GROUP BY`, `HAVING` or `ORDER BY` that MySQL stores as a select-list alias is not such a read.
+
+A view whose columns come from the catalog (its definition cannot be read) is also checked by its types: a migration that removes an ENUM or SET type one of its columns has is the same error. On PostgreSQL the `DROP TYPE` that would remove it is refused first, as for any type a view uses ([5.6](#56-multi-file-parsing-order)).
+
 **Conflict rule:** If a file-based column definition conflicts with an introspected column (same name, different type), it is a **validation error**. The file cannot silently redefine what the database already has — use explicit `ALTER TABLE ... ALTER COLUMN` to express the change.
+
+**MySQL foreign-key indexes under `both`.** MySQL builds an index for a foreign key when no index starts with the key's columns, and drops it once a later index does ([5.2](#52-dialect-parsers)). Its catalog does not say which indexes it built this way, so under `both` every introspected index counts as declared, and a pending migration's key leaves such an index in place: with `FOREIGN KEY (a)` in the database and `ALTER TABLE … ADD KEY (a, b)` in `paths`, `both` lists `a` over `(a)` and `a_2` over `(a, b)`, while the migrated database has only `a` over `(a, b)`.
 
 ### 6.2 Introspector Interface
 
@@ -1539,16 +1678,27 @@ type Introspector interface {
 
 | Capability | PostgreSQL | MySQL | SQLite |
 |------------|:----------:|:-----:|:------:|
-| Tables & columns | `information_schema` + `pg_catalog` | `information_schema` | `PRAGMA table_list/table_info` |
+| Tables & columns | `information_schema` + `pg_catalog` | `information_schema` | `PRAGMA table_list/table_xinfo` |
 | Primary keys | Yes | Yes | Yes |
 | Foreign keys | Yes | Yes | `PRAGMA foreign_key_list` |
-| Unique constraints | Yes | Yes | Limited |
-| Check constraints | Yes | Yes | Limited |
+| Unique constraints | Yes | Yes | Yes |
+| Check constraints | Yes | Yes¹ | Yes |
 | Enum types | `pg_catalog.pg_enum` | No (inline only) | No |
 | Composite types | `pg_type` + `pg_attribute` | No | No |
 | Domain types | `information_schema.domains` | No | No |
 | Comments | `pg_description` | `information_schema` | No |
 | Multi-schema | Yes | No (single database) | No |
+
+¹ MySQL CHECK introspection needs MySQL 8.0.16 or later. An older server has no CHECK catalog, so it yields no CHECK constraints; any other failure reading CHECKs is an error. sqlgen sets no minimum MySQL version.
+
+- **PostgreSQL generated columns.** Both kinds are introspected with their expression and storage: STORED (`attgenerated = 's'`, PostgreSQL 12+) and VIRTUAL (`'v'`, PostgreSQL 18+, also what `GENERATED ALWAYS AS (expr)` with neither keyword creates). Either is left out of every write input. The file parser reads only STORED until `pg_query_go` moves to the PostgreSQL 18 grammar ([5.2](#52-dialect-parsers)).
+- **PostgreSQL partitions.** A partition (`CREATE TABLE … PARTITION OF`) is skipped; only the partitioned parent is introspected, as the parser does ([5.2](#52-dialect-parsers)).
+- **SQLite virtual tables.** Virtual tables (FTS5, R*Tree, …) and the shadow tables behind them are skipped, with a warning naming each virtual table, as the parser does.
+- **SQLite constraint names and CHECK text.** SQLite's PRAGMAs give columns, keys, foreign keys and indexes, but not constraint names or CHECK expressions. Those come from the table's stored `CREATE TABLE` (`sqlite_master.sql`), read with the file parser. `PRAGMA index_list` flags a partial index but does not give its predicate, which comes from the index's stored `CREATE INDEX`, read with the file parser, so it is the parser's text and not the DDL as written.
+- **SQLite column types.** A column's type is the declared type the catalog reports, normalized as the file parser normalizes it, so an unrecognized type is `blob` and a type modifier has no spaces (`decimal(10,2)`).
+- **SQLite generated columns.** `PRAGMA table_xinfo` lists them (`hidden` 2 is VIRTUAL, 3 is STORED), and the expression comes from the stored `CREATE TABLE`, read with the file parser.
+- **SQLite foreign keys with no column list.** `REFERENCES t` with no column list references `t`'s primary key. `PRAGMA foreign_key_list` gives no parent columns for it, so both sources take them from the parent's primary key, in key order, whichever file or statement defines the parent. A key whose parent is not defined, has no primary key, or has a primary key over a different number of columns keeps no parent columns under both sources, as SQLite reports an error (a missing table or a foreign key mismatch) when it enforces it.
+- **SQLite DDL the file parser cannot read.** Every table's stored `CREATE TABLE`, and every partial index's stored `CREATE INDEX`, is read with the file parser. The parser rejects a quoted type name (`f "my type"`, `f 'text'`, `f [text]`, `f "varchar"(10)`, `f INT "x"`): SQLite keeps it in a form the parser does not reproduce (`PRAGMA table_info` reports `"varchar"(10)` as `varchar`), so it would differ by source. A table with one is an introspection error, as the same DDL is a parse error under `files`.
 
 ### 6.4 Filtering
 
@@ -1587,6 +1737,10 @@ Steps 1 and 2 are by **column**; steps 3–6 are by **SQL type**. The two per-co
 
 Only steps 3–6 carry a `nullable:` wrapper variant. A nullable column resolved by step 1 or 2 gets `*T` (or bare `T` when the type is natively nilable). Steps 1 and 2 also resolve a literal as an opaque type: a slice literal (`[]T`) is *not* treated as an array column, so it filters through the scalar comparator rather than `comparator.Slice[T]`. Use `overrides.types` when array semantics matter.
 
+**How steps 3–5 match a SQL type.** The column's SQL type is looked up as written first, then with its modifiers stripped: a `numeric(12,2)` column takes an `overrides.types."numeric(12,2)"` entry when there is one and the `numeric` entry otherwise. A MySQL integer `… unsigned` type with a modifier is looked up as `<base> unsigned`, never as the signed base, so `int(10) unsigned zerofill` takes an `int unsigned` entry. An `… unsigned` type on a non-integer base, MySQL's or SQLite's, is looked up as written, then as `<base> unsigned`, then as the signed base, which has the same Go type: `double unsigned zerofill` takes a `double unsigned` entry, else a `double` one. PostgreSQL types are written without a space inside the modifiers, by the parser and the introspector alike ([5.2](#52-dialect-parsers)), so `"numeric(12,2)"` is the key to write. A column of a table, view, composite type or domain in a schema first tries each of those keys qualified with that schema, then bare: a type in the column's own schema is written bare ("Enum, SET and domain names" below), so an `overrides.types."app.status_enum"` key reaches a `status_enum` column of `app.accounts` as well as an `app.status_enum` column of a table in another schema, and never a same-named type in a third schema. A qualified key wins over the bare one for the same column. A domain's base type is matched as a column of that domain, in the domain's schema, and each link of a domain chain is tried at steps 3–5 before the next: an `overrides.types.email` key reaches a column of a domain defined over the domain `email`.
+
+**Enum, SET and domain names.** The parser and the introspector write a column's type the same way: bare when the type is in the column's own schema, schema-qualified when it is in another. A schema-qualified name (`billing.status`) resolves to that schema's type. A bare name (`status`) is looked up first in the schema of the table, view, composite type or domain the column belongs to, and then as a bare name, which answers only while no other schema has a type by that name. So two same-named enums in different schemas never collide: a column whose type is in its own schema resolves to that schema's enum, and a column in any other schema reaches it by its qualified name. A column of an `input.views` annotation-file view ([16.1](#161-annotation-files-file-sourced-views)) copies its source column's type, rewritten the same way for the view's schema, and its source table is found in the schema the `FROM` clause names (an unqualified one in `input.schema`).
+
 ### 7.2 Built-In Type Mappings
 
 <details>
@@ -1622,7 +1776,7 @@ Only steps 3–6 carry a `nullable:` wrapper variant. A nullable column resolved
 | `numeric[]`, `decimal[]` | `[]float64` | `[]float64` |
 | `timestamp[]`, `timestamptz[]` | `[]time.Time` | `[]time.Time` |
 
-**Array type rule:** Any PostgreSQL array type (`T[]`) maps to a Go slice of the base type's **resolved** Go mapping (`[]GoT`) — the base type's built-in mapping, or whatever an `overrides.types.<base>` entry resolves it to. The base type is always resolved in its non-null form, so the element type never carries a `sql.Null*` or pointer shape; nullable array columns use the same slice type (slices are already reference types with a `nil` zero value). `uuid[]` is therefore `[]uuid.UUID` on the default binding and on every UUID integration alike ([7.4](#74-built-in-type-integrations)), all of which spell the Go type `uuid.UUID`; a `numeric` override to `github.com/shopspring/decimal` makes `numeric[]` resolve to `[]decimal.Decimal`.
+**Array type rule:** Any PostgreSQL array type (`T[]`) maps to a Go slice of the base type's **resolved** Go mapping (`[]GoT`) — the base type's built-in mapping, or whatever an `overrides.types.<base>` entry resolves it to. The base type is always resolved in its non-null form, so the element type never carries a `sql.Null*` or pointer shape; nullable array columns use the same slice type (slices are already reference types with a `nil` zero value). `uuid[]` is therefore `[]uuid.UUID` on the default binding and on every UUID integration alike ([7.4](#74-built-in-type-integrations)), all of which spell the Go type `uuid.UUID`; a `numeric` override to `github.com/shopspring/decimal` makes `numeric[]` resolve to `[]decimal.Decimal`. A schema enum's array is the exception: it always resolves to the generated `<Enum>Slice` ([8.3](#83-generated-artifacts--other)), because pgx cannot scan or bind an unregistered enum OID into any other slice, so an `overrides.types.<enum>` entry does not reach it. Retype the array with an `overrides.types."<enum>[]"` key.
 
 </details>
 
@@ -1633,9 +1787,11 @@ Only steps 3–6 carry a `nullable:` wrapper variant. A nullable column resolved
 |----------|---------|------------------|
 | `tinyint` | `int8` | `sql.NullInt16` |
 | `smallint` | `int16` | `sql.NullInt16` |
-| `int`, `integer`, `mediumint` | `int32` | `sql.NullInt32` |
+| `int` (`integer`), `mediumint` | `int32` | `sql.NullInt32` |
 | `bigint` | `int64` | `sql.NullInt64` |
-| `int unsigned` | `uint32` | `sql.NullInt64` |
+| `tinyint unsigned` | `uint8` | `sql.NullInt16` |
+| `smallint unsigned` | `uint16` | `sql.NullInt32` |
+| `int unsigned` (`integer unsigned`), `mediumint unsigned` | `uint32` | `sql.NullInt64` |
 | `bigint unsigned` | `uint64` | `sql.NullInt64` |
 | `float` | `float32` | `sql.NullFloat64` |
 | `double`, `decimal` | `float64` | `sql.NullFloat64` |
@@ -1645,7 +1801,7 @@ Only steps 3–6 carry a `nullable:` wrapper variant. A nullable column resolved
 | `date` | `time.Time` | `sql.NullTime` |
 | `json` | `types.JSON` | `types.JSON` (nil = NULL) |
 | `blob`, `binary`, `varbinary` | `[]byte` | `[]byte` |
-| `bool`, `boolean` | `bool` | `sql.NullBool` |
+| `tinyint(1)` (`bool`, `boolean`) | `bool` | `sql.NullBool` |
 | `time` | `string` | `sql.NullString` / `*string` |
 | `year` | `int16` | `sql.NullInt16` / `*int16` |
 | `set` | `string` | `sql.NullString` / `*string` |
@@ -1653,6 +1809,10 @@ Only steps 3–6 carry a `nullable:` wrapper variant. A nullable column resolved
 | `tinyblob`, `mediumblob`, `longblob` | `[]byte` | `[]byte` |
 | `bit(1)` | `bool` | `sql.NullBool` / `*bool` |
 | `bit(N)` (N > 1) | `[]byte` | `[]byte` |
+
+MySQL column types are written on both schema sources as MySQL 8.0.19+ stores them, and `overrides.types` keys match that form. An integer type has no display width (`int(11)` is `int`), except `tinyint(1)`. A synonym takes its stored form: `bool` and `boolean` are `tinyint(1)`, `integer` is `int`, `numeric` is `decimal`, `real` is `double`, `float4` is `float` and `float8` is `double`. `decimal` keeps its precision and scale (`decimal` is `decimal(10,0)`, `decimal(5)` is `decimal(5,0)`), `float(p)` is `float`, or `double` when `p` is over 24, `char`, `binary` and `bit` keep their length (`char` is `char(1)`), and `year(4)` is `year`. So an `overrides.types` key spelled `boolean`, `integer`, `numeric` or `real` matches no MySQL column; write `tinyint(1)`, `int`, `decimal` or `double`. Every `tinyint(1)` column is `bool`, whether written `BOOLEAN` or `TINYINT(1)`, as MySQL cannot tell them apart; a stored value other than 0 or 1 does not scan into it. `ZEROFILL` makes a numeric type unsigned, and an integer one keeps its width (`int(10) unsigned zerofill` resolves as `int unsigned`, `double unsigned zerofill` as `double`).
+
+A column overridden to `types.DateTime` / `types.NullDateTime` binds as the `time.Time` the value wraps (SQL NULL for an invalid `types.NullDateTime` or a nil `*types.DateTime`), whether it is a written value or a cursor keyset value; its filter operands are `time.Time` already. The driver then writes it as wall time in its DSN `loc` and reads a `DATETIME` back in that `loc`, exactly as it does for a `time.Time` column. The RFC 3339 text `types.DateTime.Value()` writes does not work on MySQL: MySQL rejects the `Z` of a UTC time (`Error 1292`), and moves any other offset to the session time zone, so a `DATETIME` written that way reads back shifted whenever `loc` and the session time zone differ. An `overrides.types` key for a fractional-second column keeps its precision: `datetime(6)` matches a `DATETIME(6)` column and `datetime` does not.
 
 </details>
 
@@ -1666,6 +1826,11 @@ Only steps 3–6 carry a `nullable:` wrapper variant. A nullable column resolved
 | `real`, `float`, `double`, `numeric`, `decimal` | `float64` | `sql.NullFloat64` |
 | `blob` | `[]byte` | `[]byte` |
 | `boolean`, `bool` | `bool` | `sql.NullBool` |
+| `datetime`, `timestamp`, `timestamptz`, `date` | `types.DateTime` | `types.NullDateTime` |
+
+SQLite has no date/time storage class and compares these columns as text, so on SQLite the SQL builders bind every time value in the text SQLite's own `datetime()` and `CURRENT_TIMESTAMP` write: `YYYY-MM-DD HH:MM:SS` in UTC, followed by the fractional seconds the Go time carries, with trailing zeros dropped (`2026-01-01 00:00:00`, `2026-01-01 00:00:00.5`). This covers a `time.Time`, `*time.Time`, `sql.NullTime`, `types.DateTime`, `*types.DateTime` or `types.NullDateTime` argument, whether it is a written value, a filter operand or a cursor keyset value, so all three compare against a row a `DEFAULT (datetime('now'))` wrote. PostgreSQL binds the value unchanged, and MySQL binds a `types.DateTime` as the MySQL Type Mappings above describe. `types.SetOutputLayout` therefore does not affect a SQLite or MySQL statement sqlgen builds.
+
+A `date` column is a `types.DateTime` too: the bind site has no column type, so sqlgen writes and binds a date in the same text (`2026-01-01 00:00:00` for UTC midnight; a midnight in another zone binds as its UTC instant, `2026-01-01 05:00:00` for EST). SQLite's `date()` and `CURRENT_DATE` write `2026-01-01`, which scans to the same `types.DateTime` but compares as different text: an `Eq` or `In` filter on that value misses the row, the row sorts before every bound value of its own day (so `Gte` that day excludes it and `Lt` the next day includes the next day's `date()` rows), and a `date` cursor key skips such rows paging forward and returns the same row on every page paging backward. Keep a SQLite `date` column in sqlgen's text: write its default as `DEFAULT (datetime('now', 'start of day'))`, not `date('now')` or `CURRENT_DATE`, and pass dates as UTC midnight.
 
 </details>
 
@@ -2101,6 +2266,8 @@ This catches template regressions without running the full generation pipeline.
 - Driver/dialect mismatch (pgx + MySQL = error)
 - Table-level `cursor_keys` referencing non-existent columns (error)
 - View-level `cursor_keys` referencing non-existent columns (error)
+- Explicit table- or view-level `cursor_keys` naming a nullable column (error), under `use_pointers: true` and `false` alike
+- Inherited `cursor_keys` naming a nullable column → PK fallback on a table with PK; `Connection` omitted, warning, on a PK-less table or a view
 - Inherited `cursor_keys` missing on table with PK → PK fallback, no warning
 - Inherited `cursor_keys` missing on table without PK → `Connection` omitted, warning
 - Inherited `cursor_keys` missing on view → `Connection` omitted, warning
@@ -2112,6 +2279,8 @@ This catches template regressions without running the full generation pipeline.
 - `primary_key.columns` columns lack a UNIQUE constraint → warning (not error — uniqueness may be app-enforced)
 - `primary_key.columns` set alongside an auto-detected PK → override wins silently (no warning)
 - `soft_delete_columns` type mismatch (e.g., `varchar` column)
+- `soft_delete_columns` `timestamp` column that is `NOT NULL`
+- `soft_delete_columns` `bool` / `integer` column that is nullable with no `DEFAULT`
 - Struct name collisions (auto-detected and explicit `struct_name`)
 - `exclude_columns` removing all columns (warning, table skipped)
 - `input.schema` on MySQL/SQLite (warning, ignored)
@@ -2181,7 +2350,7 @@ For MySQL and SQLite, message parsing tests cover known message formats and grac
 - `generate`: correct file output, stale file cleanup in `file_per_table` mode, generated header includes CLI version
 - `completion`: outputs valid shell scripts for bash/zsh/fish/powershell
 - Config discovery: `--config` flag, `sqlgen.yml` then `sqlgen.yaml` fallback, error when neither exists
-- Exit codes: 0 (success), 1 (generation error), 2 (config error), 3 (schema error), 4 (connection error)
+- Exit codes: 0 (success), 1 (generation error), 2 (config error), 3 (schema error), 4 (connection error). 4 means a connection or catalog-query failure only; a schema error exits 3 under every `input.source`, whether it came from a file or the database ([23.9](#239-exit-codes))
 
 ##### Omittable Package Tests (`omittable/`)
 
@@ -2264,18 +2433,30 @@ testdata/examples/
 │   ├── views/
 │   ├── expected/
 │   └── tests/               # Same file structure (minus postgres-specific files)
-└── sqlite/                  # SQLite: equivalent coverage, type affinity tests
-    ├── ...
+├── sqlite/                  # SQLite: equivalent coverage, type affinity tests
+│   ├── ...
+├── introspect_postgres/     # PostgreSQL under source: both
+│   ├── sqlgen.yml           # source: both; connection.url from ${SQLGEN_EXAMPLE_DATABASE_URL}
+│   ├── schema.sql           # The database's current schema
+│   ├── views/
+│   ├── after_views.sql      # Optional: statements applied after the views (indexes on views)
+│   ├── migrations/          # Pending migrations: read by sqlgen, not applied before generation
+│   ├── expected/
+│   └── tests/               # Runs against the database with migrations/ applied
+├── introspect_mysql/        # MySQL under source: both; same layout as introspect_postgres/
+└── introspect_sqlite/       # SQLite under source: both; same layout as introspect_postgres/
 ```
 
 Each example test does the following:
 
-1. **Generate** — runs sqlgen against the example's `sqlgen.yml` and `schema.sql`
+1. **Generate** — runs sqlgen against the example's `sqlgen.yml` and its inputs
 2. **Compare** — diffs the generated output against committed golden files in `expected/`. Any difference fails the test.
 3. **Compile** — verifies the generated code compiles cleanly
 4. **Exercise** — the `tests/` directory contains Go tests that import the generated code and execute real operations against a test database (via `testcontainers-go` or SQLite in-memory) to verify correctness at runtime
 
 Golden file tests (`expected/`) catch unintended output changes. Runtime tests (`tests/`) catch logical bugs where the generated code compiles but produces wrong SQL or wrong behavior.
+
+The examples also test the database sources ([6.1](#61-source-modes)). Every example that uses `source: files` is generated a second time under `source: database`, from a live database built from its own setup files, and must match its `expected/` apart from the differences §6.1 names. The `introspect_*` examples generate under `source: both`, from a database built from their setup files with `migrations/` as the overlay. That output is the golden. Apart from the same differences, it must also equal what `database` generates from the database with `migrations/` applied, and what `files` generates from `schema.sql` plus `migrations/`.
 
 **Updating golden files:** When a template change intentionally alters output, golden files are regenerated with a single command (`make update-golden`) and the diff is reviewed in the PR.
 
@@ -2321,14 +2502,14 @@ Unit tests run on every PR without external dependencies. Integration tests run 
 | `type Get{Table}sInput struct` | Query input: Filter, Limit, Offset, Sorts, and an unexported `conditions` field for internal callers (e.g., Connection keyset conditions). Field selection is controlled via `CallOptions.FieldOptions`. |
 | `type Create{Table}Input struct` | Insert input. Fields classified as required, omittable, or auto-generated. |
 | `type Update{Table}Input struct` | Update input. All fields wrapped in Omittable to distinguish "not set" from "set to zero". |
-| `type {Table}IncrementColumn string` | String enum restricting `Increment()` to numeric, non-identifying columns — neither PK, FK, nor the tenant column. Constants generated per incrementable column. |
+| `type {Table}IncrementColumn string` | String enum restricting `Increment()` to numeric, writable, non-identifying columns — neither PK, FK, the tenant column, nor a generated column. Constants generated per incrementable column. |
 | `func scan{Table}s(database.Rows, []string) ([]*{Table}, error)` | Internal (unexported). Generated scan function that handles all column types (direct, wrapped) and dynamic field selection. Reflection-free. See [Section 19.1](#191-core-package-database). |
 | `func scan{Table}sWithOneToOneJoins(database.Rows, []string) ([]*{Table}, error)` | Internal (unexported). Generated JOIN scan function for all O2O relationships on this table. One function per table (covers all O2O aliases). Handles prefix-based column routing, NULL detection for LEFT JOIN misses, and all three scan target shapes across joined tables. |
 | `func (*{Table}Filter) ToConditions(sql.Dialect) []sql.Condition` | Converts the filter struct to SQL conditions. Explicit per-field nil-checks — no reflection. Handles `And`/`Or` recursion and soft delete. |
 
 **IncrementColumn enum example:**
 
-A column is incrementable if its Go type is numeric (`int*`, `uint*`, `float*`, `decimal.Decimal`, or any type mapped from a numeric SQL type) **and it identifies nothing** — see "Eligibility: numeric, and identifying nothing" below for the full rule. Non-numeric columns are excluded, as are primary keys, foreign keys and the tenant column even when their Go type is numeric.
+A column is incrementable if its Go type is numeric (`int*`, `uint*`, `float*`, `decimal.Decimal`, or any type mapped from a numeric SQL type) **and it identifies nothing** — see "Eligibility: numeric, and identifying nothing" below for the full rule. Non-numeric columns are excluded, as are primary keys, foreign keys, the tenant column and generated columns even when their Go type is numeric.
 
 ```go
 // Generated for a products table with price (numeric) and stock (int) columns
@@ -2343,7 +2524,7 @@ const (
 client.Products().Increment(ctx, productID, <pkg>.ProductIncrementStock, 5)
 ```
 
-**Eligibility: numeric, and identifying nothing.** A column is incrementable when its resolved Go type is numeric AND it identifies no row:
+**Eligibility: numeric, and identifying nothing.** A column is incrementable when its resolved Go type is numeric AND it identifies no row AND it is writable:
 
 - **Primary key columns are excluded** — a row's identity is not an amount.
 - **Foreign key columns are excluded** — `category_id + 1` is arithmetic on *another* row's identity and lands on whichever row happens to sit at the next value. There is no schema in which that is the intended operation. This covers config-declared synthetic FKs (`tables.<t>.relationships[].fk`) as well as schema-declared ones, so a polymorphic pointer named as a relationship FK is excluded too. Only integer-typed FKs were ever affected — a `uuid` or `text` FK is not a numeric Go type — which is why the distinction is easy to miss.
@@ -2351,6 +2532,7 @@ client.Products().Increment(ctx, productID, <pkg>.ProductIncrementStock, 5)
   On a tenanted schema the exclusion is load-bearing rather than merely tidy: `Increment` constrains which rows it *matches* but not which column it *targets*, so incrementing a foreign key walks a reference into another tenant's row. No pre-write check can catch it, because the destination value is not known until after the arithmetic — see [TENANT_SCOPED_REFERENCES.md](./design/TENANT_SCOPED_REFERENCES.md) §5.
 
 - **The tenant column is excluded** — the same rule one step further out. A foreign key identifies another row; the tenant column identifies the partition the row itself belongs to, so `tenant_id + 1` walks the row out of its own tenant. The tenant predicate `Increment` appends to its `WHERE` scopes which rows match, not which column the `SET` targets, so it is no protection. This holds regardless of `tenancy.required` and regardless of whether the tenant column is part of the primary key (a PK column is already excluded above): the cross-tenant write path [29.4.2](#2942-mutations) documents under `required: false` names a target tenant through `Update`, which arithmetic cannot do. Only a tenant column whose resolved Go type is arithmetic was ever affected — integer, float, or `decimal.Decimal` — and only when it carries no declared FK, since the FK exclusion masks the rest. A `uuid` or `text` tenant column was never eligible to begin with. The exclusion covers both increment surfaces together: the Go client's `<T>IncrementColumn` enum and the GraphQL `_inc` / `_dec` operator pair ([29.4.2](#2942-mutations), [26.5.4](#2654-mutation-translation)).
+- **Generated columns are excluded** — the database computes them, so `SET "total" = "total" + 1` fails on every dialect, as any other write to them does ([10.3](#103-usage-in-generated-code)).
 
 **A type override cannot manufacture eligibility.** Eligibility reads the *resolved* Go type, and a per-column override ([7.1](#71-type-resolution-chain)) replaces that type without restating what the column is to the database. Retyping a `text` column to `int32` or `decimal.Decimal` would otherwise emit the whole increment surface for it — enum constant, `_inc` / `_dec` operators, and `SET "col" = "col" + $1`. **A column whose SQL type is classifiable and non-arithmetic is therefore left out of the increment surface**, and generation warns, naming the override route (`column_map.<col>.type`, `type_map.<col>`, or `overrides.types.<sql type>`) so the config line is findable.
 
@@ -2489,7 +2671,7 @@ MySQL `SET` columns store zero or more values from a fixed set as a comma-separa
 1. **Value type** (`<Table><Column>SetValue string`) — a string-based enum representing individual allowed values, with constants, `All*` var, `String()`, and `Validate*()`.
 2. **Set type** (`<Table><Column>Set []<Table><Column>SetValue`) — a named slice type used as the column Go type, with `String()` (comma-joined), `Value()` (driver.Valuer), and `Scan()` (sql.Scanner, splits on comma).
 
-**Naming**: MySQL inline ENUM and SET names are scoped to the table to prevent collisions when multiple tables define columns with the same name but different values. The derived schema name is `<table>_<column>_set` (e.g., `users_permissions_set`), which resolves to Go type `UsersPermissionsSet`. Similarly, inline ENUMs use `<table>_<column>_enum` (e.g., `users_role_enum` → `UsersRoleEnum`). PostgreSQL is unaffected — it uses named `CREATE TYPE ... AS ENUM` with schema-level scoping.
+**Naming**: MySQL inline ENUM and SET names are scoped to the table to prevent collisions when multiple tables define columns with the same name but different values. The derived schema name is `<table>__<column>_set` (e.g., `users__permissions_set`), which resolves to Go type `UsersPermissionsSet`. Similarly, inline ENUMs use `<table>__<column>_enum` (e.g., `users__role_enum` → `UsersRoleEnum`). The double underscore keeps table `a`, column `b_c` (`a__b_c_enum`) apart from table `a_b`, column `c` (`a_b__c_enum`), so each has its own `enums:` key. Both still resolve to Go type `ABCEnum`, which is a resolved-name collision ([4.13](#413-config-validation-rules)): set `enums.<name>.struct_name` on one of them. A SET type has no such override, so a SET pair is resolved by renaming a table or column. A view column whose ENUM or SET is not its source table column's type (an expression, or a column read from a derived table) is named after the view the same way (`<view>__<column>_enum`); a view column that reads another view's column unchanged takes that column's type, so a chain of views shares one type. PostgreSQL is unaffected — it uses named `CREATE TYPE ... AS ENUM` with schema-level scoping.
 
 ```go
 // Individual value type (for column `permissions SET('read','write','admin')` on table `users`)
@@ -2558,6 +2740,8 @@ Composite types use JSON encoding rather than PostgreSQL's native tuple format `
 Default: Singular PascalCase of table name (e.g., `products` → `Product`, `order_items` → `OrderItem`).
 
 Override: `tables.<table>.struct_name`, `views.<view>.struct_name`, `enums.<enum>.struct_name` ([4.11](#411-enum-overrides)).
+
+Singularizing never removes a whole word: a table named `s` or `_s` keeps its word, giving `S`. A table's or view's struct name must be an exported Go identifier, and one that is not is a generation error naming its `struct_name` key. That covers a name with no letter to spell one from (`_`, `$`), one whose first letter has no upper case (`ß`), and an override that is not one.
 
 #### Field Name Resolution
 
@@ -2929,7 +3113,7 @@ tables:
 - `columns` is a list of column names in declaration order. For composite PKs, declaration order is load-bearing — it determines the field order in the generated `<Table>PK` struct, cache key construction order, and `mc.AffectedPKs` ordering. See [8.7 Composite Primary Keys](#87-composite-primary-keys) and the composite key ordering invariant (CACHE.md §16).
 - When `columns` is set, the override **silently** takes precedence over any auto-detected PK. There is no warning when both exist — the user's explicit declaration is authoritative.
 - The columns listed must exist on the table (after `exclude_columns` is applied) and must be `NOT NULL`. Each is a hard validation error if violated. See [4.13](#413-config-validation-rules).
-- sqlgen emits a warning (not an error) when none of the listed columns are covered by a UNIQUE constraint at the DB level. The user is the only one who knows whether uniqueness is enforced in application code; sqlgen does not block on this.
+- sqlgen emits a warning (not an error) when no non-partial `UNIQUE` constraint or `PRIMARY KEY` at the DB level covers exactly the listed columns (set equality, order-independent — the same evidence the `{Table}ConflictPK` target needs, [9.5](#95-edge-case-behaviors)). The user is the only one who knows whether uniqueness is enforced in application code; sqlgen does not block on this.
 - All downstream code paths (cache key generation, event PK extraction, `Get` / `Update` / `Exists` signatures, `<Table>PK` struct emission) read only the resolved PK column set, so an override is functionally identical to a real `PRIMARY KEY` constraint in the schema.
 
 **When to use.** Prefer fixing the schema (`ALTER TABLE ... ADD PRIMARY KEY (...)`) when possible — it makes the contract explicit at the DB level and prevents silent corruption from non-unique inserts. Use `primary_key.columns` only when the schema cannot be changed (third-party schema, locked migration history, etc.) and the developer is confident the uniqueness contract is enforced elsewhere.
@@ -3132,7 +3316,7 @@ All methods accept an optional trailing `...func(*CallOptions[{Table}FieldOption
 | `CreateWithRelated` | `(ctx, *Create{Table}WithRelatedInput, ...func(*CallOptions[FO])) → (*Entity, error)` | Creates the row together with rows on its eligible relationships, in one transaction. See [9.9](#99-nested-mutations). |
 | `UpdateWithRelated` | `(ctx, pk, *Update{Table}WithRelatedInput, ...func(*CallOptions[FO])) → (*Entity, error)` | Updates the row and applies a verb block per eligible relationship, in one transaction. See [9.9](#99-nested-mutations). |
 | `UpsertWithRelated` | `(ctx, *Upsert{Table}WithRelatedInput, {Table}ConflictTarget, ...func(*CallOptions[FO])) → (*Entity, error)` | Inserts or updates the row and applies the same verb blocks `UpdateWithRelated` accepts, in one transaction. See [9.9](#99-nested-mutations). |
-| `Increment` | `(ctx, pk, IncrementInput[{Table}IncrementColumn], ...func(*CallOptions[FO])) → error` | Atomic column increment/decrement. Column is restricted to numeric non-identifying columns — neither PK, FK, nor the tenant column — via the generated `{Table}IncrementColumn` enum. Negative amount performs decrement. Returns `ErrNotFound` if PK does not exist (configurable). |
+| `Increment` | `(ctx, pk, IncrementInput[{Table}IncrementColumn], ...func(*CallOptions[FO])) → error` | Atomic column increment/decrement. Column is restricted to numeric, writable, non-identifying columns — neither PK, FK, the tenant column, nor a generated column — via the generated `{Table}IncrementColumn` enum. Negative amount performs decrement. Returns `ErrNotFound` if PK does not exist (configurable). |
 
 **The three `…WithRelated` methods are separate methods, not extra arguments on the three they compose.** `Create` and `Upsert` share one `Create<T>Input` — on the GraphQL surface `create<Table>` and `upsert<Table>` are projected from the same input type ([26.5.1](#2651-exposed-resolver-surface)) — so a nested member added to it would be advertised on both and honoured by neither reliably: the schema would accept a field the executor drops. Each nested method therefore takes its own wrapper input type that *contains* the flat one rather than restating its fields. Nested methods are emitted only when the base operation they compose is also enabled ([4.13](#413-config-validation-rules)) and the table has at least one eligible relationship ([9.9](#99-nested-mutations)).
 
@@ -3581,7 +3765,7 @@ product, err := client.Products().Upsert(ctx, input, <pkg>.ProductConflictRegion
 
 **MySQL note:** MySQL's `ON DUPLICATE KEY UPDATE` does not accept an explicit conflict target — it triggers on any unique constraint violation. The `conflictKeys` parameter is accepted for API consistency but does not affect the generated MySQL SQL. The consumer should be aware that MySQL may trigger on a different constraint than the one specified. The one case the generator rules out is a target naming a column the INSERT does not write, which carries no conflict clause on any dialect (below).
 
-**Update columns in upsert:** The `DO UPDATE SET` clause includes all non-PK, non-conflict-key columns from the `CreateInput`. Columns that are part of the conflict target or PK are excluded from the SET clause (they are the identity, not the payload).
+**Update columns in upsert:** The `DO UPDATE SET` clause includes all non-PK, non-conflict-key columns from the `CreateInput`. Columns that are part of the conflict target or PK are excluded from the SET clause (they are the identity, not the payload). `UpsertMany` also excludes every non-PK auto-increment column: `serial`, an identity column (`BY DEFAULT` or `ALWAYS`), MySQL `AUTO_INCREMENT`, a column whose default is `nextval(…)`, or a SQLite rowid alias that `primary_key.columns` demoted ([8.6](#86-primary-key-strategy)). A batch binds every input column in every row, so a row that leaves such a column unset carries `DEFAULT` (`NULL` on SQLite), and setting it from that row would draw a new value on every conflict. PostgreSQL rejects the clause outright on a `GENERATED ALWAYS` identity (SQLSTATE `428C9`, whether or not a row conflicts), a `serial` or `AUTO_INCREMENT` column is redrawn, and a demoted rowid alias re-keys the row. A value the caller sets for such a column therefore applies on insert, not on conflict. The single-row `Upsert` keeps the rule as stated: it writes only the columns the caller set, so it updates such a column only when asked to.
 
 **Tables with no unique constraints:** If a table has no UNIQUE constraints, `{Table}ConflictPK` is the only conflict target generated.
 
@@ -4248,7 +4432,7 @@ type ProductClient interface {
 
 This interface is what consumers import and mock. The doc comments surface soft delete behavior, idempotency semantics, and atomicity caveats without reading the unexported implementation.
 
-**Conditional methods:** `SoftDelete*`, `Restore*` methods are only present when the table has a soft delete column. `Increment` is only present when the table has numeric non-PK columns. `Upsert` is always present (PK is always a valid conflict target).
+**Conditional methods:** `SoftDelete*`, `Restore*` methods are only present when the table has a soft delete column. `Increment` is only present when the table has an incrementable column — numeric, writable and identifying nothing ([8.2](#82-generated-artifacts-per-table)). `Upsert` is only present when the table emits a conflict-target constant ([Operations](#operations)).
 
 #### Reference Schema
 
@@ -5353,7 +5537,7 @@ VALUES ($1, $2, $3, $4, DEFAULT, DEFAULT, DEFAULT),
 RETURNING "id"
 ```
 
-`sql.Default` emits the `DEFAULT` keyword in the VALUES clause, letting the database apply the column's default expression. `BuildMultiInsert` detects `sql.Default` sentinel values and emits `DEFAULT` instead of a placeholder. This keeps all rows in the same column list while allowing per-row control over which columns use their defaults. **SQLite exception:** SQLite does not support `DEFAULT` in VALUES clauses. The code generator emits `sql.DefaultExpr` instead — a sentinel carrying the raw SQL default expression from the DDL (e.g., `datetime('now')`) or `NULL` for nullable columns without a default. `BuildMultiInsert` writes these inline as raw SQL. A table with no writable column sends `NULL` for its NOT NULL `INTEGER PRIMARY KEY`, which SQLite fills with the next rowid (see [10.3](#103-usage-in-generated-code)).
+`sql.Default` emits the `DEFAULT` keyword in the VALUES clause, letting the database apply the column's default expression. `BuildMultiInsert` detects `sql.Default` sentinel values and emits `DEFAULT` instead of a placeholder. This keeps all rows in the same column list while allowing per-row control over which columns use their defaults. **SQLite exception:** SQLite does not support `DEFAULT` in VALUES clauses. The code generator emits `sql.DefaultExpr` instead — a sentinel carrying the raw SQL default expression from the DDL (e.g., `datetime('now')`) or `NULL` for a column without a default, SQLite's implicit default: a nullable column stores `NULL`, a rowid-alias auto-increment column draws the next rowid, and a NOT NULL column (an update or soft-delete column declared without a default) fails with the NOT NULL violation the single-row `Create` reports. `BuildMultiInsert` writes these inline as raw SQL. A table with no writable column sends `NULL` for its NOT NULL `INTEGER PRIMARY KEY`, which SQLite fills with the next rowid (see [10.3](#103-usage-in-generated-code)).
 
 Previously completed sub-batches are **not rolled back** on failure. Wrap in a transaction for atomicity (Section 9.5).
 
@@ -6446,7 +6630,7 @@ func (c *productClient) HardDelete(ctx context.Context, id uuid.UUID, opts ...fu
 
 #### 9.8.9a Increment
 
-Atomic column increment/decrement. The `column` parameter is a generated string enum restricting values to numeric, non-identifying columns (Section 8.2). Returns `error` only — no entity return since the operation is a single-column atomic update. Wrapped in a mutation hook chain with `OpIncrement`.
+Atomic column increment/decrement. The `column` parameter is a generated string enum restricting values to numeric, writable, non-identifying columns (Section 8.2). Returns `error` only — no entity return since the operation is a single-column atomic update. Wrapped in a mutation hook chain with `OpIncrement`.
 
 ```go
 // Increment atomically increments or decrements a numeric column on a product.
@@ -6681,14 +6865,14 @@ func (c *productClient) Connection(ctx context.Context, input ConnectionInput[Pr
         // Decode cursors and build keyset conditions
         var keysetConds []sql.Condition
         if input.After != nil {
-            cursor, err := decodeCursor(*input.After)
+            cursor, err := decodeProductCursor(*input.After, c.cursorKeys)
             if err != nil {
                 return nil, ErrInvalidCursor
             }
             keysetConds = append(keysetConds, cursorKeyset(c.dialect, c.cursorKeys, cursor, ">"))
         }
         if input.Before != nil {
-            cursor, err := decodeCursor(*input.Before)
+            cursor, err := decodeProductCursor(*input.Before, c.cursorKeys)
             if err != nil {
                 return nil, ErrInvalidCursor
             }
@@ -6792,17 +6976,68 @@ func encodeProductCursor(keys []string, p *Product) (string, error) {
     return base64.StdEncoding.EncodeToString(data), nil
 }
 
-// decodeCursor decodes a base64 JSON cursor string into key-value pairs.
-func decodeCursor(s string) (map[string]any, error) {
+// decodeProductCursor decodes a cursor string into its key values,
+// each unmarshaled into the key column's Go type.
+func decodeProductCursor(encoded string, keys []string) (map[string]any, error) {
+    raw, err := decodeCursor(encoded, keys)
+    if err != nil {
+        return nil, err
+    }
+    var row Product
+    out := make(map[string]any, len(keys))
+    for _, key := range keys {
+        switch key {
+        case "id":
+            err = json.Unmarshal(raw[key], &row.ID)
+            out[key] = row.ID
+        }
+        if err != nil {
+            return nil, err
+        }
+        if cursorValueIsNull(out[key]) {
+            return nil, ErrInvalidCursor
+        }
+    }
+    return out, nil
+}
+```
+
+`encode<T>Cursor` has a case for every column; `decode<T>Cursor` has one for each `cursor_keys` column (here the default, `id`). Unmarshaling each value into its column's Go type means the keyset condition binds the type the encoder marshaled (`[]byte`, a `sql.Null*` wrapper, a PostgreSQL array), and a value of the wrong JSON shape or type fails to decode.
+
+**Cursor helpers (generated once, in `connection_gen.go`):**
+
+```go
+// decodeCursor decodes a base64 JSON cursor string into its raw key values.
+// Every key must hold a non-null value: a missing one would leave its keyset
+// comparison without a bound argument. Each entity's decode<T>Cursor then
+// unmarshals the values into the key columns' Go types.
+func decodeCursor(s string, keys []string) (map[string]json.RawMessage, error) {
     data, err := base64.StdEncoding.DecodeString(s)
     if err != nil {
         return nil, err
     }
-    var cursor map[string]any
+    var cursor map[string]json.RawMessage
     if err := json.Unmarshal(data, &cursor); err != nil {
         return nil, err
     }
+    for _, key := range keys {
+        if value, ok := cursor[key]; !ok || string(value) == "null" {
+            return nil, ErrInvalidCursor
+        }
+    }
     return cursor, nil
+}
+
+// cursorValueIsNull reports whether a decoded cursor value binds SQL NULL, as
+// an invalid sql.Null* wrapper does. A NULL bound into the keyset comparison
+// matches no row, so the page would come back silently empty.
+func cursorValueIsNull(v any) bool {
+    valuer, ok := v.(driver.Valuer)
+    if !ok {
+        return false
+    }
+    value, err := valuer.Value()
+    return err != nil || value == nil
 }
 ```
 
@@ -7398,7 +7633,7 @@ An edge is **nestable** when every rule below holds. The `ValidateNestedWriteEli
 | **E2** | `filter:` is empty. A `discriminator:` is permitted on shapes 2 and 3, and is the *only* way a polymorphic edge becomes write-eligible ([13.4.1](#1341-discriminator--the-structured-form-of-a-polymorphic-edge)). On an **M2M** edge it is not: [9.9.5](#995-generated-surface) makes the M2M `create` take the target's create input unchanged, which leaves the executor no elided column to set and no way to honour the rule that a nested `create` sets the discriminator column to the edge's declared value ([13.4.1](#1341-discriminator--the-structured-form-of-a-polymorphic-edge) rule 1) without overwriting a field the caller can still fill in. Such an edge is not write-eligible; its read surface is unaffected. On shapes 2 and 3 the discriminator column's Go binding must also be able to take the declared value. A nested `create` sets the column from it as an untyped Go constant ([13.4.1](#1341-discriminator--the-structured-form-of-a-polymorphic-edge) rule 1), and a constant is assignable only to a predeclared string, integer, floating-point or boolean type of its own kind, or to a generated enum. A column bound to anything else (`types.JSON`, `uuid.UUID`, `time.Time`, `net.IP`, a slice, a Null wrapper, a same-package type a `type_map` names), or declared with a value of the wrong kind for its type, makes the edge not write-eligible: the `create` it would keep does not compile. Some of those columns cannot be read through either, and [13.4.1](#1341-discriminator--the-structured-form-of-a-polymorphic-edge) **Validation** rejects them before any edge is resolved; this clause covers the rest, whose reads work, such as a `uuid` column on PostgreSQL or a `json` column on MySQL. |
 | **E3** | The parent has a single-column primary key. Lifting this is mechanical but unexercised — every FK in every example schema references a single-column PK — so it stays a v1 restriction. |
 | **E4** | *Retired.* It required the target's `create` and `create_many` toggles. The client has no toggles ([4.6](#46-generationconfig)), so every generated target has both, and the number is kept so the other rules' cross-references hold. |
-| **E5** | For M2M: the junction is a generated table whose two FKs are fields of its create input, with bindings the emitter can construct from the parent's and the target's keys, and it has no column beyond those two FKs, **required or optional**. A required one is a column a nested link row cannot populate. An optional one fails silently instead. The [9.9.6](#996-execution-order) link step upserts on the junction's key, and `UpsertMany` puts every other insert column in its conflict clause's update half ([9.5](#95-edge-case-behaviors)). So re-linking a pair that is already linked resets the column to its default and reports success, on every dialect. Three kinds of column are exempt because a re-link cannot damage them. The update half leaves out the primary-key columns and the tenant column ([9.5](#95-edge-case-behaviors), [29.4.2](#2942-mutations)). The soft-delete column is reset, but its default is the not-deleted state, so the reset restores the link `create` and `connect` asked for; **E11** withholds only the unlink verbs from such a junction. Supporting payload columns — a link step that leaves them alone — is additive and deliberately not done in v1, on the same fail-closed reasoning as **E2**'s M2M half. |
+| **E5** | For M2M: the junction is a generated table whose two FKs are fields of its create input, with bindings the emitter can construct from the parent's and the target's keys, and it has no column beyond those two FKs, **required or optional**. A required one is a column a nested link row cannot populate. An optional one fails silently instead. The [9.9.6](#996-execution-order) link step upserts on the junction's key, and `UpsertMany` puts every other insert column but a non-PK auto-increment one in its conflict clause's update half ([9.5](#95-edge-case-behaviors)). So re-linking a pair that is already linked resets the column to its default and reports success, on every dialect. Three kinds of column are exempt because a re-link cannot damage them. The update half leaves out the primary-key columns and the tenant column ([9.5](#95-edge-case-behaviors), [29.4.2](#2942-mutations)). The soft-delete column is reset, but its default is the not-deleted state, so the reset restores the link `create` and `connect` asked for; **E11** withholds only the unlink verbs from such a junction. Supporting payload columns — a link step that leaves them alone — is additive and deliberately not done in v1, on the same fail-closed reasoning as **E2**'s M2M half. A non-PK auto-increment column is not reset by a re-link either, but it is not exempt: it is such a payload column. |
 | **E6** | The target's create input is non-empty after the [§32](#32-column-access-control) access projection. A write surface into a table whose columns are all `hidden` / `read_only`, or whose only column is a generated key, takes no value from the caller. The rule has two halves, one per surface. On the Go surface it reads the unprojected create input, which `access` never narrows ([32.1](#321-overview)), so there it removes only an edge whose target has no create-input column at all. On the GraphQL surface it reads the projected input, and there it removes only the GraphQL member, silently, on the terms **E7** states. |
 | **E7** | *(GraphQL only)* the target is not `api.enabled: false`, and neither is any column the nested input would expose. The second clause holds by construction, because the nested input is derived from the projected one ([32.5](#325-interactions)). The target's `api.operations` mask ([26.5.1](#2651-exposed-resolver-surface)) also narrows the verbs that write the target itself. `create` needs the target's API `create`, plus `create_many` on shapes 3 and 4, where the nested write calls `CreateMany`. An O2M / has-one `connect`, `disconnect` or `clear` rewrites the target row's foreign key by filter, through the `UpdateWhere` that **E8** routes them through. On the API, that is what the target's mask key `update_where` gates: `update<Table>s(filter, input)`. So these verbs need the mask to keep `update_where`. The M2M link and unlink verbs write only the junction row, so the first clause alone gates them. Without the mask clause, a mask written to leave one hand-guarded door into a table would leave a second, generated door through every parent that nests into it. This is the write-side mirror of [26.5.3](#2653-filter--sort--pagination-translation)'s read side-channel rule. Every clause is a config-visible fact, so it drops silently, including for an edge the config lists by name. None of them touches the Go surface: `api` gates the API, never the client, so failing generation would reject a Go surface that is correct. |
 | **E8** | `connect`, `disconnect` and `clear` on an O2M / has-one edge require a **nullable** FK; all three route through the target's `UpdateWhere`. `connect` and `disconnect` additionally require a target whose primary key can key a Go map and carry an `IN` comparator: the visibility read buckets its rows on that key, the adoption filters on it, and the two-verb check of [9.9.6](#996-execution-order) buckets the ids each verb names. The `comparator.Opaque` family ([11.2](#112-comparator-types)) is exactly the set that cannot — `[]byte`, `net.IP` and `net.HardwareAddr` are slices and `net.IPNet` holds two — so an O2M / has-one edge into such a table keeps `create` and `clear`, which name no ids, and loses the other two. On an **M2M** edge the [9.9.6](#996-execution-order) link step dedupes `created ∪ connected` on the same key, so such an edge is not write-eligible at all, and the refusal is reported the same way. That half is a generator limitation rather than a schema fact, so it is **reported** for an edge the config lists by name instead of being dropped silently the way a verb the `nested_mutations.verbs` mask turned off is. On a **has-one** edge, `create` and `connect` also require the two terms the occupancy read ([9.9.3](#993-the-eligibility-matrix)) filters on: the traversed FK's `= parent` term and, on a polymorphic edge, the discriminator's equality term. An edge that cannot render them loses `create`, rather than writing a child it cannot check for. It has already lost the other verbs to the same terms, so the edge carries nothing. This clause is a generator limitation too, and is reported the same way. |
@@ -7659,13 +7894,14 @@ func (o Value[T]) IsZero() bool
 | PK (strategy `app`) | `omittable.Value[T]` | Caller may override; app generates UUID if omitted |
 | PK (strategy `db`, auto-increment/serial/identity) | Excluded | Sequence-based — caller cannot provide |
 | PK (strategy `caller`) | Required (bare type) | Caller must provide |
+| Not PK, auto-increment/serial/identity | `omittable.Value[T]` | Caller may omit; DB draws the next sequence value. PostgreSQL rejects a set value on a `GENERATED ALWAYS` identity column. `UpsertMany` never sets it on a conflict ([9.5](#95-edge-case-behaviors)) |
 | `GENERATED ALWAYS AS (...)` | Excluded | Computed by DB, never writable |
 | Soft delete columns (`deleted_at`, etc.) | `omittable.Value[T]` | Caller may omit (default NULL/false/0); supports data backfilling |
 | Columns in `update_columns` list (`updated_at`, etc.) | `omittable.Value[T]` | Caller may omit; DB applies default on CREATE, `time.Now()` auto-set on UPDATE |
 
 When a field is omittable in CreateInput and the caller doesn't set it, the SQL builder **omits the column entirely** from the INSERT statement, allowing the database to apply its DEFAULT. The generator never duplicates DEFAULT expressions in Go code.
 
-For `CreateMany`, all rows in a multi-row INSERT must share the same column list. When omittable fields differ per row, `sql.Default` is used as a sentinel value — `BuildMultiInsert` emits the SQL `DEFAULT` keyword instead of a placeholder for that position. This works on PostgreSQL and MySQL. **SQLite does not support the `DEFAULT` keyword in VALUES clauses**, so the code generator emits `sql.DefaultExpr` instead — a sentinel carrying the raw SQL default expression (parsed from the DDL) or `NULL` for nullable columns without a default. `BuildMultiInsert` writes the expression inline. A table with no writable column (its only non-generated column is a `db`-strategy auto-increment key) still names that key in each `CreateMany` row, because a multi-row INSERT cannot name no column: PostgreSQL and MySQL send `DEFAULT`, and SQLite sends `NULL` for the NOT NULL `INTEGER PRIMARY KEY`, which SQLite fills with the next rowid.
+For `CreateMany`, all rows in a multi-row INSERT must share the same column list. When omittable fields differ per row, `sql.Default` is used as a sentinel value — `BuildMultiInsert` emits the SQL `DEFAULT` keyword instead of a placeholder for that position. This works on PostgreSQL and MySQL. **SQLite does not support the `DEFAULT` keyword in VALUES clauses**, so the code generator emits `sql.DefaultExpr` instead — a sentinel carrying the raw SQL default expression (parsed from the DDL) or `NULL` for a column without a default, SQLite's implicit default: a nullable column stores `NULL`, a rowid-alias auto-increment column draws the next rowid, and a NOT NULL column (an update or soft-delete column declared without a default) fails with the NOT NULL violation the single-row `Create` reports. `BuildMultiInsert` writes the expression inline. A table with no writable column (its only non-generated column is a `db`-strategy auto-increment key) still names that key in each `CreateMany` row, because a multi-row INSERT cannot name no column: PostgreSQL and MySQL send `DEFAULT`, and SQLite sends `NULL` for the NOT NULL `INTEGER PRIMARY KEY`, which SQLite fills with the next rowid.
 
 ```go
 type CreateProductInput struct {
@@ -7679,7 +7915,7 @@ type CreateProductInput struct {
 }
 ```
 
-**Update inputs** — all mutable fields use `omittable.Value[T]`. PK and computed columns are excluded. `update_columns` (e.g., `updated_at`) are included as omittable — the caller may override, otherwise `time.Now()` is auto-set in the generated Update method after the empty-update check:
+**Update inputs** — all mutable fields use `omittable.Value[T]`. PK and computed columns are excluded. A non-PK auto-increment column stays in the update input; PostgreSQL rejects setting a `GENERATED ALWAYS` identity column there (SQLSTATE `428C9`), as on create. `update_columns` (e.g., `updated_at`) are included as omittable — the caller may override, otherwise `time.Now()` is auto-set in the generated Update method after the empty-update check:
 
 ```go
 type UpdateProductInput struct {
@@ -8127,8 +8363,8 @@ cond := sql.Raw("price * quantity > $", 1000.00)
 
 | Method | SQL Produced |
 |--------|-------------|
-| `Eq(v)` | `col = $` |
-| `Neq(v)` | `col != $` |
+| `Eq(v)` | `col = $`; `col IS NULL` for a nil `v` |
+| `Neq(v)` | `col != $`; `col IS NOT NULL` for a nil `v` |
 | `Gt(v)` | `col > $` |
 | `Gte(v)` | `col >= $` |
 | `Lt(v)` | `col < $` |
@@ -8140,6 +8376,8 @@ cond := sql.Raw("price * quantity > $", 1000.00)
 | `Between(a, b)` | `col BETWEEN $ AND $` |
 | `IsNull()` | `col IS NULL` |
 | `IsNotNull()` | `col IS NOT NULL` |
+
+A nil operand is NULL. `col = NULL` and `col != NULL` match no row, so `Eq(nil)` and `Neq(nil)` build the conditions `IsNull()` and `IsNotNull()` build. `Gt`, `Gte`, `Lt`, `Lte`, `Like` and `NLike` have no NULL test to stand for: a nil operand binds NULL to their `$`, the statement runs, and it matches no row. The check is for a nil interface only. A typed nil such as a nil `*int` is bound like any other value, and the driver sends NULL, so `Eq((*int)(nil))` renders `col = $` and matches no row where `Eq(nil)` matches the NULL rows.
 
 `In` / `Nin` always expand: the array-parameter form (`col = ANY($)` / `col != ALL($)` on PostgreSQL+pgx) is chosen by the comparators, from `Dialect.SupportsArrayParams()` ([Appendix A](#appendix-a-sql-builder-functions)), never by the builder. That split is what lets `comparator.Enum` take the expanded form on pgx (see [11.2](#112-comparator-types)).
 
@@ -8583,7 +8821,7 @@ The `errgroup`-based loading executes each level sequentially (parents first, th
 
 Polymorphic *reads* are already covered: §4.8 introduces the `filter:` field on `TableRelationship`, and §13.2 describes how a polymorphic discriminator predicate is woven into the loader's WHERE clause. This section specifies one extension that builds on that mechanism — **sub-categorized polymorphism**, where a single parent declares multiple relationships into the same child table distinguished by the value in `filter:`.
 
-The `filter:` value remains raw SQL per §4.8 — sqlgen does not parse or validate its contents. The consumer is responsible for correctness; typos in literals surface as zero-row query results, and invalid SQL surfaces as runtime database errors. Codegen-time filter validation (column-existence checks, enum-value checks) is out of scope — see §13.7.4.
+The `filter:` value remains raw SQL per §4.8 — sqlgen does not validate its contents against the schema. The consumer is responsible for correctness; typos in literals surface as zero-row query results, and SQL that parses but names what the schema lacks surfaces as runtime database errors. Codegen-time filter validation (column-existence checks, enum-value checks) is out of scope — see §13.7.4.
 
 Writes into polymorphic child tables continue to go through the child's own client (`client.Documents().Create(ctx, &CreateDocumentInput{EntityID: ..., EntityType: ..., ...})`). No relationship-scoped writers are generated from `filter:`; a `filter:` discriminator is read-side only.
 
@@ -8650,7 +8888,7 @@ The o2o JOIN ON clause receives the qualified form, **parenthesised**, as a sing
 
 The wrap is applied when the condition is rendered rather than when it is constructed, because the o2o-join read path first runs every condition through `sql.PrefixConditions`, which qualifies a clause it has no `Column` for by prepending the alias to the whole string. Parenthesising earlier would produce `<alias>.(...)`.
 
-Malformed filters on the o2o path — anything the dialect's parser cannot parse — are reported at codegen time with the offending expression and the relationship name. o2m / m2m filters are not parsed at codegen time and reach the database as written.
+Malformed filters — anything the dialect's parser cannot parse — are reported at codegen time with the offending expression and the relationship name, on every o2m and m2m relationship and on every o2o relationship to a table. On the o2m / m2m loader path the parse is a check only: the loader still sends the filter to the database as written.
 
 **Quoting inside `filter:` is dialect-specific.** A `filter:` value is raw SQL in the configured dialect, and the three dialects do not agree on what a double quote means. Write **bare identifiers and single-quoted string values** — the one spelling that means the same thing everywhere — and the predicate ports unchanged:
 
@@ -8666,6 +8904,8 @@ Malformed filters on the o2o path — anything the dialect's parser cannot parse
 Enabling `ANSI_QUOTES` does not repair it, and makes the damage *inconsistent*. The o2m / m2m loader passes the `filter:` text to MySQL verbatim, so that path begins resolving `"entity_type"` as an identifier; the o2o JOIN `ON` clause and the relationship-filter `EXISTS` subquery are qualified by the dialect's parser at **generation** time, so the literal is already baked into the generated source before MySQL sees it and stays false. One `filter:` would then mean two different things on two read paths of the same edge. **sqlgen therefore rejects a double-quoted token in a MySQL `filter:` at codegen**, naming the relationship and both repairs; a double quote appearing inside a string literal (`note = 'say "hi"'`) or inside a backtick-quoted identifier is ordinary MySQL and is accepted.
 
 The mirror mistake — a MySQL-style double-quoted *value* on PostgreSQL or SQLite — is not silent, but it is worth knowing: `col = "v"` parses as a column reference on both, and codegen qualifies it to `<alias>."v"`, so it fails at query time as an unknown column. On SQLite this also diverges by read path: unqualified, SQLite's double-quoted-string fallback would treat `"v"` as a literal and the o2m / m2m loader would appear to work, while the qualified paths do not.
+
+**SQLite's double-quoted-string fallback applies to every generated statement.** sqlgen quotes SQLite identifiers with double quotes, and SQLite reads a double-quoted name it cannot resolve as a string literal in an expression position: a SELECT list or WHERE predicate that names a column the table or view lacks returns the column's own name as text, or compares against that constant, instead of failing with `no such column` (INSERT and UPDATE column lists still fail). The generator never emits a column its schema lacks, so this arises only when the schema sqlgen read has drifted from the database; the symptom is then wrong data or a scan error rather than an error naming the column.
 
 **Dedup key.** The relationship dedup key extends from §4.8's `(target_table, fk_column)` shape — and m2m's `(target_table, junction_table, junction_local_fk, junction_reference_fk)` shape — to include **both** discriminator forms:
 
@@ -8717,6 +8957,8 @@ Codegen-time validation of `filter:` contents (column existence, enum literal va
 | **Enum literal validity** — a literal compared against an enum discriminator that is not one of the type's declared values. | A zero-row relationship result, or a runtime database error on dialects that reject the comparison. |
 
 Both are consequences of `filter:` being raw SQL; a consumer who needs the predicate checked expresses it as a declared relationship rather than a filter.
+
+Wherever codegen parses the filter (§4.8: every o2m and m2m relationship, and every o2o relationship to a table), what the qualifier cannot read fails generation, with an error naming the table, the relationship and the filter: a syntax error on any dialect.
 
 ---
 
@@ -8780,7 +9022,7 @@ Cursors are not signed or encrypted. They are not a security boundary — they e
 
 Because the encoding is transparent in both directions — the value goes out on every edge cursor and comes back as `after` / `before`, where it becomes a keyset condition — [32.4](#324-validation) requires every resolved `cursor_keys` column to stay API-readable (`access ∈ {public, read_only}`). That is what makes this transparency safe to keep: a column `access` has restricted can never be a cursor key in the first place.
 
-**Invalid cursors:** If a cursor cannot be Base64-decoded, JSON-parsed, or does not contain the expected keys, the `Connection` method returns `ErrInvalidCursor` (see [Section 22.1](#221-generated-error-types)).
+**Invalid cursors:** If a cursor cannot be Base64-decoded or JSON-parsed, is missing an expected key or holds a JSON `null` for one, or holds a value that does not decode into its key column's Go type or that binds SQL NULL (an invalid `sql.Null*` wrapper), the `Connection` method returns `ErrInvalidCursor` (see [Section 22.1](#221-generated-error-types)).
 
 #### Relay Connection Semantics
 
@@ -8839,9 +9081,9 @@ type PageInfo struct {
 
 #### Configurable
 
-- `generation.cursor_keys` — columns used for cursor encoding (default: `["id"]`). Should be columns that are unique and immutable (or monotonically increasing). Inherited-default resolution is lenient: tables fall back to their PK and views omit `Connection` when the inherited keys don't exist on the entity. Explicit per-table/per-view overrides are strict — see [4.13](#413-config-validation-rules).
-- `tables.<name>.cursor_keys` — per-table override (strict — every listed column must exist on the table).
-- `views.<name>.cursor_keys` — per-view override (strict — every listed column must exist on the view).
+- `generation.cursor_keys` — columns used for cursor encoding (default: `["id"]`). Should be columns that are unique and immutable (or monotonically increasing). Inherited-default resolution is lenient: tables fall back to their PK and views omit `Connection` when the inherited keys don't exist on the entity or are nullable. Explicit per-table/per-view overrides are strict — see [4.13](#413-config-validation-rules).
+- `tables.<name>.cursor_keys` — per-table override (strict — every listed column must exist on the table and be NOT NULL).
+- `views.<name>.cursor_keys` — per-view override (strict — every listed column must exist on the view and be NOT NULL).
 - `generation.page_size` — default page size when `first`/`last` is not specified (default: `100`)
 
 ---
@@ -8955,14 +9197,14 @@ LEFT JOIN reviews r ON r.product_id = p.id
 GROUP BY p.id, p.name, p.discount;
 ```
 
-**View name** is extracted from the `CREATE VIEW` statement (e.g., `CREATE VIEW product_summary AS` → view name `product_summary`). Schema-qualified names are supported: `CREATE VIEW reporting.product_summary AS` → schema `reporting`, name `product_summary`. On PostgreSQL an unqualified name resolves to `input.schema` ([5.5](#55-schema-qualification--table-naming)). `CREATE OR REPLACE VIEW` is also accepted.
+**View name** is extracted from the `CREATE VIEW` statement (e.g., `CREATE VIEW product_summary AS` → view name `product_summary`). On PostgreSQL schema-qualified names are supported: `CREATE VIEW reporting.product_summary AS` → schema `reporting`, name `product_summary`, and an unqualified name resolves to `input.schema` ([5.5](#55-schema-qualification--table-naming)). On MySQL and SQLite a view, like a table, has no schema: a qualifier is dropped and the name is bare, so `CREATE VIEW app.product_summary` names the view `product_summary` and overlays the database's view of that name ([16.2](#162-introspected-views-db-sourced-views)). `CREATE OR REPLACE VIEW` is also accepted.
 
 **Column names** are extracted from the SELECT clause. Each selected expression must resolve to a column name via one of:
 - Explicit alias: `AVG(r.rating) AS avg_rating` → column `avg_rating`
 - Qualified column reference: `p.name` → column `name`
 - Bare column reference: `id` → column `id`
 
-Expressions without an alias and without a resolvable column name are a parse error.
+Expressions without an alias and without a resolvable column name are a parse error, and so is `*` or `table.*`, whose columns the view parser cannot list: name each column. A column list (`CREATE VIEW v (a, b) AS ...`) names the view's columns in order instead, as the database does, so an expression it names needs no alias. It must name every column, except on PostgreSQL, where the columns it does not reach keep their own names; a list longer than the SELECT is an error on every dialect. The query must be a single `SELECT`: a compound query (`UNION`, `INTERSECT`, `EXCEPT`) is a parse error, since its columns cannot be traced to one table. On SQLite a `RIGHT` or `FULL` join is a parse error too: the SQLite view parser does not read them. A file that overlays a view the database defines is the exception ([16.2](#162-introspected-views-db-sourced-views)): only its view name is read.
 
 Since the file contains valid SQL, it can be executed directly against a database to create the actual view — the annotation comments are standard SQL line comments and are ignored by the database.
 
@@ -8973,11 +9215,11 @@ Annotations are SQL line comments (`-- @<directive>: <value>`) that appear befor
 | Directive | Syntax | Value | Effect | Multiplicity |
 |-----------|--------|-------|--------|:------------:|
 | `@pk` | `-- @pk: col1, col2` | Comma-separated column names | Marks columns as primary key — enables `Get` method. Without `@pk`, only `GetMany`, `Count`, `Paginate`, `Connection` are generated. | Exactly once |
-| `@type` | `-- @type col: GoType [import/path]` | Column name `:` Go type, optional import path | Overrides Go type for a column (highest priority in [16.3](#163-column-type-resolution-annotation-files) chain). Import path required for external packages, omitted for builtins. | Once per column |
+| `@type` | `-- @type col: GoType [import/path]` | Column name `:` Go type, optional import path | Overrides Go type for a column (highest priority in [16.3](#163-column-type-resolution) chain). Import path required for external packages, omitted for builtins. | Once per column |
 | `@nullable` | `-- @nullable: col1, col2` | Comma-separated column names | Forces columns to nullable. Already-nullable columns (e.g., `AVG` → `*float64`) are unaffected. | Multiple allowed (merged) |
 
 **Validation rules:**
-- Column names in `@pk`, `@type`, and `@nullable` must match SELECT aliases exactly. Referencing a column not in the SELECT is a parse error.
+- Column names in `@pk`, `@type`, and `@nullable` must match the view's column names (SELECT aliases, or the column list) exactly. Referencing a column not in the view is a parse error.
 - Duplicate `@type` for the same column is a parse error.
 - Multiple `@pk` lines are not allowed — declare all PK columns in one line.
 - `@type` with an external package type (contains `.`) but no import path is a parse error.
@@ -9017,13 +9259,13 @@ When the schema source includes a live database (`source: database` or `source: 
 - **MySQL:** `information_schema.views` + `information_schema.columns`
 - **SQLite:** `sqlite_master WHERE type='view'` + `PRAGMA table_info`
 
-Introspected views provide accurate column names and types as reported by the database. No aggregate inference or schema matching is needed — the DB has already resolved the query.
+**Columns come from the view's definition.** An introspected view's columns are read from its stored definition with the same view parser and resolution chain ([16.3](#163-column-type-resolution)) an annotation file gets, so a view is described the same way under `database` and `files`. The catalog alone cannot do that: PostgreSQL and SQLite report every view column nullable. A column the definition cannot trace to a table column (an expression, or a column read from a subquery or another view) takes the catalog's type and nullability instead. SQLite reports no type for an expression, so there it stays `any`. Under `files` such a column is `any`, which is a deliberate difference by source: only the database knows its type. A definition the view parser cannot read, such as a compound query, keeps the catalog's columns, and a warning names the view.
 
-**Annotation overlays:** When both introspection and an annotation file exist for the same view, annotations take precedence. This allows users to add `@pk` (not discoverable from DB catalogs), override types, or force nullability on introspected views.
+**Annotation overlays:** When both introspection and an annotation file exist for the same view, the database's view stands: its columns are used, and the file supplies only the view's name and its annotations. Its `SELECT` is not read, so it may be one an annotation file alone could not hold, such as a compound query. The file's annotations take precedence over the introspected values. This allows users to add `@pk` (not discoverable from DB catalogs), override types, or force nullability on introspected views. An annotation that names a column the database's view lacks is an error, as it is in an annotation file. Under `source: both` a pending change to a view therefore appears only once it has run.
 
-### 16.3 Column Type Resolution (Annotation Files)
+### 16.3 Column Type Resolution
 
-For annotation file views, each SELECT column's Go type is resolved in this order:
+For every view, from an annotation file or a database view's definition ([16.2](#162-introspected-views-db-sourced-views)), each SELECT column's Go type is resolved in this order:
 
 1. **`@type` annotation** — highest priority, literal Go type string
 2. **Schema matching** — if column comes from a known table (via table alias in the SELECT), use that column's resolved Go type
@@ -9039,6 +9281,13 @@ For annotation file views, each SELECT column's Go type is resolved in this orde
    - `JSON_AGG(...)` / `JSONB_AGG(...)` / `JSON_ARRAYAGG(...)` → `types.JSON`
    - `JSON_OBJECT_AGG(...)` / `JSONB_OBJECT_AGG(...)` / `JSON_OBJECTAGG(...)` → `types.JSON`
 4. **Fallback** → `any`
+
+**Nullability.** A view column can hold NULL, and is generated nullable, when:
+- it is read from a table column that is nullable;
+- its table is on the outer side of a join: the right side of a `LEFT JOIN`, the left side of a `RIGHT JOIN`, either side of a `FULL JOIN`;
+- it is an aggregate other than `COUNT` (above).
+
+Otherwise it is non-nullable. A `@type` column is non-nullable, `@nullable` makes a column nullable, and `@pk` makes it non-nullable, applied in that order. A column that falls back to `any` can hold NULL whatever its flag.
 
 **SUM widening.** A database widens `SUM`'s result type to avoid overflow, so the inferred Go type must match what the driver actually scans — not the summed column's own type. The widening is dialect-specific and is applied on the domain-resolved base type (`CREATE DOMAIN positive_int AS integer` widens as `integer`):
 
@@ -9102,7 +9351,7 @@ Nothing in the runtime, parser-DDL, or non-Postgres introspection paths changes 
 - The PK is chosen **deterministically**: the qualifying index with the fewest columns, ties broken by index name ascending. Its columns are marked primary-key (and non-nullable), enabling `Get` without an annotation.
 - Partial and expression unique indexes never participate.
 
-**Annotation files.** `input.views` files may contain `CREATE MATERIALIZED VIEW [schema.]name AS SELECT ...` exactly like regular views ([16.1](#161-annotation-files-file-sourced-views)); all directives (`@pk`, `@type`, `@nullable`) and the [16.3](#163-column-type-resolution-annotation-files) resolution chain apply unchanged. Because there is no live index to discover:
+**Annotation files.** `input.views` files may contain `CREATE MATERIALIZED VIEW [schema.]name AS SELECT ...` exactly like regular views ([16.1](#161-annotation-files-file-sourced-views)); all directives (`@pk`, `@type`, `@nullable`) and the [16.3](#163-column-type-resolution) resolution chain apply unchanged. Because there is no live index to discover:
 
 - `@pk` present ⇒ those columns are the PK **and** the matview is concurrently refreshable (the user is asserting a unique key exists — the same precondition Postgres enforces for `CONCURRENTLY`).
 - `@pk` absent ⇒ no `Get`, and only plain `Refresh` is generated.
@@ -10124,7 +10373,7 @@ The authoritative interface definition — including all method signatures, gene
 **Conditional generation rules:** schema facts only. The interface includes every method the schema allows; there is no config that removes one. The gates are listed once in [4.6 Operations](#operations):
 - A view's interface has the read methods only ([16.4](#164-generated-artifacts-views-vs-tables)).
 - `SoftDelete*` and `Restore*` are included only when the table has a detected soft delete column.
-- `Increment` is included only when the table has an incrementable column — numeric and identifying nothing ([8.2](#82-generated-artifacts-per-table)).
+- `Increment` is included only when the table has an incrementable column — numeric, writable and identifying nothing ([8.2](#82-generated-artifacts-per-table)).
 - `Upsert`, `UpsertMany` and `UpsertWithRelated` are included only when the table emits a conflict target.
 - The three `…WithRelated` methods are included only when `nested_mutations` enables the family for the table and the table has an eligible edge ([9.9](#99-nested-mutations)).
 
@@ -11433,7 +11682,7 @@ Static analysis of consumer Go code that catches common mistakes the compiler ca
 | Rule | Severity | Description |
 |------|----------|-------------|
 | **Hook table/type mismatch** | Error | A `ForMutation` or `ForQuery` call references a `TableName` constant but the generic type parameters don't match that table's generated input/result types. E.g., `ForMutation[*CreateProductInput, *Product](TableUsers, ...)` — `CreateProductInput` belongs to `products`, not `users`. |
-| **Invalid operation for table** | Warning | A hook filters on an operation that the table doesn't support. E.g., filtering on `OpSoftDelete` for a table with no soft delete column, or `OpIncrement` for a table with no **incrementable** columns — "numeric, and identifying nothing", as [8.2](#82-generated-artifacts-per-table) defines it. A table whose only numeric columns are primary keys, foreign keys or the tenant column generates no `Increment` method, so "has numeric columns" is not the test. The hook would never fire. |
+| **Invalid operation for table** | Warning | A hook filters on an operation that the table doesn't support. E.g., filtering on `OpSoftDelete` for a table with no soft delete column, or `OpIncrement` for a table with no **incrementable** columns — "numeric, and identifying nothing", as [8.2](#82-generated-artifacts-per-table) defines it. A table whose only numeric columns are primary keys, foreign keys, the tenant column or generated columns generates no `Increment` method, so "has numeric columns" is not the test. The hook would never fire. |
 
 **How it works:**
 
@@ -11502,8 +11751,8 @@ Two feature areas carry their own governed exceptions to the `_gen.go`-only rule
 | `0` | Success |
 | `1` | Generation error (template failure, file write error) |
 | `2` | Config error (invalid YAML, validation failure) |
-| `3` | Schema error (parse failure, ambiguous table names, constraint violations) |
-| `4` | Connection error (database introspection failed) |
+| `3` | Schema error (parse failure, ambiguous table names, constraint violations), under every `input.source` |
+| `4` | Connection error: connecting to the database, or a catalog query during introspection, failed. Nothing else exits `4` |
 
 ### 23.10 Watch Mode
 
@@ -12276,7 +12525,7 @@ The anchors are emitted only when a narrowed width is in use, and the GraphQL sc
 
 A column dropped from every API surface by its [§32.2](#322-roles) access role (`hidden` / `internal`) is exempt: it names no GraphQL type anywhere in the emitted schema, so requiring a binding for it would make `access: hidden` — the documented way to keep a column *out* of the API — the one setting that forces the column to be described *to* the API.
 
-**Unresolved declarations warn.** A declared scalar that no API-exposed column resolves to produces a generation warning naming the entry and its `go_type`. It is a warning, not an error, because an unused declaration is sometimes correct: a column excluded from the API by its [§32.2](#322-roles) access role or by `api.enabled: false` registers no scalar, and a declaration may legitimately land before the column that will use it. The check needs the resolved table contexts, so it fires at `generate` time rather than `sqlgen validate`. A mistyped `go_type` is not what this warning catches: the rule above catches that case harder, because the column is then left with no binding and generation fails outright rather than warning and continuing.
+**Unresolved declarations warn.** A declared scalar that no API-exposed column resolves to produces a generation warning naming the entry and its `go_type`. It is a warning, not an error, because an unused declaration is sometimes correct: a column excluded from the API by its [§32.2](#322-roles) access role or by `api.enabled: false` registers no scalar, and a declaration may legitimately land before the column that will use it. The check needs the resolved table contexts, so it fires from `generate` and `validate`, not from `graphql gen`. A mistyped `go_type` is not what this warning catches: the rule above catches that case harder, because the column is then left with no binding and generation fails outright rather than warning and continuing.
 
 **Consumer scalars and nullability.** A consumer-declared scalar has no Null-variant pairing and needs none: a nullable column bound to one emits a nullable field, and gqlgen wraps the Go type in a pointer on both the bound row struct and the generated input. The pairing machinery exists specifically for struct wrappers that encode null in a `Valid bool` field, which gqlgen's pointer mechanism cannot express.
 
@@ -12739,7 +12988,7 @@ Two escape hatches exist for consumers who split the phases — a CI pipeline th
 
 **Pre-flight.** The chained path requires `gqlgen.yml` at `api.graphql.gqlgen_config` (default `./gqlgen.yml`). When it is missing, `sqlgen generate` fails fast with an error pointing at `sqlgen graphql init`. Auto-init is deliberately **not** a side effect of generate: config scaffolding is a one-shot the consumer performs knowingly, and silently writing a `gqlgen.yml` on a mistyped path would produce a second config the consumer does not know they own.
 
-**Failure mode.** If the gqlgen subprocess fails, the sqlgen-side files emitted earlier in the run stay on disk and are **not** rolled back. The failure surfaces loudly — `Error: gqlgen subprocess failed: <details>; sqlgen-side artifacts emitted at <output.dir>` — and the consumer fixes the gqlgen issue and re-runs.
+**Failure mode.** If the gqlgen subprocess fails, the sqlgen-side files emitted earlier in the run stay on disk and are **not** rolled back. The failure surfaces loudly — `Error: gqlgen subprocess failed: <details>; sqlgen-side artifacts emitted at <output.dir>` — and the consumer fixes the gqlgen issue and re-runs. A failure in the wrapper's own steps before or after the subprocess (reading or merging `gqlgen.yml`, writing seeds, rewriting resolver stubs) keeps the same artifacts-emitted suffix but carries the `gqlgen wrapper` label instead; an unbound root resolver name prints its own error (see "Root resolver names are checked, not stated").
 
 **Wrapper data flow (`sqlgen graphql gen`, and the chained half of `sqlgen generate`):**
 
@@ -15348,7 +15597,7 @@ Package-wide reference, answered once. Per-entity entries cross-reference rather
 }
 ```
 
-**View entries** use `kind: "view"`, `pk.kind: "none"` (when no declared PK), `relationships: []`, and a `source` field carrying the file path of the annotation file or the SQL definition. A **materialized view** ([16.5](#165-materialized-views-postgresql)) additionally carries `materialized: true` (omitted otherwise) and advertises `Refresh` / `RefreshConcurrently` under `methods.mutation[]` with their canonical `sql_bodies` (`REFRESH MATERIALIZED VIEW [CONCURRENTLY] ...`); `RefreshConcurrently` lists `database.ErrRefreshConcurrentlyInTx` in `errors` — qualified, because [§22.1](#221-generated-error-types)'s re-export list has eight entries and this is not one of them, so the bare spelling would name a symbol the generated package does not declare.
+**View entries** use `kind: "view"`, `pk.kind: "none"` (when no declared PK), `relationships: []`, and a `source` field carrying the view's definition: the annotation file's text under `files`, or the definition the database stores under `database` ([6.1](#61-source-modes)). A **materialized view** ([16.5](#165-materialized-views-postgresql)) additionally carries `materialized: true` (omitted otherwise) and advertises `Refresh` / `RefreshConcurrently` under `methods.mutation[]` with their canonical `sql_bodies` (`REFRESH MATERIALIZED VIEW [CONCURRENTLY] ...`); `RefreshConcurrently` lists `database.ErrRefreshConcurrentlyInTx` in `errors` — qualified, because [§22.1](#221-generated-error-types)'s re-export list has eight entries and this is not one of them, so the bare spelling would name a symbol the generated package does not declare.
 
 **A tenanted view populates `features.tenancy`.** Tenancy detection covers every generated entity, views included ([29.2.5](#2925-view-tenancy)), so a view carrying the effective tenant column has its reads scoped exactly as a table's are and the manifest must say so. Reporting `features.tenancy: null` on a scoped view is not a harmless omission: it tells every manifest consumer — the MCP server ([31](#31-mcp-server)), an agent, a drift check — that the view's rows are globally visible when they are not. Two fields differ from the table shape, both because a view has no write path:
 
@@ -15480,9 +15729,9 @@ The manifest carries metadata that goes beyond what's expressible in Go types al
 | Field | Where | Source |
 |---|---|---|
 | `comment` | top-level + per-column | `COMMENT ON TABLE` / `COMMENT ON COLUMN`. PG `pg_description` (introspector), MySQL `information_schema` (introspector), file parser test-validated. Empty string when no comment. |
-| `indexes[]` | top-level | All declared indexes (UNIQUE, non-unique, partial, GIN/GIST). Carries `name`, `columns[]`, `unique`, `method`, optional `where` for partial. Includes the PK index when the schema declares a `PRIMARY KEY`. A key declared only through `primary_key.columns` ([8.6](#86-primary-key-strategy)) has no primary-key index, so none is listed for it; a `UNIQUE` that backs it is listed under its own name. An inline column `UNIQUE` (`email text UNIQUE`) declares no name, so it is listed under PostgreSQL's default, `<table>_<column>_key`, on every dialect, as the PK index is `<table>_pkey`. Both are derived labels, not names read back from the database, and can differ from the name the database assigned: PostgreSQL truncates an identifier past 63 bytes, appends a number on a collision (`t_email_key1`), and keeps the original name across a table or column rename, an inline `CONSTRAINT <name> UNIQUE` keeps its declared name, which the label does not read, and MySQL and SQLite name these indexes their own way (`PRIMARY`, `email`, `sqlite_autoindex_<table>_N`). An inline `UNIQUE` is listed even when the same `CREATE TABLE` also declares the column as its single-column `PRIMARY KEY` or a table-level `UNIQUE` over it alone, although PostgreSQL then builds only the one index. |
+| `indexes[]` | top-level | All declared indexes (UNIQUE, non-unique, partial, GIN/GIST). Carries `name`, `columns[]`, `unique`, `method`, optional `where` for partial. An index with an expression part (`lower(email)`, `a + 1`) is not listed and is not a conflict target, under every source. Includes the PK index when the schema declares a `PRIMARY KEY`. A key declared only through `primary_key.columns` ([8.6](#86-primary-key-strategy)) has no primary-key index, so none is listed for it; a `UNIQUE` that backs it is listed under its own name. Each index is listed under the name the database assigns, inline or table-level alike ([5.2](#52-dialect-parsers) "Constraints"): a declared name as declared (a MySQL primary key is always `PRIMARY`), and an unnamed constraint or index under the name PostgreSQL or MySQL gives it (`users_pkey`, `users_email_key`, `orders_placed_at_idx`, `PRIMARY`, `email`). The index MySQL builds on its own for a foreign key is listed too. The list is therefore the same under every `input.source`. SQLite is the exception, because it names every constraint index `sqlite_autoindex_<table>_N` itself. On SQLite a declared constraint name is listed, and an unnamed `PRIMARY KEY` or `UNIQUE` takes the label `<table>_pkey` or `<table>_<cols>_key`, where `<cols>` joins the column names with `_`. A `UNIQUE` that repeats the primary key or an earlier `UNIQUE` over the same columns is listed only where the database builds an index for it, by the [5.2](#52-dialect-parsers) rule. On MySQL it is listed under its own name (`email_2`). |
 | `comparator` | per-column | The comparator the generated `<T>Filter` declares for the column, read from the entity's own filter surface rather than re-derived — nullable variant, type parameter and all (`comparator.NullableNumber[int32]`, `comparator.Slice[string]`, `comparator.Opaque[net.IP]`). It is the same value `filter.fields[].type` publishes, minus the leading `*`, so the two agree by construction. **Omitted for a non-filterable column** ([§26.4](#comparator-input-projection) "Non-filterable columns"): a `json[]` / `jsonb[]` column, or a `types.JSON` column on SQLite. Deriving it a second time is what let the field drift — it reported `comparator.Time` for an `interval` column, the non-nullable spelling for every nullable one, and nothing at all for enum / `bytea` / `inet` / `numeric`. |
-| `check` | per-column | Raw CHECK-constraint expression text as written in the DDL. Multi-column CHECKs are flattened onto each participating column. |
+| `check` | per-column | CHECK-constraint expression text, in the file parser's normalized form ([6.1](#61-source-modes)), so it is the same under every `input.source`. Multi-column CHECKs are flattened onto each participating column. |
 | `default_kind` | per-column | One of `literal` (constant value), `function` (e.g., `gen_random_uuid()`, `CURRENT_TIMESTAMP`), `expression` (anything else). Lets consumers distinguish a value the caller must supply from one the database supplies. |
 | `access` + `redacted` | per-column | `access` is the resolved role (`public` / `read_only` / `write_only` / `hidden` / `internal`); `redacted` is `true` for `write_only` / `internal`. Additive optional fields (default `public` / `false`) — omitted rendering is `public`. Tell MCP / AI tooling which columns are server-only and must not be advertised for exposure. `sql_bodies` stay accurate (real server SQL); the `redacted` marker is what suppresses value-surfacing, not SQL rewriting. See [Section 32](#32-column-access-control). |
 | `features.events.{enabled, types[], payload_shape}` | top-level | Populated only when `events.enabled: true` for the entity. |
@@ -15811,7 +16060,7 @@ The `ANY`/`ALL` approach is preferred for PostgreSQL+pgx because:
 | `BuildSoftDelete` | `UPDATE {table} SET deleted_at = CURRENT_TIMESTAMP WHERE ...` + optional `RETURNING` | Timestamp vs boolean vs integer column. Supports `ReturningColumns` for PG/SQLite `Where` variants. |
 | `BuildHardDelete` | `DELETE FROM {table} WHERE ...` | Placeholder style |
 
-**`sql.Default` sentinel value:** `BuildMultiInsert` recognizes the `sql.Default` sentinel value in the args. When encountered, it emits the SQL `DEFAULT` keyword instead of a placeholder for that position. This enables multi-row INSERTs where omittable fields differ per row while keeping all rows in the same column list. This works on PostgreSQL and MySQL. **SQLite does not support `DEFAULT` in VALUES clauses** — the code generator emits `sql.DefaultExpr` instead, which carries the raw SQL default expression (e.g., `datetime('now')`) or `NULL` for nullable-no-default columns. `BuildMultiInsert` writes `DefaultExpr` values inline as raw SQL.
+**`sql.Default` sentinel value:** `BuildMultiInsert` recognizes the `sql.Default` sentinel value in the args. When encountered, it emits the SQL `DEFAULT` keyword instead of a placeholder for that position. This enables multi-row INSERTs where omittable fields differ per row while keeping all rows in the same column list. This works on PostgreSQL and MySQL. **SQLite does not support `DEFAULT` in VALUES clauses** — the code generator emits `sql.DefaultExpr` instead, which carries the raw SQL default expression (e.g., `datetime('now')`) or `NULL` for a column without a default. `BuildMultiInsert` writes `DefaultExpr` values inline as raw SQL.
 
 **Column names are never schema-qualified.** Only the table reference in `FROM`, `INSERT INTO`, `UPDATE`, `DELETE FROM`, and `JOIN` clauses uses `FormatTable()`. Columns are always bare identifiers quoted with `QuoteIdentifier()`.
 

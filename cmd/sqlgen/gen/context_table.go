@@ -257,23 +257,28 @@ func buildSingleTableContext(input *GenerateInput, table *parser.Table, collisio
 	}
 
 	structName := structNameFor(table.Name, table.Schema, tableCfg.StructName, collisions)
+	if err := checkStructName("table", qualifiedTableOrName(table), structName, tableCfg.StructName); err != nil {
+		return TableContext{}, err
+	}
 
 	columns, pkColumns := buildTableColumns(input, table, tableCfg)
 
 	input.Warnings = append(input.Warnings,
-		incrementSQLTypeWarnings(qualifiedTableOrName(table), tableCfg, columns)...)
+		incrementSQLTypeWarnings(input.Resolver.ForSchema(table.Schema), qualifiedTableOrName(table), tableCfg, columns)...)
 
 	pkStrategy := detectPKStrategy(input, table, pkColumns, tableCfg)
 
-	softDelete, err := detectTableSoftDelete(table, cfg, columns)
-	if err != nil {
-		return TableContext{}, fmt.Errorf("detecting soft delete for %s: %w", table.Name, err)
-	}
+	softDelete := detectTableSoftDelete(table, cfg, columns)
 
 	updateColumns := parser.DetectUpdateColumns(table, cfg.Generation.UpdateColumns)
 
-	return assembleTableContext(input, table, tableCfg, structName, columns, pkColumns,
+	tc, err := assembleTableContext(input, table, tableCfg, structName, columns, pkColumns,
 		pkStrategy, softDelete, updateColumns, collisions)
+	if err != nil {
+		return TableContext{}, err
+	}
+	tc.CursorKeyColumns = buildCursorKeyColumns(tc.Columns, tc.CursorKeys)
+	return tc, nil
 }
 
 func buildTableColumns(input *GenerateInput, table *parser.Table, tableCfg config.TableConfig) ([]ColumnContext, []ColumnContext) {
@@ -293,7 +298,7 @@ func buildTableColumns(input *GenerateInput, table *parser.Table, tableCfg confi
 		if excludeSet[col.Name] {
 			continue
 		}
-		columns = append(columns, buildColumnContext(input, &col, tableCfg, tableOverrides))
+		columns = append(columns, buildColumnContext(input, table.Schema, &col, tableCfg, tableOverrides))
 	}
 
 	// PK column override (PRD §8.6 — tables.<name>.primary_key.columns):
@@ -334,19 +339,22 @@ func buildTableColumns(input *GenerateInput, table *parser.Table, tableCfg confi
 	return columns, pkColumns
 }
 
-func detectTableSoftDelete(table *parser.Table, cfg *config.RootConfig, columns []ColumnContext) (*SoftDeleteContext, error) {
-	sdCol, sdStrategy, err := parser.DetectSoftDelete(table, softDeleteColumnNames(cfg.Generation.SoftDeleteColumns))
-	if err != nil {
-		return nil, fmt.Errorf("detecting soft delete: %w", err)
-	}
+// detectTableSoftDelete returns the table's soft delete column, or nil when it
+// has none. The strategy is the matched entry's configured type (PRD §5.4).
+// The column's SQL type is not checked here: ValidatePostParse rejects an
+// incompatible one before generation runs.
+func detectTableSoftDelete(table *parser.Table, cfg *config.RootConfig, columns []ColumnContext) *SoftDeleteContext {
+	sdCols := cfg.Generation.SoftDeleteColumns
+	sdCol := parser.DetectSoftDelete(table, softDeleteColumnNames(sdCols))
 	if sdCol == "" {
-		return nil, nil
+		return nil
 	}
+	i := slices.IndexFunc(sdCols, func(sd config.SoftDeleteConfig) bool { return sd.Name == sdCol })
 	return &SoftDeleteContext{
 		Column:    sdCol,
 		FieldName: columnFieldName(columns, sdCol),
-		Strategy:  config.SoftDeleteType(sdStrategy),
-	}, nil
+		Strategy:  sdCols[i].Type,
+	}
 }
 
 // modelTemplateImports is the import set the table and view templates always
@@ -458,7 +466,7 @@ func assembleTableContext(
 		tableCfg,
 		cfg.Generation,
 		qualifiedTableOrName(table),
-		columnContextNames(columns),
+		cursorKeyCandidates(columns),
 		columnContextNames(pkColumns),
 	)
 
@@ -766,7 +774,7 @@ func baseSQLType(resolver *gotype.Resolver, sqlType string) string {
 // notion of which override route was taken — and a column nobody overrode
 // cannot reach it, because no non-arithmetic SQL type resolves to an
 // arithmetic Go type on its own.
-func incrementSQLTypeWarnings(qualifiedTable string, tableCfg config.TableConfig, columns []ColumnContext) []string {
+func incrementSQLTypeWarnings(resolver *gotype.Resolver, qualifiedTable string, tableCfg config.TableConfig, columns []ColumnContext) []string {
 	var warnings []string
 	for _, col := range columns {
 		if !incrementBlockedBySQLType(col) {
@@ -778,7 +786,7 @@ func incrementSQLTypeWarnings(qualifiedTable string, tableCfg config.TableConfig
 		}
 		warnings = append(warnings, fmt.Sprintf(
 			"%s: %q is an arithmetic Go type but column %q has SQL type %s, so %s is not offered for increment — `%s = %s + ?` would error on PostgreSQL, coerce on MySQL, and silently rewrite the stored value on SQLite. Everything else about the override applies as written.",
-			typeOverrideSource(qualifiedTable, tableCfg, col, col.BaseSQLType), col.GoType, col.Name, sqlTypeDesc,
+			typeOverrideSource(resolver, qualifiedTable, tableCfg, col), col.GoType, col.Name, sqlTypeDesc,
 			qualifiedTable+"."+col.Name, col.Name, col.Name,
 		))
 	}
@@ -787,26 +795,33 @@ func incrementSQLTypeWarnings(qualifiedTable string, tableCfg config.TableConfig
 
 // typeOverrideSource names the config key that produced a column's resolved Go
 // type, so an error can point at the line to edit. The two per-column routes
-// are named exactly. For the by-SQL-type routes, the table-level map is probed
-// first so the error carries the `tables.<t>.` prefix when that is where the
-// entry lives, and the key is reported as written — the raw SQL type when the
-// user keyed on it, the domain-resolved base otherwise — rather than as a
-// spelling (`varchar(255)`) that appears in no config file.
-func typeOverrideSource(qualifiedTable string, tableCfg config.TableConfig, col ColumnContext, baseSQLType string) string {
+// are named exactly. For the by-SQL-type routes the resolver reports the
+// `overrides.types` key it matched, as written — `email`, `app.email` or
+// `varchar` rather than the domain's base or a spelling (`varchar(255)`) that
+// appears in no config file — and whether it is table-scoped. resolver must be
+// the one the column was resolved with.
+func typeOverrideSource(resolver *gotype.Resolver, qualifiedTable string, tableCfg config.TableConfig, col ColumnContext) string {
 	if override, ok := tableCfg.ColumnMap[col.Name]; ok && override.Type != "" {
 		return fmt.Sprintf("tables.%s.column_map.%s.type", qualifiedTable, col.Name)
 	}
 	if _, ok := tableCfg.TypeMap[col.Name]; ok {
 		return fmt.Sprintf("tables.%s.type_map.%s", qualifiedTable, col.Name)
 	}
+	var tableOverrides map[string]config.TypeOverride
 	if tableCfg.Overrides != nil {
-		for _, key := range []string{col.SQLType, baseSQLType} {
-			if _, ok := tableCfg.Overrides.Types[key]; ok {
-				return fmt.Sprintf("tables.%s.overrides.types.%s", qualifiedTable, key)
-			}
-		}
+		tableOverrides = tableCfg.Overrides.Types
 	}
-	return fmt.Sprintf("overrides.types.%s", baseSQLType)
+	key, tableScoped, ok := resolver.OverrideSource(col.SQLType, tableOverrides)
+	switch {
+	case !ok:
+		// No overrides.types entry matched, so tenancy.type produced the
+		// type; that route is not named here.
+		return fmt.Sprintf("overrides.types.%s", col.BaseSQLType)
+	case tableScoped:
+		return fmt.Sprintf("tables.%s.overrides.types.%s", qualifiedTable, key)
+	default:
+		return "overrides.types." + key
+	}
 }
 
 // needsExplicitImport reports whether a Go type literal names a package
@@ -872,6 +887,16 @@ func tableHasResolvedPK(cfg *config.RootConfig, table *parser.Table) bool {
 	return false
 }
 
+// cursorKeyCandidates returns the columns §4.13 cursor_keys resolution checks
+// keys against, carrying the nullability a key must not have.
+func cursorKeyCandidates(cols []ColumnContext) []config.SchemaColumn {
+	out := make([]config.SchemaColumn, len(cols))
+	for i, c := range cols {
+		out[i] = config.SchemaColumn{Name: c.Name, Nullable: c.Nullable}
+	}
+	return out
+}
+
 // columnContextNames returns the slice of column names from a ColumnContext
 // slice, preserving order.
 func columnContextNames(cols []ColumnContext) []string {
@@ -910,8 +935,10 @@ func collectColumnImports(columns []ColumnContext) []string {
 
 // --- Column building ---
 
-func buildColumnContext(input *GenerateInput, col *parser.Column, tableCfg config.TableConfig, tableOverrides map[string]config.TypeOverride) ColumnContext {
-	gt := resolveColumnGoType(input.Resolver, col, tableCfg, tableOverrides, input.Config.Tenancy)
+// buildColumnContext builds the context of a column of a table in schema.
+func buildColumnContext(input *GenerateInput, schema string, col *parser.Column, tableCfg config.TableConfig, tableOverrides map[string]config.TypeOverride) ColumnContext {
+	resolver := input.Resolver.ForSchema(schema)
+	gt := resolveColumnGoType(resolver, col, tableCfg, tableOverrides, input.Config.Tenancy)
 
 	accessRole, accessCaps := resolveAccess(tableCfg.ColumnMap[col.Name].Access)
 	fieldName, fieldNameOverridden := resolveColumnFieldName(col.Name, tableCfg)
@@ -933,7 +960,7 @@ func buildColumnContext(input *GenerateInput, col *parser.Column, tableCfg confi
 		Import:        gt.Import,
 		ZeroValue:     gt.ZeroValue,
 		SQLType:       col.Type,
-		BaseSQLType:   baseSQLType(input.Resolver, col.Type),
+		BaseSQLType:   baseSQLType(resolver, col.Type),
 		Nullable:      col.Nullable,
 		PrimaryKey:    col.PrimaryKey,
 		HasDefault:    col.Default != "",
@@ -945,7 +972,7 @@ func buildColumnContext(input *GenerateInput, col *parser.Column, tableCfg confi
 		JSONTag:       col.Name,
 		IsSlice:       gt.IsSlice,
 		SliceElemType: gt.SliceElemType,
-		IsSet:         input.Resolver.IsSet(col.Type),
+		IsSet:         resolver.IsSet(col.Type),
 		FKConvert:     gt.FKConvert,
 		FKReference:   fkRef,
 		Unique:        col.Unique,
@@ -1074,16 +1101,15 @@ func resolveColumnDescription(col *parser.Column, tableCfg config.TableConfig) s
 
 // resolveDefaultExpr returns the raw SQL expression to use in place of the
 // DEFAULT keyword for dialects that do not support it (SQLite). For columns
-// with an explicit DEFAULT, this is the expression itself. For nullable columns
-// without a DEFAULT, this is "NULL". Returns empty string when neither applies.
+// with an explicit DEFAULT, this is the expression itself; every other column
+// gets "NULL", SQLite's implicit default. A rowid alias fills NULL with the
+// next rowid, and a NOT NULL column fails with the NOT NULL violation
+// single-row Create reports.
 func resolveDefaultExpr(col *parser.Column) string {
 	if col.Default != "" {
 		return col.Default
 	}
-	if col.Nullable {
-		return "NULL"
-	}
-	return ""
+	return "NULL"
 }
 
 // --- PK strategy detection ---
@@ -1256,7 +1282,7 @@ func toResolvedOperations(softDelete *SoftDeleteContext, columns []ColumnContext
 		Connection:  true,
 		Stream:      true,
 		// Soft delete and restore need a detected soft-delete column (§5.4);
-		// Increment needs a numeric column that identifies nothing (§8.2).
+		// Increment needs a writable numeric column that identifies nothing (§8.2).
 		SoftDelete: softDelete != nil,
 		Restore:    softDelete != nil,
 		Increment:  len(buildIncrementColumns(columns)) > 0,
@@ -1409,6 +1435,12 @@ func mergeDeclaredRelationships(
 	var errs []error
 	seenKey := make(map[string]int)
 	for i, r := range tableCfg.Relationships {
+		if r.Name == "" {
+			// Config validation already reported the missing `name:` (PRD
+			// §4.8). `sqlgen validate` still builds the contexts, and an edge
+			// with no name has no field to build.
+			continue
+		}
 		if err := checkResolvedDuplicate(r, i, tableCfg.Relationships, targets, seenKey, qualifiedName); err != nil {
 			errs = append(errs, err)
 		}
@@ -1705,7 +1737,7 @@ func buildConflictTargets(table *parser.Table, tableCfg config.TableConfig, stru
 		})
 	}
 
-	// Also pick up inline UNIQUE columns not covered by table-level constraints.
+	// Also pick up Unique columns no UNIQUE constraint covers.
 	for _, col := range table.Columns {
 		if !col.Unique || col.PrimaryKey || coveredCols[col.Name] {
 			continue
@@ -1731,7 +1763,11 @@ func buildConflictTargets(table *parser.Table, tableCfg config.TableConfig, stru
 	slices.SortFunc(targets, func(a, b ConflictTargetContext) int {
 		return strings.Compare(a.ConstantName, b.ConstantName)
 	})
-	return targets
+	// Two UNIQUEs can share columns (MySQL keeps duplicates; PostgreSQL keeps
+	// one added by ALTER TABLE); one target serves both.
+	return slices.CompactFunc(targets, func(a, b ConflictTargetContext) bool {
+		return a.ConstantName == b.ConstantName
+	})
 }
 
 // pkConflictTargetIsIndexed reports whether an ON CONFLICT clause naming the
@@ -1756,19 +1792,9 @@ func buildConflictTargets(table *parser.Table, tableCfg config.TableConfig, stru
 // it ("the override silently takes precedence over any auto-detected PK"), and
 // a composite restatement has a real use, since override order sets <Table>PK
 // field order and cache-key order. Such a key is DB-backed and keeps its
-// target: a table-level PRIMARY KEY leaves a Constraint behind, and the
-// write-back never synthesizes one, so that constraint is a sound discriminator.
-//
-// KNOWN LIMITATION — an *inline* single-column `PRIMARY KEY` records only the
-// column flag, on all three dialects (no Constraint entry). Once the write-back
-// has set that same flag, `id uuid PRIMARY KEY` + `primary_key.columns: [id]`
-// is byte-identical to an app-enforced override, so this returns false and the
-// table loses <T>ConflictPK. It also loses its manifest `<table>_pkey`
-// (pkDeclaredInSchema) and, with no UNIQUE beside it, Upsert and UpsertMany.
-// The bias is deliberate: a missing constant is a compile error a Go caller
-// sees immediately (the GraphQL flat upsert<T> is omitted instead), whereas a wrongly-emitted target is a 42P10 that only fires in
-// production. Deleting the redundant config line restores the
-// target; it buys nothing for a single-column key.
+// target: every PRIMARY KEY, inline or table-level, leaves a Constraint behind
+// (PRD §5.2), and the write-back never synthesizes one, so that constraint is a
+// sound discriminator.
 func pkConflictTargetIsIndexed(table *parser.Table, tableCfg config.TableConfig, pkCols []string) bool {
 	return pkDeclaredInSchema(table, tableCfg, pkCols) || uniqueCoversColumns(table, pkCols)
 }
@@ -1777,13 +1803,11 @@ func pkConflictTargetIsIndexed(table *parser.Table, tableCfg config.TableConfig,
 // the schema declared, and so one the database built a primary-key index for.
 //
 // It is pkConflictTargetIsIndexed's first half, on the same evidence: no
-// primary_key.columns override, or an override restating a table-level PRIMARY
-// KEY constraint. A key that is only backed by a set-equal UNIQUE has an index,
+// primary_key.columns override, or an override restating the PRIMARY KEY
+// constraint. A key that is only backed by a set-equal UNIQUE has an index,
 // but it is that UNIQUE's, listed under its own name. The manifest reads this
 // through TableContext.PKDeclaredInSchema so that indexes[] names no
-// primary-key index the database does not have (PRD §30.7). It carries the
-// same known limitation: an inline PRIMARY KEY restated by the override reads
-// as app-enforced.
+// primary-key index the database does not have (PRD §30.7).
 func pkDeclaredInSchema(table *parser.Table, tableCfg config.TableConfig, pkCols []string) bool {
 	if tableCfg.PrimaryKey == nil || len(tableCfg.PrimaryKey.Columns) == 0 {
 		return true
@@ -1793,7 +1817,7 @@ func pkDeclaredInSchema(table *parser.Table, tableCfg config.TableConfig, pkCols
 
 // uniqueCoversColumns reports whether the table carries a UNIQUE constraint
 // whose column membership is exactly cols (order-independent), or — for a
-// single column — an inline UNIQUE on that column.
+// single column — a column whose Unique flag is set.
 //
 // Set equality is required, matching config.uniqueCovers: a UNIQUE on (a) does
 // not make (a, b) conflict-targetable. Partial UNIQUE constraints (Where != "")
@@ -1850,7 +1874,7 @@ func conflictConstantSuffix(columns []string) string {
 // --- Increment columns ---
 
 // buildIncrementColumns selects the columns eligible for atomic
-// increment/decrement: numeric, and identifying nothing.
+// increment/decrement: numeric, writable, and identifying nothing.
 //
 // Primary keys are excluded because a row's identity is not an amount. Foreign
 // keys are excluded for the same reason one step removed — `category_id + 1`
@@ -1884,16 +1908,17 @@ func buildIncrementColumns(columns []ColumnContext) []ColumnContext {
 }
 
 // isIncrementEligible reports whether a resolved column is enrolled in the
-// Increment surface: an arithmetic Go type over an arithmetic SQL column,
-// identifying nothing. It is the single decision point — the client surface,
-// the GraphQL `_inc` / `_dec` operators and the `_inc` namespace check all
-// read it, so none of them can drift from the others.
+// Increment surface: an arithmetic Go type over an arithmetic SQL column that
+// is writable (not generated) and identifies nothing. It is the single
+// decision point — the client surface, the GraphQL `_inc` / `_dec`
+// operators and the `_inc` namespace check all read it, so none of them can
+// drift from the others.
 //
 // ColumnContext.Tenant is attached after the table context is assembled, so
 // callers reached during assembly see it unset. buildIncrementColumns is
 // therefore re-run once tenancy lands; see attachTenancyToTables.
 func isIncrementEligible(col ColumnContext) bool {
-	return !col.PrimaryKey && col.FKReference == nil && !col.Tenant &&
+	return !col.PrimaryKey && col.FKReference == nil && !col.Tenant && !col.IsComputed &&
 		isIncrementableGoType(col.GoType) && isArithmeticSQLColumn(col)
 }
 
@@ -2309,14 +2334,22 @@ func buildCreateInputFields(columns []ColumnContext, pkStrategy config.PKStrateg
 			continue
 		}
 
-		// Update columns and soft delete columns → omittable (supports data backfilling).
-		if updateSet[col.Name] || col.Name == softDeleteCol || col.Nullable || col.HasDefault {
-			fields = append(fields, omittableInputField(col))
-		} else {
-			fields = append(fields, requiredInputField(col))
+		field := requiredInputField(col)
+		if createInputOmittable(col, updateSet, softDeleteCol) {
+			field = omittableInputField(col)
 		}
+		field.AutoIncrement = col.AutoIncrement
+		fields = append(fields, field)
 	}
 	return fields
+}
+
+// createInputOmittable reports whether a non-key column may be left out of a
+// create input. Update and soft-delete columns are omittable to support data
+// backfilling. An auto-increment column has no Default (PRD §6.1), but the
+// database fills it.
+func createInputOmittable(col ColumnContext, updateSet map[string]bool, softDeleteCol string) bool {
+	return updateSet[col.Name] || col.Name == softDeleteCol || col.Nullable || col.HasDefault || col.AutoIncrement
 }
 
 func buildUpdateInputFields(columns []ColumnContext, _ []string, _ *SoftDeleteContext) []InputFieldContext {
@@ -2417,6 +2450,19 @@ func buildRelationshipOptionsDefs(rels []RelationshipContext) []RelationshipOpti
 
 // --- All column names ---
 
+// buildCursorKeyColumns returns the columns named by the resolved cursor keys,
+// in key order. Columns are matched by name; a key with no column is skipped,
+// since it never resolves (PRD §4.13).
+func buildCursorKeyColumns(columns []ColumnContext, keys []string) []ColumnContext {
+	out := make([]ColumnContext, 0, len(keys))
+	for _, key := range keys {
+		if i := slices.IndexFunc(columns, func(col ColumnContext) bool { return col.Name == key }); i >= 0 {
+			out = append(out, columns[i])
+		}
+	}
+	return out
+}
+
 // buildAllColumnNames returns a sorted list of all SQL column names.
 func buildAllColumnNames(columns []ColumnContext) []string {
 	names := make([]string, len(columns))
@@ -2489,7 +2535,7 @@ func buildSingleO2ODetail(input *GenerateInput, rel RelationshipContext, parentA
 	}
 
 	// Detect soft delete on target
-	targetSoftDelete, _ := detectTableSoftDelete(targetTable, input.Config, targetColumns)
+	targetSoftDelete := detectTableSoftDelete(targetTable, input.Config, targetColumns)
 
 	// Build scan cases for target columns
 	scanCases := buildO2OScanCases(targetColumns, alias, varName, pkCol.Name, input.Config.Output.Driver)
@@ -2598,7 +2644,9 @@ func findO2ORelationships(schema *parser.Schema, table *parser.Table, tableCfg c
 
 	for _, r := range tableCfg.Relationships {
 		relType := parseRelationshipType(r.Type)
-		if relType != parser.OneToOne {
+		// A nameless entry is skipped as mergeDeclaredRelationships skips it:
+		// config validation reports the missing `name:` (PRD §4.8).
+		if relType != parser.OneToOne || r.Name == "" {
 			continue
 		}
 		if excludeSet[r.Name] {

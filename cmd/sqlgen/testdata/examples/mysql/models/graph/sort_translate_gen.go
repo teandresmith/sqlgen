@@ -835,6 +835,8 @@ func warehouseSortFieldToColumn(f gqlmodel.WarehouseSortField) string {
 		return "price"
 	case "NULLABLE_PRICE":
 		return "nullable_price"
+	case "INSPECTED_AT":
+		return "inspected_at"
 	case "CREATED_AT":
 		return "created_at"
 	}

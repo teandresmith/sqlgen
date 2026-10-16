@@ -1,7 +1,9 @@
 scalar Bytes
+scalar DateTime
 scalar Decimal
 scalar JSON
 scalar KSUID
+scalar NullDateTime
 scalar NullDecimal
 scalar Time
 

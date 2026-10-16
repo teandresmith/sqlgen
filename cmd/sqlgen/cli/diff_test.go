@@ -431,7 +431,7 @@ func TestGenerateInto_redirectsEveryWrite_andKeepsImportsConfigured(t *testing.T
 	if err != nil {
 		t.Fatalf("loading config: %v", err)
 	}
-	schema, err := parseSchema(cfg)
+	schema, err := parseSchema(t.Context(), cfg)
 	if err != nil {
 		t.Fatalf("parsing schema: %v", err)
 	}

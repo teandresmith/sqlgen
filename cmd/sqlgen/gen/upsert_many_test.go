@@ -218,6 +218,38 @@ func TestUpsertManyTemplate_conflictClauseFields(t *testing.T) {
 	}
 }
 
+// A non-key sequence column stays out of the update half on every dialect: an
+// unset one binds DEFAULT (NULL on SQLite), so setting it would redraw it on
+// each conflict (PRD §9.5).
+func TestUpsertManyTemplate_excludesNonKeySequenceColumns(t *testing.T) {
+	withSequence := func(ctx gen.TableContext) gen.TableContext {
+		ctx.CreateInputFields = append(ctx.CreateInputFields, gen.InputFieldContext{
+			FieldName: "Seq", GoType: "omittable.Value[int64]", ColumnName: "seq", Omittable: true, JSONTag: "seq", AutoIncrement: true,
+		})
+		return ctx
+	}
+	tests := []struct {
+		name    string
+		ctx     gen.TableContext
+		dialect sql.Dialect
+		want    string
+	}{
+		{"postgres", withSequence(testUpsertManyContext_dbStrategyUUID_postgres()), sql.NewPostgresDialect(), `append(conflictColumns, "id", "seq"))`},
+		{"mysql", withSequence(testUpsertManyContext_dbStrategyAutoIncrement_mysql()), sql.NewMySQLDialect(), `append(conflictColumns, "id", "seq"))`},
+		{"sqlite", withSequence(testUpsertManyContext_sqlite()), sql.NewSQLiteDialect(), `append(conflictColumns, "id", "seq"))`},
+		{"no sequence column", testUpsertManyContext_dbStrategyUUID_postgres(), sql.NewPostgresDialect(), `append(conflictColumns, "id"))`},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			output := executeUpsertManyTemplate(t, tt.ctx, tt.dialect)
+			want := "updateColumns := excludeColumns(columns, " + tt.want
+			if !strings.Contains(output, want) {
+				t.Errorf("output missing %q\n\nfull output:\n%s", want, output)
+			}
+		})
+	}
+}
+
 // --- §6.1: the dedupe ---
 
 func TestUpsertManyTemplate_dedupesLastWins(t *testing.T) {

@@ -67,6 +67,37 @@ func TestToSchemaTables_PartialUniqueExcludedFromUniqueGroups(t *testing.T) {
 	}
 }
 
+// TestToSchemaTables_HasDefault pins that an explicit DEFAULT NULL is no
+// default. The PostgreSQL and SQLite file parsers (and SQLite's catalog) keep
+// it as the text "NULL" while the PostgreSQL and MySQL catalogs (and the MySQL
+// file parser) record none, and
+// the soft delete nullability rule must not differ by source.
+func TestToSchemaTables_HasDefault(t *testing.T) {
+	tests := []struct {
+		name string
+		col  parser.Column
+		want bool
+	}{
+		{name: "no default", col: parser.Column{Name: "c", Type: "boolean", Nullable: true}, want: false},
+		{name: "DEFAULT NULL", col: parser.Column{Name: "c", Type: "boolean", Nullable: true, Default: "NULL"}, want: false},
+		{name: "DEFAULT null", col: parser.Column{Name: "c", Type: "boolean", Nullable: true, Default: "null"}, want: false},
+		{name: "DEFAULT NULL::boolean", col: parser.Column{Name: "c", Type: "boolean", Nullable: true, Default: "NULL::boolean"}, want: false},
+		{name: "DEFAULT ((NULL))", col: parser.Column{Name: "c", Type: "boolean", Nullable: true, Default: "(NULL)"}, want: false},
+		{name: "DEFAULT (NULL::boolean)", col: parser.Column{Name: "c", Type: "boolean", Nullable: true, Default: "(NULL::boolean)"}, want: false},
+		{name: "DEFAULT false", col: parser.Column{Name: "c", Type: "boolean", Nullable: true, Default: "false"}, want: true},
+		{name: "DEFAULT 'NULL' string", col: parser.Column{Name: "c", Type: "text", Nullable: true, Default: "'NULL'"}, want: true},
+		{name: "generated", col: parser.Column{Name: "c", Type: "integer", GeneratedExpr: "a + 1"}, want: true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			schema := &parser.Schema{Tables: []parser.Table{{Name: "t", Schema: "public", Columns: []parser.Column{tt.col}}}}
+			if got := toSchemaTables(schema)[0].Columns[0].HasDefault; got != tt.want {
+				t.Errorf("HasDefault = %v, want %v (Default %q)", got, tt.want, tt.col.Default)
+			}
+		})
+	}
+}
+
 // writeSchemaProject writes a sqlgen.yml for dialect and one DDL file holding
 // sql into a fresh directory, and returns the config path.
 func writeSchemaProject(t *testing.T, dialect config.Dialect, sql string) string {
@@ -202,6 +233,87 @@ func TestParseSchema_UnresolvedForeignKey(t *testing.T) {
 	}
 }
 
+// TestGenerate_InlineTypeNameCollision covers two MySQL columns a single
+// underscore would give one inline type name: table a, column b_c and table
+// a_b, column c. The schema names differ (a__b_c_enum, a_b__c_enum) but both
+// resolve to one Go type name, so the ENUM pair generates once one of the two
+// `enums:` keys renames its type. A SET type has no such key.
+func TestGenerate_InlineTypeNameCollision(t *testing.T) {
+	tests := []struct {
+		name     string
+		sql      string
+		config   string // appended to sqlgen.yml
+		wantCode int    // generate's exit code; 0 means the command succeeds
+		wantErr  string
+	}{
+		{
+			name: "ENUM pair without an override",
+			sql: `CREATE TABLE a (id INT PRIMARY KEY, b_c ENUM('1','2') NOT NULL);
+				CREATE TABLE a_b (id INT PRIMARY KEY, c ENUM('3','4') NOT NULL);`,
+			wantCode: ExitGeneration,
+			wantErr:  `enum a__b_c_enum and enum a_b__c_enum both resolve to the Go type name "ABCEnum" — set enums.a__b_c_enum.struct_name or enums.a_b__c_enum.struct_name to a different Go identifier`,
+		},
+		{
+			name: "ENUM pair with an override",
+			sql: `CREATE TABLE a (id INT PRIMARY KEY, b_c ENUM('1','2') NOT NULL);
+				CREATE TABLE a_b (id INT PRIMARY KEY, c ENUM('3','4') NOT NULL);`,
+			config: "enums:\n  a__b_c_enum:\n    struct_name: ABCInlineEnum\n",
+		},
+		{
+			name: "SET pair",
+			sql: `CREATE TABLE a (id INT PRIMARY KEY, b_c SET('1','2'));
+				CREATE TABLE a_b (id INT PRIMARY KEY, c SET('3'));`,
+			wantCode: ExitGeneration,
+			wantErr:  `SET type a__b_c_set and SET type a_b__c_set both resolve to the Go type name "ABCSet" and the Go type name "ABCSetValue" — rename one of them in the schema`,
+		},
+	}
+	for _, tt := range tests {
+		for _, command := range []string{"generate", "validate"} {
+			t.Run(tt.name+"/"+command, func(t *testing.T) {
+				cfgPath := writeSchemaProject(t, config.DialectMySQL, tt.sql)
+				appendConfig(t, cfgPath, tt.config)
+				stderr, err := runSchemaCommand(t, command, cfgPath, tt.wantCode == 0)
+				if tt.wantCode == 0 {
+					if err != nil {
+						t.Fatalf("%s: unexpected error: %v\nstderr: %s", command, err, stderr)
+					}
+					return
+				}
+				if err == nil {
+					t.Fatalf("%s: succeeded, want %q", command, tt.wantErr)
+				}
+				if ee, ok := errors.AsType[*exitError](err); command == "generate" && (!ok || ee.code != tt.wantCode) {
+					t.Fatalf("%s: error = %v, want exit code %d\nstderr: %s", command, err, tt.wantCode, stderr)
+				}
+				if !strings.Contains(stderr, tt.wantErr) {
+					t.Errorf("%s: stderr = %q, want it to contain %q", command, stderr, tt.wantErr)
+				}
+			})
+		}
+	}
+}
+
+// TestUnmatchedEnumKey_Warns pins that an `enums:` key in the MySQL
+// `<table>_<column>_enum` form, which matches no enum, is reported by both
+// `generate` and `validate` as a warning, and neither command fails.
+func TestUnmatchedEnumKey_Warns(t *testing.T) {
+	const want = "Warning: enums.users_role_enum: matches no enum in the schema, so the entry has no effect — check the spelling (a MySQL inline ENUM is named <table>__<column>_enum)\n"
+	for _, command := range []string{"generate", "validate"} {
+		t.Run(command, func(t *testing.T) {
+			cfgPath := writeSchemaProject(t, config.DialectMySQL,
+				`CREATE TABLE users (id INT PRIMARY KEY, role ENUM('admin','viewer') NOT NULL);`)
+			appendConfig(t, cfgPath, "enums:\n  users_role_enum:\n    struct_name: Role\n")
+			stderr, err := runSchemaCommand(t, command, cfgPath, true)
+			if err != nil {
+				t.Fatalf("%s: unexpected error: %v\nstderr: %s", command, err, stderr)
+			}
+			if strings.Count(stderr, want) != 1 {
+				t.Errorf("%s: stderr = %q, want it to contain %q once", command, stderr, want)
+			}
+		})
+	}
+}
+
 // TestValidate_UnresolvedForeignKeyKeepsChecking pins that an unresolved
 // PostgreSQL foreign key does not hide the rest of `validate`'s report: the
 // parser warnings, the post-parse config error and the
@@ -288,7 +400,7 @@ func TestParseSchema_UnresolvedForeignKeyReturnsSchema(t *testing.T) {
 				Views:   []string{viewPath},
 			}}
 
-			schema, err := parseSchema(cfg)
+			schema, err := parseSchema(t.Context(), cfg)
 			if err == nil {
 				t.Fatal("parseSchema: error = nil, want the unresolved-FK error")
 			}
@@ -391,6 +503,58 @@ func TestParseSchema_PrintsParserWarnings(t *testing.T) {
 	}
 }
 
+// TestParseSchema_ViewColumnNames checks that generation stops on a view file
+// with an unnamed column (PRD §16.1) rather than generating a view that reads
+// too few columns, and that a column list names the view's columns.
+func TestParseSchema_ViewColumnNames(t *testing.T) {
+	tests := []struct {
+		name, viewSQL string
+		want          []string
+		wantErr       string
+	}{
+		{name: "unaliased expression", viewSQL: "CREATE VIEW v AS SELECT o.id, o.total + 1 FROM orders o;", wantErr: "v.sql: view v selects o.total + 1 with no alias and no column name; name it with AS"},
+		{name: "star", viewSQL: "CREATE VIEW v AS SELECT * FROM orders;", wantErr: "view v selects *, whose columns the view parser cannot list; name each column"},
+		{name: "column list", viewSQL: "CREATE VIEW v (order_id, next_total) AS SELECT o.id, o.total + 1 FROM orders o;", want: []string{"order_id", "next_total"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			dir := t.TempDir()
+			schemaPath := filepath.Join(dir, "schema.sql")
+			if err := os.WriteFile(schemaPath, []byte("CREATE TABLE orders (id uuid PRIMARY KEY, total int NOT NULL);"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			viewPath := filepath.Join(dir, "v.sql")
+			if err := os.WriteFile(viewPath, []byte(tt.viewSQL), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			cfg := &config.RootConfig{Input: config.InputConfig{
+				Dialect: config.DialectPostgres,
+				Schema:  "*",
+				Paths:   []string{schemaPath},
+				Views:   []string{viewPath},
+			}}
+
+			schema, err := parseSchema(t.Context(), cfg)
+			if tt.wantErr != "" {
+				if err == nil || !strings.Contains(err.Error(), tt.wantErr) {
+					t.Fatalf("parseSchema: error = %v, want it to contain %q", err, tt.wantErr)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("parseSchema: %v", err)
+			}
+			var got []string
+			for _, col := range schema.Views[0].Columns {
+				got = append(got, col.Name)
+			}
+			if diff := cmp.Diff(tt.want, got); diff != "" {
+				t.Errorf("view columns (-want +got):\n%s", diff)
+			}
+		})
+	}
+}
+
 // TestParseSchema_ViewDefaultSchema pins that an input.views file whose view
 // name is unqualified resolves to the schema an unqualified CREATE TABLE does
 // (input.schema, "public" when unset). A view without one kept a bare
@@ -448,7 +612,7 @@ func TestParseSchema_ViewDefaultSchema(t *testing.T) {
 				Views:   []string{viewDir},
 			}}
 
-			schema, err := parseSchema(cfg)
+			schema, err := parseSchema(t.Context(), cfg)
 			if err != nil {
 				t.Fatalf("parseSchema: %v", err)
 			}
@@ -458,6 +622,131 @@ func TestParseSchema_ViewDefaultSchema(t *testing.T) {
 			}
 			if diff := cmp.Diff(tt.want, got); diff != "" {
 				t.Errorf("view schema.name mismatch (-want +got):\n%s", diff)
+			}
+		})
+	}
+}
+
+// A database qualifier on a MySQL view file's name is dropped (PRD §5.5), so
+// the file overlays the database's view of the bare name (PRD §16.2) rather
+// than generating a second view.
+func TestAddViewFiles_MySQLQualifiedView(t *testing.T) {
+	tests := []struct {
+		name         string
+		viewSQL      string
+		introspected bool
+	}{
+		{name: "overlays the database view", viewSQL: "-- @pk: id\nCREATE VIEW app.project_ids AS SELECT p.id FROM projects p;\n", introspected: true},
+		{name: "overlays the database view from a compound query", viewSQL: "-- @pk: id\nCREATE VIEW app.project_ids AS SELECT id FROM projects UNION SELECT id FROM projects;\n", introspected: true},
+		{name: "files", viewSQL: "-- @pk: id\nCREATE VIEW `app`.`project_ids` AS SELECT p.id FROM projects p;\n"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			viewPath := filepath.Join(t.TempDir(), "project_ids.sql")
+			if err := os.WriteFile(viewPath, []byte(tt.viewSQL), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			schema := &parser.Schema{Tables: []parser.Table{{
+				Name:    "projects",
+				Columns: []parser.Column{{Name: "id", Type: "bigint", PrimaryKey: true}},
+			}}}
+			if tt.introspected {
+				schema.Views = []parser.View{{Name: "project_ids", Columns: []parser.Column{{Name: "id", Type: "bigint", Nullable: true}}}}
+			}
+			cfg := &config.RootConfig{Input: config.InputConfig{Dialect: config.DialectMySQL, Views: []string{viewPath}}}
+
+			if err := addViewFiles(cfg, "", tt.introspected, schema); err != nil {
+				t.Fatalf("addViewFiles: %v", err)
+			}
+			var got []string
+			for _, v := range schema.Views {
+				for _, col := range v.Columns {
+					got = append(got, fmt.Sprintf("%s.%s.%s pk=%v", v.Schema, v.Name, col.Name, col.PrimaryKey))
+				}
+			}
+			want := []string{".project_ids.id pk=true"}
+			if diff := cmp.Diff(want, got); diff != "" {
+				t.Errorf("views (-want +got):\n%s", diff)
+			}
+		})
+	}
+}
+
+// TestValidate_NullableCursorKey pins that a nullable column cannot be a
+// cursor key (PRD §4.13): an explicit key naming one is a config error under
+// either nullable representation, and an inherited key naming one does not
+// resolve. A view column's nullability is the one §16.3 resolves, so a column
+// read from the outer side of a LEFT JOIN counts.
+func TestValidate_NullableCursorKey(t *testing.T) {
+	const schema = `CREATE TABLE notes (
+			id INTEGER PRIMARY KEY,
+			body TEXT
+		);
+		CREATE TABLE tags (
+			id INTEGER PRIMARY KEY,
+			note_id INTEGER NOT NULL
+		);`
+	const view = `CREATE VIEW note_tags AS
+		SELECT t.note_id, n.id
+		FROM tags t
+		LEFT JOIN notes n ON n.id = t.note_id;`
+	tests := []struct {
+		name        string
+		config      string
+		wantErr     string
+		wantWarning string
+	}{
+		{
+			name:    "explicit table key",
+			config:  "tables:\n  notes:\n    cursor_keys: [body, id]\n",
+			wantErr: `Error: cursor_keys: column "body" in table notes is nullable; a cursor key must be NOT NULL`,
+		},
+		{
+			name:    "explicit table key with sql.Null wrappers",
+			config:  "overrides:\n  use_pointers: false\ntables:\n  notes:\n    cursor_keys: [body, id]\n",
+			wantErr: `Error: cursor_keys: column "body" in table notes is nullable; a cursor key must be NOT NULL`,
+		},
+		{
+			name:    "explicit view key",
+			config:  "views:\n  note_tags:\n    cursor_keys: [id]\n",
+			wantErr: `Error: cursor_keys: column "id" in view note_tags is nullable; a cursor key must be NOT NULL`,
+		},
+		{
+			name:        "inherited view key",
+			wantWarning: `Warning: cursor_keys: inherited default does not resolve on view note_tags (column "id" is nullable); Connection method omitted`,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cfgPath := writeSchemaProject(t, config.DialectSQLite, schema)
+			viewDir := t.TempDir()
+			if err := os.WriteFile(filepath.Join(viewDir, "note_tags.sql"), []byte(view), 0o600); err != nil {
+				t.Fatalf("writing view file: %v", err)
+			}
+			cfg, err := os.ReadFile(cfgPath) //nolint:gosec // test code, path is from controlled test dir
+			if err != nil {
+				t.Fatalf("reading config: %v", err)
+			}
+			content := strings.Replace(string(cfg), "\noutput:", "\n  views:\n    - \""+filepath.ToSlash(viewDir)+"\"\noutput:", 1) + tt.config
+			if err := os.WriteFile(cfgPath, []byte(content), 0o600); err != nil { //nolint:gosec // test code, path is from controlled test dir
+				t.Fatalf("writing config: %v", err)
+			}
+
+			_, stderr, err := executeCommand("validate", "--config", cfgPath)
+			if tt.wantErr != "" {
+				if err == nil {
+					t.Fatalf("validate succeeded, want %q\nstderr: %s", tt.wantErr, stderr)
+				}
+				if !strings.Contains(stderr, tt.wantErr) {
+					t.Errorf("validate: stderr = %q, want it to contain %q", stderr, tt.wantErr)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("validate: unexpected error: %v\nstderr: %s", err, stderr)
+			}
+			if !strings.Contains(stderr, tt.wantWarning) {
+				t.Errorf("validate: stderr = %q, want it to contain %q", stderr, tt.wantWarning)
 			}
 		})
 	}

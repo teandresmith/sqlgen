@@ -35,6 +35,7 @@ sqlgen manifest. Start here: [./manifest/_index.md](./manifest/_index.md).
 - **PublicNote** (`notes`, table) — [./manifest/public_note.md](./manifest/public_note.md)
 - **PublicUser** (`users`, table) — [./manifest/public_user.md](./manifest/public_user.md)
 - **RateLimit** (`rate_limits`, table) — [./manifest/rate_limit.md](./manifest/rate_limit.md)
+- **SequenceRow** (`sequence_rows`, table) — [./manifest/sequence_row.md](./manifest/sequence_row.md)
 - **SluggedRow** (`slugged_rows`, table) — [./manifest/slugged_row.md](./manifest/slugged_row.md)
 - **Tag** (`tags`, table) — [./manifest/tag.md](./manifest/tag.md)
 - **UserCategory** (`user_categories`, table) — [./manifest/user_category.md](./manifest/user_category.md)

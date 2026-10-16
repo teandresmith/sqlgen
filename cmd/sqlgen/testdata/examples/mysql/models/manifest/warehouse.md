@@ -23,13 +23,14 @@ Storage warehouses with type-overridden columns
 | `name` | Name | `string` | `varchar(255)` |  |  |  |  | `comparator.String` | Warehouse name |
 | `price` | Price | `decimal.Decimal` | `decimal(10,2)` |  |  |  |  | `comparator.String` | Operational cost |
 | `nullable_price` | NullablePrice | `decimal.NullDecimal` | `decimal(10,2)` | yes |  |  |  | `comparator.NullableString` | Optional secondary price |
-| `created_at` | CreatedAt | `time.Time` | `timestamp` |  |  |  | `current_timestamp()` | `comparator.Time` | Row creation timestamp |
+| `inspected_at` | InspectedAt | `types.NullDateTime` | `datetime(6)` | yes |  |  |  | `comparator.NullableTime` | Most recent inspection time |
+| `created_at` | CreatedAt | `types.DateTime` | `timestamp` |  |  |  | `current_timestamp()` | `comparator.Time` | Row creation timestamp |
 
 ## Indexes
 
 | Name | Columns | Unique | Method | Where |
 | --- | --- | --- | --- | --- |
-| `warehouses_pkey` | id | yes | btree |  |
+| `PRIMARY` | id | yes | btree |  |
 
 ## Query methods
 
@@ -45,7 +46,7 @@ Generated SQL:
 mysql:
 
 ```sql
-SELECT `created_at`, `external_id`, `id`, `name`, `nullable_price`, `price` FROM `warehouses` WHERE `id` = ? LIMIT 1
+SELECT `created_at`, `external_id`, `id`, `inspected_at`, `name`, `nullable_price`, `price` FROM `warehouses` WHERE `id` = ? LIMIT 1
 ```
 
 ### GetMany
@@ -58,7 +59,7 @@ Generated SQL:
 mysql:
 
 ```sql
-SELECT `created_at`, `external_id`, `id`, `name`, `nullable_price`, `price` FROM `warehouses` WHERE <filter> ORDER BY <sort> LIMIT <limit>
+SELECT `created_at`, `external_id`, `id`, `inspected_at`, `name`, `nullable_price`, `price` FROM `warehouses` WHERE <filter> ORDER BY <sort> LIMIT <limit>
 ```
 
 ### Count
@@ -124,7 +125,7 @@ Generated SQL:
 mysql:
 
 ```sql
-SELECT `created_at`, `external_id`, `id`, `name`, `nullable_price`, `price` FROM `warehouses` WHERE <filter> ORDER BY <sort>
+SELECT `created_at`, `external_id`, `id`, `inspected_at`, `name`, `nullable_price`, `price` FROM `warehouses` WHERE <filter> ORDER BY <sort>
 ```
 
 ## Mutation methods
@@ -300,6 +301,7 @@ Type `WarehouseFilter`.
 | CreatedAt | `*comparator.Time` |
 | ExternalID | `*comparator.String` |
 | ID | `*comparator.Number[int64]` |
+| InspectedAt | `*comparator.NullableTime` |
 | Name | `*comparator.String` |
 | NullablePrice | `*comparator.NullableString` |
 | Price | `*comparator.String` |
@@ -310,4 +312,4 @@ Type `WarehouseFilter`.
 
 Type `WarehouseSort`.
 
-Fields: CreatedAt, ExternalID, ID, Name, NullablePrice, Price
+Fields: CreatedAt, ExternalID, ID, InspectedAt, Name, NullablePrice, Price

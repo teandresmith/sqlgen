@@ -36,7 +36,7 @@ func newLintCmd(flags *cliFlags) *cobra.Command {
 				return err
 			}
 
-			cfg, schema, err := loadAndValidate(flags, errOut)
+			cfg, schema, err := loadAndValidate(cmd.Context(), flags, errOut)
 			if err != nil {
 				return err
 			}

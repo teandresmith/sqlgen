@@ -27,7 +27,7 @@ Junction table for m2m sub-categorized polymorphism
 
 | Name | Columns | Unique | Method | Where |
 | --- | --- | --- | --- | --- |
-| `asset_document_links_pkey` | asset_id, document_id | yes | btree |  |
+| `PRIMARY` | asset_id, document_id | yes | btree |  |
 | `document_id` | document_id |  | btree |  |
 
 ## Query methods

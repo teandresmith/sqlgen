@@ -110,6 +110,40 @@ type Schema struct {
 	Views          []View
 	Relationships  []Relationship
 	Warnings       []string
+
+	// Partitions lists the PostgreSQL partitions both sources skip (PRD
+	// §5.2, §6.3). A partition is not an entity, but PostgreSQL can index
+	// it, so under source: both the file parser needs to know the
+	// database's partitions to accept a CREATE INDEX on one.
+	Partitions []Partition
+
+	// ViewDependencies lists what every view in the database depends on,
+	// as the database records it, whatever the introspection filters
+	// (PostgreSQL pg_depend, MySQL VIEW_TABLE_USAGE). Under source: both a
+	// migration that drops one is an error (PRD §6.1). The file parser
+	// leaves it empty.
+	ViewDependencies []ViewDependency
+
+	// SQLiteSchema holds a SQLite database's schema statements
+	// (sqlite_master), tables first, then indexes, views and triggers,
+	// which source: both replays with the SQL files to check them against
+	// SQLite itself (PRD §6.1).
+	SQLiteSchema []SchemaStatement
+}
+
+// SchemaStatement is the statement that created a SQLite schema object:
+// Type is table, index, view or trigger.
+type SchemaStatement struct {
+	Type, Name, SQL string
+}
+
+// Partition is one PostgreSQL partition (CREATE TABLE … PARTITION OF) and the
+// table it is a partition of.
+type Partition struct {
+	Schema       string
+	Name         string
+	ParentSchema string
+	ParentName   string
 }
 
 // Sort sorts all elements in the schema deterministically.
@@ -162,6 +196,13 @@ func (s *Schema) Sort() {
 	slices.SortFunc(s.Relationships, func(a, b Relationship) int {
 		return strings.Compare(a.Name, b.Name)
 	})
+
+	slices.SortFunc(s.Partitions, func(a, b Partition) int {
+		if c := strings.Compare(a.Schema, b.Schema); c != 0 {
+			return c
+		}
+		return strings.Compare(a.Name, b.Name)
+	})
 }
 
 // Table represents a parsed SQL table.
@@ -173,24 +214,19 @@ type Table struct {
 	Comment      string
 	Strict       bool // SQLite STRICT table modifier (3.37+)
 	WithoutRowID bool // SQLite WITHOUT ROWID table modifier (3.8.2+)
+
+	// ExpressionIndexes holds the table's indexes with an expression part,
+	// which Constraints leaves out (PostgreSQL and MySQL).
+	ExpressionIndexes []ExpressionIndex
 }
 
 // Column represents a column in a table.
 type Column struct {
-	Name       string
-	Type       string
-	Nullable   bool
-	PrimaryKey bool
-	Unique     bool
-	// InlineUnique reports whether the column carries a UNIQUE constraint
-	// declared inline at column definition time (e.g. `email text UNIQUE`),
-	// as opposed to a table-level UNIQUE constraint that lives in
-	// Table.Constraints. The DDL parsers set this alongside Unique at column
-	// parse time; RecomputeColumnUnique consults it when re-deriving the
-	// effective Unique flag after a table-level UNIQUE is dropped, so an
-	// inline declaration still in force at the DB level is not silently
-	// stripped from the column.
-	InlineUnique     bool
+	Name             string
+	Type             string
+	Nullable         bool
+	PrimaryKey       bool
+	Unique           bool
 	Default          string
 	FKReference      *FKReference
 	AutoIncrement    bool
@@ -222,18 +258,16 @@ type FKReference struct {
 	// clause. The database does not enforce it, and it may name a column that
 	// holds no foreign key at all, so any consumer deciding something about
 	// the *referential contract* — as opposed to how a column is filtered or
-	// typed — must exclude it. Column is empty for synthetic references, but
-	// that is not a usable test: the MySQL and SQLite parsers also leave it
-	// empty when a REFERENCES clause omits the referenced column list.
+	// typed — must exclude it. Column is empty for synthetic references;
+	// test Synthetic, not Column, to tell the two apart.
 	Synthetic bool
 }
 
 // Constraint represents a table-level constraint.
 //
 // Method and Where apply only to index-shaped constraints (Index and Unique).
-// Method holds the access-method name when the DDL declares one — "btree",
-// "gin", "gist", "hash", and so on — and is empty otherwise; consumers that
-// need a default treat the empty string as "btree" (PostgreSQL's default).
+// Method holds the access-method name: "btree", "gin", "gist", "hash", and so
+// on. CanonicalizeConstraints defaults it to "btree" on PostgreSQL and MySQL.
 // Where holds the predicate text of a partial index (PostgreSQL / SQLite)
 // without the leading WHERE keyword; MySQL does not support partial indexes
 // so Where stays empty for that dialect.
@@ -340,34 +374,41 @@ type View struct {
 	// Always false for regular views (Materialized == false implies
 	// ConcurrentlyRefreshable == false).
 	ConcurrentlyRefreshable bool
+
+	// Definition is the parsed definition an introspected view's columns
+	// were read from (PRD §16.2), so that source: both can read them again
+	// against the schema the SQL files leave. Nil for a view from an
+	// annotation file, and for one whose columns come from the catalog.
+	Definition *ViewSQL
 }
 
 // RenameTableReferences repoints every foreign key that references the table
 // (schema, oldName) at (schema, newName), so a RENAME TABLE keeps the keys
-// that reference the table resolvable.
-func RenameTableReferences(tables []Table, schema, oldName, newName string) {
-	retargetTableReferences(tables, schema, oldName, schema, newName)
+// that reference the table resolvable. A reference matches the table as
+// dialect matches names (SameTableName).
+func RenameTableReferences(tables []Table, dialect, schema, oldName, newName string) {
+	retargetTableReferences(tables, dialect, schema, oldName, schema, newName)
 }
 
-// MoveTableReferences repoints every foreign key that references the table
-// (oldSchema, name) at (newSchema, name), so an ALTER TABLE … SET SCHEMA keeps
-// the keys that reference the table resolvable.
+// MoveTableReferences repoints every foreign key that references the
+// PostgreSQL table (oldSchema, name) at (newSchema, name), so an ALTER TABLE …
+// SET SCHEMA keeps the keys that reference the table resolvable.
 func MoveTableReferences(tables []Table, name, oldSchema, newSchema string) {
-	retargetTableReferences(tables, oldSchema, name, newSchema, name)
+	retargetTableReferences(tables, "postgres", oldSchema, name, newSchema, name)
 }
 
-func retargetTableReferences(tables []Table, fromSchema, fromName, toSchema, toName string) {
+func retargetTableReferences(tables []Table, dialect, fromSchema, fromName, toSchema, toName string) {
 	for i := range tables {
 		t := &tables[i]
 		for j := range t.Columns {
 			ref := t.Columns[j].FKReference
-			if ref != nil && ref.Schema == fromSchema && ref.Table == fromName {
+			if ref != nil && ref.Schema == fromSchema && SameTableName(dialect, ref.Table, fromName) {
 				ref.Schema, ref.Table = toSchema, toName
 			}
 		}
 		for j := range t.Constraints {
 			c := &t.Constraints[j]
-			if c.Type == ForeignKey && c.ReferenceSchema == fromSchema && c.ReferenceTable == fromName {
+			if c.Type == ForeignKey && c.ReferenceSchema == fromSchema && SameTableName(dialect, c.ReferenceTable, fromName) {
 				c.ReferenceSchema, c.ReferenceTable = toSchema, toName
 			}
 		}
@@ -380,58 +421,62 @@ func retargetTableReferences(tables []Table, fromSchema, fromName, toSchema, toN
 // foreign key, on any table, that references the column. The database does
 // the same on RENAME COLUMN; left on the old name, a composite key no longer
 // matches its columns, so an M2M junction degrades to O2M and an upsert
-// conflict target names a column that no longer exists. Call it after
+// conflict target names a column that no longer exists. Tables and columns
+// match as dialect matches names (SameTableName, SameColumnName), so a
+// reference written in another case follows the rename too. Call it after
 // RenameColumn has renamed the column itself.
-func RenameColumnReferences(tables []Table, schema, table, oldName, newName string) {
+func RenameColumnReferences(tables []Table, dialect, schema, table, oldName, newName string) {
 	for i := range tables {
 		t := &tables[i]
-		owner := t.Schema == schema && t.Name == table
+		owner := t.Schema == schema && SameTableName(dialect, t.Name, table)
 		for j := range t.Columns {
 			ref := t.Columns[j].FKReference
-			if ref != nil && ref.Schema == schema && ref.Table == table && ref.Column == oldName {
+			if ref != nil && ref.Schema == schema && SameTableName(dialect, ref.Table, table) &&
+				SameColumnName(dialect, ref.Column, oldName) {
 				ref.Column = newName
 			}
 		}
 		for j := range t.Constraints {
 			c := &t.Constraints[j]
 			if owner {
-				replaceName(c.Columns, oldName, newName)
+				replaceName(c.Columns, dialect, oldName, newName)
 			}
-			if c.Type == ForeignKey && c.ReferenceSchema == schema && c.ReferenceTable == table {
-				replaceName(c.ReferenceColumns, oldName, newName)
+			if c.Type == ForeignKey && c.ReferenceSchema == schema && SameTableName(dialect, c.ReferenceTable, table) {
+				replaceName(c.ReferenceColumns, dialect, oldName, newName)
 			}
 		}
 	}
 }
 
-// replaceName replaces every oldName in names with newName, in place.
-func replaceName(names []string, oldName, newName string) {
+// replaceName replaces every name in names that names column oldName in
+// dialect with newName, in place.
+func replaceName(names []string, dialect, oldName, newName string) {
 	for i := range names {
-		if names[i] == oldName {
+		if SameColumnName(dialect, names[i], oldName) {
 			names[i] = newName
 		}
 	}
 }
 
 // UnresolvedForeignKeys returns one error per foreign key whose referenced
-// table is not in tables, sorted for deterministic output. Relationship
+// table is not in tables, sorted for deterministic output. A reference
+// matches a table as dialect matches names (SameTableName). Relationship
 // detection builds an edge from every foreign key, and an edge whose far end
 // was never parsed is dropped without a trace, so the caller reports these
 // instead.
-func UnresolvedForeignKeys(tables []Table) []error {
+func UnresolvedForeignKeys(tables []Table, dialect string) []error {
 	known := make(map[string]bool, len(tables))
 	for i := range tables {
-		known[qualifiedName(tables[i].Schema, tables[i].Name)] = true
+		known[qualifiedName(tables[i].Schema, tableKey(dialect, tables[i].Name))] = true
 	}
 	seen := make(map[string]bool)
 	var msgs []string
 	add := func(t *Table, cols, refSchema, refTable string) {
-		target := qualifiedName(refSchema, refTable)
-		if known[target] {
+		if known[qualifiedName(refSchema, tableKey(dialect, refTable))] {
 			return
 		}
 		msg := fmt.Sprintf("foreign key %s(%s) references %s, which no parsed table defines",
-			qualifiedName(t.Schema, t.Name), cols, target)
+			qualifiedName(t.Schema, t.Name), cols, qualifiedName(refSchema, refTable))
 		if !seen[msg] {
 			seen[msg] = true
 			msgs = append(msgs, msg)
@@ -458,47 +503,113 @@ func UnresolvedForeignKeys(tables []Table) []error {
 	return errs
 }
 
-// CheckTableDropRefs checks whether any table in the schema has a foreign key
-// reference to the table identified by (schema, name). Returns an error
-// describing the first dangling reference found, or nil if the drop is safe.
-func CheckTableDropRefs(tables []Table, schema, name string) error {
-	for i := range tables {
-		t := &tables[i]
-		if t.Schema == schema && t.Name == name {
-			continue // self — will be dropped
-		}
-		for _, col := range t.Columns {
-			if col.FKReference != nil && col.FKReference.Schema == schema && col.FKReference.Table == name {
-				return fmt.Errorf(
-					"cannot drop table %s: column %s.%s references it via foreign key",
-					qualifiedName(schema, name), qualifiedName(t.Schema, t.Name), col.Name,
-				)
+// TableRef names a table by schema and name.
+type TableRef struct {
+	Schema, Name string
+}
+
+// CheckTableDropRefs checks whether the tables in drop, the tables of one DROP
+// TABLE statement, can be dropped together: a foreign key from a table outside
+// drop to one of them blocks the drop, while a foreign key between tables in
+// drop does not. Names match as dialect matches them (SameTableName). Returns
+// an error describing the first blocking reference found, or nil if the drop
+// is safe.
+func CheckTableDropRefs(tables []Table, dialect string, drop []TableRef) error {
+	dropping := func(schema, name string) bool {
+		return slices.ContainsFunc(drop, func(r TableRef) bool {
+			return r.Schema == schema && SameTableName(dialect, r.Name, name)
+		})
+	}
+	for _, ref := range drop {
+		for i := range tables {
+			t := &tables[i]
+			if dropping(t.Schema, t.Name) {
+				continue // dropped with it
 			}
-		}
-		for _, c := range t.Constraints {
-			if c.Type == ForeignKey && c.ReferenceSchema == schema && c.ReferenceTable == name {
-				return fmt.Errorf(
-					"cannot drop table %s: table %s has a foreign key constraint referencing it",
-					qualifiedName(schema, name), qualifiedName(t.Schema, t.Name),
-				)
+			for _, col := range t.Columns {
+				if col.FKReference != nil && col.FKReference.Schema == ref.Schema && SameTableName(dialect, col.FKReference.Table, ref.Name) {
+					return fmt.Errorf(
+						"cannot drop table %s: column %s.%s references it via foreign key",
+						qualifiedName(ref.Schema, ref.Name), qualifiedName(t.Schema, t.Name), col.Name,
+					)
+				}
+			}
+			for _, c := range t.Constraints {
+				if c.Type == ForeignKey && c.ReferenceSchema == ref.Schema && SameTableName(dialect, c.ReferenceTable, ref.Name) {
+					return fmt.Errorf(
+						"cannot drop table %s: table %s has a foreign key constraint referencing it",
+						qualifiedName(ref.Schema, ref.Name), qualifiedName(t.Schema, t.Name),
+					)
+				}
 			}
 		}
 	}
 	return nil
 }
 
-// CheckTypeDropRefs checks whether any column in the schema uses the given
-// type name. Returns an error if a reference is found, or nil if the drop is safe.
-func CheckTypeDropRefs(tables []Table, schema, name string) error {
-	qualified := qualifiedName(schema, name)
-	for i := range tables {
-		t := &tables[i]
+// TypeRef names a user type, an enum, domain or composite type, by schema
+// and name.
+type TypeRef struct {
+	Schema, Name string
+}
+
+// ResolveTypeRef reads a column, attribute or domain base type written for
+// schema owner: a bare name is a type in owner, a qualified one names its
+// schema, and an array of a type refers to that type.
+func ResolveTypeRef(typ, owner string) (ref TypeRef, isArray bool) {
+	base, isArray := strings.CutSuffix(typ, "[]")
+	if typSchema, typName, ok := strings.Cut(base, "."); ok {
+		return TypeRef{Schema: typSchema, Name: typName}, isArray
+	}
+	return TypeRef{Schema: owner, Name: base}, isArray
+}
+
+// CheckTypeDropRefs checks whether the types in drop, the objects of one DROP
+// TYPE or DROP DOMAIN statement, can be dropped together. A table or view
+// column, a domain's base type, or a composite type's attribute that uses one
+// of them, or an array of one, blocks the drop, unless that domain or
+// composite type is itself in drop. Each type is read relative to the schema
+// of the object it belongs to, as ResolveTypeRef reads it. Returns an error
+// naming the first reference found, or nil if the drop is safe.
+func CheckTypeDropRefs(s *Schema, drop []TypeRef) error {
+	dropping := func(typ, owner string) (TypeRef, bool) {
+		ref, _ := ResolveTypeRef(typ, owner)
+		return ref, slices.Contains(drop, ref)
+	}
+	refErr := func(ref TypeRef, user string) error {
+		return fmt.Errorf("cannot drop type %s: %s uses it", qualifiedName(ref.Schema, ref.Name), user)
+	}
+	for i := range s.Tables {
+		t := &s.Tables[i]
 		for _, col := range t.Columns {
-			if col.Type == name || col.Type == qualified {
-				return fmt.Errorf(
-					"cannot drop type %s: column %s.%s uses it",
-					qualified, qualifiedName(t.Schema, t.Name), col.Name,
-				)
+			if ref, ok := dropping(col.Type, t.Schema); ok {
+				return refErr(ref, fmt.Sprintf("column %s.%s", qualifiedName(t.Schema, t.Name), col.Name))
+			}
+		}
+	}
+	for i := range s.Views {
+		v := &s.Views[i]
+		for _, col := range v.Columns {
+			if ref, ok := dropping(col.Type, v.Schema); ok {
+				return refErr(ref, fmt.Sprintf("column %s.%s of view", qualifiedName(v.Schema, v.Name), col.Name))
+			}
+		}
+	}
+	for _, dt := range s.DomainTypes {
+		if slices.Contains(drop, TypeRef{Schema: dt.Schema, Name: dt.Name}) {
+			continue
+		}
+		if ref, ok := dropping(dt.BaseType, dt.Schema); ok {
+			return refErr(ref, "domain "+qualifiedName(dt.Schema, dt.Name))
+		}
+	}
+	for _, ct := range s.CompositeTypes {
+		if slices.Contains(drop, TypeRef{Schema: ct.Schema, Name: ct.Name}) {
+			continue
+		}
+		for _, attr := range ct.Attributes {
+			if ref, ok := dropping(attr.Type, ct.Schema); ok {
+				return refErr(ref, fmt.Sprintf("attribute %s of composite type %s", attr.Name, qualifiedName(ct.Schema, ct.Name)))
 			}
 		}
 	}
@@ -542,24 +653,15 @@ func ApplyConstraintToColumns(table *Table, c Constraint) {
 				col.Unique = true
 			}
 		}
-	case ForeignKey:
-		if len(c.Columns) == 1 && len(c.ReferenceColumns) == 1 {
-			if col := ColumnByName(table, c.Columns[0]); col != nil && col.FKReference == nil {
-				col.FKReference = &FKReference{
-					Table:  c.ReferenceTable,
-					Schema: c.ReferenceSchema,
-					Column: c.ReferenceColumns[0],
-				}
-			}
-		}
-	case Check, Index:
-		// CHECK and INDEX constraints don't affect column flags.
+	case ForeignKey, Check, Index:
+		// CHECK and INDEX constraints set no column flags. CanonicalizeConstraints
+		// sets FKReference from every FOREIGN KEY at once, since a column may
+		// have several.
 	}
 }
 
 // RecomputeColumnUnique re-derives the column's Unique flag from the
-// current table state — the column's InlineUnique flag plus any
-// unconditional, single-column UNIQUE constraint remaining in
+// unconditional, single-column UNIQUE constraints remaining in
 // table.Constraints. Callers must remove the dropped constraint from
 // table.Constraints before invoking this helper; partial UNIQUE
 // constraints (Where != "") are ignored because they cannot keep the
@@ -567,10 +669,6 @@ func ApplyConstraintToColumns(table *Table, c Constraint) {
 func RecomputeColumnUnique(table *Table, colName string) {
 	col := ColumnByName(table, colName)
 	if col == nil {
-		return
-	}
-	if col.InlineUnique {
-		col.Unique = true
 		return
 	}
 	for _, c := range table.Constraints {
@@ -585,15 +683,23 @@ func RecomputeColumnUnique(table *Table, colName string) {
 	col.Unique = false
 }
 
-// RenameColumn renames a column in the table from oldName to newName.
-func RenameColumn(table *Table, oldName, newName string) error {
-	for i := range table.Columns {
-		if table.Columns[i].Name == oldName {
-			table.Columns[i].Name = newName
-			return nil
+// RenameColumn renames the column of table that oldName names to newName,
+// matching names as dialect does (SameColumnName). It is an error when no
+// column has oldName, or when another column already has newName, as it is in
+// the database. MySQL and SQLite let a column be renamed to its own name, in
+// any case; PostgreSQL rejects a rename to the name the column already has.
+func RenameColumn(table *Table, dialect, oldName, newName string) error {
+	i := slices.IndexFunc(table.Columns, func(c Column) bool { return SameColumnName(dialect, c.Name, oldName) })
+	if i < 0 {
+		return fmt.Errorf("column %s not found in table %s", oldName, table.Name)
+	}
+	for j, c := range table.Columns {
+		if (j != i || dialect == "postgres") && SameColumnName(dialect, c.Name, newName) {
+			return fmt.Errorf("column %s already exists in table %s", newName, table.Name)
 		}
 	}
-	return fmt.Errorf("column %s not found in table %s", oldName, table.Name)
+	table.Columns[i].Name = newName
+	return nil
 }
 
 func qualifiedName(schema, name string) string {

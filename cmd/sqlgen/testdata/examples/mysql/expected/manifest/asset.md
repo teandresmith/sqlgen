@@ -26,7 +26,7 @@ Polymorphic parent for sub-categorized document relationships
 
 | Name | Columns | Unique | Method | Where |
 | --- | --- | --- | --- | --- |
-| `assets_pkey` | id | yes | btree |  |
+| `PRIMARY` | id | yes | btree |  |
 
 ## Relationships
 

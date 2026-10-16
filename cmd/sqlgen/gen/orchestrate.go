@@ -131,6 +131,10 @@ func buildAllContexts(input *GenerateInput, collisions map[string]bool) (generat
 		return generationContexts{}, fmt.Errorf("building view contexts: %w", err)
 	}
 
+	// After the table and view contexts, so `generate` lists its warnings in the
+	// order ValidateGeneration does.
+	input.Warnings = append(input.Warnings, unmatchedEnumKeyWarnings(cfg, schema)...)
+
 	if err := validateResolvedPackage(cfg, ctxs); err != nil {
 		return generationContexts{}, err
 	}
@@ -2403,7 +2407,7 @@ func newContextBuildInput(schema *parser.Schema, cfg *config.RootConfig) (*Gener
 // `validate` stopped at ValidatePostParse and printed "config and schema are
 // valid" for configs that `generate` then rejected — a resolved-field-name
 // collision (PRD §8.5), a per-column type literal with no importable package,
-// an ambiguous soft-delete column, an unresolvable `api.operations` mask,
+// an unresolvable `api.operations` mask,
 // a bad tenancy declaration, an o2o join that cannot be built, or an API
 // context that will not assemble. All of those are config or schema errors,
 // so validate time is where they belong.
@@ -2437,6 +2441,7 @@ func ValidateGeneration(schema *parser.Schema, cfg *config.RootConfig) ([]string
 	}
 
 	enumContexts := BuildEnumContexts(schema, collisions, cfg)
+	input.Warnings = append(input.Warnings, unmatchedEnumKeyWarnings(cfg, schema)...)
 
 	// The package-scope name rules need every category at once, and the
 	// categories that did not build contribute nothing rather than blocking
@@ -2528,13 +2533,13 @@ func resolveDialect(name config.Dialect) sql.Dialect {
 // a models package that does not compile.
 func registerSchemaTypes(resolver *gotype.Resolver, schema *parser.Schema, cfg *config.RootConfig, collisions map[string]bool) {
 	for _, e := range schema.Enums {
-		resolver.RegisterEnum(e.Name, EnumGoTypeName(cfg, e.Name, e.Schema, collisions))
+		resolver.RegisterEnum(e.Schema, e.Name, EnumGoTypeName(cfg, e.Name, e.Schema, collisions))
 	}
 	for _, s := range schema.Sets {
-		resolver.RegisterSet(s.Name, StructName(s.Name, s.Schema, collisions))
+		resolver.RegisterSet(s.Schema, s.Name, StructName(s.Name, s.Schema, collisions))
 	}
 	for _, d := range schema.DomainTypes {
-		resolver.RegisterDomain(d.Name, d.BaseType)
+		resolver.RegisterDomain(d.Schema, d.Name, d.BaseType)
 	}
 }
 

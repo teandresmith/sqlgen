@@ -138,6 +138,7 @@ func executeViewCountTemplate(t *testing.T, ctx gen.ViewContext) string {
 
 func executeViewPaginationTemplate(t *testing.T, ctx gen.ViewContext) string {
 	t.Helper()
+	ctx.CursorKeyColumns = cursorKeyColumns(ctx.Columns, ctx.CursorKeys)
 	tmpl := loadViewPaginationTemplate(t)
 	var buf strings.Builder
 	if err := tmpl.ExecuteTemplate(&buf, "view/pagination", ctx); err != nil {
@@ -673,7 +674,8 @@ func TestViewPaginationTemplate_connectionMethod(t *testing.T) {
 	wantPatterns := []string{
 		"func (c *productSummaryClient) Connection(ctx context.Context, input ConnectionInput[ProductSummaryFilter]",
 		"Connection[ProductSummary]",
-		"decodeCursor(",
+		"decodeProductSummaryCursor(*input.After, c.cursorKeys)",
+		"decodeProductSummaryCursor(*input.Before, c.cursorKeys)",
 		"cursorKeyset(c.dialect, c.cursorKeys, cursor, ",
 		"cursorSorts(",
 		"encodeProductSummaryCursor(",
@@ -695,6 +697,8 @@ func TestViewPaginationTemplate_encodeCursorFunction(t *testing.T) {
 		`case "id":`,
 		"json.Marshal(out)",
 		"base64.StdEncoding.EncodeToString(data)",
+		"func decodeProductSummaryCursor(encoded string, keys []string) (map[string]any, error) {",
+		"err = json.Unmarshal(raw[key], &row.ID)",
 	}
 	for _, want := range wantPatterns {
 		if !strings.Contains(output, want) {

@@ -1205,14 +1205,14 @@ func (c *assetDocumentLinkClient) Connection(ctx context.Context, input Connecti
 		// Decode cursors and build keyset conditions
 		var keysetConds []sql.Condition
 		if input.After != nil {
-			cursor, err := decodeCursor(*input.After)
+			cursor, err := decodeAssetDocumentLinkCursor(*input.After, c.cursorKeys)
 			if err != nil {
 				return nil, ErrInvalidCursor
 			}
 			keysetConds = append(keysetConds, cursorKeyset(c.dialect, c.cursorKeys, cursor, ">"))
 		}
 		if input.Before != nil {
-			cursor, err := decodeCursor(*input.Before)
+			cursor, err := decodeAssetDocumentLinkCursor(*input.Before, c.cursorKeys)
 			if err != nil {
 				return nil, ErrInvalidCursor
 			}
@@ -1303,6 +1303,34 @@ func encodeAssetDocumentLinkCursor(keys []string, a *AssetDocumentLink) (string,
 		return "", fmt.Errorf("encode asset_document_link cursor: %w", err)
 	}
 	return base64.StdEncoding.EncodeToString(data), nil
+}
+
+// decodeAssetDocumentLinkCursor decodes a cursor string into its key values,
+// each unmarshaled into the key column's Go type.
+func decodeAssetDocumentLinkCursor(encoded string, keys []string) (map[string]any, error) {
+	raw, err := decodeCursor(encoded, keys)
+	if err != nil {
+		return nil, err
+	}
+	var row AssetDocumentLink
+	out := make(map[string]any, len(keys))
+	for _, key := range keys {
+		switch key {
+		case "asset_id":
+			err = json.Unmarshal(raw[key], &row.AssetID)
+			out[key] = row.AssetID
+		case "document_id":
+			err = json.Unmarshal(raw[key], &row.DocumentID)
+			out[key] = row.DocumentID
+		}
+		if err != nil {
+			return nil, err
+		}
+		if cursorValueIsNull(out[key]) {
+			return nil, ErrInvalidCursor
+		}
+	}
+	return out, nil
 }
 
 // StreamAssetDocumentLinksInput holds query parameters for streaming asset_document_links records.

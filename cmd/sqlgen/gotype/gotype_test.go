@@ -214,16 +214,27 @@ func TestMySQLTypeMappings(t *testing.T) {
 		{"smallint nullable", "smallint", true, gotype.GoType{Name: "*int16", ZeroValue: "nil", FKConvert: gotype.FKStringSprint}},
 		{"int", "int", false, gotype.GoType{Name: "int32", ZeroValue: "0", FKConvert: gotype.FKStringSprint}},
 		{"int nullable", "int", true, gotype.GoType{Name: "*int32", ZeroValue: "nil", FKConvert: gotype.FKStringSprint}},
-		{"integer", "integer", false, gotype.GoType{Name: "int32", ZeroValue: "0", FKConvert: gotype.FKStringSprint}},
-		{"integer nullable", "integer", true, gotype.GoType{Name: "*int32", ZeroValue: "nil", FKConvert: gotype.FKStringSprint}},
 		{"mediumint", "mediumint", false, gotype.GoType{Name: "int32", ZeroValue: "0", FKConvert: gotype.FKStringSprint}},
 		{"mediumint nullable", "mediumint", true, gotype.GoType{Name: "*int32", ZeroValue: "nil", FKConvert: gotype.FKStringSprint}},
 		{"bigint", "bigint", false, gotype.GoType{Name: "int64", ZeroValue: "0", FKConvert: gotype.FKStringSprint}},
 		{"bigint nullable", "bigint", true, gotype.GoType{Name: "*int64", ZeroValue: "nil", FKConvert: gotype.FKStringSprint}},
+		{"tinyint unsigned", "tinyint unsigned", false, gotype.GoType{Name: "uint8", ZeroValue: "0", FKConvert: gotype.FKStringSprint}},
+		{"tinyint unsigned nullable", "tinyint unsigned", true, gotype.GoType{Name: "*uint8", ZeroValue: "nil", FKConvert: gotype.FKStringSprint}},
+		{"smallint unsigned", "smallint unsigned", false, gotype.GoType{Name: "uint16", ZeroValue: "0", FKConvert: gotype.FKStringSprint}},
+		{"smallint unsigned nullable", "smallint unsigned", true, gotype.GoType{Name: "*uint16", ZeroValue: "nil", FKConvert: gotype.FKStringSprint}},
+		{"mediumint unsigned", "mediumint unsigned", false, gotype.GoType{Name: "uint32", ZeroValue: "0", FKConvert: gotype.FKStringSprint}},
 		{"int unsigned", "int unsigned", false, gotype.GoType{Name: "uint32", ZeroValue: "0", FKConvert: gotype.FKStringSprint}},
 		{"int unsigned nullable", "int unsigned", true, gotype.GoType{Name: "*uint32", ZeroValue: "nil", FKConvert: gotype.FKStringSprint}},
 		{"bigint unsigned", "bigint unsigned", false, gotype.GoType{Name: "uint64", ZeroValue: "0", FKConvert: gotype.FKStringSprint}},
 		{"bigint unsigned nullable", "bigint unsigned", true, gotype.GoType{Name: "*uint64", ZeroValue: "nil", FKConvert: gotype.FKStringSprint}},
+		{"zerofill tinyint", "tinyint(3) unsigned zerofill", false, gotype.GoType{Name: "uint8", ZeroValue: "0", FKConvert: gotype.FKStringSprint}},
+		{"zerofill int", "int(10) unsigned zerofill", false, gotype.GoType{Name: "uint32", ZeroValue: "0", FKConvert: gotype.FKStringSprint}},
+		{"zerofill bigint", "bigint(20) unsigned zerofill", false, gotype.GoType{Name: "uint64", ZeroValue: "0", FKConvert: gotype.FKStringSprint}},
+		{"zerofill decimal keeps its base type", "decimal(5,2) unsigned zerofill", false, gotype.GoType{Name: "float64", ZeroValue: "0", FKConvert: gotype.FKStringSprint}},
+		{"zerofill double keeps its base type", "double unsigned zerofill", false, gotype.GoType{Name: "float64", ZeroValue: "0", FKConvert: gotype.FKStringSprint}},
+		{"zerofill float keeps its base type", "float(7,3) unsigned zerofill", false, gotype.GoType{Name: "float32", ZeroValue: "0", FKConvert: gotype.FKStringSprint}},
+		{"unsigned double keeps its base type", "double unsigned", false, gotype.GoType{Name: "float64", ZeroValue: "0", FKConvert: gotype.FKStringSprint}},
+		{"unsigned float keeps its base type", "float unsigned", true, gotype.GoType{Name: "*float32", ZeroValue: "nil", FKConvert: gotype.FKStringSprint}},
 
 		// --- Float types ---
 		{"float", "float", false, gotype.GoType{Name: "float32", ZeroValue: "0", FKConvert: gotype.FKStringSprint}},
@@ -280,12 +291,11 @@ func TestMySQLTypeMappings(t *testing.T) {
 		{"longblob nullable", "longblob", true, gotype.GoType{Name: "[]byte", ZeroValue: "nil", FKConvert: gotype.FKStringSprint}},
 
 		// --- Boolean ---
-		{"bool", "bool", false, gotype.GoType{Name: "bool", ZeroValue: "false", FKConvert: gotype.FKStringSprint}},
-		{"bool nullable", "bool", true, gotype.GoType{Name: "*bool", ZeroValue: "nil", FKConvert: gotype.FKStringSprint}},
-		{"boolean", "boolean", false, gotype.GoType{Name: "bool", ZeroValue: "false", FKConvert: gotype.FKStringSprint}},
-		{"boolean nullable", "boolean", true, gotype.GoType{Name: "*bool", ZeroValue: "nil", FKConvert: gotype.FKStringSprint}},
 		{"bit(1)", "bit(1)", false, gotype.GoType{Name: "bool", ZeroValue: "false", FKConvert: gotype.FKStringSprint}},
 		{"bit(1) nullable", "bit(1)", true, gotype.GoType{Name: "*bool", ZeroValue: "nil", FKConvert: gotype.FKStringSprint}},
+		{"tinyint(1) is BOOLEAN", "tinyint(1)", false, gotype.GoType{Name: "bool", ZeroValue: "false", FKConvert: gotype.FKStringSprint}},
+		{"tinyint(1) nullable", "tinyint(1)", true, gotype.GoType{Name: "*bool", ZeroValue: "nil", FKConvert: gotype.FKStringSprint}},
+		{"tinyint(1) zerofill stays unsigned", "tinyint(1) unsigned zerofill", false, gotype.GoType{Name: "uint8", ZeroValue: "0", FKConvert: gotype.FKStringSprint}},
 		{"bit(8)", "bit(8)", false, gotype.GoType{Name: "[]byte", ZeroValue: "nil", FKConvert: gotype.FKStringSprint}},
 		{"bit(8) nullable", "bit(8)", true, gotype.GoType{Name: "[]byte", ZeroValue: "nil", FKConvert: gotype.FKStringSprint}},
 
@@ -947,9 +957,14 @@ func TestMySQLSQLNullTypes(t *testing.T) {
 		want    gotype.GoType
 	}{
 		{"tinyint uses NullInt16", "tinyint", gotype.GoType{Name: "sql.NullInt16", Import: "database/sql", ZeroValue: "sql.NullInt16{}", FKConvert: gotype.FKStringSprint}},
+		{"tinyint unsigned uses NullInt16", "tinyint unsigned", gotype.GoType{Name: "sql.NullInt16", Import: "database/sql", ZeroValue: "sql.NullInt16{}", FKConvert: gotype.FKStringSprint}},
+		{"smallint unsigned uses NullInt32", "smallint unsigned", gotype.GoType{Name: "sql.NullInt32", Import: "database/sql", ZeroValue: "sql.NullInt32{}", FKConvert: gotype.FKStringSprint}},
+		{"mediumint unsigned uses NullInt64", "mediumint unsigned", gotype.GoType{Name: "sql.NullInt64", Import: "database/sql", ZeroValue: "sql.NullInt64{}", FKConvert: gotype.FKStringSprint}},
 		{"int unsigned uses NullInt64", "int unsigned", gotype.GoType{Name: "sql.NullInt64", Import: "database/sql", ZeroValue: "sql.NullInt64{}", FKConvert: gotype.FKStringSprint}},
 		{"bigint unsigned uses NullInt64", "bigint unsigned", gotype.GoType{Name: "sql.NullInt64", Import: "database/sql", ZeroValue: "sql.NullInt64{}", FKConvert: gotype.FKStringSprint}},
 		{"float uses NullFloat64", "float", gotype.GoType{Name: "sql.NullFloat64", Import: "database/sql", ZeroValue: "sql.NullFloat64{}", FKConvert: gotype.FKStringSprint}},
+		{"tinyint(1) uses NullBool", "tinyint(1)", gotype.GoType{Name: "sql.NullBool", Import: "database/sql", ZeroValue: "sql.NullBool{}", FKConvert: gotype.FKStringSprint}},
+		{"double unsigned zerofill uses NullFloat64", "double unsigned zerofill", gotype.GoType{Name: "sql.NullFloat64", Import: "database/sql", ZeroValue: "sql.NullFloat64{}", FKConvert: gotype.FKStringSprint}},
 	}
 
 	for _, tt := range tests {
@@ -1220,7 +1235,7 @@ func TestResolve_SchemaEnums(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			r := gotype.NewResolver("postgres", true, nil)
-			r.RegisterEnum("user_role", "UserRole")
+			r.RegisterEnum("", "user_role", "UserRole")
 
 			got := r.Resolve(tt.sqlType, tt.nullable, "role", nil, nil)
 			if diff := cmp.Diff(tt.want, got); diff != "" {
@@ -1232,7 +1247,7 @@ func TestResolve_SchemaEnums(t *testing.T) {
 
 func TestResolve_SchemaEnumOverriddenByTypeMap(t *testing.T) {
 	r := gotype.NewResolver("postgres", true, nil)
-	r.RegisterEnum("user_role", "UserRole")
+	r.RegisterEnum("", "user_role", "UserRole")
 
 	got := r.Resolve("user_role", false, "role",
 		map[string]string{"role": "string"}, nil)
@@ -1272,7 +1287,7 @@ func TestResolve_SchemaDomains(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			r := gotype.NewResolver("postgres", true, nil)
-			r.RegisterDomain("positive_int", "integer")
+			r.RegisterDomain("", "positive_int", "integer")
 
 			got := r.Resolve(tt.sqlType, tt.nullable, "quantity", nil, nil)
 			if diff := cmp.Diff(tt.want, got); diff != "" {
@@ -1324,7 +1339,7 @@ func TestResolve_SchemaSets(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			r := gotype.NewResolver("mysql", true, nil)
-			r.RegisterSet("permissions_set", "PermissionsSet")
+			r.RegisterSet("", "permissions_set", "PermissionsSet")
 
 			got := r.Resolve(tt.sqlType, tt.nullable, "permissions", nil, nil)
 			if diff := cmp.Diff(tt.want, got); diff != "" {
@@ -1336,13 +1351,493 @@ func TestResolve_SchemaSets(t *testing.T) {
 
 func TestResolve_SchemaSetOverriddenByTypeMap(t *testing.T) {
 	r := gotype.NewResolver("mysql", true, nil)
-	r.RegisterSet("permissions_set", "PermissionsSet")
+	r.RegisterSet("", "permissions_set", "PermissionsSet")
 
 	got := r.Resolve("permissions_set", false, "permissions",
 		map[string]string{"permissions": "string"}, nil)
 
 	if got.Name != "string" {
 		t.Errorf("type_map should override set: got %q, want %q", got.Name, "string")
+	}
+}
+
+// TestResolve_SchemaQualifiedNames pins how an enum, SET or domain answers to
+// its names: always schema-qualified, and bare only while no other schema
+// registers a type by that name (PRD §7.1).
+func TestResolve_SchemaQualifiedNames(t *testing.T) {
+	type registration struct {
+		kind, schema, name, value string
+	}
+	tests := []struct {
+		name     string
+		dialect  config.Dialect
+		register []registration
+		owner    string // the ForSchema schema; "" resolves without one
+		sqlType  string
+		want     string
+	}{
+		{
+			name:     "qualified enum",
+			register: []registration{{"enum", "app", "status_enum", "StatusEnum"}},
+			sqlType:  "app.status_enum",
+			want:     "StatusEnum",
+		},
+		{
+			name:     "qualified enum array",
+			register: []registration{{"enum", "app", "status_enum", "StatusEnum"}},
+			sqlType:  "app.status_enum[]",
+			want:     "StatusEnumSlice",
+		},
+		{
+			name:     "unique bare enum",
+			register: []registration{{"enum", "app", "status_enum", "StatusEnum"}},
+			sqlType:  "status_enum",
+			want:     "StatusEnum",
+		},
+		{
+			name:     "qualified name is case-insensitive",
+			register: []registration{{"enum", "App", "Status_Enum", "StatusEnum"}},
+			sqlType:  "APP.STATUS_ENUM",
+			want:     "StatusEnum",
+		},
+		{
+			name:     "qualified domain",
+			register: []registration{{"domain", "app", "positive_int", "integer"}},
+			sqlType:  "app.positive_int",
+			want:     "int32",
+		},
+		{
+			name:     "unique bare domain",
+			register: []registration{{"domain", "app", "positive_int", "integer"}},
+			sqlType:  "positive_int",
+			want:     "int32",
+		},
+		{
+			name:     "qualified set",
+			dialect:  config.DialectMySQL,
+			register: []registration{{"set", "shop", "perms_set", "PermsSet"}},
+			sqlType:  "shop.perms_set",
+			want:     "PermsSet",
+		},
+		{
+			name: "shared bare enum resolves only qualified",
+			register: []registration{
+				{"enum", "app", "status", "AppStatus"},
+				{"enum", "billing", "status", "BillingStatus"},
+			},
+			sqlType: "status",
+			want:    "string",
+		},
+		{
+			name: "shared enum answers to each qualified name",
+			register: []registration{
+				{"enum", "app", "status", "AppStatus"},
+				{"enum", "billing", "status", "BillingStatus"},
+			},
+			sqlType: "billing.status",
+			want:    "BillingStatus",
+		},
+		{
+			name: "a third schema cannot reclaim a shared bare name",
+			register: []registration{
+				{"enum", "app", "status", "AppStatus"},
+				{"enum", "billing", "status", "BillingStatus"},
+				{"enum", "audit", "status", "AuditStatus"},
+			},
+			sqlType: "status",
+			want:    "string",
+		},
+		{
+			name: "an enum and a domain sharing a bare name",
+			register: []registration{
+				{"enum", "app", "status", "AppStatus"},
+				{"domain", "billing", "status", "text"},
+			},
+			sqlType: "status",
+			want:    "string",
+		},
+		{
+			name: "a bare domain base is in the domain's schema",
+			register: []registration{
+				{"enum", "app", "status", "AppStatus"},
+				{"enum", "billing", "status", "BillingStatus"},
+				{"domain", "billing", "status_d", "status"},
+			},
+			sqlType: "billing.status_d",
+			want:    "BillingStatus",
+		},
+		{
+			name: "a qualified domain base is used as written",
+			register: []registration{
+				{"enum", "app", "status", "AppStatus"},
+				{"enum", "billing", "status", "BillingStatus"},
+				{"domain", "billing", "status_d", "app.status"},
+			},
+			sqlType: "status_d",
+			want:    "AppStatus",
+		},
+		{
+			name:     "a bare builtin domain base is not qualified",
+			register: []registration{{"domain", "app", "email", "text"}},
+			sqlType:  "app.email",
+			want:     "string",
+		},
+		{
+			name:     "shared bare enum resolves in the owner schema",
+			register: []registration{{"enum", "app", "status", "AppStatus"}, {"enum", "billing", "status", "BillingStatus"}},
+			owner:    "billing",
+			sqlType:  "status",
+			want:     "BillingStatus",
+		},
+		{
+			name:     "shared bare enum array resolves in the owner schema",
+			register: []registration{{"enum", "app", "status", "AppStatus"}, {"enum", "billing", "status", "BillingStatus"}},
+			owner:    "app",
+			sqlType:  "status[]",
+			want:     "AppStatusSlice",
+		},
+		{
+			name:     "owner schema matches case-insensitively",
+			register: []registration{{"enum", "app", "status", "AppStatus"}, {"enum", "billing", "status", "BillingStatus"}},
+			owner:    "App",
+			sqlType:  "STATUS",
+			want:     "AppStatus",
+		},
+		{
+			name:     "a qualified name ignores the owner schema",
+			register: []registration{{"enum", "app", "status", "AppStatus"}, {"enum", "billing", "status", "BillingStatus"}},
+			owner:    "app",
+			sqlType:  "billing.status",
+			want:     "BillingStatus",
+		},
+		{
+			name:     "bare name falls back when the owner schema has no such type",
+			register: []registration{{"enum", "app", "status_enum", "StatusEnum"}},
+			owner:    "billing",
+			sqlType:  "status_enum",
+			want:     "StatusEnum",
+		},
+		{
+			name:     "shared name with no type in the owner schema stays unresolved",
+			register: []registration{{"enum", "app", "status", "AppStatus"}, {"enum", "billing", "status", "BillingStatus"}},
+			owner:    "audit",
+			sqlType:  "status",
+			want:     "string",
+		},
+		{
+			name:     "shared bare domain resolves in the owner schema",
+			register: []registration{{"domain", "app", "amount", "integer"}, {"domain", "billing", "amount", "bigint"}},
+			owner:    "billing",
+			sqlType:  "amount",
+			want:     "int64",
+		},
+		{
+			name:     "shared bare set resolves in the owner schema",
+			dialect:  config.DialectMySQL,
+			register: []registration{{"set", "shop", "perms", "ShopPerms"}, {"set", "admin", "perms", "AdminPerms"}},
+			owner:    "admin",
+			sqlType:  "perms",
+			want:     "AdminPerms",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			dialect := tt.dialect
+			if dialect == "" {
+				dialect = config.DialectPostgres
+			}
+			r := gotype.NewResolver(dialect, true, nil)
+			for _, reg := range tt.register {
+				switch reg.kind {
+				case "enum":
+					r.RegisterEnum(reg.schema, reg.name, reg.value)
+				case "set":
+					r.RegisterSet(reg.schema, reg.name, reg.value)
+				case "domain":
+					r.RegisterDomain(reg.schema, reg.name, reg.value)
+				}
+			}
+			if tt.owner != "" {
+				r = r.ForSchema(tt.owner)
+			}
+			if got := r.Resolve(tt.sqlType, false, "c", nil, nil).Name; got != tt.want {
+				t.Errorf("ForSchema(%q).Resolve(%q) = %q, want %q", tt.owner, tt.sqlType, got, tt.want)
+			}
+		})
+	}
+}
+
+// TestForSchema_ClassifiersAndOverrides pins the owner-schema lookup on the
+// classifying entry points, and that an overrides.types key written with the
+// bare type name still wins over the schema's enum.
+func TestForSchema_ClassifiersAndOverrides(t *testing.T) {
+	r := gotype.NewResolver("postgres", true, map[string]config.TypeOverride{"mood": {Type: "string"}})
+	r.RegisterDomain("app", "amount", "integer")
+	r.RegisterDomain("billing", "amount", "text")
+	r.RegisterSet("app", "perms", "AppPerms")
+	r.RegisterSet("billing", "perms", "BillingPerms")
+	r.RegisterEnum("app", "mood", "AppMood")
+	r.RegisterEnum("billing", "mood", "BillingMood")
+
+	billing := r.ForSchema("billing")
+	// An enum or SET is not a domain, so its base type is the name as written.
+	for _, typ := range []string{"mood", "perms"} {
+		if got := billing.BaseSQLType(typ); got != typ {
+			t.Errorf(`ForSchema("billing").BaseSQLType(%q) = %q, want %q`, typ, got, typ)
+		}
+	}
+	if got := billing.BaseSQLType("amount"); got != "text" {
+		t.Errorf(`ForSchema("billing").BaseSQLType("amount") = %q, want "text"`, got)
+	}
+	if got := r.BaseSQLType("amount"); got != "amount" {
+		t.Errorf(`BaseSQLType("amount") without an owner = %q, want "amount" (the name is shared)`, got)
+	}
+	if !billing.IsSet("perms") {
+		t.Error(`ForSchema("billing").IsSet("perms") = false, want true`)
+	}
+	if r.IsSet("perms") {
+		t.Error(`IsSet("perms") without an owner = true, want false (the name is shared)`)
+	}
+	if got := billing.Resolve("mood", false, "m", nil, nil).Name; got != "string" {
+		t.Errorf(`ForSchema("billing").Resolve("mood") = %q, want the override's "string"`, got)
+	}
+	var none *gotype.Resolver
+	if none.ForSchema("app") != nil {
+		t.Error("ForSchema on a nil resolver: got non-nil, want nil")
+	}
+}
+
+// TestForSchema_QualifiedOverrideKey pins the owner-qualified override lookup:
+// both schema sources write a type in its column's own schema bare, so an
+// overrides.types key written schema.type must still reach that schema's own
+// columns, without reaching another schema's type of the same name (PRD §7.1).
+func TestForSchema_QualifiedOverrideKey(t *testing.T) {
+	ext := func(name string) config.TypeOverride {
+		return config.TypeOverride{Type: "ext." + name, Import: "example.com/ext"}
+	}
+	tests := []struct {
+		name   string
+		global map[string]config.TypeOverride
+		table  map[string]config.TypeOverride
+		owner  string
+		typ    string
+		want   string
+	}{
+		{
+			name:   "qualified key, own-schema column",
+			global: map[string]config.TypeOverride{"app.status_enum": ext("Status")},
+			owner:  "app",
+			typ:    "status_enum",
+			want:   "ext.Status",
+		},
+		{
+			name:   "qualified key, cross-schema column written qualified",
+			global: map[string]config.TypeOverride{"app.status_enum": ext("Status")},
+			owner:  "public",
+			typ:    "app.status_enum",
+			want:   "ext.Status",
+		},
+		{
+			name:   "qualified key does not leak to another schema's type",
+			global: map[string]config.TypeOverride{"app.status_enum": ext("Status")},
+			owner:  "billing",
+			typ:    "status_enum",
+			want:   "BillingStatusEnum",
+		},
+		{
+			name:   "qualified key needs an owner",
+			global: map[string]config.TypeOverride{"app.positive_int": ext("Score")},
+			typ:    "positive_int",
+			want:   "int32",
+		},
+		{
+			name:   "qualified domain key",
+			global: map[string]config.TypeOverride{"app.positive_int": ext("Score")},
+			owner:  "app",
+			typ:    "positive_int",
+			want:   "ext.Score",
+		},
+		{
+			name:   "bare key still matches",
+			global: map[string]config.TypeOverride{"status_enum": ext("Status")},
+			owner:  "app",
+			typ:    "status_enum",
+			want:   "ext.Status",
+		},
+		{
+			name:   "qualified key wins over bare",
+			global: map[string]config.TypeOverride{"status_enum": ext("Bare"), "app.status_enum": ext("Qualified")},
+			owner:  "app",
+			typ:    "status_enum",
+			want:   "ext.Qualified",
+		},
+		{
+			name:   "qualified array key keeps []",
+			global: map[string]config.TypeOverride{"app.status_enum[]": ext("Statuses")},
+			owner:  "app",
+			typ:    "status_enum[]",
+			want:   "ext.Statuses",
+		},
+		{
+			name:   "qualified key without modifiers",
+			global: map[string]config.TypeOverride{"app.positive_int": ext("Score")},
+			owner:  "app",
+			typ:    "positive_int(4)",
+			want:   "ext.Score",
+		},
+		{
+			name:  "qualified table-scoped key",
+			table: map[string]config.TypeOverride{"app.status_enum": ext("Table")},
+			owner: "app",
+			typ:   "status_enum",
+			want:  "ext.Table",
+		},
+		{
+			name:   "table scope still precedes global",
+			global: map[string]config.TypeOverride{"app.status_enum": ext("Global")},
+			table:  map[string]config.TypeOverride{"status_enum": ext("Table")},
+			owner:  "app",
+			typ:    "status_enum",
+			want:   "ext.Table",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			r := gotype.NewResolver("postgres", true, tt.global)
+			r.RegisterEnum("app", "status_enum", "AppStatusEnum")
+			r.RegisterEnum("billing", "status_enum", "BillingStatusEnum")
+			r.RegisterDomain("app", "positive_int", "integer")
+			got := r.ForSchema(tt.owner).Resolve(tt.typ, false, "c", nil, tt.table).Name
+			if got != tt.want {
+				t.Errorf("ForSchema(%q).Resolve(%q) = %q, want %q", tt.owner, tt.typ, got, tt.want)
+			}
+		})
+	}
+}
+
+// TestForSchema_DomainChainOverrideKey pins the override keys each link of a
+// domain chain is matched under. A domain's base type is a column of the
+// domain, so it tries its keys qualified with the domain's schema and then
+// bare, wherever the column using the outer domain lives (PRD §7.1).
+func TestForSchema_DomainChainOverrideKey(t *testing.T) {
+	ext := func(name string) config.TypeOverride {
+		return config.TypeOverride{Type: "ext." + name, Import: "example.com/ext"}
+	}
+	tests := []struct {
+		name   string
+		global map[string]config.TypeOverride
+		table  map[string]config.TypeOverride
+		owner  string
+		typ    string
+		want   string
+	}{
+		{
+			name:   "bare key on the domain a domain is over",
+			global: map[string]config.TypeOverride{"email": ext("Email")},
+			owner:  "app",
+			typ:    "work_email",
+			want:   "ext.Email",
+		},
+		{
+			name:   "bare key through a three-level chain",
+			global: map[string]config.TypeOverride{"email": ext("Email")},
+			owner:  "app",
+			typ:    "alt_email",
+			want:   "ext.Email",
+		},
+		{
+			name:   "bare key from a column in another schema",
+			global: map[string]config.TypeOverride{"email": ext("Email")},
+			owner:  "public",
+			typ:    "app.work_email",
+			want:   "ext.Email",
+		},
+		{
+			name:   "qualified key on the domain a domain is over",
+			global: map[string]config.TypeOverride{"app.email": ext("Email")},
+			owner:  "app",
+			typ:    "work_email",
+			want:   "ext.Email",
+		},
+		{
+			name:   "qualified key wins over bare at the same link",
+			global: map[string]config.TypeOverride{"email": ext("Bare"), "app.email": ext("Qualified")},
+			owner:  "app",
+			typ:    "work_email",
+			want:   "ext.Qualified",
+		},
+		{
+			name:  "table-scoped bare key on the domain a domain is over",
+			table: map[string]config.TypeOverride{"email": ext("Table")},
+			owner: "app",
+			typ:   "work_email",
+			want:  "ext.Table",
+		},
+		{
+			name:   "an outer link's global key wins over an inner link's table key",
+			global: map[string]config.TypeOverride{"work_email": ext("Global")},
+			table:  map[string]config.TypeOverride{"email": ext("Table")},
+			owner:  "app",
+			typ:    "work_email",
+			want:   "ext.Global",
+		},
+		{
+			name:   "an inner link's global key wins over its base's table key",
+			global: map[string]config.TypeOverride{"email": ext("Global")},
+			table:  map[string]config.TypeOverride{"text": ext("Table")},
+			owner:  "app",
+			typ:    "work_email",
+			want:   "ext.Global",
+		},
+		{
+			name:   "a key qualified with another schema does not match",
+			global: map[string]config.TypeOverride{"billing.email": ext("Email")},
+			owner:  "app",
+			typ:    "work_email",
+			want:   "string",
+		},
+		{
+			name:   "a base written qualified is matched only as written",
+			global: map[string]config.TypeOverride{"email": ext("Email")},
+			owner:  "app",
+			typ:    "billing_email",
+			want:   "string",
+		},
+		{
+			name:   "a base written qualified takes its qualified key",
+			global: map[string]config.TypeOverride{"billing.email": ext("Email")},
+			owner:  "app",
+			typ:    "billing_email",
+			want:   "ext.Email",
+		},
+		{
+			name:   "a builtin base is qualified with the domain's schema",
+			global: map[string]config.TypeOverride{"app.text": ext("Text")},
+			owner:  "public",
+			typ:    "app.email",
+			want:   "ext.Text",
+		},
+		{
+			name:   "a builtin base is not qualified with the column's schema",
+			global: map[string]config.TypeOverride{"public.text": ext("Text")},
+			owner:  "public",
+			typ:    "app.email",
+			want:   "string",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			r := gotype.NewResolver("postgres", true, tt.global)
+			r.RegisterDomain("app", "email", "text")
+			r.RegisterDomain("app", "work_email", "email")
+			r.RegisterDomain("app", "alt_email", "work_email")
+			r.RegisterDomain("billing", "email", "varchar")
+			r.RegisterDomain("app", "billing_email", "billing.email")
+			got := r.ForSchema(tt.owner).Resolve(tt.typ, false, "c", nil, tt.table).Name
+			if got != tt.want {
+				t.Errorf("ForSchema(%q).Resolve(%q) = %q, want %q", tt.owner, tt.typ, got, tt.want)
+			}
+		})
 	}
 }
 
@@ -1373,7 +1868,6 @@ func TestResolveAggregateSumWidening(t *testing.T) {
 		// MySQL: every integer sum widens to decimal (float64 here).
 		{"mysql tinyint", "mysql", "tinyint", false, "float64"},
 		{"mysql int", "mysql", "int", false, "float64"},
-		{"mysql integer", "mysql", "integer", false, "float64"},
 		{"mysql bigint", "mysql", "bigint", false, "float64"},
 		{"mysql int unsigned", "mysql", "int unsigned", false, "float64"},
 		{"mysql bigint unsigned", "mysql", "bigint unsigned", false, "float64"},
@@ -1403,7 +1897,7 @@ func TestResolveAggregateSumWidening(t *testing.T) {
 // target before the fix.
 func TestResolveAggregateSumWidening_Domain(t *testing.T) {
 	r := gotype.NewResolver("postgres", true, nil)
-	r.RegisterDomain("positive_int", "integer")
+	r.RegisterDomain("", "positive_int", "integer")
 
 	got := r.ResolveAggregate("SUM", "positive_int", true, "total_quantity", nil, nil)
 	if got.Name != "*int64" {
@@ -1943,4 +2437,115 @@ func TestDefaultUUIDBinding(t *testing.T) {
 			t.Errorf("Resolve(uuid, nullable) with google override (-want +got):\n%s", diff)
 		}
 	})
+}
+
+// A MySQL ZEROFILL integer keeps its width and is unsigned, so an override is
+// matched under <base> unsigned and never under the signed base (PRD §7).
+func TestZerofillOverrideKey(t *testing.T) {
+	tests := []struct {
+		name      string
+		overrides map[string]config.TypeOverride
+		want      string
+	}{
+		{
+			name:      "unsigned key matches",
+			overrides: map[string]config.TypeOverride{"int unsigned": {Type: "int64"}},
+			want:      "int64",
+		},
+		{
+			name: "unsigned key wins over the signed base",
+			overrides: map[string]config.TypeOverride{
+				"int":          {Type: "example.Signed"},
+				"int unsigned": {Type: "example.Unsigned"},
+			},
+			want: "example.Unsigned",
+		},
+		{
+			name:      "signed base key never applies",
+			overrides: map[string]config.TypeOverride{"int": {Type: "example.Signed"}},
+			want:      "uint32",
+		},
+		{
+			name:      "exact key wins",
+			overrides: map[string]config.TypeOverride{"int(10) unsigned zerofill": {Type: "example.Exact"}, "int unsigned": {Type: "int64"}},
+			want:      "example.Exact",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			r := gotype.NewResolver("mysql", true, tt.overrides)
+			if got := r.Resolve("int(10) unsigned zerofill", false, "n", nil, nil).Name; got != tt.want {
+				t.Errorf("Resolve() Name = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
+// TestOverrideSource pins that OverrideSource reports the key Resolve matched,
+// as written, and only an overrides.types key: a type an integration, enum or
+// built-in mapping resolves has none.
+func TestOverrideSource(t *testing.T) {
+	decimalOverride := config.TypeOverride{Type: "decimal.Decimal", Import: decimal.ImportPath}
+	tests := []struct {
+		name            string
+		global          map[string]config.TypeOverride
+		table           map[string]config.TypeOverride
+		sqlType         string
+		wantKey         string
+		wantTableScoped bool
+		wantOK          bool
+	}{
+		{
+			name:    "global key as written",
+			global:  map[string]config.TypeOverride{"varchar": {Type: "int64"}},
+			sqlType: "VARCHAR(255)",
+			wantKey: "varchar", wantOK: true,
+		},
+		{
+			name:    "table-scoped key wins over global",
+			global:  map[string]config.TypeOverride{"text": {Type: "int32"}},
+			table:   map[string]config.TypeOverride{"email": {Type: "int64"}},
+			sqlType: "email",
+			wantKey: "email", wantTableScoped: true, wantOK: true,
+		},
+		{
+			name:    "owner-qualified key before bare",
+			global:  map[string]config.TypeOverride{"email": {Type: "int32"}, "app.email": {Type: "int64"}},
+			sqlType: "email",
+			wantKey: "app.email", wantOK: true,
+		},
+		{
+			name:    "domain chain reaches the base's key",
+			global:  map[string]config.TypeOverride{"text": {Type: "int64"}},
+			sqlType: "work_email",
+			wantKey: "text", wantOK: true,
+		},
+		{
+			name:    "domain chain reaches the base domain's bare key",
+			global:  map[string]config.TypeOverride{"email": {Type: "int64"}},
+			sqlType: "work_email",
+			wantKey: "email", wantOK: true,
+		},
+		{
+			name:    "integration activated by another key has none",
+			global:  map[string]config.TypeOverride{"numeric": decimalOverride},
+			sqlType: "decimal",
+		},
+		{
+			name:    "built-in mapping has none",
+			sqlType: "text",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			r := gotype.NewResolver("postgres", true, tt.global)
+			r.RegisterDomain("app", "email", "text")
+			r.RegisterDomain("app", "work_email", "email")
+			key, tableScoped, ok := r.ForSchema("app").OverrideSource(tt.sqlType, tt.table)
+			if key != tt.wantKey || tableScoped != tt.wantTableScoped || ok != tt.wantOK {
+				t.Errorf("OverrideSource(%q) = (%q, %v, %v), want (%q, %v, %v)",
+					tt.sqlType, key, tableScoped, ok, tt.wantKey, tt.wantTableScoped, tt.wantOK)
+			}
+		})
+	}
 }

@@ -18,7 +18,7 @@
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
 | `id` | ID | `uuid.UUID` | `uuid` |  | yes |  | `gen_random_uuid()` | `comparator.ID` |  |
 | `user_id` | UserID | `uuid.UUID` | `uuid` |  |  |  |  | `comparator.ID` |  |
-| `total` | Total | `decimal.Decimal` | `numeric(12, 2)` |  |  |  | `0` | `comparator.String` |  |
+| `total` | Total | `decimal.Decimal` | `numeric(12,2)` |  |  |  | `0` | `comparator.String` |  |
 | `notes` | Notes | `*string` | `text` | yes |  |  |  | `comparator.NullableString` |  |
 | `created_at` | CreatedAt | `time.Time` | `timestamptz` |  |  |  | `current_timestamp` | `comparator.Time` |  |
 | `updated_at` | UpdatedAt | `*time.Time` | `timestamptz` | yes |  |  | `current_timestamp` | `comparator.NullableTime` |  |

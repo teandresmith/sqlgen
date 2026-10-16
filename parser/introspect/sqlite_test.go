@@ -1,61 +1,82 @@
 package introspect
 
-import "testing"
+import (
+	"errors"
+	"slices"
+	"testing"
 
-func TestExtractSQLiteIndexWhere(t *testing.T) {
+	"github.com/teandresmith/sqlgen/parser"
+)
+
+func TestQuoteSQLiteIdent(t *testing.T) {
 	tests := []struct {
-		name string
-		ddl  string
-		want string
+		name  string
+		ident string
+		want  string
 	}{
-		{
-			name: "no where clause",
-			ddl:  `CREATE UNIQUE INDEX idx_users_email ON users(email)`,
-			want: "",
-		},
-		{
-			name: "trailing partial where",
-			ddl:  `CREATE UNIQUE INDEX idx_users_email_active ON users(email) WHERE deleted_at IS NULL`,
-			want: "deleted_at IS NULL",
-		},
-		{
-			name: "lowercase where keyword",
-			ddl:  `create unique index idx_users_email on users(email) where deleted_at is null`,
-			want: "deleted_at is null",
-		},
-		{
-			name: "identifier containing where is not matched",
-			ddl:  `CREATE INDEX idx_t_nowhereland ON t (nowhereland)`,
-			want: "",
-		},
-		{
-			name: "where after parenthesized column list",
-			ddl:  `CREATE UNIQUE INDEX idx ON t (a, b)WHERE a > 0`,
-			want: "a > 0",
-		},
-		{
-			name: "line comment WHERE is ignored",
-			ddl:  "CREATE UNIQUE INDEX idx ON t(email) -- WHERE x = 0\n WHERE deleted_at IS NULL",
-			want: "deleted_at IS NULL",
-		},
-		{
-			name: "block comment WHERE is ignored",
-			ddl:  `CREATE UNIQUE INDEX idx ON t(email) /* WHERE x = 0 */ WHERE deleted_at IS NULL`,
-			want: "deleted_at IS NULL",
-		},
-		{
-			name: "quoted identifier containing WHERE is not matched",
-			ddl:  `CREATE INDEX idx ON t ("a WHERE b")`,
-			want: "",
-		},
+		{name: "plain", ident: "users", want: `"users"`},
+		{name: "embedded quote", ident: `Quoted"Name`, want: `"Quoted""Name"`},
+		{name: "backslash", ident: `back\slash`, want: `"back\slash"`},
+		{name: "space and mixed case", ident: "My Table", want: `"My Table"`},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := extractSQLiteIndexWhere(tt.ddl)
-			if got != tt.want {
-				t.Errorf("extractSQLiteIndexWhere(%q) = %q, want %q", tt.ddl, got, tt.want)
+			if got := quoteSQLiteIdent(tt.ident); got != tt.want {
+				t.Errorf("quoteSQLiteIdent(%q) = %s, want %s", tt.ident, got, tt.want)
 			}
 		})
+	}
+}
+
+func TestSQLiteGeneratedStorage(t *testing.T) {
+	tests := []struct {
+		name        string
+		hidden      int
+		wantStorage string
+		wantOK      bool
+	}{
+		{name: "ordinary column", hidden: 0, wantOK: true},
+		{name: "virtual table hidden column", hidden: 1},
+		{name: "virtual generated column", hidden: 2, wantStorage: "VIRTUAL", wantOK: true},
+		{name: "stored generated column", hidden: 3, wantStorage: "STORED", wantOK: true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			storage, ok := sqliteGeneratedStorage(tt.hidden)
+			if storage != tt.wantStorage || ok != tt.wantOK {
+				t.Errorf("sqliteGeneratedStorage(%d) = (%q, %t), want (%q, %t)", tt.hidden, storage, ok, tt.wantStorage, tt.wantOK)
+			}
+		})
+	}
+}
+
+// A stored CREATE TABLE the file parser cannot read is a schema error, not a
+// failure to read the catalog.
+func TestParseStoredTable_SchemaError(t *testing.T) {
+	_, err := parseStoredTable(`CREATE TABLE t (id INTEGER PRIMARY KEY, f "my type")`)
+	if _, ok := errors.AsType[*SchemaError](err); !ok {
+		t.Errorf("parseStoredTable() error = %v, want a *SchemaError", err)
+	}
+}
+
+// A foreign key takes the name declared for the key with its parent columns,
+// whatever order the catalog lists keys over the same columns in.
+func TestNameDeclaredConstraints_ForeignKeyParentColumns(t *testing.T) {
+	declared := &parser.Table{Constraints: []parser.Constraint{
+		{Name: "fa", Type: parser.ForeignKey, Columns: []string{"a"}, ReferenceTable: "p", ReferenceColumns: []string{"x"}},
+		{Name: "fb", Type: parser.ForeignKey, Columns: []string{"a"}, ReferenceTable: "p", ReferenceColumns: []string{"y"}},
+	}}
+	table := &parser.Table{Constraints: []parser.Constraint{
+		{Type: parser.ForeignKey, Columns: []string{"a"}, ReferenceTable: "p", ReferenceColumns: []string{"Y"}},
+		{Type: parser.ForeignKey, Columns: []string{"a"}, ReferenceTable: "p", ReferenceColumns: []string{"X"}},
+	}}
+	if err := nameDeclaredConstraints(table, declared); err != nil {
+		t.Fatalf("nameDeclaredConstraints() unexpected error: %v", err)
+	}
+	got := []string{table.Constraints[0].Name, table.Constraints[1].Name}
+	if want := []string{"fb", "fa"}; !slices.Equal(got, want) {
+		t.Errorf("nameDeclaredConstraints() names for keys to p(Y), p(X) = %q, want %q", got, want)
 	}
 }

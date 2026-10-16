@@ -3,6 +3,7 @@ package introspect_test
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"flag"
 	"fmt"
 	"maps"
@@ -30,6 +31,108 @@ import (
 	"github.com/teandresmith/sqlgen/parser/sqlite"
 )
 
+// parityException excludes one field from assertSchemaParity. Field names a
+// field of a parser type as "<Type>.<Field>", such as "Constraint.CheckExpression".
+type parityException struct {
+	Field  string
+	Reason string
+}
+
+// parityExceptions lists, per dialect, the fields no catalog stores, so an
+// introspected schema cannot round-trip them. They are the only differences
+// assertSchemaParity tolerates. A test that needs its own exception declares
+// it beside this table and passes it as ignore, so every exception can be
+// reviewed in one place. Every dialect round-trips every field of the
+// schema it describes; what only the database records about its views and
+// schema statements, for source: both, has no file form.
+var parityExceptions = map[string][]parityException{
+	"postgres": {{Field: "Schema.ViewDependencies", Reason: "pg_depend; the file parser has no database to ask (PRD §6.1)"}},
+	"mysql":    {{Field: "Schema.ViewDependencies", Reason: "VIEW_TABLE_USAGE; the file parser has no database to ask (PRD §6.1)"}},
+	"sqlite":   {{Field: "Schema.SQLiteSchema", Reason: "sqlite_master, which source: both replays; the file parser has no database to ask (PRD §6.1)"}},
+}
+
+// pgSkippedStatementExceptions are for a PostgreSQL fixture holding statements
+// the file parser skips with a warning: CREATE VIEW and CREATE TABLE …
+// PARTITION OF. A test that passes them checks the warnings itself.
+var pgSkippedStatementExceptions = []parityException{
+	{Field: "Schema.Views", Reason: "the file parser skips CREATE VIEW; views come from introspection or input.views (PRD §16)"},
+	{Field: "Schema.Warnings", Reason: "the file parser warns on each statement it skips; the introspector skips partitions without a word (PRD §5.2, §6.3)"},
+}
+
+// parityFieldTypes maps the type half of a parityException.Field to the type
+// whose field it ignores.
+var parityFieldTypes = map[string]any{
+	"Schema":        parser.Schema{},
+	"Table":         parser.Table{},
+	"Column":        parser.Column{},
+	"FKReference":   parser.FKReference{},
+	"Constraint":    parser.Constraint{},
+	"Enum":          parser.Enum{},
+	"Set":           parser.Set{},
+	"CompositeType": parser.CompositeType{},
+	"Attribute":     parser.Attribute{},
+	"DomainType":    parser.DomainType{},
+	"View":          parser.View{},
+}
+
+// assertSchemaParity compares an introspected schema against the file
+// parser's schema for the same DDL: tables, columns, constraints, enums, sets,
+// composite types, domains and views, in full. The dialect's
+// parityExceptions are the only fields left out, plus any ignore entries. It
+// sorts both schemas in place first.
+func assertSchemaParity(t *testing.T, dialect string, parsed, introspected *parser.Schema, ignore ...parityException) {
+	t.Helper()
+	exceptions, ok := parityExceptions[dialect]
+	if !ok {
+		t.Fatalf("assertSchemaParity: no parity exceptions for dialect %q", dialect)
+	}
+
+	all := slices.Concat(exceptions, ignore)
+	opts := make([]cmp.Option, 0, len(all))
+	for _, e := range all {
+		typeName, field, ok := strings.Cut(e.Field, ".")
+		typ, known := parityFieldTypes[typeName]
+		if !ok || !known || e.Reason == "" {
+			t.Fatalf("assertSchemaParity: malformed parity exception %+v", e)
+		}
+		opts = append(opts, cmpopts.IgnoreFields(typ, field))
+	}
+
+	sortForParity(parsed)
+	sortForParity(introspected)
+	if diff := cmp.Diff(parsed, introspected, opts...); diff != "" {
+		t.Errorf("%s: introspected schema differs from the file parser's (-parsed +introspected):\n%s", dialect, diff)
+	}
+}
+
+// sortForParity orders everything whose order carries no meaning. Columns,
+// constraint columns and enum values keep their order.
+func sortForParity(s *parser.Schema) {
+	s.Sort()
+	slices.Sort(s.Warnings)
+	for i := range s.Tables {
+		sortConstraints(s.Tables[i].Constraints)
+		slices.SortFunc(s.Tables[i].ExpressionIndexes, func(a, b parser.ExpressionIndex) int {
+			return strings.Compare(a.Name, b.Name)
+		})
+	}
+	for i := range s.DomainTypes {
+		sortConstraints(s.DomainTypes[i].Constraints)
+	}
+}
+
+func sortConstraints(cs []parser.Constraint) {
+	slices.SortFunc(cs, func(a, b parser.Constraint) int {
+		if a.Type != b.Type {
+			return int(a.Type) - int(b.Type)
+		}
+		if c := strings.Compare(a.Name, b.Name); c != 0 {
+			return c
+		}
+		return slices.Compare(a.Columns, b.Columns)
+	})
+}
+
 var (
 	pgConnStr    string
 	mysqlConnStr string
@@ -38,8 +141,10 @@ var (
 
 func TestMain(m *testing.M) {
 	flag.Parse()
+	// The white-box unit tests share this binary, so -short still runs them;
+	// each integration test skips itself through requireDatabases.
 	if testing.Short() {
-		os.Exit(0)
+		os.Exit(m.Run())
 	}
 
 	ctx := context.Background()
@@ -100,6 +205,8 @@ func TestMain(m *testing.M) {
 // --- PostgreSQL integration tests ---
 
 func TestPostgresIntrospect(t *testing.T) {
+	requireDatabases(t)
+
 	ctx := context.Background()
 
 	ddl := `
@@ -176,112 +283,21 @@ func TestPostgresIntrospect(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Introspect() error: %v", err)
 	}
-	introspected.Sort()
 
 	// Parse the same DDL.
 	p := postgres.New("introspect_test")
 	if err := p.Parse("test.sql", []byte(ddl)); err != nil {
 		t.Fatalf("Parse() error: %v", err)
 	}
-	parsed := p.Schema()
-	parsed.Sort()
 
-	// Compare tables.
-	if len(introspected.Tables) != len(parsed.Tables) {
-		t.Fatalf("table count: introspected=%d, parsed=%d", len(introspected.Tables), len(parsed.Tables))
-	}
-
-	for i, want := range parsed.Tables {
-		got := introspected.Tables[i]
-
-		if got.Schema != want.Schema || got.Name != want.Name {
-			t.Errorf("table[%d]: got %s.%s, want %s.%s", i, got.Schema, got.Name, want.Schema, want.Name)
-			continue
-		}
-
-		// Compare columns.
-		if len(got.Columns) != len(want.Columns) {
-			t.Errorf("table %s columns: got %d, want %d", want.Name, len(got.Columns), len(want.Columns))
-			continue
-		}
-
-		for j, wantCol := range want.Columns {
-			gotCol := got.Columns[j]
-			// Default: introspection normalizes default expressions, so the text
-			// differs from the DDL source. InlineUnique: a parse-provenance flag
-			// (inline `col UNIQUE` vs table-level `UNIQUE(col)`) that the DDL
-			// parsers set but introspection cannot reconstruct — Postgres stores
-			// both forms identically in pg_constraint. Neither field is
-			// recoverable from the live catalog, so both are excluded.
-			if diff := cmp.Diff(wantCol, gotCol, cmpopts.IgnoreFields(parser.Column{}, "Default", "InlineUnique")); diff != "" {
-				t.Errorf("table %s column %s mismatch (-want +got):\n%s", want.Name, wantCol.Name, diff)
-			}
-		}
-
-		// Compare comments.
-		if got.Comment != want.Comment {
-			t.Errorf("table %s comment: got %q, want %q", want.Name, got.Comment, want.Comment)
-		}
-
-		// Compare CHECK constraints.
-		wantChecks := filterConstraints(want.Constraints, parser.Check)
-		gotChecks := filterConstraints(got.Constraints, parser.Check)
-		if len(gotChecks) != len(wantChecks) {
-			t.Errorf("table %s CHECK constraints: got %d, want %d", want.Name, len(gotChecks), len(wantChecks))
-		} else {
-			for j, wc := range wantChecks {
-				gc := gotChecks[j]
-				if gc.Name != wc.Name {
-					t.Errorf("table %s CHECK[%d] name: got %q, want %q", want.Name, j, gc.Name, wc.Name)
-				}
-				if gc.CheckExpression == "" {
-					t.Errorf("table %s CHECK %q: introspected expression is empty", want.Name, gc.Name)
-				}
-			}
-		}
-	}
-
-	// Compare enums.
-	if diff := cmp.Diff(parsed.Enums, introspected.Enums); diff != "" {
-		t.Errorf("enums mismatch (-want +got):\n%s", diff)
-	}
-
-	// Compare composite types.
-	if len(introspected.CompositeTypes) != len(parsed.CompositeTypes) {
-		t.Errorf("composite type count: introspected=%d, parsed=%d",
-			len(introspected.CompositeTypes), len(parsed.CompositeTypes))
-	} else {
-		for i, want := range parsed.CompositeTypes {
-			got := introspected.CompositeTypes[i]
-			if got.Name != want.Name || got.Schema != want.Schema {
-				t.Errorf("composite type[%d]: got %s.%s, want %s.%s", i, got.Schema, got.Name, want.Schema, want.Name)
-			}
-			if diff := cmp.Diff(want.Attributes, got.Attributes); diff != "" {
-				t.Errorf("composite type %s attributes mismatch (-want +got):\n%s", want.Name, diff)
-			}
-		}
-	}
-
-	// Compare domain types.
-	if len(introspected.DomainTypes) != len(parsed.DomainTypes) {
-		t.Errorf("domain type count: introspected=%d, parsed=%d",
-			len(introspected.DomainTypes), len(parsed.DomainTypes))
-	} else {
-		for i, want := range parsed.DomainTypes {
-			got := introspected.DomainTypes[i]
-			if got.Name != want.Name || got.Schema != want.Schema {
-				t.Errorf("domain type[%d]: got %s.%s, want %s.%s", i, got.Schema, got.Name, want.Schema, want.Name)
-			}
-			if got.BaseType != want.BaseType {
-				t.Errorf("domain type %s base type: got %q, want %q", want.Name, got.BaseType, want.BaseType)
-			}
-		}
-	}
+	assertSchemaParity(t, "postgres", p.Schema(), introspected)
 }
 
 // --- MySQL integration tests ---
 
 func TestMySQLIntrospect(t *testing.T) {
+	requireDatabases(t)
+
 	ctx := context.Background()
 
 	ddl := `
@@ -330,11 +346,12 @@ func TestMySQLIntrospect(t *testing.T) {
 	defer intro.Close() //nolint:errcheck // test cleanup
 
 	introspected := &parser.Schema{}
-	err = intro.Introspect(ctx, mysqlConnStr, introspected, introspect.IntrospectionOptions{})
+	err = intro.Introspect(ctx, mysqlConnStr, introspected, introspect.IntrospectionOptions{
+		Tables: []string{"users", "posts"},
+	})
 	if err != nil {
 		t.Fatalf("Introspect() error: %v", err)
 	}
-	introspected.Sort()
 
 	// Parse the same DDL.
 	p, err := mysql.New()
@@ -344,86 +361,15 @@ func TestMySQLIntrospect(t *testing.T) {
 	if err := p.Parse("test.sql", []byte(ddl)); err != nil {
 		t.Fatalf("Parse() error: %v", err)
 	}
-	parsed := p.Schema()
-	parsed.Sort()
 
-	// Compare tables.
-	if len(introspected.Tables) != len(parsed.Tables) {
-		t.Fatalf("table count: introspected=%d, parsed=%d", len(introspected.Tables), len(parsed.Tables))
-	}
-
-	for i, want := range parsed.Tables {
-		got := introspected.Tables[i]
-
-		if got.Name != want.Name {
-			t.Errorf("table[%d]: got %q, want %q", i, got.Name, want.Name)
-			continue
-		}
-
-		// Compare column count and key properties.
-		if len(got.Columns) != len(want.Columns) {
-			t.Errorf("table %s columns: got %d, want %d", want.Name, len(got.Columns), len(want.Columns))
-			continue
-		}
-
-		for j, wantCol := range want.Columns {
-			gotCol := got.Columns[j]
-			if gotCol.Name != wantCol.Name {
-				t.Errorf("table %s col[%d] name: got %q, want %q", want.Name, j, gotCol.Name, wantCol.Name)
-			}
-			if gotCol.Type != wantCol.Type {
-				t.Errorf("table %s col %s type: got %q, want %q", want.Name, wantCol.Name, gotCol.Type, wantCol.Type)
-			}
-			if gotCol.Nullable != wantCol.Nullable {
-				t.Errorf("table %s col %s nullable: got %v, want %v", want.Name, wantCol.Name, gotCol.Nullable, wantCol.Nullable)
-			}
-			if gotCol.PrimaryKey != wantCol.PrimaryKey {
-				t.Errorf("table %s col %s pk: got %v, want %v", want.Name, wantCol.Name, gotCol.PrimaryKey, wantCol.PrimaryKey)
-			}
-			if gotCol.AutoIncrement != wantCol.AutoIncrement {
-				t.Errorf("table %s col %s auto_increment: got %v, want %v", want.Name, wantCol.Name, gotCol.AutoIncrement, wantCol.AutoIncrement)
-			}
-		}
-	}
-
-	// Compare enums (MySQL inline enums).
-	if len(introspected.Enums) != len(parsed.Enums) {
-		t.Errorf("enum count: introspected=%d, parsed=%d", len(introspected.Enums), len(parsed.Enums))
-	}
-
-	// Verify CHECK constraint on users table.
-	usersTable := introspected.Tables[1] // sorted: posts, users
-	if usersTable.Name != "users" {
-		// Find it explicitly.
-		for _, tbl := range introspected.Tables {
-			if tbl.Name == "users" {
-				usersTable = tbl
-				break
-			}
-		}
-	}
-	checks := filterConstraints(usersTable.Constraints, parser.Check)
-	if len(checks) == 0 {
-		t.Error("MySQL users table: expected at least 1 CHECK constraint, got 0")
-	} else {
-		found := false
-		for _, c := range checks {
-			if c.Name == "users_age_check" {
-				found = true
-				if c.CheckExpression == "" {
-					t.Error("MySQL CHECK users_age_check: expression is empty")
-				}
-			}
-		}
-		if !found {
-			t.Errorf("MySQL users table: CHECK constraint 'users_age_check' not found in %v", checks)
-		}
-	}
+	assertSchemaParity(t, "mysql", p.Schema(), introspected)
 }
 
 // --- SQLite integration tests ---
 
 func TestSQLiteIntrospect(t *testing.T) {
+	requireDatabases(t)
+
 	ctx := context.Background()
 
 	ddl := `
@@ -467,55 +413,1221 @@ func TestSQLiteIntrospect(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Introspect() error: %v", err)
 	}
-	introspected.Sort()
 
 	// Parse the same DDL.
 	p := sqlite.New()
 	if err := p.Parse("test.sql", []byte(ddl)); err != nil {
 		t.Fatalf("Parse() error: %v", err)
 	}
-	parsed := p.Schema()
-	parsed.Sort()
 
-	// Compare tables.
-	if len(introspected.Tables) != len(parsed.Tables) {
-		t.Fatalf("table count: introspected=%d, parsed=%d", len(introspected.Tables), len(parsed.Tables))
-	}
+	assertSchemaParity(t, "sqlite", p.Schema(), introspected)
+}
 
-	for i, want := range parsed.Tables {
-		got := introspected.Tables[i]
+// --- Generated column tests ---
 
-		if got.Name != want.Name {
-			t.Errorf("table[%d]: got %q, want %q", i, got.Name, want.Name)
-			continue
+// generatedColumn is the generated-column shape one column must have.
+type generatedColumn struct {
+	expr, storage string
+}
+
+// assertGeneratedColumns checks the generated-column fields of every column
+// in table, so parity cannot pass with both sides missing them. A column
+// absent from want must not be generated.
+func assertGeneratedColumns(t *testing.T, table *parser.Table, want map[string]generatedColumn) {
+	t.Helper()
+	got := make(map[string]generatedColumn)
+	for _, c := range table.Columns {
+		if c.GeneratedExpr != "" || c.GeneratedStorage != "" {
+			got[c.Name] = generatedColumn{expr: c.GeneratedExpr, storage: c.GeneratedStorage}
 		}
-
-		if len(got.Columns) != len(want.Columns) {
-			t.Errorf("table %s columns: got %d, want %d", want.Name, len(got.Columns), len(want.Columns))
-			continue
-		}
-
-		for j, wantCol := range want.Columns {
-			gotCol := got.Columns[j]
-			if gotCol.Name != wantCol.Name {
-				t.Errorf("table %s col[%d] name: got %q, want %q", want.Name, j, gotCol.Name, wantCol.Name)
-			}
-			if gotCol.Nullable != wantCol.Nullable {
-				t.Errorf("table %s col %s nullable: got %v, want %v", want.Name, wantCol.Name, gotCol.Nullable, wantCol.Nullable)
-			}
-			if gotCol.PrimaryKey != wantCol.PrimaryKey {
-				t.Errorf("table %s col %s pk: got %v, want %v", want.Name, wantCol.Name, gotCol.PrimaryKey, wantCol.PrimaryKey)
-			}
-			if gotCol.AutoIncrement != wantCol.AutoIncrement {
-				t.Errorf("table %s col %s auto_increment: got %v, want %v", want.Name, wantCol.Name, gotCol.AutoIncrement, wantCol.AutoIncrement)
-			}
+		if c.GeneratedExpr != "" && c.Default != "" {
+			t.Errorf("%s.%s: Default = %q on a generated column, want empty", table.Name, c.Name, c.Default)
 		}
 	}
+	if diff := cmp.Diff(want, got, cmp.AllowUnexported(generatedColumn{})); diff != "" {
+		t.Errorf("%s generated columns mismatch (-want +got):\n%s", table.Name, diff)
+	}
+}
+
+func TestPostgresIntrospect_GeneratedColumn(t *testing.T) {
+	requireDatabases(t)
+
+	ctx := context.Background()
+
+	ddl := `
+		CREATE TABLE gen_items (
+			id integer PRIMARY KEY,
+			qty integer NOT NULL,
+			name text,
+			price numeric,
+			code varchar(10),
+			doubled integer GENERATED ALWAYS AS (qty * 2) STORED,
+			shout text NOT NULL GENERATED ALWAYS AS (upper(name)) STORED,
+			total numeric GENERATED ALWAYS AS (price * 2) STORED,
+			loud text GENERATED ALWAYS AS (upper(code) || '!') STORED,
+			seq integer GENERATED ALWAYS AS IDENTITY
+		);
+	`
+
+	db, err := sql.Open("pgx", pgConnStr)
+	if err != nil {
+		t.Fatalf("opening postgres: %v", err)
+	}
+	defer db.Close() //nolint:errcheck // test cleanup
+
+	if _, err := db.ExecContext(ctx, "DROP SCHEMA IF EXISTS introspect_gen CASCADE; CREATE SCHEMA introspect_gen"); err != nil {
+		t.Fatalf("creating schema: %v", err)
+	}
+	defer db.ExecContext(ctx, "DROP SCHEMA IF EXISTS introspect_gen CASCADE") //nolint:errcheck // test cleanup
+	if _, err := db.ExecContext(ctx, "SET search_path TO introspect_gen; "+ddl); err != nil {
+		t.Fatalf("applying DDL: %v", err)
+	}
+
+	intro := introspect.NewPostgresIntrospector()
+	defer intro.Close() //nolint:errcheck // test cleanup
+
+	introspected := &parser.Schema{}
+	if err := intro.Introspect(ctx, pgConnStr, introspected, introspect.IntrospectionOptions{
+		Schemas: []string{"introspect_gen"},
+	}); err != nil {
+		t.Fatalf("Introspect() error: %v", err)
+	}
+
+	p := postgres.New("introspect_gen")
+	if err := p.Parse("test.sql", []byte(ddl)); err != nil {
+		t.Fatalf("Parse() error: %v", err)
+	}
+
+	want := map[string]generatedColumn{
+		"doubled": {expr: "qty * 2", storage: "STORED"},
+		"shout":   {expr: "upper(name)", storage: "STORED"},
+		"total":   {expr: "price * 2", storage: "STORED"},
+		"loud":    {expr: "upper(code) || '!'", storage: "STORED"},
+	}
+	assertGeneratedColumns(t, findTable(t, introspected, "gen_items"), want)
+	assertGeneratedColumns(t, findTable(t, p.Schema(), "gen_items"), want)
+	assertSchemaParity(t, "postgres", p.Schema(), introspected)
+}
+
+// TestPostgresIntrospect_VirtualGeneratedColumn needs PostgreSQL 18, the first
+// release with VIRTUAL generated columns, so it starts its own container. The
+// file parser's PostgreSQL 17 grammar rejects the syntax, so there is no
+// parsed schema to compare against.
+func TestPostgresIntrospect_VirtualGeneratedColumn(t *testing.T) {
+	requireDatabases(t)
+
+	ctx := context.Background()
+
+	container, err := tcpostgres.Run(
+		ctx,
+		"postgres:18-alpine",
+		tcpostgres.WithDatabase("sqlgen_test"),
+		tcpostgres.WithUsername("test"),
+		tcpostgres.WithPassword("test"),
+		testcontainers.WithWaitStrategy(
+			wait.ForLog("database system is ready to accept connections").
+				WithOccurrence(2),
+		),
+	)
+	if err != nil {
+		t.Fatalf("starting postgres 18 container: %v", err)
+	}
+	defer container.Terminate(ctx) //nolint:errcheck // test cleanup
+
+	connStr, err := container.ConnectionString(ctx, "sslmode=disable")
+	if err != nil {
+		t.Fatalf("postgres 18 connection string: %v", err)
+	}
+
+	db, err := sql.Open("pgx", connStr)
+	if err != nil {
+		t.Fatalf("opening postgres: %v", err)
+	}
+	defer db.Close() //nolint:errcheck // test cleanup
+
+	// With neither STORED nor VIRTUAL, PostgreSQL 18 makes the column VIRTUAL.
+	if _, err := db.ExecContext(ctx, `
+		CREATE TABLE gen_items (
+			id integer PRIMARY KEY,
+			qty integer NOT NULL,
+			implicit_total integer GENERATED ALWAYS AS (qty * 2),
+			virtual_total integer GENERATED ALWAYS AS (qty * 3) VIRTUAL,
+			stored_total integer GENERATED ALWAYS AS (qty * 4) STORED
+		)`); err != nil {
+		t.Fatalf("applying DDL: %v", err)
+	}
+
+	intro := introspect.NewPostgresIntrospector()
+	defer intro.Close() //nolint:errcheck // test cleanup
+
+	introspected := &parser.Schema{}
+	if err := intro.Introspect(ctx, connStr, introspected, introspect.IntrospectionOptions{
+		Schemas: []string{"public"},
+	}); err != nil {
+		t.Fatalf("Introspect() error: %v", err)
+	}
+
+	assertGeneratedColumns(t, findTable(t, introspected, "gen_items"), map[string]generatedColumn{
+		"implicit_total": {expr: "qty * 2", storage: "VIRTUAL"},
+		"virtual_total":  {expr: "qty * 3", storage: "VIRTUAL"},
+		"stored_total":   {expr: "qty * 4", storage: "STORED"},
+	})
+}
+
+func TestMySQLIntrospect_GeneratedColumn(t *testing.T) {
+	requireDatabases(t)
+
+	ctx := context.Background()
+
+	ddl := `
+		CREATE TABLE gen_items (
+			id int NOT NULL PRIMARY KEY,
+			qty int NOT NULL,
+			stored_total int GENERATED ALWAYS AS (qty * 2) STORED,
+			virtual_total int GENERATED ALWAYS AS (qty * 2) VIRTUAL,
+			default_total int GENERATED ALWAYS AS (qty + 1),
+			short_total int AS (qty + 2),
+			abs_qty int AS (abs(qty)) STORED NOT NULL,
+			label varchar(20) AS (concat('n-', qty))
+		);
+	`
+
+	db, err := sql.Open("mysql", mysqlConnStr)
+	if err != nil {
+		t.Fatalf("opening mysql: %v", err)
+	}
+	defer db.Close() //nolint:errcheck // test cleanup
+
+	if _, err := db.ExecContext(ctx, "DROP TABLE IF EXISTS gen_items"); err != nil {
+		t.Fatalf("dropping table: %v", err)
+	}
+	defer db.ExecContext(ctx, "DROP TABLE IF EXISTS gen_items") //nolint:errcheck // test cleanup
+	if _, err := db.ExecContext(ctx, ddl); err != nil {
+		t.Fatalf("applying DDL: %v", err)
+	}
+
+	intro := introspect.NewMySQLIntrospector()
+	defer intro.Close() //nolint:errcheck // test cleanup
+
+	introspected := &parser.Schema{}
+	if err := intro.Introspect(ctx, mysqlConnStr, introspected, introspect.IntrospectionOptions{
+		Tables: []string{"gen_items"},
+	}); err != nil {
+		t.Fatalf("Introspect() error: %v", err)
+	}
+
+	p, err := mysql.New()
+	if err != nil {
+		t.Fatalf("creating mysql parser: %v", err)
+	}
+	if err := p.Parse("test.sql", []byte(ddl)); err != nil {
+		t.Fatalf("Parse() error: %v", err)
+	}
+
+	want := map[string]generatedColumn{
+		"stored_total":  {expr: "qty * 2", storage: "STORED"},
+		"virtual_total": {expr: "qty * 2", storage: "VIRTUAL"},
+		"default_total": {expr: "qty + 1", storage: "VIRTUAL"},
+		"short_total":   {expr: "qty + 2", storage: "VIRTUAL"},
+		"abs_qty":       {expr: "abs(qty)", storage: "STORED"},
+		"label":         {expr: "concat('n-', qty)", storage: "VIRTUAL"},
+	}
+	assertGeneratedColumns(t, findTable(t, introspected, "gen_items"), want)
+	assertGeneratedColumns(t, findTable(t, p.Schema(), "gen_items"), want)
+	assertSchemaParity(t, "mysql", p.Schema(), introspected)
+}
+
+func TestSQLiteIntrospect_GeneratedColumn(t *testing.T) {
+	requireDatabases(t)
+
+	ctx := context.Background()
+
+	ddl := `
+		CREATE TABLE gen_items (
+			id integer PRIMARY KEY,
+			qty integer NOT NULL,
+			stored_total integer GENERATED ALWAYS AS (qty * 2) STORED,
+			virtual_total integer GENERATED ALWAYS AS (qty * 2) VIRTUAL,
+			short_total integer AS (qty + 1),
+			abs_qty integer AS (abs(qty)) STORED NOT NULL
+		);
+	`
+
+	dbPath := filepath.Join(t.TempDir(), "generated.db")
+	db, err := sql.Open("sqlite", dbPath)
+	if err != nil {
+		t.Fatalf("opening sqlite: %v", err)
+	}
+	defer db.Close() //nolint:errcheck // test cleanup
+
+	if _, err := db.ExecContext(ctx, ddl); err != nil {
+		t.Fatalf("applying DDL: %v", err)
+	}
+
+	intro := introspect.NewSQLiteIntrospector()
+	defer intro.Close() //nolint:errcheck // test cleanup
+
+	introspected := &parser.Schema{}
+	if err := intro.Introspect(ctx, dbPath, introspected, introspect.IntrospectionOptions{}); err != nil {
+		t.Fatalf("Introspect() error: %v", err)
+	}
+
+	p := sqlite.New()
+	if err := p.Parse("test.sql", []byte(ddl)); err != nil {
+		t.Fatalf("Parse() error: %v", err)
+	}
+
+	want := map[string]generatedColumn{
+		"stored_total":  {expr: `"qty" * 2`, storage: "STORED"},
+		"virtual_total": {expr: `"qty" * 2`, storage: "VIRTUAL"},
+		"short_total":   {expr: `"qty" + 1`, storage: "VIRTUAL"},
+		"abs_qty":       {expr: `abs("qty")`, storage: "STORED"},
+	}
+	assertGeneratedColumns(t, findTable(t, introspected, "gen_items"), want)
+	assertGeneratedColumns(t, findTable(t, p.Schema(), "gen_items"), want)
+	assertSchemaParity(t, "sqlite", p.Schema(), introspected)
+}
+
+// --- SQLite parity tests ---
+
+// applySQLite applies ddl to a fresh database file, one statement at a time,
+// and returns the file's path.
+func applySQLite(t *testing.T, ddl string) string {
+	t.Helper()
+	dbPath := filepath.Join(t.TempDir(), "schema.db")
+	applyParityFixture(t, "sqlite", dbPath, "", ddl)
+	return dbPath
+}
+
+func introspectSQLite(t *testing.T, dbPath string, opts introspect.IntrospectionOptions) *parser.Schema {
+	t.Helper()
+	intro := introspect.NewSQLiteIntrospector()
+	t.Cleanup(func() { _ = intro.Close() })
+	schema := &parser.Schema{}
+	if err := intro.Introspect(context.Background(), dbPath, schema, opts); err != nil {
+		t.Fatalf("Introspect() error: %v", err)
+	}
+	return schema
+}
+
+func tableNames(s *parser.Schema) []string {
+	names := make([]string, 0, len(s.Tables))
+	for _, table := range s.Tables {
+		names = append(names, table.Name)
+	}
+	return names
+}
+
+func columnNames(cols []parser.Column) []string {
+	names := make([]string, 0, len(cols))
+	for _, c := range cols {
+		names = append(names, c.Name)
+	}
+	return names
+}
+
+// sqliteSchemas returns the file parser's and the introspector's schema for
+// ddl.
+func sqliteSchemas(t *testing.T, ddl string) (parsed, introspected *parser.Schema) {
+	t.Helper()
+	dbPath := applySQLite(t, ddl)
+	introspected = introspectSQLite(t, dbPath, introspect.IntrospectionOptions{})
+	return parseStatements(t, sqlite.New(), ddl), introspected
+}
+
+func TestSQLiteIntrospect_ParityFixture(t *testing.T) {
+	requireDatabases(t)
+	parsed, introspected := sqliteSchemas(t, sqliteParityTables)
+	assertSchemaParity(t, "sqlite", parsed, introspected)
+}
+
+func TestSQLiteIntrospect_CompositePKOrder(t *testing.T) {
+	requireDatabases(t)
+	parsed, introspected := sqliteSchemas(t, `
+		CREATE TABLE pairs (a INTEGER NOT NULL, b INTEGER NOT NULL, c TEXT, PRIMARY KEY (b, a));
+		CREATE TABLE kv (k TEXT, ns TEXT, v TEXT, PRIMARY KEY (ns, k)) WITHOUT ROWID
+	`)
+
+	for table, want := range map[string][]string{"pairs": {"b", "a"}, "kv": {"ns", "k"}} {
+		pk := filterConstraints(findTable(t, introspected, table).Constraints, parser.PrimaryKey)
+		if len(pk) != 1 {
+			t.Errorf("%s: introspected %d PRIMARY KEY constraints, want 1: %+v", table, len(pk), pk)
+			continue
+		}
+		if diff := cmp.Diff(want, pk[0].Columns); diff != "" {
+			t.Errorf("%s: introspected PRIMARY KEY columns mismatch (-want +got):\n%s", table, diff)
+		}
+	}
+	assertSchemaParity(t, "sqlite", parsed, introspected)
+}
+
+// REFERENCES t with no column list references t's primary key. PRAGMA
+// foreign_key_list reports no parent columns for it, so both sources resolve
+// it to the parent's key, and leave it without columns when that key does not
+// fit.
+func TestSQLiteIntrospect_ImplicitFKTarget(t *testing.T) {
+	requireDatabases(t)
+	tests := []struct {
+		name string
+		ddl  string
+		want []string
+	}{
+		{
+			name: "column REFERENCES",
+			ddl:  `CREATE TABLE u (id INTEGER PRIMARY KEY); CREATE TABLE p (id INTEGER PRIMARY KEY, uid INTEGER REFERENCES u)`,
+			want: []string{"id"},
+		},
+		{
+			name: "table FOREIGN KEY",
+			ddl:  `CREATE TABLE u (id INTEGER PRIMARY KEY); CREATE TABLE p (id INTEGER PRIMARY KEY, uid INTEGER, CONSTRAINT p_uid FOREIGN KEY (uid) REFERENCES u)`,
+			want: []string{"id"},
+		},
+		{
+			name: "composite key",
+			ddl:  `CREATE TABLE u (a INT, b INT, PRIMARY KEY (b, a)); CREATE TABLE p (id INTEGER PRIMARY KEY, x INT, y INT, FOREIGN KEY (x, y) REFERENCES u)`,
+			want: []string{"b", "a"},
+		},
+		{
+			name: "parent defined later",
+			ddl:  `CREATE TABLE p (id INTEGER PRIMARY KEY, uid INTEGER REFERENCES u); CREATE TABLE u (id INTEGER PRIMARY KEY)`,
+			want: []string{"id"},
+		},
+		{
+			name: "self reference",
+			ddl:  `CREATE TABLE p (id INTEGER PRIMARY KEY, parent INTEGER REFERENCES p)`,
+			want: []string{"id"},
+		},
+		{
+			name: "next to a key with columns",
+			ddl:  `CREATE TABLE u (id INTEGER PRIMARY KEY, code TEXT UNIQUE); CREATE TABLE p (id INTEGER PRIMARY KEY, uid TEXT, CONSTRAINT p_code FOREIGN KEY (uid) REFERENCES u(code), CONSTRAINT p_id FOREIGN KEY (uid) REFERENCES u)`,
+			want: []string{"code", "id"},
+		},
+		{
+			name: "parent without a primary key",
+			ddl:  `CREATE TABLE u (id INTEGER); CREATE TABLE p (id INTEGER PRIMARY KEY, uid INTEGER REFERENCES u)`,
+		},
+		{
+			name: "parent not defined",
+			ddl:  `CREATE TABLE p (id INTEGER PRIMARY KEY, uid INTEGER REFERENCES u)`,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			parsed, introspected := sqliteSchemas(t, tt.ddl)
+			var got []string
+			for _, c := range filterConstraints(findTable(t, introspected, "p").Constraints, parser.ForeignKey) {
+				got = append(got, c.ReferenceColumns...)
+			}
+			if diff := cmp.Diff(tt.want, got, cmpopts.EquateEmpty()); diff != "" {
+				t.Errorf("introspected ReferenceColumns mismatch (-want +got):\n%s", diff)
+			}
+			assertSchemaParity(t, "sqlite", parsed, introspected)
+		})
+	}
+}
+
+// The parent's key comes from the database, so it resolves when
+// input.introspect leaves the parent out.
+func TestSQLiteIntrospect_ImplicitFKTargetFiltered(t *testing.T) {
+	requireDatabases(t)
+	dbPath := applySQLite(t, `CREATE TABLE u (uid INTEGER PRIMARY KEY); CREATE TABLE p (id INTEGER PRIMARY KEY, uid INTEGER REFERENCES u)`)
+	introspected := introspectSQLite(t, dbPath, introspect.IntrospectionOptions{Tables: []string{"p"}})
+	fks := filterConstraints(findTable(t, introspected, "p").Constraints, parser.ForeignKey)
+	if len(fks) != 1 || !cmp.Equal(fks[0].ReferenceColumns, []string{"uid"}) {
+		t.Errorf("p: introspected foreign keys %+v, want one referencing u(uid)", fks)
+	}
+}
+
+func TestSQLiteIntrospect_UniqueAndPKAutoIndexes(t *testing.T) {
+	requireDatabases(t)
+	parsed, introspected := sqliteSchemas(t, `
+		CREATE TABLE tpk (id TEXT PRIMARY KEY, v INTEGER);
+		CREATE TABLE ipk (id INT PRIMARY KEY, v INTEGER);
+		CREATE TABLE dpk (id INTEGER PRIMARY KEY DESC, v INTEGER);
+		CREATE TABLE cpk (a INTEGER, b INTEGER, PRIMARY KEY (a, b));
+		CREATE TABLE u (
+			id INTEGER PRIMARY KEY,
+			a TEXT UNIQUE,
+			b TEXT CONSTRAINT u_b_named UNIQUE,
+			c TEXT,
+			d TEXT,
+			UNIQUE (c, d),
+			CONSTRAINT u_dc_named UNIQUE (d, c)
+		);
+		CREATE UNIQUE INDEX u_c_idx ON u (c);
+		CREATE TABLE collated (email TEXT, name TEXT, UNIQUE (email COLLATE NOCASE));
+		CREATE UNIQUE INDEX collated_name_idx ON collated (name COLLATE NOCASE);
+		CREATE TABLE coll_two (a TEXT, UNIQUE (a), UNIQUE (a COLLATE NOCASE));
+		CREATE TABLE coll_key (id TEXT PRIMARY KEY, UNIQUE (id COLLATE NOCASE));
+		CREATE TABLE coll_order (a TEXT, UNIQUE (a), UNIQUE (a DESC));
+		CREATE TABLE coll_override (a TEXT COLLATE NOCASE UNIQUE, UNIQUE (a COLLATE BINARY));
+		CREATE TABLE coll_same_key (id TEXT COLLATE NOCASE PRIMARY KEY, UNIQUE (id))
+	`)
+
+	for _, table := range introspected.Tables {
+		for _, c := range table.Constraints {
+			if strings.HasPrefix(c.Name, "sqlite_autoindex_") {
+				t.Errorf("%s: constraint %+v carries an auto-index name", table.Name, c)
+			}
+		}
+	}
+	for _, table := range []string{"tpk", "ipk", "dpk", "cpk"} {
+		if uniques := filterConstraints(findTable(t, introspected, table).Constraints, parser.Unique); len(uniques) != 0 {
+			t.Errorf("%s: introspected UNIQUE constraints %+v, want none beside the primary key", table, uniques)
+		}
+	}
+	wantU := []parser.Constraint{
+		{Type: parser.Unique, Columns: []string{"a"}},
+		{Type: parser.Unique, Columns: []string{"c", "d"}},
+		{Name: "u_b_named", Type: parser.Unique, Columns: []string{"b"}},
+		{Name: "u_c_idx", Type: parser.Unique, Columns: []string{"c"}, Method: "btree"},
+		{Name: "u_dc_named", Type: parser.Unique, Columns: []string{"d", "c"}},
+	}
+	gotU := filterConstraints(findTable(t, introspected, "u").Constraints, parser.Unique)
+	sortConstraints(gotU)
+	if diff := cmp.Diff(wantU, gotU, cmpopts.EquateEmpty()); diff != "" {
+		t.Errorf("u: introspected UNIQUE constraints mismatch (-want +got):\n%s", diff)
+	}
+	assertSchemaParity(t, "sqlite", parsed, introspected)
+}
+
+// SQLite rewrites the column's name in the stored CHECK, generated-column and
+// partial-index text on RENAME COLUMN, and the file parser renames it the same
+// way, so the text matches by source (PRD §6.1). Function names that equal the
+// column's are not renamed, by either.
+func TestSQLiteIntrospect_RenameColumnExpressions(t *testing.T) {
+	requireDatabases(t)
+	parsed, introspected := sqliteSchemas(t, `
+		CREATE TABLE r (
+			id INTEGER PRIMARY KEY,
+			a INTEGER CHECK (a >= 0),
+			B TEXT,
+			upper TEXT,
+			g INTEGER AS (a * 2),
+			h TEXT GENERATED ALWAYS AS (upper(b) || 'a') STORED,
+			CHECK (a BETWEEN 0 AND 100),
+			CHECK (a NOT IN (1, 2) AND -a < 0),
+			CHECK (r.a IS NOT NULL OR a ISNULL),
+			CHECK (CASE WHEN a > 1 THEN b ELSE 'a' END IS NOT NULL),
+			CHECK (CAST(a AS TEXT) <> upper(upper) COLLATE NOCASE),
+			CHECK (abs(a) < 1000 AND b NOT LIKE '%a%' AND "b" GLOB '*')
+		);
+		CREATE INDEX r_b ON r (b) WHERE a > 0 AND b IS NOT 'a';
+		ALTER TABLE r RENAME COLUMN a TO qty;
+		ALTER TABLE r RENAME COLUMN B TO label;
+		ALTER TABLE r RENAME COLUMN upper TO up
+	`)
+
+	// The text SQLite stores after the renames, read with the file parser.
+	want := []string{
+		`"qty" * 2`,
+		`upper("label") || 'a'`,
+		`"qty" > 0 AND "label" IS NOT 'a'`,
+		`"qty" >= 0`,
+		`"qty" BETWEEN 0 AND 100`,
+		`"qty" NOT IN (1, 2) AND -"qty" < 0`,
+		`"r"."qty" NOT NULL OR "qty" IS NULL`,
+		`CASE WHEN "qty" > 1 THEN "label" ELSE 'a' END NOT NULL`,
+		`CAST("qty" AS TEXT) != upper("up") COLLATE "NOCASE"`,
+		`abs("qty") < 1000 AND "label" NOT LIKE '%a%' AND "label" GLOB '*'`,
+	}
+	table := findTable(t, introspected, "r")
+	var got []string
+	for _, c := range table.Columns {
+		if c.GeneratedExpr != "" {
+			got = append(got, c.GeneratedExpr)
+		}
+	}
+	for _, c := range table.Constraints {
+		if text := c.CheckExpression + c.Where; text != "" {
+			got = append(got, text)
+		}
+	}
+	slices.Sort(want)
+	slices.Sort(got)
+	if diff := cmp.Diff(want, got); diff != "" {
+		t.Errorf("r: introspected expressions after RENAME COLUMN mismatch (-want +got):\n%s", diff)
+	}
+	assertSchemaParity(t, "sqlite", parsed, introspected)
+}
+
+// A partial index's predicate comes from its stored CREATE INDEX, read with
+// the file parser, so it is the parser's text and not the DDL as written
+// (PRD §6.1, §6.3).
+func TestSQLiteIntrospect_PartialIndexes(t *testing.T) {
+	requireDatabases(t)
+	parsed, introspected := sqliteSchemas(t, `
+		CREATE TABLE t (a TEXT, b INTEGER, note TEXT);
+		CREATE UNIQUE INDEX t_a_live ON t (a) WHERE a IS NOT NULL;
+		CREATE INDEX t_b_pos ON t (b) where b>0 AND note<>'x WHERE y';
+		CREATE INDEX t_note_idx ON t (note) /* WHERE b = 1 */ WHERE note IN ('a', 'b')
+	`)
+
+	want := map[string]string{
+		"t_a_live":   `"a" NOT NULL`,
+		"t_b_pos":    `"b" > 0 AND "note" != 'x WHERE y'`,
+		"t_note_idx": `"note" IN ('a', 'b')`,
+	}
+	got := make(map[string]string)
+	for _, c := range findTable(t, introspected, "t").Constraints {
+		got[c.Name] = c.Where
+	}
+	if diff := cmp.Diff(want, got); diff != "" {
+		t.Errorf("t: introspected partial-index predicates mismatch (-want +got):\n%s", diff)
+	}
+	assertSchemaParity(t, "sqlite", parsed, introspected)
+}
+
+// An index with an expression part is skipped under both sources, unique or
+// not, and a part in parentheses names its column and keeps its collation.
+// A string literal part names its column, as SQLite reads it: under at most
+// one COLLATE, or any number in a PRIMARY KEY (PRD §6.1, §30.7).
+func TestSQLiteIntrospect_ExpressionIndexes(t *testing.T) {
+	requireDatabases(t)
+	parsed, introspected := sqliteSchemas(t, `
+		CREATE TABLE t (a TEXT, b TEXT, email TEXT, UNIQUE ((email)));
+		CREATE UNIQUE INDEX t_lower_email ON t (lower(email));
+		CREATE UNIQUE INDEX t_a_b1 ON t (a, b + 1);
+		CREATE INDEX t_a_lower_b ON t (a, lower(b));
+		CREATE INDEX t_lower_a ON t (lower(a)) WHERE b IS NOT NULL;
+		CREATE INDEX t_b_a ON t (b COLLATE NOCASE, (a));
+		CREATE TABLE u (a TEXT, UNIQUE (a), UNIQUE ((a COLLATE NOCASE)));
+		CREATE TABLE v (a TEXT, b TEXT, UNIQUE ('a' COLLATE NOCASE, b));
+		CREATE INDEX v_a ON v ('a');
+		CREATE INDEX v_a_collated ON v (('a' COLLATE NOCASE) COLLATE BINARY);
+		CREATE TABLE w (a TEXT, PRIMARY KEY (('a' COLLATE NOCASE) COLLATE BINARY))
+	`)
+
+	want := []parser.Constraint{
+		{Type: parser.Unique, Columns: []string{"email"}},
+		{Name: "t_b_a", Type: parser.Index, Columns: []string{"b", "a"}, Method: "btree"},
+	}
+	got := findTable(t, introspected, "t").Constraints
+	sortConstraints(got)
+	if diff := cmp.Diff(want, got, cmpopts.EquateEmpty()); diff != "" {
+		t.Errorf("t: introspected constraints mismatch (-want +got):\n%s", diff)
+	}
+	wantV := []parser.Constraint{
+		{Type: parser.Unique, Columns: []string{"a", "b"}},
+		{Name: "v_a", Type: parser.Index, Columns: []string{"a"}, Method: "btree"},
+	}
+	gotV := findTable(t, introspected, "v").Constraints
+	sortConstraints(gotV)
+	if diff := cmp.Diff(wantV, gotV, cmpopts.EquateEmpty()); diff != "" {
+		t.Errorf("v: introspected constraints mismatch (-want +got):\n%s", diff)
+	}
+	wantW := []parser.Constraint{{Type: parser.PrimaryKey, Columns: []string{"a"}}}
+	if diff := cmp.Diff(wantW, findTable(t, introspected, "w").Constraints, cmpopts.EquateEmpty()); diff != "" {
+		t.Errorf("w: introspected constraints mismatch (-want +got):\n%s", diff)
+	}
+	assertSchemaParity(t, "sqlite", parsed, introspected)
+}
+
+// DDL the file parser reads as SQLite does gives the same schema by source
+// (PRD §6.1).
+func TestSQLiteIntrospect_ClausesReadAsSQLite(t *testing.T) {
+	requireDatabases(t)
+	tests := []struct {
+		name string
+		ddl  string
+	}{
+		{
+			name: "IS NOT DISTINCT FROM in a partial index",
+			ddl:  `CREATE TABLE t (a TEXT, b TEXT); CREATE INDEX t_ab ON t (a) WHERE a IS NOT DISTINCT FROM b`,
+		},
+		{
+			name: "LIKE ESCAPE in a partial index",
+			ddl:  `CREATE TABLE t (a TEXT, b TEXT); CREATE INDEX t_ab ON t (a) WHERE a LIKE 'x%' ESCAPE '\'`,
+		},
+		{
+			name: "LIKE ESCAPE in a column CHECK",
+			ddl:  `CREATE TABLE t (a TEXT CHECK (a LIKE 'x%' ESCAPE '\'))`,
+		},
+		{
+			name: "IS DISTINCT FROM in a table CHECK",
+			ddl:  `CREATE TABLE t (a TEXT, CHECK (a IS DISTINCT FROM 'x'))`,
+		},
+		{
+			name: "LIKE ESCAPE in a DEFAULT",
+			ddl:  `CREATE TABLE t (a INTEGER DEFAULT ('x' LIKE 'y' ESCAPE '\'))`,
+		},
+		{
+			name: "LIKE ESCAPE in a generated column",
+			ddl:  `CREATE TABLE t (a TEXT, b INTEGER GENERATED ALWAYS AS (a LIKE 'x%' ESCAPE '\'))`,
+		},
+		{
+			name: "MATCH on a foreign key",
+			ddl:  `CREATE TABLE p (id INTEGER PRIMARY KEY); CREATE TABLE t (id INTEGER PRIMARY KEY, pid INTEGER REFERENCES p(id) MATCH SIMPLE, qid INTEGER, CONSTRAINT t_q FOREIGN KEY (qid) REFERENCES p(id) MATCH FULL)`,
+		},
+		{
+			name: "ON CONFLICT",
+			ddl:  `CREATE TABLE t (id INTEGER PRIMARY KEY ON CONFLICT REPLACE, a TEXT NOT NULL ON CONFLICT IGNORE UNIQUE ON CONFLICT ABORT, b TEXT, UNIQUE (b) ON CONFLICT FAIL)`,
+		},
+		{
+			name: "sort order before AUTOINCREMENT",
+			ddl:  `CREATE TABLE t (id INTEGER PRIMARY KEY ASC AUTOINCREMENT, v TEXT)`,
+		},
+		{
+			name: "descending column key",
+			ddl:  `CREATE TABLE t (id INTEGER PRIMARY KEY DESC, v TEXT)`,
+		},
+		{
+			name: "sort order and collation on a table-level key",
+			ddl:  `CREATE TABLE t (id INTEGER, v TEXT, PRIMARY KEY (id DESC)); CREATE TABLE u (a TEXT, b TEXT, PRIMARY KEY (a COLLATE NOCASE, b DESC))`,
+		},
+		{
+			name: "bracket-quoted names",
+			ddl:  `CREATE TABLE [p] ([Y] INTEGER PRIMARY KEY); CREATE TABLE [t] ([a b] TEXT, [x] INTEGER REFERENCES [p]([Y]))`,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			parsed, introspected := sqliteSchemas(t, tt.ddl)
+			assertSchemaParity(t, "sqlite", parsed, introspected)
+		})
+	}
+}
+
+// The columns come from PRAGMA table_xinfo, but the stored CREATE TABLE is
+// still read with the file parser, so DDL it cannot read fails both sources.
+func TestSQLiteIntrospect_UnreadableTable(t *testing.T) {
+	requireDatabases(t)
+	tests := []struct {
+		name       string
+		ddl        string
+		parseError string
+	}{
+		{
+			name:       "quoted type name",
+			ddl:        `CREATE TABLE t (id INTEGER PRIMARY KEY, f "my type")`,
+			parseError: "column f: 1:43: a quoted type name cannot be read",
+		},
+		{
+			name:       "quoted type name with a modifier",
+			ddl:        `CREATE TABLE t (id INTEGER PRIMARY KEY, f "varchar"(10))`,
+			parseError: "column f: 1:43: a quoted type name cannot be read",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			dbPath := applySQLite(t, tt.ddl)
+			intro := introspect.NewSQLiteIntrospector()
+			defer intro.Close() //nolint:errcheck // test cleanup
+			err := intro.Introspect(context.Background(), dbPath, &parser.Schema{}, introspect.IntrospectionOptions{})
+			if err == nil || !strings.Contains(err.Error(), "introspect sqlite table t:") || !strings.Contains(err.Error(), tt.parseError) {
+				t.Errorf("Introspect() error = %v, want the parse error for table t", err)
+			}
+			if _, ok := errors.AsType[*introspect.SchemaError](err); !ok {
+				t.Errorf("Introspect() error = %v, want a *introspect.SchemaError", err)
+			}
+
+			p := sqlite.New()
+			err = p.Parse("schema.sql", []byte(tt.ddl))
+			if err == nil || !strings.Contains(err.Error(), tt.parseError) {
+				t.Errorf("Parse() error = %v, want %q", err, tt.parseError)
+			}
+		})
+	}
+}
+
+func TestSQLiteIntrospect_VirtualTables(t *testing.T) {
+	requireDatabases(t)
+	ddl := `
+		CREATE TABLE docs (id INTEGER PRIMARY KEY, body TEXT);
+		CREATE VIRTUAL TABLE docs_fts USING fts5(body);
+		CREATE VIRTUAL TABLE boxes USING rtree(id, minx, maxx)
+	`
+	dbPath := applySQLite(t, ddl)
+	introspected := introspectSQLite(t, dbPath, introspect.IntrospectionOptions{})
+	parsed := parseStatements(t, sqlite.New(), ddl)
+
+	if diff := cmp.Diff([]string{"docs"}, tableNames(introspected)); diff != "" {
+		t.Errorf("introspected tables mismatch (-want +got):\n%s", diff)
+	}
+	wantWarnings := []string{
+		"CREATE VIRTUAL TABLE boxes skipped — virtual tables are not generated",
+		"CREATE VIRTUAL TABLE docs_fts skipped — virtual tables are not generated",
+	}
+	if diff := cmp.Diff(wantWarnings, introspected.Warnings); diff != "" {
+		t.Errorf("introspected warnings mismatch (-want +got):\n%s", diff)
+	}
+	assertSchemaParity(t, "sqlite", parsed, introspected)
+
+	// A virtual table the table filters leave out is not warned about.
+	filtered := introspectSQLite(t, dbPath, introspect.IntrospectionOptions{ExcludeTables: []string{"boxes"}})
+	if diff := cmp.Diff(wantWarnings[1:], filtered.Warnings); diff != "" {
+		t.Errorf("filtered warnings mismatch (-want +got):\n%s", diff)
+	}
+}
+
+func TestSQLiteIntrospect_QuotedNames(t *testing.T) {
+	requireDatabases(t)
+	ddl := `
+		CREATE TABLE "Quoted""Name" (id INTEGER PRIMARY KEY, "weird col" TEXT, "MixedCase" TEXT UNIQUE, "say ""hi""" TEXT CHECK ("say ""hi""" <> ''));
+		CREATE INDEX "idx ""q""" ON "Quoted""Name" ("weird col");
+		CREATE TABLE "Child Table" (id INTEGER PRIMARY KEY, qid INTEGER REFERENCES "Quoted""Name"(id));
+		CREATE TABLE "back\slash" (id TEXT PRIMARY KEY)
+	`
+	const view = `v "q"`
+	dbPath := applySQLite(t, ddl+`; CREATE VIEW "v ""q""" AS SELECT id, "weird col" FROM "Quoted""Name"`)
+	introspected := introspectSQLite(t, dbPath, introspect.IntrospectionOptions{ExcludeTables: []string{view}})
+	parsed := parseStatements(t, sqlite.New(), ddl)
+
+	if diff := cmp.Diff([]string{"Child Table", `Quoted"Name`, `back\slash`}, tableNames(introspected)); diff != "" {
+		t.Errorf("introspected tables mismatch (-want +got):\n%s", diff)
+	}
+	assertSchemaParity(t, "sqlite", parsed, introspected)
+
+	views := introspectSQLite(t, dbPath, introspect.IntrospectionOptions{Tables: []string{view}}).Views
+	if len(views) != 1 {
+		t.Fatalf("introspected %d views, want 1: %+v", len(views), views)
+	}
+	if diff := cmp.Diff([]string{"id", "weird col"}, columnNames(views[0].Columns)); diff != "" {
+		t.Errorf("view %s columns mismatch (-want +got):\n%s", view, diff)
+	}
+}
+
+// Only SQLite's own sqlite_ objects are left out; a user table or view whose
+// name merely starts with "sqlite" is introspected.
+func TestSQLiteIntrospect_ReservedPrefix(t *testing.T) {
+	requireDatabases(t)
+	ddl := `
+		CREATE TABLE sqlitex (id INTEGER PRIMARY KEY, v TEXT);
+		CREATE TABLE sqlite1 (id INTEGER PRIMARY KEY);
+		CREATE TABLE SQLiteZ (id INTEGER PRIMARY KEY);
+		CREATE TABLE seq (id INTEGER PRIMARY KEY AUTOINCREMENT)
+	`
+	const view = "sqlite1v"
+	dbPath := applySQLite(t, ddl+`; CREATE VIEW sqlite1v AS SELECT id, v FROM sqlitex; ANALYZE`)
+	introspected := introspectSQLite(t, dbPath, introspect.IntrospectionOptions{ExcludeTables: []string{view}})
+	parsed := parseStatements(t, sqlite.New(), ddl)
+
+	if diff := cmp.Diff([]string{"SQLiteZ", "seq", "sqlite1", "sqlitex"}, tableNames(introspected)); diff != "" {
+		t.Errorf("introspected tables mismatch (-want +got):\n%s", diff)
+	}
+	assertSchemaParity(t, "sqlite", parsed, introspected)
+
+	views := introspectSQLite(t, dbPath, introspect.IntrospectionOptions{}).Views
+	if len(views) != 1 || views[0].Name != view {
+		t.Errorf("introspected views %+v, want only %s", views, view)
+	}
+}
+
+func TestSQLiteIntrospect_Checks(t *testing.T) {
+	requireDatabases(t)
+	parsed, introspected := sqliteSchemas(t, `
+		CREATE TABLE c (
+			id INTEGER PRIMARY KEY,
+			qty INTEGER CHECK (qty >= 0),
+			price REAL CONSTRAINT c_price_positive CHECK (price > 0),
+			lo INTEGER,
+			hi INTEGER,
+			due TEXT CHECK (due > CURRENT_DATE),
+			CHECK (lo <= hi),
+			CONSTRAINT c_always CHECK (1 = 1)
+		)
+	`)
+
+	want := []parser.Constraint{
+		{Type: parser.Check, Columns: []string{"due"}, CheckExpression: `"due" > CURRENT_DATE`},
+		{Type: parser.Check, Columns: []string{"lo", "hi"}, CheckExpression: `"lo" <= "hi"`},
+		{Type: parser.Check, Columns: []string{"qty"}, CheckExpression: `"qty" >= 0`},
+		{Name: "c_always", Type: parser.Check, CheckExpression: `1 = 1`},
+		{Name: "c_price_positive", Type: parser.Check, Columns: []string{"price"}, CheckExpression: `"price" > 0`},
+	}
+	got := filterConstraints(findTable(t, introspected, "c").Constraints, parser.Check)
+	sortConstraints(got)
+	if diff := cmp.Diff(want, got, cmpopts.EquateEmpty()); diff != "" {
+		t.Errorf("introspected CHECK constraints mismatch (-want +got):\n%s", diff)
+	}
+	assertSchemaParity(t, "sqlite", parsed, introspected)
+}
+
+// insertOutcome is what SQLite does with an INSERT that leaves the key out.
+type insertOutcome string
+
+const (
+	keyAssigned insertOutcome = "assigned"
+	keyNull     insertOutcome = "null"
+	keyRejected insertOutcome = "rejected"
+)
+
+func TestSQLiteIntrospect_RowidAlias(t *testing.T) {
+	requireDatabases(t)
+	tests := []struct {
+		name        string
+		ddl         string
+		wantAutoInc bool
+		wantInsert  insertOutcome
+	}{
+		{name: "INTEGER PRIMARY KEY", ddl: `CREATE TABLE t (id INTEGER PRIMARY KEY, v TEXT)`, wantAutoInc: true, wantInsert: keyAssigned},
+		{name: "ascending key", ddl: `CREATE TABLE t (id INTEGER PRIMARY KEY ASC, v TEXT)`, wantAutoInc: true, wantInsert: keyAssigned},
+		{name: "AUTOINCREMENT", ddl: `CREATE TABLE t (id INTEGER PRIMARY KEY AUTOINCREMENT, v TEXT)`, wantAutoInc: true, wantInsert: keyAssigned},
+		{name: "table-level key", ddl: `CREATE TABLE t (id INTEGER, v TEXT, PRIMARY KEY (id))`, wantAutoInc: true, wantInsert: keyAssigned},
+		{name: "WITHOUT ROWID", ddl: `CREATE TABLE t (id INTEGER PRIMARY KEY, v TEXT) WITHOUT ROWID`, wantInsert: keyRejected},
+		{name: "descending key", ddl: `CREATE TABLE t (id INTEGER PRIMARY KEY DESC, v TEXT)`, wantInsert: keyNull},
+		{name: "INT PRIMARY KEY", ddl: `CREATE TABLE t (id INT PRIMARY KEY, v TEXT)`, wantInsert: keyNull},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			dbPath := applySQLite(t, tt.ddl)
+			introspected := introspectSQLite(t, dbPath, introspect.IntrospectionOptions{})
+			parsed := parseStatements(t, sqlite.New(), tt.ddl)
+
+			for source, schema := range map[string]*parser.Schema{"parsed": parsed, "introspected": introspected} {
+				if got := parser.ColumnByName(findTable(t, schema, "t"), "id").AutoIncrement; got != tt.wantAutoInc {
+					t.Errorf("%s: id AutoIncrement = %t, want %t", source, got, tt.wantAutoInc)
+				}
+			}
+			if got := sqliteInsertWithoutKey(t, dbPath); got != tt.wantInsert {
+				t.Errorf("INSERT without id: %s, want %s", got, tt.wantInsert)
+			}
+			assertSchemaParity(t, "sqlite", parsed, introspected)
+		})
+	}
+}
+
+// sqliteInsertWithoutKey inserts a row into t that leaves id out and reports
+// what SQLite did with the key.
+func sqliteInsertWithoutKey(t *testing.T, dbPath string) insertOutcome {
+	t.Helper()
+	ctx := context.Background()
+	db, err := sql.Open("sqlite", dbPath)
+	if err != nil {
+		t.Fatalf("opening sqlite: %v", err)
+	}
+	defer db.Close() //nolint:errcheck // test cleanup
+	if _, err := db.ExecContext(ctx, `INSERT INTO t (v) VALUES ('x')`); err != nil {
+		return keyRejected
+	}
+	var id sql.NullInt64
+	if err := db.QueryRowContext(ctx, `SELECT id FROM t`).Scan(&id); err != nil {
+		t.Fatalf("reading id: %v", err)
+	}
+	if !id.Valid {
+		return keyNull
+	}
+	return keyAssigned
+}
+
+func TestSQLiteIntrospect_TableFlags(t *testing.T) {
+	requireDatabases(t)
+	parsed, introspected := sqliteSchemas(t, `
+		CREATE TABLE plain (id INTEGER PRIMARY KEY, v TEXT);
+		CREATE TABLE wr (id INTEGER PRIMARY KEY, v TEXT) WITHOUT ROWID;
+		CREATE TABLE st (id INTEGER PRIMARY KEY, v TEXT) STRICT;
+		CREATE TABLE both_flags (id INTEGER PRIMARY KEY, v TEXT) STRICT, WITHOUT ROWID
+	`)
+
+	type flags struct{ WithoutRowID, Strict bool }
+	want := map[string]flags{
+		"plain":      {},
+		"wr":         {WithoutRowID: true},
+		"st":         {Strict: true},
+		"both_flags": {WithoutRowID: true, Strict: true},
+	}
+	for name, w := range want {
+		table := findTable(t, introspected, name)
+		if got := (flags{WithoutRowID: table.WithoutRowID, Strict: table.Strict}); got != w {
+			t.Errorf("%s: introspected flags %+v, want %+v", name, got, w)
+		}
+	}
+	assertSchemaParity(t, "sqlite", parsed, introspected)
+}
+
+func TestSQLiteIntrospect_TypeCoverage(t *testing.T) {
+	requireDatabases(t)
+	parsed, introspected := sqliteSchemas(t, `
+		CREATE TABLE types (
+			c_integer INTEGER,
+			c_text TEXT,
+			c_real REAL,
+			c_blob BLOB,
+			c_numeric NUMERIC,
+			c_varchar VARCHAR(255),
+			c_boolean BOOLEAN,
+			c_datetime DATETIME,
+			c_untyped,
+			c_decimal DECIMAL(10, 2),
+			c_uuid UUID
+		)
+	`)
+
+	want := map[string]string{
+		"c_integer":  "integer",
+		"c_text":     "text",
+		"c_real":     "real",
+		"c_blob":     "blob",
+		"c_numeric":  "numeric",
+		"c_varchar":  "varchar(255)",
+		"c_boolean":  "boolean",
+		"c_datetime": "datetime",
+		"c_untyped":  "blob",
+		"c_decimal":  "decimal(10,2)",
+		"c_uuid":     "blob",
+	}
+	for source, schema := range map[string]*parser.Schema{"parsed": parsed, "introspected": introspected} {
+		got := make(map[string]string)
+		for _, c := range findTable(t, schema, "types").Columns {
+			got[c.Name] = c.Type
+		}
+		if diff := cmp.Diff(want, got); diff != "" {
+			t.Errorf("%s column types mismatch (-want +got):\n%s", source, diff)
+		}
+	}
+	assertSchemaParity(t, "sqlite", parsed, introspected)
+}
+
+func TestSQLiteIntrospect_Defaults(t *testing.T) {
+	requireDatabases(t)
+	ddl := `
+		CREATE TABLE d (
+			id INTEGER PRIMARY KEY,
+			s TEXT DEFAULT 'it''s',
+			n REAL DEFAULT 1.5,
+			neg INTEGER DEFAULT -1,
+			ts DATETIME DEFAULT CURRENT_TIMESTAMP,
+			pts DATETIME DEFAULT (CURRENT_TIMESTAMP),
+			day TEXT DEFAULT (date(current_date, '+1 day')),
+			expr INTEGER DEFAULT (1 + 2),
+			fn TEXT DEFAULT (lower('X')),
+			nul TEXT DEFAULT NULL
+		)
+	`
+	dbPath := applySQLite(t, ddl)
+	introspected := introspectSQLite(t, dbPath, introspect.IntrospectionOptions{})
+	parsed := parseStatements(t, sqlite.New(), ddl)
+
+	want := map[string]string{
+		"id":   "",
+		"s":    `'it''s'`,
+		"n":    "1.5",
+		"neg":  "-1",
+		"ts":   "CURRENT_TIMESTAMP",
+		"pts":  "CURRENT_TIMESTAMP",
+		"day":  "date(current_date, '+1 day')",
+		"expr": "1 + 2",
+		"fn":   "lower('X')",
+		"nul":  "NULL",
+	}
+	got := make(map[string]string)
+	for _, c := range findTable(t, introspected, "d").Columns {
+		got[c.Name] = c.Default
+	}
+	if diff := cmp.Diff(want, got); diff != "" {
+		t.Errorf("introspected defaults mismatch (-want +got):\n%s", diff)
+	}
+
+	// The generator inlines a SQLite default into SQL, so each must be a valid
+	// expression on its own.
+	db, err := sql.Open("sqlite", dbPath)
+	if err != nil {
+		t.Fatalf("opening sqlite: %v", err)
+	}
+	defer db.Close() //nolint:errcheck // test cleanup
+	for name, dflt := range got {
+		if dflt == "" {
+			continue
+		}
+		var v any
+		if err := db.QueryRowContext(context.Background(), "SELECT "+dflt).Scan(&v); err != nil {
+			t.Errorf("%s: default %q is not a valid expression: %v", name, dflt, err)
+		}
+	}
+	assertSchemaParity(t, "sqlite", parsed, introspected)
+}
+
+func TestSQLiteIntrospect_CompositeConstraints(t *testing.T) {
+	requireDatabases(t)
+	parsed, introspected := sqliteSchemas(t, `
+		CREATE TABLE parent (a INTEGER NOT NULL, b INTEGER NOT NULL, name TEXT, PRIMARY KEY (a, b), UNIQUE (name, a));
+		CREATE TABLE child (
+			id INTEGER PRIMARY KEY,
+			pa INTEGER,
+			pb INTEGER,
+			parent_id INTEGER REFERENCES child(id),
+			CONSTRAINT child_parent_fk FOREIGN KEY (pb, pa) REFERENCES parent (b, a)
+		)
+	`)
+
+	want := map[string][]parser.Constraint{
+		"parent": {
+			{Type: parser.PrimaryKey, Columns: []string{"a", "b"}},
+			{Type: parser.Unique, Columns: []string{"name", "a"}},
+		},
+		"child": {
+			{Type: parser.PrimaryKey, Columns: []string{"id"}},
+			{Type: parser.ForeignKey, Columns: []string{"parent_id"}, ReferenceTable: "child", ReferenceColumns: []string{"id"}},
+			{Name: "child_parent_fk", Type: parser.ForeignKey, Columns: []string{"pb", "pa"}, ReferenceTable: "parent", ReferenceColumns: []string{"b", "a"}},
+		},
+	}
+	for name, w := range want {
+		got := slices.Clone(findTable(t, introspected, name).Constraints)
+		sortConstraints(got)
+		if diff := cmp.Diff(w, got, cmpopts.EquateEmpty()); diff != "" {
+			t.Errorf("%s: introspected constraints mismatch (-want +got):\n%s", name, diff)
+		}
+	}
+	assertSchemaParity(t, "sqlite", parsed, introspected)
+}
+
+// Several foreign keys over the same columns to the same parent keep their
+// declared names and declaration order, and the column's FKReference is the
+// first declared, as the file parser reads them. PRAGMA foreign_key_list
+// numbers them last-declared first.
+func TestSQLiteIntrospect_SameColumnForeignKeys(t *testing.T) {
+	requireDatabases(t)
+	const parent = "CREATE TABLE p (x INTEGER UNIQUE, y INTEGER UNIQUE, UNIQUE (x, y), UNIQUE (y, x));\n"
+	tests := []struct {
+		name    string
+		ddl     string
+		wantFKs []parser.Constraint
+		wantRef *parser.FKReference
+	}{
+		{
+			name: "both named",
+			ddl:  "CREATE TABLE t (id INTEGER PRIMARY KEY, a INTEGER, CONSTRAINT fa FOREIGN KEY (a) REFERENCES p(x), CONSTRAINT fb FOREIGN KEY (a) REFERENCES p(y))",
+			wantFKs: []parser.Constraint{
+				{Name: "fa", Type: parser.ForeignKey, Columns: []string{"a"}, ReferenceTable: "p", ReferenceColumns: []string{"x"}},
+				{Name: "fb", Type: parser.ForeignKey, Columns: []string{"a"}, ReferenceTable: "p", ReferenceColumns: []string{"y"}},
+			},
+			wantRef: &parser.FKReference{Table: "p", Column: "x"},
+		},
+		{
+			name: "only the first named",
+			ddl:  "CREATE TABLE t (id INTEGER PRIMARY KEY, a INTEGER, CONSTRAINT fa FOREIGN KEY (a) REFERENCES p(x), FOREIGN KEY (a) REFERENCES p(y))",
+			wantFKs: []parser.Constraint{
+				{Name: "fa", Type: parser.ForeignKey, Columns: []string{"a"}, ReferenceTable: "p", ReferenceColumns: []string{"x"}},
+				{Type: parser.ForeignKey, Columns: []string{"a"}, ReferenceTable: "p", ReferenceColumns: []string{"y"}},
+			},
+			wantRef: &parser.FKReference{Table: "p", Column: "x"},
+		},
+		{
+			name: "neither named",
+			ddl:  "CREATE TABLE t (id INTEGER PRIMARY KEY, a INTEGER, FOREIGN KEY (a) REFERENCES p(x), FOREIGN KEY (a) REFERENCES p(y))",
+			wantFKs: []parser.Constraint{
+				{Type: parser.ForeignKey, Columns: []string{"a"}, ReferenceTable: "p", ReferenceColumns: []string{"x"}},
+				{Type: parser.ForeignKey, Columns: []string{"a"}, ReferenceTable: "p", ReferenceColumns: []string{"y"}},
+			},
+			wantRef: &parser.FKReference{Table: "p", Column: "x"},
+		},
+		{
+			name: "inline then table level",
+			ddl:  "CREATE TABLE t (id INTEGER PRIMARY KEY, a INTEGER CONSTRAINT fa REFERENCES p(x), CONSTRAINT fb FOREIGN KEY (a) REFERENCES p(y))",
+			wantFKs: []parser.Constraint{
+				{Name: "fa", Type: parser.ForeignKey, Columns: []string{"a"}, ReferenceTable: "p", ReferenceColumns: []string{"x"}},
+				{Name: "fb", Type: parser.ForeignKey, Columns: []string{"a"}, ReferenceTable: "p", ReferenceColumns: []string{"y"}},
+			},
+			wantRef: &parser.FKReference{Table: "p", Column: "x"},
+		},
+		{
+			name: "two inline",
+			ddl:  "CREATE TABLE t (id INTEGER PRIMARY KEY, a INTEGER REFERENCES p(x) REFERENCES p(y))",
+			wantFKs: []parser.Constraint{
+				{Type: parser.ForeignKey, Columns: []string{"a"}, ReferenceTable: "p", ReferenceColumns: []string{"x"}},
+				{Type: parser.ForeignKey, Columns: []string{"a"}, ReferenceTable: "p", ReferenceColumns: []string{"y"}},
+			},
+			wantRef: &parser.FKReference{Table: "p", Column: "x"},
+		},
+		{
+			name: "two inline added by alter",
+			ddl:  "CREATE TABLE t (id INTEGER PRIMARY KEY);\nALTER TABLE t ADD COLUMN a INTEGER REFERENCES p(x) REFERENCES p(y)",
+			wantFKs: []parser.Constraint{
+				{Type: parser.ForeignKey, Columns: []string{"a"}, ReferenceTable: "p", ReferenceColumns: []string{"x"}},
+				{Type: parser.ForeignKey, Columns: []string{"a"}, ReferenceTable: "p", ReferenceColumns: []string{"y"}},
+			},
+			wantRef: &parser.FKReference{Table: "p", Column: "x"},
+		},
+		{
+			name: "composite",
+			ddl:  "CREATE TABLE t (id INTEGER PRIMARY KEY, a INTEGER, b INTEGER, CONSTRAINT fa FOREIGN KEY (a, b) REFERENCES p(x, y), CONSTRAINT fb FOREIGN KEY (a, b) REFERENCES p(y, x))",
+			wantFKs: []parser.Constraint{
+				{Name: "fa", Type: parser.ForeignKey, Columns: []string{"a", "b"}, ReferenceTable: "p", ReferenceColumns: []string{"x", "y"}},
+				{Name: "fb", Type: parser.ForeignKey, Columns: []string{"a", "b"}, ReferenceTable: "p", ReferenceColumns: []string{"y", "x"}},
+			},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			parsed, introspected := sqliteSchemas(t, parent+tt.ddl)
+			table := findTable(t, introspected, "t")
+			if diff := cmp.Diff(tt.wantFKs, filterConstraints(table.Constraints, parser.ForeignKey)); diff != "" {
+				t.Errorf("t: introspected foreign keys mismatch (-want +got):\n%s", diff)
+			}
+			if diff := cmp.Diff(tt.wantRef, parser.ColumnByName(table, "a").FKReference); diff != "" {
+				t.Errorf("t.a: introspected FKReference mismatch (-want +got):\n%s", diff)
+			}
+			assertSchemaParity(t, "sqlite", parsed, introspected)
+		})
+	}
+}
+
+// SQLite matches table names case-insensitively, so a statement may name a
+// table in another case than its CREATE TABLE did.
+func TestSQLiteIntrospect_TableNameCase(t *testing.T) {
+	requireDatabases(t)
+	parsed, introspected := sqliteSchemas(t, `
+		CREATE TABLE Users (id INTEGER PRIMARY KEY, a TEXT);
+		CREATE UNIQUE INDEX ux2 ON users (a);
+		ALTER TABLE USERS ADD COLUMN b TEXT;
+		CREATE INDEX users_b ON uSeRs (b);
+		CREATE TABLE Old (id INTEGER PRIMARY KEY);
+		CREATE TABLE posts (id INTEGER PRIMARY KEY, old_id INTEGER REFERENCES Old(id));
+		ALTER TABLE old RENAME TO Renamed;
+		CREATE TABLE Gone (id INTEGER PRIMARY KEY);
+		DROP TABLE gone
+	`)
+
+	if diff := cmp.Diff([]string{"Renamed", "Users", "posts"}, slices.Sorted(slices.Values(tableNames(introspected)))); diff != "" {
+		t.Errorf("introspected tables mismatch (-want +got):\n%s", diff)
+	}
+	for _, name := range []string{"ux2", "users_b"} {
+		if findConstraintByName(findTable(t, introspected, "Users").Constraints, name) == nil {
+			t.Errorf("Users: introspected index %s missing", name)
+		}
+	}
+	assertSchemaParity(t, "sqlite", parsed, introspected)
+}
+
+// TestSQLiteIntrospect_IdentifierCase checks that names SQLite matches
+// ignoring ASCII case only give both sources one schema once
+// ResolveReferenceNames has run on each.
+func TestSQLiteIntrospect_IdentifierCase(t *testing.T) {
+	requireDatabases(t)
+	parsed, introspected := sqliteSchemas(t, `
+		CREATE TABLE Users (id INTEGER PRIMARY KEY);
+		CREATE TABLE posts (id INTEGER PRIMARY KEY, uid INTEGER REFERENCES users(ID));
+		CREATE TABLE u (b INTEGER PRIMARY KEY);
+		CREATE TABLE c (x INTEGER REFERENCES u(B));
+		ALTER TABLE u RENAME COLUMN b TO c;
+		CREATE TABLE Old (id INTEGER PRIMARY KEY);
+		CREATE TABLE r (old_id INTEGER, FOREIGN KEY (old_id) REFERENCES old(id));
+		ALTER TABLE Old RENAME TO Renamed;
+		CREATE TABLE d (a INTEGER, b INTEGER);
+		ALTER TABLE d DROP COLUMN B;
+		CREATE TABLE e (A INTEGER, x INTEGER);
+		ALTER TABLE e RENAME COLUMN a TO c;
+		CREATE TABLE f ("É" INTEGER, "é" INTEGER, UNIQUE ("é"), CHECK ("é" > 0));
+		CREATE TABLE g ("É" INTEGER UNIQUE, "é" INTEGER UNIQUE)
+	`)
+	parser.ResolveReferenceNames(parsed, "sqlite")
+	parser.ResolveReferenceNames(introspected, "sqlite")
+
+	if ref := findTable(t, introspected, "posts").Columns[1].FKReference; ref == nil || ref.Table != "Users" || ref.Column != "id" {
+		t.Errorf("posts.uid FKReference = %+v, want Users(id)", ref)
+	}
+	assertSchemaParity(t, "sqlite", parsed, introspected)
 }
 
 // --- Filtering tests ---
 
 func TestPostgresSchemaFiltering(t *testing.T) {
+	requireDatabases(t)
+
 	ctx := context.Background()
 
 	db, err := sql.Open("pgx", pgConnStr)
@@ -579,6 +1691,8 @@ func TestPostgresSchemaFiltering(t *testing.T) {
 }
 
 func TestTableFilteringWithWildcards(t *testing.T) {
+	requireDatabases(t)
+
 	ctx := context.Background()
 
 	// Use SQLite for wildcard table filtering — simplest setup.
@@ -640,192 +1754,257 @@ func TestTableFilteringWithWildcards(t *testing.T) {
 
 // --- Both mode tests ---
 
-func TestBothModeAlterOverlay(t *testing.T) {
+// bothModeTable is the table the both-mode tests create in each database.
+const bothModeTable = "both_users"
+
+// bothModeDialect is one dialect's setup for the both-mode tests.
+type bothModeDialect struct {
+	name string
+	// schema is the schema a hand-built base table belongs to, the one the
+	// parser resolves an unqualified name to.
+	schema string
+	// base applies ddl, which creates only bothModeTable, and returns the
+	// introspected schema.
+	base      func(t *testing.T, ddl string) *parser.Schema
+	newParser func(t *testing.T) introspect.Seedable
+}
+
+var bothModeDialects = []bothModeDialect{
+	{
+		name:      "postgres",
+		schema:    "both_mode",
+		base:      postgresBothModeBase,
+		newParser: func(*testing.T) introspect.Seedable { return postgres.New("both_mode") },
+	},
+	{
+		name: "mysql",
+		base: mysqlBothModeBase,
+		newParser: func(t *testing.T) introspect.Seedable {
+			p, err := mysql.New()
+			if err != nil {
+				t.Fatalf("mysql.New() error: %v", err)
+			}
+			return p
+		},
+	},
+	{
+		name:      "sqlite",
+		base:      sqliteBothModeBase,
+		newParser: func(*testing.T) introspect.Seedable { return sqlite.New() },
+	},
+}
+
+func postgresBothModeBase(t *testing.T, ddl string) *parser.Schema {
+	t.Helper()
 	ctx := context.Background()
-
-	// Create a SQLite database with a base table.
-	dbPath := sqliteDBPath + "_both_alter"
-	db, err := sql.Open("sqlite", dbPath)
+	conn := pgConnStr + "&search_path=both_mode"
+	db, err := sql.Open("pgx", conn)
 	if err != nil {
-		t.Fatalf("opening sqlite: %v", err)
+		t.Fatalf("opening postgres: %v", err)
 	}
-	defer db.Close()        //nolint:errcheck // test cleanup
-	defer os.Remove(dbPath) //nolint:errcheck // test cleanup
-
-	_, err = db.ExecContext(ctx, `
-		CREATE TABLE users (
-			id integer PRIMARY KEY,
-			name text NOT NULL
-		);
-	`)
-	if err != nil {
-		t.Fatalf("applying base DDL: %v", err)
+	t.Cleanup(func() {
+		_, _ = db.ExecContext(ctx, "DROP SCHEMA IF EXISTS both_mode CASCADE")
+		_ = db.Close()
+	})
+	for _, stmt := range []string{"DROP SCHEMA IF EXISTS both_mode CASCADE", "CREATE SCHEMA both_mode", ddl} {
+		if _, err := db.ExecContext(ctx, stmt); err != nil {
+			t.Fatalf("applying %q: %v", truncate(stmt), err)
+		}
 	}
 
-	// Introspect base schema.
-	intro := introspect.NewSQLiteIntrospector()
-	defer intro.Close() //nolint:errcheck // test cleanup
-
-	base := &parser.Schema{}
-	if err := intro.Introspect(ctx, dbPath, base, introspect.IntrospectionOptions{}); err != nil {
+	intro := introspect.NewPostgresIntrospector()
+	t.Cleanup(func() { _ = intro.Close() })
+	schema := &parser.Schema{}
+	if err := intro.Introspect(ctx, conn, schema, introspect.IntrospectionOptions{Schemas: []string{"both_mode"}}); err != nil {
 		t.Fatalf("Introspect() error: %v", err)
 	}
+	return schema
+}
 
-	// Create a migration file that adds a column.
-	tmpDir, err := os.MkdirTemp("", "sqlgen_both_test")
+func mysqlBothModeBase(t *testing.T, ddl string) *parser.Schema {
+	t.Helper()
+	ctx := context.Background()
+	db, err := sql.Open("mysql", mysqlConnStr)
 	if err != nil {
-		t.Fatalf("creating temp dir: %v", err)
+		t.Fatalf("opening mysql: %v", err)
 	}
-	defer os.RemoveAll(tmpDir) //nolint:errcheck // test cleanup
+	t.Cleanup(func() {
+		_, _ = db.ExecContext(ctx, "DROP TABLE IF EXISTS "+bothModeTable)
+		_ = db.Close()
+	})
+	for _, stmt := range []string{"DROP TABLE IF EXISTS " + bothModeTable, ddl} {
+		if _, err := db.ExecContext(ctx, stmt); err != nil {
+			t.Fatalf("applying %q: %v", truncate(stmt), err)
+		}
+	}
 
-	migrationFile := filepath.Join(tmpDir, "001_add_email.sql")
-	if err := os.WriteFile(migrationFile, []byte("ALTER TABLE users ADD COLUMN email text;"), 0o600); err != nil {
+	intro := introspect.NewMySQLIntrospector()
+	t.Cleanup(func() { _ = intro.Close() })
+	schema := &parser.Schema{}
+	if err := intro.Introspect(ctx, mysqlConnStr, schema, introspect.IntrospectionOptions{Tables: []string{bothModeTable}}); err != nil {
+		t.Fatalf("Introspect() error: %v", err)
+	}
+	return schema
+}
+
+func sqliteBothModeBase(t *testing.T, ddl string) *parser.Schema {
+	t.Helper()
+	return introspectSQLite(t, applySQLite(t, ddl), introspect.IntrospectionOptions{})
+}
+
+// writeMigration writes sql to a migration file and returns its path.
+func writeMigration(t *testing.T, sql string) string {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), "001_migration.sql")
+	if err := os.WriteFile(path, []byte(sql), 0o600); err != nil {
 		t.Fatalf("writing migration: %v", err)
 	}
+	return path
+}
 
-	// Merge.
-	p := sqlite.New()
-	if err := introspect.Merge(base, p, []string{migrationFile}); err != nil {
-		t.Fatalf("Merge() error: %v", err)
-	}
+func TestBothModeAlterOverlay(t *testing.T) {
+	requireDatabases(t)
 
-	merged := p.Schema()
-	if len(merged.Tables) != 1 {
-		t.Fatalf("expected 1 table, got %d", len(merged.Tables))
-	}
+	for _, d := range bothModeDialects {
+		t.Run(d.name, func(t *testing.T) {
+			base := d.base(t, "CREATE TABLE "+bothModeTable+" (id integer PRIMARY KEY, name text NOT NULL)")
+			migration := writeMigration(t, "ALTER TABLE "+bothModeTable+" ADD COLUMN email text;")
 
-	users := merged.Tables[0]
-	if len(users.Columns) != 3 {
-		t.Fatalf("expected 3 columns, got %d", len(users.Columns))
-	}
-	if users.Columns[2].Name != "email" {
-		t.Errorf("expected column 'email', got %q", users.Columns[2].Name)
+			p := d.newParser(t)
+			if err := introspect.Merge(base, p, []string{migration}); err != nil {
+				t.Fatalf("Merge() error: %v", err)
+			}
+
+			merged := p.Schema()
+			if len(merged.Tables) != 1 {
+				t.Fatalf("merged tables = %d, want 1", len(merged.Tables))
+			}
+			if diff := cmp.Diff([]string{"id", "name", "email"}, columnNames(merged.Tables[0].Columns)); diff != "" {
+				t.Errorf("merged columns mismatch (-want +got):\n%s", diff)
+			}
+		})
 	}
 }
 
 func TestBothModeCreateExisting(t *testing.T) {
-	ctx := context.Background()
+	requireDatabases(t)
 
-	// Create a SQLite database with a table.
-	dbPath := sqliteDBPath + "_both_create"
-	db, err := sql.Open("sqlite", dbPath)
-	if err != nil {
-		t.Fatalf("opening sqlite: %v", err)
-	}
-	defer db.Close()        //nolint:errcheck // test cleanup
-	defer os.Remove(dbPath) //nolint:errcheck // test cleanup
+	for _, d := range bothModeDialects {
+		t.Run(d.name, func(t *testing.T) {
+			base := d.base(t, "CREATE TABLE "+bothModeTable+" (id integer PRIMARY KEY)")
+			migration := writeMigration(t, "CREATE TABLE "+bothModeTable+" (id integer PRIMARY KEY, name text);")
 
-	_, err = db.ExecContext(ctx, "CREATE TABLE users (id integer PRIMARY KEY);")
-	if err != nil {
-		t.Fatalf("applying base DDL: %v", err)
-	}
-
-	// Introspect base.
-	intro := introspect.NewSQLiteIntrospector()
-	defer intro.Close() //nolint:errcheck // test cleanup
-
-	base := &parser.Schema{}
-	if err := intro.Introspect(ctx, dbPath, base, introspect.IntrospectionOptions{}); err != nil {
-		t.Fatalf("Introspect() error: %v", err)
-	}
-
-	// File tries to CREATE TABLE users — should fail.
-	tmpDir, err := os.MkdirTemp("", "sqlgen_both_create")
-	if err != nil {
-		t.Fatalf("creating temp dir: %v", err)
-	}
-	defer os.RemoveAll(tmpDir) //nolint:errcheck // test cleanup
-
-	migrationFile := filepath.Join(tmpDir, "001_create_users.sql")
-	if err := os.WriteFile(migrationFile, []byte("CREATE TABLE users (id integer PRIMARY KEY, name text);"), 0o600); err != nil {
-		t.Fatalf("writing migration: %v", err)
-	}
-
-	p := sqlite.New()
-	err = introspect.Merge(base, p, []string{migrationFile})
-	if err == nil {
-		t.Fatal("Merge() expected error for CREATE TABLE on existing, got nil")
-	}
-	if got := err.Error(); !strings.Contains(got, "already exists") {
-		t.Errorf("Merge() error = %q, want error containing 'already exists'", got)
+			err := introspect.Merge(base, d.newParser(t), []string{migration})
+			if err == nil {
+				t.Fatal("Merge() expected error for CREATE TABLE on existing, got nil")
+			}
+			if got := err.Error(); !strings.Contains(got, "already exists") {
+				t.Errorf("Merge() error = %q, want error containing 'already exists'", got)
+			}
+		})
 	}
 }
 
 func TestBothModeColumnConflict(t *testing.T) {
-	tmpDir, err := os.MkdirTemp("", "sqlgen_both_conflict")
-	if err != nil {
-		t.Fatalf("creating temp dir: %v", err)
+	requireDatabases(t)
+
+	// base is an introspected table, built by hand: the conflict rule needs no
+	// database. SQLite replays the table's statement under source: both.
+	base := func(schema string) *parser.Schema {
+		return &parser.Schema{
+			SQLiteSchema: []parser.SchemaStatement{{Type: "table", Name: "items", SQL: "CREATE TABLE items (id integer PRIMARY KEY, count integer)"}},
+			Tables: []parser.Table{
+				{
+					Name:   "items",
+					Schema: schema,
+					Columns: []parser.Column{
+						{Name: "id", Type: "integer", PrimaryKey: true, AutoIncrement: true},
+						{Name: "count", Type: "integer"},
+					},
+				},
+			},
+		}
 	}
-	defer os.RemoveAll(tmpDir) //nolint:errcheck // test cleanup
 
-	t.Run("DROP+ADD is explicit and allowed", func(t *testing.T) {
-		base := &parser.Schema{
-			Tables: []parser.Table{
-				{
-					Name: "items",
-					Columns: []parser.Column{
-						{Name: "id", Type: "integer", PrimaryKey: true, AutoIncrement: true},
-						{Name: "count", Type: "integer"},
-					},
-				},
-			},
-		}
+	for _, d := range bothModeDialects {
+		t.Run(d.name, func(t *testing.T) {
+			t.Run("DROP+ADD is explicit and allowed", func(t *testing.T) {
+				migration := writeMigration(t, "ALTER TABLE items DROP COLUMN count;\nALTER TABLE items ADD COLUMN count text;")
 
-		migrationFile := filepath.Join(tmpDir, "001_change_type.sql")
-		migration := "ALTER TABLE items DROP COLUMN count;\nALTER TABLE items ADD COLUMN count text;"
-		if err := os.WriteFile(migrationFile, []byte(migration), 0o600); err != nil {
-			t.Fatalf("writing migration: %v", err)
-		}
+				p := d.newParser(t)
+				if err := introspect.Merge(base(d.schema), p, []string{migration}); err != nil {
+					t.Fatalf("Merge() unexpected error for DROP+ADD: %v", err)
+				}
 
-		p := sqlite.New()
-		if err := introspect.Merge(base, p, []string{migrationFile}); err != nil {
-			t.Fatalf("Merge() unexpected error for DROP+ADD: %v", err)
-		}
+				items := p.Schema().Tables[0]
+				countCol := parser.ColumnByName(&items, "count")
+				if countCol == nil {
+					t.Fatal("expected column 'count' in merged schema")
+				}
+				if countCol.Type != "text" {
+					t.Errorf("expected count type 'text', got %q", countCol.Type)
+				}
+			})
 
-		merged := p.Schema()
-		items := merged.Tables[0]
-		countCol := parser.ColumnByName(&items, "count")
-		if countCol == nil {
-			t.Fatal("expected column 'count' in merged schema")
-		}
-		if countCol.Type != "text" {
-			t.Errorf("expected count type 'text', got %q", countCol.Type)
-		}
-	})
+			// Each parser refuses a column name the table already has, as its
+			// database does, whatever the type: the conflict rule never sees
+			// the duplicate.
+			want := map[string]string{
+				"postgres": "add column count to both_mode.items: column already exists",
+				"mysql":    "add column count to items: column already exists",
+				"sqlite":   "duplicate column name: count",
+			}[d.name]
+			for _, tc := range []struct{ name, typ string }{
+				{"ADD COLUMN duplicating existing with different type errors", "text"},
+				{"ADD COLUMN duplicating existing with same type errors", "integer"},
+			} {
+				t.Run(tc.name, func(t *testing.T) {
+					migration := writeMigration(t, "ALTER TABLE items ADD COLUMN count "+tc.typ+";")
 
-	t.Run("ADD COLUMN duplicating existing with different type errors", func(t *testing.T) {
-		base := &parser.Schema{
-			Tables: []parser.Table{
-				{
-					Name: "items",
-					Columns: []parser.Column{
-						{Name: "id", Type: "integer", PrimaryKey: true, AutoIncrement: true},
-						{Name: "count", Type: "integer"},
-					},
-				},
-			},
-		}
+					err := introspect.Merge(base(d.schema), d.newParser(t), []string{migration})
+					if err == nil || !strings.Contains(err.Error(), want) {
+						t.Errorf("Merge() error = %v, want error containing %q", err, want)
+					}
+				})
+			}
 
-		migrationFile := filepath.Join(tmpDir, "002_dup_column.sql")
-		migration := "ALTER TABLE items ADD COLUMN count text;"
-		if err := os.WriteFile(migrationFile, []byte(migration), 0o600); err != nil {
-			t.Fatalf("writing migration: %v", err)
-		}
+			// A same-type duplicate from CREATE TABLE or CHANGE COLUMN would
+			// pass the conflict rule too; the parser refuses it first.
+			t.Run("CREATE TABLE repeating a column errors", func(t *testing.T) {
+				migration := writeMigration(t, "CREATE TABLE extra (id integer PRIMARY KEY, a integer, A integer);")
+				want := map[string]string{
+					"postgres": "create table both_mode.extra: column a specified more than once",
+					"mysql":    "create table extra: duplicate column name A",
+					"sqlite":   "table extra: duplicate column name: A",
+				}[d.name]
 
-		p := sqlite.New()
-		err := introspect.Merge(base, p, []string{migrationFile})
-		if err == nil {
-			t.Fatal("Merge() expected error for duplicate column with different type, got nil")
-		}
-		if !strings.Contains(err.Error(), "column conflict") {
-			t.Errorf("Merge() error = %q, want error containing 'column conflict'", err.Error())
-		}
-	})
+				err := introspect.Merge(base(d.schema), d.newParser(t), []string{migration})
+				if err == nil || !strings.Contains(err.Error(), want) {
+					t.Errorf("Merge() error = %v, want error containing %q", err, want)
+				}
+			})
+			if d.name == "mysql" {
+				// Both columns come from the file, so their types match; an
+				// introspected column's type would differ.
+				t.Run("CHANGE COLUMN onto an existing column errors", func(t *testing.T) {
+					migration := writeMigration(t, "ALTER TABLE items ADD COLUMN x integer, ADD COLUMN y integer;\nALTER TABLE items CHANGE COLUMN x y integer;")
+					want := "change column x to y in items: column already exists"
+
+					err := introspect.Merge(base(d.schema), d.newParser(t), []string{migration})
+					if err == nil || !strings.Contains(err.Error(), want) {
+						t.Errorf("Merge() error = %v, want error containing %q", err, want)
+					}
+				})
+			}
+		})
+	}
 }
 
 // --- View introspection tests ---
 
 func TestPostgresIntrospectViews(t *testing.T) {
+	requireDatabases(t)
+
 	ctx := context.Background()
 
 	db, err := sql.Open("pgx", pgConnStr)
@@ -898,6 +2077,8 @@ func TestPostgresIntrospectViews(t *testing.T) {
 }
 
 func TestPostgresIntrospectMaterializedViews(t *testing.T) {
+	requireDatabases(t)
+
 	ctx := context.Background()
 
 	db, err := sql.Open("pgx", pgConnStr)
@@ -989,12 +2170,14 @@ func TestPostgresIntrospectMaterializedViews(t *testing.T) {
 		t.Errorf("mv_totals.SQL = %q, want the pg_matviews definition", totals.SQL)
 	}
 
+	// Types as the view parser reads the definition (PRD §16.3): COUNT is an
+	// int64 literal, and SUM keeps its source column's type for the
+	// generator's widening.
 	wantCols := map[string]string{
 		"customer_id": "bigint",
 		"email":       "text",
-		"order_count": "bigint",
-		// sum(numeric(10,2)) widens to unconstrained numeric in Postgres.
-		"total": "numeric",
+		"order_count": "int64",
+		"total":       "numeric(10,2)",
 	}
 	if len(totals.Columns) != len(wantCols) {
 		t.Fatalf("mv_totals columns = %d, want %d", len(totals.Columns), len(wantCols))
@@ -1043,74 +2226,93 @@ func TestPostgresIntrospectMaterializedViews(t *testing.T) {
 }
 
 func TestMySQLIntrospectViews(t *testing.T) {
-	ctx := context.Background()
+	requireDatabases(t)
 
-	db, err := sql.Open("mysql", mysqlConnStr)
-	if err != nil {
-		t.Fatalf("opening mysql: %v", err)
-	}
-	defer db.Close() //nolint:errcheck // test cleanup
-
-	// Clean up and set up.
-	for _, stmt := range []string{
-		"DROP VIEW IF EXISTS user_summary",
-		"DROP TABLE IF EXISTS view_users",
-		`CREATE TABLE view_users (
+	const ddl = `CREATE TABLE view_users (
 			id bigint NOT NULL AUTO_INCREMENT,
 			name varchar(255) NOT NULL,
 			score int NOT NULL DEFAULT 0,
+			status enum('active','inactive') NOT NULL DEFAULT 'active',
+			perms set('r','w'),
 			PRIMARY KEY (id)
-		)`,
-		"CREATE VIEW user_summary AS SELECT id, name, score FROM view_users WHERE score > 0",
-	} {
-		if _, err := db.ExecContext(ctx, stmt); err != nil {
-			t.Fatalf("setup %q: %v", stmt[:min(len(stmt), 40)], err)
-		}
-	}
+		);
+		CREATE VIEW user_summary AS
+			SELECT u.id, u.name, u.score, u.status, u.status AS state, u.perms, CAST(u.status AS CHAR) AS status_text
+			FROM view_users u WHERE u.score > 0;
+		CREATE VIEW user_states AS SELECT d.status FROM (SELECT status FROM view_users) d;
+		CREATE VIEW user_states_copy AS SELECT status FROM user_states;
+		CREATE VIEW a_states (s) AS SELECT status FROM user_states_copy;
+		CREATE VIEW user_labels (label, state) AS SELECT name, status FROM view_users`
+	applyParityFixture(t, "mysql", mysqlConnStr,
+		"DROP VIEW IF EXISTS user_labels; DROP VIEW IF EXISTS a_states; DROP VIEW IF EXISTS user_states_copy; DROP VIEW IF EXISTS user_states; DROP VIEW IF EXISTS user_summary; DROP TABLE IF EXISTS view_users", ddl)
 
 	intro := introspect.NewMySQLIntrospector()
 	defer intro.Close() //nolint:errcheck // test cleanup
 
 	schema := &parser.Schema{}
-	err = intro.Introspect(ctx, mysqlConnStr, schema, introspect.IntrospectionOptions{})
+	err := intro.Introspect(context.Background(), mysqlConnStr, schema, introspect.IntrospectionOptions{
+		Tables: []string{"view_users", "user_summary", "user_states", "user_states_copy", "a_states", "user_labels"},
+	})
 	if err != nil {
 		t.Fatalf("Introspect() error: %v", err)
 	}
 
-	// Find user_summary view.
-	var found *parser.View
-	for i := range schema.Views {
-		if schema.Views[i].Name == "user_summary" {
-			found = &schema.Views[i]
-			break
-		}
+	// A projected ENUM or SET column takes its source column's type, through
+	// any chain of views and whatever their names' order, and a column list
+	// renames it (a_states, user_labels). One read from a derived table gets
+	// a type of its own (user_states).
+	wantViews := []parser.View{
+		{Name: "a_states", Columns: []parser.Column{{Name: "s", Type: "user_states__status_enum"}}},
+		{Name: "user_labels", Columns: []parser.Column{
+			{Name: "label", Type: "varchar(255)"},
+			{Name: "state", Type: "view_users__status_enum"},
+		}},
+		{Name: "user_states", Columns: []parser.Column{{Name: "status", Type: "user_states__status_enum"}}},
+		{Name: "user_states_copy", Columns: []parser.Column{{Name: "status", Type: "user_states__status_enum"}}},
+		{Name: "user_summary", Columns: []parser.Column{
+			{Name: "id", Type: "bigint"},
+			{Name: "name", Type: "varchar(255)"},
+			{Name: "score", Type: "int"},
+			{Name: "status", Type: "view_users__status_enum"},
+			{Name: "state", Type: "view_users__status_enum"},
+			{Name: "perms", Type: "view_users__perms_set", Nullable: true},
+			{Name: "status_text", Type: "varchar(8)", Nullable: true},
+		}},
 	}
-	if found == nil {
-		t.Fatalf("view user_summary not found in %d views", len(schema.Views))
+	if diff := cmp.Diff(wantViews, schema.Views, cmpopts.IgnoreFields(parser.View{}, "SQL", "Definition")); diff != "" {
+		t.Errorf("views mismatch (-want +got):\n%s", diff)
+	}
+	wantEnums := []parser.Enum{
+		{Name: "view_users__status_enum", Values: []string{"active", "inactive"}},
+		{Name: "user_states__status_enum", Values: []string{"active", "inactive"}},
+	}
+	if diff := cmp.Diff(wantEnums, schema.Enums); diff != "" {
+		t.Errorf("enums mismatch (-want +got):\n%s", diff)
+	}
+	if len(schema.Warnings) != 0 {
+		t.Errorf("Warnings = %q, want none", schema.Warnings)
+	}
+	wantSets := []parser.Set{{Name: "view_users__perms_set", Values: []string{"r", "w"}}}
+	if diff := cmp.Diff(wantSets, schema.Sets); diff != "" {
+		t.Errorf("sets mismatch (-want +got):\n%s", diff)
 	}
 
-	if len(found.Columns) != 3 {
-		t.Fatalf("view columns = %d, want 3", len(found.Columns))
+	p, err := mysql.New()
+	if err != nil {
+		t.Fatalf("creating mysql parser: %v", err)
 	}
-
-	wantCols := map[string]string{
-		"id":    "bigint",
-		"name":  "varchar(255)",
-		"score": "int",
+	parsed := parseStatements(t, p, ddl)
+	tables := &parser.Schema{
+		Tables: schema.Tables,
+		Enums:  slices.DeleteFunc(slices.Clone(schema.Enums), func(e parser.Enum) bool { return strings.HasPrefix(e.Name, "user_states") }),
+		Sets:   schema.Sets,
 	}
-	for _, col := range found.Columns {
-		want, ok := wantCols[col.Name]
-		if !ok {
-			t.Errorf("unexpected view column %q", col.Name)
-			continue
-		}
-		if col.Type != want {
-			t.Errorf("view column %s type = %q, want %q", col.Name, col.Type, want)
-		}
-	}
+	assertSchemaParity(t, "mysql", withoutViews(parsed), tables)
 }
 
 func TestSQLiteIntrospectViews(t *testing.T) {
+	requireDatabases(t)
+
 	ctx := context.Background()
 
 	dbPath := sqliteDBPath + "_view"
@@ -1167,6 +2369,8 @@ func TestSQLiteIntrospectViews(t *testing.T) {
 // --- Index method + partial-where round-trip tests ---
 
 func TestPostgresIntrospect_IndexMethodAndPartialWhere(t *testing.T) {
+	requireDatabases(t)
+
 	ctx := context.Background()
 
 	db, err := sql.Open("pgx", pgConnStr)
@@ -1243,7 +2447,60 @@ func TestPostgresIntrospect_IndexMethodAndPartialWhere(t *testing.T) {
 	}
 }
 
+func TestMySQLIntrospect_EnumEdgeValues(t *testing.T) {
+	requireDatabases(t)
+
+	ctx := context.Background()
+	ddl := `CREATE TABLE enum_edge (
+		id int PRIMARY KEY,
+		status ENUM('active', 'in,active', 'it''s', '', 'b\\c') NOT NULL
+	)`
+
+	db, err := sql.Open("mysql", mysqlConnStr)
+	if err != nil {
+		t.Fatalf("opening mysql: %v", err)
+	}
+	defer db.Close() //nolint:errcheck // test cleanup
+
+	_, _ = db.ExecContext(ctx, "DROP TABLE IF EXISTS enum_edge")
+	if _, err := db.ExecContext(ctx, ddl); err != nil {
+		t.Fatalf("applying DDL: %v", err)
+	}
+	defer db.ExecContext(ctx, "DROP TABLE IF EXISTS enum_edge") //nolint:errcheck // test cleanup
+
+	intro := introspect.NewMySQLIntrospector()
+	defer intro.Close() //nolint:errcheck // test cleanup
+
+	introspected := &parser.Schema{}
+	if err := intro.Introspect(ctx, mysqlConnStr, introspected, introspect.IntrospectionOptions{
+		Tables: []string{"enum_edge"},
+	}); err != nil {
+		t.Fatalf("Introspect() error: %v", err)
+	}
+
+	p, err := mysql.New()
+	if err != nil {
+		t.Fatalf("creating mysql parser: %v", err)
+	}
+	if err := p.Parse("test.sql", []byte(ddl)); err != nil {
+		t.Fatalf("Parse() error: %v", err)
+	}
+
+	want := []parser.Enum{{
+		Name:   "enum_edge__status_enum",
+		Values: []string{"active", "in,active", "it's", "", `b\c`},
+	}}
+	if diff := cmp.Diff(want, p.Schema().Enums); diff != "" {
+		t.Errorf("parsed enums mismatch (-want +got):\n%s", diff)
+	}
+	if diff := cmp.Diff(want, introspected.Enums); diff != "" {
+		t.Errorf("introspected enums mismatch (-want +got):\n%s", diff)
+	}
+}
+
 func TestMySQLIntrospect_IndexMethod(t *testing.T) {
+	requireDatabases(t)
+
 	ctx := context.Background()
 
 	db, err := sql.Open("mysql", mysqlConnStr)
@@ -1295,6 +2552,8 @@ func TestMySQLIntrospect_IndexMethod(t *testing.T) {
 }
 
 func TestSQLiteIntrospect_PartialUnique(t *testing.T) {
+	requireDatabases(t)
+
 	ctx := context.Background()
 
 	dbPath := sqliteDBPath + "_partial_unique"
@@ -1345,6 +2604,8 @@ func TestSQLiteIntrospect_PartialUnique(t *testing.T) {
 }
 
 func TestMySQLIntrospect_NonUniqueIndex(t *testing.T) {
+	requireDatabases(t)
+
 	ctx := context.Background()
 
 	db, err := sql.Open("mysql", mysqlConnStr)
@@ -1395,6 +2656,8 @@ func TestMySQLIntrospect_NonUniqueIndex(t *testing.T) {
 }
 
 func TestSQLiteIntrospect_NonUniqueIndex(t *testing.T) {
+	requireDatabases(t)
+
 	ctx := context.Background()
 
 	dbPath := sqliteDBPath + "_nonunique_index"
@@ -1459,6 +2722,8 @@ func TestSQLiteIntrospect_NonUniqueIndex(t *testing.T) {
 }
 
 func TestMySQLIntrospect_ForeignKeyBackingIndexParity(t *testing.T) {
+	requireDatabases(t)
+
 	ctx := context.Background()
 
 	// A bare FOREIGN KEY with no explicit KEY: MySQL materializes a backing
@@ -1540,6 +2805,15 @@ func indexColumnLists(table *parser.Table) []string {
 }
 
 // --- Helpers ---
+
+// requireDatabases skips an integration test under -short, when TestMain
+// starts no containers.
+func requireDatabases(t *testing.T) {
+	t.Helper()
+	if testing.Short() {
+		t.Skip("skipping integration test in short mode")
+	}
+}
 
 func findTable(t *testing.T, schema *parser.Schema, name string) *parser.Table {
 	t.Helper()

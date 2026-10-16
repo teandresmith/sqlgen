@@ -184,10 +184,10 @@ type APITableContext struct {
 	UsedScalars      []string // scalars used in this table (for shared dedup)
 	// IncrementEnumType is the generated Go enum-type name for the
 	// IncrementInput's Column generic argument (e.g. "ProductIncrementColumn").
-	// Empty when the table has no numeric non-PK columns.
+	// Empty when the table has no increment-eligible column.
 	IncrementEnumType string
-	// HasIncrementColumns is true iff the table has at least one non-PK
-	// numeric column whose update path emits an `_inc` / `_dec` operator —
+	// HasIncrementColumns is true iff the table has at least one
+	// increment-eligible column (isIncrementEligible) whose update path emits an `_inc` / `_dec` operator —
 	// equivalently, iff `IncrementEnumType != ""`. Drives template gating
 	// on the Update<Table> resolver and seed: when false, the
 	// rendered method drops the `incOps` parameter and the increment-
@@ -1578,9 +1578,9 @@ func collectNumericWidthScalars(tables []APITableContext) []APINumericWidth {
 // rejects that — so a name in UsedScalars means this declaration is what put
 // it there.
 //
-// Emitted from Generate only. `sqlgen generate` chains the gqlgen wrapper in
-// the same run, and the wrapper builds its own APIContext; warning
-// from both would report every entry twice.
+// Emitted from `generate` and `validate`, not from `graphql gen`: `sqlgen
+// generate` chains the gqlgen wrapper in the same run, and the wrapper builds
+// its own APIContext; warning from both would report every entry twice.
 func unusedScalarWarnings(cfg *config.RootConfig, apiCtx *APIContext) []string {
 	if apiCtx == nil || cfg.API == nil || cfg.API.GraphQL == nil {
 		return nil
@@ -4370,7 +4370,7 @@ func graphQLTypeForGoType(goType string, col ColumnContext, binds typeBindings) 
 //
 // The two halves of that sentence are why this is not just `col.IsSet`.
 // ColumnContext.IsSet is derived from the SQL type NAME (context_table.go:
-// `input.Resolver.IsSet(col.Type)`), but `type_map.<col>` and `overrides.types`
+// `resolver.IsSet(col.Type)`), but `type_map.<col>` and `overrides.types`
 // win over the SET branch in the resolution chain — gotype.Resolve steps 1-4
 // all precede the SET branch at step 4.5, and FromLiteral fills no element
 // type. So a SET column the consumer retyped to `string` still carries

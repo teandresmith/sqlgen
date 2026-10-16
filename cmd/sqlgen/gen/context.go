@@ -182,8 +182,8 @@ type ColumnContext struct {
 	HasDefault bool
 	// DefaultExpr is the raw SQL default expression for this column.
 	// For columns with an explicit DEFAULT, this is the expression (e.g., "datetime('now')").
-	// For nullable columns without a DEFAULT, this is "NULL".
-	// Empty when the column is neither nullable nor has a default.
+	// For every column without a DEFAULT, this is "NULL", SQLite's implicit
+	// default; a NOT NULL column then fails with a NOT NULL violation.
 	DefaultExpr string
 	// AutoIncrement indicates serial/auto_increment columns.
 	AutoIncrement bool
@@ -583,9 +583,15 @@ type InputFieldContext struct {
 	JSONTag string
 	// DefaultExpr is the raw SQL default expression for this column, used
 	// by dialects that do not support the DEFAULT keyword in VALUES (SQLite).
-	// Contains the expression (e.g., "datetime('now')") or "NULL" for nullable
-	// columns without a default. Empty when the column has no fallback.
+	// Contains the expression (e.g., "datetime('now')") or "NULL" for a column
+	// without a default; empty on a required field.
 	DefaultExpr string
+	// AutoIncrement marks a non-key column the database draws from a
+	// sequence: serial, identity, a nextval() default, MySQL AUTO_INCREMENT,
+	// or a SQLite rowid alias that primary_key.columns demoted. UpsertMany
+	// leaves it out of the update half of its conflict clause (PRD §9.5).
+	// Never set on a key column, which that clause leaves out anyway.
+	AutoIncrement bool
 }
 
 // ScanShapeContext holds scan target information for a column.
@@ -1092,6 +1098,9 @@ type TableContext struct {
 	QueryLimit int
 	// CursorKeys is the effective cursor key columns.
 	CursorKeys []string
+	// CursorKeyColumns is the columns CursorKeys names, in key order. The
+	// cursor decoder unmarshals each key's value into its column's Go type.
+	CursorKeyColumns []ColumnContext
 	// StrictUpdates indicates whether updates should fail on missing PK.
 	StrictUpdates bool
 	// Imports is the deduplicated, sorted list of import paths needed by this table's generated code.
@@ -1189,6 +1198,9 @@ type ViewContext struct {
 	// is false (views with inherited defaults whose columns do not match the
 	// view's projection omit Connection per PRD §4.13).
 	CursorKeys []string
+	// CursorKeyColumns is the columns CursorKeys names, in key order. The
+	// cursor decoder unmarshals each key's value into its column's Go type.
+	CursorKeyColumns []ColumnContext
 	// HasConnection reports whether the view should emit the Connection
 	// cursor-pagination method. False when the resolved cursor_keys do not
 	// exist on the view (views have no PK fallback — see PRD §4.13).

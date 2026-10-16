@@ -329,3 +329,63 @@ tables:
 			stderr, warning)
 	}
 }
+
+// TestGeneratePipeline_DemotedRowIDAliasStaysOutOfUpsertManySet drives the real
+// `generate` command on SQLite. An INTEGER PRIMARY KEY is the rowid alias, and
+// primary_key.columns can demote it to an ordinary column that still draws the
+// next rowid. An unset one binds NULL in UpsertMany, so `id = excluded.id` in
+// the update half would re-key the conflicting row (PRD §9.5).
+func TestGeneratePipeline_DemotedRowIDAliasStaysOutOfUpsertManySet(t *testing.T) {
+	dir := t.TempDir()
+	outDir := filepath.Join(dir, "out")
+
+	schema := `CREATE TABLE items (
+    id INTEGER PRIMARY KEY,
+    code TEXT NOT NULL UNIQUE,
+    note TEXT NOT NULL
+);`
+	if err := os.WriteFile(filepath.Join(dir, "schema.sql"), []byte(schema), 0o600); err != nil {
+		t.Fatalf("writing schema: %v", err)
+	}
+
+	cfg := `version: 1
+input:
+  dialect: sqlite
+  paths: [schema.sql]
+output:
+  driver: stdlib
+  dir: out
+  package: models
+tables:
+  items:
+    primary_key:
+      columns: [code]
+`
+	cfgPath := filepath.Join(dir, "sqlgen.yml")
+	if err := os.WriteFile(cfgPath, []byte(cfg), 0o600); err != nil {
+		t.Fatalf("writing config: %v", err)
+	}
+
+	origDir, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("getting working dir: %v", err)
+	}
+	if err := os.Chdir(dir); err != nil {
+		t.Fatalf("chdir: %v", err)
+	}
+	t.Cleanup(func() { _ = os.Chdir(origDir) })
+
+	if _, stderr, err := executeCommand("generate", "--config", cfgPath); err != nil {
+		t.Fatalf("generate returned error: %v\nstderr: %s", err, stderr)
+	}
+
+	models, err := os.ReadFile(filepath.Join(outDir, "models_gen.go")) //nolint:gosec // test code, path is from controlled test dir
+	if err != nil {
+		t.Fatalf("reading generated models: %v", err)
+	}
+
+	const want = `updateColumns := excludeColumns(columns, append(conflictColumns, "code", "id"))`
+	if !strings.Contains(string(models), want) {
+		t.Errorf("generated UpsertMany lacks %q — the demoted rowid alias must stay out of the update half", want)
+	}
+}

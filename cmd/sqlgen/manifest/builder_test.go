@@ -651,8 +651,9 @@ func TestBuild_CheckConstraintExpressionLiteralNotMatched(t *testing.T) {
 
 func TestBuild_DefaultKindClassification(t *testing.T) {
 	tests := []struct {
-		def  string
-		kind string
+		def     string
+		kind    string
+		dialect config.Dialect // PostgreSQL when empty
 	}{
 		{def: "gen_random_uuid()", kind: "function"},
 		{def: "CURRENT_TIMESTAMP", kind: "function"},
@@ -663,10 +664,56 @@ func TestBuild_DefaultKindClassification(t *testing.T) {
 		// form is also common. Both are function shapes, not expressions.
 		{def: "(datetime('now'))", kind: "function"},
 		{def: "(now())", kind: "function"},
+		// Most forms below are the text each dialect's parser emits for the
+		// declared default. A cast labels a constant without making it a call.
+		{def: "'pending'::text", kind: "literal"},
+		{def: "'x'::varchar(10)", kind: "literal"},
+		{def: "(0.5)::numeric(4, 2)", kind: "literal"},
+		{def: "'00:00'::time(3)", kind: "literal"},
+		{def: "'2020-01-01'::timestamp with time zone", kind: "literal"},
+		{def: "'x'::\"MyType\"", kind: "literal"},
+		{def: "- 1::int", kind: "literal"},
+		{def: "+ 1", kind: "literal"},
+		{def: "-1.5", kind: "literal"},
+		{def: "E'C:\\\\'", kind: "literal"},
+		{def: "b'101'", kind: "literal"},
+		{def: "0b101", kind: "literal", dialect: config.DialectMySQL},
+		{def: "X'1F'", kind: "literal", dialect: config.DialectMySQL},
+		{def: "'it\\'s'", kind: "literal", dialect: config.DialectMySQL},
+		{def: "'say \\'hi\\''", kind: "literal", dialect: config.DialectMySQL},
+		{def: "'it\\'s' || 'x'", kind: "expression", dialect: config.DialectMySQL},
+		{def: "'it''s'", kind: "literal"},
+		{def: "'C:\\'", kind: "literal", dialect: config.DialectSQLite},
+		{def: "date'2020-01-01'", kind: "literal", dialect: config.DialectMySQL},
+		{def: "timestamp'2020-01-01 00:00:00'", kind: "literal", dialect: config.DialectMySQL},
+		{def: "interval '1 day'", kind: "literal"},
+		{def: "date'2020-01-01' + interval 1 day", kind: "expression", dialect: config.DialectMySQL},
+		{def: "NULL", kind: "literal"},
+		{def: "localtimestamp", kind: "function"},
+		{def: "current_user", kind: "function"},
+		{def: "now()::date", kind: "function"},
+		{def: "current_timestamp()", kind: "function"},
+		{def: "datetime('now', '+1 day')", kind: "function"},
+		{def: "abs(-1)", kind: "function"},
+		{def: "public.\"MyFunc\"()", kind: "function"},
+		{def: "now() AT TIME ZONE 'utc'", kind: "expression"},
+		{def: "now() + '1 day'::interval", kind: "expression"},
+		{def: "lower('X') || 'y'", kind: "expression"},
+		{def: "current_timestamp() + interval 1 day", kind: "expression", dialect: config.DialectMySQL},
+		{def: "abs(-1) + 1", kind: "expression", dialect: config.DialectMySQL},
+		{def: "datetime('now') || 'x'", kind: "expression"},
+		{def: "strftime('%s', 'now') * 1000", kind: "expression"},
+		{def: "lower('a') || upper('b')", kind: "expression"},
+		{def: "'1'::int + 1", kind: "expression"},
+		{def: "ARRAY[]::text[]", kind: "expression"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.def, func(t *testing.T) {
 			cfg := baseConfig()
+			if tt.dialect != "" {
+				cfg.Input.Dialect = tt.dialect
+				cfg.Output.Driver = config.DriverStdlib
+			}
 			schema := &parser.Schema{
 				Tables: []parser.Table{
 					{
@@ -810,88 +857,97 @@ func TestBuild_PKIndexNeedsASchemaDeclaredKey(t *testing.T) {
 	}
 }
 
-// TestBuild_InlineUniqueIsListed pins the inline-UNIQUE half of that rule: an
-// inline column UNIQUE is recorded on the column (InlineUnique), not as a
-// Constraint, yet the database builds an index for it (PRD §30.7 "All declared
-// indexes"). It is listed as `<table>_<column>_key` on every dialect,
-// PostgreSQL's default name, as the PK index is `<table>_pkey` (measured on
-// PostgreSQL 16: `email TEXT NOT NULL UNIQUE` on users → users_email_key). A
-// column that is Unique only through a table-level constraint, single- or
-// multi-column, is listed once, under that constraint.
-func TestBuild_InlineUniqueIsListed(t *testing.T) {
-	id := parser.Column{Name: "id", Type: "uuid", PrimaryKey: true}
+// TestBuild_IndexNamesReadTheSchema pins that indexes[] lists each key under
+// the name its constraint carries (PRD §30.7): the parsers give an unnamed
+// PostgreSQL or MySQL constraint the database's name, and SQLite, which stores
+// none, is listed as <table>_pkey or <table>_<cols>_key. A MySQL duplicate is
+// listed under its own name.
+func TestBuild_IndexNamesReadTheSchema(t *testing.T) {
 	key := func(name string, cols ...string) manifest.Index {
 		return manifest.Index{Name: name, Columns: cols, Unique: true, Method: "btree"}
 	}
 	tests := []struct {
 		name     string
+		dialect  config.Dialect
 		table    parser.Table
 		tableCfg config.TableConfig
 		want     []manifest.Index
 	}{
 		{
-			name: "inline UNIQUE beside a table-level UNIQUE on another column",
+			name:    "postgres names",
+			dialect: config.DialectPostgres,
 			table: parser.Table{
 				Name: "users",
 				Columns: []parser.Column{
-					id,
-					{Name: "email", Type: "text", Unique: true, InlineUnique: true},
+					{Name: "id", Type: "uuid", PrimaryKey: true},
+					{Name: "email", Type: "text", Unique: true},
+					{Name: "placed_at", Type: "timestamptz"},
+				},
+				Constraints: []parser.Constraint{
+					{Name: "bu", Type: parser.PrimaryKey, Columns: []string{"id"}},
+					{Name: "users_email_key", Type: parser.Unique, Columns: []string{"email"}, Method: "btree"},
+					{Name: "users_placed_at_idx", Type: parser.Index, Columns: []string{"placed_at"}, Method: "btree"},
+				},
+			},
+			want: []manifest.Index{
+				key("bu", "id"),
+				key("users_email_key", "email"),
+				{Name: "users_placed_at_idx", Columns: []string{"placed_at"}, Method: "btree"},
+			},
+		},
+		{
+			name:    "mysql names and a kept duplicate",
+			dialect: config.DialectMySQL,
+			table: parser.Table{
+				Name: "users",
+				Columns: []parser.Column{
+					{Name: "id", Type: "bigint", PrimaryKey: true},
+					{Name: "email", Type: "varchar(255)", Unique: true},
+				},
+				Constraints: []parser.Constraint{
+					{Name: "PRIMARY", Type: parser.PrimaryKey, Columns: []string{"id"}},
+					{Name: "email", Type: parser.Unique, Columns: []string{"email"}, Method: "btree"},
+					{Name: "email_2", Type: parser.Unique, Columns: []string{"email"}, Method: "btree"},
+				},
+			},
+			want: []manifest.Index{key("PRIMARY", "id"), key("email", "email"), key("email_2", "email")},
+		},
+		{
+			name:    "sqlite labels an unnamed key and keeps a declared name",
+			dialect: config.DialectSQLite,
+			table: parser.Table{
+				Name: "users",
+				Columns: []parser.Column{
+					{Name: "id", Type: "integer", PrimaryKey: true},
+					{Name: "org_id", Type: "integer"},
+					{Name: "email", Type: "text", Unique: true},
 					{Name: "handle", Type: "text", Unique: true},
 				},
 				Constraints: []parser.Constraint{
+					{Type: parser.PrimaryKey, Columns: []string{"id"}},
+					{Type: parser.Unique, Columns: []string{"email"}},
+					{Type: parser.Unique, Columns: []string{"org_id", "email"}},
 					{Name: "users_handle_uq", Type: parser.Unique, Columns: []string{"handle"}},
 				},
 			},
 			want: []manifest.Index{
 				key("users_email_key", "email"),
 				key("users_handle_uq", "handle"),
+				key("users_org_id_email_key", "org_id", "email"),
 				key("users_pkey", "id"),
 			},
 		},
 		{
-			name: "inline UNIQUE column inside a multi-column UNIQUE is listed by both",
-			table: parser.Table{
-				Name: "users",
-				Columns: []parser.Column{
-					id,
-					{Name: "email", Type: "text", Unique: true, InlineUnique: true},
-					{Name: "handle", Type: "text"},
-				},
-				Constraints: []parser.Constraint{
-					{Name: "users_email_handle_uq", Type: parser.Unique, Columns: []string{"email", "handle"}},
-				},
-			},
-			want: []manifest.Index{
-				key("users_email_handle_uq", "email", "handle"),
-				key("users_email_key", "email"),
-				key("users_pkey", "id"),
-			},
-		},
-		{
-			name: "multi-column UNIQUE alone lists no per-column key",
-			table: parser.Table{
-				Name: "users",
-				Columns: []parser.Column{
-					id,
-					{Name: "email", Type: "text"},
-					{Name: "handle", Type: "text"},
-				},
-				Constraints: []parser.Constraint{
-					{Name: "users_email_handle_uq", Type: parser.Unique, Columns: []string{"email", "handle"}},
-				},
-			},
-			want: []manifest.Index{
-				key("users_email_handle_uq", "email", "handle"),
-				key("users_pkey", "id"),
-			},
-		},
-		{
-			name: "inline UNIQUE backing an app-enforced key is listed in place of the PK index",
+			name:    "a UNIQUE backing an app-enforced key is listed in place of the PK index",
+			dialect: config.DialectPostgres,
 			table: parser.Table{
 				Name: "counters",
 				Columns: []parser.Column{
-					{Name: "key", Type: "text", PrimaryKey: true, Unique: true, InlineUnique: true},
+					{Name: "key", Type: "text", PrimaryKey: true, Unique: true},
 					{Name: "count", Type: "bigint"},
+				},
+				Constraints: []parser.Constraint{
+					{Name: "counters_key_key", Type: parser.Unique, Columns: []string{"key"}, Method: "btree"},
 				},
 			},
 			tableCfg: config.TableConfig{PrimaryKey: &config.TablePrimaryKeyConfig{Columns: []string{"key"}}},
@@ -899,29 +955,27 @@ func TestBuild_InlineUniqueIsListed(t *testing.T) {
 		},
 	}
 	for _, tt := range tests {
-		for _, d := range []config.Dialect{config.DialectPostgres, config.DialectMySQL, config.DialectSQLite} {
-			t.Run(tt.name+"/"+string(d), func(t *testing.T) {
-				cfg := baseConfig()
-				cfg.Input.Dialect = d
-				if d != config.DialectPostgres {
-					cfg.Output.Driver = config.DriverStdlib
-				}
-				if tt.tableCfg.PrimaryKey != nil {
-					cfg.Tables[tt.table.Name] = tt.tableCfg
-				}
-				schema := &parser.Schema{Tables: []parser.Table{tt.table}}
-				doc, err := manifest.Build(testBuildInput(t, schema, cfg))
-				if err != nil {
-					t.Fatalf("Build: %v", err)
-				}
-				if len(doc.Entities) != 1 {
-					t.Fatalf("entities = %v, want exactly the one table", entityNames(doc))
-				}
-				if diff := cmp.Diff(tt.want, doc.Entities[0].Indexes); diff != "" {
-					t.Errorf("indexes mismatch (-want +got):\n%s", diff)
-				}
-			})
-		}
+		t.Run(tt.name, func(t *testing.T) {
+			cfg := baseConfig()
+			cfg.Input.Dialect = tt.dialect
+			if tt.dialect != config.DialectPostgres {
+				cfg.Output.Driver = config.DriverStdlib
+			}
+			if tt.tableCfg.PrimaryKey != nil {
+				cfg.Tables[tt.table.Name] = tt.tableCfg
+			}
+			schema := &parser.Schema{Tables: []parser.Table{tt.table}}
+			doc, err := manifest.Build(testBuildInput(t, schema, cfg))
+			if err != nil {
+				t.Fatalf("Build: %v", err)
+			}
+			if len(doc.Entities) != 1 {
+				t.Fatalf("entities = %v, want exactly the one table", entityNames(doc))
+			}
+			if diff := cmp.Diff(tt.want, doc.Entities[0].Indexes); diff != "" {
+				t.Errorf("indexes mismatch (-want +got):\n%s", diff)
+			}
+		})
 	}
 }
 

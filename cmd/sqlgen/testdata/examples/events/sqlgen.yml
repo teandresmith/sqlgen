@@ -22,6 +22,9 @@ tables:
   products: {}
   articles: {}
   audit_logs:
+    # A DATETIME cursor key: the keyset binds the stored text format, so pages
+    # across equal timestamps neither skip nor repeat rows.
+    cursor_keys: [created_at, id]
     events:
       enabled: false
   accounts:

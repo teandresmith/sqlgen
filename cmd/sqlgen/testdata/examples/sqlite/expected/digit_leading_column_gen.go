@@ -1616,14 +1616,14 @@ func (c *digitLeadingColumnClient) Connection(ctx context.Context, input Connect
 		// Decode cursors and build keyset conditions
 		var keysetConds []sql.Condition
 		if input.After != nil {
-			cursor, err := decodeCursor(*input.After)
+			cursor, err := decodeDigitLeadingColumnCursor(*input.After, c.cursorKeys)
 			if err != nil {
 				return nil, ErrInvalidCursor
 			}
 			keysetConds = append(keysetConds, cursorKeyset(c.dialect, c.cursorKeys, cursor, ">"))
 		}
 		if input.Before != nil {
-			cursor, err := decodeCursor(*input.Before)
+			cursor, err := decodeDigitLeadingColumnCursor(*input.Before, c.cursorKeys)
 			if err != nil {
 				return nil, ErrInvalidCursor
 			}
@@ -1720,6 +1720,34 @@ func encodeDigitLeadingColumnCursor(keys []string, d *DigitLeadingColumn) (strin
 		return "", fmt.Errorf("encode digit_leading_column cursor: %w", err)
 	}
 	return base64.StdEncoding.EncodeToString(data), nil
+}
+
+// decodeDigitLeadingColumnCursor decodes a cursor string into its key values,
+// each unmarshaled into the key column's Go type.
+func decodeDigitLeadingColumnCursor(encoded string, keys []string) (map[string]any, error) {
+	raw, err := decodeCursor(encoded, keys)
+	if err != nil {
+		return nil, err
+	}
+	var row DigitLeadingColumn
+	out := make(map[string]any, len(keys))
+	for _, key := range keys {
+		switch key {
+		case "2024_quota":
+			err = json.Unmarshal(raw[key], &row.Col2024Quota)
+			out[key] = row.Col2024Quota
+		case "id":
+			err = json.Unmarshal(raw[key], &row.ID)
+			out[key] = row.ID
+		}
+		if err != nil {
+			return nil, err
+		}
+		if cursorValueIsNull(out[key]) {
+			return nil, ErrInvalidCursor
+		}
+	}
+	return out, nil
 }
 
 // StreamDigitLeadingColumnsInput holds query parameters for streaming digit_leading_columns records.

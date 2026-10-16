@@ -1,7 +1,9 @@
 package mysql_test
 
 import (
+	"errors"
 	"fmt"
+	"slices"
 	"strings"
 	"testing"
 
@@ -87,9 +89,9 @@ func TestCreateTableMySQLTypes(t *testing.T) {
 		"t_date":      "date",
 		"t_json":      "json",
 		"t_blob":      "blob",
-		"t_bool":      "bool",
-		"t_enum":      "test_types_t_enum_enum",
-		"t_set":       "test_types_t_set_set",
+		"t_bool":      "tinyint(1)",
+		"t_enum":      "test_types__t_enum_enum",
+		"t_set":       "test_types__t_set_set",
 	}
 
 	for _, col := range table.Columns {
@@ -168,8 +170,8 @@ func TestInlineEnumExtraction(t *testing.T) {
 	for _, c := range table.Columns {
 		cols[c.Name] = c
 	}
-	if cols["status"].Type != "users_status_enum" {
-		t.Errorf("status type = %q, want %q", cols["status"].Type, "users_status_enum")
+	if cols["status"].Type != "users__status_enum" {
+		t.Errorf("status type = %q, want %q", cols["status"].Type, "users__status_enum")
 	}
 
 	// An Enum entry should be created for the inline ENUM.
@@ -179,6 +181,32 @@ func TestInlineEnumExtraction(t *testing.T) {
 	wantValues := []string{"active", "inactive", "pending"}
 	if diff := cmp.Diff(wantValues, schema.Enums[0].Values); diff != "" {
 		t.Errorf("enum values mismatch (-want +got):\n%s", diff)
+	}
+}
+
+func TestInlineEnumEdgeValues(t *testing.T) {
+	sql := `CREATE TABLE users (
+		status ENUM('active', 'in,active', 'it''s', '', 'b\\c', 't\%u'),
+		perms SET('it''s', 'r w')
+	);`
+
+	p := newParser(t)
+	if err := p.Parse("test.sql", []byte(sql)); err != nil {
+		t.Fatalf("Parse() error: %v", err)
+	}
+
+	schema := p.Schema()
+	if len(schema.Enums) != 1 || len(schema.Sets) != 1 {
+		t.Fatalf("enums = %d, sets = %d, want 1 each", len(schema.Enums), len(schema.Sets))
+	}
+	// MySQL keeps the backslash in \% and \_, so 't\%u' stores t\%u.
+	wantEnum := []string{"active", "in,active", "it's", "", `b\c`, `t\%u`}
+	if diff := cmp.Diff(wantEnum, schema.Enums[0].Values); diff != "" {
+		t.Errorf("enum values mismatch (-want +got):\n%s", diff)
+	}
+	wantSet := []string{"it's", "r w"}
+	if diff := cmp.Diff(wantSet, schema.Sets[0].Values); diff != "" {
+		t.Errorf("set values mismatch (-want +got):\n%s", diff)
 	}
 }
 
@@ -201,16 +229,16 @@ func TestInlineSetExtraction(t *testing.T) {
 	for _, c := range table.Columns {
 		cols[c.Name] = c
 	}
-	if cols["permissions"].Type != "users_permissions_set" {
-		t.Errorf("permissions type = %q, want %q", cols["permissions"].Type, "users_permissions_set")
+	if cols["permissions"].Type != "users__permissions_set" {
+		t.Errorf("permissions type = %q, want %q", cols["permissions"].Type, "users__permissions_set")
 	}
 
 	// A Set entry should be created for the inline SET.
 	if len(schema.Sets) != 1 {
 		t.Fatalf("sets = %d, want 1", len(schema.Sets))
 	}
-	if schema.Sets[0].Name != "users_permissions_set" {
-		t.Errorf("set name = %q, want %q", schema.Sets[0].Name, "users_permissions_set")
+	if schema.Sets[0].Name != "users__permissions_set" {
+		t.Errorf("set name = %q, want %q", schema.Sets[0].Name, "users__permissions_set")
 	}
 	wantValues := []string{"read", "write", "admin"}
 	if diff := cmp.Diff(wantValues, schema.Sets[0].Values); diff != "" {
@@ -220,6 +248,49 @@ func TestInlineSetExtraction(t *testing.T) {
 	// No Enum entries should be created for SET.
 	if len(schema.Enums) != 0 {
 		t.Errorf("enums = %d, want 0 (SET should not create Enum entries)", len(schema.Enums))
+	}
+}
+
+// TestInlineTypeNamesSeparateTableFromColumn covers two columns that a single
+// underscore would give one name: table a, column b_c and table a_b, column c.
+func TestInlineTypeNamesSeparateTableFromColumn(t *testing.T) {
+	sql := `CREATE TABLE a (id INT PRIMARY KEY, b_c ENUM('1','2') NOT NULL, y_z SET('r'));
+		CREATE TABLE a_b (id INT PRIMARY KEY, c ENUM('3','4') NOT NULL);
+		CREATE TABLE a_y (id INT PRIMARY KEY, z SET('w'));`
+
+	p := newParser(t)
+	if err := p.Parse("test.sql", []byte(sql)); err != nil {
+		t.Fatalf("Parse() error: %v", err)
+	}
+	schema := p.Schema()
+
+	wantEnums := []parser.Enum{
+		{Name: "a__b_c_enum", Values: []string{"1", "2"}},
+		{Name: "a_b__c_enum", Values: []string{"3", "4"}},
+	}
+	if diff := cmp.Diff(wantEnums, schema.Enums); diff != "" {
+		t.Errorf("enums mismatch (-want +got):\n%s", diff)
+	}
+	wantSets := []parser.Set{
+		{Name: "a__y_z_set", Values: []string{"r"}},
+		{Name: "a_y__z_set", Values: []string{"w"}},
+	}
+	if diff := cmp.Diff(wantSets, schema.Sets); diff != "" {
+		t.Errorf("sets mismatch (-want +got):\n%s", diff)
+	}
+	types := map[string]string{}
+	for _, tbl := range schema.Tables {
+		for _, c := range tbl.Columns {
+			types[tbl.Name+"."+c.Name] = c.Type
+		}
+	}
+	wantTypes := map[string]string{
+		"a.id": "int", "a.b_c": "a__b_c_enum", "a.y_z": "a__y_z_set",
+		"a_b.id": "int", "a_b.c": "a_b__c_enum",
+		"a_y.id": "int", "a_y.z": "a_y__z_set",
+	}
+	if diff := cmp.Diff(wantTypes, types); diff != "" {
+		t.Errorf("column types mismatch (-want +got):\n%s", diff)
 	}
 }
 
@@ -239,20 +310,20 @@ func TestRedefineColumnReplacesInlineEnumOrSet(t *testing.T) {
 		{
 			name:      "MODIFY widening an ENUM",
 			sql:       "CREATE TABLE users (id INT PRIMARY KEY, role ENUM('a','b') NOT NULL); ALTER TABLE users MODIFY role ENUM('a','b','c') NOT NULL;",
-			wantType:  "users_role_enum",
-			wantEnums: []parser.Enum{{Name: "users_role_enum", Values: []string{"a", "b", "c"}}},
+			wantType:  "users__role_enum",
+			wantEnums: []parser.Enum{{Name: "users__role_enum", Values: []string{"a", "b", "c"}}},
 		},
 		{
 			name:      "CHANGE COLUMN widening an ENUM without a rename",
 			sql:       "CREATE TABLE users (id INT PRIMARY KEY, role ENUM('a','b') NOT NULL); ALTER TABLE users CHANGE COLUMN role role ENUM('a','b','c') NOT NULL;",
-			wantType:  "users_role_enum",
-			wantEnums: []parser.Enum{{Name: "users_role_enum", Values: []string{"a", "b", "c"}}},
+			wantType:  "users__role_enum",
+			wantEnums: []parser.Enum{{Name: "users__role_enum", Values: []string{"a", "b", "c"}}},
 		},
 		{
 			name:      "CHANGE COLUMN renaming an ENUM column",
 			sql:       "CREATE TABLE users (id INT PRIMARY KEY, role ENUM('a','b') NOT NULL); ALTER TABLE users CHANGE COLUMN role kind ENUM('a','b','c') NOT NULL;",
-			wantType:  "users_kind_enum",
-			wantEnums: []parser.Enum{{Name: "users_kind_enum", Values: []string{"a", "b", "c"}}},
+			wantType:  "users__kind_enum",
+			wantEnums: []parser.Enum{{Name: "users__kind_enum", Values: []string{"a", "b", "c"}}},
 		},
 		{
 			name:     "MODIFY from ENUM to VARCHAR",
@@ -262,26 +333,26 @@ func TestRedefineColumnReplacesInlineEnumOrSet(t *testing.T) {
 		{
 			name:      "MODIFY from VARCHAR to ENUM",
 			sql:       "CREATE TABLE users (id INT PRIMARY KEY, role VARCHAR(10) NOT NULL); ALTER TABLE users MODIFY role ENUM('a','b') NOT NULL;",
-			wantType:  "users_role_enum",
-			wantEnums: []parser.Enum{{Name: "users_role_enum", Values: []string{"a", "b"}}},
+			wantType:  "users__role_enum",
+			wantEnums: []parser.Enum{{Name: "users__role_enum", Values: []string{"a", "b"}}},
 		},
 		{
 			name:     "MODIFY widening a SET",
 			sql:      "CREATE TABLE users (id INT PRIMARY KEY, role SET('a','b') NOT NULL); ALTER TABLE users MODIFY role SET('a','b','c') NOT NULL;",
-			wantType: "users_role_set",
-			wantSets: []parser.Set{{Name: "users_role_set", Values: []string{"a", "b", "c"}}},
+			wantType: "users__role_set",
+			wantSets: []parser.Set{{Name: "users__role_set", Values: []string{"a", "b", "c"}}},
 		},
 		{
 			name:     "MODIFY from ENUM to SET",
 			sql:      "CREATE TABLE users (id INT PRIMARY KEY, role ENUM('a','b') NOT NULL); ALTER TABLE users MODIFY role SET('a','b') NOT NULL;",
-			wantType: "users_role_set",
-			wantSets: []parser.Set{{Name: "users_role_set", Values: []string{"a", "b"}}},
+			wantType: "users__role_set",
+			wantSets: []parser.Set{{Name: "users__role_set", Values: []string{"a", "b"}}},
 		},
 		{
 			name:      "MODIFY on one ENUM column leaves another table's ENUM column alone",
 			sql:       "CREATE TABLE users (id INT PRIMARY KEY, role ENUM('a','b') NOT NULL); CREATE TABLE admins (id INT PRIMARY KEY, role ENUM('x') NOT NULL); ALTER TABLE users MODIFY role ENUM('a','b','c') NOT NULL;",
-			wantType:  "users_role_enum",
-			wantEnums: []parser.Enum{{Name: "admins_role_enum", Values: []string{"x"}}, {Name: "users_role_enum", Values: []string{"a", "b", "c"}}},
+			wantType:  "users__role_enum",
+			wantEnums: []parser.Enum{{Name: "users__role_enum", Values: []string{"a", "b", "c"}}, {Name: "admins__role_enum", Values: []string{"x"}}},
 		},
 	}
 	for _, tt := range tests {
@@ -305,50 +376,273 @@ func TestRedefineColumnReplacesInlineEnumOrSet(t *testing.T) {
 	}
 }
 
-// TestRedefineColumnKeepsSharedInlineEnumName covers MODIFY on an ENUM column
-// whose inline name another column also carries, which RENAME COLUMN and
-// RENAME TABLE make possible by keeping the name derived from the old names.
-// Both entries survive, so generation still fails loudly on the duplicate Go
-// type instead of resolving one column to the other's values.
-func TestRedefineColumnKeepsSharedInlineEnumName(t *testing.T) {
+// inlineColumnTypes returns the type of every column of schema that is not an
+// int, keyed by table.column.
+func inlineColumnTypes(schema *parser.Schema) map[string]string {
+	types := make(map[string]string)
+	for _, table := range schema.Tables {
+		for _, c := range table.Columns {
+			if c.Type != "int" {
+				types[table.Name+"."+c.Name] = c.Type
+			}
+		}
+	}
+	return types
+}
+
+// sortEnumsByNameAndValues orders enums by name, then values, so a test can
+// list two entries of one name in a fixed order.
+var sortEnumsByNameAndValues = cmpopts.SortSlices(func(a, b parser.Enum) bool {
+	if a.Name != b.Name {
+		return a.Name < b.Name
+	}
+	return strings.Join(a.Values, ",") < strings.Join(b.Values, ",")
+})
+
+// TestInlineEnumOrSetFollowsRenameAndDrop covers RENAME and DROP on inline
+// ENUM and SET columns. The entry takes the name built from the current table
+// and column names, as introspection names it, and goes with its column or
+// table, so a column re-added under the old name registers the only entry of
+// that name.
+func TestInlineEnumOrSetFollowsRenameAndDrop(t *testing.T) {
 	tests := []struct {
 		name      string
 		sql       string
+		wantTypes map[string]string
 		wantEnums []parser.Enum
+		wantSets  []parser.Set
 	}{
 		{
-			name: "RENAME COLUMN then ADD COLUMN under the old name",
-			sql:  "CREATE TABLE users (id INT PRIMARY KEY, role ENUM('a','b') NOT NULL); ALTER TABLE users RENAME COLUMN role TO kind; ALTER TABLE users ADD COLUMN role ENUM('x') NOT NULL; ALTER TABLE users MODIFY kind ENUM('a','b','c') NOT NULL;",
-			wantEnums: []parser.Enum{
-				{Name: "users_kind_enum", Values: []string{"a", "b", "c"}},
-				{Name: "users_role_enum", Values: []string{"a", "b"}},
-				{Name: "users_role_enum", Values: []string{"x"}},
-			},
+			name:      "RENAME COLUMN",
+			sql:       "CREATE TABLE users (id INT PRIMARY KEY, role ENUM('a','b') NOT NULL, tags SET('p','q')); ALTER TABLE users RENAME COLUMN role TO kind, RENAME COLUMN tags TO labels;",
+			wantTypes: map[string]string{"users.kind": "users__kind_enum", "users.labels": "users__labels_set"},
+			wantEnums: []parser.Enum{{Name: "users__kind_enum", Values: []string{"a", "b"}}},
+			wantSets:  []parser.Set{{Name: "users__labels_set", Values: []string{"p", "q"}}},
 		},
 		{
-			name: "RENAME TABLE then CREATE TABLE under the old name",
-			sql:  "CREATE TABLE users (id INT PRIMARY KEY, role ENUM('a','b') NOT NULL); RENAME TABLE users TO accounts; CREATE TABLE users (id INT PRIMARY KEY, role ENUM('x') NOT NULL); ALTER TABLE users MODIFY role ENUM('x','y') NOT NULL;",
-			wantEnums: []parser.Enum{
-				{Name: "users_role_enum", Values: []string{"a", "b"}},
-				{Name: "users_role_enum", Values: []string{"x"}},
-				{Name: "users_role_enum", Values: []string{"x", "y"}},
-			},
+			name:      "RENAME COLUMN then ADD COLUMN under the old name, then MODIFY the renamed column",
+			sql:       "CREATE TABLE users (id INT PRIMARY KEY, role ENUM('a','b') NOT NULL); ALTER TABLE users RENAME COLUMN role TO kind; ALTER TABLE users ADD COLUMN role ENUM('x') NOT NULL; ALTER TABLE users MODIFY kind ENUM('a','b','c') NOT NULL;",
+			wantTypes: map[string]string{"users.kind": "users__kind_enum", "users.role": "users__role_enum"},
+			wantEnums: []parser.Enum{{Name: "users__kind_enum", Values: []string{"a", "b", "c"}}, {Name: "users__role_enum", Values: []string{"x"}}},
+		},
+		{
+			name:      "RENAME COLUMN swapping two ENUM columns",
+			sql:       "CREATE TABLE users (id INT PRIMARY KEY, a ENUM('1') NOT NULL, b ENUM('2') NOT NULL); ALTER TABLE users RENAME COLUMN a TO tmp, RENAME COLUMN b TO a, RENAME COLUMN tmp TO b;",
+			wantTypes: map[string]string{"users.a": "users__a_enum", "users.b": "users__b_enum"},
+			wantEnums: []parser.Enum{{Name: "users__a_enum", Values: []string{"2"}}, {Name: "users__b_enum", Values: []string{"1"}}},
+		},
+		{
+			name:      "CHANGE COLUMN renaming to VARCHAR, then ADD COLUMN under the old name",
+			sql:       "CREATE TABLE users (id INT PRIMARY KEY, role ENUM('a','b') NOT NULL); ALTER TABLE users CHANGE COLUMN role kind VARCHAR(10) NOT NULL; ALTER TABLE users ADD COLUMN role ENUM('x') NOT NULL;",
+			wantTypes: map[string]string{"users.kind": "varchar(10)", "users.role": "users__role_enum"},
+			wantEnums: []parser.Enum{{Name: "users__role_enum", Values: []string{"x"}}},
+		},
+		{
+			name:      "ALTER TABLE RENAME TO",
+			sql:       "CREATE TABLE users (id INT PRIMARY KEY, role ENUM('a','b') NOT NULL, tags SET('p','q')); ALTER TABLE users RENAME TO people;",
+			wantTypes: map[string]string{"people.role": "people__role_enum", "people.tags": "people__tags_set"},
+			wantEnums: []parser.Enum{{Name: "people__role_enum", Values: []string{"a", "b"}}},
+			wantSets:  []parser.Set{{Name: "people__tags_set", Values: []string{"p", "q"}}},
+		},
+		{
+			name:      "ALTER TABLE RENAME TO its own name",
+			sql:       "CREATE TABLE users (id INT PRIMARY KEY, role ENUM('a','b') NOT NULL); ALTER TABLE users RENAME TO users;",
+			wantTypes: map[string]string{"users.role": "users__role_enum"},
+			wantEnums: []parser.Enum{{Name: "users__role_enum", Values: []string{"a", "b"}}},
+		},
+		{
+			name:      "RENAME TABLE then CREATE TABLE under the old name, then MODIFY",
+			sql:       "CREATE TABLE users (id INT PRIMARY KEY, role ENUM('a','b') NOT NULL); RENAME TABLE users TO people; CREATE TABLE users (id INT PRIMARY KEY, role ENUM('x') NOT NULL); ALTER TABLE users MODIFY role ENUM('x','y') NOT NULL;",
+			wantTypes: map[string]string{"people.role": "people__role_enum", "users.role": "users__role_enum"},
+			wantEnums: []parser.Enum{{Name: "people__role_enum", Values: []string{"a", "b"}}, {Name: "users__role_enum", Values: []string{"x", "y"}}},
+		},
+		{
+			name: "DROP COLUMN",
+			sql:  "CREATE TABLE users (id INT PRIMARY KEY, role ENUM('a','b') NOT NULL, tags SET('p','q')); ALTER TABLE users DROP COLUMN role, DROP COLUMN tags;",
+		},
+		{
+			name:      "DROP COLUMN then ADD COLUMN under the same name",
+			sql:       "CREATE TABLE users (id INT PRIMARY KEY, role ENUM('a','b') NOT NULL); ALTER TABLE users DROP COLUMN role; ALTER TABLE users ADD COLUMN role ENUM('x','y') NOT NULL;",
+			wantTypes: map[string]string{"users.role": "users__role_enum"},
+			wantEnums: []parser.Enum{{Name: "users__role_enum", Values: []string{"x", "y"}}},
+		},
+		{
+			name:      "DROP COLUMN then RENAME COLUMN a VARCHAR column to its name",
+			sql:       "CREATE TABLE users (id INT PRIMARY KEY, role ENUM('a','b') NOT NULL, label VARCHAR(10)); ALTER TABLE users DROP COLUMN role; ALTER TABLE users RENAME COLUMN label TO role;",
+			wantTypes: map[string]string{"users.role": "varchar(10)"},
+		},
+		{
+			name: "DROP TABLE",
+			sql:  "CREATE TABLE users (id INT PRIMARY KEY, role ENUM('a','b') NOT NULL, tags SET('p','q')); DROP TABLE users;",
+		},
+		{
+			name:      "DROP TABLE then CREATE TABLE under the same name",
+			sql:       "CREATE TABLE users (id INT PRIMARY KEY, role ENUM('a','b') NOT NULL, tags SET('p','q')); DROP TABLE users; CREATE TABLE users (id INT PRIMARY KEY, role ENUM('x') NOT NULL);",
+			wantTypes: map[string]string{"users.role": "users__role_enum"},
+			wantEnums: []parser.Enum{{Name: "users__role_enum", Values: []string{"x"}}},
 		},
 	}
-	sortEnums := cmpopts.SortSlices(func(a, b parser.Enum) bool {
-		if a.Name != b.Name {
-			return a.Name < b.Name
-		}
-		return strings.Join(a.Values, ",") < strings.Join(b.Values, ",")
-	})
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			p := newParser(t)
 			if err := p.Parse("test.sql", []byte(tt.sql)); err != nil {
 				t.Fatalf("Parse() error: %v", err)
 			}
-			if diff := cmp.Diff(tt.wantEnums, p.Schema().Enums, sortEnums); diff != "" {
+			schema := p.Schema()
+			if diff := cmp.Diff(tt.wantTypes, inlineColumnTypes(schema), cmpopts.EquateEmpty()); diff != "" {
+				t.Errorf("Parse(%q) column types mismatch (-want +got):\n%s", tt.sql, diff)
+			}
+			if diff := cmp.Diff(tt.wantEnums, schema.Enums, sortEnumsByNameAndValues, cmpopts.EquateEmpty()); diff != "" {
 				t.Errorf("Parse(%q) enums mismatch (-want +got):\n%s", tt.sql, diff)
+			}
+			if diff := cmp.Diff(tt.wantSets, schema.Sets, cmpopts.EquateEmpty()); diff != "" {
+				t.Errorf("Parse(%q) sets mismatch (-want +got):\n%s", tt.sql, diff)
+			}
+		})
+	}
+}
+
+// TestInlineEnumNameCollision covers two columns whose inline ENUM names
+// collide: a.b_c and a_b.c share the Go type name ABCEnum, and a.b__c and
+// a__b.c share the name a__b__c_enum. Each column keeps its own values through
+// MODIFY, and renaming or dropping one of them resolves the collision.
+func TestInlineEnumNameCollision(t *testing.T) {
+	const (
+		goName  = "CREATE TABLE a (id INT PRIMARY KEY, b_c ENUM('1','2') NOT NULL); CREATE TABLE a_b (id INT PRIMARY KEY, c ENUM('3','4') NOT NULL); "
+		sqlName = "CREATE TABLE a (id INT PRIMARY KEY, b__c ENUM('1') NOT NULL); CREATE TABLE a__b (id INT PRIMARY KEY, c ENUM('2') NOT NULL); "
+	)
+	tests := []struct {
+		name      string
+		sql       string
+		wantTypes map[string]string
+		wantEnums []parser.Enum
+	}{
+		{
+			name:      "Go name: RENAME COLUMN",
+			sql:       goName + "ALTER TABLE a_b RENAME COLUMN c TO d;",
+			wantTypes: map[string]string{"a.b_c": "a__b_c_enum", "a_b.d": "a_b__d_enum"},
+			wantEnums: []parser.Enum{{Name: "a__b_c_enum", Values: []string{"1", "2"}}, {Name: "a_b__d_enum", Values: []string{"3", "4"}}},
+		},
+		{
+			name:      "Go name: DROP COLUMN",
+			sql:       goName + "ALTER TABLE a_b DROP COLUMN c;",
+			wantTypes: map[string]string{"a.b_c": "a__b_c_enum"},
+			wantEnums: []parser.Enum{{Name: "a__b_c_enum", Values: []string{"1", "2"}}},
+		},
+		{
+			name:      "SQL name: MODIFY",
+			sql:       sqlName + "ALTER TABLE a MODIFY b__c ENUM('1','3') NOT NULL;",
+			wantTypes: map[string]string{"a.b__c": "a__b__c_enum", "a__b.c": "a__b__c_enum"},
+			wantEnums: []parser.Enum{{Name: "a__b__c_enum", Values: []string{"1", "3"}}, {Name: "a__b__c_enum", Values: []string{"2"}}},
+		},
+		{
+			name:      "SQL name: RENAME COLUMN",
+			sql:       sqlName + "ALTER TABLE a__b RENAME COLUMN c TO d;",
+			wantTypes: map[string]string{"a.b__c": "a__b__c_enum", "a__b.d": "a__b__d_enum"},
+			wantEnums: []parser.Enum{{Name: "a__b__c_enum", Values: []string{"1"}}, {Name: "a__b__d_enum", Values: []string{"2"}}},
+		},
+		{
+			name:      "SQL name: DROP COLUMN",
+			sql:       sqlName + "ALTER TABLE a DROP COLUMN b__c;",
+			wantTypes: map[string]string{"a__b.c": "a__b__c_enum"},
+			wantEnums: []parser.Enum{{Name: "a__b__c_enum", Values: []string{"2"}}},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			p := newParser(t)
+			if err := p.Parse("test.sql", []byte(tt.sql)); err != nil {
+				t.Fatalf("Parse() error: %v", err)
+			}
+			schema := p.Schema()
+			if diff := cmp.Diff(tt.wantTypes, inlineColumnTypes(schema)); diff != "" {
+				t.Errorf("Parse(%q) column types mismatch (-want +got):\n%s", tt.sql, diff)
+			}
+			if diff := cmp.Diff(tt.wantEnums, schema.Enums, sortEnumsByNameAndValues); diff != "" {
+				t.Errorf("Parse(%q) enums mismatch (-want +got):\n%s", tt.sql, diff)
+			}
+		})
+	}
+}
+
+// TestSeededInlineEnumOrSetFollowsRenameAndDrop covers `input.source: both`:
+// DDL that renames or drops an introspected inline ENUM or SET column updates
+// its entry as it does a parsed column's, and an entry no table column
+// declares, such as a view's own, stays.
+func TestSeededInlineEnumOrSetFollowsRenameAndDrop(t *testing.T) {
+	seed := func() *parser.Schema {
+		return &parser.Schema{
+			Tables: []parser.Table{
+				{Name: "a", Columns: []parser.Column{{Name: "id", Type: "int"}, {Name: "b__c", Type: "a__b__c_enum"}}},
+				{Name: "a__b", Columns: []parser.Column{{Name: "id", Type: "int"}, {Name: "c", Type: "a__b__c_enum"}}},
+				{Name: "users", Columns: []parser.Column{{Name: "id", Type: "int"}, {Name: "role", Type: "users__role_enum"}, {Name: "tags", Type: "users__tags_set"}}},
+			},
+			Enums: []parser.Enum{
+				{Name: "a__b__c_enum", Values: []string{"1"}},
+				{Name: "a__b__c_enum", Values: []string{"2"}},
+				{Name: "users__role_enum", Values: []string{"a", "b"}},
+				{Name: "v__role_enum", Values: []string{"a"}},
+			},
+			Sets: []parser.Set{{Name: "users__tags_set", Values: []string{"p", "q"}}},
+		}
+	}
+	tests := []struct {
+		name      string
+		sql       string
+		wantTypes map[string]string
+		wantEnums []parser.Enum
+		wantSets  []parser.Set
+	}{
+		{
+			name:      "RENAME COLUMN",
+			sql:       "ALTER TABLE users RENAME COLUMN role TO kind, RENAME COLUMN tags TO labels;",
+			wantTypes: map[string]string{"a.b__c": "a__b__c_enum", "a__b.c": "a__b__c_enum", "users.kind": "users__kind_enum", "users.labels": "users__labels_set"},
+			wantEnums: []parser.Enum{
+				{Name: "a__b__c_enum", Values: []string{"1"}},
+				{Name: "a__b__c_enum", Values: []string{"2"}},
+				{Name: "users__kind_enum", Values: []string{"a", "b"}},
+				{Name: "v__role_enum", Values: []string{"a"}},
+			},
+			wantSets: []parser.Set{{Name: "users__labels_set", Values: []string{"p", "q"}}},
+		},
+		{
+			name:      "RENAME TABLE and DROP COLUMN on a shared name",
+			sql:       "RENAME TABLE users TO people; ALTER TABLE a DROP COLUMN b__c;",
+			wantTypes: map[string]string{"a__b.c": "a__b__c_enum", "people.role": "people__role_enum", "people.tags": "people__tags_set"},
+			wantEnums: []parser.Enum{
+				{Name: "a__b__c_enum", Values: []string{"2"}},
+				{Name: "people__role_enum", Values: []string{"a", "b"}},
+				{Name: "v__role_enum", Values: []string{"a"}},
+			},
+			wantSets: []parser.Set{{Name: "people__tags_set", Values: []string{"p", "q"}}},
+		},
+		{
+			name:      "DROP TABLE",
+			sql:       "DROP TABLE users; ALTER TABLE a__b RENAME COLUMN c TO d;",
+			wantTypes: map[string]string{"a.b__c": "a__b__c_enum", "a__b.d": "a__b__d_enum"},
+			wantEnums: []parser.Enum{
+				{Name: "a__b__c_enum", Values: []string{"1"}},
+				{Name: "a__b__d_enum", Values: []string{"2"}},
+				{Name: "v__role_enum", Values: []string{"a"}},
+			},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			p := newParser(t)
+			p.Seed(seed())
+			if err := p.Parse("test.sql", []byte(tt.sql)); err != nil {
+				t.Fatalf("Parse() error: %v", err)
+			}
+			schema := p.Schema()
+			if diff := cmp.Diff(tt.wantTypes, inlineColumnTypes(schema)); diff != "" {
+				t.Errorf("Parse(%q) after Seed column types mismatch (-want +got):\n%s", tt.sql, diff)
+			}
+			if diff := cmp.Diff(tt.wantEnums, schema.Enums, sortEnumsByNameAndValues); diff != "" {
+				t.Errorf("Parse(%q) after Seed enums mismatch (-want +got):\n%s", tt.sql, diff)
+			}
+			if diff := cmp.Diff(tt.wantSets, schema.Sets, cmpopts.EquateEmpty()); diff != "" {
+				t.Errorf("Parse(%q) after Seed sets mismatch (-want +got):\n%s", tt.sql, diff)
 			}
 		})
 	}
@@ -364,16 +658,16 @@ func TestRedefineColumnReplacesSeededInlineEnum(t *testing.T) {
 			Name: "users",
 			Columns: []parser.Column{
 				{Name: "id", Type: "int", PrimaryKey: true},
-				{Name: "role", Type: "users_role_enum"},
+				{Name: "role", Type: "users__role_enum"},
 			},
 		}},
-		Enums: []parser.Enum{{Name: "users_role_enum", Values: []string{"a", "b"}}},
+		Enums: []parser.Enum{{Name: "users__role_enum", Values: []string{"a", "b"}}},
 	})
 	sql := "ALTER TABLE users MODIFY role ENUM('a','b','c') NOT NULL;"
 	if err := p.Parse("test.sql", []byte(sql)); err != nil {
 		t.Fatalf("Parse() error: %v", err)
 	}
-	want := []parser.Enum{{Name: "users_role_enum", Values: []string{"a", "b", "c"}}}
+	want := []parser.Enum{{Name: "users__role_enum", Values: []string{"a", "b", "c"}}}
 	if diff := cmp.Diff(want, p.Schema().Enums); diff != "" {
 		t.Errorf("Parse(%q) after Seed enums mismatch (-want +got):\n%s", sql, diff)
 	}
@@ -460,6 +754,255 @@ func TestInlineComment(t *testing.T) {
 	}
 	if cols["name"].Comment != "User display name" {
 		t.Errorf("name comment = %q, want %q", cols["name"].Comment, "User display name")
+	}
+}
+
+func TestGeneratedColumns(t *testing.T) {
+	tests := []struct {
+		name string
+		sql  string
+		want parser.Column
+	}{
+		{
+			name: "stored generated column",
+			sql:  "CREATE TABLE t (qty INT, total INT GENERATED ALWAYS AS (qty * 2) STORED);",
+			want: parser.Column{Name: "total", Type: "int", Nullable: true, GeneratedExpr: "qty * 2", GeneratedStorage: "STORED"},
+		},
+		{
+			name: "virtual generated column",
+			sql:  "CREATE TABLE t (qty INT, total INT GENERATED ALWAYS AS (qty * 2) VIRTUAL);",
+			want: parser.Column{Name: "total", Type: "int", Nullable: true, GeneratedExpr: "qty * 2", GeneratedStorage: "VIRTUAL"},
+		},
+		{
+			name: "storage defaults to virtual",
+			sql:  "CREATE TABLE t (qty INT, total INT GENERATED ALWAYS AS (qty + 1));",
+			want: parser.Column{Name: "total", Type: "int", Nullable: true, GeneratedExpr: "qty + 1", GeneratedStorage: "VIRTUAL"},
+		},
+		{
+			name: "shorthand AS",
+			sql:  "CREATE TABLE t (qty INT, total INT AS (qty + 1));",
+			want: parser.Column{Name: "total", Type: "int", Nullable: true, GeneratedExpr: "qty + 1", GeneratedStorage: "VIRTUAL"},
+		},
+		{
+			name: "shorthand AS stored not null",
+			sql:  "CREATE TABLE t (qty INT, total INT AS (abs(qty)) STORED NOT NULL);",
+			want: parser.Column{Name: "total", Type: "int", GeneratedExpr: "abs(qty)", GeneratedStorage: "STORED"},
+		},
+		{
+			name: "generated column added by alter table",
+			sql: `CREATE TABLE t (qty INT);
+				ALTER TABLE t ADD COLUMN total INT AS (qty * 2) STORED;`,
+			want: parser.Column{Name: "total", Type: "int", Nullable: true, GeneratedExpr: "qty * 2", GeneratedStorage: "STORED"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			p := newParser(t)
+			if err := p.Parse("test.sql", []byte(tt.sql)); err != nil {
+				t.Fatalf("Parse() error: %v", err)
+			}
+			got := parser.ColumnByName(&p.Schema().Tables[0], "total")
+			if got == nil {
+				t.Fatal("column total not found")
+			}
+			if diff := cmp.Diff(tt.want, *got); diff != "" {
+				t.Errorf("column total mismatch (-want +got):\n%s", diff)
+			}
+		})
+	}
+}
+
+func TestNormalizeExpr(t *testing.T) {
+	tests := []struct {
+		name    string
+		expr    string
+		want    string
+		wantErr bool
+	}{
+		{name: "parentheses and backticks dropped", expr: "(`qty` * 2)", want: "qty * 2"},
+		{name: "function call", expr: "abs(`qty`)", want: "abs(qty)"},
+		{name: "reserved word keeps its backticks", expr: "(`order` + 1)", want: "`order` + 1"},
+		{name: "already normalized", expr: "qty + 1", want: "qty + 1"},
+		{name: "charset introducer dropped", expr: "concat(`s`,_latin1'it\\'s')", want: "concat(s, 'it\\'s')"},
+		{name: "introducer on a lone literal", expr: "_utf8mb4'{}'", want: "'{}'"},
+		{name: "unary minus in parentheses", expr: "((`price` > 1) or (`price` < -(1)))", want: "price > 1 or price < -1"},
+		{name: "keyword function", expr: "CURRENT_TIMESTAMP", want: "current_timestamp()"},
+		{name: "keyword function with precision", expr: "CURRENT_TIMESTAMP(3)", want: "current_timestamp(3)"},
+		{name: "now", expr: "NOW()", want: "current_timestamp()"},
+		{name: "now with precision", expr: "now(3)", want: "current_timestamp(3)"},
+		{name: "localtime", expr: "LOCALTIME", want: "current_timestamp()"},
+		{name: "localtimestamp with precision", expr: "LOCALTIMESTAMP(6)", want: "current_timestamp(6)"},
+		{name: "now inside an expression", expr: "(now() + interval 1 day)", want: "current_timestamp() + interval 1 day"},
+		{name: "curdate", expr: "curdate()", want: "current_date()"},
+		{name: "current_date", expr: "CURRENT_DATE", want: "current_date()"},
+		{name: "curtime with precision", expr: "CURTIME(2)", want: "current_time(2)"},
+		{name: "utc_timestamp is not a synonym", expr: "UTC_TIMESTAMP", want: "utc_timestamp()"},
+		{name: "bit literal", expr: "b'101'", want: "0b101"},
+		{name: "json operators", expr: "json_unquote(json_extract(`doc`,_utf8mb4'$.a'))", want: "json_unquote(json_extract(doc, '$.a'))"},
+		{name: "incomplete expression", expr: "qty *", wantErr: true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := mysql.NormalizeExpr(tt.expr)
+			if (err != nil) != tt.wantErr {
+				t.Fatalf("NormalizeExpr(%q) error = %v, wantErr %t", tt.expr, err, tt.wantErr)
+			}
+			if got != tt.want {
+				t.Errorf("NormalizeExpr(%q) = %q, want %q", tt.expr, got, tt.want)
+			}
+		})
+	}
+}
+
+// MySQL 8.0.19+ stores an integer type without its display width, except
+// tinyint(1) and a ZEROFILL type, which is also UNSIGNED.
+func TestIntegerDisplayWidth(t *testing.T) {
+	tests := []struct {
+		declared string
+		want     string
+	}{
+		{declared: "INT(11)", want: "int"},
+		{declared: "BIGINT(20) UNSIGNED", want: "bigint unsigned"},
+		{declared: "SMALLINT(6)", want: "smallint"},
+		{declared: "MEDIUMINT(9)", want: "mediumint"},
+		{declared: "TINYINT(4)", want: "tinyint"},
+		{declared: "TINYINT(1)", want: "tinyint(1)"},
+		{declared: "TINYINT(1) UNSIGNED", want: "tinyint unsigned"},
+		{declared: "INT UNSIGNED", want: "int unsigned"},
+		{declared: "INT(5) ZEROFILL", want: "int(5) unsigned zerofill"},
+		{declared: "INT(5) UNSIGNED ZEROFILL", want: "int(5) unsigned zerofill"},
+		{declared: "INT ZEROFILL", want: "int(10) unsigned zerofill"},
+		{declared: "TINYINT ZEROFILL", want: "tinyint(3) unsigned zerofill"},
+		{declared: "BIGINT ZEROFILL", want: "bigint(20) unsigned zerofill"},
+		{declared: "DECIMAL(10,2)", want: "decimal(10,2)"},
+		{declared: "VARCHAR(20)", want: "varchar(20)"},
+		{declared: "BIT(8)", want: "bit(8)"},
+		{declared: "DOUBLE ZEROFILL", want: "double unsigned zerofill"},
+		// A synonym takes the type the catalog stores it as.
+		{declared: "BOOL", want: "tinyint(1)"},
+		{declared: "BOOLEAN", want: "tinyint(1)"},
+		{declared: "INTEGER", want: "int"},
+		{declared: "INTEGER(11) UNSIGNED", want: "int unsigned"},
+		{declared: "INTEGER ZEROFILL", want: "int(10) unsigned zerofill"},
+		{declared: "NUMERIC(8,3)", want: "decimal(8,3)"},
+		{declared: "NUMERIC", want: "decimal(10,0)"},
+		{declared: "DECIMAL", want: "decimal(10,0)"},
+		{declared: "DECIMAL(5)", want: "decimal(5,0)"},
+		{declared: "REAL", want: "double"},
+		{declared: "REAL(8,2)", want: "double(8,2)"},
+		{declared: "FLOAT(24)", want: "float"},
+		{declared: "FLOAT(25)", want: "double"},
+		{declared: "FLOAT(7,3)", want: "float(7,3)"},
+		{declared: "FLOAT4", want: "float"},
+		{declared: "FLOAT8", want: "double"},
+		{declared: "CHAR", want: "char(1)"},
+		{declared: "BINARY", want: "binary(1)"},
+		{declared: "BIT", want: "bit(1)"},
+		{declared: "YEAR(4)", want: "year"},
+		// ZEROFILL implies UNSIGNED on every numeric type.
+		{declared: "DOUBLE UNSIGNED ZEROFILL", want: "double unsigned zerofill"},
+		{declared: "DECIMAL(5,2) ZEROFILL", want: "decimal(5,2) unsigned zerofill"},
+		{declared: "FLOAT(7,3) UNSIGNED ZEROFILL", want: "float(7,3) unsigned zerofill"},
+		{declared: "REAL UNSIGNED ZEROFILL", want: "double unsigned zerofill"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.declared, func(t *testing.T) {
+			p := newParser(t)
+			if err := p.Parse("test.sql", []byte("CREATE TABLE t (c "+tt.declared+");")); err != nil {
+				t.Fatalf("Parse() error: %v", err)
+			}
+			if got := p.Schema().Tables[0].Columns[0].Type; got != tt.want {
+				t.Errorf("type of %s = %q, want %q", tt.declared, got, tt.want)
+			}
+		})
+	}
+}
+
+// NormalizeType reads INFORMATION_SCHEMA.COLUMNS.COLUMN_TYPE, which a server
+// older than MySQL 8.0.19 writes with display widths.
+func TestNormalizeType(t *testing.T) {
+	tests := []struct {
+		columnType string
+		want       string
+	}{
+		{columnType: "int", want: "int"},
+		{columnType: "int(11)", want: "int"},
+		{columnType: "bigint(20) unsigned", want: "bigint unsigned"},
+		{columnType: "tinyint(1)", want: "tinyint(1)"},
+		{columnType: "tinyint(1) unsigned", want: "tinyint unsigned"},
+		{columnType: "tinyint(4)", want: "tinyint"},
+		{columnType: "int(5) unsigned zerofill", want: "int(5) unsigned zerofill"},
+		{columnType: "INT(11) UNSIGNED", want: "int unsigned"},
+		{columnType: "decimal(10,2)", want: "decimal(10,2)"},
+		{columnType: "VarChar(255)", want: "varchar(255)"},
+		{columnType: "bit(1)", want: "bit(1)"},
+		// The catalog's own forms are kept.
+		{columnType: "decimal(10,0)", want: "decimal(10,0)"},
+		{columnType: "double unsigned zerofill", want: "double unsigned zerofill"},
+		{columnType: "float(7,3) unsigned zerofill", want: "float(7,3) unsigned zerofill"},
+		{columnType: "char(1)", want: "char(1)"},
+		{columnType: "year", want: "year"},
+		{columnType: "double", want: "double"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.columnType, func(t *testing.T) {
+			if got := mysql.NormalizeType(tt.columnType); got != tt.want {
+				t.Errorf("NormalizeType(%q) = %q, want %q", tt.columnType, got, tt.want)
+			}
+		})
+	}
+}
+
+// The parser writes a default, CHECK or generated expression as the
+// normalized catalog text reads, so both sources agree.
+func TestExpressionText(t *testing.T) {
+	const ddl = `CREATE TABLE t (
+		a int DEFAULT NULL,
+		b varchar(10) DEFAULT _utf8mb4'x',
+		c varchar(20) AS (concat(_latin1'n-', b)),
+		d varchar(10) NOT NULL DEFAULT '',
+		CONSTRAINT t_b CHECK (b <> _latin1'q')
+	);`
+	p := newParser(t)
+	if err := p.Parse("test.sql", []byte(ddl)); err != nil {
+		t.Fatalf("Parse() error: %v", err)
+	}
+	table := &p.Schema().Tables[0]
+
+	defaults := make(map[string]string)
+	for _, c := range table.Columns {
+		defaults[c.Name] = c.Default
+	}
+	wantDefaults := map[string]string{"a": "", "b": "'x'", "c": "", "d": "''"}
+	if diff := cmp.Diff(wantDefaults, defaults); diff != "" {
+		t.Errorf("defaults mismatch (-want +got):\n%s", diff)
+	}
+	if got := parser.ColumnByName(table, "c").GeneratedExpr; got != "concat('n-', b)" {
+		t.Errorf("c GeneratedExpr = %q, want %q", got, "concat('n-', b)")
+	}
+	if c := findConstraint(table.Constraints, "t_b", parser.Check); c == nil || c.CheckExpression != "b != 'q'" {
+		t.Errorf("CHECK t_b = %+v, want CheckExpression %q", c, "b != 'q'")
+	}
+}
+
+func TestQuoteLiteral(t *testing.T) {
+	tests := []struct {
+		value string
+		want  string
+	}{
+		{value: "", want: "''"},
+		{value: "active", want: "'active'"},
+		{value: "it's", want: `'it\'s'`},
+		{value: `a\b`, want: `'a\\b'`},
+		{value: "r,w", want: "'r,w'"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.value, func(t *testing.T) {
+			if got := mysql.QuoteLiteral(tt.value); got != tt.want {
+				t.Errorf("QuoteLiteral(%q) = %q, want %q", tt.value, got, tt.want)
+			}
+		})
 	}
 }
 
@@ -628,7 +1171,7 @@ func TestAlterTableAddDropConstraint(t *testing.T) {
 		cols[c.Name] = c
 	}
 	if cols["user_id"].FKReference != nil {
-		t.Error("user_id FKReference should be nil after DROP CONSTRAINT FK")
+		t.Error("user_id FKReference should be nil after DROP FOREIGN KEY")
 	}
 
 	// Drop the CHECK.
@@ -673,7 +1216,8 @@ func TestTableWithNoPK(t *testing.T) {
 
 // TestDropPrimaryKey checks that ALTER TABLE … DROP PRIMARY KEY leaves no
 // column flagged as a key however the key was declared, and that the former
-// key columns stay NOT NULL, as MySQL leaves them.
+// key columns stay NOT NULL, as MySQL leaves them. DROP INDEX or DROP KEY
+// `PRIMARY`, in any letter case, drops the key the same way.
 func TestDropPrimaryKey(t *testing.T) {
 	tests := []struct {
 		name string
@@ -740,6 +1284,36 @@ func TestDropPrimaryKey(t *testing.T) {
 			sql:  "CREATE TABLE users (id INT PRIMARY KEY, name TEXT); ALTER TABLE users MODIFY id BIGINT, DROP PRIMARY KEY;",
 			want: []string{"users.id bigint null", "users.name text null"},
 		},
+		{
+			name: "table-level primary key dropped by DROP INDEX PRIMARY",
+			sql:  "CREATE TABLE users (id INT, name TEXT, PRIMARY KEY (id)); ALTER TABLE users DROP INDEX `PRIMARY`;",
+			want: []string{"users.id int", "users.name text null"},
+		},
+		{
+			name: "inline primary key dropped by DROP KEY in lower case",
+			sql:  "CREATE TABLE users (id INT PRIMARY KEY, name TEXT); ALTER TABLE users DROP KEY `primary`;",
+			want: []string{"users.id int", "users.name text null"},
+		},
+		{
+			name: "composite primary key dropped by DROP INDEX PRIMARY",
+			sql:  "CREATE TABLE post_tags (post_id INT, tag_id INT, PRIMARY KEY (post_id, tag_id)); ALTER TABLE post_tags DROP INDEX `PRIMARY`;",
+			want: []string{"post_tags.post_id int", "post_tags.tag_id int"},
+		},
+		{
+			name: "primary key dropped by standalone DROP INDEX PRIMARY ON",
+			sql:  "CREATE TABLE users (id INT, name TEXT, PRIMARY KEY (id)); DROP INDEX `PRIMARY` ON users;",
+			want: []string{"users.id int", "users.name text null"},
+		},
+		{
+			name: "primary key replaced with ADD before DROP INDEX PRIMARY",
+			sql:  "CREATE TABLE users (id INT PRIMARY KEY, code INT NOT NULL); ALTER TABLE users ADD PRIMARY KEY (code), DROP INDEX `PRIMARY`;",
+			want: []string{"users.id int", "users.code int pk"},
+		},
+		{
+			name: "former key column redefined nullable before DROP INDEX PRIMARY",
+			sql:  "CREATE TABLE users (id INT PRIMARY KEY, name TEXT); ALTER TABLE users MODIFY id BIGINT, DROP INDEX `PRIMARY`;",
+			want: []string{"users.id bigint null", "users.name text null"},
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -749,15 +1323,28 @@ func TestDropPrimaryKey(t *testing.T) {
 			}
 			var got []string
 			for _, tbl := range p.Schema().Tables {
+				var flagged, keyed []string
 				for _, col := range tbl.Columns {
 					s := tbl.Name + "." + col.Name + " " + col.Type
 					if col.PrimaryKey {
 						s += " pk"
+						flagged = append(flagged, col.Name)
 					}
 					if col.Nullable {
 						s += " null"
 					}
 					got = append(got, s)
+				}
+				for _, c := range tbl.Constraints {
+					if c.Type == parser.PrimaryKey {
+						keyed = append(keyed, c.Columns...)
+					}
+				}
+				// The PRIMARY KEY constraint goes with the column flags.
+				slices.Sort(flagged)
+				slices.Sort(keyed)
+				if diff := cmp.Diff(flagged, keyed); diff != "" {
+					t.Errorf("Parse(%q) table %s primary-key constraint columns differ from pk columns (-flagged +constraint):\n%s", tt.sql, tbl.Name, diff)
 				}
 			}
 			if diff := cmp.Diff(tt.want, got); diff != "" {
@@ -925,6 +1512,8 @@ func TestForeignKeyBackingIndexSynthesis(t *testing.T) {
 			want: []wantIdx{{Name: "fk_line", Columns: []string{"order_id", "product_id"}}},
 		},
 		{
+			// Measured on MySQL 8.0: of two identical foreign key indexes the
+			// later one stays.
 			name: "two FKs on same column share one backing index",
 			ddl: `CREATE TABLE audit (
 				id INT PRIMARY KEY,
@@ -932,7 +1521,15 @@ func TestForeignKeyBackingIndexSynthesis(t *testing.T) {
 				CONSTRAINT fk_a FOREIGN KEY (user_id) REFERENCES users(id),
 				CONSTRAINT fk_b FOREIGN KEY (user_id) REFERENCES admins(id)
 			);`,
-			want: []wantIdx{{Name: "fk_a", Columns: []string{"user_id"}}},
+			want: []wantIdx{{Name: "fk_b", Columns: []string{"user_id"}}},
+		},
+		{
+			// Measured on MySQL 8.0.
+			name: "renaming the table to its own name keeps the FK index replaceable",
+			ddl: `CREATE TABLE orders (user_id INT, FOREIGN KEY (user_id) REFERENCES users(id));
+				ALTER TABLE orders RENAME TO orders;
+				ALTER TABLE orders ADD KEY ix (user_id);`,
+			want: []wantIdx{{Name: "ix", Columns: []string{"user_id"}}},
 		},
 	}
 
@@ -1025,6 +1622,65 @@ func TestDropTableCrossFile(t *testing.T) {
 	}
 }
 
+// TestDropTablesTogether mirrors MySQL 8.0 with foreign_key_checks on: one
+// DROP TABLE drops its tables together, so a foreign key between them does
+// not block it, while a reference from a table outside the statement fails
+// the whole statement.
+func TestDropTablesTogether(t *testing.T) {
+	const ab = `CREATE TABLE a (id INT PRIMARY KEY);
+		CREATE TABLE b (id INT PRIMARY KEY, a_id INT, FOREIGN KEY (a_id) REFERENCES a(id));`
+	const abc = ab + `CREATE TABLE c (id INT PRIMARY KEY, a_id INT, FOREIGN KEY (a_id) REFERENCES a(id));`
+	tests := []struct {
+		name    string
+		sql     string
+		wantErr string
+		want    []string // remaining tables
+	}{
+		{name: "parent first", sql: ab + `DROP TABLE a, b;`},
+		{name: "referencing table first", sql: ab + `DROP TABLE b, a;`},
+		{
+			name: "mutual references",
+			sql: `CREATE TABLE a (id INT PRIMARY KEY, b_id INT);
+				CREATE TABLE b (id INT PRIMARY KEY, a_id INT, FOREIGN KEY (a_id) REFERENCES a(id));
+				ALTER TABLE a ADD CONSTRAINT a_b_fk FOREIGN KEY (b_id) REFERENCES b(id);
+				DROP TABLE a, b;`,
+		},
+		{name: "IF EXISTS with a missing table", sql: ab + `DROP TABLE IF EXISTS a, zz, b;`},
+		{
+			name:    "reference from a table outside the statement",
+			sql:     abc + `DROP TABLE a, b;`,
+			wantErr: "drop table: cannot drop table a: column c.a_id references it via foreign key",
+			want:    []string{"a", "b", "c"},
+		},
+		{
+			name:    "reference from a table outside the statement, referencing table first",
+			sql:     abc + `DROP TABLE b, a;`,
+			wantErr: "drop table: cannot drop table a: column c.a_id references it via foreign key",
+			want:    []string{"a", "b", "c"},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			p := newParser(t)
+			err := p.Parse("test.sql", []byte(tt.sql))
+			if tt.wantErr == "" && err != nil {
+				t.Fatalf("Parse() error = %v", err)
+			}
+			if tt.wantErr != "" && (err == nil || !strings.Contains(err.Error(), tt.wantErr)) {
+				t.Fatalf("Parse() error = %v, want %q", err, tt.wantErr)
+			}
+			tables := p.Schema().Tables
+			got := make([]string, 0, len(tables))
+			for _, tbl := range tables {
+				got = append(got, tbl.Name)
+			}
+			if !slices.Equal(got, tt.want) {
+				t.Errorf("remaining tables = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
 func TestDropTableNoReferences(t *testing.T) {
 	p := newParser(t)
 	sql := `
@@ -1073,6 +1729,260 @@ func TestRenameColumnNotFound(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "not found") {
 		t.Errorf("error should mention 'not found', got: %v", err)
+	}
+}
+
+// TestRenameOntoExistingName pins that ALTER TABLE refuses a table or column
+// name already taken, as MySQL 8.0 does (ERROR 1050, ERROR 1060), while a
+// table renamed to its own name and a column renamed to its own name in
+// another case are accepted.
+func TestRenameOntoExistingName(t *testing.T) {
+	tests := []struct {
+		name    string
+		sql     string
+		want    []string
+		wantErr string
+	}{
+		{
+			name:    "a table name another table has",
+			sql:     `CREATE TABLE a (id INT); CREATE TABLE b (id INT); ALTER TABLE a RENAME TO b;`,
+			wantErr: "table b already exists",
+		},
+		{
+			name: "the table's own name",
+			sql:  `CREATE TABLE a (id INT); ALTER TABLE a RENAME TO a;`,
+			want: []string{"a(id)"},
+		},
+		{
+			name:    "a column name another column has in another case",
+			sql:     `CREATE TABLE t (a INT, b INT); ALTER TABLE t RENAME COLUMN a TO B;`,
+			wantErr: "column B already exists in table t",
+		},
+		{
+			name: "a column's own name in another case",
+			sql:  `CREATE TABLE t (a INT, b INT); ALTER TABLE t RENAME COLUMN a TO A;`,
+			want: []string{"t(A, b)"},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			p := newParser(t)
+			err := p.Parse("test.sql", []byte(tt.sql))
+			if tt.wantErr != "" {
+				if err == nil || !strings.Contains(err.Error(), tt.wantErr) {
+					t.Fatalf("Parse() error = %v, want it to contain %q", err, tt.wantErr)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("Parse() error: %v", err)
+			}
+			var got []string
+			for _, tbl := range p.Schema().Tables {
+				var cols []string
+				for _, c := range tbl.Columns {
+					cols = append(cols, c.Name)
+				}
+				got = append(got, tbl.Name+"("+strings.Join(cols, ", ")+")")
+			}
+			if diff := cmp.Diff(tt.want, got); diff != "" {
+				t.Errorf("tables after the rename mismatch (-want +got):\n%s", diff)
+			}
+		})
+	}
+}
+
+// TestAddColumnOntoExistingName pins ADD COLUMN of a name the table already
+// has, in any case, against MySQL 8.0: ERROR 1060 "Duplicate column name
+// 'COUNT'", while a DROP COLUMN anywhere in the same statement runs first.
+func TestAddColumnOntoExistingName(t *testing.T) {
+	const items = "CREATE TABLE items (id BIGINT PRIMARY KEY, count INT);"
+	tests := []struct {
+		name    string
+		sql     string
+		want    []string
+		wantErr string
+	}{
+		{
+			name:    "a column the table has",
+			sql:     items + "ALTER TABLE items ADD COLUMN count INT;",
+			wantErr: "add column count to items: column already exists",
+		},
+		{
+			name:    "a column the table has in another case",
+			sql:     items + "ALTER TABLE items ADD COLUMN COUNT INT;",
+			wantErr: "add column COUNT to items: column already exists",
+		},
+		{
+			name:    "a column the table has in another non-ASCII case",
+			sql:     "CREATE TABLE t (`é` INT, e INT); ALTER TABLE t ADD COLUMN `É` INT;",
+			wantErr: "add column É to t: column already exists",
+		},
+		{
+			name:    "a column the same clause adds",
+			sql:     items + "ALTER TABLE items ADD COLUMN (x INT, X INT);",
+			wantErr: "add column X to items: column already exists",
+		},
+		{
+			name:    "a column the same statement adds",
+			sql:     items + "ALTER TABLE items ADD COLUMN x INT, ADD COLUMN X INT;",
+			wantErr: "add column X to items: column already exists",
+		},
+		{
+			name: "a column the same statement drops later",
+			sql:  items + "ALTER TABLE items ADD COLUMN COUNT BIGINT, DROP COLUMN count;",
+			want: []string{"id bigint", "COUNT bigint"},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			p := newParser(t)
+			err := p.Parse("test.sql", []byte(tt.sql))
+			if tt.wantErr != "" {
+				if err == nil || !strings.Contains(err.Error(), tt.wantErr) {
+					t.Fatalf("Parse() error = %v, want it to contain %q", err, tt.wantErr)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("Parse() error: %v", err)
+			}
+			var got []string
+			for _, c := range p.Schema().Tables[0].Columns {
+				got = append(got, c.Name+" "+c.Type)
+			}
+			if diff := cmp.Diff(tt.want, got); diff != "" {
+				t.Errorf("columns after ADD COLUMN mismatch (-want +got):\n%s", diff)
+			}
+		})
+	}
+}
+
+// TestColumnNameClash pins that a CREATE TABLE naming a column twice, and a
+// CHANGE COLUMN onto a name another column has, are errors, as they are in
+// MySQL (measured on 8.0: ERROR 1060 "Duplicate column name"), with names
+// compared case-insensitively, non-ASCII case included. CHANGE COLUMN onto the
+// column's own name, in any case, is fine.
+func TestColumnNameClash(t *testing.T) {
+	const r = "CREATE TABLE r (id INT PRIMARY KEY, a INT, b INT);"
+	tests := []struct {
+		name    string
+		sql     string
+		want    []string
+		wantErr string
+	}{
+		{
+			name:    "CREATE TABLE with the same name twice",
+			sql:     "CREATE TABLE t (id INT PRIMARY KEY, a INT, a TEXT);",
+			wantErr: "create table t: duplicate column name a",
+		},
+		{
+			name:    "CREATE TABLE with a name in another case",
+			sql:     "CREATE TABLE t (id INT PRIMARY KEY, a INT, A TEXT);",
+			wantErr: "create table t: duplicate column name A",
+		},
+		{
+			name:    "CREATE TABLE with a name in another non-ASCII case",
+			sql:     "CREATE TABLE t (id INT PRIMARY KEY, `é` INT, `É` TEXT);",
+			wantErr: "create table t: duplicate column name É",
+		},
+		{
+			name: "CREATE TABLE with names differing in an accent",
+			sql:  "CREATE TABLE t (id INT PRIMARY KEY, e INT, `É` TEXT);",
+			want: []string{"id int", "e int", "É text"},
+		},
+		{
+			name:    "CHANGE COLUMN onto another column",
+			sql:     r + "ALTER TABLE r CHANGE COLUMN a b BIGINT;",
+			wantErr: "change column a to b in r: column already exists",
+		},
+		{
+			name:    "CHANGE COLUMN onto another column in another case",
+			sql:     r + "ALTER TABLE r CHANGE COLUMN a B BIGINT;",
+			wantErr: "change column a to B in r: column already exists",
+		},
+		{
+			name:    "CHANGE COLUMN onto another column in another non-ASCII case",
+			sql:     "CREATE TABLE t (a INT, `é` INT); ALTER TABLE t CHANGE COLUMN a `É` INT;",
+			wantErr: "change column a to É in t: column already exists",
+		},
+		{
+			name:    "CHANGE COLUMN onto a column the same statement adds",
+			sql:     r + "ALTER TABLE r ADD COLUMN c INT, CHANGE COLUMN a c BIGINT;",
+			wantErr: "change column a to c in r: column already exists",
+		},
+		{
+			name:    "two CHANGE COLUMNs onto one name",
+			sql:     r + "ALTER TABLE r CHANGE COLUMN a c BIGINT, CHANGE COLUMN b c INT;",
+			wantErr: "change column b to c in r: column already exists",
+		},
+		{
+			name: "CHANGE COLUMN onto its own name",
+			sql:  r + "ALTER TABLE r CHANGE COLUMN a a BIGINT;",
+			want: []string{"id int", "a bigint", "b int"},
+		},
+		{
+			name: "CHANGE COLUMN onto its own name in another case",
+			sql:  r + "ALTER TABLE r CHANGE COLUMN A A BIGINT;",
+			want: []string{"id int", "A bigint", "b int"},
+		},
+		{
+			name: "CHANGE COLUMN onto a column the same statement drops",
+			sql:  r + "ALTER TABLE r CHANGE COLUMN a b BIGINT, DROP COLUMN b;",
+			want: []string{"id int", "b bigint"},
+		},
+		{
+			name:    "CHANGE COLUMN of a missing column",
+			sql:     r + "ALTER TABLE r CHANGE COLUMN z b BIGINT;",
+			wantErr: "column z not found in table r",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			p := newParser(t)
+			err := p.Parse("test.sql", []byte(tt.sql))
+			if tt.wantErr != "" {
+				if err == nil || !strings.Contains(err.Error(), tt.wantErr) {
+					t.Fatalf("Parse() error = %v, want it to contain %q", err, tt.wantErr)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("Parse() error: %v", err)
+			}
+			var got []string
+			for _, c := range p.Schema().Tables[0].Columns {
+				got = append(got, c.Name+" "+c.Type)
+			}
+			if diff := cmp.Diff(tt.want, got); diff != "" {
+				t.Errorf("columns mismatch (-want +got):\n%s", diff)
+			}
+		})
+	}
+}
+
+// TestReferenceColumnInAnotherCase pins that a foreign key naming its
+// referenced column in another case follows a rename of that column, as MySQL
+// does (measured on 8.0: REFERENCES rp (B) is stored as `rp` (`b`), and
+// becomes `rp` (`z`) after RENAME COLUMN b TO z).
+func TestReferenceColumnInAnotherCase(t *testing.T) {
+	p := newParser(t)
+	sql := `CREATE TABLE rp (b INT PRIMARY KEY);
+		CREATE TABLE rc (x INT, FOREIGN KEY (x) REFERENCES rp (B));
+		ALTER TABLE rp RENAME COLUMN b TO z;`
+	if err := p.Parse("test.sql", []byte(sql)); err != nil {
+		t.Fatalf("Parse() error: %v", err)
+	}
+	rc := p.Schema().Tables[1]
+	if ref := rc.Columns[0].FKReference; ref == nil || ref.Column != "z" {
+		t.Errorf("rc.x FKReference = %+v, want column z", ref)
+	}
+	for _, c := range rc.Constraints {
+		if c.Type == parser.ForeignKey {
+			if diff := cmp.Diff([]string{"z"}, c.ReferenceColumns); diff != "" {
+				t.Errorf("rc FOREIGN KEY reference columns mismatch (-want +got):\n%s", diff)
+			}
+		}
 	}
 }
 
@@ -1126,6 +2036,7 @@ func TestRenameTableCarriesForeignKeys(t *testing.T) {
 	}
 	want := []string{
 		"posts.user_id -> accounts",
+		"posts constraint -> accounts",
 		"comments.user_id -> accounts",
 		"comments constraint -> accounts",
 	}
@@ -1163,6 +2074,21 @@ func TestRenameTableStatement(t *testing.T) {
 			name:    "a missing table is an error",
 			sql:     `RENAME TABLE users TO accounts;`,
 			wantErr: "table users not found",
+		},
+		{
+			name:    "a name another table has is an error",
+			sql:     `CREATE TABLE a (id INT); CREATE TABLE b (id INT); RENAME TABLE a TO b;`,
+			wantErr: "table b already exists",
+		},
+		{
+			name:    "the table's own name is an error",
+			sql:     `CREATE TABLE a (id INT); RENAME TABLE a TO a;`,
+			wantErr: "table a already exists",
+		},
+		{
+			name: "a name in another case is another table",
+			sql:  `CREATE TABLE a (id INT); RENAME TABLE a TO A;`,
+			want: []string{"A"},
 		},
 	}
 	for _, tt := range tests {
@@ -1221,8 +2147,9 @@ func TestRenameColumnCarriesReferences(t *testing.T) {
 			want: []string{
 				"users PRIMARY KEY [user_id]",
 				"posts.user_id -> users(user_id)",
-				"posts FOREIGN KEY [user_id] -> users[user_id]",
+				"posts PRIMARY KEY [id]",
 				"posts INDEX [user_id]",
+				"posts FOREIGN KEY [user_id] -> users[user_id]",
 				"post_tags.post_id -> posts(id)",
 				"post_tags PRIMARY KEY [post_id tag_id]",
 				"post_tags FOREIGN KEY [post_id] -> posts[id]",
@@ -1234,8 +2161,9 @@ func TestRenameColumnCarriesReferences(t *testing.T) {
 			want: []string{
 				"users PRIMARY KEY [user_id]",
 				"posts.user_id -> users(user_id)",
-				"posts FOREIGN KEY [user_id] -> users[user_id]",
+				"posts PRIMARY KEY [id]",
 				"posts INDEX [user_id]",
+				"posts FOREIGN KEY [user_id] -> users[user_id]",
 				"post_tags.post_id -> posts(id)",
 				"post_tags PRIMARY KEY [post_id tag_id]",
 				"post_tags FOREIGN KEY [post_id] -> posts[id]",
@@ -1247,8 +2175,9 @@ func TestRenameColumnCarriesReferences(t *testing.T) {
 			want: []string{
 				"users PRIMARY KEY [id]",
 				"posts.user_id -> users(id)",
-				"posts FOREIGN KEY [user_id] -> users[id]",
+				"posts PRIMARY KEY [id]",
 				"posts INDEX [user_id]",
+				"posts FOREIGN KEY [user_id] -> users[id]",
 				"post_tags.article_id -> posts(id)",
 				"post_tags PRIMARY KEY [article_id tag_id]",
 				"post_tags FOREIGN KEY [article_id] -> posts[id]",
@@ -1450,6 +2379,109 @@ func TestChangeColumnNotFound(t *testing.T) {
 	}
 }
 
+// MySQL column names are case-insensitive, and MODIFY COLUMN, like CHANGE
+// COLUMN, gives the column the spelling it names, carried into the keys and
+// foreign keys on it.
+func TestAlterColumnNamedInAnotherCase(t *testing.T) {
+	type column struct{ Name, Type, Ref string }
+	type key struct {
+		Name    string
+		Columns []string
+		Ref     []string
+	}
+	tests := []struct {
+		name     string
+		sql      string
+		table    string
+		wantCols []column
+		wantKeys []key
+	}{
+		{
+			name:     "DROP COLUMN",
+			sql:      "CREATE TABLE t (id int PRIMARY KEY, b int, UNIQUE KEY uk (id, b)); ALTER TABLE t DROP COLUMN B",
+			table:    "t",
+			wantCols: []column{{"id", "int", ""}},
+			wantKeys: []key{{Name: "PRIMARY", Columns: []string{"id"}}, {Name: "uk", Columns: []string{"id"}}},
+		},
+		{
+			name:     "MODIFY COLUMN",
+			sql:      "CREATE TABLE t (id int PRIMARY KEY, b int, UNIQUE KEY uk (b)); ALTER TABLE t MODIFY COLUMN B bigint NOT NULL",
+			table:    "t",
+			wantCols: []column{{"id", "int", ""}, {"B", "bigint", ""}},
+			wantKeys: []key{{Name: "PRIMARY", Columns: []string{"id"}}, {Name: "uk", Columns: []string{"B"}}},
+		},
+		{
+			name:     "MODIFY COLUMN of an inline ENUM",
+			sql:      "CREATE TABLE t (id int PRIMARY KEY, b enum('x','y')); ALTER TABLE t MODIFY COLUMN B enum('x','y','z')",
+			table:    "t",
+			wantCols: []column{{"id", "int", ""}, {"B", "t__B_enum", ""}},
+			wantKeys: []key{{Name: "PRIMARY", Columns: []string{"id"}}},
+		},
+		{
+			name: "MODIFY COLUMN of a referenced column",
+			sql: `CREATE TABLE p (id int PRIMARY KEY, b int, UNIQUE KEY uk (b));
+				CREATE TABLE c (id int PRIMARY KEY, p_b int, CONSTRAINT fk_c FOREIGN KEY (p_b) REFERENCES p (b));
+				ALTER TABLE p MODIFY COLUMN B int`,
+			table:    "c",
+			wantCols: []column{{"id", "int", ""}, {"p_b", "int", "B"}},
+			wantKeys: []key{
+				{Name: "PRIMARY", Columns: []string{"id"}},
+				{Name: "fk_c", Columns: []string{"p_b"}},
+				{Name: "fk_c", Columns: []string{"p_b"}, Ref: []string{"B"}},
+			},
+		},
+		{
+			name:     "CHANGE COLUMN",
+			sql:      "CREATE TABLE t (id int PRIMARY KEY, b int, UNIQUE KEY uk (b)); ALTER TABLE t CHANGE COLUMN B c bigint",
+			table:    "t",
+			wantCols: []column{{"id", "int", ""}, {"c", "bigint", ""}},
+			wantKeys: []key{{Name: "PRIMARY", Columns: []string{"id"}}, {Name: "uk", Columns: []string{"c"}}},
+		},
+		{
+			name:     "RENAME COLUMN",
+			sql:      "CREATE TABLE t (id int PRIMARY KEY, b enum('x','y'), UNIQUE KEY uk (b)); ALTER TABLE t RENAME COLUMN B TO c",
+			table:    "t",
+			wantCols: []column{{"id", "int", ""}, {"c", "t__c_enum", ""}},
+			wantKeys: []key{{Name: "PRIMARY", Columns: []string{"id"}}, {Name: "uk", Columns: []string{"c"}}},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			p := newParser(t)
+			if err := p.Parse("test.sql", []byte(tt.sql)); err != nil {
+				t.Fatalf("Parse() error: %v", err)
+			}
+			var table *parser.Table
+			for i, tb := range p.Schema().Tables {
+				if tb.Name == tt.table {
+					table = &p.Schema().Tables[i]
+				}
+			}
+			if table == nil {
+				t.Fatalf("table %s not found", tt.table)
+			}
+			gotCols := make([]column, 0, len(table.Columns))
+			for _, c := range table.Columns {
+				col := column{Name: c.Name, Type: c.Type}
+				if c.FKReference != nil {
+					col.Ref = c.FKReference.Column
+				}
+				gotCols = append(gotCols, col)
+			}
+			if diff := cmp.Diff(tt.wantCols, gotCols); diff != "" {
+				t.Errorf("columns mismatch (-want +got):\n%s", diff)
+			}
+			gotKeys := make([]key, 0, len(table.Constraints))
+			for _, c := range table.Constraints {
+				gotKeys = append(gotKeys, key{Name: c.Name, Columns: c.Columns, Ref: c.ReferenceColumns})
+			}
+			if diff := cmp.Diff(tt.wantKeys, gotKeys, cmpopts.EquateEmpty()); diff != "" {
+				t.Errorf("constraints mismatch (-want +got):\n%s", diff)
+			}
+		})
+	}
+}
+
 func TestMigrationSequence(t *testing.T) {
 	p := newParser(t)
 
@@ -1631,24 +2663,20 @@ func TestInlineIndex_UsingMethod(t *testing.T) {
 		t.Errorf("hash: Method=%q, want %q", hashIdx.Method, "hash")
 	}
 
-	// Without USING, MySQL parser leaves Method empty — the manifest builder
-	// falls back to "btree" at serialization time.
+	// Without USING, the method is btree, as information_schema reports it.
 	defaultIdx, ok := byName["idx_email_default"]
 	if !ok {
 		t.Fatalf("missing idx_email_default; constraints=%+v", table.Constraints)
 	}
-	if defaultIdx.Method != "" {
-		t.Errorf("default: Method=%q, want empty (manifest fills in btree)", defaultIdx.Method)
+	if defaultIdx.Method != "btree" {
+		t.Errorf("default: Method=%q, want %q", defaultIdx.Method, "btree")
 	}
 }
 
-// TestDropIndexRecomputesColumnUnique pins that dropping a table-
-// level UNIQUE index must re-derive col.Unique from the remaining state
-// (other unconditional UNIQUEs + the column's InlineUnique flag) rather
-// than leaving the column flag desynchronized from the constraint set.
-// MySQL has no partial-UNIQUE concept, so the partial-UNIQUE branch of
-// the bug applies only to PostgreSQL / SQLite; the inline + table-level
-// case and the lone-UNIQUE positive control are exercised here.
+// TestDropIndexRecomputesColumnUnique pins that dropping a UNIQUE index
+// re-derives col.Unique from the UNIQUEs that remain, an inline one
+// included, rather than leaving the column flag desynchronized from the
+// constraint set.
 func TestDropIndexRecomputesColumnUnique(t *testing.T) {
 	tests := []struct {
 		name        string
@@ -1671,6 +2699,19 @@ func TestDropIndexRecomputesColumnUnique(t *testing.T) {
 			column:      "email",
 			wantUnique:  true,
 			wantComment: "inline UNIQUE remains in force",
+		},
+		{
+			name: "inline UNIQUE dropped by its derived name clears Unique",
+			setupSQL: `
+				CREATE TABLE users (
+					id INT PRIMARY KEY,
+					email VARCHAR(255) UNIQUE
+				);
+			`,
+			dropSQL:     `ALTER TABLE users DROP INDEX email;`,
+			column:      "email",
+			wantUnique:  false,
+			wantComment: "the inline UNIQUE is the key named email",
 		},
 		{
 			name: "two table-level UNIQUEs — drop one keeps Unique",
@@ -1734,6 +2775,275 @@ func TestDropIndexRecomputesColumnUnique(t *testing.T) {
 	}
 }
 
+// TestDropConstraintIgnoresNameCase pins that ALTER TABLE drops a key or
+// constraint whose name differs from the dropped name only in case, as MySQL
+// 8.0 does, and reverses its column flags.
+func TestDropConstraintIgnoresNameCase(t *testing.T) {
+	tests := []struct {
+		name string
+		sql  string
+		want []string // every constraint of v, as "TYPE name [columns]", then flagged columns
+	}{
+		{
+			name: "DROP INDEX on a non-unique key",
+			sql:  `CREATE TABLE v (a int, KEY A (a)); ALTER TABLE v DROP INDEX a;`,
+		},
+		{
+			name: "DROP KEY on a unique key clears Unique",
+			sql:  `CREATE TABLE v (a int, UNIQUE KEY A (a)); ALTER TABLE v DROP KEY a;`,
+		},
+		{
+			name: "standalone DROP INDEX ON",
+			sql:  `CREATE TABLE v (a int, KEY a (a)); DROP INDEX A ON v;`,
+		},
+		{
+			name: "DROP FOREIGN KEY keeps its index and clears the reference",
+			sql: `CREATE TABLE p (id int PRIMARY KEY);
+				CREATE TABLE v (a int, CONSTRAINT Fk FOREIGN KEY (a) REFERENCES p (id));
+				ALTER TABLE v DROP FOREIGN KEY fk;`,
+			want: []string{"INDEX Fk [a]"},
+		},
+		{
+			name: "DROP CHECK",
+			sql:  `CREATE TABLE v (a int, CONSTRAINT Ck CHECK (a > 0)); ALTER TABLE v DROP CHECK ck;`,
+		},
+		{
+			name: "DROP CONSTRAINT on a check",
+			sql:  `CREATE TABLE v (a int, CONSTRAINT Ck CHECK (a > 0)); ALTER TABLE v DROP CONSTRAINT ck;`,
+		},
+		{
+			name: "a dropped foreign key index no longer gives way to a wider key",
+			sql: `CREATE TABLE p (id int PRIMARY KEY);
+				CREATE TABLE v (a int, b int, CONSTRAINT fk1 FOREIGN KEY (a) REFERENCES p (id));
+				ALTER TABLE v DROP FOREIGN KEY FK1;
+				ALTER TABLE v DROP INDEX FK1;
+				ALTER TABLE v ADD KEY fk1 (a);
+				ALTER TABLE v ADD KEY (a, b);`,
+			want: []string{"INDEX a [a b]", "INDEX fk1 [a]"},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			p := newParser(t)
+			if err := p.Parse("test.sql", []byte(tt.sql)); err != nil {
+				t.Fatalf("Parse() error: %v", err)
+			}
+			var got []string
+			for _, tbl := range p.Schema().Tables {
+				if tbl.Name != "v" {
+					continue
+				}
+				for _, c := range tbl.Constraints {
+					got = append(got, fmt.Sprintf("%s %s %v", c.Type, c.Name, c.Columns))
+				}
+				for _, c := range tbl.Columns {
+					if c.Unique || c.FKReference != nil {
+						got = append(got, fmt.Sprintf("column %s unique=%v fk=%v", c.Name, c.Unique, c.FKReference != nil))
+					}
+				}
+			}
+			slices.Sort(got)
+			if diff := cmp.Diff(tt.want, got); diff != "" {
+				t.Errorf("Parse(%q) constraints mismatch (-want +got):\n%s", tt.sql, diff)
+			}
+		})
+	}
+}
+
+// TestAlterTableKeyNames checks the keys ALTER TABLE leaves after it drops,
+// renames and adds keys. Each want was measured on MySQL 8.0.46, and a key
+// with an expression part, which is not listed, shows in the name a later key
+// takes.
+func TestAlterTableKeyNames(t *testing.T) {
+	const parents = `CREATE TABLE p (id int PRIMARY KEY); CREATE TABLE p2 (b int, c int, PRIMARY KEY (b, c));`
+	tests := []struct {
+		name string
+		sql  string
+		want []string // every constraint of v, as "TYPE name [columns]", then flagged columns
+	}{
+		{
+			name: "RENAME INDEX matches the old name in any case",
+			sql:  `CREATE TABLE v (a int, KEY A (a)); ALTER TABLE v RENAME INDEX a TO b;`,
+			want: []string{"INDEX b [a]"},
+		},
+		{
+			name: "RENAME KEY renames a unique key",
+			sql:  `CREATE TABLE v (a int, UNIQUE KEY u (a)); ALTER TABLE v RENAME KEY U TO w;`,
+			want: []string{"UNIQUE w [a]", "column a unique=true fk=false"},
+		},
+		{
+			name: "DROP INDEX finds a key by its new name",
+			sql:  `CREATE TABLE v (a int, KEY a (a)); ALTER TABLE v RENAME INDEX a TO b; ALTER TABLE v DROP INDEX b;`,
+		},
+		{
+			name: "a renamed foreign key index no longer gives way to a wider key",
+			sql: parents + `CREATE TABLE v (a int, b int, CONSTRAINT fk FOREIGN KEY (a) REFERENCES p (id));
+				ALTER TABLE v RENAME INDEX fk TO x;
+				ALTER TABLE v ADD KEY (a, b);`,
+			want: []string{"FOREIGN KEY fk [a]", "INDEX a [a b]", "INDEX x [a]", "column a unique=false fk=true"},
+		},
+		{
+			name: "nor after it is renamed back",
+			sql: parents + `CREATE TABLE v (a int, b int, CONSTRAINT fk FOREIGN KEY (a) REFERENCES p (id));
+				ALTER TABLE v RENAME INDEX fk TO x;
+				ALTER TABLE v RENAME INDEX x TO fk;
+				ALTER TABLE v ADD KEY (a, b);`,
+			want: []string{"FOREIGN KEY fk [a]", "INDEX a [a b]", "INDEX fk [a]", "column a unique=false fk=true"},
+		},
+		{
+			name: "RENAME INDEX renames an expression key",
+			sql:  `CREATE TABLE v (a int, KEY a ((a + 1))); ALTER TABLE v RENAME INDEX a TO f; ALTER TABLE v ADD KEY (a);`,
+			want: []string{"INDEX a [a]"},
+		},
+		{
+			name: "a rename applies before the keys the statement adds",
+			sql:  `CREATE TABLE v (a int, KEY a (a)); ALTER TABLE v ADD KEY (a), RENAME INDEX a TO b;`,
+			want: []string{"INDEX a [a]", "INDEX b [a]"},
+		},
+		{
+			name: "a new key is named against the renamed keys",
+			sql:  `CREATE TABLE v (a int, b int, KEY a (a), KEY b (b)); ALTER TABLE v ADD KEY (a), RENAME INDEX b TO a_2;`,
+			want: []string{"INDEX a [a]", "INDEX a_2 [b]", "INDEX a_3 [a]"},
+		},
+		{
+			name: "a drop applies before the keys the statement adds",
+			sql:  `CREATE TABLE v (a int, KEY a (a)); ALTER TABLE v ADD KEY (a), DROP INDEX a;`,
+			want: []string{"INDEX a [a]"},
+		},
+		{
+			name: "a drop applies before the statement's renames",
+			sql:  `CREATE TABLE v (a int, b int, KEY a (a), KEY b (b)); ALTER TABLE v RENAME INDEX b TO a, DROP INDEX a;`,
+			want: []string{"INDEX a [b]"},
+		},
+		{
+			name: "DROP CONSTRAINT drops a foreign key and keeps its index",
+			sql:  parents + `CREATE TABLE v (a int, CONSTRAINT fk FOREIGN KEY (a) REFERENCES p (id)); ALTER TABLE v DROP CONSTRAINT FK;`,
+			want: []string{"INDEX fk [a]"},
+		},
+		{
+			name: "DROP CONSTRAINT drops a unique key",
+			sql:  `CREATE TABLE v (a int, CONSTRAINT U UNIQUE (a)); ALTER TABLE v DROP CONSTRAINT u;`,
+		},
+		{
+			name: "DROP CONSTRAINT drops a unique expression key",
+			sql:  `CREATE TABLE v (x int, b int, CONSTRAINT x UNIQUE ((b + 1))); ALTER TABLE v DROP CONSTRAINT x; ALTER TABLE v ADD KEY (x);`,
+			want: []string{"INDEX x [x]"},
+		},
+		{
+			name: "DROP CONSTRAINT PRIMARY drops the primary key",
+			sql:  "CREATE TABLE v (a int, b int, PRIMARY KEY (a)); ALTER TABLE v DROP CONSTRAINT `primary`;",
+		},
+		{
+			name: "DROP CONSTRAINT PRIMARY applies before the key the statement adds",
+			sql:  "CREATE TABLE v (a int, b int, PRIMARY KEY (a)); ALTER TABLE v ADD PRIMARY KEY (b), DROP CONSTRAINT `PRIMARY`;",
+			want: []string{"PRIMARY KEY PRIMARY [b]"},
+		},
+		{
+			name: "DROP CONSTRAINT keeps the foreign key index replaceable",
+			sql: parents + `CREATE TABLE v (a int, b int, CONSTRAINT fk FOREIGN KEY (a) REFERENCES p (id));
+				ALTER TABLE v DROP CONSTRAINT fk;
+				ALTER TABLE v ADD KEY (a, b);`,
+			want: []string{"INDEX a [a b]"},
+		},
+		{
+			name: "DROP FOREIGN KEY keeps the foreign key index replaceable",
+			sql: parents + `CREATE TABLE v (a int, b int, CONSTRAINT fk4 FOREIGN KEY (a) REFERENCES p (id));
+				ALTER TABLE v DROP FOREIGN KEY fk4;
+				ALTER TABLE v ADD KEY (a, b);`,
+			want: []string{"INDEX a [a b]"},
+		},
+		{
+			name: "DROP FOREIGN KEY keeps an expression key of that name",
+			sql: parents + `CREATE TABLE v (x int, b int, KEY x (x, (b + 1)), CONSTRAINT x FOREIGN KEY (x) REFERENCES p (id));
+				ALTER TABLE v DROP FOREIGN KEY x;
+				ALTER TABLE v ADD KEY (x);`,
+			want: []string{"INDEX x_2 [x]"},
+		},
+		{
+			name: "DROP CHECK keeps an expression key of that name",
+			sql: `CREATE TABLE v (x int, b int, CONSTRAINT x CHECK (b > 0), KEY x ((b + 1)));
+				ALTER TABLE v DROP CHECK x;
+				ALTER TABLE v ADD KEY (x);`,
+			want: []string{"INDEX x_2 [x]"},
+		},
+		{
+			name: "a key a later clause adds replaces a foreign key index before it is named",
+			sql: parents + `CREATE TABLE v (a int, b int);
+				ALTER TABLE v ADD FOREIGN KEY (a, b) REFERENCES p2 (b, c), ADD KEY (a), ADD KEY (a, b);`,
+			want: []string{"FOREIGN KEY v_ibfk_1 [a b]", "INDEX a [a]", "INDEX a_2 [a b]"},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			p := newParser(t)
+			if err := p.Parse("test.sql", []byte(tt.sql)); err != nil {
+				t.Fatalf("Parse() error: %v", err)
+			}
+			var got []string
+			for _, tbl := range p.Schema().Tables {
+				if tbl.Name != "v" {
+					continue
+				}
+				for _, c := range tbl.Constraints {
+					got = append(got, fmt.Sprintf("%s %s %v", c.Type, c.Name, c.Columns))
+				}
+				for _, c := range tbl.Columns {
+					if c.Unique || c.FKReference != nil {
+						got = append(got, fmt.Sprintf("column %s unique=%v fk=%v", c.Name, c.Unique, c.FKReference != nil))
+					}
+					if c.PrimaryKey != slices.ContainsFunc(tbl.Constraints, func(k parser.Constraint) bool {
+						return k.Type == parser.PrimaryKey && slices.Contains(k.Columns, c.Name)
+					}) {
+						t.Errorf("column %s: PrimaryKey = %v", c.Name, c.PrimaryKey)
+					}
+				}
+			}
+			slices.Sort(got)
+			if diff := cmp.Diff(tt.want, got); diff != "" {
+				t.Errorf("Parse(%q) constraints mismatch (-want +got):\n%s", tt.sql, diff)
+			}
+		})
+	}
+}
+
+func TestParseViewSQL_CompoundSelectRejected(t *testing.T) {
+	tests := []string{
+		"CREATE VIEW v AS SELECT id FROM a UNION SELECT id FROM b;",
+		"CREATE VIEW app.v AS SELECT id FROM a UNION ALL SELECT id FROM b;",
+	}
+	for _, sql := range tests {
+		_, err := mysql.ParseViewSQL([]byte(sql))
+		if err == nil || !strings.Contains(err.Error(), "not a simple SELECT") {
+			t.Errorf("ParseViewSQL(%q) error = %v, want not a simple SELECT", sql, err)
+		}
+		// The error names the bare view, so an annotation file for a view the
+		// database defines can still overlay it.
+		qe, ok := errors.AsType[*parser.ViewQueryError](err)
+		if !ok || qe.Schema != "" || qe.Name != "v" {
+			t.Errorf("ParseViewSQL(%q) error = %#v, want a ViewQueryError naming the bare view v", sql, err)
+		}
+	}
+}
+
+// MySQL names are always bare (PRD §5.5), so a database qualifier on the view
+// name is dropped, as on a CREATE TABLE.
+func TestParseViewSQL_QualifiedNameIsBare(t *testing.T) {
+	tests := []string{
+		"CREATE VIEW v AS SELECT p.id FROM projects p;",
+		"CREATE VIEW app.v AS SELECT p.id FROM projects p;",
+		"CREATE VIEW `app`.`v` AS SELECT p.id FROM app.projects p;",
+	}
+	for _, sql := range tests {
+		got, err := mysql.ParseViewSQL([]byte(sql))
+		if err != nil {
+			t.Fatalf("ParseViewSQL(%q) error: %v", sql, err)
+		}
+		if got.Schema != "" || got.Name != "v" {
+			t.Errorf("ParseViewSQL(%q) = %q.%q, want the bare view v", sql, got.Schema, got.Name)
+		}
+	}
+}
+
 func TestParseViewSQL_MaterializedRejected(t *testing.T) {
 	tests := []struct {
 		name string
@@ -1763,6 +3073,795 @@ CREATE MATERIALIZED VIEW order_totals AS SELECT customer_id FROM orders;`,
 			}
 			if !strings.Contains(err.Error(), "not supported for dialect mysql") {
 				t.Errorf("error = %q, want mention of 'not supported for dialect mysql'", err)
+			}
+		})
+	}
+}
+
+// TestNamesFollowDeclarationOrder pins that unnamed keys and foreign keys are
+// numbered in the order the CREATE TABLE declares them, wherever a column,
+// a key, a FOREIGN KEY or a CHECK falls in its definition list.
+func TestNamesFollowDeclarationOrder(t *testing.T) {
+	const parent = `CREATE TABLE p (id int PRIMARY KEY, b int, c int, d int, KEY (b, c), KEY (b, c, d));`
+	tests := []struct {
+		name string
+		sql  string
+		want []string
+	}{
+		{
+			name: "a foreign key's index before a later key",
+			sql:  `CREATE TABLE o2 (b int, c int, FOREIGN KEY (b, c) REFERENCES p (b, c), KEY (b));`,
+			want: []string{"FOREIGN KEY o2_ibfk_1 [b c]", "INDEX b [b c]", "INDEX b_2 [b]"},
+		},
+		{
+			name: "a key declared on a column after a table-level key",
+			sql:  `CREATE TABLE kc (x int, KEY (a, x), a int UNIQUE);`,
+			want: []string{"INDEX a [a x]", "UNIQUE a_2 [a]"},
+		},
+		{
+			name: "a foreign key's index before a key declared on a later column",
+			sql:  `CREATE TABLE fc (x int, FOREIGN KEY (b, c) REFERENCES p (b, c), b int UNIQUE, c int);`,
+			want: []string{"FOREIGN KEY fc_ibfk_1 [b c]", "INDEX b [b c]", "UNIQUE b_2 [b]"},
+		},
+		{
+			name: "keys, columns and a foreign key interleaved",
+			sql:  `CREATE TABLE mx (b int, c int, d int, FOREIGN KEY (b, c) REFERENCES p (b, c), e int UNIQUE, KEY (b), UNIQUE (b, d));`,
+			want: []string{"FOREIGN KEY mx_ibfk_1 [b c]", "INDEX b [b c]", "UNIQUE e [e]", "INDEX b_2 [b]", "UNIQUE b_3 [b d]"},
+		},
+		{
+			name: "a foreign key's index replaced by a later key",
+			sql:  `CREATE TABLE rk (a int, b int, FOREIGN KEY (a, b) REFERENCES p (b, c), KEY (a), KEY (a, b));`,
+			want: []string{"FOREIGN KEY rk_ibfk_1 [a b]", "INDEX a [a]", "INDEX a_2 [a b]"},
+		},
+		{
+			name: "a foreign key's index replaced by a later foreign key's",
+			sql:  `CREATE TABLE rf (a int, b int, FOREIGN KEY (a) REFERENCES p (id), FOREIGN KEY (a, b) REFERENCES p (b, c), KEY (a));`,
+			want: []string{"FOREIGN KEY rf_ibfk_1 [a]", "FOREIGN KEY rf_ibfk_2 [a b]", "INDEX a [a b]", "INDEX a_2 [a]"},
+		},
+		{
+			name: "a foreign key's index replaced by a later foreign key's, past a key",
+			sql:  `CREATE TABLE lf (a int, b int, c int, FOREIGN KEY (a, b) REFERENCES p (b, c), KEY (a), FOREIGN KEY (a, b, c) REFERENCES p (b, c, d));`,
+			want: []string{"FOREIGN KEY lf_ibfk_1 [a b]", "FOREIGN KEY lf_ibfk_2 [a b c]", "INDEX a [a]", "INDEX a_2 [a b c]"},
+		},
+		{
+			name: "a foreign key's index kept past a later, shorter foreign key's",
+			sql:  `CREATE TABLE sk (a int, b int, FOREIGN KEY (a, b) REFERENCES p (b, c), KEY (b), FOREIGN KEY (a) REFERENCES p (id));`,
+			want: []string{"FOREIGN KEY sk_ibfk_1 [a b]", "FOREIGN KEY sk_ibfk_2 [a]", "INDEX a [a b]", "INDEX b [b]"},
+		},
+		{
+			name: "an inline REFERENCES after a table-level foreign key",
+			sql:  `CREATE TABLE il (a int, FOREIGN KEY (a) REFERENCES p (id), b int REFERENCES p (id));`,
+			want: []string{"FOREIGN KEY il_ibfk_1 [a]", "INDEX a [a]", "FOREIGN KEY il_ibfk_2 [b]", "INDEX b [b]"},
+		},
+		{
+			name: "a CHECK on a column between table-level CHECKs",
+			sql:  `CREATE TABLE ck (x int, CHECK (a > 0), a int CONSTRAINT nn CHECK (a < 10), CHECK (a <> 5), y int);`,
+			want: []string{"CHECK ck_chk_1 [a]", "CHECK nn [a]", "CHECK ck_chk_2 [a]"},
+		},
+		{
+			name: "keywords in comments, strings and nested parentheses",
+			sql: "CREATE TABLE kw (/* KEY (x), */ x int COMMENT 'UNIQUE, CHECK (', s enum('KEY', 'a,b') DEFAULT 'KEY', " +
+				"FOREIGN KEY (x) REFERENCES p (id), `key` int UNIQUE, CONSTRAINT UNIQUE (s, x), KEY (s));",
+			want: []string{"FOREIGN KEY kw_ibfk_1 [x]", "INDEX x [x]", "UNIQUE key [key]", "UNIQUE s [s x]", "INDEX s_2 [s]"},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			p := newParser(t)
+			if err := p.Parse("test.sql", []byte(parent+tt.sql)); err != nil {
+				t.Fatalf("Parse() error: %v", err)
+			}
+			tables := p.Schema().Tables
+			constraints := tables[len(tables)-1].Constraints
+			got := make([]string, 0, len(constraints))
+			for _, c := range constraints {
+				got = append(got, fmt.Sprintf("%s %s %v", c.Type, c.Name, c.Columns))
+			}
+			slices.Sort(got)
+			want := slices.Sorted(slices.Values(tt.want))
+			if diff := cmp.Diff(want, got); diff != "" {
+				t.Errorf("constraint names mismatch (-want +got):\n%s", diff)
+			}
+		})
+	}
+}
+
+// TestDerivedConstraintNames pins the names the parser gives unnamed keys and
+// constraints, and which indexes MySQL builds for foreign keys. Each was
+// measured on MySQL 8.0.
+func TestDerivedConstraintNames(t *testing.T) {
+	tests := []struct {
+		name string
+		sql  string
+		want []string
+	}{
+		{
+			name: "checks are numbered among the unnamed ones",
+			sql:  `CREATE TABLE k (a int, CHECK (a > 0), CONSTRAINT nn CHECK (a < 10), CHECK (a <> 5), b int CHECK (b > 0));`,
+			want: []string{"k CHECK k_chk_1", "k CHECK nn", "k CHECK k_chk_2", "k CHECK k_chk_3"},
+		},
+		{
+			name: "foreign keys and the indexes built for them",
+			sql: `CREATE TABLE p (id int PRIMARY KEY);
+				CREATE TABLE fk (a int, b int, FOREIGN KEY (a) REFERENCES p (id), CONSTRAINT named_fk FOREIGN KEY (b) REFERENCES p (id), FOREIGN KEY (b) REFERENCES p (id));
+				ALTER TABLE fk ADD FOREIGN KEY (a) REFERENCES p (id);`,
+			want: []string{
+				"p PRIMARY KEY PRIMARY",
+				"fk FOREIGN KEY fk_ibfk_1", "fk FOREIGN KEY named_fk", "fk FOREIGN KEY fk_ibfk_2", "fk FOREIGN KEY fk_ibfk_3",
+				"fk INDEX a", "fk INDEX b",
+			},
+		},
+		{
+			name: "a built index takes the constraint name before the index name",
+			sql: `CREATE TABLE p (id int PRIMARY KEY);
+				CREATE TABLE fi (a int, b int, FOREIGN KEY my_idx (a) REFERENCES p (id), CONSTRAINT cn FOREIGN KEY ix2 (b) REFERENCES p (id));`,
+			want: []string{
+				"p PRIMARY KEY PRIMARY",
+				"fi FOREIGN KEY fi_ibfk_1", "fi FOREIGN KEY cn", "fi INDEX my_idx", "fi INDEX cn",
+			},
+		},
+		{
+			name: "unnamed keys share one counter",
+			sql: `CREATE TABLE u (a int UNIQUE, UNIQUE KEY (a), UNIQUE KEY a_3 (a), KEY (a));
+				CREATE TABLE up (A int, UNIQUE (a), KEY (A));`,
+			want: []string{
+				"u UNIQUE a", "u UNIQUE a_2", "u UNIQUE a_3", "u INDEX a_4",
+				"up UNIQUE A", "up INDEX A_2",
+			},
+		},
+		{
+			name: "a declared key covering a foreign key replaces its index",
+			sql: `CREATE TABLE p (id int PRIMARY KEY);
+				CREATE TABLE o4 (b int UNIQUE, c int, FOREIGN KEY (c) REFERENCES p (id), UNIQUE (c, b), KEY (c));`,
+			want: []string{
+				"p PRIMARY KEY PRIMARY",
+				"o4 UNIQUE b", "o4 UNIQUE c", "o4 INDEX c_2", "o4 FOREIGN KEY o4_ibfk_1",
+			},
+		},
+		{
+			name: "a longer built index replaces a built one",
+			sql: `CREATE TABLE p (id int PRIMARY KEY, b int, c int, KEY (b, c));
+				CREATE TABLE gen (a int, b int, FOREIGN KEY (a) REFERENCES p (id));
+				ALTER TABLE gen ADD CONSTRAINT gen_ab FOREIGN KEY (a, b) REFERENCES p (b, c);`,
+			want: []string{
+				"p PRIMARY KEY PRIMARY", "p INDEX b",
+				"gen FOREIGN KEY gen_ibfk_1", "gen FOREIGN KEY gen_ab", "gen INDEX gen_ab",
+			},
+		},
+		{
+			name: "rename carries generated names and a matching built index is replaced",
+			sql: `CREATE TABLE p (id int PRIMARY KEY);
+				CREATE TABLE ren (a int, CHECK (a > 0), FOREIGN KEY (a) REFERENCES p (id), CONSTRAINT ren_ibfk_9 FOREIGN KEY (a) REFERENCES p (id));
+				ALTER TABLE ren ADD FOREIGN KEY (a) REFERENCES p (id), ADD CHECK (a < 100);
+				RENAME TABLE ren TO ren2;`,
+			want: []string{
+				"p PRIMARY KEY PRIMARY",
+				"ren2 CHECK ren2_chk_1", "ren2 CHECK ren2_chk_2",
+				"ren2 FOREIGN KEY ren2_ibfk_1", "ren2 FOREIGN KEY ren2_ibfk_9", "ren2 FOREIGN KEY ren2_ibfk_10",
+				"ren2 INDEX a",
+			},
+		},
+		{
+			name: "a unique key without an index name takes its constraint name",
+			sql: `CREATE TABLE cu (s int, t int, u int, v int, CONSTRAINT cu_s_key UNIQUE (s), CONSTRAINT cu_v_key UNIQUE KEY cu_v_idx (v));
+				ALTER TABLE cu ADD CONSTRAINT cu_t_key UNIQUE (t);
+				ALTER TABLE cu ADD CONSTRAINT cu_u_key UNIQUE KEY (u);`,
+			want: []string{"cu UNIQUE cu_s_key", "cu UNIQUE cu_t_key", "cu UNIQUE cu_u_key", "cu UNIQUE cu_v_idx"},
+		},
+		{
+			name: "a unique key named by its constraint drops by that name",
+			sql: `CREATE TABLE cd (a int, CONSTRAINT cd_a_key UNIQUE (a));
+				ALTER TABLE cd DROP INDEX cd_a_key;`,
+		},
+		{
+			name: "a primary key is PRIMARY whatever its declared name",
+			sql:  `CREATE TABLE pk3 (a int, CONSTRAINT mypk PRIMARY KEY (a));`,
+			want: []string{"pk3 PRIMARY KEY PRIMARY"},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			p := newParser(t)
+			if err := p.Parse("test.sql", []byte(tt.sql)); err != nil {
+				t.Fatalf("Parse() error: %v", err)
+			}
+			var got []string
+			for _, tbl := range p.Schema().Tables {
+				for _, c := range tbl.Constraints {
+					got = append(got, fmt.Sprintf("%s %s %s", tbl.Name, c.Type, c.Name))
+				}
+			}
+			slices.Sort(got)
+			want := slices.Sorted(slices.Values(tt.want))
+			if diff := cmp.Diff(want, got); diff != "" {
+				t.Errorf("constraint names mismatch (-want +got):\n%s", diff)
+			}
+		})
+	}
+}
+
+// TestColumnKeyAttributes pins the keys the key attributes of a column
+// definition declare: PRIMARY KEY or KEY alone is the primary key, UNIQUE
+// [KEY] a unique key, and repeated or mixed attributes make at most one of
+// each. Each case was measured on MySQL 8.0.
+func TestColumnKeyAttributes(t *testing.T) {
+	tests := []struct {
+		name string
+		sql  string
+		want []string // every key, as "TYPE name [columns]", and "pk column" per primary-key column
+	}{
+		{
+			name: "KEY alone is the primary key",
+			sql:  `CREATE TABLE z (a int KEY, b int);`,
+			want: []string{"PRIMARY KEY PRIMARY [a]", "pk a"},
+		},
+		{
+			name: "PRIMARY KEY then UNIQUE between table-level keys",
+			sql:  `CREATE TABLE z (x int, KEY (a), a int PRIMARY KEY UNIQUE, UNIQUE (a));`,
+			want: []string{"INDEX a [a]", "PRIMARY KEY PRIMARY [a]", "UNIQUE a_2 [a]", "UNIQUE a_3 [a]", "pk a"},
+		},
+		{
+			name: "UNIQUE then PRIMARY KEY",
+			sql:  `CREATE TABLE z (a int UNIQUE PRIMARY KEY);`,
+			want: []string{"PRIMARY KEY PRIMARY [a]", "UNIQUE a [a]", "pk a"},
+		},
+		{
+			name: "KEY then UNIQUE",
+			sql:  `CREATE TABLE z (a int KEY UNIQUE);`,
+			want: []string{"PRIMARY KEY PRIMARY [a]", "UNIQUE a [a]", "pk a"},
+		},
+		{
+			name: "UNIQUE KEY is a unique key",
+			sql:  `CREATE TABLE z (a int UNIQUE KEY);`,
+			want: []string{"UNIQUE a [a]"},
+		},
+		{
+			name: "repeated UNIQUE makes one unique key",
+			sql:  `CREATE TABLE z (a int UNIQUE KEY UNIQUE, b int UNIQUE UNIQUE);`,
+			want: []string{"UNIQUE a [a]", "UNIQUE b [b]"},
+		},
+		{
+			name: "UNIQUE KEY then KEY",
+			sql:  `CREATE TABLE z (a int UNIQUE KEY KEY);`,
+			want: []string{"PRIMARY KEY PRIMARY [a]", "UNIQUE a [a]", "pk a"},
+		},
+		{
+			name: "repeated primary key attributes make one primary key",
+			sql:  `CREATE TABLE z (a int PRIMARY KEY KEY, b int);`,
+			want: []string{"PRIMARY KEY PRIMARY [a]", "pk a"},
+		},
+		{
+			name: "key attributes among other attributes",
+			sql:  `CREATE TABLE z (a int KEY COMMENT 'x' UNIQUE DEFAULT 1 UNIQUE KEY);`,
+			want: []string{"PRIMARY KEY PRIMARY [a]", "UNIQUE a [a]", "pk a"},
+		},
+		{
+			name: "a generated column",
+			sql:  `CREATE TABLE z (a int AS (1) STORED UNIQUE PRIMARY KEY);`,
+			want: []string{"PRIMARY KEY PRIMARY [a]", "UNIQUE a [a]", "pk a"},
+		},
+		{
+			name: "key words in a type, a default and a comment",
+			sql:  `CREATE TABLE z (b enum('KEY', 'UNIQUE') DEFAULT 'KEY' COMMENT 'PRIMARY KEY' UNIQUE);`,
+			want: []string{"UNIQUE b [b]"},
+		},
+		{
+			name: "key attributes in version comments, which MySQL reads as one text",
+			sql:  `CREATE TABLE z (a int /*!50000 UNIQUE */ /*!50000 KEY */, b int /*!50000 KEY */);`,
+			want: []string{"UNIQUE a [a]", "PRIMARY KEY PRIMARY [b]", "pk b"},
+		},
+		{
+			name: "ADD COLUMN with KEY",
+			sql:  `CREATE TABLE z (a int); ALTER TABLE z ADD COLUMN b int KEY;`,
+			want: []string{"PRIMARY KEY PRIMARY [b]", "pk b"},
+		},
+		{
+			name: "ADD COLUMN on a qualified table",
+			sql:  `CREATE TABLE z (a int); ALTER TABLE t.z ADD b int UNIQUE PRIMARY KEY;`,
+			want: []string{"PRIMARY KEY PRIMARY [b]", "UNIQUE b [b]", "pk b"},
+		},
+		{
+			name: "ADD a list of columns",
+			sql:  `CREATE TABLE z (a int); ALTER TABLE z ADD (b int KEY UNIQUE, c varchar(5) UNIQUE COMMENT 'KEY', d int UNIQUE KEY);`,
+			want: []string{"PRIMARY KEY PRIMARY [b]", "UNIQUE b [b]", "UNIQUE c [c]", "UNIQUE d [d]", "pk b"},
+		},
+		{
+			name: "MODIFY COLUMN",
+			sql:  `CREATE TABLE z (a int); ALTER TABLE z MODIFY COLUMN a int UNIQUE KEY KEY;`,
+			want: []string{"PRIMARY KEY PRIMARY [a]", "UNIQUE a [a]", "pk a"},
+		},
+		{
+			name: "MODIFY on a table named modify",
+			sql:  `CREATE TABLE modify (a int); ALTER TABLE modify MODIFY a int KEY UNIQUE;`,
+			want: []string{"PRIMARY KEY PRIMARY [a]", "UNIQUE a [a]", "pk a"},
+		},
+		{
+			name: "CHANGE COLUMN after a table option and a comment",
+			sql:  `CREATE TABLE z (a int NOT NULL); ALTER TABLE z ALGORITHM=COPY, /* KEY */ CHANGE a b varchar(10) UNIQUE KEY KEY COMMENT 'KEY, UNIQUE';`,
+			want: []string{"PRIMARY KEY PRIMARY [b]", "UNIQUE b [b]", "pk b"},
+		},
+		{
+			name: "column clauses among other clauses",
+			sql:  `CREATE TABLE z (a int); ALTER TABLE z ADD COLUMN b int KEY, ADD UNIQUE (a), MODIFY a int UNIQUE UNIQUE, ADD COLUMN c int UNIQUE, ADD INDEX (c);`,
+			want: []string{"PRIMARY KEY PRIMARY [b]", "UNIQUE a [a]", "UNIQUE a_2 [a]", "UNIQUE c [c]", "INDEX c_2 [c]", "pk b"},
+		},
+		{
+			name: "a partition clause after MODIFY",
+			sql:  `CREATE TABLE z (a int NOT NULL); ALTER TABLE z MODIFY a int UNIQUE PARTITION BY KEY (a) PARTITIONS 2;`,
+			want: []string{"UNIQUE a [a]"},
+		},
+		{
+			name: "a unique key on a column named primary",
+			sql:  "CREATE TABLE z (a int); ALTER TABLE z ADD COLUMN `primary` int UNIQUE KEY KEY;",
+			want: []string{"PRIMARY KEY PRIMARY [primary]", "UNIQUE primary_2 [primary]", "pk primary"},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			p := newParser(t)
+			if err := p.Parse("test.sql", []byte(tt.sql)); err != nil {
+				t.Fatalf("Parse() error: %v", err)
+			}
+			table := p.Schema().Tables[0]
+			var got []string
+			for _, c := range table.Constraints {
+				got = append(got, fmt.Sprintf("%s %s %v", c.Type, c.Name, c.Columns))
+			}
+			for _, c := range table.Columns {
+				if c.PrimaryKey && !c.Nullable {
+					got = append(got, "pk "+c.Name)
+				}
+			}
+			slices.Sort(got)
+			want := slices.Sorted(slices.Values(tt.want))
+			if diff := cmp.Diff(want, got); diff != "" {
+				t.Errorf("Parse(%q) keys mismatch (-want +got):\n%s", tt.sql, diff)
+			}
+		})
+	}
+}
+
+// TestExpressionKeys pins that a key with an expression part is not listed,
+// unique or not, while it keeps its name, an unnamed one named
+// functional_index, and serves as a foreign key's index when its leading
+// columns are the foreign key's, as on MySQL 8.0 (PRD §30.7).
+func TestExpressionKeys(t *testing.T) {
+	tests := []struct {
+		name string
+		sql  string
+		want []string // every UNIQUE and INDEX, as "table TYPE name [columns]"
+	}{
+		{name: "unique expression only", sql: `CREATE TABLE e (x varchar(9)); CREATE UNIQUE INDEX ux ON e ((lower(x)));`},
+		{name: "unique column and expression", sql: `CREATE TABLE e (a int, x varchar(9), UNIQUE INDEX ux (a, (lower(x))));`},
+		{name: "column and expression", sql: `CREATE TABLE e (a int, b int); ALTER TABLE e ADD INDEX ix (a, (b + 1));`},
+		{
+			name: "a later unnamed key takes the name it would have",
+			sql:  `CREATE TABLE e (a int, b int, KEY (a, (b + 1)), KEY (a));`,
+			want: []string{"e INDEX a [a]"},
+		},
+		{
+			name: "a named expression key keeps its name",
+			sql:  `CREATE TABLE e (a int, b int, KEY a ((b + 1)), KEY (a));`,
+			want: []string{"e INDEX a_2 [a]"},
+		},
+		{
+			name: "a unique expression key takes its constraint name",
+			sql:  `CREATE TABLE e (a int, b int, CONSTRAINT a UNIQUE ((b + 1)), KEY (a));`,
+			want: []string{"e INDEX a_2 [a]"},
+		},
+		{
+			name: "an unnamed expression key is functional_index",
+			sql:  `CREATE TABLE e (functional_index int, b int, KEY ((b + 1)), KEY (functional_index));`,
+			want: []string{"e INDEX functional_index_2 [functional_index]"},
+		},
+		{
+			name: "dropping an expression key frees its name",
+			sql: `CREATE TABLE e (a int, b int, KEY A ((b + 1)));
+				ALTER TABLE e DROP INDEX a;
+				ALTER TABLE e ADD KEY (a);`,
+			want: []string{"e INDEX a [a]"},
+		},
+		{
+			name: "dropping the table frees its name",
+			sql: `CREATE TABLE e (a int, b int, KEY a ((b + 1)));
+				DROP TABLE e;
+				CREATE TABLE e (a int, KEY (a));`,
+			want: []string{"e INDEX a [a]"},
+		},
+		{
+			name: "renaming the table carries its name",
+			sql: `CREATE TABLE e (a int, b int, KEY a ((b + 1)));
+				ALTER TABLE e RENAME TO e2;
+				ALTER TABLE e2 ADD KEY (a);`,
+			want: []string{"e2 INDEX a_2 [a]"},
+		},
+		{
+			name: "renaming the table to its own name keeps its name",
+			sql: `CREATE TABLE e (a int, b int, KEY a ((b + 1)));
+				ALTER TABLE e RENAME TO e;
+				ALTER TABLE e ADD KEY (a);`,
+			want: []string{"e INDEX a_2 [a]"},
+		},
+		{
+			name: "an expression key serves a foreign key",
+			sql: `CREATE TABLE p (id int PRIMARY KEY);
+				CREATE TABLE e (a int, b int, KEY (a, (b + 1)), FOREIGN KEY (a) REFERENCES p (id));
+				CREATE TABLE e2 (a int, b int, FOREIGN KEY (a) REFERENCES p (id), UNIQUE (a, (b + 1)));`,
+		},
+		{
+			name: "an expression key replaces a foreign key's index",
+			sql: `CREATE TABLE p (id int PRIMARY KEY);
+				CREATE TABLE e (a int, b int, FOREIGN KEY (a) REFERENCES p (id));
+				ALTER TABLE e ADD INDEX (a, (b + 1));`,
+		},
+		{
+			name: "an expression part does not match a foreign key column",
+			sql: `CREATE TABLE p (x int, y int, KEY (x, y));
+				CREATE TABLE e (a int, b int, FOREIGN KEY (a, b) REFERENCES p (x, y), KEY (a, (b + 1)));`,
+			want: []string{"p INDEX x [x y]", "e INDEX a [a b]"},
+		},
+		{
+			name: "a renamed column stays in the expression key",
+			sql: `CREATE TABLE p (id int PRIMARY KEY);
+				CREATE TABLE e (a int, b int, KEY (a, (b + 1)));
+				ALTER TABLE e RENAME COLUMN a TO c;
+				ALTER TABLE e ADD FOREIGN KEY (c) REFERENCES p (id);
+				CREATE TABLE e2 (a int, b int, KEY (a, (b + 1)));
+				ALTER TABLE e2 CHANGE COLUMN a c int;
+				ALTER TABLE e2 ADD FOREIGN KEY (c) REFERENCES p (id);`,
+		},
+		{
+			name: "a dropped column leaves the expression key",
+			sql: `CREATE TABLE p (id int PRIMARY KEY);
+				CREATE TABLE e (a int, b int, KEY (a, (b + 1)));
+				ALTER TABLE e DROP COLUMN a;
+				ALTER TABLE e ADD COLUMN a int;
+				ALTER TABLE e ADD FOREIGN KEY (a) REFERENCES p (id);`,
+			want: []string{"e INDEX a [a]"},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			p := newParser(t)
+			if err := p.Parse("test.sql", []byte(tt.sql)); err != nil {
+				t.Fatalf("Parse() error: %v", err)
+			}
+			var got []string
+			for _, tbl := range p.Schema().Tables {
+				for _, c := range tbl.Constraints {
+					if c.Type == parser.Unique || c.Type == parser.Index {
+						got = append(got, fmt.Sprintf("%s %s %s %v", tbl.Name, c.Type, c.Name, c.Columns))
+					}
+				}
+				for _, col := range tbl.Columns {
+					if col.Unique {
+						t.Errorf("%s.%s: Unique = true", tbl.Name, col.Name)
+					}
+				}
+			}
+			if diff := cmp.Diff(tt.want, got); diff != "" {
+				t.Errorf("keys mismatch (-want +got):\n%s", diff)
+			}
+		})
+	}
+}
+
+// TestSeedKeepsExpressionKeys covers `input.source: both`: an introspected key
+// with an expression part keeps its name against a key the DDL files add, and
+// serves a foreign key whose columns lead it, as on MySQL 8.0.
+func TestSeedKeepsExpressionKeys(t *testing.T) {
+	tests := []struct {
+		name string
+		key  parser.ExpressionIndex
+		sql  string
+		want []string // every UNIQUE and INDEX of e, as "name [columns]"
+	}{
+		{
+			name: "a named expression key keeps its name",
+			key:  parser.ExpressionIndex{Name: "a", Columns: []string{""}},
+			sql:  `ALTER TABLE e ADD KEY (a);`,
+			want: []string{"a_2 [a]"},
+		},
+		{
+			name: "an unnamed expression key keeps functional_index",
+			key:  parser.ExpressionIndex{Name: "functional_index", Columns: []string{""}},
+			sql:  `ALTER TABLE e ADD KEY (functional_index);`,
+			want: []string{"functional_index_2 [functional_index]"},
+		},
+		{
+			name: "an expression key serves a foreign key",
+			key:  parser.ExpressionIndex{Name: "k", Columns: []string{"a", ""}},
+			sql:  `ALTER TABLE e ADD FOREIGN KEY (a) REFERENCES p (id);`,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			p := newParser(t)
+			p.Seed(&parser.Schema{Tables: []parser.Table{
+				{
+					Name:        "p",
+					Columns:     []parser.Column{{Name: "id", Type: "int", PrimaryKey: true}},
+					Constraints: []parser.Constraint{{Name: "PRIMARY", Type: parser.PrimaryKey, Columns: []string{"id"}, Method: "btree"}},
+				},
+				{
+					Name:              "e",
+					Columns:           []parser.Column{{Name: "a", Type: "int", Nullable: true}, {Name: "functional_index", Type: "int", Nullable: true}, {Name: "b", Type: "int", Nullable: true}},
+					ExpressionIndexes: []parser.ExpressionIndex{tt.key},
+				},
+			}})
+			if err := p.Parse("test.sql", []byte(tt.sql)); err != nil {
+				t.Fatalf("Parse() error: %v", err)
+			}
+			var got []string
+			for _, c := range p.Schema().Tables[1].Constraints {
+				if c.Type == parser.Unique || c.Type == parser.Index {
+					got = append(got, fmt.Sprintf("%s %v", c.Name, c.Columns))
+				}
+			}
+			if diff := cmp.Diff(tt.want, got); diff != "" {
+				t.Errorf("keys mismatch (-want +got):\n%s", diff)
+			}
+		})
+	}
+}
+
+func TestParseViewSQL_OuterAliases(t *testing.T) {
+	tests := []struct {
+		name string
+		sql  string
+		want map[string]bool
+	}{
+		{name: "inner join", sql: `CREATE VIEW v AS SELECT a.id, b.id AS b_id FROM a JOIN b ON b.a_id = a.id;`, want: map[string]bool{}},
+		{name: "comma join", sql: `CREATE VIEW v AS SELECT a.id, b.id AS b_id FROM a, b;`, want: map[string]bool{}},
+		{name: "left join", sql: `CREATE VIEW v AS SELECT a.id, b.id AS b_id FROM a LEFT JOIN b ON b.a_id = a.id;`, want: map[string]bool{"b": true}},
+		{name: "left outer join with aliases", sql: `CREATE VIEW v AS SELECT x.id, y.id AS y_id FROM a x LEFT OUTER JOIN b y ON y.a_id = x.id;`, want: map[string]bool{"y": true}},
+		{name: "inner then left", sql: `CREATE VIEW v AS SELECT a.id FROM a JOIN b ON b.a_id = a.id LEFT JOIN c ON c.b_id = b.id;`, want: map[string]bool{"c": true}},
+		{name: "right join", sql: `CREATE VIEW v AS SELECT a.id FROM a RIGHT JOIN b ON b.a_id = a.id;`, want: map[string]bool{"a": true}},
+		{name: "join nested under the outer side", sql: `CREATE VIEW v AS SELECT a.id FROM a LEFT JOIN (b JOIN c ON c.b_id = b.id) ON b.a_id = a.id;`, want: map[string]bool{"b": true, "c": true}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := mysql.ParseViewSQL([]byte(tt.sql))
+			if err != nil {
+				t.Fatalf("ParseViewSQL() error: %v", err)
+			}
+			if diff := cmp.Diff(tt.want, got.OuterAliases); diff != "" {
+				t.Errorf("OuterAliases mismatch (-want +got):\n%s", diff)
+			}
+		})
+	}
+}
+
+// TestParseViewSQL_ColumnNames checks that every view column has a name (PRD
+// §16.1): an unaliased expression with no column name, * and t.* are
+// ViewQueryErrors, and a column list names the columns in order. MySQL
+// requires the list to name every column.
+func TestParseViewSQL_ColumnNames(t *testing.T) {
+	tests := []struct {
+		name, sql string
+		want      []string
+		wantErr   string
+	}{
+		{name: "unaliased expression", sql: "CREATE VIEW v AS SELECT id, a + b FROM t", wantErr: "view v selects a + b with no alias and no column name"},
+		{name: "unaliased aggregate", sql: "CREATE VIEW v AS SELECT id, COUNT(*) FROM t GROUP BY id", wantErr: "view v selects count(*) with no alias"},
+		{name: "star", sql: "CREATE VIEW v AS SELECT * FROM t", wantErr: "view v selects *, whose columns the view parser cannot list"},
+		{name: "table star", sql: "CREATE VIEW v AS SELECT id, t.* FROM t", wantErr: "view v selects t.*, whose columns"},
+		{name: "column list", sql: "CREATE VIEW v (x, total) AS SELECT id, a + b FROM t", want: []string{"x", "total"}},
+		{name: "short column list", sql: "CREATE VIEW v (x) AS SELECT id, name FROM t", wantErr: "view v names 1 columns in its column list but selects 2"},
+		{name: "long column list", sql: "CREATE VIEW v (x, y) AS SELECT id FROM t", wantErr: "view v names 2 columns in its column list but selects 1"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := mysql.ParseViewSQL([]byte(tt.sql))
+			if tt.wantErr != "" {
+				if err == nil || !strings.Contains(err.Error(), tt.wantErr) {
+					t.Fatalf("ParseViewSQL() error = %v, want it to contain %q", err, tt.wantErr)
+				}
+				// An annotation file for a view the database defines can
+				// still overlay it (PRD §16.2).
+				if qe, ok := errors.AsType[*parser.ViewQueryError](err); !ok || qe.Name != "v" {
+					t.Errorf("ParseViewSQL() error = %#v, want a ViewQueryError naming v", err)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("ParseViewSQL() error: %v", err)
+			}
+			names := make([]string, 0, len(got.Columns))
+			for _, c := range got.Columns {
+				names = append(names, c.Alias)
+			}
+			if diff := cmp.Diff(tt.want, names); diff != "" {
+				t.Errorf("column names (-want +got):\n%s", diff)
+			}
+		})
+	}
+}
+
+// TestViewColumnSources_SubqueryNamedAfterItsTable checks that a derived
+// table or common table expression named after the table it reads ends the
+// trace when the table lacks the column, in forms MySQL accepts.
+func TestViewColumnSources_SubqueryNamedAfterItsTable(t *testing.T) {
+	p, err := mysql.New()
+	if err != nil {
+		t.Fatalf("New() error: %v", err)
+	}
+	if err := p.Parse("schema.sql", []byte(`CREATE TABLE users (id int PRIMARY KEY, name text, role text); CREATE TABLE posts (id int PRIMARY KEY, title text);`)); err != nil {
+		t.Fatalf("Parse() error: %v", err)
+	}
+	tests := []struct {
+		name string
+		sql  string
+		want []string
+	}{
+		{name: "derived table", sql: "CREATE VIEW `v` AS select `users`.`role` AS `role` from (select `users`.`role` AS `role` from `users` where (`users`.`id` > 0)) `users`", want: []string{"users.role"}},
+		{name: "derived table lacking the column", sql: "CREATE VIEW `v` AS select `users`.`email` AS `email` from (select `users`.`email` AS `email` from `users` where (`users`.`id` > 0)) `users`", want: []string{""}},
+		{name: "CTE lacking the column", sql: "CREATE VIEW `v` AS with `users` as (select `users`.`email` AS `email` from `users`) select `users`.`email` AS `email` from `users`", want: []string{""}},
+		// The subquery's column has another name than the table's column of
+		// its name, so only the subquery gives the right one.
+		{name: "derived table renaming a column", sql: "CREATE VIEW `v` AS select `users`.`role` AS `role` from (select `db`.`users`.`name` AS `role` from `db`.`users`) `users`", want: []string{"users.name"}},
+		{name: "derived table named after another table", sql: "CREATE VIEW `v` AS select `posts`.`title` AS `title` from (select `db`.`users`.`name` AS `title` from `db`.`users`) `posts`", want: []string{"users.name"}},
+		{name: "compound derived table", sql: "CREATE VIEW `v` AS select `users`.`role` AS `role` from (select `db`.`users`.`name` AS `role` from `db`.`users` union all select `db`.`users`.`name` AS `name` from `db`.`users`) `users`", want: []string{"users.name"}},
+		{name: "CTE renaming a column", sql: "CREATE VIEW `v` AS with `users` as (select `db`.`users`.`name` AS `role` from `db`.`users`) select `users`.`role` AS `role` from `users`", want: []string{"users.name"}},
+		{name: "derived table reading an enclosing CTE", sql: "CREATE VIEW `v` AS with `users` as (select `db`.`users`.`name` AS `role` from `db`.`users`) select `d`.`role` AS `role` from (select `users`.`role` AS `role` from `users`) `d`", want: []string{"users.name"}},
+		{name: "database-qualified table beside a CTE of its name", sql: "CREATE VIEW `v` AS with `users` as (select `db`.`users`.`name` AS `role` from `db`.`users`) select `u2`.`role` AS `role` from (`users` join `db`.`users` `u2`)", want: []string{"users.role"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			def, err := mysql.ParseViewSQL([]byte(tt.sql))
+			if err != nil {
+				t.Fatalf("ParseViewSQL() error: %v", err)
+			}
+			var got []string
+			for _, src := range parser.ViewColumnSources(def, p.Schema()) {
+				if src.Table == nil {
+					got = append(got, "")
+					continue
+				}
+				got = append(got, src.Table.Name+"."+src.Column)
+			}
+			if diff := cmp.Diff(tt.want, got); diff != "" {
+				t.Errorf("ViewColumnSources() mismatch (-want +got):\n%s", diff)
+			}
+		})
+	}
+}
+
+// TestViewReadSources_CompoundAndSubquerySelectLists checks that the table
+// columns a view reads include those every arm of a compound subquery
+// reads, and those the select list of a derived table or common table
+// expression reads that no view column selects, since MySQL resolves each
+// (PRD §6.1).
+func TestViewReadSources_CompoundAndSubquerySelectLists(t *testing.T) {
+	p, err := mysql.New()
+	if err != nil {
+		t.Fatalf("New() error: %v", err)
+	}
+	if err := p.Parse("schema.sql", []byte(`CREATE TABLE users (id int PRIMARY KEY, role text, email text);
+		CREATE TABLE posts (id int PRIMARY KEY, uid int, title text);
+		CREATE TABLE tags (id int PRIMARY KEY, uid int, k int);
+		CREATE TABLE c (n int, e text);`)); err != nil {
+		t.Fatalf("Parse() error: %v", err)
+	}
+	tests := []struct {
+		name string
+		sql  string
+		want []string
+	}{
+		{name: "IN UNION", sql: "CREATE VIEW v AS SELECT u.id FROM users u WHERE u.id IN (SELECT uid FROM posts UNION SELECT uid FROM tags WHERE k > 0)", want: []string{"posts.uid", "tags.k", "tags.uid", "users.id"}},
+		{name: "IN three arms", sql: "CREATE VIEW v AS SELECT u.id FROM users u WHERE u.id IN (SELECT id FROM users UNION SELECT uid FROM posts UNION ALL SELECT uid FROM tags)", want: []string{"posts.uid", "tags.uid", "users.id"}},
+		{name: "an arm reads the enclosing query", sql: "CREATE VIEW v AS SELECT u.id FROM users u WHERE u.id IN (SELECT uid FROM posts UNION SELECT t.uid FROM tags t WHERE u.email = 'x')", want: []string{"posts.uid", "tags.uid", "users.email", "users.id"}},
+		// title is only the first arm's: the second arm cannot read it.
+		{name: "an arm does not read the first arm's FROM clause", sql: "CREATE VIEW v AS SELECT x FROM (SELECT title AS x FROM posts UNION SELECT title FROM users) d", want: []string{"posts.title"}},
+		{name: "derived UNION", sql: "CREATE VIEW v AS SELECT x FROM (SELECT role AS x FROM users UNION SELECT title FROM posts) d", want: []string{"posts.title", "users.role"}},
+		{name: "a compound's own CTE", sql: "CREATE VIEW v AS SELECT u.id FROM users u WHERE u.id IN (WITH c AS (SELECT uid FROM tags) SELECT uid FROM posts UNION SELECT uid FROM c)", want: []string{"posts.uid", "tags.uid", "users.id"}},
+		{name: "CTE UNION ALL", sql: "CREATE VIEW v AS WITH c AS (SELECT uid FROM posts UNION ALL SELECT uid FROM tags) SELECT u.id FROM users u JOIN c ON c.uid = u.id", want: []string{"posts.uid", "tags.uid", "users.id"}},
+		// The recursive arm's c is the common table expression, not table c.
+		{name: "recursive CTE", sql: "CREATE VIEW v AS WITH RECURSIVE c(n, e) AS (SELECT id, email FROM users UNION ALL SELECT n + 1, e FROM c WHERE n < 3) SELECT n FROM c", want: []string{"users.email", "users.id"}},
+		{name: "unused derived table column", sql: "CREATE VIEW v AS SELECT id FROM (SELECT id, email FROM users) d", want: []string{"users.email", "users.id"}},
+		{name: "unused CTE column", sql: "CREATE VIEW v AS WITH c AS (SELECT id, email FROM users) SELECT id FROM c", want: []string{"users.email", "users.id"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			def, err := mysql.ParseViewSQL([]byte(tt.sql))
+			if err != nil {
+				t.Fatalf("ParseViewSQL() error: %v", err)
+			}
+			var got []string
+			for _, src := range parser.ViewReadSources(def, p.Schema()) {
+				if src.Table != nil {
+					got = append(got, src.Table.Name+"."+src.Column)
+				}
+			}
+			slices.Sort(got)
+			got = slices.Compact(got)
+			if diff := cmp.Diff(tt.want, got); diff != "" {
+				t.Errorf("ViewReadSources() mismatch (-want +got):\n%s", diff)
+			}
+		})
+	}
+}
+
+// TestViewReadSources_ValuesStatements checks that the table columns a view
+// reads other than through its own columns include those the rows of a
+// VALUES statement read, wherever the statement stands (PRD §6.1).
+func TestViewReadSources_ValuesStatements(t *testing.T) {
+	p, err := mysql.New()
+	if err != nil {
+		t.Fatalf("New() error: %v", err)
+	}
+	if err := p.Parse("schema.sql", []byte(`CREATE TABLE users (id int PRIMARY KEY, role text, email text);
+		CREATE TABLE posts (id int PRIMARY KEY, uid int, title text);`)); err != nil {
+		t.Fatalf("Parse() error: %v", err)
+	}
+	tests := []struct {
+		name string
+		sql  string
+		want []string
+	}{
+		{name: "LATERAL VALUES", sql: "CREATE VIEW v AS SELECT u.id, v.x FROM users u JOIN LATERAL (VALUES ROW(u.role)) v (x)", want: []string{"users.role"}},
+		{name: "LATERAL VALUES unnamed", sql: "CREATE VIEW v AS SELECT d.column_0 FROM users u, LATERAL (VALUES ROW(u.role)) d", want: []string{"users.role"}},
+		{name: "IN VALUES", sql: "CREATE VIEW v AS SELECT u.id FROM users u WHERE 'a' IN (VALUES ROW(u.role))", want: []string{"users.role"}},
+		{name: "EXISTS VALUES", sql: "CREATE VIEW v AS SELECT u.id FROM users u WHERE EXISTS (VALUES ROW(u.role))", want: []string{"users.role"}},
+		{name: "scalar VALUES", sql: "CREATE VIEW v AS SELECT u.id, (VALUES ROW(u.role)) AS x FROM users u", want: []string{"users.role"}},
+		{name: "a VALUES arm of a compound", sql: "CREATE VIEW v AS SELECT u.id FROM users u WHERE 'a' IN (SELECT title FROM posts UNION VALUES ROW(u.role))", want: []string{"posts.title", "users.role"}},
+		{name: "subquery in CTE VALUES", sql: "CREATE VIEW v AS WITH c (x) AS (VALUES ROW((SELECT max(role) FROM users))) SELECT x FROM c", want: []string{"users.role"}},
+		{name: "VALUES of a literal", sql: "CREATE VIEW v AS SELECT u.id, v.x FROM users u, (VALUES ROW(1)) v (x)", want: nil},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			def, err := mysql.ParseViewSQL([]byte(tt.sql))
+			if err != nil {
+				t.Fatalf("ParseViewSQL() error: %v", err)
+			}
+			var got []string
+			for _, src := range parser.ViewReadSources(def, p.Schema()) {
+				if src.Table != nil {
+					got = append(got, src.Table.Name+"."+src.Column)
+				}
+			}
+			slices.Sort(got)
+			got = slices.Compact(got)
+			if diff := cmp.Diff(tt.want, got); diff != "" {
+				t.Errorf("ViewReadSources() mismatch (-want +got):\n%s", diff)
+			}
+		})
+	}
+}
+
+// TestCreateTableUnreadColumns pins that a CREATE TABLE whose columns come from
+// another table or a query is an error, since the parser does not read those
+// columns and a table without them generates wrong code.
+func TestCreateTableUnreadColumns(t *testing.T) {
+	const base = "CREATE TABLE s (id int PRIMARY KEY, name varchar(50) NOT NULL);\n"
+	tests := []struct {
+		name    string
+		sql     string
+		wantErr string
+	}{
+		{name: "like", sql: "CREATE TABLE r LIKE s;", wantErr: "create table r: CREATE TABLE … LIKE is not supported"},
+		{name: "parenthesized like", sql: "CREATE TABLE r (LIKE s);", wantErr: "create table r: CREATE TABLE … LIKE is not supported"},
+		{name: "as select", sql: "CREATE TABLE c AS SELECT id FROM s;", wantErr: "create table c: CREATE TABLE … SELECT is not supported"},
+		{name: "select without as", sql: "CREATE TABLE c SELECT id FROM s;", wantErr: "create table c: CREATE TABLE … SELECT is not supported"},
+		{name: "columns and select", sql: "CREATE TABLE c (z int) SELECT id FROM s;", wantErr: "create table c: CREATE TABLE … SELECT is not supported"},
+		{name: "temporary as select", sql: "CREATE TEMPORARY TABLE c AS SELECT id FROM s;", wantErr: "create table c: CREATE TABLE … SELECT is not supported"},
+		{name: "like if not exists on an existing table", sql: "CREATE TABLE IF NOT EXISTS s LIKE s;"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			p, err := mysql.New()
+			if err != nil {
+				t.Fatalf("New() error: %v", err)
+			}
+			err = p.Parse("test.sql", []byte(base+tt.sql))
+			if tt.wantErr == "" {
+				if err != nil {
+					t.Fatalf("Parse() error: %v", err)
+				}
+				return
+			}
+			if err == nil || !strings.Contains(err.Error(), tt.wantErr) {
+				t.Fatalf("Parse() error = %v, want containing %q", err, tt.wantErr)
 			}
 		})
 	}

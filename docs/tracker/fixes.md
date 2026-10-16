@@ -31,6 +31,7184 @@ _No open fixes._
 
 <!-- fixes:resolved:begin -->
 
+### FIX-355
+
+- **Status:** Resolved
+- **Severity:** tracked
+- **Origin:** phase 30, parser
+- **Surfaced by:** Ship-readiness review of `feat/introspection` (2026-10-16), user ruling option 1
+
+**Issue.** **CREATE TABLE forms the file parser cannot model build a wrong
+schema silently.** The file parsers accept CREATE
+TABLE forms whose columns they do not read, and record a table with too few
+columns, no columns or no table, with no error. Measured at `1d34296c`:
+
+- PostgreSQL `CREATE TABLE r (LIKE s, z int)` gives `r[z]`.
+- PostgreSQL `CREATE TABLE b (x int) INHERITS (a)` gives `b[x]`.
+- PostgreSQL `CREATE TABLE tt OF comp` gives `tt[]`.
+- PostgreSQL `CREATE TABLE c AS SELECT …` and `SELECT … INTO c` give no table,
+  and a later `ALTER TABLE c ADD COLUMN` is absorbed.
+- SQLite `CREATE TABLE c AS SELECT …` gives `c[]` ("table c has no primary
+  key; skipped").
+- MySQL `CREATE TABLE r LIKE s` and `CREATE TABLE c AS SELECT …` give no
+  table, and a foreign key into `r` is accepted.
+
+The filed repro also crashed `sqlgen generate` ("panic: runtime error: slice
+bounds out of range [:1] with length 0" at
+`cmd/sqlgen/gen/context_table.go:488`, exit 2). The auto-review found that the
+crash comes from the repro's source table being named `s`, whose struct name
+singularizes to `""`. It is not caused by `LIKE`: `CREATE TABLE s (id int
+PRIMARY KEY)` alone panics, and the same LIKE schema with the source named
+`src` generates.
+
+This affects `source: files`, and `source: both` when a pending migration
+uses one of these forms. `source: database` reads the catalog's columns and
+is unaffected.
+
+**Root cause.**
+
+- **PostgreSQL.** `parser/postgres/postgres.go` `parseCreateTable` reads only
+  the `ColumnDef` and `Constraint` table elements. It ignores
+  `TableLikeClause`, `InhRelations` (outside a partition) and `OfTypename`.
+  `skipRelation` records CREATE TABLE AS / SELECT … INTO tables as skipped
+  relations, a skip PRD §5.2 states.
+- **MySQL.** `parser/mysql/mysql.go` `parseCreateTable` returns nil when
+  `TableSpec` is nil (`LIKE`, `AS SELECT`) and ignores `Select` otherwise.
+- **SQLite.** `parser/sqlite/sqlite.go` `parseCreateTable` ignores `Select`.
+
+**Suggested fix.**
+- The user ruled on 2026-10-16: make each form a parse error (option 1); do not model them.
+- PG: `CREATE TABLE … (LIKE …)`, `INHERITS (…)` on a non-partition, `CREATE TABLE … OF type`, `CREATE TABLE … AS` (plain, not a materialized view) and `SELECT … INTO` each fail with an error naming the table and saying to write the columns out or use `source: database`.
+- MySQL: `CREATE TABLE … LIKE` and `CREATE TABLE … [(…)] [AS] SELECT` fail the same way.
+- SQLite: `CREATE TABLE … AS SELECT` fails the same way. SQLite stores such a table as a plain CREATE TABLE (`CREATE TABLE c(id INT,b TEXT)`), so the introspector's `parseStoredTable` is unaffected.
+- TEMP / TEMPORARY forms fail too: the parsers model temporary tables as permanent tables on every dialect, so skipping only a temporary CTAS would be inconsistent.
+- Drop CREATE TABLE AS / SELECT … INTO from the PG skipped-relation set and its comments; PRD §5.2 line 1432 drops them from the skipped list and states the new errors.
+- Regression tests: per-dialect table tests for each form's error. The table-`s` panic is a separate naming defect and is out of scope.
+
+**References.**
+- PRD §5.2 (line 1432, the skipped-relation list), §6.1.
+- Backlog lines this resolves (2026-10-12): the PG typed table, PG `INHERITS` and PG `LIKE` lines (from the FIX-337 and FIX-339 vets) and the SQLite `CREATE TABLE r1 AS SELECT` line.
+- `parser/introspect/sqlite.go` `parseStoredTable` reuses the SQLite file parser.
+
+**Resolution notes.** Each form is now a parse error on its dialect, worded `create table <name>: <form> is not supported in SQL files, since sqlgen does not read the columns it gives the table; write the columns out, or create the table in the database and read it from there (input.source: database or both)`.
+- **The forms.**
+  - PostgreSQL: `LIKE`, `INHERITS` (outside `PARTITION OF`), `CREATE TABLE … OF`, `CREATE TABLE … AS` and `SELECT … INTO`, the last also on the leftmost arm of a set operation.
+  - MySQL: `CREATE TABLE … LIKE`, in both its bare and parenthesized forms, and `CREATE TABLE … [(…)] [AS] SELECT`.
+  - SQLite: `CREATE TABLE … AS SELECT`.
+- **Code.** The wording is the shared constant `parser.UnreadColumns`. Each dialect formats it with `fmt.Errorf`, because the linter's wrapcheck rule rejects returning an error built in another package.
+- **Kept working.**
+  - A PostgreSQL materialized view is still skipped with its warning.
+  - `IF NOT EXISTS` on a name that already exists is still a no-op. On PostgreSQL that holds for a skipped relation too.
+  - The PostgreSQL skipped-relation set and its comments no longer mention CREATE TABLE AS or SELECT … INTO.
+- **TEMP forms fail too**, as the Suggested fix says, since every parser models a temporary table as a permanent one.
+- **CLI.** The repro schema now fails with "Schema error: … create table public.r: LIKE is not supported in SQL files, …" and exit 3. Its source table `s` still panics on its own (`CREATE TABLE s (id int PRIMARY KEY)` → exit 2), a separate naming defect found by the auto-review.
+- **Tests.**
+  - New: `TestCreateTableUnreadColumns` for PostgreSQL (13 cases), MySQL (7) and SQLite (3).
+  - Fail-first: with the production change reverted, all 17 error cases fail and the no-error cases pass.
+  - Removed the cases that pinned the old skip: four in `TestCreateIndexOnUnknownRelation`, and the "CREATE TABLE AS or SELECT INTO table takes an index name" case in `TestDerivedConstraintNames`.
+  - `TestImplicitReferenceColumns`' "other skipped relation" case now uses a materialized view.
+- **PRD §5.2.** New paragraph "A table states its columns". The `CREATE INDEX` paragraph's exception list drops the CREATE TABLE AS / SELECT … INTO table.
+- **Gates:** `make check`, `make check-examples` and `make test-integration` all pass. No golden churn.
+- **Backlog.**
+  - Removed the four 2026-10-12 lines this resolves: the PG typed table, PG INHERITS, PG LIKE and SQLite CTAS lines.
+  - Added two lines: temporary tables are modeled as permanent ones; `CREATE TABLE IF NOT EXISTS` with LIKE, INHERITS or OF over a skipped relation's name errors where PostgreSQL does nothing.
+- **Auto-review.** PRD 5/5, tests 3/3, and fail-first confirmed. Four doc corrections were applied here: the panic is not caused by LIKE.
+- **The table-`s` panic, fixed inline by the user's ruling (2026-10-16).**
+  - Cause: `StructName("s")` was `""`, because `singularize`'s fallback trimmed the whole word, and `assembleTableContext` then sliced `structName[:1]`.
+  - `singularize` (`cmd/sqlgen/gen/inflect.go`) now keeps a last word that a rule would empty, so `s` and `_s` give `S` / `s`. The file stem follows through `SnakeName`.
+  - `checkStructName` (`gen/naming.go`), run by the table and view context builders, makes a struct name that is not an exported Go identifier a generation error naming its `struct_name` key: a name with no letter (`_`, `$`), one with no upper-case first letter (`ß`), or such an override.
+  - Measured with the CLI: `s` and `_s` generate; `_`, `$` and `ß` exit 1 with the error; `struct_name: Underscore` on `_` generates `type Underscore struct`.
+  - Tests: `TestToSingular` and `TestStructName` gained the suffix-only cases, plus the new `TestBuildContexts_StructNameMustBeExported` (9 cases). With the change reverted, the suffix cases fail and the no-letter case panics at the original slice.
+  - PRD §8.5 states both rules.
+
+
+### FIX-351
+
+- **Status:** Resolved
+- **Severity:** tracked
+- **Origin:** phase 30, parser/mysql/view_sql.go
+- **Surfaced by:** FIX-349 verify (2026-10-14)
+- **Vetted:** corrected at `c1ea706e` (2026-10-16)
+
+**Issue.** **The MySQL read collector misses a VALUES statement.** Under
+`source: both`, a column a MySQL view reads only inside a `VALUES ROW(…)`
+statement is never recorded, so dropping or renaming it passes `Merge`
+while MySQL then fails the view. PRD §6.1's MySQL bullet (from FIX-354)
+documents the gap as a limit: "A column only a later arm of a compound
+subquery, or a `VALUES` list, reads is not found, though its table is."
+Measured at `c1ea706e` against MySQL 8.0 (testcontainers; migration, then
+`SELECT * FROM vo_r LIMIT 0`), `ALTER TABLE vo_users DROP COLUMN role` and
+`RENAME COLUMN role TO kind` each give `Merge=<nil>` against "view vo_r
+fails: Error 1356 (HY000): View 'sqlgen_test.vo_r' references invalid
+table(s) or column(s) or function(s) or definer/invoker of view lack rights
+to use them" for: `JOIN LATERAL (VALUES ROW(u.role)) v(x)`, comma `LATERAL
+(VALUES ROW(u.role)) v(x)` (with and without `v.x` selected), unnamed
+`LATERAL (VALUES ROW(u.role)) d` + `d.column_0`, `WHERE 'a' IN (VALUES
+ROW(u.role))`, `WHERE EXISTS (VALUES ROW(u.role))`, a scalar `(VALUES
+ROW(u.role)) AS x`, `WITH c (x) AS (VALUES ROW((SELECT max(role) FROM
+vo_users))) SELECT x FROM c`, and `FROM (VALUES ROW((SELECT max(role) FROM
+vo_users))) d(x)`. MySQL stores and vitess parses every one of these
+definitions.
+- Filed (2026-10-14) for PostgreSQL, MySQL and SQLite, VALUES lists and
+  LIMIT/OFFSET subqueries. FIX-354 (`c1ea706e`) replaced the PostgreSQL
+  and SQLite collectors with database answers, so those cases are gone
+  here; MySQL refuses a subquery in LIMIT ("Error 1064 (42000): You have an
+  error in your SQL syntax … near '(SELECT count(*) FROM vo_tags)'"), so
+  only MySQL VALUES remains.
+
+**Root cause.** A VALUES statement is a `*sqlparser.ValuesStatement`.
+`readSubquery` (`parser/mysql/view_sql.go:60` at `c1ea706e`) returns an empty query for
+anything that is not a `*sqlparser.Select` (`:61-63`). That covers a
+derived table, LATERAL or not (`collectTableAliases`, the call at `:369`),
+a CTE, and IN/EXISTS/scalar subqueries (`readNested`, `:93`, which calls
+`readSubquery` at `:94`).
+
+**Suggested fix.**
+- `parser/mysql/view_sql.go`: `readSubquery` sends a
+  `*sqlparser.ValuesStatement` to a new `readValues`. It builds the query
+  with empty FROM aliases, the CTEs from `vs.With`, and columns named from
+  `names` (or `column_<i>`, as MySQL names them) with no source, then runs
+  `readCollector.walk(vs.Rows)` into `Reads`/`Nested`. This one site covers
+  derived tables, CTEs and IN/EXISTS/scalar subqueries.
+- `parser/view.go`: the `ViewSQL.Reads` doc comment covers a VALUES
+  statement's rows.
+- PRD §6.1 MySQL bullet: add "or in a `VALUES` statement" to where a read
+  is found, and narrow the limit to "A column only a later arm of a
+  compound subquery reads is not found, though its table is."
+- Regression test: `TestMerge_ViewColumnsMatchMySQL` in
+  `parser/introspect/view_dependency_integration_test.go`, an oracle test
+  over `oracleShape`/`compareVerdicts`/`mysqlVerdict`: LATERAL VALUES,
+  LATERAL VALUES unnamed, IN VALUES, EXISTS VALUES, scalar VALUES, a
+  subquery in CTE VALUES, and a VALUES-of-a-literal control, each under
+  drop role, rename role, and drop email (control).
+- Changed from the original at the vet: the PostgreSQL and SQLite bullets
+  and LIMIT/OFFSET are dropped (deleted code; MySQL rejects the syntax);
+  VALUES columns get no source, since a bare column in the first row
+  becoming the view column's source would change its type from the
+  catalog's, beyond this entry; widened to EXISTS, scalar VALUES and
+  subqueries inside rows (same root cause, same site); the test moved from
+  `TestMerge_ViewColumnRenameAndDrop` to a MySQL oracle test; the PRD limit
+  is amended.
+- Overlap with FIX-350, which lands first: both patch the dispatch at the
+  top of `readSubquery` (independent branches) and the same PRD §6.1
+  sentence, so this patch rebases onto FIX-350's (`git apply --3way`); on
+  landing the limit sentence goes away entirely. FIX-350's arms go through
+  `readNested` → `readSubquery`, so a `VALUES ROW` arm is covered once both
+  land.
+- Prototype results, run at `c1ea706e` on 2026-10-16: reproduction by a
+  throwaway probe (`cd parser && go test -count=1 -run
+  TestZZProbeMySQLValues -v ./introspect/`, deleted) as in Issue; controls
+  (drop `vo_posts.uid`, drop `vo_users.email`, `(VALUES ROW(1)) v(x)`)
+  agree; MySQL refuses the LIMIT subquery (1064) and `IN (VALUES
+  ROW((SELECT … WHERE p.id = u.id)))` ("Error 1054 (42S22): Unknown column
+  'u.id' in 'where clause'"), so neither is a bug. Gates: `go build ./...`,
+  `go vet ./mysql/ ./introspect/` ok; parser `go test -race -count=1 ./...`
+  ok (introspect 122s); `golangci-lint run ./mysql/... ./introspect/... ./`
+  0 issues; `gofumpt -l parser/` clean. Fail-first: the `ValuesStatement`
+  dispatch reverted → 6 of 7 `TestMerge_ViewColumnsMatchMySQL` subtests
+  fail ("drop role: Merge and the database disagree:\n  Merge: <nil>\n
+  database: \"view vo_r fails: Error 1356 (HY000): …\""), rename role
+  likewise, the literal control passes; the existing suite without the fix
+  passes. Golden churn: none. Patch: `.claude/prototypes/FIX-351.patch` (4
+  files, +72/−6).
+
+**References.**
+- PRD §6.1 (columns a view reads outside its select list).
+- FIX-347 (derived tables and CTEs).
+- FIX-349: the read collectors (only MySQL's survives FIX-354). The user
+  ruled on 2026-10-14 to file the VALUES-list and LIMIT-subquery gaps as
+  separate FIXes.
+- FIX-354 (`c1ea706e`): database answers for PostgreSQL and SQLite; MySQL
+  tables from `VIEW_TABLE_USAGE`.
+
+**Resolution notes.** MySQL's `readSubquery`
+(`parser/mysql/view_sql.go`) now dispatches a `*sqlparser.ValuesStatement`
+to a new `readValues`, beside FIX-350's `*sqlparser.Union` → `readCompound`
+branch: its columns are named from the column list, else `column_<i>` as
+MySQL names them, with no source; its CTEs come from `vs.With`; and every
+column its rows read goes to `Reads`, every subquery in them to `Nested`.
+That one site covers derived tables (LATERAL or not), CTEs, IN/EXISTS/scalar
+subqueries and, through FIX-350's `readCompound`, any arm of a compound
+subquery, leading or not. `parser/view.go`'s `ViewSQL.Reads` comment covers
+a VALUES statement's rows. PRD §6.1's MySQL bullet lists "or in a `VALUES`
+statement" among the reads and drops the limit sentence, which with FIX-350
+landed has nothing left to say. The vetted prototype (`c1ea706e`) was
+applied with `git apply --3way` and rebased onto FIX-350 (`1bfd64b5`) by
+hand in `docs/PRD.md`, `parser/mysql/view_sql.go` (both dispatch branches,
+FIX-350's `readNested`/`readCompound` kept) and the integration test.
+Regression tests: 11 VALUES shapes merged into FIX-350's
+`TestMerge_ViewColumnsMatchMySQL` oracle (`parser/introspect/view_dependency_integration_test.go`),
+reading `u.email` so the oracle's drop/rename `users.email` migrations
+exercise them: LATERAL VALUES (named, unnamed, not selected), IN, EXISTS,
+scalar, a UNION with a trailing and with a leading VALUES arm, a subquery in
+CTE VALUES and in derived VALUES, and a VALUES-of-a-literal control; plus
+the Docker-free `TestViewReadSources_ValuesStatements` in
+`parser/mysql/mysql_test.go` (8 shapes); the unit test and the
+not-selected, two UNION-arm and derived-VALUES-subquery oracle shapes are
+additions to the prototype. Fail-first with the dispatch
+reverted: 10 of 11 oracle subtests fail (the literal control passes) and 7
+of 8 unit subtests fail. Gates: `make check` ok; `cd parser && go test
+-race -count=1 ./...` ok (introspect 156s); `make check-examples` ok.
+Golden churn: none, as vetted.
+
+### FIX-350
+
+- **Status:** Resolved
+- **Severity:** tracked
+- **Origin:** phase 30, parser/mysql/view_sql.go, parser/view
+- **Surfaced by:** FIX-349 verify (2026-10-14)
+- **Vetted:** corrected at `c1ea706e` (2026-10-16)
+
+**Issue.** **MySQL compound subqueries, and unselected derived-table and
+CTE columns, are never read.** Under `source: both`, a column a MySQL view
+reads only in an arm of a compound (`UNION`) subquery, or in the select list
+of a derived table or CTE that the view does not select (a recursive CTE's
+anchor included), is never recorded, so dropping or renaming it passes
+`Merge` while MySQL then fails the view. PRD §6.1's MySQL bullet (from
+FIX-354, `docs/PRD.md:1657`) states part of it as a limit ("A column only a
+later arm of a compound subquery, or a `VALUES` list, reads is not found,
+though its table is"), and understates it: the first arm of a compound
+expression subquery is missed too. Measured at `c1ea706e` with the new MySQL
+column oracle (`cd parser && go test -count=1 -run
+TestMerge_ViewColumnsMatchMySQL ./introspect/`, 23 shapes × 9 column drops
+and renames = 207 checks) on HEAD's production code: 60 disagreements over
+19 shapes, every one a silent pass. Example: IN UNION + `ALTER TABLE vo_tags
+DROP COLUMN uid` → Merge `<nil>`, database "view vo_r fails: Error 1356
+(HY000): View 'sqlgen_test.vo_r' references invalid table(s) or column(s) or
+function(s) or definer/invoker of view lack rights to use them". The same
+for the first arm (drop vo_posts.uid), derived UNION + drop title or role,
+CTE UNION ALL, recursive CTE + drop/rename email, EXISTS/scalar UNION, and
+`SELECT id FROM (SELECT id, email FROM vo_users) d` + drop email; a
+recursive arm joining vo_tags gives "Error 1054 (42S22): Unknown column
+'t.uid' in 'on clause'" vs Merge `<nil>`.
+- Filed (2026-10-14) for all three dialects, tables and columns. FIX-354
+  (`c1ea706e`) moved PostgreSQL and SQLite to database answers (its oracle
+  has the IN UNION, IN INTERSECT, derived UNION, CTE UNION ALL and
+  recursive CTE shapes) and MySQL tables to `VIEW_TABLE_USAGE`
+  (`checkViewTables`, `parser/introspect/merge.go:68,97`;
+  `TestMerge_ViewTablesMatchMySQL`), so only MySQL columns remain.
+
+**Root cause.** At `c1ea706e`, MySQL's `readSubquery` (`parser/mysql/view_sql.go`) returns
+an empty query for a `*sqlparser.Union`, so neither arm of a compound
+derived table, CTE or expression subquery (`readNested`, `:93`) is read; and
+a derived table's or CTE's select-list columns become Reads only through
+`readNested`, so one the view does not select is never checked, though
+MySQL resolves every one. `walkScopes` (`parser/view.go:576-598`) has no
+notion of compound arms, and `cteScopes`' `inside` guard (`:559`) makes a
+recursive arm's self-reference resolve to a same-named table.
+
+**Suggested fix.**
+- `parser/mysql/view_sql.go`: `readSubquery` reads a `*sqlparser.Union`
+  through new `readCompound`/`unionArms`. The query is its leftmost arm,
+  which names the columns; each further arm goes into `Compound` through
+  `readNested`; the union's own WITH CTEs are in scope for every arm.
+  `readSubquery` records every select-list column it reads in Reads, not
+  only Columns (the loop moves there from `readNested`, which now only
+  clears Columns). `readCTEs` sets `Recursive` from `with.Recursive`.
+- `parser/view.go`: new `ViewSQL.Compound []ViewSQL` and `ViewSQL.Recursive
+  bool`. `walkScopes` yields each arm as a non-correlated child (path
+  `/|<i>`), so an arm never reads the first arm's FROM and reaches an
+  enclosing query only when the compound itself is correlated; the
+  `inside` guard covers arms unchanged. `cteScopes` lets a further arm of a
+  recursive CTE resolve the CTE's own name to the CTE. Doc comments for
+  scope paths, `ViewFromTables` and `ViewReadSources` updated.
+- PRD §6.1 MySQL bullet: reads include "in the select list of a derived
+  table or common table expression whether or not the view selects it, in
+  any arm of a compound (`UNION`) subquery"; the limit sentence becomes "A
+  column only a `VALUES` list reads is not found, though its table is"
+  (FIX-351 removes that half).
+- Tests: container oracle `TestMerge_ViewColumnsMatchMySQL` in
+  `parser/introspect/view_dependency_integration_test.go` (23 shapes, 0
+  known limits); Docker-free `TestViewReadSources_CompoundAndSubquerySelectLists`
+  in `parser/mysql/mysql_test.go` (10 cases); the "compound derived table"
+  case of `TestViewColumnSources_SubqueryNamedAfterItsTable` now expects
+  `users.name`, since the leftmost arm is traced.
+- Changed from the original at the vet: rewritten for MySQL only; arms are
+  non-correlated children, not siblings (the suggested `last.path + "|<i>"`
+  path slips past the `inside` guard, so a later arm resolved a
+  non-recursive CTE to itself); new `ViewSQL.Recursive`, because with the
+  guard a recursive arm's self-reference resolved to a same-named table, a
+  measured false error (`WITH RECURSIVE vo_tags(uid) AS (SELECT 1 UNION ALL
+  SELECT uid + 1 FROM vo_tags WHERE uid < 3) SELECT uid FROM vo_tags` + DROP
+  vo_tags.uid → Merge "view vo_r reads column uid of table vo_tags, which
+  the SQL files drop or rename; …" while MySQL accepts); every derived/CTE
+  select-list column is a Read, which the entry's own recursive-anchor case
+  needs (`SELECT n + 1, 'z' FROM c` + DROP email → Merge `<nil>`, MySQL
+  1356) and which closes the same-site unselected-column cases; the
+  regression test is a MySQL oracle test; the PRD limit is rewritten.
+  Recorded for the user to veto: two exported fields are added to the
+  parser module's `parser.ViewSQL` (not runtime or generated surface), and
+  the PRD edit drops part of a limit §6.1 states.
+- Landing order: FIX-350 before FIX-351. Both patch the dispatch at the top
+  of `readSubquery` and the same PRD §6.1 sentence; FIX-351's patch
+  rebases onto this one. A `VALUES ROW` arm still reads as empty until
+  FIX-351 lands.
+- Prototype results, run at `c1ea706e` on 2026-10-16: reproduction as in
+  Issue. Gates: parser `gofumpt -l .` clean; `golangci-lint run ./...` 0
+  issues; parser `go test -race -count=1 ./...` ok (introspect 134.9s);
+  cmd/sqlgen `go test -race -count=1 -run TestE2E .` ok (136.9s). `make
+  update-golden`/`-e2e` were not run (the session's auto-mode classifier
+  denied them); no template or generator is touched and the read-only E2E
+  golden comparison is green, so `/fix-implement` runs them with `make
+  check` and `make check-examples`. Fail-first: Union branch disabled →
+  oracle 56 disagreements (IN_UNION "drop tags.uid: Merge <nil>, database
+  'view vo_r fails: Error 1356 (HY000)…'"), 8 unit subtests plus
+  `compound_derived_table` fail ("- users.name + \"\""); select-list-as-Reads
+  loop disabled → 45 disagreements over 18 shapes ("derived table column
+  the view does not select": "drop users.email: Merge <nil>, database '…
+  1356 …'"), 10 unit subtests; `walkScopes` Compound loop disabled → 31
+  disagreements, 5 unit subtests; recursive `self` disabled → unit
+  "recursive CTE" fails (+"c.e", +"c.n") and the oracle's "recursive CTE
+  named after a table" gives the false error above; union-WITH merge
+  disabled → unit "a compound's own CTE" (-"tags.uid") and oracle "IN UNION
+  with its own CTE" ("drop tags.uid: Merge <nil>" vs 1356). Existing suite
+  without the fix passes. Golden churn: none observed (TestE2E green).
+  Patch: `.claude/prototypes/FIX-350.patch` (5 files, +207/−36).
+
+**References.**
+- PRD §6.1 (view tables and columns under `source: both`).
+- FIX-347: derived tables and CTEs. It stores a compound query as an empty
+  one.
+- FIX-349: reads outside the select list. Its 2026-10-14 auto-accept left
+  this gap in the backlog instead of adding a PRD carve-out.
+- `parser/view.go` `walkScopes` and `readScope`;
+  `parser/introspect/views.go` `checkViewReads`.
+- FIX-354 (`c1ea706e`): database answers for PostgreSQL and SQLite; MySQL
+  tables from `VIEW_TABLE_USAGE`. FIX-351: MySQL VALUES.
+
+**Resolution notes.** Resolved 2026-10-16 from the vetted prototype
+(applied clean at `4379344a`). MySQL's `readSubquery` now reads a
+`*sqlparser.Union` through `readCompound`/`unionArms`: the leftmost arm
+names the columns and each further arm goes into the new
+`parser.ViewSQL.Compound` through `readNested`, with the union's own WITH
+CTEs in scope for every arm; every derived-table and CTE select-list column
+is a Read; `readCTEs` sets the new `ViewSQL.Recursive`. `walkScopes` yields
+each arm as a non-correlated child (`/|<i>`), and `cteScopes` lets a further
+arm of a recursive CTE resolve the CTE's own name. PRD §6.1's MySQL bullet
+now lists derived/CTE select lists and compound arms as reads and keeps
+only the `VALUES` limit. Tests: MySQL oracle `TestMerge_ViewColumnsMatchMySQL`
+(23 shapes, 0 known limits), `TestViewReadSources_CompoundAndSubquerySelectLists`,
+and `compound_derived_table` now expects `users.name`. Fail-first re-run on
+the landed code (Union branch disabled): `compound_derived_table` and 8
+`TestViewReadSources_CompoundAndSubquerySelectLists` subtests fail. Golden
+churn: none (`make update-golden`, `make update-golden-e2e`), matching the
+vet.
+
+### FIX-354
+
+- **Status:** Resolved
+- **Severity:** tracked
+- **Origin:** phase 30, parser/introspect
+- **Surfaced by:** user review of FIX-349 and FIX-350..353 (2026-10-15)
+- **Vetted:** corrected at `b8bafb62` (2026-10-16)
+
+**Issue.** Under `source: both`, sqlgen decides whether a file migration
+drops or renames something a database view reads (PRD §6.1) by parsing
+each view's definition and re-implementing every dialect's name
+resolution (FIX-347, FIX-349): scopes, LATERAL, CTE scoping, select-list
+aliases in GROUP BY/HAVING, re-binds. It does not converge. FIX-349 grew
+from an 805-line prototype to about 1,500 lines and 123 subtests, every
+review round against the real databases found new shapes, and it left
+FIX-350..353 behind plus false errors HEAD never had (FIX-353; the SQLite
+`HAVING EXISTS (… WHERE p.title = role)` outer-alias case). A probe at
+`5fd51324` (2026-10-15) measured that PostgreSQL and SQLite can answer the
+question themselves, exactly:
+- PostgreSQL `pg_depend` (postgres:16): 78 view shapes, 4056 checks (DROP
+  COLUMN, ALTER TYPE, RENAME COLUMN per column, DROP/RENAME TABLE, DROP
+  TYPE/DOMAIN/composite, DROP CONSTRAINT). DROP COLUMN is refused (2BP01)
+  and ALTER TYPE (0A000) exactly when `pg_depend` lists the column, and
+  DROP TABLE exactly when any row names the table (subid 0 included). The
+  only 4 disagreements are one shape, a view over a string-body `LANGUAGE
+  sql` function, where PostgreSQL itself applies the drop and the view
+  fails only when run (42703 / 42P01). RENAME COLUMN and RENAME TABLE are
+  rewritten into the view in every shape. It also records refusals the
+  parser does not model: `DROP CONSTRAINT users_pkey` under a GROUP BY
+  that depends on the key, `DROP TYPE` under a `'a'::role_t` cast, a
+  composite attribute read as `(addr).city`.
+- SQLite replay (modernc): copy the database's schema into `:memory:`,
+  run each migration file, and check every view still reads. 74 shapes ×
+  32 migrations = 2368 checks, 0 disagreements with the real file
+  database, including every FIX-350..353 shape. About 37ms for 200
+  tables, 200 indexes, 50 views and 20 triggers.
+- MySQL 8.0 has nothing column-level. `information_schema.VIEW_TABLE_USAGE`
+  lists every table a view reads (subqueries, CTEs, recursive CTEs,
+  derived tables, UNION arms, LATERAL, `VALUES ROW`, JSON_TABLE, scalar
+  subqueries; direct only for view over view; it also lists a table read
+  inside a stored function's body). A scratch-schema replay works only
+  with CREATE DATABASE privileges the default user lacks (1044) and would
+  need a config switch the PRD does not have.
+
+**Root cause.** The dependency check is derived from the view SQL
+(`parser/{postgres,mysql,sqlite}/view_sql.go` read collectors;
+`parser/view.go` `ViewReadSources`/`readScope`/`tableColumnReads`;
+`parser/introspect/views.go` `readViewSources` :72, `refreshViewColumns`
+:150, `checkViewReads` :186) instead of from the database, which already
+enforces it. Each dialect's resolution rules are a moving target, so the
+parser both misses reads and invents false ones.
+
+**Suggested fix.**
+- PostgreSQL: the introspector runs the recursive `pg_depend` query
+  (through `pg_rewrite` for views and materialized views, recursing through
+  `pg_proc` for `BEGIN ATOMIC` function bodies; `deptype = 'n'`; references
+  to `pg_class`, `pg_type` and `pg_constraint`; `refobjsubid` 0 = the whole
+  relation) for every view in the database, not filtered by
+  `opts.Tables` or schema, and stores the dependencies on the schema model.
+  `Merge` errors when a file migration drops a column, table, type or
+  constraint, or changes a column's type, that a view depends on, naming
+  the view and the object. Renames need no check: PostgreSQL rewrites the
+  view; the parser carries the dependencies along with the rename. Widened
+  at the vet (same root cause, same fix site): partitions. DROP TABLE of a
+  partition a view reads (one the introspector skips included), of its
+  partitioned table, or of a column above it, is refused the same way,
+  since PostgreSQL answers 2BP01.
+- SQLite: the introspector keeps the raw `sqlite_master` rows (`sql IS NOT
+  NULL`, not `sqlite_%`) and the shadow-table list (`pragma_table_list`
+  `type='shadow'`). `Merge` replays them into a `:memory:` database
+  (tables incl. virtual, then indexes, views, triggers), records which
+  views read cleanly (`SELECT * FROM v LIMIT 0`), runs each file's raw
+  text as written, then errors, naming the file, on SQLite's own refusal
+  or on a view that read cleanly before and fails after. No transaction
+  wrapper: a file's own BEGIN/COMMIT runs as written (modernc `Exec` runs
+  `…BEGIN; ALTER TABLE b ADD COLUMN w int; COMMIT;` in one call), and the
+  copy is thrown away anyway. A database table or index that fails to
+  replay for a collation or function the copy lacks becomes a placeholder
+  (the statement with each missing collation made BINARY and each missing
+  function call made `json_array(…)`), and after every statement has run
+  its original SQL is written back over the `sqlite_master` row between
+  `PRAGMA writable_schema = ON` and `RESET` (ruled 2026-10-16, Q3). A
+  virtual table whose module is missing becomes a placeholder `CREATE
+  TABLE name (x)` restored with rootpage 0, and a view that fails for the
+  missing module is replaced by `CREATE VIEW name AS SELECT NULL`, with a
+  warning ("virtual tables words: this SQLite has no module for them, so
+  the SQL files are not checked against views vw, which read them"); SQLite
+  checks every view on ALTER TABLE, so otherwise every migration fails. A
+  view that does not run before the files is not checked. A file statement,
+  or a view failing after a file, that needs a collation, function or
+  module the copy lacks ("no such collation sequence", "no such function",
+  "unknown function", "no such module") warns "<file> needs <collation|
+  function|module> <name>, which this SQLite lacks, so SQLite does not
+  check it or the SQL files after it" and stops checking (ruled
+  2026-10-16, Q4). A view a file drops is not checked. View columns are re-read
+  from the view as the copy leaves it, instead of following renames in the
+  parser (ruled 2026-10-15, Q1), so a file that drops and re-creates a
+  SQLite view changes the model: a SQLite exception to PRD §6.1's "a
+  pending change to a view does not apply", stated in the PRD. Merge
+  accepts what SQLite accepts, including a subquery name that re-binds to
+  an outer table's column after a drop (ruled 2026-10-15, Q2).
+- MySQL: the introspector reads `VIEW_TABLE_USAGE`; `Merge` errors on a
+  DROP TABLE or RENAME TABLE of a table any view reads. Column checks keep
+  FIX-349's parser path.
+- Delete what the database now answers: the PostgreSQL and SQLite read
+  collectors (`queryReads`, `readNested`, `readCollector`, `fromKeys` and
+  kin), the SQLite-only parts of `parser/view.go` (`ViewColumnRef.Alias`,
+  `Using`, `tableColumnReads` whole, since PostgreSQL's reads were its only
+  other caller, the `ViewReadSource` type, and
+  `RenameViewColumnReferences`), and the PostgreSQL and SQLite read checks.
+  MySQL's reads become `[]ViewColumnSource`.
+  Keep `BuildView`'s select-list tracing (view column types and
+  nullability) and the whole MySQL path.
+- PRD §6.1: state how each database is checked and the limits, each
+  measured: a view over a string-body SQL function (PostgreSQL itself
+  allows the drop); SQLite `PRAGMA legacy_alter_table` set on the
+  migration tool's connection (a table rename then breaks the view and the
+  replay misses it; a PRAGMA inside a file is replayed); data-dependent
+  failures an empty copy cannot see (`CREATE UNIQUE INDEX` over duplicate
+  rows: the database says "UNIQUE constraint failed: u.e (2067)", Merge
+  returns nil; dropping a parent table with child rows is not one, since
+  the SQLite file parser already refuses it with "drop table par: cannot
+  drop table par: column ch.pid references it via foreign key"); a SQLite trigger on another table that reads the dropped
+  column (SQLite checks it only when the trigger fires); MySQL column
+  checks stay best-effort. The SQLite replay also reports non-view
+  refusals (e.g. dropping a generated column's source), which is new
+  Merge behavior.
+- Tests: integration tests that compare Merge's verdict with the
+  database's for the probe corpus, per dialect; trim the PostgreSQL and
+  SQLite subtests of `TestMerge_ViewColumnRenameAndDrop` that the oracle
+  now covers, keep the MySQL ones.
+- Tracker: on landing, resolve FIX-352 and FIX-353 (SQLite-only) as
+  superseded, and narrow FIX-350 and FIX-351 to MySQL column cases.
+  FIX-350's MySQL table drops and renames (IN UNION, derived UNION, CTE
+  UNION ALL) agree with MySQL in the oracle through `VIEW_TABLE_USAGE`.
+  Remove the 2026-10-14 backlog line from FIX-349 on the SQLite inward
+  re-bind (a column of the dropped name added further in), which the Q2
+  ruling makes moot.
+- Changed from the original at the vet: no transaction wrapper around a
+  replayed file; views failing after a skipped virtual table are dropped
+  from the copy; `tableColumnReads` and `ViewReadSource` go whole;
+  PostgreSQL partitions are covered (same root cause, same fix site); the
+  measured data-dependent limit is a unique index over duplicate rows, not
+  a parent-table drop; the two rulings above decide the SQLite column
+  source and re-binds.
+- Prototype results, run at `22bc55c4` on 2026-10-15:
+  - Reproduction: `go test -count=1 -run
+    'TestMerge_View(DependenciesMatch|TablesMatch)' ./introspect/` (the new
+    oracle test over HEAD's production code) compares Merge's verdict with
+    the database's over 2486 checks (PG 53 shapes × 26 migrations + 3,
+    SQLite 59 × 18 + 3, MySQL 8 × 5). HEAD has 217 disagreements: PG 146
+    silent passes; SQLite 45 silent passes and 8 false errors; MySQL 18
+    silent table passes. Examples: PG FIX-350 `IN (… UNION …)` + DROP
+    TABLE tags: Merge `<nil>`, PG "cannot drop table tags because other
+    objects depend on it (SQLSTATE 2BP01)"; PG same-type `ALTER COLUMN role
+    TYPE text`: `<nil>` vs "cannot alter type of a column used by a view or
+    rule (SQLSTATE 0A000)"; SQLite FIX-352 shape A + DROP role: `<nil>` vs
+    "error in view r after drop column: no such column: role (1)"; SQLite
+    FIX-353 EXISTS over a view + DROP: Merge "view r reads column role of
+    table users…" while SQLite accepts; SQLite trigger: `<nil>` vs "error
+    in trigger tr after drop column: no such column: NEW.role (1)"; MySQL
+    IN UNION + DROP vo_tags: `<nil>` vs "Error 1356 (HY000): View
+    'sqlgen_test.vo_r' references invalid table(s)…". With the prototype:
+    0 disagreements, apart from 4 pinned known limits (PG string-body
+    function 3, SQLite unique index over duplicate rows 1).
+  - Prototype: `parser/view_dependency.go` (`ViewDependency`,
+    `DependencyObject`, `DependencyKind`, `CheckViewDependents`,
+    `RenameDependencies`); `Schema.ViewDependencies` and
+    `Schema.SQLiteSchema []SchemaStatement`, filled only by the
+    introspectors, no config key (the `Partitions` precedent). PG: the
+    recursive pg_depend query in the introspector (an array counts as its
+    element type; pg_catalog and views skipped); the PG parser refuses at
+    statement time, CASCADE or not, DROP TABLE/COLUMN, ALTER COLUMN TYPE,
+    DROP CONSTRAINT, DROP TYPE/DOMAIN, ALTER TYPE DROP/ALTER ATTRIBUTE,
+    with "cannot drop column role of table view_def.users: view
+    view_def.v depends on it; under source: both the database's view
+    stands…"; table, column, type, attribute and constraint renames carry
+    the dependencies; PG read collectors deleted (−151 net), protobuf back
+    to indirect. SQLite: `parser/introspect/sqlite_replay.go`, erroring
+    "<file>: SQLite refuses it: …" and "<file> leaves view vt failing: …";
+    view columns re-read from the replay (question 1); the SQLite read
+    collectors, `Unaliased`, `ViewColumnRef.Using`/`Alias` and the
+    view-rename calls deleted (−290 net in `sqlite/view_sql.go`). MySQL:
+    `VIEW_TABLE_USAGE` in the introspector; Merge errors "view X reads
+    table Y, which the SQL files drop or rename…" when a read table
+    disappears (one created again under the name passes); the parser path
+    and its 38 subtests unchanged. PRD §6.1 rewritten, one bullet per
+    dialect, every limit measured.
+  - Tests: new `view_dependency_integration_test.go` (oracle),
+    `TestCheckViewDependents`, `TestRenameDependencies`,
+    `TestMerge_SQLiteReplay`. `TestMerge_ViewColumnRenameAndDrop` keeps 68
+    of 123 subtests (MySQL 38, plus PG 11 and SQLite 19 that check the
+    refreshed view columns); the 55 removed (PG 25, SQLite 30 error cases)
+    were folded into the oracle corpus first. `TestBothModeColumnConflict`'s
+    hand-built base carries `SQLiteSchema`. One parity exception per
+    dialect for the new fields.
+  - Production delta: +611/−589 (+443/−405 without comments and blank
+    lines, net about +22). The tracing deletions are roughly offset by the
+    new mechanisms (replay 155, dependency helpers 94, pg_depend
+    introspection 78, Merge +60, PG hooks +51, MySQL 33): no net deletion.
+  - Gates: parser `gofumpt -l` clean; `golangci-lint run ./...` 0 issues;
+    `go mod tidy` moves protobuf direct → indirect only; parser `go test
+    -race -count=1 ./...` ok (introspect 116s); cmd/sqlgen `go test -race
+    -count=1 -run TestE2E .` ok; `make update-golden`, `make
+    update-golden-e2e` and `make refs-check` ok.
+  - Fail-first, each site reverted alone: PG ALTER TABLE hook → 212
+    disagreements ("drop users.role: Merge <nil>, database 'refused: …
+    cannot drop column role of table users … (SQLSTATE 2BP01)'"); DROP
+    TABLE check → 89; partition recursion → 2; skipped-partition check →
+    1; DROP TYPE check → 2; DROP ATTRIBUTE check → 1; `RenameDependencies`
+    as a no-op → 71; pg_depend introspection → 304; SQLite replay → 207
+    (and `TestMerge_SQLiteReplay`: "Merge() error = <nil>, want one
+    containing ': SQLite refuses it: SQL logic error: error in view v after
+    drop column: no such column: role (1)'"); replay re-read →
+    sqlite/rename and sqlite/rename_in_another_case fail (want "kind", got
+    "role"); vtable skip → "replaying the database's table words: SQL
+    logic error: no such module: nosuchmodule (1)"; failing-view drop →
+    "SQLite refuses it: … error in view vw: no such table: main.words (1)";
+    MySQL `VIEW_TABLE_USAGE` check → 18 ("drop tags: Merge <nil> … Error
+    1356"). The existing suite without the fix passes (HEAD parser `go test
+    -count=1 ./...` ok, the 123-subtest test included) while the oracle
+    finds 217 disagreements.
+  - Golden churn: none. Patch: `.claude/prototypes/FIX-354.patch` (21
+    files, +1381/−1018).
+- Auto-accepted the recommended option on 2026-10-15 (`/fix` auto-accept
+  rule): MySQL older than 8.0.13 (no `VIEW_TABLE_USAGE`, error 1109) →
+  record no table dependencies, as CHECK introspection does before 8.0.16,
+  with PRD text naming 8.0.13, because it was prototyped with gates green,
+  causes no golden churn, adds no runtime or generated public surface or
+  config key, and only adds PRD text for an unspecified case.
+- Auto-accepted the recommended option on 2026-10-15 (`/fix` auto-accept
+  rule): a view a migration drops → not checked (the database's view
+  stands, as at HEAD), because the same conditions held.
+- The user ruled on 2026-10-15: Q1 → (a), re-read SQLite view columns
+  from the replay; Q2 → (a), follow SQLite on re-binds. Both are the
+  prototyped options, so the patch stands unchanged and its files are
+  unchanged since `22bc55c4`; no second vet wave. The questions as asked:
+  - Q1. Should SQLite view columns be re-read from the replay? (a,
+    prototyped, recommended) Read them from the view as the copy leaves
+    it: renames give the same columns as HEAD (RENAME role → v [id, kind])
+    and it enables the SQLite deletions. But a file that drops and
+    re-creates a view changes it: `DROP VIEW v; ALTER TABLE users DROP
+    COLUMN role; CREATE VIEW v AS SELECT id, email FROM users;` gives Merge
+    nil with v [id integer, email text], where HEAD errors "view v: column
+    role reads column role of table users, which the SQL files drop or
+    rename…". That is a SQLite exception to PRD §6.1's "a pending change to
+    a view does not apply", stated in the patch's PRD text. (b) Keep the
+    parser's rename-following and use the replay only as a check: about 30
+    lines back (`Unaliased`, the RenameView* calls, the SQLite branches);
+    the same migration then passes with stale columns [id, role] that the
+    migrated view lacks, a silently wrong model.
+  - Q2. SQLite re-binds: should Merge follow the database? This reverses
+    the 2026-10-14 auto-accept to keep the error and the user's ruling to
+    keep the outward-only re-bind check. `…WHERE EXISTS (SELECT 1 FROM
+    posts WHERE email <> '')` + DROP posts.email: SQLite accepts and the
+    view keeps running, now reading users.email; HEAD errors. (a,
+    prototyped, recommended) Follow SQLite: removes 3 SQLite subtests and
+    also clears the HAVING-alias and FIX-353 false errors. (b) Keep the
+    error: needs the SQLite read tracing (about 300 lines) back, which
+    defeats the fix.
+
+- Pending the user's ruling (raised by /fix-loop's verify pass, 2026-10-15):
+  - Q3. The replay re-runs each `sqlite_master` statement, so a database
+    whose schema names an app-registered collation or function now fails
+    all of `source: both`, where HEAD merged: `COLLATE nosuchcoll` →
+    "merge both mode: replaying the database's table users: SQL logic
+    error: no such collation sequence: nosuchcoll (257)"; an index `ON users
+    (myfn(role))` → "…replaying the database's index ix: … no such
+    function: myfn (1)". SQLite itself loads such a schema and runs most
+    migrations (sqlite3 3.51: ADD/DROP/RENAME COLUMN and DROP/RENAME TABLE
+    succeed — corrected at the re-vet: not when an index sits on a column
+    with the missing collation; then every ALTER TABLE on any table is
+    refused, by the real file and the copy alike, "error in index
+    users_email: no such collation sequence: nosuchcoll (1)"; only tables
+    (COLLATE, CHECK, generated column) and indexes (expression, partial
+    WHERE, inherited collation) fail to replay, while CREATE VIEW and
+    CREATE TRIGGER calling an unknown function are accepted and fail only
+    when run; DROP COLUMN email under that index → "error in index ix after
+    drop column: no such column: email"; only `SELECT * FROM v` over the
+    column fails, "no such collation sequence"). Options: (d) on such a
+    failure create a placeholder object of the same name and type, write
+    the original SQL over it with `PRAGMA writable_schema` and `RESET`: the
+    copy then matched the real file on 10/10 statements (sqlite3 3.51), and
+    modernc runs it (DROP COLUMN email → "error in index ix after drop
+    column: no such column: email (1)"); per connection, nothing leaks; not
+    in the patch. (a) Register stub collations/functions and retry:
+    modernc v1.48.2 registers only process-wide and permanently (no
+    per-connection API; a second registration of a name errors), and the
+    names come from parsing error text. (b) Skip the statement with a
+    warning, as for virtual tables: a skipped table cascades (its views
+    leave the copy, and any file touching it fails "no such table"). (c)
+    Keep the error and state the limit in PRD §6.1: those databases lose
+    `source: both`.
+  - Q4. A pending file statement that needs a collation, function or
+    virtual-table module the copy lacks (the migration tool has it) now
+    fails Merge, a false error. Options: warn naming the name and the file
+    and stop checking from that file on; or keep it an error and state the
+    limit (no workaround short of another source mode).
+- The user ruled on 2026-10-16: Q3 → (d), placeholder and swap for a
+  database object whose collation or function the copy lacks; Q4 → warn,
+  naming the missing name and the file, and stop checking from that file
+  on.
+- Raised by `/fix-loop`'s verify pass on 2026-10-16 and ruled the same day:
+  - Q-ATTACH. The replay ran a file's `ATTACH DATABASE` and `VACUUM INTO`
+    for real: `ATTACH DATABASE '<dir>/side.db' AS aux; CREATE TABLE aux.t
+    (a int);` and `VACUUM INTO '<dir>/copy.db'` both gave Merge nil and
+    created the file (a relative path in sqlgen's working directory). The
+    user ruled: block both in the replay, warn naming the file and stop
+    checking from it on (as Q4), and state it in PRD §6.1.
+  - Q5. After a Q4 stop, SQLite view columns do not follow later files'
+    renames (v keeps [id, role] where the migrated view has [id, kind]).
+    The user ruled: extend the Q4 warning with "and the views' columns do
+    not follow them", and add a PRD §6.1 line.
+- Auto-accepted the recommended option on 2026-10-16 (`/fix` auto-accept
+  rule): a plain `VACUUM` (or `VACUUM main`), which the attach limit
+  refuses like `VACUUM INTO` ("too many attached databases - max 0"), → keep
+  it a Q4 warn-and-stop, stated in PRD §6.1, rather than scan statements to
+  skip it, because it was prototyped with gates green, causes no golden
+  churn, adds no runtime or generated public surface or config key, and
+  only adds PRD text for a case the Q-ATTACH ruling left unspecified.
+- Parked by `/fix-loop` at `bccf5765` on 2026-10-15; re-vetted from the
+  work in progress at `b8bafb62` on 2026-10-16. The earlier verify pass's
+  backlog edits (one line removed, one narrowed, one added) are in
+  `.claude/prototypes/FIX-354.backlog.patch`, to apply on landing.
+- Changed from the ruling at the re-vet, both measured: the placeholder is
+  the statement with the missing names neutralized, not a bare `CREATE
+  TABLE users (x)`, which leaves no `sqlite_autoindex_users_1` row for a
+  UNIQUE column; and every swap waits until all statements have run, since
+  `CREATE INDEX users_email ON users (email)` fails "no such collation
+  sequence" on an already-swapped table. The virtual-table skip became the
+  placeholder path (measured equivalent on `DROP COLUMN email`, and better
+  on `DROP VIEW vw; DROP TABLE words;`, which the skip turned into false
+  errors "no such view: vw (1)" / "no such table: words (1)"). Q4 also
+  covers the runtime "unknown function: myfn()" and a re-created view that
+  fails after a file for a missing function (same root cause, same site).
+- Re-vet results, run at `b8bafb62` on 2026-10-16 (full fix: wip plus the
+  ruled additions, +209/−42 in `parser/introspect/sqlite_replay.go`, plus
+  tests and PRD):
+  - Reproduction against the wip's code: `go test -count=1 -run
+    'TestMerge_SQLiteReplay|TestMerge_ViewDependenciesMatchSQLite'
+    ./introspect/` → 13 of 18 `TestMerge_SQLiteReplay` subtests fail, e.g.
+    "Merge() error: merge both mode: replaying the database's table users:
+    SQL logic error: no such collation sequence: appcoll (257)",
+    "replaying the database's index ix: SQL logic error: no such function:
+    appfn (1)", "F: SQLite refuses it: SQL logic error: no such view: vw
+    (1)"; the oracle shows 75 disagreements over 5 new database-side
+    shapes (91 checks, built with writable_schema; 14 require Merge's
+    "needs <kind> <name>" warning). With the fix: 0.
+  - Gates: parser `gofumpt -l .` clean; `golangci-lint run ./...` 0
+    issues; `go mod tidy` only protobuf direct → indirect; parser `go test
+    -race -count=1 ./...` ok (introspect 114s); cmd/sqlgen `go test -race
+    -count=1 -run TestE2E .` ok (142s); `make update-golden`/`-e2e` no
+    changes; `make refs-check` ok.
+  - Fail-first: collation/function placeholders off → 7 subtests ("…
+    replaying the database's table users: SQL logic error: no such
+    collation sequence: appcoll (257)"); `restoreStatements` no-op → 5
+    subtests + 17 oracle disagreements ("F leaves view vc failing: SQL
+    logic error: no such table: main.users (1)"); virtual table back to
+    the skip → "F: SQLite refuses it: SQL logic error: no such table: words
+    (1)"; plain DROP VIEW instead of the replacement → "no such view: vw
+    (1)"; Q4 statement branch off → 6 subtests ("… unknown function:
+    appfn() (1)"); Q4 view-after branch off → "F leaves view v failing: SQL
+    logic error: no such function: appfn (1)"; continue instead of stop →
+    "F: SQLite refuses it: … error in view v after drop column: no such
+    column: role (1)"; "unknown function" left out → "F: SQLite refuses it:
+    SQL logic error: unknown function: appfn() (1)". Pre-existing shapes
+    and the wip's own cases pass against the wip's code.
+  - Golden churn: none. Patch: `.claude/prototypes/FIX-354.patch` (21
+    files, +1709/−1018).
+
+**References.**
+- PRD §6.1 (source modes; view columns under `both`).
+- FIX-347 (`c007a487`), FIX-349 (`ba7a0b53`), FIX-350, FIX-351, FIX-352,
+  FIX-353.
+- `parser/introspect/merge.go:37` (`Merge` gets file paths;
+  `parser.ParseFiles` reads each whole file, so the raw text is available
+  to replay); `parser/introspect` already imports pgx and
+  `modernc.org/sqlite`.
+
+**Resolution notes.** Applied the vetted prototype from `b8bafb62`
+(applied clean at `6eeb4211`, unchanged). The view-dependency check now
+asks the database: PostgreSQL's `pg_depend` dependencies
+(`Schema.ViewDependencies`) make the PostgreSQL file parser refuse to drop
+or retype what a view depends on (`parser.CheckViewDependents`), and
+renames carry them (`RenameDependencies`); SQLite replays
+`Schema.SQLiteSchema` and the files into `:memory:`
+(`parser/introspect/sqlite_replay.go`), with the Q3 placeholder-and-swap
+for a missing collation, function or module and the Q4 warn-and-stop;
+MySQL reads `VIEW_TABLE_USAGE` for table drops and renames and keeps the
+parser's column tracing. The PostgreSQL and SQLite read collectors and the
+SQLite-only parts of `parser/view.go` are deleted; PRD §6.1 states each
+dialect's check and its measured limits. Gates: `make check` ok; parser
+`go test -race -count=1 ./...` ok (introspect 115s, the oracle included);
+`make update-golden` and `update-golden-e2e` no churn (matches the vet);
+`TestE2EGoldenFiles` ok; `make check-examples` ok. Fail-first spot checks
+on the final code: `restoreStatements` as a no-op → 6
+`TestMerge_SQLiteReplay` subtests fail ("… leaves view vc failing: SQL
+logic error: no such table: main.users (1)"); the Q4 statement branch off
+→ 7 fail ("… SQLite refuses it: SQL logic error: unknown function: appfn()
+(1)"); `CheckViewDependents` as a no-op → `TestCheckViewDependents` fails.
+Fixed inline from the /verify reviewer: a PostgreSQL `RENAME COLUMN` on a
+partitioned table now repoints its partitions' dependencies too
+(`renamePartitionColumnDependencies`), since `checkViewDependents`
+recurses into them (`ALTER TABLE events RENAME COLUMN x TO y; ALTER TABLE
+events DROP COLUMN y;` with a view on `events_2024.x` gave `<nil>`); after
+a file SQLite stops checking, a view it leaves failing keeps its columns
+instead of failing Merge (`DROP TABLE tags; INSERT …` under an index on
+`appfn` gave "merge both mode: introspect sqlite view columns vt: SQL
+logic error: no such table: main.tags (1)"; the same for a file that
+creates a view again with a function SQLite lacks, "… view columns v: … no
+such function: appfn (1)", which the prototype's subtest missed because
+its base had no views). New `-short` test `TestViewDependents`
+(`parser/postgres`) covers the PostgreSQL parser refusals, renames and
+partitions, and `TestMerge_SQLiteReplay` gained the
+stop-after-a-broken-view case, with the views' columns asserted; each
+fails with its fix reverted. Per the 2026-10-16 rulings: Q-ATTACH, the
+replay's connection attaches no database (`sqlite.Limit(conn,
+SQLITE_LIMIT_ATTACHED, 0)`, `forbidAttach`), which measured blocks `ATTACH
+DATABASE` and `VACUUM INTO` alike (VACUUM attaches its output, "too many
+attached databases - max 0 (1)"), so no statement scan is needed; a plain
+`VACUUM` is refused the same way. Such a file is a Q4 warn-and-stop,
+"<file> runs ATTACH DATABASE or VACUUM, which the check does not run, so
+SQLite does not check it or the SQL files after it, and the views' columns
+do not follow them", and creates no file. Q5, the Q4 warning ends "…, and
+the views' columns do not follow them". PRD §6.1 gained a sentence for
+each. New `TestMerge_SQLiteReplay` subtests: ATTACH and VACUUM INTO under
+an absolute temp-dir path (Merge nil, the warning names the file, no file
+created; the ATTACH case's second file would otherwise be refused), a
+plain `PRAGMA auto_vacuum = FULL; VACUUM;`, and a later file's rename
+after a stop (v keeps [id, role]). Fail-first: `forbidAttach` call removed
+→ the three subtests fail ("Merge() created side.db", "Merge() created
+copy.db", and the plain VACUUM's missing warning); the attach branch of
+`uncheckedReason` off → both fail ("SQLite refuses it: SQL logic error:
+too many attached databases - max 0"); the Q5 clause removed from the
+warning → 12 subtests fail.
+
+### FIX-352
+
+- **Status:** Resolved
+- **Severity:** tracked
+- **Origin:** phase 30, parser/view
+- **Surfaced by:** FIX-349 verify (2026-10-14)
+
+**Issue.** **SQLite resolves a CTE body where the CTE is used; sqlgen
+resolves it where it is defined.** Two SQLite view shapes with a CTE pass
+`Merge` while SQLite refuses the migration. Re-measured at `ba7a0b53` with a
+throwaway probe on the `TestMerge_ViewColumnRenameAndDrop` helpers against
+modernc SQLite, PostgreSQL 16 and MySQL 8.0:
+- Shape A: `WITH c AS (SELECT uid FROM posts WHERE role = 'a') SELECT u.id
+  FROM users u WHERE EXISTS (SELECT 1 FROM c WHERE c.uid = u.id)`. Posts has
+  no role column, so SQLite binds `role` to `users.role` at the place `c` is
+  used, inside the EXISTS.
+  - `ALTER TABLE users DROP COLUMN role` → `Merge err=<nil>`. SQLite says
+    "SQL logic error: error in view r after drop column: no such column:
+    role (1)".
+  - `RENAME COLUMN role TO kind` → `Merge err=<nil>`. SQLite says "SQL logic
+    error: error in view r after rename: no such column: role (1)".
+  - PostgreSQL refuses to create this view ("ERROR: column \"role\" does not
+    exist (SQLSTATE 42703)"), and so does MySQL ("Error 1054 (42S22): Unknown
+    column 'role' in 'where clause'").
+- Shape B: `SELECT u.id FROM users u WHERE EXISTS (WITH c AS (SELECT p.uid
+  FROM posts p WHERE u.role = 'a') SELECT 1 FROM c)` + `ALTER TABLE users
+  RENAME COLUMN role TO kind` → `Merge err=<nil>`. SQLite says "SQL logic
+  error: error in view r after rename: no such column: u.role (1)". The same
+  happens with an unqualified `role` in that CTE: SQLite says "error in view
+  r after rename: no such column: role (1)" and `Merge err=<nil>`. Measured
+  controls where sqlgen and the database agree:
+  - Shape B + DROP COLUMN role: Merge says "view r reads column role of table
+    users, which the SQL files drop or rename; …", and SQLite says "error in
+    view r after drop column: no such column: u.role (1)".
+  - Shape B + RENAME email: both accept.
+  - A CTE whose body has its own `FROM users u` and an EXISTS reading
+    `u.role`, + RENAME role: both accept.
+  - PostgreSQL with shape B + RENAME role: it follows the rename, as Merge
+    does.
+
+**Root cause.** The two shapes have different root causes and different fix
+sites, both in `parser/view.go`. They stay in one entry because the user
+ruled on 2026-10-14 to file one SQLite CTE-scoping item.
+- Shape A: `readScope` (`parser/view.go:654-669`) resolves a read in a CTE
+  body through the scopes where the CTE is defined. `walkScopes` (`:592-601`)
+  yields the CTE as `traceScope{correlated: false}` after the query that
+  holds its WITH clause, so `readScope` never looks at that query's FROM.
+  With the CTE at the top, nothing is left to resolve the read, so it reads
+  no table column. `checkViewReads` checks only reads that had a table
+  (`parser/introspect/views.go:216`). SQLite expands a CTE where it is
+  referenced, as a derived table in that FROM clause. The body therefore
+  reads the queries that enclose the use site, here the `users u` around the
+  EXISTS. PostgreSQL and MySQL resolve the body where it is defined and
+  refuse the view.
+- Shape B: `readScope` resolves the read correctly, through the correlated
+  EXISTS scope to `users.role`, so DROP is caught. On RENAME COLUMN,
+  `tableColumnReads` (`parser/view.go:714-731`) repoints every read of the
+  column, as PostgreSQL rewrites it. SQLite's ALTER TABLE RENAME COLUMN
+  instead resolves each CTE body by itself, with no enclosing query in scope.
+  It never rewrites a reference from a CTE body to an enclosing query's
+  column, so its post-rename schema check fails on the old name. The SQLite
+  USING exception at `:722` is a fix of the same kind.
+- The two interact. Once shape A's `role` resolves to `users.role`,
+  `tableColumnReads` would repoint it on RENAME, and Merge would accept a
+  rename that SQLite refuses. Shape A's rename case needs the shape B fix
+  too.
+
+**Suggested fix.**
+- Shape A: on SQLite, resolve a read in a CTE body at each place the CTE is
+  used, treating the body as a non-LATERAL derived table there. If the
+  defining scopes cannot resolve the read, continue `readScope`'s outward
+  climb from each use site's scopes, skipping the use-site query's own FROM.
+  A use site is a FROM-clause key that `cteScopes` maps to the CTE's path.
+  Record every resolution, so that losing the column at any use site is an
+  error. `ViewReadSources` has no dialect, so the SQLite reader marks it on
+  the query, for example `ViewSQL.UseSiteCTEs`. This touches the parser
+  module only.
+- Shape B: in `tableColumnReads`, on dialect `sqlite`, do not repoint a read
+  that sits inside a CTE body (a `/with:` segment on its scope path after
+  the scope it resolves in) when it resolves outside that body. The read
+  then no longer finds the renamed column, and `checkViewReads` errors, as
+  with the SQLite USING exception.
+- Regression subtests in `TestMerge_ViewColumnRenameAndDrop` with
+  `sqliteReads`:
+  - Errors: shape A + DROP role, shape A + RENAME role, shape B + RENAME
+    role, and the unqualified shape B + RENAME role.
+  - Accepted by both: shape B + RENAME email, and the CTE with its own
+    `FROM users u` + RENAME role (the view follows).
+  - Pinned: shape B + DROP role, which already errors.
+  - PostgreSQL control: shape B + RENAME role → Merge nil, as PostgreSQL
+    follows.
+
+- Superseded (2026-10-16) by FIX-354's SQLite replay.
+
+**References.**
+- PRD §6.1 (columns a view reads; a rename applied as the database applies
+  it).
+- FIX-347: CTE scopes, `cteScopes`.
+- FIX-349: `readScope` and `tableColumnReads`. Its third verify pass found
+  shape A, and the user's 2026-10-14 ruling sent it to a separate FIX.
+
+**Resolution notes.** Superseded by FIX-354 (2026-10-16): SQLite's own replay of the database schema and the files now decides what a view reads, so the parser's SQLite read tracing this entry would have fixed is deleted. FIX-354's oracle test covers this entry's shapes with 0 disagreements against SQLite.
+
+### FIX-353
+
+- **Status:** Resolved
+- **Severity:** tracked
+- **Origin:** phase 30, parser/view
+- **Surfaced by:** FIX-349 verify (2026-10-14)
+
+**Issue.** **A SQLite expression subquery over a view or a table function
+gives a false error.** Under `source: both`, an unqualified name in an
+expression subquery whose FROM is a view or a table-valued function is bound
+to the enclosing query's table. Merge then refuses a migration that SQLite
+accepts and that leaves the view's meaning unchanged. Re-measured at
+`ba7a0b53` with a throwaway probe on the `TestMerge_ViewColumnRenameAndDrop`
+helpers against modernc SQLite:
+- View case: `CREATE VIEW iv AS SELECT uid, title AS role FROM posts; CREATE
+  VIEW r AS SELECT u.id FROM users u WHERE EXISTS (SELECT 1 FROM iv WHERE
+  role = 'a')` + `ALTER TABLE users DROP COLUMN role` → Merge says "merge
+  both mode: view r reads column role of table users, which the SQL files
+  drop or rename; under source: both the database's view stands, so change it
+  in the database first". SQLite accepts the drop, and `SELECT * FROM r`
+  still runs, because `role` is `iv.role`. `u.id IN (SELECT uid FROM iv WHERE
+  role = 'a')` gives the same.
+- Table-function case: with `users` given a `value TEXT` column, `SELECT
+  u.id FROM users u WHERE EXISTS (SELECT 1 FROM json_each('["a"]') WHERE
+  value = 'a')` + `ALTER TABLE users DROP COLUMN value` → Merge says "merge
+  both mode: view r reads column value of table users, which the SQL files
+  drop or rename; …". SQLite accepts, and the view still runs.
+- Controls where both accept (`Merge err=<nil>`, view runs): the qualified
+  `iv.role`, `json_each(…) j … WHERE j.value`, and the top-level `SELECT
+  iv.uid FROM iv WHERE role = 'a'`. PostgreSQL and MySQL store the reference
+  qualified (FIX-349), so they are not affected.
+
+**Root cause.** `readScope` (`parser/view.go:654-669`) decides that a FROM
+clause lacks an unqualified column unless a table there has it or a subquery
+there selects it (`traceViewColumn`, `:491-521`, found false). If the FROM
+clause lacks it, `readScope` climbs out of the correlated expression subquery
+to the enclosing `FROM users u`, which has the name. It sees neither source
+here:
+- A view key maps to a name that `viewSources.table` (`:784`) looks up only
+  in `schema.Tables`. The view's columns in `schema.Views` are never
+  consulted.
+- A table-valued function is not recorded at all. `collectSourceAliases`
+  (`parser/sqlite/view_sql.go:534-565`) has no `*rsql.QualifiedTableFunctionName`
+  case (only `walkJoins`, `:362`, reads its arguments), so the subquery's
+  FROM looks empty.
+
+SQLite binds the name in the innermost FROM that has it: the view's column,
+or json_each's `value`.
+
+**Suggested fix.**
+- `readScope` / `traceViewColumn`: treat a FROM key that names a view as
+  having the view's columns (`schema.Views`, matched with `SameColumnName`).
+  An unqualified read found there resolves in that query with no table
+  column (Table nil), and does not climb.
+- `parser/sqlite/view_sql.go` `collectSourceAliases`: record a table-valued
+  function under its alias or name, as a key that names no table (for
+  example a new `ViewSQL.Functions` map, so `vs.table` stays nil). Give
+  `readScope` the known column sets of SQLite's built-in `json_each` and
+  `json_tree` (key, value, type, atom, id, parent, fullkey, path, json,
+  root). For an unknown function, stop the climb only when its columns cannot
+  be known. Measure that trade-off before choosing it, because it can turn
+  this false error into a silent pass.
+- Regression subtests in `TestMerge_ViewColumnRenameAndDrop` (SQLite). They
+  need a base that takes extra DDL (view `iv`, a `users.value` column):
+  - Accepted (Merge nil, view columns unchanged): EXISTS over `iv` + DROP
+    users.role, IN over `iv` + DROP users.role, and EXISTS over `json_each`
+    + DROP users.value.
+  - Still an error: an EXISTS over `iv` that reads a name `iv` lacks, such
+    as `email`, + DROP users.email. Measure it against SQLite before pinning
+    it.
+
+- Superseded (2026-10-16) by FIX-354's SQLite replay.
+
+**References.**
+- PRD §6.1 (columns a view reads, including an enclosing query's column a
+  subquery reads).
+- FIX-347 (scope tracing).
+- FIX-349: `readScope`'s outward climb from an expression subquery; the
+  qualified-storage note for PostgreSQL and MySQL.
+
+**Resolution notes.** Superseded by FIX-354 (2026-10-16): SQLite's own replay of the database schema and the files now decides what a view reads, so the parser's SQLite read tracing this entry would have fixed is deleted. FIX-354's oracle test covers this entry's shapes with 0 disagreements against SQLite.
+
+### FIX-349
+
+- **Status:** Resolved
+- **Severity:** tracked
+- **Origin:** phase 30, parser/introspect
+- **Surfaced by:** FIX-347 vet (2026-10-14)
+- **Vetted:** corrected at `4754ed19` (2026-10-14; refreshed after FIX-347 landed)
+
+**Issue.** Under `source: both`, a file migration that drops or renames a
+column a database view reads, but does not pass straight through its select
+list (a column used only in `WHERE`, `JOIN … ON`, or inside an expression,
+at top level or inside a derived table or CTE), passes `Merge` silently.
+PRD §6.1 says dropping a column a view reads is an error. Measured during
+the FIX-347 vet: MySQL `q_vw AS SELECT id FROM q_users WHERE role = 'a'`,
+DROP COLUMN role or RENAME COLUMN role TO kind → `Merge err=<nil>`, then
+`SELECT * FROM q_vw` → "Error 1356 (HY000): View 'sqlgen_test.q_vw'
+references invalid table(s) or column(s)…". PostgreSQL `v AS SELECT u FROM
+(SELECT upper(role::text) AS u FROM users) d`, DROP COLUMN role → `Merge
+err=<nil>` (with the FIX-347 prototype applied), while PostgreSQL says
+"cannot drop column role of table users because other objects depend on it
+(SQLSTATE 2BP01)". SQLite `SELECT u FROM (SELECT upper(role) AS u FROM
+users) d`, DROP COLUMN role → `Merge err=<nil>`, while SQLite says "error
+in view v after drop column: no such column: role (1)".
+
+**Root cause.** The view SQL readers (`parser/{postgres,mysql,sqlite}/
+view_sql.go`) record only select-list columns (`ViewSQL.Columns`,
+`parser/view.go:46-91`), each with at most one pass-through source column.
+Columns referenced in WHERE, JOIN conditions, GROUP BY/HAVING, ORDER BY or
+inside a select-list expression are never recorded, so `readViewSources` /
+`refreshViewColumns` (`parser/introspect/views.go`) have nothing to check
+them against.
+
+**Suggested fix.**
+- `parser/view.go`: new `ViewColumnRef{Table, Column}`; `ViewSQL.Reads`
+  (column references outside the select list) and `ViewSQL.Nested`
+  (subqueries in expressions). `walkScopes` also yields each `Nested` query
+  as `traceScope{nested: true, path: …/#i}`, which puts expression
+  subqueries into `ViewFromTables` (keys `#i/key`),
+  `RenameViewTableReferences` and `RenameViewColumnReferences` at once.
+  `traceViewColumn` also reports whether the FROM clause has the column; a
+  new `readScope` resolves a read in its own query, then outward while the
+  scope is `nested` (correlation), reusing FIX-347's `subquery`/`cteScopes`
+  and lexical-path cycle guard. New `ViewReadSources`, and
+  `tableColumnReads`, which resolves every read before any column is renamed
+  (wired into `RenameViewColumnReferences`).
+- Each dialect's `view_sql.go` gains `queryReads`, `readNested` and a read
+  collector over non-bare select-list expressions, WHERE, join ON, GROUP BY,
+  HAVING, windows and ORDER BY; a subquery in an expression is read as
+  `Nested` with its select-list columns as reads. PostgreSQL walks the node
+  tree with protoreflect (hooked into `extractFromAliases`), plus USING via
+  `fromKey` — this makes `google.golang.org/protobuf` (already v1.36.9
+  indirect) a direct require in `parser/go.mod`; MySQL uses `sqlparser.Walk`,
+  ON only (MySQL stores a view's USING as ON, measured: "… join
+  `sqlgen_test`.`pz_users` `u` on((`p`.`email` = `u`.`email`))"), at both
+  `ParseViewSQL` and `readSubquery`; SQLite uses `rsql.Walk` (hooked into
+  `extractSourceAliases`), skipping function, type, collation and window
+  names and time keywords, plus USING, and skips a bare ORDER BY name that
+  matches a select-list alias (PG and MySQL store an alias ORDER BY as the
+  expression). Since FIX-347 `readSubquery` stores unreadable SQL as an empty
+  query, so `readNested` has no ok flag.
+- `parser/introspect/views.go`: `readViewSources` records each view's read
+  sources; new `checkViewReads` (split from `refreshViewColumns` for cyclop)
+  runs the table check, the column check, then the read check ("view %s
+  reads column %s of table %s, which the SQL files drop or rename; under
+  source: both …").
+- PRD §6.1 (`docs/PRD.md:1651`): a column the query reads outside its
+  select list (WHERE, JOIN ON/USING, GROUP BY, HAVING, ORDER BY, windows,
+  select-list expressions, IN/EXISTS/scalar subqueries, including an
+  enclosing query's column such a subquery reads) is treated the same way,
+  with an error naming the view and the table column; a table a view reads,
+  including one only a subquery reads, likewise.
+- Tests: `TestMerge_ViewColumnRenameAndDrop` grows from 49 to 74 subtests
+  (PG 10, SQLite 8, MySQL 7 new), including "drop a column an IN subquery
+  selects" per dialect.
+- Corrected from the original: widened under the scope cap (same root
+  cause, same fix site) to subqueries in expressions (their tables and
+  table renames too), correlated outer reads, JOIN USING and window
+  clauses, all measured to fail silently; rename handling needs no ruling,
+  since PRD §6.1 already says a rename is applied as the database applies
+  it; the read error has its own wording because no view column is
+  involved. Refreshed on 2026-10-14 after FIX-347 (`c007a487`) and FIX-348
+  (`85c58bb9`) landed: rebuilt on the landed FIX-347 design (`Nested` goes
+  into `walkScopes`; `readScope` plus `traceViewColumn`'s found result
+  replace the old `eachViewRead`/`resolveRead`/`fromClauseHas`; the
+  introspect `viewFromTables` hunk, whose helper is gone, is dropped); added
+  the PG and MySQL "IN subquery selects" cases, because without them
+  removing `readNested`'s select-list reads left every subtest passing;
+  dropped vitess USING handling, since MySQL never stores USING.
+- Prototype results, run at `4754ed19` on 2026-10-14 (refresh): probe
+  `zz_probe_fix349_test.go` (postgres:16-alpine, mysql:8.0, modernc SQLite;
+  22 views × 10 migrations × 3 dialects, each running Merge and then the
+  same migration on the database) → "660 cases, 174 where sqlgen and the
+  database disagree" (PG 49, MySQL 74, SQLite 51), all `Merge err=<nil>`
+  where the database refuses or the view breaks: mysql/where DROP/RENAME
+  role → "Error 1356 (HY000): View 'sqlgen_test.pz_v' references invalid
+  table(s) or column(s) or function(s)…"; postgres/sub-expr DROP role →
+  "cannot drop column role of table users because other objects depend on
+  it (SQLSTATE 2BP01)"; sqlite/sub-expr DROP role → "error in view v after
+  drop column: no such column: role (1)". With the prototype: "660 cases, 0
+  where sqlgen and the database disagree", and no view falls back to catalog
+  columns. Gates: parser gofumpt clean, `golangci-lint run ./...` 0 issues,
+  `go mod tidy` (protobuf indirect → direct only), `go test -race -count=1
+  ./...` (containers) ok; cmd/sqlgen `go test -race -run TestE2E .` ok,
+  `go test -short ./...` ok; `make refs-check` ok. Fail-first (74
+  subtests): all production files at `4754ed19` → 21 fail, e.g.
+  postgres/drop_a_column_read_in_WHERE "Merge() error = <nil>, want one
+  containing \"merge both mode: view view_def.r reads column role of table
+  view_def.users, which the SQL files drop or rename; …\""; PG `queryReads`
+  hook removed → 9 fail, MySQL → 6, SQLite → 6; `checkViewReads` read loop
+  disabled → 19 fail; `tableColumnReads` repoint removed → PG and SQLite
+  "rename a column and a table read outside the select list" fail with a
+  false error; `Nested` loop in `walkScopes` removed → 7 fail; correlated
+  outward lookup removed → postgres/drop_a_column_read_in_a_correlated_EXISTS
+  fails; PG USING removed → postgres/drop_a_column_read_in_JOIN_USING fails;
+  SQLite ORDER BY alias skip removed → sqlite/drop_a_column_an_ORDER_BY_
+  alias_shadows fails with a false error; `readNested` select-list reads
+  removed → each dialect's "drop a column an IN subquery selects" fails; the
+  49 pre-existing subtests pass without the fix. Golden churn: none. Patch:
+  `.claude/prototypes/FIX-349.patch` (8 files, +788/-62; applies to HEAD
+  directly).
+- Auto-accepted the recommended option on 2026-10-14 (`/fix` auto-accept
+  rule): a MySQL or SQLite view whose dropped column the database re-binds to
+  another table's same-named column (`FROM users x WHERE EXISTS (SELECT 1
+  FROM posts x WHERE x.status = 'a')`, an unqualified name in a derived table
+  inside EXISTS, a SQLite select-list alias or double-quoted string read in
+  WHERE) → keep the error rather than follow the re-bind, because it needs no
+  code change, causes no golden churn, adds no public surface, and matches
+  PRD §6.1's rule that dropping a column a view reads is an error (the view
+  keeps running with a changed meaning). Auto-accepted the same day: the
+  compound-subquery gap (`IN (SELECT … UNION …)`) stays in the backlog
+  rather than gaining a PRD carve-out, because §6.1 states the intended
+  behavior and the gap is a known defect, with no code, golden or surface
+  change.
+
+**References.**
+- PRD §6.1 (view columns under `both`).
+- FIX-347 (derived tables and CTEs), FIX-309 (`accaf642`), FIX-333
+  (`f4bc470c`).
+
+**Resolution notes.** Each dialect's view reader now records the columns a view's query reads outside its select list (`ViewSQL.Reads`: WHERE, JOIN ON and, on PostgreSQL and SQLite, USING, GROUP BY, HAVING, ORDER BY, windows and select-list expressions) and each IN/EXISTS/scalar subquery in an expression (`ViewSQL.Nested`, its select-list columns as reads). `walkScopes` yields nested subqueries, `readScope` resolves a read in its own query and then outward for a correlated reference, `ViewReadSources` resolves them, `tableColumnReads` repoints reads on a rename, and `checkViewReads` errors under `source: both` when a read's table column is dropped or renamed away. PRD §6.1 states it. `google.golang.org/protobuf` is now a direct `parser` require. Prototype applied clean at `057c3b8e`; fail-first reproduced 21/74 `TestMerge_ViewColumnRenameAndDrop` subtests failing without the production change; `make check`, `parser` `go test -race ./...` (containers) and `make check-examples` green; golden churn none, as vetted. The /verify
+reviewer's probes against the three databases found three silent passes in
+the new code, fixed in this change: SQLite renaming a USING column (SQLite
+does not rename USING names, so `tableColumnReads` no longer repoints a
+`ViewColumnRef.Using` read there, and the view no longer finds it); USING
+whose side is itself a join (PostgreSQL and SQLite `fromKeys` now record the
+read through every key of a joined side); and a read from a derived table
+into an enclosing query (a LATERAL derived table, or a derived table inside
+an expression subquery: `readScope` now searches every enclosing scope, so
+`traceScope.nested` is gone), plus the arguments of a function in FROM
+(PostgreSQL `RangeFunction`, SQLite table-valued functions, MySQL
+`JSON_TABLE`). 13 subtests added (87 in all), each error case measured
+against the database (PG 2BP01, MySQL 1356, SQLite "error in view r after
+…"), the two rename controls accepted by it; the 11 error cases fail on the
+prototype code. PRD §6.1 names the FROM-function and LATERAL reads and the
+SQLite USING rename. The second /verify pass found that widening `readScope` to every
+enclosing scope also binds a read a non-LATERAL derived table or CTE cannot
+resolve to the containing query's FROM: 11 false errors and 1 silent pass on
+SQLite and MySQL that the prototype did not have. The user ruled on
+2026-10-14: option (a) — an enclosing FROM is visible only from an
+expression subquery or a LATERAL derived table (surfaced by the second
+verify pass). `ViewSQL.Lateral` marks a LATERAL derived table (PostgreSQL
+`RangeSubselect.Lateral`, vitess `DerivedTable.Lateral`; SQLite has none),
+each scope records whether it is correlated, and `readScope` skips the FROM
+of the query a non-LATERAL derived table or a CTE is in while still reaching
+the queries further out that that query can read (measured: a derived table
+or CTE inside EXISTS reads the outer query's column on all three databases;
+a CTE body reading the FROM of the query that uses it, or an expression
+subquery inside a non-LATERAL derived table reading past it, is refused by
+all three; but SQLite resolves a CTE body where the CTE is used, so one used
+inside an expression subquery can read the enclosing query — see the third
+verify pass below). `ViewReadSources` now also reports the query a read resolves in
+(`ViewReadSource.Scope`), and `checkViewReads` errors when a read resolves
+further out after the migration: SQLite then re-binds the unqualified name
+to the outer query's column of that name, which, per the auto-accepted
+re-bind rule above, stays an error (PostgreSQL and MySQL store the name
+qualified). 19 subtests added (106 in all): the 11 false errors (SQLite 5,
+MySQL 6: GROUP BY or ORDER BY aliases and SQLite double-quoted strings in a
+CTE or derived table, each accepted by the database) and the SQLite silent
+pass ("no such column: email"), LATERAL reads on PostgreSQL and MySQL 8
+(stored qualified by both databases, and from a derived table inside the
+LATERAL one, 2BP01 / 1356; a PostgreSQL rename it follows), a CTE inside EXISTS reading the
+enclosing query (2BP01), and two SQLite re-binds. Fail-first: the widened
+climb → the 11 false-error subtests fail (the silent pass also needs the
+outward check removed, which catches it too); the prototype's nested-only
+climb → 9 fail (the 4 new LATERAL and CTE-in-EXISTS cases, plus 5 earlier
+ones); the outward check removed → the 2 re-bind subtests fail (both
+confirmed by the third verify reviewer). The backlog line on NATURAL JOIN is
+dropped: PostgreSQL and MySQL store NATURAL as USING / ON, which is read, and
+SQLite recomputes the join and accepts the drop (measured by the reviewer).
+`make check`, `make check-examples` and `parser` `go test -race -count=1
+./...` (containers) green; golden churn none. The third /verify pass found a
+SQLite silent pass that pass 2's wider climb had caught: `WITH c AS (SELECT
+uid FROM posts WHERE role = 'a') SELECT u.id FROM users u WHERE EXISTS
+(SELECT 1 FROM c WHERE c.uid = u.id)` + `ALTER TABLE users DROP COLUMN role`
+→ `Merge err=<nil>`, SQLite "error in view r after drop column: no such
+column: role (1)" (PostgreSQL and MySQL refuse to create the view), because
+`readScope` follows the CTE's defining scope chain; it goes to a separate
+FIX per the ruling below. The user ruled on 2026-10-14: fix the select-list
+alias false errors (GROUP BY/HAVING) in FIX-349; file the SQLite use-site
+CTE scoping, VALUES-list and LIMIT-subquery gaps as separate FIXes; keep the
+re-bind check outward-only (the inward SQLite ADD+DROP case is in
+`backlog.md`). The two alias false errors came from the new read checks:
+`SELECT u.id FROM users u WHERE u.id IN (SELECT upper(p.title) AS role FROM
+posts p GROUP BY role)` and `SELECT max(id) AS role FROM users GROUP BY email
+HAVING role > 0`, each + `DROP COLUMN role` → "view r reads column role of
+table users…" while MySQL and SQLite keep the view running. Measured per
+dialect, the read collectors now skip a name a select-list alias stands in
+for, at every query level: MySQL stores a GROUP BY, HAVING or ORDER BY name
+it binds to a column qualified and one it binds to an alias bare (``group by
+`role` ``, ``having (`role` > 0)``; HAVING prefers the alias, GROUP BY the
+column), so a bare name an alias has is skipped; SQLite binds a GROUP BY or
+HAVING name, or one in an ORDER BY expression, to a FROM column first and to
+the alias once that column is dropped, so it is skipped unless SQLite refuses
+the alias there (an aggregate alias in GROUP BY, "aggregate functions are not
+allowed in the GROUP BY clause", or inside an aggregate call, "misuse of
+aliased aggregate role"; a window alias outside ORDER BY or inside a call,
+"misuse of aliased window function role"), which keeps those drops an error;
+PostgreSQL stores a GROUP BY or ORDER BY alias as the expression, binds a
+GROUP BY name to an input column first and refuses an alias in HAVING, so
+its collector is unchanged. The SQLite HAVING case is a re-bind (HAVING role
+reads users.role until the drop) that the ruling accepts; a WHERE alias
+re-bind stays an error under the auto-accepted rule. PRD §6.1 states it. 14
+subtests added (120 in all; PG 2, SQLite 8, MySQL 4), each measured against
+the database: the two cases and a nested HAVING, ORDER BY or GROUP BY alias
+per dialect where the database accepts the view, the SQLite GROUP BY and
+ORDER BY-expression aliases a column of the same name shadows, and the
+precedence cases where the database binds the name to the column (PG and
+MySQL GROUP BY, 2BP01 / 1356) or refuses the alias (SQLite aggregate and
+window aliases). Fail-first: alias handling reverted → the 8 no-error
+subtests (SQLite 5, MySQL 3) fail, e.g. "Merge() error: merge both mode:
+view r reads column role of table users, which the SQL files drop or rename; …";
+SQLite alias kinds ignored → the 3 refused-alias subtests fail with "Merge()
+error = <nil>, want one containing …". `make check`, `make check-examples`
+and `parser` `go test -race -count=1 ./...` (containers) green; golden churn
+none. The narrow re-check (one reviewer on the alias delta, 42 probes
+against the three databases) found three SQLite silent passes the skip
+caused, fixed here: a rename then drop of the column (`GROUP BY role` +
+`RENAME COLUMN role TO r2; DROP COLUMN r2` → "no such column: r2"), because
+SQLite renames a name it binds to the column, so the SQLite reader now keeps
+such a read marked with the alias (`ViewColumnRef.Alias`) and
+`checkViewReads` skips it only while it still has the alias's name; two
+same-named aliases (SQLite binds the first); and an aggregate inside a
+subquery of the alias's expression that aggregates the outer query (`(SELECT
+max(u.id)) AS role … GROUP BY role`), which `kindOf` now counts. 3 subtests
+added (123 in all), each failing with "Merge() error = <nil>, want one
+containing …" when its fix is reverted; gates re-run green. MySQL and
+PostgreSQL matched the databases on every probe.
+
+### FIX-348
+
+- **Status:** Resolved
+- **Severity:** tracked
+- **Origin:** phase 30, parser/postgres + parser/introspect
+- **Surfaced by:** /fix-loop FIX-312 verify reviewer (2026-10-13)
+- **Vetted:** corrected at `481842f0` (2026-10-14; ruled the same day, the prototype is the chosen option)
+
+**Issue.** A column whose type is a default-schema type (`public.r`, a
+`citext` extension type) is written bare in a schema that declares an enum,
+domain or composite type of the same name, so every consumer reads it as the
+owner schema's type. Measured on postgres:17.11 (`CREATE TABLE r(x int);
+CREATE TYPE app.r AS ENUM('a'); CREATE TABLE app.t(id int, rr public.r)`):
+- `DROP TYPE app.r` → parser "parsing t.sql: drop type: cannot drop type
+  app.r: column app.t.rr uses it"; PG17 accepts the drop. The same false
+  refusal hits a bare `rr r` column, a `citext` column beside an
+  `app.citext` domain (DROP DOMAIN), a domain over `public.r`, a composite
+  attribute of type `public.r`, a type renamed to `r`, and a table moved
+  into `app`.
+- Go types: `sqlgen generate` (files and database) gives `Rr *AppR` and
+  `Ci *int32`, and at runtime `client.Ts().Get(ctx, 1)` → "scan t: pgx scan:
+  can't scan into dest[1] (col: ci): strconv.ParseInt: parsing \"Hello\":
+  invalid syntax".
+- `ALTER TYPE app.r RENAME TO y` rewrites a `public.r` column in `app` to
+  `y` (`renameTypeReferences`).
+The introspector writes the same bare names (`rr` = "r", `ra` = "r[]", `ci`
+= "citext"), so files and database agree and both are wrong. FIX-312
+(`30df7e1c`) introduced the collision for a DDL-qualified `public.r`; it
+already existed for an unqualified DDL name and for every column read from
+the database (measured at `a07d4009`).
+
+**Root cause.** `typeName` (`parser/postgres/postgres.go:1776`) writes a
+default-schema type the DDL does not declare without its `input.schema.`
+qualifier, and `columnType` (`parser/introspect/postgres.go:485-501`) keeps
+format_type's search_path-relative name. A bare name is then resolved in the
+owner's schema (`parser.ResolveTypeRef`, `parser/schema.go:540`, and
+`gotype` `ForSchema`), so it collides with a user type of the same name in
+the column's own schema. The name is computed when the column is read, so a
+shadowing type declared later (CREATE TYPE after the column, ALTER TYPE …
+RENAME TO, ALTER TABLE … SET SCHEMA) collides too.
+
+**Suggested fix.**
+- The user ruled on 2026-10-14: Q1 → (A) qualify a default-schema type
+  with `input.schema` in both sources whenever the owner schema declares a
+  same-named enum, domain or composite type, whatever the statement order,
+  and add the exception sentence to PRD §5.2 (this narrows the FIX-312
+  ruling: `overrides.types.public.citext`, not `citext`, reaches such a
+  column); Q2 → (a) the built-in collision (an `app.text` enum beside a
+  `text` column) stays a stated gap in PRD §5.2. Options considered: (B)
+  a loud error on a shadowed name, (C) document only, (D) revert FIX-312's
+  strip; for Q2, (b) a built-in type-name list.
+- Prototype (option A, `.claude/prototypes/FIX-348.patch`): `typeName`
+  passes a default-schema non-user type through a new `shadowTypeName`
+  (adds `<input.schema>.` when the owner schema declares a same-named enum,
+  domain or composite; qualified and unqualified DDL, arrays, typmods); new
+  `shadowTypeReferences` re-qualifies or un-qualifies references after
+  CREATE TYPE (enum, composite), CREATE DOMAIN and per object in
+  `dropTypes`; `retargetTypeName` re-spells non-user types on SET SCHEMA;
+  `renameType` shadows the new name before and un-shadows the old name
+  after; new `retypeAll` holds the loops from `renameTypeReferences`. The
+  introspector's `userTypeJoin` adds the schema of a non-user type (or its
+  element type) when not pg_catalog and the owner schema has a same-named
+  type (`tt.own_ns` at 4 sites plus a pg_class join for composite
+  attributes), and `columnType` takes a `shadowSchema` argument. Tests: 9
+  new `TestDropTypeReferences` cases (7 accepted, 2 refused, matching PG17),
+  `TestTypeNamesShadowedDefaultSchema` (5 cases), 4 `TestColumnType` rows,
+  `TestPostgresIntrospect_ShadowedDefaultSchemaTypes` (parity with `citext`
+  and a `pgi_shadow.citext` domain).
+- Auto-accepted the recommended option on 2026-10-14 (`/fix` auto-accept rule): the second /verify pass asked whether to fix the pg_catalog grammar types (`int`, `varchar(3)`) the create and SET SCHEMA hooks qualified when the shadowing type came after, or to make the PRD §5.2 clause order-dependent → fix it by recording the names `typeName` writes through `shadowTypeName` (`searchPathTypes`), no built-in name list, because it was prototyped with green gates, causes no golden churn, adds no public surface (an unexported parser field), and reverses no ruling (Q2 (b) rejected a built-in name list; the `text` gap of Q2 (a) is unchanged) and no PRD-stated behavior (it makes the clause this change added true). It did not by itself restore the behavior at HEAD: a bare `timestamptz` or `timetz` anywhere recorded the name the grammar writes for `timestamp with time zone`, so those columns were still qualified; the post-verify `builtinTypeName` check (see the Resolution notes) keeps every pg_catalog type bare as at HEAD.
+- Auto-accepted the recommended option on 2026-10-14 (`/fix` auto-accept rule): built-in name beside a same-named owner-schema type → state it as the Q2 (a) gap in PRD §5.2 rather than fix, because it matches the user's Q2 (a) ruling, adds no surface, causes no golden churn, and is HEAD behavior.
+- Corrected from the original: it also qualifies unqualified DDL names; it
+  keeps the qualifier correct as types are created, renamed, dropped or
+  moved; the introspector qualifies with the type's real schema; pg_catalog
+  types stay unqualified; the gotype mis-resolution and rename mis-retarget
+  are absorbed (same root cause, same fix site).
+- Prototype results, run at `481842f0` on 2026-10-14: with the prototype,
+  introspected and parsed types are identical (`rr`, `rb` = "public.r";
+  `ra` = "public.r[]"; `ci` = "public.citext"; `mine` = "r"; `dr` and the
+  attribute = "public.r"); generation (files and database) gives `Rr
+  *string`, `Ci *string`, `Mine *AppR`, `C2 *int32`; `Get(1)` →
+  `err=<nil>`; the only parity gap left is the Q2 built-in case. Gates:
+  parser gofumpt clean, `golangci-lint run ./...` 0 issues, `go test -race
+  -count=1 ./...` (PG16 containers) ok; `make update-golden` and `make
+  update-golden-e2e` no changes; cmd/sqlgen `go test ./cli/... ./gotype/...
+  ./config/...` ok; `make refs-check` ok. Fail-first: `typeName` shadowing
+  reverted → TestDropTypeReferences "Parse() error = \"parsing test.sql:
+  drop type: cannot drop type app.r: column app.t.rr uses it\", want \"\""
+  (and the unqualified, domain/composite, citext cases); create hooks
+  removed → "a shadowed type used before the shadowing type is declared"
+  fails the same way; `renameType` new-name hook removed → "a type renamed
+  to shadow…" fails; old-name hook removed → "renamed away" `"r"` →
+  `"public.r"`; `dropTypes` hook removed → "dropped" fails; non-user
+  `retargetTypeName` path reverted → "a table moved into a schema…" fails;
+  `columnType` qualification removed → `columnType("r", "", "", "public",
+  "app") = "r", want "public.r"` and the integration test reports
+  "introspected schema differs from the file parser's"; existing suite
+  without the fix passes. Golden churn: none. Patch 8 files, +320/-68.
+
+**References.**
+- PRD §5.2 (type names), §5.6 (DROP TYPE / DROP DOMAIN checks), §7.1
+  (overrides.types keys).
+- FIX-312 (`30df7e1c`, the input.schema strip ruling), FIX-305
+  (`c695fd6f`), FIX-338 (`afdb75a4`, `typeUses` reads types with
+  `ResolveTypeRef`).
+
+**Resolution notes.** Landed the vetted prototype (option A, as ruled on 2026-10-14); it applied cleanly at `c007a487`. `typeName` (`parser/postgres/postgres.go`) passes a default-schema type the DDL does not declare through the new `shadowTypeName`, which writes it `input.schema`-qualified when the owner schema declares an enum, domain or composite type by the same name (qualified or unqualified DDL, arrays, typmods); the new `shadowTypeReferences` re-qualifies or un-qualifies existing references after CREATE TYPE (enum, composite), CREATE DOMAIN, `ALTER TYPE … RENAME TO` (new name before, old name after, `parser/postgres/alter_type.go`) and each `dropTypes` object; `retargetTypeName` re-spells such a type on `ALTER TABLE … SET SCHEMA`; the loops of `renameTypeReferences` move to the new `retypeAll`. The introspector's `userTypeJoin` (`parser/introspect/postgres.go`) returns the schema of a non-user type (or its element type) that is not pg_catalog when the owner schema (`tt.own_ns`, at 4 sites; composite attributes join pg_class for it) declares a same-named user type, and `columnType` qualifies the bare format_type name with it. PRD §5.2 states the exception and the built-in gap (Q2 (a)), worded after the /verify reviewer measured that a type the grammar qualifies with pg_catalog (`int`, `varchar(3)`) stays bare under both sources and only a bare built-in such as `text` hits the gap. Tests: 9 new `TestDropTypeReferences` cases (7 accepted, 2 refused, as PG17), `TestTypeNamesShadowedDefaultSchema` (8 cases), 4 `TestColumnType` rows, `TestPostgresIntrospect_ShadowedDefaultSchemaTypes`. Changed from the prototype after the /verify reviewer measured that `shadowTypeReferences` compared a type with its modifier, so `vector(3)` and `vector(3)[]` in `app` stayed bare when `app.vector` was declared after them and stayed `public.vector(3)` after `DROP DOMAIN app.vector`, while the introspector writes `public.vector(3)`: it now compares the name before `(` or `[` and keeps the tail; two new `TestTypeNamesShadowedDefaultSchema` cases cover it, and without the change both fail (after the drop `app.t.v` is `public.vector(3)`, want `vector(3)`; declared after, it is `vector(3)`, want `public.vector(3)`). The second /verify pass measured that the create and SET SCHEMA hooks also qualified a type the grammar writes from pg_catalog (`CREATE TABLE app.t (a varchar(3), b int); CREATE DOMAIN app.varchar AS int; CREATE DOMAIN app.integer AS int;` gave `public.varchar(3)` and `public.integer`, bare when the domains came first and at HEAD in either order, and gotype reads `public.integer` as `string`), since a written name does not say where it came from: the parser now records in `searchPathTypes` the names `typeName` writes through `shadowTypeName`, and `shadowTypeReferences` and `retargetTypeName` touch only those. The new `TestTypeNamesShadowedDefaultSchema` case "grammar types a type declared after or a move shadows" fails without it (`app.t.b` is `public.integer`, want `integer`, and likewise `varchar(3)`, `timestamptz(3)`, `varchar(3)[]` and a table moved into `app`). Fail-first re-run on the landed code: `shadowTypeName` short-circuited → 6 `TestDropTypeReferences` and 4 `TestTypeNamesShadowedDefaultSchema` cases fail ("Parse() error = \"parsing test.sql: drop type: cannot drop type app.r: column app.t.rr uses it\", want \"\""); `columnType` qualification disabled → 3 `TestColumnType` rows and `TestPostgresIntrospect_ShadowedDefaultSchemaTypes` fail. Gates: `make check` ok; parser `go test -race -count=1 ./...` with containers ok; `make update-golden` and `make update-golden-e2e` no changes (golden churn: none, as recorded at the vet); `make check-examples` ok; all re-run after each post-verify change, with no golden churn. The user ruled on 2026-10-14: fix the timestamptz/timetz re-spelling and serial regressions and extend the rule to view columns in FIX-348 (surfaced by an extra post-verify review). (1) `searchPathTypes` was keyed by the DDL name and never pruned, so a bare `timestamptz` or `timetz` column anywhere, even in a table dropped since, recorded the name the grammar writes for `timestamp with time zone`, and a later `CREATE DOMAIN app.timestamptz` or a move into `app` qualified every such column (`public.timestamptz`, `public.timetz(2)`; the database writes them bare, from pg_catalog); with the domain declared first a bare `timestamptz(3)` or `int4` was qualified too. The new `builtinTypeName` (`parser/postgres/postgres.go`) reports a name the grammar reads as a pg_catalog type or one of `catalogSpellings` (the former `pgCatalogToSQL` switch, now a map); `typeName` writes such a name bare and does not record it, so `searchPathTypes` never holds a pg_catalog spelling (true once `varbit` joined `catalogSpellings`, below) and a stale entry is harmless. This is no hand-kept built-in list: a built-in the grammar reads bare (`text`, `uuid`, `date`) is still the Q2 (a) gap, and the `int4` order dependence is gone. (2) `CREATE DOMAIN app.serial AS int; CREATE TABLE app.t (id serial)` gave `public.serial`, not auto-increment, with no implicit sequence, since `typeName` shadowed `serial` before serial detection: the new `serialType` (`parser/postgres/sequences.go`) detects every serial spelling from the unqualified raw name, before `typeName`, in `parseColumnDef` and `addColumnSequence` (replacing `isSerial`). (3) A view column's type ignored the rule: `app.v AS SELECT rr FROM public.t` with `app.r` declared gave `r` (`app.r`), and with `other.t.rr` written `public.r` a view in a schema without `r` gave `public.r`. The new `parser.SearchPath` (input.schema and a built-in predicate) is a new last argument of `parser.BuildView`; `relativeType` writes a bare or input.schema-qualified non-user type through `searchPathType`, as a table column's type in the view's schema. Callers: `cmd/sqlgen/cli/pipeline.go` (`postgres.SearchPath(input.schema)` for PostgreSQL view files), `parser/introspect` (`viewColumnsFromDefinition`, `columnsFromDefinition`, `refreshViewColumns`; PostgreSQL passes `postgres.SearchPath(opts.DefaultSchema)`, MySQL and SQLite the zero value; `Merge` takes it from the parser's new `SearchPath` method), and the tests; `IntrospectionOptions` gains `DefaultSchema`, which `cmd/sqlgen/cli/connection.go` sets from input.schema. The reviewer's `sqlgen generate` repro (`CREATE DOMAIN app.citext AS int; CREATE TABLE m (id int PRIMARY KEY, ci citext); CREATE VIEW app.v AS SELECT id, ci FROM public.m`) now gives the view `Ci *string` (`public.citext`); the table's `Ci *int32` in models_gen.go is gotype's separate bare-name fallback, out of scope. Tests: `TestTypeNamesShadowedDefaultSchema` (9 cases; the "grammar types…" case gains bare `timestamptz`/`timetz`/`int4` tables and a move, and "built-in types a type declared before shadows" is new), 3 `TestSerialTypes` cases and 1 `TestSequenceOwnership` case, `TestBuildView_SearchPathTypesInViewSchema` (5 cases), and the Docker parity tests `TestPostgresIntrospect_BuiltinTypesStayBare`, `TestPostgresIntrospect_SerialBesideSerialType` and `TestPostgresIntrospect_ViewSearchPathTypes` (files, database and source: both against the catalog's type schemas). Fail-first: `builtinTypeName` check disabled → the two type-name cases (`app.t.c` is `public.timestamptz(3)`, `app.t.a` is `public.integer`, want bare) and the parity test ("parsed column types mismatch"); old serial detection → "type = \"public.serial\", want \"integer\"", the sequence case, and the parity test; `searchPathType` reverted → the view cases (`rr` is `r`, want `public.r`; `public.r`, want `r`) and the parity test for files and database; its `Builtin` check removed → `n` is `public.integer`; `Merge`'s search path dropped → the "both" leg fails. A final review measured two more, both fixed: `bit varying` was still qualified after a later `CREATE DOMAIN app.varbit` once any bare `varbit` column had recorded `varbit` (files `public.varbit(4)`, database `varbit(4)`), since the grammar reads `varbit` bare, so `varbit` joins `catalogSpellings` and the new `TestBuiltinTypeNameCoversGrammarSpellings` asserts that the name the parser writes for every type the grammar qualifies with pg_catalog (each `SystemTypeName` type but `record`; `varbit` was the only miss) is a `builtinTypeName`; and `relativeType`'s user-type branch ignored `SearchPath.Builtin`, so a view reading `int` from a schema declaring `integer` named that domain under all three sources, and now checks it — tests: the "grammar types…" case and `TestPostgresIntrospect_BuiltinTypesStayBare` gain `bit varying(4)`, bare `varbit` and an `app.varbit` domain, `TestBuildView_SearchPathTypesInViewSchema` has 6 cases and `TestPostgresIntrospect_ViewSearchPathTypes` gains `pgi_vw_d.v3`; fail-first: "\"bit varying(4)\": the parser writes \"varbit(4)\", whose name is not a builtinTypeName", `app.t.p` is `public.varbit(4)`, "parsed column types mismatch", `id` is `app.integer` (want `integer`), and `pgi_vw_d.v3.id` is `pgi_vw.integer` under files, database and both. PRD §5.2 now states the bare built-in collision as the Q2 (a) gap, measured on postgres:16 (refused `DROP DOMAIN`, retyping `RENAME`, the domain's Go type), and `builtinTypeName` caches its answer per name in a `sync.Map`.
+
+### FIX-347
+
+- **Status:** Resolved
+- **Severity:** tracked
+- **Origin:** phase 30, parser/introspect
+- **Surfaced by:** /fix-loop FIX-309 verify reviewer (2026-10-13)
+- **Vetted:** corrected at `481842f0` (2026-10-14)
+
+**Issue.** Under `source: both`, a file migration that renames or drops a
+column, or renames or drops a table, that a database view reads through a
+derived table or CTE passes `Merge` silently. Measured: MySQL `q_vd AS
+SELECT role FROM (SELECT role FROM q_users) d` and the CTE twin `q_vc`,
+RENAME COLUMN role TO kind or DROP COLUMN role → `Merge err=<nil>`, the
+views keep `q_vd__role_enum` / `q_vc__role_enum`, and MySQL then gives
+"Error 1356 (HY000): View 'sqlgen_test.q_vd' references invalid table(s) or
+column(s)…". PostgreSQL DROP COLUMN role → `Merge err=<nil>` while PG says
+"cannot drop column role of table users because other objects depend on it
+(SQLSTATE 2BP01)" (a PG RENAME is followed, correctly: PG rewrites the view
+to `SELECT users.kind AS role`). SQLite DROP → `Merge err=<nil>` while
+SQLite says "error in view vd after drop column: no such column: role (1)";
+SQLite also refuses a RENAME when the subquery or CTE selects the column
+with no AS and no column list ("error in view v after rename: no such
+column: role (1)", also for `SELECT d.role`, `SELECT role AS x FROM (SELECT
+role …) d` and `(SELECT * FROM users) d`), and follows it when the subquery
+aliases the column or a CTE has a column list. Table RENAME/DROP under a
+subquery is silent too (MySQL 1356; PG "cannot drop table users because
+other objects depend on it"; SQLite "no such table: main.users"). PRD §6.1
+states that dropping a column a view reads is an error.
+
+**Root cause.** The FIX-309/FIX-333 checks (`readViewSources` and
+`refreshViewColumns`, `parser/introspect/views.go:54`, `:122` at
+`069c8b62`) trace a view
+column only to a base table named in its FROM clause
+(`viewSources.sourceTable` / `parser.ViewFromTables`, `parser/view.go:346`,
+`:402`). The view SQL readers record nothing about a derived table or CTE,
+so a column or table read through one has no source and is never checked,
+and the rename helpers never rewrite inside one.
+
+**Suggested fix.**
+- `parser.ViewSQL` gains `Subqueries map[string]ViewSQL`; each dialect's
+  `view_sql.go` records derived tables (by alias) and CTEs (by name),
+  recursively, applying derived and CTE column lists; a `*` is stored as
+  `SourceColumn "*"` (matters for SQLite only; PG and MySQL expand `*` in
+  their stored definitions). Compound queries are left out.
+- `parser/view.go`: new `ViewColumnSources` / `ViewColumnSource{Table,
+  Column}` follow a column through `Subqueries`, including a CTE that reads
+  an earlier CTE; `RenameViewColumnReferences` and
+  `RenameViewTableReferences` recurse into subqueries. `BuildView` typing is
+  unchanged (a column read through a subquery still takes the catalog type).
+- `parser/introspect/views.go`: `readViewSources` and `refreshViewColumns`
+  use `ViewColumnSources` and check subqueries' FROM tables too
+  (`viewFromTables`); the column error names the base column ("view vd:
+  column r reads column role of table users, …").
+- PRD §6.1 (`docs/PRD.md:1651`): a column read through a derived table or
+  CTE is followed to its table and treated the same way; a SQLite rename of a
+  column the subquery selects with no AS or column list is an error.
+- Tests: `TestMerge_ViewColumnRenameAndDrop` grows from 19 to 39 cases (PG 6,
+  SQLite 8, MySQL 6 new: rename, drop, rename table, drop table, unread-column
+  drop, CTE chain, SQLite `*`).
+- Corrected from the original: option 1 (trace through the subquery) is
+  chosen; widened, by the scope cap (same root cause, same fix site), to the
+  SQLite unaliased-rename refusal, table rename/drop through subqueries,
+  SQLite `SELECT *` subqueries, CTE-to-CTE chains and derived/CTE column
+  lists. The nested table-rename recursion is required: without it PG and
+  SQLite table renames under a subquery view fail `Merge` with a false
+  error.
+- Auto-accepted the recommended option on 2026-10-14 (`/fix` auto-accept
+  rule): trace through the subquery, or treat untraceable sources
+  conservatively? → trace through the subquery, because it was prototyped
+  with gates green, neither option churns goldens, the new exported
+  identifiers (`ViewSQL.Subqueries`, `ViewColumnSources`,
+  `ViewColumnSource`) are in the parser module, not runtime or generated
+  code (as with FIX-309/333), and it reverses no ruling or PRD text, whereas
+  the conservative option over-rejects what the databases accept and PRD
+  §6.1 allows (PG RENAME of a read column, SQLite aliased renames, DROP or
+  RENAME of an unread column such as `email`, all measured).
+- Prototype results, run at `481842f0` on 2026-10-14: probe
+  `parser/introspect/zz_probe_fix347_test.go` (postgres:16-alpine,
+  mysql:8.0, modernc SQLite) reproduced every Issue line above; DROP or
+  RENAME of `email`, which no view reads, succeeds on all three databases.
+  Gates: parser gofumpt clean; `golangci-lint run ./...` → 0 issues; `go
+  test -race -count=1 ./...` (containers) → ok; `cd cmd/sqlgen && go test
+  -race -count=1 -run TestE2E .` → ok (169s); `make refs-check` → ok.
+  Fail-first: subquery following disabled → 11 cases fail, e.g.
+  postgres/drop_under_a_derived_table "Merge() error = <nil>, want one
+  containing \"merge both mode: view view_def.vd: column r reads column role
+  of table view_def.users, …\""; column-rename recursion removed →
+  postgres/rename_under_a_derived_table_and_a_CTE fails with a false error;
+  table-rename recursion removed → postgres/rename_table_under_… "view
+  view_def.vc reads table view_def.users, …"; `viewFromTables` recursion
+  removed → drop-table cases report the column message instead of the table
+  one; enclosing-scope CTE lookup removed → postgres/drop_under_a_CTE
+  `<nil>`; star pass-through removed → sqlite/rename_under_a_derived_table_
+  selecting_* `<nil>`; each dialect's parser without `Subqueries` → MySQL 5,
+  PG 3, SQLite 6 cases fail; existing suite (19 subtests) without the fix
+  passes. Golden churn: none. Patch: `.claude/prototypes/FIX-347.patch`
+  (7 files, +629/-89).
+
+**References.**
+- PRD §6.1 (view columns under `both`).
+- FIX-309 (`accaf642`; its entry records keeping the PRD sentence and
+  reporting this gap), FIX-333 (`f4bc470c`), FIX-308 (`8edbaeac`).
+
+**Resolution notes.** Landed the vetted prototype (it applied cleanly with `git apply --3way`; `docs/PRD.md` had moved since the vet only in §5.2, outside the patch's hunk). `parser.ViewSQL` gains `Subqueries` (derived tables by alias) and `CTEs` (by name), read recursively with their column lists (`*` kept as `SourceColumn "*"`), recorded by each dialect's `view_sql.go`; `parser.ViewColumnSources` follows a view column through them to its base table column, and `RenameViewColumnReferences` / `RenameViewTableReferences` recurse into them; `parser/introspect/views.go` checks the traced column and every subquery's FROM tables (`parser.ViewFromTables`), naming the base column in the error. PRD §6.1 states the subquery rule and the SQLite unaliased-rename error. `TestMerge_ViewColumnRenameAndDrop` grows from 19 to 39 cases; with the source changes reverted 14 of them fail (PG 3, SQLite 6, MySQL 5). Gates: `make check` ok; parser `go test -race ./...` with containers ok; `cd cmd/sqlgen && go test -race -run TestE2E .` ok; `make check-examples` ok. Golden churn: none, as recorded at the vet. Changed from the prototype after the /verify reviewer measured two defects in it: (1) `subquery()` looked a FROM key's table name up among enclosing scopes' derived tables as well as CTEs, so `(SELECT role FROM users) users` or `WITH users AS (SELECT … FROM users)` resolved to itself and overflowed the stack whenever the inner column was not in the schema (a dropped column, or a table filtered out or a view read inside the subquery), on every dialect; (2) the candidate keys for an unqualified column took every CTE name, not only the FROM keys, so SQLite `WITH a AS (… title AS label FROM posts), b AS (… users.name AS label FROM users JOIN a …) SELECT label FROM b` traced `label` to `posts.title` and missed a `DROP COLUMN users.name`. Fix: `ViewSQL.CTEs` now holds the common table expressions apart from `Subqueries` (derived tables only); only CTEs are looked up by name, and a CTE already being traced is skipped (`tracing`, keyed by the CTE's lexical path of FROM keys and `with:<name>` steps, `traceScope.path`), as a CTE cannot read itself; a second /verify pass measured that keying it by scope depth and name instead made sibling CTEs' same-named inner CTEs collide (`WITH y AS (WITH x AS (… FROM users) …), z AS (WITH x AS (… FROM y) …) SELECT role FROM z` traced to nothing), covered by a new subtest; the FROM-table walk and the rename recursion walk both maps. New Docker-free unit tests `TestViewColumnSources_Subqueries` (SQLite, 11 cases) and `TestViewColumnSources_SubqueryNamedAfterItsTable` (PostgreSQL and MySQL stored forms, 3 cases each); against the prototype code all three packages die with "fatal error: stack overflow" and the SQLite unqualified-CTE case gets `posts.title`. The user ruled on 2026-10-14: fix the derived-alias case and its CTE twin in FIX-347 (surfaced by an extra post-verify review). (1) Derived-alias case: `viewSources.table` read a FROM key absent from `TableAliases` as a table name, so a derived table aliased like a table, read qualified, matched the table before `traceViewColumn` looked at `Subqueries`: MySQL `SELECT role FROM (SELECT email AS role FROM vr_users) vr_users` (stored `` select `vr_users`.`role` … `vr_users` ``) + DROP or RENAME email, and SQLite `SELECT users.role FROM (SELECT email AS role FROM users) users` + DROP email or `(SELECT role FROM users WHERE id > 0) users` + RENAME role, passed `Merge` while MySQL errors 1356 and SQLite "no such column"; `ViewColumnSources` gave `users.role`, not the subquery's column, on all three dialects. (2) CTE twin (the backlog line, now deleted): `WITH users AS (SELECT email AS role FROM users) SELECT role FROM users` resolved `users` to the table in `BuildView` and in the tracing, rename and drop checks: PG and MySQL DROP email passed `Merge` (PG refuses it with 2BP01, MySQL 1356), SQLite (written `FROM main.users`; unqualified, SQLite reads the CTE itself, "circular reference") likewise, and a PG table rename typed the view column `role_t` NOT NULL instead of the catalog's `text`. Fix: a FROM key that names a derived table of its query, or a common table expression in scope, names no table (`viewSources.queries`, built by `scopeSources` from the scope chain); `cteScopes` finds the innermost CTE of the name, skipping one the key is inside (lexically, by `traceScope.path`) or that `tracing` holds (the cycle guard is unchanged), and never for a key whose table is qualified, which the parsers now record in `ViewSQL.QualifiedAliases` (PG (read with an empty search_path) and MySQL store every base table qualified: `JOIN view_def.users u2`); `ViewFromTables` walks every scope itself (the `viewFromTables` helper in `parser/introspect/views.go` is gone) and the rename helpers walk the same scopes (`viewScopes`); `ViewSourceTables`, now unused, is removed. Each dialect's `readSubquery` records a query it cannot read (a compound one) as an empty `ViewSQL`, so its alias still names no table (SQLite `(… UNION ALL …) users` + DROP role: SQLite accepts it, `Merge` used to fail falsely). Tests: `TestMerge_ViewColumnRenameAndDrop` grows from 39 to 49 cases (PG 3, SQLite 4, MySQL 3), each measured against postgres:16-alpine, mysql:8.0 and modernc SQLite; `TestViewColumnSources_SubqueryNamedAfterItsTable` (PG 7, MySQL 6 new cases) and `TestViewColumnSources_Subqueries` (SQLite 7 new cases) add derived tables and CTEs whose column has another name than the table's, a derived table named after another table, a compound derived table, a derived table reading an enclosing CTE, an inner CTE shadowing an outer one and a qualified table beside a CTE of its name; `TestViewFromTables_CTEReadingTableOfItsName` (PG). Fail-first: against the code before this change all 10 new Merge cases fail, and with only the derived/CTE key hiding removed 9 Merge and 17 unit cases fail (e.g. mysql/drop_under_a_derived_table_named_after_its_table "Merge() error = <nil>, want one containing \"merge both mode: view vr_vq: column role reads column email of table vr_users, …\"", SQLite "derived table named after another table" `posts.title` for `users.name`); without the `QualifiedAliases` check postgres/drop_under_a_table_beside_a_CTE_of_its_name gets `<nil>` and the qualified and shadowing unit cases fail; searching the outermost CTE first fails the shadowing cases; without the lexical self-skip the `ViewFromTables` test gets `"with:users/users": ""`.
+
+### FIX-346
+
+- **Status:** Resolved
+- **Severity:** tracked
+- **Origin:** phase 30, parser/postgres
+- **Surfaced by:** /fix-loop FIX-305 third verify pass (2026-10-13)
+- **Vetted:** corrected at `481842f0` (2026-10-14)
+
+**Issue.** The PostgreSQL file parser rejects `COMMENT ON COLUMN` on a
+column of a plain view, or on an attribute of a composite type, both of
+which PostgreSQL accepts and `pg_dump` writes. `CREATE TABLE t (a int);
+CREATE VIEW v AS SELECT a FROM t; COMMENT ON COLUMN v.a IS 'x';` →
+"parsing x.sql: comment on column of unknown table v"; PG16 → `COMMENT`.
+`pg_dump --schema-only` writes `COMMENT ON COLUMN public.v.a IS 'x';` and,
+for a composite type, `COMMENT ON COLUMN public.ct.f …`. Predates FIX-305.
+
+**Root cause.** `commentOnColumn` (`parser/postgres/postgres.go:1290-1311`)
+looks the relation up with `findTableByNames`, then `skippedTable`. A plain
+view is in `p.skipped`, but with the value `false` (not indexable), and
+`skippedTable` returns that flag rather than whether the name is present,
+so the view reads as unknown. A materialized view, partition or CTAS table
+maps to `true`, which is why only a plain view fails; `Seed` likewise maps a
+plain view seeded under `both` to `false`. A composite type is never looked
+up at all. The file parser models no view columns (`skipRelation` records
+only the name for CREATE VIEW), and the introspector reads no view column
+comment (`introspectViewColumns` never reads `pg_description`; the
+generator's `buildViewColumns` sets no Description), so there is nothing to
+record the comment on.
+
+**Suggested fix.**
+- In `commentOnColumn`, when no table matches, skip any name present in
+  `p.skipped` (presence, not the indexable flag), covering plain and
+  materialized views, partitions and CTAS tables under `files` and `both`.
+- Then look up a composite type of that name: skip a comment on an existing
+  attribute; error "comment on unknown column ct.nope" on a missing one, as
+  PG16 does (`column "nope" of relation "ct" does not exist`).
+- A relation nothing created still errors "comment on column of unknown
+  table". Reword the `skippedTable` doc comment to say it covers COMMENT ON
+  TABLE only (which still rejects a view, as PostgreSQL does).
+- Tests: `TestCommentOnColumnOfView` (11 cases checked against PG16: view,
+  qualified view, view in another schema, renamed view, materialized view,
+  composite attribute, unknown composite attribute, dropped view, old name
+  of a renamed view, unknown relation, COMMENT ON TABLE of a view) and
+  `TestCommentOnColumnOfSeededView` (plain and materialized view under
+  `both`) in `parser/postgres/postgres_test.go`; parity test
+  `TestPostgresIntrospect_CommentOnViewColumn` in
+  `parser/introspect/postgres_integration_test.go`.
+- PRD §5.2 ("A `CREATE INDEX` needs its table" paragraph): one sentence that
+  COMMENT ON COLUMN of a plain view or composite type attribute is skipped,
+  and one on a missing attribute is an error.
+- Corrected from the original: the comment is always skipped rather than
+  applied to a view column, because the file parser models no view columns
+  and the introspector reads no view column comment (measured parity); the
+  "error on an unknown column of a known view" bullet is dropped (see the
+  auto-accept); widened to composite type attributes, which share the root
+  cause and fix site (the `table == nil` branch).
+- Auto-accepted the recommended option on 2026-10-14 (`/fix` auto-accept
+  rule): error on an unknown column of a known view? → no, skip every
+  COMMENT ON COLUMN of a view whatever the column, because checking only
+  views seeded under `both` would split `files` from `both` and contradict
+  the materialized-view behavior at HEAD (`mv.nope` → nil); prototyped with
+  gates green, no golden churn either way, no public surface, no ruling or
+  stated PRD behavior reversed (adds PRD text for an unspecified case).
+- Landing note: FIX-345's patch makes the same presence-test change in
+  `parseAlterTable` and edits the `skippedTable` doc comment; applied after
+  it, this patch's `git apply --3way` leaves one conflict in
+  `parser/postgres/postgres.go` (measured at `481842f0`).
+- Prototype results, run at `481842f0` on 2026-10-14: probe at HEAD →
+  `COMMENT ON COLUMN v.a` "parsing x.sql: comment on column of unknown table
+  v"; `public.v.a`, renamed `v2.a`, seeded `sv.a` and composite `ct.f` fail
+  the same way; `mv.a`, `mv.nope` and `COMMENT ON VIEW v` → nil. Introspector
+  on postgres:16-alpine: view column commented 'view col' → `comment=""`;
+  materialized view → `comment=""`; composite `attrs=[{Name:f
+  Type:integer}]` (no Comment field). Gates: `cd parser && go test -race
+  -count=1 ./...` (with Docker) → 5 packages ok; `golangci-lint run
+  ./postgres/... ./introspect/...` → 0 issues; gofumpt clean; `go test -run
+  TestE2EGoldenFiles` → ok. Fail-first: presence check reverted to `if
+  p.skipped[key]` → `TestCommentOnColumnOfView/view` fails "comment on
+  column of unknown table v" (qualified, other-schema and renamed cases and
+  the seeded test too); composite branch removed →
+  `composite_type_attribute` fails "comment on column of unknown table ct";
+  whole fix reverted → `TestPostgresIntrospect_CommentOnViewColumn` fails
+  "comment on column of unknown table pgi_vcomment.v"; existing suite
+  without the fix passes. Golden churn: none. Patch:
+  `.claude/prototypes/FIX-346.patch` (4 files, +116/-5).
+
+**References.**
+- PRD §5.2; FIX-305 (`c695fd6f`) skip handling for COMMENT ON a skipped
+  relation; FIX-345 (other pg_dump statements the parser rejects).
+
+**Resolution notes.** `commentOnColumn` (`parser/postgres/postgres.go`) now, when no table matches, skips the comment for any name present in `p.skipped` (key presence, not the indexable flag), so a plain view, materialized view, partition or CTAS table under `files` or `both` is skipped; then skips a comment on an existing composite type attribute and errors "comment on unknown column ct.nope" on a missing one. An uncreated relation still errors "comment on column of unknown table". The `skippedTable` doc comment now says it covers COMMENT ON TABLE. PRD §5.2 gains the sentences on COMMENT ON COLUMN of a plain view or composite attribute. Tests: `TestCommentOnColumnOfView`, `TestCommentOnColumnOfSeededView`, `TestPostgresIntrospect_CommentOnViewColumn`. The vetted prototype applied with `git apply --3way`; its conflicts with FIX-345 (`02e610ce`) in the `skippedTable` doc comment and the PRD §5.2 paragraph were merged keeping both changes. Fail-first re-run on the final code: presence check reverted → view, qualified, other-schema, renamed and seeded cases fail "comment on column of unknown table"; composite branch removed → both composite cases fail; whole `postgres.go` reverted → the introspect parity test fails. Gates: `make check` ok, `make check-examples` ok, `TestE2EGoldenFiles` ok; golden churn none, as vetted. Verify inline: the parity test now checks the parser's view and materialized-view skip warnings, which `pgSkippedStatementExceptions` requires a caller to check, and the `TestCommentOnColumnOfView` doc comment is trimmed.
+
+### FIX-345
+
+- **Status:** Resolved
+- **Severity:** tracked
+- **Origin:** phase 30, parser/postgres
+- **Surfaced by:** /fix-loop FIX-305 verify reviewer (2026-10-13)
+- **Vetted:** corrected at `481842f0` (2026-10-14)
+
+**Issue.** The PostgreSQL file parser fails on `pg_dump` schema output. A
+default dump of a database with a serial column stops at `ALTER SEQUENCE
+public.p_id_seq OWNER TO postgres` → "table public.p_id_seq not found"; a
+no-owner dump (`pg_dump -s -O`) of a partitioned table with an index stops
+at `ALTER INDEX public.p_k_idx ATTACH PARTITION public.c1_k_idx;` → "table
+public.p_k_idx not found". A foreign table (`ALTER FOREIGN TABLE … OWNER
+TO`) and a plain view (`ALTER VIEW public.v OWNER TO …`, and `ALTER TABLE
+ONLY public.v ALTER COLUMN k SET DEFAULT 7`, which pg_dump writes even with
+`-O`) fail the same way. Measured on postgres:17 (17.11); PostgreSQL
+accepts every one of these statements.
+
+**Root cause.** pg_query reads `ALTER SEQUENCE`, `ALTER INDEX`, `ALTER
+FOREIGN TABLE` and `ALTER VIEW` subcommands as an `AlterTableStmt` with
+`Objtype` `OBJECT_SEQUENCE` / `OBJECT_INDEX` / `OBJECT_FOREIGN_TABLE` /
+`OBJECT_VIEW`. `parseAlterTable` (`parser/postgres/postgres.go:1313`)
+routes only `OBJECT_TYPE` (FIX-338) and sends the rest to `lookupTable`,
+which fails on those names. Its skipped-relation fallback tests the map
+value `p.skipped[key]`, which is `false` for a plain view (not indexable),
+so a view statement also falls through to the error; a materialized view
+already works.
+
+**Suggested fix.**
+- In `parseAlterTable`, switch on `stmt.Objtype`: `OBJECT_TYPE` still goes
+  to `alterCompositeType`; `OBJECT_SEQUENCE`, `OBJECT_INDEX` and
+  `OBJECT_FOREIGN_TABLE` return nil, since no subcommand that arrives as an
+  `AlterTableStmt` for them changes the model (OWNED BY and RESTART come as
+  `AlterSeqStmt`, RENAME as `RenameStmt`; only AT_ChangeOwner,
+  AT_SetLogged/UnLogged, SET STATISTICS, ATTACH PARTITION and the like come
+  here), the parser tracks no partition index or foreign table, and the
+  introspector excludes foreign tables.
+- Make the skipped-relation fallback test key presence (`_, skipped :=
+  p.skipped[key]`), so a plain view is absorbed like a materialized view or
+  partition; an unknown view without IF EXISTS is still an error. Drop "ALTER
+  TABLE and" from the `skippedTable` doc comment.
+- Tests: `TestAlterRelationsOtherThanTables` in
+  `parser/postgres/postgres_test.go` (13 cases on a pg_dump-shaped base: 12
+  leave the schema equal under `cmp.Diff`, 1 errors) with a
+  `parsePGSchema` helper; parity test `TestPostgresIntrospect_PgDumpOutput`
+  in `parser/introspect/postgres_integration_test.go` built from verbatim
+  postgres:17 `pg_dump -s -n pgi_dump` statements.
+- Corrected from the original: nothing from `sequences.go` is applied (no
+  registry subcommand reaches this path); "unknown name → error" is dropped,
+  because no subcommand of these object types has a model effect, partition
+  indexes and DB-only sequences are never modelled under `both`, and
+  `renameIndex`/`dropIndex`/`renameSequence`/`dropSequence` already skip
+  unknown names; widened to plain views (same root cause and fix site,
+  real pg_dump output); `OBJECT_FOREIGN_TABLE` is a no-op; no PRD change
+  (§5.2 already says statements apply as PostgreSQL applies them).
+- Landing note: FIX-346's patch also changes the skipped-relation presence
+  test and the `skippedTable` doc comment; applied after this one,
+  `git apply --3way` leaves one conflict in `parser/postgres/postgres.go`
+  (measured at `481842f0`).
+- Auto-accepted the recommended option on 2026-10-14 (`/fix` auto-accept
+  rule): should `alterSkippedTable` refuse ATTACH/DETACH PARTITION (and
+  ADD COLUMN) on a skipped relation that is not a partition, now that a
+  plain view reaches it → keep the landed behavior, which matches the
+  existing materialized-view leniency, and backlog the tightening, because
+  the prototype's gates are green, there is no golden churn, no public
+  surface changes, and no ruling or PRD behavior is reversed.
+- Prototype results, run at `481842f0` on 2026-10-14: postgres:17.11
+  fixture (enum, composite, domain, owned and free sequences, serial,
+  identity, bigserial partitioned table with 2 partitions and an index, a
+  view, a matview with an index) dumped with `pg_dump -s`, `\restrict`
+  lines removed, fed to `postgres.New("public").Parse` → default dump
+  "parsing dump.sql: table public.p_id_seq not found"; `-s -O` dump "table
+  public.p_k_idx not found"; a second DB with a file_fdw foreign table, an
+  unlogged sequence and `ALTER INDEX … ALTER COLUMN 1 SET STATISTICS 500`
+  → "table public.ft not found"; with only the sequence/index/foreign case
+  fixed, the default dump fails next at "table public.v not found"; with
+  the full prototype all three dumps parse. Gates: `cd parser && go test
+  -race -count=1 ./...` (testcontainers) → ok; `golangci-lint run
+  ./postgres/... ./introspect/...` → 0 issues; gofumpt clean. Fail-first:
+  sequence/index/foreign case reverted → 9 subtests fail, e.g.
+  serial_sequence_owner "table public.p_id_seq not found", and the parity
+  test fails "parsing stmt_07.sql: table pgi_dump.events_id_seq not
+  found"; view fallback reverted to `if p.skipped[...]` → view_owner and
+  view_column_default fail "table public.v not found", parity fails at
+  "ALTER VIEW pgi_dump.recent OWNER TO test"; existing suite without the
+  fix passes. Golden churn: none. Patch: `.claude/prototypes/FIX-345.patch`
+  (3 files, +170/-4).
+
+**References.**
+- PRD §5.2 (PostgreSQL file DDL coverage), §6.3.
+- FIX-305 (`c695fd6f`, sequence registry, ALTER handling), FIX-338
+  (`afdb75a4`, OBJECT_TYPE routing in the same function), FIX-346 (same
+  presence-test change, COMMENT ON COLUMN).
+- Backlog line on pg_dump 17.6+ `\restrict` (still live on 17.11).
+
+**Resolution notes.** Resolved on 2026-10-14 from the vetted prototype, which applied clean at `d86db304` (no commits since the vet). `parseAlterTable` (`parser/postgres/postgres.go`) now switches on `stmt.Objtype`: `OBJECT_TYPE` still goes to `alterCompositeType`, and `OBJECT_SEQUENCE`, `OBJECT_INDEX` and `OBJECT_FOREIGN_TABLE` return nil, since no subcommand that reaches this path changes the model. The skipped-relation fallback tests key presence, so a plain view is absorbed like a materialized view or partition; an unknown view without IF EXISTS still errors. The `skippedTable` doc comment drops "ALTER TABLE and". Tests: `TestAlterRelationsOtherThanTables` (13 cases, with a `parsePGSchema` helper) in `parser/postgres/postgres_test.go`, and the parity test `TestPostgresIntrospect_PgDumpOutput` in `parser/introspect/postgres_integration_test.go`. Fail-first re-run on the final code: with the sequence/index/foreign case removed, 9 subtests fail (for example serial_sequence_owner "table public.p_id_seq not found") and the parity test fails "parsing stmt_07.sql: table pgi_dump.events_id_seq not found"; with the fallback back on `if p.skipped[…]`, view_owner and view_column_default fail "table public.v not found" and the parity test fails at "ALTER VIEW pgi_dump.recent OWNER TO test". Gates: `make check` ok; `cd parser && go test -race -count=1 ./...` (testcontainers) ok; `golangci-lint run ./postgres/... ./introspect/...` 0 issues; `make check-examples` ok. Golden churn: none, matching the vet. Verify reviewer's doc correction applied inline: PRD §5.2 "A `CREATE INDEX` needs its table" now says ALTER TABLE / ALTER VIEW actions on a plain view are skipped and the ALTER SEQUENCE / ALTER INDEX / ALTER FOREIGN TABLE subcommands pg_dump writes change nothing (the vet's "no PRD change" left that paragraph implying an ALTER on a plain view errors).
+
+### FIX-344
+
+- **Status:** Resolved
+- **Severity:** tracked
+- **Origin:** phase 6, `cmd/sqlgen/config` (soft-delete validation) + `cmd/sqlgen/cli` (`toSchemaTables` HasDefault)
+- **Surfaced by:** FIX-341 vet (2026-10-12), filed at the backlog sweep's third Step 5
+- **Vetted:** corrected at `506d34bc` (2026-10-12)
+
+**Issue.** A nullable bool soft-delete column with no DEFAULT hides every row created without the flag: the live
+("not deleted") filter is `= false`, which excludes NULL. Measured on postgres:17 with `zz_b1(id SERIAL PK, name TEXT NOT
+NULL, zz_del1 BOOLEAN)` and `type: bool` (generate and build ok at base+FIX-324+FIX-336): `Create` → "Create: row=<nil>
+err=sqlgen: resource not found" although the row is inserted; `GetMany(nil)` → "0 rows"; after `SoftDelete(1)` +
+`Restore(1)`, `GetMany(nil)` → "1 rows". Measured identically for the integer strategy (`= 0`) on PG17, MySQL 8.0 and SQLite, at plain base and with
+FIX-324/336/341: bool and int `Create` → "row=false err=sqlgen: resource not found raw=<nil>", `GetMany` 0, `Count` 0,
+`Exists(1)` false, `Get(1)` not found; an O2M child likewise (EXISTS filter 0 rows, load 0 children).
+
+**Root cause.** The bool / integer strategies give NULL no meaning: the live filter compares to false / 0 (emitted at 4
+sites — gen `funcSoftDeleteCondition`, `funcSoftDeleteSubqueryPredicate`/`Arg`, runtime `sql.writeJoinSoftDeleteFilter`,
+`manifest/sql.go` `softDeleteClause`; the restore scope is `= 1`), and validation accepts a nullable column without a
+DEFAULT.
+
+**Suggested fix.**
+- `cmd/sqlgen/config/validate.go` `validateSoftDeleteTypes` (after FIX-341's case): reject a bool / integer column that is
+  nullable with no DEFAULT — `soft_delete_columns: column "<c>" in table <t> is nullable with no DEFAULT, but soft delete
+  type "bool" marks a live row with FALSE, so a row created without it is hidden (make it NOT NULL, or give it DEFAULT
+  FALSE)` (`0` for integer); an incompatible type still reports only the type error; only the first match is checked.
+- `cmd/sqlgen/cli/pipeline.go` `toSchemaTables`: `HasDefault` treats a literal `DEFAULT NULL` (any case, optional `::type`)
+  as no default via unexported `isNullDefault` — the PG / SQLite file parsers keep "NULL" while the PG catalog and the MySQL
+  parser record none, so without it `DEFAULT NULL` passed under `files` and errored under `database`. The only other
+  `HasDefault` consumer (§32.4, `validate.go:1584`) ORs it with `Nullable`.
+- PRD: §4.6 sentence (nullable bool/integer with no DEFAULT is an error; DEFAULT NULL counts as none; NOT NULL not
+  required), §4.13 row after FIX-341's, the phase-2 list and the §8 validate-test list.
+- Tests: config `TestValidatePostParse_SoftDeleteFlagNullability` (9 rows); cli `TestToSchemaTables_HasDefault` (7);
+  cli `TestGenerate_nullableNoDefaultFlagSoftDeleteRejected` (bool, bool DEFAULT NULL, integer; exit 2, no output dir);
+  `TestValidatePostParse_SoftDeleteTypeMatch` rows gain `HasDefault: true`.
+- Auto-accepted the recommended option on 2026-10-12 (`/fix` auto-accept rule): (Q1) NULL = live (A) vs validation error
+  (B) → B, because PRD §17.2 defines the not-deleted value as FALSE / 0 and §9.8 / §17.3 state the predicate literally (A
+  would reverse PRD-stated behavior), B was prototyped green, causes no churn (A unconditional churns postgres,
+  postgres_stdlib, mysql, sqlite) and adds no surface (A's M2M join site needs a new exported `SoftDeleteOptions` field).
+  Measured for A: all three predicate forms valid everywhere; only `(col IS NULL OR col = v)` uses an index (PG BitmapOr,
+  MySQL covering lookup, SQLite MULTI-INDEX OR). (Q2) which nullable columns → B1, nullable with no DEFAULT (DEFAULT NULL
+  counts as none), same conditions. Veto alternatives: B2 any nullable column (also rejects legacy `TINYINT(1) DEFAULT 0`;
+  closes B1's residual, measured on 3 dialects: a nullable DEFAULT FALSE column `Update(1, {ZzDel1:
+  omittable.Set[*bool](nil)})` → "row=false err=sqlgen: resource not found raw=<nil>", then GetMany 0); B3 any column with
+  no DEFAULT (also rejects NOT NULL without default).
+- Corrected from the original: the open choice is made (B1); widened to the `DEFAULT NULL` normalization (same root cause,
+  same site; before it PG files "generated 8 files" vs PG `source: database` "Post-parse validation error: …"); the option-A
+  round-trip tests are replaced by the validation / CLI tests, and the accepted shapes were round-tripped on all three
+  dialects (nullable `BOOLEAN DEFAULT FALSE`: Create raw=false, GetMany 1, SoftDelete → 0 rows, Restore → 1; O2M child with
+  DEFAULT FALSE: EXISTS 1, load 1).
+- Prototype results, run at `506d34bc` + FIX-324 + FIX-336 + FIX-341 on 2026-10-12: probe copies `probe344{pg,my,lite}`
+  (vet-FIX-344-pg postgres:17-alpine, vet-FIX-344-my mysql:8.0, modernc) → the reproduction above. Gates: `go test -race
+  -count=1 ./config/... ./cli/... ./gen/... ./manifest/... ./mcp/...` ok; gofumpt, golangci-lint clean; `make
+  update-golden` / `update-golden-e2e` no diff; `TestE2EDatabaseTwin` ok; `make refs-check` ok. Fail-first: validation case
+  disabled → `…/nullable_bool,_no_DEFAULT` "ValidatePostParse() error = <nil>, want \"soft_delete_columns: column
+  \\\"soft_col\\\" in table public.items is nullable with no DEFAULT, but soft delete type \\\"bool\\\" marks a live row with
+  FALSE\"" and `TestGenerate_…/bool` "generate error = <nil>, want exit code 2 (config)"; `isNullDefault` removed →
+  `TestToSchemaTables_HasDefault/DEFAULT_NULL` "HasDefault = true, want false (Default \"NULL\")" and `…/bool_DEFAULT_NULL`;
+  existing suite passes. Golden churn none. Stacked on FIX-324 + FIX-336 + FIX-341 (extends 341's switch, PRD sentence and
+  row, test file); FIX-328's §4.13 row is an adjacent-row rebase; FIX-321 / FIX-340 touch other hunks. Patch:
+  `.claude/prototypes/FIX-344.patch` (6 files, +215/-5).
+
+**References.**
+- PRD §4.6, §5.4, §17.2.
+- FIX-324, FIX-336, FIX-341 (soft-delete detection, filter literal, timestamp nullability; land first).
+
+**Resolution notes.** `cmd/sqlgen/config/validate.go` `validateSoftDeleteTypes` gains a third case after FIX-341's NOT NULL timestamp check: a matched `bool` / `integer` column that is nullable with no DEFAULT is an error naming the column, the table, the type and its live value (`FALSE` / `0`); the switch keeps the type mismatch first, so an incompatible column reports only that, a timestamp column never reaches the new case, and only the first matching `soft_delete_columns` entry is checked. `cmd/sqlgen/cli/pipeline.go` `toSchemaTables` now treats a literal `DEFAULT NULL` (any case, optional `::type`) as no default via unexported `isNullDefault`, so `source: files` and `source: database` agree; it also strips outer parentheses, since SQLite records `DEFAULT ((NULL))` as "(NULL)" in both its file parser and PRAGMA (a `/verify` reviewer probe; not in the prototype). The `SchemaColumn.HasDefault` doc comment now excludes DEFAULT NULL and names its new consumer (not in the prototype), and PRD §5.4's lead sentence names the new rule (`/verify` doc corrections). PRD §4.6 sentence, a §4.13 row after FIX-341's, the phase-2 list and the §8 validate-test list. Tests: `TestValidatePostParse_SoftDeleteFlagNullability` (9 rows, including a nullable timestamp that stays valid), `TestToSchemaTables_HasDefault`, `TestGenerate_nullableNoDefaultFlagSoftDeleteRejected` (bool, bool DEFAULT NULL, integer); `TestValidatePostParse_SoftDeleteTypeMatch` rows gain `HasDefault: true`. Prototype applied with `--3way`: the one conflict was PRD's phase-2 list, where FIX-321 (`88a62484`) had added "and nullability" to cursor_keys; the landed line keeps it and adds this rule beside FIX-341's. Fail-first: new case disabled → `TestValidatePostParse_SoftDeleteFlagNullability` and `TestGenerate_nullableNoDefaultFlagSoftDeleteRejected` fail; `isNullDefault` bypassed → `TestToSchemaTables_HasDefault/DEFAULT_NULL`, `/DEFAULT_null`, `/DEFAULT_NULL::boolean` and `…Rejected/bool_DEFAULT_NULL` fail. Gates: `make check` ok, `make update-golden` / `update-golden-e2e` no churn (as vetted), `make check-examples` ok.
+
+### FIX-343
+
+- **Status:** Resolved
+- **Severity:** nit
+- **Origin:** phase 6, `cmd/sqlgen/gotype` (SQLite `date` mapping) + runtime SQLite time binds
+- **Surfaced by:** FIX-335 vet (2026-10-12), filed at the backlog sweep's second Step 5
+- **Vetted:** ready at `f9a460a5` (2026-10-12; doc-only, so no fail-first applies)
+
+**Issue.** A SQLite `date` column resolves to `types.DateTime`, so sqlgen writes and binds datetime text while a
+`date()` / `CURRENT_DATE` default stores `YYYY-MM-DD`; filters and cursors over a mix of the two are wrong. Measured
+(events probe copy, `day DATE NOT NULL DEFAULT (date('now'))`, `cursor_keys: [day, id]`; A, B via `date('2026-01-01')`,
+C via `Create` at 2026-01-01 00:00 UTC, D via `date('2026-01-02')`): at base C stores "2026-01-01T00:00:00Z" (EST
+midnight "2026-01-01T00:00:00-05:00"); Eq → [], In → [], Lte → [A B], Gte&Lt(next day) → [C D]; cursor forward
+[A C D], backward [D D D D D D D D]. With FIX-335 (ruled option) C stores "2026-01-01 00:00:00" (EST midnight
+"2026-01-01 05:00:00"); Eq → [C] (want A B C), In → [C], Gte&Lt → [C D]; cursor forward [A C D] (B skipped), backward
+returns D on every page with HasPreviousPage true, never ending. With the workaround default `datetime(?, 'start of
+day')` everything is correct ([A B C], cursors [A B C D] both ways). No SQLite example has a `date` column.
+
+**Root cause.** `gotype.registerDialectDefaults` (`cmd/sqlgen/gotype/gotype.go:280-296`) maps SQLite `date` like
+datetime/timestamp, and no bind path knows a
+column is a date.
+
+**Suggested fix.**
+- Prototyped (`.claude/prototypes/FIX-343.patch`, doc-only, stacked on FIX-335.patch): PRD §7.2's SQLite paragraph
+  (replacing FIX-335's last sentence, which already notes the gap) says a SQLite `date` column is a `types.DateTime`
+  bound as `YYYY-MM-DD HH:MM:SS` UTC (a non-UTC midnight binds as its UTC instant), lists the failures against
+  `date()` / `CURRENT_DATE` rows (Eq / In miss, Gte/Lt boundaries shift a day, a cursor key skips forward and repeats a
+  row on every page backward), and gives the remedy: `DEFAULT (datetime('now', 'start of day'))` and dates passed as
+  UTC midnight.
+- The user ruled on 2026-10-12: (c) — document the limit and the workaround in PRD §7.2 (the prototyped patch); (b), a
+  `types.Date` runtime type, is not pursued. The question as asked — Q1, how should FIX-343 close the SQLite `date` gap?
+  - (c, recommended, prototyped) document the limit and workaround in PRD §7.2 only: no code, churn or surface; rows
+    written by `date()` / `CURRENT_DATE` stay wrong as measured; the documented default makes Eq, In, ranges and cursors
+    correct both ways (measured). No fail-first is possible for a doc-only change.
+  - (c+) (c) plus a generate-time warning or error when a SQLite `date` column is in a table's resolved `cursor_keys`
+    (new §4.13 row in `validateCursorKeys`, `cmd/sqlgen/config/validate.go:1721`), the loud signal for the never-ending
+    backward paging; flags a config that works when every row is in sqlgen's text; no example churn; not prototyped.
+  - (b) new exported `types.Date` / `types.NullDate` (Value() "2006-01-02") mapped from SQLite `date`; filters still
+    need a date comparator (comparator operands are `time.Time`), a GraphQL Date scalar and comparator input,
+    scalar-table rows (`gen/context_api.go:1300ff`), a `resolveSimpleComparator` arm (`gen/context_table.go:2207`),
+    `cli/graphql.go`, `sql/time.go`, PRD §7.2 / §11 / GraphQL changes; public surface; not prototyped.
+  - (a) generated code converts per column (~9 bind sites per date column; the filter path still needs a runtime hook,
+    since `comparator.Time.Parse` sees only the column name) — no cheaper than (b); not recommended.
+  - Vetter's recommendation: (c) (nit, no example or known schema has a SQLite `date` column, the documented default is
+    measured correct; (b) to the backlog); (c+) if a loud signal for date cursor keys is wanted.
+- Prototype results, run at `f9a460a5` (+ FIX-335.patch) on 2026-10-12: the reproduction above
+  (`GOWORK=off go test -count=1 -run TestZZProbeFIX343 -v ./tests/` on the probe copy; stored text read with `day || ''`,
+  since modernc scans DATE into `time.Time`). Gates: `make refs-check` ok; code gates n/a. Golden churn none. Must land
+  after FIX-335 (edits its PRD hunk ~:1796).
+
+**References.**
+- PRD §7.2.
+- FIX-335 (lands first).
+
+**Resolution notes.** Doc-only, per the user's 2026-10-12 ruling (c). PRD §7.2's SQLite Type Mappings now end FIX-335's paragraph at the `types.SetOutputLayout` sentence (dropping its one-line `date` caveat) and add a paragraph: a SQLite `date` column is a `types.DateTime` bound as `YYYY-MM-DD HH:MM:SS` UTC text (a non-UTC midnight binds as its UTC instant), so rows `date()` / `CURRENT_DATE` wrote miss `Eq` / `In`, shift `Gte` / `Lt` boundaries by a day and break `date` cursor keys (skip forward, repeat backward); the remedy is `DEFAULT (datetime('now', 'start of day'))` and dates passed as UTC midnight. The prototype applied with `git apply --3way`: the one conflict was the §7.2 SQLite paragraph, which FIX-342 (`e64193bf`) had reworded after the vet (MySQL now binds a `types.DateTime` as its `time.Time`); the landed text keeps FIX-342's wording and replaces only the last sentence. The claim that the bind site has no column type was re-checked against `sql/time.go` `bindArgs` / `sqliteTime` at HEAD. Gates: `make check` ok; `check-examples` not triggered (docs only); no golden churn, as vetted. `/verify` reviewer nit applied inline: the `Lt` clause now says it includes the next day's `date()` rows (a next-day row in sqlgen's text is not included).
+
+### FIX-342
+
+- **Status:** Resolved
+- **Severity:** tracked
+- **Origin:** runtime `sql/` (`bindArgs` on MySQL; `types.DateTime.Value` is what it binds today)
+- **Surfaced by:** FIX-335 vet (2026-10-12), filed at the backlog sweep's second Step 5
+- **Vetted:** ready at `f9a460a5` (2026-10-12)
+
+**Issue.** A MySQL column overridden to `types.DateTime` cannot store a UTC time: the RFC3339Nano text `Value()` binds
+is rejected. Measured on mysql:8.0: `INSERT … VALUES (?, ?)` with `types.DateTime{2026-01-01T12:30:00.5Z}` → "Error 1292
+(22007): Incorrect datetime value: '2026-01-01T12:30:00.5Z' for column 'dt' at row 1", under `parseTime=true` with
+loc=UTC or Local and session time_zone '+00:00' or '-05:00'. A zoned value is accepted but stored as wall time in the
+session zone (DATETIME "07:30:00.5" under '-05:00').
+
+**Root cause.** `types.DateTime.Value()` returns RFC3339Nano text for every dialect; MySQL rejects the `Z` suffix and
+moves any other offset to the session time_zone, while go-sql-driver parses a DATETIME back in its DSN `loc`, so zoned
+values break whenever loc ≠ session tz.
+
+**Suggested fix.**
+- `sql/time.go` (after FIX-335): `bindArgs` switches on `d.Name()`; "sqlite" keeps FIX-335's `sqliteTime`; new "mysql"
+  case → unexported `mysqlTime` binding `types.DateTime` → `.Time`, `*types.DateTime` → `.Time` or nil,
+  `types.NullDateTime` → `.Time` or nil, everything else (`time.Time` included) unchanged, copy-on-write; PG untouched.
+  Rewrite `bindArgs`' doc comment; `types.SetOutputLayout`'s doc says it affects neither SQLite nor MySQL builder
+  statements (`types/datetime.go`, comment only).
+- `sql/time_test.go`: FIX-335's tests become `TestBuild_TimeArgs` / `TestBuild_TimeArgs_EveryBuilder`; the MySQL row
+  becomes `mysqlWant` (types.* → time.Time, null → nil); EveryBuilder runs on sqlite and mysql.
+- mysql example: `warehouses` gains `inspected_at DATETIME(6)`, table-scoped overrides `timestamp` / `datetime(6)` →
+  `types.DateTime` / `types.NullDateTime`, `cursor_keys: [created_at, id]`; new `tests/datetime_override_test.go`
+  `TestDateTimeOverrideRoundTrip` (loc UTC/Local × time_zone +00:00/-05:00, each its own pool: Create UTC/EST/UTC+1h rows,
+  Get, Update with an EST NullDateTime, Eq filters, Connection First:1 forward and Last:1 backward).
+- PRD §7.2: a paragraph under MySQL Type Mappings stating the bind rule and why RFC 3339 text fails (also say that
+  `datetime(N)` / `timestamp(N)` keep their precision in the `overrides.types` key — measured, `datetime(6)` matched
+  `DATETIME(6)` and plain `datetime` would not); FIX-335's SQLite sentence "PostgreSQL and MySQL bind the value
+  unchanged… does not affect a SQLite statement" becomes "PostgreSQL binds the value unchanged, and MySQL binds a
+  `types.DateTime` as the MySQL Type Mappings above describe… does not affect a SQLite or MySQL statement".
+- Auto-accepted the recommended option on 2026-10-12 (`/fix` auto-accept rule): MySQL bind of `types.DateTime` → (A) the
+  wrapped `time.Time`, so the driver's `loc` applies as for a `time.Time` column, rather than (B) offset text
+  "2006-01-02 15:04:05.999999999-07:00" (measured: B reads a DATETIME back shifted under loc ≠ session tz, `Eq(scanned)=0`,
+  and under loc=UTC / session -05:00 `Gt(scanned)=1`, so the cursor repeats rows), because it was prototyped green, both
+  options use the same fixture (no churn difference), it adds no exported identifier or config key, and it reverses no
+  ruling (FIX-335 ruled where the SQLite text applies). Veto point: it edits FIX-335's PRD sentence, and
+  `SetOutputLayout` stops affecting MySQL builder statements.
+- Prototype results, run at `f9a460a5` + FIX-335.patch on 2026-10-12: probe `zz_probe_fix342_test.go` in the mysql example
+  module against `vet-FIX-342-mysql` (mysql:8.0), DATETIME(6) / TIMESTAMP(6), BuildInsert / BuildUpdate / BuildCount Eq/Gt
+  (original and scanned operands) across loc {UTC, Local (MST)} × time_zone {+00:00, -05:00} → identical at base and
+  base+335, 24 errors: UTC `types.DateTime` / `*types.DateTime` / `NullDateTime` Create and Update "Error 1292 (22007):
+  Incorrect datetime value: '2026-01-01T12:30:00.5Z' for column 'dt' at row 1" in all 4 configs; EST under loc=UTC/-05:00
+  stored "2026-01-01 07:30:00.500000", "scanned dt==inst false"; loc=Local "dt Eq(scanned)=0", "ts Eq(scanned)=0"; plain
+  `time.Time` all ok. With the fix: 0 errors, all 6 kinds match the `time.Time` rows, every Eq=1/Gt=0. Gates: gofumpt
+  clean; go vet; root `go test -race -count=1 -short ./...` ok; `./sql/... ./types/...` ok; golangci-lint 0 issues; `make
+  update-golden` no churn; `make update-golden-e2e` PASS, then `TestE2EGoldenFiles` ok; mysql example vet / `go test -race`
+  / golangci-lint ok; tenancy_mysql, introspect_mysql ok. Fail-first: mysql case disabled → 11 unit subtests fail (BuildUpdate
+  "- time.Time{ext: 63902867400}, + types.DateTime{Time: time.Time{ext: 63902867400}}"), `TestDateTimeOverrideRoundTrip`
+  4/4 "Create dt-a: create warehouse: exec: Error 1292 (22007): Incorrect datetime value: '2026-01-01T12:30:00Z' …", and
+  the existing `TestGraphQLKSUIDScalar` fails with the new fixture; an all-EST-writes variant fails 3/4 ("dt-a created_at =
+  2026-01-01 07:30:00 +0000 UTC, want 2026-01-01 12:30:00 +0000 UTC", filter matched [], forward pages skip 8, 9, backward
+  repeats 9); existing suite passes at base+335. Golden churn: mysql ~12 files in each of `expected/` and `models/`
+  (+258/-30 per side: models_gen, sorter_gen, graph generated / filter / input / sort translate, graph/model, shared and
+  warehouse `.graphqls`, sqlgenresolver field_options, manifest json + warehouse.md; the GraphQL schema gains DateTime /
+  NullDateTime scalars and warehouse createdAt Time → DateTime); no other example. Stacks on FIX-335.patch (same files; renames
+  its tests). Conflicts textually with FIX-343.patch on PRD ~:1798 (whichever lands second re-applies the wording). Note:
+  loc=Local differs from UTC only on a non-UTC host; the -05:00 subtests diverge on a UTC CI host too. Patch:
+  `.claude/prototypes/FIX-342.patch` (31 files, +806/-106; 24 are mysql goldens).
+
+**References.**
+- PRD §7 (type overrides).
+- FIX-335 (`sql/time.go` `bindArgs`; lands first).
+
+**Resolution notes.** `sql/time.go` `bindArgs` now picks a per-dialect binder: SQLite keeps `sqliteTime`; MySQL uses the new unexported `mysqlTime`, which binds `types.DateTime` / `*types.DateTime` / `types.NullDateTime` as the wrapped `time.Time` (nil for a null) and leaves everything else, `time.Time` included, to the driver; PostgreSQL is unchanged. `types.SetOutputLayout`'s doc now says it affects neither SQLite nor MySQL builder statements. PRD §7.2 gains the MySQL bind paragraph (including that a `datetime(6)` `overrides.types` key keeps its precision) and FIX-335's SQLite sentence now points PostgreSQL/MySQL at it. Tests: `TestBuild_TimeArgs` (MySQL row `mysqlWant`), `TestBuild_TimeArgs_EveryBuilder` on sqlite and mysql, and FIX-335's landed `TestBuild_SQLiteTimeArgs_ListAndSubquery` widened to `TestBuild_TimeArgs_ListAndSubquery` (IN / BETWEEN / subquery args on sqlite and mysql); mysql example `warehouses.inspected_at DATETIME(6)`, table-scoped `timestamp` / `datetime(6)` overrides, `cursor_keys: [created_at, id]` and `tests/datetime_override_test.go` `TestDateTimeOverrideRoundTrip` (loc UTC/Local × time_zone +00:00/-05:00). Prototype applied with `--3way`: the only conflict was `bindArgs`' doc comment (FIX-335 landed a shorter wording), taken from the prototype. Fail-first: MySQL case disabled → 14 unit subtests fail (17 FAIL lines with the 3 parent tests) and `TestDateTimeOverrideRoundTrip` 4/4 "Error 1292 (22007): Incorrect datetime value: '2026-01-01T12:30:00Z' for column 'created_at'". Gates: `make check` ok, `make update-golden` no churn, `make update-golden-e2e` 24 mysql files (per-file numstat identical to the vet), `make check-examples` ok.
+
+### FIX-341
+
+- **Status:** Resolved
+- **Severity:** tracked
+- **Origin:** phase 6, `cmd/sqlgen/config` (soft-delete validation) + `cmd/sqlgen/gen` (`funcSoftDeleteFilterOverride`)
+- **Surfaced by:** FIX-336 vet (2026-10-12), filed at the backlog sweep's second Step 5
+- **Vetted:** ready at `f9a460a5` (2026-10-12)
+
+**Issue.** A NOT NULL timestamp soft-delete column passes validation but generates code that does not compile, and
+its default "not deleted" filter `IS NULL` could never match anyway. Measured on a postgres copy with `zz_ts1
+TIMESTAMPTZ NOT NULL DEFAULT now()` and `type: timestamp`: `sqlgen generate` → "generated 13 files", exit 0; `go build
+-gcflags=-e ./models/` → "models_gen.go:57208:29: unknown field Null in struct literal of type comparator.Time" (3
+sites). Even with the literals hand-patched to compile (postgres:17): `Create` → "sqlgen: resource not found" though
+the row is inserted; `Get(1)` not found; `GetMany(nil)` 0 rows; `Count` 0; `Restore(1)` → "not_null constraint
+violation (column zz_ts1)". The column is unusable.
+
+**Root cause.** Validation checks the soft-delete column's type, not its nullability; `funcSoftDeleteFilterOverride`'s
+fallback branch then emits `{Null: new(false)}` for a non-nullable comparator.
+
+**Suggested fix.**
+- `cmd/sqlgen/config/validate.go` `validateSoftDeleteTypes`: look up the first-matching column as a `SchemaColumn`
+  (`Nullable` comes from `cli/pipeline.go` `toSchemaTables` for every source); an incompatible type still gives only the
+  existing error; otherwise `sd.Type == SoftDeleteTimestamp && !col.Nullable` → `soft_delete_columns: column "<c>" in
+  table <t> is NOT NULL, but a timestamp soft delete marks a live row with NULL (make it nullable, or soft delete with a
+  bool or integer column)`.
+- `gen/funcmap.go`: comment only — validation keeps the built-in types out of the fallback.
+- PRD: §4.6 sentence (a `timestamp` column must be nullable; NOT NULL is a validation error naming the column; `bool` /
+  `integer` may be NOT NULL); §4.13 row "`NOT NULL` `timestamp` soft delete column | Error"; the phase-2 list and the §8
+  validate-test list mention the rule. The PRD implied it (§4.6 Restore `SET col = NULL`, §17.2 zero value NULL, §9
+  "Nullable timestamp column matching `soft_delete_columns`") but stated no rule.
+- Tests: `TestValidatePostParse_SoftDeleteTimestampNullability` (7 rows: NOT NULL timestamptz and datetime(3) error;
+  nullable timestamp, NOT NULL bool, NOT NULL integer, a NOT NULL timestamp behind an earlier match pass; an
+  incompatible NOT NULL type reports one error only); cli `TestGenerate_notNullTimestampSoftDeleteRejected` (exit 2, no
+  output dir); `TestValidatePostParse_SoftDeleteTypeMatch` rows set `Nullable: true`.
+- Auto-accepted the recommended option on 2026-10-12 (`/fix` auto-accept rule): NOT NULL timestamp soft-delete column →
+  error, not warning (a warning still emits non-compiling code; matches the sibling type-mismatch Error row), because it
+  was prototyped green, neither option churns goldens, it adds no exported identifier or config key, and it reverses no
+  ruling or PRD text (adds text for an unspecified case).
+- Prototype results, run at `f9a460a5` + FIX-324 + FIX-336 on 2026-10-12: probe copy `probe_pg341` (`zz_t1 … zz_ts1
+  TIMESTAMPTZ NOT NULL DEFAULT now()`, `type: timestamp`) → at plain base and base+324+336 "sqlgen: generated 13 files (26
+  tables, 3 views)", exit 0, then `go build -gcflags=-e ./models/` → "models/models_gen.go:57208:29: unknown field Null in
+  struct literal of type comparator.Time" (+ :57269, :57345); runtime semantics as in the Issue (vet-FIX-341-pg,
+  postgres:17-alpine). With the fix: generate exits 2 "Post-parse validation error: …", no models/; the nullable variant
+  generates, builds, emits `NullableTime{Null: new(false)}` ×6. Gates: `go test -race -count=1 ./config/... ./cli/...
+  ./gen/... ./manifest/... ./mcp/...` ok; `TestE2EGoldenFiles` PASS (all 15 examples, both introspect sources — no example
+  column trips the rule); golangci-lint 0 issues; gofumpt clean; `make refs-check` ok. Fail-first: validation reverted →
+  `…/NOT_NULL_timestamp` and `/NOT_NULL_datetime` "ValidatePostParse() error = <nil>, want \"soft_delete_columns: column
+  \\\"soft_col\\\" in table public.items is NOT NULL, but a timestamp soft delete marks a live row with NULL\"" and
+  `TestGenerate_notNullTimestampSoftDeleteRejected` "generate error = <nil>, want exit code 2 (config)"; existing suite
+  passes. Golden churn none. Stacked on FIX-324 + FIX-336. Overlap: FIX-328's §4.13 row hunk (@@ -1191) sits beside this
+  row — trivial adjacent-row rebase for whichever lands second; FIX-321 / FIX-340 touch validate.go elsewhere. Patch:
+  `.claude/prototypes/FIX-341.patch` (5 files, +137/-9).
+
+**References.**
+- PRD §4.6, §5.4.
+- FIX-324, FIX-336 (same function; land first).
+
+**Resolution notes.** `cmd/sqlgen/config/validate.go` `validateSoftDeleteTypes` now looks the first-matching column up as a `SchemaColumn`: an incompatible type still reports only the type error; otherwise a `timestamp` strategy on a NOT NULL column is an Error naming the column and table ("… is NOT NULL, but a timestamp soft delete marks a live row with NULL (make it nullable, or soft delete with a bool or integer column)"). `gen/funcmap.go` `funcSoftDeleteFilterOverride` fallback comment states that validation keeps the built-in types out of it. PRD §4.6 states the nullability rule (`bool` / `integer` may be NOT NULL), §4.13 gains the "`NOT NULL` `timestamp` soft delete column | Error" row, and the phase-2 list and §8 validate-test list name it. Tests: `TestValidatePostParse_SoftDeleteTimestampNullability` (7 rows), cli `TestGenerate_notNullTimestampSoftDeleteRejected` (exit 2, no output dir); `TestValidatePostParse_SoftDeleteTypeMatch` rows set `Nullable: true`. Prototype applied with `--3way`: the source hunks applied clean; `docs/PRD.md` conflicted only on the phase-2 list line, merged to keep "cursor_keys existence and nullability" from HEAD alongside the new soft-delete clause. Fail-first re-run on the final code (validation case disabled → both new tests fail as recorded). `make check` ok; `make update-golden-e2e` + `make update-golden` → no churn (matches vet); `make check-examples` ok. Verify inline doc fix: PRD §5.4 detection sentence now also says a `timestamp` column must be nullable.
+
+### FIX-340
+
+- **Status:** Resolved
+- **Severity:** tracked
+- **Origin:** phase 5, `cmd/sqlgen/config` (`isValidRelationshipSide`) + `cmd/sqlgen/gen` (`parseRelationshipSide`)
+- **Surfaced by:** FIX-329 vet (2026-10-12), filed at the backlog sweep's second Step 5
+- **Vetted:** ready at `f9a460a5` (2026-10-12)
+
+**Issue.** A padded relationship `side` passes validation and silently generates the edge parent-side. Measured:
+`side: " child "` (type o2o, fk set) → `LoadConfig=<nil> ValidatePreParse=<nil>`; manifest probe
+(`TestBuild_O2OSideDisambiguation` fixture with Side varied) → `side="child"` / `"Child"` / `"CHILD"` → `Profile
+kinds=[m2o]`, `side=" child "` / `"child "` → `Profile kinds=[o2o]`, with no diagnostic.
+
+**Root cause.** `isValidRelationshipSide` (`cmd/sqlgen/config/validate.go:767`) does
+`strings.ToLower(strings.TrimSpace(s))`, while `parseRelationshipSide` (`cmd/sqlgen/gen/context_table.go:1688`) only
+lowercases, so an unknown value falls back to `SideParent`.
+
+**Suggested fix.**
+- Drop the `TrimSpace` in `isValidRelationshipSide`, as `isValidRelationshipType` already does (its doc comment gives
+  the reason), so a padded side is a validation error; the FIX-329 schema already rejects it.
+- Tests: validate cases for `" child "` / `"child "`; keep the case-insensitive spellings valid.
+
+- Prototype results, run at `f9a460a5` on 2026-10-12: probes (`config`, `manifest`) → `ValidatePreParse side=" child "
+  -> <nil>` (also `"child "`, `"\tchild"`, `"Child"`, `"CHILD"`); `"chld"` → `tables.asset.relationships[0].side: "chld"
+  is not a valid value (allowed: parent, child; default: parent) (PRD §4.8)`; YAML `side: " child "` → `LoadConfig ->
+  <nil>`; manifest `side="child"/"Child"/"CHILD" -> Profile kinds=[m2o]`, `" child "/"child " -> Profile kinds=[o2o]`.
+  Prototype: `isValidRelationshipSide` switches on `strings.ToLower(s)`, doc comment updated; three
+  `TestValidatePreParse_Relationships_DedupRules` cases (`"CHILD"` allowed; `" child "`, `"child "` errors). Only
+  `parseRelationshipSide` reads the raw string (feeds `context_table.go:1562` → manifest `relationshipKind`); `isM2M`
+  (`validate.go:736`) trims but never sees a padded type. Gates: `go test -race -count=1 ./config/... ./manifest/...
+  ./gen/...` ok; golangci-lint 0 issues; gofumpt clean; with FIX-329 then FIX-340 applied, `./config/...` ok. Fail-first:
+  `TrimSpace` restored → `padded_side_→_error` "ValidatePreParse() error = nil, want error containing
+  \"tables.asset.relationships[0].side: \\\" child \\\" is not a valid value\"" (and the trailing-space case); existing
+  suite passes at base. Golden churn none. FIX-321 / FIX-324 touch validate.go elsewhere; all apply. Patch:
+  `.claude/prototypes/FIX-340.patch` (2 files, +32/-2).
+
+**References.**
+- PRD §4.8 (`side`), §4.13.
+- FIX-329 (schema side pattern; lands first).
+
+**Resolution notes.** `isValidRelationshipSide` (`cmd/sqlgen/config/validate.go`) now switches on `strings.ToLower(s)`
+without `TrimSpace`, folding case as `parseRelationshipSide` does and, like `isValidRelationshipType`, rejecting a
+padded spelling that would otherwise generate the parent side; doc comment updated. Three
+`TestValidatePreParse_Relationships_DedupRules` cases: `"CHILD"` allowed, `" child "` and `"child "` rejected with the
+§4.8 message. The FIX-329 schema pattern already rejects padding, so schema and validator agree. Vetted prototype
+applied clean at `1fb3555c`. Fail-first: `TrimSpace` restored → both padded cases fail with "ValidatePreParse() error
+= nil". Gates: `make check` ok, `make check-examples` ok (path-triggered by `config/validate.go`); golden churn none,
+matching the vet. /verify: reviewer confirmed fail-first and a byte-identical match with the prototype; applied its
+doc corrections inline (Root cause line refs `validate.go:767` / `context_table.go:1688`, the doc comment reworded so
+"that function" names `parseRelationshipSide`) and removed the 2026-10-02 `backlog.md` line for this finding.
+
+### FIX-339
+
+- **Status:** Resolved
+- **Severity:** nit
+- **Origin:** phase 4, `parser/postgres` (`parseDrop` / `dropTables` CASCADE)
+- **Surfaced by:** FIX-332 vet (2026-10-12), filed at the backlog sweep's second Step 5
+- **Vetted:** corrected at `f9a460a5` (2026-10-12)
+
+**Issue.** PG `DROP TABLE a CASCADE`, where `b` references `a`, is a parser error, while PostgreSQL drops `a` and
+only `b`'s foreign key. Measured: `CREATE TABLE a (id int PRIMARY KEY); CREATE TABLE b (id int PRIMARY KEY, a_id int
+REFERENCES a(id)); DROP TABLE a CASCADE;` → "drop table public.a: cannot drop table public.a: column public.b.a_id
+references it via foreign key"; PG17.11 → "NOTICE: drop cascades to constraint b_a_id_fkey on table b / DROP TABLE",
+and `\d b` keeps columns id and a_id with no FK. MySQL ignores CASCADE (ERROR 3730), which the MySQL parser already
+matches.
+
+**Root cause.** The PG parser ignores `DropStmt.Behavior`; the drop-reference check always errors.
+
+**Suggested fix.**
+- `parser/postgres/postgres.go` `dropTables` (FIX-332): under `stmt.Behavior == pg_query.DropBehavior_DROP_CASCADE` call
+  a new `dropReferencingKeys(refs)` instead of `CheckTableDropRefs`; RESTRICT and the default still error.
+  `dropReferencingKeys` deletes every ForeignKey constraint whose ReferenceSchema/ReferenceTable is in the drop set,
+  clears any column FKReference pointing into it, then re-applies the remaining single-column FK constraints (so a column
+  with a second FK keeps it). Unique constraints and indexes stay (PG17.11 keeps `b_a_id_key` UNIQUE and `b_a_idx`).
+- PRD §5.6 (`docs/PRD.md:1593-1595` on the stack) gains: "On PostgreSQL, `DROP TABLE … CASCADE` drops the foreign keys
+  that reference the dropped tables instead, as PostgreSQL does; the referencing columns stay, with their unique
+  constraints and indexes (MySQL ignores `CASCADE`)."
+- Tests: `TestDropTableCascade` (9 cases: one and two referencing tables, table constraint with UNIQUE and index kept,
+  composite, self-reference, cross-schema, `DROP TABLE a, b CASCADE` with c→b, second key stays, RESTRICT errors with
+  nothing dropped), asserting every remaining table's constraints, unique flags and FKReference.
+- Auto-accepted the recommended option on 2026-10-12 (`/fix` auto-accept rule): under `source: both`, a database view PG's
+  CASCADE would drop gets no FIX-339 code — the view stands and FIX-333's merge check reports it ("view V reads table T,
+  which the SQL files drop or rename; …"), per PRD §6.1 ("the database's view stands") — because it needs no code, causes
+  no churn, adds no surface and reverses nothing. Not measured (the 308+309+333 stack was not applied in the vet); until
+  FIX-333 lands, CASCADE under `both` leaves the view stale as plain DROP TABLE does.
+- Corrected from the original: no Unique recompute (FKs feed only FKReference, measured); widened to the FKReference
+  fallback (same site); owned sequences need nothing (FIX-305's `dropOwnedSequences` drops them with or without
+  CASCADE); `DROP TYPE` / `DROP DOMAIN … CASCADE` not absorbed — same root cause but a different site (`dropTypes` /
+  `CheckTypeDropRefs`) and a column-drop cascade that does not exist yet (backlog, refreshed).
+- Prototype results, run at `f9a460a5` + FIX-301 + FIX-312 + FIX-332 on 2026-10-12: probe at base → "drop table public.a:
+  cannot drop table public.a: column public.b.a_id references it via foreign key" (composite: "… table public.b has a foreign
+  key constraint referencing it"; RESTRICT, two referencing tables, self-reference, `a, b CASCADE` with c→b alike); on the
+  stack the same with FIX-332's "drop table: …" prefix. PG17.11 (`vet-FIX-339-pg`): each case "NOTICE: drop cascades to
+  constraint <fk> on table b", referencing columns stay; two tables "drop cascades to 2 other objects"; RESTRICT "cannot
+  drop table a because other objects depend on it"; a view "drop cascades to view v". Gates: parser gofumpt clean,
+  golangci-lint 0 issues, `go test -race -count=1 ./...` ok; cmd/sqlgen `TestE2EGoldenFiles` ok; `make refs-check` ok.
+  Fail-first: CASCADE branch removed → 8 of 9 fail ("drop table: cannot drop table public.a: …"); FK deletion disabled →
+  "+ \"public.b: b_pkey PRIMARY KEY, b_a_id_fkey FOREIGN KEY\""; FKReference clearing disabled → 7 fail ("+ \"a_id ->
+  public.a.id\""); fallback disabled → `a_second_key_on_the_column_stays` "- \"k -> public.x.id\", + \"k\""; existing suite
+  passes. Golden churn none. Stacked on FIX-301 + FIX-312 + FIX-332 (changes only the check call in `dropTables`; PRD
+  sentence after FIX-332's, before FIX-312's type sentences); FIX-303/304/305 merges mechanical with `--3way`. Patch:
+  `.claude/prototypes/FIX-339.patch` (3 files, +148/-3).
+
+**References.**
+- PRD §5.6 (drop validation), §6.1.
+- FIX-332 (`dropTables`, set-based `CheckTableDropRefs`; lands first), FIX-312, FIX-333.
+
+**Resolution notes.** PostgreSQL `DROP TABLE … CASCADE` now drops the foreign keys that reference the dropped tables instead of failing the drop-reference check: `dropTables` (`parser/postgres/postgres.go`) calls the new `dropReferencingKeys` under `DropBehavior_DROP_CASCADE`, while RESTRICT and the default still run `CheckTableDropRefs`. `dropReferencingKeys` deletes each FOREIGN KEY whose reference is in the drop set, clears any column FKReference into it, and re-canonicalizes the table, so a remaining single-column key gives the column its FKReference; unique constraints and indexes stay. PRD §5.6 gains the CASCADE sentence. `TestDropTableCascade` (9 cases) added. Prototype applied with `--3way`: conflicts in the `dropTables` doc comment (landed FIX-332's "relation the schema does not model" wording kept), the `removeTable` comment (HEAD's kept) and the PRD paragraph (sentence placed after FIX-332's, before the type sentences, keeping FIX-312's trailing DROP DOMAIN sentence). Diverges from the prototype in one place: since FIX-302 derives FKReference in `CanonicalizeConstraints` and `ApplyConstraintToColumns` no longer sets it for a FOREIGN KEY, the prototype's re-apply loop was a no-op, so it is replaced by `parser.CanonicalizeConstraints(t, "postgres")` on each table that lost a key (the pattern the `ALTER TABLE … DROP CONSTRAINT` path uses). Fail-first on the final code: CASCADE branch removed → 8 of 9 fail; FK deletion disabled → `+ "public.b: b_pkey PRIMARY KEY, b_a_id_fkey FOREIGN KEY"`; FKReference clearing disabled → canonicalization restores an unnamed key (`+ "public.b: b_pkey PRIMARY KEY,  FOREIGN KEY"`, `+ "a_id -> public.a.id"`); re-canonicalization disabled → `a_second_key_on_the_column_stays` fails. Gates: `make check` ok, `make update-golden-e2e` / `make update-golden` no churn (matches vet), `make check-examples` ok. The `source: both` auto-accept measured on the final code: a temporary `DROP TABLE users CASCADE;` case in `TestMerge_ViewColumnRenameAndDrop` returned FIX-333's "merge both mode: view view_def.v reads table view_def.users" error (case not kept); the matching clause of the FIX-333 backlog line was removed.
+
+### FIX-338
+
+- **Status:** Resolved
+- **Severity:** nit
+- **Origin:** phase 4, `parser/postgres` (`parseAlterTable` on a composite type)
+- **Surfaced by:** FIX-305 vet (2026-10-12), filed at the backlog sweep's second Step 5
+- **Vetted:** corrected at `f9a460a5` (2026-10-12)
+
+**Issue.** `ALTER TYPE comp ADD ATTRIBUTE c int` (and DROP ATTRIBUTE / ALTER ATTRIBUTE … TYPE) is valid PostgreSQL
+DDL, but the PG parser fails on it, so generation stops. Measured: `p.Parse("x.sql", "CREATE TYPE comp AS (a int);
+ALTER TYPE comp ADD ATTRIBUTE c int")` → "parsing x.sql: table public.comp not found" (DROP ATTRIBUTE [IF EXISTS], ALTER
+ATTRIBUTE [SET DATA] TYPE and multi-subcommand statements alike, at base and with FIX-305). Worse, `CREATE TABLE tb (id
+int PRIMARY KEY); ALTER TYPE tb ADD ATTRIBUTE c int` → err=<nil> and silently adds column c to table tb (PG17: "tb" is
+not a composite type).
+
+**Root cause.** pg_query parses these as an `AlterTableStmt` with `objtype OBJECT_TYPE`, and `parseAlterTable` looks
+the name up as a table.
+
+**Suggested fix.**
+- `parseAlterTable`: `Objtype == OBJECT_TYPE` routes to `alterCompositeType` (in `alter_type.go`, beside
+  `renameAttribute`), so ALTER TYPE never reaches a table. It errors "unknown composite type" for a missing type, an enum
+  or a table, and applies subcommands in PG's passes (stable sort: DROP, then ALTER TYPE, then ADD — measured: `ADD
+  ATTRIBUTE b numeric, DROP ATTRIBUTE b` → `a integer, b numeric`; `ADD c, DROP c` → `column "c" … does not exist`).
+  `addAttribute` errors on an existing name and on self-membership; `dropAttribute` honours IF EXISTS and sets an emptied
+  list to nil (introspection reads a zero-attribute type as `Attributes: nil`); `alterAttributeType` errors on an unknown
+  attribute, self-membership, and "cannot alter attribute a because column public.u.x uses the type" (PG17: `cannot alter
+  type "comp" because column "t1.c" uses it`, with or without CASCADE, even for a no-op retype, through comp[], a domain, a
+  nested composite or another schema; a plain view or bare domain/composite user does not block). A `typeUses` helper
+  follows arrays, domains and composite attributes with a seen set. PG17 has no `ADD ATTRIBUTE IF NOT EXISTS`, `ALTER TYPE
+  IF EXISTS` or `… TYPE … USING` (syntax errors in PG17 and pg_query).
+- PRD §5.2 ALTER TYPE bullet (FIX-305's) also lists ADD ATTRIBUTE, DROP ATTRIBUTE [IF EXISTS], ALTER ATTRIBUTE …
+  [SET DATA] TYPE, the drop → retype → add order and the column-uses error.
+- Tests: `TestAlterCompositeAttributes`, `TestAlterCompositeAttributeErrors` (20 cases),
+  `TestPostgresIntrospect_AlterCompositeAttributes` (parity via `pgParityCase` + `assertSchemaParity`).
+- Auto-accepted the recommended option on 2026-10-12 (`/fix` auto-accept rule): ALTER ATTRIBUTE … TYPE while a table
+  column uses the composite → error, as PG17 does, because it was prototyped green, causes no golden churn, adds no public
+  surface, and adds PRD text for an unspecified case (the Suggested fix already said "erroring where PG17 does").
+- Corrected from the original: PG's pass order instead of written order; two more PG errors (self-membership; retype
+  while a column uses the type — the measured RESTRICT/CASCADE answer, since typed tables are not modelled); the emptied
+  list is nil; the routing also fixes ALTER TYPE silently altering a same-named table.
+- Prototype results, run at `f9a460a5` + FIX-305.patch on 2026-10-12: probe at base and base+305 as in the Issue; PG17.11
+  ground truth on `vet-FIX-338-pg17` as above (another schema: `ALTER TYPE app.comp ADD ATTRIBUTE c app.e, ALTER ATTRIBUTE
+  a TYPE numeric(12,2), ADD ATTRIBUTE d text[] COLLATE "C"` → `a numeric(12,2), c app.e, d text[]`). Gates: parser `go
+  test -race -count=1 ./postgres/... ./introspect/...` ok (testcontainers runs postgres:16-alpine; PG17 measured by hand);
+  golangci-lint 0 issues; gofumpt clean. Fail-first: routing removed → 17 error subtests and `TestAlterCompositeAttributes`
+  fail ("Parse() error: parsing test.sql: table public.comp not found"; the table subtest "error = <nil>, want … \"alter
+  type public.tb: unknown composite type\"") and parity "parsing stmt_05.sql: table pgi_attr.comp not found"; column-uses
+  check removed → 6 retype subtests fail; `typeUses` recursion removed → 4 fail ("composite type comp cannot be made a member
+  of itself"); ADD self-member check, nil normalization (parity `Attributes: []parser.Attribute{}`), DROP IF EXISTS skip and
+  pass-order sort (parity "attribute b already exists") each fail their tests; existing suite (base+305) passes. Golden
+  churn none. Stacked on FIX-305; FIX-310 / FIX-331 touch PG `parseAlterTable` elsewhere (they already conflict with base+305
+  without FIX-338). Patch: `.claude/prototypes/FIX-338.patch` (5 files, +262/-1).
+
+**References.**
+- PRD §5.2 (PG DDL coverage).
+- FIX-305 (ALTER TYPE RENAME ATTRIBUTE and the composite rename paths; lands first).
+
+**Resolution notes.** Landed from the vetted prototype with `git apply --3way` on `4603da0d`: the only conflict was `parser/introspect/postgres_integration_test.go`, where FIX-310's `TestPostgresIntrospect_ImplicitReferenceColumns` now ends the file, and both tests are kept. `parseAlterTable` routes `OBJECT_TYPE` to `alterCompositeType` (`parser/postgres/alter_type.go`), which applies DROP, then ALTER … TYPE, then ADD ATTRIBUTE as PostgreSQL does, and errors on an unknown composite type (an enum or a table too), an existing or unknown attribute, self-membership, and a retype while a table column uses the type. One divergence from the prototype: `typeUses` reads each type with `parser.ResolveTypeRef` (added by FIX-312) and keys its seen set on `parser.TypeRef`, instead of splitting the string by hand. PRD §5.2's ALTER TYPE bullet lists the attribute subcommands, the pass order and the column-uses error. Tests: `TestAlterCompositeAttributes`, `TestAlterCompositeAttributeErrors` (20 cases), `TestPostgresIntrospect_AlterCompositeAttributes`. Fail-first: routing removed → both new unit tests fail, including all 20 error subtests (22 FAIL lines). `make check` and `make check-examples` pass; no golden churn.
+
+### FIX-337
+
+- **Status:** Resolved
+- **Severity:** nit
+- **Origin:** phase 4, `parser/mysql` (`alterChangeColumn` / `replaceColumn`) + CREATE TABLE in all three parsers
+- **Surfaced by:** FIX-331 vet (2026-10-12), filed at the backlog sweep's second Step 5
+- **Vetted:** ready at `f9a460a5` (2026-10-12)
+
+**Issue.** Statements other than ADD COLUMN that leave a table with two columns of the same name are accepted, and
+the generated struct does not compile. Measured: MySQL `CREATE TABLE r1 (id int PRIMARY KEY, a int, b int); ALTER
+TABLE r1 CHANGE COLUMN a b bigint;` → `sqlgen generate` exit 0, `B *int64` and `B *int32`, "models_gen.go:22:2: B
+redeclared" (MySQL 8.0: ERROR 1060 "Duplicate column name 'b'"); PG `CREATE TABLE r1 (id int PRIMARY KEY, a int, a
+text)` → exit 0, "A redeclared" (PG17: `column "a" specified more than once`); MySQL `(… a int, A text)` → "A
+redeclared" (ERROR 1060 "Duplicate column name 'A'"); the SQLite parser accepts `(id INTEGER PRIMARY KEY, a INT, A
+TEXT)` → columns [id a A] (modernc: "duplicate column name: A (1)"). Under `both`, `validateColumnConflicts` catches
+only the different-type variants.
+
+**Root cause.** Only ADD COLUMN (FIX-331) and RENAME COLUMN check the table's existing column names; CREATE TABLE in
+each parser and MySQL CHANGE COLUMN do not.
+
+**Suggested fix.**
+- PG `parseCreateTable`: before each ColumnDef, `SameColumnName("postgres")` against columns already added → `create
+  table <schema>.<t>: column <c> specified more than once` (PG17 text; `(a int, "A" text)` stays legal).
+- MySQL `parseCreateTable`: new `repeatedColumn(defs)` pre-check (`SameColumnName("mysql")`, Unicode fold) before
+  `tableElements` → `create table <t>: duplicate column name <c>`. `alterChangeColumn`: resolve the old column
+  (`declaredColumn`; a missing one keeps "column X not found in table T"), then error when another column has the new
+  name → `change column <old> to <new> in <t>: column already exists`; the column's own name in any case stays legal
+  (MySQL accepts `CHANGE a A`). MODIFY is unaffected.
+- SQLite `parseCreateTable`: `columnIndex` (ASCII fold) after `parseColumn` → `table <t>: duplicate column name: <c>`
+  (modernc's text); the PRIMARY KEY ASC/DESC pseudo-column branch `continue`s first.
+- Tests: postgres `TestCreateTableRepeatedColumn` (4); mysql `TestColumnNameClash` (13: CREATE same / case / É-é / e-É
+  allowed; CHANGE onto other / other case / É / a column ADDed in the same statement / two CHANGEs to one name / own name /
+  own name other case / a column the statement DROPs / missing column); sqlite 2 `TestIdentifierCase` cases;
+  `TestBothModeColumnConflict` gains "CREATE TABLE repeating a column errors" on all three dialects and a MySQL
+  same-type "CHANGE COLUMN onto an existing column errors".
+- Prototype results, run at `f9a460a5` + FIX-301 + FIX-331 on 2026-10-12: parser probe (plain base and stack alike) → PG
+  `(a int, a text)` / `(a int, A text)` / `("a" int, a text)` → [a a]; MySQL `(a int, A text)` → [a A], `CHANGE COLUMN a b
+  bigint` with b → [id b:bigint b:int], `CHANGE a c, CHANGE b c` → [c c]; SQLite `(a INT, A TEXT)` → [a A]. E2E scratch
+  projects → "generate exit=0", then "models_gen.go:22:2: B redeclared" / "A redeclared". Ground truth: PG17 `ERROR:
+  column "a" specified more than once`; MySQL 8.0 ERROR 1060 for each case, `CHANGE a a` / `CHANGE a A` accepted, `CHANGE
+  a b, DROP b` → [id, b bigint]; modernc "duplicate column name: A (1)". Gates: parser `go test -race -count=1 ./...` ok
+  (testcontainers), golangci-lint 0 issues, gofumpt clean; cmd/sqlgen `go test -race -count=1 ./...` ok incl.
+  `TestE2EGoldenFiles`; prototype binary → exit 3 with each error; `CHANGE COLUMN a A bigint` → exit 0, `A *int64`.
+  Fail-first: PG check reverted → 3 cases "Parse() error = <nil>, want it to contain \"create table public.r: column a
+  specified more than once\"" and both/postgres; MySQL `repeatedColumn` reverted → 3 cases and both/mysql; SQLite check
+  reverted → `TestIdentifierCase` "want \"table t: duplicate column name: A\"" and both/sqlite; MySQL CHANGE check reverted
+  → 5 cases ("want it to contain \"change column a to b in r: column already exists\"") and both/mysql CHANGE; existing
+  suite passes. Golden churn none. Stacked on FIX-301 + FIX-331. Hand merges: FIX-300 rewrites the SQLite column loop (put
+  the check after the new `parseColumn(col, src)`); FIX-307 adjacent-line conflicts in mysql.go (`tableElements` line,
+  `readAlterColumnKeys` hunk); no semantic conflicts. Patch: `.claude/prototypes/FIX-337.patch` (7 files, +240/-2).
+
+**References.**
+- PRD §5.2, §6.1.
+- FIX-301 (`SameColumnName`), FIX-331 (ADD COLUMN twin; lands first).
+
+**Resolution notes.** Suggested fix as vetted. PostgreSQL `parseCreateTable` refuses a ColumnDef whose name an earlier one has under `SameColumnName("postgres")` (`create table <schema>.<t>: column <c> specified more than once`); MySQL `parseCreateTable` runs the new `repeatedColumn(defs)` pre-check before `tableElements` (`create table <t>: duplicate column name <c>`), and `alterChangeColumn` resolves the old column with `declaredColumn`, keeps "column X not found in table T" for a missing one, and refuses a new name another column has in any case (`change column <old> to <new> in <t>: column already exists`); SQLite `parseCreateTable` checks `columnIndex` after `parseColumn` (`table <t>: duplicate column name: <c>`). Tests: postgres `TestCreateTableRepeatedColumn` (4), mysql `TestColumnNameClash` (13), sqlite 2 `TestIdentifierCase` cases, `TestBothModeColumnConflict` "CREATE TABLE repeating a column errors" on all three dialects plus mysql "CHANGE COLUMN onto an existing column errors". Prototype applied with `--3way`: two source conflicts, both the hand merges the vet named, resolved by hand: mysql.go keeps HEAD's three-value `tableElements` (FIX-307) below the `repeatedColumn` check; in sqlite.go the duplicate check sits after `parseColumn` and before FIX-300's `primaryKeyDesc` line (the Suggested fix's "pseudo-column branch `continue`s first" no longer exists at HEAD; that branch became the `descKey` record). FIX-332 and FIX-333 touched other hunks of these files only. Golden churn: none (`make check-examples` regenerates nothing), matching the vet. Fail-first on the final code: each check disabled → postgres 3 `TestCreateTableRepeatedColumn` cases, mysql 3 CREATE and 5 CHANGE `TestColumnNameClash` cases, sqlite 2 `TestIdentifierCase` cases fail; restored → pass, and `TestBothModeColumnConflict` passes on all three dialects. Gates: `make check` ok; `make check-examples` ok. `/verify` reviewer agreed (PRD 3/3, added lines identical to the prototype, fail-first confirmed); applied inline: the `alterChangeColumn` comment says MySQL checks the columns the whole statement leaves and so accepts a swap this refuses (already `backlog.md`'s CHANGE-swap line), and a shorter comment on the both-mode CHANGE test; `make check` re-run ok.
+
+### FIX-336
+
+- **Status:** Resolved
+- **Severity:** tracked
+- **Origin:** phase 6, `cmd/sqlgen/gen` (`funcmap.go` `funcSoftDeleteFilterOverride`)
+- **Surfaced by:** FIX-324 vet (2026-10-12), filed at the backlog sweep's Step 5
+- **Vetted:** corrected at `02000941` (2026-10-12)
+
+**Issue.** An integer soft delete on a NOT NULL integer column generates code that does not compile, on every
+dialect: no SQL type resolves to Go `int` (PG smallint/integer → int16/int32; MySQL tinyint/smallint/int and
+unsigned forms → int8/int16/int32/uint8/uint16/uint32; every SQLite integer → int64), and bigint/mediumint are
+rejected under `type: integer` by validation (PRD §4.6). Measured (sibling example copies, `go build -gcflags=-e
+./models/`): PG SMALLINT/INTEGER NOT NULL → generate exit 0, "models_gen.go:57212:43: cannot use new(0) (value of
+type *int) as *int16 value in struct literal" (9 sites); MySQL → generate exit 1 ("gqlgen subprocess failed"), 21
+sites (`*int8` … `*uint32`); SQLite → exit 1, "zz_t1_gen.go:861:43: cannot use new(0) (value of type *int) as
+*int64 value in struct literal" (12 sites). Nullable variants compile (`NullableNumber[T]{Null: new(false)}`).
+A plain `tinyint` configured `type: bool` (MySQL, SQLite) fails identically at base and with FIX-324 (`Number[int8]`
+/ `Number[int64]{Neq: new(0)}`). `TestDeleteTemplate_softDelete_integer` (`cmd/sqlgen/gen/delete_test.go:255`) pins
+the broken string `Deleted: &comparator.Number[int32]{Neq: new(0)}`.
+
+**Root cause.** `funcSoftDeleteFilterOverride` (`cmd/sqlgen/gen/funcmap.go:591-593` at `75b7560f`) emits
+`&comparator.Number[T]{Neq: new(0)}`; the untyped `0` gives `*int`.
+
+**Suggested fix.**
+- Emit `&comparator.Number[T]{Neq: new(T(0))}`, T cut from the `comparator.Number[...]` type argument; the doc
+  comment says the literal follows the comparator type, not the strategy.
+- New table-driven `TestFuncSoftDeleteFilterOverride` (funcmap_test.go): one row per reachable width (int8/16/32/64,
+  uint8/16/32) plus NullableNumber, Bool, NullableBool, NullableTime; each row's expression is also compiled against
+  the real `comparator` package with a `%T` check (the generated-code compile pin). `TestDeleteTemplate_softDelete_integer`
+  expects `Neq: new(int32(0))`. No example table.
+- Corrected from the original: dropped "key the override on the soft-delete strategy" — the literal is assigned into
+  a field of the comparator type, so it must key on that (strategy-keyed would put `{Eq: new(true)}` into
+  `Number[int8]` and `{Neq: …}` into `comparator.Bool`); the comparator-keyed literals are right under both strategies
+  since deleted is 1/TRUE. The "every non-int width" and "after FIX-324" facts were restated (above).
+- Prototype results, run at `02000941` + FIX-324.patch on 2026-10-12: reproduction above. With the prototype, runtime
+  round trips (SoftDelete → GetMany → Restore): SQLite INTEGER + integer → ZzSd1=1, 0 rows, 0 (SoftDeleteMany 1);
+  SQLite TINYINT + bool → 1, 0 rows, 0; MySQL 8 TINYINT + bool → 1, 0 rows, 0; MySQL TINYINT(1) + integer → true,
+  0 rows, false; PG SMALLINT + integer → 1, 0 rows, 0. Gates: `go test -race -count=1 ./gen/...` ok; golangci-lint 0
+  issues; gofumpt clean; `TestE2EGoldenFiles` compare mode PASS; the 5 probe copies generate exit 0, `go build ./...`
+  and `go vet ./models/...` exit 0. `make update-golden*` not run (permission classifier denied it in the vet sandbox);
+  churn measured by the passing golden comparisons instead — `/fix-implement` must run them. Fail-first: override
+  reverted → `softDeleteFilterOverride("*comparator.Number[int8]") = "&comparator.Number[int8]{Neq: new(0)}", want
+  "&comparator.Number[int8]{Neq: new(int8(0))}"` (7 rows) and `TestDeleteTemplate_softDelete_integer` "output missing
+  SoftDelete integer pattern"; existing suite passes at base+324. Golden churn none (no example uses `type:
+  integer`). Stacked on FIX-324 by sequence only — it touches none of FIX-324's files and `git apply --check` passes
+  on plain `02000941`. Patch: `.claude/prototypes/FIX-336.patch` (3 files, +51/-6).
+
+**References.**
+- PRD §4.6, §5.4 (soft delete strategies).
+- FIX-324 (soft-delete strategy from config; lands first).
+- `cmd/sqlgen/gen/delete_test.go:255`.
+
+**Resolution notes.** Corrected suggested fix as vetted. `funcSoftDeleteFilterOverride` (`cmd/sqlgen/gen/funcmap.go`) cuts T from `comparator.Number[T]` and emits `&comparator.Number[T]{Neq: new(T(0))}`; its doc comment says the literal follows the comparator type, not the strategy. Tests: new table-driven `TestFuncSoftDeleteFilterOverride` (`cmd/sqlgen/gen/funcmap_test.go`), one row per reachable width (int8/16/32/64, uint8/16/32) plus NullableNumber, Bool, NullableBool and NullableTime, each row's want also written as a compiled Go literal against the real `comparator` package with a `%T` check; `TestDeleteTemplate_softDelete_integer` now expects `Neq: new(int32(0))`. Prototype applied clean. Golden churn: none (`make update-golden-e2e` and `make update-golden` regenerate nothing; no example uses `type: integer`), matching the vet. Fail-first on the final code: funcmap.go reverted → 7 `TestFuncSoftDeleteFilterOverride` rows fail (`= "&comparator.Number[int8]{Neq: new(0)}", want "&comparator.Number[int8]{Neq: new(int8(0))}"`) and `TestDeleteTemplate_softDelete_integer` "output missing SoftDelete integer pattern"; restored → pass. End-to-end re-check at `75b7560f` (sibling copy of the sqlite example, `zz_t1.zz_sd1 INTEGER NOT NULL` under `type: integer`): base → generate exit 1, "models/zz_t1_gen.go:870:43: cannot use new(0) (value of type *int) as *int64 value in struct literal"; fixed → generate exit 0, `go build ./...` and `go vet ./models/...` exit 0, emitting `ZzSd1: &comparator.Number[int64]{Neq: new(int64(0))}`. Gates: `make check` ok; `make check-examples` ok. `/verify` reviewer agreed (PRD 3/3, landed source identical to the prototype, fail-first confirmed); applied inline: the doc comment says "a tinyint" rather than "a MySQL tinyint" (SQLite TINYINT under `type: bool` takes the same branch), and Root cause's line ref is marked as at `75b7560f`; the example-coverage gap went to the backlog; `make check` and `make check-examples` re-run ok.
+
+### FIX-335
+
+- **Status:** Resolved
+- **Severity:** tracked
+- **Origin:** phase 6, runtime `sql/` builders (SQLite time binds: writes, cursor keyset, `comparator.Time` filters)
+- **Surfaced by:** backlog sweep vets (2026-10-12), filed at the backlog sweep's Step 5
+- **Vetted:** ready at `02000941` (2026-10-12)
+
+**Issue.** On SQLite, a DATETIME keyset cursor and a time filter bind a text format that differs from the stored
+one, so pages skip or repeat rows and equality filters match nothing. `DEFAULT (datetime('now'))` stores
+`2026-01-01 00:00:00`; the cursor binds `types.DateTime.Value()` in RFC3339Nano (`2026-01-01T00:00:00Z`);
+`comparator.Time` binds through modernc as `2026-01-01 00:00:00 +0000 UTC`. Measured on a probe variant of the events example
+(`audit_logs.cursor_keys: [created_at, id]`; the example itself inherits `[id]`, rows 9001/9002 at '2026-01-01 00:00:00', 9003 at '2026-01-02
+00:00:00', one row per page): forward → [9001 9003], want [9001 9002 9003]; backward → [9003 9003 9003 9003].
+`GetMany(Filter CreatedAt Eq row.CreatedAt.Time)` → 0 rows. Direct bind: `SELECT CAST(? AS TEXT),
+'2026-01-01 00:00:00' = ?` → bound "2026-01-01 00:00:00 +0000 UTC", stored-eq=0.
+
+Create and Update share the defect: `Create(CreatedAt=…12:30:00.123456789Z)` stores
+"2026-01-01T12:30:00.123456789Z", an EST-zoned value "2026-01-01T07:30:00.123456789-05:00"; both mis-sort against
+`datetime()` rows.
+
+**Root cause.** SQLite compares DATETIME as text; no bind path formats a time the way SQLite's own `datetime()`
+writes it: `types.DateTime.Value()` (`types/datetime.go`, default `outputLayout = time.RFC3339Nano`) feeds writes
+and the cursor keyset (decoded as `types.DateTime` by `shared/_cursor_decode.tmpl`; no template is involved), and
+modernc writes a `time.Time` operand as `t.String()` (no `_time_format` DSN). `types.DateTime` is not SQLite-only:
+the postgres graphql example overrides `timestamptz` to it (`graphql/sqlgen.yml:278-282`).
+
+**Suggested fix.**
+- Canonical SQLite time text (both options): `YYYY-MM-DD HH:MM:SS[.fffffffff]`, UTC, trailing fraction zeros
+  dropped — byte-identical to `datetime()` / `CURRENT_TIMESTAMP` at whole seconds, and Go sub-second values order
+  correctly against them (fixed `.SSS` misses every whole-second `datetime()` value; modernc's `_time_format=sqlite`
+  carries an offset and never matches).
+- Recommended (`.claude/prototypes/FIX-335.patch`, pending Q1): new `sql/time.go` with unexported `bindArgs(d,
+  args)` — on `d.Name() == "sqlite"` it replaces each `time.Time`, `*time.Time`, `sql.NullTime`, `types.DateTime`,
+  `*types.DateTime`, `types.NullDateTime` arg with `t.UTC().Format("2006-01-02 15:04:05.999999999")` (nil for a null),
+  copy-on-write; other dialects untouched. Every exported `sql/builder.go` builder that returns args returns
+  `bindArgs(d, args)` (BuildSelect, BuildSelectJoin, BuildInsert ×2, BuildMultiInsert, BuildUpdate, BuildCount,
+  BuildExists, BuildIncrement, BuildSoftDelete, BuildHardDelete, SubqueryWhere) — all 395 `sql.Build*` sites in the
+  sqlite example; no other exec/query args. No exported identifier; new `sql` → `types` import (both stdlib-only);
+  `types.SetOutputLayout`'s doc comment says it no longer affects SQLite statements sqlgen builds.
+- PRD §7.2 SQLite table: new row datetime/timestamp/timestamptz/date → `types.DateTime` / `types.NullDateTime`, and a
+  paragraph stating the canonical text and the bind rule.
+- Tests: `sql/time_test.go` `TestBuild_SQLiteTimeArgs` (13 value kinds × select/insert × sqlite/pg/mysql; PG and
+  MySQL pinned unchanged; caller slice unmodified) and `TestBuild_SQLiteTimeArgs_EveryBuilder` (9 builders); events
+  `tests/datetime_test.go` `TestDateTime_ConnectionPagesAcrossEqualTimestamps` (forward and backward, one row per page,
+  two `datetime()` rows and one EST Create at one instant plus a later row) and `TestDateTime_EqFilterMatchesScannedTime`;
+  events `sqlgen.yml` audit_logs gains `cursor_keys: [created_at, id]`.
+- The user ruled on 2026-10-12: Q1 → (a) SQLite-only, in the `sql` builders; Q2 → (i) convert all six kinds. Both are
+  the prototyped recommended option (`.claude/prototypes/FIX-335.patch`); `FIX-335.alt.patch` is the rejected option,
+  kept for reference only.
+- The questions as asked:
+  - Q1. Where is the SQLite time text applied? (a, recommended, prototyped) dialect-scoped in the `sql` builders —
+    PG and MySQL binds byte-identical to base (re-measured PG with a non-UTC session: stored 12:30:00.5 UTC,
+    correct); SQLite writes, filters and keyset all use the `datetime()` text; `time.Time`-overridden SQLite columns
+    fixed too (Eq 1/1); costs: `SetOutputLayout` ignored for SQLite statements sqlgen builds, raw driver binds outside
+    the builders keep the old formats. (b, `.claude/prototypes/FIX-335.alt.patch`) global `types.DateTime.Value()`
+    change plus a `comparator.Time` SQLite branch — measured: PG timestamptz via any `types.DateTime` override is 5h
+    off under `SET TIME ZONE 'America/New_York'` (stored 17:30:00.5 for 12:30:00.5; filter/cursor "bound==instant:
+    false") through pgx/v5, lib/pq and pgx stdlib; PG `timestamp` wall time changes for zoned input; MySQL stops the
+    1292 error but TIMESTAMP shifts under a non-UTC session; SQLite `time.Time` overrides flip Eq 1/0 → 0/1; keeps
+    `SetOutputLayout` effective everywhere.
+  - Q2. Under (a): convert `time.Time`, `*time.Time`, `sql.NullTime` too, or only the `types.*` kinds? (i,
+    recommended, prototyped) all six — comparator operands are always `time.Time`, so filters match, and so do
+    `time.Time`-overridden columns; rows modernc wrote earlier as `t.String()` ("… +0000 UTC") stop matching a filter.
+    (ii) `types.*` only — measured "matched [], want [5 6 7]": every `comparator.Time` filter on SQLite stays broken
+    unless the comparator changes too, which brings back (b)'s override regression.
+- Corrected from the original: the text is bound in the runtime SQL builders, not the cursor template or comparator;
+  Create/Update writes are covered; the regression test needs the `cursor_keys` fixture.
+- Prototype results, run at `02000941` on 2026-10-12: probe copy of events with audit_logs `cursor_keys: [created_at,
+  id]`, `GOWORK=off go test -run TestZZProbeFIX335 -v ./tests/` → "forward=[9001 9003] (want [9001 9002 9003])
+  backward=[9003 9003 9003 9003]"; Eq 0 (want 2), Gte 1 (want 3), In 0 (want 2); "direct time.Time bind: "2026-01-01
+  00:00:00 +0000 UTC" stored-eq=0"; "direct types.DateTime bind: "2026-01-01T00:00:00Z" stored-eq=0". modernc v1.48.1
+  scans every stored form to UTC `time.Time`. With (a): "forward=[9001 9002 9003] … backward=[9003 9002 9001]", Eq 2,
+  Gte 3, In 2, round-trip Eq 1 for every row sqlgen or SQLite wrote. Gates (a): gofumpt clean; golangci-lint 0 issues;
+  root `go test -race -count=1 -short ./...` ok; `make update-golden` no churn; `make update-golden-e2e` PASS;
+  events, sqlite, introspect_sqlite, cache, tenancy, postgres, mysql, graphql `GOWORK=off go test -race -count=1 ./...`
+  ok. Fail-first (a): `bindArgs` disabled → 11 `TestBuild_SQLiteTimeArgs*` subtests fail (BuildUpdate: "-
+  string("2026-01-01 12:30:00"), + s"2026-01-01 12:30:00 +0000 UTC"") and events "forward pages = [3 1 4], want [1 2 3
+  4]", "backward pages (reversed) = [4 4 4 4 4], want [1 2 3 4]", "matched [], want [5 6 7]"; `types.DateTime` case
+  removed → paging fails and "matched [5 6], want [5 6 7]"; `time.Time` case removed → "matched [], want [5 6 7]";
+  `.UTC()` removed → "+ string("2026-01-01 07:30:00")"; existing suite passes at base. Golden churn (both options):
+  events ~2 files (`expected/` and `models/models_gen.go`, +4/-1 each, from the `cursor_keys` fixture); no other
+  example. No other vetted patch touches `sql/`, `types/`, `comparator/` or the events example; PRD hunk ~:1797, clear
+  of the others. Patches: `.claude/prototypes/FIX-335.patch` (a; 9 files, +381/-16), `FIX-335.alt.patch` (b; 9 files,
+  +324/-40).
+
+**References.**
+- PRD §9.8.12 (Connection), §14.2 (cursor-based; "retain their types for correct keyset comparison"), §11
+  (comparators), §7.2 (the SQLite table had no datetime row; this fix adds it).
+- Measured during the backlog sweep vets (2026-10-12; events example probe).
+
+**Resolution notes.** Recommended option (a)(i) as ruled. New `sql/time.go` adds the unexported `bindArgs(d, args)`: on SQLite it binds each `time.Time`, `*time.Time`, `sql.NullTime`, `types.DateTime`, `*types.DateTime` or `types.NullDateTime` argument as `t.UTC().Format("2006-01-02 15:04:05.999999999")` (nil for a null), copy-on-write; PostgreSQL and MySQL args are returned unchanged. Every exported `sql/builder.go` builder that returns args returns `bindArgs(d, args)`; `BuildIncrementReturning` reuses `BuildIncrement`'s already-bound args (the prototype called `bindArgs` a second time there, a no-op dropped inline). PRD §7.2 SQLite table gains the datetime/timestamp/timestamptz/date → `types.DateTime` / `types.NullDateTime` row and the bind-rule paragraph; `types.SetOutputLayout`'s doc comment says it does not affect SQLite statements sqlgen builds. Tests: `sql/time_test.go` (`TestBuild_SQLiteTimeArgs`, 13 value kinds × select/insert × three dialects, caller slice unmodified; `TestBuild_SQLiteTimeArgs_EveryBuilder`, 9 builders); events `tests/datetime_test.go` (`TestDateTime_ConnectionPagesAcrossEqualTimestamps`, `TestDateTime_EqFilterMatchesScannedTime`) with audit_logs `cursor_keys: [created_at, id]` in events `sqlgen.yml`. Prototype applied clean (source hunks; goldens regenerated). Golden churn: events `expected/models_gen.go` and `models/models_gen.go`, +4/-1 each (the `cursor_keys` fixture), matching the vet. Fail-first on the final code: `bindArgs` disabled → 11 `TestBuild_SQLiteTimeArgs*` subtests fail, and events "forward pages = [3 1 4], want [1 2 3 4]", "backward pages (reversed) = [4 4 4 4 4], want [1 2 3 4]", "matched [], want [5 6 7]"; restored → pass. Gates: `make check` ok; `make check-examples` ok. `/verify` reviewer agreed (PRD 4/4, fail-first confirmed, no behaviour defects); applied inline: the `bindArgs` doc comment no longer implies RFC 3339 binds fine on MySQL, this entry's §7.2 reference reworded now that the row exists, `guidelines/SQL.md` §6 Rules gains the `bindArgs` rule for arg-returning builders, and `TestBuild_SQLiteTimeArgs_ListAndSubquery` pins the IN, BETWEEN and `Exists` subquery arg paths (3 subtests fail with `bindArgs` disabled); `make check` and `make check-examples` re-run ok.
+
+### FIX-334
+
+- **Status:** Resolved
+- **Severity:** nit
+- **Origin:** phase 30, `cmd/sqlgen/gotype` (domain resolution)
+- **Surfaced by:** FIX-322 vet (2026-10-12), filed at the backlog sweep's Step 5
+- **Vetted:** corrected at `02000941` (2026-10-12)
+
+**Issue.** A bare `overrides.types.<domain>` key does not reach a domain defined over that domain in the same
+schema, though PRD §7.1 says a domain in a schema tries the schema-qualified key, then the bare one. Measured in
+package gotype: `NewResolver("postgres", true, {"email": int64})`, `RegisterDomain("app","email","text")`,
+`RegisterDomain("app","email2","email")`, `ForSchema("app")` → `Resolve("email")=int64`,
+`Resolve("email2")=string`, so the override silently skips the `email2` column. The recursion also resolves a
+domain's base in the *column's* schema, not the domain's: from a `public` column of type `app.email` (domain over
+text), `public.text` matches (int64) and `app.text` does not (string) — the reverse of PRD §7.1. End to end (postgres
+example copy, `CREATE DOMAIN email2 AS email`, `overrides.types.email: ksuid.KSUID`): `Contact.Addr string`, `Alt
+*string`, while `types_gen.go` has `type Email2 = ksuid.KSUID` (the alias resolves with `ForSchema(dt.Schema)`), so the
+alias and the field disagree.
+
+**Root cause.** `domainBaseType` (`gotype.go:557-577`) returns `app.email`, and the domain recursion (`:832-833`,
+inside `resolveByTypeSource` since FIX-322, `r.resolveByTypeSource(baseSQLType, …)`) looks up only that key with the
+column's resolver; the qualified-then-bare logic lives in `lookupOverride` (`:699-714`), which skips a type containing
+"." (`lookupKeys`, `:729`, never adds schema keys).
+
+**Suggested fix.**
+- `resolveByTypeSource` (after FIX-322): the domain branch reads `d := r.domains[key]` and recurses with
+  `r.ForSchema(d.schema)` on the raw `d.base` (keeping `r` when `d.schema` is empty or the owner schema), so each link
+  of a chain tries its keys qualified with the domain's schema, then bare, as a column's own type does; table, global
+  and integration overrides are tried at every link, outer link first. `domainBaseType` stays for
+  `resolveDomainBase` / `BaseSQLType` (classification).
+- Tests: `TestForSchema_DomainChainOverrideKey` (13 cases: bare key over 2- and 3-level chains and from another
+  schema; qualified key; qualified beats bare at one link; table-scoped bare; outer global beats inner table key;
+  inner global beats its base's table key; `billing.email` key does not match `app`; a qualified base is matched only as
+  written; a builtin base qualified with the domain's schema); FIX-322's `TestOverrideSource` gains "domain chain reaches
+  the base domain's bare key", `TestIncrementSQLTypeGuardNamesMatchedOverrideKey` gains "global bare key on the domain a
+  domain is over".
+- PRD §7.1 may gain one sentence for the unspecified chain order: "a domain's base type is matched as a column of that
+  domain, in the domain's schema, at each link of the chain".
+- Corrected from the original: widened to the column-schema qualification of a domain's base (same root cause, same
+  site). Behavior changes beyond the bare-key case, PRD-aligned, no golden impact: a global key on the inner domain now
+  beats a table-scoped key on its base; `<column-schema>.<builtin>` no longer reaches a cross-schema domain's base and
+  `<domain-schema>.<builtin>` does.
+- Prototype results, run at `02000941` (+ FIX-319 + FIX-322) on 2026-10-12: probe (identical at plain base and
+  base+319+322) → with global `{"email": int64}`, `ForSchema(app)`: email int64, email2 string, email3 string;
+  `ForSchema(public).Resolve("app.email2")` string; global `{"public.text": int64}` → `ForSchema(public).Resolve("app.email")`
+  int64, `{"app.text": int64}` → string. E2E copy after the fix: `Contact.Addr ksuid.KSUID`, `Alt *ksuid.KSUID`,
+  `Contacts2.Addr ksuid.KSUID`, alias unchanged; `go build ./...`, `go vet ./models/...` pass. Gates: gofumpt, vet clean;
+  `go test -race -count=1 ./gotype/... ./gen/...` ok; `TestE2EGoldenFiles` ok; golangci-lint 0 issues. Fail-first: domain
+  branch reverted to base+322 → 7 of 13 fail (e.g. `ForSchema("app").Resolve("work_email") = "string", want
+  "ext.Email"`; `ForSchema("public").Resolve("app.email") = "ext.Text", want "string"`), `OverrideSource("work_email") =
+  ("", false, false), want ("email", false, true)`, increment warnings `= [], want one starting "overrides.types.email:
+  \"int64\""`; existing suite passes. Golden churn none. Stacked on FIX-319 + FIX-322 (edits a line 322 introduces; does
+  not apply without it). Patch: `.claude/prototypes/FIX-334.patch` (3 files, +148/-2).
+
+**References.**
+- PRD §7.1.
+- FIX-322 (`resolveByTypeSource` restructures the same function; lands first).
+
+**Resolution notes.** The domain branch of `resolveByTypeSource` (`cmd/sqlgen/gotype/gotype.go`) now reads
+`d := r.domains[key]` and resolves the raw `d.base` with `r.ForSchema(d.schema)` (keeping `r` when the domain has no
+schema or is in the owner schema), so each link of a domain chain tries its `overrides.types` keys qualified with the
+domain's schema and then bare, and table, global and integration overrides are tried at every link, outer link first.
+`domainBaseType` stays for `resolveDomainBase` / `BaseSQLType`. The matched key is still the one `lookupOverride`
+returns (FIX-322), so `OverrideSource` and the increment-eligibility warning name `email` for a `work_email` column of a
+domain over `email`. Tests: `TestForSchema_DomainChainOverrideKey` (13 cases), `TestOverrideSource` "domain chain reaches
+the base domain's bare key", `TestIncrementSQLTypeGuardNamesMatchedOverrideKey` "global bare key on the domain a domain
+is over". PRD §7.1 ("How steps 3–5 match a SQL type") gains the chain sentence: a domain's base is matched as a column of
+that domain, in the domain's schema, each link tried at steps 3–5 before the next. Prototype applied clean at
+`f4bc470c`; the domain-branch comment was shortened. Fail-first: source hunk reverted → 7 of 13 new cases fail, plus `OverrideSource("work_email") = ("", false,
+false), want ("email", false, true)` and `increment warnings = [], want one starting "overrides.types.email:
+\"int64\""`. Gates: `make check` ok, `make update-golden-e2e` / `make update-golden` no churn (matches the vet),
+`make check-examples` ok. Inline: Root cause updated to HEAD (`:807-808` → `:832-833`, `:728` → `:729`; the recursion is now
+`r.resolveByTypeSource`, inside `resolveByTypeSource` since FIX-322).
+
+### FIX-333
+
+- **Status:** Resolved
+- **Severity:** tracked
+- **Origin:** phase 30, `parser/introspect` (`source: both` views) + each parser's rename/drop-table path
+- **Surfaced by:** FIX-309 / FIX-310 vet wave (2026-10-12; the probe uses FIX-309's `zz_users` fixture), filed at the
+  backlog sweep's Step 5
+- **Vetted:** corrected at `02000941` (2026-10-12)
+
+**Issue.** Under `source: both`, a file `RENAME TABLE` / `DROP TABLE` of a table a database view reads leaves
+the view stale without a word. Measured (Merge probe): MySQL `DROP TABLE zz_users` → `Merge err=nil`, the view
+keeps `zz_users__role_enum` while the enum is gone, so the column degrades to `string`; MySQL itself then fails
+the view with ERROR 1356. MySQL `RENAME TABLE zz_users TO zz_people` → the view keeps `zz_users__role_enum`
+while the enums hold `zz_people__role_enum`. PG `DROP TABLE users` → `Merge err=nil`, though PG17 refuses to drop
+a table a view depends on. SQLite DROP and RENAME → `Merge err=nil` too. CLI (`source: both`, mysql:8.0.46, base
+binary): DROP and RENAME TABLE exit 0 with `views_gen.go:19: Role string`.
+
+**Root cause.** FIX-309's rename/drop-column check covers columns only, and its `refreshViewColumns` skips a column
+whose table is gone (`|| !hasTable(schema, ref)`); table renames and drops never consult the views seeded from the
+database.
+
+**Suggested fix.**
+- Per-dialect rule, settled by measurement under Q6 (error where the database errors or leaves the view invalid,
+  follow where it follows): PG DROP → error, RENAME and SET SCHEMA → follow (PG17.11: DROP "cannot drop table users
+  because other objects depend on it"; RENAME → `pg_get_viewdef` "SELECT id, role FROM people;", still after a new
+  `users` is created; SET SCHEMA → "FROM other.people;"); MySQL DROP, RENAME TABLE and ALTER … RENAME → error (8.0.46:
+  all succeed, then "ERROR 1356 (HY000): View 'd.zz_v' references invalid table(s) or column(s)…"; valid again once the
+  old name exists); SQLite DROP → error, RENAME → follow (modernc 3.51.3, `legacy_alter_table=0`: DROP then "no such
+  table: main.users (1)"; RENAME rewrites every view to `FROM "people"`).
+- `parser/view.go`: new exported `ViewFromTables(def, schema) map[string]*Table` (each FROM key's table, resolved as
+  `BuildView` does) and `RenameViewTableReferences(schema, table, newSchema, newName)` (repoints every Definition's
+  TableAliases / TableSchemas entries). PG calls it in `parseRename` (OBJECT_TABLE) and `parseAlterObjectSchema`; SQLite in
+  `renameTable`; MySQL not.
+- `parser/introspect/views.go`: `readViewSources` records each view's FROM tables (`viewReads.from`); `refreshViewColumns`
+  first errors when one no longer resolves — "view V reads table T, which the SQL files drop or rename; under source: both
+  the database's view stands, so change it in the database first" — and FIX-309's `!hasTable` skip goes (so PG rename
+  table then DROP COLUMN, which PG refuses, is caught); `tableRef.String()` replaces the inline qualification.
+- PRD §6.1 both-mode paragraph gains the table rule (extending FIX-309's).
+- Tests: FIX-309's `TestMerge_ViewColumnRenameAndDrop` gains 10 cases (PG rename, set schema, drop, rename + drop column;
+  SQLite rename, drop; MySQL RENAME TABLE, ALTER … RENAME TO, DROP, rename then re-create the old name — valid).
+- Corrected from the original: per-dialect behavior settled by measurement; widened to PG SET SCHEMA (same root cause and
+  site); FIX-309's skip removed; the check is per FROM table, so `SELECT count(*) FROM users` views are covered.
+  DROP-then-CREATE under the same name still passes (FIX-309's post-merge stance, PRD §6.1's DROP+CREATE pattern).
+- Prototype results, run at `02000941` + FIX-308 + FIX-309 on 2026-10-12: probe `parser/introspect/zz_probe_fix333_test.go`
+  (testcontainers PG16, MySQL 8.0) → the reproduction above, identical at plain base and base+308+309 (MySQL rename: view
+  keeps `zz_users__role_enum` while enums hold `[zz_people__role_enum]`, aliases `map[zz_users:zz_users]`). Gates: parser
+  gofumpt clean, golangci-lint 0 issues, `go test -race -count=1 ./...` ok; cmd/sqlgen `-run TestE2E .` ok; `make
+  refs-check` ok; CLI scratch project with the prototype binary → exit 3, "Schema error: parsing schema files: merge both
+  mode: view zz_v reads table zz_users, which the SQL files drop or rename; …". Fail-first: table check disabled → 5 cases
+  fail with FIX-309's column message instead (with FIX-309's skip too, Merge returns `<nil>` for all seven probes); PG
+  `parseRename` call removed → `- Type: "integer" + Type: "bigint"`, `- Type: "role_t" + Type: "text"`; PG
+  `parseAlterObjectSchema` call or the TableSchemas update removed → set_schema fails the same way; SQLite `renameTable`
+  call removed → `- Type: "integer" + Type: "text"`; FIX-309's skip restored → rename_table_and_drop_column "Merge() error =
+  <nil>, want one starting \"merge both mode: view view_def.v: column role reads column role of table view_def.users, …\"";
+  existing suite (base+308+309) passes. Golden churn none. Stacked on FIX-308 + FIX-309 (FIX-300..309 could not be composed
+  in the vet: FIX-301 conflicts with FIX-300 in sqlite.go and with FIX-309 in postgres.go / sqlite.go). Expected merges:
+  FIX-301's `RenameTableReferences` call lines (keep 301's call, add `RenameViewTableReferences` above); FIX-303/304 near PG
+  `parseAlterObjectSchema` / `moveTableKey`; FIX-316 `introspect/views.go` import block (`maps`). Patch:
+  `.claude/prototypes/FIX-333.patch` (6 files, +181/-24).
+
+**References.**
+- PRD §6.1 ("`both` Mode — Merge Strategy", `docs/PRD.md:1629`), §16.2 (introspected views).
+- FIX-309 (rename/drop-column twin and its ruling Q6; lands first), FIX-310.
+
+**Resolution notes.** Under `source: both`, a file `RENAME TABLE` / `DROP TABLE` of a table a database view reads is now followed or rejected per dialect instead of leaving the view stale. `parser/view.go` gains `ViewFromTables` and `RenameViewTableReferences`; PG `parseRename` (OBJECT_TABLE) and `parseAlterObjectSchema` and SQLite `renameTable` repoint the seeded views' FROM keys before the table moves (MySQL does not, so its renames error). `parser/introspect/views.go` records each view's FROM tables in `readViewSources` (`viewReads.from`) and `refreshViewColumns` errors first when one no longer resolves ("view V reads table T, which the SQL files drop or rename; …"); FIX-309's `hasTable` skip is removed, and `tableRef.String()` replaces the inline qualification. PRD §6.1's both-mode paragraph gains the table rule. `TestMerge_ViewColumnRenameAndDrop` gains 10 cases (PG rename table, set schema, drop table, rename table + drop column; SQLite rename, drop table; MySQL RENAME TABLE, ALTER … RENAME, DROP, rename then re-create the old name). Prototype applied with `git apply --3way`: conflicts resolved per the overlap notes (FIX-301's dialect-aware `RenameTableReferences` call and table-exists guard kept in PG `parseRename` and SQLite `renameTable`, `RenameViewTableReferences` added above it; PRD paragraph keeps FIX-312's closing `DROP TYPE` sentence after the new table rule); `views.go` and `view.go` applied clean on top of FIX-316 (one `refreshViewColumns` doc-comment paragraph reflowed). Verify (`/verify FIX-333`): reviewer agreed, fail-first spot check confirmed; References line ref updated `:1616` → `:1629`. Fail-first re-run on the final code matches the vet: table check disabled → 5 cases fail (PG/SQLite drop table, MySQL rename/alter rename/drop); FIX-309's skip restored → postgres/rename_table_and_drop_column fails; PG `parseRename` call removed → rename_table and rename_table_and_drop_column fail; PG `parseAlterObjectSchema` call removed → set_schema fails; SQLite `renameTable` call removed → sqlite/rename_table fails. `make check` ok, `make check-examples` ok, golden churn none.
+
+### FIX-332
+
+- **Status:** Resolved
+- **Severity:** nit
+- **Origin:** phase 4, `parser/postgres` (`parseDrop` / `dropTable`) + `parser/mysql` (`parseDropTable`) + `parser` (`CheckTableDropRefs`)
+- **Surfaced by:** FIX-312 vet (2026-10-12), filed at the backlog sweep's Step 5
+- **Vetted:** corrected at `02000941` (2026-10-12)
+
+**Issue.** PostgreSQL `DROP TABLE a, b`, where `b` has a foreign key into `a`, is rejected because each table is
+checked against the remaining schema one at a time; PostgreSQL drops both. Measured: `CREATE TABLE a (id int
+PRIMARY KEY); CREATE TABLE b (id int PRIMARY KEY, a_id int REFERENCES a(id)); DROP TABLE a, b;` → "drop table
+public.a: cannot drop table public.a: column public.b.a_id references it via foreign key" (also mutual FKs, `IF
+EXISTS a, b`, `a, b CASCADE`); the child-first `DROP TABLE b, a` already passes. MySQL has the same bug at the same
+site (`parseDropTable`, `parser/mysql/mysql.go:396-425`, check at `:406`): "drop table a: cannot drop table a: column
+b.a_id references it via foreign key". SQLite has no multi-table DROP (rqlite `DropTableStatement` has one `Name`).
+PG17.11 and MySQL 8.0.46 drop both in either order; with a third table `c → a` both reject the statement and keep
+all three tables (PG "cannot drop desired object(s) because other objects depend on them", MySQL "ERROR 3730").
+
+**Root cause.** PG `parseDrop` → `dropTable` (`parser/postgres/postgres.go:1070`, check at `:1081`) and MySQL
+`parseDropTable` call `CheckTableDropRefs` (`parser/schema.go:498`) per object before dropping it, so a reference from
+a table dropped later in the same statement still counts.
+
+**Suggested fix.**
+- `parser/schema.go`: new exported `TableRef{Schema, Name}`; `CheckTableDropRefs(tables, dialect string, drop
+  []TableRef)` checks one statement's tables as a set, skipping a referencing table that is in `drop`
+  (`SameTableName`) — generalising the old self skip, mirroring FIX-312's `CheckTypeDropRefs(s, []TypeRef)`.
+- PG: the `parseDrop` TABLE case becomes `return p.dropTables(stmt)` — collect existing targets, check once
+  (all-or-nothing), then `removeTable(key)` each (no-op on a repeat; PG accepts `DROP TABLE a, a`). MySQL
+  `parseDropTable` gets the same shape. SQLite and `multifile_test.go`'s testParser pass a one-element set.
+- Error prefix on PG/MySQL becomes "drop table: cannot drop table public.a: …" (like FIX-312's "drop type: …");
+  SQLite keeps "drop table users: …".
+- PRD §5.6 "Drop validation" (`docs/PRD.md:1605-1607`) gains: a table dropped in the same `DROP TABLE` statement does
+  not block the drop; an outside reference still fails it and nothing is dropped.
+- Tests: `TestCheckTableDropRefs` rewritten for drop sets with exact error text (11 cases); `TestDropTablesTogether`
+  in postgres (7 cases, incl. cross-schema and IF EXISTS with a missing table) and mysql (6), asserting error text and
+  remaining tables.
+- Corrected from the original: widened to MySQL (same root cause, shared helper, same per-target loop, measured); the
+  API is the concrete set-based signature; the check runs before any removal so an outside reference leaves every table
+  in place, as both databases do; adds the PRD §5.6 sentence.
+- Landing notes (from the vet): stacks on FIX-301 (adds the `dialect` parameter) and FIX-312 (restructures `parseDrop`
+  into a switch; the PRD sentence sits before FIX-312's type sentences). When it lands after FIX-303/304/305, `dropTables`
+  must still run the per-object side effects for every named object (`dropPartitions`, `skipped` cleanup) before
+  filtering to existing tables, then check the set once, then `removeTable` (FIX-305's helper plus a repeat-name guard)
+  and `dropOwnedSequences` per table. FIX-303 also edits MySQL `parseDropTable` (`exprKeys`). FIX-300/307/314 touch
+  lines near the sqlite/mysql `parseDropTable` (`--3way`).
+- Prototype results, run at `02000941` + FIX-301.patch (`--3way`) + FIX-312.patch on 2026-10-12: probe
+  `zz_probe_drop_test.go` (postgres, mysql) → the reproduction above; with `c → a`, `DROP TABLE b, a` errors on c but
+  leaves 2 tables (non-atomic; harmless as the parse aborts). Gates: parser gofumpt clean, golangci-lint 0 issues, `go
+  test -race -count=1 ./...` ok (testcontainers incl.); cmd/sqlgen `-run TestE2EGoldenFiles .` ok, `./cli/...` ok; the
+  301 → 312 → 332 stack re-applied on a clean `02000941`, parser `go test -short ./...` ok. Fail-first: set skip reverted
+  → `TestCheckTableDropRefs` `error = "cannot drop table public.users: column public.orders.user_id references it via
+  foreign key", want ""` and postgres `TestDropTablesTogether/parent_first` "drop table: cannot drop table public.a: …";
+  PG `dropTables` reverted to per-object → 6 of 7 fail (e.g. `remaining tables = ["public.a" "public.c"], want
+  ["public.a" "public.b" "public.c"]`); MySQL per-object → 5 of 6 fail; existing suite (base+301+312) passes. Golden
+  churn none. Patch: `.claude/prototypes/FIX-332.patch` (9 files, +259/-69).
+
+**References.**
+- PRD §5.6 ("Drop validation", `docs/PRD.md:1605-1607`).
+- FIX-301 (adds the `dialect` parameter; lands first), FIX-312 (`CheckTypeDropRefs` set shape, `parseDrop` switch;
+  lands first).
+
+**Resolution notes.** Resolved 2026-10-13. Prototype applied with `git apply --3way` at `e1ef5213`: the tests, `schema.go`, `mysql.go`, `sqlite.go` and `multifile_test.go` applied clean; `docs/PRD.md` and `parser/postgres/postgres.go` were hand-merged per the landing notes. `parser.TableRef` and set-based `CheckTableDropRefs(tables, dialect, drop []TableRef)` skip a referencing table that is in the drop set. PostgreSQL: `parseDrop` keeps its if-chain plus per-object switch from FIX-304/305/312 and routes DROP TABLE to the new `dropTables`, which runs `dropPartitions` and the `skipped` cleanup for every named object, checks the existing tables once ("drop table: cannot drop table public.a: …"), then `removeTable` (FIX-305's helper, behind a repeat-name guard, since it has no missing-key check) and `dropOwnedSequences` per table. MySQL `parseDropTable` has the same shape (FIX-303's expression indexes now live on the table, so the drop needs no extra cleanup). SQLite and the multifile testParser pass a one-element set. PRD §5.6 sentence added before FIX-312's type sentences. Tests: `TestCheckTableDropRefs` (11 cases, exact text), `TestDropTablesTogether` postgres (8 cases, adding "table named twice" to cover the repeat guard) and mysql (6). Fail-first on the merged code: set skip reverted → `TestCheckTableDropRefs` 4 cases and postgres/mysql `TestDropTablesTogether` fail ("drop table: cannot drop table public.a: column public.b.a_id references it via foreign key"); PG repeat guard removed → `table_named_twice` `remaining tables = ["public.b"], want ["public.a" "public.b"]`. Gates: `make check` ok; `make check-examples` ok. Golden churn none, as vetted.
+
+### FIX-331
+
+- **Status:** Resolved
+- **Severity:** nit
+- **Origin:** phase 4, `parser/postgres` + `parser/mysql` (ALTER TABLE ADD COLUMN)
+- **Surfaced by:** FIX-301 vet (2026-10-12), filed at the backlog sweep's Step 5
+- **Vetted:** corrected at `02000941` (2026-10-12)
+
+**Issue.** The PostgreSQL and MySQL parsers accept `ALTER TABLE … ADD COLUMN` of a column the table already
+has, so the generated struct carries a duplicate field and does not compile. Measured: PG files `CREATE TABLE
+items (id bigint PRIMARY KEY, count int); ALTER TABLE items ADD COLUMN count int;` → `sqlgen generate` exit 0,
+`models_gen.go` declares `Count *int32` twice. Under `source: both`, a same-type duplicate also passes `Merge`
+(`validateColumnConflicts` errors only on a type mismatch). MySQL reproduces the same way (files `ADD COLUMN COUNT int` beside
+`count`; `both` with an exact `count`): exit 0, duplicate `Count *int32`, "Count redeclared". PG17 rejects the
+statement (`column "count" of relation "items" already exists`), MySQL 8.0 too (`ERROR 1060 (42S21): Duplicate
+column name 'count'`, also for `COUNT` and `É` beside `é`). SQLite is fixed by FIX-301.
+
+**Root cause.** The PG and MySQL ADD COLUMN paths append the column without checking the table's existing
+columns; FIX-301 added the check to SQLite only.
+
+**Suggested fix.**
+- PG `alterAddColumn`: a name the table has (`parser.SameColumnName("postgres")`) → `add column <c> to
+  <schema>.<t>: column already exists`, a no-op under `IF NOT EXISTS`. MySQL: new `addColumn` helper with the same
+  check (`SameColumnName("mysql")`, Unicode fold), including a column added earlier in the same clause or statement,
+  before `parseColumn`. MySQL has no `ADD COLUMN IF NOT EXISTS` (MySQL 8.0 ERROR 1064, vitess syntax error).
+- Both parsers apply a statement's DROP COLUMN clauses first, as PG17 and MySQL 8.0 do: PG `parseAlterTable` runs
+  DROP COLUMN commands, then the rest in clause order; MySQL gets a DROP COLUMN pre-pass beside the DROP PRIMARY KEY
+  one, via a `dropColumn` helper taken out of `applyAlterOption`. This also fixes a silent column loss at base:
+  `ALTER TABLE items ADD COLUMN count bigint, DROP COLUMN count` (valid on both DBs, ends with `count bigint`) left
+  `type Item struct { ID int64 }`.
+- `merge.go`: the Merge / `validateColumnConflicts` comments stop claiming the conflict rule catches ADD COLUMN
+  duplicates (it is now a backstop).
+- Tests: postgres `TestAddColumnOntoExistingName` (existing, same statement, quoted other case allowed, IF NOT
+  EXISTS, ADD+DROP same statement); mysql `TestAddColumnOntoExistingName` (existing, case variant, É/é, same
+  clause, same statement, ADD COUNT + DROP count); `TestBothModeColumnConflict` expects the parser error on all
+  three dialects plus a same-type subtest.
+- Auto-accepted the recommended option on 2026-10-12 (`/fix` auto-accept rule): `ADD COLUMN c …, DROP COLUMN c` in
+  one statement → apply DROP COLUMN first (measured PG17 / MySQL 8.0 order) rather than refuse valid SQL, because it
+  was prototyped green, causes no golden churn either way, adds no public surface (unexported helpers), and reverses
+  no ruling or PRD text (§5.2 "as PostgreSQL applies them" is silent on clause order).
+- Corrected from the original: adds the drop-first ordering (the check alone would refuse valid SQL); no MySQL IF
+  NOT EXISTS branch; the PG error carries the schema-qualified table, like the file's other errors.
+- Prototype results, run at `02000941` + FIX-301.patch on 2026-10-12: reproduction above; parser probe at
+  base+FIX-301 → PG `ADD COLUMN x int, ADD COLUMN x int` → [id x x], MySQL `ADD COLUMN (z1 int, z1 int)` → [id z1
+  z1]. RENAME COLUMN onto an existing name is already refused at base+FIX-301 on both dialects (nothing to widen).
+  Gates: parser `go test -race -count=1 ./...` ok (testcontainers integration incl.); golangci-lint 0 issues;
+  gofumpt clean; cmd/sqlgen `go test -race -count=1 ./...` ok incl. `TestE2EGoldenFiles`; E2E with the prototype
+  binary → "Schema error: … add column count to public.items: column already exists" / "add column COUNT to items:
+  column already exists", exit 3; `ADD COLUMN count bigint, DROP COLUMN count` → `Count *int64`, builds.
+  Fail-first: PG duplicate error reverted → "Parse() error = <nil>, want it to contain \"add column count to
+  public.items: column already exists\"" and the PG same-type `both` subtest; PG drop-first reverted → "add column
+  count to public.items: column already exists" on the same-statement case; MySQL error reverted → 5 cases fail
+  (e.g. "want it to contain \"add column É to t: column already exists\""); MySQL drop-first reverted → same-
+  statement case fails; existing suite (base+FIX-301 production code) passes. Golden churn none. Stacks on
+  FIX-301.patch only (applies cleanly to base alone); a plain apply of FIX-301 on top of FIX-300 fails at
+  sqlite.go:624, so verify the stack after FIX-300/301 land. Expected hand merges (no semantic conflicts): mysql.go
+  with FIX-303 (DropColumn body → `dropExprKeyColumn`, moved into `dropColumn`), FIX-306 (pre-passes,
+  `applyAlterOption` signature), FIX-307 (`readAlterColumnKeys` above the pre-pass); postgres.go with FIX-305
+  (`addColumnSequence` after append; `dropOwnedSequences` now runs in the drop-first pass), FIX-310
+  (`resolveImplicitRefs`); merge.go comment with FIX-309; `TestBothModeColumnConflict` with FIX-301. Patch:
+  `.claude/prototypes/FIX-331.patch` (6 files, +210/-36).
+
+**References.**
+- PRD §5.2 (a statement sees only what came before), §6.1 (`both` merge and the column conflict rule).
+- FIX-301 (SQLite twin and the `SameColumnName` helper; lands first).
+
+**Resolution notes.** Resolved 2026-10-13. Prototype applied with `git apply --3way` at `a4351fae`: the test files and `merge.go` applied clean, `mysql.go` and `postgres.go` were hand-merged per the overlap notes. PostgreSQL `alterAddColumn` refuses a name the table has (`SameColumnName("postgres")`) with `add column <c> to <schema>.<t>: column already exists`, a no-op under IF NOT EXISTS, and `parseAlterTable` applies the DROP COLUMN commands before the rest (FIX-305's `dropOwnedSequences` now runs in the drop pass, `addColumnSequence` stays in `alterAddColumn`, and FIX-310's `resolveImplicitRefs` still runs after all commands). MySQL: new `addColumn` (`SameColumnName("mysql")`, passes `later` = nil like the other column-inline keys) and a `dropColumn` helper taken out of `applyAlterOption`; the DROP COLUMN pre-pass sits after FIX-306's key-drop and key-rename passes and before the clause-order pass, which now skips `DropColumn` too (the prototype's DROP PRIMARY KEY pass is FIX-306's `dropKey` pass now). `dropColumn` is a plain function, since FIX-303's `dropExprKeyColumn` takes the table. `merge.go` comments say the conflict rule is a backstop. Tests: postgres and mysql `TestAddColumnOntoExistingName`, `TestBothModeColumnConflict` expects the parser error on all three dialects plus a same-type subtest. Fail-first re-run on the merged code: production reverted → mysql 5 cases and postgres 3 cases fail; PG drop-first reversed → "add column count to public.items: column already exists"; MySQL drop-first moved back into clause order → "add column COUNT to items: column already exists". Gates: `make check` ok; parser `go test -race` (mysql, postgres, introspect incl. testcontainers, sqlite) ok; `TestE2EGoldenFiles` ok; `make check-examples` ok. Golden churn none, as vetted. /verify: reviewer agreed (fail-first spot check confirmed); one note correction applied; the PG DROP COLUMN of a missing column went to the backlog.
+
+### FIX-330
+
+- **Status:** Resolved
+- **Severity:** nit
+- **Origin:** phase 10, `cmd/sqlgen` (`e2e_test.go` `runGoldenFileTest`)
+- **Surfaced by:** backlog sweep 2026-10-12 (backlog line from FIX-295)
+- **Vetted:** corrected at `a99568ff` (2026-10-12)
+
+**Issue.** A failing `TestE2EGoldenFiles` run (without `-update-e2e`) leaves graphql-enabled example
+`models/` trees modified: after a deliberate regression it deleted
+`cmd/sqlgen/testdata/examples/sqlite/models/manifest_embed_gen.go` and rewrote other generated files,
+so a fail-first probe must re-run `make update-golden-e2e` to restore them. Killing the run mid-way
+(SIGTERM) leaves the same state: ` D …/sqlite/models/graph/generated_gen.go`, ` D …/sqlite/models/manifest_embed_gen.go`,
+` M …/sqlite/models/sorter_gen.go`.
+
+**Root cause.** `runGoldenFileTest` (`cmd/sqlgen/e2e_test.go:160-178`) generates in place
+(`runGenerate`) for graphql examples (`graphql`, `graphql_null_wrappers`, `graphql_top_level`,
+`mysql`, `sqlite`) and compares, with no restore; other examples generate into `t.TempDir()`.
+
+**Suggested fix.**
+- In compare mode (`!*updateE2E`), graphql examples call `compareFilesWithExpected(t, ex.Path,
+  generateCopy(t, ex, cfgData, cfgData))`: the existing `generateCopy` (TestE2EDatabaseTwin, `source: both`
+  sub-runs) copies the whole example into `t.TempDir()` with absolute go.mod replaces and folds in the sibling
+  graph dirs, so the checked-in `models/` is never written. The `-update-e2e` path is unchanged (in-place
+  `runGenerate` + `copyOutputToExpected`).
+- `compareWithExpected(t, examplePath, dir)` becomes a thin wrapper over `compareFilesWithExpected(t,
+  examplePath, map)`; the unused `siblings` parameter goes; both sides keyed through `slashKeys`. Rewrite the
+  graphql-branch comment and `runGenerateToDir`'s note ("a temp dir under /tmp has no go.mod so gqlgen
+  collides" holds only for a bare output dir, not a full example copy).
+- Corrected from the original: prototypes the entry's copy alternative, not snapshot/restore — it reuses
+  `generateCopy` (net -10 lines); it is interrupt-safe where `t.Cleanup` is not (Go runs no cleanups on
+  SIGINT/SIGTERM or a `-timeout` panic; measured: the base binary killed mid-run leaves 2 deleted + 1 modified
+  file, the prototype leaves `git status` clean); and `removeGoldenOutputs` clears golden-listed files in the
+  copy first, so a file the generator stops emitting can no longer pass on the stale checked-in copy (reading
+  only). Not slower: non-Docker `TestE2EGoldenFiles` 51.4s prototype vs 72.6s base (warm-cache noise).
+- Prototype results, run at `a99568ff` on 2026-10-12: regression `// REGRESSION-PROBE` in
+  `gen/templates/sorter.go.tmpl` → `go test -run 'TestE2EGoldenFiles/sqlite$' -count=1 .` → `file
+  "sorter_gen.go" differs from expected`, then `git status` ` M testdata/examples/sqlite/models/sorter_gen.go`;
+  with the prototype the same FAIL and `models/` clean. Gates: gofumpt clean; `golangci-lint run ./...` 0 issues;
+  `go test -race -count=1 -run 'TestE2E|TestRewrite' -skip 'TestE2EGoldenFiles/introspect_(mysql|postgres)|
+  TestE2EDatabaseTwin' .` ok; all 13 non-Docker golden subtests pass with a clean tree; `-update-e2e` with the
+  regression still writes `models/` and `expected/` in place (sqlite, graphql_top_level, introspect_sqlite), and
+  without it churns nothing. Not run: the Docker-backed introspect_mysql/postgres goldens and
+  TestE2EDatabaseTwin (their only change is the mechanical `compareWithExpected` signature) — `/fix-implement`'s
+  full gates cover them. Fail-first: in-place compare restored with the regression → `file "sorter_gen.go"
+  differs from expected` and `git status` dirty again; existing suite passes at base. Golden churn none. No
+  other vetted patch touches `e2e_test.go`. Patch: `.claude/prototypes/FIX-330.patch` (1 file, +32/-42).
+
+**References.**
+- `guidelines/TESTING.md` (golden files).
+- Backlog line absorbed: 2026-10-09 failing golden run rewrites models (FIX-295).
+
+**Resolution notes.** Resolved 2026-10-13. Prototype applied clean at `38e80b61`. `runGoldenFileTest` (`cmd/sqlgen/e2e_test.go`) compare mode now generates graphql examples through `generateCopy` (a full copy of the example in `t.TempDir()` with absolute go.mod replaces, sibling graph dirs folded in, golden-listed outputs cleared first) and diffs it with the new `compareFilesWithExpected`; `compareWithExpected` is a thin wrapper and drops the `siblings` parameter. `-update-e2e` still generates in place and copies into `expected/`. Divergence from the prototype: dropped the `(FIX-330)` reference from the graphql-branch comment (refs rule) and made `removeGoldenOutputs`'s doc comment source-neutral ("the run", not "the database run") now that compare mode uses it too. Fail-first: a `// REGRESSION-PROBE` line in `gen/templates/sorter.go.tmpl` → `go test -run 'TestE2EGoldenFiles/(sqlite|graphql_top_level)$'` fails with `file "sorter_gen.go" differs from expected` both ways; at base `git status` shows ` M …/graphql_top_level/models/sorter_gen.go` and ` M …/sqlite/models/sorter_gen.go`, with the fix `models/` stays clean. Gates: `make check` ok; full Docker `TestE2EGoldenFiles` (all 13 examples incl. introspect_mysql/postgres database+files) and `TestE2EDatabaseTwin` (13 subtests) pass; `make update-golden-e2e` churns nothing. `check-examples` not path-triggered (test file only).
+
+### FIX-329
+
+- **Status:** Resolved
+- **Severity:** nit
+- **Origin:** phase 5, `cmd/sqlgen/config` (`schema/v1.json`)
+- **Surfaced by:** backlog sweep 2026-10-12 (backlog lines from FIX-254, FIX-285)
+- **Vetted:** ready at `02000941` (2026-10-12)
+
+**Issue.** `config/schema/v1.json` `$defs/relationship` has no `required` list, so editor validation
+does not flag a relationship missing `name`, `type`, `table`, or its link key, all of which `sqlgen`
+rejects (`validateRelationshipKeys` rejects a missing name, type or link key; a missing `table` passes
+it and fails only at context build: `"Profile" targets "", which generates no entity …`). Measured by compiling the embedded schema (santhosh-tekuri/jsonschema): missing
+name, missing type, missing table, o2m without `fk`, m2m without `junction` → each schema-valid.
+
+**Root cause.** `cmd/sqlgen/config/schema/v1.json:434-460` declares properties only.
+
+**Suggested fix.**
+- Add `"required": ["name", "type", "table"]` and an `allOf` of if/then rules: `o2o` / `one_to_one` /
+  `o2m` / `one_to_many` require `fk` (whatever `side` is — `validateRelationshipKeys` requires it for
+  every non-m2m type), `m2m` / `many_to_many` requires `junction` (PRD §4.8 `:800-805`). Each `if` also
+  carries `"required": ["type"]`, so an entry without `type` reports only the type error.
+- Schema tests for each missing field; `TestSchemaV1_acceptsExampleConfigs` guards the examples.
+- The user ruled on 2026-10-12 (backlog sweep Step 5): widen to the case-sensitivity gap — the schema's
+  relationship `type` enum is exact while PRD §4.8 (`:801`) calls `type` case-insensitive and
+  `isValidRelationshipType` lowercases it (`side` / `isValidRelationshipSide` likely the same, by reading). Measured:
+  `type: O2M` (with name/table/fk) → `schema-valid=false`, `LoadConfig=<nil>`, `ValidatePreParse=<nil>`. Same fix
+  site (`$defs/relationship`) and root cause (the schema does not mirror validate). The if/then rules must match
+  case-insensitively too. Re-vet to fold this in.
+- Widened prototype (re-vet at `02000941`): new `$defs/relationshipTypeLinkedByFK`
+  (`^([oO]2[oOmM]|[oO][nN][eE]_[tT][oO]_([oO][nN][eE]|[mM][aA][nN][yY]))$`) and
+  `$defs/relationshipTypeLinkedByJunction` (`^([mM]2[mM]|[mM][aA][nN][yY]_[tT][oO]_[mM][aA][nN][yY])$`), which the
+  two if/then rules `$ref`; `type` becomes `anyOf [enum (6 spellings), $ref FK, $ref Junction]`; `side` becomes
+  `anyOf [enum (parent, child), pattern ^([pP][aA][rR][eE][nN][tT]|[cC][hH][iI][lL][dD])?$]`. No pattern allows
+  surrounding whitespace; both descriptions say "Case-insensitive." New `TestSchemaV1_relationshipSpellingsMatchValidate`
+  (16 cases, each asserting the schema and `LoadConfig` + `ValidatePreParse` agree) plus two `rejectsKnownMistakes`
+  cases (padded side `" child "`, misspelled `chld`). PRD §4.8 `side` row gains "(case-insensitive)".
+- Auto-accepted the recommended option on 2026-10-12 (`/fix` auto-accept rule): `side` matches case-insensitively
+  in the schema, with "(case-insensitive)" added to the PRD §4.8 side row; `side: ""` is schema-valid (sqlgen treats
+  it as the parent default); the schema trims neither field (`type`: sqlgen rejects `" o2m "` / `"o2m "`, measured;
+  `side`: validate trims but gen does not, so rejecting padding is the loud option); the form is anyOf(enum,
+  pattern) to keep completion — because each was prototyped green, causes no golden churn, adds no public surface,
+  and only adds PRD text for an unspecified case that matches the code (validate.go:764 and
+  gen/context_table.go:1687 both fold side's case).
+- Inline doc fix (absorb when implementing): the schema's top-level `description` (`v1.json:5`) says it "cannot
+  express sqlgen's cross-field rules"; it now expresses the fk / junction rule — reword.
+- Prototype results, run at `02000941` on 2026-10-12 (builds on the `a99568ff` prototype, whose evidence for the
+  missing name / type / table / fk / junction cases stands: each schema-valid=true at base, ValidatePreParse
+  rejecting all but the missing table, which `sqlgen validate` reports only at context build). Probe at base:
+  `type: O2M` / `One_To_Many` with fk, `MANY_TO_MANY` with junction, `side: Child` / `PARENT` / `""` / `" child "` →
+  `schema-valid=false LoadConfig=<nil> ValidatePreParse=<nil>`; `type: " o2m "` → schema false, ValidatePreParse
+  `type: " o2m " is not a valid value…`. ECMA-262 check (ajv 2020, `RegExp(p,"u")`) agrees with the Go validator;
+  vscode-json-languageservice keeps completion for both enums and reports `Missing property "fk".` for O2M without
+  fk. Gates: `go test -race -count=1 ./config/...` ok; `-run Schema ./cli/...` ok; gofumpt, golangci-lint,
+  `make refs-check` clean; every example config and the PRD §4.12 example pass. Fail-first (each reverted alone):
+  `required` dropped → `relationship_missing_{name,type,table}` fail ("= nil, want a validation error"); fk `then`
+  emptied → 6 fail; junction `then` emptied → 4 fail; `type` back to the exact enum → 6 SpellingsMatchValidate fail
+  ("'/tables/assets/relationships/0/type' does not validate …"); if/then back to exact enums → 4 fail ("schema
+  Validate = <nil>, want valid=false"); `side` exact enum → 3 fail; patterns allowing `\s*` → 3 fail; existing suite
+  passes at base. Golden churn none. FIX-321's `v1.json` hunk composes in either order (offset 28). Patch:
+  `.claude/prototypes/FIX-329.patch` (3 files, +137/-5).
+
+**References.**
+- PRD §4.8.
+- Backlog lines absorbed: 2026-10-02 relationship has no `required` list (FIX-254; outside the Phase
+  30/31 attribution, absorbed by ruling Q7); 2026-10-08 relationship lacks `required` (FIX-285).
+
+**Resolution notes.** Landed from the vetted prototype (applied clean at `32a7f773`). `cmd/sqlgen/config/schema/v1.json` `$defs/relationship` now has `required: [name, type, table]` and an `allOf` of two if/then rules (each `if` also requires `type`): a type matching the new `$defs/relationshipTypeLinkedByFK` pattern (o2o / one_to_one / o2m / one_to_many, any case) requires `fk`, one matching `$defs/relationshipTypeLinkedByJunction` (m2m / many_to_many, any case) requires `junction`. `type` is `anyOf [enum, $ref FK, $ref Junction]` and `side` is `anyOf [enum, pattern]` (case-insensitive, empty allowed, no padding), so completion keeps the enum values. PRD §4.8 `side` row gains "(case-insensitive)". Tests: 11 new `TestSchemaV1_rejectsKnownMistakes` cases and `TestSchemaV1_relationshipSpellingsMatchValidate` (16 cases, schema and `LoadConfig` + `ValidatePreParse` must agree). Inline doc fix absorbed: the schema's top-level `description` (`v1.json:5`) no longer says it cannot express any cross-field rule — it names the relationship link key as the one it checks; the parallel scope text in `config/schema.go` (`SchemaV1` doc comment) and PRD §4.14 **Scope** paragraph reworded the same way, as is `docs/configuration.md`'s schema note. Removed the 2026-10-02 backlog line (relationship `type` enum case-sensitive, from FIX-254), which this fix's widening resolves. Gates: `make check` ok; `check-examples` not path-triggered (only `config/schema/*`, `schema_test.go`, `schema.go`, PRD). Fail-first re-run on the final code: dropping `required` and emptying the fk `then` fails 3 + 6 cases. Golden churn none.
+
+### FIX-328
+
+- **Status:** Resolved
+- **Severity:** nit
+- **Origin:** phase 5, `cmd/sqlgen/config` + `cmd/sqlgen/gen` (`context_enum.go`)
+- **Surfaced by:** backlog sweep 2026-10-12 (backlog line from FIX-288)
+- **Vetted:** corrected at `a99568ff` (2026-10-12)
+
+**Issue.** An `enums.<name>` key that matches no enum is ignored silently, so a typo, or a key in the
+old `<table>_<column>_enum` form after FIX-288, does nothing. Measured: postgres example copy with
+`enums: {nosuch_enum: {struct_name: Bogus}}` → `sqlgen validate` prints no line for the key (only the
+example's unrelated cursor_keys warning, then "config and schema are valid"), exit 0; `sqlgen generate`
+likewise.
+
+**Root cause.** `EnumConfigFor` (`cmd/sqlgen/gen/context_enum.go:17-25`) is lookup-only; no validate
+rule checks unmatched keys.
+
+**Suggested fix.**
+- Auto-accepted the recommended option on 2026-10-12 (`/fix` auto-accept rule; user confirmed no
+  veto): a warning, not an error, because a schema filtered by `introspect.schemas` can legitimately
+  leave a key unmatched (precedent: `unusedScalarWarnings`); no churn, no public surface.
+- New `unmatchedEnumKeyWarnings(cfg, schema)` in `cmd/sqlgen/gen/context_enum.go` (nil when `cfg.Enums` is
+  empty; sorted keys; qualified-or-bare match, the same two-step as `EnumConfigFor`). A key naming a
+  `schema.Sets` entry → "enums.<k>: <k> is a SET type, which takes no enums: override, so the entry has no
+  effect — rename the table or column to change its Go type name" (PRD `:2651`); any other → "enums.<k>:
+  matches no enum in the schema, so the entry has no effect — check the spelling", plus " (a MySQL inline
+  ENUM is named <table>__<column>_enum)" under mysql.
+- There is no single gen-level warning pass: call it from `buildAllContexts` (generate / diff; after the view
+  contexts so the order matches validate) and from `ValidateGeneration` (after `BuildEnumContexts`), as
+  `unusedScalarWarnings` surfaces from both — not from `BuildEntityContextsFromSchema`, which `graphql gen`
+  chained inside `generate` would double.
+- PRD: new §4.13 row "An `enums:` key that matches no enum | Warning *(schema-level)*" and a §4.11 sentence
+  "A key that matches no enum in the schema warns ([4.13])."
+- Tests: `gen/enum_key_warnings_test.go` (table test asserting the same warnings from `ValidateGeneration` and
+  `GenerateInto`: unmatched, bare match, qualified match, wrong-schema qualified key, MySQL single-underscore
+  key with hint, MySQL SET key, MySQL match, several unmatched sorted); `cli/pipeline_test.go`
+  `TestUnmatchedEnumKey_Warns` (generate and validate each print the warning exactly once, exit 0).
+- Inline doc fix (absorb when implementing): PRD §26 "Unresolved declarations warn" (`docs/PRD.md:12503`) says
+  the unused-scalar check "fires at `generate` time rather than `sqlgen validate`", and the `unusedScalarWarnings`
+  comment (`cmd/sqlgen/gen/context_api.go:1581`) says "Emitted from Generate only"; measured, `sqlgen validate`
+  on a graphql example copy with an unused `api.graphql.scalars.UnusedThing` prints it too. Reword both to
+  "from `generate` and `validate`, not from `graphql gen`".
+- Corrected from the original: adds the PRD amendment (the warning was otherwise undocumented), names both
+  call sites, adds the MySQL naming hint for keys in the pre-FIX-288 form, and the CLI test.
+- Prototype results, run at `a99568ff` on 2026-10-12: postgres example copy with `enums: {nosuch_enum:
+  {struct_name: Bogus}, user_role: {description: matched bare}}` → `validate` / `generate` exit 0, no enums
+  line, `models/enums_gen.go:423` "// UserRole — matched bare" (matched key applied, unmatched ignored); mysql
+  copy with `users_role_enum` / `users__permissions_set` / `users__role_enum` keys → no enums line. Gates:
+  `go test -race -count=1 ./gen/... ./cli/...` ok; vet, gofumpt, golangci-lint clean; `make refs-check` ok; no
+  example declares `enums:`, and `sqlgen validate` on all 12 file-source examples is identical base vs
+  patched. Fail-first: without the `buildAllContexts` call → `TestUnmatchedEnumKeyWarnings/a_key_matching_no_enum`
+  "generate: enums: key warnings mismatch (-want +got)" and `TestUnmatchedEnumKey_Warns/generate` "stderr = \"\",
+  want it to contain \"Warning: enums.users_role_enum: …\" once"; without the `ValidateGeneration` call → the
+  validate halves fail; without the SET branch → `…/a_MySQL_key_naming_a_SET` fails; without the qualified match
+  → `…/a_schema-qualified_key_that_matches` fails; existing suite passes at base. Golden churn none. Overlap
+  (all apply cleanly in ID order): FIX-324 `orchestrate.go` @2403 (~34 lines from this hunk), FIX-321 PRD §4.13
+  @1174 and `pipeline_test.go` @574, FIX-316/317 `pipeline_test.go`; FIX-308 rewrites the §8.3 Naming paragraph
+  this links to. Patch: `.claude/prototypes/FIX-328.patch` (5 files, +219/-1).
+
+**References.**
+- PRD §4.11, §4.13, §8.3 (`docs/PRD.md:2651`).
+- Backlog line absorbed: 2026-10-08 unmatched enums key (FIX-288).
+- FIX-288.
+
+**Resolution notes.** Resolved 2026-10-13 on `feat/introspection` from the vetted prototype (applied clean at `7bb713c1`). New `unmatchedEnumKeyWarnings` (`cmd/sqlgen/gen/context_enum.go`) warns on an `enums:` key that neither the qualified nor the bare name of any schema enum answers, with a separate message for a key naming a MySQL SET and a `<table>__<column>_enum` hint under mysql; called from `buildAllContexts` (`generate`; `diff` runs it too but prints no warnings) and `ValidateGeneration` (`validate`), not from `BuildEntityContextsFromSchema`. PRD §4.11 sentence and §4.13 row added. Inline doc fix absorbed: PRD §26 "Unresolved declarations warn" and the `unusedScalarWarnings` comment now say the check fires from `generate` and `validate`, not from `graphql gen` (both call sites confirmed at `orchestrate.go`). Tests: `gen/enum_key_warnings_test.go` (`TestUnmatchedEnumKeyWarnings`, 8 cases through `ValidateGeneration` and `GenerateInto`) and `cli/pipeline_test.go` `TestUnmatchedEnumKey_Warns`. Fail-first re-run on the final code: removing the `buildAllContexts` call fails the generate halves, removing the `ValidateGeneration` call fails the validate halves, disabling the SET branch fails `a_MySQL_key_naming_a_SET`, dropping the qualified match fails `a_schema-qualified_key_that_matches`. Gates: `make check` ok; `make update-golden-e2e` + `make update-golden` produced no churn (matches vet); `make check-examples` ok, no example prints an `enums.` warning. Verify-pass reviewer comment and line-ref corrections applied inline (`context_enum.go`, both test doc comments, this entry's `:2651` / `:12503` / `:17-25` refs).
+
+### FIX-327
+
+- **Status:** Resolved
+- **Severity:** tracked
+- **Origin:** phase 6, `cmd/sqlgen/gen` (`resolveDefaultExpr`)
+- **Surfaced by:** backlog sweep 2026-10-12 (backlog line from FIX-272)
+- **Vetted:** ready at `9b58288b` (2026-10-12)
+
+**Issue.** On SQLite, an omittable NOT NULL column with no DEFAULT that is not auto-increment (an
+`update_columns` column or the soft-delete column declared without a DEFAULT) gets an empty
+`DefaultExpr`, so CreateMany / UpsertMany with it unset write `VALUES (, …)`. Measured: `zz_upd(id
+INTEGER PRIMARY KEY, code TEXT NOT NULL UNIQUE, updated_at DATETIME NOT NULL)` → generated `var
+updatedAt any = sql.NewDefaultExpr("")`; `CreateMany` → "create zz_upd batch: query: SQL logic error:
+near \")\": syntax error (1)", `UpsertMany` likewise; single `Create` → typed NOT NULL violation.
+
+**Root cause.** `resolveDefaultExpr` (`cmd/sqlgen/gen/context_table.go:1108`) returns `""` as its final
+fallback.
+
+**Suggested fix.**
+- Fall back to `"NULL"` (SQLite's implicit default for a column without DEFAULT, what PG/MySQL's
+  `DEFAULT` keyword does), so batch paths fail with the same typed NOT NULL violation as `Create`.
+  Update the doc comment.
+- Fail-first gen unit case and a SQLite probe of CreateMany. Golden churn: none (no committed output
+  contains `NewDefaultExpr("")`).
+- Vet notes (2026-10-12): where the empty slot lands depends on column order (with `updated_at` last it
+  renders `(?, )`, hence `near ")"`). The "matches PG/MySQL's DEFAULT keyword" claim was not measured for MySQL,
+  so the code comment does not make it. `DefaultExpr` is read only by the SQLite branches of
+  `create.go.tmpl:385` (CreateMany) and `upsert_many.go.tmpl:246` (UpsertMany); nested create, M2M and has-many
+  writes go through the target's CreateMany/UpsertMany (`nested.go.tmpl:631,724,855`) and inherit the fix; the
+  manifest's `defaultLiteral` reads it only under `HasDefault`. The `InputFieldContext.DefaultExpr` comment
+  (`gen/context.go:584-588`) is left unchanged because those lines are FIX-320 patch context — whichever of
+  FIX-320 / FIX-327 lands second updates it to "or \"NULL\" for a column without a default; empty on a required
+  field".
+- Prototype results, run at `9b58288b` on 2026-10-12: sibling sqlite example (`zz_upd` with `updated_at DATETIME
+  NOT NULL`, `zz_sd` with `is_deleted BOOLEAN NOT NULL` as soft-delete column, nested `zz_parent`/`zz_child`) →
+  generated `var updatedAt any = sql.NewDefaultExpr("")` (`zz_upd_gen.go:425`, `:1136`) and `var isDeleted any =
+  sql.NewDefaultExpr("")`; CreateMany / UpsertMany / mixed CreateMany / soft-delete table unset → "SQL logic error:
+  near \")\": syntax error (1)"; nested CreateWithRelated → "…create zz_child batch: tx query …: near \")\": syntax
+  error (1)"; Create and single Upsert → typed not_null. With the fix all sites emit `NewDefaultExpr("NULL")` and
+  every unset batch path returns the typed not_null violation; fully-set batches still succeed. Prototype:
+  `resolveDefaultExpr` returns `"NULL"` for every column without a DEFAULT (doc comment explains each case);
+  `ColumnContext.DefaultExpr` comment updated; new `TestCreateInputFieldClassification_defaultExprFallsBackToNULL`;
+  PRD §9.8.5 (`:5514`), §10.3 (`:7878`) and the `sql.Default` appendix (`:16037`) say `NULL` covers "a column
+  without a default" (FIX-272 precedent). Gates: gofumpt clean; `go vet ./gen/` ok; `go test -race ./gen/...` ok;
+  `./manifest/...` ok; `make update-golden` / `update-golden-e2e` no diff. Fail-first: old body restored →
+  "CreateInputFields mismatch … Column: \"updated_at\" … - DefaultExpr: \"NULL\", + DefaultExpr: \"\""; existing
+  suite without the fix passes. Golden churn: none. Patch: `.claude/prototypes/FIX-327.patch` (4 files, +60/-13;
+  FIX-320's patch applies cleanly on top).
+
+**References.**
+- PRD §10.3 (`update_columns`), §9.4 (batch inserts).
+- Backlog line absorbed: 2026-10-08 SQLite empty DefaultExpr (FIX-272).
+- FIX-272.
+
+**Resolution notes.** Resolved 2026-10-13. `resolveDefaultExpr` (`cmd/sqlgen/gen/context_table.go:1108`) now returns `"NULL"` for every column without a DEFAULT, SQLite's implicit default, so an unset NOT NULL update or soft-delete column in SQLite CreateMany / UpsertMany fails with the typed NOT NULL violation `Create` reports instead of writing `VALUES (?, )`. The prototype applied clean at `951ad718` (the stale-by-diff files were changed by other fixes, not at these hunks). FIX-320 landed first, so this change updates the `InputFieldContext.DefaultExpr` comment (`gen/context.go:584-587`) to "or \"NULL\" for a column without a default; empty on a required field", alongside the `ColumnContext.DefaultExpr` comment and PRD §9.8.5, §10.3 and the `sql.Default` appendix, plus `guidelines/SQL.md:404` (not in the prototype; it still said NULL only for nullable columns) and `docs/design/INTROSPECTION.md:188-189` (stale `context_table.go` refs). Test: `TestCreateInputFieldClassification_defaultExprFallsBackToNULL` (`gen/context_test.go`); its `got` slice is preallocated (lint `prealloc`). Fail-first: the old body restored → `updated_at` and `deleted_at` rows report `DefaultExpr: ""` against `"NULL"`. SQLite probe: `INSERT … VALUES ('a', NULL)` → "NOT NULL constraint failed: zz_upd.updated_at (19)"; `VALUES ('b', )` → "near \")\": syntax error". Gates: `make check` ok; `make update-golden` / `update-golden-e2e` no diff (golden churn: none, matches vet); `make check-examples` ok. Line refs in this entry updated to HEAD (`context_table.go:1108`, `upsert_many.go.tmpl:246` after FIX-320, PRD `:5514`/`:7878`/`:16037`).
+
+### FIX-326
+
+- **Status:** Resolved
+- **Severity:** nit
+- **Origin:** phase 16, `cmd/sqlgen/cli` (`graphql.go`) + `cmd/sqlgen/wrapper`
+- **Surfaced by:** backlog sweep 2026-10-12 (backlog line from FIX-286)
+- **Vetted:** ready at `9b58288b` (2026-10-12)
+
+**Issue.** `sqlgen generate` prefixes every `wrapper.Gen` error with "gqlgen subprocess failed",
+including errors raised before or after gqlgen runs. Measured: a `resolver: {layout: single-file}`
+block without `filename` → "Error: gqlgen subprocess failed: parsing gqlgen.yml resolver block:
+resolver.filename is required with resolver.layout: single-file; sqlgen-side artifacts emitted at
+./models".
+
+**Root cause.** `cmd/sqlgen/cli/graphql.go:213` wraps every error except `*wrapper.UnboundRootFieldsError`
+(printed bare at `:208-212`, FIX-248); only the `running gqlgen (…)` branch
+of `wrapper/gen.go` is a subprocess failure (read gqlgen.yml, `parseResolverLayout`, `Merge`,
+`writeTempConfig`, `writeSeedFiles`, `splitBin`, `settleManagedStubs`, `mergeSingleFileResolver` and Gen's
+two empty-argument guards are not).
+
+**Suggested fix.**
+- `wrapper.Gen` returns a typed error (e.g. `*wrapper.SubprocessError`) for the `cmd.Run` branch only;
+  `graphql.go` prints the PRD §26 message for it and `Error: gqlgen wrapper: <details>; sqlgen-side
+  artifacts emitted at <dir>` otherwise.
+- Tests for both branches (neither has one today).
+- Inline for the implementer: PRD §26.5.6 names only the subprocess-failure line; add a one-clause note that
+  wrapper-side failures carry the "gqlgen wrapper" label.
+- Prototype results, run at `9b58288b` on 2026-10-12: sibling copy of `graphql` with `resolver: {layout:
+  single-file, dir: models/graph, package: graph}` → base `GOWORK=off sqlgen generate` exit 1 "Error: gqlgen
+  subprocess failed: parsing gqlgen.yml resolver block: resolver.filename is required with resolver.layout:
+  single-file; sqlgen-side artifacts emitted at ./models"; `gqlgen_bin: "false"` → "Error: gqlgen subprocess
+  failed: running gqlgen (false): exit status 1; …". With the prototype the first reads "Error: gqlgen wrapper:
+  parsing gqlgen.yml resolver block: …" and the second is unchanged. Prototype: `wrapper/gen.go` exports
+  `SubprocessError{Bin string; Err error}` (`Error()` = "running gqlgen (<bin>): <err>", `Unwrap()`), returned
+  only by the `cmd.Run()` branch; `cli/graphql.go` keeps the `UnboundRootFieldsError` branch and labels
+  "gqlgen subprocess failed" when `errors.AsType[*wrapper.SubprocessError]` matches, "gqlgen wrapper" otherwise.
+  Tests: `TestGenerate_ChainedGraphQL_WrapperErrorLabel` (missing binary → subprocess label; single-file without
+  filename → wrapper label; both end "; sqlgen-side artifacts emitted at <outDir>"); wrapper tests assert the
+  type. Gates: `go test -race ./cli/ ./wrapper/` ok; `golangci-lint ./cli/... ./wrapper/...` 0 issues; gofumpt
+  clean. Fail-first: `cmd.Run` branch reverted → "Gen error = running gqlgen (…): exit status 1, want a
+  *SubprocessError" and the subprocess-label case fails ("…Error: gqlgen wrapper: running gqlgen
+  (no-such-gqlgen-binary): …"); label logic reverted → the single-file case reads "Error: gqlgen subprocess
+  failed: parsing gqlgen.yml resolver block: …"; existing suite without the fix passes. Golden churn: none.
+  Patch: `.claude/prototypes/FIX-326.patch` (4 files, +105/-2).
+
+**References.**
+- PRD §26.5.6 "Failure mode." (`docs/PRD.md:12965`).
+- Backlog line absorbed: 2026-10-07 gqlgen-subprocess prefix (FIX-286).
+- FIX-286, FIX-248.
+
+**Resolution notes.** `wrapper.Gen` now returns `*wrapper.SubprocessError{Bin, Err}` (`Error()` = "running gqlgen (<bin>): <err>", `Unwrap()`) from the `cmd.Run()` branch only (`cmd/sqlgen/wrapper/gen.go`); `runGraphQLGen` (`cmd/sqlgen/cli/graphql.go`) keeps the bare `*UnboundRootFieldsError` branch and labels the rest "gqlgen subprocess failed" when `errors.AsType[*wrapper.SubprocessError]` matches and "gqlgen wrapper" otherwise, both ending "; sqlgen-side artifacts emitted at <output.dir>". PRD §26.5.6 "Failure mode." gains a sentence naming the "gqlgen wrapper" label for wrapper-side failures. Tests: `TestGenerate_ChainedGraphQL_WrapperErrorLabel` (missing binary → subprocess label; single-file without filename → wrapper label; both with the suffix); `TestGen_TempFileCleanupOnSubprocessFailure` and `TestGen_SingleFileWithoutFilename` assert the error type. Prototype applied clean at `86b6b968`. Fail-first re-run on the final code: `cmd.Run` branch reverted → "Gen error = running gqlgen (…): exit status 1, want a *SubprocessError" and the subprocess-label case reads "Error: gqlgen wrapper: running gqlgen (no-such-gqlgen-binary): …"; label logic reverted → the single-file case reads "Error: gqlgen subprocess failed: parsing gqlgen.yml resolver block: …". `make check` and `make check-examples` green; golden churn: none, as vetted. /verify reviewer items applied inline: the PRD sentence names writing seeds and rewriting resolver stubs and points an unbound root resolver name at its own error ("Root resolver names are checked, not stated"), since `settleManagedStubs` can return the bare-printed `*UnboundRootFieldsError`; the References PRD line ref corrected to `:12965`; backlog line 2026-10-01 (cli) reworded for the now-tested labelled branches; the test reuses the package's `appendConfig` instead of a duplicate helper.
+
+
+### FIX-325
+
+- **Status:** Resolved
+- **Severity:** tracked
+- **Origin:** phase 18, `cmd/sqlgen/manifest` (`classifyDefaultKind`)
+- **Surfaced by:** backlog sweep 2026-10-12 (backlog line from FIX-268 review)
+- **Vetted:** corrected at `9b58288b` (2026-10-12)
+
+**Issue.** A column default that contains a call but does not end in `)` is classified `literal`.
+Measured through each dialect parser: PG `now() AT TIME ZONE 'utc'`, `now() + '1 day'::interval`,
+`lower('X') || 'y'`; MySQL `current_timestamp() + interval 1 day`, `abs(-1) + 1`; SQLite
+`datetime('now') || 'x'`, `abs(-1) + 1` → all `literal`. PRD §30.7 defines `literal` as a constant
+value and `expression` as anything else.
+
+**Root cause.** `classifyDefaultKind` (`cmd/sqlgen/manifest/builder.go:668-702`) gates the
+function/expression branches on `HasSuffix(")")`, so anything else falls through to `literal`.
+
+**Suggested fix.**
+- Stale facts (vet 2026-10-12): PG `now() AT TIME ZONE 'utc'` and MySQL `current_timestamp() + interval 1
+  day` / `abs(-1) + 1` cannot be declared bare (parse errors); the declared DDL is parenthesized, and the
+  parser stores it without parens — the classified text in the Issue is right. The same heuristic also
+  misclassifies (a) casts with type modifiers as `function` (PG `'x'::varchar(10)`, `(0.5)::numeric(4, 2)`,
+  `'00:00'::time(3)`), (b) PG niladic SQL value functions as `literal` (`localtimestamp`, `localtime`,
+  `current_user`, `session_user`, `user`, `current_schema`), (c) a call with an operator character anywhere
+  in its arguments as `expression` (`abs(-1)`, SQLite `datetime('now', '+1 day')`, `strftime('%Y-%m-%d',
+  'now')`), and `now()::date` / `upper('a')::text` as `literal`. Parser renderings to expect: MySQL `b'101'` →
+  `0b101`, `x'1F'` → `X'1F'`; PG `B'101'` → `b'101'`, backslash string → `E'C:\\'`; PG `+1` → `+ 1`, `-1::integer`
+  → `- 1::int`; MySQL escapes an embedded quote as `'it\'s'`.
+- `classifyDefaultKind` (`cmd/sqlgen/manifest/builder.go:668-702`) is reversed: peel one balanced outer paren
+  pair and any trailing top-level `::type` cast, repeatedly (the type check accepts `timestamp with time
+  zone`, `public."MyType"`, `numeric(4, 2)`, `varchar(10)[]`); a constant (NULL/TRUE/FALSE, signed
+  decimal/float/`0x…`/`0b…`, or one string with an optional E/B/X/N prefix) → `literal`; an SQL value keyword
+  (current_timestamp/date/time, localtime[stamp], current_user/role, session_user, user,
+  current_catalog/schema) or a top-level function shape (a qualified or quoted name followed by `(` whose
+  matching `)` ends the text) → `function`; else `expression`. Paren matching and cast search skip quoted
+  text; a default whose quotes do not balance under `''`-doubling is rescanned with backslash escapes (MySQL
+  `'it\'s'`), keeping SQLite `'C:\'` and PG `E'C:\\'` literal. `containsOperator` and the unicode-based
+  `isFunctionShape` are replaced; `stripTrailingCast` splits out `lastTopLevelCast` for cyclop. No signature
+  change, no exported identifier. `docs/design/INTROSPECTION.md:191-192` line refs updated (`:613` / `:678`).
+- Test: 33 new rows in `TestBuild_DefaultKindClassification` using measured parser-emitted texts for all three
+  dialects.
+- Corrected vs. the original suggestion (vet 2026-10-12): strip any trailing top-level `::type` cast, not only
+  `'…'::type`; add the niladic keyword set (else `localtimestamp` / `current_user` would become `expression`
+  while PRD §30.7 calls CURRENT_TIMESTAMP a function); decide function shape at the top level whatever
+  operators appear inside the arguments; add the backslash-escape fallback; drop the old bare `NOW` keyword (no
+  dialect accepts it).
+- Auto-accepted the recommended option on 2026-10-12 (`/fix` auto-accept rule): a cast of a call (`now()::date`,
+  `upper('a')::text`) → `function`; bare SQL value functions → `function` (extends §30.7's CURRENT_TIMESTAMP
+  example to its family); a call whose arguments contain operators → `function` by top-level shape;
+  constructors left unspecial-cased (`ARRAY[...]` → `expression`, `ROW(1, 2)` and MySQL `cast(1 as char)` →
+  `function`). For each: prototyped green, no churn, no public surface, §30.7 does not cover the case.
+- Prototype results, run at `9b58288b` on 2026-10-12: probe (`zz_probe_defaults_test.go`, DDL through
+  postgres/mysql/sqlite parsers, then `classifyDefaultKind`) at base → `now() + '1 day'::interval`, `lower('X')
+  || 'y'`, `(now() AT TIME ZONE 'utc')`, MySQL `(current_timestamp() + interval 1 day)`, `(abs(-1) + 1)`,
+  SQLite `(datetime('now') || 'x')` → literal; `'x'::varchar(10)`, `0.5::numeric(4,2)` → function;
+  `localtimestamp`, `current_user`, `now()::date`, `ARRAY[]::text[]` → literal. Bare `CURRENT_TIMESTAMP` is
+  already `function` on all three. Introspection where cheap (SQLite modernc; PG `postgres.CatalogExpr` on
+  catalog text) gives the same kinds under the new classifier. Gates: cmd/sqlgen `go test -race
+  ./manifest/...` ok; `golangci-lint ./manifest/...` 0 issues; gofumpt clean; `go test -short ./...` ok; `make
+  update-golden-e2e` PASS, no testdata changes. Fail-first: builder.go reverted → 18 rows fail (e.g. `default
+  "'x'::varchar(10)" → kind "function", want "literal"`; `default "localtimestamp" → kind "literal", want
+  "function"`; `default "datetime('now', '+1 day')" → kind "expression", want "function"`; `default "abs(-1) +
+  1" → kind "literal", want "expression"`); existing suite without the fix passes. Golden churn: none (all 53
+  committed manifests' default pairs keep their kind). Patch: `.claude/prototypes/FIX-325.patch` (3 files,
+  +242/-61).
+- Auto-accepted the recommended option on 2026-10-13 (`/fix` auto-accept rule): keep `interval` among the typed-literal keywords (`interval '1 day'` → `literal`) rather than limit them to the measured MySQL `date`/`time`/`timestamp` renderings → keep, because the value is a constant (§30.7 `literal`), HEAD already classified it `literal`, it was prototyped with gates green, neither option churns goldens, and no public surface changes.
+
+**References.**
+- PRD §30.7 (`default_kind`).
+- Backlog line absorbed: 2026-10-07 classifyDefaultKind (FIX-268 review).
+- FIX-268.
+
+**Resolution notes.** Landed the vetted prototype (applied clean at `64b9eb9b`). `classifyDefaultKind`
+(`cmd/sqlgen/manifest/builder.go:677`) now peels outer parens and trailing top-level `::type` casts,
+then classifies a constant (NULL/TRUE/FALSE, a number, one string with an optional E/B/X/N prefix or
+date/time/timestamp/interval keyword) as `literal`, an SQL value keyword or a top-level call as
+`function`, and anything else as `expression`. Paren and cast scanning skips quoted text;
+`containsOperator` and the unicode-based `isFunctionShape` are gone. Two divergences from the prototype,
+both from the `/verify` reviewer pass: (1) backslash escapes now follow the dialect (`buildColumns` and
+`classifyDefaultKind` take `config.Dialect`; MySQL only) instead of the prototype's "quotes do not balance
+under doubling" fallback, which split a MySQL string with an even number of embedded quotes (measured:
+`DEFAULT 'say ''hi'''` → parser text `'say \'hi\''` → `expression`); `quotesBalance` is dropped. (2) A
+MySQL typed literal (`DEFAULT (DATE '2020-01-01')` → parser text `date'2020-01-01'`) was `literal` at HEAD
+but `expression` under the prototype; it is `literal` again. 40 rows added to
+`TestBuild_DefaultKindClassification` (MySQL and SQLite rows run under their dialect); fail-first with
+`builder.go` at HEAD → 20 rows fail, and with the prototype's `builder.go` → the 4 rows for (1) and (2)
+fail. `docs/design/INTROSPECTION.md` line refs updated (`:613` / `:677`, X1 row `:1026-1091`, whose HEAD range `917-958` was already stale). Gates:
+`make check` ok; `make update-golden-e2e` + `make update-golden` → no churn (matches vet); `make
+check-examples` ok.
+
+### FIX-324
+
+- **Status:** Resolved
+- **Severity:** tracked
+- **Origin:** phase 6, `cmd/sqlgen/gen` (`detectTableSoftDelete`) + `parser` (`DetectSoftDelete`)
+- **Surfaced by:** backlog sweep 2026-10-12 (backlog lines from FIX-289)
+- **Vetted:** ready at `9b58288b` (2026-10-12)
+
+**Issue.** The soft-delete strategy comes from the column's SQL type, not the configured
+`soft_delete_columns[].type`, and a type mismatch is reported twice. Measured (mysql example copy):
+`zz_flag TINYINT` with `type: bool` → `Type: sql.SoftDeleteInteger`, filter `.Eq(0)`; `zz_one
+TINYINT(1)` with `type: integer` → `sql.SoftDeleteBool`; `zz_bad VARCHAR(10)` with `type: integer` →
+`sqlgen validate` prints "soft_delete_columns: column \"zz_bad\" … incompatible type" and then
+"building context for table zz_c: detecting soft delete for zz_c: detecting soft delete: soft delete
+column … unsupported type" (doubled prefix), exit 2.
+
+**Root cause.** `detectTableSoftDelete` (`cmd/sqlgen/gen/context_table.go:343`) builds `Strategy` from
+`parser.DetectSoftDelete`'s SQL-type mapping, a second compatibility check beside
+`config.isSoftDeleteTypeCompatible` (whose bool case accepts plain `tinyint`, `validate.go:2165`).
+
+**Suggested fix.**
+- Auto-accepted the recommended option on 2026-10-12 (`/fix` auto-accept rule; user confirmed no
+  veto): the strategy is the configured type, because PRD §5.4 says the first match "determines the
+  strategy" and the config type is the declared intent; validation (run by every CLI entry point
+  before gen) stays the only compatibility gate; no churn, no public surface.
+- `parser.DetectSoftDelete` reduces to a name match (or gen skips its type check); the duplicate
+  error and doubled prefix disappear.
+- PRD: add plain MySQL `tinyint` to the §4.6 bool compatibility row (`docs/PRD.md:487`).
+- Fail-first tests for the two cross pairs and the single error.
+- Entry-point audit (vet 2026-10-12): every caller of `BuildTableContexts`, `buildAllContexts` or
+  `detectTableSoftDelete` runs `ValidatePostParse` first — generate (`generate.go:57` before `gen.Generate` at
+  `:69`), validate (`validate.go:68` then `ValidateGeneration` at `:89`), and diff / lint / graphql gen through
+  `loadAndValidate` (`pipeline.go:57`); the MCP server, manifest diff/validate and wrapper build no contexts.
+- Prototype: `parser/detect.go` `DetectSoftDelete(table *Table, columns []string) string` is a name match
+  (`softDeleteStrategy` deleted, `findColumn` → `hasColumn`); `detectTableSoftDelete` returns
+  `*SoftDeleteContext` with no error and takes Strategy from the matched entry's configured `Type`; the
+  wrapping in `buildSingleTableContext` and the `_` discard at the O2O target site go. Stale comments fixed
+  (`isSoftDeleteTypeCompatible` doc: the only compatibility check; "an ambiguous soft-delete column" dropped
+  from `cli/validate.go` and `gen/orchestrate.go`). PRD §4.6 bool row adds `tinyint` plus "a type compatible
+  with more than one row (MySQL `tinyint` / `tinyint(1)`) takes the strategy of the configured `type`"; §5.4
+  says the match is by name and the first match's configured `type` sets the strategy. Tests: gen
+  `TestBuildTableContexts_SoftDeleteStrategyFromConfiguredType` (tinyint / tinyint(1) × bool / integer); cli
+  `TestValidate_softDeleteTypeMismatchReportedOnce`, `TestSoftDeleteTypeMismatchStopsEveryContextBuilder`
+  (generate, diff, lint, graphql gen each exit 2 with no output dir); `TestDetectSoftDelete` rewritten to
+  name-match rows, its type-family rows moved to config `TestValidatePostParse_SoftDeleteTypeMatch` (+8) and
+  `SoftDeleteTypeOutsideList` (+varchar(255), text).
+- Prototype results, run at `9b58288b` on 2026-10-12: mysql example copy (files) → `zz_flag TINYINT` +
+  `type: bool` → `Type: sql.SoftDeleteInteger`, `.Eq(0)` / restore `.Eq(1)`; `zz_one TINYINT(1)` + `type:
+  integer` → `sql.SoftDeleteBool`, `.Eq(false)`; live mysql:8.0.46 `source: database` identical (COLUMN_TYPE
+  `tinyint` / `tinyint(1)`); `zz_bad VARCHAR(10)` + `type: integer` → `sqlgen validate` prints both errors
+  (the second "building context for table zz_c: detecting soft delete for zz_c: detecting soft delete: …"),
+  exit 2. Gates: parser `go test -race ./...` ok; cmd/sqlgen `go test -race ./gen/... ./config/...
+  ./manifest/... ./cli/...` ok; `golangci-lint` 0 issues in both modules; gofumpt clean; `make update-golden`
+  and `make update-golden-e2e` (15 examples incl. introspect_* database and files) no diff. Fail-first: base
+  detect.go / context_table.go → `SoftDelete.Strategy = "integer", want "bool"` and `= "bool", want
+  "integer"`, and the two-error stderr; `validateSoftDeleteTypes` call dropped → generate `error = <nil>, want
+  exit code 2`, diff `error = 8 files would change`, lint `error = <nil>`; existing suite without the fix passes.
+  Golden churn: none. Patch: `.claude/prototypes/FIX-324.patch` (10 files, +171/-348).
+
+**References.**
+- PRD §4.6, §5.4.
+- Backlog lines absorbed: 2026-10-09 strategy ignores configured type (FIX-289); 2026-10-09 validate
+  reports mismatch twice (FIX-289).
+- FIX-289.
+
+**Resolution notes.** The soft-delete strategy is now the matched `soft_delete_columns` entry's configured `type`: `parser.DetectSoftDelete` (`parser/detect.go`) is a name match returning only the column (`softDeleteStrategy` removed, `findColumn` → `hasColumn`), and `detectTableSoftDelete` (`cmd/sqlgen/gen/context_table.go`) returns `*SoftDeleteContext` with no error, taking Strategy from the entry's `Type`; the error wrapping in `buildSingleTableContext` and the `_` discard at the O2O target site are gone, so `config.isSoftDeleteTypeCompatible` is the only compatibility check and a mismatch is reported once. PRD §4.6 bool row adds plain `tinyint` (dialect-neutral, as `isSoftDeleteTypeCompatible` and the integer row have it) and states that a type compatible with more than one row takes the configured `type`; §5.4 says the match is by name. Stale comments fixed in `config/validate.go`, `cli/validate.go` and `gen/orchestrate.go`. Tests: gen `TestBuildTableContexts_SoftDeleteStrategyFromConfiguredType`, cli `TestValidate_softDeleteTypeMismatchReportedOnce` and `TestSoftDeleteTypeMismatchStopsEveryContextBuilder`, `TestDetectSoftDelete` rewritten to name-match rows, type-family rows moved to config `TestValidatePostParse_SoftDeleteTypeMatch` / `SoftDeleteTypeOutsideList`. Prototype applied clean at `4b955348`; fail-first re-run against base source (`Strategy = "integer", want "bool"`, `= "bool", want "integer"`, two-error stderr). `make check`, `make update-golden`, `make update-golden-e2e` (no churn) and `make check-examples` green. /verify: reviewer found the landed source byte-identical to the prototype and no defects; four stale line/name refs in this entry corrected in place (`context_table.go:343`, `validate.go:2165`, `ValidateGeneration` at `:89`, `buildSingleTableContext`).
+
+### FIX-323
+
+- **Status:** Resolved
+- **Severity:** tracked
+- **Origin:** phase 17, `cmd/sqlgen/gen` (`filter_qualifier.go`, `context_relfilter.go`)
+- **Surfaced by:** backlog sweep 2026-10-12 (backlog lines from FIX-291)
+- **Vetted:** ready at `9b58288b` (2026-10-12)
+
+**Issue.** Relationship `filter:` handling at generation is inconsistent. An o2m/m2m filter is parsed
+only when the edge gets a relationship-filter member, so an unreadable filter on a parent without a
+single-column PK, with a taken field name, or with an excluded target passes generation and fails at
+runtime, while the same filter on an o2o fails generation. Measured (pg, `filter: "name LIKE"`):
+composite-PK parent o2m → `BuildTableContextsFromSchema` nil error; composite-PK o2o → error;
+single-PK o2m → error. The error text also repeats its prefix: "filter \"name LIKE\": qualify filter
+(postgres): qualify filter: parsing \"name LIKE\": syntax error at end of input" (all three dialects).
+
+**Root cause.** `buildRelationshipFilters` returns early on `len(PKColumns) != 1`
+(`cmd/sqlgen/gen/context_relfilter.go:135`) and `continue`s on a taken field name or missing target,
+before `relationshipStaticFilter` parses; `gen.qualifyFilter` (`cmd/sqlgen/gen/filter_qualifier.go:36`)
+wraps `qualify filter (%s): %w` around parser errors that already start with "qualify filter:".
+
+**Suggested fix.**
+- Ruling (user, 2026-10-12, backlog sweep Q4): parse every o2m/m2m filter at generation (parse-only
+  check through `qualifyFilter`, output discarded) before the early return and `continue`s, so the
+  outcome depends on the filter alone. Amend PRD §4.8 (`docs/PRD.md:940`) and §13.7.4 (`:8920`), and
+  §13.7.1, whose "o2m / m2m filters are not parsed at codegen time" already contradicts both.
+- `qualifyFilter` wraps as `fmt.Errorf("%s: %w", dialect, err)`; update
+  `relfilter_static_test.go:200`, which pins the doubled text.
+- Fail-first gen tests: composite-PK parent o2m, taken field name, excluded target; the error text.
+- Golden churn: none.
+- Stale facts (vet 2026-10-12): an "excluded target" never reaches the skip — a declared relationship to an
+  `exclude_tables` table already fails in `checkDeclaredTarget` ("…which generates no entity — it is
+  excluded by `exclude_tables`, has no primary key, or is not in the schema"); the reachable `lookupTarget`
+  miss is a target with no table context, such as a view (o2m to a view with `filter: "name LIKE"` → nil
+  error at base), which replaces the excluded-target regression case. A fourth skip site exists:
+  `relationshipFilterEntry` returns !ok for an m2m whose target lacks a single-column PK or has incomplete
+  junction metadata, and for an o2m with no FKColumn; parsing first covers it. The `buildRelationshipFilters`
+  doc comment still lists "excluded by `exclude_tables`" as a target-miss reason — fix inline when
+  implementing.
+- Prototype: `parseListRelationshipFilters(tc)` runs every non-empty o2m/m2m `rel.Filter` through
+  `qualifyFilter(…, RelationshipFilterAliasToken, tc.Dialect)`, discards the output, and joins errors as
+  `table %s: relationship %s: filter %q: %w`; called first in `buildRelationshipFilters` (edges dropped by
+  `exclude_relationships` are never parsed — they generate nothing). `qualifyFilter` wraps `"%s: %w"`; same
+  site, `qualifiedAliasPrefix`'s wrap becomes `"deriving alias prefix: %w"` (else the dialect appears twice).
+  Tests: `relfilter_static_test.go:200` re-pinned; `TestRelationshipFilter_UnreadableListFilterFailsGeneration`
+  (composite-PK o2m, composite-PK m2m, a taken field name, o2m to a view; each with a green control);
+  `TestRelationshipFilter_ParseErrorNamesQualifierOnce` (all three dialects, `strings.Count(err, "qualify
+  filter") == 1`). PRD §4.8 (`:940`), §13.7.1 (`:8850`) and §13.7.4 (`:8920`) amended.
+- After FIX-300 lands, `TestRelationshipFilter_UnrenderableSQLiteFilterErrors` (incl. the `:200` text) flips,
+  since ESCAPE then renders — FIX-300's concern.
+- Prototype results, run at `9b58288b` on 2026-10-12: probe (`gen.BuildTableContextsFromSchema`, `filter:
+  "name LIKE"`) → single-PK o2m on pg/mysql/sqlite → error with the doubled prefix ("…qualify filter
+  (postgres): qualify filter: parsing \"name LIKE\": syntax error at end of input"); composite-PK o2m → nil;
+  composite-PK o2o → error; taken field name → nil; composite-PK m2m → nil; o2m to a view → nil. Gates:
+  cmd/sqlgen `go test -race ./gen/...` ok; `go test -short ./...` ok; `golangci-lint ./gen/...` 0 issues;
+  gofumpt and vet clean; `TestE2EGoldenFiles` 22/22 PASS (all 14 example `filter:` lines still parse);
+  `make refs-check` ok. Fail-first: `parseListRelationshipFilters` call removed → all 4 subtests fail
+  (`BuildTableContextsFromSchema(filter="name LIKE") = nil error, want one`); old wrap restored → `… says
+  "qualify filter" 2 times, want once` on all three dialects; existing suite without the fix passes. The
+  `qualifiedAliasPrefix` wrap is not fail-first testable (its probe column always parses). Golden churn:
+  none. Patch: `.claude/prototypes/FIX-323.patch` (4 files, +160/-6).
+
+- Auto-accepted the recommended option on 2026-10-13 (`/fix` auto-accept rule): an o2o to a view with `filter: "name LIKE"` still passes generation (`buildSingleO2ODetail` finds no table and returns before `o2oJoinPredicate`; measured nil error, `O2OJoinDetails=0`) — extend the parse to it, or narrow the PRD sentences to the cases codegen parses → narrow PRD §4.8, §13.7.1 and §13.7.4 to "every o2m and m2m relationship, and every o2o relationship to a table", because it is a doc-only correction to match the code (gates unaffected), causes no golden churn, adds no public surface, and reverses no ruling (Q4 covered o2m/m2m only). The o2o-to-view edge itself is a backlog item.
+
+**References.**
+- PRD §4.8, §13.7.1, §13.7.4.
+- Backlog lines absorbed: 2026-10-08 doubled "qualify filter" prefix (FIX-291); 2026-10-08 o2m/m2m
+  filter parsed only with a member (FIX-291).
+- FIX-291, FIX-259.
+
+**Resolution notes.** Every non-empty o2m/m2m `filter:` now runs through `qualifyFilter` (output discarded) in `parseListRelationshipFilters`, called first in `buildRelationshipFilters` (`cmd/sqlgen/gen/context_relfilter.go`), so an unreadable filter fails generation before the composite-PK early return, the taken-field-name and missing-target `continue`s, and `relationshipFilterEntry`'s skips. `qualifyFilter` wraps `"%s: %w"` with the dialect (`cmd/sqlgen/gen/filter_qualifier.go`), so "qualify filter" appears once; `qualifiedAliasPrefix` wraps `"deriving alias prefix: %w"`. Tests (`relfilter_static_test.go`): `TestRelationshipFilter_UnreadableListFilterFailsGeneration` (composite-PK o2m, composite-PK m2m, taken field name, o2m to a view; each with a green control) and `TestRelationshipFilter_ParseErrorNamesQualifierOnce` (all three dialects); both fail-first (call removed → 4/4 fail; old wrap → 3/3 fail). PRD §4.8, §13.7.1, §13.7.4 amended. Prototype applied with `--3way`: FIX-300 (`ac19de67`) had already turned `TestRelationshipFilter_UnrenderableSQLiteFilterErrors` into the green `TestRelationshipFilter_SQLiteLikeEscape`, so the prototype's re-pin of the old `:200` text was dropped, and §13.7.4's line keeps FIX-300's wording (no SQLite `LIKE … ESCAPE` clause), and the test file re-adds the `strconv` import FIX-300 removed. The amended PRD sentences name o2m, m2m and o2o-to-a-table rather than "every relationship": an o2o to a view is not parsed (see Suggested fix's auto-accept). Inline: the `buildRelationshipFilters` doc comment no longer lists `exclude_tables` as a target-miss reason (a view is the reachable one) and says every filter is parsed first. Gates: `make check` ok; `make update-golden-e2e` / `make update-golden` → no churn; `make check-examples` ok.
+
+### FIX-322
+
+- **Status:** Resolved
+- **Severity:** nit
+- **Origin:** phase 30, `cmd/sqlgen/gen` (`typeOverrideSource`) + `cmd/sqlgen/gotype`
+- **Surfaced by:** backlog sweep 2026-10-12 (backlog line from FIX-270)
+- **Vetted:** corrected at `a99568ff` (2026-10-12)
+
+**Issue.** The increment-eligibility warning names the wrong config key for a domain or qualified
+override. Measured (domain `email` over `text`, override → `int64`): global `email` → warning names
+`overrides.types.text`; global `app.email` → `overrides.types.text`; table-scoped
+`tables.app.invoices.overrides.types."app.email"` → `overrides.types.text` (scope prefix lost too).
+The same re-derivation misnames a key written without the column's modifiers: global `varchar` on a
+`varchar(255)` column → `overrides.types.varchar(255)`; table-scoped `varchar` → `overrides.types.varchar(255)`
+(prefix lost too); global `app.text` on `text` → `overrides.types.text`.
+
+**Root cause.** `typeOverrideSource` (`cmd/sqlgen/gen/context_table.go:800`) re-derives the key: it
+probes only table-scope bare `col.SQLType` / base keys and falls back to `overrides.types.<base>`,
+never asking the resolver which key matched.
+
+**Suggested fix.**
+- gotype: `lookupOverride` also returns the key it matched; `resolveByType`'s body moves into
+  `resolveByTypeSource`, returning `(GoType, overrideSource{key, tableScoped})` (step 2 table-scoped,
+  step 3 global; integrations, enums, SETs and built-ins return a zero source; domain recursion and the
+  array base pass the inner source up). `resolveByType` becomes a thin wrapper. New exported
+  `(*Resolver).OverrideSource(sqlType, tableOverrides) (key string, tableScoped, ok bool)`.
+- gen: `incrementSQLTypeWarnings` / `typeOverrideSource` take the column's resolver
+  (`input.Resolver.ForSchema(table.Schema)`) and format `tables.<t>.overrides.types.<key>` or
+  `overrides.types.<key>` from it; the `overrides.types.<base>` fallback stays only for ok=false (unreachable:
+  no built-in or integration mapping makes a non-arithmetic type arithmetic).
+- Tests: `TestIncrementSQLTypeGuardNamesMatchedOverrideKey` (gen, 6 cases: the three measured, a domain over
+  that domain, global and table-scoped modifier-less keys); `TestOverrideSource` (gotype, 6 cases).
+- Corrected from the original: the matched key is passed out of `resolveByType`'s own path instead of a second
+  walk copying its step 2/3 order, so the reported key cannot drift from the one that resolved; scope widened to
+  modifier-less keys and domain-over-domain (same root cause, same site).
+- Prototype results, run at `a99568ff` on 2026-10-12: probe `zz_probe_fix322_test.go` (table `app.invoices`,
+  domain `app.email` over `text`, override → `int64`, `BuildTableContexts`) → global `email`, global
+  `app.email`, table-scoped `app.email`, global `app.text` → "overrides.types.text"; global and table-scoped
+  `varchar` on `varchar(255)` → "overrides.types.varchar(255)". With the patch: `overrides.types.email`,
+  `overrides.types.app.email`, `tables.app.invoices.overrides.types.app.email`, `overrides.types.varchar`,
+  `tables.app.invoices.overrides.types.varchar`, `overrides.types.app.text`. Gates: `go test -race -count=1
+  ./gotype/... ./gen/...` ok; `-short ./cli/... ./config/...` ok; golangci-lint 0 issues; gofumpt clean.
+  Fail-first: gen `typeOverrideSource` reverted → all 6 gen subtests fail (`increment warnings =
+  ["overrides.types.text: \"int64\" is an arithmetic Go type but column \"note\" has SQL type \"email\" (a
+  domain over \"text\"), ..."], want one starting "overrides.types.email: \"int64\""`); `lookupOverride`
+  returning the probed type → `OverrideSource("VARCHAR(255)") = ("varchar(255)", false, true), want
+  ("varchar", false, true)`; domain recursion not passing the source → `OverrideSource("work_email") = ("",
+  false, false), want ("text", false, true)`; existing suite passes at base. Golden churn none. Overlap:
+  FIX-319 (gotype.go mappings / `widenSumBase` ~:675, gotype_test.go top) and FIX-324 (context_table.go
+  @@ -265, adjacent to the call site at :264) — `git apply --check` clean after either. Patch:
+  `.claude/prototypes/FIX-322.patch` (4 files, +215/-33).
+
+**References.**
+- PRD §7.1 (override matching, `docs/PRD.md:1719`), §8.2 (increment eligibility warning, "A type override
+  cannot manufacture eligibility", `docs/PRD.md:2513`).
+- Backlog line absorbed: 2026-10-07 increment warning names wrong override key (FIX-270). The sibling
+  enum-array line is a PRD §7.2 doc fix and the qualified-builtin-key line is deleted (both applied
+  with the backlog sweep).
+- FIX-270.
+
+**Resolution notes.** Landed as vetted. `lookupOverride` also returns the key it matched; `resolveByType`'s body moved into `resolveByTypeSource`, which returns the Go type with an `overrideSource{key, tableScoped}` (step 2 table-scoped, step 3 global; integrations, enums, SETs and built-ins return none; domain recursion and the array base pass the inner source up), and `resolveByType` is a thin wrapper. New `(*Resolver).OverrideSource`. `incrementSQLTypeWarnings` / `typeOverrideSource` (`cmd/sqlgen/gen/context_table.go`) take the column's resolver (`input.Resolver.ForSchema(table.Schema)`) and name the matched key at its scope; the `overrides.types.<base>` fallback stays only for the unreachable ok=false case. Tests: `TestIncrementSQLTypeGuardNamesMatchedOverrideKey` (gen, 6 cases), `TestOverrideSource` (gotype, 6 cases). Prototype applied with `git apply --3way` (FIX-319 `29c96dfc` had edited `gotype.go` near `lookupOverride`); it merged without conflicts. Fail-first on the final code: gen `context_table.go` reverted → all 6 gen subtests fail; `lookupOverride` returning the probed type → `OverrideSource("VARCHAR(255)") = ("varchar(255)", false, true)`; domain recursion not passing the source → `OverrideSource("work_email") = ("", false, false)`. Gates: `make check` ok; `make update-golden` + `make update-golden-e2e` → no churn (matches vet); `make check-examples` ok. Verify-pass inline corrections: the `!ok` fallback comment in `typeOverrideSource` no longer claims the branch is unreachable (a `tenancy.type` override reaches it); References PRD line refs corrected (1706 → 1719, 2498 → 2513). The `tenancy.type` route going unnamed in the warning predates this fix and is a different gap, so it went to the backlog.
+
+### FIX-321
+
+- **Status:** Resolved
+- **Severity:** tracked
+- **Origin:** phase 5, `cmd/sqlgen/config` (cursor key resolution)
+- **Surfaced by:** backlog sweep 2026-10-12 (backlog lines from FIX-293, FIX-295)
+- **Vetted:** corrected at `9b58288b` (2026-10-12)
+
+**Issue.** A nullable `cursor_keys` column breaks paging. Measured on SQLite: `zz_cur(id INTEGER
+PRIMARY KEY, description TEXT)`, `cursor_keys: [description, id]`, rows NULL/a/b → page 1 cursor
+`{"description":null,"id":1}`, page 2 `sqlgen: invalid cursor`; with `use_pointers: false` the cursor
+is `{"description":{"String":"","Valid":false},"id":1}` and page 2 is the same error. Rows past a NULL
+key cannot be paged in either mode. No example configures a `sql.Null*`, array or `time.Time` cursor
+key (all 189 committed `decode<T>Cursor` cases are ID/PK-style), so those decode paths and
+`cursorValueIsNull`'s true branch never run in a test.
+
+**Root cause.** `ResolveTableConnection` / `ResolveViewConnection`
+(`cmd/sqlgen/config/config.go:2114,2150`) check only that each key column exists; PRD §4.13 has no
+nullability rule. Validate also never sees a view column's nullability: `toSchemaViews`
+(`cmd/sqlgen/cli/pipeline.go:422`) copies only Name, Type and PrimaryKey into `config.SchemaColumn`.
+
+**Suggested fix.**
+- Ruling (user, 2026-10-12, backlog sweep Q3): follow the explicit-strict / inherited-lenient split
+  (`docs/PRD.md:1259`). An explicitly configured nullable cursor key is a config error; an inherited key
+  resolving to a nullable column counts as unresolved — a table falls back to its PK, a PK-less table or a
+  view omits `Connection` with a warning (escape hatches: a NOT NULL column, or `@type`/`@pk` on a view
+  column).
+- `config.ResolveTableConnection` / `ResolveViewConnection` take `columns []SchemaColumn` (name +
+  nullability) instead of `[]string` (CLI-module signature only); new helpers `checkExplicitCursorKeys`,
+  `unresolvedCursorKeys`, `inheritedCursorKeys`, `columnsByName`; `missingColumns` goes. Error: `cursor_keys:
+  column "X" in table|view Y is nullable; a cursor key must be NOT NULL`.
+- Callers pass nullability: validate (`validateCursorKeys`, `resolvedCursorKeys` on the post-`exclude_columns`
+  set), gen (`context_table.go` / `context_view.go` via `cursorKeyCandidates([]ColumnContext)`), and
+  `toSchemaViews` copies `Nullable`.
+- PRD: §4.13 rows "Explicit `cursor_keys` naming a nullable column" (Error) and "Inherited `cursor_keys`
+  naming a nullable column" (handled as missing; `@type`/`@pk` escape hatches); fallback rules 1-5 read
+  "missing or nullable"; §8.1.7 config-test list +2; §4.6 / table / view `cursor_keys` rows and §14.2 bullets say
+  "and be NOT NULL"; `v1.json` view `cursor_keys` description matches.
+- Tests: config `TestValidatePostParse_CursorKeys_Nullable`,
+  `TestResolveTableConnection_NullableInheritedKeyFallsBackToPK`; gen
+  `TestBuildContexts_NullableInheritedCursorKey`; cli `TestValidate_NullableCursorKey` (sqlite; explicit table
+  key under both `use_pointers` settings — the `sql.Null*` case as a config error; explicit view key on a LEFT
+  JOIN outer column; inherited view key warning).
+- Coverage: `postgres_stdlib` gets `tables.categories.cursor_keys: [created_at, id]` (TIMESTAMPTZ NOT NULL →
+  `time.Time`) and `TestConnection_TimeCursorKey` in `tests/pagination_test.go` (forward and backward one row
+  at a time; data with a created_at tie and an order differing from id). A SQLite example cannot host it:
+  SQLite DATETIME resolves to `types.DateTime`, whose keyset comparison is broken (separate candidate FIX).
+- Corrected vs. the original suggestion (vet 2026-10-12): adds the `toSchemaViews` Nullable threading
+  (without it validate and gen disagree for views), and the coverage example is `postgres_stdlib` (no
+  graphql, no manifest), not a SQLite one.
+- Auto-accepted the recommended option on 2026-10-12 (`/fix` auto-accept rule): the warning names the reason
+  — "inherited default does not resolve on table|view X (column \"c\" is missing|nullable)" instead of "does
+  not match" — prototyped green, no golden or test captures the old text, CLI message only, §4.13 only
+  requires naming the entity.
+- Auto-accepted the recommended option on 2026-10-12 (`/fix` auto-accept rule): keep `cursorValueIsNull` as a
+  defence — still reachable, since §16.3 says a view column falling back to `any` "can hold NULL whatever its
+  flag"; removing it would churn every `decode<T>Cursor`; keeping it churns nothing.
+- Prototype results, run at `9b58288b` on 2026-10-12: sibling sqlite example, `zz_cur(id INTEGER PRIMARY KEY,
+  description TEXT)`, `cursor_keys: [description, id]`, rows NULL/a/b → page 1 endCursor
+  `{"description":null,"id":1}`, page 2 `sqlgen: invalid cursor`; `use_pointers: false` → endCursor
+  `{"description":{"String":"","Valid":false},"id":1}`, page 2 the same error. Gates: cmd/sqlgen `go test
+  -race ./config/... ./gen/... ./cli/...` ok; `golangci-lint` 0 issues; gofumpt clean; `make refs-check` ok;
+  `make update-golden` no changes; `make update-golden-e2e` only postgres_stdlib; `TestE2EGoldenFiles` PASS
+  for all 16 examples; postgres_stdlib `GOWORK=off go test -race ./...` ok and golangci-lint 0 issues.
+  Example sweep: `sqlgen validate` on all 12 files-sourced examples, base vs patched → exit 0 everywhere; only
+  the wording of 6 pre-existing "missing id" view warnings differs. Fail-first: explicit nullable branch
+  disabled → `ValidatePostParse() error = "", want "cursor_keys: column \"shipped_at\" in table public.orders
+  is nullable; a cursor key must be NOT NULL"` and the cli cases "validate succeeded, want …"; inherited
+  branch disabled → warnings mismatch, PK fallback mismatch, `view HasConnection = true, want false`;
+  `toSchemaViews` Nullable removed → explicit and inherited view cases fail; `cursorKeyCandidates` Nullable
+  dropped → gen test fails; coverage key reverted → `forward pages = [...c001 ...c002 ...c003], want [...c002
+  ...c003 ...c001]`; existing suite without the fix passes. Golden churn: postgres_stdlib +0/~2
+  (`models/models_gen.go` and `expected/models_gen.go`, each +4/-1: `cursorKeys: []string{"created_at", "id"}`
+  and `case "created_at"` in `decodeCategoryCursor`), plus its `sqlgen.yml` (+6) and
+  `tests/pagination_test.go` (+75). Patch: `.claude/prototypes/FIX-321.patch` (15 files, +451/-77).
+
+**References.**
+- PRD §4.13, §9.8 (Connection, cursors), §16 (view nullability).
+- Backlog lines absorbed: 2026-10-08 nullable cursor_keys (FIX-293); 2026-10-09 `sql.Null*` cursor key
+  (FIX-295); 2026-10-09 no Null/array/time cursor-key coverage (FIX-295).
+- FIX-293, FIX-295.
+
+**Resolution notes.** Landed from the vetted prototype (applied clean at `056f9fd4`, source hunks only; goldens regenerated). An explicit `cursor_keys` naming a nullable column is a config error (`cursor_keys: column "X" in table|view Y is nullable; a cursor key must be NOT NULL`); an inherited key naming one counts as unresolved, as a missing one does (table → PK fallback; PK-less table or view → `Connection` omitted, warning naming the reason). `ResolveTableConnection` / `ResolveViewConnection` take `[]SchemaColumn`; validate passes the table's columns (post-`exclude_columns` in `resolvedCursorKeys`), gen passes `cursorKeyCandidates(columns)`, and `toSchemaViews` copies `Nullable`. PRD §4.6 / table / view `cursor_keys` rows, §4.13 (two rows, fallback rules 1-5), §14.2 bullets and §8.1.7 config-test list updated; `v1.json` view `cursor_keys` description matches. Coverage: `postgres_stdlib` `categories.cursor_keys: [created_at, id]` with `TestConnection_TimeCursorKey`. Inline: moved `cursorKeyCandidates` above `columnContextNames`'s doc comment, which the prototype had split from its function. Verify inline: deleted the now-uncalled `config.columnNames`; corrected the `ResolveTableConnection` comment (a NULL-key cursor is rejected as invalid) and three PRD sentences (§4.6 Operations view row, §4.13 schema-level phase, §14.2 `generation.cursor_keys` bullet) to say "or nullable"; logged the pre-existing explicit `cursor_keys` vs `exclude_columns` disagreement to backlog.md. Golden churn matches the vet (postgres_stdlib `models/` and `expected/` `models_gen.go`, +4/-1 each). Fail-first re-run on the final code: nullable branches disabled → config, gen and cli tests fail; `toSchemaViews` Nullable dropped → cli view cases fail; `cursorKeyCandidates` Nullable dropped → gen test fails; HEAD `models_gen.go` → `TestConnection_TimeCursorKey` page-order mismatch.
+
+### FIX-320
+
+- **Status:** Resolved
+- **Severity:** tracked
+- **Origin:** phase 6, `cmd/sqlgen/gen` (`table/upsert_many.go.tmpl`)
+- **Surfaced by:** backlog sweep 2026-10-12 (backlog lines from FIX-272)
+- **Vetted:** corrected at `9b58288b` (2026-10-12)
+
+**Issue.** UpsertMany's `ON CONFLICT … DO UPDATE SET` carries every non-PK, non-conflict input column,
+including sequence columns. Measured on PG17: with a non-PK `GENERATED ALWAYS AS IDENTITY` column,
+every UpsertMany call fails, conflicting or not (`upsert zz_item batch: exec: ERROR: column
+"audit_no" can only be updated to DEFAULT (SQLSTATE 428C9)`); with a non-PK serial / BY DEFAULT
+identity, a conflict redraws it (`seq` 1 → 4, `ticket` 1 → 4) while single-row `Upsert` keeps it;
+on SQLite a rowid alias demoted by `primary_key.columns` re-keys the row (`id` 1 → 3); MySQL
+`AUTO_INCREMENT` is the same class.
+
+**Root cause.** `upsert_many.go.tmpl` builds `updateColumns := excludeColumns(columns, conflict + PK +
+tenant)` from every `CreateInputField`, per PRD §9.5 "Update columns in upsert" and §9.9 E5.
+
+**Suggested fix.**
+- Ruling (user, 2026-10-12, backlog sweep Q2): keep the §9.5 rule but also exclude every non-PK
+  auto-increment column (serial, BY DEFAULT / ALWAYS identity, MySQL `AUTO_INCREMENT`, a SQLite rowid alias
+  demoted by `primary_key.columns`) from UpsertMany's SET list. Single-row `Upsert` is unchanged (it sees set
+  vs unset, so the asymmetry is deliberate). A caller-set value for such a column applies on insert, not on
+  conflict.
+- `gen/context.go` + `context_table.go`: new `InputFieldContext.AutoIncrement`, set to `col.AutoIncrement` for
+  non-PK create-input fields (a demoted SQLite rowid alias keeps the parser's flag through
+  `applyPrimaryKeyOverrides`, so the same flag covers it).
+- `table/upsert_many.go.tmpl`: the `excludeColumns(...)` call appends every AutoIncrement field after the PK
+  and tenant columns; a 4-line generated comment appears only when the table has such a field.
+- `context_nested.go`: E5 eligibility unchanged, but a junction with a sequence column gets an accurate
+  rejection reason (the old "would reset to its default on every re-link" would become false); two related
+  comments updated.
+- Docs: PRD §9.5 "Update columns in upsert" (`docs/PRD.md:3736`) gains the UpsertMany exclusion and why
+  (428C9, redraw, re-key; a caller-set value applies on insert only; single-row Upsert unchanged); §9.9.4 E5
+  (`:7604`) text amended, rule kept; §10.3 table row amended; `guidelines/SQL.md` "Update Columns in Upsert"
+  gains a paragraph.
+- Tests: gen `TestUpsertManyTemplate_excludesNonKeySequenceColumns` (pg/mysql/sqlite + a no-sequence
+  control); `TestCreateInputFieldClassification_autoIncrementNonPKOmittable` asserts AutoIncrement; nested
+  subtest "a sequence column is refused without claiming a reset"; cli
+  `TestGeneratePipeline_DemotedRowIDAliasStaysOutOfUpsertManySet` (real SQLite generate with a demoted
+  INTEGER PRIMARY KEY); postgres example `TestSequenceRows_UpsertManyKeepsSequenceColumns` (insert, then
+  conflict on code; note updates while id/seq/ticket/audit_no stay).
+- Corrected vs. the original suggestion (vet 2026-10-12): at base `sequence_rows.UpsertMany` can never run —
+  its only target is `SequenceRowConflictPK` on a BIGSERIAL key the input never supplies ("conflict target
+  names a column the input does not supply") — so the example gains `code TEXT UNIQUE` (nullable; existing
+  Create calls unaffected) to carry the PG integration test, adding `SequenceRowConflictCode` and a `Code`
+  field to its generated code (veto option: a separate table instead); the SQLite demoted-rowid case is pinned
+  by a cli generate-pipeline test rather than a sqlite-example table (which would churn far more); the E5
+  rejection message is reworded.
+- The user confirmed on 2026-10-12 (veto check, backlog sweep Step 5): the postgres example's `sequence_rows`
+  gains `code TEXT UNIQUE` for the PG regression test (~10 golden files), not a separate table.
+- Auto-accepted the recommended option on 2026-10-12 (`/fix` auto-accept rule): E5 keeps rejecting an M2M
+  junction carrying a non-PK auto-increment column (status quo, accurate reason) rather than exempting it now
+  that the link step never resets it; prototyped green, no churn vs the alternative (no example junction has
+  one), no public surface (exempting would add nested M2M surface), E5 rule unchanged.
+- Prototype results, run at `9b58288b` on 2026-10-12 (probe copies, generator at base, `GOWORK=off`): PG17
+  `zz_always` (non-PK ALWAYS identity) → "ALWAYS fresh UpsertMany: err = upsert zz_always batch: exec: ERROR:
+  column \"audit_no\" can only be updated to DEFAULT (SQLSTATE 428C9)" (conflict likewise); `zz_redraw` →
+  "redraw conflict UpsertMany: id=1 seq 1 -> 2, ticket 1 -> 2" while single Upsert keeps them; SQLite demoted
+  rowid → "conflict UpsertMany: a.id 1 -> 3"; MySQL 8.0 non-PK AUTO_INCREMENT UNIQUE → "a.seq 1 -> 3". After
+  the fix: PG17 "ALWAYS fresh UpsertMany: ok audit_no=1", "audit_no 2 -> 2", "seq 1 -> 1, ticket 1 -> 1";
+  SQLite "a.id 1 -> 1"; MySQL "a.seq 1 -> 1". Gates: cmd/sqlgen `go test -race -short ./...` ok;
+  `TestE2EGoldenFiles` ok; `golangci-lint ./gen/... ./cli/...` 0 issues; postgres example `GOWORK=off go test
+  -race ./...` ok and golangci-lint 0 issues; `make update-golden` no unit churn; `update-golden-e2e` ok;
+  `make refs-check` ok; gofumpt clean. Fail-first: template append reverted → the three template subtests
+  fail ("output missing \"updateColumns := excludeColumns(columns, append(conflictColumns, \\\"id\\\",
+  \\\"seq\\\"))\""), the cli test fails ("…the demoted rowid alias must stay out of the update half"), and the
+  postgres example test fails with 428C9; `field.AutoIncrement` removed → "- AutoIncrement: true, +
+  AutoIncrement: false"; nested branch removed → old reset wording; existing suite without the fix passes.
+  Golden churn: template alone → postgres `models/models_gen.go` and `expected/models_gen.go` (+5/-1 each);
+  with the `code TEXT UNIQUE` regression schema → postgres ~5 files in each of `expected/` and `models/`
+  (`models_gen.go` ±118, `manifest_gen.json` 30, `manifest/sequence_row.md` 11, `sorter_gen.go` +5,
+  `cache_gen.go` 3), no new files; no other example. Patch: `.claude/prototypes/FIX-320.patch` (22 files,
+  +474/-87).
+
+**References.**
+- PRD §9.5, §9.9 (E5), §10.3.
+- Backlog lines absorbed: 2026-10-08 UpsertMany SET list with ALWAYS identity (FIX-272); 2026-10-08
+  UpsertMany SET overwrites sequence columns (FIX-272). The sibling `Update<T>Input` line is a doc fix
+  applied with the backlog sweep (PRD §10.3), per FIX-272's ruling.
+- FIX-272.
+
+**Resolution notes.** UpsertMany now leaves every non-PK auto-increment column (serial, BY DEFAULT / ALWAYS identity, MySQL `AUTO_INCREMENT`, a SQLite rowid alias demoted by `primary_key.columns`) out of its conflict clause's update half: `InputFieldContext.AutoIncrement` is set from `col.AutoIncrement` in `buildCreateInputFields`, and `table/upsert_many.go.tmpl` appends those columns to the `excludeColumns` call, with a generated comment only when the table has one. Single-row `Upsert` is unchanged. E5 still rejects an M2M junction with such a column, with an accurate reason (`context_nested.go`). PRD §9.5, §9.9.4 E5 and §10.3 and `guidelines/SQL.md` amended. The postgres example's `sequence_rows` gains `code TEXT UNIQUE` (user ruling) to carry `TestSequenceRows_UpsertManyKeepsSequenceColumns`; unit tests `TestUpsertManyTemplate_excludesNonKeySequenceColumns`, the AutoIncrement assertion in `TestCreateInputFieldClassification_autoIncrementNonPKOmittable`, the nested subtest "a sequence column is refused without claiming a reset", and cli `TestGeneratePipeline_DemotedRowIDAliasStaysOutOfUpsertManySet`. Prototype applied clean at `29c96dfc`; golden churn identical to the vet (postgres `expected/` and `models/`, 5 files each). Fail-first re-run on the final code: with the template append reverted the three template subtests and the cli test fail. Gates: `make check` ok, `make check-examples` ok. Applied from `/verify`: dropped the `E5` labels from the `context_nested.go` comments and reworded the sequence-column rejection without "v1"; shortened the new template test's comment; PRD §9.5, `guidelines/SQL.md` and the `InputFieldContext.AutoIncrement` comment now list a `nextval(…)` default, which the parser also flags `AutoIncrement`; corrected this entry's PRD line refs.
+
+### FIX-319
+
+- **Status:** Resolved
+- **Severity:** nit
+- **Origin:** phase 30, `cmd/sqlgen/gotype`
+- **Surfaced by:** backlog sweep 2026-10-12 (backlog line from FIX-271)
+- **Vetted:** corrected at `a99568ff` (2026-10-12)
+
+**Issue.** `mysqlMappings`' `bool`, `boolean`, `integer` and `integer unsigned` keys and
+`widenSumBase`'s MySQL `integer` / `integer unsigned` labels are unreachable: both MySQL sources write
+the stored form (`BOOL`/`BOOLEAN` → `tinyint(1)`, `INTEGER` → `int`), the catalog types view
+expressions as `int`/`bigint`/`double`, and every `Resolve`/`ResolveAggregate` caller passes a parser
+or introspector `Column.Type` (`gen/context_type.go:25,53` also pass composite-attribute and domain base
+types, both PostgreSQL-only). Only tests reach the keys: 7 rows of `TestMySQLTypeMappings`
+(`gotype_test.go:217,218,228,297-300`), the `"mysql integer"` row of `TestResolveAggregateSumWidening`
+(`:1752`), and the hand-built `dialectSQLTypes` fixture (`gen/api_scalar_binding_test.go:73,81`). `mysqlIntegerBases["integer"]` is NOT dead: SQLite reaches it.
+
+**Root cause.** Leftovers from before FIX-271 made both sources write the stored type.
+
+**Suggested fix.**
+- Delete `"integer"` / `"integer unsigned"` and the `"bool"` / `"boolean"` keys from `mysqlMappings`
+  (`cmd/sqlgen/gotype/gotype.go:113-139`; `tinyint(1)` and `bit(1)` stay) and the `"integer"` /
+  `"integer unsigned"` labels in `widenSumBase`'s MySQL branch (`:678-680`); keep
+  `mysqlIntegerBases["integer"]` (`:718`).
+- Drop the 7 dead-key rows of `TestMySQLTypeMappings` and the `"mysql integer"` row of
+  `TestResolveAggregateSumWidening`; in `gen/api_scalar_binding_test.go`'s `dialectSQLTypes` MySQL list drop
+  `"integer"` and replace `"bool", "boolean"` with the stored `"tinyint(1)"`. No new test: the invariant is
+  pinned by `parser/mysql/mysql_test.go:883-886` and `TestMySQLIntrospect_TypeSynonyms`.
+- Corrected from the original: it named no test edits, but 8 gotype rows pin the dead keys and the scalar-
+  binding fixture would otherwise exercise only the unknown-type fallback.
+- Prototype results, run at `a99568ff` on 2026-10-12: unreachability measured with a throwaway hook in
+  `builtinResolve` / `widenSumBase` logging hits on the four keys → `go test ./gotype/...` 8 hits, all tests
+  (`gotype_test.go:316`, `:1767`); every other cmd/sqlgen package, not short → 24 hits, all
+  `gen/api_scalar_binding_test.go:165,245`; `TestE2E*/^(mysql|introspect_mysql|tenancy_mysql)$` (goldens and
+  DatabaseTwin) → 0 hits; a throwaway MySQL schema (`INTEGER` PK, `BOOL`, `BOOLEAN`, `INTEGER UNSIGNED`,
+  `INTEGER(11) UNSIGNED ZEROFILL`, view with SUM/MAX/CAST/`n + 1`) under `files` and under `database` (live
+  MySQL 8.0) → 0 hits. `mysqlIntegerBases["integer"]` measured live: removing it flips SQLite
+  `Resolve("integer unsigned")` from `string` to `int64` with `go test ./gotype/` still green (kept). Gates:
+  `go test -race -count=1 ./gotype/... ./gen/...` ok; `go test -count=1 -timeout=30m ./...` (cmd/sqlgen, not
+  short, Docker) all ok incl. every example's E2E goldens; golangci-lint 0 issues; gofumpt clean. Fail-first:
+  the gotype.go deletion with the original tests → `TestMySQLTypeMappings/integer`: "Resolve("integer",
+  nullable=false) mismatch (-want +got)" (int32 → string) plus 6 more, `TestResolveAggregateSumWidening/
+  mysql_integer`: "ResolveAggregate(SUM, "integer", nullable=false) [mysql] = "string", want "float64""; existing
+  suite passes at base. Golden churn none. Overlap: FIX-322 touches gotype.go / gotype_test.go at disjoint
+  hunks; applies cleanly in either order. Patch: `.claude/prototypes/FIX-319.patch` (3 files, +7/-15).
+
+**References.**
+- PRD §7.2 (`docs/PRD.md:1794` already says these keys match no MySQL column).
+- Backlog line absorbed: 2026-10-08 unreachable mysqlMappings keys (FIX-271).
+- FIX-271.
+
+**Resolution notes.** Deleted the unreachable `bool`, `boolean`, `integer` and `integer unsigned` keys from `mysqlMappings` and the `integer` / `integer unsigned` labels from `widenSumBase`'s MySQL branch in `cmd/sqlgen/gotype/gotype.go`; `tinyint(1)`, `bit(1)` and `mysqlIntegerBases["integer"]` (reached by SQLite) stay. Dropped the 7 dead-key rows of `TestMySQLTypeMappings` and the `"mysql integer"` row of `TestResolveAggregateSumWidening`, and moved `gen/api_scalar_binding_test.go`'s MySQL `dialectSQLTypes` list to stored forms (`integer` dropped, `bool`/`boolean` → `tinyint(1)`). Prototype fresh at `ebc61852`, applied clean. Fail-first: the gotype.go change with the original tests → 7 `TestMySQLTypeMappings` mismatches plus `TestResolveAggregateSumWidening/mysql_integer` (`= "string", want "float64"`). Gates: `make check` ok; `make check-examples` ok; `make update-golden-e2e` and `make update-golden` → golden churn none, as vetted. Inline from `/verify`: `mysqlIntegerBases`' comment now says it also holds SQLite's `integer`, and the References PRD line ref is corrected (`:1783` → `:1794`).
+
+### FIX-318
+
+- **Status:** Resolved
+- **Severity:** tracked
+- **Origin:** phase 30, `parser/introspect` (`mysql.go` `mysqlDefault`)
+- **Surfaced by:** backlog sweep 2026-10-12 (backlog line from 30.5)
+- **Vetted:** ready at `9b58288b` (2026-10-12)
+
+**Issue.** On MySQL before 8.0.13 a `CURRENT_TIMESTAMP` column default introspects as the quoted
+literal `'CURRENT_TIMESTAMP'`. Measured on `mysql:8.0.12`: `a timestamp DEFAULT CURRENT_TIMESTAMP`,
+`b datetime(3) DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE …` → `'CURRENT_TIMESTAMP'`, `'CURRENT_TIMESTAMP(3)'`
+(8.0.46: `current_timestamp()`, `current_timestamp(3)`); manifest `default_kind` `literal` instead of
+`function`. No error. PRD §6.3 sets no minimum MySQL version.
+
+**Root cause.** `mysqlDefault` (`parser/introspect/mysql.go:769`) relies only on EXTRA's
+`DEFAULT_GENERATED`, which MySQL adds in 8.0.13.
+
+**Suggested fix.**
+- Auto-accepted the recommended option on 2026-10-12 (`/fix` auto-accept rule; user confirmed no
+  veto): with no `DEFAULT_GENERATED`, a datetime/timestamp column whose default text matches
+  `^current_timestamp(\(\d\))?$` (case-insensitive) is the expression, because a temporal column can
+  never hold that literal text, so the rule is exact without a version probe; a varchar
+  `'CURRENT_TIMESTAMP'` literal stays quoted; no churn.
+- Unit test on `mysqlDefault`; optional integration check on `mysql:8.0.12` (amd64 emulation).
+- Prototype results, run at `9b58288b` on 2026-10-12: `NewMySQLIntrospector` probe against mysql:8.0.12
+  (amd64) and 8.0.46. Catalog on 8.0.12 (COLUMN_DEFAULT | EXTRA): `timestamp DEFAULT CURRENT_TIMESTAMP` →
+  `CURRENT_TIMESTAMP | ""`; `datetime(3) … ON UPDATE CURRENT_TIMESTAMP(3)` → `CURRENT_TIMESTAMP(3) | "on
+  update CURRENT_TIMESTAMP(3)"`; NOW(), LOCALTIMESTAMP, LOCALTIME, lowercase and `CURRENT_TIMESTAMP()` all
+  store `CURRENT_TIMESTAMP`; varchar `'CURRENT_TIMESTAMP'` → `CURRENT_TIMESTAMP | ""`. 8.0.46 adds
+  `DEFAULT_GENERATED` on the temporal rows only. Introspected at base on 8.0.12: `'CURRENT_TIMESTAMP'`,
+  `'CURRENT_TIMESTAMP(3)'`, `'CURRENT_TIMESTAMP(6)'`, `'CURRENT_TIMESTAMP(2)'` vs 8.0.46 `current_timestamp()`,
+  `current_timestamp(3)`…; varchar stays quoted on both. Exactness: datetime `DEFAULT 'CURRENT_TIMESTAMP'`,
+  timestamp `DEFAULT 'current_timestamp(3)'`, `date`/`time DEFAULT CURRENT_TIMESTAMP` all fail "ERROR 1067
+  (42000): Invalid default value" even with `sql_mode=''`, so the datetime/timestamp restriction is exact.
+  Prototype: `mysqlCurrentTimestamp = regexp.MustCompile(`(?i)^current_timestamp(\(\d\))?$`)`; on the
+  non-DEFAULT_GENERATED path a datetime/timestamp match falls through to `mysql.NormalizeExpr` (the 8.0.13+
+  path); `TestMySQLDefault` gains 3 cases. With the patch the 8.0.12 probe matches 8.0.46 on all 14 columns.
+  Gates: gofumpt clean; parser `go test -race ./introspect/...` ok; `golangci-lint ./introspect/...` 0 issues.
+  Fail-first: guard removed → `mysqlDefault({String:CURRENT_TIMESTAMP Valid:true}, "", "timestamp") =
+  "'CURRENT_TIMESTAMP'", want "current_timestamp()"`; type restriction removed → `…"varchar(20)") =
+  "current_timestamp()", want "'CURRENT_TIMESTAMP'"`; existing suite without the fix passes. Golden churn:
+  none. Patch: `.claude/prototypes/FIX-318.patch` (2 files, +16/-2).
+
+**References.**
+- PRD §6.1, §6.3 (footnote 1 version notes), §30.7.
+- Backlog line absorbed: 2026-10-05 pre-8.0.13 DEFAULT_GENERATED (30.5).
+
+**Resolution notes.** `mysqlDefault` (`parser/introspect/mysql.go`) now reads a datetime or timestamp column's default that matches `(?i)^current_timestamp(\(\d\))?$` as an expression when EXTRA lacks `DEFAULT_GENERATED` (MySQL before 8.0.13), so it normalizes to `current_timestamp()` / `current_timestamp(n)` as on 8.0.13+; a string column's `CURRENT_TIMESTAMP` text stays a quoted literal. Prototype applied clean at `a0bad64f`. `TestMySQLDefault` gains 3 cases (timestamp and datetime(3) without `DEFAULT_GENERATED`, varchar `current_timestamp(3)` text). Fail-first re-run on the final code: guard removed → the two temporal cases fail (`= "'CURRENT_TIMESTAMP'", want "current_timestamp()"`); type restriction removed → the two string-column cases fail (`= "current_timestamp()", want "'CURRENT_TIMESTAMP'"`; `= "current_timestamp(3)", want "'current_timestamp(3)'"`). Gates: `make check` ok, `make check-examples` ok; golden churn none (matches vet). Verify doc corrections: Root cause line ref `mysql.go:673` → `:769`; `phase-30.md` backlog line marked resolved.
+
+### FIX-317
+
+- **Status:** Resolved
+- **Severity:** tracked
+- **Origin:** phase 6, `parser/mysql` (`view_sql.go` `ParseViewSQL`)
+- **Surfaced by:** backlog sweep 2026-10-12 (backlog line from /verify 30.8b)
+- **Vetted:** ready at `9b58288b` (2026-10-12)
+
+**Issue.** A MySQL view annotation file that qualifies its view (`CREATE VIEW app.v …`) never overlays
+the database's `v`. Measured with a copy of `introspect_mysql` (DB `l61`, view file `CREATE VIEW
+l61.project_summaries`): `source: both` → "generated 11 files (4 tables, 2 views)" and `source:
+database` → "generated 10 files (4 tables, 2 views)", with both `TableProjectSummaries` and `TableL61ProjectSummaries`; the `@pk` annotation never
+reaches the database view (`projectSummaryClient.Get` disappears). Under `files` the view's
+`hook.TableName` is qualified.
+
+**Root cause.** `ParseViewSQL` (`parser/mysql/view_sql.go:36-39`) keeps the qualifier as `Schema`, while
+introspected MySQL views have no schema, so `parseViewFiles` / `MergeViewAnnotations` keys (`app.v` vs
+`v`) never match. PRD §5.5: MySQL names are always bare.
+
+**Suggested fix.**
+- Drop the qualifier in `ParseViewSQL` (Schema always `""`, also in `ViewQueryError`), as the MySQL
+  DDL parser does for tables.
+- Update `TestParseViewSQL_CompoundSelectRejected` (expects Schema `app`); fail-first test for the
+  merge keying.
+- Same root cause and site (vet 2026-10-12): a qualified view file whose query is compound (`CREATE VIEW
+  app.v AS SELECT … UNION SELECT …`) fails hard under database and both (`parsing view SQL in …: CREATE VIEW
+  query is not a simple SELECT`), because the `ViewQueryError` carries Schema "app" and
+  `inDatabase["app.project_ids"]` misses; dropping the qualifier fixes it too.
+- Prototype results, run at `9b58288b` on 2026-10-12: sibling copy of introspect_mysql with `CREATE VIEW
+  app.project_summaries`, mysql:8.0 DB `app` → both: "generated 11 files (4 tables, 2 views)",
+  `TableProjectSummaries = "project_summaries"` and `TableAppProjectSummaries = "app.project_summaries"`,
+  only `appProjectSummaryClient.Get`; database: "generated 10 files (4 tables, 2 views)", same; files: `hook.TableName
+  = "app.project_summaries"`, `sql.Table{Schema: "app", …}`, manifest `"schema": "app"`. Prototype:
+  `ParseViewSQL` drops the qualifier (Schema "" in `ViewSQL` and both `ViewQueryError` returns);
+  `TestParseViewSQL_CompoundSelectRejected` expects a bare `ViewQueryError`; new
+  `TestParseViewSQL_QualifiedNameIsBare` (bare, `app.v`, backticked with a qualified FROM) and
+  `TestAddViewFiles_MySQLQualifiedView` (cli; simple overlay, compound overlay, files). With the fix: both →
+  "generated 11 files (4 tables, 1 views)", `projectSummaryClient.Get` back, output byte-identical to
+  introspect_mysql/expected except `generated_at` and the DB name in view source; database → 10 files, 1
+  view; files all bare. Gates: parser `go test -race ./mysql/... ./introspect/... .` ok; `golangci-lint
+  ./mysql/...` 0 issues; cmd/sqlgen `go test -race ./cli/...` ok, `golangci-lint ./cli/...` 0 issues;
+  `TestE2EGoldenFiles/(mysql|introspect_mysql|tenancy_mysql)$` pass; gofumpt clean. Fail-first:
+  view_sql.go reverted → `ParseViewSQL(…) = "app"."v", want the bare view v`; `error =
+  &parser.ViewQueryError{Schema:"app", …}, want … the bare view v`; `TestAddViewFiles_MySQLQualifiedView`
+  cases fail (`+ "app.project_ids.id pk=true"`; compound "CREATE VIEW query is not a simple SELECT"); existing
+  suite without the fix passes. Golden churn: none. Patch: `.claude/prototypes/FIX-317.patch` (3 files,
+  +87/-19).
+
+**References.**
+- PRD §5.5, §16.2.
+- Backlog line absorbed: 2026-10-07 qualified MySQL view file (/verify 30.8b).
+
+**Resolution notes.** `ParseViewSQL` (`parser/mysql/view_sql.go`) drops the database qualifier from the view name: `ViewSQL.Schema` and both `ViewQueryError` returns are always bare, as the MySQL DDL parser does for tables (PRD §5.5). A qualified view file now overlays the database view of the bare name under `both` and `database` (PRD §16.2), including a compound query, and generates the bare name under `files`. Prototype applied clean (fresh at HEAD); comments trimmed. Tests: `TestParseViewSQL_CompoundSelectRejected` expects a bare `ViewQueryError`; new `TestParseViewSQL_QualifiedNameIsBare` (parser/mysql) and `TestAddViewFiles_MySQLQualifiedView` (cmd/sqlgen/cli: simple overlay, compound overlay, files). Fail-first with `view_sql.go` reverted: all three fail (`= "app"."v", want the bare view v`; `+ "app.project_ids.id pk=true"`; `CREATE VIEW query is not a simple SELECT`). Gates: `make check` ok; `make update-golden-e2e` + `make update-golden` → no golden churn (matches vet); `make check-examples` ok. Doc correction: PRD §16.1 "View name" now limits schema-qualified view names to PostgreSQL and says a MySQL/SQLite qualifier is dropped, the name bare.
+
+### FIX-316
+
+- **Status:** Resolved
+- **Severity:** nit
+- **Origin:** phase 30, `parser/introspect` (`views.go` `viewFallbackWarning`)
+- **Surfaced by:** backlog sweep 2026-10-12 (backlog line from FIX-280)
+- **Vetted:** ready at `9b58288b` (2026-10-12)
+
+**Issue.** The database-source fallback warning for a view repeats advice meant for a view file the
+user writes. Measured (modernc): "view v_star: columns come from the catalog, since its definition
+cannot be read as a view file: view v_star selects *, whose columns the view parser cannot list; name
+each column", and `v_expr` "…; name it with AS". The view may belong to someone else's database.
+
+**Root cause.** `viewFallbackWarning` (`parser/introspect/views.go:184`) wraps the
+`{postgres,mysql,sqlite}/view_sql.go` errors, which carry the advice in their text.
+
+**Suggested fix.**
+- Return a typed view-parse error carrying reason and advice separately; the view-file path prints
+  both, the introspection warning prints only the reason.
+- Update the warning tests on all three dialects.
+- Scope note (vet 2026-10-12): only SQLite introspection reaches the defect. PG 16 and MySQL 8 catalogs expand
+  `*` and name every expression (pg_views stores `SELECT id, a FROM t` and `(a || 'x'::text) AS "?column?"`;
+  MySQL stores `` `d`.`t`.`id` AS `id` `` and ``concat(`d`.`t`.`a`,'x') AS `CONCAT(a, 'x')` ``), which both view
+  parsers read without error; the PG/MySQL changes are for uniformity and unit-tested only. Same root cause and
+  site: SQLite's RIGHT/FULL join error is split the same way.
+- Inline for the implementer (same site): the warning names the view twice ("view v_star: … view v_star
+  selects *, …") because each dialect reason starts with "view %s"; trim the repetition in `viewFallbackWarning`.
+- Prototype: `parser/view.go` gains `ViewParseError{Reason, Advice string}` (`Error()` = Reason + "; " + Advice, so
+  the view-file path prints the same text); the star and unaliased-column errors of all three `view_sql.go` and
+  SQLite's RIGHT/FULL error return `*parser.ViewParseError` (still wrapped in `ViewQueryError`);
+  `viewFallbackWarning` trims "; "+Advice when `errors.AsType` finds one (TrimSuffix keeps any wrap prefix).
+  Tests: `parser/introspect/views_test.go` `TestViewFallbackWarning` (sqlite star / `t.*` / expr / RIGHT join /
+  compound passthrough; pg star / expr; mysql star / expr); `TestSQLiteIntrospect_ViewUnnamedLikeEscape` want
+  drops "; name it with AS"; cli `TestParseSchema_ViewColumnNames` pins that the view-file path keeps the advice.
+- Prototype results, run at `9b58288b` on 2026-10-12: modernc probe via `introspect.NewSQLiteIntrospector()` →
+  "view v_star: columns come from the catalog, since its definition cannot be read as a view file: view v_star
+  selects *, whose columns the view parser cannot list; name each column", likewise v_expr ("; name it with AS"),
+  v_tstar, v_right ("; RIGHT and FULL joins are not supported"); with the prototype each line ends before the
+  advice. Gates: parser `go test -race -short ./...` ok; `golangci-lint` 0 issues; gofumpt clean; cli
+  `-run 'TestParseSchema_View|TestView'` ok (the testcontainers integration test was not run; its new want was
+  confirmed byte-for-byte by the probe). Fail-first: `viewFallbackWarning` reverted → 8 of 9 subtests fail (e.g.
+  `= "…cannot list; name each column", want "…cannot list"`); sqlite view_sql.go reverted → 4 sqlite subtests
+  fail; pg + mysql reverted → their 4 fail; existing suite without the fix passes. Golden churn: none. Patch:
+  `.claude/prototypes/FIX-316.patch` (8 files, +97/-12).
+
+**References.**
+- PRD §16.2 ("a warning names the view").
+- Backlog line absorbed: 2026-10-08 view fallback warning wording (FIX-280).
+
+**Resolution notes.** `parser.ViewParseError{Reason, Advice}` (`parser/view.go`) carries the view parser's
+reason and its advice to a view file's author separately; `Error()` joins them with "; ", so a view file's error
+reads as before. The star and unaliased-column errors of all three `view_sql.go` and SQLite's RIGHT/FULL join error
+return it (still wrapped in `ViewQueryError`). `viewFallbackWarning` (`parser/introspect/views.go`) drops the advice
+and, per the inline note, calls the view "it" when the reason names it again (prefix `view <ViewQueryError.Name> `),
+so the modernc warning now reads "view v_star: columns come from the catalog, since its definition cannot be read
+as a view file: it selects *, whose columns the view parser cannot list". Prototype applied with `--3way`: FIX-300's
+rqlite/sql pin moved the SQLite RIGHT/FULL check from the alias heuristic to the `JoinClause` operator, so that error
+(text "CREATE VIEW uses a RIGHT or FULL join; RIGHT and FULL joins are not supported", unchanged for view files) is
+the one split; `TestSQLiteIntrospect_ViewUnnamedLikeEscape` keeps HEAD's rendered `"a" LIKE 'x%' ESCAPE '\'`
+expression (FIX-297/FIX-314) with the advice dropped and "it". Tests: new `parser/introspect/views_test.go`
+`TestViewFallbackWarning` (9 rows across three dialects; the PostgreSQL rows use production's quoted, schema-qualified
+DDL and warning name `public.v`); cli `TestParseSchema_ViewColumnNames` pins the view-file advice. Fail-first:
+`views.go` reverted → 8 of 9 subtests fail (compound passthrough passes). Gates: `make check` ok, `make
+check-examples` ok, integration test run against containers ok. Golden churn: none (matches vet).
+
+
+### FIX-315
+
+- **Status:** Resolved
+- **Severity:** tracked
+- **Origin:** phase 4, `parser/sqlite` (`parseTableConstraint`)
+- **Surfaced by:** backlog sweep 2026-10-12 (backlog line from FIX-274)
+- **Vetted:** corrected at `9b58288b` (2026-10-12)
+
+**Issue.** A table-level `UNIQUE` with an expression part, which SQLite rejects ("expressions
+prohibited in PRIMARY KEY and UNIQUE constraints"), parses under `files` as a `UNIQUE` with no
+columns. Measured: `CREATE TABLE u (a TEXT, UNIQUE (lower(a)))` and `UNIQUE (a, a + 1)` → err=nil,
+`UNIQUE Columns: []`, which generates `UConflict UConflictTarget = iota // UNIQUE ()` / `UConflict: {},`
+(`models/models_gen.go:864/870`).
+
+**Root cause.** `parseTableConstraint` (`parser/sqlite/sqlite.go:632`) discards
+`indexedColumnNames`' ok flag (`cols, _ := indexedColumnNames(ct.Columns)` at `:649`).
+
+**Suggested fix.**
+- `parseTableConstraint` UNIQUE case: when `indexedColumnNames` reports !ok, return "UNIQUE has an
+  expression part: expressions prohibited in UNIQUE" (mirrors FIX-300's PK message; wrapped "parsing
+  test.sql: table t: UNIQUE has an expression part: …"). The PRIMARY KEY half is in FIX-300.
+- `indexedColumnNames` takes a `*rsql.StringLit` (after unwrapping COLLATE and parens) as the column it
+  names, as SQLite's `sqlite3StringToId` does: modernc accepts `UNIQUE ('a')`, `UNIQUE (('a'))`, `UNIQUE ('a'
+  COLLATE NOCASE)`, `PRIMARY KEY ('a')`, `CREATE INDEX i ON u ('a')` and `pragma_index_info` reports column
+  `a`. This also fixes the `CREATE INDEX … ('a')` skip and, once FIX-300 lands, `PRIMARY KEY ('a')`.
+- Tests: `TestCreateTable_UniqueExpression` (5 DDLs, exact error); `TestIndexedColumnExpressions` cases
+  "string literal" and "string literal UNIQUE constraint column"; `TestSQLiteIntrospect_ExpressionIndexes`
+  gains table `v` (`UNIQUE ('a' COLLATE NOCASE, b)` + `CREATE INDEX v_a ON v ('a')`) with parity.
+- Corrected vs. the original suggestion (vet 2026-10-12): applied as written the new error also rejects a
+  string-literal part SQLite accepts — `files` fails and introspecting a valid database fails ("introspect
+  sqlite table v: parsing stored CREATE TABLE: … UNIQUE has an expression part"); at base that database
+  already fails ("stored CREATE TABLE declares no UNIQUE over (a, b)") and `CREATE INDEX i ON u ('a')`
+  introspects as `INDEX i:["a"]` while `files` drops it. Same fix site (`indexedColumnNames`' part
+  classification), so the literal maps to its column.
+- Auto-accepted the recommended option on 2026-10-12 (`/fix` auto-accept rule): a string-literal index part
+  names its column rather than erroring; prototyped green, no churn either way, no public surface
+  (unexported func), reverses no PRD text (§30.7 excludes expression parts, and SQLite does not treat `'a'`
+  as one).
+- Composition with FIX-300: plain `git apply --check` fails at `parser/sqlite/sqlite.go:582` (FIX-300
+  rewrites the adjacent PK case); `git apply --3way` applies cleanly; combined tree gofumpt clean and parser
+  `go test -race ./...` ok; `PRIMARY KEY ('a')` → `PRIMARY KEY:["a"]` (modernc `sqlite_autoindex_u_1:a`).
+- Prototype results, run at `9b58288b` on 2026-10-12: modernc 3.51.3 vs parser → `UNIQUE (lower(a))`, `(a, a
+  + 1)`, `(1)`, `(+a)`, `(NULL)`, `(x'61')` → "expressions prohibited in PRIMARY KEY and UNIQUE constraints",
+  parser `err=<nil> cons=UNIQUE:[]`; `UNIQUE (u.a)` → 'the "." operator prohibited in index expressions'.
+  Generation at base exits 0 with the `UNIQUE ()` conflict target; with the patch exit 3 "Schema error:
+  … table u: UNIQUE has an expression part: expressions prohibited in UNIQUE". Gates: parser `go test -race
+  -count=1 ./...` ok; `golangci-lint ./sqlite/... ./introspect/...` 0 issues; gofumpt clean; `make
+  update-golden` / `update-golden-e2e` no churn. Fail-first: check reverted → `error = <nil>, want "…UNIQUE
+  has an expression part…"` (all 5); StringLit case removed → `string_literal` `- {{Name: "t_a", …}} + nil`,
+  the UNIQUE literal case and `TestSQLiteIntrospect_ExpressionIndexes` fail with the new error; base
+  sqlite.go → integration "stored CREATE TABLE declares no UNIQUE over (a, b)"; existing suite without the
+  fix passes. Golden churn: none. Patch: `.claude/prototypes/FIX-315.patch` (3 files, +61/-13).
+
+**References.**
+- PRD §5.2, §6.1.
+- Backlog line absorbed: 2026-10-08 expression UNIQUE parses as empty UNIQUE (FIX-274).
+- FIX-274, FIX-300.
+
+**Resolution notes.** `parseTableConstraint`'s UNIQUE case (`parser/sqlite/sqlite.go`) now checks `indexedColumnNames`' ok flag and returns "UNIQUE has an expression part: expressions prohibited in UNIQUE", mirroring the PRIMARY KEY case FIX-300 added; `indexedColumnNames` reads a `*rsql.StringLit` part (after COLLATE and parentheses are unwrapped) as the column it names, as SQLite does, so `UNIQUE ('a' COLLATE NOCASE, b)`, `PRIMARY KEY ('a')` and `CREATE INDEX v_a ON v ('a')` name column `a` under `files` and introspection alike. Prototype applied with `git apply --3way` (plain apply failed at `sqlite.go:582` against FIX-300's PK rewrite, as the entry's overlap note said). Tests: `TestCreateTable_UniqueExpression` (6 DDLs, exact error); `TestIndexedColumnExpressions` cases "string literal", "string literal UNIQUE constraint column" and, added inline, "string literal PRIMARY KEY column"; `TestSQLiteIntrospect_ExpressionIndexes` table `v` with parity. Fail-first re-run on the final code: check disabled → all 5 `error = <nil>`; StringLit case removed → the 3 literal cases fail and introspection fails with the new error. Inline from the /verify reviewer (measured, modernc vs parser): SQLite's `sqlite3StringToId` converts a literal only at the top or under one COLLATE in UNIQUE and CREATE INDEX (`sqlite3CreateIndex`), but under any number in a PRIMARY KEY (`sqlite3AddPrimaryKey` skips every COLLATE first). So `CREATE INDEX i ON u (('a' COLLATE NOCASE) COLLATE BINARY)` is an expression index the introspector skips, but `files` read it as `INDEX i:["a"]`. `indexedColumnNames` now takes a `primaryKey` flag and treats a literal under two or more COLLATEs as an expression outside a PRIMARY KEY; new cases in `TestIndexedColumnExpressions` (PK and index), `TestCreateTable_UniqueExpression` (sixth DDL), and `TestSQLiteIntrospect_ExpressionIndexes` (`v_a_collated` skipped, table `w` PK `[a]`, parity), each fail-first confirmed. Root cause line refs updated to HEAD (`:632`, `:649`). Gates: `make check` ok; parser `go test -race -count=1 ./...` ok; `make update-golden` / `update-golden-e2e` no churn (matches vet); `make check-examples` ok.
+
+### FIX-314
+
+- **Status:** Resolved
+- **Severity:** tracked
+- **Origin:** phase 4, `parser/sqlite` (`exprString`, filter qualifier)
+- **Surfaced by:** backlog sweep 2026-10-12 (backlog line from FIX-269)
+- **Vetted:** corrected at `9b58288b` + FIX-300 (2026-10-12)
+
+**Issue.** rqlite/sql renders `CURRENT_TIMESTAMP` / `CURRENT_DATE` / `CURRENT_TIME` in an expression
+as a quoted identifier, which SQLite reads as a string literal or a missing column. Measured: CHECK
+`(y < CURRENT_TIMESTAMP)` → `"y" < "CURRENT_TIMESTAMP"` (manifest CHECK text on both sources); a
+relationship `filter: expires_at > CURRENT_TIMESTAMP` qualifies to `"t"."expires_at" >
+"t"."CURRENT_TIMESTAMP"`, which sqlite3 rejects with "no such column: t.CURRENT_TIMESTAMP". Only the bare
+`DEFAULT CURRENT_TIMESTAMP` renders correctly (rqlite parses it as a literal): `DEFAULT (CURRENT_TIMESTAMP)`
+→ files `"CURRENT_TIMESTAMP"`, database `CURRENT_TIMESTAMP`, so CreateMany/UpsertMany inline
+`sql.NewDefaultExpr("\"CURRENT_TIMESTAMP\"")` and store the literal text, and the manifest reports
+`default_kind: literal` (vet 2026-10-12). Still present on rqlite `4555bb7`. (The backlog line's partial-index example is
+illegal SQLite: "non-deterministic functions prohibited in partial index WHERE clauses".)
+
+**Root cause.** rqlite parses these keywords in expression position as a bare `*rsql.Ident`, which
+`String()` quotes.
+
+**Suggested fix.**
+- `parser/sqlite/sqlite.go`: `exprString` renders `timeKeywords(e)`; `timeKeyword` turns an unquoted
+  `*rsql.Ident` named CURRENT_TIME / CURRENT_DATE / CURRENT_TIMESTAMP (ASCII fold) into
+  `&rsql.TimestampLit{Value: <as written>}`. A `timeKeywordVisitor` (rsql.Walk) replaces operands from their
+  parent (BinaryExpr X/Y/EscapeExpr, Unary, Paren, Range, ExprList, Call args, CaseExpr/CaseBlock, Cast,
+  Collate, Null), because Walk asserts `*Ident` in name slots and replacing the ident itself would panic.
+  Quoted and backtick identifiers stay names.
+- `parser/sqlite/filter_qualifier.go`: `qualifyExpr` returns the keyword literal instead of qualifying it.
+- Tests: `TestParse_TimeKeywords` (column, table and added-column CHECK; nested BETWEEN / call / CASE inside IS
+  NOT NULL; parenthesized DEFAULT; DEFAULT function argument; a quoted name staying quoted); two
+  `TestQualifyFilterIdentifiers` cases; `TestQualifyFilterIdentifiers_TimeKeywordRuns` (modernc, skipped
+  under -short); `TestSQLiteIntrospect_Checks` gets `due > CURRENT_DATE`; `TestSQLiteIntrospect_Defaults` gets
+  `pts DEFAULT (CURRENT_TIMESTAMP)` and `day DEFAULT (date(current_date, '+1 day'))`.
+- Corrected vs. the original suggestion (vet 2026-10-12): widened to DEFAULT expressions (parenthesized and
+  function arguments) — same root cause and site, measured wrong data and a parity break; the
+  generated-column test is replaced because SQLite rejects CURRENT_* there ("non-deterministic functions
+  prohibited in generated columns"); the visitor also covers `EscapeExpr` on the new rqlite. Lands strictly
+  after FIX-300: the patch does not apply to bare `9b58288b` (test hunks anchor on FIX-300's tests, and
+  `BinaryExpr.EscapeExpr` exists only in rqlite 4555bb7). On `9b58288b`'s rqlite (`1b2524a`), Walk does not descend
+  into `*Null`, so a CASE inside IS NOT NULL would stay quoted; `4555bb7` does.
+- Prototype results, run at `9b58288b` + FIX-300 on 2026-10-12: parser probe at base → CHECK `"y" <
+  "CURRENT_TIMESTAMP"`, `DEFAULT (CURRENT_TIMESTAMP)` → `"CURRENT_TIMESTAMP"`, filter `"t"."expires_at" >
+  "t"."CURRENT_TIMESTAMP"`. modernc: qualified `"t"."expires_at" > CURRENT_TIMESTAMP` runs (1 row); `>
+  "t"."CURRENT_TIMESTAMP"` → "no such column: t.CURRENT_TIMESTAMP"; unquoted keyword wins even over a column
+  of that name. E2E (sibling sqlite example, o2m and o2o filter `created_at <= CURRENT_TIMESTAMP`, `clocks.at
+  DEFAULT (CURRENT_TIMESTAMP)`): o2m "get assets: query: SQL logic error: no such column:
+  tgt0.CURRENT_TIMESTAMP (1)"; o2o "no such column: p.CURRENT_TIMESTAMP"; `Clocks().CreateMany` stored
+  `at="CURRENT_TIMESTAMP"`; with the fix all correct and manifest `default_kind: function`. Gates: parser `go
+  test -race -count=1 ./...` ok (Docker integration); `golangci-lint` 0 issues; gofumpt clean; cmd/sqlgen
+  `go test -short -race ./...` ok; `TestE2EGoldenFiles` ok. Fail-first (on the FIX-300 stack): `exprString`
+  reverted → `CHECK = "\"y\" < \"CURRENT_TIMESTAMP\"", want "\"y\" < CURRENT_TIMESTAMP"`, `y Default =
+  "\"CURRENT_TIMESTAMP\"", want "CURRENT_TIMESTAMP"`, and the two introspect tests fail parity; `qualifyExpr`
+  check removed → "no such column: d.CURRENT_TIMESTAMP (1)"; existing suite without the fix passes. Golden
+  churn: none. Patch: `.claude/prototypes/FIX-314.patch` (5 files, +207/-2; applies on top of FIX-300).
+
+**References.**
+- PRD §6.1, §13.7.4.
+- Backlog line absorbed: 2026-10-07 CURRENT_TIMESTAMP rendered as identifier (FIX-269).
+- FIX-300.
+
+**Resolution notes.** Applied the vetted prototype (`git apply --3way`; every hunk applied, sqlite.go's at an offset past FIX-301..309). One landing adjustment: `timeKeyword` folds with `parser.FoldASCII`, since FIX-301 removed the package-local `foldASCII`. `exprString` renders `timeKeywords(e)`, which turns an unquoted `*rsql.Ident` named CURRENT_TIME / CURRENT_DATE / CURRENT_TIMESTAMP into a `*rsql.TimestampLit` through `timeKeywordVisitor`; `qualifyExpr` returns the keyword instead of qualifying it. Inline, the same root cause where FIX-309's `columnRenamer` meets it: renaming a column named `"current_date"` rewrote the keyword in `CHECK (x > CURRENT_DATE)` to `"x" > "d"`, where sqlite3 keeps `x > CURRENT_DATE`; the renamer now skips an identifier `timeKeyword` reads as the keyword (new `TestAlterTableRenameColumn` case, fail-first). Tests as the Suggested fix lists. Fail-first on HEAD: `exprString` reverted → `CHECK = "\"y\" < \"CURRENT_TIMESTAMP\""` and 4 more `TestParse_TimeKeywords` cases; `qualifyExpr` check removed → "no such column: d.CURRENT_TIMESTAMP (1)"; renamer skip removed → the rename case fails. Gates: `make check` ok; parser sqlite + introspect (Docker) ok; `make check-examples` ok. Golden churn: none, as vetted.
+
+### FIX-313
+
+- **Status:** Resolved
+- **Severity:** tracked
+- **Origin:** phase 30, `parser/introspect` (`postgres.go` domains)
+- **Surfaced by:** backlog sweep 2026-10-12 (backlog line from 30.4)
+- **Vetted:** ready at `9b58288b` (2026-10-12)
+
+**Issue.** With `introspect.schemas` excluding the schema that holds a domain, a table CHECK over a
+column of that domain keeps the catalog's cast. Measured on PG17: `CREATE DOMAIN dom.pos …; t(x
+dom.pos, CHECK (x > 5))`, introspected with `Schemas=[public]` → files `x > 5`, database `x::int > 5`.
+The domain-constraint query has no `ORDER BY`, so domain CHECK order is not pinned. Vet 2026-10-12:
+reproduced on PG16 and PG17 — `ALTER DOMAIN d RENAME CONSTRAINT a TO a2` rewrites a's row after b's, and
+the unordered scan returns [b, a2] where oid order is [a2, b]; also drop p, `VACUUM pg_constraint`, `ADD
+CONSTRAINT s` → scan [s, q, r], oid order [q, r, s]. The same filtered domain list also reaches
+`introspectColumns` (generated and default expressions: `y GENERATED AS (x*2)` → `x::int * 2`) and
+`DomainImplicitCasts` (`app.small AS dom.pos CHECK (VALUE < 100)` → `value::int < 100`).
+
+**Root cause.** `introspectDomainTypes` (`parser/introspect/postgres.go`) keeps only domains in
+`introspect.schemas`, and `TableImplicitCasts` sees only those; the `WHERE contypid=$1 AND
+contype='c'` query has no `ORDER BY`.
+
+**Suggested fix.**
+- Keep the unfiltered domain list for `TableImplicitCasts`; filter only what is appended to
+  `schema.DomainTypes`.
+- `ORDER BY oid` on the domain-constraint query (creation order = the parser's declaration order,
+  `ALTER DOMAIN ADD` included — see FIX-305).
+- Fail-first integration test for the excluded-schema case.
+- Widened within the scope cap (same root cause, same fix site): the unfiltered domain list also feeds
+  `introspectColumns` and `DomainImplicitCasts`. Prototype: `introspectDomainTypes` returns
+  `([]parser.DomainType, error)` — every domain with its base type, unfiltered — and queries constraints and
+  appends to `schema.DomainTypes` only for allowed schemas; `Introspect` passes the list to
+  `introspectTables(ctx, schema, opts, domains)` for `introspectColumns` and `TableImplicitCasts`;
+  `DomainImplicitCasts` gets it too; the constraint query gains `ORDER BY oid`. Tests:
+  `TestPostgresIntrospect_ExcludedSchemaDomain` (table CHECK, generated expression, domain-over-domain
+  CHECK, both sides), `TestPostgresIntrospect_DomainConstraintOrder` (the RENAME CONSTRAINT case, want [a2 b]).
+- Prototype results, run at `9b58288b` on 2026-10-12: probe (`zz_probe_fix313_test.go`, postgres 17.11,
+  Schemas=[app] vs [app dom]) → [app]: `small_check: value::int < 100`, `t.y gen="x::int * 2"`, `t_x_check:
+  x::int > 5`; [app dom]: `value < 100`, `x * 2`, `x > 5`; the parser gives the latter. Gates: `go test -race
+  -count=1 ./parser/...` ok; introspect on postgres:17-alpine ok; `golangci-lint ./introspect/...` 0 issues;
+  gofumpt clean. Fail-first: `ORDER BY oid` removed → `TestPostgresIntrospect_DomainConstraintOrder` fails on
+  PG16 and PG17 ("- \"a2\", + \"b\", - \"b\", + \"a2\""); scan-time filter put back →
+  `TestPostgresIntrospect_ExcludedSchemaDomain` fails ("- \"small_check\": \"value < 100\", + …
+  \"value::int < 100\", - \"t_x_check\": \"x > 5\", + \"x::int > 5\", - \"y\": \"x * 2\", + \"x::int * 2\""); existing
+  suite without the fix passes. Golden churn: none (no example sets `introspect.schemas`). Patch:
+  `.claude/prototypes/FIX-313.patch` (2 files, +113/-25).
+
+**References.**
+- PRD §6.1 (catalog casts removed), §6.4 (`introspect.schemas`).
+- Backlog line absorbed: 2026-10-05 excluded-schema domain casts (30.4).
+
+**Resolution notes.** `introspectDomainTypes` (`parser/introspect/postgres.go`) now returns every domain in the database with its base type, unfiltered, and reads CHECK constraints and appends to `schema.DomainTypes` only for domains in allowed schemas; `Introspect` passes the full list to `introspectTables` (for `introspectColumns` and `TableImplicitCasts`), and `DomainImplicitCasts` gets it too, so an expression over a value of a domain whose schema `introspect.schemas` leaves out loses the catalog's cast as the parser does. The domain-constraint query gains `ORDER BY oid` (creation order). Prototype applied with `--3way`: the one conflict was at `Introspect`/`introspectTables`, where FIX-304's `introspectPartitions` landed between them; kept it and took the new `introspectTables` signature. Tests: `TestPostgresIntrospect_ExcludedSchemaDomain`, `TestPostgresIntrospect_DomainConstraintOrder`; fail-first re-run on the final code (dropping `ORDER BY oid` fails the order test; restoring the scan-time filter fails the excluded-schema test with `x::int > 5`, `x::int * 2`, `value::int < 100`). `make check` and `make check-examples` green; golden churn none, as vetted. Inline from /verify: `TestPostgresIntrospect_ExcludedSchemaDomain` also asserts the introspected `DomainTypes` is only `pgi_domx_app.small`, pinning the `introspect.schemas` filter at its new site (fails with `+ "pgi_domx.pos"` when the filter is dropped); References corrected from §6.3 to §6.4.
+
+### FIX-312
+
+- **Status:** Resolved
+- **Severity:** tracked
+- **Origin:** phase 30, `parser` (`CheckTypeDropRefs`) + `parser/postgres` (type names)
+- **Surfaced by:** backlog sweep 2026-10-12 (backlog lines from 30.4)
+- **Vetted:** corrected at `9b58288b` (2026-10-12)
+
+**Issue.** Type references are compared inconsistently on PostgreSQL. Measured on PG17: `s
+status_enum[]; DROP TYPE status_enum` → parser drops the enum (PG: `2BP01 cannot drop type …`); `s1.t.s
+s1.st; DROP TYPE s2.st` → parser errors "cannot drop type s2.st: column s1.t.s uses it" (PG succeeds);
+`CREATE DOMAIN de AS e; DROP TYPE e`, a composite attribute of type `e`, and `s dd[]; DROP DOMAIN dd`
+→ parser drops silently (PG refuses). Separately, a non-user type qualified with a schema on the
+search_path is spelled differently by source: `public.hstore`, `public.r` → files `public.hstore`,
+database `hstore`, so an `overrides.types.hstore` key matches only the database column.
+
+**Root cause.** `CheckTypeDropRefs` (`parser/schema.go:519`, PG is its only caller,
+`postgres.go:1158,1171`) compares `col.Type` to the bare or qualified name only and ignores arrays,
+domain base types and composite attributes; the introspector writes non-user types with
+`format_type` (search_path-relative) while the parser writes them as the DDL spells them.
+
+**Suggested fix.**
+- `parser/schema.go`: new `TypeRef{Schema, Name}` and `ResolveTypeRef(typ, owner)` (bare = owner's schema,
+  strip `[]`); `CheckTypeDropRefs(s *Schema, drop []TypeRef)` compares (schema, name) exactly over table
+  columns, view columns (seeded under `both`), `DomainType.BaseType` and composite attributes, skipping a
+  domain or composite that is itself in the drop set.
+- `parser/postgres/postgres.go`: `parseDrop` gathers all objects of one DROP TYPE/DOMAIN and checks them as a
+  set (`dropType` / `dropDomain` merge into `dropTypes(refs, kind)`); `retargetTypeName` reuses
+  `ResolveTypeRef`; `typeName` strips an `<input.schema>.` qualifier from a 2-part name that is not a user
+  type. Error text: "drop type: cannot drop type public.e: domain public.de uses it".
+- Auto-accepted the recommended option on 2026-10-12 (`/fix` auto-accept rule; user confirmed no veto): the
+  parser strips an `<input.schema>.` qualifier from a non-user type, matching `format_type` under the
+  default search_path, and a new PRD §5.2 PostgreSQL bullet states that the connection's search_path is
+  assumed to resolve `input.schema` (the introspector connects with the user's conn string as is,
+  `parser/introspect/postgres.go:44`; only the viewdef tx sets `search_path=''`); because only the parser
+  has the information and the alternative mis-spells the commoner bare case; no churn; new exported
+  `parser.TypeRef`, `parser.ResolveTypeRef` and the changed `CheckTypeDropRefs` signature are parser-module
+  only. Consequences: a `public.hstore` column in a public table becomes `hstore` (both keys reach it); in
+  `app.t` the key `"public.hstore"` no longer reaches it under files, matching database; with a non-public
+  `input.schema` off the connection's search_path, DDL `app.citext` becomes `citext` while `format_type`
+  writes `app.citext` — the PRD bullet states the assumption.
+- PRD §5.6 drop validation extended (array, domain, composite and view references; owner-relative names;
+  same-statement drops).
+- Tests: `TestCheckTypeDropRefs` (11 cases), `TestDropTypeReferences` (11 DDL cases mirroring PG17, incl. both
+  drop-set cases), `TestTypeNamesStripDefaultSchema`, a case in `TestTypeNamesFollowColumnSchema`,
+  integration `TestPostgresIntrospect_DefaultSchemaQualifiedTypes` (`public.citext`, `public.citext[]`,
+  parity); `multifile_test.go` updated for the signature.
+- Corrected vs. the original suggestion (vet 2026-10-12): check the statement's whole drop set (checking
+  each object in turn would reject `DROP TYPE e4, comp4` and `DROP DOMAIN d1, d2`, which PG17 accepts and the
+  parser accepts at base); cover view columns (same root cause and site; PG refuses a type drop a view uses);
+  share `ResolveTypeRef` through `parser`; the PRD did not already state the search_path assumption (stale
+  claim) — it is added.
+- Prototype results, run at `9b58288b` on 2026-10-12: PG17 `2BP01` for `status_enum[]` column, domain over
+  enum, composite attribute, domain array column, domain over domain, composite attribute of an array type;
+  PG17 accepts `s1.t.s s1.st; DROP TYPE s2.st` and `DROP TYPE e4, comp4`. Parser at base: array column
+  err=<nil>; cross schema → "drop type s2.st: cannot drop type s2.st: column s1.t.s uses it"; domain base,
+  composite attr, domain array, domain over domain → err=<nil>. `format_type` (PG17): default search_path →
+  `hstore`, `r`, `comp`, `ext.citext`; `search_path=''` → `public.hstore` …; introspector at base `hstore`,
+  `r`, `ext.citext`, `hstore[]` vs parser `public.hstore`, `public.r`, `ext.citext`, `public.hstore[]`.
+  Gates: parser `gofumpt -l` clean, `golangci-lint` 0 issues, `go test -race -count=1 ./...` ok (incl.
+  testcontainers); cmd/sqlgen `TestE2EGoldenFiles` ok, `./cli/... ./gotype/...` ok; `make update-golden` and
+  `update-golden-e2e` no changes; `make refs-check` ok. Fail-first: `[]` kept → array cases fail
+  (`Parse() error = "", want "…cannot drop type public.status_enum: column public.t1.s uses it"`); bare name
+  matches any schema → `error = "cannot drop type s2.st: …", want ""`; view loop removed → `error = "", want
+  "…column public.v.m of view uses it"`; domain loop removed → `want "…domain public.de uses it"`; composite
+  loop removed → `want "…attribute x of composite type public.comp uses it"`; drop-set skip removed or per-object
+  check → `error = "…cannot drop type public.e4: attribute x of composite type public.comp4 uses it", want
+  ""`; strip removed → `"h": "hstore"` vs `"public.hstore"` and the parity diff; existing suite without the
+  fix passes. Golden churn: none. Patch: `.claude/prototypes/FIX-312.patch` (8 files, +330/-86).
+- Auto-accepted the recommended option on 2026-10-13 (`/fix` auto-accept rule): FIX-309 (`accaf642`, landed after
+  the vet) pinned `TestMerge_ViewColumnRenameAndDrop/postgres/drop type` to its catalog-view merge error ("view
+  view_def.vu: column role has type role_t, …"), which this fix's view-column check now pre-empts at parse time
+  ("drop type: cannot drop type view_def.role_t: column view_def.v.role of view uses it") → keep the parser's refusal
+  and repoint the case (substring match), adding a PRD §6.1 sentence that PostgreSQL refuses the `DROP TYPE` first;
+  because gates are green, neither option churns goldens or adds public surface, and the view check is this entry's
+  ruled scope while the outcome stays the error PRD §6.1 states, naming the view and its column.
+
+**References.**
+- PRD §5.2, §5.5 (`docs/PRD.md:1469`: unqualified names resolve to `input.schema` "as PostgreSQL's
+  default search_path resolves it"), §5.6 "Drop validation" (`:1598`), §6.1, §6.3, §7.1 (override key
+  matching, `:1703-1721`); `docs/design/INTROSPECTION.md:67` (the CLI sets no search_path).
+- Backlog lines absorbed: 2026-10-05 `CheckTypeDropRefs` (30.4); 2026-10-05 non-user type
+  qualification (30.4).
+
+**Resolution notes.** Landed from the vetted prototype, applied `--3way`: `parser/postgres/postgres.go` `parseDrop` conflicted with FIX-303/304 (`b3abc88b`, `a0090f9b`: per-object VIEW/MATVIEW, INDEX and SEQUENCE cases); resolved by dispatching DROP TYPE and DROP DOMAIN to `dropTypes(dropTypeRefs(stmt), kind)` as a set before the per-object loop, which keeps the landed cases. PRD §5.2 hunk applied clean over FIX-301..311. Semantic overlap with FIX-305 (`c695fd6f`) per its landing note: `isOfEnum` and `renameTypeReferences.retype` (`parser/postgres/alter_type.go`) now read types with `parser.ResolveTypeRef`. Composition with FIX-309 (`accaf642`): seeded database views are checked by `CheckTypeDropRefs`, so `TestMerge_ViewColumnRenameAndDrop/postgres/drop type` now fails at parse time with this fix's error; the case is repointed (wantErr matched as a substring) and PRD §6.1 states that PostgreSQL refuses the `DROP TYPE` first (auto-accepted, see Suggested fix). Changes: `TypeRef`, `ResolveTypeRef` and the set-shaped `CheckTypeDropRefs(s, drop)` in `parser/schema.go` (table and view columns, domain base types, composite attributes, arrays, owner-relative names, same-statement drops); `typeName` strips an `input.schema` qualifier from a non-user type; PRD §5.2 and §5.6 bullets. Tests: `TestCheckTypeDropRefs`, `TestDropTypeReferences`, `TestTypeNamesStripDefaultSchema`, a `TestTypeNamesFollowColumnSchema` case, integration `TestPostgresIntrospect_DefaultSchemaQualifiedTypes`. Fail-first re-run on the final code: `[]` kept → array cases fail; owner-relative read replaced → table/domain/cross-schema cases fail; view loop off → `want "…column public.v.m of view uses it"`; drop-set skip off → `CheckTypeDropRefs([{public d1} {public d2}]) error = "cannot drop type public.d1: domain public.d2 uses it", want ""` and `TestDropTypeReferences` fail; strip off → `TestTypeNamesStripDefaultSchema`, `TestTypeNamesFollowColumnSchema` fail. Review (verify): the drop set ignored each object's kind, so `DROP DOMAIN d, comp` dropped `d` and kept `comp` (PG17: `"comp" is not a domain`), and `DROP TYPE e, de` kept the domain `de` (PG17 drops both); fixed in `dropTypes` (DROP DOMAIN refuses an enum or composite type, DROP TYPE deletes a domain too), with two `TestDropTypeReferences` cases that fail without it. Root cause and References line refs corrected to HEAD. Re-review: `dropTypes` comment narrowed to what it refuses; PRD §5.6 states that `DROP TYPE` drops a domain and `DROP DOMAIN` on an enum or composite type is an error; pre-existing silent accept of unknown type names and ignored `CASCADE` went to the backlog. A catalog-columns view check left without a test path is in the backlog; a false refusal from the strip (`public.r` row-type column in `app.t` read as enum `app.r`, so `DROP TYPE app.r` is refused) is reported as a candidate, not widened here. Gates: `make check` ok, parser `go test -race -count=1 ./...` ok (testcontainers), `make update-golden` / `update-golden-e2e` no churn (matches vet), `make check-examples` ok.
+
+### FIX-311
+
+- **Status:** Resolved
+- **Severity:** tracked
+- **Origin:** phase 30, `parser/postgres` (index parts)
+- **Surfaced by:** backlog sweep 2026-10-12 (backlog line from FIX-276)
+- **Vetted:** ready at `9b58288b` (2026-10-12)
+
+**Issue.** An index part that casts a column to its own exact type is stored by PostgreSQL as a
+plain column, but the file parser treats it as an expression and skips the index, so under `files`
+the index (and a UNIQUE's conflict target) is missing. Measured on PG17: `CREATE INDEX ON r
+((x::text))` on a text column → database `r_x_idx INDEX [x]`, files none; UNIQUE `((y::integer))` on
+an int column → database `r_y_idx UNIQUE [y]`, `y.Unique=true`, files none. PG drops the cast only on
+an exact type and typmod match (`w::varchar(10)` on `varchar(10)`, `i::int4` on `int`,
+`(j::int)::int`); `v::varchar` on `varchar(10)`, `q::text` on `varchar`, or a cast to a domain's base
+stay expressions.
+
+**Root cause.** `indexElemColumn` / `indexParamColumns` (`parser/postgres/postgres.go:732-792`) count
+any `TypeCast` as an expression.
+
+**Suggested fix.**
+- Pass the table in; unwrap a `TypeCast` (repeatedly, through COLLATE) when
+  `p.typeName(cast.TypeName, schema)` equals the column's type exactly. Naming is unchanged.
+- Fail-first parity tests for the plain and kept-expression cases above.
+- Every cast in a chain must match, not only the outermost (`(b::int)::bigint` on a bigint stays an
+  expression). `indexParamColumns` / `indexElemColumn` become `*Parser` methods taking the table; COLLATE
+  and TypeCast layers peel in any order; a cast of an unknown column is an expression.
+- Composition with FIX-303 (not landed): `git apply --3way` merges postgres.go cleanly; the integration
+  test file has a trivial conflict (both insert before `TestPostgresIntrospect_NoSearchPath` — keep both);
+  FIX-303's `indexReads(table, stmt)` calls the free `indexElemColumn(e)`, so whichever lands second makes
+  it `(p *Parser) indexReads` calling `p.indexElemColumn(table, e)`.
+- Prototype results, run at `9b58288b` on 2026-10-12: postgres:17, table r with 27 indexes, read
+  `pg_index.indkey` / `indexprs` → plain column: `x::text`, `y::integer` UNIQUE, `w::varchar(10)`,
+  `i::int4`, `(j::int)::int`, `d::dint`, `e::mood`, `n::numeric(10,2)`, `a::int[]`, `c::char`,
+  `t::timestamp(3)`, `x::pg_catalog.text`, three COLLATE forms (→ `(x COLLATE "C")`), `((x::text), y)` →
+  indkey "1 2"; kept as expression: `v::varchar` on varchar(10), `q::text` on varchar, `n::numeric`,
+  `t::timestamp`, `c::bpchar`, `d::int`, `i::dint`, `(b::int)::bigint`. Files at HEAD gave only
+  `unnamed_dummy INDEX [y]` — all 18 plain-column indexes missing; with the fix exactly the database's 18.
+  Tests: `TestCreateIndex_SameTypeCast` (9 plain + 9 expression cases, constraints and `col.Unique`),
+  `TestPostgresIntrospect_SameTypeCastIndexes` (schema pgi_samecast, parity). Gates: `gofumpt -l` clean;
+  `go vet` clean; parser `go test -race -short ./...` ok; `go test -race ./introspect/` (integration) ok;
+  `golangci-lint ./postgres/... ./introspect/...` 0 issues. Fail-first: change reverted → 9 plain
+  subtests fail (`- {{Name: "r_x_idx", Type: s"INDEX", Columns: []string{"x"}, …}}, + nil`) and the parity
+  test fails (`- Unique: false, + Unique: true … + {Name: "r_y_idx", Type: s"UNIQUE", …}`); typeName check
+  removed → 9 expression subtests fail (`+ {{Name: "r_q_idx", …}}`); outermost-only check →
+  `cast_away_and_back` fails; existing suite without the fix passes. Golden churn: none. Patch:
+  `.claude/prototypes/FIX-311.patch` (3 files, +184/-14).
+
+**References.**
+- PRD §5.2, §6.1, §30.7.
+- Backlog line absorbed: 2026-10-08 same-type cast counted as expression (FIX-276).
+- FIX-276.
+
+**Resolution notes.** Resolved 2026-10-13 from the vetted prototype, applied with `git apply --3way` (postgres.go and postgres_test.go clean; the integration test file conflicted only because FIX-303 inserted `TestPostgresIntrospect_BothModeExpressionIndexes` at the same spot, kept both). `indexElemColumn` (`parser/postgres/postgres.go`) peels COLLATE and TypeCast layers in any order and keeps the part a plain column only when the column exists and every cast in the chain resolves via `p.typeName` to the column's exact type; `indexParamColumns`, `indexElemColumn` and FIX-303's `indexReads` became `*Parser` methods taking the table, per the composition note. Tests: `TestCreateIndex_SameTypeCast` (9 plain + 9 kept-expression cases) and `TestPostgresIntrospect_SameTypeCastIndexes` (parity on PG17). Fail-first reproduced as vetted: fix reverted → 9 plain subtests and the parity test fail; typeName check removed → 9 expression subtests fail; outermost cast only → `cast_away_and_back` fails. Gates: `make check` ok; `go test -race ./introspect/ ./postgres/` (integration) ok; `make update-golden-e2e` no churn; `make check-examples` ok. Verify: Root cause line ref corrected inline (`:513-547` → `:732-792`); two adjacent reviewer findings (undeclared-type spelling mismatch, index on a missing column) went to the backlog.
+
+### FIX-310
+
+- **Status:** Resolved
+- **Severity:** tracked
+- **Origin:** phase 4, `parser/postgres` (foreign keys)
+- **Surfaced by:** backlog sweep 2026-10-12 (backlog line from 30.1)
+- **Vetted:** corrected at `9b58288b` (2026-10-12)
+
+**Issue.** `REFERENCES u` with no column list leaves `FKReference.Column` empty and `FOREIGN KEY (vid)
+REFERENCES u` gives `ReferenceColumns: []`, while PostgreSQL resolves both to `u`'s primary key.
+Measured on PG17: files `uid fk={u public Column:""}`, `vid fk=nil`, constraint `ref=public.u[]`;
+database `Column:id`, `ref=public.u[id]`; composite `FOREIGN KEY (x,y) REFERENCES u2` (PK a,b) → files
+`[]`, database `[a b]`.
+
+**Root cause.** `applyColumnConstraint` and `parseConstraintNode`
+(`parser/postgres/postgres.go`) copy `PkAttrs` as written.
+
+**Suggested fix.**
+- `addConstraints` records each new FK with no `ReferenceColumns` in `p.implicitRefs`; a new
+  `resolveImplicitRefs(table)` runs at the end of `parseCreateTable` and of `parseAlterTable` — after the
+  statement's last sub-command, not when the ADD runs (PG16/17 accept `ALTER TABLE s6 ADD FOREIGN KEY
+  (parent) REFERENCES s6, ADD PRIMARY KEY (id)` → confkey {id}, and resolve `ALTER TABLE zs ADD FOREIGN KEY
+  (id) REFERENCES zs, DROP CONSTRAINT zpk, ADD PRIMARY KEY (parent)` to the new key {parent}). It copies
+  the referenced table's PRIMARY KEY columns in declared order (PK (b,a) → {b,a}), then calls
+  `CanonicalizeConstraints` again so `FKReference` is set; a self-reference resolves because the table is
+  already indexed; a key dropped later in the statement is skipped.
+- Errors matching PG: `foreign key <name> on <schema>.<table>: there is no primary key for referenced
+  table <s>.<t>` and `… referenced table <s>.<t> does not exist`.
+- `applyColumnConstraint` sets `FKReference` only when the clause has a column list (otherwise
+  `ApplyConstraintToColumns`' nil guard at `parser/schema.go:543` keeps `Column ""`).
+- `parser/schema.go:216-218`: the FKReference comment drops the "PostgreSQL parser leaves it empty"
+  caveat and reads "Column is empty for synthetic references; test Synthetic, not Column, to tell the two
+  apart."
+- Tests: `TestImplicitReferenceColumns` (11 cases: inline, table-level, composite (b,a), qualified target,
+  self-reference with the PK declared later — inline and table-level, ALTER ADD CONSTRAINT and ADD
+  COLUMN, one ALTER replacing the PK after the FK, and three errors); `TestPostgresIntrospect_ImplicitReferenceColumns`
+  (parity: inline, table-level, composite, self-reference, alter-table).
+- Corrected vs. the original suggestion (vet 2026-10-12): resolve once the statement is fully applied
+  (resolving at the ADD gives `{"id"}` where PG gives `{"parent"}`); the inline FKReference must not be set
+  without a column list; a target that does not exist yet is an error too (auto-accept below).
+- Auto-accepted the recommended option on 2026-10-12 (`/fix` auto-accept rule): a REFERENCES with no
+  column list to a table that does not exist yet is a parse error (`foreign key t_wid_fkey on public.t:
+  referenced table public.w does not exist`), as PG16/17 reject it, rather than leaving it unresolved;
+  prototyped green, no churn, no public surface (unexported field and function), reverses no PRD text
+  (§5.2: a statement sees only what came before). Measured consequence for veto: in a `both` overlay whose
+  `input.introspect.tables` leaves out the target, `ALTER TABLE orders ADD COLUMN uid int REFERENCES users`
+  → `foreign key orders_uid_fkey on public.orders: referenced table public.users does not exist`, which PG
+  would accept; `REFERENCES users(id)` still parses, so writing the column list is the workaround.
+- Composition with FIX-302: `--3way` gives two conflicts — `addConstraints` (keep 302's re-canonicalize
+  after naming, then 310's collection loop) and `applyColumnConstraint` (take 302's deletion of the inline
+  set) — plus an append-only integration-test conflict; with both applied parser `go test -race ./...`
+  passes and a table-level no-list FK derives `FKReference{Column:"id"}`.
+- The user confirmed on 2026-10-12 (veto check, backlog sweep Step 5): keep the error for a no-column-list
+  REFERENCES to a table not defined yet, including under `both` with the target filtered out of introspection;
+  writing the column list is the workaround.
+- Auto-accepted the recommended option on 2026-10-13 (`/fix` auto-accept rule): a `REFERENCES t` with no column list
+  whose target is a relation the parser skips → a partition (created with PARTITION OF or attached) takes its
+  partitioned table's primary key, at any depth, and any other skipped relation (a view, a CREATE TABLE AS table, a
+  partition of a table with no primary key) stays as written, as at HEAD, rather than the "does not exist" error the
+  prototype gave; because it was prototyped green (parity with PG17 on a partition target), causes no golden churn,
+  adds no public surface (unexported helper) and reverses no ruling (the 2026-10-12 ruling covers a table not defined
+  yet, not one the parser skips).
+- Auto-accepted the recommended option on 2026-10-13 (`/fix` auto-accept rule): whether `resolveImplicitRefs` also
+  returns PostgreSQL's "number of referencing and referenced columns for foreign key disagree" error → no, it stays
+  with the backlog line that tracks the explicit-column-list twin, because the shape was already mismatched at HEAD
+  (`ReferenceColumns []` against one column), the current code is green with no churn, and it adds no public surface
+  and reverses nothing.
+- Prototype results, run at `9b58288b` on 2026-10-12: probe at base → `t1.uid fk={Table:u Schema:public
+  Column:}`, `t1_uid_fkey ref=public.u[]`, table-level `ref=public.u[]` with no FKReference, composite
+  `ref=public.u2[]`, self-references `ref=[]`; `s4 (id int UNIQUE, parent int REFERENCES s4)`, `REFERENCES
+  nopk` and the forward `REFERENCES w` → err=<nil>. PG16/17 (identical): t1/t2 {id}, t3 {b,a}, s1–s6/t5 {id};
+  `there is no primary key for referenced table "s4"`, `relation "w" does not exist`. Generation (probe copy
+  of `postgres` + `probe_inline … REFERENCES users`, `probe_tbl … FOREIGN KEY (owner_id) REFERENCES
+  users`, control `probe_ctl … REFERENCES users(id)`) → `ProbeTbls` 42 grep hits vs 61 for the control
+  (users gets no has-many edge to probe_tbl); with the fix 61. Gates: parser `gofumpt -l` clean, `go vet`
+  clean, `go test -race -count=1 ./...` ok (5 packages, testcontainers), `golangci-lint` 0 issues;
+  cmd/sqlgen `go test -short ./...` ok. Fail-first: postgres.go reverted → all 11 unit and 5 parity subtests
+  fail (`- RefColumns: []string{"id"} + RefColumns: []string{}`; `Parse() error = <nil>, want "…there is no
+  primary key for referenced table public.u"`); applyColumnConstraint hunk reverted → 4 subtests `- Column:
+  "id" + Column: ""`; parseAlterTable resolve call reverted → 2 ALTER subtests fail; per-sub-command
+  resolution → `- RefColumns: []string{"parent"} + RefColumns: []string{"id"}`; re-canonicalize dropped →
+  7 subtests fail; existing suite without the fix passes. Golden churn: none. Patch:
+  `.claude/prototypes/FIX-310.patch` (4 files, +206/-14).
+
+**References.**
+- PRD §6.1, §5.2.
+- Backlog line absorbed: 2026-10-05 REFERENCES without a column list (30.1).
+- FIX-300 (same rule for SQLite after the rqlite upgrade).
+
+**Resolution notes.** `REFERENCES t` with no column list now resolves to t's primary key, in declared order, once the CREATE TABLE or ALTER TABLE statement is fully applied: `addConstraints` records each new foreign key with no `ReferenceColumns`, and `resolveImplicitRefs` (end of `parseCreateTable` and `parseAlterTable` in `parser/postgres/postgres.go`) copies the target's primary key, then re-canonicalizes so FIX-302's derivation sets the column's `FKReference`; a missing target or one with no primary key is an error, as in PostgreSQL. The inline `applyColumnConstraint` set stays deleted (FIX-302). The `parser/schema.go` FKReference.Synthetic comment drops the PostgreSQL-parser caveat. Tests: `TestImplicitReferenceColumns` (15 cases) and `TestPostgresIntrospect_ImplicitReferenceColumns` (6 parity cases). Prototype applied with `--3way` onto FIX-301/302/303/304/305/309: the struct conflict kept HEAD's `skipped`/`sequences` fields (the prototype's `exprIndexes` context was gone) plus `implicitRefs`; `parseCreateTable` kept the sequence loop; `addConstraints` kept FIX-302's re-canonicalize, then the collection loop; `applyColumnConstraint` took FIX-302's deletion; the integration test was appended after the newer tests. A target the parser skips does not take the "does not exist" error: `partitionedTable` resolves a partition to its partitioned table's primary key, and any other skipped relation stays as written (verify review finding; 4 unit cases (sub-partition, attached partition, CREATE TABLE AS, view) and a partition parity case that checks its skipped-statement warning added). The `resolveImplicitRefs` comment was shortened and backlog line "The PG parser accepts foreign keys PostgreSQL rejects" was corrected (its `REFERENCES u2` example has no column list). Fail-first: `postgres.go` reverted → 13 of 15 unit subtests fail (the CREATE TABLE AS and view cases pin HEAD behavior); the skipped-relation branch disabled → the 4 partition/skipped subtests fail. Gates: `make check` ok, parser `go test -race ./...` ok (testcontainers), `make check-examples` ok; golden churn none, matching the vet.
+
+### FIX-309
+
+- **Status:** Resolved
+- **Severity:** tracked
+- **Origin:** phase 30, `parser/introspect` (`views.go` `refreshViewColumns`)
+- **Surfaced by:** backlog sweep 2026-10-12 (backlog line from FIX-278)
+- **Vetted:** ready at `9b58288b` (2026-10-12)
+
+**Issue.** Under `input.source: both`, a pending migration that renames or drops a table column a
+database view reads leaves the view column silently degraded. Measured on MySQL 8.0.46: `users(id,
+role enum('a','b'))`, `v (uid, role) AS SELECT id, role FROM users` (catalog fallback) and `v2 AS
+SELECT id, role FROM users` (definition path); migration `ALTER TABLE users RENAME COLUMN role TO
+kind` → generation succeeds with `V.Role` and `V2.Role` typed `string` (baseline `UsersRoleEnum`),
+no error or warning; `DROP COLUMN role` the same. MySQL itself then rejects `SELECT * FROM v2` with
+ERROR 1356 "references invalid table(s) or column(s)".
+
+**Root cause.** `refreshViewColumns` (`parser/introspect/views.go:34-55` before the fix) keeps the old column when
+the rebuilt one is `any`, stale inline type name included; a catalog-fallback view is never re-read.
+
+**Suggested fix.**
+- Ruling (user, 2026-10-12, backlog sweep Q6): on MySQL, which invalidates such a view, this is an
+  error naming the view and the column; on PostgreSQL and SQLite, follow the rename the way the
+  database does (measure first: PG keeps a view valid across RENAME COLUMN and rejects DROP COLUMN
+  without CASCADE; SQLite rewrites view text on RENAME COLUMN under `legacy_alter_table=0`).
+- For catalog-fallback views, add a post-merge check that every view column's ENUM/SET type name
+  still exists. FIX-308 shrinks that set (column-list views gain a Definition) — land after it.
+- Fail-first tests: the MySQL rename and drop cases, and the measured PG/SQLite behavior.
+- Measured database behavior (vet 2026-10-12): SQLite (modernc, `legacy_alter_table=0`) renames an
+  unaliased view column on RENAME COLUMN (`SELECT id, role` → `SELECT id, kind`), keeps an `AS` alias or a
+  column-list name, and refuses DROP COLUMN ("error in view v after drop column: no such column: kind");
+  PG17 refuses DROP ("cannot drop column kind of table users because other objects depend on it"); MySQL
+  8.0.46 accepts both, then ERROR 1356 on `SELECT * FROM v2`. So "follow the database" for PG/SQLite DROP
+  is an error, and PG/SQLite RENAME follows the rename.
+- Prototype: `parser/view.go` gains `ViewSourceTables(def, schema)` (the table each select column reads,
+  BuildView's lookup), `RenameViewColumnReferences(schema, table, old, new)` (points each Definition column
+  reading `table.old` at `new`, and renames the alias when `Unaliased`), and `ViewSelectColumn.Unaliased`
+  (set only by the SQLite view parser: no AS, no column list). The PG and SQLite parsers call the rename
+  helper before `parser.RenameColumn`; MySQL does not. `Merge` records what views read (`readViewSources`)
+  before `Seed`; `refreshViewColumns` errors when a Definition column read a now-missing column of a table
+  that still exists ("view V: column C reads column S of table T, which the SQL files drop or rename; under
+  source: both the database's view stands, so change it in the database first"), or when a catalog-columns
+  view's ENUM/SET type existed in the base but is gone after the merge ("… column C has type X …") —
+  covering MySQL rename and drop, PG and SQLite drop, and PG `DROP TYPE` under a compound view. PRD §6.1
+  gains a paragraph for the ruled behavior. Test: `TestMerge_ViewColumnRenameAndDrop` (8 cases; rename
+  cases re-add a column under the old name to show which column the view reads).
+- Composition: applies cleanly with FIX-308 in either order (disjoint files); composed, the MySQL
+  column-list case errors through the Definition path and the catalog check stays covered by `postgres/drop
+  type`.
+- Prototype results, run at `9b58288b` on 2026-10-12: Merge probe at base → MySQL `RENAME COLUMN role TO
+  kind`: `Merge err=<nil>`, `view zz_v2 … role:zz_users__role_enum` while enums hold `zz_users__kind_enum`;
+  PG DROP COLUMN: `Merge err=<nil>`, view keeps `role:role_t`; SQLite RENAME: column stays `role` (SQLite
+  says `kind`); SQLite DROP: `Merge err=<nil>`. CLI (sibling mysql copy) base binary: RENAME and DROP exit 0
+  with `views_gen.go:19: Role string`; prototype exits 3 "Schema error: parsing schema files: merge both
+  mode: view v: column role has type users__role_enum, which the SQL files drop or rename; …". Gates: parser
+  `gofumpt -l` clean, `golangci-lint` 0 issues, `go test -race -count=1 ./...` ok (containers); cmd/sqlgen
+  `go test -race -run TestE2E .` (GoldenFiles + DatabaseTwin) ok; `make refs-check` ok. Fail-first:
+  Definition-path check disabled → postgres/drop, sqlite/drop, mysql/rename, mysql/drop fail ("Merge() error
+  = <nil>, want one starting \"merge both mode: view vr_v: column role reads column role of table vr_users,
+  …\""); catalog type check disabled → `mysql/rename_under_a_view_with_a_column_list` fails (with FIX-308
+  composed, `postgres/drop_type`); PG rename call removed → `- Type: "role_t", + Type: "text"`; SQLite call
+  removed → `- {Name: "kind", Type: "text"}, + {Name: "role", Type: "integer", Nullable: true}`;
+  `Unaliased` not set → `- Name: "kind", + Name: "role"`; existing suite without the fix passes. Golden
+  churn: none. Patch: `.claude/prototypes/FIX-309.patch` (8 files, +319/-15; new exported identifiers are in
+  the parser module only).
+- Auto-accepted the recommended option on 2026-10-13 (`/fix` auto-accept rule): the PRD sentence "Dropping a column a view reads is an error" also covers a view that reads the column through a derived table or CTE, which the Definition check cannot trace (measured `Merge err=<nil>`) → keep the PRD sentence as ruled and report the shape as a candidate FIX rather than narrow the PRD, because the landed code's gates are green, neither option churns goldens or adds public surface, and keeping the sentence reverses no ruling.
+
+**References.**
+- PRD §6.1 (`both` mode), §16.2, §8.
+- Backlog line absorbed: 2026-10-09 view keeps stale inline enum (FIX-278).
+- FIX-262, FIX-278, FIX-308.
+
+**Resolution notes.** Landed from the vetted prototype, applied `--3way`: the PostgreSQL and SQLite rename-column hunks conflicted with FIX-301 (`13baa029`, dialect argument on `RenameColumn`/`RenameColumnReferences`) and FIX-305 (`c695fd6f`, PG `renameColumn` extracted); resolved by calling `parser.RenameViewColumnReferences` before `parser.RenameColumn` in both. Composition with FIX-301: `RenameViewColumnReferences` gains a `dialect` argument and matches the renamed column with `SameColumnName`, so SQLite `RENAME COLUMN ROLE TO kind` on `role` follows into the view instead of erroring (new case `sqlite/rename in another case`; fails with exact matching). Composition with FIX-308 (`8edbaeac`): the MySQL column-list view now has a Definition, so `mysql/rename under a view with a column list` asserts the Definition-path error exactly ("view vr_vl: column role reads column role of table vr_users, …"); the catalog-type check stays covered by `postgres/drop type`. Under `source: both`, `Merge` records what each view reads before seeding; `refreshViewColumns` errors when a view column read a now-missing column of a surviving table, or when a catalog-columns view's ENUM/SET type is gone; PRD §6.1 (`both` mode) gains the ruled behavior. Test `TestMerge_ViewColumnRenameAndDrop` (9 cases). Fail-first re-run on the final code: definition check off → postgres/drop, sqlite/drop, mysql/rename, mysql/drop, mysql column-list fail; catalog check off → postgres/drop type; PG call off → postgres/rename; SQLite call off → both sqlite rename cases; `Unaliased` off → `+ Name: "role"`. Gates: `make check` ok, parser `go test -race ./...` ok, `make update-golden-e2e`/`update-golden` no churn (matches vet), `make check-examples` ok.
+
+### FIX-308
+
+- **Status:** Resolved
+- **Severity:** tracked
+- **Origin:** phase 30, `parser/introspect` (`mysql.go` views)
+- **Surfaced by:** backlog sweep 2026-10-12 (backlog lines from 30.5, FIX-288)
+- **Vetted:** ready at `9b58288b` (2026-10-12)
+
+**Issue.** A MySQL view column that reads an ENUM/SET column gets a view-scoped Go type instead of the
+source column's, so one SQL enum yields two Go types. Measured on MySQL 8.0.46: `CREATE VIEW pv1 (s)
+AS SELECT status FROM p_a` → `pv1.s` = `pv1__s_enum` plus warning "columns come from the catalog …
+reads columns [status] where the catalog lists [s]" (the whole view falls back to the catalog); `CREATE
+VIEW pv0 AS SELECT status, perms FROM p_a; CREATE VIEW pvv AS SELECT status, perms FROM pv0` →
+`pvv.status` = `pvv__status_enum`, `pvv.perms` = `pvv__perms_set`. The source-table branch of
+`viewEnumOrSetType` has no covering test (mutating its name derivation leaves `go test ./introspect/`
+green).
+
+**Root cause.** `introspectViews` builds `CREATE VIEW <name> AS <view_definition>`
+(`parser/introspect/mysql.go:167`), but MySQL keeps a view's column list outside `view_definition`;
+`viewEnumOrSetType` (`:238`, `isTable` at `:247`) accepts only a table as the source.
+
+**Suggested fix.**
+- Build `CREATE VIEW v (`c1`, `c2`, …) AS <definition>` from the catalog's column names (prototyped:
+  `pv1.s` → `p_a__status_enum`, no warning, `go test ./introspect/` green). Column-list views then get
+  a Definition and are refreshed under `both`.
+- Auto-accepted the recommended option on 2026-10-12 (`/fix` auto-accept rule; user confirmed no
+  veto): a view-over-view ENUM/SET column reuses its source view column's type transitively; a
+  derived-table column stays view-scoped; because PRD §8 ("not its source table column's type")
+  read transitively wants one Go type per SQL enum; no churn. It must not depend on view name order
+  (the 30.5 fix removed exactly that): resolve after all views exist (post-pass that rewrites
+  view-scoped names and removes orphaned Enums/Sets entries) or build in dependency order. Flips the
+  `TestMySQLIntrospectViews` `user_states_copy` expectation.
+- The source-table branch becomes dead after the column-list change: delete it, or cover it with a
+  white-box unit test in the rewrite.
+- Prototype results, run at `9b58288b` on 2026-10-12: probe (`zz_probe_fix308_test.go`, mysql 8.0.46) at
+  base → `VIEW pv1 def=false: s=pv1__s_enum` + warning "it reads columns [status] where the catalog lists
+  [s]"; `VIEW pvv def=true: status=pvv__status_enum perms=pvv__perms_set`; a 3-view chain in reverse name
+  order → `a_top s2=a_top__s2_enum`; mutating the source-table branch's name derivation leaves `go test
+  ./introspect/` ok. With the patch: `pv1 s=p_a__status_enum`, `pvv status=p_a__status_enum
+  perms=p_a__perms_set`, `a_top s2=p_a__status_enum`, derived-table `pdt status=pdt__status_enum`; every
+  view def=true, no warnings, only `p_a__status_enum`, `pdt__status_enum`, `p_a__perms_set` remain.
+  Prototype: `introspectViews` builds the column list via a new `mysqlColumnList` (`quoteMySQLIdent`; no
+  list when the catalog is empty); the dead source-table branch is deleted (`viewEnumOrSetType`,
+  `viewColumnSource`, `enumOrSetValues`), `viewColumnFromCatalog` always mints the view-scoped type; a
+  post-pass `reuseViewSourceTypes(schema)` after all views are built resolves a view-scoped ENUM/SET
+  column that projects another view's column unchanged (by index through `view.Definition` and
+  TableAliases), recursively with a depth guard and a values check, then deletes orphaned Enums/Sets;
+  `TestMySQLIntrospectViews` gains `a_states (s)` (two-hop chain sorting before its sources) and
+  `user_labels (label, state)` plus a no-warnings assertion, and flips `user_states_copy` to
+  `user_states__status_enum`; PRD §8 (`:2643`) gains "a view column that reads another view's column
+  unchanged takes that column's type, so a chain of views shares one type". Gates: parser `go test -race
+  -count=1 ./...` ok (testcontainers pg16 + mysql:8.0); `golangci-lint` 0 issues; gofumpt clean;
+  `TestE2EGoldenFiles/(introspect_mysql|mysql|tenancy_mysql)$` and `TestE2EDatabaseTwin/(mysql|tenancy_mysql)$`
+  pass; `go test -race ./cli/ ./internal/livedb/` ok; `make refs-check` ok. Fail-first: column list
+  reverted → `a_states` `- Type: "user_states__status_enum" + Type: "a_states__s_enum"` plus the two
+  fallback warnings; `reuseViewSourceTypes` removed → `user_states_copy` `+ Type:
+  "user_states_copy__status_enum"`; single-pass name-order mutant → `a_states` `+ Type:
+  "user_states_copy__status_enum"`; existing suite without the fix passes. Golden churn: none. Patch:
+  `.claude/prototypes/FIX-308.patch` (3 files, +118/-66).
+
+**References.**
+- PRD §8 (MySQL ENUM/SET type names, `docs/PRD.md:2643`), §16.2, §6.1.
+- Backlog lines absorbed: 2026-10-05 view-over-view enum (30.5); 2026-10-05 column-list view enum
+  (30.5); 2026-10-08 source-table branch untested (FIX-288).
+- FIX-288; `docs/tracker/phase-30.md:1129`.
+
+**Resolution notes.** `introspectViews` (`parser/introspect/mysql.go`) now builds ``CREATE VIEW v (`c1`, …) AS <definition>`` from the catalog's column names via `mysqlColumnList`, so a column-list view gets a Definition and its columns resolve to the source table column's type with no fallback warning. A post-pass `reuseViewSourceTypes`, run once every view is read, gives a view-scoped ENUM/SET column that projects another view's column unchanged that column's type (recursively, independent of view name order, with a values check) and drops the orphaned Enums/Sets; a derived-table column keeps its view-scoped type. The dead source-table branch (`viewEnumOrSetType`, `viewColumnSource`, `enumOrSetValues`) is deleted. `TestMySQLIntrospectViews` gains `a_states (s)` (a two-hop chain sorting before its sources) and `user_labels (label, state)` plus a no-warnings assertion, and `user_states_copy` flips to `user_states__status_enum`; PRD §8 gains the view-chain sentence. Prototype applied via 3-way (the touched files moved since the vet only in unrelated hunks). Fail-first re-run on the final code: column list reverted → `a_states` `+ Type: "a_states__s_enum"` and `user_labels` `+ Type: "user_labels__state_enum"`; post-pass removed → `user_states_copy` `+ Type: "user_states_copy__status_enum"`. Gates: `make check` ok; parser `go test -race -count=1 ./...` ok; `TestE2EGoldenFiles`/`TestE2EDatabaseTwin` ok; `go test -race ./cli/ ./internal/livedb/` ok; `make check-examples` ok. Golden churn: none. Verify (reviewer agreed, prototype byte-identical): corrected this entry's PRD line refs `:2635` → `:2643`, the moved syntax-error position in a backlog line, and marked the phase-30 M6 note superseded; three `[reading]` backlog lines appended (white-box coverage of `reuseViewSourceTypes`, orphan deletion under the inline-name collision, `both`-mode dangling upstream type).
+
+### FIX-307
+
+- **Status:** Resolved
+- **Severity:** tracked
+- **Origin:** phase 4, `parser/mysql` (`parseColumn`)
+- **Surfaced by:** backlog sweep 2026-10-12 (backlog lines from 30.2, FIX-275)
+- **Vetted:** corrected at `9b58288b` (2026-10-12)
+
+**Issue.** MySQL column key attributes are lost under `files`. `zkey (a int KEY, b int)` → DB
+`PRIMARY KEY[a]`, parser no constraints and `a.PrimaryKey=false`. `zpkcol (x int, KEY (a), a int
+PRIMARY KEY UNIQUE, UNIQUE (a))` → DB PRIMARY + a + a_2 + a_3, parser loses PRIMARY; `a int UNIQUE
+PRIMARY KEY` → parser PRIMARY only (DB also unique `a`); `a int KEY UNIQUE` → parser UNIQUE only.
+A lost primary key can drop the table out of generation.
+
+**Root cause.** vitess keeps one `ColumnTypeOptions.KeyOpt` per column, last attribute wins
+(`sql.y:2374`); `parseColumn` (`parser/mysql/mysql.go:681-687`) lists `sqlparser.ColKey` in the no-key
+case, although in a column definition MySQL reads bare `KEY` as PRIMARY KEY.
+
+**Suggested fix.**
+- Auto-accepted the recommended option on 2026-10-12 (`/fix` auto-accept rule; user confirmed no
+  veto): recover every key a column's attributes declare rather than reject them, because PRD §6.1
+  promises the same constraints under both sources; no churn, no public surface.
+- MySQL makes at most one primary key and one unique key per column however the attributes repeat
+  (measured on 8.0.46: `UNIQUE UNIQUE` and `UNIQUE KEY UNIQUE` → one key `a`; `UNIQUE NOT NULL UNIQUE
+  PRIMARY KEY UNIQUE KEY` → PRIMARY + `a`; `a_2`/`a_3` arise only from table-level keys).
+- `tableElements` (the CREATE TABLE token scan) also returns `columnKeys{primary, unique}` per column
+  entry via `readColumnKeys` (top-level tokens after the column name: `PRIMARY KEY` or bare `KEY` →
+  primary; `UNIQUE [KEY]` → unique). `parseColumn` reads `p.columnKeys[col]` (filled per statement) and
+  emits the PRIMARY KEY first (setting NOT NULL), then the UNIQUE; the KeyOpt switch is removed (the scan
+  uses vitess's Tokenizer, so it sees every key vitess parses). Signatures of `parseColumn` and its ALTER
+  callers are unchanged.
+- ALTER: `processStmt` passes `sql` to `parseAlterTable(stmt, sql)`; a preamble `readAlterColumnKeys`
+  zips the AST's AddColumns / ModifyColumn / ChangeColumn definitions with a token scan of the
+  statement (`ADD [COLUMN] def`, `ADD [COLUMN] (def, …)`, `MODIFY [COLUMN] def`, `CHANGE [COLUMN] old
+  def`), skips a qualified table name, stops at a depth-0 PARTITION clause (`PARTITION BY KEY (a)` is not a
+  primary key), and errors "cannot recover column keys: read N column definitions, parsed M" on a count
+  mismatch, like `matchTableSpec`.
+- Tests: `TestColumnKeyAttributes` (21 cases, each measured on MySQL 8.0: CREATE, ALTER
+  ADD/ADD-list/MODIFY/CHANGE, mixed clauses, qualified table, a table named `modify`, a comment, a
+  partition clause, version comments, a column named `primary`); `mysqlConstraintNamesFixture` gains
+  n_ck, n_cs, n_cu and the ALTERed n_ca for live parity.
+- Corrected vs. the original suggestion (vet 2026-10-12): "move ColKey into ColKeyPrimary" is subsumed —
+  the KeyOpt switch goes entirely (with the scan in place, a union with KeyOpt was dead code); and the
+  parser emits at most one primary and one unique key per column instead of one per attribute, which
+  would invent `a_2` keys for `UNIQUE UNIQUE`.
+- Doc note for the implementer: PRD §5.2's MySQL "DDL the file parser cannot read" bullet lists the
+  `SERIAL` type but not the `SERIAL DEFAULT VALUE` column attribute, which vitess also rejects (measured:
+  `a int SERIAL DEFAULT VALUE` → "syntax error at position 29 near 'SERIAL'"); add it inline.
+- Overlap with FIX-306: applyAlterOption and applyDropKey are untouched; `parseAlterTable` gains a
+  parameter and a 3-line preamble before the drop-primary-key loop, and new functions sit between
+  `alterChangeColumn` and `replaceColumn`.
+- Prototype results, run at `9b58288b` on 2026-10-12: probe vs mysql:8.0.46 → `a int KEY, b int` parser
+  no constraints, DB PRIMARY[a]; `x int, KEY (a), a int PRIMARY KEY UNIQUE, UNIQUE (a)` parser a INDEX,
+  a_2 UNIQUE, a_3 UNIQUE, no PRIMARY, DB a, a_2, a_3, PRIMARY; `UNIQUE PRIMARY KEY` parser PRIMARY only;
+  `KEY UNIQUE` parser UNIQUE only; `UNIQUE KEY KEY` / `PRIMARY KEY KEY` parser no keys; ALTER `ADD COLUMN b
+  int KEY`, `MODIFY COLUMN a int UNIQUE KEY KEY` parser no keys, `CHANGE a b int KEY UNIQUE` UNIQUE only —
+  DB has PRIMARY in each. Gates: parser `go test -race -count=1 ./...` ok (live containers);
+  `golangci-lint` 0 issues; gofumpt clean; cmd/sqlgen `TestE2EGoldenFiles` ok. Fail-first: original
+  KeyOpt switch restored → 17 subtests fail (`- {"PRIMARY KEY PRIMARY [a]", "pk a"}, + nil`); CREATE scan
+  not recorded → 12 CREATE subtests fail; `readAlterColumnKeys` removed → 9 ALTER subtests fail; PARTITION
+  stop removed → `a_partition_clause_after_MODIFY` fails; qualified-name skip removed → "read 0 column
+  definitions, parsed 1"; `UNIQUE KEY` lookahead removed → 4 fail; ADD-list branch removed → "read 1
+  column definitions, parsed 3"; base parser with the new parity fixture → `n_cu: … - Constraints: nil, +
+  {Name: "PRIMARY" …}`; existing suite without the fix passes. Golden churn: none. Patch:
+  `.claude/prototypes/FIX-307.patch` (3 files, +367/-18).
+
+**References.**
+- PRD §5.2, §6.1.
+- Backlog lines absorbed: 2026-10-05 inline PRIMARY KEY UNIQUE (30.2, measured by FIX-275);
+  2026-10-07 column attribute KEY (FIX-275).
+
+**Resolution notes.** MySQL column key attributes are recovered from the statement tokens instead of
+vitess's last-wins `KeyOpt`: `tableElements` returns `columnKeys{primary, unique}` per column entry
+(`readColumnKeys`: `PRIMARY KEY` or bare `KEY` → primary, `UNIQUE [KEY]` → unique), and
+`parseAlterTable(stmt, sql)` runs `readAlterColumnKeys` over the ADD / ADD-list / MODIFY / CHANGE
+clauses (qualified-name skip, stops at a depth-0 PARTITION clause, count-mismatch error). `parseColumn`
+emits PRIMARY (NOT NULL) then UNIQUE, at most one of each; the KeyOpt switch is gone. Prototype applied
+with `git apply --3way` (FIX-306 `1767367a` reworked `parseAlterTable`; the preamble sits before its
+drop/rename/add passes and the map is keyed by definition pointer, so clause reordering is unaffected).
+PRD §5.2 MySQL "DDL the file parser cannot read" bullet gains the `SERIAL DEFAULT VALUE` column
+attribute. Tests: `TestColumnKeyAttributes` (21 cases); `mysqlConstraintNamesFixture` gains n_ck, n_cs,
+n_cu, n_ca for live parity. Fail-first: base `mysql.go` → 17 `TestColumnKeyAttributes` subtests fail and
+live parity fails on n_ck, n_cs, n_cu, n_ca. Gates: `make check` ok, parser `go test -race ./...` (live)
+ok, `make check-examples` ok; golden churn none (matches vet). Inline: the 3-way merge (and the prototype)
+put `TestColumnKeyAttributes` between `TestExpressionKeys`'s doc comment and its func; the comment was
+moved back. /verify reviewer: no findings; one pre-existing adjacent finding (two inline primary keys
+accepted) went to the backlog.
+
+### FIX-306
+
+- **Status:** Resolved
+- **Severity:** tracked
+- **Origin:** phase 4, `parser/mysql` (`applyAlterOption`, `applyDropKey`, `parseAlterTable`)
+- **Surfaced by:** backlog sweep 2026-10-12 (backlog lines from FIX-275, FIX-296)
+- **Vetted:** corrected at `9b58288b` (2026-10-12)
+
+**Issue.** The MySQL file parser gets index names and sets wrong after some ALTER TABLE forms
+(measured against MySQL 8.0.46):
+- `ALTER TABLE v2 RENAME INDEX a TO b` → parser keeps `A`, DB `b` (also `RENAME KEY` on a UNIQUE; a
+  rename then `DROP INDEX <new>` leaves a stale index).
+- `ALTER TABLE … DROP CONSTRAINT x` removes only a CHECK; MySQL 8.0.19+ drops a FOREIGN KEY, UNIQUE
+  (case-insensitive) or `PRIMARY` of that name.
+- `ALTER TABLE t ADD FOREIGN KEY (a, b) REFERENCES p2 (b, c), ADD KEY (a), ADD KEY (a, b)` → parser
+  `a_2:[a] a:[a,b]`, DB `a:[a] a_2:[a,b]` (the CREATE TABLE form was fixed by FIX-275).
+- `CONSTRAINT fk4 FOREIGN KEY (a) …; ALTER TABLE g4 DROP FOREIGN KEY fk4; ALTER TABLE g4 ADD KEY (a,
+  b)` → parser keeps `fk4[a]` + `a[a,b]`, DB only `a[a,b]`.
+
+**Root cause.** `applyAlterOption` (`parser/mysql/mysql.go:1117`) has no `*sqlparser.RenameIndex`
+case; vitess maps `DROP CONSTRAINT` and `DROP CHECK` to `CheckKeyType` (`sql.y:3497-3503`) and
+`applyDropKey` (`:1261`) removes only a CHECK; ALTER clauses are applied one at a time without the
+CREATE TABLE lookahead (`replacedLater`, `:507`); the DropKey case (`:1135`) clears `p.generated` by
+name for every DropKey type, so dropping an FK un-flags a same-named built index.
+
+**Suggested fix.**
+- `parseAlterTable` applies a statement's key changes in MySQL's order: every DropKey first (the PK-only
+  pre-pass becomes `p.dropKey`), then every RenameIndex (`p.renameKey`), then the remaining clauses in
+  order. Each ADD clause gets `later` — the keys the clauses after it add (`addedKey`: ADD INDEX and an
+  ADD FOREIGN KEY's built index; column-inline keys are left out, they cover one column) — and
+  `addConstraints` skips an FK's built index when `replacedLater(key, later)`, as CREATE TABLE does.
+- `renameKey`: rename the UNIQUE/INDEX constraint (old name matched case-insensitively), delete the name
+  from `p.generated` (a renamed FK index stays non-replaceable even when renamed back — measured), and
+  rename a matching `exprKeys` entry.
+- `dropKey`: `dropKeyType` maps `CheckKeyType` + `PRIMARY` to `PrimaryKeyType` (only the backticked
+  `` DROP CONSTRAINT `PRIMARY` `` is valid DDL; unquoted is ERROR 1064). `CheckKeyType` drops the CHECK,
+  else the FK (keeping its index and the index's generated flag), else the UNIQUE (MySQL rejects a name
+  two of these share, ERROR 3939). `p.generated` is cleared and `exprKeys` pruned only for index drops
+  and the UNIQUE fallback. `removeConstraintFromColumns` returns bool.
+- Test `TestAlterTableKeyNames` (20 cases, each want measured on 8.0.46). PRD §5.2's MySQL ALTER bullet
+  lists RENAME INDEX / KEY, says what DROP CONSTRAINT drops, and that drops then renames apply before
+  adds.
+- Corrected vs. the original suggestion (vet 2026-10-12): widened at the same fix site for the same root
+  cause (the parser applies ALTER clauses one at a time; MySQL applies drops, then renames, then adds,
+  whatever the clause order — measured `ADD KEY (a), DROP INDEX a` → DB `a [a]`, parser `a_2`; `ADD KEY
+  (a), RENAME INDEX a TO b` → DB `a, b`, parser `a, a_2`), so drops and renames are pre-passes rather than
+  an `applyAlterOption` case; and HEAD also deletes a same-named `exprKeys` entry on DROP FOREIGN KEY /
+  DROP CHECK (measured `KEY x (x,(b+1)), CONSTRAINT x FOREIGN KEY (x)…; DROP FOREIGN KEY x; ADD KEY (x)` →
+  DB `x_2 [x]`, parser `x [x]`), fixed the same way.
+- Auto-accepted the recommended option on 2026-10-12 (`/fix` auto-accept rule): extend PRD §5.2's MySQL
+  ALTER bullet with RENAME INDEX / KEY, DROP CONSTRAINT's targets and the drops → renames → adds order —
+  PRD text for an unspecified case; prototyped green, no churn, no public surface, reverses nothing.
+- Composition with FIX-303 (landed first, b3abc88b): `renameKey`'s exprKeys loop becomes a loop over
+  `table.ExpressionIndexes`; `dropKey`'s kind filter becomes "remove the entry by name when `len(kinds) >
+  0`" (DROP CONSTRAINT on a non-unique key is ERROR 3940, so the UNIQUE fallback never meets a non-unique
+  expression key in valid DDL). The patches conflict textually at `parser/mysql/mysql.go:1135`; whichever
+  lands second rebases onto the other.
+- Prototype results, run at `9b58288b` on 2026-10-12: probe (`zz_probe_fix306_test.go`, 32 DDL cases,
+  parser vs mysql:8.0.46 `information_schema.statistics` + `table_constraints`) → at HEAD "27/32
+  mismatched" (e.g. RENAME INDEX a TO b → parser `IDX A [a]`, DB `IDX b [a]`; DROP CONSTRAINT FK → parser
+  keeps the FK; `ADD PRIMARY KEY (b), DROP CONSTRAINT \`PRIMARY\`` → parser two PRIMARY keys; multi-clause
+  FK lookahead → parser `a [a,b], a_2 [a]`, DB `a [a], a_2 [a,b]`; DROP FOREIGN KEY fk4 then ADD KEY (a,b) →
+  parser `fk4 [a]` + `a [a,b]`, DB `a [a,b]`); with the prototype "0/32 mismatched". Gates: parser `go test
+  -race -count=1 ./...` ok (integration); `golangci-lint` 0 issues; `gofumpt -l` clean; cmd/sqlgen
+  `TestE2EGoldenFiles` ok; `make refs-check` ok. Fail-first: the new test against HEAD's mysql.go → 19 of
+  20 subtests fail (the 20th guards the kind filter); rename pass removed → "- INDEX b [a] + INDEX A [a]";
+  renameKey keeps the generated flag → "- INDEX fk [a]"; renameKey skips exprKeys → "- INDEX a [a] + INDEX
+  a_2 [a]"; no FK fallback → "+ FOREIGN KEY fk [a]"; no UNIQUE fallback → "+ {\"UNIQUE U [a]\", …}"; no
+  PRIMARY mapping → "+ {\"PRIMARY KEY PRIMARY [a]\"}"; PK-only pre-pass → "- INDEX a [a] + INDEX a_2 [a]";
+  empty `later` → lookahead case fails; generated cleared on every drop → "+ INDEX fk4 [a]"; exprKeys pruned
+  on every drop → "- INDEX x_2 [x] + INDEX x [x]"; existing suite without the fix passes. Golden churn:
+  none (introspect_mysql's migrations are single-clause). Patch: `.claude/prototypes/FIX-306.patch` (3
+  files, +277/-51).
+
+**References.**
+- PRD §5.2 (MySQL index naming), §6.1.
+- Backlog lines absorbed: 2026-10-09 RENAME INDEX ignored (FIX-296); 2026-10-09 DROP CONSTRAINT drops
+  only CHECK (FIX-296); 2026-10-09 multi-clause ALTER FK index (FIX-275). The DROP FOREIGN KEY case
+  is a backlog-sweep measurement at the same fix site.
+- FIX-275, FIX-296, FIX-299.
+
+**Resolution notes.** `parseAlterTable` (`parser/mysql/mysql.go`) now applies a statement's key drops (`p.dropKey`, replacing `applyDropKey` and the PK-only pre-pass), then its key renames (`p.renameKey`, new: RENAME INDEX / KEY), then the remaining clauses in order; each ADD clause gets `later` (`addedKey`) so `addConstraints` skips a foreign key's built index a later key replaces (`replacedLater`), as CREATE TABLE does. `dropKeyType` maps DROP CONSTRAINT `PRIMARY` to the primary key; DROP CONSTRAINT drops the CHECK, else the FOREIGN KEY, else the UNIQUE of that name; `p.generated` and the expression-index list are cleared only for index drops and the UNIQUE fallback. Test `TestAlterTableKeyNames` (20 cases); PRD §5.2's MySQL ALTER bullet extended. Prototype applied with `git apply --3way`: `parser/mysql/mysql.go` conflicted with FIX-303 (b3abc88b), which moved expression keys from `p.exprKeys` to `table.ExpressionIndexes`; resolved per the entry's composition note (`renameKey` loops over `table.ExpressionIndexes`; `dropKey` removes the entry by name when `len(kinds) > 0`). The removal uses `IndexFunc` + `slices.Concat`, as HEAD did, not `slices.DeleteFunc`: DeleteFunc leaves an empty non-nil slice, which failed FIX-303's `TestMySQLIntrospect_ExpressionIndexes` (`m_ex_d`: parser `[]` vs introspected `nil`). Fail-first re-run on the final code: HEAD's mysql.go → 19 of 20 subtests fail (the one passing, "DROP CONSTRAINT drops a unique expression key", guards the UNIQUE fallback's expression-index removal; HEAD pruned on every drop); renameKey skipping expression indexes → "RENAME INDEX renames an expression key" fails; removing the `len(kinds)` gate (generated flag cleared and expression index pruned on every drop) → the two "keeps the foreign key index replaceable" and two "keeps an expression key of that name" cases fail. Gates: `make check` ok; parser `go test -race -count=1 ./...` ok (integration); `make update-golden-e2e` no churn (matches vet); `make check-examples` ok.
+
+### FIX-305
+
+- **Status:** Resolved
+- **Severity:** tracked
+- **Origin:** phase 4, `parser/postgres` (`applyAlterCmd`, `processStmt`)
+- **Surfaced by:** backlog sweep 2026-10-12 (backlog lines from 30.3, 30.4)
+- **Vetted:** corrected at `02000941` (2026-10-12)
+
+**Issue.** The PostgreSQL file parser ignores state-changing DDL that the introspector sees, so the
+two sources differ. Measured on PG17:
+- `ALTER COLUMN b DROP EXPRESSION` / `ALTER COLUMN c SET EXPRESSION AS (a*4)` → files keeps `b`
+  generated (`a * 2`) and `c` at `a * 3`; database: `b` plain, `c` = `a * 4`.
+- `ALTER TABLE p ATTACH PARTITION c1` → files keeps `c1` as a table; `DETACH PARTITION c2` → database
+  has `c2`, files does not.
+- `ALTER DOMAIN posint ADD CONSTRAINT … CHECK (VALUE>0)` / `DROP CONSTRAINT` / `RENAME CONSTRAINT` →
+  files misses each.
+- pg_dump-style serial (plain column, `ALTER SEQUENCE … OWNED BY`, `ALTER TABLE … SET DEFAULT
+  nextval(…)`) → files `Default="nextval('t_id_seq'::regclass)"`, `AutoIncrement=false`; database
+  `Default=""`, `AutoIncrement=true`. Likewise `ALTER COLUMN id ADD GENERATED BY DEFAULT AS IDENTITY`
+  (which pg_dump 17 emits for every identity column) and `DROP IDENTITY`. So `HasDefault` and
+  `Create<T>Input` optionality differ.
+
+**Root cause.** `applyAlterCmd` has no `AT_DropExpression`, `AT_SetExpression`, `AT_AttachPartition`,
+`AT_DetachPartition`, `AT_AddIdentity` or `AT_DropIdentity` case; `processStmt` has no
+`AlterDomainStmt`, `CreateSeqStmt` or `AlterSeqStmt` case; `parseRename` handles only TABLE and
+COLUMN; `alterColumnDefault` does not apply the nextval→AutoIncrement rule.
+
+**Suggested fix.**
+- New `parser/postgres/sequences.go`: a sequence registry (name, owning table and column, identity
+  flag), filled by CREATE SEQUENCE / ALTER SEQUENCE … OWNED BY [NONE] and by serial and identity
+  columns (inline, ADD COLUMN, ADD GENERATED AS IDENTITY with SEQUENCE NAME), named by a new
+  `parser.DerivePostgresSequenceName`. Ownership follows RENAME TABLE, RENAME COLUMN and SET SCHEMA
+  (which moves the sequence); DROP COLUMN, DROP TABLE, DROP SEQUENCE [CASCADE] and ALTER SEQUENCE
+  RENAME are handled. `namespace()` counts sequence names.
+- A column follows the introspector's exact rule (`applyColumnExpr`) in any statement order: if it owns
+  a sequence and its default contains `nextval(`, the default is "" and AutoIncrement is true.
+  `alterColumnDefault` becomes a method and AutoIncrement follows the default (cleared when a default
+  stops being a nextval: serial + DROP DEFAULT or `SET DEFAULT 5`, measured). Losing ownership (OWNED BY
+  NONE or a new owner) gives the default back as `nextval('<seq>')`, schema-qualified when the schema
+  is not input.schema.
+- `applyAlterCmd` gains `applyAlterStateCmd`: ADD/DROP IDENTITY (DROP IDENTITY IF EXISTS leaves a serial
+  alone); DROP/SET EXPRESSION (an unknown or plain column is ignored, like SET/DROP NOT NULL); ATTACH
+  PARTITION drops the child with a warning through a new `removeTable` that skips `CheckTableDropRefs`
+  (PG17 keeps `r_id_k_fkey → c1` after the attach); DETACH PARTITION warns per the auto-accept below.
+- `parseAlterDomain`: ADD CHECK (named as CREATE DOMAIN names one) and DROP CONSTRAINT. `parseRename`
+  gains TABCONSTRAINT (re-runs `CanonicalizeConstraints` so FIX-302's first-FK-by-name rule applies),
+  INDEX (renames a PK/UNIQUE constraint or an expression-index reservation), DOMCONSTRAINT and SEQUENCE.
+  PRD §5.2's PostgreSQL bullets are updated.
+- Auto-accepted the recommended option on 2026-10-12 (`/fix` auto-accept rule; user confirmed no veto):
+  DETACH PARTITION emits "ALTER TABLE p DETACH PARTITION c2 skipped in DDL file — the detached table is
+  not modelled under files; use introspection", because building it would have to reproduce PG's clone
+  naming; no churn, no public surface.
+- Corrected vs. the original suggestion (vet 2026-10-12): widened under the scope cap (same root cause,
+  same site `parseRename`) to RENAME CONSTRAINT (orchestrator, from FIX-302's vet: `ALTER TABLE c RENAME
+  CONSTRAINT zz TO aa` → files `[zz bb]`, database `[aa bb]`), ALTER INDEX … RENAME and ALTER SEQUENCE …
+  RENAME (PG renames a PK/UNIQUE constraint and its index together, measured both ways), plus DROP
+  SEQUENCE; the ownership rule is the introspector's exact one; OWNED BY NONE restores the default; the
+  implicit serial/identity sequences are registered under PG's derived names; ATTACH skips the DROP
+  TABLE reference check. Stale: ADD IDENTITY on a nullable column is a PG17 error, so setting NOT NULL
+  changes nothing on valid DDL; MissingOk on DROP EXPRESSION changes nothing.
+- PG17-only syntax (SET EXPRESSION, `ALTER DOMAIN … ADD NOT NULL`) is rejected by postgres:16-alpine,
+  the integration image, so those two are unit-tested and the parity test sticks to PG16 syntax.
+- Composition: applies cleanly with FIX-302 (the RENAME CONSTRAINT parity case then passes; without the
+  re-canonicalize it fails `- Column: "y" + Column: "x"`). With FIX-303 first, `git apply --3way` leaves 5
+  textual conflicts in postgres.go (struct fields: keep `skipped`, add `sequences`; the pgNamespace
+  comment; RENAME COLUMN: keep both bodies; parseDrop: FIX-303's VIEW/MATVIEW case plus OBJECT_SEQUENCE;
+  dropTable: keep `delete(p.skipped, key)`, drop the unused `idx`) and three semantic edits: `renameIndex`
+  loops `table.ExpressionIndexes` instead of `p.exprIndexes`; `removeTable` loses `delete(p.exprIndexes,
+  key)`; `attachPartition` adds `p.skipped[key] = true`. Sequence names reach the namespace through a
+  `p.sequences` loop in `namespace()` alongside `skipped`. Measured composed: unit tests and PG16/PG17
+  `TestPostgresIntrospect_*` pass, and `CREATE SEQUENCE n_a_idx; CREATE INDEX ON n (a)` → `n_a_idx1`.
+- The user ruled on 2026-10-12 (backlog sweep Step 5): widen to PG `ALTER TYPE … ADD VALUE [BEFORE|AFTER]`,
+  `ALTER TYPE … RENAME VALUE`, and `ALTER TYPE|DOMAIN … RENAME TO`, all ignored today (same root cause, same sites:
+  `processStmt` AlterEnumStmt, `parseRename` OBJECT_TYPE / OBJECT_DOMAIN). Measured: `CREATE TYPE mood AS ENUM
+  ('ok','meh'); ALTER TYPE mood ADD VALUE 'great' BEFORE 'ok'; ALTER TYPE mood RENAME VALUE 'meh' TO 'bad';
+  CREATE DOMAIN d1 AS int; ALTER DOMAIN d1 RENAME TO d2; ALTER TYPE mood RENAME TO mood2` → parser enum mood
+  [ok meh], domain d1; PG17 {great,ok,bad}, d2, mood2. Re-vet to fold these into the prototype.
+- Widened prototype (re-vet at `02000941`, per the ruling above): new `parser/postgres/alter_type.go`;
+  `processAlterStmt` gains an `AlterEnumStmt` case → `parseAlterEnum` (ADD VALUE [IF NOT EXISTS] [BEFORE|AFTER],
+  RENAME VALUE), erroring where PG17 does (duplicate label, unknown neighbor, unknown old label, new label already
+  present, unknown enum; IF NOT EXISTS on an existing label is a no-op even with a bad neighbor, PG's NOTICE path).
+  RENAME VALUE relabels the enum's constants type-aware, as PG17 does (measured: `CHECK ((m <> 'bad'::s3.mood))`,
+  generated `CASE WHEN (n = 'bad'::s3.mood)`, index predicate, domain `CHECK ((VALUE <> 'bad'::s3.mood))`): a whole
+  default of a column of the enum (or a domain over it), a constant cast to the enum, a constant compared with or
+  listed against such a column (`value` in a domain, IN lists, ARRAY elements); text constants untouched.
+  `parseRename` gains a `default` branch → `renameTypeObject` (split for cyclop): OBJECT_TYPE / OBJECT_DOMAIN via
+  `renameType` (enum, composite, domain; `ALTER TYPE` also renames a domain, as PG does, while `ALTER DOMAIN` of a
+  non-domain errors "… is not a domain"), erroring on a taken type or table name, a composite onto any relation
+  name, an unknown type; `renameTypeReferences` rewrites table columns, seeded view columns, composite attributes
+  and domain base types, arrays included, bare staying bare and qualified staying qualified (format_type, measured).
+  Widened under the scope cap (same root cause, same site): `ALTER TYPE … RENAME ATTRIBUTE` (errors on unknown /
+  existing name). PRD §5.2: the ALTER DOMAIN bullet gains RENAME TO; new ALTER TYPE bullet.
+- Re-vet results, run at `02000941` on 2026-10-12: the earlier patch still applies and its tests and
+  `TestPostgresIntrospect_StateChangingDDL` pass on postgres:16-alpine and 17. New tests at HEAD's code → enum values
+  `[ok meh]` (PG17 `{great,ok,mid,bad,end}`), defaults stay `'meh'`, types stay `mood`, `mood[]`, `d1`, `comp`,
+  `public.comp`, every PG error case `error = <nil>`; parity `TestPostgresIntrospect_AlterTypeDDL` on PG16 → `- Type:
+  "mood" + "mood2"`, `- Default: "'meh'" + "'bad'"`, `- "d1" + "d2"`, `- "comp[]" + "comp2[]"`. Gates: parser `go test
+  -race -count=1 ./...` ok; `TestPostgresIntrospect_*` on postgres:17 ok; golangci-lint 0 issues; gofumpt clean;
+  `make refs-check` ok; cmd/sqlgen `go test -short ./...` ok. Fail-first (each site removed alone): AlterEnumStmt
+  case → `- "great" … + "meh"`; BEFORE/AFTER → order diff; IF NOT EXISTS skip → `enum label "ok" already exists`;
+  whole-default, cast, comparison, IN-list, ARRAY, domain chain, domain `value`, table CHECK, index predicate,
+  generation expression → each its relabel diff (e.g. `- "c1": "m <> 'bad'" + "m <> 'meh'"`); OBJECT_TYPE/DOMAIN case
+  → TestRenameType / InSeededViews / Errors fail; `renameTypeReferences` → `- "public.t.c": "comp2" + "comp"`; view
+  loop → `view column type = "mood[]", want mood2[]`; composite relation check, ALTER DOMAIN non-domain check,
+  collision check, OBJECT_ATTRIBUTE → each fails its case; existing suite passes at HEAD. Golden churn none. Overlap:
+  unchanged from the earlier vet (FIX-301/303/304/309/310/312 conflict on postgres.go, 312 also on PRD.md:1376; with
+  FIX-303 first, the same 5 conflicts; the new code merges cleanly). Semantic overlap with FIX-312: it adds
+  `parser.ResolveTypeRef`; whichever of 305/312 lands second switches `isOfEnum` / `renameTypeReferences.retype` to it.
+  Patch: `.claude/prototypes/FIX-305.patch` (9 files, +1642/-19).
+- Earlier prototype results, run at `9b58288b` on 2026-10-12: parity probe (`zz_probe_f305_test.go`, postgres:17)
+  → DROP/SET EXPRESSION `- GeneratedExpr: "a * 2" + ""`, `- "a * 3" + "a * 4"`; ATTACH/DETACH files `c1`
+  not `c2`, database `c2` not `c1`; ALTER DOMAIN files `posint_check "value < 1000"`, database
+  `posint_check1`, `positive`, `posint_check "value <> 7"`; pg_dump serial files
+  `def="nextval('f305s.t_id_seq'::regclass)" ai=false`, database `def="" ai=true`; ADD IDENTITY files
+  `ai=false`, DROP IDENTITY files `ai=true` (database the reverse); RENAME CONSTRAINT files `[zz bb]`,
+  database `[aa bb]`; also `CREATE SEQUENCE n_a_idx; CREATE INDEX ON n (a)` → PG17 `n_a_idx1`, parser
+  `n_a_idx`. Gates: `go test -race -count=1 ./parser/postgres/ ./parser/` ok; parser `golangci-lint`
+  0 issues (three cyclop hits split into `processAlterStmt`, `applyAlterStateCmd`,
+  `renameDomainConstraint`); gofumpt clean; `TestPostgresIntrospect_*` incl. new
+  `TestPostgresIntrospect_StateChangingDDL` ok on postgres:16-alpine and postgres:17; cmd/sqlgen `go test
+  -short -count=1 ./...` ok. Fail-first: each site reverted alone fails its test — e.g. DROP EXPRESSION →
+  "- `b \"\" \"\"` + `b \"a * 2\" \"STORED\"`"; ATTACH → `+ "c1 id,k"`; ALTER DOMAIN → `- "positive value
+  > 0" + "pos value > 0"`; RENAME CONSTRAINT → `- "UNIQUE uq3" + "UNIQUE uq"`; namespace feed → `- "n
+  INDEX n_a_idx1" + "n INDEX n_a_idx"`; sequence ownership sites → `TestSequenceOwnership`;
+  `TestPostgresIntrospect_StateChangingDDL` fails on PG16 without the fix; existing suite without the fix
+  passes. Golden churn: none. Patch: `.claude/prototypes/FIX-305.patch` (7 files, +1039/-19).
+- Auto-accepted the recommended option on 2026-10-12 (`/fix` auto-accept rule): ALTER DOMAIN … RENAME CONSTRAINT on an
+  unknown domain (question from the verify reviewer) → error "alter domain: unknown domain", as `parseAlterDomain` and
+  `renameType` do, because it was prototyped green, causes no golden churn, adds no public surface, and reverses no
+  ruling or PRD text.
+
+- Auto-accepted the recommended option on 2026-10-12 (`/fix` auto-accept rule): ALTER TABLE / COMMENT ON of a relation
+  the parser skips (question from the second verify pass: blanket skip, or PostgreSQL's per-kind rules) → blanket skip
+  of every skipped relation PostgreSQL can index, as `CREATE INDEX` on one is, because it was prototyped green, causes no
+  golden churn, adds no public surface, and adds PRD text for a case the PRD did not state. The one loosened PG error
+  (`COMMENT ON TABLE` of a matview) went to the backlog.
+- Auto-accepted the recommended option on 2026-10-13 (`/fix` auto-accept rule): PRD §5.2 "A `CREATE INDEX` needs its
+  table" said every `ALTER TABLE` naming a skipped relation is skipped, while `ALTER TABLE … RENAME` / `SET SCHEMA` of
+  one still errors (question from the third verify pass: narrow the PRD sentence, or keep it as the target) → narrow it
+  to the `ALTER TABLE` actions the code skips, leaving rename and move unstated (the backlog line from FIX-304 tracks
+  them), because it is doc-only with gates green, causes no golden churn, adds no public surface, and corrects text this
+  fix added to match the code.
+
+
+**References.**
+- PRD §5.2 (PostgreSQL bullets, partitions), §6.1, §6.3.
+- Backlog lines absorbed: 2026-10-05 DROP/SET EXPRESSION (30.3); 2026-10-05 ATTACH/DETACH PARTITION
+  (30.4); 2026-10-05 ALTER DOMAIN constraints (30.4); 2026-10-05 pg_dump-style serial (30.4).
+- `parser/introspect/postgres.go` `applyColumnExpr` (owned-sequence rule, Q5 of phase 30).
+
+**Resolution notes.** Applied the vetted prototype with `git apply --3way`. The two conflicted files came from fixes landed since the vet. `parser/introspect/postgres_integration_test.go` kept FIX-302's `TestPostgresIntrospect_SameColumnForeignKeys` (`f217cf18`) next to the new tests. `parser/postgres/postgres.go` took the five conflicts and three semantic edits the entry predicted for FIX-303 (`b3abc88b`), adjusted for FIX-304 (`a0090f9b`). The struct keeps `skipped` and adds `sequences`. `processStmt`'s default now goes to `processAlterStmt`, whose default is FIX-304's `skipRelation`. The `pgNamespace` comment names views and sequences. FIX-304 had moved RENAME COLUMN into `renameColumn`, so `renameSequenceColumn` lives there and `parseRename` keeps FIX-304's VIEW/MATVIEW case plus the new cases. `parseDrop` keeps FIX-303's VIEW/MATVIEW and FIX-304's INDEX cases plus OBJECT_SEQUENCE. `dropTable` keeps `delete(p.skipped, key)`. `renameIndex` loops `table.ExpressionIndexes`. `attachPartition` sets `p.skipped[key] = true`.
+
+FIX-304's surface met this fix in one more place. It added `parser.Schema.Partitions`, and the parity check compares it. Without a partition entry for the attached table, `TestPostgresIntrospect_StateChangingDDL` failed with `- Partitions: nil, + Partitions: []parser.Partition{{Schema: "pgi_state", Name: "c1", ParentSchema: "pgi_state", ParentName: "p"}}`. So `attachPartition` now lists the attached table as a partition of its parent. A new `detachPartition` unlists the detached table. It keeps the auto-accepted warning and keeps the table skipped, so an index on it is still accepted and DROP TABLE of the parent no longer frees its name. `TestAlterTablePartitions` now asserts `Partitions == [c1]` and accepts `CREATE INDEX` on both c1 and c2. It fails with the skipped registration removed (`create index: table public.c1 not found`) and with the detach unlisting removed (`+ c2`). The PRD §5.2 partition bullet now says the attached table is a partition from then on, and that an index on a detached table is skipped.
+
+Fail-first on the final code: each of these sites reverted alone fails its unit test and the PG16 parity test: AlterEnumStmt, AlterDomainStmt, AlterSeqStmt, RENAME CONSTRAINT, ALTER INDEX RENAME (constraint and expression index), `renameSequenceColumn`, the namespace sequence loop, ATTACH, and `renameTypeObject`.
+
+Gates:
+- `make check` ok.
+- `cd parser && go test -race -count=1 ./...` (integration, postgres:16-alpine) ok.
+- `TestPostgresIntrospect_*` on postgres:17-alpine ok.
+- `make check-examples` ok.
+- `make update-golden-e2e` and `make update-golden` produced no churn, matching the vet.
+
+Verify found one regression, now fixed. `attachPartition` takes the table out of the model, so a later statement naming it errored. `pg_dump` writes `CREATE TABLE c1`, then `ATTACH PARTITION`, then `ALTER TABLE ONLY public.c1 ADD CONSTRAINT c1_pkey …`, and that output failed with "table public.c1 not found" (`err=<nil>` at HEAD). `ALTER TABLE` and `COMMENT ON TABLE` / `COLUMN` now skip a relation the parser skips that PostgreSQL can index, as `CREATE INDEX` on one is (`parseAlterTable`; new `skippedTable`; `commentOnColumn` split out for cyclop). The same change covers `ALTER TABLE` on a `PARTITION OF` child, which the backlog line from the FIX-304 vet recorded, so that line is removed. A detached table attached again is listed as a partition again. `TestAlterTablePartitions` gains the three statements and a re-attach. Reverting each site alone fails it: "table public.c2 not found", "comment on unknown table c1", "comment on column of unknown table c1", and `- c2`. `TestPostgresIntrospect_StateChangingDDL` gains the pg_dump-shaped `ALTER TABLE ONLY c1 ADD CONSTRAINT` and `COMMENT ON TABLE c1`. The PRD §5.2 "A `CREATE INDEX` needs its table" paragraph names ALTER TABLE and COMMENT ON. Two integration-test doc comments were shortened.
+
+`ALTER TABLE … RENAME` / `SET SCHEMA` of a skipped relation still errors; the existing backlog line covers it. Sequence-DDL strictness gaps went to the backlog. Default pg_dump output (`ALTER SEQUENCE … OWNER TO`, `ALTER INDEX … ATTACH PARTITION`) still fails, before and after this fix; that is reported as a candidate FIX.
+
+Re-run gates:
+- `make check` ok.
+- Parser `go test -race -count=1 ./...` (integration) ok.
+- `make check-examples` ok.
+- No golden churn.
+
+The second verify pass found one gap. The skip also dropped an `ATTACH PARTITION` whose parent is itself a skipped partition, which is pg_dump's sub-partition shape: `tables=[p gc] partitions=[c1]`, while PG16 reports `gc relispartition=t`. The new `alterSkippedTable` applies ATTACH and DETACH on a skipped relation with a stand-in parent. New `TestAttachSubPartition` fails with it removed (`tables = 2, want only p`). `TestPostgresIntrospect_StateChangingDDL` gains a sub-partition attach. Backlog line from FIX-304 on RENAME / SET SCHEMA of skipped relations: corrected. Its "line 64" pointer was replaced, and the line widened to RENAME COLUMN / CONSTRAINT. Skipped-relation edge cases went to the backlog.
+
+The third verify pass found no FAIL and no regression; the reviewer's fail-first check on `alterSkippedTable` confirmed `TestAttachSubPartition`. It flagged the PRD §5.2 sentence above as overstating the skip (auto-accepted narrowing). Tracker text corrected: `parseDrop`'s VIEW/MATVIEW case is FIX-303's, and the backlog line from the FIX-303 vet on `ALTER VIEW … RENAME` / `SET SCHEMA` was removed (FIX-304's `moveSkipped` rekeys any skipped relation; the partition case via `ALTER TABLE` is the FIX-304 line). A pre-existing partition-parent rename gap went to the backlog. A pre-existing parse error on `COMMENT ON COLUMN` of a plain view's column, which PG16 accepts, is reported as a candidate FIX.
+
+Final gates:
+- `make check` ok.
+- Parser `go test -race -count=1 ./...` (integration) ok.
+- `make check-examples` ok.
+- No golden churn.
+
+### FIX-304
+
+- **Status:** Resolved
+- **Severity:** tracked
+- **Origin:** phase 4, `parser/postgres` + `parser/sqlite` (`parseCreateIndex`, DROP INDEX)
+- **Surfaced by:** backlog sweep 2026-10-12 (backlog lines from FIX-264, FIX-282, FIX-296)
+- **Vetted:** ready at `9b58288b` (2026-10-12)
+
+**Issue.** The PostgreSQL and SQLite parsers silently skip a `CREATE INDEX` on a table no statement
+defines (or, for PG, one created later), or on a view, and ignore a standalone `DROP INDEX`. Measured:
+SQLite `CREATE INDEX ix ON nope (id)` / on a view → err=nil (SQLite: "no such table: main.nope",
+"views may not be indexed"); PG `CREATE INDEX users_email ON users (id); CREATE TABLE users (…)` →
+err=nil, no index (PG16 `relation "users" does not exist`); SQLite `CREATE UNIQUE INDEX ix ON t(a);
+DROP INDEX ix` keeps `UNIQUE "ix"` with `a.Unique=true` (so `FindByA` is generated); PG17 `CREATE
+UNIQUE INDEX di_b ON di (b); DROP INDEX di_b` keeps it with `b.Unique=true`. MySQL already errors on
+a missing table and handles DROP INDEX.
+
+**Root cause.** SQLite `parseCreateIndex` returns nil when `lookupTable` misses; PG `parseCreateIndex`
+does the same on purpose (`parser/postgres/postgres.go:406` at `b3abc88b`, `//nolint:nilerr` "to match DROP TABLE
+handling"). SQLite `processStmt` (`parser/sqlite/sqlite.go:66-86` at `b3abc88b`) has no `*rsql.DropIndexStatement`
+case; PG `parseDrop` falls to its default branch for DROP INDEX.
+
+**Suggested fix.**
+- Ruling (user, 2026-10-12, backlog sweep Q5): `CREATE INDEX` on an unknown relation is an error on
+  every dialect, matching all three databases; relations the parser skips on purpose stay exempt (PG
+  materialized views and `PARTITION OF` children; SQLite views and virtual tables are an error).
+  Policy: reject DDL the database rejects only when accepting it corrupts the output.
+- SQLite: `parseCreateIndex` errors "create index <ix>: table <t> not found" (covers views and virtual
+  tables). New `parseDropIndex` matches a `Method == "btree"` constraint by ASCII-fold name on any table
+  (SQLite UNIQUE constraints carry Method ""), deletes it, `RecomputeColumnUnique`. No reservation to
+  release: every SQLite index is named.
+- PG: the `//nolint:nilerr` skip goes; CREATE INDEX on an unknown relation errors ("create index[ <ix>]:
+  table <schema.t> not found") unless FIX-303's `skipped[key]` is true — the set's value now means "PG
+  can index it" (true for matviews and partitions, false for plain views). `Seed` sets
+  `v.Materialized` per view and adds `base.Partitions`. ALTER VIEW / MATERIALIZED VIEW RENAME and SET
+  SCHEMA move the skipped key (else a valid `CREATE INDEX` on a renamed matview errors).
+- New parity-neutral `parser.Schema.Partitions []Partition{Schema, Name, ParentSchema, ParentName}`,
+  filled by both sources (introspector reads `pg_inherits` with `relispartition`); FIX-303 carries no
+  partitions. DROP TABLE drops a partition and, recursively, every partition of a dropped table
+  (`dropPartitions`), from both `Schema.Partitions` and `skipped`.
+- PG DROP INDEX: `dropIndex(schema, name)` removes an Index/Unique constraint by exact name in that
+  schema (by Type — a PG UNIQUE constraint also carries Method "btree", and gin/gist/hash must be
+  droppable), re-derives Unique, or releases a FIX-303 `ExpressionIndexes` entry.
+- PRD §5.2 gains "A `CREATE INDEX` needs its table".
+- Tests: `parser/postgres/index_test.go` (`TestCreateIndexOnUnknownRelation`,
+  `TestCreateIndexOnSeededRelation`, `TestPartitionsListed`, `TestDropIndex`),
+  `parser/sqlite/index_test.go` (`TestCreateIndexOnUnknownTable`, `TestDropIndex`),
+  `parser/introspect/index_integration_test.go` (`TestPostgresIntrospect_PartitionsListed`,
+  `TestPostgresMerge_Indexes`, `TestSQLiteMerge_Indexes`).
+- The four PG examples' `after_views.sql` matview indexes are confirmed outside `paths` (postgres,
+  graphql, tenancy_postgres: `./schema.sql`; introspect_postgres: `./migrations/`); parsing them as files
+  would now correctly error, since the matviews live in `views/`.
+- Corrected vs. the original suggestion (vet 2026-10-12): PG matches DROP INDEX by Type, not
+  `Method == "btree"`; no SQLite reservation exists; a new `Schema.Partitions` carrier is needed; FIX-303's
+  `skipped` set needs an indexable flag; view/matview renames move the skipped key.
+- Depends on FIX-303 (the patch is a diff on top of FIX-303's prototype). After FIX-301 lands,
+  `parseDropIndex`'s two `foldASCII` calls become `parser.FoldASCII`.
+- The user ruled on 2026-10-12 (option A, recommended, as prototyped): `DROP INDEX` of a name the parser holds no
+  index for is a no-op on PG and SQLite, as the MySQL parser already treats it — accepting it leaves the output
+  unchanged (Q5 policy), and it needs no carrier for indexes introspection cannot see. The error option (PG16/17
+  `index "nope" does not exist`, SQLite "no such index: nope") would need every skipped DB index carried into
+  `Seed` to avoid false errors under `both`. If `TestDropIndex` does not already pin it, add a case: `DROP INDEX
+  nope` → err=nil, schema unchanged (PG and SQLite).
+- Prototype results, run at `9b58288b` + FIX-303 on 2026-10-12: probes (`zz_probe_index_test.go` in
+  sqlite/postgres/mysql) → SQLite `CREATE INDEX ix ON nope (id)`, on a view, on an fts5 table → err=<nil>
+  (modernc: "no such table: main.nope", "views may not be indexed", "virtual tables may not be
+  indexed"); SQLite `CREATE UNIQUE INDEX ix ON t(a); DROP INDEX ix` → keeps it, a unique=true; PG index
+  before its table → err=<nil> (PG16/17 `relation "users" does not exist`); PG `DROP INDEX di_b` keeps it,
+  b unique=true; PG index on a plain view → err=<nil> (PG `cannot create index on relation "v"`);
+  matview/partition indexes accepted on PG16/17. Gates: parser `gofumpt -l` clean, `go test -race
+  -count=1 ./...` ok, `golangci-lint` 0 issues; cmd/sqlgen `go test -count=1 ./...` ok incl.
+  `TestE2EGoldenFiles` and the cli/livedb `source: both` runs, no golden changes; examples postgres,
+  graphql, tenancy_postgres, introspect_postgres `GOWORK=off go test -race ./...` ok. Fail-first: SQLite
+  create-index error reverted → `error = <nil>, want containing "create index ix: table nope not
+  found"`; SQLite DropIndexStatement removed → constraints and unique columns mismatch; PG create-index
+  error bypassed → `error = <nil>, want containing "create index users_email: table public.users not
+  found"`; view marked indexable → error = <nil>; Seed partitions loop removed → "create index p1_k:
+  table public.p1 not found" after Seed; PG OBJECT_INDEX case removed → `+ {Name: "g_b", Type:
+  "UNIQUE", …}`; expression-index release removed → `- Name: "n_a_idx" + Name: "n_a_idx1"`;
+  `dropPartitions` removed, partition append removed, `introspectPartitions` removed, `moveSkipped`
+  disabled → each fails its test; existing suite without the fix passes. Golden churn: none. Patch:
+  `.claude/prototypes/FIX-304.patch` (8 files, +624/-13, applies on top of FIX-303).
+
+**References.**
+- PRD §5.2 ("a statement sees only what came before"), §5.5.
+- Backlog lines absorbed: 2026-10-03 PG CREATE INDEX on a missing table (FIX-264; outside the Phase
+  30/31 attribution, absorbed by ruling Q7); 2026-10-07 SQLite CREATE INDEX on a missing table/view
+  (FIX-282); 2026-10-09 SQLite DROP INDEX ignored (FIX-296); PG DROP INDEX twin (backlog sweep
+  measurement, absorbed by ruling Q7).
+- FIX-264, FIX-303.
+
+**Resolution notes.** Applied the vetted prototype with `git apply --3way`; it applied without conflicts on top of the landed FIX-303 (`b3abc88b`), whose `parser.Table.ExpressionIndexes` the prototype's `dropIndex` already releases, and `parseDropIndex`'s `foldASCII` calls became `parser.FoldASCII` (FIX-301). CREATE INDEX on an unknown relation now errors in the PG and SQLite parsers (PG materialized views and partitions exempt via the `skipped` set's indexable flag); new `parser.Schema.Partitions` / `parser.Partition`, filled by the PG file parser and the new `introspectPartitions`, so `Seed` registers the database's partitions; PG DROP INDEX (`dropIndex`) and SQLite DROP INDEX (`parseDropIndex`) remove the index and re-derive the UNIQUE flag, and an unknown name is a no-op (pinned by both `TestDropIndex` "unknown" cases); ALTER [MATERIALIZED] VIEW RENAME / SET SCHEMA move the skipped key (`moveSkipped`) and DROP TABLE forgets a partition and every partition of a dropped table (`dropPartitions`); PRD §5.2 gains "A `CREATE INDEX` needs its table". This closes the temporary regression FIX-303's resolution notes record: the new `TestDerivedConstraintNames` case "a renamed or moved view and a dropped table's partitions free their names" pins `w_a_idx`, `w_b_idx`, `w_c_idx`, `w_d_idx1`, measured on PostgreSQL 16 (`postgres:16-alpine`, `pg_indexes`), and fails at HEAD with `w_a_idx1`, `w_b_idx1`, `w_c_idx1`, `w_d_idx`. `parseRename`'s RENAME COLUMN branch moved into `renameColumn` to keep `parseRename` under the cyclop limit. The verify reviewer measured that the new error also rejected an index on a `CREATE TABLE … AS` or `SELECT … INTO` table (`CREATE TABLE x AS SELECT 1 AS a; CREATE INDEX ON x (a)` → `create index: table public.x not found`; PostgreSQL accepts it), relations the parser skips on purpose and the ruling exempts; both now register in `skipped` as indexable, DROP TABLE releases them, PRD §5.2 names them, and `TestCreateIndexOnUnknownRelation` gains three cases (the CTAS and SELECT … INTO cases fail with their registration removed, the dropped-CTAS case with `dropTable`'s release removed); `processStmt`'s skipped-relation cases moved into `skipRelation` to stay under the cyclop limit. The second verify pass measured `SELECT 1 AS a INTO x UNION SELECT 2; CREATE INDEX x_a ON x (a)` still rejected (pg_query puts the INTO on the leftmost `Larg`), so `skipRelation` now walks `Larg` through set operations (new "select into with union" case, fails without the walk); `dropPartitions` leaves `Partitions` nil once every partition is dropped, as the introspector does (new `TestPartitionsListed` case); a new `TestDerivedConstraintNames` case pins that a CREATE TABLE AS / SELECT INTO table takes an index name until dropped (`n_a_idx1`, `n_b_idx1`, `n_c_idx`, measured on `postgres:16-alpine`). Inline doc fixes from verify: `parseAlterObjectSchema`'s comment, `dropTable`'s comment, this entry's Root cause line refs. Two reading-only findings went to `backlog.md` (ALTER TABLE RENAME / SET SCHEMA on a skipped relation; a stale `skipped` key from CREATE TABLE IF NOT EXISTS … AS). Fail-first re-run on the final code: SQLite create-index error and DropIndexStatement case reverted, PG skipped check bypassed and OBJECT_INDEX case removed → `TestCreateIndexOnUnknownTable`, `TestCreateIndexOnUnknownRelation`, `TestCreateIndexOnSeededRelation` and both `TestDropIndex` fail. Gates: `make check` ok, `cd parser && go test -race -count=1 ./...` (integration, incl. `TestPostgresIntrospect_PartitionsListed`, `TestPostgresMerge_Indexes`, `TestSQLiteMerge_Indexes`) ok, cmd/sqlgen `TestE2EDatabaseTwin` and `./internal/livedb/...` ok, `make check-examples` ok; `make update-golden-e2e` and `make update-golden` produced no churn, matching the vet.
+
+### FIX-303
+
+- **Status:** Resolved
+- **Severity:** tracked
+- **Origin:** phase 30, `parser/postgres` + `parser/mysql` (`Seed`) + `parser/introspect`
+- **Surfaced by:** backlog sweep 2026-10-12 (backlog lines from FIX-276, FIX-294)
+- **Vetted:** corrected at `9b58288b` (2026-10-12)
+
+**Issue.** Index names derived for unnamed indexes go wrong when an expression index's name is
+reserved but invisible:
+- PG, `input.source: both`: DB `CREATE INDEX ON n ((a::text))` (named `n_a_idx`), file `CREATE INDEX ON
+  n (a)` → both gives `n_a_idx`; PostgreSQL and `files` give `n_a_idx1`. Files mode too: `CREATE VIEW
+  n_a_idx …; CREATE INDEX ON n (a)` → PG `n_a_idx1`, parser `n_a_idx` (views and sequences are not
+  counted in the namespace).
+- PG: `CREATE INDEX ON e (a, lower(x)); ALTER TABLE e DROP COLUMN a; … ADD COLUMN a int, ADD COLUMN
+  lower int; CREATE INDEX ON e (a, lower)` → PG17 `e_a_lower_idx`, parser `e_a_lower_idx1`; and a
+  partial index `ON e (b) WHERE a > 0` survives `DROP COLUMN a` in the parser while PG drops it.
+- MySQL, `both`: DB `KEY k (a,(b+1))` + file `ADD FOREIGN KEY (a) REFERENCES p(id)` → both builds an
+  extra `a` index; DB `KEY a ((b+1))` + file `ADD KEY (a)` → both `a`, MySQL `a_2`; an unnamed
+  expression key → both `functional_index`, MySQL `functional_index_2`.
+
+**Root cause.** The introspectors skip expression indexes entirely (PG `indexprs IS NULL`, MySQL
+`introspect/mysql.go:390,566-571`), so `Seed` (`parser/postgres/postgres.go:43`,
+`parser/mysql/mysql.go:260`) cannot restore PG `exprIndexes` or MySQL `exprKeys`. PG `exprIndexes` is
+names only, so `alterDropColumn` (`postgres.go:856`, touches only `table.Constraints`) cannot release
+a reservation, and `namespace()` (`postgres.go:229`) does not count views or sequences.
+
+**Suggested fix.**
+- New `parser.ExpressionIndex{Name, Columns}` (`parser/expression_index.go`) and a
+  `parser.Table.ExpressionIndexes` field (a 4-line hunk at the end of the `Table` struct). Columns:
+  on PG every column the index reads (key, expression, INCLUDE, WHERE) in table order; on MySQL the key
+  parts, with "" for an expression part.
+- The file parsers store expression indexes on the table instead of the private PG `exprIndexes` /
+  MySQL `exprKeys` (both removed), so `Seed` restores them for free and rename/move/drop-table
+  bookkeeping goes away. PG `parseCreateIndex` fills Columns via a new `indexReads` (reuses
+  `parser.CheckColumns` on deparsed expressions + WHERE). PG `alterDropColumn` (still a plain function)
+  also drops expression indexes and index constraints whose WHERE reads the column (`CheckColumns` over
+  `c.Where` at drop time, since seeded constraints carry only text); RENAME COLUMN renames carrier
+  columns. The MySQL functions keep their logic and take `*parser.Table`.
+- New `introspectExpressionIndexes` in both introspectors: PG `indexprs IS NOT NULL`, columns from
+  DISTINCT `pg_depend.refobjsubid > 0` ordered by attnum (pg_depend repeats a column: measured
+  `i3|{a,a,b}`); MySQL statistics rows of any index with a NULL `column_name`, ordered by
+  `seq_in_index`. Both stay out of `Constraints`, so indexes[], the manifest and generated code are
+  unchanged.
+- PG `namespace()` counts a parser-private `skipped` relation set: views and matviews (CREATE / DROP
+  [MATERIALIZED] VIEW) and partitions (PARTITION OF / DROP TABLE); `Seed` fills it from `base.Views`.
+  FIX-305's sequence registry should feed the same namespace (whichever lands second); FIX-304 builds on
+  `skipped` as its record of deliberately skipped relations.
+- Empty-slice care: `DeleteFunc` leaves `[]` against the introspector's nil and fails parity, so the PG
+  drop and MySQL DROP INDEX paths rebuild the slice as nil when empty.
+- MySQL `generated` (which FK index MySQL built itself) cannot be recovered from the catalog
+  (`mysql.indexes.is_generated` is hidden, ERROR 3554). Auto-accepted the recommended option on
+  2026-10-12 (`/fix` auto-accept rule; user confirmed no veto): treat every seeded index as declared and
+  document it as a `both`-mode limit in PRD §6.1 (measured example: DB `FOREIGN KEY (a)` + file `ADD KEY
+  (a, b)` → both `[a(a) a_2(a,b)]`, files and DB `a(a,b)`); no churn, doc-only.
+- Auto-accepted the recommended option on 2026-10-12 (`/fix` auto-accept rule): the carrier lives on
+  `parser.Table`, filled by both the file parser and the introspector, so `assertSchemaParity` compares
+  it and finds it equal (no parity exception); `sortForParity` sorts it by name; prototyped green, no
+  churn, no runtime or generated surface (the exported type and field are in the parser module),
+  reverses no ruling or PRD text.
+- Tests: PG `TestDerivedConstraintNames` cases (drop column across key/WHERE/INCLUDE, rename column,
+  view/matview/DROP VIEW, partition/DROP TABLE); `TestSeedKeepsReservedIndexNames` (PG),
+  `TestSeedKeepsExpressionKeys` (MySQL); integration `TestPostgresIntrospect_BothModeExpressionIndexes`,
+  `TestMySQLIntrospect_BothModeExpressionKeys` (Merge + files parse + migration, then
+  `assertSchemaParity`).
+- Corrected vs. the original suggestion (vet 2026-10-12): the file parsers fill the carrier too (not an
+  introspector-only carrier beside private parser state), so parity holds on both sides, including the
+  existing fixtures with expression indexes (pgi_exprix, probe_names.e, m_ex_*); WHERE references are
+  checked at drop time; `alterDropColumn` need not become a method; widened within the scope cap
+  (same root cause and site, `namespace()`) to partitions, measured on PG17: a `n_a_idx` partition
+  gives index `n_a_idx1` where the parser gave `n_a_idx`.
+- Prototype results, run at `9b58288b` on 2026-10-12: probe (`zz_probe_fix303_test.go`, postgres 17.11,
+  mysql 8.0.46; files / introspect+Seed+file / DB) → PG `((a::text))` + `CREATE INDEX ON n (a)`: db
+  `[n_a_idx n_a_idx1]`, files `[n_a_idx1(a)]`, both `[n_a_idx(a)]`; view `n_a_idx`: db `[n_a_idx1]`,
+  files and both `[n_a_idx(a)]`; drop-column: db `[n_a_lower_idx]`, files `[n_a_lower_idx1(a,lower)
+  n_b_idx(b)]`; MySQL fk-prefix: db `[k:1:a k:2:(b + 1)]`, files `[]`, both `[a(a)]`; `KEY a ((b+1))` +
+  `ADD KEY (a)`: db and files `a_2`, both `a`; functional: db and files `functional_index_2`, both
+  `functional_index`. Gates: parser `go test -race -count=1 ./...` (integration) ok; `golangci-lint`
+  0 issues; `gofumpt -l` clean; `make refs-check` ok; cmd/sqlgen `go build ./...` ok,
+  `TestE2EGoldenFiles` ok, `TestE2EDatabaseTwin` ok (12 PASS), `go test -short ./cli/... ./manifest/...
+  ./internal/livedb/...` ok, `golangci-lint` 0 issues. Fail-first: PG introspector fill reverted → `-
+  Name: "n_a_idx" + Name: "n_a_idx1"`; namespace views/partitions loop reverted → `- "v INDEX v_a_idx1"
+  + "v INDEX v_a_idx"`; Seed view registration reverted → "want one index named n_a_idx2"; drop-column
+  release reverted → `- "e INDEX e_a_lower_idx" + "e INDEX e_a_lower_idx1"`; WHERE check reverted → `+
+  "e INDEX e_b_idx"`; RENAME carrier reverted → `- "r INDEX r_a_lower_idx" + "r INDEX r_a_lower_idx1"`;
+  MySQL introspector fill reverted → extra FK index, `functional_index` vs `_2`, `a` vs `a_2`; MySQL
+  Seed carrier cleared → 3 subtests fail; existing suite without the fix passes. Golden churn: none.
+  Patch: `.claude/prototypes/FIX-303.patch` (12 files, +462/-51).
+
+**References.**
+- PRD §5.2 (index naming), §6.1 (including "`both` Mode — Merge Strategy").
+- Backlog lines absorbed: 2026-10-08 PG both-mode Seed expression-index names (FIX-276); 2026-10-08
+  PG DROP COLUMN keeps the reservation (FIX-276); 2026-10-08 MySQL Seed generated/exprKeys (FIX-294).
+- FIX-276, FIX-294, FIX-275.
+
+**Resolution notes.** Applied the vetted prototype with `git apply --3way`; the two conflicts (`parser/mysql/mysql.go` RENAME/CHANGE COLUMN, `parser/postgres/postgres.go` RENAME COLUMN) came from FIX-301 (`13baa029`) adding the dialect argument to `parser.RenameColumnReferences`, so the landed calls keep `"mysql"`/`"postgres"` and gain the carrier updates (`renameExprKeyColumn(table, …)`, the PG `ExpressionIndexes` column rename). New `parser.ExpressionIndex` (`parser/expression_index.go`) and `parser.Table.ExpressionIndexes`, filled by the PG and MySQL file parsers (replacing the private `exprIndexes` / `exprKeys`) and by new `introspectExpressionIndexes` in both introspectors, so `Seed` restores them; PG `alterDropColumn` drops expression indexes and index constraints whose WHERE reads the column; PG `namespace()` counts a `skipped` set of views, matviews and partitions, which `Seed` fills from `base.Views`; PRD §6.1 documents the MySQL `both`-mode foreign-key-index limit. Fail-first re-run on the final code: PG/MySQL introspector fill, namespace `skipped` loop, Seed view registration, WHERE check and RENAME carrier each fail their tests when reverted. Gates: `make check` ok, `cd parser && go test -race -count=1 ./...` (integration) ok, `make check-examples` ok, cmd/sqlgen `TestE2EDatabaseTwin`, `./cli/...` and `./internal/livedb/...` (integration) ok; `make update-golden-e2e` and `make update-golden` produced no churn, matching the vet. Verify reviewer: no high-confidence issues; the landed diff matches the prototype except FIX-301 context lines. Until FIX-304 lands, the new `skipped` set does not follow ALTER [MATERIALIZED] VIEW RENAME / SET SCHEMA or a partitioned parent's DROP TABLE, so those three shapes now hold the old name (FIX-304's vetted plan covers them); an expression EXCLUDE's backing index went to the backlog.
+
+### FIX-302
+
+- **Status:** Resolved
+- **Severity:** tracked
+- **Origin:** phase 4, `parser` (`ApplyConstraintToColumns`) + all three dialect parsers
+- **Surfaced by:** backlog sweep 2026-10-12 (backlog lines from FIX-267)
+- **Vetted:** corrected at `9b58288b` (2026-10-12)
+
+**Issue.** When one column carries several foreign keys, the parsed and introspected schemas pick
+different ones for `Column.FKReference`. Measured: SQLite `a INTEGER REFERENCES p(x) REFERENCES p(y)`
+→ parity diff `- Column: "y" + Column: "x"`; PG17 same inline form → files `y`, database `x`; PG17
+and MySQL 8.0 table-level `CONSTRAINT zz FOREIGN KEY (a) REFERENCES p(x), CONSTRAINT aa FOREIGN KEY
+(a) REFERENCES p(y)` → files `x`, database `y`.
+
+**Root cause.** There is no shared rule. The introspectors keep the first FK by `ORDER BY
+con.conname` (`parser/introspect/postgres.go:673`) and MySQL's by `ORDER BY tc.constraint_name`
+(`parser/introspect/mysql.go:414`), both through `ApplyConstraintToColumns`' nil guard
+(`parser/schema.go:543`; SQLite introspection keeps the first, `introspect/sqlite.go:485`); each
+parser's `applyColumnConstraint` overwrites on every inline REFERENCES
+(`parser/postgres/postgres.go:999`, `parser/mysql/mysql.go` ~698, `parser/sqlite/sqlite.go:488`), and
+table-level FKs follow declaration order. Dropping one of two FKs (PG `DROP CONSTRAINT`, MySQL `DROP
+FOREIGN KEY`) sets `FKReference = nil` in `removeConstraintFromColumns`
+(`parser/postgres/postgres.go:1101`, `parser/mysql/mysql.go:1368`), so files gives nil where the
+database gives the remaining FK.
+
+**Suggested fix.**
+- Auto-accepted the recommended option on 2026-10-12 (`/fix` auto-accept rule; user confirmed no
+  veto): which FK owns `FKReference` → the single-column FK whose name sorts first (byte order),
+  derived in canonicalization after naming (PG, MySQL); SQLite (unnamed FKs) keeps declaration order
+  (first), because both sources know every name and agree by construction; no golden churn, no public
+  surface, PRD silent.
+- `parser/canonical.go`: new `deriveFKReferences(table, dialect)` at the end of
+  `CanonicalizeConstraints` resets each non-synthetic column's `FKReference` and sets it from the
+  owning single-column FK (`Column` is "" when `ReferenceColumns` is empty). The `ForeignKey` branch of
+  `ApplyConstraintToColumns` (`parser/schema.go`) becomes a no-op; `addFlagConstraints`' flag→FK path
+  stays (`TestCanonicalizeConstraints_FromFlags`).
+- The parsers stop setting `FKReference`: PG/MySQL/SQLite inline REFERENCES writes, MySQL
+  `redefineColumn`'s carry-over, and the SQLite introspector's direct set (`introspect/sqlite.go:485`).
+- PG `addConstraints` canonicalizes again after its naming loop (PG canonicalizes before naming because
+  CHECK naming needs the CHECK columns; idempotent). PG and MySQL `removeConstraintFromColumns`
+  canonicalize after an FK drop, so a remaining FK takes over.
+- Tests: `TestPostgresIntrospect_SameColumnForeignKeys` (two inline, named table-level, inline then
+  named, added by ALTER, one dropped), `TestMySQLIntrospect_SameColumnForeignKeys` (named, unnamed,
+  added by ALTER, one dropped, column modified), two cases in `TestSQLiteIntrospect_SameColumnForeignKeys`
+  (two inline, two inline via ALTER), each pinning the introspected `FKReference` with full parity; three
+  `TestCanonicalizeConstraints` unit cases.
+- Corrected vs. the original suggestion (vet 2026-10-12): widened to the FK-drop paths (same root
+  cause — a parser writes `FKReference` directly — same fix: re-derive in canonicalization; measured
+  files nil vs database x), and PG needs the second `CanonicalizeConstraints` call because it names
+  after canonicalizing. Side effect: a PG table-level FK with no column list now gets
+  `FKReference{Column:""}` instead of nil, as the inline form already did; FIX-310 fills the columns.
+- Prototype results, run at `9b58288b` on 2026-10-12: probe (`zz_probe_fkref_test.go`, PG 16.15, PG
+  17.11, MySQL 8.0.46, modernc) — pg inline → files `p(y)`, database `p(x)`; pg named zz/aa → files
+  `p(x)`, database `p(y)`; pg/mysql drop aa → files `nil`, database `p(x)`; mysql named → files x,
+  database y; sqlite inline → files y, database x; after the fix every case agrees on all four
+  servers. Gates: `go test -race -count=1 ./...` in parser/ (integration on PG16 + MySQL 8.0 + SQLite)
+  ok; PG17 subset ok; `golangci-lint run ./...` 0 issues; `gofumpt -l` clean; `make update-golden` and
+  `make update-golden-e2e` no changes; `go test -short -race ./...` in cmd/sqlgen ok. Fail-first: whole
+  change reverted → 3 unit cases + 12 parity subtests fail (e.g. PG named_table_level `- Column: "x"` /
+  `+ Column: "y"`; one_dropped `- FKReference: nil` / `+ FKReference: &parser.FKReference{Table:
+  "m_fkp", Column: "x"}`); PG re-canonicalize removed → `inline_then_named` fails; drop-path
+  canonicalize removed → `one_dropped` fails per dialect; name order on SQLite → existing
+  `only_the_first_named` fails; declaration order on PG/MySQL → 6 parity subtests fail; existing suite
+  without the fix passes. Golden churn: none. Patch: `.claude/prototypes/FIX-302.patch` (10 files,
+  +167/-57). Composes with FIX-301 untested (no FIX-301 patch existed yet); overlap is the end of
+  `CanonicalizeConstraints` and the `ForeignKey` case of `ApplyConstraintToColumns`.
+- Auto-accepted the recommended option on 2026-10-12 (`/fix` auto-accept rule): a SQLite foreign key
+  whose `REFERENCES p` parent key cannot be resolved (FIX-300, landed after the vet) → gives the column
+  no `FKReference`, as at HEAD, rather than `FKReference{Table: "p", Column: ""}` from the rule read
+  literally; because it was prototyped green, causes no golden churn (no example has a column-list-less
+  REFERENCES), adds no public surface, and keeps FIX-300's landed behavior (the literal rule would
+  stop increment methods on such a column, `isIncrementEligible`). Measured: literal rule →
+  `TestImplicitForeignKeyTarget` parent_without_a_primary_key / key_of_another_size /
+  parent_not_defined `FKReference = {Table:p Schema: Column: Synthetic:false}, want nil`.
+
+**References.**
+- PRD §6.1; `parser/schema.go` `ApplyConstraintToColumns`.
+- Backlog lines absorbed: 2026-10-07 SQLite two inline REFERENCES (FIX-267); 2026-10-07 PG/MySQL
+  overwrite FKReference (FIX-267).
+- FIX-267 (first-FK rule on the SQLite introspector).
+
+**Resolution notes.** Resolved 2026-10-12 from the vetted prototype, applied with `git apply --3way` (not fresh: FIX-300 and FIX-301 landed since `9b58288b`; `parser/canonical.go` doc comment and `parser/sqlite/sqlite.go` inline-REFERENCES hunk conflicted, resolved by keeping the landed text and dropping the parser's `FKReference` write). `CanonicalizeConstraints` now ends with `deriveFKReferences` (owner chosen by `fkReferenceOwner`, split out for the cyclop limit): PG/MySQL take the single-column FK whose name sorts first, SQLite the first declared; the `ForeignKey` branch of `ApplyConstraintToColumns` is a no-op; the PG/MySQL/SQLite parsers, MySQL `redefineColumn` and the SQLite introspector no longer set `FKReference`; PG canonicalizes again after naming, and PG/MySQL `removeConstraintFromColumns` re-canonicalize after an FK drop. Composition with FIX-300 (beyond the prototype): `resolveImplicitReferences` re-canonicalizes a table whose `REFERENCES p` it resolved (the `ApplyConstraintToColumns` call it used is now a no-op), and on SQLite an FK with no reference columns gives no `FKReference` (auto-accepted above); `TestImplicitForeignKeyTarget` now pins nil for the unresolvable cases. Tests: the prototype's `TestPostgresIntrospect_SameColumnForeignKeys`, `TestMySQLIntrospect_SameColumnForeignKeys`, two `TestSQLiteIntrospect_SameColumnForeignKeys` cases, three `TestCanonicalizeConstraints` cases. Fail-first re-run on the final code: source reverted (tests kept) → 3 unit cases + parity subtests fail; PG re-canonicalize removed → `inline_then_named`; drop-path canonicalize removed → `one_dropped` (PG, MySQL); name order on SQLite → `only_the_first_named`; declaration order on PG/MySQL → 6 parity subtests + 2 unit cases; `resolveImplicitReferences` re-canonicalize removed → 5 `TestImplicitForeignKeyTarget` cases + `TestSQLiteIntrospect_ImplicitFKTarget/column_REFERENCES`; SQLite empty-columns skip removed → 3 `TestImplicitForeignKeyTarget` cases. Gates: `make check` ok; parser `go test -race -count=1 ./...` (integration, PG16/PG18/MySQL/SQLite) ok; `make update-golden-e2e` and `make update-golden` no churn (matches vet); `make check-examples` ok. `/verify FIX-302`: PRD 2/2, tests 5/5, reviewer agreed (every divergence from the prototype is the FIX-300 composition above, the `fkReferenceOwner` split and a comment reword; fail-first spot check on the `resolveImplicitReferences` re-canonicalize confirmed); inline: the `CanonicalizeConstraints` doc now says a FOREIGN KEY sets its column flag only through `deriveFKReferences`.
+
+### FIX-301
+
+- **Status:** Resolved
+- **Severity:** tracked
+- **Origin:** phase 4, `parser` (`schema.go`, `canonical.go`) + `parser/sqlite` + `parser/mysql`
+- **Surfaced by:** backlog sweep 2026-10-12 (backlog lines from FIX-247, FIX-277, FIX-282, FIX-298)
+- **Vetted:** corrected at `9b58288b` (2026-10-12)
+
+**Issue.** The parsers compare table and column names in ways that differ from their databases.
+Measured at `e88e35bb`:
+- SQLite: a FK naming its parent in another case (`REFERENCES users(id)` against `CREATE TABLE Users`)
+  stays unresolved on both sources, and the relationship is silently dropped from generated code
+  (E2E: `User` has no `Posts` field; with `REFERENCES Users(id)` it has `Posts []*Post`). `ALTER TABLE
+  Users RENAME TO Accounts` leaves the reference on `users` (SQLite rewrites it), `DROP TABLE Users`
+  with the lowercase reference passes, and `REFERENCES u(B)` + `RENAME COLUMN b TO c` keeps `u(B)`.
+- SQLite ALTER: `DROP COLUMN B` on column `b` does nothing; `RENAME COLUMN a TO c` on `A` errors
+  "column a not found"; `RENAME COLUMN a TO b` with `B` present gives columns `[b B]` (SQLite:
+  "duplicate column name"); `ADD COLUMN A` beside `a` is accepted; `DROP COLUMN` of a missing column
+  is a no-op (SQLite: "no such column").
+- SQLite Unicode: `CheckColumns` / `declaredColumnNames` use Unicode `strings.EqualFold`, but SQLite
+  folds ASCII only, so a CHECK on `"é"` beside `"É"` lists both; `UNIQUE ("é")` records `[É]`; `"É"
+  UNIQUE, "é" UNIQUE` keeps one UNIQUE (the `indexCollations.key` uses Unicode `strings.ToLower`).
+- MySQL: `REFERENCES rp (B)` against `rp.b` keeps `B` (MySQL stores `b`), so a later `RENAME COLUMN
+  b` on the parent misses the reference.
+- All three parsers accept a table rename onto an existing name (`ALTER TABLE a RENAME TO b` with `b`
+  present → two `b` tables; SQLite also `Users RENAME TO users`). SQLite: "there is already another
+  table or index with this name"; PG16: `relation "b" already exists` (also for a rename to the
+  table's own name); MySQL: ERROR 1050 for `ALTER … RENAME TO b`, `RENAME TABLE a TO b` and `RENAME
+  TABLE a TO a`, while `ALTER TABLE a RENAME TO a` is a no-op.
+- Vet note (2026-10-12): `DROP TABLE Users` with a lowercase reference is a parser inconsistency, not
+  a database mismatch — SQLite (modernc, `foreign_keys=ON`) also accepts it; the fix applies the
+  parser's existing exact-case refusal under ASCII folding.
+
+**Root cause.** Exact compares in the shared helpers — `retargetTableReferences`
+(`parser/schema.go:360,366`), `UnresolvedForeignKeys` (`:426`), `CheckTableDropRefs` (`:467,475`),
+`RenameColumn` (`:582`), `RenameColumnReferences`/`replaceName` — Unicode folding in
+`declaredColumnNames` / `CheckColumns` (`parser/canonical.go:52,113`) and SQLite's
+`indexCollations.key`, an exact `c.Name == colName` in SQLite `parseAlterTable`, references kept in
+their written spelling, and no existence check in any dialect's `renameTable`. Measured identifier
+rules: PostgreSQL exact (pg_query already folds unquoted names); MySQL (`lower_case_table_names=0`)
+tables exact, columns Unicode case-insensitive (`É`≡`é`, `É`≠`e`); SQLite ASCII case-insensitive for
+both (`"É"` and `"é"` are two columns).
+
+**Suggested fix.**
+- New `parser/names.go`: exported `SameTableName(dialect, a, b)` (PG/MySQL exact, SQLite ASCII fold),
+  `SameColumnName(dialect, a, b)` (PG exact, MySQL `strings.EqualFold`, SQLite ASCII fold),
+  `FoldASCII` (moved from `parser/sqlite`), and `ResolveReferenceNames(schema, dialect)`, which rewrites
+  each non-synthetic `FKReference` and FK constraint's `ReferenceTable` / `ReferenceColumns` to the
+  parent's declared spelling (an exact match wins; a reference to an unknown table is untouched).
+- Thread the dialect through `RenameTableReferences`, `RenameColumnReferences`, `replaceName`,
+  `UnresolvedForeignKeys` and `CheckTableDropRefs`. `RenameColumn(table, dialect, old, new)` matches the
+  old name by dialect and rejects a new name another column already has (PG also its own name, as PG16
+  does). `MoveTableReferences` keeps its signature (PG-only). `declaredColumnNames` / `CheckColumns` use
+  `SameColumnName`.
+- SQLite: `indexCollations` keys use `FoldASCII`; ADD COLUMN errors "duplicate column name: X" on an
+  ASCII-fold duplicate; DROP COLUMN folds and errors "no such column: X" (extracted into
+  `addColumn` / `dropColumn` for cyclop); `renameTable` errors "table X already exists" on any
+  ASCII-fold match, its own name included.
+- PG `parseRename` errors when `schema.newname` exists (own name included). MySQL `renameTable` errors on
+  an existing name other than its own; `parseRenameTable` also rejects `RENAME TABLE a TO a`.
+- Final pass: one `parser.ResolveReferenceNames(schema, dialect)` call in `cli.parseSchema`
+  (`cmd/sqlgen/cli/pipeline.go`), after the files/merge block and before the PG unresolved-FK check; the
+  schema there is whole for every source, and `generate`, `validate` and `loadAndValidate` reach
+  `DetectRelationships` only through it. Parity tests call it on both sides.
+- Tests: parser `TestSameName`, `TestResolveReferenceNames`, `TestRenameColumn`,
+  `TestReferencesFollowRenamesInAnotherCase`, `TestCheckColumns_NonASCIICase`, dialect cases in
+  `TestCheckTableDropRefs` / `TestUnresolvedForeignKeys`; sqlite `TestIdentifierCase` (16 cases); mysql
+  `TestRenameOntoExistingName`, `TestReferenceColumnInAnotherCase`, 3 `TestRenameTableStatement` cases;
+  postgres `TestRenameOntoExistingName`; parity `TestSQLiteIntrospect_IdentifierCase`,
+  `TestMySQLIntrospect_ReferenceColumnCase`; CLI `TestParseSchema_SQLiteReferenceInAnotherCase`
+  (files/database/both → `OneToMany Users->posts via user_id`).
+- Corrected vs. the original suggestion (vet 2026-10-12): MySQL `ALTER TABLE a RENAME TO a` stays a
+  no-op (measured accepted), only `RENAME TABLE a TO a` and a rename onto another table error; widened
+  within the scope cap so the duplicate-name check lives in the shared `parser.RenameColumn` and covers
+  every dialect (PG16 rejects `a TO b` with b present and `a TO a`; MySQL ERROR 1060 for `a TO B`,
+  accepts `a TO A`; SQLite "duplicate column name: B", accepts `a TO A`); final-pass placement made
+  concrete; `foldASCII` exported as `parser.FoldASCII`.
+- Auto-accepted the recommended option on 2026-10-12 (`/fix` auto-accept rule): SQLite ADD COLUMN of a
+  name the table already has → the parser error "duplicate column name: count", as SQLite does, rather
+  than leaving exact duplicates to Merge, which leaves `files`-mode duplicates as two same-named
+  columns; `TestBothModeColumnConflict/sqlite/ADD_COLUMN_duplicating_existing_with_different_type_errors`
+  now expects that text on SQLite (PG/MySQL keep "column conflict"); conditions held: prototyped green,
+  no golden churn, no public runtime/generated surface, PRD §6.1 only requires "a validation error".
+- Prototype results, run at `9b58288b` on 2026-10-12: parser probe reproduced every measured case
+  (SQLite `REFERENCES users(id)` vs `Users` → `->users[id]`; `DROP COLUMN B` → cols [b x]; `RENAME
+  COLUMN a TO c` on `A` → "column a not found in table t"; CHECK on "é" → CHECK[é É]; `"É" UNIQUE, "é"
+  UNIQUE` → one UNIQUE[É]; MySQL `REFERENCES rp (B)` → `rp[B]` after `RENAME COLUMN b TO z`; rename onto
+  an existing table → two `b` tables on all three). Ground truth modernc, postgres:16, mysql:8.0
+  (utf8mb4 client). E2E SQLite `Users` + `REFERENCES users(id)`: base binary under `files` and `database`
+  → `type User struct { ID; Name }` with no Posts field; prototype → files, database and the
+  exact-spelled control byte-identical, with Posts. Gates: `cd parser && go test -race -count=1 ./...`
+  (integration, postgres:16-alpine + mysql:8.0) ok; `golangci-lint run ./...` 0 issues; `cd cmd/sqlgen &&
+  go test -race -count=1 ./...` ok incl. `TestE2EGoldenFiles`, `TestE2EDatabaseTwin`, internal/livedb;
+  `gofumpt -l` clean. Fail-first: each site reverted alone fails its test — e.g. retarget exact →
+  "FKReference = users(b), want Accounts(b)"; UnresolvedForeignKeys without fold → "+ {\"foreign key
+  posts(user_id) references users, which no parsed table defines\"}"; declaredColumnNames EqualFold →
+  `- "t(É, é) U[é]" + "t(É, é) U[É]"`; pipeline call removed → `TestParseSchema_SQLiteReferenceInAnotherCase`
+  fails (target `users` instead of `Users`); existing suite without the fix passes. Golden churn: none.
+  Patch: `.claude/prototypes/FIX-301.patch` (17 files, +1034/-122).
+
+**References.**
+- PRD §6.1 (same schema under both sources), §5.5 (name resolution), §5.2.
+- Backlog lines absorbed: 2026-10-01 rename onto an existing table name (FIX-247, FIX-282 re-vet);
+  2026-10-07 FK parent case (FIX-282); 2026-10-07 SQLite ALTER column case (FIX-282, FIX-277);
+  2026-10-08 Unicode EqualFold (FIX-277); 2026-10-09 MySQL FK column case (FIX-298).
+- FIX-298 (`declaredColumn` for the MySQL local side).
+
+**Resolution notes.** Applied the vetted prototype with `git apply --3way`; the one conflict, `parser/sqlite/sqlite.go` ADD COLUMN, came from FIX-300 (`ac19de67`) adding a `src` argument to `parseColumn`, so `addColumn` now takes and passes `src`. New `parser/names.go` (`SameTableName`, `SameColumnName`, `FoldASCII` moved from `parser/sqlite`, `ResolveReferenceNames`); the dialect is threaded through `RenameTableReferences`, `RenameColumnReferences`/`replaceName`, `UnresolvedForeignKeys`, `CheckTableDropRefs` and `RenameColumn` (which now rejects a new name another column has, and on PG its own name); `declaredColumnNames`/`CheckColumns` and SQLite `indexCollations` fold per dialect; SQLite ADD COLUMN ("duplicate column name") and DROP COLUMN ("no such column") fold ASCII case; the SQLite and MySQL `renameTable` and PostgreSQL `parseRename` refuse an existing name (MySQL `ALTER … RENAME TO a` on itself stays a no-op, `RENAME TABLE a TO a` errors); `cli.parseSchema` runs `parser.ResolveReferenceNames` once on the whole schema. `TestParseSchema_SQLiteReferenceInAnotherCase` also covers FIX-300's column-less `REFERENCES users` against `Users` on files/database/both (the implicit-key lookup already folds, and the final pass respells the target); removing the pipeline call fails all six subtests. Gates: `make check` ok, `cd parser && go test -race -count=1 ./...` (integration) ok, `make check-examples` ok; `make update-golden-e2e` and `make update-golden` produced no churn, matching the vet. Verify reviewer: two doc corrections applied (this note, the `TestSQLiteIntrospect_IdentifierCase` comment); the SQLite introspector's Unicode `strings.EqualFold` in `nameDeclaredConstraints` / `sameColumns` (`parser/introspect/sqlite.go:196,213`), a separate fix site, went to the backlog.
+
+### FIX-300
+
+- **Status:** Resolved
+- **Severity:** tracked
+- **Origin:** phase 4, `parser/sqlite` (`go.mod` pin of `github.com/rqlite/sql`)
+- **Surfaced by:** backlog sweep 2026-10-12 (backlog lines from 30.1, FIX-267, FIX-279, FIX-281, FIX-291)
+- **Vetted:** corrected at `9b58288b` (2026-10-12)
+
+**Issue.** The SQLite file parser cannot read legal SQLite DDL, so it is a parse error under
+`files` and, through the stored-DDL re-parse, an introspection error under `database` (PRD §6.3):
+`REFERENCES t` with no column list, `PRIMARY KEY ASC AUTOINCREMENT`, a column `PRIMARY KEY ON
+CONFLICT …`, bracket-quoted identifiers (`CREATE TABLE t ([a] TEXT, …)`, `REFERENCES [p]([Y])` →
+"found 'ILLEGAL'"), `IS [NOT] DISTINCT FROM` in an expression index (`files` exit 3 "expected
+expression, found 'DISTINCT'" while `database` exits 0), and a SQLite relationship `filter:` with
+`LIKE … ESCAPE` is a generation error ("sql.BinaryExpr.String(): invalid op ESCAPE"). All measured
+at `e88e35bb`; sqlite3 accepts every statement.
+
+**Root cause.** The pinned `github.com/rqlite/sql v0.0.0-20260224021119-1b2524a41372`
+(`parser/go.mod:10`) lacks the grammar. Upstream master `4555bb784427` (2026-10-09, untagged) landed
+~70 commits on 2026-10-08/09: bracketed identifiers, `IS [NOT] DISTINCT FROM`, ESCAPE rendering,
+`REFERENCES t` without columns, ON CONFLICT on PRIMARY KEY / NOT NULL / UNIQUE, MATCH, quoted type
+names, and the PRIMARY KEY ASC/DESC phantom-column fix
+(https://github.com/rqlite/sql/compare/1b2524a413728dec9974c7054d77edb90801373f...4555bb784427dae80a1ceb8beecda5f3942a8e01).
+
+**Suggested fix.**
+- Ruling (user, 2026-10-12, backlog sweep Q1): upgrade to `4555bb784427`.
+- Bump `parser/go.mod` / `go.sum` only (no example module, `cmd/sqlgen/go.mod` or `go.work.sum`
+  names rqlite/sql); `go get …@4555bb784427dae80a1ceb8beecda5f3942a8e01` resolves to
+  `v0.0.0-20261009033234-4555bb784427`, `go mod tidy` adds nothing.
+- Table-level PRIMARY KEY goes through `indexedColumnNames`; an expression part is an error ("PRIMARY
+  KEY has an expression part: expressions prohibited in PRIMARY KEY") — this is FIX-315's PK half.
+- Delete `isPrimaryKeySortOrder`, `columnStarts`, `onlyBlanksAndComments`; `primaryKeyDesc` reads
+  `PrimaryKeyConstraint.Desc` for `rowIDAlias`, **column form only** (modernc: `INTEGER PRIMARY KEY
+  DESC` is not a rowid alias; table-level `PRIMARY KEY (id DESC)` is).
+- `columnStarts` was also the quoted-type-name guard: new `quotedTypeName(typ, src)` rescans the type
+  tokens and rejects a quoted type name ("column f: 1:43: a quoted type name cannot be read") for
+  CREATE TABLE and ADD COLUMN; without it the sources diverge (PRAGMA vs parser: `"varchar"(10)` →
+  `varchar` vs `varchar(10)`; `INT "x"` → `int "x"` vs `int x`; `[decimal] (10, 2)` → `blob` vs
+  `decimal(10,2)`).
+- `REFERENCES p` with no column list, files: `(*Parser).resolveImplicitReferences` at the end of every
+  Parse (SQLite accepts forward references) fills the parent's PK columns in key order and sets
+  `FKReference` through `ApplyConstraintToColumns`. Database: the introspector skips NULL `to` values
+  and resolves both the PRAGMA FK and the stored-DDL (declared) FK through `pragma_table_info(parent)`
+  (works when `input.introspect` filters the parent out). Both share `sqlite.ImplicitReferenceColumns`,
+  which returns `[]` when the parent's key does not fit.
+- Same code: `qualifyExprChildren` also qualifies `EscapeExpr`; the dead Null walk in
+  `columnRenamer.Visit` is removed (`rsql.Walk` now descends into `*rsql.Null`); RIGHT/FULL joins are
+  rejected through `JoinOperator.Right/Full` instead of the alias hack.
+- Tests: new `TestCreateTable_QuotedTypeName`, `_ClausesReadAsSQLite`, `_PrimaryKeyExpression`,
+  `TestImplicitForeignKeyTarget` (9 cases), `TestParse_EscapeAndDistinctExpressions`,
+  `TestExprString_Panic`; extended `TestRowIDAlias` (+5), IndexWhere, ColumnNames, QualifyFilter,
+  RightAndFullJoin; integration `TestSQLiteIntrospect_ImplicitFKTarget` (8 + `…Filtered`),
+  `_ClausesReadAsSQLite` (12, replaces `_UnreadablePartialIndex`), `_UnreadableTable` (quoted type names
+  only); CLI `TestCommands_ParseExitCode` fixture → `f "my type"`; gen relfilter ESCAPE test expects
+  success.
+- From FIX-315's vet: the PK expression check has a gap — SQLite reads a string-literal part as a column
+  (`PRIMARY KEY ('a')` is valid); FIX-315's `indexedColumnNames` change covers it once both land.
+- Inline (from FIX-310's vet): reword the `cmd/sqlgen/gen/context_test.go:439` case comment that says SQLite
+  `REFERENCES users` "leaves Column empty" — after this fix it resolves to the parent PK.
+- Docs: PRD §6.3 (`docs/PRD.md:1673`) rewritten — a bullet on how a no-column-list FK resolves, and
+  "cannot read" lists only quoted type names; §13.7.4 (`:8920`) drops the ESCAPE clause;
+  `docs/design/INTROSPECTION.md` test-table rows (ImplicitFKTarget, UnreadablePartialIndex,
+  UnreadableTable) updated.
+- Corrected vs. the original suggestion (vet 2026-10-12): `columnStarts` is not simply dead (its guard
+  is replaced); a bare bump makes introspection *error* on `REFERENCES p` ("stored CREATE TABLE declares
+  no FOREIGN KEY over (uid)"), so implicit FKs are resolved on both the PRAGMA rows and the stored-DDL
+  table, reading the parent from the database; files-side resolution runs at end of Parse (unlike
+  FIX-310's statement-time PG rule, because SQLite accepts forward references); DESC rework column form
+  only; `EscapeExpr` qualification added (same root cause, same site). ~20 test updates turned out to be
+  7 `parser/sqlite` tests (~19 subtests) plus `parser/introspect` (`TestParseStoredTable_SchemaError`,
+  `TestSQLiteIntrospect_ImplicitFKTarget`, `_UnreadablePartialIndex`, `_UnreadableTable`,
+  `_ViewUnnamedLikeEscape`) and `cmd/sqlgen` (gen `TestRelationshipFilter_UnrenderableSQLiteFilterErrors`,
+  cli `TestCommands_ParseExitCode`).
+- Auto-accepted the recommended option on 2026-10-12 (`/fix` auto-accept rule): RIGHT/FULL JOIN views on
+  SQLite stay rejected (now via `JoinOperator.Right/Full`), because PRD §16.1 states it ("On SQLite a
+  RIGHT or FULL join is a parse error too"); prototyped green, no churn, no public surface. Veto option
+  measured: support them with §16.3 nullability (6-line change in `collectSourceAliases`; `a RIGHT JOIN
+  b` → outer {a}, `FULL OUTER` → {a,b}; no churn; the test inverts and the §16.1 sentence goes).
+- Auto-accepted the recommended option on 2026-10-12 (`/fix` auto-accept rule): every quoted type name
+  stays rejected (PRD §6.3 keeps that clause), rather than emulating SQLite's type-text dequoting;
+  prototyped green, no churn, no public surface.
+- Auto-accepted the recommended option on 2026-10-12 (`/fix` auto-accept rule): an unresolvable
+  `REFERENCES t` (parent missing, no PK, or a PK of a different column count) gives no parent columns
+  on both sources and no error, as SQLite and MySQL accept a missing FK target; adds PRD §6.3 text for
+  an uncovered case; generation exits 0 (measured); no churn, no public surface.
+- Prototype results, run at `9b58288b` on 2026-10-12: probe at base (`go test ./sqlite/ -run
+  TestZZProbeFIX300 -v`) → `REFERENCES p` "1:106: expected left paren, found ')'"; `PRIMARY KEY ASC
+  AUTOINCREMENT` "…found 'AUTOINCREMENT'"; `([a] TEXT…)` "found 'ILLEGAL'"; `IS NOT DISTINCT FROM` index
+  "expected expression, found 'DISTINCT'"; `PRIMARY KEY (id DESC)` "expected comma or right paren, found
+  'DESC'"; `MATCH FULL` "\"MATCH\" after column pid is not a column"; ESCAPE filter "sql.BinaryExpr.String():
+  invalid op ESCAPE". Bare bump with only the compile fix → `id INTEGER PRIMARY KEY DESC` `ai=true` vs
+  introspected `ai=false`; `PRIMARY KEY (lower(a))` → PK `cols=[]`. Gates: parser `go test -race
+  -count=1 ./...` (integration) ok; parser `golangci-lint` 0 issues; cmd/sqlgen `go test -short -race
+  ./...` ok; `golangci-lint ./gen/... ./cli/...` 0 issues; `TestE2EGoldenFiles/(sqlite|introspect_sqlite|cache|events|tenancy)$`
+  and `TestE2EDatabaseTwin/(sqlite|cache|events|tenancy)$` ok; `examples/sqlite` and
+  `examples/introspect_sqlite` `GOWORK=off go test -race ./...` ok; `gofumpt -l` clean. Generation probe:
+  `REFERENCES users` / self / no-PK / missing → exit 0, `models/` byte-identical to the explicit `(id)`
+  schema. Fail-first: `primaryKeyDesc` removed → "id AutoIncrement = true, want false";
+  `resolveImplicitReferences` call removed → `FKReference.Column = "", want "id"`; introspector
+  resolution disabled → "sqlite: introspected schema differs from the file parser's"; `quotedTypeName`
+  disabled → error = <nil>; PK expression check disabled → error = <nil>; JoinOperator check disabled →
+  "error = <nil>, want it to reject the join"; EscapeExpr qualification removed → `… ESCAPE "esc"`,
+  want `… ESCAPE "d"."esc"`; existing suite without the fix passes. Golden churn: none (sqlite,
+  introspect_sqlite database and files, cache, events, tenancy all +0/~0). Patch:
+  `.claude/prototypes/FIX-300.patch` (15 files, +617/-280).
+
+**References.**
+- PRD §6.3, §6.1 ("Both sources describe a schema the same way"), §13.7.4.
+- Backlog lines absorbed: 2026-10-05 rqlite rejects legal DDL (30.1); 2026-10-07 bracket-quoted
+  identifiers (FIX-267, FIX-279); 2026-10-08 LIKE … ESCAPE filter (FIX-291); 2026-10-09 IS DISTINCT
+  FROM expression index (FIX-281).
+- FIX-310 (PostgreSQL `REFERENCES t` without a column list — same parent-PK resolution).
+
+**Resolution notes.** Applied the vetted prototype (clean, fresh at `9b58288b`): `parser/go.mod`/`go.sum` bump `github.com/rqlite/sql` to `v0.0.0-20261009033234-4555bb784427`; `parser/sqlite/sqlite.go` drops the `isPrimaryKeySortOrder`/`columnStarts`/`onlyBlanksAndComments` workarounds for `primaryKeyDesc` (column form) and `quotedTypeName`, rejects an expression part in a table PRIMARY KEY via `indexedColumnNames`, and resolves `REFERENCES p` with no column list at the end of each Parse (`resolveImplicitReferences`, shared `ImplicitReferenceColumns`); `parser/introspect/sqlite.go` resolves the same on PRAGMA rows (NULL `to`) and the stored-DDL table through `pragma_table_info(parent)`; `filter_qualifier.go` qualifies `EscapeExpr`; `view_sql.go` rejects RIGHT/FULL joins through `JoinOperator.Right/Full`; dead `*rsql.Null` walk removed. PRD §6.3/§13.7.4 and `docs/design/INTROSPECTION.md` updated. Inline: reworded the `cmd/sqlgen/gen/context_test.go` "no referenced column" case comment (the parser now resolves `REFERENCES users`). Gates: `make check` ok; parser `go test -race ./sqlite/ ./introspect/` (integration) ok; `make update-golden-e2e` and `make update-golden` → no churn (matches vet); `make check-examples` ok. Fail-first list re-run on the final code: all seven mutations fail their tests. Verify (reviewer agreed, prototype divergence only the asked-for comment reword): corrected the unresolvable-key wording in PRD §6.3 and the `ImplicitReferenceColumns` doc (a missing parent is a "no such table" error in SQLite, not a foreign key mismatch); trimmed the `context_test.go` comment; two backlog lines (FIX-323 entry staleness, no re-resolve of a recreated parent).
+
+### FIX-299
+
+- **Status:** Resolved
+- **Severity:** blocking
+- **Origin:** phase 31, parser/mysql
+- **Surfaced by:** 31.4 three-way probe of `introspect_mysql` (2026-10-11)
+
+**Issue.** The MySQL file parser drops the `CONSTRAINT <symbol>` name of a
+named UNIQUE key, so `source: files` and `source: both` name the index after
+its column while the database names it after the symbol. PRD §6.1 promises the
+same constraint names under both sources. Measured on MySQL 8.0 with
+`CREATE TABLE z (…, CONSTRAINT z_s_key UNIQUE (s))`, `ALTER TABLE z ADD
+CONSTRAINT z_t_key UNIQUE (t)` and `ALTER TABLE z ADD CONSTRAINT z_u_key UNIQUE
+KEY (u)`: `information_schema.STATISTICS` gives `z_s_key`, `z_t_key`,
+`z_u_key`; the `files` manifest's `indexes[].name` gives `s`, `t`, `u`. The Go
+code is identical; only the manifest (JSON and markdown) differs.
+
+**Root cause.** `parseIndex` (`parser/mysql/mysql.go:817-848`) names a UNIQUE
+key from `idx.Info.Name`, the optional index name, and ignores
+`idx.Info.ConstraintName`, the vitess field holding the `CONSTRAINT` symbol.
+With no index name, the unnamed-key derivation then names it after its first
+column. MySQL uses the symbol as the index name when no index name is given.
+
+**Suggested fix.**
+- In `parseIndex`, for a UNIQUE key, fall back to `idx.Info.ConstraintName`
+  when `idx.Info.Name` is empty (an explicit index name still wins, as in MySQL).
+- Fail-first parser test in `parser/mysql/mysql_test.go`: the three forms above
+  (inline in `CREATE TABLE`, `ADD CONSTRAINT … UNIQUE`, `ADD CONSTRAINT … UNIQUE
+  KEY`) plus `CONSTRAINT sym UNIQUE KEY idx (c)`, which MySQL names `idx`.
+- Pin the database side in the MySQL parity fixture so `assertSchemaParity`
+  covers a named UNIQUE constraint.
+
+**References.**
+- PRD §6.1 — "the same columns, types, defaults, constraints and constraint
+  names ([5.2])".
+- `parser/mysql/mysql.go:1131-1132` (`applyAlterOption`: vitess parses
+  `ADD [CONSTRAINT x] UNIQUE …` as `AddIndexDefinition`, which reaches
+  `parseIndex`; `AddConstraintDefinition` carries only FOREIGN KEY and CHECK,
+  via `parseConstraintDef`).
+- vitess `sqlparser.IndexInfo.ConstraintName` (`go/vt/sqlparser/ast.go:2276`).
+- Phase 31 ruling Q4 (findings triage); the user chose to fix it in 31.4.
+
+**Resolution notes.** `parseIndex` (`parser/mysql/mysql.go`) names a UNIQUE key after its `CONSTRAINT` symbol when it has no index name; an explicit index name still wins, as in MySQL. Fail-first: the new `TestDerivedConstraintNames` case (inline `CONSTRAINT … UNIQUE`, `ADD CONSTRAINT … UNIQUE`, `ADD CONSTRAINT … UNIQUE KEY`, and `CONSTRAINT sym UNIQUE KEY idx`) got `s`/`t`/`u` against HEAD, and `TestMySQLIntrospect_ProbeFixture` / `TestMySQLIntrospect_TableConstraints`, with `CONSTRAINT m_users_u_key UNIQUE (u)` added to the MySQL parity fixture, failed on `u` vs `m_users_u_key`; all pass after the fix. No committed example uses the shape (the in-progress `introspect_mysql` migration does): `TestE2EGoldenFiles` and `TestE2EDatabaseTwin` pass with no golden churn, and `make check` and `make check-examples` are green. The `introspect_mysql` three-way probe now differs only by the two named parity exceptions. Inline, from the review: `TestExpressionKeys` pins that a functional `CONSTRAINT sym UNIQUE ((expr))` keeps `sym`, and `TestDerivedConstraintNames` that `DROP INDEX <symbol>` drops the key; the MySQL parity fixture also pins `CONSTRAINT m_pairs_sym UNIQUE KEY m_pairs_ac (a, c)` against the database (the index name wins); the reviewer's three tracker-reference corrections are applied. `DROP CONSTRAINT <symbol>` still drops only a CHECK, already on the backlog (2026-10-09 line).
+
+### FIX-275
+
+- **Status:** Resolved
+- **Severity:** nit
+- **Origin:** phase 30, `parser/mysql`
+- **Surfaced by:** backlog promotion at `/close-phase 30` (2026-10-07); first recorded by 30.2 (2026-10-05)
+- **Vetted:** ready at `717c3b7c` (2026-10-09; re-vetted after FIX-278, patch carried forward)
+
+**Issue.** **MySQL unnamed-key `_2` numbering is not in declaration order.**
+The parser numbers unnamed keys as column keys, then table-level keys, then
+foreign-key indexes; MySQL numbers them in declaration order, so the `_2`
+can land on the other key and index names differ by source (PRD §5.2).
+Measured evidence from the backlog line: "MySQL 8.0 `o2 (b int, c int, FOREIGN
+KEY (b, c) REFERENCES p (b, c), KEY (b))` → FK index `b`, KEY `b_2`; the
+parser gives KEY `b`, FK index `b_2`".
+
+**Root cause.** vitess keeps a table's columns, indexes and constraints in
+separate lists with no positions, so `parseTableSpec`
+(`parser/mysql/mysql.go:460-484`, doc comment at `:455`) cannot interleave them and `parseCreateTable`
+adds keys, then FK indexes (`mysql.go:438-446`; line refs at `717c3b7c`).
+
+**Suggested fix.**
+- Recover declaration order at `parseTableSpec` (e.g. from the statement
+  text) and add keys and FK indexes in that order; or, if not worth it,
+  write the difference into PRD §6.1 as a named parity exception (phase-30
+  ground rule).
+- Test: the `o2` case above as an `assertSchemaParity` MySQL case.
+- Vet notes on scope: the same root cause also misnumbers a column key declared after a table-level key, a FOREIGN KEY before a column UNIQUE, an interleaved mix, and the `ibfk_<n>` numbering of an inline REFERENCES after a table-level FK. CHECK numbering already follows declaration order. All are in scope (same root cause, same `parseTableSpec` fix site).
+- Prototype (the first option, recovering order from the statement text):
+  - `Parse` passes the statement text through `processStmt` → `parseCreateTable`, as the SQLite parser does. A new `tableElements` scans the text with vitess's own tokenizer, splits the CREATE TABLE definition list at top-level commas, and classifies each entry by its leading reserved keyword (`classifyTableElement`): a column, an index (PRIMARY/UNIQUE/KEY/INDEX/FULLTEXT/SPATIAL, or CONSTRAINT … PRIMARY/UNIQUE), or a constraint (FOREIGN/CHECK, or CONSTRAINT … FOREIGN/CHECK). A column carrying a CHECK counts as a column followed by a constraint. `matchTableSpec` returns a loud error ("create table t: cannot recover declaration order: …") when the counts do not match the TableSpec, rather than silently falling back;
+  - `parseTableSpec` returns keys in declaration order as `tableKey{Constraint, built}`, with each FK's built index placed at its FOREIGN KEY, and FK/CHECK constraints in declaration order. `parseCreateTable` adds keys through the unchanged `addKey`, then names the constraints;
+  - side effect: in `Table.Constraints` a built FK index now precedes the FK constraints; `TestRenameColumnCarriesReferences` is updated (3 swapped lines, an expectation change, not a defect guard);
+  - tests: `TestNamesFollowDeclarationOrder` (`parser/mysql`, 7 cases: o2, column key after table key, FK before column UNIQUE, interleaved mix, inline REFERENCES, column CHECK between table CHECKs, keywords inside comments/strings/enums/backquoted names) and `TestMySQLIntrospect_KeyDeclarationOrder` (4 tables incl. o2, key names on both sides, then `assertSchemaParity`).
+- Interaction with FIX-274: none for this fix. The expression-index work it anticipated landed as FIX-294 (`80809acf`, `Parser.exprKeys` in `addKey`); this patch leaves `addKey` unchanged and only hands it keys in declaration order. Measured at `cb04d107`: parity holds for expression keys interleaved with FKs (`KEY (a, (b + 1))` before/after an FK, `KEY ((a + 1))` among FK/column UNIQUE/KEY, `CONSTRAINT UNIQUE (a)` after an FK → `same=true` for all four).
+- Re-vet at `717c3b7c` on 2026-10-09 (after FIX-278, `ebcd8730`, changed the `processStmt` region and added three MySQL integration tests at the same insertion point): rebuilt with `git apply --3way`; `mysql.go` conflicted once (the new `processStmt(stmt, sql)` signature next to FIX-278's `setInline`/`renameInline`, both kept) and `mysql_integration_test.go` conflicted with FIX-278's tests (all kept, `TestMySQLIntrospect_KeyDeclarationOrder` after them). Source logic unchanged; `parseColumn` (now calling `setInline`) runs in declaration order, which is safe because `setInline` is keyed per (table, column). Re-measured on MySQL 8.0: zo2, zcol, zfkcol and zmix give the same db-vs-parse diffs as below and `same=true` with the fix; a FIX-278 cross-check (FK, then ENUM UNIQUE, KEY, SET with CHECK and UNIQUE, then `RENAME COLUMN Kind TO kind2`) → `same=true`, full `assertSchemaParity` passing with ENUM/SET entries. Gates: `gofumpt -l parser/` → clean; parser `golangci-lint run ./...` → 0 issues; `go -C parser test -race -count=1 ./...` → ok (containers); `go -C cmd/sqlgen test -short -count=1 ./...` → ok; `TestE2EGoldenFiles` → ok; `make update-golden` / `make update-golden-e2e` → no files changed. Fail-first: `mysql.go` reverted → `TestNamesFollowDeclarationOrder` fails 5 of 7 (o2: `- "INDEX b [b c]", + "INDEX b [b]"`) and `TestMySQLIntrospect_KeyDeclarationOrder` fails "parsed key names mismatch (-want +got): - \"b\": \"b,c\", + \"b\": \"b\""; the existing suite without the fix → passes. Golden churn: none. Patch: `.claude/prototypes/FIX-275.patch` (3 files, +258/-34).
+- Re-vet at `cb04d107` on 2026-10-09: rebuilt with `git apply --3way`. `mysql.go` and `mysql_test.go` merged cleanly; `parser/introspect/mysql_integration_test.go` conflicted with FIX-288's `TestMySQLIntrospect_InlineTypeNames` at the same insertion point, and both tests are kept. The old patch also put `TestNamesFollowDeclarationOrder` between `TestDerivedConstraintNames`' doc comment and its func; the rebuilt patch moves that comment back. Source code is unchanged from the first prototype. Re-measured on MySQL 8.0 (probe `zz_probe_fix275_test.go`, deleted), db vs parse: zo2 → db `b:INDEX[b c] b_2:INDEX[b]`, parse `b:INDEX[b] b_2:INDEX[b c]`; zcol → db `a:INDEX[a x] a_2:UNIQUE[a]`, parse `a:UNIQUE[a] a_2:INDEX[a x]`; zfkcol → db `b:INDEX[b c] b_2:UNIQUE[b]`, parse `b:UNIQUE[b] b_2:INDEX[b c]`; zmix → db `b:INDEX[b c] b_2:INDEX[b] b_3:UNIQUE[b d]`, parse `b:INDEX[b] b_2:UNIQUE[b d] b_3:INDEX[b c]`; with the fix all match. Gates: `gofumpt -l parser/` → clean; parser `golangci-lint run ./...` → 0 issues; `go -C parser test -race -count=1 ./...` → ok (containers); `go -C cmd/sqlgen test -short -count=1 ./...` → ok; `TestE2EGoldenFiles` → PASS. Fail-first: `mysql.go` reverted → `TestNamesFollowDeclarationOrder` fails 5 of 7 (o2: `- "INDEX b [b c]", + "INDEX b [b]"`) and `TestMySQLIntrospect_KeyDeclarationOrder` fails "parsed key names mismatch"; the existing suite without the fix → passes. Golden churn: none. Patch: `.claude/prototypes/FIX-275.patch` (3 files, +258/-34).
+- Prototype results, run at `d51ace1b` on 2026-10-07:
+  - Reproduction: a throwaway probe (`parser/introspect/zz_probe_fix275_test.go`, since deleted) on MySQL 8.0, `go -C parser test -count=1 -run TestZZProbeFIX275 ./introspect/`, db vs parse:
+    - `o2 (b int, c int, FOREIGN KEY (b, c) REFERENCES p (b, c), KEY (b))` → db `b:INDEX[b c] b_2:INDEX[b]`; parse `b:INDEX[b] b_2:INDEX[b c]`;
+    - `(x int, KEY (a, x), a int UNIQUE)` → db `a_2:UNIQUE[a] a:INDEX[a x]`; parse `a:UNIQUE[a] a_2:INDEX[a x]`;
+    - `(x int, FOREIGN KEY (b, c) …, b int UNIQUE, c int)` → db `b_2:UNIQUE[b] b:INDEX[b c]`; parse `b:UNIQUE[b] b_2:INDEX[b c]`;
+    - interleaved → db `b_3:UNIQUE[b d] b:INDEX[b c] b_2:INDEX[b]`; parse `b_2:UNIQUE[b d] b:INDEX[b] b_3:INDEX[b c]`;
+    - `(a int, FOREIGN KEY (a) REFERENCES zp (id), b int REFERENCES zp (id))` → db `zinl_ibfk_1:FOREIGN KEY[a]`; parse `zinl_ibfk_1:FOREIGN KEY[b] zinl_ibfk_2:FOREIGN KEY[a]`.
+  - Gates: `go -C parser test -race -count=1 ./...` → ok (containers); `golangci-lint run ./...` → 0 issues; `gofumpt -l parser/` → clean; `go -C cmd/sqlgen test -short -count=1 ./...` → ok; `make update-golden` / `make update-golden-e2e` → no change; `TestE2EGoldenFiles` → ok.
+  - Fail-first: `parser/mysql/mysql.go` reverted → `TestNamesFollowDeclarationOrder` fails 5 of 7 (`- "INDEX b [b c]", + "INDEX b [b]"` for o2; `- "FOREIGN KEY il_ibfk_1 [a]", + "FOREIGN KEY il_ibfk_1 [b]"`), and `TestMySQLIntrospect_KeyDeclarationOrder` fails ("m_ko_fk: - "b": "b,c" + "b": "b"" and "- Name: "a" + Name: "a_2""); the existing suite without the fix → passes.
+  - Golden churn: none.
+  - Patch: `.claude/prototypes/FIX-275.patch` (3 files, +258/-34).
+
+
+**References.**
+- PRD §5.2 (MySQL index naming, declaration order), §6.1.
+- `docs/tracker/phase-30.md` 30.2 Completion Record ("vitess key-order
+  approximation").
+
+**Resolution notes.** Resolved 2026-10-09 by implementing the vetted prototype (applied clean at `bc8b7d0a`; source logic unchanged except `replacedLater`, below). `Parse` passes each statement's text through `processStmt` → `parseCreateTable`; `tableElements` scans it with vitess's tokenizer, splits the definition list at top-level commas and classifies each entry (`classifyTableElement`), and `matchTableSpec` errors loudly ("create table t: cannot recover declaration order: …") when the counts disagree with the `TableSpec`. `parseTableSpec` now returns keys (with each FK's built index at its FOREIGN KEY) and FK/CHECK constraints in declaration order, so unnamed keys, FK indexes and `_ibfk_`/`_chk_` names number as MySQL does (PRD §5.2). Side effect: a built FK index now precedes its FK constraint in `Table.Constraints`; expectation updates in `TestRenameColumnCarriesReferences` (3 lines, as vetted) and in FIX-298's (`bc8b7d0a`) `TestAlterColumnNamedInAnotherCase` "MODIFY COLUMN of a referenced column" case (2 swapped lines; that test landed after the vet and is the same side effect meeting it). Tests: `TestNamesFollowDeclarationOrder` (`parser/mysql`, 11 cases) and `TestMySQLIntrospect_KeyDeclarationOrder` (MySQL 8.0 parity, 9 tables: the parent and 8 children). Gates: `make check` → ok; `go -C parser test -race -count=1 ./...` → ok (containers); `make update-golden` / `make update-golden-e2e` → no churn; `TestE2EGoldenFiles` → ok; `make check-examples` → ok. Fail-first: `mysql.go` reverted → `TestNamesFollowDeclarationOrder` fails 6 of 11 (the vet's 5 plus the later-foreign-key case) and `TestMySQLIntrospect_KeyDeclarationOrder` fails "parsed key names mismatch". Edge probes (throwaway, deleted): PARTITION BY, `CREATE TABLE … LIKE`, `CREATE TABLE (…) AS SELECT`, a generated column with CHECK → parse as before with no order error. `/verify` found one regression in the prototype and it was fixed inline. With the FK index built at its FOREIGN KEY, an index that a *later* key replaces took a name first and was deleted afterwards, so the keys declared in between were numbered around it. MySQL 8.0: `(a int, b int, FOREIGN KEY (a, b) …, KEY (a), KEY (a, b))` → db `a:[a] a_2:[a,b]`, parse `a:[a,b] a_2:[a]` (the pre-fix parser matched). `parseCreateTable` now skips a built index that `replacedLater` finds made redundant by a later key, by `addKey`'s own `redundantKeys` test. A throwaway parity probe of 12 replacement shapes (later KEY/UNIQUE/PRIMARY KEY/expression key/longer FK, named FK, columns in another case) gives `same=true` and passes `assertSchemaParity`. New cases, each measured on MySQL 8.0 through `TestMySQLIntrospect_KeyDeclarationOrder` (tables `m_ko_rk`, `m_ko_rf`, `m_ko_lf`, `m_ko_sk`): "a foreign key's index replaced by a later key", "… by a later foreign key's", "… by a later foreign key's, past a key" and "a foreign key's index kept past a later, shorter foreign key's". With the filter disabled, the `rk` and `lf` cases fail. With `replacedLater`'s shorter-built-key guard removed, the `sk` case fails. The reviewer brute-forced `replacedLater` against sequential `addKey` (every 3-key sequence over 53 shapes, plus 900k random 4–9-key sequences) and found the same survivors and names every time. MySQL 8.0 ignoring a column-level REFERENCES is the deliberate exception PRD §6.1 already records, so it was not logged.
+
+
+### FIX-298
+
+- **Status:** Resolved
+- **Severity:** tracked
+- **Origin:** phase 4, `parser/mysql`
+- **Surfaced by:** `/fix-vet FIX-296` (2026-10-09)
+- **Vetted:** corrected at `717c3b7c` (2026-10-09)
+
+**Issue.** **The MySQL file parser matches column names in ALTER TABLE
+case-sensitively, while MySQL does not.** Measured by the FIX-296 vet and this
+entry's vet (2026-10-09), each against MySQL 8.0.46:
+- `CREATE TABLE dc (a int, b int); ALTER TABLE dc DROP COLUMN B;` → the parser keeps `a`, `b` (and a composite or expression key keeps `b`); MySQL has only `a`. The generated model carries `B *int32 \`db:"b"\``, and the generated client fails at runtime: `Get` → "get dc: query: Error 1054 (42S22): Unknown column 'b' in 'field list'", and `GetMany` and `Create` fail the same way (the failing `Create` had already inserted its row).
+- `MODIFY COLUMN B bigint NOT NULL` on column `b` → the parser appends a second column (`b int`, `B bigint`), and the generated models do not compile: "models/models_gen.go:22:2: B redeclared", "DmIncrementB redeclared in this block". MySQL renames the column to `B`, and keys and other tables' FK `referenced_column_name` follow.
+- CHANGE and RENAME COLUMN with the old name in another case stop generation: "Schema error: … rename column dr: column B not found in table dr" and "column B not found in table dch". MySQL accepts both.
+
+**Root cause.** The ALTER column paths in `parser/mysql/mysql.go` compare names
+exactly: `alterDropColumn` (`:1046-1048`, `c.Name == colName`, and `:1052` for
+the constraint column lists), the MODIFY COLUMN lookup (`:1030`,
+`table.Columns[i].Name == name`) and CHANGE COLUMN (`:1067`,
+`table.Columns[i].Name == oldName`), plus the RENAME COLUMN lookup. MySQL column
+names are case-insensitive on every platform. Line refs at `717c3b7c`.
+
+**Suggested fix.**
+- Add `declaredColumn(table, name)` to `parser/mysql/mysql.go` (factored out of
+  `declaredColumns`, which then calls it): it turns the name an ALTER clause gives
+  into the column's declared spelling before any exact compare. Constraint and
+  `exprKeys` column lists already hold declared spellings (`declaredColumns` in
+  `addKey`/`addConstraints`, plus `CanonicalizeConstraints`), so every downstream
+  exact compare then matches.
+- DROP COLUMN and RENAME COLUMN (the old name) resolve through `declaredColumn`.
+- MODIFY and CHANGE share a new `replaceColumn` (case-insensitive lookup, then
+  `redefineColumn`, `RenameColumnReferences`, `renameExprKeyColumn`,
+  `addConstraints`), so MODIFY in another case renames the column and FK
+  references follow, as MySQL does. MODIFY of a missing column still appends it;
+  CHANGE of a missing column still errors.
+- Tests: `TestAlterColumnNamedInAnotherCase` (`parser/mysql/mysql_test.go`, 5
+  cases: DROP, MODIFY, MODIFY of an FK-referenced column, CHANGE, RENAME of an
+  inline enum) and `TestMySQLIntrospect_AlterColumnNamedInAnotherCase`
+  (`parser/introspect/mysql_integration_test.go`, one `assertSchemaParity`
+  fixture covering DROP with a composite and an expression key, MODIFY with a
+  key, a cross-table FK and an enum, CHANGE, RENAME).
+- Changed from the original (vet at `717c3b7c`, 2026-10-09): MODIFY and CHANGE
+  take the spelling the clause names (measured on MySQL), so "keep the declared
+  spelling" holds only for DROP and RENAME's old name; the name is resolved once
+  at the ALTER entry point instead of `strings.EqualFold` at each constraint and
+  `exprKeys` site; `parser.ColumnByName`, `parser.RenameColumn` and
+  `RenameColumnReferences` are unchanged (shared with PostgreSQL, where names
+  compare exactly; their MySQL inputs are now declared spellings).
+- Prototype results, run at `717c3b7c` on 2026-10-09:
+  - Reproduction: see Issue (parser probe at HEAD; the same DDL on MySQL 8.0.46 → `dc: a`, `dk: a` with uk(a), `dm: a, B`, `dch: a, c`, `dr: a, c`, `de: a, c enum`, `dx: a`; a probe example under `examples/` generated with `GOWORK=off sqlgen generate` and run against the real table).
+  - With the fix: DROP → `Dc{ID, A}`, Get/GetMany ok against MySQL, and the same `Create` returns "Duplicate entry '2' for key 'dc.PRIMARY'" (its row was inserted by the failing run); MODIFY → `Dm{ID, B int64 db:"B"}`, `go build ./models/` ok; RENAME/CHANGE → "generated 8 files (2 tables, 0 views)".
+  - Gates: `cd parser && go test -race -count=1 ./...` → ok (containers); `golangci-lint run ./mysql/... ./introspect/...` → 0 issues; `gofumpt -l` → clean; `TestE2EGoldenFiles` → ok.
+  - Fail-first: DROP site reverted → `/DROP_COLUMN` fails ("columns mismatch … + {Name: \"b\", Type: \"int\"}") and the parity test fails on m_cc_drop; RENAME site reverted → `/RENAME_COLUMN` fails ("rename column t: column B not found in table t"); `replaceColumn` lookup exact → `/MODIFY_COLUMN`, `/MODIFY_COLUMN_of_a_referenced_column` and `/CHANGE_COLUMN` fail; MODIFY without the reference rename → `/MODIFY_COLUMN_of_a_referenced_column` fails ("- Ref: \"B\" + Ref: \"b\"") and parity fails on m_cc_ref's FKReference; the existing suite without the fix → passes.
+  - Golden churn: none.
+  - Patch: `.claude/prototypes/FIX-298.patch` (3 files, +163/-28); FIX-296.patch and FIX-275.patch still pass `git apply --check` with it applied first.
+
+**References.**
+- PRD §6.1, §5.2 (MySQL parser).
+- FIX-296 (case-insensitive constraint-name drops), FIX-282 (SQLite table-name case), the SQLite column-case backlog line from FIX-277/FIX-282.
+
+**Resolution notes.** The MySQL ALTER column paths in `parser/mysql/mysql.go`
+now resolve the named column case-insensitively, as MySQL does: a new
+`declaredColumn` (factored out of `declaredColumns`) turns the clause's name into
+the declared spelling for DROP COLUMN and RENAME COLUMN's old name, and MODIFY and
+CHANGE share a new `replaceColumn` (case-insensitive lookup, `redefineColumn`,
+`RenameColumnReferences`, `renameExprKeyColumn`, `addConstraints`), so MODIFY
+naming the column in another case renames it and keys and FK references follow.
+MODIFY of a missing column still appends it; CHANGE of a missing column still
+errors. Tests: `TestAlterColumnNamedInAnotherCase` (6 cases) and
+`TestMySQLIntrospect_AlterColumnNamedInAnotherCase` (`assertSchemaParity`
+against MySQL 8.0). The vetted prototype was stale by FIX-296 (`4c951fad`, same
+files, disjoint hunks) and applied clean; doc comments trimmed. Fail-first on the
+final code: DROP site reverted → `/DROP_COLUMN` fails; RENAME site reverted →
+`/RENAME_COLUMN` fails; `replaceColumn` lookup exact → `/MODIFY_COLUMN`,
+`/MODIFY_COLUMN_of_a_referenced_column`, `/CHANGE_COLUMN` fail; reference rename
+removed → `/MODIFY_COLUMN_of_a_referenced_column` and `/CHANGE_COLUMN` fail.
+Golden churn: none. Gates: `make check`, `make check-examples` → ok;
+`go -C parser test -count=1 -run TestMySQLIntrospect_AlterColumnNamedInAnotherCase ./introspect/`
+→ ok (containers). Inline from `/verify`: added a unit case for MODIFY of an
+inline ENUM column named in another case (`t__B_enum`), so the enum rename is
+under `make check`, and reworded the `replaceColumn` doc.
+
+### FIX-296
+
+- **Status:** Resolved
+- **Severity:** tracked
+- **Origin:** phase 30, `parser/mysql`
+- **Surfaced by:** `/fix-vet FIX-294` (2026-10-08), filed at `/close-phase 30` (2026-10-08)
+- **Vetted:** corrected at `717c3b7c` (2026-10-09)
+
+**Issue.** **The MySQL file parser matches `ALTER TABLE … DROP INDEX` names
+case-sensitively, while MySQL index names are case-insensitive.** Measured:
+`CREATE TABLE v2 (a int, KEY A (a)); ALTER TABLE v2 DROP INDEX a;` → the parser
+keeps `INDEX A [a]` (throwaway unit probe), while MySQL 8.0.46 drops it
+(`information_schema.statistics` has no rows for `v2`), so `indexes[]` differs by
+source (PRD §6.1).
+
+**Root cause.** The ALTER drop paths compare constraint names exactly:
+`removeConstraintFromColumns` (`parser/mysql/mysql.go:1201`, `c.Name == name`)
+serves DROP INDEX / DROP KEY and also DROP FOREIGN KEY, DROP CHECK and DROP
+CONSTRAINT, and the DropKey branch of `applyAlterOption` clears the FK-built
+index flag with an exact `delete(p.generated[table.Name], o.Name.String())`
+(`mysql.go:996`). FIX-294's own `exprKeys` drop already uses `strings.EqualFold`
+(`:997-998`). MySQL 8.0.46 matches all of these names case-insensitively, and
+rejects a re-added FK whose name differs only in case (`ERROR 1826 Duplicate
+foreign key constraint name 'fK2'`), so a first case-insensitive match is safe.
+Line refs at `717c3b7c`.
+
+**Suggested fix.**
+- `removeConstraintFromColumns`: `c.Name == name` → `strings.EqualFold(c.Name,
+  name)`, with one comment sentence. This covers DROP INDEX/KEY (UNIQUE and
+  INDEX), DROP FOREIGN KEY and DROP CHECK/CONSTRAINT.
+- `applyAlterOption` DropKey: replace the exact `delete(p.generated[…], name)`
+  with `maps.DeleteFunc(…, strings.EqualFold …)`. Without it, an FK-built index
+  dropped in another case leaves a stale "built" flag, and a later declared key of
+  that name then gives way to a wider key (MySQL keeps `fk1 [a]` and `a [a,b]`;
+  the parser drops `fk1`).
+- Tests: `TestDropConstraintIgnoresNameCase` (`parser/mysql/mysql_test.go`, 7
+  cases: DROP INDEX, DROP KEY on UNIQUE (clears Unique), standalone `DROP INDEX
+  … ON`, DROP FOREIGN KEY (keeps the index, clears `FKReference`), DROP CHECK,
+  DROP CONSTRAINT, and the stale-built-flag sequence) and
+  `TestMySQLIntrospect_DropIgnoresNameCase`
+  (`parser/introspect/mysql_integration_test.go`, 7 `m_dc_*` tables,
+  `assertSchemaParity`).
+- Changed from the original (vet at `717c3b7c`, 2026-10-09): widened to DROP
+  FOREIGN KEY / DROP CHECK / DROP CONSTRAINT, which share the root cause and the
+  fix site (the shared helper) and were measured case-insensitive on MySQL; the
+  "check RENAME INDEX" bullet does not apply, because `applyAlterOption` has no
+  `*sqlparser.RenameIndex` case at all (RENAME INDEX is ignored, a different
+  defect); the regression sequence drops the FK in another case (`DROP FOREIGN
+  KEY FK1`), since a same-case drop already clears the map entry.
+- Prototype results, run at `717c3b7c` on 2026-10-09:
+  - Reproduction: throwaway probe `parser/mysql/zz_probe_drop_test.go` (deleted), `go test ./mysql/ -run TestZZProbeDropCase -v`: `CREATE TABLE v2 (a int, KEY A (a)); ALTER TABLE v2 DROP INDEX a;` → `INDEX A [a]`; `UNIQUE KEY A (a)` + `DROP KEY a` → `UNIQUE A [a]; col a unique=true`; `KEY A (a)` + `DROP INDEX a ON v2` → `INDEX A [a]`; `CONSTRAINT Fk FOREIGN KEY …` + `DROP FOREIGN KEY fk` → `FOREIGN KEY Fk [a]; INDEX Fk [a]; fk=true`; `CONSTRAINT Ck CHECK (a > 0)` + `DROP CHECK ck` → `CHECK Ck [a]`, and `DROP CONSTRAINT ck` → `CHECK Ck [a]`. The same statements on `mysql:8.0` (8.0.46): v2 and v3 have no rows in `information_schema.statistics`; f1 has no rows in `table_constraints` and its index `Fk` stays; c1 and c2 have no CHECK left.
+  - Gates: `cd parser && go test -race -count=1 ./...` → ok; `golangci-lint run ./mysql/... ./introspect/...` → 0 issues; `gofumpt -l mysql introspect` → clean; `go vet` → clean.
+  - Fail-first: `removeConstraintFromColumns` reverted → all 7 `TestDropConstraintIgnoresNameCase` cases fail (e.g. "DROP_INDEX_on_a_non-unique_key … constraints mismatch (-want +got): - nil, + {\"INDEX A [a]\"}") and `TestMySQLIntrospect_DropIgnoresNameCase` fails "mysql: introspected schema differs from the file parser's (-parsed +introspected)" (`- {Name: "Ck", Type: s"CHECK" …}`, `- FKReference: &parser.FKReference{Table: "m_dc_p", Column: "id"}`, `+ FKReference: nil`); `maps.DeleteFunc` reverted to the exact `delete` → `/a_dropped_foreign_key_index_no_longer_gives_way_to_a_wider_key` fails (`[]string{"INDEX a [a b]", - "INDEX fk1 [a]"}`) and the parity test fails on m_dc_g (`+ {Name: "m_dc_fk1", Type: s"INDEX", …}`); the existing suite without the fix → passes.
+  - Golden churn: none.
+  - Patch: `.claude/prototypes/FIX-296.patch` (3 files, +116/-3).
+
+**References.**
+- PRD §6.1; FIX-294 (`exprKeys` case-insensitive drop), FIX-287 (DROP INDEX `PRIMARY`).
+
+**Resolution notes.** `removeConstraintFromColumns` (`parser/mysql/mysql.go`)
+now matches the dropped name with `strings.EqualFold`, so DROP INDEX / DROP KEY
+(UNIQUE and INDEX), standalone `DROP INDEX … ON`, DROP FOREIGN KEY and DROP
+CHECK / DROP CONSTRAINT drop a key or constraint named in another case, as MySQL
+does; the DropKey branch of `applyAlterOption` clears the FK-built index flag
+with `maps.DeleteFunc` + `strings.EqualFold`, so a later declared key of that
+name no longer gives way to a wider key. Tests: `TestDropConstraintIgnoresNameCase`
+(7 cases) and `TestMySQLIntrospect_DropIgnoresNameCase` (`assertSchemaParity`
+against MySQL 8.0). The vetted prototype applied clean at `a16055e2`; fail-first
+reproduced as recorded (helper reverted → all 7 unit cases and the parity test
+fail; `maps.DeleteFunc` reverted → the stale-built-flag case and parity on
+`m_dc_g` fail). Golden churn: none. Gates: `make check`, `make check-examples`
+→ ok. Inline: `TestAlterTableAddDropConstraint`'s failure message said "after DROP CONSTRAINT
+FK" for a `DROP FOREIGN KEY` step; it now says DROP FOREIGN KEY.
+
+### FIX-297
+
+- **Status:** Resolved
+- **Severity:** tracked
+- **Origin:** phase 30, `parser/sqlite` (view column extraction)
+- **Surfaced by:** `/fix-loop` FIX-281 verify (2026-10-09)
+- **Vetted:** corrected at `717c3b7c` (2026-10-09)
+
+**Issue.** **A SQLite view with an unaliased `LIKE … ESCAPE` column panics
+`sqlgen generate` instead of returning the "name it with AS" error, under both
+`files` and `database`.** Measured during the FIX-281 run (2026-10-09):
+`views/v.sql` with `-- @pk: id` and `CREATE VIEW v AS SELECT id, a LIKE 'x%'
+ESCAPE '\' FROM t;` under `input.views` → `sqlgen generate` → exit 2,
+"panic: sql.BinaryExpr.String(): invalid op ESCAPE". With `AS m` the view parses
+fine. The vet measured the same panic under `source: database`: introspection
+runs every stored view's SQL through `sqlite.ParseViewSQL`
+(`parser/introspect/sqlite.go:257`), so a view SQLite accepts crashes generation
+instead of falling back to the catalog columns with a warning.
+
+**Root cause.** The SQLite view extractor builds its error message with an
+unrecovered `rc.String()` (`parser/sqlite/view_sql.go:103`, the "no alias and
+no column name; name it with AS" error added by FIX-280), and rqlite/sql panics
+rendering `LIKE … ESCAPE`. So the panic fires while the parser formats the error
+it meant to return. `view_sql.go:96` (the `*` / `t.*` error) also calls
+`rc.String()`, but `isStar` only admits `*` or a star `QualifiedRef`, which
+cannot hold a `LIKE … ESCAPE`, so it cannot panic (measured: `SELECT id, t.*`
+→ `view v selects "t".*, whose columns the view parser cannot list; name each
+column`). Line refs at `717c3b7c`.
+
+**Suggested fix.**
+- At `view_sql.go:103`, render `rc.Expr` through the recovering `exprString`
+  helper (`parser/sqlite/sqlite.go:165`, FIX-291) as `exprString(rc.Expr, "view
+  column")`; if rendering fails, name the column by position ("column N",
+  1-based). The "name it with AS" `ViewQueryError` is returned, not a panic.
+  Without an alias `ResultColumn.String()` is just `Expr.String()`, so the
+  message for renderable expressions is unchanged.
+- Tests: `TestParseViewSQL_ColumnNames` (`parser/sqlite/sqlite_test.go`) gains
+  3 cases: unaliased `LIKE … ESCAPE` and unaliased `COUNT(a LIKE … ESCAPE '\')`
+  → "view v selects column 2 with no alias and no column name; name it with AS";
+  aliased `LIKE … ESCAPE` → columns `[id m]`. New
+  `TestSQLiteIntrospect_ViewUnnamedLikeEscape`
+  (`parser/introspect/view_definition_integration_test.go`) checks the view
+  keeps its catalog columns `[id, a LIKE 'x%' ESCAPE '\']` and the fallback
+  warning "view v_like: columns come from the catalog, since its definition
+  cannot be read as a view file: view v_like selects column 2 with no alias and
+  no column name; name it with AS".
+- Changed from the original (vet at `717c3b7c`, 2026-10-09): `view_sql.go:96`
+  is dropped because it cannot panic, so there is no defect and no fail-first;
+  the fallback is a positional "column N", because `exprString`'s own error text
+  ("rendering view column: …panic…") would replace the "name it with AS" error;
+  the regression coverage is widened to the `database` path (same root cause and
+  fix site). A search of `view_sql.go` found no other unrecovered `String()` /
+  `rsql.ExprString` call.
+- Prototype results, run at `717c3b7c` on 2026-10-09:
+  - Reproduction: files → `GOWORK=off sqlgen generate -c sqlgen.yml` → exit=2, "panic: sql.BinaryExpr.String(): invalid op ESCAPE … extractResultColumns … view_sql.go:103"; with `AS m` → "sqlgen: generated 9 files (1 tables, 1 views)", exit=0. Database (the same view in a SQLite db) → exit=2, same panic via `ParseViewSQL` ← `introspect.viewColumnsFromDefinition`. Unit probe (`ParseViewSQL`) panics for unaliased `a LIKE … ESCAPE` and unaliased `COUNT(a LIKE … ESCAPE '\')`; no panic for aliased forms, `LIKE … ESCAPE` in WHERE or JOIN ON, or a column list `v (x, y)`.
+  - With the fix: files → "Schema error: parsing views: parsing view SQL in …/views/v.sql: view v selects column 2 with no alias and no column name; name it with AS", exit=3; database → "Warning: view v: columns come from the catalog, … view v selects column 2 …", generated 9 files, exit=0.
+  - Gates: (parser) `go test -race -count=1 ./sqlite/... ./introspect/...` → ok (containers); `gofumpt -l sqlite introspect` → clean; `golangci-lint run ./sqlite/... ./introspect/...` → 0 issues.
+  - Fail-first: `view_sql.go:103` reverted to `rc.String()` → `TestParseViewSQL_ColumnNames/unaliased_LIKE_ESCAPE` and `TestSQLiteIntrospect_ViewUnnamedLikeEscape` fail: "panic: sql.BinaryExpr.String(): invalid op ESCAPE [recovered, repanicked]"; the existing suite without the fix → passes.
+  - Golden churn: none.
+  - Patch: `.claude/prototypes/FIX-297.patch` (3 files, +33/-1).
+
+**References.**
+- PRD §16.1 (view column naming), §6.3 ("SQLite DDL the file parser cannot read").
+- FIX-280 (`19772175`, added the unnamed-column error), FIX-291 (`e50172de`, added `exprString`), FIX-281 (`e932c2e2`, reused it).
+
+**Resolution notes.** `extractResultColumns` (`parser/sqlite/view_sql.go`)
+now renders an unaliased column through the recovering `exprString` helper and,
+when rqlite/sql panics rendering it (`LIKE … ESCAPE`), names it by position
+("column N", 1-based), so the "no alias and no column name; name it with AS"
+`ViewQueryError` is returned instead of a panic; renderable expressions keep
+their message. Tests: `TestParseViewSQL_ColumnNames` gains unaliased
+`LIKE … ESCAPE`, unaliased `COUNT(a LIKE … ESCAPE '\')` and aliased
+`LIKE … ESCAPE` cases; new `TestSQLiteIntrospect_ViewUnnamedLikeEscape` pins the
+`source: database` catalog-column fallback and its warning. The vetted prototype
+applied clean at `44bccd14`. Fail-first: with `view_sql.go` reverted,
+`TestParseViewSQL_ColumnNames/unaliased_LIKE_ESCAPE` and the introspection test
+panic ("sql.BinaryExpr.String(): invalid op ESCAPE [recovered, repanicked]"). Gates: `make check` → ok;
+`make check-examples` → ok; golden churn: none (matches the vet). Inline from
+`/verify`: the new comment in `view_sql.go` was reworded to state the behavior
+rather than contrast it with the old `rc.String()` call.
+
+### FIX-292
+
+- **Status:** Resolved
+- **Severity:** nit
+- **Origin:** phase 1, `sql`
+- **Surfaced by:** /fix-vet FIX-284 (2026-10-07), filed at /close-phase 30 (2026-10-08)
+- **Vetted:** ready at `13173996` (2026-10-08; re-vetted for the ruled hybrid)
+
+**Issue.** **`sql.Where(col).Eq(nil)` emits a bare `$` the database
+rejects**, and so do `Neq` / `Gt` / `Gte` / `Lt` / `Lte` / `Like` / `NLike`
+on `ConditionBuilder`. Same root cause as FIX-284, different fix site.
+Reachable only from hand-written `sql.Where` callers (generated comparators
+dereference typed pointers). Measured: `sqlite Eq(nil): SQL=SELECT * FROM
+"users" WHERE owner_id = $ ARGS=[]interface {}(nil)` → `SQL logic error:
+unrecognized token: "$" (1)`; postgres and mysql render a bare `$` too.
+
+**Root cause.** The single-value builders store `Value: v` unchanged
+(`sql/condition.go:73-101`, `:131-139`; line refs at `04b927d6`), and `expandConditionClause` reads
+`cond.Value == nil` as "no args" (`sql/builder.go:588-590`), the shape
+`IsNull` / `IsNotNull` rely on (`sql/condition.go:146-154`). A typed nil
+(e.g. `(*int)(nil)`) is not `== nil` as an `any` and binds normally (by
+code reading).
+
+**Suggested fix.** Design question for the vet; options:
+- **Bind NULL** — store `[]any{nil}` when `v == nil` (FIX-284's shape for
+  `Raw`), so `col = NULL` is sent and matches no rows. Consistent with
+  FIX-284 and with a typed nil, but silent.
+- **Reject** — panic (or a build-time error) naming the column and
+  pointing at `IsNull` / `IsNotNull`. Loud; the builder API has no error
+  return, so it would be a panic.
+- **Redirect** — `Eq(nil)` → `IsNull()`, `Neq(nil)` → `IsNotNull()`; the
+  ordering and LIKE operators have no NULL meaning and would still need
+  bind or reject.
+- Tests: a `sql` builder table over the eight operators × three dialects
+  asserting the ruled outcome (one placeholder with `ARGS=[nil]`, the
+  panic, or the `IS [NOT] NULL` clause).
+- Vet notes: a typed nil is measured (`Eq((*int)(nil))` → `owner_id = $1` / `?` with ARGS=[(*int)(nil)], no error, 0 rows on all three dialects). PG and MySQL fail at execution on the bare `$`: PG `ERROR: syntax error at or near "$" (SQLSTATE 42601)`, MySQL `Error 1054 (42S22): Unknown column '$' in 'where clause'`. The patch does not conflict with FIX-284 (`git apply --check` passes in both orders; both applied → `go test -race -count=1 ./sql/...` ok).
+- Prototype (option B): Eq/Neq/Gt/Gte/Lt/Lte/Like/NLike go through an unexported `(b ConditionBuilder) operand(method, op string, v any)` that panics on `v == nil` with `sql: Where("owner_id").Eq(nil): a nil operand matches no row; use IsNull or IsNotNull to test for NULL`. Tests: `TestConditionBuilder_NilOperandPanics` (8 methods, exact panic) and `TestConditionBuilder_TypedNilOperandBinds` (pins the typed-nil boundary). PRD §11.5 gains a paragraph after the builder-methods table.
+- Pending the user's ruling: for a nil operand on Eq/Neq/Gt/Gte/Lt/Lte/Like/NLike, which outcome?
+  - (A) Bind NULL (`[]any{nil}`, FIX-284's shape): every op renders `col <op> $1` / `?` with ARGS=[nil], no error, 0 rows on all 3 dialects, the same as a typed nil today. Satisfies the PRD table (`Eq(v)` → `col = $`) literally, but is silent: a caller who meant IsNull gets an empty result.
+  - (B) Recommended by the vet, and prototyped: reject with a panic that points at the call site and names IsNull/IsNotNull. A typed nil and `sql.NullX{Valid:false}` still bind silently (catching those would need reflection). The condition is usually built before the generated method runs, outside its panic recovery, so a nil from e.g. a JSON-decoded `any` crashes the caller's goroutine where today it is a DB error. Follows the loud-errors-over-silent-degradation preference; NULL is never a meaningful operand for these 8 operators (unlike FIX-284's `IS NOT DISTINCT FROM $`), so it does not contradict FIX-284.
+  - (C) Redirect: Eq(nil) → `IS NULL` (measured ids=[1]), Neq(nil) → `IS NOT NULL` (ids=[2]). The other 6 ops still need A or B; `Eq(nil)` and `Eq((*int)(nil))` would return different rows; changes the PRD table's Eq/Neq rows (squirrel and goqu redirect, per their docs).
+  - (D) Not prototyped: a central rule in `expandConditionClause` binding NULL when a nil Value's clause has a `$` token. Covers these 8, FIX-284's Raw and the cursor candidate at one site, but is as silent as A, changes hand-built `Condition` semantics, and would supersede FIX-284's patch.
+  - Not auto-accepted: A and B both meet the rule's conditions mechanically, so the rule cannot choose, and B adds a panic contract to public runtime API.
+- Prototype results, run at `b606e4a7` on 2026-10-08:
+  - Reproduction: a throwaway probe (`sql/zz_probe_eqnil_test.go`, since deleted), `go test -count=1 -run TestZZProbeEqNil -v ./sql/`, table `users(id, owner_id)` with rows (1, NULL) and (2, '7') on SQLite, postgres:17-alpine (pgx) and mysql:8.4: all 8 ops × 3 dialects render a bare `$` with ARGS=nil (e.g. `sqlite Eq(nil): SQL=SELECT "id" FROM "users" WHERE owner_id = $ ARGS=[]interface {}(nil) -> err=SQL logic error: unrecognized token: "$" (1)`), and every op fails on PG (42601) and MySQL (1054). Controls: `IsNull()` → ids=[1], `IsNotNull()` → ids=[2], typed nil → ids=[] err=<nil>.
+  - Gates: `go test -race -count=1 ./sql/... ./comparator/...` → ok; `go test -race -short -count=1 ./...` (root) → ok; `gofumpt -l sql/` → clean; `golangci-lint run ./sql/...` → 0 issues; sqlite example `GOWORK=off go test -race -count=1 ./...` → ok (no generated call site passes an untyped nil).
+  - Fail-first: nil guard removed → `TestConditionBuilder_NilOperandPanics` fails all 8 subtests ("Where(\"owner_id\").Eq(nil) = {Clause:owner_id = $ Value:<nil> …}, want a panic"); the existing suite without the fix → passes.
+  - Golden churn: none.
+  - Patch: `.claude/prototypes/FIX-292.patch` (3 files, +90/-16).
+
+- The user ruled on 2026-10-08: a hybrid of (C) and (A). `Eq(nil)` redirects to `IS NULL` and `Neq(nil)` to `IS NOT NULL`; Gt/Gte/Lt/Lte/Like/NLike bind NULL (`[]any{nil}`, FIX-284's shape). This differs from the prototype (B), so the entry is re-vetted.
+
+- Prototype results for the ruled hybrid, run at `13173996` on 2026-10-08 (replaces the option-B patch; the "3 files, +90/-16" above describes that old patch):
+  - Prototype: `Eq` returns `b.IsNull()` on a nil `v` and `Neq` returns `b.IsNotNull()`, both keeping `Column` set so `PrefixConditions` still qualifies them. Gt/Gte/Lt/Lte/Like/NLike store `operand(v)`, a new unexported helper returning `[]any{nil}` for a nil `v` (FIX-284's shape); the existing `expandSlice` → `renumberTokens` path binds it, with no builder change. Doc comments on all 8 methods are updated. PRD §11.5: the Eq row reads "`col = $`; `col IS NULL` for a nil `v`", the Neq row "`col != $`; `col IS NOT NULL` for a nil `v`", and a paragraph after the table says the other six bind NULL and match no row, and that a typed nil is bound, so `Eq((*int)(nil))` matches no row where `Eq(nil)` matches the NULL rows.
+  - Tests: `TestConditionBuilder_NilOperand` (8 methods × postgres / postgres stdlib / mysql / sqlite, rendered between `active = $1 … age > $N` to check numbering; exact SQL and args) and `TestConditionBuilder_TypedNilOperandBinds` (Eq/Neq/Gt with `(*int)(nil)` keep `col <op> $`).
+  - Real-DB probe (`sql/zz_probe_eqnil_test.go`, since deleted), rows (1, NULL) and (2, '7'), identical on SQLite, postgres:17-alpine and mysql:8.4: `Eq(nil)` → `owner_id IS NULL`, ids=[1]; `Neq(nil)` → `owner_id IS NOT NULL`, ids=[2]; Gt/Gte/Lt/Lte/Like/NLike(nil) → `owner_id > $1` / `?`, ARGS=[nil], ids=[] err=<nil>; `Eq((*int)(nil))` → unchanged, ids=[]. So `Eq(nil)` and `Eq((*int)(nil))` return different rows on every dialect, as the ruling accepted.
+  - Gates: `go test -race -count=1 ./sql/... ./comparator/...` → ok; `go test -race -short -count=1 ./...` (root) → ok; `gofumpt -l sql/` → clean; `golangci-lint run ./sql/...` → 0 issues; `go vet ./sql/` → ok; sqlite example `GOWORK=off go test -race -count=1 ./...` → ok and `GOWORK=off golangci-lint run` → 0 issues. Hand-built `Condition{Value: nil}` is unaffected (`expandConditionClause` untouched), and comparators dereference typed pointers.
+  - With FIX-284: `git apply --check` passes in both orders, and with both applied `./sql/... ./comparator/...` pass in both orders. Whichever lands second can have `Raw`'s nil branch call `operand(args[0])`.
+  - Fail-first: Eq guard removed → `TestConditionBuilder_NilOperand/Eq/*` fail ("… owner_id = $ AND age > ?\" want \"… owner_id IS NULL AND age > ?\""); Neq guard removed → `/Neq/*` fail; `operand` guard removed → 24 subtests fail (e.g. Like/mysql "… owner_id LIKE $ …" want "… owner_id LIKE ? …"); the existing suite without the fix → passes.
+  - Note for `/fix-implement`: `upsert.go.tmpl:502` `resolveUpsertConflictRow` calls `sql.Where(col).Eq(args[i])` with `args []any`; generated args are never an untyped nil, except a column overridden to Go type `any` holding nil, which would now do an `IS NULL` lookup instead of a DB syntax error (not measured).
+  - Golden churn: none.
+  - Patch: `.claude/prototypes/FIX-292.patch` (3 files, +123/-16).
+
+
+**References.**
+- PRD §11.5 (condition composition, `sql.Where` builder).
+- FIX-284 (`sql.Raw(clause, nil)`, same root cause).
+
+**Resolution notes.** Implemented the ruled hybrid in `sql/condition.go`: `Eq(nil)` returns `IsNull()` and `Neq(nil)` `IsNotNull()` (both keep `Column`, so `PrefixConditions` still qualifies them); `Gt`/`Gte`/`Lt`/`Lte`/`Like`/`NLike` store `operand(v)`, an unexported helper that wraps a nil `v` as `[]any{nil}` so the builder binds NULL. Prototype applied clean (`git apply --3way`) at HEAD `04b927d6`, after FIX-284; as the vet suggested, `Raw`'s one-arg case now also stores `operand(args[0])` in place of its own nil branch (same `[]any{nil}` shape, `TestRaw` / `TestRaw_NilArg` unchanged). Doc comments trimmed to state the rule only. PRD §11.5: the Eq/Neq table rows and a paragraph after the table, as prototyped. Tests: `TestConditionBuilder_NilOperand` (8 methods × postgres / postgres stdlib / mysql / sqlite, exact SQL and args) and `TestConditionBuilder_TypedNilOperandBinds`. Fail-first on the final code: Eq guard removed → `TestConditionBuilder_NilOperand/Eq/*` fail (4 subtests); `operand` guard removed → the 24 bind-NULL subtests plus `TestRaw/single_nil_arg` and `TestRaw_NilArg/*` fail; restored → pass. Gates: `make check` → ok; `make check-examples` → ok. Golden churn: none, as vetted.
+
+### FIX-284
+
+- **Status:** Resolved
+- **Severity:** nit
+- **Origin:** phase 1, `sql`
+- **Surfaced by:** backlog promotion at `/close-phase 30` (2026-10-07); first recorded by FIX-258 (2026-10-03)
+- **Vetted:** ready at `d51ace1b` (2026-10-07)
+
+**Issue.** **`sql.Raw(clause, nil)` drops the nil argument**, so the bare `$`
+reaches the database. Measured evidence from the backlog line: "sqlite
+`Raw("owner_id IS NOT DISTINCT FROM $", nil)` → `SQL: … (owner_id IS NOT
+DISTINCT FROM $) ARGS=[0]`, `SQL logic error: unrecognized token: "$" (1)`".
+
+**Root cause.** `Raw`'s one-argument case stores `Value: args[0]`
+(`sql/condition.go:313-314`, line refs at `e932c2e2`), and `expandConditionClause` reads `Value ==
+nil` as "no args" (`sql/builder.go:588-590`), so the clause is emitted
+unexpanded.
+
+**Suggested fix.**
+- In `Raw`, store `[]any{nil}` when the single argument is nil, so
+  `expandSlice` (`sql/builder.go:653`) binds it.
+- Test: a `sql` builder case for `Raw("x IS NOT DISTINCT FROM $", nil)` on
+  all three dialects asserting one placeholder and `ARGS=[nil]`.
+- Prototype results, run at `d51ace1b` on 2026-10-07:
+  - Reproduction: a throwaway probe (`sql/zz_probe_rawnil_test.go`, since deleted), `go test -count=1 -run TestZZProbeRawNil -v ./sql/` → `postgres Raw nil: SQL=SELECT * FROM "public"."users" WHERE (owner_id IS NOT DISTINCT FROM $) ARGS=[]interface {}(nil)` (mysql and sqlite give the same bare `$`); SQLite exec → `SQL logic error: unrecognized token: "$" (1)`. On its own the Raw condition adds no args (`ARGS=[]`); the evidence's `ARGS=[0]` came from other conditions in the original probe. With the fix: `(owner_id IS NOT DISTINCT FROM ?) ARGS=[<nil>]: ids=[1]` on SQLite (the NULL-owner row comes back), and PostgreSQL renders `$1`.
+  - Prototype: `Raw` case 1 (`sql/condition.go:313-314`) returns `Value: args` (`[]any{nil}`) when `args[0] == nil`, so `expandSlice` binds it; the doc comment gains "A single nil arg binds NULL to the clause's one token." Side effect: `Raw("x IN $", nil)` now renders `x IN (?)` with `[nil]`, matching multi-arg Raw with ` IN $`. Tests: a `TestRaw` row "single nil arg" (`Value: []any{nil}`) and `TestRaw_NilArg` (postgres, postgres stdlib, mysql, sqlite; the Raw clause between `active = $` and `age > $`, one placeholder at position 2, args `[true, nil, 3]`).
+  - Gates: `go test -race -count=1 ./sql/...` → ok; `go test -race -short -count=1 ./...` (root) → ok; `gofumpt -l sql/` → clean; `golangci-lint run ./sql/...` → 0 issues.
+  - Fail-first: the nil branch reverted → `TestRaw_NilArg/postgres` fails: "BuildSelect sql = \"… WHERE active = $1 AND (owner_id IS NOT DISTINCT FROM $) AND age > $2\" want \"… (owner_id IS NOT DISTINCT FROM $2) AND age > $3\"" (the other dialects likewise), and `TestRaw/single_nil_arg` fails: "- Value: []any{nil}, + Value: nil"; the existing suite without the fix → passes.
+  - Golden churn: none.
+  - Patch: `.claude/prototypes/FIX-284.patch` (3 files, +46/-0).
+- Auto-accepted the recommended option on 2026-10-09 (`/fix` auto-accept rule): should `Raw("x IN $", nil)` list-expand to `x IN (?)` with `[nil]`? → yes, keep the current behavior and leave the PRD §11.5 text alone, because the prototype is green, neither option churns goldens (no template or example passes an untyped nil), no public surface changes, and the PRD is silent on Raw with ` IN $` while multi-arg Raw already expands.
+
+
+**References.**
+- PRD §11.5 (ConditionBuilder, `sql.Raw`).
+
+**Resolution notes.** `Raw` keeps a lone nil arg wrapped as `[]any{nil}`, so the builder binds NULL to the clause's token instead of emitting a bare `$` (`sql/condition.go`, `Raw` case 1). Prototype applied clean at HEAD `e932c2e2`; its two comments were trimmed to state the rule only. Tests: `TestRaw` row "single nil arg" and `TestRaw_NilArg` (postgres, postgres stdlib, mysql, sqlite; one placeholder at position 2, args `[true, nil, 3]`). Fail-first: the nil branch reverted → `TestRaw_NilArg` and `TestRaw` fail; restored → pass. Gates: `make check` → ok; `make check-examples` → ok. Golden churn: none, as vetted.
+
+
+### FIX-281
+
+- **Status:** Resolved
+- **Severity:** tracked
+- **Origin:** phase 4, `parser/sqlite`
+- **Surfaced by:** backlog promotion at `/close-phase 30` (2026-10-07); first recorded by FIX-269 (2026-10-07)
+- **Vetted:** corrected at `cb04d107` (2026-10-09; re-vetted, rebuilt after FIX-274, FIX-279 and FIX-291)
+
+**Issue.** **`LIKE … ESCAPE` crashes `sqlgen generate` in a SQLite CHECK,
+DEFAULT or generated column.** `rsql.ExprString` panics on it, and four call
+sites do not recover. Measured evidence from the backlog line: "`CREATE TABLE t
+(id INTEGER PRIMARY KEY, a TEXT CHECK (a LIKE 'x%' ESCAPE '\'))`, `sqlgen
+generate` → exit 2, "panic: sql.BinaryExpr.String(): invalid op ESCAPE"". The
+partial-index `WHERE` site was fixed by FIX-269 (`7ac833aa`), and FIX-291
+(`e50172de`) moved its recover into the shared `exprString` helper. Expression
+indexes and table-level `UNIQUE ((expr))` no longer reach a render: FIX-274
+(`ffc9d7f2`) skips them on both sources, so they give no error.
+
+**Root cause.** rqlite/sql parses `LIKE … ESCAPE` but `BinaryExpr.String()`
+panics rendering it. The unrecovered `rsql.ExprString` sites in
+`parser/sqlite/sqlite.go` (line refs at `cb04d107`): DEFAULT (`:452`), generated
+column (`:472`), column CHECK (`:479`) and table CHECK (`:568`). They are also
+reached through the PRIMARY KEY sort-order branch of `parseCreateTable`
+(`:222-226`) and ALTER TABLE ADD COLUMN (`parseColumn` at `:586`). The
+introspector reaches the same sites through `parseStoredTable`
+(`parser/introspect/sqlite.go:162`), so `database` crashes too.
+
+**Suggested fix.**
+- Route the four sites through the existing recovering `exprString`
+  (`sqlite.go:163-174`) with "DEFAULT", "generated column expression" and
+  "CHECK", and thread the error out: `applyColumnConstraint` returns
+  `(Constraint, bool, error)`; a new `applyColumnConstraints` loops over a
+  column's constraints, wraps with "column <c>:", and is used by `parseColumn`
+  and the PK sort-order branch; `parseColumn` and `parseTableConstraint` return
+  errors; `parseCreateTable` and ALTER ADD COLUMN wrap with "table <t>:". Move the
+  table-level constraint loop into `addTableConstraints(table, constraints, coll)
+  error` to keep `parseCreateTable` under cyclop 15. The statement is a parse
+  error under `files` and a `SchemaError` under `database`.
+- PRD §6.3 reads "`IS [NOT] DISTINCT FROM` or `LIKE … ESCAPE` in a CHECK, a
+  column default, a generated column or a partial index's `WHERE`", and
+  INTROSPECTION.md's `TestSQLiteIntrospect_UnreadableTable` row is extended to
+  match.
+- Tests: `TestParse_UnrenderableExpression` (`parser/sqlite`, 7 cases asserting
+  the exact error; it replaces `TestCreateIndex_UnrenderablePredicate` and keeps
+  its case), and 4 `LIKE … ESCAPE` cases (column CHECK, table CHECK, DEFAULT,
+  generated column) added to FIX-279's `TestSQLiteIntrospect_UnreadableTable`,
+  each a `*SchemaError` naming table t plus the same error from `Parse`.
+- Changed from the original (re-vet at `cb04d107`, 2026-10-09): the helper
+  already exists (FIX-291 took it from this entry's first prototype), so it is
+  reused, not added; four sites, not five, because FIX-274 made
+  `indexedColumnNames` skip expression parts instead of rendering them, so the
+  index-expression and table-UNIQUE-expression cases and the PRD's "an index
+  expression" wording are dropped; the database cases extend
+  `TestSQLiteIntrospect_UnreadableTable` instead of adding the near-duplicate
+  `TestSQLiteIntrospect_UnrenderableTableExpression`; `addTableConstraints` is
+  new because FIX-279's phantom-column check used up `parseCreateTable`'s cyclop
+  headroom. `IS [NOT] DISTINCT FROM` in a DEFAULT or generated column was
+  measured: under `files` both are already parse errors ("expected expression,
+  found 'DISTINCT'"), so the PRD sentence holds there.
+- Prototype results, run at `cb04d107` on 2026-10-09 (first run at `d51ace1b` on 2026-10-07; that patch conflicted in 4 of 5 files and was rebuilt by hand):
+  - Reproduction: `CREATE TABLE t (id INTEGER PRIMARY KEY, a TEXT CHECK (a LIKE 'x%' ESCAPE '\'));` → `sqlgen generate` under `files` → exit=2 "panic: sql.BinaryExpr.String(): invalid op ESCAPE"; the same DDL in a db under `source: database` → exit=2, same panic. A unit probe through `sqlite.New().Parse` panics at 6 of 9 shapes (column CHECK, table NOT LIKE…ESCAPE CHECK, DEFAULT, generated column, CHECK after `PRIMARY KEY DESC`, ALTER ADD COLUMN CHECK); table `UNIQUE ((expr))` and an expression index → err=<nil> (FIX-274 skip); a partial-index `WHERE` → the FIX-269/291 error.
+  - With the fix: files → exit=3 "Schema error: parsing schema files: parsing ./schema.sql: parsing ./schema.sql: table t: column a: rendering CHECK: sql.BinaryExpr.String(): invalid op ESCAPE"; database → exit=3 "Schema error: introspect sqlite table t: parsing stored CREATE TABLE: parsing sqlite_master: table t: column a: rendering CHECK: sql.BinaryExpr.String(): invalid op ESCAPE".
+  - Gates: parser `gofumpt -l .` → clean; `golangci-lint run ./...` → 0 issues; `go test -race -count=1 ./...` → ok (containers ran); `go build ./cmd/sqlgen` → ok; `make refs-check` → ok.
+  - Fail-first, each site reverted alone: DEFAULT → `TestParse_UnrenderableExpression/DEFAULT` and `TestSQLiteIntrospect_UnreadableTable/LIKE_ESCAPE_in_a_DEFAULT` fail "panic: sql.BinaryExpr.String(): invalid op ESCAPE [recovered, repanicked]"; likewise generated column, column CHECK and table CHECK; PK sort-order branch error dropped → `/CHECK_after_a_PRIMARY_KEY_sort_order` fails "Parse() error = <nil>, want \"parsing schema.sql: table t: column id: rendering CHECK: sql.BinaryExpr.String(): invalid op ESCAPE\""; ALTER ADD COLUMN error dropped → `/added_column_CHECK` fails likewise; the existing suite without the fix → passes.
+  - Golden churn: none.
+  - Patch: `.claude/prototypes/FIX-281.patch` (5 files, +158/-49).
+
+
+**References.**
+- PRD §6.3 ("SQLite DDL the file parser cannot read").
+- FIX-269 (`7ac833aa`, the partial-index `WHERE` site).
+
+**Resolution notes.** Resolved 2026-10-09 from the vetted prototype (applied clean at `d7b8c100`, after FIX-282). `parser/sqlite/sqlite.go`: the DEFAULT, generated-column, column CHECK and table CHECK renders go through the recovering `exprString` helper; `applyColumnConstraint` returns `(Constraint, bool, error)`, the new `applyColumnConstraints` wraps with "column <c>:" and serves `parseColumn` and the PRIMARY KEY sort-order branch, `parseTableConstraint` returns an error, and the table-level loop moved into `addTableConstraints`; `parseCreateTable` and ALTER ADD COLUMN wrap with "table <t>:". PRD §6.3 and INTROSPECTION.md's `TestSQLiteIntrospect_UnreadableTable` row now name CHECK, column default and generated column. Tests: `TestParse_UnrenderableExpression` (7 cases, replacing `TestCreateIndex_UnrenderablePredicate`) and 4 `LIKE … ESCAPE` cases in `TestSQLiteIntrospect_UnreadableTable`. Fail-first: with the source reverted the new parser test panics "sql.BinaryExpr.String(): invalid op ESCAPE [recovered, repanicked]". E2E: the entry's reproduction now gives "Schema error: parsing schema files: parsing ./schema.sql: parsing ./schema.sql: table t: column a: rendering CHECK: sql.BinaryExpr.String(): invalid op ESCAPE" under `files` and exit=3 "Schema error: introspect sqlite table t: parsing stored CREATE TABLE: parsing sqlite_master: table t: column a: rendering CHECK: …" under `database`. Gates: `make check` ok; `parser/introspect` SQLite integration tests ok; `make check-examples` ok; golden churn none (matches vet). Inline: deleted the stale `backlog.md` line saying this entry's prototype was stale after FIX-291 (the re-vet rebuilt it).
+
+### FIX-282
+
+- **Status:** Resolved
+- **Severity:** tracked
+- **Origin:** phase 4, `parser/sqlite`
+- **Surfaced by:** backlog promotion at `/close-phase 30` (2026-10-07); first recorded by FIX-269 (2026-10-07)
+- **Vetted:** corrected at `cb04d107` (2026-10-09; re-vetted, patch carried forward)
+
+**Issue.** **SQLite `CREATE INDEX … ON <table>` looks the table up
+case-sensitively**, so `CREATE TABLE Users …; CREATE UNIQUE INDEX ux2 ON users
+(a) …` silently drops the index under `files` while introspection keeps it.
+Measured evidence from the backlog line: "assertSchemaParity diff `-
+Constraints: nil` / `+ {Name: "ux2", Type: UNIQUE, …}`".
+
+**Root cause.** `parseCreateIndex` (`parser/sqlite/sqlite.go:98-106`, lookup at
+`:103`) does `p.tableIndex[tableName]` and returns nil when the exact spelling is
+absent. `tableIndex` is keyed by the name as declared (`sqlite.go:36`, `:260`), but
+SQLite identifiers are case-insensitive. The same exact-match lookup backs
+`lookupTable` (`:762`, lookup at `:763`, used by ALTER TABLE), `parseDropTable` (`:176`, lookup at `:178`), the
+duplicate-table check (`:199`) and `renameTable` (`:746`, lookup at `:747`). Line refs at `cb04d107`.
+
+**Suggested fix.**
+- Make table lookup case-insensitive in the SQLite parser (key `tableIndex`
+  by `strings.ToLower`, or one lookup helper used by every site above), keeping
+  the declared spelling in `Table.Name`.
+- Vet: confirm the other sites share the root cause and fix site (scope cap);
+  a silent skip on an unknown table in `parseCreateIndex` may also deserve an
+  error.
+- Tests: an `assertSchemaParity` SQLite case with the mixed-case index above,
+  plus parser cases for `ALTER TABLE users …` and `DROP TABLE users` on a
+  table declared `Users`.
+- Vet notes on scope: measured at HEAD, ALTER TABLE ADD/DROP/RENAME COLUMN and RENAME TO stop with an error (`table users not found`). The rest fail silently: DROP TABLE does nothing; a duplicate `CREATE TABLE users` after `Users` is accepted and leaves two tables; `IF NOT EXISTS` adds a second table; CREATE INDEX drops the index.
+- Changed from the original:
+  - the `strings.ToLower` key is wrong: SQLite folds ASCII letters only (`"Äb"` and `"äb"` are two tables), so `ToLower` would raise a false `table äb already exists`. A new helper `tableKey(name)` folds ASCII only, and every `tableIndex` read and write goes through it: Seed, the CREATE TABLE store and duplicate check, CREATE INDEX (now via `lookupTable`), DROP TABLE, `renameTable` and `lookupTable`. `Table.Name` keeps the CREATE TABLE spelling;
+  - a case-insensitive lookup alone is not enough. DROP and RENAME TO pass the table name to the shared FK helpers, which compare exactly; given the statement's spelling they miss keys that use the declared spelling (a renamed table's FK stays `->Users`, and dropping a referenced table succeeds without the error). `parseDropTable` now passes the stored name to `CheckTableDropRefs`, and `renameTable` passes `table.Name` to `RenameTableReferences`;
+  - the vet question ("should an unknown table in `parseCreateIndex` be an error?") has a different root cause and is a cross-dialect decision (the PG parser skips on purpose, `//nolint:nilerr`), so it moves to the backlog.
+- Re-vet at `cb04d107` on 2026-10-09: the `d51ace1b` patch no longer applied because `parseCreateIndex` now calls `indexedColumnNames(stmt.Columns)` (the expression-index skip) right after the `table := &p.schema.Tables[idx]` line the patch removed. Rebuilt by hand: the lookup goes through `lookupTable` and the `indexedColumnNames` block stays; every other hunk applied with `--3way`. FIX-291's `exprString`, FIX-279's `columnStarts` and FIX-277's `renameColumnInExpressions` touch no table-name lookup. RENAME COLUMN already passes the stored `table.Name` to `RenameColumnReferences`. Reproduction, tests, gates, fail-first and churn below re-measured at `cb04d107` with identical results. `/fix-implement` may share one ASCII-fold helper between `tableKey` and FIX-277's `equalFoldASCII`.
+- Prototype results, run at `cb04d107` on 2026-10-09 (first run at `d51ace1b` on 2026-10-07):
+  - Reproduction: a throwaway probe (`parser/introspect/zz_probe_fix282_test.go`, since deleted), `cd parser && go test -short -count=1 -run TestZZProbe -v ./introspect/`:
+    - `assertSchemaParity` on `CREATE TABLE Users (id INTEGER PRIMARY KEY, a TEXT); CREATE UNIQUE INDEX ux2 ON users (a)` fails: `+ {Name: "ux2", Type: s"UNIQUE", Columns: []string{"a"}, Method: "btree"}` and `- Unique: false / + Unique: true`;
+    - against real SQLite: `alter add` → SQLite ok, parser `table users not found`; `drop table` → SQLite `[]`, parser `[Users]`; `dup create` → SQLite `table users already exists`, parser ok with `[Users users]`; `rename table` → SQLite `[Accounts]`, parser `table users not found`; `"Äb"` and `"äb"` → SQLite accepts both.
+  - Tests: `TestTableNameCase` (`parser/sqlite`, 10 cases: CREATE INDEX, ADD/DROP/RENAME COLUMN, RENAME TO with FK follow-through, DROP TABLE, DROP of a referenced table, duplicate CREATE, IF NOT EXISTS, non-ASCII names keep their case) and `TestSQLiteIntrospect_TableNameCase` (mixed-case CREATE INDEX, ALTER, RENAME with an FK, DROP; `assertSchemaParity`).
+  - Gates: `cd parser && go test -race -count=1 ./...` → ok; `golangci-lint run ./sqlite/... ./introspect/...` → 0 issues; `gofumpt -l` → clean; `TestE2EGoldenFiles` → ok.
+  - Fail-first:
+    - `tableKey` returns the name unchanged → `TestTableNameCase` fails 9 of 10 (e.g. "table USERS not found", "Parse() error = <nil>, want \"table users already exists\""), and `TestSQLiteIntrospect_TableNameCase` fails;
+    - `renameTable` given `oldName` → `RENAME_TO_carries_the_foreign_keys` fails: `- "posts(id, user_id) ->Accounts"` / `+ "posts(id, user_id) ->Users"`;
+    - `parseDropTable` given the statement's name → `DROP_TABLE_referenced_by_a_foreign_key` fails: `want "drop table users: cannot drop table Users"`;
+    - `tableKey` as `strings.ToLower` → `non-ASCII_letters_keep_their_case` fails: `table äb already exists`;
+    - the existing suite without the fix → passes.
+  - Golden churn: none.
+  - Patch: `.claude/prototypes/FIX-282.patch` (3 files, +162/-16).
+
+
+**References.**
+- PRD §6.1, §5.2.
+- FIX-269 (surfaced while adding the partial-index parity cases).
+
+**Resolution notes.** The SQLite parser now matches table names the way SQLite does, folding ASCII letters only. Every `tableIndex` read and write goes through one `foldASCII` helper: `Seed`, the CREATE TABLE store and duplicate check, CREATE INDEX (now via `lookupTable`), DROP TABLE, `renameTable` and `lookupTable`. `Table.Name` keeps the CREATE TABLE spelling. DROP TABLE passes the stored name to `CheckTableDropRefs`, and RENAME TO passes `table.Name` to `RenameTableReferences`, so a statement that names the table in another case still finds the foreign keys that use the declared spelling. Prototype applied clean with `--3way`. Inline simplification: `foldASCII` replaces both the prototype's `tableKey` and the existing `equalFoldASCII` used by RENAME COLUMN's identifier match, so one helper carries SQLite's ASCII-only folding. Tests: `TestTableNameCase` (`parser/sqlite`, 10 cases) and `TestSQLiteIntrospect_TableNameCase` (`assertSchemaParity`). Fail-first on the final code: `foldASCII` returning its input fails 9 of 10 `TestTableNameCase` cases and `TestAlterTableRenameColumn/names_match_without_regard_to_case`. Gates: `make check` ok, SQLite introspect integration tests ok, `make check-examples` ok. Golden churn: none, as recorded by the vet.
+
+### FIX-278
+
+- **Status:** Resolved
+- **Severity:** tracked
+- **Origin:** phase 4, `parser/mysql`
+- **Surfaced by:** backlog promotion at `/close-phase 30` (2026-10-07); first recorded by FIX-262 (2026-10-03)
+- **Vetted:** corrected at `cb04d107` (2026-10-09; re-vetted after FIX-288 and FIX-294 landed)
+
+**Issue.** **MySQL inline ENUM/SET entries are not kept in step with RENAME
+and DROP.** RENAME COLUMN / RENAME TABLE keep the entry named from the old
+names, so the Go enum type name differs by source and a re-added column
+registers the same name twice; DROP COLUMN / DROP TABLE never remove the
+entry, so a dead enum type is emitted and re-adding a same-named ENUM fails
+generation. Measured evidence, quoted from the two backlog lines merged here:
+- "RENAME COLUMN / RENAME TABLE keep the inline ENUM/SET name derived from the old names (`people.role:users_role_enum`, `users.kind:users_role_enum`), while introspection derives `<table>_<column>_enum` from current names, so the DDL and introspect paths name the Go type differently, and `RENAME COLUMN role TO kind; ADD COLUMN role ENUM('x')` registers `users_role_enum` twice — evidence: parser probe enums=[{users_role_enum [a b]} {users_role_enum [x]}]"
+- "`CREATE TABLE users (id int PRIMARY KEY, role ENUM('a','b') NOT NULL); ALTER TABLE users DROP COLUMN role; ALTER TABLE users ADD COLUMN role ENUM('x','y') NOT NULL;` → `sqlgen generate` (FIX-262 prototype applied; reproduces at `d51ace1b` with FIX-262 landed) → "Generation error: enum users_role_enum and enum users_role_enum both resolve to the Go type name "UsersRoleEnum" …"; DROP TABLE + re-CREATE → two `users_role_enum` entries in a parser probe"
+
+**Root cause.** `extractInlineEnumOrSet` (`parser/mysql/mysql.go:508-528`)
+names the entry `<table>__<column>_enum|_set` (through `parser.InlineEnumName` /
+`InlineSetName`, FIX-288) once, at creation, and stores it as the column's `Type`.
+The RENAME COLUMN branch of `applyAlterOption` (`mysql.go:954-961`) and
+`renameTable` (`mysql.go:1072`, name set at `:1087`) never rename the entry or
+the column type (the `dropInlineEnumOrSet` doc comment, `mysql.go:575-588`,
+records this). `alterDropColumn` (`mysql.go:994`) and `parseDropTable`
+(`mysql.go:306`) never call `dropInlineEnumOrSet` (`mysql.go:589`, `users > 1`
+guard at `:598`), which only MODIFY and CHANGE COLUMN use (`:978`, `:1016`). The
+introspector names entries from current names (`parser/introspect/mysql.go:361`
+enum, `:371` set). Line refs at `cb04d107`.
+
+**Suggested fix.**
+- The user ruled on 2026-10-08 (FIX-288 Q2): rework this fix before it lands. The MySQL file parser tracks inline ENUM/SET values per (table, column), for example by deriving the entries from the final columns, so the `inlineTypeUsers` guard goes away and RENAME/DROP resolve a FIX-288 collision correctly; names are built with FIX-288's `parser.InlineEnumName` / `InlineSetName`. The entry is re-vetted on top of FIX-288.
+- The ruled design: the MySQL `Parser` gains `inline map[table]map[column]inlineType{set, values}`. Every column definition (CREATE, ADD, MODIFY, CHANGE) goes through `extractInlineEnumOrSet`, which records the ENUM/SET or clears the key. `renameInline` moves the key on RENAME COLUMN and clears the target when the source has none. `renameTable` moves the table's map with the same delete-before-set order FIX-294 uses for `generated`/`exprKeys`, so a rename to its own name keeps it. `Schema()` derives the entries and each column's `Type` from the columns that exist, under current names, so DROP COLUMN / DROP TABLE need no code; `dropInlineEnumOrSet` and the `users > 1` guard are removed. `Seed` (`both` mode) imports each introspected table column typed with its derived name, taking the first unclaimed entry of that name; entries no table column claims (a view's own) are kept as seeded extras.
+- Tests: `TestRedefineColumnKeepsSharedInlineEnumName` is replaced by `TestInlineEnumOrSetFollowsRenameAndDrop` (12 cases, including `ALTER TABLE RENAME TO its own name`); new `TestInlineEnumNameCollision` and `TestSeededInlineEnumOrSetFollowsRenameAndDrop`; parity tests `TestMySQLIntrospect_InlineEnumAfterRenameAndDrop`, `TestMySQLIntrospect_InlineEnumCollisionResolvedByAlter` and `TestMySQLIntrospect_BothModeInlineEnumAfterRenameAndDrop`; one unsorted expectation in `TestRedefineColumnReplacesInlineEnumOrSet` is reordered.
+- Changed from the original: the original bullets (rename and drop entries by name, keep the `users > 1` guard; first prototyped at `d51ace1b` on 2026-10-07) are superseded by the ruling above. Changed at the `cb04d107` re-vet: FIX-288 has landed, so the patch is a plain diff, not a delta; it was rebased onto FIX-294's `exprKeys` field and delete-before-set `renameTable`, because the old set-then-delete inline move dropped the map on a self-rename (measured: `/ALTER_TABLE_RENAME_TO_its_own_name` fails `- {{Name: "users__role_enum", Values: []string{"a", "b"}}}, + nil`, leaving the column typed with an unregistered enum).
+- Prototype results, run at `cb04d107` on 2026-10-09 (earlier runs at `d51ace1b` and `56fcc1c7` + FIX-288):
+  - Reproduction: parser probe `cd parser && go test -run TestZZProbeFix278 -v -count=1 ./mysql/` (since deleted): RENAME COLUMN → `cols=[users.kind:users__role_enum] enums=[{users__role_enum [a b]}]`; ALTER … RENAME TO people and RENAME TABLE → `people.role:users__role_enum`; rename then re-add → `enums=[{users__role_enum [a b]} {users__role_enum [x]}]`; DROP COLUMN → `cols=[] enums=[{users__role_enum [a b]}]`; DROP TABLE (ENUM+SET) → `enums=[{users__role_enum [a b]}] sets=[{users__tags_set [p q]}]`; DROP + re-CREATE → two `users__role_enum`; Go-name collision `a.b_c`/`a_b.c`: RENAME c TO d → `a_b.d:a_b__c_enum`, DROP c → stale `{a_b__c_enum [3 4]}`; `__` SQL-name collision `a.b__c`/`a__b.c` + MODIFY → three `a__b__c_enum` entries.
+  - CLI, sibling copy of the mysql example, HEAD binary, `GOWORK=off sqlgen generate`: `zz_u` DROP COLUMN role + ADD role ENUM('x','y') → "Generation error: enum zz_u__role_enum and enum zz_u__role_enum both resolve to the Go type name "ZzURoleEnum" — set enums.zz_u__role_enum.struct_name to a different Go identifier", exit 1; RENAME COLUMN role TO kind + DROP COLUMN tier → exit 0, emits dead `type ZzUTierEnum string` and `Kind ZzURoleEnum`; `ord.line_kind`/`ord_line.kind` + `ALTER TABLE ord_line RENAME COLUMN kind TO mode` → "Generation error: enum ord__line_kind_enum and enum ord_line__kind_enum both resolve to the Go type name "OrdLineKindEnum" — …", exit 1; same tables + DROP COLUMN kind → same error, exit 1. With the prototype: exit 0 in all four (one `ZzURoleEnum` X/Y; only `ZzUKindEnum` and `Kind ZzUKindEnum`; `OrdLineKindEnum` + `OrdLineModeEnum`; `OrdLineKindEnum` only).
+  - Gates: `gofumpt -l parser` → clean; `cd parser && go test -race -count=1 ./...` → ok (containers; the three parity tests PASS); `cd parser && golangci-lint run ./...` → 0 issues; `cd cmd/sqlgen && go test -race -count=1 ./cli/... ./gen/...` → ok; `TestE2EGoldenFiles` → ok; mysql example `GOWORK=off go test -race -count=1 ./...` → ok. `make update-golden-e2e` was not run (no template touched; `TestE2EGoldenFiles` passing shows the goldens still match).
+  - Fail-first (each site reverted alone): `renameInline` call removed → the RENAME cases of all three unit tests and all three parity tests fail (`- "users.kind": "users__kind_enum", + "users.kind": "users__role_enum"`); target clear in `renameInline` removed → `/DROP_COLUMN_then_RENAME_COLUMN_a_VARCHAR_column_to_its_name` fails (`- "users.role": "varchar(10)", + "users.role": "users__role_enum"`); `renameTable` move removed → `/ALTER_TABLE_RENAME_TO`, `/…its_own_name`, `/RENAME_TABLE_then_CREATE…`, seeded `/RENAME_TABLE_and_DROP_COLUMN_on_a_shared_name` and two parity tests fail (`- "people.role": "people__role_enum", + "people.role": "users__role_enum"`); `delete(p.inline, oldName)` removed → `/RENAME_TABLE_then_CREATE_TABLE_under_the_old_name,_then_MODIFY` fails; set-then-delete order → `/ALTER_TABLE_RENAME_TO_its_own_name` fails; non-ENUM clear removed → `TestRedefineColumnReplacesInlineEnumOrSet/MODIFY_from_ENUM_to_VARCHAR` fails; `Schema()` type derivation removed → rename, collision, seeded and parity cases fail; `Seed` import removed → `TestSeededInlineEnumOrSetFollowsRenameAndDrop`, `TestRedefineColumnReplacesSeededInlineEnum` and the both-mode parity test fail; the existing suite without the fix → passes.
+  - Golden churn: none.
+  - Patch: `.claude/prototypes/FIX-278.patch` (3 files, +445/-73).
+
+
+**References.**
+- PRD §6.1, §5.2 (MySQL parser), the MySQL inline ENUM/SET naming
+  (`<table>__<column>_enum`, FIX-288).
+- FIX-262 (added `dropInlineEnumOrSet` for MODIFY / CHANGE COLUMN).
+
+**Resolution notes.** The MySQL file parser now tracks each inline ENUM/SET per (table, column) (`Parser.inline`) instead of appending entries at creation. Every column definition (CREATE, ADD, MODIFY, CHANGE) records its ENUM/SET or clears the key in `extractInlineEnumOrSet`; `renameInline` moves the key on RENAME COLUMN (clearing the target when the source has none); `renameTable` moves the table's map with the delete-before-set order `generated`/`exprKeys` use; `Schema()` derives the entries and each column's `Type` from the columns that exist, under current names (`parser.InlineEnumName` / `InlineSetName`), so DROP COLUMN / DROP TABLE need no code. `dropInlineEnumOrSet` and its `users > 1` guard are removed. `Seed` (`both` mode) imports each introspected column typed with its derived name, taking the first unclaimed entry of that name; unclaimed entries (a view's own) are kept. Tests: `TestInlineEnumOrSetFollowsRenameAndDrop` (replaces `TestRedefineColumnKeepsSharedInlineEnumName`), `TestInlineEnumNameCollision`, `TestSeededInlineEnumOrSetFollowsRenameAndDrop`, and MySQL parity tests `TestMySQLIntrospect_InlineEnumAfterRenameAndDrop`, `TestMySQLIntrospect_InlineEnumCollisionResolvedByAlter`, `TestMySQLIntrospect_BothModeInlineEnumAfterRenameAndDrop`; one expectation in `TestRedefineColumnReplacesInlineEnumOrSet` reordered (entries now follow table/column order). Prototype applied clean at `c85dd849`; the new unit tests fail against the unfixed parser. Gates: `make check` ok, parser container tests ok, `make update-golden-e2e` and `make update-golden` produced no churn, `make check-examples` ok.
+
+### FIX-295
+
+- **Status:** Resolved
+- **Severity:** tracked
+- **Origin:** phase 6, `cmd/sqlgen/gen` (`connection.go.tmpl`)
+- **Surfaced by:** `/fix-vet FIX-293` (2026-10-08), filed at `/close-phase 30` (2026-10-08)
+- **Vetted:** corrected at `cb04d107` (2026-10-09; re-vetted after FIX-293 landed; ruled 2026-10-09 to keep the NULL-binding guard, the ruled option is the prototype)
+
+**Issue.** **A `Connection` cursor value that is a JSON array or object passes
+FIX-293's presence check and is not rejected as `ErrInvalidCursor`.** Measured in
+the sqlite example at `13173996`: `After={"id":[]}` → `SQL logic error:
+unrecognized token: "$" (1)`; `After={"id":[1,2]}` → `err=<nil>` (the tampered
+cursor is silently expanded as a list, changing the query); `After={"id":{"a":1}}`
+→ `sql: converting argument $1 type: unsupported type map[string]interface {},
+a map`. PRD §14.2 says an invalid cursor makes `Connection` return
+`ErrInvalidCursor`.
+
+**Root cause.** `decodeCursor` (`cmd/sqlgen/gen/templates/connection.go.tmpl`)
+checks only that each key is present and non-nil (FIX-293). `cursorKeyset` passes
+the decoded `any` as the condition's `Value`, and the builder treats `[]any` as a
+list to expand (`sql/builder.go` `expandSlice`), so an array becomes `IN`-style
+placeholders or, when empty, a bare `$`.
+
+**Suggested fix.**
+- In the `decodeCursor` loop, reject a value that is a JSON array or object with
+  `ErrInvalidCursor`, unless the cursor key column is array-typed (its
+  `json.Marshal` output is a JSON array). That needs a design call: decode
+  cursor values per key with the column's Go type, or keep `any` and reject
+  arrays/objects except for array-typed keys, or forbid array-typed cursor keys.
+- Tests: extend `TestConnection_CursorMissingKeyReturnsErrInvalidCursor` (sqlite)
+  with `[]`, `[1,2]` and `{"a":1}` values.
+- Vet notes (scope): the root cause is wider than arrays and objects. `decodeCursor` decodes every value as untyped JSON (`any`), so a value never gets back its key column's Go type. Measured beyond arrays/objects: a `[]byte` key comes back as a base64 string; a `sql.Null*` key as a map; a PostgreSQL array key as `[]any`, expanded into several arguments; and a scalar of the wrong type (`"1"`, `true`, `1.5` for an int64 key) is silently accepted. No example has an array-typed cursor key (an AST scan of every example's `models/` found 171 cursor-key columns: int64 92, uuid.UUID 63, string 12, int32 3, `[]byte` 1, sqlite `binary_keys.id`). PRD §9.8's sample (`docs/PRD.md:6923-6935`, `decodeCursor(s string)`) is already stale against FIX-293's signature.
+- Pending the user's ruling: how should `Connection` decode cursor values?
+  - (A) Recommended by the vet, and prototyped: decode each value into its key column's Go type. `decodeCursor(s, keys)` returns `map[string]json.RawMessage` and keeps FIX-293's guard as `!ok || string(value) == "null"` (a JSON null unmarshals into int64 as a silent no-op, so the raw check must stay); a new `shared/_cursor_decode.tmpl` emits an unexported `decode<T>Cursor(encoded, keys)` per Connection entity with one `json.Unmarshal(raw[key], &row.<Field>)` case per cursor-key column; a new gen-internal `CursorKeyColumns []ColumnContext` on TableContext/ViewContext. Rejects every wrong-shape or wrong-type value as `ErrInvalidCursor`, and fixes three measured existing failures: the sqlite `binary_keys` `[]byte` key whose page 2 repeats page 1 (infinite pagination in a shipped example), `sql.Null*` keys under `use_pointers: false` (every page 2 fails with a driver error), and PG array keys (every page 2 fails with "expected 3 arguments, got 5"). Makes §14.2's "Type-preserving" claim true. Cost: ~7.4k generated lines across all 12 examples (2–3 files per tree each; sqlite 24 each), one unexported function per Connection entity; no exported identifier, no config key. PRD §9.8's sample and §14.2 "Invalid cursors" need updating (not prototyped).
+  - (B) Keep `any` and reject `[]any` / `map[string]any` except for array-typed keys: 27 files, +54/-29 for the simple form (the array exemption needs a per-entity key list and FIX-293-like call-site churn). The binary_keys page repeat and wrong-scalar acceptance stay; legitimate `sql.Null*` cursors become `ErrInvalidCursor` on the client's own cursor; array keys stay broken.
+  - (C) Forbid array-typed cursor keys (a new §4.13 validation error) and reject arrays/objects unconditionally: B's churn plus validation code and PRD text; no example affected. The PG array failure becomes a generation-time error; the `[]byte` and `sql.Null*` problems remain.
+  - Not auto-accepted: A churns ~7.4k lines against B's 54.
+- Prototype results (option A), run at `be98918a` + FIX-293 on 2026-10-08 (the patch assumes FIX-293 has landed):
+  - Reproduction (sqlite probe, since deleted): table After `{"id":[]}` → `SQL logic error: unrecognized token: "$" (1)`; `{"id":[1,2]}` → `err=<nil>`; `{"id":{"a":1}}` → `unsupported type map[string]interface {}, a map`; `{"id":"1"}` / `true` / `1.5` → `err=<nil>`; a composite with `"tag_name":[1,2]` → `err=<nil>`; binary_keys First:1 → p1 `"zz-a"`, cursor `{"id":"enotYQ=="}`, p2 → `"zz-a"` again. Config probes: `use_pointers: false` + `cursor_keys: [description, id]` → page 2 `sql: converting argument $1 type: unsupported type map[string]interface {}, a map`; postgres `profiles.cursor_keys: [scores, id]` (`[]int32`) → page 2 `expected 3 arguments, got 5`.
+  - With A: every tampered shape → `sqlgen: invalid cursor`; binary_keys page 2 → `"conn-bin-b"`; the `sql.NullString` key pages; the PG `[]int32` key pages, and its tampered values → `sqlgen: invalid cursor`.
+  - Tests: `TestConnection_CursorWrongShapeReturnsErrInvalidCursor` (sqlite, 6 cases), `TestConnection_BinaryKeyCursorAdvances`, unit `TestPaginationTableTemplate_decodeCursor` / `…_decodeCursorMultiKeys`, updated connection/pagination/view unit patterns and unit goldens.
+  - Gates: `go -C cmd/sqlgen test -race -count=1 ./gen/...` → ok; `make update-golden` / `make update-golden-e2e` → ok; `TestE2EGoldenFiles` → ok; `gofumpt` / `golangci-lint ./gen/...` → clean; all 12 examples `GOWORK=off go test -race -count=1 ./...` → ok and lint → 0 issues.
+  - Fail-first: the 3 templates reverted to FIX-293's untyped decode → the wrong-shape test fails all 6 and `TestConnection_BinaryKeyCursorAdvances` fails (`"conn-bin-a", - "conn-bin-b", + "conn-bin-a"…`); dropping only `|| string(value) == "null"` → FIX-293's missing-key test fails 3 cases; the existing suite without the fix → passes.
+  - Patch: `.claude/prototypes/FIX-295.patch` (121 files, +7480/-740; source and tests 11 files, +249/-16).
+- The user ruled on 2026-10-08: (A), decode each cursor value into its key column's Go type. This matches the prototype; PRD §9.8's sample and §14.2 "Invalid cursors" are updated when it lands.
+- Re-vet at `cb04d107` on 2026-10-09 (FIX-293 landed at `552dda4f`; the patch is now a plain diff, not a delta):
+  - Stale facts: FIX-293 updated PRD §9.8's sample (`docs/PRD.md:6924-6942`, `decodeCursor(s string, keys []string) (map[string]any, error)`, call sites `:6813` / `:6820` pass `c.cursorKeys`). Option A makes it stale again: the call sites become `decode<T>Cursor(...)`, `decodeCursor` returns `map[string]json.RawMessage` with `!ok || string(value) == "null"`, and the sample needs the `decode<T>Cursor` and `cursorValueIsNull` bodies. §14.2 "Invalid cursors" (`docs/PRD.md:8922`) needs "a value that does not decode into its key column's Go type, or that binds NULL". `/fix-implement` writes this PRD text; it is not in the patch. The PG array-key failure reads "expected 4 arguments, got 6" with a filter applied ("expected 3 arguments, got 5" unfiltered; the same n+2 expansion). The old patch put `buildCursorKeyColumns`' doc comment between `buildAllColumnNames`' comment and its func; moved back.
+  - Rebase: `git apply --3way` merged all but `cmd/sqlgen/gen/view_test.go` (`TestViewPaginationTemplate_connectionMethod`, where FIX-293 added a Before pattern), resolved to `decodeProductSummaryCursor(*input.After|Before, c.cursorKeys)`.
+  - Correction beyond the ruled option, measured: under `use_pointers: false` a `sql.Null*` cursor key decodes `{"a":1}` (unknown fields ignored), or the client's own cursor for a NULL-keyed row (`{"description":{"String":"","Valid":false},"id":1}`), into an invalid wrapper that binds NULL, so the keyset matches nothing. Probe with rows n (NULL description), a, b and `categories.cursor_keys: [description, id]`: page 1 `"n"` hasNext=true, page 2 empty hasNext=false (a and b silently lost); at HEAD the same page 2 errors `unsupported type map…`; with option A as written `{"description":{"a":1},"id":1}` → `err=<nil>`. The prototype adds `cursorValueIsNull(v any) bool` to `connection.go.tmpl` (true when a `driver.Valuer`'s `Value()` errors or returns nil; `BuildConnectionContext` adds the `database/sql/driver` import), and `decode<T>Cursor` returns `ErrInvalidCursor` when a decoded value would bind NULL. Both cases → `sqlgen: invalid cursor`. Cost: +3 lines per decoder, a 10-line helper and one import in `connection_gen.go`; no exported identifier or config key. Not auto-accepted (it adds golden churn).
+- Pending the user's ruling (2026-10-09): keep the NULL-binding guard? (1, recommended) keep it — every NULL-binding cursor value is `ErrInvalidCursor`, matching FIX-293's JSON `null` rule under `use_pointers: true` and the loud-over-silent preference; costs the churn above. (2) drop it — option A exactly as ruled; a tampered or NULL-keyed `sql.Null*` cursor returns a silently empty page.
+- The user ruled on 2026-10-09: (1), keep the NULL-binding guard. This matches the prototype; PRD §14.2 "Invalid cursors" names the NULL-binding case when it lands.
+- Prototype results, run at `cb04d107` on 2026-10-09 (option A plus the NULL-binding guard):
+  - Reproduction: new sqlite tests against HEAD's generated models, `GOWORK=off go test -count=1 -run 'TestConnection_CursorWrongShape|TestConnection_BinaryKeyCursorAdvances' ./tests/` → `{"id":[]}` → `SQL logic error: unrecognized token: "$" (1)`; `{"id":[1,2]}` → `err = <nil>`; Before `{"id":{"a":1}}` → `sql: converting argument $1 type: unsupported type map[string]interface {}, a map`; `{"id":"1"}` → `<nil>`; composite `"tag_name":[1,2]` → `<nil>`; view `{"id":{"a":1}}` → `unsupported type map…`; binary_keys pages → `- "conn-bin-b", + "conn-bin-a", - "conn-bin-c", + "conn-bin-a", + "conn-bin-a"`. Config probes (HEAD binary, `GOWORK=off`): sqlite `use_pointers: false` + `categories.cursor_keys: [description, id]` → page 2 `unsupported type map[string]interface {}, a map`, tampered `{"description":"x","id":1}` → `err=<nil>`; postgres `profiles.cursor_keys: [scores, id]` (`[]int32`) → page 2 `query: expected 4 arguments, got 6`, tampered `{"scores":[1],"id":5}` → `unable to encode 1 into binary format for _int4`.
+  - With the patch: every tampered shape → `sqlgen: invalid cursor`; binary_keys pages a → b → c; the `sql.NullString` key pages a → b → c and its tampered values → `sqlgen: invalid cursor`; the PG `[]int32` key pages `[1 2]` → `[3 4]` → `[5 6]`, tampered → `sqlgen: invalid cursor`.
+  - Tests: sqlite `TestConnection_CursorWrongShapeReturnsErrInvalidCursor` (6 cases) and `TestConnection_BinaryKeyCursorAdvances`; unit `TestPaginationTableTemplate_decodeCursor` (pins the null guard) and `…_decodeCursorMultiKeys`; `TestConnectionTemplate_cursorEncodeDecode` pins `cursorValueIsNull`; `TestBuildConnectionContext` imports; view/pagination pattern updates; unit goldens.
+  - Gates: `go -C cmd/sqlgen test -race -count=1 ./gen/...` → ok; `make update-golden` and `make update-golden-e2e` → ok; `TestE2EGoldenFiles` → ok; `gofumpt -l cmd/sqlgen/gen/` → clean; `golangci-lint run ./gen/...` → 0 issues; all 12 examples `GOWORK=off go test -race -count=1 ./...` → ok and `GOWORK=off golangci-lint run` → 0 issues.
+  - Fail-first: typed decode reverted to FIX-293's `decodeCursor` → `TestConnection_CursorWrongShapeReturnsErrInvalidCursor` fails 6/6 ("… unrecognized token: \"$\" (1), want ErrInvalidCursor", "err = <nil>, want ErrInvalidCursor") and `TestConnection_BinaryKeyCursorAdvances` fails ("paged ids mismatch … - \"conn-bin-b\", + \"conn-bin-a\""); `|| string(value) == "null"` dropped → `TestConnection_CursorMissingKeyReturnsErrInvalidCursor` fails 3 cases and `TestConnectionTemplate_cursorEncodeDecode` fails; `cursorValueIsNull` check dropped from `_cursor_decode.tmpl` → `TestPaginationTableTemplate_decodeCursor` fails (no example has a `sql.Null*` cursor key, so the behavioral evidence is the probe); table `CursorKeyColumns` wiring removed → `TestE2EGoldenFiles` fails for cache, events, graphql, …; the existing suite without the fix → passes.
+  - Golden churn (models/ + expected/, all modified, none added): cache 6 files +424/-40; events 4 +256/-28; graphql 6 +1354/-108; graphql_null_wrappers 4 +148/-20; graphql_top_level 4 +148/-20; mysql 6 +1090/-88; postgres 6 +1534/-120; postgres_stdlib 6 +814/-68; sqlite 48 +1312/-104; tenancy 6 +766/-64; tenancy_mysql 6 +262/-28; tenancy_postgres 6 +262/-28; unit goldens `connection_gen.go` and `pagination_products_gen.go`. 155 generated decoders, 171 key cases.
+  - Patch: `.claude/prototypes/FIX-295.patch` (122 files, +8691/-741; source, tests and unit goldens 14 files, +321/-25).
+
+**References.**
+- PRD §14.2 "Invalid cursors"; FIX-293.
+
+**Resolution notes.** Applied the vetted prototype (option A plus the NULL-binding guard, as ruled 2026-10-08 and 2026-10-09) cleanly at `b30ed4b6`. `decodeCursor` (`connection.go.tmpl`) now returns `map[string]json.RawMessage` and rejects a missing key or a JSON `null`; a new `shared/_cursor_decode.tmpl` emits `decode<T>Cursor` per Connection entity, unmarshaling each value into its key column's Go type (new gen-internal `CursorKeyColumns` on TableContext/ViewContext) and returning `ErrInvalidCursor` when a decoded value binds SQL NULL (`cursorValueIsNull`, with the `database/sql/driver` import in `connection_gen.go`). Arrays, objects, wrong-type scalars and NULL-binding `sql.Null*` values are `ErrInvalidCursor`; `[]byte`, `sql.Null*` and PostgreSQL array keys page. Wrote PRD §9.8.12's sample (`decodeProductCursor` call sites and body, the `decodeCursor` and `cursorValueIsNull` helpers) and §14.2 "Invalid cursors" (wrong Go type and NULL-binding values). Tests: sqlite `TestConnection_CursorWrongShapeReturnsErrInvalidCursor` (6 cases), `TestConnection_BinaryKeyCursorAdvances`; unit `TestPaginationTableTemplate_decodeCursor`, `…_decodeCursorMultiKeys`, `TestConnectionTemplate_cursorEncodeDecode`, `TestBuildConnectionContext`. Golden churn matches the vet (12 examples, models/ + expected/; unit goldens `connection_gen.go`, `pagination_products_gen.go`). Fail-first re-run: against HEAD's sqlite models the wrong-shape test fails 6/6 and the binary-key test fails; dropping the `cursorValueIsNull` check fails `TestPaginationTableTemplate_decodeCursor`. Gates: `make check` ok; `make check-examples` ok. `/verify` (reviewer: prototype byte-identical apart from the PRD and tracker; fail-first confirmed) led to two inline test-comment rewrites in the sqlite `connection_test.go` to state the rule instead of the old behavior, and one backlog line on the untested `sql.Null*` / array / `time.Time` cursor-key paths.
+
+### FIX-289
+
+- **Status:** Resolved
+- **Severity:** tracked
+- **Origin:** phase 4, `parser` + `cmd/sqlgen/config`
+- **Surfaced by:** /fix-vet FIX-271 (2026-10-07), filed at /close-phase 30 (2026-10-08)
+- **Vetted:** corrected at `cb04d107` (2026-10-09; re-vetted, patch carried forward)
+
+**Issue.** **A soft-delete column whose type carries a modifier passes
+config validation and then fails generation.** `deleted_at DATETIME(3)`
+(MySQL) or `timestamp(6)` / `timestamptz(3)` (PostgreSQL) is accepted by
+`validateSoftDeleteTypes` and rejected by `parser.DetectSoftDelete`.
+Measured (probe of `DetectSoftDelete`): `datetime(3)` → `soft delete column
+"deleted_at" in table "t" has unsupported type "datetime(3)"`; same for
+`timestamp(6)`, `timestamptz(3)`, `int(10) unsigned zerofill`. Not run end to
+end.
+
+**Root cause.** (Line refs at `cb04d107`.) `softDeleteStrategy` (`parser/detect.go:55-73`) cuts the
+type at the first space only (`:61`) and matches the base against an exact
+list (`:63-69`), so a `(…)` modifier makes it miss; `DetectSoftDelete`
+(`parser/detect.go:15-28`) then returns the error (`:23`), reached from
+`detectTableSoftDelete` (`cmd/sqlgen/gen/context_table.go:338`). Validation
+uses substring matching instead (`isSoftDeleteTypeCompatible`,
+`cmd/sqlgen/config/validate.go:2160-2172`; its caller `validateSoftDeleteTypes` doc comment at `:1765-1766`), which accepts any type
+containing `timestamp` / `datetime` / `int`. By code reading the two also
+disagree on families without a modifier: `bigint`, `mediumint` and `serial`
+pass validation as `integer` but are absent from `softDeleteStrategy`'s
+list (not measured).
+
+**Suggested fix.**
+- In `softDeleteStrategy`, after the space cut, also cut the base at `(`
+  (`base, _, _ = strings.Cut(base, "(")`), so `datetime(3)`,
+  `timestamp(6)`, `timestamptz(3)`, `timestamp(6) with time zone` and
+  `int(10) unsigned zerofill` classify like their bare forms.
+- Order with FIX-271: its prototype adds a `tinyint(1)` → bool case to this
+  function; that exact match must run before the modifier strip, or
+  `tinyint(1)` falls through to `tinyint` → integer.
+- Have the vet measure the `bigint` / `mediumint` / `serial` gap; if
+  confirmed, add them to the integer case so the accepted sets match
+  (`config` cannot import `parser`, so the two lists stay separate and the
+  tests pin them together).
+- Tests: `TestDetectSoftDelete` (`parser/detect_test.go:10`) rows for
+  `datetime(3)`, `timestamp(6)`, `timestamptz(3)`, `timestamp(6) with time
+  zone` → timestamp and `int(10) unsigned zerofill` → integer; a
+  `cmd/sqlgen/gen` case where a MySQL `deleted_at DATETIME(3)` table
+  generates its soft-delete methods.
+- Vet notes (stale facts):
+  - only `config.ValidatePostParse` accepts these types: `sqlgen validate` already fails (exit 2) because `gen.ValidateGeneration` builds the contexts and hits the `DetectSoftDelete` error, and `sqlgen generate` fails with exit 1. Now run end to end;
+  - the bigint/mediumint gap is measured: `bigint` fails `DetectSoftDelete` on MySQL `BIGINT`, PG `bigint`/`int8` and SQLite `BIGINT`; MySQL `MEDIUMINT` fails too. `serial` is not a gap (the PG parser normalizes it to `integer`). Neither source produces `timestamp(6) with time zone` (the PG parser emits `timestamptz(6)`);
+  - (superseded at `cb04d107`) MySQL `TINYINT(1)` failed `DetectSoftDelete` at `b606e4a7`; since FIX-271 (`fa26812c`) MySQL `TINYINT(1)` and `BOOL` give strategy="bool", err=<nil> (measured 2026-10-09);
+  - adding bigint/mediumint/serial to the integer case would contradict PRD §4.6 ("The supported column types are those listed above, and no other").
+- Changed from the original: the bigint/mediumint gap is closed by tightening validation to the PRD §4.6 list, not by widening detection; that also closes other types the substring match accepted and generation rejects (`interval` and `point`, which contain "int", and arrays such as `timestamptz[]`, `boolean[]`) — same root cause (the two lists disagree), same fix site.
+- Auto-accepted the recommended option on 2026-10-08 (`/fix` auto-accept rule): close the bigint/mediumint gap by tightening `isSoftDeleteTypeCompatible` to the PRD §4.6 list rather than widening `softDeleteStrategy` → tighten, because it was prototyped with green gates, causes no golden churn against the alternative, adds no public surface, and implements PRD §4.6/§4.13 rather than reversing it (widening would need a PRD amendment).
+- Prototype: `parser/detect.go` `softDeleteStrategy` adds `base, _, _ = strings.Cut(base, "(")` after the existing space cut (after the `base :=` line, so FIX-271's `tinyint(1)` exact match, inserted before it, runs first). `cmd/sqlgen/config/validate.go` `isSoftDeleteTypeCompatible` replaces substring matching with the same base-type cut and an exact match against the §4.6 list (timestamp: timestamp, timestamptz, datetime; integer: int, integer, smallint, tinyint; bool: bool, boolean, plus the existing `tinyint` / `tinyint(1)` leniency), and the stale `validateSoftDeleteTypes` doc comment is rewritten. Tests: `TestDetectSoftDelete` rows (datetime(3), timestamp(6), timestamptz(3), timestamp(6) with time zone → timestamp; int(10) unsigned zerofill → integer; bigint → error); `TestValidatePostParse_SoftDeleteTypeMatch` rows (datetime(3), timestamptz(6), int(10) unsigned zerofill, smallint); new `TestValidatePostParse_SoftDeleteTypeOutsideList` (bigint, mediumint, interval, point, timestamptz[], boolean[] → "incompatible type"); new `TestGenerate_SoftDeleteColumnWithPrecision` (MySQL stdlib, `posts.deleted_at datetime(3)`, emits `SoftDelete(` and `Restore(`).
+- Lands with FIX-271: strict `git apply --check` conflicts in both orders on `parser/detect.go` (shared 3-line context), but `git apply --3way` merges cleanly in both orders, keeping the `tinyint(1)` → bool check first, then the space cut, then the `(` cut. With both patches applied, parser `./...`, cmd/sqlgen config, gen, gotype and `TestE2EGoldenFiles` pass. Either landing order is safe.
+- Re-vet at `cb04d107` on 2026-10-09: the `parser/detect.go` hunk merges cleanly with `--3way` over FIX-271's `tinyint(1)` block; the rebuilt patch applies without `--3way` and its code is identical to the `b606e4a7` prototype (offsets only). Line refs above are re-pinned to `cb04d107` (`validate.go` moved after FIX-283 and FIX-285). Re-measured: the probe gives "unsupported type" for MySQL DATETIME(3), TIMESTAMP(6), INT(10) UNSIGNED ZEROFILL, BIGINT, MEDIUMINT; PG timestamp(6), timestamptz(3), `timestamp(6) with time zone` (stored "timestamptz(6)"), `timestamp(3) without time zone` (stored "timestamp(3)"), bigint, int8, interval, timestamptz[]; SQLite DATETIME(3), TIMESTAMP(6), BIGINT. CLI, MySQL `posts.deleted_at DATETIME(3) NULL`: `sqlgen validate` → "Error: building context for table posts: detecting soft delete for posts: detecting soft delete: soft delete column \"deleted_at\" in table \"posts\" has unsupported type \"datetime(3)\"", exit=2; `sqlgen generate` → "Generation error: building table contexts: … unsupported type \"datetime(3)\"", exit=1. With the fix: validate → "config and schema are valid", exit=0; generate → "sqlgen: generated 8 files (1 tables, 0 views)", exit=0. Gates (gofumpt, parser `go test -race ./...`, cmd/sqlgen `go test -race ./config/... ./gen/... ./cli/...`, `TestE2EGoldenFiles`, golangci-lint on config, gen and parser) → ok / 0 issues; fail-first identical to the run below; golden churn none.
+- Prototype results, run at `b606e4a7` on 2026-10-08:
+  - Reproduction: a probe (since deleted) parsing `CREATE TABLE t (id INTEGER PRIMARY KEY, deleted_at <T>)` with each dialect and running `DetectSoftDelete` → "unsupported type" for MySQL datetime(3), timestamp(6), int(10) unsigned zerofill, tinyint(1), bigint, mediumint; PG timestamp(6), timestamptz(3), timestamptz(6), timestamp(3), bigint (incl. int8); SQLite datetime(3), timestamp(6), bigint. CLI at HEAD on a MySQL project with `posts.deleted_at DATETIME(3) NULL`: `sqlgen validate` → "Error: building context for table posts: … unsupported type \"datetime(3)\"", exit 2; `sqlgen generate` → "Generation error: building table contexts: … unsupported type \"datetime(3)\"", exit 1. With `deleted BIGINT` and `type: integer`: `generate` → "… unsupported type \"bigint\"", exit 1.
+  - With the fix: the DATETIME(3) project → "sqlgen: generated 8 files (1 tables, 0 views)", exit 0, with the SoftDelete methods; the bigint project → "Post-parse validation error: soft_delete_columns: column \"deleted\" in table notes has incompatible type \"bigint\" (expected integer-compatible type)", exit 2.
+  - Gates: `gofumpt -l` → clean; parser `go test -race ./...` → ok; cmd/sqlgen `go test -race ./config/... ./gen/... ./cli/...` → ok; `TestE2EGoldenFiles` → PASS; `golangci-lint` (config, gen, parser) → 0 issues.
+  - Fail-first: the detect.go `(` cut reverted → `TestDetectSoftDelete` fails 5 rows ("unexpected error: … unsupported type \"datetime(3)\"") and `TestGenerate_SoftDeleteColumnWithPrecision` fails; validate.go reverted → `TestValidatePostParse_SoftDeleteTypeOutsideList` fails all 6 rows ("ValidatePostParse() error = <nil>, want an incompatible type error"); the existing suite without the fix → passes.
+  - Golden churn: none.
+  - Patch: `.claude/prototypes/FIX-289.patch` (5 files, +167/-7).
+
+- Update after FIX-271 landed (`fa26812c`, 2026-10-08): `parser/detect.go` line refs above are re-pinned to the landed code; the `tinyint(1)` → bool case this entry anticipates is now in the tree, so this patch lands with `git apply --3way` on top of it (the vet showed the merged order: `tinyint(1)` check, space cut, `(` cut).
+
+
+**References.**
+- PRD §5.4 (soft delete column detection), §4.13 (validation rule "`soft_delete_columns`
+  type mismatch"), §4.6 (`soft_delete_columns`).
+- FIX-271 (MySQL synonyms; adds the `tinyint(1)` case here).
+
+**Resolution notes.** Resolved 2026-10-09. `softDeleteStrategy`
+(`parser/detect.go`) now cuts the base type at `(` after the space cut
+(FIX-271's `tinyint(1)` → bool check still runs first), so `datetime(3)`,
+`timestamp(6)`, `timestamptz(3)`, `timestamp(6) with time zone` and
+`int(10) unsigned zerofill` classify like their bare forms.
+`isSoftDeleteTypeCompatible` (`cmd/sqlgen/config/validate.go`) replaces
+substring matching with the same base-type cut and an exact match against
+the PRD §4.6 list (keeping the `tinyint` / `tinyint(1)` bool leniency), so
+validation now rejects `bigint`, `mediumint`, `interval`, `point` and array
+types that generation rejects; the stale `validateSoftDeleteTypes` doc
+comment is rewritten. Prototype applied clean at `421b3ad2` (fresh since
+`cb04d107`). Tests: `TestDetectSoftDelete` +7 rows,
+`TestValidatePostParse_SoftDeleteTypeMatch` +4 rows, new
+`TestValidatePostParse_SoftDeleteTypeOutsideList` (8 rows), new
+`TestGenerate_SoftDeleteColumnWithPrecision`. Gates: `make check` ok,
+`make check-examples` ok; golden churn none (`make update-golden` +
+`make update-golden-e2e`), matching the vet. Fail-first on the final code:
+source reverted → `TestDetectSoftDelete` fails 5 rows,
+`TestGenerate_SoftDeleteColumnWithPrecision` fails,
+`TestValidatePostParse_SoftDeleteTypeOutsideList` fails all 8 rows. Inline from the /verify reviewer:
+the `(` cut alone turned a precision array such as `timestamptz(3)[]`
+(emitted by the PG parser and introspection) into `timestamptz`, so
+generation silently emitted soft delete on a `[]time.Time` field (measured:
+`DetectSoftDelete` → strategy="timestamp", err=<nil>); both functions now
+reject any type containing `[` before the cuts, with a `TestDetectSoftDelete`
+`timestamptz(3)[]` → error row and `timestamptz(3)[]` / `int(10)[]` rows in
+`TestValidatePostParse_SoftDeleteTypeOutsideList` (fail-first: guard removed
+→ those 3 rows fail). Also inline: the `isSoftDeleteTypeCompatible` comment
+names the bare-`tinyint` bool leniency, the Root cause line refs are pinned
+to `cb04d107`, and the duplicate "configured type never drives the strategy"
+backlog line is merged into the 2026-10-09 one, which covers both directions.
+
+### FIX-287
+
+- **Status:** Resolved
+- **Severity:** nit
+- **Origin:** phase 4, `parser/mysql`
+- **Surfaced by:** backlog promotion at `/close-phase 30` (2026-10-07); first recorded by FIX-263 (2026-10-03)
+- **Vetted:** corrected at `d51ace1b` (2026-10-07)
+
+**Issue.** **``ALTER TABLE … DROP INDEX `PRIMARY` `` leaves the primary key in
+place under `files`**, though MySQL drops it. Measured evidence from the
+backlog line: "MySQL 8.0.46 `SHOW CREATE TABLE` shows no key after that drop
+on a table-level `PRIMARY KEY (id)`, while the parser keeps "id pk=true" and
+the `PK PRIMARY [id]` constraint".
+
+**Root cause.** vitess parses it as `NormalKeyType`, so `applyDropKey`
+(`parser/mysql/mysql.go:1050-1068`) takes the UNIQUE/INDEX branch (`:1059`) and
+never reaches its `PrimaryKeyType` case (`:1053`).
+
+**Suggested fix.**
+- In `applyDropKey`, treat a `NormalKeyType` drop named `PRIMARY`
+  (case-insensitive) as the `PrimaryKeyType` case.
+- Test: a `parser/mysql` case for ``DROP INDEX `PRIMARY` `` and its
+  ``DROP INDEX `PRIMARY` ON t`` form.
+- Changed from the original (same root cause, vitess's NormalKeyType classification, at the same fix site):
+  - only the `ALTER TABLE … DROP INDEX|KEY \`PRIMARY\`` clause form is broken (vitess gives `DropKey type=2 name="PRIMARY"`). The standalone `DROP INDEX \`PRIMARY\` ON users` already becomes `DropKey{Type: PrimaryKeyType, Name: ""}` and works at HEAD, so its test case is a regression guard that cannot fail first;
+  - `dropPrimaryKey` (`mysql.go:908-914`), the predicate that moves primary-key drops ahead of the other clauses, must recognise the clause too. Otherwise `MODIFY id BIGINT, DROP INDEX \`PRIMARY\`` leaves `id` NOT NULL where MySQL makes it nullable (measured);
+  - the PK removal must not match by exact name: the clause may spell it `primary`, which misses the constraint named `PRIMARY`.
+- Prototype: a new `dropKeyType(o *sqlparser.DropKey) sqlparser.DropKeyType` returns PrimaryKeyType for a NormalKeyType drop named `PRIMARY` (`strings.EqualFold`), else `o.Type`. Both `dropPrimaryKey` and `applyDropKey`'s switch use it. The PrimaryKeyType branch of `applyDropKey` matches by type alone (name `""`), since a table has one primary key. `TestDropPrimaryKey` gains 6 rows (table-level DROP INDEX `PRIMARY`; inline DROP KEY `primary`; composite; standalone `DROP INDEX \`PRIMARY\` ON users`; ADD before DROP INDEX `PRIMARY`; MODIFY to nullable before DROP INDEX `PRIMARY`), and every row checks that the PRIMARY KEY constraint's columns equal the pk-flagged columns.
+- Prototype results, run at `d51ace1b` on 2026-10-07:
+  - Reproduction: a throwaway probe (`parser/mysql/zz_probe_drop_primary_test.go`, since deleted), `go test -count=1 -run TestZZProbeDropPrimary ./mysql/ -v`: `… PRIMARY KEY (id)); ALTER TABLE users DROP INDEX \`PRIMARY\`;` → "col id pk=true null=false / constraint PRIMARY KEY PRIMARY [id]"; inline PK likewise; `DROP KEY \`primary\`` → pk kept; `ADD PRIMARY KEY (code), DROP INDEX \`PRIMARY\`` → two primary keys; `DROP INDEX \`PRIMARY\` ON users` → correct. MySQL 8.0.46 ground truth (SHOW CREATE TABLE): DROP INDEX `PRIMARY` and DROP KEY `primary` leave no key and keep `id int NOT NULL`; `ADD PRIMARY KEY (code), DROP INDEX \`PRIMARY\`` → `PRIMARY KEY (\`code\`)` (drop before add, like DROP PRIMARY KEY); `MODIFY id BIGINT, DROP INDEX \`PRIMARY\`` → `id bigint DEFAULT NULL`.
+  - Gates: (parser) `go test -race -count=1 ./mysql/...` → ok; `go test -race -short -count=1 ./...` → ok; `golangci-lint run ./mysql/...` → 0 issues; `gofumpt -l mysql` → clean.
+  - Fail-first: `applyDropKey` back on `switch o.Type` → 5 rows fail (e.g. "- \"users.id int\", + \"users.id int pk\""); `dropPrimaryKey` predicate reverted → `former_key_column_redefined_nullable_before_DROP_INDEX_PRIMARY` fails ("- \"users.id bigint null\", + \"users.id bigint\""); PK branch matching by `name` → `inline_primary_key_dropped_by_DROP_KEY_in_lower_case` fails; the existing suite without the fix → passes.
+  - Golden churn: none.
+  - Patch: `.claude/prototypes/FIX-287.patch` (2 files, +64/-8).
+
+
+**References.**
+- PRD §6.1, §5.2 (a MySQL PRIMARY KEY is always `PRIMARY`).
+
+**Resolution notes.** Resolved 2026-10-08. A new `dropKeyType` in
+`parser/mysql/mysql.go` reports a `NormalKeyType` drop named `PRIMARY`
+(`strings.EqualFold`) as `PrimaryKeyType`. `dropPrimaryKey` (the drop-first
+predicate in `parseAlterTable`) and `applyDropKey`'s switch both use it, and
+the primary-key branch matches by type alone, so `DROP KEY \`primary\`` finds
+the constraint named `PRIMARY`. `TestDropPrimaryKey` gains the prototype's 6
+rows and checks on every row that the PRIMARY KEY constraint's columns equal
+the pk-flagged columns. Prototype applied clean with `git apply --3way` over
+FIX-288's changes to the same files; comments trimmed. Line refs above updated to
+the landed code. Fail-first re-run on
+the final code matched the vet (5 / 1 / 1 rows). Gates: `make check` ok;
+`make update-golden-e2e` + `make update-golden` → no churn (matches vet);
+`make check-examples` ok.
+
+### FIX-286
+
+- **Status:** Resolved
+- **Severity:** nit
+- **Origin:** phase 16, `cmd/sqlgen/wrapper`
+- **Surfaced by:** backlog promotion at `/close-phase 30` (2026-10-07); first recorded by FIX-265 (2026-10-03)
+- **Vetted:** ready at `d51ace1b` (2026-10-07)
+
+**Issue.** **A `resolver:` block with `layout: single-file` and no
+`filename` produces an unbuildable package** although `generate` exits 0.
+Measured evidence from the backlog line: "sqlite probe with `resolver:
+{layout: single-file, package: graph}`, HEAD binary → `sqlgen generate` exit 0
+then `go build ./...` → "graph/resolver.go:50:19: undefined:
+translateCreateArticleInput"; fixed binary → exit 0 then "found packages
+sqliteexample (generate.go) and graph (resolver.go)"".
+
+**Root cause.** `parseResolverLayout` (`cmd/sqlgen/wrapper/seeds.go:165`)
+defaults an empty `Filename` to `resolver.go` (`:192-194`) and seeds it,
+while gqlgen skips resolver generation when neither `dir` nor `filename` is
+set (and errors when only `dir` is).
+
+**Suggested fix.**
+- Under `layout: single-file`, return a config error when `resolver.filename`
+  is absent, naming the key, instead of defaulting it.
+- Test: a `wrapper` case for that gqlgen.yml expecting the error.
+- Vet notes (stale facts):
+  - the quoted `undefined: translateCreateArticleInput` output predates FIX-265. At `d51ace1b` the seed is written to `<wd>/resolver.go` (FIX-265's `singleFileResolverPath` resolves `filename` against the working directory, default "resolver.go"), and the HEAD failure is the backlog line's "fixed binary" one: `go build ./...` → "found packages sqliteexample (generate.go) and graph (resolver.go)";
+  - a second symptom with the same root cause: with only `dir` set, gqlgen prints "failed to load schema: config.resolver: filename must be specified with layout=single-file" and generate exits 1, but the seed has already been written, so a stray `resolver.go` stays at the module root;
+  - the gqlgen v0.17.95 citations hold (`IsDefined` at codegen/config/resolver.go:149-151 gates `Check` at config.go:853 and resolvergen at plugin/resolvergen/resolver.go:39; `Check` errors at resolver.go:76-77), as do `seeds.go:165` and `:192-194`. PRD §26.5.6 step 4's "the single `graph/resolver.go`" is shorthand, not a default, so there is no PRD conflict. Related: FIX-265.
+- Prototype: `parseResolverLayout` (`cmd/sqlgen/wrapper/seeds.go`) returns `resolver.filename is required with resolver.layout: single-file` when the layout is single-file and `filename` is empty, instead of defaulting it. The `defaultSingleFilename` constant is removed (under follow-schema nothing in production reads `Filename`); the `resolverLayout.Filename` doc comment is updated, and a `parseResolverLayout` doc paragraph cites gqlgen's `IsDefined` / `Check`. Tests: two error cases in `TestParseResolverLayout` (no filename/no dir; dir but no filename) with a `wantErr` column, the follow-schema cases now expecting `Filename == ""`; new `TestGen_SingleFileWithoutFilename` asserts the wrapped error "parsing gqlgen.yml resolver block: resolver.filename is required with resolver.layout: single-file" and that nothing besides gqlgen.yml is written. Fixture churn: 8 follow-schema layouts in `wrapper_test.go` drop `Filename: defaultSingleFilename`, and `root_stubs_test.go`'s single-file case uses literal paths.
+- Prototype results, run at `d51ace1b` on 2026-10-07:
+  - Reproduction: a sibling copy of the sqlite example with `resolver: {layout: single-file, package: graph}` → `GOWORK=off sqlgen generate` → "generated 68 files (22 tables, 2 views)", exit 0; `GOWORK=off go build ./...` → "found packages sqliteexample (generate.go) and graph (resolver.go)", exit 1. With `dir: models/graph` added → "failed to load schema: config.resolver: filename must be specified with layout=single-file … exit status 1", and a stray `resolver.go` at the root.
+  - With the fix: both variants → exit 1 "Error: gqlgen subprocess failed: parsing gqlgen.yml resolver block: resolver.filename is required with resolver.layout: single-file; sqlgen-side artifacts emitted at ./models", no stray file; `dir: models/graph` + `filename: models/graph/resolver.go` → "generated 68 files", exit 0, `go build ./...` ok.
+  - Gates: `go test -race -count=1 ./wrapper/...` → ok; `golangci-lint run ./wrapper/...` → 0 issues; `gofumpt -l wrapper` → clean; graphql example `GOWORK=off go test -race -count=1 ./...` → ok and `GOWORK=off golangci-lint run` → 0 issues.
+  - Fail-first: `seeds.go` at HEAD with the new tests → `TestGen_SingleFileWithoutFilename` fails: "Gen error = <nil>, want \"parsing gqlgen.yml resolver block: resolver.filename is required with resolver.layout: single-file\""; `TestParseResolverLayout` fails (both error cases, and "Filename: got \"resolver.go\", want \"\""); the existing suite without the fix → passes.
+  - Golden churn: none.
+  - Patch: `.claude/prototypes/FIX-286.patch` (3 files, +95/-33).
+
+
+**References.**
+- PRD §26.5.6 (wrapper subcommand, seed step, ownership table).
+
+**Resolution notes.** `parseResolverLayout` (`cmd/sqlgen/wrapper/seeds.go`) now returns `resolver.filename is required with resolver.layout: single-file` when the layout is single-file and `filename` is empty, instead of defaulting it to `resolver.go`; the `defaultSingleFilename` constant is removed and the `resolverLayout.Filename` / `parseResolverLayout` doc comments say why. Tests: two error cases in `TestParseResolverLayout` (no filename or dir; dir without filename), follow-schema cases now expect `Filename == ""`, and `TestGen_SingleFileWithoutFilename` asserts the wrapped error and that nothing besides gqlgen.yml is written. Applied the vetted prototype cleanly (fresh at HEAD `28927c94`), minus its test comments' FIX references and a history sentence (refs-check, comment rules). Inline after review: the `writeSingleFileSeed` doc comment no longer claims a `resolver.go` default, a test-case comment no longer says the seed is written first, and `TestGen_SingleFileWithoutFilename` runs the gqlgen helper in `fail` mode so the exact-error assertion proves gqlgen never ran; a duplicated `backlog.md` line was removed. Fail-first: HEAD `seeds.go` with the new tests → `TestGen_SingleFileWithoutFilename` "Gen error = <nil>, want …" and `TestParseResolverLayout` fails. E2E probe (sibling copy of the sqlite example, `resolver: {layout: single-file, package: graph}`) → "Error: gqlgen subprocess failed: parsing gqlgen.yml resolver block: resolver.filename is required with resolver.layout: single-file; sqlgen-side artifacts emitted at ./models", no stray `resolver.go`; with `dir: models/graph` + `filename: models/graph/resolver.go` → "generated 68 files", `go build ./...` ok. Gates: `make check` ok, `make check-examples` ok. Golden churn: none (matches vet).
+
+
+### FIX-283
+
+- **Status:** Resolved
+- **Severity:** nit
+- **Origin:** phase 5, `cmd/sqlgen/config`
+- **Surfaced by:** backlog promotion at `/close-phase 30` (2026-10-07); first recorded by FIX-249 (2026-10-01)
+- **Vetted:** ready at `d51ace1b` (2026-10-07)
+
+**Issue.** **A composite-PK member counts as unique on its own, so the PRD
+§4.13 "no UNIQUE constraint covers the declared PK" warning is missing.**
+Measured evidence from the backlog line: "postgres copy with
+`timeline_events.primary_key.columns: [id]`, `sqlgen generate` printed only
+the cursor_keys warning" over `PRIMARY KEY (id, created_at)`.
+
+**Root cause.** `uniqueCovers` (`cmd/sqlgen/config/validate.go:1904`) accepts
+a single-column override when the column has `c.Unique || c.PrimaryKey`
+(`:1917`); `PrimaryKey` is true on each member of a composite key.
+
+**Suggested fix.**
+- Count `c.PrimaryKey` only when the table's PK has exactly one column.
+- Test: a `config` validation case for `primary_key.columns: [id]` over a
+  composite `(id, created_at)` PK expecting the warning.
+- Prototype results, run at `d51ace1b` on 2026-10-07:
+  - Reproduction: a sibling copy of the postgres example (models/ and expected/ removed) with `CREATE TABLE timeline_events (id BIGINT NOT NULL, created_at TIMESTAMPTZ NOT NULL DEFAULT now(), body TEXT NOT NULL, PRIMARY KEY (id, created_at));` and `timeline_events: primary_key: columns: [id]`; `GOWORK=off sqlgen generate` → exit 0 with only the cursor_keys warning, no UNIQUE-coverage warning. With the fixed binary the run also prints "Warning: tables.public.timeline_events.primary_key.columns: no UNIQUE constraint covers the declared PK on table public.timeline_events; sqlgen assumes uniqueness — enforce it at the application level if not at the DB level". (No example at HEAD has `timeline_events`; the evidence used a hand-added table.)
+  - Prototype: for a single-column override, `uniqueCovers` counts the table's `PrimaryKey` columns, and a column's `PrimaryKey` flag covers the override only when `pkCols == 1`; inline `c.Unique` still covers. The doc comment names the composite-member case. New table-driven `TestValidatePostParse_PrimaryKeyOverride_PKMemberCoverage` (override `[id]`: a member of a composite PK warns; a composite member with its own UNIQUE stays silent; a single-column PK stays silent).
+  - Gates: `cd cmd/sqlgen && go test -race -count=1 ./config/... ./cli/...` → ok; `gofumpt -l config` → clean; `go vet ./config/` → clean; `golangci-lint run ./config/...` → 0 issues.
+  - Fail-first: `pkCols == 1` reverted → `/member_of_a_composite_PK` fails: "no-UNIQUE-coverage warning = false, want true; warnings = []"; the PrimaryKey branch dropped entirely (over-correction probe) → `/single-column_PK` fails: "no-UNIQUE-coverage warning = true, want false"; the existing suite without the fix → passes.
+  - Golden churn: none (post-parse warnings only).
+  - Patch: `.claude/prototypes/FIX-283.patch` (2 files, +76/-4).
+
+
+**References.**
+- PRD §4.13 ("`primary_key.columns` has no UNIQUE coverage").
+
+**Resolution notes.** `uniqueCovers` (`cmd/sqlgen/config/validate.go`) counts the table's `PrimaryKey` columns for a single-column override and lets a column's `PrimaryKey` flag cover it only when that count is 1; inline `Unique` still covers, and composite overrides still match `UniqueGroups` by set equality. So `primary_key.columns: [id]` over `PRIMARY KEY (id, created_at)` now gets the PRD §4.13 no-UNIQUE-coverage warning. The vetted prototype applied clean at `d639d16e`. Regression test: table-driven `TestValidatePostParse_PrimaryKeyOverride_PKMemberCoverage` (composite-PK member warns; a composite member with its own UNIQUE stays silent; a single-column PK stays silent). Fail-first re-run on the final code: `pkCols == 1` loosened to `>= 1` fails `/member_of_a_composite_PK`, and the `PrimaryKey` branch dropped fails `/single-column_PK`. The gen-side parallel `uniqueCoversColumns` (`cmd/sqlgen/gen/context_table.go`) reads only the column `Unique` flag plus set-equal UNIQUE constraints (its sibling `pkDeclaredInSchema` checks the PRIMARY KEY constraint), so it already handled this case and is unchanged. Inline: the ordering comment in `cmd/sqlgen/cli/pipeline.go` now says `uniqueCovers` treats the column of a *single-column* PrimaryKey as self-covering. Gates: `make check` ok; `make check-examples` ok; golden churn none (post-parse warning only), matching the vet.
+
+
+### FIX-277
+
+- **Status:** Resolved
+- **Severity:** nit
+- **Origin:** phase 30, `parser/sqlite`
+- **Surfaced by:** backlog promotion at `/close-phase 30` (2026-10-07); first recorded by 30.6 (2026-10-05)
+- **Vetted:** ready at `d51ace1b` (2026-10-07)
+
+**Issue.** **The SQLite parser keeps the old column name in CHECK text after
+RENAME COLUMN**, while SQLite rewrites its stored DDL, which the introspector
+reads, so the manifest's CHECK text differs by source. Measured evidence from
+the backlog line: "`ALTER TABLE t RENAME COLUMN a TO c` → parsed CHECK `"a" >
+0`, introspected `"c" > 0` (30.6 reviewer)".
+
+**Root cause.** The SQLite RENAME COLUMN branch
+(`parser/sqlite/sqlite.go:602-616`) calls `parser.RenameColumn` and
+`parser.RenameColumnReferences` (`parser/schema.go:381`), which rewrite
+constraint column lists and FK references only, not `CheckExpression` text.
+
+**Suggested fix.**
+- In the SQLite RENAME COLUMN branch, re-parse each of the table's CHECK
+  expressions (and, if cheap, its partial-index `Where` and generated
+  expressions) with rqlite, rename identifiers equal to the old name
+  (case-insensitive), and re-render.
+- Test: extend `TestAlterTableRenameColumn` (`parser/sqlite/sqlite_test.go:627`)
+  and add a SQLite parity case.
+- Vet notes on scope: generated-column `GeneratedExpr` and partial-index `Where` diverge the same way as CHECK text, from the same root cause and at the same fix site; the entry's "if cheap" covers them, and the prototype includes both.
+- Prototype: after `RenameColumnReferences`, the RENAME COLUMN branch (`parser/sqlite/sqlite.go:602-616`) calls a new `renameColumnInExpressions`. It sends every `GeneratedExpr`, `CheckExpression` and `Where` on the table through `renameColumnInExpr`, which re-parses with `rsql.ParseExprString`, walks a `columnRenamer` visitor and re-renders with `rsql.ExprString`. Text that does not name the column is returned untouched. Errors wrap as `rename column <table>: …`. Implementation facts for `/fix-implement`:
+  - `columnRenamer` matches identifiers case-insensitively (`strings.EqualFold`), as SQLite does, and skips function names (`Call.Name`, `Over.Name`), type names, collation names and `QualifiedRef` schema/table identifiers. Without the skip, `upper(upper)` renames the function; SQLite keeps `upper(...)`;
+  - rqlite/sql's `Walk` does not descend into `*rsql.Null` operands (`IS NULL` / `NOT NULL`), so the visitor walks them by hand. Measured without it: `"r"."a" NOT NULL OR "a" IS NULL` and `CASE … END NOT NULL` stayed unrenamed.
+- Tests:
+  - `TestAlterTableRenameColumn` becomes table-driven with 8 cases: column only, CHECK, generated, partial-index `Where` (incl. `IS NOT NULL` / `IS NULL`), case-insensitive match, table-qualified reference, function/type/collation names are not columns, another column's name is left alone;
+  - new `TestSQLiteIntrospect_RenameColumnExpressions` parity case: three renames over CHECK, generated and partial-index text covering BETWEEN, NOT IN, unary minus, qualified refs, NOT NULL / ISNULL, CASE, CAST, COLLATE, NOT LIKE, GLOB, `IS NOT`, and a column named `upper` used as `upper(upper)`. It pins SQLite's rewritten text and calls `assertSchemaParity`.
+- Prototype results, run at `d51ace1b` on 2026-10-07:
+  - Reproduction: a throwaway probe (`parser/introspect/zz_probe_rename_test.go`, since deleted), `cd parser && go test -count=1 -run TestZZProbeRenameColumn ./introspect/` → FAIL. CHECK `"a" > 0` vs `"c" > 0` and `"a" < "b"` vs `"c" < "b"`; generated `"a" * 2` vs `"c" * 2`; partial `Where` `"a" > 0` vs `"c" > 0`; with column `A` and expressions using `a` / `"a"`, SQLite renames them all and the parser none; qualified `"q"."a" > 0` vs `"q"."c" > 0`.
+  - Gates: `cd parser && go test -race -count=1 ./...` → ok (containers); `golangci-lint run ./sqlite/... ./introspect/...` → 0 issues; `gofumpt -l` → clean.
+  - Fail-first:
+    - `renameColumnInExpressions` call removed → `TestAlterTableRenameColumn` fails 6 subtests (e.g. "- `CHECK [qty] \"qty\" > 0`, + `CHECK [qty] \"a\" > 0`"), and the parity test fails: "- GeneratedExpr: `\"a\" * 2`, + GeneratedExpr: `\"qty\" * 2`";
+    - `*rsql.Null` manual walk removed → `/partial_index_predicate` fails, and parity shows "- CheckExpression: `\"r\".\"a\" NOT NULL OR \"a\" IS NULL`";
+    - `Call.Name` skip removed → `/function_type_and_collation_names_are_not_columns` fails: "- \"upper\", + \"label\"";
+    - the existing suite without the fix → passes.
+  - Golden churn: none.
+  - Patch: `.claude/prototypes/FIX-277.patch` (3 files, +250/-18).
+
+
+**References.**
+- PRD §6.1.
+- Backlog line (2026-10-01, from FIX-247) on the same gap for CHECK / WHERE /
+  generated text on PostgreSQL and MySQL, which stays in the backlog.
+
+**Resolution notes.** The SQLite RENAME COLUMN branch
+(`parser/sqlite/sqlite.go`) now calls `renameColumnInExpressions` after
+`RenameColumnReferences`. It re-parses each `GeneratedExpr`,
+`CheckExpression` and partial-index `Where` on the table with rqlite/sql,
+renames identifiers equal to the old name without regard to ASCII case (skipping
+function, type, collation and qualifier names, and walking `*rsql.Null`
+operands by hand), and re-renders; text that does not name the column comes
+back untouched. Prototype applied cleanly at `e9e59c50`; two changes from it:
+the re-render goes through `exprString` (landed after the vet in FIX-291),
+so an expression rqlite/sql cannot render returns an error, not a panic; and
+(from `/verify`) ASCII-only folding, below. Tests: `TestAlterTableRenameColumn`
+is table-driven with 9 cases (the ninth, `/only_ASCII_letters_fold`, from
+`/verify`), and
+`TestSQLiteIntrospect_RenameColumnExpressions` pins SQLite's rewritten text
+and parsed/introspected parity. Fail-first re-run on the final code: call
+removed → 6 subtests + parity fail; `*rsql.Null` walk removed →
+`/partial_index_predicate` + parity fail; `Call.Name` skip removed →
+`/function_type_and_collation_names_are_not_columns` fails. From the
+`/verify` review, fixed inline (same root cause, same site): names now match
+with ASCII-only case folding (`equalFoldASCII`) instead of
+`strings.EqualFold`, since SQLite folds only ASCII; measured on 3.51,
+`RENAME COLUMN "É" TO qty` leaves `"é"` alone, which `strings.EqualFold`
+renamed. New subtest `/only_ASCII_letters_fold` fails on `strings.EqualFold`
+("- `column g AS \"é\" + 1`, + `column g AS \"qty\" + 1`"). Stale line refs in
+this entry updated (`sqlite.go:555-566` → `602-616`, `sqlite_test.go:562` →
+`627`); the 2026-10-01 backlog line on the same gap now names PostgreSQL and
+MySQL only. Gates: `make check` ok, `make check-examples` ok, `cd parser &&
+go test -race ./sqlite/ ./introspect/` ok. Golden churn: none, as vetted.
+
+### FIX-288
+
+- **Status:** Resolved
+- **Severity:** tracked
+- **Origin:** phase 4, `parser/mysql` + `parser/introspect`
+- **Surfaced by:** /fix-vet FIX-278 (2026-10-07), filed at /close-phase 30 (2026-10-08)
+- **Vetted:** ready at `56fcc1c7` (2026-10-08; re-vetted for the ruled Option 1, rebased onto FIX-271)
+
+**Issue.** **MySQL inline ENUM/SET names `<table>_<column>_enum|_set`
+collide when underscores make them ambiguous**, and the remedy the error
+offers cannot work. Table `a` column `b_c` and table `a_b` column `c` both
+register `a_b_c_enum`. Measured: `CREATE TABLE a (id int PRIMARY KEY, b_c
+ENUM('1','2') NOT NULL); CREATE TABLE a_b (id int PRIMARY KEY, c
+ENUM('3','4') NOT NULL);` → `sqlgen generate` → "Generation error: enum
+a_b_c_enum and enum a_b_c_enum both resolve to the Go type name "ABCEnum" —
+set enums.a_b_c_enum.struct_name to a different Go identifier"; with `enums:
+{a_b_c_enum: {struct_name: OtherEnum}}` → the same error naming "OtherEnum",
+since both entries share one config key. Both schema sources use the scheme,
+so `database` and `files` fail alike.
+
+**Root cause.** The derived name joins table, column and suffix with `_`,
+which can itself appear in either name, so the mapping (table, column) →
+name is not injective: `parser/mysql/mysql.go:519` / `:523`
+(`extractInlineEnumOrSet`) and `parser/introspect/mysql.go:361` / `:371`.
+The view path builds its own names the same way
+(`parser/introspect/mysql.go:255`, `<view>_<column><suffix>`), so a view name can collide with a table
+name likewise (by code reading). The duplicate is first caught at
+`validateResolvedNames` (`cmd/sqlgen/gen/resolved_names.go:403-414`), whose
+escape hint `enums.<name>.struct_name` (`cmd/sqlgen/gen/api_names.go:148`)
+names a key both entries share. FIX-278's prototype keeps an
+`inlineTypeUsers` guard (skip RENAME/DROP bookkeeping for a shared name)
+precisely because of this collision.
+
+**Suggested fix.** The naming scheme is a design question for the vet;
+options:
+- **Option 1 — a separator that cannot be confused.** E.g. `__` between
+  table and column (`a__b_c_enum` vs `a_b__c_enum`). Cheap, but not
+  injective either: a backquoted MySQL identifier may contain `__` or any
+  other character, so this narrows the collision rather than removing it.
+  Changes the PRD-documented name (§5.2, §8.3.1) and every golden enum name.
+- **Option 2 — keep the scheme, share identical values, reject different
+  ones loudly.** When two (table, column) pairs derive one name and their
+  value lists are equal, register one entry both columns use; when they
+  differ, fail in the parser / introspector with an error naming both
+  columns and a remedy that works (rename a table or column). No config
+  surface; the PRD gains one sentence.
+- **Option 3 — deterministic disambiguation.** On collision, suffix the
+  later pair (`a_b_c_2_enum`, by schema order). Generates, but a column's
+  enum name then depends on unrelated tables, and the `enums.<name>` key a
+  user configured can move to the other column when a table is added.
+- Whatever the option, move the naming into one shared helper in the
+  `parser` package used by `parser/mysql` and `parser/introspect` (both
+  already import it), so the two sources cannot drift; if the collision
+  disappears, FIX-278's `inlineTypeUsers` guard may become removable.
+- Tests: a `parser/mysql` case with tables `a` (`b_c`) and `a_b` (`c`),
+  asserting the ruled outcome (distinct names, one shared entry, or the
+  error); the same schema through `TestParityFixtures`
+  (`parser/introspect/parity_fixtures_test.go:163`) so both sources agree;
+  a `cmd/sqlgen/gen` case asserting generation succeeds or fails with the
+  ruled message.
+- Vet notes (stale facts and scope):
+  - the view collision is measured on the database source: table `z8t` column `v_c` ENUM('1','2') and view `z8t_v AS SELECT d.c FROM (SELECT v_c AS c FROM z8t) d` both register `z8t_v_c_enum` (the file parser skips CREATE VIEW);
+  - Option 1 changes no Go type names: `toPascalCase` collapses `__`, so `a__b_c_enum` and `a_b__c_enum` both become `ABCEnum`. It removes only the SQL-name/config-key collision; only SQL names churn (doc comments and manifest `db_type`);
+  - `TestParityFixtures` never compares the two sources; the regression belongs in a `mysql_integration_test.go` test using `assertSchemaParity`;
+  - equal value lists fail at HEAD too: `ord.line_kind` and `ord_line.kind`, both ENUM('x','y') → "Generation error: enum ord_line_kind_enum and enum ord_line_kind_enum both resolve to the Go type name "OrdLineKindEnum" …";
+  - a SET collision fails with a different message and no config escape: `tg.set_flags` / `tg_set.flags` → "SET type tg_set_flags_set and SET type tg_set_flags_set both resolve to the Go type name "TgSetFlagsSet" and the Go type name "TgSetFlagsSetValue" — rename one of them in the schema".
+- Prototype (Option 2):
+  - a new `parser/inline_types.go`: `InlineEnumName` / `InlineSetName` build the derived names, used by `parser/mysql` (`extractInlineEnumOrSet`) and `parser/introspect/mysql.go` (table columns and `viewEnumOrSetType`), so the sources cannot drift. `MergeInlineTypes(*Schema) []error` collapses entries with a shared name and equal values into one, and for differing values returns one error naming every column: `inline ENUM ord_line_kind_enum: columns ord.line_kind, ord_line.kind derive this name with different values; rename one of the tables or columns (PRD §5.2)`;
+  - `cmd/sqlgen/cli/pipeline.go` `parseSchema` calls it for MySQL after both sources and before view files (one site, following the `UnresolvedForeignKeys` precedent), so the result is a "Schema error:" with exit 3 on generate, validate and diff (HEAD: Generation error, exit 5). It runs after the full parse, not per statement, so a migration that later renames the collision away is not rejected;
+  - tests: `parser/inline_types_test.go` (table-driven); `TestParseSchema_InlineTypeNameCollision` (cli: equal values generate; different ENUM or SET values fail; each through generate, validate, diff); `TestMySQLIntrospect_InlineTypeNameCollision` (file vs database parity, the same error from both sources, the view case merging);
+  - PRD §8.3.1 gains a paragraph: equal values share one type, different values are a schema error, and the remedy is renaming a table or column.
+- Pending the user's ruling:
+  - Q1, naming scheme for colliding inline ENUM/SET names:
+    - (a) Recommended by the vet, and prototyped: Option 2, keep `<table>_<column>_enum|_set`; equal values share one type; different values are a schema error naming the columns. No golden churn, no config surface. The different-values case moves from Generation error (exit 5) with a remedy that cannot work to Schema error (exit 3) with a working remedy. Sub-choice: share on equal values (prototyped) or reject every collision (simpler, stricter, but forces a rename even when one type would be correct);
+    - (b) Option 1, a `__` separator: does not remove the Go-name collision (`ABCEnum` both ways); only makes `enums.<name>.struct_name` usable for ENUMs (SETs still have no escape, and even equal values need a config entry); still not injective for identifiers containing `__`. Churn is SQL names only (mysql `enums_gen.go` 3 lines, `sets_gen.go` 2, `manifest_gen.json` 7 `db_type` values, `manifest/{document,order,user}.md` 4 lines; ~34 test literals; PRD §5.2 and §8.3.1);
+    - (c) Option 3, a `_2` suffix: generates, but the name depends on unrelated tables, against the PRD §26 "GraphQL type name ownership" principle (a name that shifts because an unrelated table was added is rejected in favour of an error);
+    - not auto-accepted: PRD §8.3.1 says the names are "scoped to the table to prevent collisions", and sharing one type across two tables is a behaviour choice the PRD does not settle.
+  - Q2, composition with FIX-278's `inlineTypeUsers` guard: neither option makes the guard removable. Measured with this patch alone, fixing the collision by ALTER in the files source gives a misleading error because the stale entry stays (`ALTER TABLE a_b RENAME COLUMN c TO d` → "inline ENUM a_b_c_enum: columns a.b_c, a_b.d derive this name with different values"; `DROP COLUMN c` → "columns a.b_c derive this name with different values"). FIX-278's guard leaves the same stale entries (by reading its patch; HEAD fails these sequences too, so no regression).
+    - (a) Recommended by the vet: before FIX-278 lands, rework it so the MySQL file parser tracks inline values per (table, column), for example by deriving the inline entries from the final columns; the guard then goes away and RENAME/DROP resolve the collision. Either way, FIX-278's `renameInlineEnumOrSet` should build names with `parser.InlineEnumName` / `InlineSetName`.
+    - (b) Land both as they are and accept the misleading error in that edge case (loud, and failing at HEAD anyway).
+  - Textual overlap with FIX-278: both insert a test after `TestMySQLIntrospect_QuotedIdentifiers` (trivial conflict); their `parser/mysql/mysql.go` hunks do not overlap. The stacked combination was not measured.
+- Prototype results, run at `b606e4a7` on 2026-10-08:
+  - Reproduction: a sibling copy of the mysql example with `CREATE TABLE a (id int PRIMARY KEY, b_c ENUM('1','2') NOT NULL); CREATE TABLE a_b (id int PRIMARY KEY, c ENUM('3','4') NOT NULL);`, `GOWORK=off sqlgen generate` → `Generation error: enum a_b_c_enum and enum a_b_c_enum both resolve to the Go type name "ABCEnum" — set enums.a_b_c_enum.struct_name to a different Go identifier`; with `struct_name: OtherEnum` → the same error naming "OtherEnum". Database source (probe): introspected Enums `z8a_b_c_enum [1 2]`, `z8a_b_c_enum [3 4]`, identical to the file parser.
+  - E2E with the prototype: the equal-values case generates 68 files with both columns typed `OrdLineKindEnum`; `go build ./...` and `go vet ./models/...` pass.
+  - Gates: parser `go test -race -count=1 ./...` → ok, `golangci-lint run ./...` → 0 issues; cmd/sqlgen `go test -race -count=1 ./cli/...` → ok, `golangci-lint run ./cli/...` → 0 issues; `TestE2EGoldenFiles` → ok; `gofumpt -l` → clean.
+  - Fail-first: pipeline call removed → `TestParseSchema_InlineTypeNameCollision` fails ("generate: unexpected error: enum ord_line_kind_enum and enum ord_line_kind_enum both resolve to the Go type name …"; "different_ENUM_values/generate: … want exit code 3"); `MergeInlineTypes` stubbed to `return nil` → `TestMergeInlineTypes` fails ("MergeInlineTypes() error = <nil>, want "inline ENUM a_b_c_enum: columns a.b_c, a_b.c derive this name with different values; …"") and `TestMySQLIntrospect_InlineTypeNameCollision` fails; the existing suite without the fix → passes.
+  - Golden churn: none.
+  - Patch: `.claude/prototypes/FIX-288.patch` (8 files, +310/-16).
+
+- The user ruled on 2026-10-08: Q1 → Option 1, the `__` separator (`<table>__<column>_enum|_set`), knowing the vet's measurement that it does not by itself remove the Go-type-name collision (`toPascalCase` collapses `__`) and only makes the ENUM `enums.<name>.struct_name` escape usable. Q2 → rework FIX-278 before it lands (track inline values per (table, column) so its guard goes away, using FIX-288's naming helpers). Option 1 differs from the prototype (Option 2), so the entry is re-vetted.
+
+- Prototype results for the ruled Option 1, run at `13173996` on 2026-10-08 (replaces the Option 2 patch):
+  - Stale facts in the first vet's Q1: the different-values case at HEAD exits 1 (`ExitGeneration = 1`, `cmd/sqlgen/cli/root.go:16`), not 5; Option 1 changes 47 name literals on 44 lines in 3 parser test files (`parser/mysql/mysql_test.go` 31, `introspect_integration_test.go` 10, `mysql_integration_test.go` 3), not ~34. Hand-built cmd/sqlgen fixtures use the name as an opaque string and are left alone.
+  - Reproduction: a sibling copy of the mysql example with `ord (line_kind ENUM('x','y'))` + `ord_line (kind ENUM('x','z'))`, `GOWORK=off sqlgen generate` → exit 1, `Generation error: enum ord_line_kind_enum and enum ord_line_kind_enum both resolve to the Go type name "OrdLineKindEnum" — set enums.ord_line_kind_enum.struct_name …`; with `enums.ord__line_kind_enum.struct_name` set → the same error (the unknown key is ignored silently, backlog).
+  - Prototype: a new `parser/inline_types.go` with `InlineEnumName(table, column)` / `InlineSetName(table, column)` returning `<table>__<column>_enum|_set`, used at every naming site: `parser/mysql` `extractInlineEnumOrSet` (lines 413-437 only), `parser/introspect/mysql.go` `introspectColumns`, and both names in `viewEnumOrSetType` (the source-table lookup and the view's own `<view>__<column>_*` type). Tests: `parser/inline_types_test.go`; `TestInlineTypeNamesSeparateTableFromColumn` (a/a_b ENUM, a/a_y SET); `TestMySQLIntrospect_InlineTypeNames` (`assertSchemaParity`, incl. view `m_nc_v.c` next to table column `m_nc.v_c`); `TestGenerate_InlineTypeNameCollision` (`cmd/sqlgen/cli/pipeline_test.go`, generate and validate: the ENUM pair without an override exits 1, with `enums.a__b_c_enum.struct_name: ABCInlineEnum` it generates, the SET pair fails); the 47 literals updated. PRD §5.2 gives the `<table>__<column>_enum|_set` naming, and §8.3.1 **Naming** uses `users__permissions_set` / `users__role_enum` and says the `__` gives each column its own `enums:` key, that both can still resolve to one Go name (a §4.13 resolved-name collision fixed with `enums.<name>.struct_name`), that a SET pair has no such override (rename a table or column), and that a view's own type is `<view>__<column>_enum`.
+  - What Option 1 now does (measured):
+    - a/a_b ENUM pair without config → exit 1, `enum a__b_c_enum and enum a_b__c_enum both resolve to the Go type name "ABCEnum" — set enums.a__b_c_enum.struct_name or enums.a_b__c_enum.struct_name to a different Go identifier` (two separate keys now); with the override it generates. In the full mysql example (GraphQL on) the enum collision clears but table `a_b` then trips FIX-248's root-name check ("Query.ab is Ab to gqlgen and AB to sqlgen", remedy `tables.a_b.struct_name`). The ord/ord_line probe with `enums.ord__line_kind_enum.struct_name` generates 68 files (`OrdLineKindInlineEnum`, `OrdLineKindEnum`), and `go build ./...` / `go vet ./models/...` pass;
+    - SET pair → `SET type a__b_c_set and SET type a_b__c_set both resolve to the Go type name "ABCSet" and the Go type name "ABCSetValue" — rename one of them in the schema` (no config way out; a schema rename works);
+    - equal values (both ENUM('x','y')) now fail the same way: each column gets its own type, so even identical lists need an `enums:` entry;
+    - still not injective for identifiers containing `__`: table `` `a__b` `` col `c` and table `a` col `` `b__c` `` both derive `a__b__c_enum`, giving the original unusable remedy (accepted by the ruling);
+    - a view's own type and a table column's type have distinct SQL names (`m_nc_v__c_enum` vs `m_nc__v_c_enum`) but share the Go name `MNcVCEnum` (parser level only, not run through generation);
+    - FIX-278 should build its names with the helpers, and its test literals need the `__` form.
+  - Gates: parser `go test -race -count=1 ./...` → ok (MySQL integration); parser `golangci-lint run ./...` → 0 issues; cmd/sqlgen `go test -race -count=1 ./cli/... ./gen/...` → ok; `TestE2EGoldenFiles` → ok; `golangci-lint run ./cli/...` → 0 issues; `make update-golden` → no change; mysql example `GOWORK=off go test -race -count=1 ./...` → ok and lint → 0 issues; `gofumpt -l` → clean.
+  - Fail-first: separator set back to `_` → `TestInlineTypeNames` (`InlineEnumName("a", "b_c") = "a_b_c_enum", want "a__b_c_enum"`), `TestInlineTypeNamesSeparateTableFromColumn`, `TestMySQLIntrospect_InlineTypeNames` and `TestGenerate_InlineTypeNameCollision/ENUM_pair_with_an_override/generate` fail; each mysql.go and introspector call site reverted alone fails its test (e.g. `- Name: "a__b_c_enum" + Name: "a_b_c_enum"`; view-own-name → `TestMySQLIntrospectViews` `- Type: "user_states__status_enum" + Type: "user_states_status_enum"`). The view source-table lookup (`viewEnumOrSetType` :248) has no covering test at HEAD either (backlog). The existing suite without the fix → passes.
+  - Golden churn: mysql only, 6 changed under `expected/` and the same 6 under `models/` (`enums_gen.go` 3 doc lines, `sets_gen.go` 2, `manifest/manifest_gen.json` 7 `db_type` values, `manifest/document.md` 1, `order.md` 1, `user.md` 2).
+  - Patch: `.claude/prototypes/FIX-288.patch` (21 files at `13173996`; being rebased onto FIX-271 by the FIX-278 re-vet).
+
+
+**References.**
+- PRD §5.2 (inline ENUM values, table-scoped naming `<table>__<column>_enum`),
+  §8.3.1 (MySQL inline ENUM/SET naming), §4.11 (enum overrides, `struct_name`).
+- FIX-278 (RENAME/DROP bookkeeping; its `inlineTypeUsers` guard).
+- `parser/mysql/mysql_test.go:384` (`TestRedefineColumnKeepsSharedInlineEnumName`).
+
+**Resolution notes.** Implemented the ruled Option 1 (2026-10-08) from the vetted prototype, which applied cleanly at `19772175`. New `parser/inline_types.go`: `InlineEnumName(table, column)` / `InlineSetName(table, column)` return `<table>__<column>_enum|_set` and are the only naming sites, used by `parser/mysql` `extractInlineEnumOrSet` and `parser/introspect/mysql.go` (`introspectColumns`, and both the source-table lookup and the view's own `<view>__<column>_*` name in `viewEnumOrSetType`), so the two schema sources cannot drift. Table `a` column `b_c` → `a__b_c_enum` and table `a_b` column `c` → `a_b__c_enum` now have separate `enums:` keys, and the resolved-name error's `enums.<name>.struct_name` remedy works for ENUMs; a SET pair still needs a schema rename, and identifiers containing `__` can still collide (both accepted by the ruling). PRD §5.2 and §8.3.1 **Naming** updated. Tests: `TestInlineTypeNames` (`parser/inline_types_test.go`), `TestInlineTypeNamesSeparateTableFromColumn` (`parser/mysql`), `TestMySQLIntrospect_InlineTypeNames` (file vs database parity incl. the view case), `TestGenerate_InlineTypeNameCollision` (`cmd/sqlgen/cli`, generate + validate: ENUM pair without/with override, SET pair); 47 existing name literals updated to the `__` form. Fail-first: separator set back to `_` → all four new tests fail. Golden churn: mysql only, 6 files under `expected/` and the same 6 under `models/` (`enums_gen.go`, `sets_gen.go`, `manifest/manifest_gen.json`, `manifest/{document,order,user}.md`), matching the vet. Gates: `make check` → ok; parser MySQL integration tests → ok; `make update-golden` → no change; `make check-examples` → ok.
+
+
+### FIX-280
+
+- **Status:** Resolved
+- **Severity:** tracked
+- **Origin:** phase 6, `parser/postgres` + `parser/mysql` + `parser/sqlite` (`view_sql.go`)
+- **Surfaced by:** backlog promotion at `/close-phase 30` (2026-10-07); first recorded by `/verify 30.8b` (2026-10-07)
+- **Vetted:** ready at `d51ace1b` (2026-10-07; ruled 2026-10-08, the ruled option is the prototype)
+
+**Issue.** **All three view parsers silently drop an unaliased expression and
+`*`, and ignore a view column list**, though PRD §16.1 calls an unaliased
+expression a parse error. Under `files` the view struct has too few or
+misnamed fields and the scan fails at runtime (under `database` the name
+check falls back to the catalog with a warning). Measured evidence from the
+backlog line: "`SELECT id, a + b FROM t` → 1 column; `SELECT * FROM t` → 0;
+`CREATE VIEW v(x) AS SELECT id` → column `id`".
+
+**Root cause.** Each extractor keeps a select item only when it has an alias
+or a resolvable column name and skips the rest without error:
+`extractResTargets` (`parser/postgres/view_sql.go:97-110`, `if col.Alias !=
+""`), `extractSelectExprs` (`parser/mysql/view_sql.go:74-87`, also skipping
+any non-`AliasedExpr` such as `*`), `extractResultColumns`
+(`parser/sqlite/view_sql.go:84-93`). None reads the view's column list
+(PG `ViewStmt.Aliases`, vitess `CreateView.Columns`, rqlite
+`CreateViewStatement.Columns`).
+
+**Suggested fix.**
+- Unaliased expression with no resolvable name: return a parse error naming
+  the view and the expression, on all three dialects (PRD §16.1 states it).
+- `*` and a view column list: PRD §16.1 is silent; the vet asks for a
+  ruling — a parse error, or expand `*` from the source table and apply the
+  column list positionally as names — and the ruling adds the PRD text.
+- Tests: `ParseViewSQL` cases per dialect (`a + b` unaliased, `*`, `t.*`,
+  `v(x)`), and a generate case showing the loud error instead of a runtime
+  scan failure.
+- Vet notes on scope (measured):
+  - an unaliased expression just disappears from the struct (`var vExprAllColumns = []string{"id"}`), with no runtime error; an unaliased aggregate (`COUNT(*)`) is dropped the same way (same root cause and fix site, covered). `SELECT *` generates an empty `type VStar struct {}` with `vStarAllColumns = []string{}`. Only the column-list case misreads at run time: the generated code selects `"id"` from `v_list`, which has only `x`, and SQLite returns the literal string (`SELECT "id", typeof("id") FROM "v_list"` → `id|text`), so the scan into int64 fails;
+  - "under `database` the name check falls back to the catalog" holds only where the stored definition is the original text: PostgreSQL's `pg_get_viewdef` always writes aliases and expands `*` (`(a + b) AS "?column?"`, `SELECT id, a, b, name`, `id AS x`), and MySQL's `view_definition` does too. The fallback is measured only on SQLite (all four shapes) and on MySQL with a column list;
+  - PRD §16.1 is not wholly silent on `*`: each selected expression "must resolve to a column name via one of" alias / qualified ref / bare ref, and `*` is none of those.
+- Prototype:
+  - PG `extractResTargets`, MySQL `extractSelectExprs` and SQLite `extractResultColumns` return an error instead of dropping the column: an unnamed column → `view v selects a + b with no alias and no column name; name it with AS` (PG deparses a one-target SELECT, vitess uses `sqlparser.String`, rqlite `rc.String()`); `*` or `t.*` → `view v selects *, whose columns the view parser cannot list; name each column`;
+  - every such error is a `*parser.ViewQueryError`, so an annotation file that overlays a database view still needs only its name (PRD §16.2), pinned by new overlay cases;
+  - option (a) below: the view column list names columns in order (PG `ViewStmt.Aliases` and matview `Into.ColNames`, vitess `CreateView.Columns`, rqlite `CreateViewStatement.Columns`); an expression the list names needs no alias. Count rules follow each database: PG allows a shorter list and errors on a longer one; MySQL and SQLite require an exact count (`view v names 2 columns in its column list but selects 1`);
+  - tests: `TestParseViewSQL_ColumnNames` in each of the postgres, mysql and sqlite parser tests; `TestParseSchema_ViewColumnNames` (cli pipeline: files source, loud error, column list); three new `TestParseSchema_AnnotationFileQueryNotRead` cases (overlay with `*`, overlay with an unaliased expression, unaliased expression for a view the database lacks → error);
+  - PRD §16.1 adds the `*` and column-list text, and the annotation-validation bullet says "the view's column names (SELECT aliases, or the column list)".
+- Changed from the original: the unaliased-expression error must be a `ViewQueryError`, not a plain error. A plain error would break overlay files, whose SELECT §16.2 says is not read, so `SELECT *` and unaliased overlays that work today would start failing. The unnamed check runs after the column list is applied, because `CREATE VIEW v(x, total) AS SELECT id, a + b` is fully named.
+- Auto-accepted the recommended option on 2026-10-07 (`/fix` auto-accept rule): `*` / `t.*` → expand from the source table, or a parse error? → a parse error (`ViewQueryError`) with a PRD sentence. Conditions held: it was prototyped with green gates; there is no golden churn (no example view uses `*`); it adds no exported identifier; and it adds PRD text for an unspecified case, consistent with §16.1's "must resolve via one of" list, reversing no ruling. Expansion would be new behavior the PRD does not specify (`BuildView` would need schema-driven star expansion).
+- Pending the user's ruling: how should a view column list (`CREATE VIEW v (x, y) AS …`) be read? PRD §16.1 does not settle it.
+  - (a) Recommended by the vet, and prototyped: apply it in order as the column names, with each database's count rule. No golden churn. Files: `CREATE VIEW v (order_id, next_total) AS SELECT o.id, o.total + 1` → columns `[order_id next_total]`. Database source changes on SQLite: a column-list view (`zv_list (x)`) now reads its definition (`def=true cols=[x:int]`, with definition nullability) where it fell back to the catalog with a warning. MySQL is unchanged (`view_definition` drops the list; existing backlog line).
+  - (b) Make a column list a parse error (`ViewQueryError`). A little less code, but valid SQL is rejected under files, and SQLite database views with a column list keep falling back to the catalog with a warning. No golden churn.
+  - Not auto-accepted: (a) changes the meaning of §16.1's "Column names are extracted from the SELECT clause" and of the @pk/@type/@nullable "must match SELECT aliases" rule, and it changes database-source output on SQLite.
+- Prototype results, run at `d51ace1b` on 2026-10-07:
+  - Reproduction: `go test -run TestZZProbeView -v ./postgres/ ./mysql/ ./sqlite/` (parser module, probe since deleted), identical on all three dialects: `SELECT id, a + b` → `cols=[id] err=<nil>`; `SELECT *` → `cols=[] err=<nil>`; `SELECT t.*` → `cols=[]`; `CREATE VIEW v(x) AS SELECT id` → `cols=[id]`; `SELECT id, COUNT(*)` → `cols=[id]`. `sqlgen generate` on a files/sqlite probe project → `generated 9 files (1 tables, 3 views)` with `type VStar struct {}` and `vListAllColumns = []string{"id"}`. A database probe measured the column-list count rules: PG `zv_short (x) AS SELECT id, name` → `[x name]`; a longer PG list → `CREATE VIEW specifies more column names than columns`; MySQL → `Error 1353 ... different column counts`; SQLite → `expected 1 columns for 'zv_ls' but got 2`.
+  - Gates: `gofumpt -l` (parser, cli) → clean; parser `go test -race -count=1 ./...` (Docker) → ok; cmd/sqlgen `go test -race -short -count=1 ./...` → ok; `go test -race -run 'View|Introspect' -count=1 ./cli/` → ok; `TestE2EGoldenFiles` → ok; `golangci-lint` (parser dialects, cli) → 0 issues. `make check-examples` is left to `/fix-implement`.
+  - Fail-first:
+    - `parser/postgres/view_sql.go` reverted → `TestParseViewSQL_ColumnNames` fails all 9 subtests: `ParseViewSQL() error = <nil>, want it to contain "view v selects a + b with no alias and no column name"`;
+    - the mysql and sqlite `view_sql.go` reverted → 14 subtests fail (e.g. `sqlite_test.go:1380: … want it to contain "view v selects \"a\" + \"b\" ..."`);
+    - all three reverted → `TestParseSchema_ViewColumnNames/unaliased_expression` fails: `want it to contain "v.sql: view v selects o.total + 1 with no alias and no column name"` (star and column_list too, plus the "view the database lacks" overlay case);
+    - the existing suite without the fix → passes.
+  - Golden churn: none.
+  - Patch: `.claude/prototypes/FIX-280.patch` (9 files, +329/-25).
+
+- The user ruled on 2026-10-08: (a), the view column list names the columns in order with each database's count rule. The `*` / `t.*` parse-error auto-accept stands (not vetoed). This matches the prototype.
+
+
+**References.**
+- PRD §16.1 ("Expressions without an alias and without a resolvable column
+  name are a parse error"), §16.2, §6.1.
+- Backlog line on MySQL view-with-column-list enum types (kept), tied to the
+  column-list half.
+
+**Resolution notes.** Resolved 2026-10-08 from the vetted prototype (fresh at `0e4205d1`, applied clean). PG `extractResTargets`, MySQL `extractSelectExprs` and SQLite `extractResultColumns` now return a `*parser.ViewQueryError` for an unaliased expression with no column name (`view v selects a + b with no alias and no column name; name it with AS`) and for `*` / `t.*` (`view v selects *, whose columns the view parser cannot list; name each column`), so an overlay annotation file still needs only its view name (PRD §16.2). The view column list (PG `ViewStmt.Aliases` / matview `Into.ColNames`, vitess `CreateView.Columns`, rqlite `CreateViewStatement.Columns`) names the columns in order, per the user's 2026-10-08 ruling (a): PG allows a shorter list, MySQL and SQLite require an exact count. PRD §16.1 gains the `*` and column-list text, and the annotation validation bullet now says "the view's column names (SELECT aliases, or the column list)". Tests: `TestParseViewSQL_ColumnNames` (postgres, mysql, sqlite), `TestParseSchema_ViewColumnNames`, three new `TestParseSchema_AnnotationFileQueryNotRead` cases. Fail-first re-run on the final code: reverting the three `view_sql.go` files fails `TestParseViewSQL_ColumnNames` in all three parser packages, `TestParseSchema_ViewColumnNames` (3 subtests) and the "view the database lacks" overlay case. Inline: the new test doc comments were shortened (history phrasing dropped). Gates: `make check` ok; parser `go test -race ./...` (Docker) ok; `make check-examples` ok; golden churn none, matching the vet. `/verify FIX-280`: PRD 3/3, tests 3/3, reviewer agreed (source hunks identical to the prototype; only the test comments differ) and its fail-first spot check confirmed. Applied from the review: added `TestSQLiteIntrospect_ViewColumnList` (`parser/introspect`), pinning that a SQLite database view with a column list now reads its definition (fails without the fix: `v_list Definition = nil ... it reads columns [id a] where the catalog lists [x y]`); PRD §16.1 now says a list longer than the SELECT is an error on every dialect; the new test comments were rewrapped to 80 columns. One backlog line (database-fallback warning repeats view-file advice).
+
+### FIX-279
+
+- **Status:** Resolved
+- **Severity:** tracked
+- **Origin:** phase 4, `parser/sqlite`
+- **Surfaced by:** backlog promotion at `/close-phase 30` (2026-10-07); first recorded by 30.6 (2026-10-05)
+- **Vetted:** corrected at `d51ace1b` (2026-10-07)
+
+**Issue.** **The SQLite parser adds a phantom column for a quoted type name
+and for `REFERENCES … MATCH SIMPLE`, with no error**, so the entity struct
+gets a field for a column that does not exist. Measured evidence, quoted from
+the two backlog lines merged here:
+- "rqlite/sql reads a quoted type name as a second column, with no error: `f "my type"` parses as columns `f` (blob) and `my type` (blob), while SQLite has one column `f` of type `my type` — evidence: parser probe vs `PRAGMA table_xinfo`"
+- "`REFERENCES p(id) MATCH SIMPLE` makes rqlite/sql add a phantom column `MATCH` (blob) with no error; the introspector reads the right columns — evidence: `/verify 30.6` reviewer probe"
+
+**Root cause.** rqlite/sql's `parseColumnDefinitions` treats the comma
+between column definitions as optional (`if p.peek() == COMMA { p.scan() }`),
+so any identifier-like token left over after a column definition starts a new
+one: a quoted type name is not an `IDENT`, so `parseColumnDefinition` does not
+read it as a type, and `MATCH` is left after the foreign-key constraint.
+`parseCreateTable` (`parser/sqlite/sqlite.go:197-264`, column loop at 216-238) appends every
+`stmt.Columns` entry as a column; only the `PRIMARY KEY ASC|DESC` case of
+this rqlite behavior is caught (`isPrimaryKeySortOrder`, `sqlite.go:271-288`).
+The introspector reads columns from `PRAGMA table_xinfo` but also parses the
+stored `CREATE TABLE` with the file parser (`parseStoredTable`,
+`parser/introspect/sqlite.go:161`).
+
+**Suggested fix.**
+- In `parseCreateTable`, generalize the `isPrimaryKeySortOrder` check: a
+  column definition whose name is not preceded by `(` or `,` (only blanks and
+  comments between, via `onlyBlanksAndComments` over `src` up to
+  `col.Name.NamePos`) is not a column. Return a parse error for it (PRD §6.3:
+  DDL the file parser cannot read is an error on both sources), or, for the
+  quoted-type case only, fold it back into the previous column's type if the
+  vet finds that safe.
+- Add both shapes to PRD §6.3's "SQLite DDL the file parser cannot read" list
+  if the error route is taken.
+- Tests: `parser/sqlite/sqlite_test.go` cases for `f "my type"` and
+  `REFERENCES p(id) MATCH SIMPLE`; a SQLite introspection case showing the
+  same error (or the same columns) under `database`.
+- Vet notes on scope:
+  - there are four phantom shapes at HEAD, not two, with one root cause: `f "my type"`, f `my type` (backquoted), `f INT "x"` (a quoted word after a type) and `REFERENCES p(id) MATCH SIMPLE`;
+  - related shapes already fail on both sources with a parse error, so they are not phantoms: `f 'text'`, `f [my type]`, `MATCH FULL ON DELETE CASCADE` and table-level `FOREIGN KEY … MATCH SIMPLE`. PRD §6.3's list left them all out at vet time;
+  - refined root cause: rqlite's `parseColumnDefinition` reads a type only when the next token is `IDENT`/`NULL`. A `QIDENT`/`BIDENT` token is skipped as a type, and `parseColumnDefinitions` then accepts it as the next column name because the comma is optional.
+- Changed from the original (mechanism only; the entry left error vs fold to the vet):
+  - the suggested `onlyBlanksAndComments` check over `src` "up to col.Name.NamePos" has no start offset, because rqlite's AST does not record where the previous column definition ends. A new `columnStarts(stmt, src)` instead runs rqlite's exported `rsql.NewScanner` over `src[Lparen:Rparen]`, skips COMMENT tokens, and records the offsets of tokens that follow `(` or `,`. In `parseCreateTable`, after the `isPrimaryKeySortOrder` fold, a column at i>0 whose `NamePos.Offset` is not a column start returns `table t: 1:43: "my type" after column f is not a column: a quoted type name or a MATCH clause cannot be read`;
+  - the error route was taken, not folding: `f INT "x"` introspects as type `int "x"`, so folding would have to rebuild the quoted source text exactly; the phantom's constraints (`NOT NULL`, …) would need moving back; and MATCH folding would cover only `MATCH SIMPLE`. The error route follows PRD §6.1/§6.3 ("DDL the file parser cannot read is an error"). Its cost: the `database` source, which today reads these tables' columns correctly from PRAGMA, now fails with the same error, as §6.3 requires;
+  - PRD §6.3 "SQLite DDL the file parser cannot read" adds "a `MATCH` clause on a foreign key (`REFERENCES p(id) MATCH SIMPLE`), a quoted type name (`f "my type"`, `f 'text'`, `f [text]`)", and `docs/design/INTROSPECTION.md`'s SQLite test table gains a `TestSQLiteIntrospect_UnreadableTable` row.
+- Prototype results, run at `d51ace1b` on 2026-10-07:
+  - Reproduction: a throwaway probe (`parser/introspect/zz_probe_phantom_test.go`, since deleted), `cd parser && go test -count=1 -run TestZZProbePhantom -v ./introspect/`:
+    - `f "my type"`: files `["id:integer" "f:blob" "my type:blob"]`, database `["id:integer" "f:blob"]`;
+    - `f "my type" NOT NULL, g TEXT`: files `[… "f:blob" "my type:blob" "g:text"]`, database `[… "f:blob" "g:text"]`;
+    - f `my type`: files `[… "f:blob" "my type:blob"]`, database `[… "f:blob"]`;
+    - `f INT "x"`: files `[… "f:int" "x:blob"]`, database `[… "f:int \"x\""]`;
+    - `pid INTEGER REFERENCES p(id) MATCH SIMPLE`: files `[… "pid:integer" "MATCH:blob"]`, database `[… "pid:integer"]`;
+    - controls agree on both sources: `PRIMARY KEY DESC`, `a TEXT b TEXT`, `DEFERRABLE INITIALLY DEFERRED`, `COLLATE NOCASE`. `ALTER TABLE t ADD COLUMN f "my type"` and `… MATCH SIMPLE` already fail ("expected semicolon or EOF").
+  - Tests: `TestCreateTable_TextAfterColumnIsNotAColumn` (`parser/sqlite`, 4 error cases plus a must-parse case with comma-bearing comments between columns); `TestSQLiteIntrospect_UnreadableTable` (both shapes are a `*SchemaError` naming table t under `database`, and the same parse error under `files`).
+  - Gates: `cd parser && go test -race -count=1 ./...` → ok; `cd cmd/sqlgen && go test -count=1 ./...` → ok (incl. E2E goldens); `golangci-lint run ./sqlite/... ./introspect/...` → 0 issues; `gofumpt -l` → clean.
+  - Fail-first:
+    - check disabled → `TestCreateTable_TextAfterColumnIsNotAColumn` fails: `Parse("CREATE TABLE t (id INTEGER PRIMARY KEY, f \"my type\");") error = <nil>, want it to contain "table t: 1:43: \"my type\" after column f is not a column"` (and the backquoted, `INT "x"` and MATCH cases). `TestSQLiteIntrospect_UnreadableTable` fails: `Introspect() error = <nil>, want the parse error for table t`;
+    - the existing suite without the fix → passes.
+  - Golden churn: none.
+  - Patch: `.claude/prototypes/FIX-279.patch` (5 files, +138/-1).
+
+
+**References.**
+- PRD §6.1, §6.3 ("SQLite DDL the file parser cannot read").
+- `isPrimaryKeySortOrder` (`parser/sqlite/sqlite.go:271`), the existing
+  pattern; backlog line on rqlite upstream gaps.
+
+**Resolution notes.** Resolved 2026-10-08 from the vetted prototype (applied cleanly with `git apply --3way` at `b2a78c5d`; the target files had moved since `d51ace1b`, so not fresh, but no hunk conflicted). `parseCreateTable` (`parser/sqlite/sqlite.go`) now builds `columnStarts(stmt, src)`, the offsets of the tokens that follow `(` or `,` in the column list (rqlite's own scanner, comments skipped), and after the `isPrimaryKeySortOrder` fold returns `table t: 1:43: "my type" after column f is not a column: a quoted type name or a MATCH clause cannot be read` for a column at i>0 whose name is not at one of them. This covers all four phantom shapes (`f "my type"`, f `my type`, `f INT "x"`, `REFERENCES p(id) MATCH SIMPLE`); the `database` source fails with the same error as a `*SchemaError` naming the table, per PRD §6.3. PRD §6.3's unreadable-DDL list gains the `MATCH` clause and quoted type names; `docs/design/INTROSPECTION.md` gains the `TestSQLiteIntrospect_UnreadableTable` row. Tests: `TestCreateTable_TextAfterColumnIsNotAColumn` (`parser/sqlite`), `TestSQLiteIntrospect_UnreadableTable` (`parser/introspect`). Fail-first: with the check disabled both new tests fail (`Parse(...) error = <nil>, want it to contain "table t: 1:43: \"my type\" after column f is not a column"`; `Introspect() error = <nil>, want the parse error for table t`). Gates: `make check` ok; `make check-examples` ok; golden churn none, matching the vet. `/verify FIX-279`: PRD 3/3, tests 2/2, reviewer agreed and matched the prototype line for line; it refreshed the stale `sqlite.go` line refs in this entry.
+
+### FIX-285
+
+- **Status:** Resolved
+- **Severity:** tracked
+- **Origin:** phase 5, `cmd/sqlgen/config`
+- **Surfaced by:** backlog promotion at `/close-phase 30` (2026-10-07); first recorded by FIX-260 (2026-10-03)
+- **Vetted:** corrected at `d51ace1b` (2026-10-07)
+
+**Issue.** **A declared relationship with no `name:` passes validation and
+surfaces only as an internal api-context error.** Measured evidence from the
+backlog line: sqlite probe `{type: o2m, table: owner_profiles, fk: owner_id,
+filter: "bio IS NOT NULL"}` → `sqlgen validate` exit 2 "building api
+context: api: filter for table \"owners\" has a relationship member that
+renders only one half (graphql=\"\" input=\"OwnerProfileFilter\" …)".
+
+**Root cause.** PRD §4.8 marks `name` required, but `validateRelationships`
+(`cmd/sqlgen/config/validate.go:372`) only checks duplicates when `r.Name !=
+""` (`:381`), and `validateRelationshipKeys` (`:433`) checks `type`, `fk` and
+`junction` but not `name`.
+
+**Suggested fix.**
+- Add a `tables.<t>.relationships[<i>].name: required (PRD §4.8)` config error
+  in `validateRelationshipKeys`.
+- Test: a `config` validation case for a relationship without `name`.
+- Vet notes on scope:
+  - a nameless o2o edge makes both `sqlgen validate` and `sqlgen generate` panic at HEAD: "panic: runtime error: slice bounds out of range [:1] with length 0" at `gen.generateAlias` (`gen/context_table.go:2676`), called from `buildSingleO2ODetail` (`:2473`). The "internal api-context error" holds only for o2m/m2m. Severity raised from `nit` to `tracked` on 2026-10-07 for the measured `generate` panic (origin phase 5, so it does not gate the Phase 30 close);
+  - `validateRelationshipKeys` (`:433`) also checks `side`;
+  - a second cause: `sqlgen validate` runs `gen.ValidateGeneration` even after `ValidatePreParse` fails (`cli/validate.go:36-97`, by design, to collect every error), so the config error alone does not stop the panic or the api-context noise under `validate`. Only `generate` stops at config errors.
+- Changed from the original: the config error alone is not enough (with only that change, `validate` on a nameless o2o still panics, and on o2m/m2m prints the right error then the internal api-context error). The prototype also skips a nameless declared entry (`continue`) in `mergeDeclaredRelationships` and in `findO2ORelationships`' declared-o2o loop, with a comment that config validation already reported it, following the gen precedent for config-reported cases (`context_discriminator.go:166`). A guard in `generateAlias` alone would leave the api-context noise, and skipping `ValidateGeneration` after pre-parse errors would change validate's collect-everything design. A CLI-level regression test is added because the config-package test cannot see the panic. The vet flags the gen-skip guard for a possible veto (alternatives: an error in gen, or have validate skip `ValidateGeneration` after pre-parse errors). Not prototyped: PRD §4.13 has no row for a missing relationship `name` (only §4.8's "Yes"); `/fix-implement` may add one beside the link-key row.
+- Prototype: `validateRelationshipKeys` adds `tables.<t>.relationships[<i>].name: required — it names the relationship's Go field on the entity struct (PRD §4.8)`, independent of the type switch, so a missing name and a missing type are both reported; doc comments updated. Tests: `TestValidatePreParse_RelationshipNameRequired` (o2o, o2m, m2m, missing name plus missing type, named control) and `TestValidate_relationshipWithoutName` (`cli/validate_generation_test.go`, o2o and o2m with an api block; exit code 2 and exactly one "Error: " line naming `relationships[0].name: required`).
+- Prototype results, run at `d51ace1b` on 2026-10-07:
+  - Reproduction (sibling copy of the sqlite example):
+    - `{type: o2m, table: owner_profiles, fk: owner_id, filter: "bio IS NOT NULL"}` added to owners → `sqlgen validate` → exit 2, "Error: building api context: api: filter for table \"owners\" has a relationship member that renders only one half (… input=\"OwnerProfileFilter\" … PRD §26.5.3)";
+    - `name: OwnerProfile` removed from the owners one_to_one → `validate` → "panic: runtime error: slice bounds out of range [:1] with length 0 … gen.generateAlias … context_table.go:2676", no config error printed;
+    - `name: LinkedAttachments` removed from the assets m2m → "building api context: api: filter for table \"assets\" has a relationship member that renders only one half (… input=\"DocumentFilter\" …)";
+    - minimal postgres config with a nameless o2o → `sqlgen generate` → the same panic, exit 2.
+  - With the fix: each probe → `validate` exit 2 with the single "Error: tables.<t>.relationships[N].name: required — …"; `generate` → "Config validation error: tables.owners.relationships[0].name: required …", exit 2.
+  - Gates: `gofumpt -l ./config ./gen ./cli` → clean; `golangci-lint run ./config/... ./gen/... ./cli/...` → 0 issues; `go test -race -count=1 ./config/... ./gen/... ./cli/...` → ok; `go test -race -count=1 -short ./...` (cmd/sqlgen) → ok; `sqlgen validate -q` in all 12 examples → exit 0; `TestE2EGoldenFiles` → PASS.
+  - Fail-first:
+    - config name check reverted → `TestValidatePreParse_RelationshipNameRequired/o2o_without_name` fails: "ValidatePreParse() = nil, want an error naming tables.owners.relationships[0].name: required …" (the other cases likewise), and `TestValidate_relationshipWithoutName/o2o` and `/o2m` fail: "validate error = <nil>, want exit code 2 (config)";
+    - `mergeDeclaredRelationships` guard reverted → `/o2o` panics ("slice bounds out of range [:1] with length 0 [recovered, repanicked]"), and `/o2m` prints the api-context error after the config error;
+    - `findO2ORelationships` guard reverted → `/o2o` panics at `context_table.go:2684`;
+    - the existing suite without the fix → passes.
+  - Golden churn: none.
+  - Patch: `.claude/prototypes/FIX-285.patch` (4 files, +119/-3).
+
+- Auto-accepted the recommended option on 2026-10-08 (`/fix` auto-accept rule): the vet's possible-veto flag on the gen-skip guard (skip a nameless edge in gen vs. an error in gen vs. validate skipping `ValidateGeneration` after pre-parse errors) → skip in gen, because it was prototyped with green gates, causes no golden churn, adds no public surface, and keeps validate's collect-every-error design the PRD and code state.
+
+**References.**
+- PRD §4.8 (relationship `name`, required), §4.13.
+
+**Resolution notes.** Resolved 2026-10-08 from the vetted prototype (applied clean with `--3way`; `context_table.go` had moved under FIX-272 at `4475a6a7`, outside these hunks). `validateRelationshipKeys` (`cmd/sqlgen/config/validate.go`) reports `tables.<t>.relationships[<i>].name: required` independent of the type check; `mergeDeclaredRelationships` and `findO2ORelationships` (`cmd/sqlgen/gen/context_table.go`) skip a nameless declared edge, so `sqlgen validate` prints only the config error instead of panicking (o2o) or adding an api-context error (o2m/m2m). Tests: `TestValidatePreParse_RelationshipNameRequired` (config) and `TestValidate_relationshipWithoutName` (cli). Inline: added the PRD §4.13 row "A relationship missing `name`" beside the link-key row; trimmed history from the prototype's test comments. Fail-first re-run on the final code: each of the three guards reverted fails the new tests (config rule → exit nil; either gen guard → slice-bounds panic). `/verify` corrections applied inline: the PRD §4.13 row now states the measured failure (an `o2o` edge panics the generator; an `o2m`/`m2m` edge emits a nameless entity-struct field and the package does not parse), the config test's doc comment no longer restates its name, and an `m2m` subtest was added to `TestValidate_relationshipWithoutName` for parity (it passes with the gen guard reverted, so it pins the single-error output rather than the bug). Backlog: `v1.json` relationship `required` list. Gates: `make check` ok, `make check-examples` ok, golden churn none (matches vet).
+
+### FIX-291
+
+- **Status:** Resolved
+- **Severity:** tracked
+- **Origin:** phase 17, `parser/sqlite`
+- **Surfaced by:** /fix-vet FIX-281 (2026-10-07), filed at /close-phase 30 (2026-10-08)
+- **Vetted:** ready at `b606e4a7` (2026-10-08; on top of FIX-281)
+
+**Issue.** **A SQLite relationship `filter` using `LIKE … ESCAPE` panics
+`sqlgen generate`.** Measured: schema `assets(id, name)` +
+`documents(id, entity_id, name)`, o2m relationship `PctDocuments` with
+`filter: "name LIKE 'x\\%%' ESCAPE '\\'"`, `sqlgen generate` → exit 2
+"panic: sql.BinaryExpr.String(): invalid op ESCAPE" via
+sqlite.QualifyFilterIdentifiers → gen.qualifyFilter →
+gen.relationshipStaticFilter.
+
+**Root cause.** `sqlite.QualifyFilterIdentifiers` returns
+`qualified.String()` with no recover (`parser/sqlite/filter_qualifier.go:36`),
+and rqlite/sql's `BinaryExpr.String()` panics on the ESCAPE operator. It is
+reached through `qualifyFilter` (`cmd/sqlgen/gen/filter_qualifier.go:31`)
+from the relationship filter path (`cmd/sqlgen/gen/context_relfilter.go:242`,
+`:262`) and (measured 2026-10-08) from the o2o JOIN predicate
+(`cmd/sqlgen/gen/context_table.go:2647` at `552dda4f`).
+
+**Suggested fix.**
+- Replace the bare `qualified.String()` with FIX-281's shared recover helper
+  `exprString(e rsql.Expr, what string) (string, error)` in
+  `parser/sqlite/sqlite.go` (e.g. `exprString(qualified, "relationship
+  filter")`) and return its error wrapped as `qualify filter: …`, so
+  generation fails with a message naming the table, relationship and filter
+  instead of a panic. Land after FIX-281 (vetted ready, not yet landed), or
+  add the helper here if this lands first.
+- Tests: a `TestQualifyFilterIdentifiers` (`parser/sqlite/filter_qualifier_test.go:8`)
+  row for `name LIKE 'x\%' ESCAPE '\'` asserting an error and no panic; a
+  `cmd/sqlgen/gen` case for the o2m `filter` above asserting the wrapped
+  error.
+- Lands after FIX-281: the patch calls FIX-281's `exprString` helper and was prototyped on `b606e4a7` with FIX-281's patch applied; without FIX-281 it applies but does not compile. The o2o JOIN predicate path (`gen/context_table.go:2638`) is now measured, not only read.
+- Prototype: `parser/sqlite/filter_qualifier.go` `qualified.String()` → `exprString(qualifyExpr(parsed, alias), "relationship filter")`, wrapped as `qualify filter: %w`. `TestQualifyFilterIdentifiers`'s `wantErr bool` becomes `wantErr string` (a message substring) with a new row "unrenderable LIKE ESCAPE errors" ("qualify filter: rendering relationship filter: sql.BinaryExpr.String(): invalid op ESCAPE"); new `TestRelationshipFilter_UnrenderableSQLiteFilterErrors` (`cmd/sqlgen/gen/relfilter_static_test.go`, o2m and o2o subtests, one per qualification site) asserts the error names "relationship PctDocuments", the quoted filter and the wrapped ESCAPE message. Inline doc correction (stale since FIX-098, measured): PRD §4.8 "Invalid SQL will produce a runtime database error" and §13.7 "sqlgen does not parse or validate its contents …" are wrong, since a syntax error is already a generation error on all three dialects (`filter: "name LIKE"` → postgres "qualify filter: parsing "name LIKE": syntax error at end of input", mysql "syntax error at position 35", sqlite "1:9: expected expression, found 'EOF'"). §4.8 now says a filter the dialect's parser cannot read is a generation error; §13.7 says "does not validate its contents against the schema"; §13.7.4 gains a paragraph on syntax errors and the SQLite `LIKE … ESCAPE` limit.
+- Prototype results, run at `b606e4a7` (+ FIX-281) on 2026-10-08:
+  - Reproduction: schema `assets(id, name)` + `documents(id, entity_id REFERENCES assets(id), name)`, sqlite, `filter: "name LIKE 'x\\%%' ESCAPE '\\'"`. o2m `PctDocuments`: `GOWORK=off sqlgen generate` → exit 2 "panic: sql.BinaryExpr.String(): invalid op ESCAPE" via sqlite.QualifyFilterIdentifiers (`filter_qualifier.go:36`) → gen.qualifyFilter (`:31`) → gen.relationshipStaticFilter. o2o `PctDocument`: the same panic via gen.qualifyFilter → gen.o2oJoinPredicate (`context_table.go:2638`) → buildSingleO2ODetail.
+  - With the fix: `Generation error: building relationship filters: table assets: relationship PctDocuments: filter "name LIKE 'x\\%%' ESCAPE '\\'": qualify filter (sqlite): qualify filter: rendering relationship filter: sql.BinaryExpr.String(): invalid op ESCAPE`, exit 1; o2o the same through "building o2o join details for assets: relationship PctDocument: …".
+  - Gates: parser `go test -race ./sqlite/...` → ok, `golangci-lint run ./sqlite/...` → 0 issues; cmd/sqlgen `go test -race ./gen/...` → ok, `golangci-lint run ./gen/...` → 0 issues; `gofumpt -l` → clean; `make refs-check` → ok.
+  - Fail-first: `filter_qualifier.go` back on `qualified.String()` → `TestQualifyFilterIdentifiers/unrenderable_LIKE_ESCAPE_errors` and `TestRelationshipFilter_UnrenderableSQLiteFilterErrors/one_to_many` fail: "panic: sql.BinaryExpr.String(): invalid op ESCAPE [recovered, repanicked]"; the existing suite without the fix → passes.
+  - Golden churn: none.
+  - Patch: `.claude/prototypes/FIX-291.patch` (4 files, +63/-12; the FIX-291 delta only, against the FIX-281-applied tree).
+
+
+**References.**
+- PRD §4.8 (`filter` on a relationship), §13.4.
+- FIX-281 (the same panic in CHECK / DEFAULT / generated column / index;
+  adds `exprString`), FIX-269 (`indexWhere`'s recover), FIX-098 (filter
+  qualification).
+
+**Resolution notes.** `sqlite.QualifyFilterIdentifiers` now renders the
+qualified expression through a recovering `exprString(e, what)` helper and
+wraps its error as `qualify filter: …`, so a SQLite `filter:` rqlite/sql parses
+but cannot render (`LIKE … ESCAPE`) fails generation with an error naming the
+table, relationship and filter instead of panicking, on both the o2m
+relationship-filter path and the o2o JOIN predicate. FIX-281 had not landed, so
+this change adds `exprString` itself in `parser/sqlite/sqlite.go` (the shape
+FIX-281's patch defines) and moves `indexWhere`'s recover onto it, unchanged in
+message; FIX-281 reuses it. The prototype's source hunks applied clean; the
+helper is the only delta. Tests: `TestQualifyFilterIdentifiers` (`wantErr`
+becomes a message substring, new "unrenderable LIKE ESCAPE errors" row) and
+`TestRelationshipFilter_UnrenderableSQLiteFilterErrors` (o2m and o2o); both
+panic with the fix reverted. PRD §4.8, §13.7 and §13.7.4 corrected inline: a
+filter the dialect's parser cannot read is already a generation error on all
+three dialects. Measured: `sqlgen generate` on the reproduction schema → exit 1
+"Generation error: … relationship PctDocuments: filter … qualify filter
+(sqlite): qualify filter: rendering relationship filter:
+sql.BinaryExpr.String(): invalid op ESCAPE" (o2m and o2o). Golden churn: none.
+Inline at `/verify`: PRD §4.8 and §13.7.4 now scope the generation error to
+the filters codegen parses (every `o2o`, and each `o2m`/`m2m` that gets a
+relationship filter member); the `QualifyFilterIdentifiers` doc comment names
+both qualification sites; the Root cause's o2o line ref is updated to `:2647`.
+
+
+### FIX-293
+
+- **Status:** Resolved
+- **Severity:** tracked
+- **Origin:** phase 6, `cmd/sqlgen/gen` (`connection.go.tmpl`)
+- **Surfaced by:** `/fix-vet FIX-292` (2026-10-08), filed at `/close-phase 30` (2026-10-08)
+- **Vetted:** ready at `13173996` (2026-10-08)
+
+**Issue.** **A `Connection` cursor that lacks an expected key, or holds JSON
+`null` for it, returns an SQL error instead of `ErrInvalidCursor`.** PRD §14.2
+"Cursor Encoding" says a cursor that "does not contain the expected keys" makes
+the `Connection` method return `ErrInvalidCursor`, so callers' `errors.Is`
+checks miss this case. Measured in the sqlite example (probe since deleted),
+`GOWORK=off go test -count=1 -run TestZZProbeCursorNil -v ./tests/` →
+`After={} -> err=connection products: get products: query: SQL logic error:
+unrecognized token: "$" (1)`, and the same for `After={"id":null}`. The Phase 14
+record (`docs/tracker/phase-14.md:235`) noted missing-key cursors as uncaught
+and out of that phase's scope.
+
+**Root cause.** At `45a12a53`, `cursorKeyset` (`cmd/sqlgen/gen/templates/connection.go.tmpl:53-56`)
+builds `sql.Condition{Clause: col + " " + op + " $", Value: cursor[key]}` without
+checking that `cursor[key]` is present and non-nil. The builder reads a nil
+`Value` as "no args" (`sql/builder.go:588-590`), so the clause keeps a bare `$`,
+the root cause FIX-284 and FIX-292 address for `Raw` and `Where`. `decodeCursor`
+(`:34`) validates only base64 and JSON, and the callers in
+`table/pagination.go.tmpl:90/:97` and `view/pagination.go.tmpl:98/:105` pass the
+map straight on.
+
+**Suggested fix.**
+- After `decodeCursor` in both pagination templates (or in a shared helper in
+  `connection.go.tmpl`), check that every resolved cursor key is present with a
+  non-nil value; otherwise return `ErrInvalidCursor`, wrapped the same way as the
+  existing decode failures.
+- Tests: extend the Phase 14 tampered-cursor E2E tests with `{}` and
+  `{"<key>": null}` cursors asserting `errors.Is(err, ErrInvalidCursor)`, for a
+  table and a view, on at least the sqlite example; regenerate goldens.
+- Independent of FIX-292's ruling: a cursor key is never meaningfully NULL here.
+- Prototype results, run at `13173996` on 2026-10-08:
+  - Reproduction: a throwaway probe (`cmd/sqlgen/testdata/examples/sqlite/tests/zz_probe_cursor_test.go`, since deleted), `GOWORK=off go test -count=1 -run TestZZProbeCursorNil -v ./tests/` → `table After={} -> err=connection products: get products: query: SQL logic error: unrecognized token: "$" (1)`; the same for table Before, the view (`connection product_summary: …`), and the cursors `{"id":null}`, `{"other":1}` and a top-level JSON `null`; composite `{"product_id":1}` and `{"product_id":1,"tag_name":"a","label":null}` → `connection product_tag_labels: … unrecognized token: "$" (1)`; control `{"id":1}` → ok. With the fix every one returns `sqlgen: invalid cursor`.
+  - Prototype (the shared-helper option): `decodeCursor(s string, keys []string)` in `connection.go.tmpl` loops over the keys and returns `ErrInvalidCursor` when `cursor[key] == nil`, which covers a missing key, a null value and a top-level `null`; it reuses the package's `ErrInvalidCursor` (no new import). The 4 call sites in `table/pagination.go.tmpl` and `view/pagination.go.tmpl` pass `c.cursorKeys`, and the callers' error handling is unchanged. Unit tests (`connection_test.go`, `pagination_table_test.go` patterns) and the unit goldens `connection_gen.go` / `pagination_products_gen.go` are updated. New E2E `TestConnection_CursorMissingKeyReturnsErrInvalidCursor` (sqlite, 7 cases: table After/Before × `{}` and `{"id":null}`, a composite cursor missing its trailing keys, view After `{}`, view Before `{"id":null}`).
+  - Gates: `cd cmd/sqlgen && go test -race -count=1 ./gen/...` → ok; `make update-golden` / `make update-golden-e2e` → ok; `TestE2EGoldenFiles` → ok; `gofumpt -l` → clean; all 12 churned examples `GOWORK=off go test -race -count=1 ./...` → ok and `GOWORK=off golangci-lint run` → 0 issues.
+  - Fail-first: the key-check loop removed and goldens regenerated → `TestConnection_CursorMissingKeyReturnsErrInvalidCursor` fails all 7 (`connection_test.go:302: err = connection products: get products: query: SQL logic error: unrecognized token: "$" (1), want ErrInvalidCursor`), and `TestConnectionTemplate_cursorEncodeDecode` fails (`output missing cursor decode: "if cursor[key] == nil {"`); the existing suite without the fix → passes.
+  - Golden churn (changed only; 2 lines per Connection method plus the `decodeCursor` body in `connection_gen.go`): cache, events, graphql, graphql_null_wrappers, graphql_top_level, mysql, postgres, postgres_stdlib, tenancy, tenancy_mysql, tenancy_postgres ~2–3 files each under `expected/` and `models/`; sqlite ~24 each (file_per_table); unit goldens `connection_gen.go`, `pagination_products_gen.go`. If FIX-272's `sequence_rows` table lands first, its Connection method picks up the same 2-line change on regeneration.
+  - Patch: `.claude/prototypes/FIX-293.patch` (116 files, +888/-629; source and tests 8 files, +104/-13).
+
+
+**References.**
+- PRD §14.2 "Cursor Encoding" / "Invalid cursors" (`docs/PRD.md:8912`); §22.1.
+- FIX-284, FIX-292 (nil `Value` → bare `$`).
+- `docs/tracker/phase-14.md:235` (missing-key cursors deferred).
+
+**Resolution notes.** Resolved 2026-10-08 from the vetted prototype (fresh at HEAD `45a12a53`, applied clean). `decodeCursor` in `connection.go.tmpl` now takes the client's cursor keys and returns `ErrInvalidCursor` when any key is missing or null (this also covers a top-level JSON `null` cursor); the four call sites in `table/pagination.go.tmpl` and `view/pagination.go.tmpl` pass `c.cursorKeys`, and their error handling is unchanged. Regression test: sqlite `TestConnection_CursorMissingKeyReturnsErrInvalidCursor` (7 cases: table After/Before × `{}` and `{"id":null}`, a composite cursor missing its trailing keys, view After `{}`, view Before `{"id":null}`); template pattern tests in `connection_test.go` / `pagination_table_test.go` and unit goldens `connection_gen.go` / `pagination_products_gen.go` updated. Fail-first on the final code: the key-check loop removed from the generated sqlite `connection_gen.go` → all 7 cases fail with `unrecognized token: "$" (1), want ErrInvalidCursor`; removed from the template → `TestConnectionTemplate_cursorEncodeDecode` fails (`output missing cursor decode: "if cursor[key] == nil {"`). Golden churn matches the vet's 12 examples and 116 files, plus 2 lines in each postgres `models_gen.go` copy for the `sequence_rows` Connection method that FIX-272 (`4475a6a7`) added after the vet, as the entry anticipated. Gates: `make check` → ok; `make check-examples` → ok. Inline at `/verify`: the PRD §9.8.12 `Connection` sample (`docs/PRD.md:6812,6819`) and its `decodeCursor` body now show the two-argument form and the key check; `docs/tracker/phase-14.md:235` notes the later fix; `TestViewPaginationTemplate_connectionMethod` pins both view call sites to `c.cursorKeys`; this entry's PRD ref corrected to `:8912` and its root-cause line refs labelled `45a12a53`.
+
+
+### FIX-294
+
+- **Status:** Resolved
+- **Severity:** tracked
+- **Origin:** phase 30, `parser/mysql` + `parser/introspect` (`mysql.go`)
+- **Surfaced by:** backlog promotion at `/close-phase 30` (2026-10-08); first recorded by the FIX-274 and FIX-275 vets (2026-10-07)
+- **Vetted:** corrected at `be98918a` (2026-10-08)
+
+**Issue.** **MySQL indexes with an expression (functional) key part are not
+modeled the way PRD §30.7 now states for every source.** FIX-274 (SQLite) and
+FIX-276 (PostgreSQL) landed the user's 2026-10-08 ruling (C): an index with an
+expression part "is not listed and is not a conflict target, under every
+source". On MySQL the two sources still diverge. Measured (MySQL 8.0):
+`CREATE UNIQUE INDEX ux ON zz274t ((lower(email)))` → parsed `[""]` vs
+introspected absent; `(a, (lower(b)))` → parsed `["a", ""]` vs introspected
+`[a]`. MySQL also names an unnamed index with any expression key part
+`functional_index`, so it never takes a column-name number, while the parser
+names it after its first column and shifts later keys: `zfn (a int, b int,
+KEY (a, (b + 1)), KEY (a))` → db `a:INDEX[a] functional_index:INDEX[a]`, parser
+`a:INDEX[a ""] a_2:INDEX[a]`.
+
+**Root cause.** The file parser's `indexColumns` (`parser/mysql/mysql.go:1060` at `be98918a`) writes `""` for a functional key part instead of skipping
+the index, and keeps it in the key list that `addKey` numbers. The introspector
+(`parser/introspect/mysql.go`) skips the part (`STATISTICS.COLUMN_NAME` is NULL)
+and drops an expression-only index, but keeps a mixed index over its plain
+columns, the false-uniqueness shape the ruling removes.
+
+**Suggested fix.**
+- Apply ruling (C) on both MySQL sources: skip any index with a functional key
+  part, unique or not. In the parser, drop it before `addKey` names the
+  remaining keys, so later unnamed keys take MySQL's numbers; in the introspector,
+  skip any index with a NULL-`COLUMN_NAME` row (or a non-NULL `EXPRESSION`).
+- Tests: a `mysql_integration_test.go` parity test (`assertSchemaParity`) covering
+  an expression-only UNIQUE, a mixed UNIQUE, a mixed non-unique index and the
+  `zfn` numbering case; parser unit cases for `indexColumns` / key naming.
+- Interaction: FIX-275 (open, vetted ready, MySQL key declaration order) changes
+  the same naming path; the vet should say which lands first.
+- Vet notes (stale facts and scope):
+  - `indexColumns` is at `parser/mysql/mysql.go:1060` at `be98918a`;
+  - on the introspector, only the non-unique sweep (`introspectNonUniqueIndexes`) skips the part. UNIQUE indexes come from `introspectConstraints`' TABLE_CONSTRAINTS ⨝ KEY_COLUMN_USAGE query (`introspect/mysql.go:388-405`), where KCU has no row for an expression part, so an expression-only UNIQUE drops out of the join while a mixed UNIQUE is kept as UNIQUE [a] and also sets `Column.Unique` on `a` (measured `zfm db: ux2:UNIQUE["a"] a.Unique`);
+  - MySQL numbers expression keys `functional_index`, `functional_index_2`, … unique against all of the table's key names, and a mixed key is named that way too (`t1 … KEY (a, (b + 1))` → `functional_index_4`; a column named `functional_index` pushes its key to `functional_index_2`).
+- Changed from the original:
+  - dropping the key before `addKey` is not enough: a skipped key still holds its name, as in FIX-276's PG reservation (a named `KEY a ((b+1))` pushes a later `KEY (a)` to `a_2`; an unnamed one holds `functional_index[_N]`);
+  - an expression key whose leading columns cover an FK also serves as MySQL's index for that FK, so MySQL builds no index for the FK, or drops one it already built (measured: zfk, FK-before-UNIQUE and the ALTER case). Without this the parser lists an FK index the database lacks;
+  - the introspector needs the filter on the constraint query too, not only on STATISTICS.
+- Prototype: `addKey` keeps any key with an expression part (an `""` column) in a new per-table `Parser.exprKeys` instead of `table.Constraints`, reserving its name for later unnamed keys; an unnamed one is named as if its column were `functional_index`. A built FK index whose columns lead an expression key is not added, and a declared expression key replaces an already built FK index through the unchanged redundancy loop. `exprKeys` follows its table (dropped on DROP TABLE and case-insensitive DROP INDEX, moved on RENAME TABLE), and its plain columns follow RENAME/CHANGE/DROP COLUMN, all measured on MySQL 8.0. `parser/introspect/mysql.go`: the UNIQUE/PK/FK query gets `AND (tc.constraint_type <> 'UNIQUE' OR NOT EXISTS (… statistics … column_name IS NULL))`, and the non-unique sweep skips any index with a NULL-`column_name` row. Tests: `TestExpressionKeys` (`parser/mysql`, 14 cases) and `TestMySQLIntrospect_ExpressionIndexes` (15 tables: key names on both sides, no `Column.Unique`, then `assertSchemaParity`).
+- Lands before FIX-275 (recommended; either order applies with plain `git apply --check` and gives a byte-identical tree, and both suites pass with both applied).
+- Prototype results, run at `be98918a` on 2026-10-08:
+  - Reproduction: a throwaway probe (`parser/introspect/zz_probe_fix294_test.go`, since deleted), `go -C parser test -count=1 -run TestZZProbeFIX294 -v ./introspect/` on MySQL 8.0, db vs parse: `UNIQUE INDEX ux ((lower(email)))` → none vs `ux:UNIQUE[""]`; `UNIQUE INDEX ux2 (a, (lower(b)))` → `ux2:UNIQUE["a"] a.Unique` vs `ux2:UNIQUE["a" ""]`; `KEY ix (a, (b + 1))` → `ix:INDEX["a"]` vs `ix:INDEX["a" ""]`; zfn `KEY (a, (b + 1)), KEY (a)` → `a:INDEX["a"] functional_index:INDEX["a"]` vs `a:INDEX["a" ""] a_2:INDEX["a"]`; `KEY a ((b + 1)), KEY (a)` → `a_2:INDEX["a"]` vs `a:INDEX[""] a_2:INDEX["a"]`; `KEY (a, (b + 1)), FOREIGN KEY (a) …` → `functional_index:INDEX["a"]` (no FK index) vs `a:INDEX["a" ""]`; `assertSchemaParity` fails.
+  - Gates: `go -C parser test -race -count=1 ./...` → ok (containers); parser `golangci-lint run ./...` → 0 issues; `gofumpt -l parser/` → clean; `go -C cmd/sqlgen test -short -count=1 ./...` → ok; with FIX-275 also applied, `./mysql/ ./introspect/` → ok.
+  - Fail-first: each site removed alone fails its test — the `addKey` skip (`+ {"e UNIQUE ux []"}`, `+ {"e INDEX ix [a ]"}`), the FK-prefix check, `functional_index` naming, the name reservation, the DROP INDEX / DROP TABLE releases (`- "e INDEX a [a]", + "e INDEX a_2 [a]"`), the RENAME TABLE move, the RENAME/CHANGE COLUMN rename, the DROP COLUMN strip, the introspector UNIQUE filter ("m_ex_m.a: Unique = true", `+ "m_ex_m": {"ux": "a"}`) and the non-unique skip; `parser/mysql/mysql.go` at HEAD → `+ "m_ex_u": {"ux": ""}`. The existing suite without the fix → passes.
+  - Golden churn: none.
+  - Patch: `.claude/prototypes/FIX-294.patch` (4 files, +280/-7).
+
+
+**References.**
+- PRD §30.7 (`indexes[]`), §16.5.2, §6.1; the 2026-10-08 ruling in FIX-274.
+- FIX-274, FIX-276 (SQLite and PostgreSQL halves), FIX-275.
+
+**Resolution notes.** Resolved 2026-10-08 per the user's ruling (C), MySQL half (SQLite was FIX-274, PostgreSQL FIX-276); PRD §30.7 already says it for every source, so no PRD wording changed. The vetted prototype was fresh (`git diff --stat be98918a HEAD -- parser/` empty) and applied cleanly with `git apply --3way`. `parser/mysql`: `addKey` keeps a key with an expression part (an `""` column from `indexColumns`) in the per-table `Parser.exprKeys` instead of `table.Constraints`; its name stays taken for later unnamed keys, and an unnamed one is named as if its column were `functional_index`. A built FK index whose columns lead an expression key is not added, and a declared expression key replaces an FK index already built through the existing redundancy loop. `exprKeys` follows its table (dropped on DROP TABLE and case-insensitive DROP INDEX, moved on RENAME TABLE), and its plain columns follow RENAME / CHANGE / DROP COLUMN. `parser/introspect/mysql.go`: the PK/UNIQUE/FK query drops a UNIQUE with any NULL-`column_name` STATISTICS row (so a mixed UNIQUE no longer sets `Column.Unique`), and the non-unique sweep skips any index with a NULL-`column_name` row. Tests: `TestExpressionKeys` (`parser/mysql`, 15 cases) and `TestMySQLIntrospect_ExpressionIndexes` (16 tables: key names on both sides, no `Column.Unique`, then `assertSchemaParity`). Fail-first on the final code: both source files reverted to HEAD fail both tests. Gates: `make check` ok, `go -C parser test -race -count=1 ./...` ok (containers), `make check-examples` ok, `make update-golden-e2e` / `make update-golden` → no churn (matches the vet). Beyond the prototype: `renameTable` set the new key before deleting the old one, so `ALTER TABLE e RENAME TO e` lost the table's `exprKeys` (and, already at HEAD, its `generated` set). Measured on MySQL 8.0: `KEY a ((b + 1)); RENAME TO itself; ADD KEY (a)` → db `a_2`, parser `a`; `FOREIGN KEY (a) …; RENAME TO itself; ADD KEY ix (a)` → db `ix` only, parser `a` + `ix`. Both maps are now deleted before being set, as FIX-276's `moveTableKey` does; covered by the `TestExpressionKeys` case "renaming the table to its own name keeps its name", table `m_ex_rs` in the integration test, and a `TestForeignKeyBackingIndexSynthesis` case (each fails with the old order). Verify: the reviewer confirmed the prototype divergence is only the `renameTable` reorder and its tests (fail-first confirmed), and found no defects; its comment-trim nit was applied, and the backlog line on `Seed` not rebuilding `exprKeys` now also names the lost name reservation (reading).
+
+### FIX-290
+
+- **Status:** Resolved
+- **Severity:** tracked
+- **Origin:** phase 30 (30.2 introspection parity), `parser/introspect`
+- **Surfaced by:** /fix-vet FIX-276 (2026-10-07), filed at /close-phase 30 (2026-10-08)
+- **Vetted:** ready at `b606e4a7` (2026-10-08)
+
+**Issue.** **The PG introspector lists `INCLUDE` columns as index key
+columns**, so a standalone index differs by source and a unique index with
+`INCLUDE` would yield a wrong conflict target. Measured: `CREATE INDEX inc
+ON e (a) INCLUDE (b)` → parsed `["a"]`, introspected `["a" "b"]`
+(`assertSchemaParity` diff); `INSERT … ON CONFLICT (a, b) DO NOTHING` on
+`UNIQUE (a) INCLUDE (b)` → SQLSTATE 42P10 while `ON CONFLICT (a)` → ok (the
+generated conflict constant is inferred from the UNIQUE→conflict mapping,
+not run).
+
+**Root cause.** The `introspectStandaloneIndexes` column subquery
+(`parser/introspect/postgres.go:756-759` at `50ef2ebd`) unnests all of
+`indkey`, which holds the key columns followed by the `INCLUDE` columns, and
+has no ordinal cut (FIX-276 dropped its only filter, `k.attnum <> 0`). The
+matview query cuts at `k.ord <= ix.indnkeyatts`
+(`parser/introspect/postgres.go:329-339`); this one does not. The emitted
+constraint (`:802-809`) therefore carries the payload columns, as
+`parser.Unique` when `indisunique` (`:794-795`).
+
+**Suggested fix.**
+- Add `WHERE k.ord <= pi.indnkeyatts` to the subquery
+  (`parser/introspect/postgres.go:759` at `50ef2ebd`), matching the matview
+  query.
+- Tests: a PG case in `TestParityFixtures`
+  (`parser/introspect/parity_fixtures_test.go:163`) or alongside
+  `TestPostgresIntrospect_IndexMethodAndPartialWhere`
+  (`parser/introspect/introspect_integration_test.go:2056`) with `CREATE
+  INDEX inc ON e (a) INCLUDE (b)` and `CREATE UNIQUE INDEX u ON e (c)
+  INCLUDE (d)`, asserting `["a"]` / `["c"]` and parity with the file parser.
+- Vet notes on scope: a second symptom with the same root cause: for `CREATE UNIQUE INDEX u ON e (c) INCLUDE (d)`, the parsed `e.c` has `Unique=true` and the introspected one `Unique=false` (parity diff `- Unique: true / + Unique: false`); the fix covers it. The constraint form `CONSTRAINT k_u UNIQUE (a) INCLUDE (b)` already matches (`conkey` holds only key columns), so the scope is standalone indexes only.
+- Changed from the original (test location only): `TestParityFixtures` applies and parses the fixture but never compares the two sources, so the regression test is a new `pgParityCase` + `assertSchemaParity` test, `TestPostgresIntrospect_IncludeColumns` in `parser/introspect/postgres_integration_test.go` (placed after `TestPostgresIntrospect_QuotedIdentifiers`, away from FIX-276's test hunk).
+- Lands with FIX-276: both patches edit the same subquery line in `parser/introspect/postgres.go`, so neither applies on top of the other (`patch failed: parser/introspect/postgres.go:755` / `:756`); their other files apply cleanly. Whichever lands second carries the line by hand: after FIX-276 drops `WHERE k.attnum <> 0`, the subquery ends `WHERE k.ord <= pi.indnkeyatts),`, matching the matview query. Verified green with both patches' tests (`go -C parser test -race -count=1 ./introspect/... ./postgres/...` → ok).
+- Prototype results, run at `b606e4a7` on 2026-10-08:
+  - Reproduction: a throwaway probe (`zz_probe_fix290_test.go`, since deleted) with `CREATE INDEX inc ON zz290.e (a) INCLUDE (b); CREATE UNIQUE INDEX u ON zz290.e (c) INCLUDE (d)`, `go -C parser test -count=1 -run TestZZProbeFIX290 -v ./introspect/` → parsed `inc [a]`, `u [c]`; introspected `inc [a b]`, `u [c d]`; `INSERT … ON CONFLICT (c, d) DO NOTHING` → "ERROR: there is no unique or exclusion constraint matching the ON CONFLICT specification (SQLSTATE 42P10)", `ON CONFLICT (c)` → ok. After the fix: introspected `[a]`, `[c]`, `e.c unique=true`, parity passes.
+  - Prototype: `postgres.go:759` `WHERE k.attnum <> 0` → `WHERE k.attnum <> 0 AND k.ord <= pi.indnkeyatts` (as suggested), plus the new test asserting `inc [a]` / `u [c]` and `assertSchemaParity`.
+  - Gates: `go -C parser test -race -count=1 ./introspect/...` → ok (integration ran); `gofumpt -l parser/introspect/` → clean; `golangci-lint run ./introspect/...` → 0 issues.
+  - Fail-first: line 759 reverted → `TestPostgresIntrospect_IncludeColumns` fails: "introspected e constraints mismatch (-want +got): … Columns: []string{ + "d", } … + "b"" and "postgres: introspected schema differs from the file parser's … - Unique: true, + Unique: false"; the existing suite without the fix → passes.
+  - Golden churn: none.
+  - Patch: `.claude/prototypes/FIX-290.patch` (2 files, +26/-1).
+
+
+**References.**
+- PRD §6.1 (both schema sources give the same schema), §30.7 (`indexes[]`).
+- FIX-276 (expression-only indexes in the same function).
+- `parser/introspect/postgres.go:329-339` (the `indnkeyatts` cut to copy).
+
+**Resolution notes.** The standalone-index subquery in
+`introspectStandaloneIndexes` now ends `WHERE k.ord <= pi.indnkeyatts),`
+(`parser/introspect/postgres.go:761`), matching the matview query, so
+`INCLUDE` columns are no longer listed as index keys and a unique index with
+`INCLUDE` keeps its column `Unique` on both sources. The function comment
+names the cut. New `TestPostgresIntrospect_IncludeColumns`
+(`parser/introspect/postgres_integration_test.go:443`) asserts `inc [a]` /
+`u [c]` and schema parity. Prototype applied with `git apply --3way`; the one
+conflicting line (FIX-276 had dropped `WHERE k.attnum <> 0`) was resolved by
+hand as the vet recorded. Fail-first: the cut removed → the new test fails on
+`Columns` (`+ "b"`, `+ "d"`) and `- Unique: true / + Unique: false`. Gates:
+`make check` ok; `go -C parser test -race -count=1 ./introspect/...
+./postgres/...` ok; `make check-examples` ok; golden churn none. Doc
+corrections: Root cause and Suggested fix line refs re-pinned to `50ef2ebd`
+(FIX-276 shifted them; Root cause no longer claims a `k.attnum <> 0` filter),
+`introspect_integration_test.go:2003` → `:2056`.
+
+### FIX-276
+
+- **Status:** Resolved
+- **Severity:** tracked
+- **Origin:** phase 30, `parser/postgres` + `parser/introspect`
+- **Surfaced by:** backlog promotion at `/close-phase 30` (2026-10-07); first recorded by 30.2 (2026-10-05)
+- **Vetted:** ready at `d51ace1b` (2026-10-07; ruled 2026-10-08, the ruled option is the prototype)
+
+**Issue.** **A PostgreSQL expression-only index is kept by the parser and
+skipped by the introspector**, so the manifest's `indexes[]` differs by
+source. Measured evidence from the backlog line: "parser test `e_lower_idx`
+with `Columns: []` (introspector side by code reading)" for `CREATE INDEX ON
+e (lower(x))`.
+
+**Root cause.** `indexParamColumns` (`parser/postgres/postgres.go:502-514`)
+skips expression elements, and `parseCreateIndex` (`postgres.go:375-410`)
+appends the index even when no column is left. `introspectStandaloneIndexes`
+(`parser/introspect/postgres.go:746`) skips an index with no plain column
+(`if len(cols) == 0 { continue }`, `:794`).
+
+**Suggested fix.**
+- Align with the canonical form FIX-274 rules for expression parts; the
+  smallest change is for `parseCreateIndex` to skip an index whose
+  `indexParamColumns` is empty, matching the introspector.
+- Test: a PG `assertSchemaParity` case with `CREATE INDEX ON e (lower(x))`.
+- Vet notes on scope (all refs match HEAD):
+  - the introspector side is now measured on PG16: parsed `e_lower_idx INDEX []` → introspected absent. `TestDerivedConstraintNames` pins only the name `e_lower_idx`, not `Columns: []`;
+  - a unique expression-only index differs the same way (`ux UNIQUE []` → absent);
+  - a mixed UNIQUE index `(a, lower(x))` gives `UNIQUE [a]` and sets `Column a Unique: true` on both sources, a false uniqueness that fails at runtime (below);
+  - a column written as an expression is misread: `CREATE INDEX px ON e (((a)), b)` parses as `[b]` but introspects as `[a b]`; `((a))` parses as `[]` but introspects as `[a]`; `((x COLLATE "C"))` parses as `[]` but introspects as `[x]`. PG16 stores each as a plain column (`indexprs` NULL);
+  - the impact is not manifest-only, so `nit` understates it: generated conflict targets fail. E2E with the HEAD binary on a sibling copy of the postgres example (files source) with `expr_rows` (unique `lower(email)`, unique `(a, lower(b))`, index `(a, lower(b))`, index `lower(b)`): it generates `ExprRowConflict: {} // UNIQUE ()` and `ExprRowConflictA: {"a"} // UNIQUE (a)`, and the manifest lists `expr_rows_email_ux` and `expr_rows_lower_idx` with `"columns": null`. `Upsert(..., ExprRowConflict)` twice → "upsert expr_row: sqlgen: unique constraint violation on constraint expr_rows_email_ux: Key (lower(email))=(a@x) already exists." (the conflict clause is silently dropped). `Upsert(..., ExprRowConflictA)` → "upsert expr_row: pgx rows: ERROR: there is no unique or exclusion constraint matching the ON CONFLICT specification (SQLSTATE 42P10)", under both sources.
+- Pending the user's ruling: FIX-274's shared question (how is an index with an expression part modeled, on every dialect and source?). PG raises nothing its options miss. Measured PG consequences:
+  - (C), prototyped for PostgreSQL: in the `expr_rows` probe the conflict enum drops to `ExprRowConflictPK` only, and `exprRowConflictCoversPK` and the UpsertMany read-back branch drop out (190 changed lines in models_gen.go, all `expr_rows`); manifest `indexes[]` loses 4 entries (two had `"columns": null`), and column `a` goes from unique true to false. Nothing outside `expr_rows` changes; no golden churn;
+  - (A): PG needs only the original Suggested fix (mixed indexes already agree as `[a]`), but `ExprRowConflictA` stays and fails with 42P10 under both sources;
+  - (B): needs a deparse of `IndexElem.Expr`, `pg_get_indexdef(oid,k,true)` plus `catalogExpr`, and generator changes. Not prototyped;
+  - under any option PG needs the parenthesized-column unwrap; under C it also needs name reservation for skipped indexes.
+- Prototype (option C, PostgreSQL):
+  - `indexParamColumns` returns `([]string, bool)`, false when any part is an expression; `parseCreateIndex` skips such an index, unique or not, partial or not. It still derives the index's name and records it in a new `Parser.exprIndexes` (schema → names), which `namespace()` adds to the taken relation names. Without that, C regresses name parity: `CREATE INDEX n_a_idx ON n (lower(x)); CREATE INDEX ON n (a)` → PG names the second `n_a_idx1`, while an unreserved parser gives `n_a_idx`;
+  - a new `indexElemColumn` unwraps a ColumnRef inside any number of COLLATE clauses (parentheses are not in the AST), so `((a))` and `((x COLLATE "C"))` count as plain columns;
+  - `introspectStandaloneIndexes` adds `AND pi.indexprs IS NULL` (the matview query's filter), and the dead `WHERE k.attnum <> 0` and the `len(cols) == 0` skip are removed;
+  - tests: new `TestCreateIndex_ExpressionParts` (7 cases); `TestDerivedConstraintNames`'s "index columns from expressions and repeats" case rewritten so the skipped indexes' names show up as `e_lower_idx1`, `e_expr_idx1`, `e_x_idx1` on later plain indexes; new `TestPostgresIntrospect_ExpressionIndexes` (constraints, Unique flags, `assertSchemaParity`);
+  - known limit, not prototyped: in `both` mode a seeded (introspected) schema does not reserve the database's expression-index names; sequences and views have the same gap.
+- Changed from the original: "skip an index whose `indexParamColumns` is empty" is option A's PG half and leaves the mixed-index false uniqueness (42P10). Under C it also needs the name reservation and the parenthesized-column unwrap.
+- Prototype results, run at `d51ace1b` on 2026-10-07:
+  - Reproduction: a throwaway probe (`zz_probe_fix276_test.go`, since deleted), `cd parser && go test -v -count=1 -run TestZZProbeFIX276 ./introspect/`, parsed → introspected: `e_lower_idx INDEX []` → absent; `ux UNIQUE []` → absent; `ux2 UNIQUE ["a"]` → `["a"]` (column a Unique on both sides); `ix INDEX ["a"]` → `["a"]`; `px` → `["a" "b"]`; `inc INDEX ["a"]` (`(a) INCLUDE (b)`) → `["a" "b"]`; `assertSchemaParity` FAIL.
+  - Gates: `cd parser && go test -race -count=1 ./...` → ok (PG and MySQL containers); `golangci-lint run ./postgres/... ./introspect/...` → 0 issues; `gofumpt -l parser/` → clean; `cd cmd/sqlgen && go test -short -count=1 ./...` → ok; `TestE2EGoldenFiles` → ok.
+  - Fail-first:
+    - `parser/postgres/postgres.go` reverted → `TestCreateIndex_ExpressionParts` fails all 7 (e.g. `- nil + {{Name: "e_lower_idx", Type: s"INDEX", Columns: []string{}, Method: "btree"}}`); `TestDerivedConstraintNames` fails (`+ "e INDEX e_expr_idx"` …); the parity test fails (`- {Name: "ux2", Type: s"UNIQUE", Columns: []string{"a"}...}`);
+    - `parser/introspect/postgres.go` reverted with the parser fix kept → `+ {Name: "ux2", …}`, `+ {Name: "ix", … Where: "b > 0"}`, "introspected e.a: Unique = true";
+    - name-reservation line removed → `- "e INDEX e_lower_idx1" + "e INDEX e_lower_idx"` and `- Name: "n_a_idx" + Name: "n_a_idx1"`;
+    - parenthesized-column unwrap disabled → `parenthesized_column` and `parenthesized_collated_column` fail;
+    - the existing suite without the fix → passes.
+  - Golden churn: none.
+  - Patch: `.claude/prototypes/FIX-276.patch` (4 files, +147/-22).
+
+- The user ruled on 2026-10-08: FIX-274's option (C) for PostgreSQL, matching this prototype (with the skipped-index name reservation and the parenthesized-column unwrap). Severity raised from `nit` to `tracked` on 2026-10-08 for the measured 42P10 conflict-target failure, so it lands before the Phase 30 close.
+
+
+**References.**
+- PRD §6.1, §30.7.
+- FIX-274 (SQLite sibling).
+
+**Resolution notes.** Resolved 2026-10-08 per the user's ruling (C), PostgreSQL half (SQLite was FIX-274). The vetted prototype was fresh (`git diff --stat d51ace1b HEAD` empty on its 4 files) and applied cleanly with `git apply --3way`. `parser/postgres`: `indexParamColumns` returns `([]string, bool)`, false when any part is an expression; the new `indexElemColumn` unwraps a ColumnRef inside any number of COLLATE clauses, so `((a))` and `((x COLLATE "C"))` are plain columns; `parseCreateIndex` skips an index with an expression part (unique or not, partial or not) but still derives its name and records it in `Parser.exprIndexes`, which `namespace()` adds to the taken relation names, so a later index's derived name matches PostgreSQL's (`n_a_idx1`). `parser/introspect`: `introspectStandaloneIndexes` filters `AND pi.indexprs IS NULL` (as the matview query does); the dead `WHERE k.attnum <> 0` and the `len(cols) == 0` skip are gone. PRD §30.7 already carries FIX-274's sentence ("not listed and is not a conflict target, under every source"); PG needed no extra wording. Tests: `TestCreateIndex_ExpressionParts` (7 cases), `TestDerivedConstraintNames`'s "index columns from expressions and repeats" case rewritten so the skipped names surface as `e_lower_idx1` / `e_expr_idx1` / `e_x_idx1`, and `TestPostgresIntrospect_ExpressionIndexes` (constraints, Unique flags, `assertSchemaParity`). Fail-first reproduced on the final code: `parser/postgres/postgres.go` reverted fails all 7 subtests, the derived-names case and the introspection test; `parser/introspect/postgres.go` reverted fails with "introspected e.a: Unique = true"; the name-reservation line removed gives `- "e INDEX e_lower_idx1" + "e INDEX e_lower_idx"`. Gates: `make check` ok, `make check-examples` ok, `make update-golden-e2e` / `make update-golden` → no churn (matches the vet). Beyond the prototype (found at verify): the prototype keyed the reserved names by schema, so they outlived their table; `CREATE INDEX ON d (lower(x)); DROP TABLE d; CREATE TABLE d (…, lower int); CREATE INDEX ON d (lower)` named the last index `d_lower_idx1` where HEAD and PostgreSQL give `d_lower_idx`, and `ALTER TABLE … SET SCHEMA` left the name behind. `exprIndexes` is now keyed by qualified table: `namespace()` reads it per table, `dropTable` deletes the entry, and a new `moveTableKey` (shared by RENAME and SET SCHEMA) carries it with the table, deleting the old key before setting the new one so a same-key rename stays a no-op as at HEAD (reviewer finding). Covered by the `TestDerivedConstraintNames` case "a skipped expression index's name goes with its table" (drop, set schema, rename, rename-then-drop; the schema-keyed version fails it with `+ "d INDEX d_lower_idx1"`, `+ "m INDEX m_lower_idx1"`) and tables `d` / `r` in `TestPostgresIntrospect_ExpressionIndexes` (PG16 gives `d_lower_idx` and `r_lower_idx1`). Backlog: three lines — DROP COLUMN does not release a reservation (reviewer finding; a mixed index regresses against HEAD in name only, and the fix needs each reservation's referenced columns), the vet's known limit (under `both`, a seeded schema does not reserve the database's expression-index names) and a same-type cast part (`(x::text)` on `text`) that PostgreSQL stores as a plain column but the parser skips (measured while writing the drop test).
+
+### FIX-274
+
+- **Status:** Resolved
+- **Severity:** tracked
+- **Origin:** phase 30, `parser/introspect` + `parser/sqlite`
+- **Surfaced by:** backlog promotion at `/close-phase 30` (2026-10-07); first recorded by 30.6 (2026-10-05)
+- **Vetted:** ready at `d51ace1b` (2026-10-07; ruled 2026-10-08, the ruled option is the prototype)
+
+**Issue.** **SQLite expression index parts differ by source.** The file
+parser keeps an expression part as index column text; the introspector skips
+it, so the index's columns (conflict targets, manifest `indexes[]`) differ,
+and a non-unique expression-only index exists only under `files`. Measured
+evidence from the backlog line: "`CREATE UNIQUE INDEX ux ON t (lower(email))`
+→ parsed Columns `[lower("email")]`, introspected nil; `CREATE INDEX ix ON t
+(a, lower(b))` → `[a, lower("b")]` vs `[a]`; a non-unique expression-only
+index is dropped on the introspected side only. PG has the sibling 30.2 line"
+(filed as FIX-276).
+
+**Root cause.** Parser: `indexedColumnNames`
+(`parser/sqlite/sqlite.go:625-640`) writes `rsql.ExprString(col.X)` for any
+part that is not an `*rsql.Ident`. Introspector: `introspectIndexColumns`
+(`parser/introspect/sqlite.go:592-618`) skips `PRAGMA index_info` rows with a
+NULL name (`:610`), and `introspectIndexes` (`:540-567`) keeps a unique index
+with no columns but drops a non-unique one (`case len(cols) == 0: continue`,
+`:554`).
+
+**Suggested fix.** Design-shaped (it sets the canonical form for expression
+index parts, shared with FIX-276); options for the vet:
+- **Keep expressions (parser form):** the introspector reads index parts from
+  the stored `CREATE INDEX` with the file parser, as `indexPartialWhere`
+  (`parser/introspect/sqlite.go:574`) already does for the predicate, so
+  both sources give `lower("email")`. The vet must check what the generator
+  does with an expression in `Columns` today (conflict-target generation,
+  manifest), since that text is not a column name.
+- **Drop expressions (introspector form, as the PG and MySQL introspectors
+  do):** `indexedColumnNames` skips non-identifier parts, and both sides
+  agree on whether an index left with no columns is kept or dropped
+  (PG's introspector drops it, FIX-276).
+- Tests: an `assertSchemaParity` case in
+  `parser/introspect/introspect_integration_test.go` with the three indexes
+  above, plus a `parser/sqlite` unit case pinning the chosen form.
+- Vet notes on scope (refs all match HEAD):
+  - a parenthesized part is also misread: `CREATE INDEX cx ON t (b COLLATE NOCASE, (a))` parses as `[b, ("a")]` but introspects as `[b, a]`, and a table-level `UNIQUE ((email))` makes introspection fail: "introspect sqlite table t: stored CREATE TABLE declares no UNIQUE over (email)". Same root cause and fix site (`indexedColumnNames`), so the prototype unwraps parentheses and COLLATE;
+  - false uniqueness: the introspector keeps a UNIQUE index that mixes a column and an expression as UNIQUE over its plain columns. `CREATE UNIQUE INDEX t_a_b1 ON t (a, b + 1)` → `{t_a_b1 UNIQUE [a]}`, and it also sets `Column a Unique: true`;
+  - runtime effect, E2E on a sibling copy of the sqlite example with `expr_rows` (unique `lower(email)`, unique `(a, lower(b))`, index `(a, lower(b))`, index `lower(a)`):
+    - `files` generates `ExprRowConflictLowerEmail: {"lower(\"email\")"}`. `Upsert(..., ExprRowConflictLowerEmail)` silently drops the conflict clause (`suppliesAll`), and the second call fails: "upsert expr_row: sqlgen: unique constraint violation on constraint index 'expr_rows_email_ux' … (2067)";
+    - `database` generates `ExprRowConflict: {}  // UNIQUE ()` and `ExprRowConflictA: {"a"}`. `Upsert(..., ExprRowConflictA)` fails: "upsert expr_row: query: SQL logic error: ON CONFLICT clause does not match any PRIMARY KEY or UNIQUE constraint (1)".
+- Pending the user's ruling (one ruling covers this entry, FIX-276 and the MySQL sibling in the backlog): how should an index with an expression part be modeled, on every dialect and source?
+  - (C) Recommended by the vet, and prototyped for SQLite: drop the whole index, since it is not an index over columns. PG (FIX-276): the parser skips any index whose IndexElems include an expression, and the introspector skips any index with an `indkey` of 0, widening today's expression-only skip to mixed indexes. MySQL: the same on both sides. Result: no false uniqueness, no broken conflict targets, no generator change. Cost: the manifest `indexes[]` omits expression indexes, and the generated `<T>Conflict…` constants over expression or mixed UNIQUE indexes disappear; today those are either broken or silently a plain insert. No golden churn. Proposed PRD §30.7 sentence for the `indexes[]` cell: "An index with an expression part (`lower(email)`, `a + 1`) is not listed and is not a conflict target, under every source." This matches §16.5.2's "expression unique indexes never participate".
+  - (A) Keep the plain columns and drop the expression parts (the PG/MySQL introspector form), also dropping an index left with no columns, on both sides. Cheapest, and PG already agrees on mixed indexes. But it makes `UNIQUE (a, lower(b))` a UNIQUE over `[a]` on every source, which sets `Column.Unique`, `UniqueGroups` and `ConflictA`; that is the measured "ON CONFLICT clause does not match" error. It would need a second rule (drop a UNIQUE index with an expression part) to be safe.
+  - (B) Keep the expression text (the SQLite parser form). The SQLite introspector reads parts from the stored CREATE INDEX with the file parser. PG would deparse `IndexElem.Expr` on the parser side and read `pg_get_indexdef(oid, k, true)` through `catalogExpr`, with the §6.1 catalog-rewrite caveats. MySQL would read `STATISTICS.EXPRESSION` with normalization. The generator must also learn to skip expression entries in conflict targets, `UniqueGroups` and `uniqueCoversColumns` (`gen/context_table.go:1696`, `cli/pipeline.go:393`). It is the most faithful to §30.7's "All declared indexes", and the largest change.
+  - Not auto-accepted: C removes generated exported conflict constants for the affected schemas, and it is the decision FIX-276 shares.
+- Prototype results (option C, SQLite only), run at `d51ace1b` on 2026-10-07:
+  - Reproduction: a throwaway probe (`TestZZProbeFIX274`, since deleted), `cd parser && go test -short -count=1 -run TestZZProbeFIX274 ./introspect/`, parsed → introspected:
+    - SQLite: `ux UNIQUE [lower("email")]` → `[]string(nil)`; `ux2 UNIQUE [a, "b" + 1]` → `[a]`; `cx INDEX [b, ("a")]` → `[b, a]`; `ex INDEX [lower("a")]` → absent; `ix INDEX [a, lower("b")]` → `[a]`; `assertSchemaParity` FAIL.
+    - PG16: `ux UNIQUE []` → absent; `ex INDEX []` → absent; `ux2 UNIQUE [a]` → `[a]`; `ix INDEX [a]` → `[a]`.
+    - MySQL 8.0 (functional key parts): `ux [""]` → absent; `ex [""]` → absent; `ux2 UNIQUE ["a", ""]` → `[a]`; `ix ["a", ""]` → `[a]`.
+  - Prototype:
+    - `parser/sqlite` `indexedColumnNames` returns `([]string, bool)`. It unwraps COLLATE and parentheses at any nesting and returns false for a non-identifier part. `parseCreateIndex` skips such an index (unique or not, partial or not). The table-level UNIQUE call ignores the bool, since SQLite rejects an expression in a UNIQUE constraint.
+    - `parser/introspect` `introspectIndexColumns` returns `(cols, ok, err)`, with ok false on a `PRAGMA index_info` row with a NULL name. `introspectIndexes` skips that index, and the `len(cols)==0` case is removed.
+    - Tests: `TestIndexedColumnExpressions` (`parser/sqlite`, 7 cases) and `TestSQLiteIntrospect_ExpressionIndexes` (pins the constraints, then `assertSchemaParity`).
+    - E2E re-run with the prototype: files and database outputs are byte-identical apart from `generated_at`; the conflict map holds only `ExprRowConflictPK`.
+  - Gates: `cd parser && go test -race -count=1 ./...` → ok (PG and MySQL containers); `golangci-lint run ./sqlite/... ./introspect/...` → 0 issues; `gofumpt -l parser/` → clean; `cd cmd/sqlgen && go test -short -count=1 ./...` → ok.
+  - Fail-first:
+    - `parser/sqlite/sqlite.go` reverted → `TestIndexedColumnExpressions` fails in all 7 subtests (e.g. `Columns: []string{"a", \`lower("b")\`}` where nil was wanted; `- "a" + \`("a")\``). `TestSQLiteIntrospect_ExpressionIndexes` fails: "stored CREATE TABLE declares no UNIQUE over (email)";
+    - `parser/introspect/sqlite.go` reverted with the parser fix kept → `+ {Name: "t_a_b1", Type: s"UNIQUE", Columns: []string{"a"}, ...}`, `+ {Name: "t_lower_email", Type: s"UNIQUE", Method: "btree"}`, and `- Unique: false + Unique: true` on column `a`;
+    - the existing suite without the fix → passes.
+  - Golden churn: none (no example declares an expression index).
+  - Patch: `.claude/prototypes/FIX-274.patch` (4 files, +117/-30).
+
+- The user ruled on 2026-10-08: (C), an index with any expression part is dropped whole on every dialect and source (not listed, not a conflict target), with the PRD §30.7 sentence. The ruling also covers FIX-276; the MySQL half is in the backlog. This matches the prototype.
+
+
+**References.**
+- PRD §6.1, §6.3 ("SQLite constraint names and CHECK text"), §30.7
+  (manifest `indexes[]`).
+- FIX-276 (PG expression-only index), FIX-269 (stored `CREATE INDEX` read with
+  the file parser for partial-index predicates).
+
+**Resolution notes.** Resolved 2026-10-08 per the user's ruling (C), SQLite half (PG is FIX-276; MySQL is a backlog line). The vetted prototype applied cleanly with `git apply --3way` (FIX-273 had shifted `parser/introspect/sqlite.go` and the integration test by +1 / +26 lines). `parser/sqlite`: `indexedColumnNames` returns `([]string, bool)`, unwraps COLLATE and parentheses at any nesting, and returns false for an expression part; `parseCreateIndex` skips such an index (unique or not, partial or not). `parser/introspect`: `introspectIndexColumns` returns `(cols, ok, err)` with ok false on a `PRAGMA index_info` row with a NULL name, `introspectIndexes` skips that index, and the `len(cols) == 0` case is gone. Beyond the prototype (found at verify): `indexedColumnCollations` unwraps parentheses before reading the outermost COLLATE, since the parser deduped `UNIQUE (a), UNIQUE ((a COLLATE NOCASE))` while SQLite builds two indexes, and introspection failed "stored CREATE TABLE declares no UNIQUE over (a)"; covered by two `TestUniqueDuplicatesFollowCollation` cases (the parenthesized-inside one fails first) and table `u` in `TestSQLiteIntrospect_ExpressionIndexes`. PRD §30.7 `indexes[]` gains the ruled sentence: "An index with an expression part (`lower(email)`, `a + 1`) is not listed and is not a conflict target, under every source." Tests: `TestIndexedColumnExpressions` (7 cases) and `TestSQLiteIntrospect_ExpressionIndexes` (constraints pinned, then `assertSchemaParity`). Fail-first reproduced on the final code: the parser reverted fails all 7 subtests and the introspection test with "stored CREATE TABLE declares no UNIQUE over (email)"; the introspector reverted shows `t_a_b1 UNIQUE [a]`, `t_lower_email UNIQUE []`, `t_a_lower_b INDEX [a]` and column `a` `Unique: true`. Gates: `make check` ok, `cd parser && go test -race -count=1 ./...` ok, `make check-examples` ok, `make update-golden-e2e` / `make update-golden` → no churn (matches the vet). Gates re-run after the collation addition: `make check`, the parser race suite and `make check-examples` ok. Doc corrections: Root cause line refs into `parser/introspect/sqlite.go` re-pinned +1 after FIX-273. Backlog: the SQLite `LIKE … ESCAPE` expression-index line (from FIX-281) removed as resolved (both sources now skip the index; measured err=nil under `files`); one line added for a table-level expression `UNIQUE` that SQLite rejects but `files` accepts with no columns.
+
+### FIX-273
+
+- **Status:** Resolved
+- **Severity:** tracked
+- **Origin:** phase 30, `parser/introspect`
+- **Surfaced by:** backlog promotion at `/close-phase 30` (2026-10-07); first recorded by 30.6 (2026-10-05)
+- **Vetted:** corrected at `d51ace1b` (2026-10-07)
+
+**Issue.** **The SQLite introspector silently drops user tables and views
+whose name matches `sqlite_%` as a LIKE pattern, such as `sqlitex`.** `_` is
+a LIKE wildcard, so the filter meant for SQLite's reserved `sqlite_` prefix
+also matches `sqlitex`, `sqlite1` and so on (and, because LIKE ignores case, `SQLiteZ`); the file parser keeps the tables. The file parser never yields views (it skips `CREATE VIEW`), so for views the loss is introspection-only.
+Measured evidence from the backlog line: "probe `CREATE TABLE sqlitex` →
+parsed `[sqlitex]`, introspected `[]`; `parser/introspect/sqlite.go` table and
+view queries".
+
+**Root cause.** `introspectTables` filters `tl.name NOT LIKE 'sqlite_%'`
+(`parser/introspect/sqlite.go:88`) and `introspectViews` filters `name NOT
+LIKE 'sqlite_%'` (`parser/introspect/sqlite.go:213`), with the `_`
+unescaped.
+
+**Suggested fix.**
+- Escape the underscore at both sites: `NOT LIKE 'sqlite\_%' ESCAPE '\'`
+  (LIKE stays case-insensitive, matching SQLite's case-insensitive reserved
+  prefix), or compare `substr(lower(name), 1, 7) <> 'sqlite_'`.
+- Tests: an `assertSchemaParity` case in
+  `parser/introspect/introspect_integration_test.go` with a table `sqlitex`
+  and a view `sqlite1v` (both present on both sources), and a check that
+  `sqlite_sequence` (from an AUTOINCREMENT table) is still left out.
+- Changed from the original: the view half is checked by asserting the introspected `Views` directly, not by schema parity. The SQLite file parser skips every `CREATE VIEW` with a warning (`parser/sqlite/sqlite.go:75-77`), so no parity case can have "a view `sqlite1v` present on both sources". The table half uses parity as suggested. The SQL change is the first option above.
+- Prototype results, run at `d51ace1b` on 2026-10-07:
+  - Reproduction: a throwaway probe (`parser/introspect/zz_probe_fix273_test.go`, since deleted) with `CREATE TABLE sqlitex(...); CREATE TABLE sqlite1(...); CREATE TABLE SQLiteZ(...); CREATE TABLE seq (id INTEGER PRIMARY KEY AUTOINCREMENT); CREATE VIEW sqlite1v AS SELECT id, v FROM sqlitex`. `go test -race -count=1 -run TestZZProbeFix273 -v ./parser/introspect/` → "parsed tables: [sqlitex sqlite1 SQLiteZ seq]" / "introspected tables: [seq]" / "introspected views: []". LIKE is case-insensitive, so mixed-case `SQLiteZ` is dropped too. A second probe listed the `pragma_table_list` rows the filter must still drop after AUTOINCREMENT, CREATE INDEX and ANALYZE: `sqlite_schema`, `sqlite_sequence`, `sqlite_stat1`, `sqlite_stat4`.
+  - Prototype:
+    - both filters become `NOT LIKE 'sqlite\_%' ESCAPE '\'` (`sqlite.go:89`, `:214`), with a comment saying SQLite reserves the prefix case-insensitively and that `_` is a LIKE wildcard;
+    - new `TestSQLiteIntrospect_ReservedPrefix`: tables `sqlitex`, `sqlite1`, `SQLiteZ`, AUTOINCREMENT `seq`; the introspected names must be exactly `[SQLiteZ seq sqlite1 sqlitex]`, then `assertSchemaParity` (view excluded, as in `_QuotedNames`), and the only introspected view must be `sqlite1v`.
+  - Gates: `go test -race -count=1 ./parser/introspect/...` → ok; `golangci-lint run ./introspect/...` → 0 issues; `gofumpt -l parser/introspect/` → clean.
+  - Fail-first:
+    - table query reverted → `TestSQLiteIntrospect_ReservedPrefix` fails: "introspected tables mismatch (-want +got): - "SQLiteZ", "seq", - "sqlite1", …" and "sqlite: introspected schema differs from the file parser's";
+    - view query reverted → "introspected views [], want only sqlite1v";
+    - the existing suite without the fix → passes.
+  - Golden churn: none.
+  - Patch: `.claude/prototypes/FIX-273.patch` (2 files, +30/-3).
+
+**References.**
+- PRD §6.1 (same tables by source), §6.3 (SQLite introspection), §6.4.
+- `TestSQLiteIntrospect` / `TestSQLiteIntrospectViews`
+  (`parser/introspect/introspect_integration_test.go:365`, `:1971`).
+
+**Resolution notes.** Applied the vetted prototype clean (fresh since `d51ace1b`). Both SQLite filters now read `NOT LIKE 'sqlite\_%' ESCAPE '\'` (`introspectTables` and `introspectViews` in `parser/introspect/sqlite.go`), so only SQLite's own `sqlite_` objects (case-insensitive) are left out. New `TestSQLiteIntrospect_ReservedPrefix` in `parser/introspect/introspect_integration_test.go` runs `ANALYZE` after the DDL and asserts the introspected tables are exactly `[SQLiteZ seq sqlite1 sqlitex]` (so `sqlite_sequence`, `sqlite_stat1` and `sqlite_stat4` stay out; the `ANALYZE` was added at verify, on the reviewer's suggestion, and a filter of `NOT IN ('sqlite_sequence', 'sqlite_schema')` now fails it with `sqlite_stat1` and `sqlite_stat4` introspected), runs `assertSchemaParity`, and checks the only introspected view is `sqlite1v`. Fail-first re-run on the final code: table filter reverted → "introspected tables mismatch" + "introspected schema differs from the file parser's"; view filter reverted → "introspected views [], want only sqlite1v". `make check` and `make check-examples` green; no golden churn. Inline: the References line ref for `TestSQLiteIntrospectViews` updated `:1945` → `:1971`.
+
+### FIX-272
+
+- **Status:** Resolved
+- **Severity:** tracked
+- **Origin:** phase 30, `cmd/sqlgen/gen`
+- **Surfaced by:** backlog promotion at `/close-phase 30` (2026-10-07); first recorded by 30.4 (2026-10-05)
+- **Vetted:** ready at `d51ace1b` (2026-10-07; ruled 2026-10-08, the ruled option is the prototype)
+
+**Issue.** **A non-PK `serial` column is required in `Create<T>Input`.**
+Since 30.4 (Q5) a PostgreSQL `serial` column carries no `Default` on either
+source, only `AutoIncrement` (PRD §6.1), so the create input no longer treats
+it as defaulted, and the caller must supply a sequence value. Measured
+evidence from the backlog line: "files-mode probe `CREATE TABLE items (id
+bigserial PRIMARY KEY, seq serial, note text NOT NULL)` →
+`CreateItemInput{Note string, Seq int32}`" (the generated fields follow column order: `{Seq int32; Note string}`).
+
+**Root cause.** `buildCreateInputFields`
+(`cmd/sqlgen/gen/context_table.go:2276`) handles `AutoIncrement` /
+`isSerialType` only for a PK column (`:2297`); for any other column it makes
+the field omittable only on `updateSet || softDelete || col.Nullable ||
+col.HasDefault` (`:2309`), and `HasDefault` is `col.Default != ""`
+(`:941`). A serial column has `AutoIncrement` but no `Default`, so it lands in
+`requiredInputField`. The config side already counts it: `columnRequiredOnCreate`
+(`cmd/sqlgen/config/validate.go:1570`) returns false on `col.AutoIncrement`,
+so validation and codegen disagree.
+
+**Suggested fix.**
+- In `buildCreateInputFields` (`context_table.go:2309`), treat
+  `col.AutoIncrement` as defaulted for a non-PK column, so it is
+  `omittableInputField` and the INSERT omits it when unset (PRD §10.3).
+- Vet: decide whether a non-PK `GENERATED ALWAYS AS IDENTITY` column should
+  be excluded instead (PostgreSQL rejects an explicit value without
+  `OVERRIDING SYSTEM VALUE`); PRD §10.3's table names neither case, so add
+  the row the ruling picks.
+- Tests: a `gen` unit case for `buildCreateInputFields` (non-PK `serial`,
+  `bigserial`, identity → omittable / excluded) and a PG E2E case inserting
+  without the column and reading back a sequence value; check the
+  `pk.AutoIncrement` / `isSerialType` PK path (`:2297`) is unchanged.
+- Vet notes on scope:
+  - files mode has always made a non-PK serial required (30.4 Completion Record: "Files mode has always done this"). Q5 only brought `database` mode into line with it;
+  - the effect is worse than a required field. A non-PK `GENERATED ALWAYS AS IDENTITY` column makes every `Create` fail, because the required field always sends a value: `create zz_item: pgx scan: ERROR: cannot insert a non-DEFAULT value into column "ident_always" (SQLSTATE 428C9)`. A non-PK serial or BY DEFAULT identity left at its zero value silently writes 0 instead of drawing the sequence.
+- Prototype (option A below): the non-PK branch of `buildCreateInputFields` calls a new helper `createInputOmittable(col, updateSet, softDeleteCol)`, which adds `|| col.AutoIncrement` to the existing condition. The helper is needed because the inline `||` pushes cyclop to 16 (max 15). The PK path (`:2297`) is unchanged, and the rule now matches `columnRequiredOnCreate`. PRD §10.3 gains a row: "Not PK, auto-increment/serial/identity | `omittable.Value[T]` | Caller may omit; DB draws the next sequence value. PostgreSQL rejects a set value on a `GENERATED ALWAYS` identity column". Tests:
+  - `TestCreateInputFieldClassification_autoIncrementNonPKOmittable` (`gen/context_test.go`), table-driven over serial, bigserial and identity; it also checks that an AutoIncrement PK stays excluded;
+  - a new `sequence_rows` table in the postgres example (`seq SERIAL`, `ticket BIGINT GENERATED BY DEFAULT AS IDENTITY`, `audit_no INTEGER GENERATED ALWAYS AS IDENTITY`, `note TEXT NOT NULL`), with `tests/sequence_rows_test.go` covering Create unset (reads back sequence values), Create with seq/ticket set, and CreateMany mixed (DEFAULT sentinel).
+- Pending the user's ruling: how should a non-PK PostgreSQL `GENERATED ALWAYS AS IDENTITY` column be treated in `Create<T>Input`? The parser does not record ALWAYS vs BY DEFAULT; `parser.Column` has only `AutoIncrement`.
+  - (A) Recommended by the vet, and prototyped: omittable, like serial and BY DEFAULT. Measured: unset → sequence value; CreateMany mixed → DEFAULT works; a set value fails loudly with 428C9. No new parser or context field. `Update<T>Input` keeps the column, and setting it there also fails loudly (`column "ident_always" can only be updated to DEFAULT (SQLSTATE 428C9)`, backlog).
+  - (B) Exclude every non-PK auto-increment column, mirroring the PK row. Callers lose the ability to set a serial, BY DEFAULT identity or MySQL AUTO_INCREMENT value, which works today (measured `Seq:100`, `IdentDefault:500`, MySQL `Seq:500`).
+  - (C) Exclude only ALWAYS identity. This needs a new exported `parser.Column` field set by the PG file parser (`Constraint.GeneratedWhen == "a"`) and the introspector (`attidentity = 'a'`), plus a ColumnContext field. It widens beyond the fix site and probably should also drop the column from `Update<T>Input`. Golden churn vs A: `AuditNo` disappears from `CreateSequenceRowInput`.
+  - Not auto-accepted: the entry reserves this for a ruling, A and C produce different postgres goldens, and §10.3's "NOT NULL, no DEFAULT → Required" row arguably covers these columns literally.
+- Prototype results, run at `d51ace1b` on 2026-10-07:
+  - Reproduction: a sibling copy of the postgres example plus `CREATE TABLE zz_items (id bigserial PRIMARY KEY, seq serial, big_seq bigserial, ident_always integer GENERATED ALWAYS AS IDENTITY, ident_default bigint GENERATED BY DEFAULT AS IDENTITY, note text NOT NULL)`, `GOWORK=off sqlgen generate` → `CreateZzItemInput{Seq int32, BigSeq int64, IdentAlways int32, IdentDefault int64, Note string}`. All four sequence columns are bare required fields. PG probe `Create(&CreateZzItemInput{Note:"a"})` → `ERROR: cannot insert a non-DEFAULT value into column "ident_always" (SQLSTATE 428C9)`.
+  - MySQL probe with the fix (sibling copy, `id BIGINT PRIMARY KEY, seq INT NOT NULL AUTO_INCREMENT UNIQUE`): Create unset → `Seq:1`, set → `Seq:100`; CreateMany mixed → `Seq:500`, `Seq:501`. Same root cause and fix site; no extra code needed.
+  - Gates:
+    - `cd cmd/sqlgen && go test -race -count=1 ./gen/... ./config/... ./manifest/...` → ok;
+    - `golangci-lint run ./gen/...` → 0 issues;
+    - `make update-golden` → no churn; `make update-golden-e2e` → postgres only; `TestE2EGoldenFiles` → ok;
+    - examples/postgres: `GOWORK=off go test -race -count=1 ./...` → ok; `GOWORK=off golangci-lint run` → 0 issues.
+  - Fail-first:
+    - `|| col.AutoIncrement` removed → `TestCreateInputFieldClassification_autoIncrementNonPKOmittable/{serial,bigserial,identity}` fail: "CreateInputFields mismatch (-want +got): … Column: "seq", - Required: false, + Required: true";
+    - with the same revert and an e2e regen, `TestSequenceRows_NonKeySequenceColumnsOptional` fails to build: "cannot use omittable.Set[int32](1000) (value of struct type omittable.Value[int32]) as int32 value in struct literal";
+    - the existing suite without the fix → passes.
+  - Golden churn: postgres +2 added (`expected/manifest/sequence_row.md`, `models/manifest/sequence_row.md`), ~20 changed (10 each under `expected/` and `models/`: AGENTS.md, CLAUDE.md, cache_gen.go, client_gen.go, event_hooks_gen.go, manifest/_index.md, manifest_gen.json, models_gen.go, sorter_gen.go, tablenames_gen.go). All of it is additive from the new table; no existing table's output changes.
+  - Patch: `.claude/prototypes/FIX-272.patch` (27 files, +6756/-2; handwritten part 5 files, +126/-2).
+
+- The user ruled on 2026-10-08: (A), a non-PK `GENERATED ALWAYS AS IDENTITY` column is omittable like serial and BY DEFAULT. This matches the prototype.
+
+
+**References.**
+- PRD §10.3 (CreateInput treatment table), §6.1 (serial carries no default,
+  only auto-increment), §8.6.
+- `docs/tracker/phase-30.md` 30.4 Completion Record (Q5).
+- `columnRequiredOnCreate` (`cmd/sqlgen/config/validate.go:1570`), the rule
+  to match.
+
+**Resolution notes.** Resolved 2026-10-08 per the user's ruling (A). The non-PK branch of `buildCreateInputFields` (`cmd/sqlgen/gen/context_table.go`) now calls `createInputOmittable`, which adds `col.AutoIncrement` to the existing omittable condition, so a non-PK serial, BY DEFAULT identity or ALWAYS identity column (and a MySQL non-PK AUTO_INCREMENT) is `omittable.Value[T]` and the INSERT leaves it out when unset. This matches `columnRequiredOnCreate`. The PK path is unchanged. PRD §10.3 gains the "Not PK, auto-increment/serial/identity" row. Tests: `TestCreateInputFieldClassification_autoIncrementNonPKOmittable` (`gen/context_test.go`; the rows are relabeled from the prototype, because serial and identity share one `parser.Column` shape: integer, bigint, smallint), and the postgres example `sequence_rows` table with `tests/sequence_rows_test.go` (Create unset reads back sequence values, Create with seq/ticket set, CreateMany mixed). The prototype's handwritten parts applied clean at `56fcc1c7`; regenerated postgres goldens are line-identical to the prototype (2 added, 20 changed, all additive). Gates: `make check` ok; `make check-examples` ok. Fail-first: dropping `|| col.AutoIncrement` fails all three unit rows. Inline, from the /verify review: a SQLite `primary_key.columns` override can demote the rowid alias to a non-PK auto-increment column, which is now omittable, and its CreateMany/UpsertMany sentinel rendered `sql.NewDefaultExpr("")`, which the builder writes inline as `VALUES (, ...)` (sqlite3: `near ",": syntax error`). `resolveDefaultExpr` now returns `NULL` for an auto-increment column (SQLite fills NULL with the next rowid, measured `1|a 5|b 6|c`). The unit test also asserts `DefaultExpr: "NULL"` and failed first without it. No golden churn. Doc corrections from the second review: the `DefaultExpr` comments in `gen/context.go` and PRD §9.8.5 and §10.3 now name the auto-increment `NULL` case; this entry's line refs updated to the post-fix lines. Two adjacent UpsertMany findings went to the backlog.
+
+### FIX-271
+
+- **Status:** Resolved
+- **Severity:** tracked
+- **Origin:** phase 30, `parser/mysql` + `cmd/sqlgen/gotype`
+- **Surfaced by:** backlog promotion at `/close-phase 30` (2026-10-07); first recorded by 30.5 (2026-10-05), with the ZEROFILL line from the 30.5 reviewer (2026-10-05) and the alias line from 30.8b (2026-10-06)
+- **Vetted:** ready at `d51ace1b` (2026-10-07; ruled 2026-10-08, the ruled option is the prototype)
+
+**Issue.** **MySQL type synonyms and ZEROFILL non-integer types differ by
+source, and several change the Go type.** The catalog stores a synonym in
+its canonical form while the file parser keeps the DDL's spelling, so
+`database` and `files` give different column types, view column types,
+`overrides.types` keys and, for some, Go types, against PRD §6.1's "the same
+generated code and manifest". Measured evidence, quoted from the three
+backlog lines merged here:
+- (30.5) "the catalog stores `bool` / `boolean` as `tinyint(1)`, `integer` as `int`, `numeric(p,s)` as `decimal(p,s)`, `real` and `float(30)` as `double`, `decimal` / `decimal(5)` as `decimal(10,0)` / `decimal(5,0)`, `char` as `char(1)`, `bit` as `bit(1)`, `year(4)` as `year`, and `serial` as `bigint unsigned` AUTO_INCREMENT, while the parser keeps the DDL's spelling. Several change the Go type: files `BOOLEAN` → `bool` but database `tinyint(1)` → `int8` (the mysql example's `is_active BOOLEAN NOT NULL DEFAULT TRUE`, whose default also reads back `1` for `true`), and `NUMERIC(8,3)` / `REAL` → `string` but `decimal(8,3)` / `double` → `float64` — evidence: MySQL 8.0.46 `information_schema.columns.column_type` probe; resolver probe `tinyint(1)`→int8, `bool`→bool, `numeric(8,3)`→string, `real`→string"
+- (30.5 reviewer) "the catalog stores `double unsigned zerofill`, `decimal(5,2) unsigned zerofill`, `float(7,3) unsigned zerofill`, while the parser writes `double`, `decimal(5,2)`, `float(7,3)`; under `database` `double unsigned zerofill` resolves to `string` (the decimal and float forms fall back to `float64` / `float32`) — evidence: 30.5 reviewer probe on MySQL 8.0.46; `TestIntegerDisplayWidth` "DOUBLE ZEROFILL" → `double`"
+- (30.8b) "`integer` reads `int` and `numeric(10,2)` reads `decimal(10,2)` under `database`, so the column type, its view columns and `overrides.types` keys differ by source — evidence: 30.8b view parity test, `CREATE TABLE vd_p (id integer …, discount numeric(10,2))` → files `integer` / `numeric(10,2)`, database `int` / `decimal(10,2)`"
+
+The mysql example (`cmd/sqlgen/testdata/examples/mysql/schema.sql:14`,
+`is_active BOOLEAN NOT NULL DEFAULT TRUE`) is affected: `bool` under
+`files`, `int8` under `database`. 30.5 deferred this to the backlog
+(`docs/tracker/phase-30.md` 30.5 Completion Record, "Backlog lines added"),
+and PRD §6.1 does not name it as a parity exception, while the phase-30
+ground rule says a parity exception that stays user-visible must be written
+into §6.1.
+
+**Root cause.** Both sources go through `mysql.NormalizeType`
+(`parser/mysql/mysql.go:109-143`; the introspector via `normalizeMySQLType`,
+`parser/introspect/mysql.go:635-644`), but it canonicalizes only integer
+display widths and ZEROFILL integers (`zerofillWidths`, `mysql.go:100-102`);
+any other type is returned lowercased as written (`if !isInteger { return
+typ }`, `mysql.go:116-118`). So the parser's `buildTypeString`
+(`mysql.go:518-545`) keeps `boolean`, `integer`, `numeric(8,3)`, `real`,
+`decimal`, `char`, `bit`, `year(4)`, `serial`, and writes `zerofill` only on
+an integer base (`mysql.go:541`), so `DOUBLE UNSIGNED ZEROFILL` becomes
+`double unsigned` → `double`. On the resolver side, `mysqlMappings`
+(`cmd/sqlgen/gotype/gotype.go:113-138`) maps `bool` / `boolean` → `bool` but
+has no `tinyint(1)` key, so `tinyint(1)` falls back through `lookupKeys`
+(`gotype.go:725-738`) to `tinyint` → `int8`; it has no `numeric` or `real`
+key (fallback `string`); and `double unsigned zerofill` has no `(`, so
+`stripModifiers` (`gotype.go:1023`) yields no shorter key and it falls to
+`string`. PRD §7.2's MySQL table lists `bool`, `boolean` and `bit(1)` →
+`bool` and `tinyint` → `int8`; it has no `tinyint(1)` row, and the note under
+it says only that `tinyint(1)` keeps its width.
+
+**Suggested fix.** The direction is design-shaped; options for the vet
+(each needs a ruling before implementation):
+- **Option 1 — canonicalize the parser to the catalog form** (the 30.5 M5
+  approach, extended): teach `mysql.NormalizeType` the synonym table
+  (`bool`/`boolean` → `tinyint(1)`, `integer` → `int`, `numeric` →
+  `decimal`, bare `decimal` / `decimal(p)` → `decimal(10,0)` / `decimal(p,0)`,
+  `real` and `float(p>24)` → `double`, `char` → `char(1)`, `bit` → `bit(1)`,
+  `year(4)` → `year`, `serial` → `bigint unsigned` with AutoIncrement and the
+  UNIQUE key MySQL adds), and keep `unsigned zerofill` on a non-integer base
+  in `buildTypeString`. Consequences: types, view columns, manifest and
+  `overrides.types` keys match by source; an `overrides.types` key spelled
+  `boolean` / `numeric` / `integer` stops matching under `files` too (PRD
+  §7.2 note and §7.1 must say which spelling keys use); on its own this
+  turns every `BOOLEAN` column into `int8` under both sources, including the
+  mysql example's `is_active` (golden churn, a user-visible downgrade).
+- **Option 2 — map `tinyint(1)` → `bool` in the MySQL resolver** (add the key
+  to `mysqlMappings` and a row to PRD §7.2): `BOOLEAN` is `bool` under both
+  sources; but every hand-written `TINYINT(1)` column also becomes `bool`,
+  and a stored value other than 0/1 then fails to scan. Combined with Option
+  1 this gives one type string and `bool` on both sources.
+- **Option 3 — resolver-only**: add `numeric`, `real` → `float64`, and
+  `<double|float|decimal> unsigned [zerofill]` keys (or teach `lookupKeys`
+  to strip `unsigned zerofill` on a non-integer base) so the Go types agree,
+  leaving the type text different by source. The remaining text difference
+  (column type, view columns, override keys, manifest) must then be written
+  into PRD §6.1 as a named parity exception per the phase-30 ground rule.
+- **Option 4 — accept as-is** and write the whole difference, Go types
+  included, into §6.1. Contradicts §6.1's "same generated code" and leaves
+  the mysql example's `is_active` type source-dependent; listed for
+  completeness.
+- Whatever is chosen, the regression tests: a MySQL parity case in
+  `parser/introspect` (`assertSchemaParity` over a table with every synonym
+  above plus `DOUBLE/DECIMAL/FLOAT … ZEROFILL`, run on MySQL 8.0); unit cases
+  in `TestIntegerDisplayWidth` (`parser/mysql/mysql_test.go:594`) and
+  `TestMySQLTypeMappings` (`cmd/sqlgen/gotype/gotype_test.go:201`); the
+  mysql example goldens if `is_active` changes; and the 30.8b view parity
+  test (`vd_p`) with its exception removed.
+- Vet notes on scope:
+  - `SERIAL` is not kept "in the DDL's spelling": vitess rejects it (`syntax error at position 64 near 'SERIAL'`), so under `files` it is a parse error, which §6.1 treats as an error, not a difference. It drops out of the synonym table (backlog lists the other vitess-rejected synonyms);
+  - the parser writes `double unsigned`, `decimal(5,2) unsigned` and `float(7,3) unsigned` for the `… UNSIGNED ZEROFILL` forms; only `DOUBLE ZEROFILL` (no UNSIGNED) gives `double`. `double unsigned` resolves to `string` because `lookupKeys` has no fallback for a non-integer unsigned type without parentheses, so `DOUBLE UNSIGNED` / `FLOAT UNSIGNED` / `DOUBLE UNSIGNED ZEROFILL` are `string` under both sources. The real split is `DOUBLE ZEROFILL`: `float64` under files, `string` under database;
+  - the mysql example has 5 BOOLEAN columns (users.is_active, profiles.verified, products.in_stock, tags.is_deleted, default_only_rows.active). Under `source: database` generation fails outright: `soft delete column "is_deleted" in table "tags" has unsupported type "tinyint(1)"`. `parser.DetectSoftDelete` / `softDeleteStrategy` (`parser/detect.go`) has no `tinyint(1)` case, while `isSoftDeleteTypeCompatible` already accepts it;
+  - there is no `vd_p` exception to remove (643a723a moved the shared fixture to `int` / `decimal(10,2)`); the regression test is a new `TestMySQLIntrospect_TypeSynonyms`;
+  - further type text differs by source (measured): `float(p≤24)` → `float`, `float(25..53)` → `double`; `float4` → `float`, `float8` → `double`; `binary` → `binary(1)`; `real(8,2)` → `double(8,2)`; `INTEGER ZEROFILL` files `integer(10) unsigned zerofill` vs database `int(10) unsigned zerofill`; `DECIMAL(5,2) ZEROFILL` files `decimal(5,2)` vs database `decimal(5,2) unsigned zerofill`. Further Go-type splits: `FLOAT(30)` float32 vs float64; `FLOAT4` / `FLOAT8` string vs float32 / float64; `BIT` string vs bool.
+- Prototype (option A below):
+  - `parser/mysql/mysql.go` `NormalizeType` (split into `splitType` / `normalizeInteger` / `normalizeNonInteger` for cyclop) writes each synonym as the catalog stores it, on both paths: `bool`/`boolean` → `tinyint(1)`; `integer` → `int`; `numeric` → `decimal`; `real` → `double`; `float4` → `float`; `float8` → `double`; `decimal` → `decimal(10,0)`; `decimal(p)` → `decimal(p,0)`; `float(p)` → `float`, or `double` when p > 24; `char` / `binary` / `bit` → `(1)`; `year(4)` → `year`. ZEROFILL implies UNSIGNED on every numeric type. `buildTypeString` writes `zerofill` on any type, and the dead `"integer"` entry leaves `zerofillWidths`;
+  - `cmd/sqlgen/gotype/gotype.go` gains a `"tinyint(1)": goBool` mapping. `lookupKeys` matches a non-integer `… unsigned [zerofill]` type as `<base> unsigned`, then `<base>`, so `double unsigned zerofill` is `float64`. An integer base still never takes the signed key;
+  - `parser/detect.go`: `tinyint(1)` takes the `bool` soft-delete strategy;
+  - tests: `TestMySQLIntrospect_TypeSynonyms` (23 columns, both sources plus `assertSchemaParity`); new cases in `TestIntegerDisplayWidth`, `TestNormalizeType`, `TestMySQLTypeMappings`, `TestMySQLSQLNullTypes` and `TestDetectSoftDelete`; `TestCreateTableMySQLTypes` `t_bool` now expects `tinyint(1)`;
+  - PRD: a synonyms sentence in §6.1; the non-integer unsigned lookup in §7.1; the §7.2 row reads `tinyint(1)` (`bool`, `boolean`), and its note says `overrides.types` keys match the stored form, every `tinyint(1)` column is `bool`, and a stored value other than 0/1 does not scan; §4.6 lists `tinyint(1)` as soft-delete `bool`-compatible.
+- Changed from the original:
+  - any variant of option 1 needs the `parser/detect.go` `tinyint(1)` case, a second fix site; without it the canonical type breaks the mysql example's soft delete under `files` too;
+  - option 1 also needs the `lookupKeys` non-integer unsigned fallback (option 3's resolver half); without it, files-mode `DOUBLE ZEROFILL` would turn from `float64` into `string`;
+  - `serial` leaves the synonym table, and the regression test is new rather than the `vd_p` case.
+- Pending the user's ruling:
+  - Q1, direction:
+    - (A) Recommended by the vet, and prototyped: options 1+2. The canonical stored type on both sources, `tinyint(1)` → `bool`, plus the detect.go and `lookupKeys` changes above. Gains: types, manifest and override keys are identical by source, and the mysql example's generated Go is identical by source; the churn is the manifest `db_type` only. Costs: a hand-written `TINYINT(1)` column changes from `int8` to `bool` on both sources, and a stored 2 / -1 then fails to scan (already true for BOOLEAN columns today: `sql/driver: couldn't convert 2 into type bool`). Keys spelled `boolean` / `integer` / `numeric` / `real` stop matching under files (they never matched under database).
+    - (B) Option 1 alone, with `tinyint(1)` staying `int8`. The files output becomes today's database output: 27 model files / 1342 diff lines in the mysql example (5 fields `bool` → `int8`, `comparator.Number[int8]`, new `Increment` methods, GraphQL changes). It still needs the detect.go change.
+    - (C) Options 2+3, resolver only. Go types agree, but `db_type`, view column types and override keys differ by source and must be written into §6.1 as an exception. It still needs detect.go for database mode.
+    - (D) Option 4. The database-mode mysql example keeps failing generation.
+  - Q2, `overrides.types` keys spelled as a synonym:
+    - (A) Recommended by the vet, and prototyped: document in §7.2 that keys use the stored form. No example uses such a key.
+    - (B) Run MySQL override keys through `mysql.NormalizeType`, so a `boolean` key keeps matching (and also catches hand-written `TINYINT(1)` columns).
+    - (C) Warn when `NormalizeType` would rewrite a MySQL override key, so a key that can never match is loud.
+  - Not auto-accepted: A churns goldens relative to C/D and reverses PRD-stated behavior (`tinyint` → `int8` for `tinyint(1)`).
+- Prototype results, run at `d51ace1b` on 2026-10-07:
+  - Reproduction:
+    - probe, one table per type on MySQL 8.0, `go test -v -run TestZZProbeFix271 ./parser/introspect/` → 31 mismatched types, e.g. `BOOLEAN | files "boolean" | db "tinyint(1)"`, `NUMERIC(8,3) | files "numeric(8,3)" | db "decimal(8,3)"`, `DOUBLE ZEROFILL | files "double" | db "double unsigned zerofill"`, `FLOAT(30) | files "float(30)" | db "double"`;
+    - resolver probe: `tinyint(1)`→int8, `boolean`→bool, `numeric(8,3)`→string, `decimal(8,3)`→float64, `real`→string, `double unsigned`→string, `double unsigned zerofill`→string, `float(30)`→float32;
+    - E2E: the mysql example loaded into an anonymous `mysql:8.0` container, sibling copy with `source: database`, `GOWORK=off sqlgen generate` → `Generation error: … detecting soft delete: soft delete column "is_deleted" in table "tags" has unsupported type "tinyint(1)"`. With `is_deleted` dropped from `soft_delete_columns` in both copies, files vs database differ in 27 model files (1342 diff lines), e.g. `InStock omittable.Value[bool]` → `omittable.Value[int8]`, `*comparator.Bool` → `*comparator.Number[int8]`.
+  - With the prototype, the same E2E probe generates identical Go code from both sources, and database mode with `is_deleted` generates. The only remaining differences are default `true`/`1` and view `source`, both named exceptions in §6.1.
+  - Gates:
+    - `go test -race -count=1 ./parser/...` → ok (MySQL 8.0 and PG16 integration);
+    - `cd cmd/sqlgen && go test -race -count=1 ./...` → ok after the golden update;
+    - `make update-golden` → no churn; `make update-golden-e2e` → ok;
+    - mysql example: `GOWORK=off go test -race -count=1 ./...` → ok; `GOWORK=off golangci-lint run` → 0 issues;
+    - `golangci-lint` (parser, gotype) → 0 issues; `gofumpt -l` → clean.
+  - Fail-first:
+    - `NormalizeType` reverted → `TestIntegerDisplayWidth` fails: "type of BOOLEAN = "boolean", want "tinyint(1)"" (and 21 more); `TestMySQLIntrospect_TypeSynonyms` fails: "parsed types mismatch";
+    - integer-only zerofill in `buildTypeString` → "type of DOUBLE ZEROFILL = "double", want "double unsigned zerofill"";
+    - `"tinyint(1)": goBool` removed → `TestMySQLTypeMappings/tinyint(1)_is_BOOLEAN` fails (`+ Name: "int8"`), and `TestMySQLSQLNullTypes/tinyint(1)_uses_NullBool` fails;
+    - `lookupKeys` reverted → `TestMySQLTypeMappings/zerofill_double_keeps_its_base_type` fails: "- Name: "float64" + Name: "string"";
+    - `detect.go` reverted → `TestDetectSoftDelete/bool_column:_MySQL_BOOLEAN,_stored_as_tinyint(1)` fails: "unsupported type "tinyint(1)"";
+    - the existing suite without the fix → passes.
+  - Golden churn: mysql ~12 (6 each under `expected/manifest/` and `models/manifest/`: default_only_row.md, manifest_gen.json, product.md, profile.md, tag.md, user.md); only `db_type` `boolean` → `tinyint(1)` on 5 columns; generated Go is unchanged.
+  - Patch: `.claude/prototypes/FIX-271.patch` (20 files, +300/-68).
+
+- The user ruled on 2026-10-08: Q1 → (A), canonical stored type on both sources with `tinyint(1)` → `bool`, plus the `parser/detect.go` and `lookupKeys` changes; Q2 → (A), PRD §7.2 documents that `overrides.types` keys use the stored form. Both match the prototype, so it stands as vetted.
+- Auto-accepted the recommended option on 2026-10-08 (`/fix` auto-accept rule): should the shared `lookupKeys` fallback for an `… unsigned` type on a non-integer base also apply to SQLite (`double unsigned` now `float64`, was `string`)? → keep it, and §7.1 names both dialects, because the landed code is the prototype with green gates, no example has such a column (no golden churn either way), no public surface changes, and the PRD stated no SQLite behavior for it (SQLite gives the column REAL affinity, and §7.2's SQLite table maps `double` to `float64`).
+
+
+**References.**
+- PRD §6.1 (both sources describe a schema identically; the named parity
+  exceptions), §7.1 (override key matching), §7.2 MySQL Type Mappings and
+  the display-width / ZEROFILL note under it.
+- `docs/tracker/phase-30.md` ground rules (lasting parity exceptions go into
+  §6.1) and 30.5 Completion Record (M5 rulings, "Backlog lines added").
+- `normalizeMySQLType` (`parser/introspect/mysql.go:635`) and
+  `mysql.NormalizeType` (`parser/mysql/mysql.go:134`), the shared
+  normalization site.
+
+**Resolution notes.** Resolved 2026-10-08 from the vetted prototype (the ruled Q1 (A) + Q2 (A)), applied clean with `git apply --3way` at `13173996`; only tracker commits landed since the vet. The generated files were restored to HEAD and regenerated.
+- `parser/mysql/mysql.go`: `NormalizeType` (split into `splitType`, `normalizeInteger` and `normalizeNonInteger`) writes each type synonym as the catalog stores it, on both sources: `bool` / `boolean` → `tinyint(1)`, `integer` → `int`, `numeric` → `decimal`, `real` → `double`, `float4` → `float`, `float8` → `double`, `decimal` / `decimal(p)` → `decimal(10,0)` / `decimal(p,0)`, `float(p)` → `float` or `double` (p > 24), `char` / `binary` / `bit` → `(1)`, `year(4)` → `year`. ZEROFILL implies UNSIGNED on every numeric type. `buildTypeString` writes `zerofill` on any base, and the dead `"integer"` key leaves `zerofillWidths`.
+- `cmd/sqlgen/gotype/gotype.go`: `"tinyint(1)": goBool`; `lookupKeys` matches a non-integer `… unsigned [zerofill]` type as `<base> unsigned`, then `<base>` (an integer base still never takes the signed key), so `double unsigned zerofill` is `float64`.
+- `parser/detect.go`: `tinyint(1)` takes the `bool` soft-delete strategy, so the mysql example's `tags.is_deleted` generates under `source: database`.
+- Tests: new `TestMySQLIntrospect_TypeSynonyms` (both sources plus `assertSchemaParity`, MySQL 8.0); new cases in `TestIntegerDisplayWidth`, `TestNormalizeType`, `TestMySQLTypeMappings`, `TestMySQLSQLNullTypes`, `TestDetectSoftDelete`; `TestCreateTableMySQLTypes` `t_bool` expects `tinyint(1)`.
+- PRD: §6.1 says a MySQL type synonym takes its stored form under both sources; §7.1 describes the non-integer unsigned lookup; §7.2's row reads `tinyint(1)` (`bool`, `boolean`) and its note says `overrides.types` keys match the stored form, every `tinyint(1)` column is `bool`, and a value other than 0/1 does not scan; §4.6 lists `tinyint(1)` as `bool`-compatible.
+- Golden churn: mysql example, 12 files (6 each under `expected/manifest/` and `models/manifest/`), `db_type` `boolean` → `tinyint(1)` on 5 columns; generated Go unchanged. Matches the vet.
+- Gates: `make check` ok; `go test -race ./parser/...` with the MySQL integration tests ok; `make update-golden` no churn; `make update-golden-e2e` ok; `make check-examples` ok.
+- `/verify` (independent reviewer agreed, 4/4 PRD, fail-first confirmed) corrections applied inline: §7.2's MySQL rows read `int` (`integer`) and `int unsigned` (`integer unsigned`); §7.1's unsigned fallback names MySQL and SQLite (auto-accept above); `NormalizeType`'s doc comment and the `TestMySQLIntrospect_TypeSynonyms` comment shortened; this entry's `NormalizeType` ref → `:134`; backlog: the REAL_AS_FLOAT line's "(with the FIX-271 prototype)" → "(since FIX-271)", and the line claiming `tinyint(1) unsigned` reaches the bool match dropped (`NormalizeType` writes it as `tinyint unsigned`, an integer).
+
+### FIX-269
+
+- **Status:** Resolved
+- **Severity:** tracked
+- **Origin:** phase 30, `parser/introspect` (`sqlite.go`)
+- **Surfaced by:** `/verify 30.6` (2026-10-05), sqlgen-reviewer measurement; pre-existing at `0260df8e`
+- **Vetted:** ready at `dcc7eeeb` (2026-10-07; re-vetted after the ruling)
+
+**Issue.** A SQLite partial index's `Where` text differs by source, and the manifest carries it, against PRD §6.1. `CREATE UNIQUE INDEX ux ON t (a) WHERE a IS NOT NULL` parses as `"a" NOT NULL` but introspects as the raw `a IS NOT NULL`.
+
+**Root cause.** `indexPartialWhere` (`parser/introspect/sqlite.go:564`, called at `:551`) returns the WHERE clause of the stored `CREATE INDEX` text as written, while the file parser renders it through rqlite/sql. Q10 re-parses each table's stored `CREATE TABLE`, but not its indexes.
+
+**Suggested fix.** Ruled 2026-10-05 (user): re-parse index DDL.
+- In `indexPartialWhere`, read the index's `sqlite_master.sql` with the SQLite file parser and take `Where` in the parser's form, as 30.6 does for tables.
+- Add a partial-index case (`WHERE a IS NOT NULL`, plus a comparison predicate) to `TestSQLiteIntrospect_UniqueAndPKAutoIndexes` or a new `_PartialIndexes` test, compared through `assertSchemaParity`.
+- A stored `CREATE INDEX` the parser cannot read fails introspection, in the class PRD §6.3 already names; extend that list if a new construct turns up.
+- Vet correction (prototyped): parse the index statement by itself through a new exported `sqlite.IndexWhere(ddl string) (string, error)`, not table DDL plus index DDL through `sqlite.New().Parse`. The reason: the file parser looks up an index's `ON` table case-sensitively and silently drops the index when the case differs. Measured: `CREATE TABLE Users (a TEXT); CREATE UNIQUE INDEX ux2 ON users (a) WHERE a IS NOT NULL` → `casemismatch parsed Users: []`. `IndexWhere` and `parseCreateIndex` share an unexported `indexWhere` (`rsql.ExprString`), so both sources produce the text by one path.
+  - `indexPartialWhere` calls `sqlite.IndexWhere` on the stored `sqlite_master.sql`. A parse failure returns `*SchemaError` (`introspect sqlite index <name>: parsing CREATE INDEX: …`).
+  - The hand-written WHERE scanner and its test are deleted: `extractSQLiteIndexWhere`, `skipSQLiteInert`, `sqliteScanPast`, `matchesSQLiteWhere`, `isSQLiteSeparator`, `TestExtractSQLiteIndexWhere`. `docs/design/INTROSPECTION.md:86` cites `extractSQLiteIndexWhere` in a dated audit line, which stay as they are.
+  - New tests:
+    - `TestSQLiteIntrospect_PartialIndexes`: three predicates (lowercase `where`, `'x WHERE y'` in a literal, `/* WHERE */` in a comment) plus `assertSchemaParity`;
+    - `TestSQLiteIntrospect_UnreadablePartialIndex`: `IS NOT DISTINCT FROM` fails both paths, as a `SchemaError` on introspection;
+    - `TestIndexWhere`: table-driven, 7 rows.
+  - PRD §6.3: the "constraint names and CHECK text" bullet says a partial index's predicate comes from its stored CREATE INDEX, read with the file parser. The "DDL the file parser cannot read" bullet covers partial indexes and adds `IS [NOT] DISTINCT FROM` in a partial index's `WHERE`.
+- Pending the user's ruling: the prototype newly crashes introspection of a partial index that uses `LIKE … ESCAPE`. `rsql.ExprString` panics on it. The files source already panics on it, and introspection used to return the raw text. Measured with `CREATE INDEX ix ON t (a) WHERE a LIKE 'x%' ESCAPE '\'` under `source: database`: HEAD → exit 0, `"where": "a LIKE 'x%' ESCAPE '\\'"`; prototype → exit 2, `panic: sql.BinaryExpr.String(): invalid op ESCAPE`.
+  - (a) Land as prototyped. Introspection matches files, which already panics on this index and on any CHECK with ESCAPE. This is a crash regression for database-only users until the ESCAPE panic is fixed.
+  - (b) Recommended by the vet: a `recover` in `indexWhere` that turns the panic into a parse error, and name `LIKE … ESCAPE` in the PRD §6.3 list. Measured (temporary edit): exit 3, `Schema error: introspect sqlite index ix: rendering CREATE INDEX predicate: sql.BinaryExpr.String(): invalid op ESCAPE`. Because `parseCreateIndex` shares `indexWhere`, files gets the same error. The CHECK, DEFAULT and generated-column sites would still panic. Not in the patch.
+  - (c) Fix the ESCAPE panic at its root (all six `rsql.ExprString` sites in `parser/sqlite/sqlite.go`) as its own entry first, then land FIX-269.
+- The user ruled on 2026-10-07: option (b). `indexWhere` recovers the ESCAPE panic into a parse error (a schema error on both sources), and PRD §6.3 names `LIKE … ESCAPE` in a partial index's `WHERE`. The CHECK, DEFAULT and generated-column panic stays in the backlog.
+- Prototype results, run at `dcc7eeeb` on 2026-10-07:
+  - Reproduction:
+    - parser probe (`zz_probe`, `sqliteSchemas` + `assertSchemaParity`, `CREATE UNIQUE INDEX ux ON t (a) WHERE a IS NOT NULL; CREATE INDEX ix ON t (b) WHERE b>0 AND a<>'x'`), `go test -count=1 -run TestZZProbeFIX269 ./introspect/` → `- Where: "a" NOT NULL` / `+ Where: "a IS NOT NULL"`, and `- Where: "b" > 0 AND "a" != 'x'` / `+ Where: "b>0 AND a<>'x'"`;
+    - end to end with the HEAD CLI (json_layout single): `-c files.yml` → `"where": "\"b\" > 0"`, `"where": "\"a\" NOT NULL"`; `-c database.yml` → `"where": "b>0"`, `"where": "a IS NOT NULL"`. With the prototype CLI, `diff -r out-files out-database` → identical.
+  - Gates:
+    - `cd parser && go test -race -count=1 ./...` → ok (PG16 + MySQL 8.0 containers);
+    - `golangci-lint run ./sqlite/... ./introspect/...` → 0 issues; `gofumpt -l parser/` → clean;
+    - `cd cmd/sqlgen && go test -race -count=1 -run 'TestGenerate_.*/sqlite' ./cli/` → ok.
+  - Fail-first:
+    - `parser/introspect/sqlite.go` at HEAD, new tests kept → `TestSQLiteIntrospect_PartialIndexes` fails: `"t_a_live": "a IS NOT NULL"` (want `"a" NOT NULL`), plus the parity diff. `TestSQLiteIntrospect_UnreadablePartialIndex` fails: "Introspect() error = <nil>, want the parse error for index t_ab".
+    - `IndexWhere` is new. The `parseCreateIndex` refactor is behavior-neutral, and `TestCreateIndex_PartialWhere` still passes.
+    - The existing suite without the fix (`./introspect/ ./sqlite/` at HEAD) → passes.
+  - Golden churn: none.
+  - Patch (first vet): 6 files, +130/-138, since replaced.
+- Prototype results for the ruled option (b), run at `dcc7eeeb` on 2026-10-07:
+  - Shape: the unexported `indexWhere` returns `(where string, err error)`, and a deferred `recover` turns an `rsql.ExprString` panic into `fmt.Errorf("rendering CREATE INDEX predicate: %v", r)`. `IndexWhere` returns that error, and `parseCreateIndex` wraps it as `index <name>: …`. PRD §6.3's unreadable-DDL list reads "`IS [NOT] DISTINCT FROM` or `LIKE … ESCAPE` in a partial index's `WHERE`." The CHECK, DEFAULT and generated-column sites are untouched.
+  - Tests:
+    - a `TestIndexWhere` row "LIKE ESCAPE predicate";
+    - new `TestCreateIndex_UnrenderablePredicate` (files path): "parsing schema.sql: index ix: rendering CREATE INDEX predicate: sql.BinaryExpr.String(): invalid op ESCAPE";
+    - `TestSQLiteIntrospect_UnreadablePartialIndex`, now table-driven over `IS NOT DISTINCT FROM` and `LIKE ESCAPE`: each wants a `*SchemaError` from introspection and a parse error from `sqlite.New().Parse`.
+  - End to end with the prototype CLI, `CREATE INDEX ix ON t (a) WHERE a LIKE 'x%' ESCAPE '\'`:
+    - `source: database` → exit 3, "Schema error: introspect sqlite index ix: rendering CREATE INDEX predicate: sql.BinaryExpr.String(): invalid op ESCAPE";
+    - `source: files` → exit 3, no panic, "Schema error: parsing schema files: parsing <path>/schema.sql: parsing <path>/schema.sql: index ix: rendering CREATE INDEX predicate: …";
+    - the doubled "parsing <path>:" predates this fix (backlog).
+  - Gates:
+    - `cd parser && go test -race -count=1 ./...` → ok (containers ran, 0 SKIP);
+    - `golangci-lint run ./sqlite/... ./introspect/...` → 0 issues; `gofumpt -l parser/` → clean;
+    - `cd cmd/sqlgen && go test -race -count=1 -run 'TestGenerate_.*/sqlite' ./cli/` → ok;
+    - `TestE2EGoldenFiles` → ok.
+  - Fail-first:
+    - `recover` removed → `TestIndexWhere/LIKE_ESCAPE_predicate`, `TestCreateIndex_UnrenderablePredicate` and `TestSQLiteIntrospect_UnreadablePartialIndex/LIKE_ESCAPE` fail: "panic: sql.BinaryExpr.String(): invalid op ESCAPE [recovered, repanicked]";
+    - with `parser/introspect/sqlite.go` reverted, the earlier fail-first holds (`- "t_a_live": \`"a" NOT NULL\`` / `+ "t_a_live": "a IS NOT NULL"`; "Introspect() error = <nil>, want a *introspect.SchemaError");
+    - the existing suite at `dcc7eeeb` → passes.
+  - Golden churn: none.
+  - Patch: `.claude/prototypes/FIX-269.patch` (6 files, +173/-137), the full diff against `dcc7eeeb`.
+
+**References.**
+- PRD §6.1, §6.3; `docs/design/INTROSPECTION.md` Q10.
+- PG and MySQL already normalize partial-index predicates to the parser's form (30.4).
+
+**Resolution notes.** Resolved 2026-10-07 from the vetted prototype (option (b)), applied with `git apply --3way` at `60abe1ee`; FIX-267's changes to `parser/introspect/sqlite.go`, `sqlite_test.go` and `introspect_integration_test.go` are intact.
+- `parser/sqlite/sqlite.go`: new exported `IndexWhere(ddl string) (string, error)` parses one CREATE INDEX statement; it and `parseCreateIndex` share the unexported `indexWhere`, whose deferred `recover` turns an `rsql.ExprString` panic (`LIKE … ESCAPE`) into `rendering CREATE INDEX predicate: …`. `parseCreateIndex` wraps it as `index <name>: …`.
+- `parser/introspect/sqlite.go`: `indexPartialWhere` reads the stored `sqlite_master.sql` through `sqlite.IndexWhere`; a failure is a `*SchemaError` (`introspect sqlite index <name>: …`). The hand-written WHERE scanner (`extractSQLiteIndexWhere`, `skipSQLiteInert`, `sqliteScanPast`, `matchesSQLiteWhere`, `isSQLiteSeparator`) and `TestExtractSQLiteIndexWhere` are deleted.
+- Tests: `TestIndexWhere` (8 rows), `TestCreateIndex_UnrenderablePredicate`, `TestSQLiteIntrospect_PartialIndexes` (with `assertSchemaParity`), `TestSQLiteIntrospect_UnreadablePartialIndex` (table-driven: `IS NOT DISTINCT FROM`, `LIKE ESCAPE`).
+- PRD §6.3: the constraint-names bullet says a partial index's predicate comes from its stored CREATE INDEX read with the file parser; the unreadable-DDL bullet covers partial indexes and names `IS [NOT] DISTINCT FROM` and `LIKE … ESCAPE` in a partial index's `WHERE`.
+- Divergence from the prototype: two added comments (`IndexWhere`, `TestSQLiteIntrospect_UnreadablePartialIndex`) shortened per GO.md → Keep it short; no code change. Inline doc corrections: `docs/design/INTROSPECTION.md` (the Q10 row said the PRAGMAs give partial predicates; two §6.4 rows for the new tests) and `docs/tracker/phase-30.md` (the 30.6 PRAGMA list; the 30.9 `SchemaError` raisers gain `indexPartialWhere`); backlog line on the `LIKE … ESCAPE` panic narrowed to the remaining sites.
+- Fail-first on the final code: `parser/introspect/sqlite.go` reverted → `TestSQLiteIntrospect_PartialIndexes` (`- "t_a_live": `"a" NOT NULL`` / `+ "t_a_live": "a IS NOT NULL"`) and both `UnreadablePartialIndex` subtests ("want a *introspect.SchemaError") fail; `recover` removed → `panic: sql.BinaryExpr.String(): invalid op ESCAPE [recovered, repanicked]` in `./sqlite/` and `./introspect/`.
+- Gates: `cd parser && go test -race -count=1 ./...` → ok (containers, 0 SKIP); `make check` → ok; `make check-examples` → ok; `make update-golden-e2e` + `make update-golden` → no churn (matches the vet).
+- The CHECK, DEFAULT, generated-column and expression-index-column (`indexedColumnNames`) `rsql.ExprString` sites still panic on `LIKE … ESCAPE` (already in the backlog, per the ruling).
+
+### FIX-267
+
+- **Status:** Resolved
+- **Severity:** tracked
+- **Origin:** phase 30, `parser/introspect` (`sqlite.go`)
+- **Surfaced by:** `/verify 30.6` (2026-10-05), confirmed by the sqlgen-reviewer pass
+- **Vetted:** corrected at `dcc7eeeb` (2026-10-07)
+
+**Issue.** When a SQLite table declares two FOREIGN KEYs over the same column(s) to the same parent table but different parent columns, `database` and `files` attach the constraint names to different keys. PRD §5.2 requires "the same constraint set, with the same names". Measured: `CREATE TABLE p (x INTEGER UNIQUE, y INTEGER UNIQUE); CREATE TABLE t (id INTEGER PRIMARY KEY, a INTEGER, CONSTRAINT fa FOREIGN KEY (a) REFERENCES p(x), CONSTRAINT fb FOREIGN KEY (a) REFERENCES p(y))` parses as `fa` = a→p(x), `fb` = a→p(y), but introspects as `fa` = a→p(y), `fb` = a→p(x). With only `fa` named, the name moves to the other key. Column `a` also gets a different `FKReference` (parsed `p.x`, introspected `p.y`).
+
+**Root cause.** `nameDeclaredConstraints` (`parser/introspect/sqlite.go:177` at `dcc7eeeb`) matches a PRAGMA-built FK to a declared one by `Type`, `Columns` and `ReferenceTable` only, taking the first unused match. `PRAGMA foreign_key_list` numbers FKs in reverse declaration order (id 0 is the last declared), so the first PRAGMA FK takes the first declared FK's name. The `FKReference` half is older: `introspectForeignKeys` (`sqlite.go:430` at `dcc7eeeb`) gives the column the first FK in PRAGMA order, the last declared, while the parser keeps the first declared. That holds for table-level FKs and for an inline REFERENCES followed by a table-level FK. For two inline REFERENCES on one column, the parser keeps the last one instead (backlog, `parser/sqlite`).
+
+**Suggested fix.**
+- In `nameDeclaredConstraints`, an FK match also requires the same parent columns, compared case-insensitively (`sameColumns(d.ReferenceColumns, c.ReferenceColumns)`). The doc comment says why.
+- In `introspectForeignKeys`, sort the FK ids and walk them from highest to lowest (`slices.Backward`), so constraints and the single-column `FKReference` follow declaration order as the parser's do. A comment notes that PRAGMA id 0 is the last declared.
+- Add `TestSQLiteIntrospect_SameColumnForeignKeys`, table-driven over five cases: both named, only the first named, neither named, inline then table level, and composite `(a,b)`→`p(x,y)` / `p(y,x)`. Each case asserts the FK constraints in order and `t.a`'s `FKReference`, then calls `assertSchemaParity`.
+- Add a white-box `TestNameDeclaredConstraints_ForeignKeyParentColumns` (`parser/introspect/sqlite_test.go`). It lists catalog FKs in the opposite order to the declared ones, with upper-case parent columns, and checks that names attach by parent columns.
+- On landing, the 30.6 Completion Record's "Constraint names … an FK also matches its parent table" should read "and parent columns".
+- Changed from the original, which named only the integration test with two variants. Once the reversed walk lands, both lists are in declaration order, so the parent-column check cannot change any live result, and the integration test alone cannot show fail-first for it. The white-box unit test covers that site. The integration test gains the neither-named, inline-then-table-level and composite cases, which have the same root cause and the same fix site.
+- Prototype results, run at `dcc7eeeb` on 2026-10-07:
+  - Reproduction: a throwaway probe (`parser/introspect/zz_probe_fix267_test.go`, since deleted) with parent `p (x INTEGER UNIQUE, y INTEGER UNIQUE)` and `assertSchemaParity`; `cd parser && go test -short -count=1 -v -run TestZZProbeFix267 ./introspect/`:
+    - both FKs named: parsed `fa`→p[x], `fb`→p[y], `a.FKReference`=p.x; introspected `fa`→p[y], `fb`→p[x], `a.FKReference`=p.y;
+    - only the first named: introspected `fa`→p[y], `a.FKReference`=p.y;
+    - neither named: introspected FK order [y, x], `FKReference`=p.y;
+    - inline `CONSTRAINT fa REFERENCES p(x)` then table-level `fb`: names swapped;
+    - 6 of 7 variants fail parity at HEAD. The only pass, three FKs (x, y, x), comes out right by coincidence.
+  - A probe with quoted, mixed-case names (`REFERENCES "P"("X")` / `` `p`(`Y`) ``) passes with the fix, so the new check raises no false "declares no FOREIGN KEY" error.
+  - Gates:
+    - `cd parser && go test -race -count=1 ./...` → ok (containers ran);
+    - `golangci-lint run ./...` → 0 issues;
+    - `gofumpt -l introspect/` → clean;
+    - `cd cmd/sqlgen && go test -race -count=1 ./cli/...` → ok (109.7s, live PG/MySQL/SQLite generate);
+    - `go test -run TestE2EGoldenFiles -count=1 .` → ok.
+  - Fail-first:
+    - forward walk restored → `TestSQLiteIntrospect_SameColumnForeignKeys/{both_named,only_the_first_named,neither_named,…}` fails: "t: introspected foreign keys mismatch … - ReferenceColumns: []string{"x"} + ReferenceColumns: []string{"y"}" and "t.a: introspected FKReference mismatch … - Column: "x" + Column: "y"";
+    - parent-column match reverted → `TestNameDeclaredConstraints_ForeignKeyParentColumns` fails: "nameDeclaredConstraints() names for keys to p(Y), p(X) = ["fa" "fb"], want ["fb" "fa"]";
+    - the existing suite with HEAD `sqlite.go` (new tests skipped) → passes.
+  - Golden churn: none. No example sets `source:`.
+  - Patch: `.claude/prototypes/FIX-267.patch` (3 files, +108/-4).
+- Auto-accepted the recommended option on 2026-10-07 (`/fix` auto-accept rule): which inline REFERENCES sets `FKReference` when one column has two (the parser keeps the last, the introspector now the first) → leave it to the backlog line already filed by the vet rather than add the `parser/sqlite` guard here, because that guard is a different fix site (scope cap), the landed change is prototyped with green gates, neither option churns goldens, neither touches public surface, and the PRD states no rule for this shape.
+
+**References.**
+- PRD §5.2 "Constraints (all dialects)"; PRD §6.1.
+- `docs/design/INTROSPECTION.md` §10 Q10 / Q11 (SQLite names come from the stored DDL).
+- 30.6 Completion Record, "Constraint names".
+
+**Resolution notes.** Applied the vetted prototype with `git apply --3way` at `2079b18b`; all three files applied cleanly (FIX-268 and FIX-270, landed since the vet, touch none of them). `nameDeclaredConstraints` (`parser/introspect/sqlite.go`) now matches an FK on its parent columns too (`sameColumns(d.ReferenceColumns, c.ReferenceColumns)`, case-insensitive), and `introspectForeignKeys` sorts the PRAGMA FK ids and walks them highest first (`slices.Backward`), so the constraints and a column's single-column `FKReference` follow declaration order as the file parser's do. Tests: `TestSQLiteIntrospect_SameColumnForeignKeys` (integration, 5 cases, each with `assertSchemaParity`) and the white-box `TestNameDeclaredConstraints_ForeignKeyParentColumns`. Fail-first on the final code: the forward walk restored fails `TestSQLiteIntrospect_SameColumnForeignKeys/{both_named,only_the_first_named,…}` (`- ReferenceColumns: []string{"x"}` / `+ ReferenceColumns: []string{"y"}`, `- Column: "x"` / `+ Column: "y"`); the parent-column match reverted fails `TestNameDeclaredConstraints_ForeignKeyParentColumns` (`names for keys to p(Y), p(X) = ["fa" "fb"], want ["fb" "fa"]`). Gates: `make check` ok; `cd parser && go test -race -count=1 ./...` ok (containers); `cd cmd/sqlgen && go test -race -count=1 ./cli/...` ok (live PG/MySQL/SQLite generate); `make update-golden-e2e` and `make update-golden` → no churn, matching the vet; `make check-examples` ok. Doc correction: the 30.6 Completion Record's "Constraint names" bullet (`docs/tracker/phase-30.md`) now says an FK also matches its parent table and parent columns. `/verify FIX-267` agreed with the reviewer on every finding; the landed source diff matches the prototype byte for byte. It pinned the Root cause line refs to `dcc7eeeb` and added the non-short gate runs here; the reviewer's question on two inline REFERENCES was auto-accepted (see Suggested fix), leaving it on the backlog.
+
+### FIX-270
+
+- **Status:** Resolved
+- **Severity:** tracked
+- **Origin:** phase 30, `cmd/sqlgen/gotype`
+- **Surfaced by:** `/verify 30.4` (2026-10-05)
+- **Vetted:** ready at `dcc7eeeb` (2026-10-07)
+
+**Issue.** Since 30.4, both schema sources write a PostgreSQL type in its column's own schema bare. So an `overrides.types."app.status_enum"` key no longer matches the column `app.accounts.status`, whose type is now written `status_enum`, and nothing warns (`config/validate.go` checks only `nullable`). An accepted key that silently does nothing is the PRD §4.13 accept-and-drop pattern.
+
+**Root cause.** `lookupOverride` (`cmd/sqlgen/gotype/gotype.go:699`) tries only the type as written and its modifier-stripped form. Unlike the enum, SET and domain lookup (`schemaTypeKey`), it never tries `<owner schema>.<type>`.
+
+**Suggested fix.** Ruled 2026-10-05 (user): try the owner-qualified key.
+- In the override and integration steps, for a resolver scoped by `ForSchema`, look up `<ownerSchema>.<type>` (with and without modifiers, `[]` kept) before the bare keys, so a qualified key keeps matching its own-schema columns. A cross-schema column's type is already written qualified.
+- Tests: a `gotype` case for a qualified key on an own-schema column, a bare key still matching, and a qualified key not leaking to another schema's same-named type; plus a `cli` codegen case.
+- PRD §7.1 "How steps 3–5 match": state the owner-qualified lookup.
+- Prototype results, run at `dcc7eeeb` on 2026-10-07:
+  - Shape: `lookupOverride` becomes a `*Resolver` method. When `ownerSchema != ""` and the type is not already qualified, it tries `<owner>.<key>` for every `lookupKeys` key, then the bare keys. All four call sites use it (table and global overrides, scoped and global integrations), so the order of the chain is unchanged. The `ForSchema` doc comment, which said "Overrides, integrations and built-in mappings are unchanged", is reworded.
+  - Reproduction: a throwaway `cmd/sqlgen/cli/zz_probe_fix270_test.go` (since deleted) with enum `app.status_enum`, domain `app.positive_int`, tables `app.accounts` and `users`, and keys `"app.status_enum"` → `ext.Status` and `"app.positive_int"` → `ext.Score`. `go test ./cli/ -run TestZZProbeFIX270 -v` → `Account: map[ID:int64 Score:int32 Status:StatusEnum Statuses:StatusEnumSlice]`, `User: map[ID:int64 Score:ext.Score Status:ext.Status]`, stderr `""`. Both keys are silently ignored on the own-schema table. At `0260df8e` (before 30.4) the same probe gave `Account{Status: ext.Status, Score: ext.Score, …}`.
+  - Tests: `TestForSchema_QualifiedOverrideKey` (gotype, 11 cases: own-schema and cross-schema columns, no leak to `billing.status_enum`, no owner, domain key, bare key still matches, qualified beats bare, `[]` kept, modifier-stripped, table-scoped, table scope still precedes global) and `TestGenerate_QualifiedOverrideKey` (cli codegen; `Invoice.Status` stays `BillingStatusEnum`). PRD §7.1 also states that a qualified key beats a bare one.
+  - Gates (cmd/sqlgen):
+    - `gofumpt -l` and `go vet` → clean;
+    - `go test -race -count=1 ./gotype/... ./gen/... ./cli/... ./config/...` → ok (cli 92s, gen 63s);
+    - `golangci-lint run ./gotype/... ./cli/...` → 0 issues;
+    - `TestE2EGoldenFiles` → ok.
+  - Fail-first:
+    - qualified-key block disabled → `TestForSchema_QualifiedOverrideKey` fails 6/11, e.g. `ForSchema("app").Resolve("status_enum") = "AppStatusEnum", want "ext.Status"` and `ForSchema("app").Resolve("status_enum") = "ext.Bare", want "ext.Qualified"`. `TestGenerate_QualifiedOverrideKey` fails: `- "Status": "ext.Status" + "Status": "AppStatusEnum"`;
+    - the existing suite without the fix → passes.
+  - Golden churn: none.
+  - Patch: `.claude/prototypes/FIX-270.patch` (4 files, +183/-9).
+
+**References.**
+- PRD §7.1, §4.13; 30.4 Completion Record ("Owner schema first").
+- `schemaTypeKey` / `ForSchema` (`cmd/sqlgen/gotype/gotype.go`), the pattern to mirror.
+
+**Resolution notes.** Applied the vetted prototype with `git apply --3way` at `6f8c18de`; all four files applied cleanly (FIX-268's PRD edit is in §6.1, this one in §7.1). `lookupOverride` (`cmd/sqlgen/gotype/gotype.go`) is now a `*Resolver` method: for a resolver scoped by `ForSchema` and a type not already qualified, it tries `<owner schema>.<key>` for every `lookupKeys` key (`[]` kept, modifiers stripped) before the bare keys. All four call sites use it (table and global overrides, scoped and global integrations), so the chain order is unchanged. The `ForSchema` doc comment is reworded, and PRD §7.1 "How steps 3–5 match a SQL type" states the owner-qualified lookup and that a qualified key wins over a bare one. Tests: `TestForSchema_QualifiedOverrideKey` (gotype, 11 cases) and `TestGenerate_QualifiedOverrideKey` (cli codegen). Fail-first: with the qualified-key block disabled, `TestForSchema_QualifiedOverrideKey` fails 6/11 (`ForSchema("app").Resolve("status_enum") = "AppStatusEnum", want "ext.Status"`) and `TestGenerate_QualifiedOverrideKey` fails on `Account.Status` / `Score`. Gates: `make check` ok; `make update-golden-e2e` and `make update-golden` → no churn, matching the vet; `make check-examples` ok. `/verify FIX-270` agreed with the reviewer on every finding; the landed diff matches the prototype byte for byte. It corrected the Root cause line ref (`gotype.go:699`) and extended backlog line 93 (`typeOverrideSource` warning key) with the table-scoped qualified-key variant.
+
+### FIX-268
+
+- **Status:** Resolved
+- **Severity:** tracked
+- **Origin:** phase 30, `parser/mysql` (`exprText`) and `parser/introspect/mysql.go`
+- **Surfaced by:** `/verify 30.5` (2026-10-05), extended by the sqlgen-reviewer pass
+- **Vetted:** corrected at `dcc7eeeb` (2026-10-07)
+
+**Issue.** PRD §6.1 says `database` and `files` describe a schema identically, and its MySQL sentence lists the catalog rewrites that may differ. Measured on MySQL 8.0 with the real introspector against the file parser, these still differ and are neither normalized nor named:
+- `DEFAULT NOW()` → introspected `current_timestamp()`, parsed `now()`
+- `DEFAULT NOW(3)` → introspected `current_timestamp(3)`, parsed `now(3)`
+- `DEFAULT LOCALTIMESTAMP` → introspected `current_timestamp()`, parsed `localtimestamp()`
+- CHECK `m regexp '^[a-z]+$'` → introspected `regexp_like(m, '^[a-z]+$')`, parsed `m regexp '^[a-z]+$'`
+- CHECK `not (u > 200)` → introspected `u <= 200`, parsed `not u > 200`
+
+The manifest's `default` / CHECK text differs by source, unannounced, for DDL as common as `created_at DATETIME DEFAULT NOW()`. `default_kind` is "function" on both, and the Go code is unaffected.
+
+**Root cause.** MySQL respells current-time synonyms. A bare keyword default `NOW` / `LOCALTIME` / `LOCALTIMESTAMP` is stored as `CURRENT_TIMESTAMP` (with `DEFAULT_GENERATED`). Inside an expression default the catalog writes `now()`: `DEFAULT (NOW())` and `DEFAULT (LOCALTIMESTAMP())` give `now()`, and `DEFAULT (NOW() + INTERVAL 1 DAY)` gives `(now() + interval 1 day)`. `CURRENT_DATE` / `CURRENT_TIME` come back as `curdate()` / `curtime()`. MySQL also rewrites `REGEXP` / `RLIKE` and folds `NOT` in every stored expression (CHECK, generated column, expression default), not only in `check_clause`. `exprText` (`parser/mysql/mysql.go:64`) only drops charset introducers, so the parser keeps the DDL's spelling, while `mysqlDefault` (`parser/introspect/mysql.go:661`) and the CHECK path (`NormalizeExpr`, `mysql.go:601`) return the catalog's.
+
+**Suggested fix.** Ruled 2026-10-05 (user): normalize the defaults, and name the CHECK rewrites.
+- In `exprText`'s Rewrite callback, rename the time-function synonyms through an unexported `currentTimeSynonyms` map, keeping the `Fsp` precision:
+  - a `CurTimeFuncExpr` named `now`, `localtime` or `localtimestamp` becomes `current_timestamp`;
+  - `curtime` becomes `current_time`;
+  - an unqualified, zero-argument `FuncExpr` named `curdate` becomes `current_date`.
+  Both sources go through `exprText`, so bare defaults, expression defaults and `LOCALTIMESTAMP()` → `now()` all converge. Update the `exprText` and `NormalizeExpr` doc comments.
+- `TestNormalizeExpr`: add 9 cases (now, now(3), LOCALTIME, LOCALTIMESTAMP(6), now inside an expression, curdate, CURRENT_DATE, CURTIME(2), and UTC_TIMESTAMP as a non-synonym control).
+- `TestMySQLIntrospect_Defaults`: add 7 columns (NOW(), NOW(3), LOCALTIMESTAMP, LOCALTIME(6), `(LOCALTIMESTAMP() + INTERVAL 1 DAY)`, `(CURRENT_DATE)`, `(CURTIME())`), each asserted equal on both sources, plus `assertSchemaParity`.
+- `TestMySQLIntrospect_CatalogRewrites` (`parser/introspect/mysql_integration_test.go`):
+  - pin on both sources 12 CHECKs (regexp, rlike, not regexp, not cmp, `!`, not in, not between, not is null, double not, not-and, not on a bare column, not like kept) and one generated column `AS (not (qty > 3))`;
+  - its doc comment names both rewrites.
+- PRD §6.1:
+  - the normalization sentence says a MySQL current-time synonym takes its standard name under both sources;
+  - the MySQL catalog-rewrite sentence names, for any stored expression, the REGEXP/RLIKE → `regexp_like(…)` rewrite and the NOT-folding rule. That covers inverted comparisons; IN, BETWEEN and IS NULL gaining or losing NOT; double NOT cancelling; De Morgan over AND/OR; and `not x` → `0 = x`. NOT over LIKE/REGEXP is kept.
+- Changed from the original:
+  - the default normalization widens to `CURDATE()` / `CURRENT_DATE` and `CURTIME()` / `CURRENT_TIME` (same root cause, same fix site, measured mismatch);
+  - the PRD naming covers the whole NOT-folding rule and REGEXP/RLIKE in every stored expression. The original narrow wording (`NOT (a > b)` in CHECK) would leave measured differences unnamed: "u <= 1 or v <= 1", "v != 3", "0 = u";
+  - the parser still keeps those rewrites and only names them, per the ruling.
+- Auto-accepted the recommended option on 2026-10-07 (`/fix` auto-accept rule): which name do `CURDATE()` / `CURRENT_DATE` and `CURTIME()` / `CURRENT_TIME` normalize to? → `current_date()` / `current_time()`, matching the ruled `current_timestamp`. Conditions held: it was prototyped with green gates; there is no golden churn against the `curdate` / `curtime` alternative, since no example uses either; it adds no public surface (`currentTimeSynonyms` is unexported, and `NormalizeExpr` changes only its doc); and it reverses no ruling (it adds PRD text for an unspecified case).
+- Prototype results, run at `dcc7eeeb` on 2026-10-07:
+  - Reproduction: a throwaway probe (`parser/introspect/zz_probe_fix268_test.go`, since deleted) on testcontainers MySQL 8.0; `cd parser && go test -count=1 -run TestZZProbeFix268 ./introspect/`. `assertSchemaParity` diff (-parsed +introspected):
+    - `Default: "now()"` / `"current_timestamp()"`
+    - `"now(3)"` / `"current_timestamp(3)"`
+    - `"localtimestamp()"` / `"current_timestamp()"`
+    - `"localtime()"` / `"current_timestamp()"`
+    - `"localtimestamp(6)"` / `"current_timestamp(6)"`
+    - `"current_date()"` / `"curdate()"`
+    - `"current_time()"` / `"curtime()"`
+    - `"localtimestamp()"` / `"now()"` (from `DEFAULT (LOCALTIMESTAMP())`)
+    - `CheckExpression: "m regexp '^[a-z]+$'"` / `"regexp_like(m, '^[a-z]+$')"`
+    - `"not u > 200"` / `"u <= 200"`
+    All five of the Issue's bullets reproduce. With the prototype, only the named REGEXP and NOT rewrites remain.
+  - NOT-folding cases measured on raw catalog text:
+    - `!(v < 0)` → "v >= 0"
+    - `not (v = 3)` → "v != 3"
+    - `not (u <> 9)` → "u = 9"
+    - `not (v in (1,2))` → "v not in (1, 2)"
+    - `not (v not in (4,5))` → "v in (4, 5)"
+    - `not (u between 1 and 5)` → "u not between 1 and 5"
+    - `not (u is null)` → "u is not null"
+    - `not (not (u > 7))` → "u > 7"
+    - `not (u > 1 and v > 1)` → "u <= 1 or v <= 1"
+    - `not (u > 1 or v is null)` → "u <= 1 and v is not null"
+    - `not (u)` → "0 = u"
+    - `not (m like 'z%')` → kept as "not m like 'z%'"
+    - `m not regexp 'y'` → "not regexp_like(m, 'y')"
+    - `m rlike 'x'` → "regexp_like(m, 'x')"
+    - generated column `AS (not (u > 3))` → "u <= 3"; expression default `DEFAULT (not (1 > 2))` → "1 <= 2"
+  - Gates:
+    - `cd parser && go test -race -count=1 ./...` → ok (MySQL 8.0 and PG 16 containers);
+    - `golangci-lint run ./...` → 0 issues;
+    - `gofumpt -l parser/introspect parser/mysql` → clean;
+    - `cd cmd/sqlgen && go test -race -count=1 ./...` → all ok (incl. `TestE2EGoldenFiles`, cli, mcp/integration).
+  - Fail-first:
+    - `CurTimeFuncExpr` rename reverted → `TestNormalizeExpr` fails: `NormalizeExpr("NOW()") = "now()", want "current_timestamp()"`. `TestMySQLIntrospect_Defaults` also fails: `- "now_at": "current_timestamp()", + "now_at": "now()"`, and parity shows `- Default: "now(3)" + Default: "current_timestamp(3)"`.
+    - `curdate` case reverted → `NormalizeExpr("curdate()") = "curdate()", want "current_date()"` and `- "today": "current_date()", + "today": "curdate()"`.
+    - The `_CatalogRewrites` additions are test-only pins of database behavior and pass with `exprText` at HEAD.
+    - The existing suite without the fix (`go test -race -count=1 ./mysql/ ./introspect/` at HEAD) → passes.
+  - Golden churn: none (no example DDL uses a current-time synonym).
+  - Patch: `.claude/prototypes/FIX-268.patch` (4 files, +114/-28).
+
+**References.**
+- PRD §6.1; `docs/design/INTROSPECTION.md` Q5, Q13, M9.
+- phase-30.md ground rule: a lasting user-visible parity exception is written into §6.1.
+- Parallel: the PRD §6.1 "PostgreSQL expression text the catalog rewrites" paragraph (30.4).
+
+**Resolution notes.** Applied the vetted prototype cleanly at `64755e5f`, since it was fresh against `dcc7eeeb`. `exprText` (`parser/mysql/mysql.go`) renames MySQL current-time synonyms through the unexported `currentTimeSynonyms` map and keeps their `Fsp`: `now` / `localtime` / `localtimestamp` → `current_timestamp`, `curtime` → `current_time`, and an unqualified zero-argument `curdate` → `current_date`. Both sources go through `exprText`, so bare and expression defaults converge. The `exprText` / `NormalizeExpr` doc comments were updated. PRD §6.1 states the synonym normalization and names the MySQL REGEXP/RLIKE → `regexp_like(…)` and NOT-folding catalog rewrites for every stored expression. Tests: 9 `TestNormalizeExpr` cases, 7 `TestMySQLIntrospect_Defaults` columns, and 12 CHECKs plus 1 generated column pinned on both sources in `TestMySQLIntrospect_CatalogRewrites`. Fail-first: with `mysql.go` at HEAD, 7 `TestNormalizeExpr` cases fail (`NormalizeExpr("NOW()") = "now()", want "current_timestamp()"`), and `TestMySQLIntrospect_Defaults` fails on the new columns. Gates: `make check` ok; `cd parser && go test -race -count=1 ./...` ok (MySQL 8.0 containers); `make check-examples` ok. Golden churn: none, matching the vet. Inline: `docs/design/INTROSPECTION.md`'s `TestMySQLIntrospect_Defaults` row now lists the current-time synonyms. `/verify FIX-268` agreed with the reviewer on every finding. It corrected two facts in this entry (12 CHECKs, not 13; `exprText` is at `mysql.go:64`) and sent one pre-existing `classifyDefaultKind` finding to the backlog.
+
 ### FIX-259
 
 - **Status:** Resolved
@@ -5759,6 +12937,7 @@ analogue is `input.schema`, a single string that `pipeline.go:151-155` (at `38d9
 - Tests: `TestUnqualifiedFKTargetSchema`, `TestUnresolvedForeignKeys`, `TestRenameTableCarriesForeignKeys` (mysql), `TestAlterTableRenameTableCarriesForeignKeys` (sqlite), `TestParseSchema_UnresolvedForeignKey` and `TestParseSchema_PrintsParserWarnings` (cli).
 - Gates: `make check` ok (golangci-lint 0 issues); `make update-golden` and `make update-golden-e2e` changed no file (golden churn none, matching the vet); `make check-examples` ok.
 - Fail-first re-run on the final code, one site at a time: column-FK and constraint-FK sites and the Postgres rename sync → `TestUnqualifiedFKTargetSchema` fails; MySQL / SQLite rename sync → their rename tests fail; CLI wiring off → `postgres_target_never_parsed/*` and `postgres_unqualified_target_only_another_schema_defines/*` fail; Postgres-only gate off → `mysql_/sqlite_target_never_parsed_still_generates/*` fail; each warning print site reverted → its `PrintsParserWarnings/<cmd>/quiet=false` fails.
+- Q3 settled as (b) on 2026-10-07 by phase 30.9 (design doc `INTROSPECTION.md` Q2). The CLI now introspects, so Q3(a)'s deferred ordering decision came due. A `parseSchema` error exits 4 only when it holds a `*connectionError` (connect, ping or catalog query); an unresolved FK, like every other schema error, exits 3 under every `input.source`. The mapping is `parseExitCode` (`cmd/sqlgen/cli/connection.go`), shared by `generate`, `validate` and `loadAndValidate`. The live PG `source: both` case is tested in 30.10.
 
 ### FIX-228
 

@@ -28,8 +28,8 @@ Junction table linking users to their preferred categories
 
 | Name | Columns | Unique | Method | Where |
 | --- | --- | --- | --- | --- |
+| `PRIMARY` | user_id, category_id | yes | btree |  |
 | `category_id` | category_id |  | btree |  |
-| `user_categories_pkey` | user_id, category_id | yes | btree |  |
 | `user_categories_user_slot_uq` | user_id, slot | yes | btree |  |
 
 ## Query methods

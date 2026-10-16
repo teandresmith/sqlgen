@@ -26,7 +26,7 @@ User activity events; the one nullable-FK child table in this schema
 
 | Name | Columns | Unique | Method | Where |
 | --- | --- | --- | --- | --- |
-| `user_events_pkey` | id | yes | btree |  |
+| `PRIMARY` | id | yes | btree |  |
 | `user_id` | user_id |  | btree |  |
 
 ## Query methods

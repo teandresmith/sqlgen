@@ -42,14 +42,10 @@ func makeGenerateRunE(flags *cliFlags) func(*cobra.Command, []string) error {
 		printWarnings(errOut, warnings, flags.quiet)
 
 		// 3. Parse schema.
-		schema, err := parseSchema(cfg)
+		schema, err := parseSchema(cmd.Context(), cfg)
 		if err != nil {
-			code := ExitSchema
-			if cfg.Input.Source == config.SourceDatabase || cfg.Input.Source == config.SourceBoth {
-				code = ExitConnection
-			}
-			printSchemaError(errOut, err)
-			return &exitError{code: code, err: err}
+			printParseError(errOut, err)
+			return &exitError{code: parseExitCode(err), err: err}
 		}
 		// Statements the parser skipped, e.g. CREATE VIEW in DDL (PRD §16).
 		printManifestWarnings(errOut, schema.Warnings, flags.quiet)

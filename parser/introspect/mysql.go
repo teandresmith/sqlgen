@@ -3,12 +3,16 @@ package introspect
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
+	"regexp"
+	"slices"
 	"strings"
 
-	_ "github.com/go-sql-driver/mysql" // MySQL database/sql driver
+	mysqldriver "github.com/go-sql-driver/mysql" // MySQL database/sql driver
 
 	"github.com/teandresmith/sqlgen/parser"
+	"github.com/teandresmith/sqlgen/parser/mysql"
 )
 
 // MySQLIntrospector discovers schema elements from a live MySQL database.
@@ -54,7 +58,40 @@ func (mi *MySQLIntrospector) Introspect(ctx context.Context, connString string, 
 	if err := mi.introspectViews(ctx, schema, opts); err != nil {
 		return err
 	}
+	return mi.introspectViewTables(ctx, schema)
+}
 
+// introspectViewTables records the tables every view in the database reads,
+// whatever the introspection filters, in schema.ViewDependencies, as
+// information_schema.VIEW_TABLE_USAGE lists them, so source: both refuses a
+// migration that drops or renames one (PRD §6.1). It lists a table a view
+// reads anywhere in its query, but for a view over another view only that
+// view. A server older than MySQL 8.0.13 has no VIEW_TABLE_USAGE, and
+// records none.
+func (mi *MySQLIntrospector) introspectViewTables(ctx context.Context, schema *parser.Schema) error {
+	rows, err := mi.db.QueryContext(ctx, `
+		SELECT view_name, table_name
+		FROM information_schema.view_table_usage
+		WHERE view_schema = DATABASE() AND table_schema = DATABASE()
+		ORDER BY view_name, table_name`)
+	if err != nil {
+		if myErr, ok := errors.AsType[*mysqldriver.MySQLError](err); ok && myErr.Number == mysqlErrUnknownTable {
+			return nil
+		}
+		return fmt.Errorf("introspect mysql view tables: %w", err)
+	}
+	defer rows.Close() //nolint:errcheck // rows.Close error is not actionable after reading
+
+	for rows.Next() {
+		dep := parser.ViewDependency{Object: parser.DependencyObject{Kind: parser.TableDependency}}
+		if err := rows.Scan(&dep.View, &dep.Object.Name); err != nil {
+			return fmt.Errorf("introspect mysql view tables: scanning: %w", err)
+		}
+		schema.ViewDependencies = append(schema.ViewDependencies, dep)
+	}
+	if err := rows.Err(); err != nil {
+		return fmt.Errorf("introspect mysql view tables: iterating: %w", err)
+	}
 	return nil
 }
 
@@ -102,6 +139,7 @@ func (mi *MySQLIntrospector) introspectTables(ctx context.Context, schema *parse
 		if err := mi.introspectConstraints(ctx, &table); err != nil {
 			return err
 		}
+		parser.CanonicalizeConstraints(&table, "mysql")
 
 		schema.Tables = append(schema.Tables, table)
 	}
@@ -150,17 +188,77 @@ func (mi *MySQLIntrospector) introspectViews(ctx context.Context, schema *parser
 			SQL:  ref.definition,
 		}
 
-		if err := mi.introspectViewColumns(ctx, &view); err != nil {
+		catalog, err := mi.viewCatalogColumns(ctx, view.Name)
+		if err != nil {
 			return err
+		}
+		names := make([]string, len(catalog))
+		for i, col := range catalog {
+			names[i] = col.name
+		}
+		// MySQL keeps a view's column list out of view_definition, so the
+		// statement names the catalog's columns, as a column list would.
+		// A catalog ENUM / SET column may add a type to schema, so a catalog
+		// column is built only where it is used.
+		ddl := "CREATE VIEW " + quoteMySQLIdent(view.Name) + mysqlColumnList(names) + " AS " + ref.definition
+		view.Definition, view.Columns, err = viewColumnsFromDefinition(ddl, mysql.ParseViewSQL, schema, parser.SearchPath{}, names, func(i int) (parser.Column, bool) {
+			return viewColumnFromCatalog(view.Name, catalog[i], schema), true
+		})
+		if err != nil {
+			schema.Warnings = append(schema.Warnings, viewFallbackWarning(view.Name, err))
+			view.Columns = make([]parser.Column, 0, len(catalog))
+			for _, row := range catalog {
+				view.Columns = append(view.Columns, viewColumnFromCatalog(view.Name, row, schema))
+			}
 		}
 
 		schema.Views = append(schema.Views, view)
 	}
 
+	reuseViewSourceTypes(schema)
 	return nil
 }
 
-func (mi *MySQLIntrospector) introspectViewColumns(ctx context.Context, view *parser.View) error {
+// mysqlColumnList returns names as a CREATE VIEW column list, or "" when
+// there are none.
+func mysqlColumnList(names []string) string {
+	if len(names) == 0 {
+		return ""
+	}
+	quoted := make([]string, len(names))
+	for i, name := range names {
+		quoted[i] = quoteMySQLIdent(name)
+	}
+	return " (" + strings.Join(quoted, ", ") + ")"
+}
+
+// mysqlViewColumn is one row of a view's information_schema.columns.
+type mysqlViewColumn struct {
+	name, columnType string
+	nullable         bool
+}
+
+func quoteMySQLIdent(name string) string {
+	return "`" + strings.ReplaceAll(name, "`", "``") + "`"
+}
+
+// viewColumnFromCatalog builds a view column from its catalog row. An ENUM
+// or SET column gets a type of the view's own, added to schema, which
+// reuseViewSourceTypes may replace later.
+func viewColumnFromCatalog(view string, row mysqlViewColumn, schema *parser.Schema) parser.Column {
+	col := parser.Column{Name: row.name, Type: normalizeMySQLType(row.columnType), Nullable: row.nullable}
+	switch col.Type {
+	case "enum":
+		col.Type = parser.InlineEnumName(view, col.Name)
+		schema.Enums = append(schema.Enums, parser.Enum{Name: col.Type, Values: extractMySQLEnumValues(row.columnType)})
+	case "set":
+		col.Type = parser.InlineSetName(view, col.Name)
+		schema.Sets = append(schema.Sets, parser.Set{Name: col.Type, Values: extractMySQLEnumValues(row.columnType)})
+	}
+	return col
+}
+
+func (mi *MySQLIntrospector) viewCatalogColumns(ctx context.Context, view string) ([]mysqlViewColumn, error) {
 	rows, err := mi.db.QueryContext(ctx, `
 		SELECT
 			column_name,
@@ -168,32 +266,110 @@ func (mi *MySQLIntrospector) introspectViewColumns(ctx context.Context, view *pa
 			is_nullable
 		FROM information_schema.columns
 		WHERE table_schema = DATABASE() AND table_name = ?
-		ORDER BY ordinal_position`, view.Name)
+		ORDER BY ordinal_position`, view)
 	if err != nil {
-		return fmt.Errorf("introspect mysql view columns %s: %w", view.Name, err)
+		return nil, fmt.Errorf("introspect mysql view columns %s: %w", view, err)
 	}
 	defer rows.Close() //nolint:errcheck // rows.Close error is not actionable after reading
 
+	var cols []mysqlViewColumn
 	for rows.Next() {
-		var (
-			col        parser.Column
-			columnType string
-			isNullable string
-		)
-		if err := rows.Scan(&col.Name, &columnType, &isNullable); err != nil {
-			return fmt.Errorf("introspect mysql view columns %s: scanning: %w", view.Name, err)
+		var col mysqlViewColumn
+		var isNullable string
+		if err := rows.Scan(&col.name, &col.columnType, &isNullable); err != nil {
+			return nil, fmt.Errorf("introspect mysql view columns %s: scanning: %w", view, err)
 		}
-
-		col.Type = normalizeMySQLType(columnType)
-		col.Nullable = isNullable == "YES"
-
-		view.Columns = append(view.Columns, col)
+		col.nullable = isNullable == "YES"
+		cols = append(cols, col)
 	}
-
 	if err := rows.Err(); err != nil {
-		return fmt.Errorf("introspect mysql view columns %s: iterating: %w", view.Name, err)
+		return nil, fmt.Errorf("introspect mysql view columns %s: iterating: %w", view, err)
 	}
-	return nil
+	return cols, nil
+}
+
+// reuseViewSourceTypes gives a view's ENUM or SET column that projects
+// another view's column unchanged the type of that column, through any
+// chain of views, so one ENUM or SET column has one type (PRD §8). A
+// table's column already has its table's type, since the view's definition
+// resolves it. It runs once every view is read, so the result does not
+// depend on the order views are read in, and it drops the view types no
+// column uses any longer.
+func reuseViewSourceTypes(schema *parser.Schema) {
+	views := make(map[string]*parser.View, len(schema.Views))
+	for i := range schema.Views {
+		views[schema.Views[i].Name] = &schema.Views[i]
+	}
+	unused := make(map[string]bool)
+
+	// resolve returns the type of view's column i, after reusing its
+	// source's. depth stops a cycle MySQL would refuse anyway.
+	var resolve func(view *parser.View, i, depth int) string
+	resolve = func(view *parser.View, i, depth int) string {
+		col := &view.Columns[i]
+		isSet := col.Type == parser.InlineSetName(view.Name, col.Name)
+		own := isSet || col.Type == parser.InlineEnumName(view.Name, col.Name)
+		if !own || depth > len(views) {
+			return col.Type
+		}
+		source, j, ok := sourceViewColumn(view, i, views)
+		if !ok {
+			return col.Type
+		}
+		typ := resolve(source, j, depth+1)
+		values, found := inlineTypeValues(schema, typ, isSet)
+		ownValues, _ := inlineTypeValues(schema, col.Type, isSet)
+		if typ != col.Type && found && slices.Equal(values, ownValues) {
+			unused[col.Type] = true
+			col.Type = typ
+		}
+		return col.Type
+	}
+	for i := range schema.Views {
+		for j := range schema.Views[i].Columns {
+			resolve(&schema.Views[i], j, 0)
+		}
+	}
+
+	schema.Enums = slices.DeleteFunc(schema.Enums, func(e parser.Enum) bool { return unused[e.Name] })
+	schema.Sets = slices.DeleteFunc(schema.Sets, func(s parser.Set) bool { return unused[s.Name] })
+}
+
+// sourceViewColumn returns the view in views, and the index of its column,
+// that view's column i projects unchanged, read from view's definition. ok
+// is false when the column is an expression, comes from a table or a
+// derived table, or view has no definition.
+func sourceViewColumn(view *parser.View, i int, views map[string]*parser.View) (source *parser.View, j int, ok bool) {
+	if view.Definition == nil || i >= len(view.Definition.Columns) {
+		return nil, 0, false
+	}
+	c := view.Definition.Columns[i]
+	if c.SourceColumn == "" || c.Aggregate != "" {
+		return nil, 0, false
+	}
+	source, ok = views[view.Definition.TableAliases[c.SourceTable]]
+	if !ok {
+		return nil, 0, false
+	}
+	j = slices.IndexFunc(source.Columns, func(col parser.Column) bool { return col.Name == c.SourceColumn })
+	return source, j, j >= 0
+}
+
+// inlineTypeValues returns the values of the SET (isSet) or ENUM named name
+// in schema.
+func inlineTypeValues(schema *parser.Schema, name string, isSet bool) ([]string, bool) {
+	if isSet {
+		i := slices.IndexFunc(schema.Sets, func(s parser.Set) bool { return s.Name == name })
+		if i < 0 {
+			return nil, false
+		}
+		return schema.Sets[i].Values, true
+	}
+	i := slices.IndexFunc(schema.Enums, func(e parser.Enum) bool { return e.Name == name })
+	if i < 0 {
+		return nil, false
+	}
+	return schema.Enums[i].Values, true
 }
 
 func (mi *MySQLIntrospector) introspectColumns(ctx context.Context, table *parser.Table, schema *parser.Schema) error {
@@ -204,7 +380,8 @@ func (mi *MySQLIntrospector) introspectColumns(ctx context.Context, table *parse
 			is_nullable,
 			column_default,
 			extra,
-			COALESCE(column_comment, '')
+			COALESCE(column_comment, ''),
+			COALESCE(generation_expression, '')
 		FROM information_schema.columns
 		WHERE table_schema = DATABASE() AND table_name = ?
 		ORDER BY ordinal_position`, table.Name)
@@ -221,8 +398,9 @@ func (mi *MySQLIntrospector) introspectColumns(ctx context.Context, table *parse
 			dflt       sql.NullString
 			extra      string
 			comment    string
+			generation string
 		)
-		if err := rows.Scan(&col.Name, &columnType, &isNullable, &dflt, &extra, &comment); err != nil {
+		if err := rows.Scan(&col.Name, &columnType, &isNullable, &dflt, &extra, &comment, &generation); err != nil {
 			return fmt.Errorf("introspect mysql columns %s: scanning: %w", table.Name, err)
 		}
 
@@ -230,22 +408,33 @@ func (mi *MySQLIntrospector) introspectColumns(ctx context.Context, table *parse
 		col.Nullable = isNullable == "YES"
 		col.Comment = comment
 
-		if dflt.Valid {
-			col.Default = dflt.String
+		col.Default, err = mysqlDefault(dflt, extra, columnType)
+		if err != nil {
+			return fmt.Errorf("introspect mysql columns %s: column %s: %w", table.Name, col.Name, err)
 		}
 
-		if strings.Contains(strings.ToLower(extra), "auto_increment") {
+		lowerExtra := strings.ToLower(extra)
+		if strings.Contains(lowerExtra, "auto_increment") {
 			col.AutoIncrement = true
 		}
 
-		// Inline ENUM/SET columns get a table-scoped synthetic type name to match
-		// parser/mysql/mysql.go::extractInlineEnumOrSet and prevent cross-table collisions.
+		if storage, ok := mysqlGeneratedStorage(lowerExtra); ok {
+			expr, err := mysql.NormalizeExpr(unescapeMySQLCatalogText(generation))
+			if err != nil {
+				return &SchemaError{Err: fmt.Errorf("introspect mysql columns %s: generated column %s: %w", table.Name, col.Name, err)}
+			}
+			col.GeneratedExpr = expr
+			col.GeneratedStorage = storage
+		}
+
+		// Inline ENUM/SET columns get the table-scoped synthetic type name the
+		// file parser gives them.
 		lowerType := strings.ToLower(columnType)
 		switch {
 		case strings.HasPrefix(lowerType, "enum("):
 			values := extractMySQLEnumValues(columnType)
 			if len(values) > 0 {
-				name := table.Name + "_" + col.Name + "_enum"
+				name := parser.InlineEnumName(table.Name, col.Name)
 				col.Type = name
 				schema.Enums = append(schema.Enums, parser.Enum{
 					Name:   name,
@@ -255,7 +444,7 @@ func (mi *MySQLIntrospector) introspectColumns(ctx context.Context, table *parse
 		case strings.HasPrefix(lowerType, "set("):
 			values := extractMySQLEnumValues(columnType)
 			if len(values) > 0 {
-				name := table.Name + "_" + col.Name + "_set"
+				name := parser.InlineSetName(table.Name, col.Name)
 				col.Type = name
 				schema.Sets = append(schema.Sets, parser.Set{
 					Name:   name,
@@ -273,8 +462,10 @@ func (mi *MySQLIntrospector) introspectColumns(ctx context.Context, table *parse
 	return nil
 }
 
+// introspectConstraints reads the table's PRIMARY KEY, UNIQUE and FOREIGN KEY
+// constraints. A UNIQUE index with an expression part, which has a NULL
+// column_name, is skipped, as the DDL parser skips it (PRD §30.7).
 func (mi *MySQLIntrospector) introspectConstraints(ctx context.Context, table *parser.Table) error {
-	// Primary key and unique constraints.
 	rows, err := mi.db.QueryContext(ctx, `
 		SELECT
 			tc.constraint_name,
@@ -290,6 +481,12 @@ func (mi *MySQLIntrospector) introspectConstraints(ctx context.Context, table *p
 		WHERE tc.table_schema = DATABASE()
 		  AND tc.table_name = ?
 		  AND tc.constraint_type IN ('PRIMARY KEY', 'UNIQUE', 'FOREIGN KEY')
+		  AND (tc.constraint_type <> 'UNIQUE' OR NOT EXISTS (
+			SELECT 1 FROM information_schema.statistics s
+			WHERE s.table_schema = tc.table_schema
+			  AND s.table_name = tc.table_name
+			  AND s.index_name = tc.constraint_name
+			  AND s.column_name IS NULL))
 		ORDER BY tc.constraint_name, kcu.ordinal_position`, table.Name)
 	if err != nil {
 		return fmt.Errorf("introspect mysql constraints %s: %w", table.Name, err)
@@ -352,12 +549,7 @@ func (mi *MySQLIntrospector) introspectConstraints(ctx context.Context, table *p
 	}
 
 	// Check constraints (MySQL 8.0.16+).
-	if err := mi.introspectCheckConstraints(ctx, table); err != nil {
-		return err
-	}
-
-	parser.ApplyTableConstraints(table)
-	return nil
+	return mi.introspectCheckConstraints(ctx, table)
 }
 
 // applyIndexMetadata patches index access methods onto the PRIMARY KEY /
@@ -368,7 +560,52 @@ func (mi *MySQLIntrospector) applyIndexMetadata(ctx context.Context, table *pars
 	if err := mi.applyIndexMethods(ctx, table); err != nil {
 		return err
 	}
-	return mi.introspectNonUniqueIndexes(ctx, table)
+	if err := mi.introspectNonUniqueIndexes(ctx, table); err != nil {
+		return err
+	}
+	return mi.introspectExpressionIndexes(ctx, table)
+}
+
+// introspectExpressionIndexes reads the keys with an expression part (MySQL
+// 8.0.13+), which the constraints leave out, unique or not. Each part is its
+// column, or "" for an expression part, which has a NULL column_name.
+func (mi *MySQLIntrospector) introspectExpressionIndexes(ctx context.Context, table *parser.Table) error {
+	rows, err := mi.db.QueryContext(ctx, `
+		SELECT s.index_name, s.column_name
+		FROM information_schema.statistics s
+		WHERE s.table_schema = DATABASE()
+		  AND s.table_name = ?
+		  AND EXISTS (
+			SELECT 1 FROM information_schema.statistics e
+			WHERE e.table_schema = s.table_schema
+			  AND e.table_name = s.table_name
+			  AND e.index_name = s.index_name
+			  AND e.column_name IS NULL)
+		ORDER BY s.index_name, s.seq_in_index`, table.Name)
+	if err != nil {
+		return fmt.Errorf("introspect mysql expression indexes %s: %w", table.Name, err)
+	}
+	defer rows.Close() //nolint:errcheck // rows.Close error is not actionable after reading
+
+	for rows.Next() {
+		var (
+			name string
+			col  sql.NullString
+		)
+		if err := rows.Scan(&name, &col); err != nil {
+			return fmt.Errorf("introspect mysql expression indexes %s: scanning: %w", table.Name, err)
+		}
+		n := len(table.ExpressionIndexes)
+		if n == 0 || table.ExpressionIndexes[n-1].Name != name {
+			table.ExpressionIndexes = append(table.ExpressionIndexes, parser.ExpressionIndex{Name: name})
+			n++
+		}
+		table.ExpressionIndexes[n-1].Columns = append(table.ExpressionIndexes[n-1].Columns, col.String)
+	}
+	if err := rows.Err(); err != nil {
+		return fmt.Errorf("introspect mysql expression indexes %s: iterating: %w", table.Name, err)
+	}
+	return nil
 }
 
 // applyIndexMethods reads INFORMATION_SCHEMA.STATISTICS.INDEX_TYPE for every
@@ -437,6 +674,7 @@ func (mi *MySQLIntrospector) introspectNonUniqueIndexes(ctx context.Context, tab
 	defer rows.Close() //nolint:errcheck // rows.Close error is not actionable after reading
 
 	indexes := make(map[string]*parser.Constraint)
+	exprIndexes := make(map[string]bool)
 	var order []string
 	for rows.Next() {
 		var (
@@ -447,10 +685,10 @@ func (mi *MySQLIntrospector) introspectNonUniqueIndexes(ctx context.Context, tab
 		if err := rows.Scan(&name, &col, &method); err != nil {
 			return fmt.Errorf("introspect mysql non-unique indexes %s: scanning: %w", table.Name, err)
 		}
-		// Expression index parts (MySQL 8.0.13+) report a NULL column_name and
-		// have no projectable column — skip them to match the DDL parser and
-		// the PostgreSQL standalone-index sweep.
+		// An expression part (MySQL 8.0.13+) has a NULL column_name. Its
+		// index is skipped, as the DDL parser skips it (PRD §30.7).
 		if !col.Valid {
+			exprIndexes[name] = true
 			continue
 		}
 		c, ok := indexes[name]
@@ -466,7 +704,9 @@ func (mi *MySQLIntrospector) introspectNonUniqueIndexes(ctx context.Context, tab
 	}
 
 	for _, name := range order {
-		table.Constraints = append(table.Constraints, *indexes[name])
+		if !exprIndexes[name] {
+			table.Constraints = append(table.Constraints, *indexes[name])
+		}
 	}
 	return nil
 }
@@ -482,8 +722,7 @@ func (mi *MySQLIntrospector) introspectCheckConstraints(ctx context.Context, tab
 		  AND tc.table_name = ?
 		  AND tc.constraint_type = 'CHECK'`, table.Name)
 	if err != nil {
-		// Older MySQL versions may not have check_constraints table.
-		return nil //nolint:nilerr // gracefully degrade on older MySQL
+		return checkQueryError(table.Name, err)
 	}
 	defer rows.Close() //nolint:errcheck // rows.Close error is not actionable after reading
 
@@ -492,10 +731,14 @@ func (mi *MySQLIntrospector) introspectCheckConstraints(ctx context.Context, tab
 		if err := rows.Scan(&name, &clause); err != nil {
 			return fmt.Errorf("introspect mysql check constraints %s: scanning: %w", table.Name, err)
 		}
+		expr, err := mysql.NormalizeExpr(unescapeMySQLCatalogText(clause))
+		if err != nil {
+			return &SchemaError{Err: fmt.Errorf("introspect mysql check constraints %s: %s: %w", table.Name, name, err)}
+		}
 		table.Constraints = append(table.Constraints, parser.Constraint{
 			Name:            name,
 			Type:            parser.Check,
-			CheckExpression: clause,
+			CheckExpression: expr,
 		})
 	}
 
@@ -505,8 +748,23 @@ func (mi *MySQLIntrospector) introspectCheckConstraints(ctx context.Context, tab
 	return nil
 }
 
+// mysqlErrUnknownTable is ER_UNKNOWN_TABLE. A server older than MySQL 8.0.16
+// has no information_schema.check_constraints and answers the CHECK query
+// with it.
+const mysqlErrUnknownTable = 1109
+
+// checkQueryError returns the error to report for a failed CHECK query: none
+// when the server has no CHECK catalog, so it has no CHECKs to read, and err
+// wrapped otherwise.
+func checkQueryError(table string, err error) error {
+	if myErr, ok := errors.AsType[*mysqldriver.MySQLError](err); ok && myErr.Number == mysqlErrUnknownTable {
+		return nil
+	}
+	return fmt.Errorf("introspect mysql check constraints %s: %w", table, err)
+}
+
 // normalizeMySQLType normalizes a MySQL COLUMN_TYPE to match the parser format.
-// Enum types become "enum"; everything else is lowercased as-is.
+// Enum and set types become "enum" and "set".
 func normalizeMySQLType(columnType string) string {
 	lower := strings.ToLower(columnType)
 	if strings.HasPrefix(lower, "enum(") {
@@ -515,13 +773,61 @@ func normalizeMySQLType(columnType string) string {
 	if strings.HasPrefix(lower, "set(") {
 		return "set"
 	}
-	return lower
+	return mysql.NormalizeType(lower)
 }
 
-// extractMySQLEnumValues extracts enum values from a MySQL COLUMN_TYPE like
-// "enum('active','inactive','pending')".
+// mysqlStringTypes are the column types whose literal default
+// information_schema.columns.column_default stores as the bare string value.
+var mysqlStringTypes = map[string]bool{
+	"char": true, "varchar": true, "tinytext": true, "text": true, "mediumtext": true, "longtext": true,
+	"enum": true, "set": true, "date": true, "datetime": true, "timestamp": true, "time": true,
+}
+
+// mysqlCurrentTimestamp matches a CURRENT_TIMESTAMP default as COLUMN_DEFAULT
+// stores it, with or without a fractional-seconds precision. MySQL stores NOW()
+// and LOCALTIMESTAMP as CURRENT_TIMESTAMP too.
+var mysqlCurrentTimestamp = regexp.MustCompile(`(?i)^current_timestamp(\(\d\))?$`)
+
+// mysqlDefault returns a column's default in the parser's form, from its
+// information_schema.columns COLUMN_DEFAULT, EXTRA and COLUMN_TYPE.
+//   - An expression default (EXTRA has DEFAULT_GENERATED) is escaped like
+//     GENERATION_EXPRESSION, and is normalized like it.
+//   - A datetime or timestamp column's CURRENT_TIMESTAMP default is an
+//     expression too. MySQL before 8.0.13 does not mark it DEFAULT_GENERATED,
+//     and no such column can hold the literal text CURRENT_TIMESTAMP.
+//   - A string or temporal column's literal default is the bare value, which
+//     is quoted again. An empty string is a default too.
+//   - Any other literal (a number, b'101', a binary column's 0x6162) is SQL
+//     text already.
+func mysqlDefault(dflt sql.NullString, extra, columnType string) (string, error) {
+	if !dflt.Valid {
+		return "", nil
+	}
+	text := dflt.String
+	if strings.Contains(strings.ToLower(extra), "default_generated") {
+		text = unescapeMySQLCatalogText(text)
+	} else {
+		base := strings.ToLower(columnType)
+		if i := strings.IndexAny(base, "( "); i >= 0 {
+			base = base[:i]
+		}
+		temporalNow := (base == "datetime" || base == "timestamp") && mysqlCurrentTimestamp.MatchString(text)
+		if mysqlStringTypes[base] && !temporalNow {
+			return mysql.QuoteLiteral(text), nil
+		}
+	}
+	expr, err := mysql.NormalizeExpr(text)
+	if err != nil {
+		return "", &SchemaError{Err: fmt.Errorf("normalizing default: %w", err)}
+	}
+	return expr, nil
+}
+
+// extractMySQLEnumValues extracts enum or set values from a MySQL COLUMN_TYPE
+// like "enum('active','in,active')". COLUMN_TYPE writes each value as a string
+// literal, so a value may hold a comma, a doubled quote or a backslash escape,
+// and may be empty.
 func extractMySQLEnumValues(columnType string) []string {
-	// Find the content between first ( and last ).
 	start := strings.Index(columnType, "(")
 	end := strings.LastIndex(columnType, ")")
 	if start < 0 || end <= start {
@@ -530,12 +836,90 @@ func extractMySQLEnumValues(columnType string) []string {
 	inner := columnType[start+1 : end]
 
 	var values []string
-	for part := range strings.SplitSeq(inner, ",") {
-		v := strings.TrimSpace(part)
-		v = strings.Trim(v, "'")
-		if v != "" {
-			values = append(values, v)
+	for i := 0; i < len(inner); i++ {
+		if inner[i] != '\'' {
+			continue // the comma between two literals
 		}
+		value, next := readMySQLStringLiteral(inner, i)
+		values = append(values, value)
+		i = next
 	}
 	return values
+}
+
+// readMySQLStringLiteral decodes the single-quoted literal that opens at
+// s[open] and returns its value and the index of its closing quote.
+func readMySQLStringLiteral(s string, open int) (string, int) {
+	var b strings.Builder
+	i := open + 1
+	for ; i < len(s); i++ {
+		c := s[i]
+		switch {
+		case c == '\'' && i+1 < len(s) && s[i+1] == '\'':
+			b.WriteByte('\'')
+			i++
+		case c == '\'':
+			return b.String(), i
+		case c == '\\' && i+1 < len(s):
+			i++
+			b.WriteString(unescapeMySQL(s[i]))
+		default:
+			b.WriteByte(c)
+		}
+	}
+	return b.String(), i
+}
+
+// unescapeMySQL returns what the escape sequence \c stands for in a MySQL
+// string literal. \% and \_ keep their backslash, as MySQL does.
+func unescapeMySQL(c byte) string {
+	switch c {
+	case '0':
+		return "\x00"
+	case 'b':
+		return "\b"
+	case 'n':
+		return "\n"
+	case 'r':
+		return "\r"
+	case 't':
+		return "\t"
+	case 'Z':
+		return "\x1a"
+	case '%', '_':
+		return "\\" + string(c)
+	default:
+		return string(c)
+	}
+}
+
+// mysqlGeneratedStorage reports a generated column's storage from its
+// lowercased information_schema.columns.extra, which reads "virtual
+// generated" or "stored generated".
+func mysqlGeneratedStorage(extra string) (string, bool) {
+	switch {
+	case strings.Contains(extra, "stored generated"):
+		return "STORED", true
+	case strings.Contains(extra, "virtual generated"):
+		return "VIRTUAL", true
+	}
+	return "", false
+}
+
+// unescapeMySQLCatalogText undoes the backslash escaping information_schema
+// applies to expression text: a quote inside an expression is stored as \'
+// and a backslash as \\.
+func unescapeMySQLCatalogText(s string) string {
+	if !strings.Contains(s, `\`) {
+		return s
+	}
+	var b strings.Builder
+	b.Grow(len(s))
+	for i := 0; i < len(s); i++ {
+		if s[i] == '\\' && i+1 < len(s) {
+			i++
+		}
+		b.WriteByte(s[i])
+	}
+	return b.String()
 }

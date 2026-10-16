@@ -144,24 +144,29 @@ type resolverLayout struct {
 	// `{name}` is the schema source's basename without extension.
 	FilenameTemplate string
 	// Filename is gqlgen's `resolver.filename` (used under single-file
-	// layout). Defaults to "resolver.go" when absent. Like gqlgen, sqlgen
-	// resolves it against the working directory, not against Dir
-	// (singleFileResolverPath).
+	// layout, where it is required: parseResolverLayout rejects its
+	// absence). Like gqlgen, sqlgen resolves it against the working
+	// directory, not against Dir (singleFileResolverPath).
 	Filename string
 }
 
 const (
-	layoutFollowSchema    = "follow-schema"
-	layoutSingleFile      = "single-file"
-	defaultFilenameTpl    = "{name}.resolvers.go"
-	defaultSingleFilename = "resolver.go"
-	defaultResolverDir    = "graph"
+	layoutFollowSchema = "follow-schema"
+	layoutSingleFile   = "single-file"
+	defaultFilenameTpl = "{name}.resolvers.go"
+	defaultResolverDir = "graph"
 )
 
 // parseResolverLayout extracts the resolver block from the consumer's
 // gqlgen.yml. Empty/missing keys fall through to gqlgen's documented
 // defaults so the wrapper behaves the same as a freshly-scaffolded
 // gqlgen.yml that omits explicit resolver fields.
+//
+// `layout: single-file` without `filename` is an error. gqlgen has no
+// default for it: it skips resolver generation when `dir` is absent too,
+// and rejects the config when `dir` is set (codegen/config/resolver.go:
+// IsDefined, Check). A seed written under a guessed name would leave the
+// package unbuildable or a stray file behind.
 func parseResolverLayout(consumerYAML []byte) (resolverLayout, error) {
 	var doc struct {
 		Resolver struct {
@@ -189,8 +194,8 @@ func parseResolverLayout(consumerYAML []byte) (resolverLayout, error) {
 	if out.FilenameTemplate == "" {
 		out.FilenameTemplate = defaultFilenameTpl
 	}
-	if out.Filename == "" {
-		out.Filename = defaultSingleFilename
+	if out.Layout == layoutSingleFile && out.Filename == "" {
+		return resolverLayout{}, fmt.Errorf("resolver.filename is required with resolver.layout: %s", layoutSingleFile)
 	}
 	return out, nil
 }
@@ -598,8 +603,7 @@ func writeFollowSchemaSeeds(dir, filenameTpl string, opts GenOptions) ([]string,
 // file at path (singleFileResolverPath). Only writes when the destination is
 // absent — gqlgen owns the file after the first run.
 //
-// Under single-file layout the `resolver.filename` (default `resolver.go`)
-// is where gqlgen would have scaffolded Resolver / queryResolver /
+// Under single-file layout `resolver.filename` is where gqlgen would have scaffolded Resolver / queryResolver /
 // mutationResolver type defs alongside per-field methods. Sqlgen's seed
 // file MUST include those type defs so the per-field methods reference a
 // defined receiver type — `scaffoldBodyOnly` produces exactly that, then

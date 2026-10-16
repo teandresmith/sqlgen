@@ -28,9 +28,8 @@ Individual line items within an order
 
 | Name | Columns | Unique | Method | Where |
 | --- | --- | --- | --- | --- |
+| `PRIMARY` | id | yes | btree |  |
 | `idx_order_items_order_product` | order_id, product_id |  | btree |  |
-| `order_id` | order_id |  | btree |  |
-| `order_items_pkey` | id | yes | btree |  |
 | `product_id` | product_id |  | btree |  |
 
 ## Check constraints

@@ -504,39 +504,97 @@ func TestCheckTableDropRefs(t *testing.T) {
 				{Name: "id", Type: "bigint"},
 			},
 		},
+		{
+			Name:   "reviews",
+			Schema: "public",
+			Columns: []parser.Column{
+				{Name: "id", Type: "bigint"},
+				{Name: "order_id", Type: "bigint"},
+			},
+			Constraints: []parser.Constraint{{
+				Name: "fk_order", Type: parser.ForeignKey, Columns: []string{"order_id"},
+				ReferenceSchema: "public", ReferenceTable: "orders", ReferenceColumns: []string{"id"},
+			}},
+		},
 	}
+	ref := func(name string) parser.TableRef { return parser.TableRef{Schema: "public", Name: name} }
 
 	tests := []struct {
 		name    string
-		schema  string
-		table   string
-		wantErr bool
+		dialect string
+		drop    []parser.TableRef
+		want    string // "" for no error
 	}{
 		{
 			name:    "drop table with FK reference → error",
-			schema:  "public",
-			table:   "users",
-			wantErr: true,
+			dialect: "postgres",
+			drop:    []parser.TableRef{ref("users")},
+			want:    "cannot drop table public.users: column public.orders.user_id references it via foreign key",
 		},
 		{
 			name:    "drop table with no references → OK",
-			schema:  "public",
-			table:   "products",
-			wantErr: false,
+			dialect: "postgres",
+			drop:    []parser.TableRef{ref("products")},
 		},
 		{
 			name:    "drop nonexistent table → OK",
-			schema:  "public",
-			table:   "nonexistent",
-			wantErr: false,
+			dialect: "postgres",
+			drop:    []parser.TableRef{ref("nonexistent")},
+		},
+		{
+			name:    "SQLite reference in another ASCII case → error",
+			dialect: "sqlite",
+			drop:    []parser.TableRef{ref("USERS")},
+			want:    "cannot drop table public.USERS: column public.orders.user_id references it via foreign key",
+		},
+		{
+			name:    "PostgreSQL name in another case is another table → OK",
+			dialect: "postgres",
+			drop:    []parser.TableRef{ref("USERS")},
+		},
+		{
+			name:    "MySQL table name in another case is another table → OK",
+			dialect: "mysql",
+			drop:    []parser.TableRef{ref("USERS")},
+		},
+		{
+			name:    "parent dropped before its referencing table in one statement → OK",
+			dialect: "postgres",
+			drop:    []parser.TableRef{ref("users"), ref("orders"), ref("reviews")},
+		},
+		{
+			name:    "referencing table dropped before its parent in one statement → OK",
+			dialect: "mysql",
+			drop:    []parser.TableRef{ref("reviews"), ref("orders"), ref("users")},
+		},
+		{
+			name:    "reference from a table outside the statement → error",
+			dialect: "postgres",
+			drop:    []parser.TableRef{ref("users"), ref("orders")},
+			want:    "cannot drop table public.orders: table public.reviews has a foreign key constraint referencing it",
+		},
+		{
+			name:    "SQLite set member named in another ASCII case → OK",
+			dialect: "sqlite",
+			drop:    []parser.TableRef{ref("users"), ref("ORDERS"), ref("Reviews")},
+		},
+		{
+			name:    "PostgreSQL set member named in another case is another table → error",
+			dialect: "postgres",
+			drop:    []parser.TableRef{ref("users"), ref("ORDERS")},
+			want:    "cannot drop table public.users: column public.orders.user_id references it via foreign key",
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			err := parser.CheckTableDropRefs(tables, tt.schema, tt.table)
-			if (err != nil) != tt.wantErr {
-				t.Errorf("CheckTableDropRefs(%s.%s) error = %v, wantErr %v", tt.schema, tt.table, err, tt.wantErr)
+			err := parser.CheckTableDropRefs(tables, tt.dialect, tt.drop)
+			got := ""
+			if err != nil {
+				got = err.Error()
+			}
+			if got != tt.want {
+				t.Errorf("CheckTableDropRefs(%s, %v) error = %q, want %q", tt.dialect, tt.drop, got, tt.want)
 			}
 		})
 	}
@@ -571,7 +629,7 @@ func TestCheckTableDropRefs_ConstraintLevel(t *testing.T) {
 		},
 	}
 
-	err := parser.CheckTableDropRefs(tables, "public", "categories")
+	err := parser.CheckTableDropRefs(tables, "postgres", []parser.TableRef{{Schema: "public", Name: "categories"}})
 	if err == nil {
 		t.Fatal("CheckTableDropRefs() expected error for table-level FK constraint, got nil")
 	}
@@ -579,11 +637,28 @@ func TestCheckTableDropRefs_ConstraintLevel(t *testing.T) {
 
 func TestUnresolvedForeignKeys(t *testing.T) {
 	docs := parser.Table{Schema: "public", Name: "documents"}
+	users := parser.Table{Name: "Users"}
+	posts := parser.Table{
+		Name:    "posts",
+		Columns: []parser.Column{{Name: "user_id", FKReference: &parser.FKReference{Table: "users", Column: "id"}}},
+	}
 	tests := []struct {
-		name   string
-		tables []parser.Table
-		want   []string
+		name    string
+		dialect string
+		tables  []parser.Table
+		want    []string
 	}{
+		{
+			name:    "SQLite target named in another ASCII case resolves",
+			dialect: "sqlite",
+			tables:  []parser.Table{users, posts},
+		},
+		{
+			name:    "MySQL target named in another case is another table",
+			dialect: "mysql",
+			tables:  []parser.Table{users, posts},
+			want:    []string{"foreign key posts(user_id) references users, which no parsed table defines"},
+		},
 		{
 			name: "every target parsed",
 			tables: []parser.Table{docs, {
@@ -621,7 +696,11 @@ func TestUnresolvedForeignKeys(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			var got []string
-			for _, err := range parser.UnresolvedForeignKeys(tt.tables) {
+			dialect := tt.dialect
+			if dialect == "" {
+				dialect = "postgres"
+			}
+			for _, err := range parser.UnresolvedForeignKeys(tt.tables, dialect) {
 				got = append(got, err.Error())
 			}
 			if diff := cmp.Diff(tt.want, got); diff != "" {
@@ -632,49 +711,103 @@ func TestUnresolvedForeignKeys(t *testing.T) {
 }
 
 func TestCheckTypeDropRefs(t *testing.T) {
-	tables := []parser.Table{
-		{
-			Name:   "users",
-			Schema: "public",
-			Columns: []parser.Column{
-				{Name: "id", Type: "bigint"},
-				{Name: "status", Type: "status"},
-				{Name: "role", Type: "public.role"},
+	schema := &parser.Schema{
+		Tables: []parser.Table{
+			{
+				Name:   "users",
+				Schema: "public",
+				Columns: []parser.Column{
+					{Name: "id", Type: "bigint"},
+					{Name: "status", Type: "status"},
+					{Name: "role", Type: "public.role"},
+					{Name: "tags", Type: "tag[]"},
+				},
 			},
+			{
+				Name:    "t",
+				Schema:  "s1",
+				Columns: []parser.Column{{Name: "s", Type: "st"}},
+			},
+		},
+		Views: []parser.View{
+			{Name: "v", Schema: "public", Columns: []parser.Column{{Name: "m", Type: "s2.mood"}}},
+		},
+		DomainTypes: []parser.DomainType{
+			{Name: "de", Schema: "public", BaseType: "e"},
+			{Name: "d2", Schema: "public", BaseType: "d1"},
+		},
+		CompositeTypes: []parser.CompositeType{
+			{Name: "comp", Schema: "public", Attributes: []parser.Attribute{{Name: "x", Type: "e2[]"}}},
 		},
 	}
 
 	tests := []struct {
-		name     string
-		schema   string
-		typeName string
-		wantErr  bool
+		name    string
+		drop    []parser.TypeRef
+		wantErr string
 	}{
 		{
-			name:     "drop type used by column (bare name match) → error",
-			schema:   "public",
-			typeName: "status",
-			wantErr:  true,
+			name:    "bare name in the column's schema",
+			drop:    []parser.TypeRef{{Schema: "public", Name: "status"}},
+			wantErr: "cannot drop type public.status: column public.users.status uses it",
 		},
 		{
-			name:     "drop type used by column (qualified name match) → error",
-			schema:   "public",
-			typeName: "role",
-			wantErr:  true,
+			name:    "qualified name",
+			drop:    []parser.TypeRef{{Schema: "public", Name: "role"}},
+			wantErr: "cannot drop type public.role: column public.users.role uses it",
 		},
 		{
-			name:     "drop type not used by any column → OK",
-			schema:   "public",
-			typeName: "unused_type",
-			wantErr:  false,
+			name:    "array column",
+			drop:    []parser.TypeRef{{Schema: "public", Name: "tag"}},
+			wantErr: "cannot drop type public.tag: column public.users.tags uses it",
+		},
+		{
+			name:    "bare name resolves to the column's own schema",
+			drop:    []parser.TypeRef{{Schema: "s1", Name: "st"}},
+			wantErr: "cannot drop type s1.st: column s1.t.s uses it",
+		},
+		{
+			name: "a same-named type in another schema is free",
+			drop: []parser.TypeRef{{Schema: "s2", Name: "st"}},
+		},
+		{
+			name:    "view column",
+			drop:    []parser.TypeRef{{Schema: "s2", Name: "mood"}},
+			wantErr: "cannot drop type s2.mood: column public.v.m of view uses it",
+		},
+		{
+			name:    "domain base type",
+			drop:    []parser.TypeRef{{Schema: "public", Name: "e"}},
+			wantErr: "cannot drop type public.e: domain public.de uses it",
+		},
+		{
+			name: "a domain dropped with its base type",
+			drop: []parser.TypeRef{{Schema: "public", Name: "d1"}, {Schema: "public", Name: "d2"}},
+		},
+		{
+			name:    "composite attribute of an array type",
+			drop:    []parser.TypeRef{{Schema: "public", Name: "e2"}},
+			wantErr: "cannot drop type public.e2: attribute x of composite type public.comp uses it",
+		},
+		{
+			name: "a composite type dropped with its attribute's type",
+			drop: []parser.TypeRef{{Schema: "public", Name: "e2"}, {Schema: "public", Name: "comp"}},
+		},
+		{
+			name: "unused type",
+			drop: []parser.TypeRef{{Schema: "public", Name: "unused_type"}},
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			err := parser.CheckTypeDropRefs(tables, tt.schema, tt.typeName)
-			if (err != nil) != tt.wantErr {
-				t.Errorf("CheckTypeDropRefs(%s.%s) error = %v, wantErr %v", tt.schema, tt.typeName, err, tt.wantErr)
+			err := parser.CheckTypeDropRefs(schema, tt.drop)
+			got := ""
+			if err != nil {
+				got = err.Error()
+			}
+			if got != tt.wantErr {
+				t.Errorf("CheckTypeDropRefs(%v) error = %q, want %q", tt.drop, got, tt.wantErr)
 			}
 		})
 	}

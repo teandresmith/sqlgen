@@ -22,8 +22,8 @@ Storage warehouses with type-overridden columns
 | `external_id` | ExternalID | `ksuid.KSUID` | `text` |  |  | yes |  | `comparator.String` | External reference ID (KSUID) |
 | `name` | Name | `string` | `varchar(255)` |  |  |  |  | `comparator.String` | Warehouse name |
 | `region` | Region | `customtypes.OptionalString` | `region_name` | yes |  |  |  | `comparator.NullableString` | Optional regional designation (custom Optional[string] override) |
-| `price` | Price | `decimal.Decimal` | `numeric(10, 2)` |  |  |  |  | `comparator.String` | Operational cost |
-| `nullable_price` | NullablePrice | `decimal.NullDecimal` | `numeric(10, 2)` | yes |  |  |  | `comparator.NullableString` | Optional secondary price |
+| `price` | Price | `decimal.Decimal` | `numeric(10,2)` |  |  |  |  | `comparator.String` | Operational cost |
+| `nullable_price` | NullablePrice | `decimal.NullDecimal` | `numeric(10,2)` | yes |  |  |  | `comparator.NullableString` | Optional secondary price |
 | `related_ids` | RelatedIDS | `[]uuid.UUID` | `uuid[]` | yes |  |  |  | `comparator.NullableSlice[uuid.UUID]` | Related warehouse UUIDs |
 | `nullable_ref` | NullableRef | `*uuid.UUID` | `uuid` | yes |  |  |  | `comparator.NullableID` | Optional reference to another warehouse |
 | `allowed_roles` | AllowedRoles | `UserRoleSlice` | `user_role[]` |  |  |  | `'{}'` | `comparator.Slice[UserRole]` | Permitted user roles for warehouse access |

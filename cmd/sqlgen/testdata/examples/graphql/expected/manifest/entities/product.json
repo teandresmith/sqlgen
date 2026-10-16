@@ -102,7 +102,7 @@
       "name": "price",
       "go_field": "Price",
       "go_type": "decimal.Decimal",
-      "db_type": "numeric(12, 2)",
+      "db_type": "numeric(12,2)",
       "nullable": false,
       "pk": false,
       "unique": false,

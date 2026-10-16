@@ -30,15 +30,53 @@ To enable it on an existing config, add that line at the top of your
 IDEs, and any editor running `yaml-language-server` — no plugin or registry
 setup beyond the YAML extension itself.
 
-> The schema checks structure, key names, and closed value sets. It cannot
-> express sqlgen's cross-field rules — that `pgx` requires `dialect: postgres`,
-> that `connection` is required when `source: database`, that a soft-delete
-> column's SQL type must match its declared `type`. A file with no editor
+> The schema checks structure, key names, and closed value sets. Of sqlgen's
+> cross-field rules it checks only a relationship's link key (`fk` for o2o /
+> o2m, `junction` for m2m), not the others — such as that `pgx` requires
+> `dialect: postgres`, that `connection` is required when `source: database`,
+> that a soft-delete column's SQL type must match its declared `type`. A file with no editor
 > warnings can still fail `sqlgen validate`, so keep running it in CI.
+>
+> The schema expects a number or `true`/`false` in integer and boolean fields, so it flags
+> `port: ${DB_PORT}` even though sqlgen accepts it. See [Environment variables](#environment-variables).
+
+## Environment variables
+
+Any value in `sqlgen.yml` can reference an environment variable as `${NAME}`. Use it to keep
+secrets out of the file, or to change a setting per environment:
+
+```yaml
+input:
+  dialect: postgres
+  source: database
+  connection:
+    url: postgres://app:${SQLGEN_DB_PASSWORD}@db.internal:5432/appdb?sslmode=require
+```
+
+- `NAME` is letters, digits and `_`, and doesn't start with a digit. `$${` is a literal `${`.
+  Any other `$` is kept as written, so `$1` and `$HOME` are unchanged.
+- An unset variable fails `sqlgen generate` and `sqlgen validate` (exit 2). The error names the
+  line, the key and the variable, and every unset variable is reported at once. A variable set
+  to the empty string substitutes the empty string.
+- There are no defaults: `${NAME:-default}` is an error.
+- Keys aren't expanded, only values.
+- An unquoted reference takes the type of its value, so `port: ${DB_PORT}` works. A quoted one is
+  always a string, so `port: "${DB_PORT}"` is an error. Inside `[...]` or `{...}`, quote the
+  reference: `paths: ["${SCHEMA_DIR}", ./views]`.
+- Errors from loading the config never show a variable's value.
+
+**Passwords in a URL.** Substitution is literal, so a password containing `/`, `?`, `#` or `%`
+breaks a postgres URL. Use the individual fields instead (`password: ${DB_PASSWORD}`), which
+sqlgen escapes for you, or store the password percent-encoded.
+
+**Committed output.** A reference in a setting that reaches generated code, such as
+`output.package`, makes the output depend on the environment that ran `generate`. If you commit
+generated files and check them for drift in CI, keep references to connection and deployment
+settings.
 
 ## Contents
 
-- [Minimal config](#minimal-config) · [Top level](#top-level)
+- [Environment variables](#environment-variables) · [Minimal config](#minimal-config) · [Top level](#top-level)
 - [`input`](#input) · [`connection`](#connection) · [`introspect`](#introspect) · [`exclude_tables`](#exclude_tables)
 - [`output`](#output) · [`generation`](#generation) · [`overrides`](#overrides)
 - [`tables`](#tables-per-table) · [`views`](#views) · [`enums`](#enums) · [`extras`](#extras)
@@ -85,12 +123,12 @@ output:
 |-------|------|---------|--------------|-------------|
 | `dialect` | string | `postgres` | `postgres`, `mysql`, `sqlite` | SQL dialect used for parsing. |
 | `source` | string | `files` | `files`, `database`, `both` | Where the schema is read from. |
-| `paths` | []string | `["."]` | — | SQL files or directories to parse. Used when `source` is `files` or `both`. |
+| `paths` | []string | `["."]` | — | SQL files or directories to parse. Used when `source` is `files` or `both`; ignored under `database`, with a warning when set explicitly. |
 | `views` | []string | `[]` | — | Paths to view annotation files or directories. Parsed only as views, never as DDL. |
 | `schema` | string | `*` | — | PostgreSQL only: the schema an unqualified table name or `REFERENCES` target resolves to. `*` resolves to `public`. It does not filter which schemas are parsed; `introspect.schemas` filters introspection. Ignored with a warning on MySQL/SQLite. |
 | `parse_mode` | string | `strict` | `strict`, `merge` | How duplicate table definitions across files are handled. |
 | `connection` | object | — | — | Required when `source` is `database` or `both`. |
-| `introspect` | object | — | — | Schema/table filtering for introspection. |
+| `introspect` | object | — | — | Schema/table filtering for introspection. Ignored with a warning under `source: files`. |
 
 > `dialect` is `postgres` — not `postgresql`. An invalid value fails `sqlgen validate`.
 
@@ -99,11 +137,11 @@ output:
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
 | `url` | string | — | Full connection URL. Takes precedence over the individual fields below. |
-| `host` | string | — | Required for postgres/mysql when `url` is empty. |
-| `port` | int | — | Required for postgres/mysql when `url` is empty. |
-| `user` | string | — | Required for postgres/mysql when `url` is empty. |
-| `password` | string | — | See the environment overrides below. |
-| `database` | string | — | Database name, or the file path for SQLite. Required when `url` is empty. |
+| `host` | string | — | Required for postgres/mysql when `url` is empty. A value starting with `/` is a Unix socket: the socket directory on postgres, the socket file on mysql. |
+| `port` | int | `5432` (pg), `3306` (mysql) | Ignored on SQLite, and on mysql when `host` is a socket file. |
+| `user` | string | — | Required for postgres/mysql when `url` is empty. On mysql it cannot contain `:`, which the DSN has no escape for. |
+| `password` | string | — | Usually a reference, `password: ${DB_PASSWORD}`. See the environment overrides below. |
+| `database` | string | — | Database name, or the file path for SQLite. Required when `url` is empty. A SQLite file that does not exist is a connection error; sqlgen does not create it. A `file:` URI that sets `mode` is opened as that mode says. |
 | `ssl_mode` | string | `disable` (pg), `false` (mysql) | TLS/SSL mode. |
 
 Two environment variables override the file, and take highest precedence — keep credentials out
@@ -114,12 +152,17 @@ of `sqlgen.yml`:
 | `SQLGEN_DB_URL` | `connection.url` **and** all individual fields |
 | `SQLGEN_DB_PASSWORD` | `connection.password` |
 
+`url` wins over the individual fields, `password` included, so `SQLGEN_DB_PASSWORD` does nothing
+when the connection comes from a `url`. Reference it in the URL instead, as in the
+[example above](#environment-variables). sqlgen warns when the variable is set and a `url`
+ignores it.
+
 ### `introspect`
 
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
-| `schemas` | []string | all | Schemas to include. Empty means all non-system schemas. |
-| `exclude_schemas` | []string | `[]` | Schemas to exclude. Applied after inclusion. |
+| `schemas` | []string | all | Schemas to include. Empty means all non-system schemas. PostgreSQL only; ignored with a warning on MySQL/SQLite. |
+| `exclude_schemas` | []string | `[]` | Schemas to exclude. Applied after inclusion. PostgreSQL only; ignored with a warning on MySQL/SQLite. |
 | `tables` | []string | all | Tables to include. Empty means all in the selected schemas. |
 
 ### `exclude_tables`

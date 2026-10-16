@@ -70,7 +70,7 @@ var dialectSQLTypes = map[config.Dialect][]string{
 		"inet", "cidr", "macaddr",
 	},
 	config.DialectMySQL: {
-		"tinyint", "smallint", "int", "integer", "mediumint", "bigint",
+		"tinyint", "smallint", "int", "mediumint", "bigint",
 		"int unsigned", "bigint unsigned",
 		"float", "double", "decimal",
 		"varchar", "text", "char", "enum", "tinytext", "mediumtext", "longtext",
@@ -78,7 +78,7 @@ var dialectSQLTypes = map[config.Dialect][]string{
 		"datetime", "timestamp", "date",
 		"json",
 		"blob", "binary", "varbinary", "tinyblob", "mediumblob", "longblob",
-		"bool", "boolean", "bit(1)",
+		"tinyint(1)", "bit(1)",
 		"year",
 	},
 	config.DialectSQLite: {
@@ -1034,7 +1034,7 @@ func setBindingInput(t *testing.T) (*gen.GenerateInput, []gen.SetContext) {
 	collisions := gen.ComputeNameCollisions(schema)
 	r := gotype.NewResolver(config.DialectMySQL, true, in.Config.Overrides.Types)
 	for _, s := range schema.Sets {
-		r.RegisterSet(s.Name, gen.StructName(s.Name, s.Schema, collisions))
+		r.RegisterSet(s.Schema, s.Name, gen.StructName(s.Name, s.Schema, collisions))
 	}
 	in.Resolver = r
 	return in, gen.BuildSetContexts(schema, collisions)
@@ -1190,7 +1190,7 @@ func TestScalarBinding_overriddenSetIsNotListShaped(t *testing.T) {
 	in.Config.Tables["users"] = config.TableConfig{TypeMap: map[string]string{"permissions": "string"}}
 	collisions := gen.ComputeNameCollisions(schema)
 	r := gotype.NewResolver(config.DialectMySQL, true, in.Config.Overrides.Types)
-	r.RegisterSet("users_permissions_set", "UsersPermissionsSet")
+	r.RegisterSet("", "users_permissions_set", "UsersPermissionsSet")
 	in.Resolver = r
 
 	tables, err := gen.BuildTableContexts(in, nil)

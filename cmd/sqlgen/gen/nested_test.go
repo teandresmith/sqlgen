@@ -789,6 +789,31 @@ func TestNestedEligibility_JunctionPayloadColumnIsIneligible(t *testing.T) {
 		users := nestedContextsWithTenantOn(t, "user_categories")["users"]
 		nestedEdge(t, users, "Categories")
 	})
+
+	// UpsertMany keeps a sequence column out of the update half (PRD §9.5),
+	// so the edge is still refused, but not for a reset.
+	t.Run("a sequence column is refused without claiming a reset", func(t *testing.T) {
+		schema := nestedSchema()
+		for i := range schema.Tables {
+			if schema.Tables[i].Name == "user_categories" {
+				schema.Tables[i].Columns = append(schema.Tables[i].Columns, parser.Column{Name: "slot", Type: "integer", AutoIncrement: true})
+			}
+		}
+		input := testInput(schema)
+		cfg := cfgFor(true)
+		input.Config = cfg
+		contexts, err := gen.BuildTableContexts(input, nil)
+		if err != nil {
+			t.Fatalf("BuildTableContexts() error: %v", err)
+		}
+		err = gen.ValidateNestedWriteEligibility(contexts, cfg, input.Resolver)
+		if err == nil {
+			t.Fatal("ValidateNestedWriteEligibility() = nil, want a sequence-column error for Categories")
+		}
+		if !strings.Contains(err.Error(), `sequence column "slot"`) || strings.Contains(err.Error(), "reset") {
+			t.Errorf("error %q, want it to name sequence column \"slot\" without claiming a reset", err)
+		}
+	})
 }
 
 // TestNestedEligibility_AllowlistNarrowsAndHardErrors pins both halves of

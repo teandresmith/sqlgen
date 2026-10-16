@@ -7,7 +7,7 @@ import (
 	"io"
 )
 
-// DocumentsEntityTypeEnum represents the documents_entity_type_enum enum type.
+// DocumentsEntityTypeEnum represents the documents__entity_type_enum enum type.
 type DocumentsEntityTypeEnum string
 
 const (
@@ -122,7 +122,7 @@ func (s *DocumentsEntityTypeEnum) UnmarshalGQL(v any) error {
 	return nil
 }
 
-// OrdersStatusEnum represents the orders_status_enum enum type.
+// OrdersStatusEnum represents the orders__status_enum enum type.
 type OrdersStatusEnum string
 
 const (
@@ -243,7 +243,7 @@ func (s *OrdersStatusEnum) UnmarshalGQL(v any) error {
 	return nil
 }
 
-// UsersRoleEnum represents the users_role_enum enum type.
+// UsersRoleEnum represents the users__role_enum enum type.
 type UsersRoleEnum string
 
 const (

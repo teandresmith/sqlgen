@@ -1,0 +1,2681 @@
+{
+  "$schema": "https://raw.githubusercontent.com/teandresmith/sqlgen/vdev/cmd/sqlgen/manifest/schema/v1.json",
+  "schema_version": "0.1.0",
+  "generated_at": "2026-01-01T00:00:00Z",
+  "generator": {
+    "name": "sqlgen",
+    "version": "dev"
+  },
+  "dialect": "sqlite",
+  "package": "models",
+  "layout": "single",
+  "conventions": {
+    "client_entry_points": {
+      "query": "client.<Entity>()",
+      "mutation": "client.<Entity>()"
+    },
+    "error_sentinels": [
+      {
+        "name": "ErrNotFound",
+        "graphql_code": "NOT_FOUND",
+        "package": "models"
+      },
+      {
+        "name": "ErrEmptyFilter",
+        "graphql_code": "",
+        "package": "models"
+      },
+      {
+        "name": "ErrNilInput",
+        "graphql_code": "",
+        "package": "models"
+      },
+      {
+        "name": "ErrAmbiguousFilter",
+        "graphql_code": "",
+        "package": "models"
+      },
+      {
+        "name": "ErrInvalidCursor",
+        "graphql_code": "",
+        "package": "models"
+      },
+      {
+        "name": "ErrDeadlock",
+        "graphql_code": "",
+        "package": "models"
+      },
+      {
+        "name": "ErrConnectionFailed",
+        "graphql_code": "",
+        "package": "models"
+      },
+      {
+        "name": "ErrConstraintViolation",
+        "graphql_code": "",
+        "package": "models"
+      },
+      {
+        "name": "ErrAlreadyRelated",
+        "graphql_code": "CONFLICT",
+        "package": "models"
+      },
+      {
+        "name": "ErrNestedVerbConflict",
+        "graphql_code": "INVALID_INPUT",
+        "package": "models"
+      }
+    ],
+    "constraint_error_codes": {
+      "check": "INVALID_INPUT",
+      "foreign_key": "BAD_REFERENCE",
+      "not_null": "INVALID_INPUT",
+      "unique": "CONFLICT"
+    },
+    "find_returns_nil_on_missing": false,
+    "pagination": {
+      "page_type": "Page",
+      "list_envelope_suffix": "List",
+      "cursor_encoding": "opaque-base64"
+    },
+    "call_options": {
+      "type": "CallOptions",
+      "fields": [
+        "SkipCache",
+        "SkipEvents",
+        "SkipHooks",
+        "FieldOptions",
+        "LockMode",
+        "AllowInTransaction"
+      ]
+    },
+    "soft_delete": {
+      "default_excluded_from_finds": true,
+      "include_via": "set <SoftDeleteColumn> comparator on filter",
+      "hard_delete_method_suffix": "HardDelete",
+      "restore_method_suffix": "Restore"
+    },
+    "comparator": {
+      "package": "comparator",
+      "families": [
+        "Bool",
+        "Enum",
+        "ID",
+        "JSON",
+        "JSONB",
+        "Number",
+        "Slice",
+        "String",
+        "Time"
+      ],
+      "shape_notes": [
+        "All families share: Eq, Neq, In, NotIn, IsNull, IsNotNull",
+        "Numeric families (Number, Time) add: Gt, Gte, Lt, Lte",
+        "String adds: Like, ILike, NotLike, NotILike",
+        "Slice (JSON columns, PostgreSQL arrays) adds: Contains, ContainedBy, Overlap"
+      ],
+      "composition": {
+        "and": "Filter.And: []*Filter — predicates AND'd together",
+        "nesting": "And and Or nest arbitrarily; default is AND across top-level fields",
+        "or": "Filter.Or:  []*Filter — entries OR'd together; each entry's own fields are AND'd, so a union is one entry per branch"
+      },
+      "examples": {
+        "compound_or": "<pkg>.UserFilter{Or: []*<pkg>.UserFilter{{Email: &comparator.String{Eq: new(\"a@x.com\")}}, {Email: &comparator.String{Eq: new(\"b@x.com\")}}}}",
+        "field_filter": "<pkg>.UserFilter{Email: &comparator.String{Eq: new(\"a@x.com\")}}",
+        "id_in": "&comparator.ID{In: []string{\"u1\", \"u2\", \"u3\"}}",
+        "is_null": "&comparator.NullableString{Null: new(true)}",
+        "numeric_range": "&comparator.Number[int]{Between: &comparator.Range[int]{Start: 18, End: 65}}",
+        "text_contains": "&comparator.String{Contains: new(\"acme\")}",
+        "time_after": "&comparator.Time{Gt: new(cutoff)}"
+      }
+    },
+    "omittable": {
+      "package": "omittable",
+      "type": "omittable.Value[T]",
+      "purpose": "Distinguishes 'not set' from 'set to zero value'. Used in <Entity>Update structs and partial-update contexts.",
+      "construction": [
+        "omittable.Set(value) — set to a value",
+        "omittable.Omit[T]() — explicitly unset (zero state)"
+      ],
+      "methods": [
+        "IsSet() bool",
+        "IsZero() bool",
+        "Get() (T, bool)",
+        "MustGet() T"
+      ],
+      "json_behavior": "Marshals to the wrapped value when set; omitted when unset (omitzero semantics on the wrapper, via IsZero)"
+    }
+  },
+  "generation_config": {
+    "audit_columns": false,
+    "cache": false,
+    "events": false,
+    "graphql": false,
+    "graph_top_level": false,
+    "soft_delete": false,
+    "tenancy": false,
+    "views": false
+  },
+  "entities": [
+    {
+      "kind": "table",
+      "name": "Account",
+      "table": "accounts",
+      "file_prefix": "account",
+      "files": [
+        "models_gen.go"
+      ],
+      "comment": "",
+      "indexes": [
+        {
+          "name": "accounts_pkey",
+          "columns": [
+            "id"
+          ],
+          "unique": true,
+          "method": "btree"
+        }
+      ],
+      "pk": {
+        "kind": "single",
+        "columns": [
+          {
+            "name": "id",
+            "go_field": "ID",
+            "go_type": "int64"
+          }
+        ]
+      },
+      "features": {
+        "soft_delete": null,
+        "cache": null,
+        "events": null,
+        "tenancy": null
+      },
+      "columns": [
+        {
+          "name": "id",
+          "go_field": "ID",
+          "go_type": "int64",
+          "db_type": "integer",
+          "nullable": false,
+          "pk": true,
+          "unique": false,
+          "auto": "insert",
+          "comparator": "comparator.Number[int64]",
+          "comment": ""
+        },
+        {
+          "name": "email",
+          "go_field": "Email",
+          "go_type": "string",
+          "db_type": "text",
+          "nullable": false,
+          "pk": false,
+          "unique": false,
+          "comparator": "comparator.String",
+          "comment": ""
+        },
+        {
+          "name": "display_name",
+          "go_field": "DisplayName",
+          "go_type": "string",
+          "db_type": "text",
+          "nullable": false,
+          "pk": false,
+          "unique": false,
+          "comparator": "comparator.String",
+          "comment": ""
+        },
+        {
+          "name": "created_at",
+          "go_field": "CreatedAt",
+          "go_type": "string",
+          "db_type": "text",
+          "nullable": false,
+          "pk": false,
+          "unique": false,
+          "default": "CURRENT_TIMESTAMP",
+          "default_kind": "function",
+          "comparator": "comparator.String",
+          "comment": ""
+        },
+        {
+          "name": "nickname",
+          "go_field": "Nickname",
+          "go_type": "*string",
+          "db_type": "text",
+          "nullable": true,
+          "pk": false,
+          "unique": false,
+          "comparator": "comparator.NullableString",
+          "comment": ""
+        },
+        {
+          "name": "locale",
+          "go_field": "Locale",
+          "go_type": "string",
+          "db_type": "text",
+          "nullable": false,
+          "pk": false,
+          "unique": false,
+          "default": "'en'",
+          "default_kind": "literal",
+          "comparator": "comparator.String",
+          "comment": ""
+        }
+      ],
+      "relationships": [
+        {
+          "name": "account_projects",
+          "kind": "o2m",
+          "target_entity": "Project",
+          "fk": {
+            "table": "projects",
+            "column": "account_id"
+          }
+        },
+        {
+          "name": "project_members",
+          "kind": "m2m",
+          "target_entity": "Project",
+          "junction": {
+            "table": "project_members",
+            "local_fk": "account_id",
+            "target_fk": "project_id"
+          }
+        },
+        {
+          "name": "tasks",
+          "kind": "o2m",
+          "target_entity": "Task",
+          "fk": {
+            "table": "tasks",
+            "column": "assignee_id"
+          }
+        }
+      ],
+      "methods": {
+        "query": [
+          {
+            "name": "Get",
+            "params": [
+              {
+                "name": "id",
+                "type": "int64"
+              }
+            ],
+            "returns": "*Account",
+            "errors": [
+              "ErrNotFound"
+            ],
+            "notes": "Delegates to GetMany with a primary-key filter; returns ErrNotFound when no row matches.",
+            "sql_bodies": {
+              "sqlite": "SELECT \"created_at\", \"display_name\", \"email\", \"id\", \"locale\", \"nickname\" FROM \"accounts\" WHERE \"id\" = ? LIMIT 1"
+            }
+          },
+          {
+            "name": "GetMany",
+            "params": [
+              {
+                "name": "input",
+                "type": "*GetAccountsInput"
+              }
+            ],
+            "returns": "[]*Account",
+            "errors": [],
+            "sql_bodies": {
+              "sqlite": "SELECT \"created_at\", \"display_name\", \"email\", \"id\", \"locale\", \"nickname\" FROM \"accounts\" WHERE <filter> ORDER BY <sort> LIMIT <limit>"
+            }
+          },
+          {
+            "name": "Count",
+            "params": [
+              {
+                "name": "filter",
+                "type": "*AccountFilter"
+              }
+            ],
+            "returns": "int64",
+            "errors": [],
+            "sql_bodies": {
+              "sqlite": "SELECT COUNT(*) FROM \"accounts\" WHERE <filter>"
+            }
+          },
+          {
+            "name": "Exists",
+            "params": [
+              {
+                "name": "id",
+                "type": "int64"
+              }
+            ],
+            "returns": "bool",
+            "errors": [],
+            "sql_bodies": {
+              "sqlite": "SELECT EXISTS(SELECT 1 FROM \"accounts\" WHERE \"id\" = ?)"
+            }
+          },
+          {
+            "name": "ExistsWhere",
+            "params": [
+              {
+                "name": "filter",
+                "type": "*AccountFilter"
+              }
+            ],
+            "returns": "bool",
+            "errors": [],
+            "sql_bodies": {
+              "sqlite": "SELECT EXISTS(SELECT 1 FROM \"accounts\" WHERE <filter>)"
+            }
+          },
+          {
+            "name": "Paginate",
+            "params": [
+              {
+                "name": "input",
+                "type": "PaginateInput[AccountFilter]"
+              }
+            ],
+            "returns": "*PaginateResult[Account]",
+            "errors": [],
+            "notes": "Offset pagination. Issues no statement of its own — composes Count and GetMany, so no sql_bodies entry."
+          },
+          {
+            "name": "Connection",
+            "params": [
+              {
+                "name": "input",
+                "type": "ConnectionInput[AccountFilter]"
+              }
+            ],
+            "returns": "*Connection[Account]",
+            "errors": [
+              "ErrInvalidCursor"
+            ],
+            "notes": "Relay cursor pagination. Issues no statement of its own — composes Count and GetMany, so no sql_bodies entry."
+          },
+          {
+            "name": "Stream",
+            "params": [
+              {
+                "name": "input",
+                "type": "*StreamAccountsInput"
+              }
+            ],
+            "returns": "iter.Seq2[*Account, error]",
+            "errors": [],
+            "notes": "Scalars only — no relationship loading, cache always bypassed. Errors surface through the iterator's second value.",
+            "sql_bodies": {
+              "sqlite": "SELECT \"created_at\", \"display_name\", \"email\", \"id\", \"locale\", \"nickname\" FROM \"accounts\" WHERE <filter> ORDER BY <sort>"
+            }
+          }
+        ],
+        "mutation": [
+          {
+            "name": "Create",
+            "params": [
+              {
+                "name": "input",
+                "type": "*CreateAccountInput"
+              }
+            ],
+            "returns": "*Account",
+            "errors": [
+              "ErrNilInput",
+              "ErrConstraintViolation"
+            ],
+            "sql_bodies": {
+              "sqlite": "INSERT INTO \"accounts\" (<columns>) VALUES (<values>) RETURNING \"id\""
+            }
+          },
+          {
+            "name": "CreateMany",
+            "params": [
+              {
+                "name": "inputs",
+                "type": "[]*CreateAccountInput"
+              }
+            ],
+            "returns": "[]*Account",
+            "errors": [
+              "ErrNilInput",
+              "ErrConstraintViolation"
+            ],
+            "notes": "Batched in generation.batch_size chunks. Earlier chunks are not rolled back on a later failure — wrap in a transaction for atomicity.",
+            "sql_bodies": {
+              "sqlite": "INSERT INTO \"accounts\" (<columns>) VALUES <values> RETURNING \"id\""
+            }
+          },
+          {
+            "name": "Upsert",
+            "params": [
+              {
+                "name": "input",
+                "type": "*CreateAccountInput"
+              },
+              {
+                "name": "target",
+                "type": "AccountConflictTarget"
+              }
+            ],
+            "returns": "*Account",
+            "errors": [
+              "ErrNilInput",
+              "ErrConstraintViolation"
+            ],
+            "notes": "One method over the generated AccountConflictTarget enum — the target argument selects the conflict columns at call time.",
+            "sql_bodies": {
+              "sqlite": "INSERT INTO \"accounts\" (<columns>) VALUES (<values>) ON CONFLICT (<conflict_target>) DO UPDATE SET <excluded> RETURNING \"id\""
+            }
+          },
+          {
+            "name": "UpsertMany",
+            "params": [
+              {
+                "name": "inputs",
+                "type": "[]*CreateAccountInput"
+              },
+              {
+                "name": "target",
+                "type": "AccountConflictTarget"
+              }
+            ],
+            "returns": "[]*Account",
+            "errors": [
+              "ErrNilInput",
+              "ErrConstraintViolation"
+            ],
+            "notes": "Batched in generation.batch_size chunks over the same AccountConflictTarget enum Upsert takes. Inputs resolving to one target are deduped before the statement is built, last occurrence wins. Earlier chunks are not rolled back on a later failure — wrap in a transaction for atomicity.",
+            "sql_bodies": {
+              "sqlite": "INSERT INTO \"accounts\" (<columns>) VALUES <values> ON CONFLICT (<conflict_target>) DO UPDATE SET <excluded>"
+            }
+          },
+          {
+            "name": "Update",
+            "params": [
+              {
+                "name": "id",
+                "type": "int64"
+              },
+              {
+                "name": "input",
+                "type": "*UpdateAccountInput"
+              }
+            ],
+            "returns": "*Account",
+            "errors": [
+              "ErrNotFound",
+              "ErrNilInput",
+              "ErrConstraintViolation"
+            ],
+            "notes": "Only fields where IsSet() reports true reach the SET clause; an input with none set issues no UPDATE and returns the row unchanged.",
+            "sql_bodies": {
+              "sqlite": "UPDATE \"accounts\" SET <set> WHERE \"id\" = ?"
+            }
+          },
+          {
+            "name": "UpdateMany",
+            "params": [
+              {
+                "name": "items",
+                "type": "[]UpdateAccountItem"
+              }
+            ],
+            "returns": "[]*Account",
+            "errors": [
+              "ErrNilInput",
+              "ErrConstraintViolation"
+            ],
+            "notes": "Issues one statement per item. Batched like CreateMany — earlier items are not rolled back on a later failure. A primary key that does not exist is silently skipped, even under strict_updates.",
+            "sql_bodies": {
+              "sqlite": "UPDATE \"accounts\" SET <set> WHERE \"id\" = ?"
+            }
+          },
+          {
+            "name": "UpdateWhere",
+            "params": [
+              {
+                "name": "filter",
+                "type": "*AccountFilter"
+              },
+              {
+                "name": "input",
+                "type": "*UpdateAccountInput"
+              }
+            ],
+            "returns": "[]*Account",
+            "errors": [
+              "ErrNilInput",
+              "ErrEmptyFilter",
+              "ErrConstraintViolation"
+            ],
+            "notes": "Idempotent — returns an empty slice when no row matches. ErrEmptyFilter when the filter produces no conditions.",
+            "sql_bodies": {
+              "sqlite": "UPDATE \"accounts\" SET <set> WHERE <filter> RETURNING \"id\""
+            }
+          },
+          {
+            "name": "HardDelete",
+            "params": [
+              {
+                "name": "id",
+                "type": "int64"
+              }
+            ],
+            "returns": "",
+            "errors": [],
+            "notes": "Idempotent — a primary key that does not exist is not an error.",
+            "sql_bodies": {
+              "sqlite": "DELETE FROM \"accounts\" WHERE \"id\" = ?"
+            }
+          },
+          {
+            "name": "HardDeleteMany",
+            "params": [
+              {
+                "name": "ids",
+                "type": "[]int64"
+              }
+            ],
+            "returns": "",
+            "errors": [],
+            "notes": "Idempotent — primary keys that do not exist are not an error.",
+            "sql_bodies": {
+              "sqlite": "DELETE FROM \"accounts\" WHERE \"id\" IN (<ids>)"
+            }
+          },
+          {
+            "name": "HardDeleteWhere",
+            "params": [
+              {
+                "name": "filter",
+                "type": "*AccountFilter"
+              }
+            ],
+            "returns": "",
+            "errors": [
+              "ErrEmptyFilter"
+            ],
+            "notes": "Idempotent — no match is not an error. ErrEmptyFilter when the filter produces no conditions.",
+            "sql_bodies": {
+              "sqlite": "DELETE FROM \"accounts\" WHERE <filter> RETURNING \"id\""
+            }
+          }
+        ]
+      },
+      "filter": {
+        "type": "AccountFilter",
+        "fields": [
+          {
+            "name": "CreatedAt",
+            "type": "*comparator.String"
+          },
+          {
+            "name": "DisplayName",
+            "type": "*comparator.String"
+          },
+          {
+            "name": "Email",
+            "type": "*comparator.String"
+          },
+          {
+            "name": "ID",
+            "type": "*comparator.Number[int64]"
+          },
+          {
+            "name": "Locale",
+            "type": "*comparator.String"
+          },
+          {
+            "name": "Nickname",
+            "type": "*comparator.NullableString"
+          },
+          {
+            "name": "And",
+            "type": "[]*AccountFilter"
+          },
+          {
+            "name": "Or",
+            "type": "[]*AccountFilter"
+          }
+        ]
+      },
+      "sort": {
+        "type": "AccountSort",
+        "fields": [
+          "CreatedAt",
+          "DisplayName",
+          "Email",
+          "ID",
+          "Locale",
+          "Nickname"
+        ]
+      },
+      "examples": {}
+    },
+    {
+      "kind": "table",
+      "name": "Project",
+      "table": "projects",
+      "file_prefix": "project",
+      "files": [
+        "models_gen.go"
+      ],
+      "comment": "",
+      "indexes": [
+        {
+          "name": "projects_active_name_idx",
+          "columns": [
+            "name"
+          ],
+          "unique": false,
+          "method": "btree",
+          "where": "\"archived\" = 0"
+        },
+        {
+          "name": "projects_pkey",
+          "columns": [
+            "id"
+          ],
+          "unique": true,
+          "method": "btree"
+        },
+        {
+          "name": "projects_slug_key",
+          "columns": [
+            "slug"
+          ],
+          "unique": true,
+          "method": "btree"
+        }
+      ],
+      "pk": {
+        "kind": "single",
+        "columns": [
+          {
+            "name": "id",
+            "go_field": "ID",
+            "go_type": "int64"
+          }
+        ]
+      },
+      "features": {
+        "soft_delete": null,
+        "cache": null,
+        "events": null,
+        "tenancy": null
+      },
+      "columns": [
+        {
+          "name": "id",
+          "go_field": "ID",
+          "go_type": "int64",
+          "db_type": "integer",
+          "nullable": false,
+          "pk": true,
+          "unique": false,
+          "auto": "insert",
+          "comparator": "comparator.Number[int64]",
+          "comment": ""
+        },
+        {
+          "name": "account_id",
+          "go_field": "AccountID",
+          "go_type": "int64",
+          "db_type": "integer",
+          "nullable": false,
+          "pk": false,
+          "unique": false,
+          "comparator": "comparator.Number[int64]",
+          "comment": ""
+        },
+        {
+          "name": "name",
+          "go_field": "Name",
+          "go_type": "string",
+          "db_type": "text",
+          "nullable": false,
+          "pk": false,
+          "unique": false,
+          "comparator": "comparator.String",
+          "comment": ""
+        },
+        {
+          "name": "slug",
+          "go_field": "Slug",
+          "go_type": "string",
+          "db_type": "text",
+          "nullable": false,
+          "pk": false,
+          "unique": true,
+          "comparator": "comparator.String",
+          "comment": ""
+        },
+        {
+          "name": "archived",
+          "go_field": "Archived",
+          "go_type": "int64",
+          "db_type": "integer",
+          "nullable": false,
+          "pk": false,
+          "unique": false,
+          "default": "0",
+          "default_kind": "literal",
+          "comparator": "comparator.Number[int64]",
+          "comment": ""
+        }
+      ],
+      "relationships": [
+        {
+          "name": "accounts",
+          "kind": "m2m",
+          "target_entity": "Account",
+          "junction": {
+            "table": "project_members",
+            "local_fk": "project_id",
+            "target_fk": "account_id"
+          }
+        },
+        {
+          "name": "tasks",
+          "kind": "o2m",
+          "target_entity": "Task",
+          "fk": {
+            "table": "tasks",
+            "column": "project_id"
+          }
+        }
+      ],
+      "methods": {
+        "query": [
+          {
+            "name": "Get",
+            "params": [
+              {
+                "name": "id",
+                "type": "int64"
+              }
+            ],
+            "returns": "*Project",
+            "errors": [
+              "ErrNotFound"
+            ],
+            "notes": "Delegates to GetMany with a primary-key filter; returns ErrNotFound when no row matches.",
+            "sql_bodies": {
+              "sqlite": "SELECT \"account_id\", \"archived\", \"id\", \"name\", \"slug\" FROM \"projects\" WHERE \"id\" = ? LIMIT 1"
+            }
+          },
+          {
+            "name": "GetMany",
+            "params": [
+              {
+                "name": "input",
+                "type": "*GetProjectsInput"
+              }
+            ],
+            "returns": "[]*Project",
+            "errors": [],
+            "sql_bodies": {
+              "sqlite": "SELECT \"account_id\", \"archived\", \"id\", \"name\", \"slug\" FROM \"projects\" WHERE <filter> ORDER BY <sort> LIMIT <limit>"
+            }
+          },
+          {
+            "name": "Count",
+            "params": [
+              {
+                "name": "filter",
+                "type": "*ProjectFilter"
+              }
+            ],
+            "returns": "int64",
+            "errors": [],
+            "sql_bodies": {
+              "sqlite": "SELECT COUNT(*) FROM \"projects\" WHERE <filter>"
+            }
+          },
+          {
+            "name": "Exists",
+            "params": [
+              {
+                "name": "id",
+                "type": "int64"
+              }
+            ],
+            "returns": "bool",
+            "errors": [],
+            "sql_bodies": {
+              "sqlite": "SELECT EXISTS(SELECT 1 FROM \"projects\" WHERE \"id\" = ?)"
+            }
+          },
+          {
+            "name": "ExistsWhere",
+            "params": [
+              {
+                "name": "filter",
+                "type": "*ProjectFilter"
+              }
+            ],
+            "returns": "bool",
+            "errors": [],
+            "sql_bodies": {
+              "sqlite": "SELECT EXISTS(SELECT 1 FROM \"projects\" WHERE <filter>)"
+            }
+          },
+          {
+            "name": "Paginate",
+            "params": [
+              {
+                "name": "input",
+                "type": "PaginateInput[ProjectFilter]"
+              }
+            ],
+            "returns": "*PaginateResult[Project]",
+            "errors": [],
+            "notes": "Offset pagination. Issues no statement of its own — composes Count and GetMany, so no sql_bodies entry."
+          },
+          {
+            "name": "Connection",
+            "params": [
+              {
+                "name": "input",
+                "type": "ConnectionInput[ProjectFilter]"
+              }
+            ],
+            "returns": "*Connection[Project]",
+            "errors": [
+              "ErrInvalidCursor"
+            ],
+            "notes": "Relay cursor pagination. Issues no statement of its own — composes Count and GetMany, so no sql_bodies entry."
+          },
+          {
+            "name": "Stream",
+            "params": [
+              {
+                "name": "input",
+                "type": "*StreamProjectsInput"
+              }
+            ],
+            "returns": "iter.Seq2[*Project, error]",
+            "errors": [],
+            "notes": "Scalars only — no relationship loading, cache always bypassed. Errors surface through the iterator's second value.",
+            "sql_bodies": {
+              "sqlite": "SELECT \"account_id\", \"archived\", \"id\", \"name\", \"slug\" FROM \"projects\" WHERE <filter> ORDER BY <sort>"
+            }
+          }
+        ],
+        "mutation": [
+          {
+            "name": "Create",
+            "params": [
+              {
+                "name": "input",
+                "type": "*CreateProjectInput"
+              }
+            ],
+            "returns": "*Project",
+            "errors": [
+              "ErrNilInput",
+              "ErrConstraintViolation"
+            ],
+            "sql_bodies": {
+              "sqlite": "INSERT INTO \"projects\" (<columns>) VALUES (<values>) RETURNING \"id\""
+            }
+          },
+          {
+            "name": "CreateMany",
+            "params": [
+              {
+                "name": "inputs",
+                "type": "[]*CreateProjectInput"
+              }
+            ],
+            "returns": "[]*Project",
+            "errors": [
+              "ErrNilInput",
+              "ErrConstraintViolation"
+            ],
+            "notes": "Batched in generation.batch_size chunks. Earlier chunks are not rolled back on a later failure — wrap in a transaction for atomicity.",
+            "sql_bodies": {
+              "sqlite": "INSERT INTO \"projects\" (<columns>) VALUES <values> RETURNING \"id\""
+            }
+          },
+          {
+            "name": "Upsert",
+            "params": [
+              {
+                "name": "input",
+                "type": "*CreateProjectInput"
+              },
+              {
+                "name": "target",
+                "type": "ProjectConflictTarget"
+              }
+            ],
+            "returns": "*Project",
+            "errors": [
+              "ErrNilInput",
+              "ErrConstraintViolation"
+            ],
+            "notes": "One method over the generated ProjectConflictTarget enum — the target argument selects the conflict columns at call time.",
+            "sql_bodies": {
+              "sqlite": "INSERT INTO \"projects\" (<columns>) VALUES (<values>) ON CONFLICT (<conflict_target>) DO UPDATE SET <excluded> RETURNING \"id\""
+            }
+          },
+          {
+            "name": "UpsertMany",
+            "params": [
+              {
+                "name": "inputs",
+                "type": "[]*CreateProjectInput"
+              },
+              {
+                "name": "target",
+                "type": "ProjectConflictTarget"
+              }
+            ],
+            "returns": "[]*Project",
+            "errors": [
+              "ErrNilInput",
+              "ErrConstraintViolation"
+            ],
+            "notes": "Batched in generation.batch_size chunks over the same ProjectConflictTarget enum Upsert takes. Inputs resolving to one target are deduped before the statement is built, last occurrence wins. Earlier chunks are not rolled back on a later failure — wrap in a transaction for atomicity.",
+            "sql_bodies": {
+              "sqlite": "INSERT INTO \"projects\" (<columns>) VALUES <values> ON CONFLICT (<conflict_target>) DO UPDATE SET <excluded>"
+            }
+          },
+          {
+            "name": "Update",
+            "params": [
+              {
+                "name": "id",
+                "type": "int64"
+              },
+              {
+                "name": "input",
+                "type": "*UpdateProjectInput"
+              }
+            ],
+            "returns": "*Project",
+            "errors": [
+              "ErrNotFound",
+              "ErrNilInput",
+              "ErrConstraintViolation"
+            ],
+            "notes": "Only fields where IsSet() reports true reach the SET clause; an input with none set issues no UPDATE and returns the row unchanged.",
+            "sql_bodies": {
+              "sqlite": "UPDATE \"projects\" SET <set> WHERE \"id\" = ?"
+            }
+          },
+          {
+            "name": "UpdateMany",
+            "params": [
+              {
+                "name": "items",
+                "type": "[]UpdateProjectItem"
+              }
+            ],
+            "returns": "[]*Project",
+            "errors": [
+              "ErrNilInput",
+              "ErrConstraintViolation"
+            ],
+            "notes": "Issues one statement per item. Batched like CreateMany — earlier items are not rolled back on a later failure. A primary key that does not exist is silently skipped, even under strict_updates.",
+            "sql_bodies": {
+              "sqlite": "UPDATE \"projects\" SET <set> WHERE \"id\" = ?"
+            }
+          },
+          {
+            "name": "UpdateWhere",
+            "params": [
+              {
+                "name": "filter",
+                "type": "*ProjectFilter"
+              },
+              {
+                "name": "input",
+                "type": "*UpdateProjectInput"
+              }
+            ],
+            "returns": "[]*Project",
+            "errors": [
+              "ErrNilInput",
+              "ErrEmptyFilter",
+              "ErrConstraintViolation"
+            ],
+            "notes": "Idempotent — returns an empty slice when no row matches. ErrEmptyFilter when the filter produces no conditions.",
+            "sql_bodies": {
+              "sqlite": "UPDATE \"projects\" SET <set> WHERE <filter> RETURNING \"id\""
+            }
+          },
+          {
+            "name": "Increment",
+            "params": [
+              {
+                "name": "id",
+                "type": "int64"
+              },
+              {
+                "name": "input",
+                "type": "IncrementInput[ProjectIncrementColumn]"
+              }
+            ],
+            "returns": "",
+            "errors": [
+              "ErrNotFound"
+            ],
+            "notes": "Atomic single-column arithmetic. The column is restricted to the generated ProjectIncrementColumn enum — numeric, and identifying nothing: neither PK, FK, nor the tenant column. A negative amount decrements.",
+            "sql_bodies": {
+              "sqlite": "UPDATE \"projects\" SET <column> = <column> + ? WHERE \"id\" = ?"
+            }
+          },
+          {
+            "name": "HardDelete",
+            "params": [
+              {
+                "name": "id",
+                "type": "int64"
+              }
+            ],
+            "returns": "",
+            "errors": [],
+            "notes": "Idempotent — a primary key that does not exist is not an error.",
+            "sql_bodies": {
+              "sqlite": "DELETE FROM \"projects\" WHERE \"id\" = ?"
+            }
+          },
+          {
+            "name": "HardDeleteMany",
+            "params": [
+              {
+                "name": "ids",
+                "type": "[]int64"
+              }
+            ],
+            "returns": "",
+            "errors": [],
+            "notes": "Idempotent — primary keys that do not exist are not an error.",
+            "sql_bodies": {
+              "sqlite": "DELETE FROM \"projects\" WHERE \"id\" IN (<ids>)"
+            }
+          },
+          {
+            "name": "HardDeleteWhere",
+            "params": [
+              {
+                "name": "filter",
+                "type": "*ProjectFilter"
+              }
+            ],
+            "returns": "",
+            "errors": [
+              "ErrEmptyFilter"
+            ],
+            "notes": "Idempotent — no match is not an error. ErrEmptyFilter when the filter produces no conditions.",
+            "sql_bodies": {
+              "sqlite": "DELETE FROM \"projects\" WHERE <filter> RETURNING \"id\""
+            }
+          }
+        ]
+      },
+      "filter": {
+        "type": "ProjectFilter",
+        "fields": [
+          {
+            "name": "AccountID",
+            "type": "*comparator.Number[int64]"
+          },
+          {
+            "name": "Archived",
+            "type": "*comparator.Number[int64]"
+          },
+          {
+            "name": "ID",
+            "type": "*comparator.Number[int64]"
+          },
+          {
+            "name": "Name",
+            "type": "*comparator.String"
+          },
+          {
+            "name": "Slug",
+            "type": "*comparator.String"
+          },
+          {
+            "name": "And",
+            "type": "[]*ProjectFilter"
+          },
+          {
+            "name": "Or",
+            "type": "[]*ProjectFilter"
+          }
+        ]
+      },
+      "sort": {
+        "type": "ProjectSort",
+        "fields": [
+          "AccountID",
+          "Archived",
+          "ID",
+          "Name",
+          "Slug"
+        ]
+      },
+      "examples": {}
+    },
+    {
+      "kind": "table",
+      "name": "ProjectMember",
+      "table": "project_members",
+      "file_prefix": "project_member",
+      "files": [
+        "models_gen.go"
+      ],
+      "comment": "",
+      "indexes": [
+        {
+          "name": "project_members_pkey",
+          "columns": [
+            "project_id",
+            "account_id"
+          ],
+          "unique": true,
+          "method": "btree"
+        }
+      ],
+      "pk": {
+        "kind": "composite",
+        "struct": "ProjectMemberPK",
+        "columns": [
+          {
+            "name": "project_id",
+            "go_field": "ProjectID",
+            "go_type": "int64"
+          },
+          {
+            "name": "account_id",
+            "go_field": "AccountID",
+            "go_type": "int64"
+          }
+        ]
+      },
+      "features": {
+        "soft_delete": null,
+        "cache": null,
+        "events": null,
+        "tenancy": null
+      },
+      "columns": [
+        {
+          "name": "project_id",
+          "go_field": "ProjectID",
+          "go_type": "int64",
+          "db_type": "integer",
+          "nullable": false,
+          "pk": true,
+          "unique": false,
+          "comparator": "comparator.Number[int64]",
+          "comment": ""
+        },
+        {
+          "name": "account_id",
+          "go_field": "AccountID",
+          "go_type": "int64",
+          "db_type": "integer",
+          "nullable": false,
+          "pk": true,
+          "unique": false,
+          "comparator": "comparator.Number[int64]",
+          "comment": ""
+        },
+        {
+          "name": "role",
+          "go_field": "Role",
+          "go_type": "string",
+          "db_type": "text",
+          "nullable": false,
+          "pk": false,
+          "unique": false,
+          "comparator": "comparator.String",
+          "comment": ""
+        }
+      ],
+      "relationships": [],
+      "methods": {
+        "query": [
+          {
+            "name": "Get",
+            "params": [
+              {
+                "name": "pk",
+                "type": "ProjectMemberPK"
+              }
+            ],
+            "returns": "*ProjectMember",
+            "errors": [
+              "ErrNotFound"
+            ],
+            "notes": "Delegates to GetMany with a primary-key filter; returns ErrNotFound when no row matches.",
+            "sql_bodies": {
+              "sqlite": "SELECT \"account_id\", \"project_id\", \"role\" FROM \"project_members\" WHERE \"project_id\" = ? AND \"account_id\" = ? LIMIT 1"
+            }
+          },
+          {
+            "name": "GetMany",
+            "params": [
+              {
+                "name": "input",
+                "type": "*GetProjectMembersInput"
+              }
+            ],
+            "returns": "[]*ProjectMember",
+            "errors": [],
+            "sql_bodies": {
+              "sqlite": "SELECT \"account_id\", \"project_id\", \"role\" FROM \"project_members\" WHERE <filter> ORDER BY <sort> LIMIT <limit>"
+            }
+          },
+          {
+            "name": "Count",
+            "params": [
+              {
+                "name": "filter",
+                "type": "*ProjectMemberFilter"
+              }
+            ],
+            "returns": "int64",
+            "errors": [],
+            "sql_bodies": {
+              "sqlite": "SELECT COUNT(*) FROM \"project_members\" WHERE <filter>"
+            }
+          },
+          {
+            "name": "Exists",
+            "params": [
+              {
+                "name": "pk",
+                "type": "ProjectMemberPK"
+              }
+            ],
+            "returns": "bool",
+            "errors": [],
+            "sql_bodies": {
+              "sqlite": "SELECT EXISTS(SELECT 1 FROM \"project_members\" WHERE \"project_id\" = ? AND \"account_id\" = ?)"
+            }
+          },
+          {
+            "name": "ExistsWhere",
+            "params": [
+              {
+                "name": "filter",
+                "type": "*ProjectMemberFilter"
+              }
+            ],
+            "returns": "bool",
+            "errors": [],
+            "sql_bodies": {
+              "sqlite": "SELECT EXISTS(SELECT 1 FROM \"project_members\" WHERE <filter>)"
+            }
+          },
+          {
+            "name": "Paginate",
+            "params": [
+              {
+                "name": "input",
+                "type": "PaginateInput[ProjectMemberFilter]"
+              }
+            ],
+            "returns": "*PaginateResult[ProjectMember]",
+            "errors": [],
+            "notes": "Offset pagination. Issues no statement of its own — composes Count and GetMany, so no sql_bodies entry."
+          },
+          {
+            "name": "Connection",
+            "params": [
+              {
+                "name": "input",
+                "type": "ConnectionInput[ProjectMemberFilter]"
+              }
+            ],
+            "returns": "*Connection[ProjectMember]",
+            "errors": [
+              "ErrInvalidCursor"
+            ],
+            "notes": "Relay cursor pagination. Issues no statement of its own — composes Count and GetMany, so no sql_bodies entry."
+          },
+          {
+            "name": "Stream",
+            "params": [
+              {
+                "name": "input",
+                "type": "*StreamProjectMembersInput"
+              }
+            ],
+            "returns": "iter.Seq2[*ProjectMember, error]",
+            "errors": [],
+            "notes": "Scalars only — no relationship loading, cache always bypassed. Errors surface through the iterator's second value.",
+            "sql_bodies": {
+              "sqlite": "SELECT \"account_id\", \"project_id\", \"role\" FROM \"project_members\" WHERE <filter> ORDER BY <sort>"
+            }
+          }
+        ],
+        "mutation": [
+          {
+            "name": "Create",
+            "params": [
+              {
+                "name": "input",
+                "type": "*CreateProjectMemberInput"
+              }
+            ],
+            "returns": "*ProjectMember",
+            "errors": [
+              "ErrNilInput",
+              "ErrConstraintViolation"
+            ],
+            "sql_bodies": {
+              "sqlite": "INSERT INTO \"project_members\" (<columns>) VALUES (<values>)"
+            }
+          },
+          {
+            "name": "CreateMany",
+            "params": [
+              {
+                "name": "inputs",
+                "type": "[]*CreateProjectMemberInput"
+              }
+            ],
+            "returns": "[]*ProjectMember",
+            "errors": [
+              "ErrNilInput",
+              "ErrConstraintViolation"
+            ],
+            "notes": "Batched in generation.batch_size chunks. Earlier chunks are not rolled back on a later failure — wrap in a transaction for atomicity.",
+            "sql_bodies": {
+              "sqlite": "INSERT INTO \"project_members\" (<columns>) VALUES <values>"
+            }
+          },
+          {
+            "name": "Upsert",
+            "params": [
+              {
+                "name": "input",
+                "type": "*CreateProjectMemberInput"
+              },
+              {
+                "name": "target",
+                "type": "ProjectMemberConflictTarget"
+              }
+            ],
+            "returns": "*ProjectMember",
+            "errors": [
+              "ErrNilInput",
+              "ErrConstraintViolation"
+            ],
+            "notes": "One method over the generated ProjectMemberConflictTarget enum — the target argument selects the conflict columns at call time.",
+            "sql_bodies": {
+              "sqlite": "INSERT INTO \"project_members\" (<columns>) VALUES (<values>) ON CONFLICT (<conflict_target>) DO UPDATE SET <excluded>"
+            }
+          },
+          {
+            "name": "UpsertMany",
+            "params": [
+              {
+                "name": "inputs",
+                "type": "[]*CreateProjectMemberInput"
+              },
+              {
+                "name": "target",
+                "type": "ProjectMemberConflictTarget"
+              }
+            ],
+            "returns": "[]*ProjectMember",
+            "errors": [
+              "ErrNilInput",
+              "ErrConstraintViolation"
+            ],
+            "notes": "Batched in generation.batch_size chunks over the same ProjectMemberConflictTarget enum Upsert takes. Inputs resolving to one target are deduped before the statement is built, last occurrence wins. Earlier chunks are not rolled back on a later failure — wrap in a transaction for atomicity.",
+            "sql_bodies": {
+              "sqlite": "INSERT INTO \"project_members\" (<columns>) VALUES <values> ON CONFLICT (<conflict_target>) DO UPDATE SET <excluded>"
+            }
+          },
+          {
+            "name": "Update",
+            "params": [
+              {
+                "name": "pk",
+                "type": "ProjectMemberPK"
+              },
+              {
+                "name": "input",
+                "type": "*UpdateProjectMemberInput"
+              }
+            ],
+            "returns": "*ProjectMember",
+            "errors": [
+              "ErrNotFound",
+              "ErrNilInput",
+              "ErrConstraintViolation"
+            ],
+            "notes": "Only fields where IsSet() reports true reach the SET clause; an input with none set issues no UPDATE and returns the row unchanged.",
+            "sql_bodies": {
+              "sqlite": "UPDATE \"project_members\" SET <set> WHERE \"project_id\" = ? AND \"account_id\" = ?"
+            }
+          },
+          {
+            "name": "UpdateMany",
+            "params": [
+              {
+                "name": "items",
+                "type": "[]UpdateProjectMemberItem"
+              }
+            ],
+            "returns": "[]*ProjectMember",
+            "errors": [
+              "ErrNilInput",
+              "ErrConstraintViolation"
+            ],
+            "notes": "Issues one statement per item. Batched like CreateMany — earlier items are not rolled back on a later failure. A primary key that does not exist is silently skipped, even under strict_updates.",
+            "sql_bodies": {
+              "sqlite": "UPDATE \"project_members\" SET <set> WHERE \"project_id\" = ? AND \"account_id\" = ?"
+            }
+          },
+          {
+            "name": "UpdateWhere",
+            "params": [
+              {
+                "name": "filter",
+                "type": "*ProjectMemberFilter"
+              },
+              {
+                "name": "input",
+                "type": "*UpdateProjectMemberInput"
+              }
+            ],
+            "returns": "[]*ProjectMember",
+            "errors": [
+              "ErrNilInput",
+              "ErrEmptyFilter",
+              "ErrConstraintViolation"
+            ],
+            "notes": "Idempotent — returns an empty slice when no row matches. ErrEmptyFilter when the filter produces no conditions.",
+            "sql_bodies": {
+              "sqlite": "UPDATE \"project_members\" SET <set> WHERE <filter> RETURNING \"project_id\", \"account_id\""
+            }
+          },
+          {
+            "name": "HardDelete",
+            "params": [
+              {
+                "name": "pk",
+                "type": "ProjectMemberPK"
+              }
+            ],
+            "returns": "",
+            "errors": [],
+            "notes": "Idempotent — a primary key that does not exist is not an error.",
+            "sql_bodies": {
+              "sqlite": "DELETE FROM \"project_members\" WHERE \"project_id\" = ? AND \"account_id\" = ?"
+            }
+          },
+          {
+            "name": "HardDeleteMany",
+            "params": [
+              {
+                "name": "pks",
+                "type": "[]ProjectMemberPK"
+              }
+            ],
+            "returns": "",
+            "errors": [],
+            "notes": "Idempotent — primary keys that do not exist are not an error.",
+            "sql_bodies": {
+              "sqlite": "DELETE FROM \"project_members\" WHERE (\"project_id\", \"account_id\") IN (<pks>)"
+            }
+          },
+          {
+            "name": "HardDeleteWhere",
+            "params": [
+              {
+                "name": "filter",
+                "type": "*ProjectMemberFilter"
+              }
+            ],
+            "returns": "",
+            "errors": [
+              "ErrEmptyFilter"
+            ],
+            "notes": "Idempotent — no match is not an error. ErrEmptyFilter when the filter produces no conditions.",
+            "sql_bodies": {
+              "sqlite": "DELETE FROM \"project_members\" WHERE <filter> RETURNING \"project_id\", \"account_id\""
+            }
+          }
+        ]
+      },
+      "filter": {
+        "type": "ProjectMemberFilter",
+        "fields": [
+          {
+            "name": "AccountID",
+            "type": "*comparator.Number[int64]"
+          },
+          {
+            "name": "ProjectID",
+            "type": "*comparator.Number[int64]"
+          },
+          {
+            "name": "Role",
+            "type": "*comparator.String"
+          },
+          {
+            "name": "And",
+            "type": "[]*ProjectMemberFilter"
+          },
+          {
+            "name": "Or",
+            "type": "[]*ProjectMemberFilter"
+          }
+        ]
+      },
+      "sort": {
+        "type": "ProjectMemberSort",
+        "fields": [
+          "AccountID",
+          "ProjectID",
+          "Role"
+        ]
+      },
+      "examples": {}
+    },
+    {
+      "kind": "view",
+      "name": "ProjectSummary",
+      "table": "project_summaries",
+      "source": "CREATE VIEW project_summaries AS\nSELECT\n    p.id,\n    p.name,\n    p.slug\nFROM projects p",
+      "file_prefix": "project_summary",
+      "files": [
+        "views_gen.go"
+      ],
+      "comment": "",
+      "indexes": [],
+      "pk": {
+        "kind": "single",
+        "columns": [
+          {
+            "name": "id",
+            "go_field": "ID",
+            "go_type": "int64"
+          }
+        ]
+      },
+      "features": {
+        "soft_delete": null,
+        "cache": null,
+        "events": null,
+        "tenancy": null
+      },
+      "columns": [
+        {
+          "name": "id",
+          "go_field": "ID",
+          "go_type": "int64",
+          "db_type": "integer",
+          "nullable": false,
+          "pk": true,
+          "unique": false,
+          "comparator": "comparator.Number[int64]",
+          "comment": ""
+        },
+        {
+          "name": "name",
+          "go_field": "Name",
+          "go_type": "string",
+          "db_type": "text",
+          "nullable": false,
+          "pk": false,
+          "unique": false,
+          "comparator": "comparator.String",
+          "comment": ""
+        },
+        {
+          "name": "slug",
+          "go_field": "Slug",
+          "go_type": "string",
+          "db_type": "text",
+          "nullable": false,
+          "pk": false,
+          "unique": false,
+          "comparator": "comparator.String",
+          "comment": ""
+        }
+      ],
+      "relationships": [],
+      "methods": {
+        "query": [
+          {
+            "name": "Get",
+            "params": [
+              {
+                "name": "id",
+                "type": "int64"
+              }
+            ],
+            "returns": "*ProjectSummary",
+            "errors": [
+              "ErrNotFound"
+            ],
+            "notes": "Generated from the view's @pk annotation.",
+            "sql_bodies": {
+              "sqlite": "SELECT \"id\", \"name\", \"slug\" FROM \"project_summaries\" WHERE \"id\" = ? LIMIT 1"
+            }
+          },
+          {
+            "name": "GetMany",
+            "params": [
+              {
+                "name": "input",
+                "type": "*GetProjectSummariesInput"
+              }
+            ],
+            "returns": "[]*ProjectSummary",
+            "errors": [],
+            "sql_bodies": {
+              "sqlite": "SELECT \"id\", \"name\", \"slug\" FROM \"project_summaries\" WHERE <filter> ORDER BY <sort> LIMIT <limit>"
+            }
+          },
+          {
+            "name": "Count",
+            "params": [
+              {
+                "name": "filter",
+                "type": "*ProjectSummaryFilter"
+              }
+            ],
+            "returns": "int64",
+            "errors": [],
+            "sql_bodies": {
+              "sqlite": "SELECT COUNT(*) FROM \"project_summaries\" WHERE <filter>"
+            }
+          },
+          {
+            "name": "Paginate",
+            "params": [
+              {
+                "name": "input",
+                "type": "PaginateInput[ProjectSummaryFilter]"
+              }
+            ],
+            "returns": "*PaginateResult[ProjectSummary]",
+            "errors": [],
+            "notes": "Offset pagination. Issues no statement of its own — composes Count and GetMany, so no sql_bodies entry."
+          },
+          {
+            "name": "Connection",
+            "params": [
+              {
+                "name": "input",
+                "type": "ConnectionInput[ProjectSummaryFilter]"
+              }
+            ],
+            "returns": "*Connection[ProjectSummary]",
+            "errors": [
+              "ErrInvalidCursor"
+            ],
+            "notes": "Relay cursor pagination. Issues no statement of its own — composes Count and GetMany, so no sql_bodies entry."
+          }
+        ],
+        "mutation": []
+      },
+      "filter": {
+        "type": "ProjectSummaryFilter",
+        "fields": [
+          {
+            "name": "ID",
+            "type": "*comparator.Number[int64]"
+          },
+          {
+            "name": "Name",
+            "type": "*comparator.String"
+          },
+          {
+            "name": "Slug",
+            "type": "*comparator.String"
+          },
+          {
+            "name": "And",
+            "type": "[]*ProjectSummaryFilter"
+          },
+          {
+            "name": "Or",
+            "type": "[]*ProjectSummaryFilter"
+          }
+        ]
+      },
+      "sort": {
+        "type": "ProjectSummarySort",
+        "fields": [
+          "ID",
+          "Name",
+          "Slug"
+        ]
+      }
+    },
+    {
+      "kind": "table",
+      "name": "Task",
+      "table": "tasks",
+      "file_prefix": "task",
+      "files": [
+        "models_gen.go"
+      ],
+      "comment": "",
+      "indexes": [
+        {
+          "name": "tasks_pkey",
+          "columns": [
+            "id"
+          ],
+          "unique": true,
+          "method": "btree"
+        }
+      ],
+      "pk": {
+        "kind": "single",
+        "columns": [
+          {
+            "name": "id",
+            "go_field": "ID",
+            "go_type": "int64"
+          }
+        ]
+      },
+      "features": {
+        "soft_delete": null,
+        "cache": null,
+        "events": null,
+        "tenancy": null
+      },
+      "columns": [
+        {
+          "name": "id",
+          "go_field": "ID",
+          "go_type": "int64",
+          "db_type": "integer",
+          "nullable": false,
+          "pk": true,
+          "unique": false,
+          "auto": "insert",
+          "comparator": "comparator.Number[int64]",
+          "comment": ""
+        },
+        {
+          "name": "project_id",
+          "go_field": "ProjectID",
+          "go_type": "int64",
+          "db_type": "integer",
+          "nullable": false,
+          "pk": false,
+          "unique": false,
+          "comparator": "comparator.Number[int64]",
+          "comment": ""
+        },
+        {
+          "name": "title",
+          "go_field": "Title",
+          "go_type": "string",
+          "db_type": "text",
+          "nullable": false,
+          "pk": false,
+          "unique": false,
+          "comparator": "comparator.String",
+          "comment": ""
+        },
+        {
+          "name": "estimate_minutes",
+          "go_field": "EstimateMinutes",
+          "go_type": "int64",
+          "db_type": "integer",
+          "nullable": false,
+          "pk": false,
+          "unique": false,
+          "default": "0",
+          "default_kind": "literal",
+          "comparator": "comparator.Number[int64]",
+          "comment": ""
+        },
+        {
+          "name": "estimate_seconds",
+          "go_field": "EstimateSeconds",
+          "go_type": "*int64",
+          "db_type": "integer",
+          "nullable": true,
+          "pk": false,
+          "unique": false,
+          "comparator": "comparator.NullableNumber[int64]",
+          "comment": ""
+        },
+        {
+          "name": "assignee_id",
+          "go_field": "AssigneeID",
+          "go_type": "*int64",
+          "db_type": "integer",
+          "nullable": true,
+          "pk": false,
+          "unique": false,
+          "comparator": "comparator.NullableNumber[int64]",
+          "comment": ""
+        }
+      ],
+      "relationships": [
+        {
+          "name": "task_labels",
+          "kind": "o2m",
+          "target_entity": "TaskLabel",
+          "fk": {
+            "table": "task_labels",
+            "column": "task_id"
+          }
+        }
+      ],
+      "methods": {
+        "query": [
+          {
+            "name": "Get",
+            "params": [
+              {
+                "name": "id",
+                "type": "int64"
+              }
+            ],
+            "returns": "*Task",
+            "errors": [
+              "ErrNotFound"
+            ],
+            "notes": "Delegates to GetMany with a primary-key filter; returns ErrNotFound when no row matches.",
+            "sql_bodies": {
+              "sqlite": "SELECT \"assignee_id\", \"estimate_minutes\", \"estimate_seconds\", \"id\", \"project_id\", \"title\" FROM \"tasks\" WHERE \"id\" = ? LIMIT 1"
+            }
+          },
+          {
+            "name": "GetMany",
+            "params": [
+              {
+                "name": "input",
+                "type": "*GetTasksInput"
+              }
+            ],
+            "returns": "[]*Task",
+            "errors": [],
+            "sql_bodies": {
+              "sqlite": "SELECT \"assignee_id\", \"estimate_minutes\", \"estimate_seconds\", \"id\", \"project_id\", \"title\" FROM \"tasks\" WHERE <filter> ORDER BY <sort> LIMIT <limit>"
+            }
+          },
+          {
+            "name": "Count",
+            "params": [
+              {
+                "name": "filter",
+                "type": "*TaskFilter"
+              }
+            ],
+            "returns": "int64",
+            "errors": [],
+            "sql_bodies": {
+              "sqlite": "SELECT COUNT(*) FROM \"tasks\" WHERE <filter>"
+            }
+          },
+          {
+            "name": "Exists",
+            "params": [
+              {
+                "name": "id",
+                "type": "int64"
+              }
+            ],
+            "returns": "bool",
+            "errors": [],
+            "sql_bodies": {
+              "sqlite": "SELECT EXISTS(SELECT 1 FROM \"tasks\" WHERE \"id\" = ?)"
+            }
+          },
+          {
+            "name": "ExistsWhere",
+            "params": [
+              {
+                "name": "filter",
+                "type": "*TaskFilter"
+              }
+            ],
+            "returns": "bool",
+            "errors": [],
+            "sql_bodies": {
+              "sqlite": "SELECT EXISTS(SELECT 1 FROM \"tasks\" WHERE <filter>)"
+            }
+          },
+          {
+            "name": "Paginate",
+            "params": [
+              {
+                "name": "input",
+                "type": "PaginateInput[TaskFilter]"
+              }
+            ],
+            "returns": "*PaginateResult[Task]",
+            "errors": [],
+            "notes": "Offset pagination. Issues no statement of its own — composes Count and GetMany, so no sql_bodies entry."
+          },
+          {
+            "name": "Connection",
+            "params": [
+              {
+                "name": "input",
+                "type": "ConnectionInput[TaskFilter]"
+              }
+            ],
+            "returns": "*Connection[Task]",
+            "errors": [
+              "ErrInvalidCursor"
+            ],
+            "notes": "Relay cursor pagination. Issues no statement of its own — composes Count and GetMany, so no sql_bodies entry."
+          },
+          {
+            "name": "Stream",
+            "params": [
+              {
+                "name": "input",
+                "type": "*StreamTasksInput"
+              }
+            ],
+            "returns": "iter.Seq2[*Task, error]",
+            "errors": [],
+            "notes": "Scalars only — no relationship loading, cache always bypassed. Errors surface through the iterator's second value.",
+            "sql_bodies": {
+              "sqlite": "SELECT \"assignee_id\", \"estimate_minutes\", \"estimate_seconds\", \"id\", \"project_id\", \"title\" FROM \"tasks\" WHERE <filter> ORDER BY <sort>"
+            }
+          }
+        ],
+        "mutation": [
+          {
+            "name": "Create",
+            "params": [
+              {
+                "name": "input",
+                "type": "*CreateTaskInput"
+              }
+            ],
+            "returns": "*Task",
+            "errors": [
+              "ErrNilInput",
+              "ErrConstraintViolation"
+            ],
+            "sql_bodies": {
+              "sqlite": "INSERT INTO \"tasks\" (<columns>) VALUES (<values>) RETURNING \"id\""
+            }
+          },
+          {
+            "name": "CreateMany",
+            "params": [
+              {
+                "name": "inputs",
+                "type": "[]*CreateTaskInput"
+              }
+            ],
+            "returns": "[]*Task",
+            "errors": [
+              "ErrNilInput",
+              "ErrConstraintViolation"
+            ],
+            "notes": "Batched in generation.batch_size chunks. Earlier chunks are not rolled back on a later failure — wrap in a transaction for atomicity.",
+            "sql_bodies": {
+              "sqlite": "INSERT INTO \"tasks\" (<columns>) VALUES <values> RETURNING \"id\""
+            }
+          },
+          {
+            "name": "Upsert",
+            "params": [
+              {
+                "name": "input",
+                "type": "*CreateTaskInput"
+              },
+              {
+                "name": "target",
+                "type": "TaskConflictTarget"
+              }
+            ],
+            "returns": "*Task",
+            "errors": [
+              "ErrNilInput",
+              "ErrConstraintViolation"
+            ],
+            "notes": "One method over the generated TaskConflictTarget enum — the target argument selects the conflict columns at call time.",
+            "sql_bodies": {
+              "sqlite": "INSERT INTO \"tasks\" (<columns>) VALUES (<values>) ON CONFLICT (<conflict_target>) DO UPDATE SET <excluded> RETURNING \"id\""
+            }
+          },
+          {
+            "name": "UpsertMany",
+            "params": [
+              {
+                "name": "inputs",
+                "type": "[]*CreateTaskInput"
+              },
+              {
+                "name": "target",
+                "type": "TaskConflictTarget"
+              }
+            ],
+            "returns": "[]*Task",
+            "errors": [
+              "ErrNilInput",
+              "ErrConstraintViolation"
+            ],
+            "notes": "Batched in generation.batch_size chunks over the same TaskConflictTarget enum Upsert takes. Inputs resolving to one target are deduped before the statement is built, last occurrence wins. Earlier chunks are not rolled back on a later failure — wrap in a transaction for atomicity.",
+            "sql_bodies": {
+              "sqlite": "INSERT INTO \"tasks\" (<columns>) VALUES <values> ON CONFLICT (<conflict_target>) DO UPDATE SET <excluded>"
+            }
+          },
+          {
+            "name": "Update",
+            "params": [
+              {
+                "name": "id",
+                "type": "int64"
+              },
+              {
+                "name": "input",
+                "type": "*UpdateTaskInput"
+              }
+            ],
+            "returns": "*Task",
+            "errors": [
+              "ErrNotFound",
+              "ErrNilInput",
+              "ErrConstraintViolation"
+            ],
+            "notes": "Only fields where IsSet() reports true reach the SET clause; an input with none set issues no UPDATE and returns the row unchanged.",
+            "sql_bodies": {
+              "sqlite": "UPDATE \"tasks\" SET <set> WHERE \"id\" = ?"
+            }
+          },
+          {
+            "name": "UpdateMany",
+            "params": [
+              {
+                "name": "items",
+                "type": "[]UpdateTaskItem"
+              }
+            ],
+            "returns": "[]*Task",
+            "errors": [
+              "ErrNilInput",
+              "ErrConstraintViolation"
+            ],
+            "notes": "Issues one statement per item. Batched like CreateMany — earlier items are not rolled back on a later failure. A primary key that does not exist is silently skipped, even under strict_updates.",
+            "sql_bodies": {
+              "sqlite": "UPDATE \"tasks\" SET <set> WHERE \"id\" = ?"
+            }
+          },
+          {
+            "name": "UpdateWhere",
+            "params": [
+              {
+                "name": "filter",
+                "type": "*TaskFilter"
+              },
+              {
+                "name": "input",
+                "type": "*UpdateTaskInput"
+              }
+            ],
+            "returns": "[]*Task",
+            "errors": [
+              "ErrNilInput",
+              "ErrEmptyFilter",
+              "ErrConstraintViolation"
+            ],
+            "notes": "Idempotent — returns an empty slice when no row matches. ErrEmptyFilter when the filter produces no conditions.",
+            "sql_bodies": {
+              "sqlite": "UPDATE \"tasks\" SET <set> WHERE <filter> RETURNING \"id\""
+            }
+          },
+          {
+            "name": "Increment",
+            "params": [
+              {
+                "name": "id",
+                "type": "int64"
+              },
+              {
+                "name": "input",
+                "type": "IncrementInput[TaskIncrementColumn]"
+              }
+            ],
+            "returns": "",
+            "errors": [
+              "ErrNotFound"
+            ],
+            "notes": "Atomic single-column arithmetic. The column is restricted to the generated TaskIncrementColumn enum — numeric, and identifying nothing: neither PK, FK, nor the tenant column. A negative amount decrements.",
+            "sql_bodies": {
+              "sqlite": "UPDATE \"tasks\" SET <column> = <column> + ? WHERE \"id\" = ?"
+            }
+          },
+          {
+            "name": "HardDelete",
+            "params": [
+              {
+                "name": "id",
+                "type": "int64"
+              }
+            ],
+            "returns": "",
+            "errors": [],
+            "notes": "Idempotent — a primary key that does not exist is not an error.",
+            "sql_bodies": {
+              "sqlite": "DELETE FROM \"tasks\" WHERE \"id\" = ?"
+            }
+          },
+          {
+            "name": "HardDeleteMany",
+            "params": [
+              {
+                "name": "ids",
+                "type": "[]int64"
+              }
+            ],
+            "returns": "",
+            "errors": [],
+            "notes": "Idempotent — primary keys that do not exist are not an error.",
+            "sql_bodies": {
+              "sqlite": "DELETE FROM \"tasks\" WHERE \"id\" IN (<ids>)"
+            }
+          },
+          {
+            "name": "HardDeleteWhere",
+            "params": [
+              {
+                "name": "filter",
+                "type": "*TaskFilter"
+              }
+            ],
+            "returns": "",
+            "errors": [
+              "ErrEmptyFilter"
+            ],
+            "notes": "Idempotent — no match is not an error. ErrEmptyFilter when the filter produces no conditions.",
+            "sql_bodies": {
+              "sqlite": "DELETE FROM \"tasks\" WHERE <filter> RETURNING \"id\""
+            }
+          }
+        ]
+      },
+      "filter": {
+        "type": "TaskFilter",
+        "fields": [
+          {
+            "name": "AssigneeID",
+            "type": "*comparator.NullableNumber[int64]"
+          },
+          {
+            "name": "EstimateMinutes",
+            "type": "*comparator.Number[int64]"
+          },
+          {
+            "name": "EstimateSeconds",
+            "type": "*comparator.NullableNumber[int64]"
+          },
+          {
+            "name": "ID",
+            "type": "*comparator.Number[int64]"
+          },
+          {
+            "name": "ProjectID",
+            "type": "*comparator.Number[int64]"
+          },
+          {
+            "name": "Title",
+            "type": "*comparator.String"
+          },
+          {
+            "name": "And",
+            "type": "[]*TaskFilter"
+          },
+          {
+            "name": "Or",
+            "type": "[]*TaskFilter"
+          }
+        ]
+      },
+      "sort": {
+        "type": "TaskSort",
+        "fields": [
+          "AssigneeID",
+          "EstimateMinutes",
+          "EstimateSeconds",
+          "ID",
+          "ProjectID",
+          "Title"
+        ]
+      },
+      "examples": {}
+    },
+    {
+      "kind": "table",
+      "name": "TaskLabel",
+      "table": "task_labels",
+      "file_prefix": "task_label",
+      "files": [
+        "models_gen.go"
+      ],
+      "comment": "",
+      "indexes": [
+        {
+          "name": "task_labels_pkey",
+          "columns": [
+            "id"
+          ],
+          "unique": true,
+          "method": "btree"
+        }
+      ],
+      "pk": {
+        "kind": "single",
+        "columns": [
+          {
+            "name": "id",
+            "go_field": "ID",
+            "go_type": "int64"
+          }
+        ]
+      },
+      "features": {
+        "soft_delete": null,
+        "cache": null,
+        "events": null,
+        "tenancy": null
+      },
+      "columns": [
+        {
+          "name": "id",
+          "go_field": "ID",
+          "go_type": "int64",
+          "db_type": "integer",
+          "nullable": false,
+          "pk": true,
+          "unique": false,
+          "auto": "insert",
+          "comparator": "comparator.Number[int64]",
+          "comment": ""
+        },
+        {
+          "name": "task_id",
+          "go_field": "TaskID",
+          "go_type": "int64",
+          "db_type": "integer",
+          "nullable": false,
+          "pk": false,
+          "unique": false,
+          "comparator": "comparator.Number[int64]",
+          "comment": ""
+        },
+        {
+          "name": "label",
+          "go_field": "Label",
+          "go_type": "string",
+          "db_type": "text",
+          "nullable": false,
+          "pk": false,
+          "unique": false,
+          "comparator": "comparator.String",
+          "comment": ""
+        }
+      ],
+      "relationships": [],
+      "methods": {
+        "query": [
+          {
+            "name": "Get",
+            "params": [
+              {
+                "name": "id",
+                "type": "int64"
+              }
+            ],
+            "returns": "*TaskLabel",
+            "errors": [
+              "ErrNotFound"
+            ],
+            "notes": "Delegates to GetMany with a primary-key filter; returns ErrNotFound when no row matches.",
+            "sql_bodies": {
+              "sqlite": "SELECT \"id\", \"label\", \"task_id\" FROM \"task_labels\" WHERE \"id\" = ? LIMIT 1"
+            }
+          },
+          {
+            "name": "GetMany",
+            "params": [
+              {
+                "name": "input",
+                "type": "*GetTaskLabelsInput"
+              }
+            ],
+            "returns": "[]*TaskLabel",
+            "errors": [],
+            "sql_bodies": {
+              "sqlite": "SELECT \"id\", \"label\", \"task_id\" FROM \"task_labels\" WHERE <filter> ORDER BY <sort> LIMIT <limit>"
+            }
+          },
+          {
+            "name": "Count",
+            "params": [
+              {
+                "name": "filter",
+                "type": "*TaskLabelFilter"
+              }
+            ],
+            "returns": "int64",
+            "errors": [],
+            "sql_bodies": {
+              "sqlite": "SELECT COUNT(*) FROM \"task_labels\" WHERE <filter>"
+            }
+          },
+          {
+            "name": "Exists",
+            "params": [
+              {
+                "name": "id",
+                "type": "int64"
+              }
+            ],
+            "returns": "bool",
+            "errors": [],
+            "sql_bodies": {
+              "sqlite": "SELECT EXISTS(SELECT 1 FROM \"task_labels\" WHERE \"id\" = ?)"
+            }
+          },
+          {
+            "name": "ExistsWhere",
+            "params": [
+              {
+                "name": "filter",
+                "type": "*TaskLabelFilter"
+              }
+            ],
+            "returns": "bool",
+            "errors": [],
+            "sql_bodies": {
+              "sqlite": "SELECT EXISTS(SELECT 1 FROM \"task_labels\" WHERE <filter>)"
+            }
+          },
+          {
+            "name": "Paginate",
+            "params": [
+              {
+                "name": "input",
+                "type": "PaginateInput[TaskLabelFilter]"
+              }
+            ],
+            "returns": "*PaginateResult[TaskLabel]",
+            "errors": [],
+            "notes": "Offset pagination. Issues no statement of its own — composes Count and GetMany, so no sql_bodies entry."
+          },
+          {
+            "name": "Connection",
+            "params": [
+              {
+                "name": "input",
+                "type": "ConnectionInput[TaskLabelFilter]"
+              }
+            ],
+            "returns": "*Connection[TaskLabel]",
+            "errors": [
+              "ErrInvalidCursor"
+            ],
+            "notes": "Relay cursor pagination. Issues no statement of its own — composes Count and GetMany, so no sql_bodies entry."
+          },
+          {
+            "name": "Stream",
+            "params": [
+              {
+                "name": "input",
+                "type": "*StreamTaskLabelsInput"
+              }
+            ],
+            "returns": "iter.Seq2[*TaskLabel, error]",
+            "errors": [],
+            "notes": "Scalars only — no relationship loading, cache always bypassed. Errors surface through the iterator's second value.",
+            "sql_bodies": {
+              "sqlite": "SELECT \"id\", \"label\", \"task_id\" FROM \"task_labels\" WHERE <filter> ORDER BY <sort>"
+            }
+          }
+        ],
+        "mutation": [
+          {
+            "name": "Create",
+            "params": [
+              {
+                "name": "input",
+                "type": "*CreateTaskLabelInput"
+              }
+            ],
+            "returns": "*TaskLabel",
+            "errors": [
+              "ErrNilInput",
+              "ErrConstraintViolation"
+            ],
+            "sql_bodies": {
+              "sqlite": "INSERT INTO \"task_labels\" (<columns>) VALUES (<values>) RETURNING \"id\""
+            }
+          },
+          {
+            "name": "CreateMany",
+            "params": [
+              {
+                "name": "inputs",
+                "type": "[]*CreateTaskLabelInput"
+              }
+            ],
+            "returns": "[]*TaskLabel",
+            "errors": [
+              "ErrNilInput",
+              "ErrConstraintViolation"
+            ],
+            "notes": "Batched in generation.batch_size chunks. Earlier chunks are not rolled back on a later failure — wrap in a transaction for atomicity.",
+            "sql_bodies": {
+              "sqlite": "INSERT INTO \"task_labels\" (<columns>) VALUES <values> RETURNING \"id\""
+            }
+          },
+          {
+            "name": "Upsert",
+            "params": [
+              {
+                "name": "input",
+                "type": "*CreateTaskLabelInput"
+              },
+              {
+                "name": "target",
+                "type": "TaskLabelConflictTarget"
+              }
+            ],
+            "returns": "*TaskLabel",
+            "errors": [
+              "ErrNilInput",
+              "ErrConstraintViolation"
+            ],
+            "notes": "One method over the generated TaskLabelConflictTarget enum — the target argument selects the conflict columns at call time.",
+            "sql_bodies": {
+              "sqlite": "INSERT INTO \"task_labels\" (<columns>) VALUES (<values>) ON CONFLICT (<conflict_target>) DO UPDATE SET <excluded> RETURNING \"id\""
+            }
+          },
+          {
+            "name": "UpsertMany",
+            "params": [
+              {
+                "name": "inputs",
+                "type": "[]*CreateTaskLabelInput"
+              },
+              {
+                "name": "target",
+                "type": "TaskLabelConflictTarget"
+              }
+            ],
+            "returns": "[]*TaskLabel",
+            "errors": [
+              "ErrNilInput",
+              "ErrConstraintViolation"
+            ],
+            "notes": "Batched in generation.batch_size chunks over the same TaskLabelConflictTarget enum Upsert takes. Inputs resolving to one target are deduped before the statement is built, last occurrence wins. Earlier chunks are not rolled back on a later failure — wrap in a transaction for atomicity.",
+            "sql_bodies": {
+              "sqlite": "INSERT INTO \"task_labels\" (<columns>) VALUES <values> ON CONFLICT (<conflict_target>) DO UPDATE SET <excluded>"
+            }
+          },
+          {
+            "name": "Update",
+            "params": [
+              {
+                "name": "id",
+                "type": "int64"
+              },
+              {
+                "name": "input",
+                "type": "*UpdateTaskLabelInput"
+              }
+            ],
+            "returns": "*TaskLabel",
+            "errors": [
+              "ErrNotFound",
+              "ErrNilInput",
+              "ErrConstraintViolation"
+            ],
+            "notes": "Only fields where IsSet() reports true reach the SET clause; an input with none set issues no UPDATE and returns the row unchanged.",
+            "sql_bodies": {
+              "sqlite": "UPDATE \"task_labels\" SET <set> WHERE \"id\" = ?"
+            }
+          },
+          {
+            "name": "UpdateMany",
+            "params": [
+              {
+                "name": "items",
+                "type": "[]UpdateTaskLabelItem"
+              }
+            ],
+            "returns": "[]*TaskLabel",
+            "errors": [
+              "ErrNilInput",
+              "ErrConstraintViolation"
+            ],
+            "notes": "Issues one statement per item. Batched like CreateMany — earlier items are not rolled back on a later failure. A primary key that does not exist is silently skipped, even under strict_updates.",
+            "sql_bodies": {
+              "sqlite": "UPDATE \"task_labels\" SET <set> WHERE \"id\" = ?"
+            }
+          },
+          {
+            "name": "UpdateWhere",
+            "params": [
+              {
+                "name": "filter",
+                "type": "*TaskLabelFilter"
+              },
+              {
+                "name": "input",
+                "type": "*UpdateTaskLabelInput"
+              }
+            ],
+            "returns": "[]*TaskLabel",
+            "errors": [
+              "ErrNilInput",
+              "ErrEmptyFilter",
+              "ErrConstraintViolation"
+            ],
+            "notes": "Idempotent — returns an empty slice when no row matches. ErrEmptyFilter when the filter produces no conditions.",
+            "sql_bodies": {
+              "sqlite": "UPDATE \"task_labels\" SET <set> WHERE <filter> RETURNING \"id\""
+            }
+          },
+          {
+            "name": "HardDelete",
+            "params": [
+              {
+                "name": "id",
+                "type": "int64"
+              }
+            ],
+            "returns": "",
+            "errors": [],
+            "notes": "Idempotent — a primary key that does not exist is not an error.",
+            "sql_bodies": {
+              "sqlite": "DELETE FROM \"task_labels\" WHERE \"id\" = ?"
+            }
+          },
+          {
+            "name": "HardDeleteMany",
+            "params": [
+              {
+                "name": "ids",
+                "type": "[]int64"
+              }
+            ],
+            "returns": "",
+            "errors": [],
+            "notes": "Idempotent — primary keys that do not exist are not an error.",
+            "sql_bodies": {
+              "sqlite": "DELETE FROM \"task_labels\" WHERE \"id\" IN (<ids>)"
+            }
+          },
+          {
+            "name": "HardDeleteWhere",
+            "params": [
+              {
+                "name": "filter",
+                "type": "*TaskLabelFilter"
+              }
+            ],
+            "returns": "",
+            "errors": [
+              "ErrEmptyFilter"
+            ],
+            "notes": "Idempotent — no match is not an error. ErrEmptyFilter when the filter produces no conditions.",
+            "sql_bodies": {
+              "sqlite": "DELETE FROM \"task_labels\" WHERE <filter> RETURNING \"id\""
+            }
+          }
+        ]
+      },
+      "filter": {
+        "type": "TaskLabelFilter",
+        "fields": [
+          {
+            "name": "ID",
+            "type": "*comparator.Number[int64]"
+          },
+          {
+            "name": "Label",
+            "type": "*comparator.String"
+          },
+          {
+            "name": "TaskID",
+            "type": "*comparator.Number[int64]"
+          },
+          {
+            "name": "And",
+            "type": "[]*TaskLabelFilter"
+          },
+          {
+            "name": "Or",
+            "type": "[]*TaskLabelFilter"
+          }
+        ]
+      },
+      "sort": {
+        "type": "TaskLabelSort",
+        "fields": [
+          "ID",
+          "Label",
+          "TaskID"
+        ]
+      },
+      "examples": {}
+    }
+  ],
+  "enums": [],
+  "extras": []
+}

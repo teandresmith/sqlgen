@@ -53,33 +53,131 @@ func createsMaterializedView(sql string) bool {
 }
 
 func parseCreateViewStmt(cv *rsql.CreateViewStatement) (parser.ViewSQL, error) {
+	name := rsql.IdentName(cv.Name)
 	sel := cv.Select
 	if sel == nil {
-		return parser.ViewSQL{}, fmt.Errorf("CREATE VIEW has no SELECT statement")
+		return parser.ViewSQL{}, &parser.ViewQueryError{Name: name, Err: fmt.Errorf("CREATE VIEW has no SELECT statement")}
+	}
+	// A compound SELECT (UNION, INTERSECT, EXCEPT) has no single column list
+	// whose columns can be traced to a table.
+	if sel.Compound != nil {
+		return parser.ViewSQL{}, &parser.ViewQueryError{Name: name, Err: fmt.Errorf("CREATE VIEW query is not a simple SELECT")}
 	}
 
-	aliases := make(map[string]string)
-	if sel.Source != nil {
-		collectSourceAliases(sel.Source, aliases)
+	def, err := extractSourceAliases(sel)
+	if err != nil {
+		return parser.ViewSQL{}, &parser.ViewQueryError{Name: name, Err: err}
 	}
 
-	return parser.ViewSQL{
-		Name:         rsql.IdentName(cv.Name),
-		Columns:      extractResultColumns(sel.Columns),
-		TableAliases: aliases,
-	}, nil
+	columns, err := extractResultColumns(name, sel.Columns, cv.Columns)
+	if err != nil {
+		return parser.ViewSQL{}, &parser.ViewQueryError{Name: name, Err: err}
+	}
+
+	def.Name, def.Columns = name, columns
+	return def, nil
 }
 
-// extractResultColumns converts rqlite ResultColumns into ViewSelectColumns.
-func extractResultColumns(cols []*rsql.ResultColumn) []parser.ViewSelectColumn {
-	result := make([]parser.ViewSelectColumn, 0, len(cols))
-	for _, rc := range cols {
-		col := extractResultColumn(rc)
-		if col.Alias != "" {
-			result = append(result, col)
+// extractSourceAliases reads sel's FROM and WITH clauses into a ViewSQL's
+// TableAliases, OuterAliases, QualifiedAliases, Subqueries and CTEs (each
+// of the last three nil when it is empty).
+func extractSourceAliases(sel *rsql.SelectStatement) (parser.ViewSQL, error) {
+	from := parser.ViewSQL{
+		TableAliases: make(map[string]string),
+		OuterAliases: make(map[string]bool),
+	}
+	if sel.Source != nil {
+		if err := collectSourceAliases(sel.Source, false, &from); err != nil {
+			return parser.ViewSQL{}, err
 		}
 	}
-	return result
+	if sel.WithClause != nil && len(sel.WithClause.CTEs) > 0 {
+		from.CTEs = make(map[string]parser.ViewSQL, len(sel.WithClause.CTEs))
+		for _, cte := range sel.WithClause.CTEs {
+			from.CTEs[rsql.IdentName(cte.TableName)] = readSubquery(cte.Select, cte.Columns)
+		}
+	}
+	return from, nil
+}
+
+// readSubquery reads the query of a derived table or common table
+// expression for parser.ViewSQL.Subqueries or CTEs, its columns named by
+// names where it has them. It returns an empty query for one it cannot
+// read: a compound one, one with a RIGHT or FULL join, or one that names *
+// alongside a column list.
+func readSubquery(sel *rsql.SelectStatement, names []*rsql.Ident) parser.ViewSQL {
+	if sel == nil || sel.Compound != nil {
+		return parser.ViewSQL{}
+	}
+	columns := make([]parser.ViewSelectColumn, 0, len(sel.Columns))
+	for i, rc := range sel.Columns {
+		col := extractResultColumn(rc)
+		if isStar(rc) {
+			if len(names) > 0 {
+				return parser.ViewSQL{}
+			}
+			col = parser.ViewSelectColumn{SourceColumn: "*"}
+			if ref, ok := rc.Expr.(*rsql.QualifiedRef); ok && ref.Table != nil {
+				col.SourceTable = rsql.IdentName(ref.Table)
+			}
+		}
+		if i < len(names) {
+			col.Alias = rsql.IdentName(names[i])
+		}
+		columns = append(columns, col)
+	}
+	q, err := extractSourceAliases(sel)
+	if err != nil {
+		return parser.ViewSQL{}
+	}
+	q.Columns = columns
+	return q
+}
+
+// extractResultColumns converts rqlite ResultColumns into ViewSelectColumns,
+// named by the view's column list where it has one; SQLite requires the list
+// to name every column. Every column must have a name (PRD §16.1), and * is
+// refused, since the parser cannot list the columns it selects.
+func extractResultColumns(view string, cols []*rsql.ResultColumn, names []*rsql.Ident) ([]parser.ViewSelectColumn, error) {
+	result := make([]parser.ViewSelectColumn, 0, len(cols))
+	for i, rc := range cols {
+		if isStar(rc) {
+			return nil, &parser.ViewParseError{
+				Reason: fmt.Sprintf("view %s selects %s, whose columns the view parser cannot list", view, rc.String()),
+				Advice: "name each column",
+			}
+		}
+		col := extractResultColumn(rc)
+		if i < len(names) {
+			col.Alias = rsql.IdentName(names[i])
+		}
+		if col.Alias == "" {
+			// Name the column by position when rqlite/sql cannot render
+			// the expression.
+			expr, err := exprString(rc.Expr, "view column")
+			if err != nil {
+				expr = fmt.Sprintf("column %d", i+1)
+			}
+			return nil, &parser.ViewParseError{
+				Reason: fmt.Sprintf("view %s selects %s with no alias and no column name", view, expr),
+				Advice: "name it with AS",
+			}
+		}
+		result = append(result, col)
+	}
+	if len(names) > 0 && len(names) != len(result) {
+		return nil, fmt.Errorf("view %s names %d columns in its column list but selects %d", view, len(names), len(result))
+	}
+	return result, nil
+}
+
+// isStar reports whether rc selects * or table.*.
+func isStar(rc *rsql.ResultColumn) bool {
+	if rc.Star.IsValid() {
+		return true
+	}
+	ref, ok := rc.Expr.(*rsql.QualifiedRef)
+	return ok && ref.Star.IsValid()
 }
 
 // extractResultColumn extracts a ViewSelectColumn from a single rqlite ResultColumn.
@@ -140,24 +238,65 @@ func extractCallArg(arg rsql.Expr, col *parser.ViewSelectColumn) {
 	}
 }
 
-// collectSourceAliases recursively collects table aliases from a FROM clause Source.
-func collectSourceAliases(src rsql.Source, aliases map[string]string) {
+// collectSourceAliases recursively collects table aliases and derived
+// tables from a FROM clause Source into from. isOuter marks a source on the
+// outer side of an enclosing join.
+func collectSourceAliases(src rsql.Source, isOuter bool, from *parser.ViewSQL) error {
 	switch s := src.(type) {
 	case *rsql.QualifiedTableName:
-		tableName := rsql.IdentName(s.Name)
+		key := rsql.IdentName(s.Name)
 		if s.Alias != nil {
-			aliases[rsql.IdentName(s.Alias)] = tableName
-		} else {
-			aliases[tableName] = tableName
+			key = rsql.IdentName(s.Alias)
 		}
+		addTableAlias(from, key, rsql.IdentName(s.Name), isOuter, s.Schema != nil)
 
 	case *rsql.JoinClause:
-		collectSourceAliases(s.X, aliases)
-		collectSourceAliases(s.Y, aliases)
+		if s.Operator != nil && (s.Operator.Right.IsValid() || s.Operator.Full.IsValid()) {
+			return &parser.ViewParseError{
+				Reason: "CREATE VIEW uses a RIGHT or FULL join",
+				Advice: "RIGHT and FULL joins are not supported",
+			}
+		}
+		if err := collectSourceAliases(s.X, isOuter, from); err != nil {
+			return err
+		}
+		return collectSourceAliases(s.Y, isOuter || (s.Operator != nil && s.Operator.Left.IsValid()), from)
 
 	case *rsql.ParenSource:
+		if sel, ok := s.X.(*rsql.SelectStatement); ok {
+			addDerivedTable(sel, s.Alias, from)
+			return nil
+		}
 		if s.X != nil {
-			collectSourceAliases(s.X, aliases)
+			return collectSourceAliases(s.X, isOuter, from)
 		}
 	}
+	return nil
+}
+
+// addTableAlias records in from that FROM-clause key reads table name,
+// whether it is on the outer side of a join and whether name is qualified.
+func addTableAlias(from *parser.ViewSQL, key, name string, isOuter, qualified bool) {
+	from.TableAliases[key] = name
+	if isOuter {
+		from.OuterAliases[key] = true
+	}
+	if qualified {
+		if from.QualifiedAliases == nil {
+			from.QualifiedAliases = make(map[string]bool)
+		}
+		from.QualifiedAliases[key] = true
+	}
+}
+
+// addDerivedTable records the query of a derived table under its alias in
+// from, as readSubquery reads it, when it has an alias.
+func addDerivedTable(sel *rsql.SelectStatement, alias *rsql.Ident, from *parser.ViewSQL) {
+	if alias == nil {
+		return
+	}
+	if from.Subqueries == nil {
+		from.Subqueries = make(map[string]parser.ViewSQL)
+	}
+	from.Subqueries[rsql.IdentName(alias)] = readSubquery(sel, nil)
 }
