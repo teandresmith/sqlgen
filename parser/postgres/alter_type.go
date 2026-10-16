@@ -211,6 +211,9 @@ func (p *Parser) renameType(stmt *pg_query.RenameStmt) error {
 	// is bare again after.
 	p.shadowTypeReferences(schema, newName, true)
 	*typName = newName
+	parser.RenameDependencies(p.schema,
+		parser.DependencyObject{Kind: parser.TypeDependency, Schema: schema, Name: name},
+		parser.DependencyObject{Kind: parser.TypeDependency, Schema: schema, Name: newName})
 	p.renameTypeReferences(schema, name, newName)
 	p.shadowTypeReferences(schema, name, false)
 	return nil
@@ -251,6 +254,9 @@ func (p *Parser) renameAttribute(stmt *pg_query.RenameStmt) error {
 	}
 	for i := range ct.Attributes {
 		if ct.Attributes[i].Name == stmt.Subname {
+			parser.RenameDependencies(p.schema,
+				parser.DependencyObject{Kind: parser.AttributeDependency, Schema: schema, Name: name, Part: stmt.Subname},
+				parser.DependencyObject{Kind: parser.AttributeDependency, Schema: schema, Name: name, Part: stmt.Newname})
 			ct.Attributes[i].Name = stmt.Newname
 			return nil
 		}
@@ -287,13 +293,18 @@ func (p *Parser) alterCompositeType(stmt *pg_query.AlterTableStmt) error {
 	})
 	for _, cmd := range cmds {
 		var err error
+		attr := parser.DependencyObject{Kind: parser.AttributeDependency, Schema: schema, Name: name, Part: cmd.Name}
 		switch cmd.Subtype {
 		case pg_query.AlterTableType_AT_AddColumn:
 			err = p.addAttribute(ct, cmd)
 		case pg_query.AlterTableType_AT_DropColumn:
-			err = dropAttribute(ct, cmd)
+			if err = parser.CheckViewDependents(p.schema, "drop", attr); err == nil {
+				err = dropAttribute(ct, cmd)
+			}
 		case pg_query.AlterTableType_AT_AlterColumnType:
-			err = p.alterAttributeType(ct, cmd)
+			if err = parser.CheckViewDependents(p.schema, "change the type of", attr); err == nil {
+				err = p.alterAttributeType(ct, cmd)
+			}
 		default:
 			// The ALTER TYPE grammar has no other attribute subcommand.
 		}

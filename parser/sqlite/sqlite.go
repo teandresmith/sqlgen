@@ -713,9 +713,8 @@ func (p *Parser) parseAlterTable(stmt *rsql.AlterTableStatement, src []rune) err
 			return fmt.Errorf("table %s not found", tableName)
 		}
 		oldName, newName := rsql.IdentName(stmt.ColumnName), rsql.IdentName(stmt.NewColumnName)
-		// SQLite rewrites a view that reads the column, as it rewrites the
-		// table's own expressions below.
-		parser.RenameViewColumnReferences(p.schema, table, "sqlite", oldName, newName)
+		// Under source: both the views are read again from SQLite, which
+		// rewrites a view that reads the column (introspect.Merge).
 		if err := parser.RenameColumn(table, "sqlite", oldName, newName); err != nil {
 			return fmt.Errorf("rename column %s: %w", tableName, err)
 		}
@@ -866,9 +865,9 @@ func (p *Parser) renameTable(oldName, newName string) error {
 	}
 	// Keys referencing the table follow it to its new name, as they do in the
 	// database; left on the old name, relationship detection drops the edge.
-	// SQLite rewrites a view that reads the table too.
+	// Under source: both the views are read again from SQLite, which
+	// rewrites a view that reads the table (introspect.Merge).
 	table := &p.schema.Tables[idx]
-	parser.RenameViewTableReferences(p.schema, table, table.Schema, newName)
 	parser.RenameTableReferences(p.schema.Tables, "sqlite", table.Schema, table.Name, newName)
 	table.Name = newName
 	delete(p.tableIndex, parser.FoldASCII(oldName))

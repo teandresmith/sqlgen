@@ -122,7 +122,7 @@ check in `checkViewReads` (`parser/introspect/views.go:188-193`), and
   - One PostgreSQL and one SQLite rename control where the database follows
     the rename and Merge accepts.
 
-- Hold (2026-10-15): FIX-354 would narrow this to MySQL column cases (its PostgreSQL and SQLite cases, and MySQL table drops via `VIEW_TABLE_USAGE`, would be covered there); decide FIX-354 first.
+- Narrowed (2026-10-16): FIX-354 landed. PostgreSQL now checks from `pg_depend`, SQLite from a replay of the schema and files, and MySQL table drops and renames from `VIEW_TABLE_USAGE` (the IN UNION, derived UNION and CTE UNION ALL table cases agree with MySQL in FIX-354's oracle test). What remains is MySQL column reads, which still go through the parser path; re-vet against that scope.
 
 **References.**
 - PRD §6.1 (view tables and columns under `source: both`).
@@ -220,7 +220,7 @@ databases:
     follows, so Merge accepts it.
   - `mysqlReads` has no tags table. The MySQL cases need only `vr_users`.
 
-- Hold (2026-10-15): FIX-354 would narrow this to MySQL column cases; decide FIX-354 first.
+- Narrowed (2026-10-16): FIX-354 landed; PostgreSQL and SQLite are checked by the database (`pg_depend`, the SQLite replay), and MySQL tables by `VIEW_TABLE_USAGE`. What remains is MySQL column reads in VALUES lists and LIMIT/OFFSET subqueries, which still go through the parser path; re-vet against that scope.
 
 **References.**
 - PRD §6.1 (columns a view reads outside its select list).
@@ -230,194 +230,15 @@ databases:
 
 **Resolution notes.** _Filled in by `/fix resolve`._
 
-### FIX-352
+<!-- fixes:open:end -->
 
-- **Status:** Open
-- **Severity:** tracked
-- **Origin:** phase 30, parser/view
-- **Surfaced by:** FIX-349 verify (2026-10-14)
+## Resolved
 
-**Issue.** **SQLite resolves a CTE body where the CTE is used; sqlgen
-resolves it where it is defined.** Two SQLite view shapes with a CTE pass
-`Merge` while SQLite refuses the migration. Re-measured at `ba7a0b53` with a
-throwaway probe on the `TestMerge_ViewColumnRenameAndDrop` helpers against
-modernc SQLite, PostgreSQL 16 and MySQL 8.0:
-- Shape A: `WITH c AS (SELECT uid FROM posts WHERE role = 'a') SELECT u.id
-  FROM users u WHERE EXISTS (SELECT 1 FROM c WHERE c.uid = u.id)`. Posts has
-  no role column, so SQLite binds `role` to `users.role` at the place `c` is
-  used, inside the EXISTS.
-  - `ALTER TABLE users DROP COLUMN role` → `Merge err=<nil>`. SQLite says
-    "SQL logic error: error in view r after drop column: no such column:
-    role (1)".
-  - `RENAME COLUMN role TO kind` → `Merge err=<nil>`. SQLite says "SQL logic
-    error: error in view r after rename: no such column: role (1)".
-  - PostgreSQL refuses to create this view ("ERROR: column \"role\" does not
-    exist (SQLSTATE 42703)"), and so does MySQL ("Error 1054 (42S22): Unknown
-    column 'role' in 'where clause'").
-- Shape B: `SELECT u.id FROM users u WHERE EXISTS (WITH c AS (SELECT p.uid
-  FROM posts p WHERE u.role = 'a') SELECT 1 FROM c)` + `ALTER TABLE users
-  RENAME COLUMN role TO kind` → `Merge err=<nil>`. SQLite says "SQL logic
-  error: error in view r after rename: no such column: u.role (1)". The same
-  happens with an unqualified `role` in that CTE: SQLite says "error in view
-  r after rename: no such column: role (1)" and `Merge err=<nil>`. Measured
-  controls where sqlgen and the database agree:
-  - Shape B + DROP COLUMN role: Merge says "view r reads column role of table
-    users, which the SQL files drop or rename; …", and SQLite says "error in
-    view r after drop column: no such column: u.role (1)".
-  - Shape B + RENAME email: both accept.
-  - A CTE whose body has its own `FROM users u` and an EXISTS reading
-    `u.role`, + RENAME role: both accept.
-  - PostgreSQL with shape B + RENAME role: it follows the rename, as Merge
-    does.
-
-**Root cause.** The two shapes have different root causes and different fix
-sites, both in `parser/view.go`. They stay in one entry because the user
-ruled on 2026-10-14 to file one SQLite CTE-scoping item.
-- Shape A: `readScope` (`parser/view.go:654-669`) resolves a read in a CTE
-  body through the scopes where the CTE is defined. `walkScopes` (`:592-601`)
-  yields the CTE as `traceScope{correlated: false}` after the query that
-  holds its WITH clause, so `readScope` never looks at that query's FROM.
-  With the CTE at the top, nothing is left to resolve the read, so it reads
-  no table column. `checkViewReads` checks only reads that had a table
-  (`parser/introspect/views.go:216`). SQLite expands a CTE where it is
-  referenced, as a derived table in that FROM clause. The body therefore
-  reads the queries that enclose the use site, here the `users u` around the
-  EXISTS. PostgreSQL and MySQL resolve the body where it is defined and
-  refuse the view.
-- Shape B: `readScope` resolves the read correctly, through the correlated
-  EXISTS scope to `users.role`, so DROP is caught. On RENAME COLUMN,
-  `tableColumnReads` (`parser/view.go:714-731`) repoints every read of the
-  column, as PostgreSQL rewrites it. SQLite's ALTER TABLE RENAME COLUMN
-  instead resolves each CTE body by itself, with no enclosing query in scope.
-  It never rewrites a reference from a CTE body to an enclosing query's
-  column, so its post-rename schema check fails on the old name. The SQLite
-  USING exception at `:722` is a fix of the same kind.
-- The two interact. Once shape A's `role` resolves to `users.role`,
-  `tableColumnReads` would repoint it on RENAME, and Merge would accept a
-  rename that SQLite refuses. Shape A's rename case needs the shape B fix
-  too.
-
-**Suggested fix.**
-- Shape A: on SQLite, resolve a read in a CTE body at each place the CTE is
-  used, treating the body as a non-LATERAL derived table there. If the
-  defining scopes cannot resolve the read, continue `readScope`'s outward
-  climb from each use site's scopes, skipping the use-site query's own FROM.
-  A use site is a FROM-clause key that `cteScopes` maps to the CTE's path.
-  Record every resolution, so that losing the column at any use site is an
-  error. `ViewReadSources` has no dialect, so the SQLite reader marks it on
-  the query, for example `ViewSQL.UseSiteCTEs`. This touches the parser
-  module only.
-- Shape B: in `tableColumnReads`, on dialect `sqlite`, do not repoint a read
-  that sits inside a CTE body (a `/with:` segment on its scope path after
-  the scope it resolves in) when it resolves outside that body. The read
-  then no longer finds the renamed column, and `checkViewReads` errors, as
-  with the SQLite USING exception.
-- Regression subtests in `TestMerge_ViewColumnRenameAndDrop` with
-  `sqliteReads`:
-  - Errors: shape A + DROP role, shape A + RENAME role, shape B + RENAME
-    role, and the unqualified shape B + RENAME role.
-  - Accepted by both: shape B + RENAME email, and the CTE with its own
-    `FROM users u` + RENAME role (the view follows).
-  - Pinned: shape B + DROP role, which already errors.
-  - PostgreSQL control: shape B + RENAME role → Merge nil, as PostgreSQL
-    follows.
-
-- Hold (2026-10-15): FIX-354 would supersede this (SQLite replay); decide FIX-354 first.
-
-**References.**
-- PRD §6.1 (columns a view reads; a rename applied as the database applies
-  it).
-- FIX-347: CTE scopes, `cteScopes`.
-- FIX-349: `readScope` and `tableColumnReads`. Its third verify pass found
-  shape A, and the user's 2026-10-14 ruling sent it to a separate FIX.
-
-**Resolution notes.** _Filled in by `/fix resolve`._
-
-### FIX-353
-
-- **Status:** Open
-- **Severity:** tracked
-- **Origin:** phase 30, parser/view
-- **Surfaced by:** FIX-349 verify (2026-10-14)
-
-**Issue.** **A SQLite expression subquery over a view or a table function
-gives a false error.** Under `source: both`, an unqualified name in an
-expression subquery whose FROM is a view or a table-valued function is bound
-to the enclosing query's table. Merge then refuses a migration that SQLite
-accepts and that leaves the view's meaning unchanged. Re-measured at
-`ba7a0b53` with a throwaway probe on the `TestMerge_ViewColumnRenameAndDrop`
-helpers against modernc SQLite:
-- View case: `CREATE VIEW iv AS SELECT uid, title AS role FROM posts; CREATE
-  VIEW r AS SELECT u.id FROM users u WHERE EXISTS (SELECT 1 FROM iv WHERE
-  role = 'a')` + `ALTER TABLE users DROP COLUMN role` → Merge says "merge
-  both mode: view r reads column role of table users, which the SQL files
-  drop or rename; under source: both the database's view stands, so change it
-  in the database first". SQLite accepts the drop, and `SELECT * FROM r`
-  still runs, because `role` is `iv.role`. `u.id IN (SELECT uid FROM iv WHERE
-  role = 'a')` gives the same.
-- Table-function case: with `users` given a `value TEXT` column, `SELECT
-  u.id FROM users u WHERE EXISTS (SELECT 1 FROM json_each('["a"]') WHERE
-  value = 'a')` + `ALTER TABLE users DROP COLUMN value` → Merge says "merge
-  both mode: view r reads column value of table users, which the SQL files
-  drop or rename; …". SQLite accepts, and the view still runs.
-- Controls where both accept (`Merge err=<nil>`, view runs): the qualified
-  `iv.role`, `json_each(…) j … WHERE j.value`, and the top-level `SELECT
-  iv.uid FROM iv WHERE role = 'a'`. PostgreSQL and MySQL store the reference
-  qualified (FIX-349), so they are not affected.
-
-**Root cause.** `readScope` (`parser/view.go:654-669`) decides that a FROM
-clause lacks an unqualified column unless a table there has it or a subquery
-there selects it (`traceViewColumn`, `:491-521`, found false). If the FROM
-clause lacks it, `readScope` climbs out of the correlated expression subquery
-to the enclosing `FROM users u`, which has the name. It sees neither source
-here:
-- A view key maps to a name that `viewSources.table` (`:784`) looks up only
-  in `schema.Tables`. The view's columns in `schema.Views` are never
-  consulted.
-- A table-valued function is not recorded at all. `collectSourceAliases`
-  (`parser/sqlite/view_sql.go:534-565`) has no `*rsql.QualifiedTableFunctionName`
-  case (only `walkJoins`, `:362`, reads its arguments), so the subquery's
-  FROM looks empty.
-
-SQLite binds the name in the innermost FROM that has it: the view's column,
-or json_each's `value`.
-
-**Suggested fix.**
-- `readScope` / `traceViewColumn`: treat a FROM key that names a view as
-  having the view's columns (`schema.Views`, matched with `SameColumnName`).
-  An unqualified read found there resolves in that query with no table
-  column (Table nil), and does not climb.
-- `parser/sqlite/view_sql.go` `collectSourceAliases`: record a table-valued
-  function under its alias or name, as a key that names no table (for
-  example a new `ViewSQL.Functions` map, so `vs.table` stays nil). Give
-  `readScope` the known column sets of SQLite's built-in `json_each` and
-  `json_tree` (key, value, type, atom, id, parent, fullkey, path, json,
-  root). For an unknown function, stop the climb only when its columns cannot
-  be known. Measure that trade-off before choosing it, because it can turn
-  this false error into a silent pass.
-- Regression subtests in `TestMerge_ViewColumnRenameAndDrop` (SQLite). They
-  need a base that takes extra DDL (view `iv`, a `users.value` column):
-  - Accepted (Merge nil, view columns unchanged): EXISTS over `iv` + DROP
-    users.role, IN over `iv` + DROP users.role, and EXISTS over `json_each`
-    + DROP users.value.
-  - Still an error: an EXISTS over `iv` that reads a name `iv` lacks, such
-    as `email`, + DROP users.email. Measure it against SQLite before pinning
-    it.
-
-- Hold (2026-10-15): FIX-354 would supersede this (SQLite replay); decide FIX-354 first.
-
-**References.**
-- PRD §6.1 (columns a view reads, including an enclosing query's column a
-  subquery reads).
-- FIX-347 (scope tracing).
-- FIX-349: `readScope`'s outward climb from an expression subquery; the
-  qualified-storage note for PostgreSQL and MySQL.
-
-**Resolution notes.** _Filled in by `/fix resolve`._
+<!-- fixes:resolved:begin -->
 
 ### FIX-354
 
-- **Status:** Open
+- **Status:** Resolved
 - **Severity:** tracked
 - **Origin:** phase 30, parser/introspect
 - **Surfaced by:** user review of FIX-349 and FIX-350..353 (2026-10-15)
@@ -717,6 +538,24 @@ parser both misses reads and invents false ones.
   database object whose collation or function the copy lacks; Q4 → warn,
   naming the missing name and the file, and stop checking from that file
   on.
+- Raised by `/fix-loop`'s verify pass on 2026-10-16 and ruled the same day:
+  - Q-ATTACH. The replay ran a file's `ATTACH DATABASE` and `VACUUM INTO`
+    for real: `ATTACH DATABASE '<dir>/side.db' AS aux; CREATE TABLE aux.t
+    (a int);` and `VACUUM INTO '<dir>/copy.db'` both gave Merge nil and
+    created the file (a relative path in sqlgen's working directory). The
+    user ruled: block both in the replay, warn naming the file and stop
+    checking from it on (as Q4), and state it in PRD §6.1.
+  - Q5. After a Q4 stop, SQLite view columns do not follow later files'
+    renames (v keeps [id, role] where the migrated view has [id, kind]).
+    The user ruled: extend the Q4 warning with "and the views' columns do
+    not follow them", and add a PRD §6.1 line.
+- Auto-accepted the recommended option on 2026-10-16 (`/fix` auto-accept
+  rule): a plain `VACUUM` (or `VACUUM main`), which the attach limit
+  refuses like `VACUUM INTO` ("too many attached databases - max 0"), → keep
+  it a Q4 warn-and-stop, stated in PRD §6.1, rather than scan statements to
+  skip it, because it was prototyped with gates green, causes no golden
+  churn, adds no runtime or generated public surface or config key, and
+  only adds PRD text for a case the Q-ATTACH ruling left unspecified.
 - Parked by `/fix-loop` at `bccf5765` on 2026-10-15; re-vetted from the
   work in progress at `b8bafb62` on 2026-10-16. The earlier verify pass's
   backlog edits (one line removed, one narrowed, one added) are in
@@ -771,18 +610,252 @@ parser both misses reads and invents false ones.
 - PRD §6.1 (source modes; view columns under `both`).
 - FIX-347 (`c007a487`), FIX-349 (`ba7a0b53`), FIX-350, FIX-351, FIX-352,
   FIX-353.
-- `parser/introspect/merge.go:26` (`Merge` gets file paths;
+- `parser/introspect/merge.go:37` (`Merge` gets file paths;
   `parser.ParseFiles` reads each whole file, so the raw text is available
   to replay); `parser/introspect` already imports pgx and
   `modernc.org/sqlite`.
 
-**Resolution notes.** _Filled in by /fix resolve._
+**Resolution notes.** Applied the vetted prototype from `b8bafb62`
+(applied clean at `6eeb4211`, unchanged). The view-dependency check now
+asks the database: PostgreSQL's `pg_depend` dependencies
+(`Schema.ViewDependencies`) make the PostgreSQL file parser refuse to drop
+or retype what a view depends on (`parser.CheckViewDependents`), and
+renames carry them (`RenameDependencies`); SQLite replays
+`Schema.SQLiteSchema` and the files into `:memory:`
+(`parser/introspect/sqlite_replay.go`), with the Q3 placeholder-and-swap
+for a missing collation, function or module and the Q4 warn-and-stop;
+MySQL reads `VIEW_TABLE_USAGE` for table drops and renames and keeps the
+parser's column tracing. The PostgreSQL and SQLite read collectors and the
+SQLite-only parts of `parser/view.go` are deleted; PRD §6.1 states each
+dialect's check and its measured limits. Gates: `make check` ok; parser
+`go test -race -count=1 ./...` ok (introspect 115s, the oracle included);
+`make update-golden` and `update-golden-e2e` no churn (matches the vet);
+`TestE2EGoldenFiles` ok; `make check-examples` ok. Fail-first spot checks
+on the final code: `restoreStatements` as a no-op → 6
+`TestMerge_SQLiteReplay` subtests fail ("… leaves view vc failing: SQL
+logic error: no such table: main.users (1)"); the Q4 statement branch off
+→ 7 fail ("… SQLite refuses it: SQL logic error: unknown function: appfn()
+(1)"); `CheckViewDependents` as a no-op → `TestCheckViewDependents` fails.
+Fixed inline from the /verify reviewer: a PostgreSQL `RENAME COLUMN` on a
+partitioned table now repoints its partitions' dependencies too
+(`renamePartitionColumnDependencies`), since `checkViewDependents`
+recurses into them (`ALTER TABLE events RENAME COLUMN x TO y; ALTER TABLE
+events DROP COLUMN y;` with a view on `events_2024.x` gave `<nil>`); after
+a file SQLite stops checking, a view it leaves failing keeps its columns
+instead of failing Merge (`DROP TABLE tags; INSERT …` under an index on
+`appfn` gave "merge both mode: introspect sqlite view columns vt: SQL
+logic error: no such table: main.tags (1)"; the same for a file that
+creates a view again with a function SQLite lacks, "… view columns v: … no
+such function: appfn (1)", which the prototype's subtest missed because
+its base had no views). New `-short` test `TestViewDependents`
+(`parser/postgres`) covers the PostgreSQL parser refusals, renames and
+partitions, and `TestMerge_SQLiteReplay` gained the
+stop-after-a-broken-view case, with the views' columns asserted; each
+fails with its fix reverted. Per the 2026-10-16 rulings: Q-ATTACH, the
+replay's connection attaches no database (`sqlite.Limit(conn,
+SQLITE_LIMIT_ATTACHED, 0)`, `forbidAttach`), which measured blocks `ATTACH
+DATABASE` and `VACUUM INTO` alike (VACUUM attaches its output, "too many
+attached databases - max 0 (1)"), so no statement scan is needed; a plain
+`VACUUM` is refused the same way. Such a file is a Q4 warn-and-stop,
+"<file> runs ATTACH DATABASE or VACUUM, which the check does not run, so
+SQLite does not check it or the SQL files after it, and the views' columns
+do not follow them", and creates no file. Q5, the Q4 warning ends "…, and
+the views' columns do not follow them". PRD §6.1 gained a sentence for
+each. New `TestMerge_SQLiteReplay` subtests: ATTACH and VACUUM INTO under
+an absolute temp-dir path (Merge nil, the warning names the file, no file
+created; the ATTACH case's second file would otherwise be refused), a
+plain `PRAGMA auto_vacuum = FULL; VACUUM;`, and a later file's rename
+after a stop (v keeps [id, role]). Fail-first: `forbidAttach` call removed
+→ the three subtests fail ("Merge() created side.db", "Merge() created
+copy.db", and the plain VACUUM's missing warning); the attach branch of
+`uncheckedReason` off → both fail ("SQLite refuses it: SQL logic error:
+too many attached databases - max 0"); the Q5 clause removed from the
+warning → 12 subtests fail.
 
-<!-- fixes:open:end -->
+### FIX-352
 
-## Resolved
+- **Status:** Resolved
+- **Severity:** tracked
+- **Origin:** phase 30, parser/view
+- **Surfaced by:** FIX-349 verify (2026-10-14)
 
-<!-- fixes:resolved:begin -->
+**Issue.** **SQLite resolves a CTE body where the CTE is used; sqlgen
+resolves it where it is defined.** Two SQLite view shapes with a CTE pass
+`Merge` while SQLite refuses the migration. Re-measured at `ba7a0b53` with a
+throwaway probe on the `TestMerge_ViewColumnRenameAndDrop` helpers against
+modernc SQLite, PostgreSQL 16 and MySQL 8.0:
+- Shape A: `WITH c AS (SELECT uid FROM posts WHERE role = 'a') SELECT u.id
+  FROM users u WHERE EXISTS (SELECT 1 FROM c WHERE c.uid = u.id)`. Posts has
+  no role column, so SQLite binds `role` to `users.role` at the place `c` is
+  used, inside the EXISTS.
+  - `ALTER TABLE users DROP COLUMN role` → `Merge err=<nil>`. SQLite says
+    "SQL logic error: error in view r after drop column: no such column:
+    role (1)".
+  - `RENAME COLUMN role TO kind` → `Merge err=<nil>`. SQLite says "SQL logic
+    error: error in view r after rename: no such column: role (1)".
+  - PostgreSQL refuses to create this view ("ERROR: column \"role\" does not
+    exist (SQLSTATE 42703)"), and so does MySQL ("Error 1054 (42S22): Unknown
+    column 'role' in 'where clause'").
+- Shape B: `SELECT u.id FROM users u WHERE EXISTS (WITH c AS (SELECT p.uid
+  FROM posts p WHERE u.role = 'a') SELECT 1 FROM c)` + `ALTER TABLE users
+  RENAME COLUMN role TO kind` → `Merge err=<nil>`. SQLite says "SQL logic
+  error: error in view r after rename: no such column: u.role (1)". The same
+  happens with an unqualified `role` in that CTE: SQLite says "error in view
+  r after rename: no such column: role (1)" and `Merge err=<nil>`. Measured
+  controls where sqlgen and the database agree:
+  - Shape B + DROP COLUMN role: Merge says "view r reads column role of table
+    users, which the SQL files drop or rename; …", and SQLite says "error in
+    view r after drop column: no such column: u.role (1)".
+  - Shape B + RENAME email: both accept.
+  - A CTE whose body has its own `FROM users u` and an EXISTS reading
+    `u.role`, + RENAME role: both accept.
+  - PostgreSQL with shape B + RENAME role: it follows the rename, as Merge
+    does.
+
+**Root cause.** The two shapes have different root causes and different fix
+sites, both in `parser/view.go`. They stay in one entry because the user
+ruled on 2026-10-14 to file one SQLite CTE-scoping item.
+- Shape A: `readScope` (`parser/view.go:654-669`) resolves a read in a CTE
+  body through the scopes where the CTE is defined. `walkScopes` (`:592-601`)
+  yields the CTE as `traceScope{correlated: false}` after the query that
+  holds its WITH clause, so `readScope` never looks at that query's FROM.
+  With the CTE at the top, nothing is left to resolve the read, so it reads
+  no table column. `checkViewReads` checks only reads that had a table
+  (`parser/introspect/views.go:216`). SQLite expands a CTE where it is
+  referenced, as a derived table in that FROM clause. The body therefore
+  reads the queries that enclose the use site, here the `users u` around the
+  EXISTS. PostgreSQL and MySQL resolve the body where it is defined and
+  refuse the view.
+- Shape B: `readScope` resolves the read correctly, through the correlated
+  EXISTS scope to `users.role`, so DROP is caught. On RENAME COLUMN,
+  `tableColumnReads` (`parser/view.go:714-731`) repoints every read of the
+  column, as PostgreSQL rewrites it. SQLite's ALTER TABLE RENAME COLUMN
+  instead resolves each CTE body by itself, with no enclosing query in scope.
+  It never rewrites a reference from a CTE body to an enclosing query's
+  column, so its post-rename schema check fails on the old name. The SQLite
+  USING exception at `:722` is a fix of the same kind.
+- The two interact. Once shape A's `role` resolves to `users.role`,
+  `tableColumnReads` would repoint it on RENAME, and Merge would accept a
+  rename that SQLite refuses. Shape A's rename case needs the shape B fix
+  too.
+
+**Suggested fix.**
+- Shape A: on SQLite, resolve a read in a CTE body at each place the CTE is
+  used, treating the body as a non-LATERAL derived table there. If the
+  defining scopes cannot resolve the read, continue `readScope`'s outward
+  climb from each use site's scopes, skipping the use-site query's own FROM.
+  A use site is a FROM-clause key that `cteScopes` maps to the CTE's path.
+  Record every resolution, so that losing the column at any use site is an
+  error. `ViewReadSources` has no dialect, so the SQLite reader marks it on
+  the query, for example `ViewSQL.UseSiteCTEs`. This touches the parser
+  module only.
+- Shape B: in `tableColumnReads`, on dialect `sqlite`, do not repoint a read
+  that sits inside a CTE body (a `/with:` segment on its scope path after
+  the scope it resolves in) when it resolves outside that body. The read
+  then no longer finds the renamed column, and `checkViewReads` errors, as
+  with the SQLite USING exception.
+- Regression subtests in `TestMerge_ViewColumnRenameAndDrop` with
+  `sqliteReads`:
+  - Errors: shape A + DROP role, shape A + RENAME role, shape B + RENAME
+    role, and the unqualified shape B + RENAME role.
+  - Accepted by both: shape B + RENAME email, and the CTE with its own
+    `FROM users u` + RENAME role (the view follows).
+  - Pinned: shape B + DROP role, which already errors.
+  - PostgreSQL control: shape B + RENAME role → Merge nil, as PostgreSQL
+    follows.
+
+- Superseded (2026-10-16) by FIX-354's SQLite replay.
+
+**References.**
+- PRD §6.1 (columns a view reads; a rename applied as the database applies
+  it).
+- FIX-347: CTE scopes, `cteScopes`.
+- FIX-349: `readScope` and `tableColumnReads`. Its third verify pass found
+  shape A, and the user's 2026-10-14 ruling sent it to a separate FIX.
+
+**Resolution notes.** Superseded by FIX-354 (2026-10-16): SQLite's own replay of the database schema and the files now decides what a view reads, so the parser's SQLite read tracing this entry would have fixed is deleted. FIX-354's oracle test covers this entry's shapes with 0 disagreements against SQLite.
+
+### FIX-353
+
+- **Status:** Resolved
+- **Severity:** tracked
+- **Origin:** phase 30, parser/view
+- **Surfaced by:** FIX-349 verify (2026-10-14)
+
+**Issue.** **A SQLite expression subquery over a view or a table function
+gives a false error.** Under `source: both`, an unqualified name in an
+expression subquery whose FROM is a view or a table-valued function is bound
+to the enclosing query's table. Merge then refuses a migration that SQLite
+accepts and that leaves the view's meaning unchanged. Re-measured at
+`ba7a0b53` with a throwaway probe on the `TestMerge_ViewColumnRenameAndDrop`
+helpers against modernc SQLite:
+- View case: `CREATE VIEW iv AS SELECT uid, title AS role FROM posts; CREATE
+  VIEW r AS SELECT u.id FROM users u WHERE EXISTS (SELECT 1 FROM iv WHERE
+  role = 'a')` + `ALTER TABLE users DROP COLUMN role` → Merge says "merge
+  both mode: view r reads column role of table users, which the SQL files
+  drop or rename; under source: both the database's view stands, so change it
+  in the database first". SQLite accepts the drop, and `SELECT * FROM r`
+  still runs, because `role` is `iv.role`. `u.id IN (SELECT uid FROM iv WHERE
+  role = 'a')` gives the same.
+- Table-function case: with `users` given a `value TEXT` column, `SELECT
+  u.id FROM users u WHERE EXISTS (SELECT 1 FROM json_each('["a"]') WHERE
+  value = 'a')` + `ALTER TABLE users DROP COLUMN value` → Merge says "merge
+  both mode: view r reads column value of table users, which the SQL files
+  drop or rename; …". SQLite accepts, and the view still runs.
+- Controls where both accept (`Merge err=<nil>`, view runs): the qualified
+  `iv.role`, `json_each(…) j … WHERE j.value`, and the top-level `SELECT
+  iv.uid FROM iv WHERE role = 'a'`. PostgreSQL and MySQL store the reference
+  qualified (FIX-349), so they are not affected.
+
+**Root cause.** `readScope` (`parser/view.go:654-669`) decides that a FROM
+clause lacks an unqualified column unless a table there has it or a subquery
+there selects it (`traceViewColumn`, `:491-521`, found false). If the FROM
+clause lacks it, `readScope` climbs out of the correlated expression subquery
+to the enclosing `FROM users u`, which has the name. It sees neither source
+here:
+- A view key maps to a name that `viewSources.table` (`:784`) looks up only
+  in `schema.Tables`. The view's columns in `schema.Views` are never
+  consulted.
+- A table-valued function is not recorded at all. `collectSourceAliases`
+  (`parser/sqlite/view_sql.go:534-565`) has no `*rsql.QualifiedTableFunctionName`
+  case (only `walkJoins`, `:362`, reads its arguments), so the subquery's
+  FROM looks empty.
+
+SQLite binds the name in the innermost FROM that has it: the view's column,
+or json_each's `value`.
+
+**Suggested fix.**
+- `readScope` / `traceViewColumn`: treat a FROM key that names a view as
+  having the view's columns (`schema.Views`, matched with `SameColumnName`).
+  An unqualified read found there resolves in that query with no table
+  column (Table nil), and does not climb.
+- `parser/sqlite/view_sql.go` `collectSourceAliases`: record a table-valued
+  function under its alias or name, as a key that names no table (for
+  example a new `ViewSQL.Functions` map, so `vs.table` stays nil). Give
+  `readScope` the known column sets of SQLite's built-in `json_each` and
+  `json_tree` (key, value, type, atom, id, parent, fullkey, path, json,
+  root). For an unknown function, stop the climb only when its columns cannot
+  be known. Measure that trade-off before choosing it, because it can turn
+  this false error into a silent pass.
+- Regression subtests in `TestMerge_ViewColumnRenameAndDrop` (SQLite). They
+  need a base that takes extra DDL (view `iv`, a `users.value` column):
+  - Accepted (Merge nil, view columns unchanged): EXISTS over `iv` + DROP
+    users.role, IN over `iv` + DROP users.role, and EXISTS over `json_each`
+    + DROP users.value.
+  - Still an error: an EXISTS over `iv` that reads a name `iv` lacks, such
+    as `email`, + DROP users.email. Measure it against SQLite before pinning
+    it.
+
+- Superseded (2026-10-16) by FIX-354's SQLite replay.
+
+**References.**
+- PRD §6.1 (columns a view reads, including an enclosing query's column a
+  subquery reads).
+- FIX-347 (scope tracing).
+- FIX-349: `readScope`'s outward climb from an expression subquery; the
+  qualified-storage note for PostgreSQL and MySQL.
+
+**Resolution notes.** Superseded by FIX-354 (2026-10-16): SQLite's own replay of the database schema and the files now decides what a view reads, so the parser's SQLite read tracing this entry would have fixed is deleted. FIX-354's oracle test covers this entry's shapes with 0 disagreements against SQLite.
 
 ### FIX-349
 

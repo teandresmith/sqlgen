@@ -249,16 +249,14 @@ func TestMerge_RefreshesViewColumns(t *testing.T) {
 }
 
 // TestMerge_ViewColumnRenameAndDrop checks that under source: both a
-// migration that renames or drops a table column a view reads is applied
-// the way the database applies it: PostgreSQL keeps the view's column name
-// and reads the renamed column, SQLite also renames a column named after its
-// source, and dropping a column a view reads is an error on both, as the
-// database refuses it. MySQL leaves the view invalid on either, so both are
-// errors there. A table a view reads is the same: PostgreSQL and SQLite
-// views follow a table rename (and a PostgreSQL SET SCHEMA), dropping it is
-// an error on every dialect (PostgreSQL refuses it, MySQL and SQLite leave
-// the view invalid), and so is renaming it on MySQL. A column the query
-// reads outside its select list counts the same.
+// migration that renames a table or column a view reads is applied the way
+// the database applies it: PostgreSQL keeps the view's column name and reads
+// the renamed column, and SQLite also renames a column named after its
+// source. MySQL leaves the view invalid on a rename or drop, so both are
+// errors there, as is renaming or dropping a table a view reads; a column
+// the query reads outside its select list counts the same. Which PostgreSQL
+// and SQLite migrations are errors is the database's answer, checked by
+// TestMerge_ViewDependenciesMatchPostgres and …MatchSQLite.
 func TestMerge_ViewColumnRenameAndDrop(t *testing.T) {
 	requireDatabases(t)
 	type col struct {
@@ -413,22 +411,6 @@ func TestMerge_ViewColumnRenameAndDrop(t *testing.T) {
 			},
 		},
 		{
-			name:      "postgres/drop",
-			base:      pgBase,
-			parser:    newPostgres,
-			migration: "ALTER TABLE users DROP COLUMN role;",
-			wantErr:   "merge both mode: view view_def.v: column role reads column role of table view_def.users" + stands,
-		},
-		{
-			// The file parser refuses to drop a type a database view uses,
-			// as PostgreSQL does.
-			name:      "postgres/drop type",
-			base:      pgBase,
-			parser:    newPostgres,
-			migration: "ALTER TABLE users ALTER COLUMN role TYPE text; DROP TYPE role_t;",
-			wantErr:   "drop type: cannot drop type view_def.role_t: column view_def.v.role of view uses it",
-		},
-		{
 			name:   "sqlite/rename",
 			base:   sqliteBase,
 			parser: newSQLite,
@@ -450,13 +432,6 @@ func TestMerge_ViewColumnRenameAndDrop(t *testing.T) {
 				"v":  {{"id", "integer", false}, {"kind", "text", false}},
 				"v2": {{"id", "integer", false}, {"r", "text", false}},
 			},
-		},
-		{
-			name:      "sqlite/drop",
-			base:      sqliteBase,
-			parser:    newSQLite,
-			migration: "ALTER TABLE users DROP COLUMN role;",
-			wantErr:   "merge both mode: view v: column role reads column role of table users" + stands,
 		},
 		{
 			name:      "mysql/rename",
@@ -506,21 +481,6 @@ func TestMerge_ViewColumnRenameAndDrop(t *testing.T) {
 			},
 		},
 		{
-			name:      "postgres/drop table",
-			base:      pgBase,
-			parser:    newPostgres,
-			migration: "DROP TABLE users;",
-			wantErr:   "merge both mode: view view_def.v reads table view_def.users" + stands,
-		},
-		{
-			// The view follows the rename, so dropping the column is refused.
-			name:      "postgres/rename table and drop column",
-			base:      pgBase,
-			parser:    newPostgres,
-			migration: "ALTER TABLE users RENAME TO people; ALTER TABLE people DROP COLUMN role;",
-			wantErr:   "merge both mode: view view_def.v: column role reads column role of table view_def.users" + stands,
-		},
-		{
 			name:   "sqlite/rename table",
 			base:   sqliteBase,
 			parser: newSQLite,
@@ -531,13 +491,6 @@ func TestMerge_ViewColumnRenameAndDrop(t *testing.T) {
 				"v2": {{"id", "integer", false}, {"r", "text", false}},
 				"v3": {{"a", "integer", false}, {"b", "text", false}},
 			},
-		},
-		{
-			name:      "sqlite/drop table",
-			base:      sqliteBase,
-			parser:    newSQLite,
-			migration: "DROP TABLE users;",
-			wantErr:   "merge both mode: view v reads table users" + stands,
 		},
 		{
 			name:      "mysql/rename table",
@@ -585,20 +538,6 @@ func TestMerge_ViewColumnRenameAndDrop(t *testing.T) {
 			},
 		},
 		{
-			name:      "postgres/drop under a derived table",
-			base:      pgSub(pgDerived),
-			parser:    newPostgres,
-			migration: "ALTER TABLE users DROP COLUMN role;",
-			wantErr:   "merge both mode: view view_def.vd: column r reads column role of table view_def.users" + stands,
-		},
-		{
-			name:      "postgres/drop under a CTE",
-			base:      pgSub(pgCTE),
-			parser:    newPostgres,
-			migration: "ALTER TABLE users DROP COLUMN role;",
-			wantErr:   "merge both mode: view view_def.vc: column r reads column role of table view_def.users" + stands,
-		},
-		{
 			name:      "postgres/drop a column no view reads",
 			base:      pgSub(pgDerived + pgCTE),
 			parser:    newPostgres,
@@ -619,13 +558,6 @@ func TestMerge_ViewColumnRenameAndDrop(t *testing.T) {
 			},
 		},
 		{
-			name:      "postgres/drop table under a CTE",
-			base:      pgSub(pgCTE),
-			parser:    newPostgres,
-			migration: "DROP TABLE users;",
-			wantErr:   "merge both mode: view view_def.vc reads table view_def.users" + stands,
-		},
-		{
 			// SQLite renames the column inside the subquery, and the view
 			// still reads it under the name the subquery gives it.
 			name:      "sqlite/rename under an aliased derived table and a CTE column list",
@@ -638,55 +570,11 @@ func TestMerge_ViewColumnRenameAndDrop(t *testing.T) {
 			},
 		},
 		{
-			// SQLite renames the subquery's column too, so the view no
-			// longer finds it, and SQLite refuses the rename.
-			name:      "sqlite/rename under an unaliased derived table",
-			base:      sqliteSub("CREATE VIEW vd AS SELECT role FROM (SELECT role FROM users) d;"),
-			parser:    newSQLite,
-			migration: "ALTER TABLE users RENAME COLUMN role TO kind;",
-			wantErr:   "merge both mode: view vd: column role reads column role of table users" + stands,
-		},
-		{
-			name:      "sqlite/rename under an unaliased CTE",
-			base:      sqliteSub("CREATE VIEW vc AS WITH c AS (SELECT role FROM users) SELECT role FROM c;"),
-			parser:    newSQLite,
-			migration: "ALTER TABLE users RENAME COLUMN role TO kind;",
-			wantErr:   "merge both mode: view vc: column role reads column role of table users" + stands,
-		},
-		{
-			name:      "sqlite/rename under a derived table selecting *",
-			base:      sqliteSub("CREATE VIEW vs AS SELECT role FROM (SELECT * FROM users) d;"),
-			parser:    newSQLite,
-			migration: "ALTER TABLE users RENAME COLUMN role TO kind;",
-			wantErr:   "merge both mode: view vs: column role reads column role of table users" + stands,
-		},
-		{
-			name:      "sqlite/drop under a derived table",
-			base:      sqliteSub("CREATE VIEW vd AS SELECT r FROM (SELECT role AS r FROM users) d;"),
-			parser:    newSQLite,
-			migration: "ALTER TABLE users DROP COLUMN role;",
-			wantErr:   "merge both mode: view vd: column r reads column role of table users" + stands,
-		},
-		{
-			name:      "sqlite/drop under a CTE",
-			base:      sqliteSub("CREATE VIEW vc AS WITH c (r) AS (SELECT role FROM users) SELECT r FROM c;"),
-			parser:    newSQLite,
-			migration: "ALTER TABLE users DROP COLUMN role;",
-			wantErr:   "merge both mode: view vc: column r reads column role of table users" + stands,
-		},
-		{
 			name:      "sqlite/rename table under a derived table",
 			base:      sqliteSub("CREATE VIEW vd AS SELECT r FROM (SELECT role AS r FROM users) d;"),
 			parser:    newSQLite,
 			migration: "ALTER TABLE users RENAME TO people;",
 			want:      map[string][]col{"vd": {{"r", "text", true}}},
-		},
-		{
-			name:      "sqlite/drop table under a CTE",
-			base:      sqliteSub("CREATE VIEW vc AS WITH c (r) AS (SELECT role FROM users) SELECT r FROM c;"),
-			parser:    newSQLite,
-			migration: "DROP TABLE users;",
-			wantErr:   "merge both mode: view vc reads table users" + stands,
 		},
 		{
 			name:      "mysql/rename under a CTE",
@@ -726,48 +614,12 @@ func TestMerge_ViewColumnRenameAndDrop(t *testing.T) {
 		// A derived table or CTE named after a table is read before the
 		// table, so a column it renames is followed to the table's column.
 		{
-			name:      "postgres/drop under a CTE named after its table",
-			base:      pgSub(pgCTENamedAfterTable),
-			parser:    newPostgres,
-			migration: "ALTER TABLE users DROP COLUMN email;",
-			wantErr:   "merge both mode: view view_def.vt: column role reads column email of table view_def.users" + stands,
-		},
-		{
 			// The CTE follows the rename, and the view still reads the CTE.
 			name:      "postgres/rename table under a CTE named after it",
 			base:      pgSub(pgCTENamedAfterTable),
 			parser:    newPostgres,
 			migration: "ALTER TABLE users RENAME TO people;",
 			want:      map[string][]col{"vt": {{"role", "text", true}}},
-		},
-		{
-			// PostgreSQL writes the table qualified beside a CTE of its name.
-			name:      "postgres/drop under a table beside a CTE of its name",
-			base:      pgSub("CREATE VIEW vb AS WITH users AS (SELECT email AS role FROM users) SELECT u2.role FROM users JOIN view_def.users u2 ON true;"),
-			parser:    newPostgres,
-			migration: "ALTER TABLE users DROP COLUMN role;",
-			wantErr:   "merge both mode: view view_def.vb: column role reads column role of table view_def.users" + stands,
-		},
-		{
-			name:      "sqlite/drop under a derived table named after its table",
-			base:      sqliteSub("CREATE VIEW vq AS SELECT users.role FROM (SELECT email AS role FROM users) users;"),
-			parser:    newSQLite,
-			migration: "ALTER TABLE users DROP COLUMN email;",
-			wantErr:   "merge both mode: view vq: column role reads column email of table users" + stands,
-		},
-		{
-			name:      "sqlite/rename under an unaliased derived table named after its table",
-			base:      sqliteSub("CREATE VIEW vq AS SELECT users.role FROM (SELECT role FROM users WHERE id > 0) users;"),
-			parser:    newSQLite,
-			migration: "ALTER TABLE users RENAME COLUMN role TO kind;",
-			wantErr:   "merge both mode: view vq: column role reads column role of table users" + stands,
-		},
-		{
-			name:      "sqlite/drop under a CTE named after its table",
-			base:      sqliteSub("CREATE VIEW vt AS WITH users AS (SELECT email AS role FROM main.users) SELECT role FROM users;"),
-			parser:    newSQLite,
-			migration: "ALTER TABLE users DROP COLUMN email;",
-			wantErr:   "merge both mode: view vt: column role reads column email of table users" + stands,
 		},
 		{
 			// The compound query cannot be traced, but its role is not the
@@ -812,63 +664,6 @@ func TestMerge_ViewColumnRenameAndDrop(t *testing.T) {
 		// A column a view reads outside its select list: in WHERE, JOIN ON,
 		// an expression or a subquery in an expression.
 		{
-			name:      "postgres/drop a column read in WHERE",
-			base:      pgReads("SELECT id FROM users WHERE role = 'a'"),
-			parser:    newPostgres,
-			migration: "ALTER TABLE users DROP COLUMN role;",
-			wantErr:   "merge both mode: view view_def.r reads column role of table view_def.users" + stands,
-		},
-		{
-			name:      "postgres/drop a column read in JOIN ON",
-			base:      pgReads("SELECT p.id FROM posts p JOIN users u ON u.role = p.title"),
-			parser:    newPostgres,
-			migration: "ALTER TABLE posts DROP COLUMN title;",
-			wantErr:   "merge both mode: view view_def.r reads column title of table view_def.posts" + stands,
-		},
-		{
-			name:      "postgres/drop a column read in an expression under a derived table",
-			base:      pgReads("SELECT u FROM (SELECT upper(role) AS u FROM users) d"),
-			parser:    newPostgres,
-			migration: "ALTER TABLE users DROP COLUMN role;",
-			wantErr:   "merge both mode: view view_def.r reads column role of table view_def.users" + stands,
-		},
-		{
-			name:      "postgres/drop a column read in WHERE under a CTE",
-			base:      pgReads("WITH c AS (SELECT id FROM users WHERE role = 'a') SELECT id FROM c"),
-			parser:    newPostgres,
-			migration: "ALTER TABLE users DROP COLUMN role;",
-			wantErr:   "merge both mode: view view_def.r reads column role of table view_def.users" + stands,
-		},
-		{
-			name:      "postgres/drop a column read in JOIN USING",
-			base:      pgReads("SELECT p.id FROM posts p JOIN users u USING (email)"),
-			parser:    newPostgres,
-			migration: "ALTER TABLE posts DROP COLUMN email;",
-			wantErr:   "merge both mode: view view_def.r reads column email of table view_def.posts" + stands,
-		},
-		{
-			// The subquery reads the enclosing query's column.
-			name:      "postgres/drop a column read in a correlated EXISTS",
-			base:      pgReads("SELECT id FROM users u WHERE EXISTS (SELECT 1 FROM posts p WHERE p.uid = u.id AND u.role = 'a')"),
-			parser:    newPostgres,
-			migration: "ALTER TABLE users DROP COLUMN role;",
-			wantErr:   "merge both mode: view view_def.r reads column role of table view_def.users" + stands,
-		},
-		{
-			name:      "postgres/drop a table read in an IN subquery",
-			base:      pgReads("SELECT id FROM users WHERE id IN (SELECT uid FROM posts WHERE title = 'x')"),
-			parser:    newPostgres,
-			migration: "DROP TABLE posts;",
-			wantErr:   "merge both mode: view view_def.r reads table view_def.posts" + stands,
-		},
-		{
-			name:      "postgres/drop a column an IN subquery selects",
-			base:      pgReads("SELECT id FROM users WHERE id IN (SELECT uid FROM posts)"),
-			parser:    newPostgres,
-			migration: "ALTER TABLE posts DROP COLUMN uid;",
-			wantErr:   "merge both mode: view view_def.r reads column uid of table view_def.posts" + stands,
-		},
-		{
 			// PostgreSQL follows both renames.
 			name:   "postgres/rename a column and a table read outside the select list",
 			base:   pgReads("SELECT id FROM users u WHERE role = 'a' AND EXISTS (SELECT 1 FROM posts p WHERE p.uid = u.id AND p.title = 'x')"),
@@ -879,48 +674,6 @@ func TestMerge_ViewColumnRenameAndDrop(t *testing.T) {
 			want: map[string][]col{"r": {{"id", "integer", false}}},
 		},
 		{
-			name:      "postgres/rename a column read in WHERE and drop it",
-			base:      pgReads("SELECT id FROM users WHERE role = 'a'"),
-			parser:    newPostgres,
-			migration: "ALTER TABLE users RENAME COLUMN role TO kind; ALTER TABLE users DROP COLUMN kind;",
-			wantErr:   "merge both mode: view view_def.r reads column role of table view_def.users" + stands,
-		},
-		{
-			name:      "sqlite/drop a column read in WHERE",
-			base:      sqliteReads("SELECT id FROM users WHERE role = 'a'"),
-			parser:    newSQLite,
-			migration: "ALTER TABLE users DROP COLUMN role;",
-			wantErr:   "merge both mode: view r reads column role of table users" + stands,
-		},
-		{
-			name:      "sqlite/drop a column read in JOIN ON under a derived table",
-			base:      sqliteReads("SELECT id FROM (SELECT p.id FROM posts p JOIN users u ON u.role = p.title) d"),
-			parser:    newSQLite,
-			migration: "ALTER TABLE posts DROP COLUMN title;",
-			wantErr:   "merge both mode: view r reads column title of table posts" + stands,
-		},
-		{
-			name:      "sqlite/drop a column read in an expression",
-			base:      sqliteReads("SELECT upper(role) AS u FROM users"),
-			parser:    newSQLite,
-			migration: "ALTER TABLE users DROP COLUMN role;",
-			wantErr:   "merge both mode: view r reads column role of table users" + stands,
-		},
-		{
-			name:      "sqlite/drop a column read in a scalar subquery",
-			base:      sqliteReads("SELECT id, (SELECT max(title) FROM posts p WHERE p.uid = u.id) AS t FROM users u"),
-			parser:    newSQLite,
-			migration: "ALTER TABLE posts DROP COLUMN title;",
-			wantErr:   "merge both mode: view r reads column title of table posts" + stands,
-		},
-		{
-			name:      "sqlite/drop a column an IN subquery selects",
-			base:      sqliteReads("SELECT id FROM users WHERE id IN (SELECT uid FROM posts)"),
-			parser:    newSQLite,
-			migration: "ALTER TABLE posts DROP COLUMN uid;",
-			wantErr:   "merge both mode: view r reads column uid of table posts" + stands,
-		},
-		{
 			name:   "sqlite/rename a column and a table read outside the select list",
 			base:   sqliteReads("SELECT id FROM users u WHERE role = 'a' AND EXISTS (SELECT 1 FROM posts p WHERE p.uid = u.id AND p.title = 'x')"),
 			parser: newSQLite,
@@ -928,15 +681,6 @@ func TestMerge_ViewColumnRenameAndDrop(t *testing.T) {
 				ALTER TABLE posts RENAME COLUMN title TO heading;
 				ALTER TABLE posts RENAME TO articles;`,
 			want: map[string][]col{"r": {{"id", "integer", false}}},
-		},
-		{
-			// SQLite renames the subquery's column, so WHERE no longer finds
-			// it, and SQLite refuses the rename.
-			name:      "sqlite/rename a column WHERE reads through an unaliased derived table",
-			base:      sqliteReads("SELECT id FROM (SELECT id, role FROM users) d WHERE d.role = 'a'"),
-			parser:    newSQLite,
-			migration: "ALTER TABLE users RENAME COLUMN role TO kind;",
-			wantErr:   "merge both mode: view r reads column role of table users" + stands,
 		},
 		{
 			// ORDER BY role is the select-list column, not users.role.
@@ -989,14 +733,6 @@ func TestMerge_ViewColumnRenameAndDrop(t *testing.T) {
 			wantErr:   "merge both mode: view vr_r reads table vr_posts" + stands,
 		},
 		{
-			// The join's side has users.email; tags has none.
-			name:      "postgres/drop a column USING reads through a join",
-			base:      pgReads("SELECT p.id FROM users u JOIN tags t ON t.uid = u.id JOIN posts p USING (email)"),
-			parser:    newPostgres,
-			migration: "ALTER TABLE users DROP COLUMN email;",
-			wantErr:   "merge both mode: view view_def.r reads column email of table view_def.users" + stands,
-		},
-		{
 			// PostgreSQL follows the renames.
 			name:   "postgres/rename a column USING and a FROM function read",
 			base:   pgReads("SELECT p.id FROM users u JOIN tags t ON t.uid = u.id JOIN posts p USING (email), unnest(string_to_array(u.email, ',')) x"),
@@ -1006,62 +742,11 @@ func TestMerge_ViewColumnRenameAndDrop(t *testing.T) {
 			want: map[string][]col{"r": {{"id", "integer", false}}},
 		},
 		{
-			name:      "postgres/drop a column a LATERAL derived table reads",
-			base:      pgReads("SELECT u.id, l.t FROM users u, LATERAL (SELECT p.title AS t FROM posts p WHERE p.uid = u.id AND u.role = 'a') l"),
-			parser:    newPostgres,
-			migration: "ALTER TABLE users DROP COLUMN role;",
-			wantErr:   "merge both mode: view view_def.r reads column role of table view_def.users" + stands,
-		},
-		{
-			// The derived table reads the query that encloses the EXISTS.
-			name:      "postgres/drop a column read under a derived table in EXISTS",
-			base:      pgReads("SELECT id FROM users u WHERE EXISTS (SELECT 1 FROM (SELECT p.uid FROM posts p WHERE p.uid = u.id AND u.role = 'a') d)"),
-			parser:    newPostgres,
-			migration: "ALTER TABLE users DROP COLUMN role;",
-			wantErr:   "merge both mode: view view_def.r reads column role of table view_def.users" + stands,
-		},
-		{
-			name:      "postgres/drop a column a FROM function reads",
-			base:      pgReads("SELECT u.id FROM users u, unnest(string_to_array(u.email, ',')) x"),
-			parser:    newPostgres,
-			migration: "ALTER TABLE users DROP COLUMN email;",
-			wantErr:   "merge both mode: view view_def.r reads column email of table view_def.users" + stands,
-		},
-		{
-			// SQLite does not rename a USING column, so the view breaks.
-			name:      "sqlite/rename a column read in JOIN USING",
-			base:      sqliteReads("SELECT p.id FROM posts p JOIN users u USING (email)"),
-			parser:    newSQLite,
-			migration: "ALTER TABLE users RENAME COLUMN email TO mail;",
-			wantErr:   "merge both mode: view r reads column email of table users" + stands,
-		},
-		{
 			name:      "sqlite/rename a column a table function reads",
 			base:      sqliteReads("SELECT u.id FROM users u, json_each(u.email) j"),
 			parser:    newSQLite,
 			migration: "ALTER TABLE users RENAME COLUMN email TO mail;",
 			want:      map[string][]col{"r": {{"id", "integer", false}}},
-		},
-		{
-			name:      "sqlite/drop a column USING reads through a join",
-			base:      sqliteReads("SELECT p.id FROM users u JOIN tags t ON t.uid = u.id JOIN posts p USING (email)"),
-			parser:    newSQLite,
-			migration: "ALTER TABLE users DROP COLUMN email;",
-			wantErr:   "merge both mode: view r reads column email of table users" + stands,
-		},
-		{
-			name:      "sqlite/drop a column read under a derived table in EXISTS",
-			base:      sqliteReads("SELECT id FROM users u WHERE EXISTS (SELECT 1 FROM (SELECT p.uid FROM posts p WHERE p.uid = u.id AND u.role = 'a') d)"),
-			parser:    newSQLite,
-			migration: "ALTER TABLE users DROP COLUMN role;",
-			wantErr:   "merge both mode: view r reads column role of table users" + stands,
-		},
-		{
-			name:      "sqlite/drop a column a table function reads",
-			base:      sqliteReads("SELECT u.id FROM users u, json_each(u.email) j"),
-			parser:    newSQLite,
-			migration: "ALTER TABLE users DROP COLUMN email;",
-			wantErr:   "merge both mode: view r reads column email of table users" + stands,
 		},
 		{
 			name:      "mysql/drop a column read under a derived table in EXISTS",
@@ -1131,14 +816,6 @@ func TestMerge_ViewColumnRenameAndDrop(t *testing.T) {
 			want:      map[string][]col{"r": {{"id", "integer", false}}},
 		},
 		{
-			// users.email is out of the derived table's reach.
-			name:      "sqlite/drop a column a derived table reads that the enclosing query also has",
-			base:      sqliteReads("SELECT u.id FROM users u JOIN (SELECT uid FROM posts WHERE email <> '') d ON d.uid = u.id"),
-			parser:    newSQLite,
-			migration: "ALTER TABLE posts DROP COLUMN email;",
-			wantErr:   "merge both mode: view r reads column email of table posts" + stands,
-		},
-		{
 			name:      "mysql/drop a column a CTE's GROUP BY alias shadows",
 			base:      mysqlReads("WITH c AS (SELECT upper(title) AS role, count(*) AS n FROM vr_posts GROUP BY role) SELECT u.id FROM vr_users u, c"),
 			parser:    newMySQL,
@@ -1195,13 +872,6 @@ func TestMerge_ViewColumnRenameAndDrop(t *testing.T) {
 			want:      map[string][]col{"r": {{"id", "integer", false}}},
 		},
 		{
-			name:      "postgres/drop a column a GROUP BY name reads before a select-list alias",
-			base:      pgReads("SELECT max(id) AS role FROM users GROUP BY role"),
-			parser:    newPostgres,
-			migration: "ALTER TABLE users DROP COLUMN role;",
-			wantErr:   "merge both mode: view view_def.r reads column role of table view_def.users" + stands,
-		},
-		{
 			name:      "sqlite/drop a column an IN subquery's GROUP BY alias shadows",
 			base:      sqliteReads("SELECT u.id FROM users u WHERE u.id IN (SELECT length(p.title) AS role FROM posts p GROUP BY role)"),
 			parser:    newSQLite,
@@ -1230,63 +900,11 @@ func TestMerge_ViewColumnRenameAndDrop(t *testing.T) {
 			want:      map[string][]col{"r": {{"role", "any", false}}},
 		},
 		{
-			// SQLite renames GROUP BY role to r2, which no alias stands in
-			// for: "no such column: r2".
-			name:      "sqlite/rename and drop a column a GROUP BY alias stands in for",
-			base:      sqliteReads("SELECT upper(email) AS role FROM users GROUP BY role"),
-			parser:    newSQLite,
-			migration: "ALTER TABLE users RENAME COLUMN role TO r2; ALTER TABLE users DROP COLUMN r2;",
-			wantErr:   "merge both mode: view r reads column role of table users" + stands,
-		},
-		{
-			// SQLite binds the first alias: "misuse of aliased aggregate
-			// role".
-			name:      "sqlite/drop a column the first of two same-named aliases cannot stand in for",
-			base:      sqliteReads("SELECT id FROM users u WHERE EXISTS (SELECT max(u2.id) AS role, upper(u2.email) AS role FROM users u2 GROUP BY u2.email HAVING count(role) > 0)"),
-			parser:    newSQLite,
-			migration: "ALTER TABLE users DROP COLUMN role;",
-			wantErr:   "merge both mode: view r reads column role of table users" + stands,
-		},
-		{
-			// The subquery's max aggregates the view's query: "aggregate
-			// functions are not allowed in the GROUP BY clause".
-			name:      "sqlite/drop a column a GROUP BY alias of an outer aggregate in a subquery cannot stand in for",
-			base:      sqliteReads("SELECT (SELECT max(u.id)) AS role FROM users u GROUP BY role"),
-			parser:    newSQLite,
-			migration: "ALTER TABLE users DROP COLUMN role;",
-			wantErr:   "merge both mode: view r reads column role of table users" + stands,
-		},
-		{
-			// SQLite drops the column, then the view fails with "aggregate
-			// functions are not allowed in the GROUP BY clause".
-			name:      "sqlite/drop a column a GROUP BY aggregate alias cannot stand in for",
-			base:      sqliteReads("SELECT max(id) AS role FROM users GROUP BY role"),
-			parser:    newSQLite,
-			migration: "ALTER TABLE users DROP COLUMN role;",
-			wantErr:   "merge both mode: view r reads column role of table users" + stands,
-		},
-		{
-			// "misuse of aliased aggregate role"
-			name:      "sqlite/drop a column an aggregate alias cannot stand in for inside an aggregate",
-			base:      sqliteReads("SELECT max(id) AS role FROM users GROUP BY email HAVING count(role) > 0"),
-			parser:    newSQLite,
-			migration: "ALTER TABLE users DROP COLUMN role;",
-			wantErr:   "merge both mode: view r reads column role of table users" + stands,
-		},
-		{
 			name:      "sqlite/drop a column an ORDER BY window alias stands in for",
 			base:      sqliteReads("SELECT row_number() OVER () AS role FROM users ORDER BY role || ''"),
 			parser:    newSQLite,
 			migration: "ALTER TABLE users DROP COLUMN role;",
 			want:      map[string][]col{"r": {{"role", "any", false}}},
-		},
-		{
-			// "misuse of aliased window function role"
-			name:      "sqlite/drop a column a HAVING window alias cannot stand in for",
-			base:      sqliteReads("SELECT row_number() OVER () AS role FROM users GROUP BY email HAVING role > 0"),
-			parser:    newSQLite,
-			migration: "ALTER TABLE users DROP COLUMN role;",
-			wantErr:   "merge both mode: view r reads column role of table users" + stands,
 		},
 		{
 			name:      "mysql/drop a column an IN subquery's GROUP BY alias shadows",
@@ -1328,13 +946,6 @@ func TestMerge_ViewColumnRenameAndDrop(t *testing.T) {
 			want:      map[string][]col{"r": {{"id", "integer", false}, {"t", "text", true}}},
 		},
 		{
-			name:      "postgres/drop a column a derived table inside a LATERAL one reads",
-			base:      pgReads("SELECT u.id, l.uid FROM users u, LATERAL (SELECT x.uid FROM (SELECT p.uid FROM posts p WHERE p.uid = u.id AND u.role = 'a') x) l"),
-			parser:    newPostgres,
-			migration: "ALTER TABLE users DROP COLUMN role;",
-			wantErr:   "merge both mode: view view_def.r reads column role of table view_def.users" + stands,
-		},
-		{
 			name:      "mysql/drop a column a LATERAL derived table reads",
 			base:      mysqlReads("SELECT u.id, l.t FROM vr_users u, LATERAL (SELECT p.title AS t FROM vr_posts p WHERE p.uid = u.id AND role = 'a') l"),
 			parser:    newMySQL,
@@ -1347,31 +958,6 @@ func TestMerge_ViewColumnRenameAndDrop(t *testing.T) {
 			parser:    newMySQL,
 			migration: "ALTER TABLE vr_users DROP COLUMN role;",
 			wantErr:   "merge both mode: view vr_r reads column role of table vr_users" + stands,
-		},
-		// A common table expression inside a subquery can read the query
-		// that encloses the subquery.
-		{
-			name:      "postgres/drop a column a CTE inside EXISTS reads from the enclosing query",
-			base:      pgReads("SELECT id FROM users u WHERE EXISTS (WITH c AS (SELECT p.uid FROM posts p WHERE p.uid = u.id AND u.role = 'a') SELECT 1 FROM c)"),
-			parser:    newPostgres,
-			migration: "ALTER TABLE users DROP COLUMN role;",
-			wantErr:   "merge both mode: view view_def.r reads column role of table view_def.users" + stands,
-		},
-		// SQLite reads users.email once posts.email is gone, which changes
-		// what the view means, so dropping posts.email stays an error.
-		{
-			name:      "sqlite/drop a column a derived table in EXISTS reads that the enclosing query also has",
-			base:      sqliteReads("SELECT id FROM users u WHERE EXISTS (SELECT 1 FROM (SELECT uid FROM posts WHERE email <> '') d)"),
-			parser:    newSQLite,
-			migration: "ALTER TABLE posts DROP COLUMN email;",
-			wantErr:   "merge both mode: view r reads column email of table posts" + stands,
-		},
-		{
-			name:      "sqlite/drop a column an EXISTS subquery reads that the enclosing query also has",
-			base:      sqliteReads("SELECT id FROM users u WHERE EXISTS (SELECT 1 FROM posts WHERE email <> '')"),
-			parser:    newSQLite,
-			migration: "ALTER TABLE posts DROP COLUMN email;",
-			wantErr:   "merge both mode: view r reads column email of table posts" + stands,
 		},
 	}
 	for _, tt := range tests {

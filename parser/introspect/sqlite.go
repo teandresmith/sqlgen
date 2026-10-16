@@ -64,7 +64,38 @@ func (si *SQLiteIntrospector) Introspect(ctx context.Context, connString string,
 	if err := si.introspectViews(ctx, schema, opts); err != nil {
 		return err
 	}
+	return si.introspectSchemaStatements(ctx, schema)
+}
 
+// introspectSchemaStatements records every schema statement of the
+// database, whatever the introspection filters, in schema.SQLiteSchema, in
+// the order source: both replays them (PRD §6.1): tables, virtual ones
+// included, then indexes, views and triggers, each kind in the order they
+// were created. SQLite's own objects, an index SQLite builds for a
+// constraint, and a virtual table's shadow tables, which creating the
+// virtual table creates, are left out.
+func (si *SQLiteIntrospector) introspectSchemaStatements(ctx context.Context, schema *parser.Schema) error {
+	rows, err := si.db.QueryContext(ctx, `
+		SELECT type, name, sql
+		FROM sqlite_master
+		WHERE sql IS NOT NULL AND name NOT LIKE 'sqlite\_%' ESCAPE '\'
+		  AND name NOT IN (SELECT name FROM pragma_table_list WHERE schema = 'main' AND type = 'shadow')
+		ORDER BY CASE type WHEN 'table' THEN 0 WHEN 'index' THEN 1 WHEN 'view' THEN 2 ELSE 3 END, rowid`)
+	if err != nil {
+		return fmt.Errorf("introspect sqlite schema: %w", err)
+	}
+	defer rows.Close() //nolint:errcheck // rows.Close error is not actionable after reading
+
+	for rows.Next() {
+		var stmt parser.SchemaStatement
+		if err := rows.Scan(&stmt.Type, &stmt.Name, &stmt.SQL); err != nil {
+			return fmt.Errorf("introspect sqlite schema: scanning: %w", err)
+		}
+		schema.SQLiteSchema = append(schema.SQLiteSchema, stmt)
+	}
+	if err := rows.Err(); err != nil {
+		return fmt.Errorf("introspect sqlite schema: iterating: %w", err)
+	}
 	return nil
 }
 
@@ -249,25 +280,31 @@ func (si *SQLiteIntrospector) introspectViews(ctx context.Context, schema *parse
 	}
 
 	for _, ref := range views {
-		view := parser.View{
-			Name: ref.name,
-			SQL:  ref.sql,
-		}
-
-		declared, err := si.introspectViewColumns(ctx, &view)
+		view, err := si.readView(ctx, ref.name, ref.sql, schema)
 		if err != nil {
 			return err
 		}
-		// SQLite reports no type for an expression column; that one stays any.
-		catalog := view.Columns
-		columnsFromDefinition(&view, ref.sql, sqlite.ParseViewSQL, schema, parser.SearchPath{}, func(i int) (parser.Column, bool) {
-			return catalog[i], declared[i] != ""
-		})
-
 		schema.Views = append(schema.Views, view)
 	}
 
 	return nil
+}
+
+// readView reads the view name, whose CREATE VIEW statement is ddl, with its
+// columns from the definition against schema's tables (PRD §16.2), or from
+// the catalog with a warning in schema.Warnings.
+func (si *SQLiteIntrospector) readView(ctx context.Context, name, ddl string, schema *parser.Schema) (parser.View, error) {
+	view := parser.View{Name: name, SQL: ddl}
+	declared, err := si.introspectViewColumns(ctx, &view)
+	if err != nil {
+		return parser.View{}, err
+	}
+	// SQLite reports no type for an expression column; that one stays any.
+	catalog := view.Columns
+	columnsFromDefinition(&view, ddl, sqlite.ParseViewSQL, schema, parser.SearchPath{}, func(i int) (parser.Column, bool) {
+		return catalog[i], declared[i] != ""
+	})
+	return view, nil
 }
 
 // introspectViewColumns reads view's columns from PRAGMA table_info and

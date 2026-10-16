@@ -878,7 +878,8 @@ func (p *Parser) renameColumn(stmt *pg_query.RenameStmt) error {
 	}
 	// Views, constraints, indexes and foreign keys name the column by its
 	// attribute number, so they follow the rename.
-	parser.RenameViewColumnReferences(p.schema, table, "postgres", stmt.Subname, stmt.Newname)
+	parser.RenameViewColumnReferences(p.schema, table, stmt.Subname, stmt.Newname)
+	p.renamePartitionColumnDependencies(table.Schema, table.Name, stmt.Subname, stmt.Newname)
 	if err := parser.RenameColumn(table, "postgres", stmt.Subname, stmt.Newname); err != nil {
 		return fmt.Errorf("rename column %s.%s: %w", table.Schema+"."+table.Name, stmt.Subname, err)
 	}
@@ -935,6 +936,9 @@ func (p *Parser) renameTableConstraint(stmt *pg_query.RenameStmt) error {
 		}
 		return err
 	}
+	parser.RenameDependencies(p.schema,
+		parser.DependencyObject{Kind: parser.ConstraintDependency, Schema: table.Schema, Name: table.Name, Part: stmt.Subname},
+		parser.DependencyObject{Kind: parser.ConstraintDependency, Schema: table.Schema, Name: table.Name, Part: stmt.Newname})
 	for i := range table.Constraints {
 		if c := &table.Constraints[i]; c.Name == stmt.Subname && c.Type != parser.Index {
 			c.Name = stmt.Newname
@@ -960,6 +964,9 @@ func (p *Parser) renameIndex(rv *pg_query.RangeVar, newName string) {
 		for i := range table.Constraints {
 			c := &table.Constraints[i]
 			if c.Name == rv.Relname && (c.Type == parser.Index || c.Type == parser.Unique || c.Type == parser.PrimaryKey) {
+				parser.RenameDependencies(p.schema,
+					parser.DependencyObject{Kind: parser.ConstraintDependency, Schema: table.Schema, Name: table.Name, Part: c.Name},
+					parser.DependencyObject{Kind: parser.ConstraintDependency, Schema: table.Schema, Name: table.Name, Part: newName})
 				c.Name = newName
 				parser.CanonicalizeConstraints(table, "postgres")
 				return
@@ -1095,6 +1102,10 @@ func (p *Parser) dropTables(stmt *pg_query.DropStmt) error {
 	refs := make([]parser.TableRef, 0, len(stmt.Objects))
 	for _, obj := range stmt.Objects {
 		schema, name := p.splitQualifiedName(extractDropObjectNames(obj))
+		// A partition the model skips counts too.
+		if err := p.checkViewDependents("drop", parser.DependencyObject{Kind: parser.TableDependency, Schema: schema, Name: name}); err != nil {
+			return fmt.Errorf("drop table: %w", err)
+		}
 		p.dropPartitions(schema, name)
 		if _, ok := p.tableIndex[schema+"."+name]; !ok {
 			delete(p.skipped, schema+"."+name) // a skipped relation
@@ -1240,6 +1251,11 @@ func (p *Parser) dropTypes(refs []parser.TypeRef, kind string) error {
 	}
 	if err := parser.CheckTypeDropRefs(p.schema, refs); err != nil {
 		return fmt.Errorf("drop %s: %w", kind, err)
+	}
+	for _, ref := range refs {
+		if err := parser.CheckViewDependents(p.schema, "drop", parser.DependencyObject{Kind: parser.TypeDependency, Schema: ref.Schema, Name: ref.Name}); err != nil {
+			return fmt.Errorf("drop %s: %w", kind, err)
+		}
 	}
 	for _, ref := range refs {
 		p.schema.DomainTypes = slices.DeleteFunc(p.schema.DomainTypes, func(dt parser.DomainType) bool {
@@ -1399,6 +1415,9 @@ func (p *Parser) alterSkippedTable(stmt *pg_query.AlterTableStmt) {
 }
 
 func (p *Parser) applyAlterCmd(table *parser.Table, cmd *pg_query.AlterTableCmd) error {
+	if err := p.checkAlterViewDependents(table, cmd); err != nil {
+		return err
+	}
 	switch cmd.Subtype {
 	case pg_query.AlterTableType_AT_AddColumn:
 		return p.alterAddColumn(table, cmd)
@@ -1477,6 +1496,66 @@ func (p *Parser) alterAddColumn(table *parser.Table, cmd *pg_query.AlterTableCmd
 	p.addColumnSequence(table, cd.ColumnDef)
 	p.addConstraints(table, constraints)
 	return nil
+}
+
+// checkAlterViewDependents refuses an ALTER TABLE subcommand that drops a
+// column or constraint a database view depends on, or changes the type of
+// such a column, as PostgreSQL does (PRD §6.1).
+func (p *Parser) checkAlterViewDependents(table *parser.Table, cmd *pg_query.AlterTableCmd) error {
+	obj := parser.DependencyObject{Kind: parser.ColumnDependency, Schema: table.Schema, Name: table.Name, Part: cmd.Name}
+	action := "drop"
+	switch cmd.Subtype { //nolint:exhaustive // only these subcommands are refused for a view
+	case pg_query.AlterTableType_AT_DropColumn:
+	case pg_query.AlterTableType_AT_AlterColumnType:
+		action = "change the type of"
+	case pg_query.AlterTableType_AT_DropConstraint:
+		obj.Kind = parser.ConstraintDependency
+	default:
+		return nil
+	}
+	if err := p.checkViewDependents(action, obj); err != nil {
+		return fmt.Errorf("alter table %s.%s: %w", table.Schema, table.Name, err)
+	}
+	return nil
+}
+
+// checkViewDependents refuses action on obj when a view depends on it
+// (parser.CheckViewDependents), or, for a table or column, on the same
+// object of one of the table's partitions, at any depth, which PostgreSQL
+// drops or retypes along with it.
+func (p *Parser) checkViewDependents(action string, obj parser.DependencyObject) error {
+	if err := parser.CheckViewDependents(p.schema, action, obj); err != nil {
+		return err //nolint:wrapcheck // the caller names the statement
+	}
+	if obj.Kind != parser.TableDependency && obj.Kind != parser.ColumnDependency {
+		return nil
+	}
+	for _, part := range p.schema.Partitions {
+		if part.ParentSchema != obj.Schema || part.ParentName != obj.Name {
+			continue
+		}
+		child := obj
+		child.Schema, child.Name = part.Schema, part.Name
+		if err := p.checkViewDependents(action, child); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// renamePartitionColumnDependencies repoints the dependencies on column
+// oldName of each partition of table schema.name, at any depth, at newName,
+// as PostgreSQL renames the column in the partitions too.
+func (p *Parser) renamePartitionColumnDependencies(schema, name, oldName, newName string) {
+	for _, part := range p.schema.Partitions {
+		if part.ParentSchema != schema || part.ParentName != name {
+			continue
+		}
+		parser.RenameDependencies(p.schema,
+			parser.DependencyObject{Kind: parser.ColumnDependency, Schema: part.Schema, Name: part.Name, Part: oldName},
+			parser.DependencyObject{Kind: parser.ColumnDependency, Schema: part.Schema, Name: part.Name, Part: newName})
+		p.renamePartitionColumnDependencies(part.Schema, part.Name, oldName, newName)
+	}
 }
 
 // alterDropColumn drops the column, and with it every index and constraint of

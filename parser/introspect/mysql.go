@@ -58,7 +58,40 @@ func (mi *MySQLIntrospector) Introspect(ctx context.Context, connString string, 
 	if err := mi.introspectViews(ctx, schema, opts); err != nil {
 		return err
 	}
+	return mi.introspectViewTables(ctx, schema)
+}
 
+// introspectViewTables records the tables every view in the database reads,
+// whatever the introspection filters, in schema.ViewDependencies, as
+// information_schema.VIEW_TABLE_USAGE lists them, so source: both refuses a
+// migration that drops or renames one (PRD §6.1). It lists a table a view
+// reads anywhere in its query, but for a view over another view only that
+// view. A server older than MySQL 8.0.13 has no VIEW_TABLE_USAGE, and
+// records none.
+func (mi *MySQLIntrospector) introspectViewTables(ctx context.Context, schema *parser.Schema) error {
+	rows, err := mi.db.QueryContext(ctx, `
+		SELECT view_name, table_name
+		FROM information_schema.view_table_usage
+		WHERE view_schema = DATABASE() AND table_schema = DATABASE()
+		ORDER BY view_name, table_name`)
+	if err != nil {
+		if myErr, ok := errors.AsType[*mysqldriver.MySQLError](err); ok && myErr.Number == mysqlErrUnknownTable {
+			return nil
+		}
+		return fmt.Errorf("introspect mysql view tables: %w", err)
+	}
+	defer rows.Close() //nolint:errcheck // rows.Close error is not actionable after reading
+
+	for rows.Next() {
+		dep := parser.ViewDependency{Object: parser.DependencyObject{Kind: parser.TableDependency}}
+		if err := rows.Scan(&dep.View, &dep.Object.Name); err != nil {
+			return fmt.Errorf("introspect mysql view tables: scanning: %w", err)
+		}
+		schema.ViewDependencies = append(schema.ViewDependencies, dep)
+	}
+	if err := rows.Err(); err != nil {
+		return fmt.Errorf("introspect mysql view tables: iterating: %w", err)
+	}
 	return nil
 }
 

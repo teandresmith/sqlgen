@@ -116,6 +116,25 @@ type Schema struct {
 	// it, so under source: both the file parser needs to know the
 	// database's partitions to accept a CREATE INDEX on one.
 	Partitions []Partition
+
+	// ViewDependencies lists what every view in the database depends on,
+	// as the database records it, whatever the introspection filters
+	// (PostgreSQL pg_depend, MySQL VIEW_TABLE_USAGE). Under source: both a
+	// migration that drops one is an error (PRD §6.1). The file parser
+	// leaves it empty.
+	ViewDependencies []ViewDependency
+
+	// SQLiteSchema holds a SQLite database's schema statements
+	// (sqlite_master), tables first, then indexes, views and triggers,
+	// which source: both replays with the SQL files to check them against
+	// SQLite itself (PRD §6.1).
+	SQLiteSchema []SchemaStatement
+}
+
+// SchemaStatement is the statement that created a SQLite schema object:
+// Type is table, index, view or trigger.
+type SchemaStatement struct {
+	Type, Name, SQL string
 }
 
 // Partition is one PostgreSQL partition (CREATE TABLE … PARTITION OF) and the

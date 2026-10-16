@@ -29,23 +29,12 @@ type ViewSelectColumn struct {
 	SourceTable  string // table alias the column comes from (if qualified reference)
 	SourceColumn string // column name in the source table
 	Aggregate    string // aggregate function name (uppercase), empty if not aggregate
-	// Unaliased reports a column named after its source column, with no AS
-	// and no view column list. SQLite renames such a column when its source
-	// column is renamed, so only the SQLite view parser sets it.
-	Unaliased bool
 }
 
 // ViewColumnRef is a column reference in a view's query: Table is the
-// FROM-clause key that qualifies it, "" when it is unqualified. Using
-// reports a JOIN … USING column, whose name SQLite does not rename. Alias,
-// set only by the SQLite view parser, is the folded name of the select-list
-// alias SQLite binds an unqualified name to once no FROM-clause column has
-// it, so the reference stops reading a column, rather than failing, while
-// it keeps that name.
+// FROM-clause key that qualifies it, "" when it is unqualified.
 type ViewColumnRef struct {
 	Table, Column string
-	Using         bool
-	Alias         string
 }
 
 // ViewSQL holds the metadata extracted from a CREATE VIEW or CREATE
@@ -83,15 +72,15 @@ type ViewSQL struct {
 	// can read the FROM clause of the query it is in.
 	Lateral bool
 	// Reads holds every column the query reads other than as a column of
-	// its select list: in WHERE, JOIN … ON or USING, GROUP BY, HAVING,
-	// ORDER BY and window clauses, inside a select-list expression, and in
-	// the arguments of a function in FROM. An ORDER BY name SQLite reads as
-	// a select-list alias is left out.
+	// its select list: in WHERE, JOIN … ON, GROUP BY, HAVING, ORDER BY and
+	// window clauses, inside a select-list expression, and in the arguments
+	// of a function in FROM. Only the MySQL view parser records it, since
+	// MySQL records no column a view reads (PRD §6.1).
 	Reads []ViewColumnRef
 	// Nested holds each subquery in an expression (IN, EXISTS, a scalar
 	// subquery), read as Subqueries are, with the columns its select list
 	// reads in its Reads and no Columns. A column it reads can be one of an
-	// enclosing query's FROM clause.
+	// enclosing query's FROM clause. Only the MySQL view parser records it.
 	Nested []ViewSQL
 
 	// Materialized reports whether the statement was CREATE MATERIALIZED VIEW
@@ -608,31 +597,19 @@ func walkScopes(scopes []traceScope, yield func([]traceScope) bool) bool {
 	return true
 }
 
-// ViewReadSource is the table column a column reference in a view's query
-// reads, and Scope the query whose FROM clause it reads: "" for the view's
-// own query, else the FROM-clause keys, common table expression names
-// ("with:<name>") and expression subquery indexes ("#<i>") that lead to it
-// from the view, each after a "/". Ref is the reference.
-type ViewReadSource struct {
-	ViewColumnSource
-	Scope string
-	Ref   ViewColumnRef
-}
-
 // ViewReadSources returns the table column each column reference in the
 // Reads of def, and of each derived table, common table expression and
 // expression subquery it reads, at any depth, reads, in the order
 // viewScopes yields them, resolved against schema as ViewColumnSources
 // resolves a view column. Table is nil for a reference that reads no table
 // column.
-func ViewReadSources(def ViewSQL, schema *Schema) []ViewReadSource {
-	var sources []ViewReadSource
+func ViewReadSources(def ViewSQL, schema *Schema) []ViewColumnSource {
+	var sources []ViewColumnSource
 	for scopes := range viewScopes(def) {
 		for _, ref := range scopes[len(scopes)-1].query.Reads {
-			src := ViewReadSource{Ref: ref}
+			var src ViewColumnSource
 			if inner, vs, ok := readScope(ref, scopes, schema); ok {
-				src.ViewColumnSource, _ = traceViewColumn(ViewSelectColumn{SourceTable: ref.Table, SourceColumn: ref.Column}, vs, inner, make(map[string]bool), schema)
-				src.Scope = inner[len(inner)-1].path
+				src, _ = traceViewColumn(ViewSelectColumn{SourceTable: ref.Table, SourceColumn: ref.Column}, vs, inner, make(map[string]bool), schema)
 			}
 			sources = append(sources, src)
 		}
@@ -669,26 +646,19 @@ func readScope(ref ViewColumnRef, scopes []traceScope, schema *Schema) ([]traceS
 }
 
 // RenameViewColumnReferences repoints every view column whose Definition
-// reads column oldName of table at newName, as PostgreSQL and SQLite do on
-// RENAME COLUMN, so the view's columns can be read again after the rename.
-// Column names match as dialect matches them (SameColumnName). An Unaliased
-// column also takes the new name, as SQLite renames it. The columns of a
+// reads column oldName of table at newName, as PostgreSQL does on RENAME
+// COLUMN, so the view's columns can be read again after the rename, and
+// each dependency on the column (RenameDependencies). The columns of a
 // derived table or common table expression the view reads are repointed
-// the same way, so a view column read through one whose name changes no
-// longer finds it, as SQLite then refuses the rename. A column reference in
-// the Reads of the view or of a subquery it reads that reads the column
-// directly is repointed too, except a USING column on SQLite, which then no
-// longer finds it, as SQLite leaves the view invalid. Call it before the
-// table's column is renamed.
-func RenameViewColumnReferences(schema *Schema, table *Table, dialect, oldName, newName string) {
+// the same way. Call it before the table's column is renamed.
+func RenameViewColumnReferences(schema *Schema, table *Table, oldName, newName string) {
+	RenameDependencies(schema,
+		DependencyObject{Kind: ColumnDependency, Schema: table.Schema, Name: table.Name, Part: oldName},
+		DependencyObject{Kind: ColumnDependency, Schema: table.Schema, Name: table.Name, Part: newName})
 	for i := range schema.Views {
 		def := schema.Views[i].Definition
 		if def == nil {
 			continue
-		}
-		// Each reference is resolved before any subquery column is renamed.
-		for _, ref := range tableColumnReads(*def, schema, table, dialect, oldName) {
-			ref.Column = newName
 		}
 		for scopes := range viewScopes(*def) {
 			// The scope's query shares its Columns with def or the map's entry.
@@ -696,38 +666,12 @@ func RenameViewColumnReferences(schema *Schema, table *Table, dialect, oldName, 
 			vs := scopeSources(scopes, nil, schema)
 			for j := range q.Columns {
 				sc := &q.Columns[j]
-				if t, _ := vs.sourceTable(*sc); t != table || !SameColumnName(dialect, sc.SourceColumn, oldName) {
-					continue
-				}
-				sc.SourceColumn = newName
-				if sc.Unaliased {
-					sc.Alias = newName
+				if t, _ := vs.sourceTable(*sc); t == table && sc.SourceColumn == oldName {
+					sc.SourceColumn = newName
 				}
 			}
 		}
 	}
-}
-
-// tableColumnReads returns the column references in the Reads of def, and
-// of each subquery it reads, that read column oldName of table directly,
-// other than the USING columns SQLite does not rename.
-func tableColumnReads(def ViewSQL, schema *Schema, table *Table, dialect, oldName string) []*ViewColumnRef {
-	var reads []*ViewColumnRef
-	for scopes := range viewScopes(def) {
-		// The scope's query shares its Reads with def or its subquery.
-		q := scopes[len(scopes)-1].query
-		for j := range q.Reads {
-			ref := &q.Reads[j]
-			_, vs, ok := readScope(*ref, scopes, schema)
-			if !ok || ref.Using && dialect == "sqlite" {
-				continue
-			}
-			if t, _ := vs.sourceTable(ViewSelectColumn{SourceTable: ref.Table, SourceColumn: ref.Column}); t == table && SameColumnName(dialect, ref.Column, oldName) {
-				reads = append(reads, ref)
-			}
-		}
-	}
-	return reads
 }
 
 // ViewFromTables returns, by FROM-clause key, the table each key of def
@@ -752,10 +696,14 @@ func ViewFromTables(def ViewSQL, schema *Schema) map[string]*Table {
 
 // RenameViewTableReferences repoints every FROM-clause key of a view
 // Definition, or of a subquery it reads, that names table at (newSchema,
-// newName), as PostgreSQL does on a table rename or SET SCHEMA and SQLite on
-// a table rename, so the view's columns can be read again after the change.
-// Call it before the table is renamed or moved.
+// newName), as PostgreSQL does on a table rename or SET SCHEMA, so the
+// view's columns can be read again after the change, and each dependency
+// on the table or a part of it (RenameDependencies). Call it before the
+// table is renamed or moved.
 func RenameViewTableReferences(schema *Schema, table *Table, newSchema, newName string) {
+	RenameDependencies(schema,
+		DependencyObject{Kind: TableDependency, Schema: table.Schema, Name: table.Name},
+		DependencyObject{Kind: TableDependency, Schema: newSchema, Name: newName})
 	for i := range schema.Views {
 		def := schema.Views[i].Definition
 		if def == nil {

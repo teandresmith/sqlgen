@@ -30,16 +30,19 @@ func columnsFromDefinition(view *parser.View, ddl string, parse viewSQLParser, s
 }
 
 // viewReads records what the introspected views read before the SQL files
-// are applied.
+// are applied. Only MySQL, whose catalog records no column a view reads,
+// traces the views' columns, reads and tables from their definitions.
 type viewReads struct {
+	// traced reports whether columns, reads and from are recorded.
+	traced bool
 	// columns holds, by viewKey, the table column each column of a view
 	// with a Definition reads (parser.ViewColumnSources); a zero columnRef
 	// for a column that reads none.
 	columns map[string][]columnRef
 	// reads holds, by viewKey, the table column each column reference of a
-	// view with a Definition reads, and the query whose FROM clause it reads
-	// (parser.ViewReadSources); a zero columnRef for one that reads none.
-	reads map[string][]readRef
+	// view with a Definition reads (parser.ViewReadSources); a zero
+	// columnRef for one that reads none.
+	reads map[string][]columnRef
 	// from holds, by viewKey, the table each FROM-clause key of a view with
 	// a Definition, or of a subquery it reads, names
 	// (parser.ViewFromTables), for the keys that name a table.
@@ -55,13 +58,6 @@ type columnRef struct {
 	column string
 }
 
-// readRef is a columnRef a view's query reads outside its select list, and
-// scope the query whose FROM clause it reads (parser.ViewReadSource).
-type readRef struct {
-	columnRef
-	scope string
-}
-
 func (r tableRef) String() string {
 	if r.schema == "" {
 		return r.name
@@ -69,12 +65,18 @@ func (r tableRef) String() string {
 	return r.schema + "." + r.name
 }
 
-func readViewSources(schema *parser.Schema) viewReads {
+// readViewSources records what schema's views read, tracing their
+// definitions when traced is set.
+func readViewSources(schema *parser.Schema, traced bool) viewReads {
 	reads := viewReads{
+		traced:  traced,
 		columns: make(map[string][]columnRef),
-		reads:   make(map[string][]readRef),
+		reads:   make(map[string][]columnRef),
 		from:    make(map[string]map[string]tableRef),
 		types:   enumAndSetNames(schema),
+	}
+	if !traced {
+		return reads
 	}
 	for _, view := range schema.Views {
 		if view.Definition == nil {
@@ -91,7 +93,7 @@ func readViewSources(schema *parser.Schema) viewReads {
 			reads.columns[viewKey(view)] = append(reads.columns[viewKey(view)], newColumnRef(src))
 		}
 		for _, src := range parser.ViewReadSources(*view.Definition, schema) {
-			reads.reads[viewKey(view)] = append(reads.reads[viewKey(view)], readRef{newColumnRef(src.ViewColumnSource), src.Scope})
+			reads.reads[viewKey(view)] = append(reads.reads[viewKey(view)], newColumnRef(src))
 		}
 	}
 	return reads
@@ -134,19 +136,17 @@ func viewKey(view parser.View) string {
 // again, against schema as the SQL files left it, so a migration that
 // changes a table a view reads changes the view too. A column the
 // definition cannot trace keeps the column it has, and a primary key from a
-// materialized view's unique index stays.
-//
-// A view that read a table the SQL files drop or rename, or a column that
-// read a table column they drop or rename, is an error, since the
-// database's view stands under source: both: PostgreSQL refuses to drop a
-// table or column a view reads, SQLite refuses to drop such a column and
-// leaves the view invalid when its table is dropped, and MySQL leaves the
-// view invalid on any of them. A rename PostgreSQL and SQLite carry into
+// materialized view's unique index stays. A rename PostgreSQL carries into
 // the view has already been applied to its Definition by the file parser.
-// A table or column read through a subquery, or a column read outside the
-// select list, counts the same. A view whose columns come from the catalog
-// cannot be traced, so it is an error only when one of its ENUM or SET
-// types is gone.
+//
+// When reads is traced (MySQL), a view that read a table the SQL files drop
+// or rename, or a column that read a table column they drop or rename, is
+// an error, since MySQL leaves the view invalid and the database's view
+// stands under source: both. A table or column read through a subquery, or
+// a column read outside the select list, counts the same. PostgreSQL
+// refuses such a migration in the file parser (parser.CheckViewDependents).
+// A view whose columns come from the catalog cannot be traced, so it is an
+// error only when one of its ENUM or SET types is gone.
 func refreshViewColumns(schema *parser.Schema, searchPath parser.SearchPath, reads viewReads) error {
 	types := enumAndSetNames(schema)
 	for i := range schema.Views {
@@ -160,8 +160,10 @@ func refreshViewColumns(schema *parser.Schema, searchPath parser.SearchPath, rea
 			}
 			continue
 		}
-		if err := checkViewReads(*view, schema, reads); err != nil {
-			return err
+		if reads.traced {
+			if err := checkViewReads(*view, schema, reads); err != nil {
+				return err
+			}
 		}
 		built, err := parser.BuildView(*view.Definition, view.SQL, &parser.ViewAnnotations{}, schema, searchPath)
 		if err != nil {
@@ -199,21 +201,10 @@ func checkViewReads(view parser.View, schema *parser.Schema, reads viewReads) er
 			return fmt.Errorf("view %s: column %s reads column %s of table %s%s", viewKey(view), view.Definition.Columns[j].Alias, ref.column, ref.table, stands)
 		}
 	}
-	// So does a column the query reads outside its select list. One that
-	// now resolves in the FROM clause of a query further out lost its
-	// column too: SQLite binds the unqualified name to that query's column
-	// instead, which changes what the view means. Every scope a read
-	// resolves in is on the path to its own query, so a shorter path is
-	// further out.
+	// So does a column the query reads outside its select list.
 	nowReads := parser.ViewReadSources(*view.Definition, schema)
 	for j, ref := range reads.reads[viewKey(view)] {
-		// A name a select-list alias stands in for binds to the alias
-		// instead, unless a rename gave it another name.
-		if r := nowReads[j].Ref; r.Alias != "" && parser.FoldASCII(r.Column) == r.Alias {
-			continue
-		}
-		movedOut := len(nowReads[j].Scope) < len(ref.scope)
-		if ref.table.name != "" && (nowReads[j].Table == nil || movedOut) {
+		if ref.table.name != "" && nowReads[j].Table == nil {
 			return fmt.Errorf("view %s reads column %s of table %s%s", viewKey(view), ref.column, ref.table, stands)
 		}
 	}

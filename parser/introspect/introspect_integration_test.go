@@ -42,11 +42,13 @@ type parityException struct {
 // introspected schema cannot round-trip them. They are the only differences
 // assertSchemaParity tolerates. A test that needs its own exception declares
 // it beside this table and passes it as ignore, so every exception can be
-// reviewed in one place. Every dialect round-trips every field today.
+// reviewed in one place. Every dialect round-trips every field of the
+// schema it describes; what only the database records about its views and
+// schema statements, for source: both, has no file form.
 var parityExceptions = map[string][]parityException{
-	"postgres": nil,
-	"mysql":    nil,
-	"sqlite":   nil,
+	"postgres": {{Field: "Schema.ViewDependencies", Reason: "pg_depend; the file parser has no database to ask (PRD §6.1)"}},
+	"mysql":    {{Field: "Schema.ViewDependencies", Reason: "VIEW_TABLE_USAGE; the file parser has no database to ask (PRD §6.1)"}},
+	"sqlite":   {{Field: "Schema.SQLiteSchema", Reason: "sqlite_master, which source: both replays; the file parser has no database to ask (PRD §6.1)"}},
 }
 
 // pgSkippedStatementExceptions are for a PostgreSQL fixture holding statements
@@ -1907,9 +1909,10 @@ func TestBothModeColumnConflict(t *testing.T) {
 	requireDatabases(t)
 
 	// base is an introspected table, built by hand: the conflict rule needs no
-	// database.
+	// database. SQLite replays the table's statement under source: both.
 	base := func(schema string) *parser.Schema {
 		return &parser.Schema{
+			SQLiteSchema: []parser.SchemaStatement{{Type: "table", Name: "items", SQL: "CREATE TABLE items (id integer PRIMARY KEY, count integer)"}},
 			Tables: []parser.Table{
 				{
 					Name:   "items",

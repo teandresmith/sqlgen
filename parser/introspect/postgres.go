@@ -81,7 +81,85 @@ func (pi *PostgresIntrospector) Introspect(ctx context.Context, connString strin
 	if err := pi.introspectMaterializedViews(ctx, schema, opts, definitions); err != nil {
 		return err
 	}
+	return pi.introspectViewDependencies(ctx, schema)
+}
 
+// postgresViewDependencies lists what each view and materialized view in the
+// database depends on, as pg_depend records it for the view's rewrite rule,
+// and for each SQL function with a BEGIN ATOMIC body it calls, at any depth:
+// a table (its whole row), a table column, a table constraint (a GROUP BY
+// that relies on a primary key), a type (an array of it counts as the
+// type), or a composite type's attribute. A dependency on another view, or
+// on an object of pg_catalog or information_schema, is left out.
+const postgresViewDependencies = `
+WITH RECURSIVE views AS (
+	SELECT c.oid, n.nspname, c.relname
+	FROM pg_catalog.pg_class c
+	JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
+	WHERE c.relkind IN ('v', 'm')
+	  AND n.nspname NOT IN ('pg_catalog', 'information_schema')
+), refs(view, classid, objid) AS (
+	SELECT v.oid, 'pg_catalog.pg_rewrite'::regclass, rw.oid
+	FROM views v
+	JOIN pg_catalog.pg_rewrite rw ON rw.ev_class = v.oid
+	UNION
+	SELECT r.view, d.refclassid, d.refobjid
+	FROM refs r
+	JOIN pg_catalog.pg_depend d ON d.classid = r.classid AND d.objid = r.objid
+	WHERE d.refclassid = 'pg_catalog.pg_proc'::regclass AND d.deptype = 'n'
+)
+SELECT DISTINCT v.nspname, v.relname,
+	CASE
+		WHEN rc.relkind = 'c' AND d.refobjsubid = 0 THEN 'type'
+		WHEN rc.relkind = 'c' THEN 'attribute'
+		WHEN rc.oid IS NOT NULL AND d.refobjsubid = 0 THEN 'table'
+		WHEN rc.oid IS NOT NULL THEN 'column'
+		WHEN t.oid IS NOT NULL THEN 'type'
+		ELSE 'constraint'
+	END,
+	COALESCE(rn.nspname, tn.nspname, cn.nspname),
+	COALESCE(rc.relname, t.typname, cc.relname),
+	COALESCE(a.attname, con.conname, '')
+FROM refs r
+JOIN views v ON v.oid = r.view
+JOIN pg_catalog.pg_depend d ON d.classid = r.classid AND d.objid = r.objid AND d.deptype = 'n'
+LEFT JOIN pg_catalog.pg_class rc ON d.refclassid = 'pg_catalog.pg_class'::regclass AND rc.oid = d.refobjid AND rc.relkind IN ('r', 'p', 'c')
+LEFT JOIN pg_catalog.pg_namespace rn ON rn.oid = rc.relnamespace
+LEFT JOIN pg_catalog.pg_attribute a ON a.attrelid = rc.oid AND a.attnum = d.refobjsubid AND d.refobjsubid > 0
+LEFT JOIN pg_catalog.pg_type ty ON d.refclassid = 'pg_catalog.pg_type'::regclass AND ty.oid = d.refobjid
+LEFT JOIN pg_catalog.pg_type t ON t.oid = CASE WHEN ty.typcategory = 'A' AND ty.typelem <> 0 THEN ty.typelem ELSE ty.oid END
+	AND (t.typrelid = 0 OR EXISTS (SELECT 1 FROM pg_catalog.pg_class tc WHERE tc.oid = t.typrelid AND tc.relkind = 'c'))
+LEFT JOIN pg_catalog.pg_namespace tn ON tn.oid = t.typnamespace
+LEFT JOIN pg_catalog.pg_constraint con ON d.refclassid = 'pg_catalog.pg_constraint'::regclass AND con.oid = d.refobjid AND con.conrelid <> 0
+LEFT JOIN pg_catalog.pg_class cc ON cc.oid = con.conrelid
+LEFT JOIN pg_catalog.pg_namespace cn ON cn.oid = cc.relnamespace
+WHERE COALESCE(rc.oid, t.oid, con.oid) IS NOT NULL
+  AND COALESCE(rn.nspname, tn.nspname, cn.nspname) NOT IN ('pg_catalog', 'information_schema')
+ORDER BY 1, 2, 3, 4, 5, 6`
+
+// introspectViewDependencies records what every view in the database
+// depends on, whatever the introspection filters, in
+// schema.ViewDependencies, so source: both refuses a migration that drops
+// one as PostgreSQL does (PRD §6.1).
+func (pi *PostgresIntrospector) introspectViewDependencies(ctx context.Context, schema *parser.Schema) error {
+	rows, err := pi.db.QueryContext(ctx, postgresViewDependencies)
+	if err != nil {
+		return fmt.Errorf("introspect postgres view dependencies: %w", err)
+	}
+	defer rows.Close() //nolint:errcheck // rows.Close error is not actionable after reading
+
+	for rows.Next() {
+		var dep parser.ViewDependency
+		var kind string
+		if err := rows.Scan(&dep.ViewSchema, &dep.View, &kind, &dep.Object.Schema, &dep.Object.Name, &dep.Object.Part); err != nil {
+			return fmt.Errorf("introspect postgres view dependencies: scanning: %w", err)
+		}
+		dep.Object.Kind = parser.DependencyKind(kind)
+		schema.ViewDependencies = append(schema.ViewDependencies, dep)
+	}
+	if err := rows.Err(); err != nil {
+		return fmt.Errorf("introspect postgres view dependencies: iterating: %w", err)
+	}
 	return nil
 }
 
