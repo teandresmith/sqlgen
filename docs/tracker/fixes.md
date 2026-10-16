@@ -23,7 +23,47 @@
 
 <!-- fixes:open:begin -->
 
-_No open fixes._
+### FIX-356
+
+- **Status:** Open
+- **Severity:** tracked
+- **Origin:** phase 6, cmd/sqlgen/gen/templates/table
+- **Surfaced by:** Composite-FK relationship probe (design/tenant-composite-fk-relationships, 2026-10-16), user approved filing
+
+**Issue.** **M2M loader filters the target by a literal `ID` field, so a target PK not named `id` does not compile.**
+The M2M relationship loader in `GetMany` builds its target filter with a
+hard-coded `ID:` field, so a many-to-many whose target table's primary key is
+not named `id` generates code that does not compile. Measured at `e38ded5a`
+with `posts(id bigint PK)`, `tags(code <type> PK)`,
+`post_tags(post_id → posts, tag_code → tags, PK (post_id, tag_code))`,
+PostgreSQL, `source: files`: `sqlgen generate` exits 0, then
+`go build ./models/` fails with
+`models/models_gen.go:2120:5: unknown field ID in struct literal of type TagFilter`
+(text PK; `TagFilter` has `Code *comparator.ID`) and
+`models/models_gen.go:2125:5: unknown field ID in struct literal of type TagFilter`
+(bigint PK; `Code *comparator.Number[int64]`). Every dialect and source shares
+the template.
+
+**Root cause.** `cmd/sqlgen/gen/templates/table/get.go.tmpl:566`
+(`ID: &comparator.ID{In: allTargetIDs}`) and `:575`
+(`ID: {{ pkFilterInExprStr .FKGoType "targetPKs" false }}`) name the filter
+field literally. `wireRelFKMetadata` (`cmd/sqlgen/gen/context_table.go:156-165`)
+already resolves `TargetPKFieldName` from the target's PK for M2M, and
+`nested.go.tmpl:667,889` uses `{{ .TargetPKFieldName }}: {{ .ConnectFilterExpr }}`
+for the same target filter, but the loader never adopted it.
+
+**Suggested fix.**
+- Use `{{ .TargetPKFieldName }}` for the filter field in both branches at `get.go.tmpl:566,575`.
+- Check the comparator expression against the target PK's filter type (the string branch assumes `comparator.ID`, the other branch derives it from `.FKGoType`); reuse whatever `ConnectFilterExpr` resolves from, or the target PK column's own type, rather than the junction FK's type.
+- Check the integer branch's `strconv.ParseInt` conversion against the target PK's Go type.
+- Regression: a gen unit/golden case with an M2M target whose PK is `code` (text) and one with a non-`id` integer PK, asserting `Code:` in the loader's filter literal; the generated package must compile (an example or a compile-checked golden).
+
+**References.**
+- PRD §13.1 (M2M relationship type), §13.2 (loading strategy: batched IN per relationship), §5.3 (M2M detection).
+- `cmd/sqlgen/gen/templates/table/nested.go.tmpl:633-695` — the connect path that already uses `TargetPKFieldName`.
+- `cmd/sqlgen/gen/context_table.go:130-190` — `wireRelFKMetadata`.
+
+**Resolution notes.** _Filled in by /fix resolve._
 
 <!-- fixes:open:end -->
 
