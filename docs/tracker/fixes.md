@@ -692,6 +692,10 @@ parser both misses reads and invents false ones.
     fails Merge, a false error. Options: warn naming the name and the file
     and stop checking from that file on; or keep it an error and state the
     limit (no workaround short of another source mode).
+- The user ruled on 2026-10-16: Q3 → (d), placeholder and swap for a
+  database object whose collation or function the copy lacks; Q4 → warn,
+  naming the missing name and the file, and stop checking from that file
+  on.
 - Parked by `/fix-loop` at `bccf5765` on 2026-10-15. The work in progress
   is in `.claude/prototypes/FIX-354.wip.patch` (verify passed apart from
   this; gates green; no golden churn); its backlog edits are in
