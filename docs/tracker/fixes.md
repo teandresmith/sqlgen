@@ -421,7 +421,7 @@ or json_each's `value`.
 - **Severity:** tracked
 - **Origin:** phase 30, parser/introspect
 - **Surfaced by:** user review of FIX-349 and FIX-350..353 (2026-10-15)
-- **Vetted:** needs ruling at `bccf5765` (2026-10-15; parked by /fix-loop)
+- **Vetted:** corrected at `b8bafb62` (2026-10-16)
 
 **Issue.** Under `source: both`, sqlgen decides whether a file migration
 drops or renames something a database view reads (PRD §6.1) by parsing
@@ -491,11 +491,25 @@ parser both misses reads and invents false ones.
   or on a view that read cleanly before and fails after. No transaction
   wrapper: a file's own BEGIN/COMMIT runs as written (modernc `Exec` runs
   `…BEGIN; ALTER TABLE b ADD COLUMN w int; COMMIT;` in one call), and the
-  copy is thrown away anyway. A virtual table whose module is not loaded
-  is skipped with a warning naming the views that read it, and those views
-  are dropped from the copy, since SQLite checks every view on ALTER TABLE
-  ("error in view vw: no such table: main.words (1)" on every migration
-  otherwise). A view a file drops is not checked. View columns are re-read
+  copy is thrown away anyway. A database table or index that fails to
+  replay for a collation or function the copy lacks becomes a placeholder
+  (the statement with each missing collation made BINARY and each missing
+  function call made `json_array(…)`), and after every statement has run
+  its original SQL is written back over the `sqlite_master` row between
+  `PRAGMA writable_schema = ON` and `RESET` (ruled 2026-10-16, Q3). A
+  virtual table whose module is missing becomes a placeholder `CREATE
+  TABLE name (x)` restored with rootpage 0, and a view that fails for the
+  missing module is replaced by `CREATE VIEW name AS SELECT NULL`, with a
+  warning ("virtual tables words: this SQLite has no module for them, so
+  the SQL files are not checked against views vw, which read them"); SQLite
+  checks every view on ALTER TABLE, so otherwise every migration fails. A
+  view that does not run before the files is not checked. A file statement,
+  or a view failing after a file, that needs a collation, function or
+  module the copy lacks ("no such collation sequence", "no such function",
+  "unknown function", "no such module") warns "<file> needs <collation|
+  function|module> <name>, which this SQLite lacks, so SQLite does not
+  check it or the SQL files after it" and stops checking (ruled
+  2026-10-16, Q4). A view a file drops is not checked. View columns are re-read
   from the view as the copy leaves it, instead of following renames in the
   parser (ruled 2026-10-15, Q1), so a file that drops and re-creates a
   SQLite view changes the model: a SQLite exception to PRD §6.1's "a
@@ -671,7 +685,14 @@ parser both misses reads and invents false ones.
     (myfn(role))` → "…replaying the database's index ix: … no such
     function: myfn (1)". SQLite itself loads such a schema and runs most
     migrations (sqlite3 3.51: ADD/DROP/RENAME COLUMN and DROP/RENAME TABLE
-    succeed; DROP COLUMN email under that index → "error in index ix after
+    succeed — corrected at the re-vet: not when an index sits on a column
+    with the missing collation; then every ALTER TABLE on any table is
+    refused, by the real file and the copy alike, "error in index
+    users_email: no such collation sequence: nosuchcoll (1)"; only tables
+    (COLLATE, CHECK, generated column) and indexes (expression, partial
+    WHERE, inherited collation) fail to replay, while CREATE VIEW and
+    CREATE TRIGGER calling an unknown function are accepted and fail only
+    when run; DROP COLUMN email under that index → "error in index ix after
     drop column: no such column: email"; only `SELECT * FROM v` over the
     column fails, "no such collation sequence"). Options: (d) on such a
     failure create a placeholder object of the same name and type, write
@@ -696,11 +717,55 @@ parser both misses reads and invents false ones.
   database object whose collation or function the copy lacks; Q4 → warn,
   naming the missing name and the file, and stop checking from that file
   on.
-- Parked by `/fix-loop` at `bccf5765` on 2026-10-15. The work in progress
-  is in `.claude/prototypes/FIX-354.wip.patch` (verify passed apart from
-  this; gates green; no golden churn); its backlog edits are in
-  `.claude/prototypes/FIX-354.backlog.patch` and its resolution text in
-  `.claude/prototypes/FIX-354.fixes-at-park.patch`.
+- Parked by `/fix-loop` at `bccf5765` on 2026-10-15; re-vetted from the
+  work in progress at `b8bafb62` on 2026-10-16. The earlier verify pass's
+  backlog edits (one line removed, one narrowed, one added) are in
+  `.claude/prototypes/FIX-354.backlog.patch`, to apply on landing.
+- Changed from the ruling at the re-vet, both measured: the placeholder is
+  the statement with the missing names neutralized, not a bare `CREATE
+  TABLE users (x)`, which leaves no `sqlite_autoindex_users_1` row for a
+  UNIQUE column; and every swap waits until all statements have run, since
+  `CREATE INDEX users_email ON users (email)` fails "no such collation
+  sequence" on an already-swapped table. The virtual-table skip became the
+  placeholder path (measured equivalent on `DROP COLUMN email`, and better
+  on `DROP VIEW vw; DROP TABLE words;`, which the skip turned into false
+  errors "no such view: vw (1)" / "no such table: words (1)"). Q4 also
+  covers the runtime "unknown function: myfn()" and a re-created view that
+  fails after a file for a missing function (same root cause, same site).
+- Re-vet results, run at `b8bafb62` on 2026-10-16 (full fix: wip plus the
+  ruled additions, +209/−42 in `parser/introspect/sqlite_replay.go`, plus
+  tests and PRD):
+  - Reproduction against the wip's code: `go test -count=1 -run
+    'TestMerge_SQLiteReplay|TestMerge_ViewDependenciesMatchSQLite'
+    ./introspect/` → 13 of 18 `TestMerge_SQLiteReplay` subtests fail, e.g.
+    "Merge() error: merge both mode: replaying the database's table users:
+    SQL logic error: no such collation sequence: appcoll (257)",
+    "replaying the database's index ix: SQL logic error: no such function:
+    appfn (1)", "F: SQLite refuses it: SQL logic error: no such view: vw
+    (1)"; the oracle shows 75 disagreements over 5 new database-side
+    shapes (91 checks, built with writable_schema; 14 require Merge's
+    "needs <kind> <name>" warning). With the fix: 0.
+  - Gates: parser `gofumpt -l .` clean; `golangci-lint run ./...` 0
+    issues; `go mod tidy` only protobuf direct → indirect; parser `go test
+    -race -count=1 ./...` ok (introspect 114s); cmd/sqlgen `go test -race
+    -count=1 -run TestE2E .` ok (142s); `make update-golden`/`-e2e` no
+    changes; `make refs-check` ok.
+  - Fail-first: collation/function placeholders off → 7 subtests ("…
+    replaying the database's table users: SQL logic error: no such
+    collation sequence: appcoll (257)"); `restoreStatements` no-op → 5
+    subtests + 17 oracle disagreements ("F leaves view vc failing: SQL
+    logic error: no such table: main.users (1)"); virtual table back to
+    the skip → "F: SQLite refuses it: SQL logic error: no such table: words
+    (1)"; plain DROP VIEW instead of the replacement → "no such view: vw
+    (1)"; Q4 statement branch off → 6 subtests ("… unknown function:
+    appfn() (1)"); Q4 view-after branch off → "F leaves view v failing: SQL
+    logic error: no such function: appfn (1)"; continue instead of stop →
+    "F: SQLite refuses it: … error in view v after drop column: no such
+    column: role (1)"; "unknown function" left out → "F: SQLite refuses it:
+    SQL logic error: unknown function: appfn() (1)". Pre-existing shapes
+    and the wip's own cases pass against the wip's code.
+  - Golden churn: none. Patch: `.claude/prototypes/FIX-354.patch` (21
+    files, +1709/−1018).
 
 **References.**
 - PRD §6.1 (source modes; view columns under `both`).
