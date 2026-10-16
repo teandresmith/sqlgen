@@ -23,9 +23,17 @@
 
 <!-- fixes:open:begin -->
 
+_No open fixes._
+
+<!-- fixes:open:end -->
+
+## Resolved
+
+<!-- fixes:resolved:begin -->
+
 ### FIX-351
 
-- **Status:** Open
+- **Status:** Resolved
 - **Severity:** tracked
 - **Origin:** phase 30, parser/mysql/view_sql.go
 - **Surfaced by:** FIX-349 verify (2026-10-14)
@@ -58,7 +66,7 @@ definitions.
   only MySQL VALUES remains.
 
 **Root cause.** A VALUES statement is a `*sqlparser.ValuesStatement`.
-`readSubquery` (`parser/mysql/view_sql.go:60`) returns an empty query for
+`readSubquery` (`parser/mysql/view_sql.go:60` at `c1ea706e`) returns an empty query for
 anything that is not a `*sqlparser.Select` (`:61-63`). That covers a
 derived table, LATERAL or not (`collectTableAliases`, the call at `:369`),
 a CTE, and IN/EXISTS/scalar subqueries (`readNested`, `:93`, which calls
@@ -122,13 +130,35 @@ a CTE, and IN/EXISTS/scalar subqueries (`readNested`, `:93`, which calls
 - FIX-354 (`c1ea706e`): database answers for PostgreSQL and SQLite; MySQL
   tables from `VIEW_TABLE_USAGE`.
 
-**Resolution notes.** _Filled in by `/fix resolve`._
-
-<!-- fixes:open:end -->
-
-## Resolved
-
-<!-- fixes:resolved:begin -->
+**Resolution notes.** MySQL's `readSubquery`
+(`parser/mysql/view_sql.go`) now dispatches a `*sqlparser.ValuesStatement`
+to a new `readValues`, beside FIX-350's `*sqlparser.Union` → `readCompound`
+branch: its columns are named from the column list, else `column_<i>` as
+MySQL names them, with no source; its CTEs come from `vs.With`; and every
+column its rows read goes to `Reads`, every subquery in them to `Nested`.
+That one site covers derived tables (LATERAL or not), CTEs, IN/EXISTS/scalar
+subqueries and, through FIX-350's `readCompound`, any arm of a compound
+subquery, leading or not. `parser/view.go`'s `ViewSQL.Reads` comment covers
+a VALUES statement's rows. PRD §6.1's MySQL bullet lists "or in a `VALUES`
+statement" among the reads and drops the limit sentence, which with FIX-350
+landed has nothing left to say. The vetted prototype (`c1ea706e`) was
+applied with `git apply --3way` and rebased onto FIX-350 (`1bfd64b5`) by
+hand in `docs/PRD.md`, `parser/mysql/view_sql.go` (both dispatch branches,
+FIX-350's `readNested`/`readCompound` kept) and the integration test.
+Regression tests: 11 VALUES shapes merged into FIX-350's
+`TestMerge_ViewColumnsMatchMySQL` oracle (`parser/introspect/view_dependency_integration_test.go`),
+reading `u.email` so the oracle's drop/rename `users.email` migrations
+exercise them: LATERAL VALUES (named, unnamed, not selected), IN, EXISTS,
+scalar, a UNION with a trailing and with a leading VALUES arm, a subquery in
+CTE VALUES and in derived VALUES, and a VALUES-of-a-literal control; plus
+the Docker-free `TestViewReadSources_ValuesStatements` in
+`parser/mysql/mysql_test.go` (8 shapes); the unit test and the
+not-selected, two UNION-arm and derived-VALUES-subquery oracle shapes are
+additions to the prototype. Fail-first with the dispatch
+reverted: 10 of 11 oracle subtests fail (the literal control passes) and 7
+of 8 unit subtests fail. Gates: `make check` ok; `cd parser && go test
+-race -count=1 ./...` ok (introspect 156s); `make check-examples` ok.
+Golden churn: none, as vetted.
 
 ### FIX-350
 

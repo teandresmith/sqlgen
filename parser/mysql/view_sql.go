@@ -59,11 +59,14 @@ func ParseViewSQL(sql []byte) (parser.ViewSQL, error) {
 // Reads too, since MySQL resolves each one whether or not the view selects
 // it. A compound query is read as its leftmost arm, which names its
 // columns, with the other arms in Compound. It returns an empty query for
-// one it cannot read: one that is not a SELECT, or that names * alongside
-// a column list.
+// one it cannot read: one that is not a SELECT or a VALUES statement, or
+// that names * alongside a column list.
 func readSubquery(stmt sqlparser.TableStatement, names sqlparser.Columns) parser.ViewSQL {
-	if u, ok := stmt.(*sqlparser.Union); ok {
-		return readCompound(u, names)
+	switch s := stmt.(type) {
+	case *sqlparser.Union:
+		return readCompound(s, names)
+	case *sqlparser.ValuesStatement:
+		return readValues(s, names)
 	}
 	sel, ok := stmt.(*sqlparser.Select)
 	if !ok || sel.SelectExprs == nil {
@@ -96,6 +99,28 @@ func readSubquery(stmt sqlparser.TableStatement, names sqlparser.Columns) parser
 			q.Reads = append(q.Reads, parser.ViewColumnRef{Table: c.SourceTable, Column: c.SourceColumn})
 		}
 	}
+	return q
+}
+
+// readValues reads a VALUES statement as readSubquery reads a query. Its
+// columns are named by names where it has them, else column_0, column_1, …
+// as MySQL names them, and trace to no table column; every column its rows
+// read goes to its Reads, and every subquery in them to its Nested.
+func readValues(vs *sqlparser.ValuesStatement, names sqlparser.Columns) parser.ViewSQL {
+	q := extractTableAliases(nil)
+	q.CTEs = readCTEs(vs.With)
+	if len(vs.Rows) > 0 {
+		for i := range vs.Rows[0] {
+			name := fmt.Sprintf("column_%d", i)
+			if i < len(names) {
+				name = names[i].String()
+			}
+			q.Columns = append(q.Columns, parser.ViewSelectColumn{Alias: name})
+		}
+	}
+	r := &readCollector{}
+	r.walk(vs.Rows)
+	q.Reads, q.Nested = r.reads, r.nested
 	return q
 }
 

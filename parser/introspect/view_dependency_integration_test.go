@@ -539,8 +539,9 @@ func TestMerge_ViewTablesMatchMySQL(t *testing.T) {
 // renames a column on a corpus of MySQL views through Merge and through the
 // database, and checks that Merge refuses exactly the migrations that leave
 // a view failing (PRD §6.1). Merge finds these columns by reading the
-// views' definitions; the corpus holds compound subqueries and the select
-// lists of derived tables and common table expressions.
+// views' definitions; the corpus holds compound subqueries, the select
+// lists of derived tables and common table expressions, and VALUES
+// statements.
 func TestMerge_ViewColumnsMatchMySQL(t *testing.T) {
 	requireDatabases(t)
 	migrations := []oracleMigration{
@@ -578,6 +579,17 @@ func TestMerge_ViewColumnsMatchMySQL(t *testing.T) {
 		{name: "derived table column the view does not select", ddl: "CREATE VIEW vo_r AS SELECT id FROM (SELECT id, email FROM vo_users) d"},
 		{name: "CTE column the view does not select", ddl: "CREATE VIEW vo_r AS WITH c AS (SELECT id, email FROM vo_users) SELECT id FROM c"},
 		{name: "unreferenced CTE", ddl: "CREATE VIEW vo_r AS WITH c AS (SELECT email FROM vo_users) SELECT id FROM vo_users"},
+		{name: "LATERAL VALUES", ddl: "CREATE VIEW vo_r AS SELECT u.id, v.x FROM vo_users u JOIN LATERAL (VALUES ROW(u.email)) v (x)"},
+		{name: "LATERAL VALUES unnamed", ddl: "CREATE VIEW vo_r AS SELECT d.column_0 FROM vo_users u, LATERAL (VALUES ROW(u.email)) d"},
+		{name: "LATERAL VALUES not selected", ddl: "CREATE VIEW vo_r AS SELECT u.id FROM vo_users u, LATERAL (VALUES ROW(u.email)) v (x)"},
+		{name: "IN VALUES", ddl: "CREATE VIEW vo_r AS SELECT u.id FROM vo_users u WHERE 'a' IN (VALUES ROW(u.email))"},
+		{name: "EXISTS VALUES", ddl: "CREATE VIEW vo_r AS SELECT u.id FROM vo_users u WHERE EXISTS (VALUES ROW(u.email))"},
+		{name: "scalar VALUES", ddl: "CREATE VIEW vo_r AS SELECT u.id, (VALUES ROW(u.email)) AS x FROM vo_users u"},
+		{name: "IN UNION with a VALUES arm", ddl: "CREATE VIEW vo_r AS SELECT u.id FROM vo_users u WHERE 'a' IN (SELECT title FROM vo_posts UNION VALUES ROW(u.email))"},
+		{name: "IN UNION with a leading VALUES arm", ddl: "CREATE VIEW vo_r AS SELECT u.id FROM vo_users u WHERE 'a' IN (VALUES ROW(u.email) UNION SELECT title FROM vo_posts)"},
+		{name: "subquery in CTE VALUES", ddl: "CREATE VIEW vo_r AS WITH c (x) AS (VALUES ROW((SELECT max(email) FROM vo_users))) SELECT x FROM c"},
+		{name: "subquery in derived VALUES", ddl: "CREATE VIEW vo_r AS SELECT d.x FROM (VALUES ROW((SELECT max(email) FROM vo_users))) d (x)"},
+		{name: "VALUES of a literal", ddl: "CREATE VIEW vo_r AS SELECT u.id, v.x FROM vo_users u, (VALUES ROW(1)) v (x)"},
 	}
 	const reset = "DROP VIEW IF EXISTS vo_r; DROP TABLE IF EXISTS vo_users, vo_posts, vo_tags"
 	for _, shape := range shapes {

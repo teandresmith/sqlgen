@@ -3781,3 +3781,50 @@ func TestViewReadSources_CompoundAndSubquerySelectLists(t *testing.T) {
 		})
 	}
 }
+
+// TestViewReadSources_ValuesStatements checks that the table columns a view
+// reads other than through its own columns include those the rows of a
+// VALUES statement read, wherever the statement stands (PRD §6.1).
+func TestViewReadSources_ValuesStatements(t *testing.T) {
+	p, err := mysql.New()
+	if err != nil {
+		t.Fatalf("New() error: %v", err)
+	}
+	if err := p.Parse("schema.sql", []byte(`CREATE TABLE users (id int PRIMARY KEY, role text, email text);
+		CREATE TABLE posts (id int PRIMARY KEY, uid int, title text);`)); err != nil {
+		t.Fatalf("Parse() error: %v", err)
+	}
+	tests := []struct {
+		name string
+		sql  string
+		want []string
+	}{
+		{name: "LATERAL VALUES", sql: "CREATE VIEW v AS SELECT u.id, v.x FROM users u JOIN LATERAL (VALUES ROW(u.role)) v (x)", want: []string{"users.role"}},
+		{name: "LATERAL VALUES unnamed", sql: "CREATE VIEW v AS SELECT d.column_0 FROM users u, LATERAL (VALUES ROW(u.role)) d", want: []string{"users.role"}},
+		{name: "IN VALUES", sql: "CREATE VIEW v AS SELECT u.id FROM users u WHERE 'a' IN (VALUES ROW(u.role))", want: []string{"users.role"}},
+		{name: "EXISTS VALUES", sql: "CREATE VIEW v AS SELECT u.id FROM users u WHERE EXISTS (VALUES ROW(u.role))", want: []string{"users.role"}},
+		{name: "scalar VALUES", sql: "CREATE VIEW v AS SELECT u.id, (VALUES ROW(u.role)) AS x FROM users u", want: []string{"users.role"}},
+		{name: "a VALUES arm of a compound", sql: "CREATE VIEW v AS SELECT u.id FROM users u WHERE 'a' IN (SELECT title FROM posts UNION VALUES ROW(u.role))", want: []string{"posts.title", "users.role"}},
+		{name: "subquery in CTE VALUES", sql: "CREATE VIEW v AS WITH c (x) AS (VALUES ROW((SELECT max(role) FROM users))) SELECT x FROM c", want: []string{"users.role"}},
+		{name: "VALUES of a literal", sql: "CREATE VIEW v AS SELECT u.id, v.x FROM users u, (VALUES ROW(1)) v (x)", want: nil},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			def, err := mysql.ParseViewSQL([]byte(tt.sql))
+			if err != nil {
+				t.Fatalf("ParseViewSQL() error: %v", err)
+			}
+			var got []string
+			for _, src := range parser.ViewReadSources(def, p.Schema()) {
+				if src.Table != nil {
+					got = append(got, src.Table.Name+"."+src.Column)
+				}
+			}
+			slices.Sort(got)
+			got = slices.Compact(got)
+			if diff := cmp.Diff(tt.want, got); diff != "" {
+				t.Errorf("ViewReadSources() mismatch (-want +got):\n%s", diff)
+			}
+		})
+	}
+}

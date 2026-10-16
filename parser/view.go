@@ -74,9 +74,10 @@ type ViewSQL struct {
 	Lateral bool
 	// Reads holds every column the query reads other than as a column of
 	// its select list: in WHERE, JOIN … ON, GROUP BY, HAVING, ORDER BY and
-	// window clauses, inside a select-list expression, and in the arguments
-	// of a function in FROM. Only the MySQL view parser records it, since
-	// MySQL records no column a view reads (PRD §6.1).
+	// window clauses, inside a select-list expression, in the arguments of
+	// a function in FROM, and, for a VALUES statement, in its rows. Only
+	// the MySQL view parser records it, since MySQL records no column a
+	// view reads (PRD §6.1).
 	Reads []ViewColumnRef
 	// Nested holds each subquery in an expression (IN, EXISTS, a scalar
 	// subquery), read as Subqueries are, with the columns its select list
