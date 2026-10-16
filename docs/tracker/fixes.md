@@ -23,133 +23,6 @@
 
 <!-- fixes:open:begin -->
 
-### FIX-350
-
-- **Status:** Open
-- **Severity:** tracked
-- **Origin:** phase 30, parser/mysql/view_sql.go, parser/view
-- **Surfaced by:** FIX-349 verify (2026-10-14)
-- **Vetted:** corrected at `c1ea706e` (2026-10-16)
-
-**Issue.** **MySQL compound subqueries, and unselected derived-table and
-CTE columns, are never read.** Under `source: both`, a column a MySQL view
-reads only in an arm of a compound (`UNION`) subquery, or in the select list
-of a derived table or CTE that the view does not select (a recursive CTE's
-anchor included), is never recorded, so dropping or renaming it passes
-`Merge` while MySQL then fails the view. PRD §6.1's MySQL bullet (from
-FIX-354, `docs/PRD.md:1657`) states part of it as a limit ("A column only a
-later arm of a compound subquery, or a `VALUES` list, reads is not found,
-though its table is"), and understates it: the first arm of a compound
-expression subquery is missed too. Measured at `c1ea706e` with the new MySQL
-column oracle (`cd parser && go test -count=1 -run
-TestMerge_ViewColumnsMatchMySQL ./introspect/`, 23 shapes × 9 column drops
-and renames = 207 checks) on HEAD's production code: 60 disagreements over
-19 shapes, every one a silent pass. Example: IN UNION + `ALTER TABLE vo_tags
-DROP COLUMN uid` → Merge `<nil>`, database "view vo_r fails: Error 1356
-(HY000): View 'sqlgen_test.vo_r' references invalid table(s) or column(s) or
-function(s) or definer/invoker of view lack rights to use them". The same
-for the first arm (drop vo_posts.uid), derived UNION + drop title or role,
-CTE UNION ALL, recursive CTE + drop/rename email, EXISTS/scalar UNION, and
-`SELECT id FROM (SELECT id, email FROM vo_users) d` + drop email; a
-recursive arm joining vo_tags gives "Error 1054 (42S22): Unknown column
-'t.uid' in 'on clause'" vs Merge `<nil>`.
-- Filed (2026-10-14) for all three dialects, tables and columns. FIX-354
-  (`c1ea706e`) moved PostgreSQL and SQLite to database answers (its oracle
-  has the IN UNION, IN INTERSECT, derived UNION, CTE UNION ALL and
-  recursive CTE shapes) and MySQL tables to `VIEW_TABLE_USAGE`
-  (`checkViewTables`, `parser/introspect/merge.go:68,97`;
-  `TestMerge_ViewTablesMatchMySQL`), so only MySQL columns remain.
-
-**Root cause.** MySQL's `readSubquery` (`parser/mysql/view_sql.go`) returns
-an empty query for a `*sqlparser.Union`, so neither arm of a compound
-derived table, CTE or expression subquery (`readNested`, `:93`) is read; and
-a derived table's or CTE's select-list columns become Reads only through
-`readNested`, so one the view does not select is never checked, though
-MySQL resolves every one. `walkScopes` (`parser/view.go:576-598`) has no
-notion of compound arms, and `cteScopes`' `inside` guard (`:559`) makes a
-recursive arm's self-reference resolve to a same-named table.
-
-**Suggested fix.**
-- `parser/mysql/view_sql.go`: `readSubquery` reads a `*sqlparser.Union`
-  through new `readCompound`/`unionArms`. The query is its leftmost arm,
-  which names the columns; each further arm goes into `Compound` through
-  `readNested`; the union's own WITH CTEs are in scope for every arm.
-  `readSubquery` records every select-list column it reads in Reads, not
-  only Columns (the loop moves there from `readNested`, which now only
-  clears Columns). `readCTEs` sets `Recursive` from `with.Recursive`.
-- `parser/view.go`: new `ViewSQL.Compound []ViewSQL` and `ViewSQL.Recursive
-  bool`. `walkScopes` yields each arm as a non-correlated child (path
-  `/|<i>`), so an arm never reads the first arm's FROM and reaches an
-  enclosing query only when the compound itself is correlated; the
-  `inside` guard covers arms unchanged. `cteScopes` lets a further arm of a
-  recursive CTE resolve the CTE's own name to the CTE. Doc comments for
-  scope paths, `ViewFromTables` and `ViewReadSources` updated.
-- PRD §6.1 MySQL bullet: reads include "in the select list of a derived
-  table or common table expression whether or not the view selects it, in
-  any arm of a compound (`UNION`) subquery"; the limit sentence becomes "A
-  column only a `VALUES` list reads is not found, though its table is"
-  (FIX-351 removes that half).
-- Tests: container oracle `TestMerge_ViewColumnsMatchMySQL` in
-  `parser/introspect/view_dependency_integration_test.go` (23 shapes, 0
-  known limits); Docker-free `TestViewReadSources_CompoundAndSubquerySelectLists`
-  in `parser/mysql/mysql_test.go` (10 cases); the "compound derived table"
-  case of `TestViewColumnSources_SubqueryNamedAfterItsTable` now expects
-  `users.name`, since the leftmost arm is traced.
-- Changed from the original at the vet: rewritten for MySQL only; arms are
-  non-correlated children, not siblings (the suggested `last.path + "|<i>"`
-  path slips past the `inside` guard, so a later arm resolved a
-  non-recursive CTE to itself); new `ViewSQL.Recursive`, because with the
-  guard a recursive arm's self-reference resolved to a same-named table, a
-  measured false error (`WITH RECURSIVE vo_tags(uid) AS (SELECT 1 UNION ALL
-  SELECT uid + 1 FROM vo_tags WHERE uid < 3) SELECT uid FROM vo_tags` + DROP
-  vo_tags.uid → Merge "view vo_r reads column uid of table vo_tags, which
-  the SQL files drop or rename; …" while MySQL accepts); every derived/CTE
-  select-list column is a Read, which the entry's own recursive-anchor case
-  needs (`SELECT n + 1, 'z' FROM c` + DROP email → Merge `<nil>`, MySQL
-  1356) and which closes the same-site unselected-column cases; the
-  regression test is a MySQL oracle test; the PRD limit is rewritten.
-  Recorded for the user to veto: two exported fields are added to the
-  parser module's `parser.ViewSQL` (not runtime or generated surface), and
-  the PRD edit drops part of a limit §6.1 states.
-- Landing order: FIX-350 before FIX-351. Both patch the dispatch at the top
-  of `readSubquery` and the same PRD §6.1 sentence; FIX-351's patch
-  rebases onto this one. A `VALUES ROW` arm still reads as empty until
-  FIX-351 lands.
-- Prototype results, run at `c1ea706e` on 2026-10-16: reproduction as in
-  Issue. Gates: parser `gofumpt -l .` clean; `golangci-lint run ./...` 0
-  issues; parser `go test -race -count=1 ./...` ok (introspect 134.9s);
-  cmd/sqlgen `go test -race -count=1 -run TestE2E .` ok (136.9s). `make
-  update-golden`/`-e2e` were not run (the session's auto-mode classifier
-  denied them); no template or generator is touched and the read-only E2E
-  golden comparison is green, so `/fix-implement` runs them with `make
-  check` and `make check-examples`. Fail-first: Union branch disabled →
-  oracle 56 disagreements (IN_UNION "drop tags.uid: Merge <nil>, database
-  'view vo_r fails: Error 1356 (HY000)…'"), 9 unit subtests plus
-  `compound_derived_table` fail ("- users.name + \"\""); select-list-as-Reads
-  loop disabled → 45 disagreements over 18 shapes ("derived table column
-  the view does not select": "drop users.email: Merge <nil>, database '…
-  1356 …'"), 10 unit subtests; `walkScopes` Compound loop disabled → 31
-  disagreements, 5 unit subtests; recursive `self` disabled → unit
-  "recursive CTE" fails (+"c.e", +"c.n") and the oracle's "recursive CTE
-  named after a table" gives the false error above; union-WITH merge
-  disabled → unit "a compound's own CTE" (-"tags.uid") and oracle "IN UNION
-  with its own CTE" ("drop tags.uid: Merge <nil>" vs 1356). Existing suite
-  without the fix passes. Golden churn: none observed (TestE2E green).
-  Patch: `.claude/prototypes/FIX-350.patch` (5 files, +207/−36).
-
-**References.**
-- PRD §6.1 (view tables and columns under `source: both`).
-- FIX-347: derived tables and CTEs. It stores a compound query as an empty
-  one.
-- FIX-349: reads outside the select list. Its 2026-10-14 auto-accept left
-  this gap in the backlog instead of adding a PRD carve-out.
-- `parser/view.go` `walkScopes` and `readScope`;
-  `parser/introspect/views.go` `checkViewReads`.
-- FIX-354 (`c1ea706e`): database answers for PostgreSQL and SQLite; MySQL
-  tables from `VIEW_TABLE_USAGE`. FIX-351: MySQL VALUES.
-
-**Resolution notes.** _Filled in by `/fix resolve`._
-
 ### FIX-351
 
 - **Status:** Open
@@ -256,6 +129,149 @@ a CTE, and IN/EXISTS/scalar subqueries (`readNested`, `:93`, which calls
 ## Resolved
 
 <!-- fixes:resolved:begin -->
+
+### FIX-350
+
+- **Status:** Resolved
+- **Severity:** tracked
+- **Origin:** phase 30, parser/mysql/view_sql.go, parser/view
+- **Surfaced by:** FIX-349 verify (2026-10-14)
+- **Vetted:** corrected at `c1ea706e` (2026-10-16)
+
+**Issue.** **MySQL compound subqueries, and unselected derived-table and
+CTE columns, are never read.** Under `source: both`, a column a MySQL view
+reads only in an arm of a compound (`UNION`) subquery, or in the select list
+of a derived table or CTE that the view does not select (a recursive CTE's
+anchor included), is never recorded, so dropping or renaming it passes
+`Merge` while MySQL then fails the view. PRD §6.1's MySQL bullet (from
+FIX-354, `docs/PRD.md:1657`) states part of it as a limit ("A column only a
+later arm of a compound subquery, or a `VALUES` list, reads is not found,
+though its table is"), and understates it: the first arm of a compound
+expression subquery is missed too. Measured at `c1ea706e` with the new MySQL
+column oracle (`cd parser && go test -count=1 -run
+TestMerge_ViewColumnsMatchMySQL ./introspect/`, 23 shapes × 9 column drops
+and renames = 207 checks) on HEAD's production code: 60 disagreements over
+19 shapes, every one a silent pass. Example: IN UNION + `ALTER TABLE vo_tags
+DROP COLUMN uid` → Merge `<nil>`, database "view vo_r fails: Error 1356
+(HY000): View 'sqlgen_test.vo_r' references invalid table(s) or column(s) or
+function(s) or definer/invoker of view lack rights to use them". The same
+for the first arm (drop vo_posts.uid), derived UNION + drop title or role,
+CTE UNION ALL, recursive CTE + drop/rename email, EXISTS/scalar UNION, and
+`SELECT id FROM (SELECT id, email FROM vo_users) d` + drop email; a
+recursive arm joining vo_tags gives "Error 1054 (42S22): Unknown column
+'t.uid' in 'on clause'" vs Merge `<nil>`.
+- Filed (2026-10-14) for all three dialects, tables and columns. FIX-354
+  (`c1ea706e`) moved PostgreSQL and SQLite to database answers (its oracle
+  has the IN UNION, IN INTERSECT, derived UNION, CTE UNION ALL and
+  recursive CTE shapes) and MySQL tables to `VIEW_TABLE_USAGE`
+  (`checkViewTables`, `parser/introspect/merge.go:68,97`;
+  `TestMerge_ViewTablesMatchMySQL`), so only MySQL columns remain.
+
+**Root cause.** At `c1ea706e`, MySQL's `readSubquery` (`parser/mysql/view_sql.go`) returns
+an empty query for a `*sqlparser.Union`, so neither arm of a compound
+derived table, CTE or expression subquery (`readNested`, `:93`) is read; and
+a derived table's or CTE's select-list columns become Reads only through
+`readNested`, so one the view does not select is never checked, though
+MySQL resolves every one. `walkScopes` (`parser/view.go:576-598`) has no
+notion of compound arms, and `cteScopes`' `inside` guard (`:559`) makes a
+recursive arm's self-reference resolve to a same-named table.
+
+**Suggested fix.**
+- `parser/mysql/view_sql.go`: `readSubquery` reads a `*sqlparser.Union`
+  through new `readCompound`/`unionArms`. The query is its leftmost arm,
+  which names the columns; each further arm goes into `Compound` through
+  `readNested`; the union's own WITH CTEs are in scope for every arm.
+  `readSubquery` records every select-list column it reads in Reads, not
+  only Columns (the loop moves there from `readNested`, which now only
+  clears Columns). `readCTEs` sets `Recursive` from `with.Recursive`.
+- `parser/view.go`: new `ViewSQL.Compound []ViewSQL` and `ViewSQL.Recursive
+  bool`. `walkScopes` yields each arm as a non-correlated child (path
+  `/|<i>`), so an arm never reads the first arm's FROM and reaches an
+  enclosing query only when the compound itself is correlated; the
+  `inside` guard covers arms unchanged. `cteScopes` lets a further arm of a
+  recursive CTE resolve the CTE's own name to the CTE. Doc comments for
+  scope paths, `ViewFromTables` and `ViewReadSources` updated.
+- PRD §6.1 MySQL bullet: reads include "in the select list of a derived
+  table or common table expression whether or not the view selects it, in
+  any arm of a compound (`UNION`) subquery"; the limit sentence becomes "A
+  column only a `VALUES` list reads is not found, though its table is"
+  (FIX-351 removes that half).
+- Tests: container oracle `TestMerge_ViewColumnsMatchMySQL` in
+  `parser/introspect/view_dependency_integration_test.go` (23 shapes, 0
+  known limits); Docker-free `TestViewReadSources_CompoundAndSubquerySelectLists`
+  in `parser/mysql/mysql_test.go` (10 cases); the "compound derived table"
+  case of `TestViewColumnSources_SubqueryNamedAfterItsTable` now expects
+  `users.name`, since the leftmost arm is traced.
+- Changed from the original at the vet: rewritten for MySQL only; arms are
+  non-correlated children, not siblings (the suggested `last.path + "|<i>"`
+  path slips past the `inside` guard, so a later arm resolved a
+  non-recursive CTE to itself); new `ViewSQL.Recursive`, because with the
+  guard a recursive arm's self-reference resolved to a same-named table, a
+  measured false error (`WITH RECURSIVE vo_tags(uid) AS (SELECT 1 UNION ALL
+  SELECT uid + 1 FROM vo_tags WHERE uid < 3) SELECT uid FROM vo_tags` + DROP
+  vo_tags.uid → Merge "view vo_r reads column uid of table vo_tags, which
+  the SQL files drop or rename; …" while MySQL accepts); every derived/CTE
+  select-list column is a Read, which the entry's own recursive-anchor case
+  needs (`SELECT n + 1, 'z' FROM c` + DROP email → Merge `<nil>`, MySQL
+  1356) and which closes the same-site unselected-column cases; the
+  regression test is a MySQL oracle test; the PRD limit is rewritten.
+  Recorded for the user to veto: two exported fields are added to the
+  parser module's `parser.ViewSQL` (not runtime or generated surface), and
+  the PRD edit drops part of a limit §6.1 states.
+- Landing order: FIX-350 before FIX-351. Both patch the dispatch at the top
+  of `readSubquery` and the same PRD §6.1 sentence; FIX-351's patch
+  rebases onto this one. A `VALUES ROW` arm still reads as empty until
+  FIX-351 lands.
+- Prototype results, run at `c1ea706e` on 2026-10-16: reproduction as in
+  Issue. Gates: parser `gofumpt -l .` clean; `golangci-lint run ./...` 0
+  issues; parser `go test -race -count=1 ./...` ok (introspect 134.9s);
+  cmd/sqlgen `go test -race -count=1 -run TestE2E .` ok (136.9s). `make
+  update-golden`/`-e2e` were not run (the session's auto-mode classifier
+  denied them); no template or generator is touched and the read-only E2E
+  golden comparison is green, so `/fix-implement` runs them with `make
+  check` and `make check-examples`. Fail-first: Union branch disabled →
+  oracle 56 disagreements (IN_UNION "drop tags.uid: Merge <nil>, database
+  'view vo_r fails: Error 1356 (HY000)…'"), 8 unit subtests plus
+  `compound_derived_table` fail ("- users.name + \"\""); select-list-as-Reads
+  loop disabled → 45 disagreements over 18 shapes ("derived table column
+  the view does not select": "drop users.email: Merge <nil>, database '…
+  1356 …'"), 10 unit subtests; `walkScopes` Compound loop disabled → 31
+  disagreements, 5 unit subtests; recursive `self` disabled → unit
+  "recursive CTE" fails (+"c.e", +"c.n") and the oracle's "recursive CTE
+  named after a table" gives the false error above; union-WITH merge
+  disabled → unit "a compound's own CTE" (-"tags.uid") and oracle "IN UNION
+  with its own CTE" ("drop tags.uid: Merge <nil>" vs 1356). Existing suite
+  without the fix passes. Golden churn: none observed (TestE2E green).
+  Patch: `.claude/prototypes/FIX-350.patch` (5 files, +207/−36).
+
+**References.**
+- PRD §6.1 (view tables and columns under `source: both`).
+- FIX-347: derived tables and CTEs. It stores a compound query as an empty
+  one.
+- FIX-349: reads outside the select list. Its 2026-10-14 auto-accept left
+  this gap in the backlog instead of adding a PRD carve-out.
+- `parser/view.go` `walkScopes` and `readScope`;
+  `parser/introspect/views.go` `checkViewReads`.
+- FIX-354 (`c1ea706e`): database answers for PostgreSQL and SQLite; MySQL
+  tables from `VIEW_TABLE_USAGE`. FIX-351: MySQL VALUES.
+
+**Resolution notes.** Resolved 2026-10-16 from the vetted prototype
+(applied clean at `4379344a`). MySQL's `readSubquery` now reads a
+`*sqlparser.Union` through `readCompound`/`unionArms`: the leftmost arm
+names the columns and each further arm goes into the new
+`parser.ViewSQL.Compound` through `readNested`, with the union's own WITH
+CTEs in scope for every arm; every derived-table and CTE select-list column
+is a Read; `readCTEs` sets the new `ViewSQL.Recursive`. `walkScopes` yields
+each arm as a non-correlated child (`/|<i>`), and `cteScopes` lets a further
+arm of a recursive CTE resolve the CTE's own name. PRD §6.1's MySQL bullet
+now lists derived/CTE select lists and compound arms as reads and keeps
+only the `VALUES` limit. Tests: MySQL oracle `TestMerge_ViewColumnsMatchMySQL`
+(23 shapes, 0 known limits), `TestViewReadSources_CompoundAndSubquerySelectLists`,
+and `compound_derived_table` now expects `users.name`. Fail-first re-run on
+the landed code (Union branch disabled): `compound_derived_table` and 8
+`TestViewReadSources_CompoundAndSubquerySelectLists` subtests fail. Golden
+churn: none (`make update-golden`, `make update-golden-e2e`), matching the
+vet.
 
 ### FIX-354
 

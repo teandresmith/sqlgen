@@ -62,9 +62,10 @@ type ViewSQL struct {
 	// such a query a column whose SourceColumn is "*" selects every column
 	// of its SourceTable's table, or of every FROM-clause table when
 	// SourceTable is empty, under its own name. A query the parser cannot
-	// read, such as a compound one, is recorded with no columns, so its
-	// name still names no table. A FROM-clause key that names a derived
-	// table or a common table expression in scope names no table.
+	// read, such as a compound one outside MySQL, is recorded with no
+	// columns, so its name still names no table. A FROM-clause key that
+	// names a derived table or a common table expression in scope names no
+	// table.
 	Subqueries map[string]ViewSQL
 	CTEs       map[string]ViewSQL
 	// Lateral reports a derived table declared LATERAL (PostgreSQL, MySQL),
@@ -82,6 +83,15 @@ type ViewSQL struct {
 	// reads in its Reads and no Columns. A column it reads can be one of an
 	// enclosing query's FROM clause. Only the MySQL view parser records it.
 	Nested []ViewSQL
+	// Compound holds the arms after the first of a compound query, which
+	// the query itself is, each read as a Nested query is. An arm reads
+	// neither the first arm's FROM clause nor, unless the compound can, an
+	// enclosing query's. Only the MySQL view parser records it.
+	Compound []ViewSQL
+	// Recursive reports a common table expression of a WITH RECURSIVE
+	// clause, whose further arms read it under its own name. Only the
+	// MySQL view parser records it.
+	Recursive bool
 
 	// Materialized reports whether the statement was CREATE MATERIALIZED VIEW
 	// (PostgreSQL-only; the MySQL/SQLite parsers reject the syntax).
@@ -459,12 +469,12 @@ func ViewColumnSources(def ViewSQL, schema *Schema) []ViewColumnSource {
 }
 
 // traceScope is a query on the path ViewColumnSources follows, and path the
-// FROM-clause keys, common table expression names ("with:<name>") and
-// expression subquery indexes ("#<i>") that lead to it from the view, which
-// identify it. correlated reports whether the query can read the FROM
-// clause of the scope before it, as an expression subquery or a LATERAL
-// derived table can, and a common table expression or any other derived
-// table cannot.
+// FROM-clause keys, common table expression names ("with:<name>"),
+// expression subquery indexes ("#<i>") and compound arm indexes ("|<i>")
+// that lead to it from the view, which identify it. correlated reports
+// whether the query can read the FROM clause of the scope before it, as an
+// expression subquery or a LATERAL derived table can, and a common table
+// expression, a compound's arm or any other derived table cannot.
 type traceScope struct {
 	query      ViewSQL
 	path       string
@@ -545,8 +555,8 @@ func subquery(key string, scopes []traceScope, tracing map[string]bool) (inner [
 // FROM-clause key of the innermost of scopes names, ending with its query:
 // the innermost one of the key's name, of that query or of an enclosing
 // one, that the key is not inside and tracing does not hold, as a common
-// table expression cannot read itself. A key whose table name is qualified
-// names a table.
+// table expression cannot read itself, except in a further arm of a
+// recursive one. A key whose table name is qualified names a table.
 func cteScopes(key string, scopes []traceScope, tracing map[string]bool) ([]traceScope, bool) {
 	last := scopes[len(scopes)-1]
 	name, ok := last.query.TableAliases[key]
@@ -557,7 +567,8 @@ func cteScopes(key string, scopes []traceScope, tracing map[string]bool) ([]trac
 		path := scopes[i].path + "/with:" + name
 		q, ok := scopes[i].query.CTEs[name]
 		inside := last.path == path || strings.HasPrefix(last.path, path+"/")
-		if ok && !inside && !tracing[path] {
+		self := q.Recursive && strings.HasPrefix(last.path, path+"/|")
+		if ok && (!inside || self) && !tracing[path] {
 			return append(slices.Clip(scopes[:i+1]), traceScope{query: q, path: path}), true
 		}
 	}
@@ -565,8 +576,8 @@ func cteScopes(key string, scopes []traceScope, tracing map[string]bool) ([]trac
 }
 
 // viewScopes yields the scopes of def and of each derived table, common
-// table expression and expression subquery it reads, at any depth, each
-// ending with that query.
+// table expression, expression subquery and compound arm it reads, at any
+// depth, each ending with that query.
 func viewScopes(def ViewSQL) iter.Seq[[]traceScope] {
 	return func(yield func([]traceScope) bool) {
 		walkScopes([]traceScope{{query: def}}, yield)
@@ -594,15 +605,20 @@ func walkScopes(scopes []traceScope, yield func([]traceScope) bool) bool {
 			return false
 		}
 	}
+	for i, q := range last.query.Compound {
+		if !walkScopes(append(slices.Clip(scopes), traceScope{query: q, path: last.path + "/|" + strconv.Itoa(i)}), yield) {
+			return false
+		}
+	}
 	return true
 }
 
 // ViewReadSources returns the table column each column reference in the
-// Reads of def, and of each derived table, common table expression and
-// expression subquery it reads, at any depth, reads, in the order
-// viewScopes yields them, resolved against schema as ViewColumnSources
-// resolves a view column. Table is nil for a reference that reads no table
-// column.
+// Reads of def, and of each derived table, common table expression,
+// expression subquery and compound arm it reads, at any depth, reads, in
+// the order viewScopes yields them, resolved against schema as
+// ViewColumnSources resolves a view column. Table is nil for a reference
+// that reads no table column.
 func ViewReadSources(def ViewSQL, schema *Schema) []ViewColumnSource {
 	var sources []ViewColumnSource
 	for scopes := range viewScopes(def) {
@@ -678,9 +694,9 @@ func RenameViewColumnReferences(schema *Schema, table *Table, oldName, newName s
 // names, resolved against schema as BuildView resolves it, or nil for a key
 // that names no table in schema (a common table expression, a view, or a
 // table schema lacks). The keys of each derived table, common table
-// expression and expression subquery def reads, at any depth, are listed
-// too, under the path that leads to it: "<alias>/<key>", "with:<name>/<key>"
-// and "#<i>/<key>".
+// expression, expression subquery and compound arm def reads, at any depth,
+// are listed too, under the path that leads to it: "<alias>/<key>",
+// "with:<name>/<key>", "#<i>/<key>" and "|<i>/<key>".
 func ViewFromTables(def ViewSQL, schema *Schema) map[string]*Table {
 	tables := make(map[string]*Table)
 	for scopes := range viewScopes(def) {

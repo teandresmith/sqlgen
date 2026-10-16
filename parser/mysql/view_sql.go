@@ -2,6 +2,7 @@ package mysql
 
 import (
 	"fmt"
+	"maps"
 	"strings"
 
 	"vitess.io/vitess/go/vt/sqlparser"
@@ -54,10 +55,16 @@ func ParseViewSQL(sql []byte) (parser.ViewSQL, error) {
 
 // readSubquery reads the query of a derived table or common table
 // expression for parser.ViewSQL.Subqueries or CTEs, its columns named by
-// names where it has them. It returns an empty query for one it cannot
-// read: one that is not a simple SELECT, or that names * alongside a
-// column list.
+// names where it has them. The columns its select list reads are in its
+// Reads too, since MySQL resolves each one whether or not the view selects
+// it. A compound query is read as its leftmost arm, which names its
+// columns, with the other arms in Compound. It returns an empty query for
+// one it cannot read: one that is not a SELECT, or that names * alongside
+// a column list.
 func readSubquery(stmt sqlparser.TableStatement, names sqlparser.Columns) parser.ViewSQL {
+	if u, ok := stmt.(*sqlparser.Union); ok {
+		return readCompound(u, names)
+	}
 	sel, ok := stmt.(*sqlparser.Select)
 	if !ok || sel.SelectExprs == nil {
 		return parser.ViewSQL{}
@@ -84,19 +91,45 @@ func readSubquery(stmt sqlparser.TableStatement, names sqlparser.Columns) parser
 	q := extractTableAliases(sel.From)
 	q.Columns, q.CTEs = columns, readCTEs(sel.With)
 	q.Reads, q.Nested = queryReads(sel)
-	return q
-}
-
-// readNested reads a subquery in an expression for parser.ViewSQL.Nested:
-// the columns its select list reads go to its Reads, since no view column
-// reads them.
-func readNested(stmt sqlparser.TableStatement) parser.ViewSQL {
-	q := readSubquery(stmt, nil)
-	for _, c := range q.Columns {
+	for _, c := range columns {
 		if c.SourceColumn != "" && c.SourceColumn != "*" {
 			q.Reads = append(q.Reads, parser.ViewColumnRef{Table: c.SourceTable, Column: c.SourceColumn})
 		}
 	}
+	return q
+}
+
+// readCompound reads a compound query as readSubquery does.
+func readCompound(u *sqlparser.Union, names sqlparser.Columns) parser.ViewSQL {
+	arms := unionArms(u)
+	q := readSubquery(arms[0], names)
+	for _, arm := range arms[1:] {
+		q.Compound = append(q.Compound, readNested(arm))
+	}
+	// The compound's own common table expressions are in scope in every arm.
+	if ctes := readCTEs(u.With); ctes != nil {
+		if q.CTEs == nil {
+			q.CTEs = make(map[string]parser.ViewSQL, len(ctes))
+		}
+		maps.Copy(q.CTEs, ctes)
+	}
+	return q
+}
+
+// unionArms returns the arms of a compound query, leftmost first.
+func unionArms(stmt sqlparser.TableStatement) []sqlparser.TableStatement {
+	u, ok := stmt.(*sqlparser.Union)
+	if !ok {
+		return []sqlparser.TableStatement{stmt}
+	}
+	return append(unionArms(u.Left), unionArms(u.Right)...)
+}
+
+// readNested reads a subquery in an expression, or a further arm of a
+// compound query, for parser.ViewSQL.Nested or Compound. It has no
+// Columns, since no view column reads it.
+func readNested(stmt sqlparser.TableStatement) parser.ViewSQL {
+	q := readSubquery(stmt, nil)
 	q.Columns = nil
 	return q
 }
@@ -208,7 +241,9 @@ func readCTEs(with *sqlparser.With) map[string]parser.ViewSQL {
 	}
 	ctes := make(map[string]parser.ViewSQL, len(with.CTEs))
 	for _, cte := range with.CTEs {
-		ctes[cte.ID.String()] = readSubquery(cte.Subquery, cte.Columns)
+		q := readSubquery(cte.Subquery, cte.Columns)
+		q.Recursive = with.Recursive
+		ctes[cte.ID.String()] = q
 	}
 	return ctes
 }

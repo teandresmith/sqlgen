@@ -535,6 +535,71 @@ func TestMerge_ViewTablesMatchMySQL(t *testing.T) {
 	}
 }
 
+// TestMerge_ViewColumnsMatchMySQL runs each pending migration that drops or
+// renames a column on a corpus of MySQL views through Merge and through the
+// database, and checks that Merge refuses exactly the migrations that leave
+// a view failing (PRD §6.1). Merge finds these columns by reading the
+// views' definitions; the corpus holds compound subqueries and the select
+// lists of derived tables and common table expressions.
+func TestMerge_ViewColumnsMatchMySQL(t *testing.T) {
+	requireDatabases(t)
+	migrations := []oracleMigration{
+		{"drop users.role", "ALTER TABLE vo_users DROP COLUMN role;"},
+		{"drop users.email", "ALTER TABLE vo_users DROP COLUMN email;"},
+		{"drop posts.title", "ALTER TABLE vo_posts DROP COLUMN title;"},
+		{"drop posts.uid", "ALTER TABLE vo_posts DROP COLUMN uid;"},
+		{"drop tags.uid", "ALTER TABLE vo_tags DROP COLUMN uid;"},
+		{"drop tags.k", "ALTER TABLE vo_tags DROP COLUMN k;"},
+		{"rename tags.uid", "ALTER TABLE vo_tags RENAME COLUMN uid TO uid2;"},
+		{"rename posts.title", "ALTER TABLE vo_posts RENAME COLUMN title TO headline;"},
+		{"rename users.email", "ALTER TABLE vo_users RENAME COLUMN email TO mail;"},
+	}
+	shapes := []oracleShape{
+		{name: "passthrough", ddl: "CREATE VIEW vo_r AS SELECT uid FROM vo_tags"},
+		{name: "IN subquery", ddl: "CREATE VIEW vo_r AS SELECT u.id FROM vo_users u WHERE u.id IN (SELECT uid FROM vo_tags)"},
+		{name: "IN UNION", ddl: "CREATE VIEW vo_r AS SELECT u.id FROM vo_users u WHERE u.id IN (SELECT uid FROM vo_posts UNION SELECT uid FROM vo_tags)"},
+		{name: "IN UNION, WHERE in the second arm", ddl: "CREATE VIEW vo_r AS SELECT u.id FROM vo_users u WHERE u.id IN (SELECT uid FROM vo_posts UNION SELECT uid FROM vo_tags WHERE k > 0)"},
+		{name: "IN UNION, the second arm reads the enclosing query", ddl: "CREATE VIEW vo_r AS SELECT u.id FROM vo_users u WHERE u.id IN (SELECT uid FROM vo_posts UNION SELECT t.uid FROM vo_tags t WHERE u.email = 'x')"},
+		{name: "IN, three arms", ddl: "CREATE VIEW vo_r AS SELECT u.id FROM vo_users u WHERE u.id IN (SELECT id FROM vo_users UNION SELECT uid FROM vo_posts UNION ALL SELECT uid FROM vo_tags)"},
+		{name: "IN, parenthesized arms", ddl: "CREATE VIEW vo_r AS SELECT u.id FROM vo_users u WHERE u.id IN ((SELECT uid FROM vo_posts) UNION (SELECT uid FROM vo_tags))"},
+		{name: "IN UNION with its own CTE", ddl: "CREATE VIEW vo_r AS SELECT u.id FROM vo_users u WHERE u.id IN (WITH c AS (SELECT uid FROM vo_tags) SELECT uid FROM vo_posts UNION SELECT uid FROM c)"},
+		{name: "EXISTS UNION", ddl: "CREATE VIEW vo_r AS SELECT u.id FROM vo_users u WHERE EXISTS (SELECT 1 FROM vo_posts p WHERE p.uid = u.id UNION SELECT 1 FROM vo_tags t WHERE t.uid = u.id)"},
+		{name: "scalar UNION", ddl: "CREATE VIEW vo_r AS SELECT u.id, (SELECT p.title FROM vo_posts p WHERE p.uid = u.id UNION SELECT u.email LIMIT 1) AS t FROM vo_users u"},
+		{name: "derived UNION", ddl: "CREATE VIEW vo_r AS SELECT x FROM (SELECT role AS x FROM vo_users UNION SELECT title FROM vo_posts) d"},
+		{name: "derived UNION ALL", ddl: "CREATE VIEW vo_r AS SELECT d.x FROM (SELECT email AS x FROM vo_users UNION ALL SELECT title AS y FROM vo_posts) d"},
+		{name: "derived UNION with a column list", ddl: "CREATE VIEW vo_r AS SELECT a FROM (SELECT role, email FROM vo_users UNION SELECT title, title FROM vo_posts) d (a, b)"},
+		{name: "derived UNION with ORDER BY", ddl: "CREATE VIEW vo_r AS SELECT x FROM (SELECT role AS x FROM vo_users UNION SELECT title FROM vo_posts ORDER BY x) d"},
+		{name: "CTE UNION ALL", ddl: "CREATE VIEW vo_r AS WITH c AS (SELECT uid FROM vo_posts UNION ALL SELECT uid FROM vo_tags) SELECT u.id FROM vo_users u JOIN c ON c.uid = u.id"},
+		{name: "compound CTE named after its table", ddl: "CREATE VIEW vo_r AS WITH vo_posts AS (SELECT title AS uid FROM vo_posts UNION SELECT uid FROM vo_posts) SELECT uid FROM vo_posts"},
+		{name: "recursive CTE", ddl: "CREATE VIEW vo_r AS WITH RECURSIVE c(n, e) AS (SELECT id, email FROM vo_users UNION ALL SELECT n + 1, e FROM c WHERE n < 3) SELECT n FROM c"},
+		{name: "recursive CTE whose recursive arm reads no anchor column", ddl: "CREATE VIEW vo_r AS WITH RECURSIVE c(n, e) AS (SELECT id, email FROM vo_users UNION ALL SELECT n + 1, 'z' FROM c WHERE n < 3) SELECT n FROM c"},
+		{name: "recursive CTE joining a table", ddl: "CREATE VIEW vo_r AS WITH RECURSIVE c(n) AS (SELECT 1 UNION ALL SELECT n + 1 FROM c JOIN vo_tags t ON t.uid = c.n WHERE n < 3) SELECT n FROM c"},
+		{name: "recursive CTE named after a table", ddl: "CREATE VIEW vo_r AS WITH RECURSIVE vo_tags(uid) AS (SELECT 1 UNION ALL SELECT uid + 1 FROM vo_tags WHERE uid < 3) SELECT uid FROM vo_tags"},
+		{name: "derived table column the view does not select", ddl: "CREATE VIEW vo_r AS SELECT id FROM (SELECT id, email FROM vo_users) d"},
+		{name: "CTE column the view does not select", ddl: "CREATE VIEW vo_r AS WITH c AS (SELECT id, email FROM vo_users) SELECT id FROM c"},
+		{name: "unreferenced CTE", ddl: "CREATE VIEW vo_r AS WITH c AS (SELECT email FROM vo_users) SELECT id FROM vo_users"},
+	}
+	const reset = "DROP VIEW IF EXISTS vo_r; DROP TABLE IF EXISTS vo_users, vo_posts, vo_tags"
+	for _, shape := range shapes {
+		t.Run(shape.name, func(t *testing.T) {
+			t.Cleanup(func() { execAll(t, "mysql", mysqlConnStr, reset) })
+			for _, m := range migrations {
+				execAll(t, "mysql", mysqlConnStr, reset+`;
+					CREATE TABLE vo_users (id int PRIMARY KEY, role varchar(20), email varchar(20));
+					CREATE TABLE vo_posts (id int PRIMARY KEY, uid int, title varchar(20));
+					CREATE TABLE vo_tags (id int PRIMARY KEY, uid int, k int);`+shape.ddl)
+				base := introspectWith(t, introspect.NewMySQLIntrospector(), mysqlConnStr, introspect.IntrospectionOptions{Tables: []string{"vo_users", "vo_posts", "vo_tags", "vo_r"}})
+				p, err := mysql.New()
+				if err != nil {
+					t.Fatalf("mysql.New() error: %v", err)
+				}
+				err = introspect.Merge(base, p, []string{writeMigration(t, m.sql)})
+				compareVerdicts(t, shape, m, mysqlVerdict(t, m.sql), err)
+			}
+		})
+	}
+}
+
 // mysqlVerdict runs migration on MySQL and returns why MySQL refuses it or
 // which view then fails, or "" when it accepts it and every view runs.
 func mysqlVerdict(t *testing.T, migration string) string {

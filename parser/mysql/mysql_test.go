@@ -3701,7 +3701,7 @@ func TestViewColumnSources_SubqueryNamedAfterItsTable(t *testing.T) {
 		// its name, so only the subquery gives the right one.
 		{name: "derived table renaming a column", sql: "CREATE VIEW `v` AS select `users`.`role` AS `role` from (select `db`.`users`.`name` AS `role` from `db`.`users`) `users`", want: []string{"users.name"}},
 		{name: "derived table named after another table", sql: "CREATE VIEW `v` AS select `posts`.`title` AS `title` from (select `db`.`users`.`name` AS `title` from `db`.`users`) `posts`", want: []string{"users.name"}},
-		{name: "compound derived table", sql: "CREATE VIEW `v` AS select `users`.`role` AS `role` from (select `db`.`users`.`name` AS `role` from `db`.`users` union all select `db`.`users`.`name` AS `name` from `db`.`users`) `users`", want: []string{""}},
+		{name: "compound derived table", sql: "CREATE VIEW `v` AS select `users`.`role` AS `role` from (select `db`.`users`.`name` AS `role` from `db`.`users` union all select `db`.`users`.`name` AS `name` from `db`.`users`) `users`", want: []string{"users.name"}},
 		{name: "CTE renaming a column", sql: "CREATE VIEW `v` AS with `users` as (select `db`.`users`.`name` AS `role` from `db`.`users`) select `users`.`role` AS `role` from `users`", want: []string{"users.name"}},
 		{name: "derived table reading an enclosing CTE", sql: "CREATE VIEW `v` AS with `users` as (select `db`.`users`.`name` AS `role` from `db`.`users`) select `d`.`role` AS `role` from (select `users`.`role` AS `role` from `users`) `d`", want: []string{"users.name"}},
 		{name: "database-qualified table beside a CTE of its name", sql: "CREATE VIEW `v` AS with `users` as (select `db`.`users`.`name` AS `role` from `db`.`users`) select `u2`.`role` AS `role` from (`users` join `db`.`users` `u2`)", want: []string{"users.role"}},
@@ -3722,6 +3722,61 @@ func TestViewColumnSources_SubqueryNamedAfterItsTable(t *testing.T) {
 			}
 			if diff := cmp.Diff(tt.want, got); diff != "" {
 				t.Errorf("ViewColumnSources() mismatch (-want +got):\n%s", diff)
+			}
+		})
+	}
+}
+
+// TestViewReadSources_CompoundAndSubquerySelectLists checks that the table
+// columns a view reads include those every arm of a compound subquery
+// reads, and those the select list of a derived table or common table
+// expression reads that no view column selects, since MySQL resolves each
+// (PRD §6.1).
+func TestViewReadSources_CompoundAndSubquerySelectLists(t *testing.T) {
+	p, err := mysql.New()
+	if err != nil {
+		t.Fatalf("New() error: %v", err)
+	}
+	if err := p.Parse("schema.sql", []byte(`CREATE TABLE users (id int PRIMARY KEY, role text, email text);
+		CREATE TABLE posts (id int PRIMARY KEY, uid int, title text);
+		CREATE TABLE tags (id int PRIMARY KEY, uid int, k int);
+		CREATE TABLE c (n int, e text);`)); err != nil {
+		t.Fatalf("Parse() error: %v", err)
+	}
+	tests := []struct {
+		name string
+		sql  string
+		want []string
+	}{
+		{name: "IN UNION", sql: "CREATE VIEW v AS SELECT u.id FROM users u WHERE u.id IN (SELECT uid FROM posts UNION SELECT uid FROM tags WHERE k > 0)", want: []string{"posts.uid", "tags.k", "tags.uid", "users.id"}},
+		{name: "IN three arms", sql: "CREATE VIEW v AS SELECT u.id FROM users u WHERE u.id IN (SELECT id FROM users UNION SELECT uid FROM posts UNION ALL SELECT uid FROM tags)", want: []string{"posts.uid", "tags.uid", "users.id"}},
+		{name: "an arm reads the enclosing query", sql: "CREATE VIEW v AS SELECT u.id FROM users u WHERE u.id IN (SELECT uid FROM posts UNION SELECT t.uid FROM tags t WHERE u.email = 'x')", want: []string{"posts.uid", "tags.uid", "users.email", "users.id"}},
+		// title is only the first arm's: the second arm cannot read it.
+		{name: "an arm does not read the first arm's FROM clause", sql: "CREATE VIEW v AS SELECT x FROM (SELECT title AS x FROM posts UNION SELECT title FROM users) d", want: []string{"posts.title"}},
+		{name: "derived UNION", sql: "CREATE VIEW v AS SELECT x FROM (SELECT role AS x FROM users UNION SELECT title FROM posts) d", want: []string{"posts.title", "users.role"}},
+		{name: "a compound's own CTE", sql: "CREATE VIEW v AS SELECT u.id FROM users u WHERE u.id IN (WITH c AS (SELECT uid FROM tags) SELECT uid FROM posts UNION SELECT uid FROM c)", want: []string{"posts.uid", "tags.uid", "users.id"}},
+		{name: "CTE UNION ALL", sql: "CREATE VIEW v AS WITH c AS (SELECT uid FROM posts UNION ALL SELECT uid FROM tags) SELECT u.id FROM users u JOIN c ON c.uid = u.id", want: []string{"posts.uid", "tags.uid", "users.id"}},
+		// The recursive arm's c is the common table expression, not table c.
+		{name: "recursive CTE", sql: "CREATE VIEW v AS WITH RECURSIVE c(n, e) AS (SELECT id, email FROM users UNION ALL SELECT n + 1, e FROM c WHERE n < 3) SELECT n FROM c", want: []string{"users.email", "users.id"}},
+		{name: "unused derived table column", sql: "CREATE VIEW v AS SELECT id FROM (SELECT id, email FROM users) d", want: []string{"users.email", "users.id"}},
+		{name: "unused CTE column", sql: "CREATE VIEW v AS WITH c AS (SELECT id, email FROM users) SELECT id FROM c", want: []string{"users.email", "users.id"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			def, err := mysql.ParseViewSQL([]byte(tt.sql))
+			if err != nil {
+				t.Fatalf("ParseViewSQL() error: %v", err)
+			}
+			var got []string
+			for _, src := range parser.ViewReadSources(def, p.Schema()) {
+				if src.Table != nil {
+					got = append(got, src.Table.Name+"."+src.Column)
+				}
+			}
+			slices.Sort(got)
+			got = slices.Compact(got)
+			if diff := cmp.Diff(tt.want, got); diff != "" {
+				t.Errorf("ViewReadSources() mismatch (-want +got):\n%s", diff)
 			}
 		})
 	}
