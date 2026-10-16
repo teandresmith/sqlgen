@@ -257,6 +257,9 @@ func buildSingleTableContext(input *GenerateInput, table *parser.Table, collisio
 	}
 
 	structName := structNameFor(table.Name, table.Schema, tableCfg.StructName, collisions)
+	if err := checkStructName("table", qualifiedTableOrName(table), structName, tableCfg.StructName); err != nil {
+		return TableContext{}, err
+	}
 
 	columns, pkColumns := buildTableColumns(input, table, tableCfg)
 

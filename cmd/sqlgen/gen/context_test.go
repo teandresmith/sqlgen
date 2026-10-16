@@ -3007,3 +3007,59 @@ func TestBuildViewContexts_SumAggregateWidening(t *testing.T) {
 		t.Errorf("plain integer column GoType = %q, want *int32 (not widened)", got)
 	}
 }
+
+// TestBuildContexts_StructNameMustBeExported pins that a table or view whose
+// struct name is not an exported Go identifier, derived or overridden, is an
+// error naming its struct_name key, not a crash or an unexported type.
+func TestBuildContexts_StructNameMustBeExported(t *testing.T) {
+	tests := []struct {
+		name     string
+		view     bool
+		sqlName  string
+		override string
+		wantErr  string
+	}{
+		{name: "table with no letter", sqlName: "_", wantErr: `table public._: its name gives no exported Go struct name (""); set one with tables.public._.struct_name`},
+		{name: "table with a symbol name", sqlName: "$", wantErr: `table public.$: its name gives no exported Go struct name (""); set one with tables.public.$.struct_name`},
+		{name: "table with no upper case", sqlName: "ß", wantErr: `table public.ß: its name gives no exported Go struct name ("ß")`},
+		{name: "table named after its suffix", sqlName: "s"},
+		{name: "table override", sqlName: "_", override: "Underscore"},
+		{name: "table override not exported", sqlName: "things", override: "thing", wantErr: `tables.public.things.struct_name: "thing" is not an exported Go identifier`},
+		{name: "view with no letter", view: true, sqlName: "_", wantErr: `view public._: its name gives no exported Go struct name (""); set one with views.public._.struct_name`},
+		{name: "view override", view: true, sqlName: "_", override: "Underscore"},
+		{name: "view override not an identifier", view: true, sqlName: "v", override: "Not Valid", wantErr: `views.public.v.struct_name: "Not Valid" is not an exported Go identifier`},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			columns := []parser.Column{{Name: "id", Type: "bigint", PrimaryKey: true}}
+			schema := &parser.Schema{}
+			if tt.view {
+				schema.Views = []parser.View{{Name: tt.sqlName, Schema: "public", Columns: columns}}
+			} else {
+				schema.Tables = []parser.Table{{Name: tt.sqlName, Schema: "public", Columns: columns}}
+			}
+			in := testInput(schema)
+			var err error
+			if tt.view {
+				if tt.override != "" {
+					in.Config.Views["public."+tt.sqlName] = config.ViewConfig{StructName: tt.override}
+				}
+				_, err = gen.BuildViewContexts(in, nil)
+			} else {
+				if tt.override != "" {
+					in.Config.Tables["public."+tt.sqlName] = config.TableConfig{StructName: tt.override}
+				}
+				_, err = gen.BuildTableContexts(in, nil)
+			}
+			if tt.wantErr == "" {
+				if err != nil {
+					t.Fatalf("build error: %v", err)
+				}
+				return
+			}
+			if err == nil || !strings.Contains(err.Error(), tt.wantErr) {
+				t.Fatalf("build error = %v, want containing %q", err, tt.wantErr)
+			}
+		})
+	}
+}

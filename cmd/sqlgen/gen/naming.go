@@ -1,6 +1,8 @@
 package gen
 
 import (
+	"fmt"
+	"go/token"
 	"strings"
 	"unicode"
 )
@@ -240,6 +242,20 @@ func structNameFor(sqlName, schema, structNameOverride string, collisions map[st
 		return structNameOverride
 	}
 	return StructName(sqlName, schema, collisions)
+}
+
+// checkStructName returns an error when name, the Go struct name of the table
+// or view at key (its `tables:` or `views:` key), is not an exported Go
+// identifier. A SQL name such as `_` or `$` has no letter to spell one with,
+// and every generated identifier for the entity is built from it.
+func checkStructName(kind, key, name, override string) error {
+	if token.IsIdentifier(name) && token.IsExported(name) {
+		return nil
+	}
+	if override != "" {
+		return fmt.Errorf("%ss.%s.struct_name: %q is not an exported Go identifier", kind, key, name)
+	}
+	return fmt.Errorf("%s %s: its name gives no exported Go struct name (%q); set one with %ss.%s.struct_name", kind, key, name, kind, key)
 }
 
 // snakeNameFor returns the file-stem spelling for a table or view, honouring a

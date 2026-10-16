@@ -3828,3 +3828,41 @@ func TestViewReadSources_ValuesStatements(t *testing.T) {
 		})
 	}
 }
+
+// TestCreateTableUnreadColumns pins that a CREATE TABLE whose columns come from
+// another table or a query is an error, since the parser does not read those
+// columns and a table without them generates wrong code.
+func TestCreateTableUnreadColumns(t *testing.T) {
+	const base = "CREATE TABLE s (id int PRIMARY KEY, name varchar(50) NOT NULL);\n"
+	tests := []struct {
+		name    string
+		sql     string
+		wantErr string
+	}{
+		{name: "like", sql: "CREATE TABLE r LIKE s;", wantErr: "create table r: CREATE TABLE … LIKE is not supported"},
+		{name: "parenthesized like", sql: "CREATE TABLE r (LIKE s);", wantErr: "create table r: CREATE TABLE … LIKE is not supported"},
+		{name: "as select", sql: "CREATE TABLE c AS SELECT id FROM s;", wantErr: "create table c: CREATE TABLE … SELECT is not supported"},
+		{name: "select without as", sql: "CREATE TABLE c SELECT id FROM s;", wantErr: "create table c: CREATE TABLE … SELECT is not supported"},
+		{name: "columns and select", sql: "CREATE TABLE c (z int) SELECT id FROM s;", wantErr: "create table c: CREATE TABLE … SELECT is not supported"},
+		{name: "temporary as select", sql: "CREATE TEMPORARY TABLE c AS SELECT id FROM s;", wantErr: "create table c: CREATE TABLE … SELECT is not supported"},
+		{name: "like if not exists on an existing table", sql: "CREATE TABLE IF NOT EXISTS s LIKE s;"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			p, err := mysql.New()
+			if err != nil {
+				t.Fatalf("New() error: %v", err)
+			}
+			err = p.Parse("test.sql", []byte(base+tt.sql))
+			if tt.wantErr == "" {
+				if err != nil {
+					t.Fatalf("Parse() error: %v", err)
+				}
+				return
+			}
+			if err == nil || !strings.Contains(err.Error(), tt.wantErr) {
+				t.Fatalf("Parse() error = %v, want containing %q", err, tt.wantErr)
+			}
+		})
+	}
+}

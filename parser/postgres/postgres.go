@@ -21,8 +21,7 @@ type Parser struct {
 	defaultSchema string
 	tableIndex    map[string]int // qualified "schema.name" → index in schema.Tables
 	// skipped holds the qualified names of the relations the parser skips:
-	// views, materialized views, partitions and CREATE TABLE AS / SELECT …
-	// INTO tables. Each still takes its name.
+	// views, materialized views and partitions. Each still takes its name.
 	// The value reports whether PostgreSQL can index the relation: false
 	// for a view, true for the rest.
 	skipped map[string]bool
@@ -141,15 +140,15 @@ func (p *Parser) processAlterStmt(node *pg_query.Node) error {
 	case *pg_query.Node_AlterSeqStmt:
 		return p.parseAlterSequence(n.AlterSeqStmt)
 	default:
-		p.skipRelation(node)
+		return p.skipRelation(node)
 	}
-	return nil
 }
 
-// skipRelation records the relation a view, materialized view, CREATE TABLE
-// AS or SELECT … INTO creates. The parser does not model it, but it takes its
-// name, and only a view cannot be indexed.
-func (p *Parser) skipRelation(node *pg_query.Node) {
+// skipRelation records the relation a view or materialized view creates. The
+// parser does not model it, but it takes its name, and only a view cannot be
+// indexed. A table CREATE TABLE AS or SELECT … INTO creates is an error, since
+// its columns come from a query.
+func (p *Parser) skipRelation(node *pg_query.Node) error {
 	switch n := node.Node.(type) {
 	case *pg_query.Node_ViewStmt:
 		p.skipped[p.relationKey(n.ViewStmt.View)] = false
@@ -158,25 +157,31 @@ func (p *Parser) skipRelation(node *pg_query.Node) {
 				n.ViewStmt.View.Relname))
 	case *pg_query.Node_CreateTableAsStmt:
 		// CREATE MATERIALIZED VIEW parses as CreateTableAsStmt with a matview
-		// object type; plain CREATE TABLE AS is skipped silently.
-		p.skipped[p.relationKey(n.CreateTableAsStmt.Into.Rel)] = true
-		if n.CreateTableAsStmt.Objtype == pg_query.ObjectType_OBJECT_MATVIEW {
-			p.schema.Warnings = append(p.schema.Warnings,
-				fmt.Sprintf("CREATE MATERIALIZED VIEW %s skipped in DDL file — use introspection or define the view in input.views",
-					n.CreateTableAsStmt.Into.Rel.Relname))
+		// object type.
+		key := p.relationKey(n.CreateTableAsStmt.Into.Rel)
+		if n.CreateTableAsStmt.Objtype != pg_query.ObjectType_OBJECT_MATVIEW {
+			_, isTable := p.tableIndex[key]
+			_, isSkipped := p.skipped[key]
+			if n.CreateTableAsStmt.IfNotExists && (isTable || isSkipped) {
+				return nil
+			}
+			return fmt.Errorf("create table %s: CREATE TABLE … AS %s", key, parser.UnreadColumns)
 		}
+		p.skipped[key] = true
+		p.schema.Warnings = append(p.schema.Warnings,
+			fmt.Sprintf("CREATE MATERIALIZED VIEW %s skipped in DDL file — use introspection or define the view in input.views",
+				n.CreateTableAsStmt.Into.Rel.Relname))
 	case *pg_query.Node_SelectStmt:
-		// SELECT … INTO creates a table, skipped silently as CREATE TABLE AS
-		// is. In a UNION, INTERSECT or EXCEPT the INTO sits on the leftmost
-		// SELECT.
+		// In a UNION, INTERSECT or EXCEPT the INTO sits on the leftmost SELECT.
 		sel := n.SelectStmt
 		for sel.Op != pg_query.SetOperation_SETOP_NONE && sel.Larg != nil {
 			sel = sel.Larg
 		}
 		if into := sel.IntoClause; into != nil && into.Rel != nil {
-			p.skipped[p.relationKey(into.Rel)] = true
+			return fmt.Errorf("create table %s: SELECT … INTO %s", p.relationKey(into.Rel), parser.UnreadColumns)
 		}
 	}
+	return nil
 }
 
 func (p *Parser) parseCreateTable(stmt *pg_query.CreateStmt) error {
@@ -212,6 +217,9 @@ func (p *Parser) parseCreateTable(stmt *pg_query.CreateStmt) error {
 			return nil
 		}
 		return fmt.Errorf("table %s already exists", key)
+	}
+	if form := unreadColumnsForm(stmt); form != "" {
+		return fmt.Errorf("create table %s: %s %s", key, form, parser.UnreadColumns)
 	}
 
 	table := parser.Table{
@@ -249,6 +257,23 @@ func (p *Parser) parseCreateTable(stmt *pg_query.CreateStmt) error {
 	p.addConstraints(created, mergeDuplicateIndexes(constraints))
 
 	return p.resolveImplicitRefs(created)
+}
+
+// unreadColumnsForm names the clause of stmt, if any, that gives the table
+// columns the parser does not read.
+func unreadColumnsForm(stmt *pg_query.CreateStmt) string {
+	switch {
+	case stmt.OfTypename != nil:
+		return "CREATE TABLE … OF"
+	case len(stmt.InhRelations) > 0:
+		return "INHERITS"
+	}
+	for _, elt := range stmt.TableElts {
+		if elt.GetTableLikeClause() != nil {
+			return "LIKE"
+		}
+	}
+	return ""
 }
 
 // mergeDuplicateIndexes merges the PRIMARY KEY and UNIQUE constraints of one
@@ -579,10 +604,9 @@ func (p *Parser) parseAlterDomain(stmt *pg_query.AlterDomainStmt) error {
 // given (PRD §30.7 expects "btree" / "gin" / "gist" / "hash"); WhereClause
 // holds the partial-index predicate text. An index with an expression part is
 // not an index over columns, so it is skipped, as the introspector skips it;
-// its name stays taken. An index on a materialized view, a partition or a
-// CREATE TABLE AS table is skipped with the relation. An index on any other
-// relation no earlier statement created, a view included, is an error, as it
-// is in PostgreSQL.
+// its name stays taken. An index on a materialized view or a partition is
+// skipped with the relation. An index on any other relation no earlier
+// statement created, a view included, is an error, as it is in PostgreSQL.
 func (p *Parser) parseCreateIndex(stmt *pg_query.IndexStmt) error {
 	if stmt == nil || stmt.Relation == nil {
 		return nil
@@ -1170,9 +1194,8 @@ func (p *Parser) removeTable(key string) {
 }
 
 // skippedTable reports whether names is a relation the parser skips that
-// PostgreSQL can index: a partition, materialized view or CREATE TABLE AS /
-// SELECT … INTO table. COMMENT ON TABLE of one is skipped with it, as CREATE
-// INDEX on one is.
+// PostgreSQL can index: a partition or materialized view. COMMENT ON TABLE of
+// one is skipped with it, as CREATE INDEX on one is.
 func (p *Parser) skippedTable(names []string) bool {
 	schema, name := p.splitQualifiedName(names)
 	return p.skipped[schema+"."+name]

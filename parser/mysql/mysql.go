@@ -427,16 +427,20 @@ func (p *Parser) parseDropTable(stmt *sqlparser.DropTable) error {
 // --- CREATE TABLE ---
 
 func (p *Parser) parseCreateTable(stmt *sqlparser.CreateTable, sql string) error {
-	if stmt.TableSpec == nil {
-		return nil
-	}
-
 	tableName := stmt.Table.Name.String()
 	if _, exists := p.tableIndex[tableName]; exists {
 		if stmt.IfNotExists {
 			return nil
 		}
 		return fmt.Errorf("table %s already exists", tableName)
+	}
+	switch {
+	case stmt.OptLike != nil:
+		return fmt.Errorf("create table %s: CREATE TABLE … LIKE %s", tableName, parser.UnreadColumns)
+	case stmt.Select != nil:
+		return fmt.Errorf("create table %s: CREATE TABLE … SELECT %s", tableName, parser.UnreadColumns)
+	case stmt.TableSpec == nil:
+		return nil
 	}
 
 	table := parser.Table{

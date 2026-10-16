@@ -54,6 +54,9 @@ func buildSingleViewContext(input *GenerateInput, view *parser.View, collisions 
 		structNameOverride = viewCfg.StructName
 	}
 	structName := structNameFor(view.Name, view.Schema, structNameOverride, collisions)
+	if err := checkStructName("view", qualifiedViewOrName(view), structName, structNameOverride); err != nil {
+		return ViewContext{}, err
+	}
 	snakeName := snakeNameFor(view.Name, view.Schema, structNameOverride, collisions)
 
 	columns := buildViewColumns(input, view, viewCfg)

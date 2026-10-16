@@ -13,8 +13,8 @@ import (
 // TestCreateIndexOnUnknownRelation pins that CREATE INDEX on a relation no
 // earlier statement created is an error, as it is in PostgreSQL 16 and 17
 // (`relation "users" does not exist`, `cannot create index on relation "v"`),
-// while an index on a materialized view, a partition or a CREATE TABLE AS /
-// SELECT … INTO table, which the parser skips on purpose, is skipped with it.
+// while an index on a materialized view or a partition, which the parser skips
+// on purpose, is skipped with it.
 func TestCreateIndexOnUnknownRelation(t *testing.T) {
 	const base = `CREATE TABLE t (id int PRIMARY KEY);
 CREATE TABLE p (id int, k int) PARTITION BY RANGE (k);
@@ -45,10 +45,6 @@ CREATE VIEW v AS SELECT id FROM t;
 		{name: "renamed view", ddl: `ALTER VIEW v RENAME TO v2; CREATE INDEX v2_id ON v2 (id);`, wantErr: "create index v2_id: table public.v2 not found"},
 		{name: "dropped partition", ddl: `DROP TABLE p1; CREATE INDEX p1_k ON p1 (k);`, wantErr: "create index p1_k: table public.p1 not found"},
 		{name: "partition of a dropped table", ddl: `DROP TABLE p; CREATE INDEX p2_k ON s.p2 (k);`, wantErr: "create index p2_k: table s.p2 not found"},
-		{name: "create table as", ddl: `CREATE TABLE x AS SELECT 1 AS a; CREATE INDEX ON x (a);`},
-		{name: "select into", ddl: `SELECT 1 AS a INTO x; CREATE INDEX x_a ON x (a);`},
-		{name: "select into with union", ddl: `SELECT 1 AS a INTO x UNION SELECT 2; CREATE INDEX x_a ON x (a);`},
-		{name: "dropped create table as", ddl: `CREATE TABLE x AS SELECT 1 AS a; DROP TABLE x; CREATE INDEX x_a ON x (a);`, wantErr: "create index x_a: table public.x not found"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

@@ -626,12 +626,19 @@ func (in *inflector) singularize(s string) string {
 		return s
 	}
 
+	singular := strings.TrimSuffix(word, "s")
 	for _, r := range in.singularRules {
 		if strings.HasSuffix(word, r.suffix) {
-			return prefix + r.fn(word)
+			singular = r.fn(word)
+			break
 		}
 	}
-	return prefix + strings.TrimSuffix(word, "s")
+	if singular == "" {
+		// The word is only the suffix, as in a table named "s"; nothing would
+		// be left to name it.
+		return s
+	}
+	return prefix + singular
 }
 
 // pluralize returns the plural form of s, inflecting only its last word.

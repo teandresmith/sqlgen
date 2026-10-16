@@ -300,6 +300,9 @@ func (p *Parser) parseCreateTable(stmt *rsql.CreateTableStatement, src []rune) e
 		}
 		return fmt.Errorf("table %s already exists", tableName)
 	}
+	if stmt.Select != nil {
+		return fmt.Errorf("create table %s: CREATE TABLE … AS SELECT %s", tableName, parser.UnreadColumns)
+	}
 
 	table := parser.Table{
 		Name:         tableName,

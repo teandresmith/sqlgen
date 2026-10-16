@@ -31,6 +31,97 @@ _No open fixes._
 
 <!-- fixes:resolved:begin -->
 
+### FIX-355
+
+- **Status:** Resolved
+- **Severity:** tracked
+- **Origin:** phase 30, parser
+- **Surfaced by:** Ship-readiness review of `feat/introspection` (2026-10-16), user ruling option 1
+
+**Issue.** **CREATE TABLE forms the file parser cannot model build a wrong
+schema silently.** The file parsers accept CREATE
+TABLE forms whose columns they do not read, and record a table with too few
+columns, no columns or no table, with no error. Measured at `1d34296c`:
+
+- PostgreSQL `CREATE TABLE r (LIKE s, z int)` gives `r[z]`.
+- PostgreSQL `CREATE TABLE b (x int) INHERITS (a)` gives `b[x]`.
+- PostgreSQL `CREATE TABLE tt OF comp` gives `tt[]`.
+- PostgreSQL `CREATE TABLE c AS SELECT …` and `SELECT … INTO c` give no table,
+  and a later `ALTER TABLE c ADD COLUMN` is absorbed.
+- SQLite `CREATE TABLE c AS SELECT …` gives `c[]` ("table c has no primary
+  key; skipped").
+- MySQL `CREATE TABLE r LIKE s` and `CREATE TABLE c AS SELECT …` give no
+  table, and a foreign key into `r` is accepted.
+
+The filed repro also crashed `sqlgen generate` ("panic: runtime error: slice
+bounds out of range [:1] with length 0" at
+`cmd/sqlgen/gen/context_table.go:488`, exit 2). The auto-review found that the
+crash comes from the repro's source table being named `s`, whose struct name
+singularizes to `""`. It is not caused by `LIKE`: `CREATE TABLE s (id int
+PRIMARY KEY)` alone panics, and the same LIKE schema with the source named
+`src` generates.
+
+This affects `source: files`, and `source: both` when a pending migration
+uses one of these forms. `source: database` reads the catalog's columns and
+is unaffected.
+
+**Root cause.**
+
+- **PostgreSQL.** `parser/postgres/postgres.go` `parseCreateTable` reads only
+  the `ColumnDef` and `Constraint` table elements. It ignores
+  `TableLikeClause`, `InhRelations` (outside a partition) and `OfTypename`.
+  `skipRelation` records CREATE TABLE AS / SELECT … INTO tables as skipped
+  relations, a skip PRD §5.2 states.
+- **MySQL.** `parser/mysql/mysql.go` `parseCreateTable` returns nil when
+  `TableSpec` is nil (`LIKE`, `AS SELECT`) and ignores `Select` otherwise.
+- **SQLite.** `parser/sqlite/sqlite.go` `parseCreateTable` ignores `Select`.
+
+**Suggested fix.**
+- The user ruled on 2026-10-16: make each form a parse error (option 1); do not model them.
+- PG: `CREATE TABLE … (LIKE …)`, `INHERITS (…)` on a non-partition, `CREATE TABLE … OF type`, `CREATE TABLE … AS` (plain, not a materialized view) and `SELECT … INTO` each fail with an error naming the table and saying to write the columns out or use `source: database`.
+- MySQL: `CREATE TABLE … LIKE` and `CREATE TABLE … [(…)] [AS] SELECT` fail the same way.
+- SQLite: `CREATE TABLE … AS SELECT` fails the same way. SQLite stores such a table as a plain CREATE TABLE (`CREATE TABLE c(id INT,b TEXT)`), so the introspector's `parseStoredTable` is unaffected.
+- TEMP / TEMPORARY forms fail too: the parsers model temporary tables as permanent tables on every dialect, so skipping only a temporary CTAS would be inconsistent.
+- Drop CREATE TABLE AS / SELECT … INTO from the PG skipped-relation set and its comments; PRD §5.2 line 1432 drops them from the skipped list and states the new errors.
+- Regression tests: per-dialect table tests for each form's error. The table-`s` panic is a separate naming defect and is out of scope.
+
+**References.**
+- PRD §5.2 (line 1432, the skipped-relation list), §6.1.
+- Backlog lines this resolves (2026-10-12): the PG typed table, PG `INHERITS` and PG `LIKE` lines (from the FIX-337 and FIX-339 vets) and the SQLite `CREATE TABLE r1 AS SELECT` line.
+- `parser/introspect/sqlite.go` `parseStoredTable` reuses the SQLite file parser.
+
+**Resolution notes.** Each form is now a parse error on its dialect, worded `create table <name>: <form> is not supported in SQL files, since sqlgen does not read the columns it gives the table; write the columns out, or create the table in the database and read it from there (input.source: database or both)`.
+- **The forms.**
+  - PostgreSQL: `LIKE`, `INHERITS` (outside `PARTITION OF`), `CREATE TABLE … OF`, `CREATE TABLE … AS` and `SELECT … INTO`, the last also on the leftmost arm of a set operation.
+  - MySQL: `CREATE TABLE … LIKE`, in both its bare and parenthesized forms, and `CREATE TABLE … [(…)] [AS] SELECT`.
+  - SQLite: `CREATE TABLE … AS SELECT`.
+- **Code.** The wording is the shared constant `parser.UnreadColumns`. Each dialect formats it with `fmt.Errorf`, because the linter's wrapcheck rule rejects returning an error built in another package.
+- **Kept working.**
+  - A PostgreSQL materialized view is still skipped with its warning.
+  - `IF NOT EXISTS` on a name that already exists is still a no-op. On PostgreSQL that holds for a skipped relation too.
+  - The PostgreSQL skipped-relation set and its comments no longer mention CREATE TABLE AS or SELECT … INTO.
+- **TEMP forms fail too**, as the Suggested fix says, since every parser models a temporary table as a permanent one.
+- **CLI.** The repro schema now fails with "Schema error: … create table public.r: LIKE is not supported in SQL files, …" and exit 3. Its source table `s` still panics on its own (`CREATE TABLE s (id int PRIMARY KEY)` → exit 2), a separate naming defect found by the auto-review.
+- **Tests.**
+  - New: `TestCreateTableUnreadColumns` for PostgreSQL (13 cases), MySQL (7) and SQLite (3).
+  - Fail-first: with the production change reverted, all 17 error cases fail and the no-error cases pass.
+  - Removed the cases that pinned the old skip: four in `TestCreateIndexOnUnknownRelation`, and the "CREATE TABLE AS or SELECT INTO table takes an index name" case in `TestDerivedConstraintNames`.
+  - `TestImplicitReferenceColumns`' "other skipped relation" case now uses a materialized view.
+- **PRD §5.2.** New paragraph "A table states its columns". The `CREATE INDEX` paragraph's exception list drops the CREATE TABLE AS / SELECT … INTO table.
+- **Gates:** `make check`, `make check-examples` and `make test-integration` all pass. No golden churn.
+- **Backlog.**
+  - Removed the four 2026-10-12 lines this resolves: the PG typed table, PG INHERITS, PG LIKE and SQLite CTAS lines.
+  - Added two lines: temporary tables are modeled as permanent ones; `CREATE TABLE IF NOT EXISTS` with LIKE, INHERITS or OF over a skipped relation's name errors where PostgreSQL does nothing.
+- **Auto-review.** PRD 5/5, tests 3/3, and fail-first confirmed. Four doc corrections were applied here: the panic is not caused by LIKE.
+- **The table-`s` panic, fixed inline by the user's ruling (2026-10-16).**
+  - Cause: `StructName("s")` was `""`, because `singularize`'s fallback trimmed the whole word, and `assembleTableContext` then sliced `structName[:1]`.
+  - `singularize` (`cmd/sqlgen/gen/inflect.go`) now keeps a last word that a rule would empty, so `s` and `_s` give `S` / `s`. The file stem follows through `SnakeName`.
+  - `checkStructName` (`gen/naming.go`), run by the table and view context builders, makes a struct name that is not an exported Go identifier a generation error naming its `struct_name` key: a name with no letter (`_`, `$`), one with no upper-case first letter (`ß`), or such an override.
+  - Measured with the CLI: `s` and `_s` generate; `_`, `$` and `ß` exit 1 with the error; `struct_name: Underscore` on `_` generates `type Underscore struct`.
+  - Tests: `TestToSingular` and `TestStructName` gained the suffix-only cases, plus the new `TestBuildContexts_StructNameMustBeExported` (9 cases). With the change reverted, the suffix cases fail and the no-letter case panics at the original slice.
+  - PRD §8.5 states both rules.
+
+
 ### FIX-351
 
 - **Status:** Resolved

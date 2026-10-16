@@ -2330,3 +2330,33 @@ func TestParseViewSQL_ColumnNames(t *testing.T) {
 		})
 	}
 }
+
+// TestCreateTableUnreadColumns pins that CREATE TABLE … AS SELECT is an error,
+// since the parser does not read the columns the query gives the table.
+func TestCreateTableUnreadColumns(t *testing.T) {
+	const base = "CREATE TABLE s (id INTEGER PRIMARY KEY, name TEXT NOT NULL);\n"
+	tests := []struct {
+		name    string
+		sql     string
+		wantErr string
+	}{
+		{name: "as select", sql: "CREATE TABLE c AS SELECT id, name FROM s;", wantErr: "create table c: CREATE TABLE … AS SELECT is not supported"},
+		{name: "temporary as select", sql: "CREATE TEMP TABLE c AS SELECT id FROM s;", wantErr: "create table c: CREATE TABLE … AS SELECT is not supported"},
+		{name: "as select if not exists on an existing table", sql: "CREATE TABLE IF NOT EXISTS s AS SELECT 1 AS id;"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			p := sqlite.New()
+			err := p.Parse("test.sql", []byte(base+tt.sql))
+			if tt.wantErr == "" {
+				if err != nil {
+					t.Fatalf("Parse() error: %v", err)
+				}
+				return
+			}
+			if err == nil || !strings.Contains(err.Error(), tt.wantErr) {
+				t.Fatalf("Parse() error = %v, want containing %q", err, tt.wantErr)
+			}
+		})
+	}
+}

@@ -1043,8 +1043,8 @@ func TestImplicitReferenceColumns(t *testing.T) {
 			want: []fk{{"public.t", "t_x_fkey", []string{"id"}, &parser.FKReference{Table: "p1", Schema: "public", Column: "id"}}},
 		},
 		{
-			name: "other skipped relation stays as written",
-			sql:  `CREATE TABLE u (id int PRIMARY KEY); CREATE TABLE c AS SELECT * FROM u; CREATE TABLE t (x int REFERENCES c);`,
+			name: "materialized view stays as written",
+			sql:  `CREATE TABLE u (id int PRIMARY KEY); CREATE MATERIALIZED VIEW c AS SELECT * FROM u; CREATE TABLE t (x int REFERENCES c);`,
 			want: []fk{{"public.t", "t_x_fkey", []string{}, &parser.FKReference{Table: "c", Schema: "public"}}},
 		},
 		{
@@ -3127,18 +3127,6 @@ func TestDerivedConstraintNames(t *testing.T) {
 			want: []string{"w INDEX w_a_idx", "w INDEX w_b_idx", "w INDEX w_c_idx", "w INDEX w_d_idx1"},
 		},
 		{
-			name: "a CREATE TABLE AS or SELECT INTO table takes an index name until it is dropped",
-			sql: `CREATE TABLE n_a_idx AS SELECT 1 AS x;
-				SELECT 1 AS x INTO n_b_idx;
-				CREATE TABLE n_c_idx AS SELECT 1 AS x;
-				DROP TABLE n_c_idx;
-				CREATE TABLE n (a int, b int, c int);
-				CREATE INDEX ON n (a);
-				CREATE INDEX ON n (b);
-				CREATE INDEX ON n (c);`,
-			want: []string{"n INDEX n_a_idx1", "n INDEX n_b_idx1", "n INDEX n_c_idx"},
-		},
-		{
 			name: "a merged primary key takes a unique's name",
 			sql: `CREATE TABLE m (id int UNIQUE, CONSTRAINT pk PRIMARY KEY (id), CONSTRAINT u2 UNIQUE (id));
 				CREATE TABLE m2 (CONSTRAINT u1 UNIQUE (id), id int PRIMARY KEY);`,
@@ -3690,5 +3678,49 @@ func TestViewFromTables_CTEReadingTableOfItsName(t *testing.T) {
 	}
 	if diff := cmp.Diff(map[string]string{"users": "", "with:users/users": "users"}, got); diff != "" {
 		t.Errorf("ViewFromTables() mismatch (-want +got):\n%s", diff)
+	}
+}
+
+// TestCreateTableUnreadColumns pins that a CREATE TABLE whose columns come from
+// another table, a type or a query is an error, since the parser does not read
+// those columns and a table without them generates wrong code. A materialized
+// view, which parses as CREATE TABLE AS, is still skipped.
+func TestCreateTableUnreadColumns(t *testing.T) {
+	const base = `CREATE TABLE s (id int PRIMARY KEY, name text NOT NULL);
+CREATE TYPE comp AS (a int, b text);
+`
+	tests := []struct {
+		name    string
+		sql     string
+		wantErr string
+	}{
+		{name: "like", sql: `CREATE TABLE r (LIKE s INCLUDING ALL);`, wantErr: "create table public.r: LIKE is not supported in SQL files"},
+		{name: "like with columns", sql: `CREATE TABLE r (z int, LIKE s);`, wantErr: "create table public.r: LIKE is not supported in SQL files"},
+		{name: "inherits", sql: `CREATE TABLE b (x int) INHERITS (s);`, wantErr: "create table public.b: INHERITS is not supported"},
+		{name: "typed table", sql: `CREATE TABLE tt OF comp;`, wantErr: "create table public.tt: CREATE TABLE … OF is not supported"},
+		{name: "create table as", sql: `CREATE TABLE c AS SELECT id FROM s;`, wantErr: "create table public.c: CREATE TABLE … AS is not supported"},
+		{name: "temporary create table as", sql: `CREATE TEMP TABLE c AS SELECT id FROM s;`, wantErr: "create table public.c: CREATE TABLE … AS is not supported"},
+		{name: "create table as in another schema", sql: `CREATE SCHEMA app; CREATE TABLE app.c AS SELECT id FROM s;`, wantErr: "create table app.c: CREATE TABLE … AS is not supported"},
+		{name: "select into", sql: `SELECT id INTO c FROM s;`, wantErr: "create table public.c: SELECT … INTO is not supported"},
+		{name: "select into with union", sql: `SELECT id INTO c FROM s UNION SELECT 2;`, wantErr: "create table public.c: SELECT … INTO is not supported"},
+		{name: "create table as if not exists on an existing table", sql: `CREATE TABLE IF NOT EXISTS s AS SELECT 1 AS id;`},
+		{name: "create table as if not exists on a materialized view", sql: `CREATE MATERIALIZED VIEW mv AS SELECT id FROM s; CREATE TABLE IF NOT EXISTS mv AS SELECT 1 AS id;`},
+		{name: "materialized view", sql: `CREATE MATERIALIZED VIEW mv AS SELECT id FROM s;`},
+		{name: "partition", sql: `CREATE TABLE p (k int) PARTITION BY RANGE (k); CREATE TABLE p1 PARTITION OF p FOR VALUES FROM (0) TO (10);`},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			p := postgres.New("")
+			err := p.Parse("test.sql", []byte(base+tt.sql))
+			if tt.wantErr == "" {
+				if err != nil {
+					t.Fatalf("Parse() error: %v", err)
+				}
+				return
+			}
+			if err == nil || !strings.Contains(err.Error(), tt.wantErr) {
+				t.Fatalf("Parse() error = %v, want containing %q", err, tt.wantErr)
+			}
+		})
 	}
 }
