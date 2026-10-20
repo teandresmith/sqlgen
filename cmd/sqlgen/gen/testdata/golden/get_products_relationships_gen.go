@@ -350,19 +350,20 @@ func (c *productClient) loadRelationships(ctx context.Context, conn database.Que
 				}
 			}
 
-			// Build mapping and collect all target IDs
+			// Build mapping and collect all target keys. Each junction column
+			// scans into its own Go type, so both sides of the maps stringify
+			// keys the same way.
 			parentToTargetIDs := make(map[string][]string)
 			var allTargetIDs []string
 			for junctionRows.Next() {
-				vals := make([]string, len(junctionCols))
+				var localKey uuid.UUID
+				var refKey uuid.UUID
 				ptrs := make([]any, len(junctionCols))
-				for i := range vals {
-					ptrs[i] = &vals[i]
-				}
+				ptrs[localIdx], ptrs[refIdx] = &localKey, &refKey
 				if err := junctionRows.Scan(ptrs...); err != nil {
 					return fmt.Errorf("scan product tags junction: %w", err)
 				}
-				parentID, targetID := vals[localIdx], vals[refIdx]
+				parentID, targetID := localKey.String(), refKey.String()
 				parentToTargetIDs[parentID] = append(parentToTargetIDs[parentID], targetID)
 				allTargetIDs = append(allTargetIDs, targetID)
 			}
@@ -370,7 +371,7 @@ func (c *productClient) loadRelationships(ctx context.Context, conn database.Que
 				return fmt.Errorf("iterate product tags junction: %w", err)
 			}
 
-			if len(allTargetIDs) == 0 {
+			if len(parentToTargetIDs) == 0 {
 				return nil
 			}
 

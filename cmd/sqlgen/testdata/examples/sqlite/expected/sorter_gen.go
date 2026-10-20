@@ -120,6 +120,23 @@ func (s BinaryKeySorter) Name(direction sql.SortDirection) sql.Sort {
 	return sql.Sort{Column: "name", Direction: direction}
 }
 
+// BinaryKeyBadgeSorter provides type-safe sort helpers for the BinaryKeyBadge entity.
+// Each method returns a sql.Sort for the corresponding column.
+type BinaryKeyBadgeSorter struct{}
+
+// NewBinaryKeyBadgeSorter returns a new BinaryKeyBadgeSorter.
+func NewBinaryKeyBadgeSorter() BinaryKeyBadgeSorter { return BinaryKeyBadgeSorter{} }
+
+// BadgeCode returns a sort for the badge_code column in the given direction.
+func (s BinaryKeyBadgeSorter) BadgeCode(direction sql.SortDirection) sql.Sort {
+	return sql.Sort{Column: "badge_code", Direction: direction}
+}
+
+// BinaryKeyID returns a sort for the binary_key_id column in the given direction.
+func (s BinaryKeyBadgeSorter) BinaryKeyID(direction sql.SortDirection) sql.Sort {
+	return sql.Sort{Column: "binary_key_id", Direction: direction}
+}
+
 // BinaryKeyEventSorter provides type-safe sort helpers for the BinaryKeyEvent entity.
 // Each method returns a sql.Sort for the corresponding column.
 type BinaryKeyEventSorter struct{}

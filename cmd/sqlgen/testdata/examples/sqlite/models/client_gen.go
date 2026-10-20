@@ -65,6 +65,7 @@ type Client struct {
 	assetDocumentLink  *assetDocumentLinkClient
 	badge              *badgeClient
 	binaryKey          *binaryKeyClient
+	binaryKeyBadge     *binaryKeyBadgeClient
 	binaryKeyEvent     *binaryKeyEventClient
 	category           *categoryClient
 	categoryStat       *categoryStatClient
@@ -106,6 +107,7 @@ func New(querier database.Querier, opts ...ClientOption) *Client {
 		assetDocumentLink:  newAssetDocumentLinkClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler),
 		badge:              newBadgeClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler),
 		binaryKey:          newBinaryKeyClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler),
+		binaryKeyBadge:     newBinaryKeyBadgeClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler),
 		binaryKeyEvent:     newBinaryKeyEventClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler),
 		category:           newCategoryClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler),
 		categoryStat:       newCategoryStatClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler),
@@ -148,9 +150,13 @@ func New(querier database.Querier, opts ...ClientOption) *Client {
 	// the nested-mutation executors write through
 	c.asset.documentClient = c.document
 	c.asset.assetDocumentLinkClient = c.assetDocumentLink
+	c.badge.binaryKeyClient = c.binaryKey
 	c.badge.ownerClient = c.owner
+	c.badge.binaryKeyBadgeClient = c.binaryKeyBadge
 	c.badge.ownerBadgeClient = c.ownerBadge
 	c.binaryKey.binaryKeyEventClient = c.binaryKeyEvent
+	c.binaryKey.badgeClient = c.badge
+	c.binaryKey.binaryKeyBadgeClient = c.binaryKeyBadge
 	c.category.productClient = c.product
 	c.category.userClient = c.user
 	c.category.userCategoryClient = c.userCategory
@@ -193,6 +199,11 @@ func (c *Client) Badges() BadgeClient {
 // BinaryKeys returns the BinaryKeyClient for BinaryKey operations.
 func (c *Client) BinaryKeys() BinaryKeyClient {
 	return c.binaryKey
+}
+
+// BinaryKeyBadges returns the BinaryKeyBadgeClient for BinaryKeyBadge operations.
+func (c *Client) BinaryKeyBadges() BinaryKeyBadgeClient {
+	return c.binaryKeyBadge
 }
 
 // BinaryKeyEvents returns the BinaryKeyEventClient for BinaryKeyEvent operations.

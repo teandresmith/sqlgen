@@ -84,6 +84,9 @@ type Client struct {
 	defaultOnlyRow    *defaultOnlyRowClient
 	document          *documentClient
 	event             *eventClient
+	fingerprint       *fingerprintClient
+	host              *hostClient
+	hostFingerprint   *hostFingerprintClient
 	keyOnlyRow        *keyOnlyRowClient
 	noteWatcher       *noteWatcherClient
 	order             *orderClient
@@ -140,6 +143,9 @@ func New(querier database.Querier, opts ...ClientOption) *Client {
 		defaultOnlyRow:    newDefaultOnlyRowClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler),
 		document:          newDocumentClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler),
 		event:             newEventClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler),
+		fingerprint:       newFingerprintClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler),
+		host:              newHostClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler),
+		hostFingerprint:   newHostFingerprintClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler),
 		keyOnlyRow:        newKeyOnlyRowClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler),
 		noteWatcher:       newNoteWatcherClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler),
 		order:             newOrderClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler),
@@ -168,6 +174,8 @@ func New(querier database.Querier, opts ...ClientOption) *Client {
 	c.category.callbackMode = options.callbackMode
 	c.document.callbackMode = options.callbackMode
 	c.event.callbackMode = options.callbackMode
+	c.fingerprint.callbackMode = options.callbackMode
+	c.host.callbackMode = options.callbackMode
 	c.order.callbackMode = options.callbackMode
 	c.product.callbackMode = options.callbackMode
 	c.publicUser.callbackMode = options.callbackMode
@@ -184,6 +192,10 @@ func New(querier database.Querier, opts ...ClientOption) *Client {
 	c.document.assetDocumentLinkClient = c.assetDocumentLink
 	c.event.auditNoteClient = c.auditNote
 	c.event.publicNoteClient = c.publicNote
+	c.fingerprint.hostClient = c.host
+	c.fingerprint.hostFingerprintClient = c.hostFingerprint
+	c.host.fingerprintClient = c.fingerprint
+	c.host.hostFingerprintClient = c.hostFingerprint
 	c.order.orderItemClient = c.orderItem
 	c.product.orderItemClient = c.orderItem
 	c.product.productTagLabelClient = c.productTagLabel
@@ -252,6 +264,21 @@ func (c *Client) Documents() DocumentClient {
 // Events returns the EventClient for Event operations.
 func (c *Client) Events() EventClient {
 	return c.event
+}
+
+// Fingerprints returns the FingerprintClient for Fingerprint operations.
+func (c *Client) Fingerprints() FingerprintClient {
+	return c.fingerprint
+}
+
+// Hosts returns the HostClient for Host operations.
+func (c *Client) Hosts() HostClient {
+	return c.host
+}
+
+// HostFingerprints returns the HostFingerprintClient for HostFingerprint operations.
+func (c *Client) HostFingerprints() HostFingerprintClient {
+	return c.hostFingerprint
 }
 
 // KeyOnlyRows returns the KeyOnlyRowClient for KeyOnlyRow operations.

@@ -280,6 +280,57 @@ func (s EventSorter) Payload(direction sql.SortDirection) sql.Sort {
 	return sql.Sort{Column: "payload", Direction: direction}
 }
 
+// FingerprintSorter provides type-safe sort helpers for the Fingerprint entity.
+// Each method returns a sql.Sort for the corresponding column.
+type FingerprintSorter struct{}
+
+// NewFingerprintSorter returns a new FingerprintSorter.
+func NewFingerprintSorter() FingerprintSorter { return FingerprintSorter{} }
+
+// Digest returns a sort for the digest column in the given direction.
+func (s FingerprintSorter) Digest(direction sql.SortDirection) sql.Sort {
+	return sql.Sort{Column: "digest", Direction: direction}
+}
+
+// Label returns a sort for the label column in the given direction.
+func (s FingerprintSorter) Label(direction sql.SortDirection) sql.Sort {
+	return sql.Sort{Column: "label", Direction: direction}
+}
+
+// HostSorter provides type-safe sort helpers for the Host entity.
+// Each method returns a sql.Sort for the corresponding column.
+type HostSorter struct{}
+
+// NewHostSorter returns a new HostSorter.
+func NewHostSorter() HostSorter { return HostSorter{} }
+
+// Addr returns a sort for the addr column in the given direction.
+func (s HostSorter) Addr(direction sql.SortDirection) sql.Sort {
+	return sql.Sort{Column: "addr", Direction: direction}
+}
+
+// Label returns a sort for the label column in the given direction.
+func (s HostSorter) Label(direction sql.SortDirection) sql.Sort {
+	return sql.Sort{Column: "label", Direction: direction}
+}
+
+// HostFingerprintSorter provides type-safe sort helpers for the HostFingerprint entity.
+// Each method returns a sql.Sort for the corresponding column.
+type HostFingerprintSorter struct{}
+
+// NewHostFingerprintSorter returns a new HostFingerprintSorter.
+func NewHostFingerprintSorter() HostFingerprintSorter { return HostFingerprintSorter{} }
+
+// FingerprintDigest returns a sort for the fingerprint_digest column in the given direction.
+func (s HostFingerprintSorter) FingerprintDigest(direction sql.SortDirection) sql.Sort {
+	return sql.Sort{Column: "fingerprint_digest", Direction: direction}
+}
+
+// HostAddr returns a sort for the host_addr column in the given direction.
+func (s HostFingerprintSorter) HostAddr(direction sql.SortDirection) sql.Sort {
+	return sql.Sort{Column: "host_addr", Direction: direction}
+}
+
 // KeyOnlyRowSorter provides type-safe sort helpers for the KeyOnlyRow entity.
 // Each method returns a sql.Sort for the corresponding column.
 type KeyOnlyRowSorter struct{}

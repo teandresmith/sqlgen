@@ -8,7 +8,6 @@ import (
 	"fmt"
 	"iter"
 	"slices"
-	"strconv"
 	"uuid"
 
 	"github.com/teandresmith/sqlgen/comparator"
@@ -12286,36 +12285,32 @@ func (c *postClient) loadRelationships(ctx context.Context, conn database.Querie
 				}
 			}
 
-			// Build mapping and collect all target IDs
+			// Build mapping and collect all target keys. Each junction column
+			// scans into its own Go type, so both sides of the maps stringify
+			// keys the same way.
 			parentToTargetIDs := make(map[string][]string)
-			var allTargetIDs []string
+			var targetPKs []int64
 			for junctionRows.Next() {
-				vals := make([]string, len(junctionCols))
+				var localKey int64
+				var refKey int64
 				ptrs := make([]any, len(junctionCols))
-				for i := range vals {
-					ptrs[i] = &vals[i]
-				}
+				ptrs[localIdx], ptrs[refIdx] = &localKey, &refKey
 				if err := junctionRows.Scan(ptrs...); err != nil {
 					return fmt.Errorf("scan post tags junction: %w", err)
 				}
-				parentID, targetID := vals[localIdx], vals[refIdx]
+				parentID, targetID := fmt.Sprint(localKey), fmt.Sprint(refKey)
 				parentToTargetIDs[parentID] = append(parentToTargetIDs[parentID], targetID)
-				allTargetIDs = append(allTargetIDs, targetID)
+				targetPKs = append(targetPKs, int64(refKey))
 			}
 			if err := junctionRows.Err(); err != nil {
 				return fmt.Errorf("iterate post tags junction: %w", err)
 			}
 
-			if len(allTargetIDs) == 0 {
+			if len(parentToTargetIDs) == 0 {
 				return nil
 			}
 
 			// Step 2: Fetch the actual entities
-			targetPKs := make([]int64, len(allTargetIDs))
-			for ii, s := range allTargetIDs {
-				v, _ := strconv.ParseInt(s, 10, 64)
-				targetPKs[ii] = int64(v)
-			}
 			filter := &TagFilter{
 				ID: &comparator.Number[int64]{In: targetPKs},
 			}
@@ -20310,36 +20305,32 @@ func (c *tagClient) loadRelationships(ctx context.Context, conn database.Querier
 				}
 			}
 
-			// Build mapping and collect all target IDs
+			// Build mapping and collect all target keys. Each junction column
+			// scans into its own Go type, so both sides of the maps stringify
+			// keys the same way.
 			parentToTargetIDs := make(map[string][]string)
-			var allTargetIDs []string
+			var targetPKs []int64
 			for junctionRows.Next() {
-				vals := make([]string, len(junctionCols))
+				var localKey int64
+				var refKey int64
 				ptrs := make([]any, len(junctionCols))
-				for i := range vals {
-					ptrs[i] = &vals[i]
-				}
+				ptrs[localIdx], ptrs[refIdx] = &localKey, &refKey
 				if err := junctionRows.Scan(ptrs...); err != nil {
 					return fmt.Errorf("scan tag posts junction: %w", err)
 				}
-				parentID, targetID := vals[localIdx], vals[refIdx]
+				parentID, targetID := fmt.Sprint(localKey), fmt.Sprint(refKey)
 				parentToTargetIDs[parentID] = append(parentToTargetIDs[parentID], targetID)
-				allTargetIDs = append(allTargetIDs, targetID)
+				targetPKs = append(targetPKs, int64(refKey))
 			}
 			if err := junctionRows.Err(); err != nil {
 				return fmt.Errorf("iterate tag posts junction: %w", err)
 			}
 
-			if len(allTargetIDs) == 0 {
+			if len(parentToTargetIDs) == 0 {
 				return nil
 			}
 
 			// Step 2: Fetch the actual entities
-			targetPKs := make([]int64, len(allTargetIDs))
-			for ii, s := range allTargetIDs {
-				v, _ := strconv.ParseInt(s, 10, 64)
-				targetPKs[ii] = int64(v)
-			}
 			filter := &PostFilter{
 				ID: &comparator.Number[int64]{In: targetPKs},
 			}
@@ -20429,36 +20420,32 @@ func (c *tagClient) loadRelationships(ctx context.Context, conn database.Querier
 				}
 			}
 
-			// Build mapping and collect all target IDs
+			// Build mapping and collect all target keys. Each junction column
+			// scans into its own Go type, so both sides of the maps stringify
+			// keys the same way.
 			parentToTargetIDs := make(map[string][]string)
-			var allTargetIDs []string
+			var targetPKs []int64
 			for junctionRows.Next() {
-				vals := make([]string, len(junctionCols))
+				var localKey int64
+				var refKey int64
 				ptrs := make([]any, len(junctionCols))
-				for i := range vals {
-					ptrs[i] = &vals[i]
-				}
+				ptrs[localIdx], ptrs[refIdx] = &localKey, &refKey
 				if err := junctionRows.Scan(ptrs...); err != nil {
 					return fmt.Errorf("scan tag tags junction: %w", err)
 				}
-				parentID, targetID := vals[localIdx], vals[refIdx]
+				parentID, targetID := fmt.Sprint(localKey), fmt.Sprint(refKey)
 				parentToTargetIDs[parentID] = append(parentToTargetIDs[parentID], targetID)
-				allTargetIDs = append(allTargetIDs, targetID)
+				targetPKs = append(targetPKs, int64(refKey))
 			}
 			if err := junctionRows.Err(); err != nil {
 				return fmt.Errorf("iterate tag tags junction: %w", err)
 			}
 
-			if len(allTargetIDs) == 0 {
+			if len(parentToTargetIDs) == 0 {
 				return nil
 			}
 
 			// Step 2: Fetch the actual entities
-			targetPKs := make([]int64, len(allTargetIDs))
-			for ii, s := range allTargetIDs {
-				v, _ := strconv.ParseInt(s, 10, 64)
-				targetPKs[ii] = int64(v)
-			}
 			filter := &TagFilter{
 				ID: &comparator.Number[int64]{In: targetPKs},
 			}
@@ -20548,36 +20535,32 @@ func (c *tagClient) loadRelationships(ctx context.Context, conn database.Querier
 				}
 			}
 
-			// Build mapping and collect all target IDs
+			// Build mapping and collect all target keys. Each junction column
+			// scans into its own Go type, so both sides of the maps stringify
+			// keys the same way.
 			parentToTargetIDs := make(map[string][]string)
-			var allTargetIDs []string
+			var targetPKs []int64
 			for junctionRows.Next() {
-				vals := make([]string, len(junctionCols))
+				var localKey int64
+				var refKey int64
 				ptrs := make([]any, len(junctionCols))
-				for i := range vals {
-					ptrs[i] = &vals[i]
-				}
+				ptrs[localIdx], ptrs[refIdx] = &localKey, &refKey
 				if err := junctionRows.Scan(ptrs...); err != nil {
 					return fmt.Errorf("scan tag tags junction: %w", err)
 				}
-				parentID, targetID := vals[localIdx], vals[refIdx]
+				parentID, targetID := fmt.Sprint(localKey), fmt.Sprint(refKey)
 				parentToTargetIDs[parentID] = append(parentToTargetIDs[parentID], targetID)
-				allTargetIDs = append(allTargetIDs, targetID)
+				targetPKs = append(targetPKs, int64(refKey))
 			}
 			if err := junctionRows.Err(); err != nil {
 				return fmt.Errorf("iterate tag tags junction: %w", err)
 			}
 
-			if len(allTargetIDs) == 0 {
+			if len(parentToTargetIDs) == 0 {
 				return nil
 			}
 
 			// Step 2: Fetch the actual entities
-			targetPKs := make([]int64, len(allTargetIDs))
-			for ii, s := range allTargetIDs {
-				v, _ := strconv.ParseInt(s, 10, 64)
-				targetPKs[ii] = int64(v)
-			}
 			filter := &TagFilter{
 				ID: &comparator.Number[int64]{In: targetPKs},
 			}

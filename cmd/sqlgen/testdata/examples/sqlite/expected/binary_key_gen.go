@@ -25,6 +25,8 @@ type BinaryKey struct {
 
 	// Events - one-to-many relationship with the binary_key_events table.
 	Events []*BinaryKeyEvent `db:"-" json:"events"`
+	// Badges - many-to-many relationship with the badges table.
+	Badges []*Badge `db:"-" json:"badges"`
 	// BinaryKeyEvents - one-to-many relationship with the binary_key_events table.
 	BinaryKeyEvents []*BinaryKeyEvent `db:"-" json:"binary_key_events"`
 }
@@ -130,7 +132,10 @@ type binaryKeyClient struct {
 	callbackMode               database.CallbackMode
 	eventsDefaultSort          []sql.Sort
 	binaryKeyEventsDefaultSort []sql.Sort
+	badgesDefaultSort          []sql.Sort
+	badgeClient                *badgeClient
 	binaryKeyEventClient       *binaryKeyEventClient
+	binaryKeyBadgeClient       *binaryKeyBadgeClient
 }
 
 // newBinaryKeyClient creates a new binaryKeyClient.
@@ -376,6 +381,9 @@ func (fo *BinaryKeyFieldOptions) loadsRelationships() bool {
 	if fo.BinaryKeyEvents != nil {
 		return true
 	}
+	if fo.Badges != nil {
+		return true
+	}
 	return false
 }
 
@@ -503,6 +511,119 @@ func (c *binaryKeyClient) loadRelationships(ctx context.Context, conn database.Q
 			}
 			for i := range binaryKeys {
 				binaryKeys[i].BinaryKeyEvents = byFK[fmt.Sprint(binaryKeys[i].ID)]
+			}
+			return nil
+		})
+	}
+
+	if fo.Badges != nil {
+		g.Go(func() error {
+			// Collect parent IDs
+			binaryKeyIDs := make([][]byte, len(binaryKeys))
+			for idx, b := range binaryKeys {
+				binaryKeyIDs[idx] = b.ID
+			}
+
+			// Step 1: Query junction table to get mapping
+			junctionQuery, junctionArgs := sql.BuildSelect(c.dialect, sql.Table{Schema: "", Name: "binary_key_badges"}, sql.SelectOptions{
+				Columns:    []string{"binary_key_id", "badge_code"},
+				Conditions: []sql.Condition{sql.Where(c.dialect.QuoteIdentifier("binary_key_id")).In(toAnySlice(binaryKeyIDs)...)},
+			})
+
+			junctionRows, err := conn.Query(ctx, junctionQuery, junctionArgs...)
+			if err != nil {
+				return fmt.Errorf("load binary_key badges junction: %w", err)
+			}
+			defer junctionRows.Close()
+
+			// Discover column positions from result (BuildSelect sorts columns alphabetically)
+			junctionCols, err := junctionRows.Columns()
+			if err != nil {
+				return fmt.Errorf("load binary_key badges junction columns: %w", err)
+			}
+			localIdx, refIdx := 0, 1
+			for i, col := range junctionCols {
+				switch col {
+				case "binary_key_id":
+					localIdx = i
+				case "badge_code":
+					refIdx = i
+				}
+			}
+
+			// Build mapping and collect all target keys. Each junction column
+			// scans into its own Go type, so both sides of the maps stringify
+			// keys the same way.
+			parentToTargetIDs := make(map[string][]string)
+			var allTargetIDs []string
+			for junctionRows.Next() {
+				var localKey []byte
+				var refKey string
+				ptrs := make([]any, len(junctionCols))
+				ptrs[localIdx], ptrs[refIdx] = &localKey, &refKey
+				if err := junctionRows.Scan(ptrs...); err != nil {
+					return fmt.Errorf("scan binary_key badges junction: %w", err)
+				}
+				parentID, targetID := fmt.Sprint(localKey), refKey
+				parentToTargetIDs[parentID] = append(parentToTargetIDs[parentID], targetID)
+				allTargetIDs = append(allTargetIDs, targetID)
+			}
+			if err := junctionRows.Err(); err != nil {
+				return fmt.Errorf("iterate binary_key badges junction: %w", err)
+			}
+
+			if len(parentToTargetIDs) == 0 {
+				return nil
+			}
+
+			// Step 2: Fetch the actual entities
+			filter := &BadgeFilter{
+				Code: &comparator.ID{In: allTargetIDs},
+			}
+			if fo.Badges.Filter != nil {
+				filter.And = append(filter.And, fo.Badges.Filter)
+			}
+
+			sorts := fo.Badges.Sorts
+			if len(sorts) == 0 {
+				sorts = c.badgesDefaultSort
+			}
+
+			// Self-referential relationships share the parent's entity type, so
+			// the loaded targets must use a name distinct from the parent slice
+			// (binaryKeys) to avoid shadowing it and mis-mapping the results
+			// onto the targets instead of the parents.
+			relatedBadges, err := c.badgeClient.GetMany(ctx, &GetBadgesInput{
+				Filter: filter,
+				Sorts:  sorts,
+				Limit:  new(0),
+				// Step 3 keys every loaded target on its own PK, so the fetch
+				// declares that column rather than mutating the caller's
+				// FieldOptions — a narrowed selection that omits it would
+				// otherwise map every target onto the zero value.
+				requiredColumns: []string{"code"},
+			}, func(co *CallOptions[BadgeFieldOptions]) {
+				co.FieldOptions = fo.Badges.FieldOptions
+			})
+			if err != nil {
+				return fmt.Errorf("load binary_key badges: %w", err)
+			}
+
+			// Step 3: Map back to parent entities via junction mapping. The
+			// targets are walked in the order the fetch returned them, so the
+			// relationship's Sorts — the caller's, or the static `sort:` —
+			// order each parent's slice. Walking the
+			// junction rows instead would keep junction order and drop the sort.
+			parentsByTarget := make(map[string][]int, len(relatedBadges))
+			for i := range binaryKeys {
+				for _, tID := range parentToTargetIDs[fmt.Sprint(binaryKeys[i].ID)] {
+					parentsByTarget[tID] = append(parentsByTarget[tID], i)
+				}
+			}
+			for _, t := range relatedBadges {
+				for _, i := range parentsByTarget[t.Code] {
+					binaryKeys[i].Badges = append(binaryKeys[i].Badges, t)
+				}
 			}
 			return nil
 		})
@@ -1837,6 +1958,7 @@ type BinaryKeyFilter struct {
 	CreatedAt       *comparator.Time           `json:"created_at"`
 	ID              *comparator.Opaque[[]byte] `json:"id"`
 	Name            *comparator.String         `json:"name"`
+	Badges          *BadgeFilter               `json:"badges"`
 	BinaryKeyEvents *BinaryKeyEventFilter      `json:"binary_key_events"`
 	Events          *BinaryKeyEventFilter      `json:"events"`
 	And             []*BinaryKeyFilter         `json:"and"`
@@ -1868,6 +1990,10 @@ func (f *BinaryKeyFilter) ToConditions(dialect sql.Dialect, opts ...FilterOption
 
 	if f.Name != nil {
 		conds = append(conds, f.Name.Parse(dialect.QuoteIdentifier("name"), dialect)...)
+	}
+
+	if f.Badges != nil {
+		conds = append(conds, binaryKeyBadgesFilterExists(f.Badges, dialect, opts))
 	}
 
 	if f.BinaryKeyEvents != nil {
@@ -1907,6 +2033,45 @@ func (f *BinaryKeyFilter) ToConditions(dialect sql.Dialect, opts ...FilterOption
 	}
 
 	return conds
+}
+
+// binaryKeyBadgesFilterExists compiles a BadgeFilter set on the
+// Badges relationship into a correlated EXISTS over badges, joined through the binary_key_badges junction.
+//
+// The parent-side reference carries no qualifier: sql.CorrelationToken is
+// resolved by the builder against whichever FROM clause encloses the predicate,
+// so one emitted value is correct on both the plain read path and the aliased
+// O2O-join path.
+//
+// The subquery alias is keyed on nesting depth. A relationship filter nested
+// inside itself — legal for a self-referential relationship — would
+// otherwise reuse the alias and let the inner subquery shadow the reference its
+// own correlation resolves against.
+//
+// MySQL rejects an EXISTS naming the table an UPDATE or DELETE is mutating
+// (error 1093). A relationship filter whose target is the mutated table is
+// therefore a read-path predicate on MySQL, not one to pass to UpdateWhere /
+// SoftDeleteWhere / HardDeleteWhere / Increment.
+func binaryKeyBadgesFilterExists(f *BadgeFilter, dialect sql.Dialect, opts []FilterOption) sql.Condition {
+	scope := resolveFilterScope(opts)
+	tgt := filterSubqueryAlias("tgt", scope.depth)
+	jn := filterSubqueryAlias("jn", scope.depth)
+	subSQL := "SELECT 1 FROM " + dialect.FormatTable(sql.Table{Schema: "", Name: "binary_key_badges"}) + " " + jn +
+		" JOIN " + dialect.FormatTable(sql.Table{Schema: "", Name: "badges"}) + " " + tgt +
+		" ON " + tgt + "." + dialect.QuoteIdentifier("code") + " = " + jn + "." + dialect.QuoteIdentifier("badge_code") +
+		" WHERE " + jn + "." + dialect.QuoteIdentifier("binary_key_id") + " = " + sql.CorrelationToken
+	var subArgs []any
+
+	// The target's own ToConditions supplies the inner WHERE, so nesting and
+	// and/or compose recursively. Every reference is qualified with the target
+	// alias: unqualified names inside a correlated subquery bind to the
+	// enclosing statement whenever the target lacks the column.
+	if where, whereArgs := sql.SubqueryWhere(dialect, tgt, f.ToConditions(dialect, nestFilterScope(opts, scope.depth+1)...)); where != "" {
+		subSQL += " AND " + where
+		subArgs = append(subArgs, whereArgs...)
+	}
+
+	return sql.Exists("id", sql.Subquery{SQL: subSQL, Args: subArgs})
 }
 
 // binaryKeyBinaryKeyEventsFilterExists compiles a BinaryKeyEventFilter set on the
@@ -1987,6 +2152,7 @@ type BinaryKeyFieldOptions struct {
 	Name            bool                               `json:"name"`
 	CreatedAt       bool                               `json:"created_at"`
 	Events          *BinaryKeyEventRelationshipOptions `json:"events"`
+	Badges          *BadgeRelationshipOptions          `json:"badges"`
 	BinaryKeyEvents *BinaryKeyEventRelationshipOptions `json:"binary_key_events"`
 }
 
@@ -2030,10 +2196,20 @@ func (fo *BinaryKeyFieldOptions) HasSelectedColumns() bool {
 	if fo.Events != nil {
 		return true
 	}
+	if fo.Badges != nil {
+		return true
+	}
 	if fo.BinaryKeyEvents != nil {
 		return true
 	}
 	return false
+}
+
+// BadgeRelationshipOptions controls loading options for Badge relationships.
+type BadgeRelationshipOptions struct {
+	FieldOptions *BadgeFieldOptions `json:"field_options"`
+	Filter       *BadgeFilter       `json:"filter"`
+	Sorts        []sql.Sort         `json:"sorts"`
 }
 
 // BinaryKeyEventRelationshipOptions controls loading options for BinaryKeyEvent relationships.

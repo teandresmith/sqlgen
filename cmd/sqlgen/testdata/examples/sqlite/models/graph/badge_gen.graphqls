@@ -6,6 +6,8 @@ type Badge {
   code: ID!
   "label"
   label: String!
+  "many-to-many relationship with the binary_keys table."
+  binaryKeys: [BinaryKey!]!
   "many-to-many relationship with the owners table."
   owners: [Owner!]!
 }
@@ -31,6 +33,7 @@ type BadgeListResult {
 
 input BadgeFilter {
   label: StringComparator
+  binaryKeys: BinaryKeyFilter
   owners: OwnerFilter
   and: [BadgeFilter!]
   or:  [BadgeFilter!]

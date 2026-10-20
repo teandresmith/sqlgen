@@ -241,6 +241,10 @@ func badgeFieldOptionsFromCollected(opCtx *graphql.OperationContext, fields []gr
 			fo.Code = true
 		case "label":
 			fo.Label = true
+		case "binaryKeys":
+			fo.BinaryKeys = &models.BinaryKeyRelationshipOptions{
+				FieldOptions: binaryKeyFieldOptionsFromCollected(opCtx, f.Sub),
+			}
 		case "owners":
 			fo.Owners = &models.OwnerRelationshipOptions{
 				FieldOptions: ownerFieldOptionsFromCollected(opCtx, f.Sub),
@@ -292,6 +296,10 @@ func binaryKeyFieldOptionsFromCollected(opCtx *graphql.OperationContext, fields 
 			fo.Events = &models.BinaryKeyEventRelationshipOptions{
 				FieldOptions: binaryKeyEventFieldOptionsFromCollected(opCtx, f.Sub),
 			}
+		case "badges":
+			fo.Badges = &models.BadgeRelationshipOptions{
+				FieldOptions: badgeFieldOptionsFromCollected(opCtx, f.Sub),
+			}
 		case "binaryKeyEvents":
 			fo.BinaryKeyEvents = &models.BinaryKeyEventRelationshipOptions{
 				FieldOptions: binaryKeyEventFieldOptionsFromCollected(opCtx, f.Sub),
@@ -306,6 +314,48 @@ func binaryKeyFieldOptionsFromCollected(opCtx *graphql.OperationContext, fields 
 		// mapping keys, O2O NULL-detection keys) are unioned in downstream by
 		// the client method that reads them, not here.
 		fo.ID = true
+	}
+	return fo
+}
+
+// binaryKeyBadgeFieldOptionsFromContext returns the
+// models.BinaryKeyBadgeFieldOptions for the current GraphQL request.
+func binaryKeyBadgeFieldOptionsFromContext(ctx context.Context) *models.BinaryKeyBadgeFieldOptions {
+	opCtx := graphql.GetOperationContext(ctx)
+	fields := graphql.CollectFieldsCtx(ctx, nil)
+	entityFields, wantsRows := unwrapConnectionFields(ctx, fields, "BinaryKeyBadgeConnection", "BinaryKeyBadgeListResult")
+	if !wantsRows {
+		// Count-only envelope selection: the request never reaches a row, so
+		// the all-false FieldOptions is the right answer and the read
+		// short-circuits into a single COUNT.
+		return &models.BinaryKeyBadgeFieldOptions{}
+	}
+	return binaryKeyBadgeFieldOptionsFromCollected(opCtx, entityFields)
+}
+
+// binaryKeyBadgeFieldOptionsFromCollected walks one level of
+// the BinaryKeyBadge selection set and produces the corresponding
+// FieldOptions tree. Recursive descent into relationships re-enters the
+// related table's walker on the child's selection set.
+func binaryKeyBadgeFieldOptionsFromCollected(opCtx *graphql.OperationContext, fields []graphql.CollectedField) *models.BinaryKeyBadgeFieldOptions {
+	fo := &models.BinaryKeyBadgeFieldOptions{}
+	for _, f := range coalesceAliases(opCtx, fields) {
+		switch f.Name {
+		case "binaryKeyID":
+			fo.BinaryKeyID = true
+		case "badgeCode":
+			fo.BadgeCode = true
+		}
+	}
+	if !fo.HasSelectedColumns() {
+		// The selection asked for this row but named no column. Projecting the
+		// row's identity keeps the all-false short-circuit — which means
+		// "the caller wants no rows" — from swallowing it. Columns
+		// the read derives rather than returns (cursor keys, relationship
+		// mapping keys, O2O NULL-detection keys) are unioned in downstream by
+		// the client method that reads them, not here.
+		fo.BinaryKeyID = true
+		fo.BadgeCode = true
 	}
 	return fo
 }

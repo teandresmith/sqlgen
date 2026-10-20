@@ -34,7 +34,7 @@ func TestFuncMap_returnsPopulatedMap(t *testing.T) {
 		// PK Filtering
 		"pkFilterExpr", "pkFilterInExpr", "pkFilterInExprStr", "pkIsStringType",
 		// Relationships
-		"fkStringExpr", "fkToString", "fkToStringByGoType", "fkNullGuard", "fkLoadGuard", "fkLoadKey", "isO2O", "isM2M", "reverseO2OTargets",
+		"fkStringExpr", "fkToString", "fkToStringByGoType", "fkNullGuard", "fkLoadGuard", "fkLoadKey", "fkLoadValue", "isO2O", "isM2M", "reverseO2OTargets",
 		// Inputs
 		"createInputFieldType", "updateInputFieldType",
 		// Tags

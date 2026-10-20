@@ -5302,6 +5302,1300 @@
     },
     {
       "kind": "table",
+      "name": "Fingerprint",
+      "table": "fingerprints",
+      "schema": "public",
+      "file_prefix": "fingerprint",
+      "files": [
+        "models_gen.go"
+      ],
+      "comment": "",
+      "indexes": [
+        {
+          "name": "fingerprints_pkey",
+          "columns": [
+            "digest"
+          ],
+          "unique": true,
+          "method": "btree"
+        }
+      ],
+      "pk": {
+        "kind": "single",
+        "columns": [
+          {
+            "name": "digest",
+            "go_field": "Digest",
+            "go_type": "[]byte"
+          }
+        ]
+      },
+      "features": {
+        "soft_delete": null,
+        "cache": {
+          "ttl_seconds": 3600,
+          "hydration": "eager",
+          "key_pattern": "sqlgen:fingerprint:{digest}",
+          "invalidates_on": [
+            "Create",
+            "Update",
+            "Delete",
+            "SoftDelete",
+            "Restore",
+            "Increment"
+          ]
+        },
+        "events": {
+          "enabled": true,
+          "types": [
+            "FingerprintCreated",
+            "FingerprintDeleted",
+            "FingerprintUpdated"
+          ],
+          "payload_shape": "models.FingerprintEvent"
+        },
+        "tenancy": null
+      },
+      "columns": [
+        {
+          "name": "digest",
+          "go_field": "Digest",
+          "go_type": "[]byte",
+          "db_type": "bytea",
+          "nullable": false,
+          "pk": true,
+          "unique": false,
+          "comparator": "comparator.Opaque[[]byte]",
+          "comment": ""
+        },
+        {
+          "name": "label",
+          "go_field": "Label",
+          "go_type": "string",
+          "db_type": "text",
+          "nullable": false,
+          "pk": false,
+          "unique": false,
+          "comparator": "comparator.String",
+          "comment": ""
+        }
+      ],
+      "relationships": [
+        {
+          "name": "hosts",
+          "kind": "m2m",
+          "target_entity": "Host",
+          "junction": {
+            "table": "host_fingerprints",
+            "schema": "public",
+            "local_fk": "fingerprint_digest",
+            "target_fk": "host_addr"
+          }
+        }
+      ],
+      "methods": {
+        "query": [
+          {
+            "name": "Get",
+            "params": [
+              {
+                "name": "id",
+                "type": "[]byte"
+              }
+            ],
+            "returns": "*Fingerprint",
+            "errors": [
+              "ErrNotFound"
+            ],
+            "notes": "Delegates to GetMany with a primary-key filter; returns ErrNotFound when no row matches.",
+            "sql_bodies": {
+              "postgres": "SELECT \"digest\", \"label\" FROM \"public\".\"fingerprints\" WHERE \"digest\" = $1 LIMIT 1"
+            }
+          },
+          {
+            "name": "GetMany",
+            "params": [
+              {
+                "name": "input",
+                "type": "*GetFingerprintsInput"
+              }
+            ],
+            "returns": "[]*Fingerprint",
+            "errors": [],
+            "sql_bodies": {
+              "postgres": "SELECT \"digest\", \"label\" FROM \"public\".\"fingerprints\" WHERE <filter> ORDER BY <sort> LIMIT <limit>"
+            }
+          },
+          {
+            "name": "Count",
+            "params": [
+              {
+                "name": "filter",
+                "type": "*FingerprintFilter"
+              }
+            ],
+            "returns": "int64",
+            "errors": [],
+            "sql_bodies": {
+              "postgres": "SELECT COUNT(*) FROM \"public\".\"fingerprints\" WHERE <filter>"
+            }
+          },
+          {
+            "name": "Exists",
+            "params": [
+              {
+                "name": "id",
+                "type": "[]byte"
+              }
+            ],
+            "returns": "bool",
+            "errors": [],
+            "sql_bodies": {
+              "postgres": "SELECT EXISTS(SELECT 1 FROM \"public\".\"fingerprints\" WHERE \"digest\" = $1)"
+            }
+          },
+          {
+            "name": "ExistsWhere",
+            "params": [
+              {
+                "name": "filter",
+                "type": "*FingerprintFilter"
+              }
+            ],
+            "returns": "bool",
+            "errors": [],
+            "sql_bodies": {
+              "postgres": "SELECT EXISTS(SELECT 1 FROM \"public\".\"fingerprints\" WHERE <filter>)"
+            }
+          },
+          {
+            "name": "Paginate",
+            "params": [
+              {
+                "name": "input",
+                "type": "PaginateInput[FingerprintFilter]"
+              }
+            ],
+            "returns": "*PaginateResult[Fingerprint]",
+            "errors": [],
+            "notes": "Offset pagination. Issues no statement of its own — composes Count and GetMany, so no sql_bodies entry."
+          },
+          {
+            "name": "Connection",
+            "params": [
+              {
+                "name": "input",
+                "type": "ConnectionInput[FingerprintFilter]"
+              }
+            ],
+            "returns": "*Connection[Fingerprint]",
+            "errors": [
+              "ErrInvalidCursor"
+            ],
+            "notes": "Relay cursor pagination. Issues no statement of its own — composes Count and GetMany, so no sql_bodies entry."
+          },
+          {
+            "name": "Stream",
+            "params": [
+              {
+                "name": "input",
+                "type": "*StreamFingerprintsInput"
+              }
+            ],
+            "returns": "iter.Seq2[*Fingerprint, error]",
+            "errors": [],
+            "notes": "Scalars only — no relationship loading, cache always bypassed. Errors surface through the iterator's second value.",
+            "sql_bodies": {
+              "postgres": "SELECT \"digest\", \"label\" FROM \"public\".\"fingerprints\" WHERE <filter> ORDER BY <sort>"
+            }
+          }
+        ],
+        "mutation": [
+          {
+            "name": "Create",
+            "params": [
+              {
+                "name": "input",
+                "type": "*CreateFingerprintInput"
+              }
+            ],
+            "returns": "*Fingerprint",
+            "errors": [
+              "ErrNilInput",
+              "ErrConstraintViolation"
+            ],
+            "sql_bodies": {
+              "postgres": "INSERT INTO \"public\".\"fingerprints\" (<columns>) VALUES (<values>) RETURNING \"digest\""
+            }
+          },
+          {
+            "name": "CreateMany",
+            "params": [
+              {
+                "name": "inputs",
+                "type": "[]*CreateFingerprintInput"
+              }
+            ],
+            "returns": "[]*Fingerprint",
+            "errors": [
+              "ErrNilInput",
+              "ErrConstraintViolation"
+            ],
+            "notes": "Batched in generation.batch_size chunks. Earlier chunks are not rolled back on a later failure — wrap in a transaction for atomicity.",
+            "sql_bodies": {
+              "postgres": "INSERT INTO \"public\".\"fingerprints\" (<columns>) VALUES <values> RETURNING \"digest\""
+            }
+          },
+          {
+            "name": "Upsert",
+            "params": [
+              {
+                "name": "input",
+                "type": "*CreateFingerprintInput"
+              },
+              {
+                "name": "target",
+                "type": "FingerprintConflictTarget"
+              }
+            ],
+            "returns": "*Fingerprint",
+            "errors": [
+              "ErrNilInput",
+              "ErrConstraintViolation"
+            ],
+            "notes": "One method over the generated FingerprintConflictTarget enum — the target argument selects the conflict columns at call time.",
+            "sql_bodies": {
+              "postgres": "INSERT INTO \"public\".\"fingerprints\" (<columns>) VALUES (<values>) ON CONFLICT (<conflict_target>) DO UPDATE SET <excluded> RETURNING \"digest\""
+            }
+          },
+          {
+            "name": "UpsertMany",
+            "params": [
+              {
+                "name": "inputs",
+                "type": "[]*CreateFingerprintInput"
+              },
+              {
+                "name": "target",
+                "type": "FingerprintConflictTarget"
+              }
+            ],
+            "returns": "[]*Fingerprint",
+            "errors": [
+              "ErrNilInput",
+              "ErrConstraintViolation"
+            ],
+            "notes": "Batched in generation.batch_size chunks over the same FingerprintConflictTarget enum Upsert takes. Inputs resolving to one target are deduped before the statement is built, last occurrence wins. Earlier chunks are not rolled back on a later failure — wrap in a transaction for atomicity.",
+            "sql_bodies": {
+              "postgres": "INSERT INTO \"public\".\"fingerprints\" (<columns>) VALUES <values> ON CONFLICT (<conflict_target>) DO UPDATE SET <excluded>"
+            }
+          },
+          {
+            "name": "Update",
+            "params": [
+              {
+                "name": "id",
+                "type": "[]byte"
+              },
+              {
+                "name": "input",
+                "type": "*UpdateFingerprintInput"
+              }
+            ],
+            "returns": "*Fingerprint",
+            "errors": [
+              "ErrNotFound",
+              "ErrNilInput",
+              "ErrConstraintViolation"
+            ],
+            "notes": "Only fields where IsSet() reports true reach the SET clause; an input with none set issues no UPDATE and returns the row unchanged.",
+            "sql_bodies": {
+              "postgres": "UPDATE \"public\".\"fingerprints\" SET <set> WHERE \"digest\" = $1"
+            }
+          },
+          {
+            "name": "UpdateMany",
+            "params": [
+              {
+                "name": "items",
+                "type": "[]UpdateFingerprintItem"
+              }
+            ],
+            "returns": "[]*Fingerprint",
+            "errors": [
+              "ErrNilInput",
+              "ErrConstraintViolation"
+            ],
+            "notes": "Issues one statement per item. Batched like CreateMany — earlier items are not rolled back on a later failure. A primary key that does not exist is silently skipped, even under strict_updates.",
+            "sql_bodies": {
+              "postgres": "UPDATE \"public\".\"fingerprints\" SET <set> WHERE \"digest\" = $1"
+            }
+          },
+          {
+            "name": "UpdateWhere",
+            "params": [
+              {
+                "name": "filter",
+                "type": "*FingerprintFilter"
+              },
+              {
+                "name": "input",
+                "type": "*UpdateFingerprintInput"
+              }
+            ],
+            "returns": "[]*Fingerprint",
+            "errors": [
+              "ErrNilInput",
+              "ErrEmptyFilter",
+              "ErrConstraintViolation"
+            ],
+            "notes": "Idempotent — returns an empty slice when no row matches. ErrEmptyFilter when the filter produces no conditions.",
+            "sql_bodies": {
+              "postgres": "UPDATE \"public\".\"fingerprints\" SET <set> WHERE <filter> RETURNING \"digest\""
+            }
+          },
+          {
+            "name": "HardDelete",
+            "params": [
+              {
+                "name": "id",
+                "type": "[]byte"
+              }
+            ],
+            "returns": "",
+            "errors": [],
+            "notes": "Idempotent — a primary key that does not exist is not an error.",
+            "sql_bodies": {
+              "postgres": "DELETE FROM \"public\".\"fingerprints\" WHERE \"digest\" = $1"
+            }
+          },
+          {
+            "name": "HardDeleteMany",
+            "params": [
+              {
+                "name": "ids",
+                "type": "[][]byte"
+              }
+            ],
+            "returns": "",
+            "errors": [],
+            "notes": "Idempotent — primary keys that do not exist are not an error.",
+            "sql_bodies": {
+              "postgres": "DELETE FROM \"public\".\"fingerprints\" WHERE \"digest\" IN (<ids>)"
+            }
+          },
+          {
+            "name": "HardDeleteWhere",
+            "params": [
+              {
+                "name": "filter",
+                "type": "*FingerprintFilter"
+              }
+            ],
+            "returns": "",
+            "errors": [
+              "ErrEmptyFilter"
+            ],
+            "notes": "Idempotent — no match is not an error. ErrEmptyFilter when the filter produces no conditions.",
+            "sql_bodies": {
+              "postgres": "DELETE FROM \"public\".\"fingerprints\" WHERE <filter> RETURNING \"digest\""
+            }
+          }
+        ]
+      },
+      "filter": {
+        "type": "FingerprintFilter",
+        "fields": [
+          {
+            "name": "Digest",
+            "type": "*comparator.Opaque[[]byte]"
+          },
+          {
+            "name": "Label",
+            "type": "*comparator.String"
+          },
+          {
+            "name": "And",
+            "type": "[]*FingerprintFilter"
+          },
+          {
+            "name": "Or",
+            "type": "[]*FingerprintFilter"
+          }
+        ]
+      },
+      "sort": {
+        "type": "FingerprintSort",
+        "fields": [
+          "Digest",
+          "Label"
+        ]
+      },
+      "examples": {}
+    },
+    {
+      "kind": "table",
+      "name": "Host",
+      "table": "hosts",
+      "schema": "public",
+      "file_prefix": "host",
+      "files": [
+        "models_gen.go"
+      ],
+      "comment": "",
+      "indexes": [
+        {
+          "name": "hosts_pkey",
+          "columns": [
+            "addr"
+          ],
+          "unique": true,
+          "method": "btree"
+        }
+      ],
+      "pk": {
+        "kind": "single",
+        "columns": [
+          {
+            "name": "addr",
+            "go_field": "Addr",
+            "go_type": "net.IP"
+          }
+        ]
+      },
+      "features": {
+        "soft_delete": null,
+        "cache": {
+          "ttl_seconds": 3600,
+          "hydration": "eager",
+          "key_pattern": "sqlgen:host:{addr}",
+          "invalidates_on": [
+            "Create",
+            "Update",
+            "Delete",
+            "SoftDelete",
+            "Restore",
+            "Increment"
+          ]
+        },
+        "events": {
+          "enabled": true,
+          "types": [
+            "HostCreated",
+            "HostDeleted",
+            "HostUpdated"
+          ],
+          "payload_shape": "models.HostEvent"
+        },
+        "tenancy": null
+      },
+      "columns": [
+        {
+          "name": "addr",
+          "go_field": "Addr",
+          "go_type": "net.IP",
+          "db_type": "inet",
+          "nullable": false,
+          "pk": true,
+          "unique": false,
+          "comparator": "comparator.Opaque[net.IP]",
+          "comment": ""
+        },
+        {
+          "name": "label",
+          "go_field": "Label",
+          "go_type": "string",
+          "db_type": "text",
+          "nullable": false,
+          "pk": false,
+          "unique": false,
+          "comparator": "comparator.String",
+          "comment": ""
+        }
+      ],
+      "relationships": [
+        {
+          "name": "fingerprints",
+          "kind": "m2m",
+          "target_entity": "Fingerprint",
+          "junction": {
+            "table": "host_fingerprints",
+            "schema": "public",
+            "local_fk": "host_addr",
+            "target_fk": "fingerprint_digest"
+          }
+        }
+      ],
+      "methods": {
+        "query": [
+          {
+            "name": "Get",
+            "params": [
+              {
+                "name": "id",
+                "type": "net.IP"
+              }
+            ],
+            "returns": "*Host",
+            "errors": [
+              "ErrNotFound"
+            ],
+            "notes": "Delegates to GetMany with a primary-key filter; returns ErrNotFound when no row matches.",
+            "sql_bodies": {
+              "postgres": "SELECT \"addr\", \"label\" FROM \"public\".\"hosts\" WHERE \"addr\" = $1 LIMIT 1"
+            }
+          },
+          {
+            "name": "GetMany",
+            "params": [
+              {
+                "name": "input",
+                "type": "*GetHostsInput"
+              }
+            ],
+            "returns": "[]*Host",
+            "errors": [],
+            "sql_bodies": {
+              "postgres": "SELECT \"addr\", \"label\" FROM \"public\".\"hosts\" WHERE <filter> ORDER BY <sort> LIMIT <limit>"
+            }
+          },
+          {
+            "name": "Count",
+            "params": [
+              {
+                "name": "filter",
+                "type": "*HostFilter"
+              }
+            ],
+            "returns": "int64",
+            "errors": [],
+            "sql_bodies": {
+              "postgres": "SELECT COUNT(*) FROM \"public\".\"hosts\" WHERE <filter>"
+            }
+          },
+          {
+            "name": "Exists",
+            "params": [
+              {
+                "name": "id",
+                "type": "net.IP"
+              }
+            ],
+            "returns": "bool",
+            "errors": [],
+            "sql_bodies": {
+              "postgres": "SELECT EXISTS(SELECT 1 FROM \"public\".\"hosts\" WHERE \"addr\" = $1)"
+            }
+          },
+          {
+            "name": "ExistsWhere",
+            "params": [
+              {
+                "name": "filter",
+                "type": "*HostFilter"
+              }
+            ],
+            "returns": "bool",
+            "errors": [],
+            "sql_bodies": {
+              "postgres": "SELECT EXISTS(SELECT 1 FROM \"public\".\"hosts\" WHERE <filter>)"
+            }
+          },
+          {
+            "name": "Paginate",
+            "params": [
+              {
+                "name": "input",
+                "type": "PaginateInput[HostFilter]"
+              }
+            ],
+            "returns": "*PaginateResult[Host]",
+            "errors": [],
+            "notes": "Offset pagination. Issues no statement of its own — composes Count and GetMany, so no sql_bodies entry."
+          },
+          {
+            "name": "Connection",
+            "params": [
+              {
+                "name": "input",
+                "type": "ConnectionInput[HostFilter]"
+              }
+            ],
+            "returns": "*Connection[Host]",
+            "errors": [
+              "ErrInvalidCursor"
+            ],
+            "notes": "Relay cursor pagination. Issues no statement of its own — composes Count and GetMany, so no sql_bodies entry."
+          },
+          {
+            "name": "Stream",
+            "params": [
+              {
+                "name": "input",
+                "type": "*StreamHostsInput"
+              }
+            ],
+            "returns": "iter.Seq2[*Host, error]",
+            "errors": [],
+            "notes": "Scalars only — no relationship loading, cache always bypassed. Errors surface through the iterator's second value.",
+            "sql_bodies": {
+              "postgres": "SELECT \"addr\", \"label\" FROM \"public\".\"hosts\" WHERE <filter> ORDER BY <sort>"
+            }
+          }
+        ],
+        "mutation": [
+          {
+            "name": "Create",
+            "params": [
+              {
+                "name": "input",
+                "type": "*CreateHostInput"
+              }
+            ],
+            "returns": "*Host",
+            "errors": [
+              "ErrNilInput",
+              "ErrConstraintViolation"
+            ],
+            "sql_bodies": {
+              "postgres": "INSERT INTO \"public\".\"hosts\" (<columns>) VALUES (<values>) RETURNING \"addr\""
+            }
+          },
+          {
+            "name": "CreateMany",
+            "params": [
+              {
+                "name": "inputs",
+                "type": "[]*CreateHostInput"
+              }
+            ],
+            "returns": "[]*Host",
+            "errors": [
+              "ErrNilInput",
+              "ErrConstraintViolation"
+            ],
+            "notes": "Batched in generation.batch_size chunks. Earlier chunks are not rolled back on a later failure — wrap in a transaction for atomicity.",
+            "sql_bodies": {
+              "postgres": "INSERT INTO \"public\".\"hosts\" (<columns>) VALUES <values> RETURNING \"addr\""
+            }
+          },
+          {
+            "name": "Upsert",
+            "params": [
+              {
+                "name": "input",
+                "type": "*CreateHostInput"
+              },
+              {
+                "name": "target",
+                "type": "HostConflictTarget"
+              }
+            ],
+            "returns": "*Host",
+            "errors": [
+              "ErrNilInput",
+              "ErrConstraintViolation"
+            ],
+            "notes": "One method over the generated HostConflictTarget enum — the target argument selects the conflict columns at call time.",
+            "sql_bodies": {
+              "postgres": "INSERT INTO \"public\".\"hosts\" (<columns>) VALUES (<values>) ON CONFLICT (<conflict_target>) DO UPDATE SET <excluded> RETURNING \"addr\""
+            }
+          },
+          {
+            "name": "UpsertMany",
+            "params": [
+              {
+                "name": "inputs",
+                "type": "[]*CreateHostInput"
+              },
+              {
+                "name": "target",
+                "type": "HostConflictTarget"
+              }
+            ],
+            "returns": "[]*Host",
+            "errors": [
+              "ErrNilInput",
+              "ErrConstraintViolation"
+            ],
+            "notes": "Batched in generation.batch_size chunks over the same HostConflictTarget enum Upsert takes. Inputs resolving to one target are deduped before the statement is built, last occurrence wins. Earlier chunks are not rolled back on a later failure — wrap in a transaction for atomicity.",
+            "sql_bodies": {
+              "postgres": "INSERT INTO \"public\".\"hosts\" (<columns>) VALUES <values> ON CONFLICT (<conflict_target>) DO UPDATE SET <excluded>"
+            }
+          },
+          {
+            "name": "Update",
+            "params": [
+              {
+                "name": "id",
+                "type": "net.IP"
+              },
+              {
+                "name": "input",
+                "type": "*UpdateHostInput"
+              }
+            ],
+            "returns": "*Host",
+            "errors": [
+              "ErrNotFound",
+              "ErrNilInput",
+              "ErrConstraintViolation"
+            ],
+            "notes": "Only fields where IsSet() reports true reach the SET clause; an input with none set issues no UPDATE and returns the row unchanged.",
+            "sql_bodies": {
+              "postgres": "UPDATE \"public\".\"hosts\" SET <set> WHERE \"addr\" = $1"
+            }
+          },
+          {
+            "name": "UpdateMany",
+            "params": [
+              {
+                "name": "items",
+                "type": "[]UpdateHostItem"
+              }
+            ],
+            "returns": "[]*Host",
+            "errors": [
+              "ErrNilInput",
+              "ErrConstraintViolation"
+            ],
+            "notes": "Issues one statement per item. Batched like CreateMany — earlier items are not rolled back on a later failure. A primary key that does not exist is silently skipped, even under strict_updates.",
+            "sql_bodies": {
+              "postgres": "UPDATE \"public\".\"hosts\" SET <set> WHERE \"addr\" = $1"
+            }
+          },
+          {
+            "name": "UpdateWhere",
+            "params": [
+              {
+                "name": "filter",
+                "type": "*HostFilter"
+              },
+              {
+                "name": "input",
+                "type": "*UpdateHostInput"
+              }
+            ],
+            "returns": "[]*Host",
+            "errors": [
+              "ErrNilInput",
+              "ErrEmptyFilter",
+              "ErrConstraintViolation"
+            ],
+            "notes": "Idempotent — returns an empty slice when no row matches. ErrEmptyFilter when the filter produces no conditions.",
+            "sql_bodies": {
+              "postgres": "UPDATE \"public\".\"hosts\" SET <set> WHERE <filter> RETURNING \"addr\""
+            }
+          },
+          {
+            "name": "HardDelete",
+            "params": [
+              {
+                "name": "id",
+                "type": "net.IP"
+              }
+            ],
+            "returns": "",
+            "errors": [],
+            "notes": "Idempotent — a primary key that does not exist is not an error.",
+            "sql_bodies": {
+              "postgres": "DELETE FROM \"public\".\"hosts\" WHERE \"addr\" = $1"
+            }
+          },
+          {
+            "name": "HardDeleteMany",
+            "params": [
+              {
+                "name": "ids",
+                "type": "[]net.IP"
+              }
+            ],
+            "returns": "",
+            "errors": [],
+            "notes": "Idempotent — primary keys that do not exist are not an error.",
+            "sql_bodies": {
+              "postgres": "DELETE FROM \"public\".\"hosts\" WHERE \"addr\" IN (<ids>)"
+            }
+          },
+          {
+            "name": "HardDeleteWhere",
+            "params": [
+              {
+                "name": "filter",
+                "type": "*HostFilter"
+              }
+            ],
+            "returns": "",
+            "errors": [
+              "ErrEmptyFilter"
+            ],
+            "notes": "Idempotent — no match is not an error. ErrEmptyFilter when the filter produces no conditions.",
+            "sql_bodies": {
+              "postgres": "DELETE FROM \"public\".\"hosts\" WHERE <filter> RETURNING \"addr\""
+            }
+          }
+        ]
+      },
+      "filter": {
+        "type": "HostFilter",
+        "fields": [
+          {
+            "name": "Addr",
+            "type": "*comparator.Opaque[net.IP]"
+          },
+          {
+            "name": "Label",
+            "type": "*comparator.String"
+          },
+          {
+            "name": "And",
+            "type": "[]*HostFilter"
+          },
+          {
+            "name": "Or",
+            "type": "[]*HostFilter"
+          }
+        ]
+      },
+      "sort": {
+        "type": "HostSort",
+        "fields": [
+          "Addr",
+          "Label"
+        ]
+      },
+      "examples": {}
+    },
+    {
+      "kind": "table",
+      "name": "HostFingerprint",
+      "table": "host_fingerprints",
+      "schema": "public",
+      "file_prefix": "host_fingerprint",
+      "files": [
+        "models_gen.go"
+      ],
+      "comment": "",
+      "indexes": [
+        {
+          "name": "host_fingerprints_pkey",
+          "columns": [
+            "host_addr",
+            "fingerprint_digest"
+          ],
+          "unique": true,
+          "method": "btree"
+        }
+      ],
+      "pk": {
+        "kind": "composite",
+        "struct": "HostFingerprintPK",
+        "columns": [
+          {
+            "name": "host_addr",
+            "go_field": "HostAddr",
+            "go_type": "net.IP"
+          },
+          {
+            "name": "fingerprint_digest",
+            "go_field": "FingerprintDigest",
+            "go_type": "[]byte"
+          }
+        ]
+      },
+      "features": {
+        "soft_delete": null,
+        "cache": {
+          "ttl_seconds": 3600,
+          "hydration": "eager",
+          "key_pattern": "sqlgen:hostfingerprint:{host_addr}:{fingerprint_digest}",
+          "invalidates_on": [
+            "Create",
+            "Update",
+            "Delete",
+            "SoftDelete",
+            "Restore",
+            "Increment"
+          ]
+        },
+        "events": {
+          "enabled": true,
+          "types": [
+            "HostFingerprintCreated",
+            "HostFingerprintDeleted",
+            "HostFingerprintUpdated"
+          ],
+          "payload_shape": "models.HostFingerprintEvent"
+        },
+        "tenancy": null
+      },
+      "columns": [
+        {
+          "name": "host_addr",
+          "go_field": "HostAddr",
+          "go_type": "net.IP",
+          "db_type": "inet",
+          "nullable": false,
+          "pk": true,
+          "unique": false,
+          "comparator": "comparator.Opaque[net.IP]",
+          "comment": ""
+        },
+        {
+          "name": "fingerprint_digest",
+          "go_field": "FingerprintDigest",
+          "go_type": "[]byte",
+          "db_type": "bytea",
+          "nullable": false,
+          "pk": true,
+          "unique": false,
+          "comparator": "comparator.Opaque[[]byte]",
+          "comment": ""
+        }
+      ],
+      "relationships": [],
+      "methods": {
+        "query": [
+          {
+            "name": "Get",
+            "params": [
+              {
+                "name": "pk",
+                "type": "HostFingerprintPK"
+              }
+            ],
+            "returns": "*HostFingerprint",
+            "errors": [
+              "ErrNotFound"
+            ],
+            "notes": "Delegates to GetMany with a primary-key filter; returns ErrNotFound when no row matches.",
+            "sql_bodies": {
+              "postgres": "SELECT \"fingerprint_digest\", \"host_addr\" FROM \"public\".\"host_fingerprints\" WHERE \"host_addr\" = $1 AND \"fingerprint_digest\" = $2 LIMIT 1"
+            }
+          },
+          {
+            "name": "GetMany",
+            "params": [
+              {
+                "name": "input",
+                "type": "*GetHostFingerprintsInput"
+              }
+            ],
+            "returns": "[]*HostFingerprint",
+            "errors": [],
+            "sql_bodies": {
+              "postgres": "SELECT \"fingerprint_digest\", \"host_addr\" FROM \"public\".\"host_fingerprints\" WHERE <filter> ORDER BY <sort> LIMIT <limit>"
+            }
+          },
+          {
+            "name": "Count",
+            "params": [
+              {
+                "name": "filter",
+                "type": "*HostFingerprintFilter"
+              }
+            ],
+            "returns": "int64",
+            "errors": [],
+            "sql_bodies": {
+              "postgres": "SELECT COUNT(*) FROM \"public\".\"host_fingerprints\" WHERE <filter>"
+            }
+          },
+          {
+            "name": "Exists",
+            "params": [
+              {
+                "name": "pk",
+                "type": "HostFingerprintPK"
+              }
+            ],
+            "returns": "bool",
+            "errors": [],
+            "sql_bodies": {
+              "postgres": "SELECT EXISTS(SELECT 1 FROM \"public\".\"host_fingerprints\" WHERE \"host_addr\" = $1 AND \"fingerprint_digest\" = $2)"
+            }
+          },
+          {
+            "name": "ExistsWhere",
+            "params": [
+              {
+                "name": "filter",
+                "type": "*HostFingerprintFilter"
+              }
+            ],
+            "returns": "bool",
+            "errors": [],
+            "sql_bodies": {
+              "postgres": "SELECT EXISTS(SELECT 1 FROM \"public\".\"host_fingerprints\" WHERE <filter>)"
+            }
+          },
+          {
+            "name": "Paginate",
+            "params": [
+              {
+                "name": "input",
+                "type": "PaginateInput[HostFingerprintFilter]"
+              }
+            ],
+            "returns": "*PaginateResult[HostFingerprint]",
+            "errors": [],
+            "notes": "Offset pagination. Issues no statement of its own — composes Count and GetMany, so no sql_bodies entry."
+          },
+          {
+            "name": "Connection",
+            "params": [
+              {
+                "name": "input",
+                "type": "ConnectionInput[HostFingerprintFilter]"
+              }
+            ],
+            "returns": "*Connection[HostFingerprint]",
+            "errors": [
+              "ErrInvalidCursor"
+            ],
+            "notes": "Relay cursor pagination. Issues no statement of its own — composes Count and GetMany, so no sql_bodies entry."
+          },
+          {
+            "name": "Stream",
+            "params": [
+              {
+                "name": "input",
+                "type": "*StreamHostFingerprintsInput"
+              }
+            ],
+            "returns": "iter.Seq2[*HostFingerprint, error]",
+            "errors": [],
+            "notes": "Scalars only — no relationship loading, cache always bypassed. Errors surface through the iterator's second value.",
+            "sql_bodies": {
+              "postgres": "SELECT \"fingerprint_digest\", \"host_addr\" FROM \"public\".\"host_fingerprints\" WHERE <filter> ORDER BY <sort>"
+            }
+          }
+        ],
+        "mutation": [
+          {
+            "name": "Create",
+            "params": [
+              {
+                "name": "input",
+                "type": "*CreateHostFingerprintInput"
+              }
+            ],
+            "returns": "*HostFingerprint",
+            "errors": [
+              "ErrNilInput",
+              "ErrConstraintViolation"
+            ],
+            "sql_bodies": {
+              "postgres": "INSERT INTO \"public\".\"host_fingerprints\" (<columns>) VALUES (<values>)"
+            }
+          },
+          {
+            "name": "CreateMany",
+            "params": [
+              {
+                "name": "inputs",
+                "type": "[]*CreateHostFingerprintInput"
+              }
+            ],
+            "returns": "[]*HostFingerprint",
+            "errors": [
+              "ErrNilInput",
+              "ErrConstraintViolation"
+            ],
+            "notes": "Batched in generation.batch_size chunks. Earlier chunks are not rolled back on a later failure — wrap in a transaction for atomicity.",
+            "sql_bodies": {
+              "postgres": "INSERT INTO \"public\".\"host_fingerprints\" (<columns>) VALUES <values>"
+            }
+          },
+          {
+            "name": "Upsert",
+            "params": [
+              {
+                "name": "input",
+                "type": "*CreateHostFingerprintInput"
+              },
+              {
+                "name": "target",
+                "type": "HostFingerprintConflictTarget"
+              }
+            ],
+            "returns": "*HostFingerprint",
+            "errors": [
+              "ErrNilInput",
+              "ErrConstraintViolation"
+            ],
+            "notes": "One method over the generated HostFingerprintConflictTarget enum — the target argument selects the conflict columns at call time.",
+            "sql_bodies": {
+              "postgres": "INSERT INTO \"public\".\"host_fingerprints\" (<columns>) VALUES (<values>) ON CONFLICT (<conflict_target>) DO UPDATE SET <excluded>"
+            }
+          },
+          {
+            "name": "UpsertMany",
+            "params": [
+              {
+                "name": "inputs",
+                "type": "[]*CreateHostFingerprintInput"
+              },
+              {
+                "name": "target",
+                "type": "HostFingerprintConflictTarget"
+              }
+            ],
+            "returns": "[]*HostFingerprint",
+            "errors": [
+              "ErrNilInput",
+              "ErrConstraintViolation"
+            ],
+            "notes": "Batched in generation.batch_size chunks over the same HostFingerprintConflictTarget enum Upsert takes. Inputs resolving to one target are deduped before the statement is built, last occurrence wins. Earlier chunks are not rolled back on a later failure — wrap in a transaction for atomicity.",
+            "sql_bodies": {
+              "postgres": "INSERT INTO \"public\".\"host_fingerprints\" (<columns>) VALUES <values> ON CONFLICT (<conflict_target>) DO UPDATE SET <excluded>"
+            }
+          },
+          {
+            "name": "Update",
+            "params": [
+              {
+                "name": "pk",
+                "type": "HostFingerprintPK"
+              },
+              {
+                "name": "input",
+                "type": "*UpdateHostFingerprintInput"
+              }
+            ],
+            "returns": "*HostFingerprint",
+            "errors": [
+              "ErrNotFound",
+              "ErrNilInput",
+              "ErrConstraintViolation"
+            ],
+            "notes": "Only fields where IsSet() reports true reach the SET clause; an input with none set issues no UPDATE and returns the row unchanged.",
+            "sql_bodies": {
+              "postgres": "UPDATE \"public\".\"host_fingerprints\" SET <set> WHERE \"host_addr\" = $1 AND \"fingerprint_digest\" = $2"
+            }
+          },
+          {
+            "name": "UpdateMany",
+            "params": [
+              {
+                "name": "items",
+                "type": "[]UpdateHostFingerprintItem"
+              }
+            ],
+            "returns": "[]*HostFingerprint",
+            "errors": [
+              "ErrNilInput",
+              "ErrConstraintViolation"
+            ],
+            "notes": "Issues one statement per item. Batched like CreateMany — earlier items are not rolled back on a later failure. A primary key that does not exist is silently skipped, even under strict_updates.",
+            "sql_bodies": {
+              "postgres": "UPDATE \"public\".\"host_fingerprints\" SET <set> WHERE \"host_addr\" = $1 AND \"fingerprint_digest\" = $2"
+            }
+          },
+          {
+            "name": "UpdateWhere",
+            "params": [
+              {
+                "name": "filter",
+                "type": "*HostFingerprintFilter"
+              },
+              {
+                "name": "input",
+                "type": "*UpdateHostFingerprintInput"
+              }
+            ],
+            "returns": "[]*HostFingerprint",
+            "errors": [
+              "ErrNilInput",
+              "ErrEmptyFilter",
+              "ErrConstraintViolation"
+            ],
+            "notes": "Idempotent — returns an empty slice when no row matches. ErrEmptyFilter when the filter produces no conditions.",
+            "sql_bodies": {
+              "postgres": "UPDATE \"public\".\"host_fingerprints\" SET <set> WHERE <filter> RETURNING \"host_addr\", \"fingerprint_digest\""
+            }
+          },
+          {
+            "name": "HardDelete",
+            "params": [
+              {
+                "name": "pk",
+                "type": "HostFingerprintPK"
+              }
+            ],
+            "returns": "",
+            "errors": [],
+            "notes": "Idempotent — a primary key that does not exist is not an error.",
+            "sql_bodies": {
+              "postgres": "DELETE FROM \"public\".\"host_fingerprints\" WHERE \"host_addr\" = $1 AND \"fingerprint_digest\" = $2"
+            }
+          },
+          {
+            "name": "HardDeleteMany",
+            "params": [
+              {
+                "name": "pks",
+                "type": "[]HostFingerprintPK"
+              }
+            ],
+            "returns": "",
+            "errors": [],
+            "notes": "Idempotent — primary keys that do not exist are not an error.",
+            "sql_bodies": {
+              "postgres": "DELETE FROM \"public\".\"host_fingerprints\" WHERE (\"host_addr\", \"fingerprint_digest\") IN (<pks>)"
+            }
+          },
+          {
+            "name": "HardDeleteWhere",
+            "params": [
+              {
+                "name": "filter",
+                "type": "*HostFingerprintFilter"
+              }
+            ],
+            "returns": "",
+            "errors": [
+              "ErrEmptyFilter"
+            ],
+            "notes": "Idempotent — no match is not an error. ErrEmptyFilter when the filter produces no conditions.",
+            "sql_bodies": {
+              "postgres": "DELETE FROM \"public\".\"host_fingerprints\" WHERE <filter> RETURNING \"host_addr\", \"fingerprint_digest\""
+            }
+          }
+        ]
+      },
+      "filter": {
+        "type": "HostFingerprintFilter",
+        "fields": [
+          {
+            "name": "FingerprintDigest",
+            "type": "*comparator.Opaque[[]byte]"
+          },
+          {
+            "name": "HostAddr",
+            "type": "*comparator.Opaque[net.IP]"
+          },
+          {
+            "name": "And",
+            "type": "[]*HostFingerprintFilter"
+          },
+          {
+            "name": "Or",
+            "type": "[]*HostFingerprintFilter"
+          }
+        ]
+      },
+      "sort": {
+        "type": "HostFingerprintSort",
+        "fields": [
+          "FingerprintDigest",
+          "HostAddr"
+        ]
+      },
+      "examples": {}
+    },
+    {
+      "kind": "table",
       "name": "KeyOnlyRow",
       "table": "key_only_rows",
       "schema": "public",

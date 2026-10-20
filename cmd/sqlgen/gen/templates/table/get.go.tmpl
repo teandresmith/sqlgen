@@ -536,45 +536,57 @@ func (c *{{ .StructName | toCamelCase }}Client) loadRelationships(ctx context.Co
 				}
 			}
 
-			// Build mapping and collect all target IDs
+			// Build mapping and collect all target keys. Each junction column
+			// scans into its own Go type, so both sides of the maps stringify
+			// keys the same way.
 			parentToTargetIDs := make(map[string][]string)
+{{- if pkIsStringType .FKGoType }}
 			var allTargetIDs []string
+{{- else }}
+			var targetPKs []{{ .FKGoType }}
+{{- end }}
 			for junctionRows.Next() {
-				vals := make([]string, len(junctionCols))
+				var localKey {{ .FKColumnGoType }}
+				var refKey {{ .JunctionReferenceGoType }}
 				ptrs := make([]any, len(junctionCols))
-				for i := range vals {
-					ptrs[i] = &vals[i]
-				}
+				ptrs[localIdx], ptrs[refIdx] = &localKey, &refKey
 				if err := junctionRows.Scan(ptrs...); err != nil {
 					return fmt.Errorf("scan {{ $.TableName | toSingular }} {{ .TargetTable }} junction: %w", err)
 				}
-				parentID, targetID := vals[localIdx], vals[refIdx]
+{{- with fkLoadGuard .FKColumnGoType "localKey" }}
+				if !({{ . }}) {
+					continue
+				}
+{{- end }}
+{{- with fkLoadGuard .JunctionReferenceGoType "refKey" }}
+				if !({{ . }}) {
+					continue
+				}
+{{- end }}
+				parentID, targetID := {{ fkLoadKey .FKColumnGoType "localKey" }}, {{ fkLoadKey .JunctionReferenceGoType "refKey" }}
 				parentToTargetIDs[parentID] = append(parentToTargetIDs[parentID], targetID)
+{{- if pkIsStringType .FKGoType }}
 				allTargetIDs = append(allTargetIDs, targetID)
+{{- else }}
+				targetPKs = append(targetPKs, {{ .FKGoType }}({{ fkLoadValue .JunctionReferenceGoType "refKey" }}))
+{{- end }}
 			}
 			if err := junctionRows.Err(); err != nil {
 				return fmt.Errorf("iterate {{ $.TableName | toSingular }} {{ .TargetTable }} junction: %w", err)
 			}
 
-			if len(allTargetIDs) == 0 {
+			if len(parentToTargetIDs) == 0 {
 				return nil
 			}
 
 			// Step 2: Fetch the actual entities
+			filter := &{{ .TargetStructName }}Filter{
 {{- if pkIsStringType .FKGoType }}
-			filter := &{{ .TargetStructName }}Filter{
 				{{ .TargetPKFieldName }}: &comparator.ID{In: allTargetIDs},
-			}
 {{- else }}
-			targetPKs := make([]{{ .FKGoType }}, len(allTargetIDs))
-			for ii, s := range allTargetIDs {
-				v, _ := strconv.ParseInt(s, 10, 64)
-				targetPKs[ii] = {{ .FKGoType }}(v)
-			}
-			filter := &{{ .TargetStructName }}Filter{
 				{{ .TargetPKFieldName }}: {{ pkFilterInExprStr .FKGoType "targetPKs" false }},
-			}
 {{- end }}
+			}
 			if fo.{{ .FieldName }}.Filter != nil {
 				filter.And = append(filter.And, fo.{{ .FieldName }}.Filter)
 			}

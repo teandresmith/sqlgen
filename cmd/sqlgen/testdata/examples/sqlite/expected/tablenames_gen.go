@@ -10,6 +10,7 @@ const (
 	TableAssetDocumentLinks  hook.TableName = "asset_document_links"
 	TableAssets              hook.TableName = "assets"
 	TableBadges              hook.TableName = "badges"
+	TableBinaryKeyBadges     hook.TableName = "binary_key_badges"
 	TableBinaryKeyEvents     hook.TableName = "binary_key_events"
 	TableBinaryKeys          hook.TableName = "binary_keys"
 	TableCategories          hook.TableName = "categories"

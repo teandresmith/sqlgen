@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"net"
 	"sync"
 	"time"
 	"uuid"
@@ -29,6 +30,9 @@ const fingerprintCounter = "bc302378"
 const fingerprintDefaultOnlyRow = "349b9fd8"
 const fingerprintDocument = "c27f21d2"
 const fingerprintEvent = "d9a7cdd0"
+const fingerprintFingerprint = "26353f13"
+const fingerprintHost = "93935214"
+const fingerprintHostFingerprint = "a480f14d"
 const fingerprintKeyOnlyRow = "5e878aea"
 const fingerprintNoteWatcher = "9c5d5888"
 const fingerprintOrder = "632002be"
@@ -2728,6 +2732,768 @@ func (c *Cache) hydrateEvent(pk uuid.UUID, next hook.QueryHandler) {
 		if c.metrics != nil {
 			c.metrics.Set(schema, TableEvents)
 			c.metrics.HydrationComplete(schema, TableEvents, nil)
+		}
+	}()
+}
+
+// keyForFingerprint builds the cache key for Fingerprint by PK.
+func (c *Cache) keyForFingerprint(pk []byte) string {
+	return cache.BuildKey(c.prefix, "public", "fingerprints", fingerprintFingerprint, pk)
+}
+
+// ttlForFingerprint returns the resolved TTL for Fingerprint cache entries.
+func (c *Cache) ttlForFingerprint() time.Duration {
+	return time.Duration(3600000000000)
+}
+
+// hasAnyRelationshipFingerprint reports whether fo has any relationship-typed
+// flag set. Returns false when fo is nil or when only column flags are set.
+func hasAnyRelationshipFingerprint(fo any) bool {
+	if fo == nil {
+		return false
+	}
+	typed, ok := fo.(*FingerprintFieldOptions)
+	if !ok || typed == nil {
+		return false
+	}
+	if typed.Hosts != nil {
+		return true
+	}
+	return false
+}
+
+// fullParentFieldOptionsFingerprint returns a FieldOptions with every column
+// flag set to true and every relationship flag nil — used by hydration to
+// guarantee parent-only results regardless of nil-FieldOptions semantics
+// elsewhere.
+func fullParentFieldOptionsFingerprint() *FingerprintFieldOptions {
+	return &FingerprintFieldOptions{
+		Digest: true,
+		Label:  true,
+	}
+}
+
+// readThroughFingerprint implements the cache read-through path for Fingerprint:
+// probe cache → hit returns decoded entity, miss runs the DB query under
+// singleflight dedup and populates cache. Every backend call is breaker-gated;
+// errors are routed through cache.RouteError and fall through to the DB so
+// a cache outage never breaks the caller.
+func (c *Cache) readThroughFingerprint(ctx context.Context, pk []byte, q *hook.QueryContext, next hook.QueryHandler) (any, error) {
+	key := c.keyForFingerprint(pk)
+	schema := "public"
+
+	if c.breaker == nil || c.breaker.Allow() {
+		getStart := time.Now()
+		entity, hit, err := cache.GetAs[*Fingerprint](ctx, c.backend, c.serializer, key)
+		if c.metrics != nil {
+			c.metrics.GetLatency(schema, TableFingerprints, time.Since(getStart))
+		}
+		if err != nil {
+			cache.RouteError(ctx, c.metrics, c.onError, c.breaker, "get", schema, TableFingerprints, err)
+		} else if hit {
+			if c.metrics != nil {
+				c.metrics.Hit(schema, TableFingerprints)
+			}
+			if c.breaker != nil {
+				c.breaker.RecordSuccess()
+			}
+			return entity, nil
+		} else {
+			if c.metrics != nil {
+				c.metrics.Miss(schema, TableFingerprints)
+			}
+			// A clean miss is a successful backend round-trip — it resets
+			// the consecutive-failure counter and closes a HalfOpen probe.
+			if c.breaker != nil {
+				c.breaker.RecordSuccess()
+			}
+		}
+	} else if c.metrics != nil {
+		c.metrics.Miss(schema, TableFingerprints)
+	}
+
+	// Partial fetches must not write back to cache (invariant:
+	// only full entities). On miss, run the DB through `next` with the
+	// caller's partial FieldOptions, kick off fire-and-forget hydration to
+	// refill the cache with the full entity, and return the
+	// partial result directly. The partial + hydration-disabled case is
+	// filtered out earlier in QueryHook.
+	if extractFieldOptions(q.CallOptions) != nil {
+		result, err := next(ctx, q)
+		if err != nil {
+			return nil, err
+		}
+		c.hydrateFingerprint(pk, next)
+		return result, nil
+	}
+
+	ch := c.sf.DoChan(key, func() (any, error) {
+		// In-flight cache re-check: a sibling flight may have populated the
+		// cache between this caller's outer Get-miss and entering the flight.
+		// Without this, late stragglers that arrive after the sibling flight
+		// completed would register a new flight and run a duplicate DB query.
+		// The outer probe already recorded the Miss / breaker success; this
+		// inner re-check is dedup machinery, not an observable cache event, so
+		// it emits no metrics.
+		if c.breaker == nil || c.breaker.Allow() {
+			if entity, hit, err := cache.GetAs[*Fingerprint](ctx, c.backend, c.serializer, key); err == nil && hit {
+				return entity, nil
+			}
+		}
+		result, fetchErr := next(ctx, q)
+		if fetchErr != nil {
+			return nil, fetchErr
+		}
+		entity, ok := result.(*Fingerprint)
+		if !ok || entity == nil {
+			return result, nil
+		}
+		if c.breaker != nil && !c.breaker.Allow() {
+			return result, nil
+		}
+		setStart := time.Now()
+		setErr := cache.SetAs(ctx, c.backend, c.serializer, key, entity, c.ttlForFingerprint())
+		if c.metrics != nil {
+			c.metrics.SetLatency(schema, TableFingerprints, time.Since(setStart))
+		}
+		if setErr != nil {
+			cache.RouteError(ctx, c.metrics, c.onError, c.breaker, "set", schema, TableFingerprints, setErr)
+			return result, nil
+		}
+		if c.breaker != nil {
+			c.breaker.RecordSuccess()
+		}
+		if c.metrics != nil {
+			c.metrics.Set(schema, TableFingerprints)
+		}
+		return result, nil
+	})
+
+	select {
+	case res := <-ch:
+		return res.Val, res.Err
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	}
+}
+
+// setFingerprint caches a full Fingerprint entity. Called by the mutation hook
+// after a successful Create / CreateMany to populate the cache with the new
+// entity. The PK is read from the entity itself so this never
+// depends on parallel ordering with m.AffectedPKs (GetMany does not guarantee
+// result order). Failures route through cache.RouteError and never surface to
+// the caller path; a cache outage can delay the next Get but never breaks a
+// mutation.
+func (c *Cache) setFingerprint(ctx context.Context, entity *Fingerprint) {
+	if entity == nil {
+		return
+	}
+	if c.breaker != nil && !c.breaker.Allow() {
+		return
+	}
+	key := c.keyForFingerprint(entity.Digest)
+	schema := "public"
+	setStart := time.Now()
+	err := cache.SetAs(ctx, c.backend, c.serializer, key, entity, c.ttlForFingerprint())
+	if c.metrics != nil {
+		c.metrics.SetLatency(schema, TableFingerprints, time.Since(setStart))
+	}
+	if err != nil {
+		cache.RouteError(ctx, c.metrics, c.onError, c.breaker, "set", schema, TableFingerprints, err)
+		return
+	}
+	if c.breaker != nil {
+		c.breaker.RecordSuccess()
+	}
+	if c.metrics != nil {
+		c.metrics.Set(schema, TableFingerprints)
+	}
+}
+
+// hydrateFingerprint launches at most one background hydration per (table, pk).
+// Runs with a fresh context.Background() timeout — does NOT inherit the
+// caller's ctx. Re-runs the Get through the
+// downstream chain with full-parent FieldOptions (every column true, every
+// relationship nil) and SkipHooks: true so the refill pulls a full entity,
+// then serializes and populates the cache under the full-entity key. Errors
+// surface via metrics.HydrationComplete + cache.RouteError; the caller path
+// is never affected.
+func (c *Cache) hydrateFingerprint(pk []byte, next hook.QueryHandler) {
+	if !c.hydrationEnabled {
+		return
+	}
+	key := c.keyForFingerprint(pk)
+	if _, loaded := c.hydrating.LoadOrStore(key, struct{}{}); loaded {
+		return
+	}
+	go func() {
+		defer c.hydrating.Delete(key)
+		ctx, cancel := context.WithTimeout(context.Background(), c.hydrationTimeout)
+		defer cancel()
+		schema := "public"
+		if c.metrics != nil {
+			c.metrics.HydrationStart(schema, TableFingerprints)
+		}
+
+		q := &hook.QueryContext{
+			Op:     hook.OpGet,
+			Table:  TableFingerprints,
+			Schema: schema,
+			PK:     pk,
+			CallOptions: CallOptions[FingerprintFieldOptions]{
+				FieldOptions: fullParentFieldOptionsFingerprint(),
+				SkipHooks:    true,
+			},
+		}
+		result, err := next(ctx, q)
+		if err != nil {
+			if c.metrics != nil {
+				c.metrics.HydrationComplete(schema, TableFingerprints, err)
+			}
+			return
+		}
+		entity, ok := result.(*Fingerprint)
+		if !ok || entity == nil {
+			if c.metrics != nil {
+				c.metrics.HydrationComplete(schema, TableFingerprints, nil)
+			}
+			return
+		}
+
+		if c.breaker != nil && !c.breaker.Allow() {
+			if c.metrics != nil {
+				c.metrics.HydrationComplete(schema, TableFingerprints, nil)
+			}
+			return
+		}
+		setStart := time.Now()
+		setErr := cache.SetAs(ctx, c.backend, c.serializer, key, entity, c.ttlForFingerprint())
+		if c.metrics != nil {
+			c.metrics.SetLatency(schema, TableFingerprints, time.Since(setStart))
+		}
+		if setErr != nil {
+			cache.RouteError(ctx, c.metrics, c.onError, c.breaker, "set", schema, TableFingerprints, setErr)
+			if c.metrics != nil {
+				c.metrics.HydrationComplete(schema, TableFingerprints, setErr)
+			}
+			return
+		}
+		if c.breaker != nil {
+			c.breaker.RecordSuccess()
+		}
+		if c.metrics != nil {
+			c.metrics.Set(schema, TableFingerprints)
+			c.metrics.HydrationComplete(schema, TableFingerprints, nil)
+		}
+	}()
+}
+
+// keyForHost builds the cache key for Host by PK.
+func (c *Cache) keyForHost(pk net.IP) string {
+	return cache.BuildKey(c.prefix, "public", "hosts", fingerprintHost, pk)
+}
+
+// ttlForHost returns the resolved TTL for Host cache entries.
+func (c *Cache) ttlForHost() time.Duration {
+	return time.Duration(3600000000000)
+}
+
+// hasAnyRelationshipHost reports whether fo has any relationship-typed
+// flag set. Returns false when fo is nil or when only column flags are set.
+func hasAnyRelationshipHost(fo any) bool {
+	if fo == nil {
+		return false
+	}
+	typed, ok := fo.(*HostFieldOptions)
+	if !ok || typed == nil {
+		return false
+	}
+	if typed.Fingerprints != nil {
+		return true
+	}
+	return false
+}
+
+// fullParentFieldOptionsHost returns a FieldOptions with every column
+// flag set to true and every relationship flag nil — used by hydration to
+// guarantee parent-only results regardless of nil-FieldOptions semantics
+// elsewhere.
+func fullParentFieldOptionsHost() *HostFieldOptions {
+	return &HostFieldOptions{
+		Addr:  true,
+		Label: true,
+	}
+}
+
+// readThroughHost implements the cache read-through path for Host:
+// probe cache → hit returns decoded entity, miss runs the DB query under
+// singleflight dedup and populates cache. Every backend call is breaker-gated;
+// errors are routed through cache.RouteError and fall through to the DB so
+// a cache outage never breaks the caller.
+func (c *Cache) readThroughHost(ctx context.Context, pk net.IP, q *hook.QueryContext, next hook.QueryHandler) (any, error) {
+	key := c.keyForHost(pk)
+	schema := "public"
+
+	if c.breaker == nil || c.breaker.Allow() {
+		getStart := time.Now()
+		entity, hit, err := cache.GetAs[*Host](ctx, c.backend, c.serializer, key)
+		if c.metrics != nil {
+			c.metrics.GetLatency(schema, TableHosts, time.Since(getStart))
+		}
+		if err != nil {
+			cache.RouteError(ctx, c.metrics, c.onError, c.breaker, "get", schema, TableHosts, err)
+		} else if hit {
+			if c.metrics != nil {
+				c.metrics.Hit(schema, TableHosts)
+			}
+			if c.breaker != nil {
+				c.breaker.RecordSuccess()
+			}
+			return entity, nil
+		} else {
+			if c.metrics != nil {
+				c.metrics.Miss(schema, TableHosts)
+			}
+			// A clean miss is a successful backend round-trip — it resets
+			// the consecutive-failure counter and closes a HalfOpen probe.
+			if c.breaker != nil {
+				c.breaker.RecordSuccess()
+			}
+		}
+	} else if c.metrics != nil {
+		c.metrics.Miss(schema, TableHosts)
+	}
+
+	// Partial fetches must not write back to cache (invariant:
+	// only full entities). On miss, run the DB through `next` with the
+	// caller's partial FieldOptions, kick off fire-and-forget hydration to
+	// refill the cache with the full entity, and return the
+	// partial result directly. The partial + hydration-disabled case is
+	// filtered out earlier in QueryHook.
+	if extractFieldOptions(q.CallOptions) != nil {
+		result, err := next(ctx, q)
+		if err != nil {
+			return nil, err
+		}
+		c.hydrateHost(pk, next)
+		return result, nil
+	}
+
+	ch := c.sf.DoChan(key, func() (any, error) {
+		// In-flight cache re-check: a sibling flight may have populated the
+		// cache between this caller's outer Get-miss and entering the flight.
+		// Without this, late stragglers that arrive after the sibling flight
+		// completed would register a new flight and run a duplicate DB query.
+		// The outer probe already recorded the Miss / breaker success; this
+		// inner re-check is dedup machinery, not an observable cache event, so
+		// it emits no metrics.
+		if c.breaker == nil || c.breaker.Allow() {
+			if entity, hit, err := cache.GetAs[*Host](ctx, c.backend, c.serializer, key); err == nil && hit {
+				return entity, nil
+			}
+		}
+		result, fetchErr := next(ctx, q)
+		if fetchErr != nil {
+			return nil, fetchErr
+		}
+		entity, ok := result.(*Host)
+		if !ok || entity == nil {
+			return result, nil
+		}
+		if c.breaker != nil && !c.breaker.Allow() {
+			return result, nil
+		}
+		setStart := time.Now()
+		setErr := cache.SetAs(ctx, c.backend, c.serializer, key, entity, c.ttlForHost())
+		if c.metrics != nil {
+			c.metrics.SetLatency(schema, TableHosts, time.Since(setStart))
+		}
+		if setErr != nil {
+			cache.RouteError(ctx, c.metrics, c.onError, c.breaker, "set", schema, TableHosts, setErr)
+			return result, nil
+		}
+		if c.breaker != nil {
+			c.breaker.RecordSuccess()
+		}
+		if c.metrics != nil {
+			c.metrics.Set(schema, TableHosts)
+		}
+		return result, nil
+	})
+
+	select {
+	case res := <-ch:
+		return res.Val, res.Err
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	}
+}
+
+// setHost caches a full Host entity. Called by the mutation hook
+// after a successful Create / CreateMany to populate the cache with the new
+// entity. The PK is read from the entity itself so this never
+// depends on parallel ordering with m.AffectedPKs (GetMany does not guarantee
+// result order). Failures route through cache.RouteError and never surface to
+// the caller path; a cache outage can delay the next Get but never breaks a
+// mutation.
+func (c *Cache) setHost(ctx context.Context, entity *Host) {
+	if entity == nil {
+		return
+	}
+	if c.breaker != nil && !c.breaker.Allow() {
+		return
+	}
+	key := c.keyForHost(entity.Addr)
+	schema := "public"
+	setStart := time.Now()
+	err := cache.SetAs(ctx, c.backend, c.serializer, key, entity, c.ttlForHost())
+	if c.metrics != nil {
+		c.metrics.SetLatency(schema, TableHosts, time.Since(setStart))
+	}
+	if err != nil {
+		cache.RouteError(ctx, c.metrics, c.onError, c.breaker, "set", schema, TableHosts, err)
+		return
+	}
+	if c.breaker != nil {
+		c.breaker.RecordSuccess()
+	}
+	if c.metrics != nil {
+		c.metrics.Set(schema, TableHosts)
+	}
+}
+
+// hydrateHost launches at most one background hydration per (table, pk).
+// Runs with a fresh context.Background() timeout — does NOT inherit the
+// caller's ctx. Re-runs the Get through the
+// downstream chain with full-parent FieldOptions (every column true, every
+// relationship nil) and SkipHooks: true so the refill pulls a full entity,
+// then serializes and populates the cache under the full-entity key. Errors
+// surface via metrics.HydrationComplete + cache.RouteError; the caller path
+// is never affected.
+func (c *Cache) hydrateHost(pk net.IP, next hook.QueryHandler) {
+	if !c.hydrationEnabled {
+		return
+	}
+	key := c.keyForHost(pk)
+	if _, loaded := c.hydrating.LoadOrStore(key, struct{}{}); loaded {
+		return
+	}
+	go func() {
+		defer c.hydrating.Delete(key)
+		ctx, cancel := context.WithTimeout(context.Background(), c.hydrationTimeout)
+		defer cancel()
+		schema := "public"
+		if c.metrics != nil {
+			c.metrics.HydrationStart(schema, TableHosts)
+		}
+
+		q := &hook.QueryContext{
+			Op:     hook.OpGet,
+			Table:  TableHosts,
+			Schema: schema,
+			PK:     pk,
+			CallOptions: CallOptions[HostFieldOptions]{
+				FieldOptions: fullParentFieldOptionsHost(),
+				SkipHooks:    true,
+			},
+		}
+		result, err := next(ctx, q)
+		if err != nil {
+			if c.metrics != nil {
+				c.metrics.HydrationComplete(schema, TableHosts, err)
+			}
+			return
+		}
+		entity, ok := result.(*Host)
+		if !ok || entity == nil {
+			if c.metrics != nil {
+				c.metrics.HydrationComplete(schema, TableHosts, nil)
+			}
+			return
+		}
+
+		if c.breaker != nil && !c.breaker.Allow() {
+			if c.metrics != nil {
+				c.metrics.HydrationComplete(schema, TableHosts, nil)
+			}
+			return
+		}
+		setStart := time.Now()
+		setErr := cache.SetAs(ctx, c.backend, c.serializer, key, entity, c.ttlForHost())
+		if c.metrics != nil {
+			c.metrics.SetLatency(schema, TableHosts, time.Since(setStart))
+		}
+		if setErr != nil {
+			cache.RouteError(ctx, c.metrics, c.onError, c.breaker, "set", schema, TableHosts, setErr)
+			if c.metrics != nil {
+				c.metrics.HydrationComplete(schema, TableHosts, setErr)
+			}
+			return
+		}
+		if c.breaker != nil {
+			c.breaker.RecordSuccess()
+		}
+		if c.metrics != nil {
+			c.metrics.Set(schema, TableHosts)
+			c.metrics.HydrationComplete(schema, TableHosts, nil)
+		}
+	}()
+}
+
+// keyForHostFingerprint builds the cache key for HostFingerprint with composite PK.
+// The []any is constructed in DDL PRIMARY KEY column order inside this one
+// function — call sites never reorder (key-order invariant).
+func (c *Cache) keyForHostFingerprint(pk HostFingerprintPK) string {
+	return cache.BuildCompositeKey(c.prefix, "public", "host_fingerprints", fingerprintHostFingerprint, []any{
+		pk.HostAddr,
+		pk.FingerprintDigest,
+	})
+}
+
+// ttlForHostFingerprint returns the resolved TTL for HostFingerprint cache entries.
+func (c *Cache) ttlForHostFingerprint() time.Duration {
+	return time.Duration(3600000000000)
+}
+
+// hasAnyRelationshipHostFingerprint reports whether fo has any relationship-typed
+// flag set. Returns false when fo is nil or when only column flags are set.
+func hasAnyRelationshipHostFingerprint(fo any) bool {
+	if fo == nil {
+		return false
+	}
+	typed, ok := fo.(*HostFingerprintFieldOptions)
+	if !ok || typed == nil {
+		return false
+	}
+	_ = typed
+	return false
+}
+
+// fullParentFieldOptionsHostFingerprint returns a FieldOptions with every column
+// flag set to true and every relationship flag nil — used by hydration to
+// guarantee parent-only results regardless of nil-FieldOptions semantics
+// elsewhere.
+func fullParentFieldOptionsHostFingerprint() *HostFingerprintFieldOptions {
+	return &HostFingerprintFieldOptions{
+		HostAddr:          true,
+		FingerprintDigest: true,
+	}
+}
+
+// readThroughHostFingerprint implements the cache read-through path for HostFingerprint:
+// probe cache → hit returns decoded entity, miss runs the DB query under
+// singleflight dedup and populates cache. Every backend call is breaker-gated;
+// errors are routed through cache.RouteError and fall through to the DB so
+// a cache outage never breaks the caller.
+func (c *Cache) readThroughHostFingerprint(ctx context.Context, pk HostFingerprintPK, q *hook.QueryContext, next hook.QueryHandler) (any, error) {
+	key := c.keyForHostFingerprint(pk)
+	schema := "public"
+
+	if c.breaker == nil || c.breaker.Allow() {
+		getStart := time.Now()
+		entity, hit, err := cache.GetAs[*HostFingerprint](ctx, c.backend, c.serializer, key)
+		if c.metrics != nil {
+			c.metrics.GetLatency(schema, TableHostFingerprints, time.Since(getStart))
+		}
+		if err != nil {
+			cache.RouteError(ctx, c.metrics, c.onError, c.breaker, "get", schema, TableHostFingerprints, err)
+		} else if hit {
+			if c.metrics != nil {
+				c.metrics.Hit(schema, TableHostFingerprints)
+			}
+			if c.breaker != nil {
+				c.breaker.RecordSuccess()
+			}
+			return entity, nil
+		} else {
+			if c.metrics != nil {
+				c.metrics.Miss(schema, TableHostFingerprints)
+			}
+			// A clean miss is a successful backend round-trip — it resets
+			// the consecutive-failure counter and closes a HalfOpen probe.
+			if c.breaker != nil {
+				c.breaker.RecordSuccess()
+			}
+		}
+	} else if c.metrics != nil {
+		c.metrics.Miss(schema, TableHostFingerprints)
+	}
+
+	// Partial fetches must not write back to cache (invariant:
+	// only full entities). On miss, run the DB through `next` with the
+	// caller's partial FieldOptions, kick off fire-and-forget hydration to
+	// refill the cache with the full entity, and return the
+	// partial result directly. The partial + hydration-disabled case is
+	// filtered out earlier in QueryHook.
+	if extractFieldOptions(q.CallOptions) != nil {
+		result, err := next(ctx, q)
+		if err != nil {
+			return nil, err
+		}
+		c.hydrateHostFingerprint(pk, next)
+		return result, nil
+	}
+
+	ch := c.sf.DoChan(key, func() (any, error) {
+		// In-flight cache re-check: a sibling flight may have populated the
+		// cache between this caller's outer Get-miss and entering the flight.
+		// Without this, late stragglers that arrive after the sibling flight
+		// completed would register a new flight and run a duplicate DB query.
+		// The outer probe already recorded the Miss / breaker success; this
+		// inner re-check is dedup machinery, not an observable cache event, so
+		// it emits no metrics.
+		if c.breaker == nil || c.breaker.Allow() {
+			if entity, hit, err := cache.GetAs[*HostFingerprint](ctx, c.backend, c.serializer, key); err == nil && hit {
+				return entity, nil
+			}
+		}
+		result, fetchErr := next(ctx, q)
+		if fetchErr != nil {
+			return nil, fetchErr
+		}
+		entity, ok := result.(*HostFingerprint)
+		if !ok || entity == nil {
+			return result, nil
+		}
+		if c.breaker != nil && !c.breaker.Allow() {
+			return result, nil
+		}
+		setStart := time.Now()
+		setErr := cache.SetAs(ctx, c.backend, c.serializer, key, entity, c.ttlForHostFingerprint())
+		if c.metrics != nil {
+			c.metrics.SetLatency(schema, TableHostFingerprints, time.Since(setStart))
+		}
+		if setErr != nil {
+			cache.RouteError(ctx, c.metrics, c.onError, c.breaker, "set", schema, TableHostFingerprints, setErr)
+			return result, nil
+		}
+		if c.breaker != nil {
+			c.breaker.RecordSuccess()
+		}
+		if c.metrics != nil {
+			c.metrics.Set(schema, TableHostFingerprints)
+		}
+		return result, nil
+	})
+
+	select {
+	case res := <-ch:
+		return res.Val, res.Err
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	}
+}
+
+// setHostFingerprint caches a full HostFingerprint entity. Called by the mutation hook
+// after a successful Create / CreateMany to populate the cache with the new
+// entity. The PK is read from the entity itself so this never
+// depends on parallel ordering with m.AffectedPKs (GetMany does not guarantee
+// result order). Failures route through cache.RouteError and never surface to
+// the caller path; a cache outage can delay the next Get but never breaks a
+// mutation.
+func (c *Cache) setHostFingerprint(ctx context.Context, entity *HostFingerprint) {
+	if entity == nil {
+		return
+	}
+	if c.breaker != nil && !c.breaker.Allow() {
+		return
+	}
+	key := c.keyForHostFingerprint(HostFingerprintPK{
+		HostAddr:          entity.HostAddr,
+		FingerprintDigest: entity.FingerprintDigest,
+	})
+	schema := "public"
+	setStart := time.Now()
+	err := cache.SetAs(ctx, c.backend, c.serializer, key, entity, c.ttlForHostFingerprint())
+	if c.metrics != nil {
+		c.metrics.SetLatency(schema, TableHostFingerprints, time.Since(setStart))
+	}
+	if err != nil {
+		cache.RouteError(ctx, c.metrics, c.onError, c.breaker, "set", schema, TableHostFingerprints, err)
+		return
+	}
+	if c.breaker != nil {
+		c.breaker.RecordSuccess()
+	}
+	if c.metrics != nil {
+		c.metrics.Set(schema, TableHostFingerprints)
+	}
+}
+
+// hydrateHostFingerprint launches at most one background hydration per (table, pk).
+// Runs with a fresh context.Background() timeout — does NOT inherit the
+// caller's ctx. Re-runs the Get through the
+// downstream chain with full-parent FieldOptions (every column true, every
+// relationship nil) and SkipHooks: true so the refill pulls a full entity,
+// then serializes and populates the cache under the full-entity key. Errors
+// surface via metrics.HydrationComplete + cache.RouteError; the caller path
+// is never affected.
+func (c *Cache) hydrateHostFingerprint(pk HostFingerprintPK, next hook.QueryHandler) {
+	if !c.hydrationEnabled {
+		return
+	}
+	key := c.keyForHostFingerprint(pk)
+	if _, loaded := c.hydrating.LoadOrStore(key, struct{}{}); loaded {
+		return
+	}
+	go func() {
+		defer c.hydrating.Delete(key)
+		ctx, cancel := context.WithTimeout(context.Background(), c.hydrationTimeout)
+		defer cancel()
+		schema := "public"
+		if c.metrics != nil {
+			c.metrics.HydrationStart(schema, TableHostFingerprints)
+		}
+
+		q := &hook.QueryContext{
+			Op:     hook.OpGet,
+			Table:  TableHostFingerprints,
+			Schema: schema,
+			PK:     pk,
+			CallOptions: CallOptions[HostFingerprintFieldOptions]{
+				FieldOptions: fullParentFieldOptionsHostFingerprint(),
+				SkipHooks:    true,
+			},
+		}
+		result, err := next(ctx, q)
+		if err != nil {
+			if c.metrics != nil {
+				c.metrics.HydrationComplete(schema, TableHostFingerprints, err)
+			}
+			return
+		}
+		entity, ok := result.(*HostFingerprint)
+		if !ok || entity == nil {
+			if c.metrics != nil {
+				c.metrics.HydrationComplete(schema, TableHostFingerprints, nil)
+			}
+			return
+		}
+
+		if c.breaker != nil && !c.breaker.Allow() {
+			if c.metrics != nil {
+				c.metrics.HydrationComplete(schema, TableHostFingerprints, nil)
+			}
+			return
+		}
+		setStart := time.Now()
+		setErr := cache.SetAs(ctx, c.backend, c.serializer, key, entity, c.ttlForHostFingerprint())
+		if c.metrics != nil {
+			c.metrics.SetLatency(schema, TableHostFingerprints, time.Since(setStart))
+		}
+		if setErr != nil {
+			cache.RouteError(ctx, c.metrics, c.onError, c.breaker, "set", schema, TableHostFingerprints, setErr)
+			if c.metrics != nil {
+				c.metrics.HydrationComplete(schema, TableHostFingerprints, setErr)
+			}
+			return
+		}
+		if c.breaker != nil {
+			c.breaker.RecordSuccess()
+		}
+		if c.metrics != nil {
+			c.metrics.Set(schema, TableHostFingerprints)
+			c.metrics.HydrationComplete(schema, TableHostFingerprints, nil)
 		}
 	}()
 }
@@ -6642,6 +7408,12 @@ func (c *Cache) InvalidateMany(ctx context.Context, table hook.TableName, pks []
 		keys, err = cache.KeysFromAny(pks, c.keyForDocument)
 	case TableEvents:
 		keys, err = cache.KeysFromAny(pks, c.keyForEvent)
+	case TableFingerprints:
+		keys, err = cache.KeysFromAny(pks, c.keyForFingerprint)
+	case TableHosts:
+		keys, err = cache.KeysFromAny(pks, c.keyForHost)
+	case TableHostFingerprints:
+		keys, err = cache.KeysFromAny(pks, c.keyForHostFingerprint)
 	case TableKeyOnlyRows:
 		keys, err = cache.KeysFromAny(pks, c.keyForKeyOnlyRow)
 	case TableNoteWatchers:
@@ -6720,6 +7492,12 @@ func cacheRelationFor(table hook.TableName) (schema, name string, ok bool) {
 		return "public", "documents", true
 	case TableEvents:
 		return "audit", "events", true
+	case TableFingerprints:
+		return "public", "fingerprints", true
+	case TableHosts:
+		return "public", "hosts", true
+	case TableHostFingerprints:
+		return "public", "host_fingerprints", true
 	case TableKeyOnlyRows:
 		return "public", "key_only_rows", true
 	case TableNoteWatchers:
@@ -6919,6 +7697,24 @@ func (c *Cache) QueryHook() hook.QueryHook {
 					return next(ctx, q)
 				}
 				return c.readThroughEvent(ctx, pk, q, next)
+			case TableFingerprints:
+				pk, ok := q.PK.([]byte)
+				if !ok {
+					return next(ctx, q)
+				}
+				return c.readThroughFingerprint(ctx, pk, q, next)
+			case TableHosts:
+				pk, ok := q.PK.(net.IP)
+				if !ok {
+					return next(ctx, q)
+				}
+				return c.readThroughHost(ctx, pk, q, next)
+			case TableHostFingerprints:
+				pk, ok := q.PK.(HostFingerprintPK)
+				if !ok {
+					return next(ctx, q)
+				}
+				return c.readThroughHostFingerprint(ctx, pk, q, next)
 			case TableKeyOnlyRows:
 				pk, ok := q.PK.(int64)
 				if !ok {
@@ -7096,6 +7892,18 @@ func (c *Cache) dispatchMutation(ctx context.Context, m *hook.MutationContext, r
 				if entity, ok := result.(*Event); ok {
 					c.setEvent(ctx, entity)
 				}
+			case TableFingerprints:
+				if entity, ok := result.(*Fingerprint); ok {
+					c.setFingerprint(ctx, entity)
+				}
+			case TableHosts:
+				if entity, ok := result.(*Host); ok {
+					c.setHost(ctx, entity)
+				}
+			case TableHostFingerprints:
+				if entity, ok := result.(*HostFingerprint); ok {
+					c.setHostFingerprint(ctx, entity)
+				}
 			case TableKeyOnlyRows:
 				if entity, ok := result.(*KeyOnlyRow); ok {
 					c.setKeyOnlyRow(ctx, entity)
@@ -7221,6 +8029,24 @@ func (c *Cache) dispatchMutation(ctx context.Context, m *hook.MutationContext, r
 				if entities, ok := result.([]*Event); ok {
 					for _, entity := range entities {
 						c.setEvent(ctx, entity)
+					}
+				}
+			case TableFingerprints:
+				if entities, ok := result.([]*Fingerprint); ok {
+					for _, entity := range entities {
+						c.setFingerprint(ctx, entity)
+					}
+				}
+			case TableHosts:
+				if entities, ok := result.([]*Host); ok {
+					for _, entity := range entities {
+						c.setHost(ctx, entity)
+					}
+				}
+			case TableHostFingerprints:
+				if entities, ok := result.([]*HostFingerprint); ok {
+					for _, entity := range entities {
+						c.setHostFingerprint(ctx, entity)
 					}
 				}
 			case TableKeyOnlyRows:
@@ -7427,6 +8253,12 @@ func hasAnyRelationshipFieldOptions(table hook.TableName, callOpts any) bool {
 		return hasAnyRelationshipDocument(fo)
 	case TableEvents:
 		return hasAnyRelationshipEvent(fo)
+	case TableFingerprints:
+		return hasAnyRelationshipFingerprint(fo)
+	case TableHosts:
+		return hasAnyRelationshipHost(fo)
+	case TableHostFingerprints:
+		return hasAnyRelationshipHostFingerprint(fo)
 	case TableKeyOnlyRows:
 		return hasAnyRelationshipKeyOnlyRow(fo)
 	case TableNoteWatchers:

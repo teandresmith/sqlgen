@@ -246,6 +246,15 @@ CREATE TABLE owner_badges (
     PRIMARY KEY (owner_id, badge_code)
 );
 
+-- A many-to-many edge with a BLOB key on one side: BinaryKey.Badges scans
+-- the junction's BLOB parent key, and Badge.BinaryKeys fetches binary_keys by
+-- it.
+CREATE TABLE binary_key_badges (
+    binary_key_id BLOB NOT NULL REFERENCES binary_keys(id),
+    badge_code TEXT NOT NULL REFERENCES badges(code),
+    PRIMARY KEY (binary_key_id, badge_code)
+);
+
 -- slugged_rows: `slug` is UNIQUE with a constant DEFAULT and `read_only` on the
 -- API, and every column has a DEFAULT, so a zero input supplies no column.
 CREATE TABLE slugged_rows (

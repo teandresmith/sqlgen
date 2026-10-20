@@ -21,6 +21,9 @@ Features: audit_columns, cache, events, soft_delete, views
 | DefaultOnlyRow | `default_only_rows` | table | [default_only_row.md](default_only_row.md) |  |
 | Document | `documents` | table | [document.md](document.md) | Polymorphic child rows; entity_type sub-categorizes per-parent relationship |
 | Event | `events` | table | [event.md](event.md) | General system audit events |
+| Fingerprint | `fingerprints` | table | [fingerprint.md](fingerprint.md) |  |
+| Host | `hosts` | table | [host.md](host.md) |  |
+| HostFingerprint | `host_fingerprints` | table | [host_fingerprint.md](host_fingerprint.md) |  |
 | KeyOnlyRow | `key_only_rows` | table | [key_only_row.md](key_only_row.md) |  |
 | NoteWatcher | `note_watchers` | table | [note_watcher.md](note_watcher.md) |  |
 | Order | `orders` | table | [order.md](order.md) | Customer purchase orders |

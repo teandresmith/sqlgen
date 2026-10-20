@@ -163,6 +163,9 @@ func translateBadgeFilter(in *gqlmodel.BadgeFilter) *models.BadgeFilter {
 	if in.Label != nil {
 		out.Label = translateStringComparator(in.Label)
 	}
+	if in.BinaryKeys != nil {
+		out.BinaryKeys = translateBinaryKeyFilter(in.BinaryKeys)
+	}
 	if in.Owners != nil {
 		out.Owners = translateOwnerFilter(in.Owners)
 	}
@@ -202,6 +205,9 @@ func translateBinaryKeyFilter(in *gqlmodel.BinaryKeyFilter) *models.BinaryKeyFil
 	if in.Name != nil {
 		out.Name = translateStringComparator(in.Name)
 	}
+	if in.Badges != nil {
+		out.Badges = translateBadgeFilter(in.Badges)
+	}
 	if in.BinaryKeyEvents != nil {
 		out.BinaryKeyEvents = translateBinaryKeyEventFilter(in.BinaryKeyEvents)
 	}
@@ -224,6 +230,36 @@ func translateBinaryKeyFilter(in *gqlmodel.BinaryKeyFilter) *models.BinaryKeyFil
 				continue
 			}
 			out.Or = append(out.Or, translateBinaryKeyFilter(sub))
+		}
+	}
+	return out
+}
+
+// translateBinaryKeyBadgeFilter converts the gqlgen-generated
+// BinaryKeyBadgeFilter into a *models.BinaryKeyBadgeFilter.
+// Returns nil when the input is nil so the model layer's "nil filter ⇒ no
+// where clause" contract is preserved.
+func translateBinaryKeyBadgeFilter(in *gqlmodel.BinaryKeyBadgeFilter) *models.BinaryKeyBadgeFilter {
+	if in == nil {
+		return nil
+	}
+	out := &models.BinaryKeyBadgeFilter{}
+	if len(in.And) > 0 {
+		out.And = make([]*models.BinaryKeyBadgeFilter, 0, len(in.And))
+		for _, sub := range in.And {
+			if sub == nil {
+				continue
+			}
+			out.And = append(out.And, translateBinaryKeyBadgeFilter(sub))
+		}
+	}
+	if len(in.Or) > 0 {
+		out.Or = make([]*models.BinaryKeyBadgeFilter, 0, len(in.Or))
+		for _, sub := range in.Or {
+			if sub == nil {
+				continue
+			}
+			out.Or = append(out.Or, translateBinaryKeyBadgeFilter(sub))
 		}
 	}
 	return out

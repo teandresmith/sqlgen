@@ -6990,19 +6990,20 @@ func (c *categoryClient) loadRelationships(ctx context.Context, conn database.Qu
 				}
 			}
 
-			// Build mapping and collect all target IDs
+			// Build mapping and collect all target keys. Each junction column
+			// scans into its own Go type, so both sides of the maps stringify
+			// keys the same way.
 			parentToTargetIDs := make(map[string][]string)
 			var allTargetIDs []string
 			for junctionRows.Next() {
-				vals := make([]string, len(junctionCols))
+				var localKey uuid.UUID
+				var refKey uuid.UUID
 				ptrs := make([]any, len(junctionCols))
-				for i := range vals {
-					ptrs[i] = &vals[i]
-				}
+				ptrs[localIdx], ptrs[refIdx] = &localKey, &refKey
 				if err := junctionRows.Scan(ptrs...); err != nil {
 					return fmt.Errorf("scan category users junction: %w", err)
 				}
-				parentID, targetID := vals[localIdx], vals[refIdx]
+				parentID, targetID := localKey.String(), refKey.String()
 				parentToTargetIDs[parentID] = append(parentToTargetIDs[parentID], targetID)
 				allTargetIDs = append(allTargetIDs, targetID)
 			}
@@ -7010,7 +7011,7 @@ func (c *categoryClient) loadRelationships(ctx context.Context, conn database.Qu
 				return fmt.Errorf("iterate category users junction: %w", err)
 			}
 
-			if len(allTargetIDs) == 0 {
+			if len(parentToTargetIDs) == 0 {
 				return nil
 			}
 
@@ -25132,19 +25133,20 @@ func (c *publicUserClient) loadRelationships(ctx context.Context, conn database.
 				}
 			}
 
-			// Build mapping and collect all target IDs
+			// Build mapping and collect all target keys. Each junction column
+			// scans into its own Go type, so both sides of the maps stringify
+			// keys the same way.
 			parentToTargetIDs := make(map[string][]string)
 			var allTargetIDs []string
 			for junctionRows.Next() {
-				vals := make([]string, len(junctionCols))
+				var localKey uuid.UUID
+				var refKey uuid.UUID
 				ptrs := make([]any, len(junctionCols))
-				for i := range vals {
-					ptrs[i] = &vals[i]
-				}
+				ptrs[localIdx], ptrs[refIdx] = &localKey, &refKey
 				if err := junctionRows.Scan(ptrs...); err != nil {
 					return fmt.Errorf("scan user categories junction: %w", err)
 				}
-				parentID, targetID := vals[localIdx], vals[refIdx]
+				parentID, targetID := localKey.String(), refKey.String()
 				parentToTargetIDs[parentID] = append(parentToTargetIDs[parentID], targetID)
 				allTargetIDs = append(allTargetIDs, targetID)
 			}
@@ -25152,7 +25154,7 @@ func (c *publicUserClient) loadRelationships(ctx context.Context, conn database.
 				return fmt.Errorf("iterate user categories junction: %w", err)
 			}
 
-			if len(allTargetIDs) == 0 {
+			if len(parentToTargetIDs) == 0 {
 				return nil
 			}
 

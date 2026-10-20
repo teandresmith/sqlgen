@@ -211,6 +211,40 @@ func binaryKeySortFieldToColumn(f gqlmodel.BinaryKeySortField) string {
 	return ""
 }
 
+// translateBinaryKeyBadgeSort converts a gqlgen-generated
+// []*BinaryKeyBadgeSort into a []sql.Sort. nil / empty input returns nil
+// so the caller's "no sort" path is preserved.
+func translateBinaryKeyBadgeSort(in []*gqlmodel.BinaryKeyBadgeSort) []sql.Sort {
+	if len(in) == 0 {
+		return nil
+	}
+	out := make([]sql.Sort, 0, len(in))
+	for _, s := range in {
+		if s == nil {
+			continue
+		}
+		out = append(out, sql.Sort{
+			Column:    binaryKeyBadgeSortFieldToColumn(s.Field),
+			Direction: directionToSortDirection(s.Direction),
+		})
+	}
+	return out
+}
+
+// binaryKeyBadgeSortFieldToColumn resolves a gqlgen
+// BinaryKeyBadgeSortField value to the SQL column it sorts on. Returns an
+// empty string for unrecognised values so the caller can decide whether to
+// surface a validation error or silently drop the entry.
+func binaryKeyBadgeSortFieldToColumn(f gqlmodel.BinaryKeyBadgeSortField) string {
+	switch string(f) {
+	case "BINARY_KEY_ID":
+		return "binary_key_id"
+	case "BADGE_CODE":
+		return "badge_code"
+	}
+	return ""
+}
+
 // translateBinaryKeyEventSort converts a gqlgen-generated
 // []*BinaryKeyEventSort into a []sql.Sort. nil / empty input returns nil
 // so the caller's "no sort" path is preserved.

@@ -7,9 +7,9 @@ import (
 	"encoding/json"
 	"fmt"
 	"iter"
+	"net"
 	"net/netip"
 	"slices"
-	"strconv"
 	"time"
 	"uuid"
 
@@ -13386,19 +13386,20 @@ func (c *assetClient) loadRelationships(ctx context.Context, conn database.Queri
 				}
 			}
 
-			// Build mapping and collect all target IDs
+			// Build mapping and collect all target keys. Each junction column
+			// scans into its own Go type, so both sides of the maps stringify
+			// keys the same way.
 			parentToTargetIDs := make(map[string][]string)
 			var allTargetIDs []string
 			for junctionRows.Next() {
-				vals := make([]string, len(junctionCols))
+				var localKey uuid.UUID
+				var refKey uuid.UUID
 				ptrs := make([]any, len(junctionCols))
-				for i := range vals {
-					ptrs[i] = &vals[i]
-				}
+				ptrs[localIdx], ptrs[refIdx] = &localKey, &refKey
 				if err := junctionRows.Scan(ptrs...); err != nil {
 					return fmt.Errorf("scan asset documents junction: %w", err)
 				}
-				parentID, targetID := vals[localIdx], vals[refIdx]
+				parentID, targetID := localKey.String(), refKey.String()
 				parentToTargetIDs[parentID] = append(parentToTargetIDs[parentID], targetID)
 				allTargetIDs = append(allTargetIDs, targetID)
 			}
@@ -13406,7 +13407,7 @@ func (c *assetClient) loadRelationships(ctx context.Context, conn database.Queri
 				return fmt.Errorf("iterate asset documents junction: %w", err)
 			}
 
-			if len(allTargetIDs) == 0 {
+			if len(parentToTargetIDs) == 0 {
 				return nil
 			}
 
@@ -13502,19 +13503,20 @@ func (c *assetClient) loadRelationships(ctx context.Context, conn database.Queri
 				}
 			}
 
-			// Build mapping and collect all target IDs
+			// Build mapping and collect all target keys. Each junction column
+			// scans into its own Go type, so both sides of the maps stringify
+			// keys the same way.
 			parentToTargetIDs := make(map[string][]string)
 			var allTargetIDs []string
 			for junctionRows.Next() {
-				vals := make([]string, len(junctionCols))
+				var localKey uuid.UUID
+				var refKey uuid.UUID
 				ptrs := make([]any, len(junctionCols))
-				for i := range vals {
-					ptrs[i] = &vals[i]
-				}
+				ptrs[localIdx], ptrs[refIdx] = &localKey, &refKey
 				if err := junctionRows.Scan(ptrs...); err != nil {
 					return fmt.Errorf("scan asset documents junction: %w", err)
 				}
-				parentID, targetID := vals[localIdx], vals[refIdx]
+				parentID, targetID := localKey.String(), refKey.String()
 				parentToTargetIDs[parentID] = append(parentToTargetIDs[parentID], targetID)
 				allTargetIDs = append(allTargetIDs, targetID)
 			}
@@ -13522,7 +13524,7 @@ func (c *assetClient) loadRelationships(ctx context.Context, conn database.Queri
 				return fmt.Errorf("iterate asset documents junction: %w", err)
 			}
 
-			if len(allTargetIDs) == 0 {
+			if len(parentToTargetIDs) == 0 {
 				return nil
 			}
 
@@ -16121,19 +16123,20 @@ func (c *categoryClient) loadRelationships(ctx context.Context, conn database.Qu
 				}
 			}
 
-			// Build mapping and collect all target IDs
+			// Build mapping and collect all target keys. Each junction column
+			// scans into its own Go type, so both sides of the maps stringify
+			// keys the same way.
 			parentToTargetIDs := make(map[string][]string)
 			var allTargetIDs []string
 			for junctionRows.Next() {
-				vals := make([]string, len(junctionCols))
+				var localKey uuid.UUID
+				var refKey uuid.UUID
 				ptrs := make([]any, len(junctionCols))
-				for i := range vals {
-					ptrs[i] = &vals[i]
-				}
+				ptrs[localIdx], ptrs[refIdx] = &localKey, &refKey
 				if err := junctionRows.Scan(ptrs...); err != nil {
 					return fmt.Errorf("scan category users junction: %w", err)
 				}
-				parentID, targetID := vals[localIdx], vals[refIdx]
+				parentID, targetID := localKey.String(), refKey.String()
 				parentToTargetIDs[parentID] = append(parentToTargetIDs[parentID], targetID)
 				allTargetIDs = append(allTargetIDs, targetID)
 			}
@@ -16141,7 +16144,7 @@ func (c *categoryClient) loadRelationships(ctx context.Context, conn database.Qu
 				return fmt.Errorf("iterate category users junction: %w", err)
 			}
 
-			if len(allTargetIDs) == 0 {
+			if len(parentToTargetIDs) == 0 {
 				return nil
 			}
 
@@ -22703,19 +22706,20 @@ func (c *documentClient) loadRelationships(ctx context.Context, conn database.Qu
 				}
 			}
 
-			// Build mapping and collect all target IDs
+			// Build mapping and collect all target keys. Each junction column
+			// scans into its own Go type, so both sides of the maps stringify
+			// keys the same way.
 			parentToTargetIDs := make(map[string][]string)
 			var allTargetIDs []string
 			for junctionRows.Next() {
-				vals := make([]string, len(junctionCols))
+				var localKey uuid.UUID
+				var refKey uuid.UUID
 				ptrs := make([]any, len(junctionCols))
-				for i := range vals {
-					ptrs[i] = &vals[i]
-				}
+				ptrs[localIdx], ptrs[refIdx] = &localKey, &refKey
 				if err := junctionRows.Scan(ptrs...); err != nil {
 					return fmt.Errorf("scan document assets junction: %w", err)
 				}
-				parentID, targetID := vals[localIdx], vals[refIdx]
+				parentID, targetID := localKey.String(), refKey.String()
 				parentToTargetIDs[parentID] = append(parentToTargetIDs[parentID], targetID)
 				allTargetIDs = append(allTargetIDs, targetID)
 			}
@@ -22723,7 +22727,7 @@ func (c *documentClient) loadRelationships(ctx context.Context, conn database.Qu
 				return fmt.Errorf("iterate document assets junction: %w", err)
 			}
 
-			if len(allTargetIDs) == 0 {
+			if len(parentToTargetIDs) == 0 {
 				return nil
 			}
 
@@ -24573,6 +24577,5635 @@ type GetDocumentsInput struct {
 	Limit  *int            `json:"limit"`
 	Offset *int            `json:"offset"`
 	Sorts  []sql.Sort      `json:"sorts"`
+	// conditions holds additional SQL conditions injected by internal callers
+	// (e.g., Connection keyset conditions). Not part of the public API.
+	conditions []sql.Condition
+	// requiredColumns holds columns an internal caller needs read back even
+	// when FieldOptions narrows the projection (e.g., Connection cursor keys).
+	// Not part of the public API.
+	requiredColumns []string
+}
+
+type Fingerprint struct {
+	Digest []byte `db:"digest" json:"digest"`
+	Label  string `db:"label" json:"label"`
+
+	// Hosts - many-to-many relationship with the hosts table.
+	Hosts []*Host `db:"-" json:"hosts"`
+}
+
+// FingerprintClient provides type-safe operations for the fingerprints table.
+type FingerprintClient interface {
+	// --- Read Operations ---
+
+	// Get returns a single fingerprint by primary key.
+	Get(ctx context.Context, id []byte, opts ...func(*CallOptions[FingerprintFieldOptions])) (*Fingerprint, error)
+
+	// GetMany returns fingerprints matching the given filter, field selection, and sort criteria.
+	// When FieldOptions includes O2M or M2M relationships, they are loaded via an
+	// errgroup fan-out — in parallel over the pool, and serialized by the
+	// transaction's connection reservation when ctx carries one.
+	GetMany(ctx context.Context, input *GetFingerprintsInput, opts ...func(*CallOptions[FingerprintFieldOptions])) ([]*Fingerprint, error)
+
+	// Exists returns true if a fingerprint with the given primary key exists.
+	Exists(ctx context.Context, id []byte, opts ...func(*CallOptions[FingerprintFieldOptions])) (bool, error)
+
+	// ExistsWhere returns true if any fingerprint matches the given filter.
+	ExistsWhere(ctx context.Context, filter *FingerprintFilter, opts ...func(*CallOptions[FingerprintFieldOptions])) (bool, error)
+
+	// Count returns the number of fingerprints matching the given filter.
+	Count(ctx context.Context, filter *FingerprintFilter, opts ...func(*CallOptions[FingerprintFieldOptions])) (int64, error)
+
+	// --- Write Operations ---
+
+	// Create inserts a new fingerprint and returns the created entity.
+	Create(ctx context.Context, input *CreateFingerprintInput, opts ...func(*CallOptions[FingerprintFieldOptions])) (*Fingerprint, error)
+
+	// CreateMany inserts multiple fingerprints in batches and returns all created entities.
+	// Sub-batches are not automatically rolled back on failure — wrap in a transaction for atomicity.
+	CreateMany(ctx context.Context, inputs []*CreateFingerprintInput, opts ...func(*CallOptions[FingerprintFieldOptions])) ([]*Fingerprint, error)
+
+	// Update partially updates a fingerprint by primary key and returns the updated entity.
+	// Only fields where IsSet() is true are included in the SET clause.
+	// Returns ErrNotFound if the primary key does not exist.
+	Update(ctx context.Context, id []byte, input *UpdateFingerprintInput, opts ...func(*CallOptions[FingerprintFieldOptions])) (*Fingerprint, error)
+
+	// UpdateMany updates multiple fingerprints and returns the updated entities.
+	UpdateMany(ctx context.Context, items []UpdateFingerprintItem, opts ...func(*CallOptions[FingerprintFieldOptions])) ([]*Fingerprint, error)
+
+	// UpdateWhere updates all fingerprints matching the filter and returns the updated entities.
+	// Idempotent — returns empty slice when no rows match.
+	UpdateWhere(ctx context.Context, filter *FingerprintFilter, input *UpdateFingerprintInput, opts ...func(*CallOptions[FingerprintFieldOptions])) ([]*Fingerprint, error)
+
+	// Upsert inserts a fingerprint or updates it on conflict and returns the resulting entity.
+	Upsert(ctx context.Context, input *CreateFingerprintInput, target FingerprintConflictTarget, opts ...func(*CallOptions[FingerprintFieldOptions])) (*Fingerprint, error)
+
+	// UpsertMany inserts or updates multiple fingerprints in batches and returns all resulting entities.
+	// Inputs resolving to the same conflict target are deduped, last occurrence wins.
+	UpsertMany(ctx context.Context, inputs []*CreateFingerprintInput, target FingerprintConflictTarget, opts ...func(*CallOptions[FingerprintFieldOptions])) ([]*Fingerprint, error)
+
+	// --- Hard Delete Operations ---
+
+	// HardDelete permanently removes a fingerprint from the database.
+	// Idempotent — returns nil if the primary key does not exist.
+	HardDelete(ctx context.Context, id []byte, opts ...func(*CallOptions[FingerprintFieldOptions])) error
+
+	// HardDeleteMany permanently removes multiple fingerprints from the database.
+	HardDeleteMany(ctx context.Context, ids [][]byte, opts ...func(*CallOptions[FingerprintFieldOptions])) error
+
+	// HardDeleteWhere permanently removes all fingerprints matching the filter.
+	// Idempotent — returns nil when no rows match.
+	HardDeleteWhere(ctx context.Context, filter *FingerprintFilter, opts ...func(*CallOptions[FingerprintFieldOptions])) error
+
+	// --- Pagination Operations ---
+
+	// Paginate returns a page of fingerprints with total count for offset-based pagination.
+	Paginate(ctx context.Context, input PaginateInput[FingerprintFilter], opts ...func(*CallOptions[FingerprintFieldOptions])) (*PaginateResult[Fingerprint], error)
+
+	// Connection returns a Relay-style cursor-paginated connection of fingerprints.
+	// Sort order is determined by cursor_keys — custom sorts are not supported.
+	// Use Paginate for custom sort orders.
+	Connection(ctx context.Context, input ConnectionInput[FingerprintFilter], opts ...func(*CallOptions[FingerprintFieldOptions])) (*Connection[Fingerprint], error)
+
+	// Stream returns an iterator over fingerprints matching the filter and sort criteria.
+	// Rows are yielded as the driver returns them; cache is bypassed.
+	// Stream cannot load relationships.
+	//
+	// Stream refuses an active transaction unless CallOptions.AllowInTransaction
+	// is set, and the opt-in commits the caller to issuing nothing else on that
+	// txCtx: the one rule that remains the caller's — drain or close a result set
+	// before issuing the next statement on that txCtx — applied to a loop whose
+	// body is caller code.
+	Stream(ctx context.Context, input *StreamFingerprintsInput, opts ...func(*CallOptions[StreamFingerprintFieldOptions])) iter.Seq2[*Fingerprint, error]
+}
+
+// fingerprintClient implements the FingerprintClient interface.
+type fingerprintClient struct {
+	querier               database.Querier
+	dialect               sql.Dialect
+	table                 sql.Table
+	batchSize             int
+	queryLimit            int
+	pageSize              int
+	cursorKeys            []string
+	strictUpdates         bool
+	mutationHooks         []hook.MutationHook
+	queryHooks            []hook.QueryHook
+	panicHandler          hook.PanicHandler
+	callbackMode          database.CallbackMode
+	hostsDefaultSort      []sql.Sort
+	hostClient            *hostClient
+	hostFingerprintClient *hostFingerprintClient
+}
+
+// newFingerprintClient creates a new fingerprintClient.
+func newFingerprintClient(querier database.Querier, mutationHooks []hook.MutationHook, queryHooks []hook.QueryHook, panicHandler hook.PanicHandler) *fingerprintClient {
+	return &fingerprintClient{
+		querier:       querier,
+		dialect:       sql.NewPostgresDialect(),
+		table:         sql.Table{Schema: "public", Name: "fingerprints"},
+		batchSize:     200,
+		queryLimit:    1000,
+		pageSize:      100,
+		cursorKeys:    []string{"digest"},
+		strictUpdates: true,
+		mutationHooks: mutationHooks,
+		queryHooks:    queryHooks,
+		panicHandler:  panicHandler,
+	}
+}
+
+// executeMutation runs fn through the mutation hook chain.
+// When skipHooks is true, only panic recovery wraps the call.
+func (c *fingerprintClient) executeMutation(ctx context.Context, skipHooks bool, mc *hook.MutationContext, fn hook.MutationHandler) (any, error) {
+	var hooks []hook.MutationHook
+	if !skipHooks {
+		hooks = c.mutationHooks
+	}
+	return hook.BuildMutationChain(c.panicHandler, hooks, fn)(ctx, mc)
+}
+
+// executeQuery runs fn through the query hook chain.
+// When skipHooks is true, only panic recovery wraps the call.
+func (c *fingerprintClient) executeQuery(ctx context.Context, skipHooks bool, qc *hook.QueryContext, fn hook.QueryHandler) (any, error) {
+	var hooks []hook.QueryHook
+	if !skipHooks {
+		hooks = c.queryHooks
+	}
+	return hook.BuildQueryChain(c.panicHandler, hooks, fn)(ctx, qc)
+}
+
+// fingerprintAllColumns is the column list for full-entity reads, sorted for determinism.
+var fingerprintAllColumns = []string{"digest", "label"}
+
+// scanFingerprints scans rows into Fingerprint entities using a column-name switch.
+// Handles both scan target shapes (direct, wrapped) without reflection.
+func scanFingerprints(rows database.Rows, columns []string) ([]*Fingerprint, error) {
+	var result []*Fingerprint
+	for rows.Next() {
+		f := &Fingerprint{}
+
+		targets := make([]any, len(columns))
+		for idx, col := range columns {
+			switch col {
+			case "digest":
+				targets[idx] = &f.Digest
+			case "label":
+				targets[idx] = &f.Label
+			}
+		}
+
+		if err := rows.Scan(targets...); err != nil {
+			return nil, fmt.Errorf("scan fingerprint: %w", err)
+		}
+
+		result = append(result, f)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate fingerprint rows: %w", err)
+	}
+	return result, nil
+}
+
+// Get returns a single fingerprint by primary key with optional field selection.
+// If fieldOptions is provided, only the selected columns are returned and
+// relationships with non-nil FieldOptions are loaded.
+func (c *fingerprintClient) Get(ctx context.Context, id []byte, opts ...func(*CallOptions[FingerprintFieldOptions])) (*Fingerprint, error) {
+	options := resolveCallOptions(opts)
+
+	if options.LockMode != sql.LockNone {
+		if !database.InTransaction(ctx) {
+			return nil, fmt.Errorf("get fingerprint: LockMode requires an active transaction")
+		}
+		options.SkipCache = true
+	}
+	qctx := &hook.QueryContext{
+		Op: hook.OpGet, Table: TableFingerprints, Schema: "public",
+		PK: id, CallOptions: options,
+	}
+	result, err := c.executeQuery(ctx, options.SkipHooks, qctx, func(ctx context.Context, q *hook.QueryContext) (any, error) {
+		// Hooks may mutate q.CallOptions (e.g. the cache hook's hydration
+		// path overrides FieldOptions for a full-entity refill). Prefer
+		// those overrides when present; otherwise fall back to the
+		// caller-supplied options captured at Get() time.
+		effectiveOpts := options
+		if qOpts, ok := q.CallOptions.(CallOptions[FingerprintFieldOptions]); ok {
+			effectiveOpts = qOpts
+		}
+		// Internal GetMany call with SkipHooks to prevent nested hook invocation
+		internalOpts := func(o *CallOptions[FingerprintFieldOptions]) {
+			*o = effectiveOpts
+			o.SkipHooks = true
+		}
+		fingerprints, err := c.GetMany(ctx, &GetFingerprintsInput{
+			Filter: &FingerprintFilter{
+				Digest: &comparator.Opaque[[]byte]{Eq: new(id)},
+			},
+			Limit: new(1),
+		}, internalOpts)
+		if err != nil {
+			return nil, err
+		}
+		if len(fingerprints) == 0 {
+			return nil, ErrNotFound
+		}
+		return fingerprints[0], nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	if result == nil {
+		return nil, nil
+	}
+	return result.(*Fingerprint), nil
+}
+
+// GetMany returns fingerprints matching the given filter, field selection, and sort criteria.
+// When FieldOptions includes O2M or M2M relationships, they are loaded via an
+// errgroup fan-out — in parallel over the pool, and serialized by the
+// transaction's connection reservation when ctx carries one.
+func (c *fingerprintClient) GetMany(ctx context.Context, input *GetFingerprintsInput, opts ...func(*CallOptions[FingerprintFieldOptions])) ([]*Fingerprint, error) {
+	// A nil input is the zero-value input — no filter, no sorts, no
+	// limit. Normalized before the hook context is built, so a hook never sees
+	// a nil Input either.
+	if input == nil {
+		input = &GetFingerprintsInput{}
+	}
+	options := resolveCallOptions(opts)
+
+	if options.LockMode != sql.LockNone {
+		if !database.InTransaction(ctx) {
+			return nil, fmt.Errorf("get fingerprints: LockMode requires an active transaction")
+		}
+		options.SkipCache = true
+	}
+	result, err := c.executeQuery(ctx, options.SkipHooks, &hook.QueryContext{
+		Op: hook.OpGetMany, Table: TableFingerprints, Schema: "public",
+		Input: input, CallOptions: options,
+	}, func(ctx context.Context, q *hook.QueryContext) (any, error) {
+		conn := database.Conn(ctx, c.querier)
+
+		// FieldOptions from CallOptions — nil means all columns
+		fieldOptions := options.FieldOptions
+
+		// Nothing selected — return early
+		if fieldOptions != nil && !fieldOptions.HasSelectedColumns() {
+			return nil, nil
+		}
+
+		// Determine columns from FieldOptions. A narrowed projection still
+		// carries the columns this call structurally requires — the cursor keys
+		// an internal caller declares, and the key relationship
+		// mapping reads off each row. An all-false FieldOptions is
+		// untouched: it short-circuits above.
+		columns := fingerprintAllColumns
+		if fieldOptions != nil {
+			if selected := fieldOptions.Columns(); len(selected) > 0 {
+				columns = unionColumns(selected, input.requiredColumns...)
+				if fieldOptions.loadsRelationships() {
+					columns = unionColumns(columns, "digest")
+				}
+			}
+		}
+
+		// Build conditions from filter
+		var conds []sql.Condition
+		if input.Filter != nil {
+			conds = input.Filter.ToConditions(c.dialect)
+		}
+
+		// Append internal conditions (e.g., keyset conditions from Connection)
+		conds = append(conds, input.conditions...)
+
+		// Resolve limit/offset to pointers for the builder.
+		// nil → no clause, *0 (via new(0)) → no clause, *N → LIMIT/OFFSET N.
+		var limitPtr *int
+		if input.Limit != nil {
+			if v := *input.Limit; v > 0 {
+				limitPtr = new(v)
+			}
+		} else if c.queryLimit > 0 {
+			limitPtr = new(c.queryLimit)
+		}
+		var offsetPtr *int
+		if input.Offset != nil {
+			if v := *input.Offset; v > 0 {
+				offsetPtr = new(v)
+			}
+		}
+
+		var fingerprints []*Fingerprint
+		query, args := sql.BuildSelect(c.dialect, c.table, sql.SelectOptions{
+			Columns:    columns,
+			Conditions: conds,
+			OrderBy:    input.Sorts,
+			Limit:      limitPtr,
+			Offset:     offsetPtr,
+			LockMode:   options.LockMode,
+		})
+
+		rows, err := conn.Query(ctx, query, args...)
+		if err != nil {
+			return nil, fmt.Errorf("get fingerprints: %w", err)
+		}
+		defer rows.Close()
+
+		fingerprints, err = scanFingerprints(rows, columns)
+		if err != nil {
+			return nil, err
+		}
+
+		// Load O2M/M2M relationships via errgroup — in parallel over the pool,
+		// serialized by the transaction's connection reservation inside one
+		if fieldOptions != nil {
+			if err := c.loadRelationships(ctx, conn, fingerprints, options.FieldOptions); err != nil {
+				return nil, err
+			}
+		}
+
+		return fingerprints, nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	if result == nil {
+		return nil, nil
+	}
+	return result.([]*Fingerprint), nil
+}
+
+// loadsRelationships reports whether any O2M or M2M relationship is selected.
+// GetMany unions the digest column into a narrowed projection when one is:
+// loadRelationships maps every child back through f.Digest, which
+// an unselected column would leave at its zero value.
+func (fo *FingerprintFieldOptions) loadsRelationships() bool {
+	if fo.Hosts != nil {
+		return true
+	}
+	return false
+}
+
+// loadRelationships fetches every selected O2M / M2M member through the
+// target's own client, so each child read carries that table's own filters,
+// soft-delete default and access rules rather than this one's.
+//
+// The fan-out is unbounded, inside a transaction and out. Outside one each
+// edge draws its own pooled connection and the parallelism is real. Inside one
+// they share the transaction's single connection — database.Conn hands every
+// nested read the same *database.Tx — and the Tx's connection reservation
+// serializes them, so the statement count is identical either way and only the
+// concurrency differs. The loader needs no transaction-aware bound of its own.
+func (c *fingerprintClient) loadRelationships(ctx context.Context, conn database.Querier, fingerprints []*Fingerprint, fo *FingerprintFieldOptions) error {
+	g, ctx := errgroup.WithContext(ctx)
+
+	if fo.Hosts != nil {
+		g.Go(func() error {
+			// Collect parent IDs
+			fingerprintIDs := make([][]byte, len(fingerprints))
+			for idx, f := range fingerprints {
+				fingerprintIDs[idx] = f.Digest
+			}
+
+			// Step 1: Query junction table to get mapping
+			junctionQuery, junctionArgs := sql.BuildSelect(c.dialect, sql.Table{Schema: "public", Name: "host_fingerprints"}, sql.SelectOptions{
+				Columns:    []string{"fingerprint_digest", "host_addr"},
+				Conditions: []sql.Condition{sql.Where(c.dialect.QuoteIdentifier("fingerprint_digest")).In(toAnySlice(fingerprintIDs)...)},
+			})
+
+			junctionRows, err := conn.Query(ctx, junctionQuery, junctionArgs...)
+			if err != nil {
+				return fmt.Errorf("load fingerprint hosts junction: %w", err)
+			}
+			defer junctionRows.Close()
+
+			// Discover column positions from result (BuildSelect sorts columns alphabetically)
+			junctionCols, err := junctionRows.Columns()
+			if err != nil {
+				return fmt.Errorf("load fingerprint hosts junction columns: %w", err)
+			}
+			localIdx, refIdx := 0, 1
+			for i, col := range junctionCols {
+				switch col {
+				case "fingerprint_digest":
+					localIdx = i
+				case "host_addr":
+					refIdx = i
+				}
+			}
+
+			// Build mapping and collect all target keys. Each junction column
+			// scans into its own Go type, so both sides of the maps stringify
+			// keys the same way.
+			parentToTargetIDs := make(map[string][]string)
+			var targetPKs []net.IP
+			for junctionRows.Next() {
+				var localKey []byte
+				var refKey net.IP
+				ptrs := make([]any, len(junctionCols))
+				ptrs[localIdx], ptrs[refIdx] = &localKey, &refKey
+				if err := junctionRows.Scan(ptrs...); err != nil {
+					return fmt.Errorf("scan fingerprint hosts junction: %w", err)
+				}
+				parentID, targetID := fmt.Sprint(localKey), refKey.String()
+				parentToTargetIDs[parentID] = append(parentToTargetIDs[parentID], targetID)
+				targetPKs = append(targetPKs, net.IP(refKey))
+			}
+			if err := junctionRows.Err(); err != nil {
+				return fmt.Errorf("iterate fingerprint hosts junction: %w", err)
+			}
+
+			if len(parentToTargetIDs) == 0 {
+				return nil
+			}
+
+			// Step 2: Fetch the actual entities
+			filter := &HostFilter{
+				Addr: &comparator.Opaque[net.IP]{In: targetPKs},
+			}
+			if fo.Hosts.Filter != nil {
+				filter.And = append(filter.And, fo.Hosts.Filter)
+			}
+
+			sorts := fo.Hosts.Sorts
+			if len(sorts) == 0 {
+				sorts = c.hostsDefaultSort
+			}
+
+			// Self-referential relationships share the parent's entity type, so
+			// the loaded targets must use a name distinct from the parent slice
+			// (fingerprints) to avoid shadowing it and mis-mapping the results
+			// onto the targets instead of the parents.
+			relatedHosts, err := c.hostClient.GetMany(ctx, &GetHostsInput{
+				Filter: filter,
+				Sorts:  sorts,
+				Limit:  new(0),
+				// Step 3 keys every loaded target on its own PK, so the fetch
+				// declares that column rather than mutating the caller's
+				// FieldOptions — a narrowed selection that omits it would
+				// otherwise map every target onto the zero value.
+				requiredColumns: []string{"addr"},
+			}, func(co *CallOptions[HostFieldOptions]) {
+				co.FieldOptions = fo.Hosts.FieldOptions
+			})
+			if err != nil {
+				return fmt.Errorf("load fingerprint hosts: %w", err)
+			}
+
+			// Step 3: Map back to parent entities via junction mapping. The
+			// targets are walked in the order the fetch returned them, so the
+			// relationship's Sorts — the caller's, or the static `sort:` —
+			// order each parent's slice. Walking the
+			// junction rows instead would keep junction order and drop the sort.
+			parentsByTarget := make(map[string][]int, len(relatedHosts))
+			for i := range fingerprints {
+				for _, tID := range parentToTargetIDs[fmt.Sprint(fingerprints[i].Digest)] {
+					parentsByTarget[tID] = append(parentsByTarget[tID], i)
+				}
+			}
+			for _, t := range relatedHosts {
+				for _, i := range parentsByTarget[t.Addr.String()] {
+					fingerprints[i].Hosts = append(fingerprints[i].Hosts, t)
+				}
+			}
+			return nil
+		})
+	}
+
+	return g.Wait()
+}
+
+// Create inserts a new fingerprint and returns the created entity.
+func (c *fingerprintClient) Create(ctx context.Context, input *CreateFingerprintInput, opts ...func(*CallOptions[FingerprintFieldOptions])) (*Fingerprint, error) {
+	// A write cannot normalize nil to the zero value the way a read
+	// does — a zero CreateFingerprintInput legally writes a row (each required
+	// field's zero value, or with no required field, every column's default), so
+	// that would turn a caller's mistake into a silently written one. Guarded
+	// before the executor, so nil fires no hook and publishes no event.
+	if input == nil {
+		return nil, ErrNilInput
+	}
+	options := resolveCallOptions(opts)
+	result, err := c.executeMutation(ctx, options.SkipHooks, &hook.MutationContext{
+		Op: hook.OpCreate, Table: TableFingerprints, Schema: "public",
+		Input: input, CallOptions: options,
+	}, func(ctx context.Context, m *hook.MutationContext) (any, error) {
+		conn := database.Conn(ctx, c.querier)
+
+		columns := []string{"digest", "label"}
+		args := []any{input.Digest, input.Label}
+
+		id, err := c.insertAndResolveID(ctx, conn, columns, args)
+		if err != nil {
+			return nil, fmt.Errorf("create fingerprint: %w", err)
+		}
+		m.AffectedPKs = []any{id}
+
+		// Empty FieldOptions — caller doesn't need the result
+		if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
+			return nil, nil
+		}
+
+		return c.Get(ctx, id, func(o *CallOptions[FingerprintFieldOptions]) {
+			*o = options
+			o.SkipHooks = true
+			o.LockMode = sql.LockNone
+		})
+	})
+	if err != nil {
+		return nil, err
+	}
+	if result == nil {
+		return nil, nil
+	}
+	return result.(*Fingerprint), nil
+}
+
+// CreateMany inserts multiple fingerprints in batches and returns all created entities.
+// Sub-batches are not automatically rolled back on failure — wrap in a transaction for atomicity.
+func (c *fingerprintClient) CreateMany(ctx context.Context, inputs []*CreateFingerprintInput, opts ...func(*CallOptions[FingerprintFieldOptions])) ([]*Fingerprint, error) {
+	// A nil *slice* is simply no rows, but a nil *element* is the
+	// same caller error a nil Create argument is — and skipping it silently
+	// would drop a row the caller asked for. Rejected before the executor.
+	for _, in := range inputs {
+		if in == nil {
+			return nil, ErrNilInput
+		}
+	}
+	options := resolveCallOptions(opts)
+	result, err := c.executeMutation(ctx, options.SkipHooks, &hook.MutationContext{
+		Op: hook.OpCreateMany, Table: TableFingerprints, Schema: "public",
+		Input: inputs, CallOptions: options,
+	}, func(ctx context.Context, m *hook.MutationContext) (any, error) {
+		conn := database.Conn(ctx, c.querier)
+		// An empty batch writes nothing and must read nothing. The trailing
+		// re-fetch below filters on the keys this call touched, and every
+		// generated key filter treats an empty set as *no condition* — so
+		// without this guard the re-fetch degrades to an unfiltered SELECT and
+		// returns the whole table as if this call had produced it.
+		if len(inputs) == 0 {
+			return []*Fingerprint{}, nil
+		}
+		var allIDs [][]byte
+		for start := 0; start < len(inputs); start += c.batchSize {
+			end := min(start+c.batchSize, len(inputs))
+			batch := inputs[start:end]
+
+			columns := []string{"digest", "label"}
+			var valueRows [][]any
+			for _, input := range batch {
+
+				valueRows = append(valueRows, []any{
+					input.Digest,
+					input.Label,
+				})
+			}
+
+			ids, err := c.multiInsertAndResolveIDs(ctx, conn, columns, valueRows)
+			if err != nil {
+				return nil, fmt.Errorf("create fingerprints batch: %w", err)
+			}
+			allIDs = append(allIDs, ids...)
+		}
+
+		m.AffectedPKs = toAnySlice(allIDs)
+
+		// Empty FieldOptions — skip fetch
+		if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
+			return nil, nil
+		}
+		return c.GetMany(ctx, &GetFingerprintsInput{
+			Filter: &FingerprintFilter{
+				Digest: &comparator.Opaque[[]byte]{In: allIDs},
+			},
+			Limit: new(0),
+		}, func(o *CallOptions[FingerprintFieldOptions]) {
+			*o = options
+			o.SkipHooks = true
+			o.LockMode = sql.LockNone
+		})
+	})
+	if err != nil {
+		return nil, err
+	}
+	if result == nil {
+		return nil, nil
+	}
+	return result.([]*Fingerprint), nil
+}
+
+// insertAndResolveID performs the INSERT and resolves the generated primary key.
+func (c *fingerprintClient) insertAndResolveID(ctx context.Context, conn database.Querier, columns []string, args []any) ([]byte, error) {
+	query, queryArgs := sql.BuildInsert(c.dialect, c.table, sql.InsertOptions{
+		Columns:          columns,
+		Values:           args,
+		ReturningColumns: []string{"digest"},
+	})
+	var id []byte
+	if err := conn.QueryRow(ctx, query, queryArgs...).Scan(&id); err != nil {
+		return nil, err
+	}
+	return id, nil
+}
+
+// multiInsertAndResolveIDs performs a multi-row INSERT and resolves all generated primary keys.
+func (c *fingerprintClient) multiInsertAndResolveIDs(ctx context.Context, conn database.Querier, columns []string, valueRows [][]any) ([][]byte, error) {
+	query, args := sql.BuildMultiInsert(c.dialect, c.table, sql.MultiInsertOptions{
+		Columns:          columns,
+		ValueRows:        valueRows,
+		ReturningColumns: []string{"digest"},
+	})
+
+	rows, err := conn.Query(ctx, query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var ids [][]byte
+	for rows.Next() {
+		var id []byte
+		if err := rows.Scan(&id); err != nil {
+			return nil, fmt.Errorf("scan fingerprint id: %w", err)
+		}
+		ids = append(ids, id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return ids, nil
+}
+
+// Update partially updates a fingerprint by primary key and returns the updated entity.
+// Only fields where IsSet() is true are included in the SET clause. If no fields are
+// set, no UPDATE is executed and the current entity is returned unchanged.
+// Returns ErrNotFound if the primary key does not exist (strict_updates is enabled).
+func (c *fingerprintClient) Update(ctx context.Context, id []byte, input *UpdateFingerprintInput, opts ...func(*CallOptions[FingerprintFieldOptions])) (*Fingerprint, error) {
+	// Nil is a caller error, distinct from an empty-but-non-nil
+	// input — that one is the documented no-op returning the entity unchanged.
+	// Guarded before the executor, so nil fires no hook and publishes no event.
+	if input == nil {
+		return nil, ErrNilInput
+	}
+	options := resolveCallOptions(opts)
+	result, err := c.executeMutation(ctx, options.SkipHooks, &hook.MutationContext{
+		Op: hook.OpUpdate, Table: TableFingerprints, Schema: "public",
+		PK: id, Input: input, CallOptions: options,
+	}, func(ctx context.Context, m *hook.MutationContext) (any, error) {
+		conn := database.Conn(ctx, c.querier)
+
+		// Build SET clause from omittable fields — explicit per-field checks, no reflection
+		setClauses := make(map[string]any)
+		if v, ok := input.Label.Get(); ok {
+			setClauses["label"] = v
+		}
+
+		// Empty update — no fields set, return current entity unchanged
+		if len(setClauses) == 0 {
+			// Empty FieldOptions — caller doesn't need the result
+			if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
+				return nil, nil
+			}
+
+			return c.Get(ctx, id, func(o *CallOptions[FingerprintFieldOptions]) {
+				*o = options
+				o.SkipHooks = true
+				o.LockMode = sql.LockNone
+			})
+		}
+
+		query, args := sql.BuildUpdate(c.dialect, c.table, sql.UpdateOptions{
+			SetClauses: setClauses,
+			Conditions: []sql.Condition{sql.Where(c.dialect.QuoteIdentifier("digest")).Eq(id)},
+		})
+
+		execResult, err := conn.Exec(ctx, query, args...)
+		if err != nil {
+			return nil, fmt.Errorf("update fingerprint: %w", err)
+		}
+		count, err := execResult.RowsAffected()
+		if err != nil {
+			return nil, fmt.Errorf("update fingerprint rows affected: %w", err)
+		}
+		if count == 0 {
+			return nil, ErrNotFound
+		}
+		m.AffectedPKs = []any{id}
+
+		// Empty FieldOptions — caller doesn't need the result
+		if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
+			return nil, nil
+		}
+
+		return c.Get(ctx, id, func(o *CallOptions[FingerprintFieldOptions]) {
+			*o = options
+			o.SkipHooks = true
+			o.LockMode = sql.LockNone
+		})
+	})
+	if err != nil {
+		return nil, err
+	}
+	if result == nil {
+		return nil, nil
+	}
+	return result.(*Fingerprint), nil
+}
+
+// UpdateFingerprintItem pairs a primary key with an update input for batch updates.
+type UpdateFingerprintItem struct {
+	Digest []byte                  `json:"digest"`
+	Input  *UpdateFingerprintInput `json:"input"`
+}
+
+// UpdateMany partially updates multiple fingerprints and returns the updated entities.
+// Each item is a (PK, UpdateInput) pair. Splits into batches of batchSize.
+// On pgx, uses SendBatch for pipelined execution within each batch.
+func (c *fingerprintClient) UpdateMany(ctx context.Context, items []UpdateFingerprintItem, opts ...func(*CallOptions[FingerprintFieldOptions])) ([]*Fingerprint, error) {
+	// UpdateFingerprintItem.Input is a pointer, so a zero-valued item
+	// carries a nil one — a shape that compiles naturally. Rejected before the
+	// executor, like every other nil write input.
+	for _, item := range items {
+		if item.Input == nil {
+			return nil, ErrNilInput
+		}
+	}
+	options := resolveCallOptions(opts)
+	result, err := c.executeMutation(ctx, options.SkipHooks, &hook.MutationContext{
+		Op: hook.OpUpdateMany, Table: TableFingerprints, Schema: "public",
+		Input: items, CallOptions: options,
+	}, func(ctx context.Context, m *hook.MutationContext) (any, error) {
+		conn := database.Conn(ctx, c.querier)
+		// An empty batch writes nothing and must read nothing. The trailing
+		// re-fetch below filters on the keys this call touched, and every
+		// generated key filter treats an empty set as *no condition* — so
+		// without this guard the re-fetch degrades to an unfiltered SELECT and
+		// returns the whole table as if this call had produced it.
+		if len(items) == 0 {
+			return []*Fingerprint{}, nil
+		}
+		var allIDs [][]byte
+		for start := 0; start < len(items); start += c.batchSize {
+			end := min(start+c.batchSize, len(items))
+			batch := items[start:end]
+
+			// Build all UPDATE statements for this batch
+			pgxBatch := &pgx.Batch{}
+			var batchQueries []string
+			var batchArgs [][]any
+			for _, item := range batch {
+				setClauses := make(map[string]any)
+				if v, ok := item.Input.Label.Get(); ok {
+					setClauses["label"] = v
+				}
+
+				// Skip no-op updates
+				if len(setClauses) == 0 {
+					allIDs = append(allIDs, item.Digest)
+					continue
+				}
+
+				query, args := sql.BuildUpdate(c.dialect, c.table, sql.UpdateOptions{
+					SetClauses: setClauses,
+					Conditions: []sql.Condition{sql.Where(c.dialect.QuoteIdentifier("digest")).Eq(item.Digest)},
+				})
+				pgxBatch.Queue(query, args...)
+				batchQueries = append(batchQueries, query)
+				batchArgs = append(batchArgs, args)
+				allIDs = append(allIDs, item.Digest)
+			}
+
+			// Send all UPDATEs — pipelined if supported, sequential otherwise
+			if pgxBatch.Len() > 0 {
+				if batcher, ok := conn.(interface {
+					SendBatch(ctx context.Context, b *pgx.Batch) pgx.BatchResults
+				}); ok {
+					br := batcher.SendBatch(ctx, pgxBatch)
+					for range pgxBatch.Len() {
+						if _, err := br.Exec(); err != nil {
+							br.Close()
+							return nil, fmt.Errorf("update fingerprints batch: %w", err)
+						}
+					}
+					if err := br.Close(); err != nil {
+						return nil, fmt.Errorf("close update batch: %w", err)
+					}
+				} else {
+					for i, q := range batchQueries {
+						if _, err := conn.Exec(ctx, q, batchArgs[i]...); err != nil {
+							return nil, fmt.Errorf("update fingerprints batch: %w", err)
+						}
+					}
+				}
+			}
+		}
+
+		m.AffectedPKs = toAnySlice(allIDs)
+
+		// Empty FieldOptions — skip fetch
+		if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
+			return nil, nil
+		}
+		return c.GetMany(ctx, &GetFingerprintsInput{
+			Filter: &FingerprintFilter{
+				Digest: &comparator.Opaque[[]byte]{In: allIDs},
+			},
+			Limit: new(0),
+		}, func(o *CallOptions[FingerprintFieldOptions]) {
+			*o = options
+			o.SkipHooks = true
+			o.LockMode = sql.LockNone
+		})
+	})
+	if err != nil {
+		return nil, err
+	}
+	if result == nil {
+		return nil, nil
+	}
+	return result.([]*Fingerprint), nil
+}
+
+// UpdateWhere updates all fingerprints matching the filter and returns the updated entities.
+// Idempotent — returns empty slice when no rows match.
+// Returns ErrNilInput when input is nil, checked before the filter.
+// Returns ErrEmptyFilter when the filter is nil or produces no conditions.
+func (c *fingerprintClient) UpdateWhere(ctx context.Context, filter *FingerprintFilter, input *UpdateFingerprintInput, opts ...func(*CallOptions[FingerprintFieldOptions])) ([]*Fingerprint, error) {
+	// Argument validity is checked before the filter's bulk-op
+	// safety guard, and before the executor, so a nil input fires no hook and
+	// publishes no event. ErrEmptyFilter still covers a non-nil input with an
+	// empty filter.
+	if input == nil {
+		return nil, ErrNilInput
+	}
+	options := resolveCallOptions(opts)
+	result, err := c.executeMutation(ctx, options.SkipHooks, &hook.MutationContext{
+		Op: hook.OpUpdateWhere, Table: TableFingerprints, Schema: "public",
+		Input: input, CallOptions: options,
+	}, func(ctx context.Context, m *hook.MutationContext) (any, error) {
+		conn := database.Conn(ctx, c.querier)
+
+		conds := filter.ToConditions(c.dialect)
+		if len(conds) == 0 {
+			return nil, ErrEmptyFilter
+		}
+
+		// Build SET clause (same per-field checks as Update)
+		setClauses := make(map[string]any)
+		if v, ok := input.Label.Get(); ok {
+			setClauses["label"] = v
+		}
+
+		// No fields set — return matching entities unchanged
+		if len(setClauses) == 0 {
+			if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
+				return nil, nil
+			}
+			return c.GetMany(ctx, &GetFingerprintsInput{
+				Filter: filter,
+				Limit:  new(0),
+			}, func(o *CallOptions[FingerprintFieldOptions]) {
+				*o = options
+				o.SkipHooks = true
+				o.LockMode = sql.LockNone
+			})
+		}
+
+		// UPDATE with RETURNING "id" — get affected IDs in one round-trip
+		query, args := sql.BuildUpdate(c.dialect, c.table, sql.UpdateOptions{
+			SetClauses:       setClauses,
+			Conditions:       conds,
+			ReturningColumns: []string{"digest"},
+		})
+
+		rows, err := conn.Query(ctx, query, args...)
+		if err != nil {
+			return nil, fmt.Errorf("update fingerprints where: %w", err)
+		}
+		defer rows.Close()
+		var ids [][]byte
+		for rows.Next() {
+			var id []byte
+			if err := rows.Scan(&id); err != nil {
+				return nil, fmt.Errorf("scan updated fingerprint id: %w", err)
+			}
+			ids = append(ids, id)
+		}
+		if err := rows.Err(); err != nil {
+			return nil, err
+		}
+		if len(ids) == 0 {
+			return nil, nil
+		}
+		m.AffectedPKs = toAnySlice(ids)
+
+		// Empty FieldOptions — skip fetch
+		if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
+			return nil, nil
+		}
+
+		// Fetch affected entities with FieldOptions
+		return c.GetMany(ctx, &GetFingerprintsInput{
+			Filter: &FingerprintFilter{
+				Digest: &comparator.Opaque[[]byte]{In: ids},
+			},
+			Limit: new(0),
+		}, func(o *CallOptions[FingerprintFieldOptions]) {
+			*o = options
+			o.SkipHooks = true
+			o.LockMode = sql.LockNone
+		})
+	})
+	if err != nil {
+		return nil, err
+	}
+	if result == nil {
+		return nil, nil
+	}
+	return result.([]*Fingerprint), nil
+}
+
+// HardDelete permanently removes a fingerprint from the database.
+// Idempotent — returns nil if the primary key does not exist.
+func (c *fingerprintClient) HardDelete(ctx context.Context, id []byte, opts ...func(*CallOptions[FingerprintFieldOptions])) error {
+	options := resolveCallOptions(opts)
+	_, err := c.executeMutation(ctx, options.SkipHooks, &hook.MutationContext{
+		Op: hook.OpHardDelete, Table: TableFingerprints, Schema: "public",
+		PK: id, CallOptions: options,
+	}, func(ctx context.Context, m *hook.MutationContext) (any, error) {
+		conn := database.Conn(ctx, c.querier)
+		query, args := sql.BuildHardDelete(c.dialect, c.table, sql.HardDeleteOptions{
+			Conditions: []sql.Condition{sql.Where(c.dialect.QuoteIdentifier("digest")).Eq(id)},
+		})
+
+		_, err := conn.Exec(ctx, query, args...)
+		if err != nil {
+			return nil, fmt.Errorf("hard delete fingerprint: %w", err)
+		}
+		m.AffectedPKs = []any{id}
+		return nil, nil
+	})
+	return err
+}
+
+// HardDeleteMany permanently removes multiple fingerprints from the database.
+func (c *fingerprintClient) HardDeleteMany(ctx context.Context, ids [][]byte, opts ...func(*CallOptions[FingerprintFieldOptions])) error {
+	options := resolveCallOptions(opts)
+	_, err := c.executeMutation(ctx, options.SkipHooks, &hook.MutationContext{
+		Op: hook.OpHardDeleteMany, Table: TableFingerprints, Schema: "public",
+		Input: ids, CallOptions: options,
+	}, func(ctx context.Context, m *hook.MutationContext) (any, error) {
+		conn := database.Conn(ctx, c.querier)
+
+		query, args := sql.BuildHardDelete(c.dialect, c.table, sql.HardDeleteOptions{
+			Conditions: []sql.Condition{
+				sql.Where(c.dialect.QuoteIdentifier("digest")).In(toAnySlice(ids)...),
+			},
+		})
+
+		_, err := conn.Exec(ctx, query, args...)
+		if err != nil {
+			return nil, fmt.Errorf("hard delete fingerprints: %w", err)
+		}
+		m.AffectedPKs = toAnySlice(ids)
+		return nil, nil
+	})
+	return err
+}
+
+// HardDeleteWhere permanently removes all fingerprints matching the filter.
+// Idempotent — returns nil when no rows match.
+// Returns ErrEmptyFilter when the filter is nil or produces no conditions.
+func (c *fingerprintClient) HardDeleteWhere(ctx context.Context, filter *FingerprintFilter, opts ...func(*CallOptions[FingerprintFieldOptions])) error {
+	options := resolveCallOptions(opts)
+	_, err := c.executeMutation(ctx, options.SkipHooks, &hook.MutationContext{
+		Op: hook.OpHardDeleteWhere, Table: TableFingerprints, Schema: "public",
+		Input: filter, CallOptions: options,
+	}, func(ctx context.Context, m *hook.MutationContext) (any, error) {
+		conn := database.Conn(ctx, c.querier)
+
+		conds := filter.ToConditions(c.dialect)
+		if len(conds) == 0 {
+			return nil, ErrEmptyFilter
+		}
+
+		// DELETE with RETURNING "id" — get affected IDs in one round-trip
+		query, args := sql.BuildHardDelete(c.dialect, c.table, sql.HardDeleteOptions{
+			Conditions:       conds,
+			ReturningColumns: []string{"digest"},
+		})
+
+		rows, err := conn.Query(ctx, query, args...)
+		if err != nil {
+			return nil, fmt.Errorf("hard delete fingerprints where: %w", err)
+		}
+		defer rows.Close()
+		var ids [][]byte
+		for rows.Next() {
+			var id []byte
+			if err := rows.Scan(&id); err != nil {
+				return nil, fmt.Errorf("scan deleted fingerprint id: %w", err)
+			}
+			ids = append(ids, id)
+		}
+		if err := rows.Err(); err != nil {
+			return nil, err
+		}
+		m.AffectedPKs = toAnySlice(ids)
+		return nil, nil
+	})
+	return err
+}
+
+// FingerprintConflictTarget identifies a unique constraint for upsert conflict detection.
+type FingerprintConflictTarget int
+
+const (
+	FingerprintConflictPK FingerprintConflictTarget = iota // PRIMARY KEY (digest)
+)
+
+// fingerprintConflictColumns maps each conflict target to its column set.
+var fingerprintConflictColumns = map[FingerprintConflictTarget][]string{
+	FingerprintConflictPK: {"digest"},
+}
+
+// Upsert inserts a fingerprint or updates it if a row matching the conflict target already
+// exists. Returns the resulting entity with optional field selection and relationship loading.
+// The conflict target determines which unique constraint triggers an update
+// instead of an insert. Non-PK, non-conflict columns are included in the SET clause.
+func (c *fingerprintClient) Upsert(ctx context.Context, input *CreateFingerprintInput, target FingerprintConflictTarget, opts ...func(*CallOptions[FingerprintFieldOptions])) (*Fingerprint, error) {
+	// A write cannot normalize nil to the zero value the way a read
+	// does — a zero CreateFingerprintInput legally writes a row (each required
+	// field's zero value, or with no required field, every column's default).
+	// Guarded before the executor, so nil fires no hook and publishes no event.
+	// An input that supplies no column gets no conflict clause on any dialect:
+	// it is a plain insert, so a conflict on a UNIQUE column with a
+	// DEFAULT is a unique violation, including on MySQL, where ON DUPLICATE KEY
+	// UPDATE would have returned the existing row.
+	if input == nil {
+		return nil, ErrNilInput
+	}
+	options := resolveCallOptions(opts)
+	result, err := c.executeMutation(ctx, options.SkipHooks, &hook.MutationContext{
+		Op: hook.OpUpsert, Table: TableFingerprints, Schema: "public",
+		Input: input, CallOptions: options,
+	}, func(ctx context.Context, m *hook.MutationContext) (any, error) {
+		conn := database.Conn(ctx, c.querier)
+
+		columns := []string{"digest", "label"}
+		args := []any{input.Digest, input.Label}
+
+		// Resolve conflict target and update columns. Tenant column is excluded
+		// from the UPDATE-set half of the conflict clause — a
+		// row's tenant is not a mutable attribute under normal operation.
+		conflictColumns := fingerprintConflictColumns[target]
+		updateColumns := excludeColumns(columns, append(conflictColumns, "digest"))
+
+		id, err := c.insertUpsertAndResolveID(ctx, conn, columns, args, conflictColumns, updateColumns)
+		if err != nil {
+			return nil, fmt.Errorf("upsert fingerprint: %w", err)
+		}
+		m.AffectedPKs = []any{id}
+
+		// Empty FieldOptions — caller doesn't need the result
+		if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
+			return nil, nil
+		}
+
+		return c.Get(ctx, id, func(o *CallOptions[FingerprintFieldOptions]) {
+			*o = options
+			o.SkipHooks = true
+			o.LockMode = sql.LockNone
+		})
+	})
+	if err != nil {
+		return nil, err
+	}
+	if result == nil {
+		return nil, nil
+	}
+	return result.(*Fingerprint), nil
+}
+
+// insertUpsertAndResolveID performs the INSERT with upsert clause and resolves the generated primary key.
+func (c *fingerprintClient) insertUpsertAndResolveID(ctx context.Context, conn database.Querier, columns []string, args []any, conflictColumns, updateColumns []string) ([]byte, error) {
+	query, queryArgs := sql.BuildInsert(c.dialect, c.table, sql.InsertOptions{
+		Columns:               columns,
+		Values:                args,
+		UpsertConflictKeys:    conflictColumns,
+		UpsertUpdateColumns:   updateColumns,
+		UpsertResolvePKColumn: "digest",
+		ReturningColumns:      []string{"digest"},
+	})
+	rows, err := conn.Query(ctx, query, queryArgs...)
+	if err != nil {
+		return nil, err
+	}
+	var id []byte
+	found := rows.Next()
+	if found {
+		err = rows.Scan(&id)
+	}
+	if err == nil {
+		err = rows.Err()
+	}
+	// Closed before the fallback below issues its own statement: conn may be a
+	// transaction, where an open result set blocks the next statement on the
+	// same connection.
+	if cerr := rows.Close(); err == nil {
+		err = cerr
+	}
+	if err != nil {
+		return nil, err
+	}
+	if found {
+		return id, nil
+	}
+	return c.resolveUpsertConflictRow(ctx, conn, columns, args, conflictColumns)
+}
+
+// resolveUpsertConflictRow resolves the row an upsert conflicted with, for the
+// case where the statement returned nothing.
+//
+// A conflict target that covers every inserted column leaves no column to
+// assign, so the dialect emits DO NOTHING — and DO NOTHING returns
+// no row, which leaves the RETURNING branch above with no PK for a write that
+// did resolve to a row. The conflicting row is looked up by the same conflict
+// columns the statement targeted; unlike MySQL's ON DUPLICATE KEY UPDATE, an
+// explicit ON CONFLICT target can only have fired on those columns, so the
+// lookup identifies the same row the statement did.
+//
+// The lookup does not exclude soft-deleted rows: the unique index matched
+// regardless of the soft-delete column, so a soft-deleted row is still the row
+// that conflicted and still the row whose PK this resolves. (The terminal Get
+// then applies the read path's own soft-delete filter, exactly as it does on
+// the DO UPDATE SET branch.)
+//
+// This is a second statement, so a concurrent delete between the insert and
+// this lookup surfaces as ErrNotFound. Run the upsert inside a transaction
+// where the pair has to be atomic.
+func (c *fingerprintClient) resolveUpsertConflictRow(ctx context.Context, conn database.Querier, columns []string, args []any, conflictColumns []string) ([]byte, error) {
+	conds := make([]sql.Condition, 0, len(conflictColumns))
+	for _, col := range conflictColumns {
+		i := slices.Index(columns, col)
+		if i < 0 {
+			// A conflict column the statement never supplied cannot have
+			// produced the conflict, so there is no row to look up.
+			return nil, ErrNotFound
+		}
+		conds = append(conds, sql.Where(c.dialect.QuoteIdentifier(col)).Eq(args[i]))
+	}
+
+	query, queryArgs := sql.BuildSelect(c.dialect, c.table, sql.SelectOptions{
+		Columns:    []string{"digest"},
+		Conditions: conds,
+		Limit:      new(1),
+	})
+	rows, err := conn.Query(ctx, query, queryArgs...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var id []byte
+	if !rows.Next() {
+		if err := rows.Err(); err != nil {
+			return nil, err
+		}
+		// The conflicting row is gone — deleted between the two statements.
+		return nil, ErrNotFound
+	}
+	if err := rows.Scan(&id); err != nil {
+		return nil, err
+	}
+	return id, rows.Err()
+}
+
+// UpsertMany inserts or updates multiple fingerprints in batches and returns all
+// resulting entities. One conflict target applies to the whole batch, drawn from
+// the same enum Upsert takes. Sub-batches are not automatically rolled back on
+// failure — wrap in a transaction for atomicity.
+//
+// Inputs resolving to the same conflict target are deduped before the statement
+// is built, last occurrence wins. PostgreSQL rejects an
+// ON CONFLICT ... DO UPDATE that would affect one row twice; MySQL and SQLite
+// accept it and keep the last row. The dedupe is what makes one spelling behave
+// identically on all three. A row carrying no definite, non-NULL value for every
+// conflict column is exempt: a NULL never matches under a unique index on any of
+// the three dialects, so two such rows are two rows, not a duplicate.
+//
+// The returned slice carries one entity per deduped input on every dialect,
+// including the DO NOTHING branch a conflict target covering every inserted
+// column produces. The entities come from a re-fetch by primary key, never from
+// RETURNING — RETURNING yields only the rows actually inserted, so a batch that
+// conflicted would come back short. Row order is GetMany's, as with
+// CreateMany.
+func (c *fingerprintClient) UpsertMany(ctx context.Context, inputs []*CreateFingerprintInput, target FingerprintConflictTarget, opts ...func(*CallOptions[FingerprintFieldOptions])) ([]*Fingerprint, error) {
+	// A nil *slice* is simply no rows, but a nil *element* is the
+	// same caller error a nil Upsert argument is — and skipping it silently
+	// would drop a row the caller asked for. Rejected before the executor.
+	for _, in := range inputs {
+		if in == nil {
+			return nil, ErrNilInput
+		}
+	}
+	options := resolveCallOptions(opts)
+	result, err := c.executeMutation(ctx, options.SkipHooks, &hook.MutationContext{
+		Op: hook.OpUpsertMany, Table: TableFingerprints, Schema: "public",
+		Input: inputs, CallOptions: options,
+	}, func(ctx context.Context, m *hook.MutationContext) (any, error) {
+		// No rows means no statement and nothing affected. Guarded here because
+		// the terminal GetMany filters on the written keys, and a key filter
+		// built from an empty set contributes no condition — an unguarded empty
+		// call would read the whole table back.
+		if len(inputs) == 0 {
+			return []*Fingerprint{}, nil
+		}
+		conn := database.Conn(ctx, c.querier)
+
+		// Resolve conflict target and update columns. Tenant column is excluded
+		// from the UPDATE-set half of the conflict clause — a
+		// row's tenant is not a mutable attribute under normal operation.
+		//
+		// UpsertResolvePKColumn is deliberately not set: it exists so a
+		// single-row MySQL upsert can republish the conflicting row's id into
+		// the OK packet, and after a batch that packet names at most one row.
+		// Nothing here reads LastInsertId, so requesting it would
+		// only add a misleading assignment to the SET list.
+		columns := []string{"digest", "label"}
+		conflictColumns := fingerprintConflictColumns[target]
+		updateColumns := excludeColumns(columns, append(conflictColumns, "digest"))
+		conflictPositions, haveConflictKey := upsertConflictPositions(columns, conflictColumns)
+
+		// One value row per input, built before any statement runs: the dedupe
+		// spans the whole call, not a sub-batch (ceil(M/batch_size)
+		// statements for M inputs, *after* the dedupe).
+		valueRows := make([][]any, 0, len(inputs))
+		rowInputs := make([]*CreateFingerprintInput, 0, len(inputs))
+		rowIDs := make([][]byte, 0, len(inputs))
+		for _, input := range inputs {
+
+			valueRows = append(valueRows, []any{
+				input.Digest,
+				input.Label,
+			})
+			rowInputs = append(rowInputs, input)
+			rowIDs = append(rowIDs, input.Digest)
+		}
+
+		// Dedupe by conflict target, last occurrence wins, first-appearance
+		// order preserved.
+		if haveConflictKey {
+			seen := make(map[string]int, len(valueRows))
+			dedupedRows := make([][]any, 0, len(valueRows))
+			dedupedInputs := make([]*CreateFingerprintInput, 0, len(rowInputs))
+			dedupedIDs := make([][]byte, 0, len(rowIDs))
+			for i, row := range valueRows {
+				key, keyed := upsertDedupeKey(row, conflictPositions)
+				if keyed {
+					if j, ok := seen[key]; ok {
+						dedupedRows[j] = row
+						dedupedInputs[j] = rowInputs[i]
+						dedupedIDs[j] = rowIDs[i]
+						continue
+					}
+					seen[key] = len(dedupedRows)
+				}
+				dedupedRows = append(dedupedRows, row)
+				dedupedInputs = append(dedupedInputs, rowInputs[i])
+				dedupedIDs = append(dedupedIDs, rowIDs[i])
+			}
+			valueRows = dedupedRows
+			rowInputs = dedupedInputs
+			rowIDs = dedupedIDs
+		}
+		// The published input is the deduped slice, so it stays index-aligned
+		// with m.AffectedPKs: an event fanned out per affected row carries the
+		// input that actually wrote that row.
+		m.Input = rowInputs
+
+		for start := 0; start < len(valueRows); start += c.batchSize {
+			end := min(start+c.batchSize, len(valueRows))
+			batch := valueRows[start:end]
+
+			query, queryArgs := sql.BuildMultiInsert(c.dialect, c.table, sql.MultiInsertOptions{
+				Columns:             columns,
+				ValueRows:           batch,
+				UpsertConflictKeys:  conflictColumns,
+				UpsertUpdateColumns: updateColumns,
+			})
+			if _, err := conn.Exec(ctx, query, queryArgs...); err != nil {
+				return nil, fmt.Errorf("upsert fingerprints batch: %w", err)
+			}
+		}
+
+		m.AffectedPKs = toAnySlice(rowIDs)
+
+		// Empty FieldOptions — skip fetch
+		if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
+			return nil, nil
+		}
+
+		return c.GetMany(ctx, &GetFingerprintsInput{
+			Filter: &FingerprintFilter{
+				Digest: &comparator.Opaque[[]byte]{In: rowIDs},
+			},
+			Limit: new(0),
+		}, func(o *CallOptions[FingerprintFieldOptions]) {
+			*o = options
+			o.SkipHooks = true
+			o.LockMode = sql.LockNone
+		})
+	})
+	if err != nil {
+		return nil, err
+	}
+	if result == nil {
+		return nil, nil
+	}
+	return result.([]*Fingerprint), nil
+}
+
+// Exists returns true if a fingerprint with the given primary key exists.
+func (c *fingerprintClient) Exists(ctx context.Context, id []byte, opts ...func(*CallOptions[FingerprintFieldOptions])) (bool, error) {
+	options := resolveCallOptions(opts)
+	result, err := c.executeQuery(ctx, options.SkipHooks, &hook.QueryContext{
+		Op: hook.OpExists, Table: TableFingerprints, Schema: "public",
+		PK: id, CallOptions: options,
+	}, func(ctx context.Context, q *hook.QueryContext) (any, error) {
+		conn := database.Conn(ctx, c.querier)
+		conds := []sql.Condition{sql.Where(c.dialect.QuoteIdentifier("digest")).Eq(id)}
+
+		query, args := sql.BuildExists(c.dialect, c.table, conds)
+
+		var exists bool
+		if err := conn.QueryRow(ctx, query, args...).Scan(&exists); err != nil {
+			return false, fmt.Errorf("exists fingerprint: %w", err)
+		}
+		return exists, nil
+	})
+	if err != nil {
+		return false, err
+	}
+	return result.(bool), nil
+}
+
+// ExistsWhere returns true if any fingerprint matches the given filter.
+func (c *fingerprintClient) ExistsWhere(ctx context.Context, filter *FingerprintFilter, opts ...func(*CallOptions[FingerprintFieldOptions])) (bool, error) {
+	options := resolveCallOptions(opts)
+	result, err := c.executeQuery(ctx, options.SkipHooks, &hook.QueryContext{
+		Op: hook.OpExists, Table: TableFingerprints, Schema: "public",
+		Input: filter, CallOptions: options,
+	}, func(ctx context.Context, q *hook.QueryContext) (any, error) {
+		conn := database.Conn(ctx, c.querier)
+
+		var conds []sql.Condition
+		if filter != nil {
+			conds = filter.ToConditions(c.dialect)
+		}
+
+		query, args := sql.BuildExists(c.dialect, c.table, conds)
+
+		var exists bool
+		if err := conn.QueryRow(ctx, query, args...).Scan(&exists); err != nil {
+			return false, fmt.Errorf("exists fingerprint where: %w", err)
+		}
+		return exists, nil
+	})
+	if err != nil {
+		return false, err
+	}
+	return result.(bool), nil
+}
+
+// Count returns the number of fingerprints matching the given filter.
+// A nil filter counts all fingerprints.
+func (c *fingerprintClient) Count(ctx context.Context, filter *FingerprintFilter, opts ...func(*CallOptions[FingerprintFieldOptions])) (int64, error) {
+	options := resolveCallOptions(opts)
+	result, err := c.executeQuery(ctx, options.SkipHooks, &hook.QueryContext{
+		Op: hook.OpCount, Table: TableFingerprints, Schema: "public",
+		Input: filter, CallOptions: options,
+	}, func(ctx context.Context, q *hook.QueryContext) (any, error) {
+		conn := database.Conn(ctx, c.querier)
+
+		var conds []sql.Condition
+		if filter != nil {
+			conds = filter.ToConditions(c.dialect)
+		}
+
+		query, args := sql.BuildCount(c.dialect, c.table, conds)
+
+		var count int64
+		if err := conn.QueryRow(ctx, query, args...).Scan(&count); err != nil {
+			return int64(0), fmt.Errorf("count fingerprints: %w", err)
+		}
+		return count, nil
+	})
+	if err != nil {
+		return 0, err
+	}
+	return result.(int64), nil
+}
+
+// Paginate returns a page of fingerprints with total count for offset-based pagination.
+// A nil filter paginates all fingerprints.
+func (c *fingerprintClient) Paginate(ctx context.Context, input PaginateInput[FingerprintFilter], opts ...func(*CallOptions[FingerprintFieldOptions])) (*PaginateResult[Fingerprint], error) {
+	options := resolveCallOptions(opts)
+	result, err := c.executeQuery(ctx, options.SkipHooks, &hook.QueryContext{
+		Op: hook.OpPaginate, Table: TableFingerprints, Schema: "public",
+		Input: input, CallOptions: options,
+	}, func(ctx context.Context, q *hook.QueryContext) (any, error) {
+		// Internal calls with SkipHooks to prevent nested hook invocation
+		internalOpts := func(o *CallOptions[FingerprintFieldOptions]) {
+			*o = options
+			o.SkipHooks = true
+		}
+
+		// Total count (delegates to Count — both are always generated)
+		totalCount, err := c.Count(ctx, input.Filter, internalOpts)
+		if err != nil {
+			return nil, fmt.Errorf("paginate fingerprints count: %w", err)
+		}
+
+		// Page data via GetMany (handles FieldOptions and relationships)
+		fingerprints, err := c.GetMany(ctx, &GetFingerprintsInput{
+			Filter: input.Filter,
+			Sorts:  input.Sort,
+			Limit:  &input.Limit,
+			Offset: &input.Offset,
+		}, internalOpts)
+		if err != nil {
+			return nil, fmt.Errorf("paginate fingerprints: %w", err)
+		}
+
+		return &PaginateResult[Fingerprint]{
+			Items:      fingerprints,
+			TotalCount: totalCount,
+			Offset:     input.Offset,
+			Limit:      input.Limit,
+			HasMore:    int64(input.Offset+input.Limit) < totalCount,
+		}, nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	return result.(*PaginateResult[Fingerprint]), nil
+}
+
+// Connection returns a Relay-style cursor-paginated connection of fingerprints.
+// Sort order is determined by cursor_keys — custom sorts are not supported.
+// Use Paginate for custom sort orders.
+func (c *fingerprintClient) Connection(ctx context.Context, input ConnectionInput[FingerprintFilter], opts ...func(*CallOptions[FingerprintFieldOptions])) (*Connection[Fingerprint], error) {
+	options := resolveCallOptions(opts)
+
+	if options.LockMode != sql.LockNone {
+		if !database.InTransaction(ctx) {
+			return nil, fmt.Errorf("connection fingerprints: LockMode requires an active transaction")
+		}
+		options.SkipCache = true
+	}
+	result, err := c.executeQuery(ctx, options.SkipHooks, &hook.QueryContext{
+		Op: hook.OpConnection, Table: TableFingerprints, Schema: "public",
+		Input: input, CallOptions: options,
+	}, func(ctx context.Context, q *hook.QueryContext) (any, error) {
+		// Internal calls with SkipHooks to prevent nested hook invocation
+		internalOpts := func(o *CallOptions[FingerprintFieldOptions]) {
+			*o = options
+			o.SkipHooks = true
+		}
+
+		// Validate: first and last are mutually exclusive
+		if input.First != nil && input.Last != nil {
+			return nil, ErrInvalidCursor
+		}
+
+		// Total count (separate COUNT query — no cursor conditions)
+		totalCount, err := c.Count(ctx, input.Filter, internalOpts)
+		if err != nil {
+			return nil, fmt.Errorf("connection fingerprints count: %w", err)
+		}
+
+		// Decode cursors and build keyset conditions
+		var keysetConds []sql.Condition
+		if input.After != nil {
+			cursor, err := decodeFingerprintCursor(*input.After, c.cursorKeys)
+			if err != nil {
+				return nil, ErrInvalidCursor
+			}
+			keysetConds = append(keysetConds, cursorKeyset(c.dialect, c.cursorKeys, cursor, ">"))
+		}
+		if input.Before != nil {
+			cursor, err := decodeFingerprintCursor(*input.Before, c.cursorKeys)
+			if err != nil {
+				return nil, ErrInvalidCursor
+			}
+			keysetConds = append(keysetConds, cursorKeyset(c.dialect, c.cursorKeys, cursor, "<"))
+		}
+
+		// Direction and limit
+		limit := c.pageSize
+		ascending := true
+		if input.First != nil {
+			limit = *input.First
+		} else if input.Last != nil {
+			limit = *input.Last
+			ascending = false
+		}
+
+		// Fetch limit+1 rows via GetMany (handles FieldOptions, O2O joins, relationships, soft delete)
+		connLimit := limit + 1
+		fingerprints, err := c.GetMany(ctx, &GetFingerprintsInput{
+			Filter:     input.Filter,
+			Sorts:      cursorSorts(c.cursorKeys, ascending),
+			Limit:      &connLimit,
+			conditions: keysetConds,
+			// Each edge's cursor is encoded from the row it wraps, so the cursor
+			// keys have to survive a narrowed FieldOptions — otherwise the
+			// encoder reads fields the SELECT never filled and every cursor
+			// carries zero values.
+			requiredColumns: c.cursorKeys,
+		}, internalOpts)
+		if err != nil {
+			return nil, fmt.Errorf("connection fingerprints: %w", err)
+		}
+
+		// Trim extra row and determine page boundaries
+		hasMore := len(fingerprints) > limit
+		if hasMore {
+			fingerprints = fingerprints[:limit]
+		}
+
+		// Backward pagination: reverse for ascending cursor order
+		if !ascending {
+			slices.Reverse(fingerprints)
+		}
+
+		// Build edges with encoded cursors
+		edges := make([]Edge[Fingerprint], len(fingerprints))
+		for i, row := range fingerprints {
+			cursor, err := encodeFingerprintCursor(c.cursorKeys, row)
+			if err != nil {
+				return nil, err
+			}
+			edges[i] = Edge[Fingerprint]{
+				Node:   row,
+				Cursor: cursor,
+			}
+		}
+
+		pageInfo := PageInfo{
+			HasNextPage:     (ascending && hasMore) || (!ascending && input.Before != nil),
+			HasPreviousPage: (!ascending && hasMore) || (ascending && input.After != nil),
+		}
+		if len(edges) > 0 {
+			pageInfo.StartCursor = &edges[0].Cursor
+			pageInfo.EndCursor = &edges[len(edges)-1].Cursor
+		}
+
+		return &Connection[Fingerprint]{Edges: edges, PageInfo: pageInfo, TotalCount: totalCount}, nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	return result.(*Connection[Fingerprint]), nil
+}
+
+// encodeFingerprintCursor encodes cursor key values as a base64 JSON string.
+func encodeFingerprintCursor(keys []string, f *Fingerprint) (string, error) {
+	out := make(map[string]any, len(keys))
+	for _, key := range keys {
+		switch key {
+		case "digest":
+			out["digest"] = f.Digest
+		case "label":
+			out["label"] = f.Label
+		}
+	}
+	data, err := json.Marshal(out)
+	if err != nil {
+		return "", fmt.Errorf("encode fingerprint cursor: %w", err)
+	}
+	return base64.StdEncoding.EncodeToString(data), nil
+}
+
+// decodeFingerprintCursor decodes a cursor string into its key values,
+// each unmarshaled into the key column's Go type.
+func decodeFingerprintCursor(encoded string, keys []string) (map[string]any, error) {
+	raw, err := decodeCursor(encoded, keys)
+	if err != nil {
+		return nil, err
+	}
+	var row Fingerprint
+	out := make(map[string]any, len(keys))
+	for _, key := range keys {
+		switch key {
+		case "digest":
+			err = json.Unmarshal(raw[key], &row.Digest)
+			out[key] = row.Digest
+		}
+		if err != nil {
+			return nil, err
+		}
+		if cursorValueIsNull(out[key]) {
+			return nil, ErrInvalidCursor
+		}
+	}
+	return out, nil
+}
+
+// StreamFingerprintsInput holds query parameters for streaming fingerprints records.
+// Stream is iterator-style and intentionally has no Limit/Offset.
+// Field selection is controlled via CallOptions.FieldOptions, not this struct.
+type StreamFingerprintsInput struct {
+	Filter *FingerprintFilter `json:"filter"`
+	Sorts  []sql.Sort         `json:"sorts"`
+}
+
+// StreamFingerprintFieldOptions controls scalar column selection for fingerprints streams.
+// Stream cannot load relationships — only scalar columns are selectable.
+type StreamFingerprintFieldOptions struct {
+	Digest bool `json:"digest"`
+	Label  bool `json:"label"`
+}
+
+// Columns returns the SQL column names for all selected columns, sorted alphabetically
+// to match the SQL builder's deterministic column ordering.
+func (fo *StreamFingerprintFieldOptions) Columns() []string {
+	var cols []string
+	if fo.Digest {
+		cols = append(cols, "digest")
+	}
+	if fo.Label {
+		cols = append(cols, "label")
+	}
+	slices.Sort(cols)
+	return cols
+}
+
+// HasSelectedColumns reports whether any column is selected.
+func (fo *StreamFingerprintFieldOptions) HasSelectedColumns() bool {
+	if fo.Digest {
+		return true
+	}
+	if fo.Label {
+		return true
+	}
+	return false
+}
+
+// scanFingerprintRow scans a single row into a Fingerprint entity.
+// Used by Stream to yield rows one at a time without materializing the result set.
+func scanFingerprintRow(rows database.Rows, columns []string) (*Fingerprint, error) {
+	f := &Fingerprint{}
+
+	targets := make([]any, len(columns))
+	for idx, col := range columns {
+		switch col {
+		case "digest":
+			targets[idx] = &f.Digest
+		case "label":
+			targets[idx] = &f.Label
+		}
+	}
+
+	if err := rows.Scan(targets...); err != nil {
+		return nil, fmt.Errorf("scan fingerprint: %w", err)
+	}
+
+	return f, nil
+}
+
+// Stream returns an iterator over fingerprints matching the given filter and sort criteria.
+// Rows are yielded as the driver returns them, without materializing the full
+// result set. Cache is bypassed regardless of caller setting.
+// Stream cannot load relationships — use Connection in a loop when relationships
+// are required.
+//
+// Stream refuses an active transaction. It runs consumer code inside an open
+// result set, which inside a transaction is the transaction's only connection,
+// held for the whole iteration — so a statement issued from the loop body on the
+// same txCtx waits on a reservation the loop itself holds. Set
+// CallOptions.AllowInTransaction for a snapshot-consistent stream that issues
+// nothing else on that txCtx. That obligation is the one rule that remains the
+// caller's — drain or close a result set before issuing the next statement on
+// that txCtx — applied to a loop whose body is caller code.
+func (c *fingerprintClient) Stream(ctx context.Context, input *StreamFingerprintsInput, opts ...func(*CallOptions[StreamFingerprintFieldOptions])) iter.Seq2[*Fingerprint, error] {
+	return func(yield func(*Fingerprint, error) bool) {
+		// A nil input is the zero-value input. Without it, an
+		// unguarded nil dereference in the handler would be recovered by the
+		// panic wrapper and reported as an error instead of streaming the table.
+		if input == nil {
+			input = &StreamFingerprintsInput{}
+		}
+		options := resolveCallOptions(opts)
+		options.SkipCache = true
+
+		// Stream's contract is that the connection stays open across
+		// caller code; a transaction's is one connection, one statement at a
+		// time. The two cannot both hold, so Stream refuses a transaction unless
+		// the caller opts in. Refused before any SQL is issued and before the
+		// hook chain is built, mirroring the LockMode precondition, and
+		// surfaced through yield because Stream returns an iterator and has no
+		// error return.
+		if database.InTransaction(ctx) && !options.AllowInTransaction {
+			yield(nil, fmt.Errorf("stream fingerprints: unsupported inside a transaction — use Connection in a loop, "+
+				"or set AllowInTransaction for a snapshot-consistent stream that issues nothing else on this txCtx"))
+			return
+		}
+
+		// stopped is true while the consumer's loop body runs, and stays true
+		// once the body breaks (yield returned false) or panics out of yield.
+		// Calling yield again after either makes the Go runtime panic, so the
+		// chain's error below is yielded only while stopped is false.
+		var stopped bool
+		emit := func(row *Fingerprint, err error) bool {
+			stopped = true
+			if !yield(row, err) {
+				return false
+			}
+			stopped = false
+			return true
+		}
+
+		// A recovered panic and a hook's abort error are the
+		// chain's return value. Stream has no error return, so it yields that
+		// error once, after anything the handler yielded.
+		_, err := c.executeQuery(ctx, options.SkipHooks, &hook.QueryContext{
+			Op: hook.OpStream, Table: TableFingerprints, Schema: "public",
+			Input: input, CallOptions: options,
+		}, func(ctx context.Context, q *hook.QueryContext) (any, error) {
+			conn := database.Conn(ctx, c.querier)
+
+			fieldOptions := options.FieldOptions
+			columns := fingerprintAllColumns
+			if fieldOptions != nil {
+				if selected := fieldOptions.Columns(); len(selected) > 0 {
+					columns = selected
+				}
+			}
+
+			var conds []sql.Condition
+			if input.Filter != nil {
+				conds = input.Filter.ToConditions(c.dialect)
+			}
+
+			query, args := sql.BuildSelect(c.dialect, c.table, sql.SelectOptions{
+				Columns:    columns,
+				Conditions: conds,
+				OrderBy:    input.Sorts,
+			})
+
+			rows, err := conn.Query(ctx, query, args...)
+			if err != nil {
+				emit(nil, fmt.Errorf("stream fingerprints: %w", err))
+				return nil, nil
+			}
+			defer rows.Close()
+
+			for rows.Next() {
+				f, err := scanFingerprintRow(rows, columns)
+				if err != nil {
+					if !emit(nil, err) {
+						return nil, nil
+					}
+					continue
+				}
+				if !emit(f, nil) {
+					return nil, nil
+				}
+			}
+			if err := rows.Err(); err != nil {
+				emit(nil, fmt.Errorf("iterate fingerprint rows: %w", err))
+			}
+			return nil, nil
+		})
+		if err != nil && !stopped {
+			yield(nil, err)
+		}
+	}
+}
+
+// FingerprintFilter provides type-safe filtering for the fingerprints table.
+type FingerprintFilter struct {
+	Digest *comparator.Opaque[[]byte] `json:"digest"`
+	Label  *comparator.String         `json:"label"`
+	Hosts  *HostFilter                `json:"hosts"`
+	And    []*FingerprintFilter       `json:"and"`
+	Or     []*FingerprintFilter       `json:"or"`
+}
+
+// ToConditions converts the filter to a slice of SQL conditions.
+//
+// A nil receiver contributes no conditions. Two callers depend on that. The
+// *Where methods dereference their filter only here and document a nil one as
+// the empty-filter case, so this is what makes ErrEmptyFilter reachable instead
+// of a nil dereference. And a nil entry inside and / or is skipped rather than
+// fatal, matching the "an unset member contributes no SQL" rule the
+// relationship members already follow.
+func (f *FingerprintFilter) ToConditions(dialect sql.Dialect, opts ...FilterOption) []sql.Condition {
+	if f == nil {
+		return nil
+	}
+
+	var conds []sql.Condition
+
+	if f.Digest != nil {
+		conds = append(conds, f.Digest.Parse(dialect.QuoteIdentifier("digest"), dialect)...)
+	}
+
+	if f.Label != nil {
+		conds = append(conds, f.Label.Parse(dialect.QuoteIdentifier("label"), dialect)...)
+	}
+
+	if f.Hosts != nil {
+		conds = append(conds, fingerprintHostsFilterExists(f.Hosts, dialect, opts))
+	}
+
+	for _, sub := range f.And {
+		subConds := sub.ToConditions(dialect, opts...)
+		if len(subConds) > 0 {
+			conds = append(conds, sql.And(subConds...))
+		}
+	}
+
+	// A filter object's own fields are always conjunctive, so each or member
+	// contributes sql.And of its own conditions and the members are OR-ed
+	// together as ONE group condition. Appending a per-member
+	// sql.Or instead hands the caller N conditions, and buildWhere joins those
+	// with AND — turning or: [A, B] into A AND B, while simultaneously OR-ing a
+	// single member's own fields against each other.
+	//
+	// The group is appended only when some member compiled to something:
+	// sql.Or of nothing expands to a literal "()", which buildWhere keeps
+	// because it is not the empty string, yielding invalid SQL.
+	var orGroup []sql.Condition
+	for _, sub := range f.Or {
+		subConds := sub.ToConditions(dialect, opts...)
+		if len(subConds) > 0 {
+			orGroup = append(orGroup, sql.And(subConds...))
+		}
+	}
+	if len(orGroup) > 0 {
+		conds = append(conds, sql.Or(orGroup...))
+	}
+
+	return conds
+}
+
+// fingerprintHostsFilterExists compiles a HostFilter set on the
+// Hosts relationship into a correlated EXISTS over hosts, joined through the host_fingerprints junction.
+//
+// The parent-side reference carries no qualifier: sql.CorrelationToken is
+// resolved by the builder against whichever FROM clause encloses the predicate,
+// so one emitted value is correct on both the plain read path and the aliased
+// O2O-join path.
+//
+// The subquery alias is keyed on nesting depth. A relationship filter nested
+// inside itself — legal for a self-referential relationship — would
+// otherwise reuse the alias and let the inner subquery shadow the reference its
+// own correlation resolves against.
+//
+// MySQL rejects an EXISTS naming the table an UPDATE or DELETE is mutating
+// (error 1093). A relationship filter whose target is the mutated table is
+// therefore a read-path predicate on MySQL, not one to pass to UpdateWhere /
+// SoftDeleteWhere / HardDeleteWhere / Increment.
+func fingerprintHostsFilterExists(f *HostFilter, dialect sql.Dialect, opts []FilterOption) sql.Condition {
+	scope := resolveFilterScope(opts)
+	tgt := filterSubqueryAlias("tgt", scope.depth)
+	jn := filterSubqueryAlias("jn", scope.depth)
+	subSQL := "SELECT 1 FROM " + dialect.FormatTable(sql.Table{Schema: "public", Name: "host_fingerprints"}) + " " + jn +
+		" JOIN " + dialect.FormatTable(sql.Table{Schema: "public", Name: "hosts"}) + " " + tgt +
+		" ON " + tgt + "." + dialect.QuoteIdentifier("addr") + " = " + jn + "." + dialect.QuoteIdentifier("host_addr") +
+		" WHERE " + jn + "." + dialect.QuoteIdentifier("fingerprint_digest") + " = " + sql.CorrelationToken
+	var subArgs []any
+
+	// The target's own ToConditions supplies the inner WHERE, so nesting and
+	// and/or compose recursively. Every reference is qualified with the target
+	// alias: unqualified names inside a correlated subquery bind to the
+	// enclosing statement whenever the target lacks the column.
+	if where, whereArgs := sql.SubqueryWhere(dialect, tgt, f.ToConditions(dialect, nestFilterScope(opts, scope.depth+1)...)); where != "" {
+		subSQL += " AND " + where
+		subArgs = append(subArgs, whereArgs...)
+	}
+
+	return sql.Exists("digest", sql.Subquery{SQL: subSQL, Args: subArgs})
+}
+
+// FingerprintFieldOptions controls column selection and relationship loading for fingerprints queries.
+type FingerprintFieldOptions struct {
+	Digest bool                     `json:"digest"`
+	Label  bool                     `json:"label"`
+	Hosts  *HostRelationshipOptions `json:"hosts"`
+}
+
+// Columns returns the SQL column names for all selected columns, sorted alphabetically
+// to match the SQL builder's deterministic column ordering.
+func (fo *FingerprintFieldOptions) Columns() []string {
+	var cols []string
+	if fo.Digest {
+		cols = append(cols, "digest")
+	}
+	if fo.Label {
+		cols = append(cols, "label")
+	}
+	slices.Sort(cols)
+	return cols
+}
+
+// ColumnMap returns a mapping of Go field name to SQL column name for all columns.
+func (fo *FingerprintFieldOptions) ColumnMap() map[string]string {
+	return map[string]string{
+		"Digest": "digest",
+		"Label":  "label",
+	}
+}
+
+// HasSelectedColumns reports whether any column or relationship is selected.
+func (fo *FingerprintFieldOptions) HasSelectedColumns() bool {
+	if fo.Digest {
+		return true
+	}
+	if fo.Label {
+		return true
+	}
+	if fo.Hosts != nil {
+		return true
+	}
+	return false
+}
+
+// HostRelationshipOptions controls loading options for Host relationships.
+type HostRelationshipOptions struct {
+	FieldOptions *HostFieldOptions `json:"field_options"`
+	Filter       *HostFilter       `json:"filter"`
+	Sorts        []sql.Sort        `json:"sorts"`
+}
+
+// CreateFingerprintInput holds the fields for creating a fingerprints record.
+type CreateFingerprintInput struct {
+	Digest []byte `json:"digest"`
+	Label  string `json:"label"`
+}
+
+// UpdateFingerprintInput holds the fields for updating a fingerprints record.
+// All fields use omittable.Value to distinguish "not set" from "set to zero".
+type UpdateFingerprintInput struct {
+	Label omittable.Value[string] `json:"label,omitzero"`
+}
+
+// GetFingerprintsInput holds query parameters for retrieving fingerprints records.
+// Field selection is controlled via CallOptions.FieldOptions, not this struct.
+type GetFingerprintsInput struct {
+	Filter *FingerprintFilter `json:"filter"`
+	Limit  *int               `json:"limit"`
+	Offset *int               `json:"offset"`
+	Sorts  []sql.Sort         `json:"sorts"`
+	// conditions holds additional SQL conditions injected by internal callers
+	// (e.g., Connection keyset conditions). Not part of the public API.
+	conditions []sql.Condition
+	// requiredColumns holds columns an internal caller needs read back even
+	// when FieldOptions narrows the projection (e.g., Connection cursor keys).
+	// Not part of the public API.
+	requiredColumns []string
+}
+
+// HostFingerprintPK - composite primary key for the host_fingerprints table.
+type HostFingerprintPK struct {
+	HostAddr          net.IP `db:"host_addr" json:"host_addr"`
+	FingerprintDigest []byte `db:"fingerprint_digest" json:"fingerprint_digest"`
+}
+type HostFingerprint struct {
+	HostAddr          net.IP `db:"host_addr" json:"host_addr"`
+	FingerprintDigest []byte `db:"fingerprint_digest" json:"fingerprint_digest"`
+}
+
+// HostFingerprintClient provides type-safe operations for the host_fingerprints table.
+type HostFingerprintClient interface {
+	// --- Read Operations ---
+
+	// Get returns a single hostFingerprint by primary key.
+	Get(ctx context.Context, pk HostFingerprintPK, opts ...func(*CallOptions[HostFingerprintFieldOptions])) (*HostFingerprint, error)
+
+	// GetMany returns host_fingerprints matching the given filter, field selection, and sort criteria.
+	GetMany(ctx context.Context, input *GetHostFingerprintsInput, opts ...func(*CallOptions[HostFingerprintFieldOptions])) ([]*HostFingerprint, error)
+
+	// Exists returns true if a hostFingerprint with the given primary key exists.
+	Exists(ctx context.Context, pk HostFingerprintPK, opts ...func(*CallOptions[HostFingerprintFieldOptions])) (bool, error)
+
+	// ExistsWhere returns true if any hostFingerprint matches the given filter.
+	ExistsWhere(ctx context.Context, filter *HostFingerprintFilter, opts ...func(*CallOptions[HostFingerprintFieldOptions])) (bool, error)
+
+	// Count returns the number of host_fingerprints matching the given filter.
+	Count(ctx context.Context, filter *HostFingerprintFilter, opts ...func(*CallOptions[HostFingerprintFieldOptions])) (int64, error)
+
+	// --- Write Operations ---
+
+	// Create inserts a new hostFingerprint and returns the created entity.
+	Create(ctx context.Context, input *CreateHostFingerprintInput, opts ...func(*CallOptions[HostFingerprintFieldOptions])) (*HostFingerprint, error)
+
+	// CreateMany inserts multiple host_fingerprints in batches and returns all created entities.
+	// Sub-batches are not automatically rolled back on failure — wrap in a transaction for atomicity.
+	CreateMany(ctx context.Context, inputs []*CreateHostFingerprintInput, opts ...func(*CallOptions[HostFingerprintFieldOptions])) ([]*HostFingerprint, error)
+
+	// Update partially updates a hostFingerprint by primary key and returns the updated entity.
+	// Only fields where IsSet() is true are included in the SET clause.
+	// Returns ErrNotFound if the primary key does not exist.
+	Update(ctx context.Context, pk HostFingerprintPK, input *UpdateHostFingerprintInput, opts ...func(*CallOptions[HostFingerprintFieldOptions])) (*HostFingerprint, error)
+
+	// UpdateMany updates multiple host_fingerprints and returns the updated entities.
+	UpdateMany(ctx context.Context, items []UpdateHostFingerprintItem, opts ...func(*CallOptions[HostFingerprintFieldOptions])) ([]*HostFingerprint, error)
+
+	// UpdateWhere updates all host_fingerprints matching the filter and returns the updated entities.
+	// Idempotent — returns empty slice when no rows match.
+	UpdateWhere(ctx context.Context, filter *HostFingerprintFilter, input *UpdateHostFingerprintInput, opts ...func(*CallOptions[HostFingerprintFieldOptions])) ([]*HostFingerprint, error)
+
+	// Upsert inserts a hostFingerprint or updates it on conflict and returns the resulting entity.
+	Upsert(ctx context.Context, input *CreateHostFingerprintInput, target HostFingerprintConflictTarget, opts ...func(*CallOptions[HostFingerprintFieldOptions])) (*HostFingerprint, error)
+
+	// UpsertMany inserts or updates multiple host_fingerprints in batches and returns all resulting entities.
+	// Inputs resolving to the same conflict target are deduped, last occurrence wins.
+	UpsertMany(ctx context.Context, inputs []*CreateHostFingerprintInput, target HostFingerprintConflictTarget, opts ...func(*CallOptions[HostFingerprintFieldOptions])) ([]*HostFingerprint, error)
+
+	// --- Hard Delete Operations ---
+
+	// HardDelete permanently removes a hostFingerprint from the database.
+	// Idempotent — returns nil if the primary key does not exist.
+	HardDelete(ctx context.Context, pk HostFingerprintPK, opts ...func(*CallOptions[HostFingerprintFieldOptions])) error
+
+	// HardDeleteMany permanently removes multiple host_fingerprints from the database.
+	HardDeleteMany(ctx context.Context, pks []HostFingerprintPK, opts ...func(*CallOptions[HostFingerprintFieldOptions])) error
+
+	// HardDeleteWhere permanently removes all host_fingerprints matching the filter.
+	// Idempotent — returns nil when no rows match.
+	HardDeleteWhere(ctx context.Context, filter *HostFingerprintFilter, opts ...func(*CallOptions[HostFingerprintFieldOptions])) error
+
+	// --- Pagination Operations ---
+
+	// Paginate returns a page of host_fingerprints with total count for offset-based pagination.
+	Paginate(ctx context.Context, input PaginateInput[HostFingerprintFilter], opts ...func(*CallOptions[HostFingerprintFieldOptions])) (*PaginateResult[HostFingerprint], error)
+
+	// Connection returns a Relay-style cursor-paginated connection of host_fingerprints.
+	// Sort order is determined by cursor_keys — custom sorts are not supported.
+	// Use Paginate for custom sort orders.
+	Connection(ctx context.Context, input ConnectionInput[HostFingerprintFilter], opts ...func(*CallOptions[HostFingerprintFieldOptions])) (*Connection[HostFingerprint], error)
+
+	// Stream returns an iterator over host_fingerprints matching the filter and sort criteria.
+	// Rows are yielded as the driver returns them; cache is bypassed.
+	// Stream cannot load relationships.
+	//
+	// Stream refuses an active transaction unless CallOptions.AllowInTransaction
+	// is set, and the opt-in commits the caller to issuing nothing else on that
+	// txCtx: the one rule that remains the caller's — drain or close a result set
+	// before issuing the next statement on that txCtx — applied to a loop whose
+	// body is caller code.
+	Stream(ctx context.Context, input *StreamHostFingerprintsInput, opts ...func(*CallOptions[StreamHostFingerprintFieldOptions])) iter.Seq2[*HostFingerprint, error]
+}
+
+// hostFingerprintClient implements the HostFingerprintClient interface.
+type hostFingerprintClient struct {
+	querier       database.Querier
+	dialect       sql.Dialect
+	table         sql.Table
+	batchSize     int
+	queryLimit    int
+	pageSize      int
+	cursorKeys    []string
+	strictUpdates bool
+	mutationHooks []hook.MutationHook
+	queryHooks    []hook.QueryHook
+	panicHandler  hook.PanicHandler
+}
+
+// newHostFingerprintClient creates a new hostFingerprintClient.
+func newHostFingerprintClient(querier database.Querier, mutationHooks []hook.MutationHook, queryHooks []hook.QueryHook, panicHandler hook.PanicHandler) *hostFingerprintClient {
+	return &hostFingerprintClient{
+		querier:       querier,
+		dialect:       sql.NewPostgresDialect(),
+		table:         sql.Table{Schema: "public", Name: "host_fingerprints"},
+		batchSize:     200,
+		queryLimit:    1000,
+		pageSize:      100,
+		cursorKeys:    []string{"host_addr", "fingerprint_digest"},
+		strictUpdates: true,
+		mutationHooks: mutationHooks,
+		queryHooks:    queryHooks,
+		panicHandler:  panicHandler,
+	}
+}
+
+// executeMutation runs fn through the mutation hook chain.
+// When skipHooks is true, only panic recovery wraps the call.
+func (c *hostFingerprintClient) executeMutation(ctx context.Context, skipHooks bool, mc *hook.MutationContext, fn hook.MutationHandler) (any, error) {
+	var hooks []hook.MutationHook
+	if !skipHooks {
+		hooks = c.mutationHooks
+	}
+	return hook.BuildMutationChain(c.panicHandler, hooks, fn)(ctx, mc)
+}
+
+// executeQuery runs fn through the query hook chain.
+// When skipHooks is true, only panic recovery wraps the call.
+func (c *hostFingerprintClient) executeQuery(ctx context.Context, skipHooks bool, qc *hook.QueryContext, fn hook.QueryHandler) (any, error) {
+	var hooks []hook.QueryHook
+	if !skipHooks {
+		hooks = c.queryHooks
+	}
+	return hook.BuildQueryChain(c.panicHandler, hooks, fn)(ctx, qc)
+}
+
+// hostFingerprintAllColumns is the column list for full-entity reads, sorted for determinism.
+var hostFingerprintAllColumns = []string{"fingerprint_digest", "host_addr"}
+
+// scanHostFingerprints scans rows into HostFingerprint entities using a column-name switch.
+// Handles both scan target shapes (direct, wrapped) without reflection.
+func scanHostFingerprints(rows database.Rows, columns []string) ([]*HostFingerprint, error) {
+	var result []*HostFingerprint
+	for rows.Next() {
+		h := &HostFingerprint{}
+
+		targets := make([]any, len(columns))
+		for idx, col := range columns {
+			switch col {
+			case "host_addr":
+				targets[idx] = &h.HostAddr
+			case "fingerprint_digest":
+				targets[idx] = &h.FingerprintDigest
+			}
+		}
+
+		if err := rows.Scan(targets...); err != nil {
+			return nil, fmt.Errorf("scan host_fingerprint: %w", err)
+		}
+
+		result = append(result, h)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate host_fingerprint rows: %w", err)
+	}
+	return result, nil
+}
+
+// Get returns a single host_fingerprint by primary key with optional field selection.
+// If fieldOptions is provided, only the selected columns are returned and
+// relationships with non-nil FieldOptions are loaded.
+func (c *hostFingerprintClient) Get(ctx context.Context, pk HostFingerprintPK, opts ...func(*CallOptions[HostFingerprintFieldOptions])) (*HostFingerprint, error) {
+	options := resolveCallOptions(opts)
+
+	if options.LockMode != sql.LockNone {
+		if !database.InTransaction(ctx) {
+			return nil, fmt.Errorf("get host_fingerprint: LockMode requires an active transaction")
+		}
+		options.SkipCache = true
+	}
+	qctx := &hook.QueryContext{
+		Op: hook.OpGet, Table: TableHostFingerprints, Schema: "public",
+		PK: pk, CallOptions: options,
+	}
+	result, err := c.executeQuery(ctx, options.SkipHooks, qctx, func(ctx context.Context, q *hook.QueryContext) (any, error) {
+		// Hooks may mutate q.CallOptions (e.g. the cache hook's hydration
+		// path overrides FieldOptions for a full-entity refill). Prefer
+		// those overrides when present; otherwise fall back to the
+		// caller-supplied options captured at Get() time.
+		effectiveOpts := options
+		if qOpts, ok := q.CallOptions.(CallOptions[HostFingerprintFieldOptions]); ok {
+			effectiveOpts = qOpts
+		}
+		// Internal GetMany call with SkipHooks to prevent nested hook invocation
+		internalOpts := func(o *CallOptions[HostFingerprintFieldOptions]) {
+			*o = effectiveOpts
+			o.SkipHooks = true
+		}
+		hostFingerprints, err := c.GetMany(ctx, &GetHostFingerprintsInput{
+			Filter: &HostFingerprintFilter{
+				HostAddr:          &comparator.Opaque[net.IP]{Eq: new(pk.HostAddr)},
+				FingerprintDigest: &comparator.Opaque[[]byte]{Eq: new(pk.FingerprintDigest)},
+			},
+			Limit: new(1),
+		}, internalOpts)
+		if err != nil {
+			return nil, err
+		}
+		if len(hostFingerprints) == 0 {
+			return nil, ErrNotFound
+		}
+		return hostFingerprints[0], nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	if result == nil {
+		return nil, nil
+	}
+	return result.(*HostFingerprint), nil
+}
+
+// GetMany returns host_fingerprints matching the given filter, field selection, and sort criteria.
+func (c *hostFingerprintClient) GetMany(ctx context.Context, input *GetHostFingerprintsInput, opts ...func(*CallOptions[HostFingerprintFieldOptions])) ([]*HostFingerprint, error) {
+	// A nil input is the zero-value input — no filter, no sorts, no
+	// limit. Normalized before the hook context is built, so a hook never sees
+	// a nil Input either.
+	if input == nil {
+		input = &GetHostFingerprintsInput{}
+	}
+	options := resolveCallOptions(opts)
+
+	if options.LockMode != sql.LockNone {
+		if !database.InTransaction(ctx) {
+			return nil, fmt.Errorf("get host_fingerprints: LockMode requires an active transaction")
+		}
+		options.SkipCache = true
+	}
+	result, err := c.executeQuery(ctx, options.SkipHooks, &hook.QueryContext{
+		Op: hook.OpGetMany, Table: TableHostFingerprints, Schema: "public",
+		Input: input, CallOptions: options,
+	}, func(ctx context.Context, q *hook.QueryContext) (any, error) {
+		conn := database.Conn(ctx, c.querier)
+
+		// FieldOptions from CallOptions — nil means all columns
+		fieldOptions := options.FieldOptions
+
+		// Nothing selected — return early
+		if fieldOptions != nil && !fieldOptions.HasSelectedColumns() {
+			return nil, nil
+		}
+
+		// Determine columns from FieldOptions. A narrowed projection still
+		// carries the columns this call structurally requires — the cursor keys
+		// an internal caller declares. An all-false FieldOptions is
+		// untouched: it short-circuits above.
+		columns := hostFingerprintAllColumns
+		if fieldOptions != nil {
+			if selected := fieldOptions.Columns(); len(selected) > 0 {
+				columns = unionColumns(selected, input.requiredColumns...)
+			}
+		}
+
+		// Build conditions from filter
+		var conds []sql.Condition
+		if input.Filter != nil {
+			conds = input.Filter.ToConditions(c.dialect)
+		}
+
+		// Append internal conditions (e.g., keyset conditions from Connection)
+		conds = append(conds, input.conditions...)
+
+		// Resolve limit/offset to pointers for the builder.
+		// nil → no clause, *0 (via new(0)) → no clause, *N → LIMIT/OFFSET N.
+		var limitPtr *int
+		if input.Limit != nil {
+			if v := *input.Limit; v > 0 {
+				limitPtr = new(v)
+			}
+		} else if c.queryLimit > 0 {
+			limitPtr = new(c.queryLimit)
+		}
+		var offsetPtr *int
+		if input.Offset != nil {
+			if v := *input.Offset; v > 0 {
+				offsetPtr = new(v)
+			}
+		}
+
+		var hostFingerprints []*HostFingerprint
+		query, args := sql.BuildSelect(c.dialect, c.table, sql.SelectOptions{
+			Columns:    columns,
+			Conditions: conds,
+			OrderBy:    input.Sorts,
+			Limit:      limitPtr,
+			Offset:     offsetPtr,
+			LockMode:   options.LockMode,
+		})
+
+		rows, err := conn.Query(ctx, query, args...)
+		if err != nil {
+			return nil, fmt.Errorf("get host_fingerprints: %w", err)
+		}
+		defer rows.Close()
+
+		hostFingerprints, err = scanHostFingerprints(rows, columns)
+		if err != nil {
+			return nil, err
+		}
+
+		return hostFingerprints, nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	if result == nil {
+		return nil, nil
+	}
+	return result.([]*HostFingerprint), nil
+}
+
+// Create inserts a new host_fingerprint and returns the created entity.
+func (c *hostFingerprintClient) Create(ctx context.Context, input *CreateHostFingerprintInput, opts ...func(*CallOptions[HostFingerprintFieldOptions])) (*HostFingerprint, error) {
+	// A write cannot normalize nil to the zero value the way a read
+	// does — a zero CreateHostFingerprintInput legally writes a row (each required
+	// field's zero value, or with no required field, every column's default), so
+	// that would turn a caller's mistake into a silently written one. Guarded
+	// before the executor, so nil fires no hook and publishes no event.
+	if input == nil {
+		return nil, ErrNilInput
+	}
+	options := resolveCallOptions(opts)
+	result, err := c.executeMutation(ctx, options.SkipHooks, &hook.MutationContext{
+		Op: hook.OpCreate, Table: TableHostFingerprints, Schema: "public",
+		Input: input, CallOptions: options,
+	}, func(ctx context.Context, m *hook.MutationContext) (any, error) {
+		conn := database.Conn(ctx, c.querier)
+
+		columns := []string{"host_addr", "fingerprint_digest"}
+		args := []any{input.HostAddr, input.FingerprintDigest}
+
+		query, queryArgs := sql.BuildInsert(c.dialect, c.table, sql.InsertOptions{
+			Columns: columns,
+			Values:  args,
+		})
+		_, err := conn.Exec(ctx, query, queryArgs...)
+		if err != nil {
+			return nil, fmt.Errorf("create host_fingerprint: %w", err)
+		}
+
+		m.AffectedPKs = []any{HostFingerprintPK{HostAddr: input.HostAddr, FingerprintDigest: input.FingerprintDigest}}
+
+		// Empty FieldOptions — caller doesn't need the result
+		if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
+			return nil, nil
+		}
+
+		return c.Get(ctx, HostFingerprintPK{HostAddr: input.HostAddr, FingerprintDigest: input.FingerprintDigest}, func(o *CallOptions[HostFingerprintFieldOptions]) {
+			*o = options
+			o.SkipHooks = true
+			o.LockMode = sql.LockNone
+		})
+	})
+	if err != nil {
+		return nil, err
+	}
+	if result == nil {
+		return nil, nil
+	}
+	return result.(*HostFingerprint), nil
+}
+
+// CreateMany inserts multiple host_fingerprints in batches and returns all created entities.
+// Sub-batches are not automatically rolled back on failure — wrap in a transaction for atomicity.
+func (c *hostFingerprintClient) CreateMany(ctx context.Context, inputs []*CreateHostFingerprintInput, opts ...func(*CallOptions[HostFingerprintFieldOptions])) ([]*HostFingerprint, error) {
+	// A nil *slice* is simply no rows, but a nil *element* is the
+	// same caller error a nil Create argument is — and skipping it silently
+	// would drop a row the caller asked for. Rejected before the executor.
+	for _, in := range inputs {
+		if in == nil {
+			return nil, ErrNilInput
+		}
+	}
+	options := resolveCallOptions(opts)
+	result, err := c.executeMutation(ctx, options.SkipHooks, &hook.MutationContext{
+		Op: hook.OpCreateMany, Table: TableHostFingerprints, Schema: "public",
+		Input: inputs, CallOptions: options,
+	}, func(ctx context.Context, m *hook.MutationContext) (any, error) {
+		conn := database.Conn(ctx, c.querier)
+		// An empty batch writes nothing and must read nothing. The trailing
+		// re-fetch below filters on the keys this call touched, and every
+		// generated key filter treats an empty set as *no condition* — so
+		// without this guard the re-fetch degrades to an unfiltered SELECT and
+		// returns the whole table as if this call had produced it.
+		if len(inputs) == 0 {
+			return []*HostFingerprint{}, nil
+		}
+		var allPKs []HostFingerprintPK
+		for start := 0; start < len(inputs); start += c.batchSize {
+			end := min(start+c.batchSize, len(inputs))
+			batch := inputs[start:end]
+
+			columns := []string{"host_addr", "fingerprint_digest"}
+			var valueRows [][]any
+			for _, input := range batch {
+
+				valueRows = append(valueRows, []any{
+					input.HostAddr,
+					input.FingerprintDigest,
+				})
+			}
+
+			query, queryArgs := sql.BuildMultiInsert(c.dialect, c.table, sql.MultiInsertOptions{
+				Columns:   columns,
+				ValueRows: valueRows,
+			})
+			_, err := conn.Exec(ctx, query, queryArgs...)
+			if err != nil {
+				return nil, fmt.Errorf("create host_fingerprints batch: %w", err)
+			}
+			for _, input := range batch {
+				allPKs = append(allPKs, HostFingerprintPK{HostAddr: input.HostAddr, FingerprintDigest: input.FingerprintDigest})
+			}
+		}
+
+		m.AffectedPKs = toAnySlice(allPKs)
+
+		// Empty FieldOptions — skip fetch
+		if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
+			return nil, nil
+		}
+
+		// Re-fetch via composite PK filter
+		return c.GetMany(ctx, &GetHostFingerprintsInput{
+			Filter: &HostFingerprintFilter{PKs: allPKs},
+			Limit:  new(0),
+		}, func(o *CallOptions[HostFingerprintFieldOptions]) {
+			*o = options
+			o.SkipHooks = true
+			o.LockMode = sql.LockNone
+		})
+	})
+	if err != nil {
+		return nil, err
+	}
+	if result == nil {
+		return nil, nil
+	}
+	return result.([]*HostFingerprint), nil
+}
+
+// Update partially updates a host_fingerprint by primary key and returns the updated entity.
+// Only fields where IsSet() is true are included in the SET clause. If no fields are
+// set, no UPDATE is executed and the current entity is returned unchanged.
+// Returns ErrNotFound if the primary key does not exist (strict_updates is enabled).
+func (c *hostFingerprintClient) Update(ctx context.Context, pk HostFingerprintPK, input *UpdateHostFingerprintInput, opts ...func(*CallOptions[HostFingerprintFieldOptions])) (*HostFingerprint, error) {
+	// Nil is a caller error, distinct from an empty-but-non-nil
+	// input — that one is the documented no-op returning the entity unchanged.
+	// Guarded before the executor, so nil fires no hook and publishes no event.
+	if input == nil {
+		return nil, ErrNilInput
+	}
+	options := resolveCallOptions(opts)
+	result, err := c.executeMutation(ctx, options.SkipHooks, &hook.MutationContext{
+		Op: hook.OpUpdate, Table: TableHostFingerprints, Schema: "public",
+		PK: pk, Input: input, CallOptions: options,
+	}, func(ctx context.Context, m *hook.MutationContext) (any, error) {
+		conn := database.Conn(ctx, c.querier)
+
+		// Build SET clause from omittable fields — explicit per-field checks, no reflection
+		setClauses := make(map[string]any)
+
+		// Empty update — no fields set, return current entity unchanged
+		if len(setClauses) == 0 {
+			// Empty FieldOptions — caller doesn't need the result
+			if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
+				return nil, nil
+			}
+
+			return c.Get(ctx, pk, func(o *CallOptions[HostFingerprintFieldOptions]) {
+				*o = options
+				o.SkipHooks = true
+				o.LockMode = sql.LockNone
+			})
+		}
+
+		query, args := sql.BuildUpdate(c.dialect, c.table, sql.UpdateOptions{
+			SetClauses: setClauses,
+			Conditions: sql.BuildCompositePKConditions(c.dialect,
+				[]string{"host_addr", "fingerprint_digest"},
+				[]any{pk.HostAddr, pk.FingerprintDigest}),
+		})
+
+		execResult, err := conn.Exec(ctx, query, args...)
+		if err != nil {
+			return nil, fmt.Errorf("update host_fingerprint: %w", err)
+		}
+		count, err := execResult.RowsAffected()
+		if err != nil {
+			return nil, fmt.Errorf("update host_fingerprint rows affected: %w", err)
+		}
+		if count == 0 {
+			return nil, ErrNotFound
+		}
+		m.AffectedPKs = []any{pk}
+
+		// Empty FieldOptions — caller doesn't need the result
+		if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
+			return nil, nil
+		}
+
+		return c.Get(ctx, pk, func(o *CallOptions[HostFingerprintFieldOptions]) {
+			*o = options
+			o.SkipHooks = true
+			o.LockMode = sql.LockNone
+		})
+	})
+	if err != nil {
+		return nil, err
+	}
+	if result == nil {
+		return nil, nil
+	}
+	return result.(*HostFingerprint), nil
+}
+
+// UpdateHostFingerprintItem pairs a primary key with an update input for batch updates.
+type UpdateHostFingerprintItem struct {
+	PK    HostFingerprintPK           `json:"pk"`
+	Input *UpdateHostFingerprintInput `json:"input"`
+}
+
+// UpdateMany partially updates multiple host_fingerprints and returns the updated entities.
+// Each item is a (PK, UpdateInput) pair. Splits into batches of batchSize.
+// On pgx, uses SendBatch for pipelined execution within each batch.
+func (c *hostFingerprintClient) UpdateMany(ctx context.Context, items []UpdateHostFingerprintItem, opts ...func(*CallOptions[HostFingerprintFieldOptions])) ([]*HostFingerprint, error) {
+	// UpdateHostFingerprintItem.Input is a pointer, so a zero-valued item
+	// carries a nil one — a shape that compiles naturally. Rejected before the
+	// executor, like every other nil write input.
+	for _, item := range items {
+		if item.Input == nil {
+			return nil, ErrNilInput
+		}
+	}
+	options := resolveCallOptions(opts)
+	result, err := c.executeMutation(ctx, options.SkipHooks, &hook.MutationContext{
+		Op: hook.OpUpdateMany, Table: TableHostFingerprints, Schema: "public",
+		Input: items, CallOptions: options,
+	}, func(ctx context.Context, m *hook.MutationContext) (any, error) {
+		conn := database.Conn(ctx, c.querier)
+		// An empty batch writes nothing and must read nothing. The trailing
+		// re-fetch below filters on the keys this call touched, and every
+		// generated key filter treats an empty set as *no condition* — so
+		// without this guard the re-fetch degrades to an unfiltered SELECT and
+		// returns the whole table as if this call had produced it.
+		if len(items) == 0 {
+			return []*HostFingerprint{}, nil
+		}
+		var allPKs []HostFingerprintPK
+		for start := 0; start < len(items); start += c.batchSize {
+			end := min(start+c.batchSize, len(items))
+			batch := items[start:end]
+
+			// Build all UPDATE statements for this batch
+			pgxBatch := &pgx.Batch{}
+			var batchQueries []string
+			var batchArgs [][]any
+			for _, item := range batch {
+				setClauses := make(map[string]any)
+
+				// Skip no-op updates
+				if len(setClauses) == 0 {
+					allPKs = append(allPKs, item.PK)
+					continue
+				}
+
+				query, args := sql.BuildUpdate(c.dialect, c.table, sql.UpdateOptions{
+					SetClauses: setClauses,
+					Conditions: sql.BuildCompositePKConditions(c.dialect,
+						[]string{"host_addr", "fingerprint_digest"},
+						[]any{item.PK.HostAddr, item.PK.FingerprintDigest}),
+				})
+				pgxBatch.Queue(query, args...)
+				batchQueries = append(batchQueries, query)
+				batchArgs = append(batchArgs, args)
+				allPKs = append(allPKs, item.PK)
+			}
+
+			// Send all UPDATEs — pipelined if supported, sequential otherwise
+			if pgxBatch.Len() > 0 {
+				if batcher, ok := conn.(interface {
+					SendBatch(ctx context.Context, b *pgx.Batch) pgx.BatchResults
+				}); ok {
+					br := batcher.SendBatch(ctx, pgxBatch)
+					for range pgxBatch.Len() {
+						if _, err := br.Exec(); err != nil {
+							br.Close()
+							return nil, fmt.Errorf("update host_fingerprints batch: %w", err)
+						}
+					}
+					if err := br.Close(); err != nil {
+						return nil, fmt.Errorf("close update batch: %w", err)
+					}
+				} else {
+					for i, q := range batchQueries {
+						if _, err := conn.Exec(ctx, q, batchArgs[i]...); err != nil {
+							return nil, fmt.Errorf("update host_fingerprints batch: %w", err)
+						}
+					}
+				}
+			}
+		}
+
+		m.AffectedPKs = toAnySlice(allPKs)
+
+		// Empty FieldOptions — skip fetch
+		if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
+			return nil, nil
+		}
+
+		return c.GetMany(ctx, &GetHostFingerprintsInput{
+			Filter: &HostFingerprintFilter{PKs: allPKs},
+			Limit:  new(0),
+		}, func(o *CallOptions[HostFingerprintFieldOptions]) {
+			*o = options
+			o.SkipHooks = true
+			o.LockMode = sql.LockNone
+		})
+	})
+	if err != nil {
+		return nil, err
+	}
+	if result == nil {
+		return nil, nil
+	}
+	return result.([]*HostFingerprint), nil
+}
+
+// UpdateWhere updates all host_fingerprints matching the filter and returns the updated entities.
+// Idempotent — returns empty slice when no rows match.
+// Returns ErrNilInput when input is nil, checked before the filter.
+// Returns ErrEmptyFilter when the filter is nil or produces no conditions.
+func (c *hostFingerprintClient) UpdateWhere(ctx context.Context, filter *HostFingerprintFilter, input *UpdateHostFingerprintInput, opts ...func(*CallOptions[HostFingerprintFieldOptions])) ([]*HostFingerprint, error) {
+	// Argument validity is checked before the filter's bulk-op
+	// safety guard, and before the executor, so a nil input fires no hook and
+	// publishes no event. ErrEmptyFilter still covers a non-nil input with an
+	// empty filter.
+	if input == nil {
+		return nil, ErrNilInput
+	}
+	options := resolveCallOptions(opts)
+	result, err := c.executeMutation(ctx, options.SkipHooks, &hook.MutationContext{
+		Op: hook.OpUpdateWhere, Table: TableHostFingerprints, Schema: "public",
+		Input: input, CallOptions: options,
+	}, func(ctx context.Context, m *hook.MutationContext) (any, error) {
+		conn := database.Conn(ctx, c.querier)
+
+		conds := filter.ToConditions(c.dialect)
+		if len(conds) == 0 {
+			return nil, ErrEmptyFilter
+		}
+
+		// Build SET clause (same per-field checks as Update)
+		setClauses := make(map[string]any)
+
+		// No fields set — return matching entities unchanged
+		if len(setClauses) == 0 {
+			if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
+				return nil, nil
+			}
+			return c.GetMany(ctx, &GetHostFingerprintsInput{
+				Filter: filter,
+				Limit:  new(0),
+			}, func(o *CallOptions[HostFingerprintFieldOptions]) {
+				*o = options
+				o.SkipHooks = true
+				o.LockMode = sql.LockNone
+			})
+		}
+
+		// UPDATE with RETURNING — get affected composite PKs in one round-trip
+		query, args := sql.BuildUpdate(c.dialect, c.table, sql.UpdateOptions{
+			SetClauses:       setClauses,
+			Conditions:       conds,
+			ReturningColumns: []string{"host_addr", "fingerprint_digest"},
+		})
+
+		rows, err := conn.Query(ctx, query, args...)
+		if err != nil {
+			return nil, fmt.Errorf("update host_fingerprints where: %w", err)
+		}
+		defer rows.Close()
+
+		var pks []HostFingerprintPK
+		for rows.Next() {
+			var pk HostFingerprintPK
+			if err := rows.Scan(&pk.HostAddr, &pk.FingerprintDigest); err != nil {
+				return nil, fmt.Errorf("scan updated host_fingerprint pk: %w", err)
+			}
+			pks = append(pks, pk)
+		}
+		if err := rows.Err(); err != nil {
+			return nil, err
+		}
+		if len(pks) == 0 {
+			return nil, nil
+		}
+		m.AffectedPKs = toAnySlice(pks)
+
+		// Empty FieldOptions — skip fetch
+		if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
+			return nil, nil
+		}
+
+		return c.GetMany(ctx, &GetHostFingerprintsInput{
+			Filter: &HostFingerprintFilter{PKs: pks},
+			Limit:  new(0),
+		}, func(o *CallOptions[HostFingerprintFieldOptions]) {
+			*o = options
+			o.SkipHooks = true
+			o.LockMode = sql.LockNone
+		})
+	})
+	if err != nil {
+		return nil, err
+	}
+	if result == nil {
+		return nil, nil
+	}
+	return result.([]*HostFingerprint), nil
+}
+
+// HardDelete permanently removes a host_fingerprint from the database.
+// Idempotent — returns nil if the primary key does not exist.
+func (c *hostFingerprintClient) HardDelete(ctx context.Context, pk HostFingerprintPK, opts ...func(*CallOptions[HostFingerprintFieldOptions])) error {
+	options := resolveCallOptions(opts)
+	_, err := c.executeMutation(ctx, options.SkipHooks, &hook.MutationContext{
+		Op: hook.OpHardDelete, Table: TableHostFingerprints, Schema: "public",
+		PK: pk, CallOptions: options,
+	}, func(ctx context.Context, m *hook.MutationContext) (any, error) {
+		conn := database.Conn(ctx, c.querier)
+		query, args := sql.BuildHardDelete(c.dialect, c.table, sql.HardDeleteOptions{
+			Conditions: sql.BuildCompositePKConditions(c.dialect,
+				[]string{"host_addr", "fingerprint_digest"},
+				[]any{pk.HostAddr, pk.FingerprintDigest}),
+		})
+
+		_, err := conn.Exec(ctx, query, args...)
+		if err != nil {
+			return nil, fmt.Errorf("hard delete host_fingerprint: %w", err)
+		}
+		m.AffectedPKs = []any{pk}
+		return nil, nil
+	})
+	return err
+}
+
+// HardDeleteMany permanently removes multiple host_fingerprints from the database.
+func (c *hostFingerprintClient) HardDeleteMany(ctx context.Context, pks []HostFingerprintPK, opts ...func(*CallOptions[HostFingerprintFieldOptions])) error {
+	options := resolveCallOptions(opts)
+	_, err := c.executeMutation(ctx, options.SkipHooks, &hook.MutationContext{
+		Op: hook.OpHardDeleteMany, Table: TableHostFingerprints, Schema: "public",
+		Input: pks, CallOptions: options,
+	}, func(ctx context.Context, m *hook.MutationContext) (any, error) {
+		conn := database.Conn(ctx, c.querier)
+
+		pkValues := make([][]any, len(pks))
+		for i, pk := range pks {
+			pkValues[i] = []any{pk.HostAddr, pk.FingerprintDigest}
+		}
+
+		query, args := sql.BuildHardDelete(c.dialect, c.table, sql.HardDeleteOptions{
+			Conditions: []sql.Condition{
+				sql.BuildCompositePKBatchCondition(c.dialect, []string{"host_addr", "fingerprint_digest"}, pkValues),
+			},
+		})
+
+		_, err := conn.Exec(ctx, query, args...)
+		if err != nil {
+			return nil, fmt.Errorf("hard delete host_fingerprints: %w", err)
+		}
+		m.AffectedPKs = toAnySlice(pks)
+		return nil, nil
+	})
+	return err
+}
+
+// HardDeleteWhere permanently removes all host_fingerprints matching the filter.
+// Idempotent — returns nil when no rows match.
+// Returns ErrEmptyFilter when the filter is nil or produces no conditions.
+func (c *hostFingerprintClient) HardDeleteWhere(ctx context.Context, filter *HostFingerprintFilter, opts ...func(*CallOptions[HostFingerprintFieldOptions])) error {
+	options := resolveCallOptions(opts)
+	_, err := c.executeMutation(ctx, options.SkipHooks, &hook.MutationContext{
+		Op: hook.OpHardDeleteWhere, Table: TableHostFingerprints, Schema: "public",
+		Input: filter, CallOptions: options,
+	}, func(ctx context.Context, m *hook.MutationContext) (any, error) {
+		conn := database.Conn(ctx, c.querier)
+
+		conds := filter.ToConditions(c.dialect)
+		if len(conds) == 0 {
+			return nil, ErrEmptyFilter
+		}
+
+		// DELETE with RETURNING — get affected composite PKs in one round-trip
+		query, args := sql.BuildHardDelete(c.dialect, c.table, sql.HardDeleteOptions{
+			Conditions:       conds,
+			ReturningColumns: []string{"host_addr", "fingerprint_digest"},
+		})
+
+		rows, err := conn.Query(ctx, query, args...)
+		if err != nil {
+			return nil, fmt.Errorf("hard delete host_fingerprints where: %w", err)
+		}
+		defer rows.Close()
+
+		var pks []HostFingerprintPK
+		for rows.Next() {
+			var pk HostFingerprintPK
+			if err := rows.Scan(&pk.HostAddr, &pk.FingerprintDigest); err != nil {
+				return nil, fmt.Errorf("scan deleted host_fingerprint pk: %w", err)
+			}
+			pks = append(pks, pk)
+		}
+		if err := rows.Err(); err != nil {
+			return nil, err
+		}
+		m.AffectedPKs = toAnySlice(pks)
+		return nil, nil
+	})
+	return err
+}
+
+// HostFingerprintConflictTarget identifies a unique constraint for upsert conflict detection.
+type HostFingerprintConflictTarget int
+
+const (
+	HostFingerprintConflictPK HostFingerprintConflictTarget = iota // PRIMARY KEY (host_addr, fingerprint_digest)
+)
+
+// hostFingerprintConflictColumns maps each conflict target to its column set.
+var hostFingerprintConflictColumns = map[HostFingerprintConflictTarget][]string{
+	HostFingerprintConflictPK: {"host_addr", "fingerprint_digest"},
+}
+
+// Upsert inserts a host_fingerprint or updates it if a row matching the conflict target already
+// exists. Returns the resulting entity with optional field selection and relationship loading.
+// The conflict target determines which unique constraint triggers an update
+// instead of an insert. Non-PK, non-conflict columns are included in the SET clause.
+func (c *hostFingerprintClient) Upsert(ctx context.Context, input *CreateHostFingerprintInput, target HostFingerprintConflictTarget, opts ...func(*CallOptions[HostFingerprintFieldOptions])) (*HostFingerprint, error) {
+	// A write cannot normalize nil to the zero value the way a read
+	// does — a zero CreateHostFingerprintInput legally writes a row (each required
+	// field's zero value, or with no required field, every column's default).
+	// Guarded before the executor, so nil fires no hook and publishes no event.
+	// An input that supplies no column gets no conflict clause on any dialect:
+	// it is a plain insert, so a conflict on a UNIQUE column with a
+	// DEFAULT is a unique violation, including on MySQL, where ON DUPLICATE KEY
+	// UPDATE would have returned the existing row.
+	if input == nil {
+		return nil, ErrNilInput
+	}
+	options := resolveCallOptions(opts)
+	result, err := c.executeMutation(ctx, options.SkipHooks, &hook.MutationContext{
+		Op: hook.OpUpsert, Table: TableHostFingerprints, Schema: "public",
+		Input: input, CallOptions: options,
+	}, func(ctx context.Context, m *hook.MutationContext) (any, error) {
+		conn := database.Conn(ctx, c.querier)
+
+		columns := []string{"host_addr", "fingerprint_digest"}
+		args := []any{input.HostAddr, input.FingerprintDigest}
+
+		// Resolve conflict target and update columns. Tenant column is excluded
+		// from the UPDATE-set half of the conflict clause — a
+		// row's tenant is not a mutable attribute under normal operation.
+		conflictColumns := hostFingerprintConflictColumns[target]
+		updateColumns := excludeColumns(columns, append(conflictColumns, "host_addr", "fingerprint_digest"))
+
+		query, queryArgs := sql.BuildInsert(c.dialect, c.table, sql.InsertOptions{
+			Columns:             columns,
+			Values:              args,
+			UpsertConflictKeys:  conflictColumns,
+			UpsertUpdateColumns: updateColumns,
+		})
+		_, err := conn.Exec(ctx, query, queryArgs...)
+		if err != nil {
+			return nil, fmt.Errorf("upsert host_fingerprint: %w", err)
+		}
+
+		m.AffectedPKs = []any{HostFingerprintPK{HostAddr: input.HostAddr, FingerprintDigest: input.FingerprintDigest}}
+
+		// Empty FieldOptions — caller doesn't need the result
+		if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
+			return nil, nil
+		}
+
+		return c.Get(ctx, HostFingerprintPK{HostAddr: input.HostAddr, FingerprintDigest: input.FingerprintDigest}, func(o *CallOptions[HostFingerprintFieldOptions]) {
+			*o = options
+			o.SkipHooks = true
+			o.LockMode = sql.LockNone
+		})
+	})
+	if err != nil {
+		return nil, err
+	}
+	if result == nil {
+		return nil, nil
+	}
+	return result.(*HostFingerprint), nil
+}
+
+// UpsertMany inserts or updates multiple host_fingerprints in batches and returns all
+// resulting entities. One conflict target applies to the whole batch, drawn from
+// the same enum Upsert takes. Sub-batches are not automatically rolled back on
+// failure — wrap in a transaction for atomicity.
+//
+// Inputs resolving to the same conflict target are deduped before the statement
+// is built, last occurrence wins. PostgreSQL rejects an
+// ON CONFLICT ... DO UPDATE that would affect one row twice; MySQL and SQLite
+// accept it and keep the last row. The dedupe is what makes one spelling behave
+// identically on all three. A row carrying no definite, non-NULL value for every
+// conflict column is exempt: a NULL never matches under a unique index on any of
+// the three dialects, so two such rows are two rows, not a duplicate.
+//
+// The returned slice carries one entity per deduped input on every dialect,
+// including the DO NOTHING branch a conflict target covering every inserted
+// column produces. The entities come from a re-fetch by primary key, never from
+// RETURNING — RETURNING yields only the rows actually inserted, so a batch that
+// conflicted would come back short. Row order is GetMany's, as with
+// CreateMany.
+func (c *hostFingerprintClient) UpsertMany(ctx context.Context, inputs []*CreateHostFingerprintInput, target HostFingerprintConflictTarget, opts ...func(*CallOptions[HostFingerprintFieldOptions])) ([]*HostFingerprint, error) {
+	// A nil *slice* is simply no rows, but a nil *element* is the
+	// same caller error a nil Upsert argument is — and skipping it silently
+	// would drop a row the caller asked for. Rejected before the executor.
+	for _, in := range inputs {
+		if in == nil {
+			return nil, ErrNilInput
+		}
+	}
+	options := resolveCallOptions(opts)
+	result, err := c.executeMutation(ctx, options.SkipHooks, &hook.MutationContext{
+		Op: hook.OpUpsertMany, Table: TableHostFingerprints, Schema: "public",
+		Input: inputs, CallOptions: options,
+	}, func(ctx context.Context, m *hook.MutationContext) (any, error) {
+		// No rows means no statement and nothing affected. Guarded here because
+		// the terminal GetMany filters on the written keys, and a key filter
+		// built from an empty set contributes no condition — an unguarded empty
+		// call would read the whole table back.
+		if len(inputs) == 0 {
+			return []*HostFingerprint{}, nil
+		}
+		conn := database.Conn(ctx, c.querier)
+
+		// Resolve conflict target and update columns. Tenant column is excluded
+		// from the UPDATE-set half of the conflict clause — a
+		// row's tenant is not a mutable attribute under normal operation.
+		//
+		// UpsertResolvePKColumn is deliberately not set: it exists so a
+		// single-row MySQL upsert can republish the conflicting row's id into
+		// the OK packet, and after a batch that packet names at most one row.
+		// Nothing here reads LastInsertId, so requesting it would
+		// only add a misleading assignment to the SET list.
+		columns := []string{"host_addr", "fingerprint_digest"}
+		conflictColumns := hostFingerprintConflictColumns[target]
+		updateColumns := excludeColumns(columns, append(conflictColumns, "host_addr", "fingerprint_digest"))
+		conflictPositions, haveConflictKey := upsertConflictPositions(columns, conflictColumns)
+
+		// One value row per input, built before any statement runs: the dedupe
+		// spans the whole call, not a sub-batch (ceil(M/batch_size)
+		// statements for M inputs, *after* the dedupe).
+		valueRows := make([][]any, 0, len(inputs))
+		rowInputs := make([]*CreateHostFingerprintInput, 0, len(inputs))
+		rowPKs := make([]HostFingerprintPK, 0, len(inputs))
+		for _, input := range inputs {
+
+			valueRows = append(valueRows, []any{
+				input.HostAddr,
+				input.FingerprintDigest,
+			})
+			rowInputs = append(rowInputs, input)
+			rowPKs = append(rowPKs, HostFingerprintPK{HostAddr: input.HostAddr, FingerprintDigest: input.FingerprintDigest})
+		}
+
+		// Dedupe by conflict target, last occurrence wins, first-appearance
+		// order preserved.
+		if haveConflictKey {
+			seen := make(map[string]int, len(valueRows))
+			dedupedRows := make([][]any, 0, len(valueRows))
+			dedupedInputs := make([]*CreateHostFingerprintInput, 0, len(rowInputs))
+			dedupedPKs := make([]HostFingerprintPK, 0, len(rowPKs))
+			for i, row := range valueRows {
+				key, keyed := upsertDedupeKey(row, conflictPositions)
+				if keyed {
+					if j, ok := seen[key]; ok {
+						dedupedRows[j] = row
+						dedupedInputs[j] = rowInputs[i]
+						dedupedPKs[j] = rowPKs[i]
+						continue
+					}
+					seen[key] = len(dedupedRows)
+				}
+				dedupedRows = append(dedupedRows, row)
+				dedupedInputs = append(dedupedInputs, rowInputs[i])
+				dedupedPKs = append(dedupedPKs, rowPKs[i])
+			}
+			valueRows = dedupedRows
+			rowInputs = dedupedInputs
+			rowPKs = dedupedPKs
+		}
+		// The published input is the deduped slice, so it stays index-aligned
+		// with m.AffectedPKs: an event fanned out per affected row carries the
+		// input that actually wrote that row.
+		m.Input = rowInputs
+
+		for start := 0; start < len(valueRows); start += c.batchSize {
+			end := min(start+c.batchSize, len(valueRows))
+			batch := valueRows[start:end]
+
+			query, queryArgs := sql.BuildMultiInsert(c.dialect, c.table, sql.MultiInsertOptions{
+				Columns:             columns,
+				ValueRows:           batch,
+				UpsertConflictKeys:  conflictColumns,
+				UpsertUpdateColumns: updateColumns,
+			})
+			if _, err := conn.Exec(ctx, query, queryArgs...); err != nil {
+				return nil, fmt.Errorf("upsert host_fingerprints batch: %w", err)
+			}
+		}
+
+		m.AffectedPKs = toAnySlice(rowPKs)
+
+		// Empty FieldOptions — skip fetch
+		if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
+			return nil, nil
+		}
+
+		// Re-fetch via composite PK filter
+		return c.GetMany(ctx, &GetHostFingerprintsInput{
+			Filter: &HostFingerprintFilter{PKs: rowPKs},
+			Limit:  new(0),
+		}, func(o *CallOptions[HostFingerprintFieldOptions]) {
+			*o = options
+			o.SkipHooks = true
+			o.LockMode = sql.LockNone
+		})
+	})
+	if err != nil {
+		return nil, err
+	}
+	if result == nil {
+		return nil, nil
+	}
+	return result.([]*HostFingerprint), nil
+}
+
+// Exists returns true if a host_fingerprint with the given primary key exists.
+func (c *hostFingerprintClient) Exists(ctx context.Context, pk HostFingerprintPK, opts ...func(*CallOptions[HostFingerprintFieldOptions])) (bool, error) {
+	options := resolveCallOptions(opts)
+	result, err := c.executeQuery(ctx, options.SkipHooks, &hook.QueryContext{
+		Op: hook.OpExists, Table: TableHostFingerprints, Schema: "public",
+		PK: pk, CallOptions: options,
+	}, func(ctx context.Context, q *hook.QueryContext) (any, error) {
+		conn := database.Conn(ctx, c.querier)
+		conds := sql.BuildCompositePKConditions(c.dialect,
+			[]string{"host_addr", "fingerprint_digest"},
+			[]any{pk.HostAddr, pk.FingerprintDigest})
+
+		query, args := sql.BuildExists(c.dialect, c.table, conds)
+
+		var exists bool
+		if err := conn.QueryRow(ctx, query, args...).Scan(&exists); err != nil {
+			return false, fmt.Errorf("exists host_fingerprint: %w", err)
+		}
+		return exists, nil
+	})
+	if err != nil {
+		return false, err
+	}
+	return result.(bool), nil
+}
+
+// ExistsWhere returns true if any host_fingerprint matches the given filter.
+func (c *hostFingerprintClient) ExistsWhere(ctx context.Context, filter *HostFingerprintFilter, opts ...func(*CallOptions[HostFingerprintFieldOptions])) (bool, error) {
+	options := resolveCallOptions(opts)
+	result, err := c.executeQuery(ctx, options.SkipHooks, &hook.QueryContext{
+		Op: hook.OpExists, Table: TableHostFingerprints, Schema: "public",
+		Input: filter, CallOptions: options,
+	}, func(ctx context.Context, q *hook.QueryContext) (any, error) {
+		conn := database.Conn(ctx, c.querier)
+
+		var conds []sql.Condition
+		if filter != nil {
+			conds = filter.ToConditions(c.dialect)
+		}
+
+		query, args := sql.BuildExists(c.dialect, c.table, conds)
+
+		var exists bool
+		if err := conn.QueryRow(ctx, query, args...).Scan(&exists); err != nil {
+			return false, fmt.Errorf("exists host_fingerprint where: %w", err)
+		}
+		return exists, nil
+	})
+	if err != nil {
+		return false, err
+	}
+	return result.(bool), nil
+}
+
+// Count returns the number of host_fingerprints matching the given filter.
+// A nil filter counts all host_fingerprints.
+func (c *hostFingerprintClient) Count(ctx context.Context, filter *HostFingerprintFilter, opts ...func(*CallOptions[HostFingerprintFieldOptions])) (int64, error) {
+	options := resolveCallOptions(opts)
+	result, err := c.executeQuery(ctx, options.SkipHooks, &hook.QueryContext{
+		Op: hook.OpCount, Table: TableHostFingerprints, Schema: "public",
+		Input: filter, CallOptions: options,
+	}, func(ctx context.Context, q *hook.QueryContext) (any, error) {
+		conn := database.Conn(ctx, c.querier)
+
+		var conds []sql.Condition
+		if filter != nil {
+			conds = filter.ToConditions(c.dialect)
+		}
+
+		query, args := sql.BuildCount(c.dialect, c.table, conds)
+
+		var count int64
+		if err := conn.QueryRow(ctx, query, args...).Scan(&count); err != nil {
+			return int64(0), fmt.Errorf("count host_fingerprints: %w", err)
+		}
+		return count, nil
+	})
+	if err != nil {
+		return 0, err
+	}
+	return result.(int64), nil
+}
+
+// Paginate returns a page of host_fingerprints with total count for offset-based pagination.
+// A nil filter paginates all host_fingerprints.
+func (c *hostFingerprintClient) Paginate(ctx context.Context, input PaginateInput[HostFingerprintFilter], opts ...func(*CallOptions[HostFingerprintFieldOptions])) (*PaginateResult[HostFingerprint], error) {
+	options := resolveCallOptions(opts)
+	result, err := c.executeQuery(ctx, options.SkipHooks, &hook.QueryContext{
+		Op: hook.OpPaginate, Table: TableHostFingerprints, Schema: "public",
+		Input: input, CallOptions: options,
+	}, func(ctx context.Context, q *hook.QueryContext) (any, error) {
+		// Internal calls with SkipHooks to prevent nested hook invocation
+		internalOpts := func(o *CallOptions[HostFingerprintFieldOptions]) {
+			*o = options
+			o.SkipHooks = true
+		}
+
+		// Total count (delegates to Count — both are always generated)
+		totalCount, err := c.Count(ctx, input.Filter, internalOpts)
+		if err != nil {
+			return nil, fmt.Errorf("paginate host_fingerprints count: %w", err)
+		}
+
+		// Page data via GetMany (handles FieldOptions and relationships)
+		hostFingerprints, err := c.GetMany(ctx, &GetHostFingerprintsInput{
+			Filter: input.Filter,
+			Sorts:  input.Sort,
+			Limit:  &input.Limit,
+			Offset: &input.Offset,
+		}, internalOpts)
+		if err != nil {
+			return nil, fmt.Errorf("paginate host_fingerprints: %w", err)
+		}
+
+		return &PaginateResult[HostFingerprint]{
+			Items:      hostFingerprints,
+			TotalCount: totalCount,
+			Offset:     input.Offset,
+			Limit:      input.Limit,
+			HasMore:    int64(input.Offset+input.Limit) < totalCount,
+		}, nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	return result.(*PaginateResult[HostFingerprint]), nil
+}
+
+// Connection returns a Relay-style cursor-paginated connection of host_fingerprints.
+// Sort order is determined by cursor_keys — custom sorts are not supported.
+// Use Paginate for custom sort orders.
+func (c *hostFingerprintClient) Connection(ctx context.Context, input ConnectionInput[HostFingerprintFilter], opts ...func(*CallOptions[HostFingerprintFieldOptions])) (*Connection[HostFingerprint], error) {
+	options := resolveCallOptions(opts)
+
+	if options.LockMode != sql.LockNone {
+		if !database.InTransaction(ctx) {
+			return nil, fmt.Errorf("connection host_fingerprints: LockMode requires an active transaction")
+		}
+		options.SkipCache = true
+	}
+	result, err := c.executeQuery(ctx, options.SkipHooks, &hook.QueryContext{
+		Op: hook.OpConnection, Table: TableHostFingerprints, Schema: "public",
+		Input: input, CallOptions: options,
+	}, func(ctx context.Context, q *hook.QueryContext) (any, error) {
+		// Internal calls with SkipHooks to prevent nested hook invocation
+		internalOpts := func(o *CallOptions[HostFingerprintFieldOptions]) {
+			*o = options
+			o.SkipHooks = true
+		}
+
+		// Validate: first and last are mutually exclusive
+		if input.First != nil && input.Last != nil {
+			return nil, ErrInvalidCursor
+		}
+
+		// Total count (separate COUNT query — no cursor conditions)
+		totalCount, err := c.Count(ctx, input.Filter, internalOpts)
+		if err != nil {
+			return nil, fmt.Errorf("connection host_fingerprints count: %w", err)
+		}
+
+		// Decode cursors and build keyset conditions
+		var keysetConds []sql.Condition
+		if input.After != nil {
+			cursor, err := decodeHostFingerprintCursor(*input.After, c.cursorKeys)
+			if err != nil {
+				return nil, ErrInvalidCursor
+			}
+			keysetConds = append(keysetConds, cursorKeyset(c.dialect, c.cursorKeys, cursor, ">"))
+		}
+		if input.Before != nil {
+			cursor, err := decodeHostFingerprintCursor(*input.Before, c.cursorKeys)
+			if err != nil {
+				return nil, ErrInvalidCursor
+			}
+			keysetConds = append(keysetConds, cursorKeyset(c.dialect, c.cursorKeys, cursor, "<"))
+		}
+
+		// Direction and limit
+		limit := c.pageSize
+		ascending := true
+		if input.First != nil {
+			limit = *input.First
+		} else if input.Last != nil {
+			limit = *input.Last
+			ascending = false
+		}
+
+		// Fetch limit+1 rows via GetMany (handles FieldOptions, O2O joins, relationships, soft delete)
+		connLimit := limit + 1
+		hostFingerprints, err := c.GetMany(ctx, &GetHostFingerprintsInput{
+			Filter:     input.Filter,
+			Sorts:      cursorSorts(c.cursorKeys, ascending),
+			Limit:      &connLimit,
+			conditions: keysetConds,
+			// Each edge's cursor is encoded from the row it wraps, so the cursor
+			// keys have to survive a narrowed FieldOptions — otherwise the
+			// encoder reads fields the SELECT never filled and every cursor
+			// carries zero values.
+			requiredColumns: c.cursorKeys,
+		}, internalOpts)
+		if err != nil {
+			return nil, fmt.Errorf("connection host_fingerprints: %w", err)
+		}
+
+		// Trim extra row and determine page boundaries
+		hasMore := len(hostFingerprints) > limit
+		if hasMore {
+			hostFingerprints = hostFingerprints[:limit]
+		}
+
+		// Backward pagination: reverse for ascending cursor order
+		if !ascending {
+			slices.Reverse(hostFingerprints)
+		}
+
+		// Build edges with encoded cursors
+		edges := make([]Edge[HostFingerprint], len(hostFingerprints))
+		for i, row := range hostFingerprints {
+			cursor, err := encodeHostFingerprintCursor(c.cursorKeys, row)
+			if err != nil {
+				return nil, err
+			}
+			edges[i] = Edge[HostFingerprint]{
+				Node:   row,
+				Cursor: cursor,
+			}
+		}
+
+		pageInfo := PageInfo{
+			HasNextPage:     (ascending && hasMore) || (!ascending && input.Before != nil),
+			HasPreviousPage: (!ascending && hasMore) || (ascending && input.After != nil),
+		}
+		if len(edges) > 0 {
+			pageInfo.StartCursor = &edges[0].Cursor
+			pageInfo.EndCursor = &edges[len(edges)-1].Cursor
+		}
+
+		return &Connection[HostFingerprint]{Edges: edges, PageInfo: pageInfo, TotalCount: totalCount}, nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	return result.(*Connection[HostFingerprint]), nil
+}
+
+// encodeHostFingerprintCursor encodes cursor key values as a base64 JSON string.
+func encodeHostFingerprintCursor(keys []string, h *HostFingerprint) (string, error) {
+	out := make(map[string]any, len(keys))
+	for _, key := range keys {
+		switch key {
+		case "host_addr":
+			out["host_addr"] = h.HostAddr
+		case "fingerprint_digest":
+			out["fingerprint_digest"] = h.FingerprintDigest
+		}
+	}
+	data, err := json.Marshal(out)
+	if err != nil {
+		return "", fmt.Errorf("encode host_fingerprint cursor: %w", err)
+	}
+	return base64.StdEncoding.EncodeToString(data), nil
+}
+
+// decodeHostFingerprintCursor decodes a cursor string into its key values,
+// each unmarshaled into the key column's Go type.
+func decodeHostFingerprintCursor(encoded string, keys []string) (map[string]any, error) {
+	raw, err := decodeCursor(encoded, keys)
+	if err != nil {
+		return nil, err
+	}
+	var row HostFingerprint
+	out := make(map[string]any, len(keys))
+	for _, key := range keys {
+		switch key {
+		case "host_addr":
+			err = json.Unmarshal(raw[key], &row.HostAddr)
+			out[key] = row.HostAddr
+		case "fingerprint_digest":
+			err = json.Unmarshal(raw[key], &row.FingerprintDigest)
+			out[key] = row.FingerprintDigest
+		}
+		if err != nil {
+			return nil, err
+		}
+		if cursorValueIsNull(out[key]) {
+			return nil, ErrInvalidCursor
+		}
+	}
+	return out, nil
+}
+
+// StreamHostFingerprintsInput holds query parameters for streaming host_fingerprints records.
+// Stream is iterator-style and intentionally has no Limit/Offset.
+// Field selection is controlled via CallOptions.FieldOptions, not this struct.
+type StreamHostFingerprintsInput struct {
+	Filter *HostFingerprintFilter `json:"filter"`
+	Sorts  []sql.Sort             `json:"sorts"`
+}
+
+// StreamHostFingerprintFieldOptions controls scalar column selection for host_fingerprints streams.
+// Stream cannot load relationships — only scalar columns are selectable.
+type StreamHostFingerprintFieldOptions struct {
+	HostAddr          bool `json:"host_addr"`
+	FingerprintDigest bool `json:"fingerprint_digest"`
+}
+
+// Columns returns the SQL column names for all selected columns, sorted alphabetically
+// to match the SQL builder's deterministic column ordering.
+func (fo *StreamHostFingerprintFieldOptions) Columns() []string {
+	var cols []string
+	if fo.HostAddr {
+		cols = append(cols, "host_addr")
+	}
+	if fo.FingerprintDigest {
+		cols = append(cols, "fingerprint_digest")
+	}
+	slices.Sort(cols)
+	return cols
+}
+
+// HasSelectedColumns reports whether any column is selected.
+func (fo *StreamHostFingerprintFieldOptions) HasSelectedColumns() bool {
+	if fo.HostAddr {
+		return true
+	}
+	if fo.FingerprintDigest {
+		return true
+	}
+	return false
+}
+
+// scanHostFingerprintRow scans a single row into a HostFingerprint entity.
+// Used by Stream to yield rows one at a time without materializing the result set.
+func scanHostFingerprintRow(rows database.Rows, columns []string) (*HostFingerprint, error) {
+	h := &HostFingerprint{}
+
+	targets := make([]any, len(columns))
+	for idx, col := range columns {
+		switch col {
+		case "host_addr":
+			targets[idx] = &h.HostAddr
+		case "fingerprint_digest":
+			targets[idx] = &h.FingerprintDigest
+		}
+	}
+
+	if err := rows.Scan(targets...); err != nil {
+		return nil, fmt.Errorf("scan host_fingerprint: %w", err)
+	}
+
+	return h, nil
+}
+
+// Stream returns an iterator over host_fingerprints matching the given filter and sort criteria.
+// Rows are yielded as the driver returns them, without materializing the full
+// result set. Cache is bypassed regardless of caller setting.
+// Stream cannot load relationships — use Connection in a loop when relationships
+// are required.
+//
+// Stream refuses an active transaction. It runs consumer code inside an open
+// result set, which inside a transaction is the transaction's only connection,
+// held for the whole iteration — so a statement issued from the loop body on the
+// same txCtx waits on a reservation the loop itself holds. Set
+// CallOptions.AllowInTransaction for a snapshot-consistent stream that issues
+// nothing else on that txCtx. That obligation is the one rule that remains the
+// caller's — drain or close a result set before issuing the next statement on
+// that txCtx — applied to a loop whose body is caller code.
+func (c *hostFingerprintClient) Stream(ctx context.Context, input *StreamHostFingerprintsInput, opts ...func(*CallOptions[StreamHostFingerprintFieldOptions])) iter.Seq2[*HostFingerprint, error] {
+	return func(yield func(*HostFingerprint, error) bool) {
+		// A nil input is the zero-value input. Without it, an
+		// unguarded nil dereference in the handler would be recovered by the
+		// panic wrapper and reported as an error instead of streaming the table.
+		if input == nil {
+			input = &StreamHostFingerprintsInput{}
+		}
+		options := resolveCallOptions(opts)
+		options.SkipCache = true
+
+		// Stream's contract is that the connection stays open across
+		// caller code; a transaction's is one connection, one statement at a
+		// time. The two cannot both hold, so Stream refuses a transaction unless
+		// the caller opts in. Refused before any SQL is issued and before the
+		// hook chain is built, mirroring the LockMode precondition, and
+		// surfaced through yield because Stream returns an iterator and has no
+		// error return.
+		if database.InTransaction(ctx) && !options.AllowInTransaction {
+			yield(nil, fmt.Errorf("stream host_fingerprints: unsupported inside a transaction — use Connection in a loop, "+
+				"or set AllowInTransaction for a snapshot-consistent stream that issues nothing else on this txCtx"))
+			return
+		}
+
+		// stopped is true while the consumer's loop body runs, and stays true
+		// once the body breaks (yield returned false) or panics out of yield.
+		// Calling yield again after either makes the Go runtime panic, so the
+		// chain's error below is yielded only while stopped is false.
+		var stopped bool
+		emit := func(row *HostFingerprint, err error) bool {
+			stopped = true
+			if !yield(row, err) {
+				return false
+			}
+			stopped = false
+			return true
+		}
+
+		// A recovered panic and a hook's abort error are the
+		// chain's return value. Stream has no error return, so it yields that
+		// error once, after anything the handler yielded.
+		_, err := c.executeQuery(ctx, options.SkipHooks, &hook.QueryContext{
+			Op: hook.OpStream, Table: TableHostFingerprints, Schema: "public",
+			Input: input, CallOptions: options,
+		}, func(ctx context.Context, q *hook.QueryContext) (any, error) {
+			conn := database.Conn(ctx, c.querier)
+
+			fieldOptions := options.FieldOptions
+			columns := hostFingerprintAllColumns
+			if fieldOptions != nil {
+				if selected := fieldOptions.Columns(); len(selected) > 0 {
+					columns = selected
+				}
+			}
+
+			var conds []sql.Condition
+			if input.Filter != nil {
+				conds = input.Filter.ToConditions(c.dialect)
+			}
+
+			query, args := sql.BuildSelect(c.dialect, c.table, sql.SelectOptions{
+				Columns:    columns,
+				Conditions: conds,
+				OrderBy:    input.Sorts,
+			})
+
+			rows, err := conn.Query(ctx, query, args...)
+			if err != nil {
+				emit(nil, fmt.Errorf("stream host_fingerprints: %w", err))
+				return nil, nil
+			}
+			defer rows.Close()
+
+			for rows.Next() {
+				h, err := scanHostFingerprintRow(rows, columns)
+				if err != nil {
+					if !emit(nil, err) {
+						return nil, nil
+					}
+					continue
+				}
+				if !emit(h, nil) {
+					return nil, nil
+				}
+			}
+			if err := rows.Err(); err != nil {
+				emit(nil, fmt.Errorf("iterate host_fingerprint rows: %w", err))
+			}
+			return nil, nil
+		})
+		if err != nil && !stopped {
+			yield(nil, err)
+		}
+	}
+}
+
+// HostFingerprintFilter provides type-safe filtering for the host_fingerprints table.
+type HostFingerprintFilter struct {
+	FingerprintDigest *comparator.Opaque[[]byte] `json:"fingerprint_digest"`
+	HostAddr          *comparator.Opaque[net.IP] `json:"host_addr"`
+	PKs               []HostFingerprintPK        `json:"pks"`
+	And               []*HostFingerprintFilter   `json:"and"`
+	Or                []*HostFingerprintFilter   `json:"or"`
+}
+
+// ToConditions converts the filter to a slice of SQL conditions.
+//
+// A nil receiver contributes no conditions. Two callers depend on that. The
+// *Where methods dereference their filter only here and document a nil one as
+// the empty-filter case, so this is what makes ErrEmptyFilter reachable instead
+// of a nil dereference. And a nil entry inside and / or is skipped rather than
+// fatal, matching the "an unset member contributes no SQL" rule the
+// relationship members already follow.
+func (f *HostFingerprintFilter) ToConditions(dialect sql.Dialect, opts ...FilterOption) []sql.Condition {
+	if f == nil {
+		return nil
+	}
+
+	var conds []sql.Condition
+
+	if f.FingerprintDigest != nil {
+		conds = append(conds, f.FingerprintDigest.Parse(dialect.QuoteIdentifier("fingerprint_digest"), dialect)...)
+	}
+
+	if f.HostAddr != nil {
+		conds = append(conds, f.HostAddr.Parse(dialect.QuoteIdentifier("host_addr"), dialect)...)
+	}
+
+	if len(f.PKs) > 0 {
+		var pkConds []sql.Condition
+		for _, pk := range f.PKs {
+			pkConds = append(pkConds, sql.And(
+				sql.Condition{Clause: dialect.QuoteIdentifier("host_addr") + " = $", Value: pk.HostAddr},
+				sql.Condition{Clause: dialect.QuoteIdentifier("fingerprint_digest") + " = $", Value: pk.FingerprintDigest},
+			))
+		}
+		conds = append(conds, sql.Or(pkConds...))
+	}
+
+	for _, sub := range f.And {
+		subConds := sub.ToConditions(dialect, opts...)
+		if len(subConds) > 0 {
+			conds = append(conds, sql.And(subConds...))
+		}
+	}
+
+	// A filter object's own fields are always conjunctive, so each or member
+	// contributes sql.And of its own conditions and the members are OR-ed
+	// together as ONE group condition. Appending a per-member
+	// sql.Or instead hands the caller N conditions, and buildWhere joins those
+	// with AND — turning or: [A, B] into A AND B, while simultaneously OR-ing a
+	// single member's own fields against each other.
+	//
+	// The group is appended only when some member compiled to something:
+	// sql.Or of nothing expands to a literal "()", which buildWhere keeps
+	// because it is not the empty string, yielding invalid SQL.
+	var orGroup []sql.Condition
+	for _, sub := range f.Or {
+		subConds := sub.ToConditions(dialect, opts...)
+		if len(subConds) > 0 {
+			orGroup = append(orGroup, sql.And(subConds...))
+		}
+	}
+	if len(orGroup) > 0 {
+		conds = append(conds, sql.Or(orGroup...))
+	}
+
+	return conds
+}
+
+// HostFingerprintFieldOptions controls column selection and relationship loading for host_fingerprints queries.
+type HostFingerprintFieldOptions struct {
+	HostAddr          bool `json:"host_addr"`
+	FingerprintDigest bool `json:"fingerprint_digest"`
+}
+
+// Columns returns the SQL column names for all selected columns, sorted alphabetically
+// to match the SQL builder's deterministic column ordering.
+func (fo *HostFingerprintFieldOptions) Columns() []string {
+	var cols []string
+	if fo.HostAddr {
+		cols = append(cols, "host_addr")
+	}
+	if fo.FingerprintDigest {
+		cols = append(cols, "fingerprint_digest")
+	}
+	slices.Sort(cols)
+	return cols
+}
+
+// ColumnMap returns a mapping of Go field name to SQL column name for all columns.
+func (fo *HostFingerprintFieldOptions) ColumnMap() map[string]string {
+	return map[string]string{
+		"HostAddr":          "host_addr",
+		"FingerprintDigest": "fingerprint_digest",
+	}
+}
+
+// HasSelectedColumns reports whether any column or relationship is selected.
+func (fo *HostFingerprintFieldOptions) HasSelectedColumns() bool {
+	if fo.HostAddr {
+		return true
+	}
+	if fo.FingerprintDigest {
+		return true
+	}
+	return false
+}
+
+// CreateHostFingerprintInput holds the fields for creating a host_fingerprints record.
+type CreateHostFingerprintInput struct {
+	HostAddr          net.IP `json:"host_addr"`
+	FingerprintDigest []byte `json:"fingerprint_digest"`
+}
+
+// UpdateHostFingerprintInput holds the fields for updating a host_fingerprints record.
+// All fields use omittable.Value to distinguish "not set" from "set to zero".
+type UpdateHostFingerprintInput struct {
+}
+
+// GetHostFingerprintsInput holds query parameters for retrieving host_fingerprints records.
+// Field selection is controlled via CallOptions.FieldOptions, not this struct.
+type GetHostFingerprintsInput struct {
+	Filter *HostFingerprintFilter `json:"filter"`
+	Limit  *int                   `json:"limit"`
+	Offset *int                   `json:"offset"`
+	Sorts  []sql.Sort             `json:"sorts"`
+	// conditions holds additional SQL conditions injected by internal callers
+	// (e.g., Connection keyset conditions). Not part of the public API.
+	conditions []sql.Condition
+	// requiredColumns holds columns an internal caller needs read back even
+	// when FieldOptions narrows the projection (e.g., Connection cursor keys).
+	// Not part of the public API.
+	requiredColumns []string
+}
+
+type Host struct {
+	Addr  net.IP `db:"addr" json:"addr"`
+	Label string `db:"label" json:"label"`
+
+	// Fingerprints - many-to-many relationship with the fingerprints table.
+	Fingerprints []*Fingerprint `db:"-" json:"fingerprints"`
+}
+
+// HostClient provides type-safe operations for the hosts table.
+type HostClient interface {
+	// --- Read Operations ---
+
+	// Get returns a single host by primary key.
+	Get(ctx context.Context, id net.IP, opts ...func(*CallOptions[HostFieldOptions])) (*Host, error)
+
+	// GetMany returns hosts matching the given filter, field selection, and sort criteria.
+	// When FieldOptions includes O2M or M2M relationships, they are loaded via an
+	// errgroup fan-out — in parallel over the pool, and serialized by the
+	// transaction's connection reservation when ctx carries one.
+	GetMany(ctx context.Context, input *GetHostsInput, opts ...func(*CallOptions[HostFieldOptions])) ([]*Host, error)
+
+	// Exists returns true if a host with the given primary key exists.
+	Exists(ctx context.Context, id net.IP, opts ...func(*CallOptions[HostFieldOptions])) (bool, error)
+
+	// ExistsWhere returns true if any host matches the given filter.
+	ExistsWhere(ctx context.Context, filter *HostFilter, opts ...func(*CallOptions[HostFieldOptions])) (bool, error)
+
+	// Count returns the number of hosts matching the given filter.
+	Count(ctx context.Context, filter *HostFilter, opts ...func(*CallOptions[HostFieldOptions])) (int64, error)
+
+	// --- Write Operations ---
+
+	// Create inserts a new host and returns the created entity.
+	Create(ctx context.Context, input *CreateHostInput, opts ...func(*CallOptions[HostFieldOptions])) (*Host, error)
+
+	// CreateMany inserts multiple hosts in batches and returns all created entities.
+	// Sub-batches are not automatically rolled back on failure — wrap in a transaction for atomicity.
+	CreateMany(ctx context.Context, inputs []*CreateHostInput, opts ...func(*CallOptions[HostFieldOptions])) ([]*Host, error)
+
+	// Update partially updates a host by primary key and returns the updated entity.
+	// Only fields where IsSet() is true are included in the SET clause.
+	// Returns ErrNotFound if the primary key does not exist.
+	Update(ctx context.Context, id net.IP, input *UpdateHostInput, opts ...func(*CallOptions[HostFieldOptions])) (*Host, error)
+
+	// UpdateMany updates multiple hosts and returns the updated entities.
+	UpdateMany(ctx context.Context, items []UpdateHostItem, opts ...func(*CallOptions[HostFieldOptions])) ([]*Host, error)
+
+	// UpdateWhere updates all hosts matching the filter and returns the updated entities.
+	// Idempotent — returns empty slice when no rows match.
+	UpdateWhere(ctx context.Context, filter *HostFilter, input *UpdateHostInput, opts ...func(*CallOptions[HostFieldOptions])) ([]*Host, error)
+
+	// Upsert inserts a host or updates it on conflict and returns the resulting entity.
+	Upsert(ctx context.Context, input *CreateHostInput, target HostConflictTarget, opts ...func(*CallOptions[HostFieldOptions])) (*Host, error)
+
+	// UpsertMany inserts or updates multiple hosts in batches and returns all resulting entities.
+	// Inputs resolving to the same conflict target are deduped, last occurrence wins.
+	UpsertMany(ctx context.Context, inputs []*CreateHostInput, target HostConflictTarget, opts ...func(*CallOptions[HostFieldOptions])) ([]*Host, error)
+
+	// --- Hard Delete Operations ---
+
+	// HardDelete permanently removes a host from the database.
+	// Idempotent — returns nil if the primary key does not exist.
+	HardDelete(ctx context.Context, id net.IP, opts ...func(*CallOptions[HostFieldOptions])) error
+
+	// HardDeleteMany permanently removes multiple hosts from the database.
+	HardDeleteMany(ctx context.Context, ids []net.IP, opts ...func(*CallOptions[HostFieldOptions])) error
+
+	// HardDeleteWhere permanently removes all hosts matching the filter.
+	// Idempotent — returns nil when no rows match.
+	HardDeleteWhere(ctx context.Context, filter *HostFilter, opts ...func(*CallOptions[HostFieldOptions])) error
+
+	// --- Pagination Operations ---
+
+	// Paginate returns a page of hosts with total count for offset-based pagination.
+	Paginate(ctx context.Context, input PaginateInput[HostFilter], opts ...func(*CallOptions[HostFieldOptions])) (*PaginateResult[Host], error)
+
+	// Connection returns a Relay-style cursor-paginated connection of hosts.
+	// Sort order is determined by cursor_keys — custom sorts are not supported.
+	// Use Paginate for custom sort orders.
+	Connection(ctx context.Context, input ConnectionInput[HostFilter], opts ...func(*CallOptions[HostFieldOptions])) (*Connection[Host], error)
+
+	// Stream returns an iterator over hosts matching the filter and sort criteria.
+	// Rows are yielded as the driver returns them; cache is bypassed.
+	// Stream cannot load relationships.
+	//
+	// Stream refuses an active transaction unless CallOptions.AllowInTransaction
+	// is set, and the opt-in commits the caller to issuing nothing else on that
+	// txCtx: the one rule that remains the caller's — drain or close a result set
+	// before issuing the next statement on that txCtx — applied to a loop whose
+	// body is caller code.
+	Stream(ctx context.Context, input *StreamHostsInput, opts ...func(*CallOptions[StreamHostFieldOptions])) iter.Seq2[*Host, error]
+}
+
+// hostClient implements the HostClient interface.
+type hostClient struct {
+	querier                 database.Querier
+	dialect                 sql.Dialect
+	table                   sql.Table
+	batchSize               int
+	queryLimit              int
+	pageSize                int
+	cursorKeys              []string
+	strictUpdates           bool
+	mutationHooks           []hook.MutationHook
+	queryHooks              []hook.QueryHook
+	panicHandler            hook.PanicHandler
+	callbackMode            database.CallbackMode
+	fingerprintsDefaultSort []sql.Sort
+	fingerprintClient       *fingerprintClient
+	hostFingerprintClient   *hostFingerprintClient
+}
+
+// newHostClient creates a new hostClient.
+func newHostClient(querier database.Querier, mutationHooks []hook.MutationHook, queryHooks []hook.QueryHook, panicHandler hook.PanicHandler) *hostClient {
+	return &hostClient{
+		querier:       querier,
+		dialect:       sql.NewPostgresDialect(),
+		table:         sql.Table{Schema: "public", Name: "hosts"},
+		batchSize:     200,
+		queryLimit:    1000,
+		pageSize:      100,
+		cursorKeys:    []string{"addr"},
+		strictUpdates: true,
+		mutationHooks: mutationHooks,
+		queryHooks:    queryHooks,
+		panicHandler:  panicHandler,
+	}
+}
+
+// executeMutation runs fn through the mutation hook chain.
+// When skipHooks is true, only panic recovery wraps the call.
+func (c *hostClient) executeMutation(ctx context.Context, skipHooks bool, mc *hook.MutationContext, fn hook.MutationHandler) (any, error) {
+	var hooks []hook.MutationHook
+	if !skipHooks {
+		hooks = c.mutationHooks
+	}
+	return hook.BuildMutationChain(c.panicHandler, hooks, fn)(ctx, mc)
+}
+
+// executeQuery runs fn through the query hook chain.
+// When skipHooks is true, only panic recovery wraps the call.
+func (c *hostClient) executeQuery(ctx context.Context, skipHooks bool, qc *hook.QueryContext, fn hook.QueryHandler) (any, error) {
+	var hooks []hook.QueryHook
+	if !skipHooks {
+		hooks = c.queryHooks
+	}
+	return hook.BuildQueryChain(c.panicHandler, hooks, fn)(ctx, qc)
+}
+
+// hostAllColumns is the column list for full-entity reads, sorted for determinism.
+var hostAllColumns = []string{"addr", "label"}
+
+// scanHosts scans rows into Host entities using a column-name switch.
+// Handles both scan target shapes (direct, wrapped) without reflection.
+func scanHosts(rows database.Rows, columns []string) ([]*Host, error) {
+	var result []*Host
+	for rows.Next() {
+		h := &Host{}
+
+		targets := make([]any, len(columns))
+		for idx, col := range columns {
+			switch col {
+			case "addr":
+				targets[idx] = &h.Addr
+			case "label":
+				targets[idx] = &h.Label
+			}
+		}
+
+		if err := rows.Scan(targets...); err != nil {
+			return nil, fmt.Errorf("scan host: %w", err)
+		}
+
+		result = append(result, h)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate host rows: %w", err)
+	}
+	return result, nil
+}
+
+// Get returns a single host by primary key with optional field selection.
+// If fieldOptions is provided, only the selected columns are returned and
+// relationships with non-nil FieldOptions are loaded.
+func (c *hostClient) Get(ctx context.Context, id net.IP, opts ...func(*CallOptions[HostFieldOptions])) (*Host, error) {
+	options := resolveCallOptions(opts)
+
+	if options.LockMode != sql.LockNone {
+		if !database.InTransaction(ctx) {
+			return nil, fmt.Errorf("get host: LockMode requires an active transaction")
+		}
+		options.SkipCache = true
+	}
+	qctx := &hook.QueryContext{
+		Op: hook.OpGet, Table: TableHosts, Schema: "public",
+		PK: id, CallOptions: options,
+	}
+	result, err := c.executeQuery(ctx, options.SkipHooks, qctx, func(ctx context.Context, q *hook.QueryContext) (any, error) {
+		// Hooks may mutate q.CallOptions (e.g. the cache hook's hydration
+		// path overrides FieldOptions for a full-entity refill). Prefer
+		// those overrides when present; otherwise fall back to the
+		// caller-supplied options captured at Get() time.
+		effectiveOpts := options
+		if qOpts, ok := q.CallOptions.(CallOptions[HostFieldOptions]); ok {
+			effectiveOpts = qOpts
+		}
+		// Internal GetMany call with SkipHooks to prevent nested hook invocation
+		internalOpts := func(o *CallOptions[HostFieldOptions]) {
+			*o = effectiveOpts
+			o.SkipHooks = true
+		}
+		hosts, err := c.GetMany(ctx, &GetHostsInput{
+			Filter: &HostFilter{
+				Addr: &comparator.Opaque[net.IP]{Eq: new(id)},
+			},
+			Limit: new(1),
+		}, internalOpts)
+		if err != nil {
+			return nil, err
+		}
+		if len(hosts) == 0 {
+			return nil, ErrNotFound
+		}
+		return hosts[0], nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	if result == nil {
+		return nil, nil
+	}
+	return result.(*Host), nil
+}
+
+// GetMany returns hosts matching the given filter, field selection, and sort criteria.
+// When FieldOptions includes O2M or M2M relationships, they are loaded via an
+// errgroup fan-out — in parallel over the pool, and serialized by the
+// transaction's connection reservation when ctx carries one.
+func (c *hostClient) GetMany(ctx context.Context, input *GetHostsInput, opts ...func(*CallOptions[HostFieldOptions])) ([]*Host, error) {
+	// A nil input is the zero-value input — no filter, no sorts, no
+	// limit. Normalized before the hook context is built, so a hook never sees
+	// a nil Input either.
+	if input == nil {
+		input = &GetHostsInput{}
+	}
+	options := resolveCallOptions(opts)
+
+	if options.LockMode != sql.LockNone {
+		if !database.InTransaction(ctx) {
+			return nil, fmt.Errorf("get hosts: LockMode requires an active transaction")
+		}
+		options.SkipCache = true
+	}
+	result, err := c.executeQuery(ctx, options.SkipHooks, &hook.QueryContext{
+		Op: hook.OpGetMany, Table: TableHosts, Schema: "public",
+		Input: input, CallOptions: options,
+	}, func(ctx context.Context, q *hook.QueryContext) (any, error) {
+		conn := database.Conn(ctx, c.querier)
+
+		// FieldOptions from CallOptions — nil means all columns
+		fieldOptions := options.FieldOptions
+
+		// Nothing selected — return early
+		if fieldOptions != nil && !fieldOptions.HasSelectedColumns() {
+			return nil, nil
+		}
+
+		// Determine columns from FieldOptions. A narrowed projection still
+		// carries the columns this call structurally requires — the cursor keys
+		// an internal caller declares, and the key relationship
+		// mapping reads off each row. An all-false FieldOptions is
+		// untouched: it short-circuits above.
+		columns := hostAllColumns
+		if fieldOptions != nil {
+			if selected := fieldOptions.Columns(); len(selected) > 0 {
+				columns = unionColumns(selected, input.requiredColumns...)
+				if fieldOptions.loadsRelationships() {
+					columns = unionColumns(columns, "addr")
+				}
+			}
+		}
+
+		// Build conditions from filter
+		var conds []sql.Condition
+		if input.Filter != nil {
+			conds = input.Filter.ToConditions(c.dialect)
+		}
+
+		// Append internal conditions (e.g., keyset conditions from Connection)
+		conds = append(conds, input.conditions...)
+
+		// Resolve limit/offset to pointers for the builder.
+		// nil → no clause, *0 (via new(0)) → no clause, *N → LIMIT/OFFSET N.
+		var limitPtr *int
+		if input.Limit != nil {
+			if v := *input.Limit; v > 0 {
+				limitPtr = new(v)
+			}
+		} else if c.queryLimit > 0 {
+			limitPtr = new(c.queryLimit)
+		}
+		var offsetPtr *int
+		if input.Offset != nil {
+			if v := *input.Offset; v > 0 {
+				offsetPtr = new(v)
+			}
+		}
+
+		var hosts []*Host
+		query, args := sql.BuildSelect(c.dialect, c.table, sql.SelectOptions{
+			Columns:    columns,
+			Conditions: conds,
+			OrderBy:    input.Sorts,
+			Limit:      limitPtr,
+			Offset:     offsetPtr,
+			LockMode:   options.LockMode,
+		})
+
+		rows, err := conn.Query(ctx, query, args...)
+		if err != nil {
+			return nil, fmt.Errorf("get hosts: %w", err)
+		}
+		defer rows.Close()
+
+		hosts, err = scanHosts(rows, columns)
+		if err != nil {
+			return nil, err
+		}
+
+		// Load O2M/M2M relationships via errgroup — in parallel over the pool,
+		// serialized by the transaction's connection reservation inside one
+		if fieldOptions != nil {
+			if err := c.loadRelationships(ctx, conn, hosts, options.FieldOptions); err != nil {
+				return nil, err
+			}
+		}
+
+		return hosts, nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	if result == nil {
+		return nil, nil
+	}
+	return result.([]*Host), nil
+}
+
+// loadsRelationships reports whether any O2M or M2M relationship is selected.
+// GetMany unions the addr column into a narrowed projection when one is:
+// loadRelationships maps every child back through h.Addr, which
+// an unselected column would leave at its zero value.
+func (fo *HostFieldOptions) loadsRelationships() bool {
+	if fo.Fingerprints != nil {
+		return true
+	}
+	return false
+}
+
+// loadRelationships fetches every selected O2M / M2M member through the
+// target's own client, so each child read carries that table's own filters,
+// soft-delete default and access rules rather than this one's.
+//
+// The fan-out is unbounded, inside a transaction and out. Outside one each
+// edge draws its own pooled connection and the parallelism is real. Inside one
+// they share the transaction's single connection — database.Conn hands every
+// nested read the same *database.Tx — and the Tx's connection reservation
+// serializes them, so the statement count is identical either way and only the
+// concurrency differs. The loader needs no transaction-aware bound of its own.
+func (c *hostClient) loadRelationships(ctx context.Context, conn database.Querier, hosts []*Host, fo *HostFieldOptions) error {
+	g, ctx := errgroup.WithContext(ctx)
+
+	if fo.Fingerprints != nil {
+		g.Go(func() error {
+			// Collect parent IDs
+			hostIDs := make([]net.IP, len(hosts))
+			for idx, h := range hosts {
+				hostIDs[idx] = h.Addr
+			}
+
+			// Step 1: Query junction table to get mapping
+			junctionQuery, junctionArgs := sql.BuildSelect(c.dialect, sql.Table{Schema: "public", Name: "host_fingerprints"}, sql.SelectOptions{
+				Columns:    []string{"host_addr", "fingerprint_digest"},
+				Conditions: []sql.Condition{sql.Where(c.dialect.QuoteIdentifier("host_addr")).In(toAnySlice(hostIDs)...)},
+			})
+
+			junctionRows, err := conn.Query(ctx, junctionQuery, junctionArgs...)
+			if err != nil {
+				return fmt.Errorf("load host fingerprints junction: %w", err)
+			}
+			defer junctionRows.Close()
+
+			// Discover column positions from result (BuildSelect sorts columns alphabetically)
+			junctionCols, err := junctionRows.Columns()
+			if err != nil {
+				return fmt.Errorf("load host fingerprints junction columns: %w", err)
+			}
+			localIdx, refIdx := 0, 1
+			for i, col := range junctionCols {
+				switch col {
+				case "host_addr":
+					localIdx = i
+				case "fingerprint_digest":
+					refIdx = i
+				}
+			}
+
+			// Build mapping and collect all target keys. Each junction column
+			// scans into its own Go type, so both sides of the maps stringify
+			// keys the same way.
+			parentToTargetIDs := make(map[string][]string)
+			var targetPKs [][]byte
+			for junctionRows.Next() {
+				var localKey net.IP
+				var refKey []byte
+				ptrs := make([]any, len(junctionCols))
+				ptrs[localIdx], ptrs[refIdx] = &localKey, &refKey
+				if err := junctionRows.Scan(ptrs...); err != nil {
+					return fmt.Errorf("scan host fingerprints junction: %w", err)
+				}
+				parentID, targetID := localKey.String(), fmt.Sprint(refKey)
+				parentToTargetIDs[parentID] = append(parentToTargetIDs[parentID], targetID)
+				targetPKs = append(targetPKs, []byte(refKey))
+			}
+			if err := junctionRows.Err(); err != nil {
+				return fmt.Errorf("iterate host fingerprints junction: %w", err)
+			}
+
+			if len(parentToTargetIDs) == 0 {
+				return nil
+			}
+
+			// Step 2: Fetch the actual entities
+			filter := &FingerprintFilter{
+				Digest: &comparator.Opaque[[]byte]{In: targetPKs},
+			}
+			if fo.Fingerprints.Filter != nil {
+				filter.And = append(filter.And, fo.Fingerprints.Filter)
+			}
+
+			sorts := fo.Fingerprints.Sorts
+			if len(sorts) == 0 {
+				sorts = c.fingerprintsDefaultSort
+			}
+
+			// Self-referential relationships share the parent's entity type, so
+			// the loaded targets must use a name distinct from the parent slice
+			// (hosts) to avoid shadowing it and mis-mapping the results
+			// onto the targets instead of the parents.
+			relatedFingerprints, err := c.fingerprintClient.GetMany(ctx, &GetFingerprintsInput{
+				Filter: filter,
+				Sorts:  sorts,
+				Limit:  new(0),
+				// Step 3 keys every loaded target on its own PK, so the fetch
+				// declares that column rather than mutating the caller's
+				// FieldOptions — a narrowed selection that omits it would
+				// otherwise map every target onto the zero value.
+				requiredColumns: []string{"digest"},
+			}, func(co *CallOptions[FingerprintFieldOptions]) {
+				co.FieldOptions = fo.Fingerprints.FieldOptions
+			})
+			if err != nil {
+				return fmt.Errorf("load host fingerprints: %w", err)
+			}
+
+			// Step 3: Map back to parent entities via junction mapping. The
+			// targets are walked in the order the fetch returned them, so the
+			// relationship's Sorts — the caller's, or the static `sort:` —
+			// order each parent's slice. Walking the
+			// junction rows instead would keep junction order and drop the sort.
+			parentsByTarget := make(map[string][]int, len(relatedFingerprints))
+			for i := range hosts {
+				for _, tID := range parentToTargetIDs[hosts[i].Addr.String()] {
+					parentsByTarget[tID] = append(parentsByTarget[tID], i)
+				}
+			}
+			for _, t := range relatedFingerprints {
+				for _, i := range parentsByTarget[fmt.Sprint(t.Digest)] {
+					hosts[i].Fingerprints = append(hosts[i].Fingerprints, t)
+				}
+			}
+			return nil
+		})
+	}
+
+	return g.Wait()
+}
+
+// Create inserts a new host and returns the created entity.
+func (c *hostClient) Create(ctx context.Context, input *CreateHostInput, opts ...func(*CallOptions[HostFieldOptions])) (*Host, error) {
+	// A write cannot normalize nil to the zero value the way a read
+	// does — a zero CreateHostInput legally writes a row (each required
+	// field's zero value, or with no required field, every column's default), so
+	// that would turn a caller's mistake into a silently written one. Guarded
+	// before the executor, so nil fires no hook and publishes no event.
+	if input == nil {
+		return nil, ErrNilInput
+	}
+	options := resolveCallOptions(opts)
+	result, err := c.executeMutation(ctx, options.SkipHooks, &hook.MutationContext{
+		Op: hook.OpCreate, Table: TableHosts, Schema: "public",
+		Input: input, CallOptions: options,
+	}, func(ctx context.Context, m *hook.MutationContext) (any, error) {
+		conn := database.Conn(ctx, c.querier)
+
+		columns := []string{"addr", "label"}
+		args := []any{input.Addr, input.Label}
+
+		id, err := c.insertAndResolveID(ctx, conn, columns, args)
+		if err != nil {
+			return nil, fmt.Errorf("create host: %w", err)
+		}
+		m.AffectedPKs = []any{id}
+
+		// Empty FieldOptions — caller doesn't need the result
+		if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
+			return nil, nil
+		}
+
+		return c.Get(ctx, id, func(o *CallOptions[HostFieldOptions]) {
+			*o = options
+			o.SkipHooks = true
+			o.LockMode = sql.LockNone
+		})
+	})
+	if err != nil {
+		return nil, err
+	}
+	if result == nil {
+		return nil, nil
+	}
+	return result.(*Host), nil
+}
+
+// CreateMany inserts multiple hosts in batches and returns all created entities.
+// Sub-batches are not automatically rolled back on failure — wrap in a transaction for atomicity.
+func (c *hostClient) CreateMany(ctx context.Context, inputs []*CreateHostInput, opts ...func(*CallOptions[HostFieldOptions])) ([]*Host, error) {
+	// A nil *slice* is simply no rows, but a nil *element* is the
+	// same caller error a nil Create argument is — and skipping it silently
+	// would drop a row the caller asked for. Rejected before the executor.
+	for _, in := range inputs {
+		if in == nil {
+			return nil, ErrNilInput
+		}
+	}
+	options := resolveCallOptions(opts)
+	result, err := c.executeMutation(ctx, options.SkipHooks, &hook.MutationContext{
+		Op: hook.OpCreateMany, Table: TableHosts, Schema: "public",
+		Input: inputs, CallOptions: options,
+	}, func(ctx context.Context, m *hook.MutationContext) (any, error) {
+		conn := database.Conn(ctx, c.querier)
+		// An empty batch writes nothing and must read nothing. The trailing
+		// re-fetch below filters on the keys this call touched, and every
+		// generated key filter treats an empty set as *no condition* — so
+		// without this guard the re-fetch degrades to an unfiltered SELECT and
+		// returns the whole table as if this call had produced it.
+		if len(inputs) == 0 {
+			return []*Host{}, nil
+		}
+		var allIDs []net.IP
+		for start := 0; start < len(inputs); start += c.batchSize {
+			end := min(start+c.batchSize, len(inputs))
+			batch := inputs[start:end]
+
+			columns := []string{"addr", "label"}
+			var valueRows [][]any
+			for _, input := range batch {
+
+				valueRows = append(valueRows, []any{
+					input.Addr,
+					input.Label,
+				})
+			}
+
+			ids, err := c.multiInsertAndResolveIDs(ctx, conn, columns, valueRows)
+			if err != nil {
+				return nil, fmt.Errorf("create hosts batch: %w", err)
+			}
+			allIDs = append(allIDs, ids...)
+		}
+
+		m.AffectedPKs = toAnySlice(allIDs)
+
+		// Empty FieldOptions — skip fetch
+		if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
+			return nil, nil
+		}
+		return c.GetMany(ctx, &GetHostsInput{
+			Filter: &HostFilter{
+				Addr: &comparator.Opaque[net.IP]{In: allIDs},
+			},
+			Limit: new(0),
+		}, func(o *CallOptions[HostFieldOptions]) {
+			*o = options
+			o.SkipHooks = true
+			o.LockMode = sql.LockNone
+		})
+	})
+	if err != nil {
+		return nil, err
+	}
+	if result == nil {
+		return nil, nil
+	}
+	return result.([]*Host), nil
+}
+
+// insertAndResolveID performs the INSERT and resolves the generated primary key.
+func (c *hostClient) insertAndResolveID(ctx context.Context, conn database.Querier, columns []string, args []any) (net.IP, error) {
+	query, queryArgs := sql.BuildInsert(c.dialect, c.table, sql.InsertOptions{
+		Columns:          columns,
+		Values:           args,
+		ReturningColumns: []string{"addr"},
+	})
+	var id net.IP
+	if err := conn.QueryRow(ctx, query, queryArgs...).Scan(&id); err != nil {
+		return nil, err
+	}
+	return id, nil
+}
+
+// multiInsertAndResolveIDs performs a multi-row INSERT and resolves all generated primary keys.
+func (c *hostClient) multiInsertAndResolveIDs(ctx context.Context, conn database.Querier, columns []string, valueRows [][]any) ([]net.IP, error) {
+	query, args := sql.BuildMultiInsert(c.dialect, c.table, sql.MultiInsertOptions{
+		Columns:          columns,
+		ValueRows:        valueRows,
+		ReturningColumns: []string{"addr"},
+	})
+
+	rows, err := conn.Query(ctx, query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var ids []net.IP
+	for rows.Next() {
+		var id net.IP
+		if err := rows.Scan(&id); err != nil {
+			return nil, fmt.Errorf("scan host id: %w", err)
+		}
+		ids = append(ids, id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return ids, nil
+}
+
+// Update partially updates a host by primary key and returns the updated entity.
+// Only fields where IsSet() is true are included in the SET clause. If no fields are
+// set, no UPDATE is executed and the current entity is returned unchanged.
+// Returns ErrNotFound if the primary key does not exist (strict_updates is enabled).
+func (c *hostClient) Update(ctx context.Context, id net.IP, input *UpdateHostInput, opts ...func(*CallOptions[HostFieldOptions])) (*Host, error) {
+	// Nil is a caller error, distinct from an empty-but-non-nil
+	// input — that one is the documented no-op returning the entity unchanged.
+	// Guarded before the executor, so nil fires no hook and publishes no event.
+	if input == nil {
+		return nil, ErrNilInput
+	}
+	options := resolveCallOptions(opts)
+	result, err := c.executeMutation(ctx, options.SkipHooks, &hook.MutationContext{
+		Op: hook.OpUpdate, Table: TableHosts, Schema: "public",
+		PK: id, Input: input, CallOptions: options,
+	}, func(ctx context.Context, m *hook.MutationContext) (any, error) {
+		conn := database.Conn(ctx, c.querier)
+
+		// Build SET clause from omittable fields — explicit per-field checks, no reflection
+		setClauses := make(map[string]any)
+		if v, ok := input.Label.Get(); ok {
+			setClauses["label"] = v
+		}
+
+		// Empty update — no fields set, return current entity unchanged
+		if len(setClauses) == 0 {
+			// Empty FieldOptions — caller doesn't need the result
+			if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
+				return nil, nil
+			}
+
+			return c.Get(ctx, id, func(o *CallOptions[HostFieldOptions]) {
+				*o = options
+				o.SkipHooks = true
+				o.LockMode = sql.LockNone
+			})
+		}
+
+		query, args := sql.BuildUpdate(c.dialect, c.table, sql.UpdateOptions{
+			SetClauses: setClauses,
+			Conditions: []sql.Condition{sql.Where(c.dialect.QuoteIdentifier("addr")).Eq(id)},
+		})
+
+		execResult, err := conn.Exec(ctx, query, args...)
+		if err != nil {
+			return nil, fmt.Errorf("update host: %w", err)
+		}
+		count, err := execResult.RowsAffected()
+		if err != nil {
+			return nil, fmt.Errorf("update host rows affected: %w", err)
+		}
+		if count == 0 {
+			return nil, ErrNotFound
+		}
+		m.AffectedPKs = []any{id}
+
+		// Empty FieldOptions — caller doesn't need the result
+		if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
+			return nil, nil
+		}
+
+		return c.Get(ctx, id, func(o *CallOptions[HostFieldOptions]) {
+			*o = options
+			o.SkipHooks = true
+			o.LockMode = sql.LockNone
+		})
+	})
+	if err != nil {
+		return nil, err
+	}
+	if result == nil {
+		return nil, nil
+	}
+	return result.(*Host), nil
+}
+
+// UpdateHostItem pairs a primary key with an update input for batch updates.
+type UpdateHostItem struct {
+	Addr  net.IP           `json:"addr"`
+	Input *UpdateHostInput `json:"input"`
+}
+
+// UpdateMany partially updates multiple hosts and returns the updated entities.
+// Each item is a (PK, UpdateInput) pair. Splits into batches of batchSize.
+// On pgx, uses SendBatch for pipelined execution within each batch.
+func (c *hostClient) UpdateMany(ctx context.Context, items []UpdateHostItem, opts ...func(*CallOptions[HostFieldOptions])) ([]*Host, error) {
+	// UpdateHostItem.Input is a pointer, so a zero-valued item
+	// carries a nil one — a shape that compiles naturally. Rejected before the
+	// executor, like every other nil write input.
+	for _, item := range items {
+		if item.Input == nil {
+			return nil, ErrNilInput
+		}
+	}
+	options := resolveCallOptions(opts)
+	result, err := c.executeMutation(ctx, options.SkipHooks, &hook.MutationContext{
+		Op: hook.OpUpdateMany, Table: TableHosts, Schema: "public",
+		Input: items, CallOptions: options,
+	}, func(ctx context.Context, m *hook.MutationContext) (any, error) {
+		conn := database.Conn(ctx, c.querier)
+		// An empty batch writes nothing and must read nothing. The trailing
+		// re-fetch below filters on the keys this call touched, and every
+		// generated key filter treats an empty set as *no condition* — so
+		// without this guard the re-fetch degrades to an unfiltered SELECT and
+		// returns the whole table as if this call had produced it.
+		if len(items) == 0 {
+			return []*Host{}, nil
+		}
+		var allIDs []net.IP
+		for start := 0; start < len(items); start += c.batchSize {
+			end := min(start+c.batchSize, len(items))
+			batch := items[start:end]
+
+			// Build all UPDATE statements for this batch
+			pgxBatch := &pgx.Batch{}
+			var batchQueries []string
+			var batchArgs [][]any
+			for _, item := range batch {
+				setClauses := make(map[string]any)
+				if v, ok := item.Input.Label.Get(); ok {
+					setClauses["label"] = v
+				}
+
+				// Skip no-op updates
+				if len(setClauses) == 0 {
+					allIDs = append(allIDs, item.Addr)
+					continue
+				}
+
+				query, args := sql.BuildUpdate(c.dialect, c.table, sql.UpdateOptions{
+					SetClauses: setClauses,
+					Conditions: []sql.Condition{sql.Where(c.dialect.QuoteIdentifier("addr")).Eq(item.Addr)},
+				})
+				pgxBatch.Queue(query, args...)
+				batchQueries = append(batchQueries, query)
+				batchArgs = append(batchArgs, args)
+				allIDs = append(allIDs, item.Addr)
+			}
+
+			// Send all UPDATEs — pipelined if supported, sequential otherwise
+			if pgxBatch.Len() > 0 {
+				if batcher, ok := conn.(interface {
+					SendBatch(ctx context.Context, b *pgx.Batch) pgx.BatchResults
+				}); ok {
+					br := batcher.SendBatch(ctx, pgxBatch)
+					for range pgxBatch.Len() {
+						if _, err := br.Exec(); err != nil {
+							br.Close()
+							return nil, fmt.Errorf("update hosts batch: %w", err)
+						}
+					}
+					if err := br.Close(); err != nil {
+						return nil, fmt.Errorf("close update batch: %w", err)
+					}
+				} else {
+					for i, q := range batchQueries {
+						if _, err := conn.Exec(ctx, q, batchArgs[i]...); err != nil {
+							return nil, fmt.Errorf("update hosts batch: %w", err)
+						}
+					}
+				}
+			}
+		}
+
+		m.AffectedPKs = toAnySlice(allIDs)
+
+		// Empty FieldOptions — skip fetch
+		if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
+			return nil, nil
+		}
+		return c.GetMany(ctx, &GetHostsInput{
+			Filter: &HostFilter{
+				Addr: &comparator.Opaque[net.IP]{In: allIDs},
+			},
+			Limit: new(0),
+		}, func(o *CallOptions[HostFieldOptions]) {
+			*o = options
+			o.SkipHooks = true
+			o.LockMode = sql.LockNone
+		})
+	})
+	if err != nil {
+		return nil, err
+	}
+	if result == nil {
+		return nil, nil
+	}
+	return result.([]*Host), nil
+}
+
+// UpdateWhere updates all hosts matching the filter and returns the updated entities.
+// Idempotent — returns empty slice when no rows match.
+// Returns ErrNilInput when input is nil, checked before the filter.
+// Returns ErrEmptyFilter when the filter is nil or produces no conditions.
+func (c *hostClient) UpdateWhere(ctx context.Context, filter *HostFilter, input *UpdateHostInput, opts ...func(*CallOptions[HostFieldOptions])) ([]*Host, error) {
+	// Argument validity is checked before the filter's bulk-op
+	// safety guard, and before the executor, so a nil input fires no hook and
+	// publishes no event. ErrEmptyFilter still covers a non-nil input with an
+	// empty filter.
+	if input == nil {
+		return nil, ErrNilInput
+	}
+	options := resolveCallOptions(opts)
+	result, err := c.executeMutation(ctx, options.SkipHooks, &hook.MutationContext{
+		Op: hook.OpUpdateWhere, Table: TableHosts, Schema: "public",
+		Input: input, CallOptions: options,
+	}, func(ctx context.Context, m *hook.MutationContext) (any, error) {
+		conn := database.Conn(ctx, c.querier)
+
+		conds := filter.ToConditions(c.dialect)
+		if len(conds) == 0 {
+			return nil, ErrEmptyFilter
+		}
+
+		// Build SET clause (same per-field checks as Update)
+		setClauses := make(map[string]any)
+		if v, ok := input.Label.Get(); ok {
+			setClauses["label"] = v
+		}
+
+		// No fields set — return matching entities unchanged
+		if len(setClauses) == 0 {
+			if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
+				return nil, nil
+			}
+			return c.GetMany(ctx, &GetHostsInput{
+				Filter: filter,
+				Limit:  new(0),
+			}, func(o *CallOptions[HostFieldOptions]) {
+				*o = options
+				o.SkipHooks = true
+				o.LockMode = sql.LockNone
+			})
+		}
+
+		// UPDATE with RETURNING "id" — get affected IDs in one round-trip
+		query, args := sql.BuildUpdate(c.dialect, c.table, sql.UpdateOptions{
+			SetClauses:       setClauses,
+			Conditions:       conds,
+			ReturningColumns: []string{"addr"},
+		})
+
+		rows, err := conn.Query(ctx, query, args...)
+		if err != nil {
+			return nil, fmt.Errorf("update hosts where: %w", err)
+		}
+		defer rows.Close()
+		var ids []net.IP
+		for rows.Next() {
+			var id net.IP
+			if err := rows.Scan(&id); err != nil {
+				return nil, fmt.Errorf("scan updated host id: %w", err)
+			}
+			ids = append(ids, id)
+		}
+		if err := rows.Err(); err != nil {
+			return nil, err
+		}
+		if len(ids) == 0 {
+			return nil, nil
+		}
+		m.AffectedPKs = toAnySlice(ids)
+
+		// Empty FieldOptions — skip fetch
+		if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
+			return nil, nil
+		}
+
+		// Fetch affected entities with FieldOptions
+		return c.GetMany(ctx, &GetHostsInput{
+			Filter: &HostFilter{
+				Addr: &comparator.Opaque[net.IP]{In: ids},
+			},
+			Limit: new(0),
+		}, func(o *CallOptions[HostFieldOptions]) {
+			*o = options
+			o.SkipHooks = true
+			o.LockMode = sql.LockNone
+		})
+	})
+	if err != nil {
+		return nil, err
+	}
+	if result == nil {
+		return nil, nil
+	}
+	return result.([]*Host), nil
+}
+
+// HardDelete permanently removes a host from the database.
+// Idempotent — returns nil if the primary key does not exist.
+func (c *hostClient) HardDelete(ctx context.Context, id net.IP, opts ...func(*CallOptions[HostFieldOptions])) error {
+	options := resolveCallOptions(opts)
+	_, err := c.executeMutation(ctx, options.SkipHooks, &hook.MutationContext{
+		Op: hook.OpHardDelete, Table: TableHosts, Schema: "public",
+		PK: id, CallOptions: options,
+	}, func(ctx context.Context, m *hook.MutationContext) (any, error) {
+		conn := database.Conn(ctx, c.querier)
+		query, args := sql.BuildHardDelete(c.dialect, c.table, sql.HardDeleteOptions{
+			Conditions: []sql.Condition{sql.Where(c.dialect.QuoteIdentifier("addr")).Eq(id)},
+		})
+
+		_, err := conn.Exec(ctx, query, args...)
+		if err != nil {
+			return nil, fmt.Errorf("hard delete host: %w", err)
+		}
+		m.AffectedPKs = []any{id}
+		return nil, nil
+	})
+	return err
+}
+
+// HardDeleteMany permanently removes multiple hosts from the database.
+func (c *hostClient) HardDeleteMany(ctx context.Context, ids []net.IP, opts ...func(*CallOptions[HostFieldOptions])) error {
+	options := resolveCallOptions(opts)
+	_, err := c.executeMutation(ctx, options.SkipHooks, &hook.MutationContext{
+		Op: hook.OpHardDeleteMany, Table: TableHosts, Schema: "public",
+		Input: ids, CallOptions: options,
+	}, func(ctx context.Context, m *hook.MutationContext) (any, error) {
+		conn := database.Conn(ctx, c.querier)
+
+		query, args := sql.BuildHardDelete(c.dialect, c.table, sql.HardDeleteOptions{
+			Conditions: []sql.Condition{
+				sql.Where(c.dialect.QuoteIdentifier("addr")).In(toAnySlice(ids)...),
+			},
+		})
+
+		_, err := conn.Exec(ctx, query, args...)
+		if err != nil {
+			return nil, fmt.Errorf("hard delete hosts: %w", err)
+		}
+		m.AffectedPKs = toAnySlice(ids)
+		return nil, nil
+	})
+	return err
+}
+
+// HardDeleteWhere permanently removes all hosts matching the filter.
+// Idempotent — returns nil when no rows match.
+// Returns ErrEmptyFilter when the filter is nil or produces no conditions.
+func (c *hostClient) HardDeleteWhere(ctx context.Context, filter *HostFilter, opts ...func(*CallOptions[HostFieldOptions])) error {
+	options := resolveCallOptions(opts)
+	_, err := c.executeMutation(ctx, options.SkipHooks, &hook.MutationContext{
+		Op: hook.OpHardDeleteWhere, Table: TableHosts, Schema: "public",
+		Input: filter, CallOptions: options,
+	}, func(ctx context.Context, m *hook.MutationContext) (any, error) {
+		conn := database.Conn(ctx, c.querier)
+
+		conds := filter.ToConditions(c.dialect)
+		if len(conds) == 0 {
+			return nil, ErrEmptyFilter
+		}
+
+		// DELETE with RETURNING "id" — get affected IDs in one round-trip
+		query, args := sql.BuildHardDelete(c.dialect, c.table, sql.HardDeleteOptions{
+			Conditions:       conds,
+			ReturningColumns: []string{"addr"},
+		})
+
+		rows, err := conn.Query(ctx, query, args...)
+		if err != nil {
+			return nil, fmt.Errorf("hard delete hosts where: %w", err)
+		}
+		defer rows.Close()
+		var ids []net.IP
+		for rows.Next() {
+			var id net.IP
+			if err := rows.Scan(&id); err != nil {
+				return nil, fmt.Errorf("scan deleted host id: %w", err)
+			}
+			ids = append(ids, id)
+		}
+		if err := rows.Err(); err != nil {
+			return nil, err
+		}
+		m.AffectedPKs = toAnySlice(ids)
+		return nil, nil
+	})
+	return err
+}
+
+// HostConflictTarget identifies a unique constraint for upsert conflict detection.
+type HostConflictTarget int
+
+const (
+	HostConflictPK HostConflictTarget = iota // PRIMARY KEY (addr)
+)
+
+// hostConflictColumns maps each conflict target to its column set.
+var hostConflictColumns = map[HostConflictTarget][]string{
+	HostConflictPK: {"addr"},
+}
+
+// Upsert inserts a host or updates it if a row matching the conflict target already
+// exists. Returns the resulting entity with optional field selection and relationship loading.
+// The conflict target determines which unique constraint triggers an update
+// instead of an insert. Non-PK, non-conflict columns are included in the SET clause.
+func (c *hostClient) Upsert(ctx context.Context, input *CreateHostInput, target HostConflictTarget, opts ...func(*CallOptions[HostFieldOptions])) (*Host, error) {
+	// A write cannot normalize nil to the zero value the way a read
+	// does — a zero CreateHostInput legally writes a row (each required
+	// field's zero value, or with no required field, every column's default).
+	// Guarded before the executor, so nil fires no hook and publishes no event.
+	// An input that supplies no column gets no conflict clause on any dialect:
+	// it is a plain insert, so a conflict on a UNIQUE column with a
+	// DEFAULT is a unique violation, including on MySQL, where ON DUPLICATE KEY
+	// UPDATE would have returned the existing row.
+	if input == nil {
+		return nil, ErrNilInput
+	}
+	options := resolveCallOptions(opts)
+	result, err := c.executeMutation(ctx, options.SkipHooks, &hook.MutationContext{
+		Op: hook.OpUpsert, Table: TableHosts, Schema: "public",
+		Input: input, CallOptions: options,
+	}, func(ctx context.Context, m *hook.MutationContext) (any, error) {
+		conn := database.Conn(ctx, c.querier)
+
+		columns := []string{"addr", "label"}
+		args := []any{input.Addr, input.Label}
+
+		// Resolve conflict target and update columns. Tenant column is excluded
+		// from the UPDATE-set half of the conflict clause — a
+		// row's tenant is not a mutable attribute under normal operation.
+		conflictColumns := hostConflictColumns[target]
+		updateColumns := excludeColumns(columns, append(conflictColumns, "addr"))
+
+		id, err := c.insertUpsertAndResolveID(ctx, conn, columns, args, conflictColumns, updateColumns)
+		if err != nil {
+			return nil, fmt.Errorf("upsert host: %w", err)
+		}
+		m.AffectedPKs = []any{id}
+
+		// Empty FieldOptions — caller doesn't need the result
+		if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
+			return nil, nil
+		}
+
+		return c.Get(ctx, id, func(o *CallOptions[HostFieldOptions]) {
+			*o = options
+			o.SkipHooks = true
+			o.LockMode = sql.LockNone
+		})
+	})
+	if err != nil {
+		return nil, err
+	}
+	if result == nil {
+		return nil, nil
+	}
+	return result.(*Host), nil
+}
+
+// insertUpsertAndResolveID performs the INSERT with upsert clause and resolves the generated primary key.
+func (c *hostClient) insertUpsertAndResolveID(ctx context.Context, conn database.Querier, columns []string, args []any, conflictColumns, updateColumns []string) (net.IP, error) {
+	query, queryArgs := sql.BuildInsert(c.dialect, c.table, sql.InsertOptions{
+		Columns:               columns,
+		Values:                args,
+		UpsertConflictKeys:    conflictColumns,
+		UpsertUpdateColumns:   updateColumns,
+		UpsertResolvePKColumn: "addr",
+		ReturningColumns:      []string{"addr"},
+	})
+	rows, err := conn.Query(ctx, query, queryArgs...)
+	if err != nil {
+		return nil, err
+	}
+	var id net.IP
+	found := rows.Next()
+	if found {
+		err = rows.Scan(&id)
+	}
+	if err == nil {
+		err = rows.Err()
+	}
+	// Closed before the fallback below issues its own statement: conn may be a
+	// transaction, where an open result set blocks the next statement on the
+	// same connection.
+	if cerr := rows.Close(); err == nil {
+		err = cerr
+	}
+	if err != nil {
+		return nil, err
+	}
+	if found {
+		return id, nil
+	}
+	return c.resolveUpsertConflictRow(ctx, conn, columns, args, conflictColumns)
+}
+
+// resolveUpsertConflictRow resolves the row an upsert conflicted with, for the
+// case where the statement returned nothing.
+//
+// A conflict target that covers every inserted column leaves no column to
+// assign, so the dialect emits DO NOTHING — and DO NOTHING returns
+// no row, which leaves the RETURNING branch above with no PK for a write that
+// did resolve to a row. The conflicting row is looked up by the same conflict
+// columns the statement targeted; unlike MySQL's ON DUPLICATE KEY UPDATE, an
+// explicit ON CONFLICT target can only have fired on those columns, so the
+// lookup identifies the same row the statement did.
+//
+// The lookup does not exclude soft-deleted rows: the unique index matched
+// regardless of the soft-delete column, so a soft-deleted row is still the row
+// that conflicted and still the row whose PK this resolves. (The terminal Get
+// then applies the read path's own soft-delete filter, exactly as it does on
+// the DO UPDATE SET branch.)
+//
+// This is a second statement, so a concurrent delete between the insert and
+// this lookup surfaces as ErrNotFound. Run the upsert inside a transaction
+// where the pair has to be atomic.
+func (c *hostClient) resolveUpsertConflictRow(ctx context.Context, conn database.Querier, columns []string, args []any, conflictColumns []string) (net.IP, error) {
+	conds := make([]sql.Condition, 0, len(conflictColumns))
+	for _, col := range conflictColumns {
+		i := slices.Index(columns, col)
+		if i < 0 {
+			// A conflict column the statement never supplied cannot have
+			// produced the conflict, so there is no row to look up.
+			return nil, ErrNotFound
+		}
+		conds = append(conds, sql.Where(c.dialect.QuoteIdentifier(col)).Eq(args[i]))
+	}
+
+	query, queryArgs := sql.BuildSelect(c.dialect, c.table, sql.SelectOptions{
+		Columns:    []string{"addr"},
+		Conditions: conds,
+		Limit:      new(1),
+	})
+	rows, err := conn.Query(ctx, query, queryArgs...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var id net.IP
+	if !rows.Next() {
+		if err := rows.Err(); err != nil {
+			return nil, err
+		}
+		// The conflicting row is gone — deleted between the two statements.
+		return nil, ErrNotFound
+	}
+	if err := rows.Scan(&id); err != nil {
+		return nil, err
+	}
+	return id, rows.Err()
+}
+
+// UpsertMany inserts or updates multiple hosts in batches and returns all
+// resulting entities. One conflict target applies to the whole batch, drawn from
+// the same enum Upsert takes. Sub-batches are not automatically rolled back on
+// failure — wrap in a transaction for atomicity.
+//
+// Inputs resolving to the same conflict target are deduped before the statement
+// is built, last occurrence wins. PostgreSQL rejects an
+// ON CONFLICT ... DO UPDATE that would affect one row twice; MySQL and SQLite
+// accept it and keep the last row. The dedupe is what makes one spelling behave
+// identically on all three. A row carrying no definite, non-NULL value for every
+// conflict column is exempt: a NULL never matches under a unique index on any of
+// the three dialects, so two such rows are two rows, not a duplicate.
+//
+// The returned slice carries one entity per deduped input on every dialect,
+// including the DO NOTHING branch a conflict target covering every inserted
+// column produces. The entities come from a re-fetch by primary key, never from
+// RETURNING — RETURNING yields only the rows actually inserted, so a batch that
+// conflicted would come back short. Row order is GetMany's, as with
+// CreateMany.
+func (c *hostClient) UpsertMany(ctx context.Context, inputs []*CreateHostInput, target HostConflictTarget, opts ...func(*CallOptions[HostFieldOptions])) ([]*Host, error) {
+	// A nil *slice* is simply no rows, but a nil *element* is the
+	// same caller error a nil Upsert argument is — and skipping it silently
+	// would drop a row the caller asked for. Rejected before the executor.
+	for _, in := range inputs {
+		if in == nil {
+			return nil, ErrNilInput
+		}
+	}
+	options := resolveCallOptions(opts)
+	result, err := c.executeMutation(ctx, options.SkipHooks, &hook.MutationContext{
+		Op: hook.OpUpsertMany, Table: TableHosts, Schema: "public",
+		Input: inputs, CallOptions: options,
+	}, func(ctx context.Context, m *hook.MutationContext) (any, error) {
+		// No rows means no statement and nothing affected. Guarded here because
+		// the terminal GetMany filters on the written keys, and a key filter
+		// built from an empty set contributes no condition — an unguarded empty
+		// call would read the whole table back.
+		if len(inputs) == 0 {
+			return []*Host{}, nil
+		}
+		conn := database.Conn(ctx, c.querier)
+
+		// Resolve conflict target and update columns. Tenant column is excluded
+		// from the UPDATE-set half of the conflict clause — a
+		// row's tenant is not a mutable attribute under normal operation.
+		//
+		// UpsertResolvePKColumn is deliberately not set: it exists so a
+		// single-row MySQL upsert can republish the conflicting row's id into
+		// the OK packet, and after a batch that packet names at most one row.
+		// Nothing here reads LastInsertId, so requesting it would
+		// only add a misleading assignment to the SET list.
+		columns := []string{"addr", "label"}
+		conflictColumns := hostConflictColumns[target]
+		updateColumns := excludeColumns(columns, append(conflictColumns, "addr"))
+		conflictPositions, haveConflictKey := upsertConflictPositions(columns, conflictColumns)
+
+		// One value row per input, built before any statement runs: the dedupe
+		// spans the whole call, not a sub-batch (ceil(M/batch_size)
+		// statements for M inputs, *after* the dedupe).
+		valueRows := make([][]any, 0, len(inputs))
+		rowInputs := make([]*CreateHostInput, 0, len(inputs))
+		rowIDs := make([]net.IP, 0, len(inputs))
+		for _, input := range inputs {
+
+			valueRows = append(valueRows, []any{
+				input.Addr,
+				input.Label,
+			})
+			rowInputs = append(rowInputs, input)
+			rowIDs = append(rowIDs, input.Addr)
+		}
+
+		// Dedupe by conflict target, last occurrence wins, first-appearance
+		// order preserved.
+		if haveConflictKey {
+			seen := make(map[string]int, len(valueRows))
+			dedupedRows := make([][]any, 0, len(valueRows))
+			dedupedInputs := make([]*CreateHostInput, 0, len(rowInputs))
+			dedupedIDs := make([]net.IP, 0, len(rowIDs))
+			for i, row := range valueRows {
+				key, keyed := upsertDedupeKey(row, conflictPositions)
+				if keyed {
+					if j, ok := seen[key]; ok {
+						dedupedRows[j] = row
+						dedupedInputs[j] = rowInputs[i]
+						dedupedIDs[j] = rowIDs[i]
+						continue
+					}
+					seen[key] = len(dedupedRows)
+				}
+				dedupedRows = append(dedupedRows, row)
+				dedupedInputs = append(dedupedInputs, rowInputs[i])
+				dedupedIDs = append(dedupedIDs, rowIDs[i])
+			}
+			valueRows = dedupedRows
+			rowInputs = dedupedInputs
+			rowIDs = dedupedIDs
+		}
+		// The published input is the deduped slice, so it stays index-aligned
+		// with m.AffectedPKs: an event fanned out per affected row carries the
+		// input that actually wrote that row.
+		m.Input = rowInputs
+
+		for start := 0; start < len(valueRows); start += c.batchSize {
+			end := min(start+c.batchSize, len(valueRows))
+			batch := valueRows[start:end]
+
+			query, queryArgs := sql.BuildMultiInsert(c.dialect, c.table, sql.MultiInsertOptions{
+				Columns:             columns,
+				ValueRows:           batch,
+				UpsertConflictKeys:  conflictColumns,
+				UpsertUpdateColumns: updateColumns,
+			})
+			if _, err := conn.Exec(ctx, query, queryArgs...); err != nil {
+				return nil, fmt.Errorf("upsert hosts batch: %w", err)
+			}
+		}
+
+		m.AffectedPKs = toAnySlice(rowIDs)
+
+		// Empty FieldOptions — skip fetch
+		if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
+			return nil, nil
+		}
+
+		return c.GetMany(ctx, &GetHostsInput{
+			Filter: &HostFilter{
+				Addr: &comparator.Opaque[net.IP]{In: rowIDs},
+			},
+			Limit: new(0),
+		}, func(o *CallOptions[HostFieldOptions]) {
+			*o = options
+			o.SkipHooks = true
+			o.LockMode = sql.LockNone
+		})
+	})
+	if err != nil {
+		return nil, err
+	}
+	if result == nil {
+		return nil, nil
+	}
+	return result.([]*Host), nil
+}
+
+// Exists returns true if a host with the given primary key exists.
+func (c *hostClient) Exists(ctx context.Context, id net.IP, opts ...func(*CallOptions[HostFieldOptions])) (bool, error) {
+	options := resolveCallOptions(opts)
+	result, err := c.executeQuery(ctx, options.SkipHooks, &hook.QueryContext{
+		Op: hook.OpExists, Table: TableHosts, Schema: "public",
+		PK: id, CallOptions: options,
+	}, func(ctx context.Context, q *hook.QueryContext) (any, error) {
+		conn := database.Conn(ctx, c.querier)
+		conds := []sql.Condition{sql.Where(c.dialect.QuoteIdentifier("addr")).Eq(id)}
+
+		query, args := sql.BuildExists(c.dialect, c.table, conds)
+
+		var exists bool
+		if err := conn.QueryRow(ctx, query, args...).Scan(&exists); err != nil {
+			return false, fmt.Errorf("exists host: %w", err)
+		}
+		return exists, nil
+	})
+	if err != nil {
+		return false, err
+	}
+	return result.(bool), nil
+}
+
+// ExistsWhere returns true if any host matches the given filter.
+func (c *hostClient) ExistsWhere(ctx context.Context, filter *HostFilter, opts ...func(*CallOptions[HostFieldOptions])) (bool, error) {
+	options := resolveCallOptions(opts)
+	result, err := c.executeQuery(ctx, options.SkipHooks, &hook.QueryContext{
+		Op: hook.OpExists, Table: TableHosts, Schema: "public",
+		Input: filter, CallOptions: options,
+	}, func(ctx context.Context, q *hook.QueryContext) (any, error) {
+		conn := database.Conn(ctx, c.querier)
+
+		var conds []sql.Condition
+		if filter != nil {
+			conds = filter.ToConditions(c.dialect)
+		}
+
+		query, args := sql.BuildExists(c.dialect, c.table, conds)
+
+		var exists bool
+		if err := conn.QueryRow(ctx, query, args...).Scan(&exists); err != nil {
+			return false, fmt.Errorf("exists host where: %w", err)
+		}
+		return exists, nil
+	})
+	if err != nil {
+		return false, err
+	}
+	return result.(bool), nil
+}
+
+// Count returns the number of hosts matching the given filter.
+// A nil filter counts all hosts.
+func (c *hostClient) Count(ctx context.Context, filter *HostFilter, opts ...func(*CallOptions[HostFieldOptions])) (int64, error) {
+	options := resolveCallOptions(opts)
+	result, err := c.executeQuery(ctx, options.SkipHooks, &hook.QueryContext{
+		Op: hook.OpCount, Table: TableHosts, Schema: "public",
+		Input: filter, CallOptions: options,
+	}, func(ctx context.Context, q *hook.QueryContext) (any, error) {
+		conn := database.Conn(ctx, c.querier)
+
+		var conds []sql.Condition
+		if filter != nil {
+			conds = filter.ToConditions(c.dialect)
+		}
+
+		query, args := sql.BuildCount(c.dialect, c.table, conds)
+
+		var count int64
+		if err := conn.QueryRow(ctx, query, args...).Scan(&count); err != nil {
+			return int64(0), fmt.Errorf("count hosts: %w", err)
+		}
+		return count, nil
+	})
+	if err != nil {
+		return 0, err
+	}
+	return result.(int64), nil
+}
+
+// Paginate returns a page of hosts with total count for offset-based pagination.
+// A nil filter paginates all hosts.
+func (c *hostClient) Paginate(ctx context.Context, input PaginateInput[HostFilter], opts ...func(*CallOptions[HostFieldOptions])) (*PaginateResult[Host], error) {
+	options := resolveCallOptions(opts)
+	result, err := c.executeQuery(ctx, options.SkipHooks, &hook.QueryContext{
+		Op: hook.OpPaginate, Table: TableHosts, Schema: "public",
+		Input: input, CallOptions: options,
+	}, func(ctx context.Context, q *hook.QueryContext) (any, error) {
+		// Internal calls with SkipHooks to prevent nested hook invocation
+		internalOpts := func(o *CallOptions[HostFieldOptions]) {
+			*o = options
+			o.SkipHooks = true
+		}
+
+		// Total count (delegates to Count — both are always generated)
+		totalCount, err := c.Count(ctx, input.Filter, internalOpts)
+		if err != nil {
+			return nil, fmt.Errorf("paginate hosts count: %w", err)
+		}
+
+		// Page data via GetMany (handles FieldOptions and relationships)
+		hosts, err := c.GetMany(ctx, &GetHostsInput{
+			Filter: input.Filter,
+			Sorts:  input.Sort,
+			Limit:  &input.Limit,
+			Offset: &input.Offset,
+		}, internalOpts)
+		if err != nil {
+			return nil, fmt.Errorf("paginate hosts: %w", err)
+		}
+
+		return &PaginateResult[Host]{
+			Items:      hosts,
+			TotalCount: totalCount,
+			Offset:     input.Offset,
+			Limit:      input.Limit,
+			HasMore:    int64(input.Offset+input.Limit) < totalCount,
+		}, nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	return result.(*PaginateResult[Host]), nil
+}
+
+// Connection returns a Relay-style cursor-paginated connection of hosts.
+// Sort order is determined by cursor_keys — custom sorts are not supported.
+// Use Paginate for custom sort orders.
+func (c *hostClient) Connection(ctx context.Context, input ConnectionInput[HostFilter], opts ...func(*CallOptions[HostFieldOptions])) (*Connection[Host], error) {
+	options := resolveCallOptions(opts)
+
+	if options.LockMode != sql.LockNone {
+		if !database.InTransaction(ctx) {
+			return nil, fmt.Errorf("connection hosts: LockMode requires an active transaction")
+		}
+		options.SkipCache = true
+	}
+	result, err := c.executeQuery(ctx, options.SkipHooks, &hook.QueryContext{
+		Op: hook.OpConnection, Table: TableHosts, Schema: "public",
+		Input: input, CallOptions: options,
+	}, func(ctx context.Context, q *hook.QueryContext) (any, error) {
+		// Internal calls with SkipHooks to prevent nested hook invocation
+		internalOpts := func(o *CallOptions[HostFieldOptions]) {
+			*o = options
+			o.SkipHooks = true
+		}
+
+		// Validate: first and last are mutually exclusive
+		if input.First != nil && input.Last != nil {
+			return nil, ErrInvalidCursor
+		}
+
+		// Total count (separate COUNT query — no cursor conditions)
+		totalCount, err := c.Count(ctx, input.Filter, internalOpts)
+		if err != nil {
+			return nil, fmt.Errorf("connection hosts count: %w", err)
+		}
+
+		// Decode cursors and build keyset conditions
+		var keysetConds []sql.Condition
+		if input.After != nil {
+			cursor, err := decodeHostCursor(*input.After, c.cursorKeys)
+			if err != nil {
+				return nil, ErrInvalidCursor
+			}
+			keysetConds = append(keysetConds, cursorKeyset(c.dialect, c.cursorKeys, cursor, ">"))
+		}
+		if input.Before != nil {
+			cursor, err := decodeHostCursor(*input.Before, c.cursorKeys)
+			if err != nil {
+				return nil, ErrInvalidCursor
+			}
+			keysetConds = append(keysetConds, cursorKeyset(c.dialect, c.cursorKeys, cursor, "<"))
+		}
+
+		// Direction and limit
+		limit := c.pageSize
+		ascending := true
+		if input.First != nil {
+			limit = *input.First
+		} else if input.Last != nil {
+			limit = *input.Last
+			ascending = false
+		}
+
+		// Fetch limit+1 rows via GetMany (handles FieldOptions, O2O joins, relationships, soft delete)
+		connLimit := limit + 1
+		hosts, err := c.GetMany(ctx, &GetHostsInput{
+			Filter:     input.Filter,
+			Sorts:      cursorSorts(c.cursorKeys, ascending),
+			Limit:      &connLimit,
+			conditions: keysetConds,
+			// Each edge's cursor is encoded from the row it wraps, so the cursor
+			// keys have to survive a narrowed FieldOptions — otherwise the
+			// encoder reads fields the SELECT never filled and every cursor
+			// carries zero values.
+			requiredColumns: c.cursorKeys,
+		}, internalOpts)
+		if err != nil {
+			return nil, fmt.Errorf("connection hosts: %w", err)
+		}
+
+		// Trim extra row and determine page boundaries
+		hasMore := len(hosts) > limit
+		if hasMore {
+			hosts = hosts[:limit]
+		}
+
+		// Backward pagination: reverse for ascending cursor order
+		if !ascending {
+			slices.Reverse(hosts)
+		}
+
+		// Build edges with encoded cursors
+		edges := make([]Edge[Host], len(hosts))
+		for i, row := range hosts {
+			cursor, err := encodeHostCursor(c.cursorKeys, row)
+			if err != nil {
+				return nil, err
+			}
+			edges[i] = Edge[Host]{
+				Node:   row,
+				Cursor: cursor,
+			}
+		}
+
+		pageInfo := PageInfo{
+			HasNextPage:     (ascending && hasMore) || (!ascending && input.Before != nil),
+			HasPreviousPage: (!ascending && hasMore) || (ascending && input.After != nil),
+		}
+		if len(edges) > 0 {
+			pageInfo.StartCursor = &edges[0].Cursor
+			pageInfo.EndCursor = &edges[len(edges)-1].Cursor
+		}
+
+		return &Connection[Host]{Edges: edges, PageInfo: pageInfo, TotalCount: totalCount}, nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	return result.(*Connection[Host]), nil
+}
+
+// encodeHostCursor encodes cursor key values as a base64 JSON string.
+func encodeHostCursor(keys []string, h *Host) (string, error) {
+	out := make(map[string]any, len(keys))
+	for _, key := range keys {
+		switch key {
+		case "addr":
+			out["addr"] = h.Addr
+		case "label":
+			out["label"] = h.Label
+		}
+	}
+	data, err := json.Marshal(out)
+	if err != nil {
+		return "", fmt.Errorf("encode host cursor: %w", err)
+	}
+	return base64.StdEncoding.EncodeToString(data), nil
+}
+
+// decodeHostCursor decodes a cursor string into its key values,
+// each unmarshaled into the key column's Go type.
+func decodeHostCursor(encoded string, keys []string) (map[string]any, error) {
+	raw, err := decodeCursor(encoded, keys)
+	if err != nil {
+		return nil, err
+	}
+	var row Host
+	out := make(map[string]any, len(keys))
+	for _, key := range keys {
+		switch key {
+		case "addr":
+			err = json.Unmarshal(raw[key], &row.Addr)
+			out[key] = row.Addr
+		}
+		if err != nil {
+			return nil, err
+		}
+		if cursorValueIsNull(out[key]) {
+			return nil, ErrInvalidCursor
+		}
+	}
+	return out, nil
+}
+
+// StreamHostsInput holds query parameters for streaming hosts records.
+// Stream is iterator-style and intentionally has no Limit/Offset.
+// Field selection is controlled via CallOptions.FieldOptions, not this struct.
+type StreamHostsInput struct {
+	Filter *HostFilter `json:"filter"`
+	Sorts  []sql.Sort  `json:"sorts"`
+}
+
+// StreamHostFieldOptions controls scalar column selection for hosts streams.
+// Stream cannot load relationships — only scalar columns are selectable.
+type StreamHostFieldOptions struct {
+	Addr  bool `json:"addr"`
+	Label bool `json:"label"`
+}
+
+// Columns returns the SQL column names for all selected columns, sorted alphabetically
+// to match the SQL builder's deterministic column ordering.
+func (fo *StreamHostFieldOptions) Columns() []string {
+	var cols []string
+	if fo.Addr {
+		cols = append(cols, "addr")
+	}
+	if fo.Label {
+		cols = append(cols, "label")
+	}
+	slices.Sort(cols)
+	return cols
+}
+
+// HasSelectedColumns reports whether any column is selected.
+func (fo *StreamHostFieldOptions) HasSelectedColumns() bool {
+	if fo.Addr {
+		return true
+	}
+	if fo.Label {
+		return true
+	}
+	return false
+}
+
+// scanHostRow scans a single row into a Host entity.
+// Used by Stream to yield rows one at a time without materializing the result set.
+func scanHostRow(rows database.Rows, columns []string) (*Host, error) {
+	h := &Host{}
+
+	targets := make([]any, len(columns))
+	for idx, col := range columns {
+		switch col {
+		case "addr":
+			targets[idx] = &h.Addr
+		case "label":
+			targets[idx] = &h.Label
+		}
+	}
+
+	if err := rows.Scan(targets...); err != nil {
+		return nil, fmt.Errorf("scan host: %w", err)
+	}
+
+	return h, nil
+}
+
+// Stream returns an iterator over hosts matching the given filter and sort criteria.
+// Rows are yielded as the driver returns them, without materializing the full
+// result set. Cache is bypassed regardless of caller setting.
+// Stream cannot load relationships — use Connection in a loop when relationships
+// are required.
+//
+// Stream refuses an active transaction. It runs consumer code inside an open
+// result set, which inside a transaction is the transaction's only connection,
+// held for the whole iteration — so a statement issued from the loop body on the
+// same txCtx waits on a reservation the loop itself holds. Set
+// CallOptions.AllowInTransaction for a snapshot-consistent stream that issues
+// nothing else on that txCtx. That obligation is the one rule that remains the
+// caller's — drain or close a result set before issuing the next statement on
+// that txCtx — applied to a loop whose body is caller code.
+func (c *hostClient) Stream(ctx context.Context, input *StreamHostsInput, opts ...func(*CallOptions[StreamHostFieldOptions])) iter.Seq2[*Host, error] {
+	return func(yield func(*Host, error) bool) {
+		// A nil input is the zero-value input. Without it, an
+		// unguarded nil dereference in the handler would be recovered by the
+		// panic wrapper and reported as an error instead of streaming the table.
+		if input == nil {
+			input = &StreamHostsInput{}
+		}
+		options := resolveCallOptions(opts)
+		options.SkipCache = true
+
+		// Stream's contract is that the connection stays open across
+		// caller code; a transaction's is one connection, one statement at a
+		// time. The two cannot both hold, so Stream refuses a transaction unless
+		// the caller opts in. Refused before any SQL is issued and before the
+		// hook chain is built, mirroring the LockMode precondition, and
+		// surfaced through yield because Stream returns an iterator and has no
+		// error return.
+		if database.InTransaction(ctx) && !options.AllowInTransaction {
+			yield(nil, fmt.Errorf("stream hosts: unsupported inside a transaction — use Connection in a loop, "+
+				"or set AllowInTransaction for a snapshot-consistent stream that issues nothing else on this txCtx"))
+			return
+		}
+
+		// stopped is true while the consumer's loop body runs, and stays true
+		// once the body breaks (yield returned false) or panics out of yield.
+		// Calling yield again after either makes the Go runtime panic, so the
+		// chain's error below is yielded only while stopped is false.
+		var stopped bool
+		emit := func(row *Host, err error) bool {
+			stopped = true
+			if !yield(row, err) {
+				return false
+			}
+			stopped = false
+			return true
+		}
+
+		// A recovered panic and a hook's abort error are the
+		// chain's return value. Stream has no error return, so it yields that
+		// error once, after anything the handler yielded.
+		_, err := c.executeQuery(ctx, options.SkipHooks, &hook.QueryContext{
+			Op: hook.OpStream, Table: TableHosts, Schema: "public",
+			Input: input, CallOptions: options,
+		}, func(ctx context.Context, q *hook.QueryContext) (any, error) {
+			conn := database.Conn(ctx, c.querier)
+
+			fieldOptions := options.FieldOptions
+			columns := hostAllColumns
+			if fieldOptions != nil {
+				if selected := fieldOptions.Columns(); len(selected) > 0 {
+					columns = selected
+				}
+			}
+
+			var conds []sql.Condition
+			if input.Filter != nil {
+				conds = input.Filter.ToConditions(c.dialect)
+			}
+
+			query, args := sql.BuildSelect(c.dialect, c.table, sql.SelectOptions{
+				Columns:    columns,
+				Conditions: conds,
+				OrderBy:    input.Sorts,
+			})
+
+			rows, err := conn.Query(ctx, query, args...)
+			if err != nil {
+				emit(nil, fmt.Errorf("stream hosts: %w", err))
+				return nil, nil
+			}
+			defer rows.Close()
+
+			for rows.Next() {
+				h, err := scanHostRow(rows, columns)
+				if err != nil {
+					if !emit(nil, err) {
+						return nil, nil
+					}
+					continue
+				}
+				if !emit(h, nil) {
+					return nil, nil
+				}
+			}
+			if err := rows.Err(); err != nil {
+				emit(nil, fmt.Errorf("iterate host rows: %w", err))
+			}
+			return nil, nil
+		})
+		if err != nil && !stopped {
+			yield(nil, err)
+		}
+	}
+}
+
+// HostFilter provides type-safe filtering for the hosts table.
+type HostFilter struct {
+	Addr         *comparator.Opaque[net.IP] `json:"addr"`
+	Label        *comparator.String         `json:"label"`
+	Fingerprints *FingerprintFilter         `json:"fingerprints"`
+	And          []*HostFilter              `json:"and"`
+	Or           []*HostFilter              `json:"or"`
+}
+
+// ToConditions converts the filter to a slice of SQL conditions.
+//
+// A nil receiver contributes no conditions. Two callers depend on that. The
+// *Where methods dereference their filter only here and document a nil one as
+// the empty-filter case, so this is what makes ErrEmptyFilter reachable instead
+// of a nil dereference. And a nil entry inside and / or is skipped rather than
+// fatal, matching the "an unset member contributes no SQL" rule the
+// relationship members already follow.
+func (f *HostFilter) ToConditions(dialect sql.Dialect, opts ...FilterOption) []sql.Condition {
+	if f == nil {
+		return nil
+	}
+
+	var conds []sql.Condition
+
+	if f.Addr != nil {
+		conds = append(conds, f.Addr.Parse(dialect.QuoteIdentifier("addr"), dialect)...)
+	}
+
+	if f.Label != nil {
+		conds = append(conds, f.Label.Parse(dialect.QuoteIdentifier("label"), dialect)...)
+	}
+
+	if f.Fingerprints != nil {
+		conds = append(conds, hostFingerprintsFilterExists(f.Fingerprints, dialect, opts))
+	}
+
+	for _, sub := range f.And {
+		subConds := sub.ToConditions(dialect, opts...)
+		if len(subConds) > 0 {
+			conds = append(conds, sql.And(subConds...))
+		}
+	}
+
+	// A filter object's own fields are always conjunctive, so each or member
+	// contributes sql.And of its own conditions and the members are OR-ed
+	// together as ONE group condition. Appending a per-member
+	// sql.Or instead hands the caller N conditions, and buildWhere joins those
+	// with AND — turning or: [A, B] into A AND B, while simultaneously OR-ing a
+	// single member's own fields against each other.
+	//
+	// The group is appended only when some member compiled to something:
+	// sql.Or of nothing expands to a literal "()", which buildWhere keeps
+	// because it is not the empty string, yielding invalid SQL.
+	var orGroup []sql.Condition
+	for _, sub := range f.Or {
+		subConds := sub.ToConditions(dialect, opts...)
+		if len(subConds) > 0 {
+			orGroup = append(orGroup, sql.And(subConds...))
+		}
+	}
+	if len(orGroup) > 0 {
+		conds = append(conds, sql.Or(orGroup...))
+	}
+
+	return conds
+}
+
+// hostFingerprintsFilterExists compiles a FingerprintFilter set on the
+// Fingerprints relationship into a correlated EXISTS over fingerprints, joined through the host_fingerprints junction.
+//
+// The parent-side reference carries no qualifier: sql.CorrelationToken is
+// resolved by the builder against whichever FROM clause encloses the predicate,
+// so one emitted value is correct on both the plain read path and the aliased
+// O2O-join path.
+//
+// The subquery alias is keyed on nesting depth. A relationship filter nested
+// inside itself — legal for a self-referential relationship — would
+// otherwise reuse the alias and let the inner subquery shadow the reference its
+// own correlation resolves against.
+//
+// MySQL rejects an EXISTS naming the table an UPDATE or DELETE is mutating
+// (error 1093). A relationship filter whose target is the mutated table is
+// therefore a read-path predicate on MySQL, not one to pass to UpdateWhere /
+// SoftDeleteWhere / HardDeleteWhere / Increment.
+func hostFingerprintsFilterExists(f *FingerprintFilter, dialect sql.Dialect, opts []FilterOption) sql.Condition {
+	scope := resolveFilterScope(opts)
+	tgt := filterSubqueryAlias("tgt", scope.depth)
+	jn := filterSubqueryAlias("jn", scope.depth)
+	subSQL := "SELECT 1 FROM " + dialect.FormatTable(sql.Table{Schema: "public", Name: "host_fingerprints"}) + " " + jn +
+		" JOIN " + dialect.FormatTable(sql.Table{Schema: "public", Name: "fingerprints"}) + " " + tgt +
+		" ON " + tgt + "." + dialect.QuoteIdentifier("digest") + " = " + jn + "." + dialect.QuoteIdentifier("fingerprint_digest") +
+		" WHERE " + jn + "." + dialect.QuoteIdentifier("host_addr") + " = " + sql.CorrelationToken
+	var subArgs []any
+
+	// The target's own ToConditions supplies the inner WHERE, so nesting and
+	// and/or compose recursively. Every reference is qualified with the target
+	// alias: unqualified names inside a correlated subquery bind to the
+	// enclosing statement whenever the target lacks the column.
+	if where, whereArgs := sql.SubqueryWhere(dialect, tgt, f.ToConditions(dialect, nestFilterScope(opts, scope.depth+1)...)); where != "" {
+		subSQL += " AND " + where
+		subArgs = append(subArgs, whereArgs...)
+	}
+
+	return sql.Exists("addr", sql.Subquery{SQL: subSQL, Args: subArgs})
+}
+
+// HostFieldOptions controls column selection and relationship loading for hosts queries.
+type HostFieldOptions struct {
+	Addr         bool                            `json:"addr"`
+	Label        bool                            `json:"label"`
+	Fingerprints *FingerprintRelationshipOptions `json:"fingerprints"`
+}
+
+// Columns returns the SQL column names for all selected columns, sorted alphabetically
+// to match the SQL builder's deterministic column ordering.
+func (fo *HostFieldOptions) Columns() []string {
+	var cols []string
+	if fo.Addr {
+		cols = append(cols, "addr")
+	}
+	if fo.Label {
+		cols = append(cols, "label")
+	}
+	slices.Sort(cols)
+	return cols
+}
+
+// ColumnMap returns a mapping of Go field name to SQL column name for all columns.
+func (fo *HostFieldOptions) ColumnMap() map[string]string {
+	return map[string]string{
+		"Addr":  "addr",
+		"Label": "label",
+	}
+}
+
+// HasSelectedColumns reports whether any column or relationship is selected.
+func (fo *HostFieldOptions) HasSelectedColumns() bool {
+	if fo.Addr {
+		return true
+	}
+	if fo.Label {
+		return true
+	}
+	if fo.Fingerprints != nil {
+		return true
+	}
+	return false
+}
+
+// FingerprintRelationshipOptions controls loading options for Fingerprint relationships.
+type FingerprintRelationshipOptions struct {
+	FieldOptions *FingerprintFieldOptions `json:"field_options"`
+	Filter       *FingerprintFilter       `json:"filter"`
+	Sorts        []sql.Sort               `json:"sorts"`
+}
+
+// CreateHostInput holds the fields for creating a hosts record.
+type CreateHostInput struct {
+	Addr  net.IP `json:"addr"`
+	Label string `json:"label"`
+}
+
+// UpdateHostInput holds the fields for updating a hosts record.
+// All fields use omittable.Value to distinguish "not set" from "set to zero".
+type UpdateHostInput struct {
+	Label omittable.Value[string] `json:"label,omitzero"`
+}
+
+// GetHostsInput holds query parameters for retrieving hosts records.
+// Field selection is controlled via CallOptions.FieldOptions, not this struct.
+type GetHostsInput struct {
+	Filter *HostFilter `json:"filter"`
+	Limit  *int        `json:"limit"`
+	Offset *int        `json:"offset"`
+	Sorts  []sql.Sort  `json:"sorts"`
 	// conditions holds additional SQL conditions injected by internal callers
 	// (e.g., Connection keyset conditions). Not part of the public API.
 	conditions []sql.Condition
@@ -51039,36 +56672,32 @@ func (c *publicUserClient) loadRelationships(ctx context.Context, conn database.
 				}
 			}
 
-			// Build mapping and collect all target IDs
+			// Build mapping and collect all target keys. Each junction column
+			// scans into its own Go type, so both sides of the maps stringify
+			// keys the same way.
 			parentToTargetIDs := make(map[string][]string)
-			var allTargetIDs []string
+			var targetPKs []int64
 			for junctionRows.Next() {
-				vals := make([]string, len(junctionCols))
+				var localKey uuid.UUID
+				var refKey int64
 				ptrs := make([]any, len(junctionCols))
-				for i := range vals {
-					ptrs[i] = &vals[i]
-				}
+				ptrs[localIdx], ptrs[refIdx] = &localKey, &refKey
 				if err := junctionRows.Scan(ptrs...); err != nil {
 					return fmt.Errorf("scan user notes junction: %w", err)
 				}
-				parentID, targetID := vals[localIdx], vals[refIdx]
+				parentID, targetID := localKey.String(), fmt.Sprint(refKey)
 				parentToTargetIDs[parentID] = append(parentToTargetIDs[parentID], targetID)
-				allTargetIDs = append(allTargetIDs, targetID)
+				targetPKs = append(targetPKs, int64(refKey))
 			}
 			if err := junctionRows.Err(); err != nil {
 				return fmt.Errorf("iterate user notes junction: %w", err)
 			}
 
-			if len(allTargetIDs) == 0 {
+			if len(parentToTargetIDs) == 0 {
 				return nil
 			}
 
 			// Step 2: Fetch the actual entities
-			targetPKs := make([]int64, len(allTargetIDs))
-			for ii, s := range allTargetIDs {
-				v, _ := strconv.ParseInt(s, 10, 64)
-				targetPKs[ii] = int64(v)
-			}
 			filter := &AuditNoteFilter{
 				ID: &comparator.Number[int64]{In: targetPKs},
 			}
@@ -51156,19 +56785,20 @@ func (c *publicUserClient) loadRelationships(ctx context.Context, conn database.
 				}
 			}
 
-			// Build mapping and collect all target IDs
+			// Build mapping and collect all target keys. Each junction column
+			// scans into its own Go type, so both sides of the maps stringify
+			// keys the same way.
 			parentToTargetIDs := make(map[string][]string)
 			var allTargetIDs []string
 			for junctionRows.Next() {
-				vals := make([]string, len(junctionCols))
+				var localKey uuid.UUID
+				var refKey uuid.UUID
 				ptrs := make([]any, len(junctionCols))
-				for i := range vals {
-					ptrs[i] = &vals[i]
-				}
+				ptrs[localIdx], ptrs[refIdx] = &localKey, &refKey
 				if err := junctionRows.Scan(ptrs...); err != nil {
 					return fmt.Errorf("scan user categories junction: %w", err)
 				}
-				parentID, targetID := vals[localIdx], vals[refIdx]
+				parentID, targetID := localKey.String(), refKey.String()
 				parentToTargetIDs[parentID] = append(parentToTargetIDs[parentID], targetID)
 				allTargetIDs = append(allTargetIDs, targetID)
 			}
@@ -51176,7 +56806,7 @@ func (c *publicUserClient) loadRelationships(ctx context.Context, conn database.
 				return fmt.Errorf("iterate user categories junction: %w", err)
 			}
 
-			if len(allTargetIDs) == 0 {
+			if len(parentToTargetIDs) == 0 {
 				return nil
 			}
 

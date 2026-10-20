@@ -238,6 +238,21 @@ func hasUpdateBinaryKeySetFields(in gqlmodel.UpdateBinaryKeyInput) bool {
 	return false
 }
 
+// translateCreateBinaryKeyBadgeInput maps a gqlgen-generated input value
+// onto the consumer model's Create<Table>Input. The body shape per field
+// depends on (SchemaNullable) × (ModelOmittable) × (ModelInnerIsPointer) ×
+// (CastTo) × (AddressOf) × (PointerCast); see APIInputField doc-comment for
+// the full table. PointerCast is the one branch that cannot be an expression:
+// gqlgen's `*int` and the model's `*int32` do not thread through each other,
+// and Go cannot convert a pointee inline, so the value goes through a local.
+func translateCreateBinaryKeyBadgeInput(in gqlmodel.CreateBinaryKeyBadgeInput) *models.CreateBinaryKeyBadgeInput {
+	out := &models.CreateBinaryKeyBadgeInput{}
+	out.BinaryKeyID = in.BinaryKeyID
+	out.BadgeCode = in.BadgeCode
+
+	return out
+}
+
 // translateCreateBinaryKeyEventInput maps a gqlgen-generated input value
 // onto the consumer model's Create<Table>Input. The body shape per field
 // depends on (SchemaNullable) × (ModelOmittable) × (ModelInnerIsPointer) ×

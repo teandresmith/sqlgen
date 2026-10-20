@@ -183,6 +183,10 @@ func testGetContext_withRelationships() gen.TableContext {
 			// unit tests must set it to drive the target-type-aware
 			// fkToStringByGoType conversion.
 			FKGoType: "uuid.UUID",
+			// FKColumnGoType / JunctionReferenceGoType are the junction's two
+			// FK columns' Go types; the loader scans each into its own type.
+			FKColumnGoType:          "uuid.UUID",
+			JunctionReferenceGoType: "uuid.UUID",
 			// TargetPKFieldName / TargetPKColumn are the target's PK. Same wiring
 			// pass, same fixture rule: the M2M loader spells its map key with the
 			// field and declares the column on the target fetch.
@@ -601,6 +605,70 @@ func TestGetTemplate_m2mTargetFilterUsesTargetPKField(t *testing.T) {
 
 			if !strings.Contains(output, tt.want) {
 				t.Errorf("output missing target filter:\n%s\n\nfull output:\n%s", tt.want, output)
+			}
+		})
+	}
+}
+
+// TestGetTemplate_m2mJunctionScansTypedKeys pins the M2M junction scan to each
+// key's own Go type, so binary and network keys scan on pgx, match on both map
+// sides, and rebuild the target filter without parsing text.
+func TestGetTemplate_m2mJunctionScansTypedKeys(t *testing.T) {
+	tests := []struct {
+		name     string
+		fkGoType string // target PK
+		refType  string // junction reference column
+		want     []string
+	}{
+		{
+			name: "binary key", fkGoType: "[]byte", refType: "[]byte",
+			want: []string{
+				"var refKey []byte",
+				"parentID, targetID := localKey.String(), fmt.Sprint(refKey)",
+				"targetPKs = append(targetPKs, []byte(refKey))",
+				"ID: &comparator.Opaque[[]byte]{In: targetPKs},",
+			},
+		},
+		{
+			name: "network key", fkGoType: "net.IP", refType: "net.IP",
+			want: []string{
+				"var refKey net.IP",
+				"parentID, targetID := localKey.String(), refKey.String()",
+				"targetPKs = append(targetPKs, net.IP(refKey))",
+				"ID: &comparator.Opaque[net.IP]{In: targetPKs},",
+			},
+		},
+		{
+			name: "integer key", fkGoType: "int64", refType: "int64",
+			want: []string{
+				"var refKey int64",
+				"targetPKs = append(targetPKs, int64(refKey))",
+				"ID: &comparator.Number[int64]{In: targetPKs},",
+			},
+		},
+		{
+			name: "nullable junction column", fkGoType: "int64", refType: "sql.NullInt64",
+			want: []string{
+				"var refKey sql.NullInt64",
+				"if !(refKey.Valid) {\n\t\t\t\t\tcontinue",
+				"targetPKs = append(targetPKs, int64(refKey.Int64))",
+			},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ctx := testGetContext_withRelationships()
+			ctx.M2MRelationships[0].FKGoType = tt.fkGoType
+			ctx.M2MRelationships[0].JunctionReferenceGoType = tt.refType
+			output := executeGetTemplate(t, ctx)
+
+			for _, want := range tt.want {
+				if !strings.Contains(output, want) {
+					t.Errorf("output missing %q\n\nfull output:\n%s", want, output)
+				}
+			}
+			if strings.Contains(output, "strconv.ParseInt") {
+				t.Errorf("M2M loader still parses junction keys from text\n\nfull output:\n%s", output)
 			}
 		})
 	}
@@ -1174,21 +1242,23 @@ func TestGetTemplate_subCategorizedM2MFilter(t *testing.T) {
 	ctx.Imports = append(ctx.Imports, "golang.org/x/sync/errgroup")
 	ctx.M2MRelationships = []gen.RelationshipContext{
 		{
-			Name:                "Tags",
-			Type:                parser.ManyToMany,
-			TargetTable:         "tags",
-			TargetStructName:    "Tag",
-			JunctionTable:       "asset_tags",
-			JunctionSchema:      "public",
-			JunctionLocalFK:     "asset_id",
-			JunctionReferenceFK: "tag_id",
-			FieldName:           "Tags",
-			GoType:              "[]*Tag",
-			JSONTag:             "tags",
-			Filter:              "scope = 'asset'",
-			FKGoType:            "uuid.UUID",
-			TargetPKFieldName:   "ID",
-			TargetPKColumn:      "id",
+			Name:                    "Tags",
+			Type:                    parser.ManyToMany,
+			TargetTable:             "tags",
+			TargetStructName:        "Tag",
+			JunctionTable:           "asset_tags",
+			JunctionSchema:          "public",
+			JunctionLocalFK:         "asset_id",
+			JunctionReferenceFK:     "tag_id",
+			FieldName:               "Tags",
+			GoType:                  "[]*Tag",
+			JSONTag:                 "tags",
+			Filter:                  "scope = 'asset'",
+			FKGoType:                "uuid.UUID",
+			FKColumnGoType:          "uuid.UUID",
+			JunctionReferenceGoType: "uuid.UUID",
+			TargetPKFieldName:       "ID",
+			TargetPKColumn:          "id",
 		},
 	}
 	ctx.HasO2MRelationships = true // M2M loaders live behind this flag too

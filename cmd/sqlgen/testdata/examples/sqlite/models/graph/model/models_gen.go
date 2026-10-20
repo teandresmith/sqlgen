@@ -58,15 +58,26 @@ type AssetSort struct {
 }
 
 type BadgeFilter struct {
-	Label  *StringComparator `json:"label,omitempty"`
-	Owners *OwnerFilter      `json:"owners,omitempty"`
-	And    []*BadgeFilter    `json:"and,omitempty"`
-	Or     []*BadgeFilter    `json:"or,omitempty"`
+	Label      *StringComparator `json:"label,omitempty"`
+	BinaryKeys *BinaryKeyFilter  `json:"binaryKeys,omitempty"`
+	Owners     *OwnerFilter      `json:"owners,omitempty"`
+	And        []*BadgeFilter    `json:"and,omitempty"`
+	Or         []*BadgeFilter    `json:"or,omitempty"`
 }
 
 type BadgeSort struct {
 	Field     BadgeSortField `json:"field"`
 	Direction SortDirection  `json:"direction"`
+}
+
+type BinaryKeyBadgeFilter struct {
+	And []*BinaryKeyBadgeFilter `json:"and,omitempty"`
+	Or  []*BinaryKeyBadgeFilter `json:"or,omitempty"`
+}
+
+type BinaryKeyBadgeSort struct {
+	Field     BinaryKeyBadgeSortField `json:"field"`
+	Direction SortDirection           `json:"direction"`
 }
 
 type BinaryKeyEventFilter struct {
@@ -84,6 +95,7 @@ type BinaryKeyEventSort struct {
 type BinaryKeyFilter struct {
 	Name            *StringComparator     `json:"name,omitempty"`
 	CreatedAt       *TimeComparator       `json:"createdAt,omitempty"`
+	Badges          *BadgeFilter          `json:"badges,omitempty"`
 	BinaryKeyEvents *BinaryKeyEventFilter `json:"binaryKeyEvents,omitempty"`
 	Events          *BinaryKeyEventFilter `json:"events,omitempty"`
 	And             []*BinaryKeyFilter    `json:"and,omitempty"`
@@ -163,6 +175,11 @@ type CreateAssetInput struct {
 type CreateBadgeInput struct {
 	Code  string `json:"code"`
 	Label string `json:"label"`
+}
+
+type CreateBinaryKeyBadgeInput struct {
+	BinaryKeyID []byte `json:"binaryKeyID"`
+	BadgeCode   string `json:"badgeCode"`
 }
 
 type CreateBinaryKeyEventInput struct {
@@ -1079,6 +1096,61 @@ func (e *BadgeSortField) UnmarshalJSON(b []byte) error {
 }
 
 func (e BadgeSortField) MarshalJSON() ([]byte, error) {
+	var buf bytes.Buffer
+	e.MarshalGQL(&buf)
+	return buf.Bytes(), nil
+}
+
+type BinaryKeyBadgeSortField string
+
+const (
+	BinaryKeyBadgeSortFieldBinaryKeyID BinaryKeyBadgeSortField = "BINARY_KEY_ID"
+	BinaryKeyBadgeSortFieldBadgeCode   BinaryKeyBadgeSortField = "BADGE_CODE"
+)
+
+var AllBinaryKeyBadgeSortField = []BinaryKeyBadgeSortField{
+	BinaryKeyBadgeSortFieldBinaryKeyID,
+	BinaryKeyBadgeSortFieldBadgeCode,
+}
+
+func (e BinaryKeyBadgeSortField) IsValid() bool {
+	switch e {
+	case BinaryKeyBadgeSortFieldBinaryKeyID, BinaryKeyBadgeSortFieldBadgeCode:
+		return true
+	}
+	return false
+}
+
+func (e BinaryKeyBadgeSortField) String() string {
+	return string(e)
+}
+
+func (e *BinaryKeyBadgeSortField) UnmarshalGQL(v any) error {
+	str, ok := v.(string)
+	if !ok {
+		return fmt.Errorf("enums must be strings")
+	}
+
+	*e = BinaryKeyBadgeSortField(str)
+	if !e.IsValid() {
+		return fmt.Errorf("%s is not a valid BinaryKeyBadgeSortField", str)
+	}
+	return nil
+}
+
+func (e BinaryKeyBadgeSortField) MarshalGQL(w io.Writer) {
+	_, _ = fmt.Fprint(w, strconv.Quote(e.String()))
+}
+
+func (e *BinaryKeyBadgeSortField) UnmarshalJSON(b []byte) error {
+	s, err := strconv.Unquote(string(b))
+	if err != nil {
+		return err
+	}
+	return e.UnmarshalGQL(s)
+}
+
+func (e BinaryKeyBadgeSortField) MarshalJSON() ([]byte, error) {
 	var buf bytes.Buffer
 	e.MarshalGQL(&buf)
 	return buf.Bytes(), nil

@@ -130,9 +130,10 @@ type ComplexityRoot struct {
 	}
 
 	Badge struct {
-		Code   func(childComplexity int) int
-		Label  func(childComplexity int) int
-		Owners func(childComplexity int) int
+		BinaryKeys func(childComplexity int) int
+		Code       func(childComplexity int) int
+		Label      func(childComplexity int) int
+		Owners     func(childComplexity int) int
 	}
 
 	BadgeConnection struct {
@@ -155,11 +156,36 @@ type ComplexityRoot struct {
 	}
 
 	BinaryKey struct {
+		Badges          func(childComplexity int) int
 		BinaryKeyEvents func(childComplexity int) int
 		CreatedAt       func(childComplexity int) int
 		Events          func(childComplexity int) int
 		ID              func(childComplexity int) int
 		Name            func(childComplexity int) int
+	}
+
+	BinaryKeyBadge struct {
+		BadgeCode   func(childComplexity int) int
+		BinaryKeyID func(childComplexity int) int
+	}
+
+	BinaryKeyBadgeConnection struct {
+		Edges      func(childComplexity int) int
+		PageInfo   func(childComplexity int) int
+		TotalCount func(childComplexity int) int
+	}
+
+	BinaryKeyBadgeEdge struct {
+		Cursor func(childComplexity int) int
+		Node   func(childComplexity int) int
+	}
+
+	BinaryKeyBadgeListResult struct {
+		HasMore    func(childComplexity int) int
+		Items      func(childComplexity int) int
+		Limit      func(childComplexity int) int
+		Offset     func(childComplexity int) int
+		TotalCount func(childComplexity int) int
 	}
 
 	BinaryKeyConnection struct {
@@ -350,6 +376,8 @@ type ComplexityRoot struct {
 		CreateBadge               func(childComplexity int, input model.CreateBadgeInput) int
 		CreateBadges              func(childComplexity int, inputs []*model.CreateBadgeInput) int
 		CreateBinaryKey           func(childComplexity int, input model.CreateBinaryKeyInput) int
+		CreateBinaryKeyBadge      func(childComplexity int, input model.CreateBinaryKeyBadgeInput) int
+		CreateBinaryKeyBadges     func(childComplexity int, inputs []*model.CreateBinaryKeyBadgeInput) int
 		CreateBinaryKeyEvent      func(childComplexity int, input model.CreateBinaryKeyEventInput) int
 		CreateBinaryKeyEvents     func(childComplexity int, inputs []*model.CreateBinaryKeyEventInput) int
 		CreateBinaryKeys          func(childComplexity int, inputs []*model.CreateBinaryKeyInput) int
@@ -391,6 +419,7 @@ type ComplexityRoot struct {
 		DeleteAssetDocumentLink   func(childComplexity int, assetID int, documentID int) int
 		DeleteBadge               func(childComplexity int, code string) int
 		DeleteBinaryKey           func(childComplexity int, id []byte) int
+		DeleteBinaryKeyBadge      func(childComplexity int, binaryKeyID []byte, badgeCode string) int
 		DeleteBinaryKeyEvent      func(childComplexity int, id int) int
 		DeleteCategory            func(childComplexity int, id int) int
 		DeleteDigitLeadingColumn  func(childComplexity int, id int) int
@@ -460,6 +489,7 @@ type ComplexityRoot struct {
 		UpsertAssetDocumentLink   func(childComplexity int, input model.CreateAssetDocumentLinkInput) int
 		UpsertBadge               func(childComplexity int, input model.CreateBadgeInput) int
 		UpsertBinaryKey           func(childComplexity int, input model.CreateBinaryKeyInput) int
+		UpsertBinaryKeyBadge      func(childComplexity int, input model.CreateBinaryKeyBadgeInput) int
 		UpsertBinaryKeyEvent      func(childComplexity int, input model.CreateBinaryKeyEventInput) int
 		UpsertCategory            func(childComplexity int, input model.CreateCategoryInput) int
 		UpsertDigitLeadingColumn  func(childComplexity int, input model.CreateDigitLeadingColumnInput) int
@@ -746,6 +776,9 @@ type ComplexityRoot struct {
 		BadgeList              func(childComplexity int, filter *model.BadgeFilter, sort []*model.BadgeSort, limit *int, offset *int) int
 		Badges                 func(childComplexity int, filter *model.BadgeFilter, first *int, after *string, last *int, before *string) int
 		BinaryKey              func(childComplexity int, id []byte) int
+		BinaryKeyBadge         func(childComplexity int, binaryKeyID []byte, badgeCode string) int
+		BinaryKeyBadgeList     func(childComplexity int, filter *model.BinaryKeyBadgeFilter, sort []*model.BinaryKeyBadgeSort, limit *int, offset *int) int
+		BinaryKeyBadges        func(childComplexity int, filter *model.BinaryKeyBadgeFilter, first *int, after *string, last *int, before *string) int
 		BinaryKeyEvent         func(childComplexity int, id int) int
 		BinaryKeyEventList     func(childComplexity int, filter *model.BinaryKeyEventFilter, sort []*model.BinaryKeyEventSort, limit *int, offset *int) int
 		BinaryKeyEvents        func(childComplexity int, filter *model.BinaryKeyEventFilter, first *int, after *string, last *int, before *string) int
@@ -1014,6 +1047,10 @@ type MutationResolver interface {
 	UpdateBadges(ctx context.Context, filter model.BadgeFilter, input model.UpdateBadgeInput) ([]*models.Badge, error)
 	UpsertBadge(ctx context.Context, input model.CreateBadgeInput) (*models.Badge, error)
 	DeleteBadge(ctx context.Context, code string) (bool, error)
+	CreateBinaryKeyBadge(ctx context.Context, input model.CreateBinaryKeyBadgeInput) (*models.BinaryKeyBadge, error)
+	CreateBinaryKeyBadges(ctx context.Context, inputs []*model.CreateBinaryKeyBadgeInput) ([]*models.BinaryKeyBadge, error)
+	UpsertBinaryKeyBadge(ctx context.Context, input model.CreateBinaryKeyBadgeInput) (*models.BinaryKeyBadge, error)
+	DeleteBinaryKeyBadge(ctx context.Context, binaryKeyID []byte, badgeCode string) (bool, error)
 	CreateBinaryKeyEvent(ctx context.Context, input model.CreateBinaryKeyEventInput) (*models.BinaryKeyEvent, error)
 	CreateBinaryKeyEvents(ctx context.Context, inputs []*model.CreateBinaryKeyEventInput) ([]*models.BinaryKeyEvent, error)
 	UpdateBinaryKeyEvent(ctx context.Context, id int, input model.UpdateBinaryKeyEventInput) (*models.BinaryKeyEvent, error)
@@ -1141,6 +1178,9 @@ type QueryResolver interface {
 	Badge(ctx context.Context, code string) (*models.Badge, error)
 	Badges(ctx context.Context, filter *model.BadgeFilter, first *int, after *string, last *int, before *string) (*models.Connection[models.Badge], error)
 	BadgeList(ctx context.Context, filter *model.BadgeFilter, sort []*model.BadgeSort, limit *int, offset *int) (*models.PaginateResult[models.Badge], error)
+	BinaryKeyBadge(ctx context.Context, binaryKeyID []byte, badgeCode string) (*models.BinaryKeyBadge, error)
+	BinaryKeyBadges(ctx context.Context, filter *model.BinaryKeyBadgeFilter, first *int, after *string, last *int, before *string) (*models.Connection[models.BinaryKeyBadge], error)
+	BinaryKeyBadgeList(ctx context.Context, filter *model.BinaryKeyBadgeFilter, sort []*model.BinaryKeyBadgeSort, limit *int, offset *int) (*models.PaginateResult[models.BinaryKeyBadge], error)
 	BinaryKeyEvent(ctx context.Context, id int) (*models.BinaryKeyEvent, error)
 	BinaryKeyEvents(ctx context.Context, filter *model.BinaryKeyEventFilter, first *int, after *string, last *int, before *string) (*models.Connection[models.BinaryKeyEvent], error)
 	BinaryKeyEventList(ctx context.Context, filter *model.BinaryKeyEventFilter, sort []*model.BinaryKeyEventSort, limit *int, offset *int) (*models.PaginateResult[models.BinaryKeyEvent], error)
@@ -1537,6 +1577,12 @@ func (e *executableSchema) Complexity(ctx context.Context, typeName, field strin
 
 		return e.ComplexityRoot.AssetListResult.TotalCount(childComplexity), true
 
+	case "Badge.binaryKeys":
+		if e.ComplexityRoot.Badge.BinaryKeys == nil {
+			break
+		}
+
+		return e.ComplexityRoot.Badge.BinaryKeys(childComplexity), true
 	case "Badge.code":
 		if e.ComplexityRoot.Badge.Code == nil {
 			break
@@ -1619,6 +1665,12 @@ func (e *executableSchema) Complexity(ctx context.Context, typeName, field strin
 
 		return e.ComplexityRoot.BadgeListResult.TotalCount(childComplexity), true
 
+	case "BinaryKey.badges":
+		if e.ComplexityRoot.BinaryKey.Badges == nil {
+			break
+		}
+
+		return e.ComplexityRoot.BinaryKey.Badges(childComplexity), true
 	case "BinaryKey.binaryKeyEvents":
 		if e.ComplexityRoot.BinaryKey.BinaryKeyEvents == nil {
 			break
@@ -1649,6 +1701,82 @@ func (e *executableSchema) Complexity(ctx context.Context, typeName, field strin
 		}
 
 		return e.ComplexityRoot.BinaryKey.Name(childComplexity), true
+
+	case "BinaryKeyBadge.badgeCode":
+		if e.ComplexityRoot.BinaryKeyBadge.BadgeCode == nil {
+			break
+		}
+
+		return e.ComplexityRoot.BinaryKeyBadge.BadgeCode(childComplexity), true
+	case "BinaryKeyBadge.binaryKeyID":
+		if e.ComplexityRoot.BinaryKeyBadge.BinaryKeyID == nil {
+			break
+		}
+
+		return e.ComplexityRoot.BinaryKeyBadge.BinaryKeyID(childComplexity), true
+
+	case "BinaryKeyBadgeConnection.edges":
+		if e.ComplexityRoot.BinaryKeyBadgeConnection.Edges == nil {
+			break
+		}
+
+		return e.ComplexityRoot.BinaryKeyBadgeConnection.Edges(childComplexity), true
+	case "BinaryKeyBadgeConnection.pageInfo":
+		if e.ComplexityRoot.BinaryKeyBadgeConnection.PageInfo == nil {
+			break
+		}
+
+		return e.ComplexityRoot.BinaryKeyBadgeConnection.PageInfo(childComplexity), true
+	case "BinaryKeyBadgeConnection.totalCount":
+		if e.ComplexityRoot.BinaryKeyBadgeConnection.TotalCount == nil {
+			break
+		}
+
+		return e.ComplexityRoot.BinaryKeyBadgeConnection.TotalCount(childComplexity), true
+
+	case "BinaryKeyBadgeEdge.cursor":
+		if e.ComplexityRoot.BinaryKeyBadgeEdge.Cursor == nil {
+			break
+		}
+
+		return e.ComplexityRoot.BinaryKeyBadgeEdge.Cursor(childComplexity), true
+	case "BinaryKeyBadgeEdge.node":
+		if e.ComplexityRoot.BinaryKeyBadgeEdge.Node == nil {
+			break
+		}
+
+		return e.ComplexityRoot.BinaryKeyBadgeEdge.Node(childComplexity), true
+
+	case "BinaryKeyBadgeListResult.hasMore":
+		if e.ComplexityRoot.BinaryKeyBadgeListResult.HasMore == nil {
+			break
+		}
+
+		return e.ComplexityRoot.BinaryKeyBadgeListResult.HasMore(childComplexity), true
+	case "BinaryKeyBadgeListResult.items":
+		if e.ComplexityRoot.BinaryKeyBadgeListResult.Items == nil {
+			break
+		}
+
+		return e.ComplexityRoot.BinaryKeyBadgeListResult.Items(childComplexity), true
+	case "BinaryKeyBadgeListResult.limit":
+		if e.ComplexityRoot.BinaryKeyBadgeListResult.Limit == nil {
+			break
+		}
+
+		return e.ComplexityRoot.BinaryKeyBadgeListResult.Limit(childComplexity), true
+	case "BinaryKeyBadgeListResult.offset":
+		if e.ComplexityRoot.BinaryKeyBadgeListResult.Offset == nil {
+			break
+		}
+
+		return e.ComplexityRoot.BinaryKeyBadgeListResult.Offset(childComplexity), true
+	case "BinaryKeyBadgeListResult.totalCount":
+		if e.ComplexityRoot.BinaryKeyBadgeListResult.TotalCount == nil {
+			break
+		}
+
+		return e.ComplexityRoot.BinaryKeyBadgeListResult.TotalCount(childComplexity), true
 
 	case "BinaryKeyConnection.edges":
 		if e.ComplexityRoot.BinaryKeyConnection.Edges == nil {
@@ -2358,6 +2486,28 @@ func (e *executableSchema) Complexity(ctx context.Context, typeName, field strin
 		}
 
 		return e.ComplexityRoot.Mutation.CreateBinaryKey(childComplexity, args["input"].(model.CreateBinaryKeyInput)), true
+	case "Mutation.createBinaryKeyBadge":
+		if e.ComplexityRoot.Mutation.CreateBinaryKeyBadge == nil {
+			break
+		}
+
+		args, err := ec.field_Mutation_createBinaryKeyBadge_args(ctx, rawArgs)
+		if err != nil {
+			return 0, false
+		}
+
+		return e.ComplexityRoot.Mutation.CreateBinaryKeyBadge(childComplexity, args["input"].(model.CreateBinaryKeyBadgeInput)), true
+	case "Mutation.createBinaryKeyBadges":
+		if e.ComplexityRoot.Mutation.CreateBinaryKeyBadges == nil {
+			break
+		}
+
+		args, err := ec.field_Mutation_createBinaryKeyBadges_args(ctx, rawArgs)
+		if err != nil {
+			return 0, false
+		}
+
+		return e.ComplexityRoot.Mutation.CreateBinaryKeyBadges(childComplexity, args["inputs"].([]*model.CreateBinaryKeyBadgeInput)), true
 	case "Mutation.createBinaryKeyEvent":
 		if e.ComplexityRoot.Mutation.CreateBinaryKeyEvent == nil {
 			break
@@ -2809,6 +2959,17 @@ func (e *executableSchema) Complexity(ctx context.Context, typeName, field strin
 		}
 
 		return e.ComplexityRoot.Mutation.DeleteBinaryKey(childComplexity, args["id"].([]byte)), true
+	case "Mutation.deleteBinaryKeyBadge":
+		if e.ComplexityRoot.Mutation.DeleteBinaryKeyBadge == nil {
+			break
+		}
+
+		args, err := ec.field_Mutation_deleteBinaryKeyBadge_args(ctx, rawArgs)
+		if err != nil {
+			return 0, false
+		}
+
+		return e.ComplexityRoot.Mutation.DeleteBinaryKeyBadge(childComplexity, args["binaryKeyID"].([]byte), args["badgeCode"].(string)), true
 	case "Mutation.deleteBinaryKeyEvent":
 		if e.ComplexityRoot.Mutation.DeleteBinaryKeyEvent == nil {
 			break
@@ -3568,6 +3729,17 @@ func (e *executableSchema) Complexity(ctx context.Context, typeName, field strin
 		}
 
 		return e.ComplexityRoot.Mutation.UpsertBinaryKey(childComplexity, args["input"].(model.CreateBinaryKeyInput)), true
+	case "Mutation.upsertBinaryKeyBadge":
+		if e.ComplexityRoot.Mutation.UpsertBinaryKeyBadge == nil {
+			break
+		}
+
+		args, err := ec.field_Mutation_upsertBinaryKeyBadge_args(ctx, rawArgs)
+		if err != nil {
+			return 0, false
+		}
+
+		return e.ComplexityRoot.Mutation.UpsertBinaryKeyBadge(childComplexity, args["input"].(model.CreateBinaryKeyBadgeInput)), true
 	case "Mutation.upsertBinaryKeyEvent":
 		if e.ComplexityRoot.Mutation.UpsertBinaryKeyEvent == nil {
 			break
@@ -4793,6 +4965,39 @@ func (e *executableSchema) Complexity(ctx context.Context, typeName, field strin
 		}
 
 		return e.ComplexityRoot.Query.BinaryKey(childComplexity, args["id"].([]byte)), true
+	case "Query.binaryKeyBadge":
+		if e.ComplexityRoot.Query.BinaryKeyBadge == nil {
+			break
+		}
+
+		args, err := ec.field_Query_binaryKeyBadge_args(ctx, rawArgs)
+		if err != nil {
+			return 0, false
+		}
+
+		return e.ComplexityRoot.Query.BinaryKeyBadge(childComplexity, args["binaryKeyID"].([]byte), args["badgeCode"].(string)), true
+	case "Query.binaryKeyBadgeList":
+		if e.ComplexityRoot.Query.BinaryKeyBadgeList == nil {
+			break
+		}
+
+		args, err := ec.field_Query_binaryKeyBadgeList_args(ctx, rawArgs)
+		if err != nil {
+			return 0, false
+		}
+
+		return e.ComplexityRoot.Query.BinaryKeyBadgeList(childComplexity, args["filter"].(*model.BinaryKeyBadgeFilter), args["sort"].([]*model.BinaryKeyBadgeSort), args["limit"].(*int), args["offset"].(*int)), true
+	case "Query.binaryKeyBadges":
+		if e.ComplexityRoot.Query.BinaryKeyBadges == nil {
+			break
+		}
+
+		args, err := ec.field_Query_binaryKeyBadges_args(ctx, rawArgs)
+		if err != nil {
+			return 0, false
+		}
+
+		return e.ComplexityRoot.Query.BinaryKeyBadges(childComplexity, args["filter"].(*model.BinaryKeyBadgeFilter), args["first"].(*int), args["after"].(*string), args["last"].(*int), args["before"].(*string)), true
 	case "Query.binaryKeyEvent":
 		if e.ComplexityRoot.Query.BinaryKeyEvent == nil {
 			break
@@ -6134,6 +6339,8 @@ func (e *executableSchema) Exec(ctx context.Context) graphql.ResponseHandler {
 		ec.unmarshalInputAssetSort,
 		ec.unmarshalInputBadgeFilter,
 		ec.unmarshalInputBadgeSort,
+		ec.unmarshalInputBinaryKeyBadgeFilter,
+		ec.unmarshalInputBinaryKeyBadgeSort,
 		ec.unmarshalInputBinaryKeyEventFilter,
 		ec.unmarshalInputBinaryKeyEventSort,
 		ec.unmarshalInputBinaryKeyFilter,
@@ -6148,6 +6355,7 @@ func (e *executableSchema) Exec(ctx context.Context) graphql.ResponseHandler {
 		ec.unmarshalInputCreateAssetDocumentLinkInput,
 		ec.unmarshalInputCreateAssetInput,
 		ec.unmarshalInputCreateBadgeInput,
+		ec.unmarshalInputCreateBinaryKeyBadgeInput,
 		ec.unmarshalInputCreateBinaryKeyEventInput,
 		ec.unmarshalInputCreateBinaryKeyInput,
 		ec.unmarshalInputCreateCategoryInput,
@@ -6308,7 +6516,7 @@ func newExecutionContext(
 	}
 }
 
-//go:embed "article_gen.graphqls" "asset_document_link_gen.graphqls" "asset_gen.graphqls" "badge_gen.graphqls" "binary_key_event_gen.graphqls" "binary_key_gen.graphqls" "category_gen.graphqls" "category_stat_gen.graphqls" "digit_leading_column_gen.graphqls" "document_gen.graphqls" "key_only_row_gen.graphqls" "order_gen.graphqls" "order_item_gen.graphqls" "owner_badge_gen.graphqls" "owner_gen.graphqls" "owner_profile_gen.graphqls" "product_gen.graphqls" "product_summary_gen.graphqls" "product_tag_label_gen.graphqls" "profile_gen.graphqls" "reserved_word_column_gen.graphqls" "shared_gen.graphqls" "slugged_row_gen.graphqls" "tag_gen.graphqls" "user_category_gen.graphqls" "user_gen.graphqls" "warehouse_gen.graphqls"
+//go:embed "article_gen.graphqls" "asset_document_link_gen.graphqls" "asset_gen.graphqls" "badge_gen.graphqls" "binary_key_badge_gen.graphqls" "binary_key_event_gen.graphqls" "binary_key_gen.graphqls" "category_gen.graphqls" "category_stat_gen.graphqls" "digit_leading_column_gen.graphqls" "document_gen.graphqls" "key_only_row_gen.graphqls" "order_gen.graphqls" "order_item_gen.graphqls" "owner_badge_gen.graphqls" "owner_gen.graphqls" "owner_profile_gen.graphqls" "product_gen.graphqls" "product_summary_gen.graphqls" "product_tag_label_gen.graphqls" "profile_gen.graphqls" "reserved_word_column_gen.graphqls" "shared_gen.graphqls" "slugged_row_gen.graphqls" "tag_gen.graphqls" "user_category_gen.graphqls" "user_gen.graphqls" "warehouse_gen.graphqls"
 var sourcesFS embed.FS
 
 func sourceData(filename string) string {
@@ -6324,6 +6532,7 @@ var sources = []*ast.Source{
 	{Name: "asset_document_link_gen.graphqls", Input: sourceData("asset_document_link_gen.graphqls"), BuiltIn: false},
 	{Name: "asset_gen.graphqls", Input: sourceData("asset_gen.graphqls"), BuiltIn: false},
 	{Name: "badge_gen.graphqls", Input: sourceData("badge_gen.graphqls"), BuiltIn: false},
+	{Name: "binary_key_badge_gen.graphqls", Input: sourceData("binary_key_badge_gen.graphqls"), BuiltIn: false},
 	{Name: "binary_key_event_gen.graphqls", Input: sourceData("binary_key_event_gen.graphqls"), BuiltIn: false},
 	{Name: "binary_key_gen.graphqls", Input: sourceData("binary_key_gen.graphqls"), BuiltIn: false},
 	{Name: "category_gen.graphqls", Input: sourceData("category_gen.graphqls"), BuiltIn: false},
@@ -6532,6 +6741,8 @@ func (ec *executionContext) childFields_Badge(ctx context.Context, field graphql
 		return ec.fieldContext_Badge_code(ctx, field)
 	case "label":
 		return ec.fieldContext_Badge_label(ctx, field)
+	case "binaryKeys":
+		return ec.fieldContext_Badge_binaryKeys(ctx, field)
 	case "owners":
 		return ec.fieldContext_Badge_owners(ctx, field)
 	}
@@ -6586,10 +6797,60 @@ func (ec *executionContext) childFields_BinaryKey(ctx context.Context, field gra
 		return ec.fieldContext_BinaryKey_createdAt(ctx, field)
 	case "events":
 		return ec.fieldContext_BinaryKey_events(ctx, field)
+	case "badges":
+		return ec.fieldContext_BinaryKey_badges(ctx, field)
 	case "binaryKeyEvents":
 		return ec.fieldContext_BinaryKey_binaryKeyEvents(ctx, field)
 	}
 	return nil, fmt.Errorf("no field named %q was found under type BinaryKey", field.Name)
+}
+
+func (ec *executionContext) childFields_BinaryKeyBadge(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+	switch field.Name {
+	case "binaryKeyID":
+		return ec.fieldContext_BinaryKeyBadge_binaryKeyID(ctx, field)
+	case "badgeCode":
+		return ec.fieldContext_BinaryKeyBadge_badgeCode(ctx, field)
+	}
+	return nil, fmt.Errorf("no field named %q was found under type BinaryKeyBadge", field.Name)
+}
+
+func (ec *executionContext) childFields_BinaryKeyBadgeConnection(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+	switch field.Name {
+	case "edges":
+		return ec.fieldContext_BinaryKeyBadgeConnection_edges(ctx, field)
+	case "pageInfo":
+		return ec.fieldContext_BinaryKeyBadgeConnection_pageInfo(ctx, field)
+	case "totalCount":
+		return ec.fieldContext_BinaryKeyBadgeConnection_totalCount(ctx, field)
+	}
+	return nil, fmt.Errorf("no field named %q was found under type BinaryKeyBadgeConnection", field.Name)
+}
+
+func (ec *executionContext) childFields_BinaryKeyBadgeEdge(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+	switch field.Name {
+	case "node":
+		return ec.fieldContext_BinaryKeyBadgeEdge_node(ctx, field)
+	case "cursor":
+		return ec.fieldContext_BinaryKeyBadgeEdge_cursor(ctx, field)
+	}
+	return nil, fmt.Errorf("no field named %q was found under type BinaryKeyBadgeEdge", field.Name)
+}
+
+func (ec *executionContext) childFields_BinaryKeyBadgeListResult(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+	switch field.Name {
+	case "items":
+		return ec.fieldContext_BinaryKeyBadgeListResult_items(ctx, field)
+	case "totalCount":
+		return ec.fieldContext_BinaryKeyBadgeListResult_totalCount(ctx, field)
+	case "offset":
+		return ec.fieldContext_BinaryKeyBadgeListResult_offset(ctx, field)
+	case "limit":
+		return ec.fieldContext_BinaryKeyBadgeListResult_limit(ctx, field)
+	case "hasMore":
+		return ec.fieldContext_BinaryKeyBadgeListResult_hasMore(ctx, field)
+	}
+	return nil, fmt.Errorf("no field named %q was found under type BinaryKeyBadgeListResult", field.Name)
 }
 
 func (ec *executionContext) childFields_BinaryKeyConnection(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
@@ -8014,6 +8275,34 @@ func (ec *executionContext) field_Mutation_createBadges_args(ctx context.Context
 	return args, nil
 }
 
+func (ec *executionContext) field_Mutation_createBinaryKeyBadge_args(ctx context.Context, rawArgs map[string]any) (map[string]any, error) {
+	var err error
+	args := map[string]any{}
+	arg0, err := graphql.ProcessArgField(ctx, rawArgs, "input",
+		func(ctx context.Context, v any) (model.CreateBinaryKeyBadgeInput, error) {
+			return ec.unmarshalNCreateBinaryKeyBadgeInput2githubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋsqliteᚋmodelsᚋgraphᚋmodelᚐCreateBinaryKeyBadgeInput(ctx, v)
+		})
+	if err != nil {
+		return nil, err
+	}
+	args["input"] = arg0
+	return args, nil
+}
+
+func (ec *executionContext) field_Mutation_createBinaryKeyBadges_args(ctx context.Context, rawArgs map[string]any) (map[string]any, error) {
+	var err error
+	args := map[string]any{}
+	arg0, err := graphql.ProcessArgField(ctx, rawArgs, "inputs",
+		func(ctx context.Context, v any) ([]*model.CreateBinaryKeyBadgeInput, error) {
+			return ec.unmarshalNCreateBinaryKeyBadgeInput2ᚕᚖgithubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋsqliteᚋmodelsᚋgraphᚋmodelᚐCreateBinaryKeyBadgeInputᚄ(ctx, v)
+		})
+	if err != nil {
+		return nil, err
+	}
+	args["inputs"] = arg0
+	return args, nil
+}
+
 func (ec *executionContext) field_Mutation_createBinaryKeyEvent_args(ctx context.Context, rawArgs map[string]any) (map[string]any, error) {
 	var err error
 	args := map[string]any{}
@@ -8593,6 +8882,28 @@ func (ec *executionContext) field_Mutation_deleteBadge_args(ctx context.Context,
 		return nil, err
 	}
 	args["code"] = arg0
+	return args, nil
+}
+
+func (ec *executionContext) field_Mutation_deleteBinaryKeyBadge_args(ctx context.Context, rawArgs map[string]any) (map[string]any, error) {
+	var err error
+	args := map[string]any{}
+	arg0, err := graphql.ProcessArgField(ctx, rawArgs, "binaryKeyID",
+		func(ctx context.Context, v any) ([]byte, error) {
+			return ec.unmarshalNBytes2ᚕbyte(ctx, v)
+		})
+	if err != nil {
+		return nil, err
+	}
+	args["binaryKeyID"] = arg0
+	arg1, err := graphql.ProcessArgField(ctx, rawArgs, "badgeCode",
+		func(ctx context.Context, v any) (string, error) {
+			return ec.unmarshalNID2string(ctx, v)
+		})
+	if err != nil {
+		return nil, err
+	}
+	args["badgeCode"] = arg1
 	return args, nil
 }
 
@@ -9930,6 +10241,20 @@ func (ec *executionContext) field_Mutation_upsertBadge_args(ctx context.Context,
 	return args, nil
 }
 
+func (ec *executionContext) field_Mutation_upsertBinaryKeyBadge_args(ctx context.Context, rawArgs map[string]any) (map[string]any, error) {
+	var err error
+	args := map[string]any{}
+	arg0, err := graphql.ProcessArgField(ctx, rawArgs, "input",
+		func(ctx context.Context, v any) (model.CreateBinaryKeyBadgeInput, error) {
+			return ec.unmarshalNCreateBinaryKeyBadgeInput2githubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋsqliteᚋmodelsᚋgraphᚋmodelᚐCreateBinaryKeyBadgeInput(ctx, v)
+		})
+	if err != nil {
+		return nil, err
+	}
+	args["input"] = arg0
+	return args, nil
+}
+
 func (ec *executionContext) field_Mutation_upsertBinaryKeyEvent_args(ctx context.Context, rawArgs map[string]any) (map[string]any, error) {
 	var err error
 	args := map[string]any{}
@@ -10570,6 +10895,112 @@ func (ec *executionContext) field_Query_badges_args(ctx context.Context, rawArgs
 	arg0, err := graphql.ProcessArgField(ctx, rawArgs, "filter",
 		func(ctx context.Context, v any) (*model.BadgeFilter, error) {
 			return ec.unmarshalOBadgeFilter2ᚖgithubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋsqliteᚋmodelsᚋgraphᚋmodelᚐBadgeFilter(ctx, v)
+		})
+	if err != nil {
+		return nil, err
+	}
+	args["filter"] = arg0
+	arg1, err := graphql.ProcessArgField(ctx, rawArgs, "first",
+		func(ctx context.Context, v any) (*int, error) {
+			return ec.unmarshalOInt2ᚖint(ctx, v)
+		})
+	if err != nil {
+		return nil, err
+	}
+	args["first"] = arg1
+	arg2, err := graphql.ProcessArgField(ctx, rawArgs, "after",
+		func(ctx context.Context, v any) (*string, error) {
+			return ec.unmarshalOString2ᚖstring(ctx, v)
+		})
+	if err != nil {
+		return nil, err
+	}
+	args["after"] = arg2
+	arg3, err := graphql.ProcessArgField(ctx, rawArgs, "last",
+		func(ctx context.Context, v any) (*int, error) {
+			return ec.unmarshalOInt2ᚖint(ctx, v)
+		})
+	if err != nil {
+		return nil, err
+	}
+	args["last"] = arg3
+	arg4, err := graphql.ProcessArgField(ctx, rawArgs, "before",
+		func(ctx context.Context, v any) (*string, error) {
+			return ec.unmarshalOString2ᚖstring(ctx, v)
+		})
+	if err != nil {
+		return nil, err
+	}
+	args["before"] = arg4
+	return args, nil
+}
+
+func (ec *executionContext) field_Query_binaryKeyBadgeList_args(ctx context.Context, rawArgs map[string]any) (map[string]any, error) {
+	var err error
+	args := map[string]any{}
+	arg0, err := graphql.ProcessArgField(ctx, rawArgs, "filter",
+		func(ctx context.Context, v any) (*model.BinaryKeyBadgeFilter, error) {
+			return ec.unmarshalOBinaryKeyBadgeFilter2ᚖgithubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋsqliteᚋmodelsᚋgraphᚋmodelᚐBinaryKeyBadgeFilter(ctx, v)
+		})
+	if err != nil {
+		return nil, err
+	}
+	args["filter"] = arg0
+	arg1, err := graphql.ProcessArgField(ctx, rawArgs, "sort",
+		func(ctx context.Context, v any) ([]*model.BinaryKeyBadgeSort, error) {
+			return ec.unmarshalOBinaryKeyBadgeSort2ᚕᚖgithubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋsqliteᚋmodelsᚋgraphᚋmodelᚐBinaryKeyBadgeSortᚄ(ctx, v)
+		})
+	if err != nil {
+		return nil, err
+	}
+	args["sort"] = arg1
+	arg2, err := graphql.ProcessArgField(ctx, rawArgs, "limit",
+		func(ctx context.Context, v any) (*int, error) {
+			return ec.unmarshalOInt2ᚖint(ctx, v)
+		})
+	if err != nil {
+		return nil, err
+	}
+	args["limit"] = arg2
+	arg3, err := graphql.ProcessArgField(ctx, rawArgs, "offset",
+		func(ctx context.Context, v any) (*int, error) {
+			return ec.unmarshalOInt2ᚖint(ctx, v)
+		})
+	if err != nil {
+		return nil, err
+	}
+	args["offset"] = arg3
+	return args, nil
+}
+
+func (ec *executionContext) field_Query_binaryKeyBadge_args(ctx context.Context, rawArgs map[string]any) (map[string]any, error) {
+	var err error
+	args := map[string]any{}
+	arg0, err := graphql.ProcessArgField(ctx, rawArgs, "binaryKeyID",
+		func(ctx context.Context, v any) ([]byte, error) {
+			return ec.unmarshalNBytes2ᚕbyte(ctx, v)
+		})
+	if err != nil {
+		return nil, err
+	}
+	args["binaryKeyID"] = arg0
+	arg1, err := graphql.ProcessArgField(ctx, rawArgs, "badgeCode",
+		func(ctx context.Context, v any) (string, error) {
+			return ec.unmarshalNID2string(ctx, v)
+		})
+	if err != nil {
+		return nil, err
+	}
+	args["badgeCode"] = arg1
+	return args, nil
+}
+
+func (ec *executionContext) field_Query_binaryKeyBadges_args(ctx context.Context, rawArgs map[string]any) (map[string]any, error) {
+	var err error
+	args := map[string]any{}
+	arg0, err := graphql.ProcessArgField(ctx, rawArgs, "filter",
+		func(ctx context.Context, v any) (*model.BinaryKeyBadgeFilter, error) {
+			return ec.unmarshalOBinaryKeyBadgeFilter2ᚖgithubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋsqliteᚋmodelsᚋgraphᚋmodelᚐBinaryKeyBadgeFilter(ctx, v)
 		})
 	if err != nil {
 		return nil, err
@@ -14183,6 +14614,38 @@ func (ec *executionContext) fieldContext_Badge_label(_ context.Context, field gr
 	return graphql.NewScalarFieldContext("Badge", field, false, false, errors.New("field of type String does not have child fields"))
 }
 
+func (ec *executionContext) _Badge_binaryKeys(ctx context.Context, field graphql.CollectedField, obj *models.Badge) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.fieldContext_Badge_binaryKeys(ctx, field)
+		},
+		func(ctx context.Context) (any, error) {
+			return obj.BinaryKeys, nil
+		},
+		nil,
+		func(ctx context.Context, selections ast.SelectionSet, v []*models.BinaryKey) graphql.Marshaler {
+			return ec.marshalNBinaryKey2ᚕᚖgithubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋsqliteᚋmodelsᚐBinaryKeyᚄ(ctx, selections, v)
+		},
+		true,
+		true,
+	)
+}
+func (ec *executionContext) fieldContext_Badge_binaryKeys(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "Badge",
+		Field:      field,
+		IsMethod:   false,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.childFields_BinaryKey(ctx, field)
+		},
+	}
+	return fc, nil
+}
+
 func (ec *executionContext) _Badge_owners(ctx context.Context, field graphql.CollectedField, obj *models.Badge) (ret graphql.Marshaler) {
 	return graphql.ResolveField(
 		ctx,
@@ -14582,6 +15045,38 @@ func (ec *executionContext) fieldContext_BinaryKey_events(_ context.Context, fie
 	return fc, nil
 }
 
+func (ec *executionContext) _BinaryKey_badges(ctx context.Context, field graphql.CollectedField, obj *models.BinaryKey) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.fieldContext_BinaryKey_badges(ctx, field)
+		},
+		func(ctx context.Context) (any, error) {
+			return obj.Badges, nil
+		},
+		nil,
+		func(ctx context.Context, selections ast.SelectionSet, v []*models.Badge) graphql.Marshaler {
+			return ec.marshalNBadge2ᚕᚖgithubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋsqliteᚋmodelsᚐBadgeᚄ(ctx, selections, v)
+		},
+		true,
+		true,
+	)
+}
+func (ec *executionContext) fieldContext_BinaryKey_badges(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "BinaryKey",
+		Field:      field,
+		IsMethod:   false,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.childFields_Badge(ctx, field)
+		},
+	}
+	return fc, nil
+}
+
 func (ec *executionContext) _BinaryKey_binaryKeyEvents(ctx context.Context, field graphql.CollectedField, obj *models.BinaryKey) (ret graphql.Marshaler) {
 	return graphql.ResolveField(
 		ctx,
@@ -14612,6 +15107,318 @@ func (ec *executionContext) fieldContext_BinaryKey_binaryKeyEvents(_ context.Con
 		},
 	}
 	return fc, nil
+}
+
+func (ec *executionContext) _BinaryKeyBadge_binaryKeyID(ctx context.Context, field graphql.CollectedField, obj *models.BinaryKeyBadge) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.fieldContext_BinaryKeyBadge_binaryKeyID(ctx, field)
+		},
+		func(ctx context.Context) (any, error) {
+			return obj.BinaryKeyID, nil
+		},
+		nil,
+		func(ctx context.Context, selections ast.SelectionSet, v []byte) graphql.Marshaler {
+			return ec.marshalNBytes2ᚕbyte(ctx, selections, v)
+		},
+		true,
+		true,
+	)
+}
+func (ec *executionContext) fieldContext_BinaryKeyBadge_binaryKeyID(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	return graphql.NewScalarFieldContext("BinaryKeyBadge", field, false, false, errors.New("field of type Bytes does not have child fields"))
+}
+
+func (ec *executionContext) _BinaryKeyBadge_badgeCode(ctx context.Context, field graphql.CollectedField, obj *models.BinaryKeyBadge) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.fieldContext_BinaryKeyBadge_badgeCode(ctx, field)
+		},
+		func(ctx context.Context) (any, error) {
+			return obj.BadgeCode, nil
+		},
+		nil,
+		func(ctx context.Context, selections ast.SelectionSet, v string) graphql.Marshaler {
+			return ec.marshalNID2string(ctx, selections, v)
+		},
+		true,
+		true,
+	)
+}
+func (ec *executionContext) fieldContext_BinaryKeyBadge_badgeCode(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	return graphql.NewScalarFieldContext("BinaryKeyBadge", field, false, false, errors.New("field of type ID does not have child fields"))
+}
+
+func (ec *executionContext) _BinaryKeyBadgeConnection_edges(ctx context.Context, field graphql.CollectedField, obj *models.Connection[models.BinaryKeyBadge]) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.fieldContext_BinaryKeyBadgeConnection_edges(ctx, field)
+		},
+		func(ctx context.Context) (any, error) {
+			return obj.Edges, nil
+		},
+		nil,
+		func(ctx context.Context, selections ast.SelectionSet, v []models.Edge[models.BinaryKeyBadge]) graphql.Marshaler {
+			return ec.marshalNBinaryKeyBadgeEdge2ᚕgithubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋsqliteᚋmodelsᚐEdgeᚄ(ctx, selections, v)
+		},
+		true,
+		true,
+	)
+}
+func (ec *executionContext) fieldContext_BinaryKeyBadgeConnection_edges(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "BinaryKeyBadgeConnection",
+		Field:      field,
+		IsMethod:   false,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.childFields_BinaryKeyBadgeEdge(ctx, field)
+		},
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _BinaryKeyBadgeConnection_pageInfo(ctx context.Context, field graphql.CollectedField, obj *models.Connection[models.BinaryKeyBadge]) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.fieldContext_BinaryKeyBadgeConnection_pageInfo(ctx, field)
+		},
+		func(ctx context.Context) (any, error) {
+			return obj.PageInfo, nil
+		},
+		nil,
+		func(ctx context.Context, selections ast.SelectionSet, v models.PageInfo) graphql.Marshaler {
+			return ec.marshalNPageInfo2githubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋsqliteᚋmodelsᚐPageInfo(ctx, selections, v)
+		},
+		true,
+		true,
+	)
+}
+func (ec *executionContext) fieldContext_BinaryKeyBadgeConnection_pageInfo(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "BinaryKeyBadgeConnection",
+		Field:      field,
+		IsMethod:   false,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.childFields_PageInfo(ctx, field)
+		},
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _BinaryKeyBadgeConnection_totalCount(ctx context.Context, field graphql.CollectedField, obj *models.Connection[models.BinaryKeyBadge]) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.fieldContext_BinaryKeyBadgeConnection_totalCount(ctx, field)
+		},
+		func(ctx context.Context) (any, error) {
+			return obj.TotalCount, nil
+		},
+		nil,
+		func(ctx context.Context, selections ast.SelectionSet, v int64) graphql.Marshaler {
+			return ec.marshalNInt2int64(ctx, selections, v)
+		},
+		true,
+		true,
+	)
+}
+func (ec *executionContext) fieldContext_BinaryKeyBadgeConnection_totalCount(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	return graphql.NewScalarFieldContext("BinaryKeyBadgeConnection", field, false, false, errors.New("field of type Int does not have child fields"))
+}
+
+func (ec *executionContext) _BinaryKeyBadgeEdge_node(ctx context.Context, field graphql.CollectedField, obj *models.Edge[models.BinaryKeyBadge]) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.fieldContext_BinaryKeyBadgeEdge_node(ctx, field)
+		},
+		func(ctx context.Context) (any, error) {
+			return obj.Node, nil
+		},
+		nil,
+		func(ctx context.Context, selections ast.SelectionSet, v *models.BinaryKeyBadge) graphql.Marshaler {
+			return ec.marshalNBinaryKeyBadge2ᚖgithubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋsqliteᚋmodelsᚐBinaryKeyBadge(ctx, selections, v)
+		},
+		true,
+		true,
+	)
+}
+func (ec *executionContext) fieldContext_BinaryKeyBadgeEdge_node(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "BinaryKeyBadgeEdge",
+		Field:      field,
+		IsMethod:   false,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.childFields_BinaryKeyBadge(ctx, field)
+		},
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _BinaryKeyBadgeEdge_cursor(ctx context.Context, field graphql.CollectedField, obj *models.Edge[models.BinaryKeyBadge]) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.fieldContext_BinaryKeyBadgeEdge_cursor(ctx, field)
+		},
+		func(ctx context.Context) (any, error) {
+			return obj.Cursor, nil
+		},
+		nil,
+		func(ctx context.Context, selections ast.SelectionSet, v string) graphql.Marshaler {
+			return ec.marshalNString2string(ctx, selections, v)
+		},
+		true,
+		true,
+	)
+}
+func (ec *executionContext) fieldContext_BinaryKeyBadgeEdge_cursor(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	return graphql.NewScalarFieldContext("BinaryKeyBadgeEdge", field, false, false, errors.New("field of type String does not have child fields"))
+}
+
+func (ec *executionContext) _BinaryKeyBadgeListResult_items(ctx context.Context, field graphql.CollectedField, obj *models.PaginateResult[models.BinaryKeyBadge]) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.fieldContext_BinaryKeyBadgeListResult_items(ctx, field)
+		},
+		func(ctx context.Context) (any, error) {
+			return obj.Items, nil
+		},
+		nil,
+		func(ctx context.Context, selections ast.SelectionSet, v []*models.BinaryKeyBadge) graphql.Marshaler {
+			return ec.marshalNBinaryKeyBadge2ᚕᚖgithubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋsqliteᚋmodelsᚐBinaryKeyBadgeᚄ(ctx, selections, v)
+		},
+		true,
+		true,
+	)
+}
+func (ec *executionContext) fieldContext_BinaryKeyBadgeListResult_items(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "BinaryKeyBadgeListResult",
+		Field:      field,
+		IsMethod:   false,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.childFields_BinaryKeyBadge(ctx, field)
+		},
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _BinaryKeyBadgeListResult_totalCount(ctx context.Context, field graphql.CollectedField, obj *models.PaginateResult[models.BinaryKeyBadge]) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.fieldContext_BinaryKeyBadgeListResult_totalCount(ctx, field)
+		},
+		func(ctx context.Context) (any, error) {
+			return obj.TotalCount, nil
+		},
+		nil,
+		func(ctx context.Context, selections ast.SelectionSet, v int64) graphql.Marshaler {
+			return ec.marshalNInt2int64(ctx, selections, v)
+		},
+		true,
+		true,
+	)
+}
+func (ec *executionContext) fieldContext_BinaryKeyBadgeListResult_totalCount(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	return graphql.NewScalarFieldContext("BinaryKeyBadgeListResult", field, false, false, errors.New("field of type Int does not have child fields"))
+}
+
+func (ec *executionContext) _BinaryKeyBadgeListResult_offset(ctx context.Context, field graphql.CollectedField, obj *models.PaginateResult[models.BinaryKeyBadge]) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.fieldContext_BinaryKeyBadgeListResult_offset(ctx, field)
+		},
+		func(ctx context.Context) (any, error) {
+			return obj.Offset, nil
+		},
+		nil,
+		func(ctx context.Context, selections ast.SelectionSet, v int) graphql.Marshaler {
+			return ec.marshalNInt2int(ctx, selections, v)
+		},
+		true,
+		true,
+	)
+}
+func (ec *executionContext) fieldContext_BinaryKeyBadgeListResult_offset(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	return graphql.NewScalarFieldContext("BinaryKeyBadgeListResult", field, false, false, errors.New("field of type Int does not have child fields"))
+}
+
+func (ec *executionContext) _BinaryKeyBadgeListResult_limit(ctx context.Context, field graphql.CollectedField, obj *models.PaginateResult[models.BinaryKeyBadge]) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.fieldContext_BinaryKeyBadgeListResult_limit(ctx, field)
+		},
+		func(ctx context.Context) (any, error) {
+			return obj.Limit, nil
+		},
+		nil,
+		func(ctx context.Context, selections ast.SelectionSet, v int) graphql.Marshaler {
+			return ec.marshalNInt2int(ctx, selections, v)
+		},
+		true,
+		true,
+	)
+}
+func (ec *executionContext) fieldContext_BinaryKeyBadgeListResult_limit(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	return graphql.NewScalarFieldContext("BinaryKeyBadgeListResult", field, false, false, errors.New("field of type Int does not have child fields"))
+}
+
+func (ec *executionContext) _BinaryKeyBadgeListResult_hasMore(ctx context.Context, field graphql.CollectedField, obj *models.PaginateResult[models.BinaryKeyBadge]) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.fieldContext_BinaryKeyBadgeListResult_hasMore(ctx, field)
+		},
+		func(ctx context.Context) (any, error) {
+			return obj.HasMore, nil
+		},
+		nil,
+		func(ctx context.Context, selections ast.SelectionSet, v bool) graphql.Marshaler {
+			return ec.marshalNBoolean2bool(ctx, selections, v)
+		},
+		true,
+		true,
+	)
+}
+func (ec *executionContext) fieldContext_BinaryKeyBadgeListResult_hasMore(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	return graphql.NewScalarFieldContext("BinaryKeyBadgeListResult", field, false, false, errors.New("field of type Boolean does not have child fields"))
 }
 
 func (ec *executionContext) _BinaryKeyConnection_edges(ctx context.Context, field graphql.CollectedField, obj *models.Connection[models.BinaryKey]) (ret graphql.Marshaler) {
@@ -18174,6 +18981,182 @@ func (ec *executionContext) fieldContext_Mutation_deleteBadge(ctx context.Contex
 	}()
 	ctx = graphql.WithFieldContext(ctx, fc)
 	if fc.Args, err = ec.field_Mutation_deleteBadge_args(ctx, field.ArgumentMap(ec.Variables)); err != nil {
+		ec.Error(ctx, err)
+		return fc, err
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _Mutation_createBinaryKeyBadge(ctx context.Context, field graphql.CollectedField) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.fieldContext_Mutation_createBinaryKeyBadge(ctx, field)
+		},
+		func(ctx context.Context) (any, error) {
+			fc := graphql.GetFieldContext(ctx)
+			return ec.Resolvers.Mutation().CreateBinaryKeyBadge(ctx, fc.Args["input"].(model.CreateBinaryKeyBadgeInput))
+		},
+		nil,
+		func(ctx context.Context, selections ast.SelectionSet, v *models.BinaryKeyBadge) graphql.Marshaler {
+			return ec.marshalNBinaryKeyBadge2ᚖgithubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋsqliteᚋmodelsᚐBinaryKeyBadge(ctx, selections, v)
+		},
+		true,
+		true,
+	)
+}
+func (ec *executionContext) fieldContext_Mutation_createBinaryKeyBadge(ctx context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "Mutation",
+		Field:      field,
+		IsMethod:   true,
+		IsResolver: true,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.childFields_BinaryKeyBadge(ctx, field)
+		},
+	}
+	defer func() {
+		if r := recover(); r != nil {
+			err = ec.Recover(ctx, r)
+			ec.Error(ctx, err)
+		}
+	}()
+	ctx = graphql.WithFieldContext(ctx, fc)
+	if fc.Args, err = ec.field_Mutation_createBinaryKeyBadge_args(ctx, field.ArgumentMap(ec.Variables)); err != nil {
+		ec.Error(ctx, err)
+		return fc, err
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _Mutation_createBinaryKeyBadges(ctx context.Context, field graphql.CollectedField) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.fieldContext_Mutation_createBinaryKeyBadges(ctx, field)
+		},
+		func(ctx context.Context) (any, error) {
+			fc := graphql.GetFieldContext(ctx)
+			return ec.Resolvers.Mutation().CreateBinaryKeyBadges(ctx, fc.Args["inputs"].([]*model.CreateBinaryKeyBadgeInput))
+		},
+		nil,
+		func(ctx context.Context, selections ast.SelectionSet, v []*models.BinaryKeyBadge) graphql.Marshaler {
+			return ec.marshalNBinaryKeyBadge2ᚕᚖgithubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋsqliteᚋmodelsᚐBinaryKeyBadgeᚄ(ctx, selections, v)
+		},
+		true,
+		true,
+	)
+}
+func (ec *executionContext) fieldContext_Mutation_createBinaryKeyBadges(ctx context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "Mutation",
+		Field:      field,
+		IsMethod:   true,
+		IsResolver: true,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.childFields_BinaryKeyBadge(ctx, field)
+		},
+	}
+	defer func() {
+		if r := recover(); r != nil {
+			err = ec.Recover(ctx, r)
+			ec.Error(ctx, err)
+		}
+	}()
+	ctx = graphql.WithFieldContext(ctx, fc)
+	if fc.Args, err = ec.field_Mutation_createBinaryKeyBadges_args(ctx, field.ArgumentMap(ec.Variables)); err != nil {
+		ec.Error(ctx, err)
+		return fc, err
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _Mutation_upsertBinaryKeyBadge(ctx context.Context, field graphql.CollectedField) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.fieldContext_Mutation_upsertBinaryKeyBadge(ctx, field)
+		},
+		func(ctx context.Context) (any, error) {
+			fc := graphql.GetFieldContext(ctx)
+			return ec.Resolvers.Mutation().UpsertBinaryKeyBadge(ctx, fc.Args["input"].(model.CreateBinaryKeyBadgeInput))
+		},
+		nil,
+		func(ctx context.Context, selections ast.SelectionSet, v *models.BinaryKeyBadge) graphql.Marshaler {
+			return ec.marshalNBinaryKeyBadge2ᚖgithubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋsqliteᚋmodelsᚐBinaryKeyBadge(ctx, selections, v)
+		},
+		true,
+		true,
+	)
+}
+func (ec *executionContext) fieldContext_Mutation_upsertBinaryKeyBadge(ctx context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "Mutation",
+		Field:      field,
+		IsMethod:   true,
+		IsResolver: true,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.childFields_BinaryKeyBadge(ctx, field)
+		},
+	}
+	defer func() {
+		if r := recover(); r != nil {
+			err = ec.Recover(ctx, r)
+			ec.Error(ctx, err)
+		}
+	}()
+	ctx = graphql.WithFieldContext(ctx, fc)
+	if fc.Args, err = ec.field_Mutation_upsertBinaryKeyBadge_args(ctx, field.ArgumentMap(ec.Variables)); err != nil {
+		ec.Error(ctx, err)
+		return fc, err
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _Mutation_deleteBinaryKeyBadge(ctx context.Context, field graphql.CollectedField) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.fieldContext_Mutation_deleteBinaryKeyBadge(ctx, field)
+		},
+		func(ctx context.Context) (any, error) {
+			fc := graphql.GetFieldContext(ctx)
+			return ec.Resolvers.Mutation().DeleteBinaryKeyBadge(ctx, fc.Args["binaryKeyID"].([]byte), fc.Args["badgeCode"].(string))
+		},
+		nil,
+		func(ctx context.Context, selections ast.SelectionSet, v bool) graphql.Marshaler {
+			return ec.marshalNBoolean2bool(ctx, selections, v)
+		},
+		true,
+		true,
+	)
+}
+func (ec *executionContext) fieldContext_Mutation_deleteBinaryKeyBadge(ctx context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "Mutation",
+		Field:      field,
+		IsMethod:   true,
+		IsResolver: true,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return nil, errors.New("field of type Boolean does not have child fields")
+		},
+	}
+	defer func() {
+		if r := recover(); r != nil {
+			err = ec.Recover(ctx, r)
+			ec.Error(ctx, err)
+		}
+	}()
+	ctx = graphql.WithFieldContext(ctx, fc)
+	if fc.Args, err = ec.field_Mutation_deleteBinaryKeyBadge_args(ctx, field.ArgumentMap(ec.Variables)); err != nil {
 		ec.Error(ctx, err)
 		return fc, err
 	}
@@ -27310,6 +28293,138 @@ func (ec *executionContext) fieldContext_Query_badgeList(ctx context.Context, fi
 	return fc, nil
 }
 
+func (ec *executionContext) _Query_binaryKeyBadge(ctx context.Context, field graphql.CollectedField) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.fieldContext_Query_binaryKeyBadge(ctx, field)
+		},
+		func(ctx context.Context) (any, error) {
+			fc := graphql.GetFieldContext(ctx)
+			return ec.Resolvers.Query().BinaryKeyBadge(ctx, fc.Args["binaryKeyID"].([]byte), fc.Args["badgeCode"].(string))
+		},
+		nil,
+		func(ctx context.Context, selections ast.SelectionSet, v *models.BinaryKeyBadge) graphql.Marshaler {
+			return ec.marshalOBinaryKeyBadge2ᚖgithubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋsqliteᚋmodelsᚐBinaryKeyBadge(ctx, selections, v)
+		},
+		true,
+		false,
+	)
+}
+func (ec *executionContext) fieldContext_Query_binaryKeyBadge(ctx context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "Query",
+		Field:      field,
+		IsMethod:   true,
+		IsResolver: true,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.childFields_BinaryKeyBadge(ctx, field)
+		},
+	}
+	defer func() {
+		if r := recover(); r != nil {
+			err = ec.Recover(ctx, r)
+			ec.Error(ctx, err)
+		}
+	}()
+	ctx = graphql.WithFieldContext(ctx, fc)
+	if fc.Args, err = ec.field_Query_binaryKeyBadge_args(ctx, field.ArgumentMap(ec.Variables)); err != nil {
+		ec.Error(ctx, err)
+		return fc, err
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _Query_binaryKeyBadges(ctx context.Context, field graphql.CollectedField) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.fieldContext_Query_binaryKeyBadges(ctx, field)
+		},
+		func(ctx context.Context) (any, error) {
+			fc := graphql.GetFieldContext(ctx)
+			return ec.Resolvers.Query().BinaryKeyBadges(ctx, fc.Args["filter"].(*model.BinaryKeyBadgeFilter), fc.Args["first"].(*int), fc.Args["after"].(*string), fc.Args["last"].(*int), fc.Args["before"].(*string))
+		},
+		nil,
+		func(ctx context.Context, selections ast.SelectionSet, v *models.Connection[models.BinaryKeyBadge]) graphql.Marshaler {
+			return ec.marshalNBinaryKeyBadgeConnection2ᚖgithubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋsqliteᚋmodelsᚐConnection(ctx, selections, v)
+		},
+		true,
+		true,
+	)
+}
+func (ec *executionContext) fieldContext_Query_binaryKeyBadges(ctx context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "Query",
+		Field:      field,
+		IsMethod:   true,
+		IsResolver: true,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.childFields_BinaryKeyBadgeConnection(ctx, field)
+		},
+	}
+	defer func() {
+		if r := recover(); r != nil {
+			err = ec.Recover(ctx, r)
+			ec.Error(ctx, err)
+		}
+	}()
+	ctx = graphql.WithFieldContext(ctx, fc)
+	if fc.Args, err = ec.field_Query_binaryKeyBadges_args(ctx, field.ArgumentMap(ec.Variables)); err != nil {
+		ec.Error(ctx, err)
+		return fc, err
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _Query_binaryKeyBadgeList(ctx context.Context, field graphql.CollectedField) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.fieldContext_Query_binaryKeyBadgeList(ctx, field)
+		},
+		func(ctx context.Context) (any, error) {
+			fc := graphql.GetFieldContext(ctx)
+			return ec.Resolvers.Query().BinaryKeyBadgeList(ctx, fc.Args["filter"].(*model.BinaryKeyBadgeFilter), fc.Args["sort"].([]*model.BinaryKeyBadgeSort), fc.Args["limit"].(*int), fc.Args["offset"].(*int))
+		},
+		nil,
+		func(ctx context.Context, selections ast.SelectionSet, v *models.PaginateResult[models.BinaryKeyBadge]) graphql.Marshaler {
+			return ec.marshalNBinaryKeyBadgeListResult2ᚖgithubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋsqliteᚋmodelsᚐPaginateResult(ctx, selections, v)
+		},
+		true,
+		true,
+	)
+}
+func (ec *executionContext) fieldContext_Query_binaryKeyBadgeList(ctx context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "Query",
+		Field:      field,
+		IsMethod:   true,
+		IsResolver: true,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.childFields_BinaryKeyBadgeListResult(ctx, field)
+		},
+	}
+	defer func() {
+		if r := recover(); r != nil {
+			err = ec.Recover(ctx, r)
+			ec.Error(ctx, err)
+		}
+	}()
+	ctx = graphql.WithFieldContext(ctx, fc)
+	if fc.Args, err = ec.field_Query_binaryKeyBadgeList_args(ctx, field.ArgumentMap(ec.Variables)); err != nil {
+		ec.Error(ctx, err)
+		return fc, err
+	}
+	return fc, nil
+}
+
 func (ec *executionContext) _Query_binaryKeyEvent(ctx context.Context, field graphql.CollectedField) (ret graphql.Marshaler) {
 	return graphql.ResolveField(
 		ctx,
@@ -34151,7 +35266,7 @@ func (ec *executionContext) unmarshalInputBadgeFilter(ctx context.Context, obj a
 		asMap[k] = v
 	}
 
-	fieldsInOrder := [...]string{"label", "owners", "and", "or"}
+	fieldsInOrder := [...]string{"label", "binaryKeys", "owners", "and", "or"}
 	for _, k := range fieldsInOrder {
 		v, ok := asMap[k]
 		if !ok {
@@ -34165,6 +35280,13 @@ func (ec *executionContext) unmarshalInputBadgeFilter(ctx context.Context, obj a
 				return it, err
 			}
 			it.Label = data
+		case "binaryKeys":
+			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("binaryKeys"))
+			data, err := ec.unmarshalOBinaryKeyFilter2ᚖgithubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋsqliteᚋmodelsᚋgraphᚋmodelᚐBinaryKeyFilter(ctx, v)
+			if err != nil {
+				return it, err
+			}
+			it.BinaryKeys = data
 		case "owners":
 			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("owners"))
 			data, err := ec.unmarshalOOwnerFilter2ᚖgithubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋsqliteᚋmodelsᚋgraphᚋmodelᚐOwnerFilter(ctx, v)
@@ -34212,6 +35334,80 @@ func (ec *executionContext) unmarshalInputBadgeSort(ctx context.Context, obj any
 		case "field":
 			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("field"))
 			data, err := ec.unmarshalNBadgeSortField2githubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋsqliteᚋmodelsᚋgraphᚋmodelᚐBadgeSortField(ctx, v)
+			if err != nil {
+				return it, err
+			}
+			it.Field = data
+		case "direction":
+			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("direction"))
+			data, err := ec.unmarshalNSortDirection2githubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋsqliteᚋmodelsᚋgraphᚋmodelᚐSortDirection(ctx, v)
+			if err != nil {
+				return it, err
+			}
+			it.Direction = data
+		}
+	}
+	return it, nil
+}
+
+func (ec *executionContext) unmarshalInputBinaryKeyBadgeFilter(ctx context.Context, obj any) (model.BinaryKeyBadgeFilter, error) {
+	var it model.BinaryKeyBadgeFilter
+	if obj == nil {
+		return it, nil
+	}
+
+	asMap := map[string]any{}
+	for k, v := range obj.(map[string]any) {
+		asMap[k] = v
+	}
+
+	fieldsInOrder := [...]string{"and", "or"}
+	for _, k := range fieldsInOrder {
+		v, ok := asMap[k]
+		if !ok {
+			continue
+		}
+		switch k {
+		case "and":
+			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("and"))
+			data, err := ec.unmarshalOBinaryKeyBadgeFilter2ᚕᚖgithubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋsqliteᚋmodelsᚋgraphᚋmodelᚐBinaryKeyBadgeFilterᚄ(ctx, v)
+			if err != nil {
+				return it, err
+			}
+			it.And = data
+		case "or":
+			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("or"))
+			data, err := ec.unmarshalOBinaryKeyBadgeFilter2ᚕᚖgithubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋsqliteᚋmodelsᚋgraphᚋmodelᚐBinaryKeyBadgeFilterᚄ(ctx, v)
+			if err != nil {
+				return it, err
+			}
+			it.Or = data
+		}
+	}
+	return it, nil
+}
+
+func (ec *executionContext) unmarshalInputBinaryKeyBadgeSort(ctx context.Context, obj any) (model.BinaryKeyBadgeSort, error) {
+	var it model.BinaryKeyBadgeSort
+	if obj == nil {
+		return it, nil
+	}
+
+	asMap := map[string]any{}
+	for k, v := range obj.(map[string]any) {
+		asMap[k] = v
+	}
+
+	fieldsInOrder := [...]string{"field", "direction"}
+	for _, k := range fieldsInOrder {
+		v, ok := asMap[k]
+		if !ok {
+			continue
+		}
+		switch k {
+		case "field":
+			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("field"))
+			data, err := ec.unmarshalNBinaryKeyBadgeSortField2githubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋsqliteᚋmodelsᚋgraphᚋmodelᚐBinaryKeyBadgeSortField(ctx, v)
 			if err != nil {
 				return it, err
 			}
@@ -34327,7 +35523,7 @@ func (ec *executionContext) unmarshalInputBinaryKeyFilter(ctx context.Context, o
 		asMap[k] = v
 	}
 
-	fieldsInOrder := [...]string{"name", "createdAt", "binaryKeyEvents", "events", "and", "or"}
+	fieldsInOrder := [...]string{"name", "createdAt", "badges", "binaryKeyEvents", "events", "and", "or"}
 	for _, k := range fieldsInOrder {
 		v, ok := asMap[k]
 		if !ok {
@@ -34348,6 +35544,13 @@ func (ec *executionContext) unmarshalInputBinaryKeyFilter(ctx context.Context, o
 				return it, err
 			}
 			it.CreatedAt = data
+		case "badges":
+			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("badges"))
+			data, err := ec.unmarshalOBadgeFilter2ᚖgithubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋsqliteᚋmodelsᚋgraphᚋmodelᚐBadgeFilter(ctx, v)
+			if err != nil {
+				return it, err
+			}
+			it.Badges = data
 		case "binaryKeyEvents":
 			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("binaryKeyEvents"))
 			data, err := ec.unmarshalOBinaryKeyEventFilter2ᚖgithubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋsqliteᚋmodelsᚋgraphᚋmodelᚐBinaryKeyEventFilter(ctx, v)
@@ -34923,6 +36126,43 @@ func (ec *executionContext) unmarshalInputCreateBadgeInput(ctx context.Context, 
 				return it, err
 			}
 			it.Label = data
+		}
+	}
+	return it, nil
+}
+
+func (ec *executionContext) unmarshalInputCreateBinaryKeyBadgeInput(ctx context.Context, obj any) (model.CreateBinaryKeyBadgeInput, error) {
+	var it model.CreateBinaryKeyBadgeInput
+	if obj == nil {
+		return it, nil
+	}
+
+	asMap := map[string]any{}
+	for k, v := range obj.(map[string]any) {
+		asMap[k] = v
+	}
+
+	fieldsInOrder := [...]string{"binaryKeyID", "badgeCode"}
+	for _, k := range fieldsInOrder {
+		v, ok := asMap[k]
+		if !ok {
+			continue
+		}
+		switch k {
+		case "binaryKeyID":
+			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("binaryKeyID"))
+			data, err := ec.unmarshalNBytes2ᚕbyte(ctx, v)
+			if err != nil {
+				return it, err
+			}
+			it.BinaryKeyID = data
+		case "badgeCode":
+			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("badgeCode"))
+			data, err := ec.unmarshalNID2string(ctx, v)
+			if err != nil {
+				return it, err
+			}
+			it.BadgeCode = data
 		}
 	}
 	return it, nil
@@ -40557,6 +41797,11 @@ func (ec *executionContext) _Badge(ctx context.Context, sel ast.SelectionSet, ob
 			if out.Values[i] == graphql.Null {
 				out.Invalids++
 			}
+		case "binaryKeys":
+			out.Values[i] = ec._Badge_binaryKeys(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
 		case "owners":
 			out.Values[i] = ec._Badge_owners(ctx, field, obj)
 			if out.Values[i] == graphql.Null {
@@ -40764,8 +42009,205 @@ func (ec *executionContext) _BinaryKey(ctx context.Context, sel ast.SelectionSet
 			if out.Values[i] == graphql.Null {
 				out.Invalids++
 			}
+		case "badges":
+			out.Values[i] = ec._BinaryKey_badges(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
 		case "binaryKeyEvents":
 			out.Values[i] = ec._BinaryKey_binaryKeyEvents(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		default:
+			panic("unknown field " + strconv.Quote(field.Name))
+		}
+	}
+	out.Dispatch(ctx)
+	if out.Invalids > 0 {
+		return graphql.Null
+	}
+
+	atomic.AddInt32(&ec.Deferred, int32(min(len(deferLabelToView), math.MaxInt32)))
+
+	ec.ProcessDeferredGroup(graphql.DeferredGroup{
+		Defers:   deferLabelToView,
+		Path:     graphql.GetPath(ctx),
+		FieldSet: deferredFieldSet,
+		Context:  ctx,
+	})
+
+	return out
+}
+
+var binaryKeyBadgeImplementors = []string{"BinaryKeyBadge"}
+
+func (ec *executionContext) _BinaryKeyBadge(ctx context.Context, sel ast.SelectionSet, obj *models.BinaryKeyBadge) graphql.Marshaler {
+	fields := graphql.CollectFields(ec.OperationContext, sel, binaryKeyBadgeImplementors)
+
+	out := graphql.NewFieldSet(fields)
+	deferredFieldSet := graphql.NewFieldSet(nil)
+	deferLabelToView := make(map[string]*graphql.FieldSetView)
+	for i, field := range fields {
+		switch field.Name {
+		case "__typename":
+			out.Values[i] = graphql.MarshalString("BinaryKeyBadge")
+		case "binaryKeyID":
+			out.Values[i] = ec._BinaryKeyBadge_binaryKeyID(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		case "badgeCode":
+			out.Values[i] = ec._BinaryKeyBadge_badgeCode(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		default:
+			panic("unknown field " + strconv.Quote(field.Name))
+		}
+	}
+	out.Dispatch(ctx)
+	if out.Invalids > 0 {
+		return graphql.Null
+	}
+
+	atomic.AddInt32(&ec.Deferred, int32(min(len(deferLabelToView), math.MaxInt32)))
+
+	ec.ProcessDeferredGroup(graphql.DeferredGroup{
+		Defers:   deferLabelToView,
+		Path:     graphql.GetPath(ctx),
+		FieldSet: deferredFieldSet,
+		Context:  ctx,
+	})
+
+	return out
+}
+
+var binaryKeyBadgeConnectionImplementors = []string{"BinaryKeyBadgeConnection"}
+
+func (ec *executionContext) _BinaryKeyBadgeConnection(ctx context.Context, sel ast.SelectionSet, obj *models.Connection[models.BinaryKeyBadge]) graphql.Marshaler {
+	fields := graphql.CollectFields(ec.OperationContext, sel, binaryKeyBadgeConnectionImplementors)
+
+	out := graphql.NewFieldSet(fields)
+	deferredFieldSet := graphql.NewFieldSet(nil)
+	deferLabelToView := make(map[string]*graphql.FieldSetView)
+	for i, field := range fields {
+		switch field.Name {
+		case "__typename":
+			out.Values[i] = graphql.MarshalString("BinaryKeyBadgeConnection")
+		case "edges":
+			out.Values[i] = ec._BinaryKeyBadgeConnection_edges(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		case "pageInfo":
+			out.Values[i] = ec._BinaryKeyBadgeConnection_pageInfo(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		case "totalCount":
+			out.Values[i] = ec._BinaryKeyBadgeConnection_totalCount(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		default:
+			panic("unknown field " + strconv.Quote(field.Name))
+		}
+	}
+	out.Dispatch(ctx)
+	if out.Invalids > 0 {
+		return graphql.Null
+	}
+
+	atomic.AddInt32(&ec.Deferred, int32(min(len(deferLabelToView), math.MaxInt32)))
+
+	ec.ProcessDeferredGroup(graphql.DeferredGroup{
+		Defers:   deferLabelToView,
+		Path:     graphql.GetPath(ctx),
+		FieldSet: deferredFieldSet,
+		Context:  ctx,
+	})
+
+	return out
+}
+
+var binaryKeyBadgeEdgeImplementors = []string{"BinaryKeyBadgeEdge"}
+
+func (ec *executionContext) _BinaryKeyBadgeEdge(ctx context.Context, sel ast.SelectionSet, obj *models.Edge[models.BinaryKeyBadge]) graphql.Marshaler {
+	fields := graphql.CollectFields(ec.OperationContext, sel, binaryKeyBadgeEdgeImplementors)
+
+	out := graphql.NewFieldSet(fields)
+	deferredFieldSet := graphql.NewFieldSet(nil)
+	deferLabelToView := make(map[string]*graphql.FieldSetView)
+	for i, field := range fields {
+		switch field.Name {
+		case "__typename":
+			out.Values[i] = graphql.MarshalString("BinaryKeyBadgeEdge")
+		case "node":
+			out.Values[i] = ec._BinaryKeyBadgeEdge_node(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		case "cursor":
+			out.Values[i] = ec._BinaryKeyBadgeEdge_cursor(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		default:
+			panic("unknown field " + strconv.Quote(field.Name))
+		}
+	}
+	out.Dispatch(ctx)
+	if out.Invalids > 0 {
+		return graphql.Null
+	}
+
+	atomic.AddInt32(&ec.Deferred, int32(min(len(deferLabelToView), math.MaxInt32)))
+
+	ec.ProcessDeferredGroup(graphql.DeferredGroup{
+		Defers:   deferLabelToView,
+		Path:     graphql.GetPath(ctx),
+		FieldSet: deferredFieldSet,
+		Context:  ctx,
+	})
+
+	return out
+}
+
+var binaryKeyBadgeListResultImplementors = []string{"BinaryKeyBadgeListResult"}
+
+func (ec *executionContext) _BinaryKeyBadgeListResult(ctx context.Context, sel ast.SelectionSet, obj *models.PaginateResult[models.BinaryKeyBadge]) graphql.Marshaler {
+	fields := graphql.CollectFields(ec.OperationContext, sel, binaryKeyBadgeListResultImplementors)
+
+	out := graphql.NewFieldSet(fields)
+	deferredFieldSet := graphql.NewFieldSet(nil)
+	deferLabelToView := make(map[string]*graphql.FieldSetView)
+	for i, field := range fields {
+		switch field.Name {
+		case "__typename":
+			out.Values[i] = graphql.MarshalString("BinaryKeyBadgeListResult")
+		case "items":
+			out.Values[i] = ec._BinaryKeyBadgeListResult_items(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		case "totalCount":
+			out.Values[i] = ec._BinaryKeyBadgeListResult_totalCount(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		case "offset":
+			out.Values[i] = ec._BinaryKeyBadgeListResult_offset(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		case "limit":
+			out.Values[i] = ec._BinaryKeyBadgeListResult_limit(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		case "hasMore":
+			out.Values[i] = ec._BinaryKeyBadgeListResult_hasMore(ctx, field, obj)
 			if out.Values[i] == graphql.Null {
 				out.Invalids++
 			}
@@ -42350,6 +43792,34 @@ func (ec *executionContext) _Mutation(ctx context.Context, sel ast.SelectionSet)
 		case "deleteBadge":
 			out.Values[i] = ec.OperationContext.RootResolverMiddleware(innerCtx, func(ctx context.Context) (res graphql.Marshaler) {
 				return ec._Mutation_deleteBadge(ctx, field)
+			})
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		case "createBinaryKeyBadge":
+			out.Values[i] = ec.OperationContext.RootResolverMiddleware(innerCtx, func(ctx context.Context) (res graphql.Marshaler) {
+				return ec._Mutation_createBinaryKeyBadge(ctx, field)
+			})
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		case "createBinaryKeyBadges":
+			out.Values[i] = ec.OperationContext.RootResolverMiddleware(innerCtx, func(ctx context.Context) (res graphql.Marshaler) {
+				return ec._Mutation_createBinaryKeyBadges(ctx, field)
+			})
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		case "upsertBinaryKeyBadge":
+			out.Values[i] = ec.OperationContext.RootResolverMiddleware(innerCtx, func(ctx context.Context) (res graphql.Marshaler) {
+				return ec._Mutation_upsertBinaryKeyBadge(ctx, field)
+			})
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		case "deleteBinaryKeyBadge":
+			out.Values[i] = ec.OperationContext.RootResolverMiddleware(innerCtx, func(ctx context.Context) (res graphql.Marshaler) {
+				return ec._Mutation_deleteBinaryKeyBadge(ctx, field)
 			})
 			if out.Values[i] == graphql.Null {
 				out.Invalids++
@@ -45364,6 +46834,72 @@ func (ec *executionContext) _Query(ctx context.Context, sel ast.SelectionSet) gr
 					}
 				}()
 				res = ec._Query_badgeList(ctx, field)
+				if res == graphql.Null {
+					atomic.AddUint32(&fs.Invalids, 1)
+				}
+				return res
+			}
+
+			rrm := func(ctx context.Context) graphql.Marshaler {
+				return ec.OperationContext.RootResolverMiddleware(ctx,
+					func(ctx context.Context) graphql.Marshaler { return innerFunc(ctx, out) })
+			}
+
+			out.Concurrently(i, func(ctx context.Context) graphql.Marshaler { return rrm(innerCtx) })
+		case "binaryKeyBadge":
+			field := field
+
+			innerFunc := func(ctx context.Context, fs *graphql.FieldSet) (res graphql.Marshaler) {
+				defer func() {
+					if r := recover(); r != nil {
+						ec.Error(ctx, ec.Recover(ctx, r))
+					}
+				}()
+				res = ec._Query_binaryKeyBadge(ctx, field)
+				if res == graphql.RequiredNull {
+					atomic.AddUint32(&fs.Invalids, 1)
+				}
+				return res
+			}
+
+			rrm := func(ctx context.Context) graphql.Marshaler {
+				return ec.OperationContext.RootResolverMiddleware(ctx,
+					func(ctx context.Context) graphql.Marshaler { return innerFunc(ctx, out) })
+			}
+
+			out.Concurrently(i, func(ctx context.Context) graphql.Marshaler { return rrm(innerCtx) })
+		case "binaryKeyBadges":
+			field := field
+
+			innerFunc := func(ctx context.Context, fs *graphql.FieldSet) (res graphql.Marshaler) {
+				defer func() {
+					if r := recover(); r != nil {
+						ec.Error(ctx, ec.Recover(ctx, r))
+					}
+				}()
+				res = ec._Query_binaryKeyBadges(ctx, field)
+				if res == graphql.Null {
+					atomic.AddUint32(&fs.Invalids, 1)
+				}
+				return res
+			}
+
+			rrm := func(ctx context.Context) graphql.Marshaler {
+				return ec.OperationContext.RootResolverMiddleware(ctx,
+					func(ctx context.Context) graphql.Marshaler { return innerFunc(ctx, out) })
+			}
+
+			out.Concurrently(i, func(ctx context.Context) graphql.Marshaler { return rrm(innerCtx) })
+		case "binaryKeyBadgeList":
+			field := field
+
+			innerFunc := func(ctx context.Context, fs *graphql.FieldSet) (res graphql.Marshaler) {
+				defer func() {
+					if r := recover(); r != nil {
+						ec.Error(ctx, ec.Recover(ctx, r))
+					}
+				}()
+				res = ec._Query_binaryKeyBadgeList(ctx, field)
 				if res == graphql.Null {
 					atomic.AddUint32(&fs.Invalids, 1)
 				}
@@ -48893,6 +50429,92 @@ func (ec *executionContext) marshalNBinaryKey2ᚖgithubᚗcomᚋteandresmithᚋs
 	return ec._BinaryKey(ctx, sel, v)
 }
 
+func (ec *executionContext) marshalNBinaryKeyBadge2ᚕᚖgithubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋsqliteᚋmodelsᚐBinaryKeyBadgeᚄ(ctx context.Context, sel ast.SelectionSet, v []*models.BinaryKeyBadge) graphql.Marshaler {
+	ret := graphql.MarshalSliceConcurrently(ctx, len(v), 0, false, func(ctx context.Context, i int) graphql.Marshaler {
+		fc := graphql.GetFieldContext(ctx)
+		fc.Result = &v[i]
+		return ec.marshalNBinaryKeyBadge2ᚖgithubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋsqliteᚋmodelsᚐBinaryKeyBadge(ctx, sel, v[i])
+	})
+
+	for _, e := range ret {
+		if e == graphql.Null {
+			return graphql.Null
+		}
+	}
+
+	return ret
+}
+
+func (ec *executionContext) marshalNBinaryKeyBadge2ᚖgithubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋsqliteᚋmodelsᚐBinaryKeyBadge(ctx context.Context, sel ast.SelectionSet, v *models.BinaryKeyBadge) graphql.Marshaler {
+	if v == nil {
+		if !graphql.HasFieldError(ctx, graphql.GetFieldContext(ctx)) {
+			graphql.AddErrorf(ctx, "the requested element is null which the schema does not allow")
+		}
+		return graphql.Null
+	}
+	return ec._BinaryKeyBadge(ctx, sel, v)
+}
+
+func (ec *executionContext) marshalNBinaryKeyBadgeConnection2ᚖgithubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋsqliteᚋmodelsᚐConnection(ctx context.Context, sel ast.SelectionSet, v *models.Connection[models.BinaryKeyBadge]) graphql.Marshaler {
+	if v == nil {
+		if !graphql.HasFieldError(ctx, graphql.GetFieldContext(ctx)) {
+			graphql.AddErrorf(ctx, "the requested element is null which the schema does not allow")
+		}
+		return graphql.Null
+	}
+	return ec._BinaryKeyBadgeConnection(ctx, sel, v)
+}
+
+func (ec *executionContext) marshalNBinaryKeyBadgeEdge2githubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋsqliteᚋmodelsᚐEdge(ctx context.Context, sel ast.SelectionSet, v models.Edge[models.BinaryKeyBadge]) graphql.Marshaler {
+	return ec._BinaryKeyBadgeEdge(ctx, sel, &v)
+}
+
+func (ec *executionContext) marshalNBinaryKeyBadgeEdge2ᚕgithubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋsqliteᚋmodelsᚐEdgeᚄ(ctx context.Context, sel ast.SelectionSet, v []models.Edge[models.BinaryKeyBadge]) graphql.Marshaler {
+	ret := graphql.MarshalSliceConcurrently(ctx, len(v), 0, false, func(ctx context.Context, i int) graphql.Marshaler {
+		fc := graphql.GetFieldContext(ctx)
+		fc.Result = &v[i]
+		return ec.marshalNBinaryKeyBadgeEdge2githubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋsqliteᚋmodelsᚐEdge(ctx, sel, v[i])
+	})
+
+	for _, e := range ret {
+		if e == graphql.Null {
+			return graphql.Null
+		}
+	}
+
+	return ret
+}
+
+func (ec *executionContext) unmarshalNBinaryKeyBadgeFilter2ᚖgithubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋsqliteᚋmodelsᚋgraphᚋmodelᚐBinaryKeyBadgeFilter(ctx context.Context, v any) (*model.BinaryKeyBadgeFilter, error) {
+	res, err := ec.unmarshalInputBinaryKeyBadgeFilter(ctx, v)
+	return &res, graphql.ErrorOnPath(ctx, err)
+}
+
+func (ec *executionContext) marshalNBinaryKeyBadgeListResult2ᚖgithubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋsqliteᚋmodelsᚐPaginateResult(ctx context.Context, sel ast.SelectionSet, v *models.PaginateResult[models.BinaryKeyBadge]) graphql.Marshaler {
+	if v == nil {
+		if !graphql.HasFieldError(ctx, graphql.GetFieldContext(ctx)) {
+			graphql.AddErrorf(ctx, "the requested element is null which the schema does not allow")
+		}
+		return graphql.Null
+	}
+	return ec._BinaryKeyBadgeListResult(ctx, sel, v)
+}
+
+func (ec *executionContext) unmarshalNBinaryKeyBadgeSort2ᚖgithubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋsqliteᚋmodelsᚋgraphᚋmodelᚐBinaryKeyBadgeSort(ctx context.Context, v any) (*model.BinaryKeyBadgeSort, error) {
+	res, err := ec.unmarshalInputBinaryKeyBadgeSort(ctx, v)
+	return &res, graphql.ErrorOnPath(ctx, err)
+}
+
+func (ec *executionContext) unmarshalNBinaryKeyBadgeSortField2githubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋsqliteᚋmodelsᚋgraphᚋmodelᚐBinaryKeyBadgeSortField(ctx context.Context, v any) (model.BinaryKeyBadgeSortField, error) {
+	var res model.BinaryKeyBadgeSortField
+	err := res.UnmarshalGQL(v)
+	return res, graphql.ErrorOnPath(ctx, err)
+}
+
+func (ec *executionContext) marshalNBinaryKeyBadgeSortField2githubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋsqliteᚋmodelsᚋgraphᚋmodelᚐBinaryKeyBadgeSortField(ctx context.Context, sel ast.SelectionSet, v model.BinaryKeyBadgeSortField) graphql.Marshaler {
+	return v
+}
+
 func (ec *executionContext) marshalNBinaryKeyConnection2ᚖgithubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋsqliteᚋmodelsᚐConnection(ctx context.Context, sel ast.SelectionSet, v *models.Connection[models.BinaryKey]) graphql.Marshaler {
 	if v == nil {
 		if !graphql.HasFieldError(ctx, graphql.GetFieldContext(ctx)) {
@@ -49347,6 +50969,30 @@ func (ec *executionContext) unmarshalNCreateBadgeInput2ᚕᚖgithubᚗcomᚋtean
 
 func (ec *executionContext) unmarshalNCreateBadgeInput2ᚖgithubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋsqliteᚋmodelsᚋgraphᚋmodelᚐCreateBadgeInput(ctx context.Context, v any) (*model.CreateBadgeInput, error) {
 	res, err := ec.unmarshalInputCreateBadgeInput(ctx, v)
+	return &res, graphql.ErrorOnPath(ctx, err)
+}
+
+func (ec *executionContext) unmarshalNCreateBinaryKeyBadgeInput2githubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋsqliteᚋmodelsᚋgraphᚋmodelᚐCreateBinaryKeyBadgeInput(ctx context.Context, v any) (model.CreateBinaryKeyBadgeInput, error) {
+	res, err := ec.unmarshalInputCreateBinaryKeyBadgeInput(ctx, v)
+	return res, graphql.ErrorOnPath(ctx, err)
+}
+
+func (ec *executionContext) unmarshalNCreateBinaryKeyBadgeInput2ᚕᚖgithubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋsqliteᚋmodelsᚋgraphᚋmodelᚐCreateBinaryKeyBadgeInputᚄ(ctx context.Context, v any) ([]*model.CreateBinaryKeyBadgeInput, error) {
+	vSlice := graphql.CoerceList(v)
+	var err error
+	res := make([]*model.CreateBinaryKeyBadgeInput, len(vSlice))
+	for i := range vSlice {
+		ctx := graphql.WithPathContext(ctx, graphql.NewPathWithIndex(i))
+		res[i], err = ec.unmarshalNCreateBinaryKeyBadgeInput2ᚖgithubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋsqliteᚋmodelsᚋgraphᚋmodelᚐCreateBinaryKeyBadgeInput(ctx, vSlice[i])
+		if err != nil {
+			return nil, err
+		}
+	}
+	return res, nil
+}
+
+func (ec *executionContext) unmarshalNCreateBinaryKeyBadgeInput2ᚖgithubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋsqliteᚋmodelsᚋgraphᚋmodelᚐCreateBinaryKeyBadgeInput(ctx context.Context, v any) (*model.CreateBinaryKeyBadgeInput, error) {
+	res, err := ec.unmarshalInputCreateBinaryKeyBadgeInput(ctx, v)
 	return &res, graphql.ErrorOnPath(ctx, err)
 }
 
@@ -52077,6 +53723,55 @@ func (ec *executionContext) marshalOBinaryKey2ᚖgithubᚗcomᚋteandresmithᚋs
 		return graphql.Null
 	}
 	return ec._BinaryKey(ctx, sel, v)
+}
+
+func (ec *executionContext) marshalOBinaryKeyBadge2ᚖgithubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋsqliteᚋmodelsᚐBinaryKeyBadge(ctx context.Context, sel ast.SelectionSet, v *models.BinaryKeyBadge) graphql.Marshaler {
+	if v == nil {
+		return graphql.Null
+	}
+	return ec._BinaryKeyBadge(ctx, sel, v)
+}
+
+func (ec *executionContext) unmarshalOBinaryKeyBadgeFilter2ᚕᚖgithubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋsqliteᚋmodelsᚋgraphᚋmodelᚐBinaryKeyBadgeFilterᚄ(ctx context.Context, v any) ([]*model.BinaryKeyBadgeFilter, error) {
+	if v == nil {
+		return nil, nil
+	}
+	vSlice := graphql.CoerceList(v)
+	var err error
+	res := make([]*model.BinaryKeyBadgeFilter, len(vSlice))
+	for i := range vSlice {
+		ctx := graphql.WithPathContext(ctx, graphql.NewPathWithIndex(i))
+		res[i], err = ec.unmarshalNBinaryKeyBadgeFilter2ᚖgithubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋsqliteᚋmodelsᚋgraphᚋmodelᚐBinaryKeyBadgeFilter(ctx, vSlice[i])
+		if err != nil {
+			return nil, err
+		}
+	}
+	return res, nil
+}
+
+func (ec *executionContext) unmarshalOBinaryKeyBadgeFilter2ᚖgithubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋsqliteᚋmodelsᚋgraphᚋmodelᚐBinaryKeyBadgeFilter(ctx context.Context, v any) (*model.BinaryKeyBadgeFilter, error) {
+	if v == nil {
+		return nil, nil
+	}
+	res, err := ec.unmarshalInputBinaryKeyBadgeFilter(ctx, v)
+	return &res, graphql.ErrorOnPath(ctx, err)
+}
+
+func (ec *executionContext) unmarshalOBinaryKeyBadgeSort2ᚕᚖgithubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋsqliteᚋmodelsᚋgraphᚋmodelᚐBinaryKeyBadgeSortᚄ(ctx context.Context, v any) ([]*model.BinaryKeyBadgeSort, error) {
+	if v == nil {
+		return nil, nil
+	}
+	vSlice := graphql.CoerceList(v)
+	var err error
+	res := make([]*model.BinaryKeyBadgeSort, len(vSlice))
+	for i := range vSlice {
+		ctx := graphql.WithPathContext(ctx, graphql.NewPathWithIndex(i))
+		res[i], err = ec.unmarshalNBinaryKeyBadgeSort2ᚖgithubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋsqliteᚋmodelsᚋgraphᚋmodelᚐBinaryKeyBadgeSort(ctx, vSlice[i])
+		if err != nil {
+			return nil, err
+		}
+	}
+	return res, nil
 }
 
 func (ec *executionContext) marshalOBinaryKeyEvent2ᚖgithubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋsqliteᚋmodelsᚐBinaryKeyEvent(ctx context.Context, sel ast.SelectionSet, v *models.BinaryKeyEvent) graphql.Marshaler {

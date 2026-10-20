@@ -9,7 +9,6 @@ import (
 	"fmt"
 	"iter"
 	"slices"
-	"strconv"
 	"time"
 
 	"github.com/segmentio/ksuid"
@@ -4920,36 +4919,32 @@ func (c *assetClient) loadRelationships(ctx context.Context, conn database.Queri
 				}
 			}
 
-			// Build mapping and collect all target IDs
+			// Build mapping and collect all target keys. Each junction column
+			// scans into its own Go type, so both sides of the maps stringify
+			// keys the same way.
 			parentToTargetIDs := make(map[string][]string)
-			var allTargetIDs []string
+			var targetPKs []int64
 			for junctionRows.Next() {
-				vals := make([]string, len(junctionCols))
+				var localKey int64
+				var refKey int64
 				ptrs := make([]any, len(junctionCols))
-				for i := range vals {
-					ptrs[i] = &vals[i]
-				}
+				ptrs[localIdx], ptrs[refIdx] = &localKey, &refKey
 				if err := junctionRows.Scan(ptrs...); err != nil {
 					return fmt.Errorf("scan asset documents junction: %w", err)
 				}
-				parentID, targetID := vals[localIdx], vals[refIdx]
+				parentID, targetID := fmt.Sprint(localKey), fmt.Sprint(refKey)
 				parentToTargetIDs[parentID] = append(parentToTargetIDs[parentID], targetID)
-				allTargetIDs = append(allTargetIDs, targetID)
+				targetPKs = append(targetPKs, int64(refKey))
 			}
 			if err := junctionRows.Err(); err != nil {
 				return fmt.Errorf("iterate asset documents junction: %w", err)
 			}
 
-			if len(allTargetIDs) == 0 {
+			if len(parentToTargetIDs) == 0 {
 				return nil
 			}
 
 			// Step 2: Fetch the actual entities
-			targetPKs := make([]int64, len(allTargetIDs))
-			for ii, s := range allTargetIDs {
-				v, _ := strconv.ParseInt(s, 10, 64)
-				targetPKs[ii] = int64(v)
-			}
 			filter := &DocumentFilter{
 				ID: &comparator.Number[int64]{In: targetPKs},
 			}
@@ -5041,36 +5036,32 @@ func (c *assetClient) loadRelationships(ctx context.Context, conn database.Queri
 				}
 			}
 
-			// Build mapping and collect all target IDs
+			// Build mapping and collect all target keys. Each junction column
+			// scans into its own Go type, so both sides of the maps stringify
+			// keys the same way.
 			parentToTargetIDs := make(map[string][]string)
-			var allTargetIDs []string
+			var targetPKs []int64
 			for junctionRows.Next() {
-				vals := make([]string, len(junctionCols))
+				var localKey int64
+				var refKey int64
 				ptrs := make([]any, len(junctionCols))
-				for i := range vals {
-					ptrs[i] = &vals[i]
-				}
+				ptrs[localIdx], ptrs[refIdx] = &localKey, &refKey
 				if err := junctionRows.Scan(ptrs...); err != nil {
 					return fmt.Errorf("scan asset documents junction: %w", err)
 				}
-				parentID, targetID := vals[localIdx], vals[refIdx]
+				parentID, targetID := fmt.Sprint(localKey), fmt.Sprint(refKey)
 				parentToTargetIDs[parentID] = append(parentToTargetIDs[parentID], targetID)
-				allTargetIDs = append(allTargetIDs, targetID)
+				targetPKs = append(targetPKs, int64(refKey))
 			}
 			if err := junctionRows.Err(); err != nil {
 				return fmt.Errorf("iterate asset documents junction: %w", err)
 			}
 
-			if len(allTargetIDs) == 0 {
+			if len(parentToTargetIDs) == 0 {
 				return nil
 			}
 
 			// Step 2: Fetch the actual entities
-			targetPKs := make([]int64, len(allTargetIDs))
-			for ii, s := range allTargetIDs {
-				v, _ := strconv.ParseInt(s, 10, 64)
-				targetPKs[ii] = int64(v)
-			}
 			filter := &DocumentFilter{
 				ID: &comparator.Number[int64]{In: targetPKs},
 			}
@@ -8461,36 +8452,32 @@ func (c *categoryClient) loadRelationships(ctx context.Context, conn database.Qu
 				}
 			}
 
-			// Build mapping and collect all target IDs
+			// Build mapping and collect all target keys. Each junction column
+			// scans into its own Go type, so both sides of the maps stringify
+			// keys the same way.
 			parentToTargetIDs := make(map[string][]string)
-			var allTargetIDs []string
+			var targetPKs []int64
 			for junctionRows.Next() {
-				vals := make([]string, len(junctionCols))
+				var localKey int32
+				var refKey int64
 				ptrs := make([]any, len(junctionCols))
-				for i := range vals {
-					ptrs[i] = &vals[i]
-				}
+				ptrs[localIdx], ptrs[refIdx] = &localKey, &refKey
 				if err := junctionRows.Scan(ptrs...); err != nil {
 					return fmt.Errorf("scan category users junction: %w", err)
 				}
-				parentID, targetID := vals[localIdx], vals[refIdx]
+				parentID, targetID := fmt.Sprint(localKey), fmt.Sprint(refKey)
 				parentToTargetIDs[parentID] = append(parentToTargetIDs[parentID], targetID)
-				allTargetIDs = append(allTargetIDs, targetID)
+				targetPKs = append(targetPKs, int64(refKey))
 			}
 			if err := junctionRows.Err(); err != nil {
 				return fmt.Errorf("iterate category users junction: %w", err)
 			}
 
-			if len(allTargetIDs) == 0 {
+			if len(parentToTargetIDs) == 0 {
 				return nil
 			}
 
 			// Step 2: Fetch the actual entities
-			targetPKs := make([]int64, len(allTargetIDs))
-			for ii, s := range allTargetIDs {
-				v, _ := strconv.ParseInt(s, 10, 64)
-				targetPKs[ii] = int64(v)
-			}
 			filter := &UserFilter{
 				ID: &comparator.Number[int64]{In: targetPKs},
 			}
@@ -13101,36 +13088,32 @@ func (c *documentClient) loadRelationships(ctx context.Context, conn database.Qu
 				}
 			}
 
-			// Build mapping and collect all target IDs
+			// Build mapping and collect all target keys. Each junction column
+			// scans into its own Go type, so both sides of the maps stringify
+			// keys the same way.
 			parentToTargetIDs := make(map[string][]string)
-			var allTargetIDs []string
+			var targetPKs []int64
 			for junctionRows.Next() {
-				vals := make([]string, len(junctionCols))
+				var localKey int64
+				var refKey int64
 				ptrs := make([]any, len(junctionCols))
-				for i := range vals {
-					ptrs[i] = &vals[i]
-				}
+				ptrs[localIdx], ptrs[refIdx] = &localKey, &refKey
 				if err := junctionRows.Scan(ptrs...); err != nil {
 					return fmt.Errorf("scan document assets junction: %w", err)
 				}
-				parentID, targetID := vals[localIdx], vals[refIdx]
+				parentID, targetID := fmt.Sprint(localKey), fmt.Sprint(refKey)
 				parentToTargetIDs[parentID] = append(parentToTargetIDs[parentID], targetID)
-				allTargetIDs = append(allTargetIDs, targetID)
+				targetPKs = append(targetPKs, int64(refKey))
 			}
 			if err := junctionRows.Err(); err != nil {
 				return fmt.Errorf("iterate document assets junction: %w", err)
 			}
 
-			if len(allTargetIDs) == 0 {
+			if len(parentToTargetIDs) == 0 {
 				return nil
 			}
 
 			// Step 2: Fetch the actual entities
-			targetPKs := make([]int64, len(allTargetIDs))
-			for ii, s := range allTargetIDs {
-				v, _ := strconv.ParseInt(s, 10, 64)
-				targetPKs[ii] = int64(v)
-			}
 			filter := &AssetFilter{
 				ID: &comparator.Number[int64]{In: targetPKs},
 			}
@@ -38030,36 +38013,32 @@ func (c *userClient) loadRelationships(ctx context.Context, conn database.Querie
 				}
 			}
 
-			// Build mapping and collect all target IDs
+			// Build mapping and collect all target keys. Each junction column
+			// scans into its own Go type, so both sides of the maps stringify
+			// keys the same way.
 			parentToTargetIDs := make(map[string][]string)
-			var allTargetIDs []string
+			var targetPKs []int32
 			for junctionRows.Next() {
-				vals := make([]string, len(junctionCols))
+				var localKey int64
+				var refKey int32
 				ptrs := make([]any, len(junctionCols))
-				for i := range vals {
-					ptrs[i] = &vals[i]
-				}
+				ptrs[localIdx], ptrs[refIdx] = &localKey, &refKey
 				if err := junctionRows.Scan(ptrs...); err != nil {
 					return fmt.Errorf("scan user categories junction: %w", err)
 				}
-				parentID, targetID := vals[localIdx], vals[refIdx]
+				parentID, targetID := fmt.Sprint(localKey), fmt.Sprint(refKey)
 				parentToTargetIDs[parentID] = append(parentToTargetIDs[parentID], targetID)
-				allTargetIDs = append(allTargetIDs, targetID)
+				targetPKs = append(targetPKs, int32(refKey))
 			}
 			if err := junctionRows.Err(); err != nil {
 				return fmt.Errorf("iterate user categories junction: %w", err)
 			}
 
-			if len(allTargetIDs) == 0 {
+			if len(parentToTargetIDs) == 0 {
 				return nil
 			}
 
 			// Step 2: Fetch the actual entities
-			targetPKs := make([]int32, len(allTargetIDs))
-			for ii, s := range allTargetIDs {
-				v, _ := strconv.ParseInt(s, 10, 64)
-				targetPKs[ii] = int32(v)
-			}
 			filter := &CategoryFilter{
 				ID: &comparator.Number[int32]{In: targetPKs},
 			}

@@ -23,9 +23,17 @@
 
 <!-- fixes:open:begin -->
 
+_No open fixes._
+
+<!-- fixes:open:end -->
+
+## Resolved
+
+<!-- fixes:resolved:begin -->
+
 ### FIX-357
 
-- **Status:** Open
+- **Status:** Resolved
 - **Severity:** tracked
 - **Origin:** phase 6, cmd/sqlgen/gen/templates/table
 - **Surfaced by:** FIX-356 implementation (2026-10-20), user approved filing
@@ -90,13 +98,7 @@ match.
 - FIX-356 (the literal `ID:` filter field in the same loader; its resolution notes record this as a separate root cause).
 - `cmd/sqlgen/gen/funcmap.go:662-704` (`pkFilterInExprStr`, `pkIsStringType`); `cmd/sqlgen/gotype/gotype.go:1075-1091` (`DeriveFKMethod`).
 
-**Resolution notes.** _Filled in by /fix resolve._
-
-<!-- fixes:open:end -->
-
-## Resolved
-
-<!-- fixes:resolved:begin -->
+**Resolution notes.** Implemented the ruled option: every M2M loader scans its junction into the keys' own Go types. Started from the vetted prototype (fresh at `02303463`, source hunks applied clean; generated files regenerated rather than applied). `RelationshipContext` gains `JunctionReferenceGoType`, wired in `wireRelFKMetadata` from the junction's reference column (fallback `FKGoType`); a `fkLoadValue` funcmap helper renders the unwrapped value `fkLoadKey` stringifies; `get.go.tmpl` scans into `localKey` / `refKey`, skips rows that fail `fkLoadGuard`, keys both maps with `fkLoadKey`, and builds `targetPKs` from the typed values, so the `strconv.ParseInt` round trip is gone. The only change from the prototype is a shorter template comment. Regression coverage: `TestGetTemplate_m2mJunctionScansTypedKeys` (binary, network, integer, nullable junction column), `TestRelationshipTargets_M2MJunctionReferenceGoType`, and example load tests over real drivers: postgres `tests/m2m_opaque_key_test.go` (`hosts` INET ↔ `fingerprints` BYTEA through `host_fingerprints`) and sqlite `tests/m2m_binary_key_test.go` (`binary_key_badges`: BLOB parent ↔ text target). Fail-first re-run on the final code: template reverted → all four template cases fail; wiring line removed → `users.Tags FKGoType = "string", JunctionReferenceGoType = "string"; want "string", "*string"`; `fkLoadValue` returning the raw variable → output missing `"targetPKs = append(targetPKs, int64(refKey.Int64))"`. Golden churn matches the vet: graphql, introspect_sqlite, mysql, postgres_stdlib and tenancy ~2 each; postgres +7 ~21 and sqlite +9 ~53; unit golden `get_products_relationships_gen.go`. Gates: `make check`, `make update-golden`, `make update-golden-e2e`, `TestE2EGoldenFiles` and `make check-examples`, all green. Auto-review follow-ups applied inline: (1) a regression this change introduced: with the junction outside the generated set (`exclude_tables`, or a junction with no PK), `FKColumnGoType` fell back to `FKGoType`, which for M2M is the *target* key type, so the loader declared `var localKey` with the wrong type and a uuid parent over a bigint target could not scan. The fallback now uses the parent's PK type for an M2M local column; `TestRelationshipTargets_QualifiedJunctionReadsOnlyItsSchema` asserts both junction key types and failed before the fix with `users.AuditTags FKColumnGoType = "string", JunctionReferenceGoType = "string"; want "uuid.UUID", "string"`. A pgx probe (uuid `users` ↔ bigint `tags`, junction excluded) renders `var localKey uuid.UUID` / `var refKey int64` and loads `u1 [t7 t8]`. The fallbacks moved into `applyRelFKFallbacks`, since the extra branch put `wireRelFKMetadata` over the cyclop limit. (2) Doc fixes: `funcFKLoadValue` moved below `funcFKLoadKey` so each keeps its own doc comment; the `wireRelFKMetadata` comment names `JunctionReferenceGoType`; the doc comments of `TestGetTemplate_m2mJunctionScansTypedKeys` and both example tests state the behavior instead of the old failure. Backlog: one `[reading]` line (a junction column overridden to another comparator family than the target key). Gates re-run after the follow-ups: `make check`, `make update-golden-e2e` (same file set) and `make check-examples`, all green.
 
 ### FIX-356
 

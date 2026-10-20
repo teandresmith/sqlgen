@@ -8,7 +8,6 @@ import (
 	"fmt"
 	"iter"
 	"slices"
-	"strconv"
 
 	"github.com/teandresmith/sqlgen/comparator"
 	"github.com/teandresmith/sqlgen/database"
@@ -22,6 +21,8 @@ type Badge struct {
 	Code  string `db:"code" json:"code"`
 	Label string `db:"label" json:"label"`
 
+	// BinaryKeys - many-to-many relationship with the binary_keys table.
+	BinaryKeys []*BinaryKey `db:"-" json:"binary_keys"`
 	// Owners - many-to-many relationship with the owners table.
 	Owners []*Owner `db:"-" json:"owners"`
 }
@@ -113,21 +114,24 @@ type BadgeClient interface {
 
 // badgeClient implements the BadgeClient interface.
 type badgeClient struct {
-	querier           database.Querier
-	dialect           sql.Dialect
-	table             sql.Table
-	batchSize         int
-	queryLimit        int
-	pageSize          int
-	cursorKeys        []string
-	strictUpdates     bool
-	mutationHooks     []hook.MutationHook
-	queryHooks        []hook.QueryHook
-	panicHandler      hook.PanicHandler
-	callbackMode      database.CallbackMode
-	ownersDefaultSort []sql.Sort
-	ownerClient       *ownerClient
-	ownerBadgeClient  *ownerBadgeClient
+	querier               database.Querier
+	dialect               sql.Dialect
+	table                 sql.Table
+	batchSize             int
+	queryLimit            int
+	pageSize              int
+	cursorKeys            []string
+	strictUpdates         bool
+	mutationHooks         []hook.MutationHook
+	queryHooks            []hook.QueryHook
+	panicHandler          hook.PanicHandler
+	callbackMode          database.CallbackMode
+	binaryKeysDefaultSort []sql.Sort
+	ownersDefaultSort     []sql.Sort
+	binaryKeyClient       *binaryKeyClient
+	ownerClient           *ownerClient
+	binaryKeyBadgeClient  *binaryKeyBadgeClient
+	ownerBadgeClient      *ownerBadgeClient
 }
 
 // newBadgeClient creates a new badgeClient.
@@ -365,6 +369,9 @@ func (c *badgeClient) GetMany(ctx context.Context, input *GetBadgesInput, opts .
 // loadRelationships maps every child back through b.Code, which
 // an unselected column would leave at its zero value.
 func (fo *BadgeFieldOptions) loadsRelationships() bool {
+	if fo.BinaryKeys != nil {
+		return true
+	}
 	if fo.Owners != nil {
 		return true
 	}
@@ -383,6 +390,119 @@ func (fo *BadgeFieldOptions) loadsRelationships() bool {
 // concurrency differs. The loader needs no transaction-aware bound of its own.
 func (c *badgeClient) loadRelationships(ctx context.Context, conn database.Querier, badges []*Badge, fo *BadgeFieldOptions) error {
 	g, ctx := errgroup.WithContext(ctx)
+
+	if fo.BinaryKeys != nil {
+		g.Go(func() error {
+			// Collect parent IDs as strings
+			badgeIDs := make([]string, len(badges))
+			for idx, b := range badges {
+				badgeIDs[idx] = b.Code
+			}
+
+			// Step 1: Query junction table to get mapping
+			junctionQuery, junctionArgs := sql.BuildSelect(c.dialect, sql.Table{Schema: "", Name: "binary_key_badges"}, sql.SelectOptions{
+				Columns:    []string{"badge_code", "binary_key_id"},
+				Conditions: []sql.Condition{sql.Where(c.dialect.QuoteIdentifier("badge_code")).In(toAnySlice(badgeIDs)...)},
+			})
+
+			junctionRows, err := conn.Query(ctx, junctionQuery, junctionArgs...)
+			if err != nil {
+				return fmt.Errorf("load badge binary_keys junction: %w", err)
+			}
+			defer junctionRows.Close()
+
+			// Discover column positions from result (BuildSelect sorts columns alphabetically)
+			junctionCols, err := junctionRows.Columns()
+			if err != nil {
+				return fmt.Errorf("load badge binary_keys junction columns: %w", err)
+			}
+			localIdx, refIdx := 0, 1
+			for i, col := range junctionCols {
+				switch col {
+				case "badge_code":
+					localIdx = i
+				case "binary_key_id":
+					refIdx = i
+				}
+			}
+
+			// Build mapping and collect all target keys. Each junction column
+			// scans into its own Go type, so both sides of the maps stringify
+			// keys the same way.
+			parentToTargetIDs := make(map[string][]string)
+			var targetPKs [][]byte
+			for junctionRows.Next() {
+				var localKey string
+				var refKey []byte
+				ptrs := make([]any, len(junctionCols))
+				ptrs[localIdx], ptrs[refIdx] = &localKey, &refKey
+				if err := junctionRows.Scan(ptrs...); err != nil {
+					return fmt.Errorf("scan badge binary_keys junction: %w", err)
+				}
+				parentID, targetID := localKey, fmt.Sprint(refKey)
+				parentToTargetIDs[parentID] = append(parentToTargetIDs[parentID], targetID)
+				targetPKs = append(targetPKs, []byte(refKey))
+			}
+			if err := junctionRows.Err(); err != nil {
+				return fmt.Errorf("iterate badge binary_keys junction: %w", err)
+			}
+
+			if len(parentToTargetIDs) == 0 {
+				return nil
+			}
+
+			// Step 2: Fetch the actual entities
+			filter := &BinaryKeyFilter{
+				ID: &comparator.Opaque[[]byte]{In: targetPKs},
+			}
+			if fo.BinaryKeys.Filter != nil {
+				filter.And = append(filter.And, fo.BinaryKeys.Filter)
+			}
+
+			sorts := fo.BinaryKeys.Sorts
+			if len(sorts) == 0 {
+				sorts = c.binaryKeysDefaultSort
+			}
+
+			// Self-referential relationships share the parent's entity type, so
+			// the loaded targets must use a name distinct from the parent slice
+			// (badges) to avoid shadowing it and mis-mapping the results
+			// onto the targets instead of the parents.
+			relatedBinaryKeys, err := c.binaryKeyClient.GetMany(ctx, &GetBinaryKeysInput{
+				Filter: filter,
+				Sorts:  sorts,
+				Limit:  new(0),
+				// Step 3 keys every loaded target on its own PK, so the fetch
+				// declares that column rather than mutating the caller's
+				// FieldOptions — a narrowed selection that omits it would
+				// otherwise map every target onto the zero value.
+				requiredColumns: []string{"id"},
+			}, func(co *CallOptions[BinaryKeyFieldOptions]) {
+				co.FieldOptions = fo.BinaryKeys.FieldOptions
+			})
+			if err != nil {
+				return fmt.Errorf("load badge binary_keys: %w", err)
+			}
+
+			// Step 3: Map back to parent entities via junction mapping. The
+			// targets are walked in the order the fetch returned them, so the
+			// relationship's Sorts — the caller's, or the static `sort:` —
+			// order each parent's slice. Walking the
+			// junction rows instead would keep junction order and drop the sort.
+			parentsByTarget := make(map[string][]int, len(relatedBinaryKeys))
+			for i := range badges {
+				for _, tID := range parentToTargetIDs[badges[i].Code] {
+					parentsByTarget[tID] = append(parentsByTarget[tID], i)
+				}
+			}
+			for _, t := range relatedBinaryKeys {
+				for _, i := range parentsByTarget[fmt.Sprint(t.ID)] {
+					badges[i].BinaryKeys = append(badges[i].BinaryKeys, t)
+				}
+			}
+			return nil
+		})
+	}
 
 	if fo.Owners != nil {
 		g.Go(func() error {
@@ -419,36 +539,32 @@ func (c *badgeClient) loadRelationships(ctx context.Context, conn database.Queri
 				}
 			}
 
-			// Build mapping and collect all target IDs
+			// Build mapping and collect all target keys. Each junction column
+			// scans into its own Go type, so both sides of the maps stringify
+			// keys the same way.
 			parentToTargetIDs := make(map[string][]string)
-			var allTargetIDs []string
+			var targetPKs []int64
 			for junctionRows.Next() {
-				vals := make([]string, len(junctionCols))
+				var localKey string
+				var refKey int64
 				ptrs := make([]any, len(junctionCols))
-				for i := range vals {
-					ptrs[i] = &vals[i]
-				}
+				ptrs[localIdx], ptrs[refIdx] = &localKey, &refKey
 				if err := junctionRows.Scan(ptrs...); err != nil {
 					return fmt.Errorf("scan badge owners junction: %w", err)
 				}
-				parentID, targetID := vals[localIdx], vals[refIdx]
+				parentID, targetID := localKey, fmt.Sprint(refKey)
 				parentToTargetIDs[parentID] = append(parentToTargetIDs[parentID], targetID)
-				allTargetIDs = append(allTargetIDs, targetID)
+				targetPKs = append(targetPKs, int64(refKey))
 			}
 			if err := junctionRows.Err(); err != nil {
 				return fmt.Errorf("iterate badge owners junction: %w", err)
 			}
 
-			if len(allTargetIDs) == 0 {
+			if len(parentToTargetIDs) == 0 {
 				return nil
 			}
 
 			// Step 2: Fetch the actual entities
-			targetPKs := make([]int64, len(allTargetIDs))
-			for ii, s := range allTargetIDs {
-				v, _ := strconv.ParseInt(s, 10, 64)
-				targetPKs[ii] = int64(v)
-			}
 			filter := &OwnerFilter{
 				OwnerKey: &comparator.Number[int64]{In: targetPKs},
 			}
@@ -1802,11 +1918,12 @@ func (c *badgeClient) Stream(ctx context.Context, input *StreamBadgesInput, opts
 
 // BadgeFilter provides type-safe filtering for the badges table.
 type BadgeFilter struct {
-	Code   *comparator.ID     `json:"code"`
-	Label  *comparator.String `json:"label"`
-	Owners *OwnerFilter       `json:"owners"`
-	And    []*BadgeFilter     `json:"and"`
-	Or     []*BadgeFilter     `json:"or"`
+	Code       *comparator.ID     `json:"code"`
+	Label      *comparator.String `json:"label"`
+	BinaryKeys *BinaryKeyFilter   `json:"binary_keys"`
+	Owners     *OwnerFilter       `json:"owners"`
+	And        []*BadgeFilter     `json:"and"`
+	Or         []*BadgeFilter     `json:"or"`
 }
 
 // ToConditions converts the filter to a slice of SQL conditions.
@@ -1830,6 +1947,10 @@ func (f *BadgeFilter) ToConditions(dialect sql.Dialect, opts ...FilterOption) []
 
 	if f.Label != nil {
 		conds = append(conds, f.Label.Parse(dialect.QuoteIdentifier("label"), dialect)...)
+	}
+
+	if f.BinaryKeys != nil {
+		conds = append(conds, badgeBinaryKeysFilterExists(f.BinaryKeys, dialect, opts))
 	}
 
 	if f.Owners != nil {
@@ -1865,6 +1986,45 @@ func (f *BadgeFilter) ToConditions(dialect sql.Dialect, opts ...FilterOption) []
 	}
 
 	return conds
+}
+
+// badgeBinaryKeysFilterExists compiles a BinaryKeyFilter set on the
+// BinaryKeys relationship into a correlated EXISTS over binary_keys, joined through the binary_key_badges junction.
+//
+// The parent-side reference carries no qualifier: sql.CorrelationToken is
+// resolved by the builder against whichever FROM clause encloses the predicate,
+// so one emitted value is correct on both the plain read path and the aliased
+// O2O-join path.
+//
+// The subquery alias is keyed on nesting depth. A relationship filter nested
+// inside itself — legal for a self-referential relationship — would
+// otherwise reuse the alias and let the inner subquery shadow the reference its
+// own correlation resolves against.
+//
+// MySQL rejects an EXISTS naming the table an UPDATE or DELETE is mutating
+// (error 1093). A relationship filter whose target is the mutated table is
+// therefore a read-path predicate on MySQL, not one to pass to UpdateWhere /
+// SoftDeleteWhere / HardDeleteWhere / Increment.
+func badgeBinaryKeysFilterExists(f *BinaryKeyFilter, dialect sql.Dialect, opts []FilterOption) sql.Condition {
+	scope := resolveFilterScope(opts)
+	tgt := filterSubqueryAlias("tgt", scope.depth)
+	jn := filterSubqueryAlias("jn", scope.depth)
+	subSQL := "SELECT 1 FROM " + dialect.FormatTable(sql.Table{Schema: "", Name: "binary_key_badges"}) + " " + jn +
+		" JOIN " + dialect.FormatTable(sql.Table{Schema: "", Name: "binary_keys"}) + " " + tgt +
+		" ON " + tgt + "." + dialect.QuoteIdentifier("id") + " = " + jn + "." + dialect.QuoteIdentifier("binary_key_id") +
+		" WHERE " + jn + "." + dialect.QuoteIdentifier("badge_code") + " = " + sql.CorrelationToken
+	var subArgs []any
+
+	// The target's own ToConditions supplies the inner WHERE, so nesting and
+	// and/or compose recursively. Every reference is qualified with the target
+	// alias: unqualified names inside a correlated subquery bind to the
+	// enclosing statement whenever the target lacks the column.
+	if where, whereArgs := sql.SubqueryWhere(dialect, tgt, f.ToConditions(dialect, nestFilterScope(opts, scope.depth+1)...)); where != "" {
+		subSQL += " AND " + where
+		subArgs = append(subArgs, whereArgs...)
+	}
+
+	return sql.Exists("code", sql.Subquery{SQL: subSQL, Args: subArgs})
 }
 
 // badgeOwnersFilterExists compiles a OwnerFilter set on the
@@ -1908,9 +2068,10 @@ func badgeOwnersFilterExists(f *OwnerFilter, dialect sql.Dialect, opts []FilterO
 
 // BadgeFieldOptions controls column selection and relationship loading for badges queries.
 type BadgeFieldOptions struct {
-	Code   bool                      `json:"code"`
-	Label  bool                      `json:"label"`
-	Owners *OwnerRelationshipOptions `json:"owners"`
+	Code       bool                          `json:"code"`
+	Label      bool                          `json:"label"`
+	BinaryKeys *BinaryKeyRelationshipOptions `json:"binary_keys"`
+	Owners     *OwnerRelationshipOptions     `json:"owners"`
 }
 
 // Columns returns the SQL column names for all selected columns, sorted alphabetically
@@ -1943,10 +2104,20 @@ func (fo *BadgeFieldOptions) HasSelectedColumns() bool {
 	if fo.Label {
 		return true
 	}
+	if fo.BinaryKeys != nil {
+		return true
+	}
 	if fo.Owners != nil {
 		return true
 	}
 	return false
+}
+
+// BinaryKeyRelationshipOptions controls loading options for BinaryKey relationships.
+type BinaryKeyRelationshipOptions struct {
+	FieldOptions *BinaryKeyFieldOptions `json:"field_options"`
+	Filter       *BinaryKeyFilter       `json:"filter"`
+	Sorts        []sql.Sort             `json:"sorts"`
 }
 
 // OwnerRelationshipOptions controls loading options for Owner relationships.

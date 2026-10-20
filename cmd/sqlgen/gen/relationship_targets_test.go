@@ -707,4 +707,48 @@ func TestRelationshipTargets_QualifiedJunctionReadsOnlyItsSchema(t *testing.T) {
 	if r.JunctionSchema != "public" || r.FKNullable {
 		t.Errorf("users.AuditTags JunctionSchema = %q, FKNullable = %v; want public, false (audit.user_tags.user_id is the nullable one)", r.JunctionSchema, r.FKNullable)
 	}
+	// With the junction excluded, its key types fall back to the keys they
+	// reference: the parent's PK for the local column, the target's for the
+	// reference column. The loader scans the junction into them.
+	if pk := contexts[i].PKColumns[0].GoType; r.FKColumnGoType != pk || r.JunctionReferenceGoType != "string" {
+		t.Errorf("users.AuditTags FKColumnGoType = %q, JunctionReferenceGoType = %q; want %q, %q",
+			r.FKColumnGoType, r.JunctionReferenceGoType, pk, "string")
+	}
+}
+
+// TestRelationshipTargets_M2MJunctionReferenceGoType pins the junction
+// reference column's own Go type on an M2M edge. The loader scans the junction
+// into it, so a nullable reference column must resolve to its Null-wrapped
+// type, not to the target PK's bare type.
+func TestRelationshipTargets_M2MJunctionReferenceGoType(t *testing.T) {
+	schema := &parser.Schema{Tables: []parser.Table{
+		{Name: "users", Schema: "public", Columns: []parser.Column{{Name: "id", Type: "uuid", PrimaryKey: true}}},
+		{Name: "tags", Schema: "public", Columns: []parser.Column{{Name: "code", Type: "text", PrimaryKey: true}}},
+		{Name: "user_tags", Schema: "public", Columns: []parser.Column{
+			{Name: "id", Type: "bigint", PrimaryKey: true},
+			{Name: "user_id", Type: "uuid"},
+			{Name: "tag_code", Type: "text", Nullable: true},
+		}},
+	}}
+	input := testInput(schema)
+	input.Config.Tables = map[string]config.TableConfig{"users": {Relationships: []config.TableRelationship{{
+		Name: "Tags", Type: "many_to_many", Table: "tags",
+		Junction: "user_tags", JunctionLocalFK: "user_id", JunctionReferenceFK: "tag_code",
+	}}}}
+	contexts, err := gen.BuildTableContextsFromSchema(input.Schema, input.Config)
+	if err != nil {
+		t.Fatalf("BuildTableContextsFromSchema() error: %v", err)
+	}
+	i := slices.IndexFunc(contexts, func(tc gen.TableContext) bool { return tc.TableName == "users" })
+	if i < 0 {
+		t.Fatal("BuildTableContextsFromSchema(): users context not built")
+	}
+	r, ok := relByField(contexts[i])["Tags"]
+	if !ok {
+		t.Fatalf("users has no relationship Tags; have %v", relByField(contexts[i]))
+	}
+	if r.FKGoType != "string" || r.JunctionReferenceGoType != "*string" {
+		t.Errorf("users.Tags FKGoType = %q, JunctionReferenceGoType = %q; want %q, %q",
+			r.FKGoType, r.JunctionReferenceGoType, "string", "*string")
+	}
 }

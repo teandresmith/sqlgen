@@ -17,6 +17,7 @@ sqlgen manifest. Start here: [./manifest/_index.md](./manifest/_index.md).
 - **AssetDocumentLink** (`asset_document_links`, table) — [./manifest/asset_document_link.md](./manifest/asset_document_link.md)
 - **Badge** (`badges`, table) — [./manifest/badge.md](./manifest/badge.md)
 - **BinaryKey** (`binary_keys`, table) — [./manifest/binary_key.md](./manifest/binary_key.md)
+- **BinaryKeyBadge** (`binary_key_badges`, table) — [./manifest/binary_key_badge.md](./manifest/binary_key_badge.md)
 - **BinaryKeyEvent** (`binary_key_events`, table) — [./manifest/binary_key_event.md](./manifest/binary_key_event.md)
 - **Category** (`categories`, table) — [./manifest/category.md](./manifest/category.md)
 - **CategoryStat** (`category_stats`, view) — [./manifest/category_stat.md](./manifest/category_stat.md)

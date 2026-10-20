@@ -1709,6 +1709,16 @@
       ],
       "relationships": [
         {
+          "name": "binary_keys",
+          "kind": "m2m",
+          "target_entity": "BinaryKey",
+          "junction": {
+            "table": "binary_key_badges",
+            "local_fk": "badge_code",
+            "target_fk": "binary_key_id"
+          }
+        },
+        {
           "name": "owners",
           "kind": "m2m",
           "target_entity": "Owner",
@@ -2142,6 +2152,16 @@
           }
         },
         {
+          "name": "badges",
+          "kind": "m2m",
+          "target_entity": "Badge",
+          "junction": {
+            "table": "binary_key_badges",
+            "local_fk": "binary_key_id",
+            "target_fk": "badge_code"
+          }
+        },
+        {
           "name": "binary_key_events",
           "kind": "o2m",
           "target_entity": "BinaryKeyEvent",
@@ -2492,6 +2512,413 @@
           "CreatedAt",
           "ID",
           "Name"
+        ]
+      },
+      "examples": {}
+    },
+    {
+      "kind": "table",
+      "name": "BinaryKeyBadge",
+      "table": "binary_key_badges",
+      "file_prefix": "binary_key_badge",
+      "files": [
+        "binary_key_badge_gen.go"
+      ],
+      "comment": "",
+      "indexes": [
+        {
+          "name": "binary_key_badges_pkey",
+          "columns": [
+            "binary_key_id",
+            "badge_code"
+          ],
+          "unique": true,
+          "method": "btree"
+        }
+      ],
+      "pk": {
+        "kind": "composite",
+        "struct": "BinaryKeyBadgePK",
+        "columns": [
+          {
+            "name": "binary_key_id",
+            "go_field": "BinaryKeyID",
+            "go_type": "[]byte"
+          },
+          {
+            "name": "badge_code",
+            "go_field": "BadgeCode",
+            "go_type": "string"
+          }
+        ]
+      },
+      "features": {
+        "soft_delete": null,
+        "cache": null,
+        "events": null,
+        "tenancy": null
+      },
+      "columns": [
+        {
+          "name": "binary_key_id",
+          "go_field": "BinaryKeyID",
+          "go_type": "[]byte",
+          "db_type": "blob",
+          "nullable": false,
+          "pk": true,
+          "unique": false,
+          "comparator": "comparator.Opaque[[]byte]",
+          "comment": ""
+        },
+        {
+          "name": "badge_code",
+          "go_field": "BadgeCode",
+          "go_type": "string",
+          "db_type": "text",
+          "nullable": false,
+          "pk": true,
+          "unique": false,
+          "comparator": "comparator.ID",
+          "comment": ""
+        }
+      ],
+      "relationships": [],
+      "methods": {
+        "query": [
+          {
+            "name": "Get",
+            "params": [
+              {
+                "name": "pk",
+                "type": "BinaryKeyBadgePK"
+              }
+            ],
+            "returns": "*BinaryKeyBadge",
+            "errors": [
+              "ErrNotFound"
+            ],
+            "notes": "Delegates to GetMany with a primary-key filter; returns ErrNotFound when no row matches.",
+            "sql_bodies": {
+              "sqlite": "SELECT \"badge_code\", \"binary_key_id\" FROM \"binary_key_badges\" WHERE \"binary_key_id\" = ? AND \"badge_code\" = ? LIMIT 1"
+            }
+          },
+          {
+            "name": "GetMany",
+            "params": [
+              {
+                "name": "input",
+                "type": "*GetBinaryKeyBadgesInput"
+              }
+            ],
+            "returns": "[]*BinaryKeyBadge",
+            "errors": [],
+            "sql_bodies": {
+              "sqlite": "SELECT \"badge_code\", \"binary_key_id\" FROM \"binary_key_badges\" WHERE <filter> ORDER BY <sort> LIMIT <limit>"
+            }
+          },
+          {
+            "name": "Count",
+            "params": [
+              {
+                "name": "filter",
+                "type": "*BinaryKeyBadgeFilter"
+              }
+            ],
+            "returns": "int64",
+            "errors": [],
+            "sql_bodies": {
+              "sqlite": "SELECT COUNT(*) FROM \"binary_key_badges\" WHERE <filter>"
+            }
+          },
+          {
+            "name": "Exists",
+            "params": [
+              {
+                "name": "pk",
+                "type": "BinaryKeyBadgePK"
+              }
+            ],
+            "returns": "bool",
+            "errors": [],
+            "sql_bodies": {
+              "sqlite": "SELECT EXISTS(SELECT 1 FROM \"binary_key_badges\" WHERE \"binary_key_id\" = ? AND \"badge_code\" = ?)"
+            }
+          },
+          {
+            "name": "ExistsWhere",
+            "params": [
+              {
+                "name": "filter",
+                "type": "*BinaryKeyBadgeFilter"
+              }
+            ],
+            "returns": "bool",
+            "errors": [],
+            "sql_bodies": {
+              "sqlite": "SELECT EXISTS(SELECT 1 FROM \"binary_key_badges\" WHERE <filter>)"
+            }
+          },
+          {
+            "name": "Paginate",
+            "params": [
+              {
+                "name": "input",
+                "type": "PaginateInput[BinaryKeyBadgeFilter]"
+              }
+            ],
+            "returns": "*PaginateResult[BinaryKeyBadge]",
+            "errors": [],
+            "notes": "Offset pagination. Issues no statement of its own — composes Count and GetMany, so no sql_bodies entry."
+          },
+          {
+            "name": "Connection",
+            "params": [
+              {
+                "name": "input",
+                "type": "ConnectionInput[BinaryKeyBadgeFilter]"
+              }
+            ],
+            "returns": "*Connection[BinaryKeyBadge]",
+            "errors": [
+              "ErrInvalidCursor"
+            ],
+            "notes": "Relay cursor pagination. Issues no statement of its own — composes Count and GetMany, so no sql_bodies entry."
+          },
+          {
+            "name": "Stream",
+            "params": [
+              {
+                "name": "input",
+                "type": "*StreamBinaryKeyBadgesInput"
+              }
+            ],
+            "returns": "iter.Seq2[*BinaryKeyBadge, error]",
+            "errors": [],
+            "notes": "Scalars only — no relationship loading, cache always bypassed. Errors surface through the iterator's second value.",
+            "sql_bodies": {
+              "sqlite": "SELECT \"badge_code\", \"binary_key_id\" FROM \"binary_key_badges\" WHERE <filter> ORDER BY <sort>"
+            }
+          }
+        ],
+        "mutation": [
+          {
+            "name": "Create",
+            "params": [
+              {
+                "name": "input",
+                "type": "*CreateBinaryKeyBadgeInput"
+              }
+            ],
+            "returns": "*BinaryKeyBadge",
+            "errors": [
+              "ErrNilInput",
+              "ErrConstraintViolation"
+            ],
+            "sql_bodies": {
+              "sqlite": "INSERT INTO \"binary_key_badges\" (<columns>) VALUES (<values>)"
+            }
+          },
+          {
+            "name": "CreateMany",
+            "params": [
+              {
+                "name": "inputs",
+                "type": "[]*CreateBinaryKeyBadgeInput"
+              }
+            ],
+            "returns": "[]*BinaryKeyBadge",
+            "errors": [
+              "ErrNilInput",
+              "ErrConstraintViolation"
+            ],
+            "notes": "Batched in generation.batch_size chunks. Earlier chunks are not rolled back on a later failure — wrap in a transaction for atomicity.",
+            "sql_bodies": {
+              "sqlite": "INSERT INTO \"binary_key_badges\" (<columns>) VALUES <values>"
+            }
+          },
+          {
+            "name": "Upsert",
+            "params": [
+              {
+                "name": "input",
+                "type": "*CreateBinaryKeyBadgeInput"
+              },
+              {
+                "name": "target",
+                "type": "BinaryKeyBadgeConflictTarget"
+              }
+            ],
+            "returns": "*BinaryKeyBadge",
+            "errors": [
+              "ErrNilInput",
+              "ErrConstraintViolation"
+            ],
+            "notes": "One method over the generated BinaryKeyBadgeConflictTarget enum — the target argument selects the conflict columns at call time.",
+            "sql_bodies": {
+              "sqlite": "INSERT INTO \"binary_key_badges\" (<columns>) VALUES (<values>) ON CONFLICT (<conflict_target>) DO UPDATE SET <excluded>"
+            }
+          },
+          {
+            "name": "UpsertMany",
+            "params": [
+              {
+                "name": "inputs",
+                "type": "[]*CreateBinaryKeyBadgeInput"
+              },
+              {
+                "name": "target",
+                "type": "BinaryKeyBadgeConflictTarget"
+              }
+            ],
+            "returns": "[]*BinaryKeyBadge",
+            "errors": [
+              "ErrNilInput",
+              "ErrConstraintViolation"
+            ],
+            "notes": "Batched in generation.batch_size chunks over the same BinaryKeyBadgeConflictTarget enum Upsert takes. Inputs resolving to one target are deduped before the statement is built, last occurrence wins. Earlier chunks are not rolled back on a later failure — wrap in a transaction for atomicity.",
+            "sql_bodies": {
+              "sqlite": "INSERT INTO \"binary_key_badges\" (<columns>) VALUES <values> ON CONFLICT (<conflict_target>) DO UPDATE SET <excluded>"
+            }
+          },
+          {
+            "name": "Update",
+            "params": [
+              {
+                "name": "pk",
+                "type": "BinaryKeyBadgePK"
+              },
+              {
+                "name": "input",
+                "type": "*UpdateBinaryKeyBadgeInput"
+              }
+            ],
+            "returns": "*BinaryKeyBadge",
+            "errors": [
+              "ErrNotFound",
+              "ErrNilInput",
+              "ErrConstraintViolation"
+            ],
+            "notes": "Only fields where IsSet() reports true reach the SET clause; an input with none set issues no UPDATE and returns the row unchanged.",
+            "sql_bodies": {
+              "sqlite": "UPDATE \"binary_key_badges\" SET <set> WHERE \"binary_key_id\" = ? AND \"badge_code\" = ?"
+            }
+          },
+          {
+            "name": "UpdateMany",
+            "params": [
+              {
+                "name": "items",
+                "type": "[]UpdateBinaryKeyBadgeItem"
+              }
+            ],
+            "returns": "[]*BinaryKeyBadge",
+            "errors": [
+              "ErrNilInput",
+              "ErrConstraintViolation"
+            ],
+            "notes": "Issues one statement per item. Batched like CreateMany — earlier items are not rolled back on a later failure. A primary key that does not exist is silently skipped, even under strict_updates.",
+            "sql_bodies": {
+              "sqlite": "UPDATE \"binary_key_badges\" SET <set> WHERE \"binary_key_id\" = ? AND \"badge_code\" = ?"
+            }
+          },
+          {
+            "name": "UpdateWhere",
+            "params": [
+              {
+                "name": "filter",
+                "type": "*BinaryKeyBadgeFilter"
+              },
+              {
+                "name": "input",
+                "type": "*UpdateBinaryKeyBadgeInput"
+              }
+            ],
+            "returns": "[]*BinaryKeyBadge",
+            "errors": [
+              "ErrNilInput",
+              "ErrEmptyFilter",
+              "ErrConstraintViolation"
+            ],
+            "notes": "Idempotent — returns an empty slice when no row matches. ErrEmptyFilter when the filter produces no conditions.",
+            "sql_bodies": {
+              "sqlite": "UPDATE \"binary_key_badges\" SET <set> WHERE <filter> RETURNING \"binary_key_id\", \"badge_code\""
+            }
+          },
+          {
+            "name": "HardDelete",
+            "params": [
+              {
+                "name": "pk",
+                "type": "BinaryKeyBadgePK"
+              }
+            ],
+            "returns": "",
+            "errors": [],
+            "notes": "Idempotent — a primary key that does not exist is not an error.",
+            "sql_bodies": {
+              "sqlite": "DELETE FROM \"binary_key_badges\" WHERE \"binary_key_id\" = ? AND \"badge_code\" = ?"
+            }
+          },
+          {
+            "name": "HardDeleteMany",
+            "params": [
+              {
+                "name": "pks",
+                "type": "[]BinaryKeyBadgePK"
+              }
+            ],
+            "returns": "",
+            "errors": [],
+            "notes": "Idempotent — primary keys that do not exist are not an error.",
+            "sql_bodies": {
+              "sqlite": "DELETE FROM \"binary_key_badges\" WHERE (\"binary_key_id\", \"badge_code\") IN (<pks>)"
+            }
+          },
+          {
+            "name": "HardDeleteWhere",
+            "params": [
+              {
+                "name": "filter",
+                "type": "*BinaryKeyBadgeFilter"
+              }
+            ],
+            "returns": "",
+            "errors": [
+              "ErrEmptyFilter"
+            ],
+            "notes": "Idempotent — no match is not an error. ErrEmptyFilter when the filter produces no conditions.",
+            "sql_bodies": {
+              "sqlite": "DELETE FROM \"binary_key_badges\" WHERE <filter> RETURNING \"binary_key_id\", \"badge_code\""
+            }
+          }
+        ]
+      },
+      "filter": {
+        "type": "BinaryKeyBadgeFilter",
+        "fields": [
+          {
+            "name": "BadgeCode",
+            "type": "*comparator.ID"
+          },
+          {
+            "name": "BinaryKeyID",
+            "type": "*comparator.Opaque[[]byte]"
+          },
+          {
+            "name": "And",
+            "type": "[]*BinaryKeyBadgeFilter"
+          },
+          {
+            "name": "Or",
+            "type": "[]*BinaryKeyBadgeFilter"
+          }
+        ]
+      },
+      "sort": {
+        "type": "BinaryKeyBadgeSort",
+        "fields": [
+          "BadgeCode",
+          "BinaryKeyID"
         ]
       },
       "examples": {}

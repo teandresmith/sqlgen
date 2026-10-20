@@ -377,6 +377,10 @@ type RelationshipContext struct {
 	// guard + unwrap expression when stringifying a FK for bucket lookup.
 	// For M2M: the local junction FK's Go type.
 	FKColumnGoType string
+	// JunctionReferenceGoType is the resolved Go type of the junction's
+	// reference FK column (M2M only). The loader scans the junction into
+	// FKColumnGoType and this type, so each key keeps its own type.
+	JunctionReferenceGoType string
 	// TargetPKFieldName is the Go field name of the target table's first PK
 	// column (e.g. "ID"), and TargetPKColumn is that column's SQL name (e.g.
 	// "id"). Only M2M consumes them: the loader filters the target fetch on the

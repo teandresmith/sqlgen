@@ -42,6 +42,10 @@ type BinaryKeyConnection = Connection[BinaryKey]
 type BinaryKeyEdge = Edge[BinaryKey]
 type BinaryKeyListResult = PaginateResult[BinaryKey]
 
+type BinaryKeyBadgeConnection = Connection[BinaryKeyBadge]
+type BinaryKeyBadgeEdge = Edge[BinaryKeyBadge]
+type BinaryKeyBadgeListResult = PaginateResult[BinaryKeyBadge]
+
 type BinaryKeyEventConnection = Connection[BinaryKeyEvent]
 type BinaryKeyEventEdge = Edge[BinaryKeyEvent]
 type BinaryKeyEventListResult = PaginateResult[BinaryKeyEvent]

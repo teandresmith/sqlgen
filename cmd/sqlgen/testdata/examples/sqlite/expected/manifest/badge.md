@@ -29,6 +29,7 @@
 
 | Name | Kind | Target | FK | Filter |
 | --- | --- | --- | --- | --- |
+| binary_keys | m2m | BinaryKey | binary_key_badges (badge_code → binary_key_id) |  |
 | owners | m2m | Owner | owner_badges (badge_code → owner_id) |  |
 
 ## Query methods

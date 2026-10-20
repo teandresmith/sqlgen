@@ -15,6 +15,7 @@ Features: audit_columns, graphql, soft_delete
 | AssetDocumentLink | `asset_document_links` | table | [asset_document_link.md](asset_document_link.md) |  |
 | Badge | `badges` | table | [badge.md](badge.md) |  |
 | BinaryKey | `binary_keys` | table | [binary_key.md](binary_key.md) |  |
+| BinaryKeyBadge | `binary_key_badges` | table | [binary_key_badge.md](binary_key_badge.md) |  |
 | BinaryKeyEvent | `binary_key_events` | table | [binary_key_event.md](binary_key_event.md) |  |
 | Category | `categories` | table | [category.md](category.md) |  |
 | CategoryStat | `category_stats` | view | [category_stat.md](category_stat.md) |  |

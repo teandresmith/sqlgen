@@ -902,6 +902,134 @@ func (m *M) DeleteBinaryKey(ctx context.Context, id []byte) (bool, error) {
 	return true, nil
 }
 
+// BinaryKeyBadge resolves the single-by-PK query for binary_key_badges.
+// <table>(id) returns null when missing — no separate exists query is
+// needed. ErrNotFound is collapsed to (nil, nil) so the nullable
+// schema field surfaces as JSON null rather than a NOT_FOUND error.
+func (q *Q) BinaryKeyBadge(ctx context.Context, binaryKeyID []byte, badgeCode string) (*models.BinaryKeyBadge, error) {
+	fo := binaryKeyBadgeFieldOptionsFromContext(ctx)
+	res, err := q.Client.BinaryKeyBadges().Get(ctx, models.BinaryKeyBadgePK{BinaryKeyID: binaryKeyID, BadgeCode: badgeCode}, func(o *models.CallOptions[models.BinaryKeyBadgeFieldOptions]) {
+		o.FieldOptions = fo
+		for _, f := range callOptionsFromHTTP[models.BinaryKeyBadgeFieldOptions](ctx) {
+			f(o)
+		}
+	})
+	if err != nil {
+		if errors.Is(err, models.ErrNotFound) {
+			return nil, nil
+		}
+		return nil, mapErrorToGQL(err)
+	}
+	return res, nil
+}
+
+// BinaryKeyBadges resolves the cursor-paginated Connection query for binary_key_badges.
+func (q *Q) BinaryKeyBadges(ctx context.Context, filter *models.BinaryKeyBadgeFilter, first *int, after *string, last *int, before *string) (*models.Connection[models.BinaryKeyBadge], error) {
+	fo := binaryKeyBadgeFieldOptionsFromContext(ctx)
+	res, err := q.Client.BinaryKeyBadges().Connection(ctx, models.ConnectionInput[models.BinaryKeyBadgeFilter]{
+		Filter: filter,
+		First:  first,
+		After:  after,
+		Last:   last,
+		Before: before,
+	}, func(o *models.CallOptions[models.BinaryKeyBadgeFieldOptions]) {
+		o.FieldOptions = fo
+		for _, f := range callOptionsFromHTTP[models.BinaryKeyBadgeFieldOptions](ctx) {
+			f(o)
+		}
+	})
+	if err != nil {
+		return nil, mapErrorToGQL(err)
+	}
+	return res, nil
+}
+
+// BinaryKeyBadgeList resolves the offset-paginated ListResult query for binary_key_badges.
+func (q *Q) BinaryKeyBadgeList(ctx context.Context, filter *models.BinaryKeyBadgeFilter, sort []sql.Sort, limit *int, offset *int) (*models.PaginateResult[models.BinaryKeyBadge], error) {
+	fo := binaryKeyBadgeFieldOptionsFromContext(ctx)
+	in := models.PaginateInput[models.BinaryKeyBadgeFilter]{
+		Filter: filter,
+		Sort:   sort,
+	}
+	if limit != nil {
+		in.Limit = *limit
+	}
+	if offset != nil {
+		in.Offset = *offset
+	}
+	res, err := q.Client.BinaryKeyBadges().Paginate(ctx, in, func(o *models.CallOptions[models.BinaryKeyBadgeFieldOptions]) {
+		o.FieldOptions = fo
+		for _, f := range callOptionsFromHTTP[models.BinaryKeyBadgeFieldOptions](ctx) {
+			f(o)
+		}
+	})
+	if err != nil {
+		return nil, mapErrorToGQL(err)
+	}
+	return res, nil
+}
+
+// CreateBinaryKeyBadge resolves the single-row create mutation for binary_key_badges.
+func (m *M) CreateBinaryKeyBadge(ctx context.Context, input *models.CreateBinaryKeyBadgeInput) (*models.BinaryKeyBadge, error) {
+	fo := binaryKeyBadgeFieldOptionsFromContext(ctx)
+	res, err := m.Client.BinaryKeyBadges().Create(ctx, input, func(o *models.CallOptions[models.BinaryKeyBadgeFieldOptions]) {
+		o.FieldOptions = fo
+		for _, f := range callOptionsFromHTTP[models.BinaryKeyBadgeFieldOptions](ctx) {
+			f(o)
+		}
+	})
+	if err != nil {
+		return nil, mapErrorToGQL(err)
+	}
+	return res, nil
+}
+
+// CreateBinaryKeyBadges resolves the bulk create mutation for binary_key_badges.
+func (m *M) CreateBinaryKeyBadges(ctx context.Context, inputs []*models.CreateBinaryKeyBadgeInput) ([]*models.BinaryKeyBadge, error) {
+	fo := binaryKeyBadgeFieldOptionsFromContext(ctx)
+	res, err := m.Client.BinaryKeyBadges().CreateMany(ctx, inputs, func(o *models.CallOptions[models.BinaryKeyBadgeFieldOptions]) {
+		o.FieldOptions = fo
+		for _, f := range callOptionsFromHTTP[models.BinaryKeyBadgeFieldOptions](ctx) {
+			f(o)
+		}
+	})
+	if err != nil {
+		return nil, mapErrorToGQL(err)
+	}
+	return res, nil
+}
+
+// UpsertBinaryKeyBadge resolves the single-row upsert mutation for binary_key_badges.
+func (m *M) UpsertBinaryKeyBadge(ctx context.Context, input *models.CreateBinaryKeyBadgeInput) (*models.BinaryKeyBadge, error) {
+	fo := binaryKeyBadgeFieldOptionsFromContext(ctx)
+	res, err := m.Client.BinaryKeyBadges().Upsert(ctx, input, models.BinaryKeyBadgeConflictPK, func(o *models.CallOptions[models.BinaryKeyBadgeFieldOptions]) {
+		o.FieldOptions = fo
+		for _, f := range callOptionsFromHTTP[models.BinaryKeyBadgeFieldOptions](ctx) {
+			f(o)
+		}
+	})
+	if err != nil {
+		return nil, mapErrorToGQL(err)
+	}
+	return res, nil
+}
+
+// DeleteBinaryKeyBadge resolves the bare `delete<Table>` mutation when
+// only hard delete is enabled. Returns Boolean!.
+func (m *M) DeleteBinaryKeyBadge(ctx context.Context, binaryKeyID []byte, badgeCode string) (bool, error) {
+	if err := m.Client.BinaryKeyBadges().HardDelete(ctx, models.BinaryKeyBadgePK{BinaryKeyID: binaryKeyID, BadgeCode: badgeCode}, func(o *models.CallOptions[models.BinaryKeyBadgeFieldOptions]) {
+		for _, f := range callOptionsFromHTTP[models.BinaryKeyBadgeFieldOptions](ctx) {
+			f(o)
+		}
+	}); err != nil {
+		if errors.Is(err, models.ErrNotFound) {
+			return false, nil
+		}
+		return false, mapErrorToGQL(err)
+	}
+	return true, nil
+}
+
 // BinaryKeyEvent resolves the single-by-PK query for binary_key_events.
 // <table>(id) returns null when missing — no separate exists query is
 // needed. ErrNotFound is collapsed to (nil, nil) so the nullable

@@ -448,3 +448,22 @@ CREATE TABLE sequence_rows (
     audit_no INTEGER GENERATED ALWAYS AS IDENTITY,
     note TEXT NOT NULL
 );
+
+-- A many-to-many edge keyed on binary and network types. Host.Fingerprints
+-- fetches fingerprints by BYTEA key and Fingerprint.Hosts fetches hosts by
+-- INET key; pgx scans neither type into a string.
+CREATE TABLE hosts (
+    addr INET PRIMARY KEY,
+    label TEXT NOT NULL
+);
+
+CREATE TABLE fingerprints (
+    digest BYTEA PRIMARY KEY,
+    label TEXT NOT NULL
+);
+
+CREATE TABLE host_fingerprints (
+    host_addr INET NOT NULL REFERENCES hosts(addr),
+    fingerprint_digest BYTEA NOT NULL REFERENCES fingerprints(digest),
+    PRIMARY KEY (host_addr, fingerprint_digest)
+);

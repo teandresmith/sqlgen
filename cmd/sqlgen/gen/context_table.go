@@ -127,9 +127,10 @@ func wireRelListFKMetadata(rels []RelationshipContext, parent *TableContext, pkC
 	}
 }
 
-// wireRelFKMetadata fills FKGoType, FKNullable, FKColumnGoType, FKFieldName
-// and TargetPKFieldName on a single relationship by consulting the cross-table
-// lookup. Split out to keep the per-relationship-type branching readable.
+// wireRelFKMetadata fills FKGoType, FKNullable, FKColumnGoType,
+// JunctionReferenceGoType, FKFieldName and TargetPKFieldName on a single
+// relationship by consulting the cross-table lookup. Split out to keep the
+// per-relationship-type branching readable.
 func wireRelFKMetadata(r *RelationshipContext, parent *TableContext, pkColumns map[string]ColumnContext, colsByTable map[string]map[string]ColumnContext) {
 	if r.FKGoType == "" {
 		r.FKGoType = resolveFKGoType(r, parent, pkColumns)
@@ -156,6 +157,9 @@ func wireRelFKMetadata(r *RelationshipContext, parent *TableContext, pkColumns m
 	case parser.ManyToMany:
 		fkCol = r.JunctionLocalFK
 		wireRelFKFromTable(r, fkCol, r.JunctionSchema, r.JunctionTable, colsByTable)
+		if col, ok := lookupTableCols(colsByTable, r.JunctionSchema, r.JunctionTable)[r.JunctionReferenceFK]; ok {
+			r.JunctionReferenceGoType = col.GoType
+		}
 		// The M2M loader keys its target-to-parent map on the *target's* PK
 		// field and declares that column on the target fetch, so both
 		// spellings have to come from the target table rather than the parent's
@@ -166,6 +170,13 @@ func wireRelFKMetadata(r *RelationshipContext, parent *TableContext, pkColumns m
 		}
 	}
 
+	applyRelFKFallbacks(r, parent, fkCol)
+}
+
+// applyRelFKFallbacks fills what wireRelFKMetadata's cross-table lookup left
+// unset, which happens for unit fixtures, bare tables and tables outside the
+// generated set. fkCol is the FK column the lookup read.
+func applyRelFKFallbacks(r *RelationshipContext, parent *TableContext, fkCol string) {
 	// Final fallback for the field name: a bare table (unit fixture, or a
 	// target outside the generated set) leaves it unresolved, in which case
 	// the naming engine's spelling is the only answer available and matches
@@ -174,10 +185,18 @@ func wireRelFKMetadata(r *RelationshipContext, parent *TableContext, pkColumns m
 		r.FKFieldName = FieldName(fkCol)
 	}
 
-	// Final fallback: FKColumnGoType matches FKGoType when no cross-table
-	// metadata was available (covers unit fixtures and bare tables).
+	// Final fallback when no cross-table metadata was available (unit
+	// fixtures, bare tables, an excluded junction): each FK column takes the
+	// type of the key it references. FKGoType is that key for O2M/O2O and the
+	// junction's reference column; an M2M local column references the parent.
 	if r.FKColumnGoType == "" {
 		r.FKColumnGoType = r.FKGoType
+		if r.Type == parser.ManyToMany && len(parent.PKColumns) > 0 {
+			r.FKColumnGoType = parent.PKColumns[0].GoType
+		}
+	}
+	if r.Type == parser.ManyToMany && r.JunctionReferenceGoType == "" {
+		r.JunctionReferenceGoType = r.FKGoType
 	}
 
 	// Final fallback for the target PK: with the target outside the generated

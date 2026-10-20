@@ -79,6 +79,7 @@ func FuncMapWithResolver(dialect sql.Dialect, resolver *gotype.Resolver) templat
 		"fkNullGuard":        funcFKNullGuard,
 		"fkLoadGuard":        funcFKLoadGuard(resolver),
 		"fkLoadKey":          funcFKLoadKey(resolver),
+		"fkLoadValue":        funcFKLoadValue(resolver),
 		"isO2O":              funcIsO2O,
 		"isM2M":              funcIsM2M,
 		"reverseO2OTargets":  funcReverseO2OTargets,
@@ -769,6 +770,15 @@ func funcFKLoadKey(resolver *gotype.Resolver) func(string, string) string {
 		default:
 			return "fmt.Sprint(" + unwrapped + ")"
 		}
+	}
+}
+
+// funcFKLoadValue returns a closure that produces the Go expression for a
+// FK value with any Null wrapper unwrapped, the value fkLoadKey stringifies.
+// Callers guard it with fkLoadGuard first.
+func funcFKLoadValue(resolver *gotype.Resolver) func(string, string) string {
+	return func(fkColumnGoType, varExpr string) string {
+		return strings.ReplaceAll(resolver.DeriveScalarExtraction(fkColumnGoType).UnwrapExpr, "$v", varExpr)
 	}
 }
 

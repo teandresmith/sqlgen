@@ -454,19 +454,20 @@ func (c *ownerClient) loadRelationships(ctx context.Context, conn database.Queri
 				}
 			}
 
-			// Build mapping and collect all target IDs
+			// Build mapping and collect all target keys. Each junction column
+			// scans into its own Go type, so both sides of the maps stringify
+			// keys the same way.
 			parentToTargetIDs := make(map[string][]string)
 			var allTargetIDs []string
 			for junctionRows.Next() {
-				vals := make([]string, len(junctionCols))
+				var localKey int64
+				var refKey string
 				ptrs := make([]any, len(junctionCols))
-				for i := range vals {
-					ptrs[i] = &vals[i]
-				}
+				ptrs[localIdx], ptrs[refIdx] = &localKey, &refKey
 				if err := junctionRows.Scan(ptrs...); err != nil {
 					return fmt.Errorf("scan owner badges junction: %w", err)
 				}
-				parentID, targetID := vals[localIdx], vals[refIdx]
+				parentID, targetID := fmt.Sprint(localKey), refKey
 				parentToTargetIDs[parentID] = append(parentToTargetIDs[parentID], targetID)
 				allTargetIDs = append(allTargetIDs, targetID)
 			}
@@ -474,7 +475,7 @@ func (c *ownerClient) loadRelationships(ctx context.Context, conn database.Queri
 				return fmt.Errorf("iterate owner badges junction: %w", err)
 			}
 
-			if len(allTargetIDs) == 0 {
+			if len(parentToTargetIDs) == 0 {
 				return nil
 			}
 
@@ -2101,13 +2102,6 @@ func (fo *OwnerFieldOptions) HasSelectedColumns() bool {
 		return true
 	}
 	return false
-}
-
-// BadgeRelationshipOptions controls loading options for Badge relationships.
-type BadgeRelationshipOptions struct {
-	FieldOptions *BadgeFieldOptions `json:"field_options"`
-	Filter       *BadgeFilter       `json:"filter"`
-	Sorts        []sql.Sort         `json:"sorts"`
 }
 
 // CreateOwnerInput holds the fields for creating a owners record.

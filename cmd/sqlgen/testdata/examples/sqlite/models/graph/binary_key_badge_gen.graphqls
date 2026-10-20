@@ -1,0 +1,61 @@
+"""
+BinaryKeyBadge corresponds to the binary_key_badges table.
+"""
+type BinaryKeyBadge {
+  "binary_key_id"
+  binaryKeyID: Bytes!
+  "badge_code"
+  badgeCode: ID!
+}
+
+type BinaryKeyBadgeConnection {
+  edges:      [BinaryKeyBadgeEdge!]!
+  pageInfo:   PageInfo!
+  totalCount: Int!
+}
+
+type BinaryKeyBadgeEdge {
+  node:   BinaryKeyBadge!
+  cursor: String!
+}
+
+type BinaryKeyBadgeListResult {
+  items:      [BinaryKeyBadge!]!
+  totalCount: Int!
+  offset:     Int!
+  limit:      Int!
+  hasMore:    Boolean!
+}
+
+input BinaryKeyBadgeFilter {
+  and: [BinaryKeyBadgeFilter!]
+  or:  [BinaryKeyBadgeFilter!]
+}
+
+enum BinaryKeyBadgeSortField {
+  BINARY_KEY_ID
+  BADGE_CODE
+}
+
+input BinaryKeyBadgeSort {
+  field:     BinaryKeyBadgeSortField!
+  direction: SortDirection!
+}
+input CreateBinaryKeyBadgeInput {
+  binaryKeyID: Bytes!
+  badgeCode: ID!
+}
+
+extend type Query {
+  binaryKeyBadge(binaryKeyID: Bytes!, badgeCode: ID!): BinaryKeyBadge
+  "Cursor-paginated; ordering is driven by cursor_keys to preserve keyset semantics — pass `sort` to binaryKeyBadgeList instead."
+  binaryKeyBadges(filter: BinaryKeyBadgeFilter, first: Int, after: String, last: Int, before: String): BinaryKeyBadgeConnection!
+  binaryKeyBadgeList(filter: BinaryKeyBadgeFilter, sort: [BinaryKeyBadgeSort!], limit: Int, offset: Int): BinaryKeyBadgeListResult!
+}
+
+extend type Mutation {
+  createBinaryKeyBadge(input: CreateBinaryKeyBadgeInput!): BinaryKeyBadge!
+  createBinaryKeyBadges(inputs: [CreateBinaryKeyBadgeInput!]!): [BinaryKeyBadge!]!
+  upsertBinaryKeyBadge(input: CreateBinaryKeyBadgeInput!): BinaryKeyBadge!
+  deleteBinaryKeyBadge(binaryKeyID: Bytes!, badgeCode: ID!): Boolean!
+}
