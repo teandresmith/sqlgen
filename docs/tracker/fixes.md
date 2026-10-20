@@ -29,6 +29,7 @@
 - **Severity:** tracked
 - **Origin:** phase 6, cmd/sqlgen/gen/templates/table
 - **Surfaced by:** FIX-356 implementation (2026-10-20), user approved filing
+- **Vetted:** ready at `02303463` (2026-10-20)
 
 **Issue.** **M2M loader cannot fetch a target keyed on a binary or network type; the generated code does not compile.**
 An M2M relationship whose target table's primary key resolves to the
@@ -53,19 +54,39 @@ else branch that assumes an integer: `strconv.ParseInt(s, 10, 64)` then
 `{{ .FKGoType }}(v)` (`:570-573`). `pkComparatorFamily`
 (`cmd/sqlgen/gen/context_table.go:2125-2139`) sends the Opaque family to that
 else branch, where the conversion does not compile. Beyond compiling
-(reading, not measured): the map-back keys targets with `fkToStringByGoType`
-(`:635`), which is `fmt.Sprint` for `[]byte` (`"[1 2 3]"`) and `.String()` for
-the `net` types, so those strings need not match the junction's scanned text,
-and a compile-only fix could load no rows.
+(measured at `02303463`): the string scan cannot carry these keys at all. On
+SQLite (modernc) a BLOB key scans into the string `"\x01\xffA"` while the
+map-back's `fkToStringByGoType` (`:635`) renders the same key as
+`fmt.Sprint` → `"[1 255 65]"`, so no key ever matches. pgx refuses the scan
+outright: `cannot scan bytea (OID 17) in binary format into *string`, and the
+same for `inet` (OID 869) and `cidr` (OID 650); `macaddr` scans. The parent
+side has the same root cause at the same site: an M2M whose *parent* key is
+binary or network compiles (only the target direction fails to build), but on
+pgx its junction scan fails at runtime and on SQLite its parent keys never
+match.
 
 **Suggested fix.**
 - Pending the user's ruling (or `/fix-vet`): support the Opaque family in the M2M loader, or refuse the edge loudly.
   - Support: scan the junction's target column into the key's own Go type rather than `string`, build `targetPKs` from those values with `pkFilterInExprStr` (it already renders `&comparator.Opaque[T]{In: …}`), and key both maps with a conversion that round-trips (`string(b)` for `[]byte`, `.String()` for the `net` types on both sides). Needs an example M2M keyed on a blob or inet column with a load test.
   - Refuse: treat an Opaque-keyed M2M target as a generation error (or drop the edge with a warning), stated in PRD §13, as §9.9's E8 rule already does for nested writes on such edges.
 - Regression: a gen template test per Opaque type, and an example case that compiles under `check-examples`.
+- The user ruled on 2026-10-20: support, with the typed junction scan on every M2M loader (the recommended option). The prototype below implements exactly that option, so the verdict moved to `ready` without a second wave.
+- Options as presented for the ruling:
+  - Support or refuse binary/network keys in the M2M loader, and if supported, on which path?
+    - **Support with a typed junction scan on every M2M loader (recommended; prototyped).** Each junction column scans into its own Go type (`FKColumnGoType` and a new context field `JunctionReferenceGoType`), both map sides stringify typed values with `fkLoadKey` (as the O2M loader does), and the target fetch builds `targetPKs` from the typed values. It removes the `strconv.ParseInt` round trip for every key family. Consequence: golden churn in every example with an M2M edge (one model file and its `expected/` copy in graphql, introspect_sqlite, mysql, postgres_stdlib and tenancy; more in postgres and sqlite, which gain the example tables). All seven suites pass with race and lint.
+    - **Support with the typed scan only for the Opaque family.** No churn in existing loaders, but the loader keeps two junction paths, and other families keep the string round trip.
+    - **Refuse.** Generation error (or dropped edge with a warning) for an M2M whose target or parent key is in the Opaque family, stated in PRD §13 beside §9.9.4 E8. No churn; such edges lose loading entirely, including the parent-side case, which compiles today but fails at runtime.
+- Prototype results, run at `02303463` on 2026-10-20 (recommended option):
+  - Reproduction: the Issue's schema at `c5c3862d` (Issue); driver probes as quoted under Root cause.
+  - Prototype: `JunctionReferenceGoType` on `RelationshipContext`, wired in `wireRelFKMetadata` from the junction's reference column (fallback `FKGoType`); a `fkLoadValue` funcmap helper (the unwrapped value `fkLoadKey` stringifies); `get.go.tmpl` scans the junction into `var localKey <FKColumnGoType>` / `var refKey <JunctionReferenceGoType>`, skips rows failing `fkLoadGuard`, keys both maps with `fkLoadKey`, and appends `<FKGoType>(fkLoadValue refKey)` to `targetPKs` (the ID family keeps `allTargetIDs []string`). Examples: postgres gains `hosts(addr INET PK)`, `fingerprints(digest BYTEA PK)` and `host_fingerprints`, with `tests/m2m_opaque_key_test.go`; sqlite gains `binary_key_badges` (BLOB parent ↔ text target), with `tests/m2m_binary_key_test.go`. Tests: `TestGetTemplate_m2mJunctionScansTypedKeys` (binary, network, integer, nullable junction column), `TestRelationshipTargets_M2MJunctionReferenceGoType` (a nullable reference column resolves to `*string`, not the target's `string`).
+  - Generated-code probe (pgx module from the CLI): bytea, inet, cidr, macaddr, text, bigint and uuid target keys all `go vet` clean; a load run against PostgreSQL 17 returns `post 1 blobs=[b1 b2] hosts=[h1]`, `blob b2 posts=[1 2]`, `host h1 posts=[1 2]` (binary and network keys on both sides).
+  - Gates: `go test -race ./gen/...` ok; `TestE2EGoldenFiles` ok; `GOWORK=off go test -race -count=1 ./...` and `GOWORK=off golangci-lint run` ok in graphql, introspect_sqlite, mysql, postgres, postgres_stdlib, sqlite and tenancy.
+  - Fail-first: template reverted → `TestGetTemplate_m2mJunctionScansTypedKeys` fails (output missing `"var refKey []byte"`, and the network case likewise), and the updated examples generated with the `HEAD` CLI fail `go vet`: postgres `models/models_gen.go:25021:28: cannot convert v (variable of type int64) to type net.IP`, sqlite `models/badge_gen.go:458:28: cannot convert v (variable of type int64) to type []byte` (sqlite `generate` exits 1 at the chained gqlgen step). Wiring line removed → `users.Tags FKGoType = "string", JunctionReferenceGoType = "string"; want "string", "*string"`. `fkLoadValue` returning the raw variable → the nullable case fails (output missing `"targetPKs = append(targetPKs, int64(refKey.Int64))"`). Existing suite without the fix: `make check` green at `c5c3862d`.
+  - Golden churn: graphql ~2, introspect_sqlite ~2, mysql ~2, postgres_stdlib ~2, tenancy ~2 (the loader only); postgres +7 ~21 and sqlite +9 ~53 (the loader plus the new example tables); unit golden `get_products_relationships_gen.go`.
+  - Patch: `.claude/prototypes/FIX-357.patch` (108 files; 11 source and test files, +418/-32).
 
 **References.**
-- PRD §13.1, §13.2 (M2M batched loading); §11.2 (the `Opaque[T]` family); §9.9.3 E8 (M2M nested writes into an Opaque-keyed table are already not eligible, a generator limitation).
+- PRD §13.1, §13.2 (M2M batched loading); §11.2 (the `Opaque[T]` family); §9.9.4 E8 (M2M nested writes into an Opaque-keyed table are already not eligible, a generator limitation).
 - FIX-356 (the literal `ID:` filter field in the same loader; its resolution notes record this as a separate root cause).
 - `cmd/sqlgen/gen/funcmap.go:662-704` (`pkFilterInExprStr`, `pkIsStringType`); `cmd/sqlgen/gotype/gotype.go:1075-1091` (`DeriveFKMethod`).
 
