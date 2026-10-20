@@ -23,7 +23,53 @@
 
 <!-- fixes:open:begin -->
 
-_No open fixes._
+### FIX-357
+
+- **Status:** Open
+- **Severity:** tracked
+- **Origin:** phase 6, cmd/sqlgen/gen/templates/table
+- **Surfaced by:** FIX-356 implementation (2026-10-20), user approved filing
+
+**Issue.** **M2M loader cannot fetch a target keyed on a binary or network type; the generated code does not compile.**
+An M2M relationship whose target table's primary key resolves to the
+`comparator.Opaque` family (`[]byte`, `net.IP`, `net.IPNet`,
+`net.HardwareAddr`) generates a `GetMany` loader that does not compile.
+Measured at `c5c3862d`, PostgreSQL, `source: files`, schema
+`posts(id bigint PK)`, `tags(id <type> PK)`,
+`post_tags(post_id → posts, tag_id → tags, PK (post_id, tag_id))`:
+`sqlgen generate` exits 0, then `go build ./models/` fails with
+`models/models_gen.go:2122:28: cannot convert v (variable of type int64) to type []byte` (bytea),
+`models/models_gen.go:2123:28: cannot convert v (variable of type int64) to type net.IP` (inet) and
+`models/models_gen.go:2123:38: cannot convert v (variable of type int64) to type net.HardwareAddr` (macaddr).
+The key's column name does not matter; it fails the same way on `main`
+before FIX-356. Any dialect whose binary column is a target PK (bytea, blob,
+varbinary) is affected.
+
+**Root cause.** The M2M loader in `cmd/sqlgen/gen/templates/table/get.go.tmpl`
+carries target keys as strings: it scans both junction columns into
+`[]string` (`:543`), then rebuilds typed keys for the target fetch. It has
+two branches, `pkIsStringType .FKGoType` (the `comparator.ID` family) and an
+else branch that assumes an integer: `strconv.ParseInt(s, 10, 64)` then
+`{{ .FKGoType }}(v)` (`:570-573`). `pkComparatorFamily`
+(`cmd/sqlgen/gen/context_table.go:2125-2139`) sends the Opaque family to that
+else branch, where the conversion does not compile. Beyond compiling
+(reading, not measured): the map-back keys targets with `fkToStringByGoType`
+(`:635`), which is `fmt.Sprint` for `[]byte` (`"[1 2 3]"`) and `.String()` for
+the `net` types, so those strings need not match the junction's scanned text,
+and a compile-only fix could load no rows.
+
+**Suggested fix.**
+- Pending the user's ruling (or `/fix-vet`): support the Opaque family in the M2M loader, or refuse the edge loudly.
+  - Support: scan the junction's target column into the key's own Go type rather than `string`, build `targetPKs` from those values with `pkFilterInExprStr` (it already renders `&comparator.Opaque[T]{In: …}`), and key both maps with a conversion that round-trips (`string(b)` for `[]byte`, `.String()` for the `net` types on both sides). Needs an example M2M keyed on a blob or inet column with a load test.
+  - Refuse: treat an Opaque-keyed M2M target as a generation error (or drop the edge with a warning), stated in PRD §13, as §9.9's E8 rule already does for nested writes on such edges.
+- Regression: a gen template test per Opaque type, and an example case that compiles under `check-examples`.
+
+**References.**
+- PRD §13.1, §13.2 (M2M batched loading); §11.2 (the `Opaque[T]` family); §9.9.3 E8 (M2M nested writes into an Opaque-keyed table are already not eligible, a generator limitation).
+- FIX-356 (the literal `ID:` filter field in the same loader; its resolution notes record this as a separate root cause).
+- `cmd/sqlgen/gen/funcmap.go:662-704` (`pkFilterInExprStr`, `pkIsStringType`); `cmd/sqlgen/gotype/gotype.go:1075-1091` (`DeriveFKMethod`).
+
+**Resolution notes.** _Filled in by /fix resolve._
 
 <!-- fixes:open:end -->
 
