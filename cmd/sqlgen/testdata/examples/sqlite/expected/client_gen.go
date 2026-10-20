@@ -63,6 +63,7 @@ type Client struct {
 	article            *articleClient
 	asset              *assetClient
 	assetDocumentLink  *assetDocumentLinkClient
+	badge              *badgeClient
 	binaryKey          *binaryKeyClient
 	binaryKeyEvent     *binaryKeyEventClient
 	category           *categoryClient
@@ -73,6 +74,7 @@ type Client struct {
 	order              *orderClient
 	orderItem          *orderItemClient
 	owner              *ownerClient
+	ownerBadge         *ownerBadgeClient
 	ownerProfile       *ownerProfileClient
 	product            *productClient
 	productSummary     *productSummaryClient
@@ -102,6 +104,7 @@ func New(querier database.Querier, opts ...ClientOption) *Client {
 		article:            newArticleClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler),
 		asset:              newAssetClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler),
 		assetDocumentLink:  newAssetDocumentLinkClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler),
+		badge:              newBadgeClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler),
 		binaryKey:          newBinaryKeyClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler),
 		binaryKeyEvent:     newBinaryKeyEventClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler),
 		category:           newCategoryClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler),
@@ -112,6 +115,7 @@ func New(querier database.Querier, opts ...ClientOption) *Client {
 		order:              newOrderClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler),
 		orderItem:          newOrderItemClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler),
 		owner:              newOwnerClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler),
+		ownerBadge:         newOwnerBadgeClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler),
 		ownerProfile:       newOwnerProfileClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler),
 		product:            newProductClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler),
 		productSummary:     newProductSummaryClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler),
@@ -131,6 +135,7 @@ func New(querier database.Querier, opts ...ClientOption) *Client {
 	// deferred events and cache invalidation flush the way the client was
 	// configured rather than on NewTransaction's default.
 	c.asset.callbackMode = options.callbackMode
+	c.badge.callbackMode = options.callbackMode
 	c.binaryKey.callbackMode = options.callbackMode
 	c.category.callbackMode = options.callbackMode
 	c.document.callbackMode = options.callbackMode
@@ -143,6 +148,8 @@ func New(querier database.Querier, opts ...ClientOption) *Client {
 	// the nested-mutation executors write through
 	c.asset.documentClient = c.document
 	c.asset.assetDocumentLinkClient = c.assetDocumentLink
+	c.badge.ownerClient = c.owner
+	c.badge.ownerBadgeClient = c.ownerBadge
 	c.binaryKey.binaryKeyEventClient = c.binaryKeyEvent
 	c.category.productClient = c.product
 	c.category.userClient = c.user
@@ -150,6 +157,8 @@ func New(querier database.Querier, opts ...ClientOption) *Client {
 	c.document.assetClient = c.asset
 	c.document.assetDocumentLinkClient = c.assetDocumentLink
 	c.order.orderItemClient = c.orderItem
+	c.owner.badgeClient = c.badge
+	c.owner.ownerBadgeClient = c.ownerBadge
 	c.owner.ownerProfileClient = c.ownerProfile
 	c.product.orderItemClient = c.orderItem
 	c.product.productTagLabelClient = c.productTagLabel
@@ -174,6 +183,11 @@ func (c *Client) Assets() AssetClient {
 // AssetDocumentLinks returns the AssetDocumentLinkClient for AssetDocumentLink operations.
 func (c *Client) AssetDocumentLinks() AssetDocumentLinkClient {
 	return c.assetDocumentLink
+}
+
+// Badges returns the BadgeClient for Badge operations.
+func (c *Client) Badges() BadgeClient {
+	return c.badge
 }
 
 // BinaryKeys returns the BinaryKeyClient for BinaryKey operations.
@@ -224,6 +238,11 @@ func (c *Client) OrderItems() OrderItemClient {
 // Owners returns the OwnerClient for Owner operations.
 func (c *Client) Owners() OwnerClient {
 	return c.owner
+}
+
+// OwnerBadges returns the OwnerBadgeClient for OwnerBadge operations.
+func (c *Client) OwnerBadges() OwnerBadgeClient {
+	return c.ownerBadge
 }
 
 // OwnerProfiles returns the OwnerProfileClient for OwnerProfile operations.

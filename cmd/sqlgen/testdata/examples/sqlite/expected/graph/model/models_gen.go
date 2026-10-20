@@ -57,6 +57,18 @@ type AssetSort struct {
 	Direction SortDirection  `json:"direction"`
 }
 
+type BadgeFilter struct {
+	Label  *StringComparator `json:"label,omitempty"`
+	Owners *OwnerFilter      `json:"owners,omitempty"`
+	And    []*BadgeFilter    `json:"and,omitempty"`
+	Or     []*BadgeFilter    `json:"or,omitempty"`
+}
+
+type BadgeSort struct {
+	Field     BadgeSortField `json:"field"`
+	Direction SortDirection  `json:"direction"`
+}
+
 type BinaryKeyEventFilter struct {
 	BinaryKeyID *BytesComparator        `json:"binaryKeyID,omitempty"`
 	Label       *StringComparator       `json:"label,omitempty"`
@@ -148,6 +160,11 @@ type CreateAssetInput struct {
 	CreatedAt types.DateTime `json:"createdAt"`
 }
 
+type CreateBadgeInput struct {
+	Code  string `json:"code"`
+	Label string `json:"label"`
+}
+
 type CreateBinaryKeyEventInput struct {
 	BinaryKeyID []byte `json:"binaryKeyID"`
 	Label       string `json:"label"`
@@ -191,6 +208,11 @@ type CreateOrderItemInput struct {
 	ProductID int     `json:"productID"`
 	Quantity  int     `json:"quantity"`
 	UnitPrice float64 `json:"unitPrice"`
+}
+
+type CreateOwnerBadgeInput struct {
+	OwnerID   int    `json:"ownerID"`
+	BadgeCode string `json:"badgeCode"`
 }
 
 type CreateOwnerInput struct {
@@ -446,10 +468,21 @@ type OrderSort struct {
 	Direction SortDirection  `json:"direction"`
 }
 
+type OwnerBadgeFilter struct {
+	And []*OwnerBadgeFilter `json:"and,omitempty"`
+	Or  []*OwnerBadgeFilter `json:"or,omitempty"`
+}
+
+type OwnerBadgeSort struct {
+	Field     OwnerBadgeSortField `json:"field"`
+	Direction SortDirection       `json:"direction"`
+}
+
 type OwnerFilter struct {
-	Name *StringComparator `json:"name,omitempty"`
-	And  []*OwnerFilter    `json:"and,omitempty"`
-	Or   []*OwnerFilter    `json:"or,omitempty"`
+	Name   *StringComparator `json:"name,omitempty"`
+	Badges *BadgeFilter      `json:"badges,omitempty"`
+	And    []*OwnerFilter    `json:"and,omitempty"`
+	Or     []*OwnerFilter    `json:"or,omitempty"`
 }
 
 type OwnerProfileFilter struct {
@@ -619,6 +652,10 @@ type UpdateArticleInput struct {
 type UpdateAssetInput struct {
 	Name      *string         `json:"name,omitempty"`
 	CreatedAt *types.DateTime `json:"createdAt,omitempty"`
+}
+
+type UpdateBadgeInput struct {
+	Label *string `json:"label,omitempty"`
 }
 
 type UpdateBinaryKeyEventInput struct {
@@ -987,6 +1024,61 @@ func (e *AssetSortField) UnmarshalJSON(b []byte) error {
 }
 
 func (e AssetSortField) MarshalJSON() ([]byte, error) {
+	var buf bytes.Buffer
+	e.MarshalGQL(&buf)
+	return buf.Bytes(), nil
+}
+
+type BadgeSortField string
+
+const (
+	BadgeSortFieldCode  BadgeSortField = "CODE"
+	BadgeSortFieldLabel BadgeSortField = "LABEL"
+)
+
+var AllBadgeSortField = []BadgeSortField{
+	BadgeSortFieldCode,
+	BadgeSortFieldLabel,
+}
+
+func (e BadgeSortField) IsValid() bool {
+	switch e {
+	case BadgeSortFieldCode, BadgeSortFieldLabel:
+		return true
+	}
+	return false
+}
+
+func (e BadgeSortField) String() string {
+	return string(e)
+}
+
+func (e *BadgeSortField) UnmarshalGQL(v any) error {
+	str, ok := v.(string)
+	if !ok {
+		return fmt.Errorf("enums must be strings")
+	}
+
+	*e = BadgeSortField(str)
+	if !e.IsValid() {
+		return fmt.Errorf("%s is not a valid BadgeSortField", str)
+	}
+	return nil
+}
+
+func (e BadgeSortField) MarshalGQL(w io.Writer) {
+	_, _ = fmt.Fprint(w, strconv.Quote(e.String()))
+}
+
+func (e *BadgeSortField) UnmarshalJSON(b []byte) error {
+	s, err := strconv.Unquote(string(b))
+	if err != nil {
+		return err
+	}
+	return e.UnmarshalGQL(s)
+}
+
+func (e BadgeSortField) MarshalJSON() ([]byte, error) {
 	var buf bytes.Buffer
 	e.MarshalGQL(&buf)
 	return buf.Bytes(), nil
@@ -1522,6 +1614,61 @@ func (e *OrderSortField) UnmarshalJSON(b []byte) error {
 }
 
 func (e OrderSortField) MarshalJSON() ([]byte, error) {
+	var buf bytes.Buffer
+	e.MarshalGQL(&buf)
+	return buf.Bytes(), nil
+}
+
+type OwnerBadgeSortField string
+
+const (
+	OwnerBadgeSortFieldOwnerID   OwnerBadgeSortField = "OWNER_ID"
+	OwnerBadgeSortFieldBadgeCode OwnerBadgeSortField = "BADGE_CODE"
+)
+
+var AllOwnerBadgeSortField = []OwnerBadgeSortField{
+	OwnerBadgeSortFieldOwnerID,
+	OwnerBadgeSortFieldBadgeCode,
+}
+
+func (e OwnerBadgeSortField) IsValid() bool {
+	switch e {
+	case OwnerBadgeSortFieldOwnerID, OwnerBadgeSortFieldBadgeCode:
+		return true
+	}
+	return false
+}
+
+func (e OwnerBadgeSortField) String() string {
+	return string(e)
+}
+
+func (e *OwnerBadgeSortField) UnmarshalGQL(v any) error {
+	str, ok := v.(string)
+	if !ok {
+		return fmt.Errorf("enums must be strings")
+	}
+
+	*e = OwnerBadgeSortField(str)
+	if !e.IsValid() {
+		return fmt.Errorf("%s is not a valid OwnerBadgeSortField", str)
+	}
+	return nil
+}
+
+func (e OwnerBadgeSortField) MarshalGQL(w io.Writer) {
+	_, _ = fmt.Fprint(w, strconv.Quote(e.String()))
+}
+
+func (e *OwnerBadgeSortField) UnmarshalJSON(b []byte) error {
+	s, err := strconv.Unquote(string(b))
+	if err != nil {
+		return err
+	}
+	return e.UnmarshalGQL(s)
+}
+
+func (e OwnerBadgeSortField) MarshalJSON() ([]byte, error) {
 	var buf bytes.Buffer
 	e.MarshalGQL(&buf)
 	return buf.Bytes(), nil

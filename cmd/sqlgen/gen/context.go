@@ -379,10 +379,10 @@ type RelationshipContext struct {
 	FKColumnGoType string
 	// TargetPKFieldName is the Go field name of the target table's first PK
 	// column (e.g. "ID"), and TargetPKColumn is that column's SQL name (e.g.
-	// "id"). Only M2M consumes them: the loader maps loaded targets back to
-	// their parents through a map keyed on the field, and declares the column
-	// on the target fetch's requiredColumns so a narrowed projection cannot
-	// leave the key at its zero value. Filled cross-table by
+	// "id"). Only M2M consumes them: the loader filters the target fetch on the
+	// field, maps loaded targets back to their parents through a map keyed on
+	// it, and declares the column on the fetch's requiredColumns so a narrowed
+	// projection cannot leave the key at its zero value. Filled cross-table by
 	// wireRelationshipFKMetadata; the field name falls back to the parent's PK
 	// spelling when the target is outside the generated set (unit fixtures,
 	// bare tables).

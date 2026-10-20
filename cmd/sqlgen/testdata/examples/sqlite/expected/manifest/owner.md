@@ -30,6 +30,7 @@
 | Name | Kind | Target | FK | Filter |
 | --- | --- | --- | --- | --- |
 | OwnerProfile | o2o | OwnerProfile | owner_profiles.owner_id |  |
+| badges | m2m | Badge | owner_badges (owner_id → badge_code) |  |
 
 ## Query methods
 

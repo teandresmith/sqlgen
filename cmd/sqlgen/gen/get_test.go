@@ -579,6 +579,33 @@ func TestGetTemplate_m2mRelationshipLoading(t *testing.T) {
 	}
 }
 
+// TestGetTemplate_m2mTargetFilterUsesTargetPKField pins the M2M target fetch's
+// filter to the target's own PK field: a target keyed on `code` has no `ID`
+// filter field, so a literal one does not compile.
+func TestGetTemplate_m2mTargetFilterUsesTargetPKField(t *testing.T) {
+	tests := []struct {
+		name     string
+		fkGoType string
+		want     string
+	}{
+		{name: "string key", fkGoType: "string", want: "filter := &TagFilter{\n\t\t\t\tCode: &comparator.ID{In: allTargetIDs},\n\t\t\t}"},
+		{name: "integer key", fkGoType: "int64", want: "filter := &TagFilter{\n\t\t\t\tCode: &comparator.Number[int64]{In: targetPKs},\n\t\t\t}"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ctx := testGetContext_withRelationships()
+			ctx.M2MRelationships[0].FKGoType = tt.fkGoType
+			ctx.M2MRelationships[0].TargetPKFieldName = "Code"
+			ctx.M2MRelationships[0].TargetPKColumn = "code"
+			output := executeGetTemplate(t, ctx)
+
+			if !strings.Contains(output, tt.want) {
+				t.Errorf("output missing target filter:\n%s\n\nfull output:\n%s", tt.want, output)
+			}
+		})
+	}
+}
+
 // --- Test: Parallel loading via errgroup ---
 
 func TestGetTemplate_parallelLoading(t *testing.T) {

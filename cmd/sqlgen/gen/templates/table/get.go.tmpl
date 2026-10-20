@@ -563,7 +563,7 @@ func (c *{{ .StructName | toCamelCase }}Client) loadRelationships(ctx context.Co
 			// Step 2: Fetch the actual entities
 {{- if pkIsStringType .FKGoType }}
 			filter := &{{ .TargetStructName }}Filter{
-				ID: &comparator.ID{In: allTargetIDs},
+				{{ .TargetPKFieldName }}: &comparator.ID{In: allTargetIDs},
 			}
 {{- else }}
 			targetPKs := make([]{{ .FKGoType }}, len(allTargetIDs))
@@ -572,7 +572,7 @@ func (c *{{ .StructName | toCamelCase }}Client) loadRelationships(ctx context.Co
 				targetPKs[ii] = {{ .FKGoType }}(v)
 			}
 			filter := &{{ .TargetStructName }}Filter{
-				ID: {{ pkFilterInExprStr .FKGoType "targetPKs" false }},
+				{{ .TargetPKFieldName }}: {{ pkFilterInExprStr .FKGoType "targetPKs" false }},
 			}
 {{- end }}
 			if fo.{{ .FieldName }}.Filter != nil {

@@ -13,6 +13,7 @@ Features: audit_columns, graphql, soft_delete
 | Article | `articles` | table | [article.md](article.md) |  |
 | Asset | `assets` | table | [asset.md](asset.md) |  |
 | AssetDocumentLink | `asset_document_links` | table | [asset_document_link.md](asset_document_link.md) |  |
+| Badge | `badges` | table | [badge.md](badge.md) |  |
 | BinaryKey | `binary_keys` | table | [binary_key.md](binary_key.md) |  |
 | BinaryKeyEvent | `binary_key_events` | table | [binary_key_event.md](binary_key_event.md) |  |
 | Category | `categories` | table | [category.md](category.md) |  |
@@ -23,6 +24,7 @@ Features: audit_columns, graphql, soft_delete
 | Order | `orders` | table | [order.md](order.md) |  |
 | OrderItem | `order_items` | table | [order_item.md](order_item.md) |  |
 | Owner | `owners` | table | [owner.md](owner.md) |  |
+| OwnerBadge | `owner_badges` | table | [owner_badge.md](owner_badge.md) |  |
 | OwnerProfile | `owner_profiles` | table | [owner_profile.md](owner_profile.md) |  |
 | Product | `products` | table | [product.md](product.md) |  |
 | ProductSummary | `product_summary` | view | [product_summary.md](product_summary.md) |  |

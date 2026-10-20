@@ -149,6 +149,47 @@ func translateCreateAssetDocumentLinkInput(in gqlmodel.CreateAssetDocumentLinkIn
 	return out
 }
 
+// translateCreateBadgeInput maps a gqlgen-generated input value
+// onto the consumer model's Create<Table>Input. The body shape per field
+// depends on (SchemaNullable) × (ModelOmittable) × (ModelInnerIsPointer) ×
+// (CastTo) × (AddressOf) × (PointerCast); see APIInputField doc-comment for
+// the full table. PointerCast is the one branch that cannot be an expression:
+// gqlgen's `*int` and the model's `*int32` do not thread through each other,
+// and Go cannot convert a pointee inline, so the value goes through a local.
+func translateCreateBadgeInput(in gqlmodel.CreateBadgeInput) *models.CreateBadgeInput {
+	out := &models.CreateBadgeInput{}
+	out.Code = in.Code
+	out.Label = in.Label
+
+	return out
+}
+
+// translateUpdateBadgeInput maps the gqlgen-generated update
+// input onto the consumer model's Update<Table>Input. All fields are
+// omittable in the model; gqlgen emits each field as `*T` regardless of
+// schema nullability so the nil-check is uniform — only the inner coercion
+// varies (see inputCoerceDeref for the cast / address-of / deref branches).
+// `_inc` / `_dec` paired fields are skipped here and dispatched separately
+// by the resolver via Increment.
+func translateUpdateBadgeInput(in gqlmodel.UpdateBadgeInput) *models.UpdateBadgeInput {
+	out := &models.UpdateBadgeInput{}
+	if in.Label != nil {
+		out.Label = omittable.Set(*in.Label)
+	}
+	return out
+}
+
+// hasUpdateBadgeSetFields reports whether any non-`_inc`/`_dec`
+// field on the update input is set. The resolver only issues Update when at
+// least one set-field is present; a pure inc/dec mutation skips the Update
+// call entirely so the unified client's hook chain sees one Increment per op.
+func hasUpdateBadgeSetFields(in gqlmodel.UpdateBadgeInput) bool {
+	if in.Label != nil {
+		return true
+	}
+	return false
+}
+
 // translateCreateBinaryKeyInput maps a gqlgen-generated input value
 // onto the consumer model's Create<Table>Input. The body shape per field
 // depends on (SchemaNullable) × (ModelOmittable) × (ModelInnerIsPointer) ×
@@ -584,6 +625,21 @@ func hasUpdateOwnerSetFields(in gqlmodel.UpdateOwnerInput) bool {
 		return true
 	}
 	return false
+}
+
+// translateCreateOwnerBadgeInput maps a gqlgen-generated input value
+// onto the consumer model's Create<Table>Input. The body shape per field
+// depends on (SchemaNullable) × (ModelOmittable) × (ModelInnerIsPointer) ×
+// (CastTo) × (AddressOf) × (PointerCast); see APIInputField doc-comment for
+// the full table. PointerCast is the one branch that cannot be an expression:
+// gqlgen's `*int` and the model's `*int32` do not thread through each other,
+// and Go cannot convert a pointee inline, so the value goes through a local.
+func translateCreateOwnerBadgeInput(in gqlmodel.CreateOwnerBadgeInput) *models.CreateOwnerBadgeInput {
+	out := &models.CreateOwnerBadgeInput{}
+	out.OwnerID = int64(in.OwnerID)
+	out.BadgeCode = in.BadgeCode
+
+	return out
 }
 
 // translateCreateOwnerProfileInput maps a gqlgen-generated input value

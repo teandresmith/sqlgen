@@ -558,6 +558,178 @@ func (m *M) DeleteAssetDocumentLink(ctx context.Context, assetID int, documentID
 	return true, nil
 }
 
+// Badge resolves the single-by-PK query for badges.
+// <table>(id) returns null when missing — no separate exists query is
+// needed. ErrNotFound is collapsed to (nil, nil) so the nullable
+// schema field surfaces as JSON null rather than a NOT_FOUND error.
+func (q *Q) Badge(ctx context.Context, code string) (*models.Badge, error) {
+	fo := badgeFieldOptionsFromContext(ctx)
+	res, err := q.Client.Badges().Get(ctx, code, func(o *models.CallOptions[models.BadgeFieldOptions]) {
+		o.FieldOptions = fo
+		for _, f := range callOptionsFromHTTP[models.BadgeFieldOptions](ctx) {
+			f(o)
+		}
+	})
+	if err != nil {
+		if errors.Is(err, models.ErrNotFound) {
+			return nil, nil
+		}
+		return nil, mapErrorToGQL(err)
+	}
+	return res, nil
+}
+
+// Badges resolves the cursor-paginated Connection query for badges.
+func (q *Q) Badges(ctx context.Context, filter *models.BadgeFilter, first *int, after *string, last *int, before *string) (*models.Connection[models.Badge], error) {
+	fo := badgeFieldOptionsFromContext(ctx)
+	res, err := q.Client.Badges().Connection(ctx, models.ConnectionInput[models.BadgeFilter]{
+		Filter: filter,
+		First:  first,
+		After:  after,
+		Last:   last,
+		Before: before,
+	}, func(o *models.CallOptions[models.BadgeFieldOptions]) {
+		o.FieldOptions = fo
+		for _, f := range callOptionsFromHTTP[models.BadgeFieldOptions](ctx) {
+			f(o)
+		}
+	})
+	if err != nil {
+		return nil, mapErrorToGQL(err)
+	}
+	return res, nil
+}
+
+// BadgeList resolves the offset-paginated ListResult query for badges.
+func (q *Q) BadgeList(ctx context.Context, filter *models.BadgeFilter, sort []sql.Sort, limit *int, offset *int) (*models.PaginateResult[models.Badge], error) {
+	fo := badgeFieldOptionsFromContext(ctx)
+	in := models.PaginateInput[models.BadgeFilter]{
+		Filter: filter,
+		Sort:   sort,
+	}
+	if limit != nil {
+		in.Limit = *limit
+	}
+	if offset != nil {
+		in.Offset = *offset
+	}
+	res, err := q.Client.Badges().Paginate(ctx, in, func(o *models.CallOptions[models.BadgeFieldOptions]) {
+		o.FieldOptions = fo
+		for _, f := range callOptionsFromHTTP[models.BadgeFieldOptions](ctx) {
+			f(o)
+		}
+	})
+	if err != nil {
+		return nil, mapErrorToGQL(err)
+	}
+	return res, nil
+}
+
+// CreateBadge resolves the single-row create mutation for badges.
+func (m *M) CreateBadge(ctx context.Context, input *models.CreateBadgeInput) (*models.Badge, error) {
+	fo := badgeFieldOptionsFromContext(ctx)
+	res, err := m.Client.Badges().Create(ctx, input, func(o *models.CallOptions[models.BadgeFieldOptions]) {
+		o.FieldOptions = fo
+		for _, f := range callOptionsFromHTTP[models.BadgeFieldOptions](ctx) {
+			f(o)
+		}
+	})
+	if err != nil {
+		return nil, mapErrorToGQL(err)
+	}
+	return res, nil
+}
+
+// CreateBadges resolves the bulk create mutation for badges.
+func (m *M) CreateBadges(ctx context.Context, inputs []*models.CreateBadgeInput) ([]*models.Badge, error) {
+	fo := badgeFieldOptionsFromContext(ctx)
+	res, err := m.Client.Badges().CreateMany(ctx, inputs, func(o *models.CallOptions[models.BadgeFieldOptions]) {
+		o.FieldOptions = fo
+		for _, f := range callOptionsFromHTTP[models.BadgeFieldOptions](ctx) {
+			f(o)
+		}
+	})
+	if err != nil {
+		return nil, mapErrorToGQL(err)
+	}
+	return res, nil
+}
+
+// UpdateBadge resolves the single-row update mutation for badges.
+// This table has no numeric non-PK columns, so no `_inc`/`_dec`
+// dispatch is generated and the IncrementColumn enum is omitted. The method
+// simply applies the set input (when non-empty) and re-fetches the entity.
+func (m *M) UpdateBadge(ctx context.Context, code string, setIn *models.UpdateBadgeInput, hasSet bool) (*models.Badge, error) {
+	fo := badgeFieldOptionsFromContext(ctx)
+	if hasSet {
+		if _, err := m.Client.Badges().Update(ctx, code, setIn, func(o *models.CallOptions[models.BadgeFieldOptions]) {
+			for _, f := range callOptionsFromHTTP[models.BadgeFieldOptions](ctx) {
+				f(o)
+			}
+		}); err != nil {
+			return nil, mapErrorToGQL(err)
+		}
+	}
+	res, err := m.Client.Badges().Get(ctx, code, func(o *models.CallOptions[models.BadgeFieldOptions]) {
+		o.FieldOptions = fo
+		for _, f := range callOptionsFromHTTP[models.BadgeFieldOptions](ctx) {
+			f(o)
+		}
+	})
+	if err != nil {
+		return nil, mapErrorToGQL(err)
+	}
+	return res, nil
+}
+
+// UpdateBadges resolves the bulk update-where mutation for badges.
+// `_inc` / `_dec` operators are dispatched per-row internally by the unified
+// client, so the seed only needs to pass the translated set input.
+func (m *M) UpdateBadges(ctx context.Context, filter *models.BadgeFilter, setIn *models.UpdateBadgeInput) ([]*models.Badge, error) {
+	fo := badgeFieldOptionsFromContext(ctx)
+	res, err := m.Client.Badges().UpdateWhere(ctx, filter, setIn, func(o *models.CallOptions[models.BadgeFieldOptions]) {
+		o.FieldOptions = fo
+		for _, f := range callOptionsFromHTTP[models.BadgeFieldOptions](ctx) {
+			f(o)
+		}
+	})
+	if err != nil {
+		return nil, mapErrorToGQL(err)
+	}
+	return res, nil
+}
+
+// UpsertBadge resolves the single-row upsert mutation for badges.
+func (m *M) UpsertBadge(ctx context.Context, input *models.CreateBadgeInput) (*models.Badge, error) {
+	fo := badgeFieldOptionsFromContext(ctx)
+	res, err := m.Client.Badges().Upsert(ctx, input, models.BadgeConflictPK, func(o *models.CallOptions[models.BadgeFieldOptions]) {
+		o.FieldOptions = fo
+		for _, f := range callOptionsFromHTTP[models.BadgeFieldOptions](ctx) {
+			f(o)
+		}
+	})
+	if err != nil {
+		return nil, mapErrorToGQL(err)
+	}
+	return res, nil
+}
+
+// DeleteBadge resolves the bare `delete<Table>` mutation when
+// only hard delete is enabled. Returns Boolean!.
+func (m *M) DeleteBadge(ctx context.Context, code string) (bool, error) {
+	if err := m.Client.Badges().HardDelete(ctx, code, func(o *models.CallOptions[models.BadgeFieldOptions]) {
+		for _, f := range callOptionsFromHTTP[models.BadgeFieldOptions](ctx) {
+			f(o)
+		}
+	}); err != nil {
+		if errors.Is(err, models.ErrNotFound) {
+			return false, nil
+		}
+		return false, mapErrorToGQL(err)
+	}
+	return true, nil
+}
+
 // BinaryKey resolves the single-by-PK query for binary_keys.
 // <table>(id) returns null when missing — no separate exists query is
 // needed. ErrNotFound is collapsed to (nil, nil) so the nullable
@@ -2073,6 +2245,134 @@ func (m *M) UpsertOwner(ctx context.Context, input *models.CreateOwnerInput) (*m
 func (m *M) DeleteOwner(ctx context.Context, ownerKey int) (bool, error) {
 	if err := m.Client.Owners().HardDelete(ctx, int64(ownerKey), func(o *models.CallOptions[models.OwnerFieldOptions]) {
 		for _, f := range callOptionsFromHTTP[models.OwnerFieldOptions](ctx) {
+			f(o)
+		}
+	}); err != nil {
+		if errors.Is(err, models.ErrNotFound) {
+			return false, nil
+		}
+		return false, mapErrorToGQL(err)
+	}
+	return true, nil
+}
+
+// OwnerBadge resolves the single-by-PK query for owner_badges.
+// <table>(id) returns null when missing — no separate exists query is
+// needed. ErrNotFound is collapsed to (nil, nil) so the nullable
+// schema field surfaces as JSON null rather than a NOT_FOUND error.
+func (q *Q) OwnerBadge(ctx context.Context, ownerID int, badgeCode string) (*models.OwnerBadge, error) {
+	fo := ownerBadgeFieldOptionsFromContext(ctx)
+	res, err := q.Client.OwnerBadges().Get(ctx, models.OwnerBadgePK{OwnerID: int64(ownerID), BadgeCode: badgeCode}, func(o *models.CallOptions[models.OwnerBadgeFieldOptions]) {
+		o.FieldOptions = fo
+		for _, f := range callOptionsFromHTTP[models.OwnerBadgeFieldOptions](ctx) {
+			f(o)
+		}
+	})
+	if err != nil {
+		if errors.Is(err, models.ErrNotFound) {
+			return nil, nil
+		}
+		return nil, mapErrorToGQL(err)
+	}
+	return res, nil
+}
+
+// OwnerBadges resolves the cursor-paginated Connection query for owner_badges.
+func (q *Q) OwnerBadges(ctx context.Context, filter *models.OwnerBadgeFilter, first *int, after *string, last *int, before *string) (*models.Connection[models.OwnerBadge], error) {
+	fo := ownerBadgeFieldOptionsFromContext(ctx)
+	res, err := q.Client.OwnerBadges().Connection(ctx, models.ConnectionInput[models.OwnerBadgeFilter]{
+		Filter: filter,
+		First:  first,
+		After:  after,
+		Last:   last,
+		Before: before,
+	}, func(o *models.CallOptions[models.OwnerBadgeFieldOptions]) {
+		o.FieldOptions = fo
+		for _, f := range callOptionsFromHTTP[models.OwnerBadgeFieldOptions](ctx) {
+			f(o)
+		}
+	})
+	if err != nil {
+		return nil, mapErrorToGQL(err)
+	}
+	return res, nil
+}
+
+// OwnerBadgeList resolves the offset-paginated ListResult query for owner_badges.
+func (q *Q) OwnerBadgeList(ctx context.Context, filter *models.OwnerBadgeFilter, sort []sql.Sort, limit *int, offset *int) (*models.PaginateResult[models.OwnerBadge], error) {
+	fo := ownerBadgeFieldOptionsFromContext(ctx)
+	in := models.PaginateInput[models.OwnerBadgeFilter]{
+		Filter: filter,
+		Sort:   sort,
+	}
+	if limit != nil {
+		in.Limit = *limit
+	}
+	if offset != nil {
+		in.Offset = *offset
+	}
+	res, err := q.Client.OwnerBadges().Paginate(ctx, in, func(o *models.CallOptions[models.OwnerBadgeFieldOptions]) {
+		o.FieldOptions = fo
+		for _, f := range callOptionsFromHTTP[models.OwnerBadgeFieldOptions](ctx) {
+			f(o)
+		}
+	})
+	if err != nil {
+		return nil, mapErrorToGQL(err)
+	}
+	return res, nil
+}
+
+// CreateOwnerBadge resolves the single-row create mutation for owner_badges.
+func (m *M) CreateOwnerBadge(ctx context.Context, input *models.CreateOwnerBadgeInput) (*models.OwnerBadge, error) {
+	fo := ownerBadgeFieldOptionsFromContext(ctx)
+	res, err := m.Client.OwnerBadges().Create(ctx, input, func(o *models.CallOptions[models.OwnerBadgeFieldOptions]) {
+		o.FieldOptions = fo
+		for _, f := range callOptionsFromHTTP[models.OwnerBadgeFieldOptions](ctx) {
+			f(o)
+		}
+	})
+	if err != nil {
+		return nil, mapErrorToGQL(err)
+	}
+	return res, nil
+}
+
+// CreateOwnerBadges resolves the bulk create mutation for owner_badges.
+func (m *M) CreateOwnerBadges(ctx context.Context, inputs []*models.CreateOwnerBadgeInput) ([]*models.OwnerBadge, error) {
+	fo := ownerBadgeFieldOptionsFromContext(ctx)
+	res, err := m.Client.OwnerBadges().CreateMany(ctx, inputs, func(o *models.CallOptions[models.OwnerBadgeFieldOptions]) {
+		o.FieldOptions = fo
+		for _, f := range callOptionsFromHTTP[models.OwnerBadgeFieldOptions](ctx) {
+			f(o)
+		}
+	})
+	if err != nil {
+		return nil, mapErrorToGQL(err)
+	}
+	return res, nil
+}
+
+// UpsertOwnerBadge resolves the single-row upsert mutation for owner_badges.
+func (m *M) UpsertOwnerBadge(ctx context.Context, input *models.CreateOwnerBadgeInput) (*models.OwnerBadge, error) {
+	fo := ownerBadgeFieldOptionsFromContext(ctx)
+	res, err := m.Client.OwnerBadges().Upsert(ctx, input, models.OwnerBadgeConflictPK, func(o *models.CallOptions[models.OwnerBadgeFieldOptions]) {
+		o.FieldOptions = fo
+		for _, f := range callOptionsFromHTTP[models.OwnerBadgeFieldOptions](ctx) {
+			f(o)
+		}
+	})
+	if err != nil {
+		return nil, mapErrorToGQL(err)
+	}
+	return res, nil
+}
+
+// DeleteOwnerBadge resolves the bare `delete<Table>` mutation when
+// only hard delete is enabled. Returns Boolean!.
+func (m *M) DeleteOwnerBadge(ctx context.Context, ownerID int, badgeCode string) (bool, error) {
+	if err := m.Client.OwnerBadges().HardDelete(ctx, models.OwnerBadgePK{OwnerID: int64(ownerID), BadgeCode: badgeCode}, func(o *models.CallOptions[models.OwnerBadgeFieldOptions]) {
+		for _, f := range callOptionsFromHTTP[models.OwnerBadgeFieldOptions](ctx) {
 			f(o)
 		}
 	}); err != nil {

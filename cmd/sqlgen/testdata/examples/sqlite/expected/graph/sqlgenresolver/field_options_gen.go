@@ -214,6 +214,51 @@ func assetDocumentLinkFieldOptionsFromCollected(opCtx *graphql.OperationContext,
 	return fo
 }
 
+// badgeFieldOptionsFromContext returns the
+// models.BadgeFieldOptions for the current GraphQL request.
+func badgeFieldOptionsFromContext(ctx context.Context) *models.BadgeFieldOptions {
+	opCtx := graphql.GetOperationContext(ctx)
+	fields := graphql.CollectFieldsCtx(ctx, nil)
+	entityFields, wantsRows := unwrapConnectionFields(ctx, fields, "BadgeConnection", "BadgeListResult")
+	if !wantsRows {
+		// Count-only envelope selection: the request never reaches a row, so
+		// the all-false FieldOptions is the right answer and the read
+		// short-circuits into a single COUNT.
+		return &models.BadgeFieldOptions{}
+	}
+	return badgeFieldOptionsFromCollected(opCtx, entityFields)
+}
+
+// badgeFieldOptionsFromCollected walks one level of
+// the Badge selection set and produces the corresponding
+// FieldOptions tree. Recursive descent into relationships re-enters the
+// related table's walker on the child's selection set.
+func badgeFieldOptionsFromCollected(opCtx *graphql.OperationContext, fields []graphql.CollectedField) *models.BadgeFieldOptions {
+	fo := &models.BadgeFieldOptions{}
+	for _, f := range coalesceAliases(opCtx, fields) {
+		switch f.Name {
+		case "code":
+			fo.Code = true
+		case "label":
+			fo.Label = true
+		case "owners":
+			fo.Owners = &models.OwnerRelationshipOptions{
+				FieldOptions: ownerFieldOptionsFromCollected(opCtx, f.Sub),
+			}
+		}
+	}
+	if !fo.HasSelectedColumns() {
+		// The selection asked for this row but named no column. Projecting the
+		// row's identity keeps the all-false short-circuit — which means
+		// "the caller wants no rows" — from swallowing it. Columns
+		// the read derives rather than returns (cursor keys, relationship
+		// mapping keys, O2O NULL-detection keys) are unioned in downstream by
+		// the client method that reads them, not here.
+		fo.Code = true
+	}
+	return fo
+}
+
 // binaryKeyFieldOptionsFromContext returns the
 // models.BinaryKeyFieldOptions for the current GraphQL request.
 func binaryKeyFieldOptionsFromContext(ctx context.Context) *models.BinaryKeyFieldOptions {
@@ -676,6 +721,10 @@ func ownerFieldOptionsFromCollected(opCtx *graphql.OperationContext, fields []gr
 			fo.Name = true
 		case "ownerProfile":
 			fo.OwnerProfile = ownerProfileFieldOptionsFromCollected(opCtx, f.Sub)
+		case "badges":
+			fo.Badges = &models.BadgeRelationshipOptions{
+				FieldOptions: badgeFieldOptionsFromCollected(opCtx, f.Sub),
+			}
 		}
 	}
 	if !fo.HasSelectedColumns() {
@@ -686,6 +735,48 @@ func ownerFieldOptionsFromCollected(opCtx *graphql.OperationContext, fields []gr
 		// mapping keys, O2O NULL-detection keys) are unioned in downstream by
 		// the client method that reads them, not here.
 		fo.OwnerKey = true
+	}
+	return fo
+}
+
+// ownerBadgeFieldOptionsFromContext returns the
+// models.OwnerBadgeFieldOptions for the current GraphQL request.
+func ownerBadgeFieldOptionsFromContext(ctx context.Context) *models.OwnerBadgeFieldOptions {
+	opCtx := graphql.GetOperationContext(ctx)
+	fields := graphql.CollectFieldsCtx(ctx, nil)
+	entityFields, wantsRows := unwrapConnectionFields(ctx, fields, "OwnerBadgeConnection", "OwnerBadgeListResult")
+	if !wantsRows {
+		// Count-only envelope selection: the request never reaches a row, so
+		// the all-false FieldOptions is the right answer and the read
+		// short-circuits into a single COUNT.
+		return &models.OwnerBadgeFieldOptions{}
+	}
+	return ownerBadgeFieldOptionsFromCollected(opCtx, entityFields)
+}
+
+// ownerBadgeFieldOptionsFromCollected walks one level of
+// the OwnerBadge selection set and produces the corresponding
+// FieldOptions tree. Recursive descent into relationships re-enters the
+// related table's walker on the child's selection set.
+func ownerBadgeFieldOptionsFromCollected(opCtx *graphql.OperationContext, fields []graphql.CollectedField) *models.OwnerBadgeFieldOptions {
+	fo := &models.OwnerBadgeFieldOptions{}
+	for _, f := range coalesceAliases(opCtx, fields) {
+		switch f.Name {
+		case "ownerID":
+			fo.OwnerID = true
+		case "badgeCode":
+			fo.BadgeCode = true
+		}
+	}
+	if !fo.HasSelectedColumns() {
+		// The selection asked for this row but named no column. Projecting the
+		// row's identity keeps the all-false short-circuit — which means
+		// "the caller wants no rows" — from swallowing it. Columns
+		// the read derives rather than returns (cursor keys, relationship
+		// mapping keys, O2O NULL-detection keys) are unioned in downstream by
+		// the client method that reads them, not here.
+		fo.OwnerID = true
+		fo.BadgeCode = true
 	}
 	return fo
 }

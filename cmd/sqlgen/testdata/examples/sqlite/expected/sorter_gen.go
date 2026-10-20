@@ -81,6 +81,23 @@ func (s AssetDocumentLinkSorter) DocumentID(direction sql.SortDirection) sql.Sor
 	return sql.Sort{Column: "document_id", Direction: direction}
 }
 
+// BadgeSorter provides type-safe sort helpers for the Badge entity.
+// Each method returns a sql.Sort for the corresponding column.
+type BadgeSorter struct{}
+
+// NewBadgeSorter returns a new BadgeSorter.
+func NewBadgeSorter() BadgeSorter { return BadgeSorter{} }
+
+// Code returns a sort for the code column in the given direction.
+func (s BadgeSorter) Code(direction sql.SortDirection) sql.Sort {
+	return sql.Sort{Column: "code", Direction: direction}
+}
+
+// Label returns a sort for the label column in the given direction.
+func (s BadgeSorter) Label(direction sql.SortDirection) sql.Sort {
+	return sql.Sort{Column: "label", Direction: direction}
+}
+
 // BinaryKeySorter provides type-safe sort helpers for the BinaryKey entity.
 // Each method returns a sql.Sort for the corresponding column.
 type BinaryKeySorter struct{}
@@ -307,6 +324,23 @@ func (s OwnerSorter) Name(direction sql.SortDirection) sql.Sort {
 // OwnerKey returns a sort for the owner_key column in the given direction.
 func (s OwnerSorter) OwnerKey(direction sql.SortDirection) sql.Sort {
 	return sql.Sort{Column: "owner_key", Direction: direction}
+}
+
+// OwnerBadgeSorter provides type-safe sort helpers for the OwnerBadge entity.
+// Each method returns a sql.Sort for the corresponding column.
+type OwnerBadgeSorter struct{}
+
+// NewOwnerBadgeSorter returns a new OwnerBadgeSorter.
+func NewOwnerBadgeSorter() OwnerBadgeSorter { return OwnerBadgeSorter{} }
+
+// BadgeCode returns a sort for the badge_code column in the given direction.
+func (s OwnerBadgeSorter) BadgeCode(direction sql.SortDirection) sql.Sort {
+	return sql.Sort{Column: "badge_code", Direction: direction}
+}
+
+// OwnerID returns a sort for the owner_id column in the given direction.
+func (s OwnerBadgeSorter) OwnerID(direction sql.SortDirection) sql.Sort {
+	return sql.Sort{Column: "owner_id", Direction: direction}
 }
 
 // OwnerProfileSorter provides type-safe sort helpers for the OwnerProfile entity.

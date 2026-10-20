@@ -34,6 +34,10 @@ type AssetDocumentLinkConnection = Connection[AssetDocumentLink]
 type AssetDocumentLinkEdge = Edge[AssetDocumentLink]
 type AssetDocumentLinkListResult = PaginateResult[AssetDocumentLink]
 
+type BadgeConnection = Connection[Badge]
+type BadgeEdge = Edge[Badge]
+type BadgeListResult = PaginateResult[Badge]
+
 type BinaryKeyConnection = Connection[BinaryKey]
 type BinaryKeyEdge = Edge[BinaryKey]
 type BinaryKeyListResult = PaginateResult[BinaryKey]
@@ -73,6 +77,10 @@ type OrderItemListResult = PaginateResult[OrderItem]
 type OwnerConnection = Connection[Owner]
 type OwnerEdge = Edge[Owner]
 type OwnerListResult = PaginateResult[Owner]
+
+type OwnerBadgeConnection = Connection[OwnerBadge]
+type OwnerBadgeEdge = Edge[OwnerBadge]
+type OwnerBadgeListResult = PaginateResult[OwnerBadge]
 
 type OwnerProfileConnection = Connection[OwnerProfile]
 type OwnerProfileEdge = Edge[OwnerProfile]

@@ -129,6 +129,31 @@ type ComplexityRoot struct {
 		TotalCount func(childComplexity int) int
 	}
 
+	Badge struct {
+		Code   func(childComplexity int) int
+		Label  func(childComplexity int) int
+		Owners func(childComplexity int) int
+	}
+
+	BadgeConnection struct {
+		Edges      func(childComplexity int) int
+		PageInfo   func(childComplexity int) int
+		TotalCount func(childComplexity int) int
+	}
+
+	BadgeEdge struct {
+		Cursor func(childComplexity int) int
+		Node   func(childComplexity int) int
+	}
+
+	BadgeListResult struct {
+		HasMore    func(childComplexity int) int
+		Items      func(childComplexity int) int
+		Limit      func(childComplexity int) int
+		Offset     func(childComplexity int) int
+		TotalCount func(childComplexity int) int
+	}
+
 	BinaryKey struct {
 		BinaryKeyEvents func(childComplexity int) int
 		CreatedAt       func(childComplexity int) int
@@ -322,6 +347,8 @@ type ComplexityRoot struct {
 		CreateAssetDocumentLink   func(childComplexity int, input model.CreateAssetDocumentLinkInput) int
 		CreateAssetDocumentLinks  func(childComplexity int, inputs []*model.CreateAssetDocumentLinkInput) int
 		CreateAssets              func(childComplexity int, inputs []*model.CreateAssetInput) int
+		CreateBadge               func(childComplexity int, input model.CreateBadgeInput) int
+		CreateBadges              func(childComplexity int, inputs []*model.CreateBadgeInput) int
 		CreateBinaryKey           func(childComplexity int, input model.CreateBinaryKeyInput) int
 		CreateBinaryKeyEvent      func(childComplexity int, input model.CreateBinaryKeyEventInput) int
 		CreateBinaryKeyEvents     func(childComplexity int, inputs []*model.CreateBinaryKeyEventInput) int
@@ -337,6 +364,8 @@ type ComplexityRoot struct {
 		CreateOrderItems          func(childComplexity int, inputs []*model.CreateOrderItemInput) int
 		CreateOrders              func(childComplexity int, inputs []*model.CreateOrderInput) int
 		CreateOwner               func(childComplexity int, input model.CreateOwnerInput) int
+		CreateOwnerBadge          func(childComplexity int, input model.CreateOwnerBadgeInput) int
+		CreateOwnerBadges         func(childComplexity int, inputs []*model.CreateOwnerBadgeInput) int
 		CreateOwnerProfile        func(childComplexity int, input model.CreateOwnerProfileInput) int
 		CreateOwnerProfiles       func(childComplexity int, inputs []*model.CreateOwnerProfileInput) int
 		CreateOwners              func(childComplexity int, inputs []*model.CreateOwnerInput) int
@@ -360,6 +389,7 @@ type ComplexityRoot struct {
 		CreateWarehouses          func(childComplexity int, inputs []*model.CreateWarehouseInput) int
 		DeleteAsset               func(childComplexity int, id int) int
 		DeleteAssetDocumentLink   func(childComplexity int, assetID int, documentID int) int
+		DeleteBadge               func(childComplexity int, code string) int
 		DeleteBinaryKey           func(childComplexity int, id []byte) int
 		DeleteBinaryKeyEvent      func(childComplexity int, id int) int
 		DeleteCategory            func(childComplexity int, id int) int
@@ -369,6 +399,7 @@ type ComplexityRoot struct {
 		DeleteOrder               func(childComplexity int, id int) int
 		DeleteOrderItem           func(childComplexity int, id int) int
 		DeleteOwner               func(childComplexity int, ownerKey int) int
+		DeleteOwnerBadge          func(childComplexity int, ownerID int, badgeCode string) int
 		DeleteOwnerProfile        func(childComplexity int, id int) int
 		DeleteProduct             func(childComplexity int, id int) int
 		DeleteProductTagLabel     func(childComplexity int, productID int, tagName string, label string) int
@@ -388,6 +419,8 @@ type ComplexityRoot struct {
 		UpdateArticles            func(childComplexity int, filter model.ArticleFilter, input model.UpdateArticleInput) int
 		UpdateAsset               func(childComplexity int, id int, input model.UpdateAssetInput) int
 		UpdateAssets              func(childComplexity int, filter model.AssetFilter, input model.UpdateAssetInput) int
+		UpdateBadge               func(childComplexity int, code string, input model.UpdateBadgeInput) int
+		UpdateBadges              func(childComplexity int, filter model.BadgeFilter, input model.UpdateBadgeInput) int
 		UpdateBinaryKey           func(childComplexity int, id []byte, input model.UpdateBinaryKeyInput) int
 		UpdateBinaryKeyEvent      func(childComplexity int, id int, input model.UpdateBinaryKeyEventInput) int
 		UpdateBinaryKeyEvents     func(childComplexity int, filter model.BinaryKeyEventFilter, input model.UpdateBinaryKeyEventInput) int
@@ -425,6 +458,7 @@ type ComplexityRoot struct {
 		UpsertArticle             func(childComplexity int, input model.CreateArticleInput) int
 		UpsertAsset               func(childComplexity int, input model.CreateAssetInput) int
 		UpsertAssetDocumentLink   func(childComplexity int, input model.CreateAssetDocumentLinkInput) int
+		UpsertBadge               func(childComplexity int, input model.CreateBadgeInput) int
 		UpsertBinaryKey           func(childComplexity int, input model.CreateBinaryKeyInput) int
 		UpsertBinaryKeyEvent      func(childComplexity int, input model.CreateBinaryKeyEventInput) int
 		UpsertCategory            func(childComplexity int, input model.CreateCategoryInput) int
@@ -433,6 +467,7 @@ type ComplexityRoot struct {
 		UpsertOrder               func(childComplexity int, input model.CreateOrderInput) int
 		UpsertOrderItem           func(childComplexity int, input model.CreateOrderItemInput) int
 		UpsertOwner               func(childComplexity int, input model.CreateOwnerInput) int
+		UpsertOwnerBadge          func(childComplexity int, input model.CreateOwnerBadgeInput) int
 		UpsertOwnerProfile        func(childComplexity int, input model.CreateOwnerProfileInput) int
 		UpsertProduct             func(childComplexity int, input model.CreateProductInput) int
 		UpsertProductTagLabel     func(childComplexity int, input model.CreateProductTagLabelInput) int
@@ -502,9 +537,34 @@ type ComplexityRoot struct {
 	}
 
 	Owner struct {
+		Badges       func(childComplexity int) int
 		Name         func(childComplexity int) int
 		OwnerKey     func(childComplexity int) int
 		OwnerProfile func(childComplexity int) int
+	}
+
+	OwnerBadge struct {
+		BadgeCode func(childComplexity int) int
+		OwnerID   func(childComplexity int) int
+	}
+
+	OwnerBadgeConnection struct {
+		Edges      func(childComplexity int) int
+		PageInfo   func(childComplexity int) int
+		TotalCount func(childComplexity int) int
+	}
+
+	OwnerBadgeEdge struct {
+		Cursor func(childComplexity int) int
+		Node   func(childComplexity int) int
+	}
+
+	OwnerBadgeListResult struct {
+		HasMore    func(childComplexity int) int
+		Items      func(childComplexity int) int
+		Limit      func(childComplexity int) int
+		Offset     func(childComplexity int) int
+		TotalCount func(childComplexity int) int
 	}
 
 	OwnerConnection struct {
@@ -682,6 +742,9 @@ type ComplexityRoot struct {
 		AssetDocumentLinks     func(childComplexity int, filter *model.AssetDocumentLinkFilter, first *int, after *string, last *int, before *string) int
 		AssetList              func(childComplexity int, filter *model.AssetFilter, sort []*model.AssetSort, limit *int, offset *int) int
 		Assets                 func(childComplexity int, filter *model.AssetFilter, first *int, after *string, last *int, before *string) int
+		Badge                  func(childComplexity int, code string) int
+		BadgeList              func(childComplexity int, filter *model.BadgeFilter, sort []*model.BadgeSort, limit *int, offset *int) int
+		Badges                 func(childComplexity int, filter *model.BadgeFilter, first *int, after *string, last *int, before *string) int
 		BinaryKey              func(childComplexity int, id []byte) int
 		BinaryKeyEvent         func(childComplexity int, id int) int
 		BinaryKeyEventList     func(childComplexity int, filter *model.BinaryKeyEventFilter, sort []*model.BinaryKeyEventSort, limit *int, offset *int) int
@@ -708,6 +771,9 @@ type ComplexityRoot struct {
 		OrderList              func(childComplexity int, filter *model.OrderFilter, sort []*model.OrderSort, limit *int, offset *int) int
 		Orders                 func(childComplexity int, filter *model.OrderFilter, first *int, after *string, last *int, before *string) int
 		Owner                  func(childComplexity int, ownerKey int) int
+		OwnerBadge             func(childComplexity int, ownerID int, badgeCode string) int
+		OwnerBadgeList         func(childComplexity int, filter *model.OwnerBadgeFilter, sort []*model.OwnerBadgeSort, limit *int, offset *int) int
+		OwnerBadges            func(childComplexity int, filter *model.OwnerBadgeFilter, first *int, after *string, last *int, before *string) int
 		OwnerList              func(childComplexity int, filter *model.OwnerFilter, sort []*model.OwnerSort, limit *int, offset *int) int
 		OwnerProfile           func(childComplexity int, id int) int
 		OwnerProfileList       func(childComplexity int, filter *model.OwnerProfileFilter, sort []*model.OwnerProfileSort, limit *int, offset *int) int
@@ -942,6 +1008,12 @@ type MutationResolver interface {
 	UpdateAssets(ctx context.Context, filter model.AssetFilter, input model.UpdateAssetInput) ([]*models.Asset, error)
 	UpsertAsset(ctx context.Context, input model.CreateAssetInput) (*models.Asset, error)
 	DeleteAsset(ctx context.Context, id int) (bool, error)
+	CreateBadge(ctx context.Context, input model.CreateBadgeInput) (*models.Badge, error)
+	CreateBadges(ctx context.Context, inputs []*model.CreateBadgeInput) ([]*models.Badge, error)
+	UpdateBadge(ctx context.Context, code string, input model.UpdateBadgeInput) (*models.Badge, error)
+	UpdateBadges(ctx context.Context, filter model.BadgeFilter, input model.UpdateBadgeInput) ([]*models.Badge, error)
+	UpsertBadge(ctx context.Context, input model.CreateBadgeInput) (*models.Badge, error)
+	DeleteBadge(ctx context.Context, code string) (bool, error)
 	CreateBinaryKeyEvent(ctx context.Context, input model.CreateBinaryKeyEventInput) (*models.BinaryKeyEvent, error)
 	CreateBinaryKeyEvents(ctx context.Context, inputs []*model.CreateBinaryKeyEventInput) ([]*models.BinaryKeyEvent, error)
 	UpdateBinaryKeyEvent(ctx context.Context, id int, input model.UpdateBinaryKeyEventInput) (*models.BinaryKeyEvent, error)
@@ -985,6 +1057,10 @@ type MutationResolver interface {
 	UpdateOrderItems(ctx context.Context, filter model.OrderItemFilter, input model.UpdateOrderItemInput) ([]*models.OrderItem, error)
 	UpsertOrderItem(ctx context.Context, input model.CreateOrderItemInput) (*models.OrderItem, error)
 	DeleteOrderItem(ctx context.Context, id int) (bool, error)
+	CreateOwnerBadge(ctx context.Context, input model.CreateOwnerBadgeInput) (*models.OwnerBadge, error)
+	CreateOwnerBadges(ctx context.Context, inputs []*model.CreateOwnerBadgeInput) ([]*models.OwnerBadge, error)
+	UpsertOwnerBadge(ctx context.Context, input model.CreateOwnerBadgeInput) (*models.OwnerBadge, error)
+	DeleteOwnerBadge(ctx context.Context, ownerID int, badgeCode string) (bool, error)
 	CreateOwner(ctx context.Context, input model.CreateOwnerInput) (*models.Owner, error)
 	CreateOwners(ctx context.Context, inputs []*model.CreateOwnerInput) ([]*models.Owner, error)
 	UpdateOwner(ctx context.Context, ownerKey int, input model.UpdateOwnerInput) (*models.Owner, error)
@@ -1062,6 +1138,9 @@ type QueryResolver interface {
 	Asset(ctx context.Context, id int) (*models.Asset, error)
 	Assets(ctx context.Context, filter *model.AssetFilter, first *int, after *string, last *int, before *string) (*models.Connection[models.Asset], error)
 	AssetList(ctx context.Context, filter *model.AssetFilter, sort []*model.AssetSort, limit *int, offset *int) (*models.PaginateResult[models.Asset], error)
+	Badge(ctx context.Context, code string) (*models.Badge, error)
+	Badges(ctx context.Context, filter *model.BadgeFilter, first *int, after *string, last *int, before *string) (*models.Connection[models.Badge], error)
+	BadgeList(ctx context.Context, filter *model.BadgeFilter, sort []*model.BadgeSort, limit *int, offset *int) (*models.PaginateResult[models.Badge], error)
 	BinaryKeyEvent(ctx context.Context, id int) (*models.BinaryKeyEvent, error)
 	BinaryKeyEvents(ctx context.Context, filter *model.BinaryKeyEventFilter, first *int, after *string, last *int, before *string) (*models.Connection[models.BinaryKeyEvent], error)
 	BinaryKeyEventList(ctx context.Context, filter *model.BinaryKeyEventFilter, sort []*model.BinaryKeyEventSort, limit *int, offset *int) (*models.PaginateResult[models.BinaryKeyEvent], error)
@@ -1087,6 +1166,9 @@ type QueryResolver interface {
 	OrderItem(ctx context.Context, id int) (*models.OrderItem, error)
 	OrderItems(ctx context.Context, filter *model.OrderItemFilter, first *int, after *string, last *int, before *string) (*models.Connection[models.OrderItem], error)
 	OrderItemList(ctx context.Context, filter *model.OrderItemFilter, sort []*model.OrderItemSort, limit *int, offset *int) (*models.PaginateResult[models.OrderItem], error)
+	OwnerBadge(ctx context.Context, ownerID int, badgeCode string) (*models.OwnerBadge, error)
+	OwnerBadges(ctx context.Context, filter *model.OwnerBadgeFilter, first *int, after *string, last *int, before *string) (*models.Connection[models.OwnerBadge], error)
+	OwnerBadgeList(ctx context.Context, filter *model.OwnerBadgeFilter, sort []*model.OwnerBadgeSort, limit *int, offset *int) (*models.PaginateResult[models.OwnerBadge], error)
 	Owner(ctx context.Context, ownerKey int) (*models.Owner, error)
 	Owners(ctx context.Context, filter *model.OwnerFilter, first *int, after *string, last *int, before *string) (*models.Connection[models.Owner], error)
 	OwnerList(ctx context.Context, filter *model.OwnerFilter, sort []*model.OwnerSort, limit *int, offset *int) (*models.PaginateResult[models.Owner], error)
@@ -1454,6 +1536,88 @@ func (e *executableSchema) Complexity(ctx context.Context, typeName, field strin
 		}
 
 		return e.ComplexityRoot.AssetListResult.TotalCount(childComplexity), true
+
+	case "Badge.code":
+		if e.ComplexityRoot.Badge.Code == nil {
+			break
+		}
+
+		return e.ComplexityRoot.Badge.Code(childComplexity), true
+	case "Badge.label":
+		if e.ComplexityRoot.Badge.Label == nil {
+			break
+		}
+
+		return e.ComplexityRoot.Badge.Label(childComplexity), true
+	case "Badge.owners":
+		if e.ComplexityRoot.Badge.Owners == nil {
+			break
+		}
+
+		return e.ComplexityRoot.Badge.Owners(childComplexity), true
+
+	case "BadgeConnection.edges":
+		if e.ComplexityRoot.BadgeConnection.Edges == nil {
+			break
+		}
+
+		return e.ComplexityRoot.BadgeConnection.Edges(childComplexity), true
+	case "BadgeConnection.pageInfo":
+		if e.ComplexityRoot.BadgeConnection.PageInfo == nil {
+			break
+		}
+
+		return e.ComplexityRoot.BadgeConnection.PageInfo(childComplexity), true
+	case "BadgeConnection.totalCount":
+		if e.ComplexityRoot.BadgeConnection.TotalCount == nil {
+			break
+		}
+
+		return e.ComplexityRoot.BadgeConnection.TotalCount(childComplexity), true
+
+	case "BadgeEdge.cursor":
+		if e.ComplexityRoot.BadgeEdge.Cursor == nil {
+			break
+		}
+
+		return e.ComplexityRoot.BadgeEdge.Cursor(childComplexity), true
+	case "BadgeEdge.node":
+		if e.ComplexityRoot.BadgeEdge.Node == nil {
+			break
+		}
+
+		return e.ComplexityRoot.BadgeEdge.Node(childComplexity), true
+
+	case "BadgeListResult.hasMore":
+		if e.ComplexityRoot.BadgeListResult.HasMore == nil {
+			break
+		}
+
+		return e.ComplexityRoot.BadgeListResult.HasMore(childComplexity), true
+	case "BadgeListResult.items":
+		if e.ComplexityRoot.BadgeListResult.Items == nil {
+			break
+		}
+
+		return e.ComplexityRoot.BadgeListResult.Items(childComplexity), true
+	case "BadgeListResult.limit":
+		if e.ComplexityRoot.BadgeListResult.Limit == nil {
+			break
+		}
+
+		return e.ComplexityRoot.BadgeListResult.Limit(childComplexity), true
+	case "BadgeListResult.offset":
+		if e.ComplexityRoot.BadgeListResult.Offset == nil {
+			break
+		}
+
+		return e.ComplexityRoot.BadgeListResult.Offset(childComplexity), true
+	case "BadgeListResult.totalCount":
+		if e.ComplexityRoot.BadgeListResult.TotalCount == nil {
+			break
+		}
+
+		return e.ComplexityRoot.BadgeListResult.TotalCount(childComplexity), true
 
 	case "BinaryKey.binaryKeyEvents":
 		if e.ComplexityRoot.BinaryKey.BinaryKeyEvents == nil {
@@ -2161,6 +2325,28 @@ func (e *executableSchema) Complexity(ctx context.Context, typeName, field strin
 		}
 
 		return e.ComplexityRoot.Mutation.CreateAssets(childComplexity, args["inputs"].([]*model.CreateAssetInput)), true
+	case "Mutation.createBadge":
+		if e.ComplexityRoot.Mutation.CreateBadge == nil {
+			break
+		}
+
+		args, err := ec.field_Mutation_createBadge_args(ctx, rawArgs)
+		if err != nil {
+			return 0, false
+		}
+
+		return e.ComplexityRoot.Mutation.CreateBadge(childComplexity, args["input"].(model.CreateBadgeInput)), true
+	case "Mutation.createBadges":
+		if e.ComplexityRoot.Mutation.CreateBadges == nil {
+			break
+		}
+
+		args, err := ec.field_Mutation_createBadges_args(ctx, rawArgs)
+		if err != nil {
+			return 0, false
+		}
+
+		return e.ComplexityRoot.Mutation.CreateBadges(childComplexity, args["inputs"].([]*model.CreateBadgeInput)), true
 	case "Mutation.createBinaryKey":
 		if e.ComplexityRoot.Mutation.CreateBinaryKey == nil {
 			break
@@ -2326,6 +2512,28 @@ func (e *executableSchema) Complexity(ctx context.Context, typeName, field strin
 		}
 
 		return e.ComplexityRoot.Mutation.CreateOwner(childComplexity, args["input"].(model.CreateOwnerInput)), true
+	case "Mutation.createOwnerBadge":
+		if e.ComplexityRoot.Mutation.CreateOwnerBadge == nil {
+			break
+		}
+
+		args, err := ec.field_Mutation_createOwnerBadge_args(ctx, rawArgs)
+		if err != nil {
+			return 0, false
+		}
+
+		return e.ComplexityRoot.Mutation.CreateOwnerBadge(childComplexity, args["input"].(model.CreateOwnerBadgeInput)), true
+	case "Mutation.createOwnerBadges":
+		if e.ComplexityRoot.Mutation.CreateOwnerBadges == nil {
+			break
+		}
+
+		args, err := ec.field_Mutation_createOwnerBadges_args(ctx, rawArgs)
+		if err != nil {
+			return 0, false
+		}
+
+		return e.ComplexityRoot.Mutation.CreateOwnerBadges(childComplexity, args["inputs"].([]*model.CreateOwnerBadgeInput)), true
 	case "Mutation.createOwnerProfile":
 		if e.ComplexityRoot.Mutation.CreateOwnerProfile == nil {
 			break
@@ -2579,6 +2787,17 @@ func (e *executableSchema) Complexity(ctx context.Context, typeName, field strin
 		}
 
 		return e.ComplexityRoot.Mutation.DeleteAssetDocumentLink(childComplexity, args["assetID"].(int), args["documentID"].(int)), true
+	case "Mutation.deleteBadge":
+		if e.ComplexityRoot.Mutation.DeleteBadge == nil {
+			break
+		}
+
+		args, err := ec.field_Mutation_deleteBadge_args(ctx, rawArgs)
+		if err != nil {
+			return 0, false
+		}
+
+		return e.ComplexityRoot.Mutation.DeleteBadge(childComplexity, args["code"].(string)), true
 	case "Mutation.deleteBinaryKey":
 		if e.ComplexityRoot.Mutation.DeleteBinaryKey == nil {
 			break
@@ -2678,6 +2897,17 @@ func (e *executableSchema) Complexity(ctx context.Context, typeName, field strin
 		}
 
 		return e.ComplexityRoot.Mutation.DeleteOwner(childComplexity, args["ownerKey"].(int)), true
+	case "Mutation.deleteOwnerBadge":
+		if e.ComplexityRoot.Mutation.DeleteOwnerBadge == nil {
+			break
+		}
+
+		args, err := ec.field_Mutation_deleteOwnerBadge_args(ctx, rawArgs)
+		if err != nil {
+			return 0, false
+		}
+
+		return e.ComplexityRoot.Mutation.DeleteOwnerBadge(childComplexity, args["ownerID"].(int), args["badgeCode"].(string)), true
 	case "Mutation.deleteOwnerProfile":
 		if e.ComplexityRoot.Mutation.DeleteOwnerProfile == nil {
 			break
@@ -2887,6 +3117,28 @@ func (e *executableSchema) Complexity(ctx context.Context, typeName, field strin
 		}
 
 		return e.ComplexityRoot.Mutation.UpdateAssets(childComplexity, args["filter"].(model.AssetFilter), args["input"].(model.UpdateAssetInput)), true
+	case "Mutation.updateBadge":
+		if e.ComplexityRoot.Mutation.UpdateBadge == nil {
+			break
+		}
+
+		args, err := ec.field_Mutation_updateBadge_args(ctx, rawArgs)
+		if err != nil {
+			return 0, false
+		}
+
+		return e.ComplexityRoot.Mutation.UpdateBadge(childComplexity, args["code"].(string), args["input"].(model.UpdateBadgeInput)), true
+	case "Mutation.updateBadges":
+		if e.ComplexityRoot.Mutation.UpdateBadges == nil {
+			break
+		}
+
+		args, err := ec.field_Mutation_updateBadges_args(ctx, rawArgs)
+		if err != nil {
+			return 0, false
+		}
+
+		return e.ComplexityRoot.Mutation.UpdateBadges(childComplexity, args["filter"].(model.BadgeFilter), args["input"].(model.UpdateBadgeInput)), true
 	case "Mutation.updateBinaryKey":
 		if e.ComplexityRoot.Mutation.UpdateBinaryKey == nil {
 			break
@@ -3294,6 +3546,17 @@ func (e *executableSchema) Complexity(ctx context.Context, typeName, field strin
 		}
 
 		return e.ComplexityRoot.Mutation.UpsertAssetDocumentLink(childComplexity, args["input"].(model.CreateAssetDocumentLinkInput)), true
+	case "Mutation.upsertBadge":
+		if e.ComplexityRoot.Mutation.UpsertBadge == nil {
+			break
+		}
+
+		args, err := ec.field_Mutation_upsertBadge_args(ctx, rawArgs)
+		if err != nil {
+			return 0, false
+		}
+
+		return e.ComplexityRoot.Mutation.UpsertBadge(childComplexity, args["input"].(model.CreateBadgeInput)), true
 	case "Mutation.upsertBinaryKey":
 		if e.ComplexityRoot.Mutation.UpsertBinaryKey == nil {
 			break
@@ -3382,6 +3645,17 @@ func (e *executableSchema) Complexity(ctx context.Context, typeName, field strin
 		}
 
 		return e.ComplexityRoot.Mutation.UpsertOwner(childComplexity, args["input"].(model.CreateOwnerInput)), true
+	case "Mutation.upsertOwnerBadge":
+		if e.ComplexityRoot.Mutation.UpsertOwnerBadge == nil {
+			break
+		}
+
+		args, err := ec.field_Mutation_upsertOwnerBadge_args(ctx, rawArgs)
+		if err != nil {
+			return 0, false
+		}
+
+		return e.ComplexityRoot.Mutation.UpsertOwnerBadge(childComplexity, args["input"].(model.CreateOwnerBadgeInput)), true
 	case "Mutation.upsertOwnerProfile":
 		if e.ComplexityRoot.Mutation.UpsertOwnerProfile == nil {
 			break
@@ -3693,6 +3967,12 @@ func (e *executableSchema) Complexity(ctx context.Context, typeName, field strin
 
 		return e.ComplexityRoot.OrderListResult.TotalCount(childComplexity), true
 
+	case "Owner.badges":
+		if e.ComplexityRoot.Owner.Badges == nil {
+			break
+		}
+
+		return e.ComplexityRoot.Owner.Badges(childComplexity), true
 	case "Owner.name":
 		if e.ComplexityRoot.Owner.Name == nil {
 			break
@@ -3711,6 +3991,82 @@ func (e *executableSchema) Complexity(ctx context.Context, typeName, field strin
 		}
 
 		return e.ComplexityRoot.Owner.OwnerProfile(childComplexity), true
+
+	case "OwnerBadge.badgeCode":
+		if e.ComplexityRoot.OwnerBadge.BadgeCode == nil {
+			break
+		}
+
+		return e.ComplexityRoot.OwnerBadge.BadgeCode(childComplexity), true
+	case "OwnerBadge.ownerID":
+		if e.ComplexityRoot.OwnerBadge.OwnerID == nil {
+			break
+		}
+
+		return e.ComplexityRoot.OwnerBadge.OwnerID(childComplexity), true
+
+	case "OwnerBadgeConnection.edges":
+		if e.ComplexityRoot.OwnerBadgeConnection.Edges == nil {
+			break
+		}
+
+		return e.ComplexityRoot.OwnerBadgeConnection.Edges(childComplexity), true
+	case "OwnerBadgeConnection.pageInfo":
+		if e.ComplexityRoot.OwnerBadgeConnection.PageInfo == nil {
+			break
+		}
+
+		return e.ComplexityRoot.OwnerBadgeConnection.PageInfo(childComplexity), true
+	case "OwnerBadgeConnection.totalCount":
+		if e.ComplexityRoot.OwnerBadgeConnection.TotalCount == nil {
+			break
+		}
+
+		return e.ComplexityRoot.OwnerBadgeConnection.TotalCount(childComplexity), true
+
+	case "OwnerBadgeEdge.cursor":
+		if e.ComplexityRoot.OwnerBadgeEdge.Cursor == nil {
+			break
+		}
+
+		return e.ComplexityRoot.OwnerBadgeEdge.Cursor(childComplexity), true
+	case "OwnerBadgeEdge.node":
+		if e.ComplexityRoot.OwnerBadgeEdge.Node == nil {
+			break
+		}
+
+		return e.ComplexityRoot.OwnerBadgeEdge.Node(childComplexity), true
+
+	case "OwnerBadgeListResult.hasMore":
+		if e.ComplexityRoot.OwnerBadgeListResult.HasMore == nil {
+			break
+		}
+
+		return e.ComplexityRoot.OwnerBadgeListResult.HasMore(childComplexity), true
+	case "OwnerBadgeListResult.items":
+		if e.ComplexityRoot.OwnerBadgeListResult.Items == nil {
+			break
+		}
+
+		return e.ComplexityRoot.OwnerBadgeListResult.Items(childComplexity), true
+	case "OwnerBadgeListResult.limit":
+		if e.ComplexityRoot.OwnerBadgeListResult.Limit == nil {
+			break
+		}
+
+		return e.ComplexityRoot.OwnerBadgeListResult.Limit(childComplexity), true
+	case "OwnerBadgeListResult.offset":
+		if e.ComplexityRoot.OwnerBadgeListResult.Offset == nil {
+			break
+		}
+
+		return e.ComplexityRoot.OwnerBadgeListResult.Offset(childComplexity), true
+	case "OwnerBadgeListResult.totalCount":
+		if e.ComplexityRoot.OwnerBadgeListResult.TotalCount == nil {
+			break
+		}
+
+		return e.ComplexityRoot.OwnerBadgeListResult.TotalCount(childComplexity), true
 
 	case "OwnerConnection.edges":
 		if e.ComplexityRoot.OwnerConnection.Edges == nil {
@@ -4393,6 +4749,39 @@ func (e *executableSchema) Complexity(ctx context.Context, typeName, field strin
 		}
 
 		return e.ComplexityRoot.Query.Assets(childComplexity, args["filter"].(*model.AssetFilter), args["first"].(*int), args["after"].(*string), args["last"].(*int), args["before"].(*string)), true
+	case "Query.badge":
+		if e.ComplexityRoot.Query.Badge == nil {
+			break
+		}
+
+		args, err := ec.field_Query_badge_args(ctx, rawArgs)
+		if err != nil {
+			return 0, false
+		}
+
+		return e.ComplexityRoot.Query.Badge(childComplexity, args["code"].(string)), true
+	case "Query.badgeList":
+		if e.ComplexityRoot.Query.BadgeList == nil {
+			break
+		}
+
+		args, err := ec.field_Query_badgeList_args(ctx, rawArgs)
+		if err != nil {
+			return 0, false
+		}
+
+		return e.ComplexityRoot.Query.BadgeList(childComplexity, args["filter"].(*model.BadgeFilter), args["sort"].([]*model.BadgeSort), args["limit"].(*int), args["offset"].(*int)), true
+	case "Query.badges":
+		if e.ComplexityRoot.Query.Badges == nil {
+			break
+		}
+
+		args, err := ec.field_Query_badges_args(ctx, rawArgs)
+		if err != nil {
+			return 0, false
+		}
+
+		return e.ComplexityRoot.Query.Badges(childComplexity, args["filter"].(*model.BadgeFilter), args["first"].(*int), args["after"].(*string), args["last"].(*int), args["before"].(*string)), true
 	case "Query.binaryKey":
 		if e.ComplexityRoot.Query.BinaryKey == nil {
 			break
@@ -4680,6 +5069,39 @@ func (e *executableSchema) Complexity(ctx context.Context, typeName, field strin
 		}
 
 		return e.ComplexityRoot.Query.Owner(childComplexity, args["ownerKey"].(int)), true
+	case "Query.ownerBadge":
+		if e.ComplexityRoot.Query.OwnerBadge == nil {
+			break
+		}
+
+		args, err := ec.field_Query_ownerBadge_args(ctx, rawArgs)
+		if err != nil {
+			return 0, false
+		}
+
+		return e.ComplexityRoot.Query.OwnerBadge(childComplexity, args["ownerID"].(int), args["badgeCode"].(string)), true
+	case "Query.ownerBadgeList":
+		if e.ComplexityRoot.Query.OwnerBadgeList == nil {
+			break
+		}
+
+		args, err := ec.field_Query_ownerBadgeList_args(ctx, rawArgs)
+		if err != nil {
+			return 0, false
+		}
+
+		return e.ComplexityRoot.Query.OwnerBadgeList(childComplexity, args["filter"].(*model.OwnerBadgeFilter), args["sort"].([]*model.OwnerBadgeSort), args["limit"].(*int), args["offset"].(*int)), true
+	case "Query.ownerBadges":
+		if e.ComplexityRoot.Query.OwnerBadges == nil {
+			break
+		}
+
+		args, err := ec.field_Query_ownerBadges_args(ctx, rawArgs)
+		if err != nil {
+			return 0, false
+		}
+
+		return e.ComplexityRoot.Query.OwnerBadges(childComplexity, args["filter"].(*model.OwnerBadgeFilter), args["first"].(*int), args["after"].(*string), args["last"].(*int), args["before"].(*string)), true
 	case "Query.ownerList":
 		if e.ComplexityRoot.Query.OwnerList == nil {
 			break
@@ -5710,6 +6132,8 @@ func (e *executableSchema) Exec(ctx context.Context) graphql.ResponseHandler {
 		ec.unmarshalInputAssetDocumentLinkSort,
 		ec.unmarshalInputAssetFilter,
 		ec.unmarshalInputAssetSort,
+		ec.unmarshalInputBadgeFilter,
+		ec.unmarshalInputBadgeSort,
 		ec.unmarshalInputBinaryKeyEventFilter,
 		ec.unmarshalInputBinaryKeyEventSort,
 		ec.unmarshalInputBinaryKeyFilter,
@@ -5723,6 +6147,7 @@ func (e *executableSchema) Exec(ctx context.Context) graphql.ResponseHandler {
 		ec.unmarshalInputCreateArticleInput,
 		ec.unmarshalInputCreateAssetDocumentLinkInput,
 		ec.unmarshalInputCreateAssetInput,
+		ec.unmarshalInputCreateBadgeInput,
 		ec.unmarshalInputCreateBinaryKeyEventInput,
 		ec.unmarshalInputCreateBinaryKeyInput,
 		ec.unmarshalInputCreateCategoryInput,
@@ -5730,6 +6155,7 @@ func (e *executableSchema) Exec(ctx context.Context) graphql.ResponseHandler {
 		ec.unmarshalInputCreateDocumentInput,
 		ec.unmarshalInputCreateOrderInput,
 		ec.unmarshalInputCreateOrderItemInput,
+		ec.unmarshalInputCreateOwnerBadgeInput,
 		ec.unmarshalInputCreateOwnerInput,
 		ec.unmarshalInputCreateOwnerProfileInput,
 		ec.unmarshalInputCreateProductInput,
@@ -5759,6 +6185,8 @@ func (e *executableSchema) Exec(ctx context.Context) graphql.ResponseHandler {
 		ec.unmarshalInputOrderItemFilter,
 		ec.unmarshalInputOrderItemSort,
 		ec.unmarshalInputOrderSort,
+		ec.unmarshalInputOwnerBadgeFilter,
+		ec.unmarshalInputOwnerBadgeSort,
 		ec.unmarshalInputOwnerFilter,
 		ec.unmarshalInputOwnerProfileFilter,
 		ec.unmarshalInputOwnerProfileSort,
@@ -5782,6 +6210,7 @@ func (e *executableSchema) Exec(ctx context.Context) graphql.ResponseHandler {
 		ec.unmarshalInputTimeRange,
 		ec.unmarshalInputUpdateArticleInput,
 		ec.unmarshalInputUpdateAssetInput,
+		ec.unmarshalInputUpdateBadgeInput,
 		ec.unmarshalInputUpdateBinaryKeyEventInput,
 		ec.unmarshalInputUpdateBinaryKeyInput,
 		ec.unmarshalInputUpdateCategoryInput,
@@ -5879,7 +6308,7 @@ func newExecutionContext(
 	}
 }
 
-//go:embed "article_gen.graphqls" "asset_document_link_gen.graphqls" "asset_gen.graphqls" "binary_key_event_gen.graphqls" "binary_key_gen.graphqls" "category_gen.graphqls" "category_stat_gen.graphqls" "digit_leading_column_gen.graphqls" "document_gen.graphqls" "key_only_row_gen.graphqls" "order_gen.graphqls" "order_item_gen.graphqls" "owner_gen.graphqls" "owner_profile_gen.graphqls" "product_gen.graphqls" "product_summary_gen.graphqls" "product_tag_label_gen.graphqls" "profile_gen.graphqls" "reserved_word_column_gen.graphqls" "shared_gen.graphqls" "slugged_row_gen.graphqls" "tag_gen.graphqls" "user_category_gen.graphqls" "user_gen.graphqls" "warehouse_gen.graphqls"
+//go:embed "article_gen.graphqls" "asset_document_link_gen.graphqls" "asset_gen.graphqls" "badge_gen.graphqls" "binary_key_event_gen.graphqls" "binary_key_gen.graphqls" "category_gen.graphqls" "category_stat_gen.graphqls" "digit_leading_column_gen.graphqls" "document_gen.graphqls" "key_only_row_gen.graphqls" "order_gen.graphqls" "order_item_gen.graphqls" "owner_badge_gen.graphqls" "owner_gen.graphqls" "owner_profile_gen.graphqls" "product_gen.graphqls" "product_summary_gen.graphqls" "product_tag_label_gen.graphqls" "profile_gen.graphqls" "reserved_word_column_gen.graphqls" "shared_gen.graphqls" "slugged_row_gen.graphqls" "tag_gen.graphqls" "user_category_gen.graphqls" "user_gen.graphqls" "warehouse_gen.graphqls"
 var sourcesFS embed.FS
 
 func sourceData(filename string) string {
@@ -5894,6 +6323,7 @@ var sources = []*ast.Source{
 	{Name: "article_gen.graphqls", Input: sourceData("article_gen.graphqls"), BuiltIn: false},
 	{Name: "asset_document_link_gen.graphqls", Input: sourceData("asset_document_link_gen.graphqls"), BuiltIn: false},
 	{Name: "asset_gen.graphqls", Input: sourceData("asset_gen.graphqls"), BuiltIn: false},
+	{Name: "badge_gen.graphqls", Input: sourceData("badge_gen.graphqls"), BuiltIn: false},
 	{Name: "binary_key_event_gen.graphqls", Input: sourceData("binary_key_event_gen.graphqls"), BuiltIn: false},
 	{Name: "binary_key_gen.graphqls", Input: sourceData("binary_key_gen.graphqls"), BuiltIn: false},
 	{Name: "category_gen.graphqls", Input: sourceData("category_gen.graphqls"), BuiltIn: false},
@@ -5903,6 +6333,7 @@ var sources = []*ast.Source{
 	{Name: "key_only_row_gen.graphqls", Input: sourceData("key_only_row_gen.graphqls"), BuiltIn: false},
 	{Name: "order_gen.graphqls", Input: sourceData("order_gen.graphqls"), BuiltIn: false},
 	{Name: "order_item_gen.graphqls", Input: sourceData("order_item_gen.graphqls"), BuiltIn: false},
+	{Name: "owner_badge_gen.graphqls", Input: sourceData("owner_badge_gen.graphqls"), BuiltIn: false},
 	{Name: "owner_gen.graphqls", Input: sourceData("owner_gen.graphqls"), BuiltIn: false},
 	{Name: "owner_profile_gen.graphqls", Input: sourceData("owner_profile_gen.graphqls"), BuiltIn: false},
 	{Name: "product_gen.graphqls", Input: sourceData("product_gen.graphqls"), BuiltIn: false},
@@ -6093,6 +6524,56 @@ func (ec *executionContext) childFields_AssetListResult(ctx context.Context, fie
 		return ec.fieldContext_AssetListResult_hasMore(ctx, field)
 	}
 	return nil, fmt.Errorf("no field named %q was found under type AssetListResult", field.Name)
+}
+
+func (ec *executionContext) childFields_Badge(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+	switch field.Name {
+	case "code":
+		return ec.fieldContext_Badge_code(ctx, field)
+	case "label":
+		return ec.fieldContext_Badge_label(ctx, field)
+	case "owners":
+		return ec.fieldContext_Badge_owners(ctx, field)
+	}
+	return nil, fmt.Errorf("no field named %q was found under type Badge", field.Name)
+}
+
+func (ec *executionContext) childFields_BadgeConnection(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+	switch field.Name {
+	case "edges":
+		return ec.fieldContext_BadgeConnection_edges(ctx, field)
+	case "pageInfo":
+		return ec.fieldContext_BadgeConnection_pageInfo(ctx, field)
+	case "totalCount":
+		return ec.fieldContext_BadgeConnection_totalCount(ctx, field)
+	}
+	return nil, fmt.Errorf("no field named %q was found under type BadgeConnection", field.Name)
+}
+
+func (ec *executionContext) childFields_BadgeEdge(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+	switch field.Name {
+	case "node":
+		return ec.fieldContext_BadgeEdge_node(ctx, field)
+	case "cursor":
+		return ec.fieldContext_BadgeEdge_cursor(ctx, field)
+	}
+	return nil, fmt.Errorf("no field named %q was found under type BadgeEdge", field.Name)
+}
+
+func (ec *executionContext) childFields_BadgeListResult(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+	switch field.Name {
+	case "items":
+		return ec.fieldContext_BadgeListResult_items(ctx, field)
+	case "totalCount":
+		return ec.fieldContext_BadgeListResult_totalCount(ctx, field)
+	case "offset":
+		return ec.fieldContext_BadgeListResult_offset(ctx, field)
+	case "limit":
+		return ec.fieldContext_BadgeListResult_limit(ctx, field)
+	case "hasMore":
+		return ec.fieldContext_BadgeListResult_hasMore(ctx, field)
+	}
+	return nil, fmt.Errorf("no field named %q was found under type BadgeListResult", field.Name)
 }
 
 func (ec *executionContext) childFields_BinaryKey(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
@@ -6575,8 +7056,58 @@ func (ec *executionContext) childFields_Owner(ctx context.Context, field graphql
 		return ec.fieldContext_Owner_name(ctx, field)
 	case "ownerProfile":
 		return ec.fieldContext_Owner_ownerProfile(ctx, field)
+	case "badges":
+		return ec.fieldContext_Owner_badges(ctx, field)
 	}
 	return nil, fmt.Errorf("no field named %q was found under type Owner", field.Name)
+}
+
+func (ec *executionContext) childFields_OwnerBadge(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+	switch field.Name {
+	case "ownerID":
+		return ec.fieldContext_OwnerBadge_ownerID(ctx, field)
+	case "badgeCode":
+		return ec.fieldContext_OwnerBadge_badgeCode(ctx, field)
+	}
+	return nil, fmt.Errorf("no field named %q was found under type OwnerBadge", field.Name)
+}
+
+func (ec *executionContext) childFields_OwnerBadgeConnection(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+	switch field.Name {
+	case "edges":
+		return ec.fieldContext_OwnerBadgeConnection_edges(ctx, field)
+	case "pageInfo":
+		return ec.fieldContext_OwnerBadgeConnection_pageInfo(ctx, field)
+	case "totalCount":
+		return ec.fieldContext_OwnerBadgeConnection_totalCount(ctx, field)
+	}
+	return nil, fmt.Errorf("no field named %q was found under type OwnerBadgeConnection", field.Name)
+}
+
+func (ec *executionContext) childFields_OwnerBadgeEdge(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+	switch field.Name {
+	case "node":
+		return ec.fieldContext_OwnerBadgeEdge_node(ctx, field)
+	case "cursor":
+		return ec.fieldContext_OwnerBadgeEdge_cursor(ctx, field)
+	}
+	return nil, fmt.Errorf("no field named %q was found under type OwnerBadgeEdge", field.Name)
+}
+
+func (ec *executionContext) childFields_OwnerBadgeListResult(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+	switch field.Name {
+	case "items":
+		return ec.fieldContext_OwnerBadgeListResult_items(ctx, field)
+	case "totalCount":
+		return ec.fieldContext_OwnerBadgeListResult_totalCount(ctx, field)
+	case "offset":
+		return ec.fieldContext_OwnerBadgeListResult_offset(ctx, field)
+	case "limit":
+		return ec.fieldContext_OwnerBadgeListResult_limit(ctx, field)
+	case "hasMore":
+		return ec.fieldContext_OwnerBadgeListResult_hasMore(ctx, field)
+	}
+	return nil, fmt.Errorf("no field named %q was found under type OwnerBadgeListResult", field.Name)
 }
 
 func (ec *executionContext) childFields_OwnerConnection(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
@@ -7455,6 +7986,34 @@ func (ec *executionContext) field_Mutation_createAssets_args(ctx context.Context
 	return args, nil
 }
 
+func (ec *executionContext) field_Mutation_createBadge_args(ctx context.Context, rawArgs map[string]any) (map[string]any, error) {
+	var err error
+	args := map[string]any{}
+	arg0, err := graphql.ProcessArgField(ctx, rawArgs, "input",
+		func(ctx context.Context, v any) (model.CreateBadgeInput, error) {
+			return ec.unmarshalNCreateBadgeInput2githubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋsqliteᚋmodelsᚋgraphᚋmodelᚐCreateBadgeInput(ctx, v)
+		})
+	if err != nil {
+		return nil, err
+	}
+	args["input"] = arg0
+	return args, nil
+}
+
+func (ec *executionContext) field_Mutation_createBadges_args(ctx context.Context, rawArgs map[string]any) (map[string]any, error) {
+	var err error
+	args := map[string]any{}
+	arg0, err := graphql.ProcessArgField(ctx, rawArgs, "inputs",
+		func(ctx context.Context, v any) ([]*model.CreateBadgeInput, error) {
+			return ec.unmarshalNCreateBadgeInput2ᚕᚖgithubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋsqliteᚋmodelsᚋgraphᚋmodelᚐCreateBadgeInputᚄ(ctx, v)
+		})
+	if err != nil {
+		return nil, err
+	}
+	args["inputs"] = arg0
+	return args, nil
+}
+
 func (ec *executionContext) field_Mutation_createBinaryKeyEvent_args(ctx context.Context, rawArgs map[string]any) (map[string]any, error) {
 	var err error
 	args := map[string]any{}
@@ -7643,6 +8202,34 @@ func (ec *executionContext) field_Mutation_createOrders_args(ctx context.Context
 	arg0, err := graphql.ProcessArgField(ctx, rawArgs, "inputs",
 		func(ctx context.Context, v any) ([]*model.CreateOrderInput, error) {
 			return ec.unmarshalNCreateOrderInput2ᚕᚖgithubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋsqliteᚋmodelsᚋgraphᚋmodelᚐCreateOrderInputᚄ(ctx, v)
+		})
+	if err != nil {
+		return nil, err
+	}
+	args["inputs"] = arg0
+	return args, nil
+}
+
+func (ec *executionContext) field_Mutation_createOwnerBadge_args(ctx context.Context, rawArgs map[string]any) (map[string]any, error) {
+	var err error
+	args := map[string]any{}
+	arg0, err := graphql.ProcessArgField(ctx, rawArgs, "input",
+		func(ctx context.Context, v any) (model.CreateOwnerBadgeInput, error) {
+			return ec.unmarshalNCreateOwnerBadgeInput2githubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋsqliteᚋmodelsᚋgraphᚋmodelᚐCreateOwnerBadgeInput(ctx, v)
+		})
+	if err != nil {
+		return nil, err
+	}
+	args["input"] = arg0
+	return args, nil
+}
+
+func (ec *executionContext) field_Mutation_createOwnerBadges_args(ctx context.Context, rawArgs map[string]any) (map[string]any, error) {
+	var err error
+	args := map[string]any{}
+	arg0, err := graphql.ProcessArgField(ctx, rawArgs, "inputs",
+		func(ctx context.Context, v any) ([]*model.CreateOwnerBadgeInput, error) {
+			return ec.unmarshalNCreateOwnerBadgeInput2ᚕᚖgithubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋsqliteᚋmodelsᚋgraphᚋmodelᚐCreateOwnerBadgeInputᚄ(ctx, v)
 		})
 	if err != nil {
 		return nil, err
@@ -7995,6 +8582,20 @@ func (ec *executionContext) field_Mutation_deleteAsset_args(ctx context.Context,
 	return args, nil
 }
 
+func (ec *executionContext) field_Mutation_deleteBadge_args(ctx context.Context, rawArgs map[string]any) (map[string]any, error) {
+	var err error
+	args := map[string]any{}
+	arg0, err := graphql.ProcessArgField(ctx, rawArgs, "code",
+		func(ctx context.Context, v any) (string, error) {
+			return ec.unmarshalNID2string(ctx, v)
+		})
+	if err != nil {
+		return nil, err
+	}
+	args["code"] = arg0
+	return args, nil
+}
+
 func (ec *executionContext) field_Mutation_deleteBinaryKeyEvent_args(ctx context.Context, rawArgs map[string]any) (map[string]any, error) {
 	var err error
 	args := map[string]any{}
@@ -8104,6 +8705,28 @@ func (ec *executionContext) field_Mutation_deleteOrder_args(ctx context.Context,
 		return nil, err
 	}
 	args["id"] = arg0
+	return args, nil
+}
+
+func (ec *executionContext) field_Mutation_deleteOwnerBadge_args(ctx context.Context, rawArgs map[string]any) (map[string]any, error) {
+	var err error
+	args := map[string]any{}
+	arg0, err := graphql.ProcessArgField(ctx, rawArgs, "ownerID",
+		func(ctx context.Context, v any) (int, error) {
+			return ec.unmarshalNInt2int(ctx, v)
+		})
+	if err != nil {
+		return nil, err
+	}
+	args["ownerID"] = arg0
+	arg1, err := graphql.ProcessArgField(ctx, rawArgs, "badgeCode",
+		func(ctx context.Context, v any) (string, error) {
+			return ec.unmarshalNID2string(ctx, v)
+		})
+	if err != nil {
+		return nil, err
+	}
+	args["badgeCode"] = arg1
 	return args, nil
 }
 
@@ -8435,6 +9058,50 @@ func (ec *executionContext) field_Mutation_updateAssets_args(ctx context.Context
 	arg1, err := graphql.ProcessArgField(ctx, rawArgs, "input",
 		func(ctx context.Context, v any) (model.UpdateAssetInput, error) {
 			return ec.unmarshalNUpdateAssetInput2githubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋsqliteᚋmodelsᚋgraphᚋmodelᚐUpdateAssetInput(ctx, v)
+		})
+	if err != nil {
+		return nil, err
+	}
+	args["input"] = arg1
+	return args, nil
+}
+
+func (ec *executionContext) field_Mutation_updateBadge_args(ctx context.Context, rawArgs map[string]any) (map[string]any, error) {
+	var err error
+	args := map[string]any{}
+	arg0, err := graphql.ProcessArgField(ctx, rawArgs, "code",
+		func(ctx context.Context, v any) (string, error) {
+			return ec.unmarshalNID2string(ctx, v)
+		})
+	if err != nil {
+		return nil, err
+	}
+	args["code"] = arg0
+	arg1, err := graphql.ProcessArgField(ctx, rawArgs, "input",
+		func(ctx context.Context, v any) (model.UpdateBadgeInput, error) {
+			return ec.unmarshalNUpdateBadgeInput2githubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋsqliteᚋmodelsᚋgraphᚋmodelᚐUpdateBadgeInput(ctx, v)
+		})
+	if err != nil {
+		return nil, err
+	}
+	args["input"] = arg1
+	return args, nil
+}
+
+func (ec *executionContext) field_Mutation_updateBadges_args(ctx context.Context, rawArgs map[string]any) (map[string]any, error) {
+	var err error
+	args := map[string]any{}
+	arg0, err := graphql.ProcessArgField(ctx, rawArgs, "filter",
+		func(ctx context.Context, v any) (model.BadgeFilter, error) {
+			return ec.unmarshalNBadgeFilter2githubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋsqliteᚋmodelsᚋgraphᚋmodelᚐBadgeFilter(ctx, v)
+		})
+	if err != nil {
+		return nil, err
+	}
+	args["filter"] = arg0
+	arg1, err := graphql.ProcessArgField(ctx, rawArgs, "input",
+		func(ctx context.Context, v any) (model.UpdateBadgeInput, error) {
+			return ec.unmarshalNUpdateBadgeInput2githubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋsqliteᚋmodelsᚋgraphᚋmodelᚐUpdateBadgeInput(ctx, v)
 		})
 	if err != nil {
 		return nil, err
@@ -9249,6 +9916,20 @@ func (ec *executionContext) field_Mutation_upsertAsset_args(ctx context.Context,
 	return args, nil
 }
 
+func (ec *executionContext) field_Mutation_upsertBadge_args(ctx context.Context, rawArgs map[string]any) (map[string]any, error) {
+	var err error
+	args := map[string]any{}
+	arg0, err := graphql.ProcessArgField(ctx, rawArgs, "input",
+		func(ctx context.Context, v any) (model.CreateBadgeInput, error) {
+			return ec.unmarshalNCreateBadgeInput2githubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋsqliteᚋmodelsᚋgraphᚋmodelᚐCreateBadgeInput(ctx, v)
+		})
+	if err != nil {
+		return nil, err
+	}
+	args["input"] = arg0
+	return args, nil
+}
+
 func (ec *executionContext) field_Mutation_upsertBinaryKeyEvent_args(ctx context.Context, rawArgs map[string]any) (map[string]any, error) {
 	var err error
 	args := map[string]any{}
@@ -9339,6 +10020,20 @@ func (ec *executionContext) field_Mutation_upsertOrder_args(ctx context.Context,
 	arg0, err := graphql.ProcessArgField(ctx, rawArgs, "input",
 		func(ctx context.Context, v any) (model.CreateOrderInput, error) {
 			return ec.unmarshalNCreateOrderInput2githubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋsqliteᚋmodelsᚋgraphᚋmodelᚐCreateOrderInput(ctx, v)
+		})
+	if err != nil {
+		return nil, err
+	}
+	args["input"] = arg0
+	return args, nil
+}
+
+func (ec *executionContext) field_Mutation_upsertOwnerBadge_args(ctx context.Context, rawArgs map[string]any) (map[string]any, error) {
+	var err error
+	args := map[string]any{}
+	arg0, err := graphql.ProcessArgField(ctx, rawArgs, "input",
+		func(ctx context.Context, v any) (model.CreateOwnerBadgeInput, error) {
+			return ec.unmarshalNCreateOwnerBadgeInput2githubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋsqliteᚋmodelsᚋgraphᚋmodelᚐCreateOwnerBadgeInput(ctx, v)
 		})
 	if err != nil {
 		return nil, err
@@ -9777,6 +10472,104 @@ func (ec *executionContext) field_Query_assets_args(ctx context.Context, rawArgs
 	arg0, err := graphql.ProcessArgField(ctx, rawArgs, "filter",
 		func(ctx context.Context, v any) (*model.AssetFilter, error) {
 			return ec.unmarshalOAssetFilter2ᚖgithubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋsqliteᚋmodelsᚋgraphᚋmodelᚐAssetFilter(ctx, v)
+		})
+	if err != nil {
+		return nil, err
+	}
+	args["filter"] = arg0
+	arg1, err := graphql.ProcessArgField(ctx, rawArgs, "first",
+		func(ctx context.Context, v any) (*int, error) {
+			return ec.unmarshalOInt2ᚖint(ctx, v)
+		})
+	if err != nil {
+		return nil, err
+	}
+	args["first"] = arg1
+	arg2, err := graphql.ProcessArgField(ctx, rawArgs, "after",
+		func(ctx context.Context, v any) (*string, error) {
+			return ec.unmarshalOString2ᚖstring(ctx, v)
+		})
+	if err != nil {
+		return nil, err
+	}
+	args["after"] = arg2
+	arg3, err := graphql.ProcessArgField(ctx, rawArgs, "last",
+		func(ctx context.Context, v any) (*int, error) {
+			return ec.unmarshalOInt2ᚖint(ctx, v)
+		})
+	if err != nil {
+		return nil, err
+	}
+	args["last"] = arg3
+	arg4, err := graphql.ProcessArgField(ctx, rawArgs, "before",
+		func(ctx context.Context, v any) (*string, error) {
+			return ec.unmarshalOString2ᚖstring(ctx, v)
+		})
+	if err != nil {
+		return nil, err
+	}
+	args["before"] = arg4
+	return args, nil
+}
+
+func (ec *executionContext) field_Query_badgeList_args(ctx context.Context, rawArgs map[string]any) (map[string]any, error) {
+	var err error
+	args := map[string]any{}
+	arg0, err := graphql.ProcessArgField(ctx, rawArgs, "filter",
+		func(ctx context.Context, v any) (*model.BadgeFilter, error) {
+			return ec.unmarshalOBadgeFilter2ᚖgithubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋsqliteᚋmodelsᚋgraphᚋmodelᚐBadgeFilter(ctx, v)
+		})
+	if err != nil {
+		return nil, err
+	}
+	args["filter"] = arg0
+	arg1, err := graphql.ProcessArgField(ctx, rawArgs, "sort",
+		func(ctx context.Context, v any) ([]*model.BadgeSort, error) {
+			return ec.unmarshalOBadgeSort2ᚕᚖgithubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋsqliteᚋmodelsᚋgraphᚋmodelᚐBadgeSortᚄ(ctx, v)
+		})
+	if err != nil {
+		return nil, err
+	}
+	args["sort"] = arg1
+	arg2, err := graphql.ProcessArgField(ctx, rawArgs, "limit",
+		func(ctx context.Context, v any) (*int, error) {
+			return ec.unmarshalOInt2ᚖint(ctx, v)
+		})
+	if err != nil {
+		return nil, err
+	}
+	args["limit"] = arg2
+	arg3, err := graphql.ProcessArgField(ctx, rawArgs, "offset",
+		func(ctx context.Context, v any) (*int, error) {
+			return ec.unmarshalOInt2ᚖint(ctx, v)
+		})
+	if err != nil {
+		return nil, err
+	}
+	args["offset"] = arg3
+	return args, nil
+}
+
+func (ec *executionContext) field_Query_badge_args(ctx context.Context, rawArgs map[string]any) (map[string]any, error) {
+	var err error
+	args := map[string]any{}
+	arg0, err := graphql.ProcessArgField(ctx, rawArgs, "code",
+		func(ctx context.Context, v any) (string, error) {
+			return ec.unmarshalNID2string(ctx, v)
+		})
+	if err != nil {
+		return nil, err
+	}
+	args["code"] = arg0
+	return args, nil
+}
+
+func (ec *executionContext) field_Query_badges_args(ctx context.Context, rawArgs map[string]any) (map[string]any, error) {
+	var err error
+	args := map[string]any{}
+	arg0, err := graphql.ProcessArgField(ctx, rawArgs, "filter",
+		func(ctx context.Context, v any) (*model.BadgeFilter, error) {
+			return ec.unmarshalOBadgeFilter2ᚖgithubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋsqliteᚋmodelsᚋgraphᚋmodelᚐBadgeFilter(ctx, v)
 		})
 	if err != nil {
 		return nil, err
@@ -10599,6 +11392,112 @@ func (ec *executionContext) field_Query_orders_args(ctx context.Context, rawArgs
 	arg0, err := graphql.ProcessArgField(ctx, rawArgs, "filter",
 		func(ctx context.Context, v any) (*model.OrderFilter, error) {
 			return ec.unmarshalOOrderFilter2ᚖgithubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋsqliteᚋmodelsᚋgraphᚋmodelᚐOrderFilter(ctx, v)
+		})
+	if err != nil {
+		return nil, err
+	}
+	args["filter"] = arg0
+	arg1, err := graphql.ProcessArgField(ctx, rawArgs, "first",
+		func(ctx context.Context, v any) (*int, error) {
+			return ec.unmarshalOInt2ᚖint(ctx, v)
+		})
+	if err != nil {
+		return nil, err
+	}
+	args["first"] = arg1
+	arg2, err := graphql.ProcessArgField(ctx, rawArgs, "after",
+		func(ctx context.Context, v any) (*string, error) {
+			return ec.unmarshalOString2ᚖstring(ctx, v)
+		})
+	if err != nil {
+		return nil, err
+	}
+	args["after"] = arg2
+	arg3, err := graphql.ProcessArgField(ctx, rawArgs, "last",
+		func(ctx context.Context, v any) (*int, error) {
+			return ec.unmarshalOInt2ᚖint(ctx, v)
+		})
+	if err != nil {
+		return nil, err
+	}
+	args["last"] = arg3
+	arg4, err := graphql.ProcessArgField(ctx, rawArgs, "before",
+		func(ctx context.Context, v any) (*string, error) {
+			return ec.unmarshalOString2ᚖstring(ctx, v)
+		})
+	if err != nil {
+		return nil, err
+	}
+	args["before"] = arg4
+	return args, nil
+}
+
+func (ec *executionContext) field_Query_ownerBadgeList_args(ctx context.Context, rawArgs map[string]any) (map[string]any, error) {
+	var err error
+	args := map[string]any{}
+	arg0, err := graphql.ProcessArgField(ctx, rawArgs, "filter",
+		func(ctx context.Context, v any) (*model.OwnerBadgeFilter, error) {
+			return ec.unmarshalOOwnerBadgeFilter2ᚖgithubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋsqliteᚋmodelsᚋgraphᚋmodelᚐOwnerBadgeFilter(ctx, v)
+		})
+	if err != nil {
+		return nil, err
+	}
+	args["filter"] = arg0
+	arg1, err := graphql.ProcessArgField(ctx, rawArgs, "sort",
+		func(ctx context.Context, v any) ([]*model.OwnerBadgeSort, error) {
+			return ec.unmarshalOOwnerBadgeSort2ᚕᚖgithubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋsqliteᚋmodelsᚋgraphᚋmodelᚐOwnerBadgeSortᚄ(ctx, v)
+		})
+	if err != nil {
+		return nil, err
+	}
+	args["sort"] = arg1
+	arg2, err := graphql.ProcessArgField(ctx, rawArgs, "limit",
+		func(ctx context.Context, v any) (*int, error) {
+			return ec.unmarshalOInt2ᚖint(ctx, v)
+		})
+	if err != nil {
+		return nil, err
+	}
+	args["limit"] = arg2
+	arg3, err := graphql.ProcessArgField(ctx, rawArgs, "offset",
+		func(ctx context.Context, v any) (*int, error) {
+			return ec.unmarshalOInt2ᚖint(ctx, v)
+		})
+	if err != nil {
+		return nil, err
+	}
+	args["offset"] = arg3
+	return args, nil
+}
+
+func (ec *executionContext) field_Query_ownerBadge_args(ctx context.Context, rawArgs map[string]any) (map[string]any, error) {
+	var err error
+	args := map[string]any{}
+	arg0, err := graphql.ProcessArgField(ctx, rawArgs, "ownerID",
+		func(ctx context.Context, v any) (int, error) {
+			return ec.unmarshalNInt2int(ctx, v)
+		})
+	if err != nil {
+		return nil, err
+	}
+	args["ownerID"] = arg0
+	arg1, err := graphql.ProcessArgField(ctx, rawArgs, "badgeCode",
+		func(ctx context.Context, v any) (string, error) {
+			return ec.unmarshalNID2string(ctx, v)
+		})
+	if err != nil {
+		return nil, err
+	}
+	args["badgeCode"] = arg1
+	return args, nil
+}
+
+func (ec *executionContext) field_Query_ownerBadges_args(ctx context.Context, rawArgs map[string]any) (map[string]any, error) {
+	var err error
+	args := map[string]any{}
+	arg0, err := graphql.ProcessArgField(ctx, rawArgs, "filter",
+		func(ctx context.Context, v any) (*model.OwnerBadgeFilter, error) {
+			return ec.unmarshalOOwnerBadgeFilter2ᚖgithubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋsqliteᚋmodelsᚋgraphᚋmodelᚐOwnerBadgeFilter(ctx, v)
 		})
 	if err != nil {
 		return nil, err
@@ -13236,6 +14135,350 @@ func (ec *executionContext) _AssetListResult_hasMore(ctx context.Context, field 
 }
 func (ec *executionContext) fieldContext_AssetListResult_hasMore(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
 	return graphql.NewScalarFieldContext("AssetListResult", field, false, false, errors.New("field of type Boolean does not have child fields"))
+}
+
+func (ec *executionContext) _Badge_code(ctx context.Context, field graphql.CollectedField, obj *models.Badge) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.fieldContext_Badge_code(ctx, field)
+		},
+		func(ctx context.Context) (any, error) {
+			return obj.Code, nil
+		},
+		nil,
+		func(ctx context.Context, selections ast.SelectionSet, v string) graphql.Marshaler {
+			return ec.marshalNID2string(ctx, selections, v)
+		},
+		true,
+		true,
+	)
+}
+func (ec *executionContext) fieldContext_Badge_code(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	return graphql.NewScalarFieldContext("Badge", field, false, false, errors.New("field of type ID does not have child fields"))
+}
+
+func (ec *executionContext) _Badge_label(ctx context.Context, field graphql.CollectedField, obj *models.Badge) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.fieldContext_Badge_label(ctx, field)
+		},
+		func(ctx context.Context) (any, error) {
+			return obj.Label, nil
+		},
+		nil,
+		func(ctx context.Context, selections ast.SelectionSet, v string) graphql.Marshaler {
+			return ec.marshalNString2string(ctx, selections, v)
+		},
+		true,
+		true,
+	)
+}
+func (ec *executionContext) fieldContext_Badge_label(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	return graphql.NewScalarFieldContext("Badge", field, false, false, errors.New("field of type String does not have child fields"))
+}
+
+func (ec *executionContext) _Badge_owners(ctx context.Context, field graphql.CollectedField, obj *models.Badge) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.fieldContext_Badge_owners(ctx, field)
+		},
+		func(ctx context.Context) (any, error) {
+			return obj.Owners, nil
+		},
+		nil,
+		func(ctx context.Context, selections ast.SelectionSet, v []*models.Owner) graphql.Marshaler {
+			return ec.marshalNOwner2ᚕᚖgithubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋsqliteᚋmodelsᚐOwnerᚄ(ctx, selections, v)
+		},
+		true,
+		true,
+	)
+}
+func (ec *executionContext) fieldContext_Badge_owners(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "Badge",
+		Field:      field,
+		IsMethod:   false,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.childFields_Owner(ctx, field)
+		},
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _BadgeConnection_edges(ctx context.Context, field graphql.CollectedField, obj *models.Connection[models.Badge]) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.fieldContext_BadgeConnection_edges(ctx, field)
+		},
+		func(ctx context.Context) (any, error) {
+			return obj.Edges, nil
+		},
+		nil,
+		func(ctx context.Context, selections ast.SelectionSet, v []models.Edge[models.Badge]) graphql.Marshaler {
+			return ec.marshalNBadgeEdge2ᚕgithubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋsqliteᚋmodelsᚐEdgeᚄ(ctx, selections, v)
+		},
+		true,
+		true,
+	)
+}
+func (ec *executionContext) fieldContext_BadgeConnection_edges(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "BadgeConnection",
+		Field:      field,
+		IsMethod:   false,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.childFields_BadgeEdge(ctx, field)
+		},
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _BadgeConnection_pageInfo(ctx context.Context, field graphql.CollectedField, obj *models.Connection[models.Badge]) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.fieldContext_BadgeConnection_pageInfo(ctx, field)
+		},
+		func(ctx context.Context) (any, error) {
+			return obj.PageInfo, nil
+		},
+		nil,
+		func(ctx context.Context, selections ast.SelectionSet, v models.PageInfo) graphql.Marshaler {
+			return ec.marshalNPageInfo2githubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋsqliteᚋmodelsᚐPageInfo(ctx, selections, v)
+		},
+		true,
+		true,
+	)
+}
+func (ec *executionContext) fieldContext_BadgeConnection_pageInfo(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "BadgeConnection",
+		Field:      field,
+		IsMethod:   false,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.childFields_PageInfo(ctx, field)
+		},
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _BadgeConnection_totalCount(ctx context.Context, field graphql.CollectedField, obj *models.Connection[models.Badge]) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.fieldContext_BadgeConnection_totalCount(ctx, field)
+		},
+		func(ctx context.Context) (any, error) {
+			return obj.TotalCount, nil
+		},
+		nil,
+		func(ctx context.Context, selections ast.SelectionSet, v int64) graphql.Marshaler {
+			return ec.marshalNInt2int64(ctx, selections, v)
+		},
+		true,
+		true,
+	)
+}
+func (ec *executionContext) fieldContext_BadgeConnection_totalCount(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	return graphql.NewScalarFieldContext("BadgeConnection", field, false, false, errors.New("field of type Int does not have child fields"))
+}
+
+func (ec *executionContext) _BadgeEdge_node(ctx context.Context, field graphql.CollectedField, obj *models.Edge[models.Badge]) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.fieldContext_BadgeEdge_node(ctx, field)
+		},
+		func(ctx context.Context) (any, error) {
+			return obj.Node, nil
+		},
+		nil,
+		func(ctx context.Context, selections ast.SelectionSet, v *models.Badge) graphql.Marshaler {
+			return ec.marshalNBadge2ᚖgithubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋsqliteᚋmodelsᚐBadge(ctx, selections, v)
+		},
+		true,
+		true,
+	)
+}
+func (ec *executionContext) fieldContext_BadgeEdge_node(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "BadgeEdge",
+		Field:      field,
+		IsMethod:   false,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.childFields_Badge(ctx, field)
+		},
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _BadgeEdge_cursor(ctx context.Context, field graphql.CollectedField, obj *models.Edge[models.Badge]) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.fieldContext_BadgeEdge_cursor(ctx, field)
+		},
+		func(ctx context.Context) (any, error) {
+			return obj.Cursor, nil
+		},
+		nil,
+		func(ctx context.Context, selections ast.SelectionSet, v string) graphql.Marshaler {
+			return ec.marshalNString2string(ctx, selections, v)
+		},
+		true,
+		true,
+	)
+}
+func (ec *executionContext) fieldContext_BadgeEdge_cursor(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	return graphql.NewScalarFieldContext("BadgeEdge", field, false, false, errors.New("field of type String does not have child fields"))
+}
+
+func (ec *executionContext) _BadgeListResult_items(ctx context.Context, field graphql.CollectedField, obj *models.PaginateResult[models.Badge]) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.fieldContext_BadgeListResult_items(ctx, field)
+		},
+		func(ctx context.Context) (any, error) {
+			return obj.Items, nil
+		},
+		nil,
+		func(ctx context.Context, selections ast.SelectionSet, v []*models.Badge) graphql.Marshaler {
+			return ec.marshalNBadge2ᚕᚖgithubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋsqliteᚋmodelsᚐBadgeᚄ(ctx, selections, v)
+		},
+		true,
+		true,
+	)
+}
+func (ec *executionContext) fieldContext_BadgeListResult_items(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "BadgeListResult",
+		Field:      field,
+		IsMethod:   false,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.childFields_Badge(ctx, field)
+		},
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _BadgeListResult_totalCount(ctx context.Context, field graphql.CollectedField, obj *models.PaginateResult[models.Badge]) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.fieldContext_BadgeListResult_totalCount(ctx, field)
+		},
+		func(ctx context.Context) (any, error) {
+			return obj.TotalCount, nil
+		},
+		nil,
+		func(ctx context.Context, selections ast.SelectionSet, v int64) graphql.Marshaler {
+			return ec.marshalNInt2int64(ctx, selections, v)
+		},
+		true,
+		true,
+	)
+}
+func (ec *executionContext) fieldContext_BadgeListResult_totalCount(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	return graphql.NewScalarFieldContext("BadgeListResult", field, false, false, errors.New("field of type Int does not have child fields"))
+}
+
+func (ec *executionContext) _BadgeListResult_offset(ctx context.Context, field graphql.CollectedField, obj *models.PaginateResult[models.Badge]) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.fieldContext_BadgeListResult_offset(ctx, field)
+		},
+		func(ctx context.Context) (any, error) {
+			return obj.Offset, nil
+		},
+		nil,
+		func(ctx context.Context, selections ast.SelectionSet, v int) graphql.Marshaler {
+			return ec.marshalNInt2int(ctx, selections, v)
+		},
+		true,
+		true,
+	)
+}
+func (ec *executionContext) fieldContext_BadgeListResult_offset(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	return graphql.NewScalarFieldContext("BadgeListResult", field, false, false, errors.New("field of type Int does not have child fields"))
+}
+
+func (ec *executionContext) _BadgeListResult_limit(ctx context.Context, field graphql.CollectedField, obj *models.PaginateResult[models.Badge]) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.fieldContext_BadgeListResult_limit(ctx, field)
+		},
+		func(ctx context.Context) (any, error) {
+			return obj.Limit, nil
+		},
+		nil,
+		func(ctx context.Context, selections ast.SelectionSet, v int) graphql.Marshaler {
+			return ec.marshalNInt2int(ctx, selections, v)
+		},
+		true,
+		true,
+	)
+}
+func (ec *executionContext) fieldContext_BadgeListResult_limit(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	return graphql.NewScalarFieldContext("BadgeListResult", field, false, false, errors.New("field of type Int does not have child fields"))
+}
+
+func (ec *executionContext) _BadgeListResult_hasMore(ctx context.Context, field graphql.CollectedField, obj *models.PaginateResult[models.Badge]) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.fieldContext_BadgeListResult_hasMore(ctx, field)
+		},
+		func(ctx context.Context) (any, error) {
+			return obj.HasMore, nil
+		},
+		nil,
+		func(ctx context.Context, selections ast.SelectionSet, v bool) graphql.Marshaler {
+			return ec.marshalNBoolean2bool(ctx, selections, v)
+		},
+		true,
+		true,
+	)
+}
+func (ec *executionContext) fieldContext_BadgeListResult_hasMore(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	return graphql.NewScalarFieldContext("BadgeListResult", field, false, false, errors.New("field of type Boolean does not have child fields"))
 }
 
 func (ec *executionContext) _BinaryKey_id(ctx context.Context, field graphql.CollectedField, obj *models.BinaryKey) (ret graphql.Marshaler) {
@@ -16673,6 +17916,270 @@ func (ec *executionContext) fieldContext_Mutation_deleteAsset(ctx context.Contex
 	return fc, nil
 }
 
+func (ec *executionContext) _Mutation_createBadge(ctx context.Context, field graphql.CollectedField) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.fieldContext_Mutation_createBadge(ctx, field)
+		},
+		func(ctx context.Context) (any, error) {
+			fc := graphql.GetFieldContext(ctx)
+			return ec.Resolvers.Mutation().CreateBadge(ctx, fc.Args["input"].(model.CreateBadgeInput))
+		},
+		nil,
+		func(ctx context.Context, selections ast.SelectionSet, v *models.Badge) graphql.Marshaler {
+			return ec.marshalNBadge2ᚖgithubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋsqliteᚋmodelsᚐBadge(ctx, selections, v)
+		},
+		true,
+		true,
+	)
+}
+func (ec *executionContext) fieldContext_Mutation_createBadge(ctx context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "Mutation",
+		Field:      field,
+		IsMethod:   true,
+		IsResolver: true,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.childFields_Badge(ctx, field)
+		},
+	}
+	defer func() {
+		if r := recover(); r != nil {
+			err = ec.Recover(ctx, r)
+			ec.Error(ctx, err)
+		}
+	}()
+	ctx = graphql.WithFieldContext(ctx, fc)
+	if fc.Args, err = ec.field_Mutation_createBadge_args(ctx, field.ArgumentMap(ec.Variables)); err != nil {
+		ec.Error(ctx, err)
+		return fc, err
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _Mutation_createBadges(ctx context.Context, field graphql.CollectedField) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.fieldContext_Mutation_createBadges(ctx, field)
+		},
+		func(ctx context.Context) (any, error) {
+			fc := graphql.GetFieldContext(ctx)
+			return ec.Resolvers.Mutation().CreateBadges(ctx, fc.Args["inputs"].([]*model.CreateBadgeInput))
+		},
+		nil,
+		func(ctx context.Context, selections ast.SelectionSet, v []*models.Badge) graphql.Marshaler {
+			return ec.marshalNBadge2ᚕᚖgithubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋsqliteᚋmodelsᚐBadgeᚄ(ctx, selections, v)
+		},
+		true,
+		true,
+	)
+}
+func (ec *executionContext) fieldContext_Mutation_createBadges(ctx context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "Mutation",
+		Field:      field,
+		IsMethod:   true,
+		IsResolver: true,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.childFields_Badge(ctx, field)
+		},
+	}
+	defer func() {
+		if r := recover(); r != nil {
+			err = ec.Recover(ctx, r)
+			ec.Error(ctx, err)
+		}
+	}()
+	ctx = graphql.WithFieldContext(ctx, fc)
+	if fc.Args, err = ec.field_Mutation_createBadges_args(ctx, field.ArgumentMap(ec.Variables)); err != nil {
+		ec.Error(ctx, err)
+		return fc, err
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _Mutation_updateBadge(ctx context.Context, field graphql.CollectedField) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.fieldContext_Mutation_updateBadge(ctx, field)
+		},
+		func(ctx context.Context) (any, error) {
+			fc := graphql.GetFieldContext(ctx)
+			return ec.Resolvers.Mutation().UpdateBadge(ctx, fc.Args["code"].(string), fc.Args["input"].(model.UpdateBadgeInput))
+		},
+		nil,
+		func(ctx context.Context, selections ast.SelectionSet, v *models.Badge) graphql.Marshaler {
+			return ec.marshalNBadge2ᚖgithubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋsqliteᚋmodelsᚐBadge(ctx, selections, v)
+		},
+		true,
+		true,
+	)
+}
+func (ec *executionContext) fieldContext_Mutation_updateBadge(ctx context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "Mutation",
+		Field:      field,
+		IsMethod:   true,
+		IsResolver: true,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.childFields_Badge(ctx, field)
+		},
+	}
+	defer func() {
+		if r := recover(); r != nil {
+			err = ec.Recover(ctx, r)
+			ec.Error(ctx, err)
+		}
+	}()
+	ctx = graphql.WithFieldContext(ctx, fc)
+	if fc.Args, err = ec.field_Mutation_updateBadge_args(ctx, field.ArgumentMap(ec.Variables)); err != nil {
+		ec.Error(ctx, err)
+		return fc, err
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _Mutation_updateBadges(ctx context.Context, field graphql.CollectedField) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.fieldContext_Mutation_updateBadges(ctx, field)
+		},
+		func(ctx context.Context) (any, error) {
+			fc := graphql.GetFieldContext(ctx)
+			return ec.Resolvers.Mutation().UpdateBadges(ctx, fc.Args["filter"].(model.BadgeFilter), fc.Args["input"].(model.UpdateBadgeInput))
+		},
+		nil,
+		func(ctx context.Context, selections ast.SelectionSet, v []*models.Badge) graphql.Marshaler {
+			return ec.marshalNBadge2ᚕᚖgithubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋsqliteᚋmodelsᚐBadgeᚄ(ctx, selections, v)
+		},
+		true,
+		true,
+	)
+}
+func (ec *executionContext) fieldContext_Mutation_updateBadges(ctx context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "Mutation",
+		Field:      field,
+		IsMethod:   true,
+		IsResolver: true,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.childFields_Badge(ctx, field)
+		},
+	}
+	defer func() {
+		if r := recover(); r != nil {
+			err = ec.Recover(ctx, r)
+			ec.Error(ctx, err)
+		}
+	}()
+	ctx = graphql.WithFieldContext(ctx, fc)
+	if fc.Args, err = ec.field_Mutation_updateBadges_args(ctx, field.ArgumentMap(ec.Variables)); err != nil {
+		ec.Error(ctx, err)
+		return fc, err
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _Mutation_upsertBadge(ctx context.Context, field graphql.CollectedField) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.fieldContext_Mutation_upsertBadge(ctx, field)
+		},
+		func(ctx context.Context) (any, error) {
+			fc := graphql.GetFieldContext(ctx)
+			return ec.Resolvers.Mutation().UpsertBadge(ctx, fc.Args["input"].(model.CreateBadgeInput))
+		},
+		nil,
+		func(ctx context.Context, selections ast.SelectionSet, v *models.Badge) graphql.Marshaler {
+			return ec.marshalNBadge2ᚖgithubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋsqliteᚋmodelsᚐBadge(ctx, selections, v)
+		},
+		true,
+		true,
+	)
+}
+func (ec *executionContext) fieldContext_Mutation_upsertBadge(ctx context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "Mutation",
+		Field:      field,
+		IsMethod:   true,
+		IsResolver: true,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.childFields_Badge(ctx, field)
+		},
+	}
+	defer func() {
+		if r := recover(); r != nil {
+			err = ec.Recover(ctx, r)
+			ec.Error(ctx, err)
+		}
+	}()
+	ctx = graphql.WithFieldContext(ctx, fc)
+	if fc.Args, err = ec.field_Mutation_upsertBadge_args(ctx, field.ArgumentMap(ec.Variables)); err != nil {
+		ec.Error(ctx, err)
+		return fc, err
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _Mutation_deleteBadge(ctx context.Context, field graphql.CollectedField) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.fieldContext_Mutation_deleteBadge(ctx, field)
+		},
+		func(ctx context.Context) (any, error) {
+			fc := graphql.GetFieldContext(ctx)
+			return ec.Resolvers.Mutation().DeleteBadge(ctx, fc.Args["code"].(string))
+		},
+		nil,
+		func(ctx context.Context, selections ast.SelectionSet, v bool) graphql.Marshaler {
+			return ec.marshalNBoolean2bool(ctx, selections, v)
+		},
+		true,
+		true,
+	)
+}
+func (ec *executionContext) fieldContext_Mutation_deleteBadge(ctx context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "Mutation",
+		Field:      field,
+		IsMethod:   true,
+		IsResolver: true,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return nil, errors.New("field of type Boolean does not have child fields")
+		},
+	}
+	defer func() {
+		if r := recover(); r != nil {
+			err = ec.Recover(ctx, r)
+			ec.Error(ctx, err)
+		}
+	}()
+	ctx = graphql.WithFieldContext(ctx, fc)
+	if fc.Args, err = ec.field_Mutation_deleteBadge_args(ctx, field.ArgumentMap(ec.Variables)); err != nil {
+		ec.Error(ctx, err)
+		return fc, err
+	}
+	return fc, nil
+}
+
 func (ec *executionContext) _Mutation_createBinaryKeyEvent(ctx context.Context, field graphql.CollectedField) (ret graphql.Marshaler) {
 	return graphql.ResolveField(
 		ctx,
@@ -18559,6 +20066,182 @@ func (ec *executionContext) fieldContext_Mutation_deleteOrderItem(ctx context.Co
 	}()
 	ctx = graphql.WithFieldContext(ctx, fc)
 	if fc.Args, err = ec.field_Mutation_deleteOrderItem_args(ctx, field.ArgumentMap(ec.Variables)); err != nil {
+		ec.Error(ctx, err)
+		return fc, err
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _Mutation_createOwnerBadge(ctx context.Context, field graphql.CollectedField) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.fieldContext_Mutation_createOwnerBadge(ctx, field)
+		},
+		func(ctx context.Context) (any, error) {
+			fc := graphql.GetFieldContext(ctx)
+			return ec.Resolvers.Mutation().CreateOwnerBadge(ctx, fc.Args["input"].(model.CreateOwnerBadgeInput))
+		},
+		nil,
+		func(ctx context.Context, selections ast.SelectionSet, v *models.OwnerBadge) graphql.Marshaler {
+			return ec.marshalNOwnerBadge2ᚖgithubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋsqliteᚋmodelsᚐOwnerBadge(ctx, selections, v)
+		},
+		true,
+		true,
+	)
+}
+func (ec *executionContext) fieldContext_Mutation_createOwnerBadge(ctx context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "Mutation",
+		Field:      field,
+		IsMethod:   true,
+		IsResolver: true,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.childFields_OwnerBadge(ctx, field)
+		},
+	}
+	defer func() {
+		if r := recover(); r != nil {
+			err = ec.Recover(ctx, r)
+			ec.Error(ctx, err)
+		}
+	}()
+	ctx = graphql.WithFieldContext(ctx, fc)
+	if fc.Args, err = ec.field_Mutation_createOwnerBadge_args(ctx, field.ArgumentMap(ec.Variables)); err != nil {
+		ec.Error(ctx, err)
+		return fc, err
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _Mutation_createOwnerBadges(ctx context.Context, field graphql.CollectedField) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.fieldContext_Mutation_createOwnerBadges(ctx, field)
+		},
+		func(ctx context.Context) (any, error) {
+			fc := graphql.GetFieldContext(ctx)
+			return ec.Resolvers.Mutation().CreateOwnerBadges(ctx, fc.Args["inputs"].([]*model.CreateOwnerBadgeInput))
+		},
+		nil,
+		func(ctx context.Context, selections ast.SelectionSet, v []*models.OwnerBadge) graphql.Marshaler {
+			return ec.marshalNOwnerBadge2ᚕᚖgithubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋsqliteᚋmodelsᚐOwnerBadgeᚄ(ctx, selections, v)
+		},
+		true,
+		true,
+	)
+}
+func (ec *executionContext) fieldContext_Mutation_createOwnerBadges(ctx context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "Mutation",
+		Field:      field,
+		IsMethod:   true,
+		IsResolver: true,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.childFields_OwnerBadge(ctx, field)
+		},
+	}
+	defer func() {
+		if r := recover(); r != nil {
+			err = ec.Recover(ctx, r)
+			ec.Error(ctx, err)
+		}
+	}()
+	ctx = graphql.WithFieldContext(ctx, fc)
+	if fc.Args, err = ec.field_Mutation_createOwnerBadges_args(ctx, field.ArgumentMap(ec.Variables)); err != nil {
+		ec.Error(ctx, err)
+		return fc, err
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _Mutation_upsertOwnerBadge(ctx context.Context, field graphql.CollectedField) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.fieldContext_Mutation_upsertOwnerBadge(ctx, field)
+		},
+		func(ctx context.Context) (any, error) {
+			fc := graphql.GetFieldContext(ctx)
+			return ec.Resolvers.Mutation().UpsertOwnerBadge(ctx, fc.Args["input"].(model.CreateOwnerBadgeInput))
+		},
+		nil,
+		func(ctx context.Context, selections ast.SelectionSet, v *models.OwnerBadge) graphql.Marshaler {
+			return ec.marshalNOwnerBadge2ᚖgithubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋsqliteᚋmodelsᚐOwnerBadge(ctx, selections, v)
+		},
+		true,
+		true,
+	)
+}
+func (ec *executionContext) fieldContext_Mutation_upsertOwnerBadge(ctx context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "Mutation",
+		Field:      field,
+		IsMethod:   true,
+		IsResolver: true,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.childFields_OwnerBadge(ctx, field)
+		},
+	}
+	defer func() {
+		if r := recover(); r != nil {
+			err = ec.Recover(ctx, r)
+			ec.Error(ctx, err)
+		}
+	}()
+	ctx = graphql.WithFieldContext(ctx, fc)
+	if fc.Args, err = ec.field_Mutation_upsertOwnerBadge_args(ctx, field.ArgumentMap(ec.Variables)); err != nil {
+		ec.Error(ctx, err)
+		return fc, err
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _Mutation_deleteOwnerBadge(ctx context.Context, field graphql.CollectedField) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.fieldContext_Mutation_deleteOwnerBadge(ctx, field)
+		},
+		func(ctx context.Context) (any, error) {
+			fc := graphql.GetFieldContext(ctx)
+			return ec.Resolvers.Mutation().DeleteOwnerBadge(ctx, fc.Args["ownerID"].(int), fc.Args["badgeCode"].(string))
+		},
+		nil,
+		func(ctx context.Context, selections ast.SelectionSet, v bool) graphql.Marshaler {
+			return ec.marshalNBoolean2bool(ctx, selections, v)
+		},
+		true,
+		true,
+	)
+}
+func (ec *executionContext) fieldContext_Mutation_deleteOwnerBadge(ctx context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "Mutation",
+		Field:      field,
+		IsMethod:   true,
+		IsResolver: true,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return nil, errors.New("field of type Boolean does not have child fields")
+		},
+	}
+	defer func() {
+		if r := recover(); r != nil {
+			err = ec.Recover(ctx, r)
+			ec.Error(ctx, err)
+		}
+	}()
+	ctx = graphql.WithFieldContext(ctx, fc)
+	if fc.Args, err = ec.field_Mutation_deleteOwnerBadge_args(ctx, field.ArgumentMap(ec.Variables)); err != nil {
 		ec.Error(ctx, err)
 		return fc, err
 	}
@@ -22364,6 +24047,350 @@ func (ec *executionContext) fieldContext_Owner_ownerProfile(_ context.Context, f
 	return fc, nil
 }
 
+func (ec *executionContext) _Owner_badges(ctx context.Context, field graphql.CollectedField, obj *models.Owner) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.fieldContext_Owner_badges(ctx, field)
+		},
+		func(ctx context.Context) (any, error) {
+			return obj.Badges, nil
+		},
+		nil,
+		func(ctx context.Context, selections ast.SelectionSet, v []*models.Badge) graphql.Marshaler {
+			return ec.marshalNBadge2ᚕᚖgithubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋsqliteᚋmodelsᚐBadgeᚄ(ctx, selections, v)
+		},
+		true,
+		true,
+	)
+}
+func (ec *executionContext) fieldContext_Owner_badges(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "Owner",
+		Field:      field,
+		IsMethod:   false,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.childFields_Badge(ctx, field)
+		},
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _OwnerBadge_ownerID(ctx context.Context, field graphql.CollectedField, obj *models.OwnerBadge) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.fieldContext_OwnerBadge_ownerID(ctx, field)
+		},
+		func(ctx context.Context) (any, error) {
+			return obj.OwnerID, nil
+		},
+		nil,
+		func(ctx context.Context, selections ast.SelectionSet, v int64) graphql.Marshaler {
+			return ec.marshalNInt2int64(ctx, selections, v)
+		},
+		true,
+		true,
+	)
+}
+func (ec *executionContext) fieldContext_OwnerBadge_ownerID(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	return graphql.NewScalarFieldContext("OwnerBadge", field, false, false, errors.New("field of type Int does not have child fields"))
+}
+
+func (ec *executionContext) _OwnerBadge_badgeCode(ctx context.Context, field graphql.CollectedField, obj *models.OwnerBadge) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.fieldContext_OwnerBadge_badgeCode(ctx, field)
+		},
+		func(ctx context.Context) (any, error) {
+			return obj.BadgeCode, nil
+		},
+		nil,
+		func(ctx context.Context, selections ast.SelectionSet, v string) graphql.Marshaler {
+			return ec.marshalNID2string(ctx, selections, v)
+		},
+		true,
+		true,
+	)
+}
+func (ec *executionContext) fieldContext_OwnerBadge_badgeCode(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	return graphql.NewScalarFieldContext("OwnerBadge", field, false, false, errors.New("field of type ID does not have child fields"))
+}
+
+func (ec *executionContext) _OwnerBadgeConnection_edges(ctx context.Context, field graphql.CollectedField, obj *models.Connection[models.OwnerBadge]) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.fieldContext_OwnerBadgeConnection_edges(ctx, field)
+		},
+		func(ctx context.Context) (any, error) {
+			return obj.Edges, nil
+		},
+		nil,
+		func(ctx context.Context, selections ast.SelectionSet, v []models.Edge[models.OwnerBadge]) graphql.Marshaler {
+			return ec.marshalNOwnerBadgeEdge2ᚕgithubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋsqliteᚋmodelsᚐEdgeᚄ(ctx, selections, v)
+		},
+		true,
+		true,
+	)
+}
+func (ec *executionContext) fieldContext_OwnerBadgeConnection_edges(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "OwnerBadgeConnection",
+		Field:      field,
+		IsMethod:   false,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.childFields_OwnerBadgeEdge(ctx, field)
+		},
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _OwnerBadgeConnection_pageInfo(ctx context.Context, field graphql.CollectedField, obj *models.Connection[models.OwnerBadge]) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.fieldContext_OwnerBadgeConnection_pageInfo(ctx, field)
+		},
+		func(ctx context.Context) (any, error) {
+			return obj.PageInfo, nil
+		},
+		nil,
+		func(ctx context.Context, selections ast.SelectionSet, v models.PageInfo) graphql.Marshaler {
+			return ec.marshalNPageInfo2githubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋsqliteᚋmodelsᚐPageInfo(ctx, selections, v)
+		},
+		true,
+		true,
+	)
+}
+func (ec *executionContext) fieldContext_OwnerBadgeConnection_pageInfo(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "OwnerBadgeConnection",
+		Field:      field,
+		IsMethod:   false,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.childFields_PageInfo(ctx, field)
+		},
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _OwnerBadgeConnection_totalCount(ctx context.Context, field graphql.CollectedField, obj *models.Connection[models.OwnerBadge]) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.fieldContext_OwnerBadgeConnection_totalCount(ctx, field)
+		},
+		func(ctx context.Context) (any, error) {
+			return obj.TotalCount, nil
+		},
+		nil,
+		func(ctx context.Context, selections ast.SelectionSet, v int64) graphql.Marshaler {
+			return ec.marshalNInt2int64(ctx, selections, v)
+		},
+		true,
+		true,
+	)
+}
+func (ec *executionContext) fieldContext_OwnerBadgeConnection_totalCount(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	return graphql.NewScalarFieldContext("OwnerBadgeConnection", field, false, false, errors.New("field of type Int does not have child fields"))
+}
+
+func (ec *executionContext) _OwnerBadgeEdge_node(ctx context.Context, field graphql.CollectedField, obj *models.Edge[models.OwnerBadge]) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.fieldContext_OwnerBadgeEdge_node(ctx, field)
+		},
+		func(ctx context.Context) (any, error) {
+			return obj.Node, nil
+		},
+		nil,
+		func(ctx context.Context, selections ast.SelectionSet, v *models.OwnerBadge) graphql.Marshaler {
+			return ec.marshalNOwnerBadge2ᚖgithubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋsqliteᚋmodelsᚐOwnerBadge(ctx, selections, v)
+		},
+		true,
+		true,
+	)
+}
+func (ec *executionContext) fieldContext_OwnerBadgeEdge_node(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "OwnerBadgeEdge",
+		Field:      field,
+		IsMethod:   false,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.childFields_OwnerBadge(ctx, field)
+		},
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _OwnerBadgeEdge_cursor(ctx context.Context, field graphql.CollectedField, obj *models.Edge[models.OwnerBadge]) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.fieldContext_OwnerBadgeEdge_cursor(ctx, field)
+		},
+		func(ctx context.Context) (any, error) {
+			return obj.Cursor, nil
+		},
+		nil,
+		func(ctx context.Context, selections ast.SelectionSet, v string) graphql.Marshaler {
+			return ec.marshalNString2string(ctx, selections, v)
+		},
+		true,
+		true,
+	)
+}
+func (ec *executionContext) fieldContext_OwnerBadgeEdge_cursor(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	return graphql.NewScalarFieldContext("OwnerBadgeEdge", field, false, false, errors.New("field of type String does not have child fields"))
+}
+
+func (ec *executionContext) _OwnerBadgeListResult_items(ctx context.Context, field graphql.CollectedField, obj *models.PaginateResult[models.OwnerBadge]) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.fieldContext_OwnerBadgeListResult_items(ctx, field)
+		},
+		func(ctx context.Context) (any, error) {
+			return obj.Items, nil
+		},
+		nil,
+		func(ctx context.Context, selections ast.SelectionSet, v []*models.OwnerBadge) graphql.Marshaler {
+			return ec.marshalNOwnerBadge2ᚕᚖgithubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋsqliteᚋmodelsᚐOwnerBadgeᚄ(ctx, selections, v)
+		},
+		true,
+		true,
+	)
+}
+func (ec *executionContext) fieldContext_OwnerBadgeListResult_items(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "OwnerBadgeListResult",
+		Field:      field,
+		IsMethod:   false,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.childFields_OwnerBadge(ctx, field)
+		},
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _OwnerBadgeListResult_totalCount(ctx context.Context, field graphql.CollectedField, obj *models.PaginateResult[models.OwnerBadge]) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.fieldContext_OwnerBadgeListResult_totalCount(ctx, field)
+		},
+		func(ctx context.Context) (any, error) {
+			return obj.TotalCount, nil
+		},
+		nil,
+		func(ctx context.Context, selections ast.SelectionSet, v int64) graphql.Marshaler {
+			return ec.marshalNInt2int64(ctx, selections, v)
+		},
+		true,
+		true,
+	)
+}
+func (ec *executionContext) fieldContext_OwnerBadgeListResult_totalCount(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	return graphql.NewScalarFieldContext("OwnerBadgeListResult", field, false, false, errors.New("field of type Int does not have child fields"))
+}
+
+func (ec *executionContext) _OwnerBadgeListResult_offset(ctx context.Context, field graphql.CollectedField, obj *models.PaginateResult[models.OwnerBadge]) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.fieldContext_OwnerBadgeListResult_offset(ctx, field)
+		},
+		func(ctx context.Context) (any, error) {
+			return obj.Offset, nil
+		},
+		nil,
+		func(ctx context.Context, selections ast.SelectionSet, v int) graphql.Marshaler {
+			return ec.marshalNInt2int(ctx, selections, v)
+		},
+		true,
+		true,
+	)
+}
+func (ec *executionContext) fieldContext_OwnerBadgeListResult_offset(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	return graphql.NewScalarFieldContext("OwnerBadgeListResult", field, false, false, errors.New("field of type Int does not have child fields"))
+}
+
+func (ec *executionContext) _OwnerBadgeListResult_limit(ctx context.Context, field graphql.CollectedField, obj *models.PaginateResult[models.OwnerBadge]) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.fieldContext_OwnerBadgeListResult_limit(ctx, field)
+		},
+		func(ctx context.Context) (any, error) {
+			return obj.Limit, nil
+		},
+		nil,
+		func(ctx context.Context, selections ast.SelectionSet, v int) graphql.Marshaler {
+			return ec.marshalNInt2int(ctx, selections, v)
+		},
+		true,
+		true,
+	)
+}
+func (ec *executionContext) fieldContext_OwnerBadgeListResult_limit(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	return graphql.NewScalarFieldContext("OwnerBadgeListResult", field, false, false, errors.New("field of type Int does not have child fields"))
+}
+
+func (ec *executionContext) _OwnerBadgeListResult_hasMore(ctx context.Context, field graphql.CollectedField, obj *models.PaginateResult[models.OwnerBadge]) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.fieldContext_OwnerBadgeListResult_hasMore(ctx, field)
+		},
+		func(ctx context.Context) (any, error) {
+			return obj.HasMore, nil
+		},
+		nil,
+		func(ctx context.Context, selections ast.SelectionSet, v bool) graphql.Marshaler {
+			return ec.marshalNBoolean2bool(ctx, selections, v)
+		},
+		true,
+		true,
+	)
+}
+func (ec *executionContext) fieldContext_OwnerBadgeListResult_hasMore(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	return graphql.NewScalarFieldContext("OwnerBadgeListResult", field, false, false, errors.New("field of type Boolean does not have child fields"))
+}
+
 func (ec *executionContext) _OwnerConnection_edges(ctx context.Context, field graphql.CollectedField, obj *models.Connection[models.Owner]) (ret graphql.Marshaler) {
 	return graphql.ResolveField(
 		ctx,
@@ -25151,6 +27178,138 @@ func (ec *executionContext) fieldContext_Query_assetList(ctx context.Context, fi
 	return fc, nil
 }
 
+func (ec *executionContext) _Query_badge(ctx context.Context, field graphql.CollectedField) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.fieldContext_Query_badge(ctx, field)
+		},
+		func(ctx context.Context) (any, error) {
+			fc := graphql.GetFieldContext(ctx)
+			return ec.Resolvers.Query().Badge(ctx, fc.Args["code"].(string))
+		},
+		nil,
+		func(ctx context.Context, selections ast.SelectionSet, v *models.Badge) graphql.Marshaler {
+			return ec.marshalOBadge2ᚖgithubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋsqliteᚋmodelsᚐBadge(ctx, selections, v)
+		},
+		true,
+		false,
+	)
+}
+func (ec *executionContext) fieldContext_Query_badge(ctx context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "Query",
+		Field:      field,
+		IsMethod:   true,
+		IsResolver: true,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.childFields_Badge(ctx, field)
+		},
+	}
+	defer func() {
+		if r := recover(); r != nil {
+			err = ec.Recover(ctx, r)
+			ec.Error(ctx, err)
+		}
+	}()
+	ctx = graphql.WithFieldContext(ctx, fc)
+	if fc.Args, err = ec.field_Query_badge_args(ctx, field.ArgumentMap(ec.Variables)); err != nil {
+		ec.Error(ctx, err)
+		return fc, err
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _Query_badges(ctx context.Context, field graphql.CollectedField) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.fieldContext_Query_badges(ctx, field)
+		},
+		func(ctx context.Context) (any, error) {
+			fc := graphql.GetFieldContext(ctx)
+			return ec.Resolvers.Query().Badges(ctx, fc.Args["filter"].(*model.BadgeFilter), fc.Args["first"].(*int), fc.Args["after"].(*string), fc.Args["last"].(*int), fc.Args["before"].(*string))
+		},
+		nil,
+		func(ctx context.Context, selections ast.SelectionSet, v *models.Connection[models.Badge]) graphql.Marshaler {
+			return ec.marshalNBadgeConnection2ᚖgithubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋsqliteᚋmodelsᚐConnection(ctx, selections, v)
+		},
+		true,
+		true,
+	)
+}
+func (ec *executionContext) fieldContext_Query_badges(ctx context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "Query",
+		Field:      field,
+		IsMethod:   true,
+		IsResolver: true,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.childFields_BadgeConnection(ctx, field)
+		},
+	}
+	defer func() {
+		if r := recover(); r != nil {
+			err = ec.Recover(ctx, r)
+			ec.Error(ctx, err)
+		}
+	}()
+	ctx = graphql.WithFieldContext(ctx, fc)
+	if fc.Args, err = ec.field_Query_badges_args(ctx, field.ArgumentMap(ec.Variables)); err != nil {
+		ec.Error(ctx, err)
+		return fc, err
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _Query_badgeList(ctx context.Context, field graphql.CollectedField) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.fieldContext_Query_badgeList(ctx, field)
+		},
+		func(ctx context.Context) (any, error) {
+			fc := graphql.GetFieldContext(ctx)
+			return ec.Resolvers.Query().BadgeList(ctx, fc.Args["filter"].(*model.BadgeFilter), fc.Args["sort"].([]*model.BadgeSort), fc.Args["limit"].(*int), fc.Args["offset"].(*int))
+		},
+		nil,
+		func(ctx context.Context, selections ast.SelectionSet, v *models.PaginateResult[models.Badge]) graphql.Marshaler {
+			return ec.marshalNBadgeListResult2ᚖgithubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋsqliteᚋmodelsᚐPaginateResult(ctx, selections, v)
+		},
+		true,
+		true,
+	)
+}
+func (ec *executionContext) fieldContext_Query_badgeList(ctx context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "Query",
+		Field:      field,
+		IsMethod:   true,
+		IsResolver: true,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.childFields_BadgeListResult(ctx, field)
+		},
+	}
+	defer func() {
+		if r := recover(); r != nil {
+			err = ec.Recover(ctx, r)
+			ec.Error(ctx, err)
+		}
+	}()
+	ctx = graphql.WithFieldContext(ctx, fc)
+	if fc.Args, err = ec.field_Query_badgeList_args(ctx, field.ArgumentMap(ec.Variables)); err != nil {
+		ec.Error(ctx, err)
+		return fc, err
+	}
+	return fc, nil
+}
+
 func (ec *executionContext) _Query_binaryKeyEvent(ctx context.Context, field graphql.CollectedField) (ret graphql.Marshaler) {
 	return graphql.ResolveField(
 		ctx,
@@ -26245,6 +28404,138 @@ func (ec *executionContext) fieldContext_Query_orderItemList(ctx context.Context
 	}()
 	ctx = graphql.WithFieldContext(ctx, fc)
 	if fc.Args, err = ec.field_Query_orderItemList_args(ctx, field.ArgumentMap(ec.Variables)); err != nil {
+		ec.Error(ctx, err)
+		return fc, err
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _Query_ownerBadge(ctx context.Context, field graphql.CollectedField) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.fieldContext_Query_ownerBadge(ctx, field)
+		},
+		func(ctx context.Context) (any, error) {
+			fc := graphql.GetFieldContext(ctx)
+			return ec.Resolvers.Query().OwnerBadge(ctx, fc.Args["ownerID"].(int), fc.Args["badgeCode"].(string))
+		},
+		nil,
+		func(ctx context.Context, selections ast.SelectionSet, v *models.OwnerBadge) graphql.Marshaler {
+			return ec.marshalOOwnerBadge2ᚖgithubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋsqliteᚋmodelsᚐOwnerBadge(ctx, selections, v)
+		},
+		true,
+		false,
+	)
+}
+func (ec *executionContext) fieldContext_Query_ownerBadge(ctx context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "Query",
+		Field:      field,
+		IsMethod:   true,
+		IsResolver: true,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.childFields_OwnerBadge(ctx, field)
+		},
+	}
+	defer func() {
+		if r := recover(); r != nil {
+			err = ec.Recover(ctx, r)
+			ec.Error(ctx, err)
+		}
+	}()
+	ctx = graphql.WithFieldContext(ctx, fc)
+	if fc.Args, err = ec.field_Query_ownerBadge_args(ctx, field.ArgumentMap(ec.Variables)); err != nil {
+		ec.Error(ctx, err)
+		return fc, err
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _Query_ownerBadges(ctx context.Context, field graphql.CollectedField) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.fieldContext_Query_ownerBadges(ctx, field)
+		},
+		func(ctx context.Context) (any, error) {
+			fc := graphql.GetFieldContext(ctx)
+			return ec.Resolvers.Query().OwnerBadges(ctx, fc.Args["filter"].(*model.OwnerBadgeFilter), fc.Args["first"].(*int), fc.Args["after"].(*string), fc.Args["last"].(*int), fc.Args["before"].(*string))
+		},
+		nil,
+		func(ctx context.Context, selections ast.SelectionSet, v *models.Connection[models.OwnerBadge]) graphql.Marshaler {
+			return ec.marshalNOwnerBadgeConnection2ᚖgithubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋsqliteᚋmodelsᚐConnection(ctx, selections, v)
+		},
+		true,
+		true,
+	)
+}
+func (ec *executionContext) fieldContext_Query_ownerBadges(ctx context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "Query",
+		Field:      field,
+		IsMethod:   true,
+		IsResolver: true,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.childFields_OwnerBadgeConnection(ctx, field)
+		},
+	}
+	defer func() {
+		if r := recover(); r != nil {
+			err = ec.Recover(ctx, r)
+			ec.Error(ctx, err)
+		}
+	}()
+	ctx = graphql.WithFieldContext(ctx, fc)
+	if fc.Args, err = ec.field_Query_ownerBadges_args(ctx, field.ArgumentMap(ec.Variables)); err != nil {
+		ec.Error(ctx, err)
+		return fc, err
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _Query_ownerBadgeList(ctx context.Context, field graphql.CollectedField) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.fieldContext_Query_ownerBadgeList(ctx, field)
+		},
+		func(ctx context.Context) (any, error) {
+			fc := graphql.GetFieldContext(ctx)
+			return ec.Resolvers.Query().OwnerBadgeList(ctx, fc.Args["filter"].(*model.OwnerBadgeFilter), fc.Args["sort"].([]*model.OwnerBadgeSort), fc.Args["limit"].(*int), fc.Args["offset"].(*int))
+		},
+		nil,
+		func(ctx context.Context, selections ast.SelectionSet, v *models.PaginateResult[models.OwnerBadge]) graphql.Marshaler {
+			return ec.marshalNOwnerBadgeListResult2ᚖgithubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋsqliteᚋmodelsᚐPaginateResult(ctx, selections, v)
+		},
+		true,
+		true,
+	)
+}
+func (ec *executionContext) fieldContext_Query_ownerBadgeList(ctx context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "Query",
+		Field:      field,
+		IsMethod:   true,
+		IsResolver: true,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.childFields_OwnerBadgeListResult(ctx, field)
+		},
+	}
+	defer func() {
+		if r := recover(); r != nil {
+			err = ec.Recover(ctx, r)
+			ec.Error(ctx, err)
+		}
+	}()
+	ctx = graphql.WithFieldContext(ctx, fc)
+	if fc.Args, err = ec.field_Query_ownerBadgeList_args(ctx, field.ArgumentMap(ec.Variables)); err != nil {
 		ec.Error(ctx, err)
 		return fc, err
 	}
@@ -31849,6 +34140,94 @@ func (ec *executionContext) unmarshalInputAssetSort(ctx context.Context, obj any
 	return it, nil
 }
 
+func (ec *executionContext) unmarshalInputBadgeFilter(ctx context.Context, obj any) (model.BadgeFilter, error) {
+	var it model.BadgeFilter
+	if obj == nil {
+		return it, nil
+	}
+
+	asMap := map[string]any{}
+	for k, v := range obj.(map[string]any) {
+		asMap[k] = v
+	}
+
+	fieldsInOrder := [...]string{"label", "owners", "and", "or"}
+	for _, k := range fieldsInOrder {
+		v, ok := asMap[k]
+		if !ok {
+			continue
+		}
+		switch k {
+		case "label":
+			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("label"))
+			data, err := ec.unmarshalOStringComparator2ᚖgithubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋsqliteᚋmodelsᚋgraphᚋmodelᚐStringComparator(ctx, v)
+			if err != nil {
+				return it, err
+			}
+			it.Label = data
+		case "owners":
+			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("owners"))
+			data, err := ec.unmarshalOOwnerFilter2ᚖgithubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋsqliteᚋmodelsᚋgraphᚋmodelᚐOwnerFilter(ctx, v)
+			if err != nil {
+				return it, err
+			}
+			it.Owners = data
+		case "and":
+			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("and"))
+			data, err := ec.unmarshalOBadgeFilter2ᚕᚖgithubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋsqliteᚋmodelsᚋgraphᚋmodelᚐBadgeFilterᚄ(ctx, v)
+			if err != nil {
+				return it, err
+			}
+			it.And = data
+		case "or":
+			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("or"))
+			data, err := ec.unmarshalOBadgeFilter2ᚕᚖgithubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋsqliteᚋmodelsᚋgraphᚋmodelᚐBadgeFilterᚄ(ctx, v)
+			if err != nil {
+				return it, err
+			}
+			it.Or = data
+		}
+	}
+	return it, nil
+}
+
+func (ec *executionContext) unmarshalInputBadgeSort(ctx context.Context, obj any) (model.BadgeSort, error) {
+	var it model.BadgeSort
+	if obj == nil {
+		return it, nil
+	}
+
+	asMap := map[string]any{}
+	for k, v := range obj.(map[string]any) {
+		asMap[k] = v
+	}
+
+	fieldsInOrder := [...]string{"field", "direction"}
+	for _, k := range fieldsInOrder {
+		v, ok := asMap[k]
+		if !ok {
+			continue
+		}
+		switch k {
+		case "field":
+			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("field"))
+			data, err := ec.unmarshalNBadgeSortField2githubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋsqliteᚋmodelsᚋgraphᚋmodelᚐBadgeSortField(ctx, v)
+			if err != nil {
+				return it, err
+			}
+			it.Field = data
+		case "direction":
+			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("direction"))
+			data, err := ec.unmarshalNSortDirection2githubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋsqliteᚋmodelsᚋgraphᚋmodelᚐSortDirection(ctx, v)
+			if err != nil {
+				return it, err
+			}
+			it.Direction = data
+		}
+	}
+	return it, nil
+}
+
 func (ec *executionContext) unmarshalInputBinaryKeyEventFilter(ctx context.Context, obj any) (model.BinaryKeyEventFilter, error) {
 	var it model.BinaryKeyEventFilter
 	if obj == nil {
@@ -32512,6 +34891,43 @@ func (ec *executionContext) unmarshalInputCreateAssetInput(ctx context.Context, 
 	return it, nil
 }
 
+func (ec *executionContext) unmarshalInputCreateBadgeInput(ctx context.Context, obj any) (model.CreateBadgeInput, error) {
+	var it model.CreateBadgeInput
+	if obj == nil {
+		return it, nil
+	}
+
+	asMap := map[string]any{}
+	for k, v := range obj.(map[string]any) {
+		asMap[k] = v
+	}
+
+	fieldsInOrder := [...]string{"code", "label"}
+	for _, k := range fieldsInOrder {
+		v, ok := asMap[k]
+		if !ok {
+			continue
+		}
+		switch k {
+		case "code":
+			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("code"))
+			data, err := ec.unmarshalNID2string(ctx, v)
+			if err != nil {
+				return it, err
+			}
+			it.Code = data
+		case "label":
+			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("label"))
+			data, err := ec.unmarshalNString2string(ctx, v)
+			if err != nil {
+				return it, err
+			}
+			it.Label = data
+		}
+	}
+	return it, nil
+}
+
 func (ec *executionContext) unmarshalInputCreateBinaryKeyEventInput(ctx context.Context, obj any) (model.CreateBinaryKeyEventInput, error) {
 	var it model.CreateBinaryKeyEventInput
 	if obj == nil {
@@ -32836,6 +35252,43 @@ func (ec *executionContext) unmarshalInputCreateOrderItemInput(ctx context.Conte
 				return it, err
 			}
 			it.UnitPrice = data
+		}
+	}
+	return it, nil
+}
+
+func (ec *executionContext) unmarshalInputCreateOwnerBadgeInput(ctx context.Context, obj any) (model.CreateOwnerBadgeInput, error) {
+	var it model.CreateOwnerBadgeInput
+	if obj == nil {
+		return it, nil
+	}
+
+	asMap := map[string]any{}
+	for k, v := range obj.(map[string]any) {
+		asMap[k] = v
+	}
+
+	fieldsInOrder := [...]string{"ownerID", "badgeCode"}
+	for _, k := range fieldsInOrder {
+		v, ok := asMap[k]
+		if !ok {
+			continue
+		}
+		switch k {
+		case "ownerID":
+			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("ownerID"))
+			data, err := ec.unmarshalNInt2int(ctx, v)
+			if err != nil {
+				return it, err
+			}
+			it.OwnerID = data
+		case "badgeCode":
+			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("badgeCode"))
+			data, err := ec.unmarshalNID2string(ctx, v)
+			if err != nil {
+				return it, err
+			}
+			it.BadgeCode = data
 		}
 	}
 	return it, nil
@@ -34649,6 +37102,80 @@ func (ec *executionContext) unmarshalInputOrderSort(ctx context.Context, obj any
 	return it, nil
 }
 
+func (ec *executionContext) unmarshalInputOwnerBadgeFilter(ctx context.Context, obj any) (model.OwnerBadgeFilter, error) {
+	var it model.OwnerBadgeFilter
+	if obj == nil {
+		return it, nil
+	}
+
+	asMap := map[string]any{}
+	for k, v := range obj.(map[string]any) {
+		asMap[k] = v
+	}
+
+	fieldsInOrder := [...]string{"and", "or"}
+	for _, k := range fieldsInOrder {
+		v, ok := asMap[k]
+		if !ok {
+			continue
+		}
+		switch k {
+		case "and":
+			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("and"))
+			data, err := ec.unmarshalOOwnerBadgeFilter2ᚕᚖgithubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋsqliteᚋmodelsᚋgraphᚋmodelᚐOwnerBadgeFilterᚄ(ctx, v)
+			if err != nil {
+				return it, err
+			}
+			it.And = data
+		case "or":
+			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("or"))
+			data, err := ec.unmarshalOOwnerBadgeFilter2ᚕᚖgithubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋsqliteᚋmodelsᚋgraphᚋmodelᚐOwnerBadgeFilterᚄ(ctx, v)
+			if err != nil {
+				return it, err
+			}
+			it.Or = data
+		}
+	}
+	return it, nil
+}
+
+func (ec *executionContext) unmarshalInputOwnerBadgeSort(ctx context.Context, obj any) (model.OwnerBadgeSort, error) {
+	var it model.OwnerBadgeSort
+	if obj == nil {
+		return it, nil
+	}
+
+	asMap := map[string]any{}
+	for k, v := range obj.(map[string]any) {
+		asMap[k] = v
+	}
+
+	fieldsInOrder := [...]string{"field", "direction"}
+	for _, k := range fieldsInOrder {
+		v, ok := asMap[k]
+		if !ok {
+			continue
+		}
+		switch k {
+		case "field":
+			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("field"))
+			data, err := ec.unmarshalNOwnerBadgeSortField2githubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋsqliteᚋmodelsᚋgraphᚋmodelᚐOwnerBadgeSortField(ctx, v)
+			if err != nil {
+				return it, err
+			}
+			it.Field = data
+		case "direction":
+			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("direction"))
+			data, err := ec.unmarshalNSortDirection2githubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋsqliteᚋmodelsᚋgraphᚋmodelᚐSortDirection(ctx, v)
+			if err != nil {
+				return it, err
+			}
+			it.Direction = data
+		}
+	}
+	return it, nil
+}
+
 func (ec *executionContext) unmarshalInputOwnerFilter(ctx context.Context, obj any) (model.OwnerFilter, error) {
 	var it model.OwnerFilter
 	if obj == nil {
@@ -34660,7 +37187,7 @@ func (ec *executionContext) unmarshalInputOwnerFilter(ctx context.Context, obj a
 		asMap[k] = v
 	}
 
-	fieldsInOrder := [...]string{"name", "and", "or"}
+	fieldsInOrder := [...]string{"name", "badges", "and", "or"}
 	for _, k := range fieldsInOrder {
 		v, ok := asMap[k]
 		if !ok {
@@ -34674,6 +37201,13 @@ func (ec *executionContext) unmarshalInputOwnerFilter(ctx context.Context, obj a
 				return it, err
 			}
 			it.Name = data
+		case "badges":
+			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("badges"))
+			data, err := ec.unmarshalOBadgeFilter2ᚖgithubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋsqliteᚋmodelsᚋgraphᚋmodelᚐBadgeFilter(ctx, v)
+			if err != nil {
+				return it, err
+			}
+			it.Badges = data
 		case "and":
 			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("and"))
 			data, err := ec.unmarshalOOwnerFilter2ᚕᚖgithubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋsqliteᚋmodelsᚋgraphᚋmodelᚐOwnerFilterᚄ(ctx, v)
@@ -35894,6 +38428,36 @@ func (ec *executionContext) unmarshalInputUpdateAssetInput(ctx context.Context, 
 				return it, err
 			}
 			it.CreatedAt = data
+		}
+	}
+	return it, nil
+}
+
+func (ec *executionContext) unmarshalInputUpdateBadgeInput(ctx context.Context, obj any) (model.UpdateBadgeInput, error) {
+	var it model.UpdateBadgeInput
+	if obj == nil {
+		return it, nil
+	}
+
+	asMap := map[string]any{}
+	for k, v := range obj.(map[string]any) {
+		asMap[k] = v
+	}
+
+	fieldsInOrder := [...]string{"label"}
+	for _, k := range fieldsInOrder {
+		v, ok := asMap[k]
+		if !ok {
+			continue
+		}
+		switch k {
+		case "label":
+			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("label"))
+			data, err := ec.unmarshalOString2ᚖstring(ctx, v)
+			if err != nil {
+				return it, err
+			}
+			it.Label = data
 		}
 	}
 	return it, nil
@@ -37971,6 +40535,203 @@ func (ec *executionContext) _AssetListResult(ctx context.Context, sel ast.Select
 	return out
 }
 
+var badgeImplementors = []string{"Badge"}
+
+func (ec *executionContext) _Badge(ctx context.Context, sel ast.SelectionSet, obj *models.Badge) graphql.Marshaler {
+	fields := graphql.CollectFields(ec.OperationContext, sel, badgeImplementors)
+
+	out := graphql.NewFieldSet(fields)
+	deferredFieldSet := graphql.NewFieldSet(nil)
+	deferLabelToView := make(map[string]*graphql.FieldSetView)
+	for i, field := range fields {
+		switch field.Name {
+		case "__typename":
+			out.Values[i] = graphql.MarshalString("Badge")
+		case "code":
+			out.Values[i] = ec._Badge_code(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		case "label":
+			out.Values[i] = ec._Badge_label(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		case "owners":
+			out.Values[i] = ec._Badge_owners(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		default:
+			panic("unknown field " + strconv.Quote(field.Name))
+		}
+	}
+	out.Dispatch(ctx)
+	if out.Invalids > 0 {
+		return graphql.Null
+	}
+
+	atomic.AddInt32(&ec.Deferred, int32(min(len(deferLabelToView), math.MaxInt32)))
+
+	ec.ProcessDeferredGroup(graphql.DeferredGroup{
+		Defers:   deferLabelToView,
+		Path:     graphql.GetPath(ctx),
+		FieldSet: deferredFieldSet,
+		Context:  ctx,
+	})
+
+	return out
+}
+
+var badgeConnectionImplementors = []string{"BadgeConnection"}
+
+func (ec *executionContext) _BadgeConnection(ctx context.Context, sel ast.SelectionSet, obj *models.Connection[models.Badge]) graphql.Marshaler {
+	fields := graphql.CollectFields(ec.OperationContext, sel, badgeConnectionImplementors)
+
+	out := graphql.NewFieldSet(fields)
+	deferredFieldSet := graphql.NewFieldSet(nil)
+	deferLabelToView := make(map[string]*graphql.FieldSetView)
+	for i, field := range fields {
+		switch field.Name {
+		case "__typename":
+			out.Values[i] = graphql.MarshalString("BadgeConnection")
+		case "edges":
+			out.Values[i] = ec._BadgeConnection_edges(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		case "pageInfo":
+			out.Values[i] = ec._BadgeConnection_pageInfo(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		case "totalCount":
+			out.Values[i] = ec._BadgeConnection_totalCount(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		default:
+			panic("unknown field " + strconv.Quote(field.Name))
+		}
+	}
+	out.Dispatch(ctx)
+	if out.Invalids > 0 {
+		return graphql.Null
+	}
+
+	atomic.AddInt32(&ec.Deferred, int32(min(len(deferLabelToView), math.MaxInt32)))
+
+	ec.ProcessDeferredGroup(graphql.DeferredGroup{
+		Defers:   deferLabelToView,
+		Path:     graphql.GetPath(ctx),
+		FieldSet: deferredFieldSet,
+		Context:  ctx,
+	})
+
+	return out
+}
+
+var badgeEdgeImplementors = []string{"BadgeEdge"}
+
+func (ec *executionContext) _BadgeEdge(ctx context.Context, sel ast.SelectionSet, obj *models.Edge[models.Badge]) graphql.Marshaler {
+	fields := graphql.CollectFields(ec.OperationContext, sel, badgeEdgeImplementors)
+
+	out := graphql.NewFieldSet(fields)
+	deferredFieldSet := graphql.NewFieldSet(nil)
+	deferLabelToView := make(map[string]*graphql.FieldSetView)
+	for i, field := range fields {
+		switch field.Name {
+		case "__typename":
+			out.Values[i] = graphql.MarshalString("BadgeEdge")
+		case "node":
+			out.Values[i] = ec._BadgeEdge_node(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		case "cursor":
+			out.Values[i] = ec._BadgeEdge_cursor(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		default:
+			panic("unknown field " + strconv.Quote(field.Name))
+		}
+	}
+	out.Dispatch(ctx)
+	if out.Invalids > 0 {
+		return graphql.Null
+	}
+
+	atomic.AddInt32(&ec.Deferred, int32(min(len(deferLabelToView), math.MaxInt32)))
+
+	ec.ProcessDeferredGroup(graphql.DeferredGroup{
+		Defers:   deferLabelToView,
+		Path:     graphql.GetPath(ctx),
+		FieldSet: deferredFieldSet,
+		Context:  ctx,
+	})
+
+	return out
+}
+
+var badgeListResultImplementors = []string{"BadgeListResult"}
+
+func (ec *executionContext) _BadgeListResult(ctx context.Context, sel ast.SelectionSet, obj *models.PaginateResult[models.Badge]) graphql.Marshaler {
+	fields := graphql.CollectFields(ec.OperationContext, sel, badgeListResultImplementors)
+
+	out := graphql.NewFieldSet(fields)
+	deferredFieldSet := graphql.NewFieldSet(nil)
+	deferLabelToView := make(map[string]*graphql.FieldSetView)
+	for i, field := range fields {
+		switch field.Name {
+		case "__typename":
+			out.Values[i] = graphql.MarshalString("BadgeListResult")
+		case "items":
+			out.Values[i] = ec._BadgeListResult_items(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		case "totalCount":
+			out.Values[i] = ec._BadgeListResult_totalCount(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		case "offset":
+			out.Values[i] = ec._BadgeListResult_offset(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		case "limit":
+			out.Values[i] = ec._BadgeListResult_limit(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		case "hasMore":
+			out.Values[i] = ec._BadgeListResult_hasMore(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		default:
+			panic("unknown field " + strconv.Quote(field.Name))
+		}
+	}
+	out.Dispatch(ctx)
+	if out.Invalids > 0 {
+		return graphql.Null
+	}
+
+	atomic.AddInt32(&ec.Deferred, int32(min(len(deferLabelToView), math.MaxInt32)))
+
+	ec.ProcessDeferredGroup(graphql.DeferredGroup{
+		Defers:   deferLabelToView,
+		Path:     graphql.GetPath(ctx),
+		FieldSet: deferredFieldSet,
+		Context:  ctx,
+	})
+
+	return out
+}
+
 var binaryKeyImplementors = []string{"BinaryKey"}
 
 func (ec *executionContext) _BinaryKey(ctx context.Context, sel ast.SelectionSet, obj *models.BinaryKey) graphql.Marshaler {
@@ -39551,6 +42312,48 @@ func (ec *executionContext) _Mutation(ctx context.Context, sel ast.SelectionSet)
 			if out.Values[i] == graphql.Null {
 				out.Invalids++
 			}
+		case "createBadge":
+			out.Values[i] = ec.OperationContext.RootResolverMiddleware(innerCtx, func(ctx context.Context) (res graphql.Marshaler) {
+				return ec._Mutation_createBadge(ctx, field)
+			})
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		case "createBadges":
+			out.Values[i] = ec.OperationContext.RootResolverMiddleware(innerCtx, func(ctx context.Context) (res graphql.Marshaler) {
+				return ec._Mutation_createBadges(ctx, field)
+			})
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		case "updateBadge":
+			out.Values[i] = ec.OperationContext.RootResolverMiddleware(innerCtx, func(ctx context.Context) (res graphql.Marshaler) {
+				return ec._Mutation_updateBadge(ctx, field)
+			})
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		case "updateBadges":
+			out.Values[i] = ec.OperationContext.RootResolverMiddleware(innerCtx, func(ctx context.Context) (res graphql.Marshaler) {
+				return ec._Mutation_updateBadges(ctx, field)
+			})
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		case "upsertBadge":
+			out.Values[i] = ec.OperationContext.RootResolverMiddleware(innerCtx, func(ctx context.Context) (res graphql.Marshaler) {
+				return ec._Mutation_upsertBadge(ctx, field)
+			})
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		case "deleteBadge":
+			out.Values[i] = ec.OperationContext.RootResolverMiddleware(innerCtx, func(ctx context.Context) (res graphql.Marshaler) {
+				return ec._Mutation_deleteBadge(ctx, field)
+			})
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
 		case "createBinaryKeyEvent":
 			out.Values[i] = ec.OperationContext.RootResolverMiddleware(innerCtx, func(ctx context.Context) (res graphql.Marshaler) {
 				return ec._Mutation_createBinaryKeyEvent(ctx, field)
@@ -39848,6 +42651,34 @@ func (ec *executionContext) _Mutation(ctx context.Context, sel ast.SelectionSet)
 		case "deleteOrderItem":
 			out.Values[i] = ec.OperationContext.RootResolverMiddleware(innerCtx, func(ctx context.Context) (res graphql.Marshaler) {
 				return ec._Mutation_deleteOrderItem(ctx, field)
+			})
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		case "createOwnerBadge":
+			out.Values[i] = ec.OperationContext.RootResolverMiddleware(innerCtx, func(ctx context.Context) (res graphql.Marshaler) {
+				return ec._Mutation_createOwnerBadge(ctx, field)
+			})
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		case "createOwnerBadges":
+			out.Values[i] = ec.OperationContext.RootResolverMiddleware(innerCtx, func(ctx context.Context) (res graphql.Marshaler) {
+				return ec._Mutation_createOwnerBadges(ctx, field)
+			})
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		case "upsertOwnerBadge":
+			out.Values[i] = ec.OperationContext.RootResolverMiddleware(innerCtx, func(ctx context.Context) (res graphql.Marshaler) {
+				return ec._Mutation_upsertOwnerBadge(ctx, field)
+			})
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		case "deleteOwnerBadge":
+			out.Values[i] = ec.OperationContext.RootResolverMiddleware(innerCtx, func(ctx context.Context) (res graphql.Marshaler) {
+				return ec._Mutation_deleteOwnerBadge(ctx, field)
 			})
 			if out.Values[i] == graphql.Null {
 				out.Invalids++
@@ -40784,6 +43615,203 @@ func (ec *executionContext) _Owner(ctx context.Context, sel ast.SelectionSet, ob
 		case "ownerProfile":
 			out.Values[i] = ec._Owner_ownerProfile(ctx, field, obj)
 			if out.Values[i] == graphql.RequiredNull {
+				out.Invalids++
+			}
+		case "badges":
+			out.Values[i] = ec._Owner_badges(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		default:
+			panic("unknown field " + strconv.Quote(field.Name))
+		}
+	}
+	out.Dispatch(ctx)
+	if out.Invalids > 0 {
+		return graphql.Null
+	}
+
+	atomic.AddInt32(&ec.Deferred, int32(min(len(deferLabelToView), math.MaxInt32)))
+
+	ec.ProcessDeferredGroup(graphql.DeferredGroup{
+		Defers:   deferLabelToView,
+		Path:     graphql.GetPath(ctx),
+		FieldSet: deferredFieldSet,
+		Context:  ctx,
+	})
+
+	return out
+}
+
+var ownerBadgeImplementors = []string{"OwnerBadge"}
+
+func (ec *executionContext) _OwnerBadge(ctx context.Context, sel ast.SelectionSet, obj *models.OwnerBadge) graphql.Marshaler {
+	fields := graphql.CollectFields(ec.OperationContext, sel, ownerBadgeImplementors)
+
+	out := graphql.NewFieldSet(fields)
+	deferredFieldSet := graphql.NewFieldSet(nil)
+	deferLabelToView := make(map[string]*graphql.FieldSetView)
+	for i, field := range fields {
+		switch field.Name {
+		case "__typename":
+			out.Values[i] = graphql.MarshalString("OwnerBadge")
+		case "ownerID":
+			out.Values[i] = ec._OwnerBadge_ownerID(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		case "badgeCode":
+			out.Values[i] = ec._OwnerBadge_badgeCode(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		default:
+			panic("unknown field " + strconv.Quote(field.Name))
+		}
+	}
+	out.Dispatch(ctx)
+	if out.Invalids > 0 {
+		return graphql.Null
+	}
+
+	atomic.AddInt32(&ec.Deferred, int32(min(len(deferLabelToView), math.MaxInt32)))
+
+	ec.ProcessDeferredGroup(graphql.DeferredGroup{
+		Defers:   deferLabelToView,
+		Path:     graphql.GetPath(ctx),
+		FieldSet: deferredFieldSet,
+		Context:  ctx,
+	})
+
+	return out
+}
+
+var ownerBadgeConnectionImplementors = []string{"OwnerBadgeConnection"}
+
+func (ec *executionContext) _OwnerBadgeConnection(ctx context.Context, sel ast.SelectionSet, obj *models.Connection[models.OwnerBadge]) graphql.Marshaler {
+	fields := graphql.CollectFields(ec.OperationContext, sel, ownerBadgeConnectionImplementors)
+
+	out := graphql.NewFieldSet(fields)
+	deferredFieldSet := graphql.NewFieldSet(nil)
+	deferLabelToView := make(map[string]*graphql.FieldSetView)
+	for i, field := range fields {
+		switch field.Name {
+		case "__typename":
+			out.Values[i] = graphql.MarshalString("OwnerBadgeConnection")
+		case "edges":
+			out.Values[i] = ec._OwnerBadgeConnection_edges(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		case "pageInfo":
+			out.Values[i] = ec._OwnerBadgeConnection_pageInfo(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		case "totalCount":
+			out.Values[i] = ec._OwnerBadgeConnection_totalCount(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		default:
+			panic("unknown field " + strconv.Quote(field.Name))
+		}
+	}
+	out.Dispatch(ctx)
+	if out.Invalids > 0 {
+		return graphql.Null
+	}
+
+	atomic.AddInt32(&ec.Deferred, int32(min(len(deferLabelToView), math.MaxInt32)))
+
+	ec.ProcessDeferredGroup(graphql.DeferredGroup{
+		Defers:   deferLabelToView,
+		Path:     graphql.GetPath(ctx),
+		FieldSet: deferredFieldSet,
+		Context:  ctx,
+	})
+
+	return out
+}
+
+var ownerBadgeEdgeImplementors = []string{"OwnerBadgeEdge"}
+
+func (ec *executionContext) _OwnerBadgeEdge(ctx context.Context, sel ast.SelectionSet, obj *models.Edge[models.OwnerBadge]) graphql.Marshaler {
+	fields := graphql.CollectFields(ec.OperationContext, sel, ownerBadgeEdgeImplementors)
+
+	out := graphql.NewFieldSet(fields)
+	deferredFieldSet := graphql.NewFieldSet(nil)
+	deferLabelToView := make(map[string]*graphql.FieldSetView)
+	for i, field := range fields {
+		switch field.Name {
+		case "__typename":
+			out.Values[i] = graphql.MarshalString("OwnerBadgeEdge")
+		case "node":
+			out.Values[i] = ec._OwnerBadgeEdge_node(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		case "cursor":
+			out.Values[i] = ec._OwnerBadgeEdge_cursor(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		default:
+			panic("unknown field " + strconv.Quote(field.Name))
+		}
+	}
+	out.Dispatch(ctx)
+	if out.Invalids > 0 {
+		return graphql.Null
+	}
+
+	atomic.AddInt32(&ec.Deferred, int32(min(len(deferLabelToView), math.MaxInt32)))
+
+	ec.ProcessDeferredGroup(graphql.DeferredGroup{
+		Defers:   deferLabelToView,
+		Path:     graphql.GetPath(ctx),
+		FieldSet: deferredFieldSet,
+		Context:  ctx,
+	})
+
+	return out
+}
+
+var ownerBadgeListResultImplementors = []string{"OwnerBadgeListResult"}
+
+func (ec *executionContext) _OwnerBadgeListResult(ctx context.Context, sel ast.SelectionSet, obj *models.PaginateResult[models.OwnerBadge]) graphql.Marshaler {
+	fields := graphql.CollectFields(ec.OperationContext, sel, ownerBadgeListResultImplementors)
+
+	out := graphql.NewFieldSet(fields)
+	deferredFieldSet := graphql.NewFieldSet(nil)
+	deferLabelToView := make(map[string]*graphql.FieldSetView)
+	for i, field := range fields {
+		switch field.Name {
+		case "__typename":
+			out.Values[i] = graphql.MarshalString("OwnerBadgeListResult")
+		case "items":
+			out.Values[i] = ec._OwnerBadgeListResult_items(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		case "totalCount":
+			out.Values[i] = ec._OwnerBadgeListResult_totalCount(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		case "offset":
+			out.Values[i] = ec._OwnerBadgeListResult_offset(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		case "limit":
+			out.Values[i] = ec._OwnerBadgeListResult_limit(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		case "hasMore":
+			out.Values[i] = ec._OwnerBadgeListResult_hasMore(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
 				out.Invalids++
 			}
 		default:
@@ -42282,6 +45310,72 @@ func (ec *executionContext) _Query(ctx context.Context, sel ast.SelectionSet) gr
 			}
 
 			out.Concurrently(i, func(ctx context.Context) graphql.Marshaler { return rrm(innerCtx) })
+		case "badge":
+			field := field
+
+			innerFunc := func(ctx context.Context, fs *graphql.FieldSet) (res graphql.Marshaler) {
+				defer func() {
+					if r := recover(); r != nil {
+						ec.Error(ctx, ec.Recover(ctx, r))
+					}
+				}()
+				res = ec._Query_badge(ctx, field)
+				if res == graphql.RequiredNull {
+					atomic.AddUint32(&fs.Invalids, 1)
+				}
+				return res
+			}
+
+			rrm := func(ctx context.Context) graphql.Marshaler {
+				return ec.OperationContext.RootResolverMiddleware(ctx,
+					func(ctx context.Context) graphql.Marshaler { return innerFunc(ctx, out) })
+			}
+
+			out.Concurrently(i, func(ctx context.Context) graphql.Marshaler { return rrm(innerCtx) })
+		case "badges":
+			field := field
+
+			innerFunc := func(ctx context.Context, fs *graphql.FieldSet) (res graphql.Marshaler) {
+				defer func() {
+					if r := recover(); r != nil {
+						ec.Error(ctx, ec.Recover(ctx, r))
+					}
+				}()
+				res = ec._Query_badges(ctx, field)
+				if res == graphql.Null {
+					atomic.AddUint32(&fs.Invalids, 1)
+				}
+				return res
+			}
+
+			rrm := func(ctx context.Context) graphql.Marshaler {
+				return ec.OperationContext.RootResolverMiddleware(ctx,
+					func(ctx context.Context) graphql.Marshaler { return innerFunc(ctx, out) })
+			}
+
+			out.Concurrently(i, func(ctx context.Context) graphql.Marshaler { return rrm(innerCtx) })
+		case "badgeList":
+			field := field
+
+			innerFunc := func(ctx context.Context, fs *graphql.FieldSet) (res graphql.Marshaler) {
+				defer func() {
+					if r := recover(); r != nil {
+						ec.Error(ctx, ec.Recover(ctx, r))
+					}
+				}()
+				res = ec._Query_badgeList(ctx, field)
+				if res == graphql.Null {
+					atomic.AddUint32(&fs.Invalids, 1)
+				}
+				return res
+			}
+
+			rrm := func(ctx context.Context) graphql.Marshaler {
+				return ec.OperationContext.RootResolverMiddleware(ctx,
+					func(ctx context.Context) graphql.Marshaler { return innerFunc(ctx, out) })
+			}
+
+			out.Concurrently(i, func(ctx context.Context) graphql.Marshaler { return rrm(innerCtx) })
 		case "binaryKeyEvent":
 			field := field
 
@@ -42820,6 +45914,72 @@ func (ec *executionContext) _Query(ctx context.Context, sel ast.SelectionSet) gr
 					}
 				}()
 				res = ec._Query_orderItemList(ctx, field)
+				if res == graphql.Null {
+					atomic.AddUint32(&fs.Invalids, 1)
+				}
+				return res
+			}
+
+			rrm := func(ctx context.Context) graphql.Marshaler {
+				return ec.OperationContext.RootResolverMiddleware(ctx,
+					func(ctx context.Context) graphql.Marshaler { return innerFunc(ctx, out) })
+			}
+
+			out.Concurrently(i, func(ctx context.Context) graphql.Marshaler { return rrm(innerCtx) })
+		case "ownerBadge":
+			field := field
+
+			innerFunc := func(ctx context.Context, fs *graphql.FieldSet) (res graphql.Marshaler) {
+				defer func() {
+					if r := recover(); r != nil {
+						ec.Error(ctx, ec.Recover(ctx, r))
+					}
+				}()
+				res = ec._Query_ownerBadge(ctx, field)
+				if res == graphql.RequiredNull {
+					atomic.AddUint32(&fs.Invalids, 1)
+				}
+				return res
+			}
+
+			rrm := func(ctx context.Context) graphql.Marshaler {
+				return ec.OperationContext.RootResolverMiddleware(ctx,
+					func(ctx context.Context) graphql.Marshaler { return innerFunc(ctx, out) })
+			}
+
+			out.Concurrently(i, func(ctx context.Context) graphql.Marshaler { return rrm(innerCtx) })
+		case "ownerBadges":
+			field := field
+
+			innerFunc := func(ctx context.Context, fs *graphql.FieldSet) (res graphql.Marshaler) {
+				defer func() {
+					if r := recover(); r != nil {
+						ec.Error(ctx, ec.Recover(ctx, r))
+					}
+				}()
+				res = ec._Query_ownerBadges(ctx, field)
+				if res == graphql.Null {
+					atomic.AddUint32(&fs.Invalids, 1)
+				}
+				return res
+			}
+
+			rrm := func(ctx context.Context) graphql.Marshaler {
+				return ec.OperationContext.RootResolverMiddleware(ctx,
+					func(ctx context.Context) graphql.Marshaler { return innerFunc(ctx, out) })
+			}
+
+			out.Concurrently(i, func(ctx context.Context) graphql.Marshaler { return rrm(innerCtx) })
+		case "ownerBadgeList":
+			field := field
+
+			innerFunc := func(ctx context.Context, fs *graphql.FieldSet) (res graphql.Marshaler) {
+				defer func() {
+					if r := recover(); r != nil {
+						ec.Error(ctx, ec.Recover(ctx, r))
+					}
+				}()
+				res = ec._Query_ownerBadgeList(ctx, field)
 				if res == graphql.Null {
 					atomic.AddUint32(&fs.Invalids, 1)
 				}
@@ -45616,6 +48776,97 @@ func (ec *executionContext) marshalNAssetSortField2githubᚗcomᚋteandresmith�
 	return v
 }
 
+func (ec *executionContext) marshalNBadge2ᚕᚖgithubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋsqliteᚋmodelsᚐBadgeᚄ(ctx context.Context, sel ast.SelectionSet, v []*models.Badge) graphql.Marshaler {
+	ret := graphql.MarshalSliceConcurrently(ctx, len(v), 0, false, func(ctx context.Context, i int) graphql.Marshaler {
+		fc := graphql.GetFieldContext(ctx)
+		fc.Result = &v[i]
+		return ec.marshalNBadge2ᚖgithubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋsqliteᚋmodelsᚐBadge(ctx, sel, v[i])
+	})
+
+	for _, e := range ret {
+		if e == graphql.Null {
+			return graphql.Null
+		}
+	}
+
+	return ret
+}
+
+func (ec *executionContext) marshalNBadge2ᚖgithubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋsqliteᚋmodelsᚐBadge(ctx context.Context, sel ast.SelectionSet, v *models.Badge) graphql.Marshaler {
+	if v == nil {
+		if !graphql.HasFieldError(ctx, graphql.GetFieldContext(ctx)) {
+			graphql.AddErrorf(ctx, "the requested element is null which the schema does not allow")
+		}
+		return graphql.Null
+	}
+	return ec._Badge(ctx, sel, v)
+}
+
+func (ec *executionContext) marshalNBadgeConnection2ᚖgithubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋsqliteᚋmodelsᚐConnection(ctx context.Context, sel ast.SelectionSet, v *models.Connection[models.Badge]) graphql.Marshaler {
+	if v == nil {
+		if !graphql.HasFieldError(ctx, graphql.GetFieldContext(ctx)) {
+			graphql.AddErrorf(ctx, "the requested element is null which the schema does not allow")
+		}
+		return graphql.Null
+	}
+	return ec._BadgeConnection(ctx, sel, v)
+}
+
+func (ec *executionContext) marshalNBadgeEdge2githubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋsqliteᚋmodelsᚐEdge(ctx context.Context, sel ast.SelectionSet, v models.Edge[models.Badge]) graphql.Marshaler {
+	return ec._BadgeEdge(ctx, sel, &v)
+}
+
+func (ec *executionContext) marshalNBadgeEdge2ᚕgithubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋsqliteᚋmodelsᚐEdgeᚄ(ctx context.Context, sel ast.SelectionSet, v []models.Edge[models.Badge]) graphql.Marshaler {
+	ret := graphql.MarshalSliceConcurrently(ctx, len(v), 0, false, func(ctx context.Context, i int) graphql.Marshaler {
+		fc := graphql.GetFieldContext(ctx)
+		fc.Result = &v[i]
+		return ec.marshalNBadgeEdge2githubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋsqliteᚋmodelsᚐEdge(ctx, sel, v[i])
+	})
+
+	for _, e := range ret {
+		if e == graphql.Null {
+			return graphql.Null
+		}
+	}
+
+	return ret
+}
+
+func (ec *executionContext) unmarshalNBadgeFilter2githubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋsqliteᚋmodelsᚋgraphᚋmodelᚐBadgeFilter(ctx context.Context, v any) (model.BadgeFilter, error) {
+	res, err := ec.unmarshalInputBadgeFilter(ctx, v)
+	return res, graphql.ErrorOnPath(ctx, err)
+}
+
+func (ec *executionContext) unmarshalNBadgeFilter2ᚖgithubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋsqliteᚋmodelsᚋgraphᚋmodelᚐBadgeFilter(ctx context.Context, v any) (*model.BadgeFilter, error) {
+	res, err := ec.unmarshalInputBadgeFilter(ctx, v)
+	return &res, graphql.ErrorOnPath(ctx, err)
+}
+
+func (ec *executionContext) marshalNBadgeListResult2ᚖgithubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋsqliteᚋmodelsᚐPaginateResult(ctx context.Context, sel ast.SelectionSet, v *models.PaginateResult[models.Badge]) graphql.Marshaler {
+	if v == nil {
+		if !graphql.HasFieldError(ctx, graphql.GetFieldContext(ctx)) {
+			graphql.AddErrorf(ctx, "the requested element is null which the schema does not allow")
+		}
+		return graphql.Null
+	}
+	return ec._BadgeListResult(ctx, sel, v)
+}
+
+func (ec *executionContext) unmarshalNBadgeSort2ᚖgithubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋsqliteᚋmodelsᚋgraphᚋmodelᚐBadgeSort(ctx context.Context, v any) (*model.BadgeSort, error) {
+	res, err := ec.unmarshalInputBadgeSort(ctx, v)
+	return &res, graphql.ErrorOnPath(ctx, err)
+}
+
+func (ec *executionContext) unmarshalNBadgeSortField2githubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋsqliteᚋmodelsᚋgraphᚋmodelᚐBadgeSortField(ctx context.Context, v any) (model.BadgeSortField, error) {
+	var res model.BadgeSortField
+	err := res.UnmarshalGQL(v)
+	return res, graphql.ErrorOnPath(ctx, err)
+}
+
+func (ec *executionContext) marshalNBadgeSortField2githubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋsqliteᚋmodelsᚋgraphᚋmodelᚐBadgeSortField(ctx context.Context, sel ast.SelectionSet, v model.BadgeSortField) graphql.Marshaler {
+	return v
+}
+
 func (ec *executionContext) marshalNBinaryKey2ᚕᚖgithubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋsqliteᚋmodelsᚐBinaryKeyᚄ(ctx context.Context, sel ast.SelectionSet, v []*models.BinaryKey) graphql.Marshaler {
 	ret := graphql.MarshalSliceConcurrently(ctx, len(v), 0, false, func(ctx context.Context, i int) graphql.Marshaler {
 		fc := graphql.GetFieldContext(ctx)
@@ -46075,6 +49326,30 @@ func (ec *executionContext) unmarshalNCreateAssetInput2ᚖgithubᚗcomᚋteandre
 	return &res, graphql.ErrorOnPath(ctx, err)
 }
 
+func (ec *executionContext) unmarshalNCreateBadgeInput2githubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋsqliteᚋmodelsᚋgraphᚋmodelᚐCreateBadgeInput(ctx context.Context, v any) (model.CreateBadgeInput, error) {
+	res, err := ec.unmarshalInputCreateBadgeInput(ctx, v)
+	return res, graphql.ErrorOnPath(ctx, err)
+}
+
+func (ec *executionContext) unmarshalNCreateBadgeInput2ᚕᚖgithubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋsqliteᚋmodelsᚋgraphᚋmodelᚐCreateBadgeInputᚄ(ctx context.Context, v any) ([]*model.CreateBadgeInput, error) {
+	vSlice := graphql.CoerceList(v)
+	var err error
+	res := make([]*model.CreateBadgeInput, len(vSlice))
+	for i := range vSlice {
+		ctx := graphql.WithPathContext(ctx, graphql.NewPathWithIndex(i))
+		res[i], err = ec.unmarshalNCreateBadgeInput2ᚖgithubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋsqliteᚋmodelsᚋgraphᚋmodelᚐCreateBadgeInput(ctx, vSlice[i])
+		if err != nil {
+			return nil, err
+		}
+	}
+	return res, nil
+}
+
+func (ec *executionContext) unmarshalNCreateBadgeInput2ᚖgithubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋsqliteᚋmodelsᚋgraphᚋmodelᚐCreateBadgeInput(ctx context.Context, v any) (*model.CreateBadgeInput, error) {
+	res, err := ec.unmarshalInputCreateBadgeInput(ctx, v)
+	return &res, graphql.ErrorOnPath(ctx, err)
+}
+
 func (ec *executionContext) unmarshalNCreateBinaryKeyEventInput2githubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋsqliteᚋmodelsᚋgraphᚋmodelᚐCreateBinaryKeyEventInput(ctx context.Context, v any) (model.CreateBinaryKeyEventInput, error) {
 	res, err := ec.unmarshalInputCreateBinaryKeyEventInput(ctx, v)
 	return res, graphql.ErrorOnPath(ctx, err)
@@ -46240,6 +49515,30 @@ func (ec *executionContext) unmarshalNCreateOrderItemInput2ᚕᚖgithubᚗcomᚋ
 
 func (ec *executionContext) unmarshalNCreateOrderItemInput2ᚖgithubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋsqliteᚋmodelsᚋgraphᚋmodelᚐCreateOrderItemInput(ctx context.Context, v any) (*model.CreateOrderItemInput, error) {
 	res, err := ec.unmarshalInputCreateOrderItemInput(ctx, v)
+	return &res, graphql.ErrorOnPath(ctx, err)
+}
+
+func (ec *executionContext) unmarshalNCreateOwnerBadgeInput2githubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋsqliteᚋmodelsᚋgraphᚋmodelᚐCreateOwnerBadgeInput(ctx context.Context, v any) (model.CreateOwnerBadgeInput, error) {
+	res, err := ec.unmarshalInputCreateOwnerBadgeInput(ctx, v)
+	return res, graphql.ErrorOnPath(ctx, err)
+}
+
+func (ec *executionContext) unmarshalNCreateOwnerBadgeInput2ᚕᚖgithubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋsqliteᚋmodelsᚋgraphᚋmodelᚐCreateOwnerBadgeInputᚄ(ctx context.Context, v any) ([]*model.CreateOwnerBadgeInput, error) {
+	vSlice := graphql.CoerceList(v)
+	var err error
+	res := make([]*model.CreateOwnerBadgeInput, len(vSlice))
+	for i := range vSlice {
+		ctx := graphql.WithPathContext(ctx, graphql.NewPathWithIndex(i))
+		res[i], err = ec.unmarshalNCreateOwnerBadgeInput2ᚖgithubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋsqliteᚋmodelsᚋgraphᚋmodelᚐCreateOwnerBadgeInput(ctx, vSlice[i])
+		if err != nil {
+			return nil, err
+		}
+	}
+	return res, nil
+}
+
+func (ec *executionContext) unmarshalNCreateOwnerBadgeInput2ᚖgithubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋsqliteᚋmodelsᚋgraphᚋmodelᚐCreateOwnerBadgeInput(ctx context.Context, v any) (*model.CreateOwnerBadgeInput, error) {
+	res, err := ec.unmarshalInputCreateOwnerBadgeInput(ctx, v)
 	return &res, graphql.ErrorOnPath(ctx, err)
 }
 
@@ -47127,6 +50426,92 @@ func (ec *executionContext) marshalNOwner2ᚖgithubᚗcomᚋteandresmithᚋsqlge
 	return ec._Owner(ctx, sel, v)
 }
 
+func (ec *executionContext) marshalNOwnerBadge2ᚕᚖgithubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋsqliteᚋmodelsᚐOwnerBadgeᚄ(ctx context.Context, sel ast.SelectionSet, v []*models.OwnerBadge) graphql.Marshaler {
+	ret := graphql.MarshalSliceConcurrently(ctx, len(v), 0, false, func(ctx context.Context, i int) graphql.Marshaler {
+		fc := graphql.GetFieldContext(ctx)
+		fc.Result = &v[i]
+		return ec.marshalNOwnerBadge2ᚖgithubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋsqliteᚋmodelsᚐOwnerBadge(ctx, sel, v[i])
+	})
+
+	for _, e := range ret {
+		if e == graphql.Null {
+			return graphql.Null
+		}
+	}
+
+	return ret
+}
+
+func (ec *executionContext) marshalNOwnerBadge2ᚖgithubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋsqliteᚋmodelsᚐOwnerBadge(ctx context.Context, sel ast.SelectionSet, v *models.OwnerBadge) graphql.Marshaler {
+	if v == nil {
+		if !graphql.HasFieldError(ctx, graphql.GetFieldContext(ctx)) {
+			graphql.AddErrorf(ctx, "the requested element is null which the schema does not allow")
+		}
+		return graphql.Null
+	}
+	return ec._OwnerBadge(ctx, sel, v)
+}
+
+func (ec *executionContext) marshalNOwnerBadgeConnection2ᚖgithubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋsqliteᚋmodelsᚐConnection(ctx context.Context, sel ast.SelectionSet, v *models.Connection[models.OwnerBadge]) graphql.Marshaler {
+	if v == nil {
+		if !graphql.HasFieldError(ctx, graphql.GetFieldContext(ctx)) {
+			graphql.AddErrorf(ctx, "the requested element is null which the schema does not allow")
+		}
+		return graphql.Null
+	}
+	return ec._OwnerBadgeConnection(ctx, sel, v)
+}
+
+func (ec *executionContext) marshalNOwnerBadgeEdge2githubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋsqliteᚋmodelsᚐEdge(ctx context.Context, sel ast.SelectionSet, v models.Edge[models.OwnerBadge]) graphql.Marshaler {
+	return ec._OwnerBadgeEdge(ctx, sel, &v)
+}
+
+func (ec *executionContext) marshalNOwnerBadgeEdge2ᚕgithubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋsqliteᚋmodelsᚐEdgeᚄ(ctx context.Context, sel ast.SelectionSet, v []models.Edge[models.OwnerBadge]) graphql.Marshaler {
+	ret := graphql.MarshalSliceConcurrently(ctx, len(v), 0, false, func(ctx context.Context, i int) graphql.Marshaler {
+		fc := graphql.GetFieldContext(ctx)
+		fc.Result = &v[i]
+		return ec.marshalNOwnerBadgeEdge2githubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋsqliteᚋmodelsᚐEdge(ctx, sel, v[i])
+	})
+
+	for _, e := range ret {
+		if e == graphql.Null {
+			return graphql.Null
+		}
+	}
+
+	return ret
+}
+
+func (ec *executionContext) unmarshalNOwnerBadgeFilter2ᚖgithubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋsqliteᚋmodelsᚋgraphᚋmodelᚐOwnerBadgeFilter(ctx context.Context, v any) (*model.OwnerBadgeFilter, error) {
+	res, err := ec.unmarshalInputOwnerBadgeFilter(ctx, v)
+	return &res, graphql.ErrorOnPath(ctx, err)
+}
+
+func (ec *executionContext) marshalNOwnerBadgeListResult2ᚖgithubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋsqliteᚋmodelsᚐPaginateResult(ctx context.Context, sel ast.SelectionSet, v *models.PaginateResult[models.OwnerBadge]) graphql.Marshaler {
+	if v == nil {
+		if !graphql.HasFieldError(ctx, graphql.GetFieldContext(ctx)) {
+			graphql.AddErrorf(ctx, "the requested element is null which the schema does not allow")
+		}
+		return graphql.Null
+	}
+	return ec._OwnerBadgeListResult(ctx, sel, v)
+}
+
+func (ec *executionContext) unmarshalNOwnerBadgeSort2ᚖgithubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋsqliteᚋmodelsᚋgraphᚋmodelᚐOwnerBadgeSort(ctx context.Context, v any) (*model.OwnerBadgeSort, error) {
+	res, err := ec.unmarshalInputOwnerBadgeSort(ctx, v)
+	return &res, graphql.ErrorOnPath(ctx, err)
+}
+
+func (ec *executionContext) unmarshalNOwnerBadgeSortField2githubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋsqliteᚋmodelsᚋgraphᚋmodelᚐOwnerBadgeSortField(ctx context.Context, v any) (model.OwnerBadgeSortField, error) {
+	var res model.OwnerBadgeSortField
+	err := res.UnmarshalGQL(v)
+	return res, graphql.ErrorOnPath(ctx, err)
+}
+
+func (ec *executionContext) marshalNOwnerBadgeSortField2githubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋsqliteᚋmodelsᚋgraphᚋmodelᚐOwnerBadgeSortField(ctx context.Context, sel ast.SelectionSet, v model.OwnerBadgeSortField) graphql.Marshaler {
+	return v
+}
+
 func (ec *executionContext) marshalNOwnerConnection2ᚖgithubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋsqliteᚋmodelsᚐConnection(ctx context.Context, sel ast.SelectionSet, v *models.Connection[models.Owner]) graphql.Marshaler {
 	if v == nil {
 		if !graphql.HasFieldError(ctx, graphql.GetFieldContext(ctx)) {
@@ -47993,6 +51378,11 @@ func (ec *executionContext) unmarshalNUpdateAssetInput2githubᚗcomᚋteandresmi
 	return res, graphql.ErrorOnPath(ctx, err)
 }
 
+func (ec *executionContext) unmarshalNUpdateBadgeInput2githubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋsqliteᚋmodelsᚋgraphᚋmodelᚐUpdateBadgeInput(ctx context.Context, v any) (model.UpdateBadgeInput, error) {
+	res, err := ec.unmarshalInputUpdateBadgeInput(ctx, v)
+	return res, graphql.ErrorOnPath(ctx, err)
+}
+
 func (ec *executionContext) unmarshalNUpdateBinaryKeyEventInput2githubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋsqliteᚋmodelsᚋgraphᚋmodelᚐUpdateBinaryKeyEventInput(ctx context.Context, v any) (model.UpdateBinaryKeyEventInput, error) {
 	res, err := ec.unmarshalInputUpdateBinaryKeyEventInput(ctx, v)
 	return res, graphql.ErrorOnPath(ctx, err)
@@ -48626,6 +52016,55 @@ func (ec *executionContext) unmarshalOAssetSort2ᚕᚖgithubᚗcomᚋteandresmit
 	for i := range vSlice {
 		ctx := graphql.WithPathContext(ctx, graphql.NewPathWithIndex(i))
 		res[i], err = ec.unmarshalNAssetSort2ᚖgithubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋsqliteᚋmodelsᚋgraphᚋmodelᚐAssetSort(ctx, vSlice[i])
+		if err != nil {
+			return nil, err
+		}
+	}
+	return res, nil
+}
+
+func (ec *executionContext) marshalOBadge2ᚖgithubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋsqliteᚋmodelsᚐBadge(ctx context.Context, sel ast.SelectionSet, v *models.Badge) graphql.Marshaler {
+	if v == nil {
+		return graphql.Null
+	}
+	return ec._Badge(ctx, sel, v)
+}
+
+func (ec *executionContext) unmarshalOBadgeFilter2ᚕᚖgithubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋsqliteᚋmodelsᚋgraphᚋmodelᚐBadgeFilterᚄ(ctx context.Context, v any) ([]*model.BadgeFilter, error) {
+	if v == nil {
+		return nil, nil
+	}
+	vSlice := graphql.CoerceList(v)
+	var err error
+	res := make([]*model.BadgeFilter, len(vSlice))
+	for i := range vSlice {
+		ctx := graphql.WithPathContext(ctx, graphql.NewPathWithIndex(i))
+		res[i], err = ec.unmarshalNBadgeFilter2ᚖgithubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋsqliteᚋmodelsᚋgraphᚋmodelᚐBadgeFilter(ctx, vSlice[i])
+		if err != nil {
+			return nil, err
+		}
+	}
+	return res, nil
+}
+
+func (ec *executionContext) unmarshalOBadgeFilter2ᚖgithubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋsqliteᚋmodelsᚋgraphᚋmodelᚐBadgeFilter(ctx context.Context, v any) (*model.BadgeFilter, error) {
+	if v == nil {
+		return nil, nil
+	}
+	res, err := ec.unmarshalInputBadgeFilter(ctx, v)
+	return &res, graphql.ErrorOnPath(ctx, err)
+}
+
+func (ec *executionContext) unmarshalOBadgeSort2ᚕᚖgithubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋsqliteᚋmodelsᚋgraphᚋmodelᚐBadgeSortᚄ(ctx context.Context, v any) ([]*model.BadgeSort, error) {
+	if v == nil {
+		return nil, nil
+	}
+	vSlice := graphql.CoerceList(v)
+	var err error
+	res := make([]*model.BadgeSort, len(vSlice))
+	for i := range vSlice {
+		ctx := graphql.WithPathContext(ctx, graphql.NewPathWithIndex(i))
+		res[i], err = ec.unmarshalNBadgeSort2ᚖgithubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋsqliteᚋmodelsᚋgraphᚋmodelᚐBadgeSort(ctx, vSlice[i])
 		if err != nil {
 			return nil, err
 		}
@@ -49466,6 +52905,55 @@ func (ec *executionContext) marshalOOwner2ᚖgithubᚗcomᚋteandresmithᚋsqlge
 		return graphql.Null
 	}
 	return ec._Owner(ctx, sel, v)
+}
+
+func (ec *executionContext) marshalOOwnerBadge2ᚖgithubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋsqliteᚋmodelsᚐOwnerBadge(ctx context.Context, sel ast.SelectionSet, v *models.OwnerBadge) graphql.Marshaler {
+	if v == nil {
+		return graphql.Null
+	}
+	return ec._OwnerBadge(ctx, sel, v)
+}
+
+func (ec *executionContext) unmarshalOOwnerBadgeFilter2ᚕᚖgithubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋsqliteᚋmodelsᚋgraphᚋmodelᚐOwnerBadgeFilterᚄ(ctx context.Context, v any) ([]*model.OwnerBadgeFilter, error) {
+	if v == nil {
+		return nil, nil
+	}
+	vSlice := graphql.CoerceList(v)
+	var err error
+	res := make([]*model.OwnerBadgeFilter, len(vSlice))
+	for i := range vSlice {
+		ctx := graphql.WithPathContext(ctx, graphql.NewPathWithIndex(i))
+		res[i], err = ec.unmarshalNOwnerBadgeFilter2ᚖgithubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋsqliteᚋmodelsᚋgraphᚋmodelᚐOwnerBadgeFilter(ctx, vSlice[i])
+		if err != nil {
+			return nil, err
+		}
+	}
+	return res, nil
+}
+
+func (ec *executionContext) unmarshalOOwnerBadgeFilter2ᚖgithubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋsqliteᚋmodelsᚋgraphᚋmodelᚐOwnerBadgeFilter(ctx context.Context, v any) (*model.OwnerBadgeFilter, error) {
+	if v == nil {
+		return nil, nil
+	}
+	res, err := ec.unmarshalInputOwnerBadgeFilter(ctx, v)
+	return &res, graphql.ErrorOnPath(ctx, err)
+}
+
+func (ec *executionContext) unmarshalOOwnerBadgeSort2ᚕᚖgithubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋsqliteᚋmodelsᚋgraphᚋmodelᚐOwnerBadgeSortᚄ(ctx context.Context, v any) ([]*model.OwnerBadgeSort, error) {
+	if v == nil {
+		return nil, nil
+	}
+	vSlice := graphql.CoerceList(v)
+	var err error
+	res := make([]*model.OwnerBadgeSort, len(vSlice))
+	for i := range vSlice {
+		ctx := graphql.WithPathContext(ctx, graphql.NewPathWithIndex(i))
+		res[i], err = ec.unmarshalNOwnerBadgeSort2ᚖgithubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋsqliteᚋmodelsᚋgraphᚋmodelᚐOwnerBadgeSort(ctx, vSlice[i])
+		if err != nil {
+			return nil, err
+		}
+	}
+	return res, nil
 }
 
 func (ec *executionContext) unmarshalOOwnerFilter2ᚕᚖgithubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋsqliteᚋmodelsᚋgraphᚋmodelᚐOwnerFilterᚄ(ctx context.Context, v any) ([]*model.OwnerFilter, error) {

@@ -8,6 +8,8 @@ type Owner {
   name: String!
   "one-to-one relationship with the owner_profiles table."
   ownerProfile: OwnerProfile
+  "many-to-many relationship with the badges table."
+  badges: [Badge!]!
 }
 
 type OwnerConnection {
@@ -31,6 +33,7 @@ type OwnerListResult {
 
 input OwnerFilter {
   name: StringComparator
+  badges: BadgeFilter
   and: [OwnerFilter!]
   or:  [OwnerFilter!]
 }

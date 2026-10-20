@@ -1,0 +1,70 @@
+"""
+Badge corresponds to the badges table.
+"""
+type Badge {
+  "code"
+  code: ID!
+  "label"
+  label: String!
+  "many-to-many relationship with the owners table."
+  owners: [Owner!]!
+}
+
+type BadgeConnection {
+  edges:      [BadgeEdge!]!
+  pageInfo:   PageInfo!
+  totalCount: Int!
+}
+
+type BadgeEdge {
+  node:   Badge!
+  cursor: String!
+}
+
+type BadgeListResult {
+  items:      [Badge!]!
+  totalCount: Int!
+  offset:     Int!
+  limit:      Int!
+  hasMore:    Boolean!
+}
+
+input BadgeFilter {
+  label: StringComparator
+  owners: OwnerFilter
+  and: [BadgeFilter!]
+  or:  [BadgeFilter!]
+}
+
+enum BadgeSortField {
+  CODE
+  LABEL
+}
+
+input BadgeSort {
+  field:     BadgeSortField!
+  direction: SortDirection!
+}
+input CreateBadgeInput {
+  code: ID!
+  label: String!
+}
+input UpdateBadgeInput {
+  label: String
+}
+
+extend type Query {
+  badge(code: ID!): Badge
+  "Cursor-paginated; ordering is driven by cursor_keys to preserve keyset semantics — pass `sort` to badgeList instead."
+  badges(filter: BadgeFilter, first: Int, after: String, last: Int, before: String): BadgeConnection!
+  badgeList(filter: BadgeFilter, sort: [BadgeSort!], limit: Int, offset: Int): BadgeListResult!
+}
+
+extend type Mutation {
+  createBadge(input: CreateBadgeInput!): Badge!
+  createBadges(inputs: [CreateBadgeInput!]!): [Badge!]!
+  updateBadge(code: ID!, input: UpdateBadgeInput!): Badge!
+  updateBadges(filter: BadgeFilter!, input: UpdateBadgeInput!): [Badge!]!
+  upsertBadge(input: CreateBadgeInput!): Badge!
+  deleteBadge(code: ID!): Boolean!
+}

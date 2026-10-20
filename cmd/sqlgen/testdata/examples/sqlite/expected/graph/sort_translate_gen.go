@@ -141,6 +141,40 @@ func assetDocumentLinkSortFieldToColumn(f gqlmodel.AssetDocumentLinkSortField) s
 	return ""
 }
 
+// translateBadgeSort converts a gqlgen-generated
+// []*BadgeSort into a []sql.Sort. nil / empty input returns nil
+// so the caller's "no sort" path is preserved.
+func translateBadgeSort(in []*gqlmodel.BadgeSort) []sql.Sort {
+	if len(in) == 0 {
+		return nil
+	}
+	out := make([]sql.Sort, 0, len(in))
+	for _, s := range in {
+		if s == nil {
+			continue
+		}
+		out = append(out, sql.Sort{
+			Column:    badgeSortFieldToColumn(s.Field),
+			Direction: directionToSortDirection(s.Direction),
+		})
+	}
+	return out
+}
+
+// badgeSortFieldToColumn resolves a gqlgen
+// BadgeSortField value to the SQL column it sorts on. Returns an
+// empty string for unrecognised values so the caller can decide whether to
+// surface a validation error or silently drop the entry.
+func badgeSortFieldToColumn(f gqlmodel.BadgeSortField) string {
+	switch string(f) {
+	case "CODE":
+		return "code"
+	case "LABEL":
+		return "label"
+	}
+	return ""
+}
+
 // translateBinaryKeySort converts a gqlgen-generated
 // []*BinaryKeySort into a []sql.Sort. nil / empty input returns nil
 // so the caller's "no sort" path is preserved.
@@ -517,6 +551,40 @@ func ownerSortFieldToColumn(f gqlmodel.OwnerSortField) string {
 		return "owner_key"
 	case "NAME":
 		return "name"
+	}
+	return ""
+}
+
+// translateOwnerBadgeSort converts a gqlgen-generated
+// []*OwnerBadgeSort into a []sql.Sort. nil / empty input returns nil
+// so the caller's "no sort" path is preserved.
+func translateOwnerBadgeSort(in []*gqlmodel.OwnerBadgeSort) []sql.Sort {
+	if len(in) == 0 {
+		return nil
+	}
+	out := make([]sql.Sort, 0, len(in))
+	for _, s := range in {
+		if s == nil {
+			continue
+		}
+		out = append(out, sql.Sort{
+			Column:    ownerBadgeSortFieldToColumn(s.Field),
+			Direction: directionToSortDirection(s.Direction),
+		})
+	}
+	return out
+}
+
+// ownerBadgeSortFieldToColumn resolves a gqlgen
+// OwnerBadgeSortField value to the SQL column it sorts on. Returns an
+// empty string for unrecognised values so the caller can decide whether to
+// surface a validation error or silently drop the entry.
+func ownerBadgeSortFieldToColumn(f gqlmodel.OwnerBadgeSortField) string {
+	switch string(f) {
+	case "OWNER_ID":
+		return "owner_id"
+	case "BADGE_CODE":
+		return "badge_code"
 	}
 	return ""
 }

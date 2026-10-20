@@ -1650,6 +1650,417 @@
     },
     {
       "kind": "table",
+      "name": "Badge",
+      "table": "badges",
+      "file_prefix": "badge",
+      "files": [
+        "badge_gen.go"
+      ],
+      "comment": "",
+      "indexes": [
+        {
+          "name": "badges_pkey",
+          "columns": [
+            "code"
+          ],
+          "unique": true,
+          "method": "btree"
+        }
+      ],
+      "pk": {
+        "kind": "single",
+        "columns": [
+          {
+            "name": "code",
+            "go_field": "Code",
+            "go_type": "string"
+          }
+        ]
+      },
+      "features": {
+        "soft_delete": null,
+        "cache": null,
+        "events": null,
+        "tenancy": null
+      },
+      "columns": [
+        {
+          "name": "code",
+          "go_field": "Code",
+          "go_type": "string",
+          "db_type": "text",
+          "nullable": false,
+          "pk": true,
+          "unique": false,
+          "comparator": "comparator.ID",
+          "comment": ""
+        },
+        {
+          "name": "label",
+          "go_field": "Label",
+          "go_type": "string",
+          "db_type": "text",
+          "nullable": false,
+          "pk": false,
+          "unique": false,
+          "comparator": "comparator.String",
+          "comment": ""
+        }
+      ],
+      "relationships": [
+        {
+          "name": "owners",
+          "kind": "m2m",
+          "target_entity": "Owner",
+          "junction": {
+            "table": "owner_badges",
+            "local_fk": "badge_code",
+            "target_fk": "owner_id"
+          }
+        }
+      ],
+      "methods": {
+        "query": [
+          {
+            "name": "Get",
+            "params": [
+              {
+                "name": "id",
+                "type": "string"
+              }
+            ],
+            "returns": "*Badge",
+            "errors": [
+              "ErrNotFound"
+            ],
+            "notes": "Delegates to GetMany with a primary-key filter; returns ErrNotFound when no row matches.",
+            "sql_bodies": {
+              "sqlite": "SELECT \"code\", \"label\" FROM \"badges\" WHERE \"code\" = ? LIMIT 1"
+            }
+          },
+          {
+            "name": "GetMany",
+            "params": [
+              {
+                "name": "input",
+                "type": "*GetBadgesInput"
+              }
+            ],
+            "returns": "[]*Badge",
+            "errors": [],
+            "sql_bodies": {
+              "sqlite": "SELECT \"code\", \"label\" FROM \"badges\" WHERE <filter> ORDER BY <sort> LIMIT <limit>"
+            }
+          },
+          {
+            "name": "Count",
+            "params": [
+              {
+                "name": "filter",
+                "type": "*BadgeFilter"
+              }
+            ],
+            "returns": "int64",
+            "errors": [],
+            "sql_bodies": {
+              "sqlite": "SELECT COUNT(*) FROM \"badges\" WHERE <filter>"
+            }
+          },
+          {
+            "name": "Exists",
+            "params": [
+              {
+                "name": "id",
+                "type": "string"
+              }
+            ],
+            "returns": "bool",
+            "errors": [],
+            "sql_bodies": {
+              "sqlite": "SELECT EXISTS(SELECT 1 FROM \"badges\" WHERE \"code\" = ?)"
+            }
+          },
+          {
+            "name": "ExistsWhere",
+            "params": [
+              {
+                "name": "filter",
+                "type": "*BadgeFilter"
+              }
+            ],
+            "returns": "bool",
+            "errors": [],
+            "sql_bodies": {
+              "sqlite": "SELECT EXISTS(SELECT 1 FROM \"badges\" WHERE <filter>)"
+            }
+          },
+          {
+            "name": "Paginate",
+            "params": [
+              {
+                "name": "input",
+                "type": "PaginateInput[BadgeFilter]"
+              }
+            ],
+            "returns": "*PaginateResult[Badge]",
+            "errors": [],
+            "notes": "Offset pagination. Issues no statement of its own — composes Count and GetMany, so no sql_bodies entry."
+          },
+          {
+            "name": "Connection",
+            "params": [
+              {
+                "name": "input",
+                "type": "ConnectionInput[BadgeFilter]"
+              }
+            ],
+            "returns": "*Connection[Badge]",
+            "errors": [
+              "ErrInvalidCursor"
+            ],
+            "notes": "Relay cursor pagination. Issues no statement of its own — composes Count and GetMany, so no sql_bodies entry."
+          },
+          {
+            "name": "Stream",
+            "params": [
+              {
+                "name": "input",
+                "type": "*StreamBadgesInput"
+              }
+            ],
+            "returns": "iter.Seq2[*Badge, error]",
+            "errors": [],
+            "notes": "Scalars only — no relationship loading, cache always bypassed. Errors surface through the iterator's second value.",
+            "sql_bodies": {
+              "sqlite": "SELECT \"code\", \"label\" FROM \"badges\" WHERE <filter> ORDER BY <sort>"
+            }
+          }
+        ],
+        "mutation": [
+          {
+            "name": "Create",
+            "params": [
+              {
+                "name": "input",
+                "type": "*CreateBadgeInput"
+              }
+            ],
+            "returns": "*Badge",
+            "errors": [
+              "ErrNilInput",
+              "ErrConstraintViolation"
+            ],
+            "sql_bodies": {
+              "sqlite": "INSERT INTO \"badges\" (<columns>) VALUES (<values>) RETURNING \"code\""
+            }
+          },
+          {
+            "name": "CreateMany",
+            "params": [
+              {
+                "name": "inputs",
+                "type": "[]*CreateBadgeInput"
+              }
+            ],
+            "returns": "[]*Badge",
+            "errors": [
+              "ErrNilInput",
+              "ErrConstraintViolation"
+            ],
+            "notes": "Batched in generation.batch_size chunks. Earlier chunks are not rolled back on a later failure — wrap in a transaction for atomicity.",
+            "sql_bodies": {
+              "sqlite": "INSERT INTO \"badges\" (<columns>) VALUES <values> RETURNING \"code\""
+            }
+          },
+          {
+            "name": "Upsert",
+            "params": [
+              {
+                "name": "input",
+                "type": "*CreateBadgeInput"
+              },
+              {
+                "name": "target",
+                "type": "BadgeConflictTarget"
+              }
+            ],
+            "returns": "*Badge",
+            "errors": [
+              "ErrNilInput",
+              "ErrConstraintViolation"
+            ],
+            "notes": "One method over the generated BadgeConflictTarget enum — the target argument selects the conflict columns at call time.",
+            "sql_bodies": {
+              "sqlite": "INSERT INTO \"badges\" (<columns>) VALUES (<values>) ON CONFLICT (<conflict_target>) DO UPDATE SET <excluded> RETURNING \"code\""
+            }
+          },
+          {
+            "name": "UpsertMany",
+            "params": [
+              {
+                "name": "inputs",
+                "type": "[]*CreateBadgeInput"
+              },
+              {
+                "name": "target",
+                "type": "BadgeConflictTarget"
+              }
+            ],
+            "returns": "[]*Badge",
+            "errors": [
+              "ErrNilInput",
+              "ErrConstraintViolation"
+            ],
+            "notes": "Batched in generation.batch_size chunks over the same BadgeConflictTarget enum Upsert takes. Inputs resolving to one target are deduped before the statement is built, last occurrence wins. Earlier chunks are not rolled back on a later failure — wrap in a transaction for atomicity.",
+            "sql_bodies": {
+              "sqlite": "INSERT INTO \"badges\" (<columns>) VALUES <values> ON CONFLICT (<conflict_target>) DO UPDATE SET <excluded>"
+            }
+          },
+          {
+            "name": "Update",
+            "params": [
+              {
+                "name": "id",
+                "type": "string"
+              },
+              {
+                "name": "input",
+                "type": "*UpdateBadgeInput"
+              }
+            ],
+            "returns": "*Badge",
+            "errors": [
+              "ErrNotFound",
+              "ErrNilInput",
+              "ErrConstraintViolation"
+            ],
+            "notes": "Only fields where IsSet() reports true reach the SET clause; an input with none set issues no UPDATE and returns the row unchanged.",
+            "sql_bodies": {
+              "sqlite": "UPDATE \"badges\" SET <set> WHERE \"code\" = ?"
+            }
+          },
+          {
+            "name": "UpdateMany",
+            "params": [
+              {
+                "name": "items",
+                "type": "[]UpdateBadgeItem"
+              }
+            ],
+            "returns": "[]*Badge",
+            "errors": [
+              "ErrNilInput",
+              "ErrConstraintViolation"
+            ],
+            "notes": "Issues one statement per item. Batched like CreateMany — earlier items are not rolled back on a later failure. A primary key that does not exist is silently skipped, even under strict_updates.",
+            "sql_bodies": {
+              "sqlite": "UPDATE \"badges\" SET <set> WHERE \"code\" = ?"
+            }
+          },
+          {
+            "name": "UpdateWhere",
+            "params": [
+              {
+                "name": "filter",
+                "type": "*BadgeFilter"
+              },
+              {
+                "name": "input",
+                "type": "*UpdateBadgeInput"
+              }
+            ],
+            "returns": "[]*Badge",
+            "errors": [
+              "ErrNilInput",
+              "ErrEmptyFilter",
+              "ErrConstraintViolation"
+            ],
+            "notes": "Idempotent — returns an empty slice when no row matches. ErrEmptyFilter when the filter produces no conditions.",
+            "sql_bodies": {
+              "sqlite": "UPDATE \"badges\" SET <set> WHERE <filter> RETURNING \"code\""
+            }
+          },
+          {
+            "name": "HardDelete",
+            "params": [
+              {
+                "name": "id",
+                "type": "string"
+              }
+            ],
+            "returns": "",
+            "errors": [],
+            "notes": "Idempotent — a primary key that does not exist is not an error.",
+            "sql_bodies": {
+              "sqlite": "DELETE FROM \"badges\" WHERE \"code\" = ?"
+            }
+          },
+          {
+            "name": "HardDeleteMany",
+            "params": [
+              {
+                "name": "ids",
+                "type": "[]string"
+              }
+            ],
+            "returns": "",
+            "errors": [],
+            "notes": "Idempotent — primary keys that do not exist are not an error.",
+            "sql_bodies": {
+              "sqlite": "DELETE FROM \"badges\" WHERE \"code\" IN (<ids>)"
+            }
+          },
+          {
+            "name": "HardDeleteWhere",
+            "params": [
+              {
+                "name": "filter",
+                "type": "*BadgeFilter"
+              }
+            ],
+            "returns": "",
+            "errors": [
+              "ErrEmptyFilter"
+            ],
+            "notes": "Idempotent — no match is not an error. ErrEmptyFilter when the filter produces no conditions.",
+            "sql_bodies": {
+              "sqlite": "DELETE FROM \"badges\" WHERE <filter> RETURNING \"code\""
+            }
+          }
+        ]
+      },
+      "filter": {
+        "type": "BadgeFilter",
+        "fields": [
+          {
+            "name": "Code",
+            "type": "*comparator.ID"
+          },
+          {
+            "name": "Label",
+            "type": "*comparator.String"
+          },
+          {
+            "name": "And",
+            "type": "[]*BadgeFilter"
+          },
+          {
+            "name": "Or",
+            "type": "[]*BadgeFilter"
+          }
+        ]
+      },
+      "sort": {
+        "type": "BadgeSort",
+        "fields": [
+          "Code",
+          "Label"
+        ]
+      },
+      "examples": {}
+    },
+    {
+      "kind": "table",
       "name": "BinaryKey",
       "table": "binary_keys",
       "file_prefix": "binary_key",
@@ -5520,6 +5931,16 @@
             "table": "owner_profiles",
             "column": "owner_id"
           }
+        },
+        {
+          "name": "badges",
+          "kind": "m2m",
+          "target_entity": "Badge",
+          "junction": {
+            "table": "owner_badges",
+            "local_fk": "owner_id",
+            "target_fk": "badge_code"
+          }
         }
       ],
       "methods": {
@@ -5858,6 +6279,413 @@
         "fields": [
           "Name",
           "OwnerKey"
+        ]
+      },
+      "examples": {}
+    },
+    {
+      "kind": "table",
+      "name": "OwnerBadge",
+      "table": "owner_badges",
+      "file_prefix": "owner_badge",
+      "files": [
+        "owner_badge_gen.go"
+      ],
+      "comment": "",
+      "indexes": [
+        {
+          "name": "owner_badges_pkey",
+          "columns": [
+            "owner_id",
+            "badge_code"
+          ],
+          "unique": true,
+          "method": "btree"
+        }
+      ],
+      "pk": {
+        "kind": "composite",
+        "struct": "OwnerBadgePK",
+        "columns": [
+          {
+            "name": "owner_id",
+            "go_field": "OwnerID",
+            "go_type": "int64"
+          },
+          {
+            "name": "badge_code",
+            "go_field": "BadgeCode",
+            "go_type": "string"
+          }
+        ]
+      },
+      "features": {
+        "soft_delete": null,
+        "cache": null,
+        "events": null,
+        "tenancy": null
+      },
+      "columns": [
+        {
+          "name": "owner_id",
+          "go_field": "OwnerID",
+          "go_type": "int64",
+          "db_type": "integer",
+          "nullable": false,
+          "pk": true,
+          "unique": false,
+          "comparator": "comparator.Number[int64]",
+          "comment": ""
+        },
+        {
+          "name": "badge_code",
+          "go_field": "BadgeCode",
+          "go_type": "string",
+          "db_type": "text",
+          "nullable": false,
+          "pk": true,
+          "unique": false,
+          "comparator": "comparator.ID",
+          "comment": ""
+        }
+      ],
+      "relationships": [],
+      "methods": {
+        "query": [
+          {
+            "name": "Get",
+            "params": [
+              {
+                "name": "pk",
+                "type": "OwnerBadgePK"
+              }
+            ],
+            "returns": "*OwnerBadge",
+            "errors": [
+              "ErrNotFound"
+            ],
+            "notes": "Delegates to GetMany with a primary-key filter; returns ErrNotFound when no row matches.",
+            "sql_bodies": {
+              "sqlite": "SELECT \"badge_code\", \"owner_id\" FROM \"owner_badges\" WHERE \"owner_id\" = ? AND \"badge_code\" = ? LIMIT 1"
+            }
+          },
+          {
+            "name": "GetMany",
+            "params": [
+              {
+                "name": "input",
+                "type": "*GetOwnerBadgesInput"
+              }
+            ],
+            "returns": "[]*OwnerBadge",
+            "errors": [],
+            "sql_bodies": {
+              "sqlite": "SELECT \"badge_code\", \"owner_id\" FROM \"owner_badges\" WHERE <filter> ORDER BY <sort> LIMIT <limit>"
+            }
+          },
+          {
+            "name": "Count",
+            "params": [
+              {
+                "name": "filter",
+                "type": "*OwnerBadgeFilter"
+              }
+            ],
+            "returns": "int64",
+            "errors": [],
+            "sql_bodies": {
+              "sqlite": "SELECT COUNT(*) FROM \"owner_badges\" WHERE <filter>"
+            }
+          },
+          {
+            "name": "Exists",
+            "params": [
+              {
+                "name": "pk",
+                "type": "OwnerBadgePK"
+              }
+            ],
+            "returns": "bool",
+            "errors": [],
+            "sql_bodies": {
+              "sqlite": "SELECT EXISTS(SELECT 1 FROM \"owner_badges\" WHERE \"owner_id\" = ? AND \"badge_code\" = ?)"
+            }
+          },
+          {
+            "name": "ExistsWhere",
+            "params": [
+              {
+                "name": "filter",
+                "type": "*OwnerBadgeFilter"
+              }
+            ],
+            "returns": "bool",
+            "errors": [],
+            "sql_bodies": {
+              "sqlite": "SELECT EXISTS(SELECT 1 FROM \"owner_badges\" WHERE <filter>)"
+            }
+          },
+          {
+            "name": "Paginate",
+            "params": [
+              {
+                "name": "input",
+                "type": "PaginateInput[OwnerBadgeFilter]"
+              }
+            ],
+            "returns": "*PaginateResult[OwnerBadge]",
+            "errors": [],
+            "notes": "Offset pagination. Issues no statement of its own — composes Count and GetMany, so no sql_bodies entry."
+          },
+          {
+            "name": "Connection",
+            "params": [
+              {
+                "name": "input",
+                "type": "ConnectionInput[OwnerBadgeFilter]"
+              }
+            ],
+            "returns": "*Connection[OwnerBadge]",
+            "errors": [
+              "ErrInvalidCursor"
+            ],
+            "notes": "Relay cursor pagination. Issues no statement of its own — composes Count and GetMany, so no sql_bodies entry."
+          },
+          {
+            "name": "Stream",
+            "params": [
+              {
+                "name": "input",
+                "type": "*StreamOwnerBadgesInput"
+              }
+            ],
+            "returns": "iter.Seq2[*OwnerBadge, error]",
+            "errors": [],
+            "notes": "Scalars only — no relationship loading, cache always bypassed. Errors surface through the iterator's second value.",
+            "sql_bodies": {
+              "sqlite": "SELECT \"badge_code\", \"owner_id\" FROM \"owner_badges\" WHERE <filter> ORDER BY <sort>"
+            }
+          }
+        ],
+        "mutation": [
+          {
+            "name": "Create",
+            "params": [
+              {
+                "name": "input",
+                "type": "*CreateOwnerBadgeInput"
+              }
+            ],
+            "returns": "*OwnerBadge",
+            "errors": [
+              "ErrNilInput",
+              "ErrConstraintViolation"
+            ],
+            "sql_bodies": {
+              "sqlite": "INSERT INTO \"owner_badges\" (<columns>) VALUES (<values>)"
+            }
+          },
+          {
+            "name": "CreateMany",
+            "params": [
+              {
+                "name": "inputs",
+                "type": "[]*CreateOwnerBadgeInput"
+              }
+            ],
+            "returns": "[]*OwnerBadge",
+            "errors": [
+              "ErrNilInput",
+              "ErrConstraintViolation"
+            ],
+            "notes": "Batched in generation.batch_size chunks. Earlier chunks are not rolled back on a later failure — wrap in a transaction for atomicity.",
+            "sql_bodies": {
+              "sqlite": "INSERT INTO \"owner_badges\" (<columns>) VALUES <values>"
+            }
+          },
+          {
+            "name": "Upsert",
+            "params": [
+              {
+                "name": "input",
+                "type": "*CreateOwnerBadgeInput"
+              },
+              {
+                "name": "target",
+                "type": "OwnerBadgeConflictTarget"
+              }
+            ],
+            "returns": "*OwnerBadge",
+            "errors": [
+              "ErrNilInput",
+              "ErrConstraintViolation"
+            ],
+            "notes": "One method over the generated OwnerBadgeConflictTarget enum — the target argument selects the conflict columns at call time.",
+            "sql_bodies": {
+              "sqlite": "INSERT INTO \"owner_badges\" (<columns>) VALUES (<values>) ON CONFLICT (<conflict_target>) DO UPDATE SET <excluded>"
+            }
+          },
+          {
+            "name": "UpsertMany",
+            "params": [
+              {
+                "name": "inputs",
+                "type": "[]*CreateOwnerBadgeInput"
+              },
+              {
+                "name": "target",
+                "type": "OwnerBadgeConflictTarget"
+              }
+            ],
+            "returns": "[]*OwnerBadge",
+            "errors": [
+              "ErrNilInput",
+              "ErrConstraintViolation"
+            ],
+            "notes": "Batched in generation.batch_size chunks over the same OwnerBadgeConflictTarget enum Upsert takes. Inputs resolving to one target are deduped before the statement is built, last occurrence wins. Earlier chunks are not rolled back on a later failure — wrap in a transaction for atomicity.",
+            "sql_bodies": {
+              "sqlite": "INSERT INTO \"owner_badges\" (<columns>) VALUES <values> ON CONFLICT (<conflict_target>) DO UPDATE SET <excluded>"
+            }
+          },
+          {
+            "name": "Update",
+            "params": [
+              {
+                "name": "pk",
+                "type": "OwnerBadgePK"
+              },
+              {
+                "name": "input",
+                "type": "*UpdateOwnerBadgeInput"
+              }
+            ],
+            "returns": "*OwnerBadge",
+            "errors": [
+              "ErrNotFound",
+              "ErrNilInput",
+              "ErrConstraintViolation"
+            ],
+            "notes": "Only fields where IsSet() reports true reach the SET clause; an input with none set issues no UPDATE and returns the row unchanged.",
+            "sql_bodies": {
+              "sqlite": "UPDATE \"owner_badges\" SET <set> WHERE \"owner_id\" = ? AND \"badge_code\" = ?"
+            }
+          },
+          {
+            "name": "UpdateMany",
+            "params": [
+              {
+                "name": "items",
+                "type": "[]UpdateOwnerBadgeItem"
+              }
+            ],
+            "returns": "[]*OwnerBadge",
+            "errors": [
+              "ErrNilInput",
+              "ErrConstraintViolation"
+            ],
+            "notes": "Issues one statement per item. Batched like CreateMany — earlier items are not rolled back on a later failure. A primary key that does not exist is silently skipped, even under strict_updates.",
+            "sql_bodies": {
+              "sqlite": "UPDATE \"owner_badges\" SET <set> WHERE \"owner_id\" = ? AND \"badge_code\" = ?"
+            }
+          },
+          {
+            "name": "UpdateWhere",
+            "params": [
+              {
+                "name": "filter",
+                "type": "*OwnerBadgeFilter"
+              },
+              {
+                "name": "input",
+                "type": "*UpdateOwnerBadgeInput"
+              }
+            ],
+            "returns": "[]*OwnerBadge",
+            "errors": [
+              "ErrNilInput",
+              "ErrEmptyFilter",
+              "ErrConstraintViolation"
+            ],
+            "notes": "Idempotent — returns an empty slice when no row matches. ErrEmptyFilter when the filter produces no conditions.",
+            "sql_bodies": {
+              "sqlite": "UPDATE \"owner_badges\" SET <set> WHERE <filter> RETURNING \"owner_id\", \"badge_code\""
+            }
+          },
+          {
+            "name": "HardDelete",
+            "params": [
+              {
+                "name": "pk",
+                "type": "OwnerBadgePK"
+              }
+            ],
+            "returns": "",
+            "errors": [],
+            "notes": "Idempotent — a primary key that does not exist is not an error.",
+            "sql_bodies": {
+              "sqlite": "DELETE FROM \"owner_badges\" WHERE \"owner_id\" = ? AND \"badge_code\" = ?"
+            }
+          },
+          {
+            "name": "HardDeleteMany",
+            "params": [
+              {
+                "name": "pks",
+                "type": "[]OwnerBadgePK"
+              }
+            ],
+            "returns": "",
+            "errors": [],
+            "notes": "Idempotent — primary keys that do not exist are not an error.",
+            "sql_bodies": {
+              "sqlite": "DELETE FROM \"owner_badges\" WHERE (\"owner_id\", \"badge_code\") IN (<pks>)"
+            }
+          },
+          {
+            "name": "HardDeleteWhere",
+            "params": [
+              {
+                "name": "filter",
+                "type": "*OwnerBadgeFilter"
+              }
+            ],
+            "returns": "",
+            "errors": [
+              "ErrEmptyFilter"
+            ],
+            "notes": "Idempotent — no match is not an error. ErrEmptyFilter when the filter produces no conditions.",
+            "sql_bodies": {
+              "sqlite": "DELETE FROM \"owner_badges\" WHERE <filter> RETURNING \"owner_id\", \"badge_code\""
+            }
+          }
+        ]
+      },
+      "filter": {
+        "type": "OwnerBadgeFilter",
+        "fields": [
+          {
+            "name": "BadgeCode",
+            "type": "*comparator.ID"
+          },
+          {
+            "name": "OwnerID",
+            "type": "*comparator.Number[int64]"
+          },
+          {
+            "name": "And",
+            "type": "[]*OwnerBadgeFilter"
+          },
+          {
+            "name": "Or",
+            "type": "[]*OwnerBadgeFilter"
+          }
+        ]
+      },
+      "sort": {
+        "type": "OwnerBadgeSort",
+        "fields": [
+          "BadgeCode",
+          "OwnerID"
         ]
       },
       "examples": {}

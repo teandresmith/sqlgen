@@ -232,6 +232,20 @@ CREATE TABLE owner_profiles (
     FOREIGN KEY (owner_id) REFERENCES owners(owner_key)
 );
 
+-- A many-to-many edge whose targets are not keyed on `id`: Owner.Badges
+-- fetches badges by the TEXT key `code`, and Badge.Owners fetches owners by
+-- the INTEGER key `owner_key`.
+CREATE TABLE badges (
+    code TEXT PRIMARY KEY,
+    label TEXT NOT NULL
+);
+
+CREATE TABLE owner_badges (
+    owner_id INTEGER NOT NULL REFERENCES owners(owner_key),
+    badge_code TEXT NOT NULL REFERENCES badges(code),
+    PRIMARY KEY (owner_id, badge_code)
+);
+
 -- slugged_rows: `slug` is UNIQUE with a constant DEFAULT and `read_only` on the
 -- API, and every column has a DEFAULT, so a zero input supplies no column.
 CREATE TABLE slugged_rows (

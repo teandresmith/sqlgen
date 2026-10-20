@@ -14,6 +14,7 @@ import (
 	"github.com/teandresmith/sqlgen/hook"
 	"github.com/teandresmith/sqlgen/omittable"
 	"github.com/teandresmith/sqlgen/sql"
+	"golang.org/x/sync/errgroup"
 )
 
 type Owner struct {
@@ -22,6 +23,8 @@ type Owner struct {
 
 	// OwnerProfile - one-to-one relationship with the owner_profiles table.
 	OwnerProfile *OwnerProfile `db:"-" json:"owner_profile"`
+	// Badges - many-to-many relationship with the badges table.
+	Badges []*Badge `db:"-" json:"badges"`
 }
 
 // OwnerClient provides type-safe operations for the owners table.
@@ -32,6 +35,9 @@ type OwnerClient interface {
 	Get(ctx context.Context, id int64, opts ...func(*CallOptions[OwnerFieldOptions])) (*Owner, error)
 
 	// GetMany returns owners matching the given filter, field selection, and sort criteria.
+	// When FieldOptions includes O2M or M2M relationships, they are loaded via an
+	// errgroup fan-out — in parallel over the pool, and serialized by the
+	// transaction's connection reservation when ctx carries one.
 	GetMany(ctx context.Context, input *GetOwnersInput, opts ...func(*CallOptions[OwnerFieldOptions])) ([]*Owner, error)
 
 	// Exists returns true if a owner with the given primary key exists.
@@ -120,6 +126,9 @@ type ownerClient struct {
 	queryHooks         []hook.QueryHook
 	panicHandler       hook.PanicHandler
 	callbackMode       database.CallbackMode
+	badgesDefaultSort  []sql.Sort
+	badgeClient        *badgeClient
+	ownerBadgeClient   *ownerBadgeClient
 	ownerProfileClient *ownerProfileClient
 }
 
@@ -243,6 +252,9 @@ func (c *ownerClient) Get(ctx context.Context, id int64, opts ...func(*CallOptio
 }
 
 // GetMany returns owners matching the given filter, field selection, and sort criteria.
+// When FieldOptions includes O2M or M2M relationships, they are loaded via an
+// errgroup fan-out — in parallel over the pool, and serialized by the
+// transaction's connection reservation when ctx carries one.
 func (c *ownerClient) GetMany(ctx context.Context, input *GetOwnersInput, opts ...func(*CallOptions[OwnerFieldOptions])) ([]*Owner, error) {
 	// A nil input is the zero-value input — no filter, no sorts, no
 	// limit. Normalized before the hook context is built, so a hook never sees
@@ -271,12 +283,16 @@ func (c *ownerClient) GetMany(ctx context.Context, input *GetOwnersInput, opts .
 
 		// Determine columns from FieldOptions. A narrowed projection still
 		// carries the columns this call structurally requires — the cursor keys
-		// an internal caller declares. An all-false FieldOptions is
+		// an internal caller declares, and the key relationship
+		// mapping reads off each row. An all-false FieldOptions is
 		// untouched: it short-circuits above.
 		columns := ownerAllColumns
 		if fieldOptions != nil {
 			if selected := fieldOptions.Columns(); len(selected) > 0 {
 				columns = unionColumns(selected, input.requiredColumns...)
+				if fieldOptions.loadsRelationships() {
+					columns = unionColumns(columns, "owner_key")
+				}
 			}
 		}
 
@@ -360,6 +376,14 @@ func (c *ownerClient) GetMany(ctx context.Context, input *GetOwnersInput, opts .
 			}
 		}
 
+		// Load O2M/M2M relationships via errgroup — in parallel over the pool,
+		// serialized by the transaction's connection reservation inside one
+		if fieldOptions != nil {
+			if err := c.loadRelationships(ctx, conn, owners, options.FieldOptions); err != nil {
+				return nil, err
+			}
+		}
+
 		return owners, nil
 	})
 	if err != nil {
@@ -369,6 +393,145 @@ func (c *ownerClient) GetMany(ctx context.Context, input *GetOwnersInput, opts .
 		return nil, nil
 	}
 	return result.([]*Owner), nil
+}
+
+// loadsRelationships reports whether any O2M or M2M relationship is selected.
+// GetMany unions the owner_key column into a narrowed projection when one is:
+// loadRelationships maps every child back through o.OwnerKey, which
+// an unselected column would leave at its zero value.
+func (fo *OwnerFieldOptions) loadsRelationships() bool {
+	if fo.Badges != nil {
+		return true
+	}
+	return false
+}
+
+// loadRelationships fetches every selected O2M / M2M member through the
+// target's own client, so each child read carries that table's own filters,
+// soft-delete default and access rules rather than this one's.
+//
+// The fan-out is unbounded, inside a transaction and out. Outside one each
+// edge draws its own pooled connection and the parallelism is real. Inside one
+// they share the transaction's single connection — database.Conn hands every
+// nested read the same *database.Tx — and the Tx's connection reservation
+// serializes them, so the statement count is identical either way and only the
+// concurrency differs. The loader needs no transaction-aware bound of its own.
+func (c *ownerClient) loadRelationships(ctx context.Context, conn database.Querier, owners []*Owner, fo *OwnerFieldOptions) error {
+	g, ctx := errgroup.WithContext(ctx)
+
+	if fo.Badges != nil {
+		g.Go(func() error {
+			// Collect parent IDs
+			ownerIDs := make([]int64, len(owners))
+			for idx, o := range owners {
+				ownerIDs[idx] = o.OwnerKey
+			}
+
+			// Step 1: Query junction table to get mapping
+			junctionQuery, junctionArgs := sql.BuildSelect(c.dialect, sql.Table{Schema: "", Name: "owner_badges"}, sql.SelectOptions{
+				Columns:    []string{"owner_id", "badge_code"},
+				Conditions: []sql.Condition{sql.Where(c.dialect.QuoteIdentifier("owner_id")).In(toAnySlice(ownerIDs)...)},
+			})
+
+			junctionRows, err := conn.Query(ctx, junctionQuery, junctionArgs...)
+			if err != nil {
+				return fmt.Errorf("load owner badges junction: %w", err)
+			}
+			defer junctionRows.Close()
+
+			// Discover column positions from result (BuildSelect sorts columns alphabetically)
+			junctionCols, err := junctionRows.Columns()
+			if err != nil {
+				return fmt.Errorf("load owner badges junction columns: %w", err)
+			}
+			localIdx, refIdx := 0, 1
+			for i, col := range junctionCols {
+				switch col {
+				case "owner_id":
+					localIdx = i
+				case "badge_code":
+					refIdx = i
+				}
+			}
+
+			// Build mapping and collect all target IDs
+			parentToTargetIDs := make(map[string][]string)
+			var allTargetIDs []string
+			for junctionRows.Next() {
+				vals := make([]string, len(junctionCols))
+				ptrs := make([]any, len(junctionCols))
+				for i := range vals {
+					ptrs[i] = &vals[i]
+				}
+				if err := junctionRows.Scan(ptrs...); err != nil {
+					return fmt.Errorf("scan owner badges junction: %w", err)
+				}
+				parentID, targetID := vals[localIdx], vals[refIdx]
+				parentToTargetIDs[parentID] = append(parentToTargetIDs[parentID], targetID)
+				allTargetIDs = append(allTargetIDs, targetID)
+			}
+			if err := junctionRows.Err(); err != nil {
+				return fmt.Errorf("iterate owner badges junction: %w", err)
+			}
+
+			if len(allTargetIDs) == 0 {
+				return nil
+			}
+
+			// Step 2: Fetch the actual entities
+			filter := &BadgeFilter{
+				Code: &comparator.ID{In: allTargetIDs},
+			}
+			if fo.Badges.Filter != nil {
+				filter.And = append(filter.And, fo.Badges.Filter)
+			}
+
+			sorts := fo.Badges.Sorts
+			if len(sorts) == 0 {
+				sorts = c.badgesDefaultSort
+			}
+
+			// Self-referential relationships share the parent's entity type, so
+			// the loaded targets must use a name distinct from the parent slice
+			// (owners) to avoid shadowing it and mis-mapping the results
+			// onto the targets instead of the parents.
+			relatedBadges, err := c.badgeClient.GetMany(ctx, &GetBadgesInput{
+				Filter: filter,
+				Sorts:  sorts,
+				Limit:  new(0),
+				// Step 3 keys every loaded target on its own PK, so the fetch
+				// declares that column rather than mutating the caller's
+				// FieldOptions — a narrowed selection that omits it would
+				// otherwise map every target onto the zero value.
+				requiredColumns: []string{"code"},
+			}, func(co *CallOptions[BadgeFieldOptions]) {
+				co.FieldOptions = fo.Badges.FieldOptions
+			})
+			if err != nil {
+				return fmt.Errorf("load owner badges: %w", err)
+			}
+
+			// Step 3: Map back to parent entities via junction mapping. The
+			// targets are walked in the order the fetch returned them, so the
+			// relationship's Sorts — the caller's, or the static `sort:` —
+			// order each parent's slice. Walking the
+			// junction rows instead would keep junction order and drop the sort.
+			parentsByTarget := make(map[string][]int, len(relatedBadges))
+			for i := range owners {
+				for _, tID := range parentToTargetIDs[fmt.Sprint(owners[i].OwnerKey)] {
+					parentsByTarget[tID] = append(parentsByTarget[tID], i)
+				}
+			}
+			for _, t := range relatedBadges {
+				for _, i := range parentsByTarget[t.Code] {
+					owners[i].Badges = append(owners[i].Badges, t)
+				}
+			}
+			return nil
+		})
+	}
+
+	return g.Wait()
 }
 
 // Create inserts a new owner and returns the created entity.
@@ -1791,6 +1954,7 @@ func (c *ownerClient) Stream(ctx context.Context, input *StreamOwnersInput, opts
 type OwnerFilter struct {
 	Name     *comparator.String        `json:"name"`
 	OwnerKey *comparator.Number[int64] `json:"owner_key"`
+	Badges   *BadgeFilter              `json:"badges"`
 	And      []*OwnerFilter            `json:"and"`
 	Or       []*OwnerFilter            `json:"or"`
 }
@@ -1816,6 +1980,10 @@ func (f *OwnerFilter) ToConditions(dialect sql.Dialect, opts ...FilterOption) []
 
 	if f.OwnerKey != nil {
 		conds = append(conds, f.OwnerKey.Parse(dialect.QuoteIdentifier("owner_key"), dialect)...)
+	}
+
+	if f.Badges != nil {
+		conds = append(conds, ownerBadgesFilterExists(f.Badges, dialect, opts))
 	}
 
 	for _, sub := range f.And {
@@ -1849,11 +2017,51 @@ func (f *OwnerFilter) ToConditions(dialect sql.Dialect, opts ...FilterOption) []
 	return conds
 }
 
+// ownerBadgesFilterExists compiles a BadgeFilter set on the
+// Badges relationship into a correlated EXISTS over badges, joined through the owner_badges junction.
+//
+// The parent-side reference carries no qualifier: sql.CorrelationToken is
+// resolved by the builder against whichever FROM clause encloses the predicate,
+// so one emitted value is correct on both the plain read path and the aliased
+// O2O-join path.
+//
+// The subquery alias is keyed on nesting depth. A relationship filter nested
+// inside itself — legal for a self-referential relationship — would
+// otherwise reuse the alias and let the inner subquery shadow the reference its
+// own correlation resolves against.
+//
+// MySQL rejects an EXISTS naming the table an UPDATE or DELETE is mutating
+// (error 1093). A relationship filter whose target is the mutated table is
+// therefore a read-path predicate on MySQL, not one to pass to UpdateWhere /
+// SoftDeleteWhere / HardDeleteWhere / Increment.
+func ownerBadgesFilterExists(f *BadgeFilter, dialect sql.Dialect, opts []FilterOption) sql.Condition {
+	scope := resolveFilterScope(opts)
+	tgt := filterSubqueryAlias("tgt", scope.depth)
+	jn := filterSubqueryAlias("jn", scope.depth)
+	subSQL := "SELECT 1 FROM " + dialect.FormatTable(sql.Table{Schema: "", Name: "owner_badges"}) + " " + jn +
+		" JOIN " + dialect.FormatTable(sql.Table{Schema: "", Name: "badges"}) + " " + tgt +
+		" ON " + tgt + "." + dialect.QuoteIdentifier("code") + " = " + jn + "." + dialect.QuoteIdentifier("badge_code") +
+		" WHERE " + jn + "." + dialect.QuoteIdentifier("owner_id") + " = " + sql.CorrelationToken
+	var subArgs []any
+
+	// The target's own ToConditions supplies the inner WHERE, so nesting and
+	// and/or compose recursively. Every reference is qualified with the target
+	// alias: unqualified names inside a correlated subquery bind to the
+	// enclosing statement whenever the target lacks the column.
+	if where, whereArgs := sql.SubqueryWhere(dialect, tgt, f.ToConditions(dialect, nestFilterScope(opts, scope.depth+1)...)); where != "" {
+		subSQL += " AND " + where
+		subArgs = append(subArgs, whereArgs...)
+	}
+
+	return sql.Exists("owner_key", sql.Subquery{SQL: subSQL, Args: subArgs})
+}
+
 // OwnerFieldOptions controls column selection and relationship loading for owners queries.
 type OwnerFieldOptions struct {
 	OwnerKey     bool                      `json:"owner_key"`
 	Name         bool                      `json:"name"`
 	OwnerProfile *OwnerProfileFieldOptions `json:"owner_profile"`
+	Badges       *BadgeRelationshipOptions `json:"badges"`
 }
 
 // Columns returns the SQL column names for all selected columns, sorted alphabetically
@@ -1889,7 +2097,17 @@ func (fo *OwnerFieldOptions) HasSelectedColumns() bool {
 	if fo.OwnerProfile != nil {
 		return true
 	}
+	if fo.Badges != nil {
+		return true
+	}
 	return false
+}
+
+// BadgeRelationshipOptions controls loading options for Badge relationships.
+type BadgeRelationshipOptions struct {
+	FieldOptions *BadgeFieldOptions `json:"field_options"`
+	Filter       *BadgeFilter       `json:"filter"`
+	Sorts        []sql.Sort         `json:"sorts"`
 }
 
 // CreateOwnerInput holds the fields for creating a owners record.

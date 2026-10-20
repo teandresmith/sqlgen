@@ -151,6 +151,42 @@ func translateAssetDocumentLinkFilter(in *gqlmodel.AssetDocumentLinkFilter) *mod
 	return out
 }
 
+// translateBadgeFilter converts the gqlgen-generated
+// BadgeFilter into a *models.BadgeFilter.
+// Returns nil when the input is nil so the model layer's "nil filter ⇒ no
+// where clause" contract is preserved.
+func translateBadgeFilter(in *gqlmodel.BadgeFilter) *models.BadgeFilter {
+	if in == nil {
+		return nil
+	}
+	out := &models.BadgeFilter{}
+	if in.Label != nil {
+		out.Label = translateStringComparator(in.Label)
+	}
+	if in.Owners != nil {
+		out.Owners = translateOwnerFilter(in.Owners)
+	}
+	if len(in.And) > 0 {
+		out.And = make([]*models.BadgeFilter, 0, len(in.And))
+		for _, sub := range in.And {
+			if sub == nil {
+				continue
+			}
+			out.And = append(out.And, translateBadgeFilter(sub))
+		}
+	}
+	if len(in.Or) > 0 {
+		out.Or = make([]*models.BadgeFilter, 0, len(in.Or))
+		for _, sub := range in.Or {
+			if sub == nil {
+				continue
+			}
+			out.Or = append(out.Or, translateBadgeFilter(sub))
+		}
+	}
+	return out
+}
+
 // translateBinaryKeyFilter converts the gqlgen-generated
 // BinaryKeyFilter into a *models.BinaryKeyFilter.
 // Returns nil when the input is nil so the model layer's "nil filter ⇒ no
@@ -541,6 +577,9 @@ func translateOwnerFilter(in *gqlmodel.OwnerFilter) *models.OwnerFilter {
 	if in.Name != nil {
 		out.Name = translateStringComparator(in.Name)
 	}
+	if in.Badges != nil {
+		out.Badges = translateBadgeFilter(in.Badges)
+	}
 	if len(in.And) > 0 {
 		out.And = make([]*models.OwnerFilter, 0, len(in.And))
 		for _, sub := range in.And {
@@ -557,6 +596,36 @@ func translateOwnerFilter(in *gqlmodel.OwnerFilter) *models.OwnerFilter {
 				continue
 			}
 			out.Or = append(out.Or, translateOwnerFilter(sub))
+		}
+	}
+	return out
+}
+
+// translateOwnerBadgeFilter converts the gqlgen-generated
+// OwnerBadgeFilter into a *models.OwnerBadgeFilter.
+// Returns nil when the input is nil so the model layer's "nil filter ⇒ no
+// where clause" contract is preserved.
+func translateOwnerBadgeFilter(in *gqlmodel.OwnerBadgeFilter) *models.OwnerBadgeFilter {
+	if in == nil {
+		return nil
+	}
+	out := &models.OwnerBadgeFilter{}
+	if len(in.And) > 0 {
+		out.And = make([]*models.OwnerBadgeFilter, 0, len(in.And))
+		for _, sub := range in.And {
+			if sub == nil {
+				continue
+			}
+			out.And = append(out.And, translateOwnerBadgeFilter(sub))
+		}
+	}
+	if len(in.Or) > 0 {
+		out.Or = make([]*models.OwnerBadgeFilter, 0, len(in.Or))
+		for _, sub := range in.Or {
+			if sub == nil {
+				continue
+			}
+			out.Or = append(out.Or, translateOwnerBadgeFilter(sub))
 		}
 	}
 	return out

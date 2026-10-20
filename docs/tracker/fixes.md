@@ -23,9 +23,17 @@
 
 <!-- fixes:open:begin -->
 
+_No open fixes._
+
+<!-- fixes:open:end -->
+
+## Resolved
+
+<!-- fixes:resolved:begin -->
+
 ### FIX-356
 
-- **Status:** Open
+- **Status:** Resolved
 - **Severity:** tracked
 - **Origin:** phase 6, cmd/sqlgen/gen/templates/table
 - **Surfaced by:** Composite-FK relationship probe (design/tenant-composite-fk-relationships, 2026-10-16), user approved filing
@@ -63,13 +71,7 @@ for the same target filter, but the loader never adopted it.
 - `cmd/sqlgen/gen/templates/table/nested.go.tmpl:633-695` — the connect path that already uses `TargetPKFieldName`.
 - `cmd/sqlgen/gen/context_table.go:130-190` — `wireRelFKMetadata`.
 
-**Resolution notes.** _Filled in by /fix resolve._
-
-<!-- fixes:open:end -->
-
-## Resolved
-
-<!-- fixes:resolved:begin -->
+**Resolution notes.** The M2M loader's target filter now names the target's PK field (`{{ .TargetPKFieldName }}`) in both branches of `get.go.tmpl`, instead of a literal `ID`. No other change was needed: `FKGoType` is already the target PK's Go type for M2M (`resolveFKGoType`), so the comparator family was right, and the map-back already keyed on `TargetPKFieldName`. Regression test: `TestGetTemplate_m2mTargetFilterUsesTargetPKField` (string and integer keys named `Code`); it fails on both cases with the old template. Re-ran the Issue's probe with the fixed CLI: text, bigint and uuid `tags.code` keys all `go build` (exit 0). A bytea key still fails, on a different line (`cannot convert v (variable of type int64) to type []byte`): the loader carries keys as strings, and the Opaque comparator family never round-trips through that. It fails the same way on `main` with a key named `id`, so it is a separate root cause, reported as a candidate FIX rather than widened into this one. Compile and runtime coverage (the auto-review flagged that no gate compiled the shape, since every example's M2M target was keyed on `id`): the `sqlite` example gains `badges(code TEXT PK)` and the junction `owner_badges(owner_id → owners.owner_key, badge_code → badges.code)`, so `Owner.Badges` exercises the string branch (`Code: &comparator.ID{…}`) and `Badge.Owners` the integer branch (`OwnerKey: &comparator.Number[int64]{…}`); `tests/m2m_non_id_key_test.go` loads both directions over overlapping memberships. Fail-first on the example: generated with the CLI built from `HEAD`, `sqlgen generate` exits 1 at the chained gqlgen step, and `go vet ./models/...` reports `models/badge_gen.go:453:5: unknown field ID in struct literal of type OwnerFilter` and `models/owner_gen.go:483:5: unknown field ID in struct literal of type BadgeFilter`. Golden churn: the `sqlite` example only (new badge and owner_badge files, plus the owner, client, sorter, table-name, GraphQL and manifest files the new tables touch). Auto-review doc fix applied inline: the `TargetPKFieldName` comment in `cmd/sqlgen/gen/context.go` now says the loader filters the target fetch on the field. Gates: `make check`, `make update-golden`, `make update-golden-e2e`, `TestE2EGoldenFiles` and `make check-examples`, all green.
 
 ### FIX-355
 
