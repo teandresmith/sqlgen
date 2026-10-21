@@ -408,38 +408,48 @@ func (c *binaryKeyClient) loadRelationships(ctx context.Context, conn database.Q
 				binaryKeyIDs[idx] = b.ID
 			}
 
-			// Build FK-based filter, merged with consumer filter
-			filter := &BinaryKeyEventFilter{
-				BinaryKeyID: &comparator.Opaque[[]byte]{In: binaryKeyIDs},
-			}
-			if fo.Events.Filter != nil {
-				filter.And = append(filter.And, fo.Events.Filter)
-			}
-
-			// Load via related entity client
 			sorts := fo.Events.Sorts
 			if len(sorts) == 0 {
 				sorts = c.eventsDefaultSort
 			}
 
+			// Load via related entity client, 16383 parent keys per
+			// statement: half the dialect's bind-parameter limit, leaving the rest
+			// for the relationship's filters. Each parent's children come from one
+			// statement, so the sorts order every parent's slice.
+			//
 			// Self-referential relationships share the parent's entity type, so
 			// the loaded children must use a name distinct from the parent slice
 			// (binaryKeys) to avoid shadowing it and mis-mapping the results
 			// onto the children instead of the parents.
-			relatedEvents, err := c.binaryKeyEventClient.GetMany(ctx, &GetBinaryKeyEventsInput{
-				Filter: filter,
-				Sorts:  sorts,
-				Limit:  new(0),
-				// The mapping below keys every child on its FK, so the fetch
-				// declares that column rather than mutating the caller's
-				// FieldOptions — a narrowed selection that omits it would
-				// otherwise map every child onto the zero value.
-				requiredColumns: []string{"binary_key_id"},
-			}, func(co *CallOptions[BinaryKeyEventFieldOptions]) {
-				co.FieldOptions = fo.Events.FieldOptions
-			})
-			if err != nil {
-				return fmt.Errorf("load binary_key binary_key_events: %w", err)
+			var relatedEvents []*BinaryKeyEvent
+			for start := 0; start < len(binaryKeyIDs); start += 16383 {
+				chunk := binaryKeyIDs[start:min(start+16383, len(binaryKeyIDs))]
+
+				// Build FK-based filter, merged with consumer filter
+				filter := &BinaryKeyEventFilter{
+					BinaryKeyID: &comparator.Opaque[[]byte]{In: chunk},
+				}
+				if fo.Events.Filter != nil {
+					filter.And = append(filter.And, fo.Events.Filter)
+				}
+
+				loaded, err := c.binaryKeyEventClient.GetMany(ctx, &GetBinaryKeyEventsInput{
+					Filter: filter,
+					Sorts:  sorts,
+					Limit:  new(0),
+					// The mapping below keys every child on its FK, so the fetch
+					// declares that column rather than mutating the caller's
+					// FieldOptions — a narrowed selection that omits it would
+					// otherwise map every child onto the zero value.
+					requiredColumns: []string{"binary_key_id"},
+				}, func(co *CallOptions[BinaryKeyEventFieldOptions]) {
+					co.FieldOptions = fo.Events.FieldOptions
+				})
+				if err != nil {
+					return fmt.Errorf("load binary_key binary_key_events: %w", err)
+				}
+				relatedEvents = append(relatedEvents, loaded...)
 			}
 
 			// Map results back to parent entities by FK. The FK column on the
@@ -466,38 +476,48 @@ func (c *binaryKeyClient) loadRelationships(ctx context.Context, conn database.Q
 				binaryKeyIDs[idx] = b.ID
 			}
 
-			// Build FK-based filter, merged with consumer filter
-			filter := &BinaryKeyEventFilter{
-				BinaryKeyID: &comparator.Opaque[[]byte]{In: binaryKeyIDs},
-			}
-			if fo.BinaryKeyEvents.Filter != nil {
-				filter.And = append(filter.And, fo.BinaryKeyEvents.Filter)
-			}
-
-			// Load via related entity client
 			sorts := fo.BinaryKeyEvents.Sorts
 			if len(sorts) == 0 {
 				sorts = c.binaryKeyEventsDefaultSort
 			}
 
+			// Load via related entity client, 16383 parent keys per
+			// statement: half the dialect's bind-parameter limit, leaving the rest
+			// for the relationship's filters. Each parent's children come from one
+			// statement, so the sorts order every parent's slice.
+			//
 			// Self-referential relationships share the parent's entity type, so
 			// the loaded children must use a name distinct from the parent slice
 			// (binaryKeys) to avoid shadowing it and mis-mapping the results
 			// onto the children instead of the parents.
-			relatedBinaryKeyEvents, err := c.binaryKeyEventClient.GetMany(ctx, &GetBinaryKeyEventsInput{
-				Filter: filter,
-				Sorts:  sorts,
-				Limit:  new(0),
-				// The mapping below keys every child on its FK, so the fetch
-				// declares that column rather than mutating the caller's
-				// FieldOptions — a narrowed selection that omits it would
-				// otherwise map every child onto the zero value.
-				requiredColumns: []string{"binary_key_id"},
-			}, func(co *CallOptions[BinaryKeyEventFieldOptions]) {
-				co.FieldOptions = fo.BinaryKeyEvents.FieldOptions
-			})
-			if err != nil {
-				return fmt.Errorf("load binary_key binary_key_events: %w", err)
+			var relatedBinaryKeyEvents []*BinaryKeyEvent
+			for start := 0; start < len(binaryKeyIDs); start += 16383 {
+				chunk := binaryKeyIDs[start:min(start+16383, len(binaryKeyIDs))]
+
+				// Build FK-based filter, merged with consumer filter
+				filter := &BinaryKeyEventFilter{
+					BinaryKeyID: &comparator.Opaque[[]byte]{In: chunk},
+				}
+				if fo.BinaryKeyEvents.Filter != nil {
+					filter.And = append(filter.And, fo.BinaryKeyEvents.Filter)
+				}
+
+				loaded, err := c.binaryKeyEventClient.GetMany(ctx, &GetBinaryKeyEventsInput{
+					Filter: filter,
+					Sorts:  sorts,
+					Limit:  new(0),
+					// The mapping below keys every child on its FK, so the fetch
+					// declares that column rather than mutating the caller's
+					// FieldOptions — a narrowed selection that omits it would
+					// otherwise map every child onto the zero value.
+					requiredColumns: []string{"binary_key_id"},
+				}, func(co *CallOptions[BinaryKeyEventFieldOptions]) {
+					co.FieldOptions = fo.BinaryKeyEvents.FieldOptions
+				})
+				if err != nil {
+					return fmt.Errorf("load binary_key binary_key_events: %w", err)
+				}
+				relatedBinaryKeyEvents = append(relatedBinaryKeyEvents, loaded...)
 			}
 
 			// Map results back to parent entities by FK. The FK column on the
@@ -524,105 +544,131 @@ func (c *binaryKeyClient) loadRelationships(ctx context.Context, conn database.Q
 				binaryKeyIDs[idx] = b.ID
 			}
 
-			// Step 1: Query junction table to get mapping
-			junctionQuery, junctionArgs := sql.BuildSelect(c.dialect, sql.Table{Schema: "", Name: "binary_key_badges"}, sql.SelectOptions{
-				Columns:    []string{"binary_key_id", "badge_code"},
-				Conditions: []sql.Condition{sql.Where(c.dialect.QuoteIdentifier("binary_key_id")).In(toAnySlice(binaryKeyIDs)...)},
-			})
-
-			junctionRows, err := conn.Query(ctx, junctionQuery, junctionArgs...)
-			if err != nil {
-				return fmt.Errorf("load binary_key badges junction: %w", err)
-			}
-			defer junctionRows.Close()
-
-			// Discover column positions from result (BuildSelect sorts columns alphabetically)
-			junctionCols, err := junctionRows.Columns()
-			if err != nil {
-				return fmt.Errorf("load binary_key badges junction columns: %w", err)
-			}
-			localIdx, refIdx := 0, 1
-			for i, col := range junctionCols {
-				switch col {
-				case "binary_key_id":
-					localIdx = i
-				case "badge_code":
-					refIdx = i
-				}
-			}
-
-			// Build mapping and collect all target keys. Each junction column
-			// scans into its own Go type, so both sides of the maps stringify
-			// keys the same way.
-			parentToTargetIDs := make(map[string][]string)
-			var allTargetIDs []string
-			for junctionRows.Next() {
-				var localKey []byte
-				var refKey string
-				ptrs := make([]any, len(junctionCols))
-				ptrs[localIdx], ptrs[refIdx] = &localKey, &refKey
-				if err := junctionRows.Scan(ptrs...); err != nil {
-					return fmt.Errorf("scan binary_key badges junction: %w", err)
-				}
-				parentID, targetID := fmt.Sprint(localKey), refKey
-				parentToTargetIDs[parentID] = append(parentToTargetIDs[parentID], targetID)
-				allTargetIDs = append(allTargetIDs, targetID)
-			}
-			if err := junctionRows.Err(); err != nil {
-				return fmt.Errorf("iterate binary_key badges junction: %w", err)
-			}
-
-			if len(parentToTargetIDs) == 0 {
-				return nil
-			}
-
-			// Step 2: Fetch the actual entities
-			filter := &BadgeFilter{
-				Code: &comparator.ID{In: allTargetIDs},
-			}
-			if fo.Badges.Filter != nil {
-				filter.And = append(filter.And, fo.Badges.Filter)
-			}
-
 			sorts := fo.Badges.Sorts
 			if len(sorts) == 0 {
 				sorts = c.badgesDefaultSort
 			}
 
-			// Self-referential relationships share the parent's entity type, so
-			// the loaded targets must use a name distinct from the parent slice
-			// (binaryKeys) to avoid shadowing it and mis-mapping the results
-			// onto the targets instead of the parents.
-			relatedBadges, err := c.badgeClient.GetMany(ctx, &GetBadgesInput{
-				Filter: filter,
-				Sorts:  sorts,
-				Limit:  new(0),
-				// Step 3 keys every loaded target on its own PK, so the fetch
-				// declares that column rather than mutating the caller's
-				// FieldOptions — a narrowed selection that omits it would
-				// otherwise map every target onto the zero value.
-				requiredColumns: []string{"code"},
-			}, func(co *CallOptions[BadgeFieldOptions]) {
-				co.FieldOptions = fo.Badges.FieldOptions
-			})
-			if err != nil {
-				return fmt.Errorf("load binary_key badges: %w", err)
-			}
+			// The three steps run once per chunk of 16383 parent keys:
+			// half the dialect's bind-parameter limit, leaving the rest for the
+			// relationship's filters.
+			for start := 0; start < len(binaryKeyIDs); start += 16383 {
+				chunk := binaryKeyIDs[start:min(start+16383, len(binaryKeyIDs))]
 
-			// Step 3: Map back to parent entities via junction mapping. The
-			// targets are walked in the order the fetch returned them, so the
-			// relationship's Sorts — the caller's, or the static `sort:` —
-			// order each parent's slice. Walking the
-			// junction rows instead would keep junction order and drop the sort.
-			parentsByTarget := make(map[string][]int, len(relatedBadges))
-			for i := range binaryKeys {
-				for _, tID := range parentToTargetIDs[fmt.Sprint(binaryKeys[i].ID)] {
-					parentsByTarget[tID] = append(parentsByTarget[tID], i)
+				// Step 1: Query junction table to get mapping. Each junction
+				// column scans into its own Go type, so both sides of the maps
+				// stringify keys the same way.
+				parentToTargetIDs := make(map[string][]string)
+				if err := func() error {
+					junctionQuery, junctionArgs := sql.BuildSelect(c.dialect, sql.Table{Schema: "", Name: "binary_key_badges"}, sql.SelectOptions{
+						Columns:    []string{"binary_key_id", "badge_code"},
+						Conditions: []sql.Condition{sql.Where(c.dialect.QuoteIdentifier("binary_key_id")).In(toAnySlice(chunk)...)},
+					})
+
+					junctionRows, err := conn.Query(ctx, junctionQuery, junctionArgs...)
+					if err != nil {
+						return fmt.Errorf("load binary_key badges junction: %w", err)
+					}
+					defer junctionRows.Close()
+
+					// Discover column positions from result (BuildSelect sorts columns alphabetically)
+					junctionCols, err := junctionRows.Columns()
+					if err != nil {
+						return fmt.Errorf("load binary_key badges junction columns: %w", err)
+					}
+					localIdx, refIdx := 0, 1
+					for i, col := range junctionCols {
+						switch col {
+						case "binary_key_id":
+							localIdx = i
+						case "badge_code":
+							refIdx = i
+						}
+					}
+
+					for junctionRows.Next() {
+						var localKey []byte
+						var refKey string
+						ptrs := make([]any, len(junctionCols))
+						ptrs[localIdx], ptrs[refIdx] = &localKey, &refKey
+						if err := junctionRows.Scan(ptrs...); err != nil {
+							return fmt.Errorf("scan binary_key badges junction: %w", err)
+						}
+						parentID, targetID := fmt.Sprint(localKey), refKey
+						parentToTargetIDs[parentID] = append(parentToTargetIDs[parentID], targetID)
+					}
+					if err := junctionRows.Err(); err != nil {
+						return fmt.Errorf("iterate binary_key badges junction: %w", err)
+					}
+					return nil
+				}(); err != nil {
+					return err
 				}
-			}
-			for _, t := range relatedBadges {
-				for _, i := range parentsByTarget[t.Code] {
-					binaryKeys[i].Badges = append(binaryKeys[i].Badges, t)
+
+				if len(parentToTargetIDs) == 0 {
+					continue
+				}
+
+				// Step 2: Fetch the actual entities. The target key is matched
+				// against this chunk's junction rows, not against a list of target
+				// keys, so the statement binds the chunk's parent keys however many
+				// targets they share, and each parent's targets come from one
+				// statement.
+				junctionWhere, junctionWhereArgs := sql.SubqueryWhere(c.dialect, "j", []sql.Condition{
+					sql.Where(c.dialect.QuoteIdentifier("binary_key_id")).In(toAnySlice(chunk)...),
+				})
+				conditions := []sql.Condition{
+					sql.Where(c.dialect.QuoteIdentifier("code")).In(sql.Subquery{
+						SQL: "SELECT j." + c.dialect.QuoteIdentifier("badge_code") +
+							" FROM " + c.dialect.FormatTable(sql.Table{Schema: "", Name: "binary_key_badges"}) + " j WHERE " + junctionWhere,
+						Args: junctionWhereArgs,
+					}),
+				}
+
+				// The consumer filter is ANDed in, as on the O2M fetch, so a
+				// soft-delete comparator in it narrows the target's default
+				// rather than replacing it.
+				filter := &BadgeFilter{}
+				if fo.Badges.Filter != nil {
+					filter.And = append(filter.And, fo.Badges.Filter)
+				}
+
+				// Self-referential relationships share the parent's entity type, so
+				// the loaded targets must use a name distinct from the parent slice
+				// (binaryKeys) to avoid shadowing it and mis-mapping the results
+				// onto the targets instead of the parents.
+				relatedBadges, err := c.badgeClient.GetMany(ctx, &GetBadgesInput{
+					Filter:     filter,
+					Sorts:      sorts,
+					Limit:      new(0),
+					conditions: conditions,
+					// Step 3 keys every loaded target on its own PK, so the fetch
+					// declares that column rather than mutating the caller's
+					// FieldOptions — a narrowed selection that omits it would
+					// otherwise map every target onto the zero value.
+					requiredColumns: []string{"code"},
+				}, func(co *CallOptions[BadgeFieldOptions]) {
+					co.FieldOptions = fo.Badges.FieldOptions
+				})
+				if err != nil {
+					return fmt.Errorf("load binary_key badges: %w", err)
+				}
+
+				// Step 3: Map back to this chunk's parents via junction mapping.
+				// The targets are walked in the order the fetch returned them, so
+				// the relationship's Sorts — the caller's, or the static `sort:` —
+				// order each parent's slice. Walking the
+				// junction rows instead would keep junction order and drop the sort.
+				parentsByTarget := make(map[string][]int, len(relatedBadges))
+				for i := start; i < start+len(chunk); i++ {
+					for _, tID := range parentToTargetIDs[fmt.Sprint(binaryKeys[i].ID)] {
+						parentsByTarget[tID] = append(parentsByTarget[tID], i)
+					}
+				}
+				for _, t := range relatedBadges {
+					for _, i := range parentsByTarget[t.Code] {
+						binaryKeys[i].Badges = append(binaryKeys[i].Badges, t)
+					}
 				}
 			}
 			return nil

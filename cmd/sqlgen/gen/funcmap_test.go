@@ -32,9 +32,9 @@ func TestFuncMap_returnsPopulatedMap(t *testing.T) {
 		"softDeleteFilterOverride",
 		"softDeleteSubqueryPredicate", "softDeleteSubqueryArg",
 		// PK Filtering
-		"pkFilterExpr", "pkFilterInExpr", "pkFilterInExprStr", "pkIsStringType",
+		"pkFilterExpr", "pkFilterInExpr", "pkIsStringType",
 		// Relationships
-		"fkStringExpr", "fkToString", "fkToStringByGoType", "fkNullGuard", "fkLoadGuard", "fkLoadKey", "fkLoadValue", "isO2O", "isM2M", "reverseO2OTargets",
+		"fkStringExpr", "fkToString", "fkToStringByGoType", "fkNullGuard", "fkLoadGuard", "fkLoadKey", "isO2O", "isM2M", "reverseO2OTargets",
 		// Inputs
 		"createInputFieldType", "updateInputFieldType",
 		// Tags
@@ -42,7 +42,7 @@ func TestFuncMap_returnsPopulatedMap(t *testing.T) {
 		// Imports
 		"uniqueImports",
 		// Dialect
-		"placeholder", "quoteIdentifier", "supportsReturning",
+		"placeholder", "quoteIdentifier", "supportsReturning", "loadChunkSize",
 		// Cache / tenancy predicates
 		"anyTenanted",
 		// LockMode guard (PRD §9.6a)
@@ -189,6 +189,30 @@ func TestFuncSupportsReturning(t *testing.T) {
 			got := supportsReturning()
 			if got != tt.want {
 				t.Errorf("supportsReturning() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestFuncLoadChunkSize(t *testing.T) {
+	tests := []struct {
+		name       string
+		dialect    sql.Dialect
+		keyColumns int
+		want       int
+	}{
+		{"postgres single key", sql.NewPostgresDialect(), 1, 32767},
+		{"postgres pair", sql.NewPostgresDialect(), 2, 16383},
+		{"mysql single key", sql.NewMySQLDialect(), 1, 32767},
+		{"sqlite single key", sql.NewSQLiteDialect(), 1, 16383},
+		{"sqlite triple", sql.NewSQLiteDialect(), 3, 5461},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			loadChunkSize := gen.FuncMap(tt.dialect)["loadChunkSize"].(func(int) int)
+			if got := loadChunkSize(tt.keyColumns); got != tt.want {
+				t.Errorf("loadChunkSize(%d) = %d, want %d", tt.keyColumns, got, tt.want)
 			}
 		})
 	}

@@ -164,7 +164,7 @@ func TestDiscriminator_M2MLoaderBindsTheValue(t *testing.T) {
 	tc := discriminatorTables(t, config.DialectPostgres, rel)
 	got := executeGetTemplate(t, tc)
 
-	want := `conditions: []sql.Condition{sql.Raw(c.dialect.QuoteIdentifier("entity_type")+" = $", "asset.primary")}`
+	want := `sql.Raw(c.dialect.QuoteIdentifier("entity_type")+" = $", "asset.primary"),`
 	if !strings.Contains(got, want) {
 		t.Errorf("M2M loader does not bind the discriminator.\nwant substring: %s\ngot:\n%s", want, got)
 	}

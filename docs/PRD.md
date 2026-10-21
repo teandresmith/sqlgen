@@ -5015,7 +5015,10 @@ func (c *productClient) loadRelationships(ctx context.Context, conn database.Que
                 productIDs[i] = p.ID.String()
             }
 
-            // Build FK-based filter, merged with consumer filter
+            // Build FK-based filter, merged with consumer filter. This is the
+            // PostgreSQL + pgx shape (one = ANY($1) statement); every other
+            // driver runs this fetch once per chunk of parent keys (§25.1), the
+            // way the M2M block below does.
             filter := &ReviewFilter{
                 ProductID: &comparator.ID{In: productIDs},
             }
@@ -5062,75 +5065,90 @@ func (c *productClient) loadRelationships(ctx context.Context, conn database.Que
                 productIDs[i] = p.ID.String()
             }
 
-            // Step 1: Query junction table to get (product_id → tag_id) mapping
-            //   SELECT "product_id", "tag_id" FROM "product_tags"
-            //   WHERE "product_id" IN ($1, $2, ...)
-            junctionQuery, junctionArgs := sql.BuildSelect(c.dialect, sql.Table{Schema: "public", Name: "product_tags"}, sql.SelectOptions{
-                Columns:    []string{"product_id", "tag_id"},
-                Conditions: []sql.Condition{sql.Where("product_id").In(toAnySlice(productIDs)...)},
-            })
-
-            junctionRows, err := conn.Query(ctx, junctionQuery, junctionArgs...)
-            if err != nil {
-                return fmt.Errorf("load product tags junction: %w", err)
-            }
-            defer junctionRows.Close()
-
-            // Build mapping: product_id → []tag_id, and collect all tag IDs
-            productToTagIDs := make(map[string][]string)
-            var allTagIDs []string
-            for junctionRows.Next() {
-                var productID, tagID string
-                if err := junctionRows.Scan(&productID, &tagID); err != nil {
-                    return fmt.Errorf("scan product tags junction: %w", err)
-                }
-                productToTagIDs[productID] = append(productToTagIDs[productID], tagID)
-                allTagIDs = append(allTagIDs, tagID)
-            }
-            if err := junctionRows.Err(); err != nil {
-                return fmt.Errorf("iterate product tags junction: %w", err)
-            }
-
-            if len(allTagIDs) == 0 {
-                return nil
-            }
-
-            // Step 2: Fetch the actual tag entities
-            filter := &TagFilter{
-                ID: &comparator.ID{In: allTagIDs},
-            }
-            if fo.Tags.Filter != nil {
-                filter.And = append(filter.And, fo.Tags.Filter)
-            }
-
             sorts := fo.Tags.Sorts
             if len(sorts) == 0 {
                 sorts = c.tagsDefaultSort // static relationship sort from config
             }
 
-            tags, err := c.tagClient.GetMany(ctx, &GetTagsInput{
-                Filter: filter,
-                Sorts:  sorts,
-                Limit:  new(0), // no limit
-            }, func(co *CallOptions[TagFieldOptions]) {
-                co.FieldOptions = fo.Tags.FieldOptions
-            })
-            if err != nil {
-                return fmt.Errorf("load product tags: %w", err)
-            }
+            // The three steps run once per chunk of 32767 parent keys: half the
+            // dialect's bind-parameter limit (§25.1).
+            for start := 0; start < len(productIDs); start += 32767 {
+                chunk := productIDs[start:min(start+32767, len(productIDs))]
 
-            // Step 3: Map tags back to parent products via junction mapping,
-            // walking tags in fetch order so Sorts (or the static sort) order
-            // each product's slice
-            parentsByTarget := make(map[string][]int, len(tags))
-            for i := range products {
-                for _, tagID := range productToTagIDs[products[i].ID.String()] {
-                    parentsByTarget[tagID] = append(parentsByTarget[tagID], i)
+                // Step 1: Query junction table to get (product_id → tag_id) mapping
+                //   SELECT "product_id", "tag_id" FROM "product_tags"
+                //   WHERE "product_id" IN ($1, $2, ...)
+                productToTagIDs := make(map[string][]string)
+                if err := func() error {
+                    junctionQuery, junctionArgs := sql.BuildSelect(c.dialect, sql.Table{Schema: "public", Name: "product_tags"}, sql.SelectOptions{
+                        Columns:    []string{"product_id", "tag_id"},
+                        Conditions: []sql.Condition{sql.Where(c.dialect.QuoteIdentifier("product_id")).In(toAnySlice(chunk)...)},
+                    })
+                    junctionRows, err := conn.Query(ctx, junctionQuery, junctionArgs...)
+                    if err != nil {
+                        return fmt.Errorf("load product tags junction: %w", err)
+                    }
+                    defer junctionRows.Close()
+                    for junctionRows.Next() {
+                        var productID, tagID string
+                        if err := junctionRows.Scan(&productID, &tagID); err != nil {
+                            return fmt.Errorf("scan product tags junction: %w", err)
+                        }
+                        productToTagIDs[productID] = append(productToTagIDs[productID], tagID)
+                    }
+                    if err := junctionRows.Err(); err != nil {
+                        return fmt.Errorf("iterate product tags junction: %w", err)
+                    }
+                    return nil
+                }(); err != nil {
+                    return err
                 }
-            }
-            for _, t := range tags {
-                for _, i := range parentsByTarget[t.ID.String()] {
-                    products[i].Tags = append(products[i].Tags, t)
+                if len(productToTagIDs) == 0 {
+                    continue
+                }
+
+                // Step 2: Fetch the actual tag entities, matching the tag PK
+                // against this chunk's junction rows rather than a list of tag IDs:
+                //   SELECT ... FROM "tags" WHERE "id" IN
+                //     (SELECT j."tag_id" FROM "product_tags" j WHERE j."product_id" IN ($1, $2, ...))
+                junctionWhere, junctionWhereArgs := sql.SubqueryWhere(c.dialect, "j", []sql.Condition{
+                    sql.Where(c.dialect.QuoteIdentifier("product_id")).In(toAnySlice(chunk)...),
+                })
+                filter := &TagFilter{}
+                if fo.Tags.Filter != nil {
+                    filter.And = append(filter.And, fo.Tags.Filter)
+                }
+                tags, err := c.tagClient.GetMany(ctx, &GetTagsInput{
+                    Filter: filter,
+                    Sorts:  sorts,
+                    Limit:  new(0), // no limit
+                    conditions: []sql.Condition{
+                        sql.Where(c.dialect.QuoteIdentifier("id")).In(sql.Subquery{
+                            SQL: "SELECT j." + c.dialect.QuoteIdentifier("tag_id") +
+                                " FROM " + c.dialect.FormatTable(sql.Table{Schema: "public", Name: "product_tags"}) + " j WHERE " + junctionWhere,
+                            Args: junctionWhereArgs,
+                        }),
+                    },
+                }, func(co *CallOptions[TagFieldOptions]) {
+                    co.FieldOptions = fo.Tags.FieldOptions
+                })
+                if err != nil {
+                    return fmt.Errorf("load product tags: %w", err)
+                }
+
+                // Step 3: Map tags back to this chunk's products via junction
+                // mapping, walking tags in fetch order so Sorts (or the static
+                // sort) order each product's slice
+                parentsByTarget := make(map[string][]int, len(tags))
+                for i := start; i < start+len(chunk); i++ {
+                    for _, tagID := range productToTagIDs[products[i].ID.String()] {
+                        parentsByTarget[tagID] = append(parentsByTarget[tagID], i)
+                    }
+                }
+                for _, t := range tags {
+                    for _, i := range parentsByTarget[t.ID.String()] {
+                        products[i].Tags = append(products[i].Tags, t)
+                    }
                 }
             }
             return nil
@@ -8623,13 +8641,13 @@ One-to-many and many-to-many relationships are loaded in **separate queries** us
    - **Apply the relationship's static `filter:` from config (if non-empty) as an `AND` condition — used for polymorphic discriminators (§13.7)**
    - Merge the consumer's `Filter` from the relationship FieldOptions (if provided) with AND
    - Apply `Sorts` from the relationship FieldOptions (if provided), or fall back to the static relationship sort from config
-   - Execute the query on the related table
+   - Execute the query on the related table, once per chunk of parent keys ([25.1](#251-query-count-guarantee)); on PostgreSQL with `output.driver: pgx` the `IN` binds every key as one array parameter and runs once
    - Map results back to parent entities
-3. For each M2M relationship in the FieldOptions (two queries — see §25.1):
+3. For each M2M relationship in the FieldOptions (two queries per chunk of parent keys — see §25.1), for each chunk:
    - Query the junction table with `IN` on the parent FK to resolve the parent→target id mapping
-   - Query the target table via the target client's `GetMany` with `IN` on the collected target ids (so soft-delete defaults, sort handling, and recursive relationship loading apply uniformly)
+   - Query the target table via the target client's `GetMany`, matching the target PK against the junction rows of the chunk's parents — `target_pk IN (SELECT j.ref_fk FROM junction j WHERE j.local_fk IN (...))` — rather than against a list of collected target ids, so the statement binds the chunk's parent keys however many targets they share, and soft-delete defaults, sort handling, and recursive relationship loading apply uniformly. The consumer's `Filter` from the relationship FieldOptions (if provided) is merged with AND
    - **The relationship's static `filter:` from config (if non-empty) is applied as an `AND` condition on the target query — used for polymorphic discriminators (§13.7)**
-   - Map target entities back to parent entities via the junction mapping, walking targets in the target query's order so `Sorts` (or the static sort) order each parent's slice
+   - Map target entities back to the chunk's parent entities via the junction mapping, walking targets in the target query's order so `Sorts` (or the static sort) order each parent's slice. Every parent's targets come from one target query, so the order holds at any parent or target count
 4. All O2M/M2M relationship loads run in parallel via `errgroup`, inside a transaction and out. Outside one, each load draws its own pooled connection and the fan-out is real. Inside one, they share the transaction's single connection and the `Tx`'s connection reservation serializes them ([18.5](#185-concurrent-safety)) — the statement count is identical either way, only the concurrency differs, and the loader needs no transaction-aware bound of its own.
 
 #### Combined Example
@@ -8640,11 +8658,11 @@ GetMany(products, FieldOptions{Company: O2O, Reviews: O2M, Tags: M2M})
     ├── 1 query: SELECT p.*, c.* FROM products p LEFT JOIN companies c ON ...  ← Parent + O2O
     ├── 1 query: SELECT * FROM reviews WHERE product_id = ANY(...)             ← O2M (parallel)
     ├── 1 query: SELECT product_id, tag_id FROM product_tags WHERE product_id IN (...)   ← M2M junction (parallel)
-    └── 1 query: SELECT * FROM tags WHERE id = ANY(...)                        ← M2M entities
+    └── 1 query: SELECT * FROM tags WHERE id IN (SELECT j.tag_id FROM product_tags j WHERE j.product_id IN (...))   ← M2M entities
     = 4 queries total (1 parent+O2O + 1 O2M + 2 for the M2M edge)
 ```
 
-The M2M edge is two queries — junction + entities — per §25.1. Compare to the no-JOIN approach which would be 5 queries (1 parent + 1 O2O + 1 O2M + 2 for M2M); the O2O savings compound with multiple O2O relationships and O2O chains.
+The M2M edge is two queries — junction + entities — per §25.1, for a parent set that fits one chunk of keys. Compare to the no-JOIN approach which would be 5 queries (1 parent + 1 O2O + 1 O2M + 2 for M2M); the O2O savings compound with multiple O2O relationships and O2O chains.
 
 #### Filtering Scope
 
@@ -8942,7 +8960,7 @@ The reverse direction — given a child entity, materialize its parent — is **
 |-----------|---------|
 | Two relationships on the same parent share the full dedup key (incl. byte-equal `filter:`) | Hard validation error — duplicate relationship. |
 | Two relationships on the same parent share the dedup-key prefix `(target, fk)` (or m2m equivalent) but have distinct `filter:` **or** distinct `discriminator:` values | Allowed — produces sub-categorized fields. Each relationship's `name:` field must be set so the Go field names on `<Table>FieldOptions` are distinct (already a §4.8 requirement). |
-| `filter:` is non-empty on an `m2m` relationship | Allowed — applies as an `AND` condition on the target-table query (after the junction resolves target IDs). |
+| `filter:` is non-empty on an `m2m` relationship | Allowed — applies as an `AND` condition on the target-table query (alongside the match against the junction rows). |
 | `filter:` contains a double-quoted token and the dialect is MySQL | Hard validation error — MySQL reads it as a string literal, not an identifier, so the predicate silently matches no rows (§13.7.1). A double quote inside a string literal or a backtick-quoted identifier is accepted. |
 
 Codegen-time validation of `filter:` contents (column existence, enum literal validity) is **not** performed — see §13.7.4.
@@ -11839,7 +11857,15 @@ There are no hard performance targets. This section documents the known tradeoff
 
 ### 25.1 Query Count Guarantee
 
-The number of database queries for any operation is **deterministic and known at call time**. O2O relationships are loaded via LEFT JOIN in the parent query (zero additional queries). O2M relationships produce one batched query each. M2M relationships produce **two** batched queries each — one against the junction table to resolve the parent→target id mapping, then one against the target table for the actual entities. The total is:
+The number of database queries for any operation is **deterministic and known at call time**. O2O relationships are loaded via LEFT JOIN in the parent query (zero additional queries). O2M relationships produce one batched query per chunk of parent keys. M2M relationships produce **two** batched queries per chunk — one against the junction table to resolve the parent→target id mapping, then one against the target table for the actual entities.
+
+**Chunking.** Each loader step binds the parent keys in chunks of `floor(L / 2 / N)` keys, where `N` is the number of key columns and `L` is the dialect's bind-parameter limit: 32766 on SQLite (`MAX_VARIABLE_NUMBER`), 65535 on MySQL and PostgreSQL. For a single-column key the chunk is 16383 on SQLite and 32767 on MySQL and PostgreSQL. The other half of the budget is left for the relationship's filter, tenancy, soft-delete and static `filter:` parameters, so no parent count makes a load exceed the limit. With `P` parents, `C = ceil(P / chunk)` (0 when there are no parents), and the total is:
+
+```
+total = 1 + Σ_O2M s + 2 · C · count(M2M relationships loaded)
+```
+
+where `s = 1` on PostgreSQL with `output.driver: pgx` and `s = C` on every other dialect and driver, PostgreSQL with `stdlib` included. On pgx the O2M FK filter binds every parent key as one array parameter (`= ANY($1)`, Appendix A), so one statement covers any parent count. On every driver the junction step takes `C` statements and the target fetch at most `C` (none for a chunk whose junction read returns no rows; the formula counts the upper bound): the junction step expands one parameter per key, and the target fetch matches the target key against the chunk's junction rows (`target_pk IN (SELECT j.ref_fk FROM junction j WHERE j.local_fk IN (chunk))`), so it binds the chunk's parent keys however many targets they share. Each parent's children and targets come from one statement, so the relationship's `Sorts` order every parent's slice at any size. When every parent set fits one chunk (`0 < P ≤ chunk`, `C = 1`), the total reduces to:
 
 ```
 total = 1 + count(O2M relationships loaded) + 2 * count(M2M relationships loaded)
@@ -11853,8 +11879,8 @@ GetMany(products, FieldOptions{Company: O2O, Reviews: O2M, Tags: M2M})
     ├── 1 query: SELECT p.*, c.* FROM products p LEFT JOIN companies c ON ...  ← Parent + O2O
     ├── 1 query: SELECT * FROM reviews WHERE product_id = ANY(...)             ← O2M
     ├── 1 query: SELECT product_id, tag_id FROM product_tags WHERE product_id IN (...)   ← M2M junction
-    └── 1 query: SELECT * FROM tags WHERE id = ANY(...)                        ← M2M entities
-    = 4 queries total
+    └── 1 query: SELECT * FROM tags WHERE id IN (SELECT j.tag_id FROM product_tags j WHERE j.product_id IN (...))   ← M2M entities
+    = 4 queries total (one chunk of parents)
 ```
 
 A deeper O2O chain adds JOINs, not queries:
@@ -11872,7 +11898,7 @@ GetMany(products, FieldOptions{Company: {Country: {Region: {}}}})
 
 **Why two queries for M2M.** The junction-then-entities split lets per-table generated `GetMany` (with its complete FieldOptions, soft-delete defaults, sort handling, and recursive relationship loading) own target-entity loading uniformly across every relationship kind — a single JOIN that bypassed the target client would duplicate that logic per M2M edge and lose the nested-loading invariant. The cost is one extra round-trip per M2M relationship versus a single JOIN; the benefit is one composable loader chain.
 
-There are no hidden queries. No N+1 problem — O2O uses JOINs, O2M uses a batched `IN` clause, M2M uses two batched `IN` clauses (junction + entities). The consumer controls depth and breadth via `FieldOptions` nesting.
+There are no hidden queries. No N+1 problem — O2O uses JOINs, O2M uses a batched `IN` clause per chunk of parent keys, M2M uses two per chunk (junction, then entities matched through the junction). The count follows the number of parents, never the number of children or targets. The consumer controls depth and breadth via `FieldOptions` nesting.
 
 **The count is driven by what is selected, not by how it is spelled.** On the GraphQL surface the formula is applied to the entity read the request reaches, and a selection that names no column still reaches one when it asks for the row ([26.5.2](#2652-field-selection-translation--the-central-mechanism), "Row identity"). So:
 
@@ -12560,7 +12586,7 @@ models:
 
 ### 26.5 GraphQL Resolver Generation
 
-Generated resolvers are **concrete implementations** of the gqlgen-generated resolver interfaces. They translate inputs → unified-client call → outputs, with no business logic. The generated resolvers translate GraphQL field selections into the core client's `FieldOptions`, so relationship loading uses the client's batched `GetMany` strategy (1 + count(O2M selected) + 2 \* count(M2M selected) queries per request, regardless of result-set size — see [Section 25.1](#251-query-count-guarantee)).
+Generated resolvers are **concrete implementations** of the gqlgen-generated resolver interfaces. They translate inputs → unified-client call → outputs, with no business logic. The generated resolvers translate GraphQL field selections into the core client's `FieldOptions`, so relationship loading uses the client's batched `GetMany` strategy (1 + count(O2M selected) + 2 \* count(M2M selected) queries per request while each parent set fits one chunk of keys, and one more per chunked step for each extra chunk past that — see [Section 25.1](#251-query-count-guarantee)).
 
 #### 26.5.1 Exposed Resolver Surface
 
@@ -13090,7 +13116,7 @@ A dataloader batches per-item fetches across sibling resolvers in the same tick.
 | `createProduct(input) { reviews { count } }` | `Create` chains `Get` internally with FieldOptions | No |
 | Custom resolver doing per-item DB call | Consumer-written code outside sqlgen | **Yes (consumer's choice)** |
 
-**Documented contract:** "sqlgen-generated resolvers issue `1 + count(O2M selected) + 2 * count(M2M selected)` queries per request, regardless of result set size." Same as §25.1.
+**Documented contract:** "sqlgen-generated resolvers issue `1 + count(O2M selected) + 2 * count(M2M selected)` queries per request while each relationship's parent set fits one chunk of keys; a larger parent set adds one query per extra chunk to each chunked step." Same as §25.1, which gives the chunk sizes and the full formula. The count never depends on the number of children.
 
 If the recursive walker has a bug and a relationship goes un-prefetched, the child resolver returns nil — it does **not** lazy-load. This fails fast and is caught by the per-table walker test (§26.5.2).
 

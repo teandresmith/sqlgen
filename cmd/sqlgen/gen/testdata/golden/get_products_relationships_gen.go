@@ -265,6 +265,21 @@ func (c *productClient) loadRelationships(ctx context.Context, conn database.Que
 				productIDs[idx] = p.ID.String()
 			}
 
+			sorts := fo.Reviews.Sorts
+			if len(sorts) == 0 {
+				sorts = c.reviewsDefaultSort
+			}
+
+			// Load via related entity client in one statement: with pgx the FK
+			// filter binds every parent key as one array parameter (= ANY($1)),
+			// so no parent count reaches the bind-parameter limit, and the sorts
+			// order every parent's slice.
+			//
+			// Self-referential relationships share the parent's entity type, so
+			// the loaded children must use a name distinct from the parent slice
+			// (products) to avoid shadowing it and mis-mapping the results
+			// onto the children instead of the parents.
+
 			// Build FK-based filter, merged with consumer filter
 			filter := &ReviewFilter{
 				ProductID: &comparator.ID{In: productIDs},
@@ -273,16 +288,6 @@ func (c *productClient) loadRelationships(ctx context.Context, conn database.Que
 				filter.And = append(filter.And, fo.Reviews.Filter)
 			}
 
-			// Load via related entity client
-			sorts := fo.Reviews.Sorts
-			if len(sorts) == 0 {
-				sorts = c.reviewsDefaultSort
-			}
-
-			// Self-referential relationships share the parent's entity type, so
-			// the loaded children must use a name distinct from the parent slice
-			// (products) to avoid shadowing it and mis-mapping the results
-			// onto the children instead of the parents.
 			relatedReviews, err := c.reviewClient.GetMany(ctx, &GetReviewsInput{
 				Filter: filter,
 				Sorts:  sorts,
@@ -323,105 +328,131 @@ func (c *productClient) loadRelationships(ctx context.Context, conn database.Que
 				productIDs[idx] = p.ID.String()
 			}
 
-			// Step 1: Query junction table to get mapping
-			junctionQuery, junctionArgs := sql.BuildSelect(c.dialect, sql.Table{Schema: "public", Name: "product_tags"}, sql.SelectOptions{
-				Columns:    []string{"product_id", "tag_id"},
-				Conditions: []sql.Condition{sql.Where(c.dialect.QuoteIdentifier("product_id")).In(toAnySlice(productIDs)...)},
-			})
-
-			junctionRows, err := conn.Query(ctx, junctionQuery, junctionArgs...)
-			if err != nil {
-				return fmt.Errorf("load product tags junction: %w", err)
-			}
-			defer junctionRows.Close()
-
-			// Discover column positions from result (BuildSelect sorts columns alphabetically)
-			junctionCols, err := junctionRows.Columns()
-			if err != nil {
-				return fmt.Errorf("load product tags junction columns: %w", err)
-			}
-			localIdx, refIdx := 0, 1
-			for i, col := range junctionCols {
-				switch col {
-				case "product_id":
-					localIdx = i
-				case "tag_id":
-					refIdx = i
-				}
-			}
-
-			// Build mapping and collect all target keys. Each junction column
-			// scans into its own Go type, so both sides of the maps stringify
-			// keys the same way.
-			parentToTargetIDs := make(map[string][]string)
-			var allTargetIDs []string
-			for junctionRows.Next() {
-				var localKey uuid.UUID
-				var refKey uuid.UUID
-				ptrs := make([]any, len(junctionCols))
-				ptrs[localIdx], ptrs[refIdx] = &localKey, &refKey
-				if err := junctionRows.Scan(ptrs...); err != nil {
-					return fmt.Errorf("scan product tags junction: %w", err)
-				}
-				parentID, targetID := localKey.String(), refKey.String()
-				parentToTargetIDs[parentID] = append(parentToTargetIDs[parentID], targetID)
-				allTargetIDs = append(allTargetIDs, targetID)
-			}
-			if err := junctionRows.Err(); err != nil {
-				return fmt.Errorf("iterate product tags junction: %w", err)
-			}
-
-			if len(parentToTargetIDs) == 0 {
-				return nil
-			}
-
-			// Step 2: Fetch the actual entities
-			filter := &TagFilter{
-				ID: &comparator.ID{In: allTargetIDs},
-			}
-			if fo.Tags.Filter != nil {
-				filter.And = append(filter.And, fo.Tags.Filter)
-			}
-
 			sorts := fo.Tags.Sorts
 			if len(sorts) == 0 {
 				sorts = c.tagsDefaultSort
 			}
 
-			// Self-referential relationships share the parent's entity type, so
-			// the loaded targets must use a name distinct from the parent slice
-			// (products) to avoid shadowing it and mis-mapping the results
-			// onto the targets instead of the parents.
-			relatedTags, err := c.tagClient.GetMany(ctx, &GetTagsInput{
-				Filter: filter,
-				Sorts:  sorts,
-				Limit:  new(0),
-				// Step 3 keys every loaded target on its own PK, so the fetch
-				// declares that column rather than mutating the caller's
-				// FieldOptions — a narrowed selection that omits it would
-				// otherwise map every target onto the zero value.
-				requiredColumns: []string{"id"},
-			}, func(co *CallOptions[TagFieldOptions]) {
-				co.FieldOptions = fo.Tags.FieldOptions
-			})
-			if err != nil {
-				return fmt.Errorf("load product tags: %w", err)
-			}
+			// The three steps run once per chunk of 32767 parent keys:
+			// half the dialect's bind-parameter limit, leaving the rest for the
+			// relationship's filters.
+			for start := 0; start < len(productIDs); start += 32767 {
+				chunk := productIDs[start:min(start+32767, len(productIDs))]
 
-			// Step 3: Map back to parent entities via junction mapping. The
-			// targets are walked in the order the fetch returned them, so the
-			// relationship's Sorts — the caller's, or the static `sort:` —
-			// order each parent's slice. Walking the
-			// junction rows instead would keep junction order and drop the sort.
-			parentsByTarget := make(map[string][]int, len(relatedTags))
-			for i := range products {
-				for _, tID := range parentToTargetIDs[products[i].ID.String()] {
-					parentsByTarget[tID] = append(parentsByTarget[tID], i)
+				// Step 1: Query junction table to get mapping. Each junction
+				// column scans into its own Go type, so both sides of the maps
+				// stringify keys the same way.
+				parentToTargetIDs := make(map[string][]string)
+				if err := func() error {
+					junctionQuery, junctionArgs := sql.BuildSelect(c.dialect, sql.Table{Schema: "public", Name: "product_tags"}, sql.SelectOptions{
+						Columns:    []string{"product_id", "tag_id"},
+						Conditions: []sql.Condition{sql.Where(c.dialect.QuoteIdentifier("product_id")).In(toAnySlice(chunk)...)},
+					})
+
+					junctionRows, err := conn.Query(ctx, junctionQuery, junctionArgs...)
+					if err != nil {
+						return fmt.Errorf("load product tags junction: %w", err)
+					}
+					defer junctionRows.Close()
+
+					// Discover column positions from result (BuildSelect sorts columns alphabetically)
+					junctionCols, err := junctionRows.Columns()
+					if err != nil {
+						return fmt.Errorf("load product tags junction columns: %w", err)
+					}
+					localIdx, refIdx := 0, 1
+					for i, col := range junctionCols {
+						switch col {
+						case "product_id":
+							localIdx = i
+						case "tag_id":
+							refIdx = i
+						}
+					}
+
+					for junctionRows.Next() {
+						var localKey uuid.UUID
+						var refKey uuid.UUID
+						ptrs := make([]any, len(junctionCols))
+						ptrs[localIdx], ptrs[refIdx] = &localKey, &refKey
+						if err := junctionRows.Scan(ptrs...); err != nil {
+							return fmt.Errorf("scan product tags junction: %w", err)
+						}
+						parentID, targetID := localKey.String(), refKey.String()
+						parentToTargetIDs[parentID] = append(parentToTargetIDs[parentID], targetID)
+					}
+					if err := junctionRows.Err(); err != nil {
+						return fmt.Errorf("iterate product tags junction: %w", err)
+					}
+					return nil
+				}(); err != nil {
+					return err
 				}
-			}
-			for _, t := range relatedTags {
-				for _, i := range parentsByTarget[t.ID.String()] {
-					products[i].Tags = append(products[i].Tags, t)
+
+				if len(parentToTargetIDs) == 0 {
+					continue
+				}
+
+				// Step 2: Fetch the actual entities. The target key is matched
+				// against this chunk's junction rows, not against a list of target
+				// keys, so the statement binds the chunk's parent keys however many
+				// targets they share, and each parent's targets come from one
+				// statement.
+				junctionWhere, junctionWhereArgs := sql.SubqueryWhere(c.dialect, "j", []sql.Condition{
+					sql.Where(c.dialect.QuoteIdentifier("product_id")).In(toAnySlice(chunk)...),
+				})
+				conditions := []sql.Condition{
+					sql.Where(c.dialect.QuoteIdentifier("id")).In(sql.Subquery{
+						SQL: "SELECT j." + c.dialect.QuoteIdentifier("tag_id") +
+							" FROM " + c.dialect.FormatTable(sql.Table{Schema: "public", Name: "product_tags"}) + " j WHERE " + junctionWhere,
+						Args: junctionWhereArgs,
+					}),
+				}
+
+				// The consumer filter is ANDed in, as on the O2M fetch, so a
+				// soft-delete comparator in it narrows the target's default
+				// rather than replacing it.
+				filter := &TagFilter{}
+				if fo.Tags.Filter != nil {
+					filter.And = append(filter.And, fo.Tags.Filter)
+				}
+
+				// Self-referential relationships share the parent's entity type, so
+				// the loaded targets must use a name distinct from the parent slice
+				// (products) to avoid shadowing it and mis-mapping the results
+				// onto the targets instead of the parents.
+				relatedTags, err := c.tagClient.GetMany(ctx, &GetTagsInput{
+					Filter:     filter,
+					Sorts:      sorts,
+					Limit:      new(0),
+					conditions: conditions,
+					// Step 3 keys every loaded target on its own PK, so the fetch
+					// declares that column rather than mutating the caller's
+					// FieldOptions — a narrowed selection that omits it would
+					// otherwise map every target onto the zero value.
+					requiredColumns: []string{"id"},
+				}, func(co *CallOptions[TagFieldOptions]) {
+					co.FieldOptions = fo.Tags.FieldOptions
+				})
+				if err != nil {
+					return fmt.Errorf("load product tags: %w", err)
+				}
+
+				// Step 3: Map back to this chunk's parents via junction mapping.
+				// The targets are walked in the order the fetch returned them, so
+				// the relationship's Sorts — the caller's, or the static `sort:` —
+				// order each parent's slice. Walking the
+				// junction rows instead would keep junction order and drop the sort.
+				parentsByTarget := make(map[string][]int, len(relatedTags))
+				for i := start; i < start+len(chunk); i++ {
+					for _, tID := range parentToTargetIDs[products[i].ID.String()] {
+						parentsByTarget[tID] = append(parentsByTarget[tID], i)
+					}
+				}
+				for _, t := range relatedTags {
+					for _, i := range parentsByTarget[t.ID.String()] {
+						products[i].Tags = append(products[i].Tags, t)
+					}
 				}
 			}
 			return nil

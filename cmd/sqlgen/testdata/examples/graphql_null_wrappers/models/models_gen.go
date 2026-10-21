@@ -494,6 +494,21 @@ func (c *accountClient) loadRelationships(ctx context.Context, conn database.Que
 				accountIDs[idx] = a.ID
 			}
 
+			sorts := fo.Accounts.Sorts
+			if len(sorts) == 0 {
+				sorts = c.accountsDefaultSort
+			}
+
+			// Load via related entity client in one statement: with pgx the FK
+			// filter binds every parent key as one array parameter (= ANY($1)),
+			// so no parent count reaches the bind-parameter limit, and the sorts
+			// order every parent's slice.
+			//
+			// Self-referential relationships share the parent's entity type, so
+			// the loaded children must use a name distinct from the parent slice
+			// (accounts) to avoid shadowing it and mis-mapping the results
+			// onto the children instead of the parents.
+
 			// Build FK-based filter, merged with consumer filter
 			filter := &AccountFilter{
 				ParentID: &comparator.NullableNumber[int64]{Number: comparator.Number[int64]{In: accountIDs}},
@@ -502,16 +517,6 @@ func (c *accountClient) loadRelationships(ctx context.Context, conn database.Que
 				filter.And = append(filter.And, fo.Accounts.Filter)
 			}
 
-			// Load via related entity client
-			sorts := fo.Accounts.Sorts
-			if len(sorts) == 0 {
-				sorts = c.accountsDefaultSort
-			}
-
-			// Self-referential relationships share the parent's entity type, so
-			// the loaded children must use a name distinct from the parent slice
-			// (accounts) to avoid shadowing it and mis-mapping the results
-			// onto the children instead of the parents.
 			relatedAccounts, err := c.accountClient.GetMany(ctx, &GetAccountsInput{
 				Filter: filter,
 				Sorts:  sorts,
@@ -555,6 +560,21 @@ func (c *accountClient) loadRelationships(ctx context.Context, conn database.Que
 				accountIDs[idx] = a.ID
 			}
 
+			sorts := fo.Entries.Sorts
+			if len(sorts) == 0 {
+				sorts = c.entriesDefaultSort
+			}
+
+			// Load via related entity client in one statement: with pgx the FK
+			// filter binds every parent key as one array parameter (= ANY($1)),
+			// so no parent count reaches the bind-parameter limit, and the sorts
+			// order every parent's slice.
+			//
+			// Self-referential relationships share the parent's entity type, so
+			// the loaded children must use a name distinct from the parent slice
+			// (accounts) to avoid shadowing it and mis-mapping the results
+			// onto the children instead of the parents.
+
 			// Build FK-based filter, merged with consumer filter
 			filter := &EntryFilter{
 				AccountID: &comparator.Number[int64]{In: accountIDs},
@@ -563,16 +583,6 @@ func (c *accountClient) loadRelationships(ctx context.Context, conn database.Que
 				filter.And = append(filter.And, fo.Entries.Filter)
 			}
 
-			// Load via related entity client
-			sorts := fo.Entries.Sorts
-			if len(sorts) == 0 {
-				sorts = c.entriesDefaultSort
-			}
-
-			// Self-referential relationships share the parent's entity type, so
-			// the loaded children must use a name distinct from the parent slice
-			// (accounts) to avoid shadowing it and mis-mapping the results
-			// onto the children instead of the parents.
 			relatedEntries, err := c.entryClient.GetMany(ctx, &GetEntriesInput{
 				Filter: filter,
 				Sorts:  sorts,

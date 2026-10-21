@@ -2488,6 +2488,21 @@ func (c *accountClient) loadRelationships(ctx context.Context, conn database.Que
 				accountIDs[idx] = a.ID
 			}
 
+			sorts := fo.Invoices.Sorts
+			if len(sorts) == 0 {
+				sorts = c.invoicesDefaultSort
+			}
+
+			// Load via related entity client in one statement: with pgx the FK
+			// filter binds every parent key as one array parameter (= ANY($1)),
+			// so no parent count reaches the bind-parameter limit, and the sorts
+			// order every parent's slice.
+			//
+			// Self-referential relationships share the parent's entity type, so
+			// the loaded children must use a name distinct from the parent slice
+			// (accounts) to avoid shadowing it and mis-mapping the results
+			// onto the children instead of the parents.
+
 			// Build FK-based filter, merged with consumer filter
 			filter := &InvoiceFilter{
 				AccountID: &comparator.Number[int64]{In: accountIDs},
@@ -2496,16 +2511,6 @@ func (c *accountClient) loadRelationships(ctx context.Context, conn database.Que
 				filter.And = append(filter.And, fo.Invoices.Filter)
 			}
 
-			// Load via related entity client
-			sorts := fo.Invoices.Sorts
-			if len(sorts) == 0 {
-				sorts = c.invoicesDefaultSort
-			}
-
-			// Self-referential relationships share the parent's entity type, so
-			// the loaded children must use a name distinct from the parent slice
-			// (accounts) to avoid shadowing it and mis-mapping the results
-			// onto the children instead of the parents.
 			relatedInvoices, err := c.invoiceClient.GetMany(ctx, &GetInvoicesInput{
 				Filter: filter,
 				Sorts:  sorts,
@@ -2546,6 +2551,21 @@ func (c *accountClient) loadRelationships(ctx context.Context, conn database.Que
 				accountIDs[idx] = a.ID
 			}
 
+			sorts := fo.Projects.Sorts
+			if len(sorts) == 0 {
+				sorts = c.projectsDefaultSort
+			}
+
+			// Load via related entity client in one statement: with pgx the FK
+			// filter binds every parent key as one array parameter (= ANY($1)),
+			// so no parent count reaches the bind-parameter limit, and the sorts
+			// order every parent's slice.
+			//
+			// Self-referential relationships share the parent's entity type, so
+			// the loaded children must use a name distinct from the parent slice
+			// (accounts) to avoid shadowing it and mis-mapping the results
+			// onto the children instead of the parents.
+
 			// Build FK-based filter, merged with consumer filter
 			filter := &ProjectFilter{
 				AccountID: &comparator.Number[int64]{In: accountIDs},
@@ -2554,16 +2574,6 @@ func (c *accountClient) loadRelationships(ctx context.Context, conn database.Que
 				filter.And = append(filter.And, fo.Projects.Filter)
 			}
 
-			// Load via related entity client
-			sorts := fo.Projects.Sorts
-			if len(sorts) == 0 {
-				sorts = c.projectsDefaultSort
-			}
-
-			// Self-referential relationships share the parent's entity type, so
-			// the loaded children must use a name distinct from the parent slice
-			// (accounts) to avoid shadowing it and mis-mapping the results
-			// onto the children instead of the parents.
 			relatedProjects, err := c.projectClient.GetMany(ctx, &GetProjectsInput{
 				Filter: filter,
 				Sorts:  sorts,
@@ -2604,6 +2614,21 @@ func (c *accountClient) loadRelationships(ctx context.Context, conn database.Que
 				accountIDs[idx] = a.ID
 			}
 
+			sorts := fo.Tasks.Sorts
+			if len(sorts) == 0 {
+				sorts = c.tasksDefaultSort
+			}
+
+			// Load via related entity client in one statement: with pgx the FK
+			// filter binds every parent key as one array parameter (= ANY($1)),
+			// so no parent count reaches the bind-parameter limit, and the sorts
+			// order every parent's slice.
+			//
+			// Self-referential relationships share the parent's entity type, so
+			// the loaded children must use a name distinct from the parent slice
+			// (accounts) to avoid shadowing it and mis-mapping the results
+			// onto the children instead of the parents.
+
 			// Build FK-based filter, merged with consumer filter
 			filter := &TaskFilter{
 				AssigneeID: &comparator.NullableNumber[int64]{Number: comparator.Number[int64]{In: accountIDs}},
@@ -2612,16 +2637,6 @@ func (c *accountClient) loadRelationships(ctx context.Context, conn database.Que
 				filter.And = append(filter.And, fo.Tasks.Filter)
 			}
 
-			// Load via related entity client
-			sorts := fo.Tasks.Sorts
-			if len(sorts) == 0 {
-				sorts = c.tasksDefaultSort
-			}
-
-			// Self-referential relationships share the parent's entity type, so
-			// the loaded children must use a name distinct from the parent slice
-			// (accounts) to avoid shadowing it and mis-mapping the results
-			// onto the children instead of the parents.
 			relatedTasks, err := c.taskClient.GetMany(ctx, &GetTasksInput{
 				Filter: filter,
 				Sorts:  sorts,
@@ -5105,6 +5120,21 @@ func (c *projectClient) loadRelationships(ctx context.Context, conn database.Que
 				projectIDs[idx] = p.ID
 			}
 
+			sorts := fo.Tasks.Sorts
+			if len(sorts) == 0 {
+				sorts = c.tasksDefaultSort
+			}
+
+			// Load via related entity client in one statement: with pgx the FK
+			// filter binds every parent key as one array parameter (= ANY($1)),
+			// so no parent count reaches the bind-parameter limit, and the sorts
+			// order every parent's slice.
+			//
+			// Self-referential relationships share the parent's entity type, so
+			// the loaded children must use a name distinct from the parent slice
+			// (projects) to avoid shadowing it and mis-mapping the results
+			// onto the children instead of the parents.
+
 			// Build FK-based filter, merged with consumer filter
 			filter := &TaskFilter{
 				ProjectID: &comparator.Number[int64]{In: projectIDs},
@@ -5113,16 +5143,6 @@ func (c *projectClient) loadRelationships(ctx context.Context, conn database.Que
 				filter.And = append(filter.And, fo.Tasks.Filter)
 			}
 
-			// Load via related entity client
-			sorts := fo.Tasks.Sorts
-			if len(sorts) == 0 {
-				sorts = c.tasksDefaultSort
-			}
-
-			// Self-referential relationships share the parent's entity type, so
-			// the loaded children must use a name distinct from the parent slice
-			// (projects) to avoid shadowing it and mis-mapping the results
-			// onto the children instead of the parents.
 			relatedTasks, err := c.taskClient.GetMany(ctx, &GetTasksInput{
 				Filter: filter,
 				Sorts:  sorts,
@@ -9224,6 +9244,21 @@ func (c *taskClient) loadRelationships(ctx context.Context, conn database.Querie
 				taskIDs[idx] = t.ID
 			}
 
+			sorts := fo.TaskLabels.Sorts
+			if len(sorts) == 0 {
+				sorts = c.taskLabelsDefaultSort
+			}
+
+			// Load via related entity client in one statement: with pgx the FK
+			// filter binds every parent key as one array parameter (= ANY($1)),
+			// so no parent count reaches the bind-parameter limit, and the sorts
+			// order every parent's slice.
+			//
+			// Self-referential relationships share the parent's entity type, so
+			// the loaded children must use a name distinct from the parent slice
+			// (tasks) to avoid shadowing it and mis-mapping the results
+			// onto the children instead of the parents.
+
 			// Build FK-based filter, merged with consumer filter
 			filter := &TaskLabelFilter{
 				TaskID: &comparator.Number[int64]{In: taskIDs},
@@ -9232,16 +9267,6 @@ func (c *taskClient) loadRelationships(ctx context.Context, conn database.Querie
 				filter.And = append(filter.And, fo.TaskLabels.Filter)
 			}
 
-			// Load via related entity client
-			sorts := fo.TaskLabels.Sorts
-			if len(sorts) == 0 {
-				sorts = c.taskLabelsDefaultSort
-			}
-
-			// Self-referential relationships share the parent's entity type, so
-			// the loaded children must use a name distinct from the parent slice
-			// (tasks) to avoid shadowing it and mis-mapping the results
-			// onto the children instead of the parents.
 			relatedTaskLabels, err := c.taskLabelClient.GetMany(ctx, &GetTaskLabelsInput{
 				Filter: filter,
 				Sorts:  sorts,

@@ -420,38 +420,48 @@ func (c *productClient) loadRelationships(ctx context.Context, conn database.Que
 				productIDs[idx] = p.ID
 			}
 
-			// Build FK-based filter, merged with consumer filter
-			filter := &OrderItemFilter{
-				ProductID: &comparator.Number[int64]{In: productIDs},
-			}
-			if fo.OrderItems.Filter != nil {
-				filter.And = append(filter.And, fo.OrderItems.Filter)
-			}
-
-			// Load via related entity client
 			sorts := fo.OrderItems.Sorts
 			if len(sorts) == 0 {
 				sorts = c.orderItemsDefaultSort
 			}
 
+			// Load via related entity client, 16383 parent keys per
+			// statement: half the dialect's bind-parameter limit, leaving the rest
+			// for the relationship's filters. Each parent's children come from one
+			// statement, so the sorts order every parent's slice.
+			//
 			// Self-referential relationships share the parent's entity type, so
 			// the loaded children must use a name distinct from the parent slice
 			// (products) to avoid shadowing it and mis-mapping the results
 			// onto the children instead of the parents.
-			relatedOrderItems, err := c.orderItemClient.GetMany(ctx, &GetOrderItemsInput{
-				Filter: filter,
-				Sorts:  sorts,
-				Limit:  new(0),
-				// The mapping below keys every child on its FK, so the fetch
-				// declares that column rather than mutating the caller's
-				// FieldOptions — a narrowed selection that omits it would
-				// otherwise map every child onto the zero value.
-				requiredColumns: []string{"product_id"},
-			}, func(co *CallOptions[OrderItemFieldOptions]) {
-				co.FieldOptions = fo.OrderItems.FieldOptions
-			})
-			if err != nil {
-				return fmt.Errorf("load product order_items: %w", err)
+			var relatedOrderItems []*OrderItem
+			for start := 0; start < len(productIDs); start += 16383 {
+				chunk := productIDs[start:min(start+16383, len(productIDs))]
+
+				// Build FK-based filter, merged with consumer filter
+				filter := &OrderItemFilter{
+					ProductID: &comparator.Number[int64]{In: chunk},
+				}
+				if fo.OrderItems.Filter != nil {
+					filter.And = append(filter.And, fo.OrderItems.Filter)
+				}
+
+				loaded, err := c.orderItemClient.GetMany(ctx, &GetOrderItemsInput{
+					Filter: filter,
+					Sorts:  sorts,
+					Limit:  new(0),
+					// The mapping below keys every child on its FK, so the fetch
+					// declares that column rather than mutating the caller's
+					// FieldOptions — a narrowed selection that omits it would
+					// otherwise map every child onto the zero value.
+					requiredColumns: []string{"product_id"},
+				}, func(co *CallOptions[OrderItemFieldOptions]) {
+					co.FieldOptions = fo.OrderItems.FieldOptions
+				})
+				if err != nil {
+					return fmt.Errorf("load product order_items: %w", err)
+				}
+				relatedOrderItems = append(relatedOrderItems, loaded...)
 			}
 
 			// Map results back to parent entities by FK. The FK column on the
@@ -478,38 +488,48 @@ func (c *productClient) loadRelationships(ctx context.Context, conn database.Que
 				productIDs[idx] = p.ID
 			}
 
-			// Build FK-based filter, merged with consumer filter
-			filter := &ProductTagLabelFilter{
-				ProductID: &comparator.Number[int64]{In: productIDs},
-			}
-			if fo.ProductTagLabels.Filter != nil {
-				filter.And = append(filter.And, fo.ProductTagLabels.Filter)
-			}
-
-			// Load via related entity client
 			sorts := fo.ProductTagLabels.Sorts
 			if len(sorts) == 0 {
 				sorts = c.productTagLabelsDefaultSort
 			}
 
+			// Load via related entity client, 16383 parent keys per
+			// statement: half the dialect's bind-parameter limit, leaving the rest
+			// for the relationship's filters. Each parent's children come from one
+			// statement, so the sorts order every parent's slice.
+			//
 			// Self-referential relationships share the parent's entity type, so
 			// the loaded children must use a name distinct from the parent slice
 			// (products) to avoid shadowing it and mis-mapping the results
 			// onto the children instead of the parents.
-			relatedProductTagLabels, err := c.productTagLabelClient.GetMany(ctx, &GetProductTagLabelsInput{
-				Filter: filter,
-				Sorts:  sorts,
-				Limit:  new(0),
-				// The mapping below keys every child on its FK, so the fetch
-				// declares that column rather than mutating the caller's
-				// FieldOptions — a narrowed selection that omits it would
-				// otherwise map every child onto the zero value.
-				requiredColumns: []string{"product_id"},
-			}, func(co *CallOptions[ProductTagLabelFieldOptions]) {
-				co.FieldOptions = fo.ProductTagLabels.FieldOptions
-			})
-			if err != nil {
-				return fmt.Errorf("load product product_tag_labels: %w", err)
+			var relatedProductTagLabels []*ProductTagLabel
+			for start := 0; start < len(productIDs); start += 16383 {
+				chunk := productIDs[start:min(start+16383, len(productIDs))]
+
+				// Build FK-based filter, merged with consumer filter
+				filter := &ProductTagLabelFilter{
+					ProductID: &comparator.Number[int64]{In: chunk},
+				}
+				if fo.ProductTagLabels.Filter != nil {
+					filter.And = append(filter.And, fo.ProductTagLabels.Filter)
+				}
+
+				loaded, err := c.productTagLabelClient.GetMany(ctx, &GetProductTagLabelsInput{
+					Filter: filter,
+					Sorts:  sorts,
+					Limit:  new(0),
+					// The mapping below keys every child on its FK, so the fetch
+					// declares that column rather than mutating the caller's
+					// FieldOptions — a narrowed selection that omits it would
+					// otherwise map every child onto the zero value.
+					requiredColumns: []string{"product_id"},
+				}, func(co *CallOptions[ProductTagLabelFieldOptions]) {
+					co.FieldOptions = fo.ProductTagLabels.FieldOptions
+				})
+				if err != nil {
+					return fmt.Errorf("load product product_tag_labels: %w", err)
+				}
+				relatedProductTagLabels = append(relatedProductTagLabels, loaded...)
 			}
 
 			// Map results back to parent entities by FK. The FK column on the

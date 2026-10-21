@@ -401,38 +401,48 @@ func (c *categoryClient) loadRelationships(ctx context.Context, conn database.Qu
 				categoryIDs[idx] = c.ID
 			}
 
-			// Build FK-based filter, merged with consumer filter
-			filter := &ProductFilter{
-				CategoryID: &comparator.Number[int64]{In: categoryIDs},
-			}
-			if fo.Products.Filter != nil {
-				filter.And = append(filter.And, fo.Products.Filter)
-			}
-
-			// Load via related entity client
 			sorts := fo.Products.Sorts
 			if len(sorts) == 0 {
 				sorts = c.productsDefaultSort
 			}
 
+			// Load via related entity client, 16383 parent keys per
+			// statement: half the dialect's bind-parameter limit, leaving the rest
+			// for the relationship's filters. Each parent's children come from one
+			// statement, so the sorts order every parent's slice.
+			//
 			// Self-referential relationships share the parent's entity type, so
 			// the loaded children must use a name distinct from the parent slice
 			// (categories) to avoid shadowing it and mis-mapping the results
 			// onto the children instead of the parents.
-			relatedProducts, err := c.productClient.GetMany(ctx, &GetProductsInput{
-				Filter: filter,
-				Sorts:  sorts,
-				Limit:  new(0),
-				// The mapping below keys every child on its FK, so the fetch
-				// declares that column rather than mutating the caller's
-				// FieldOptions — a narrowed selection that omits it would
-				// otherwise map every child onto the zero value.
-				requiredColumns: []string{"category_id"},
-			}, func(co *CallOptions[ProductFieldOptions]) {
-				co.FieldOptions = fo.Products.FieldOptions
-			})
-			if err != nil {
-				return fmt.Errorf("load category products: %w", err)
+			var relatedProducts []*Product
+			for start := 0; start < len(categoryIDs); start += 16383 {
+				chunk := categoryIDs[start:min(start+16383, len(categoryIDs))]
+
+				// Build FK-based filter, merged with consumer filter
+				filter := &ProductFilter{
+					CategoryID: &comparator.Number[int64]{In: chunk},
+				}
+				if fo.Products.Filter != nil {
+					filter.And = append(filter.And, fo.Products.Filter)
+				}
+
+				loaded, err := c.productClient.GetMany(ctx, &GetProductsInput{
+					Filter: filter,
+					Sorts:  sorts,
+					Limit:  new(0),
+					// The mapping below keys every child on its FK, so the fetch
+					// declares that column rather than mutating the caller's
+					// FieldOptions — a narrowed selection that omits it would
+					// otherwise map every child onto the zero value.
+					requiredColumns: []string{"category_id"},
+				}, func(co *CallOptions[ProductFieldOptions]) {
+					co.FieldOptions = fo.Products.FieldOptions
+				})
+				if err != nil {
+					return fmt.Errorf("load category products: %w", err)
+				}
+				relatedProducts = append(relatedProducts, loaded...)
 			}
 
 			// Map results back to parent entities by FK. The FK column on the
@@ -459,105 +469,131 @@ func (c *categoryClient) loadRelationships(ctx context.Context, conn database.Qu
 				categoryIDs[idx] = c.ID
 			}
 
-			// Step 1: Query junction table to get mapping
-			junctionQuery, junctionArgs := sql.BuildSelect(c.dialect, sql.Table{Schema: "", Name: "user_categories"}, sql.SelectOptions{
-				Columns:    []string{"category_id", "user_id"},
-				Conditions: []sql.Condition{sql.Where(c.dialect.QuoteIdentifier("category_id")).In(toAnySlice(categoryIDs)...)},
-			})
-
-			junctionRows, err := conn.Query(ctx, junctionQuery, junctionArgs...)
-			if err != nil {
-				return fmt.Errorf("load category users junction: %w", err)
-			}
-			defer junctionRows.Close()
-
-			// Discover column positions from result (BuildSelect sorts columns alphabetically)
-			junctionCols, err := junctionRows.Columns()
-			if err != nil {
-				return fmt.Errorf("load category users junction columns: %w", err)
-			}
-			localIdx, refIdx := 0, 1
-			for i, col := range junctionCols {
-				switch col {
-				case "category_id":
-					localIdx = i
-				case "user_id":
-					refIdx = i
-				}
-			}
-
-			// Build mapping and collect all target keys. Each junction column
-			// scans into its own Go type, so both sides of the maps stringify
-			// keys the same way.
-			parentToTargetIDs := make(map[string][]string)
-			var targetPKs []int64
-			for junctionRows.Next() {
-				var localKey int64
-				var refKey int64
-				ptrs := make([]any, len(junctionCols))
-				ptrs[localIdx], ptrs[refIdx] = &localKey, &refKey
-				if err := junctionRows.Scan(ptrs...); err != nil {
-					return fmt.Errorf("scan category users junction: %w", err)
-				}
-				parentID, targetID := fmt.Sprint(localKey), fmt.Sprint(refKey)
-				parentToTargetIDs[parentID] = append(parentToTargetIDs[parentID], targetID)
-				targetPKs = append(targetPKs, int64(refKey))
-			}
-			if err := junctionRows.Err(); err != nil {
-				return fmt.Errorf("iterate category users junction: %w", err)
-			}
-
-			if len(parentToTargetIDs) == 0 {
-				return nil
-			}
-
-			// Step 2: Fetch the actual entities
-			filter := &UserFilter{
-				ID: &comparator.Number[int64]{In: targetPKs},
-			}
-			if fo.Users.Filter != nil {
-				filter.And = append(filter.And, fo.Users.Filter)
-			}
-
 			sorts := fo.Users.Sorts
 			if len(sorts) == 0 {
 				sorts = c.usersDefaultSort
 			}
 
-			// Self-referential relationships share the parent's entity type, so
-			// the loaded targets must use a name distinct from the parent slice
-			// (categories) to avoid shadowing it and mis-mapping the results
-			// onto the targets instead of the parents.
-			relatedUsers, err := c.userClient.GetMany(ctx, &GetUsersInput{
-				Filter: filter,
-				Sorts:  sorts,
-				Limit:  new(0),
-				// Step 3 keys every loaded target on its own PK, so the fetch
-				// declares that column rather than mutating the caller's
-				// FieldOptions — a narrowed selection that omits it would
-				// otherwise map every target onto the zero value.
-				requiredColumns: []string{"id"},
-			}, func(co *CallOptions[UserFieldOptions]) {
-				co.FieldOptions = fo.Users.FieldOptions
-			})
-			if err != nil {
-				return fmt.Errorf("load category users: %w", err)
-			}
+			// The three steps run once per chunk of 16383 parent keys:
+			// half the dialect's bind-parameter limit, leaving the rest for the
+			// relationship's filters.
+			for start := 0; start < len(categoryIDs); start += 16383 {
+				chunk := categoryIDs[start:min(start+16383, len(categoryIDs))]
 
-			// Step 3: Map back to parent entities via junction mapping. The
-			// targets are walked in the order the fetch returned them, so the
-			// relationship's Sorts — the caller's, or the static `sort:` —
-			// order each parent's slice. Walking the
-			// junction rows instead would keep junction order and drop the sort.
-			parentsByTarget := make(map[string][]int, len(relatedUsers))
-			for i := range categories {
-				for _, tID := range parentToTargetIDs[fmt.Sprint(categories[i].ID)] {
-					parentsByTarget[tID] = append(parentsByTarget[tID], i)
+				// Step 1: Query junction table to get mapping. Each junction
+				// column scans into its own Go type, so both sides of the maps
+				// stringify keys the same way.
+				parentToTargetIDs := make(map[string][]string)
+				if err := func() error {
+					junctionQuery, junctionArgs := sql.BuildSelect(c.dialect, sql.Table{Schema: "", Name: "user_categories"}, sql.SelectOptions{
+						Columns:    []string{"category_id", "user_id"},
+						Conditions: []sql.Condition{sql.Where(c.dialect.QuoteIdentifier("category_id")).In(toAnySlice(chunk)...)},
+					})
+
+					junctionRows, err := conn.Query(ctx, junctionQuery, junctionArgs...)
+					if err != nil {
+						return fmt.Errorf("load category users junction: %w", err)
+					}
+					defer junctionRows.Close()
+
+					// Discover column positions from result (BuildSelect sorts columns alphabetically)
+					junctionCols, err := junctionRows.Columns()
+					if err != nil {
+						return fmt.Errorf("load category users junction columns: %w", err)
+					}
+					localIdx, refIdx := 0, 1
+					for i, col := range junctionCols {
+						switch col {
+						case "category_id":
+							localIdx = i
+						case "user_id":
+							refIdx = i
+						}
+					}
+
+					for junctionRows.Next() {
+						var localKey int64
+						var refKey int64
+						ptrs := make([]any, len(junctionCols))
+						ptrs[localIdx], ptrs[refIdx] = &localKey, &refKey
+						if err := junctionRows.Scan(ptrs...); err != nil {
+							return fmt.Errorf("scan category users junction: %w", err)
+						}
+						parentID, targetID := fmt.Sprint(localKey), fmt.Sprint(refKey)
+						parentToTargetIDs[parentID] = append(parentToTargetIDs[parentID], targetID)
+					}
+					if err := junctionRows.Err(); err != nil {
+						return fmt.Errorf("iterate category users junction: %w", err)
+					}
+					return nil
+				}(); err != nil {
+					return err
 				}
-			}
-			for _, t := range relatedUsers {
-				for _, i := range parentsByTarget[fmt.Sprint(t.ID)] {
-					categories[i].Users = append(categories[i].Users, t)
+
+				if len(parentToTargetIDs) == 0 {
+					continue
+				}
+
+				// Step 2: Fetch the actual entities. The target key is matched
+				// against this chunk's junction rows, not against a list of target
+				// keys, so the statement binds the chunk's parent keys however many
+				// targets they share, and each parent's targets come from one
+				// statement.
+				junctionWhere, junctionWhereArgs := sql.SubqueryWhere(c.dialect, "j", []sql.Condition{
+					sql.Where(c.dialect.QuoteIdentifier("category_id")).In(toAnySlice(chunk)...),
+				})
+				conditions := []sql.Condition{
+					sql.Where(c.dialect.QuoteIdentifier("id")).In(sql.Subquery{
+						SQL: "SELECT j." + c.dialect.QuoteIdentifier("user_id") +
+							" FROM " + c.dialect.FormatTable(sql.Table{Schema: "", Name: "user_categories"}) + " j WHERE " + junctionWhere,
+						Args: junctionWhereArgs,
+					}),
+				}
+
+				// The consumer filter is ANDed in, as on the O2M fetch, so a
+				// soft-delete comparator in it narrows the target's default
+				// rather than replacing it.
+				filter := &UserFilter{}
+				if fo.Users.Filter != nil {
+					filter.And = append(filter.And, fo.Users.Filter)
+				}
+
+				// Self-referential relationships share the parent's entity type, so
+				// the loaded targets must use a name distinct from the parent slice
+				// (categories) to avoid shadowing it and mis-mapping the results
+				// onto the targets instead of the parents.
+				relatedUsers, err := c.userClient.GetMany(ctx, &GetUsersInput{
+					Filter:     filter,
+					Sorts:      sorts,
+					Limit:      new(0),
+					conditions: conditions,
+					// Step 3 keys every loaded target on its own PK, so the fetch
+					// declares that column rather than mutating the caller's
+					// FieldOptions — a narrowed selection that omits it would
+					// otherwise map every target onto the zero value.
+					requiredColumns: []string{"id"},
+				}, func(co *CallOptions[UserFieldOptions]) {
+					co.FieldOptions = fo.Users.FieldOptions
+				})
+				if err != nil {
+					return fmt.Errorf("load category users: %w", err)
+				}
+
+				// Step 3: Map back to this chunk's parents via junction mapping.
+				// The targets are walked in the order the fetch returned them, so
+				// the relationship's Sorts — the caller's, or the static `sort:` —
+				// order each parent's slice. Walking the
+				// junction rows instead would keep junction order and drop the sort.
+				parentsByTarget := make(map[string][]int, len(relatedUsers))
+				for i := start; i < start+len(chunk); i++ {
+					for _, tID := range parentToTargetIDs[fmt.Sprint(categories[i].ID)] {
+						parentsByTarget[tID] = append(parentsByTarget[tID], i)
+					}
+				}
+				for _, t := range relatedUsers {
+					for _, i := range parentsByTarget[fmt.Sprint(t.ID)] {
+						categories[i].Users = append(categories[i].Users, t)
+					}
 				}
 			}
 			return nil

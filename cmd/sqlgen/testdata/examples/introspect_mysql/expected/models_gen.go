@@ -443,38 +443,48 @@ func (c *accountClient) loadRelationships(ctx context.Context, conn database.Que
 				accountIDs[idx] = a.ID
 			}
 
-			// Build FK-based filter, merged with consumer filter
-			filter := &ProjectFilter{
-				AccountID: &comparator.Number[uint64]{In: accountIDs},
-			}
-			if fo.Projects.Filter != nil {
-				filter.And = append(filter.And, fo.Projects.Filter)
-			}
-
-			// Load via related entity client
 			sorts := fo.Projects.Sorts
 			if len(sorts) == 0 {
 				sorts = c.projectsDefaultSort
 			}
 
+			// Load via related entity client, 32767 parent keys per
+			// statement: half the dialect's bind-parameter limit, leaving the rest
+			// for the relationship's filters. Each parent's children come from one
+			// statement, so the sorts order every parent's slice.
+			//
 			// Self-referential relationships share the parent's entity type, so
 			// the loaded children must use a name distinct from the parent slice
 			// (accounts) to avoid shadowing it and mis-mapping the results
 			// onto the children instead of the parents.
-			relatedProjects, err := c.projectClient.GetMany(ctx, &GetProjectsInput{
-				Filter: filter,
-				Sorts:  sorts,
-				Limit:  new(0),
-				// The mapping below keys every child on its FK, so the fetch
-				// declares that column rather than mutating the caller's
-				// FieldOptions — a narrowed selection that omits it would
-				// otherwise map every child onto the zero value.
-				requiredColumns: []string{"account_id"},
-			}, func(co *CallOptions[ProjectFieldOptions]) {
-				co.FieldOptions = fo.Projects.FieldOptions
-			})
-			if err != nil {
-				return fmt.Errorf("load account projects: %w", err)
+			var relatedProjects []*Project
+			for start := 0; start < len(accountIDs); start += 32767 {
+				chunk := accountIDs[start:min(start+32767, len(accountIDs))]
+
+				// Build FK-based filter, merged with consumer filter
+				filter := &ProjectFilter{
+					AccountID: &comparator.Number[uint64]{In: chunk},
+				}
+				if fo.Projects.Filter != nil {
+					filter.And = append(filter.And, fo.Projects.Filter)
+				}
+
+				loaded, err := c.projectClient.GetMany(ctx, &GetProjectsInput{
+					Filter: filter,
+					Sorts:  sorts,
+					Limit:  new(0),
+					// The mapping below keys every child on its FK, so the fetch
+					// declares that column rather than mutating the caller's
+					// FieldOptions — a narrowed selection that omits it would
+					// otherwise map every child onto the zero value.
+					requiredColumns: []string{"account_id"},
+				}, func(co *CallOptions[ProjectFieldOptions]) {
+					co.FieldOptions = fo.Projects.FieldOptions
+				})
+				if err != nil {
+					return fmt.Errorf("load account projects: %w", err)
+				}
+				relatedProjects = append(relatedProjects, loaded...)
 			}
 
 			// Map results back to parent entities by FK. The FK column on the
@@ -501,38 +511,48 @@ func (c *accountClient) loadRelationships(ctx context.Context, conn database.Que
 				accountIDs[idx] = a.ID
 			}
 
-			// Build FK-based filter, merged with consumer filter
-			filter := &TaskFilter{
-				AssigneeID: &comparator.NullableNumber[uint64]{Number: comparator.Number[uint64]{In: accountIDs}},
-			}
-			if fo.Tasks.Filter != nil {
-				filter.And = append(filter.And, fo.Tasks.Filter)
-			}
-
-			// Load via related entity client
 			sorts := fo.Tasks.Sorts
 			if len(sorts) == 0 {
 				sorts = c.tasksDefaultSort
 			}
 
+			// Load via related entity client, 32767 parent keys per
+			// statement: half the dialect's bind-parameter limit, leaving the rest
+			// for the relationship's filters. Each parent's children come from one
+			// statement, so the sorts order every parent's slice.
+			//
 			// Self-referential relationships share the parent's entity type, so
 			// the loaded children must use a name distinct from the parent slice
 			// (accounts) to avoid shadowing it and mis-mapping the results
 			// onto the children instead of the parents.
-			relatedTasks, err := c.taskClient.GetMany(ctx, &GetTasksInput{
-				Filter: filter,
-				Sorts:  sorts,
-				Limit:  new(0),
-				// The mapping below keys every child on its FK, so the fetch
-				// declares that column rather than mutating the caller's
-				// FieldOptions — a narrowed selection that omits it would
-				// otherwise map every child onto the zero value.
-				requiredColumns: []string{"assignee_id"},
-			}, func(co *CallOptions[TaskFieldOptions]) {
-				co.FieldOptions = fo.Tasks.FieldOptions
-			})
-			if err != nil {
-				return fmt.Errorf("load account tasks: %w", err)
+			var relatedTasks []*Task
+			for start := 0; start < len(accountIDs); start += 32767 {
+				chunk := accountIDs[start:min(start+32767, len(accountIDs))]
+
+				// Build FK-based filter, merged with consumer filter
+				filter := &TaskFilter{
+					AssigneeID: &comparator.NullableNumber[uint64]{Number: comparator.Number[uint64]{In: chunk}},
+				}
+				if fo.Tasks.Filter != nil {
+					filter.And = append(filter.And, fo.Tasks.Filter)
+				}
+
+				loaded, err := c.taskClient.GetMany(ctx, &GetTasksInput{
+					Filter: filter,
+					Sorts:  sorts,
+					Limit:  new(0),
+					// The mapping below keys every child on its FK, so the fetch
+					// declares that column rather than mutating the caller's
+					// FieldOptions — a narrowed selection that omits it would
+					// otherwise map every child onto the zero value.
+					requiredColumns: []string{"assignee_id"},
+				}, func(co *CallOptions[TaskFieldOptions]) {
+					co.FieldOptions = fo.Tasks.FieldOptions
+				})
+				if err != nil {
+					return fmt.Errorf("load account tasks: %w", err)
+				}
+				relatedTasks = append(relatedTasks, loaded...)
 			}
 
 			// Map results back to parent entities by FK. The FK column on the
@@ -2874,38 +2894,48 @@ func (c *projectClient) loadRelationships(ctx context.Context, conn database.Que
 				projectIDs[idx] = p.ID
 			}
 
-			// Build FK-based filter, merged with consumer filter
-			filter := &TaskFilter{
-				ProjectID: &comparator.Number[uint64]{In: projectIDs},
-			}
-			if fo.Tasks.Filter != nil {
-				filter.And = append(filter.And, fo.Tasks.Filter)
-			}
-
-			// Load via related entity client
 			sorts := fo.Tasks.Sorts
 			if len(sorts) == 0 {
 				sorts = c.tasksDefaultSort
 			}
 
+			// Load via related entity client, 32767 parent keys per
+			// statement: half the dialect's bind-parameter limit, leaving the rest
+			// for the relationship's filters. Each parent's children come from one
+			// statement, so the sorts order every parent's slice.
+			//
 			// Self-referential relationships share the parent's entity type, so
 			// the loaded children must use a name distinct from the parent slice
 			// (projects) to avoid shadowing it and mis-mapping the results
 			// onto the children instead of the parents.
-			relatedTasks, err := c.taskClient.GetMany(ctx, &GetTasksInput{
-				Filter: filter,
-				Sorts:  sorts,
-				Limit:  new(0),
-				// The mapping below keys every child on its FK, so the fetch
-				// declares that column rather than mutating the caller's
-				// FieldOptions — a narrowed selection that omits it would
-				// otherwise map every child onto the zero value.
-				requiredColumns: []string{"project_id"},
-			}, func(co *CallOptions[TaskFieldOptions]) {
-				co.FieldOptions = fo.Tasks.FieldOptions
-			})
-			if err != nil {
-				return fmt.Errorf("load project tasks: %w", err)
+			var relatedTasks []*Task
+			for start := 0; start < len(projectIDs); start += 32767 {
+				chunk := projectIDs[start:min(start+32767, len(projectIDs))]
+
+				// Build FK-based filter, merged with consumer filter
+				filter := &TaskFilter{
+					ProjectID: &comparator.Number[uint64]{In: chunk},
+				}
+				if fo.Tasks.Filter != nil {
+					filter.And = append(filter.And, fo.Tasks.Filter)
+				}
+
+				loaded, err := c.taskClient.GetMany(ctx, &GetTasksInput{
+					Filter: filter,
+					Sorts:  sorts,
+					Limit:  new(0),
+					// The mapping below keys every child on its FK, so the fetch
+					// declares that column rather than mutating the caller's
+					// FieldOptions — a narrowed selection that omits it would
+					// otherwise map every child onto the zero value.
+					requiredColumns: []string{"project_id"},
+				}, func(co *CallOptions[TaskFieldOptions]) {
+					co.FieldOptions = fo.Tasks.FieldOptions
+				})
+				if err != nil {
+					return fmt.Errorf("load project tasks: %w", err)
+				}
+				relatedTasks = append(relatedTasks, loaded...)
 			}
 
 			// Map results back to parent entities by FK. The FK column on the
@@ -7013,38 +7043,48 @@ func (c *taskClient) loadRelationships(ctx context.Context, conn database.Querie
 				taskIDs[idx] = t.ID
 			}
 
-			// Build FK-based filter, merged with consumer filter
-			filter := &TaskLabelFilter{
-				TaskID: &comparator.Number[uint64]{In: taskIDs},
-			}
-			if fo.TaskLabels.Filter != nil {
-				filter.And = append(filter.And, fo.TaskLabels.Filter)
-			}
-
-			// Load via related entity client
 			sorts := fo.TaskLabels.Sorts
 			if len(sorts) == 0 {
 				sorts = c.taskLabelsDefaultSort
 			}
 
+			// Load via related entity client, 32767 parent keys per
+			// statement: half the dialect's bind-parameter limit, leaving the rest
+			// for the relationship's filters. Each parent's children come from one
+			// statement, so the sorts order every parent's slice.
+			//
 			// Self-referential relationships share the parent's entity type, so
 			// the loaded children must use a name distinct from the parent slice
 			// (tasks) to avoid shadowing it and mis-mapping the results
 			// onto the children instead of the parents.
-			relatedTaskLabels, err := c.taskLabelClient.GetMany(ctx, &GetTaskLabelsInput{
-				Filter: filter,
-				Sorts:  sorts,
-				Limit:  new(0),
-				// The mapping below keys every child on its FK, so the fetch
-				// declares that column rather than mutating the caller's
-				// FieldOptions — a narrowed selection that omits it would
-				// otherwise map every child onto the zero value.
-				requiredColumns: []string{"task_id"},
-			}, func(co *CallOptions[TaskLabelFieldOptions]) {
-				co.FieldOptions = fo.TaskLabels.FieldOptions
-			})
-			if err != nil {
-				return fmt.Errorf("load task task_labels: %w", err)
+			var relatedTaskLabels []*TaskLabel
+			for start := 0; start < len(taskIDs); start += 32767 {
+				chunk := taskIDs[start:min(start+32767, len(taskIDs))]
+
+				// Build FK-based filter, merged with consumer filter
+				filter := &TaskLabelFilter{
+					TaskID: &comparator.Number[uint64]{In: chunk},
+				}
+				if fo.TaskLabels.Filter != nil {
+					filter.And = append(filter.And, fo.TaskLabels.Filter)
+				}
+
+				loaded, err := c.taskLabelClient.GetMany(ctx, &GetTaskLabelsInput{
+					Filter: filter,
+					Sorts:  sorts,
+					Limit:  new(0),
+					// The mapping below keys every child on its FK, so the fetch
+					// declares that column rather than mutating the caller's
+					// FieldOptions — a narrowed selection that omits it would
+					// otherwise map every child onto the zero value.
+					requiredColumns: []string{"task_id"},
+				}, func(co *CallOptions[TaskLabelFieldOptions]) {
+					co.FieldOptions = fo.TaskLabels.FieldOptions
+				})
+				if err != nil {
+					return fmt.Errorf("load task task_labels: %w", err)
+				}
+				relatedTaskLabels = append(relatedTaskLabels, loaded...)
 			}
 
 			// Map results back to parent entities by FK. The FK column on the

@@ -67,10 +67,9 @@ func FuncMapWithResolver(dialect sql.Dialect, resolver *gotype.Resolver) templat
 		"softDeleteSubqueryArg":       funcSoftDeleteSubqueryArg,
 
 		// PK Filtering
-		"pkFilterExpr":      funcPKFilterExpr,
-		"pkFilterInExpr":    funcPKFilterInExpr,
-		"pkFilterInExprStr": funcPKFilterInExprStr,
-		"pkIsStringType":    funcPKIsStringType,
+		"pkFilterExpr":   funcPKFilterExpr,
+		"pkFilterInExpr": funcPKFilterInExpr,
+		"pkIsStringType": funcPKIsStringType,
 
 		// Relationships
 		"fkStringExpr":       funcFKStringExpr,
@@ -79,7 +78,6 @@ func FuncMapWithResolver(dialect sql.Dialect, resolver *gotype.Resolver) templat
 		"fkNullGuard":        funcFKNullGuard,
 		"fkLoadGuard":        funcFKLoadGuard(resolver),
 		"fkLoadKey":          funcFKLoadKey(resolver),
-		"fkLoadValue":        funcFKLoadValue(resolver),
 		"isO2O":              funcIsO2O,
 		"isM2M":              funcIsM2M,
 		"reverseO2OTargets":  funcReverseO2OTargets,
@@ -106,6 +104,7 @@ func FuncMapWithResolver(dialect sql.Dialect, resolver *gotype.Resolver) templat
 		"placeholder":       funcPlaceholder(dialect),
 		"quoteIdentifier":   funcQuoteIdentifier(dialect),
 		"supportsReturning": funcSupportsReturning(dialect),
+		"loadChunkSize":     funcLoadChunkSize(dialect),
 
 		// Cache / tenancy predicates
 		"anyTenanted": funcAnyTenanted,
@@ -658,13 +657,6 @@ func funcPKFilterInExpr(col ColumnContext, varExpr string, nullable bool) string
 	return pkFilterInExpr(baseGoType, varExpr, nullable)
 }
 
-// funcPKFilterInExprStr is like funcPKFilterInExpr but works with a Go type string
-// instead of a ColumnContext. Used for M2M relationships where only FKGoType is available.
-func funcPKFilterInExprStr(goType, varExpr string, nullable bool) string {
-	baseGoType := strings.TrimPrefix(goType, "*")
-	return pkFilterInExpr(baseGoType, varExpr, nullable)
-}
-
 func pkFilterInExpr(baseGoType, varExpr string, nullable bool) string {
 	switch family, typeParam := pkComparatorFamily(baseGoType); family {
 	case "Number":
@@ -773,15 +765,6 @@ func funcFKLoadKey(resolver *gotype.Resolver) func(string, string) string {
 	}
 }
 
-// funcFKLoadValue returns a closure that produces the Go expression for a
-// FK value with any Null wrapper unwrapped, the value fkLoadKey stringifies.
-// Callers guard it with fkLoadGuard first.
-func funcFKLoadValue(resolver *gotype.Resolver) func(string, string) string {
-	return func(fkColumnGoType, varExpr string) string {
-		return strings.ReplaceAll(resolver.DeriveScalarExtraction(fkColumnGoType).UnwrapExpr, "$v", varExpr)
-	}
-}
-
 // funcFKNullGuard returns a Go null-guard expression for a nullable FK column.
 // Returns an empty string if the column is not nullable.
 func funcFKNullGuard(col ColumnContext) string {
@@ -851,6 +834,30 @@ func funcQuoteIdentifier(d sql.Dialect) func(string) string {
 func funcSupportsReturning(d sql.Dialect) func() bool {
 	return func() bool {
 		return d.SupportsReturning()
+	}
+}
+
+// bindParamLimit is the most bind parameters one statement may carry on the
+// dialect. SQLite's is its compiled MAX_VARIABLE_NUMBER; PostgreSQL's wire
+// protocol counts parameters in a 16-bit field; MySQL refuses more with
+// Error 1390.
+func bindParamLimit(dialect string) int {
+	switch dialect {
+	case "postgres", "mysql":
+		return 65535
+	default: // sqlite
+		return 32766
+	}
+}
+
+// funcLoadChunkSize returns a function giving how many parent keys one
+// relationship-loader statement binds: half the dialect's bind-parameter limit,
+// divided by the key's column count. The other half is left for the
+// relationship's filter, tenancy, soft-delete and static `filter:` parameters.
+func funcLoadChunkSize(d sql.Dialect) func(keyColumns int) int {
+	limit := bindParamLimit(d.Name())
+	return func(keyColumns int) int {
+		return limit / 2 / keyColumns
 	}
 }
 

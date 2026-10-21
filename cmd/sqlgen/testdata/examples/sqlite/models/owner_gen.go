@@ -427,105 +427,131 @@ func (c *ownerClient) loadRelationships(ctx context.Context, conn database.Queri
 				ownerIDs[idx] = o.OwnerKey
 			}
 
-			// Step 1: Query junction table to get mapping
-			junctionQuery, junctionArgs := sql.BuildSelect(c.dialect, sql.Table{Schema: "", Name: "owner_badges"}, sql.SelectOptions{
-				Columns:    []string{"owner_id", "badge_code"},
-				Conditions: []sql.Condition{sql.Where(c.dialect.QuoteIdentifier("owner_id")).In(toAnySlice(ownerIDs)...)},
-			})
-
-			junctionRows, err := conn.Query(ctx, junctionQuery, junctionArgs...)
-			if err != nil {
-				return fmt.Errorf("load owner badges junction: %w", err)
-			}
-			defer junctionRows.Close()
-
-			// Discover column positions from result (BuildSelect sorts columns alphabetically)
-			junctionCols, err := junctionRows.Columns()
-			if err != nil {
-				return fmt.Errorf("load owner badges junction columns: %w", err)
-			}
-			localIdx, refIdx := 0, 1
-			for i, col := range junctionCols {
-				switch col {
-				case "owner_id":
-					localIdx = i
-				case "badge_code":
-					refIdx = i
-				}
-			}
-
-			// Build mapping and collect all target keys. Each junction column
-			// scans into its own Go type, so both sides of the maps stringify
-			// keys the same way.
-			parentToTargetIDs := make(map[string][]string)
-			var allTargetIDs []string
-			for junctionRows.Next() {
-				var localKey int64
-				var refKey string
-				ptrs := make([]any, len(junctionCols))
-				ptrs[localIdx], ptrs[refIdx] = &localKey, &refKey
-				if err := junctionRows.Scan(ptrs...); err != nil {
-					return fmt.Errorf("scan owner badges junction: %w", err)
-				}
-				parentID, targetID := fmt.Sprint(localKey), refKey
-				parentToTargetIDs[parentID] = append(parentToTargetIDs[parentID], targetID)
-				allTargetIDs = append(allTargetIDs, targetID)
-			}
-			if err := junctionRows.Err(); err != nil {
-				return fmt.Errorf("iterate owner badges junction: %w", err)
-			}
-
-			if len(parentToTargetIDs) == 0 {
-				return nil
-			}
-
-			// Step 2: Fetch the actual entities
-			filter := &BadgeFilter{
-				Code: &comparator.ID{In: allTargetIDs},
-			}
-			if fo.Badges.Filter != nil {
-				filter.And = append(filter.And, fo.Badges.Filter)
-			}
-
 			sorts := fo.Badges.Sorts
 			if len(sorts) == 0 {
 				sorts = c.badgesDefaultSort
 			}
 
-			// Self-referential relationships share the parent's entity type, so
-			// the loaded targets must use a name distinct from the parent slice
-			// (owners) to avoid shadowing it and mis-mapping the results
-			// onto the targets instead of the parents.
-			relatedBadges, err := c.badgeClient.GetMany(ctx, &GetBadgesInput{
-				Filter: filter,
-				Sorts:  sorts,
-				Limit:  new(0),
-				// Step 3 keys every loaded target on its own PK, so the fetch
-				// declares that column rather than mutating the caller's
-				// FieldOptions — a narrowed selection that omits it would
-				// otherwise map every target onto the zero value.
-				requiredColumns: []string{"code"},
-			}, func(co *CallOptions[BadgeFieldOptions]) {
-				co.FieldOptions = fo.Badges.FieldOptions
-			})
-			if err != nil {
-				return fmt.Errorf("load owner badges: %w", err)
-			}
+			// The three steps run once per chunk of 16383 parent keys:
+			// half the dialect's bind-parameter limit, leaving the rest for the
+			// relationship's filters.
+			for start := 0; start < len(ownerIDs); start += 16383 {
+				chunk := ownerIDs[start:min(start+16383, len(ownerIDs))]
 
-			// Step 3: Map back to parent entities via junction mapping. The
-			// targets are walked in the order the fetch returned them, so the
-			// relationship's Sorts — the caller's, or the static `sort:` —
-			// order each parent's slice. Walking the
-			// junction rows instead would keep junction order and drop the sort.
-			parentsByTarget := make(map[string][]int, len(relatedBadges))
-			for i := range owners {
-				for _, tID := range parentToTargetIDs[fmt.Sprint(owners[i].OwnerKey)] {
-					parentsByTarget[tID] = append(parentsByTarget[tID], i)
+				// Step 1: Query junction table to get mapping. Each junction
+				// column scans into its own Go type, so both sides of the maps
+				// stringify keys the same way.
+				parentToTargetIDs := make(map[string][]string)
+				if err := func() error {
+					junctionQuery, junctionArgs := sql.BuildSelect(c.dialect, sql.Table{Schema: "", Name: "owner_badges"}, sql.SelectOptions{
+						Columns:    []string{"owner_id", "badge_code"},
+						Conditions: []sql.Condition{sql.Where(c.dialect.QuoteIdentifier("owner_id")).In(toAnySlice(chunk)...)},
+					})
+
+					junctionRows, err := conn.Query(ctx, junctionQuery, junctionArgs...)
+					if err != nil {
+						return fmt.Errorf("load owner badges junction: %w", err)
+					}
+					defer junctionRows.Close()
+
+					// Discover column positions from result (BuildSelect sorts columns alphabetically)
+					junctionCols, err := junctionRows.Columns()
+					if err != nil {
+						return fmt.Errorf("load owner badges junction columns: %w", err)
+					}
+					localIdx, refIdx := 0, 1
+					for i, col := range junctionCols {
+						switch col {
+						case "owner_id":
+							localIdx = i
+						case "badge_code":
+							refIdx = i
+						}
+					}
+
+					for junctionRows.Next() {
+						var localKey int64
+						var refKey string
+						ptrs := make([]any, len(junctionCols))
+						ptrs[localIdx], ptrs[refIdx] = &localKey, &refKey
+						if err := junctionRows.Scan(ptrs...); err != nil {
+							return fmt.Errorf("scan owner badges junction: %w", err)
+						}
+						parentID, targetID := fmt.Sprint(localKey), refKey
+						parentToTargetIDs[parentID] = append(parentToTargetIDs[parentID], targetID)
+					}
+					if err := junctionRows.Err(); err != nil {
+						return fmt.Errorf("iterate owner badges junction: %w", err)
+					}
+					return nil
+				}(); err != nil {
+					return err
 				}
-			}
-			for _, t := range relatedBadges {
-				for _, i := range parentsByTarget[t.Code] {
-					owners[i].Badges = append(owners[i].Badges, t)
+
+				if len(parentToTargetIDs) == 0 {
+					continue
+				}
+
+				// Step 2: Fetch the actual entities. The target key is matched
+				// against this chunk's junction rows, not against a list of target
+				// keys, so the statement binds the chunk's parent keys however many
+				// targets they share, and each parent's targets come from one
+				// statement.
+				junctionWhere, junctionWhereArgs := sql.SubqueryWhere(c.dialect, "j", []sql.Condition{
+					sql.Where(c.dialect.QuoteIdentifier("owner_id")).In(toAnySlice(chunk)...),
+				})
+				conditions := []sql.Condition{
+					sql.Where(c.dialect.QuoteIdentifier("code")).In(sql.Subquery{
+						SQL: "SELECT j." + c.dialect.QuoteIdentifier("badge_code") +
+							" FROM " + c.dialect.FormatTable(sql.Table{Schema: "", Name: "owner_badges"}) + " j WHERE " + junctionWhere,
+						Args: junctionWhereArgs,
+					}),
+				}
+
+				// The consumer filter is ANDed in, as on the O2M fetch, so a
+				// soft-delete comparator in it narrows the target's default
+				// rather than replacing it.
+				filter := &BadgeFilter{}
+				if fo.Badges.Filter != nil {
+					filter.And = append(filter.And, fo.Badges.Filter)
+				}
+
+				// Self-referential relationships share the parent's entity type, so
+				// the loaded targets must use a name distinct from the parent slice
+				// (owners) to avoid shadowing it and mis-mapping the results
+				// onto the targets instead of the parents.
+				relatedBadges, err := c.badgeClient.GetMany(ctx, &GetBadgesInput{
+					Filter:     filter,
+					Sorts:      sorts,
+					Limit:      new(0),
+					conditions: conditions,
+					// Step 3 keys every loaded target on its own PK, so the fetch
+					// declares that column rather than mutating the caller's
+					// FieldOptions — a narrowed selection that omits it would
+					// otherwise map every target onto the zero value.
+					requiredColumns: []string{"code"},
+				}, func(co *CallOptions[BadgeFieldOptions]) {
+					co.FieldOptions = fo.Badges.FieldOptions
+				})
+				if err != nil {
+					return fmt.Errorf("load owner badges: %w", err)
+				}
+
+				// Step 3: Map back to this chunk's parents via junction mapping.
+				// The targets are walked in the order the fetch returned them, so
+				// the relationship's Sorts — the caller's, or the static `sort:` —
+				// order each parent's slice. Walking the
+				// junction rows instead would keep junction order and drop the sort.
+				parentsByTarget := make(map[string][]int, len(relatedBadges))
+				for i := start; i < start+len(chunk); i++ {
+					for _, tID := range parentToTargetIDs[fmt.Sprint(owners[i].OwnerKey)] {
+						parentsByTarget[tID] = append(parentsByTarget[tID], i)
+					}
+				}
+				for _, t := range relatedBadges {
+					for _, i := range parentsByTarget[t.Code] {
+						owners[i].Badges = append(owners[i].Badges, t)
+					}
 				}
 			}
 			return nil

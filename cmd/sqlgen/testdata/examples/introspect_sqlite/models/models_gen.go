@@ -416,38 +416,48 @@ func (c *accountClient) loadRelationships(ctx context.Context, conn database.Que
 				accountIDs[idx] = a.ID
 			}
 
-			// Build FK-based filter, merged with consumer filter
-			filter := &ProjectFilter{
-				AccountID: &comparator.Number[int64]{In: accountIDs},
-			}
-			if fo.AccountProjects.Filter != nil {
-				filter.And = append(filter.And, fo.AccountProjects.Filter)
-			}
-
-			// Load via related entity client
 			sorts := fo.AccountProjects.Sorts
 			if len(sorts) == 0 {
 				sorts = c.accountProjectsDefaultSort
 			}
 
+			// Load via related entity client, 16383 parent keys per
+			// statement: half the dialect's bind-parameter limit, leaving the rest
+			// for the relationship's filters. Each parent's children come from one
+			// statement, so the sorts order every parent's slice.
+			//
 			// Self-referential relationships share the parent's entity type, so
 			// the loaded children must use a name distinct from the parent slice
 			// (accounts) to avoid shadowing it and mis-mapping the results
 			// onto the children instead of the parents.
-			relatedAccountProjects, err := c.projectClient.GetMany(ctx, &GetProjectsInput{
-				Filter: filter,
-				Sorts:  sorts,
-				Limit:  new(0),
-				// The mapping below keys every child on its FK, so the fetch
-				// declares that column rather than mutating the caller's
-				// FieldOptions — a narrowed selection that omits it would
-				// otherwise map every child onto the zero value.
-				requiredColumns: []string{"account_id"},
-			}, func(co *CallOptions[ProjectFieldOptions]) {
-				co.FieldOptions = fo.AccountProjects.FieldOptions
-			})
-			if err != nil {
-				return fmt.Errorf("load account projects: %w", err)
+			var relatedAccountProjects []*Project
+			for start := 0; start < len(accountIDs); start += 16383 {
+				chunk := accountIDs[start:min(start+16383, len(accountIDs))]
+
+				// Build FK-based filter, merged with consumer filter
+				filter := &ProjectFilter{
+					AccountID: &comparator.Number[int64]{In: chunk},
+				}
+				if fo.AccountProjects.Filter != nil {
+					filter.And = append(filter.And, fo.AccountProjects.Filter)
+				}
+
+				loaded, err := c.projectClient.GetMany(ctx, &GetProjectsInput{
+					Filter: filter,
+					Sorts:  sorts,
+					Limit:  new(0),
+					// The mapping below keys every child on its FK, so the fetch
+					// declares that column rather than mutating the caller's
+					// FieldOptions — a narrowed selection that omits it would
+					// otherwise map every child onto the zero value.
+					requiredColumns: []string{"account_id"},
+				}, func(co *CallOptions[ProjectFieldOptions]) {
+					co.FieldOptions = fo.AccountProjects.FieldOptions
+				})
+				if err != nil {
+					return fmt.Errorf("load account projects: %w", err)
+				}
+				relatedAccountProjects = append(relatedAccountProjects, loaded...)
 			}
 
 			// Map results back to parent entities by FK. The FK column on the
@@ -474,38 +484,48 @@ func (c *accountClient) loadRelationships(ctx context.Context, conn database.Que
 				accountIDs[idx] = a.ID
 			}
 
-			// Build FK-based filter, merged with consumer filter
-			filter := &TaskFilter{
-				AssigneeID: &comparator.NullableNumber[int64]{Number: comparator.Number[int64]{In: accountIDs}},
-			}
-			if fo.Tasks.Filter != nil {
-				filter.And = append(filter.And, fo.Tasks.Filter)
-			}
-
-			// Load via related entity client
 			sorts := fo.Tasks.Sorts
 			if len(sorts) == 0 {
 				sorts = c.tasksDefaultSort
 			}
 
+			// Load via related entity client, 16383 parent keys per
+			// statement: half the dialect's bind-parameter limit, leaving the rest
+			// for the relationship's filters. Each parent's children come from one
+			// statement, so the sorts order every parent's slice.
+			//
 			// Self-referential relationships share the parent's entity type, so
 			// the loaded children must use a name distinct from the parent slice
 			// (accounts) to avoid shadowing it and mis-mapping the results
 			// onto the children instead of the parents.
-			relatedTasks, err := c.taskClient.GetMany(ctx, &GetTasksInput{
-				Filter: filter,
-				Sorts:  sorts,
-				Limit:  new(0),
-				// The mapping below keys every child on its FK, so the fetch
-				// declares that column rather than mutating the caller's
-				// FieldOptions — a narrowed selection that omits it would
-				// otherwise map every child onto the zero value.
-				requiredColumns: []string{"assignee_id"},
-			}, func(co *CallOptions[TaskFieldOptions]) {
-				co.FieldOptions = fo.Tasks.FieldOptions
-			})
-			if err != nil {
-				return fmt.Errorf("load account tasks: %w", err)
+			var relatedTasks []*Task
+			for start := 0; start < len(accountIDs); start += 16383 {
+				chunk := accountIDs[start:min(start+16383, len(accountIDs))]
+
+				// Build FK-based filter, merged with consumer filter
+				filter := &TaskFilter{
+					AssigneeID: &comparator.NullableNumber[int64]{Number: comparator.Number[int64]{In: chunk}},
+				}
+				if fo.Tasks.Filter != nil {
+					filter.And = append(filter.And, fo.Tasks.Filter)
+				}
+
+				loaded, err := c.taskClient.GetMany(ctx, &GetTasksInput{
+					Filter: filter,
+					Sorts:  sorts,
+					Limit:  new(0),
+					// The mapping below keys every child on its FK, so the fetch
+					// declares that column rather than mutating the caller's
+					// FieldOptions — a narrowed selection that omits it would
+					// otherwise map every child onto the zero value.
+					requiredColumns: []string{"assignee_id"},
+				}, func(co *CallOptions[TaskFieldOptions]) {
+					co.FieldOptions = fo.Tasks.FieldOptions
+				})
+				if err != nil {
+					return fmt.Errorf("load account tasks: %w", err)
+				}
+				relatedTasks = append(relatedTasks, loaded...)
 			}
 
 			// Map results back to parent entities by FK. The FK column on the
@@ -535,105 +555,131 @@ func (c *accountClient) loadRelationships(ctx context.Context, conn database.Que
 				accountIDs[idx] = a.ID
 			}
 
-			// Step 1: Query junction table to get mapping
-			junctionQuery, junctionArgs := sql.BuildSelect(c.dialect, sql.Table{Schema: "", Name: "project_members"}, sql.SelectOptions{
-				Columns:    []string{"account_id", "project_id"},
-				Conditions: []sql.Condition{sql.Where(c.dialect.QuoteIdentifier("account_id")).In(toAnySlice(accountIDs)...)},
-			})
-
-			junctionRows, err := conn.Query(ctx, junctionQuery, junctionArgs...)
-			if err != nil {
-				return fmt.Errorf("load account projects junction: %w", err)
-			}
-			defer junctionRows.Close()
-
-			// Discover column positions from result (BuildSelect sorts columns alphabetically)
-			junctionCols, err := junctionRows.Columns()
-			if err != nil {
-				return fmt.Errorf("load account projects junction columns: %w", err)
-			}
-			localIdx, refIdx := 0, 1
-			for i, col := range junctionCols {
-				switch col {
-				case "account_id":
-					localIdx = i
-				case "project_id":
-					refIdx = i
-				}
-			}
-
-			// Build mapping and collect all target keys. Each junction column
-			// scans into its own Go type, so both sides of the maps stringify
-			// keys the same way.
-			parentToTargetIDs := make(map[string][]string)
-			var targetPKs []int64
-			for junctionRows.Next() {
-				var localKey int64
-				var refKey int64
-				ptrs := make([]any, len(junctionCols))
-				ptrs[localIdx], ptrs[refIdx] = &localKey, &refKey
-				if err := junctionRows.Scan(ptrs...); err != nil {
-					return fmt.Errorf("scan account projects junction: %w", err)
-				}
-				parentID, targetID := fmt.Sprint(localKey), fmt.Sprint(refKey)
-				parentToTargetIDs[parentID] = append(parentToTargetIDs[parentID], targetID)
-				targetPKs = append(targetPKs, int64(refKey))
-			}
-			if err := junctionRows.Err(); err != nil {
-				return fmt.Errorf("iterate account projects junction: %w", err)
-			}
-
-			if len(parentToTargetIDs) == 0 {
-				return nil
-			}
-
-			// Step 2: Fetch the actual entities
-			filter := &ProjectFilter{
-				ID: &comparator.Number[int64]{In: targetPKs},
-			}
-			if fo.ProjectMembers.Filter != nil {
-				filter.And = append(filter.And, fo.ProjectMembers.Filter)
-			}
-
 			sorts := fo.ProjectMembers.Sorts
 			if len(sorts) == 0 {
 				sorts = c.projectMembersDefaultSort
 			}
 
-			// Self-referential relationships share the parent's entity type, so
-			// the loaded targets must use a name distinct from the parent slice
-			// (accounts) to avoid shadowing it and mis-mapping the results
-			// onto the targets instead of the parents.
-			relatedProjectMembers, err := c.projectClient.GetMany(ctx, &GetProjectsInput{
-				Filter: filter,
-				Sorts:  sorts,
-				Limit:  new(0),
-				// Step 3 keys every loaded target on its own PK, so the fetch
-				// declares that column rather than mutating the caller's
-				// FieldOptions — a narrowed selection that omits it would
-				// otherwise map every target onto the zero value.
-				requiredColumns: []string{"id"},
-			}, func(co *CallOptions[ProjectFieldOptions]) {
-				co.FieldOptions = fo.ProjectMembers.FieldOptions
-			})
-			if err != nil {
-				return fmt.Errorf("load account projects: %w", err)
-			}
+			// The three steps run once per chunk of 16383 parent keys:
+			// half the dialect's bind-parameter limit, leaving the rest for the
+			// relationship's filters.
+			for start := 0; start < len(accountIDs); start += 16383 {
+				chunk := accountIDs[start:min(start+16383, len(accountIDs))]
 
-			// Step 3: Map back to parent entities via junction mapping. The
-			// targets are walked in the order the fetch returned them, so the
-			// relationship's Sorts — the caller's, or the static `sort:` —
-			// order each parent's slice. Walking the
-			// junction rows instead would keep junction order and drop the sort.
-			parentsByTarget := make(map[string][]int, len(relatedProjectMembers))
-			for i := range accounts {
-				for _, tID := range parentToTargetIDs[fmt.Sprint(accounts[i].ID)] {
-					parentsByTarget[tID] = append(parentsByTarget[tID], i)
+				// Step 1: Query junction table to get mapping. Each junction
+				// column scans into its own Go type, so both sides of the maps
+				// stringify keys the same way.
+				parentToTargetIDs := make(map[string][]string)
+				if err := func() error {
+					junctionQuery, junctionArgs := sql.BuildSelect(c.dialect, sql.Table{Schema: "", Name: "project_members"}, sql.SelectOptions{
+						Columns:    []string{"account_id", "project_id"},
+						Conditions: []sql.Condition{sql.Where(c.dialect.QuoteIdentifier("account_id")).In(toAnySlice(chunk)...)},
+					})
+
+					junctionRows, err := conn.Query(ctx, junctionQuery, junctionArgs...)
+					if err != nil {
+						return fmt.Errorf("load account projects junction: %w", err)
+					}
+					defer junctionRows.Close()
+
+					// Discover column positions from result (BuildSelect sorts columns alphabetically)
+					junctionCols, err := junctionRows.Columns()
+					if err != nil {
+						return fmt.Errorf("load account projects junction columns: %w", err)
+					}
+					localIdx, refIdx := 0, 1
+					for i, col := range junctionCols {
+						switch col {
+						case "account_id":
+							localIdx = i
+						case "project_id":
+							refIdx = i
+						}
+					}
+
+					for junctionRows.Next() {
+						var localKey int64
+						var refKey int64
+						ptrs := make([]any, len(junctionCols))
+						ptrs[localIdx], ptrs[refIdx] = &localKey, &refKey
+						if err := junctionRows.Scan(ptrs...); err != nil {
+							return fmt.Errorf("scan account projects junction: %w", err)
+						}
+						parentID, targetID := fmt.Sprint(localKey), fmt.Sprint(refKey)
+						parentToTargetIDs[parentID] = append(parentToTargetIDs[parentID], targetID)
+					}
+					if err := junctionRows.Err(); err != nil {
+						return fmt.Errorf("iterate account projects junction: %w", err)
+					}
+					return nil
+				}(); err != nil {
+					return err
 				}
-			}
-			for _, t := range relatedProjectMembers {
-				for _, i := range parentsByTarget[fmt.Sprint(t.ID)] {
-					accounts[i].ProjectMembers = append(accounts[i].ProjectMembers, t)
+
+				if len(parentToTargetIDs) == 0 {
+					continue
+				}
+
+				// Step 2: Fetch the actual entities. The target key is matched
+				// against this chunk's junction rows, not against a list of target
+				// keys, so the statement binds the chunk's parent keys however many
+				// targets they share, and each parent's targets come from one
+				// statement.
+				junctionWhere, junctionWhereArgs := sql.SubqueryWhere(c.dialect, "j", []sql.Condition{
+					sql.Where(c.dialect.QuoteIdentifier("account_id")).In(toAnySlice(chunk)...),
+				})
+				conditions := []sql.Condition{
+					sql.Where(c.dialect.QuoteIdentifier("id")).In(sql.Subquery{
+						SQL: "SELECT j." + c.dialect.QuoteIdentifier("project_id") +
+							" FROM " + c.dialect.FormatTable(sql.Table{Schema: "", Name: "project_members"}) + " j WHERE " + junctionWhere,
+						Args: junctionWhereArgs,
+					}),
+				}
+
+				// The consumer filter is ANDed in, as on the O2M fetch, so a
+				// soft-delete comparator in it narrows the target's default
+				// rather than replacing it.
+				filter := &ProjectFilter{}
+				if fo.ProjectMembers.Filter != nil {
+					filter.And = append(filter.And, fo.ProjectMembers.Filter)
+				}
+
+				// Self-referential relationships share the parent's entity type, so
+				// the loaded targets must use a name distinct from the parent slice
+				// (accounts) to avoid shadowing it and mis-mapping the results
+				// onto the targets instead of the parents.
+				relatedProjectMembers, err := c.projectClient.GetMany(ctx, &GetProjectsInput{
+					Filter:     filter,
+					Sorts:      sorts,
+					Limit:      new(0),
+					conditions: conditions,
+					// Step 3 keys every loaded target on its own PK, so the fetch
+					// declares that column rather than mutating the caller's
+					// FieldOptions — a narrowed selection that omits it would
+					// otherwise map every target onto the zero value.
+					requiredColumns: []string{"id"},
+				}, func(co *CallOptions[ProjectFieldOptions]) {
+					co.FieldOptions = fo.ProjectMembers.FieldOptions
+				})
+				if err != nil {
+					return fmt.Errorf("load account projects: %w", err)
+				}
+
+				// Step 3: Map back to this chunk's parents via junction mapping.
+				// The targets are walked in the order the fetch returned them, so
+				// the relationship's Sorts — the caller's, or the static `sort:` —
+				// order each parent's slice. Walking the
+				// junction rows instead would keep junction order and drop the sort.
+				parentsByTarget := make(map[string][]int, len(relatedProjectMembers))
+				for i := start; i < start+len(chunk); i++ {
+					for _, tID := range parentToTargetIDs[fmt.Sprint(accounts[i].ID)] {
+						parentsByTarget[tID] = append(parentsByTarget[tID], i)
+					}
+				}
+				for _, t := range relatedProjectMembers {
+					for _, i := range parentsByTarget[fmt.Sprint(t.ID)] {
+						accounts[i].ProjectMembers = append(accounts[i].ProjectMembers, t)
+					}
 				}
 			}
 			return nil
@@ -4613,38 +4659,48 @@ func (c *projectClient) loadRelationships(ctx context.Context, conn database.Que
 				projectIDs[idx] = p.ID
 			}
 
-			// Build FK-based filter, merged with consumer filter
-			filter := &TaskFilter{
-				ProjectID: &comparator.Number[int64]{In: projectIDs},
-			}
-			if fo.Tasks.Filter != nil {
-				filter.And = append(filter.And, fo.Tasks.Filter)
-			}
-
-			// Load via related entity client
 			sorts := fo.Tasks.Sorts
 			if len(sorts) == 0 {
 				sorts = c.tasksDefaultSort
 			}
 
+			// Load via related entity client, 16383 parent keys per
+			// statement: half the dialect's bind-parameter limit, leaving the rest
+			// for the relationship's filters. Each parent's children come from one
+			// statement, so the sorts order every parent's slice.
+			//
 			// Self-referential relationships share the parent's entity type, so
 			// the loaded children must use a name distinct from the parent slice
 			// (projects) to avoid shadowing it and mis-mapping the results
 			// onto the children instead of the parents.
-			relatedTasks, err := c.taskClient.GetMany(ctx, &GetTasksInput{
-				Filter: filter,
-				Sorts:  sorts,
-				Limit:  new(0),
-				// The mapping below keys every child on its FK, so the fetch
-				// declares that column rather than mutating the caller's
-				// FieldOptions — a narrowed selection that omits it would
-				// otherwise map every child onto the zero value.
-				requiredColumns: []string{"project_id"},
-			}, func(co *CallOptions[TaskFieldOptions]) {
-				co.FieldOptions = fo.Tasks.FieldOptions
-			})
-			if err != nil {
-				return fmt.Errorf("load project tasks: %w", err)
+			var relatedTasks []*Task
+			for start := 0; start < len(projectIDs); start += 16383 {
+				chunk := projectIDs[start:min(start+16383, len(projectIDs))]
+
+				// Build FK-based filter, merged with consumer filter
+				filter := &TaskFilter{
+					ProjectID: &comparator.Number[int64]{In: chunk},
+				}
+				if fo.Tasks.Filter != nil {
+					filter.And = append(filter.And, fo.Tasks.Filter)
+				}
+
+				loaded, err := c.taskClient.GetMany(ctx, &GetTasksInput{
+					Filter: filter,
+					Sorts:  sorts,
+					Limit:  new(0),
+					// The mapping below keys every child on its FK, so the fetch
+					// declares that column rather than mutating the caller's
+					// FieldOptions — a narrowed selection that omits it would
+					// otherwise map every child onto the zero value.
+					requiredColumns: []string{"project_id"},
+				}, func(co *CallOptions[TaskFieldOptions]) {
+					co.FieldOptions = fo.Tasks.FieldOptions
+				})
+				if err != nil {
+					return fmt.Errorf("load project tasks: %w", err)
+				}
+				relatedTasks = append(relatedTasks, loaded...)
 			}
 
 			// Map results back to parent entities by FK. The FK column on the
@@ -4671,105 +4727,131 @@ func (c *projectClient) loadRelationships(ctx context.Context, conn database.Que
 				projectIDs[idx] = p.ID
 			}
 
-			// Step 1: Query junction table to get mapping
-			junctionQuery, junctionArgs := sql.BuildSelect(c.dialect, sql.Table{Schema: "", Name: "project_members"}, sql.SelectOptions{
-				Columns:    []string{"project_id", "account_id"},
-				Conditions: []sql.Condition{sql.Where(c.dialect.QuoteIdentifier("project_id")).In(toAnySlice(projectIDs)...)},
-			})
-
-			junctionRows, err := conn.Query(ctx, junctionQuery, junctionArgs...)
-			if err != nil {
-				return fmt.Errorf("load project accounts junction: %w", err)
-			}
-			defer junctionRows.Close()
-
-			// Discover column positions from result (BuildSelect sorts columns alphabetically)
-			junctionCols, err := junctionRows.Columns()
-			if err != nil {
-				return fmt.Errorf("load project accounts junction columns: %w", err)
-			}
-			localIdx, refIdx := 0, 1
-			for i, col := range junctionCols {
-				switch col {
-				case "project_id":
-					localIdx = i
-				case "account_id":
-					refIdx = i
-				}
-			}
-
-			// Build mapping and collect all target keys. Each junction column
-			// scans into its own Go type, so both sides of the maps stringify
-			// keys the same way.
-			parentToTargetIDs := make(map[string][]string)
-			var targetPKs []int64
-			for junctionRows.Next() {
-				var localKey int64
-				var refKey int64
-				ptrs := make([]any, len(junctionCols))
-				ptrs[localIdx], ptrs[refIdx] = &localKey, &refKey
-				if err := junctionRows.Scan(ptrs...); err != nil {
-					return fmt.Errorf("scan project accounts junction: %w", err)
-				}
-				parentID, targetID := fmt.Sprint(localKey), fmt.Sprint(refKey)
-				parentToTargetIDs[parentID] = append(parentToTargetIDs[parentID], targetID)
-				targetPKs = append(targetPKs, int64(refKey))
-			}
-			if err := junctionRows.Err(); err != nil {
-				return fmt.Errorf("iterate project accounts junction: %w", err)
-			}
-
-			if len(parentToTargetIDs) == 0 {
-				return nil
-			}
-
-			// Step 2: Fetch the actual entities
-			filter := &AccountFilter{
-				ID: &comparator.Number[int64]{In: targetPKs},
-			}
-			if fo.Accounts.Filter != nil {
-				filter.And = append(filter.And, fo.Accounts.Filter)
-			}
-
 			sorts := fo.Accounts.Sorts
 			if len(sorts) == 0 {
 				sorts = c.accountsDefaultSort
 			}
 
-			// Self-referential relationships share the parent's entity type, so
-			// the loaded targets must use a name distinct from the parent slice
-			// (projects) to avoid shadowing it and mis-mapping the results
-			// onto the targets instead of the parents.
-			relatedAccounts, err := c.accountClient.GetMany(ctx, &GetAccountsInput{
-				Filter: filter,
-				Sorts:  sorts,
-				Limit:  new(0),
-				// Step 3 keys every loaded target on its own PK, so the fetch
-				// declares that column rather than mutating the caller's
-				// FieldOptions — a narrowed selection that omits it would
-				// otherwise map every target onto the zero value.
-				requiredColumns: []string{"id"},
-			}, func(co *CallOptions[AccountFieldOptions]) {
-				co.FieldOptions = fo.Accounts.FieldOptions
-			})
-			if err != nil {
-				return fmt.Errorf("load project accounts: %w", err)
-			}
+			// The three steps run once per chunk of 16383 parent keys:
+			// half the dialect's bind-parameter limit, leaving the rest for the
+			// relationship's filters.
+			for start := 0; start < len(projectIDs); start += 16383 {
+				chunk := projectIDs[start:min(start+16383, len(projectIDs))]
 
-			// Step 3: Map back to parent entities via junction mapping. The
-			// targets are walked in the order the fetch returned them, so the
-			// relationship's Sorts — the caller's, or the static `sort:` —
-			// order each parent's slice. Walking the
-			// junction rows instead would keep junction order and drop the sort.
-			parentsByTarget := make(map[string][]int, len(relatedAccounts))
-			for i := range projects {
-				for _, tID := range parentToTargetIDs[fmt.Sprint(projects[i].ID)] {
-					parentsByTarget[tID] = append(parentsByTarget[tID], i)
+				// Step 1: Query junction table to get mapping. Each junction
+				// column scans into its own Go type, so both sides of the maps
+				// stringify keys the same way.
+				parentToTargetIDs := make(map[string][]string)
+				if err := func() error {
+					junctionQuery, junctionArgs := sql.BuildSelect(c.dialect, sql.Table{Schema: "", Name: "project_members"}, sql.SelectOptions{
+						Columns:    []string{"project_id", "account_id"},
+						Conditions: []sql.Condition{sql.Where(c.dialect.QuoteIdentifier("project_id")).In(toAnySlice(chunk)...)},
+					})
+
+					junctionRows, err := conn.Query(ctx, junctionQuery, junctionArgs...)
+					if err != nil {
+						return fmt.Errorf("load project accounts junction: %w", err)
+					}
+					defer junctionRows.Close()
+
+					// Discover column positions from result (BuildSelect sorts columns alphabetically)
+					junctionCols, err := junctionRows.Columns()
+					if err != nil {
+						return fmt.Errorf("load project accounts junction columns: %w", err)
+					}
+					localIdx, refIdx := 0, 1
+					for i, col := range junctionCols {
+						switch col {
+						case "project_id":
+							localIdx = i
+						case "account_id":
+							refIdx = i
+						}
+					}
+
+					for junctionRows.Next() {
+						var localKey int64
+						var refKey int64
+						ptrs := make([]any, len(junctionCols))
+						ptrs[localIdx], ptrs[refIdx] = &localKey, &refKey
+						if err := junctionRows.Scan(ptrs...); err != nil {
+							return fmt.Errorf("scan project accounts junction: %w", err)
+						}
+						parentID, targetID := fmt.Sprint(localKey), fmt.Sprint(refKey)
+						parentToTargetIDs[parentID] = append(parentToTargetIDs[parentID], targetID)
+					}
+					if err := junctionRows.Err(); err != nil {
+						return fmt.Errorf("iterate project accounts junction: %w", err)
+					}
+					return nil
+				}(); err != nil {
+					return err
 				}
-			}
-			for _, t := range relatedAccounts {
-				for _, i := range parentsByTarget[fmt.Sprint(t.ID)] {
-					projects[i].Accounts = append(projects[i].Accounts, t)
+
+				if len(parentToTargetIDs) == 0 {
+					continue
+				}
+
+				// Step 2: Fetch the actual entities. The target key is matched
+				// against this chunk's junction rows, not against a list of target
+				// keys, so the statement binds the chunk's parent keys however many
+				// targets they share, and each parent's targets come from one
+				// statement.
+				junctionWhere, junctionWhereArgs := sql.SubqueryWhere(c.dialect, "j", []sql.Condition{
+					sql.Where(c.dialect.QuoteIdentifier("project_id")).In(toAnySlice(chunk)...),
+				})
+				conditions := []sql.Condition{
+					sql.Where(c.dialect.QuoteIdentifier("id")).In(sql.Subquery{
+						SQL: "SELECT j." + c.dialect.QuoteIdentifier("account_id") +
+							" FROM " + c.dialect.FormatTable(sql.Table{Schema: "", Name: "project_members"}) + " j WHERE " + junctionWhere,
+						Args: junctionWhereArgs,
+					}),
+				}
+
+				// The consumer filter is ANDed in, as on the O2M fetch, so a
+				// soft-delete comparator in it narrows the target's default
+				// rather than replacing it.
+				filter := &AccountFilter{}
+				if fo.Accounts.Filter != nil {
+					filter.And = append(filter.And, fo.Accounts.Filter)
+				}
+
+				// Self-referential relationships share the parent's entity type, so
+				// the loaded targets must use a name distinct from the parent slice
+				// (projects) to avoid shadowing it and mis-mapping the results
+				// onto the targets instead of the parents.
+				relatedAccounts, err := c.accountClient.GetMany(ctx, &GetAccountsInput{
+					Filter:     filter,
+					Sorts:      sorts,
+					Limit:      new(0),
+					conditions: conditions,
+					// Step 3 keys every loaded target on its own PK, so the fetch
+					// declares that column rather than mutating the caller's
+					// FieldOptions — a narrowed selection that omits it would
+					// otherwise map every target onto the zero value.
+					requiredColumns: []string{"id"},
+				}, func(co *CallOptions[AccountFieldOptions]) {
+					co.FieldOptions = fo.Accounts.FieldOptions
+				})
+				if err != nil {
+					return fmt.Errorf("load project accounts: %w", err)
+				}
+
+				// Step 3: Map back to this chunk's parents via junction mapping.
+				// The targets are walked in the order the fetch returned them, so
+				// the relationship's Sorts — the caller's, or the static `sort:` —
+				// order each parent's slice. Walking the
+				// junction rows instead would keep junction order and drop the sort.
+				parentsByTarget := make(map[string][]int, len(relatedAccounts))
+				for i := start; i < start+len(chunk); i++ {
+					for _, tID := range parentToTargetIDs[fmt.Sprint(projects[i].ID)] {
+						parentsByTarget[tID] = append(parentsByTarget[tID], i)
+					}
+				}
+				for _, t := range relatedAccounts {
+					for _, i := range parentsByTarget[fmt.Sprint(t.ID)] {
+						projects[i].Accounts = append(projects[i].Accounts, t)
+					}
 				}
 			}
 			return nil
@@ -8891,38 +8973,48 @@ func (c *taskClient) loadRelationships(ctx context.Context, conn database.Querie
 				taskIDs[idx] = t.ID
 			}
 
-			// Build FK-based filter, merged with consumer filter
-			filter := &TaskLabelFilter{
-				TaskID: &comparator.Number[int64]{In: taskIDs},
-			}
-			if fo.TaskLabels.Filter != nil {
-				filter.And = append(filter.And, fo.TaskLabels.Filter)
-			}
-
-			// Load via related entity client
 			sorts := fo.TaskLabels.Sorts
 			if len(sorts) == 0 {
 				sorts = c.taskLabelsDefaultSort
 			}
 
+			// Load via related entity client, 16383 parent keys per
+			// statement: half the dialect's bind-parameter limit, leaving the rest
+			// for the relationship's filters. Each parent's children come from one
+			// statement, so the sorts order every parent's slice.
+			//
 			// Self-referential relationships share the parent's entity type, so
 			// the loaded children must use a name distinct from the parent slice
 			// (tasks) to avoid shadowing it and mis-mapping the results
 			// onto the children instead of the parents.
-			relatedTaskLabels, err := c.taskLabelClient.GetMany(ctx, &GetTaskLabelsInput{
-				Filter: filter,
-				Sorts:  sorts,
-				Limit:  new(0),
-				// The mapping below keys every child on its FK, so the fetch
-				// declares that column rather than mutating the caller's
-				// FieldOptions — a narrowed selection that omits it would
-				// otherwise map every child onto the zero value.
-				requiredColumns: []string{"task_id"},
-			}, func(co *CallOptions[TaskLabelFieldOptions]) {
-				co.FieldOptions = fo.TaskLabels.FieldOptions
-			})
-			if err != nil {
-				return fmt.Errorf("load task task_labels: %w", err)
+			var relatedTaskLabels []*TaskLabel
+			for start := 0; start < len(taskIDs); start += 16383 {
+				chunk := taskIDs[start:min(start+16383, len(taskIDs))]
+
+				// Build FK-based filter, merged with consumer filter
+				filter := &TaskLabelFilter{
+					TaskID: &comparator.Number[int64]{In: chunk},
+				}
+				if fo.TaskLabels.Filter != nil {
+					filter.And = append(filter.And, fo.TaskLabels.Filter)
+				}
+
+				loaded, err := c.taskLabelClient.GetMany(ctx, &GetTaskLabelsInput{
+					Filter: filter,
+					Sorts:  sorts,
+					Limit:  new(0),
+					// The mapping below keys every child on its FK, so the fetch
+					// declares that column rather than mutating the caller's
+					// FieldOptions — a narrowed selection that omits it would
+					// otherwise map every child onto the zero value.
+					requiredColumns: []string{"task_id"},
+				}, func(co *CallOptions[TaskLabelFieldOptions]) {
+					co.FieldOptions = fo.TaskLabels.FieldOptions
+				})
+				if err != nil {
+					return fmt.Errorf("load task task_labels: %w", err)
+				}
+				relatedTaskLabels = append(relatedTaskLabels, loaded...)
 			}
 
 			// Map results back to parent entities by FK. The FK column on the

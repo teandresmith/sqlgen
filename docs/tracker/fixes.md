@@ -169,9 +169,173 @@ filter member and client wiring are emitted against it.
 
 **Resolution notes.** _Filled in by /fix resolve._
 
-### FIX-359
+### FIX-360
 
 - **Status:** Open
+- **Severity:** tracked
+- **Origin:** phase 5, cmd/sqlgen/gen
+- **Surfaced by:** FIX-358 vet (2026-10-21), user approved filing
+- **Vetted:** corrected at `02e23d79` (2026-10-21)
+
+**Issue.** **Excluding a table's only primary-key column passes `sqlgen validate` and crashes `sqlgen generate`.**
+Measured at `bd7783ea`, PostgreSQL, `source: files`: schema
+`cycles(id INT PRIMARY KEY, name TEXT NOT NULL)` with
+`tables.cycles.exclude_columns: [id]` and no `primary_key` override.
+`sqlgen validate` → "config and schema are valid"; `sqlgen generate` →
+
+```
+Generation error: generating table/client for table cycles: executing template: template: client.go.tmpl:12:95: executing "table/client" at <index .PKColumns 0>: error calling index: reflect: slice index out of range
+```
+
+(exit 1). A template panic surfaced as a generation error, with no message
+naming the config that caused it. The same crash follows a global
+`generation.exclude_columns: [id]`, and an FK into or out of the table or a
+declared O2O into it does not change it.
+
+Two more cases share the root cause (found by the 2026-10-21 vet):
+
+- **A composite PK with one member excluded generates silently on the wrong
+  key.** `memberships(org_id, user_id, PRIMARY KEY (org_id, user_id))` with
+  `exclude_columns: [user_id]`: `generate` exits 0, `go build` is ok, and the
+  client is `Get/Update/HardDelete(ctx, id int32)`, with `HardDelete` running
+  `sql.Where(QuoteIdentifier("org_id")).Eq(id)`, so one `HardDelete` removes
+  every membership in the org.
+- **`exclude_columns` removing every column** prints PRD §4.13's warning
+  ("exclude_columns removes all columns from table public.cycles; table will
+  be skipped") and then crashes with the same `client.go.tmpl:12:95` error,
+  though §4.13 says the table is skipped.
+
+Already working at HEAD (confirmed): a PK column excluded with
+`primary_key.columns: [code]`, and a composite member excluded with an
+override over the remaining member.
+
+**Root cause.** `tableHasResolvedPK` (`cmd/sqlgen/gen/context_table.go:889-907`)
+decides whether a table generates from the `primary_key` override or the
+parser's `Column.PrimaryKey` flags, and ignores `exclude_columns`. So the table
+is treated as keyed, while `buildTableColumns` (`context_table.go:309-320`)
+drops the excluded PK column and leaves `PKColumns` empty (or a partial key),
+and `client.go.tmpl` indexes `.PKColumns 0`. Post-parse validation checks
+`exclude_columns` exhausting a table's columns (PRD §4.13) but not removing its
+key. Confirmed by the vet; line refs and the quoted error are accurate at
+`02e23d79`.
+
+**Suggested fix.**
+- Decide the PRD behavior (unspecified today); the vet should measure both and
+  bring it as a ruling if the PRD does not settle it:
+  - (a) an error at validation: "`tables.<t>.exclude_columns` removes
+    primary-key column `<c>`; declare `primary_key.columns` or keep the
+    column". Consistent with §4.13's row requiring `primary_key.columns` to
+    exist after `exclude_columns` is applied.
+  - (b) treat the table as having no primary key after exclusion, so it is
+    skipped with §4.13's existing warning (`table %s has no primary key;
+    skipped from generation`, §9.4b).
+- Make `tableHasResolvedPK` and validation agree with `buildTableColumns`, so
+  `validate` reports the case instead of `generate` crashing. Cover a composite
+  PK with one member excluded too.
+- Add a PRD §4.13 row for the chosen behavior.
+- Tests: a config / gen unit test for the single and composite PK cases; a cli
+  test that `validate` and `generate` both report it (no template panic).
+- **Vetted prototype (option (a)):**
+  - `gen/context_table.go`: `tableHasResolvedPK` resolves the key (override,
+    else detected PK flags) and returns false when it is empty or the merged
+    global + table `exclude_columns` removes any member; signature unchanged,
+    same precedence via `resolveTableConfig`. It now agrees with
+    `buildTableColumns`, and the all-columns-excluded table is skipped as
+    §4.13 states (widened: same root cause and fix site, PRD-settled).
+  - `config/validate.go`: `validateExcludedPrimaryKey`, wired into
+    `ValidatePostParse` after `validatePrimaryKeyOverride`, errors once per
+    excluded detected-PK member, naming the source key: `tables.public.cycles.exclude_columns
+    removes primary-key column "id" of table public.cycles; keep the column,
+    declare tables.public.cycles.primary_key.columns over columns that remain,
+    or drop the table with exclude_tables` (or `generation.exclude_columns …`).
+    It skips tables with a `primary_key.columns` override (already validated),
+    tables with every column excluded (the exhaustion warning), and tables in
+    `exclude_tables`. With the gen change alone, `generate` drops the table
+    with no warning at all, so a validator is required under (a) or (b).
+  - PRD §4.13: a new row "`exclude_columns` removes a primary-key column"
+    (Error, schema-level), plus an entry in the schema-level phase list and the
+    edge-case bullets.
+  - Tests: `config.TestValidatePostParse_ExcludedPrimaryKey` (7 cases:
+    table-level, global, composite member, override, all excluded,
+    exclude_tables, non-key column); `gen.TestBuildTableContexts_ExcludedKeyColumn`
+    (6 cases); `cli/excluded_pk_test.go` `TestExcludedPrimaryKeyColumn` (single,
+    global, composite under both `validate` and `generate`, asserting the error
+    and no "executing template") and `TestGenerate_AllColumnsExcludedSkipsTable`.
+- **Pending the user's ruling:**
+  - **Q1.** `exclude_columns` removes a member of a table's detected primary
+    key (no `primary_key.columns` override): error, or skip as a no-PK table?
+    (a) Validation error (prototyped): `validate` exits 2 with the message
+    above, `generate` exits 2 with "Post-parse validation error: …" before gen;
+    a global `exclude_columns: [id]` gives one error per id-keyed table; the
+    composite case errors naming `user_id` instead of generating on `org_id`; a
+    declared edge into the table adds a consequential "generates no entity"
+    error in `validate` only. (b) Skip with the §9.4b warning (measured with a
+    throwaway variant): exit 0 with "table public.cycles has no primary key;
+    skipped from generation …", which misstates the cause (the table has a
+    PK); the table, its client, cache, events and GraphQL type vanish; an
+    FK-inferred edge into it is silently omitted; a declared edge errors with
+    the misleading "has no primary key" cause; a cached view with
+    `invalidate_on: [cycles]` passes and is never invalidated (breaks §27.11
+    unless `validateViewInvalidateOn` is extended); a global `exclude_columns:
+    [id]` silently drops every id-keyed table. No golden churn under either.
+    Vet recommends (a): it matches §4.13's rule that `primary_key.columns` must
+    survive `exclude_columns` and the loud-error preference, and keeps the
+    all-columns case as §4.13's intentional skip. Not auto-accepted: the entry
+    asked for a ruling, and (a) turns the composite config that generates today
+    into an error.
+- **The user ruled on 2026-10-21:** Q1 (a), a validation error. That is the
+  prototyped option, so its gates and fail-first evidence stand; the verdict is
+  `corrected` (widened to the all-columns-excluded crash, and the composite
+  case is a silent wrong key rather than a crash) without a second wave.
+- Prototype results, run at `02e23d79` on 2026-10-21: reproduced with the HEAD
+  CLI on scratch projects (PostgreSQL, `source: files`): single exclude →
+  `validate` "config and schema are valid" (exit 0), `generate` the
+  `client.go.tmpl:12:95` error (exit 1); global exclude, FK into / out of,
+  declared O2O into → same crash; composite member → exit 0 keyed on `org_id`;
+  all columns → the §4.13 warning, then the crash; both override forms → exit
+  0, build ok. Gates: `go test -race -count=1 ./config/... ./gen/... ./cli/...`
+  ok (config 1.7 s, gen 68 s, cli 97 s); `TestE2EGoldenFiles` ok;
+  `golangci-lint run ./config/... ./gen/... ./cli/...` 0 issues; gofumpt clean.
+  Fail-first: `tableHasResolvedPK` reverted →
+  `TestBuildTableContexts_ExcludedKeyColumn` "BuildTableContexts returned 1
+  tables, want cycles skipped" (4 subtests) and
+  `TestGenerate_AllColumnsExcludedSkipsTable` "generate: unexpected error:
+  generating table/client for table cycles: executing template: template:
+  client.go.tmpl:12:95: …"; `validateExcludedPrimaryKey` call removed →
+  `TestValidatePostParse_ExcludedPrimaryKey` "ValidatePostParse() error = nil,
+  want one containing \"tables.public.cycles.exclude_columns removes
+  primary-key column \\\"id\\\" …\"" (3 subtests) and `TestExcludedPrimaryKeyColumn`
+  "validate: want an error, got none" / "generate: want an error, got none".
+  Existing suite without the fix passes. Golden churn: none (no example uses
+  `exclude_columns` at HEAD). **FIX-358 overlap:** no textual conflict in either
+  order (`git apply` one then `--check` the other, both ways, at `02e23d79`);
+  with both applied, `go vet`, `go test -race ./config/... ./gen/... ./cli/...`
+  and `TestE2EGoldenFiles` pass. Land FIX-358 first (ready, carries the golden
+  churn); FIX-360 rebases trivially. From reading: once FIX-360 lands,
+  FIX-358's referenced-side check no longer fires for an excluded target PK
+  (validation rejects it) but still covers an FK to an excluded non-key UNIQUE
+  column. Patch: `.claude/prototypes/FIX-360.patch` (6 files, +389/-18).
+
+**References.**
+- PRD §4.13 (config validation rules: "`primary_key.columns` references
+  non-existent column", "Table has no primary key after override resolution",
+  exclude_columns exhaustion), §9.4b (no-PK tables are skipped).
+- `cmd/sqlgen/gen/context_table.go:889-907` (`tableHasResolvedPK`),
+  `:309-320` (`buildTableColumns`).
+- `cmd/sqlgen/gen/relationship_targets.go` (uses `tableHasResolvedPK` to decide
+  whether a relationship target generates; FIX-358 touches the same file).
+
+**Resolution notes.** _Filled in by /fix resolve._
+
+<!-- fixes:open:end -->
+
+## Resolved
+
+<!-- fixes:resolved:begin -->
+
+### FIX-359
+
+- **Status:** Resolved
 - **Severity:** tracked
 - **Origin:** phase 6, cmd/sqlgen/gen/templates/table
 - **Surfaced by:** R4 probe of `docs/design/COMPOSITE_FK_RELATIONSHIPS.md` (2026-10-20), user approved filing
@@ -442,171 +606,72 @@ nested-mutation steps, which chunk at `c.batchSize` for exactly this reason
   its rationale).
 - Related: FIX-357 (typed M2M junction keys, same loader).
 
-**Resolution notes.** _Filled in by /fix resolve._
-
-### FIX-360
-
-- **Status:** Open
-- **Severity:** tracked
-- **Origin:** phase 5, cmd/sqlgen/gen
-- **Surfaced by:** FIX-358 vet (2026-10-21), user approved filing
-- **Vetted:** corrected at `02e23d79` (2026-10-21)
-
-**Issue.** **Excluding a table's only primary-key column passes `sqlgen validate` and crashes `sqlgen generate`.**
-Measured at `bd7783ea`, PostgreSQL, `source: files`: schema
-`cycles(id INT PRIMARY KEY, name TEXT NOT NULL)` with
-`tables.cycles.exclude_columns: [id]` and no `primary_key` override.
-`sqlgen validate` → "config and schema are valid"; `sqlgen generate` →
-
-```
-Generation error: generating table/client for table cycles: executing template: template: client.go.tmpl:12:95: executing "table/client" at <index .PKColumns 0>: error calling index: reflect: slice index out of range
-```
-
-(exit 1). A template panic surfaced as a generation error, with no message
-naming the config that caused it. The same crash follows a global
-`generation.exclude_columns: [id]`, and an FK into or out of the table or a
-declared O2O into it does not change it.
-
-Two more cases share the root cause (found by the 2026-10-21 vet):
-
-- **A composite PK with one member excluded generates silently on the wrong
-  key.** `memberships(org_id, user_id, PRIMARY KEY (org_id, user_id))` with
-  `exclude_columns: [user_id]`: `generate` exits 0, `go build` is ok, and the
-  client is `Get/Update/HardDelete(ctx, id int32)`, with `HardDelete` running
-  `sql.Where(QuoteIdentifier("org_id")).Eq(id)`, so one `HardDelete` removes
-  every membership in the org.
-- **`exclude_columns` removing every column** prints PRD §4.13's warning
-  ("exclude_columns removes all columns from table public.cycles; table will
-  be skipped") and then crashes with the same `client.go.tmpl:12:95` error,
-  though §4.13 says the table is skipped.
-
-Already working at HEAD (confirmed): a PK column excluded with
-`primary_key.columns: [code]`, and a composite member excluded with an
-override over the remaining member.
-
-**Root cause.** `tableHasResolvedPK` (`cmd/sqlgen/gen/context_table.go:889-907`)
-decides whether a table generates from the `primary_key` override or the
-parser's `Column.PrimaryKey` flags, and ignores `exclude_columns`. So the table
-is treated as keyed, while `buildTableColumns` (`context_table.go:309-320`)
-drops the excluded PK column and leaves `PKColumns` empty (or a partial key),
-and `client.go.tmpl` indexes `.PKColumns 0`. Post-parse validation checks
-`exclude_columns` exhausting a table's columns (PRD §4.13) but not removing its
-key. Confirmed by the vet; line refs and the quoted error are accurate at
-`02e23d79`.
-
-**Suggested fix.**
-- Decide the PRD behavior (unspecified today); the vet should measure both and
-  bring it as a ruling if the PRD does not settle it:
-  - (a) an error at validation: "`tables.<t>.exclude_columns` removes
-    primary-key column `<c>`; declare `primary_key.columns` or keep the
-    column". Consistent with §4.13's row requiring `primary_key.columns` to
-    exist after `exclude_columns` is applied.
-  - (b) treat the table as having no primary key after exclusion, so it is
-    skipped with §4.13's existing warning (`table %s has no primary key;
-    skipped from generation`, §9.4b).
-- Make `tableHasResolvedPK` and validation agree with `buildTableColumns`, so
-  `validate` reports the case instead of `generate` crashing. Cover a composite
-  PK with one member excluded too.
-- Add a PRD §4.13 row for the chosen behavior.
-- Tests: a config / gen unit test for the single and composite PK cases; a cli
-  test that `validate` and `generate` both report it (no template panic).
-- **Vetted prototype (option (a)):**
-  - `gen/context_table.go`: `tableHasResolvedPK` resolves the key (override,
-    else detected PK flags) and returns false when it is empty or the merged
-    global + table `exclude_columns` removes any member; signature unchanged,
-    same precedence via `resolveTableConfig`. It now agrees with
-    `buildTableColumns`, and the all-columns-excluded table is skipped as
-    §4.13 states (widened: same root cause and fix site, PRD-settled).
-  - `config/validate.go`: `validateExcludedPrimaryKey`, wired into
-    `ValidatePostParse` after `validatePrimaryKeyOverride`, errors once per
-    excluded detected-PK member, naming the source key: `tables.public.cycles.exclude_columns
-    removes primary-key column "id" of table public.cycles; keep the column,
-    declare tables.public.cycles.primary_key.columns over columns that remain,
-    or drop the table with exclude_tables` (or `generation.exclude_columns …`).
-    It skips tables with a `primary_key.columns` override (already validated),
-    tables with every column excluded (the exhaustion warning), and tables in
-    `exclude_tables`. With the gen change alone, `generate` drops the table
-    with no warning at all, so a validator is required under (a) or (b).
-  - PRD §4.13: a new row "`exclude_columns` removes a primary-key column"
-    (Error, schema-level), plus an entry in the schema-level phase list and the
-    edge-case bullets.
-  - Tests: `config.TestValidatePostParse_ExcludedPrimaryKey` (7 cases:
-    table-level, global, composite member, override, all excluded,
-    exclude_tables, non-key column); `gen.TestBuildTableContexts_ExcludedKeyColumn`
-    (6 cases); `cli/excluded_pk_test.go` `TestExcludedPrimaryKeyColumn` (single,
-    global, composite under both `validate` and `generate`, asserting the error
-    and no "executing template") and `TestGenerate_AllColumnsExcludedSkipsTable`.
-- **Pending the user's ruling:**
-  - **Q1.** `exclude_columns` removes a member of a table's detected primary
-    key (no `primary_key.columns` override): error, or skip as a no-PK table?
-    (a) Validation error (prototyped): `validate` exits 2 with the message
-    above, `generate` exits 2 with "Post-parse validation error: …" before gen;
-    a global `exclude_columns: [id]` gives one error per id-keyed table; the
-    composite case errors naming `user_id` instead of generating on `org_id`; a
-    declared edge into the table adds a consequential "generates no entity"
-    error in `validate` only. (b) Skip with the §9.4b warning (measured with a
-    throwaway variant): exit 0 with "table public.cycles has no primary key;
-    skipped from generation …", which misstates the cause (the table has a
-    PK); the table, its client, cache, events and GraphQL type vanish; an
-    FK-inferred edge into it is silently omitted; a declared edge errors with
-    the misleading "has no primary key" cause; a cached view with
-    `invalidate_on: [cycles]` passes and is never invalidated (breaks §27.11
-    unless `validateViewInvalidateOn` is extended); a global `exclude_columns:
-    [id]` silently drops every id-keyed table. No golden churn under either.
-    Vet recommends (a): it matches §4.13's rule that `primary_key.columns` must
-    survive `exclude_columns` and the loud-error preference, and keeps the
-    all-columns case as §4.13's intentional skip. Not auto-accepted: the entry
-    asked for a ruling, and (a) turns the composite config that generates today
-    into an error.
-- **The user ruled on 2026-10-21:** Q1 (a), a validation error. That is the
-  prototyped option, so its gates and fail-first evidence stand; the verdict is
-  `corrected` (widened to the all-columns-excluded crash, and the composite
-  case is a silent wrong key rather than a crash) without a second wave.
-- Prototype results, run at `02e23d79` on 2026-10-21: reproduced with the HEAD
-  CLI on scratch projects (PostgreSQL, `source: files`): single exclude →
-  `validate` "config and schema are valid" (exit 0), `generate` the
-  `client.go.tmpl:12:95` error (exit 1); global exclude, FK into / out of,
-  declared O2O into → same crash; composite member → exit 0 keyed on `org_id`;
-  all columns → the §4.13 warning, then the crash; both override forms → exit
-  0, build ok. Gates: `go test -race -count=1 ./config/... ./gen/... ./cli/...`
-  ok (config 1.7 s, gen 68 s, cli 97 s); `TestE2EGoldenFiles` ok;
-  `golangci-lint run ./config/... ./gen/... ./cli/...` 0 issues; gofumpt clean.
-  Fail-first: `tableHasResolvedPK` reverted →
-  `TestBuildTableContexts_ExcludedKeyColumn` "BuildTableContexts returned 1
-  tables, want cycles skipped" (4 subtests) and
-  `TestGenerate_AllColumnsExcludedSkipsTable` "generate: unexpected error:
-  generating table/client for table cycles: executing template: template:
-  client.go.tmpl:12:95: …"; `validateExcludedPrimaryKey` call removed →
-  `TestValidatePostParse_ExcludedPrimaryKey` "ValidatePostParse() error = nil,
-  want one containing \"tables.public.cycles.exclude_columns removes
-  primary-key column \\\"id\\\" …\"" (3 subtests) and `TestExcludedPrimaryKeyColumn`
-  "validate: want an error, got none" / "generate: want an error, got none".
-  Existing suite without the fix passes. Golden churn: none (no example uses
-  `exclude_columns` at HEAD). **FIX-358 overlap:** no textual conflict in either
-  order (`git apply` one then `--check` the other, both ways, at `02e23d79`);
-  with both applied, `go vet`, `go test -race ./config/... ./gen/... ./cli/...`
-  and `TestE2EGoldenFiles` pass. Land FIX-358 first (ready, carries the golden
-  churn); FIX-360 rebases trivially. From reading: once FIX-360 lands,
-  FIX-358's referenced-side check no longer fires for an excluded target PK
-  (validation rejects it) but still covers an FK to an excluded non-key UNIQUE
-  column. Patch: `.claude/prototypes/FIX-360.patch` (6 files, +389/-18).
-
-**References.**
-- PRD §4.13 (config validation rules: "`primary_key.columns` references
-  non-existent column", "Table has no primary key after override resolution",
-  exclude_columns exhaustion), §9.4b (no-PK tables are skipped).
-- `cmd/sqlgen/gen/context_table.go:889-907` (`tableHasResolvedPK`),
-  `:309-320` (`buildTableColumns`).
-- `cmd/sqlgen/gen/relationship_targets.go` (uses `tableHasResolvedPK` to decide
-  whether a relationship target generates; FIX-358 touches the same file).
-
-**Resolution notes.** _Filled in by /fix resolve._
-
-<!-- fixes:open:end -->
-
-## Resolved
-
-<!-- fixes:resolved:begin -->
+**Resolution notes.** Resolved 2026-10-21 from the second-wave prototype
+(fresh at `56b381b2`: no source file changed since `02e23d79`; the source and
+test hunks applied clean, generated files regenerated rather than taken from the
+patch). Root cause as recorded: every loader step bound all parent keys (and the
+M2M target fetch one key per junction row) in a single statement.
+- `get.go.tmpl`: the O2M step loops over chunks of `loadChunkSize 1` parent keys
+  (one `GetMany` per chunk, results appended) except on PostgreSQL with
+  `output.driver: pgx`, which keeps one `GetMany` with `= ANY($1)`
+  (`TableContext.O2MLoadUnchunked()`, `gen/context.go`). The M2M junction read,
+  target fetch and mapping run once per parent chunk on every driver; the
+  junction scan runs in a closure so its `defer Close` is per chunk. The target
+  fetch matches the target PK against `SELECT j.ref FROM <junction> j WHERE
+  j.local IN (chunk)` (`sql.Subquery` + `sql.SubqueryWhere`) with the consumer
+  filter ANDed into an empty `<Target>Filter`, and the mapping walks only the
+  chunk's parents. Divergence from the prototype, which passed the consumer
+  filter as the input `Filter`: that let a soft-delete comparator in it
+  replace the target's default `deleted_at IS NULL` (`GetMany` checks only the
+  top-level field), where HEAD and the O2M fetch AND it in. The landed code
+  keeps HEAD's semantics; `TestGetTemplate_m2mRelationshipLoading` pins it
+  (fails with `output missing M2M pattern: "Filter:     filter,"` when
+  reverted). Found by the /verify reviewer.
+- `funcmap.go`: `loadChunkSize N` returns `floor(L / 2 / N)` from a per-dialect
+  `bindParamLimit` (SQLite 32766, PostgreSQL/MySQL 65535), baked as a literal
+  (16383 / 32767). `pkFilterInExprStr` and `fkLoadValue` deleted with their
+  registrations (no caller left).
+- Tests: `relationship_bind_limit_test.go` in the `sqlite`, `postgres`, `mysql`
+  and `postgres_stdlib` examples (`TestRelationshipLoad_PastBindLimit`,
+  `TestRelationshipLoad_M2MTargetsPastBindLimit`, statements counted by
+  outermost FROM; pgx expects 1 O2M statement, every other driver 3);
+  `TestFuncLoadChunkSize`; `TestGetTemplate_o2mRelationshipLoading` table-driven
+  over pgx and stdlib; updated `get_test.go` / `discriminator_test.go` patterns;
+  the tenancy `TestM2M_NonTenantedJunctionSQLShape` classifies by outermost FROM.
+- Docs: PRD §9.8.3's sample `loadRelationships` (M2M block chunked with the
+  junction-subquery target fetch; O2M marked as the pgx shape), §13.2 steps 2-3
+  and combined example (chunked steps, the M2M target
+  query shape), §25.1 rewritten with the chunk formula and the pgx dialect clause
+  (diagram's M2M-entities line, "two batched IN clauses" sentence), §26.5 intro
+  and §26.5.7's "Documented contract" (was "regardless of result set
+  size"); `api/field_options.go.tmpl` generated comment; `guidelines/SQL.md` §8
+  "Implementation" (the M2M target fetch now expands through the junction
+  subquery) and §14 (M2M SQL shape, new "Chunking at the bind-parameter limit").
+  Dropped the 2026-10-20 backlog line about `int64(refKey)` through
+  `fkLoadValue` (both removed). /verify reviewer corrections applied: the
+  `O2MLoadUnchunked` comment and SQL.md §8 no longer claim generated stdlib
+  clients expand `IN` (they build the pgx-mode dialect; backlog line of
+  2026-10-21 tracks it); §25.1 says the target fetch takes at most `C` (a chunk
+  with no junction rows skips it) and the reduced formula needs `0 < P`; PRD
+  §13.7.3's m2m `filter:` row and the template comment no longer say "after the
+  junction resolves target IDs"; dropped the 2026-10-21 backlog line on
+  block-scoped loop patterns (the O2M test is now anchored, and the reviewer
+  measured a junction-only revert failing
+  `TestGetTemplate_goldenFile_withRelationships`).
+- Behavior change: with 0 parents a chunked step issues 0 statements (was 1);
+  the pgx O2M step still issues 1.
+- Golden churn: the same file set as the second-wave record (gen unit golden;
+  per-example `expected/` and `models/` identical, no files added), plus
+  `graph/sqlgenresolver/field_options_gen.go` in graphql,
+  graphql_null_wrappers, graphql_top_level, mysql and sqlite (comment-only,
+  +4/-2 each) from the `api/field_options.go.tmpl` sync. Before the M2M filter
+  correction the numstats matched the record exactly; after it: unit golden
+  +129/-98, graphql +771/-579, graphql_null_wrappers +32/-20,
+  graphql_top_level +18/-11, introspect_mysql +132/-92, introspect_postgres
+  +70/-45, introspect_sqlite +362/-270, mysql +904/-682, postgres +1094/-831,
+  postgres_stdlib +395/-293, sqlite +1424/-1078, tenancy +538/-414 (field
+  options included).
+- Gates (re-run after the M2M filter correction, both green): `make check` ok; `make update-golden`, `make update-golden-e2e` ok; `make check-examples` ok (sqlite, postgres, mysql, postgres_stdlib bind-limit tests included). Fail-first on the final code: SQLite O2M chunk bound to all keys → "load category products: get products: query: SQL logic error: too many SQL variables (1)"; junction step on all keys → "load category users junction: query: …too many SQL variables (1)"; target-fetch subquery on all keys → "load category users: get users: query: …too many SQL variables (1)"; `O2MLoadUnchunked` forced false → postgres "statements reading \"public\".\"products\" = 3, want 1"; driver clause dropped → postgres_stdlib "statements reading \"public\".\"products\" = 1, want 3".
 
 ### FIX-357
 

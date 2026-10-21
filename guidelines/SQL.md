@@ -259,7 +259,9 @@ Building the literal by hand means `sliceToArrayLiteral` owns PostgreSQL's array
 
 ### Implementation
 
-The comparators choose the row: `parseIn` / `parseNin` (`comparator/comparator.go`) emit `col = ANY($)` / `col != ALL($)` with one slice arg when `Dialect.SupportsArrayParams()` is true, and `col IN $` / `col NOT IN $` with `[]any` otherwise. The builder expands a `col IN $` clause carrying `[]any` to one placeholder per value on **every** dialect and never rewrites it to `ANY` — that is what lets `comparator.Enum` opt out. `sql.Where(col).In(...)` therefore always takes the expanded form, and so do the generated code paths built on it: the `SoftDeleteMany` / `RestoreMany` / `HardDeleteMany` id lists, the `UpdateMany` / `UpsertMany` tenant-capture pre-reads, and the M2M junction loader. Filter-driven reads (`GetMany`, the O2M loader, the M2M target fetch) go through the comparators and take the pgx row. An empty list renders `1 = 0` (IN) or `1 = 1` (NOT IN).
+The comparators choose the row: `parseIn` / `parseNin` (`comparator/comparator.go`) emit `col = ANY($)` / `col != ALL($)` with one slice arg when `Dialect.SupportsArrayParams()` is true, and `col IN $` / `col NOT IN $` with `[]any` otherwise. The builder expands a `col IN $` clause carrying `[]any` to one placeholder per value on **every** dialect and never rewrites it to `ANY` — that is what lets `comparator.Enum` opt out. `sql.Where(col).In(...)` therefore always takes the expanded form, and so do the generated code paths built on it: the `SoftDeleteMany` / `RestoreMany` / `HardDeleteMany` id lists, the `UpdateMany` / `UpsertMany` tenant-capture pre-reads, and both M2M loader steps (the junction read, and the target fetch's `target_pk IN (SELECT … FROM junction j WHERE j.local_fk IN (…))` subquery). Filter-driven reads (`GetMany`, the O2M loader) go through the comparators and take the pgx row. An empty list renders `1 = 0` (IN) or `1 = 1` (NOT IN).
+
+A relationship loader therefore expands one placeholder per parent key on both M2M steps, and on the O2M step outside PostgreSQL. It chunks the keys of every step except the pgx O2M one to stay under the dialect's bind-parameter limit. §14 has the chunk sizes.
 
 ---
 
@@ -560,7 +562,21 @@ Results are grouped by the FK column in Go code and attached to the parent entit
 
 ### Many-to-Many (junction table)
 
-M2M relationships query through the junction table. The SQL depends on the specific junction table schema.
+M2M relationships query through the junction table in two steps. The junction read resolves the parent→target mapping; the target fetch goes through the target client's `GetMany` and matches the target PK against the same junction rows, never against a list of collected target keys:
+
+```sql
+SELECT "product_id", "tag_id" FROM "public"."product_tags" WHERE "product_id" IN ($1, $2, ...)
+
+SELECT "id", "name" FROM "public"."tags"
+WHERE "id" IN (SELECT j."tag_id" FROM "public"."product_tags" j WHERE j."product_id" IN ($1, $2, ...))
+ORDER BY "name" ASC
+```
+
+The target fetch binds the parent keys, not one key per junction row, so parents sharing many targets cannot push it past the limit, and each parent's targets come from one sorted statement.
+
+### Chunking at the bind-parameter limit
+
+Every loader step binds parent keys in chunks of `floor(L / 2 / N)`, where `N` is the key's column count and `L` is the dialect's bind-parameter limit (SQLite 32766, MySQL and PostgreSQL 65535). The funcmap's `loadChunkSize N` bakes the size into the template as a literal: 16383 on SQLite and 32767 on MySQL and PostgreSQL for `N = 1`. Half the budget is left for the relationship filter, tenancy, soft-delete and static `filter:` parameters; a chunk of the full limit fails once the consumer filter adds one. The pgx O2M step is the one exception: its `= ANY($1)` binds one parameter at any count, so it runs unchunked (`TableContext.O2MLoadUnchunked`). PRD §25.1 gives the resulting query count.
 
 ---
 

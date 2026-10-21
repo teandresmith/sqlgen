@@ -16,8 +16,10 @@ import (
 // in the source schema has a corresponding `case` clause here, so the
 // resolver can pre-compute the exact set of fields/relationships to load and
 // the unified client issues `1 + count(O2M selected) + 2 * count(M2M selected)`
-// queries per request, regardless of result-set size (each M2M edge costs
-// two queries — junction + entities).
+// queries per request while each relationship's parent set fits one chunk of
+// keys (each M2M edge costs two queries — junction + entities). A larger
+// parent set adds one query per chunked step for each extra chunk; the count
+// never depends on the number of children.
 //
 // `<table>FieldOptionsFromContext` is the entry point used by every per-table
 // resolver method. It pulls the collected fields out of ctx, descends through

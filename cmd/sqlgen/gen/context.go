@@ -1660,3 +1660,17 @@ func (t TableContext) resolvesTenantDirectly() bool {
 	return (t.Tenancy != nil && t.Tenancy.Tenanted) ||
 		t.HasTenantedO2OChild || t.HasTenantedRelationshipFilter
 }
+
+// O2MLoadUnchunked reports that the O2M loaders fetch every parent's children
+// in one statement instead of one per chunk of parent keys (PRD §25.1). On
+// PostgreSQL with pgx the FK filter's comparator binds the whole key list as
+// one array parameter (= ANY($1), PRD Appendix A), so the parent count never
+// reaches the bind-parameter limit. Every other dialect and driver chunks,
+// stdlib included, which Appendix A specifies as the expanded form.
+// The M2M steps chunk on every driver: they expand one parameter per key.
+//
+// A method rather than a field for the reason NeedsTenantResolver gives: it
+// reads two plain facts every fixture already sets.
+func (t TableContext) O2MLoadUnchunked() bool {
+	return t.Dialect == config.DialectPostgres && t.Driver == config.DriverPgx
+}

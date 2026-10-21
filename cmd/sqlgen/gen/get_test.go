@@ -530,27 +530,59 @@ func TestGetTemplate_noSoftDelete(t *testing.T) {
 // --- Test: O2M relationship loading ---
 
 func TestGetTemplate_o2mRelationshipLoading(t *testing.T) {
-	ctx := testGetContext_withRelationships()
-	output := executeGetTemplate(t, ctx)
-
-	wantPatterns := []string{
-		"func (c *productClient) loadRelationships(ctx context.Context, conn database.Querier, products []*Product, fo *ProductFieldOptions) error",
-		"g, ctx := errgroup.WithContext(ctx)",
-		"if fo.Reviews != nil {",
+	// The O2M fetch is chunked unless its FK filter binds the parent keys as
+	// one array parameter, which only PostgreSQL with pgx does (PRD §25.1).
+	single := []string{
 		`ProductID: &comparator.ID{In: productIDs}`,
-		"c.reviewClient.GetMany(ctx, &GetReviewsInput{",
-		"Limit:  new(0)",
-		// The child fetch declares the FK on the input struct rather than
-		// flipping it on the caller's FieldOptions.
-		`requiredColumns: []string{"product_id"},`,
-		"co.FieldOptions = fo.Reviews.FieldOptions",
-		"byFK := make(map[string][]*Review)",
-		"return g.Wait()",
+		"relatedReviews, err := c.reviewClient.GetMany(ctx, &GetReviewsInput{",
 	}
-	for _, want := range wantPatterns {
-		if !strings.Contains(output, want) {
-			t.Errorf("output missing O2M pattern: %q\n\nfull output:\n%s", want, output)
-		}
+	chunked := []string{
+		// One statement per chunk of parent keys, half PostgreSQL's
+		// 65535 bind-parameter limit. The M2M block has the same loop, so
+		// the pattern anchors on the O2M result slice.
+		"var relatedReviews []*Review\n\t\t\tfor start := 0; start < len(productIDs); start += 32767 {",
+		`ProductID: &comparator.ID{In: chunk}`,
+		"loaded, err := c.reviewClient.GetMany(ctx, &GetReviewsInput{",
+		"relatedReviews = append(relatedReviews, loaded...)",
+	}
+	tests := []struct {
+		name    string
+		driver  config.Driver
+		want    []string
+		notWant []string
+	}{
+		{name: "pgx", driver: config.DriverPgx, want: single, notWant: chunked},
+		{name: "stdlib", driver: config.DriverStdlib, want: chunked, notWant: single},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ctx := testGetContext_withRelationships()
+			ctx.Driver = tt.driver
+			output := executeGetTemplate(t, ctx)
+
+			wantPatterns := append([]string{
+				"func (c *productClient) loadRelationships(ctx context.Context, conn database.Querier, products []*Product, fo *ProductFieldOptions) error",
+				"g, ctx := errgroup.WithContext(ctx)",
+				"if fo.Reviews != nil {",
+				"Limit:  new(0)",
+				// The child fetch declares the FK on the input struct rather than
+				// flipping it on the caller's FieldOptions.
+				`requiredColumns: []string{"product_id"},`,
+				"co.FieldOptions = fo.Reviews.FieldOptions",
+				"byFK := make(map[string][]*Review)",
+				"return g.Wait()",
+			}, tt.want...)
+			for _, want := range wantPatterns {
+				if !strings.Contains(output, want) {
+					t.Errorf("output missing O2M pattern: %q\n\nfull output:\n%s", want, output)
+				}
+			}
+			for _, notWant := range tt.notWant {
+				if strings.Contains(output, notWant) {
+					t.Errorf("output has O2M pattern %q of the other driver\n\nfull output:\n%s", notWant, output)
+				}
+			}
+		})
 	}
 }
 
@@ -564,8 +596,17 @@ func TestGetTemplate_m2mRelationshipLoading(t *testing.T) {
 		"if fo.Tags != nil {",
 		`sql.BuildSelect(c.dialect, sql.Table{Schema: "public", Name: "product_tags"}`,
 		`"product_id", "tag_id"`,
-		`sql.Where(c.dialect.QuoteIdentifier("product_id")).In(toAnySlice(productIDs)...)`,
+		"for start := 0; start < len(productIDs); start += 32767 {",
+		`sql.Where(c.dialect.QuoteIdentifier("product_id")).In(toAnySlice(chunk)...)`,
 		"parentToTargetIDs := make(map[string][]string)",
+		// The target fetch matches the chunk's junction rows, so it binds
+		// the chunk's parent keys rather than every target key.
+		`sql.Where(c.dialect.QuoteIdentifier("id")).In(sql.Subquery{`,
+		`" FROM " + c.dialect.FormatTable(sql.Table{Schema: "public", Name: "product_tags"}) + " j WHERE " + junctionWhere,`,
+		// The consumer filter is ANDed in rather than passed as the input
+		// filter, so a soft-delete comparator in it keeps the default.
+		"filter.And = append(filter.And, fo.Tags.Filter)",
+		"Filter:     filter,",
 		"c.tagClient.GetMany(ctx, &GetTagsInput{",
 		// The target fetch declares the target PK and the target-to-parent map
 		// is keyed on it — a narrowed FieldOptions that omitted it
@@ -574,6 +615,7 @@ func TestGetTemplate_m2mRelationshipLoading(t *testing.T) {
 		"co.FieldOptions = fo.Tags.FieldOptions",
 		// Targets are walked in fetch order so the Sorts carry through.
 		"parentsByTarget := make(map[string][]int, len(",
+		"for i := start; i < start+len(chunk); i++ {",
 		"for _, i := range parentsByTarget[",
 	}
 	for _, want := range wantPatterns {
@@ -583,17 +625,17 @@ func TestGetTemplate_m2mRelationshipLoading(t *testing.T) {
 	}
 }
 
-// TestGetTemplate_m2mTargetFilterUsesTargetPKField pins the M2M target fetch's
-// filter to the target's own PK field: a target keyed on `code` has no `ID`
-// filter field, so a literal one does not compile.
+// TestGetTemplate_m2mTargetFilterUsesTargetPKField pins the M2M target fetch
+// to the target's own key: a target keyed on `code` has no `id` column and no
+// `ID` field, so the fetch matches `code` and the mapping reads `Code`.
 func TestGetTemplate_m2mTargetFilterUsesTargetPKField(t *testing.T) {
 	tests := []struct {
 		name     string
 		fkGoType string
 		want     string
 	}{
-		{name: "string key", fkGoType: "string", want: "filter := &TagFilter{\n\t\t\t\tCode: &comparator.ID{In: allTargetIDs},\n\t\t\t}"},
-		{name: "integer key", fkGoType: "int64", want: "filter := &TagFilter{\n\t\t\t\tCode: &comparator.Number[int64]{In: targetPKs},\n\t\t\t}"},
+		{name: "string key", fkGoType: "string", want: "for _, i := range parentsByTarget[t.Code] {"},
+		{name: "integer key", fkGoType: "int64", want: "for _, i := range parentsByTarget[fmt.Sprint(t.Code)] {"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -603,16 +645,18 @@ func TestGetTemplate_m2mTargetFilterUsesTargetPKField(t *testing.T) {
 			ctx.M2MRelationships[0].TargetPKColumn = "code"
 			output := executeGetTemplate(t, ctx)
 
-			if !strings.Contains(output, tt.want) {
-				t.Errorf("output missing target filter:\n%s\n\nfull output:\n%s", tt.want, output)
+			for _, want := range []string{`sql.Where(c.dialect.QuoteIdentifier("code")).In(sql.Subquery{`, tt.want} {
+				if !strings.Contains(output, want) {
+					t.Errorf("output missing target key use:\n%s\n\nfull output:\n%s", want, output)
+				}
 			}
 		})
 	}
 }
 
 // TestGetTemplate_m2mJunctionScansTypedKeys pins the M2M junction scan to each
-// key's own Go type, so binary and network keys scan on pgx, match on both map
-// sides, and rebuild the target filter without parsing text.
+// key's own Go type, so binary and network keys scan on pgx and match on both
+// map sides without parsing text.
 func TestGetTemplate_m2mJunctionScansTypedKeys(t *testing.T) {
 	tests := []struct {
 		name     string
@@ -625,8 +669,6 @@ func TestGetTemplate_m2mJunctionScansTypedKeys(t *testing.T) {
 			want: []string{
 				"var refKey []byte",
 				"parentID, targetID := localKey.String(), fmt.Sprint(refKey)",
-				"targetPKs = append(targetPKs, []byte(refKey))",
-				"ID: &comparator.Opaque[[]byte]{In: targetPKs},",
 			},
 		},
 		{
@@ -634,24 +676,21 @@ func TestGetTemplate_m2mJunctionScansTypedKeys(t *testing.T) {
 			want: []string{
 				"var refKey net.IP",
 				"parentID, targetID := localKey.String(), refKey.String()",
-				"targetPKs = append(targetPKs, net.IP(refKey))",
-				"ID: &comparator.Opaque[net.IP]{In: targetPKs},",
 			},
 		},
 		{
 			name: "integer key", fkGoType: "int64", refType: "int64",
 			want: []string{
 				"var refKey int64",
-				"targetPKs = append(targetPKs, int64(refKey))",
-				"ID: &comparator.Number[int64]{In: targetPKs},",
+				"parentID, targetID := localKey.String(), fmt.Sprint(refKey)",
 			},
 		},
 		{
 			name: "nullable junction column", fkGoType: "int64", refType: "sql.NullInt64",
 			want: []string{
 				"var refKey sql.NullInt64",
-				"if !(refKey.Valid) {\n\t\t\t\t\tcontinue",
-				"targetPKs = append(targetPKs, int64(refKey.Int64))",
+				"if !(refKey.Valid) {\n\t\t\t\t\t\t\tcontinue",
+				"parentID, targetID := localKey.String(), fmt.Sprint(refKey.Int64)",
 			},
 		},
 	}
@@ -1266,7 +1305,7 @@ func TestGetTemplate_subCategorizedM2MFilter(t *testing.T) {
 
 	output := executeGetTemplate(t, ctx)
 
-	want := `conditions: []sql.Condition{sql.Raw("scope = 'asset'")},`
+	want := "\n\t\t\t\t\tsql.Raw(\"scope = 'asset'\"),\n"
 	if !strings.Contains(output, want) {
 		t.Errorf("output missing M2M static filter pattern: %q\n\nfull output:\n%s", want, output)
 	}

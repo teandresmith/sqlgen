@@ -406,6 +406,21 @@ func (c *categoryClient) loadRelationships(ctx context.Context, conn database.Qu
 				categoryIDs[idx] = c.ID
 			}
 
+			sorts := fo.Products.Sorts
+			if len(sorts) == 0 {
+				sorts = c.productsDefaultSort
+			}
+
+			// Load via related entity client in one statement: with pgx the FK
+			// filter binds every parent key as one array parameter (= ANY($1)),
+			// so no parent count reaches the bind-parameter limit, and the sorts
+			// order every parent's slice.
+			//
+			// Self-referential relationships share the parent's entity type, so
+			// the loaded children must use a name distinct from the parent slice
+			// (categories) to avoid shadowing it and mis-mapping the results
+			// onto the children instead of the parents.
+
 			// Build FK-based filter, merged with consumer filter
 			filter := &ProductFilter{
 				CategoryID: &comparator.Number[int64]{In: categoryIDs},
@@ -414,16 +429,6 @@ func (c *categoryClient) loadRelationships(ctx context.Context, conn database.Qu
 				filter.And = append(filter.And, fo.Products.Filter)
 			}
 
-			// Load via related entity client
-			sorts := fo.Products.Sorts
-			if len(sorts) == 0 {
-				sorts = c.productsDefaultSort
-			}
-
-			// Self-referential relationships share the parent's entity type, so
-			// the loaded children must use a name distinct from the parent slice
-			// (categories) to avoid shadowing it and mis-mapping the results
-			// onto the children instead of the parents.
 			relatedProducts, err := c.productClient.GetMany(ctx, &GetProductsInput{
 				Filter: filter,
 				Sorts:  sorts,
