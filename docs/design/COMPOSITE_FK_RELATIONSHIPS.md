@@ -260,8 +260,12 @@ Two existing rules extend to every member rather than adding pinned kinds (R1):
   (measured: `"cycle_id" is absent from the target's create input`).
 - **Every member must be in the generated model on both sides.** An edge with a member
   removed by `exclude_columns`, on the child or the parent, gives no edge and a warning
-  naming the column and §13.4. Today an excluded single-column FK still yields its edge and
-  the generated code does not compile; that is FIX-358, which lands this rule for N = 1.
+  naming the column and §13.4; a manual relationship over an excluded link column is an
+  error, since the user declared it by name. Today an excluded single-column FK still
+  yields its edge: an O2M one does not compile, while O2O and M2M edges build and load
+  (measured, FIX-358 vet). The rule drops every shape anyway (ruled 2026-10-21 under
+  FIX-358): `exclude_columns` means "not in the model", and `access: hidden` (PRD §32) hides
+  a column while keeping its edge. FIX-358 lands this rule for N = 1.
 
 ### 4.4 Reads
 
@@ -269,7 +273,7 @@ Two existing rules extend to every member rather than adding pinned kinds (R1):
 |---|---|---|
 | O2O (inline JOIN) | `ON c.id = t.cycle_id` | `ON c.workspace_id = t.workspace_id AND c.id = t.cycle_id`. `JoinClause.On` is opaque SQL, so no runtime change. |
 | O2M (batched load) | collect parent `PKColumns[0]`, child `GetMany` with `cycle_id IN (…)`, group by `fkLoadKey` string | collect the parent's referenced-column tuples, filter the child on its FK members, group by an `[N]string` of `fkLoadKey`s |
-| M2M (junction) | junction `local IN (…)`, typed scan (FIX-357), map, target fetch on the target key | each step filters on a tuple, both maps key on `[N]string` |
+| M2M (junction) | junction `local IN (…)`, typed scan (FIX-357), map, target fetch on the target key | per parent chunk, the junction step filters on a tuple and the target fetch matches the target key against `(SELECT j.ref … FROM junction j WHERE (j.local …) IN (chunk))` (FIX-359's junction subquery, with tuple IN); maps key on `[N]string` |
 | Relationship filter (`EXISTS`) | `sql.Exists(correlationColumn string, …)`, composite-PK parents skipped | correlates on every pair; the composite-PK skip is lifted |
 
 Rules shared by every loader:
@@ -291,13 +295,25 @@ Rules shared by every loader:
   child's tenant column (PRD §29.10). The tuple adds `workspace_id = …` again, which the
   composite key guarantees anyway.
 - **Every step is chunked** at `floor(maxParams / 2 / N)` parent keys per query, where
-  `maxParams` is the dialect's bind limit exposed by the runtime `sql.Dialect` (SQLite 32766,
-  MySQL 65535, PostgreSQL 65535) and `N` the key's column count. Half the budget is left for
-  the consumer filter, tenancy, soft-delete and `filter:` parameters; a chunk of exactly
-  32766 keys failed on SQLite once a one-parameter consumer filter was added (§9.4). This
-  applies to the O2M load, the M2M junction step and the M2M target fetch. PRD §25.1 becomes
-  "one query per edge per chunk", unchanged below the chunk size. Ruled under R4; FIX-359
-  lands it for N = 1, which fails today, and this design's tuple loaders reuse it.
+  `maxParams` is the dialect's bind limit (SQLite 32766, MySQL 65535, PostgreSQL 65535) and
+  `N` the key's column count. Half the budget is left for the consumer filter, tenancy,
+  soft-delete and `filter:` parameters; a chunk of exactly 32766 keys failed on SQLite once a
+  one-parameter consumer filter was added (§9.4). Ruled under R4, refined by the FIX-359
+  rulings (2026-10-21):
+  - **The limit is a generator-side literal**, not runtime API: the funcmap's
+    `loadChunkSize N` bakes `floor(limit / 2 / N)` into the template (16383 on SQLite, 32767
+    on PostgreSQL and MySQL for N = 1). Tuple loaders pass the key's column count.
+  - **The M2M target fetch chunks by parent, not by target key.** Per parent chunk it matches
+    the target key against a junction subquery over that chunk. Chunking on target keys
+    silently mis-sorts each parent's slice once a load's distinct targets exceed a chunk
+    (measured: 2 parents × 16400 users, name DESC, each slice split at "…-16383" /
+    "…-16384"), breaking PRD §13.2's per-parent order.
+  - **The pgx `= ANY($1)` O2M path stays one query**, since it binds one array parameter.
+    Every other driver chunks the O2M step; both M2M steps chunk on every driver, pgx
+    included. A composite-key O2M on pgx expands per key, so it chunks too.
+  - PRD §25.1 becomes "one query per step per chunk", with a dialect clause for the pgx O2M
+    path; unchanged below the chunk size. FIX-359 lands it for N = 1, which fails today, and
+    this design's tuple loaders reuse it.
 
 There is no single-pair projection, even when the referenced columns include a single-column
 primary key. One loader shape for every N keeps one code path, and N = 1 generates what it
@@ -377,8 +393,8 @@ place a foreign-key constraint is named in the manifest, and it shows where an e
   1.49 s at 10000 pairs, 122 ms vs 2 min 3 s at 32767. Flip it to true in N.1. This also
   speeds up today's composite-PK batch operations on MySQL (`Filter.PKs`,
   `BuildCompositePKBatchCondition`).
-- **`MaxParams()` on `sql.Dialect`** for the loader chunk size (§4.4, R4), landed by
-  FIX-359.
+- **No runtime API for the chunk size.** FIX-359 keeps the bind limit in the generator
+  (§4.4), so `sql.Dialect` gains no `MaxParams()` method (ruled 2026-10-21).
 
 ### 4.9 The N = 1 invariant
 
@@ -389,15 +405,23 @@ and `fingerprints(digest)`, is that table's PK). So the Go goldens must not move
 model changes, and that is the regression gate for every sub-item. The manifest does move
 (§4.7): every edge's `fk` changes shape.
 
-Two intended changes in output for N = 1, both on schemas no example has:
+Intended changes in output for N = 1, all on schemas no example has:
 
-- **A single-column FK to a non-PK UNIQUE column.** Today it wires `TargetPKColumn` to the
-  target's primary key (`context_table.go:206-207`), so its loader appears to match on the
-  wrong column. This is from reading only; N.0 measures it. If it holds, D fixes it.
+- **A single-column FK to a non-PK UNIQUE column** now loads through the referenced column.
+  Today the loader filters the child's FK by the parent's primary key
+  (`TargetPKColumn`, `context_table.go:206-207`), and the generated code does not compile.
+  Measured by the FIX-358 vet at `bd7783ea`: `users(id INT PRIMARY KEY, email TEXT NOT NULL
+  UNIQUE)`, `invites.email REFERENCES users(email)` → `cannot use
+  &comparator.NullableNumber[int32]{…} as *comparator.NullableID value in struct literal`;
+  the PK-override form (`cycles(id PK, code UNIQUE)`, `tasks.cycle_id REFERENCES
+  cycles(id)`, `primary_key.columns: [code]`) → `cannot use &comparator.NullableID{…} as
+  *comparator.NullableNumber[int32] value`. Folded into this phase rather than filed
+  (ruled 2026-10-21): N.4 and N.5 replace the same `PKColumns[0]` wiring, and both
+  schemas become regression tests there.
 - **A SQLite single-column FK to a non-key column** loses its edge and gains a warning
   (§4.2 rule 1). Measured: today it emits `O2M workspaces->cycles` via `workspace_slug`.
-- **An excluded FK column** loses its edge (§4.3). Today that output does not compile
-  (FIX-358), so no working config changes.
+- **An excluded FK column** loses its edge (§4.3), landed early by FIX-358. An O2M one does
+  not compile today; an O2O or M2M one works today and is dropped by ruling.
 
 ## 5. What this does not cover
 
@@ -420,15 +444,15 @@ Two intended changes in output for N = 1, both on schemas no example has:
 One phase. N is the next free phase number at `/phase` time. Two filed fixes land first,
 because they fix today's N = 1 code on the same sites with the rule this design reuses:
 
-- **FIX-358:** an excluded FK column still yields its edge, and the output does not compile
+- **FIX-358:** an excluded FK column still yields its edge; an O2M one does not compile
   (§4.3's missing-member rule).
-- **FIX-359:** loaders fail past the dialect's bind limit (§4.4's chunking, `MaxParams()`).
+- **FIX-359:** loaders fail past the dialect's bind limit (§4.4's chunking: a generator-side literal, the M2M junction subquery, pgx O2M left as one query).
 
 Sub-items in dependency order:
 
 | # | Sub-item | Notes |
 |---|---|---|
-| N.0 | **PRD sync.** §4.6/§4.8 config reference, §5.3, §8.2, §8.6, §9.9 (E1 over every member, pinning, MATCH FULL disconnect), §13.4, §25.1 (chunks), §29.10, §30, `MANIFEST.md`, `MCP.md`. Measure the non-PK UNIQUE loader (§4.9) and re-run §9.1 at HEAD. MATCH and MySQL tuple IN are already measured (§9.4). | Blocks everything |
+| N.0 | **PRD sync.** §4.6/§4.8 config reference, §5.3, §8.2, §8.6, §9.9 (E1 over every member, pinning, MATCH FULL disconnect), §13.4, §25.1 (chunks), §29.10, §30, `MANIFEST.md`, `MCP.md`. Re-run §9.1 at HEAD. MATCH, MySQL tuple IN and the non-PK FK loader failure are already measured (§9.4, §4.9). | Blocks everything |
 | N.1 | **Runtime.** N-column `Exists`; tuple-IN prefixing; MySQL `SupportsTupleIN` true. | Independent of N.2 |
 | N.2 | **Parser model and detection.** `KeyPair`, `Relationship.Key`, `Constraint.Match` (PostgreSQL file parser and introspection), detection per §4.2 including redundant FKs and the naming rule, the unresolvable-key warning (printed after detection, not through `schema.Warnings`, which is printed first), the residual-name-collision error. Parity under `files` and `database` on all three dialects. Starts from the §9.4 prototype. | Go goldens unchanged |
 | N.3 | **Config, manifest and MCP shapes.** §4.7. Manual relationships produce the same `Key` lists. | Manifest goldens move once |
@@ -485,7 +509,7 @@ Each ruling followed a measured probe (§9.4) and took the recommended option.
 
 | # | Question | Ruling | Evidence |
 |---|---|---|---|
-| R1 | Is the pinned set complete? | **Yes: tenant column, child-PK members, members shared with another FK.** Plus E1 over every non-tenant member, and every member must be in the generated model on both sides or the edge is dropped with a warning (§4.3). | PG 17: writing the tenant column moved a task to workspace 2 while its project stayed in 1; a shared member raised a raw FK error when the other edge was linked and silently moved the row when it was NULL; a PK member re-keyed the row. A generated member cannot be written. An excluded FK column yields a non-compiling edge today (FIX-358). |
+| R1 | Is the pinned set complete? | **Yes: tenant column, child-PK members, members shared with another FK.** Plus E1 over every non-tenant member, and every member must be in the generated model on both sides or the edge is dropped with a warning (§4.3). | PG 17: writing the tenant column moved a task to workspace 2 while its project stayed in 1; a shared member raised a raw FK error when the other edge was linked and silently moved the row when it was NULL; a PK member re-keyed the row. A generated member cannot be written. An excluded FK column yields its edge today; an O2M one does not compile (FIX-358; O2O and M2M build, and the FIX-358 ruling drops them too). |
 | R2 | MATCH semantics | **Record `Constraint.Match` on PostgreSQL only; MySQL and SQLite are always SIMPLE. Under FULL, disconnect only when every member is free and nullable** (§4.5). | Only PG enforces FULL. MySQL parses it, reports it in `MATCH_OPTION` and ignores it; SQLite ignores it and reports `NONE`. PG accepts an all-NULL FULL key, refuses a mixed one. |
 | R3 | Composite-PK parents and targets (E1, E3) | **Next phase.** This phase gives them every read surface (§4.5). | GraphQL has no composite-key input type; `<T>PK` with opaque fields is not a map key; E1 already refuses the writes, so deferring breaks nothing; no consumer needs it. |
 | R4 | Chunk loader IN lists? | **Yes, at `floor(maxParams / 2 / N)`, every loader step; PRD §25.1 "one query per edge per chunk". N = 1 first as FIX-359** (§4.4). | Today's loaders already fail: SQLite > 32766 parents, MySQL > 65535, every M2M junction on pgx. A hand-chunked loader returned 40000 parents correctly; a chunk of 32766 failed with a one-parameter consumer filter, so the headroom is needed. |
@@ -542,10 +566,11 @@ replaces it (§3).
 | An M2M whose target PK is not named `id` generated code that did not compile | Fixed, FIX-356 (`c5c3862d`) |
 | A prefixed tuple-IN renders invalid SQL on PostgreSQL and SQLite | Measured (§4.8); unreachable from generated code today; fixed by N.1 |
 | A single-column PK that is also a composite-FK member is classified by type in `autoDetectPKStrategy` | Reading only; fixed by N.4 (§4.6) |
-| A single-column FK to a non-PK UNIQUE wires the loader to the target's PK | Reading only (`context_table.go:206-207`); measured in N.0 (§4.9) |
+| A single-column FK to a non-PK column (UNIQUE, or the PK-override form) generates a loader that does not compile | Measured by the FIX-358 vet (§4.9); folded into N.4 / N.5 with both schemas as regression tests |
 | Under option A, a tenant junction with two composite FKs and no single-column FK on the tenant column becomes M2M, with a three-column junction key that M2M disconnect cannot handle | Reading only; one reason A is not recommended |
 | MySQL is marked as lacking tuple IN (`sql/mysql.go:103`) | Measured: it works, and OR-of-ANDs is up to 1000× slower (§4.8); flipped in N.1 |
-| An FK column removed by `exclude_columns` still yields its edge, and the output does not compile | Measured; FIX-358 |
+| An FK column removed by `exclude_columns` still yields its edge; an O2M one does not compile | Measured; FIX-358 |
+| Excluding a table's only PK column passes `validate` and crashes `generate` (`index .PKColumns 0`) | Measured; FIX-360 |
 | Relationship loaders fail past the dialect's bind limit (O2M on SQLite and MySQL, every M2M junction including pgx) | Measured; FIX-359 |
 
 ### 9.4 Probes for the rulings (2026-10-20, at `bd7783ea`)
