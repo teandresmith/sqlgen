@@ -224,6 +224,110 @@ func TestBuildTableContexts_NoPK_WithOverride_NotSkipped(t *testing.T) {
 	}
 }
 
+// TestBuildTableContexts_ExcludedKeyColumn checks that a table generates only
+// when `exclude_columns` leaves every member of its resolved key, agreeing
+// with buildTableColumns; otherwise the client template indexes an empty
+// PKColumns.
+func TestBuildTableContexts_ExcludedKeyColumn(t *testing.T) {
+	cycles := parser.Table{
+		Name: "cycles", Schema: "public",
+		Columns: []parser.Column{
+			{Name: "id", Type: "integer", PrimaryKey: true},
+			{Name: "code", Type: "text", Unique: true},
+			{Name: "name", Type: "text"},
+		},
+	}
+	memberships := parser.Table{
+		Name: "memberships", Schema: "public",
+		Columns: []parser.Column{
+			{Name: "org_id", Type: "integer", PrimaryKey: true},
+			{Name: "user_id", Type: "integer", PrimaryKey: true},
+			{Name: "role", Type: "text"},
+		},
+	}
+	tests := []struct {
+		name   string
+		table  parser.Table
+		mutate func(*config.RootConfig)
+		wantPK []string // nil means the table is skipped
+	}{
+		{
+			name:  "every column excluded",
+			table: cycles,
+			mutate: func(c *config.RootConfig) {
+				c.Tables["cycles"] = config.TableConfig{ExcludeColumns: []string{"id", "code", "name"}}
+			},
+		},
+		{
+			name:  "only key column excluded per table",
+			table: cycles,
+			mutate: func(c *config.RootConfig) {
+				c.Tables["public.cycles"] = config.TableConfig{ExcludeColumns: []string{"id"}}
+			},
+		},
+		{
+			name:  "only key column excluded globally",
+			table: cycles,
+			mutate: func(c *config.RootConfig) {
+				c.Generation.ExcludeColumns = []string{"id"}
+			},
+		},
+		{
+			name:  "one member of a composite key excluded",
+			table: memberships,
+			mutate: func(c *config.RootConfig) {
+				c.Tables["memberships"] = config.TableConfig{ExcludeColumns: []string{"user_id"}}
+			},
+		},
+		{
+			name:  "override over a surviving column",
+			table: cycles,
+			mutate: func(c *config.RootConfig) {
+				c.Tables["cycles"] = config.TableConfig{
+					ExcludeColumns: []string{"id"},
+					PrimaryKey:     &config.TablePrimaryKeyConfig{Columns: []string{"code"}},
+				}
+			},
+			wantPK: []string{"code"},
+		},
+		{
+			name:  "non-key column excluded",
+			table: memberships,
+			mutate: func(c *config.RootConfig) {
+				c.Tables["memberships"] = config.TableConfig{ExcludeColumns: []string{"role"}}
+			},
+			wantPK: []string{"org_id", "user_id"},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			in := testInput(&parser.Schema{Tables: []parser.Table{tt.table}})
+			tt.mutate(in.Config)
+
+			contexts, err := gen.BuildTableContexts(in, nil)
+			if err != nil {
+				t.Fatalf("BuildTableContexts: %v", err)
+			}
+			if tt.wantPK == nil {
+				if len(contexts) != 0 {
+					t.Fatalf("BuildTableContexts returned %d tables, want %s skipped", len(contexts), tt.table.Name)
+				}
+				return
+			}
+			if len(contexts) != 1 {
+				t.Fatalf("BuildTableContexts returned %d tables, want 1", len(contexts))
+			}
+			got := make([]string, len(contexts[0].PKColumns))
+			for i, c := range contexts[0].PKColumns {
+				got[i] = c.Name
+			}
+			if diff := cmp.Diff(tt.wantPK, got); diff != "" {
+				t.Errorf("PKColumns mismatch (-want +got):\n%s", diff)
+			}
+		})
+	}
+}
+
 // TestBuildTableContexts_ExcludeTables pins that tables
 // matching any pattern in cfg.ExcludeTables are dropped silently before
 // table-context build. Glob syntax (filepath.Match) — `*`, `?`,

@@ -1250,6 +1250,110 @@ func TestValidatePostParse_PrimaryKeyOverride_PKMemberCoverage(t *testing.T) {
 	}
 }
 
+// TestValidatePostParse_ExcludedPrimaryKey covers the PRD §4.13 rule that
+// `exclude_columns` may not remove a member of a table's detected primary key,
+// and the override, all-excluded and exclude_tables cases it does not apply to.
+func TestValidatePostParse_ExcludedPrimaryKey(t *testing.T) {
+	single := config.SchemaTable{
+		Name: "cycles", Schema: "public",
+		Columns: []config.SchemaColumn{
+			{Name: "id", Type: "integer", PrimaryKey: true},
+			{Name: "code", Type: "text", Unique: true},
+			{Name: "name", Type: "text"},
+		},
+	}
+	composite := config.SchemaTable{
+		Name: "memberships", Schema: "public",
+		Columns: []config.SchemaColumn{
+			{Name: "org_id", Type: "integer", PrimaryKey: true},
+			{Name: "user_id", Type: "integer", PrimaryKey: true},
+			{Name: "role", Type: "text"},
+		},
+	}
+	tests := []struct {
+		name    string
+		table   config.SchemaTable
+		mutate  func(*config.RootConfig)
+		wantErr string // "" means no error
+	}{
+		{
+			name:  "table-level exclusion of the only key column",
+			table: single,
+			mutate: func(c *config.RootConfig) {
+				c.Tables["cycles"] = config.TableConfig{ExcludeColumns: []string{"id"}}
+			},
+			wantErr: `tables.public.cycles.exclude_columns removes primary-key column "id" of table public.cycles; keep the column, declare tables.public.cycles.primary_key.columns over columns that remain, or drop the table with exclude_tables`,
+		},
+		{
+			name:  "global exclusion of the only key column",
+			table: single,
+			mutate: func(c *config.RootConfig) {
+				c.Generation.ExcludeColumns = []string{"id"}
+			},
+			wantErr: `generation.exclude_columns removes primary-key column "id" of table public.cycles`,
+		},
+		{
+			name:  "one member of a composite key",
+			table: composite,
+			mutate: func(c *config.RootConfig) {
+				c.Tables["public.memberships"] = config.TableConfig{ExcludeColumns: []string{"user_id"}}
+			},
+			wantErr: `tables.public.memberships.exclude_columns removes primary-key column "user_id" of table public.memberships`,
+		},
+		{
+			name:  "override over a surviving column replaces the excluded key",
+			table: single,
+			mutate: func(c *config.RootConfig) {
+				c.Tables["cycles"] = config.TableConfig{
+					ExcludeColumns: []string{"id"},
+					PrimaryKey:     &config.TablePrimaryKeyConfig{Columns: []string{"code"}},
+				}
+			},
+		},
+		{
+			name:  "every column excluded is the exhaustion warning, not this error",
+			table: single,
+			mutate: func(c *config.RootConfig) {
+				c.Tables["cycles"] = config.TableConfig{ExcludeColumns: []string{"id", "code", "name"}}
+			},
+		},
+		{
+			name:  "a table exclude_tables drops is not checked",
+			table: single,
+			mutate: func(c *config.RootConfig) {
+				c.ExcludeTables = []string{"cycles"}
+				c.Generation.ExcludeColumns = []string{"id"}
+			},
+		},
+		{
+			name:  "excluding a non-key column is fine",
+			table: single,
+			mutate: func(c *config.RootConfig) {
+				c.Tables["cycles"] = config.TableConfig{ExcludeColumns: []string{"name"}}
+			},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg := validConfig()
+			tt.mutate(cfg)
+			_, err := config.ValidatePostParse(cfg, []config.SchemaTable{tt.table}, nil)
+			if tt.wantErr == "" {
+				if err != nil {
+					t.Fatalf("ValidatePostParse() error = %v, want nil", err)
+				}
+				return
+			}
+			if err == nil {
+				t.Fatalf("ValidatePostParse() error = nil, want one containing %q", tt.wantErr)
+			}
+			if !strings.Contains(err.Error(), tt.wantErr) {
+				t.Errorf("ValidatePostParse() error = %q, want it to contain %q", err.Error(), tt.wantErr)
+			}
+		})
+	}
+}
+
 // TestValidatePostParse_MissingPrimaryKey pins the no-PK skip warning: a
 // table with no auto-detected PK and no override gets a warning directing
 // the user toward either declaring the PK via primary_key.columns or

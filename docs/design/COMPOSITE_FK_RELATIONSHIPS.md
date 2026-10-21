@@ -569,9 +569,9 @@ replaces it (§3).
 | A single-column FK to a non-PK column (UNIQUE, or the PK-override form) generates a loader that does not compile | Measured by the FIX-358 vet (§4.9); folded into N.4 / N.5 with both schemas as regression tests |
 | Under option A, a tenant junction with two composite FKs and no single-column FK on the tenant column becomes M2M, with a three-column junction key that M2M disconnect cannot handle | Reading only; one reason A is not recommended |
 | MySQL is marked as lacking tuple IN (`sql/mysql.go:103`) | Measured: it works, and OR-of-ANDs is up to 1000× slower (§4.8); flipped in N.1 |
-| An FK column removed by `exclude_columns` still yielded its edge; an O2M one did not compile | Fixed, FIX-358 |
-| Excluding a table's only PK column passes `validate` and crashes `generate` (`index .PKColumns 0`) | Measured; FIX-360 |
-| Relationship loaders fail past the dialect's bind limit (O2M on SQLite and MySQL, every M2M junction including pgx) | Measured; FIX-359 |
+| An FK column removed by `exclude_columns` still yielded its edge; an O2M one did not compile | Fixed, FIX-358 (`c875fec9`) |
+| Excluding a table's only PK column passes `validate` and crashes `generate` (`index .PKColumns 0`) | Fixed, FIX-360: now a schema-level validation error (PRD §4.13) |
+| Relationship loaders fail past the dialect's bind limit (O2M on SQLite and MySQL, every M2M junction including pgx) | Fixed, FIX-359 (`2ae215f8`) |
 
 ### 9.4 Probes for the rulings (2026-10-20, at `bd7783ea`)
 

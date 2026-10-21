@@ -23,9 +23,17 @@
 
 <!-- fixes:open:begin -->
 
+_No open fixes._
+
+<!-- fixes:open:end -->
+
+## Resolved
+
+<!-- fixes:resolved:begin -->
+
 ### FIX-360
 
-- **Status:** Open
+- **Status:** Resolved
 - **Severity:** tracked
 - **Origin:** phase 5, cmd/sqlgen/gen
 - **Surfaced by:** FIX-358 vet (2026-10-21), user approved filing
@@ -174,18 +182,44 @@ key. Confirmed by the vet; line refs and the quoted error are accurate at
 - PRD §4.13 (config validation rules: "`primary_key.columns` references
   non-existent column", "Table has no primary key after override resolution",
   exclude_columns exhaustion), §9.4b (no-PK tables are skipped).
-- `cmd/sqlgen/gen/context_table.go:889-907` (`tableHasResolvedPK`),
+- `cmd/sqlgen/gen/context_table.go:885-912` (`tableHasResolvedPK`),
   `:309-320` (`buildTableColumns`).
 - `cmd/sqlgen/gen/relationship_targets.go` (uses `tableHasResolvedPK` to decide
   whether a relationship target generates; FIX-358 touches the same file).
 
-**Resolution notes.** _Filled in by /fix resolve._
-
-<!-- fixes:open:end -->
-
-## Resolved
-
-<!-- fixes:resolved:begin -->
+**Resolution notes.** Implemented option (a), the user's 2026-10-21 ruling,
+from the vetted prototype (`git apply --3way` at `c875fec9`: every code and
+test hunk applied clean; the PRD phase-list hunk conflicted only because
+FIX-358 rewrote the adjacent phase-3 line, merged by hand keeping FIX-358's
+phase-3 text and adding ", an excluded primary-key column" to phase 2).
+`tableHasResolvedPK` (`cmd/sqlgen/gen/context_table.go`) now resolves the key
+(override via `resolveTableConfig`, else the detected PK flags) and returns
+false when it is empty or merged `exclude_columns` removes any member, so it
+agrees with `buildTableColumns`; the all-columns-excluded table is skipped as
+§4.13 states. `config.validateExcludedPrimaryKey`, wired into
+`ValidatePostParse` after `validatePrimaryKeyOverride`, errors once per
+excluded detected-PK member naming the `exclude_columns` key, column and
+table; it skips override tables, fully excluded tables and `exclude_tables`
+matches. PRD §4.13 gains the "`exclude_columns` removes a primary-key column"
+row, the phase-2 list item and the edge-case bullet. Tests:
+`config.TestValidatePostParse_ExcludedPrimaryKey` (7 cases),
+`gen.TestBuildTableContexts_ExcludedKeyColumn` (6 cases),
+`cli.TestExcludedPrimaryKeyColumn` (single, global, composite under both
+`validate` and `generate`) and `cli.TestGenerate_AllColumnsExcludedSkipsTable`.
+Inline: the prototype's doc and test comments were shortened and its
+`FIX-360` references in test comments removed (refs rule); the
+`BuildTableContexts` doc comment now names every warning or error that
+reports a skipped table; the References line ref was updated to `:885-912`;
+`docs/design/COMPOSITE_FK_RELATIONSHIPS.md` §9.3 marks FIX-358, FIX-359 and
+FIX-360 fixed. Fail-first
+re-run on the final code: validator call removed → the config test (3
+subtests) and `TestExcludedPrimaryKeyColumn` ("validate: want an error, got
+none" / "generate: want an error, got none") fail; `tableHasResolvedPK`
+reverted → `TestBuildTableContexts_ExcludedKeyColumn` ("returned 1 tables,
+want cycles skipped", 4 subtests) and `TestGenerate_AllColumnsExcludedSkipsTable`
+(the `client.go.tmpl:12:95` error) fail. Gates: `make check` ok;
+`make update-golden-e2e` and `make update-golden` produce no churn (matches
+the vet); `make check-examples` ok.
 
 ### FIX-358
 

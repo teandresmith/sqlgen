@@ -1425,6 +1425,7 @@ func ValidatePostParse(cfg *RootConfig, tables []SchemaTable, views []SchemaView
 	validateAmbiguousBareNames(cfg, tables, &errs)
 	validateViewInvalidateOn(cfg, tables, &errs)
 	validatePrimaryKeyOverride(cfg, tables, &errs, &warnings)
+	validateExcludedPrimaryKey(cfg, tables, &errs)
 	validateCompositePKStrategy(cfg, tables, &errs)
 	validateMissingPrimaryKey(cfg, tables, &warnings)
 	validateColumnAccessSchema(cfg, tables, &errs, &warnings)
@@ -2008,6 +2009,50 @@ func validateMissingPrimaryKey(cfg *RootConfig, tables []SchemaTable, warnings *
 				qualifiedTableName(table), qualifiedTableName(table),
 			),
 		})
+	}
+}
+
+// validateExcludedPrimaryKey rejects exclude_columns removing a member of a
+// table's detected primary key (PRD §4.13): generating on the members that
+// remain would key Get, Update and HardDelete on a column set that is not
+// unique. Tables with a primary_key.columns override are checked by
+// validatePrimaryKeyOverride; fully excluded and exclude_tables tables are
+// skipped, not generated.
+func validateExcludedPrimaryKey(cfg *RootConfig, tables []SchemaTable, errs *[]error) {
+	global := make(map[string]bool, len(cfg.Generation.ExcludeColumns))
+	for _, name := range cfg.Generation.ExcludeColumns {
+		global[name] = true
+	}
+	for _, table := range tables {
+		tc := findTableConfig(cfg, table)
+		if tc != nil && tc.PrimaryKey != nil && len(tc.PrimaryKey.Columns) > 0 {
+			continue
+		}
+		if allColumnsExcluded(cfg, table) {
+			continue
+		}
+		if _, matched := MatchExcludeTablePattern(table.Name, table.Schema, cfg.ExcludeTables); matched {
+			continue
+		}
+		qualified := qualifiedTableName(table)
+		for _, col := range table.Columns {
+			if !col.PrimaryKey {
+				continue
+			}
+			key := ""
+			switch {
+			case tc != nil && slices.Contains(tc.ExcludeColumns, col.Name):
+				key = "tables." + qualified + ".exclude_columns"
+			case global[col.Name]:
+				key = "generation.exclude_columns"
+			default:
+				continue
+			}
+			*errs = append(*errs, fmt.Errorf(
+				"%s removes primary-key column %q of table %s; keep the column, declare tables.%s.primary_key.columns over columns that remain, or drop the table with exclude_tables",
+				key, col.Name, qualified, qualified,
+			))
+		}
 	}
 }
 

@@ -19,12 +19,10 @@ import (
 // silently before table-context build. The filter applies to file inputs
 // and introspected schemas alike.
 //
-// Tables that have no primary key after override resolution are skipped
-// entirely (PRD §9.4b). The corresponding warning is emitted earlier from
-// config.ValidatePostParse::validateMissingPrimaryKey; no client, model,
-// cache entry, or event hook is generated. Users can either declare a PK
-// via tables.<name>.primary_key.columns or drop the table via the
-// top-level exclude_tables filter to silence the warning.
+// Tables with no primary key after override resolution and exclude_columns
+// are skipped entirely (PRD §9.4b): no client, model, cache entry, or event
+// hook is generated. config.ValidatePostParse reports each one first, as the
+// missing-PK or exclude_columns-exhaustion warning or as an error.
 func BuildTableContexts(input *GenerateInput, collisions map[string]bool) ([]TableContext, error) {
 	applyConfigDeclaredFKs(input.Schema, input.Config)
 	input.relTargets = newRelationshipTargets(input, collisions)
@@ -879,31 +877,38 @@ func qualifiedTableOrName(t *parser.Table) string {
 }
 
 // tableHasResolvedPK reports whether a table has a primary key after override
-// resolution. A table qualifies when either:
-//   - The matching config.TableConfig declares primary_key.columns (override), or
-//   - At least one of the parser-detected columns has PrimaryKey == true.
-//
-// Tables that fail both checks are skipped from generation; the warning is
-// emitted earlier from config.ValidatePostParse::validateMissingPrimaryKey
-// (PRD §9.4b).
+// resolution and column exclusion: the primary_key.columns override when
+// declared, else the parser-detected PK columns, non-empty and with no member
+// removed by exclude_columns. It must agree with buildTableColumns, which drops
+// excluded columns before collecting PKColumns. config.ValidatePostParse
+// reports every table this skips, as a warning or an error (PRD §4.13, §9.4b).
 func tableHasResolvedPK(cfg *config.RootConfig, table *parser.Table) bool {
+	var tableCfg config.TableConfig
+	var global config.GenerationConfig
 	if cfg != nil {
-		if tc, ok := cfg.Tables[qualifiedTableOrName(table)]; ok {
-			if tc.PrimaryKey != nil && len(tc.PrimaryKey.Columns) > 0 {
-				return true
-			}
-		} else if tc, ok := cfg.Tables[table.Name]; ok {
-			if tc.PrimaryKey != nil && len(tc.PrimaryKey.Columns) > 0 {
-				return true
+		tableCfg = resolveTableConfig(cfg.Tables, table.Schema, table.Name)
+		global = cfg.Generation
+	}
+	var key []string
+	if tableCfg.PrimaryKey != nil && len(tableCfg.PrimaryKey.Columns) > 0 {
+		key = tableCfg.PrimaryKey.Columns
+	} else {
+		for i := range table.Columns {
+			if table.Columns[i].PrimaryKey {
+				key = append(key, table.Columns[i].Name)
 			}
 		}
 	}
-	for i := range table.Columns {
-		if table.Columns[i].PrimaryKey {
-			return true
+	if len(key) == 0 {
+		return false
+	}
+	excluded := config.ResolveTableExcludeColumns(tableCfg, global)
+	for _, name := range key {
+		if slices.Contains(excluded, name) {
+			return false
 		}
 	}
-	return false
+	return true
 }
 
 // cursorKeyCandidates returns the columns §4.13 cursor_keys resolution checks
