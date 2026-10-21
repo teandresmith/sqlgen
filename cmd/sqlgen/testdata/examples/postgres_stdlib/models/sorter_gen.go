@@ -96,6 +96,23 @@ func (s CategorySorter) Name(direction sql.SortDirection) sql.Sort {
 	return sql.Sort{Column: "name", Direction: direction}
 }
 
+// CycleSorter provides type-safe sort helpers for the Cycle entity.
+// Each method returns a sql.Sort for the corresponding column.
+type CycleSorter struct{}
+
+// NewCycleSorter returns a new CycleSorter.
+func NewCycleSorter() CycleSorter { return CycleSorter{} }
+
+// ID returns a sort for the id column in the given direction.
+func (s CycleSorter) ID(direction sql.SortDirection) sql.Sort {
+	return sql.Sort{Column: "id", Direction: direction}
+}
+
+// Name returns a sort for the name column in the given direction.
+func (s CycleSorter) Name(direction sql.SortDirection) sql.Sort {
+	return sql.Sort{Column: "name", Direction: direction}
+}
+
 // EventSorter provides type-safe sort helpers for the Event entity.
 // Each method returns a sql.Sort for the corresponding column.
 type EventSorter struct{}
@@ -400,6 +417,23 @@ func (s TagSorter) IsDeleted(direction sql.SortDirection) sql.Sort {
 // Name returns a sort for the name column in the given direction.
 func (s TagSorter) Name(direction sql.SortDirection) sql.Sort {
 	return sql.Sort{Column: "name", Direction: direction}
+}
+
+// TaskSorter provides type-safe sort helpers for the Task entity.
+// Each method returns a sql.Sort for the corresponding column.
+type TaskSorter struct{}
+
+// NewTaskSorter returns a new TaskSorter.
+func NewTaskSorter() TaskSorter { return TaskSorter{} }
+
+// ID returns a sort for the id column in the given direction.
+func (s TaskSorter) ID(direction sql.SortDirection) sql.Sort {
+	return sql.Sort{Column: "id", Direction: direction}
+}
+
+// Title returns a sort for the title column in the given direction.
+func (s TaskSorter) Title(direction sql.SortDirection) sql.Sort {
+	return sql.Sort{Column: "title", Direction: direction}
 }
 
 // UserCategorySorter provides type-safe sort helpers for the UserCategory entity.

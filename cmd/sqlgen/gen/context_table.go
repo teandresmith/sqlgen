@@ -1376,7 +1376,10 @@ func buildRelationshipContexts(
 		excludeSet[name] = true
 	}
 
-	var inferred []RelationshipContext
+	var (
+		inferred []RelationshipContext
+		omitted  []string
+	)
 
 	qualifiedName := table.Name
 	if table.Schema != "" {
@@ -1411,6 +1414,16 @@ func buildRelationshipContexts(
 		if !targets.generates(r.TargetTable) {
 			continue
 		}
+		// A key column `exclude_columns` removes has no field for the loader,
+		// the filter or the nested writer to use, so the edge is omitted. It
+		// is reported, since the user excluded a column, not the edge.
+		if member := targets.excludedKeyMember(schema, r); member != "" {
+			omitted = append(omitted, fmt.Sprintf(
+				"tables.%s: the foreign-key-inferred relationship %q is omitted because its key column %s is removed by `exclude_columns`. Keep the column to keep the edge, or list %q in `exclude_relationships` (PRD §4.13, §13.4).",
+				qualifiedName, visibleName, member, visibleName,
+			))
+			continue
+		}
 		inferred = append(inferred, relationshipToContext(schema, r, targets))
 	}
 
@@ -1418,6 +1431,7 @@ func buildRelationshipContexts(
 	if err != nil {
 		return nil, nil, err
 	}
+	warnings = append(omitted, warnings...)
 	slices.SortFunc(rels, func(a, b RelationshipContext) int {
 		return strings.Compare(a.Name, b.Name)
 	})
@@ -1475,6 +1489,15 @@ func mergeDeclaredRelationships(
 			continue
 		}
 		rel := configRelationshipToContext(schema, r, targets)
+		// The user declared this edge by name, so a link column removed by
+		// `exclude_columns` is an error, as an unresolvable target is.
+		if member := targets.excludedDeclaredMember(schema, rel, qualifiedName); member != "" {
+			errs = append(errs, fmt.Errorf(
+				"tables.%s.relationships: %q links through %s, which `exclude_columns` removes from the generated model; keep the column or remove the relationship (PRD §4.13, §13.4)",
+				qualifiedName, r.Name, member,
+			))
+			continue
+		}
 		// The !replaced guard keeps a second declared entry resolving to the
 		// same field from re-reporting a replacement that already happened.
 		// It does not make that pair legal: config.validateRelationships
@@ -2653,7 +2676,8 @@ func findO2ORelationships(schema *parser.Schema, table *parser.Table, tableCfg c
 		if excludeSet[r.Name] {
 			continue
 		}
-		if !targets.generates(r.TargetTable) {
+		// Skipped rather than reported: buildRelationshipContexts reports it.
+		if !targets.generates(r.TargetTable) || targets.excludedKeyMember(schema, r) != "" {
 			continue
 		}
 		results = append(results, chainedRelInfo{

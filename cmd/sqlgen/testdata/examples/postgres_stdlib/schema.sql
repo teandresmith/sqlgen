@@ -272,3 +272,16 @@ COMMENT ON COLUMN warehouses.related_ids IS 'Related warehouse UUIDs';
 COMMENT ON COLUMN warehouses.nullable_ref IS 'Optional reference to another warehouse';
 COMMENT ON COLUMN warehouses.allowed_roles IS 'Permitted user roles for warehouse access';
 COMMENT ON COLUMN warehouses.created_at IS 'Row creation timestamp';
+
+-- tasks.cycle_id is removed by exclude_columns, so the FK-inferred
+-- Cycle.Tasks edge is omitted with a warning.
+CREATE TABLE cycles (
+    id INT PRIMARY KEY,
+    name TEXT NOT NULL
+);
+
+CREATE TABLE tasks (
+    id INT PRIMARY KEY,
+    title TEXT NOT NULL,
+    cycle_id INT REFERENCES cycles(id)
+);

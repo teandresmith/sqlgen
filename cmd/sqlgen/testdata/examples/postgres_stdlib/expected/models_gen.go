@@ -8923,6 +8923,1742 @@ type GetCategoriesInput struct {
 	requiredColumns []string
 }
 
+type Cycle struct {
+	ID   int32  `db:"id" json:"id"`
+	Name string `db:"name" json:"name"`
+}
+
+// CycleClient provides type-safe operations for the cycles table.
+type CycleClient interface {
+	// --- Read Operations ---
+
+	// Get returns a single cycle by primary key.
+	Get(ctx context.Context, id int32, opts ...func(*CallOptions[CycleFieldOptions])) (*Cycle, error)
+
+	// GetMany returns cycles matching the given filter, field selection, and sort criteria.
+	GetMany(ctx context.Context, input *GetCyclesInput, opts ...func(*CallOptions[CycleFieldOptions])) ([]*Cycle, error)
+
+	// Exists returns true if a cycle with the given primary key exists.
+	Exists(ctx context.Context, id int32, opts ...func(*CallOptions[CycleFieldOptions])) (bool, error)
+
+	// ExistsWhere returns true if any cycle matches the given filter.
+	ExistsWhere(ctx context.Context, filter *CycleFilter, opts ...func(*CallOptions[CycleFieldOptions])) (bool, error)
+
+	// Count returns the number of cycles matching the given filter.
+	Count(ctx context.Context, filter *CycleFilter, opts ...func(*CallOptions[CycleFieldOptions])) (int64, error)
+
+	// --- Write Operations ---
+
+	// Create inserts a new cycle and returns the created entity.
+	Create(ctx context.Context, input *CreateCycleInput, opts ...func(*CallOptions[CycleFieldOptions])) (*Cycle, error)
+
+	// CreateMany inserts multiple cycles in batches and returns all created entities.
+	// Sub-batches are not automatically rolled back on failure — wrap in a transaction for atomicity.
+	CreateMany(ctx context.Context, inputs []*CreateCycleInput, opts ...func(*CallOptions[CycleFieldOptions])) ([]*Cycle, error)
+
+	// Update partially updates a cycle by primary key and returns the updated entity.
+	// Only fields where IsSet() is true are included in the SET clause.
+	// Returns ErrNotFound if the primary key does not exist.
+	Update(ctx context.Context, id int32, input *UpdateCycleInput, opts ...func(*CallOptions[CycleFieldOptions])) (*Cycle, error)
+
+	// UpdateMany updates multiple cycles and returns the updated entities.
+	UpdateMany(ctx context.Context, items []UpdateCycleItem, opts ...func(*CallOptions[CycleFieldOptions])) ([]*Cycle, error)
+
+	// UpdateWhere updates all cycles matching the filter and returns the updated entities.
+	// Idempotent — returns empty slice when no rows match.
+	UpdateWhere(ctx context.Context, filter *CycleFilter, input *UpdateCycleInput, opts ...func(*CallOptions[CycleFieldOptions])) ([]*Cycle, error)
+
+	// Upsert inserts a cycle or updates it on conflict and returns the resulting entity.
+	Upsert(ctx context.Context, input *CreateCycleInput, target CycleConflictTarget, opts ...func(*CallOptions[CycleFieldOptions])) (*Cycle, error)
+
+	// UpsertMany inserts or updates multiple cycles in batches and returns all resulting entities.
+	// Inputs resolving to the same conflict target are deduped, last occurrence wins.
+	UpsertMany(ctx context.Context, inputs []*CreateCycleInput, target CycleConflictTarget, opts ...func(*CallOptions[CycleFieldOptions])) ([]*Cycle, error)
+
+	// --- Hard Delete Operations ---
+
+	// HardDelete permanently removes a cycle from the database.
+	// Idempotent — returns nil if the primary key does not exist.
+	HardDelete(ctx context.Context, id int32, opts ...func(*CallOptions[CycleFieldOptions])) error
+
+	// HardDeleteMany permanently removes multiple cycles from the database.
+	HardDeleteMany(ctx context.Context, ids []int32, opts ...func(*CallOptions[CycleFieldOptions])) error
+
+	// HardDeleteWhere permanently removes all cycles matching the filter.
+	// Idempotent — returns nil when no rows match.
+	HardDeleteWhere(ctx context.Context, filter *CycleFilter, opts ...func(*CallOptions[CycleFieldOptions])) error
+
+	// --- Pagination Operations ---
+
+	// Paginate returns a page of cycles with total count for offset-based pagination.
+	Paginate(ctx context.Context, input PaginateInput[CycleFilter], opts ...func(*CallOptions[CycleFieldOptions])) (*PaginateResult[Cycle], error)
+
+	// Connection returns a Relay-style cursor-paginated connection of cycles.
+	// Sort order is determined by cursor_keys — custom sorts are not supported.
+	// Use Paginate for custom sort orders.
+	Connection(ctx context.Context, input ConnectionInput[CycleFilter], opts ...func(*CallOptions[CycleFieldOptions])) (*Connection[Cycle], error)
+
+	// Stream returns an iterator over cycles matching the filter and sort criteria.
+	// Rows are yielded as the driver returns them; cache is bypassed.
+	// Stream cannot load relationships.
+	//
+	// Stream refuses an active transaction unless CallOptions.AllowInTransaction
+	// is set, and the opt-in commits the caller to issuing nothing else on that
+	// txCtx: the one rule that remains the caller's — drain or close a result set
+	// before issuing the next statement on that txCtx — applied to a loop whose
+	// body is caller code.
+	Stream(ctx context.Context, input *StreamCyclesInput, opts ...func(*CallOptions[StreamCycleFieldOptions])) iter.Seq2[*Cycle, error]
+}
+
+// cycleClient implements the CycleClient interface.
+type cycleClient struct {
+	querier       database.Querier
+	dialect       sql.Dialect
+	table         sql.Table
+	batchSize     int
+	queryLimit    int
+	pageSize      int
+	cursorKeys    []string
+	strictUpdates bool
+	mutationHooks []hook.MutationHook
+	queryHooks    []hook.QueryHook
+	panicHandler  hook.PanicHandler
+}
+
+// newCycleClient creates a new cycleClient.
+func newCycleClient(querier database.Querier, mutationHooks []hook.MutationHook, queryHooks []hook.QueryHook, panicHandler hook.PanicHandler) *cycleClient {
+	return &cycleClient{
+		querier:       querier,
+		dialect:       sql.NewPostgresDialect(),
+		table:         sql.Table{Schema: "public", Name: "cycles"},
+		batchSize:     200,
+		queryLimit:    1000,
+		pageSize:      100,
+		cursorKeys:    []string{"id"},
+		strictUpdates: true,
+		mutationHooks: mutationHooks,
+		queryHooks:    queryHooks,
+		panicHandler:  panicHandler,
+	}
+}
+
+// executeMutation runs fn through the mutation hook chain.
+// When skipHooks is true, only panic recovery wraps the call.
+func (c *cycleClient) executeMutation(ctx context.Context, skipHooks bool, mc *hook.MutationContext, fn hook.MutationHandler) (any, error) {
+	var hooks []hook.MutationHook
+	if !skipHooks {
+		hooks = c.mutationHooks
+	}
+	return hook.BuildMutationChain(c.panicHandler, hooks, fn)(ctx, mc)
+}
+
+// executeQuery runs fn through the query hook chain.
+// When skipHooks is true, only panic recovery wraps the call.
+func (c *cycleClient) executeQuery(ctx context.Context, skipHooks bool, qc *hook.QueryContext, fn hook.QueryHandler) (any, error) {
+	var hooks []hook.QueryHook
+	if !skipHooks {
+		hooks = c.queryHooks
+	}
+	return hook.BuildQueryChain(c.panicHandler, hooks, fn)(ctx, qc)
+}
+
+// cycleAllColumns is the column list for full-entity reads, sorted for determinism.
+var cycleAllColumns = []string{"id", "name"}
+
+// scanCycles scans rows into Cycle entities using a column-name switch.
+// Handles both scan target shapes (direct, wrapped) without reflection.
+func scanCycles(rows database.Rows, columns []string) ([]*Cycle, error) {
+	var result []*Cycle
+	for rows.Next() {
+		c := &Cycle{}
+
+		targets := make([]any, len(columns))
+		for idx, col := range columns {
+			switch col {
+			case "id":
+				targets[idx] = &c.ID
+			case "name":
+				targets[idx] = &c.Name
+			}
+		}
+
+		if err := rows.Scan(targets...); err != nil {
+			return nil, fmt.Errorf("scan cycle: %w", err)
+		}
+
+		result = append(result, c)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate cycle rows: %w", err)
+	}
+	return result, nil
+}
+
+// Get returns a single cycle by primary key with optional field selection.
+// If fieldOptions is provided, only the selected columns are returned and
+// relationships with non-nil FieldOptions are loaded.
+func (c *cycleClient) Get(ctx context.Context, id int32, opts ...func(*CallOptions[CycleFieldOptions])) (*Cycle, error) {
+	options := resolveCallOptions(opts)
+
+	if options.LockMode != sql.LockNone {
+		if !database.InTransaction(ctx) {
+			return nil, fmt.Errorf("get cycle: LockMode requires an active transaction")
+		}
+		options.SkipCache = true
+	}
+	qctx := &hook.QueryContext{
+		Op: hook.OpGet, Table: TableCycles, Schema: "public",
+		PK: id, CallOptions: options,
+	}
+	result, err := c.executeQuery(ctx, options.SkipHooks, qctx, func(ctx context.Context, q *hook.QueryContext) (any, error) {
+		// Hooks may mutate q.CallOptions (e.g. the cache hook's hydration
+		// path overrides FieldOptions for a full-entity refill). Prefer
+		// those overrides when present; otherwise fall back to the
+		// caller-supplied options captured at Get() time.
+		effectiveOpts := options
+		if qOpts, ok := q.CallOptions.(CallOptions[CycleFieldOptions]); ok {
+			effectiveOpts = qOpts
+		}
+		// Internal GetMany call with SkipHooks to prevent nested hook invocation
+		internalOpts := func(o *CallOptions[CycleFieldOptions]) {
+			*o = effectiveOpts
+			o.SkipHooks = true
+		}
+		cycles, err := c.GetMany(ctx, &GetCyclesInput{
+			Filter: &CycleFilter{
+				ID: &comparator.Number[int32]{Eq: new(id)},
+			},
+			Limit: new(1),
+		}, internalOpts)
+		if err != nil {
+			return nil, err
+		}
+		if len(cycles) == 0 {
+			return nil, ErrNotFound
+		}
+		return cycles[0], nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	if result == nil {
+		return nil, nil
+	}
+	return result.(*Cycle), nil
+}
+
+// GetMany returns cycles matching the given filter, field selection, and sort criteria.
+func (c *cycleClient) GetMany(ctx context.Context, input *GetCyclesInput, opts ...func(*CallOptions[CycleFieldOptions])) ([]*Cycle, error) {
+	// A nil input is the zero-value input — no filter, no sorts, no
+	// limit. Normalized before the hook context is built, so a hook never sees
+	// a nil Input either.
+	if input == nil {
+		input = &GetCyclesInput{}
+	}
+	options := resolveCallOptions(opts)
+
+	if options.LockMode != sql.LockNone {
+		if !database.InTransaction(ctx) {
+			return nil, fmt.Errorf("get cycles: LockMode requires an active transaction")
+		}
+		options.SkipCache = true
+	}
+	result, err := c.executeQuery(ctx, options.SkipHooks, &hook.QueryContext{
+		Op: hook.OpGetMany, Table: TableCycles, Schema: "public",
+		Input: input, CallOptions: options,
+	}, func(ctx context.Context, q *hook.QueryContext) (any, error) {
+		conn := database.Conn(ctx, c.querier)
+
+		// FieldOptions from CallOptions — nil means all columns
+		fieldOptions := options.FieldOptions
+
+		// Nothing selected — return early
+		if fieldOptions != nil && !fieldOptions.HasSelectedColumns() {
+			return nil, nil
+		}
+
+		// Determine columns from FieldOptions. A narrowed projection still
+		// carries the columns this call structurally requires — the cursor keys
+		// an internal caller declares. An all-false FieldOptions is
+		// untouched: it short-circuits above.
+		columns := cycleAllColumns
+		if fieldOptions != nil {
+			if selected := fieldOptions.Columns(); len(selected) > 0 {
+				columns = unionColumns(selected, input.requiredColumns...)
+			}
+		}
+
+		// Build conditions from filter
+		var conds []sql.Condition
+		if input.Filter != nil {
+			conds = input.Filter.ToConditions(c.dialect)
+		}
+
+		// Append internal conditions (e.g., keyset conditions from Connection)
+		conds = append(conds, input.conditions...)
+
+		// Resolve limit/offset to pointers for the builder.
+		// nil → no clause, *0 (via new(0)) → no clause, *N → LIMIT/OFFSET N.
+		var limitPtr *int
+		if input.Limit != nil {
+			if v := *input.Limit; v > 0 {
+				limitPtr = new(v)
+			}
+		} else if c.queryLimit > 0 {
+			limitPtr = new(c.queryLimit)
+		}
+		var offsetPtr *int
+		if input.Offset != nil {
+			if v := *input.Offset; v > 0 {
+				offsetPtr = new(v)
+			}
+		}
+
+		var cycles []*Cycle
+		query, args := sql.BuildSelect(c.dialect, c.table, sql.SelectOptions{
+			Columns:    columns,
+			Conditions: conds,
+			OrderBy:    input.Sorts,
+			Limit:      limitPtr,
+			Offset:     offsetPtr,
+			LockMode:   options.LockMode,
+		})
+
+		rows, err := conn.Query(ctx, query, args...)
+		if err != nil {
+			return nil, fmt.Errorf("get cycles: %w", err)
+		}
+		defer rows.Close()
+
+		cycles, err = scanCycles(rows, columns)
+		if err != nil {
+			return nil, err
+		}
+
+		return cycles, nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	if result == nil {
+		return nil, nil
+	}
+	return result.([]*Cycle), nil
+}
+
+// Create inserts a new cycle and returns the created entity.
+func (c *cycleClient) Create(ctx context.Context, input *CreateCycleInput, opts ...func(*CallOptions[CycleFieldOptions])) (*Cycle, error) {
+	// A write cannot normalize nil to the zero value the way a read
+	// does — a zero CreateCycleInput legally writes a row (each required
+	// field's zero value, or with no required field, every column's default), so
+	// that would turn a caller's mistake into a silently written one. Guarded
+	// before the executor, so nil fires no hook and publishes no event.
+	if input == nil {
+		return nil, ErrNilInput
+	}
+	options := resolveCallOptions(opts)
+	result, err := c.executeMutation(ctx, options.SkipHooks, &hook.MutationContext{
+		Op: hook.OpCreate, Table: TableCycles, Schema: "public",
+		Input: input, CallOptions: options,
+	}, func(ctx context.Context, m *hook.MutationContext) (any, error) {
+		conn := database.Conn(ctx, c.querier)
+
+		columns := []string{"id", "name"}
+		args := []any{input.ID, input.Name}
+
+		id, err := c.insertAndResolveID(ctx, conn, columns, args)
+		if err != nil {
+			return nil, fmt.Errorf("create cycle: %w", err)
+		}
+		m.AffectedPKs = []any{id}
+
+		// Empty FieldOptions — caller doesn't need the result
+		if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
+			return nil, nil
+		}
+
+		return c.Get(ctx, id, func(o *CallOptions[CycleFieldOptions]) {
+			*o = options
+			o.SkipHooks = true
+			o.LockMode = sql.LockNone
+		})
+	})
+	if err != nil {
+		return nil, err
+	}
+	if result == nil {
+		return nil, nil
+	}
+	return result.(*Cycle), nil
+}
+
+// CreateMany inserts multiple cycles in batches and returns all created entities.
+// Sub-batches are not automatically rolled back on failure — wrap in a transaction for atomicity.
+func (c *cycleClient) CreateMany(ctx context.Context, inputs []*CreateCycleInput, opts ...func(*CallOptions[CycleFieldOptions])) ([]*Cycle, error) {
+	// A nil *slice* is simply no rows, but a nil *element* is the
+	// same caller error a nil Create argument is — and skipping it silently
+	// would drop a row the caller asked for. Rejected before the executor.
+	for _, in := range inputs {
+		if in == nil {
+			return nil, ErrNilInput
+		}
+	}
+	options := resolveCallOptions(opts)
+	result, err := c.executeMutation(ctx, options.SkipHooks, &hook.MutationContext{
+		Op: hook.OpCreateMany, Table: TableCycles, Schema: "public",
+		Input: inputs, CallOptions: options,
+	}, func(ctx context.Context, m *hook.MutationContext) (any, error) {
+		conn := database.Conn(ctx, c.querier)
+		// An empty batch writes nothing and must read nothing. The trailing
+		// re-fetch below filters on the keys this call touched, and every
+		// generated key filter treats an empty set as *no condition* — so
+		// without this guard the re-fetch degrades to an unfiltered SELECT and
+		// returns the whole table as if this call had produced it.
+		if len(inputs) == 0 {
+			return []*Cycle{}, nil
+		}
+		var allIDs []int32
+		for start := 0; start < len(inputs); start += c.batchSize {
+			end := min(start+c.batchSize, len(inputs))
+			batch := inputs[start:end]
+
+			columns := []string{"id", "name"}
+			var valueRows [][]any
+			for _, input := range batch {
+
+				valueRows = append(valueRows, []any{
+					input.ID,
+					input.Name,
+				})
+			}
+
+			ids, err := c.multiInsertAndResolveIDs(ctx, conn, columns, valueRows)
+			if err != nil {
+				return nil, fmt.Errorf("create cycles batch: %w", err)
+			}
+			allIDs = append(allIDs, ids...)
+		}
+
+		m.AffectedPKs = toAnySlice(allIDs)
+
+		// Empty FieldOptions — skip fetch
+		if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
+			return nil, nil
+		}
+		return c.GetMany(ctx, &GetCyclesInput{
+			Filter: &CycleFilter{
+				ID: &comparator.Number[int32]{In: allIDs},
+			},
+			Limit: new(0),
+		}, func(o *CallOptions[CycleFieldOptions]) {
+			*o = options
+			o.SkipHooks = true
+			o.LockMode = sql.LockNone
+		})
+	})
+	if err != nil {
+		return nil, err
+	}
+	if result == nil {
+		return nil, nil
+	}
+	return result.([]*Cycle), nil
+}
+
+// insertAndResolveID performs the INSERT and resolves the generated primary key.
+func (c *cycleClient) insertAndResolveID(ctx context.Context, conn database.Querier, columns []string, args []any) (int32, error) {
+	query, queryArgs := sql.BuildInsert(c.dialect, c.table, sql.InsertOptions{
+		Columns:          columns,
+		Values:           args,
+		ReturningColumns: []string{"id"},
+	})
+	var id int32
+	if err := conn.QueryRow(ctx, query, queryArgs...).Scan(&id); err != nil {
+		return 0, err
+	}
+	return id, nil
+}
+
+// multiInsertAndResolveIDs performs a multi-row INSERT and resolves all generated primary keys.
+func (c *cycleClient) multiInsertAndResolveIDs(ctx context.Context, conn database.Querier, columns []string, valueRows [][]any) ([]int32, error) {
+	query, args := sql.BuildMultiInsert(c.dialect, c.table, sql.MultiInsertOptions{
+		Columns:          columns,
+		ValueRows:        valueRows,
+		ReturningColumns: []string{"id"},
+	})
+
+	rows, err := conn.Query(ctx, query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var ids []int32
+	for rows.Next() {
+		var id int32
+		if err := rows.Scan(&id); err != nil {
+			return nil, fmt.Errorf("scan cycle id: %w", err)
+		}
+		ids = append(ids, id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return ids, nil
+}
+
+// Update partially updates a cycle by primary key and returns the updated entity.
+// Only fields where IsSet() is true are included in the SET clause. If no fields are
+// set, no UPDATE is executed and the current entity is returned unchanged.
+// Returns ErrNotFound if the primary key does not exist (strict_updates is enabled).
+func (c *cycleClient) Update(ctx context.Context, id int32, input *UpdateCycleInput, opts ...func(*CallOptions[CycleFieldOptions])) (*Cycle, error) {
+	// Nil is a caller error, distinct from an empty-but-non-nil
+	// input — that one is the documented no-op returning the entity unchanged.
+	// Guarded before the executor, so nil fires no hook and publishes no event.
+	if input == nil {
+		return nil, ErrNilInput
+	}
+	options := resolveCallOptions(opts)
+	result, err := c.executeMutation(ctx, options.SkipHooks, &hook.MutationContext{
+		Op: hook.OpUpdate, Table: TableCycles, Schema: "public",
+		PK: id, Input: input, CallOptions: options,
+	}, func(ctx context.Context, m *hook.MutationContext) (any, error) {
+		conn := database.Conn(ctx, c.querier)
+
+		// Build SET clause from omittable fields — explicit per-field checks, no reflection
+		setClauses := make(map[string]any)
+		if v, ok := input.Name.Get(); ok {
+			setClauses["name"] = v
+		}
+
+		// Empty update — no fields set, return current entity unchanged
+		if len(setClauses) == 0 {
+			// Empty FieldOptions — caller doesn't need the result
+			if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
+				return nil, nil
+			}
+
+			return c.Get(ctx, id, func(o *CallOptions[CycleFieldOptions]) {
+				*o = options
+				o.SkipHooks = true
+				o.LockMode = sql.LockNone
+			})
+		}
+
+		query, args := sql.BuildUpdate(c.dialect, c.table, sql.UpdateOptions{
+			SetClauses: setClauses,
+			Conditions: []sql.Condition{sql.Where(c.dialect.QuoteIdentifier("id")).Eq(id)},
+		})
+
+		execResult, err := conn.Exec(ctx, query, args...)
+		if err != nil {
+			return nil, fmt.Errorf("update cycle: %w", err)
+		}
+		count, err := execResult.RowsAffected()
+		if err != nil {
+			return nil, fmt.Errorf("update cycle rows affected: %w", err)
+		}
+		if count == 0 {
+			return nil, ErrNotFound
+		}
+		m.AffectedPKs = []any{id}
+
+		// Empty FieldOptions — caller doesn't need the result
+		if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
+			return nil, nil
+		}
+
+		return c.Get(ctx, id, func(o *CallOptions[CycleFieldOptions]) {
+			*o = options
+			o.SkipHooks = true
+			o.LockMode = sql.LockNone
+		})
+	})
+	if err != nil {
+		return nil, err
+	}
+	if result == nil {
+		return nil, nil
+	}
+	return result.(*Cycle), nil
+}
+
+// UpdateCycleItem pairs a primary key with an update input for batch updates.
+type UpdateCycleItem struct {
+	ID    int32             `json:"id"`
+	Input *UpdateCycleInput `json:"input"`
+}
+
+// UpdateMany partially updates multiple cycles and returns the updated entities.
+// Each item is a (PK, UpdateInput) pair. Splits into batches of batchSize.
+// On stdlib, each UPDATE executes sequentially.
+func (c *cycleClient) UpdateMany(ctx context.Context, items []UpdateCycleItem, opts ...func(*CallOptions[CycleFieldOptions])) ([]*Cycle, error) {
+	// UpdateCycleItem.Input is a pointer, so a zero-valued item
+	// carries a nil one — a shape that compiles naturally. Rejected before the
+	// executor, like every other nil write input.
+	for _, item := range items {
+		if item.Input == nil {
+			return nil, ErrNilInput
+		}
+	}
+	options := resolveCallOptions(opts)
+	result, err := c.executeMutation(ctx, options.SkipHooks, &hook.MutationContext{
+		Op: hook.OpUpdateMany, Table: TableCycles, Schema: "public",
+		Input: items, CallOptions: options,
+	}, func(ctx context.Context, m *hook.MutationContext) (any, error) {
+		conn := database.Conn(ctx, c.querier)
+		// An empty batch writes nothing and must read nothing. The trailing
+		// re-fetch below filters on the keys this call touched, and every
+		// generated key filter treats an empty set as *no condition* — so
+		// without this guard the re-fetch degrades to an unfiltered SELECT and
+		// returns the whole table as if this call had produced it.
+		if len(items) == 0 {
+			return []*Cycle{}, nil
+		}
+		var allIDs []int32
+		for start := 0; start < len(items); start += c.batchSize {
+			end := min(start+c.batchSize, len(items))
+			batch := items[start:end]
+
+			for _, item := range batch {
+				setClauses := make(map[string]any)
+				if v, ok := item.Input.Name.Get(); ok {
+					setClauses["name"] = v
+				}
+
+				// Skip no-op updates
+				if len(setClauses) == 0 {
+					allIDs = append(allIDs, item.ID)
+					continue
+				}
+
+				query, args := sql.BuildUpdate(c.dialect, c.table, sql.UpdateOptions{
+					SetClauses: setClauses,
+					Conditions: []sql.Condition{sql.Where(c.dialect.QuoteIdentifier("id")).Eq(item.ID)},
+				})
+
+				_, err := conn.Exec(ctx, query, args...)
+				if err != nil {
+					return nil, fmt.Errorf("update cycle %v: %w", item.ID, err)
+				}
+				allIDs = append(allIDs, item.ID)
+			}
+		}
+
+		m.AffectedPKs = toAnySlice(allIDs)
+
+		// Empty FieldOptions — skip fetch
+		if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
+			return nil, nil
+		}
+		return c.GetMany(ctx, &GetCyclesInput{
+			Filter: &CycleFilter{
+				ID: &comparator.Number[int32]{In: allIDs},
+			},
+			Limit: new(0),
+		}, func(o *CallOptions[CycleFieldOptions]) {
+			*o = options
+			o.SkipHooks = true
+			o.LockMode = sql.LockNone
+		})
+	})
+	if err != nil {
+		return nil, err
+	}
+	if result == nil {
+		return nil, nil
+	}
+	return result.([]*Cycle), nil
+}
+
+// UpdateWhere updates all cycles matching the filter and returns the updated entities.
+// Idempotent — returns empty slice when no rows match.
+// Returns ErrNilInput when input is nil, checked before the filter.
+// Returns ErrEmptyFilter when the filter is nil or produces no conditions.
+func (c *cycleClient) UpdateWhere(ctx context.Context, filter *CycleFilter, input *UpdateCycleInput, opts ...func(*CallOptions[CycleFieldOptions])) ([]*Cycle, error) {
+	// Argument validity is checked before the filter's bulk-op
+	// safety guard, and before the executor, so a nil input fires no hook and
+	// publishes no event. ErrEmptyFilter still covers a non-nil input with an
+	// empty filter.
+	if input == nil {
+		return nil, ErrNilInput
+	}
+	options := resolveCallOptions(opts)
+	result, err := c.executeMutation(ctx, options.SkipHooks, &hook.MutationContext{
+		Op: hook.OpUpdateWhere, Table: TableCycles, Schema: "public",
+		Input: input, CallOptions: options,
+	}, func(ctx context.Context, m *hook.MutationContext) (any, error) {
+		conn := database.Conn(ctx, c.querier)
+
+		conds := filter.ToConditions(c.dialect)
+		if len(conds) == 0 {
+			return nil, ErrEmptyFilter
+		}
+
+		// Build SET clause (same per-field checks as Update)
+		setClauses := make(map[string]any)
+		if v, ok := input.Name.Get(); ok {
+			setClauses["name"] = v
+		}
+
+		// No fields set — return matching entities unchanged
+		if len(setClauses) == 0 {
+			if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
+				return nil, nil
+			}
+			return c.GetMany(ctx, &GetCyclesInput{
+				Filter: filter,
+				Limit:  new(0),
+			}, func(o *CallOptions[CycleFieldOptions]) {
+				*o = options
+				o.SkipHooks = true
+				o.LockMode = sql.LockNone
+			})
+		}
+
+		// UPDATE with RETURNING "id" — get affected IDs in one round-trip
+		query, args := sql.BuildUpdate(c.dialect, c.table, sql.UpdateOptions{
+			SetClauses:       setClauses,
+			Conditions:       conds,
+			ReturningColumns: []string{"id"},
+		})
+
+		rows, err := conn.Query(ctx, query, args...)
+		if err != nil {
+			return nil, fmt.Errorf("update cycles where: %w", err)
+		}
+		defer rows.Close()
+		var ids []int32
+		for rows.Next() {
+			var id int32
+			if err := rows.Scan(&id); err != nil {
+				return nil, fmt.Errorf("scan updated cycle id: %w", err)
+			}
+			ids = append(ids, id)
+		}
+		if err := rows.Err(); err != nil {
+			return nil, err
+		}
+		if len(ids) == 0 {
+			return nil, nil
+		}
+		m.AffectedPKs = toAnySlice(ids)
+
+		// Empty FieldOptions — skip fetch
+		if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
+			return nil, nil
+		}
+
+		// Fetch affected entities with FieldOptions
+		return c.GetMany(ctx, &GetCyclesInput{
+			Filter: &CycleFilter{
+				ID: &comparator.Number[int32]{In: ids},
+			},
+			Limit: new(0),
+		}, func(o *CallOptions[CycleFieldOptions]) {
+			*o = options
+			o.SkipHooks = true
+			o.LockMode = sql.LockNone
+		})
+	})
+	if err != nil {
+		return nil, err
+	}
+	if result == nil {
+		return nil, nil
+	}
+	return result.([]*Cycle), nil
+}
+
+// HardDelete permanently removes a cycle from the database.
+// Idempotent — returns nil if the primary key does not exist.
+func (c *cycleClient) HardDelete(ctx context.Context, id int32, opts ...func(*CallOptions[CycleFieldOptions])) error {
+	options := resolveCallOptions(opts)
+	_, err := c.executeMutation(ctx, options.SkipHooks, &hook.MutationContext{
+		Op: hook.OpHardDelete, Table: TableCycles, Schema: "public",
+		PK: id, CallOptions: options,
+	}, func(ctx context.Context, m *hook.MutationContext) (any, error) {
+		conn := database.Conn(ctx, c.querier)
+		query, args := sql.BuildHardDelete(c.dialect, c.table, sql.HardDeleteOptions{
+			Conditions: []sql.Condition{sql.Where(c.dialect.QuoteIdentifier("id")).Eq(id)},
+		})
+
+		_, err := conn.Exec(ctx, query, args...)
+		if err != nil {
+			return nil, fmt.Errorf("hard delete cycle: %w", err)
+		}
+		m.AffectedPKs = []any{id}
+		return nil, nil
+	})
+	return err
+}
+
+// HardDeleteMany permanently removes multiple cycles from the database.
+func (c *cycleClient) HardDeleteMany(ctx context.Context, ids []int32, opts ...func(*CallOptions[CycleFieldOptions])) error {
+	options := resolveCallOptions(opts)
+	_, err := c.executeMutation(ctx, options.SkipHooks, &hook.MutationContext{
+		Op: hook.OpHardDeleteMany, Table: TableCycles, Schema: "public",
+		Input: ids, CallOptions: options,
+	}, func(ctx context.Context, m *hook.MutationContext) (any, error) {
+		conn := database.Conn(ctx, c.querier)
+
+		query, args := sql.BuildHardDelete(c.dialect, c.table, sql.HardDeleteOptions{
+			Conditions: []sql.Condition{
+				sql.Where(c.dialect.QuoteIdentifier("id")).In(toAnySlice(ids)...),
+			},
+		})
+
+		_, err := conn.Exec(ctx, query, args...)
+		if err != nil {
+			return nil, fmt.Errorf("hard delete cycles: %w", err)
+		}
+		m.AffectedPKs = toAnySlice(ids)
+		return nil, nil
+	})
+	return err
+}
+
+// HardDeleteWhere permanently removes all cycles matching the filter.
+// Idempotent — returns nil when no rows match.
+// Returns ErrEmptyFilter when the filter is nil or produces no conditions.
+func (c *cycleClient) HardDeleteWhere(ctx context.Context, filter *CycleFilter, opts ...func(*CallOptions[CycleFieldOptions])) error {
+	options := resolveCallOptions(opts)
+	_, err := c.executeMutation(ctx, options.SkipHooks, &hook.MutationContext{
+		Op: hook.OpHardDeleteWhere, Table: TableCycles, Schema: "public",
+		Input: filter, CallOptions: options,
+	}, func(ctx context.Context, m *hook.MutationContext) (any, error) {
+		conn := database.Conn(ctx, c.querier)
+
+		conds := filter.ToConditions(c.dialect)
+		if len(conds) == 0 {
+			return nil, ErrEmptyFilter
+		}
+
+		// DELETE with RETURNING "id" — get affected IDs in one round-trip
+		query, args := sql.BuildHardDelete(c.dialect, c.table, sql.HardDeleteOptions{
+			Conditions:       conds,
+			ReturningColumns: []string{"id"},
+		})
+
+		rows, err := conn.Query(ctx, query, args...)
+		if err != nil {
+			return nil, fmt.Errorf("hard delete cycles where: %w", err)
+		}
+		defer rows.Close()
+		var ids []int32
+		for rows.Next() {
+			var id int32
+			if err := rows.Scan(&id); err != nil {
+				return nil, fmt.Errorf("scan deleted cycle id: %w", err)
+			}
+			ids = append(ids, id)
+		}
+		if err := rows.Err(); err != nil {
+			return nil, err
+		}
+		m.AffectedPKs = toAnySlice(ids)
+		return nil, nil
+	})
+	return err
+}
+
+// CycleConflictTarget identifies a unique constraint for upsert conflict detection.
+type CycleConflictTarget int
+
+const (
+	CycleConflictPK CycleConflictTarget = iota // PRIMARY KEY (id)
+)
+
+// cycleConflictColumns maps each conflict target to its column set.
+var cycleConflictColumns = map[CycleConflictTarget][]string{
+	CycleConflictPK: {"id"},
+}
+
+// Upsert inserts a cycle or updates it if a row matching the conflict target already
+// exists. Returns the resulting entity with optional field selection and relationship loading.
+// The conflict target determines which unique constraint triggers an update
+// instead of an insert. Non-PK, non-conflict columns are included in the SET clause.
+func (c *cycleClient) Upsert(ctx context.Context, input *CreateCycleInput, target CycleConflictTarget, opts ...func(*CallOptions[CycleFieldOptions])) (*Cycle, error) {
+	// A write cannot normalize nil to the zero value the way a read
+	// does — a zero CreateCycleInput legally writes a row (each required
+	// field's zero value, or with no required field, every column's default).
+	// Guarded before the executor, so nil fires no hook and publishes no event.
+	// An input that supplies no column gets no conflict clause on any dialect:
+	// it is a plain insert, so a conflict on a UNIQUE column with a
+	// DEFAULT is a unique violation, including on MySQL, where ON DUPLICATE KEY
+	// UPDATE would have returned the existing row.
+	if input == nil {
+		return nil, ErrNilInput
+	}
+	options := resolveCallOptions(opts)
+	result, err := c.executeMutation(ctx, options.SkipHooks, &hook.MutationContext{
+		Op: hook.OpUpsert, Table: TableCycles, Schema: "public",
+		Input: input, CallOptions: options,
+	}, func(ctx context.Context, m *hook.MutationContext) (any, error) {
+		conn := database.Conn(ctx, c.querier)
+
+		columns := []string{"id", "name"}
+		args := []any{input.ID, input.Name}
+
+		// Resolve conflict target and update columns. Tenant column is excluded
+		// from the UPDATE-set half of the conflict clause — a
+		// row's tenant is not a mutable attribute under normal operation.
+		conflictColumns := cycleConflictColumns[target]
+		updateColumns := excludeColumns(columns, append(conflictColumns, "id"))
+
+		id, err := c.insertUpsertAndResolveID(ctx, conn, columns, args, conflictColumns, updateColumns)
+		if err != nil {
+			return nil, fmt.Errorf("upsert cycle: %w", err)
+		}
+		m.AffectedPKs = []any{id}
+
+		// Empty FieldOptions — caller doesn't need the result
+		if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
+			return nil, nil
+		}
+
+		return c.Get(ctx, id, func(o *CallOptions[CycleFieldOptions]) {
+			*o = options
+			o.SkipHooks = true
+			o.LockMode = sql.LockNone
+		})
+	})
+	if err != nil {
+		return nil, err
+	}
+	if result == nil {
+		return nil, nil
+	}
+	return result.(*Cycle), nil
+}
+
+// insertUpsertAndResolveID performs the INSERT with upsert clause and resolves the generated primary key.
+func (c *cycleClient) insertUpsertAndResolveID(ctx context.Context, conn database.Querier, columns []string, args []any, conflictColumns, updateColumns []string) (int32, error) {
+	query, queryArgs := sql.BuildInsert(c.dialect, c.table, sql.InsertOptions{
+		Columns:               columns,
+		Values:                args,
+		UpsertConflictKeys:    conflictColumns,
+		UpsertUpdateColumns:   updateColumns,
+		UpsertResolvePKColumn: "id",
+		ReturningColumns:      []string{"id"},
+	})
+	rows, err := conn.Query(ctx, query, queryArgs...)
+	if err != nil {
+		return 0, err
+	}
+	var id int32
+	found := rows.Next()
+	if found {
+		err = rows.Scan(&id)
+	}
+	if err == nil {
+		err = rows.Err()
+	}
+	// Closed before the fallback below issues its own statement: conn may be a
+	// transaction, where an open result set blocks the next statement on the
+	// same connection.
+	if cerr := rows.Close(); err == nil {
+		err = cerr
+	}
+	if err != nil {
+		return 0, err
+	}
+	if found {
+		return id, nil
+	}
+	return c.resolveUpsertConflictRow(ctx, conn, columns, args, conflictColumns)
+}
+
+// resolveUpsertConflictRow resolves the row an upsert conflicted with, for the
+// case where the statement returned nothing.
+//
+// A conflict target that covers every inserted column leaves no column to
+// assign, so the dialect emits DO NOTHING — and DO NOTHING returns
+// no row, which leaves the RETURNING branch above with no PK for a write that
+// did resolve to a row. The conflicting row is looked up by the same conflict
+// columns the statement targeted; unlike MySQL's ON DUPLICATE KEY UPDATE, an
+// explicit ON CONFLICT target can only have fired on those columns, so the
+// lookup identifies the same row the statement did.
+//
+// The lookup does not exclude soft-deleted rows: the unique index matched
+// regardless of the soft-delete column, so a soft-deleted row is still the row
+// that conflicted and still the row whose PK this resolves. (The terminal Get
+// then applies the read path's own soft-delete filter, exactly as it does on
+// the DO UPDATE SET branch.)
+//
+// This is a second statement, so a concurrent delete between the insert and
+// this lookup surfaces as ErrNotFound. Run the upsert inside a transaction
+// where the pair has to be atomic.
+func (c *cycleClient) resolveUpsertConflictRow(ctx context.Context, conn database.Querier, columns []string, args []any, conflictColumns []string) (int32, error) {
+	conds := make([]sql.Condition, 0, len(conflictColumns))
+	for _, col := range conflictColumns {
+		i := slices.Index(columns, col)
+		if i < 0 {
+			// A conflict column the statement never supplied cannot have
+			// produced the conflict, so there is no row to look up.
+			return 0, ErrNotFound
+		}
+		conds = append(conds, sql.Where(c.dialect.QuoteIdentifier(col)).Eq(args[i]))
+	}
+
+	query, queryArgs := sql.BuildSelect(c.dialect, c.table, sql.SelectOptions{
+		Columns:    []string{"id"},
+		Conditions: conds,
+		Limit:      new(1),
+	})
+	rows, err := conn.Query(ctx, query, queryArgs...)
+	if err != nil {
+		return 0, err
+	}
+	defer rows.Close()
+
+	var id int32
+	if !rows.Next() {
+		if err := rows.Err(); err != nil {
+			return 0, err
+		}
+		// The conflicting row is gone — deleted between the two statements.
+		return 0, ErrNotFound
+	}
+	if err := rows.Scan(&id); err != nil {
+		return 0, err
+	}
+	return id, rows.Err()
+}
+
+// UpsertMany inserts or updates multiple cycles in batches and returns all
+// resulting entities. One conflict target applies to the whole batch, drawn from
+// the same enum Upsert takes. Sub-batches are not automatically rolled back on
+// failure — wrap in a transaction for atomicity.
+//
+// Inputs resolving to the same conflict target are deduped before the statement
+// is built, last occurrence wins. PostgreSQL rejects an
+// ON CONFLICT ... DO UPDATE that would affect one row twice; MySQL and SQLite
+// accept it and keep the last row. The dedupe is what makes one spelling behave
+// identically on all three. A row carrying no definite, non-NULL value for every
+// conflict column is exempt: a NULL never matches under a unique index on any of
+// the three dialects, so two such rows are two rows, not a duplicate.
+//
+// The returned slice carries one entity per deduped input on every dialect,
+// including the DO NOTHING branch a conflict target covering every inserted
+// column produces. The entities come from a re-fetch by primary key, never from
+// RETURNING — RETURNING yields only the rows actually inserted, so a batch that
+// conflicted would come back short. Row order is GetMany's, as with
+// CreateMany.
+func (c *cycleClient) UpsertMany(ctx context.Context, inputs []*CreateCycleInput, target CycleConflictTarget, opts ...func(*CallOptions[CycleFieldOptions])) ([]*Cycle, error) {
+	// A nil *slice* is simply no rows, but a nil *element* is the
+	// same caller error a nil Upsert argument is — and skipping it silently
+	// would drop a row the caller asked for. Rejected before the executor.
+	for _, in := range inputs {
+		if in == nil {
+			return nil, ErrNilInput
+		}
+	}
+	options := resolveCallOptions(opts)
+	result, err := c.executeMutation(ctx, options.SkipHooks, &hook.MutationContext{
+		Op: hook.OpUpsertMany, Table: TableCycles, Schema: "public",
+		Input: inputs, CallOptions: options,
+	}, func(ctx context.Context, m *hook.MutationContext) (any, error) {
+		// No rows means no statement and nothing affected. Guarded here because
+		// the terminal GetMany filters on the written keys, and a key filter
+		// built from an empty set contributes no condition — an unguarded empty
+		// call would read the whole table back.
+		if len(inputs) == 0 {
+			return []*Cycle{}, nil
+		}
+		conn := database.Conn(ctx, c.querier)
+
+		// Resolve conflict target and update columns. Tenant column is excluded
+		// from the UPDATE-set half of the conflict clause — a
+		// row's tenant is not a mutable attribute under normal operation.
+		//
+		// UpsertResolvePKColumn is deliberately not set: it exists so a
+		// single-row MySQL upsert can republish the conflicting row's id into
+		// the OK packet, and after a batch that packet names at most one row.
+		// Nothing here reads LastInsertId, so requesting it would
+		// only add a misleading assignment to the SET list.
+		columns := []string{"id", "name"}
+		conflictColumns := cycleConflictColumns[target]
+		updateColumns := excludeColumns(columns, append(conflictColumns, "id"))
+		conflictPositions, haveConflictKey := upsertConflictPositions(columns, conflictColumns)
+
+		// One value row per input, built before any statement runs: the dedupe
+		// spans the whole call, not a sub-batch (ceil(M/batch_size)
+		// statements for M inputs, *after* the dedupe).
+		valueRows := make([][]any, 0, len(inputs))
+		rowInputs := make([]*CreateCycleInput, 0, len(inputs))
+		rowIDs := make([]int32, 0, len(inputs))
+		for _, input := range inputs {
+
+			valueRows = append(valueRows, []any{
+				input.ID,
+				input.Name,
+			})
+			rowInputs = append(rowInputs, input)
+			rowIDs = append(rowIDs, input.ID)
+		}
+
+		// Dedupe by conflict target, last occurrence wins, first-appearance
+		// order preserved.
+		if haveConflictKey {
+			seen := make(map[string]int, len(valueRows))
+			dedupedRows := make([][]any, 0, len(valueRows))
+			dedupedInputs := make([]*CreateCycleInput, 0, len(rowInputs))
+			dedupedIDs := make([]int32, 0, len(rowIDs))
+			for i, row := range valueRows {
+				key, keyed := upsertDedupeKey(row, conflictPositions)
+				if keyed {
+					if j, ok := seen[key]; ok {
+						dedupedRows[j] = row
+						dedupedInputs[j] = rowInputs[i]
+						dedupedIDs[j] = rowIDs[i]
+						continue
+					}
+					seen[key] = len(dedupedRows)
+				}
+				dedupedRows = append(dedupedRows, row)
+				dedupedInputs = append(dedupedInputs, rowInputs[i])
+				dedupedIDs = append(dedupedIDs, rowIDs[i])
+			}
+			valueRows = dedupedRows
+			rowInputs = dedupedInputs
+			rowIDs = dedupedIDs
+		}
+		// The published input is the deduped slice, so it stays index-aligned
+		// with m.AffectedPKs: an event fanned out per affected row carries the
+		// input that actually wrote that row.
+		m.Input = rowInputs
+
+		for start := 0; start < len(valueRows); start += c.batchSize {
+			end := min(start+c.batchSize, len(valueRows))
+			batch := valueRows[start:end]
+
+			query, queryArgs := sql.BuildMultiInsert(c.dialect, c.table, sql.MultiInsertOptions{
+				Columns:             columns,
+				ValueRows:           batch,
+				UpsertConflictKeys:  conflictColumns,
+				UpsertUpdateColumns: updateColumns,
+			})
+			if _, err := conn.Exec(ctx, query, queryArgs...); err != nil {
+				return nil, fmt.Errorf("upsert cycles batch: %w", err)
+			}
+		}
+
+		m.AffectedPKs = toAnySlice(rowIDs)
+
+		// Empty FieldOptions — skip fetch
+		if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
+			return nil, nil
+		}
+
+		return c.GetMany(ctx, &GetCyclesInput{
+			Filter: &CycleFilter{
+				ID: &comparator.Number[int32]{In: rowIDs},
+			},
+			Limit: new(0),
+		}, func(o *CallOptions[CycleFieldOptions]) {
+			*o = options
+			o.SkipHooks = true
+			o.LockMode = sql.LockNone
+		})
+	})
+	if err != nil {
+		return nil, err
+	}
+	if result == nil {
+		return nil, nil
+	}
+	return result.([]*Cycle), nil
+}
+
+// Exists returns true if a cycle with the given primary key exists.
+func (c *cycleClient) Exists(ctx context.Context, id int32, opts ...func(*CallOptions[CycleFieldOptions])) (bool, error) {
+	options := resolveCallOptions(opts)
+	result, err := c.executeQuery(ctx, options.SkipHooks, &hook.QueryContext{
+		Op: hook.OpExists, Table: TableCycles, Schema: "public",
+		PK: id, CallOptions: options,
+	}, func(ctx context.Context, q *hook.QueryContext) (any, error) {
+		conn := database.Conn(ctx, c.querier)
+		conds := []sql.Condition{sql.Where(c.dialect.QuoteIdentifier("id")).Eq(id)}
+
+		query, args := sql.BuildExists(c.dialect, c.table, conds)
+
+		var exists bool
+		if err := conn.QueryRow(ctx, query, args...).Scan(&exists); err != nil {
+			return false, fmt.Errorf("exists cycle: %w", err)
+		}
+		return exists, nil
+	})
+	if err != nil {
+		return false, err
+	}
+	return result.(bool), nil
+}
+
+// ExistsWhere returns true if any cycle matches the given filter.
+func (c *cycleClient) ExistsWhere(ctx context.Context, filter *CycleFilter, opts ...func(*CallOptions[CycleFieldOptions])) (bool, error) {
+	options := resolveCallOptions(opts)
+	result, err := c.executeQuery(ctx, options.SkipHooks, &hook.QueryContext{
+		Op: hook.OpExists, Table: TableCycles, Schema: "public",
+		Input: filter, CallOptions: options,
+	}, func(ctx context.Context, q *hook.QueryContext) (any, error) {
+		conn := database.Conn(ctx, c.querier)
+
+		var conds []sql.Condition
+		if filter != nil {
+			conds = filter.ToConditions(c.dialect)
+		}
+
+		query, args := sql.BuildExists(c.dialect, c.table, conds)
+
+		var exists bool
+		if err := conn.QueryRow(ctx, query, args...).Scan(&exists); err != nil {
+			return false, fmt.Errorf("exists cycle where: %w", err)
+		}
+		return exists, nil
+	})
+	if err != nil {
+		return false, err
+	}
+	return result.(bool), nil
+}
+
+// Count returns the number of cycles matching the given filter.
+// A nil filter counts all cycles.
+func (c *cycleClient) Count(ctx context.Context, filter *CycleFilter, opts ...func(*CallOptions[CycleFieldOptions])) (int64, error) {
+	options := resolveCallOptions(opts)
+	result, err := c.executeQuery(ctx, options.SkipHooks, &hook.QueryContext{
+		Op: hook.OpCount, Table: TableCycles, Schema: "public",
+		Input: filter, CallOptions: options,
+	}, func(ctx context.Context, q *hook.QueryContext) (any, error) {
+		conn := database.Conn(ctx, c.querier)
+
+		var conds []sql.Condition
+		if filter != nil {
+			conds = filter.ToConditions(c.dialect)
+		}
+
+		query, args := sql.BuildCount(c.dialect, c.table, conds)
+
+		var count int64
+		if err := conn.QueryRow(ctx, query, args...).Scan(&count); err != nil {
+			return int64(0), fmt.Errorf("count cycles: %w", err)
+		}
+		return count, nil
+	})
+	if err != nil {
+		return 0, err
+	}
+	return result.(int64), nil
+}
+
+// Paginate returns a page of cycles with total count for offset-based pagination.
+// A nil filter paginates all cycles.
+func (c *cycleClient) Paginate(ctx context.Context, input PaginateInput[CycleFilter], opts ...func(*CallOptions[CycleFieldOptions])) (*PaginateResult[Cycle], error) {
+	options := resolveCallOptions(opts)
+	result, err := c.executeQuery(ctx, options.SkipHooks, &hook.QueryContext{
+		Op: hook.OpPaginate, Table: TableCycles, Schema: "public",
+		Input: input, CallOptions: options,
+	}, func(ctx context.Context, q *hook.QueryContext) (any, error) {
+		// Internal calls with SkipHooks to prevent nested hook invocation
+		internalOpts := func(o *CallOptions[CycleFieldOptions]) {
+			*o = options
+			o.SkipHooks = true
+		}
+
+		// Total count (delegates to Count — both are always generated)
+		totalCount, err := c.Count(ctx, input.Filter, internalOpts)
+		if err != nil {
+			return nil, fmt.Errorf("paginate cycles count: %w", err)
+		}
+
+		// Page data via GetMany (handles FieldOptions and relationships)
+		cycles, err := c.GetMany(ctx, &GetCyclesInput{
+			Filter: input.Filter,
+			Sorts:  input.Sort,
+			Limit:  &input.Limit,
+			Offset: &input.Offset,
+		}, internalOpts)
+		if err != nil {
+			return nil, fmt.Errorf("paginate cycles: %w", err)
+		}
+
+		return &PaginateResult[Cycle]{
+			Items:      cycles,
+			TotalCount: totalCount,
+			Offset:     input.Offset,
+			Limit:      input.Limit,
+			HasMore:    int64(input.Offset+input.Limit) < totalCount,
+		}, nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	return result.(*PaginateResult[Cycle]), nil
+}
+
+// Connection returns a Relay-style cursor-paginated connection of cycles.
+// Sort order is determined by cursor_keys — custom sorts are not supported.
+// Use Paginate for custom sort orders.
+func (c *cycleClient) Connection(ctx context.Context, input ConnectionInput[CycleFilter], opts ...func(*CallOptions[CycleFieldOptions])) (*Connection[Cycle], error) {
+	options := resolveCallOptions(opts)
+
+	if options.LockMode != sql.LockNone {
+		if !database.InTransaction(ctx) {
+			return nil, fmt.Errorf("connection cycles: LockMode requires an active transaction")
+		}
+		options.SkipCache = true
+	}
+	result, err := c.executeQuery(ctx, options.SkipHooks, &hook.QueryContext{
+		Op: hook.OpConnection, Table: TableCycles, Schema: "public",
+		Input: input, CallOptions: options,
+	}, func(ctx context.Context, q *hook.QueryContext) (any, error) {
+		// Internal calls with SkipHooks to prevent nested hook invocation
+		internalOpts := func(o *CallOptions[CycleFieldOptions]) {
+			*o = options
+			o.SkipHooks = true
+		}
+
+		// Validate: first and last are mutually exclusive
+		if input.First != nil && input.Last != nil {
+			return nil, ErrInvalidCursor
+		}
+
+		// Total count (separate COUNT query — no cursor conditions)
+		totalCount, err := c.Count(ctx, input.Filter, internalOpts)
+		if err != nil {
+			return nil, fmt.Errorf("connection cycles count: %w", err)
+		}
+
+		// Decode cursors and build keyset conditions
+		var keysetConds []sql.Condition
+		if input.After != nil {
+			cursor, err := decodeCycleCursor(*input.After, c.cursorKeys)
+			if err != nil {
+				return nil, ErrInvalidCursor
+			}
+			keysetConds = append(keysetConds, cursorKeyset(c.dialect, c.cursorKeys, cursor, ">"))
+		}
+		if input.Before != nil {
+			cursor, err := decodeCycleCursor(*input.Before, c.cursorKeys)
+			if err != nil {
+				return nil, ErrInvalidCursor
+			}
+			keysetConds = append(keysetConds, cursorKeyset(c.dialect, c.cursorKeys, cursor, "<"))
+		}
+
+		// Direction and limit
+		limit := c.pageSize
+		ascending := true
+		if input.First != nil {
+			limit = *input.First
+		} else if input.Last != nil {
+			limit = *input.Last
+			ascending = false
+		}
+
+		// Fetch limit+1 rows via GetMany (handles FieldOptions, O2O joins, relationships, soft delete)
+		connLimit := limit + 1
+		cycles, err := c.GetMany(ctx, &GetCyclesInput{
+			Filter:     input.Filter,
+			Sorts:      cursorSorts(c.cursorKeys, ascending),
+			Limit:      &connLimit,
+			conditions: keysetConds,
+			// Each edge's cursor is encoded from the row it wraps, so the cursor
+			// keys have to survive a narrowed FieldOptions — otherwise the
+			// encoder reads fields the SELECT never filled and every cursor
+			// carries zero values.
+			requiredColumns: c.cursorKeys,
+		}, internalOpts)
+		if err != nil {
+			return nil, fmt.Errorf("connection cycles: %w", err)
+		}
+
+		// Trim extra row and determine page boundaries
+		hasMore := len(cycles) > limit
+		if hasMore {
+			cycles = cycles[:limit]
+		}
+
+		// Backward pagination: reverse for ascending cursor order
+		if !ascending {
+			slices.Reverse(cycles)
+		}
+
+		// Build edges with encoded cursors
+		edges := make([]Edge[Cycle], len(cycles))
+		for i, row := range cycles {
+			cursor, err := encodeCycleCursor(c.cursorKeys, row)
+			if err != nil {
+				return nil, err
+			}
+			edges[i] = Edge[Cycle]{
+				Node:   row,
+				Cursor: cursor,
+			}
+		}
+
+		pageInfo := PageInfo{
+			HasNextPage:     (ascending && hasMore) || (!ascending && input.Before != nil),
+			HasPreviousPage: (!ascending && hasMore) || (ascending && input.After != nil),
+		}
+		if len(edges) > 0 {
+			pageInfo.StartCursor = &edges[0].Cursor
+			pageInfo.EndCursor = &edges[len(edges)-1].Cursor
+		}
+
+		return &Connection[Cycle]{Edges: edges, PageInfo: pageInfo, TotalCount: totalCount}, nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	return result.(*Connection[Cycle]), nil
+}
+
+// encodeCycleCursor encodes cursor key values as a base64 JSON string.
+func encodeCycleCursor(keys []string, c *Cycle) (string, error) {
+	out := make(map[string]any, len(keys))
+	for _, key := range keys {
+		switch key {
+		case "id":
+			out["id"] = c.ID
+		case "name":
+			out["name"] = c.Name
+		}
+	}
+	data, err := json.Marshal(out)
+	if err != nil {
+		return "", fmt.Errorf("encode cycle cursor: %w", err)
+	}
+	return base64.StdEncoding.EncodeToString(data), nil
+}
+
+// decodeCycleCursor decodes a cursor string into its key values,
+// each unmarshaled into the key column's Go type.
+func decodeCycleCursor(encoded string, keys []string) (map[string]any, error) {
+	raw, err := decodeCursor(encoded, keys)
+	if err != nil {
+		return nil, err
+	}
+	var row Cycle
+	out := make(map[string]any, len(keys))
+	for _, key := range keys {
+		switch key {
+		case "id":
+			err = json.Unmarshal(raw[key], &row.ID)
+			out[key] = row.ID
+		}
+		if err != nil {
+			return nil, err
+		}
+		if cursorValueIsNull(out[key]) {
+			return nil, ErrInvalidCursor
+		}
+	}
+	return out, nil
+}
+
+// StreamCyclesInput holds query parameters for streaming cycles records.
+// Stream is iterator-style and intentionally has no Limit/Offset.
+// Field selection is controlled via CallOptions.FieldOptions, not this struct.
+type StreamCyclesInput struct {
+	Filter *CycleFilter `json:"filter"`
+	Sorts  []sql.Sort   `json:"sorts"`
+}
+
+// StreamCycleFieldOptions controls scalar column selection for cycles streams.
+// Stream cannot load relationships — only scalar columns are selectable.
+type StreamCycleFieldOptions struct {
+	ID   bool `json:"id"`
+	Name bool `json:"name"`
+}
+
+// Columns returns the SQL column names for all selected columns, sorted alphabetically
+// to match the SQL builder's deterministic column ordering.
+func (fo *StreamCycleFieldOptions) Columns() []string {
+	var cols []string
+	if fo.ID {
+		cols = append(cols, "id")
+	}
+	if fo.Name {
+		cols = append(cols, "name")
+	}
+	slices.Sort(cols)
+	return cols
+}
+
+// HasSelectedColumns reports whether any column is selected.
+func (fo *StreamCycleFieldOptions) HasSelectedColumns() bool {
+	if fo.ID {
+		return true
+	}
+	if fo.Name {
+		return true
+	}
+	return false
+}
+
+// scanCycleRow scans a single row into a Cycle entity.
+// Used by Stream to yield rows one at a time without materializing the result set.
+func scanCycleRow(rows database.Rows, columns []string) (*Cycle, error) {
+	c := &Cycle{}
+
+	targets := make([]any, len(columns))
+	for idx, col := range columns {
+		switch col {
+		case "id":
+			targets[idx] = &c.ID
+		case "name":
+			targets[idx] = &c.Name
+		}
+	}
+
+	if err := rows.Scan(targets...); err != nil {
+		return nil, fmt.Errorf("scan cycle: %w", err)
+	}
+
+	return c, nil
+}
+
+// Stream returns an iterator over cycles matching the given filter and sort criteria.
+// Rows are yielded as the driver returns them, without materializing the full
+// result set. Cache is bypassed regardless of caller setting.
+// Stream cannot load relationships — use Connection in a loop when relationships
+// are required.
+//
+// Stream refuses an active transaction. It runs consumer code inside an open
+// result set, which inside a transaction is the transaction's only connection,
+// held for the whole iteration — so a statement issued from the loop body on the
+// same txCtx waits on a reservation the loop itself holds. Set
+// CallOptions.AllowInTransaction for a snapshot-consistent stream that issues
+// nothing else on that txCtx. That obligation is the one rule that remains the
+// caller's — drain or close a result set before issuing the next statement on
+// that txCtx — applied to a loop whose body is caller code.
+func (c *cycleClient) Stream(ctx context.Context, input *StreamCyclesInput, opts ...func(*CallOptions[StreamCycleFieldOptions])) iter.Seq2[*Cycle, error] {
+	return func(yield func(*Cycle, error) bool) {
+		// A nil input is the zero-value input. Without it, an
+		// unguarded nil dereference in the handler would be recovered by the
+		// panic wrapper and reported as an error instead of streaming the table.
+		if input == nil {
+			input = &StreamCyclesInput{}
+		}
+		options := resolveCallOptions(opts)
+		options.SkipCache = true
+
+		// Stream's contract is that the connection stays open across
+		// caller code; a transaction's is one connection, one statement at a
+		// time. The two cannot both hold, so Stream refuses a transaction unless
+		// the caller opts in. Refused before any SQL is issued and before the
+		// hook chain is built, mirroring the LockMode precondition, and
+		// surfaced through yield because Stream returns an iterator and has no
+		// error return.
+		if database.InTransaction(ctx) && !options.AllowInTransaction {
+			yield(nil, fmt.Errorf("stream cycles: unsupported inside a transaction — use Connection in a loop, "+
+				"or set AllowInTransaction for a snapshot-consistent stream that issues nothing else on this txCtx"))
+			return
+		}
+
+		// stopped is true while the consumer's loop body runs, and stays true
+		// once the body breaks (yield returned false) or panics out of yield.
+		// Calling yield again after either makes the Go runtime panic, so the
+		// chain's error below is yielded only while stopped is false.
+		var stopped bool
+		emit := func(row *Cycle, err error) bool {
+			stopped = true
+			if !yield(row, err) {
+				return false
+			}
+			stopped = false
+			return true
+		}
+
+		// A recovered panic and a hook's abort error are the
+		// chain's return value. Stream has no error return, so it yields that
+		// error once, after anything the handler yielded.
+		_, err := c.executeQuery(ctx, options.SkipHooks, &hook.QueryContext{
+			Op: hook.OpStream, Table: TableCycles, Schema: "public",
+			Input: input, CallOptions: options,
+		}, func(ctx context.Context, q *hook.QueryContext) (any, error) {
+			conn := database.Conn(ctx, c.querier)
+
+			fieldOptions := options.FieldOptions
+			columns := cycleAllColumns
+			if fieldOptions != nil {
+				if selected := fieldOptions.Columns(); len(selected) > 0 {
+					columns = selected
+				}
+			}
+
+			var conds []sql.Condition
+			if input.Filter != nil {
+				conds = input.Filter.ToConditions(c.dialect)
+			}
+
+			query, args := sql.BuildSelect(c.dialect, c.table, sql.SelectOptions{
+				Columns:    columns,
+				Conditions: conds,
+				OrderBy:    input.Sorts,
+			})
+
+			rows, err := conn.Query(ctx, query, args...)
+			if err != nil {
+				emit(nil, fmt.Errorf("stream cycles: %w", err))
+				return nil, nil
+			}
+			defer rows.Close()
+
+			for rows.Next() {
+				c, err := scanCycleRow(rows, columns)
+				if err != nil {
+					if !emit(nil, err) {
+						return nil, nil
+					}
+					continue
+				}
+				if !emit(c, nil) {
+					return nil, nil
+				}
+			}
+			if err := rows.Err(); err != nil {
+				emit(nil, fmt.Errorf("iterate cycle rows: %w", err))
+			}
+			return nil, nil
+		})
+		if err != nil && !stopped {
+			yield(nil, err)
+		}
+	}
+}
+
+// CycleFilter provides type-safe filtering for the cycles table.
+type CycleFilter struct {
+	ID   *comparator.Number[int32] `json:"id"`
+	Name *comparator.String        `json:"name"`
+	And  []*CycleFilter            `json:"and"`
+	Or   []*CycleFilter            `json:"or"`
+}
+
+// ToConditions converts the filter to a slice of SQL conditions.
+//
+// A nil receiver contributes no conditions. Two callers depend on that. The
+// *Where methods dereference their filter only here and document a nil one as
+// the empty-filter case, so this is what makes ErrEmptyFilter reachable instead
+// of a nil dereference. And a nil entry inside and / or is skipped rather than
+// fatal, matching the "an unset member contributes no SQL" rule the
+// relationship members already follow.
+func (f *CycleFilter) ToConditions(dialect sql.Dialect, opts ...FilterOption) []sql.Condition {
+	if f == nil {
+		return nil
+	}
+
+	var conds []sql.Condition
+
+	if f.ID != nil {
+		conds = append(conds, f.ID.Parse(dialect.QuoteIdentifier("id"), dialect)...)
+	}
+
+	if f.Name != nil {
+		conds = append(conds, f.Name.Parse(dialect.QuoteIdentifier("name"), dialect)...)
+	}
+
+	for _, sub := range f.And {
+		subConds := sub.ToConditions(dialect, opts...)
+		if len(subConds) > 0 {
+			conds = append(conds, sql.And(subConds...))
+		}
+	}
+
+	// A filter object's own fields are always conjunctive, so each or member
+	// contributes sql.And of its own conditions and the members are OR-ed
+	// together as ONE group condition. Appending a per-member
+	// sql.Or instead hands the caller N conditions, and buildWhere joins those
+	// with AND — turning or: [A, B] into A AND B, while simultaneously OR-ing a
+	// single member's own fields against each other.
+	//
+	// The group is appended only when some member compiled to something:
+	// sql.Or of nothing expands to a literal "()", which buildWhere keeps
+	// because it is not the empty string, yielding invalid SQL.
+	var orGroup []sql.Condition
+	for _, sub := range f.Or {
+		subConds := sub.ToConditions(dialect, opts...)
+		if len(subConds) > 0 {
+			orGroup = append(orGroup, sql.And(subConds...))
+		}
+	}
+	if len(orGroup) > 0 {
+		conds = append(conds, sql.Or(orGroup...))
+	}
+
+	return conds
+}
+
+// CycleFieldOptions controls column selection and relationship loading for cycles queries.
+type CycleFieldOptions struct {
+	ID   bool `json:"id"`
+	Name bool `json:"name"`
+}
+
+// Columns returns the SQL column names for all selected columns, sorted alphabetically
+// to match the SQL builder's deterministic column ordering.
+func (fo *CycleFieldOptions) Columns() []string {
+	var cols []string
+	if fo.ID {
+		cols = append(cols, "id")
+	}
+	if fo.Name {
+		cols = append(cols, "name")
+	}
+	slices.Sort(cols)
+	return cols
+}
+
+// ColumnMap returns a mapping of Go field name to SQL column name for all columns.
+func (fo *CycleFieldOptions) ColumnMap() map[string]string {
+	return map[string]string{
+		"ID":   "id",
+		"Name": "name",
+	}
+}
+
+// HasSelectedColumns reports whether any column or relationship is selected.
+func (fo *CycleFieldOptions) HasSelectedColumns() bool {
+	if fo.ID {
+		return true
+	}
+	if fo.Name {
+		return true
+	}
+	return false
+}
+
+// CreateCycleInput holds the fields for creating a cycles record.
+type CreateCycleInput struct {
+	ID   int32  `json:"id"`
+	Name string `json:"name"`
+}
+
+// UpdateCycleInput holds the fields for updating a cycles record.
+// All fields use omittable.Value to distinguish "not set" from "set to zero".
+type UpdateCycleInput struct {
+	Name omittable.Value[string] `json:"name,omitzero"`
+}
+
+// GetCyclesInput holds query parameters for retrieving cycles records.
+// Field selection is controlled via CallOptions.FieldOptions, not this struct.
+type GetCyclesInput struct {
+	Filter *CycleFilter `json:"filter"`
+	Limit  *int         `json:"limit"`
+	Offset *int         `json:"offset"`
+	Sorts  []sql.Sort   `json:"sorts"`
+	// conditions holds additional SQL conditions injected by internal callers
+	// (e.g., Connection keyset conditions). Not part of the public API.
+	conditions []sql.Condition
+	// requiredColumns holds columns an internal caller needs read back even
+	// when FieldOptions narrows the projection (e.g., Connection cursor keys).
+	// Not part of the public API.
+	requiredColumns []string
+}
+
 // OrderItem - Individual line items within an order
 type OrderItem struct {
 	// ID - Unique identifier
@@ -23008,6 +24744,1742 @@ type GetTagsInput struct {
 	Limit  *int       `json:"limit"`
 	Offset *int       `json:"offset"`
 	Sorts  []sql.Sort `json:"sorts"`
+	// conditions holds additional SQL conditions injected by internal callers
+	// (e.g., Connection keyset conditions). Not part of the public API.
+	conditions []sql.Condition
+	// requiredColumns holds columns an internal caller needs read back even
+	// when FieldOptions narrows the projection (e.g., Connection cursor keys).
+	// Not part of the public API.
+	requiredColumns []string
+}
+
+type Task struct {
+	ID    int32  `db:"id" json:"id"`
+	Title string `db:"title" json:"title"`
+}
+
+// TaskClient provides type-safe operations for the tasks table.
+type TaskClient interface {
+	// --- Read Operations ---
+
+	// Get returns a single task by primary key.
+	Get(ctx context.Context, id int32, opts ...func(*CallOptions[TaskFieldOptions])) (*Task, error)
+
+	// GetMany returns tasks matching the given filter, field selection, and sort criteria.
+	GetMany(ctx context.Context, input *GetTasksInput, opts ...func(*CallOptions[TaskFieldOptions])) ([]*Task, error)
+
+	// Exists returns true if a task with the given primary key exists.
+	Exists(ctx context.Context, id int32, opts ...func(*CallOptions[TaskFieldOptions])) (bool, error)
+
+	// ExistsWhere returns true if any task matches the given filter.
+	ExistsWhere(ctx context.Context, filter *TaskFilter, opts ...func(*CallOptions[TaskFieldOptions])) (bool, error)
+
+	// Count returns the number of tasks matching the given filter.
+	Count(ctx context.Context, filter *TaskFilter, opts ...func(*CallOptions[TaskFieldOptions])) (int64, error)
+
+	// --- Write Operations ---
+
+	// Create inserts a new task and returns the created entity.
+	Create(ctx context.Context, input *CreateTaskInput, opts ...func(*CallOptions[TaskFieldOptions])) (*Task, error)
+
+	// CreateMany inserts multiple tasks in batches and returns all created entities.
+	// Sub-batches are not automatically rolled back on failure — wrap in a transaction for atomicity.
+	CreateMany(ctx context.Context, inputs []*CreateTaskInput, opts ...func(*CallOptions[TaskFieldOptions])) ([]*Task, error)
+
+	// Update partially updates a task by primary key and returns the updated entity.
+	// Only fields where IsSet() is true are included in the SET clause.
+	// Returns ErrNotFound if the primary key does not exist.
+	Update(ctx context.Context, id int32, input *UpdateTaskInput, opts ...func(*CallOptions[TaskFieldOptions])) (*Task, error)
+
+	// UpdateMany updates multiple tasks and returns the updated entities.
+	UpdateMany(ctx context.Context, items []UpdateTaskItem, opts ...func(*CallOptions[TaskFieldOptions])) ([]*Task, error)
+
+	// UpdateWhere updates all tasks matching the filter and returns the updated entities.
+	// Idempotent — returns empty slice when no rows match.
+	UpdateWhere(ctx context.Context, filter *TaskFilter, input *UpdateTaskInput, opts ...func(*CallOptions[TaskFieldOptions])) ([]*Task, error)
+
+	// Upsert inserts a task or updates it on conflict and returns the resulting entity.
+	Upsert(ctx context.Context, input *CreateTaskInput, target TaskConflictTarget, opts ...func(*CallOptions[TaskFieldOptions])) (*Task, error)
+
+	// UpsertMany inserts or updates multiple tasks in batches and returns all resulting entities.
+	// Inputs resolving to the same conflict target are deduped, last occurrence wins.
+	UpsertMany(ctx context.Context, inputs []*CreateTaskInput, target TaskConflictTarget, opts ...func(*CallOptions[TaskFieldOptions])) ([]*Task, error)
+
+	// --- Hard Delete Operations ---
+
+	// HardDelete permanently removes a task from the database.
+	// Idempotent — returns nil if the primary key does not exist.
+	HardDelete(ctx context.Context, id int32, opts ...func(*CallOptions[TaskFieldOptions])) error
+
+	// HardDeleteMany permanently removes multiple tasks from the database.
+	HardDeleteMany(ctx context.Context, ids []int32, opts ...func(*CallOptions[TaskFieldOptions])) error
+
+	// HardDeleteWhere permanently removes all tasks matching the filter.
+	// Idempotent — returns nil when no rows match.
+	HardDeleteWhere(ctx context.Context, filter *TaskFilter, opts ...func(*CallOptions[TaskFieldOptions])) error
+
+	// --- Pagination Operations ---
+
+	// Paginate returns a page of tasks with total count for offset-based pagination.
+	Paginate(ctx context.Context, input PaginateInput[TaskFilter], opts ...func(*CallOptions[TaskFieldOptions])) (*PaginateResult[Task], error)
+
+	// Connection returns a Relay-style cursor-paginated connection of tasks.
+	// Sort order is determined by cursor_keys — custom sorts are not supported.
+	// Use Paginate for custom sort orders.
+	Connection(ctx context.Context, input ConnectionInput[TaskFilter], opts ...func(*CallOptions[TaskFieldOptions])) (*Connection[Task], error)
+
+	// Stream returns an iterator over tasks matching the filter and sort criteria.
+	// Rows are yielded as the driver returns them; cache is bypassed.
+	// Stream cannot load relationships.
+	//
+	// Stream refuses an active transaction unless CallOptions.AllowInTransaction
+	// is set, and the opt-in commits the caller to issuing nothing else on that
+	// txCtx: the one rule that remains the caller's — drain or close a result set
+	// before issuing the next statement on that txCtx — applied to a loop whose
+	// body is caller code.
+	Stream(ctx context.Context, input *StreamTasksInput, opts ...func(*CallOptions[StreamTaskFieldOptions])) iter.Seq2[*Task, error]
+}
+
+// taskClient implements the TaskClient interface.
+type taskClient struct {
+	querier       database.Querier
+	dialect       sql.Dialect
+	table         sql.Table
+	batchSize     int
+	queryLimit    int
+	pageSize      int
+	cursorKeys    []string
+	strictUpdates bool
+	mutationHooks []hook.MutationHook
+	queryHooks    []hook.QueryHook
+	panicHandler  hook.PanicHandler
+}
+
+// newTaskClient creates a new taskClient.
+func newTaskClient(querier database.Querier, mutationHooks []hook.MutationHook, queryHooks []hook.QueryHook, panicHandler hook.PanicHandler) *taskClient {
+	return &taskClient{
+		querier:       querier,
+		dialect:       sql.NewPostgresDialect(),
+		table:         sql.Table{Schema: "public", Name: "tasks"},
+		batchSize:     200,
+		queryLimit:    1000,
+		pageSize:      100,
+		cursorKeys:    []string{"id"},
+		strictUpdates: true,
+		mutationHooks: mutationHooks,
+		queryHooks:    queryHooks,
+		panicHandler:  panicHandler,
+	}
+}
+
+// executeMutation runs fn through the mutation hook chain.
+// When skipHooks is true, only panic recovery wraps the call.
+func (c *taskClient) executeMutation(ctx context.Context, skipHooks bool, mc *hook.MutationContext, fn hook.MutationHandler) (any, error) {
+	var hooks []hook.MutationHook
+	if !skipHooks {
+		hooks = c.mutationHooks
+	}
+	return hook.BuildMutationChain(c.panicHandler, hooks, fn)(ctx, mc)
+}
+
+// executeQuery runs fn through the query hook chain.
+// When skipHooks is true, only panic recovery wraps the call.
+func (c *taskClient) executeQuery(ctx context.Context, skipHooks bool, qc *hook.QueryContext, fn hook.QueryHandler) (any, error) {
+	var hooks []hook.QueryHook
+	if !skipHooks {
+		hooks = c.queryHooks
+	}
+	return hook.BuildQueryChain(c.panicHandler, hooks, fn)(ctx, qc)
+}
+
+// taskAllColumns is the column list for full-entity reads, sorted for determinism.
+var taskAllColumns = []string{"id", "title"}
+
+// scanTasks scans rows into Task entities using a column-name switch.
+// Handles both scan target shapes (direct, wrapped) without reflection.
+func scanTasks(rows database.Rows, columns []string) ([]*Task, error) {
+	var result []*Task
+	for rows.Next() {
+		t := &Task{}
+
+		targets := make([]any, len(columns))
+		for idx, col := range columns {
+			switch col {
+			case "id":
+				targets[idx] = &t.ID
+			case "title":
+				targets[idx] = &t.Title
+			}
+		}
+
+		if err := rows.Scan(targets...); err != nil {
+			return nil, fmt.Errorf("scan task: %w", err)
+		}
+
+		result = append(result, t)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate task rows: %w", err)
+	}
+	return result, nil
+}
+
+// Get returns a single task by primary key with optional field selection.
+// If fieldOptions is provided, only the selected columns are returned and
+// relationships with non-nil FieldOptions are loaded.
+func (c *taskClient) Get(ctx context.Context, id int32, opts ...func(*CallOptions[TaskFieldOptions])) (*Task, error) {
+	options := resolveCallOptions(opts)
+
+	if options.LockMode != sql.LockNone {
+		if !database.InTransaction(ctx) {
+			return nil, fmt.Errorf("get task: LockMode requires an active transaction")
+		}
+		options.SkipCache = true
+	}
+	qctx := &hook.QueryContext{
+		Op: hook.OpGet, Table: TableTasks, Schema: "public",
+		PK: id, CallOptions: options,
+	}
+	result, err := c.executeQuery(ctx, options.SkipHooks, qctx, func(ctx context.Context, q *hook.QueryContext) (any, error) {
+		// Hooks may mutate q.CallOptions (e.g. the cache hook's hydration
+		// path overrides FieldOptions for a full-entity refill). Prefer
+		// those overrides when present; otherwise fall back to the
+		// caller-supplied options captured at Get() time.
+		effectiveOpts := options
+		if qOpts, ok := q.CallOptions.(CallOptions[TaskFieldOptions]); ok {
+			effectiveOpts = qOpts
+		}
+		// Internal GetMany call with SkipHooks to prevent nested hook invocation
+		internalOpts := func(o *CallOptions[TaskFieldOptions]) {
+			*o = effectiveOpts
+			o.SkipHooks = true
+		}
+		tasks, err := c.GetMany(ctx, &GetTasksInput{
+			Filter: &TaskFilter{
+				ID: &comparator.Number[int32]{Eq: new(id)},
+			},
+			Limit: new(1),
+		}, internalOpts)
+		if err != nil {
+			return nil, err
+		}
+		if len(tasks) == 0 {
+			return nil, ErrNotFound
+		}
+		return tasks[0], nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	if result == nil {
+		return nil, nil
+	}
+	return result.(*Task), nil
+}
+
+// GetMany returns tasks matching the given filter, field selection, and sort criteria.
+func (c *taskClient) GetMany(ctx context.Context, input *GetTasksInput, opts ...func(*CallOptions[TaskFieldOptions])) ([]*Task, error) {
+	// A nil input is the zero-value input — no filter, no sorts, no
+	// limit. Normalized before the hook context is built, so a hook never sees
+	// a nil Input either.
+	if input == nil {
+		input = &GetTasksInput{}
+	}
+	options := resolveCallOptions(opts)
+
+	if options.LockMode != sql.LockNone {
+		if !database.InTransaction(ctx) {
+			return nil, fmt.Errorf("get tasks: LockMode requires an active transaction")
+		}
+		options.SkipCache = true
+	}
+	result, err := c.executeQuery(ctx, options.SkipHooks, &hook.QueryContext{
+		Op: hook.OpGetMany, Table: TableTasks, Schema: "public",
+		Input: input, CallOptions: options,
+	}, func(ctx context.Context, q *hook.QueryContext) (any, error) {
+		conn := database.Conn(ctx, c.querier)
+
+		// FieldOptions from CallOptions — nil means all columns
+		fieldOptions := options.FieldOptions
+
+		// Nothing selected — return early
+		if fieldOptions != nil && !fieldOptions.HasSelectedColumns() {
+			return nil, nil
+		}
+
+		// Determine columns from FieldOptions. A narrowed projection still
+		// carries the columns this call structurally requires — the cursor keys
+		// an internal caller declares. An all-false FieldOptions is
+		// untouched: it short-circuits above.
+		columns := taskAllColumns
+		if fieldOptions != nil {
+			if selected := fieldOptions.Columns(); len(selected) > 0 {
+				columns = unionColumns(selected, input.requiredColumns...)
+			}
+		}
+
+		// Build conditions from filter
+		var conds []sql.Condition
+		if input.Filter != nil {
+			conds = input.Filter.ToConditions(c.dialect)
+		}
+
+		// Append internal conditions (e.g., keyset conditions from Connection)
+		conds = append(conds, input.conditions...)
+
+		// Resolve limit/offset to pointers for the builder.
+		// nil → no clause, *0 (via new(0)) → no clause, *N → LIMIT/OFFSET N.
+		var limitPtr *int
+		if input.Limit != nil {
+			if v := *input.Limit; v > 0 {
+				limitPtr = new(v)
+			}
+		} else if c.queryLimit > 0 {
+			limitPtr = new(c.queryLimit)
+		}
+		var offsetPtr *int
+		if input.Offset != nil {
+			if v := *input.Offset; v > 0 {
+				offsetPtr = new(v)
+			}
+		}
+
+		var tasks []*Task
+		query, args := sql.BuildSelect(c.dialect, c.table, sql.SelectOptions{
+			Columns:    columns,
+			Conditions: conds,
+			OrderBy:    input.Sorts,
+			Limit:      limitPtr,
+			Offset:     offsetPtr,
+			LockMode:   options.LockMode,
+		})
+
+		rows, err := conn.Query(ctx, query, args...)
+		if err != nil {
+			return nil, fmt.Errorf("get tasks: %w", err)
+		}
+		defer rows.Close()
+
+		tasks, err = scanTasks(rows, columns)
+		if err != nil {
+			return nil, err
+		}
+
+		return tasks, nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	if result == nil {
+		return nil, nil
+	}
+	return result.([]*Task), nil
+}
+
+// Create inserts a new task and returns the created entity.
+func (c *taskClient) Create(ctx context.Context, input *CreateTaskInput, opts ...func(*CallOptions[TaskFieldOptions])) (*Task, error) {
+	// A write cannot normalize nil to the zero value the way a read
+	// does — a zero CreateTaskInput legally writes a row (each required
+	// field's zero value, or with no required field, every column's default), so
+	// that would turn a caller's mistake into a silently written one. Guarded
+	// before the executor, so nil fires no hook and publishes no event.
+	if input == nil {
+		return nil, ErrNilInput
+	}
+	options := resolveCallOptions(opts)
+	result, err := c.executeMutation(ctx, options.SkipHooks, &hook.MutationContext{
+		Op: hook.OpCreate, Table: TableTasks, Schema: "public",
+		Input: input, CallOptions: options,
+	}, func(ctx context.Context, m *hook.MutationContext) (any, error) {
+		conn := database.Conn(ctx, c.querier)
+
+		columns := []string{"id", "title"}
+		args := []any{input.ID, input.Title}
+
+		id, err := c.insertAndResolveID(ctx, conn, columns, args)
+		if err != nil {
+			return nil, fmt.Errorf("create task: %w", err)
+		}
+		m.AffectedPKs = []any{id}
+
+		// Empty FieldOptions — caller doesn't need the result
+		if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
+			return nil, nil
+		}
+
+		return c.Get(ctx, id, func(o *CallOptions[TaskFieldOptions]) {
+			*o = options
+			o.SkipHooks = true
+			o.LockMode = sql.LockNone
+		})
+	})
+	if err != nil {
+		return nil, err
+	}
+	if result == nil {
+		return nil, nil
+	}
+	return result.(*Task), nil
+}
+
+// CreateMany inserts multiple tasks in batches and returns all created entities.
+// Sub-batches are not automatically rolled back on failure — wrap in a transaction for atomicity.
+func (c *taskClient) CreateMany(ctx context.Context, inputs []*CreateTaskInput, opts ...func(*CallOptions[TaskFieldOptions])) ([]*Task, error) {
+	// A nil *slice* is simply no rows, but a nil *element* is the
+	// same caller error a nil Create argument is — and skipping it silently
+	// would drop a row the caller asked for. Rejected before the executor.
+	for _, in := range inputs {
+		if in == nil {
+			return nil, ErrNilInput
+		}
+	}
+	options := resolveCallOptions(opts)
+	result, err := c.executeMutation(ctx, options.SkipHooks, &hook.MutationContext{
+		Op: hook.OpCreateMany, Table: TableTasks, Schema: "public",
+		Input: inputs, CallOptions: options,
+	}, func(ctx context.Context, m *hook.MutationContext) (any, error) {
+		conn := database.Conn(ctx, c.querier)
+		// An empty batch writes nothing and must read nothing. The trailing
+		// re-fetch below filters on the keys this call touched, and every
+		// generated key filter treats an empty set as *no condition* — so
+		// without this guard the re-fetch degrades to an unfiltered SELECT and
+		// returns the whole table as if this call had produced it.
+		if len(inputs) == 0 {
+			return []*Task{}, nil
+		}
+		var allIDs []int32
+		for start := 0; start < len(inputs); start += c.batchSize {
+			end := min(start+c.batchSize, len(inputs))
+			batch := inputs[start:end]
+
+			columns := []string{"id", "title"}
+			var valueRows [][]any
+			for _, input := range batch {
+
+				valueRows = append(valueRows, []any{
+					input.ID,
+					input.Title,
+				})
+			}
+
+			ids, err := c.multiInsertAndResolveIDs(ctx, conn, columns, valueRows)
+			if err != nil {
+				return nil, fmt.Errorf("create tasks batch: %w", err)
+			}
+			allIDs = append(allIDs, ids...)
+		}
+
+		m.AffectedPKs = toAnySlice(allIDs)
+
+		// Empty FieldOptions — skip fetch
+		if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
+			return nil, nil
+		}
+		return c.GetMany(ctx, &GetTasksInput{
+			Filter: &TaskFilter{
+				ID: &comparator.Number[int32]{In: allIDs},
+			},
+			Limit: new(0),
+		}, func(o *CallOptions[TaskFieldOptions]) {
+			*o = options
+			o.SkipHooks = true
+			o.LockMode = sql.LockNone
+		})
+	})
+	if err != nil {
+		return nil, err
+	}
+	if result == nil {
+		return nil, nil
+	}
+	return result.([]*Task), nil
+}
+
+// insertAndResolveID performs the INSERT and resolves the generated primary key.
+func (c *taskClient) insertAndResolveID(ctx context.Context, conn database.Querier, columns []string, args []any) (int32, error) {
+	query, queryArgs := sql.BuildInsert(c.dialect, c.table, sql.InsertOptions{
+		Columns:          columns,
+		Values:           args,
+		ReturningColumns: []string{"id"},
+	})
+	var id int32
+	if err := conn.QueryRow(ctx, query, queryArgs...).Scan(&id); err != nil {
+		return 0, err
+	}
+	return id, nil
+}
+
+// multiInsertAndResolveIDs performs a multi-row INSERT and resolves all generated primary keys.
+func (c *taskClient) multiInsertAndResolveIDs(ctx context.Context, conn database.Querier, columns []string, valueRows [][]any) ([]int32, error) {
+	query, args := sql.BuildMultiInsert(c.dialect, c.table, sql.MultiInsertOptions{
+		Columns:          columns,
+		ValueRows:        valueRows,
+		ReturningColumns: []string{"id"},
+	})
+
+	rows, err := conn.Query(ctx, query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var ids []int32
+	for rows.Next() {
+		var id int32
+		if err := rows.Scan(&id); err != nil {
+			return nil, fmt.Errorf("scan task id: %w", err)
+		}
+		ids = append(ids, id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return ids, nil
+}
+
+// Update partially updates a task by primary key and returns the updated entity.
+// Only fields where IsSet() is true are included in the SET clause. If no fields are
+// set, no UPDATE is executed and the current entity is returned unchanged.
+// Returns ErrNotFound if the primary key does not exist (strict_updates is enabled).
+func (c *taskClient) Update(ctx context.Context, id int32, input *UpdateTaskInput, opts ...func(*CallOptions[TaskFieldOptions])) (*Task, error) {
+	// Nil is a caller error, distinct from an empty-but-non-nil
+	// input — that one is the documented no-op returning the entity unchanged.
+	// Guarded before the executor, so nil fires no hook and publishes no event.
+	if input == nil {
+		return nil, ErrNilInput
+	}
+	options := resolveCallOptions(opts)
+	result, err := c.executeMutation(ctx, options.SkipHooks, &hook.MutationContext{
+		Op: hook.OpUpdate, Table: TableTasks, Schema: "public",
+		PK: id, Input: input, CallOptions: options,
+	}, func(ctx context.Context, m *hook.MutationContext) (any, error) {
+		conn := database.Conn(ctx, c.querier)
+
+		// Build SET clause from omittable fields — explicit per-field checks, no reflection
+		setClauses := make(map[string]any)
+		if v, ok := input.Title.Get(); ok {
+			setClauses["title"] = v
+		}
+
+		// Empty update — no fields set, return current entity unchanged
+		if len(setClauses) == 0 {
+			// Empty FieldOptions — caller doesn't need the result
+			if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
+				return nil, nil
+			}
+
+			return c.Get(ctx, id, func(o *CallOptions[TaskFieldOptions]) {
+				*o = options
+				o.SkipHooks = true
+				o.LockMode = sql.LockNone
+			})
+		}
+
+		query, args := sql.BuildUpdate(c.dialect, c.table, sql.UpdateOptions{
+			SetClauses: setClauses,
+			Conditions: []sql.Condition{sql.Where(c.dialect.QuoteIdentifier("id")).Eq(id)},
+		})
+
+		execResult, err := conn.Exec(ctx, query, args...)
+		if err != nil {
+			return nil, fmt.Errorf("update task: %w", err)
+		}
+		count, err := execResult.RowsAffected()
+		if err != nil {
+			return nil, fmt.Errorf("update task rows affected: %w", err)
+		}
+		if count == 0 {
+			return nil, ErrNotFound
+		}
+		m.AffectedPKs = []any{id}
+
+		// Empty FieldOptions — caller doesn't need the result
+		if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
+			return nil, nil
+		}
+
+		return c.Get(ctx, id, func(o *CallOptions[TaskFieldOptions]) {
+			*o = options
+			o.SkipHooks = true
+			o.LockMode = sql.LockNone
+		})
+	})
+	if err != nil {
+		return nil, err
+	}
+	if result == nil {
+		return nil, nil
+	}
+	return result.(*Task), nil
+}
+
+// UpdateTaskItem pairs a primary key with an update input for batch updates.
+type UpdateTaskItem struct {
+	ID    int32            `json:"id"`
+	Input *UpdateTaskInput `json:"input"`
+}
+
+// UpdateMany partially updates multiple tasks and returns the updated entities.
+// Each item is a (PK, UpdateInput) pair. Splits into batches of batchSize.
+// On stdlib, each UPDATE executes sequentially.
+func (c *taskClient) UpdateMany(ctx context.Context, items []UpdateTaskItem, opts ...func(*CallOptions[TaskFieldOptions])) ([]*Task, error) {
+	// UpdateTaskItem.Input is a pointer, so a zero-valued item
+	// carries a nil one — a shape that compiles naturally. Rejected before the
+	// executor, like every other nil write input.
+	for _, item := range items {
+		if item.Input == nil {
+			return nil, ErrNilInput
+		}
+	}
+	options := resolveCallOptions(opts)
+	result, err := c.executeMutation(ctx, options.SkipHooks, &hook.MutationContext{
+		Op: hook.OpUpdateMany, Table: TableTasks, Schema: "public",
+		Input: items, CallOptions: options,
+	}, func(ctx context.Context, m *hook.MutationContext) (any, error) {
+		conn := database.Conn(ctx, c.querier)
+		// An empty batch writes nothing and must read nothing. The trailing
+		// re-fetch below filters on the keys this call touched, and every
+		// generated key filter treats an empty set as *no condition* — so
+		// without this guard the re-fetch degrades to an unfiltered SELECT and
+		// returns the whole table as if this call had produced it.
+		if len(items) == 0 {
+			return []*Task{}, nil
+		}
+		var allIDs []int32
+		for start := 0; start < len(items); start += c.batchSize {
+			end := min(start+c.batchSize, len(items))
+			batch := items[start:end]
+
+			for _, item := range batch {
+				setClauses := make(map[string]any)
+				if v, ok := item.Input.Title.Get(); ok {
+					setClauses["title"] = v
+				}
+
+				// Skip no-op updates
+				if len(setClauses) == 0 {
+					allIDs = append(allIDs, item.ID)
+					continue
+				}
+
+				query, args := sql.BuildUpdate(c.dialect, c.table, sql.UpdateOptions{
+					SetClauses: setClauses,
+					Conditions: []sql.Condition{sql.Where(c.dialect.QuoteIdentifier("id")).Eq(item.ID)},
+				})
+
+				_, err := conn.Exec(ctx, query, args...)
+				if err != nil {
+					return nil, fmt.Errorf("update task %v: %w", item.ID, err)
+				}
+				allIDs = append(allIDs, item.ID)
+			}
+		}
+
+		m.AffectedPKs = toAnySlice(allIDs)
+
+		// Empty FieldOptions — skip fetch
+		if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
+			return nil, nil
+		}
+		return c.GetMany(ctx, &GetTasksInput{
+			Filter: &TaskFilter{
+				ID: &comparator.Number[int32]{In: allIDs},
+			},
+			Limit: new(0),
+		}, func(o *CallOptions[TaskFieldOptions]) {
+			*o = options
+			o.SkipHooks = true
+			o.LockMode = sql.LockNone
+		})
+	})
+	if err != nil {
+		return nil, err
+	}
+	if result == nil {
+		return nil, nil
+	}
+	return result.([]*Task), nil
+}
+
+// UpdateWhere updates all tasks matching the filter and returns the updated entities.
+// Idempotent — returns empty slice when no rows match.
+// Returns ErrNilInput when input is nil, checked before the filter.
+// Returns ErrEmptyFilter when the filter is nil or produces no conditions.
+func (c *taskClient) UpdateWhere(ctx context.Context, filter *TaskFilter, input *UpdateTaskInput, opts ...func(*CallOptions[TaskFieldOptions])) ([]*Task, error) {
+	// Argument validity is checked before the filter's bulk-op
+	// safety guard, and before the executor, so a nil input fires no hook and
+	// publishes no event. ErrEmptyFilter still covers a non-nil input with an
+	// empty filter.
+	if input == nil {
+		return nil, ErrNilInput
+	}
+	options := resolveCallOptions(opts)
+	result, err := c.executeMutation(ctx, options.SkipHooks, &hook.MutationContext{
+		Op: hook.OpUpdateWhere, Table: TableTasks, Schema: "public",
+		Input: input, CallOptions: options,
+	}, func(ctx context.Context, m *hook.MutationContext) (any, error) {
+		conn := database.Conn(ctx, c.querier)
+
+		conds := filter.ToConditions(c.dialect)
+		if len(conds) == 0 {
+			return nil, ErrEmptyFilter
+		}
+
+		// Build SET clause (same per-field checks as Update)
+		setClauses := make(map[string]any)
+		if v, ok := input.Title.Get(); ok {
+			setClauses["title"] = v
+		}
+
+		// No fields set — return matching entities unchanged
+		if len(setClauses) == 0 {
+			if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
+				return nil, nil
+			}
+			return c.GetMany(ctx, &GetTasksInput{
+				Filter: filter,
+				Limit:  new(0),
+			}, func(o *CallOptions[TaskFieldOptions]) {
+				*o = options
+				o.SkipHooks = true
+				o.LockMode = sql.LockNone
+			})
+		}
+
+		// UPDATE with RETURNING "id" — get affected IDs in one round-trip
+		query, args := sql.BuildUpdate(c.dialect, c.table, sql.UpdateOptions{
+			SetClauses:       setClauses,
+			Conditions:       conds,
+			ReturningColumns: []string{"id"},
+		})
+
+		rows, err := conn.Query(ctx, query, args...)
+		if err != nil {
+			return nil, fmt.Errorf("update tasks where: %w", err)
+		}
+		defer rows.Close()
+		var ids []int32
+		for rows.Next() {
+			var id int32
+			if err := rows.Scan(&id); err != nil {
+				return nil, fmt.Errorf("scan updated task id: %w", err)
+			}
+			ids = append(ids, id)
+		}
+		if err := rows.Err(); err != nil {
+			return nil, err
+		}
+		if len(ids) == 0 {
+			return nil, nil
+		}
+		m.AffectedPKs = toAnySlice(ids)
+
+		// Empty FieldOptions — skip fetch
+		if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
+			return nil, nil
+		}
+
+		// Fetch affected entities with FieldOptions
+		return c.GetMany(ctx, &GetTasksInput{
+			Filter: &TaskFilter{
+				ID: &comparator.Number[int32]{In: ids},
+			},
+			Limit: new(0),
+		}, func(o *CallOptions[TaskFieldOptions]) {
+			*o = options
+			o.SkipHooks = true
+			o.LockMode = sql.LockNone
+		})
+	})
+	if err != nil {
+		return nil, err
+	}
+	if result == nil {
+		return nil, nil
+	}
+	return result.([]*Task), nil
+}
+
+// HardDelete permanently removes a task from the database.
+// Idempotent — returns nil if the primary key does not exist.
+func (c *taskClient) HardDelete(ctx context.Context, id int32, opts ...func(*CallOptions[TaskFieldOptions])) error {
+	options := resolveCallOptions(opts)
+	_, err := c.executeMutation(ctx, options.SkipHooks, &hook.MutationContext{
+		Op: hook.OpHardDelete, Table: TableTasks, Schema: "public",
+		PK: id, CallOptions: options,
+	}, func(ctx context.Context, m *hook.MutationContext) (any, error) {
+		conn := database.Conn(ctx, c.querier)
+		query, args := sql.BuildHardDelete(c.dialect, c.table, sql.HardDeleteOptions{
+			Conditions: []sql.Condition{sql.Where(c.dialect.QuoteIdentifier("id")).Eq(id)},
+		})
+
+		_, err := conn.Exec(ctx, query, args...)
+		if err != nil {
+			return nil, fmt.Errorf("hard delete task: %w", err)
+		}
+		m.AffectedPKs = []any{id}
+		return nil, nil
+	})
+	return err
+}
+
+// HardDeleteMany permanently removes multiple tasks from the database.
+func (c *taskClient) HardDeleteMany(ctx context.Context, ids []int32, opts ...func(*CallOptions[TaskFieldOptions])) error {
+	options := resolveCallOptions(opts)
+	_, err := c.executeMutation(ctx, options.SkipHooks, &hook.MutationContext{
+		Op: hook.OpHardDeleteMany, Table: TableTasks, Schema: "public",
+		Input: ids, CallOptions: options,
+	}, func(ctx context.Context, m *hook.MutationContext) (any, error) {
+		conn := database.Conn(ctx, c.querier)
+
+		query, args := sql.BuildHardDelete(c.dialect, c.table, sql.HardDeleteOptions{
+			Conditions: []sql.Condition{
+				sql.Where(c.dialect.QuoteIdentifier("id")).In(toAnySlice(ids)...),
+			},
+		})
+
+		_, err := conn.Exec(ctx, query, args...)
+		if err != nil {
+			return nil, fmt.Errorf("hard delete tasks: %w", err)
+		}
+		m.AffectedPKs = toAnySlice(ids)
+		return nil, nil
+	})
+	return err
+}
+
+// HardDeleteWhere permanently removes all tasks matching the filter.
+// Idempotent — returns nil when no rows match.
+// Returns ErrEmptyFilter when the filter is nil or produces no conditions.
+func (c *taskClient) HardDeleteWhere(ctx context.Context, filter *TaskFilter, opts ...func(*CallOptions[TaskFieldOptions])) error {
+	options := resolveCallOptions(opts)
+	_, err := c.executeMutation(ctx, options.SkipHooks, &hook.MutationContext{
+		Op: hook.OpHardDeleteWhere, Table: TableTasks, Schema: "public",
+		Input: filter, CallOptions: options,
+	}, func(ctx context.Context, m *hook.MutationContext) (any, error) {
+		conn := database.Conn(ctx, c.querier)
+
+		conds := filter.ToConditions(c.dialect)
+		if len(conds) == 0 {
+			return nil, ErrEmptyFilter
+		}
+
+		// DELETE with RETURNING "id" — get affected IDs in one round-trip
+		query, args := sql.BuildHardDelete(c.dialect, c.table, sql.HardDeleteOptions{
+			Conditions:       conds,
+			ReturningColumns: []string{"id"},
+		})
+
+		rows, err := conn.Query(ctx, query, args...)
+		if err != nil {
+			return nil, fmt.Errorf("hard delete tasks where: %w", err)
+		}
+		defer rows.Close()
+		var ids []int32
+		for rows.Next() {
+			var id int32
+			if err := rows.Scan(&id); err != nil {
+				return nil, fmt.Errorf("scan deleted task id: %w", err)
+			}
+			ids = append(ids, id)
+		}
+		if err := rows.Err(); err != nil {
+			return nil, err
+		}
+		m.AffectedPKs = toAnySlice(ids)
+		return nil, nil
+	})
+	return err
+}
+
+// TaskConflictTarget identifies a unique constraint for upsert conflict detection.
+type TaskConflictTarget int
+
+const (
+	TaskConflictPK TaskConflictTarget = iota // PRIMARY KEY (id)
+)
+
+// taskConflictColumns maps each conflict target to its column set.
+var taskConflictColumns = map[TaskConflictTarget][]string{
+	TaskConflictPK: {"id"},
+}
+
+// Upsert inserts a task or updates it if a row matching the conflict target already
+// exists. Returns the resulting entity with optional field selection and relationship loading.
+// The conflict target determines which unique constraint triggers an update
+// instead of an insert. Non-PK, non-conflict columns are included in the SET clause.
+func (c *taskClient) Upsert(ctx context.Context, input *CreateTaskInput, target TaskConflictTarget, opts ...func(*CallOptions[TaskFieldOptions])) (*Task, error) {
+	// A write cannot normalize nil to the zero value the way a read
+	// does — a zero CreateTaskInput legally writes a row (each required
+	// field's zero value, or with no required field, every column's default).
+	// Guarded before the executor, so nil fires no hook and publishes no event.
+	// An input that supplies no column gets no conflict clause on any dialect:
+	// it is a plain insert, so a conflict on a UNIQUE column with a
+	// DEFAULT is a unique violation, including on MySQL, where ON DUPLICATE KEY
+	// UPDATE would have returned the existing row.
+	if input == nil {
+		return nil, ErrNilInput
+	}
+	options := resolveCallOptions(opts)
+	result, err := c.executeMutation(ctx, options.SkipHooks, &hook.MutationContext{
+		Op: hook.OpUpsert, Table: TableTasks, Schema: "public",
+		Input: input, CallOptions: options,
+	}, func(ctx context.Context, m *hook.MutationContext) (any, error) {
+		conn := database.Conn(ctx, c.querier)
+
+		columns := []string{"id", "title"}
+		args := []any{input.ID, input.Title}
+
+		// Resolve conflict target and update columns. Tenant column is excluded
+		// from the UPDATE-set half of the conflict clause — a
+		// row's tenant is not a mutable attribute under normal operation.
+		conflictColumns := taskConflictColumns[target]
+		updateColumns := excludeColumns(columns, append(conflictColumns, "id"))
+
+		id, err := c.insertUpsertAndResolveID(ctx, conn, columns, args, conflictColumns, updateColumns)
+		if err != nil {
+			return nil, fmt.Errorf("upsert task: %w", err)
+		}
+		m.AffectedPKs = []any{id}
+
+		// Empty FieldOptions — caller doesn't need the result
+		if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
+			return nil, nil
+		}
+
+		return c.Get(ctx, id, func(o *CallOptions[TaskFieldOptions]) {
+			*o = options
+			o.SkipHooks = true
+			o.LockMode = sql.LockNone
+		})
+	})
+	if err != nil {
+		return nil, err
+	}
+	if result == nil {
+		return nil, nil
+	}
+	return result.(*Task), nil
+}
+
+// insertUpsertAndResolveID performs the INSERT with upsert clause and resolves the generated primary key.
+func (c *taskClient) insertUpsertAndResolveID(ctx context.Context, conn database.Querier, columns []string, args []any, conflictColumns, updateColumns []string) (int32, error) {
+	query, queryArgs := sql.BuildInsert(c.dialect, c.table, sql.InsertOptions{
+		Columns:               columns,
+		Values:                args,
+		UpsertConflictKeys:    conflictColumns,
+		UpsertUpdateColumns:   updateColumns,
+		UpsertResolvePKColumn: "id",
+		ReturningColumns:      []string{"id"},
+	})
+	rows, err := conn.Query(ctx, query, queryArgs...)
+	if err != nil {
+		return 0, err
+	}
+	var id int32
+	found := rows.Next()
+	if found {
+		err = rows.Scan(&id)
+	}
+	if err == nil {
+		err = rows.Err()
+	}
+	// Closed before the fallback below issues its own statement: conn may be a
+	// transaction, where an open result set blocks the next statement on the
+	// same connection.
+	if cerr := rows.Close(); err == nil {
+		err = cerr
+	}
+	if err != nil {
+		return 0, err
+	}
+	if found {
+		return id, nil
+	}
+	return c.resolveUpsertConflictRow(ctx, conn, columns, args, conflictColumns)
+}
+
+// resolveUpsertConflictRow resolves the row an upsert conflicted with, for the
+// case where the statement returned nothing.
+//
+// A conflict target that covers every inserted column leaves no column to
+// assign, so the dialect emits DO NOTHING — and DO NOTHING returns
+// no row, which leaves the RETURNING branch above with no PK for a write that
+// did resolve to a row. The conflicting row is looked up by the same conflict
+// columns the statement targeted; unlike MySQL's ON DUPLICATE KEY UPDATE, an
+// explicit ON CONFLICT target can only have fired on those columns, so the
+// lookup identifies the same row the statement did.
+//
+// The lookup does not exclude soft-deleted rows: the unique index matched
+// regardless of the soft-delete column, so a soft-deleted row is still the row
+// that conflicted and still the row whose PK this resolves. (The terminal Get
+// then applies the read path's own soft-delete filter, exactly as it does on
+// the DO UPDATE SET branch.)
+//
+// This is a second statement, so a concurrent delete between the insert and
+// this lookup surfaces as ErrNotFound. Run the upsert inside a transaction
+// where the pair has to be atomic.
+func (c *taskClient) resolveUpsertConflictRow(ctx context.Context, conn database.Querier, columns []string, args []any, conflictColumns []string) (int32, error) {
+	conds := make([]sql.Condition, 0, len(conflictColumns))
+	for _, col := range conflictColumns {
+		i := slices.Index(columns, col)
+		if i < 0 {
+			// A conflict column the statement never supplied cannot have
+			// produced the conflict, so there is no row to look up.
+			return 0, ErrNotFound
+		}
+		conds = append(conds, sql.Where(c.dialect.QuoteIdentifier(col)).Eq(args[i]))
+	}
+
+	query, queryArgs := sql.BuildSelect(c.dialect, c.table, sql.SelectOptions{
+		Columns:    []string{"id"},
+		Conditions: conds,
+		Limit:      new(1),
+	})
+	rows, err := conn.Query(ctx, query, queryArgs...)
+	if err != nil {
+		return 0, err
+	}
+	defer rows.Close()
+
+	var id int32
+	if !rows.Next() {
+		if err := rows.Err(); err != nil {
+			return 0, err
+		}
+		// The conflicting row is gone — deleted between the two statements.
+		return 0, ErrNotFound
+	}
+	if err := rows.Scan(&id); err != nil {
+		return 0, err
+	}
+	return id, rows.Err()
+}
+
+// UpsertMany inserts or updates multiple tasks in batches and returns all
+// resulting entities. One conflict target applies to the whole batch, drawn from
+// the same enum Upsert takes. Sub-batches are not automatically rolled back on
+// failure — wrap in a transaction for atomicity.
+//
+// Inputs resolving to the same conflict target are deduped before the statement
+// is built, last occurrence wins. PostgreSQL rejects an
+// ON CONFLICT ... DO UPDATE that would affect one row twice; MySQL and SQLite
+// accept it and keep the last row. The dedupe is what makes one spelling behave
+// identically on all three. A row carrying no definite, non-NULL value for every
+// conflict column is exempt: a NULL never matches under a unique index on any of
+// the three dialects, so two such rows are two rows, not a duplicate.
+//
+// The returned slice carries one entity per deduped input on every dialect,
+// including the DO NOTHING branch a conflict target covering every inserted
+// column produces. The entities come from a re-fetch by primary key, never from
+// RETURNING — RETURNING yields only the rows actually inserted, so a batch that
+// conflicted would come back short. Row order is GetMany's, as with
+// CreateMany.
+func (c *taskClient) UpsertMany(ctx context.Context, inputs []*CreateTaskInput, target TaskConflictTarget, opts ...func(*CallOptions[TaskFieldOptions])) ([]*Task, error) {
+	// A nil *slice* is simply no rows, but a nil *element* is the
+	// same caller error a nil Upsert argument is — and skipping it silently
+	// would drop a row the caller asked for. Rejected before the executor.
+	for _, in := range inputs {
+		if in == nil {
+			return nil, ErrNilInput
+		}
+	}
+	options := resolveCallOptions(opts)
+	result, err := c.executeMutation(ctx, options.SkipHooks, &hook.MutationContext{
+		Op: hook.OpUpsertMany, Table: TableTasks, Schema: "public",
+		Input: inputs, CallOptions: options,
+	}, func(ctx context.Context, m *hook.MutationContext) (any, error) {
+		// No rows means no statement and nothing affected. Guarded here because
+		// the terminal GetMany filters on the written keys, and a key filter
+		// built from an empty set contributes no condition — an unguarded empty
+		// call would read the whole table back.
+		if len(inputs) == 0 {
+			return []*Task{}, nil
+		}
+		conn := database.Conn(ctx, c.querier)
+
+		// Resolve conflict target and update columns. Tenant column is excluded
+		// from the UPDATE-set half of the conflict clause — a
+		// row's tenant is not a mutable attribute under normal operation.
+		//
+		// UpsertResolvePKColumn is deliberately not set: it exists so a
+		// single-row MySQL upsert can republish the conflicting row's id into
+		// the OK packet, and after a batch that packet names at most one row.
+		// Nothing here reads LastInsertId, so requesting it would
+		// only add a misleading assignment to the SET list.
+		columns := []string{"id", "title"}
+		conflictColumns := taskConflictColumns[target]
+		updateColumns := excludeColumns(columns, append(conflictColumns, "id"))
+		conflictPositions, haveConflictKey := upsertConflictPositions(columns, conflictColumns)
+
+		// One value row per input, built before any statement runs: the dedupe
+		// spans the whole call, not a sub-batch (ceil(M/batch_size)
+		// statements for M inputs, *after* the dedupe).
+		valueRows := make([][]any, 0, len(inputs))
+		rowInputs := make([]*CreateTaskInput, 0, len(inputs))
+		rowIDs := make([]int32, 0, len(inputs))
+		for _, input := range inputs {
+
+			valueRows = append(valueRows, []any{
+				input.ID,
+				input.Title,
+			})
+			rowInputs = append(rowInputs, input)
+			rowIDs = append(rowIDs, input.ID)
+		}
+
+		// Dedupe by conflict target, last occurrence wins, first-appearance
+		// order preserved.
+		if haveConflictKey {
+			seen := make(map[string]int, len(valueRows))
+			dedupedRows := make([][]any, 0, len(valueRows))
+			dedupedInputs := make([]*CreateTaskInput, 0, len(rowInputs))
+			dedupedIDs := make([]int32, 0, len(rowIDs))
+			for i, row := range valueRows {
+				key, keyed := upsertDedupeKey(row, conflictPositions)
+				if keyed {
+					if j, ok := seen[key]; ok {
+						dedupedRows[j] = row
+						dedupedInputs[j] = rowInputs[i]
+						dedupedIDs[j] = rowIDs[i]
+						continue
+					}
+					seen[key] = len(dedupedRows)
+				}
+				dedupedRows = append(dedupedRows, row)
+				dedupedInputs = append(dedupedInputs, rowInputs[i])
+				dedupedIDs = append(dedupedIDs, rowIDs[i])
+			}
+			valueRows = dedupedRows
+			rowInputs = dedupedInputs
+			rowIDs = dedupedIDs
+		}
+		// The published input is the deduped slice, so it stays index-aligned
+		// with m.AffectedPKs: an event fanned out per affected row carries the
+		// input that actually wrote that row.
+		m.Input = rowInputs
+
+		for start := 0; start < len(valueRows); start += c.batchSize {
+			end := min(start+c.batchSize, len(valueRows))
+			batch := valueRows[start:end]
+
+			query, queryArgs := sql.BuildMultiInsert(c.dialect, c.table, sql.MultiInsertOptions{
+				Columns:             columns,
+				ValueRows:           batch,
+				UpsertConflictKeys:  conflictColumns,
+				UpsertUpdateColumns: updateColumns,
+			})
+			if _, err := conn.Exec(ctx, query, queryArgs...); err != nil {
+				return nil, fmt.Errorf("upsert tasks batch: %w", err)
+			}
+		}
+
+		m.AffectedPKs = toAnySlice(rowIDs)
+
+		// Empty FieldOptions — skip fetch
+		if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
+			return nil, nil
+		}
+
+		return c.GetMany(ctx, &GetTasksInput{
+			Filter: &TaskFilter{
+				ID: &comparator.Number[int32]{In: rowIDs},
+			},
+			Limit: new(0),
+		}, func(o *CallOptions[TaskFieldOptions]) {
+			*o = options
+			o.SkipHooks = true
+			o.LockMode = sql.LockNone
+		})
+	})
+	if err != nil {
+		return nil, err
+	}
+	if result == nil {
+		return nil, nil
+	}
+	return result.([]*Task), nil
+}
+
+// Exists returns true if a task with the given primary key exists.
+func (c *taskClient) Exists(ctx context.Context, id int32, opts ...func(*CallOptions[TaskFieldOptions])) (bool, error) {
+	options := resolveCallOptions(opts)
+	result, err := c.executeQuery(ctx, options.SkipHooks, &hook.QueryContext{
+		Op: hook.OpExists, Table: TableTasks, Schema: "public",
+		PK: id, CallOptions: options,
+	}, func(ctx context.Context, q *hook.QueryContext) (any, error) {
+		conn := database.Conn(ctx, c.querier)
+		conds := []sql.Condition{sql.Where(c.dialect.QuoteIdentifier("id")).Eq(id)}
+
+		query, args := sql.BuildExists(c.dialect, c.table, conds)
+
+		var exists bool
+		if err := conn.QueryRow(ctx, query, args...).Scan(&exists); err != nil {
+			return false, fmt.Errorf("exists task: %w", err)
+		}
+		return exists, nil
+	})
+	if err != nil {
+		return false, err
+	}
+	return result.(bool), nil
+}
+
+// ExistsWhere returns true if any task matches the given filter.
+func (c *taskClient) ExistsWhere(ctx context.Context, filter *TaskFilter, opts ...func(*CallOptions[TaskFieldOptions])) (bool, error) {
+	options := resolveCallOptions(opts)
+	result, err := c.executeQuery(ctx, options.SkipHooks, &hook.QueryContext{
+		Op: hook.OpExists, Table: TableTasks, Schema: "public",
+		Input: filter, CallOptions: options,
+	}, func(ctx context.Context, q *hook.QueryContext) (any, error) {
+		conn := database.Conn(ctx, c.querier)
+
+		var conds []sql.Condition
+		if filter != nil {
+			conds = filter.ToConditions(c.dialect)
+		}
+
+		query, args := sql.BuildExists(c.dialect, c.table, conds)
+
+		var exists bool
+		if err := conn.QueryRow(ctx, query, args...).Scan(&exists); err != nil {
+			return false, fmt.Errorf("exists task where: %w", err)
+		}
+		return exists, nil
+	})
+	if err != nil {
+		return false, err
+	}
+	return result.(bool), nil
+}
+
+// Count returns the number of tasks matching the given filter.
+// A nil filter counts all tasks.
+func (c *taskClient) Count(ctx context.Context, filter *TaskFilter, opts ...func(*CallOptions[TaskFieldOptions])) (int64, error) {
+	options := resolveCallOptions(opts)
+	result, err := c.executeQuery(ctx, options.SkipHooks, &hook.QueryContext{
+		Op: hook.OpCount, Table: TableTasks, Schema: "public",
+		Input: filter, CallOptions: options,
+	}, func(ctx context.Context, q *hook.QueryContext) (any, error) {
+		conn := database.Conn(ctx, c.querier)
+
+		var conds []sql.Condition
+		if filter != nil {
+			conds = filter.ToConditions(c.dialect)
+		}
+
+		query, args := sql.BuildCount(c.dialect, c.table, conds)
+
+		var count int64
+		if err := conn.QueryRow(ctx, query, args...).Scan(&count); err != nil {
+			return int64(0), fmt.Errorf("count tasks: %w", err)
+		}
+		return count, nil
+	})
+	if err != nil {
+		return 0, err
+	}
+	return result.(int64), nil
+}
+
+// Paginate returns a page of tasks with total count for offset-based pagination.
+// A nil filter paginates all tasks.
+func (c *taskClient) Paginate(ctx context.Context, input PaginateInput[TaskFilter], opts ...func(*CallOptions[TaskFieldOptions])) (*PaginateResult[Task], error) {
+	options := resolveCallOptions(opts)
+	result, err := c.executeQuery(ctx, options.SkipHooks, &hook.QueryContext{
+		Op: hook.OpPaginate, Table: TableTasks, Schema: "public",
+		Input: input, CallOptions: options,
+	}, func(ctx context.Context, q *hook.QueryContext) (any, error) {
+		// Internal calls with SkipHooks to prevent nested hook invocation
+		internalOpts := func(o *CallOptions[TaskFieldOptions]) {
+			*o = options
+			o.SkipHooks = true
+		}
+
+		// Total count (delegates to Count — both are always generated)
+		totalCount, err := c.Count(ctx, input.Filter, internalOpts)
+		if err != nil {
+			return nil, fmt.Errorf("paginate tasks count: %w", err)
+		}
+
+		// Page data via GetMany (handles FieldOptions and relationships)
+		tasks, err := c.GetMany(ctx, &GetTasksInput{
+			Filter: input.Filter,
+			Sorts:  input.Sort,
+			Limit:  &input.Limit,
+			Offset: &input.Offset,
+		}, internalOpts)
+		if err != nil {
+			return nil, fmt.Errorf("paginate tasks: %w", err)
+		}
+
+		return &PaginateResult[Task]{
+			Items:      tasks,
+			TotalCount: totalCount,
+			Offset:     input.Offset,
+			Limit:      input.Limit,
+			HasMore:    int64(input.Offset+input.Limit) < totalCount,
+		}, nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	return result.(*PaginateResult[Task]), nil
+}
+
+// Connection returns a Relay-style cursor-paginated connection of tasks.
+// Sort order is determined by cursor_keys — custom sorts are not supported.
+// Use Paginate for custom sort orders.
+func (c *taskClient) Connection(ctx context.Context, input ConnectionInput[TaskFilter], opts ...func(*CallOptions[TaskFieldOptions])) (*Connection[Task], error) {
+	options := resolveCallOptions(opts)
+
+	if options.LockMode != sql.LockNone {
+		if !database.InTransaction(ctx) {
+			return nil, fmt.Errorf("connection tasks: LockMode requires an active transaction")
+		}
+		options.SkipCache = true
+	}
+	result, err := c.executeQuery(ctx, options.SkipHooks, &hook.QueryContext{
+		Op: hook.OpConnection, Table: TableTasks, Schema: "public",
+		Input: input, CallOptions: options,
+	}, func(ctx context.Context, q *hook.QueryContext) (any, error) {
+		// Internal calls with SkipHooks to prevent nested hook invocation
+		internalOpts := func(o *CallOptions[TaskFieldOptions]) {
+			*o = options
+			o.SkipHooks = true
+		}
+
+		// Validate: first and last are mutually exclusive
+		if input.First != nil && input.Last != nil {
+			return nil, ErrInvalidCursor
+		}
+
+		// Total count (separate COUNT query — no cursor conditions)
+		totalCount, err := c.Count(ctx, input.Filter, internalOpts)
+		if err != nil {
+			return nil, fmt.Errorf("connection tasks count: %w", err)
+		}
+
+		// Decode cursors and build keyset conditions
+		var keysetConds []sql.Condition
+		if input.After != nil {
+			cursor, err := decodeTaskCursor(*input.After, c.cursorKeys)
+			if err != nil {
+				return nil, ErrInvalidCursor
+			}
+			keysetConds = append(keysetConds, cursorKeyset(c.dialect, c.cursorKeys, cursor, ">"))
+		}
+		if input.Before != nil {
+			cursor, err := decodeTaskCursor(*input.Before, c.cursorKeys)
+			if err != nil {
+				return nil, ErrInvalidCursor
+			}
+			keysetConds = append(keysetConds, cursorKeyset(c.dialect, c.cursorKeys, cursor, "<"))
+		}
+
+		// Direction and limit
+		limit := c.pageSize
+		ascending := true
+		if input.First != nil {
+			limit = *input.First
+		} else if input.Last != nil {
+			limit = *input.Last
+			ascending = false
+		}
+
+		// Fetch limit+1 rows via GetMany (handles FieldOptions, O2O joins, relationships, soft delete)
+		connLimit := limit + 1
+		tasks, err := c.GetMany(ctx, &GetTasksInput{
+			Filter:     input.Filter,
+			Sorts:      cursorSorts(c.cursorKeys, ascending),
+			Limit:      &connLimit,
+			conditions: keysetConds,
+			// Each edge's cursor is encoded from the row it wraps, so the cursor
+			// keys have to survive a narrowed FieldOptions — otherwise the
+			// encoder reads fields the SELECT never filled and every cursor
+			// carries zero values.
+			requiredColumns: c.cursorKeys,
+		}, internalOpts)
+		if err != nil {
+			return nil, fmt.Errorf("connection tasks: %w", err)
+		}
+
+		// Trim extra row and determine page boundaries
+		hasMore := len(tasks) > limit
+		if hasMore {
+			tasks = tasks[:limit]
+		}
+
+		// Backward pagination: reverse for ascending cursor order
+		if !ascending {
+			slices.Reverse(tasks)
+		}
+
+		// Build edges with encoded cursors
+		edges := make([]Edge[Task], len(tasks))
+		for i, row := range tasks {
+			cursor, err := encodeTaskCursor(c.cursorKeys, row)
+			if err != nil {
+				return nil, err
+			}
+			edges[i] = Edge[Task]{
+				Node:   row,
+				Cursor: cursor,
+			}
+		}
+
+		pageInfo := PageInfo{
+			HasNextPage:     (ascending && hasMore) || (!ascending && input.Before != nil),
+			HasPreviousPage: (!ascending && hasMore) || (ascending && input.After != nil),
+		}
+		if len(edges) > 0 {
+			pageInfo.StartCursor = &edges[0].Cursor
+			pageInfo.EndCursor = &edges[len(edges)-1].Cursor
+		}
+
+		return &Connection[Task]{Edges: edges, PageInfo: pageInfo, TotalCount: totalCount}, nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	return result.(*Connection[Task]), nil
+}
+
+// encodeTaskCursor encodes cursor key values as a base64 JSON string.
+func encodeTaskCursor(keys []string, t *Task) (string, error) {
+	out := make(map[string]any, len(keys))
+	for _, key := range keys {
+		switch key {
+		case "id":
+			out["id"] = t.ID
+		case "title":
+			out["title"] = t.Title
+		}
+	}
+	data, err := json.Marshal(out)
+	if err != nil {
+		return "", fmt.Errorf("encode task cursor: %w", err)
+	}
+	return base64.StdEncoding.EncodeToString(data), nil
+}
+
+// decodeTaskCursor decodes a cursor string into its key values,
+// each unmarshaled into the key column's Go type.
+func decodeTaskCursor(encoded string, keys []string) (map[string]any, error) {
+	raw, err := decodeCursor(encoded, keys)
+	if err != nil {
+		return nil, err
+	}
+	var row Task
+	out := make(map[string]any, len(keys))
+	for _, key := range keys {
+		switch key {
+		case "id":
+			err = json.Unmarshal(raw[key], &row.ID)
+			out[key] = row.ID
+		}
+		if err != nil {
+			return nil, err
+		}
+		if cursorValueIsNull(out[key]) {
+			return nil, ErrInvalidCursor
+		}
+	}
+	return out, nil
+}
+
+// StreamTasksInput holds query parameters for streaming tasks records.
+// Stream is iterator-style and intentionally has no Limit/Offset.
+// Field selection is controlled via CallOptions.FieldOptions, not this struct.
+type StreamTasksInput struct {
+	Filter *TaskFilter `json:"filter"`
+	Sorts  []sql.Sort  `json:"sorts"`
+}
+
+// StreamTaskFieldOptions controls scalar column selection for tasks streams.
+// Stream cannot load relationships — only scalar columns are selectable.
+type StreamTaskFieldOptions struct {
+	ID    bool `json:"id"`
+	Title bool `json:"title"`
+}
+
+// Columns returns the SQL column names for all selected columns, sorted alphabetically
+// to match the SQL builder's deterministic column ordering.
+func (fo *StreamTaskFieldOptions) Columns() []string {
+	var cols []string
+	if fo.ID {
+		cols = append(cols, "id")
+	}
+	if fo.Title {
+		cols = append(cols, "title")
+	}
+	slices.Sort(cols)
+	return cols
+}
+
+// HasSelectedColumns reports whether any column is selected.
+func (fo *StreamTaskFieldOptions) HasSelectedColumns() bool {
+	if fo.ID {
+		return true
+	}
+	if fo.Title {
+		return true
+	}
+	return false
+}
+
+// scanTaskRow scans a single row into a Task entity.
+// Used by Stream to yield rows one at a time without materializing the result set.
+func scanTaskRow(rows database.Rows, columns []string) (*Task, error) {
+	t := &Task{}
+
+	targets := make([]any, len(columns))
+	for idx, col := range columns {
+		switch col {
+		case "id":
+			targets[idx] = &t.ID
+		case "title":
+			targets[idx] = &t.Title
+		}
+	}
+
+	if err := rows.Scan(targets...); err != nil {
+		return nil, fmt.Errorf("scan task: %w", err)
+	}
+
+	return t, nil
+}
+
+// Stream returns an iterator over tasks matching the given filter and sort criteria.
+// Rows are yielded as the driver returns them, without materializing the full
+// result set. Cache is bypassed regardless of caller setting.
+// Stream cannot load relationships — use Connection in a loop when relationships
+// are required.
+//
+// Stream refuses an active transaction. It runs consumer code inside an open
+// result set, which inside a transaction is the transaction's only connection,
+// held for the whole iteration — so a statement issued from the loop body on the
+// same txCtx waits on a reservation the loop itself holds. Set
+// CallOptions.AllowInTransaction for a snapshot-consistent stream that issues
+// nothing else on that txCtx. That obligation is the one rule that remains the
+// caller's — drain or close a result set before issuing the next statement on
+// that txCtx — applied to a loop whose body is caller code.
+func (c *taskClient) Stream(ctx context.Context, input *StreamTasksInput, opts ...func(*CallOptions[StreamTaskFieldOptions])) iter.Seq2[*Task, error] {
+	return func(yield func(*Task, error) bool) {
+		// A nil input is the zero-value input. Without it, an
+		// unguarded nil dereference in the handler would be recovered by the
+		// panic wrapper and reported as an error instead of streaming the table.
+		if input == nil {
+			input = &StreamTasksInput{}
+		}
+		options := resolveCallOptions(opts)
+		options.SkipCache = true
+
+		// Stream's contract is that the connection stays open across
+		// caller code; a transaction's is one connection, one statement at a
+		// time. The two cannot both hold, so Stream refuses a transaction unless
+		// the caller opts in. Refused before any SQL is issued and before the
+		// hook chain is built, mirroring the LockMode precondition, and
+		// surfaced through yield because Stream returns an iterator and has no
+		// error return.
+		if database.InTransaction(ctx) && !options.AllowInTransaction {
+			yield(nil, fmt.Errorf("stream tasks: unsupported inside a transaction — use Connection in a loop, "+
+				"or set AllowInTransaction for a snapshot-consistent stream that issues nothing else on this txCtx"))
+			return
+		}
+
+		// stopped is true while the consumer's loop body runs, and stays true
+		// once the body breaks (yield returned false) or panics out of yield.
+		// Calling yield again after either makes the Go runtime panic, so the
+		// chain's error below is yielded only while stopped is false.
+		var stopped bool
+		emit := func(row *Task, err error) bool {
+			stopped = true
+			if !yield(row, err) {
+				return false
+			}
+			stopped = false
+			return true
+		}
+
+		// A recovered panic and a hook's abort error are the
+		// chain's return value. Stream has no error return, so it yields that
+		// error once, after anything the handler yielded.
+		_, err := c.executeQuery(ctx, options.SkipHooks, &hook.QueryContext{
+			Op: hook.OpStream, Table: TableTasks, Schema: "public",
+			Input: input, CallOptions: options,
+		}, func(ctx context.Context, q *hook.QueryContext) (any, error) {
+			conn := database.Conn(ctx, c.querier)
+
+			fieldOptions := options.FieldOptions
+			columns := taskAllColumns
+			if fieldOptions != nil {
+				if selected := fieldOptions.Columns(); len(selected) > 0 {
+					columns = selected
+				}
+			}
+
+			var conds []sql.Condition
+			if input.Filter != nil {
+				conds = input.Filter.ToConditions(c.dialect)
+			}
+
+			query, args := sql.BuildSelect(c.dialect, c.table, sql.SelectOptions{
+				Columns:    columns,
+				Conditions: conds,
+				OrderBy:    input.Sorts,
+			})
+
+			rows, err := conn.Query(ctx, query, args...)
+			if err != nil {
+				emit(nil, fmt.Errorf("stream tasks: %w", err))
+				return nil, nil
+			}
+			defer rows.Close()
+
+			for rows.Next() {
+				t, err := scanTaskRow(rows, columns)
+				if err != nil {
+					if !emit(nil, err) {
+						return nil, nil
+					}
+					continue
+				}
+				if !emit(t, nil) {
+					return nil, nil
+				}
+			}
+			if err := rows.Err(); err != nil {
+				emit(nil, fmt.Errorf("iterate task rows: %w", err))
+			}
+			return nil, nil
+		})
+		if err != nil && !stopped {
+			yield(nil, err)
+		}
+	}
+}
+
+// TaskFilter provides type-safe filtering for the tasks table.
+type TaskFilter struct {
+	ID    *comparator.Number[int32] `json:"id"`
+	Title *comparator.String        `json:"title"`
+	And   []*TaskFilter             `json:"and"`
+	Or    []*TaskFilter             `json:"or"`
+}
+
+// ToConditions converts the filter to a slice of SQL conditions.
+//
+// A nil receiver contributes no conditions. Two callers depend on that. The
+// *Where methods dereference their filter only here and document a nil one as
+// the empty-filter case, so this is what makes ErrEmptyFilter reachable instead
+// of a nil dereference. And a nil entry inside and / or is skipped rather than
+// fatal, matching the "an unset member contributes no SQL" rule the
+// relationship members already follow.
+func (f *TaskFilter) ToConditions(dialect sql.Dialect, opts ...FilterOption) []sql.Condition {
+	if f == nil {
+		return nil
+	}
+
+	var conds []sql.Condition
+
+	if f.ID != nil {
+		conds = append(conds, f.ID.Parse(dialect.QuoteIdentifier("id"), dialect)...)
+	}
+
+	if f.Title != nil {
+		conds = append(conds, f.Title.Parse(dialect.QuoteIdentifier("title"), dialect)...)
+	}
+
+	for _, sub := range f.And {
+		subConds := sub.ToConditions(dialect, opts...)
+		if len(subConds) > 0 {
+			conds = append(conds, sql.And(subConds...))
+		}
+	}
+
+	// A filter object's own fields are always conjunctive, so each or member
+	// contributes sql.And of its own conditions and the members are OR-ed
+	// together as ONE group condition. Appending a per-member
+	// sql.Or instead hands the caller N conditions, and buildWhere joins those
+	// with AND — turning or: [A, B] into A AND B, while simultaneously OR-ing a
+	// single member's own fields against each other.
+	//
+	// The group is appended only when some member compiled to something:
+	// sql.Or of nothing expands to a literal "()", which buildWhere keeps
+	// because it is not the empty string, yielding invalid SQL.
+	var orGroup []sql.Condition
+	for _, sub := range f.Or {
+		subConds := sub.ToConditions(dialect, opts...)
+		if len(subConds) > 0 {
+			orGroup = append(orGroup, sql.And(subConds...))
+		}
+	}
+	if len(orGroup) > 0 {
+		conds = append(conds, sql.Or(orGroup...))
+	}
+
+	return conds
+}
+
+// TaskFieldOptions controls column selection and relationship loading for tasks queries.
+type TaskFieldOptions struct {
+	ID    bool `json:"id"`
+	Title bool `json:"title"`
+}
+
+// Columns returns the SQL column names for all selected columns, sorted alphabetically
+// to match the SQL builder's deterministic column ordering.
+func (fo *TaskFieldOptions) Columns() []string {
+	var cols []string
+	if fo.ID {
+		cols = append(cols, "id")
+	}
+	if fo.Title {
+		cols = append(cols, "title")
+	}
+	slices.Sort(cols)
+	return cols
+}
+
+// ColumnMap returns a mapping of Go field name to SQL column name for all columns.
+func (fo *TaskFieldOptions) ColumnMap() map[string]string {
+	return map[string]string{
+		"ID":    "id",
+		"Title": "title",
+	}
+}
+
+// HasSelectedColumns reports whether any column or relationship is selected.
+func (fo *TaskFieldOptions) HasSelectedColumns() bool {
+	if fo.ID {
+		return true
+	}
+	if fo.Title {
+		return true
+	}
+	return false
+}
+
+// CreateTaskInput holds the fields for creating a tasks record.
+type CreateTaskInput struct {
+	ID    int32  `json:"id"`
+	Title string `json:"title"`
+}
+
+// UpdateTaskInput holds the fields for updating a tasks record.
+// All fields use omittable.Value to distinguish "not set" from "set to zero".
+type UpdateTaskInput struct {
+	Title omittable.Value[string] `json:"title,omitzero"`
+}
+
+// GetTasksInput holds query parameters for retrieving tasks records.
+// Field selection is controlled via CallOptions.FieldOptions, not this struct.
+type GetTasksInput struct {
+	Filter *TaskFilter `json:"filter"`
+	Limit  *int        `json:"limit"`
+	Offset *int        `json:"offset"`
+	Sorts  []sql.Sort  `json:"sorts"`
 	// conditions holds additional SQL conditions injected by internal callers
 	// (e.g., Connection keyset conditions). Not part of the public API.
 	conditions []sql.Condition

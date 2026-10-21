@@ -23,152 +23,6 @@
 
 <!-- fixes:open:begin -->
 
-### FIX-358
-
-- **Status:** Open
-- **Severity:** tracked
-- **Origin:** phase 6, cmd/sqlgen/gen
-- **Surfaced by:** R1 probe of `docs/design/COMPOSITE_FK_RELATIONSHIPS.md` (2026-10-20), user approved filing
-- **Vetted:** ready at `bd7783ea` (2026-10-21)
-
-**Issue.** **An FK column removed by `exclude_columns` still yields its relationship; for an O2M edge the generated code does not compile.**
-Only the O2M shape (inferred or declared `o2m`) fails to build. An O2O
-(`profiles.user_id` excluded) and an M2M junction column (`post_tags.tag_id`
-excluded) generate, build and load correctly at `bd7783ea`: a SQLite runtime
-probe returned `o2o: Users = {ID:1 Name:ann}` and both tags on `Post.Tags`
-(corrected by the 2026-10-21 vet; the entry first implied every shape fails).
-Measured at `bd7783ea`, PostgreSQL, `source: files`, schema
-`CREATE TABLE cycles (id INT PRIMARY KEY, name TEXT NOT NULL); CREATE TABLE
-tasks (id INT PRIMARY KEY, title TEXT NOT NULL, cycle_id INT REFERENCES
-cycles(id));` with `tables: tasks: exclude_columns: [cycle_id]`. `sqlgen
-generate` succeeds and emits `Cycle.Tasks []*Task` plus its O2M loader, then
-`go build` fails:
-
-```
-models/models_gen.go:402:5: unknown field CycleID in struct literal of type TaskFilter
-models/models_gen.go:440:25: r.CycleID undefined (type *Task has no field or method CycleID)
-```
-
-**Root cause.** Column exclusion is applied only when gen builds a table's
-columns (`buildTableColumns`, `cmd/sqlgen/gen/context_table.go:309-320`).
-Relationship detection runs earlier, on the unfiltered schema
-(`parser.DetectRelationships` at `cmd/sqlgen/cli/pipeline.go:65`, also
-`generate.go:66` and `validate.go:80`), so the edge is detected from the FK
-column's `FKReference`. Nothing afterwards checks that the FK column, or the
-referenced column on the other table, survived exclusion before the loader,
-filter member and client wiring are emitted against it.
-
-**Suggested fix.**
-- Drop any inferred relationship whose FK column (O2O / O2M), junction column
-  (M2M), or referenced column is excluded on its table, and emit a warning
-  naming the table, the column and PRD §13.4. The ruling (2026-10-20,
-  `COMPOSITE_FK_RELATIONSHIPS.md` R1) is "every key member must be in the
-  generated model on both sides, else no edge and a warning". Whether that
-  holds for the O2O and M2M shapes, which work today, is pending Q1 below.
-- **Fix site: gen-side, in `cmd/sqlgen/gen/relationship_targets.go`** (vetted).
-  `relationshipTargets` also indexes each table's `exclude_columns` (global and
-  per-table); `excludedKeyMember` checks an inferred edge's FK column or
-  junction columns plus each column's `FKReference.Column` on the referenced
-  table. `buildRelationshipContexts` omits such an edge with the warning (an
-  edge already in `exclude_relationships` is skipped first, silently);
-  `findO2ORelationships` skips it silently so a chained O2O join cannot read a
-  removed field. Chosen by measurement: it covers `generate`, `validate`
-  (`gen.ValidateGeneration` → `BuildTableContexts`) and lint/diff/graphql, and
-  the nested check reads `tc.Relationships`, so `validate` reports "names no
-  relationship". A CLI-side site would need three call-site hooks, would miss
-  direct gen entry and declared edges, and nulling `FKReference` would change
-  its other readers (reading).
-- **Declared relationships** (§13.4): same root cause, same file
-  (`mergeDeclaredRelationships`). `excludedDeclaredMember` checks `fk` (o2m on
-  the related table; o2o on the side `FKOnTarget` names) or a declared m2m's
-  `junction_local_fk` / `junction_reference_fk`, and the prototype returns an
-  **error** naming the column, §4.13 and §13.4, pending Q2.
-- Add a PRD §4.13 row for this case (inferred: warning and omit; declared:
-  error), adding text for an unspecified case. (`COMPOSITE_FK_RELATIONSHIPS.md`
-  §4.3, §4.9 and the §7 R1 evidence were corrected when this vet was recorded:
-  only O2M fails to compile.)
-- Tests (prototyped): gen
-  `TestRelationshipTargets_ExcludedKeyMemberDropsInferredEdge` (none, O2M, O2O
-  via `generation.exclude_columns`, M2M junction column with two warnings,
-  referenced column, `exclude_relationships` silence),
-  `TestRelationshipTargets_DeclaredExcludedLinkColumnErrors`, a "fk column
-  excluded" case in `TestRelationshipTargets_ChainedO2OIntoExcludedTableDropped`;
-  cli `TestGenerate_ExcludedFKColumnOmitsEdge` and
-  `TestValidate_NestedMutationOnExcludedFKEdge`; E2E: the entry's schema added
-  to the `postgres_stdlib` example (moved from `sqlite`, where GraphQL made the
-  churn about 5.9k lines).
-- **Pending the user's ruling:**
-  - **Q1.** R1 drops every shape, but its stated premise (does not compile)
-    holds only for O2M. Drop O2O and M2M edges with an excluded member too?
-    (a) Drop all shapes as R1 is worded (prototyped): a config that hides the
-    FK column today and uses a working `Profile.Users` / `Post.Tags` /
-    `Tag.Posts` loses those fields and gets a warning; one rule, shared with the
-    composite design §4.3. (b) Drop only O2M (inferred and declared), the shape
-    that does not compile; O2O and M2M keep working; two arms of
-    `excludedKeyMember` go; the composite design §4.3 / §4.9 / R1 get a
-    per-shape amendment. No golden churn either way. Vet recommends (a).
-  - **Q2.** A declared relationship whose link column `exclude_columns` removes:
-    (a) error naming the relationship and column (prototyped), matching §4.13's
-    rows for a declared edge with no generated entity or a non-column `fk`
-    ("the user declared the edge by name"); with Q1(a) no edge over a hidden FK
-    column can be kept. (b) warning and drop, as the entry first suggested; the
-    build passes silently minus the field. No golden churn either way. Vet
-    recommends (a); not auto-accepted, since it departs from the entry's text.
-- **The user ruled on 2026-10-21:** Q1 (a), drop every shape (O2M, O2O, M2M,
-  referenced column) with the warning; `exclude_columns` means "not in the
-  model", and `access: hidden` (PRD §32) is the tool for hiding a column while
-  keeping the edge. Q2 (a), a declared relationship over an excluded link
-  column is an error. Both are what the prototype implements, so its gates and
-  fail-first evidence below stand and the verdict moves to `ready` without a
-  second wave.
-- Prototype results, run at `bd7783ea` on 2026-10-21: reproduced with the
-  example probe harness (`examples/zz_probe_o2m`, the postgres example's go.mod,
-  `GOWORK=off`): `sqlgen validate` → "config and schema are valid" (exit 0);
-  `sqlgen generate` → "generated 8 files (2 tables, 0 views)"; `go build
-  ./models/...` → the two errors above, byte-identical; a declared `o2m` with
-  `fk: cycle_id` excluded → the same two errors; O2O and M2M build (exit 0).
-  With a `nested_mutations` entry on the edge, HEAD's `validate` already exits
-  2 (`relationship "Tasks" is not write-eligible: the traversed FK column
-  "cycle_id" is absent from the target's create input`); with the fix it
-  reports `"Tasks" names no relationship on this table (PRD §4.8)`. Gates:
-  `go test -race -count=1 ./gen/... ./cli/... ./config/...` ok;
-  `make update-golden` no churn; `make update-golden-e2e` only
-  `postgres_stdlib` (the new fixture); `TestE2EGoldenFiles` ok;
-  `golangci-lint run ./gen/... ./cli/...` 0 issues; `postgres_stdlib`
-  `GOWORK=off go test -race -count=1 ./...` ok (70 tests) and lint 0 issues.
-  Fail-first: inferred drop reverted → `…DropsInferredEdge/o2m_fk_column`
-  "cycles relationships = [\"Tasks\"], want []" (o2o, m2m, referenced_column
-  likewise), `TestGenerate_ExcludedFKColumnOmitsEdge` "Cycle fields mismatch …
-  + \"Tasks\"", `TestValidate_NestedMutationOnExcludedFKEdge` (stderr "is not
-  write-eligible"), `TestE2EGoldenFiles/postgres_stdlib` "file
-  \"client_gen.go\" differs from expected", and `postgres_stdlib` `go build`
-  "models/models_gen.go:9271:5: unknown field CycleID in struct literal of type
-  TaskFilter"; `findO2ORelationships` guard reverted →
-  `…ChainedO2OIntoExcludedTableDropped/fk_column_excluded` "profiles → users
-  chained joins = [\"Account\"], want []"; declared error reverted →
-  `…DeclaredExcludedLinkColumnErrors/o2m_fk_on_the_related_table` and
-  `/m2m_junction_column` "BuildTableContexts() error = <nil>, want it to
-  contain …"; referenced-column arm reverted → `…/referenced_column` fails.
-  Existing suite without the fix passes (`gen` 77s, `cli` 107s). Golden churn:
-  `postgres_stdlib` only, from the new fixture (`client_gen.go` +14,
-  `models_gen.go` +3472, `sorter_gen.go` +34, `tablenames_gen.go` +2, in both
-  `expected/` and `models/`); the fix itself churns no example, since none
-  excludes a column. Patch: `.claude/prototypes/FIX-358.patch` (14 files; source
-  and tests +383/-7, the rest regenerated `postgres_stdlib` goldens).
-
-**References.**
-- PRD §4.6 / §4.13 (`exclude_columns`), §5.3 (relationship detection), §13.4
-  (manual relationships).
-- `docs/design/COMPOSITE_FK_RELATIONSHIPS.md` §7 R1 (ruling on missing key
-  members).
-- `cmd/sqlgen/gen/relationship_targets.go:161-169` (`relationshipTargets.generates`,
-  the existing edge drop for tables that generate no entity), called at
-  `context_table.go:1411` (`buildRelationshipContexts`) and `:2656`
-  (`findO2ORelationships`). Corrected from `:84-106`, which only builds the
-  index.
-
-**Resolution notes.** _Filled in by /fix resolve._
-
 ### FIX-360
 
 - **Status:** Open
@@ -332,6 +186,176 @@ key. Confirmed by the vet; line refs and the quoted error are accurate at
 ## Resolved
 
 <!-- fixes:resolved:begin -->
+
+### FIX-358
+
+- **Status:** Resolved
+- **Severity:** tracked
+- **Origin:** phase 6, cmd/sqlgen/gen
+- **Surfaced by:** R1 probe of `docs/design/COMPOSITE_FK_RELATIONSHIPS.md` (2026-10-20), user approved filing
+- **Vetted:** ready at `bd7783ea` (2026-10-21)
+
+**Issue.** **An FK column removed by `exclude_columns` still yields its relationship; for an O2M edge the generated code does not compile.**
+Only the O2M shape (inferred or declared `o2m`) fails to build. An O2O
+(`profiles.user_id` excluded) and an M2M junction column (`post_tags.tag_id`
+excluded) generate, build and load correctly at `bd7783ea`: a SQLite runtime
+probe returned `o2o: Users = {ID:1 Name:ann}` and both tags on `Post.Tags`
+(corrected by the 2026-10-21 vet; the entry first implied every shape fails).
+Measured at `bd7783ea`, PostgreSQL, `source: files`, schema
+`CREATE TABLE cycles (id INT PRIMARY KEY, name TEXT NOT NULL); CREATE TABLE
+tasks (id INT PRIMARY KEY, title TEXT NOT NULL, cycle_id INT REFERENCES
+cycles(id));` with `tables: tasks: exclude_columns: [cycle_id]`. `sqlgen
+generate` succeeds and emits `Cycle.Tasks []*Task` plus its O2M loader, then
+`go build` fails:
+
+```
+models/models_gen.go:402:5: unknown field CycleID in struct literal of type TaskFilter
+models/models_gen.go:440:25: r.CycleID undefined (type *Task has no field or method CycleID)
+```
+
+**Root cause.** Column exclusion is applied only when gen builds a table's
+columns (`buildTableColumns`, `cmd/sqlgen/gen/context_table.go:309-320`).
+Relationship detection runs earlier, on the unfiltered schema
+(`parser.DetectRelationships` at `cmd/sqlgen/cli/pipeline.go:65`, also
+`generate.go:66` and `validate.go:80`), so the edge is detected from the FK
+column's `FKReference`. Nothing afterwards checks that the FK column, or the
+referenced column on the other table, survived exclusion before the loader,
+filter member and client wiring are emitted against it.
+
+**Suggested fix.**
+- Drop any inferred relationship whose FK column (O2O / O2M), junction column
+  (M2M), or referenced column is excluded on its table, and emit a warning
+  naming the table, the column and PRD §13.4. The ruling (2026-10-20,
+  `COMPOSITE_FK_RELATIONSHIPS.md` R1) is "every key member must be in the
+  generated model on both sides, else no edge and a warning". Whether that
+  holds for the O2O and M2M shapes, which work today, is pending Q1 below.
+- **Fix site: gen-side, in `cmd/sqlgen/gen/relationship_targets.go`** (vetted).
+  `relationshipTargets` also indexes each table's `exclude_columns` (global and
+  per-table); `excludedKeyMember` checks an inferred edge's FK column or
+  junction columns plus each column's `FKReference.Column` on the referenced
+  table. `buildRelationshipContexts` omits such an edge with the warning (an
+  edge already in `exclude_relationships` is skipped first, silently);
+  `findO2ORelationships` skips it silently so a chained O2O join cannot read a
+  removed field. Chosen by measurement: it covers `generate`, `validate`
+  (`gen.ValidateGeneration` → `BuildTableContexts`) and lint/diff/graphql, and
+  the nested check reads `tc.Relationships`, so `validate` reports "names no
+  relationship". A CLI-side site would need three call-site hooks, would miss
+  direct gen entry and declared edges, and nulling `FKReference` would change
+  its other readers (reading).
+- **Declared relationships** (§13.4): same root cause, same file
+  (`mergeDeclaredRelationships`). `excludedDeclaredMember` checks `fk` (o2m on
+  the related table; o2o on the side `FKOnTarget` names) or a declared m2m's
+  `junction_local_fk` / `junction_reference_fk`, and the prototype returns an
+  **error** naming the column, §4.13 and §13.4, pending Q2.
+- Add a PRD §4.13 row for this case (inferred: warning and omit; declared:
+  error), adding text for an unspecified case. (`COMPOSITE_FK_RELATIONSHIPS.md`
+  §4.3, §4.9 and the §7 R1 evidence were corrected when this vet was recorded:
+  only O2M fails to compile.)
+- Tests (prototyped): gen
+  `TestRelationshipTargets_ExcludedKeyMemberDropsInferredEdge` (none, O2M, O2O
+  via `generation.exclude_columns`, M2M junction column with two warnings,
+  referenced column, `exclude_relationships` silence),
+  `TestRelationshipTargets_DeclaredExcludedLinkColumnErrors`, a "fk column
+  excluded" case in `TestRelationshipTargets_ChainedO2OIntoExcludedTableDropped`;
+  cli `TestGenerate_ExcludedFKColumnOmitsEdge` and
+  `TestValidate_NestedMutationOnExcludedFKEdge`; E2E: the entry's schema added
+  to the `postgres_stdlib` example (moved from `sqlite`, where GraphQL made the
+  churn about 5.9k lines).
+- **Pending the user's ruling:**
+  - **Q1.** R1 drops every shape, but its stated premise (does not compile)
+    holds only for O2M. Drop O2O and M2M edges with an excluded member too?
+    (a) Drop all shapes as R1 is worded (prototyped): a config that hides the
+    FK column today and uses a working `Profile.Users` / `Post.Tags` /
+    `Tag.Posts` loses those fields and gets a warning; one rule, shared with the
+    composite design §4.3. (b) Drop only O2M (inferred and declared), the shape
+    that does not compile; O2O and M2M keep working; two arms of
+    `excludedKeyMember` go; the composite design §4.3 / §4.9 / R1 get a
+    per-shape amendment. No golden churn either way. Vet recommends (a).
+  - **Q2.** A declared relationship whose link column `exclude_columns` removes:
+    (a) error naming the relationship and column (prototyped), matching §4.13's
+    rows for a declared edge with no generated entity or a non-column `fk`
+    ("the user declared the edge by name"); with Q1(a) no edge over a hidden FK
+    column can be kept. (b) warning and drop, as the entry first suggested; the
+    build passes silently minus the field. No golden churn either way. Vet
+    recommends (a); not auto-accepted, since it departs from the entry's text.
+- **The user ruled on 2026-10-21:** Q1 (a), drop every shape (O2M, O2O, M2M,
+  referenced column) with the warning; `exclude_columns` means "not in the
+  model", and `access: hidden` (PRD §32) is the tool for hiding a column while
+  keeping the edge. Q2 (a), a declared relationship over an excluded link
+  column is an error. Both are what the prototype implements, so its gates and
+  fail-first evidence below stand and the verdict moves to `ready` without a
+  second wave.
+- Prototype results, run at `bd7783ea` on 2026-10-21: reproduced with the
+  example probe harness (`examples/zz_probe_o2m`, the postgres example's go.mod,
+  `GOWORK=off`): `sqlgen validate` → "config and schema are valid" (exit 0);
+  `sqlgen generate` → "generated 8 files (2 tables, 0 views)"; `go build
+  ./models/...` → the two errors above, byte-identical; a declared `o2m` with
+  `fk: cycle_id` excluded → the same two errors; O2O and M2M build (exit 0).
+  With a `nested_mutations` entry on the edge, HEAD's `validate` already exits
+  2 (`relationship "Tasks" is not write-eligible: the traversed FK column
+  "cycle_id" is absent from the target's create input`); with the fix it
+  reports `"Tasks" names no relationship on this table (PRD §4.8)`. Gates:
+  `go test -race -count=1 ./gen/... ./cli/... ./config/...` ok;
+  `make update-golden` no churn; `make update-golden-e2e` only
+  `postgres_stdlib` (the new fixture); `TestE2EGoldenFiles` ok;
+  `golangci-lint run ./gen/... ./cli/...` 0 issues; `postgres_stdlib`
+  `GOWORK=off go test -race -count=1 ./...` ok (70 tests) and lint 0 issues.
+  Fail-first: inferred drop reverted → `…DropsInferredEdge/o2m_fk_column`
+  "cycles relationships = [\"Tasks\"], want []" (o2o, m2m, referenced_column
+  likewise), `TestGenerate_ExcludedFKColumnOmitsEdge` "Cycle fields mismatch …
+  + \"Tasks\"", `TestValidate_NestedMutationOnExcludedFKEdge` (stderr "is not
+  write-eligible"), `TestE2EGoldenFiles/postgres_stdlib` "file
+  \"client_gen.go\" differs from expected", and `postgres_stdlib` `go build`
+  "models/models_gen.go:9271:5: unknown field CycleID in struct literal of type
+  TaskFilter"; `findO2ORelationships` guard reverted →
+  `…ChainedO2OIntoExcludedTableDropped/fk_column_excluded` "profiles → users
+  chained joins = [\"Account\"], want []"; declared error reverted →
+  `…DeclaredExcludedLinkColumnErrors/o2m_fk_on_the_related_table` and
+  `/m2m_junction_column` "BuildTableContexts() error = <nil>, want it to
+  contain …"; referenced-column arm reverted → `…/referenced_column` fails.
+  Existing suite without the fix passes (`gen` 77s, `cli` 107s). Golden churn:
+  `postgres_stdlib` only, from the new fixture (`client_gen.go` +14,
+  `models_gen.go` +3472, `sorter_gen.go` +34, `tablenames_gen.go` +2, in both
+  `expected/` and `models/`); the fix itself churns no example, since none
+  excludes a column. Patch: `.claude/prototypes/FIX-358.patch` (14 files; source
+  and tests +383/-7, the rest regenerated `postgres_stdlib` goldens).
+
+**References.**
+- PRD §4.6 / §4.13 (`exclude_columns`), §5.3 (relationship detection), §13.4
+  (manual relationships).
+- `docs/design/COMPOSITE_FK_RELATIONSHIPS.md` §7 R1 (ruling on missing key
+  members).
+- `cmd/sqlgen/gen/relationship_targets.go:176-179` (`relationshipTargets.generates`,
+  the existing edge drop for tables that generate no entity), called at
+  `context_table.go:1414` (`buildRelationshipContexts`) and `:2680`
+  (`findO2ORelationships`). Corrected from `:84-106`, which only builds the
+  index.
+
+**Resolution notes.** Landed the vetted prototype (2026-10-21). Its source
+files were fresh at `2ae215f8`, so the source and test hunks applied clean;
+the `postgres_stdlib` goldens were regenerated rather than taken from the patch.
+`relationshipTargets` indexes each table's merged `exclude_columns`;
+`excludedKeyMember` drops an FK-inferred O2O / O2M / M2M edge whose FK column,
+junction column or referenced column is excluded, with a warning naming the
+table, edge and column (`buildRelationshipContexts`), and silently in
+`findO2ORelationships`; `excludedDeclaredMember` makes a declared edge over an
+excluded `fk` or junction column an error. Added the PRD §4.13 row
+("`exclude_columns` removes a relationship's link column"), a phase-3 mention
+and an edge-case bullet, none of which the prototype carried. Inline: dropped
+the design-decision label from two comments; from `/verify`, corrected the
+`excludedDeclaredMember` comment (a declared `fk` joins the other side's key),
+made the inferred warning cite PRD §4.13 as well as §13.4, added a has-one
+declared O2O case (the `FKOnTarget` arm; fails with the arm reverted), wrote
+the §4.13 row's escape hatch as `column_map.<col>.access: hidden`, put the
+`COMPOSITE_FK_RELATIONSHIPS.md` §4.3, §4.9, R1 and findings-table sentences
+into the past tense, and refreshed this entry's References line refs. Gates: `make check` ok;
+`make check-examples` ok. Fail-first on the final code: guards reverted →
+the seven `…ExcludedKeyMember…` / `…DeclaredExcluded…` / `…ChainedO2O…/fk_column_excluded`
+subtests and both cli tests fail as the entry records, and `postgres_stdlib`
+`go build` → "models/models_gen.go:9325:6: unknown field CycleID in struct
+literal of type TaskFilter". Golden churn matches the vet: `postgres_stdlib`
+only, from the new fixture (`client_gen.go` +14, `models_gen.go` +3472,
+`sorter_gen.go` +34, `tablenames_gen.go` +2, in `expected/` and `models/`).
 
 ### FIX-359
 

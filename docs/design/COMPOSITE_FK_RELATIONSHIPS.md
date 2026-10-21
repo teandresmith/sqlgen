@@ -261,11 +261,11 @@ Two existing rules extend to every member rather than adding pinned kinds (R1):
 - **Every member must be in the generated model on both sides.** An edge with a member
   removed by `exclude_columns`, on the child or the parent, gives no edge and a warning
   naming the column and §13.4; a manual relationship over an excluded link column is an
-  error, since the user declared it by name. Today an excluded single-column FK still
-  yields its edge: an O2M one does not compile, while O2O and M2M edges build and load
+  error, since the user declared it by name. Before FIX-358 an excluded single-column FK still
+  yielded its edge: an O2M one did not compile, while O2O and M2M edges built and loaded
   (measured, FIX-358 vet). The rule drops every shape anyway (ruled 2026-10-21 under
   FIX-358): `exclude_columns` means "not in the model", and `access: hidden` (PRD §32) hides
-  a column while keeping its edge. FIX-358 lands this rule for N = 1.
+  a column while keeping its edge. FIX-358 landed this rule for N = 1.
 
 ### 4.4 Reads
 
@@ -420,8 +420,8 @@ Intended changes in output for N = 1, all on schemas no example has:
   schemas become regression tests there.
 - **A SQLite single-column FK to a non-key column** loses its edge and gains a warning
   (§4.2 rule 1). Measured: today it emits `O2M workspaces->cycles` via `workspace_slug`.
-- **An excluded FK column** loses its edge (§4.3), landed early by FIX-358. An O2M one does
-  not compile today; an O2O or M2M one works today and is dropped by ruling.
+- **An excluded FK column** loses its edge (§4.3), landed early by FIX-358. Before it, an O2M one
+  did not compile; O2O and M2M ones worked and are dropped by ruling.
 
 ## 5. What this does not cover
 
@@ -509,7 +509,7 @@ Each ruling followed a measured probe (§9.4) and took the recommended option.
 
 | # | Question | Ruling | Evidence |
 |---|---|---|---|
-| R1 | Is the pinned set complete? | **Yes: tenant column, child-PK members, members shared with another FK.** Plus E1 over every non-tenant member, and every member must be in the generated model on both sides or the edge is dropped with a warning (§4.3). | PG 17: writing the tenant column moved a task to workspace 2 while its project stayed in 1; a shared member raised a raw FK error when the other edge was linked and silently moved the row when it was NULL; a PK member re-keyed the row. A generated member cannot be written. An excluded FK column yields its edge today; an O2M one does not compile (FIX-358; O2O and M2M build, and the FIX-358 ruling drops them too). |
+| R1 | Is the pinned set complete? | **Yes: tenant column, child-PK members, members shared with another FK.** Plus E1 over every non-tenant member, and every member must be in the generated model on both sides or the edge is dropped with a warning (§4.3). | PG 17: writing the tenant column moved a task to workspace 2 while its project stayed in 1; a shared member raised a raw FK error when the other edge was linked and silently moved the row when it was NULL; a PK member re-keyed the row. A generated member cannot be written. An excluded FK column yielded its edge before FIX-358; an O2M one did not compile (FIX-358; O2O and M2M built, and the FIX-358 ruling drops them too). |
 | R2 | MATCH semantics | **Record `Constraint.Match` on PostgreSQL only; MySQL and SQLite are always SIMPLE. Under FULL, disconnect only when every member is free and nullable** (§4.5). | Only PG enforces FULL. MySQL parses it, reports it in `MATCH_OPTION` and ignores it; SQLite ignores it and reports `NONE`. PG accepts an all-NULL FULL key, refuses a mixed one. |
 | R3 | Composite-PK parents and targets (E1, E3) | **Next phase.** This phase gives them every read surface (§4.5). | GraphQL has no composite-key input type; `<T>PK` with opaque fields is not a map key; E1 already refuses the writes, so deferring breaks nothing; no consumer needs it. |
 | R4 | Chunk loader IN lists? | **Yes, at `floor(maxParams / 2 / N)`, every loader step; PRD §25.1 "one query per edge per chunk". N = 1 first as FIX-359** (§4.4). | Today's loaders already fail: SQLite > 32766 parents, MySQL > 65535, every M2M junction on pgx. A hand-chunked loader returned 40000 parents correctly; a chunk of 32766 failed with a one-parameter consumer filter, so the headroom is needed. |
@@ -569,7 +569,7 @@ replaces it (§3).
 | A single-column FK to a non-PK column (UNIQUE, or the PK-override form) generates a loader that does not compile | Measured by the FIX-358 vet (§4.9); folded into N.4 / N.5 with both schemas as regression tests |
 | Under option A, a tenant junction with two composite FKs and no single-column FK on the tenant column becomes M2M, with a three-column junction key that M2M disconnect cannot handle | Reading only; one reason A is not recommended |
 | MySQL is marked as lacking tuple IN (`sql/mysql.go:103`) | Measured: it works, and OR-of-ANDs is up to 1000× slower (§4.8); flipped in N.1 |
-| An FK column removed by `exclude_columns` still yields its edge; an O2M one does not compile | Measured; FIX-358 |
+| An FK column removed by `exclude_columns` still yielded its edge; an O2M one did not compile | Fixed, FIX-358 |
 | Excluding a table's only PK column passes `validate` and crashes `generate` (`index .PKColumns 0`) | Measured; FIX-360 |
 | Relationship loaders fail past the dialect's bind limit (O2M on SQLite and MySQL, every M2M junction including pgx) | Measured; FIX-359 |
 

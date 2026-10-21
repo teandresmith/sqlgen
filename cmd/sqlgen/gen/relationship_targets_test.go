@@ -474,7 +474,9 @@ func TestRelationshipTargets_DuplicateDeclaredEdgeBySpelling(t *testing.T) {
 // (findO2ORelationships), and an FK-inferred one into an excluded table must be
 // dropped there too, or the chained join is emitted typed as a struct that does
 // not exist. A PK-less target is caught earlier, by the join builder's own PK
-// check, so the excluded shape is the one that reaches this guard.
+// check, so the excluded shape is the one that reaches this guard. A chained
+// edge whose FK column `exclude_columns` removes is dropped there too, since
+// the target's struct has no field for it.
 func TestRelationshipTargets_ChainedO2OIntoExcludedTableDropped(t *testing.T) {
 	schema := func() *parser.Schema {
 		return &parser.Schema{
@@ -498,15 +500,18 @@ func TestRelationshipTargets_ChainedO2OIntoExcludedTableDropped(t *testing.T) {
 	tests := []struct {
 		name        string
 		exclude     []string
+		excludeCols []string
 		wantChained []string
 	}{
-		{"target generates", nil, []string{"Account"}},
-		{"target excluded", []string{"accounts"}, nil},
+		{"target generates", nil, nil, []string{"Account"}},
+		{"target excluded", []string{"accounts"}, nil, nil},
+		{"fk column excluded", nil, []string{"account_id"}, nil},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			input := testInput(schema())
 			input.Config.ExcludeTables = tt.exclude
+			input.Config.Tables["users"] = config.TableConfig{ExcludeColumns: tt.excludeCols}
 			contexts, err := gen.BuildTableContexts(input, nil)
 			if err != nil {
 				t.Fatalf("BuildTableContexts() error: %v", err)
@@ -750,5 +755,214 @@ func TestRelationshipTargets_M2MJunctionReferenceGoType(t *testing.T) {
 	if r.FKGoType != "string" || r.JunctionReferenceGoType != "*string" {
 		t.Errorf("users.Tags FKGoType = %q, JunctionReferenceGoType = %q; want %q, %q",
 			r.FKGoType, r.JunctionReferenceGoType, "string", "*string")
+	}
+}
+
+// excludedMemberSchema: tasks → cycles is O2M, profiles → users is O2O, and
+// posts ↔ tags is M2M through post_tags. Every FK references its parent's id.
+func excludedMemberSchema() *parser.Schema {
+	ref := func(table string) *parser.FKReference {
+		return &parser.FKReference{Schema: "public", Table: table, Column: "id"}
+	}
+	return &parser.Schema{
+		Tables: []parser.Table{
+			{Name: "cycles", Schema: "public", Columns: []parser.Column{
+				{Name: "id", Type: "integer", PrimaryKey: true},
+				{Name: "code", Type: "text", Unique: true},
+			}},
+			{Name: "tasks", Schema: "public", Columns: []parser.Column{
+				{Name: "id", Type: "integer", PrimaryKey: true},
+				{Name: "cycle_id", Type: "integer", Nullable: true, FKReference: ref("cycles")},
+			}},
+			{Name: "users", Schema: "public", Columns: []parser.Column{{Name: "id", Type: "integer", PrimaryKey: true}}},
+			{Name: "profiles", Schema: "public", Columns: []parser.Column{
+				{Name: "id", Type: "integer", PrimaryKey: true},
+				{Name: "user_id", Type: "integer", Unique: true, FKReference: ref("users")},
+			}},
+			{Name: "posts", Schema: "public", Columns: []parser.Column{{Name: "id", Type: "integer", PrimaryKey: true}}},
+			{Name: "tags", Schema: "public", Columns: []parser.Column{{Name: "id", Type: "integer", PrimaryKey: true}}},
+			{Name: "post_tags", Schema: "public", Columns: []parser.Column{
+				{Name: "post_id", Type: "integer", PrimaryKey: true, FKReference: ref("posts")},
+				{Name: "tag_id", Type: "integer", PrimaryKey: true, FKReference: ref("tags")},
+			}},
+		},
+		Relationships: []parser.Relationship{
+			{Name: "tasks", BaseName: "tasks", SourceTable: "public.cycles", TargetTable: "public.tasks", Type: parser.OneToMany, FKColumn: "cycle_id"},
+			{Name: "users", BaseName: "users", SourceTable: "public.profiles", TargetTable: "public.users", Type: parser.OneToOne, FKColumn: "user_id"},
+			{
+				Name: "tags", BaseName: "tags", SourceTable: "public.posts", TargetTable: "public.tags", Type: parser.ManyToMany,
+				JunctionTable: "public.post_tags", JunctionLocalFK: "post_id", JunctionReferenceFK: "tag_id",
+			},
+			{
+				Name: "posts", BaseName: "posts", SourceTable: "public.tags", TargetTable: "public.posts", Type: parser.ManyToMany,
+				JunctionTable: "public.post_tags", JunctionLocalFK: "tag_id", JunctionReferenceFK: "post_id",
+			},
+		},
+	}
+}
+
+// omittedWarning is the warning an FK-inferred edge with an excluded key
+// column is omitted with.
+func omittedWarning(table, edge, column string) string {
+	return "tables." + table + ": the foreign-key-inferred relationship \"" + edge +
+		"\" is omitted because its key column " + column + " is removed by `exclude_columns`." +
+		" Keep the column to keep the edge, or list \"" + edge + "\" in `exclude_relationships` (PRD §4.13, §13.4)."
+}
+
+// An FK-inferred edge whose FK column, junction column or referenced column
+// `exclude_columns` removes is omitted with a warning naming the column. An
+// emitted O2M loader and filter would name a field the target struct does not
+// have, and the generated package would not compile.
+func TestRelationshipTargets_ExcludedKeyMemberDropsInferredEdge(t *testing.T) {
+	tests := []struct {
+		name         string
+		mutate       func(*config.RootConfig)
+		wantFields   map[string][]string
+		wantWarnings []string
+	}{
+		{
+			name:       "nothing excluded",
+			wantFields: map[string][]string{"cycles": {"Tasks"}, "profiles": {"Users"}, "posts": {"Tags"}, "tags": {"Posts"}},
+		},
+		{
+			name: "o2m fk column",
+			mutate: func(cfg *config.RootConfig) {
+				cfg.Tables["tasks"] = config.TableConfig{ExcludeColumns: []string{"cycle_id"}}
+			},
+			wantFields:   map[string][]string{"cycles": nil, "profiles": {"Users"}, "posts": {"Tags"}, "tags": {"Posts"}},
+			wantWarnings: []string{omittedWarning("public.cycles", "tasks", "public.tasks.cycle_id")},
+		},
+		{
+			name:         "o2o fk column, through generation.exclude_columns",
+			mutate:       func(cfg *config.RootConfig) { cfg.Generation.ExcludeColumns = []string{"user_id"} },
+			wantFields:   map[string][]string{"cycles": {"Tasks"}, "profiles": nil, "posts": {"Tags"}, "tags": {"Posts"}},
+			wantWarnings: []string{omittedWarning("public.profiles", "users", "public.profiles.user_id")},
+		},
+		{
+			name: "m2m junction column",
+			mutate: func(cfg *config.RootConfig) {
+				cfg.Tables["post_tags"] = config.TableConfig{ExcludeColumns: []string{"tag_id"}}
+			},
+			wantFields: map[string][]string{"cycles": {"Tasks"}, "profiles": {"Users"}, "posts": nil, "tags": nil},
+			wantWarnings: []string{
+				omittedWarning("public.posts", "tags", "public.post_tags.tag_id"),
+				omittedWarning("public.tags", "posts", "public.post_tags.tag_id"),
+			},
+		},
+		{
+			name: "referenced column",
+			mutate: func(cfg *config.RootConfig) {
+				cfg.Tables["cycles"] = config.TableConfig{
+					ExcludeColumns: []string{"id"},
+					PrimaryKey:     &config.TablePrimaryKeyConfig{Columns: []string{"code"}},
+				}
+			},
+			wantFields:   map[string][]string{"cycles": nil, "profiles": {"Users"}, "posts": {"Tags"}, "tags": {"Posts"}},
+			wantWarnings: []string{omittedWarning("public.cycles", "tasks", "public.cycles.id")},
+		},
+		{
+			name: "edge also listed in exclude_relationships",
+			mutate: func(cfg *config.RootConfig) {
+				cfg.Tables["tasks"] = config.TableConfig{ExcludeColumns: []string{"cycle_id"}}
+				cfg.Tables["cycles"] = config.TableConfig{ExcludeRelationships: []string{"tasks"}}
+			},
+			wantFields: map[string][]string{"cycles": nil, "profiles": {"Users"}, "posts": {"Tags"}, "tags": {"Posts"}},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			input := testInput(excludedMemberSchema())
+			if tt.mutate != nil {
+				tt.mutate(input.Config)
+			}
+			contexts, err := gen.BuildTableContexts(input, nil)
+			if err != nil {
+				t.Fatalf("BuildTableContexts() error: %v", err)
+			}
+			for table, want := range tt.wantFields {
+				i := slices.IndexFunc(contexts, func(tc gen.TableContext) bool { return tc.TableName == table })
+				if i < 0 {
+					t.Fatalf("BuildTableContexts(): %s context not built", table)
+				}
+				var got []string
+				for _, r := range contexts[i].Relationships {
+					got = append(got, r.FieldName)
+				}
+				if !slices.Equal(got, want) {
+					t.Errorf("BuildTableContexts(): %s relationships = %q, want %q", table, got, want)
+				}
+			}
+			var warnings []string
+			for _, w := range input.Warnings {
+				if strings.Contains(w, "exclude_columns") {
+					warnings = append(warnings, w)
+				}
+			}
+			if !slices.Equal(warnings, tt.wantWarnings) {
+				t.Errorf("BuildTableContexts() warnings = %q, want %q", warnings, tt.wantWarnings)
+			}
+		})
+	}
+}
+
+// A declared relationship whose link column `exclude_columns` removes is an
+// error naming the column, since the user asked for the edge by name (PRD
+// §4.13).
+func TestRelationshipTargets_DeclaredExcludedLinkColumnErrors(t *testing.T) {
+	tests := []struct {
+		name    string
+		rel     config.TableRelationship
+		exclude map[string][]string
+		wantErr string // "" for no error
+	}{
+		{
+			name:    "o2m fk on the related table",
+			rel:     config.TableRelationship{Name: "Tasks", Type: "o2m", Table: "tasks", FK: "cycle_id"},
+			exclude: map[string][]string{"tasks": {"cycle_id"}},
+			wantErr: `tables.public.cycles.relationships: "Tasks" links through public.tasks.cycle_id, which ` + "`exclude_columns`" + ` removes from the generated model; keep the column or remove the relationship (PRD §4.13, §13.4)`,
+		},
+		{
+			name:    "o2o fk on the related table",
+			rel:     config.TableRelationship{Name: "LatestTask", Type: "o2o", Table: "tasks", FK: "cycle_id"},
+			exclude: map[string][]string{"tasks": {"cycle_id"}},
+			wantErr: `tables.public.cycles.relationships: "LatestTask" links through public.tasks.cycle_id, which ` + "`exclude_columns`" + ` removes`,
+		},
+		{
+			name:    "o2m fk kept",
+			rel:     config.TableRelationship{Name: "Tasks", Type: "o2m", Table: "tasks", FK: "cycle_id"},
+			exclude: map[string][]string{"cycles": {"code"}},
+		},
+		{
+			name: "m2m junction column",
+			rel: config.TableRelationship{
+				Name: "LinkedPosts", Type: "m2m", Table: "posts",
+				Junction: "post_tags", JunctionLocalFK: "tag_id", JunctionReferenceFK: "post_id",
+			},
+			exclude: map[string][]string{"post_tags": {"tag_id"}},
+			wantErr: `tables.public.cycles.relationships: "LinkedPosts" links through public.post_tags.tag_id, which ` + "`exclude_columns`" + ` removes`,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			schema := excludedMemberSchema()
+			schema.Relationships = nil
+			input := testInput(schema)
+			for table, cols := range tt.exclude {
+				input.Config.Tables[table] = config.TableConfig{ExcludeColumns: cols}
+			}
+			cycles := input.Config.Tables["cycles"]
+			cycles.Relationships = []config.TableRelationship{tt.rel}
+			input.Config.Tables["cycles"] = cycles
+			_, err := gen.BuildTableContexts(input, nil)
+			if tt.wantErr == "" {
+				if err != nil {
+					t.Fatalf("BuildTableContexts() error: %v", err)
+				}
+				return
+			}
+			if err == nil || !strings.Contains(err.Error(), tt.wantErr) {
+				t.Fatalf("BuildTableContexts() error = %v, want it to contain %q", err, tt.wantErr)
+			}
+		})
 	}
 }

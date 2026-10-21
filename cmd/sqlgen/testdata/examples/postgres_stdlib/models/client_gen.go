@@ -64,6 +64,7 @@ type Client struct {
 	auditUser       *auditUserClient
 	category        *categoryClient
 	categoryStat    *categoryStatClient
+	cycle           *cycleClient
 	event           *eventClient
 	order           *orderClient
 	orderItem       *orderItemClient
@@ -73,6 +74,7 @@ type Client struct {
 	profile         *profileClient
 	publicUser      *publicUserClient
 	tag             *tagClient
+	task            *taskClient
 	userCategory    *userCategoryClient
 	warehouse       *warehouseClient
 	warehouseRole   *warehouseRoleClient
@@ -95,6 +97,7 @@ func New(querier database.Querier, opts ...ClientOption) *Client {
 		auditUser:       newAuditUserClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler),
 		category:        newCategoryClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler),
 		categoryStat:    newCategoryStatClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler),
+		cycle:           newCycleClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler),
 		event:           newEventClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler),
 		order:           newOrderClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler),
 		orderItem:       newOrderItemClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler),
@@ -104,6 +107,7 @@ func New(querier database.Querier, opts ...ClientOption) *Client {
 		profile:         newProfileClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler),
 		publicUser:      newPublicUserClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler),
 		tag:             newTagClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler),
+		task:            newTaskClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler),
 		userCategory:    newUserCategoryClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler),
 		warehouse:       newWarehouseClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler),
 		warehouseRole:   newWarehouseRoleClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler),
@@ -155,6 +159,11 @@ func (c *Client) CategoryStat() CategoryStatClient {
 	return c.categoryStat
 }
 
+// Cycles returns the CycleClient for Cycle operations.
+func (c *Client) Cycles() CycleClient {
+	return c.cycle
+}
+
 // Events returns the EventClient for Event operations.
 func (c *Client) Events() EventClient {
 	return c.event
@@ -198,6 +207,11 @@ func (c *Client) PublicUsers() PublicUserClient {
 // Tags returns the TagClient for Tag operations.
 func (c *Client) Tags() TagClient {
 	return c.tag
+}
+
+// Tasks returns the TaskClient for Task operations.
+func (c *Client) Tasks() TaskClient {
+	return c.task
 }
 
 // UserCategories returns the UserCategoryClient for UserCategory operations.

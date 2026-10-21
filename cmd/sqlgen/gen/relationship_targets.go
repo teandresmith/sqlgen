@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/teandresmith/sqlgen/cmd/sqlgen/config"
+	"github.com/teandresmith/sqlgen/parser"
 )
 
 // relationshipTargets indexes the entities a relationship may point at — every
@@ -37,6 +38,7 @@ type relationshipTargets struct {
 	bare      map[string]relationshipTarget // "name" → the entity, when one entity has the name
 	ambiguous map[string][]string           // bare name → the schemas of every entity answering to it
 	schemas   map[string][]string           // bare name → the schema of every parsed entity with the name
+	excluded  map[string]map[string]bool    // "schema.name" → the columns `exclude_columns` removes from the table
 }
 
 // relationshipTarget is the entity a relationship's target name resolves to.
@@ -59,6 +61,7 @@ func newRelationshipTargets(input *GenerateInput, collisions map[string]bool) *r
 		bare:      make(map[string]relationshipTarget),
 		ambiguous: make(map[string][]string),
 		schemas:   make(map[string][]string),
+		excluded:  make(map[string]map[string]bool),
 	}
 	// add records one parsed entity; structName is "" when it generates nothing.
 	add := func(schema, name, structName string) {
@@ -81,13 +84,20 @@ func newRelationshipTargets(input *GenerateInput, collisions map[string]bool) *r
 	cfg := input.Config
 	for i := range input.Schema.Tables {
 		table := &input.Schema.Tables[i]
+		tableCfg := resolveTableConfig(cfg.Tables, table.Schema, table.Name)
+		if cols := config.ResolveTableExcludeColumns(tableCfg, cfg.Generation); len(cols) > 0 {
+			set := make(map[string]bool, len(cols))
+			for _, c := range cols {
+				set[c] = true
+			}
+			t.excluded[qualifiedTableOrName(table)] = set
+		}
 		_, excluded := config.MatchExcludeTablePattern(table.Name, table.Schema, cfg.ExcludeTables)
 		if excluded || !tableHasResolvedPK(cfg, table) {
 			add(table.Schema, table.Name, "")
 			continue
 		}
-		override := resolveTableConfig(cfg.Tables, table.Schema, table.Name).StructName
-		add(table.Schema, table.Name, structNameFor(table.Name, table.Schema, override, collisions))
+		add(table.Schema, table.Name, structNameFor(table.Name, table.Schema, tableCfg.StructName, collisions))
 	}
 	for i := range input.Schema.Views {
 		view := &input.Schema.Views[i]
@@ -166,6 +176,80 @@ func (t *relationshipTargets) resolveJunction(junction string) (schema, name str
 func (t *relationshipTargets) generates(qualifiedTarget string) bool {
 	_, res := t.resolve(splitQualifiedName(qualifiedTarget))
 	return res == targetGenerated
+}
+
+// excludedKeyMember returns the first key column of an FK-inferred edge that
+// `exclude_columns` removes, spelled "table.column", or "" when there is none.
+// The members are the FK column (an M2M junction's two) and the column each
+// one references. Every member must be in the generated model on both sides,
+// or the edge is omitted with a warning (COMPOSITE_FK_RELATIONSHIPS.md §4.3).
+func (t *relationshipTargets) excludedKeyMember(schema *parser.Schema, r parser.Relationship) string {
+	var holder string
+	var cols []string
+	switch r.Type {
+	case parser.OneToMany:
+		holder, cols = r.TargetTable, []string{r.FKColumn}
+	case parser.OneToOne:
+		holder, cols = r.SourceTable, []string{r.FKColumn}
+	case parser.ManyToMany:
+		holder, cols = r.JunctionTable, []string{r.JunctionLocalFK, r.JunctionReferenceFK}
+	}
+	hSchema, hName := splitQualifiedName(holder)
+	table := findSchemaTable(schema, hSchema, hName)
+	if table == nil {
+		return ""
+	}
+	for _, name := range cols {
+		if member := t.excludedColumn(table, name); member != "" {
+			return member
+		}
+		col := parser.ColumnByName(table, name)
+		if col == nil || col.FKReference == nil || col.FKReference.Column == "" {
+			continue
+		}
+		if ref := findSchemaTable(schema, col.FKReference.Schema, col.FKReference.Table); ref != nil {
+			if member := t.excludedColumn(ref, col.FKReference.Column); member != "" {
+				return member
+			}
+		}
+	}
+	return ""
+}
+
+// excludedDeclaredMember is excludedKeyMember for a declared relationship: its
+// `fk` on the table that holds it, or an M2M's junction columns. A declared
+// `fk` joins the primary key on the other side, so only the link columns are
+// checked.
+func (t *relationshipTargets) excludedDeclaredMember(schema *parser.Schema, rel RelationshipContext, source string) string {
+	holder, cols := source, []string{rel.FKColumn}
+	switch {
+	case rel.Type == parser.ManyToMany:
+		holder = qualifiedTableName(rel.JunctionSchema, rel.JunctionTable)
+		cols = []string{rel.JunctionLocalFK, rel.JunctionReferenceFK}
+	case rel.Type == parser.OneToMany || rel.FKOnTarget:
+		holder = qualifiedTableName(rel.TargetSchema, rel.TargetTable)
+	}
+	hSchema, hName := splitQualifiedName(holder)
+	table := findSchemaTable(schema, hSchema, hName)
+	if table == nil {
+		return ""
+	}
+	for _, name := range cols {
+		if member := t.excludedColumn(table, name); member != "" {
+			return member
+		}
+	}
+	return ""
+}
+
+// excludedColumn returns "table.column" when `exclude_columns` removes the
+// column from table, else "".
+func (t *relationshipTargets) excludedColumn(table *parser.Table, name string) string {
+	key := qualifiedTableOrName(table)
+	if name == "" || !t.excluded[key][name] {
+		return ""
+	}
+	return key + "." + name
 }
 
 // checkDeclaredTarget rejects a declared relationship whose `table:` does not

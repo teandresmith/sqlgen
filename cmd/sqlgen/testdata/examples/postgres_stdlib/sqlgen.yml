@@ -85,3 +85,7 @@ tables:
         text:
           type: ksuid.KSUID
           import: github.com/segmentio/ksuid
+  # The FK column is excluded, so Cycle gets no Tasks edge: its loader would
+  # read a CycleID field Task does not have.
+  tasks:
+    exclude_columns: [cycle_id]
