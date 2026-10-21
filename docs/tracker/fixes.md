@@ -29,8 +29,14 @@
 - **Severity:** tracked
 - **Origin:** phase 6, cmd/sqlgen/gen
 - **Surfaced by:** R1 probe of `docs/design/COMPOSITE_FK_RELATIONSHIPS.md` (2026-10-20), user approved filing
+- **Vetted:** ready at `bd7783ea` (2026-10-21)
 
-**Issue.** **An FK column removed by `exclude_columns` still yields its relationship, and the generated code does not compile.**
+**Issue.** **An FK column removed by `exclude_columns` still yields its relationship; for an O2M edge the generated code does not compile.**
+Only the O2M shape (inferred or declared `o2m`) fails to build. An O2O
+(`profiles.user_id` excluded) and an M2M junction column (`post_tags.tag_id`
+excluded) generate, build and load correctly at `bd7783ea`: a SQLite runtime
+probe returned `o2o: Users = {ID:1 Name:ann}` and both tags on `Post.Tags`
+(corrected by the 2026-10-21 vet; the entry first implied every shape fails).
 Measured at `bd7783ea`, PostgreSQL, `source: files`, schema
 `CREATE TABLE cycles (id INT PRIMARY KEY, name TEXT NOT NULL); CREATE TABLE
 tasks (id INT PRIMARY KEY, title TEXT NOT NULL, cycle_id INT REFERENCES
@@ -53,31 +59,113 @@ referenced column on the other table, survived exclusion before the loader,
 filter member and client wiring are emitted against it.
 
 **Suggested fix.**
-- Drop any relationship whose FK column (O2O / O2M), junction column (M2M), or
-  referenced column is excluded on its table, and emit a warning naming the
-  table, the column and PRD §13.4. The ruling (2026-10-20,
+- Drop any inferred relationship whose FK column (O2O / O2M), junction column
+  (M2M), or referenced column is excluded on its table, and emit a warning
+  naming the table, the column and PRD §13.4. The ruling (2026-10-20,
   `COMPOSITE_FK_RELATIONSHIPS.md` R1) is "every key member must be in the
-  generated model on both sides, else no edge and a warning".
-- A natural site is beside the relationship-target filtering in
-  `cmd/sqlgen/gen/relationship_targets.go`, which already drops edges into
-  tables that generate no entity; or mark excluded columns before
-  `DetectRelationships` in `cmd/sqlgen/cli/pipeline.go`. The vet should pick
-  the site that also covers `validate`, so a `nested_mutations` entry naming
-  the dropped edge reports "names no relationship" instead of passing.
-- Config-declared relationships (§13.4) whose `fk` names an excluded column
-  should get the same treatment: today `markSyntheticFK` would stamp a column
-  gen never emits.
-- Tests: a gen unit test for each shape (O2M, O2O, M2M junction column,
-  excluded referenced column) asserting no edge and the warning; an E2E
-  generate-and-build of the schema above.
+  generated model on both sides, else no edge and a warning". Whether that
+  holds for the O2O and M2M shapes, which work today, is pending Q1 below.
+- **Fix site: gen-side, in `cmd/sqlgen/gen/relationship_targets.go`** (vetted).
+  `relationshipTargets` also indexes each table's `exclude_columns` (global and
+  per-table); `excludedKeyMember` checks an inferred edge's FK column or
+  junction columns plus each column's `FKReference.Column` on the referenced
+  table. `buildRelationshipContexts` omits such an edge with the warning (an
+  edge already in `exclude_relationships` is skipped first, silently);
+  `findO2ORelationships` skips it silently so a chained O2O join cannot read a
+  removed field. Chosen by measurement: it covers `generate`, `validate`
+  (`gen.ValidateGeneration` → `BuildTableContexts`) and lint/diff/graphql, and
+  the nested check reads `tc.Relationships`, so `validate` reports "names no
+  relationship". A CLI-side site would need three call-site hooks, would miss
+  direct gen entry and declared edges, and nulling `FKReference` would change
+  its other readers (reading).
+- **Declared relationships** (§13.4): same root cause, same file
+  (`mergeDeclaredRelationships`). `excludedDeclaredMember` checks `fk` (o2m on
+  the related table; o2o on the side `FKOnTarget` names) or a declared m2m's
+  `junction_local_fk` / `junction_reference_fk`, and the prototype returns an
+  **error** naming the column, §4.13 and §13.4, pending Q2.
+- Add a PRD §4.13 row for this case (inferred: warning and omit; declared:
+  error), adding text for an unspecified case. (`COMPOSITE_FK_RELATIONSHIPS.md`
+  §4.3, §4.9 and the §7 R1 evidence were corrected when this vet was recorded:
+  only O2M fails to compile.)
+- Tests (prototyped): gen
+  `TestRelationshipTargets_ExcludedKeyMemberDropsInferredEdge` (none, O2M, O2O
+  via `generation.exclude_columns`, M2M junction column with two warnings,
+  referenced column, `exclude_relationships` silence),
+  `TestRelationshipTargets_DeclaredExcludedLinkColumnErrors`, a "fk column
+  excluded" case in `TestRelationshipTargets_ChainedO2OIntoExcludedTableDropped`;
+  cli `TestGenerate_ExcludedFKColumnOmitsEdge` and
+  `TestValidate_NestedMutationOnExcludedFKEdge`; E2E: the entry's schema added
+  to the `postgres_stdlib` example (moved from `sqlite`, where GraphQL made the
+  churn about 5.9k lines).
+- **Pending the user's ruling:**
+  - **Q1.** R1 drops every shape, but its stated premise (does not compile)
+    holds only for O2M. Drop O2O and M2M edges with an excluded member too?
+    (a) Drop all shapes as R1 is worded (prototyped): a config that hides the
+    FK column today and uses a working `Profile.Users` / `Post.Tags` /
+    `Tag.Posts` loses those fields and gets a warning; one rule, shared with the
+    composite design §4.3. (b) Drop only O2M (inferred and declared), the shape
+    that does not compile; O2O and M2M keep working; two arms of
+    `excludedKeyMember` go; the composite design §4.3 / §4.9 / R1 get a
+    per-shape amendment. No golden churn either way. Vet recommends (a).
+  - **Q2.** A declared relationship whose link column `exclude_columns` removes:
+    (a) error naming the relationship and column (prototyped), matching §4.13's
+    rows for a declared edge with no generated entity or a non-column `fk`
+    ("the user declared the edge by name"); with Q1(a) no edge over a hidden FK
+    column can be kept. (b) warning and drop, as the entry first suggested; the
+    build passes silently minus the field. No golden churn either way. Vet
+    recommends (a); not auto-accepted, since it departs from the entry's text.
+- **The user ruled on 2026-10-21:** Q1 (a), drop every shape (O2M, O2O, M2M,
+  referenced column) with the warning; `exclude_columns` means "not in the
+  model", and `access: hidden` (PRD §32) is the tool for hiding a column while
+  keeping the edge. Q2 (a), a declared relationship over an excluded link
+  column is an error. Both are what the prototype implements, so its gates and
+  fail-first evidence below stand and the verdict moves to `ready` without a
+  second wave.
+- Prototype results, run at `bd7783ea` on 2026-10-21: reproduced with the
+  example probe harness (`examples/zz_probe_o2m`, the postgres example's go.mod,
+  `GOWORK=off`): `sqlgen validate` → "config and schema are valid" (exit 0);
+  `sqlgen generate` → "generated 8 files (2 tables, 0 views)"; `go build
+  ./models/...` → the two errors above, byte-identical; a declared `o2m` with
+  `fk: cycle_id` excluded → the same two errors; O2O and M2M build (exit 0).
+  With a `nested_mutations` entry on the edge, HEAD's `validate` already exits
+  2 (`relationship "Tasks" is not write-eligible: the traversed FK column
+  "cycle_id" is absent from the target's create input`); with the fix it
+  reports `"Tasks" names no relationship on this table (PRD §4.8)`. Gates:
+  `go test -race -count=1 ./gen/... ./cli/... ./config/...` ok;
+  `make update-golden` no churn; `make update-golden-e2e` only
+  `postgres_stdlib` (the new fixture); `TestE2EGoldenFiles` ok;
+  `golangci-lint run ./gen/... ./cli/...` 0 issues; `postgres_stdlib`
+  `GOWORK=off go test -race -count=1 ./...` ok (70 tests) and lint 0 issues.
+  Fail-first: inferred drop reverted → `…DropsInferredEdge/o2m_fk_column`
+  "cycles relationships = [\"Tasks\"], want []" (o2o, m2m, referenced_column
+  likewise), `TestGenerate_ExcludedFKColumnOmitsEdge` "Cycle fields mismatch …
+  + \"Tasks\"", `TestValidate_NestedMutationOnExcludedFKEdge` (stderr "is not
+  write-eligible"), `TestE2EGoldenFiles/postgres_stdlib` "file
+  \"client_gen.go\" differs from expected", and `postgres_stdlib` `go build`
+  "models/models_gen.go:9271:5: unknown field CycleID in struct literal of type
+  TaskFilter"; `findO2ORelationships` guard reverted →
+  `…ChainedO2OIntoExcludedTableDropped/fk_column_excluded` "profiles → users
+  chained joins = [\"Account\"], want []"; declared error reverted →
+  `…DeclaredExcludedLinkColumnErrors/o2m_fk_on_the_related_table` and
+  `/m2m_junction_column` "BuildTableContexts() error = <nil>, want it to
+  contain …"; referenced-column arm reverted → `…/referenced_column` fails.
+  Existing suite without the fix passes (`gen` 77s, `cli` 107s). Golden churn:
+  `postgres_stdlib` only, from the new fixture (`client_gen.go` +14,
+  `models_gen.go` +3472, `sorter_gen.go` +34, `tablenames_gen.go` +2, in both
+  `expected/` and `models/`); the fix itself churns no example, since none
+  excludes a column. Patch: `.claude/prototypes/FIX-358.patch` (14 files; source
+  and tests +383/-7, the rest regenerated `postgres_stdlib` goldens).
 
 **References.**
 - PRD §4.6 / §4.13 (`exclude_columns`), §5.3 (relationship detection), §13.4
   (manual relationships).
 - `docs/design/COMPOSITE_FK_RELATIONSHIPS.md` §7 R1 (ruling on missing key
   members).
-- `cmd/sqlgen/gen/relationship_targets.go:84-106` (existing edge drop for
-  excluded tables).
+- `cmd/sqlgen/gen/relationship_targets.go:161-169` (`relationshipTargets.generates`,
+  the existing edge drop for tables that generate no entity), called at
+  `context_table.go:1411` (`buildRelationshipContexts`) and `:2656`
+  (`findO2ORelationships`). Corrected from `:84-106`, which only builds the
+  index.
 
 **Resolution notes.** _Filled in by /fix resolve._
 
@@ -87,6 +175,7 @@ filter member and client wiring are emitted against it.
 - **Severity:** tracked
 - **Origin:** phase 6, cmd/sqlgen/gen/templates/table
 - **Surfaced by:** R4 probe of `docs/design/COMPOSITE_FK_RELATIONSHIPS.md` (2026-10-20), user approved filing
+- **Vetted:** corrected at `02e23d79` (2026-10-21)
 
 **Issue.** **Relationship loaders fail once the parent set exceeds the dialect's bind-parameter limit.**
 Loaders put every parent key into one `IN` list. Measured at `bd7783ea` by
@@ -110,14 +199,25 @@ Limits measured: SQLite 32766 (`MAX_VARIABLE_NUMBER`), MySQL 65535 (8.0 and
 8.4, without `interpolateParams`), PostgreSQL 65535 (pgx and lib/pq). The
 error names no table, column or edge beyond the load wrapper.
 
+The M2M target fetch fails separately, on **junction rows** rather than
+parents, because its key list is not deduplicated (one entry per junction row).
+Measured at `bd7783ea` with two parents sharing many targets: MySQL, 2 × 32784
+shared users → `load category users: get users: query: Error 1390 (HY000):
+Prepared statement contains too many placeholders`; SQLite, 2 × 16400 → `load
+category users: get users: query: SQL logic error: too many SQL variables (1)`.
+On pgx it renders `= ANY($1)` and does not fail. (Added by the 2026-10-21 vet.)
+
 **Root cause.** The O2M loader builds one `<Target>Filter` whose FK comparator
-holds every parent key and makes one `GetMany` call
-(`cmd/sqlgen/gen/templates/table/get.go.tmpl:437-457`). The M2M junction step
+holds every parent key (`cmd/sqlgen/gen/templates/table/get.go.tmpl:419-426`)
+and makes one `GetMany` call (`get.go.tmpl:437-477`). The M2M junction step
 builds one `sql.Where(...).In(...)` over every parent key
 (`get.go.tmpl:513-515`), which expands to one placeholder per key on every
-dialect, pgx included. The target fetch after it (`get.go.tmpl:585`) has the
-same shape. Nothing splits the key list, unlike the nested-mutation steps,
-which chunk at `c.batchSize` for exactly this reason (`nested.go.tmpl:651`).
+dialect, pgx included. The M2M target fetch filters on every collected target
+key through the comparators (`get.go.tmpl:583-589`, `GetMany` at `:603`), one
+key per junction row with no dedupe. Nothing splits the key lists, unlike the
+nested-mutation steps, which chunk at `c.batchSize` for exactly this reason
+(`nested.go.tmpl:651`). (Line refs corrected by the vet from `:437-457` and
+`:585`; the target fetch is not the same shape as the junction step.)
 
 **Suggested fix.**
 - Ruled 2026-10-20 (`COMPOSITE_FK_RELATIONSHIPS.md` R4): chunk every loader
@@ -130,18 +230,209 @@ which chunk at `c.batchSize` for exactly this reason (`nested.go.tmpl:651`).
   32766 also fails, because the consumer filter adds one parameter; 32765 and
   16000 return all 40000 parents with the 40 correct child sets in 2 and 3
   queries. So the headroom is required, not optional.
-- Expose the limit from the runtime `sql.Dialect` (for example a `MaxParams()`
-  method) rather than hard-coding it in templates, so the composite-FK phase's
-  tuple loaders reuse it with `N > 1`.
-- Apply it to the O2M loader, the M2M junction step and the M2M target fetch.
-  The pgx `= ANY($1)` path may stay unchunked or chunk uniformly; the vet
-  should pick the one that keeps PRD §25.1 simplest to state.
-- Amend PRD §25.1: one query per edge per chunk, with the chunk size rule;
-  the count is unchanged below the chunk size.
-- Tests: a gen template test asserting the chunk loop for O2M and both M2M
-  steps; an example integration test per dialect loading more parents than
-  one chunk and checking every child set (SQLite cheaply in-memory; PG and
-  MySQL via testcontainers).
+- How the limit reaches the templates is pending Q1 below. The prototype uses
+  a generator-side funcmap `loadChunkSize N` (`cmd/sqlgen/gen/funcmap.go`) that
+  returns `floor(limit / 2 / N)` from a per-dialect limit and bakes the literal
+  into the template: 16383 on SQLite, 32767 on PostgreSQL and MySQL. No runtime
+  API change.
+- **O2M:** loop over chunks of parent keys, one `GetMany` per chunk, results
+  appended, mapping unchanged. Chunked uniformly, pgx included (pending Q2).
+- **M2M:** the junction step, target fetch and mapping run once per parent
+  chunk; the junction scan runs in a closure so its `defer Close` is per chunk.
+  The target fetch is corrected (pending Q3): it no longer filters on the
+  collected target keys but matches the target PK against the junction,
+  `sql.Where(q(targetPK)).In(sql.Subquery{"SELECT j.ref FROM <junction> j WHERE
+  " + sql.SubqueryWhere(j.local IN chunk)})`, plus the static `filter:` or
+  discriminator, with `Filter: fo.X.Filter`. The mapping walks only the chunk's
+  parents.
+- **Correction vs. the original suggestion and R4:** chunking the M2M target
+  fetch on target keys (deduplicated or not) silently breaks PRD §13.2's
+  per-parent sort ("walking targets in the target query's order so Sorts order
+  each parent's slice") once a load's distinct targets exceed one chunk.
+  Measured: 2 parents × 16400 users, sort name DESC → each slice starts at
+  "…-16383" and ends at "…-16384". Today that load errors loudly; the target-key
+  chunk would turn it into a silent misorder. Every chunking variant also needs
+  target-key dedupe, or the subquery.
+- If Q3's subquery is accepted, `pkFilterInExprStr` and `fkLoadValue` in the
+  funcmap have no template caller left: delete them. The prototype leaves them.
+- PRD and doc sync, when ruled: §25.1 (one query per step per chunk), §13.2
+  steps 2-3 (the M2M target query shape), PRD line ~13093 ("regardless of
+  result set size"), the generated comment at `api/field_options.go.tmpl:11`
+  (its formula is in the graphql goldens), `guidelines/SQL.md` §8
+  "Implementation" (the M2M target fetch no longer takes the pgx row) and §14.
+  (`COMPOSITE_FK_RELATIONSHIPS.md` §4.4, §4.8 and §6 were updated to the
+  rulings when this vet was recorded.)
+- Tests (prototyped): an integration test per dialect in the `sqlite`,
+  `postgres` and `mysql` examples (`relationship_bind_limit_test.go`):
+  `TestRelationshipLoad_PastBindLimit` checks every child set and order and
+  asserts 3 statements per step through a `statementLog` Querier that counts
+  by outermost FROM; `TestRelationshipLoad_M2MTargetsPastBindLimit` has 2
+  parents sharing chunk+17 targets and checks the full name-DESC order. Parents
+  are seeded server-side at the real limits (32800 SQLite, 65600 PG / MySQL):
+  about 1 s on SQLite, 8 s on PG and MySQL. Plus `TestFuncLoadChunkSize`, and
+  updated `get_test.go` / `discriminator_test.go` patterns. The tenancy
+  `TestM2M_NonTenantedJunctionSQLShape` now classifies statements by outermost
+  FROM, because the tags SELECT names `post_tags` in its subquery (same root
+  cause and site; isolation unchanged, the outer WHERE keeps `workspace_id`).
+- **Pending the user's ruling:**
+  - **Q1. How the limit reaches the templates.** (a) `MaxParams() int` on the
+    exported `sql.Dialect` interface, generated code calls
+    `c.dialect.MaxParams()/2/N`: public API (one interface method, three
+    dialect methods); runtime-reusable for N > 1. (a') the same method, read by
+    the generator's funcmap and baked as a literal: same public API, one source
+    of truth. (b) generator-side per-dialect limit in the funcmap, baked as a
+    literal (prototyped): zero public surface; N > 1 reused per edge at
+    generation time (`loadChunkSize (len .FKColumns)`); the dialect fact lives
+    in `cmd/sqlgen` rather than on `Dialect` (SQL.md §2's "dialect logic on the
+    interface" rule is written for runtime builders). (c) an exported free
+    function `sql.MaxParams(d)`: public API, no interface change. (d) an
+    unexported or `internal/` runtime helper is not viable: measured, an
+    `internal/zzprobe` package compiles from an example module but fails for a
+    consumer (`use of internal package
+    github.com/teandresmith/sqlgen/internal/zzprobe not allowed`). Golden churn
+    is the same file set under every option. Vet recommends (b).
+  - **Q2. The pgx `= ANY($1)` O2M path.** Chunk uniformly (prototyped): PG O2M
+    takes `ceil(P / 32767)` statements, measured 3 for 65600; §25.1 has one
+    rule. Leave pgx unchunked: measured 1 statement for 65600 parents and 134
+    children correct; §25.1 needs a dialect clause that holds only for O2M,
+    since both M2M steps (under Q3) and composite-FK tuple loaders expand on
+    pgx. Vet recommends chunking uniformly.
+  - **Q3. How the M2M target fetch chunks.** (T1) dedupe target keys and chunk
+    on them, as the entry and R4 said: silent per-parent misorder once distinct
+    targets exceed a chunk (measured above); the count depends on distinct
+    targets. (T2) group whole parents so each group's targets fit a chunk:
+    still misorders when one parent alone exceeds a chunk; data-dependent
+    count. (T3, prototyped) per parent chunk, match the target PK against
+    `SELECT j.ref FROM junction j WHERE j.local IN (chunk)`: each parent's
+    targets come from one sorted statement, no dedupe needed, count
+    `ceil(P / chunk)` per step, known from the parent count; costs a PRD §13.2
+    amendment, a second junction read inside the target query, and two dead
+    funcmap helpers. Composite-FK tuple loaders reuse it with tuple IN in the
+    subquery. Vet recommends T3.
+- **The user ruled on 2026-10-21:** Q1 (b), the generator-side literal
+  (`loadChunkSize N`), no runtime API. Q2: **leave the pgx `= ANY($1)` O2M path
+  unchunked** (one query at any size); every other driver chunks O2M, and both
+  M2M steps chunk on every driver. This differs from the first-wave prototype,
+  which chunks uniformly, so a second vet wave reworks that branch; PRD §25.1
+  gets a dialect clause. Q3: T3, the junction subquery. Delete
+  `pkFilterInExprStr` and `fkLoadValue` if no caller remains.
+- Prototype results, run at `bd7783ea` on 2026-10-21: reproduced with the new
+  example tests against HEAD's models: SQLite (32800 parents) `GOWORK=off go test
+  -run BindLimit ./tests/` → "load category users junction: query: SQL logic
+  error: too many SQL variables (1)" (shared-targets test: "load category
+  users: get users: query: SQL logic error: too many SQL variables (1)");
+  PostgreSQL (65600) → "iterate category users junction: pgx rows: extended
+  protocol limited to 65535 parameters"; MySQL (65600) → "load category users
+  junction: query: Error 1390 (HY000): Prepared statement contains too many
+  placeholders" (shared-targets: "load category users: get users: query: Error
+  1390 …"); PG O2M alone at HEAD → "err=<nil> parents=65600 products=134
+  statements on products=1". Gates: `go test -race -count=1 ./gen/...` ok;
+  `golangci-lint run ./gen/...` 0 issues; gofumpt clean; `make update-golden`,
+  `make update-golden-e2e` and `TestE2EGoldenFiles` ok; `GOWORK=off go test
+  -race -count=1 ./...` and `golangci-lint run` ok in sqlite, postgres, mysql,
+  postgres_stdlib, tenancy, graphql, graphql_null_wrappers, graphql_top_level,
+  introspect_sqlite, introspect_postgres, introspect_mysql. Fail-first
+  (SQLite, each site reverted alone): O2M chunk loop →
+  `TestRelationshipLoad_PastBindLimit` "load category products: get products:
+  query: SQL logic error: too many SQL variables (1)"; junction chunk → "load
+  category users junction: query: SQL logic error: too many SQL variables (1)";
+  target-fetch subquery back to an IN on collected keys →
+  `TestRelationshipLoad_M2MTargetsPastBindLimit` "load category users: get
+  users: query: SQL logic error: too many SQL variables (1)" (plus
+  `TestGetTemplate_m2mRelationshipLoading` and
+  `m2mTargetFilterUsesTargetPKField`); target chunked on deduplicated keys (T1)
+  → "category bind-limit-shared-1: 16400 users, want 16400 in name-descending
+  order; first difference at 0" and "statements reading \"users\" = 1, want 3".
+  Gap: reverting only the O2M or only the junction chunking fails no gen unit
+  test (the loop patterns also match the other M2M block); the integration
+  tests are the guard. Existing suite without the fix passes (`go test
+  ./gen/` ok; sqlite `go test -skip BindLimit ./tests/` ok). Golden churn
+  (each example's `expected/` and `models/` identically, no files added): gen
+  unit golden `get_products_relationships_gen.go` (+141/-113); graphql
+  (+998/-788), graphql_null_wrappers (+66/-46), graphql_top_level (+33/-23),
+  introspect_mysql (+132/-92), introspect_postgres (+165/-115),
+  introspect_sqlite (+348/-272), mysql (+860/-680), postgres (+1253/-999),
+  postgres_stdlib (+381/-295), sqlite 9 files (+1357/-1085), tenancy
+  (+510/-418); cache, events, tenancy_mysql, tenancy_postgres unchanged. (First
+  wave; superseded by the second-wave patch below.)
+- Second-wave prototype results, run at `02e23d79` on 2026-10-21 (after the
+  rulings), started from the first-wave patch (applied clean):
+  - **Q2 implemented at generation time.** `TableContext.O2MLoadUnchunked()`
+    (`gen/context.go`) returns `Dialect == postgres && Driver == pgx`;
+    `get.go.tmpl`'s O2M block branches on it, so pgx output is one `GetMany`
+    with `In: <parentIDs>` and no loop; every other dialect/driver keeps the
+    `loadChunkSize` loop; both M2M steps chunk on every driver. A method, not a
+    field, for the reason `NeedsTenantResolver` gives (TEMPLATES.md §6). The
+    driver, not `SupportsArrayParams()`, decides it, because the funcmap's
+    dialect is pgx-mode for both drivers (`resolveDialect`).
+  - **Deleted** `pkFilterInExprStr` and `fkLoadValue` with their funcmap
+    registrations and `funcmap_test` name-list entries (no caller remains).
+  - **Stale premise in the Q2 ruling:** PostgreSQL with `output.driver: stdlib`
+    does **not** expand `IN`. The generated client always builds
+    `sql.NewPostgresDialect()` (pgx mode) whatever the driver
+    (`templates/table/client.go.tmpl:254`, `templates/view/client.go.tmpl:64`),
+    and lib/pq ≥ 1.11 (the runtime requires v1.12.3, root `go.mod:10`) converts
+    the slice to an array. A postgres_stdlib probe logged `SELECT … FROM
+    "public"."products" WHERE "category_id" = ANY($1)`; with stdlib also
+    unchunked, 65600 parents load correctly in 1 statement. The prototype keeps
+    stdlib chunked as ruled; on stdlib that is a precaution today, and it stays
+    correct if generated code ever switches to `NewPostgresStdlibDialect()` to
+    match PRD Appendix A. **The user ruled on 2026-10-21, given this finding:
+    keep stdlib chunked**; only PostgreSQL with `output.driver: pgx` leaves the
+    O2M step unchunked.
+  - **Behavior change:** with 0 parents, every chunked step issues 0
+    statements (HEAD issued 1 per step); the pgx O2M step still issues 1 with
+    an empty array.
+  - **Tests:** `TestGetTemplate_o2mRelationshipLoading` is table-driven over pgx
+    and stdlib, checking wanted and unwanted patterns, and anchors on
+    `var relatedReviews []*Review` + the loop, which only the O2M block emits —
+    this closes the first wave's "reverting only the O2M chunking fails no gen
+    unit test" gap for O2M. The nullable-FK O2M tests are back at HEAD's `In:
+    categoryIDs` / `In: folderIDs` (pgx fixture). postgres
+    `TestRelationshipLoad_PastBindLimit` now expects products 1, junction 3,
+    users 3; new `postgres_stdlib/tests/relationship_bind_limit_test.go` expects
+    3 per step plus the shared-targets test; SQLite and MySQL unchanged.
+  - Gates: `go test -race -count=1 ./gen/...` ok; `golangci-lint run ./gen/...`
+    0 issues; gofumpt clean; `make update-golden`, `make update-golden-e2e`,
+    `TestE2EGoldenFiles` ok (re-run after fail-first restore); `GOWORK=off go
+    test -race -count=1 ./...` and `golangci-lint run` ok / 0 issues in sqlite,
+    postgres, mysql, postgres_stdlib, tenancy, graphql, graphql_null_wrappers,
+    graphql_top_level, introspect_sqlite, introspect_postgres, introspect_mysql.
+  - Fail-first: pgx branch reverted (`O2MLoadUnchunked` forced false) → postgres
+    `TestRelationshipLoad_PastBindLimit` "statements reading
+    \"public\".\"products\" = 3, want 1", and
+    `TestGetTemplate_o2mRelationshipLoading/pgx` "output missing O2M pattern:
+    \"ProductID: &comparator.ID{In: productIDs}\""; driver clause dropped
+    (stdlib unchunked) → postgres_stdlib `TestRelationshipLoad_PastBindLimit`
+    "statements reading \"public\".\"products\" = 1, want 3" (correctness still
+    passes, the stale-premise evidence) and `…/stdlib` "output missing O2M
+    pattern: \"ProductID: &comparator.ID{In: chunk}\"". The junction-chunk,
+    target-subquery and SQLite O2M sites are unchanged from the first wave and
+    its fail-first stands.
+  - Golden churn vs. `02e23d79` (`models/` same as `expected/`, no files
+    added): gen unit golden `get_products_relationships_gen.go` (+122/-99);
+    graphql (+727/-577), graphql_null_wrappers (+28/-18), graphql_top_level
+    (+14/-9), introspect_mysql (+132/-92), introspect_postgres (+70/-45),
+    introspect_sqlite (+348/-272), mysql (+860/-680), postgres (+1030/-831),
+    postgres_stdlib (+381/-295), sqlite 9 files (+1357/-1085), tenancy
+    (+510/-418); cache, events, tenancy_mysql, tenancy_postgres unchanged.
+  - PRD §25.1 wording for `/fix-implement`: each loader step binds parent keys
+    in chunks of `floor(L / 2 / N)` (L = 32766 SQLite, 65535 MySQL and
+    PostgreSQL; 16383 / 32767 for N = 1), half the budget left for the
+    relationship filter, tenancy, soft-delete and `filter:`. With P parents,
+    `C = ceil(P / chunk)` (0 with no parents): `total = 1 + Σ_O2M s + 2·C·count(M2M)`,
+    where `s = 1` on PostgreSQL with `output.driver: pgx` (one array parameter,
+    `= ANY($1)`) and `s = C` everywhere else, PostgreSQL `stdlib` included. The
+    junction step and the target fetch (`target_pk IN (SELECT j.ref FROM
+    junction j WHERE j.local IN (chunk))`) take C each on every driver. For
+    P ≤ chunk it reduces to today's formula; the count stays known at call
+    time. Also update the §25.1 diagram's M2M-entities line, "M2M uses two
+    batched IN clauses", PRD ~13093 and `api/field_options.go.tmpl:11`, and
+    `guidelines/SQL.md` §8.
+  - On landing, drop the 2026-10-20 backlog line about the `int64(refKey)`
+    conversion through `fkLoadValue` (FIX-357 auto-review): T3 removes both.
+  - Patch: `.claude/prototypes/FIX-359.patch` (50 files, +12444/-8967; source and
+    tests 11 files, +1408/-224), applies clean at `02e23d79`.
 
 **References.**
 - PRD §13.2 (loading strategy), §25.1 (query count guarantee), §4.6
@@ -150,6 +441,164 @@ which chunk at `c.batchSize` for exactly this reason (`nested.go.tmpl:651`).
 - `cmd/sqlgen/gen/templates/table/nested.go.tmpl:651` (existing chunking and
   its rationale).
 - Related: FIX-357 (typed M2M junction keys, same loader).
+
+**Resolution notes.** _Filled in by /fix resolve._
+
+### FIX-360
+
+- **Status:** Open
+- **Severity:** tracked
+- **Origin:** phase 5, cmd/sqlgen/gen
+- **Surfaced by:** FIX-358 vet (2026-10-21), user approved filing
+- **Vetted:** corrected at `02e23d79` (2026-10-21)
+
+**Issue.** **Excluding a table's only primary-key column passes `sqlgen validate` and crashes `sqlgen generate`.**
+Measured at `bd7783ea`, PostgreSQL, `source: files`: schema
+`cycles(id INT PRIMARY KEY, name TEXT NOT NULL)` with
+`tables.cycles.exclude_columns: [id]` and no `primary_key` override.
+`sqlgen validate` → "config and schema are valid"; `sqlgen generate` →
+
+```
+Generation error: generating table/client for table cycles: executing template: template: client.go.tmpl:12:95: executing "table/client" at <index .PKColumns 0>: error calling index: reflect: slice index out of range
+```
+
+(exit 1). A template panic surfaced as a generation error, with no message
+naming the config that caused it. The same crash follows a global
+`generation.exclude_columns: [id]`, and an FK into or out of the table or a
+declared O2O into it does not change it.
+
+Two more cases share the root cause (found by the 2026-10-21 vet):
+
+- **A composite PK with one member excluded generates silently on the wrong
+  key.** `memberships(org_id, user_id, PRIMARY KEY (org_id, user_id))` with
+  `exclude_columns: [user_id]`: `generate` exits 0, `go build` is ok, and the
+  client is `Get/Update/HardDelete(ctx, id int32)`, with `HardDelete` running
+  `sql.Where(QuoteIdentifier("org_id")).Eq(id)`, so one `HardDelete` removes
+  every membership in the org.
+- **`exclude_columns` removing every column** prints PRD §4.13's warning
+  ("exclude_columns removes all columns from table public.cycles; table will
+  be skipped") and then crashes with the same `client.go.tmpl:12:95` error,
+  though §4.13 says the table is skipped.
+
+Already working at HEAD (confirmed): a PK column excluded with
+`primary_key.columns: [code]`, and a composite member excluded with an
+override over the remaining member.
+
+**Root cause.** `tableHasResolvedPK` (`cmd/sqlgen/gen/context_table.go:889-907`)
+decides whether a table generates from the `primary_key` override or the
+parser's `Column.PrimaryKey` flags, and ignores `exclude_columns`. So the table
+is treated as keyed, while `buildTableColumns` (`context_table.go:309-320`)
+drops the excluded PK column and leaves `PKColumns` empty (or a partial key),
+and `client.go.tmpl` indexes `.PKColumns 0`. Post-parse validation checks
+`exclude_columns` exhausting a table's columns (PRD §4.13) but not removing its
+key. Confirmed by the vet; line refs and the quoted error are accurate at
+`02e23d79`.
+
+**Suggested fix.**
+- Decide the PRD behavior (unspecified today); the vet should measure both and
+  bring it as a ruling if the PRD does not settle it:
+  - (a) an error at validation: "`tables.<t>.exclude_columns` removes
+    primary-key column `<c>`; declare `primary_key.columns` or keep the
+    column". Consistent with §4.13's row requiring `primary_key.columns` to
+    exist after `exclude_columns` is applied.
+  - (b) treat the table as having no primary key after exclusion, so it is
+    skipped with §4.13's existing warning (`table %s has no primary key;
+    skipped from generation`, §9.4b).
+- Make `tableHasResolvedPK` and validation agree with `buildTableColumns`, so
+  `validate` reports the case instead of `generate` crashing. Cover a composite
+  PK with one member excluded too.
+- Add a PRD §4.13 row for the chosen behavior.
+- Tests: a config / gen unit test for the single and composite PK cases; a cli
+  test that `validate` and `generate` both report it (no template panic).
+- **Vetted prototype (option (a)):**
+  - `gen/context_table.go`: `tableHasResolvedPK` resolves the key (override,
+    else detected PK flags) and returns false when it is empty or the merged
+    global + table `exclude_columns` removes any member; signature unchanged,
+    same precedence via `resolveTableConfig`. It now agrees with
+    `buildTableColumns`, and the all-columns-excluded table is skipped as
+    §4.13 states (widened: same root cause and fix site, PRD-settled).
+  - `config/validate.go`: `validateExcludedPrimaryKey`, wired into
+    `ValidatePostParse` after `validatePrimaryKeyOverride`, errors once per
+    excluded detected-PK member, naming the source key: `tables.public.cycles.exclude_columns
+    removes primary-key column "id" of table public.cycles; keep the column,
+    declare tables.public.cycles.primary_key.columns over columns that remain,
+    or drop the table with exclude_tables` (or `generation.exclude_columns …`).
+    It skips tables with a `primary_key.columns` override (already validated),
+    tables with every column excluded (the exhaustion warning), and tables in
+    `exclude_tables`. With the gen change alone, `generate` drops the table
+    with no warning at all, so a validator is required under (a) or (b).
+  - PRD §4.13: a new row "`exclude_columns` removes a primary-key column"
+    (Error, schema-level), plus an entry in the schema-level phase list and the
+    edge-case bullets.
+  - Tests: `config.TestValidatePostParse_ExcludedPrimaryKey` (7 cases:
+    table-level, global, composite member, override, all excluded,
+    exclude_tables, non-key column); `gen.TestBuildTableContexts_ExcludedKeyColumn`
+    (6 cases); `cli/excluded_pk_test.go` `TestExcludedPrimaryKeyColumn` (single,
+    global, composite under both `validate` and `generate`, asserting the error
+    and no "executing template") and `TestGenerate_AllColumnsExcludedSkipsTable`.
+- **Pending the user's ruling:**
+  - **Q1.** `exclude_columns` removes a member of a table's detected primary
+    key (no `primary_key.columns` override): error, or skip as a no-PK table?
+    (a) Validation error (prototyped): `validate` exits 2 with the message
+    above, `generate` exits 2 with "Post-parse validation error: …" before gen;
+    a global `exclude_columns: [id]` gives one error per id-keyed table; the
+    composite case errors naming `user_id` instead of generating on `org_id`; a
+    declared edge into the table adds a consequential "generates no entity"
+    error in `validate` only. (b) Skip with the §9.4b warning (measured with a
+    throwaway variant): exit 0 with "table public.cycles has no primary key;
+    skipped from generation …", which misstates the cause (the table has a
+    PK); the table, its client, cache, events and GraphQL type vanish; an
+    FK-inferred edge into it is silently omitted; a declared edge errors with
+    the misleading "has no primary key" cause; a cached view with
+    `invalidate_on: [cycles]` passes and is never invalidated (breaks §27.11
+    unless `validateViewInvalidateOn` is extended); a global `exclude_columns:
+    [id]` silently drops every id-keyed table. No golden churn under either.
+    Vet recommends (a): it matches §4.13's rule that `primary_key.columns` must
+    survive `exclude_columns` and the loud-error preference, and keeps the
+    all-columns case as §4.13's intentional skip. Not auto-accepted: the entry
+    asked for a ruling, and (a) turns the composite config that generates today
+    into an error.
+- **The user ruled on 2026-10-21:** Q1 (a), a validation error. That is the
+  prototyped option, so its gates and fail-first evidence stand; the verdict is
+  `corrected` (widened to the all-columns-excluded crash, and the composite
+  case is a silent wrong key rather than a crash) without a second wave.
+- Prototype results, run at `02e23d79` on 2026-10-21: reproduced with the HEAD
+  CLI on scratch projects (PostgreSQL, `source: files`): single exclude →
+  `validate` "config and schema are valid" (exit 0), `generate` the
+  `client.go.tmpl:12:95` error (exit 1); global exclude, FK into / out of,
+  declared O2O into → same crash; composite member → exit 0 keyed on `org_id`;
+  all columns → the §4.13 warning, then the crash; both override forms → exit
+  0, build ok. Gates: `go test -race -count=1 ./config/... ./gen/... ./cli/...`
+  ok (config 1.7 s, gen 68 s, cli 97 s); `TestE2EGoldenFiles` ok;
+  `golangci-lint run ./config/... ./gen/... ./cli/...` 0 issues; gofumpt clean.
+  Fail-first: `tableHasResolvedPK` reverted →
+  `TestBuildTableContexts_ExcludedKeyColumn` "BuildTableContexts returned 1
+  tables, want cycles skipped" (4 subtests) and
+  `TestGenerate_AllColumnsExcludedSkipsTable` "generate: unexpected error:
+  generating table/client for table cycles: executing template: template:
+  client.go.tmpl:12:95: …"; `validateExcludedPrimaryKey` call removed →
+  `TestValidatePostParse_ExcludedPrimaryKey` "ValidatePostParse() error = nil,
+  want one containing \"tables.public.cycles.exclude_columns removes
+  primary-key column \\\"id\\\" …\"" (3 subtests) and `TestExcludedPrimaryKeyColumn`
+  "validate: want an error, got none" / "generate: want an error, got none".
+  Existing suite without the fix passes. Golden churn: none (no example uses
+  `exclude_columns` at HEAD). **FIX-358 overlap:** no textual conflict in either
+  order (`git apply` one then `--check` the other, both ways, at `02e23d79`);
+  with both applied, `go vet`, `go test -race ./config/... ./gen/... ./cli/...`
+  and `TestE2EGoldenFiles` pass. Land FIX-358 first (ready, carries the golden
+  churn); FIX-360 rebases trivially. From reading: once FIX-360 lands,
+  FIX-358's referenced-side check no longer fires for an excluded target PK
+  (validation rejects it) but still covers an FK to an excluded non-key UNIQUE
+  column. Patch: `.claude/prototypes/FIX-360.patch` (6 files, +389/-18).
+
+**References.**
+- PRD §4.13 (config validation rules: "`primary_key.columns` references
+  non-existent column", "Table has no primary key after override resolution",
+  exclude_columns exhaustion), §9.4b (no-PK tables are skipped).
+- `cmd/sqlgen/gen/context_table.go:889-907` (`tableHasResolvedPK`),
+  `:309-320` (`buildTableColumns`).
+- `cmd/sqlgen/gen/relationship_targets.go` (uses `tableHasResolvedPK` to decide
+  whether a relationship target generates; FIX-358 touches the same file).
 
 **Resolution notes.** _Filled in by /fix resolve._
 
