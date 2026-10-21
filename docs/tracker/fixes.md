@@ -23,7 +23,135 @@
 
 <!-- fixes:open:begin -->
 
-_No open fixes._
+### FIX-358
+
+- **Status:** Open
+- **Severity:** tracked
+- **Origin:** phase 6, cmd/sqlgen/gen
+- **Surfaced by:** R1 probe of `docs/design/COMPOSITE_FK_RELATIONSHIPS.md` (2026-10-20), user approved filing
+
+**Issue.** **An FK column removed by `exclude_columns` still yields its relationship, and the generated code does not compile.**
+Measured at `bd7783ea`, PostgreSQL, `source: files`, schema
+`CREATE TABLE cycles (id INT PRIMARY KEY, name TEXT NOT NULL); CREATE TABLE
+tasks (id INT PRIMARY KEY, title TEXT NOT NULL, cycle_id INT REFERENCES
+cycles(id));` with `tables: tasks: exclude_columns: [cycle_id]`. `sqlgen
+generate` succeeds and emits `Cycle.Tasks []*Task` plus its O2M loader, then
+`go build` fails:
+
+```
+models/models_gen.go:402:5: unknown field CycleID in struct literal of type TaskFilter
+models/models_gen.go:440:25: r.CycleID undefined (type *Task has no field or method CycleID)
+```
+
+**Root cause.** Column exclusion is applied only when gen builds a table's
+columns (`buildTableColumns`, `cmd/sqlgen/gen/context_table.go:309-320`).
+Relationship detection runs earlier, on the unfiltered schema
+(`parser.DetectRelationships` at `cmd/sqlgen/cli/pipeline.go:65`, also
+`generate.go:66` and `validate.go:80`), so the edge is detected from the FK
+column's `FKReference`. Nothing afterwards checks that the FK column, or the
+referenced column on the other table, survived exclusion before the loader,
+filter member and client wiring are emitted against it.
+
+**Suggested fix.**
+- Drop any relationship whose FK column (O2O / O2M), junction column (M2M), or
+  referenced column is excluded on its table, and emit a warning naming the
+  table, the column and PRD §13.4. The ruling (2026-10-20,
+  `COMPOSITE_FK_RELATIONSHIPS.md` R1) is "every key member must be in the
+  generated model on both sides, else no edge and a warning".
+- A natural site is beside the relationship-target filtering in
+  `cmd/sqlgen/gen/relationship_targets.go`, which already drops edges into
+  tables that generate no entity; or mark excluded columns before
+  `DetectRelationships` in `cmd/sqlgen/cli/pipeline.go`. The vet should pick
+  the site that also covers `validate`, so a `nested_mutations` entry naming
+  the dropped edge reports "names no relationship" instead of passing.
+- Config-declared relationships (§13.4) whose `fk` names an excluded column
+  should get the same treatment: today `markSyntheticFK` would stamp a column
+  gen never emits.
+- Tests: a gen unit test for each shape (O2M, O2O, M2M junction column,
+  excluded referenced column) asserting no edge and the warning; an E2E
+  generate-and-build of the schema above.
+
+**References.**
+- PRD §4.6 / §4.13 (`exclude_columns`), §5.3 (relationship detection), §13.4
+  (manual relationships).
+- `docs/design/COMPOSITE_FK_RELATIONSHIPS.md` §7 R1 (ruling on missing key
+  members).
+- `cmd/sqlgen/gen/relationship_targets.go:84-106` (existing edge drop for
+  excluded tables).
+
+**Resolution notes.** _Filled in by /fix resolve._
+
+### FIX-359
+
+- **Status:** Open
+- **Severity:** tracked
+- **Origin:** phase 6, cmd/sqlgen/gen/templates/table
+- **Surfaced by:** R4 probe of `docs/design/COMPOSITE_FK_RELATIONSHIPS.md` (2026-10-20), user approved filing
+
+**Issue.** **Relationship loaders fail once the parent set exceeds the dialect's bind-parameter limit.**
+Loaders put every parent key into one `IN` list. Measured at `bd7783ea` by
+copying the `postgres`, `sqlite` and `mysql` examples, inserting more
+parents than the limit plus one child, and calling `Categories().GetMany`
+with `Limit: new(0)` and an O2M (`Products`) or M2M (`Users`) selected:
+
+```
+SQLite (modernc), 40000 parents
+  O2M: load category products: get products: query: SQL logic error: too many SQL variables (1)
+  M2M: load category users junction: query: SQL logic error: too many SQL variables (1)
+MySQL 8.0, 70000 parents
+  O2M: load category products: get products: query: Error 1390 (HY000): Prepared statement contains too many placeholders
+  M2M: load category users junction: query: Error 1390 (HY000): ...
+PostgreSQL 17, pgx, 70000 parents
+  O2M: ok (comparator.ID{In} renders = ANY($1), one parameter)
+  M2M: iterate category users junction: pgx rows: extended protocol limited to 65535 parameters
+```
+
+Limits measured: SQLite 32766 (`MAX_VARIABLE_NUMBER`), MySQL 65535 (8.0 and
+8.4, without `interpolateParams`), PostgreSQL 65535 (pgx and lib/pq). The
+error names no table, column or edge beyond the load wrapper.
+
+**Root cause.** The O2M loader builds one `<Target>Filter` whose FK comparator
+holds every parent key and makes one `GetMany` call
+(`cmd/sqlgen/gen/templates/table/get.go.tmpl:437-457`). The M2M junction step
+builds one `sql.Where(...).In(...)` over every parent key
+(`get.go.tmpl:513-515`), which expands to one placeholder per key on every
+dialect, pgx included. The target fetch after it (`get.go.tmpl:585`) has the
+same shape. Nothing splits the key list, unlike the nested-mutation steps,
+which chunk at `c.batchSize` for exactly this reason (`nested.go.tmpl:651`).
+
+**Suggested fix.**
+- Ruled 2026-10-20 (`COMPOSITE_FK_RELATIONSHIPS.md` R4): chunk every loader
+  step at `floor(maxParams / 2 / N)` keys per query, where `N` is the number
+  of key columns (1 here) and `maxParams` is the dialect's limit (SQLite
+  32766, MySQL 65535, PostgreSQL 65535). Half the budget is left for the
+  consumer filter, tenancy, soft-delete and `filter:` parameters.
+- Measured prototype (hand-edited generated SQLite O2M loader, 40000 parents,
+  consumer filter `InStock: Eq(true)`): unchunked fails as above; a chunk of
+  32766 also fails, because the consumer filter adds one parameter; 32765 and
+  16000 return all 40000 parents with the 40 correct child sets in 2 and 3
+  queries. So the headroom is required, not optional.
+- Expose the limit from the runtime `sql.Dialect` (for example a `MaxParams()`
+  method) rather than hard-coding it in templates, so the composite-FK phase's
+  tuple loaders reuse it with `N > 1`.
+- Apply it to the O2M loader, the M2M junction step and the M2M target fetch.
+  The pgx `= ANY($1)` path may stay unchunked or chunk uniformly; the vet
+  should pick the one that keeps PRD §25.1 simplest to state.
+- Amend PRD §25.1: one query per edge per chunk, with the chunk size rule;
+  the count is unchanged below the chunk size.
+- Tests: a gen template test asserting the chunk loop for O2M and both M2M
+  steps; an example integration test per dialect loading more parents than
+  one chunk and checking every child set (SQLite cheaply in-memory; PG and
+  MySQL via testcontainers).
+
+**References.**
+- PRD §13.2 (loading strategy), §25.1 (query count guarantee), §4.6
+  (`batch_size`).
+- `docs/design/COMPOSITE_FK_RELATIONSHIPS.md` §5, §7 R4.
+- `cmd/sqlgen/gen/templates/table/nested.go.tmpl:651` (existing chunking and
+  its rationale).
+- Related: FIX-357 (typed M2M junction keys, same loader).
+
+**Resolution notes.** _Filled in by /fix resolve._
 
 <!-- fixes:open:end -->
 
