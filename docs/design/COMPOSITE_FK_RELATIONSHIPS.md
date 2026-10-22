@@ -1,8 +1,10 @@
 # Relationships Through Composite Foreign Keys
 
-> **Status: ruled, ready for `/phase` (design record). Option D: full composite
-> relationships, built as a phase. Rulings R1–R7 settled 2026-10-20 (§7), each from a
-> measured probe (§9).** Verified against source at `bd7783ea` on 2026-10-20.
+> **Status: ruled, broken down as Phase 32 (2026-10-21; `docs/tracker/phase-32.md`, where N
+> is 32). Option D: full composite relationships. Rulings R1–R7 settled 2026-10-20 (§7), each
+> from a measured probe (§9).** Verified against source at `bd7783ea` on 2026-10-20; the
+> §6 code references re-checked at `244ce2ee` on 2026-10-21; §9.1 re-verified at `244ce2ee`
+> on 2026-10-22 (32.0), which wrote §4 into the PRD with the five rulings in §7.1.
 > sqlgen models a relationship as one foreign-key column joined to the target's first
 > primary-key column. A composite foreign key therefore gives no relationship, so the
 > tenant-isolation pattern `TENANT_SCOPED_REFERENCES.md` §1.3 recommends, the composite
@@ -176,15 +178,17 @@ One edge per FOREIGN KEY constraint (PRD §5.2's canonical model), read from
 call sites (`generate.go`, `pipeline.go`, `validate.go`) already run detection there.
 
 1. **Target key.** The referenced columns must be, as a set, the target's resolved primary
-   key (the column flags after `primary_key` overrides) or one of its non-partial UNIQUE
-   constraints. A single-column FK with no column list (`REFERENCES t`) references the
+   key (the column flags after `primary_key` overrides), its declared PRIMARY KEY constraint
+   (§7.1), or one of its non-partial UNIQUE constraints. A single-column FK with no column list (`REFERENCES t`) references the
    primary key, as today; on SQLite, empty `ReferenceColumns` means the parent key could not
    be resolved. Any other FK yields no edge and a warning naming the constraint and §13.4.
    SQLite FKs are usually unnamed, so the warning (and the manifest's `constraint`, §4.7)
-   falls back to `table(columns) → target(columns)`. PostgreSQL and MySQL refuse such a key
-   at DDL time; SQLite accepts it and fails at DML time, so the warning reaches only `files`
-   input and SQLite. This drops one N = 1 edge today's detection emits: a SQLite
-   single-column FK to a non-key column (fixture 10b, §9.4). That edge's loader joins the
+   falls back to `table(columns) → target(columns)`. PostgreSQL refuses such a key at DDL
+   time. MySQL 8.0 accepts one to any indexed columns, and 8.4 refuses it only while
+   `restrict_fk_on_non_standard_key` is on (the default; corrected at 32.0, unprobed). SQLite
+   accepts it and fails at DML time. So the warning reaches MySQL and SQLite under either
+   source. This drops N = 1 edges today's detection emits: a SQLite single-column FK to a
+   non-key column (fixture 10b, §9.4), and the MySQL equivalent. That edge's loader joins the
    wrong column (§4.9), so the change is deliberate.
 2. **Redundant FKs.** An FK whose (local → referenced) pairs are a subset of another FK's
    pairs to the same target gives no edge; of two identical FKs, the first declared is kept.
@@ -224,7 +228,8 @@ call sites (`generate.go`, `pipeline.go`, `validate.go`) already run detection t
    the two directions of `cycle_notes(workspace_id, cycle_id, prev_cycle_id, n)`, whose every
    member is in its primary key, `cycle` and `prev_cycle`; without it both were `cycle_notes`.
 6. **Self-references and disambiguation** run as today, keyed on the naming member. A name
-   still shared by two edges on one table after disambiguation is a hard generation error
+   still shared by two edges on one table after disambiguation, once `exclude_relationships`
+   and manual replacements apply (§7.1), is a hard generation error
    naming both constraints and pointing to §13.4 (`exclude_relationships` plus a manual
    relationship), never two fields of one name. No measured schema reaches it (§9.4).
 
@@ -243,17 +248,18 @@ writing them would change something other than the edge. A member is **pinned** 
   `tasks.workspace_id → workspaces`.
 
 The rest are **free** members. Pinning needs the tenancy config, so it is computed in `gen`,
-not the parser. A relationship with no free member is readable but not writable: nested
-mutations skip it as ineligible, with the reason (PRD §9.9.4). Ruled under R1; each kind was
-measured to do harm when written (§9.4).
+not the parser. A relationship with no free member has no verb that rewrites a row (connect,
+disconnect, clear, reparent) and keeps `create`, as a NOT NULL edge does (§7.1). Ruled under
+R1; each kind was measured to do harm when written (§9.4). Pinning applies to O2M and has-one
+edges only: M2M link and unlink insert and delete junction rows and never rewrite a member.
 
 Pinning governs rewriting an existing row (connect, `allow_reparent`). A nested `create`
-sets every member from the parent's referenced columns; the tenant column comes from tenancy
-and is checked against the parent's.
+sets every member from the parent's referenced columns, the tenant column included; when
+tenancy also sets it, the two must agree (§7.1).
 
 Two existing rules extend to every member rather than adding pinned kinds (R1):
 
-- **E1 covers every non-tenant member.** Each must be a field of the target's create input,
+- **E1 covers every member**, the tenant column included (§7.1). Each must be a field of the target's create input,
   as E1 requires of the one FK column today. A generated column is not, and the database
   refuses to write one (`column "cycle_id" can only be updated to DEFAULT`), so an edge with a
   generated member is read-only, exactly as a generated single-column FK is today
@@ -325,7 +331,8 @@ generates today (§4.8).
   `<T>PK` struct for a composite key, as `Get` takes it. The target is loaded through its own
   tenant-scoped client (PRD §9.9), which reads its referenced columns.
 - **Pinned members are verified, free members are written.** A pinned member must equal the
-  target's referenced value, or the connect fails with a typed error before any write. Free
+  target's referenced value, or the connect fails with `ErrAlreadyRelated` before any write
+  (§7.1). Free
   members take the target's values. `allow_reparent` never moves a pinned member.
 - **Disconnect nulls the free members.** Under MATCH SIMPLE it is eligible when every free
   member is nullable. Under MATCH FULL it is eligible only when every member is free and
@@ -337,8 +344,8 @@ generates today (§4.8).
   single-column FK is unaffected: nulling its one member is all-NULL.
 - **`ErrAlreadyRelated`** keys its owner map on the `[N]string` tuple.
 - **M2M link and unlink** insert and delete the junction row by the union of both key lists.
-  Disconnect requires a junction PRIMARY KEY or UNIQUE equal to that union, which replaces the
-  two-column rule.
+  Disconnect requires a junction PRIMARY KEY equal to that union, which replaces the two-column
+  rule (§7.1).
 - **Composite-PK parents and targets** stay ineligible in this phase: E1 and E3 keep
   excluding them, and they get every read surface (loaders, relationship filters, manifest).
   Lifting the gates is the next phase (R3). It needs a GraphQL `<T>PKInput` per composite-PK
@@ -347,9 +354,10 @@ generates today (§4.8).
   key structs, since a `<T>PK` holding `[]byte` or `net.IP` is not a Go map key. The model
   above needs no change for it.
 
-The child's create and update inputs drop every free member of a relationship that nested
-mutations write, as they drop the one FK column today. Pinned members stay where they are:
-tenancy owns the tenant column, and a PK member is part of the caller's key.
+The nested child input (`<Parent><Edge>CreateInput`) drops every member of the traversed key,
+the tenant column included, as it drops the one FK column today, since a nested `create` sets
+them all from the parent. When tenancy also sets the tenant column, the two must agree, or it is
+`ErrAlreadyRelated` (§7.1).
 
 ### 4.6 Column treatments
 
@@ -391,8 +399,9 @@ place a foreign-key constraint is named in the manifest, and it shows where an e
   Measured on 8.0.46 and 8.4.11 through go-sql-driver: `(a, b) IN ((?, ?), …)` works, and
   EXPLAIN shows the same composite-index range scan as OR-of-ANDs. It is far faster: 32 ms vs
   1.49 s at 10000 pairs, 122 ms vs 2 min 3 s at 32767. Flip it to true in N.1. This also
-  speeds up today's composite-PK batch operations on MySQL (`Filter.PKs`,
-  `BuildCompositePKBatchCondition`).
+  speeds up today's composite-PK batch operations on MySQL (`BuildCompositePKBatchCondition`).
+  `<T>Filter.PKs` does not go through it: it renders OR-of-ANDs on every dialect (§9.1), and
+  moving it is a backlog item (§7.1).
 - **No runtime API for the chunk size.** FIX-359 keeps the bind limit in the generator
   (§4.4), so `sql.Dialect` gains no `MaxParams()` method (ruled 2026-10-21).
 
@@ -420,6 +429,8 @@ Intended changes in output for N = 1, all on schemas no example has:
   schemas become regression tests there.
 - **A SQLite single-column FK to a non-key column** loses its edge and gains a warning
   (§4.2 rule 1). Measured: today it emits `O2M workspaces->cycles` via `workspace_slug`.
+  A MySQL single-column FK to a non-unique indexed column (8.0, or 8.4 with
+  `restrict_fk_on_non_standard_key` off) does the same; not measured.
 - **An excluded FK column** loses its edge (§4.3), landed early by FIX-358. Before it, an O2M one
   did not compile; O2O and M2M ones worked and are dropped by ruling.
 
@@ -460,10 +471,10 @@ Sub-items in dependency order:
 | N.5 | **Read templates.** O2O join, O2M and M2M loaders (chunked, tuple keys), relationship filters. | `get.go.tmpl`, the filter template, `relationships.go.tmpl` |
 | N.6 | **Nested writes through composite FKs.** §4.5 for single-column-PK parents and targets, including MATCH FULL disconnect eligibility. | `nested.go.tmpl` |
 | N.7 | **GraphQL.** Relationship fields and filters for the new edges. | |
-| N.8 | **Examples.** `tenancy_postgres` gains a composite tenant FK, a tenant junction (M2M) and a composite-PK target (read surfaces only), each with load and filter tests, and nested tests where eligible. `mysql` and `sqlite` each gain one composite FK. `sqlgen-example` drops the §1.4 workaround. | New goldens only |
+| N.8 | **Examples.** `tenancy_postgres` gains a composite tenant FK, a tenant junction (M2M) and a composite-PK target (read surfaces only), each with load and filter tests, and nested tests where eligible. `mysql` and `sqlite` each gain one composite FK. A `sqlgen-example` probe against HEAD generates and passes with no manual relationships (that repo carries no §1.4 workaround; it fails `validate` today, §1.1). | New goldens only |
 
-**Next phase (R3):** composite-PK parents and targets in nested mutations. Lift E1, E3 and
-the relationship-filter skip; GraphQL `<T>PKInput` types; E8's opaque-key rule for key
+**Next phase (R3):** composite-PK parents and targets in nested mutations. Lift E1 and E3;
+GraphQL `<T>PKInput` types; E8's opaque-key rule for key
 structs.
 
 ### 6.1 Tests
@@ -501,7 +512,8 @@ structs.
 - **Runtime:** `sql.Exists` changes signature; MySQL composite-key batches switch to tuple IN.
 - **Detection on schemas with composite FKs:** a junction's ends can move (§4.2 rule 4).
 - **Consumers:** a manual relationship that duplicates a detected one replaces it with a
-  warning (PRD §13.4), so `sqlgen-example`'s workaround keeps working until it is removed.
+  warning (PRD §13.4), so a consumer that applied the §1.4 workaround keeps working until it
+  removes it.
 
 ## 7. Rulings (settled 2026-10-20)
 
@@ -521,6 +533,24 @@ The old open questions are settled by the design: Q1 by §4.2 rule 1, Q2 by §4.
 §4.9, Q3 by §4.3 (a tenant member in the key marks the edge as tenant-guarded for
 `TENANT_SCOPED_REFERENCES.md`'s hook), Q4 by §4.7, Q5 by §4.6.
 
+### 7.1 Rulings at 32.0 (2026-10-22)
+
+Nine points §4 left open, settled while writing the PRD and in its review, each taking the
+recommended option:
+
+| Question | Ruling |
+|---|---|
+| Does an edge with no free member lose `create`? | **No.** It loses the rewrite verbs only and stays `create`-only, like a NOT NULL edge; they drop silently, as a NOT NULL edge's do. M2M is exempt. The literal "readable but not writable" would have taken `create` from a single-column FK in the child's PK (`order_lines(order_id, line_no)`), an unlisted N = 1 change. |
+| M2M unlink: junction PK, or PK or UNIQUE, equal to the union? | **Primary key only.** `HardDeleteMany` keeps keying on the junction PK, and no surrogate-keyed junction gains unlink verbs. |
+| Which error is a pinned-member mismatch? | **`ErrAlreadyRelated`** (`CONFLICT`), naming the target: the row is bound to another key through a member the edge cannot write. A nested `create` whose tenant column differs from the parent's under `SkipTenancy` gets it too. |
+| Manifest `junction` shape | **Nested, like `fk`:** `{table, schema, local_fk: {columns, references, constraint}, target_fk: {…}}` (PRD §30.4.2). |
+| Nested child input and the tenant column | **Every key member is elided, tenant column included**, and set from the parent; a tenancy-set value that disagrees is `ErrAlreadyRelated`. E1 therefore covers every member, the tenant column included, which supersedes R1's "every non-tenant member". Keeping the tenant column in the input would have added a field to a single-column tenant FK edge (`context_nested.go:633` drops it today), an N = 1 change. |
+| PK-override target | **Rule 1 also accepts the declared PRIMARY KEY constraint.** With `primary_key.columns: [code]` on `cycles(id PK, code UNIQUE)`, `tasks.cycle_id → cycles(id)` keeps its edge and loads through `id`, as §4.9 expects. |
+| Residual name collision | **Checked after `exclude_relationships` and manual replacements** (resolution-level), so the remedy it names can clear it. Detection still renames; the error lives where exclusions are known. |
+| `MATCH FULL` `connect` with a pinned member | **Generated only with `allow_reparent: true`.** Such a key never has an unparented row, so the default `connect` could only report a no-op or a conflict. Dropped silently, as a schema fact. |
+| `Filter.PKs` and tuple IN | **PRD §9.8.13 states the code:** OR-of-ANDs on every dialect. Routing it through `BuildCompositePKBatchCondition` is a backlog line, since it moves every composite-PK example's Go goldens. |
+
+
 ## 8. Interaction with tenant-scoped reference verification
 
 `TENANT_SCOPED_REFERENCES.md` proposes a runtime hook that probes tenanted→tenanted
@@ -530,7 +560,15 @@ flag is needed.
 
 ## 9. Probe record
 
-### 9.1 What already exists (re-verified at `bd7783ea`)
+### 9.1 What already exists (re-verified at `bd7783ea` and `244ce2ee`)
+
+At `244ce2ee` (2026-10-22): the composite-FK parity tests pass on all three dialects under both
+sources (`TestPostgresIntrospect_TableConstraints`, `TestMySQLIntrospect_TableConstraints`,
+`TestSQLiteIntrospect_TableConstraints`, `TestParityFixtures`), and a SQLite probe of
+`(workspace_id, cycle_id) → Cycles (WORKSPACE_ID, ID)` gave identical `Columns` and resolved
+`ReferenceColumns` under both. The builders sit at `sql/builder.go:461-531` and the
+`PKColumns[0]` relationship reads are 6 / 2 / 12, as below.
+
 
 - **The parser keeps the data.** `parser.Constraint` stores a composite FK's `Columns` and
   `ReferenceColumns` on all three dialects and under every source. `ResolveReferenceNames`

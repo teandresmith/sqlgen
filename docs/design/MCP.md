@@ -566,8 +566,8 @@ insurance against partial writes if sqlgen crashes mid-generation.
 | `sqlgen_list_entities` | `{kind?: "table" \| "view"}` | `[{name, table, pk_kind, features_summary}]` | "What's available in this package?" |
 | `sqlgen_get_entity` | `{name: string, compact?: bool}` | Full entity JSON (columns, methods, relationships, filter, sort, example) | "Tell me about `User`" |
 | `sqlgen_find_method` | `{query: string, fuzzy?: bool}` | `[{entity, method, signature}]` | "Which entity has `UpdateWhere`?" |
-| `sqlgen_find_referencing` | `{table: string}` | `[{entity, relationship_name, kind, fk_column}]` | "What references `users`?" |
-| `sqlgen_describe_relationship` | `{entity: string, relationship: string, compact?: bool}` | Join shape: FK col, junction (m2m), filter clause (sub-categorized), target entity | "How does `Post.Tags` resolve?" |
+| `sqlgen_find_referencing` | `{table: string}` | `[{entity, relationship_name, kind, fk_columns}]` | "What references `users`?" |
+| `sqlgen_describe_relationship` | `{entity: string, relationship: string, compact?: bool}` | Join shape: FK columns and the columns they reference, junction (m2m), filter clause (sub-categorized), target entity | "How does `Post.Tags` resolve?" |
 | `sqlgen_get_conventions` | `{}` | Conventions block (error sentinels, pagination, comparators, `CallOptions`) | "How do I handle a not-found?" |
 | `sqlgen_get_example` | `{entity: string, op?: "read" \| "write", compact?: bool}` | Canonical Go snippet | "Show me how to call this" |
 | `sqlgen_find_join_path` | `{from: string, to: string, max_hops?: int}` | `[{hops: int, path: [{entity, relationship}]}]` (≤5 paths, shortest first) | "How do I join `User` to `Comment`?" |

@@ -61,6 +61,8 @@ type Dialect interface {
 }
 ```
 
+`SupportsTupleIN` is true on every dialect: composite-key batches render `("a", "b") IN (($1, $2), …)` on PostgreSQL and `(a, b) IN ((?, ?), …)` on MySQL and SQLite. MySQL 8.0 and 8.4 evaluate it with the same composite-index range scan as an OR of ANDs, and far faster (PRD §8.7). `PrefixConditions` qualifies each column of a tuple-IN condition, `(c."workspace_id", c."id") IN (…)`; prefixing the tuple as a whole, `c.("workspace_id", "id")`, is a syntax error on PostgreSQL and SQLite.
+
 ### Implementation Rules
 
 - Each dialect has its own file: `postgres.go`, `mysql.go`, `sqlite.go`.
@@ -479,7 +481,7 @@ conditions := sql.And(
 
 `sql.Where` and every comparator's `Parse` write the column token they are given verbatim, into both `Clause` and `Column`; they never quote. The caller quotes through `Dialect.QuoteIdentifier`, and generated code always does. `sql.Where("status")` renders `status = $1`, which is invalid SQL for a keyword, mixed-case or digit-leading column. The quoted forms in the operator tables above assume a quoted column. Because the token is verbatim, a caller can also pass an already-qualified one, such as `j.Alias + "." + d.QuoteIdentifier(col)`.
 
-The builder helpers that take a column name rather than a WHERE token quote it themselves, so they take a raw name: `sql.Exists(correlationColumn, …)` (qualified with the enclosing alias at build time), `BuildCompositePKConditions` / `BuildCompositePKBatchCondition`, `SoftDeleteOptions.Column` and `BuildIncrement`. Passing them a quoted name quotes it twice.
+The builder helpers that take a column name rather than a WHERE token quote it themselves, so they take a raw name: `sql.Exists` with its correlation columns, one per pair of the relationship's key, each qualified with the enclosing alias at build time, `BuildCompositePKConditions` / `BuildCompositePKBatchCondition`, `SoftDeleteOptions.Column` and `BuildIncrement`. Passing them a quoted name quotes it twice.
 
 ### Subquery Support
 
@@ -731,6 +733,8 @@ Quick reference for what each dialect supports.
 | `ALTER TABLE DROP COLUMN` | Yes | Yes | Yes (3.35+) |
 | `ALTER TABLE MODIFY COLUMN` | Yes | Yes | No |
 | Partial unique indexes | Yes | No | Yes (3.8.0+) |
+| Tuple `IN` (`(a, b) IN ((…), …)`) | Yes | Yes | Yes |
+| `MATCH FULL` foreign keys enforced | Yes | No (parsed, ignored) | No (parsed, ignored) |
 | `DEFAULT` in VALUES clause | Yes | Yes | No (use `sql.DefaultExpr` instead) |
 
 ### Transaction Features

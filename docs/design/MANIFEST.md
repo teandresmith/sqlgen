@@ -972,14 +972,18 @@ read it — no duplicated fields.
       "name": "Posts",
       "kind": "o2m",
       "target_entity": "Post",
-      "fk": { "table": "posts", "column": "author_id" },
+      "fk": { "table": "posts", "columns": ["author_id"], "references": ["id"], "constraint": "posts_author_id_fkey" },
       "filter": null
     },
     {
       "name": "Roles",
       "kind": "m2m",
       "target_entity": "Role",
-      "junction": { "table": "user_roles", "local_fk": "user_id", "target_fk": "role_id" },
+      "junction": {
+        "table": "user_roles",
+        "local_fk": { "columns": ["user_id"], "references": ["id"], "constraint": "user_roles_user_id_fkey" },
+        "target_fk": { "columns": ["role_id"], "references": ["id"], "constraint": "user_roles_role_id_fkey" }
+      },
       "filter": null
     }
   ],
@@ -1114,12 +1118,17 @@ read it — no duplicated fields.
 }
 ```
 
-**Relationship `fk` and `junction` fields.** `fk.table` names the table
-that holds `fk.column`: the target's table when the column is on the
+**Relationship `fk` and `junction` fields** (key lists since
+`schema_version` `0.2.0`, PRD §30.4.2). `fk.table` names the table
+that holds `fk.columns`: the target's table when the columns are on the
 target (an `o2m` edge such as `posts.author_id` above, or a has-one
-`o2o`), and the entity's own table when the entity holds the column (a
+`o2o`), and the entity's own table when the entity holds them (a
 belongs-to edge, such as `Profile.users` → `profiles.user_id`).
-`junction.table` names the M2M junction. Both carry
+`fk.columns[i]` references `fk.references[i]`, in the foreign key's
+declared order, and `fk.constraint` names the FOREIGN KEY the edge was
+detected from (omitted for a manual relationship). `junction.local_fk`
+and `junction.target_fk` have the same `columns` / `references` /
+`constraint` shape. `junction.table` names the M2M junction. Both carry
 the bare table name, with an optional `schema` beside it when sqlgen
 resolved one (a config-declared `junction:` resolves by PRD §5.5's
 rule, and carries no schema only when it names no parsed table),

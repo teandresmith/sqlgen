@@ -653,7 +653,7 @@ overrides:
 3. **Pointer type (`*T`)** — guard is `<var> != nil`; unwrap is `(*<var>)`; string conversion is derived from the pointed-to type.
 4. **Bare type** — no guard. If the type has a `.String()` method (UUID-style, `time.Time`, `time.Duration`, `net.IP`, `net.IPNet`, `net.HardwareAddr`, `types.DateTime`, `*.UUID`) → call `.String()`. If the type is `string` → pass through. Otherwise → `fmt.Sprint(<var>)`.
 
-This applies only when the FK column is read off a *child* entity in a relationship loader. Parent-side / target-side PK reads never hit a Null wrapper because primary keys are never nullable.
+This applies to every FK column read off a *child* entity in a relationship loader, one per member of a composite key. Parent-side / target-side reads are of the columns the key references: a primary key is never nullable, and a referenced UNIQUE column holding a NULL is skipped before the query ([13.3](#133-fk-type-conversion)).
 
 ### 4.8 TableConfig (per-table)
 
@@ -801,10 +801,10 @@ When both `column_map` and `type_map` specify a type for the same column, `colum
 | `type` | `string` | Yes | Relationship cardinality: `o2o`, `o2m`, `m2m`, or the long spellings `one_to_one`, `one_to_many`, `many_to_many` (case-insensitive). Any other value, or an omitted `type`, is a config error. |
 | `side` | `string` | No (O2O only) | Which end of the edge this entry represents. `parent` (default) for the FK-holder side; `child` for the inverse view from the referenced side. Either value is case-insensitive. The manifest emits `kind: "o2o"` for `parent` and `kind: "m2o"` for `child`. Ignored for `o2m` and `m2m` (auto-detection emits both peers as parent-side). |
 | `table` | `string` | Yes | Related table name (bare or schema-qualified). |
-| `fk` | `string` | Yes (O2O/O2M) | The FK column that creates the link. For O2M: column on the **related** table pointing to this table's PK. For O2O: column on **this** table pointing to the related table's PK (belongs-to), or on the **related** table pointing to this table's PK (has-one); which one is derived from where the column is declared ([13.1](#131-relationship-types)). |
-| `junction` | `string` | Yes (M2M) | Junction table name (bare or schema-qualified). FK column names are inferred from the linked table names (e.g., `product_id`, `tag_id`). |
-| `junction_local_fk` | `string` | No (M2M) | Override inferred FK column in junction table for this table. Only needed when column name doesn't follow `{table_singular}_id` convention. |
-| `junction_reference_fk` | `string` | No (M2M) | Override inferred FK column in junction table for the related table. |
+| `fk` | `string` or `[]string` | Yes (O2O/O2M) | The FK column or columns that create the link. For O2M: columns on the **related** table pointing to this table's PK. For O2O: columns on **this** table pointing to the related table's PK (belongs-to), or on the **related** table pointing to this table's PK (has-one); which one is derived from where the columns are declared ([13.1](#131-relationship-types)). A list maps by position onto the primary key of the table it references, and its length must equal that key's column count ([4.13](#413-config-validation-rules)). A string is a one-item list. |
+| `junction` | `string` | Yes (M2M) | Junction table name (bare or schema-qualified). FK column names are inferred from the linked table names (e.g., `product_id`, `tag_id`). Inference gives one column per side, so a linked table with a composite primary key needs `junction_local_fk` or `junction_reference_fk`. |
+| `junction_local_fk` | `string` or `[]string` | No (M2M) | Override the inferred FK column or columns in the junction table for this table. Only needed when the column name doesn't follow the `{table_singular}_id` convention, or when this table's primary key is composite. A list maps by position onto this table's primary key, as `fk` does. |
+| `junction_reference_fk` | `string` or `[]string` | No (M2M) | Override the inferred FK column or columns in the junction table for the related table. A list maps by position onto the related table's primary key, as `fk` does. |
 | `filter` | `string` | No | Static SQL condition appended to the relationship loader's WHERE clause. Used for discriminator-based (polymorphic) relationships. The condition is injected as-is — it must be valid SQL for the configured dialect. Mutually exclusive with `discriminator`. See [Polymorphic Relationships](#polymorphic-relationships) below. |
 | `discriminator` | `RelationshipDiscriminator` | No | Structured `{column, value}` form of a polymorphic predicate — the column lives on the related table and the value is bound as a parameter on every read path that can carry one ([13.4.1](#1341-discriminator--the-structured-form-of-a-polymorphic-edge) names the one that cannot). Compiles to the same equality predicate the equivalent `filter` produced, and is the **only** polymorphic form that is write-eligible for nested mutations. Mutually exclusive with `filter`. See [13.4.1](#1341-discriminator--the-structured-form-of-a-polymorphic-edge). |
 | `sort` | `[]RelationshipSort` | No | Default ordering for loaded related entities, **O2M and M2M only**. Applied as `ORDER BY` in the relationship loader query when the caller passes no `Sorts` ([12.1](#relationship-loading-options)). If omitted, no ordering is applied (database-default order). Rejected on an O2O relationship, which is loaded by a `LEFT JOIN` in the parent query and has no loader query to order ([13.2](#132-loading-strategy)); see [4.13](#413-config-validation-rules). |
@@ -818,6 +818,8 @@ When both `column_map` and `type_map` specify a type for the same column, `colum
 | `o2o` belongs-to | This table | Column on this table that references the related table's PK |
 | `o2o` has-one | Related table | Column on the related table that references this table's PK |
 | `m2m` | N/A | Not used — junction table handles the link |
+
+**A manual relationship joins the primary key.** `fk` and the two junction keys name the FK columns only; there is no key naming the columns they reference. A list's first column references the first primary-key column, its second the second, and so on, in the order the primary key declares them. A foreign key to a non-PK UNIQUE key is detected ([5.3](#53-relationship-detection)) but cannot be declared.
 
 **RelationshipDiscriminator:**
 
@@ -878,6 +880,15 @@ tables:
         table: comments
         fk: commentable_id
         filter: "commentable_type = 'products'"
+
+  workspace_settings:          # primary key (workspace_id, key)
+    relationships:
+      # O2M to a composite primary key, mapped by position:
+      # setting_overrides(workspace_id, setting_key) → workspace_settings(workspace_id, key)
+      - name: Overrides
+        type: o2m
+        table: setting_overrides
+        fk: [workspace_id, setting_key]
 ```
 
 #### Polymorphic Relationships
@@ -965,7 +976,7 @@ tables:
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
 | `name` | `string` | — | The relationship's resolved Go field name, as it appears on the entity struct. Required. |
-| `allow_reparent` | `bool` | `false` | Lets an O2M `connect` on this edge adopt a row that is already parented elsewhere. With the default, such a row is `ErrAlreadyRelated`. This is per-edge config and never a per-call option: moving a row between parents is a static, reviewable policy decision, and a `CallOptions` flag would make it a per-request authorization decision, which [29.11](#2911-constraints) puts out of scope. |
+| `allow_reparent` | `bool` | `false` | Lets an O2M `connect` on this edge adopt a row that is already parented elsewhere. With the default, such a row is `ErrAlreadyRelated`. A reparent writes only the key's free members; a target whose pinned member differs from the parent's is still `ErrAlreadyRelated` ([9.9.2](#992-the-verb-set-is-decided-per-edge-by-fk-nullability)). This is per-edge config and never a per-call option: moving a row between parents is a static, reviewable policy decision, and a `CallOptions` flag would make it a per-request authorization decision, which [29.11](#2911-constraints) puts out of scope. |
 
 ### 4.9 ViewConfig (per-view)
 
@@ -1218,9 +1229,12 @@ The config is validated immediately after loading, before parsing or generation 
 | **A `sort` column is not a column on the related table** | Error *(schema-level)* | The loader hands the static sort to the related table's query, so an unknown column would fail every relationship load at runtime. The error names the relationship, the column, and the related table. The check reads the parsed tables only, as the `discriminator.column` row's does: a target absent from them is left to relationship resolution, and a view target's sort column is not checked here — a bad one fails as an SQL error on the edge's first load. |
 | **A relationship missing `name`** | Error | [4.8](#48-tableconfig-per-table) marks `name` required: it is the relationship's Go field on the entity struct. Without it an `o2o` edge panics the generator, and an `o2m` or `m2m` edge emits an entity-struct field with no name, so the generated package does not parse. The error names the relationship and the key, and is reported alongside a missing or invalid `type`. |
 | **A relationship missing the link key its type requires** | Error | [4.8](#48-tableconfig-per-table) marks `fk` required on `o2o` and `o2m`, and `junction` on `m2m`: each names what creates the link. Without `fk` an `o2m` edge generates a filter field on an empty column name and the generated package does not parse, and an `o2o` edge generates a `LEFT JOIN` on an empty identifier that fails on its first load; without `junction` an `m2m` edge generates a package that does not compile. The error names the relationship and the key. An entry whose `type` is missing or invalid reports the type error instead of a link-key error. |
-| **A relationship's `fk` is not a column where its type puts it** | Error *(schema-level)* | An `o2m` `fk` must be a column on the related table; an `o2o` `fk` must be a column on this table (belongs-to) or on the related table (has-one), since [13.1](#131-relationship-types) derives which one from where it is declared ([4.8](#48-tableconfig-per-table)). A column on neither side would otherwise be read as belongs-to: an `o2m` edge then fails in the Go compile of the generated package, and an `o2o` edge on its first load. The error names the relationship, the column, and the table or tables it was looked up on. `m2m` is not checked, since its link columns are the junction's own fields. The check reads the parsed tables only, as the `sort` row's does: a target absent from them, a view target included, is left to relationship resolution. |
+| **A relationship's `fk` is not a column where its type puts it** | Error *(schema-level)* | Every `fk` column of an `o2m` edge must be a column on the related table; the `fk` columns of an `o2o` edge must all be on this table (belongs-to) or all on the related table (has-one), since [13.1](#131-relationship-types) derives which one from where it is declared ([4.8](#48-tableconfig-per-table)). A column on neither side would otherwise be read as belongs-to: an `o2m` edge then fails in the Go compile of the generated package, and an `o2o` edge on its first load. The error names the relationship, the column, and the table or tables it was looked up on. `m2m` is not checked, since its link columns are the junction's own fields. The check reads the parsed tables only, as the `sort` row's does: a target absent from them, a view target included, is left to relationship resolution. |
 | **A declared relationship's `table:` resolves to no generated entity** | Error *(resolution-level — see phase 3 below)* | A `tables.<name>.relationships` entry must target a table or view that generates. A table excluded by `exclude_tables` ([6.4](#64-filtering)), a table with no primary key ([9.4b](#94b-no-pk-tables-are-skipped)), or a name not in the schema is an error. It names the table, the relationship, the target and the three causes, because the user declared the edge by name. Every such entry is reported in one pass. The FK-inferred counterpart is silently omitted instead, by the same listed / auto-included rule as nested-mutation edges below: an FK into a skipped table was never asked for, so it cannot break the tables that reference it. The same row covers the ambiguity rule in [5.5](#55-schema-qualification--table-naming): a bare `table:` or `junction:` that names an entity in more than one schema is an error, and the message names each qualified spelling. |
-| **`exclude_columns` removes a relationship's link column** | Warning (FK-inferred) / Error (declared) *(resolution-level — see phase 3 below)* | Every column a relationship joins on must be in the generated model on both sides: the FK column of an `o2o` / `o2m` edge, both junction columns of an `m2m` edge, and, for an FK-inferred edge, the column each one references. Otherwise the loader, the filter member and the nested writer would name a field the struct does not have, and an `o2m` edge does not compile. An FK-inferred edge with such a column is omitted with a warning naming the table, the edge and the column, since the user excluded a column, not the edge; an edge also listed in `exclude_relationships` is omitted silently. A declared relationship whose `fk` (or `junction_local_fk` / `junction_reference_fk`) is excluded is an error naming the relationship and the column, because the user declared the edge by name. To hide a column from the API while keeping the edge, use `column_map.<col>.access: hidden` ([32](#32-column-access-control)) instead. |
+| **`exclude_columns` removes a relationship's link column** | Warning (FK-inferred) / Error (declared) *(resolution-level — see phase 3 below)* | Every column a relationship joins on must be in the generated model on both sides: every FK column of an `o2o` / `o2m` edge's key, every column of both junction keys of an `m2m` edge, and, for an FK-inferred edge, every column each one references. Otherwise the loader, the filter member and the nested writer would name a field the struct does not have, and an `o2m` edge does not compile. An FK-inferred edge with such a column is omitted with a warning naming the table, the edge and the column, since the user excluded a column, not the edge; an edge also listed in `exclude_relationships` is omitted silently. A declared relationship with an excluded column in its `fk` (or `junction_local_fk` / `junction_reference_fk`) is an error naming the relationship and the column, because the user declared the edge by name. To hide a column from the API while keeping the edge, use `column_map.<col>.access: hidden` ([32](#32-column-access-control)) instead. |
+| **A foreign key whose referenced columns are not a key** | Warning *(schema-level)* | Relationship detection ([5.3](#53-relationship-detection) rule 1) gives an edge only to a FOREIGN KEY whose referenced columns are, as a set, the target's resolved primary key, its declared PRIMARY KEY constraint, or one of its non-partial UNIQUE constraints. Any other foreign key gives no edge and this warning, which names the constraint and points to manual relationships ([13.4](#134-manual-relationship-configuration)). An unnamed SQLite foreign key is named `table(columns) → target(columns)`. PostgreSQL refuses such a key; MySQL 8.0 (and 8.4 with `restrict_fk_on_non_standard_key` off) and SQLite accept it, so the warning is reached on MySQL and SQLite. It is printed after relationship detection, after the parser's schema warnings. |
+| **Two detected relationships keep one name after disambiguation** | Error *(resolution-level — see phase 3 below)* | Disambiguation ([5.3](#53-relationship-detection) rule 6) renames edges that share a source and a target from their own keys. A name two edges of one table still share afterwards would put one field on the entity struct twice. The check runs after `exclude_relationships` and manual replacements ([13.4](#134-manual-relationship-configuration)) are applied, so an excluded or replaced edge does not count, and the remedy below clears it. The error names both FOREIGN KEY constraints and points to [13.4](#134-manual-relationship-configuration): list the name in `exclude_relationships` and declare the edges by hand. |
+| **A relationship's `fk` list does not match the referenced primary key** | Error *(schema-level)* | A list in `fk`, `junction_local_fk` or `junction_reference_fk` maps by position onto the primary key of the table it references ([13.4](#134-manual-relationship-configuration)), so its length must equal that key's column count. A string is a one-item list, so a single string into a table with a composite primary key fails this rule as well. The error names the relationship, the key, the list and the primary key's columns. |
 | **`nested_mutations.max_depth` is not `1`** | Error | Depth greater than 1 is not implemented in v1 ([9.9](#99-nested-mutations)); `0` disables nothing that `enabled: false` does not already disable. Rejecting is what keeps a future depth from silently meaning depth 1. |
 | **Unknown value in `nested_mutations.operations` or `nested_mutations.verbs`** | Error | Both are closed sets — `{create, update, upsert}` and `{create, connect, disconnect, clear}`. A typo'd verb would otherwise silently narrow the generated surface. |
 | **A `…_with_related` mask key enabled without its base** | Error | In an `api.operations` or `tables.<name>.api.operations` mask, `create_with_related: true` beside `create: false` is rejected, and likewise for update and upsert. The mask conjoins each `…_with_related` key with its masked base ([26.5.1](#2651-exposed-resolver-surface)), so that a mask written to leave a single hand-guarded door into a table does not leave a second, generated one through the nested mutation. The pair would therefore drop the nested mutation from the API with no signal; failing at validate time names the key that is wrong. The Go client is untouched either way: it generates the nested methods whenever `nested_mutations` enables them ([4.6](#46-generationconfig)). |
@@ -1258,8 +1272,8 @@ The config is validated immediately after loading, before parsing or generation 
 
 Validation runs in three phases:
 1. **Config-level** (before parsing) — driver/dialect mismatch, missing connection, invalid `api.operations` presets, a leftover client `operations` key, client-only keys in an `api.operations` mask, duplicate struct names
-2. **Schema-level** (after parsing) — cursor_keys existence and nullability, soft_delete type mismatch, `NOT NULL` timestamp column and nullable no-`DEFAULT` bool / integer column, struct name collisions from auto-detection, exclude_columns exhaustion, an excluded primary-key column
-3. **Resolution-level** (during generation) — the few rules that need the naming or type engine to have run, and so cannot be answered from the config text alone: the `api.operations` over-reach warning (which reads each table's resolved operations), the resolved-field-name rules (collision and reserved name), whether a declared relationship's target generates at all (which needs `exclude_tables` and the primary-key rule applied, and the target's `struct_name` resolved), whether a relationship's link columns survive `exclude_columns`, the two rules that ask whether a Go type literal needs an explicit import, and the one-UUID-library-per-package rule, which has to collect the import path every column actually resolved to across the whole package before it can count them. They live in the generator rather than in config validation, and the table above marks them — but `sqlgen validate` still reports them: it builds the table, view and API contexts in memory and discards them, so every phase-3 rule is answered at validate time without loading a template or writing a file.
+2. **Schema-level** (after parsing) — cursor_keys existence and nullability, soft_delete type mismatch, `NOT NULL` timestamp column and nullable no-`DEFAULT` bool / integer column, struct name collisions from auto-detection, exclude_columns exhaustion, an excluded primary-key column, a foreign key to non-key columns, a manual `fk` list that does not match the referenced primary key
+3. **Resolution-level** (during generation) — the few rules that need the naming or type engine to have run, and so cannot be answered from the config text alone: the `api.operations` over-reach warning (which reads each table's resolved operations), the resolved-field-name rules (collision and reserved name), whether a declared relationship's target generates at all (which needs `exclude_tables` and the primary-key rule applied, and the target's `struct_name` resolved), whether a relationship's link columns survive `exclude_columns`, whether two detected relationships still share a name once exclusions and manual replacements apply, the two rules that ask whether a Go type literal needs an explicit import, and the one-UUID-library-per-package rule, which has to collect the import path every column actually resolved to across the whole package before it can count them. They live in the generator rather than in config validation, and the table above marks them — but `sqlgen validate` still reports them: it builds the table, view and API contexts in memory and discards them, so every phase-3 rule is answered at validate time without loading a template or writing a file.
 
 **Cursor key resolution — fallback semantics.** `cursor_keys` resolution is lenient for inherited values and strict for explicit values. The rationale: explicit configuration is a user assertion that must be honored or flagged; an inherited default should degrade gracefully because the global default cannot know every table's schema shape. Partial matches (some columns present, others missing) always trigger a full fallback — never a subset — because a partial cursor would silently change sort semantics. Resolution rules:
 
@@ -1429,6 +1443,8 @@ PostgreSQL names follow its own rules: `<cols>` joins the column names with `_`,
 - **SQLite** drops a UNIQUE only when an identical index already exists. A rowid-alias `INTEGER PRIMARY KEY` has no index, so a UNIQUE on it is kept.
 - **MySQL** keeps every duplicate.
 
+**A FOREIGN KEY keeps every column pair and, on PostgreSQL, its MATCH type.** A composite key's columns and referenced columns are kept in declared order on every dialect and source. A PostgreSQL key records `MATCH SIMPLE` or `MATCH FULL`, from the DDL under `files` and from `pg_constraint.confmatchtype` under `database`, because PostgreSQL enforces `MATCH FULL` and nested `disconnect` depends on it ([9.9.3](#993-the-eligibility-matrix)). MySQL and SQLite accept any `MATCH` clause, `PARTIAL` included, and enforce `MATCH SIMPLE` whatever it says, so their keys are always recorded as `MATCH SIMPLE`. On PostgreSQL `MATCH PARTIAL` is a parse error, as PostgreSQL rejects it.
+
 **Indexes get the database's names too.** SQLite requires every `CREATE INDEX` to be named. On PostgreSQL an unnamed `CREATE INDEX` is `<table>_<cols>_idx`, with the collision suffix. On MySQL an unnamed `KEY` / `INDEX` takes its first column's name, numbered together with the unnamed UNIQUEs (`c`, `c_2`, `c_3`). MySQL also builds an index for a FOREIGN KEY when no existing index starts with the key's columns, and drops it once a later index does. That index is named after the constraint when the constraint is named, then after the index name a `FOREIGN KEY <name> (…)` clause declares, and after the key's first column otherwise. The MySQL parser adds it as well, so both paths list it. UNIQUE and index `method` defaults to `btree` on PostgreSQL and MySQL, and a CHECK's columns are the columns its expression references.
 
 **A table states its columns.** A `CREATE TABLE` whose columns come from another table, a type or a query is a parse error on every dialect, temporary tables included, since the file parser does not read those columns: PostgreSQL `LIKE`, `INHERITS` (outside `PARTITION OF`), `CREATE TABLE … OF type`, `CREATE TABLE … AS` and `SELECT … INTO`; MySQL `LIKE` and `CREATE TABLE … [AS] SELECT`; SQLite `CREATE TABLE … AS SELECT`. The error says to write the columns out, or to create the table in the database and read it from there (`source: database` or `both`), since the catalog holds its columns. A PostgreSQL `CREATE MATERIALIZED VIEW`, which has the same form as `CREATE TABLE … AS`, is skipped as a view.
@@ -1437,20 +1453,26 @@ PostgreSQL names follow its own rules: `<cols>` joins the column names with `_`,
 
 ### 5.3 Relationship Detection
 
-Automatic relationship detection runs after all tables are parsed:
+Automatic relationship detection runs after all tables are parsed, after every foreign key's referenced table and columns are rewritten to the spelling the target declares, and after `tables.<name>.primary_key` overrides ([8.6](#86-primary-key-strategy)) are applied. It reads the table constraints ([5.2](#52-dialect-parsers)): **each FOREIGN KEY constraint gives at most one edge**, joining every column pair the constraint declares. A single-column foreign key is the one-pair case of the same rule.
 
-**Many-to-Many (M2M):**
-- Table has exactly 2 foreign key columns
-- Both FK columns are part of a composite PRIMARY KEY or UNIQUE constraint
-- Creates bidirectional relationships (TableA ↔ TableB through JunctionTable)
+An edge's **key** is its list of pairs, each a column on the table holding the foreign key and the column it references, in the constraint's declared column order. An M2M edge has one key per junction foreign key. Every member of any FOREIGN KEY constraint is a foreign-key column for increment exclusion ([8.2](#82-generated-artifacts-per-table)) and PK strategy ([8.6](#86-primary-key-strategy)). A column's own FK reference stays a single-column property: only a single-column foreign key sets it, and it types the column's comparator ([13.3](#133-fk-type-conversion)).
 
-**One-to-One (O2O):**
-- Column has FOREIGN KEY constraint
-- Column is marked UNIQUE or part of a UNIQUE constraint
+1. **Target key.** The referenced columns must be, as a set, the target's resolved primary key (after `primary_key` overrides), its declared PRIMARY KEY constraint, or the columns of one of its non-partial UNIQUE constraints. The declared constraint counts even when an override moves the primary key, because the database still enforces it: with `primary_key.columns: [code]` on `cycles(id PRIMARY KEY, code UNIQUE)`, `tasks.cycle_id → cycles(id)` keeps its edge and joins through `id`. A `REFERENCES t` with no column list references the primary key. Any other foreign key gives no edge and a warning naming the constraint and pointing to manual relationships ([13.4](#134-manual-relationship-configuration), [4.13](#413-config-validation-rules)). On SQLite, a `REFERENCES t` whose parent key could not be resolved has no referenced columns and is such a key. PostgreSQL refuses a foreign key to non-key columns at DDL time. MySQL 8.0 accepts one to any indexed columns, and 8.4 refuses it only while `restrict_fk_on_non_standard_key` is on, its default. SQLite accepts it and fails at DML time. So the warning is reached on MySQL and SQLite, from either source. SQLite foreign keys are usually unnamed, so the warning names one as `table(columns) → target(columns)`.
+2. **Redundant foreign keys.** A foreign key whose pairs are a subset of another foreign key's pairs to the same target gives no edge. Of two identical foreign keys, the first declared gives the edge. A schema mid-migration that holds both `cycle_id → cycles(id)` and `(workspace_id, cycle_id) → cycles(workspace_id, id)` gets one edge, through the composite key.
+3. **O2O or O2M.** An edge is O2O when the table holding the foreign key has a PRIMARY KEY or non-partial UNIQUE constraint whose columns are a subset of the key's columns: a unique subset makes the whole key unique. A single-column foreign key is therefore O2O when its column is unique or is the table's sole primary-key column ([13.1](#131-relationship-types)). Every other edge is O2M.
+4. **M2M.** First, every foreign key whose columns all belong to the table's other foreign keys is set aside. The table is a junction when exactly two foreign keys remain and a PRIMARY KEY or non-partial UNIQUE constraint contains the union of their columns. The two keys may share columns. A junction gives one bidirectional M2M edge (TableA ↔ TableB through the junction) instead of an O2O or O2M edge per foreign key. Two consequences follow:
+   - **On a junction, a set-aside foreign key gives no edge.** On a table that is not a junction it is detected like any other. The tenant junction `task_labels(workspace_id, task_id, label_id)` with `(workspace_id, task_id) → tasks`, `(workspace_id, label_id) → labels` and `workspace_id → workspaces` is M2M: the workspace key lies inside both composite keys, so it is set aside and `workspaces → task_labels` has no O2M. A junction with three single-column foreign keys keeps all three and gives three O2M edges.
+   - **A set-aside foreign key can be a real parent, not only the tenant column.** `order_items` with `order_id → orders`, `product_id → products` and `(warehouse_id, product_id) → stock`, keyed on all three columns, is a junction between orders and stock. The products key lies inside the stock key and is set aside, so `Order.Products` is not detected; a manual relationship ([13.4](#134-manual-relationship-configuration)) restores it. Both consequences need a composite foreign key, so no schema without one is affected.
+5. **Naming member.** An O2M edge is named after the table holding the foreign key, an O2O edge after the referenced table, and an M2M edge after the table at its other end. Disambiguation (rule 6) derives a name from one member column of the key, the **naming member**, chosen by the first step that yields exactly one column:
+   1. the only member that is neither in the primary key of the table holding the foreign key nor a member of another foreign key on that table;
+   2. else the only member that is not a member of another foreign key on that table, ignoring the primary key;
+   3. else the member paired with the target's single-column primary key;
+   4. else none, and the edge keeps its name.
 
-**One-to-Many (O2M):**
-- Column has FOREIGN KEY constraint
-- Column is NOT unique (default fallback for FKs not matching O2O or M2M)
+   The tenant key `(workspace_id, cycle_id) → cycles(workspace_id, id)` names from `cycle_id`, as the single-column `cycle_id → cycles(id)` would. Step 2 covers `cycle_notes(workspace_id, cycle_id, prev_cycle_id, n)`, keyed on all four columns, with `(workspace_id, cycle_id)` and `(workspace_id, prev_cycle_id)` both referencing `cycles(workspace_id, id)`. It is a self-referential M2M on `cycles`, and its two directions are `cycle` and `prev_cycle`.
+6. **Disambiguation.** When two or more edges share a source and a target table, each is renamed from its own key, where `<stem>` is the naming member without its `_id` suffix: an O2M edge to `<stem>_<name>`, an O2O edge to `<stem>`, an M2M edge to its junction table's name, and a self-referential M2M edge to the stem of its reference key's naming member. An edge with no naming member keeps its name. `exclude_relationships` also matches the name an edge had before it was renamed. A name that two edges of one table still share after this step, once `exclude_relationships` and manual replacements are applied, is a generation error naming both constraints and pointing to `exclude_relationships` plus a manual relationship ([13.4](#134-manual-relationship-configuration), [4.13](#413-config-validation-rules)). Two fields of one name are never emitted.
+
+Detection reads the schema alone, so it gives the same answer under `files`, `database` and `both` ([6.1](#61-source-modes)). A foreign key into a table the generated schema does not hold gives no edge ([5.5](#55-schema-qualification--table-naming)). An edge with a member column that `exclude_columns` removes, on either side, is dropped later, with a warning ([4.13](#413-config-validation-rules)).
 
 Relationships can also be manually configured via `tables.<table>.relationships` (see [4.8](#48-tableconfig-per-table)).
 
@@ -2305,7 +2327,8 @@ This catches template regressions without running the full generation pipeline.
 - Placeholder styles: `$1, $2` (PostgreSQL) vs `?` (MySQL/SQLite)
 - Identifier quoting: `"double"` (PostgreSQL/SQLite) vs `` `backtick` `` (MySQL)
 - `In`/`Nin` conditions: expanded `IN ($1, $2, ...)` / `IN (?, ?, ...)` on every dialect, including a single-`Subquery` argument rendered as a nested SELECT
-- Composite PK: tuple `IN` (PostgreSQL), expanded `OR` (MySQL)
+- Composite PK: tuple `IN` on every dialect, and a prefixed tuple `IN` that qualifies each column (`(c."workspace_id", c."id") IN (…)`)
+- Correlated `Exists` with one and with several correlation pairs, rendered SQL and argument order
 - Edge cases: empty filter (returns all rows), nil FieldOptions (SELECT *), zero-length IN list
 
 **Integration tests:** Generated SQL is executed against real databases to verify it produces correct results — not just correct syntax.
@@ -2531,7 +2554,7 @@ client.Products().Increment(ctx, productID, <pkg>.ProductIncrementStock, 5)
 **Eligibility: numeric, and identifying nothing.** A column is incrementable when its resolved Go type is numeric AND it identifies no row AND it is writable:
 
 - **Primary key columns are excluded** — a row's identity is not an amount.
-- **Foreign key columns are excluded** — `category_id + 1` is arithmetic on *another* row's identity and lands on whichever row happens to sit at the next value. There is no schema in which that is the intended operation. This covers config-declared synthetic FKs (`tables.<t>.relationships[].fk`) as well as schema-declared ones, so a polymorphic pointer named as a relationship FK is excluded too. Only integer-typed FKs were ever affected — a `uuid` or `text` FK is not a numeric Go type — which is why the distinction is easy to miss.
+- **Foreign key columns are excluded** — `category_id + 1` is arithmetic on *another* row's identity and lands on whichever row happens to sit at the next value. There is no schema in which that is the intended operation. Every member of any FOREIGN KEY constraint is excluded, a composite one included: `workspace_id` in `tasks`, a member of `(workspace_id, cycle_id) → cycles(workspace_id, id)`, could only break that key if incremented ([5.3](#53-relationship-detection)). This covers config-declared synthetic FKs (`tables.<t>.relationships[].fk`) as well as schema-declared ones, so a polymorphic pointer named as a relationship FK is excluded too. Only integer-typed FKs were ever affected — a `uuid` or `text` FK is not a numeric Go type — which is why the distinction is easy to miss.
 
   On a tenanted schema the exclusion is load-bearing rather than merely tidy: `Increment` constrains which rows it *matches* but not which column it *targets*, so incrementing a foreign key walks a reference into another tenant's row. No pre-write check can catch it, because the destination value is not known until after the arithmetic — see [TENANT_SCOPED_REFERENCES.md](./design/TENANT_SCOPED_REFERENCES.md) §5.
 
@@ -3009,7 +3032,7 @@ The strategy is derived from the PK column's type, default expression, and diale
 
 | Dialect | PK Type | Has DB Default? | Detected Strategy | CreateInput | Rationale |
 |---------|---------|:---------------:|:-----------------:|-------------|-----------|
-| **Any** | **Any, and the column is a FOREIGN KEY** | — | **`caller`** | Required (bare type) | **Checked first, ahead of every row below.** The value must equal an existing parent row's key, so nothing may mint it. |
+| **Any** | **Any, and the column is a member of a FOREIGN KEY constraint** | — | **`caller`** | Required (bare type) | **Checked first, ahead of every row below.** The value must equal an existing parent row's key, so nothing may mint it. |
 | PostgreSQL | UUID | Yes (`DEFAULT gen_random_uuid()`) | `db` | `omittable.Value[T]` | DB applies default if omitted; caller may override |
 | PostgreSQL | UUID | No | `app` | `omittable.Value[T]` | App generates UUID if omitted; caller may override |
 | PostgreSQL | SERIAL/BIGSERIAL | Yes | `db` | Excluded | Sequence-based — caller cannot provide |
@@ -3026,8 +3049,10 @@ The strategy is derived from the PK column's type, default expression, and diale
 
 **Key rule: MySQL + UUID PK always defaults to `app`**, regardless of whether the schema has a DEFAULT expression. This is because MySQL has no mechanism to retrieve a DB-generated UUID after INSERT (`RETURNING` is not supported, and `LastInsertId()` only works for integer auto-increment).
 
-**Key rule: a single-column PK that is also a foreign key is always `caller`**, on every dialect,
-whatever its SQL type or default. This is the 1:1 extension shape —
+**Key rule: a single-column PK that is also a foreign-key column is always `caller`**, on every dialect,
+whatever its SQL type or default. A foreign-key column is a member of any FOREIGN KEY constraint, a
+composite one included ([5.3](#53-relationship-detection)), so a UUID key that is a member of a
+composite foreign key is not minted by the client. The common case is the 1:1 extension shape —
 `user_credentials(user_id UUID PRIMARY KEY REFERENCES users(id))`, `profiles(user_id UUID PRIMARY
 KEY REFERENCES users(id))`. Such a key is caller-supplied by definition: its value must equal an
 existing parent row's key, so neither the database nor the generated client may mint one. The
@@ -3043,7 +3068,7 @@ the ordinary `default:` arm and needs no special handling.
 a tuple of foreign keys ([§8.7](#87-composite-primary-keys)).
 
 **Scope of the foreign-key check.** Only references the schema declares — a `REFERENCES` clause or a
-`FOREIGN KEY` constraint — move the strategy. A reference *synthesized* from a config
+`FOREIGN KEY` constraint, single-column or composite — move the strategy. A reference *synthesized* from a config
 `relationships.fk` entry (§7, used to type polymorphic FK columns that carry no SQL-level
 constraint) does not: it asserts how a column is loaded and filtered, not that the database enforces
 a parent row, and it resolves against the related table by column name, so it can name a column that
@@ -3228,13 +3253,11 @@ SELECT * FROM "public"."order_items" WHERE "order_id" = $1 AND "product_id" = $2
 -- Composite PK — batch (PostgreSQL: tuple IN)
 DELETE FROM "public"."order_items" WHERE ("order_id", "product_id") IN (($1, $2), ($3, $4))
 
--- Composite PK — batch (MySQL: expanded OR, no tuple IN support)
-DELETE FROM `order_items`
-WHERE (`order_id` = ? AND `product_id` = ?)
-   OR (`order_id` = ? AND `product_id` = ?)
+-- Composite PK — batch (MySQL and SQLite: tuple IN)
+DELETE FROM `order_items` WHERE (`order_id`, `product_id`) IN ((?, ?), (?, ?))
 ```
 
-Note: single-column list operations build their condition with `sql.Where(pk).In(...)`, which expands to one placeholder per id on every dialect, PostgreSQL+pgx included; the `= ANY($1)` array form belongs to the comparators only ([11.5](#115-condition-composition)). Composite PK batch operations use tuple `IN` on PostgreSQL/SQLite and expanded `OR` on MySQL.
+Note: single-column list operations build their condition with `sql.Where(pk).In(...)`, which expands to one placeholder per id on every dialect, PostgreSQL+pgx included; the `= ANY($1)` array form belongs to the comparators only ([11.5](#115-condition-composition)). Composite PK batch operations use tuple `IN` on every dialect. On MySQL 8.0 and 8.4, `(a, b) IN ((?, ?), …)` takes the same composite-index range scan as the equivalent OR of ANDs and is far faster (32 ms against 1.49 s at 10000 keys).
 
 #### Create/Update Inputs
 
@@ -3268,7 +3291,7 @@ filter := &OrderItemFilter{
 }
 ```
 
-For M2M junction tables with composite PKs, the junction table detection logic already requires exactly 2 FK columns in a composite PK (section 5.3).
+For M2M junction tables with composite PKs, junction detection requires the PK or a UNIQUE constraint to contain the columns of both junction foreign keys (section 5.3).
 
 #### Unified Client Accessor
 
@@ -3847,12 +3870,12 @@ The empty FieldOptions short-circuit applies to all mutation methods that return
 | Consumer | Column unioned in | Read by |
 |----------|-------------------|---------|
 | `Connection` | the entity's `cursor_keys` | `encode<T>Cursor`, which builds each edge's cursor from the returned row |
-| `GetMany` with any O2M / M2M relationship selected | the parent's first PK column | the relationship loaders, which collect the parent side of every mapping off the scanned row |
+| `GetMany` with any O2M / M2M relationship selected | every parent column the relationship's key references — for an edge into the parent's primary key, the primary key | the relationship loaders, which collect the parent side of every mapping off the scanned row |
 | an O2O relationship | the target's first PK column | the JOIN scan, which distinguishes a LEFT JOIN miss by testing that PK against its zero value |
-| an O2M relationship | the child's FK column, declared on the child fetch | the parent-child bucketing, which is keyed on it |
-| an M2M relationship | the target's first PK column, declared on the target fetch | the target-to-parent map, which is keyed on it |
+| an O2M relationship | every FK column of the edge's key, declared on the child fetch | the parent-child bucketing, which is keyed on them |
+| an M2M relationship | every target column the junction's target key references, declared on the target fetch | the target-to-parent map, which is keyed on them |
 
-This is a pure over-fetch of the entity struct: it never widens what a consumer surface renders, since the GraphQL layer serializes only the fields the request selected ([26.5.2](#2652-field-selection-translation--the-central-mechanism)). Every column it adds is a key, and all but one are kept API-readable by [32.4](#324-validation) for exactly this reason — primary keys under the PK rule, and resolved `cursor_keys` (PK or not) under the cursor-key rule, so a column whose value reaches an edge cursor is never one `access` has restricted. The O2M child FK is the exception, deliberately: [32.5](#325-interactions) allows `access` on an FK column precisely so a config can hide the raw id while leaving the nested relationship object exposable, so a restricted FK still joins the child projection. It is safe for the same reason the rest of the over-fetch is — the loader reads the value to bucket children by parent and nothing serializes it, and the walker emits no `case` for a restricted column, so no request can name it.
+This is a pure over-fetch of the entity struct: it never widens what a consumer surface renders, since the GraphQL layer serializes only the fields the request selected ([26.5.2](#2652-field-selection-translation--the-central-mechanism)). Every column it adds is a key, and all but one are kept API-readable by [32.4](#324-validation) for exactly this reason — primary keys under the PK rule, and resolved `cursor_keys` (PK or not) under the cursor-key rule, so a column whose value reaches an edge cursor is never one `access` has restricted. The O2M child FK columns are the exception, deliberately: [32.5](#325-interactions) allows `access` on an FK column precisely so a config can hide the raw id while leaving the nested relationship object exposable, so a restricted FK still joins the child projection. It is safe for the same reason the rest of the over-fetch is — the loader reads the value to bucket children by parent and nothing serializes it, and the walker emits no `case` for a restricted column, so no request can name it.
 
 The union applies **only** when the caller's selection is non-empty, so an all-false `&FieldOptions{}` still short-circuits its own entity fetch per the table above and a count-only query issues no entity fetch at all. This holds identically at every depth and for both list loaders: an all-false `FieldOptions` on a nested O2M *or* M2M relationship skips that child fetch and leaves the parent's relationship slice nil, rather than returning rows carrying nothing but the mapping key. The short-circuit is a Go-client affordance: below the envelope a GraphQL request cannot express it, because every selection set asks for the row it is written against. The generated walker therefore never hands an all-false value to a read for a row that was requested — it projects the entity's row identity instead ([26.5.2](#2652-field-selection-translation--the-central-mechanism), "Row identity"), and the only GraphQL selection that reaches a client method with an all-false `FieldOptions` is a count-only envelope, which never reaches the entity at all. O2O is the exception in kind rather than in rule: its target is columns on the parent's JOIN rather than a separate fetch, so an all-false O2O `FieldOptions` still contributes the target's key column — the value that separates a real row from a LEFT JOIN miss. `Stream` is exempt entirely: `Stream{Table}FieldOptions` carries no relationships ([9.4a](#94a-streaming-operations)) and `Stream` encodes no cursors.
 
@@ -5171,12 +5194,12 @@ Each O2M/M2M relationship is a separate `g.Go` goroutine. All run concurrently a
 |--------|---------------|------------|
 | Queries | 1 — direct query on related table with FK IN clause | 2 — junction table query + target table query |
 | FK location | On the related table (`reviews.product_id`) | On the junction table (`product_tags.product_id`, `product_tags.tag_id`) |
-| Mapping | Direct — group by FK column on result | Indirect — junction provides the ID mapping, then tag entities are fetched and matched |
+| Mapping | Direct — group by the FK columns on result | Indirect — junction provides the ID mapping, then tag entities are fetched and matched |
 | Consumer Filter/Sorts | Applied to the related table query | Applied to the target table query (step 2), not the junction query |
 
 **Relationship loads bypass the default query limit.** `GetMany` normally applies `generation.query_limit` when `Limit` is `nil`. Relationship loaders set `Limit: new(0)` to explicitly disable the limit — all matching related entities must be returned for correct parent mapping. A default limit would silently truncate results, causing some parents to appear to have fewer children than they actually do.
 
-**FK-to-map-key conversion in relationship mapping.** The `byProductID` and `productToTagIDs` maps use `string` keys regardless of the FK's Go type. The generator selects the conversion method per FK type using the resolution chain from Section 13.3:
+**FK-to-map-key conversion in relationship mapping.** The `byProductID` and `productToTagIDs` maps use `string` keys regardless of the FK's Go type. A key with several columns maps on an `[N]string` array of those strings, one per member, which Go compares as a map key. The generator selects the conversion method per FK type using the resolution chain from Section 13.3:
 
 | FK Go Type | Map Key Expression | Example |
 |------------|-------------------|---------|
@@ -7160,7 +7183,7 @@ var orderItemAllColumns = []string{"deleted_at", "order_id", "product_id", "quan
 
 **Composite PK filter — `PKs` field for batch lookups:**
 
-Composite PK tables include a `PKs` field on the filter struct. `ToConditions` converts it via `BuildCompositePKBatchCondition`, producing tuple IN (PostgreSQL) or expanded OR (MySQL):
+Composite PK tables include a `PKs` field on the filter struct. `ToConditions` compiles it to an OR of per-key ANDs, `(a = $ AND b = $) OR (a = $ AND b = $)`, on every dialect:
 
 ```go
 type OrderItemFilter struct {
@@ -7177,11 +7200,14 @@ func (f *OrderItemFilter) ToConditions(d sql.Dialect) []sql.Condition {
 
     // Batch composite PK condition
     if len(f.PKs) > 0 {
-        pkValues := make([][]any, len(f.PKs))
-        for i, pk := range f.PKs {
-            pkValues[i] = []any{pk.OrderID, pk.ProductID}
+        var pkConds []sql.Condition
+        for _, pk := range f.PKs {
+            pkConds = append(pkConds, sql.And(
+                sql.Condition{Clause: d.QuoteIdentifier("order_id") + " = $", Value: pk.OrderID},
+                sql.Condition{Clause: d.QuoteIdentifier("product_id") + " = $", Value: pk.ProductID},
+            ))
         }
-        conds = append(conds, sql.BuildCompositePKBatchCondition(d, []string{"order_id", "product_id"}, pkValues))
+        conds = append(conds, sql.Or(pkConds...))
     }
 
     // Individual column comparators
@@ -7624,6 +7650,16 @@ Shape alone does not decide which verbs an edge admits. **What an unlink can mea
 
 The verb set is computed per edge from the FK's nullability, never from the relationship type. FK nullability and FK ownership (which side physically holds the column) are both first-class properties of a relationship — see [13.1](#131-relationship-types).
 
+**A foreign key with several columns is rewritten only through its free members.** Each member of an O2M or has-one edge's key ([5.3](#53-relationship-detection)) is **pinned** or **free**. A member is pinned when it is:
+
+- the table's tenant column ([29](#29-tenancy)), which tenancy already writes and guards;
+- a member of the child's primary key, so writing it would change the row's identity; or
+- a member of another FOREIGN KEY constraint on the same table, so writing it would move another edge.
+
+Every other member is free. `workspace_id` in `tasks`, under `(workspace_id, cycle_id) → cycles(workspace_id, id)`, is pinned twice over: it is the tenant column, and `tasks.workspace_id → workspaces` holds it too. Each kind was measured to do harm when written: a tenant column moved a task to another workspace while its project stayed behind, a shared member raised the other key's FK error or silently moved the row, and a primary-key member re-keyed the row.
+
+Pinning governs the verbs that rewrite an existing row. `connect` verifies each pinned member and writes the free ones ([9.9.6](#996-execution-order)), `disconnect` and `clear` null the free ones, and `allow_reparent` never moves a pinned member. "The FK's nullability" above is the nullability of the free members. An edge with no free member has none of those verbs and keeps `create`, exactly as a NOT NULL edge does, and they are dropped as silently as a NOT NULL edge's are, since the schema states why ([9.9.4](#994-eligibility-rules)). A nested `create` sets every member from the parent's referenced columns, pinned ones and the tenant column included. An M2M edge has no pinned members: its verbs insert and delete junction rows and never rewrite one. A single-column foreign key is the one-member case. When its member is pinned, a primary-key member or the tenant column, the member is NOT NULL, so the edge is already `create`-only and its verb set is unchanged.
+
 #### 9.9.3 The eligibility matrix
 
 This table is the normative verb set. Everything else in this section is mechanical once it is fixed.
@@ -7632,8 +7668,10 @@ This table is the normative verb set. Everything else in this section is mechani
 |---|---|---|---|---|---|
 | **O2M / has-one, nullable FK** | on target, NULL | yes — `INSERT` with `fk = parent`; has-one: after the occupancy read (below) | yes — has-one: the occupancy read (below); then visibility read, then `UPDATE … SET fk = parent WHERE id IN (…) AND fk IS NULL` | yes — `UPDATE … SET fk = NULL WHERE id IN (…) AND fk = parent` | yes — `UPDATE … SET fk = NULL WHERE fk = parent`; no id list, no read |
 | **O2M / has-one, NOT NULL FK** | on target, NOT NULL | yes — `INSERT` with `fk = parent`; has-one: after the occupancy read (below) | **no** — nothing is ever unparented, so there is nothing to adopt | **no** — would violate the constraint | **no** — same constraint |
-| **M2M** | junction | yes — `INSERT` target, then junction row | yes — visibility read, then junction row | yes — `HardDeleteMany` on junction PKs, gated by **E11**; requires the junction's primary key to be exactly its two FKs, with the parent's and target's key types | yes — `HardDeleteWhere(local_fk = parent)`, same **E11** gate |
+| **M2M** | junction | yes — `INSERT` target, then junction row | yes — visibility read, then junction row | yes — `HardDeleteMany` on junction PKs, gated by **E11**; requires the junction's primary key to be exactly the union of both junction keys' columns, with the parent's and target's key types | yes — `HardDeleteWhere(local_fk = parent)`, same **E11** gate |
 | **belongs-to (FK on parent)** | on parent | **no** — deferred, shape 1 | **no** — redundant; this *is* the scalar FK field | **no** — redundant; set the FK to NULL through the ordinary update input | **no** — same |
+
+**On a key with several columns, `fk` in this table stands for the whole key.** `fk = parent` compares every member with the parent column it references, `SET fk = parent` and `SET fk = NULL` write the free members only, and `fk IS NULL` tests the free members. A nullable FK is one whose free members are all nullable. Under PostgreSQL `MATCH FULL` a key may not mix NULL and non-NULL members, so there `disconnect` and `clear` are eligible only when every member is free and nullable; PostgreSQL accepts an all-NULL `MATCH FULL` key. For the same reason a `MATCH FULL` key with a pinned member never has an unparented row, so `connect` there is generated only on an `allow_reparent: true` edge. MySQL and SQLite do not enforce `MATCH FULL`, so every key on them is treated as `MATCH SIMPLE`. A single-column key is unaffected: nulling its one member nulls the whole key.
 
 **A NOT NULL FK edge is `create`-only.** This is not a special case: `connect` adopts unparented rows and nothing on such an edge is ever unparented, and `disconnect` / `clear` null out a column the schema forbids to be NULL. The generator declining to emit those fields is the schema saying so at compile time.
 
@@ -7647,18 +7685,18 @@ This table is the normative verb set. Everything else in this section is mechani
 
 An edge is **nestable** when every rule below holds. The `ValidateNestedWriteEligibility` lint, which runs under `sqlgen validate` as well as `sqlgen generate`, **hard-errors** on an edge explicitly listed in `tables.<t>.nested_mutations.relationships` that fails a rule, and **silently omits** an auto-included edge that fails one. Both halves are load-bearing: an explicitly requested edge that silently generates nothing is worse than a build failure, and an auto-included edge that fails a rule must not break an unrelated build.
 
-**Some rules take one or two verbs rather than the whole edge**, and where they do the row says so — E8's clauses and E11. **Whether a lost verb is reported turns on something else**: whether the consumer could have seen it coming from their own config. A verb dropped by a config-visible fact — the `nested_mutations.verbs` mask, a NOT NULL foreign key, a soft-delete column on the junction — is silent, because the config already says why. A verb dropped by a *generator limitation* the config does not express is reported for an edge the config listed by name, on the same listed-versus-auto rule the edge-level errors follow. Three shapes are specified for that half: **E8**'s primary-key clause, a traversed FK whose binding the emitter cannot construct the statement's own expressions from, and a discriminator whose column carries no equality comparator to scope the write — or a has-one's occupancy read — with ([13.4.1](#1341-discriminator--the-structured-form-of-a-polymorphic-edge)). The third is unreachable through any built-in binding and stays as defence. **E2** admits a discriminator only when its column's binding can take the declared value, which means a predeclared string, integer, floating-point or boolean type or a generated enum, and every such binding carries an equality comparator. So an edge whose column has none is refused as a whole under **E2** before any verb is considered; the clause catches a binding a later change admits, rather than letting it write unscoped. Neither kind is reported for an auto-included edge.
+**Some rules take one or two verbs rather than the whole edge**, and where they do the row says so — E8's clauses and E11. **Whether a lost verb is reported turns on something else**: whether the consumer could have seen it coming from their own config. A verb dropped by a config-visible fact — the `nested_mutations.verbs` mask, a NOT NULL foreign key, a key with no free member or a `MATCH FULL` key with a pinned member ([9.9.2](#992-the-verb-set-is-decided-per-edge-by-fk-nullability)), a soft-delete column on the junction — is silent, because the config already says why. A verb dropped by a *generator limitation* the config does not express is reported for an edge the config listed by name, on the same listed-versus-auto rule the edge-level errors follow. Three shapes are specified for that half: **E8**'s primary-key clause, a traversed FK whose binding the emitter cannot construct the statement's own expressions from, and a discriminator whose column carries no equality comparator to scope the write — or a has-one's occupancy read — with ([13.4.1](#1341-discriminator--the-structured-form-of-a-polymorphic-edge)). The third is unreachable through any built-in binding and stays as defence. **E2** admits a discriminator only when its column's binding can take the declared value, which means a predeclared string, integer, floating-point or boolean type or a generated enum, and every such binding carries an equality comparator. So an edge whose column has none is refused as a whole under **E2** before any verb is considered; the clause catches a binding a later change admits, rather than letting it write unscoped. Neither kind is reported for an auto-included edge.
 
 | # | Rule |
 |---|---|
-| **E1** | The edge is shape 2, 3 or 4 — the parent's PK flows *down* — into a generated target with a single-column primary key, which the visibility read, the link step and the id-list verbs key on. On shapes 2 and 3 the traversed FK must also be a field of the target's create input whose binding the emitter can construct from the parent's key. A one-to-one edge whose FK sits on the parent (shape 1, belongs-to) fails this rule, as does an edge into a table outside the generated set. |
+| **E1** | The edge is shape 2, 3 or 4 — the parent's key flows *down* — into a generated target with a single-column primary key, which the visibility read, the link step and the id-list verbs key on. On shapes 2 and 3 every member of the traversed key must also be a field of the target's create input whose binding the emitter can construct from the parent column it references. A generated member is not one, and the database refuses to write it, so an edge with a generated member is not write-eligible, as an edge over a generated single-column FK is not. A one-to-one edge whose FK sits on the parent (shape 1, belongs-to) fails this rule, as does an edge into a table outside the generated set. A target with a composite primary key fails it too, as **E3** fails a composite-key parent. |
 | **E2** | `filter:` is empty. A `discriminator:` is permitted on shapes 2 and 3, and is the *only* way a polymorphic edge becomes write-eligible ([13.4.1](#1341-discriminator--the-structured-form-of-a-polymorphic-edge)). On an **M2M** edge it is not: [9.9.5](#995-generated-surface) makes the M2M `create` take the target's create input unchanged, which leaves the executor no elided column to set and no way to honour the rule that a nested `create` sets the discriminator column to the edge's declared value ([13.4.1](#1341-discriminator--the-structured-form-of-a-polymorphic-edge) rule 1) without overwriting a field the caller can still fill in. Such an edge is not write-eligible; its read surface is unaffected. On shapes 2 and 3 the discriminator column's Go binding must also be able to take the declared value. A nested `create` sets the column from it as an untyped Go constant ([13.4.1](#1341-discriminator--the-structured-form-of-a-polymorphic-edge) rule 1), and a constant is assignable only to a predeclared string, integer, floating-point or boolean type of its own kind, or to a generated enum. A column bound to anything else (`types.JSON`, `uuid.UUID`, `time.Time`, `net.IP`, a slice, a Null wrapper, a same-package type a `type_map` names), or declared with a value of the wrong kind for its type, makes the edge not write-eligible: the `create` it would keep does not compile. Some of those columns cannot be read through either, and [13.4.1](#1341-discriminator--the-structured-form-of-a-polymorphic-edge) **Validation** rejects them before any edge is resolved; this clause covers the rest, whose reads work, such as a `uuid` column on PostgreSQL or a `json` column on MySQL. |
-| **E3** | The parent has a single-column primary key. Lifting this is mechanical but unexercised — every FK in every example schema references a single-column PK — so it stays a v1 restriction. |
+| **E3** | The parent has a single-column primary key. A composite-key parent, like a composite-key target (**E1**), gets every read surface: its loaders, relationship filters and manifest entries. Nested writes on either need a GraphQL key input per composite-key table, since a composite `Get` takes one argument per key column, and a map key for a key struct holding an `Opaque` field (**E8**), so they stay a v1 restriction. |
 | **E4** | *Retired.* It required the target's `create` and `create_many` toggles. The client has no toggles ([4.6](#46-generationconfig)), so every generated target has both, and the number is kept so the other rules' cross-references hold. |
-| **E5** | For M2M: the junction is a generated table whose two FKs are fields of its create input, with bindings the emitter can construct from the parent's and the target's keys, and it has no column beyond those two FKs, **required or optional**. A required one is a column a nested link row cannot populate. An optional one fails silently instead. The [9.9.6](#996-execution-order) link step upserts on the junction's key, and `UpsertMany` puts every other insert column but a non-PK auto-increment one in its conflict clause's update half ([9.5](#95-edge-case-behaviors)). So re-linking a pair that is already linked resets the column to its default and reports success, on every dialect. Three kinds of column are exempt because a re-link cannot damage them. The update half leaves out the primary-key columns and the tenant column ([9.5](#95-edge-case-behaviors), [29.4.2](#2942-mutations)). The soft-delete column is reset, but its default is the not-deleted state, so the reset restores the link `create` and `connect` asked for; **E11** withholds only the unlink verbs from such a junction. Supporting payload columns — a link step that leaves them alone — is additive and deliberately not done in v1, on the same fail-closed reasoning as **E2**'s M2M half. A non-PK auto-increment column is not reset by a re-link either, but it is not exempt: it is such a payload column. |
+| **E5** | For M2M: the junction is a generated table whose two foreign keys' columns — the union of both junction keys, which may share columns — are fields of its create input, with bindings the emitter can construct from the parent's and the target's referenced columns, and it has no column beyond that union, **required or optional**. A required one is a column a nested link row cannot populate. An optional one fails silently instead. The [9.9.6](#996-execution-order) link step upserts on the junction's key, and `UpsertMany` puts every other insert column but a non-PK auto-increment one in its conflict clause's update half ([9.5](#95-edge-case-behaviors)). So re-linking a pair that is already linked resets the column to its default and reports success, on every dialect. Three kinds of column are exempt because a re-link cannot damage them. The update half leaves out the primary-key columns and the tenant column ([9.5](#95-edge-case-behaviors), [29.4.2](#2942-mutations)). The soft-delete column is reset, but its default is the not-deleted state, so the reset restores the link `create` and `connect` asked for; **E11** withholds only the unlink verbs from such a junction. Supporting payload columns — a link step that leaves them alone — is additive and deliberately not done in v1, on the same fail-closed reasoning as **E2**'s M2M half. A non-PK auto-increment column is not reset by a re-link either, but it is not exempt: it is such a payload column. |
 | **E6** | The target's create input is non-empty after the [§32](#32-column-access-control) access projection. A write surface into a table whose columns are all `hidden` / `read_only`, or whose only column is a generated key, takes no value from the caller. The rule has two halves, one per surface. On the Go surface it reads the unprojected create input, which `access` never narrows ([32.1](#321-overview)), so there it removes only an edge whose target has no create-input column at all. On the GraphQL surface it reads the projected input, and there it removes only the GraphQL member, silently, on the terms **E7** states. |
 | **E7** | *(GraphQL only)* the target is not `api.enabled: false`, and neither is any column the nested input would expose. The second clause holds by construction, because the nested input is derived from the projected one ([32.5](#325-interactions)). The target's `api.operations` mask ([26.5.1](#2651-exposed-resolver-surface)) also narrows the verbs that write the target itself. `create` needs the target's API `create`, plus `create_many` on shapes 3 and 4, where the nested write calls `CreateMany`. An O2M / has-one `connect`, `disconnect` or `clear` rewrites the target row's foreign key by filter, through the `UpdateWhere` that **E8** routes them through. On the API, that is what the target's mask key `update_where` gates: `update<Table>s(filter, input)`. So these verbs need the mask to keep `update_where`. The M2M link and unlink verbs write only the junction row, so the first clause alone gates them. Without the mask clause, a mask written to leave one hand-guarded door into a table would leave a second, generated door through every parent that nests into it. This is the write-side mirror of [26.5.3](#2653-filter--sort--pagination-translation)'s read side-channel rule. Every clause is a config-visible fact, so it drops silently, including for an edge the config lists by name. None of them touches the Go surface: `api` gates the API, never the client, so failing generation would reject a Go surface that is correct. |
-| **E8** | `connect`, `disconnect` and `clear` on an O2M / has-one edge require a **nullable** FK; all three route through the target's `UpdateWhere`. `connect` and `disconnect` additionally require a target whose primary key can key a Go map and carry an `IN` comparator: the visibility read buckets its rows on that key, the adoption filters on it, and the two-verb check of [9.9.6](#996-execution-order) buckets the ids each verb names. The `comparator.Opaque` family ([11.2](#112-comparator-types)) is exactly the set that cannot — `[]byte`, `net.IP` and `net.HardwareAddr` are slices and `net.IPNet` holds two — so an O2M / has-one edge into such a table keeps `create` and `clear`, which name no ids, and loses the other two. On an **M2M** edge the [9.9.6](#996-execution-order) link step dedupes `created ∪ connected` on the same key, so such an edge is not write-eligible at all, and the refusal is reported the same way. That half is a generator limitation rather than a schema fact, so it is **reported** for an edge the config lists by name instead of being dropped silently the way a verb the `nested_mutations.verbs` mask turned off is. On a **has-one** edge, `create` and `connect` also require the two terms the occupancy read ([9.9.3](#993-the-eligibility-matrix)) filters on: the traversed FK's `= parent` term and, on a polymorphic edge, the discriminator's equality term. An edge that cannot render them loses `create`, rather than writing a child it cannot check for. It has already lost the other verbs to the same terms, so the edge carries nothing. This clause is a generator limitation too, and is reported the same way. |
+| **E8** | `connect`, `disconnect` and `clear` on an O2M / has-one edge require a **nullable** FK, one whose free members are all nullable, and at least one free member ([9.9.2](#992-the-verb-set-is-decided-per-edge-by-fk-nullability)); under PostgreSQL `MATCH FULL`, `disconnect` and `clear` also require every member to be free, and `connect` requires every member to be free unless the edge sets `allow_reparent: true` ([9.9.3](#993-the-eligibility-matrix)). All three route through the target's `UpdateWhere`. `connect` and `disconnect` additionally require a target whose primary key can key a Go map and carry an `IN` comparator: the visibility read buckets its rows on that key, the adoption filters on it, and the two-verb check of [9.9.6](#996-execution-order) buckets the ids each verb names. The `comparator.Opaque` family ([11.2](#112-comparator-types)) is exactly the set that cannot — `[]byte`, `net.IP` and `net.HardwareAddr` are slices and `net.IPNet` holds two — so an O2M / has-one edge into such a table keeps `create` and `clear`, which name no ids, and loses the other two. On an **M2M** edge the [9.9.6](#996-execution-order) link step dedupes `created ∪ connected` on the same key, so such an edge is not write-eligible at all, and the refusal is reported the same way. That half is a generator limitation rather than a schema fact, so it is **reported** for an edge the config lists by name instead of being dropped silently the way a verb the `nested_mutations.verbs` mask turned off is. On a **has-one** edge, `create` and `connect` also require the two terms the occupancy read ([9.9.3](#993-the-eligibility-matrix)) filters on: the traversed FK's `= parent` term and, on a polymorphic edge, the discriminator's equality term. An edge that cannot render them loses `create`, rather than writing a child it cannot check for. It has already lost the other verbs to the same terms, so the edge carries nothing. This clause is a generator limitation too, and is reported the same way. |
 | **E9** | *Retired.* It required `upsert_many` and `hard_delete` on the junction table. The client has no toggles ([4.6](#46-generationconfig)): `HardDeleteMany` and `HardDeleteWhere` are generated on every table, and `UpsertMany` on every junction **E13** admits, so the [9.9.6](#996-execution-order) link step and both unlink verbs always have their method. |
 | **E10** | `UpsertWithRelated` requires the existence of a generated `<Table>ConflictTarget` constant to pass it. A table whose uniqueness is app-enforced through `primary_key.columns` emits no `<Table>ConflictPK` ([9.5](#95-edge-case-behaviors)), and, with no unique target left either, the nested upsert surface is omitted. |
 | **E11** | M2M `disconnect` and `clear` require the junction to have **no soft-delete column**. With one, neither mechanism is correct: a hard delete destroys a row the schema marked soft-deletable, and a soft delete leaves the link visible, because the M2M loader's junction query is a bare `SELECT` carrying only the parent-id `IN` condition, with no soft-delete predicate ([13.2](#132-loading-strategy)). Refusing the verb is the fail-closed direction. `create` and `connect` on such an edge are unaffected. |
@@ -7678,7 +7716,7 @@ Six type families per eligible parent. Every name is registered with the codegen
 | `Upsert<Parent>WithRelatedInput` | `Create<Parent>Input` + the **same** `<Parent><Edge>UpdateNested` blocks |
 | `<Parent><Edge>CreateNested` | the per-edge verb block: `create` and `connect` only |
 | `<Parent><Edge>UpdateNested` | the per-edge verb block: `create`, `connect`, `disconnect`, `clear` |
-| `<Parent><Edge>CreateInput` | the child's create input **minus** the traversed FK and **minus** the edge's discriminator column — shapes 2 and 3 only |
+| `<Parent><Edge>CreateInput` | the child's create input **minus** every column of the traversed key and **minus** the edge's discriminator column — shapes 2 and 3 only |
 
 On an **M2M** edge the `create` verb takes the target's ordinary `Create<Target>Input` unchanged: there is no traversed FK on the target to elide, because the link lives in the junction row the executor writes afterwards.
 
@@ -7692,7 +7730,7 @@ On an **M2M** edge the `create` verb takes the target's ordinary `Create<Target>
 
 **That does not make a repeated upsert a no-op.** `connect`, `disconnect` and `clear` are idempotent set operations. `create` is not: it inserts on every call. Repeating an `UpsertWithRelated` that carries `create` takes the conflict branch and inserts again: another O2M child, another M2M target and its link. On a has-one that already holds a child it is refused, with `ErrAlreadyRelated` from the occupancy read ([9.9.3](#993-the-eligibility-matrix)).
 
-**The traversed FK is elided from the nested child input.** `<Parent><Edge>CreateInput` is the child's create input with the FK column removed, because that column is always set from the parent's primary key. Leaving it would force the caller to supply a value that is then overwritten — and on GraphQL a non-null FK field would force the client to invent an id.
+**The traversed FK is elided from the nested child input.** `<Parent><Edge>CreateInput` is the child's create input with the key's columns removed, because a nested `create` always sets them from the parent's referenced columns. Leaving them would force the caller to supply values that are then overwritten — and on GraphQL a non-null FK field would force the client to invent an id. A tenant column in the key is elided too and set from the parent, as a single-column FK on the tenant column is.
 
 **Every nested name carries the `<Parent><Edge>` prefix, and none of them joins the `Create<T>Input` family.** This is the one place where the obvious spelling is wrong. `Create<Parent><SingularEdge>Input` — the name this table carried until 27.7 — reconstructs the *target's own* create input exactly whenever the child table is named `<parent>_<edge>`, which is the conventional name for a dependent table: `users.Profile` over `user_profiles` and `binary_keys.Events` over `binary_key_events` both resolve to `CreateUserProfileInput` / `CreateBinaryKeyEventInput`, the names those two tables already declare. The two types are not interchangeable — the nested one has the FK removed — so the collision is a redeclaration, and it is systematic rather than incidental. Moving the family marker to a suffix puts the nested names in a namespace no table's derived name occupies. The collision is still *checked* ([8.5](#85-naming-rules)), because no identifier scheme is collision-free; what changed is that the check no longer fires on the common case.
 
@@ -7702,7 +7740,7 @@ On an **M2M** edge the `create` verb takes the target's ordinary `Create<Target>
 
 #### 9.9.6 Execution order
 
-The parent is always written first — v1 nests only where the parent's PK flows down — so there is no topological sort and no cycle.
+The parent is always written first — v1 nests only where the parent's key flows down — so there is no topological sort and no cycle.
 
 ```
 BEGIN, or SAVEPOINT when ctx already holds a transaction (18.3)
@@ -7765,7 +7803,7 @@ A verb whose scope cannot be rendered is refused rather than emitted unscoped, o
 
 **On a has-one edge, replacing the child is `clear` plus `create` or `connect`.** `clear` runs before the occupancy read, so the read finds the edge empty and the new child is written. `{disconnect: <current>, create: …}` and `{disconnect: <current>, connect: <other>}` do **not** replace: `disconnect` runs last, so the occupancy read still finds the current child and the call returns `ErrAlreadyRelated`. A has-one on a NOT NULL FK has no `clear` (**E8**), so its child cannot be replaced through the nested block at all. Delete it through the target's own client, then `create`.
 
-**`connect` performs a visibility read; `disconnect` does not.** The asymmetry is structural, not stylistic. A `disconnect` is keyed on the parent's own primary key — the junction pair embeds it, the O2M filter carries `fk = parent` — so it is incapable of touching another parent's rows, and a miss is a no-op. A `connect` is keyed on a **caller-supplied target id** with no such anchor: without the read it is an existence oracle across tenants and access boundaries, and on O2M the `UPDATE`'s row count alone cannot separate *no such row* from *already parented*. See [29.4](#294-generated-behavior) for the tenancy half of this rule.
+**`connect` performs a visibility read; `disconnect` does not.** The asymmetry is structural, not stylistic. A `disconnect` is keyed on the parent's referenced key — the junction pair embeds it, the O2M filter carries `fk = parent` — so it is incapable of touching another parent's rows, and a miss is a no-op. A `connect` is keyed on a **caller-supplied target id** with no such anchor: without the read it is an existence oracle across tenants and access boundaries, and on O2M the `UPDATE`'s row count alone cannot separate *no such row* from *already parented*. See [29.4](#294-generated-behavior) for the tenancy half of this rule.
 
 **`Limit: new(0)` on the visibility read is normative.** A `*Limit` of `0` means *emit no `LIMIT` clause* and *skip the client's default `query_limit`* ([4.6](#46-generationconfig)); a nil `Limit` would let `query_limit` truncate the read, so a `connect` naming more targets than the client's page size would find the tail of its own list absent and report real, visible rows as `NOT_FOUND`. The failure scales with the caller's input size.
 
@@ -7774,6 +7812,8 @@ A verb whose scope cannot be rendered is refused rather than emitted unscoped, o
 **The shortfall check counts a verify read, and it holds on every dialect.** After each chunk's `UPDATE`, the adoption reads the chunk's ids back filtered on `fk = parent`, plus the discriminator on a polymorphic edge, and counts the rows that come back. The read is a plain one inside the transaction, so it sees the transaction's own writes: every row the `UPDATE` adopted is counted. A row another connection parented elsewhere between the visibility read and the `UPDATE` was skipped by the `fk IS NULL` term, so it is not under this parent and is not counted, and the call returns `ErrAlreadyRelated`. The read carries no locking clause, so below SERIALIZABLE it takes no lock. It costs no extra statement either: the adoption's `UpdateWhere` selects nothing, so the read that would hand its rows back is never issued, and the verify read takes its place ([9.9.7](#997-query-count)). The check deliberately does not count what `UpdateWhere` reports. On MySQL those rows come from a pre-SELECT that can disagree with the write ([9.8.6b](#986b-updatewhere)). Under REPEATABLE READ that pre-SELECT answers from the transaction's snapshot, where the contested row is still unparented, so it would count the row the `UPDATE` skipped, and the call would report success with the row still under the other parent. One interleaving can go either way: a row another connection parents to *this* parent inside the same window is counted when the read can see that commit and reported as the shortfall when it cannot. The caller's end state holds either way, and the error is the conservative answer.
 
 **`allow_reparent: true` removes the `fk IS NULL` term, and that changes what a shortfall means.** The guard is what makes the default adoption atomic against a concurrent `connect`; an edge that opts into adopting a parented row is opting out of the guard, so the statement carries the id list alone. Two consequences follow and neither is derivable from the flag's name. The middle outcome disappears — a visible target parented elsewhere is adopted rather than `ErrAlreadyRelated`, leaving `connect` two-way: not visible → `ErrNotFound`, already ours → no-op, anything else → adopted. And the shortfall changes sentinel: with no `fk IS NULL` term, a row the visibility read returned that the verify read does not count has stopped being visible in between — deleted, or soft-deleted — so it reports `ErrNotFound`, not `ErrAlreadyRelated`. Reporting a conflict there would name a relationship that does not exist, which is the failure the three-way split exists to prevent, reappearing on the opt-in path. The same-parent interleaving above is the one exception to "stopped being visible", and it fails the same conservative way.
+
+**A `connect` through a key with several columns checks its pinned members before any write.** The visibility read returns each target with its pinned members ([9.9.2](#992-the-verb-set-is-decided-per-edge-by-fk-nullability)). Each must already equal the parent column it references. A target whose pinned member does not is refused with `ErrAlreadyRelated` naming it, before any write on the edge: the row is bound to a different key through a member this edge cannot write. The adoption `UPDATE` then sets the free members only, and its guard and the verify read compare the whole key. `allow_reparent` removes the `fk IS NULL` term and never the pinned check, so a reparent moves the free members and nothing else. Under tenancy the visibility read already hides a target in another tenant as `ErrNotFound`. The check refuses one under `SkipTenancy`, and a target whose member shared with another foreign key points elsewhere. A nested `create` sets every member from the parent, the tenant column included. When tenancy also sets the tenant column, the two values must agree, and a mismatch is `ErrAlreadyRelated`, attributed to `create`.
 
 **Naming one target under two verbs on one edge is a validation error**, returned before any statement *on that edge* runs (the parent write and earlier edges have already run, and roll back with the transaction or savepoint): the order would decide the outcome and there is no defensible default. Concretely this is `connect` ∩ `disconnect`, and `create` ∩ `disconnect` where a `create` entry carries an explicit primary key. The check is skipped for `disconnect` when `clear` is set on the same edge, since `disconnect` is then ignored and cannot contradict anything. **A has-one block that sets both `create` and `connect` is refused the same way**, with `ErrNestedVerbConflict` attributed to `connect`: the edge holds one child and the block asks for two. On `CreateWithRelated` this check is the only guard, because the parent has no child yet for the occupancy read to find.
 
@@ -7799,7 +7839,7 @@ Every read earns its place:
 
 | Read | When | Why it is unavoidable |
 |---|---|---|
-| parent PK resolution | always | children key on the parent's PK, and `Create` / `Upsert` surface a generated PK only through the return value |
+| parent PK resolution | always | children key on the parent's referenced columns, and `Create` / `Upsert` surface a generated PK only through the return value |
 | M2M target PKs | per edge with a non-empty `create` | junction rows need the generated target PKs |
 | `connect` visibility | per edge with a non-empty `connect`, O2M and M2M alike | the FK constraint proves a row exists, not that the caller may see it; on O2M it is also the only thing separating *absent* from *already parented* |
 | has-one occupancy read | per has-one edge with `create` or `connect` set, every dialect | a has-one holds one child, and only a UNIQUE FK makes the database refuse a second one; this read is what finds the child the parent already holds ([9.9.3](#993-the-eligibility-matrix)). It is a plain `SELECT`, so MySQL spends no extra statement on it |
@@ -7829,6 +7869,7 @@ Two failures have no existing sentinel and get one, both carried by the structur
 | `connect` target not visible — O2M and M2M alike | `ErrNotFound` naming the id | `NOT_FOUND` — **never** `BAD_REFERENCE` |
 | `connect` target already parented to **another** row (O2M) | `ErrAlreadyRelated` naming the id | `CONFLICT` — unreachable on an `allow_reparent: true` edge, which adopts it instead ([9.9.6](#996-execution-order)) |
 | `connect` target already parented to **this** parent (O2M) | none — no-op | n/a |
+| `connect` target whose pinned key member differs from the parent's value, or a nested `create` whose tenancy-set tenant column differs from the parent's ([9.9.6](#996-execution-order)) | `ErrAlreadyRelated` naming the id (none on `create`) | `CONFLICT` — on every edge, `allow_reparent: true` included: the flag moves free members only |
 | has-one `create` or `connect` when the parent already holds a **different** child | `ErrAlreadyRelated` naming the child the edge holds, attributed to `connect` when the block sets it and to `create` otherwise | `CONFLICT` — on every has-one edge, `allow_reparent: true` included: the flag lets a target change parents, not a parent hold two children |
 | two verbs naming one target on one edge, a has-one block setting both `create` and `connect`, or a self-reference on a self-referential edge | `ErrNestedVerbConflict` | `INVALID_INPUT` |
 
@@ -7849,6 +7890,7 @@ Both are inherited, with one rule that is genuinely new:
 
 - **A `connect` is tenant-checked by reading the target through its own client**, which applies the target's tenant filter. The FK constraint proves the row exists; only the read proves the caller may see it. A target in another tenant is `ErrNotFound`, identical to a target that does not exist. See [29.4](#294-generated-behavior).
 - **`SkipTenancy` propagates to every nested child**, and under it the tenant column is not auto-set — the caller must populate it on each nested child input, exactly as on the flat path. See [29.10](#2910-relationship-propagation).
+- **A tenant column in the traversed key is pinned** ([9.9.2](#992-the-verb-set-is-decided-per-edge-by-fk-nullability)). No verb rewrites it through the edge. A nested `create` sets it from the parent, like every other member, so it is absent from the nested child input even under `SkipTenancy`. A `connect` target, or a tenancy-set value on `create`, that differs from the parent's is `ErrAlreadyRelated` ([9.9.6](#996-execution-order)).
 - **The [§32](#32-column-access-control) access projection governs nested inputs.** A column the projection drops from a child's create input is absent from the nested child input too, and an entity hidden from the API gets no nested member on the API surface. See [32.5](#325-interactions).
 
 ---
@@ -8015,7 +8057,7 @@ Each table gets a `{Table}Filter` struct with:
 - One `*{Target}Filter` field per **list** relationship (O2M / M2M) — filter the parent by its children, compiled to a correlated `EXISTS` (see [Relationship filters](#relationship-filters) below)
 - `And []*{Table}Filter` — each member's own fields are AND'd, and the members are AND'd together
 - `Or []*{Table}Filter` — each member's own fields are AND'd, and the members are **OR'd** together, i.e. `Or: [A, B]` compiles to `(A OR B)`. A filter object's own fields are always conjunctive; only `Or`-list membership is disjunctive
-- For composite PK tables: `PKs []{Table}PK` — batch composite PK match via tuple IN or expanded OR
+- For composite PK tables: `PKs []{Table}PK` — batch composite PK match, an OR of per-key ANDs on every dialect
 
 Each filter struct has a generated `ToConditions(dialect)` method that converts the filter to SQL conditions **without reflection**. The generator produces explicit nil-checks per comparator field:
 
@@ -8096,7 +8138,7 @@ This follows the same reflection-free pattern as scan targets (Section 19.1) and
 
 #### Relationship filters
 
-A filter can constrain a row by its **related** rows. Each **list** relationship on the table — O2M and M2M — contributes one `*{Target}Filter` field, and a non-nil value compiles to a correlated `EXISTS` subquery. The subquery is built from the join metadata the relationship already carries: the FK column on the target for O2M, the junction table plus both its FKs for M2M.
+A filter can constrain a row by its **related** rows. Each **list** relationship on the table — O2M and M2M — contributes one `*{Target}Filter` field, and a non-nil value compiles to a correlated `EXISTS` subquery. The subquery is built from the join metadata the relationship already carries: the key's FK columns on the target for O2M, the junction table plus both its keys for M2M. It correlates on every pair of the key, so a composite foreign key compiles to one equality per pair.
 
 A **to-one** relationship (O2O / belongs-to) contributes **no** filter member. Its FK column is directly filterable on the parent, and the inverse list direction on the target expresses the same predicate, so an `EXISTS` compilation for to-one relationships would add a third spelling of a predicate the filter already carries twice.
 
@@ -8123,12 +8165,23 @@ SELECT ... FROM "tasks" WHERE "status" = $1 AND EXISTS (
 )
 ```
 
+Through the composite tenant key `tasks(workspace_id, cycle_id) → cycles(workspace_id, id)`, a filter on `cycles` correlates on both pairs:
+
+```sql
+-- filter: { tasks: { status: {eq: 'done'} } }
+SELECT ... FROM "cycles" WHERE EXISTS (
+  SELECT 1 FROM "tasks" tgt0
+  WHERE tgt0."workspace_id" = "cycles"."workspace_id" AND tgt0."cycle_id" = "cycles"."id"
+    AND tgt0."status" = $1
+)
+```
+
 The subquery's **structure** is identical on all three dialects — only identifier quoting and placeholder style differ (`$N` on PostgreSQL, `?` on MySQL and SQLite), as for any other generated condition.
 
 Three invariants:
 
 1. **The target's own scoping applies inside the subquery.** Its soft-delete predicate ([§17.3](#173-generated-behavior)) and, when the target is tenanted, its tenant predicate ([§29.4.1](#2941-reads)) are injected into the `EXISTS`. A relationship filter is a read of the target, so it must not become a path around either rule — without the tenant injection it would be a cross-tenant existence probe.
-2. **The parent-side correlation reference carries no qualifier at generation time.** The plain read path emits `FROM "tasks"` (unqualified) while the O2O-join path emits `FROM "tasks" t` and alias-prefixes every filter condition, so the correlation must render as `"tasks"."id"` in the first case and `t."id"` in the second. The generator therefore emits the structured `Exists` condition ([§11.5](#correlated-exists-and-qualifier-resolution)), which carries only the correlation **column**; the builder resolves the qualifier against the enclosing statement, and `PrefixConditions` passes the condition through untouched because it is not a leaf clause.
+2. **The parent-side correlation reference carries no qualifier at generation time.** The plain read path emits `FROM "tasks"` (unqualified) while the O2O-join path emits `FROM "tasks" t` and alias-prefixes every filter condition, so the correlation must render as `"tasks"."id"` in the first case and `t."id"` in the second. The generator therefore emits the structured `Exists` condition ([§11.5](#correlated-exists-and-qualifier-resolution)), which carries only the correlation **columns**, one per pair; the builder resolves the qualifier against the enclosing statement, and `PrefixConditions` passes the condition through untouched because it is not a leaf clause.
 3. **One hop per level.** Depth comes from nesting a relationship filter inside a relationship filter; there are no aggregate predicates (`count > 3`) — those need a `GROUP BY` / `HAVING` shape and their own operator vocabulary.
 
 An unset (nil) relationship member contributes no SQL, preserving the "nil filter ⇒ no WHERE clause" contract.
@@ -8148,7 +8201,7 @@ Two things travel in the option set, and both must reach an arbitrarily nested m
 - **The resolved tenant**, via the exported `WithFilterTenant(tenant T)`. Generated read and filter-accepting mutation methods pass it automatically from the same resolution the outer `WHERE` uses; converting a filter without it produces subqueries scoped as if `CallOptions.SkipTenancy` were set, which is exactly what `SkipTenancy` itself needs.
 - **The subquery nesting depth**, which names the target alias (`tgt0`, `tgt1`, …). A self-referential relationship filter nested inside itself ([§13.5](#135-self-referential-relationships)) would otherwise alias both levels the same, and the inner alias would shadow the outer one — the correlation would silently compare the related row to itself.
 
-**Emission is limited to shapes `Exists` can express.** It carries exactly one correlation column, so a parent without a single-column primary key contributes no relationship filter members, and an M2M whose target has no single-column primary key contributes none for that edge. A relationship whose Go field name is already taken by a column comparator is likewise skipped — the column wins, as it does on the model struct.
+**Every list relationship gets a member, whatever its key.** `Exists` carries one correlation column per pair, so a parent with a composite primary key, an edge whose key references a UNIQUE constraint, and an M2M whose target has a composite primary key each contribute members like any other. A relationship whose Go field name is already taken by a column comparator is skipped — the column wins, as it does on the model struct.
 
 **MySQL error 1093.** MySQL rejects an `EXISTS` naming the table an `UPDATE` or `DELETE` is mutating. A relationship filter whose target *is* the mutated table — a self-referential edge — is therefore a read-path predicate on MySQL, not one to pass to `UpdateWhere` / `SoftDeleteWhere` / `HardDeleteWhere` / `Increment`. PostgreSQL and SQLite accept it.
 
@@ -8332,7 +8385,7 @@ The `sql` package provides both raw condition types and a fluent `ConditionBuild
 - `Or(conditions...)` — joins conditions with OR
 - `Subquery{SQL, Args}` — nested SELECT as a condition value. Its `SQL` marks the args with bare `$` tokens, one per arg in order, or with `$1`…`$k`, where `$N` is the subquery's own `Args[N-1]` and may repeat or appear out of order; one form per subquery, not both. The builder numbers either form into the enclosing statement's positional sequence in `Conditions` order, like every other condition, so the caller never writes an enclosing-statement position or `?`. PostgreSQL renders `$N` at its absolute position, so a repeated `$N` reuses one parameter; MySQL and SQLite emit one `?` per token, with the args in token order. A `$` inside a string literal, a quoted identifier, a comment or a PostgreSQL dollar-quoted string is the SQL's own text and is not a token. Quotes match the SQL-standard way, a doubled quote escaping itself. On MySQL a backslash also escapes the character after it inside a `'…'` or `"…"` string literal, as MySQL's default `sql_mode` reads it. PostgreSQL and SQLite read a backslash there literally, and a PostgreSQL `E'…'` escape is not recognised, so write `''` on them. SQL outside both forms is the caller's responsibility: the builder neither checks nor repairs it, and passes it to the database. Most such shapes fail there, but some run without an error: on SQLite, fewer bare `$` tokens than args (the surplus args shift onto the placeholders that follow); on MySQL and SQLite, an arg no `$N` references (left out); on PostgreSQL, a `$N` past `len(Args)`, which is copied as written and so binds the enclosing statement's Nth parameter whenever that parameter exists and its type fits
 - `Range{Start, End}` — BETWEEN clause
-- `Exists(correlationColumn, Subquery)` — correlated `EXISTS` predicate; the parent-side qualifier is resolved by the builder, not by the caller (see [Correlated EXISTS and qualifier resolution](#correlated-exists-and-qualifier-resolution) below)
+- `Exists(correlation columns, Subquery)` — correlated `EXISTS` predicate over one or more correlation columns; the parent-side qualifier is resolved by the builder, not by the caller (see [Correlated EXISTS and qualifier resolution](#correlated-exists-and-qualifier-resolution) below)
 - `Raw(clause, args...)` — an opaque SQL fragment as a condition, parenthesised when rendered. Its clause marks the args with the same two token forms as a `Subquery`'s `SQL`, read by the same rules: bare `$` tokens one per arg in order, or `$1`…`$k` numbered against the clause's own args, with the same quote-aware token scan and the same pass-through of SQL outside both forms. A hand-built `Condition` with a scalar or `[]any` value is read the same way, except a `[]any` clause ending ` IN $` or ` NOT IN $`, which expands to a list
 
 #### ConditionBuilder
@@ -8414,7 +8467,7 @@ A correlated subquery must reference a column of the **enclosing** statement's t
 | `BuildSelect` | `FROM "tasks"` — no alias | `"tasks"."id"` |
 | `BuildSelectJoin` | `FROM "tasks" t` — aliased, and every condition is alias-prefixed | `t."id"` |
 
-A condition carrying a pre-baked qualifier is therefore correct on exactly one of the two paths and invalid SQL on the other, on every dialect. The `Exists` condition resolves this by **carrying the correlation column and never the qualifier**:
+A condition carrying a pre-baked qualifier is therefore correct on exactly one of the two paths and invalid SQL on the other, on every dialect. The `Exists` condition resolves this by **carrying the correlation columns and never the qualifier**. It takes one correlation column per pair of the relationship's key, and the subquery references one correlation token per column. A one-pair condition:
 
 ```go
 sql.Exists("id", sql.Subquery{SQL: "SELECT 1 FROM ...", Args: []any{...}})
@@ -8422,7 +8475,7 @@ sql.Exists("id", sql.Subquery{SQL: "SELECT 1 FROM ...", Args: []any{...}})
 
 **Rules.**
 
-1. **The builder supplies the qualifier.** At render time the enclosing statement resolves it once — `SelectOptions.Alias` when the statement aliases its table, `Dialect.FormatTable(table)` otherwise — and renders `<qualifier>.<QuoteIdentifier(CorrelationColumn)>` inside the subquery's correlation predicate. The same `Exists` value is therefore correct on both read paths without the generator knowing which one will run.
+1. **The builder supplies the qualifier.** At render time the enclosing statement resolves it once — `SelectOptions.Alias` when the statement aliases its table, `Dialect.FormatTable(table)` otherwise — and replaces each correlation token with `<qualifier>.<QuoteIdentifier(column)>` for its correlation column. The same `Exists` value is therefore correct on both read paths without the generator knowing which one will run.
 2. **`PrefixConditions` never rewrites it.** Alias prefixing (`prefixCondition`) prepends `alias + "."` to the leading token of a **leaf string clause**; an `Exists` is a structured condition value, like `And` / `Or` / `Subquery` / `Range`, so it is not a leaf clause and is passed through untouched — including when nested inside `And` / `Or`, which prefixing descends recursively. This is exemption **by construction**, not an opt-out flag the caller can forget to set.
 3. **Placeholder numbering is unchanged.** The subquery's args participate in the enclosing statement's positional numbering in `Conditions` slice order, exactly as any other multi-arg condition — the contract `BuildSelectJoin` documents and the child-tenant filter already relies on. JOIN `On` strings still contribute nothing.
 4. **Dialect differences are quoting and placeholders only.** The emitted structure is identical across PostgreSQL, MySQL, and SQLite; `$N` vs `?` and the identifier quoting style are the only deltas.
@@ -8546,21 +8599,25 @@ Each `FieldOptions` has a generated `ColumnMap()` method that returns a `map[str
 
 | Type | Cardinality | Detection | FK lives on | Generated Field Type |
 |------|-------------|-----------|-------------|---------------------|
-| O2O **belongs-to** | One-to-One | FK that is unique — an inline `UNIQUE`, a single-column `UNIQUE` constraint, or the table's **sole PRIMARY KEY column** | **this** table | `*{Related}` |
+| O2O **belongs-to** | One-to-One | FK that is unique — a PRIMARY KEY or non-partial `UNIQUE` on this table whose columns are a subset of the FK's columns. For a single-column FK: an inline `UNIQUE`, a single-column `UNIQUE` constraint, or the table's **sole PRIMARY KEY column** | **this** table | `*{Related}` |
 | O2O **has-one** | One-to-One | same, viewed from the referenced side — config-declared only | the **related** table | `*{Related}` |
 | O2M | One-to-Many | FK without uniqueness | the **related** table | `[]*{Related}` |
-| M2M | Many-to-Many | Junction table with 2 FKs in composite PK/UNIQUE | junction table | `[]*{Related}` |
+| M2M | Many-to-Many | Junction table: two FKs, once every FK inside the others is set aside, whose union a PK or UNIQUE contains ([5.3](#53-relationship-detection)) | junction table | `[]*{Related}` |
 
 **Belongs-to and has-one are both `o2o`, and the `type:` field cannot tell them apart.** They differ in which table physically holds the FK column, and that fact — carried on the relationship context as **`FKOnTarget`** — is derived **once**, during relationship building, from whether the FK column is declared on the target table. It is not the same question as the `side:` field ([4.8](#48-tableconfig-per-table)): `side` is a *declared* property that defaults to `parent` and drives the manifest's `o2o` / `m2o` split, while a config-declared edge may leave `side` at its default and still put the FK on the target. Read and write paths consume the one derived value; neither re-derives it.
 
+**An edge joins the columns its foreign key references, not the target's primary key.** Its key is every (FK column → referenced column) pair of the FOREIGN KEY constraint ([5.3](#53-relationship-detection)), and the referenced columns may be the target's primary key (resolved or declared) or one of its non-partial UNIQUE constraints. The O2O join, the loaders and the relationship filter all match on that key. A manual relationship ([13.4](#134-manual-relationship-configuration)) always joins the referenced table's primary key.
+
 **FK nullability is a first-class property of an edge.** It changes nothing on the read path, and it decides the entire write-side verb set: an O2M edge on a nullable FK admits `connect`, `disconnect` and `clear`, and the same edge shape on a NOT NULL FK admits none of them. Two edges of the same `type:` on the same parent can therefore differ. See [9.9](#99-nested-mutations).
 
-**A single-column PRIMARY KEY counts as unique** for this purpose — it is implicitly unique on every
-dialect, so a 1:1 extension table (`user_credentials(user_id UUID PRIMARY KEY REFERENCES users(id))`)
-holds at most one row per parent and its edge is O2O, not O2M. A member of a **composite** key carries
-no such guarantee on its own, so a junction's FK columns keep falling through to the O2M arm and are
-picked up by M2M detection instead. Partial `UNIQUE` constraints (those with a `WHERE` predicate) are
-ignored throughout: uniqueness that holds only for matching rows cannot promote an edge.
+**A PRIMARY KEY counts as unique** for this purpose. It is unique on every dialect, so a 1:1
+extension table (`user_credentials(user_id UUID PRIMARY KEY REFERENCES users(id))`) holds at most one
+row per parent and its edge is O2O, not O2M. A composite key gives that guarantee only to a foreign
+key that holds all of its columns: `cycle_settings(workspace_id, cycle_id)`, unique on both, with
+`(workspace_id, cycle_id) → cycles(workspace_id, id)`, is O2O. A foreign key holding only part of a
+composite key is O2M, which is why a junction's foreign keys fall through to the O2M arm until M2M
+detection takes them. Partial `UNIQUE` constraints (those with a `WHERE` predicate) are ignored
+throughout: uniqueness that holds only for matching rows cannot promote an edge.
 
 Auto-detection emits the O2O edge on the **FK-holding** side only. The inverse edge — the parent's
 view of its extension row — is declared in config (§7 `relationships`), the same way `profiles` is
@@ -8595,6 +8652,8 @@ FROM "public"."products" p
 LEFT JOIN "public"."companies" c ON c."id" = p."company_id"
 WHERE p."price" > $1
 ```
+
+The `ON` clause ANDs one equality per pair of the edge's key, so the composite key `tasks(workspace_id, cycle_id) → cycles(workspace_id, id)` joins `ON c."workspace_id" = t."workspace_id" AND c."id" = t."cycle_id"`.
 
 Multiple O2O relationships produce multiple LEFT JOINs in one query. O2O chains (product → company → country) are flattened into a single multi-JOIN query:
 
@@ -8640,18 +8699,18 @@ One-to-many and many-to-many relationships are loaded in **separate queries** us
 
 1. Parent entities are fetched first (with any O2O relationships inlined via JOIN)
 2. For each O2M relationship in the FieldOptions:
-   - Collect FK values from parent entities
-   - Build a filter with `IN` clause on the related table's PK/FK
+   - Collect from the parent entities the values of the columns the edge's key references — the parent's primary key, or the UNIQUE columns the foreign key names. A parent whose referenced columns hold a NULL is skipped, since no row references it
+   - Build a condition on the related table's FK columns: `IN` for a one-column key, tuple `IN` (`("workspace_id", "cycle_id") IN ((…), …)`) for several. It is appended to the related table's query conditions, never in place of them. A child with a NULL FK member matches no parent and is never returned
    - **Apply the relationship's static `filter:` from config (if non-empty) as an `AND` condition — used for polymorphic discriminators (§13.7)**
    - Merge the consumer's `Filter` from the relationship FieldOptions (if provided) with AND
    - Apply `Sorts` from the relationship FieldOptions (if provided), or fall back to the static relationship sort from config
    - Execute the query on the related table, once per chunk of parent keys ([25.1](#251-query-count-guarantee)); on PostgreSQL with `output.driver: pgx` the `IN` binds every key as one array parameter and runs once
    - Map results back to parent entities
 3. For each M2M relationship in the FieldOptions (two queries per chunk of parent keys — see §25.1), for each chunk:
-   - Query the junction table with `IN` on the parent FK to resolve the parent→target id mapping
-   - Query the target table via the target client's `GetMany`, matching the target PK against the junction rows of the chunk's parents — `target_pk IN (SELECT j.ref_fk FROM junction j WHERE j.local_fk IN (...))` — rather than against a list of collected target ids, so the statement binds the chunk's parent keys however many targets they share, and soft-delete defaults, sort handling, and recursive relationship loading apply uniformly. The consumer's `Filter` from the relationship FieldOptions (if provided) is merged with AND
+   - Query the junction table with `IN` on the local key's columns (tuple `IN` for several) to resolve the parent→target key mapping
+   - Query the target table via the target client's `GetMany`, matching the target's referenced columns against the junction rows of the chunk's parents — `target_key IN (SELECT j.ref_key FROM junction j WHERE j.local_key IN (...))`, each `key` a column or a tuple of them — rather than against a list of collected target ids, so the statement binds the chunk's parent keys however many targets they share, and soft-delete defaults, sort handling, and recursive relationship loading apply uniformly. The consumer's `Filter` from the relationship FieldOptions (if provided) is merged with AND
    - **The relationship's static `filter:` from config (if non-empty) is applied as an `AND` condition on the target query — used for polymorphic discriminators (§13.7)**
-   - Map target entities back to the chunk's parent entities via the junction mapping, walking targets in the target query's order so `Sorts` (or the static sort) order each parent's slice. Every parent's targets come from one target query, so the order holds at any parent or target count
+   - Map target entities back to the chunk's parent entities via the junction mapping, keyed on every column of each key, walking targets in the target query's order so `Sorts` (or the static sort) order each parent's slice. Every parent's targets come from one target query, so the order holds at any parent or target count
 4. All O2M/M2M relationship loads run in parallel via `errgroup`, inside a transaction and out. Outside one, each load draws its own pooled connection and the fan-out is real. Inside one, they share the transaction's single connection and the `Tx`'s connection reservation serializes them ([18.5](#185-concurrent-safety)) — the statement count is identical either way, only the concurrency differs, and the loader needs no transaction-aware bound of its own.
 
 #### Combined Example
@@ -8715,11 +8774,15 @@ Relationship loading requires converting FK values to comparator-compatible type
 4. **Bare type** — no guard. Uses the type's `.String()` method when present (`*.UUID`, `time.Time`, `time.Duration`, `types.DateTime`, `net.IP`, `net.IPNet`, `net.HardwareAddr`); pass-through for `string`; `fmt.Sprint()` otherwise.
 
 
-The guard + unwrap path applies only when the FK column is read off a *child* entity. Parent-side / target-side PK reads never hit a Null wrapper because primary keys are never nullable.
+The guard + unwrap path applies to every FK column read off a *child* entity, one per member of a composite key. A child with a NULL member matches no parent. Parent-side / target-side reads are of the columns the key references. A primary key is never nullable, and a referenced UNIQUE column that holds a NULL is skipped before the query, since nothing references it.
 
 ### 13.4 Manual Relationship Configuration
 
 When automatic detection is insufficient (e.g., polymorphic FKs, non-standard naming, missing FK constraints), relationships can be explicitly defined in config. See [TableRelationship in 4.8](#48-tableconfig-per-table).
+
+**A manual relationship joins the referenced table's primary key, through one or more columns.** `fk`, `junction_local_fk` and `junction_reference_fk` take a string or a list. A list maps by position onto the primary key of the table its columns reference, so `fk: [workspace_id, setting_key]` into a table keyed `(workspace_id, key)` pairs `workspace_id → workspace_id` and `setting_key → key`. Its length must equal that key's column count, or validation fails ([4.13](#413-config-validation-rules)). A string is a one-item list, so a single-column `fk` means what it always has. There is no key naming the referenced columns: an edge to a non-PK UNIQUE key comes only from detection ([5.3](#53-relationship-detection)). A manual edge has no FOREIGN KEY constraint behind it, so its manifest `constraint` is omitted ([30.4.2](#3042-entity-shape)).
+
+**Detection can leave an edge to be declared.** A foreign key whose referenced columns are not a key ([5.3](#53-relationship-detection) rule 1), a foreign key set aside on a junction (rule 4), and two edges whose names still collide after disambiguation (rule 6) all point here. For a collision, list the detected name in `exclude_relationships` and declare the edge under a name of your choosing.
 
 Auto-detected relationships can be disabled per-table via `exclude_relationships` (by relationship name). If a manual relationship has the same name as an auto-detected one, the manual definition replaces it.
 
@@ -8929,10 +8992,12 @@ The mirror mistake — a MySQL-style double-quoted *value* on PostgreSQL or SQLi
 
 **SQLite's double-quoted-string fallback applies to every generated statement.** sqlgen quotes SQLite identifiers with double quotes, and SQLite reads a double-quoted name it cannot resolve as a string literal in an expression position: a SELECT list or WHERE predicate that names a column the table or view lacks returns the column's own name as text, or compares against that constant, instead of failing with `no such column` (INSERT and UPDATE column lists still fail). The generator never emits a column its schema lacks, so this arises only when the schema sqlgen read has drifted from the database; the symptom is then wrong data or a scan error rather than an error naming the column.
 
-**Dedup key.** The relationship dedup key extends from §4.8's `(target_table, fk_column)` shape — and m2m's `(target_table, junction_table, junction_local_fk, junction_reference_fk)` shape — to include **both** discriminator forms:
+**Dedup key.** The relationship dedup key extends from §4.8's `(target_table, fk_columns)` shape — and m2m's `(target_table, junction_table, junction_local_fk, junction_reference_fk)` shape — to include **both** discriminator forms:
 
-- o2o / o2m: `(target_table, fk_column, filter, discriminator)`
+- o2o / o2m: `(target_table, fk_columns, filter, discriminator)`
 - m2m: `(target_table, junction_table, junction_local_fk, junction_reference_fk, filter, discriminator)`
+
+`fk_columns` and the two junction components are column lists, compared in order, so a one-column `fk` and a list holding only that column are the same key.
 
 The `filter` portion is the raw filter string as written in the config — byte-equal comparison, no whitespace normalization or canonicalization. The `discriminator` portion is its `column` and `value` in that order, compared the same way. The two are mutually exclusive ([13.4.1](#1341-discriminator--the-structured-form-of-a-polymorphic-edge)), so exactly one is non-empty on any sub-categorized edge and the other contributes nothing.
 
@@ -11869,7 +11934,7 @@ The number of database queries for any operation is **deterministic and known at
 total = 1 + Σ_O2M s + 2 · C · count(M2M relationships loaded)
 ```
 
-where `s = 1` on PostgreSQL with `output.driver: pgx` and `s = C` on every other dialect and driver, PostgreSQL with `stdlib` included. On pgx the O2M FK filter binds every parent key as one array parameter (`= ANY($1)`, Appendix A), so one statement covers any parent count. On every driver the junction step takes `C` statements and the target fetch at most `C` (none for a chunk whose junction read returns no rows; the formula counts the upper bound): the junction step expands one parameter per key, and the target fetch matches the target key against the chunk's junction rows (`target_pk IN (SELECT j.ref_fk FROM junction j WHERE j.local_fk IN (chunk))`), so it binds the chunk's parent keys however many targets they share. Each parent's children and targets come from one statement, so the relationship's `Sorts` order every parent's slice at any size. When every parent set fits one chunk (`0 < P ≤ chunk`, `C = 1`), the total reduces to:
+where `s = 1` on PostgreSQL with `output.driver: pgx` for a one-column key, and `s = C` on every other dialect and driver, PostgreSQL with `stdlib` included. On pgx a one-column O2M FK filter binds every parent key as one array parameter (`= ANY($1)`, Appendix A), so one statement covers any parent count. A key with several columns expands one parameter per key column on every driver, so `s = C` for it on pgx too. On every driver the junction step takes `C` statements and the target fetch at most `C` (none for a chunk whose junction read returns no rows; the formula counts the upper bound): the junction step expands one parameter per key, and the target fetch matches the target key against the chunk's junction rows (`target_key IN (SELECT j.ref_key FROM junction j WHERE j.local_key IN (chunk))`), so it binds the chunk's parent keys however many targets they share. Each parent's children and targets come from one statement, so the relationship's `Sorts` order every parent's slice at any size. When every parent set fits one chunk (`0 < P ≤ chunk`, `C = 1`), the total reduces to:
 
 ```
 total = 1 + count(O2M relationships loaded) + 2 * count(M2M relationships loaded)
@@ -15056,7 +15121,7 @@ When the tenant column is the *only* writable non-PK column, the update input wo
 Nested mutations ([9.9](#99-nested-mutations)) inherit every rule above, because every write routes through the target's own generated client. Three consequences are worth stating, and the first is the one place nested writes add a security rule rather than inheriting one:
 
 - **A `connect` is tenant-checked by reading the target through its own client.** The FK constraint proves a row *exists*; it does not prove the caller may see it. The visibility read applies the target's own tenant filter, so a target in another tenant is `ErrNotFound` — indistinguishable from a target that does not exist, which is the fail-closed direction and the same answer [29.10](#2910-relationship-propagation) gives on the read side. Without the read, a `connect` naming a foreign-tenant id would either succeed (writing a cross-tenant link) or fail with an opaque FK violation that confirms the row exists; both are cross-tenant information.
-- **A `disconnect` needs no such read**, and this is structural rather than an omission: it is keyed on the parent's own primary key — the junction pair embeds it, the O2M filter carries `fk = parent` — so it cannot reach another tenant's rows, and a miss is a no-op.
+- **A `disconnect` needs no such read**, and this is structural rather than an omission: it is keyed on the parent's referenced key — the junction pair embeds it, the O2M filter carries `fk = parent` — so it cannot reach another tenant's rows, and a miss is a no-op.
 - **`SkipTenancy` propagates to every nested child.** Under it the tenant column is not auto-set on any nested child insert, and the caller must populate it on each nested child input — identical to the flat path ([29.4.4](#2944-calloptionsskiptenancy-and-calloptionstenant)). It is called out here because the nested call site is the one place the child inputs sit several layers below the `SkipTenancy` the caller typed.
 
 The visibility read is a **validation of caller input at call time, not a durable invariant**: it takes no row lock, so a target that is visible when the read runs can be soft-deleted before the transaction commits. That state is reachable anyway — by a delete committed one millisecond after commit — so a lock would buy a narrower window on a condition it cannot maintain, in exchange for holding shared locks on every connected target for the rest of the transaction. What the read does guarantee is the part that matters: a foreign-tenant or invisible id fails, and it fails as `NOT_FOUND` rather than as an opaque constraint error.
@@ -15190,8 +15255,8 @@ Each table's tenancy is evaluated independently. A tenant filter is applied to w
 
 | Shape | How the child loads | Tenancy behavior |
 |---|---|---|
-| **o2o** | Inline JOIN in the parent `Get` / `GetMany` SQL | JOIN generator adds `AND {childAlias}.{tenantCol} = $N` **only when the child table is tenanted**. Tenant column name is resolved from the child's per-table config. When the child is NOT tenanted, no child-side filter is added — the parent's WHERE tenant filter + the ON condition over the parent PK is the scoping path. |
-| **o2m** | Chained `client.Children.GetMany(ctx, input)` | Free — the child's standalone `GetMany` already auto-filters by its own tenant column (when the child is tenanted). Non-tenanted child = no child filter; transitive scoping via the parent-PK `IN (...)` predicate over FKs is the guarantee. |
+| **o2o** | Inline JOIN in the parent `Get` / `GetMany` SQL | JOIN generator adds `AND {childAlias}.{tenantCol} = $N` **only when the child table is tenanted**. Tenant column name is resolved from the child's per-table config. When the child is NOT tenanted, no child-side filter is added — the parent's WHERE tenant filter + the ON condition over the edge's key is the scoping path. |
+| **o2m** | Chained `client.Children.GetMany(ctx, input)` | Free — the child's standalone `GetMany` already auto-filters by its own tenant column (when the child is tenanted). Non-tenanted child = no child filter; transitive scoping via the parent-key `IN (...)` predicate over the FK columns is the guarantee. |
 | **m2m** | Chained junction-read + child `GetMany` | Free for the same reason as o2m. Junction tables are usually non-tenanted by design; the child itself auto-filters if tenanted, transitively if not. |
 
 **Key properties:**
@@ -15200,6 +15265,7 @@ Each table's tenancy is evaluated independently. A tenant filter is applied to w
 - **Belt-and-suspenders when both sides are tenanted.** The JOIN generator emits `parent.tenant = $N AND child.tenant = $N` in o2o. If both sides share the same resolver value (always true under `T comparable` + uniform tenant type), this catches corrupted rows where a child's tenant drifts from its parent's due to bad data or a broken migration.
 - **Per-table tenant column name suffices.** The child's own `tables.<child>.tenancy.column` (or the global default) determines the column used on the child side. No per-relationship override is provided: a tenant column that differs per JOIN side would mean the two tables disagree on what a tenant is, which the single `TenantResolver[T]` cannot represent.
 - **`SkipTenancy: true` propagates.** A parent `Get` / `GetMany` called with `SkipTenancy: true` drops the auto-filter on both parent and child sides — the admin/reporting caller owns full row scoping. `CallOptions` already propagate through the relationship loading pipeline (section 9.6).
+- **A composite tenant foreign key is guarded by the database.** `tasks(workspace_id, cycle_id) → cycles(workspace_id, id)` is an ordinary edge ([5.3](#53-relationship-detection)): it loads `Cycle.Tasks` through both pairs, and its relationship filter and O2O join correlate on both. The child's own tenant filter applies as for any O2M, and the tuple condition repeats `workspace_id`, which the key guarantees anyway. An edge whose key holds the tenant column on both sides cannot cross a tenant, so the generator can tell from the key alone that the database enforces tenant isolation on it. In nested mutations the tenant member is pinned ([9.9.2](#992-the-verb-set-is-decided-per-edge-by-fk-nullability)): no verb writes it through the edge.
 - **The write side takes the same fail-closed rule.** This section covers relationship *loading*; a nested mutation ([9.9](#99-nested-mutations)) writes across the same edges, and its `connect` verb resolves target visibility by reading the target through that target's own client — so the child-side tenant filter above applies to the write path unchanged, and a target in another tenant is `ErrNotFound`. Nested children inherit the ctx-cached tenant (section 29.6), and `SkipTenancy` propagates into them exactly as it does into a relationship load. See [29.4.2a](#2942a-nested-mutations).
 
 ### 29.11 Constraints
@@ -15466,7 +15532,7 @@ The on-disk JSON has two layouts, controlled by `json_layout`:
 ```json
 {
   "$schema": "https://raw.githubusercontent.com/<owner>/sqlgen/v<version>/cmd/sqlgen/manifest/schema/v1.json",
-  "schema_version": "0.1.0",
+  "schema_version": "0.2.0",
   "generated_at": "2026-05-15T14:22:11Z",
   "generator": { "name": "sqlgen", "version": "0.42.0" },
   "dialect": "postgres",
@@ -15485,7 +15551,7 @@ The on-disk JSON has two layouts, controlled by `json_layout`:
 ```json
 {
   "$schema": "...",
-  "schema_version": "0.1.0",
+  "schema_version": "0.2.0",
   "generated_at": "...",
   "generator": { ... },
   "dialect": "postgres",
@@ -15642,6 +15708,26 @@ Package-wide reference, answered once. Per-entity entries cross-reference rather
 
 **Composite-PK entities** use `pk.kind: "composite"` with `pk.struct` naming the generated `<Entity>PK` struct.
 
+**A relationship's `fk` and `junction` record its whole key.** An `o2o` / `o2m` / `m2o` edge carries `fk`; an `m2m` edge carries `junction` and no `fk`:
+
+```json
+"fk": {
+  "table": "tasks",
+  "columns": ["workspace_id", "cycle_id"],
+  "references": ["workspace_id", "id"],
+  "constraint": "tasks_cycle_same_ws"
+},
+"junction": {
+  "table": "task_labels",
+  "local_fk":  { "columns": ["workspace_id", "task_id"],  "references": ["workspace_id", "id"], "constraint": "task_labels_task_fk" },
+  "target_fk": { "columns": ["workspace_id", "label_id"], "references": ["workspace_id", "id"], "constraint": "task_labels_label_fk" }
+}
+```
+
+- **`fk.table`** names the table that holds the FK columns: the target's table when the columns are on the target (an `o2m` edge, or a has-one `o2o`), and the entity's own table when the entity holds them (a belongs-to edge). `junction.table` names the M2M junction. Both carry the bare table name, with an optional `schema` beside it when sqlgen resolved one, split the way an entity splits `table` and `schema`.
+- **`columns` and `references`** are the key's pairs in the foreign key's declared order: `columns[i]` references `references[i]`. A single-column edge has one-item lists. `references` names the referenced columns, which may be the target's primary key or one of its UNIQUE constraints ([5.3](#53-relationship-detection)); for a manual relationship it is the referenced primary key ([13.4](#134-manual-relationship-configuration)). `junction.local_fk` is the junction's key into this entity, and `junction.target_fk` its key into the target.
+- **`constraint`** names the FOREIGN KEY constraint the edge was detected from, so the manifest shows where each edge came from. An unnamed SQLite foreign key is named `table(columns) → target(columns)`, as its detection warning names it. A manual relationship has no constraint behind it, and `constraint` is omitted.
+
 **`methods[]` is the generated Go surface, not a description of it.** An entity's `methods.query[] + methods.mutation[]` is exactly the method set on its generated `<Entity>Client` interface — the [§9.1](#91-read-operations)–[§9.4a](#94a-streaming-operations) tables — gated by the schema facts of [4.6 Operations](#operations): `SoftDelete*` / `Restore*` on a detected soft-delete column, `Increment` on at least one increment-eligible column, `Upsert` / `UpsertMany` on a conflict target, and the `…WithRelated` methods on `nested_mutations`; the rest are unconditional. Views carry `Get` (with a `@pk` annotation), `GetMany`, `Count`, `Paginate`, `Connection` (with resolvable cursor keys), plus `Refresh` / `RefreshConcurrently` on a matview ([16.5](#165-materialized-views-postgresql)).
 
 The list is read from the templates, never back-formed from a documentation example. That is the same rule [§30.4.1](#3041-conventions-block) states for `error_sentinels[]`, applied to the block that contains `errors[]`, and it binds in both directions: a plausible-sounding method the templates do not emit (`FindByID`, `FindBy<Col>` per UNIQUE index, `List`, `Walk`, `Delete`, `Upsert<Target>` per conflict target) must not appear, and a real one must not be omitted — `Increment`, `ExistsWhere`, `Paginate`, `Connection`, `CreateMany`, `UpdateMany`, `UpdateWhere`, `Restore`, and the six `*Many` / `*Where` delete and restore forms carry the conditions above. Param and return types are read the same way.
@@ -15707,7 +15793,7 @@ Added 2026-05-15 to back MCP §31 `sqlgen://config` resource (see `docs/design/M
 - Adding optional fields → minor bump (consumers tolerate).
 - Bug fixes / clarifications → patch.
 - Every breaking version preserves its JSON Schema at `cmd/sqlgen/manifest/schema/v<N>.json`. Generation emits the latest; consumers pin via the `$schema` URL.
-- `schema_version` ships at `0.x` until the shape is frozen; while it is `0.x`, breaking changes are permitted under a minor bump and consumers are expected to regenerate rather than pin.
+- `schema_version` ships at `0.x` until the shape is frozen; while it is `0.x`, breaking changes are permitted under a minor bump and consumers are expected to regenerate rather than pin. `0.2.0` changed every relationship's `fk` and `junction` to the key-list shape in [30.4.2](#3042-entity-shape) and added `constraint`.
 - The `1.0.0` freeze is the point at which the shape stops moving. It requires the `schema/v1.json` conventions tightening — the always-emitted `call_options` / `soft_delete` / `comparator` / `omittable` sub-blocks take their final shape and `conventions.required` is tightened — and from that release on, the rules above bind.
 
 ### 30.6 Runtime-Embedded Manifest
@@ -15851,8 +15937,8 @@ All tool names are prefixed `sqlgen_*`, resource URIs use the `sqlgen://` scheme
 | `sqlgen_list_entities` | `{kind?: "table" \| "view"}` | `[{name, table, pk_kind, features_summary}]` | "What's available in this package?" |
 | `sqlgen_get_entity` | `{name: string, compact?: bool}` | Full entity JSON (columns, methods, relationships, filter, sort, example) | "Tell me about `User`" |
 | `sqlgen_find_method` | `{query: string, fuzzy?: bool}` | `[{entity, method, signature}]` | "Which entity has `UpdateWhere`?" |
-| `sqlgen_find_referencing` | `{table: string}` | `[{entity, relationship_name, kind, fk_column}]` | "What references `users`?" |
-| `sqlgen_describe_relationship` | `{entity: string, relationship: string, compact?: bool}` | Join shape: FK col, junction (m2m), filter clause (sub-categorized), target entity | "How does `Post.Tags` resolve?" |
+| `sqlgen_find_referencing` | `{table: string}` | `[{entity, relationship_name, kind, fk_columns}]` | "What references `users`?" |
+| `sqlgen_describe_relationship` | `{entity: string, relationship: string, compact?: bool}` | Join shape: FK columns and the columns they reference, junction (m2m), filter clause (sub-categorized), target entity | "How does `Post.Tags` resolve?" |
 | `sqlgen_get_conventions` | `{}` | Conventions block (error sentinels, pagination, comparators, `CallOptions`) | "How do I handle a not-found?" |
 | `sqlgen_get_example` | `{entity: string, op?: "read" \| "write", compact?: bool}` | Canonical Go snippet | "Show me how to call this" |
 | `sqlgen_find_join_path` | `{from: string, to: string, max_hops?: int}` | `[{hops: int, path: [{entity, relationship}]}]` (≤5 paths, shortest first) | "How do I join `User` to `Comment`?" |
@@ -15863,7 +15949,7 @@ All tool names are prefixed `sqlgen_*`, resource URIs use the `sqlgen://` scheme
 Surface notes (normative):
 
 - **`compact: bool`** on `sqlgen_get_entity` / `sqlgen_describe_relationship` drops example snippets, long-form descriptions, and non-lookup per-column metadata (`check`, `default_kind`, full `indexes[]`) while always retaining required identity (names, types, PK kind, FK columns, method signatures, join shape, filter sub-categories). On **`sqlgen_get_example`** the flag is accepted for surface parity but is a **documented no-op** — example snippets are that tool's required identity, so there is nothing droppable.
-- **`sqlgen_find_referencing`** returns every FK edge pointing at the given table, emitted from whichever entity **declared** the relationship (both sides of an m2m/FK pair emit; results are deduplicated by the full tuple and sorted). `relationship_name` is the declaring side's edge name and `kind` is that edge's kind — it names how the *declaring* entity sees the edge, not how the referenced table would.
+- **`sqlgen_find_referencing`** returns every FK edge pointing at the given table, emitted from whichever entity **declared** the relationship (both sides of an m2m/FK pair emit; results are deduplicated by the full tuple and sorted). `fk_columns` is the edge's FK column list in the foreign key's declared order — a one-item list for a single-column key — and the dedup and the sort compare it as a whole, so a two-column key and a one-column key into the same table are two results. `relationship_name` is the declaring side's edge name and `kind` is that edge's kind — it names how the *declaring* entity sees the edge, not how the referenced table would.
 - **`sqlgen_find_join_path`** searches the relationship graph cycle-free (no entity twice on one path); `max_hops` defaults to 4, clamped to `[1, 6]`; up to 5 shortest paths, increasing-hop order, ties broken lexicographically by serialized path; empty list when no path exists within `max_hops`.
 - **`sqlgen_show_sql`** reads `entity.methods[].sql_bodies` (§30.7) for the active dialect (`dialect` overrides). `-32005 METHOD_SQL_UNAVAILABLE` when the manifest predates the addendum **or** carries no body for the resolved dialect; `-32006 METHOD_NOT_FOUND` for an unknown method.
 - **`sqlgen_health`** is a pure diagnostic (no manifest data leaks); `ok: false` means a failed reload left the prior good manifest serving. **`sqlgen_validate_manifest`** with no `path` validates the loaded manifest in memory; with `path` it validates that file without swapping the served manifest. Error shape matches the §30.8 CLI tool.
@@ -16050,7 +16136,7 @@ type Dialect interface {
 
     // Capability flags — used by builders and comparators to select SQL strategies
     SupportsArrayParams() bool                    // pgx: true (native array IN), others: false
-    SupportsTupleIN() bool                        // PostgreSQL/SQLite: true, MySQL: false
+    SupportsTupleIN() bool                        // true on every dialect: (a, b) IN ((…), …)
     BackslashEscapes() bool                       // MySQL: true (a backslash escapes inside '…' / "…" literals, §11.5), others: false
 
     // Single-row INSERT that supplies no column (9.4c)

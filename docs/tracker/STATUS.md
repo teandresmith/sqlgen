@@ -38,8 +38,22 @@
 | 29 | Generate Every Client Method the Schema Allows | 2 | 2 | Complete (closed 2026-10-03; normative spec PRD §4.6 Operations, with §4.13/§9/§9.8/§9.9.4/§20.2/§23.7/§26.5.1/§26.8/§26.10/§30.4.3; FIX-224 resolved; no sibling design doc) |
 | 30 | Database Introspection — CLI Wiring & Introspector Parity | 13 | 13 | Complete (closed 2026-10-08; design docs `docs/design/INTROSPECTION.md` and `docs/design/CONFIG_ENV.md` SYNCED — superseded by PRD §4.1.1/§4.2/§4.3/§5.2/§6.1/§6.3/§30.7; 11 FIXes resolved at closure, 19 carried forward vetted ready) |
 | 31 | Introspection Examples — `source: database` and `both` End to End | 5 | 5 | Complete (closed 2026-10-12; design doc `docs/design/INTROSPECTION_EXAMPLES.md` SYNCED — superseded by PRD §8.1.7 and `guidelines/TESTING.md` §10) |
+| 32 | Composite Foreign-Key Relationships | 9 | 1 | In Progress (broken down 2026-10-21; design doc `docs/design/COMPOSITE_FK_RELATIONSHIPS.md`, option D, rulings R1–R7 and the 32.0 rulings in its §7.1) |
 
 ## Current Focus
+
+**Phase 32 (Composite Foreign-Key Relationships) broken down 2026-10-21.** The breakdown is in `docs/tracker/phase-32.md`: 9 sub-items. 32.0 PRD and doc sync; 32.1 runtime (N-pair `sql.Exists`, prefixed tuple IN, MySQL `SupportsTupleIN` true); 32.2 parser model (`KeyPair`, `Relationship.Key`, `Constraint.Match`) and detection, one edge per FOREIGN KEY constraint; 32.3 config list form, manifest key lists and `schema_version` `0.2.0`, MCP `fk_columns`; 32.4 gen contexts (key pairs replace the `PKColumns[0]` relationship reads, pinned and free members, FK membership for increments and PK strategy); 32.5 read templates (tuple-key O2O/O2M/M2M loaders, chunked, and N-pair relationship filters); 32.6 nested writes through composite FKs for single-column-PK parents and targets; 32.7 GraphQL; 32.8 examples (`tenancy_postgres`, `mysql`, `sqlite`) and a `sqlgen-example` probe. Every sub-item keeps the Go goldens of existing examples byte-identical (design §4.9); a staging guard keeps edges with more than one key pair out of gen until 32.5 (reads) and 32.6 (writes). FIX-358, FIX-359 and FIX-360 landed first (`c875fec9`, `2ae215f8`, `244ce2ee`); the open FIX queue is empty. Closure via `/close-phase 32`. Work happens on branch `design/tenant-composite-fk-relationships`.
+
+**32.0 complete (2026-10-22):** PRD and doc sync. Design §4 is now PRD text (§4.8, §4.13, §5.2, §5.3, §8.2, §8.6, §9.9, §11.1, §11.5, §13.1–§13.4, §13.7.1, §25.1, §29.10, §30, §31.3), with `MANIFEST.md`, `MCP.md` and `guidelines/SQL.md` synced. §9.1 was re-verified at `244ce2ee`. Nine points were ruled while writing and in review, recorded in design §7.1:
+- an all-pinned edge stays `create`-only;
+- M2M unlink needs a junction PK equal to the union;
+- a pinned mismatch is `ErrAlreadyRelated`;
+- the manifest `junction` uses the nested key shape;
+- `Filter.PKs` stays OR-of-ANDs (backlog);
+- every key member, the tenant column included, is elided from the nested child input;
+- rule 1 accepts the declared PK;
+- the residual name collision is checked after exclusions;
+- MATCH FULL `connect` with a pinned member needs `allow_reparent`. **Next:** `/implement 32.1` and `/implement 32.2` (independent).
 
 **Phase 31 (Introspection Examples — `source: database` and `both` End to End) closed 2026-10-12.** All 5 sub-items complete: 31.0 PRD §8.1.7 and `guidelines/TESTING.md` §10 sync; 31.1 PostgreSQL type and domain comments introspected from `pg_description` (the one defect the 2026-10-11 probe found); 31.2 shared `cmd/sqlgen/internal/livedb` package (containers, per-test databases, `ApplySetup`, the parity exceptions behind `NormalizeTree`, view `source` across the split manifest layout, the MySQL literal-default exception); 31.3 `TestE2EDatabaseTwin`, every one of the 12 `files` examples regenerated from a live database and equal to its goldens after the shared exceptions, plus the `after_views.sql` convention; 31.4 three `source: both` modules (`introspect_postgres`, `introspect_mysql`, `introspect_sqlite`) with the three-way check in `TestE2EGoldenFiles`.
 
