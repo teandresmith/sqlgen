@@ -331,7 +331,8 @@ CREATE TABLE tasks (id bigint PRIMARY KEY, workspace_id bigint NOT NULL REFERENC
 				"O2M public.cycles -> public.tasks tasks [workspace_id→workspace_id cycle_id→id] tasks_workspace_id_cycle_id_fkey",
 			},
 		},
-		// Of identical keys the first declared gives the edge.
+		// Of identical keys the one whose name sorts first gives the edge, as
+		// both sources agree on it.
 		{
 			name: "duplicate FKs give one edge",
 			ddl: `
@@ -340,17 +341,27 @@ CREATE TABLE posts (id bigint PRIMARY KEY, author_id bigint,
   CONSTRAINT posts_author_b FOREIGN KEY (author_id) REFERENCES users(id),
   CONSTRAINT posts_author_a FOREIGN KEY (author_id) REFERENCES users(id));`,
 			want: []string{
-				"O2M public.users -> public.posts posts [author_id→id] posts_author_b",
+				"O2M public.users -> public.posts posts [author_id→id] posts_author_a",
 			},
 		},
 		{
-			name: "identical FKs listing their columns in different orders keep the first declared",
+			name: "identical FKs listing their columns in different orders keep the name that sorts first",
 			ddl: `
 CREATE TABLE t (x int NOT NULL, y int NOT NULL, PRIMARY KEY (x, y));
 CREATE TABLE c (id int PRIMARY KEY, a int, b int,
-  CONSTRAINT first_decl FOREIGN KEY (b, a) REFERENCES t (y, x),
-  CONSTRAINT second_decl FOREIGN KEY (a, b) REFERENCES t (x, y));`,
-			want: []string{"O2M public.t -> public.c c [b→y a→x] first_decl"},
+  CONSTRAINT z_decl FOREIGN KEY (a, b) REFERENCES t (x, y),
+  CONSTRAINT a_decl FOREIGN KEY (b, a) REFERENCES t (y, x));`,
+			want: []string{"O2M public.t -> public.c c [b→y a→x] a_decl"},
+		},
+		{
+			name:    "identical unnamed SQLite FKs keep the first declared",
+			dialect: "sqlite",
+			ddl: `
+CREATE TABLE t (x INTEGER NOT NULL, y INTEGER NOT NULL, PRIMARY KEY (x, y));
+CREATE TABLE c (id INTEGER PRIMARY KEY, a INTEGER, b INTEGER,
+  FOREIGN KEY (b, a) REFERENCES t (y, x),
+  FOREIGN KEY (a, b) REFERENCES t (x, y));`,
+			want: []string{"O2M t -> c c [b→y a→x] c(b, a) → t(y, x)"},
 		},
 		{
 			name: "a duplicated FK keeps its naming member",

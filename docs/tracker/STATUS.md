@@ -47,7 +47,7 @@
 **32.2 complete (2026-10-23):** parser model and detection.
 - **Model.** `parser.KeyPair` and `Relationship.Key` / `JunctionLocal` / `JunctionReference`, with per-key constraint names, replace the single-column fields. `Constraint.Match` records MATCH FULL on PostgreSQL under both sources.
 - **Detection.** Detection reads the FOREIGN KEY constraints (PRD §5.3 rules 1–6) and is idempotent. A non-key FK warns and gives no edge.
-- **Duplicate keys.** Of identical keys the first declared is kept. The PostgreSQL introspector reads constraints in OID order to match the file parser; MySQL `database` falls back to name order (ruled).
+- **Duplicate keys.** Of identical keys the one whose name sorts first is kept, and the first declared of unnamed (SQLite) ones. Every source agrees, with no parity exception.
 - **Name collisions.** A name two detected edges still share after disambiguation is now a gen error naming both edges' foreign keys.
 - **Staging guard.** gen omits every edge with more than one key pair until 32.5.
 - **Examples.** All 15 examples detect the same edges as before, and no Go golden changed.

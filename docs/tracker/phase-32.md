@@ -322,7 +322,8 @@ confirmed again, no `SupportsTupleIN` reference left in code or living spec. Its
     non-partial UNIQUE, as a set (design §7.1); `REFERENCES t`
     with no column list is the PK; empty SQLite `ReferenceColumns` is unresolvable;
   - **rule 2, redundant FKs:** a subset of another FK's pairs to the same target gives no edge;
-    of two identical FKs, the first declared wins;
+    of two identical FKs, the one whose name sorts first wins (the first declared when
+    unnamed);
   - **rule 3, O2O vs O2M:** by a unique subset of the FK's columns;
   - **rule 4, M2M:** set aside every FK whose columns all belong to the table's other FKs; then
     exactly two remain, and a PK or non-partial UNIQUE contains their union;
@@ -396,7 +397,7 @@ Completed 2026-10-23 on `design/tenant-composite-fk-relationships`, uncommitted.
   - `parser/schema.go` (`KeyPair`, `Relationship` keys, `Constraint.Match`, `MatchType`);
   - `parser/relationship.go` (rewritten);
   - `parser/postgres/postgres.go` (`FkMatchtype`);
-  - `parser/introspect/postgres.go` (`confmatchtype`, OID order).
+  - `parser/introspect/postgres.go` (`confmatchtype`).
 - CLI: `cmd/sqlgen/cli/{generate,pipeline,validate}.go`, which print the detection warnings.
 - gen:
   - `cmd/sqlgen/gen/relationship_targets.go` (`compositeKeyEdge`, `excludedKeyMember` over key pairs);
@@ -416,13 +417,13 @@ Completed 2026-10-23 on `design/tenant-composite-fk-relationships`, uncommitted.
 - It reads `Table.Constraints` and replaces `schema.Relationships` instead of appending to it,
   so it is idempotent. It returns the non-key warnings, and `generate`, `validate` and
   `loadAndValidate` print them after `schema.Warnings`.
-- Each table's FKs are ordered by their columns' positions, then as declared, which reproduces
-  today's column-order iteration for N = 1. Rule 2's tie-break keeps the first declared of
-  identical keys, by declared index, whatever order each lists its columns in. The PostgreSQL introspector now reads constraints in `pg_constraint`
-  OID order, which is declared order (probed: inline FK, table-level FKs, then `ALTER`). The
-  MySQL catalog keeps no declared order (probed: `SHOW CREATE TABLE` and `information_schema`
-  list by name), so MySQL under `database` keeps the key whose name sorts first. That is the one
-  stated parity exception, pinned by `TestDetectRelationships_MySQLIdenticalKeysByName`.
+- Each table's FKs are ordered by their columns' positions, which reproduces today's
+  column-order iteration for N = 1.
+- Rule 2's tie-break keeps the identical key whose name sorts first, whatever order each lists
+  its columns in, and the first declared of unnamed (SQLite) ones.
+  - Every source agrees: MySQL's catalog keeps no declared order (probed: `SHOW CREATE TABLE`
+    and `information_schema` list by name).
+  - SQLite introspection recovers FK names from the stored DDL (probed).
 - Rule 1 reads the resolved PK, the declared PRIMARY KEY and non-partial UNIQUEs. Rule 3 reads
   the resolved PK and UNIQUEs, which is today's O2O rule. Rule 4 reads only PRIMARY KEY and
   UNIQUE constraints, so a `primary_key` override over two FKs still makes no junction
@@ -505,18 +506,16 @@ Doc fixes applied inline:
 - the naming member counted FKs that rule 2 discards, so a duplicated FK to a UNIQUE column lost
   its name. Two such columns collided where HEAD named them `author_email_posts` and
   `reviewer_email_posts`. `namingMember` now reads the table's FKs less the redundant ones;
-- identical FKs listing their columns in different orders kept the second declared. The tie now
-  breaks on the declared index.
+- identical FKs listing their columns in different orders kept the wrong one. The tie now
+  compares names, then the declared index.
 
-It found no consumer at risk from the OID order. The one consumer whose output can change,
-the manifest's `checkExpressionForColumn` taking a column's first CHECK, now agrees with `files`
-under PostgreSQL `database`. Doc fix applied: the `sortForParity` comment. Open question: a
-PostgreSQL database restored from a dump recreates FKs in the dump's order, so it may tie-break
-as MySQL does. PRD §5.3 names only MySQL.
+Doc fix applied: the `sortForParity` comment.
 
 **Rulings (2026-10-23).**
-- Rule 2 keeps the first declared of identical keys, with the MySQL `database` fallback above.
-  PRD §5.3 rule 2 and its parity sentence, and design §4.2, are updated.
+- Rule 2 keeps the identical key whose name sorts first, and the first declared of unnamed
+  ones, with no parity exception. A "first declared" ruling was tried and reverted: MySQL could
+  not honour it under `database`, and `files` and `database` must not answer differently. PRD
+  §5.3 rule 2 and design §4.2 are updated.
 - PRD §5.3 rules 1, 3 and 4 each say which primary key they read:
   - rule 1 reads the resolved and the declared PK;
   - rule 3 reads the resolved PK;

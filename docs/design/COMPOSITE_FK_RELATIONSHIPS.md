@@ -192,9 +192,9 @@ call sites (`generate.go`, `pipeline.go`, `validate.go`) already run detection t
    non-key column (fixture 10b, §9.4), and the MySQL equivalent. That edge's loader joins the
    wrong column (§4.9), so the change is deliberate.
 2. **Redundant FKs.** An FK whose (local → referenced) pairs are a subset of another FK's
-   pairs to the same target gives no edge; of two identical FKs, the first declared is kept
-   (under `database` on MySQL, whose catalog keeps no declared order, the one whose name sorts
-   first; ruled 2026-10-23).
+   pairs to the same target gives no edge; of two identical FKs, the one whose name sorts first
+   is kept, and of two unnamed ones (SQLite) the first declared (ruled 2026-10-23: no source
+   may answer differently, and the MySQL catalog keeps no declared order).
    A schema mid-migration that holds both `cycle_id → cycles(id)` and
    `(workspace_id, cycle_id) → cycles(workspace_id, id)` gets one edge, through the composite
    key. Without this step both edges are emitted with colliding names (§9.4, fixtures 12c,

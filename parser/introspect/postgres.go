@@ -819,10 +819,6 @@ func (pi *PostgresIntrospector) introspectExpressionIndexes(ctx context.Context,
 	return nil
 }
 
-// introspectConstraintsViaPgConstraint reads the table's constraints in the
-// order they were created (pg_constraint OIDs), which is the order the file
-// parser declares them in: relationship detection keeps the first declared of
-// two identical foreign keys (PRD §5.3).
 func (pi *PostgresIntrospector) introspectConstraintsViaPgConstraint(ctx context.Context, table *parser.Table, casts map[string][]string) (map[int64]struct{}, error) {
 	rows, err := pi.db.QueryContext(ctx, `
 		SELECT
@@ -864,7 +860,7 @@ func (pi *PostgresIntrospector) introspectConstraintsViaPgConstraint(ctx context
 		  AND con.contype IN ('p', 'f', 'u', 'c')
 		GROUP BY con.oid, con.conname, con.contype, con.confrelid, con.confkey,
 		         refns.nspname, refc.relname, con.conindid, con.confmatchtype
-		ORDER BY con.oid`, table.Schema, table.Name)
+		ORDER BY con.conname`, table.Schema, table.Name)
 	if err != nil {
 		return nil, fmt.Errorf("introspect postgres constraints %s.%s: %w", table.Schema, table.Name, err)
 	}

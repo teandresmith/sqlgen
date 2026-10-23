@@ -106,7 +106,7 @@ func assertSchemaParity(t *testing.T, dialect string, parsed, introspected *pars
 }
 
 // sortForParity orders everything the parity check treats as unordered.
-// Foreign-key order breaks detection's tie between identical keys, so
+// Foreign-key order breaks detection's tie between identical unnamed keys, so
 // detection parity is checked before this runs. Columns, constraint columns
 // and enum values keep their order.
 func sortForParity(s *parser.Schema) {

@@ -1,6 +1,7 @@
 package parser
 
 import (
+	"cmp"
 	"fmt"
 	"slices"
 	"strings"
@@ -77,9 +78,7 @@ type foreignKey struct {
 func (fk foreignKey) localColumns() []string { return fk.constraint.Columns }
 
 // foreignKeys returns the table's foreign keys less the redundant ones (PRD
-// §5.3 rules 1 and 2), ordered by the positions of their columns and then as
-// declared. The MySQL catalog lists constraints by name, so under `database`
-// MySQL breaks the tie by name.
+// §5.3 rules 1 and 2), ordered by the positions of their columns.
 func foreignKeys(schema *Schema, table *Table) ([]foreignKey, []string) {
 	var (
 		fks      []foreignKey
@@ -120,14 +119,16 @@ func foreignKeys(schema *Schema, table *Table) ([]foreignKey, []string) {
 }
 
 // withoutRedundant applies PRD §5.3 rule 2: a key whose pairs lie within
-// another's to the same target is redundant, and of identical keys the first
-// declared is kept, whatever order each lists its columns in.
+// another's to the same target is redundant. Of identical keys, whatever
+// order each lists its columns in, the one whose name sorts first is kept, so
+// every source keeps the same one: the introspectors list constraints by
+// name. Unnamed keys (SQLite) keep the first declared.
 func withoutRedundant(fks []foreignKey) []foreignKey {
 	var kept []foreignKey
 	for i, fk := range fks {
 		redundant := false
 		for j, o := range fks {
-			if j != i && !fk.noEdge && !o.noEdge && o.target == fk.target && within(fk.key, o.key) && (len(fk.key) < len(o.key) || o.declared < fk.declared) {
+			if j != i && !fk.noEdge && !o.noEdge && o.target == fk.target && within(fk.key, o.key) && (len(fk.key) < len(o.key) || firstOfIdentical(o, fk)) {
 				redundant = true
 				break
 			}
@@ -137,6 +138,11 @@ func withoutRedundant(fks []foreignKey) []foreignKey {
 		}
 	}
 	return kept
+}
+
+// firstOfIdentical reports whether a is kept over b, an identical key.
+func firstOfIdentical(a, b foreignKey) bool {
+	return cmp.Or(strings.Compare(a.constraint.Name, b.constraint.Name), cmp.Compare(a.declared, b.declared)) < 0
 }
 
 // foreignKeyName is the constraint's name, or "table(columns) →

@@ -14,7 +14,8 @@ import (
 
 // The relationship shapes of PRD §5.3 on one schema. tasks holds a foreign key
 // inside the composite one (redundant) and two identical composite keys whose
-// names sort against their declared order: the first declared gives the edge.
+// names sort against their declared order: the one whose name sorts first
+// gives the edge under both sources.
 const pgRelationshipFixture = `
 CREATE SCHEMA pgi_rel;
 CREATE TABLE pgi_rel.workspaces (id bigint PRIMARY KEY);
@@ -53,8 +54,7 @@ CREATE TABLE pgi_rel.setting_refs (
 
 // mysqlRelationshipFixture is pgRelationshipFixture on MySQL, plus a key into
 // indexed columns that are not a key. MySQL ignores a foreign key written on a
-// column, so every key here is a table constraint. Its identical keys are
-// declared in name order, the only order the MySQL catalog gives back.
+// column, so every key here is a table constraint.
 const mysqlRelationshipFixture = `
 CREATE TABLE r_workspaces (id bigint PRIMARY KEY);
 CREATE TABLE r_cycles (id bigint PRIMARY KEY, workspace_id bigint NOT NULL, code varchar(20) NOT NULL UNIQUE, UNIQUE (workspace_id, id),
@@ -68,8 +68,8 @@ CREATE TABLE r_tasks (
 	CONSTRAINT r_tasks_ws FOREIGN KEY (workspace_id) REFERENCES r_workspaces (id),
 	CONSTRAINT r_tasks_cycle FOREIGN KEY (cycle_id) REFERENCES r_cycles (id),
 	CONSTRAINT r_tasks_code FOREIGN KEY (cycle_code) REFERENCES r_cycles (code),
-	CONSTRAINT r_tasks_a_cycle FOREIGN KEY (workspace_id, cycle_id) REFERENCES r_cycles (workspace_id, id) MATCH FULL,
-	CONSTRAINT r_tasks_z_cycle FOREIGN KEY (workspace_id, cycle_id) REFERENCES r_cycles (workspace_id, id)
+	CONSTRAINT r_tasks_z_cycle FOREIGN KEY (workspace_id, cycle_id) REFERENCES r_cycles (workspace_id, id) MATCH FULL,
+	CONSTRAINT r_tasks_a_cycle FOREIGN KEY (workspace_id, cycle_id) REFERENCES r_cycles (workspace_id, id)
 );
 CREATE TABLE r_labels (id bigint PRIMARY KEY, workspace_id bigint NOT NULL, UNIQUE (workspace_id, id),
 	CONSTRAINT r_labels_ws FOREIGN KEY (workspace_id) REFERENCES r_workspaces (id));
@@ -157,7 +157,7 @@ func TestDetectRelationships_SourceParity(t *testing.T) {
 
 	t.Run("postgres", func(t *testing.T) {
 		parsed, introspected := pgParityCase(t, "DROP SCHEMA IF EXISTS pgi_rel CASCADE", pgRelationshipFixture, "pgi_rel")
-		assertMatch(t, introspected, "tasks", "tasks_z_cycle", parser.MatchFull)
+		assertMatch(t, introspected, "tasks", "tasks_a_cycle", parser.MatchFull)
 		// Detection runs first: assertSchemaParity sorts the constraints in place.
 		defer assertSchemaParity(t, "postgres", parsed, introspected)
 		assertDetectionParity(t, "postgres", parsed, introspected, []string{
@@ -168,7 +168,7 @@ func TestDetectRelationships_SourceParity(t *testing.T) {
 			"M2M pgi_rel.tasks -> pgi_rel.labels labels via pgi_rel.task_labels [workspace_id→workspace_id task_id→id] [workspace_id→workspace_id label_id→id]",
 			"M2M pgi_rel.labels -> pgi_rel.tasks tasks via pgi_rel.task_labels [workspace_id→workspace_id label_id→id] [workspace_id→workspace_id task_id→id]",
 			"O2M pgi_rel.workspaces -> pgi_rel.tasks tasks [workspace_id→id] tasks_workspace_id_fkey",
-			"O2M pgi_rel.cycles -> pgi_rel.tasks cycle_tasks (tasks) [workspace_id→workspace_id cycle_id→id] tasks_z_cycle",
+			"O2M pgi_rel.cycles -> pgi_rel.tasks cycle_tasks (tasks) [workspace_id→workspace_id cycle_id→id] tasks_a_cycle",
 			"O2M pgi_rel.cycles -> pgi_rel.tasks cycle_code_tasks (tasks) [cycle_code→code] tasks_cycle_code_fkey",
 		}, nil)
 	})
@@ -181,7 +181,7 @@ func TestDetectRelationships_SourceParity(t *testing.T) {
 		}
 		parsed, introspected := parseMySQL(t, mysqlRelationshipFixture), introspectMySQL(t, tables...)
 		assertConstraintParity(t, parsed, introspected, tables...)
-		assertMatch(t, introspected, "r_tasks", "r_tasks_a_cycle", parser.MatchSimple)
+		assertMatch(t, introspected, "r_tasks", "r_tasks_z_cycle", parser.MatchSimple)
 		assertDetectionParity(t, "mysql", parsed, introspected, []string{
 			"O2O r_cycle_settings -> r_cycles r_cycles [workspace_id→workspace_id cycle_id→id] r_cycle_settings_cycle",
 			"M2M r_tasks -> r_labels r_labels via r_task_labels [workspace_id→workspace_id task_id→id] [workspace_id→workspace_id label_id→id]",
@@ -209,39 +209,6 @@ func TestDetectRelationships_SourceParity(t *testing.T) {
 			"tables.slugged: foreign key slugged(workspace_slug) → workspaces(slug) references columns that are neither the primary key nor a non-partial UNIQUE constraint of workspaces, so it gives no relationship; declare one by hand if you need it (PRD §5.3, §13.4)",
 		})
 	})
-}
-
-// The MySQL catalog lists foreign keys by name and keeps no declared order, so
-// of two identical keys declared against name order, `files` keeps the first
-// declared and `database` the one whose name sorts first (PRD §5.3 rule 2).
-// The edge is otherwise the same.
-func TestDetectRelationships_MySQLIdenticalKeysByName(t *testing.T) {
-	requireDatabases(t)
-	const ddl = `
-CREATE TABLE d_users (id bigint PRIMARY KEY);
-CREATE TABLE d_posts (id bigint PRIMARY KEY, author_id bigint,
-	CONSTRAINT d_posts_z FOREIGN KEY (author_id) REFERENCES d_users (id),
-	CONSTRAINT d_posts_a FOREIGN KEY (author_id) REFERENCES d_users (id))`
-	applyParityFixture(t, "mysql", mysqlConnStr, "DROP TABLE IF EXISTS d_posts; DROP TABLE IF EXISTS d_users", ddl)
-	for _, tt := range []struct {
-		source     string
-		schema     *parser.Schema
-		constraint string
-	}{
-		{source: "files", schema: parseMySQL(t, ddl), constraint: "d_posts_z"},
-		{source: "database", schema: introspectMySQL(t, "d_users", "d_posts"), constraint: "d_posts_a"},
-	} {
-		parser.ResolveReferenceNames(tt.schema, "mysql")
-		parser.DetectRelationships(tt.schema)
-		var got []string
-		for _, r := range tt.schema.Relationships {
-			got = append(got, relationshipString(r))
-		}
-		want := []string{"O2M d_users -> d_posts d_posts [author_id→id] " + tt.constraint}
-		if diff := cmp.Diff(want, got); diff != "" {
-			t.Errorf("%s: DetectRelationships() mismatch (-want +got):\n%s", tt.source, diff)
-		}
-	}
 }
 
 // assertMatch checks the MATCH type of every FOREIGN KEY of table named name,
