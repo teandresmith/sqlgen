@@ -146,6 +146,8 @@ github.com/teandresmith/sqlgen/cmd/sqlgen/       ← Module 3: CLI binary
 │   ├── uuidgofrs/                         ← github.com/gofrs/uuid/v5 mapping
 │   └── decimal/                           ← github.com/shopspring/decimal mapping
 ├── internal/livedb/                       ← Test support (imported only by _test.go files): live-database containers, example setup applier, by-source parity exceptions
+├── internal/reqcheck/                     ← Repository tooling: checks the PRD requirement registry (docs/conformance) against the PRD and the test sources
+├── internal/cmd/reqcheck/                 ← `make req-check` / `make req-rehash` entry point
 ├── manifest/                              ← Manifest builder: read-only pass over codegen state → *Document
 │   ├── types.go                           ← ~25 JSON-tagged manifest types + versioned SchemaVersion (PRD §30.4/§30.5)
 │   ├── builder.go                         ← Build(BuildInput) *Document — per-entity kind/pk/features/methods/relationships
@@ -298,6 +300,7 @@ Steps 1–11 emit into `output.dir`. The GraphQL API layer (step 12) emits into 
 | `gen/` | Template execution, file writing, context building, module path resolution, API/GraphQL layer orchestration + root-relative graph output-dir resolution | SQL building, type resolution |
 | `gotype/` | SQL-to-Go type mapping, import resolution, zero values, `ScalarExtraction` (resolver-aware guard/unwrap), per-integration UUID generation expressions (`UUIDIntegration`) | Runtime type behavior, which integration a given package selected (that is `gen/uuid_generation.go`, read off the built contexts) |
 | `internal/livedb/` | Test support for live-database tests, shared by the CLI suite and (with `TestE2EDatabaseTwin`) the E2E harness: lazy PostgreSQL/MySQL containers, per-test databases, the example setup applier, and the parity exceptions between `files` and `database` output (PRD §6.1). Imported only by `_test.go` files | Anything the `sqlgen` binary links |
+| `internal/reqcheck/`, `internal/cmd/reqcheck/` | Repository tooling behind `make req-check` and `make req-rehash`: parses `docs/PRD.md`, the registry files under `docs/conformance/` and the Go test sources they name (stdlib `go/parser` only), and runs the registry checks of `docs/design/CONFORMANCE.md` §5.3 | Anything the `sqlgen` binary links; running tests (the static check reads test sources, it never executes them) |
 | `manifest/` | Manifest document builder: read-only pass over parsed schema + config + `gen` contexts → `*Document`; per-method canonical SQL captured from runtime `sql/` builders; JSON/markdown emission | Runtime-embedded manifest (the `gen/` `manifest_embed` template) |
 | `wrapper/` | gqlgen subprocess wrapper: scaffolds `gqlgen.yml`, merges sqlgen-generated `*.graphqls` into user schema, seeds resolver bodies, invokes gqlgen; one-shot `resolver.go` scaffold is goimports-sorted for idempotency | Schema generation (lives in `gen/templates/api/`) |
 

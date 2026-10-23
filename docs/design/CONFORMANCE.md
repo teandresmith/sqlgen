@@ -457,17 +457,24 @@ The tool is `cmd/sqlgen/internal/reqcheck` (stdlib only: `go/parser` and `go/ast
 6. **Matrix cells are well formed.** It fails when a row's matrix cell names a matrix or column
    its file doesn't declare (rows are an open set), or when a cell declared `n/a` is also
    claimed by a requirement. It also fails when an `n/a` reason cites no PRD section (`§…`) and
-   has no `accepted` date in `YYYY-MM-DD` form.
+   has no `accepted` date in `YYYY-MM-DD` form, or cites a `§` that is not a PRD section.
 
 It also rejects malformed rows: an ID that is not a lower-case slug or is reused across files, an
 unknown applies-to value, a requirement outside an anchor, an unrecognized table, and a
-`not-started` file that already has rows.
+`not-started` file that already has rows. And it fails on any directory holding `_test.go` files
+(outside `testdata`) that no registry file lists in `<!-- packages: … -->` and the ownership map
+doesn't mark `<!-- unregistered: … -->` (test support, repository tooling), so a module's tests
+can't escape the orphan check by living in an unlisted package. `make req-rehash SECTIONS=…`
+fails on a section that no anchor names.
 
 Check 1 reads subtest names statically: a string literal, a string field of a ranged table
 literal (keyed or positional, `t.Run(tt.name, …)`), or a key of a ranged map literal. It follows
 calls to package-level helpers that take a `*testing.T`, which is how the suite's `Run` reaches
-each method's subtests. Any other name (`fmt.Sprint(i)`) is computed: the test itself can be
-claimed, but a path below it fails with a message saying the names are computed.
+each method's subtests, and a subtest body sees the tables of the test enclosing it. A literal
+name containing `/` is nested, as `go test` reports it. Any other name (`fmt.Sprint(i)`) is
+computed: a unit test itself can still be claimed, but a path below it fails with a message
+saying the names are computed. In the suite, a computed name fails outright, because every
+suite subtest must be claimable.
 
 ### 5.4 Coverage ratchet
 
@@ -517,8 +524,8 @@ database versions it ran against.
 1. **Prototype the cross-dialect plumbing (§4.2).** Done 2026-10-23: `replace` works.
 2. **Registry tool and ownership map.** Done 2026-10-23: `req-check` with the six static
    checks (in `make check`), `make req-rehash`, the §5.1 file format, and the §5.2 map with all
-   238 level-2 and level-3 PRD headings assigned (95 `cli.md`, 64 `runtime.md`, 40 `client.md`,
-   16 `parser.md`, 23 `informative`). All four registry files start `not-started` with the §3
+   238 level-2 and level-3 PRD headings assigned (96 `cli.md`, 64 `runtime.md`, 40 `client.md`,
+   16 `parser.md`, 22 `informative`). All four registry files start `not-started` with the §3
    matrices declared. A probe seeding one §4.13 row against a real `config` test resolved it,
    failed on a `pending` hash and on a PRD edit under the anchor, and listed 87 coverage notes
    for `cli.md` once it was `in-progress`.

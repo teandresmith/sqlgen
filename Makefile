@@ -11,7 +11,7 @@ EXAMPLE_DIRS = $(dir $(EXAMPLE_MODULES))
 # detector, not a budget. The example suites keep their own tighter bound.
 TEST_TIMEOUT ?= 30m
 
-.PHONY: refs-check test test-integration test-examples lint lint-examples tools-check check check-all fmt vet update-golden update-golden-e2e coverage coverage-html clean help
+.PHONY: refs-check req-check req-rehash test test-integration test-examples lint lint-examples tools-check check check-all fmt vet update-golden update-golden-e2e coverage coverage-html clean help
 
 ## Testing
 
@@ -168,9 +168,15 @@ refs-check: ## Fail on FIX/phase IDs outside the tracker and design docs, on any
 	if [ $$bad -ne 0 ]; then echo "  see guidelines/GO.md -> When to Comment and guidelines/TEMPLATES.md §8"; exit 1; fi; \
 	echo "  ok   refs          no internal references in code, templates or published docs"
 
+req-check: ## Check the PRD requirement registry (docs/conformance) against the PRD and the test sources
+	@cd cmd/sqlgen && go run ./internal/cmd/reqcheck -root ../.. $(if $(VERBOSE),-v)
+
+req-rehash: ## Record that changed PRD sections were reviewed: SECTIONS=9.4c,4.13 (default: every changed anchor)
+	@cd cmd/sqlgen && go run ./internal/cmd/reqcheck -root ../.. -rehash $(if $(SECTIONS),-sections $(SECTIONS))
+
 ## Combined Checks
 
-check: tools-check tracker-check refs-check fmt lint vet test ## Run lint + unit tests (pre-push check)
+check: tools-check tracker-check refs-check req-check fmt lint vet test ## Run lint + unit tests (pre-push check)
 
 check-examples: tools-check fmt-examples lint-examples vet-examples test-examples ## Run lint + tests on E2E example modules (requires Docker)
 
