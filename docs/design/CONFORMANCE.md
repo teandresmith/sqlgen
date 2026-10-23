@@ -540,6 +540,40 @@ database versions it ran against.
       method.
 
    Record from both: rows seeded, gaps found, defects found, hours spent.
+
+   **Config pilot, recorded 2026-10-23:**
+   - **Rows seeded.** The 87 §4.13 rules, each with 5 columns, give 435 cells: 293 requirement
+     rows and 142 `n/a` declarations. 3 more rows cover the prose under the table (exit code 2,
+     `validate` reporting phase-3 rules, the partial cursor-key fallback). No cell is empty.
+     Each `n/a` cites a PRD section: §4.13 where the PRD states no message, or the rule is a
+     warning or a silent fallback; §4.14 where the schema does not express the rule. None needed
+     an `accepted` date. A row claims one cell, so a rule's `fires` row is `config.<slug>`
+     and its other columns are `config.<slug>.<column>`.
+   - **Gaps.** At seeding, 75 rows were `untested`: 59 `together`, 9 `message`, 5 `schema`, and
+     the `fires` and `severity` rows of the `fk` list-length rule. That rule is not implemented
+     yet; it is planned as 32.3. After the new tests, the 4 rows of that rule are the only ones
+     left. 4 tests are claimed at the top level because their subtest names are computed. Two
+     range over a `[]string` literal, which `req-check` does not read; two build names by
+     concatenation. The `unclaimed` list was not exercised, because `cli.md` is still
+     `in-progress` and the orphan check is off.
+   - **Defects: 6**, each fixed with a fail-first test:
+     1. An explicit `manifest.formats: []` was defaulted at load, so its error never fired.
+     2. `markdown_dir` / `json_per_entity_dir` accepted an interior `..` escape.
+     3. They did not clean the path before the reserved-name and equality checks.
+     4. The three manifest placement rules ran only when the manifest was enabled.
+     5. The no-UNIQUE-coverage warning did not match the PRD's quoted text.
+     6. In `validate`, one table that failed to build hid five resolution-level rules on every
+        other table, which breaks reporting all errors together.
+
+     6 behaviors pinned by tests with no PRD text went to `backlog.md` as `prd-gap` items.
+   - **Tests written.** 4 table-driven "reported together" tests (pre-parse, post-parse,
+     generation and view tenancy; 56 cases, one of them guarding the fix for defect 6 against reporting a
+     false error for an edge into the table that failed), 2 env-reference cases, 7 JSON Schema cases, and
+     message assertions tightened in 8 existing tests.
+   - **Time.** About 40 minutes of wall time, with the test mapping fanned out to four parallel
+     agents (about 4–5 minutes each). Seeding itself was mechanical: one generator script, with
+     `req-check` failing only on the computed names. Most of the effort was the `together`
+     column, which no existing test covered rule by rule.
 4. **Report generator** and `make conformance`.
 5. **Add the MySQL and `postgres_stdlib` conformance modules**, since MySQL differs most (no
    `RETURNING`, `AUTO_INCREMENT`).
@@ -548,7 +582,8 @@ database versions it ran against.
    `runtime.md`. Each file goes `in-progress` → `complete` on its own.
 7. **Skill changes (§6).** `/design`, `/phase` and `/implement` landed with step 2. `/verify` and
    `/close-phase` change during the config pilot (step 3), once there are rows for them to read
-   (§9 ruling 14).
+   (§9 ruling 14). Done 2026-10-23: `/verify` reads the registry rows for a sub-item's PRD
+   sections, and `/close-phase` runs the conformance gate (`req-check -v` until step 4).
 
 ## 8. Follow-ons (not part of this design)
 
