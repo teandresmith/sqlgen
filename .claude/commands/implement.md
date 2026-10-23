@@ -50,7 +50,12 @@ If a project-pinned tool-version file exists at `.tool-versions` or `tools.mk`, 
 
 ### Step 4: Implement
 
-Work through the tasks in order. For each task:
+**Contract tests come first.** Before changing any non-test code:
+
+1. Write the sub-item's regression-guard tests (Tests Required items that "pass on current code") and run them. They must pass against today's code. A guard that fails has found an existing bug: stop and report it. Do not change the guard to make it pass.
+2. Write the sub-item's new-behavior tests ("fail before the change") and run them. Each must fail, and for the reason the requirement predicts. A test that passes before the change asserts nothing new: stop and report it.
+
+Record both runs in the completion record. Then work through the tasks in order. For each task:
 
 1. Write the code following the guidelines and PRD specification
 2. Write the tests as specified in "Tests Required"
