@@ -371,6 +371,28 @@ func TestCheck(t *testing.T) {
 			wantErr: "matrix config-validation: cell driver × message is empty",
 		},
 		{
+			name: "not-started file with a declared matrix has no findings",
+			mutate: func(f map[string]string) {
+				f["docs/conformance/client.md"] = "# Client\n\n<!-- seeding: not-started -->\n<!-- matrix: client-methods rows=method cols=happy-path -->\n"
+			},
+			wantNoErr: true,
+		},
+		{
+			name: "declared matrix with no rows is a note while seeding",
+			mutate: func(f map[string]string) {
+				edit(f, "docs/conformance/cli.md", "<!-- matrix: config-validation", "<!-- matrix: naming rows=rule cols=struct,field -->\n<!-- matrix: config-validation")
+			},
+			wantNote: "matrix naming has no rows",
+		},
+		{
+			name: "complete file fails on a declared matrix with no rows",
+			mutate: func(f map[string]string) {
+				edit(f, "docs/conformance/cli.md", "<!-- matrix: config-validation", "<!-- matrix: naming rows=rule cols=struct,field -->\n<!-- matrix: config-validation")
+				edit(f, "docs/conformance/cli.md", "seeding: in-progress", "seeding: complete")
+			},
+			wantErr: "matrix naming has no rows",
+		},
+		{
 			name: "complete file fails on an unclaimed test",
 			mutate: func(f map[string]string) {
 				edit(f, "docs/conformance/cli.md", "seeding: in-progress", "seeding: complete")

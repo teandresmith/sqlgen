@@ -441,8 +441,8 @@ func (c *checker) recordClaim(ref TestRef) {
 }
 
 // checkCoverage applies the ratchet (CONFORMANCE.md §5.4): in a complete file, owned sections
-// with no requirement, empty matrix cells and unclaimed tests fail; while seeding they are
-// notes.
+// with no requirement, matrices with no rows, empty matrix cells and unclaimed tests fail; while
+// seeding they are notes.
 func (c *checker) checkCoverage(r *Registry, claimed map[string]int) {
 	if r.Seeding == SeedingNotStarted {
 		return
@@ -480,7 +480,8 @@ func (c *checker) coverSections(r *Registry, report func(string, int, string, ..
 	}
 }
 
-// coverCells: every matrix row that a claim or an n/a names fills every declared column.
+// coverCells: every declared matrix has at least one row, and every row that a claim or an n/a
+// names fills every declared column.
 func (c *checker) coverCells(r *Registry, claimed map[string]int, report func(string, int, string, ...any)) {
 	na := map[string]bool{}
 	rows := map[string][]string{}
@@ -498,6 +499,10 @@ func (c *checker) coverCells(r *Registry, claimed map[string]int, report func(st
 	}
 	for _, name := range sortedKeys(r.Matrices) {
 		decl := r.Matrices[name]
+		if len(rows[name]) == 0 {
+			report(r.Path, decl.Line, "matrix %s has no rows; seed it, or remove the declaration if the module has no such matrix", name)
+			continue
+		}
 		for _, row := range rows[name] {
 			for _, col := range decl.Cols {
 				key := name + "\x00" + row + "\x00" + col

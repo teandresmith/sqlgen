@@ -156,7 +156,7 @@ another file also cites is still owned once.
 | §9.3 Delete Operations | client.md |
 | §9.4 Pagination Operations | client.md |
 | §9.4a Streaming Operations | client.md |
-| §9.4b No-PK tables are skipped | client.md |
+| §9.4b No-PK tables are skipped | cli.md |
 | §9.4c Nil input handling | client.md |
 | §9.5 Edge Case Behaviors | client.md |
 | §9.6 Per-Call Options | client.md |

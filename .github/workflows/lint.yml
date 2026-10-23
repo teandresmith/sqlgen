@@ -55,3 +55,11 @@ jobs:
         run: make refs-check
       - name: Tracker structure
         run: make tracker-check
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: .tool-versions
+          cache-dependency-path: |
+            cmd/sqlgen/go.sum
+            go.work.sum
+      - name: PRD requirement registry
+        run: make req-check

@@ -41,7 +41,7 @@ GitHub Actions runs three workflows on every pull request and every push to `mai
 ```
 Pull request / push to main
     │
-    ├── Lint              ← golangci-lint × 8 modules, plus refs-check and tracker-check
+    ├── Lint              ← golangci-lint × 8 modules, plus refs-check, tracker-check and req-check
     │
     ├── Test (Unit)       ← go test -short -race × 8 modules (no containers)
     │       │
@@ -62,7 +62,7 @@ The YAML lives in `.github/workflows/`; read it there rather than copying it her
 
 | File | Jobs | Notes |
 |------|------|-------|
-| `lint.yml` | `golangci-lint` per module; `repo-checks` | golangci-lint also runs the gofumpt and goimports formatters. `repo-checks` runs `make refs-check` and `make tracker-check`. |
+| `lint.yml` | `golangci-lint` per module; `repo-checks` | golangci-lint also runs the gofumpt and goimports formatters. `repo-checks` runs `make refs-check`, `make tracker-check` and `make req-check` (the PRD requirement registry, `docs/conformance/`). |
 | `test.yml` | `unit`, then `integration`, per module | `integration` has `needs: unit`. |
 | `examples.yml` | `discover`, then `lint` and `test` per example | `GOWORK: off`, and `paths-ignore` for docs-only changes. |
 | `release-please.yml` | `release-please`, `tag-modules`, then `release` | Calls `release.yml` when a release is created. See [Section 11](#11-automated-release-management). |

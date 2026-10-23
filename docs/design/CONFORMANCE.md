@@ -1,6 +1,6 @@
 # PRD Conformance: Module Matrices, Cross-Dialect Suite & Requirement Registry — Design & Plan
 
-> **Status:** draft for review (design record, not a plan of record). Rulings 1–10 settled
+> **Status:** draft for review (design record, not a plan of record). Rulings 1–14 settled
 > 2026-10-23 (§9); no questions open. The §7 step 1 prototype measured the
 > cross-dialect suite's `replace` plumbing as working (§4.2). Proposes three linked pieces:
 > **module conformance matrices** (§3), which give every module (runtime, parser, CLI and the
@@ -484,8 +484,8 @@ file declares its seeding status:
 | Status | Meaning | Effect |
 |---|---|---|
 | `not-started` | No rows yet | Report shows the module as not started; no failures |
-| `in-progress` | Rows being seeded | Report lists owned PRD sections with no rows and empty matrix cells; no failures |
-| `complete` | Every owned section has rows, every matrix cell is a row or `n/a` | `req-check` **fails** on any owned section with no rows, any empty cell, and any orphan test in the module's packages |
+| `in-progress` | Rows being seeded | Report lists owned PRD sections with no rows, declared matrices with no rows, and empty matrix cells; no failures |
+| `complete` | Every owned section has rows, every declared matrix has at least one row, every matrix cell is a row or `n/a` | `req-check` **fails** on any owned section with no rows, any declared matrix with no rows, any empty cell, and any orphan test in the module's packages |
 
 A file moves to `complete` only by an explicit edit in a commit that `req-check` passes. From
 then on, coverage can't silently fall back: a new PRD section or matrix row in that module fails
@@ -546,7 +546,9 @@ database versions it ran against.
 6. **Seed module by module**, using the FIX origin tally (§1.3) to choose the order: `cli.md`
    (gen, then gotype, naming and the rest), `parser.md`, `client.md` (method by method), then
    `runtime.md`. Each file goes `in-progress` → `complete` on its own.
-7. **Skill changes (§6),** landing with step 2 so new work starts recording rows right away.
+7. **Skill changes (§6).** `/design`, `/phase` and `/implement` landed with step 2. `/verify` and
+   `/close-phase` change during the config pilot (step 3), once there are rows for them to read
+   (§9 ruling 14).
 
 ## 8. Follow-ons (not part of this design)
 
@@ -592,3 +594,17 @@ Rulings 7–10 were raised by extending the design from the client suite to ever
 10. **Orphan unit tests: an `unclaimed` list with reasons.** In a `complete` module, a test that
     backs no PRD behavior is listed with a one-line reason, not forced into a requirement row
     (§5.1 part 4, §5.3 check 2).
+
+Rulings 11–14 came from the step 2 review:
+
+11. **CI runs `req-check`.** The `repo-checks` job in `.github/workflows/lint.yml` runs
+    `make req-check` alongside `refs-check` and `tracker-check`, so a PR that edits the PRD under
+    a registered anchor fails CI, not just a local `make check`.
+12. **§9.4b belongs to `cli.md`.** Skipping a no-PK table is generation-time behavior, and the
+    `cli.md` matrices carry a `no-pk` column. Likewise §26.12 Known Limitations is owned by
+    `cli.md`, not `informative`: it states generation errors and accepted values.
+13. **A `complete` file has no empty matrix.** Every declared matrix needs at least one row. An
+    empty one is a note while the file is seeding and a failure once it is `complete`. Seed it, or
+    remove the declaration (§5.4).
+14. **`/verify` and `/close-phase` change with the config pilot.** They switch to reading registry
+    rows once rows exist to read (§7 steps 3 and 7).
