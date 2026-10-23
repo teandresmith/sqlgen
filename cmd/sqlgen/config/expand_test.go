@@ -282,6 +282,23 @@ func TestLoadConfig_EnvReferenceErrors(t *testing.T) {
 			want: []string{`line 3: input.connection.host: unterminated reference "${EXP_HOST"`},
 		},
 		{
+			name: "unset, invalid and unterminated references in one load",
+			yaml: "input:\n  connection:\n    host: ${EXP_UNSET}\n    user: ${1X}\n    password: ${EXP_HOST\n",
+			want: []string{
+				"line 3: input.connection.host: environment variable EXP_UNSET is not set",
+				`line 4: input.connection.user: invalid reference "${1X}": ` + invalidName,
+				`line 5: input.connection.password: unterminated reference "${EXP_HOST"`,
+			},
+		},
+		{
+			name: "a tagged reference beside an unset one",
+			yaml: "input:\n  connection:\n    port: !!int ${EXP_LONG}\n    host: ${EXP_UNSET}\n",
+			want: []string{
+				"line 3: input.connection.port: a reference can't be in a !!int-tagged value",
+				"line 4: input.connection.host: environment variable EXP_UNSET is not set",
+			},
+		},
+		{
 			name:    "reference errors come before decoding",
 			yaml:    "input:\n  typo: x\n  connection:\n    port: ${EXP_UNSET}\n",
 			want:    []string{"line 4: input.connection.port: environment variable EXP_UNSET is not set"},

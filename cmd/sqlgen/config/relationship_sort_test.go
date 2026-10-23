@@ -46,12 +46,12 @@ func TestValidateRelationships_SortRejected(t *testing.T) {
 		{
 			name: "missing column",
 			rel:  sortRel("o2m", config.RelationshipSort{Direction: "desc"}),
-			want: []string{"tables.assets.relationships[0]", ".sort[0].column: required"},
+			want: []string{`tables.assets.relationships[0] ("Attachments").sort[0].column: required`},
 		},
 		{
 			name: "unknown direction",
 			rel:  m2mSortRel(config.RelationshipSort{Column: "name"}, config.RelationshipSort{Column: "id", Direction: "descending"}),
-			want: []string{"tables.assets.relationships[0]", ".sort[1].direction", `"descending"`, "allowed: asc, desc"},
+			want: []string{`tables.assets.relationships[0] ("Attachments").sort[1].direction`, `"descending"`, "allowed: asc, desc"},
 		},
 	}
 	for _, tt := range tests {

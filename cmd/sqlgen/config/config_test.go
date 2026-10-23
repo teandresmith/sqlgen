@@ -1008,7 +1008,7 @@ func TestLeftoverOperationsKeyPointsAtTheAPIMask(t *testing.T) {
 		{
 			name:  "under generation",
 			yaml:  "generation:\n  operations: read_only\n",
-			wants: []string{"generation.operations: the Go client generates every method the schema allows; use api.operations"},
+			wants: []string{"generation.operations: the Go client generates every method the schema allows; use api.operations to control what the API exposes"},
 		},
 		{
 			name:  "under a table, as a toggle map",

@@ -1380,8 +1380,8 @@ func TestValidatePostParse_MissingPrimaryKey(t *testing.T) {
 	}
 	found := false
 	for _, w := range warnings {
-		if strings.Contains(w.Message, "skipped from generation") &&
-			strings.Contains(w.Message, "counters") {
+		// The PRD gives the warning text; the remedy follows it.
+		if strings.HasPrefix(w.Message, "table public.counters has no primary key; skipped from generation") {
 			found = true
 			break
 		}
@@ -1478,9 +1478,10 @@ func TestValidatePostParse_CompositePKStrategy(t *testing.T) {
 		wantErr string
 	}{
 		{
-			name:    "db on a schema composite key",
-			pk:      config.TablePrimaryKeyConfig{Strategy: config.PKStrategyDB},
-			wantErr: `tables.public.timeline_events.primary_key.strategy: "db" is not supported on a composite primary key (id, created_at)`,
+			name: "db on a schema composite key",
+			pk:   config.TablePrimaryKeyConfig{Strategy: config.PKStrategyDB},
+			wantErr: `tables.public.timeline_events.primary_key.strategy: "db" is not supported on a composite primary key (id, created_at)` +
+				" — a composite key is always caller-provided (PRD §8.6); remove the override, or declare a single-column key with primary_key.columns",
 		},
 		{
 			name:    "app on a schema composite key",
@@ -2646,10 +2647,11 @@ func TestValidatePreParse_IgnoredPasswordEnv(t *testing.T) {
 		envURL   string
 		envPW    string
 		wantFrom string // empty: no warning
+		wantHint string // the suggested remedy, when a warning is wanted
 	}{
-		{name: "config url without the reference", input: "  source: database\n  connection:\n    url: postgres://app@db/app\n", envPW: "s3cret", wantFrom: "input.connection.url"},
+		{name: "config url without the reference", input: "  source: database\n  connection:\n    url: postgres://app@db/app\n", envPW: "s3cret", wantFrom: "input.connection.url", wantHint: "write ${SQLGEN_DB_PASSWORD} into the url to use it"},
 		{name: "config url with the reference", input: "  source: database\n  connection:\n    url: postgres://app:${SQLGEN_DB_PASSWORD}@db/app\n", envPW: "s3cret"},
-		{name: "env url", input: "  source: both\n  connection:\n    host: db\n", envURL: "postgres://app@db/app", envPW: "s3cret", wantFrom: "SQLGEN_DB_URL"},
+		{name: "env url", input: "  source: both\n  connection:\n    host: db\n", envURL: "postgres://app@db/app", envPW: "s3cret", wantFrom: "SQLGEN_DB_URL", wantHint: "put the password in SQLGEN_DB_URL"},
 		{name: "env url replaces a config url with the reference", input: "  source: database\n  connection:\n    url: postgres://app:${SQLGEN_DB_PASSWORD}@db/app\n", envURL: "postgres://app@db/app", envPW: "s3cret", wantFrom: "SQLGEN_DB_URL"},
 		{name: "individual fields", input: "  source: database\n  connection:\n    host: db\n    user: app\n    database: app\n", envPW: "s3cret"},
 		{name: "files source", input: "  source: files\n  connection:\n    url: postgres://app@db/app\n", envPW: "s3cret"},
@@ -2679,6 +2681,8 @@ func TestValidatePreParse_IgnoredPasswordEnv(t *testing.T) {
 				t.Errorf("warnings = %q, want no SQLGEN_DB_PASSWORD warning", got)
 			case tt.wantFrom != "" && (len(got) != 1 || !strings.Contains(got[0], warning+tt.wantFrom)):
 				t.Errorf("warnings = %q, want one containing %q", got, warning+tt.wantFrom)
+			case tt.wantHint != "" && !strings.Contains(got[0], tt.wantHint):
+				t.Errorf("warnings = %q, want the remedy %q", got, tt.wantHint)
 			}
 		})
 	}

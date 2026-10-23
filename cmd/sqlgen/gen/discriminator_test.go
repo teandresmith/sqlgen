@@ -1,6 +1,7 @@
 package gen_test
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 
@@ -430,7 +431,9 @@ func TestDiscriminator_ValueTheReadCannotCompareIsRejected(t *testing.T) {
 					t.Errorf("%s() = nil, want the discriminator refused", path)
 					continue
 				}
-				for _, want := range []string{`"Pinned" declares discriminator tag = `, tt.wantRefusal, "§13.4.1"} {
+				// The error names the relationship, the column, the value and the reason.
+				wantValue := fmt.Sprintf(`"Pinned" declares discriminator tag = %#v, but`, tt.value)
+				for _, want := range []string{wantValue, tt.wantRefusal, "§13.4.1"} {
 					if !strings.Contains(err.Error(), want) {
 						t.Errorf("%s() error %q does not mention %q", path, err, want)
 					}

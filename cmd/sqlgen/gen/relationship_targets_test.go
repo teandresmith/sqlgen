@@ -164,8 +164,14 @@ func TestRelationshipTargets_DeclaredEdgeIntoMissingTargetErrors(t *testing.T) {
 					{Name: "Linked", Type: "one_to_many", Table: tt.table, FK: "user_id"},
 				}}
 			})
-			if err == nil || !strings.Contains(err.Error(), tt.wantErr) {
-				t.Errorf("BuildTableContexts() error = %v, want it to contain %q", err, tt.wantErr)
+			// The error names the table, the relationship, the target and the three causes.
+			for _, want := range []string{
+				"tables.public.users.relationships: " + tt.wantErr,
+				"it is excluded by `exclude_tables`, has no primary key, or is not in the schema",
+			} {
+				if err == nil || !strings.Contains(err.Error(), want) {
+					t.Errorf("BuildTableContexts() error = %v, want it to contain %q", err, want)
+				}
 			}
 		})
 	}
