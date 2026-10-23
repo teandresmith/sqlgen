@@ -99,9 +99,6 @@ func (d MySQLDialect) UpsertClause(opts UpsertClauseOptions) string {
 // SupportsArrayParams returns false — MySQL does not support native array parameters.
 func (d MySQLDialect) SupportsArrayParams() bool { return false }
 
-// SupportsTupleIN returns false — MySQL uses expanded OR for composite PK batch lookups.
-func (d MySQLDialect) SupportsTupleIN() bool { return false }
-
 // BackslashEscapes returns true — MySQL's default sql_mode reads a backslash
 // inside a '...' or "..." literal as escaping the character after it.
 func (d MySQLDialect) BackslashEscapes() bool { return true }

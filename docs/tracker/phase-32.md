@@ -24,8 +24,9 @@ PRD Sections: 4.6, 4.8, 4.13, 5.3, 8.1.7, 8.2, 8.6, 8.7, 9.8.13, 9.9, 11.1, 13.1
 > **Ground rules for every sub-item:**
 > - **N = 1 invariant (design §4.9).** The Go goldens of every existing example are
 >   byte-identical after each sub-item; `make update-golden` and `make update-golden-e2e` show no
->   Go churn. The manifest goldens move once, in 32.3, and nowhere else. Every intended N = 1
->   change (§4.9's three bullets) is on a schema no example has and gets its own regression test.
+>   Go churn. The manifest's shape moves once, in 32.3. The only other manifest change is
+>   32.1's MySQL composite-PK batch SQL bodies. Every intended N = 1 change (§4.9's three
+>   bullets) is on a schema no example has and gets its own regression test.
 > - **Staging guard.** 32.2 changes the model before gen can use more than one pair. Until a
 >   sub-item lifts it, `gen` keeps today's output for an edge with more than one key pair: a
 >   detected one is omitted, as a composite FK is today, and a declared one is a generation error
@@ -196,23 +197,23 @@ the signature 32.1 picks.
 
 **PRD Reference:** Sections 9.8.13, 11.1, Appendix A
 
-**Status:** Not Started
+**Status:** Complete
 
 ### Tasks
 
-- [ ] Fail first: a `sql` test that prefixes a tuple-IN condition and renders it on PostgreSQL and
+- [x] Fail first: a `sql` test that prefixes a tuple-IN condition and renders it on PostgreSQL and
   SQLite. Today it gives `c.("workspace_id", "id") IN (…)` (PostgreSQL 17: `syntax error at or
   near "("`; SQLite: `near "(": syntax error`, design §4.8).
-- [ ] `sql.PrefixConditions` (`sql/condition.go:223`): prefix each column of a tuple-IN
+- [x] `sql.PrefixConditions` (`sql/condition.go:223`): prefix each column of a tuple-IN
   condition, giving `(c."workspace_id", c."id") IN (…)`.
-- [ ] `sql.Exists` (`sql/condition.go:202`): take N correlation pairs instead of one
+- [x] `sql.Exists` (`sql/condition.go:202`): take N correlation pairs instead of one
   `correlationColumn` string. The subquery references one correlation token per pair, and
   `builder.go:639` replaces each. Pick the token form (an indexed `CorrelationToken`) and
   document it on the type.
-- [ ] Update every caller of `sql.Exists`: the relationship-filter template
+- [x] Update every caller of `sql.Exists`: the relationship-filter template
   (`gen/templates/shared/_filter.tmpl:226`) is the only one in generated code. N = 1 output is
   byte-identical.
-- [ ] `MySQLDialect.SupportsTupleIN` (`sql/mysql.go:103`) → true; fix its comment. Check every
+- [x] `MySQLDialect.SupportsTupleIN` (`sql/mysql.go:103`) → true; fix its comment. Check every
   `SupportsTupleIN` branch (`BuildCompositePKBatchCondition`, `Filter.PKs`, keyset cursors) for
   a MySQL-only path that becomes dead, and remove it.
 
@@ -228,15 +229,69 @@ the signature 32.1 picks.
 
 ### Tests Required
 
-- [ ] Prefixed tuple IN on PostgreSQL, MySQL and SQLite (table-driven, fails first).
-- [ ] `Exists` with 1 and 2 pairs on every dialect, rendered SQL and argument order.
-- [ ] MySQL tuple IN against a live MySQL (testcontainers) for a composite-PK `GetMany` and
-  `Filter.PKs`.
-- [ ] Existing composite-PK example suites (`mysql`, `tenancy_mysql`) pass.
+- [x] Prefixed tuple IN on PostgreSQL, MySQL and SQLite (table-driven, fails first).
+- [x] `Exists` with 1 and 2 pairs on every dialect, rendered SQL and argument order.
+- [x] MySQL tuple IN against a live MySQL (testcontainers) for a composite-PK `HardDeleteMany`
+  (`Filter.PKs` stays OR-of-ANDs).
+- [x] Existing composite-PK example suites (`mysql`, `tenancy_mysql`) pass.
 
 ### Completion Record
 
-_Filled in when complete: files changed, commit references, notes._
+Completed 2026-10-23 on `design/tenant-composite-fk-relationships`.
+
+**Fail first.** `TestBuildSelectJoin_PrefixedTupleIN` failed at `912082d5`. PostgreSQL (pgx and
+stdlib) and SQLite rendered `c.("workspace_id", "cycle_id") IN ((…))`, and MySQL rendered the
+prefixed OR of ANDs. The reviewer reproduced the failure in a HEAD worktree.
+
+**API picked.**
+- `sql.Exists[C string | []string](correlation C, subquery Subquery)`. A string literal infers
+  `string`, so the generated one-pair call `sql.Exists("id", …)` and every Go golden stay
+  byte-identical. A list takes one column per pair.
+- Tokens: `sql.CorrelationTokenAt(i)`. Index 0 is `CorrelationToken` (`{{parent}}`); the others
+  are `{{parent.i}}`. One `strings.Replacer` pass substitutes them all, so a substituted column is
+  never rescanned.
+- The composite-key batch condition is now a structured value (`tupleInCondition`: quoted
+  columns and rows), so `PrefixConditions` qualifies each column.
+
+**Dead paths removed.** `buildExpandedOR` and the manifest's `!SupportsTupleIN` branch. Keyset
+cursors and `Filter.PKs` never branched on the flag. With every dialect true and no reader left,
+`SupportsTupleIN` came off `Dialect` and the three dialects (ruled 2026-10-23, after the
+review), with PRD Appendix A and `guidelines/SQL.md` synced.
+
+**Files.**
+- `sql/condition.go`, `sql/builder.go`, `sql/dialect.go`, `sql/mysql.go`, `sql/postgres.go`,
+  `sql/sqlite.go`;
+- `cmd/sqlgen/manifest/sql.go`;
+- the comments in `cmd/sqlgen/gen/context_relfilter.go` and `filter_relationship_test.go`;
+- tests: `sql/builder_test.go` (MySQL joins the tuple-IN table, the expanded-OR test is gone) and
+  `mysql/tests/composite_pk_test.go` (`TestBatchByCompositePK`);
+- docs: PRD §11.5 `Exists` example and Appendix A, `guidelines/SQL.md`, design §4.8.
+- No template changed.
+
+**Goldens.** No Go golden changed. The manifest moved in 3 tables × 4 files, all in the `mysql`
+example: `{expected,models}/manifest/{asset_document_link,product_tag_label,user_category}.md`
+and `manifest_gen.json`. The only change is the MySQL `HardDeleteMany` body, `WHERE <pks>` →
+`WHERE (cols…) IN (<pks>)`, which is the tuple-IN flip alone.
+
+**Tests.**
+- `make check` green, `refs-check` included.
+- `make check-examples` green on all 15 example modules, `mysql` and `tenancy_mysql` included,
+  re-run after the flag removal; `TestE2EGoldenFiles` green without `-update`.
+  The `mysql` `UpsertMany` composite read-back and the new `HardDeleteMany` test run tuple IN
+  against a live MySQL.
+
+**Auto-review (sqlgen-reviewer).** No behavior defects; fail first confirmed. Doc fixes applied
+inline:
+- the manifest ground rule above;
+- the live-MySQL Tests Required wording;
+- design §4.8's prefix and MySQL bullets;
+- a stale `buildExpandedOR` reference in `mysql/tests/upsert_many_test.go`;
+- a test section header;
+- three reflowed comments.
+
+**Verify (2026-10-23).** An independent reviewer pass agreed: PRD 5/5, tests 4/4, fail first
+confirmed again, no `SupportsTupleIN` reference left in code or living spec. Its doc fixes
+(STATUS, IMPLEMENTATION_ORDER and design §6/§9.3 wording) were applied inline. No FIX logged.
 
 ## 32.2 Parser model and detection — one edge per FOREIGN KEY constraint
 

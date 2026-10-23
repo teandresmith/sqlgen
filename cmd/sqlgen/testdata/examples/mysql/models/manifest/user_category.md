@@ -274,7 +274,7 @@ Generated SQL:
 mysql:
 
 ```sql
-DELETE FROM `user_categories` WHERE <pks>
+DELETE FROM `user_categories` WHERE (`user_id`, `category_id`) IN (<pks>)
 ```
 
 ### HardDeleteWhere

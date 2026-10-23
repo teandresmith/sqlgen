@@ -8467,10 +8467,17 @@ A correlated subquery must reference a column of the **enclosing** statement's t
 | `BuildSelect` | `FROM "tasks"` — no alias | `"tasks"."id"` |
 | `BuildSelectJoin` | `FROM "tasks" t` — aliased, and every condition is alias-prefixed | `t."id"` |
 
-A condition carrying a pre-baked qualifier is therefore correct on exactly one of the two paths and invalid SQL on the other, on every dialect. The `Exists` condition resolves this by **carrying the correlation columns and never the qualifier**. It takes one correlation column per pair of the relationship's key, and the subquery references one correlation token per column. A one-pair condition:
+A condition carrying a pre-baked qualifier is therefore correct on exactly one of the two paths and invalid SQL on the other, on every dialect. The `Exists` condition resolves this by **carrying the correlation columns and never the qualifier**. It takes one correlation column, or a list with one column per pair of the relationship's key, and the subquery references one correlation token per column: `sql.CorrelationTokenAt(i)` for the column at index `i`, where `sql.CorrelationTokenAt(0)` is `sql.CorrelationToken`.
 
 ```go
-sql.Exists("id", sql.Subquery{SQL: "SELECT 1 FROM ...", Args: []any{...}})
+// One pair
+sql.Exists("id", sql.Subquery{SQL: "SELECT 1 FROM ... WHERE tgt.\"post_id\" = " + sql.CorrelationToken, Args: []any{...}})
+
+// Two pairs
+sql.Exists([]string{"workspace_id", "id"}, sql.Subquery{
+    SQL: "SELECT 1 FROM ... WHERE tgt.\"workspace_id\" = " + sql.CorrelationTokenAt(0) +
+        " AND tgt.\"cycle_id\" = " + sql.CorrelationTokenAt(1),
+})
 ```
 
 **Rules.**
@@ -16136,7 +16143,6 @@ type Dialect interface {
 
     // Capability flags — used by builders and comparators to select SQL strategies
     SupportsArrayParams() bool                    // pgx: true (native array IN), others: false
-    SupportsTupleIN() bool                        // true on every dialect: (a, b) IN ((…), …)
     BackslashEscapes() bool                       // MySQL: true (a backslash escapes inside '…' / "…" literals, §11.5), others: false
 
     // Single-row INSERT that supplies no column (9.4c)

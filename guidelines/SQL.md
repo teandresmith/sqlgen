@@ -54,14 +54,13 @@ type Dialect interface {
     ReturningClause(columns []string) string
     UpsertClause(opts UpsertClauseOptions) string
     SupportsArrayParams() bool
-    SupportsTupleIN() bool
     BackslashEscapes() bool
     DefaultValuesClause() string
     LockClause(mode LockMode) string
 }
 ```
 
-`SupportsTupleIN` is true on every dialect: composite-key batches render `("a", "b") IN (($1, $2), …)` on PostgreSQL and `(a, b) IN ((?, ?), …)` on MySQL and SQLite. MySQL 8.0 and 8.4 evaluate it with the same composite-index range scan as an OR of ANDs, and far faster (PRD §8.7). `PrefixConditions` qualifies each column of a tuple-IN condition, `(c."workspace_id", c."id") IN (…)`; prefixing the tuple as a whole, `c.("workspace_id", "id")`, is a syntax error on PostgreSQL and SQLite.
+Composite-key batches use tuple IN on every dialect, so no capability flag selects it: they render `("a", "b") IN (($1, $2), …)` on PostgreSQL and `(a, b) IN ((?, ?), …)` on MySQL and SQLite. MySQL 8.0 and 8.4 evaluate it with the same composite-index range scan as an OR of ANDs, and far faster (PRD §8.7). `PrefixConditions` qualifies each column of a tuple-IN condition, `(c."workspace_id", c."id") IN (…)`; prefixing the tuple as a whole, `c.("workspace_id", "id")`, is a syntax error on PostgreSQL and SQLite.
 
 ### Implementation Rules
 

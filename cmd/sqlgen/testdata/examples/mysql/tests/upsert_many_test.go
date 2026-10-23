@@ -298,10 +298,8 @@ func TestUpsertMany_UnsuppliedConflictTargetRefused(t *testing.T) {
 //
 // This is the only runtime coverage of two things at once: the composite
 // read-back (resolveUpsertManyRows returning []UserCategoryPK, generalized for
-// exactly this), and MySQL's own tuple-IN, which degenerates through
-// buildExpandedOR where PostgreSQL and SQLite emit a row constructor. The
-// postgres pin covers a single-column key on a single-column target, so neither
-// of those paths is reached there.
+// exactly this), and MySQL's tuple IN. The postgres pin covers a single-column
+// key on a single-column target, so neither of those paths is reached there.
 //
 // Failing-first: against the pre-fix template this returns 1 entity, not 2.
 func TestUpsertMany_CallerKnownCompositeKey_NonCoveringTargetResolvesExistingKey(t *testing.T) {

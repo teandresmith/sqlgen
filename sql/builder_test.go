@@ -2383,7 +2383,6 @@ func TestBuildCompositePKConditions(t *testing.T) {
 }
 
 func TestBuildCompositePKBatchCondition_TupleIN(t *testing.T) {
-	// PostgreSQL and SQLite use tuple IN syntax
 	tests := []struct {
 		name    string
 		dialect sql.Dialect
@@ -2395,6 +2394,12 @@ func TestBuildCompositePKBatchCondition_TupleIN(t *testing.T) {
 			dialect: pg,
 			table:   sql.Table{Schema: "public", Name: "order_items"},
 			wantSQL: `SELECT * FROM "public"."order_items" WHERE ("order_id", "product_id") IN (($1, $2), ($3, $4))`,
+		},
+		{
+			name:    "mysql tuple IN",
+			dialect: my,
+			table:   sql.Table{Name: "order_items"},
+			wantSQL: "SELECT * FROM `order_items` WHERE (`order_id`, `product_id`) IN ((?, ?), (?, ?))",
 		},
 		{
 			name:    "sqlite tuple IN",
@@ -2421,25 +2426,6 @@ func TestBuildCompositePKBatchCondition_TupleIN(t *testing.T) {
 				t.Errorf("Batch tuple IN args mismatch (-want +got):\n%s", diff)
 			}
 		})
-	}
-}
-
-func TestBuildCompositePKBatchCondition_ExpandedOR(t *testing.T) {
-	// MySQL uses expanded OR
-	cond := sql.BuildCompositePKBatchCondition(
-		my,
-		[]string{"order_id", "product_id"},
-		[][]any{{"o1", "p1"}, {"o2", "p2"}},
-	)
-	gotSQL, gotArgs := sql.BuildSelect(my, sql.Table{Name: "order_items"}, sql.SelectOptions{
-		Conditions: []sql.Condition{cond},
-	})
-	wantSQL := "SELECT * FROM `order_items` WHERE ((`order_id` = ? AND `product_id` = ?) OR (`order_id` = ? AND `product_id` = ?))"
-	if gotSQL != wantSQL {
-		t.Errorf("Batch expanded OR sql =\n  %q\nwant\n  %q", gotSQL, wantSQL)
-	}
-	if diff := cmp.Diff([]any{"o1", "p1", "o2", "p2"}, gotArgs); diff != "" {
-		t.Errorf("Batch expanded OR args mismatch (-want +got):\n%s", diff)
 	}
 }
 
@@ -3519,5 +3505,198 @@ func TestBuildSelectJoin_RawConditionSurvivesPrefixing(t *testing.T) {
 	}
 	if diff := cmp.Diff([]any{1, "leak"}, gotArgs); diff != "" {
 		t.Errorf("args mismatch (-want +got):\n%s", diff)
+	}
+}
+
+// TestBuildSelectJoin_PrefixedTupleIN covers the loader shape: a composite-key
+// batch condition qualified with the enclosing alias. Prefixing the tuple as a
+// whole, `c.("a", "b")`, is a syntax error on PostgreSQL and SQLite.
+func TestBuildSelectJoin_PrefixedTupleIN(t *testing.T) {
+	tests := []struct {
+		name    string
+		dialect sql.Dialect
+		table   sql.Table
+		wantSQL string
+	}{
+		{
+			name:    "postgres",
+			dialect: pg,
+			table:   sql.Table{Schema: "public", Name: "tasks"},
+			wantSQL: `SELECT c."id" AS "c.id" FROM "public"."tasks" c WHERE (c."workspace_id", c."cycle_id") IN (($1, $2), ($3, $4)) AND c."status" = $5`,
+		},
+		{
+			name:    "postgres stdlib",
+			dialect: pgStd,
+			table:   sql.Table{Schema: "public", Name: "tasks"},
+			wantSQL: `SELECT c."id" AS "c.id" FROM "public"."tasks" c WHERE (c."workspace_id", c."cycle_id") IN (($1, $2), ($3, $4)) AND c."status" = $5`,
+		},
+		{
+			name:    "mysql",
+			dialect: my,
+			table:   sql.Table{Name: "tasks"},
+			wantSQL: "SELECT c.`id` AS `c.id` FROM `tasks` c WHERE (c.`workspace_id`, c.`cycle_id`) IN ((?, ?), (?, ?)) AND c.`status` = ?",
+		},
+		{
+			name:    "sqlite",
+			dialect: lite,
+			table:   sql.Table{Name: "tasks"},
+			wantSQL: `SELECT c."id" AS "c.id" FROM "tasks" c WHERE (c."workspace_id", c."cycle_id") IN ((?, ?), (?, ?)) AND c."status" = ?`,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			status := tt.dialect.QuoteIdentifier("status")
+			conds := sql.PrefixConditions("c", []sql.Condition{
+				sql.BuildCompositePKBatchCondition(tt.dialect, []string{"workspace_id", "cycle_id"}, [][]any{{"w1", "c1"}, {"w1", "c2"}}),
+				{Clause: status + " = $", Value: "open", Column: status},
+			})
+			gotSQL, gotArgs := sql.BuildSelectJoin(tt.dialect, tt.table, nil, sql.SelectOptions{
+				Alias:      "c",
+				Columns:    []string{"id"},
+				Conditions: conds,
+			})
+			if gotSQL != tt.wantSQL {
+				t.Errorf("BuildSelectJoin sql =\n  %q\nwant\n  %q", gotSQL, tt.wantSQL)
+			}
+			if diff := cmp.Diff([]any{"w1", "c1", "w1", "c2", "open"}, gotArgs); diff != "" {
+				t.Errorf("BuildSelectJoin args mismatch (-want +got):\n%s", diff)
+			}
+		})
+	}
+}
+
+// existsTasks correlates tasks to the enclosing cycles row on the given key:
+// one pair (id → cycle_id) or two (workspace_id, id → workspace_id, cycle_id).
+func existsTasks(d sql.Dialect, pairs int) sql.Condition {
+	tasks := d.FormatTable(sql.Table{Schema: "public", Name: "tasks"})
+	sub := "SELECT 1 FROM " + tasks + " tgt WHERE "
+	if pairs == 1 {
+		sub += "tgt." + d.QuoteIdentifier("cycle_id") + " = " + sql.CorrelationToken
+		sub += " AND tgt." + d.QuoteIdentifier("status") + " = $"
+		return sql.Exists("id", sql.Subquery{SQL: sub, Args: []any{"open"}})
+	}
+	sub += "tgt." + d.QuoteIdentifier("workspace_id") + " = " + sql.CorrelationTokenAt(0) +
+		" AND tgt." + d.QuoteIdentifier("cycle_id") + " = " + sql.CorrelationTokenAt(1)
+	sub += " AND tgt." + d.QuoteIdentifier("status") + " = $"
+	return sql.Exists([]string{"workspace_id", "id"}, sql.Subquery{SQL: sub, Args: []any{"open"}})
+}
+
+// TestExists_CorrelationPairs renders a one-pair and a two-pair EXISTS on both
+// read paths. Each pair's token resolves to its own column, the pairs AND
+// together, and the subquery's arg is numbered between its neighbours'.
+func TestExists_CorrelationPairs(t *testing.T) {
+	tests := []struct {
+		name      string
+		dialect   sql.Dialect
+		table     sql.Table
+		pairs     int
+		wantPlain string
+		wantJoin  string
+	}{
+		{
+			name:      "postgres one pair",
+			dialect:   pg,
+			table:     sql.Table{Schema: "public", Name: "cycles"},
+			pairs:     1,
+			wantPlain: `SELECT * FROM "public"."cycles" WHERE "name" = $1 AND EXISTS (SELECT 1 FROM "public"."tasks" tgt WHERE tgt."cycle_id" = "public"."cycles"."id" AND tgt."status" = $2) AND "open" = $3`,
+			wantJoin:  `SELECT c."id" AS "c.id" FROM "public"."cycles" c WHERE c."name" = $1 AND EXISTS (SELECT 1 FROM "public"."tasks" tgt WHERE tgt."cycle_id" = c."id" AND tgt."status" = $2) AND c."open" = $3`,
+		},
+		{
+			name:      "postgres two pairs",
+			dialect:   pg,
+			table:     sql.Table{Schema: "public", Name: "cycles"},
+			pairs:     2,
+			wantPlain: `SELECT * FROM "public"."cycles" WHERE "name" = $1 AND EXISTS (SELECT 1 FROM "public"."tasks" tgt WHERE tgt."workspace_id" = "public"."cycles"."workspace_id" AND tgt."cycle_id" = "public"."cycles"."id" AND tgt."status" = $2) AND "open" = $3`,
+			wantJoin:  `SELECT c."id" AS "c.id" FROM "public"."cycles" c WHERE c."name" = $1 AND EXISTS (SELECT 1 FROM "public"."tasks" tgt WHERE tgt."workspace_id" = c."workspace_id" AND tgt."cycle_id" = c."id" AND tgt."status" = $2) AND c."open" = $3`,
+		},
+		{
+			name:      "postgres stdlib two pairs",
+			dialect:   pgStd,
+			table:     sql.Table{Schema: "public", Name: "cycles"},
+			pairs:     2,
+			wantPlain: `SELECT * FROM "public"."cycles" WHERE "name" = $1 AND EXISTS (SELECT 1 FROM "public"."tasks" tgt WHERE tgt."workspace_id" = "public"."cycles"."workspace_id" AND tgt."cycle_id" = "public"."cycles"."id" AND tgt."status" = $2) AND "open" = $3`,
+			wantJoin:  `SELECT c."id" AS "c.id" FROM "public"."cycles" c WHERE c."name" = $1 AND EXISTS (SELECT 1 FROM "public"."tasks" tgt WHERE tgt."workspace_id" = c."workspace_id" AND tgt."cycle_id" = c."id" AND tgt."status" = $2) AND c."open" = $3`,
+		},
+		{
+			name:      "mysql one pair",
+			dialect:   my,
+			table:     sql.Table{Name: "cycles"},
+			pairs:     1,
+			wantPlain: "SELECT * FROM `cycles` WHERE `name` = ? AND EXISTS (SELECT 1 FROM `tasks` tgt WHERE tgt.`cycle_id` = `cycles`.`id` AND tgt.`status` = ?) AND `open` = ?",
+			wantJoin:  "SELECT c.`id` AS `c.id` FROM `cycles` c WHERE c.`name` = ? AND EXISTS (SELECT 1 FROM `tasks` tgt WHERE tgt.`cycle_id` = c.`id` AND tgt.`status` = ?) AND c.`open` = ?",
+		},
+		{
+			name:      "mysql two pairs",
+			dialect:   my,
+			table:     sql.Table{Name: "cycles"},
+			pairs:     2,
+			wantPlain: "SELECT * FROM `cycles` WHERE `name` = ? AND EXISTS (SELECT 1 FROM `tasks` tgt WHERE tgt.`workspace_id` = `cycles`.`workspace_id` AND tgt.`cycle_id` = `cycles`.`id` AND tgt.`status` = ?) AND `open` = ?",
+			wantJoin:  "SELECT c.`id` AS `c.id` FROM `cycles` c WHERE c.`name` = ? AND EXISTS (SELECT 1 FROM `tasks` tgt WHERE tgt.`workspace_id` = c.`workspace_id` AND tgt.`cycle_id` = c.`id` AND tgt.`status` = ?) AND c.`open` = ?",
+		},
+		{
+			name:      "sqlite one pair",
+			dialect:   lite,
+			table:     sql.Table{Name: "cycles"},
+			pairs:     1,
+			wantPlain: `SELECT * FROM "cycles" WHERE "name" = ? AND EXISTS (SELECT 1 FROM "tasks" tgt WHERE tgt."cycle_id" = "cycles"."id" AND tgt."status" = ?) AND "open" = ?`,
+			wantJoin:  `SELECT c."id" AS "c.id" FROM "cycles" c WHERE c."name" = ? AND EXISTS (SELECT 1 FROM "tasks" tgt WHERE tgt."cycle_id" = c."id" AND tgt."status" = ?) AND c."open" = ?`,
+		},
+		{
+			name:      "sqlite two pairs",
+			dialect:   lite,
+			table:     sql.Table{Name: "cycles"},
+			pairs:     2,
+			wantPlain: `SELECT * FROM "cycles" WHERE "name" = ? AND EXISTS (SELECT 1 FROM "tasks" tgt WHERE tgt."workspace_id" = "cycles"."workspace_id" AND tgt."cycle_id" = "cycles"."id" AND tgt."status" = ?) AND "open" = ?`,
+			wantJoin:  `SELECT c."id" AS "c.id" FROM "cycles" c WHERE c."name" = ? AND EXISTS (SELECT 1 FROM "tasks" tgt WHERE tgt."workspace_id" = c."workspace_id" AND tgt."cycle_id" = c."id" AND tgt."status" = ?) AND c."open" = ?`,
+		},
+	}
+
+	wantArgs := []any{"q3", "open", true}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			name, open := tt.dialect.QuoteIdentifier("name"), tt.dialect.QuoteIdentifier("open")
+			conds := []sql.Condition{
+				{Clause: name + " = $", Value: "q3", Column: name},
+				existsTasks(tt.dialect, tt.pairs),
+				{Clause: open + " = $", Value: true, Column: open},
+			}
+
+			plainSQL, plainArgs := sql.BuildSelect(tt.dialect, tt.table, sql.SelectOptions{Conditions: conds})
+			if plainSQL != tt.wantPlain {
+				t.Errorf("BuildSelect sql =\n  %q\nwant\n  %q", plainSQL, tt.wantPlain)
+			}
+			if diff := cmp.Diff(wantArgs, plainArgs); diff != "" {
+				t.Errorf("BuildSelect args mismatch (-want +got):\n%s", diff)
+			}
+
+			joinSQL, joinArgs := sql.BuildSelectJoin(tt.dialect, tt.table, nil, sql.SelectOptions{
+				Alias:      "c",
+				Columns:    []string{"id"},
+				Conditions: sql.PrefixConditions("c", conds),
+			})
+			if joinSQL != tt.wantJoin {
+				t.Errorf("BuildSelectJoin sql =\n  %q\nwant\n  %q", joinSQL, tt.wantJoin)
+			}
+			if diff := cmp.Diff(wantArgs, joinArgs); diff != "" {
+				t.Errorf("BuildSelectJoin args mismatch (-want +got):\n%s", diff)
+			}
+		})
+	}
+}
+
+// TestExists_SubstitutedColumnIsNotRescanned pins the single substitution
+// pass: a correlation column whose name spells a later pair's token is
+// written as that column, not replaced again.
+func TestExists_SubstitutedColumnIsNotRescanned(t *testing.T) {
+	cond := sql.Exists([]string{sql.CorrelationTokenAt(1), "id"}, sql.Subquery{
+		SQL: `SELECT 1 FROM "tasks" tgt WHERE tgt."a" = ` + sql.CorrelationTokenAt(0) +
+			` AND tgt."b" = ` + sql.CorrelationTokenAt(1),
+	})
+	got, _ := sql.BuildSelect(lite, sql.Table{Name: "cycles"}, sql.SelectOptions{Conditions: []sql.Condition{cond}})
+	want := `SELECT * FROM "cycles" WHERE EXISTS (SELECT 1 FROM "tasks" tgt WHERE tgt."a" = "cycles"."{{parent.1}}" AND tgt."b" = "cycles"."id")`
+	if got != want {
+		t.Errorf("BuildSelect sql =\n  %q\nwant\n  %q", got, want)
 	}
 }

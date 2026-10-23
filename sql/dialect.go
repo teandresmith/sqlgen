@@ -53,11 +53,6 @@ type Dialect interface {
 	// OID.
 	SupportsArrayParams() bool
 
-	// SupportsTupleIN reports whether this dialect supports tuple IN syntax
-	// for composite PK batch lookups: WHERE (col1, col2) IN (($1,$2), ...).
-	// MySQL does not support this and uses expanded OR instead.
-	SupportsTupleIN() bool
-
 	// BackslashEscapes reports whether a backslash escapes the character after
 	// it inside a '...' or "..." string literal, as MySQL's default sql_mode
 	// reads it. PostgreSQL and SQLite read a backslash there literally. The

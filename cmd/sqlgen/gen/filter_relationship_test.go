@@ -307,10 +307,10 @@ func TestRelationshipFilters_NoneWithoutTenancy(t *testing.T) {
 	}
 }
 
-// TestRelationshipFilters_CompositePKParentEmitsNone covers the shape
-// sql.Exists cannot express: one correlation column, so a parent whose identity
-// spans several columns has nothing single to correlate on. The member is
-// dropped rather than emitted against an arbitrary PK column.
+// TestRelationshipFilters_CompositePKParentEmitsNone covers the shape the
+// relationship-filter context cannot express: one correlation column, so a
+// parent whose identity spans several columns has nothing single to correlate
+// on. The member is dropped rather than emitted against an arbitrary PK column.
 func TestRelationshipFilters_CompositePKParentEmitsNone(t *testing.T) {
 	tables := relFilterTables(t, "")
 	uc := tables["user_categories"]

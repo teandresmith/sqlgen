@@ -127,10 +127,6 @@ func (d PostgresDialect) SupportsArrayParams() bool {
 	return d.driver == DriverPgx
 }
 
-// SupportsTupleIN reports whether this dialect supports tuple IN syntax
-// for composite PK batch lookups: WHERE (col1, col2) IN (($1, $2), ...).
-func (d PostgresDialect) SupportsTupleIN() bool { return true }
-
 // BackslashEscapes returns false — a backslash inside a standard '...'
 // literal is literal text (standard_conforming_strings).
 func (d PostgresDialect) BackslashEscapes() bool { return false }

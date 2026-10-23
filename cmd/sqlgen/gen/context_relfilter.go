@@ -125,13 +125,13 @@ func backfillRelationshipFilterTenancy(tables []TableContext) {
 // can be compiled into a correlated EXISTS.
 //
 // A relationship is skipped — rather than emitted half-formed — when the shape
-// cannot be expressed by [sql.Exists], which carries exactly one correlation
-// column: a parent without a single-column PK has no single column to
-// correlate on, and an M2M whose target has no single-column PK has nothing to
-// join the junction to. The same applies to a target outside the generated set
-// (a view, or a table in another package), which has no filter type to
-// reference. Every list relationship's `filter:` is parsed first, so an
-// unreadable one fails generation even on an edge skipped here.
+// cannot be expressed by the one correlation column the context carries: a
+// parent without a single-column PK has no single column to correlate on, and
+// an M2M whose target has no single-column PK has nothing to join the junction
+// to. The same applies to a target outside the generated set (a view, or a
+// table in another package), which has no filter type to reference. Every list
+// relationship's `filter:` is parsed first, so an unreadable one fails
+// generation even on an edge skipped here.
 func buildRelationshipFilters(tc *TableContext, targets map[string]*TableContext) ([]RelationshipFilterContext, error) {
 	if err := parseListRelationshipFilters(tc); err != nil {
 		return nil, err

@@ -386,3 +386,70 @@ func TestGetManyCompositePKFilter(t *testing.T) {
 		t.Errorf("GetMany with product_id filter returned %d results, want 3", len(all))
 	}
 }
+
+// --- Batch by composite PK: HardDeleteMany (tuple IN) and Filter.PKs ---
+
+func TestBatchByCompositePK(t *testing.T) {
+	ctx := context.Background()
+	client := newClient()
+
+	cat, err := client.Categories().Create(ctx, &models.CreateCategoryInput{Name: "CPKBatchCat"})
+	if err != nil {
+		t.Fatalf("Create category: %v", err)
+	}
+	t.Cleanup(func() { _ = client.Categories().HardDelete(ctx, cat.ID) })
+
+	product, err := client.Products().Create(ctx, &models.CreateProductInput{
+		Title:      "CPKBatchProduct",
+		Price:      60.00,
+		CategoryID: cat.ID,
+		SKU:        "cpk-batch-sku",
+		Attributes: types.JSON([]byte(`{}`)),
+	})
+	if err != nil {
+		t.Fatalf("Create product: %v", err)
+	}
+	t.Cleanup(func() { _ = client.Products().HardDelete(ctx, product.ID) })
+
+	pks := []models.ProductTagLabelPK{
+		{ProductID: product.ID, TagName: "color", Label: "red"},
+		{ProductID: product.ID, TagName: "color", Label: "teal"},
+		{ProductID: product.ID, TagName: "size", Label: "large"},
+	}
+	for _, pk := range pks {
+		if _, err := client.ProductTagLabels().Create(ctx, &models.CreateProductTagLabelInput{
+			ProductID: pk.ProductID, TagName: pk.TagName, Label: pk.Label,
+		}); err != nil {
+			t.Fatalf("Create product_tag_label %+v: %v", pk, err)
+		}
+	}
+	t.Cleanup(func() { _ = client.ProductTagLabels().HardDeleteMany(ctx, pks) })
+
+	// A key that matches on two of three columns must not match.
+	got, err := client.ProductTagLabels().GetMany(ctx, &models.GetProductTagLabelsInput{
+		Filter: &models.ProductTagLabelFilter{PKs: []models.ProductTagLabelPK{
+			pks[0], pks[2], {ProductID: product.ID, TagName: "size", Label: "red"},
+		}},
+	})
+	if err != nil {
+		t.Fatalf("GetMany with Filter.PKs: %v", err)
+	}
+	if len(got) != 2 {
+		t.Fatalf("GetMany with Filter.PKs returned %d rows, want 2", len(got))
+	}
+
+	if err := client.ProductTagLabels().HardDeleteMany(ctx, []models.ProductTagLabelPK{
+		pks[0], pks[1], {ProductID: product.ID, TagName: "size", Label: "red"},
+	}); err != nil {
+		t.Fatalf("HardDeleteMany by composite PK: %v", err)
+	}
+	for i, pk := range pks {
+		exists, err := client.ProductTagLabels().Exists(ctx, pk)
+		if err != nil {
+			t.Fatalf("Exists %+v: %v", pk, err)
+		}
+		if want := i == 2; exists != want {
+			t.Errorf("Exists %+v after HardDeleteMany = %v, want %v", pk, exists, want)
+		}
+	}
+}

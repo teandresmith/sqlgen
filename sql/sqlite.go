@@ -90,10 +90,6 @@ func (d SQLiteDialect) UpsertClause(opts UpsertClauseOptions) string {
 // SupportsArrayParams returns false — SQLite does not support native array parameters.
 func (d SQLiteDialect) SupportsArrayParams() bool { return false }
 
-// SupportsTupleIN reports whether this dialect supports tuple IN syntax
-// for composite PK batch lookups: WHERE (col1, col2) IN (($1, $2), ...).
-func (d SQLiteDialect) SupportsTupleIN() bool { return true }
-
 // BackslashEscapes returns false — SQLite reads a backslash inside a literal
 // as literal text.
 func (d SQLiteDialect) BackslashEscapes() bool { return false }

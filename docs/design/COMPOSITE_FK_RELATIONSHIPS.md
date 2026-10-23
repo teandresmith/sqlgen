@@ -387,18 +387,19 @@ place a foreign-key constraint is named in the manifest, and it shows where an e
 
 ### 4.8 Runtime
 
-- **`sql.Exists` with N correlation columns.** The subquery references one `CorrelationToken`
-  per pair today; it needs one per pair. This is a public API change, which pre-release
-  allows.
+- **`sql.Exists` with N correlation columns.** The subquery referenced one `CorrelationToken`;
+  it needs one per pair. This is a public API change, which pre-release allows. 32.1 made
+  `Exists` take `string | []string`, so a one-pair call site is unchanged, and added
+  `CorrelationTokenAt(i)`, where index 0 is `CorrelationToken`.
 - **`sql.PrefixConditions` on tuple IN.** A prefixed tuple-IN renders
   `c.("workspace_id", "id") IN (…)` on PostgreSQL and SQLite, which is invalid SQL. Measured:
-  PostgreSQL 17 `syntax error at or near "("`, SQLite `near "(": syntax error`. Loaders
-  prefix their conditions, so this must be fixed before they use tuple IN. MySQL's
-  OR-of-ANDs prefixes correctly.
-- **MySQL tuple IN.** `MySQLDialect.SupportsTupleIN` returns false (`sql/mysql.go:103`).
+  PostgreSQL 17 `syntax error at or near "("`, SQLite `near "(": syntax error`. 32.1 made
+  the batch condition a structured value that `PrefixConditions` qualifies per column.
+- **MySQL tuple IN.** `MySQLDialect.SupportsTupleIN` returned false; 32.1 removed the flag,
+  and composite-key batches use tuple IN on every dialect.
   Measured on 8.0.46 and 8.4.11 through go-sql-driver: `(a, b) IN ((?, ?), …)` works, and
   EXPLAIN shows the same composite-index range scan as OR-of-ANDs. It is far faster: 32 ms vs
-  1.49 s at 10000 pairs, 122 ms vs 2 min 3 s at 32767. Flip it to true in N.1. This also
+  1.49 s at 10000 pairs, 122 ms vs 2 min 3 s at 32767. This also
   speeds up today's composite-PK batch operations on MySQL (`BuildCompositePKBatchCondition`).
   `<T>Filter.PKs` does not go through it: it renders OR-of-ANDs on every dialect (§9.1), and
   moving it is a backlog item (§7.1).
@@ -464,7 +465,7 @@ Sub-items in dependency order:
 | # | Sub-item | Notes |
 |---|---|---|
 | N.0 | **PRD sync.** §4.6/§4.8 config reference, §5.3, §8.2, §8.6, §9.9 (E1 over every member, pinning, MATCH FULL disconnect), §13.4, §25.1 (chunks), §29.10, §30, `MANIFEST.md`, `MCP.md`. Re-run §9.1 at HEAD. MATCH, MySQL tuple IN and the non-PK FK loader failure are already measured (§9.4, §4.9). | Blocks everything |
-| N.1 | **Runtime.** N-column `Exists`; tuple-IN prefixing; MySQL `SupportsTupleIN` true. | Independent of N.2 |
+| N.1 | **Runtime.** N-column `Exists`; tuple-IN prefixing; MySQL tuple IN (flag removed). | Independent of N.2 |
 | N.2 | **Parser model and detection.** `KeyPair`, `Relationship.Key`, `Constraint.Match` (PostgreSQL file parser and introspection), detection per §4.2 including redundant FKs and the naming rule, the unresolvable-key warning (printed after detection, not through `schema.Warnings`, which is printed first), the residual-name-collision error. Parity under `files` and `database` on all three dialects. Starts from the §9.4 prototype. | Go goldens unchanged |
 | N.3 | **Config, manifest and MCP shapes.** §4.7. Manual relationships produce the same `Key` lists. | Manifest goldens move once |
 | N.4 | **Gen contexts.** Key pairs replace the `PKColumns[0]` reads in relationship code; pinned and free members; E1 over every member; FK membership for increments and PK strategy (§4.6). | Go goldens unchanged |
@@ -606,7 +607,7 @@ replaces it (§3).
 | A single-column PK that is also a composite-FK member is classified by type in `autoDetectPKStrategy` | Reading only; fixed by N.4 (§4.6) |
 | A single-column FK to a non-PK column (UNIQUE, or the PK-override form) generates a loader that does not compile | Measured by the FIX-358 vet (§4.9); folded into N.4 / N.5 with both schemas as regression tests |
 | Under option A, a tenant junction with two composite FKs and no single-column FK on the tenant column becomes M2M, with a three-column junction key that M2M disconnect cannot handle | Reading only; one reason A is not recommended |
-| MySQL is marked as lacking tuple IN (`sql/mysql.go:103`) | Measured: it works, and OR-of-ANDs is up to 1000× slower (§4.8); flipped in N.1 |
+| MySQL is marked as lacking tuple IN (`sql/mysql.go:103`) | Measured: it works, and OR-of-ANDs is up to 1000× slower (§4.8); fixed in N.1 (tuple IN everywhere; flag removed) |
 | An FK column removed by `exclude_columns` still yielded its edge; an O2M one did not compile | Fixed, FIX-358 (`c875fec9`) |
 | Excluding a table's only PK column passes `validate` and crashes `generate` (`index .PKColumns 0`) | Fixed, FIX-360: now a schema-level validation error (PRD §4.13) |
 | Relationship loaders fail past the dialect's bind limit (O2M on SQLite and MySQL, every M2M junction including pgx) | Fixed, FIX-359 (`2ae215f8`) |

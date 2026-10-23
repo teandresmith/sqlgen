@@ -3718,7 +3718,7 @@ Closure is `/close-phase 31`, with no sub-item of its own. It flips the design d
 
 **Sub-items** (`docs/tracker/phase-32.md`):
 - **32.0** — **PRD and doc sync.** No code. Re-verify design §9.1 at HEAD. *Blocks every other sub-item.*
-- **32.1** — **Runtime.** `sql.Exists` with N correlation pairs; `PrefixConditions` on tuple IN; MySQL `SupportsTupleIN` true. *Depends on 32.0; runs alongside 32.2.*
+- **32.1** — **Runtime.** `sql.Exists` with N correlation pairs; `PrefixConditions` on tuple IN; MySQL tuple IN (flag removed). *Depends on 32.0; runs alongside 32.2.*
 - **32.2** — **Parser model and detection.** `KeyPair`, `Relationship.Key` / `JunctionLocal` / `JunctionReference` / `Constraint` replace the three column strings; `Constraint.Match` on PostgreSQL; detection per design §4.2 (target key, redundant FKs, O2O by subset, the set-aside M2M rule, the four-step naming rule, the residual-collision error, the unresolvable-key warning). Parity on all three dialects under `files` and `database`. Starts from the §9.4 detection prototype. *Depends on 32.0.*
 - **32.3** — **Config, manifest and MCP shapes.** `fk` and the junction keys take a string or a list; manifest `fk` / `junction` key lists and `constraint`, `SchemaVersion` `0.2.0`; MCP `fk_columns`. *Depends on 32.2.*
 - **32.4** — **Gen contexts.** Key pairs replace the `PKColumns[0]` relationship reads; pinned and free members; E1 over every member; FK membership for increments and PK strategy. *Depends on 32.2, 32.3.*

@@ -257,7 +257,7 @@ Generated SQL:
 mysql:
 
 ```sql
-DELETE FROM `asset_document_links` WHERE <pks>
+DELETE FROM `asset_document_links` WHERE (`asset_id`, `document_id`) IN (<pks>)
 ```
 
 ### HardDeleteWhere

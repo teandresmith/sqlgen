@@ -259,7 +259,7 @@ Generated SQL:
 mysql:
 
 ```sql
-DELETE FROM `product_tag_labels` WHERE <pks>
+DELETE FROM `product_tag_labels` WHERE (`product_id`, `tag_name`, `label`) IN (<pks>)
 ```
 
 ### HardDeleteWhere

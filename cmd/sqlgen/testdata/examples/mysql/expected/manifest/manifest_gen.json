@@ -1634,7 +1634,7 @@
             "errors": [],
             "notes": "Idempotent — primary keys that do not exist are not an error.",
             "sql_bodies": {
-              "mysql": "DELETE FROM `asset_document_links` WHERE <pks>"
+              "mysql": "DELETE FROM `asset_document_links` WHERE (`asset_id`, `document_id`) IN (<pks>)"
             }
           },
           {
@@ -6028,7 +6028,7 @@
             "errors": [],
             "notes": "Idempotent — primary keys that do not exist are not an error.",
             "sql_bodies": {
-              "mysql": "DELETE FROM `product_tag_labels` WHERE <pks>"
+              "mysql": "DELETE FROM `product_tag_labels` WHERE (`product_id`, `tag_name`, `label`) IN (<pks>)"
             }
           },
           {
@@ -8782,7 +8782,7 @@
             "errors": [],
             "notes": "Idempotent — primary keys that do not exist are not an error.",
             "sql_bodies": {
-              "mysql": "DELETE FROM `user_categories` WHERE <pks>"
+              "mysql": "DELETE FROM `user_categories` WHERE (`user_id`, `category_id`) IN (<pks>)"
             }
           },
           {

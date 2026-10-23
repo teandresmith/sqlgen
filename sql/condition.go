@@ -1,5 +1,7 @@
 package sql
 
+import "strconv"
+
 // andConditions represents a logical AND composition of conditions.
 // When encountered as a Condition.Value, builders join the contained
 // conditions with " AND " and wrap them in parentheses.
@@ -38,25 +40,44 @@ type Range struct {
 }
 
 // existsCondition is the structured value behind a correlated EXISTS
-// predicate. It carries the parent-side correlation column and never a
+// predicate. It carries the parent-side correlation columns and never a
 // qualifier: the qualifier is path-dependent — the plain read path selects
 // from an unaliased table, the O2O-join path aliases it — so builders resolve
 // it at render time. See [Exists].
 type existsCondition struct {
-	CorrelationColumn string
-	Subquery          Subquery
+	CorrelationColumns []string
+	Subquery           Subquery
 }
 
-// CorrelationToken marks the parent-side reference inside an [Exists]
-// subquery. Builders replace every occurrence with the enclosing statement's
-// qualifier followed by the quoted correlation column. Generated code
-// concatenates this constant rather than spelling the token:
+// tupleInCondition is the structured value behind a composite-key batch
+// predicate, (c1, c2) IN ((…), …). Columns are quoted. It is a value rather
+// than a clause so [PrefixConditions] can qualify each column; prepending the
+// alias to the clause would give c.(c1, c2), a syntax error.
+type tupleInCondition struct {
+	Columns []string
+	Rows    [][]any
+}
+
+// CorrelationToken marks the parent-side reference to the first correlation
+// column inside an [Exists] subquery; [CorrelationTokenAt] gives the token of
+// each further one. Builders replace every occurrence with the enclosing
+// statement's qualifier followed by the quoted correlation column. Generated
+// code concatenates the token rather than spelling it:
 //
 //	sql.Exists("id", sql.Subquery{
 //		SQL: `SELECT 1 FROM "comments" tgt WHERE tgt."post_id" = ` +
 //			sql.CorrelationToken + ` AND tgt."deleted_at" IS NULL`,
 //	})
 const CorrelationToken = "{{parent}}"
+
+// CorrelationTokenAt returns the token of the correlation column at index i:
+// [CorrelationToken] for 0, "{{parent.i}}" otherwise.
+func CorrelationTokenAt(i int) string {
+	if i == 0 {
+		return CorrelationToken
+	}
+	return "{{parent." + strconv.Itoa(i) + "}}"
+}
 
 // ConditionBuilder provides a fluent API for constructing Condition values.
 // Create one with Where(column).
@@ -183,24 +204,40 @@ func Or(conditions ...Condition) Condition {
 	return Condition{Value: orConditions(conditions)}
 }
 
-// Exists returns a correlated EXISTS condition. The subquery references the
-// enclosing statement's row through [CorrelationToken], which builders replace
-// with the statement's qualifier and the quoted correlationColumn: the table
-// alias when the statement aliased its table (the O2O-join read path), the
-// formatted table name otherwise (the plain read path). One emitted value is
-// therefore correct on both paths, which is why the qualifier is resolved by
-// the builder instead of being baked in at generation time.
+// Exists returns a correlated EXISTS condition. correlation is one column, or
+// one column per pair of a composite key. The subquery references the
+// enclosing statement's row through CorrelationTokenAt(i) for the column at
+// index i, and builders replace each token with the statement's qualifier and
+// that quoted column: the table alias when the statement aliased its table
+// (the O2O-join read path), the formatted table name otherwise (the plain read
+// path). One emitted value is therefore correct on both paths, which is why
+// the qualifier is resolved by the builder instead of being baked in at
+// generation time.
+//
+//	sql.Exists([]string{"workspace_id", "id"}, sql.Subquery{
+//		SQL: `SELECT 1 FROM "tasks" tgt WHERE tgt."workspace_id" = ` + sql.CorrelationTokenAt(0) +
+//			` AND tgt."cycle_id" = ` + sql.CorrelationTokenAt(1),
+//	})
 //
 // The subquery's "$" or "$N" tokens, in either form [Subquery] describes, are
 // renumbered into the enclosing statement's positional sequence in Conditions
 // order, exactly as any other multi-arg condition and as a bare [Subquery]
 // condition value.
 //
-// The subquery is the caller's to build and must reference [CorrelationToken]:
-// one that does not is an uncorrelated EXISTS, which matches on the existence
-// of any row the subquery returns rather than on the enclosing row's own.
-func Exists(correlationColumn string, subquery Subquery) Condition {
-	return Condition{Value: existsCondition{CorrelationColumn: correlationColumn, Subquery: subquery}}
+// The subquery is the caller's to build and must reference every column's
+// token: one that references none is an uncorrelated EXISTS, which matches on
+// the existence of any row the subquery returns rather than on the enclosing
+// row's own. A token past the last column is left as written, and the
+// database rejects it.
+func Exists[C string | []string](correlation C, subquery Subquery) Condition {
+	var columns []string
+	switch c := any(correlation).(type) {
+	case string:
+		columns = []string{c}
+	case []string:
+		columns = c
+	}
+	return Condition{Value: existsCondition{CorrelationColumns: columns, Subquery: subquery}}
 }
 
 // IsAnd reports whether the condition's value is an AND composition and
@@ -255,6 +292,8 @@ func PrefixConditions(alias string, conds []Condition) []Condition {
 // mechanism. Being a structured value rather than a leaf clause, it is passed
 // through untouched here — including inside the And/Or recursion below — and
 // the builder resolves its qualifier at render time (PRD 11.5).
+//
+// A composite-key batch condition qualifies each column of its tuple.
 func prefixCondition(alias string, c Condition) Condition {
 	// Handle AND/OR compositions recursively
 	if andConds, ok := c.IsAnd(); ok {
@@ -262,6 +301,14 @@ func prefixCondition(alias string, c Condition) Condition {
 	}
 	if orConds, ok := c.IsOr(); ok {
 		return Or(PrefixConditions(alias, orConds)...)
+	}
+	if t, ok := c.Value.(tupleInCondition); ok {
+		cols := make([]string, len(t.Columns))
+		for i, col := range t.Columns {
+			cols[i] = alias + "." + col
+		}
+		c.Value = tupleInCondition{Columns: cols, Rows: t.Rows}
+		return c
 	}
 	if c.Clause == "" {
 		return c

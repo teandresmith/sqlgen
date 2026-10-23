@@ -469,66 +469,22 @@ func BuildCompositePKConditions(d Dialect, columns []string, values []any) []Con
 	return conds
 }
 
-// BuildCompositePKBatchCondition returns a condition for batch composite PK lookup.
-// Dialects with tuple IN support produce: ("c1","c2") IN (($,$),($,$)).
-// Others produce: (c1=$ AND c2=$) OR (c1=$ AND c2=$).
+// BuildCompositePKBatchCondition returns a condition for batch composite PK
+// lookup: ("c1", "c2") IN (($, $), ($, $)) on every dialect. MySQL 8.0 and 8.4
+// evaluate it with the same composite-index range scan as an OR of ANDs, and
+// far faster.
 func BuildCompositePKBatchCondition(d Dialect, columns []string, valueSets [][]any) Condition {
 	if len(valueSets) == 0 {
 		return Condition{Clause: "1 = 0"}
 	}
-	if d.SupportsTupleIN() {
-		return buildTupleIN(d, columns, valueSets)
+	quoted := make([]string, len(columns))
+	for i, col := range columns {
+		quoted[i] = d.QuoteIdentifier(col)
 	}
-	return buildExpandedOR(d, columns, valueSets)
+	return Condition{Value: tupleInCondition{Columns: quoted, Rows: valueSets}}
 }
 
 // --- Internal helpers ---
-
-func buildTupleIN(d Dialect, columns []string, valueSets [][]any) Condition {
-	var b strings.Builder
-	b.WriteString("(")
-	for i, col := range columns {
-		if i > 0 {
-			b.WriteString(", ")
-		}
-		b.WriteString(d.QuoteIdentifier(col))
-	}
-	b.WriteString(") IN (")
-
-	args := make([]any, 0, len(columns)*len(valueSets))
-	for i, vals := range valueSets {
-		if i > 0 {
-			b.WriteString(", ")
-		}
-		b.WriteString("(")
-		for j := range columns {
-			if j > 0 {
-				b.WriteString(", ")
-			}
-			b.WriteString("$")
-		}
-		b.WriteString(")")
-		args = append(args, vals...)
-	}
-	b.WriteString(")")
-
-	return Condition{Clause: b.String(), Value: args}
-}
-
-func buildExpandedOR(d Dialect, columns []string, valueSets [][]any) Condition {
-	orConds := make([]Condition, len(valueSets))
-	for i, vals := range valueSets {
-		andConds := make([]Condition, len(columns))
-		for j, col := range columns {
-			andConds[j] = Condition{
-				Clause: d.QuoteIdentifier(col) + " = $",
-				Value:  vals[j],
-			}
-		}
-		orConds[i] = And(andConds...)
-	}
-	return Or(orConds...)
-}
 
 // buildWhere generates a WHERE clause from conditions, joining them with AND.
 // Returns the clause SQL (no "WHERE" prefix), args, and next placeholder position.
@@ -591,6 +547,9 @@ func expandConditionClause(d Dialect, cond Condition, pos int, qualifier string)
 	if e, ok := cond.Value.(existsCondition); ok {
 		return expandExists(d, e, pos, qualifier)
 	}
+	if t, ok := cond.Value.(tupleInCondition); ok {
+		return expandTupleIN(d, t, pos)
+	}
 	if r, ok := cond.Value.(Range); ok {
 		return expandRange(d, cond.Clause, r, pos)
 	}
@@ -627,17 +586,44 @@ func expandRange(d Dialect, clause string, r Range, pos int) (string, []any, int
 	return result, vals, nextPos
 }
 
-// expandExists renders a correlated EXISTS predicate. Every
-// [CorrelationToken] in the subquery becomes the enclosing statement's
-// qualifier plus the quoted correlation column, and the subquery's $ tokens
-// are renumbered into the enclosing statement's positional sequence, so its
-// args participate in Conditions order like any other multi-arg condition.
+// expandExists renders a correlated EXISTS predicate. Each correlation token
+// in the subquery becomes the enclosing statement's qualifier plus its quoted
+// correlation column, and the subquery's $ tokens are renumbered into the
+// enclosing statement's positional sequence, so its args participate in
+// Conditions order like any other multi-arg condition.
 func expandExists(d Dialect, e existsCondition, pos int, qualifier string) (string, []any, int) {
 	// Renumber before substituting, so a qualifier that happens to contain a $
-	// cannot be mistaken for a placeholder token.
+	// cannot be mistaken for a placeholder token. One Replacer pass keeps a
+	// substituted column from being scanned for a later token.
 	rendered, args, nextPos := renumberTokens(d, e.Subquery.SQL, e.Subquery.Args, pos)
-	rendered = strings.ReplaceAll(rendered, CorrelationToken, qualifier+"."+d.QuoteIdentifier(e.CorrelationColumn))
+	pairs := make([]string, 0, 2*len(e.CorrelationColumns))
+	for i, col := range e.CorrelationColumns {
+		pairs = append(pairs, CorrelationTokenAt(i), qualifier+"."+d.QuoteIdentifier(col))
+	}
+	rendered = strings.NewReplacer(pairs...).Replace(rendered)
 	return "EXISTS (" + rendered + ")", args, nextPos
+}
+
+// expandTupleIN renders a composite-key batch predicate, binding the rows'
+// values in row order.
+func expandTupleIN(d Dialect, t tupleInCondition, pos int) (string, []any, int) {
+	var b strings.Builder
+	b.WriteString("(")
+	b.WriteString(strings.Join(t.Columns, ", "))
+	b.WriteString(") IN (")
+	args := make([]any, 0, len(t.Columns)*len(t.Rows))
+	for i, row := range t.Rows {
+		if i > 0 {
+			b.WriteString(", ")
+		}
+		b.WriteString("(")
+		b.WriteString(d.PlaceholderList(pos, len(row)))
+		b.WriteString(")")
+		pos += len(row)
+		args = append(args, row...)
+	}
+	b.WriteString(")")
+	return b.String(), args, pos
 }
 
 // expandSubquery splices a nested SELECT into the clause's "$" token. The
