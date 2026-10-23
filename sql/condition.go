@@ -225,10 +225,12 @@ func Or(conditions ...Condition) Condition {
 // condition value.
 //
 // The subquery is the caller's to build and must reference every column's
-// token: one that references none is an uncorrelated EXISTS, which matches on
-// the existence of any row the subquery returns rather than on the enclosing
-// row's own. A token past the last column is left as written, and the
-// database rejects it.
+// token. Nothing checks this. A subquery that references no token is an
+// uncorrelated EXISTS, which matches on the existence of any row the subquery
+// returns rather than on the enclosing row's own, and one that references only
+// some correlates on only those columns. Both run without an error. A token
+// with no column, past the end of the list or in an empty one, is left as
+// written, and the database rejects it.
 func Exists[C string | []string](correlation C, subquery Subquery) Condition {
 	var columns []string
 	switch c := any(correlation).(type) {
