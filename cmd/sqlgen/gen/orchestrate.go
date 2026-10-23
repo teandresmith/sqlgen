@@ -2420,8 +2420,9 @@ func ValidateGeneration(schema *parser.Schema, cfg *config.RootConfig) ([]string
 
 	// Errors accumulate: validate reports everything it can see in one pass.
 	// A failure in one stage does not stop the next unless the next needs its
-	// output — only the API context does, and it is skipped when the table
-	// contexts did not build.
+	// output — only the API context does, and it is skipped when any table
+	// failed to build. The tables that did build still reach the package-wide
+	// and cross-table checks.
 	var errs []error
 
 	tenancyMap, tenancyWarnings, err := BuildTenancyContext(cfg, schema, input.Resolver)
@@ -2430,7 +2431,10 @@ func ValidateGeneration(schema *parser.Schema, cfg *config.RootConfig) ([]string
 		errs = append(errs, fmt.Errorf("building tenancy context: %w", err))
 	}
 
-	tableContexts, err := BuildTableContexts(input, collisions)
+	// The tables that built are checked even when others fail, so one bad
+	// table does not hide the rules below on the rest.
+	tableContexts, failedTables, err := buildTableContextsPartial(input, collisions)
+	tablesBuilt := err == nil
 	if err != nil {
 		errs = append(errs, err)
 	}
@@ -2458,47 +2462,48 @@ func ValidateGeneration(schema *parser.Schema, cfg *config.RootConfig) ([]string
 		errs = append(errs, err)
 	}
 
-	if tableContexts != nil {
-		// The post-build wiring the generate path runs that can *reject* a
-		// config, mirrored here in the same order and for the same reason
-		// validate exists at all: a check that only `generate` performs is a
-		// check `validate` reports clean on. attachUUIDGeneration is the one
-		// pass deliberately left out — it rejects nothing, and validate
-		// renders no table file, so an unfilled PKAutoGenExpr is unobservable
-		// here (PRD §7.4).
-		//
-		// wireRelationshipFilters is the one that can reject a config outright
-		// (a relationship `filter:` containing `$` — PRD §11.1), and it reads
-		// the *target's* tenancy, so the two attach passes have to precede it.
-		// Running it also means the API context below sees the same
-		// FilterRelationships `generate` would build, rather than an empty set —
-		// which is what keeps a future relationship-aware §26.5.3 completeness
-		// lint from silently no-opping under validate.
-		attachTenancyToTables(tableContexts, tenancyMap)
-		attachTenancyToViews(viewContexts, tenancyMap)
-		tableContexts = deduplicateRelationshipOptionsDefs(tableContexts)
-		if err := wireRelationshipFilters(tableContexts, viewContexts); err != nil {
-			errs = append(errs, fmt.Errorf("building relationship filters: %w", err))
-		}
-		if err := validateDiscriminatorBindings(tableContexts, viewContexts, cfg.Input.Dialect, input.Resolver); err != nil {
-			errs = append(errs, fmt.Errorf("validating relationship discriminators: %w", err))
-		}
+	// The post-build wiring the generate path runs that can *reject* a
+	// config, mirrored here in the same order and for the same reason
+	// validate exists at all: a check that only `generate` performs is a
+	// check `validate` reports clean on. attachUUIDGeneration is the one
+	// pass deliberately left out — it rejects nothing, and validate
+	// renders no table file, so an unfilled PKAutoGenExpr is unobservable
+	// here (PRD §7.4).
+	//
+	// wireRelationshipFilters is the one that can reject a config outright
+	// (a relationship `filter:` containing `$` — PRD §11.1), and it reads
+	// the *target's* tenancy, so the two attach passes have to precede it.
+	// Running it also means the API context below sees the same
+	// FilterRelationships `generate` would build, rather than an empty set —
+	// which is what keeps a future relationship-aware §26.5.3 completeness
+	// lint from silently no-opping under validate.
+	attachTenancyToTables(tableContexts, tenancyMap)
+	attachTenancyToViews(viewContexts, tenancyMap)
+	tableContexts = deduplicateRelationshipOptionsDefs(tableContexts)
+	if err := wireRelationshipFilters(tableContexts, viewContexts); err != nil {
+		errs = append(errs, fmt.Errorf("building relationship filters: %w", err))
+	}
+	if err := validateDiscriminatorBindings(tableContexts, viewContexts, cfg.Input.Dialect, input.Resolver); err != nil {
+		errs = append(errs, fmt.Errorf("validating relationship discriminators: %w", err))
+	}
 
-		// PRD §9.9.4 makes ValidateNestedWriteEligibility answerable under
-		// `sqlgen validate` as well as `sqlgen generate`: an explicitly-listed
-		// ineligible edge is a hard error, and a check only `generate`
-		// performs is one `validate` reports clean on.
-		if err := ValidateNestedWriteEligibility(tableContexts, cfg, input.Resolver); err != nil {
-			errs = append(errs, fmt.Errorf("validating nested mutations: %w", err))
-		}
-		wireNestedMutations(tableContexts, cfg, input.Resolver)
-		finalizeTenancyWiring(tableContexts, viewContexts)
+	// PRD §9.9.4 makes ValidateNestedWriteEligibility answerable under
+	// `sqlgen validate` as well as `sqlgen generate`: an explicitly-listed
+	// ineligible edge is a hard error, and a check only `generate`
+	// performs is one `validate` reports clean on.
+	if err := validateNestedWriteEligibility(tableContexts, cfg, input.Resolver, failedTables); err != nil {
+		errs = append(errs, fmt.Errorf("validating nested mutations: %w", err))
+	}
+	wireNestedMutations(tableContexts, cfg, input.Resolver)
+	finalizeTenancyWiring(tableContexts, viewContexts)
 
+	if tablesBuilt {
 		// viewContexts threads in so `sqlgen validate` answers the view half of
 		// the API rules too — a view/table GraphQL type-name collision, a view
 		// whose walker disagrees with its schema type, an unresolvable
 		// `views.<n>.api.operations` preset. PRD §4.13 note 3 makes validate the
-		// place every phase-3 rule is answered without writing a file.
+		// place every phase-3 rule is answered without writing a file. It needs
+		// every table, so it is skipped when one failed to build.
 		apiCtx, err := BuildAPIContext(tableContexts, viewContexts, enumContexts, setContexts, cfg)
 		if err != nil {
 			errs = append(errs, fmt.Errorf("building api context: %w", err))

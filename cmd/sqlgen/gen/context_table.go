@@ -24,6 +24,20 @@ import (
 // hook is generated. config.ValidatePostParse reports each one first, as the
 // missing-PK or exclude_columns-exhaustion warning or as an error.
 func BuildTableContexts(input *GenerateInput, collisions map[string]bool) ([]TableContext, error) {
+	contexts, _, err := buildTableContextsPartial(input, collisions)
+	if err != nil {
+		return nil, err
+	}
+	return contexts, nil
+}
+
+// buildTableContextsPartial is BuildTableContexts that also returns the
+// contexts of the tables that did build when others fail, and the keys
+// (qualifiedOrBare) of the ones that failed. Generation stops on the error;
+// ValidateGeneration keeps going, so the package-wide and cross-table rules
+// still report on those tables in the same run (PRD §4.13: all validation
+// errors are reported together).
+func buildTableContextsPartial(input *GenerateInput, collisions map[string]bool) ([]TableContext, map[string]bool, error) {
 	applyConfigDeclaredFKs(input.Schema, input.Config)
 	input.relTargets = newRelationshipTargets(input, collisions)
 	excludePatterns := input.Config.ExcludeTables
@@ -32,6 +46,7 @@ func BuildTableContexts(input *GenerateInput, collisions map[string]bool) ([]Tab
 	// `sqlgen validate` reaches this path and reports every problem
 	// in one pass, and `generate` gains the same batch report for free.
 	var errs []error
+	failed := map[string]bool{}
 	for _, table := range input.Schema.Tables {
 		if _, matched := config.MatchExcludeTablePattern(table.Name, table.Schema, excludePatterns); matched {
 			continue
@@ -42,14 +57,11 @@ func BuildTableContexts(input *GenerateInput, collisions map[string]bool) ([]Tab
 		tc, err := buildSingleTableContext(input, &table, collisions)
 		if err != nil {
 			errs = append(errs, fmt.Errorf("building context for table %s: %w", table.Name, err))
+			failed[qualifiedOrBare(table.Schema, table.Name)] = true
 			continue
 		}
 		contexts = append(contexts, tc)
 	}
-	if err := errors.Join(errs...); err != nil {
-		return nil, err
-	}
-
 	slices.SortFunc(contexts, func(a, b TableContext) int {
 		if c := strings.Compare(a.Schema, b.Schema); c != 0 {
 			return c
@@ -67,7 +79,7 @@ func BuildTableContexts(input *GenerateInput, collisions map[string]bool) ([]Tab
 	// the junction's own context.
 	wireNestedMutationSurface(contexts)
 
-	return contexts, nil
+	return contexts, failed, errors.Join(errs...)
 }
 
 // wireRelationshipFKMetadata resolves the FKGoType, FKNullable, FKColumnGoType

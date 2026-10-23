@@ -156,6 +156,14 @@ func wireNestedMutations(contexts []TableContext, cfg *config.RootConfig, resolv
 // names no relationship at all is reported here too: the config asked for an
 // edge that does not exist, which no other pass catches.
 func ValidateNestedWriteEligibility(contexts []TableContext, cfg *config.RootConfig, resolver *gotype.Resolver) error {
+	return validateNestedWriteEligibility(contexts, cfg, resolver, nil)
+}
+
+// validateNestedWriteEligibility is ValidateNestedWriteEligibility over the
+// tables that built when others failed (failed holds their qualifiedOrBare
+// keys). An edge whose target or junction failed is not reported: that table's
+// own error already is, and "not in the generated set" would misstate why.
+func validateNestedWriteEligibility(contexts []TableContext, cfg *config.RootConfig, resolver *gotype.Resolver, failed map[string]bool) error {
 	if !nestedMutationsEnabled(cfg) {
 		return nil
 	}
@@ -192,12 +200,35 @@ func ValidateNestedWriteEligibility(contexts []TableContext, cfg *config.RootCon
 		_, resolveRejected := resolveNestedEdges(tc, byTable, cfg, resolver)
 		rejected = append(rejected, resolveRejected...)
 		for _, r := range rejected {
+			if edgeIntoFailedTable(tc, r.edge, failed) {
+				continue
+			}
 			if _, listed := allow[r.edge]; listed {
 				errs = append(errs, fmt.Errorf("tables.%s.nested_mutations: %s", table, r))
 			}
 		}
 	}
 	return errors.Join(errs...)
+}
+
+// edgeIntoFailedTable reports whether the named edge of tc targets, or links
+// through, a table whose context failed to build.
+func edgeIntoFailedTable(tc *TableContext, edge string, failed map[string]bool) bool {
+	if len(failed) == 0 {
+		return false
+	}
+	for _, rel := range tc.Relationships {
+		if rel.FieldName != edge {
+			continue
+		}
+		if failed[qualifiedOrBare(rel.TargetSchema, rel.TargetTable)] {
+			return true
+		}
+		if rel.JunctionTable != "" && failed[qualifiedOrBare(rel.JunctionSchema, rel.JunctionTable)] {
+			return true
+		}
+	}
+	return false
 }
 
 // listedShapeFailures reports the listed edges that nestedCandidateEdges
