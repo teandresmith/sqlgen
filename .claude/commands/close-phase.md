@@ -61,7 +61,10 @@ Run sequentially (each must complete before the next; capture timings):
 make check
 make check-examples
 make test-integration  # skipped if --skip-integration
+make conformance       # until it exists (CONFORMANCE.md §7 step 4): make req-check VERBOSE=1
 ```
+
+**Conformance gate.** For every PRD section the phase implements, read its rows in the requirement registry (`docs/conformance/`). No row may be `untested` or failing unless the user accepts it for this closure; record each accepted row and its reason in the closure report. Once `make conformance` exists, commit the `docs/conformance/REPORT.md` it regenerates. Until then, `req-check -v` lists the coverage notes (untested rows, empty matrix cells) instead.
 
 Record for each:
 - Exit status (0 = clean)
@@ -152,6 +155,7 @@ Output a structured closure report:
 ### Rules
 
 - **Never auto-resolve FIX entries** during closure. The classification step asks the user; resolution happens via `/fix-implement` or explicit `/fix resolve` outside this skill.
+- **Never close over an untested or failing registry row** for the phase's PRD sections without the user's acceptance (Step 3, conformance gate).
 - **Never skip a failing test leg.** A flake suspicion is not a pass — re-run in isolation, or `/fix add (phase N, module) [blocking] — flake pattern X in Y` and resolve before resuming.
 - **Never edit the sub-item Completion Records** at closure time. Those should already be filled in from `/done`; closure synthesizes from them.
 - **Never advance the phase counter in STATUS.md without confirming the sub-item count matches.** Mismatched counts are a sign of an in-flight sub-item split (e.g., 16.8 → 16.8a–g) — handle explicitly.
