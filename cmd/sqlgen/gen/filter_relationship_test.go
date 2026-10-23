@@ -96,7 +96,7 @@ func relFilterTables(t *testing.T, tenantColumn string) map[string]gen.TableCont
 	in := testInput(relFilterSchema())
 	// Relationship detection is a parser step; the context builders consume its
 	// output rather than re-deriving it.
-	parser.DetectRelationships(in.Schema)
+	detectRelationships(in.Schema)
 	if tenantColumn != "" {
 		in.Config.Tenancy = &config.TenancyConfig{
 			Enabled:  true,
@@ -240,7 +240,7 @@ func TestRelationshipFilters_TargetSoftDeleteAttached(t *testing.T) {
 // default, so neither does the subquery.
 func TestRelationshipFilters_TargetSoftDeleteRespectsExcludeDeleted(t *testing.T) {
 	in := testInput(relFilterSchema())
-	parser.DetectRelationships(in.Schema)
+	detectRelationships(in.Schema)
 	in.Config.Generation.ExcludeDeleted = new(false)
 	tables, err := gen.BuildTableContextsFromSchema(in.Schema, in.Config)
 	if err != nil {

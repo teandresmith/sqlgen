@@ -1434,7 +1434,7 @@ func relationshipKind(t parser.RelationshipType, side parser.RelationshipSide) s
 	case parser.OneToOne:
 		// O2O on the parent side carries the FK; m2o on the child side. The
 		// codegen marks both as OneToOne — Side is the authoritative
-		// disambiguator. Every production emit path (addO2O,
+		// disambiguator. Every production emit path (DetectRelationships,
 		// configRelationshipToContext, relationshipToContext) populates Side,
 		// so SideUnspecified here means a caller fed a hand-built fixture
 		// through the manifest pipeline without going through the gen

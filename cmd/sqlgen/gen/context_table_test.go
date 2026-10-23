@@ -614,7 +614,7 @@ func TestBuildRelationshipContexts_ExcludeByBaseName(t *testing.T) {
 	// group, so it does not surface on stakeholder; users sees the one
 	// undecorated edge pluralized to "assets".
 	in := testInput(multiFKAssetSchema())
-	parser.DetectRelationships(in.Schema)
+	detectRelationships(in.Schema)
 	gotBaseline := relationshipNames(stakeholderRelationships(t, in))
 	wantBaseline := []string{"developer_assets", "om_provider_assets", "owner_assets"}
 	if diff := cmp.Diff(wantBaseline, gotBaseline); diff != "" {
@@ -627,7 +627,7 @@ func TestBuildRelationshipContexts_ExcludeByBaseName(t *testing.T) {
 	// (stakeholder, asset) used the bare name; multi-FK schemas must
 	// continue to honor it.
 	in = testInput(multiFKAssetSchema())
-	parser.DetectRelationships(in.Schema)
+	detectRelationships(in.Schema)
 	in.Config.Tables["stakeholder"] = config.TableConfig{
 		ExcludeRelationships: []string{"asset"},
 	}
@@ -640,7 +640,7 @@ func TestBuildRelationshipContexts_ExcludeByBaseName(t *testing.T) {
 	// code, e.g. `DeveloperAssets`) drops only that edge; siblings in the
 	// same (source, target) group remain.
 	in = testInput(multiFKAssetSchema())
-	parser.DetectRelationships(in.Schema)
+	detectRelationships(in.Schema)
 	in.Config.Tables["stakeholder"] = config.TableConfig{
 		ExcludeRelationships: []string{"developer_assets"},
 	}
@@ -654,7 +654,7 @@ func TestBuildRelationshipContexts_ExcludeByBaseName(t *testing.T) {
 	// disambiguated entry — combining both still produces zero edges.
 	// Confirms BaseName-match short-circuits Name-match cleanly.
 	in = testInput(multiFKAssetSchema())
-	parser.DetectRelationships(in.Schema)
+	detectRelationships(in.Schema)
 	in.Config.Tables["stakeholder"] = config.TableConfig{
 		ExcludeRelationships: []string{"asset", "owner_assets"},
 	}
@@ -711,7 +711,7 @@ func TestBuildRelationshipContexts_SliceFieldsArePlural(t *testing.T) {
 							{Name: "tag_id", Type: "uuid", PrimaryKey: true, FKReference: &parser.FKReference{Table: "tag", Column: "id"}},
 						},
 						// Composite PK is what the M2M detector keys off
-						// (junctionConstraint in parser/relationship.go) — without
+						// (parser.DetectRelationships) — without
 						// the table-level Constraint entry the parser falls back
 						// to two separate O2M edges instead of one M2M.
 						Constraints: []parser.Constraint{
@@ -776,7 +776,7 @@ func TestBuildRelationshipContexts_SliceFieldsArePlural(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			in := testInput(tt.schema)
-			parser.DetectRelationships(in.Schema)
+			detectRelationships(in.Schema)
 			contexts, err := gen.BuildTableContexts(in, nil)
 			if err != nil {
 				t.Fatalf("BuildTableContexts: %v", err)
@@ -959,7 +959,7 @@ func TestBuildRelationshipContexts_DeclaredReplacesInferred(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			in := testInput(declaredEntriesSchema())
-			parser.DetectRelationships(in.Schema)
+			detectRelationships(in.Schema)
 			in.Config.Tables["accounts"] = tt.tableCfg
 
 			rels, warnings := accountsRelationships(t, in)
@@ -1054,7 +1054,7 @@ func TestValidateResolvedFieldNames_DuplicateRelationshipField(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			in := testInput(declaredEntriesSchema())
-			parser.DetectRelationships(in.Schema)
+			detectRelationships(in.Schema)
 			in.Config.Tables["accounts"] = config.TableConfig{Relationships: tt.rels}
 
 			_, err := gen.BuildTableContexts(in, nil)

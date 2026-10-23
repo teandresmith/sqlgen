@@ -94,6 +94,36 @@ func entityNames(doc *manifest.Document) []string {
 	return names
 }
 
+// detectRelationships runs relationship detection on a hand-built schema. A
+// parsed schema carries a FOREIGN KEY constraint for every column reference,
+// and detection reads only the constraints, so each reference without one
+// gets one here first.
+func detectRelationships(s *parser.Schema) {
+	for i := range s.Tables {
+		t := &s.Tables[i]
+		for _, col := range t.Columns {
+			ref := col.FKReference
+			if ref == nil || ref.Synthetic || slices.ContainsFunc(t.Constraints, func(c parser.Constraint) bool {
+				return c.Type == parser.ForeignKey && slices.Equal(c.Columns, []string{col.Name})
+			}) {
+				continue
+			}
+			refCol := ref.Column
+			if refCol == "" {
+				refCol = "id"
+			}
+			t.Constraints = append(t.Constraints, parser.Constraint{
+				Type:             parser.ForeignKey,
+				Columns:          []string{col.Name},
+				ReferenceSchema:  ref.Schema,
+				ReferenceTable:   ref.Table,
+				ReferenceColumns: []string{refCol},
+			})
+		}
+	}
+	parser.DetectRelationships(s)
+}
+
 // --- entity-shape tests ---
 
 func TestBuild_SinglePKTable(t *testing.T) {
@@ -320,16 +350,16 @@ func TestBuild_M2MRelationship(t *testing.T) {
 					{Name: "user_id", Type: "uuid", PrimaryKey: true, FKReference: &parser.FKReference{Table: "users", Column: "id"}},
 					{Name: "role_id", Type: "uuid", PrimaryKey: true, FKReference: &parser.FKReference{Table: "roles", Column: "id"}},
 				},
-				// Composite PRIMARY KEY constraint is what the parser's
-				// junctionConstraint() matches against to flip the table from
-				// O2M into M2M (parser/relationship.go).
+				// Composite PRIMARY KEY constraint is what junction
+				// detection matches against to flip the table from O2M into
+				// M2M (parser.DetectRelationships).
 				Constraints: []parser.Constraint{
 					{Type: parser.PrimaryKey, Columns: []string{"user_id", "role_id"}},
 				},
 			},
 		},
 	}
-	parser.DetectRelationships(schema)
+	detectRelationships(schema)
 	doc, err := manifest.Build(testBuildInput(t, schema, cfg))
 	if err != nil {
 		t.Fatalf("Build: %v", err)
@@ -383,7 +413,7 @@ func TestBuild_M2MJunctionSchema(t *testing.T) {
 			junction("audit", "tag_id", "tags"),
 		},
 	}
-	parser.DetectRelationships(schema)
+	detectRelationships(schema)
 	doc, err := manifest.Build(testBuildInput(t, schema, cfg))
 	if err != nil {
 		t.Fatalf("Build: %v", err)
@@ -431,7 +461,7 @@ func TestBuild_FKSchema(t *testing.T) {
 			table("public", "event_refs", fkCol("event_id", "audit", "events", true)),
 		},
 	}
-	parser.DetectRelationships(schema)
+	detectRelationships(schema)
 	doc, err := manifest.Build(testBuildInput(t, schema, cfg))
 	if err != nil {
 		t.Fatalf("Build: %v", err)
@@ -474,7 +504,7 @@ func TestBuild_O2MFKNotOnTargetStaysOnTarget(t *testing.T) {
 			{Name: "notes", Columns: []parser.Column{{Name: "id", Type: "uuid", PrimaryKey: true}, {Name: "body", Type: "text"}}},
 		},
 	}
-	parser.DetectRelationships(schema)
+	detectRelationships(schema)
 	doc, err := manifest.Build(testBuildInput(t, schema, cfg))
 	if err != nil {
 		t.Fatalf("Build: %v", err)
@@ -1570,7 +1600,7 @@ func TestBuild_O2OSideDisambiguation(t *testing.T) {
 				Columns: []parser.Column{
 					{Name: "id", Type: "uuid", PrimaryKey: true},
 					// Nullable UNIQUE FK — auto-detection drives this through
-					// addO2O (Side: SideParent) so the manifest emits "o2o" on
+					// detection (Side: SideParent) so the manifest emits "o2o" on
 					// the User entity without any config help.
 					{
 						Name:        "profile_id",
@@ -1583,7 +1613,7 @@ func TestBuild_O2OSideDisambiguation(t *testing.T) {
 			},
 		},
 	}
-	parser.DetectRelationships(schema)
+	detectRelationships(schema)
 
 	// Inverse view from the referenced side: opt in via config with
 	// `side: child`. configRelationshipToContext threads Side through to

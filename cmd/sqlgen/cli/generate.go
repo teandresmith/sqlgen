@@ -63,7 +63,7 @@ func makeGenerateRunE(flags *cliFlags) func(*cobra.Command, []string) error {
 
 		// 5. Resolve PK overrides, then detect relationships.
 		applyPrimaryKeyOverrides(schema, cfg)
-		parser.DetectRelationships(schema)
+		printManifestWarnings(errOut, parser.DetectRelationships(schema), flags.quiet)
 
 		// 6. Generate.
 		result, err := gen.Generate(schema, cfg, Version)

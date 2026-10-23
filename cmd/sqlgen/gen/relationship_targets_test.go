@@ -39,11 +39,11 @@ func relTargetSchema() *parser.Schema {
 			}},
 		},
 		Relationships: []parser.Relationship{
-			{Name: "posts", SourceTable: "public.users", TargetTable: "public.posts", Type: parser.OneToMany, FKColumn: "user_id"},
-			{Name: "notes", SourceTable: "public.users", TargetTable: "public.notes", Type: parser.OneToMany, FKColumn: "user_id"},
+			{Name: "posts", SourceTable: "public.users", TargetTable: "public.posts", Type: parser.OneToMany, Key: []parser.KeyPair{{Local: "user_id", Referenced: "id"}}},
+			{Name: "notes", SourceTable: "public.users", TargetTable: "public.notes", Type: parser.OneToMany, Key: []parser.KeyPair{{Local: "user_id", Referenced: "id"}}},
 			{
 				Name: "tags", SourceTable: "public.users", TargetTable: "public.tags", Type: parser.ManyToMany,
-				JunctionTable: "public.user_tags", JunctionLocalFK: "user_id", JunctionReferenceFK: "tag_id",
+				JunctionTable: "public.user_tags", JunctionLocal: []parser.KeyPair{{Local: "user_id", Referenced: "id"}}, JunctionReference: []parser.KeyPair{{Local: "tag_id", Referenced: "id"}},
 			},
 		},
 	}
@@ -492,8 +492,8 @@ func TestRelationshipTargets_ChainedO2OIntoExcludedTableDropped(t *testing.T) {
 				{Name: "accounts", Schema: "public", Columns: []parser.Column{{Name: "id", Type: "uuid", PrimaryKey: true}}},
 			},
 			Relationships: []parser.Relationship{
-				{Name: "users", SourceTable: "public.profiles", TargetTable: "public.users", Type: parser.OneToOne, FKColumn: "user_id"},
-				{Name: "accounts", SourceTable: "public.users", TargetTable: "public.accounts", Type: parser.OneToOne, FKColumn: "account_id"},
+				{Name: "users", SourceTable: "public.profiles", TargetTable: "public.users", Type: parser.OneToOne, Key: []parser.KeyPair{{Local: "user_id", Referenced: "id"}}},
+				{Name: "accounts", SourceTable: "public.users", TargetTable: "public.accounts", Type: parser.OneToOne, Key: []parser.KeyPair{{Local: "account_id", Referenced: "id"}}},
 			},
 		}
 	}
@@ -787,15 +787,15 @@ func excludedMemberSchema() *parser.Schema {
 			}},
 		},
 		Relationships: []parser.Relationship{
-			{Name: "tasks", BaseName: "tasks", SourceTable: "public.cycles", TargetTable: "public.tasks", Type: parser.OneToMany, FKColumn: "cycle_id"},
-			{Name: "users", BaseName: "users", SourceTable: "public.profiles", TargetTable: "public.users", Type: parser.OneToOne, FKColumn: "user_id"},
+			{Name: "tasks", BaseName: "tasks", SourceTable: "public.cycles", TargetTable: "public.tasks", Type: parser.OneToMany, Key: []parser.KeyPair{{Local: "cycle_id", Referenced: "id"}}},
+			{Name: "users", BaseName: "users", SourceTable: "public.profiles", TargetTable: "public.users", Type: parser.OneToOne, Key: []parser.KeyPair{{Local: "user_id", Referenced: "id"}}},
 			{
 				Name: "tags", BaseName: "tags", SourceTable: "public.posts", TargetTable: "public.tags", Type: parser.ManyToMany,
-				JunctionTable: "public.post_tags", JunctionLocalFK: "post_id", JunctionReferenceFK: "tag_id",
+				JunctionTable: "public.post_tags", JunctionLocal: []parser.KeyPair{{Local: "post_id", Referenced: "id"}}, JunctionReference: []parser.KeyPair{{Local: "tag_id", Referenced: "id"}},
 			},
 			{
 				Name: "posts", BaseName: "posts", SourceTable: "public.tags", TargetTable: "public.posts", Type: parser.ManyToMany,
-				JunctionTable: "public.post_tags", JunctionLocalFK: "tag_id", JunctionReferenceFK: "post_id",
+				JunctionTable: "public.post_tags", JunctionLocal: []parser.KeyPair{{Local: "tag_id", Referenced: "id"}}, JunctionReference: []parser.KeyPair{{Local: "post_id", Referenced: "id"}},
 			},
 		},
 	}

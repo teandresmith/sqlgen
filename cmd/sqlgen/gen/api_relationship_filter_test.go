@@ -31,7 +31,7 @@ func relFilterAPIContext(t *testing.T, tweak func(cfg *config.RootConfig)) *gen.
 	in := apiTestInput(t, relFilterSchema())
 	// Relationship detection is a parser step; the context builders consume
 	// its output rather than re-deriving it.
-	parser.DetectRelationships(in.Schema)
+	detectRelationships(in.Schema)
 	if tweak != nil {
 		tweak(in.Config)
 	}
@@ -173,7 +173,7 @@ func TestAPIFilterRelationships_APIDisabledTargetDropped(t *testing.T) {
 	// member, because `access` and `api.enabled` never narrow the core client
 	// (§32.1's load-bearing principle, which §26.10 follows).
 	in := apiTestInput(t, relFilterSchema())
-	parser.DetectRelationships(in.Schema)
+	detectRelationships(in.Schema)
 	tables, err := gen.BuildTableContextsFromSchema(in.Schema, in.Config)
 	if err != nil {
 		t.Fatalf("BuildTableContextsFromSchema: %v", err)
@@ -253,7 +253,7 @@ func selfRefAPIContext(t *testing.T) *gen.APIContext {
 			},
 		}},
 	})
-	parser.DetectRelationships(in.Schema)
+	detectRelationships(in.Schema)
 	tables, views, err := gen.BuildEntityContextsFromSchema(in.Schema, in.Config)
 	if err != nil {
 		t.Fatalf("BuildEntityContextsFromSchema: %v", err)
@@ -417,7 +417,7 @@ func TestAPIFilterRelationships_ViewsCarryNone(t *testing.T) {
 		apiViewCol("email", "text", false, false),
 	}}}
 	in := apiTestInput(t, sch)
-	parser.DetectRelationships(in.Schema)
+	detectRelationships(in.Schema)
 	tables, views, err := gen.BuildEntityContextsFromSchema(in.Schema, in.Config)
 	if err != nil {
 		t.Fatalf("BuildEntityContextsFromSchema: %v", err)
@@ -474,7 +474,7 @@ func relFilterValidateSchema() *parser.Schema {
 			{Name: "status", Type: "text"},
 		}},
 	}}
-	parser.DetectRelationships(sch)
+	detectRelationships(sch)
 	return sch
 }
 

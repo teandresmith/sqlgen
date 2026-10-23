@@ -204,7 +204,7 @@ func buildFilteredAssets(t *testing.T, dialect config.Dialect, rel config.TableR
 	if dialect != config.DialectPostgres {
 		in.Config.Output.Driver = "stdlib"
 	}
-	parser.DetectRelationships(in.Schema)
+	detectRelationships(in.Schema)
 	in.Config.Tables["assets"] = config.TableConfig{
 		Relationships: []config.TableRelationship{rel},
 	}
@@ -334,7 +334,7 @@ func buildListFilterAssets(dialect config.Dialect, compositePK bool, rel config.
 	if dialect != config.DialectPostgres {
 		in.Config.Output.Driver = "stdlib"
 	}
-	parser.DetectRelationships(in.Schema)
+	detectRelationships(in.Schema)
 	in.Config.Tables["assets"] = config.TableConfig{
 		Relationships: []config.TableRelationship{rel},
 	}

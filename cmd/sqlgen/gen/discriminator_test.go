@@ -52,7 +52,7 @@ func discriminatorTables(t *testing.T, dialect config.Dialect, rel config.TableR
 	if dialect != config.DialectPostgres {
 		in.Config.Output.Driver = "stdlib"
 	}
-	parser.DetectRelationships(in.Schema)
+	detectRelationships(in.Schema)
 	in.Config.Tables["assets"] = config.TableConfig{
 		Relationships: []config.TableRelationship{rel},
 	}
@@ -254,7 +254,7 @@ func TestDiscriminatorLiterals(t *testing.T) {
 // predicate.
 func TestDiscriminator_SubCategorizedEdgesStayDistinct(t *testing.T) {
 	in := testInput(discriminatorSchema())
-	parser.DetectRelationships(in.Schema)
+	detectRelationships(in.Schema)
 
 	rels := make([]config.TableRelationship, 0, 3)
 	for _, v := range []string{"asset.primary", "asset.attachment", "asset.invoice"} {

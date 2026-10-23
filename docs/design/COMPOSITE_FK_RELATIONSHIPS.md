@@ -164,6 +164,7 @@ type Relationship struct {
     JunctionTable     string
     JunctionLocal     []KeyPair // junction → this table
     JunctionReference []KeyPair // junction → target
+    JunctionLocalConstraint, JunctionReferenceConstraint string // each junction FK's name (§4.7's manifest `junction`)
 }
 ```
 
@@ -191,7 +192,9 @@ call sites (`generate.go`, `pipeline.go`, `validate.go`) already run detection t
    non-key column (fixture 10b, §9.4), and the MySQL equivalent. That edge's loader joins the
    wrong column (§4.9), so the change is deliberate.
 2. **Redundant FKs.** An FK whose (local → referenced) pairs are a subset of another FK's
-   pairs to the same target gives no edge; of two identical FKs, the first declared is kept.
+   pairs to the same target gives no edge; of two identical FKs, the first declared is kept
+   (under `database` on MySQL, whose catalog keeps no declared order, the one whose name sorts
+   first; ruled 2026-10-23).
    A schema mid-migration that holds both `cycle_id → cycles(id)` and
    `(workspace_id, cycle_id) → cycles(workspace_id, id)` gets one edge, through the composite
    key. Without this step both edges are emitted with colliding names (§9.4, fixtures 12c,
@@ -434,6 +437,8 @@ Intended changes in output for N = 1, all on schemas no example has:
   `restrict_fk_on_non_standard_key` off) does the same; not measured.
 - **An excluded FK column** loses its edge (§4.3), landed early by FIX-358. Before it, an O2M one
   did not compile; O2O and M2M ones worked and are dropped by ruling.
+- **A column with single-column FKs to two tables** gives an edge to each (32.2). Today
+  `deriveFKReferences` gives the column one reference, so it gives one edge.
 
 ## 5. What this does not cover
 

@@ -3,6 +3,7 @@ package gen_test
 import (
 	"maps"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -45,6 +46,36 @@ func testInput(schema *parser.Schema) *gen.GenerateInput {
 		Config:   cfg,
 		Resolver: resolver,
 	}
+}
+
+// detectRelationships runs relationship detection on a hand-built schema. A
+// parsed schema carries a FOREIGN KEY constraint for every column reference,
+// and detection reads only the constraints, so each reference without one
+// gets one here first.
+func detectRelationships(s *parser.Schema) {
+	for i := range s.Tables {
+		t := &s.Tables[i]
+		for _, col := range t.Columns {
+			ref := col.FKReference
+			if ref == nil || ref.Synthetic || slices.ContainsFunc(t.Constraints, func(c parser.Constraint) bool {
+				return c.Type == parser.ForeignKey && slices.Equal(c.Columns, []string{col.Name})
+			}) {
+				continue
+			}
+			refCol := ref.Column
+			if refCol == "" {
+				refCol = "id"
+			}
+			t.Constraints = append(t.Constraints, parser.Constraint{
+				Type:             parser.ForeignKey,
+				Columns:          []string{col.Name},
+				ReferenceSchema:  ref.Schema,
+				ReferenceTable:   ref.Table,
+				ReferenceColumns: []string{refCol},
+			})
+		}
+	}
+	parser.DetectRelationships(s)
 }
 
 // --- Enum context tests ---
@@ -1563,14 +1594,14 @@ func TestBuildTableContexts_relationshipDescription(t *testing.T) {
 				SourceTable: "products",
 				TargetTable: "companies",
 				Type:        parser.OneToOne,
-				FKColumn:    "company_id",
+				Key:         []parser.KeyPair{{Local: "company_id", Referenced: "id"}},
 			},
 			{
 				Name:        "reviews",
 				SourceTable: "products",
 				TargetTable: "reviews",
 				Type:        parser.OneToMany,
-				FKColumn:    "product_id",
+				Key:         []parser.KeyPair{{Local: "product_id", Referenced: "id"}},
 			},
 		},
 	}
@@ -1643,7 +1674,7 @@ func TestBuildTableContexts_relationshipFKNullable(t *testing.T) {
 				SourceTable: "public.categories",
 				TargetTable: "public.categories",
 				Type:        parser.OneToMany,
-				FKColumn:    "parent_id",
+				Key:         []parser.KeyPair{{Local: "parent_id", Referenced: "id"}},
 			},
 			// Plain O2M with non-nullable FK on the child side.
 			{
@@ -1651,7 +1682,7 @@ func TestBuildTableContexts_relationshipFKNullable(t *testing.T) {
 				SourceTable: "public.users",
 				TargetTable: "public.posts",
 				Type:        parser.OneToMany,
-				FKColumn:    "author_id",
+				Key:         []parser.KeyPair{{Local: "author_id", Referenced: "id"}},
 			},
 		},
 	}
@@ -1690,7 +1721,7 @@ func TestBuildTableContexts_relationshipFKNullable(t *testing.T) {
 }
 
 // O2O FKNullable must be resolved against whichever table
-// actually carries the FK column. Auto-detected (addO2O) edges hold the FK on
+// actually carries the FK column. Auto-detected edges hold the FK on
 // the *source*/parent table; config edges hold it on the *target*. The wiring
 // previously looked up the FK on the target unconditionally, so auto-detected
 // O2O edges silently resolved FKNullable to its zero value (false). No template
@@ -1743,7 +1774,7 @@ func TestBuildTableContexts_relationshipFKNullable_O2O(t *testing.T) {
 				TargetTable: "public.profiles",
 				Type:        parser.OneToOne,
 				Side:        parser.SideParent,
-				FKColumn:    "primary_profile_id",
+				Key:         []parser.KeyPair{{Local: "primary_profile_id", Referenced: "id"}},
 			},
 			// Config-shaped O2O: FK (entity_id) lives on the target (documents).
 			// Target lookup must win — the parent (assets) has no such column.
@@ -1753,7 +1784,7 @@ func TestBuildTableContexts_relationshipFKNullable_O2O(t *testing.T) {
 				TargetTable: "public.documents",
 				Type:        parser.OneToOne,
 				Side:        parser.SideParent,
-				FKColumn:    "entity_id",
+				Key:         []parser.KeyPair{{Local: "entity_id", Referenced: "id"}},
 			},
 		},
 	}
@@ -1799,8 +1830,8 @@ func TestBuildTableContexts_relationshipFKNullable_O2O(t *testing.T) {
 // columns and then throw it away; the write-side emitters need the same fact,
 // and a second derivation is free to drift from the first.
 //
-// Side does not answer this question and is untouched by the hoist: addO2O and
-// addO2M both hard-code SideParent, and a config-declared edge defaults to
+// Side does not answer this question and is untouched by the hoist: detection
+// always sets SideParent, and a config-declared edge defaults to
 // "parent" while putting the FK on the target — the shape of the graphql
 // example's assets.PrimaryDocument, asserted below.
 func TestBuildTableContexts_relationshipFKOnTarget(t *testing.T) {
@@ -1886,7 +1917,7 @@ func TestBuildTableContexts_relationshipFKOnTarget(t *testing.T) {
 			},
 		},
 	}
-	parser.DetectRelationships(input.Schema)
+	detectRelationships(input.Schema)
 
 	contexts, err := gen.BuildTableContexts(input, nil)
 	if err != nil {
@@ -2010,7 +2041,7 @@ func TestBuildO2OJoinDetails_chainedFKOnTarget(t *testing.T) {
 			{Name: "PrimaryAddress", Type: "one_to_one", Table: "addresses", FK: "customer_id"},
 		},
 	}
-	parser.DetectRelationships(input.Schema)
+	detectRelationships(input.Schema)
 
 	contexts, err := gen.BuildTableContexts(input, nil)
 	if err != nil {
@@ -2090,7 +2121,7 @@ func TestBuildO2OJoinDetails_fkOnTargetParentPKName(t *testing.T) {
 			{Name: "Badge", Type: "one_to_one", Table: "badges", FK: "profile_id"},
 		},
 	}
-	parser.DetectRelationships(input.Schema)
+	detectRelationships(input.Schema)
 
 	contexts, err := gen.BuildTableContexts(input, nil)
 	if err != nil {

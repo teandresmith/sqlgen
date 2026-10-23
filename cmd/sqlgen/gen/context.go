@@ -296,6 +296,10 @@ type RelationshipContext struct {
 	TargetStructName string
 	// FKColumn is the foreign key column name (O2O/O2M).
 	FKColumn string
+	// Constraints names the FOREIGN KEY constraints a detected edge comes
+	// from: its own for O2O / O2M, the junction's two for M2M. Empty for a
+	// declared edge.
+	Constraints []string
 	// FKFieldName is the Go field name for the FK column (e.g., "ProductID").
 	// The FK column lives on the *target* table for O2M edges, so this is
 	// resolved cross-table in wireRelationshipFKMetadata rather than derived
@@ -305,7 +309,7 @@ type RelationshipContext struct {
 	// Which column it names follows the same table the rest of the FK
 	// metadata is read from: the target table's FKColumn for O2M/O2O, and
 	// the junction's JunctionLocalFK for M2M — where FKColumn is empty on
-	// every auto-detected edge (parser.addM2M sets only the junction FKs),
+	// every auto-detected edge (detection sets only the junction keys),
 	// so there was nothing to derive from before. Only get.go.tmpl's O2M
 	// loader consumes this today.
 	FKFieldName string

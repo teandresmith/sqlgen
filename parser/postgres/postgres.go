@@ -1791,6 +1791,9 @@ func (p *Parser) parseConstraintNode(c *pg_query.Constraint) parser.Constraint {
 			constraint.ReferenceSchema = p.referenceSchema(c.Pktable)
 		}
 		constraint.ReferenceColumns = extractStringList(c.PkAttrs)
+		if c.FkMatchtype == "f" {
+			constraint.Match = parser.MatchFull
+		}
 
 	default:
 		// Other constraint types not relevant at table level.

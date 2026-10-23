@@ -138,13 +138,13 @@ func wireRelFKMetadata(r *RelationshipContext, parent *TableContext, pkColumns m
 	switch r.Type {
 	case parser.OneToMany:
 		// O2M: the FK column lives on the target (many) table for both
-		// auto-detected (addO2M) and config edges. This is the only path that
+		// auto-detected and config edges. This is the only path that
 		// actually consumes FKNullable today (the get.go.tmpl relationship
 		// loader picks a nullable comparator off it).
 		wireRelFKFromTable(r, fkCol, r.TargetSchema, r.TargetTable, colsByTable)
 	case parser.OneToOne:
 		// O2O FK placement depends on the edge's origin: auto-detected
-		// (addO2O) edges carry the FK on the *source*/parent table, while
+		// edges carry the FK on the *source*/parent table, while
 		// config edges (e.g. `fk: entity_id` referencing the target) carry it
 		// on the *target*. Resolve against whichever table actually holds the
 		// column so FKNullable / FKColumnGoType are correct for both shapes —
@@ -210,7 +210,7 @@ func applyRelFKFallbacks(r *RelationshipContext, parent *TableContext, fkCol str
 // FKColumnGoType for r by reading fkCol off the table identified by
 // (schema, name). It reports whether that table actually carries fkCol, so
 // O2O callers can fall back to the parent table when the FK lives on the
-// source side (auto-detected addO2O edges) rather than the target. Returns
+// source side (auto-detected O2O edges) rather than the target. Returns
 // false — leaving r untouched — when the table is absent from the lookup or
 // does not declare fkCol.
 func wireRelFKFromTable(r *RelationshipContext, fkCol, schema, name string, colsByTable map[string]map[string]ColumnContext) bool {
@@ -641,25 +641,54 @@ func validateResolvedFieldNames(
 // replacement (§13.4). What remains is two declared entries whose
 // names pascalize onto one field, which config.validateRelationships misses
 // because it compares `name:` byte-equal (`primary_document` and
-// `PrimaryDocument` are distinct names, one field), or two inferred edges to
-// different targets whose names pluralize onto one.
+// `PrimaryDocument` are distinct names, one field), two inferred edges to
+// different targets whose names pluralize onto one, or two inferred edges
+// that disambiguation left one name (PRD §5.3 rule 6). The last is reported
+// with the foreign keys behind both edges, since its remedy is to exclude the
+// name and declare the edges by hand.
 //
 // rels is sorted by Name before this runs, so the reported pair is stable.
 func validateDuplicateRelationshipFields(qualifiedTable string, rels []RelationshipContext) error {
-	seen := make(map[string]string, len(rels))
+	seen := make(map[string]int, len(rels))
 	var errs []error
 	for i := range rels {
-		prev, taken := seen[rels[i].FieldName]
+		j, taken := seen[rels[i].FieldName]
 		if !taken {
-			seen[rels[i].FieldName] = rels[i].Name
+			seen[rels[i].FieldName] = i
+			continue
+		}
+		prev := rels[j]
+		if prev.Name == rels[i].Name && len(prev.Constraints) > 0 && len(rels[i].Constraints) > 0 {
+			// rels are sorted by Name alone, so the pair is ordered here.
+			first, second := quotedConstraints(prev), quotedConstraints(rels[i])
+			if second < first {
+				first, second = second, first
+			}
+			errs = append(errs, fmt.Errorf(
+				"tables.%s.relationships: two detected relationships are both named %q after disambiguation, one from %s and one from %s; list %q in `exclude_relationships` and declare both edges by hand (PRD §5.3, §13.4)",
+				qualifiedTable, rels[i].Name, first, second, rels[i].Name,
+			))
 			continue
 		}
 		errs = append(errs, fmt.Errorf(
 			"tables.%s.relationships: relationships %q and %q both resolve to the Go field %q — two relationships on one table cannot share a Go field name (PRD §13.7.3); rename one, or drop an auto-detected edge with `exclude_relationships`",
-			qualifiedTable, prev, rels[i].Name, rels[i].FieldName,
+			qualifiedTable, prev.Name, rels[i].Name, rels[i].FieldName,
 		))
 	}
 	return errors.Join(errs...)
+}
+
+// quotedConstraints spells the foreign keys behind a detected edge: one for an
+// O2O / O2M edge, the junction's two for an M2M edge.
+func quotedConstraints(rel RelationshipContext) string {
+	quoted := make([]string, len(rel.Constraints))
+	for i, c := range rel.Constraints {
+		quoted[i] = strconv.Quote(c)
+	}
+	if len(quoted) == 1 {
+		return "foreign key " + quoted[0]
+	}
+	return "foreign keys " + strings.Join(quoted, " and ")
 }
 
 // validateDuplicateFieldNames is the override-gated half of the rule: two
@@ -1416,7 +1445,7 @@ func buildRelationshipContexts(
 		// never asked for, so it is omitted rather than failing a build that
 		// the skipped table is otherwise not part of (§4.13's auto-included
 		// rule).
-		if !targets.generates(r.TargetTable) {
+		if !targets.generates(r.TargetTable) || compositeKeyEdge(r) {
 			continue
 		}
 		// A key column `exclude_columns` removes has no field for the loader,
@@ -1567,6 +1596,17 @@ func relationshipToContext(schema *parser.Schema, r parser.Relationship, targets
 		sorts = append(sorts, SortContext{Column: s.Column, Direction: sortDirection(s.Direction)})
 	}
 
+	// Callers omit an edge with more than one key pair (compositeKeyEdge), so
+	// each key here is one column.
+	var fkCol, localFK, referenceFK string
+	constraints := []string{r.Constraint}
+	if r.Type == parser.ManyToMany {
+		localFK, referenceFK = r.JunctionLocal[0].Local, r.JunctionReference[0].Local
+		constraints = []string{r.JunctionLocalConstraint, r.JunctionReferenceConstraint}
+	} else {
+		fkCol = r.Key[0].Local
+	}
+
 	jSchema, jName := splitQualifiedName(r.JunctionTable)
 	return RelationshipContext{
 		Name:                name,
@@ -1575,12 +1615,13 @@ func relationshipToContext(schema *parser.Schema, r parser.Relationship, targets
 		TargetTable:         tName,
 		TargetSchema:        tSchema,
 		TargetStructName:    targetStruct,
-		FKColumn:            r.FKColumn,
-		FKOnTarget:          fkColumnOnTarget(schema, r.Type, tSchema, tName, r.FKColumn),
+		FKColumn:            fkCol,
+		Constraints:         constraints,
+		FKOnTarget:          fkColumnOnTarget(schema, r.Type, tSchema, tName, fkCol),
 		JunctionTable:       jName,
 		JunctionSchema:      jSchema,
-		JunctionLocalFK:     r.JunctionLocalFK,
-		JunctionReferenceFK: r.JunctionReferenceFK,
+		JunctionLocalFK:     localFK,
+		JunctionReferenceFK: referenceFK,
 		Filter:              r.Filter,
 		Sort:                sorts,
 		FieldName:           fieldName,
@@ -2682,7 +2723,7 @@ func findO2ORelationships(schema *parser.Schema, table *parser.Table, tableCfg c
 			continue
 		}
 		// Skipped rather than reported: buildRelationshipContexts reports it.
-		if !targets.generates(r.TargetTable) || targets.excludedKeyMember(schema, r) != "" {
+		if !targets.generates(r.TargetTable) || compositeKeyEdge(r) || targets.excludedKeyMember(schema, r) != "" {
 			continue
 		}
 		results = append(results, chainedRelInfo{
@@ -2916,12 +2957,8 @@ func classifyRelationships(rels []RelationshipContext) (o2o, o2m, m2m []Relation
 // see autoDetectPKStrategy, where treating one as real demotes a `db` PK to
 // `caller`.
 //
-// Ordering matters and is not enforced by the type system: the CLI runs
-// cli.applyPrimaryKeyOverrides and then parser.DetectRelationships on this
-// schema *before* handing it to gen, so relationship classification sees the
-// resolved primary key but never the references stamped here. A
-// synthetic reference on a sole-PK column would otherwise promote that edge
-// to a spurious O2O (parser.columnUnique).
+// Relationship detection never sees these references: it reads the FOREIGN
+// KEY constraints, which this adds none of.
 func applyConfigDeclaredFKs(schema *parser.Schema, cfg *config.RootConfig) {
 	if schema == nil || cfg == nil {
 		return

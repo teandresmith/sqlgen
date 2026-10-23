@@ -62,7 +62,7 @@ func loadAndValidate(ctx context.Context, flags *cliFlags, errOut io.Writer) (*c
 	printWarnings(errOut, postWarnings, flags.quiet)
 
 	applyPrimaryKeyOverrides(schema, cfg)
-	parser.DetectRelationships(schema)
+	printManifestWarnings(errOut, parser.DetectRelationships(schema), flags.quiet)
 
 	return cfg, schema, nil
 }

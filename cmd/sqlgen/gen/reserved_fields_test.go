@@ -215,7 +215,7 @@ func TestReservedFieldName_Relationship(t *testing.T) {
 				Type:        parser.OneToMany,
 				SourceTable: "users",
 				TargetTable: "column",
-				FKColumn:    "user_id",
+				Key:         []parser.KeyPair{{Local: "user_id", Referenced: "id"}},
 			},
 		},
 	}

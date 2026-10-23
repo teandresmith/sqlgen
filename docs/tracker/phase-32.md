@@ -32,7 +32,10 @@ PRD Sections: 4.6, 4.8, 4.13, 5.3, 8.1.7, 8.2, 8.6, 8.7, 9.8.13, 9.9, 11.1, 13.1
 >   detected one is omitted, as a composite FK is today, and a declared one is a generation error
 >   naming the relationship and the sub-item that lifts it. 32.5 lifts it for reads; until 32.6,
 >   such an edge is nested-ineligible with that reason (PRD §9.9.4). Each lift is a task in its
->   sub-item, and the guard is gone at closure.
+>   sub-item, and the guard is gone at closure. While it stands, two shapes lose an edge they have
+>   today, since detection drops it for a composite edge the guard hides: a single-column FK inside
+>   a composite one to the same target (rule 2), and a tenant-column FK set aside on a tenant
+>   junction (rule 4). No example has either.
 > - **Fail first.** Each behavior change starts with a test that fails at HEAD. Record the failure
 >   in the Completion Record.
 > - **Every dialect.** Every builder and loader change covers PostgreSQL (pgx and stdlib), MySQL
@@ -297,24 +300,24 @@ confirmed again, no `SupportsTupleIN` reference left in code or living spec. Its
 
 **PRD Reference:** Sections 5.2, 5.3, 13.1, 13.5
 
-**Status:** Not Started
+**Status:** Complete
 
 ### Tasks
 
-- [ ] Start from `.claude/prototypes/composite-fk/detect-proto.patch` (it applies at `244ce2ee`;
+- [x] Start from `.claude/prototypes/composite-fk/detect-proto.patch` (it applies at `244ce2ee`;
   it adds `parser/proto_detect.go` and `cmd/sqlgen/cli/proto_detect_test.go`). Fold its rules into
   `parser.DetectRelationships` and its fixtures into `parser/relationship_test.go`. Delete the
   prototype files.
-- [ ] `parser/schema.go`: add `KeyPair{Local, Referenced}`. On `Relationship`, add `Constraint`,
+- [x] `parser/schema.go`: add `KeyPair{Local, Referenced}`. On `Relationship`, add `Constraint`,
   `Key`, `JunctionTable`, `JunctionLocal` and `JunctionReference`, and remove `FKColumn`,
   `JunctionLocalFK` and `JunctionReferenceFK` (`parser/schema.go:349-352`). Key lists are in the
   FK's declared column order.
-- [ ] `parser.Constraint.Match` (PostgreSQL only, R2):
+- [x] `parser.Constraint.Match` (PostgreSQL only, R2):
   - the file parser reads it from `pg_query` `Constraint.FkMatchtype`;
   - introspection reads it from `pg_constraint.confmatchtype`;
   - MySQL and SQLite leave it SIMPLE;
   - `assertSchemaParity` covers it.
-- [ ] Detection (design §4.2), from `Table.Constraints`:
+- [x] Detection (design §4.2), from `Table.Constraints`:
   - **rule 1, target key:** the resolved PK, the declared PRIMARY KEY constraint, or a
     non-partial UNIQUE, as a set (design §7.1); `REFERENCES t`
     with no column list is the PK; empty SQLite `ReferenceColumns` is unresolvable;
@@ -327,18 +330,18 @@ confirmed again, no `SupportsTupleIN` reference left in code or living spec. Its
   - **rule 6:** self-reference disambiguation keyed on the naming member. The residual name
     collision error is checked after `exclude_relationships` and manual replacements apply
     (resolution-level, PRD §4.13; design §7.1), so it lives in `gen`, not in detection.
-- [ ] The unresolvable-key warning: printed after detection, not through `schema.Warnings`,
+- [x] The unresolvable-key warning: printed after detection, not through `schema.Warnings`,
   which is printed first. It names the constraint (or `table(columns) → target(columns)` on
   SQLite) and §13.4.
-- [ ] `Column.FKReference` stays a single-column property (design §4.6). Confirm
+- [x] `Column.FKReference` stays a single-column property (design §4.6). Confirm
   `deriveFKReferences` still sets it only from single-column FKs.
-- [ ] Mechanical migration of every reader of the removed fields to `Key[0]` / `JunctionLocal[0]`
+- [x] Mechanical migration of every reader of the removed fields to `Key[0]` / `JunctionLocal[0]`
   / `JunctionReference[0]`: `gen`, `config`, `manifest`, `mcp`, `cli`. No behavior change for
   N = 1.
-- [ ] Staging guard (see ground rules): `relationshipTargets` omits a detected edge with
+- [x] Staging guard (see ground rules): `relationshipTargets` omits a detected edge with
   `len(Key) > 1` (or either junction list longer than 1), keeping today's output. Pin it with a
   test that 32.5 inverts.
-- [ ] `applyConfigDeclaredFKs` and manual relationships produce one-pair `Key` lists. 32.3 adds
+- [x] `applyConfigDeclaredFKs` and manual relationships produce one-pair `Key` lists. 32.3 adds
   the list form.
 
 ### Acceptance Criteria
@@ -356,7 +359,7 @@ confirmed again, no `SupportsTupleIN` reference left in code or living spec. Its
 
 ### Tests Required
 
-- [ ] `parser/relationship_test.go`, table-driven (design §6.1):
+- [x] `parser/relationship_test.go`, table-driven (design §6.1):
   - the tenant pattern → O2M; a UNIQUE subset → O2O;
   - reversed column order; FK to a non-PK UNIQUE; FK to a composite PK;
   - FK to non-key columns → no edge, one warning;
@@ -368,15 +371,158 @@ confirmed again, no `SupportsTupleIN` reference left in code or living spec. Its
   - a residual collision → error;
   - a PK override moves the target key;
   - detection is idempotent.
-- [ ] Parity: each shape under `files` and `database` on all three dialects, through
+- [x] Parity: each shape under `files` and `database` on all three dialects, through
   `assertSchemaParity` and the `parser/introspect` integration tests.
-- [ ] `Constraint.Match`: PostgreSQL `MATCH FULL` under both sources; MySQL and SQLite SIMPLE.
-- [ ] The staging-guard test: a composite FK generates the same Go as today (no edge).
-- [ ] `TestE2EGoldenFiles` green with no golden change.
+- [x] `Constraint.Match`: PostgreSQL `MATCH FULL` under both sources; MySQL and SQLite SIMPLE.
+- [x] The staging-guard test: a composite FK generates the same Go as today (no edge).
+- [x] `TestE2EGoldenFiles` green with no golden change.
 
 ### Completion Record
 
-_Filled in when complete: files changed, commit references, notes._
+Completed 2026-10-23 on `design/tenant-composite-fk-relationships`, uncommitted.
+
+**Fail first** (throwaway probe in a HEAD worktree, and the new CLI tests run there):
+- the tenant FK `(workspace_id, cycle_id) → cycles(workspace_id, id)` gave no `cycles → tasks` edge;
+- a second `DetectRelationships` run doubled the edges (2 → 4);
+- a SQLite FK to the non-key `workspaces(slug)` gave an O2M edge and no warning
+  (`TestDetectionWarningIsPrinted` fails at HEAD);
+- `TestGenerate_DetectedNameCollisionIsAnError` failed at HEAD with the generic "both resolve to
+  the Go field" message.
+- `TestGenerate_CompositeKeyEdgeIsOmitted` passes at HEAD by design: it pins today's output, and
+  32.5 inverts it.
+
+**Files.**
+- Parser:
+  - `parser/schema.go` (`KeyPair`, `Relationship` keys, `Constraint.Match`, `MatchType`);
+  - `parser/relationship.go` (rewritten);
+  - `parser/postgres/postgres.go` (`FkMatchtype`);
+  - `parser/introspect/postgres.go` (`confmatchtype`, OID order).
+- CLI: `cmd/sqlgen/cli/{generate,pipeline,validate}.go`, which print the detection warnings.
+- gen:
+  - `cmd/sqlgen/gen/relationship_targets.go` (`compositeKeyEdge`, `excludedKeyMember` over key pairs);
+  - `context_table.go` (key-list migration, the guard at both loops, the collision error);
+  - `context.go` (`RelationshipContext.Constraints`).
+- Comments: `cmd/sqlgen/manifest/builder.go`.
+- Tests:
+  - `parser/relationship_test.go` (rewritten; `junction_temp_test.go` removed);
+  - `parser/introspect/relationship_parity_test.go` (new);
+  - `parser/{postgres,mysql,sqlite}/*_test.go`;
+  - `parser/schema_test.go`;
+  - `cmd/sqlgen/cli/relationship_detection_test.go` (new);
+  - fixture migration in `cmd/sqlgen/{gen,manifest,cli}` tests.
+- Docs: PRD §5.3, design §4.1, §4.2, §4.9, this file, `STATUS.md`.
+
+**Detection** (`parser/relationship.go`, rewritten from the prototype's rules):
+- It reads `Table.Constraints` and replaces `schema.Relationships` instead of appending to it,
+  so it is idempotent. It returns the non-key warnings, and `generate`, `validate` and
+  `loadAndValidate` print them after `schema.Warnings`.
+- Each table's FKs are ordered by their columns' positions, then as declared, which reproduces
+  today's column-order iteration for N = 1. Rule 2's tie-break keeps the first declared of
+  identical keys, by declared index, whatever order each lists its columns in. The PostgreSQL introspector now reads constraints in `pg_constraint`
+  OID order, which is declared order (probed: inline FK, table-level FKs, then `ALTER`). The
+  MySQL catalog keeps no declared order (probed: `SHOW CREATE TABLE` and `information_schema`
+  list by name), so MySQL under `database` keeps the key whose name sorts first. That is the one
+  stated parity exception, pinned by `TestDetectRelationships_MySQLIdenticalKeysByName`.
+- Rule 1 reads the resolved PK, the declared PRIMARY KEY and non-partial UNIQUEs. Rule 3 reads
+  the resolved PK and UNIQUEs, which is today's O2O rule. Rule 4 reads only PRIMARY KEY and
+  UNIQUE constraints, so a `primary_key` override over two FKs still makes no junction
+  (`TestApplyPrimaryKeyOverrides_CompositeIsNotAJunction`).
+- Rule 4 also counts FKs that give no edge: one into a table outside the schema, or one whose
+  referenced columns are not a key. A junction with such an end gives no edge, as today. This was
+  added on the review's finding: without it, a `team_members` junction into Supabase's
+  `auth.users` grew a new `TeamMembers` O2M. It is pinned by two fixtures.
+- `Relationship` also carries `JunctionLocalConstraint` / `JunctionReferenceConstraint`, which
+  PRD §30.4.2's manifest `junction` needs. Design §4.1 is updated. An unnamed FK is named
+  `table(columns) → target(columns)`.
+- The residual name collision is checked in gen's `validateDuplicateRelationshipFields`, after
+  exclusions and replacements, and names both edges' constraints (`RelationshipContext.Constraints`).
+  It is reachable at N = 1 today: `users.organization_id` beside an `organization_users`
+  junction names both edges `organization_users`. `exclude_relationships` clears it (tested).
+
+**Tasks recorded as found:**
+- `Column.FKReference`: `fkReferenceOwner` still skips any FK with `len(c.Columns) != 1`
+  (`parser/canonical.go`).
+- The migration touched only gen (`relationshipToContext`, `excludedKeyMember`, which now checks
+  every pair on both sides) and test fixtures. `config`, `manifest` and `mcp` read gen's
+  `RelationshipContext` or the manifest types, never `parser.Relationship`.
+- No `Key` lists come from config yet. Neither `applyConfigDeclaredFKs` (it only stamps
+  synthetic `FKReference`s, which detection no longer reads) nor manual relationships (they build
+  `RelationshipContext` directly) produce a `parser.Relationship`. 32.3/32.4 own that path.
+- The prototype's patch was folded in, never applied to the tree. The patch file is still in
+  `.claude/prototypes/composite-fk/`.
+
+**Staging guard.** `compositeKeyEdge` (`gen/relationship_targets.go`) drops a detected edge whose
+key, or either junction key, has more than one pair. It applies at both `schema.Relationships`
+loops (`buildRelationshipContexts`, `findO2ORelationships`).
+`TestGenerate_CompositeKeyEdgeIsOmitted` covers composite O2M, O2O, a chained O2O reaching it,
+and a tenant junction: the generated Go is byte-identical to the same schema without those FKs.
+A mutation of the chained-O2O site or of the M2M arm fails it. Known gap until 32.5 (ground rules
+updated): a single-column FK made redundant by a composite one, and a tenant-column FK set aside
+on a tenant junction, lose today's edge. No example has either.
+
+**N = 1 invariant.** A probe over all 15 examples and `~/sqlgen-example` (files source, PK
+overrides applied) gave identical edges, names and types before and after, with no warnings.
+`sqlgen-example` gains exactly `cycles → tasks` and `teams → projects`, which repeats the
+prototype's result. Intended N = 1 changes, none in an example: a SQLite FK to a non-key column
+warns and loses its edge (also as a junction end); a column with single-column FKs to two
+tables gives two edges (design §4.9 bullet added).
+
+**Tests.**
+- `parser/relationship_test.go`: 50 table-driven DDL cases on all three dialects, plus
+  idempotency. `junction_temp_test.go` is folded in.
+- MATCH: parser tests on PostgreSQL (FULL inline, table-level and by ALTER; default and explicit
+  SIMPLE; PARTIAL is a parse error), MySQL and SQLite (FULL/PARTIAL recorded SIMPLE).
+- `parser/introspect/relationship_parity_test.go`: `TestDetectRelationships_SourceParity` checks
+  identical edges and warnings, MATCH, constraint and schema parity on PostgreSQL, MySQL and
+  SQLite.
+- `cmd/sqlgen/cli/relationship_detection_test.go`: the staging guard, the warning under
+  `validate` and `generate`, and the collision error and its remedy.
+- Hand-built gen, manifest and cli fixtures that set only `FKReference` go through a test
+  `detectRelationships` helper that adds the FOREIGN KEY a parsed schema carries. The reviewer
+  confirmed every parser and introspector path does.
+- `make check` green (`refs-check` included). `TestE2EGoldenFiles` green without `-update`.
+  `make update-golden` and `make update-golden-e2e` left no golden change. The full parser
+  integration suite (`go test ./...` in `parser`) and `make check-examples` (all 15 modules)
+  are green, and were re-run after the review fixes.
+
+**Auto-review (sqlgen-reviewer).** Fail first confirmed by mutation: without
+`compositeKeyEdge` a `Tasks []*Task` field appears. Two high-confidence findings, both fixed:
+- H1, the junction end that gives no edge (above);
+- H2, the staging guard's O2O, chained-O2O and M2M arms were unexercised. The test now covers
+  all three, and mutations of the chained-O2O site and the M2M arm fail it.
+
+Doc fixes applied inline:
+- six comments that named deleted functions (`addO2O`, `addO2M`, `junctionConstraint`);
+- "non-partial" in the `junctionKeys` doc;
+- `excludedKeyMember`'s design-doc citation → PRD §4.13;
+- design §4.1 (the junction constraint fields) and §4.9 (two edges from one column);
+- this file's staging-guard ground rule (the two shapes it loses).
+
+
+**Verify (2026-10-23).** An independent reviewer pass confirmed fail first by mutation:
+`ORDER BY con.conname` fails the PostgreSQL parity test. It found two defects in this
+(uncommitted) work, fixed inline with a fixture each, so no FIX was logged:
+- the naming member counted FKs that rule 2 discards, so a duplicated FK to a UNIQUE column lost
+  its name. Two such columns collided where HEAD named them `author_email_posts` and
+  `reviewer_email_posts`. `namingMember` now reads the table's FKs less the redundant ones;
+- identical FKs listing their columns in different orders kept the second declared. The tie now
+  breaks on the declared index.
+
+It found no consumer at risk from the OID order. The one consumer whose output can change,
+the manifest's `checkExpressionForColumn` taking a column's first CHECK, now agrees with `files`
+under PostgreSQL `database`. Doc fix applied: the `sortForParity` comment. Open question: a
+PostgreSQL database restored from a dump recreates FKs in the dump's order, so it may tie-break
+as MySQL does. PRD §5.3 names only MySQL.
+
+**Rulings (2026-10-23).**
+- Rule 2 keeps the first declared of identical keys, with the MySQL `database` fallback above.
+  PRD §5.3 rule 2 and its parity sentence, and design §4.2, are updated.
+- PRD §5.3 rules 1, 3 and 4 each say which primary key they read:
+  - rule 1 reads the resolved and the declared PK;
+  - rule 3 reads the resolved PK;
+  - rule 4 reads the declared constraint.
+  Rule 4 also states that an FK which gives no edge still counts, and that a junction with such
+  an end gives no edge.
 
 ## 32.3 Config, manifest and MCP shapes
 

@@ -45,7 +45,7 @@ func TestValidateResolvedNames_NestedSurfaceCollisions(t *testing.T) {
 			},
 			rels: []parser.Relationship{{
 				Name: "events", Type: parser.OneToMany,
-				SourceTable: "users", TargetTable: "events", FKColumn: "user_id",
+				SourceTable: "users", TargetTable: "events", Key: []parser.KeyPair{{Local: "user_id", Referenced: "id"}},
 			}},
 			wantErr: []string{
 				`relationship users.Events`,
@@ -72,7 +72,7 @@ func TestValidateResolvedNames_NestedSurfaceCollisions(t *testing.T) {
 			},
 			rels: []parser.Relationship{{
 				Name: "events", Type: parser.OneToMany,
-				SourceTable: "users", TargetTable: "events", FKColumn: "user_id",
+				SourceTable: "users", TargetTable: "events", Key: []parser.KeyPair{{Local: "user_id", Referenced: "id"}},
 			}},
 			wantErr: []string{
 				`nested mutations on table users`,
@@ -103,7 +103,7 @@ func TestValidateResolvedNames_NestedSurfaceCollisions(t *testing.T) {
 			},
 			rels: []parser.Relationship{{
 				Name: "profile", Type: parser.OneToOne,
-				SourceTable: "users", TargetTable: "user_profiles", FKColumn: "user_id",
+				SourceTable: "users", TargetTable: "user_profiles", Key: []parser.KeyPair{{Local: "user_id", Referenced: "id"}},
 			}},
 		},
 		{
@@ -119,7 +119,7 @@ func TestValidateResolvedNames_NestedSurfaceCollisions(t *testing.T) {
 			},
 			rels: []parser.Relationship{{
 				Name: "company", Type: parser.OneToOne,
-				SourceTable: "users", TargetTable: "companies", FKColumn: "company_id",
+				SourceTable: "users", TargetTable: "companies", Key: []parser.KeyPair{{Local: "company_id", Referenced: "id"}},
 			}},
 		},
 		{
@@ -137,7 +137,7 @@ func TestValidateResolvedNames_NestedSurfaceCollisions(t *testing.T) {
 			rels: []parser.Relationship{{
 				Name: "categories", Type: parser.ManyToMany,
 				SourceTable: "users", TargetTable: "categories",
-				JunctionTable: "user_categories", JunctionLocalFK: "user_id", JunctionReferenceFK: "category_id",
+				JunctionTable: "user_categories", JunctionLocal: []parser.KeyPair{{Local: "user_id", Referenced: "id"}}, JunctionReference: []parser.KeyPair{{Local: "category_id", Referenced: "id"}},
 			}},
 		},
 		{
@@ -151,7 +151,7 @@ func TestValidateResolvedNames_NestedSurfaceCollisions(t *testing.T) {
 			},
 			rels: []parser.Relationship{{
 				Name: "events", Type: parser.OneToMany,
-				SourceTable: "users", TargetTable: "events", FKColumn: "user_id",
+				SourceTable: "users", TargetTable: "events", Key: []parser.KeyPair{{Local: "user_id", Referenced: "id"}},
 			}},
 		},
 	}
@@ -217,7 +217,7 @@ func TestValidateResolvedNames_NestedNamesAreNotFeatureGated(t *testing.T) {
 		},
 		Relationships: []parser.Relationship{{
 			Name: "events", Type: parser.OneToMany,
-			SourceTable: "users", TargetTable: "events", FKColumn: "user_id",
+			SourceTable: "users", TargetTable: "events", Key: []parser.KeyPair{{Local: "user_id", Referenced: "id"}},
 		}},
 	}
 
@@ -273,12 +273,12 @@ func TestBuildTableContexts_NestedClientWiring(t *testing.T) {
 		Relationships: []parser.Relationship{
 			{
 				Name: "events", Type: parser.OneToMany,
-				SourceTable: "users", TargetTable: "events", FKColumn: "user_id",
+				SourceTable: "users", TargetTable: "events", Key: []parser.KeyPair{{Local: "user_id", Referenced: "id"}},
 			},
 			{
 				Name: "categories", Type: parser.ManyToMany,
 				SourceTable: "users", TargetTable: "categories",
-				JunctionTable: "user_categories", JunctionLocalFK: "user_id", JunctionReferenceFK: "category_id",
+				JunctionTable: "user_categories", JunctionLocal: []parser.KeyPair{{Local: "user_id", Referenced: "id"}}, JunctionReference: []parser.KeyPair{{Local: "category_id", Referenced: "id"}},
 			},
 		},
 	}
@@ -337,13 +337,13 @@ func TestBuildTableContexts_JunctionClientDedupedAgainstTargets(t *testing.T) {
 			{
 				Name: "categories", Type: parser.ManyToMany,
 				SourceTable: "users", TargetTable: "categories",
-				JunctionTable: "user_categories", JunctionLocalFK: "user_id", JunctionReferenceFK: "category_id",
+				JunctionTable: "user_categories", JunctionLocal: []parser.KeyPair{{Local: "user_id", Referenced: "id"}}, JunctionReference: []parser.KeyPair{{Local: "category_id", Referenced: "id"}},
 			},
 			{
 				// The junction read directly as an O2M child, which is how a
 				// junction carrying payload columns is usually also exposed.
 				Name: "memberships", Type: parser.OneToMany,
-				SourceTable: "users", TargetTable: "user_categories", FKColumn: "user_id",
+				SourceTable: "users", TargetTable: "user_categories", Key: []parser.KeyPair{{Local: "user_id", Referenced: "id"}},
 			},
 		},
 	}

@@ -77,7 +77,7 @@ func makeValidateRunE(flags *cliFlags) func(*cobra.Command, []string) error {
 			// Resolve PK overrides, then detect relationships — the order
 			// ValidateGeneration below depends on.
 			applyPrimaryKeyOverrides(schema, cfg)
-			parser.DetectRelationships(schema)
+			allGenWarnings = append(allGenWarnings, parser.DetectRelationships(schema)...)
 
 			// 4b. Generation-phase validation. `validate` used to stop at the
 			// two config passes above, so a config that only `generate`

@@ -178,38 +178,49 @@ func (t *relationshipTargets) generates(qualifiedTarget string) bool {
 	return res == targetGenerated
 }
 
+// compositeKeyEdge reports whether an FK-inferred edge joins through more than
+// one column pair. The loaders, the relationship filter and the nested writers
+// join one column per side, so such an edge is omitted silently.
+func compositeKeyEdge(r parser.Relationship) bool {
+	return len(r.Key) > 1 || len(r.JunctionLocal) > 1 || len(r.JunctionReference) > 1
+}
+
 // excludedKeyMember returns the first key column of an FK-inferred edge that
 // `exclude_columns` removes, spelled "table.column", or "" when there is none.
-// The members are the FK column (an M2M junction's two) and the column each
-// one references. Every member must be in the generated model on both sides,
-// or the edge is omitted with a warning (COMPOSITE_FK_RELATIONSHIPS.md §4.3).
+// The members are every column of the edge's key (an M2M junction's two keys)
+// and every column each one references. Every member must be in the generated
+// model on both sides, or the edge is omitted with a warning (PRD §4.13).
 func (t *relationshipTargets) excludedKeyMember(schema *parser.Schema, r parser.Relationship) string {
-	var holder string
-	var cols []string
+	type keySide struct {
+		holder, referenced string
+		key                []parser.KeyPair
+	}
+	var sides []keySide
 	switch r.Type {
 	case parser.OneToMany:
-		holder, cols = r.TargetTable, []string{r.FKColumn}
+		sides = []keySide{{r.TargetTable, r.SourceTable, r.Key}}
 	case parser.OneToOne:
-		holder, cols = r.SourceTable, []string{r.FKColumn}
+		sides = []keySide{{r.SourceTable, r.TargetTable, r.Key}}
 	case parser.ManyToMany:
-		holder, cols = r.JunctionTable, []string{r.JunctionLocalFK, r.JunctionReferenceFK}
-	}
-	hSchema, hName := splitQualifiedName(holder)
-	table := findSchemaTable(schema, hSchema, hName)
-	if table == nil {
-		return ""
-	}
-	for _, name := range cols {
-		if member := t.excludedColumn(table, name); member != "" {
-			return member
+		sides = []keySide{
+			{r.JunctionTable, r.SourceTable, r.JunctionLocal},
+			{r.JunctionTable, r.TargetTable, r.JunctionReference},
 		}
-		col := parser.ColumnByName(table, name)
-		if col == nil || col.FKReference == nil || col.FKReference.Column == "" {
-			continue
-		}
-		if ref := findSchemaTable(schema, col.FKReference.Schema, col.FKReference.Table); ref != nil {
-			if member := t.excludedColumn(ref, col.FKReference.Column); member != "" {
-				return member
+	}
+	for _, side := range sides {
+		hSchema, hName := splitQualifiedName(side.holder)
+		rSchema, rName := splitQualifiedName(side.referenced)
+		holder, ref := findSchemaTable(schema, hSchema, hName), findSchemaTable(schema, rSchema, rName)
+		for _, pair := range side.key {
+			if holder != nil {
+				if member := t.excludedColumn(holder, pair.Local); member != "" {
+					return member
+				}
+			}
+			if ref != nil {
+				if member := t.excludedColumn(ref, pair.Referenced); member != "" {
+					return member
+				}
 			}
 		}
 	}

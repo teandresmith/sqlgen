@@ -161,7 +161,7 @@ func TestParseSchema_SQLiteReferenceInAnotherCase(t *testing.T) {
 				parser.DetectRelationships(schema)
 				var got []string
 				for _, r := range schema.Relationships {
-					got = append(got, fmt.Sprintf("%s %s->%s via %s", r.Type, r.SourceTable, r.TargetTable, r.FKColumn))
+					got = append(got, fmt.Sprintf("%s %s->%s via %s", r.Type, r.SourceTable, r.TargetTable, r.Key[0].Local))
 				}
 				want := []string{"OneToMany Users->posts via user_id"}
 				if diff := cmp.Diff(want, got); diff != "" {

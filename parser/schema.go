@@ -75,7 +75,7 @@ type RelationshipSide int
 
 const (
 	// SideUnspecified is the zero value. Production emit paths
-	// (DetectRelationships' addO2O / addO2M / addM2M, plus the codegen's
+	// (DetectRelationships, plus the codegen's
 	// config-relationship builder) always populate Side, so consumers that
 	// observe SideUnspecified are reading a hand-built fixture that
 	// bypassed those builders — surface that as "no signal" rather than
@@ -278,9 +278,31 @@ type Constraint struct {
 	ReferenceTable   string
 	ReferenceSchema  string
 	ReferenceColumns []string
-	CheckExpression  string
-	Method           string
-	Where            string
+	// Match is a FOREIGN KEY's MATCH type. Only PostgreSQL enforces MATCH
+	// FULL, so MySQL and SQLite keys are always MatchSimple.
+	Match           MatchType
+	CheckExpression string
+	Method          string
+	Where           string
+}
+
+// MatchType is the MATCH clause of a FOREIGN KEY constraint.
+type MatchType int
+
+const (
+	// MatchSimple is MATCH SIMPLE, the default: a key with any NULL member
+	// references no row.
+	MatchSimple MatchType = iota
+	// MatchFull is PostgreSQL's MATCH FULL: a key is all NULL or all non-NULL.
+	MatchFull
+)
+
+// String returns the SQL spelling of the match type.
+func (m MatchType) String() string {
+	if m == MatchFull {
+		return "FULL"
+	}
+	return "SIMPLE"
 }
 
 // Enum represents a named enum type with ordered values.
@@ -329,29 +351,50 @@ type RelationshipSort struct {
 	Direction string
 }
 
-// Relationship represents a detected or configured relationship between tables.
+// KeyPair is one column pair of a foreign key: a column on the table holding
+// the key and the column it references.
+type KeyPair struct {
+	Local      string
+	Referenced string
+}
+
+// Relationship represents a detected relationship between tables, one per
+// FOREIGN KEY constraint (PRD §5.3).
 //
 // BaseName is the pre-disambiguation Name produced at emission time
 // (DetectRelationships) — the child table for O2M, the target table for O2O,
 // the M2M-target table for ManyToMany. When multiple FK edges connect the
 // same (SourceTable, TargetTable) pair, Name is rewritten by
-// disambiguateRelationshipNames to a unique form derived from the FK column
-// (O2M / O2O) or junction table (M2M); BaseName preserves the original so
-// `exclude_relationships` entries written against the bare table name (PRD
-// §4.8 / §13.4) continue to match every disambiguated edge in the group.
+// disambiguateRelationshipNames to a unique form derived from the key's
+// naming member (O2M / O2O) or junction table (M2M); BaseName preserves the
+// original so `exclude_relationships` entries written against the bare table
+// name (PRD §4.8 / §13.4) continue to match every disambiguated edge in the
+// group.
+//
+// Every key list is in the foreign key's declared column order.
 type Relationship struct {
-	Name                string
-	BaseName            string
-	Type                RelationshipType
-	Side                RelationshipSide
-	SourceTable         string
-	TargetTable         string
-	FKColumn            string
-	JunctionTable       string
-	JunctionLocalFK     string
-	JunctionReferenceFK string
-	Filter              string
-	Sort                []RelationshipSort
+	Name        string
+	BaseName    string
+	Type        RelationshipType
+	Side        RelationshipSide
+	SourceTable string
+	TargetTable string
+	// Constraint names the FOREIGN KEY behind an O2O / O2M edge, or
+	// "table(columns) → target(columns)" for an unnamed one.
+	Constraint string
+	// Key pairs the FK columns of an O2O / O2M edge with the columns they
+	// reference.
+	Key []KeyPair
+	// An M2M edge reads through two foreign keys on JunctionTable:
+	// JunctionLocal references SourceTable, JunctionReference TargetTable.
+	// Each constraint is named as Constraint is.
+	JunctionTable               string
+	JunctionLocal               []KeyPair
+	JunctionReference           []KeyPair
+	JunctionLocalConstraint     string
+	JunctionReferenceConstraint string
+	Filter                      string
+	Sort                        []RelationshipSort
 }
 
 // View represents a SQL view (regular or materialized) with its source SQL and

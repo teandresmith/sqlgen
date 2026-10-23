@@ -692,7 +692,7 @@ func scanShapeSchema() *parser.Schema {
 // driver.Value type []uint8 into type *[]string").
 func TestRelationships_O2OTargetScanAbsorbsJoinMiss(t *testing.T) {
 	in := testInput(scanShapeSchema())
-	parser.DetectRelationships(in.Schema)
+	detectRelationships(in.Schema)
 	in.Config.Tables["owners"] = config.TableConfig{
 		Relationships: []config.TableRelationship{
 			{Name: "Detail", Type: "one_to_one", Table: "details", FK: "owner_id"},

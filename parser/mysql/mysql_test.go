@@ -3866,3 +3866,26 @@ func TestCreateTableUnreadColumns(t *testing.T) {
 		})
 	}
 }
+
+// MySQL accepts a MATCH clause and enforces MATCH SIMPLE whatever it says, so
+// every FOREIGN KEY records MATCH SIMPLE.
+func TestForeignKeyMatchIsSimple(t *testing.T) {
+	p := newParser(t)
+	if err := p.Parse("schema.sql", []byte(`
+		CREATE TABLE p (a INT, b INT, PRIMARY KEY (a, b));
+		CREATE TABLE c (y INT, z INT,
+			CONSTRAINT c_full FOREIGN KEY (y, z) REFERENCES p (a, b) MATCH FULL,
+			CONSTRAINT c_partial FOREIGN KEY (z, y) REFERENCES p (a, b) MATCH PARTIAL);
+	`)); err != nil {
+		t.Fatalf("Parse() error: %v", err)
+	}
+	for _, name := range []string{"c_full", "c_partial"} {
+		c := findConstraint(p.Schema().Tables[1].Constraints, name, parser.ForeignKey)
+		if c == nil {
+			t.Fatalf("FOREIGN KEY %s not found", name)
+		}
+		if c.Match != parser.MatchSimple {
+			t.Errorf("FOREIGN KEY %s Match = %v, want %v", name, c.Match, parser.MatchSimple)
+		}
+	}
+}
