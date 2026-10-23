@@ -1751,7 +1751,9 @@ func applyManifestDefaults(gen *GenerationConfig) {
 	if !*m.Enabled {
 		return
 	}
-	if len(m.Formats) == 0 {
+	// Only a missing key takes the default. An explicit `formats: []` decodes
+	// to an empty non-nil slice and is kept, so validation rejects it (§4.13).
+	if m.Formats == nil {
 		m.Formats = []string{ManifestFormatJSON, ManifestFormatMarkdown}
 	}
 	if m.JSONFilename == "" {

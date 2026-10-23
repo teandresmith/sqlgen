@@ -220,8 +220,8 @@ func TestCleanStale_CustomDirNamesFailClosed(t *testing.T) {
 }
 
 // TestCleanStale_AnchorCannotBeRelocated pins that the ownership proof must
-// come from inside the directory being removed. json_filename is unvalidated
-// config, so a value carrying path separators would otherwise read the anchor
+// come from inside the directory being removed. The stage does not re-check
+// json_filename, so a value carrying path separators would otherwise read the anchor
 // out of some other directory and re-authorize RemoveAll on the strength of a
 // manifest that has nothing to do with the target.
 func TestCleanStale_AnchorCannotBeRelocated(t *testing.T) {

@@ -1881,8 +1881,8 @@ func validatePrimaryKeyOverride(cfg *RootConfig, tables []SchemaTable, errs *[]e
 		if !uniqueCovers(table, resolved) {
 			*warnings = append(*warnings, Warning{
 				Message: fmt.Sprintf(
-					"tables.%s.primary_key.columns: no UNIQUE constraint covers the declared PK on table %s; sqlgen assumes uniqueness — enforce it at the application level if not at the DB level",
-					qualified, qualified,
+					"tables.%s.primary_key.columns: no UNIQUE constraint covers the declared PK; sqlgen assumes uniqueness — enforce it at the application level if not at the DB level",
+					qualified,
 				),
 			})
 		}
@@ -2270,8 +2270,10 @@ func validateManifestConfig(cfg *RootConfig, errs *[]error) {
 	if m != nil {
 		// Enforced regardless of enabled state: the removal path (manifest
 		// disabled / emit flipped off) walks the same project_configs
-		// targets, so the module-root-escape rule must hold symmetrically.
+		// targets, and the stale-cleanup pass joins the artifact paths onto
+		// output.dir, so the escape rules must hold symmetrically.
 		validateManifestMCPTargets(m, errs)
+		validateManifestArtifactPaths(m, errs)
 	}
 	validateManifestPerTableOptIn(cfg, enabled, errs)
 }
@@ -2299,7 +2301,6 @@ func validateManifestEnabledFields(m *ManifestConfig, errs *[]error) {
 	if !m.JSONLayout.IsValid() {
 		*errs = append(*errs, fmt.Errorf("manifest.json_layout: %q is not one of single, per_entity (PRD §30.2 / §4.13)", string(m.JSONLayout)))
 	}
-	validateManifestArtifactPaths(m, errs)
 }
 
 // validateManifestArtifactPaths enforces PRD §30.2's placement rules on the
@@ -2321,7 +2322,7 @@ func validateManifestArtifactPaths(m *ManifestConfig, errs *[]error) {
 	if err := checkManifestDirPlacement("manifest.json_per_entity_dir", m.JSONPerEntityDir, false); err != nil {
 		*errs = append(*errs, err)
 	}
-	if m.JSONPerEntityDir != "" && m.MarkdownDir != "" && m.JSONPerEntityDir == m.MarkdownDir {
+	if m.JSONPerEntityDir != "" && m.MarkdownDir != "" && filepath.Clean(m.JSONPerEntityDir) == filepath.Clean(m.MarkdownDir) {
 		*errs = append(*errs, fmt.Errorf("manifest.json_per_entity_dir: cannot equal manifest.markdown_dir (%q) (PRD §30.2 / §4.13)", m.MarkdownDir))
 	}
 }
@@ -2398,23 +2399,27 @@ func checkManifestDirPlacement(field, value string, checkArtifactSubdir bool) er
 	if value == "" {
 		return nil
 	}
-	if value == "." {
+	if filepath.Clean(value) == "." {
 		return fmt.Errorf("%s: cannot be %q (PRD §30.2 / §4.13)", field, value)
 	}
 	// PRD §30.2 types both fields as a *subdirectory under* their parent
 	// (markdown_dir under output.dir, json_per_entity_dir under markdown_dir).
-	// An absolute path or one escaping via ".." is not a subdirectory, and the
+	// An absolute path, or one whose ".." segments climb out of the parent
+	// anywhere in it (filepath.IsLocal), is not a subdirectory, and the
 	// emitters and the stale-cleanup pass both join it onto the parent — so a
 	// value that escapes writes, prunes and removes outside the tree sqlgen
 	// owns.
-	if filepath.IsAbs(value) || value == ".." || strings.HasPrefix(filepath.ToSlash(value), "../") {
+	if !filepath.IsLocal(value) {
 		return fmt.Errorf("%s: must be a subdirectory of its parent, got %q — absolute paths and %q escapes are rejected (PRD §30.2 / §4.13)", field, value, "..")
 	}
-	if strings.HasPrefix(value, "_") {
+	// The remaining rules compare the cleaned path, so `./graph` or
+	// `docs/../_index` cannot slip past them.
+	clean := filepath.ToSlash(filepath.Clean(value))
+	if strings.HasPrefix(clean, "_") {
 		return fmt.Errorf("%s: cannot start with %q (reserved for _index.md / _conventions.md) (PRD §30.2 / §4.13)", field, "_")
 	}
 	if checkArtifactSubdir {
-		if reservedManifestArtifactDirs[strings.TrimSuffix(value, "/")] {
+		if reservedManifestArtifactDirs[clean] {
 			return fmt.Errorf("%s: %q collides with a PRD §8.3 artifact subdir (PRD §30.2 / §4.13)", field, value)
 		}
 	}

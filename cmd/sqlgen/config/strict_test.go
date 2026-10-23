@@ -160,6 +160,7 @@ func TestValidateManifest_RejectsEscapingPlacements(t *testing.T) {
 		mutate   func(*config.ManifestConfig)
 		wantErr  string
 		wantPass bool
+		disabled bool // manifest.enabled: false; the placement rules hold either way
 	}{
 		{name: "defaults are accepted", mutate: func(*config.ManifestConfig) {}, wantPass: true},
 		{
@@ -192,6 +193,59 @@ func TestValidateManifest_RejectsEscapingPlacements(t *testing.T) {
 			mutate:  func(m *config.ManifestConfig) { m.JSONFilename = "../real/manifest_gen.json" },
 			wantErr: "must be a bare filename",
 		},
+		{
+			name:     "a .. that stays inside the parent is accepted",
+			mutate:   func(m *config.ManifestConfig) { m.MarkdownDir = "docs/../manifest" },
+			wantPass: true,
+		},
+		{
+			name:    "markdown_dir escaping through an interior ..",
+			mutate:  func(m *config.ManifestConfig) { m.MarkdownDir = "docs/../../manifest" },
+			wantErr: "must be a subdirectory of its parent",
+		},
+		{
+			name:    "markdown_dir that cleans to its parent",
+			mutate:  func(m *config.ManifestConfig) { m.MarkdownDir = "docs/.." },
+			wantErr: "manifest.markdown_dir: cannot be",
+		},
+		{
+			name:    "markdown_dir naming an artifact subdir through ./",
+			mutate:  func(m *config.ManifestConfig) { m.MarkdownDir = "./graph" },
+			wantErr: "collides with a PRD §8.3 artifact subdir",
+		},
+		{
+			name:    "markdown_dir reaching a reserved name through ..",
+			mutate:  func(m *config.ManifestConfig) { m.MarkdownDir = "docs/../_index" },
+			wantErr: "cannot start with",
+		},
+		{
+			name:    "json_per_entity_dir equal to markdown_dir once cleaned",
+			mutate:  func(m *config.ManifestConfig) { m.JSONPerEntityDir = "./manifest" },
+			wantErr: "cannot equal manifest.markdown_dir",
+		},
+		{
+			name:    "json_per_entity_dir escaping through an interior ..",
+			mutate:  func(m *config.ManifestConfig) { m.JSONPerEntityDir = "entities/../../x" },
+			wantErr: "must be a subdirectory of its parent",
+		},
+		{
+			name:     "markdown_dir escaping with the manifest off",
+			mutate:   func(m *config.ManifestConfig) { m.MarkdownDir = "../docs" },
+			wantErr:  "must be a subdirectory of its parent",
+			disabled: true,
+		},
+		{
+			name:     "json_per_entity_dir escaping with the manifest off",
+			mutate:   func(m *config.ManifestConfig) { m.JSONPerEntityDir = "../entities" },
+			wantErr:  "must be a subdirectory of its parent",
+			disabled: true,
+		},
+		{
+			name:     "json_filename carrying a path separator with the manifest off",
+			mutate:   func(m *config.ManifestConfig) { m.JSONFilename = "../real/manifest_gen.json" },
+			wantErr:  "must be a bare filename",
+			disabled: true,
+		},
 	}
 
 	for _, tt := range tests {
@@ -206,6 +260,11 @@ func TestValidateManifest_RejectsEscapingPlacements(t *testing.T) {
 				EmbedInClient:    new(true),
 			}
 			tt.mutate(m)
+			if tt.disabled {
+				// Placement only: embed_in_client: true is itself an error
+				// when disabled, so it is cleared too.
+				m.Enabled, m.EmbedInClient = new(false), new(false)
+			}
 
 			cfg := &config.RootConfig{
 				Version: "v1",

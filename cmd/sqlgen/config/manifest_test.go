@@ -5,6 +5,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/google/go-cmp/cmp"
+
 	"github.com/teandresmith/sqlgen/cmd/sqlgen/config"
 )
 
@@ -48,6 +50,41 @@ func TestValidatePreParse_Manifest_FormatsEmpty(t *testing.T) {
 				}
 			} else if err != nil {
 				t.Fatalf("ValidatePreParse: unexpected error: %v", err)
+			}
+		})
+	}
+}
+
+// TestLoadConfig_Manifest_FormatsDefault pins that the [json, markdown]
+// default (PRD §30.2) fills a missing formats key only: an explicit empty list
+// under enabled: true survives loading, so the §4.13 rule can reject it.
+func TestLoadConfig_Manifest_FormatsDefault(t *testing.T) {
+	const base = "input:\n  dialect: postgres\n  paths: [\"./migrations\"]\noutput:\n  dir: ./models\ngeneration:\n  manifest:\n    enabled: true\n"
+	tests := []struct {
+		name        string
+		yaml        string
+		wantFormats []string
+		wantErr     bool
+	}{
+		{name: "missing key defaults to json and markdown", yaml: "", wantFormats: []string{"json", "markdown"}},
+		{name: "explicit empty list is rejected", yaml: "    formats: []\n", wantFormats: []string{}, wantErr: true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg, err := config.LoadConfig(writeTestConfig(t, base+tt.yaml))
+			if err != nil {
+				t.Fatalf("LoadConfig() error = %v", err)
+			}
+			if diff := cmp.Diff(tt.wantFormats, cfg.Generation.Manifest.Formats); diff != "" {
+				t.Errorf("LoadConfig() manifest.formats mismatch (-want +got):\n%s", diff)
+			}
+			_, err = config.ValidatePreParse(cfg)
+			if tt.wantErr {
+				if err == nil || !strings.Contains(err.Error(), "manifest.formats: at least one format") {
+					t.Errorf("ValidatePreParse() error = %v, want the empty-formats error", err)
+				}
+			} else if err != nil {
+				t.Errorf("ValidatePreParse() unexpected error: %v", err)
 			}
 		})
 	}

@@ -1107,15 +1107,18 @@ func TestValidatePostParse_PrimaryKeyOverride_NoUniqueCoverage(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ValidatePostParse() unexpected error: %v", err)
 	}
+	// The PRD quotes the warning text; the key path in front names the table.
+	const want = "tables.public.counters.primary_key.columns: no UNIQUE constraint covers the declared PK; " +
+		"sqlgen assumes uniqueness — enforce it at the application level if not at the DB level"
 	found := false
 	for _, w := range warnings {
-		if strings.Contains(w.Message, "no UNIQUE constraint covers") {
+		if w.Message == want {
 			found = true
 			break
 		}
 	}
 	if !found {
-		t.Errorf("ValidatePostParse() warnings = %v, want no-UNIQUE-coverage warning", warnings)
+		t.Errorf("ValidatePostParse() warnings = %v, want %q", warnings, want)
 	}
 }
 
