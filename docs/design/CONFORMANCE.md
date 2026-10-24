@@ -659,7 +659,35 @@ database versions it ran against.
      negligible. Most of the effort per method is reading the PRD for each concern: about 10
      sections for one method. Wall time was about 2 hours, including the plumbing and a stop for
      the defect.
-4. **Report generator** and `make conformance`.
+4. **Report generator** and `make conformance`. Done 2026-10-24.
+   - **Built.** `reqcheck -report` joins `go test -json` results with the registry
+     (`results.go`, `report.go`) and writes `docs/conformance/REPORT.md` (§5.5, "Joining results").
+     `make conformance` runs the 8 modules (unit and integration together), the 15 example modules
+     and the 2 dialect modules, after the `sqlgen diff` freshness check, now shared with
+     `test-conformance` as `conformance-fresh`. The harness gained a `Database` field that `Run`
+     logs, which gives the header PostgreSQL 16.15 and SQLite 3.51.3. The `conformance` CI job runs
+     the suite per dialect beside the example jobs and leaves the report alone (ruling 2).
+     `/close-phase` reads and commits the report instead of `req-check -v`. Four design choices
+     were ruled: matrices render whole (config-validation is 87 lines), the joiner lives in
+     `reqcheck`, the target always writes the report and then fails on any failed run, and the
+     requirement tables take one column per dialect module plus one for the other tests.
+   - **Time.** About 50 minutes of wall time. A full `make conformance` takes about 8.5 minutes on
+     a laptop under `-race`; most of that is the `cmd/sqlgen` module and the example containers.
+   - **What the report showed.** On the first run, 305 of 310 rows passed. 4 were `untested`: the
+     `fk` list-length rule, not yet implemented. 1 was `not run`, and that was a joiner bug, not a
+     test. The subtest `markdown_dir naming an artifact subdir through ./` ends in `/`, which
+     `go test` keeps as an empty last segment, but the reference was split on `/` with empty
+     segments dropped. Static resolution had the same flaw from the other side: a reference
+     stopping partway through a slashed name (`TestSlash/from` for `from/to`) passed `req-check`,
+     though `go test` never reports such a test. Both now split names the same way, and a partial
+     name fails the check. After the fix: 306 pass, 0 fail, 0 skip, 0 not run, 4 untested. No
+     registered test fails on current code. Of the 7 open PRD gaps, 5 have passing pins and 2
+     have no tests, because they were found by reading code. No registry content changed.
+   - **Review lessons.** The reviewer probed real `go test -json` output and found that a
+     multi-line or bare `t.Skip` and stray container output corrupted the skip message. Continuation
+     lines are now taken only when indented deeper than the logged line. It also found that a row
+     whose conformance tests apply to no existing dialect module could pass on its other tests.
+     That row is now `not run`.
 5. **Add the MySQL and `postgres_stdlib` conformance modules**, since MySQL differs most (no
    `RETURNING`, `AUTO_INCREMENT`).
 6. **Seed module by module**, using the FIX origin tally (§1.3) to choose the order: `cli.md`
