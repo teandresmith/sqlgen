@@ -38,7 +38,7 @@ Each of these is a **FAIL**:
 - a test that fails, or skips without a capability message;
 - an empty matrix cell the sub-item touches.
 
-Read the PRD section too, but only to check that the rows cover it. A PRD behavior with no row is a missing row: report it as **UNTESTED**, and add the row in this verification if it is unambiguous. A test that pins behavior the PRD does not state is not a requirement; list it for the user (`backlog.md`, `prd-gap`) and add no row for it.
+Read the PRD section too, but only to check that the rows cover it. A PRD behavior with no row is a missing row: report it as **UNTESTED**, and add the row in this verification if it is unambiguous. A test that pins behavior the PRD does not state is not a requirement: add no row for it. Record it in the module file's PRD gaps table (`docs/conformance/README.md` → Format) with an empty Ruling, and list it for the user, who rules `amend-prd` or `drop-pin`.
 
 If the owning file has no rows for the section yet (it is `not-started`, or `in-progress` without this section), build the checklist from the PRD prose as before, and note the missing rows in the report:
 - Types, functions, methods, interfaces that must exist

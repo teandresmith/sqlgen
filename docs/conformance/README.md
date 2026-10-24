@@ -25,7 +25,7 @@ A file that passes about 500 rows is split into a directory of per-package files
 
 ## Format
 
-A registry file has a header and up to three kinds of table.
+A registry file has a header and up to four kinds of table.
 
 **Header.** The seeding state, the module's package directories, and its matrices:
 
@@ -36,7 +36,7 @@ A registry file has a header and up to three kinds of table.
 ```
 
 Seeding is `not-started`, `in-progress` or `complete`. While a file is `in-progress`, coverage
-gaps are reported as notes (`make req-check` with `-v` lists them). Once it is `complete` they
+holes are reported as notes (`make req-check VERBOSE=1` lists them). Once it is `complete` they
 fail the check, so coverage cannot slip back.
 
 **Requirements**, under a PRD anchor whose hash records the PRD text the rows were reviewed
@@ -81,6 +81,29 @@ file every top-level test in the listed packages is claimed by a row or listed h
 |---|---|
 | cmd/sqlgen/gen: TestFuncmapIndent | Template helper; no PRD behavior |
 ```
+
+**PRD gaps**: behavior the code has, usually pinned by tests, that no PRD text states. A gap is
+not a requirement. It records a question for the user, under a `## PRD gaps` heading at the end
+of the file whose module shows the behavior:
+
+```markdown
+| Gap | Behavior | Tests | Section | Ruling |
+|---|---|---|---|---|
+| gap.hard-delete-many.nil-statement | `HardDeleteMany(ctx, nil)` sends `DELETE … WHERE 1 = 0` and reads nothing back | `example: postgres: TestEmptyBatch_HardDeleteManyUnaffected` | §9.4c | |
+```
+
+- **Gap**: a slug starting with `gap.`, unique across every registry file, IDs of requirements
+  included. A requirement ID may not start with `gap.`.
+- **Tests**: the tests that pin the behavior, in the requirement format, or empty for a gap found
+  by reading code. Each must resolve, and each counts as claimed, so a pin listed here passes the
+  orphan check of a `complete` file, whichever registry file lists the test's package.
+- **Section**: the nearest PRD section or sections (`§…`), each of which must exist.
+- **Ruling**: empty while the gap is open. The user's ruling is `amend-prd YYYY-MM-DD` (the PRD
+  will state the behavior) or `drop-pin YYYY-MM-DD` (the tests stop asserting it). Once the
+  ruling is applied, delete the entry: the PRD text becomes requirement rows, or the pins go.
+
+An open or ruled gap never fails the check; it is a note, so `make req-check VERBOSE=1` lists
+what is waiting on the user and what is waiting to be applied.
 
 ## When the PRD changes
 

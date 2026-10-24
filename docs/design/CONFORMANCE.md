@@ -363,7 +363,7 @@ every claimed test maps to a PRD-anchored registry row is the guard against this
 `docs/conformance/` holds one registry file per module (§2): `runtime.md`, `parser.md`, `cli.md`,
 `client.md`. A file that passes about 500 rows is split into a directory of per-package files
 (e.g. `docs/conformance/cli/config.md`), with the §5.2 map updated in the same commit (§9 ruling
-7). Each file has four parts:
+7). Each file has five parts:
 
 1. **A header** with the file's seeding status (§5.4), the module's package directories (the
    orphan check of §5.3 check 2 scans them), and its matrix declarations:
@@ -406,6 +406,17 @@ every claimed test maps to a PRD-anchored registry row is the guard against this
    | Unclaimed test | Reason |
    |---|---|
    | cmd/sqlgen/gen: TestFuncmapIndent | Template helper; no PRD behavior |
+   ```
+
+5. **A `PRD gaps` table** of behavior the code has, usually pinned by tests, that no PRD text
+   states (§9 ruling 15). A gap is a question for the user, not a requirement. Its tests resolve
+   and count as claimed. Its Ruling stays empty until the user rules `amend-prd <date>` or
+   `drop-pin <date>`, and the entry is deleted once the ruling is applied:
+
+   ```markdown
+   | Gap | Behavior | Tests | Section | Ruling |
+   |---|---|---|---|---|
+   | gap.hard-delete-many.nil-statement | `HardDeleteMany(ctx, nil)` sends `DELETE … WHERE 1 = 0` and reads nothing back | `example: postgres: TestEmptyBatch_HardDeleteManyUnaffected` | §9.4c | |
    ```
 
 Row fields:
@@ -461,11 +472,14 @@ The tool is `cmd/sqlgen/internal/reqcheck` (stdlib only: `go/parser` and `go/ast
 
 It also rejects malformed rows: an ID that is not a lower-case slug or is reused across files, an
 unknown applies-to value, a requirement outside an anchor, an unrecognized table, and a
-`not-started` file that already has rows. And it fails on any directory holding `_test.go` files
-(outside `testdata`) that no registry file lists in `<!-- packages: … -->` and the ownership map
-doesn't mark `<!-- unregistered: … -->` (test support, repository tooling), so a module's tests
-can't escape the orphan check by living in an unlisted package. `make req-rehash SECTIONS=…`
-fails on a section that no anchor names.
+`not-started` file that already has rows. A PRD gap fails on an ID without the `gap.` prefix, an
+empty behavior, a test that does not resolve, no `§` citation or one that is not a PRD section,
+and a ruling other than `amend-prd` or `drop-pin` with a date. A requirement ID may not start with
+`gap.`. An open or ruled gap is a note, never a failure. And it fails on any directory holding
+`_test.go` files (outside `testdata`) that no registry file lists in `<!-- packages: … -->` and
+the ownership map doesn't mark `<!-- unregistered: … -->` (test support, repository tooling), so a
+module's tests can't escape the orphan check by living in an unlisted package.
+`make req-rehash SECTIONS=…` fails on a section that no anchor names.
 
 Check 1 reads subtest names statically: a string literal, a string field of a ranged table
 literal (keyed or positional, `t.Run(tt.name, …)`), or a key of a ranged map literal. It follows
@@ -565,7 +579,8 @@ database versions it ran against.
      6. In `validate`, one table that failed to build hid five resolution-level rules on every
         other table, which breaks reporting all errors together.
 
-     6 behaviors pinned by tests with no PRD text went to `backlog.md` as `prd-gap` items.
+     6 behaviors pinned by tests with no PRD text went to `backlog.md` as `prd-gap` items. They
+     moved to `cli.md`'s PRD gaps table once it existed (§9 ruling 15).
    - **Tests written.** 4 table-driven "reported together" tests (pre-parse, post-parse,
      generation and view tenancy; 56 cases, one of them guarding the fix for defect 6 against reporting a
      false error for an edge into the table that failed), 2 env-reference cases, 7 JSON Schema cases, and
@@ -599,8 +614,9 @@ database versions it ran against.
      `generation.batch_size` (§9.5, §19.4, §25.3). With `batch_size: 2`, 5 keys sent one `DELETE`
      where 3 were expected. A failing third key also undid the first sub-batch. The two fail-first
      subtests are held back for the fix.
-   - **PRD gaps: 1**, logged in `backlog.md`: `HardDeleteMany(nil)` sends `DELETE … WHERE 1 = 0` and
-     reads nothing back. The Postgres example's pin of that behavior stays, since no row can claim it.
+   - **PRD gaps: 1**, logged in `backlog.md` and later moved to `client.md`'s PRD gaps table:
+     `HardDeleteMany(nil)` sends `DELETE … WHERE 1 = 0` and reads nothing back. The Postgres
+     example's pin of that behavior stays, claimed by the gap until the user rules on it.
    - **Ported:** `TestHardDeleteMany` was deleted from the `postgres` and `sqlite` examples. The
      `mysql` and `postgres_stdlib` copies stay until step 5 adds those modules. So does the MySQL
      composite-PK batch test, which also covers `Filter.PKs`. The cache, events and tenancy
@@ -690,3 +706,12 @@ Rulings 11–14 came from the step 2 review:
     remove the declaration (§5.4).
 14. **`/verify` and `/close-phase` change with the config pilot.** They switch to reading registry
     rows once rows exist to read (§7 steps 3 and 7).
+
+Ruling 15 came after the client pilot:
+
+15. **PRD gaps: a table in each registry file.** The config pilot found 6 and the `HardDeleteMany`
+    pilot 1, all first logged in `backlog.md`. They now live in a `PRD gaps` table in the module
+    file that shows the behavior, so they are tracked as seeding goes and sit beside the rows an
+    `amend-prd` ruling will add. A gap's tests count as claimed. An open gap is a note and never
+    fails the check, even in a `complete` file. A ruling, `amend-prd` or `drop-pin` with a date,
+    is recorded in the table, and the entry is deleted once it is applied (§5.1 part 5).

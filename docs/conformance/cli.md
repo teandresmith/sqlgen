@@ -461,3 +461,17 @@ errors (§4.13), and agreement with the §4.14 JSON Schema.
 | config-validation: access-soft-delete-filter × message | §4.13 states no message content for this rule | |
 | config-validation: access-soft-delete-filter × together | §4.13 reports validation errors together; this rule is a warning | |
 | config-validation: access-soft-delete-filter × schema | §4.14: the schema covers structure, key names and closed value sets, not this rule | |
+
+## PRD gaps
+
+Behavior the code has, most of it pinned by tests, that no PRD text states. Each gap waits for
+the user's ruling: amend the PRD, which turns the gap into requirement rows, or drop the pins.
+
+| Gap | Behavior | Tests | Section | Ruling |
+|---|---|---|---|---|
+| gap.config.access-error-precedence | A column reports one `access` error, in a fixed precedence: the PK rule over the cursor-key rule, and the cursor-key rule over required-on-create (`validate.go:1523`) | `unit: cmd/sqlgen/config: TestValidatePostParse_ColumnAccess_CursorKeyScope/PK member that is also a cursor key reports the PK rule only`; `unit: cmd/sqlgen/config: TestValidatePostParse_ColumnAccess_CursorKeyScope/required-on-create cursor key reports the cursor rule` | §4.13, §32.4 | |
+| gap.config.cursor-keys-first-error | An explicit `cursor_keys` list reports only its first bad column per entity (`checkExplicitCursorKeys`), which §4.13's reporting of every error at once does not obviously allow | | §4.13 | |
+| gap.config.soft-delete-first-match | Only a table's first matching soft-delete column is checked, and a column of the wrong type reports only the type error, not the nullability error | `unit: cmd/sqlgen/config: TestValidatePostParse_SoftDeleteTimestampNullability/NOT NULL timestamp behind an earlier match` | §4.13, §17.1, §17.2 | |
+| gap.config.go-type-expressions | `column_map.<col>.type` accepts generic instantiations and sized arrays, and `type_map` values get the same Go-type-expression check, which rejects an empty value; §4.13 lists only `*T`, `[]T` and `map[K]V`, and only for `column_map` | `unit: cmd/sqlgen/config: TestValidatePreParse_ColumnType_Expression/generic instantiation accepted`; `unit: cmd/sqlgen/config: TestValidatePreParse_ColumnType_Expression/sized array accepted`; `unit: cmd/sqlgen/config: TestValidatePreParse_TypeMap_Expression` | §4.13 | |
+| gap.gen.nested-eligibility-reported-once | Under `sqlgen validate`, a listed ineligible nested-mutation edge is reported once, not twice | `unit: cmd/sqlgen/gen: TestNestedEligibility_ValidateReportsEachViolationOnce` | §4.13 | |
+| gap.config.enum-warning-phase | The `enums:` unmatched-key warning, listed as schema-level in §4.13, runs in the generator (`gen/context_enum.go:66`); the output is as the PRD says, only the phase differs | | §4.13 | |

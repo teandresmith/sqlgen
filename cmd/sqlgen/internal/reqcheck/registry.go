@@ -28,6 +28,7 @@ type Registry struct {
 	Rows      []Row
 	NA        []NA
 	Unclaimed []Unclaimed
+	Gaps      []Gap
 }
 
 // Matrix is a declared conformance matrix: an open set of rows and a fixed set of columns.
@@ -71,6 +72,18 @@ type Unclaimed struct {
 	Line   int
 }
 
+// Gap records behavior the code has, often pinned by tests, that no PRD text states. It is open
+// until the user rules on it, and is deleted once the ruling is applied: a PRD amendment turns it
+// into requirement rows, or the pinning tests are dropped.
+type Gap struct {
+	ID       string
+	Behavior string
+	Tests    []string
+	Section  string
+	Ruling   string
+	Line     int
+}
+
 // Ownership is the PRD section ownership map (CONFORMANCE.md §5.2).
 type Ownership struct {
 	Path    string
@@ -100,6 +113,7 @@ const (
 	headerRows      = "ID|Requirement|Tests|Applies to|Matrix cell"
 	headerNA        = "Matrix cell|Reason|Accepted"
 	headerUnclaimed = "Unclaimed test|Reason"
+	headerGaps      = "Gap|Behavior|Tests|Section|Ruling"
 	headerOwnership = "PRD section|Owner"
 )
 
@@ -195,10 +209,10 @@ func (p *registryParser) table(lines []string, i int) int {
 	}
 	kind := strings.Join(header, "|")
 	switch kind {
-	case headerRows, headerNA, headerUnclaimed:
+	case headerRows, headerNA, headerUnclaimed, headerGaps:
 	default:
-		p.bad(headerNo, "unrecognized table %q; registry tables are requirements (%s), n/a (%s) or unclaimed (%s)",
-			kind, headerRows, headerNA, headerUnclaimed)
+		p.bad(headerNo, "unrecognized table %q; registry tables are requirements (%s), n/a (%s), unclaimed (%s) or PRD gaps (%s)",
+			kind, headerRows, headerNA, headerUnclaimed, headerGaps)
 	}
 	for i+1 < len(lines) && strings.HasPrefix(strings.TrimSpace(lines[i+1]), "|") {
 		i++
@@ -232,6 +246,15 @@ func (p *registryParser) row(kind string, cells []string, rowNo int) {
 		r.NA = append(r.NA, NA{Cell: stripTicks(cells[0]), Reason: cells[1], Accepted: cells[2], Line: rowNo})
 	case headerUnclaimed:
 		r.Unclaimed = append(r.Unclaimed, Unclaimed{Test: stripTicks(cells[0]), Reason: cells[1], Line: rowNo})
+	case headerGaps:
+		r.Gaps = append(r.Gaps, Gap{
+			ID:       stripTicks(cells[0]),
+			Behavior: cells[1],
+			Tests:    splitList(cells[2], ";"),
+			Section:  cells[3],
+			Ruling:   strings.TrimSpace(cells[4]),
+			Line:     rowNo,
+		})
 	}
 }
 

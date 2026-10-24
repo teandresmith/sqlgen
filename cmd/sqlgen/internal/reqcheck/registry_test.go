@@ -31,6 +31,10 @@ func TestParseRegistry_Tables(t *testing.T) {
 | Unclaimed test | Reason |
 |---|---|
 | cmd/sqlgen/gen: TestHelper | Helper |
+
+| Gap | Behavior | Tests | Section | Ruling |
+|---|---|---|---|---|
+| gap.config.order | Errors come in a fixed order | ` + "`unit: cmd/sqlgen/config: TestA`" + ` | §4.13 | amend-prd 2026-10-23 |
 `
 	r, findings := reqcheck.ParseRegistry(text, "docs/conformance/cli.md", "cli.md")
 	if len(findings) != 0 {
@@ -71,6 +75,17 @@ func TestParseRegistry_Tables(t *testing.T) {
 	}
 	if len(r.Unclaimed) != 1 || r.Unclaimed[0].Test != "cmd/sqlgen/gen: TestHelper" {
 		t.Errorf("ParseRegistry().Unclaimed = %+v, want one entry", r.Unclaimed)
+	}
+	wantGaps := []reqcheck.Gap{{
+		ID:       "gap.config.order",
+		Behavior: "Errors come in a fixed order",
+		Tests:    []string{"unit: cmd/sqlgen/config: TestA"},
+		Section:  "§4.13",
+		Ruling:   "amend-prd 2026-10-23",
+		Line:     25,
+	}}
+	if diff := cmp.Diff(wantGaps, r.Gaps); diff != "" {
+		t.Errorf("ParseRegistry().Gaps mismatch (-want +got):\n%s", diff)
 	}
 }
 

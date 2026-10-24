@@ -56,7 +56,11 @@ var (
 	dateRE     = regexp.MustCompile(`^\d{4}-\d{2}-\d{2}$`)
 	prdCiteRE  = regexp.MustCompile(`§\s*(Appendix [A-Z]|\d+[A-Za-z]?(?:\.\d+[a-z]?)*)`)
 	appliesSet = []string{"all", "postgres", "mysql", "sqlite", "pgx", "stdlib"}
+	rulingRE   = regexp.MustCompile(`^(amend-prd|drop-pin) (\d{4}-\d{2}-\d{2})$`)
 )
+
+// GapIDPrefix starts every PRD gap ID, so a gap never reads as a requirement.
+const GapIDPrefix = "gap."
 
 // Check runs every static check (CONFORMANCE.md §5.3) against the repository at root.
 func Check(root string) (Result, error) {
@@ -72,6 +76,13 @@ func Check(root string) (Result, error) {
 	c.checkOwnership()
 	for _, r := range regs {
 		c.checkRegistry(r)
+	}
+	// The unit orphan check runs once every file's claims are in: a row or gap in one file may
+	// claim a test in a package another file lists.
+	for _, r := range regs {
+		if r.Seeding == SeedingComplete {
+			c.coverTests(r)
+		}
 	}
 	c.checkUniqueIDs()
 	c.checkConformanceOrphans()
@@ -218,6 +229,7 @@ func (c *checker) checkRegistry(r *Registry) {
 	claimed := c.checkRows(r)
 	c.checkNA(r, claimed)
 	c.checkUnclaimed(r)
+	c.checkGaps(r)
 	c.checkCoverage(r, claimed)
 }
 
@@ -249,6 +261,9 @@ func (c *checker) checkRows(r *Registry) map[string]int {
 	for _, row := range r.Rows {
 		if !idRE.MatchString(row.ID) {
 			c.fail(r.Path, row.Line, "id %q is not a lower-case slug like `area.behavior`", row.ID)
+		}
+		if strings.HasPrefix(row.ID, GapIDPrefix) {
+			c.fail(r.Path, row.Line, "requirement id %q starts with `%s`, which marks a PRD gap", row.ID, GapIDPrefix)
 		}
 		if strings.TrimSpace(row.Requirement) == "" {
 			c.fail(r.Path, row.Line, "requirement %s has no statement", row.ID)
@@ -301,6 +316,40 @@ func (c *checker) checkUnclaimed(r *Registry) {
 			continue
 		}
 		c.resolve(r, u.Line, TestRef{Home: HomeUnit, Dir: strings.TrimSpace(dir), Path: splitPath(strings.TrimSpace(name)), Raw: u.Test}, false)
+	}
+}
+
+// checkGaps validates the PRD gaps table. A gap's tests must resolve, and they count as claimed:
+// the gap is the reason they exist. An open gap is a note in every seeding state, and so is a
+// ruled gap whose ruling has not been applied yet.
+func (c *checker) checkGaps(r *Registry) {
+	for _, g := range r.Gaps {
+		if !idRE.MatchString(g.ID) || !strings.HasPrefix(g.ID, GapIDPrefix) {
+			c.fail(r.Path, g.Line, "gap id %q is not a lower-case slug starting with `%s`", g.ID, GapIDPrefix)
+		}
+		if strings.TrimSpace(g.Behavior) == "" {
+			c.fail(r.Path, g.Line, "gap %s has no behavior", g.ID)
+		}
+		for _, t := range g.Tests {
+			c.checkTestRef(r, g.Line, t)
+		}
+		cites := prdCiteRE.FindAllStringSubmatch(g.Section, -1)
+		if len(cites) == 0 {
+			c.fail(r.Path, g.Line, "gap %s names no PRD section; cite the nearest one (§…)", g.ID)
+		}
+		for _, m := range cites {
+			if _, ok := c.prd.Section(m[1]); !ok {
+				c.fail(r.Path, g.Line, "gap %s cites §%s, which is not a PRD section", g.ID, m[1])
+			}
+		}
+		switch m := rulingRE.FindStringSubmatch(g.Ruling); {
+		case g.Ruling == "":
+			c.note(r.Path, g.Line, "PRD gap %s is open; bring it to the user for a ruling (amend-prd or drop-pin)", g.ID)
+		case m == nil:
+			c.fail(r.Path, g.Line, "gap %s: ruling %q is not `amend-prd YYYY-MM-DD` or `drop-pin YYYY-MM-DD`", g.ID, g.Ruling)
+		default:
+			c.note(r.Path, g.Line, "PRD gap %s was ruled %s on %s; apply the ruling and delete the entry", g.ID, m[1], m[2])
+		}
 	}
 }
 
@@ -441,8 +490,8 @@ func (c *checker) recordClaim(ref TestRef) {
 }
 
 // checkCoverage applies the ratchet (CONFORMANCE.md §5.4): in a complete file, owned sections
-// with no requirement, matrices with no rows, empty matrix cells and unclaimed tests fail; while
-// seeding they are notes.
+// with no requirement, matrices with no rows and empty matrix cells fail; while seeding they are
+// notes. Unclaimed tests in a complete file are checked after every file (coverTests).
 func (c *checker) checkCoverage(r *Registry, claimed map[string]int) {
 	if r.Seeding == SeedingNotStarted {
 		return
@@ -453,9 +502,6 @@ func (c *checker) checkCoverage(r *Registry, claimed map[string]int) {
 	}
 	c.coverSections(r, report)
 	c.coverCells(r, claimed, report)
-	if r.Seeding == SeedingComplete {
-		c.coverTests(r)
-	}
 }
 
 // coverSections: an owned section with no owned descendant needs a requirement at or below it.
@@ -539,17 +585,22 @@ func (c *checker) coverTests(r *Registry) {
 	}
 }
 
-// checkUniqueIDs: requirement IDs are unique across every registry file.
+// checkUniqueIDs: requirement and gap IDs are unique across every registry file.
 func (c *checker) checkUniqueIDs() {
 	seen := map[string]string{}
+	add := func(r *Registry, id string, line int) {
+		if prev, dup := seen[id]; dup {
+			c.fail(r.Path, line, "id %s is also used at %s", id, prev)
+			return
+		}
+		seen[id] = fmt.Sprintf("%s:%d", r.Path, line)
+	}
 	for _, r := range c.regs {
 		for _, row := range r.Rows {
-			at := fmt.Sprintf("%s:%d", r.Path, row.Line)
-			if prev, dup := seen[row.ID]; dup {
-				c.fail(r.Path, row.Line, "id %s is also used at %s", row.ID, prev)
-				continue
-			}
-			seen[row.ID] = at
+			add(r, row.ID, row.Line)
+		}
+		for _, g := range r.Gaps {
+			add(r, g.ID, g.Line)
 		}
 	}
 }

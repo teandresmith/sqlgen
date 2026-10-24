@@ -91,3 +91,12 @@ Requirements of the generated client, proved by the cross-dialect conformance su
 |---|---|---|
 | client-methods: HardDeleteMany × field-selection | §12 field selection chooses the columns of a returned entity; `HardDeleteMany` returns only an error (§9.3) | |
 | client-methods: HardDeleteMany × lock-mode | §9.6a `LockMode` applies to read methods only and is ignored on `*Delete*` methods | |
+
+## PRD gaps
+
+Behavior the generated client has, pinned by tests, that no PRD text states. Each gap waits for
+the user's ruling: amend the PRD, which turns the gap into requirement rows, or drop the pins.
+
+| Gap | Behavior | Tests | Section | Ruling |
+|---|---|---|---|---|
+| gap.hard-delete-many.nil-statement | `HardDeleteMany(ctx, nil)` sends `DELETE … WHERE 1 = 0` and reads nothing back; §9.4c says only that a nil slice is no rows | `example: postgres: TestEmptyBatch_HardDeleteManyUnaffected` | §9.4c | |

@@ -15,7 +15,7 @@ func main() {
 	root := flag.String("root", ".", "repository root")
 	rehash := flag.Bool("rehash", false, "rewrite registry anchor hashes to the PRD's current text")
 	sections := flag.String("sections", "", "comma-separated PRD sections to rehash (default: every anchor)")
-	verbose := flag.Bool("v", false, "list coverage notes, not just their count")
+	verbose := flag.Bool("v", false, "list notes (coverage gaps, PRD gaps awaiting a ruling), not just their count")
 	flag.Parse()
 
 	if *rehash {
@@ -48,9 +48,15 @@ func main() {
 			fmt.Println("  note", n)
 		}
 	}
-	rows := 0
+	rows, gaps, open := 0, 0, 0
 	for _, r := range res.Registries {
 		rows += len(r.Rows)
+		gaps += len(r.Gaps)
+		for _, g := range r.Gaps {
+			if g.Ruling == "" {
+				open++
+			}
+		}
 	}
 	if len(errs) > 0 {
 		fmt.Println("  FAIL req-check     the requirement registry disagrees with the PRD or the tests:")
@@ -60,6 +66,6 @@ func main() {
 		fmt.Println("  see docs/conformance/README.md")
 		os.Exit(1)
 	}
-	fmt.Printf("  ok   req-check     %d registry file(s), %d requirement(s), %d PRD section(s) mapped, %d coverage note(s)\n",
-		len(res.Registries), rows, len(res.Ownership.Entries), len(notes))
+	fmt.Printf("  ok   req-check     %d registry file(s), %d requirement(s), %d PRD gap(s) (%d open), %d PRD section(s) mapped, %d note(s)\n",
+		len(res.Registries), rows, gaps, open, len(res.Ownership.Entries), len(notes))
 }

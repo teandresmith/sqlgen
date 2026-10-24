@@ -472,6 +472,111 @@ func TestCheck(t *testing.T) {
 			},
 			wantErr: "conformance subtest HardDeleteMany/missing keys are not an error is claimed by no requirement",
 		},
+		{
+			name: "gap tests count as claimed",
+			mutate: func(f map[string]string) {
+				edit(f, "docs/conformance/cli.md", "seeding: in-progress", "seeding: complete")
+				f["docs/conformance/cli.md"] += "\n| Matrix cell | Reason | Accepted |\n|---|---|---|\n| config-validation: driver × message | §4.13 states no message | |\n" +
+					"\n| Gap | Behavior | Tests | Section | Ruling |\n|---|---|---|---|---|\n| gap.config.helperless | Something the PRD does not say | unit: pkg/config: TestRelatedHelperless | §4.13 | |\n"
+			},
+			wantNoErr: true,
+		},
+		{
+			name: "open gap is a note",
+			mutate: func(f map[string]string) {
+				f["docs/conformance/cli.md"] += "\n| Gap | Behavior | Tests | Section | Ruling |\n|---|---|---|---|---|\n| gap.config.helperless | Something the PRD does not say | | §4.13 | |\n"
+			},
+			wantNote: "PRD gap gap.config.helperless is open",
+		},
+		{
+			name: "ruled gap is a note until applied",
+			mutate: func(f map[string]string) {
+				f["docs/conformance/cli.md"] += "\n| Gap | Behavior | Tests | Section | Ruling |\n|---|---|---|---|---|\n| gap.config.helperless | Something the PRD does not say | | §4.13 | drop-pin 2026-10-23 |\n"
+			},
+			wantNote: "PRD gap gap.config.helperless was ruled drop-pin on 2026-10-23",
+		},
+		{
+			name: "gap ruling outside the closed set",
+			mutate: func(f map[string]string) {
+				f["docs/conformance/cli.md"] += "\n| Gap | Behavior | Tests | Section | Ruling |\n|---|---|---|---|---|\n| gap.config.helperless | Something the PRD does not say | | §4.13 | keep |\n"
+			},
+			wantErr: "ruling \"keep\" is not `amend-prd YYYY-MM-DD` or `drop-pin YYYY-MM-DD`",
+		},
+		{
+			name: "gap id without the gap prefix",
+			mutate: func(f map[string]string) {
+				f["docs/conformance/cli.md"] += "\n| Gap | Behavior | Tests | Section | Ruling |\n|---|---|---|---|---|\n| config.helperless | Something the PRD does not say | | §4.13 | |\n"
+			},
+			wantErr: "gap id \"config.helperless\" is not a lower-case slug starting with `gap.`",
+		},
+		{
+			name: "gap with no PRD section",
+			mutate: func(f map[string]string) {
+				f["docs/conformance/cli.md"] += "\n| Gap | Behavior | Tests | Section | Ruling |\n|---|---|---|---|---|\n| gap.config.helperless | Something the PRD does not say | | config | |\n"
+			},
+			wantErr: "gap gap.config.helperless names no PRD section",
+		},
+		{
+			name: "gap cites a section the PRD lacks",
+			mutate: func(f map[string]string) {
+				f["docs/conformance/cli.md"] += "\n| Gap | Behavior | Tests | Section | Ruling |\n|---|---|---|---|---|\n| gap.config.helperless | Something the PRD does not say | | §99 | |\n"
+			},
+			wantErr: "gap gap.config.helperless cites §99, which is not a PRD section",
+		},
+		{
+			name: "gap naming a missing test",
+			mutate: func(f map[string]string) {
+				f["docs/conformance/cli.md"] += "\n| Gap | Behavior | Tests | Section | Ruling |\n|---|---|---|---|---|\n| gap.config.helperless | Something the PRD does not say | unit: pkg/config: TestGone | §4.13 | |\n"
+			},
+			wantErr: "pkg/config has no test function TestGone",
+		},
+		{
+			name: "gap id reused across files",
+			mutate: func(f map[string]string) {
+				f["docs/conformance/cli.md"] += "\n| Gap | Behavior | Tests | Section | Ruling |\n|---|---|---|---|---|\n| gap.config.dup | Something the PRD does not say | | §4.13 | |\n"
+				f["docs/conformance/client.md"] += "\n| Gap | Behavior | Tests | Section | Ruling |\n|---|---|---|---|---|\n| gap.config.dup | Something else | | §9.3 | |\n"
+			},
+			wantErr: "id gap.config.dup is also used at docs/conformance/cli.md",
+		},
+		{
+			name: "requirement id with the gap prefix",
+			mutate: func(f map[string]string) {
+				edit(f, "docs/conformance/cli.md", "| config.driver-mismatch |", "| gap.config.driver-mismatch |")
+			},
+			wantErr: "requirement id \"gap.config.driver-mismatch\" starts with `gap.`",
+		},
+		{
+			name: "gap with no behavior",
+			mutate: func(f map[string]string) {
+				f["docs/conformance/cli.md"] += "\n| Gap | Behavior | Tests | Section | Ruling |\n|---|---|---|---|---|\n| gap.config.helperless | | | §4.13 | |\n"
+			},
+			wantErr: "gap gap.config.helperless has no behavior",
+		},
+		{
+			name: "gap with one good and one bad citation",
+			mutate: func(f map[string]string) {
+				f["docs/conformance/cli.md"] += "\n| Gap | Behavior | Tests | Section | Ruling |\n|---|---|---|---|---|\n| gap.config.helperless | Something the PRD does not say | | §4.13, §99 | |\n"
+			},
+			wantErr: "gap gap.config.helperless cites §99, which is not a PRD section",
+		},
+		{
+			name: "gap in another file claims a test in a complete file's package",
+			mutate: func(f map[string]string) {
+				edit(f, "docs/conformance/cli.md", "seeding: in-progress", "seeding: complete")
+				f["docs/conformance/cli.md"] += "\n| Matrix cell | Reason | Accepted |\n|---|---|---|\n| config-validation: driver × message | §4.13 states no message | |\n"
+				f["docs/conformance/client.md"] += "\n| Gap | Behavior | Tests | Section | Ruling |\n|---|---|---|---|---|\n| gap.client.helperless | Something the PRD does not say | unit: pkg/config: TestRelatedHelperless | §9.3 | |\n"
+			},
+			wantNoErr: true,
+		},
+		{
+			name: "conformance subtest claimed by a gap",
+			mutate: func(f map[string]string) {
+				f["cmd/sqlgen/testdata/conformance/suite/suite.go"] = checkSuite
+				f["docs/conformance/client.md"] = "# Client\n\n<!-- seeding: in-progress -->\n\n## §9.3\n<!-- prd: 9.3 sha256: " + sectionHash(t, "9.3") + " -->\n\n| ID | Requirement | Tests | Applies to | Matrix cell |\n|---|---|---|---|---|\n| delete.empty | Empty deletes nothing | conformance: HardDeleteMany/empty key list deletes nothing | all | |\n" +
+					"\n| Gap | Behavior | Tests | Section | Ruling |\n|---|---|---|---|---|\n| gap.delete.missing | Missing keys are not an error | conformance: HardDeleteMany/missing keys are not an error | §9.3 | |\n"
+			},
+			wantNoErr: true,
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
