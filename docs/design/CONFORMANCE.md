@@ -711,6 +711,8 @@ database versions it ran against.
      8.0 created no constraint, and the foreign-key subtest failed with a nil error. The key is
      now a table constraint. (`backlog.md` already records that 9.x enforces the inline form.)
      No capability was needed yet: the three seeded methods behave the same on every dialect.
+     The regenerated report has four target columns (MySQL 8.0.46, PostgreSQL 16.15 twice,
+     SQLite 3.51.3) and the same totals as step 4: 306 pass, 0 fail, 0 not run, 4 untested.
 6. **Seed module by module**, using the FIX origin tally (§1.3) to choose the order: `cli.md`
    (gen, then gotype, naming and the rest), `parser.md`, `client.md` (method by method), then
    `runtime.md`. Each file goes `in-progress` → `complete` on its own.
