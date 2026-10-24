@@ -1,6 +1,7 @@
 -- The conformance schema (docs/design/CONFORMANCE.md §4.1). Every integer is
 -- BIGINT and every surrogate key is database-generated, so the generated Go API
--- matches the other dialects' field for field.
+-- matches the other dialects' field for field. The postgres_stdlib module reads
+-- this file too.
 
 CREATE TABLE products (
     id         BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,

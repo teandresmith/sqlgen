@@ -1,0 +1,16 @@
+version: v1
+input:
+  dialect: postgres
+  paths:
+    # The same DDL as the pgx module: this module varies only the driver.
+    - ../postgres/schema.sql
+output:
+  driver: stdlib
+  dir: ./models
+  package: models
+tables:
+  products:
+    # Small enough that a handful of keys spans several sub-batches.
+    batch_size: 2
+  documents:
+    batch_size: 2

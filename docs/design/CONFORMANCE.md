@@ -639,9 +639,9 @@ database versions it ran against.
      `HardDeleteMany(nil)` sent `DELETE … WHERE 1 = 0` (no statement once sub-batching landed) and
      read nothing back. The Postgres example's pin of that behavior stays, claimed by the gap until
      the user rules on it.
-   - **Ported:** `TestHardDeleteMany` was deleted from the `postgres` and `sqlite` examples. The
-     `mysql` and `postgres_stdlib` copies stay until step 5 adds those modules. So does the MySQL
-     composite-PK batch test, which also covers `Filter.PKs`. The cache, events and tenancy
+   - **Ported:** `TestHardDeleteMany` was deleted from the `postgres` and `sqlite` examples. Step 5
+     deleted the `mysql` and `postgres_stdlib` copies. The MySQL composite-PK batch test stays,
+     because it also covers `Filter.PKs`. The cache, events and tenancy
      variants' uses are not ports (§8). The deleted Postgres copy keyed on a UUID; key-type coverage
      is the `type-resolution` matrix's job, not this method's. Until step 4's CI job, CI runs no
      `HardDeleteMany` test on Postgres or SQLite: only `make check-examples` does.
@@ -693,7 +693,24 @@ database versions it ran against.
      `make static-examples` (the format, lint and vet half of `check-examples`) and
      `make conformance`, and its `--skip-integration` flag is gone.
 5. **Add the MySQL and `postgres_stdlib` conformance modules**, since MySQL differs most (no
-   `RETURNING`, `AUTO_INCREMENT`).
+   `RETURNING`, `AUTO_INCREMENT`). Done 2026-10-24.
+   - **Built.** `mysql/` (MySQL 8.0 through `go-sql-driver/mysql`, `parseTime=true`) and
+     `postgres_stdlib/` (PostgreSQL 16 through `lib/pq`, as the `postgres_stdlib` example uses).
+     `postgres_stdlib` reads the pgx module's `schema.sql`, so the two differ only in the driver;
+     an edit to that DDL makes both modules' `models/` stale, and `conformance-fresh` catches it.
+     The MySQL schema uses `BIGINT AUTO_INCREMENT` keys and `TIMESTAMP(6)` columns, and its
+     harness resets with `DELETE`, because `TRUNCATE` refuses a table a foreign key references.
+     The Makefile, the CI `discover` job and the report's target columns found both modules
+     with no change. The `TestHardDeleteMany` copies in the `mysql` and `postgres_stdlib`
+     examples were deleted (ruling 6).
+   - **Time.** About 30 minutes, plus the gate runs.
+   - **What it showed.** No subtest fails or skips on either module: 19 of 19 pass on each. The
+     generated API (`go doc -all`) matches the pgx module's except that MySQL's table-name
+     constants have no `public.` prefix. One schema fact was measured, not assumed: with the
+     foreign key written inline (`product_id BIGINT NOT NULL REFERENCES products(id)`), MySQL
+     8.0 created no constraint, and the foreign-key subtest failed with a nil error. The key is
+     now a table constraint. (`backlog.md` already records that 9.x enforces the inline form.)
+     No capability was needed yet: the three seeded methods behave the same on every dialect.
 6. **Seed module by module**, using the FIX origin tally (§1.3) to choose the order: `cli.md`
    (gen, then gotype, naming and the rest), `parser.md`, `client.md` (method by method), then
    `runtime.md`. Each file goes `in-progress` → `complete` on its own.
