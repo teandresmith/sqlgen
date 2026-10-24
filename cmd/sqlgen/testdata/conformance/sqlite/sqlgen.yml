@@ -11,3 +11,5 @@ tables:
   products:
     # Small enough that a handful of keys spans several sub-batches.
     batch_size: 2
+  documents:
+    batch_size: 2

@@ -201,4 +201,36 @@ func hardDeleteMany(t *testing.T, h *Harness) {
 			}
 		}
 	})
+
+	t.Run("splits the keys into sub-batches of the table's batch size", func(t *testing.T) {
+		h.Reset(t)
+		var ids []int64
+		for _, name := range []string{"a", "b", "c", "d", "e"} {
+			ids = append(ids, createProduct(t, h, name).ID)
+		}
+		h.Querier.ResetCount()
+		if err := h.Client.Products().HardDeleteMany(ctx, ids); err != nil {
+			t.Fatalf("HardDeleteMany(5 keys) error = %v, want nil", err)
+		}
+		deletes := statementsWithPrefix(h, "DELETE")
+		// The products table sets batch_size: 2, so 5 keys are ceil(5 / 2) = 3 sub-batches.
+		if len(deletes) != 3 {
+			t.Errorf("HardDeleteMany(5 keys) sent %d DELETE statements, want 3: %q", len(deletes), deletes)
+		}
+		assertRowCount(t, h, "products", 0)
+	})
+
+	t.Run("a failed sub-batch keeps the sub-batches before it", func(t *testing.T) {
+		h.Reset(t)
+		a, b, c := createProduct(t, h, "a"), createProduct(t, h, "b"), createProduct(t, h, "c")
+		createOrderItem(t, h, models.OrderItemPK{OrderID: 1, ProductID: c.ID})
+		// With batch_size: 2, {a, b} is the first sub-batch and {c} the second, which fails.
+		err := h.Client.Products().HardDeleteMany(ctx, []int64{a.ID, b.ID, c.ID})
+		if _, ok := errors.AsType[*models.ConstraintError](err); !ok {
+			t.Fatalf("HardDeleteMany([a, b, referenced c]) error = %v, want a *ConstraintError", err)
+		}
+		assertProductExists(t, h, a.ID, false)
+		assertProductExists(t, h, b.ID, false)
+		assertProductExists(t, h, c.ID, true)
+	})
 }

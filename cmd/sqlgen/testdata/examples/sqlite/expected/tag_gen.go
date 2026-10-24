@@ -895,15 +895,21 @@ func (c *tagClient) SoftDeleteMany(ctx context.Context, ids []int64, opts ...fun
 		if len(ids) == 0 {
 			return []*Tag{}, nil
 		}
-		query, args := sql.BuildSoftDelete(c.dialect, c.table, sql.SoftDeleteOptions{
-			Column:     "is_deleted",
-			Type:       sql.SoftDeleteBool,
-			Conditions: []sql.Condition{sql.Where(c.dialect.QuoteIdentifier("id")).In(toAnySlice(ids)...)},
-		})
 
-		_, err := conn.Exec(ctx, query, args...)
-		if err != nil {
-			return nil, fmt.Errorf("soft delete tags: %w", err)
+		// One statement per sub-batch of c.batchSize keys. A failing sub-batch
+		// returns at once, and the sub-batches before it stay applied.
+		for start := 0; start < len(ids); start += c.batchSize {
+			end := min(start+c.batchSize, len(ids))
+			delConds := []sql.Condition{sql.Where(c.dialect.QuoteIdentifier("id")).In(toAnySlice(ids[start:end])...)}
+
+			query, args := sql.BuildSoftDelete(c.dialect, c.table, sql.SoftDeleteOptions{
+				Column:     "is_deleted",
+				Type:       sql.SoftDeleteBool,
+				Conditions: delConds,
+			})
+			if _, err := conn.Exec(ctx, query, args...); err != nil {
+				return nil, fmt.Errorf("soft delete tags: %w", err)
+			}
 		}
 		m.AffectedPKs = toAnySlice(ids)
 
@@ -1067,14 +1073,20 @@ func (c *tagClient) RestoreMany(ctx context.Context, ids []int64, opts ...func(*
 		if len(ids) == 0 {
 			return []*Tag{}, nil
 		}
-		query, args := sql.BuildUpdate(c.dialect, c.table, sql.UpdateOptions{
-			SetClauses: map[string]any{"is_deleted": false},
-			Conditions: []sql.Condition{sql.Where(c.dialect.QuoteIdentifier("id")).In(toAnySlice(ids)...)},
-		})
 
-		_, err := conn.Exec(ctx, query, args...)
-		if err != nil {
-			return nil, fmt.Errorf("restore tags: %w", err)
+		// One statement per sub-batch of c.batchSize keys. A failing sub-batch
+		// returns at once, and the sub-batches before it stay applied.
+		for start := 0; start < len(ids); start += c.batchSize {
+			end := min(start+c.batchSize, len(ids))
+			restoreConds := []sql.Condition{sql.Where(c.dialect.QuoteIdentifier("id")).In(toAnySlice(ids[start:end])...)}
+
+			query, args := sql.BuildUpdate(c.dialect, c.table, sql.UpdateOptions{
+				SetClauses: map[string]any{"is_deleted": false},
+				Conditions: restoreConds,
+			})
+			if _, err := conn.Exec(ctx, query, args...); err != nil {
+				return nil, fmt.Errorf("restore tags: %w", err)
+			}
 		}
 		m.AffectedPKs = toAnySlice(ids)
 
@@ -1208,15 +1220,18 @@ func (c *tagClient) HardDeleteMany(ctx context.Context, ids []int64, opts ...fun
 	}, func(ctx context.Context, m *hook.MutationContext) (any, error) {
 		conn := database.Conn(ctx, c.querier)
 
-		query, args := sql.BuildHardDelete(c.dialect, c.table, sql.HardDeleteOptions{
-			Conditions: []sql.Condition{
-				sql.Where(c.dialect.QuoteIdentifier("id")).In(toAnySlice(ids)...),
-			},
-		})
+		// One statement per sub-batch of c.batchSize keys. A failing sub-batch
+		// returns at once, and the sub-batches before it stay applied.
+		for start := 0; start < len(ids); start += c.batchSize {
+			end := min(start+c.batchSize, len(ids))
+			hardConds := []sql.Condition{sql.Where(c.dialect.QuoteIdentifier("id")).In(toAnySlice(ids[start:end])...)}
 
-		_, err := conn.Exec(ctx, query, args...)
-		if err != nil {
-			return nil, fmt.Errorf("hard delete tags: %w", err)
+			query, args := sql.BuildHardDelete(c.dialect, c.table, sql.HardDeleteOptions{
+				Conditions: hardConds,
+			})
+			if _, err := conn.Exec(ctx, query, args...); err != nil {
+				return nil, fmt.Errorf("hard delete tags: %w", err)
+			}
 		}
 		m.AffectedPKs = toAnySlice(ids)
 		return nil, nil

@@ -196,29 +196,16 @@ func (c *{{ $structCamel }}Client) SoftDeleteMany(ctx context.Context, {{ if .Co
 		if len({{ if .CompositePK }}pks{{ else }}ids{{ end }}) == 0 {
 			return []*{{ .StructName }}{}, nil
 		}
-{{- if and .Tenancy .Tenancy.Tenanted }}
-{{- if .CompositePK }}
+{{- if and (not .CompositePK) (pkIsStringType $pkCol) }}
 
-		pkValues := make([][]any, len(pks))
-		for i, pk := range pks {
-			pkValues[i] = []any{ {{- range .PKColumns }}pk.{{ .FieldName }}, {{ end -}} }
-		}
-
-		delConds := []sql.Condition{
-			sql.BuildCompositePKBatchCondition(c.dialect, []string{ {{- range .PKColumns }}{{ printf "%q" .Name }}, {{ end -}} }, pkValues),
-		}
-{{- else }}
-
-{{- if pkIsStringType $pkCol }}
 		idStrings := make([]string, len(ids))
 		for i, id := range ids {
 			idStrings[i] = {{ fkToString $pkCol "id" }}
 		}
-		delConds := []sql.Condition{sql.Where(c.dialect.QuoteIdentifier({{ printf "%q" $pkCol.Name }})).In(toAnySlice(idStrings)...)}
-{{- else }}
-		delConds := []sql.Condition{sql.Where(c.dialect.QuoteIdentifier({{ printf "%q" $pkCol.Name }})).In(toAnySlice(ids)...)}
 {{- end }}
-{{- end }}
+{{- if and .Tenancy .Tenancy.Tenanted }}
+
+		var scopeConds []sql.Condition
 		if !options.SkipTenancy {
 			resolvedTenant, apply, err := c.resolveTenant(ctx, options.Tenant)
 			if err != nil {
@@ -242,123 +229,99 @@ func (c *{{ $structCamel }}Client) SoftDeleteMany(ctx context.Context, {{ if .Co
 					}
 				}
 {{- end }}
-				delConds = append(delConds, sql.Where(c.dialect.QuoteIdentifier({{ printf "%q" .Tenancy.Column }})).Eq(resolvedTenant))
+				scopeConds = append(scopeConds, sql.Where(c.dialect.QuoteIdentifier({{ printf "%q" .Tenancy.Column }})).Eq(resolvedTenant))
 				// Stash for cache hook (single-resolve per operation).
 				m.Tenant = resolvedTenant
 			}
 		}
-{{- if and $captureTenant (not (supportsReturning)) }}
-
-		// MySQL has no RETURNING — one batched pre-read captures each affected
-		// row's tenant before the delete, so cache invalidation and event
-		// stamping rebuild tenant-scoped keys from the rows themselves.
-		tenantByPK, err := c.captureAffectedTenants(ctx, conn, delConds)
-		if err != nil {
-			return nil, fmt.Errorf("soft delete {{ .TableName }}: capture tenants: %w", err)
-		}
 {{- end }}
-{{- if and $captureTenant (supportsReturning) }}
+{{- if $captureTenant }}
 
-		// RETURNING projects each affected row's PK and tenant so cache
+		// Every sub-batch records the tenant of each row it touches, so cache
 		// invalidation and event stamping rebuild tenant-scoped keys from the
 		// rows themselves.
-		query, args := sql.BuildSoftDelete(c.dialect, c.table, sql.SoftDeleteOptions{
-			Column:           {{ printf "%q" .SoftDelete.Column }},
-			Type:             {{ softDeleteTypeConst .SoftDelete.Strategy }},
-			Conditions:       delConds,
-			ReturningColumns: []string{ {{- range .PKColumns }}{{ printf "%q" .Name }}, {{ end }}{{ printf "%q" .Tenancy.Column -}} },
-		})
-{{- else }}
-
-		query, args := sql.BuildSoftDelete(c.dialect, c.table, sql.SoftDeleteOptions{
-			Column:     {{ printf "%q" .SoftDelete.Column }},
-			Type:       {{ softDeleteTypeConst .SoftDelete.Strategy }},
-			Conditions: delConds,
-		})
-{{- end }}
-{{- else }}
-{{- if .CompositePK }}
-
-		pkValues := make([][]any, len(pks))
-		for i, pk := range pks {
-			pkValues[i] = []any{ {{- range .PKColumns }}pk.{{ .FieldName }}, {{ end -}} }
-		}
-
-		query, args := sql.BuildSoftDelete(c.dialect, c.table, sql.SoftDeleteOptions{
-			Column: {{ printf "%q" .SoftDelete.Column }},
-			Type:   {{ softDeleteTypeConst .SoftDelete.Strategy }},
-			Conditions: []sql.Condition{
-				sql.BuildCompositePKBatchCondition(c.dialect, []string{ {{- range .PKColumns }}{{ printf "%q" .Name }}, {{ end -}} }, pkValues),
-			},
-		})
-{{- else }}
-
-{{- if pkIsStringType $pkCol }}
-		idStrings := make([]string, len(ids))
-		for i, id := range ids {
-			idStrings[i] = {{ fkToString $pkCol "id" }}
-		}
-
-		query, args := sql.BuildSoftDelete(c.dialect, c.table, sql.SoftDeleteOptions{
-			Column:     {{ printf "%q" .SoftDelete.Column }},
-			Type:       {{ softDeleteTypeConst .SoftDelete.Strategy }},
-			Conditions: []sql.Condition{sql.Where(c.dialect.QuoteIdentifier({{ printf "%q" $pkCol.Name }})).In(toAnySlice(idStrings)...)},
-		})
-{{- else }}
-		query, args := sql.BuildSoftDelete(c.dialect, c.table, sql.SoftDeleteOptions{
-			Column:     {{ printf "%q" .SoftDelete.Column }},
-			Type:       {{ softDeleteTypeConst .SoftDelete.Strategy }},
-			Conditions: []sql.Condition{sql.Where(c.dialect.QuoteIdentifier({{ printf "%q" $pkCol.Name }})).In(toAnySlice(ids)...)},
-		})
-{{- end }}
-{{- end }}
-{{- end }}
-
-{{- if and $captureTenant (supportsReturning) }}
-
-		rows, err := conn.Query(ctx, query, args...)
-		if err != nil {
-			return nil, fmt.Errorf("soft delete {{ .TableName }}: %w", err)
-		}
 		tenantByPK := make(map[{{ if .CompositePK }}{{ .CompositePKStructName }}{{ else }}{{ $pkCol.GoType }}{{ end }}]any, len({{ if .CompositePK }}pks{{ else }}ids{{ end }}))
-		for rows.Next() {
-{{- if .CompositePK }}
-			var rowPK {{ .CompositePKStructName }}
-			var rowTenant {{ .Tenancy.GoType }}
-			if err := rows.Scan({{ range $i, $col := .PKColumns }}{{ if $i }}, {{ end }}&rowPK.{{ $col.FieldName }}{{ end }}, &rowTenant); err != nil {
-				rows.Close()
-				return nil, fmt.Errorf("scan soft deleted {{ $singular }} tenant: %w", err)
-			}
-			tenantByPK[rowPK] = rowTenant
-{{- else }}
-			var rowID {{ $pkCol.GoType }}
-			var rowTenant {{ .Tenancy.GoType }}
-			if err := rows.Scan(&rowID, &rowTenant); err != nil {
-				rows.Close()
-				return nil, fmt.Errorf("scan soft deleted {{ $singular }} tenant: %w", err)
-			}
-			tenantByPK[rowID] = rowTenant
 {{- end }}
-		}
-		if err := rows.Err(); err != nil {
-			rows.Close()
-			return nil, err
-		}
-		rows.Close()
-{{- else }}
 
+		// One statement per sub-batch of c.batchSize keys. A failing sub-batch
+		// returns at once, and the sub-batches before it stay applied.
+		for start := 0; start < len({{ if .CompositePK }}pks{{ else }}ids{{ end }}); start += c.batchSize {
+			end := min(start+c.batchSize, len({{ if .CompositePK }}pks{{ else }}ids{{ end }}))
+{{- if .CompositePK }}
+			pkValues := make([][]any, end-start)
+			for i, pk := range pks[start:end] {
+				pkValues[i] = []any{ {{- range .PKColumns }}pk.{{ .FieldName }}, {{ end -}} }
+			}
+			delConds := []sql.Condition{
+				sql.BuildCompositePKBatchCondition(c.dialect, []string{ {{- range .PKColumns }}{{ printf "%q" .Name }}, {{ end -}} }, pkValues),
+			}
+{{- else if pkIsStringType $pkCol }}
+			delConds := []sql.Condition{sql.Where(c.dialect.QuoteIdentifier({{ printf "%q" $pkCol.Name }})).In(toAnySlice(idStrings[start:end])...)}
+{{- else }}
+			delConds := []sql.Condition{sql.Where(c.dialect.QuoteIdentifier({{ printf "%q" $pkCol.Name }})).In(toAnySlice(ids[start:end])...)}
+{{- end }}
+{{- if and .Tenancy .Tenancy.Tenanted }}
+			delConds = append(delConds, scopeConds...)
+{{- end }}
 {{- if and $captureTenant (not (supportsReturning)) }}
 
-		// err is already declared by the tenant pre-read above.
-		_, err = conn.Exec(ctx, query, args...)
+			// MySQL has no RETURNING, so a pre-read captures the tenants first.
+			batchTenants, err := c.captureAffectedTenants(ctx, conn, delConds)
+			if err != nil {
+				return nil, fmt.Errorf("soft delete {{ .TableName }}: capture tenants: %w", err)
+			}
+			for pk, tenant := range batchTenants {
+				tenantByPK[pk] = tenant
+			}
+{{- end }}
+{{- if and $captureTenant (supportsReturning) }}
+
+			query, args := sql.BuildSoftDelete(c.dialect, c.table, sql.SoftDeleteOptions{
+				Column: {{ printf "%q" .SoftDelete.Column }},
+				Type: {{ softDeleteTypeConst .SoftDelete.Strategy }},
+				Conditions: delConds,
+				ReturningColumns: []string{ {{- range .PKColumns }}{{ printf "%q" .Name }}, {{ end }}{{ printf "%q" .Tenancy.Column -}} },
+			})
+			rows, err := conn.Query(ctx, query, args...)
+			if err != nil {
+				return nil, fmt.Errorf("soft delete {{ .TableName }}: %w", err)
+			}
+			for rows.Next() {
+{{- if .CompositePK }}
+				var rowPK {{ .CompositePKStructName }}
+				var rowTenant {{ .Tenancy.GoType }}
+				if err := rows.Scan({{ range $i, $col := .PKColumns }}{{ if $i }}, {{ end }}&rowPK.{{ $col.FieldName }}{{ end }}, &rowTenant); err != nil {
+					rows.Close()
+					return nil, fmt.Errorf("scan soft deleted {{ $singular }} tenant: %w", err)
+				}
+				tenantByPK[rowPK] = rowTenant
+{{- else }}
+				var rowID {{ $pkCol.GoType }}
+				var rowTenant {{ .Tenancy.GoType }}
+				if err := rows.Scan(&rowID, &rowTenant); err != nil {
+					rows.Close()
+					return nil, fmt.Errorf("scan soft deleted {{ $singular }} tenant: %w", err)
+				}
+				tenantByPK[rowID] = rowTenant
+{{- end }}
+			}
+			if err := rows.Err(); err != nil {
+				rows.Close()
+				return nil, err
+			}
+			rows.Close()
 {{- else }}
 
-		_, err := conn.Exec(ctx, query, args...)
+			query, args := sql.BuildSoftDelete(c.dialect, c.table, sql.SoftDeleteOptions{
+				Column: {{ printf "%q" .SoftDelete.Column }},
+				Type: {{ softDeleteTypeConst .SoftDelete.Strategy }},
+				Conditions: delConds,
+			})
+			if _, err := conn.Exec(ctx, query, args...); err != nil {
+				return nil, fmt.Errorf("soft delete {{ .TableName }}: %w", err)
+			}
 {{- end }}
-		if err != nil {
-			return nil, fmt.Errorf("soft delete {{ .TableName }}: %w", err)
 		}
-{{- end }}
 {{- if .CompositePK }}
 		m.AffectedPKs = toAnySlice(pks)
 {{- else }}
@@ -943,29 +906,16 @@ func (c *{{ $structCamel }}Client) RestoreMany(ctx context.Context, {{ if .Compo
 		if len({{ if .CompositePK }}pks{{ else }}ids{{ end }}) == 0 {
 			return []*{{ .StructName }}{}, nil
 		}
-{{- if and .Tenancy .Tenancy.Tenanted }}
-{{- if .CompositePK }}
+{{- if and (not .CompositePK) (pkIsStringType $pkCol) }}
 
-		pkValues := make([][]any, len(pks))
-		for i, pk := range pks {
-			pkValues[i] = []any{ {{- range .PKColumns }}pk.{{ .FieldName }}, {{ end -}} }
-		}
-
-		restoreConds := []sql.Condition{
-			sql.BuildCompositePKBatchCondition(c.dialect, []string{ {{- range .PKColumns }}{{ printf "%q" .Name }}, {{ end -}} }, pkValues),
-		}
-{{- else }}
-
-{{- if pkIsStringType $pkCol }}
 		idStrings := make([]string, len(ids))
 		for i, id := range ids {
 			idStrings[i] = {{ fkToString $pkCol "id" }}
 		}
-		restoreConds := []sql.Condition{sql.Where(c.dialect.QuoteIdentifier({{ printf "%q" $pkCol.Name }})).In(toAnySlice(idStrings)...)}
-{{- else }}
-		restoreConds := []sql.Condition{sql.Where(c.dialect.QuoteIdentifier({{ printf "%q" $pkCol.Name }})).In(toAnySlice(ids)...)}
 {{- end }}
-{{- end }}
+{{- if and .Tenancy .Tenancy.Tenanted }}
+
+		var scopeConds []sql.Condition
 		if !options.SkipTenancy {
 			resolvedTenant, apply, err := c.resolveTenant(ctx, options.Tenant)
 			if err != nil {
@@ -989,118 +939,97 @@ func (c *{{ $structCamel }}Client) RestoreMany(ctx context.Context, {{ if .Compo
 					}
 				}
 {{- end }}
-				restoreConds = append(restoreConds, sql.Where(c.dialect.QuoteIdentifier({{ printf "%q" .Tenancy.Column }})).Eq(resolvedTenant))
+				scopeConds = append(scopeConds, sql.Where(c.dialect.QuoteIdentifier({{ printf "%q" .Tenancy.Column }})).Eq(resolvedTenant))
 				// Stash for cache hook (single-resolve per operation).
 				m.Tenant = resolvedTenant
 			}
 		}
-{{- if and $captureTenant (not (supportsReturning)) }}
-
-		// MySQL has no RETURNING — one batched pre-read captures each affected
-		// row's tenant before the restore, so cache invalidation and event
-		// stamping rebuild tenant-scoped keys from the rows themselves.
-		tenantByPK, err := c.captureAffectedTenants(ctx, conn, restoreConds)
-		if err != nil {
-			return nil, fmt.Errorf("restore {{ .TableName }}: capture tenants: %w", err)
-		}
 {{- end }}
-{{- if and $captureTenant (supportsReturning) }}
+{{- if $captureTenant }}
 
-		// RETURNING projects each affected row's PK and tenant so cache
+		// Every sub-batch records the tenant of each row it touches, so cache
 		// invalidation and event stamping rebuild tenant-scoped keys from the
 		// rows themselves.
-		query, args := sql.BuildUpdate(c.dialect, c.table, sql.UpdateOptions{
-			SetClauses:       map[string]any{ {{- printf "%q" .SoftDelete.Column }}: {{ softDeleteRestoreGoValue .SoftDelete.Strategy }}},
-			Conditions:       restoreConds,
-			ReturningColumns: []string{ {{- range .PKColumns }}{{ printf "%q" .Name }}, {{ end }}{{ printf "%q" .Tenancy.Column -}} },
-		})
-{{- else }}
-
-		query, args := sql.BuildUpdate(c.dialect, c.table, sql.UpdateOptions{
-			SetClauses: map[string]any{ {{- printf "%q" .SoftDelete.Column }}: {{ softDeleteRestoreGoValue .SoftDelete.Strategy }}},
-			Conditions: restoreConds,
-		})
-{{- end }}
-{{- else }}
-{{- if .CompositePK }}
-
-		pkValues := make([][]any, len(pks))
-		for i, pk := range pks {
-			pkValues[i] = []any{ {{- range .PKColumns }}pk.{{ .FieldName }}, {{ end -}} }
-		}
-
-		query, args := sql.BuildUpdate(c.dialect, c.table, sql.UpdateOptions{
-			SetClauses: map[string]any{ {{- printf "%q" .SoftDelete.Column }}: {{ softDeleteRestoreGoValue .SoftDelete.Strategy }}},
-			Conditions: []sql.Condition{
-				sql.BuildCompositePKBatchCondition(c.dialect, []string{ {{- range .PKColumns }}{{ printf "%q" .Name }}, {{ end -}} }, pkValues),
-			},
-		})
-{{- else }}
-
-{{- if pkIsStringType $pkCol }}
-		idStrings := make([]string, len(ids))
-		for i, id := range ids {
-			idStrings[i] = {{ fkToString $pkCol "id" }}
-		}
-
-		query, args := sql.BuildUpdate(c.dialect, c.table, sql.UpdateOptions{
-			SetClauses: map[string]any{ {{- printf "%q" .SoftDelete.Column }}: {{ softDeleteRestoreGoValue .SoftDelete.Strategy }}},
-			Conditions: []sql.Condition{sql.Where(c.dialect.QuoteIdentifier({{ printf "%q" $pkCol.Name }})).In(toAnySlice(idStrings)...)},
-		})
-{{- else }}
-		query, args := sql.BuildUpdate(c.dialect, c.table, sql.UpdateOptions{
-			SetClauses: map[string]any{ {{- printf "%q" .SoftDelete.Column }}: {{ softDeleteRestoreGoValue .SoftDelete.Strategy }}},
-			Conditions: []sql.Condition{sql.Where(c.dialect.QuoteIdentifier({{ printf "%q" $pkCol.Name }})).In(toAnySlice(ids)...)},
-		})
-{{- end }}
-{{- end }}
-{{- end }}
-
-{{- if and $captureTenant (supportsReturning) }}
-
-		rows, err := conn.Query(ctx, query, args...)
-		if err != nil {
-			return nil, fmt.Errorf("restore {{ .TableName }}: %w", err)
-		}
 		tenantByPK := make(map[{{ if .CompositePK }}{{ .CompositePKStructName }}{{ else }}{{ $pkCol.GoType }}{{ end }}]any, len({{ if .CompositePK }}pks{{ else }}ids{{ end }}))
-		for rows.Next() {
-{{- if .CompositePK }}
-			var rowPK {{ .CompositePKStructName }}
-			var rowTenant {{ .Tenancy.GoType }}
-			if err := rows.Scan({{ range $i, $col := .PKColumns }}{{ if $i }}, {{ end }}&rowPK.{{ $col.FieldName }}{{ end }}, &rowTenant); err != nil {
-				rows.Close()
-				return nil, fmt.Errorf("scan restored {{ $singular }} tenant: %w", err)
-			}
-			tenantByPK[rowPK] = rowTenant
-{{- else }}
-			var rowID {{ $pkCol.GoType }}
-			var rowTenant {{ .Tenancy.GoType }}
-			if err := rows.Scan(&rowID, &rowTenant); err != nil {
-				rows.Close()
-				return nil, fmt.Errorf("scan restored {{ $singular }} tenant: %w", err)
-			}
-			tenantByPK[rowID] = rowTenant
 {{- end }}
-		}
-		if err := rows.Err(); err != nil {
-			rows.Close()
-			return nil, err
-		}
-		rows.Close()
-{{- else }}
 
+		// One statement per sub-batch of c.batchSize keys. A failing sub-batch
+		// returns at once, and the sub-batches before it stay applied.
+		for start := 0; start < len({{ if .CompositePK }}pks{{ else }}ids{{ end }}); start += c.batchSize {
+			end := min(start+c.batchSize, len({{ if .CompositePK }}pks{{ else }}ids{{ end }}))
+{{- if .CompositePK }}
+			pkValues := make([][]any, end-start)
+			for i, pk := range pks[start:end] {
+				pkValues[i] = []any{ {{- range .PKColumns }}pk.{{ .FieldName }}, {{ end -}} }
+			}
+			restoreConds := []sql.Condition{
+				sql.BuildCompositePKBatchCondition(c.dialect, []string{ {{- range .PKColumns }}{{ printf "%q" .Name }}, {{ end -}} }, pkValues),
+			}
+{{- else if pkIsStringType $pkCol }}
+			restoreConds := []sql.Condition{sql.Where(c.dialect.QuoteIdentifier({{ printf "%q" $pkCol.Name }})).In(toAnySlice(idStrings[start:end])...)}
+{{- else }}
+			restoreConds := []sql.Condition{sql.Where(c.dialect.QuoteIdentifier({{ printf "%q" $pkCol.Name }})).In(toAnySlice(ids[start:end])...)}
+{{- end }}
+{{- if and .Tenancy .Tenancy.Tenanted }}
+			restoreConds = append(restoreConds, scopeConds...)
+{{- end }}
 {{- if and $captureTenant (not (supportsReturning)) }}
 
-		// err is already declared by the tenant pre-read above.
-		_, err = conn.Exec(ctx, query, args...)
+			// MySQL has no RETURNING, so a pre-read captures the tenants first.
+			batchTenants, err := c.captureAffectedTenants(ctx, conn, restoreConds)
+			if err != nil {
+				return nil, fmt.Errorf("restore {{ .TableName }}: capture tenants: %w", err)
+			}
+			for pk, tenant := range batchTenants {
+				tenantByPK[pk] = tenant
+			}
+{{- end }}
+{{- if and $captureTenant (supportsReturning) }}
+
+			query, args := sql.BuildUpdate(c.dialect, c.table, sql.UpdateOptions{
+				SetClauses: map[string]any{ {{- printf "%q" .SoftDelete.Column }}: {{ softDeleteRestoreGoValue .SoftDelete.Strategy }}},
+				Conditions: restoreConds,
+				ReturningColumns: []string{ {{- range .PKColumns }}{{ printf "%q" .Name }}, {{ end }}{{ printf "%q" .Tenancy.Column -}} },
+			})
+			rows, err := conn.Query(ctx, query, args...)
+			if err != nil {
+				return nil, fmt.Errorf("restore {{ .TableName }}: %w", err)
+			}
+			for rows.Next() {
+{{- if .CompositePK }}
+				var rowPK {{ .CompositePKStructName }}
+				var rowTenant {{ .Tenancy.GoType }}
+				if err := rows.Scan({{ range $i, $col := .PKColumns }}{{ if $i }}, {{ end }}&rowPK.{{ $col.FieldName }}{{ end }}, &rowTenant); err != nil {
+					rows.Close()
+					return nil, fmt.Errorf("scan restored {{ $singular }} tenant: %w", err)
+				}
+				tenantByPK[rowPK] = rowTenant
+{{- else }}
+				var rowID {{ $pkCol.GoType }}
+				var rowTenant {{ .Tenancy.GoType }}
+				if err := rows.Scan(&rowID, &rowTenant); err != nil {
+					rows.Close()
+					return nil, fmt.Errorf("scan restored {{ $singular }} tenant: %w", err)
+				}
+				tenantByPK[rowID] = rowTenant
+{{- end }}
+			}
+			if err := rows.Err(); err != nil {
+				rows.Close()
+				return nil, err
+			}
+			rows.Close()
 {{- else }}
 
-		_, err := conn.Exec(ctx, query, args...)
+			query, args := sql.BuildUpdate(c.dialect, c.table, sql.UpdateOptions{
+				SetClauses: map[string]any{ {{- printf "%q" .SoftDelete.Column }}: {{ softDeleteRestoreGoValue .SoftDelete.Strategy }}},
+				Conditions: restoreConds,
+			})
+			if _, err := conn.Exec(ctx, query, args...); err != nil {
+				return nil, fmt.Errorf("restore {{ .TableName }}: %w", err)
+			}
 {{- end }}
-		if err != nil {
-			return nil, fmt.Errorf("restore {{ .TableName }}: %w", err)
 		}
-{{- end }}
 {{- if .CompositePK }}
 		m.AffectedPKs = toAnySlice(pks)
 {{- else }}
@@ -1611,22 +1540,8 @@ func (c *{{ $structCamel }}Client) HardDeleteMany(ctx context.Context, {{ if .Co
 	}, func(ctx context.Context, m *hook.MutationContext) (any, error) {
 		conn := database.Conn(ctx, c.querier)
 {{- if and .Tenancy .Tenancy.Tenanted }}
-{{- if .CompositePK }}
 
-		pkValues := make([][]any, len(pks))
-		for i, pk := range pks {
-			pkValues[i] = []any{ {{- range .PKColumns }}pk.{{ .FieldName }}, {{ end -}} }
-		}
-
-		hardConds := []sql.Condition{
-			sql.BuildCompositePKBatchCondition(c.dialect, []string{ {{- range .PKColumns }}{{ printf "%q" .Name }}, {{ end -}} }, pkValues),
-		}
-{{- else }}
-
-		hardConds := []sql.Condition{
-			sql.Where(c.dialect.QuoteIdentifier({{ printf "%q" $pkCol.Name }})).In(toAnySlice(ids)...),
-		}
-{{- end }}
+		var scopeConds []sql.Condition
 		if !options.SkipTenancy {
 			resolvedTenant, apply, err := c.resolveTenant(ctx, options.Tenant)
 			if err != nil {
@@ -1641,104 +1556,93 @@ func (c *{{ $structCamel }}Client) HardDeleteMany(ctx context.Context, {{ if .Co
 					}
 				}
 {{- end }}
-				hardConds = append(hardConds, sql.Where(c.dialect.QuoteIdentifier({{ printf "%q" .Tenancy.Column }})).Eq(resolvedTenant))
+				scopeConds = append(scopeConds, sql.Where(c.dialect.QuoteIdentifier({{ printf "%q" .Tenancy.Column }})).Eq(resolvedTenant))
 				// Stash for cache hook (single-resolve per operation).
 				m.Tenant = resolvedTenant
 			}
 		}
-{{- if and $captureTenant (not (supportsReturning)) }}
-
-		// MySQL has no RETURNING — one batched pre-read captures each affected
-		// row's tenant before the delete, so cache invalidation and event
-		// stamping rebuild tenant-scoped keys from the rows themselves.
-		tenantByPK, err := c.captureAffectedTenants(ctx, conn, hardConds)
-		if err != nil {
-			return nil, fmt.Errorf("hard delete {{ .TableName }}: capture tenants: %w", err)
-		}
 {{- end }}
-{{- if and $captureTenant (supportsReturning) }}
+{{- if $captureTenant }}
 
-		// RETURNING projects each affected row's PK and tenant so cache
+		// Every sub-batch records the tenant of each row it touches, so cache
 		// invalidation and event stamping rebuild tenant-scoped keys from the
 		// rows themselves.
-		query, args := sql.BuildHardDelete(c.dialect, c.table, sql.HardDeleteOptions{
-			Conditions:       hardConds,
-			ReturningColumns: []string{ {{- range .PKColumns }}{{ printf "%q" .Name }}, {{ end }}{{ printf "%q" .Tenancy.Column -}} },
-		})
-{{- else }}
-
-		query, args := sql.BuildHardDelete(c.dialect, c.table, sql.HardDeleteOptions{
-			Conditions: hardConds,
-		})
-{{- end }}
-{{- else }}
-{{- if .CompositePK }}
-
-		pkValues := make([][]any, len(pks))
-		for i, pk := range pks {
-			pkValues[i] = []any{ {{- range .PKColumns }}pk.{{ .FieldName }}, {{ end -}} }
-		}
-
-		query, args := sql.BuildHardDelete(c.dialect, c.table, sql.HardDeleteOptions{
-			Conditions: []sql.Condition{
-				sql.BuildCompositePKBatchCondition(c.dialect, []string{ {{- range .PKColumns }}{{ printf "%q" .Name }}, {{ end -}} }, pkValues),
-			},
-		})
-{{- else }}
-
-		query, args := sql.BuildHardDelete(c.dialect, c.table, sql.HardDeleteOptions{
-			Conditions: []sql.Condition{
-				sql.Where(c.dialect.QuoteIdentifier({{ printf "%q" $pkCol.Name }})).In(toAnySlice(ids)...),
-			},
-		})
-{{- end }}
-{{- end }}
-
-{{- if and $captureTenant (supportsReturning) }}
-
-		rows, err := conn.Query(ctx, query, args...)
-		if err != nil {
-			return nil, fmt.Errorf("hard delete {{ .TableName }}: %w", err)
-		}
 		tenantByPK := make(map[{{ if .CompositePK }}{{ .CompositePKStructName }}{{ else }}{{ $pkCol.GoType }}{{ end }}]any, len({{ if .CompositePK }}pks{{ else }}ids{{ end }}))
-		for rows.Next() {
-{{- if .CompositePK }}
-			var rowPK {{ .CompositePKStructName }}
-			var rowTenant {{ .Tenancy.GoType }}
-			if err := rows.Scan({{ range $i, $col := .PKColumns }}{{ if $i }}, {{ end }}&rowPK.{{ $col.FieldName }}{{ end }}, &rowTenant); err != nil {
-				rows.Close()
-				return nil, fmt.Errorf("scan deleted {{ $singular }} tenant: %w", err)
-			}
-			tenantByPK[rowPK] = rowTenant
-{{- else }}
-			var rowID {{ $pkCol.GoType }}
-			var rowTenant {{ .Tenancy.GoType }}
-			if err := rows.Scan(&rowID, &rowTenant); err != nil {
-				rows.Close()
-				return nil, fmt.Errorf("scan deleted {{ $singular }} tenant: %w", err)
-			}
-			tenantByPK[rowID] = rowTenant
 {{- end }}
-		}
-		if err := rows.Err(); err != nil {
-			rows.Close()
-			return nil, err
-		}
-		rows.Close()
-{{- else }}
 
+		// One statement per sub-batch of c.batchSize keys. A failing sub-batch
+		// returns at once, and the sub-batches before it stay applied.
+		for start := 0; start < len({{ if .CompositePK }}pks{{ else }}ids{{ end }}); start += c.batchSize {
+			end := min(start+c.batchSize, len({{ if .CompositePK }}pks{{ else }}ids{{ end }}))
+{{- if .CompositePK }}
+			pkValues := make([][]any, end-start)
+			for i, pk := range pks[start:end] {
+				pkValues[i] = []any{ {{- range .PKColumns }}pk.{{ .FieldName }}, {{ end -}} }
+			}
+			hardConds := []sql.Condition{
+				sql.BuildCompositePKBatchCondition(c.dialect, []string{ {{- range .PKColumns }}{{ printf "%q" .Name }}, {{ end -}} }, pkValues),
+			}
+{{- else }}
+			hardConds := []sql.Condition{sql.Where(c.dialect.QuoteIdentifier({{ printf "%q" $pkCol.Name }})).In(toAnySlice(ids[start:end])...)}
+{{- end }}
+{{- if and .Tenancy .Tenancy.Tenanted }}
+			hardConds = append(hardConds, scopeConds...)
+{{- end }}
 {{- if and $captureTenant (not (supportsReturning)) }}
 
-		// err is already declared by the tenant pre-read above.
-		_, err = conn.Exec(ctx, query, args...)
+			// MySQL has no RETURNING, so a pre-read captures the tenants first.
+			batchTenants, err := c.captureAffectedTenants(ctx, conn, hardConds)
+			if err != nil {
+				return nil, fmt.Errorf("hard delete {{ .TableName }}: capture tenants: %w", err)
+			}
+			for pk, tenant := range batchTenants {
+				tenantByPK[pk] = tenant
+			}
+{{- end }}
+{{- if and $captureTenant (supportsReturning) }}
+
+			query, args := sql.BuildHardDelete(c.dialect, c.table, sql.HardDeleteOptions{
+				Conditions: hardConds,
+				ReturningColumns: []string{ {{- range .PKColumns }}{{ printf "%q" .Name }}, {{ end }}{{ printf "%q" .Tenancy.Column -}} },
+			})
+			rows, err := conn.Query(ctx, query, args...)
+			if err != nil {
+				return nil, fmt.Errorf("hard delete {{ .TableName }}: %w", err)
+			}
+			for rows.Next() {
+{{- if .CompositePK }}
+				var rowPK {{ .CompositePKStructName }}
+				var rowTenant {{ .Tenancy.GoType }}
+				if err := rows.Scan({{ range $i, $col := .PKColumns }}{{ if $i }}, {{ end }}&rowPK.{{ $col.FieldName }}{{ end }}, &rowTenant); err != nil {
+					rows.Close()
+					return nil, fmt.Errorf("scan deleted {{ $singular }} tenant: %w", err)
+				}
+				tenantByPK[rowPK] = rowTenant
+{{- else }}
+				var rowID {{ $pkCol.GoType }}
+				var rowTenant {{ .Tenancy.GoType }}
+				if err := rows.Scan(&rowID, &rowTenant); err != nil {
+					rows.Close()
+					return nil, fmt.Errorf("scan deleted {{ $singular }} tenant: %w", err)
+				}
+				tenantByPK[rowID] = rowTenant
+{{- end }}
+			}
+			if err := rows.Err(); err != nil {
+				rows.Close()
+				return nil, err
+			}
+			rows.Close()
 {{- else }}
 
-		_, err := conn.Exec(ctx, query, args...)
+			query, args := sql.BuildHardDelete(c.dialect, c.table, sql.HardDeleteOptions{
+				Conditions: hardConds,
+			})
+			if _, err := conn.Exec(ctx, query, args...); err != nil {
+				return nil, fmt.Errorf("hard delete {{ .TableName }}: %w", err)
+			}
 {{- end }}
-		if err != nil {
-			return nil, fmt.Errorf("hard delete {{ .TableName }}: %w", err)
 		}
-{{- end }}
 {{- if .CompositePK }}
 		m.AffectedPKs = toAnySlice(pks)
 {{- else }}

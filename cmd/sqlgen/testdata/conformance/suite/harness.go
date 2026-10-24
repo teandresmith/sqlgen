@@ -34,6 +34,8 @@ type Harness struct {
 // Run runs every method contract against h, one method at a time.
 func Run(t *testing.T, h *Harness) {
 	t.Run("HardDeleteMany", func(t *testing.T) { hardDeleteMany(t, h) })
+	t.Run("SoftDeleteMany", func(t *testing.T) { softDeleteMany(t, h) })
+	t.Run("RestoreMany", func(t *testing.T) { restoreMany(t, h) })
 }
 
 // CountingQuerier records every statement sent through it.

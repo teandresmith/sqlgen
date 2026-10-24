@@ -148,6 +148,8 @@ func TestTenantCapture_delete_acrossDialects(t *testing.T) {
 		out := renderTenantCapture(t, base("mysql", "stdlib"), "table/delete", sql.NewMySQLDialect())
 		wants := []string{
 			"tenantByPK, err := c.captureAffectedTenants(ctx, conn, hardConds)",
+			// The *Many methods pre-read each sub-batch and merge the tenants.
+			"batchTenants, err := c.captureAffectedTenants(ctx, conn, hardConds)",
 			"m.AffectedTenants = []any{capturedTenant}",
 			"ids, affectedTenants, err := c.collectAffectedIDs(ctx, conn, conds)",
 			"m.AffectedTenants = affectedTenants",

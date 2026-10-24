@@ -101,8 +101,7 @@ func TestEmptyBatch_HardDeleteManyUnaffected(t *testing.T) {
 	if err := client.Tags().HardDeleteMany(ctx, nil); err != nil {
 		t.Fatalf("HardDeleteMany(nil): %v", err)
 	}
-	// It still issues its DELETE ... WHERE 1 = 0, which matches no row. That is
-	// pre-existing and harmless; what matters is that it reads nothing back.
+	// No keys means no sub-batch, so it sends nothing; above all it reads nothing back.
 	for _, sqlStr := range cap.snapshot() {
 		if len(sqlStr) >= 6 && sqlStr[:6] == "SELECT" {
 			t.Errorf("HardDeleteMany(nil) issued a SELECT: %q", sqlStr)

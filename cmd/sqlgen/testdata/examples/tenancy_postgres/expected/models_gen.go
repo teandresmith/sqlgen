@@ -1373,7 +1373,8 @@ func (c *articleClient) SoftDeleteMany(ctx context.Context, ids []int64, opts ..
 		if len(ids) == 0 {
 			return []*Article{}, nil
 		}
-		delConds := []sql.Condition{sql.Where(c.dialect.QuoteIdentifier("id")).In(toAnySlice(ids)...)}
+
+		var scopeConds []sql.Condition
 		if !options.SkipTenancy {
 			resolvedTenant, apply, err := c.resolveTenant(ctx, options.Tenant)
 			if err != nil {
@@ -1389,41 +1390,49 @@ func (c *articleClient) SoftDeleteMany(ctx context.Context, ids []int64, opts ..
 				ctx = tenancy.WithResolvedTenant(ctx, resolvedTenant)
 			}
 			if apply {
-				delConds = append(delConds, sql.Where(c.dialect.QuoteIdentifier("workspace_id")).Eq(resolvedTenant))
+				scopeConds = append(scopeConds, sql.Where(c.dialect.QuoteIdentifier("workspace_id")).Eq(resolvedTenant))
 				// Stash for cache hook (single-resolve per operation).
 				m.Tenant = resolvedTenant
 			}
 		}
 
-		// RETURNING projects each affected row's PK and tenant so cache
+		// Every sub-batch records the tenant of each row it touches, so cache
 		// invalidation and event stamping rebuild tenant-scoped keys from the
 		// rows themselves.
-		query, args := sql.BuildSoftDelete(c.dialect, c.table, sql.SoftDeleteOptions{
-			Column:           "deleted_at",
-			Type:             sql.SoftDeleteTimestamp,
-			Conditions:       delConds,
-			ReturningColumns: []string{"id", "workspace_id"},
-		})
-
-		rows, err := conn.Query(ctx, query, args...)
-		if err != nil {
-			return nil, fmt.Errorf("soft delete articles: %w", err)
-		}
 		tenantByPK := make(map[int64]any, len(ids))
-		for rows.Next() {
-			var rowID int64
-			var rowTenant uuid.UUID
-			if err := rows.Scan(&rowID, &rowTenant); err != nil {
-				rows.Close()
-				return nil, fmt.Errorf("scan soft deleted article tenant: %w", err)
+
+		// One statement per sub-batch of c.batchSize keys. A failing sub-batch
+		// returns at once, and the sub-batches before it stay applied.
+		for start := 0; start < len(ids); start += c.batchSize {
+			end := min(start+c.batchSize, len(ids))
+			delConds := []sql.Condition{sql.Where(c.dialect.QuoteIdentifier("id")).In(toAnySlice(ids[start:end])...)}
+			delConds = append(delConds, scopeConds...)
+
+			query, args := sql.BuildSoftDelete(c.dialect, c.table, sql.SoftDeleteOptions{
+				Column:           "deleted_at",
+				Type:             sql.SoftDeleteTimestamp,
+				Conditions:       delConds,
+				ReturningColumns: []string{"id", "workspace_id"},
+			})
+			rows, err := conn.Query(ctx, query, args...)
+			if err != nil {
+				return nil, fmt.Errorf("soft delete articles: %w", err)
 			}
-			tenantByPK[rowID] = rowTenant
-		}
-		if err := rows.Err(); err != nil {
+			for rows.Next() {
+				var rowID int64
+				var rowTenant uuid.UUID
+				if err := rows.Scan(&rowID, &rowTenant); err != nil {
+					rows.Close()
+					return nil, fmt.Errorf("scan soft deleted article tenant: %w", err)
+				}
+				tenantByPK[rowID] = rowTenant
+			}
+			if err := rows.Err(); err != nil {
+				rows.Close()
+				return nil, err
+			}
 			rows.Close()
-			return nil, err
 		}
-		rows.Close()
 		m.AffectedPKs = toAnySlice(ids)
 		affectedTenants := make([]any, len(ids))
 		for i, id := range ids {
@@ -1652,7 +1661,8 @@ func (c *articleClient) RestoreMany(ctx context.Context, ids []int64, opts ...fu
 		if len(ids) == 0 {
 			return []*Article{}, nil
 		}
-		restoreConds := []sql.Condition{sql.Where(c.dialect.QuoteIdentifier("id")).In(toAnySlice(ids)...)}
+
+		var scopeConds []sql.Condition
 		if !options.SkipTenancy {
 			resolvedTenant, apply, err := c.resolveTenant(ctx, options.Tenant)
 			if err != nil {
@@ -1668,40 +1678,48 @@ func (c *articleClient) RestoreMany(ctx context.Context, ids []int64, opts ...fu
 				ctx = tenancy.WithResolvedTenant(ctx, resolvedTenant)
 			}
 			if apply {
-				restoreConds = append(restoreConds, sql.Where(c.dialect.QuoteIdentifier("workspace_id")).Eq(resolvedTenant))
+				scopeConds = append(scopeConds, sql.Where(c.dialect.QuoteIdentifier("workspace_id")).Eq(resolvedTenant))
 				// Stash for cache hook (single-resolve per operation).
 				m.Tenant = resolvedTenant
 			}
 		}
 
-		// RETURNING projects each affected row's PK and tenant so cache
+		// Every sub-batch records the tenant of each row it touches, so cache
 		// invalidation and event stamping rebuild tenant-scoped keys from the
 		// rows themselves.
-		query, args := sql.BuildUpdate(c.dialect, c.table, sql.UpdateOptions{
-			SetClauses:       map[string]any{"deleted_at": nil},
-			Conditions:       restoreConds,
-			ReturningColumns: []string{"id", "workspace_id"},
-		})
-
-		rows, err := conn.Query(ctx, query, args...)
-		if err != nil {
-			return nil, fmt.Errorf("restore articles: %w", err)
-		}
 		tenantByPK := make(map[int64]any, len(ids))
-		for rows.Next() {
-			var rowID int64
-			var rowTenant uuid.UUID
-			if err := rows.Scan(&rowID, &rowTenant); err != nil {
-				rows.Close()
-				return nil, fmt.Errorf("scan restored article tenant: %w", err)
+
+		// One statement per sub-batch of c.batchSize keys. A failing sub-batch
+		// returns at once, and the sub-batches before it stay applied.
+		for start := 0; start < len(ids); start += c.batchSize {
+			end := min(start+c.batchSize, len(ids))
+			restoreConds := []sql.Condition{sql.Where(c.dialect.QuoteIdentifier("id")).In(toAnySlice(ids[start:end])...)}
+			restoreConds = append(restoreConds, scopeConds...)
+
+			query, args := sql.BuildUpdate(c.dialect, c.table, sql.UpdateOptions{
+				SetClauses:       map[string]any{"deleted_at": nil},
+				Conditions:       restoreConds,
+				ReturningColumns: []string{"id", "workspace_id"},
+			})
+			rows, err := conn.Query(ctx, query, args...)
+			if err != nil {
+				return nil, fmt.Errorf("restore articles: %w", err)
 			}
-			tenantByPK[rowID] = rowTenant
-		}
-		if err := rows.Err(); err != nil {
+			for rows.Next() {
+				var rowID int64
+				var rowTenant uuid.UUID
+				if err := rows.Scan(&rowID, &rowTenant); err != nil {
+					rows.Close()
+					return nil, fmt.Errorf("scan restored article tenant: %w", err)
+				}
+				tenantByPK[rowID] = rowTenant
+			}
+			if err := rows.Err(); err != nil {
+				rows.Close()
+				return nil, err
+			}
 			rows.Close()
-			return nil, err
 		}
-		rows.Close()
 		m.AffectedPKs = toAnySlice(ids)
 		affectedTenants := make([]any, len(ids))
 		for i, id := range ids {
@@ -1892,48 +1910,54 @@ func (c *articleClient) HardDeleteMany(ctx context.Context, ids []int64, opts ..
 	}, func(ctx context.Context, m *hook.MutationContext) (any, error) {
 		conn := database.Conn(ctx, c.querier)
 
-		hardConds := []sql.Condition{
-			sql.Where(c.dialect.QuoteIdentifier("id")).In(toAnySlice(ids)...),
-		}
+		var scopeConds []sql.Condition
 		if !options.SkipTenancy {
 			resolvedTenant, apply, err := c.resolveTenant(ctx, options.Tenant)
 			if err != nil {
 				return nil, fmt.Errorf("hard delete articles: resolve tenant: %w", err)
 			}
 			if apply {
-				hardConds = append(hardConds, sql.Where(c.dialect.QuoteIdentifier("workspace_id")).Eq(resolvedTenant))
+				scopeConds = append(scopeConds, sql.Where(c.dialect.QuoteIdentifier("workspace_id")).Eq(resolvedTenant))
 				// Stash for cache hook (single-resolve per operation).
 				m.Tenant = resolvedTenant
 			}
 		}
 
-		// RETURNING projects each affected row's PK and tenant so cache
+		// Every sub-batch records the tenant of each row it touches, so cache
 		// invalidation and event stamping rebuild tenant-scoped keys from the
 		// rows themselves.
-		query, args := sql.BuildHardDelete(c.dialect, c.table, sql.HardDeleteOptions{
-			Conditions:       hardConds,
-			ReturningColumns: []string{"id", "workspace_id"},
-		})
-
-		rows, err := conn.Query(ctx, query, args...)
-		if err != nil {
-			return nil, fmt.Errorf("hard delete articles: %w", err)
-		}
 		tenantByPK := make(map[int64]any, len(ids))
-		for rows.Next() {
-			var rowID int64
-			var rowTenant uuid.UUID
-			if err := rows.Scan(&rowID, &rowTenant); err != nil {
-				rows.Close()
-				return nil, fmt.Errorf("scan deleted article tenant: %w", err)
+
+		// One statement per sub-batch of c.batchSize keys. A failing sub-batch
+		// returns at once, and the sub-batches before it stay applied.
+		for start := 0; start < len(ids); start += c.batchSize {
+			end := min(start+c.batchSize, len(ids))
+			hardConds := []sql.Condition{sql.Where(c.dialect.QuoteIdentifier("id")).In(toAnySlice(ids[start:end])...)}
+			hardConds = append(hardConds, scopeConds...)
+
+			query, args := sql.BuildHardDelete(c.dialect, c.table, sql.HardDeleteOptions{
+				Conditions:       hardConds,
+				ReturningColumns: []string{"id", "workspace_id"},
+			})
+			rows, err := conn.Query(ctx, query, args...)
+			if err != nil {
+				return nil, fmt.Errorf("hard delete articles: %w", err)
 			}
-			tenantByPK[rowID] = rowTenant
-		}
-		if err := rows.Err(); err != nil {
+			for rows.Next() {
+				var rowID int64
+				var rowTenant uuid.UUID
+				if err := rows.Scan(&rowID, &rowTenant); err != nil {
+					rows.Close()
+					return nil, fmt.Errorf("scan deleted article tenant: %w", err)
+				}
+				tenantByPK[rowID] = rowTenant
+			}
+			if err := rows.Err(); err != nil {
+				rows.Close()
+				return nil, err
+			}
 			rows.Close()
-			return nil, err
 		}
-		rows.Close()
 		m.AffectedPKs = toAnySlice(ids)
 		affectedTenants := make([]any, len(ids))
 		for i, id := range ids {
@@ -4568,53 +4592,60 @@ func (c *lineItemClient) HardDeleteMany(ctx context.Context, pks []LineItemPK, o
 	}, func(ctx context.Context, m *hook.MutationContext) (any, error) {
 		conn := database.Conn(ctx, c.querier)
 
-		pkValues := make([][]any, len(pks))
-		for i, pk := range pks {
-			pkValues[i] = []any{pk.OrderID, pk.ProductID}
-		}
-
-		hardConds := []sql.Condition{
-			sql.BuildCompositePKBatchCondition(c.dialect, []string{"order_id", "product_id"}, pkValues),
-		}
+		var scopeConds []sql.Condition
 		if !options.SkipTenancy {
 			resolvedTenant, apply, err := c.resolveTenant(ctx, options.Tenant)
 			if err != nil {
 				return nil, fmt.Errorf("hard delete line_items: resolve tenant: %w", err)
 			}
 			if apply {
-				hardConds = append(hardConds, sql.Where(c.dialect.QuoteIdentifier("workspace_id")).Eq(resolvedTenant))
+				scopeConds = append(scopeConds, sql.Where(c.dialect.QuoteIdentifier("workspace_id")).Eq(resolvedTenant))
 				// Stash for cache hook (single-resolve per operation).
 				m.Tenant = resolvedTenant
 			}
 		}
 
-		// RETURNING projects each affected row's PK and tenant so cache
+		// Every sub-batch records the tenant of each row it touches, so cache
 		// invalidation and event stamping rebuild tenant-scoped keys from the
 		// rows themselves.
-		query, args := sql.BuildHardDelete(c.dialect, c.table, sql.HardDeleteOptions{
-			Conditions:       hardConds,
-			ReturningColumns: []string{"order_id", "product_id", "workspace_id"},
-		})
-
-		rows, err := conn.Query(ctx, query, args...)
-		if err != nil {
-			return nil, fmt.Errorf("hard delete line_items: %w", err)
-		}
 		tenantByPK := make(map[LineItemPK]any, len(pks))
-		for rows.Next() {
-			var rowPK LineItemPK
-			var rowTenant uuid.UUID
-			if err := rows.Scan(&rowPK.OrderID, &rowPK.ProductID, &rowTenant); err != nil {
-				rows.Close()
-				return nil, fmt.Errorf("scan deleted line_item tenant: %w", err)
+
+		// One statement per sub-batch of c.batchSize keys. A failing sub-batch
+		// returns at once, and the sub-batches before it stay applied.
+		for start := 0; start < len(pks); start += c.batchSize {
+			end := min(start+c.batchSize, len(pks))
+			pkValues := make([][]any, end-start)
+			for i, pk := range pks[start:end] {
+				pkValues[i] = []any{pk.OrderID, pk.ProductID}
 			}
-			tenantByPK[rowPK] = rowTenant
-		}
-		if err := rows.Err(); err != nil {
+			hardConds := []sql.Condition{
+				sql.BuildCompositePKBatchCondition(c.dialect, []string{"order_id", "product_id"}, pkValues),
+			}
+			hardConds = append(hardConds, scopeConds...)
+
+			query, args := sql.BuildHardDelete(c.dialect, c.table, sql.HardDeleteOptions{
+				Conditions:       hardConds,
+				ReturningColumns: []string{"order_id", "product_id", "workspace_id"},
+			})
+			rows, err := conn.Query(ctx, query, args...)
+			if err != nil {
+				return nil, fmt.Errorf("hard delete line_items: %w", err)
+			}
+			for rows.Next() {
+				var rowPK LineItemPK
+				var rowTenant uuid.UUID
+				if err := rows.Scan(&rowPK.OrderID, &rowPK.ProductID, &rowTenant); err != nil {
+					rows.Close()
+					return nil, fmt.Errorf("scan deleted line_item tenant: %w", err)
+				}
+				tenantByPK[rowPK] = rowTenant
+			}
+			if err := rows.Err(); err != nil {
+				rows.Close()
+				return nil, err
+			}
 			rows.Close()
-			return nil, err
 		}
-		rows.Close()
 		m.AffectedPKs = toAnySlice(pks)
 		affectedTenants := make([]any, len(pks))
 		for i, pk := range pks {

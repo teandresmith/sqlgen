@@ -757,20 +757,24 @@ func (c *userCategoryClient) HardDeleteMany(ctx context.Context, pks []UserCateg
 	}, func(ctx context.Context, m *hook.MutationContext) (any, error) {
 		conn := database.Conn(ctx, c.querier)
 
-		pkValues := make([][]any, len(pks))
-		for i, pk := range pks {
-			pkValues[i] = []any{pk.UserID, pk.CategoryID}
-		}
-
-		query, args := sql.BuildHardDelete(c.dialect, c.table, sql.HardDeleteOptions{
-			Conditions: []sql.Condition{
+		// One statement per sub-batch of c.batchSize keys. A failing sub-batch
+		// returns at once, and the sub-batches before it stay applied.
+		for start := 0; start < len(pks); start += c.batchSize {
+			end := min(start+c.batchSize, len(pks))
+			pkValues := make([][]any, end-start)
+			for i, pk := range pks[start:end] {
+				pkValues[i] = []any{pk.UserID, pk.CategoryID}
+			}
+			hardConds := []sql.Condition{
 				sql.BuildCompositePKBatchCondition(c.dialect, []string{"user_id", "category_id"}, pkValues),
-			},
-		})
+			}
 
-		_, err := conn.Exec(ctx, query, args...)
-		if err != nil {
-			return nil, fmt.Errorf("hard delete user_categories: %w", err)
+			query, args := sql.BuildHardDelete(c.dialect, c.table, sql.HardDeleteOptions{
+				Conditions: hardConds,
+			})
+			if _, err := conn.Exec(ctx, query, args...); err != nil {
+				return nil, fmt.Errorf("hard delete user_categories: %w", err)
+			}
 		}
 		m.AffectedPKs = toAnySlice(pks)
 		return nil, nil

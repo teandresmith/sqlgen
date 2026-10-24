@@ -2,6 +2,7 @@ package suite
 
 import (
 	"context"
+	"strings"
 	"testing"
 
 	models "github.com/teandresmith/sqlgen/cmd/sqlgen/testdata/conformance/models"
@@ -59,5 +60,38 @@ func assertProductExists(t *testing.T, h *Harness, id int64, want bool) {
 	}
 	if got != want {
 		t.Errorf("Products().Exists(%d) = %v, want %v", id, got, want)
+	}
+}
+
+// statementsWithPrefix returns the recorded statements that start with prefix.
+func statementsWithPrefix(h *Harness, prefix string) []string {
+	var out []string
+	for _, s := range h.Querier.Statements() {
+		if strings.HasPrefix(s, prefix) {
+			out = append(out, s)
+		}
+	}
+	return out
+}
+
+// createDocuments creates n documents and returns their keys.
+func createDocuments(t *testing.T, h *Harness, n int) []int64 {
+	t.Helper()
+	ids := make([]int64, n)
+	for i := range ids {
+		ids[i] = createDocument(t, h, "doc").ID
+	}
+	return ids
+}
+
+// assertLiveDocuments checks how many documents are not soft-deleted.
+func assertLiveDocuments(t *testing.T, h *Harness, want int64) {
+	t.Helper()
+	got, err := h.Client.Documents().Count(context.Background(), nil)
+	if err != nil {
+		t.Fatalf("Documents().Count error = %v", err)
+	}
+	if got != want {
+		t.Errorf("Documents().Count = %d, want %d", got, want)
 	}
 }

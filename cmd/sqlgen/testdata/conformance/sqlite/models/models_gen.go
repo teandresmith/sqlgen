@@ -161,7 +161,7 @@ func newDocumentClient(querier database.Querier, mutationHooks []hook.MutationHo
 		querier:        querier,
 		dialect:        sql.NewSQLiteDialect(),
 		table:          sql.Table{Schema: "", Name: "documents"},
-		batchSize:      200,
+		batchSize:      2,
 		queryLimit:     1000,
 		pageSize:       100,
 		cursorKeys:     []string{"id"},
@@ -897,15 +897,21 @@ func (c *documentClient) SoftDeleteMany(ctx context.Context, ids []int64, opts .
 		if len(ids) == 0 {
 			return []*Document{}, nil
 		}
-		query, args := sql.BuildSoftDelete(c.dialect, c.table, sql.SoftDeleteOptions{
-			Column:     "deleted_at",
-			Type:       sql.SoftDeleteTimestamp,
-			Conditions: []sql.Condition{sql.Where(c.dialect.QuoteIdentifier("id")).In(toAnySlice(ids)...)},
-		})
 
-		_, err := conn.Exec(ctx, query, args...)
-		if err != nil {
-			return nil, fmt.Errorf("soft delete documents: %w", err)
+		// One statement per sub-batch of c.batchSize keys. A failing sub-batch
+		// returns at once, and the sub-batches before it stay applied.
+		for start := 0; start < len(ids); start += c.batchSize {
+			end := min(start+c.batchSize, len(ids))
+			delConds := []sql.Condition{sql.Where(c.dialect.QuoteIdentifier("id")).In(toAnySlice(ids[start:end])...)}
+
+			query, args := sql.BuildSoftDelete(c.dialect, c.table, sql.SoftDeleteOptions{
+				Column:     "deleted_at",
+				Type:       sql.SoftDeleteTimestamp,
+				Conditions: delConds,
+			})
+			if _, err := conn.Exec(ctx, query, args...); err != nil {
+				return nil, fmt.Errorf("soft delete documents: %w", err)
+			}
 		}
 		m.AffectedPKs = toAnySlice(ids)
 
@@ -1069,14 +1075,20 @@ func (c *documentClient) RestoreMany(ctx context.Context, ids []int64, opts ...f
 		if len(ids) == 0 {
 			return []*Document{}, nil
 		}
-		query, args := sql.BuildUpdate(c.dialect, c.table, sql.UpdateOptions{
-			SetClauses: map[string]any{"deleted_at": nil},
-			Conditions: []sql.Condition{sql.Where(c.dialect.QuoteIdentifier("id")).In(toAnySlice(ids)...)},
-		})
 
-		_, err := conn.Exec(ctx, query, args...)
-		if err != nil {
-			return nil, fmt.Errorf("restore documents: %w", err)
+		// One statement per sub-batch of c.batchSize keys. A failing sub-batch
+		// returns at once, and the sub-batches before it stay applied.
+		for start := 0; start < len(ids); start += c.batchSize {
+			end := min(start+c.batchSize, len(ids))
+			restoreConds := []sql.Condition{sql.Where(c.dialect.QuoteIdentifier("id")).In(toAnySlice(ids[start:end])...)}
+
+			query, args := sql.BuildUpdate(c.dialect, c.table, sql.UpdateOptions{
+				SetClauses: map[string]any{"deleted_at": nil},
+				Conditions: restoreConds,
+			})
+			if _, err := conn.Exec(ctx, query, args...); err != nil {
+				return nil, fmt.Errorf("restore documents: %w", err)
+			}
 		}
 		m.AffectedPKs = toAnySlice(ids)
 
@@ -1210,15 +1222,18 @@ func (c *documentClient) HardDeleteMany(ctx context.Context, ids []int64, opts .
 	}, func(ctx context.Context, m *hook.MutationContext) (any, error) {
 		conn := database.Conn(ctx, c.querier)
 
-		query, args := sql.BuildHardDelete(c.dialect, c.table, sql.HardDeleteOptions{
-			Conditions: []sql.Condition{
-				sql.Where(c.dialect.QuoteIdentifier("id")).In(toAnySlice(ids)...),
-			},
-		})
+		// One statement per sub-batch of c.batchSize keys. A failing sub-batch
+		// returns at once, and the sub-batches before it stay applied.
+		for start := 0; start < len(ids); start += c.batchSize {
+			end := min(start+c.batchSize, len(ids))
+			hardConds := []sql.Condition{sql.Where(c.dialect.QuoteIdentifier("id")).In(toAnySlice(ids[start:end])...)}
 
-		_, err := conn.Exec(ctx, query, args...)
-		if err != nil {
-			return nil, fmt.Errorf("hard delete documents: %w", err)
+			query, args := sql.BuildHardDelete(c.dialect, c.table, sql.HardDeleteOptions{
+				Conditions: hardConds,
+			})
+			if _, err := conn.Exec(ctx, query, args...); err != nil {
+				return nil, fmt.Errorf("hard delete documents: %w", err)
+			}
 		}
 		m.AffectedPKs = toAnySlice(ids)
 		return nil, nil
@@ -3120,20 +3135,24 @@ func (c *orderItemClient) HardDeleteMany(ctx context.Context, pks []OrderItemPK,
 	}, func(ctx context.Context, m *hook.MutationContext) (any, error) {
 		conn := database.Conn(ctx, c.querier)
 
-		pkValues := make([][]any, len(pks))
-		for i, pk := range pks {
-			pkValues[i] = []any{pk.OrderID, pk.ProductID}
-		}
-
-		query, args := sql.BuildHardDelete(c.dialect, c.table, sql.HardDeleteOptions{
-			Conditions: []sql.Condition{
+		// One statement per sub-batch of c.batchSize keys. A failing sub-batch
+		// returns at once, and the sub-batches before it stay applied.
+		for start := 0; start < len(pks); start += c.batchSize {
+			end := min(start+c.batchSize, len(pks))
+			pkValues := make([][]any, end-start)
+			for i, pk := range pks[start:end] {
+				pkValues[i] = []any{pk.OrderID, pk.ProductID}
+			}
+			hardConds := []sql.Condition{
 				sql.BuildCompositePKBatchCondition(c.dialect, []string{"order_id", "product_id"}, pkValues),
-			},
-		})
+			}
 
-		_, err := conn.Exec(ctx, query, args...)
-		if err != nil {
-			return nil, fmt.Errorf("hard delete order_items: %w", err)
+			query, args := sql.BuildHardDelete(c.dialect, c.table, sql.HardDeleteOptions{
+				Conditions: hardConds,
+			})
+			if _, err := conn.Exec(ctx, query, args...); err != nil {
+				return nil, fmt.Errorf("hard delete order_items: %w", err)
+			}
 		}
 		m.AffectedPKs = toAnySlice(pks)
 		return nil, nil
@@ -5004,15 +5023,18 @@ func (c *productClient) HardDeleteMany(ctx context.Context, ids []int64, opts ..
 	}, func(ctx context.Context, m *hook.MutationContext) (any, error) {
 		conn := database.Conn(ctx, c.querier)
 
-		query, args := sql.BuildHardDelete(c.dialect, c.table, sql.HardDeleteOptions{
-			Conditions: []sql.Condition{
-				sql.Where(c.dialect.QuoteIdentifier("id")).In(toAnySlice(ids)...),
-			},
-		})
+		// One statement per sub-batch of c.batchSize keys. A failing sub-batch
+		// returns at once, and the sub-batches before it stay applied.
+		for start := 0; start < len(ids); start += c.batchSize {
+			end := min(start+c.batchSize, len(ids))
+			hardConds := []sql.Condition{sql.Where(c.dialect.QuoteIdentifier("id")).In(toAnySlice(ids[start:end])...)}
 
-		_, err := conn.Exec(ctx, query, args...)
-		if err != nil {
-			return nil, fmt.Errorf("hard delete products: %w", err)
+			query, args := sql.BuildHardDelete(c.dialect, c.table, sql.HardDeleteOptions{
+				Conditions: hardConds,
+			})
+			if _, err := conn.Exec(ctx, query, args...); err != nil {
+				return nil, fmt.Errorf("hard delete products: %w", err)
+			}
 		}
 		m.AffectedPKs = toAnySlice(ids)
 		return nil, nil

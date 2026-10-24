@@ -351,7 +351,7 @@ Subtest names carry no PRD numbers, IDs or labels (`guidelines/GO.md` → When t
 to the PRD lives only in the registry. The same rule holds for every module's unit tests.
 
 **A subtest asserts only what the PRD promises.** The prototype's first draft asserted that "an
-empty key list runs no query". Both dialects failed, because `HardDeleteMany(nil)` sends
+empty key list runs no query". Both dialects failed, because `HardDeleteMany(nil)` then sent
 `DELETE … WHERE 1 = 0`. The PRD says only "Batch hard delete" (§9.3 table), and `1 = 0` is the
 builder's designed empty-batch condition. The test had invented a contract. The §5.3 check that
 every claimed test maps to a PRD-anchored registry row is the guard against this.
@@ -416,7 +416,7 @@ every claimed test maps to a PRD-anchored registry row is the guard against this
    ```markdown
    | Gap | Behavior | Tests | Section | Ruling |
    |---|---|---|---|---|
-   | gap.hard-delete-many.nil-statement | `HardDeleteMany(ctx, nil)` sends `DELETE … WHERE 1 = 0` and reads nothing back | `example: postgres: TestEmptyBatch_HardDeleteManyUnaffected` | §9.4c | |
+   | gap.hard-delete-many.nil-statement | `HardDeleteMany(ctx, nil)` sends no statement and reads nothing back | `example: postgres: TestEmptyBatch_HardDeleteManyUnaffected` | §9.4c | |
    ```
 
 Row fields:
@@ -609,14 +609,15 @@ database versions it ran against.
      ignored on deletes). No `n/a` needed an `accepted` date. Rows cite sections other files own
      (§8.7, §18, §21, §22.2), as §5.2 allows. The anchors are the subsections the rows quote, so an
      unrelated edit elsewhere in §18 or §21 does not trip the hash.
-   - **Gaps: 2**, the two batch rows, which stay `untested` until the defect below is fixed.
+   - **Gaps: 2**, the two batch rows, which stayed `untested` until FIX-361 landed.
    - **Defects: 1, a blocking FIX.** `HardDeleteMany`, `SoftDeleteMany` and `RestoreMany` ignore
      `generation.batch_size` (§9.5, §19.4, §25.3). With `batch_size: 2`, 5 keys sent one `DELETE`
      where 3 were expected. A failing third key also undid the first sub-batch. The two fail-first
-     subtests are held back for the fix.
+     subtests were held back for the fix and landed with it.
    - **PRD gaps: 1**, logged in `backlog.md` and later moved to `client.md`'s PRD gaps table:
-     `HardDeleteMany(nil)` sends `DELETE … WHERE 1 = 0` and reads nothing back. The Postgres
-     example's pin of that behavior stays, claimed by the gap until the user rules on it.
+     `HardDeleteMany(nil)` sent `DELETE … WHERE 1 = 0` (no statement once sub-batching landed) and
+     read nothing back. The Postgres example's pin of that behavior stays, claimed by the gap until
+     the user rules on it.
    - **Ported:** `TestHardDeleteMany` was deleted from the `postgres` and `sqlite` examples. The
      `mysql` and `postgres_stdlib` copies stay until step 5 adds those modules. So does the MySQL
      composite-PK batch test, which also covers `Filter.PKs`. The cache, events and tenancy
@@ -631,7 +632,7 @@ database versions it ran against.
      only what the PRD states. For step 6: mutate the generated method once per concern and watch
      its subtest fail.
    - **Cost per method.** Setup was a one-off: plumbing, schema rules, Makefile and freshness
-     check. The method itself took 11 subtests (about 200 lines; 13 with the two held back for the fix) and 12 rows. Each concern was one
+     check. The method itself took 11 subtests (about 200 lines; 13 with the two that landed with the fix) and 12 rows. Each concern was one
      or two subtests of 10 to 25 lines, built on shared fixtures. Runtime is about 0.5 s on SQLite
      and about 4 s on Postgres, nearly all of it container start, so per-method runtime is
      negligible. Most of the effort per method is reading the PRD for each concern: about 10

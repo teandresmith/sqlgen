@@ -22,10 +22,15 @@
 ## Open
 
 <!-- fixes:open:begin -->
+_No open fixes._
+<!-- fixes:open:end -->
 
+## Resolved
+
+<!-- fixes:resolved:begin -->
 ### FIX-361
 
-- **Status:** Open
+- **Status:** Resolved
 - **Severity:** blocking
 - **Origin:** conformance pilot, cmd/sqlgen/gen
 - **Surfaced by:** `client.md` HardDeleteMany conformance pilot, CONFORMANCE.md §7 step 3.2 (2026-10-23)
@@ -75,13 +80,39 @@ and never reads `c.batchSize`. `CreateMany` (`create.go.tmpl:304`) and
 - `cmd/sqlgen/gen/templates/table/nested.go.tmpl:754` chunks a junction
   `HardDeleteMany`-shaped delete at `c.batchSize` already.
 
-**Resolution notes.** _Filled in by /fix resolve._
+**Resolution notes.** `HardDeleteMany`, `SoftDeleteMany` and `RestoreMany` now
+send one statement per sub-batch of `c.batchSize` keys (`delete.go.tmpl`) and
+return on the first failing sub-batch, leaving earlier ones applied. The tenant
+scope is resolved once, and the tenant-in-PK verify-match runs over every key
+before any statement. The tenant capture is per sub-batch and accumulates into
+`tenantByPK`: `RETURNING`, or the MySQL pre-read. `AffectedPKs` /
+`AffectedTenants` are set only on full success, matching `CreateMany` /
+`UpdateMany`. An empty key list now sends no statement (it was
+`DELETE … WHERE 1 = 0`); `gap.hard-delete-many.nil-statement` and the
+`TestEmptyBatch_HardDeleteManyUnaffected` comment are updated.
 
-<!-- fixes:open:end -->
+Tests. The two held-back `HardDeleteMany` subtests, plus new
+`SoftDeleteMany` / `RestoreMany` "splits the keys into sub-batches" subtests
+(conformance `documents` now sets `batch_size: 2`). All four failed against the
+pre-fix generated code on Postgres and SQLite and pass now. Rows
+`hard-delete-many.batch-split`, `hard-delete-many.batch-partial`,
+`soft-delete-many.batch-split` (§9.5) and `restore-many.batch-split` (new §19.4
+anchor, rehashed) claim them. Gen pattern tests and goldens are updated, and
+every example is regenerated.
 
-## Resolved
+User ruling 2026-10-23: keep `RestoreMany` batched (§19.4 "all batch
+operations"). The unchunked trailing re-fetch went to the backlog.
 
-<!-- fixes:resolved:begin -->
+Review follow-ups applied inline. The PRD's soft-delete query-count table
+gives `SoftDeleteMany` / `RestoreMany` `ceil(M / batch_size)` Exec + GetMany,
+and §29.5's MySQL capture sentence says one pre-read per sub-batch; both had
+described the unbatched shape. The CONFORMANCE.md §7 pilot record is now in
+past tense, and the MySQL `batchTenants` pre-read is pinned in
+`TestTenantCapture_delete_acrossDialects`. Two backlog lines: the nested
+junction unlink double-chunk, and `UpdateMany`'s unchunked MySQL tenant pre-read.
+User ruling 2026-10-24: on a partial failure, `AffectedPKs` stays unset, as in
+`UpdateMany`; the cache and events gap for applied sub-batches is in the backlog.
+
 
 ### FIX-360
 

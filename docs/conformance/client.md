@@ -34,7 +34,8 @@ Requirements of the generated client, proved by the cross-dialect conformance su
 | ID | Requirement | Tests | Applies to | Matrix cell |
 |---|---|---|---|---|
 | hard-delete-many.not-found | Delete operations are always idempotent: a listed key that does not exist is not an error | `conformance: HardDeleteMany/missing keys are not an error` | all | client-methods: HardDeleteMany × not-found |
-| hard-delete-many.batch-partial | `HardDeleteMany` splits its input into sub-batches of `generation.batch_size`. If any sub-batch fails, the operation returns an error immediately, and previously executed sub-batches within the same call are not rolled back | | all | |
+| hard-delete-many.batch-partial | `HardDeleteMany` splits its input into sub-batches of `generation.batch_size`. If any sub-batch fails, the operation returns an error immediately, and previously executed sub-batches within the same call are not rolled back | `conformance: HardDeleteMany/a failed sub-batch keeps the sub-batches before it` | all | |
+| soft-delete-many.batch-split | `SoftDeleteMany` splits its input into sub-batches of `generation.batch_size`, one statement each | `conformance: SoftDeleteMany/splits the keys into sub-batches of the table's batch size` | all | |
 
 ## §17.3 Generated Behavior
 <!-- prd: 17.3 sha256: dce1144bfbcb5b6f -->
@@ -56,6 +57,13 @@ Requirements of the generated client, proved by the cross-dialect conformance su
 | ID | Requirement | Tests | Applies to | Matrix cell |
 |---|---|---|---|---|
 | hard-delete-many.rollback | `WithTransaction` rolls back when its function returns an error, so a `HardDeleteMany` inside it deletes nothing | `conformance: HardDeleteMany/rolled-back transaction leaves rows` | all | |
+
+## §19.4 Batch Behavior by Driver
+<!-- prd: 19.4 sha256: 41bde47074962425 -->
+
+| ID | Requirement | Tests | Applies to | Matrix cell |
+|---|---|---|---|---|
+| restore-many.batch-split | Regardless of driver, all batch operations split their input into sub-batches of `generation.batch_size`, so `RestoreMany` sends one statement per sub-batch | `conformance: RestoreMany/splits the keys into sub-batches of the table's batch size` | all | |
 
 ## §21.2 Hook Types
 <!-- prd: 21.2 sha256: 9d8fd1b0bd0ec4e4 -->
@@ -83,7 +91,7 @@ Requirements of the generated client, proved by the cross-dialect conformance su
 
 | ID | Requirement | Tests | Applies to | Matrix cell |
 |---|---|---|---|---|
-| hard-delete-many.batch-split | `HardDeleteMany` is bounded by `generation.batch_size`: each sub-batch is one write statement, and M keys take `ceil(M / batch_size)` statements | | all | |
+| hard-delete-many.batch-split | `HardDeleteMany` is bounded by `generation.batch_size`: each sub-batch is one write statement, and M keys take `ceil(M / batch_size)` statements | `conformance: HardDeleteMany/splits the keys into sub-batches of the table's batch size` | all | |
 
 ## Not applicable
 
@@ -99,4 +107,4 @@ the user's ruling: amend the PRD, which turns the gap into requirement rows, or 
 
 | Gap | Behavior | Tests | Section | Ruling |
 |---|---|---|---|---|
-| gap.hard-delete-many.nil-statement | `HardDeleteMany(ctx, nil)` sends `DELETE … WHERE 1 = 0` and reads nothing back; §9.4c says only that a nil slice is no rows | `example: postgres: TestEmptyBatch_HardDeleteManyUnaffected` | §9.4c | |
+| gap.hard-delete-many.nil-statement | `HardDeleteMany(ctx, nil)` sends no statement and reads nothing back; §9.4c says only that a nil slice is no rows | `example: postgres: TestEmptyBatch_HardDeleteManyUnaffected` | §9.4c | |

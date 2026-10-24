@@ -89,7 +89,7 @@ of the file whose module shows the behavior:
 ```markdown
 | Gap | Behavior | Tests | Section | Ruling |
 |---|---|---|---|---|
-| gap.hard-delete-many.nil-statement | `HardDeleteMany(ctx, nil)` sends `DELETE … WHERE 1 = 0` and reads nothing back | `example: postgres: TestEmptyBatch_HardDeleteManyUnaffected` | §9.4c | |
+| gap.hard-delete-many.nil-statement | `HardDeleteMany(ctx, nil)` sends no statement and reads nothing back | `example: postgres: TestEmptyBatch_HardDeleteManyUnaffected` | §9.4c | |
 ```
 
 - **Gap**: a slug starting with `gap.`, unique across every registry file, IDs of requirements

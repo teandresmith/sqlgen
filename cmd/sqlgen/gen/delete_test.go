@@ -272,7 +272,8 @@ func TestDeleteTemplate_softDeleteMany(t *testing.T) {
 		"idStrings := make([]string, len(ids))",
 		"idStrings[i] = id.String()",
 		"sql.BuildSoftDelete(c.dialect, c.table, sql.SoftDeleteOptions{",
-		`Conditions: []sql.Condition{sql.Where(c.dialect.QuoteIdentifier("id")).In(toAnySlice(idStrings)...)}`,
+		"for start := 0; start < len(ids); start += c.batchSize {",
+		`delConds := []sql.Condition{sql.Where(c.dialect.QuoteIdentifier("id")).In(toAnySlice(idStrings[start:end])...)}`,
 		`fmt.Errorf("soft delete products: %w", err)`,
 		"ID: &comparator.ID{In: idStrings}",
 		"DeletedAt: &comparator.NullableTime{Null: new(false)}",
@@ -461,7 +462,8 @@ func TestDeleteTemplate_hardDeleteMany(t *testing.T) {
 
 	wantPatterns := []string{
 		"func (c *productClient) HardDeleteMany(ctx context.Context, ids []uuid.UUID, opts ...func(*CallOptions[ProductFieldOptions])) error",
-		`sql.Where(c.dialect.QuoteIdentifier("id")).In(toAnySlice(ids)...)`,
+		"for start := 0; start < len(ids); start += c.batchSize {",
+		`sql.Where(c.dialect.QuoteIdentifier("id")).In(toAnySlice(ids[start:end])...)`,
 		`fmt.Errorf("hard delete products: %w", err)`,
 	}
 	for _, want := range wantPatterns {
@@ -548,7 +550,8 @@ func TestDeleteTemplate_compositePK_softDeleteMany(t *testing.T) {
 
 	wantPatterns := []string{
 		"func (c *orderItemClient) SoftDeleteMany(ctx context.Context, pks []OrderItemPK,",
-		"pkValues := make([][]any, len(pks))",
+		"for start := 0; start < len(pks); start += c.batchSize {",
+		"pkValues := make([][]any, end-start)",
 		"sql.BuildCompositePKBatchCondition(c.dialect,",
 		"PKs: pks",
 	}
@@ -565,7 +568,8 @@ func TestDeleteTemplate_compositePK_hardDeleteMany(t *testing.T) {
 
 	wantPatterns := []string{
 		"func (c *orderItemClient) HardDeleteMany(ctx context.Context, pks []OrderItemPK,",
-		"pkValues := make([][]any, len(pks))",
+		"for start := 0; start < len(pks); start += c.batchSize {",
+		"pkValues := make([][]any, end-start)",
 		"sql.BuildCompositePKBatchCondition(c.dialect,",
 		"sql.BuildHardDelete(c.dialect, c.table,",
 	}
