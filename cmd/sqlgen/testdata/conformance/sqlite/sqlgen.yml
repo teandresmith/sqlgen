@@ -1,0 +1,13 @@
+version: v1
+input:
+  dialect: sqlite
+  paths:
+    - ./schema.sql
+output:
+  driver: stdlib
+  dir: ./models
+  package: models
+tables:
+  products:
+    # Small enough that a handful of keys spans several sub-batches.
+    batch_size: 2

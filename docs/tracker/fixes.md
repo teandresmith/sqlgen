@@ -23,7 +23,59 @@
 
 <!-- fixes:open:begin -->
 
-_No open fixes._
+### FIX-361
+
+- **Status:** Open
+- **Severity:** blocking
+- **Origin:** conformance pilot, cmd/sqlgen/gen
+- **Surfaced by:** `client.md` HardDeleteMany conformance pilot, CONFORMANCE.md §7 step 3.2 (2026-10-23)
+
+**Issue.** `HardDeleteMany`, `SoftDeleteMany` and `RestoreMany` ignore
+`generation.batch_size`: each sends one statement over every key instead of
+`ceil(M / batch_size)` sub-batches, so a failing later sub-batch also undoes the
+earlier ones. Measured 2026-10-23 on the conformance suite (Postgres pgx and
+SQLite stdlib) with `tables.products.batch_size: 2`: 5 keys sent one
+`DELETE FROM "public"."products" WHERE "id" IN ($1, $2, $3, $4, $5)`, want 3
+statements; `[a, b, c]` with `c` referenced by an order item failed as one
+statement, so `a` and `b` survived, where the PRD keeps the first sub-batch
+`{a, b}` deleted.
+
+**Root cause.** `cmd/sqlgen/gen/templates/table/delete.go.tmpl` (the
+`HardDeleteMany` body from line 1605, and the `SoftDeleteMany` / `RestoreMany`
+bodies) builds a single `IN` / composite batch condition over the whole slice
+and never reads `c.batchSize`. `CreateMany` (`create.go.tmpl:304`) and
+`UpdateMany` (`update.go.tmpl:369`) chunk with
+`for start := 0; start < len(x); start += c.batchSize`.
+
+**Suggested fix.**
+- Chunk the three methods at `c.batchSize` inside the mutation terminal, one
+  statement per sub-batch, returning on the first failing sub-batch.
+- Cover every branch: plain, composite PK, tenanted with `RETURNING` capture,
+  and the MySQL tenant pre-read; accumulate `tenantByPK` / `AffectedPKs` across
+  sub-batches (decide whether `AffectedPKs` names only the sub-batches that ran
+  when one fails).
+- Regression tests: apply `.claude/prototypes/batch-delete-subtests.patch`,
+  which adds the two held-back conformance subtests "splits the keys into
+  sub-batches of the table's batch size" and "a failed sub-batch keeps the
+  sub-batches before it" to `cmd/sqlgen/testdata/conformance/suite/hard_delete_many.go`.
+  Both fail on current code on both dialects. Claim them in the
+  `hard-delete-many.batch-split` and `hard-delete-many.batch-partial` rows of
+  `docs/conformance/client.md`, which are `untested` until then.
+- `SoftDeleteMany` / `RestoreMany` get the same tests when their conformance
+  rows are seeded, or as example tests in this fix.
+- Regenerate every example and the goldens (`make update-golden update-golden-e2e`).
+
+**References.**
+- PRD §9.5 Batch Failure Semantics: "`CreateMany`, `UpdateMany`,
+  `HardDeleteMany`, and `SoftDeleteMany` split their input into sub-batches of
+  `generation.batch_size`."
+- PRD §19.4: "Regardless of driver, all batch operations split their input into
+  sub-batches of `generation.batch_size`."
+- PRD §25.3: "The total write count for a batch of M items is `ceil(M / batch_size)`."
+- `cmd/sqlgen/gen/templates/table/nested.go.tmpl:754` chunks a junction
+  `HardDeleteMany`-shaped delete at `c.batchSize` already.
+
+**Resolution notes.** _Filled in by /fix resolve._
 
 <!-- fixes:open:end -->
 

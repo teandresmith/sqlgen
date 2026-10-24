@@ -140,38 +140,6 @@ func TestUpdateWhere(t *testing.T) {
 	}
 }
 
-func TestHardDeleteMany(t *testing.T) {
-	ctx := context.Background()
-	client := newClient()
-
-	c1, _ := client.Categories().Create(ctx, &models.CreateCategoryInput{Name: "DelMany1"})
-	c2, _ := client.Categories().Create(ctx, &models.CreateCategoryInput{Name: "DelMany2"})
-	c3, _ := client.Categories().Create(ctx, &models.CreateCategoryInput{Name: "DelMany3"})
-	t.Cleanup(func() { _ = client.Categories().HardDelete(ctx, c3.ID) })
-
-	if err := client.Categories().HardDeleteMany(ctx, []int64{c1.ID, c2.ID}); err != nil {
-		t.Fatalf("HardDeleteMany: %v", err)
-	}
-
-	for _, id := range []int64{c1.ID, c2.ID} {
-		exists, err := client.Categories().Exists(ctx, id)
-		if err != nil {
-			t.Fatalf("Exists(%d): %v", id, err)
-		}
-		if exists {
-			t.Errorf("Category %d should not exist after HardDeleteMany", id)
-		}
-	}
-
-	exists, err := client.Categories().Exists(ctx, c3.ID)
-	if err != nil {
-		t.Fatalf("Exists(%d): %v", c3.ID, err)
-	}
-	if !exists {
-		t.Error("c3 should still exist after HardDeleteMany of c1,c2")
-	}
-}
-
 func TestHardDeleteWhere(t *testing.T) {
 	ctx := context.Background()
 	client := newClient()

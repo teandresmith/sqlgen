@@ -1,6 +1,10 @@
 MODULES = . parser cmd/sqlgen event/natsbus cache/memory cache/redis cache/msgpack metrics/otel
 EXAMPLE_MODULES = $(wildcard cmd/sqlgen/testdata/examples/*/go.mod)
 EXAMPLE_DIRS = $(dir $(EXAMPLE_MODULES))
+# The cross-dialect conformance suite (docs/design/CONFORMANCE.md §4.2): a suite
+# library module plus one module per dialect, each generating its own models/.
+CONFORMANCE_DIRS = $(dir $(wildcard cmd/sqlgen/testdata/conformance/*/go.mod))
+CONFORMANCE_DIALECT_DIRS = $(filter-out %/suite/,$(CONFORMANCE_DIRS))
 
 # Timeout for the slow suites. Deliberately generous: a test timeout exists to
 # catch a hang, not to bound a normal run. It was sized when `cmd/sqlgen/cli`
@@ -11,7 +15,7 @@ EXAMPLE_DIRS = $(dir $(EXAMPLE_MODULES))
 # detector, not a budget. The example suites keep their own tighter bound.
 TEST_TIMEOUT ?= 30m
 
-.PHONY: refs-check req-check req-rehash test test-integration test-examples lint lint-examples tools-check check check-all fmt vet update-golden update-golden-e2e coverage coverage-html clean help
+.PHONY: refs-check req-check req-rehash test test-integration test-examples test-conformance check-conformance lint lint-examples tools-check check check-all fmt vet update-golden update-golden-e2e coverage coverage-html clean help
 
 ## Testing
 
@@ -30,6 +34,15 @@ test-integration: ## Run full test suite including integration tests (requires D
 test-examples: ## Run E2E example tests against real databases (requires Docker)
 	@for dir in $(EXAMPLE_DIRS); do \
 		echo "==> test-examples $$dir"; \
+		(cd $$dir && GOWORK=off go test -race -count=1 -timeout=5m ./...) || exit 1; \
+	done
+
+# Each dialect's committed models/ must match what sqlgen generates now:
+# `sqlgen diff` exits 1 when generate would change a file (PRD §23.6).
+test-conformance: ## Run the cross-dialect conformance suite on every dialect (requires Docker)
+	@for dir in $(CONFORMANCE_DIALECT_DIRS); do \
+		echo "==> test-conformance $$dir"; \
+		(cd $$dir && go run github.com/teandresmith/sqlgen/cmd/sqlgen diff --quiet) || { echo "$$dir: models/ is stale or sqlgen diff failed; run sqlgen generate in $$dir"; exit 1; }; \
 		(cd $$dir && GOWORK=off go test -race -count=1 -timeout=5m ./...) || exit 1; \
 	done
 
@@ -178,7 +191,16 @@ req-rehash: ## Record that changed PRD sections were reviewed: SECTIONS=9.4c,4.1
 
 check: tools-check tracker-check refs-check req-check fmt lint vet test ## Run lint + unit tests (pre-push check)
 
-check-examples: tools-check fmt-examples lint-examples vet-examples test-examples ## Run lint + tests on E2E example modules (requires Docker)
+check-examples: tools-check fmt-examples lint-examples vet-examples test-examples check-conformance ## Run lint + tests on E2E example modules and the conformance suite (requires Docker)
+
+check-conformance: ## Format, lint, vet and test the conformance suite modules (requires Docker)
+	@for dir in $(CONFORMANCE_DIRS); do \
+		echo "==> check-conformance $$dir"; \
+		find $$dir -type d -name models -prune -o -type f -name '*.go' -print0 | xargs -0 -r gofumpt -w || exit 1; \
+		(cd $$dir && GOWORK=off golangci-lint run --timeout=5m) || exit 1; \
+		(cd $$dir && GOWORK=off go vet ./...) || exit 1; \
+	done
+	@$(MAKE) --no-print-directory test-conformance
 
 ## Code Generation
 

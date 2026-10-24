@@ -1,6 +1,93 @@
 # Generated Client Requirements
 
-<!-- seeding: not-started -->
+<!-- seeding: in-progress -->
 <!-- matrix: client-methods rows=method cols=happy-path,nil-empty-input,not-found,soft-delete,transaction,hooks,error-mapping,field-selection,lock-mode,composite-pk -->
 
-No requirements yet. See [README.md](README.md) for the format.
+Requirements of the generated client, proved by the cross-dialect conformance suite in
+`cmd/sqlgen/testdata/conformance` (see [README.md](README.md) for the format). Each method's
+`client-methods` cells are seeded together; a row may cite a section another registry file owns.
+
+## §8.7 Composite Primary Keys
+<!-- prd: 8.7 sha256: da45a45caf192996 -->
+
+| ID | Requirement | Tests | Applies to | Matrix cell |
+|---|---|---|---|---|
+| hard-delete-many.composite-pk | Batch operations accept slices of the `{Table}PK` type, and the WHERE clause matches all PK columns, so `HardDeleteMany` deletes only the listed tuples | `conformance: HardDeleteMany/composite keys delete only the listed tuples` | all | client-methods: HardDeleteMany × composite-pk |
+
+## §9.3 Delete Operations
+<!-- prd: 9.3 sha256: 9a222a59e2330f57 -->
+
+| ID | Requirement | Tests | Applies to | Matrix cell |
+|---|---|---|---|---|
+| hard-delete-many.happy-path | `HardDeleteMany(ctx, []pk)` is a batch hard delete: a physical DELETE of the rows whose keys are listed | `conformance: HardDeleteMany/deletes only the listed keys` | all | client-methods: HardDeleteMany × happy-path |
+
+## §9.4c Nil input handling
+<!-- prd: 9.4c sha256: ed42be05ab92062c -->
+
+| ID | Requirement | Tests | Applies to | Matrix cell |
+|---|---|---|---|---|
+| hard-delete-many.nil-empty-input | Bulk write variants distinguish the two nils: a nil slice is simply no rows, since nil and empty already mean the same thing, so `HardDeleteMany` with no keys does nothing | `conformance: HardDeleteMany/nil key list deletes nothing`; `conformance: HardDeleteMany/empty key list deletes nothing` | all | client-methods: HardDeleteMany × nil-empty-input |
+
+## §9.5 Edge Case Behaviors
+<!-- prd: 9.5 sha256: 39cf69aea492fcef -->
+
+| ID | Requirement | Tests | Applies to | Matrix cell |
+|---|---|---|---|---|
+| hard-delete-many.not-found | Delete operations are always idempotent: a listed key that does not exist is not an error | `conformance: HardDeleteMany/missing keys are not an error` | all | client-methods: HardDeleteMany × not-found |
+| hard-delete-many.batch-partial | `HardDeleteMany` splits its input into sub-batches of `generation.batch_size`. If any sub-batch fails, the operation returns an error immediately, and previously executed sub-batches within the same call are not rolled back | | all | |
+
+## §17.3 Generated Behavior
+<!-- prd: 17.3 sha256: dce1144bfbcb5b6f -->
+
+| ID | Requirement | Tests | Applies to | Matrix cell |
+|---|---|---|---|---|
+| hard-delete-many.soft-delete | §17.3 adds the default "is not deleted" condition only to `GetMany`, and a hard delete is a physical DELETE (§9.3), so `HardDeleteMany` removes the listed rows whether or not they are soft-deleted | `conformance: HardDeleteMany/deletes listed rows whether or not they are soft-deleted` | all | client-methods: HardDeleteMany × soft-delete |
+
+## §18.1 Context-Based Injection
+<!-- prd: 18.1 sha256: c3db00f28ba2ecf7 -->
+
+| ID | Requirement | Tests | Applies to | Matrix cell |
+|---|---|---|---|---|
+| hard-delete-many.transaction | Every generated client method calls `database.Conn(ctx, querier)`, so `HardDeleteMany` with a transaction in its context runs on that transaction | `conformance: HardDeleteMany/deletes inside the caller's transaction` | all | client-methods: HardDeleteMany × transaction |
+
+## §18.3 API
+<!-- prd: 18.3 sha256: d74d13c5256f0eb9 -->
+
+| ID | Requirement | Tests | Applies to | Matrix cell |
+|---|---|---|---|---|
+| hard-delete-many.rollback | `WithTransaction` rolls back when its function returns an error, so a `HardDeleteMany` inside it deletes nothing | `conformance: HardDeleteMany/rolled-back transaction leaves rows` | all | |
+
+## §21.2 Hook Types
+<!-- prd: 21.2 sha256: 9d8fd1b0bd0ec4e4 -->
+
+| ID | Requirement | Tests | Applies to | Matrix cell |
+|---|---|---|---|---|
+| hard-delete-many.hooks | `HardDeleteMany` runs through the mutation hook chain as `OpHardDeleteMany`; the `MutationContext` carries the table constant and a nil `PK` (a batch), and after the mutation `AffectedPKs` holds the affected keys | `conformance: HardDeleteMany/fires one hard_delete_many mutation hook` | all | client-methods: HardDeleteMany × hooks |
+
+## §21.5 Hook Lifecycle
+<!-- prd: 21.5 sha256: e0d73e7468d1e59c -->
+
+| ID | Requirement | Tests | Applies to | Matrix cell |
+|---|---|---|---|---|
+| hard-delete-many.hook-abort | A hook can abort: it returns an error without calling `next()`, and the delete does not run | `conformance: HardDeleteMany/a hook that aborts deletes nothing` | all | |
+
+## §22.2 Constraint Errors
+<!-- prd: 22.2 sha256: 810f4c6c65c97c1e -->
+
+| ID | Requirement | Tests | Applies to | Matrix cell |
+|---|---|---|---|---|
+| hard-delete-many.error-mapping | A constraint violation is wrapped into a structured `ConstraintError` that unwraps to `ErrConstraintViolation`: deleting a row another row references gives `Type` `ConstraintForeignKey` | `conformance: HardDeleteMany/deleting a referenced row returns a foreign key ConstraintError` | all | client-methods: HardDeleteMany × error-mapping |
+
+## §25.3 Batch Operations
+<!-- prd: 25.3 sha256: f6b1af10841cf723 -->
+
+| ID | Requirement | Tests | Applies to | Matrix cell |
+|---|---|---|---|---|
+| hard-delete-many.batch-split | `HardDeleteMany` is bounded by `generation.batch_size`: each sub-batch is one write statement, and M keys take `ceil(M / batch_size)` statements | | all | |
+
+## Not applicable
+
+| Matrix cell | Reason | Accepted |
+|---|---|---|
+| client-methods: HardDeleteMany × field-selection | §12 field selection chooses the columns of a returned entity; `HardDeleteMany` returns only an error (§9.3) | |
+| client-methods: HardDeleteMany × lock-mode | §9.6a `LockMode` applies to read methods only and is ignored on `*Delete*` methods | |

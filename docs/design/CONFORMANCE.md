@@ -574,6 +574,53 @@ database versions it ran against.
      agents (about 4–5 minutes each). Seeding itself was mechanical: one generator script, with
      `req-check` failing only on the computed names. Most of the effort was the `together`
      column, which no existing test covered rule by rule.
+
+   **Client pilot (`HardDeleteMany`), recorded 2026-10-23:**
+   - **Suite landed** at `cmd/sqlgen/testdata/conformance/` (`suite`, `postgres` on pgx, `sqlite`
+     on stdlib). The schema has three tables so far: `products`, `order_items` and `documents`
+     (timestamp soft delete). A SQLite surrogate key is `INTEGER PRIMARY KEY`, the only rowid
+     spelling. Every other integer is `BIGINT`. The generated APIs then differ only in timestamp
+     types, the nullable `deleted_at` included (`*time.Time` against `types.NullDateTime`). The suite
+     never names that type: it soft-deletes through the client and counts rows with SQL.
+     The generated `models/` is committed like the examples. `make test-conformance` fails when
+     `sqlgen diff` reports it stale. `make check-conformance` (fmt, lint, vet, test) is a
+     prerequisite of `check-examples`. A CI job comes with step 4. SQLite needs its foreign-key
+     pragma in the DSN (`_pragma=foreign_keys(1)`), because a `PRAGMA` statement reaches one
+     pooled connection only.
+   - **Rows seeded: 12**, under 11 anchors. 8 claim a `client-methods` cell: happy path, nil and
+     empty input, not found, soft delete, transaction, hooks, error mapping, composite PK. 4 have
+     no cell: rollback (§18.3), a hook aborting (§21.5), and the two batch rows (§9.5, §25.3). The 2
+     `n/a` cells cite §12 (field selection: the method returns no entity) and §9.6a (lock modes are
+     ignored on deletes). No `n/a` needed an `accepted` date. Rows cite sections other files own
+     (§8.7, §18, §21, §22.2), as §5.2 allows. The anchors are the subsections the rows quote, so an
+     unrelated edit elsewhere in §18 or §21 does not trip the hash.
+   - **Gaps: 2**, the two batch rows, which stay `untested` until the defect below is fixed.
+   - **Defects: 1, a blocking FIX.** `HardDeleteMany`, `SoftDeleteMany` and `RestoreMany` ignore
+     `generation.batch_size` (§9.5, §19.4, §25.3). With `batch_size: 2`, 5 keys sent one `DELETE`
+     where 3 were expected. A failing third key also undid the first sub-batch. The two fail-first
+     subtests are held back for the fix.
+   - **PRD gaps: 1**, logged in `backlog.md`: `HardDeleteMany(nil)` sends `DELETE … WHERE 1 = 0` and
+     reads nothing back. The Postgres example's pin of that behavior stays, since no row can claim it.
+   - **Ported:** `TestHardDeleteMany` was deleted from the `postgres` and `sqlite` examples. The
+     `mysql` and `postgres_stdlib` copies stay until step 5 adds those modules. So does the MySQL
+     composite-PK batch test, which also covers `Filter.PKs`. The cache, events and tenancy
+     variants' uses are not ports (§8). The deleted Postgres copy keyed on a UUID; key-type coverage
+     is the `type-resolution` matrix's job, not this method's. Until step 4's CI job, CI runs no
+     `HardDeleteMany` test on Postgres or SQLite: only `make check-examples` does.
+   - **Review lessons.** The reviewer ran a mutation check: a generated `HardDeleteMany` that
+     ignored the transaction in its context still passed the first draft of the transaction
+     subtest, because the delete only autocommitted outside the transaction. The subtest now
+     asserts that nothing reaches the counting querier. Two more subtests over-asserted: one
+     checked `RejectMutation`'s message text, the other the order of `AffectedPKs`. Both now assert
+     only what the PRD states. For step 6: mutate the generated method once per concern and watch
+     its subtest fail.
+   - **Cost per method.** Setup was a one-off: plumbing, schema rules, Makefile and freshness
+     check. The method itself took 11 subtests (about 200 lines; 13 with the two held back for the fix) and 12 rows. Each concern was one
+     or two subtests of 10 to 25 lines, built on shared fixtures. Runtime is about 0.5 s on SQLite
+     and about 4 s on Postgres, nearly all of it container start, so per-method runtime is
+     negligible. Most of the effort per method is reading the PRD for each concern: about 10
+     sections for one method. Wall time was about 2 hours, including the plumbing and a stop for
+     the defect.
 4. **Report generator** and `make conformance`.
 5. **Add the MySQL and `postgres_stdlib` conformance modules**, since MySQL differs most (no
    `RETURNING`, `AUTO_INCREMENT`).
