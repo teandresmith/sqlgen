@@ -47,12 +47,17 @@ func TestConformance(t *testing.T) {
 	if _, err := pool.Exec(ctx, string(schema)); err != nil {
 		t.Fatal(err)
 	}
+	var version string
+	if err := pool.QueryRow(ctx, "SHOW server_version").Scan(&version); err != nil {
+		t.Fatal(err)
+	}
 	q := &suite.CountingQuerier{Inner: dbpgx.New(pool)}
 	suite.Run(t, &suite.Harness{
-		Dialect: "postgres",
-		Driver:  "pgx",
-		Client:  models.New(q),
-		Querier: q,
+		Dialect:  "postgres",
+		Driver:   "pgx",
+		Database: "PostgreSQL " + version,
+		Client:   models.New(q),
+		Querier:  q,
 		Reset: func(t *testing.T) {
 			if _, err := pool.Exec(ctx, "TRUNCATE order_items, products, documents RESTART IDENTITY"); err != nil {
 				t.Fatal(err)

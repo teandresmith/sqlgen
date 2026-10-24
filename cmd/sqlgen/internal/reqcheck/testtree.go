@@ -34,8 +34,10 @@ const conformanceRoot = "Run"
 // TestRef is a parsed Tests-cell entry.
 type TestRef struct {
 	Home string
-	Dir  string   // the package directory holding the test, relative to the repository root
-	Path []string // test name segments; empty for a golden home
+	Dir  string // the package directory holding the test, relative to the repository root
+	// Path is the test name split on "/", segments kept exactly as written, empty ones included:
+	// `go test` names a subtest "a/" as a and an empty child. Empty for a golden home.
+	Path []string
 	Raw  string
 }
 
@@ -75,14 +77,13 @@ func ParseTestRef(s string) (TestRef, error) {
 	return ref, nil
 }
 
+// splitPath splits a test name the way the test tree does, so a reference resolves to exactly
+// the test `go test` reports under that name.
 func splitPath(s string) []string {
-	var out []string
-	for seg := range strings.SplitSeq(s, "/") {
-		if seg = strings.TrimSpace(seg); seg != "" {
-			out = append(out, seg)
-		}
+	if s == "" {
+		return nil
 	}
-	return out
+	return strings.Split(s, "/")
 }
 
 // testNode is one test or subtest.
@@ -91,6 +92,9 @@ type testNode struct {
 	children []*testNode
 	// computed is set when some subtest names under this node could not be read statically.
 	computed bool
+	// run is set on a test go test reports. A subtest name containing "/" also makes a node
+	// for each segment before the last, which go test never reports on its own.
+	run bool
 }
 
 func (n *testNode) child(name string) *testNode {
@@ -107,7 +111,7 @@ func (n *testNode) child(name string) *testNode {
 // lookup finds a child by its literal name or by the name `go test` reports, spaces as underscores.
 func (n *testNode) lookup(seg string) *testNode {
 	for _, c := range n.children {
-		if c.name == seg || strings.ReplaceAll(c.name, " ", "_") == seg {
+		if c.name == seg || goTestName(c.name) == seg {
 			return c
 		}
 	}
@@ -154,7 +158,7 @@ func loadTestTree(dir string, allFiles bool) (testTree, error) {
 		if !takesTestingT(fn.Type) {
 			continue
 		}
-		root := &testNode{name: name}
+		root := &testNode{name: name, run: true}
 		w := walker{funcs: funcs, pkgVars: vars, stack: []string{name}}
 		w.walk(fn.Body, root, nil, nil)
 		tree[name] = root
@@ -256,6 +260,7 @@ func (w walker) call(n *ast.CallExpr, parent *testNode, vars map[string]ast.Expr
 			for seg := range strings.SplitSeq(name, "/") {
 				node = node.child(seg)
 			}
+			node.run = true
 			w.walk(fn.Body, node, vars, ranges)
 		}
 		return false

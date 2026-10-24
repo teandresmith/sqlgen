@@ -15,7 +15,7 @@ CONFORMANCE_DIALECT_DIRS = $(filter-out %/suite/,$(CONFORMANCE_DIRS))
 # detector, not a budget. The example suites keep their own tighter bound.
 TEST_TIMEOUT ?= 30m
 
-.PHONY: refs-check req-check req-rehash test test-integration test-examples test-conformance check-conformance lint lint-examples tools-check check check-all fmt vet update-golden update-golden-e2e coverage coverage-html clean help
+.PHONY: refs-check req-check req-rehash test test-integration test-examples test-conformance conformance-fresh conformance check-conformance lint lint-examples tools-check check check-all fmt vet update-golden update-golden-e2e coverage coverage-html clean help
 
 ## Testing
 
@@ -37,14 +37,43 @@ test-examples: ## Run E2E example tests against real databases (requires Docker)
 		(cd $$dir && GOWORK=off go test -race -count=1 -timeout=5m ./...) || exit 1; \
 	done
 
-# Each dialect's committed models/ must match what sqlgen generates now:
-# `sqlgen diff` exits 1 when generate would change a file (PRD §23.6).
-test-conformance: ## Run the cross-dialect conformance suite on every dialect (requires Docker)
+test-conformance: conformance-fresh ## Run the cross-dialect conformance suite on every dialect (requires Docker)
 	@for dir in $(CONFORMANCE_DIALECT_DIRS); do \
 		echo "==> test-conformance $$dir"; \
-		(cd $$dir && go run github.com/teandresmith/sqlgen/cmd/sqlgen diff --quiet) || { echo "$$dir: models/ is stale or sqlgen diff failed; run sqlgen generate in $$dir"; exit 1; }; \
 		(cd $$dir && GOWORK=off go test -race -count=1 -timeout=5m ./...) || exit 1; \
 	done
+
+# Each dialect's committed models/ must match what sqlgen generates now:
+# `sqlgen diff` exits 1 when generate would change a file (PRD §23.6).
+conformance-fresh:
+	@for dir in $(CONFORMANCE_DIALECT_DIRS); do \
+		(cd $$dir && go run github.com/teandresmith/sqlgen/cmd/sqlgen diff --quiet) || { echo "$$dir: models/ is stale or sqlgen diff failed; run sqlgen generate in $$dir"; exit 1; }; \
+	done
+
+# Runs every registered test home (docs/design/CONFORMANCE.md §5.5) with
+# go test -json into CONFORMANCE_RESULTS, then joins the results with the
+# registry into docs/conformance/REPORT.md. A failing home does not stop the
+# others: the report is always written, and the target fails afterwards.
+# Not part of `make check`: it needs Docker.
+CONFORMANCE_RESULTS ?= .conformance-results
+CONFORMANCE_OUT = $(abspath $(CONFORMANCE_RESULTS))
+
+conformance: conformance-fresh ## Run every registered test home and write docs/conformance/REPORT.md (requires Docker)
+	@rm -rf $(CONFORMANCE_OUT) && mkdir -p $(CONFORMANCE_OUT); status=0; \
+	for mod in $(MODULES); do \
+		echo "==> conformance $$mod"; \
+		out=$(CONFORMANCE_OUT)/module-$$(echo $$mod | sed 's|^\.$$|root|; s|/|-|g').json; \
+		(cd $$mod && go test -json -race -count=1 -timeout=$(TEST_TIMEOUT) ./... > $$out) || { echo "  FAIL $$mod"; status=1; }; \
+	done; \
+	for dir in $(EXAMPLE_DIRS) $(CONFORMANCE_DIALECT_DIRS); do \
+		echo "==> conformance $$dir"; \
+		kind=example; case $$dir in */conformance/*) kind=conformance;; esac; \
+		out=$(CONFORMANCE_OUT)/$$kind-$$(basename $$dir).json; \
+		(cd $$dir && GOWORK=off go test -json -race -count=1 -timeout=5m ./... > $$out) || { echo "  FAIL $$dir"; status=1; }; \
+	done; \
+	commit=$$(git rev-parse --short=12 HEAD)$$(git diff --quiet HEAD -- . ':!docs/conformance/REPORT.md' || echo -dirty); \
+	(cd cmd/sqlgen && go run ./internal/cmd/reqcheck -root ../.. -report $(CONFORMANCE_OUT) -commit $$commit) || status=1; \
+	exit $$status
 
 ## Code Quality
 

@@ -60,7 +60,8 @@ against:
   `example: <example>: TestName` or `golden: <example>`. `<dir>` is relative to the repository
   root. An empty cell means the requirement is not yet tested.
 - **Applies to**: `all`, or a comma-separated list of `postgres`, `mysql`, `sqlite`, `pgx`,
-  `stdlib`.
+  `stdlib`. Dialects and drivers combine: `postgres, stdlib` is Postgres through `stdlib`
+  only, and `mysql, sqlite` is either dialect on any driver.
 - **Matrix cell**: `<matrix>: <row> × <column>`, naming a matrix the file declares. Leave it empty
   when no matrix covers the row.
 
@@ -104,6 +105,21 @@ of the file whose module shows the behavior:
 
 An open or ruled gap never fails the check; it is a note, so `make req-check VERBOSE=1` lists
 what is waiting on the user and what is waiting to be applied.
+
+## The report
+
+`make conformance` (needs Docker, not part of `make check`) runs every registered test home with
+`go test -json`: the module packages, unit and integration tests together, the example modules,
+and each conformance dialect module. It joins the results with this registry and writes
+[`REPORT.md`](REPORT.md). A failing test does not stop the other homes; the report is always
+written, and the target then exits non-zero. CI runs the suite but does not rewrite the report:
+`/close-phase` and deliberate runs do.
+
+A reference matches the name `go test` reports, with spaces in subtest names as underscores. A
+`conformance:` reference is looked up under each dialect module's `TestConformance` that the
+row's Applies-to admits; a `golden: <example>` reference is `cmd/sqlgen: TestE2EGoldenFiles/<example>`.
+A test with no result of its own is `not run`, never `pass`: its package did not build or run, or
+a parent test failed first (no Docker: the container does not start) or skipped.
 
 ## When the PRD changes
 

@@ -26,6 +26,7 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       examples: ${{ steps.list.outputs.examples }}
+      dialects: ${{ steps.dialects.outputs.dialects }}
     steps:
       - uses: actions/checkout@v7
       # Every directory with a go.mod is an example module, the same set the
@@ -36,6 +37,13 @@ jobs:
           examples=$(find cmd/sqlgen/testdata/examples -mindepth 2 -maxdepth 2 -name go.mod \
             | xargs -n1 dirname | xargs -n1 basename | sort | jq -R . | jq -sc .)
           echo "examples=$examples" >> "$GITHUB_OUTPUT"
+      # The conformance dialect modules: every module beside the suite, the
+      # same set as the Makefile's CONFORMANCE_DIALECT_DIRS.
+      - id: dialects
+        run: |
+          dialects=$(find cmd/sqlgen/testdata/conformance -mindepth 2 -maxdepth 2 -name go.mod \
+            | xargs -n1 dirname | xargs -n1 basename | grep -vx suite | sort | jq -R . | jq -sc .)
+          echo "dialects=$dialects" >> "$GITHUB_OUTPUT"
 
   lint:
     name: lint (${{ matrix.example }})
@@ -80,3 +88,32 @@ jobs:
         env:
           GOWORK: off
         working-directory: cmd/sqlgen/testdata/examples/${{ matrix.example }}
+
+  # The cross-dialect conformance suite (docs/design/CONFORMANCE.md §4). It
+  # checks that each dialect's committed models/ is fresh, then runs the suite.
+  # docs/conformance/REPORT.md is not regenerated here: /close-phase and
+  # deliberate `make conformance` runs rewrite it.
+  conformance:
+    name: conformance (${{ matrix.dialect }})
+    needs: discover
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        dialect: ${{ fromJSON(needs.discover.outputs.dialects) }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: .tool-versions
+          cache-dependency-path: |
+            cmd/sqlgen/testdata/conformance/${{ matrix.dialect }}/go.sum
+            cmd/sqlgen/go.sum
+      # sqlgen diff exits 1 when generate would change a file (PRD §23.6).
+      - name: models/ is fresh
+        run: go run github.com/teandresmith/sqlgen/cmd/sqlgen diff --quiet
+        working-directory: cmd/sqlgen/testdata/conformance/${{ matrix.dialect }}
+      - run: go test -race -count=1 -timeout=10m ./...
+        env:
+          GOWORK: off
+        working-directory: cmd/sqlgen/testdata/conformance/${{ matrix.dialect }}

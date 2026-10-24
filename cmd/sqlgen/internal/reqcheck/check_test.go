@@ -218,6 +218,29 @@ func TestCheck(t *testing.T) {
 			wantErr: `TestTable has no subtest "other case"`,
 		},
 		{
+			name: "part of a subtest name containing a slash",
+			mutate: func(f map[string]string) {
+				edit(f, "docs/conformance/cli.md", "TestSlash/from/to;", "TestSlash/from;")
+			},
+			wantErr: `"unit: pkg/config: TestSlash/from" names only part of a subtest name`,
+		},
+		{
+			name: "a subtest name ending in a slash without its slash",
+			mutate: func(f map[string]string) {
+				edit(f, "pkg/config/config_test.go", `t.Run("from/to", func(t *testing.T) {})`, `t.Run("through ./", func(t *testing.T) {})`)
+				edit(f, "docs/conformance/cli.md", "TestSlash/from/to;", "TestSlash/through .;")
+			},
+			wantErr: `"unit: pkg/config: TestSlash/through ." names only part of a subtest name`,
+		},
+		{
+			name: "a subtest name ending in a slash resolves with it",
+			mutate: func(f map[string]string) {
+				edit(f, "pkg/config/config_test.go", `t.Run("from/to", func(t *testing.T) {})`, `t.Run("through ./", func(t *testing.T) {})`)
+				edit(f, "docs/conformance/cli.md", "TestSlash/from/to;", "TestSlash/through ./;")
+			},
+			wantNoErr: true,
+		},
+		{
 			name: "computed subtest names cannot be verified",
 			mutate: func(f map[string]string) {
 				edit(f, "docs/conformance/cli.md", "TestComputed;", "TestComputed/0;")

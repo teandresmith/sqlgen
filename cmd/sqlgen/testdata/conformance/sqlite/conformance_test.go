@@ -27,12 +27,17 @@ func TestConformance(t *testing.T) {
 	if _, err := db.Exec(string(schema)); err != nil {
 		t.Fatal(err)
 	}
+	var version string
+	if err := db.QueryRow("SELECT sqlite_version()").Scan(&version); err != nil {
+		t.Fatal(err)
+	}
 	q := &suite.CountingQuerier{Inner: dbstdlib.New(db)}
 	suite.Run(t, &suite.Harness{
-		Dialect: "sqlite",
-		Driver:  "stdlib",
-		Client:  models.New(q),
-		Querier: q,
+		Dialect:  "sqlite",
+		Driver:   "stdlib",
+		Database: "SQLite " + version,
+		Client:   models.New(q),
+		Querier:  q,
 		Reset: func(t *testing.T) {
 			if _, err := db.Exec("DELETE FROM order_items; DELETE FROM products; DELETE FROM documents"); err != nil {
 				t.Fatal(err)

@@ -22,6 +22,9 @@ type Harness struct {
 	// failures only: no test branches on them (CONFORMANCE.md §4.4).
 	Dialect string
 	Driver  string
+	// Database names the server and its version, e.g. "PostgreSQL 16.4". Run
+	// logs it for the conformance report.
+	Database string
 	// Client is built on Querier with no options.
 	Client *models.Client
 	// Querier is the counting querier Client was built on. Statements inside a
@@ -33,6 +36,8 @@ type Harness struct {
 
 // Run runs every method contract against h, one method at a time.
 func Run(t *testing.T, h *Harness) {
+	// make conformance reads this line into the report header; keep its prefix.
+	t.Logf("conformance harness: database %s", h.Database)
 	t.Run("HardDeleteMany", func(t *testing.T) { hardDeleteMany(t, h) })
 	t.Run("SoftDeleteMany", func(t *testing.T) { softDeleteMany(t, h) })
 	t.Run("RestoreMany", func(t *testing.T) { restoreMany(t, h) })

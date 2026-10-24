@@ -517,6 +517,27 @@ the results with the registry and writes `docs/conformance/REPORT.md`:
 - **Every declared matrix** rendered with its cells filled, `n/a`, or shown empty.
 - **PRD coverage:** owned sections with no rows, per module, and the `informative` count.
 
+**Joining results (step 4).** The joiner lives in `reqcheck` (`results.go`, `report.go`), run by
+`reqcheck -report <results dir>`, and refuses a registry that fails `req-check`. Each `go test -json`
+event's package path is `github.com/teandresmith/sqlgen/<dir>` for every module in the repository,
+so a reference's `<dir>` names its package directly. Names match as `go test` reports them, with
+spaces as underscores, the same rule `req-check` resolves with. A `conformance:` reference becomes
+`TestConformance/<Method>/<subtest>` in each dialect module, the targets, whose dialect and driver
+are the string literals its test sets on the harness. The suite logs a `conformance harness:
+database …` line, which gives the header its database versions.
+
+- **Not run is never pass.** A test with no result of its own is `not run`, with the reason: its
+  package is missing or failed to build, or a parent test failed first (no Docker: the container does not start) or skipped.
+- **On one target**, a failure or a test that did not run decides. Otherwise one pass is enough,
+  since a sibling subtest may skip for a capability another covers. All skips make a skip, with
+  the skip messages.
+- **A row's status** is its most severe target: `fail`, `not run`, `untested`, `skip`, `pass`. A
+  target the row's Applies-to excludes shows `—` and does not count. A row whose conformance
+  tests apply to no existing dialect module is `not run`.
+- **Matrices** are rendered whole, one line per matrix row; a filled cell shows its row's status.
+- **`make conformance` exits non-zero** after writing the report when any `go test` run failed. A
+  stale `models/` aborts it before anything runs.
+
 `make check` doesn't regenerate the report, because that needs Docker. It is regenerated and
 committed by `/close-phase` (§6) and by a deliberate `make conformance` run. It is not rewritten
 on every test run, to keep churn down (§9 ruling 2). Its header records the commit and the
@@ -647,7 +668,7 @@ database versions it ran against.
 7. **Skill changes (§6).** `/design`, `/phase` and `/implement` landed with step 2. `/verify` and
    `/close-phase` change during the config pilot (step 3), once there are rows for them to read
    (§9 ruling 14). Done 2026-10-23: `/verify` reads the registry rows for a sub-item's PRD
-   sections, and `/close-phase` runs the conformance gate (`req-check -v` until step 4).
+   sections, and `/close-phase` runs the conformance gate (`make conformance` and its `REPORT.md` since step 4).
 
 ## 8. Follow-ons (not part of this design)
 

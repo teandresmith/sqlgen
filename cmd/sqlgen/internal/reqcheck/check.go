@@ -458,6 +458,10 @@ func (c *checker) resolve(r *Registry, line int, ref TestRef, claim bool) {
 		}
 		node = next
 	}
+	if !node.run {
+		c.fail(r.Path, line, "test %q names only part of a subtest name containing \"/\", which go test never reports; name the whole subtest", ref.Raw)
+		return
+	}
 	if claim {
 		c.recordClaim(ref)
 	}
@@ -506,23 +510,9 @@ func (c *checker) checkCoverage(r *Registry, claimed map[string]int) {
 
 // coverSections: an owned section with no owned descendant needs a requirement at or below it.
 func (c *checker) coverSections(r *Registry, report func(string, int, string, ...any)) {
-	var owned []string
-	for _, e := range c.own.Entries {
-		if e.Owner == r.Name {
-			owned = append(owned, e.Key)
-		}
-	}
-	for _, key := range owned {
-		if slices.ContainsFunc(owned, func(k string) bool { return strings.HasPrefix(k, key+".") }) {
-			continue
-		}
-		covered := slices.ContainsFunc(r.Rows, func(row Row) bool {
-			return row.Anchor == key || strings.HasPrefix(row.Anchor, key+".")
-		})
-		if !covered {
-			s, _ := c.prd.Section(key)
-			report(r.Path, 0, "owned PRD §%s %s has no requirement rows", key, s.Title)
-		}
+	for _, key := range uncoveredSections(c.own, r) {
+		s, _ := c.prd.Section(key)
+		report(r.Path, 0, "owned PRD §%s %s has no requirement rows", key, s.Title)
 	}
 }
 
@@ -698,7 +688,7 @@ func hasPrefixPath(path, claim []string) bool {
 		return false
 	}
 	for i, seg := range claim {
-		if seg != path[i] && seg != strings.ReplaceAll(path[i], " ", "_") {
+		if seg != path[i] && seg != goTestName(path[i]) {
 			return false
 		}
 	}
