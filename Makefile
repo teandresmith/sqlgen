@@ -15,7 +15,7 @@ CONFORMANCE_DIALECT_DIRS = $(filter-out %/suite/,$(CONFORMANCE_DIRS))
 # detector, not a budget. The example suites keep their own tighter bound.
 TEST_TIMEOUT ?= 30m
 
-.PHONY: refs-check req-check req-rehash test test-integration test-examples test-conformance conformance-fresh conformance check-conformance lint lint-examples tools-check check check-all fmt vet update-golden update-golden-e2e coverage coverage-html clean help
+.PHONY: refs-check req-check req-rehash test test-integration test-examples test-conformance conformance-fresh conformance check-conformance lint-conformance static-examples lint lint-examples tools-check check check-all fmt vet update-golden update-golden-e2e coverage coverage-html clean help
 
 ## Testing
 
@@ -220,16 +220,21 @@ req-rehash: ## Record that changed PRD sections were reviewed: SECTIONS=9.4c,4.1
 
 check: tools-check tracker-check refs-check req-check fmt lint vet test ## Run lint + unit tests (pre-push check)
 
-check-examples: tools-check fmt-examples lint-examples vet-examples test-examples check-conformance ## Run lint + tests on E2E example modules and the conformance suite (requires Docker)
+check-examples: static-examples test-examples test-conformance ## Run lint + tests on E2E example modules and the conformance suite (requires Docker)
 
-check-conformance: ## Format, lint, vet and test the conformance suite modules (requires Docker)
+# The static half of check-examples. /close-phase runs it before `make
+# conformance`, which runs the example and conformance tests itself.
+static-examples: tools-check fmt-examples lint-examples vet-examples lint-conformance ## Format, lint and vet the E2E example and conformance suite modules (no tests, no Docker)
+
+check-conformance: lint-conformance test-conformance ## Format, lint, vet and test the conformance suite modules (requires Docker)
+
+lint-conformance: ## Format, lint and vet the conformance suite modules
 	@for dir in $(CONFORMANCE_DIRS); do \
-		echo "==> check-conformance $$dir"; \
+		echo "==> lint-conformance $$dir"; \
 		find $$dir -type d -name models -prune -o -type f -name '*.go' -print0 | xargs -0 -r gofumpt -w || exit 1; \
 		(cd $$dir && GOWORK=off golangci-lint run --timeout=5m) || exit 1; \
 		(cd $$dir && GOWORK=off go vet ./...) || exit 1; \
 	done
-	@$(MAKE) --no-print-directory test-conformance
 
 ## Code Generation
 

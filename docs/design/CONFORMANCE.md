@@ -688,6 +688,10 @@ database versions it ran against.
      lines are now taken only when indented deeper than the logged line. It also found that a row
      whose conformance tests apply to no existing dialect module could pass on its other tests.
      That row is now `not run`.
+   - **Follow-up.** `/close-phase` ran `make check-examples` and `make test-integration` before
+     `make conformance`, which runs the same tests again. Its sweep is now `make check`,
+     `make static-examples` (the format, lint and vet half of `check-examples`) and
+     `make conformance`, and its `--skip-integration` flag is gone.
 5. **Add the MySQL and `postgres_stdlib` conformance modules**, since MySQL differs most (no
    `RETURNING`, `AUTO_INCREMENT`).
 6. **Seed module by module**, using the FIX origin tally (§1.3) to choose the order: `cli.md`
