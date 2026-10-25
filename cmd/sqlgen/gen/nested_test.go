@@ -647,6 +647,27 @@ func TestNestedEligibility_ListedShapeFailureIsReported(t *testing.T) {
 	}
 }
 
+// TestNestedEligibility_CompositePKParentKeepsItsLoaders pins that a parent
+// shut out of nested writes by its composite key keeps the read side of the
+// same edge: the relationship, and the O2M flag that renders its loader.
+func TestNestedEligibility_CompositePKParentKeepsItsLoaders(t *testing.T) {
+	declared := func(cfg *config.RootConfig) {
+		cfg.Tables["user_categories"] = config.TableConfig{Relationships: []config.TableRelationship{
+			{Name: "Events", Type: "one_to_many", Table: "events", FK: "user_id"},
+		}}
+	}
+	tc := buildNestedContexts(t, declared)["user_categories"]
+	if tc.Nested != nil {
+		t.Fatalf("user_categories carries a nested surface with edges %v, want none", nestedEdgeNames(tc))
+	}
+	if !slices.ContainsFunc(tc.Relationships, func(r gen.RelationshipContext) bool { return r.FieldName == "Events" }) {
+		t.Errorf("user_categories relationships = %v, want Events kept", tc.Relationships)
+	}
+	if !tc.HasO2MRelationships {
+		t.Error("user_categories HasO2MRelationships = false, want the Events loader rendered")
+	}
+}
+
 // TestNestedEligibility_DisabledEmitsNothing pins the §4.6 opt-in: with
 // `generation.nested_mutations.enabled` unset, nothing in §9.9 is emitted
 // anywhere.

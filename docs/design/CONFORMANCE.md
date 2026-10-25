@@ -728,7 +728,7 @@ database versions it ran against.
      slice, and the package-wide §8.3 artifacts are rows with no cell. Relationships rows are
      §13.1's belongs-to, has-one, O2M and M2M plus self, circular and polymorphic (no m2o: §13.1
      has no such type). The slice also took §22.1, §22.4, §22.5 and §28.9, which `gen` emits.
-   - **Rows seeded: 466** under 38 anchors, 167 of them matrix cells (106 generated-artifacts, 35
+   - **Rows seeded: 468** under 38 anchors, 167 of them matrix cells (106 generated-artifacts, 35
      access-control, 26 relationships), plus **50 `n/a`** (48 generated-artifacts, 2
      relationships), each citing a PRD section; none needed an `accepted` date. The five
      `access-control × manifest` cells are left for the manifest slice. Anchors include sections
@@ -738,9 +738,10 @@ database versions it ran against.
      work not yet started (composite-key edges, FKs to a UNIQUE column, the `fk` list form, which
      the staging guard keeps out of `gen` until 32.4–32.6); 4 are REST; the rest are
      `go:generate` (needs an end-to-end module), the tenant filter's comparator type (a PRD gap),
-     and three rows split off over-claiming rows in review (an auto-included belongs-to edge, a
-     composite-PK parent keeping its read surface, and the self-edge `ErrNestedVerbConflict`
-     refusal, which is runtime behavior for the client slice).
+     and two clauses split off over-claiming rows in review: a composite-PK parent keeping its
+     manifest entries (the manifest slice), and the self-edge `ErrNestedVerbConflict` refusal,
+     which is runtime behavior for the client slice. A third split-off clause, a composite-PK
+     parent's relationship filters, is one of the 11 Phase 32 rows.
    - **Defects: 2 fixed**, each with a fail-first test: JSON view aggregates were generated NOT NULL
      (§16.3, in the parser), and `Restore` on a missing key returned `ErrNotFound` instead of
      `nil, nil` (§9.3, §9.5, §9.8.8). Five more findings were Phase 32 sub-items already planned.
