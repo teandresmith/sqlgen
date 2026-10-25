@@ -37,12 +37,34 @@ const aliasCollisionProbe = "sqlgenaliasprobe"
 // signature as tables'. A view has no relationships, so it never contributes an
 // entry of its own.
 func wireRelationshipFilters(tables []TableContext, views []ViewContext) error {
-	targets := make(map[string]*TableContext, len(tables)*2)
+	targets := make(map[string]*TableContext, (len(tables)+len(views))*2)
 	for i := range tables {
 		tc := &tables[i]
 		targets[tc.TableName] = tc
 		if tc.Schema != "" {
 			targets[qualifiedTableName(tc.Schema, tc.TableName)] = tc
+		}
+	}
+	// A declared list relationship may target a view (PRD §13.4), and a view
+	// generates its own <View>Filter, so it is a target like a table. The
+	// entry carries only the facts relationshipFilterEntry reads off a target:
+	// names, the @pk columns an M2M joins on, and the tenancy that scopes the
+	// subquery. A view has no soft delete, so none is injected. A table keeps
+	// a bare name a view shares; lookups go through the qualified name.
+	for i := range views {
+		vc := &views[i]
+		target := &TableContext{
+			StructName: vc.StructName,
+			TableName:  vc.ViewName,
+			Schema:     vc.Schema,
+			PKColumns:  vc.PKColumns,
+			Tenancy:    vc.Tenancy,
+		}
+		if _, taken := targets[vc.ViewName]; !taken {
+			targets[vc.ViewName] = target
+		}
+		if vc.Schema != "" {
+			targets[qualifiedTableName(vc.Schema, vc.ViewName)] = target
 		}
 	}
 
@@ -128,8 +150,9 @@ func backfillRelationshipFilterTenancy(tables []TableContext) {
 // cannot be expressed by the one correlation column the context carries: a
 // parent without a single-column PK has no single column to correlate on, and
 // an M2M whose target has no single-column PK has nothing to join the junction
-// to. The same applies to a target outside the generated set (a view, or a
-// table in another package), which has no filter type to reference. Every list
+// to. The same applies to a target outside the generated set (a table in
+// another package), which has no filter type to reference; a view target is
+// inside it, since a view generates its own <View>Filter. Every list
 // relationship's `filter:` is parsed first, so an unreadable one fails
 // generation even on an edge skipped here.
 func buildRelationshipFilters(tc *TableContext, targets map[string]*TableContext) ([]RelationshipFilterContext, error) {

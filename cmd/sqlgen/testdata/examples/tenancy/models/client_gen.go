@@ -176,6 +176,7 @@ func New(querier database.Querier, opts ...ClientOption) *Client {
 	c.tagLink.tenantResolver = options.tenantResolver
 	c.user.tenantResolver = options.tenantResolver
 	c.userProfile.tenantResolver = options.tenantResolver
+	c.workspace.tenantResolver = options.tenantResolver
 
 	// Push the configured CallbackMode down to every entity client that can
 	// carry a nested-mutation surface: the nested methods open the transaction
@@ -185,6 +186,7 @@ func New(querier database.Querier, opts ...ClientOption) *Client {
 	c.post.callbackMode = options.callbackMode
 	c.tag.callbackMode = options.callbackMode
 	c.user.callbackMode = options.callbackMode
+	c.workspace.callbackMode = options.callbackMode
 
 	// Wire up cross-client references for relationship loading and the clients
 	// the nested-mutation executors write through
@@ -197,6 +199,7 @@ func New(querier database.Querier, opts ...ClientOption) *Client {
 	c.user.articleClient = c.article
 	c.user.postClient = c.post
 	c.user.userProfileClient = c.userProfile
+	c.workspace.productStatClient = c.productStat
 
 	return c
 }

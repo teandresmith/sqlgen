@@ -493,7 +493,8 @@ type RelationshipFilterContext struct {
 	// TargetStructName is the target's Go struct name (e.g. "Post"), which
 	// also spells the member's type: *PostFilter.
 	TargetStructName string
-	// TargetTable / TargetSchema name the related table.
+	// TargetTable / TargetSchema name the related table, or the related view
+	// on a declared relationship into one.
 	TargetTable  string
 	TargetSchema string
 	// HelperName is the generated compile function (e.g. "userPostsFilterExists").

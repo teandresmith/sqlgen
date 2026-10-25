@@ -2985,7 +2985,9 @@ func hasAnyRelationshipWorkspace(fo any) bool {
 	if !ok || typed == nil {
 		return false
 	}
-	_ = typed
+	if typed.ProductStats != nil {
+		return true
+	}
 	return false
 }
 

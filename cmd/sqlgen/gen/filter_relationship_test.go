@@ -615,3 +615,88 @@ func TestRelationshipFilters_ColumnComparatorKeepsItsFieldName(t *testing.T) {
 		t.Errorf("UserFilter declares an Email relationship member\n---\n%s", got)
 	}
 }
+
+// TestRelationshipFilters_ViewTargetGetsMember covers a list relationship whose
+// target is a view, which only a declared relationship can produce. A view
+// generates its own <View>Filter, so the edge gets a member built from it the
+// way a table target's is: an O2M correlates on the view's FK column, an M2M
+// joins the junction to the view's @pk column, and a tenanted view's tenant
+// column scopes the subquery.
+func TestRelationshipFilters_ViewTargetGetsMember(t *testing.T) {
+	in := testInput(relFilterSchema())
+	in.Schema.Views = []parser.View{
+		{Name: "user_order_totals", Columns: []parser.Column{
+			{Name: "user_id", Type: "uuid"},
+			{Name: "workspace_id", Type: "uuid"},
+			{Name: "total", Type: "bigint"},
+		}},
+		{Name: "category_labels", Columns: []parser.Column{
+			{Name: "id", Type: "uuid", PrimaryKey: true},
+			{Name: "label", Type: "text"},
+		}},
+	}
+	detectRelationships(in.Schema)
+	in.Config.Tenancy = &config.TenancyConfig{Enabled: true, Column: "workspace_id", Required: new(true)}
+	in.Config.Tables["users"] = config.TableConfig{Relationships: []config.TableRelationship{
+		{Name: "OrderTotals", Type: "one_to_many", Table: "user_order_totals", FK: "user_id"},
+		{
+			Name: "Labels", Type: "many_to_many", Table: "category_labels",
+			Junction: "user_categories", JunctionLocalFK: "user_id", JunctionReferenceFK: "category_id",
+		},
+	}}
+
+	tables, _, err := gen.BuildEntityContextsFromSchema(in.Schema, in.Config)
+	if err != nil {
+		t.Fatalf("BuildEntityContextsFromSchema: %v", err)
+	}
+	var users gen.TableContext
+	for _, tc := range tables {
+		if tc.TableName == "users" {
+			users = tc
+		}
+	}
+
+	tests := []struct {
+		name  string
+		field string
+		want  gen.RelationshipFilterContext
+	}{
+		{
+			name:  "o2m into a tenanted view",
+			field: "OrderTotals",
+			want: gen.RelationshipFilterContext{
+				FieldName: "OrderTotals", SQLName: "OrderTotals", JSONTag: "order_totals",
+				TargetStructName: "UserOrderTotal", TargetTable: "user_order_totals", TargetSchema: "",
+				HelperName: "userOrderTotalsFilterExists", CorrelationColumn: "id",
+				FKColumn: "user_id", TenantColumn: "workspace_id",
+			},
+		},
+		{
+			name:  "m2m into a view with a declared pk",
+			field: "Labels",
+			want: gen.RelationshipFilterContext{
+				FieldName: "Labels", SQLName: "Labels", JSONTag: "labels",
+				TargetStructName: "CategoryLabel", TargetTable: "category_labels", TargetSchema: "",
+				HelperName: "userLabelsFilterExists", CorrelationColumn: "id",
+				IsM2M: true, JunctionTable: "user_categories",
+				JunctionLocalFK: "user_id", JunctionReferenceFK: "category_id", TargetPKColumn: "id",
+			},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var got *gen.RelationshipFilterContext
+			for i := range users.RelationshipFilters {
+				if users.RelationshipFilters[i].FieldName == tt.field {
+					got = &users.RelationshipFilters[i]
+				}
+			}
+			if got == nil {
+				t.Fatalf("users relationship filters = %v, want a %s member", relFilterNames(users.RelationshipFilters), tt.field)
+			}
+			if diff := cmp.Diff(tt.want, *got); diff != "" {
+				t.Errorf("%s member (-want +got):\n%s", tt.field, diff)
+			}
+		})
+	}
+}

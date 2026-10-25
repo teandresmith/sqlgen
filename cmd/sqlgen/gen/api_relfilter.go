@@ -23,8 +23,9 @@ import (
 //
 // A view is a member when it is API-enabled. A declared relationship may point
 // at one, and every view column is public (a view has no column_map), so
-// `api.enabled` alone decides. Filter members are unaffected: the model side
-// builds them for table targets only.
+// `api.enabled` alone decides, for the object-type field and the filter
+// member alike: the model side builds a member for a view target as it does
+// for a table, and the view's own filter translator backs it.
 //
 // The key is the struct name because that is what a relationship field
 // renders as its type, and it is unique project-wide (§8.5).

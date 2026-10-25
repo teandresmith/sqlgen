@@ -251,8 +251,8 @@ func twoSchemaSchema() *parser.Schema {
 				{Name: "user_id", Type: "uuid"},
 			}},
 		},
-		// audit.stats is a view beside the public.stats table: a view has no
-		// table context, so nothing may resolve an edge into it to the table.
+		// audit.stats is a view beside the public.stats table: nothing may
+		// resolve an edge into the view to the same-named table.
 		Views: []parser.View{
 			{Name: "stats", Schema: "audit", Columns: []parser.Column{
 				{Name: "user_id", Type: "uuid"},
@@ -352,16 +352,14 @@ func TestRelationshipTargets_QualifiedDeclaredEdgeNamesOneTable(t *testing.T) {
 			"AuditPosts": "audit.posts/AuditPost",
 			"Posts":      "public.posts/PublicPost",
 			"AuditTags":  "audit.tags/AuditTag",
+			// The view's edge gets a member built from the view's own filter;
+			// the same-named public.stats table must not stand in for it.
+			"AuditStats": "audit.stats/AuditStat",
 		}
 		for field, w := range want {
 			if got[field] != w {
 				t.Errorf("relationship filter %s = %q, want %q", field, got[field], w)
 			}
-		}
-		// A view has no table context, so its edge gets no filter member; the
-		// same-named public.stats table must not stand in for it.
-		if g, ok := got["AuditStats"]; ok {
-			t.Errorf("relationship filter AuditStats = %q, want none (audit.stats is a view)", g)
 		}
 	})
 }

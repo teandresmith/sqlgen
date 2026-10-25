@@ -29320,6 +29320,9 @@ type Workspace struct {
 	ID        uuid.UUID      `db:"id" json:"id"`
 	Name      string         `db:"name" json:"name"`
 	CreatedAt types.DateTime `db:"created_at" json:"created_at"`
+
+	// ProductStats - one-to-many relationship with the product_stats table.
+	ProductStats []*ProductStat `db:"-" json:"product_stats"`
 }
 
 // WorkspaceClient provides type-safe operations for the workspaces table.
@@ -29330,6 +29333,9 @@ type WorkspaceClient interface {
 	Get(ctx context.Context, id uuid.UUID, opts ...func(*CallOptions[WorkspaceFieldOptions])) (*Workspace, error)
 
 	// GetMany returns workspaces matching the given filter, field selection, and sort criteria.
+	// When FieldOptions includes O2M or M2M relationships, they are loaded via an
+	// errgroup fan-out — in parallel over the pool, and serialized by the
+	// transaction's connection reservation when ctx carries one.
 	GetMany(ctx context.Context, input *GetWorkspacesInput, opts ...func(*CallOptions[WorkspaceFieldOptions])) ([]*Workspace, error)
 
 	// Exists returns true if a workspace with the given primary key exists.
@@ -29406,17 +29412,21 @@ type WorkspaceClient interface {
 
 // workspaceClient implements the WorkspaceClient interface.
 type workspaceClient struct {
-	querier       database.Querier
-	dialect       sql.Dialect
-	table         sql.Table
-	batchSize     int
-	queryLimit    int
-	pageSize      int
-	cursorKeys    []string
-	strictUpdates bool
-	mutationHooks []hook.MutationHook
-	queryHooks    []hook.QueryHook
-	panicHandler  hook.PanicHandler
+	querier                 database.Querier
+	dialect                 sql.Dialect
+	table                   sql.Table
+	batchSize               int
+	queryLimit              int
+	pageSize                int
+	cursorKeys              []string
+	strictUpdates           bool
+	mutationHooks           []hook.MutationHook
+	queryHooks              []hook.QueryHook
+	panicHandler            hook.PanicHandler
+	callbackMode            database.CallbackMode
+	tenantResolver          tenancy.TenantResolver[uuid.UUID]
+	productStatsDefaultSort []sql.Sort
+	productStatClient       *productStatClient
 }
 
 // newWorkspaceClient creates a new workspaceClient.
@@ -29454,6 +29464,114 @@ func (c *workspaceClient) executeQuery(ctx context.Context, skipHooks bool, qc *
 		hooks = c.queryHooks
 	}
 	return hook.BuildQueryChain(c.panicHandler, hooks, fn)(ctx, qc)
+}
+
+// resolveTenant reads the operation's tenant from tenantValue and applies THIS
+// table's tenancy.required setting to it, returning the value, a bool
+// indicating whether tenancy should be applied to this call, and any resolver
+// error. The split matters: tenantValue's answer is shared across every client
+// the operation touches, while the apply bool below is this table's alone
+// (required is a per-table setting). The apply bool encodes the
+// tenancy.required semantic:
+//
+//   - Non-zero resolver return → apply=true; callers AND the filter into the
+//     WHERE (reads), verify-match against caller-supplied tenant (mutations),
+//     and auto-set the tenant column on INSERT.
+//   - Zero resolver return (resolver returned (zero, nil) or is nil) under
+//     tenancy.required:true → apply=false, err=tenancy.ErrMissing. The op
+//     fails closed before the DB round-trip.
+//   - Zero resolver return under tenancy.required:false → apply=false, err=nil.
+//     The op silently becomes cross-tenant: no filter append, no verify-match,
+//     no auto-set. This is the "missing tenant skips the filter" path
+//     — always-off rather than a silent zero-value write.
+//   - Resolver returns a non-nil error → apply=false, err propagated.
+//
+// Required-at-codegen determinism: the required:true vs required:false branch
+// is picked at template-expansion time per-table, from the table's resolved
+// tenancy config. Runtime callers observe a stable behavior per table.
+//
+// explicit carries CallOptions.Tenant (the explicit-tenant resolution
+// mode): when non-nil, tenancy behaves as normal resolution with
+// the resolver replaced by this constant — filter, auto-set, and verify-match
+// all apply. Precedence over SkipTenancy is normalized in
+// resolveCallOptions, so callers gate on SkipTenancy exactly as before. The
+// pointer distinguishes set from unset; a set zero value is honored verbatim.
+func (c *workspaceClient) resolveTenant(ctx context.Context, explicit *uuid.UUID) (uuid.UUID, bool, error) {
+	if explicit != nil {
+		return *explicit, true, nil
+	}
+	var zero uuid.UUID
+	v, err := c.tenantValue(ctx)
+	if err != nil {
+		return zero, false, err
+	}
+	if v == zero {
+		return zero, false, nil
+	}
+	return v, true, nil
+}
+
+// tenantValue returns the tenant the user resolver reports for this operation,
+// invoking it at most once per logical operation.
+//
+// It answers the table-independent half of the question and stops there: what
+// the resolver said. The tenancy.required reading of that answer — zero means
+// ErrMissing, or zero means skip the filter — belongs to resolveTenant above,
+// because `required` is a per-table setting while this value is
+// shared across every client the operation touches.
+//
+// Keeping the two apart is load-bearing rather than tidy. The ctx cache is
+// keyed on the tenant type alone, so it is one slot for the whole package;
+// caching the reading instead of the answer let whichever table resolved first
+// impose its `required` on the rest, and a required:false table handing
+// apply=false to a required:true one is a fail-open. A nil resolver
+// yields the zero value and the same per-table branch a zero return takes.
+func (c *workspaceClient) tenantValue(ctx context.Context) (uuid.UUID, error) {
+	// Short-circuit: an entry point for this logical operation — a chaining
+	// mutation (Create, Update, Upsert, …) or a nested method's hoist — already
+	// resolved and stashed the value via tenancy.WithResolvedTenant. Lookup
+	// uses the same comparable T as the resolver, so collisions across entity
+	// clients with different tenant types are impossible.
+	if v, ok := tenancy.CachedTenant[uuid.UUID](ctx); ok {
+		return v, nil
+	}
+	if c.tenantResolver == nil {
+		var zero uuid.UUID
+		return zero, nil
+	}
+	return c.tenantResolver(ctx)
+}
+
+// filterOptions resolves the FilterOption set this client's filters need to
+// compile their relationship members. A relationship filter is a
+// read of the related table, so the target's tenant predicate goes inside the
+// EXISTS subquery — otherwise the filter would be a cross-tenant existence
+// probe on rows the caller cannot otherwise see.
+//
+// The resolve is gated on filter, not performed unconditionally, because the
+// option set is read only by the EXISTS helpers: a filter that sets no
+// relationship member compiles identically with or without it. Resolving anyway
+// would import the tenant's failure modes into calls that have no tenanted
+// component at all — on a shared table the outer WHERE is
+// never tenant-scoped, so a resolver that reports a missing tenant as an error
+// would reject every read that legitimately runs before a tenant is selected.
+//
+// Beyond that gate, nil is the correct answer in exactly the cases where the
+// table's own WHERE gets no tenant filter either: SkipTenancy, and a zero
+// resolver result under tenancy.required:false. The subquery is then unscoped
+// by the same decision that leaves the outer statement unscoped.
+func (c *workspaceClient) filterOptions(ctx context.Context, filter *WorkspaceFilter, skipTenancy bool, explicit *uuid.UUID) ([]FilterOption, error) {
+	if skipTenancy || !filter.usesRelationshipFilter() {
+		return nil, nil
+	}
+	tenant, apply, err := c.resolveTenant(ctx, explicit)
+	if err != nil {
+		return nil, err
+	}
+	if !apply {
+		return nil, nil
+	}
+	return []FilterOption{WithFilterTenant(tenant)}, nil
 }
 
 // workspaceAllColumns is the column list for full-entity reads, sorted for determinism.
@@ -29541,6 +29659,9 @@ func (c *workspaceClient) Get(ctx context.Context, id uuid.UUID, opts ...func(*C
 }
 
 // GetMany returns workspaces matching the given filter, field selection, and sort criteria.
+// When FieldOptions includes O2M or M2M relationships, they are loaded via an
+// errgroup fan-out — in parallel over the pool, and serialized by the
+// transaction's connection reservation when ctx carries one.
 func (c *workspaceClient) GetMany(ctx context.Context, input *GetWorkspacesInput, opts ...func(*CallOptions[WorkspaceFieldOptions])) ([]*Workspace, error) {
 	// A nil input is the zero-value input — no filter, no sorts, no
 	// limit. Normalized before the hook context is built, so a hook never sees
@@ -29569,19 +29690,31 @@ func (c *workspaceClient) GetMany(ctx context.Context, input *GetWorkspacesInput
 
 		// Determine columns from FieldOptions. A narrowed projection still
 		// carries the columns this call structurally requires — the cursor keys
-		// an internal caller declares. An all-false FieldOptions is
+		// an internal caller declares, and the key relationship
+		// mapping reads off each row. An all-false FieldOptions is
 		// untouched: it short-circuits above.
 		columns := workspaceAllColumns
 		if fieldOptions != nil {
 			if selected := fieldOptions.Columns(); len(selected) > 0 {
 				columns = unionColumns(selected, input.requiredColumns...)
+				if fieldOptions.loadsRelationships() {
+					columns = unionColumns(columns, "id")
+				}
 			}
+		}
+
+		// A relationship filter compiles to a correlated EXISTS carrying the
+		// *target's* tenant predicate, so the tenant is
+		// resolved before the conditions are built rather than appended after them.
+		filterOpts, filterErr := c.filterOptions(ctx, input.Filter, options.SkipTenancy, options.Tenant)
+		if filterErr != nil {
+			return nil, fmt.Errorf("get workspaces: %w", filterErr)
 		}
 
 		// Build conditions from filter
 		var conds []sql.Condition
 		if input.Filter != nil {
-			conds = input.Filter.ToConditions(c.dialect)
+			conds = input.Filter.ToConditions(c.dialect, filterOpts...)
 		}
 
 		// Append internal conditions (e.g., keyset conditions from Connection)
@@ -29625,6 +29758,14 @@ func (c *workspaceClient) GetMany(ctx context.Context, input *GetWorkspacesInput
 			return nil, err
 		}
 
+		// Load O2M/M2M relationships via errgroup — in parallel over the pool,
+		// serialized by the transaction's connection reservation inside one
+		if fieldOptions != nil {
+			if err := c.loadRelationships(ctx, conn, workspaces, options.FieldOptions, options.SkipTenancy, options.Tenant); err != nil {
+				return nil, err
+			}
+		}
+
 		return workspaces, nil
 	})
 	if err != nil {
@@ -29634,6 +29775,110 @@ func (c *workspaceClient) GetMany(ctx context.Context, input *GetWorkspacesInput
 		return nil, nil
 	}
 	return result.([]*Workspace), nil
+}
+
+// loadsRelationships reports whether any O2M or M2M relationship is selected.
+// GetMany unions the id column into a narrowed projection when one is:
+// loadRelationships maps every child back through w.ID, which
+// an unselected column would leave at its zero value.
+func (fo *WorkspaceFieldOptions) loadsRelationships() bool {
+	if fo.ProductStats != nil {
+		return true
+	}
+	return false
+}
+
+// loadRelationships fetches every selected O2M / M2M member through the
+// target's own client, so each child read carries that table's own filters,
+// soft-delete default and access rules rather than this one's.
+//
+// Both tenancy call options travel with it for that reason.
+// SkipTenancy has always been forwarded; CallOptions.Tenant is forwarded too,
+// because a parent scoped to an explicit tenant whose children fell back to the
+// ctx resolver read the two halves of one row set under two different tenants —
+// and on the explicit-tenant bootstrap path, where ctx carries no tenant at all, the child
+// read failed with tenancy.ErrMissing while the parent succeeded.
+//
+// The fan-out is unbounded, inside a transaction and out. Outside one each
+// edge draws its own pooled connection and the parallelism is real. Inside one
+// they share the transaction's single connection — database.Conn hands every
+// nested read the same *database.Tx — and the Tx's connection reservation
+// serializes them, so the statement count is identical either way and only the
+// concurrency differs. The loader needs no transaction-aware bound of its own.
+func (c *workspaceClient) loadRelationships(ctx context.Context, conn database.Querier, workspaces []*Workspace, fo *WorkspaceFieldOptions, skipTenancy bool, tenant *uuid.UUID) error {
+	g, ctx := errgroup.WithContext(ctx)
+
+	if fo.ProductStats != nil {
+		g.Go(func() error {
+			// Collect parent FK values as strings
+			workspaceIDs := make([]string, len(workspaces))
+			for idx, w := range workspaces {
+				workspaceIDs[idx] = w.ID.String()
+			}
+
+			sorts := fo.ProductStats.Sorts
+			if len(sorts) == 0 {
+				sorts = c.productStatsDefaultSort
+			}
+
+			// Load via related entity client, 16383 parent keys per
+			// statement: half the dialect's bind-parameter limit, leaving the rest
+			// for the relationship's filters. Each parent's children come from one
+			// statement, so the sorts order every parent's slice.
+			//
+			// Self-referential relationships share the parent's entity type, so
+			// the loaded children must use a name distinct from the parent slice
+			// (workspaces) to avoid shadowing it and mis-mapping the results
+			// onto the children instead of the parents.
+			var relatedProductStats []*ProductStat
+			for start := 0; start < len(workspaceIDs); start += 16383 {
+				chunk := workspaceIDs[start:min(start+16383, len(workspaceIDs))]
+
+				// Build FK-based filter, merged with consumer filter
+				filter := &ProductStatFilter{
+					WorkspaceID: &comparator.ID{In: chunk},
+				}
+				if fo.ProductStats.Filter != nil {
+					filter.And = append(filter.And, fo.ProductStats.Filter)
+				}
+
+				loaded, err := c.productStatClient.GetMany(ctx, &GetProductStatsInput{
+					Filter: filter,
+					Sorts:  sorts,
+					Limit:  new(0),
+					// The mapping below keys every child on its FK, so the fetch
+					// declares that column rather than mutating the caller's
+					// FieldOptions — a narrowed selection that omits it would
+					// otherwise map every child onto the zero value.
+					requiredColumns: []string{"workspace_id"},
+				}, func(co *CallOptions[ProductStatFieldOptions]) {
+					co.FieldOptions = fo.ProductStats.FieldOptions
+					co.SkipTenancy = skipTenancy
+					co.Tenant = tenant
+				})
+				if err != nil {
+					return fmt.Errorf("load workspace product_stats: %w", err)
+				}
+				relatedProductStats = append(relatedProductStats, loaded...)
+			}
+
+			// Map results back to parent entities by FK. The FK column on the
+			// child table may be nullable and resolved to a Null-wrapper struct
+			// (e.g., uuid.NullUUID) — fkLoadGuard skips invalid rows and
+			// fkLoadKey unwraps the underlying scalar before stringifying.
+			byFK := make(map[string][]*ProductStat)
+			for _, r := range relatedProductStats {
+				key := r.WorkspaceID.String()
+				byFK[key] = append(byFK[key], r)
+			}
+			for i := range workspaces {
+				workspaces[i].ProductStats = byFK[workspaces[i].ID.String()]
+			}
+			return nil
+		})
+	}
+
+	return g.Wait()
 }
 
 // Create inserts a new workspace and returns the created entity.
@@ -30006,7 +30251,15 @@ func (c *workspaceClient) UpdateWhere(ctx context.Context, filter *WorkspaceFilt
 	}, func(ctx context.Context, m *hook.MutationContext) (any, error) {
 		conn := database.Conn(ctx, c.querier)
 
-		conds := filter.ToConditions(c.dialect)
+		// A relationship filter compiles to a correlated EXISTS carrying the
+		// *target's* tenant predicate, so the tenant is
+		// resolved before the conditions are built rather than appended after them.
+		filterOpts, filterErr := c.filterOptions(ctx, filter, options.SkipTenancy, options.Tenant)
+		if filterErr != nil {
+			return nil, fmt.Errorf("update workspaces where: %w", filterErr)
+		}
+
+		conds := filter.ToConditions(c.dialect, filterOpts...)
 		if len(conds) == 0 {
 			return nil, ErrEmptyFilter
 		}
@@ -30159,7 +30412,15 @@ func (c *workspaceClient) HardDeleteWhere(ctx context.Context, filter *Workspace
 	}, func(ctx context.Context, m *hook.MutationContext) (any, error) {
 		conn := database.Conn(ctx, c.querier)
 
-		conds := filter.ToConditions(c.dialect)
+		// A relationship filter compiles to a correlated EXISTS carrying the
+		// *target's* tenant predicate, so the tenant is
+		// resolved before the conditions are built rather than appended after them.
+		filterOpts, filterErr := c.filterOptions(ctx, filter, options.SkipTenancy, options.Tenant)
+		if filterErr != nil {
+			return nil, fmt.Errorf("hard delete workspaces where: %w", filterErr)
+		}
+
+		conds := filter.ToConditions(c.dialect, filterOpts...)
 		if len(conds) == 0 {
 			return nil, ErrEmptyFilter
 		}
@@ -30549,9 +30810,17 @@ func (c *workspaceClient) ExistsWhere(ctx context.Context, filter *WorkspaceFilt
 	}, func(ctx context.Context, q *hook.QueryContext) (any, error) {
 		conn := database.Conn(ctx, c.querier)
 
+		// A relationship filter compiles to a correlated EXISTS carrying the
+		// *target's* tenant predicate, so the tenant is
+		// resolved before the conditions are built rather than appended after them.
+		filterOpts, filterErr := c.filterOptions(ctx, filter, options.SkipTenancy, options.Tenant)
+		if filterErr != nil {
+			return nil, fmt.Errorf("exists workspaces: %w", filterErr)
+		}
+
 		var conds []sql.Condition
 		if filter != nil {
-			conds = filter.ToConditions(c.dialect)
+			conds = filter.ToConditions(c.dialect, filterOpts...)
 		}
 
 		query, args := sql.BuildExists(c.dialect, c.table, conds)
@@ -30578,9 +30847,17 @@ func (c *workspaceClient) Count(ctx context.Context, filter *WorkspaceFilter, op
 	}, func(ctx context.Context, q *hook.QueryContext) (any, error) {
 		conn := database.Conn(ctx, c.querier)
 
+		// A relationship filter compiles to a correlated EXISTS carrying the
+		// *target's* tenant predicate, so the tenant is
+		// resolved before the conditions are built rather than appended after them.
+		filterOpts, filterErr := c.filterOptions(ctx, filter, options.SkipTenancy, options.Tenant)
+		if filterErr != nil {
+			return nil, fmt.Errorf("count workspaces: %w", filterErr)
+		}
+
 		var conds []sql.Condition
 		if filter != nil {
-			conds = filter.ToConditions(c.dialect)
+			conds = filter.ToConditions(c.dialect, filterOpts...)
 		}
 
 		query, args := sql.BuildCount(c.dialect, c.table, conds)
@@ -30942,9 +31219,18 @@ func (c *workspaceClient) Stream(ctx context.Context, input *StreamWorkspacesInp
 				}
 			}
 
+			// A relationship filter compiles to a correlated EXISTS carrying the
+			// *target's* tenant predicate, so the tenant is
+			// resolved before the conditions are built rather than appended after them.
+			filterOpts, filterErr := c.filterOptions(ctx, input.Filter, options.SkipTenancy, options.Tenant)
+			if filterErr != nil {
+				emit(nil, fmt.Errorf("stream workspaces: %w", filterErr))
+				return nil, nil
+			}
+
 			var conds []sql.Condition
 			if input.Filter != nil {
-				conds = input.Filter.ToConditions(c.dialect)
+				conds = input.Filter.ToConditions(c.dialect, filterOpts...)
 			}
 
 			query, args := sql.BuildSelect(c.dialect, c.table, sql.SelectOptions{
@@ -30985,11 +31271,12 @@ func (c *workspaceClient) Stream(ctx context.Context, input *StreamWorkspacesInp
 
 // WorkspaceFilter provides type-safe filtering for the workspaces table.
 type WorkspaceFilter struct {
-	CreatedAt *comparator.Time   `json:"created_at"`
-	ID        *comparator.ID     `json:"id"`
-	Name      *comparator.String `json:"name"`
-	And       []*WorkspaceFilter `json:"and"`
-	Or        []*WorkspaceFilter `json:"or"`
+	CreatedAt    *comparator.Time   `json:"created_at"`
+	ID           *comparator.ID     `json:"id"`
+	Name         *comparator.String `json:"name"`
+	ProductStats *ProductStatFilter `json:"product_stats"`
+	And          []*WorkspaceFilter `json:"and"`
+	Or           []*WorkspaceFilter `json:"or"`
 }
 
 // ToConditions converts the filter to a slice of SQL conditions.
@@ -31017,6 +31304,10 @@ func (f *WorkspaceFilter) ToConditions(dialect sql.Dialect, opts ...FilterOption
 
 	if f.Name != nil {
 		conds = append(conds, f.Name.Parse(dialect.QuoteIdentifier("name"), dialect)...)
+	}
+
+	if f.ProductStats != nil {
+		conds = append(conds, workspaceProductStatsFilterExists(f.ProductStats, dialect, opts))
 	}
 
 	for _, sub := range f.And {
@@ -31050,11 +31341,86 @@ func (f *WorkspaceFilter) ToConditions(dialect sql.Dialect, opts ...FilterOption
 	return conds
 }
 
+// usesRelationshipFilter reports whether f sets at least one relationship
+// member, directly or through and / or.
+//
+// The FilterOption set ToConditions takes is read only by the EXISTS helpers
+// below, so a filter with no relationship member ignores it entirely and
+// compiles to byte-identical SQL either way. The client's filterOptions
+// consults this before resolving a tenant, which is what keeps a read that has
+// no tenanted component from failing closed: on a shared table the outer WHERE
+// is never tenant-scoped, so a resolver that reports a missing tenant as an
+// error would otherwise reject reads that legitimately run before any tenant
+// is selected.
+func (f *WorkspaceFilter) usesRelationshipFilter() bool {
+	if f == nil {
+		return false
+	}
+	if f.ProductStats != nil {
+		return true
+	}
+	for _, sub := range f.And {
+		if sub.usesRelationshipFilter() {
+			return true
+		}
+	}
+	for _, sub := range f.Or {
+		if sub.usesRelationshipFilter() {
+			return true
+		}
+	}
+	return false
+}
+
+// workspaceProductStatsFilterExists compiles a ProductStatFilter set on the
+// ProductStats relationship into a correlated EXISTS over product_stats.
+//
+// The parent-side reference carries no qualifier: sql.CorrelationToken is
+// resolved by the builder against whichever FROM clause encloses the predicate,
+// so one emitted value is correct on both the plain read path and the aliased
+// O2O-join path.
+//
+// The subquery alias is keyed on nesting depth. A relationship filter nested
+// inside itself — legal for a self-referential relationship — would
+// otherwise reuse the alias and let the inner subquery shadow the reference its
+// own correlation resolves against.
+//
+// MySQL rejects an EXISTS naming the table an UPDATE or DELETE is mutating
+// (error 1093). A relationship filter whose target is the mutated table is
+// therefore a read-path predicate on MySQL, not one to pass to UpdateWhere /
+// SoftDeleteWhere / HardDeleteWhere / Increment.
+func workspaceProductStatsFilterExists(f *ProductStatFilter, dialect sql.Dialect, opts []FilterOption) sql.Condition {
+	scope := resolveFilterScope(opts)
+	tgt := filterSubqueryAlias("tgt", scope.depth)
+	subSQL := "SELECT 1 FROM " + dialect.FormatTable(sql.Table{Schema: "", Name: "product_stats"}) + " " + tgt +
+		" WHERE " + tgt + "." + dialect.QuoteIdentifier("workspace_id") + " = " + sql.CorrelationToken
+	var subArgs []any
+
+	// The target's own ToConditions supplies the inner WHERE, so nesting and
+	// and/or compose recursively. Every reference is qualified with the target
+	// alias: unqualified names inside a correlated subquery bind to the
+	// enclosing statement whenever the target lacks the column.
+	if where, whereArgs := sql.SubqueryWhere(dialect, tgt, f.ToConditions(dialect, nestFilterScope(opts, scope.depth+1)...)); where != "" {
+		subSQL += " AND " + where
+		subArgs = append(subArgs, whereArgs...)
+	}
+
+	// The target's tenant rule applies inside the subquery. Without it a
+	// relationship filter would be a cross-tenant existence probe on a table the caller cannot otherwise read.
+	if scope.applyTenant {
+		subSQL += " AND " + tgt + "." + dialect.QuoteIdentifier("workspace_id") + " = $"
+		subArgs = append(subArgs, scope.tenant)
+	}
+
+	return sql.Exists("id", sql.Subquery{SQL: subSQL, Args: subArgs})
+}
+
 // WorkspaceFieldOptions controls column selection and relationship loading for workspaces queries.
 type WorkspaceFieldOptions struct {
-	ID        bool `json:"id"`
-	Name      bool `json:"name"`
-	CreatedAt bool `json:"created_at"`
+	ID           bool                            `json:"id"`
+	Name         bool                            `json:"name"`
+	CreatedAt    bool                            `json:"created_at"`
+	ProductStats *ProductStatRelationshipOptions `json:"product_stats"`
 }
 
 // Columns returns the SQL column names for all selected columns, sorted alphabetically
@@ -31094,7 +31460,17 @@ func (fo *WorkspaceFieldOptions) HasSelectedColumns() bool {
 	if fo.CreatedAt {
 		return true
 	}
+	if fo.ProductStats != nil {
+		return true
+	}
 	return false
+}
+
+// ProductStatRelationshipOptions controls loading options for ProductStat relationships.
+type ProductStatRelationshipOptions struct {
+	FieldOptions *ProductStatFieldOptions `json:"field_options"`
+	Filter       *ProductStatFilter       `json:"filter"`
+	Sorts        []sql.Sort               `json:"sorts"`
 }
 
 // CreateWorkspaceInput holds the fields for creating a workspaces record.
