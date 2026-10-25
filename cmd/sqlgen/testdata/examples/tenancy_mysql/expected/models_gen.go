@@ -1421,13 +1421,20 @@ func (c *articleClient) SoftDelete(ctx context.Context, id int64, opts ...func(*
 			Conditions: delConds,
 		})
 
-		// err is already declared by the tenant pre-read above.
-		_, err = conn.Exec(ctx, query, args...)
+		execResult, err := conn.Exec(ctx, query, args...)
 		if err != nil {
 			return nil, fmt.Errorf("soft delete article: %w", err)
 		}
-		m.AffectedPKs = []any{id}
-		m.AffectedTenants = []any{capturedTenant}
+		matched, err := execResult.RowsAffected()
+		if err != nil {
+			return nil, fmt.Errorf("soft delete article rows affected: %w", err)
+		}
+		// A key that matched no row wrote nothing: it records no affected
+		// key, so no cache entry is invalidated and no event is published.
+		if matched > 0 {
+			m.AffectedPKs = []any{id}
+			m.AffectedTenants = []any{capturedTenant}
+		}
 
 		// Empty FieldOptions — caller doesn't need the result
 		if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
@@ -1697,13 +1704,20 @@ func (c *articleClient) Restore(ctx context.Context, id int64, opts ...func(*Cal
 			Conditions: restoreConds,
 		})
 
-		// err is already declared by the tenant pre-read above.
-		_, err = conn.Exec(ctx, query, args...)
+		execResult, err := conn.Exec(ctx, query, args...)
 		if err != nil {
 			return nil, fmt.Errorf("restore article: %w", err)
 		}
-		m.AffectedPKs = []any{id}
-		m.AffectedTenants = []any{capturedTenant}
+		matched, err := execResult.RowsAffected()
+		if err != nil {
+			return nil, fmt.Errorf("restore article rows affected: %w", err)
+		}
+		// A key that matched no row wrote nothing: it records no affected
+		// key, so no cache entry is invalidated and no event is published.
+		if matched > 0 {
+			m.AffectedPKs = []any{id}
+			m.AffectedTenants = []any{capturedTenant}
+		}
 
 		// Empty FieldOptions — caller doesn't need the result
 		if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
@@ -1955,13 +1969,20 @@ func (c *articleClient) HardDelete(ctx context.Context, id int64, opts ...func(*
 			Conditions: hardConds,
 		})
 
-		// err is already declared by the tenant pre-read above.
-		_, err = conn.Exec(ctx, query, args...)
+		execResult, err := conn.Exec(ctx, query, args...)
 		if err != nil {
 			return nil, fmt.Errorf("hard delete article: %w", err)
 		}
-		m.AffectedPKs = []any{id}
-		m.AffectedTenants = []any{capturedTenant}
+		matched, err := execResult.RowsAffected()
+		if err != nil {
+			return nil, fmt.Errorf("hard delete article rows affected: %w", err)
+		}
+		// A key that matched no row wrote nothing: it records no affected
+		// key, so no cache entry is invalidated and no event is published.
+		if matched > 0 {
+			m.AffectedPKs = []any{id}
+			m.AffectedTenants = []any{capturedTenant}
+		}
 		return nil, nil
 	})
 	return err
@@ -4651,13 +4672,20 @@ func (c *documentClient) HardDelete(ctx context.Context, id string, opts ...func
 			Conditions: hardConds,
 		})
 
-		// err is already declared by the tenant pre-read above.
-		_, err = conn.Exec(ctx, query, args...)
+		execResult, err := conn.Exec(ctx, query, args...)
 		if err != nil {
 			return nil, fmt.Errorf("hard delete document: %w", err)
 		}
-		m.AffectedPKs = []any{id}
-		m.AffectedTenants = []any{capturedTenant}
+		matched, err := execResult.RowsAffected()
+		if err != nil {
+			return nil, fmt.Errorf("hard delete document rows affected: %w", err)
+		}
+		// A key that matched no row wrote nothing: it records no affected
+		// key, so no cache entry is invalidated and no event is published.
+		if matched > 0 {
+			m.AffectedPKs = []any{id}
+			m.AffectedTenants = []any{capturedTenant}
+		}
 		return nil, nil
 	})
 	return err
@@ -7027,13 +7055,20 @@ func (c *lineItemClient) HardDelete(ctx context.Context, pk LineItemPK, opts ...
 			Conditions: hardConds,
 		})
 
-		// err is already declared by the tenant pre-read above.
-		_, err = conn.Exec(ctx, query, args...)
+		execResult, err := conn.Exec(ctx, query, args...)
 		if err != nil {
 			return nil, fmt.Errorf("hard delete line_item: %w", err)
 		}
-		m.AffectedPKs = []any{pk}
-		m.AffectedTenants = []any{capturedTenant}
+		matched, err := execResult.RowsAffected()
+		if err != nil {
+			return nil, fmt.Errorf("hard delete line_item rows affected: %w", err)
+		}
+		// A key that matched no row wrote nothing: it records no affected
+		// key, so no cache entry is invalidated and no event is published.
+		if matched > 0 {
+			m.AffectedPKs = []any{pk}
+			m.AffectedTenants = []any{capturedTenant}
+		}
 		return nil, nil
 	})
 	return err

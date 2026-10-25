@@ -104,6 +104,7 @@ func (c *{{ $structCamel }}Client) SoftDelete(ctx context.Context, {{ if .Compos
 			return nil, fmt.Errorf("soft delete {{ $singular }}: %w", err)
 		}
 		var capturedTenant any
+		var matched int
 		for rows.Next() {
 			var rowTenant {{ .Tenancy.GoType }}
 			if err := rows.Scan(&rowTenant); err != nil {
@@ -111,6 +112,7 @@ func (c *{{ $structCamel }}Client) SoftDelete(ctx context.Context, {{ if .Compos
 				return nil, fmt.Errorf("scan soft deleted {{ $singular }} tenant: %w", err)
 			}
 			capturedTenant = rowTenant
+			matched++
 		}
 		if err := rows.Err(); err != nil {
 			rows.Close()
@@ -119,22 +121,24 @@ func (c *{{ $structCamel }}Client) SoftDelete(ctx context.Context, {{ if .Compos
 		rows.Close()
 {{- else }}
 
-{{- if and $captureTenant (not (supportsReturning)) }}
 
-		// err is already declared by the tenant pre-read above.
-		_, err = conn.Exec(ctx, query, args...)
-{{- else }}
-
-		_, err := conn.Exec(ctx, query, args...)
-{{- end }}
+		execResult, err := conn.Exec(ctx, query, args...)
 		if err != nil {
 			return nil, fmt.Errorf("soft delete {{ $singular }}: %w", err)
 		}
+		matched, err := execResult.RowsAffected()
+		if err != nil {
+			return nil, fmt.Errorf("soft delete {{ $singular }} rows affected: %w", err)
+		}
 {{- end }}
-		m.AffectedPKs = []any{ {{ if .CompositePK }}pk{{ else }}id{{ end }} }
+		// A key that matched no row wrote nothing: it records no affected
+		// key, so no cache entry is invalidated and no event is published.
+		if matched > 0 {
+			m.AffectedPKs = []any{ {{ if .CompositePK }}pk{{ else }}id{{ end }} }
 {{- if $captureTenant }}
-		m.AffectedTenants = []any{capturedTenant}
+			m.AffectedTenants = []any{capturedTenant}
 {{- end }}
+		}
 
 		// Empty FieldOptions — caller doesn't need the result
 		if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
@@ -838,6 +842,7 @@ func (c *{{ $structCamel }}Client) Restore(ctx context.Context, {{ if .Composite
 			return nil, fmt.Errorf("restore {{ $singular }}: %w", err)
 		}
 		var capturedTenant any
+		var matched int
 		for rows.Next() {
 			var rowTenant {{ .Tenancy.GoType }}
 			if err := rows.Scan(&rowTenant); err != nil {
@@ -845,6 +850,7 @@ func (c *{{ $structCamel }}Client) Restore(ctx context.Context, {{ if .Composite
 				return nil, fmt.Errorf("scan restored {{ $singular }} tenant: %w", err)
 			}
 			capturedTenant = rowTenant
+			matched++
 		}
 		if err := rows.Err(); err != nil {
 			rows.Close()
@@ -853,22 +859,24 @@ func (c *{{ $structCamel }}Client) Restore(ctx context.Context, {{ if .Composite
 		rows.Close()
 {{- else }}
 
-{{- if and $captureTenant (not (supportsReturning)) }}
 
-		// err is already declared by the tenant pre-read above.
-		_, err = conn.Exec(ctx, query, args...)
-{{- else }}
-
-		_, err := conn.Exec(ctx, query, args...)
-{{- end }}
+		execResult, err := conn.Exec(ctx, query, args...)
 		if err != nil {
 			return nil, fmt.Errorf("restore {{ $singular }}: %w", err)
 		}
+		matched, err := execResult.RowsAffected()
+		if err != nil {
+			return nil, fmt.Errorf("restore {{ $singular }} rows affected: %w", err)
+		}
 {{- end }}
-		m.AffectedPKs = []any{ {{ if .CompositePK }}pk{{ else }}id{{ end }} }
+		// A key that matched no row wrote nothing: it records no affected
+		// key, so no cache entry is invalidated and no event is published.
+		if matched > 0 {
+			m.AffectedPKs = []any{ {{ if .CompositePK }}pk{{ else }}id{{ end }} }
 {{- if $captureTenant }}
-		m.AffectedTenants = []any{capturedTenant}
+			m.AffectedTenants = []any{capturedTenant}
 {{- end }}
+		}
 
 		// Empty FieldOptions — caller doesn't need the result
 		if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
@@ -1511,6 +1519,7 @@ func (c *{{ $structCamel }}Client) HardDelete(ctx context.Context, {{ if .Compos
 			return nil, fmt.Errorf("hard delete {{ $singular }}: %w", err)
 		}
 		var capturedTenant any
+		var matched int
 		for rows.Next() {
 			var rowTenant {{ .Tenancy.GoType }}
 			if err := rows.Scan(&rowTenant); err != nil {
@@ -1518,6 +1527,7 @@ func (c *{{ $structCamel }}Client) HardDelete(ctx context.Context, {{ if .Compos
 				return nil, fmt.Errorf("scan deleted {{ $singular }} tenant: %w", err)
 			}
 			capturedTenant = rowTenant
+			matched++
 		}
 		if err := rows.Err(); err != nil {
 			rows.Close()
@@ -1526,22 +1536,24 @@ func (c *{{ $structCamel }}Client) HardDelete(ctx context.Context, {{ if .Compos
 		rows.Close()
 {{- else }}
 
-{{- if and $captureTenant (not (supportsReturning)) }}
 
-		// err is already declared by the tenant pre-read above.
-		_, err = conn.Exec(ctx, query, args...)
-{{- else }}
-
-		_, err := conn.Exec(ctx, query, args...)
-{{- end }}
+		execResult, err := conn.Exec(ctx, query, args...)
 		if err != nil {
 			return nil, fmt.Errorf("hard delete {{ $singular }}: %w", err)
 		}
+		matched, err := execResult.RowsAffected()
+		if err != nil {
+			return nil, fmt.Errorf("hard delete {{ $singular }} rows affected: %w", err)
+		}
 {{- end }}
-		m.AffectedPKs = []any{ {{ if .CompositePK }}pk{{ else }}id{{ end }} }
+		// A key that matched no row wrote nothing: it records no affected
+		// key, so no cache entry is invalidated and no event is published.
+		if matched > 0 {
+			m.AffectedPKs = []any{ {{ if .CompositePK }}pk{{ else }}id{{ end }} }
 {{- if $captureTenant }}
-		m.AffectedTenants = []any{capturedTenant}
+			m.AffectedTenants = []any{capturedTenant}
 {{- end }}
+		}
 		return nil, nil
 	})
 	return err

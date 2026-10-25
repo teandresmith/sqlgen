@@ -8,6 +8,7 @@ import (
 	"text/template"
 
 	"github.com/google/go-cmp/cmp"
+	"github.com/teandresmith/sqlgen/cmd/sqlgen/config"
 	"github.com/teandresmith/sqlgen/cmd/sqlgen/gen"
 	"github.com/teandresmith/sqlgen/cmd/sqlgen/gotype"
 	"github.com/teandresmith/sqlgen/sql"
@@ -710,5 +711,92 @@ func TestDeleteTemplate_goldenFile_noSoftDelete(t *testing.T) {
 
 	if diff := cmp.Diff(string(want), got); diff != "" {
 		t.Errorf("delete_products_no_soft_gen.go mismatch (-want +got):\n%s", diff)
+	}
+}
+
+// --- Tests: by-key no-op writes record no affected key ---
+
+// methodBody returns the source of the generated method named name, from its
+// signature to the closing brace at column zero.
+func methodBody(t *testing.T, output, name string) string {
+	t.Helper()
+	start := strings.Index(output, ") "+name+"(ctx context.Context")
+	if start < 0 {
+		t.Fatalf("method %s not found in output:\n%s", name, output)
+	}
+	end := strings.Index(output[start:], "\n}\n")
+	if end < 0 {
+		t.Fatalf("method %s has no closing brace", name)
+	}
+	return output[start : start+end]
+}
+
+// A by-key SoftDelete, Restore or HardDelete whose key matches no row writes
+// nothing. It must record no affected key, so the cache invalidates nothing
+// and the event hook publishes nothing: the one m.AffectedPKs assignment in
+// each of those methods sits behind the matched-row check.
+func TestDeleteTemplate_byKeyNoOp_recordsNoAffectedPKs(t *testing.T) {
+	tenanted := func(dialectName config.Dialect, driver config.Driver) gen.TableContext {
+		tc := tenantedProductContext()
+		tc.Dialect = dialectName
+		tc.Driver = driver
+		tc.SoftDelete = &gen.SoftDeleteContext{Column: "deleted_at", FieldName: "DeletedAt", Strategy: "timestamp"}
+		tc.ExcludeDeleted = true
+		tc.FilterFields = []gen.FilterFieldContext{
+			{FieldName: "ID", ComparatorType: "comparator.ID", ColumnName: "id"},
+			{FieldName: "DeletedAt", ComparatorType: "comparator.NullableTime", ColumnName: "deleted_at", IsSoftDeleteColumn: true},
+		}
+		tc.Operations = gen.ResolvedOperations{SoftDelete: true, Restore: true, HardDelete: true}
+		return tc
+	}
+	cases := []struct {
+		name    string
+		ctx     gen.TableContext
+		dialect sql.Dialect
+	}{
+		{name: "postgres exec", ctx: testDeleteContext_timestamp(), dialect: sql.NewPostgresDialect()},
+		{name: "mysql exec", ctx: testDeleteContext_mysql(), dialect: sql.NewMySQLDialect()},
+		{name: "composite pk", ctx: testDeleteContext_compositePK(), dialect: sql.NewPostgresDialect()},
+		{name: "tenanted postgres returning", ctx: tenanted("postgres", "pgx"), dialect: sql.NewPostgresDialect()},
+		{name: "tenanted sqlite returning", ctx: tenanted("sqlite", "stdlib"), dialect: sql.NewSQLiteDialect()},
+		{name: "tenanted mysql pre-read", ctx: tenanted("mysql", "stdlib"), dialect: sql.NewMySQLDialect()},
+	}
+	methods := []struct {
+		name string
+	}{
+		{name: "SoftDelete"},
+		{name: "Restore"},
+		{name: "HardDelete"},
+	}
+	for _, tt := range cases {
+		t.Run(tt.name, func(t *testing.T) {
+			output := executeDeleteTemplate(t, tt.ctx, tt.dialect)
+			for _, m := range methods {
+				t.Run(m.name, func(t *testing.T) {
+					body := methodBody(t, output, m.name)
+					lines := strings.Split(body, "\n")
+					assignments := 0
+					for i, line := range lines {
+						if !strings.Contains(line, "m.AffectedPKs =") {
+							continue
+						}
+						assignments++
+						prev := ""
+						for j := i - 1; j >= 0; j-- {
+							if s := strings.TrimSpace(lines[j]); s != "" {
+								prev = s
+								break
+							}
+						}
+						if prev != "if matched > 0 {" {
+							t.Errorf("m.AffectedPKs assignment not behind the matched-row check; preceding line %q\n\nmethod:\n%s", prev, body)
+						}
+					}
+					if assignments != 1 {
+						t.Errorf("m.AffectedPKs assignments = %d, want 1\n\nmethod:\n%s", assignments, body)
+					}
+				})
+			}
+		})
 	}
 }

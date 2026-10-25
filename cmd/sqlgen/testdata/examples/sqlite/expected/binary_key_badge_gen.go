@@ -738,11 +738,19 @@ func (c *binaryKeyBadgeClient) HardDelete(ctx context.Context, pk BinaryKeyBadge
 				[]any{pk.BinaryKeyID, pk.BadgeCode}),
 		})
 
-		_, err := conn.Exec(ctx, query, args...)
+		execResult, err := conn.Exec(ctx, query, args...)
 		if err != nil {
 			return nil, fmt.Errorf("hard delete binary_key_badge: %w", err)
 		}
-		m.AffectedPKs = []any{pk}
+		matched, err := execResult.RowsAffected()
+		if err != nil {
+			return nil, fmt.Errorf("hard delete binary_key_badge rows affected: %w", err)
+		}
+		// A key that matched no row wrote nothing: it records no affected
+		// key, so no cache entry is invalidated and no event is published.
+		if matched > 0 {
+			m.AffectedPKs = []any{pk}
+		}
 		return nil, nil
 	})
 	return err

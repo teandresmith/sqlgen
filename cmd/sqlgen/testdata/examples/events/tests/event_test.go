@@ -407,6 +407,41 @@ func TestEvent_Restore(t *testing.T) {
 	}
 }
 
+// A by-key write whose key matches no row writes nothing, so it publishes
+// nothing, though it still returns no error.
+func TestEvent_MissingKeyPublishesNothing(t *testing.T) {
+	ctx := context.Background()
+	const missing = int64(987654321)
+	cases := []struct {
+		name  string
+		write func(client *models.Client) error
+	}{
+		{name: "soft delete", write: func(client *models.Client) error {
+			_, err := client.Articles().SoftDelete(ctx, missing)
+			return err
+		}},
+		{name: "restore", write: func(client *models.Client) error {
+			_, err := client.Articles().Restore(ctx, missing)
+			return err
+		}},
+		{name: "hard delete", write: func(client *models.Client) error {
+			return client.Products().HardDelete(ctx, missing)
+		}},
+	}
+	for _, tt := range cases {
+		t.Run(tt.name, func(t *testing.T) {
+			client, bus := newClientWithBus(t)
+			got := subscribe(t, bus, event.SubscribeOptions{})
+			if err := tt.write(client); err != nil {
+				t.Fatalf("write: %v", err)
+			}
+			if events := got.waitStable(); len(events) != 0 {
+				t.Errorf("got %d events, want 0: %+v", len(events), events)
+			}
+		})
+	}
+}
+
 func TestEvent_RestoreMany(t *testing.T) {
 	ctx := context.Background()
 	client, bus := newClientWithBus(t)

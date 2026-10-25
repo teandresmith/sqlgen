@@ -1306,6 +1306,7 @@ func (c *articleClient) SoftDelete(ctx context.Context, id int64, opts ...func(*
 			return nil, fmt.Errorf("soft delete article: %w", err)
 		}
 		var capturedTenant any
+		var matched int
 		for rows.Next() {
 			var rowTenant uuid.UUID
 			if err := rows.Scan(&rowTenant); err != nil {
@@ -1313,14 +1314,19 @@ func (c *articleClient) SoftDelete(ctx context.Context, id int64, opts ...func(*
 				return nil, fmt.Errorf("scan soft deleted article tenant: %w", err)
 			}
 			capturedTenant = rowTenant
+			matched++
 		}
 		if err := rows.Err(); err != nil {
 			rows.Close()
 			return nil, err
 		}
 		rows.Close()
-		m.AffectedPKs = []any{id}
-		m.AffectedTenants = []any{capturedTenant}
+		// A key that matched no row wrote nothing: it records no affected
+		// key, so no cache entry is invalidated and no event is published.
+		if matched > 0 {
+			m.AffectedPKs = []any{id}
+			m.AffectedTenants = []any{capturedTenant}
+		}
 
 		// Empty FieldOptions — caller doesn't need the result
 		if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
@@ -1609,6 +1615,7 @@ func (c *articleClient) Restore(ctx context.Context, id int64, opts ...func(*Cal
 			return nil, fmt.Errorf("restore article: %w", err)
 		}
 		var capturedTenant any
+		var matched int
 		for rows.Next() {
 			var rowTenant uuid.UUID
 			if err := rows.Scan(&rowTenant); err != nil {
@@ -1616,14 +1623,19 @@ func (c *articleClient) Restore(ctx context.Context, id int64, opts ...func(*Cal
 				return nil, fmt.Errorf("scan restored article tenant: %w", err)
 			}
 			capturedTenant = rowTenant
+			matched++
 		}
 		if err := rows.Err(); err != nil {
 			rows.Close()
 			return nil, err
 		}
 		rows.Close()
-		m.AffectedPKs = []any{id}
-		m.AffectedTenants = []any{capturedTenant}
+		// A key that matched no row wrote nothing: it records no affected
+		// key, so no cache entry is invalidated and no event is published.
+		if matched > 0 {
+			m.AffectedPKs = []any{id}
+			m.AffectedTenants = []any{capturedTenant}
+		}
 
 		// Empty FieldOptions — caller doesn't need the result
 		if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
@@ -1893,6 +1905,7 @@ func (c *articleClient) HardDelete(ctx context.Context, id int64, opts ...func(*
 			return nil, fmt.Errorf("hard delete article: %w", err)
 		}
 		var capturedTenant any
+		var matched int
 		for rows.Next() {
 			var rowTenant uuid.UUID
 			if err := rows.Scan(&rowTenant); err != nil {
@@ -1900,14 +1913,19 @@ func (c *articleClient) HardDelete(ctx context.Context, id int64, opts ...func(*
 				return nil, fmt.Errorf("scan deleted article tenant: %w", err)
 			}
 			capturedTenant = rowTenant
+			matched++
 		}
 		if err := rows.Err(); err != nil {
 			rows.Close()
 			return nil, err
 		}
 		rows.Close()
-		m.AffectedPKs = []any{id}
-		m.AffectedTenants = []any{capturedTenant}
+		// A key that matched no row wrote nothing: it records no affected
+		// key, so no cache entry is invalidated and no event is published.
+		if matched > 0 {
+			m.AffectedPKs = []any{id}
+			m.AffectedTenants = []any{capturedTenant}
+		}
 		return nil, nil
 	})
 	return err
@@ -4575,6 +4593,7 @@ func (c *lineItemClient) HardDelete(ctx context.Context, pk LineItemPK, opts ...
 			return nil, fmt.Errorf("hard delete line_item: %w", err)
 		}
 		var capturedTenant any
+		var matched int
 		for rows.Next() {
 			var rowTenant uuid.UUID
 			if err := rows.Scan(&rowTenant); err != nil {
@@ -4582,14 +4601,19 @@ func (c *lineItemClient) HardDelete(ctx context.Context, pk LineItemPK, opts ...
 				return nil, fmt.Errorf("scan deleted line_item tenant: %w", err)
 			}
 			capturedTenant = rowTenant
+			matched++
 		}
 		if err := rows.Err(); err != nil {
 			rows.Close()
 			return nil, err
 		}
 		rows.Close()
-		m.AffectedPKs = []any{pk}
-		m.AffectedTenants = []any{capturedTenant}
+		// A key that matched no row wrote nothing: it records no affected
+		// key, so no cache entry is invalidated and no event is published.
+		if matched > 0 {
+			m.AffectedPKs = []any{pk}
+			m.AffectedTenants = []any{capturedTenant}
+		}
 		return nil, nil
 	})
 	return err
