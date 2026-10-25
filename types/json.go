@@ -154,9 +154,9 @@ func (j JSON) AsSlice() ([]any, error) {
 	return s, nil
 }
 
-// IsNull reports whether the value is SQL NULL (empty or whitespace-only
-// bytes) or holds the JSON `null` literal, with any surrounding JSON
-// whitespace (space, tab, CR, LF).
+// IsNull reports whether the value is empty (SQL NULL) or whitespace-only,
+// or holds the JSON `null` literal, with any surrounding JSON whitespace
+// (space, tab, CR, LF).
 // The two are indistinguishable to most application code; use len(j) == 0
 // directly when you must distinguish.
 func (j JSON) IsNull() bool {

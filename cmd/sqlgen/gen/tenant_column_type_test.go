@@ -591,8 +591,8 @@ func filterComparatorOf(t *testing.T, fields []gen.FilterFieldContext, column st
 
 // TestBuildEntityContexts_TenancyTypeReachesTenantFilter pins `tenancy.type`
 // reaching the filter as well as the row struct: the tenant column's filter
-// comparator follows the resolved tenant Go type, as it would for any column
-// of that Go type, not the SQL type the override replaced. A SQLite `blob`
+// comparator follows the resolved tenant Go type, as a native `uuid` column's
+// does, not the SQL type the override replaced. A SQLite `blob`
 // tenant column typed uuid.UUID filters through comparator.ID, on tables and
 // on tenanted views alike, while the `text` columns beside it keep
 // comparator.String.

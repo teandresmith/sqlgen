@@ -7,7 +7,7 @@
 Rows of the `type-resolution` matrix are the rows of the three §7.2 tables, one per dialect (`postgres-…`, `mysql-…`, `sqlite-…`), with each table row's spellings together. Rows that cite gotype tests from other sections (§16.3 SUM widening, §29.2.4 tenancy) live in [`gen.md`](gen.md).
 
 ## §7.1 Type Resolution Chain
-<!-- prd: 7.1 sha256: 7b41bff8bf21bcd5 -->
+<!-- prd: 7.1 sha256: 81640b37e6534763 -->
 
 | ID | Requirement | Tests | Applies to | Matrix cell |
 |---|---|---|---|---|
@@ -160,8 +160,8 @@ Rows of the `type-resolution` matrix are the rows of the three §7.2 tables, one
 | gotype.names.view-copies-source-type | A column of an `input.views` annotation-file view copies its source column's type, rewritten the same way for the view's schema | `unit: parser: TestBuildView_TypesRelativeToViewSchema/view in the source table's schema`; `unit: parser: TestBuildView_TypesRelativeToViewSchema/view in the schema a qualified type names`; `unit: parser: TestBuildView_TypesRelativeToViewSchema/view in a third schema`; `unit: cmd/sqlgen/cli: TestGenerate_AnnotationViewTypesFollowViewSchema` | postgres |  |
 | gotype.names.view-source-table-schema | The annotation-file view's source table is found in the schema the `FROM` clause names | `unit: parser: TestBuildView_SourceTableBySchema` | postgres |  |
 | gotype.names.view-unqualified-from | An unqualified `FROM` table of an annotation-file view is found in `input.schema` | `unit: parser: TestBuildView_UnqualifiedFromUsesInputSchema/input schema app`; `unit: parser: TestBuildView_UnqualifiedFromUsesInputSchema/input schema billing` | postgres |  |
-| gotype.override-key.case-insensitive | Every lookup ignores case: SQL type names, enum, SET and domain names, schema qualifiers and `overrides.types` keys | `unit: cmd/sqlgen/gotype: TestCaseNormalization`; `unit: cmd/sqlgen/gotype: TestResolve_SchemaEnums/enum is case-insensitive`; `unit: cmd/sqlgen/gotype: TestResolve_SchemaSets/set is case-insensitive`; `unit: cmd/sqlgen/gotype: TestResolve_SchemaQualifiedNames/qualified name is case-insensitive`; `unit: cmd/sqlgen/gotype: TestResolve_SchemaQualifiedNames/owner schema matches case-insensitively` | all |  |
-| gotype.chain.unknown-type-string | A column whose SQL type no step resolves is `string` (`*string` / `sql.NullString` when nullable) | `unit: cmd/sqlgen/gotype: TestResolve_SchemaQualifiedNames/shared bare enum resolves only qualified`; `unit: cmd/sqlgen/gotype: TestDefaultUUIDBinding/other dialects declare no uuid type` | all |  |
+| gotype.override-key.case-insensitive | Every lookup ignores case: SQL type names, enum, SET and domain names, schema qualifiers and `overrides.types` keys | `unit: cmd/sqlgen/gotype: TestCaseNormalization`; `unit: cmd/sqlgen/gotype: TestResolve_SchemaEnums/enum is case-insensitive`; `unit: cmd/sqlgen/gotype: TestResolve_SchemaSets/set is case-insensitive`; `unit: cmd/sqlgen/gotype: TestResolve_SchemaQualifiedNames/qualified name is case-insensitive`; `unit: cmd/sqlgen/gotype: TestResolve_SchemaQualifiedNames/owner schema matches case-insensitively`; `unit: cmd/sqlgen/gotype: TestOverrideKeysIgnoreCase` | all |  |
+| gotype.chain.unknown-type-string | A column whose SQL type no step resolves is `string` (`*string` / `sql.NullString` when nullable) | `unit: cmd/sqlgen/gotype: TestResolve_SchemaQualifiedNames/shared bare enum resolves only qualified`; `unit: cmd/sqlgen/gotype: TestDefaultUUIDBinding/other dialects declare no uuid type`; `unit: cmd/sqlgen/gotype: TestResolveReportsUnmappedSQLType` | all |  |
 | gotype.chain.unknown-type-warning | Generation warns for such a column, naming the column, its SQL type and the `overrides.types.<sql_type>` key that would type it, and the config still generates | `unit: cmd/sqlgen/gen: TestUnmappedSQLTypeWarnsOnTableColumn/unknown type warns and falls back to string`; `unit: cmd/sqlgen/gen: TestUnmappedSQLTypeWarnsOnViewColumn`; `unit: cmd/sqlgen/gotype: TestResolveReportsUnmappedSQLType/unknown type falls back and is reported` | all |  |
 
 ## §7.2 Built-In Type Mappings
@@ -495,7 +495,7 @@ Rows of the `type-resolution` matrix are the rows of the three §7.2 tables, one
 | gotype.custom-null.pointer-fallthrough | Pointer types (`*uuid.UUID`, `*string`) are handled by the resolver's pointer fallthrough, with no YAML declaration | `unit: cmd/sqlgen/gotype: TestDeriveScalarExtraction/*uuid.UUID`; `unit: cmd/sqlgen/gotype: TestDeriveScalarExtraction/*string`; `unit: cmd/sqlgen/gen: TestFuncFKLoadKey/*string — deref pass-through`; `unit: cmd/sqlgen/gen: TestFuncFKLoadKey/*uuid.UUID — deref Stringer` | all |  |
 
 ## §7.6 JSON / JSONB Column Type
-<!-- prd: 7.6 sha256: 6ece034ac00b571e -->
+<!-- prd: 7.6 sha256: 5073d28ef4c24145 -->
 
 | ID | Requirement | Tests | Applies to | Matrix cell |
 |---|---|---|---|---|

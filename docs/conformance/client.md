@@ -30,7 +30,7 @@ Requirements of the generated client, proved by the cross-dialect conformance su
 | nil-input.batch-no-statement | `CreateMany`, `UpdateMany`, `UpsertMany`, `SoftDeleteMany`, `RestoreMany` and `HardDeleteMany` send no statement for a nil or empty slice and read nothing back | `example: postgres: TestEmptyBatch_HardDeleteManyUnaffected` | all | |
 
 ## §9.5 Edge Case Behaviors
-<!-- prd: 9.5 sha256: fd6bd1aa5cc4b821 -->
+<!-- prd: 9.5 sha256: 46c881b9cd3c5d36 -->
 
 | ID | Requirement | Tests | Applies to | Matrix cell |
 |---|---|---|---|---|

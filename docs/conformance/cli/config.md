@@ -5,7 +5,7 @@
 <!-- matrix: config-validation rows=rule cols=fires,message,severity,together,schema -->
 
 ## §4.13 Config Validation Rules
-<!-- prd: 4.13 sha256: 4e2dd2d5bedcd0ca -->
+<!-- prd: 4.13 sha256: e1838dbf66d4e684 -->
 
 One row per rule and matrix column. A rule's `fires` row carries the rule's PRD wording; the
 other columns are the message the PRD states, the PRD severity, reporting together with other
@@ -286,6 +286,11 @@ errors (§4.13), and agreement with the §4.14 JSON Schema.
 | config.postgres-synonym-type-key.message | The message names the key and the catalog spelling to write instead | `unit: cmd/sqlgen/config: TestValidatePreParse_PostgresSynonymTypeKey` | postgres | config-validation: postgres-synonym-type-key × message |
 | config.postgres-synonym-type-key.severity | Reported as an error | `unit: cmd/sqlgen/config: TestValidatePreParse_PostgresSynonymTypeKey` | postgres | config-validation: postgres-synonym-type-key × severity |
 | config.postgres-synonym-type-key.together | Reported together with the other validation errors |  | postgres | config-validation: postgres-synonym-type-key × together |
+| config.postgres-synonym-type-key.letter-case | A synonym key in another letter case (`INT4`) is rejected as the lower-case synonym is | `unit: cmd/sqlgen/config: TestValidatePreParse_TypeKeyLetterCase/upper-case synonym` | postgres |  |
+| config.type-key-case-duplicate | Two keys of one `overrides.types` scope that differ only in letter case are rejected | `unit: cmd/sqlgen/config: TestValidatePreParse_TypeKeyLetterCase/keys that differ only in case` | all | config-validation: type-key-case-duplicate × fires |
+| config.type-key-case-duplicate.message | The message names both keys | `unit: cmd/sqlgen/config: TestValidatePreParse_TypeKeyLetterCase/keys that differ only in case` | all | config-validation: type-key-case-duplicate × message |
+| config.type-key-case-duplicate.severity | Reported as an error | `unit: cmd/sqlgen/config: TestValidatePreParse_TypeKeyLetterCase/keys that differ only in case` | all | config-validation: type-key-case-duplicate × severity |
+| config.type-key-case-duplicate.together | Reported together with the other validation errors |  | all | config-validation: type-key-case-duplicate × together |
 | config.column-type-missing-column | `column_map.<col>.type` must name a real column that survives `exclude_columns` | `unit: cmd/sqlgen/config: TestValidatePreParse_ColumnType_ExcludedColumn/table-level exclude_columns`; `unit: cmd/sqlgen/config: TestValidatePreParse_ColumnType_ExcludedColumn/global exclude_columns`; `unit: cmd/sqlgen/config: TestValidatePostParse_ColumnType_ColumnExists/unknown column rejected` | all | config-validation: column-type-missing-column × fires |
 | config.column-type-missing-column.severity | Reported as an error | `unit: cmd/sqlgen/config: TestValidatePostParse_ColumnType_ColumnExists/unknown column rejected` | all | config-validation: column-type-missing-column × severity |
 | config.column-type-missing-column.together | Reported together with the other validation errors of the run, not one at a time | `unit: cmd/sqlgen/config: TestValidatePreParse_ReportsEachRuleWithTheOthers/column type override on an excluded column` | all | config-validation: column-type-missing-column × together |
@@ -460,6 +465,7 @@ errors (§4.13), and agreement with the §4.14 JSON Schema.
 | config-validation: access-missing-column × message | §4.13 states no message content for this rule | |
 | config-validation: access-missing-column × schema | §4.14: the schema covers structure, key names and closed value sets, not this rule | |
 | config-validation: postgres-synonym-type-key × schema | §4.14: the schema covers structure, key names and closed value sets, not this rule | |
+| config-validation: type-key-case-duplicate × schema | §4.14: the schema covers structure, key names and closed value sets, not this rule | |
 | config-validation: access-pk-restricted × message | §4.13 states no message content for this rule | |
 | config-validation: access-pk-restricted × schema | §4.14: the schema covers structure, key names and closed value sets, not this rule | |
 | config-validation: access-required-on-create × message | §4.13 states no message content for this rule | |
