@@ -353,27 +353,7 @@ func buildTableColumns(input *GenerateInput, table *parser.Table, tableCfg confi
 	// (validatePrimaryKeyOverride) hard-errors on missing or nullable
 	// columns, so by the time we get here the override is well-formed.
 	if tableCfg.PrimaryKey != nil && len(tableCfg.PrimaryKey.Columns) > 0 {
-		overrideSet := make(map[string]bool, len(tableCfg.PrimaryKey.Columns))
-		for _, name := range tableCfg.PrimaryKey.Columns {
-			overrideSet[name] = true
-		}
-		for i := range columns {
-			columns[i].PrimaryKey = overrideSet[columns[i].Name]
-		}
-		// Build pkColumns in the user-declared order. Order is load-bearing
-		// for composite-PK cache key construction (CACHE.md §16) and the
-		// generated <Table>PK struct field order.
-		colByName := make(map[string]ColumnContext, len(columns))
-		for _, c := range columns {
-			colByName[c.Name] = c
-		}
-		pkColumns := make([]ColumnContext, 0, len(tableCfg.PrimaryKey.Columns))
-		for _, name := range tableCfg.PrimaryKey.Columns {
-			if col, ok := colByName[name]; ok {
-				pkColumns = append(pkColumns, col)
-			}
-		}
-		return columns, pkColumns, unmapped, nil
+		return columns, overridePKColumns(columns, tableCfg.PrimaryKey.Columns), unmapped, nil
 	}
 
 	var pkColumns []ColumnContext
@@ -383,6 +363,31 @@ func buildTableColumns(input *GenerateInput, table *parser.Table, tableCfg confi
 		}
 	}
 	return columns, pkColumns, unmapped, nil
+}
+
+// overridePKColumns marks the declared primary_key.columns as the PK in
+// columns and returns them in the user-declared order. Order is load-bearing
+// for composite-PK cache key construction (CACHE.md §16) and the generated
+// <Table>PK struct field order.
+func overridePKColumns(columns []ColumnContext, names []string) []ColumnContext {
+	overrideSet := make(map[string]bool, len(names))
+	for _, name := range names {
+		overrideSet[name] = true
+	}
+	for i := range columns {
+		columns[i].PrimaryKey = overrideSet[columns[i].Name]
+	}
+	colByName := make(map[string]ColumnContext, len(columns))
+	for _, c := range columns {
+		colByName[c.Name] = c
+	}
+	pkColumns := make([]ColumnContext, 0, len(names))
+	for _, name := range names {
+		if col, ok := colByName[name]; ok {
+			pkColumns = append(pkColumns, col)
+		}
+	}
+	return pkColumns
 }
 
 // detectTableSoftDelete returns the table's soft delete column, or nil when it
