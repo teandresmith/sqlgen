@@ -631,7 +631,7 @@ func validateResolvedFieldNames(
 		}
 	}
 	for i := range rels {
-		if err := reservedRelationshipFieldError(qualifiedTable, structName, rels[i]); err != nil {
+		if err := reservedRelationshipFieldError(qualifiedTable, structName, rels[i], pkColumns); err != nil {
 			reservedErrs = append(reservedErrs, err)
 		}
 	}

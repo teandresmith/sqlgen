@@ -146,12 +146,6 @@ func buildRelationshipFilters(tc *TableContext, targets map[string]*TableContext
 			taken[f.FieldName] = true
 		}
 	}
-	taken["And"] = true
-	taken["Or"] = true
-	taken["PKs"] = true
-	// The filter type's own method would be shadowed by a field of the same
-	// name, so a relationship named ToConditions cannot contribute a member.
-	taken["ToConditions"] = true
 
 	rels := make([]RelationshipContext, 0, len(tc.O2MRelationships)+len(tc.M2MRelationships))
 	rels = append(rels, tc.O2MRelationships...)
