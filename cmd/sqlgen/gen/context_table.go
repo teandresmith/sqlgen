@@ -290,7 +290,10 @@ func buildSingleTableContext(input *GenerateInput, table *parser.Table, collisio
 		return TableContext{}, err
 	}
 
-	columns, pkColumns := buildTableColumns(input, table, tableCfg)
+	columns, pkColumns, err := buildTableColumns(input, table, tableCfg)
+	if err != nil {
+		return TableContext{}, err
+	}
 
 	input.Warnings = append(input.Warnings,
 		incrementSQLTypeWarnings(input.Resolver.ForSchema(table.Schema), qualifiedTableOrName(table), tableCfg, columns)...)
@@ -310,7 +313,7 @@ func buildSingleTableContext(input *GenerateInput, table *parser.Table, collisio
 	return tc, nil
 }
 
-func buildTableColumns(input *GenerateInput, table *parser.Table, tableCfg config.TableConfig) ([]ColumnContext, []ColumnContext) {
+func buildTableColumns(input *GenerateInput, table *parser.Table, tableCfg config.TableConfig) ([]ColumnContext, []ColumnContext, error) {
 	var tableOverrides map[string]config.TypeOverride
 	if tableCfg.Overrides != nil {
 		tableOverrides = tableCfg.Overrides.Types
@@ -327,7 +330,11 @@ func buildTableColumns(input *GenerateInput, table *parser.Table, tableCfg confi
 		if excludeSet[col.Name] {
 			continue
 		}
-		columns = append(columns, buildColumnContext(input, table.Schema, &col, tableCfg, tableOverrides))
+		colCtx, err := buildColumnContext(input, table.Schema, &col, tableCfg, tableOverrides)
+		if err != nil {
+			return nil, nil, fmt.Errorf("building column %s.%s: %w", qualifiedTableOrName(table), col.Name, err)
+		}
+		columns = append(columns, colCtx)
 	}
 
 	// PK column override (PRD §8.6 — tables.<name>.primary_key.columns):
@@ -356,7 +363,7 @@ func buildTableColumns(input *GenerateInput, table *parser.Table, tableCfg confi
 				pkColumns = append(pkColumns, col)
 			}
 		}
-		return columns, pkColumns
+		return columns, pkColumns, nil
 	}
 
 	var pkColumns []ColumnContext
@@ -365,7 +372,7 @@ func buildTableColumns(input *GenerateInput, table *parser.Table, tableCfg confi
 			pkColumns = append(pkColumns, columns[i])
 		}
 	}
-	return columns, pkColumns
+	return columns, pkColumns, nil
 }
 
 // detectTableSoftDelete returns the table's soft delete column, or nil when it
@@ -1001,11 +1008,14 @@ func collectColumnImports(columns []ColumnContext) []string {
 // --- Column building ---
 
 // buildColumnContext builds the context of a column of a table in schema.
-func buildColumnContext(input *GenerateInput, schema string, col *parser.Column, tableCfg config.TableConfig, tableOverrides map[string]config.TypeOverride) ColumnContext {
+func buildColumnContext(input *GenerateInput, schema string, col *parser.Column, tableCfg config.TableConfig, tableOverrides map[string]config.TypeOverride) (ColumnContext, error) {
 	resolver := input.Resolver.ForSchema(schema)
 	gt := resolveColumnGoType(resolver, col, tableCfg, tableOverrides, input.Config.Tenancy)
 
-	accessRole, accessCaps := resolveAccess(tableCfg.ColumnMap[col.Name].Access)
+	accessRole, accessCaps, err := resolveAccess(tableCfg.ColumnMap[col.Name].Access)
+	if err != nil {
+		return ColumnContext{}, err
+	}
 	fieldName, fieldNameOverridden := resolveColumnFieldName(col.Name, tableCfg)
 
 	var fkRef *FKReferenceContext
@@ -1051,7 +1061,7 @@ func buildColumnContext(input *GenerateInput, schema string, col *parser.Column,
 		APISortable:        accessCaps.APISortable,
 		EventRedacted:      accessCaps.EventRedacted,
 		ManifestVisibility: accessCaps.ManifestVisibility,
-	}
+	}, nil
 }
 
 // --- Doc comment resolution ---
@@ -2615,7 +2625,10 @@ func buildSingleO2ODetail(input *GenerateInput, rel RelationshipContext, parentA
 
 	// Find target table PK
 	var pkCol *ColumnContext
-	targetColumns, targetPKColumns := buildTableColumns(input, targetTable, targetCfg)
+	targetColumns, targetPKColumns, err := buildTableColumns(input, targetTable, targetCfg)
+	if err != nil {
+		return nil, err
+	}
 	if len(targetPKColumns) > 0 {
 		pkCol = &targetPKColumns[0]
 	}

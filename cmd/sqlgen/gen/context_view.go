@@ -157,7 +157,7 @@ func validateResolvedViewFieldNames(qualifiedView, structName string, columns, p
 // on its own resolution while the tenancy context carried the override, and a
 // view's two spellings of one column disagreed exactly as a table's did.
 func buildViewColumns(input *GenerateInput, view *parser.View, viewCfg config.ViewConfig) []ColumnContext {
-	accessRole, accessCaps := resolveAccess("")
+	accessRole, accessCaps := config.AccessPublic, roleCapabilityTable[config.AccessPublic]
 
 	columns := make([]ColumnContext, 0, len(view.Columns))
 	for _, col := range view.Columns {

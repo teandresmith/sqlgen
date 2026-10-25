@@ -1,6 +1,7 @@
 package gen
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/google/go-cmp/cmp"
@@ -9,8 +10,8 @@ import (
 )
 
 // TestResolveAccess pins the PRD §32.2 role → capability matrix: every role
-// resolves to exactly its row, and empty / unknown values fall back to
-// public. roleCapabilityTable is the single source of truth the templates
+// resolves to exactly its row, an empty value falls back to public, and an
+// unknown value is an error. roleCapabilityTable is the single source of truth the templates
 // consume — a drift here silently reshapes every external surface.
 func TestResolveAccess(t *testing.T) {
 	tests := []struct {
@@ -18,6 +19,7 @@ func TestResolveAccess(t *testing.T) {
 		role     string
 		wantRole string
 		wantCaps accessCapabilities
+		wantErr  string
 	}{
 		{
 			name:     "public",
@@ -74,19 +76,24 @@ func TestResolveAccess(t *testing.T) {
 			},
 		},
 		{
-			name:     "unknown resolves to public",
-			role:     "confidential",
-			wantRole: "public",
-			wantCaps: accessCapabilities{
-				APIReadable: true, APIWritable: true, APIFilterable: true, APISortable: true,
-				EventRedacted: false, ManifestVisibility: "public",
-			},
+			name:    "unknown role is an error naming the role",
+			role:    "confidential",
+			wantErr: `unknown access role "confidential"`,
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			gotRole, gotCaps := resolveAccess(tt.role)
+			gotRole, gotCaps, err := resolveAccess(tt.role)
+			if tt.wantErr != "" {
+				if err == nil || !strings.Contains(err.Error(), tt.wantErr) {
+					t.Fatalf("resolveAccess(%q) error = %v, want it to contain %q", tt.role, err, tt.wantErr)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("resolveAccess(%q) error = %v", tt.role, err)
+			}
 			if gotRole != tt.wantRole {
 				t.Errorf("resolveAccess(%q) role = %q, want %q", tt.role, gotRole, tt.wantRole)
 			}

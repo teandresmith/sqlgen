@@ -1,6 +1,10 @@
 package gen
 
-import "github.com/teandresmith/sqlgen/cmd/sqlgen/config"
+import (
+	"fmt"
+
+	"github.com/teandresmith/sqlgen/cmd/sqlgen/config"
+)
 
 // accessCapabilities is the per-surface exposure derived from a column's
 // access role — the template-facing decomposition of the PRD §32.2 matrix.
@@ -48,14 +52,19 @@ var roleCapabilityTable = map[string]accessCapabilities{
 }
 
 // resolveAccess normalizes a configured access role and returns it with its
-// capability set. Empty and unknown values resolve to public — config
-// validation rejects unknown roles before generation reaches this point, so
-// the fallback only serves direct (test / programmatic) construction.
-func resolveAccess(role string) (string, accessCapabilities) {
-	if caps, ok := roleCapabilityTable[role]; ok {
-		return role, caps
+// capability set. An empty role resolves to public, the §32.2 default. An
+// unknown role is an error: config validation rejects one before generation
+// reaches this point, so one arriving here means a config bypassed that pass,
+// and silently exposing the column as public would be the wrong failure.
+func resolveAccess(role string) (string, accessCapabilities, error) {
+	if role == "" {
+		return config.AccessPublic, roleCapabilityTable[config.AccessPublic], nil
 	}
-	return config.AccessPublic, roleCapabilityTable[config.AccessPublic]
+	if caps, ok := roleCapabilityTable[role]; ok {
+		return role, caps, nil
+	}
+	return "", accessCapabilities{}, fmt.Errorf("unknown access role %q (want one of %s, %s, %s, %s, %s)",
+		role, config.AccessPublic, config.AccessReadOnly, config.AccessWriteOnly, config.AccessHidden, config.AccessInternal)
 }
 
 // columnAccessCapabilities returns the column's resolved capability set. A
@@ -66,8 +75,7 @@ func resolveAccess(role string) (string, accessCapabilities) {
 // resolved role, so this reads the stored booleans verbatim for them.
 func columnAccessCapabilities(col ColumnContext) accessCapabilities {
 	if col.Access == "" {
-		_, caps := resolveAccess("")
-		return caps
+		return roleCapabilityTable[config.AccessPublic]
 	}
 	return accessCapabilities{
 		APIReadable:        col.APIReadable,

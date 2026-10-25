@@ -1,6 +1,7 @@
 package gen_test
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/teandresmith/sqlgen/cmd/sqlgen/config"
@@ -148,6 +149,41 @@ func TestBuildViewContexts_AccessDefaultsPublic(t *testing.T) {
 	for _, col := range contexts[0].Columns {
 		if got := columnAccessFields(col); got != public {
 			t.Errorf("view column %q access fields = %+v, want public defaults %+v", col.Name, got, public)
+		}
+	}
+}
+
+// TestBuildTableContexts_UnknownAccessRole pins that a column_map access role
+// outside the PRD §32.2 set fails generation loudly, naming the table, the
+// column and the role, rather than silently exposing the column as public.
+// Config validation rejects such a role first; this guards a config that
+// reaches generation without that pass.
+func TestBuildTableContexts_UnknownAccessRole(t *testing.T) {
+	schema := &parser.Schema{
+		Tables: []parser.Table{
+			{
+				Name: "users",
+				Columns: []parser.Column{
+					{Name: "id", Type: "bigint", PrimaryKey: true},
+					{Name: "ssn", Type: "text"},
+				},
+			},
+		},
+	}
+	in := testInput(schema)
+	in.Config.Tables["users"] = config.TableConfig{
+		ColumnMap: map[string]config.ColumnOverride{
+			"ssn": {Access: "confidential"},
+		},
+	}
+
+	_, err := gen.BuildTableContexts(in, nil)
+	if err == nil {
+		t.Fatal("BuildTableContexts() error = nil, want an unknown access role error")
+	}
+	for _, want := range []string{"users", "ssn", `"confidential"`} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("BuildTableContexts() error = %q, want it to name %s", err, want)
 		}
 	}
 }
