@@ -675,6 +675,7 @@ func attachTenancyToTables(tables []TableContext, tenancyMap map[string]TenancyC
 			// table whose only numeric column is the tenant has no Increment.
 			markTenantColumn(tc.Columns, entry.Column)
 			markTenantColumn(tc.PKColumns, entry.Column)
+			retypeTenantFilterField(tc.FilterFields, tc.Columns, entry.Column, tc.Dialect)
 			tc.IncrementColumns = buildIncrementColumns(tc.Columns)
 			tc.Operations.Increment = len(tc.IncrementColumns) > 0
 			// Fold tenant import into the table imports so the
@@ -734,11 +735,12 @@ func attachTenancyToViews(views []ViewContext, tenancyMap map[string]TenancyCont
 			// Read the field name off the view's resolved columns rather than
 			// re-deriving it, matching the table path.
 			ctx.FieldName = columnFieldName(vc.Columns, entry.Column)
-			// A view has no increment surface, so nothing is re-derived here —
-			// the flag is stamped anyway so a ColumnContext means the same
-			// thing whichever entity kind it came off.
+			// A view has no increment surface, so only the filter is
+			// re-derived here; the flag is stamped so a ColumnContext means
+			// the same thing whichever entity kind it came off.
 			markTenantColumn(vc.Columns, entry.Column)
 			markTenantColumn(vc.PKColumns, entry.Column)
+			retypeTenantFilterField(vc.FilterFields, vc.Columns, entry.Column, vc.Dialect)
 			if entry.Import != "" {
 				vc.Imports = UniqueImports(append(vc.Imports, entry.Import))
 			}

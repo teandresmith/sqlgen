@@ -3270,7 +3270,7 @@ type ArticleFilter struct {
 	ID          *comparator.Number[int64]         `json:"id"`
 	Title       *comparator.String                `json:"title"`
 	UserID      *comparator.NullableNumber[int64] `json:"user_id"`
-	WorkspaceID *comparator.String                `json:"workspace_id"`
+	WorkspaceID *comparator.ID                    `json:"workspace_id"`
 	And         []*ArticleFilter                  `json:"and"`
 	Or          []*ArticleFilter                  `json:"or"`
 }
@@ -7784,7 +7784,7 @@ func (c *legacyWidgetClient) Stream(ctx context.Context, input *StreamLegacyWidg
 type LegacyWidgetFilter struct {
 	ID    *comparator.Number[int64] `json:"id"`
 	Label *comparator.String        `json:"label"`
-	OrgID *comparator.String        `json:"org_id"`
+	OrgID *comparator.ID            `json:"org_id"`
 	And   []*LegacyWidgetFilter     `json:"and"`
 	Or    []*LegacyWidgetFilter     `json:"or"`
 }
@@ -14525,7 +14525,7 @@ type PostFilter struct {
 	ID          *comparator.Number[int64] `json:"id"`
 	Title       *comparator.String        `json:"title"`
 	UserID      *comparator.Number[int64] `json:"user_id"`
-	WorkspaceID *comparator.String        `json:"workspace_id"`
+	WorkspaceID *comparator.ID            `json:"workspace_id"`
 	Tags        *TagFilter                `json:"tags"`
 	And         []*PostFilter             `json:"and"`
 	Or          []*PostFilter             `json:"or"`
@@ -17332,7 +17332,7 @@ type ProductFilter struct {
 	Name        *comparator.String          `json:"name"`
 	Price       *comparator.Number[float64] `json:"price"`
 	SKU         *comparator.String          `json:"sku"`
-	WorkspaceID *comparator.String          `json:"workspace_id"`
+	WorkspaceID *comparator.ID              `json:"workspace_id"`
 	And         []*ProductFilter            `json:"and"`
 	Or          []*ProductFilter            `json:"or"`
 }
@@ -19750,7 +19750,7 @@ func (c *tagLinkClient) Stream(ctx context.Context, input *StreamTagLinksInput, 
 type TagLinkFilter struct {
 	RelatedTagID *comparator.Number[int64] `json:"related_tag_id"`
 	TagID        *comparator.Number[int64] `json:"tag_id"`
-	WorkspaceID  *comparator.String        `json:"workspace_id"`
+	WorkspaceID  *comparator.ID            `json:"workspace_id"`
 	PKs          []TagLinkPK               `json:"pks"`
 	And          []*TagLinkFilter          `json:"and"`
 	Or           []*TagLinkFilter          `json:"or"`
@@ -22867,7 +22867,7 @@ func (c *tagClient) Stream(ctx context.Context, input *StreamTagsInput, opts ...
 type TagFilter struct {
 	ID          *comparator.Number[int64] `json:"id"`
 	Name        *comparator.String        `json:"name"`
-	WorkspaceID *comparator.String        `json:"workspace_id"`
+	WorkspaceID *comparator.ID            `json:"workspace_id"`
 	Posts       *PostFilter               `json:"posts"`
 	RelatedTags *TagFilter                `json:"related_tags"`
 	Tags        *TagFilter                `json:"tags"`
@@ -25717,7 +25717,7 @@ type UserProfileFilter struct {
 	Bio         *comparator.NullableString `json:"bio"`
 	ID          *comparator.Number[int64]  `json:"id"`
 	UserID      *comparator.Number[int64]  `json:"user_id"`
-	WorkspaceID *comparator.String         `json:"workspace_id"`
+	WorkspaceID *comparator.ID             `json:"workspace_id"`
 	And         []*UserProfileFilter       `json:"and"`
 	Or          []*UserProfileFilter       `json:"or"`
 }
@@ -28821,7 +28821,7 @@ func (c *userClient) Stream(ctx context.Context, input *StreamUsersInput, opts .
 type UserFilter struct {
 	Email       *comparator.String        `json:"email"`
 	ID          *comparator.Number[int64] `json:"id"`
-	WorkspaceID *comparator.String        `json:"workspace_id"`
+	WorkspaceID *comparator.ID            `json:"workspace_id"`
 	Articles    *ArticleFilter            `json:"articles"`
 	Posts       *PostFilter               `json:"posts"`
 	And         []*UserFilter             `json:"and"`

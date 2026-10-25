@@ -578,7 +578,7 @@ type ProductStatFilter struct {
 	Name           *comparator.String          `json:"name"`
 	OrderLineCount *comparator.Number[int64]   `json:"order_line_count"`
 	Price          *comparator.Number[float64] `json:"price"`
-	WorkspaceID    *comparator.String          `json:"workspace_id"`
+	WorkspaceID    *comparator.ID              `json:"workspace_id"`
 	And            []*ProductStatFilter        `json:"and"`
 	Or             []*ProductStatFilter        `json:"or"`
 }

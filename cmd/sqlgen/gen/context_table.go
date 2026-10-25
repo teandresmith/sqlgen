@@ -1196,6 +1196,30 @@ func markTenantColumn(cols []ColumnContext, column string) {
 	}
 }
 
+// retypeTenantFilterField re-derives the tenant column's filter comparator
+// once markTenantColumn has stamped the column. buildFilterFields ran while
+// the column still looked untenanted, and the comparator follows the resolved
+// tenant Go type (resolveSimpleComparator's tenant arm), so the field has to
+// be recomputed here or the filter keeps the SQL type's comparator while the
+// row struct carries the tenant type.
+func retypeTenantFilterField(fields []FilterFieldContext, cols []ColumnContext, column string, dialect config.Dialect) {
+	i := slices.IndexFunc(cols, func(c ColumnContext) bool { return c.Name == column })
+	if i < 0 {
+		return
+	}
+	col := cols[i]
+	for j := range fields {
+		if fields[j].ColumnName != column {
+			continue
+		}
+		fields[j].Filterable = columnIsFilterable(col, dialect)
+		fields[j].ComparatorType = ""
+		if fields[j].Filterable {
+			fields[j].ComparatorType = resolveComparatorType(col, dialect)
+		}
+	}
+}
+
 // resolveColumnDescription resolves the doc comment for a column.
 // Priority: config column_map.<col>.description > SQL COMMENT ON COLUMN > empty.
 // All descriptions are returned verbatim — the template handles formatting.
@@ -2382,6 +2406,14 @@ func resolveSimpleComparator(col ColumnContext, baseGoType string, dialect confi
 		// compile. Keyed on the SQL type (not FKConvert, which is also set for
 		// decimal/time and would misclassify them) and placed after the
 		// concrete Go-type arms.
+		return "ID"
+	case col.Tenant && baseGoType == "uuid.UUID":
+		// The tenant column's Go type comes from `tenancy.type` (or an
+		// `overrides.types` entry) as often as from its SQL type: a SQLite
+		// `blob` tenant typed uuid.UUID is an identifier like a native
+		// `uuid` column, so it filters the same way. The SQL-type arm above
+		// cannot see that, and keying every column on the Go type would
+		// retype non-tenant columns the override never named.
 		return "ID"
 	default:
 		return "String"
