@@ -109,5 +109,5 @@ the user's ruling: amend the PRD, which turns the gap into requirement rows, or 
 
 | Gap | Behavior | Tests | Section | Ruling |
 |---|---|---|---|---|
-| gap.hard-delete-many.nil-statement | `HardDeleteMany(ctx, nil)` sends no statement and reads nothing back; §9.4c says only that a nil slice is no rows | `example: postgres: TestEmptyBatch_HardDeleteManyUnaffected` | §9.4c | |
-| gap.by-key-noop-side-effects | A by-key `SoftDelete` or `Restore` whose key matches no row returns `nil, nil` but still records `AffectedPKs`, runs cache invalidation and publishes its event (`templates/table/delete.go.tmpl`); §21 and §28 do not say whether a no-op write fires them | | §9.5, §21.5, §28.6 | |
+| gap.hard-delete-many.nil-statement | `HardDeleteMany(ctx, nil)` sends no statement and reads nothing back; §9.4c says only that a nil slice is no rows | `example: postgres: TestEmptyBatch_HardDeleteManyUnaffected` | §9.4c | amend-prd 2026-10-25 |
+| gap.by-key-noop-side-effects | A by-key `SoftDelete` or `Restore` whose key matches no row returns `nil, nil` but still records `AffectedPKs`, runs cache invalidation and publishes its event (`templates/table/delete.go.tmpl`); §21 and §28 do not say whether a no-op write fires them | | §9.5, §21.5, §28.6 | amend-prd 2026-10-25 |
