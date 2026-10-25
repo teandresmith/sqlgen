@@ -31,6 +31,7 @@ func ValidatePreParse(cfg *RootConfig) ([]Warning, error) {
 	validateConnectionRequired(cfg, &errs)
 	validateRemovedOperations(cfg, &errs)
 	validateNullableVariants(cfg, &errs)
+	validatePostgresTypeKeys(cfg, &errs)
 	validateSchemaDialect(cfg, &warnings)
 	validateIgnoredInputKeys(cfg, &warnings)
 	validateIgnoredPasswordEnv(cfg, &warnings)
