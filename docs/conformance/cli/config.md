@@ -1,15 +1,8 @@
-# CLI Requirements
+# CLI Requirements: Config
 
 <!-- seeding: in-progress -->
-<!-- packages: cmd/sqlgen cmd/sqlgen/cli cmd/sqlgen/config cmd/sqlgen/gen cmd/sqlgen/gotype cmd/sqlgen/manifest cmd/sqlgen/mcp cmd/sqlgen/mcp/integration cmd/sqlgen/wrapper -->
+<!-- packages: cmd/sqlgen/config -->
 <!-- matrix: config-validation rows=rule cols=fires,message,severity,together,schema -->
-<!-- matrix: type-resolution rows=sql-type cols=not-null,nullable,integration,column-override,type-override -->
-<!-- matrix: naming rows=rule cols=struct,field,type-name,file-stem -->
-<!-- matrix: generated-artifacts rows=artifact cols=single-pk,composite-pk,no-pk,soft-delete,tenanted,view,materialized-view -->
-<!-- matrix: relationships rows=type cols=struct-field,loader,filter,nested-mutation -->
-<!-- matrix: access-control rows=role cols=struct,input,filter,sort,graphql,rest -->
-<!-- matrix: commands rows=command cols=success,config-error,schema-error,generation-error -->
-<!-- matrix: api-generation rows=element cols=single-pk,composite-pk,no-pk,soft-delete,tenanted,view -->
 
 ## §4.13 Config Validation Rules
 <!-- prd: 4.13 sha256: a8c5003a032992d6 -->
@@ -473,5 +466,4 @@ the user's ruling: amend the PRD, which turns the gap into requirement rows, or 
 | gap.config.cursor-keys-first-error | An explicit `cursor_keys` list reports only its first bad column per entity (`checkExplicitCursorKeys`), which §4.13's reporting of every error at once does not obviously allow | | §4.13 | |
 | gap.config.soft-delete-first-match | Only a table's first matching soft-delete column is checked, and a column of the wrong type reports only the type error, not the nullability error | `unit: cmd/sqlgen/config: TestValidatePostParse_SoftDeleteTimestampNullability/NOT NULL timestamp behind an earlier match` | §4.13, §17.1, §17.2 | |
 | gap.config.go-type-expressions | `column_map.<col>.type` accepts generic instantiations and sized arrays, and `type_map` values get the same Go-type-expression check, which rejects an empty value; §4.13 lists only `*T`, `[]T` and `map[K]V`, and only for `column_map` | `unit: cmd/sqlgen/config: TestValidatePreParse_ColumnType_Expression/generic instantiation accepted`; `unit: cmd/sqlgen/config: TestValidatePreParse_ColumnType_Expression/sized array accepted`; `unit: cmd/sqlgen/config: TestValidatePreParse_TypeMap_Expression` | §4.13 | |
-| gap.gen.nested-eligibility-reported-once | Under `sqlgen validate`, a listed ineligible nested-mutation edge is reported once, not twice | `unit: cmd/sqlgen/gen: TestNestedEligibility_ValidateReportsEachViolationOnce` | §4.13 | |
 | gap.config.enum-warning-phase | The `enums:` unmatched-key warning, listed as schema-level in §4.13, runs in the generator (`gen/context_enum.go:66`); the output is as the PRD says, only the phase differs | | §4.13 | |

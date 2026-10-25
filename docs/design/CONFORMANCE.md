@@ -79,7 +79,7 @@ generated client:
 |---|---|---|
 | `runtime.md` | `sql/`, `comparator/`, `omittable/`, `database/` and drivers, `cache/`, `tenancy/`, `event/`, `hook/`, `types/`, `manifest/` | §10, §11, §14, §15, §18, §19, §21, §22, §24, §27, §28, §29 (runtime), App. A, App. B |
 | `parser.md` | `parser/` and its dialect and `introspect` packages | §5, §6 |
-| `cli.md` | `cmd/sqlgen/` (`config`, `gotype`, `gen`, `manifest`, `mcp`, `wrapper`, `cli`) | §4, §7, §8, §12, §13, §16, §23, §26, §30, §31, §32 |
+| `cli/` | `cmd/sqlgen/`, split by slice (§7 step 6): `config.md` (`config`), `gen.md` (`gen`), `gotype.md` (`gotype`), `commands.md` (`cmd/sqlgen`, `cli`, `wrapper`), `manifest.md` (`manifest`, `mcp`) | §4, §7, §8, §12, §13, §16, §23, §26, §30, §31, §32 |
 | `client.md` | The generated client, through the §4 suite | §9, §17, §20, §25, §29 (generated behavior) |
 
 Each test home stays where it is best placed:
@@ -156,7 +156,7 @@ it rather than restating it.
 | Naming | each §8.5 rule (about 60 table rows) | {struct, field, type name, file stem} | unit | §8.5 |
 | Generated artifacts | each artifact in §8.2 / §8.3 | table kind ({single PK, composite PK, no PK, soft delete, tenanted, view, materialized view}) | unit + golden | §8.2, §8.3, §8.6, §9.4b, §16.4 |
 | Relationships (codegen) | relationship type (o2o, o2m, m2o, m2m, self, circular, polymorphic) | {struct field and tags, loader, filter, nested mutation} | unit + golden | §13, §9.9 |
-| Field selection and access control | column access role | surface ({struct, input, filter, sort, GraphQL, REST}) | unit + golden | §12, §32 |
+| Field selection and access control | column access role | the §32.2 surfaces ({Go client, API in, API out, filter, sort, event payload, cache, manifest}); REST, not generated yet, has rows outside the matrix | unit + golden | §12, §32 |
 | Commands | each command (`generate`, `validate`, `init`, `diff`, `lint`, `completion`, `manifest …`) | outcome ({success, config error, schema error, generation error}) × {exit code, output} | unit | §23 |
 | API generation | GraphQL / REST / gRPC surface element | table kind | golden | §26 |
 | Manifest and MCP | manifest field / MCP tool | {present, shape, error code} | unit + golden | §30, §31 |
