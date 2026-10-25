@@ -17,6 +17,7 @@ var columnOverrideMappings = []struct {
 	dialect   config.Dialect
 	spellings []string
 	setType   bool
+	enumType  bool
 }{
 	{name: "postgres text", dialect: config.DialectPostgres, spellings: []string{"text", "varchar", "char", "name"}},
 	{name: "postgres int2", dialect: config.DialectPostgres, spellings: []string{"int2", "smallint"}},
@@ -29,6 +30,7 @@ var columnOverrideMappings = []struct {
 	{name: "postgres bytea", dialect: config.DialectPostgres, spellings: []string{"bytea"}},
 	{name: "postgres timestamp", dialect: config.DialectPostgres, spellings: []string{"timestamp", "timestamptz"}},
 	{name: "postgres date", dialect: config.DialectPostgres, spellings: []string{"date"}},
+	{name: "postgres time", dialect: config.DialectPostgres, spellings: []string{"time"}},
 	{name: "postgres interval", dialect: config.DialectPostgres, spellings: []string{"interval"}},
 	{name: "postgres uuid", dialect: config.DialectPostgres, spellings: []string{"uuid"}},
 	{name: "postgres json", dialect: config.DialectPostgres, spellings: []string{"json", "jsonb"}},
@@ -57,6 +59,7 @@ var columnOverrideMappings = []struct {
 	{name: "mysql float", dialect: config.DialectMySQL, spellings: []string{"float"}},
 	{name: "mysql double", dialect: config.DialectMySQL, spellings: []string{"double", "decimal", "decimal(10,0)"}},
 	{name: "mysql varchar", dialect: config.DialectMySQL, spellings: []string{"varchar", "text", "char", "enum"}},
+	{name: "mysql enum type", dialect: config.DialectMySQL, spellings: []string{"users__role_enum"}, enumType: true},
 	{name: "mysql set type", dialect: config.DialectMySQL, spellings: []string{"users__permissions_set"}, setType: true},
 	{name: "mysql datetime", dialect: config.DialectMySQL, spellings: []string{"datetime", "timestamp"}},
 	{name: "mysql date", dialect: config.DialectMySQL, spellings: []string{"date"}},
@@ -72,7 +75,7 @@ var columnOverrideMappings = []struct {
 	{name: "mysql bit n", dialect: config.DialectMySQL, spellings: []string{"bit(2)", "bit(8)", "bit(64)"}},
 
 	{name: "sqlite integer", dialect: config.DialectSQLite, spellings: []string{"integer", "int", "tinyint", "smallint", "bigint"}},
-	{name: "sqlite text", dialect: config.DialectSQLite, spellings: []string{"text", "varchar", "char", "clob"}},
+	{name: "sqlite text", dialect: config.DialectSQLite, spellings: []string{"text", "varchar", "char", "clob", "time"}},
 	{name: "sqlite real", dialect: config.DialectSQLite, spellings: []string{"real", "float", "double", "numeric", "decimal"}},
 	{name: "sqlite blob", dialect: config.DialectSQLite, spellings: []string{"blob"}},
 	{name: "sqlite boolean", dialect: config.DialectSQLite, spellings: []string{"boolean", "bool"}},
@@ -114,6 +117,9 @@ func TestColumnOverrideWinsForEverySQLType(t *testing.T) {
 					resolver := gotype.NewResolver(m.dialect, true, nil)
 					if m.setType {
 						resolver.RegisterSet("", m.spellings[0], "UsersPermissionsSet")
+					}
+					if m.enumType {
+						resolver.RegisterEnum("", m.spellings[0], "UsersRoleEnum")
 					}
 					for _, sqlType := range m.spellings {
 						literal := route.literal

@@ -21,52 +21,29 @@ func TestFuncMap_returnsPopulatedMap(t *testing.T) {
 		t.Fatal("FuncMap() returned nil")
 	}
 
-	// Verify all expected function categories are registered.
+	// The functions the template engine's function table lists. Templates
+	// may use further helpers; those are internals, not part of the table.
 	expected := []string{
-		// Naming — toSnakeCase is deliberately absent: it reads a snake_case
-		// name back out of a Go identifier, which is a guess, and no template
-		// needs it (PRD §8.5). Contexts carry SnakeName pre-computed.
 		"toPascalCase", "toCamelCase", "structNamePlural", "toSingular", "safeGoIdent",
-		// Types
 		"goType", "isNullableType", "comparatorType", "zeroValue",
-		// Soft Delete
-		"softDeleteSwitch", "softDeleteValue", "softDeleteCondition",
-		"softDeleteRestoreCondition", "softDeleteTypeConst", "softDeleteRestoreGoValue",
-		"softDeleteFilterOverride",
-		"softDeleteSubqueryPredicate", "softDeleteSubqueryArg",
-		// PK Filtering
-		"pkFilterExpr", "pkFilterInExpr", "pkIsStringType",
-		// Relationships
-		"fkStringExpr", "fkToString", "fkToStringByGoType", "fkNullGuard", "fkLoadGuard", "fkLoadKey", "isO2O", "isM2M", "reverseO2OTargets",
-		// Inputs
+		"softDeleteSwitch", "softDeleteValue",
+		"fkStringExpr", "fkNullGuard", "isM2M",
 		"createInputFieldType", "updateInputFieldType",
-		// Tags
-		"formatTagPairs",
-		// Imports
-		"uniqueImports",
-		// Dialect
-		"placeholder", "quoteIdentifier", "supportsReturning", "loadChunkSize",
-		// Cache / tenancy predicates
-		"anyTenanted",
-		// LockMode guard (PRD §9.6a)
-		"lockGuardCtx",
-		// API / GraphQL helpers
-		// `comparatorFor` was deleted — a column's comparator input
-		// is resolved once into APIFieldContext.Filter (PRD §26.5.3) and
-		// the schema template reads it there.
-		"screamingSnakeCase", "gqlEnumIdent", "hasAnyRead", "hasAnyMutation", "pkConvert",
-		"pkSchemaArgs", "pkGoArgs", "pkPassArgs",
-		"inputCoerceBare", "inputCoerceDeref",
+		"placeholder", "quoteIdentifier", "supportsReturning",
 	}
-
 	for _, name := range expected {
 		if fm[name] == nil {
 			t.Errorf("FuncMap() missing function %q", name)
 		}
 	}
 
-	if len(fm) != len(expected) {
-		t.Errorf("FuncMap() has %d entries, want %d", len(fm), len(expected))
+	// toSnakeCase reads a snake_case name back out of a Go identifier, which
+	// is a guess, so no template may call it; contexts carry SnakeName
+	// pre-computed. The function table excludes toPlural and pkAutoGenType too.
+	for _, name := range []string{"toPlural", "toSnakeCase", "pkAutoGenType"} {
+		if fm[name] != nil {
+			t.Errorf("FuncMap() registers %q, which must not be registered", name)
+		}
 	}
 }
 

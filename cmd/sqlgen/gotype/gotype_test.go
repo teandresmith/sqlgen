@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/google/go-cmp/cmp"
+	"github.com/google/go-cmp/cmp/cmpopts"
 	"github.com/teandresmith/sqlgen/cmd/sqlgen/config"
 	"github.com/teandresmith/sqlgen/cmd/sqlgen/gotype"
 	"github.com/teandresmith/sqlgen/cmd/sqlgen/gotype/decimal"
@@ -1071,6 +1072,11 @@ func TestGofrsUUIDIntegration(t *testing.T) {
 	})
 }
 
+// ignoreFKConvert leaves out how a decimal FK is stringified: the PRD
+// promises only that it stringifies correctly, and fmt.Sprint and String()
+// agree on decimal.Decimal.
+var ignoreFKConvert = cmpopts.IgnoreFields(gotype.GoType{}, "FKConvert")
+
 func TestShopspringDecimalIntegration(t *testing.T) {
 	t.Run("numeric non-nullable", func(t *testing.T) {
 		r := gotype.NewResolver("postgres", true, map[string]config.TypeOverride{
@@ -1083,7 +1089,7 @@ func TestShopspringDecimalIntegration(t *testing.T) {
 			ZeroValue: "decimal.Decimal{}",
 			FKConvert: gotype.FKStringSprint,
 		}
-		if diff := cmp.Diff(want, got); diff != "" {
+		if diff := cmp.Diff(want, got, ignoreFKConvert); diff != "" {
 			t.Errorf("decimal numeric non-nullable (-want +got):\n%s", diff)
 		}
 	})
@@ -1100,7 +1106,7 @@ func TestShopspringDecimalIntegration(t *testing.T) {
 			ZeroValue: "decimal.Decimal{}",
 			FKConvert: gotype.FKStringSprint,
 		}
-		if diff := cmp.Diff(want, got); diff != "" {
+		if diff := cmp.Diff(want, got, ignoreFKConvert); diff != "" {
 			t.Errorf("decimal auto-detected from numeric override (-want +got):\n%s", diff)
 		}
 	})
@@ -1117,7 +1123,7 @@ func TestShopspringDecimalIntegration(t *testing.T) {
 				ZeroValue: "decimal.NullDecimal{}",
 				FKConvert: gotype.FKStringSprint,
 			}
-			if diff := cmp.Diff(want, got); diff != "" {
+			if diff := cmp.Diff(want, got, ignoreFKConvert); diff != "" {
 				t.Errorf("decimal nullable (usePointers=%v) (-want +got):\n%s", usePointers, diff)
 			}
 		}

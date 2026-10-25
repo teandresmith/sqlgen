@@ -455,3 +455,51 @@ func TestUUIDWrapperNullableExplicitNamed(t *testing.T) {
 		})
 	}
 }
+
+// TestPostgresSynonymOverrideKeysMiss pins that PostgreSQL override keys
+// match the catalog spelling the parser writes: a synonym key reaches no
+// column, and the catalog key does.
+func TestPostgresSynonymOverrideKeysMiss(t *testing.T) {
+	tests := []struct {
+		name      string
+		synonym   string
+		canonical string
+		builtin   string
+	}{
+		{"int4 for integer", "int4", "integer", "int32"},
+		{"int2 for smallint", "int2", "smallint", "int16"},
+		{"int8 for bigint", "int8", "bigint", "int64"},
+		{"float4 for real", "float4", "real", "float32"},
+		{"float8 for double precision", "float8", "double precision", "float64"},
+		{"bool for boolean", "bool", "boolean", "bool"},
+	}
+	override := config.TypeOverride{Type: "ov.Custom", Import: "example.com/ov"}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			r := gotype.NewResolver(config.DialectPostgres, true, map[string]config.TypeOverride{tt.synonym: override})
+			if got := r.Resolve(tt.canonical, false, "c", nil, nil); got.Name != tt.builtin {
+				t.Errorf("synonym key %q: Resolve(%q) Name = %q, want the built-in %q", tt.synonym, tt.canonical, got.Name, tt.builtin)
+			}
+			r = gotype.NewResolver(config.DialectPostgres, true, map[string]config.TypeOverride{tt.canonical: override})
+			if got := r.Resolve(tt.canonical, false, "c", nil, nil); got.Name != "ov.Custom" {
+				t.Errorf("catalog key %q: Resolve(%q) Name = %q, want %q", tt.canonical, tt.canonical, got.Name, "ov.Custom")
+			}
+		})
+	}
+}
+
+// TestArrayKeyRetypesWholeColumn pins that a `"<T>[]"` override key gives a
+// non-enum array column the entry's type as written, as an opaque type
+// rather than an array column.
+func TestArrayKeyRetypesWholeColumn(t *testing.T) {
+	r := gotype.NewResolver(config.DialectPostgres, true, map[string]config.TypeOverride{
+		"text[]": {Type: "ov.Tags", Import: "example.com/ov"},
+	})
+	got := r.Resolve("text[]", false, "tags", nil, nil)
+	if got.Name != "ov.Tags" || got.IsSlice {
+		t.Errorf("Resolve(text[]) = {%q, IsSlice: %v}, want {%q, IsSlice: false}", got.Name, got.IsSlice, "ov.Tags")
+	}
+	if got := r.Resolve("text[]", true, "tags", nil, nil); got.Name != "*ov.Tags" {
+		t.Errorf("Resolve(text[], nullable) Name = %q, want %q", got.Name, "*ov.Tags")
+	}
+}

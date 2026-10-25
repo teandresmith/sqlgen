@@ -16,18 +16,23 @@ import (
 // generated named slice.
 const mysqlSetType = "users__permissions_set"
 
+// mysqlEnumType is the SQL type the MySQL parsers write for an inline ENUM
+// column whose values are in the schema, registered as the generated enum.
+const mysqlEnumType = "users__role_enum"
+
 // builtInMapping is one row of a dialect's built-in mapping table: every
 // spelling the row lists, its Go type, and its nullable Go type with and
 // without pointers.
 type builtInMapping struct {
-	name        string
-	dialect     config.Dialect
-	spellings   []string
-	goType      string
-	nullPtr     string
-	nullNoPtr   string
-	array       bool
-	registerSet bool
+	name         string
+	dialect      config.Dialect
+	spellings    []string
+	goType       string
+	nullPtr      string
+	nullNoPtr    string
+	array        bool
+	registerSet  bool
+	registerEnum bool
 }
 
 var builtInMappings = []builtInMapping{
@@ -42,6 +47,7 @@ var builtInMappings = []builtInMapping{
 	{name: "postgres bytea", dialect: config.DialectPostgres, spellings: []string{"bytea"}, goType: "[]byte", nullPtr: "[]byte", nullNoPtr: "[]byte"},
 	{name: "postgres timestamp", dialect: config.DialectPostgres, spellings: []string{"timestamp", "timestamptz"}, goType: "time.Time", nullPtr: "*time.Time", nullNoPtr: "sql.NullTime"},
 	{name: "postgres date", dialect: config.DialectPostgres, spellings: []string{"date"}, goType: "time.Time", nullPtr: "*time.Time", nullNoPtr: "sql.NullTime"},
+	{name: "postgres time", dialect: config.DialectPostgres, spellings: []string{"time"}, goType: "string", nullPtr: "*string", nullNoPtr: "sql.NullString"},
 	{name: "postgres interval", dialect: config.DialectPostgres, spellings: []string{"interval"}, goType: "time.Duration", nullPtr: "*time.Duration", nullNoPtr: "*time.Duration"},
 	{name: "postgres uuid", dialect: config.DialectPostgres, spellings: []string{"uuid"}, goType: "uuid.UUID", nullPtr: "*uuid.UUID", nullNoPtr: "*uuid.UUID"},
 	{name: "postgres json", dialect: config.DialectPostgres, spellings: []string{"json", "jsonb"}, goType: "types.JSON", nullPtr: "types.JSON", nullNoPtr: "types.JSON"},
@@ -70,6 +76,7 @@ var builtInMappings = []builtInMapping{
 	{name: "mysql float", dialect: config.DialectMySQL, spellings: []string{"float"}, goType: "float32", nullPtr: "*float32", nullNoPtr: "sql.NullFloat64"},
 	{name: "mysql double", dialect: config.DialectMySQL, spellings: []string{"double", "decimal", "decimal(10,0)"}, goType: "float64", nullPtr: "*float64", nullNoPtr: "sql.NullFloat64"},
 	{name: "mysql varchar", dialect: config.DialectMySQL, spellings: []string{"varchar", "text", "char", "enum"}, goType: "string", nullPtr: "*string", nullNoPtr: "sql.NullString"},
+	{name: "mysql enum type", dialect: config.DialectMySQL, spellings: []string{mysqlEnumType}, goType: "UsersRoleEnum", nullPtr: "*UsersRoleEnum", nullNoPtr: "*UsersRoleEnum", registerEnum: true},
 	{name: "mysql set type", dialect: config.DialectMySQL, spellings: []string{mysqlSetType}, goType: "UsersPermissionsSet", nullPtr: "UsersPermissionsSet", nullNoPtr: "UsersPermissionsSet", registerSet: true},
 	{name: "mysql datetime", dialect: config.DialectMySQL, spellings: []string{"datetime", "timestamp"}, goType: "time.Time", nullPtr: "*time.Time", nullNoPtr: "sql.NullTime"},
 	{name: "mysql date", dialect: config.DialectMySQL, spellings: []string{"date"}, goType: "time.Time", nullPtr: "*time.Time", nullNoPtr: "sql.NullTime"},
@@ -85,7 +92,7 @@ var builtInMappings = []builtInMapping{
 	{name: "mysql bit n", dialect: config.DialectMySQL, spellings: []string{"bit(2)", "bit(8)", "bit(64)"}, goType: "[]byte", nullPtr: "[]byte", nullNoPtr: "[]byte"},
 
 	{name: "sqlite integer", dialect: config.DialectSQLite, spellings: []string{"integer", "int", "tinyint", "smallint", "bigint"}, goType: "int64", nullPtr: "*int64", nullNoPtr: "sql.NullInt64"},
-	{name: "sqlite text", dialect: config.DialectSQLite, spellings: []string{"text", "varchar", "char", "clob"}, goType: "string", nullPtr: "*string", nullNoPtr: "sql.NullString"},
+	{name: "sqlite text", dialect: config.DialectSQLite, spellings: []string{"text", "varchar", "char", "clob", "time"}, goType: "string", nullPtr: "*string", nullNoPtr: "sql.NullString"},
 	{name: "sqlite real", dialect: config.DialectSQLite, spellings: []string{"real", "float", "double", "numeric", "decimal"}, goType: "float64", nullPtr: "*float64", nullNoPtr: "sql.NullFloat64"},
 	{name: "sqlite blob", dialect: config.DialectSQLite, spellings: []string{"blob"}, goType: "[]byte", nullPtr: "[]byte", nullNoPtr: "[]byte"},
 	{name: "sqlite boolean", dialect: config.DialectSQLite, spellings: []string{"boolean", "bool"}, goType: "bool", nullPtr: "*bool", nullNoPtr: "sql.NullBool"},
@@ -96,6 +103,9 @@ func mappingResolver(m builtInMapping, usePointers bool, global map[string]confi
 	r := gotype.NewResolver(m.dialect, usePointers, global)
 	if m.registerSet {
 		r.RegisterSet("", mysqlSetType, "UsersPermissionsSet")
+	}
+	if m.registerEnum {
+		r.RegisterEnum("", mysqlEnumType, "UsersRoleEnum")
 	}
 	return r
 }
@@ -145,8 +155,8 @@ func TestTypeOverrideWinsForEverySQLType(t *testing.T) {
 		Nullable: config.NullableVariant{Type: "ov.NullCustom"},
 	}
 	for _, m := range builtInMappings {
-		if m.registerSet {
-			continue // a generated SET type has no overrides.types key
+		if m.registerSet || m.registerEnum {
+			continue // a generated SET or ENUM type has no overrides.types key
 		}
 		t.Run(m.name, func(t *testing.T) {
 			wantNotNull, wantNullable := "ov.Custom", "ov.NullCustom"
