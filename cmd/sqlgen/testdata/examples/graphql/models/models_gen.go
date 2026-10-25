@@ -29522,11 +29522,23 @@ func (c *orderClient) Restore(ctx context.Context, id uuid.UUID, opts ...func(*C
 			return nil, nil
 		}
 
-		return c.Get(ctx, id, func(o *CallOptions[OrderFieldOptions]) {
+		// Fetch the restored entity. A key that matched no row restores
+		// nothing, which is not an error: Restore is idempotent.
+		results, err := c.GetMany(ctx, &GetOrdersInput{
+			Filter: &OrderFilter{ID: &comparator.ID{Eq: new(id.String())}},
+			Limit:  new(1),
+		}, func(o *CallOptions[OrderFieldOptions]) {
 			*o = options
 			o.SkipHooks = true
 			o.LockMode = sql.LockNone
 		})
+		if err != nil {
+			return nil, err
+		}
+		if len(results) == 0 {
+			return nil, nil
+		}
+		return results[0], nil
 	})
 	if err != nil {
 		return nil, err
@@ -32811,11 +32823,23 @@ func (c *productClient) Restore(ctx context.Context, id uuid.UUID, opts ...func(
 			return nil, nil
 		}
 
-		return c.Get(ctx, id, func(o *CallOptions[ProductFieldOptions]) {
+		// Fetch the restored entity. A key that matched no row restores
+		// nothing, which is not an error: Restore is idempotent.
+		results, err := c.GetMany(ctx, &GetProductsInput{
+			Filter: &ProductFilter{ID: &comparator.ID{Eq: new(id.String())}},
+			Limit:  new(1),
+		}, func(o *CallOptions[ProductFieldOptions]) {
 			*o = options
 			o.SkipHooks = true
 			o.LockMode = sql.LockNone
 		})
+		if err != nil {
+			return nil, err
+		}
+		if len(results) == 0 {
+			return nil, nil
+		}
+		return results[0], nil
 	})
 	if err != nil {
 		return nil, err
@@ -50260,11 +50284,23 @@ func (c *userClient) Restore(ctx context.Context, id uuid.UUID, opts ...func(*Ca
 			return nil, nil
 		}
 
-		return c.Get(ctx, id, func(o *CallOptions[UserFieldOptions]) {
+		// Fetch the restored entity. A key that matched no row restores
+		// nothing, which is not an error: Restore is idempotent.
+		results, err := c.GetMany(ctx, &GetUsersInput{
+			Filter: &UserFilter{ID: &comparator.ID{Eq: new(id.String())}},
+			Limit:  new(1),
+		}, func(o *CallOptions[UserFieldOptions]) {
 			*o = options
 			o.SkipHooks = true
 			o.LockMode = sql.LockNone
 		})
+		if err != nil {
+			return nil, err
+		}
+		if len(results) == 0 {
+			return nil, nil
+		}
+		return results[0], nil
 	})
 	if err != nil {
 		return nil, err

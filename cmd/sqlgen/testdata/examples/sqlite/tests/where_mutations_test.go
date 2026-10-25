@@ -162,3 +162,23 @@ func TestSoftDeleteWhere_AlreadySoftDeleted_NoOp_SQLite(t *testing.T) {
 		t.Errorf("SoftDeleteWhere(second) = %d, want 0 (already soft-deleted is a no-op)", len(second))
 	}
 }
+
+func TestSoftDeleteAndRestore_MissingKey_ReturnNilNil_SQLite(t *testing.T) {
+	ctx := context.Background()
+	client := newClient()
+
+	const missing int64 = 1 << 62
+
+	t.Run("SoftDelete", func(t *testing.T) {
+		got, err := client.Articles().SoftDelete(ctx, missing)
+		if err != nil || got != nil {
+			t.Errorf("SoftDelete(missing key) = (%v, %v), want (nil, nil)", got, err)
+		}
+	})
+	t.Run("Restore", func(t *testing.T) {
+		got, err := client.Articles().Restore(ctx, missing)
+		if err != nil || got != nil {
+			t.Errorf("Restore(missing key) = (%v, %v), want (nil, nil)", got, err)
+		}
+	})
+}

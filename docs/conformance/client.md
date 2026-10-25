@@ -8,7 +8,7 @@ Requirements of the generated client, proved by the cross-dialect conformance su
 `client-methods` cells are seeded together; a row may cite a section another registry file owns.
 
 ## §8.7 Composite Primary Keys
-<!-- prd: 8.7 sha256: da45a45caf192996 -->
+<!-- prd: 8.7 sha256: dc244e8091a8bad5 -->
 
 | ID | Requirement | Tests | Applies to | Matrix cell |
 |---|---|---|---|---|
@@ -36,6 +36,8 @@ Requirements of the generated client, proved by the cross-dialect conformance su
 | hard-delete-many.not-found | Delete operations are always idempotent: a listed key that does not exist is not an error | `conformance: HardDeleteMany/missing keys are not an error` | all | client-methods: HardDeleteMany × not-found |
 | hard-delete-many.batch-partial | `HardDeleteMany` splits its input into sub-batches of `generation.batch_size`. If any sub-batch fails, the operation returns an error immediately, and previously executed sub-batches within the same call are not rolled back | `conformance: HardDeleteMany/a failed sub-batch keeps the sub-batches before it` | all | |
 | soft-delete-many.batch-split | `SoftDeleteMany` splits its input into sub-batches of `generation.batch_size`, one statement each | `conformance: SoftDeleteMany/splits the keys into sub-batches of the table's batch size` | all | |
+| soft-delete.missing-key | `SoftDelete` on a key that does not exist returns `nil` (idempotent) | `example: sqlite: TestSoftDeleteAndRestore_MissingKey_ReturnNilNil_SQLite/SoftDelete` | all | |
+| restore.missing-key | `Restore` on a key that does not exist returns `nil` (idempotent): restoring a non-existent row is a no-op | `example: sqlite: TestSoftDeleteAndRestore_MissingKey_ReturnNilNil_SQLite/Restore` | all | |
 
 ## §17.3 Generated Behavior
 <!-- prd: 17.3 sha256: dce1144bfbcb5b6f -->
@@ -108,3 +110,4 @@ the user's ruling: amend the PRD, which turns the gap into requirement rows, or 
 | Gap | Behavior | Tests | Section | Ruling |
 |---|---|---|---|---|
 | gap.hard-delete-many.nil-statement | `HardDeleteMany(ctx, nil)` sends no statement and reads nothing back; §9.4c says only that a nil slice is no rows | `example: postgres: TestEmptyBatch_HardDeleteManyUnaffected` | §9.4c | |
+| gap.by-key-noop-side-effects | A by-key `SoftDelete` or `Restore` whose key matches no row returns `nil, nil` but still records `AffectedPKs`, runs cache invalidation and publishes its event (`templates/table/delete.go.tmpl`); §21 and §28 do not say whether a no-op write fires them | | §9.5, §21.5, §28.6 | |

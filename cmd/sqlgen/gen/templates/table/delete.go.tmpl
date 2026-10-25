@@ -771,7 +771,7 @@ func (c *{{ $structCamel }}Client) Restore(ctx context.Context, {{ if .Composite
 			if err != nil {
 				return nil, fmt.Errorf("restore {{ $singular }}: resolve tenant: %w", err)
 			}
-			// Stash on ctx so the chained terminal Get reuses this value —
+			// Stash on ctx so the chained terminal GetMany reuses this value —
 			// the tenant resolves once per operation.
 			// An explicit tenant is not cached: it rides on CallOptions, which
 			// every internal call inherits, and resolveTenant honours it ahead of
@@ -875,11 +875,27 @@ func (c *{{ $structCamel }}Client) Restore(ctx context.Context, {{ if .Composite
 			return nil, nil
 		}
 
-		return c.Get(ctx, {{ if .CompositePK }}pk{{ else }}id{{ end }}, func(o *CallOptions[{{ .StructName }}FieldOptions]) {
+		// Fetch the restored entity. A key that matched no row restores
+		// nothing, which is not an error: Restore is idempotent.
+		results, err := c.GetMany(ctx, &Get{{ .StructName | structNamePlural }}Input{
+{{- if .CompositePK }}
+			Filter: &{{ .StructName }}Filter{PKs: []{{ .CompositePKStructName }}{pk}},
+{{- else }}
+			Filter: &{{ .StructName }}Filter{ {{- $pkCol.FieldName }}: {{ pkFilterExpr $pkCol "id" -}} },
+{{- end }}
+			Limit: new(1),
+		}, func(o *CallOptions[{{ .StructName }}FieldOptions]) {
 			*o = options
 			o.SkipHooks = true
 			o.LockMode = sql.LockNone
 		})
+		if err != nil {
+			return nil, err
+		}
+		if len(results) == 0 {
+			return nil, nil
+		}
+		return results[0], nil
 	})
 	if err != nil {
 		return nil, err

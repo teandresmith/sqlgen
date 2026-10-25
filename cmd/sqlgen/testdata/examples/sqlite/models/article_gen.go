@@ -1100,11 +1100,23 @@ func (c *articleClient) Restore(ctx context.Context, id int64, opts ...func(*Cal
 			return nil, nil
 		}
 
-		return c.Get(ctx, id, func(o *CallOptions[ArticleFieldOptions]) {
+		// Fetch the restored entity. A key that matched no row restores
+		// nothing, which is not an error: Restore is idempotent.
+		results, err := c.GetMany(ctx, &GetArticlesInput{
+			Filter: &ArticleFilter{ID: &comparator.Number[int64]{Eq: new(id)}},
+			Limit:  new(1),
+		}, func(o *CallOptions[ArticleFieldOptions]) {
 			*o = options
 			o.SkipHooks = true
 			o.LockMode = sql.LockNone
 		})
+		if err != nil {
+			return nil, err
+		}
+		if len(results) == 0 {
+			return nil, nil
+		}
+		return results[0], nil
 	})
 	if err != nil {
 		return nil, err

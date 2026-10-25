@@ -242,11 +242,23 @@ func (c *orderItemClient) Restore(ctx context.Context, pk OrderItemPK, opts ...f
 			return nil, nil
 		}
 
-		return c.Get(ctx, pk, func(o *CallOptions[OrderItemFieldOptions]) {
+		// Fetch the restored entity. A key that matched no row restores
+		// nothing, which is not an error: Restore is idempotent.
+		results, err := c.GetMany(ctx, &GetOrderItemsInput{
+			Filter: &OrderItemFilter{PKs: []OrderItemPK{pk}},
+			Limit:  new(1),
+		}, func(o *CallOptions[OrderItemFieldOptions]) {
 			*o = options
 			o.SkipHooks = true
 			o.LockMode = sql.LockNone
 		})
+		if err != nil {
+			return nil, err
+		}
+		if len(results) == 0 {
+			return nil, nil
+		}
+		return results[0], nil
 	})
 	if err != nil {
 		return nil, err
