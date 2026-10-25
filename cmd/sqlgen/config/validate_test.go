@@ -2790,6 +2790,83 @@ func TestValidatePostParse_CursorKeys_Nullable(t *testing.T) {
 	}
 }
 
+// TestValidatePostParse_CursorKeys_ExplicitReportsEveryBadColumn pins that an
+// explicit cursor_keys list reports each missing or nullable column, one error
+// per column in list order, instead of stopping at the first.
+func TestValidatePostParse_CursorKeys_ExplicitReportsEveryBadColumn(t *testing.T) {
+	tables := []config.SchemaTable{
+		{
+			Name:   "orders",
+			Schema: "public",
+			Columns: []config.SchemaColumn{
+				{Name: "id", Type: "bigint", PrimaryKey: true},
+				{Name: "shipped_at", Type: "timestamp", Nullable: true},
+				{Name: "note", Type: "text", Nullable: true},
+			},
+		},
+	}
+	views := []config.SchemaView{
+		{
+			Name:   "order_totals",
+			Schema: "public",
+			Columns: []config.SchemaColumn{
+				{Name: "id", Type: "bigint"},
+				{Name: "shipped_at", Type: "timestamp", Nullable: true},
+			},
+		},
+	}
+	tests := []struct {
+		name      string
+		tableKeys []string
+		viewKeys  []string
+		want      []string
+	}{
+		{
+			name:      "table list with missing and nullable columns",
+			tableKeys: []string{"shipped_at", "nope", "id", "note", "gone"},
+			want: []string{
+				`cursor_keys: column "shipped_at" in table public.orders is nullable; a cursor key must be NOT NULL`,
+				`cursor_keys: column "nope" does not exist in table public.orders`,
+				`cursor_keys: column "note" in table public.orders is nullable; a cursor key must be NOT NULL`,
+				`cursor_keys: column "gone" does not exist in table public.orders`,
+			},
+		},
+		{
+			name:     "view list with missing and nullable columns",
+			viewKeys: []string{"missing", "id", "shipped_at"},
+			want: []string{
+				`cursor_keys: column "missing" does not exist in view public.order_totals`,
+				`cursor_keys: column "shipped_at" in view public.order_totals is nullable; a cursor key must be NOT NULL`,
+			},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg := validConfig()
+			if tt.tableKeys != nil {
+				cfg.Tables["public.orders"] = config.TableConfig{CursorKeys: tt.tableKeys}
+			}
+			if tt.viewKeys != nil {
+				cfg.Views["public.order_totals"] = config.ViewConfig{CursorKeys: tt.viewKeys}
+			}
+
+			_, err := config.ValidatePostParse(cfg, tables, views)
+			if err == nil {
+				t.Fatal("ValidatePostParse() error = nil, want cursor_keys errors")
+			}
+			var got []string
+			for _, line := range strings.Split(err.Error(), "\n") {
+				if strings.HasPrefix(line, "cursor_keys: column ") {
+					got = append(got, line)
+				}
+			}
+			if diff := cmp.Diff(tt.want, got); diff != "" {
+				t.Errorf("ValidatePostParse() cursor_keys errors mismatch (-want +got):\n%s", diff)
+			}
+		})
+	}
+}
+
 // TestResolveTableConnection_NullableInheritedKeyFallsBackToPK pins the keys
 // an unresolved inherited key falls back to: the table's PK, never the
 // subset of keys that would resolve.

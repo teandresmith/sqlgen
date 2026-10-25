@@ -1644,7 +1644,7 @@ func resolvedCursorKeys(cfg *RootConfig, tc TableConfig, table SchemaTable) (map
 		present,
 		resolvedPKColumns(tc, table),
 	)
-	if decision.Err != nil || !decision.Emit {
+	if len(decision.Errs) > 0 || !decision.Emit {
 		return nil, ""
 	}
 	switch {
@@ -1740,9 +1740,7 @@ func validateCursorKeys(cfg *RootConfig, tables []SchemaTable, views []SchemaVie
 			table.Columns,
 			resolvedPKColumns(tc, table),
 		)
-		if decision.Err != nil {
-			*errs = append(*errs, decision.Err)
-		}
+		*errs = append(*errs, decision.Errs...)
 		if decision.Warning != "" {
 			*warnings = append(*warnings, Warning{Message: decision.Warning})
 		}
@@ -1756,9 +1754,7 @@ func validateCursorKeys(cfg *RootConfig, tables []SchemaTable, views []SchemaVie
 			qualifiedViewName(view),
 			view.Columns,
 		)
-		if decision.Err != nil {
-			*errs = append(*errs, decision.Err)
-		}
+		*errs = append(*errs, decision.Errs...)
 		if decision.Warning != "" {
 			*warnings = append(*warnings, Warning{Message: decision.Warning})
 		}
