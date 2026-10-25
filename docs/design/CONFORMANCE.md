@@ -766,6 +766,59 @@ database versions it ran against.
      "and", since review found rows claiming tests that assert only one clause; give each agent
      the list of planned work (tracker) so planned gaps are not reported as defects; and assign
      helper names up front, since two agents wrote the same function-extraction helper.
+   **Second slice, `cmd/sqlgen/gotype`, recorded 2026-10-25:**
+   - **Matrix shape.** The `type-resolution` header has no dialect column, so the dialect axis is
+     carried by per-dialect row slugs, one per row of the three §7.2 tables, with each row's
+     spellings together: 27 `postgres-…`, 24 `mysql-…` and 6 `sqlite-…` rows, each with
+     Applies-to set to its dialect. MySQL `set`, listed twice in §7.2, is two rows
+     (`mysql-set-type`, `mysql-set-string`) plus a PRD gap asking for the condition. The header
+     did not change. A cell may be claimed by more than one row; `nullable` is two rows where the
+     two `use_pointers` settings differ.
+   - **Rows seeded: 484** under the six §7 anchors, 266 of them matrix cells, plus **52 `n/a`**:
+     51 `integration` cells citing §7.4 (the integrations match only `uuid` and `numeric`,
+     `decimal`) and `mysql-set-type × type-override` citing §7.2 / §8.3. None needed an
+     `accepted` date. The matrix rows were generated from the spec table of the test that fills
+     them, so the registry and the test cannot drift. Rows cite `gen`, `config`, `parser`,
+     `manifest`, `sql`, `types`, golden and example tests where the behavior lives there.
+   - **Gaps.** The mapping agents' drafts had about 210 of 520 rows untested, most of them the
+     `column-override` and `type-override` cells and the `use_pointers: false` forms. Four
+     table-driven tests over every spelling of every §7.2 row (built-in mapping, type override,
+     integration, column override; about 520 subtests) filled the matrix, which left 40. After
+     the new tests, 7 remain, all driver-level: a MySQL `tinyint(1)` value other than 0 or 1, SQLite
+     `date()` rows against bound dates, the pgx and stdlib behavior of a `text` column retyped to
+     `uuid.UUID`, a stdlib `uuid` column under `database/sql`, and a typed JSON struct scanning
+     directly. They need example-module tests.
+   - **Defects: 1 fixed**, with a fail-first test: `types.JSON.UnmarshalJSON` accepted malformed
+     input, since `json.RawMessage.UnmarshalJSON` copies unchecked (§7.6).
+   - **PRD amendments: 4 ruled**, plus wording from review: a wrapper-backed integration's wrapper
+     (`uuid.NullUUID`, `decimal.NullDecimal`) is the nullable variant at either `use_pointers`
+     setting (§7.3, §7.4, §4.7; the code and its tests already did this); a bare `datetime` key
+     reaches a `DATETIME(6)` column behind a `datetime(6)` key, by §7.1's modifier-stripped lookup
+     (§7.2); the §7.6 typed-access example uses `column_map`, since the strict loader rejected
+     `columns.<col>.go_type`; and `UnmarshalJSON`'s row follows the fix. Review also corrected
+     `types.NullDateTime`'s underlying field to `Time` (§4.7). **PRD gaps: 24** in `gotype.md`, all
+     open: among them PG and SQLite `time` → `string`, the unknown-type `string` fallback,
+     PostgreSQL override keys matching only the parser's spelling (`int4` misses `integer`),
+     inline MySQL enums, and an `overrides.types` entry with no `nullable:` ignoring
+     `use_pointers: false`, which contradicts §4.7.
+   - **Tests written.** 4 matrix tests and 1 key-precision test by hand; 14 gotype, 7 runtime
+     (`types`, `sql`) and 8 gen / parser / manifest tests by three agents working on this branch
+     in separate files with assigned helper prefixes, so no worktree and no helper clash. One
+     agent-mapped row over-claimed (the unknown-type fallback inside a §7.4 row); review found two
+     unjustified Applies-to narrowings and four rows whose tests asserted part of the requirement,
+     all fixed.
+   - **Report.** `make conformance` at `52dc8321`: 1264 rows, 1234 pass, 0 fail, 0 skip, 0 not
+     run, 30 untested (7 in `cli/gotype.md`, 19 in `cli/gen.md`, 4 in `cli/config.md`).
+   - **Time.** About 2.5 hours of wall time: 15 minutes to scope, 10 to map with five agents, one
+     round of four rulings, the matrix tests and registry generator, three test-writing agents,
+     one review pass and the gates.
+   - **For the next slice (naming, §8.5):** generate matrix rows from the filling test's own spec
+     table, as here, since §8.5 is a table too (about 60 rows × 4 columns); fix the row shape (one
+     row per cell, or several when a column has two settings) in the mapping brief, since agents
+     chose differently; tell agents that ranging over a `[]string` literal gives computed names
+     `req-check` cannot read, and that Applies-to narrower than `all` needs a PRD basis; and a
+     `gen` test that sets `Config.Overrides` must rebuild `input.Resolver`, since `testInput`
+     builds its own.
 7. **Skill changes (§6).** `/design`, `/phase` and `/implement` landed with step 2. `/verify` and
    `/close-phase` change during the config pilot (step 3), once there are rows for them to read
    (§9 ruling 14). Done 2026-10-23: `/verify` reads the registry rows for a sub-item's PRD
