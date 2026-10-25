@@ -153,7 +153,7 @@ type CategoryStatFilter struct {
 	MinPrice         *NullableNumericComparator `json:"minPrice,omitempty"`
 	MaxPrice         *NullableNumericComparator `json:"maxPrice,omitempty"`
 	ProductNames     *NullableStringComparator  `json:"productNames,omitempty"`
-	ProductNamesJSON *JSONComparator            `json:"productNamesJSON,omitempty"`
+	ProductNamesJSON *NullableJSONComparator    `json:"productNamesJSON,omitempty"`
 	And              []*CategoryStatFilter      `json:"and,omitempty"`
 	Or               []*CategoryStatFilter      `json:"or,omitempty"`
 }

@@ -12553,10 +12553,10 @@ func (ec *executionContext) _CategoryStat_productNamesJSON(ctx context.Context, 
 		},
 		nil,
 		func(ctx context.Context, selections ast.SelectionSet, v types.JSON) graphql.Marshaler {
-			return ec.marshalNJSON2githubᚗcomᚋteandresmithᚋsqlgenᚋtypesᚐJSON(ctx, selections, v)
+			return ec.marshalOJSON2githubᚗcomᚋteandresmithᚋsqlgenᚋtypesᚐJSON(ctx, selections, v)
 		},
 		true,
-		true,
+		false,
 	)
 }
 func (ec *executionContext) fieldContext_CategoryStat_productNamesJSON(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
@@ -29278,7 +29278,7 @@ func (ec *executionContext) unmarshalInputCategoryStatFilter(ctx context.Context
 			it.ProductNames = data
 		case "productNamesJSON":
 			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("productNamesJSON"))
-			data, err := ec.unmarshalOJSONComparator2ᚖgithubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋmysqlᚋmodelsᚋgraphᚋmodelᚐJSONComparator(ctx, v)
+			data, err := ec.unmarshalONullableJSONComparator2ᚖgithubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋmysqlᚋmodelsᚋgraphᚋmodelᚐNullableJSONComparator(ctx, v)
 			if err != nil {
 				return it, err
 			}
@@ -36494,7 +36494,7 @@ func (ec *executionContext) _CategoryStat(ctx context.Context, sel ast.Selection
 			}
 		case "productNamesJSON":
 			out.Values[i] = ec._CategoryStat_productNamesJSON(ctx, field, obj)
-			if out.Values[i] == graphql.Null {
+			if out.Values[i] == graphql.RequiredNull {
 				out.Invalids++
 			}
 		default:

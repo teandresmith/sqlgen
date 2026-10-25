@@ -198,12 +198,14 @@ func TestBuildView_AggregateInference(t *testing.T) {
 		{"BOOL_AND", parser.ViewSelectColumn{Alias: "all_active", Aggregate: "BOOL_AND"}, nil, "*bool", true},
 		{"EVERY", parser.ViewSelectColumn{Alias: "all_verified", Aggregate: "EVERY"}, nil, "*bool", true},
 		{"BOOL_OR", parser.ViewSelectColumn{Alias: "any_premium", Aggregate: "BOOL_OR"}, nil, "*bool", true},
-		{"JSON_AGG", parser.ViewSelectColumn{Alias: "all_data", Aggregate: "JSON_AGG"}, nil, "types.JSON", false},
-		{"JSONB_AGG", parser.ViewSelectColumn{Alias: "all_meta", Aggregate: "JSONB_AGG"}, nil, "types.JSON", false},
-		{"JSON_ARRAYAGG", parser.ViewSelectColumn{Alias: "all_info", Aggregate: "JSON_ARRAYAGG"}, nil, "types.JSON", false},
-		{"JSON_OBJECT_AGG", parser.ViewSelectColumn{Alias: "kv", Aggregate: "JSON_OBJECT_AGG"}, nil, "types.JSON", false},
-		{"JSONB_OBJECT_AGG", parser.ViewSelectColumn{Alias: "kv", Aggregate: "JSONB_OBJECT_AGG"}, nil, "types.JSON", false},
-		{"JSON_OBJECTAGG", parser.ViewSelectColumn{Alias: "kv", Aggregate: "JSON_OBJECTAGG"}, nil, "types.JSON", false},
+		// A JSON aggregate over zero rows yields SQL NULL like every aggregate
+		// other than COUNT.
+		{"JSON_AGG", parser.ViewSelectColumn{Alias: "all_data", Aggregate: "JSON_AGG"}, nil, "types.JSON", true},
+		{"JSONB_AGG", parser.ViewSelectColumn{Alias: "all_meta", Aggregate: "JSONB_AGG"}, nil, "types.JSON", true},
+		{"JSON_ARRAYAGG", parser.ViewSelectColumn{Alias: "all_info", Aggregate: "JSON_ARRAYAGG"}, nil, "types.JSON", true},
+		{"JSON_OBJECT_AGG", parser.ViewSelectColumn{Alias: "kv", Aggregate: "JSON_OBJECT_AGG"}, nil, "types.JSON", true},
+		{"JSONB_OBJECT_AGG", parser.ViewSelectColumn{Alias: "kv", Aggregate: "JSONB_OBJECT_AGG"}, nil, "types.JSON", true},
+		{"JSON_OBJECTAGG", parser.ViewSelectColumn{Alias: "kv", Aggregate: "JSON_OBJECTAGG"}, nil, "types.JSON", true},
 	}
 
 	for _, tt := range tests {

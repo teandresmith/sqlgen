@@ -354,7 +354,7 @@ func TestCategoryStatsNoPK(t *testing.T) {
 		t.Error("ProductNames should not be nil")
 	}
 
-	// JSON_ARRAYAGG → json.RawMessage
+	// JSON_ARRAYAGG → types.JSON (nullable)
 	if cs.ProductNamesJSON == nil {
 		t.Error("ProductNamesJSON should not be nil")
 	}

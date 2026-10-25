@@ -301,7 +301,7 @@ type CategoryStatFilter struct {
 	ProductCount     *comparator.Number[int32]           `json:"product_count"`
 	ProductNameList  *comparator.NullableSlice[string]   `json:"product_name_list"`
 	ProductNames     *comparator.NullableString          `json:"product_names"`
-	ProductNamesJSON *comparator.JSON                    `json:"product_names_json"`
+	ProductNamesJSON *comparator.NullableJSON            `json:"product_names_json"`
 	TotalPrice       *comparator.NullableNumber[float64] `json:"total_price"`
 	And              []*CategoryStatFilter               `json:"and"`
 	Or               []*CategoryStatFilter               `json:"or"`

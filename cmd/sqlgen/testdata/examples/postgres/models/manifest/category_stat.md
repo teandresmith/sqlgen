@@ -41,7 +41,7 @@ GROUP BY c.name;
 | `max_price` | MaxPrice | `*float64` | `numeric(10,2)` | yes |  |  |  | `comparator.NullableNumber[float64]` |  |
 | `product_names` | ProductNames | `*string` | `*string` | yes |  |  |  | `comparator.NullableString` |  |
 | `has_active_product` | HasActiveProduct | `*bool` | `*bool` | yes |  |  |  | `comparator.NullableBool` |  |
-| `product_names_json` | ProductNamesJSON | `types.JSON` | `types.JSON` |  |  |  |  | `comparator.JSON` |  |
+| `product_names_json` | ProductNamesJSON | `types.JSON` | `types.JSON` | yes |  |  |  | `comparator.NullableJSON` |  |
 
 ## Query methods
 
@@ -90,7 +90,7 @@ Type `CategoryStatFilter`.
 | MinPrice | `*comparator.NullableNumber[float64]` |
 | ProductCount | `*comparator.Number[int32]` |
 | ProductNames | `*comparator.NullableString` |
-| ProductNamesJSON | `*comparator.JSON` |
+| ProductNamesJSON | `*comparator.NullableJSON` |
 | TotalPrice | `*comparator.NullableNumber[float64]` |
 | And | `[]*CategoryStatFilter` |
 | Or | `[]*CategoryStatFilter` |

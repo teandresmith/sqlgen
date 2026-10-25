@@ -218,7 +218,7 @@ func translateCategoryStatFilter(in *gqlmodel.CategoryStatFilter) *models.Catego
 		out.ProductNames = translateNullableStringComparator(in.ProductNames)
 	}
 	if in.ProductNamesJSON != nil {
-		out.ProductNamesJSON = translateJSONComparator(in.ProductNamesJSON)
+		out.ProductNamesJSON = translateNullableJSONComparator(in.ProductNamesJSON)
 	}
 	if in.TotalPrice != nil {
 		out.TotalPrice = translateNullableNumericComparatorFloat64(in.TotalPrice)

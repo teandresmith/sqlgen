@@ -3250,10 +3250,10 @@
           "go_field": "ProductNamesJSON",
           "go_type": "types.JSON",
           "db_type": "types.JSON",
-          "nullable": false,
+          "nullable": true,
           "pk": false,
           "unique": false,
-          "comparator": "comparator.JSON",
+          "comparator": "comparator.NullableJSON",
           "comment": ""
         }
       ],
@@ -3336,7 +3336,7 @@
           },
           {
             "name": "ProductNamesJSON",
-            "type": "*comparator.JSON"
+            "type": "*comparator.NullableJSON"
           },
           {
             "name": "TotalPrice",

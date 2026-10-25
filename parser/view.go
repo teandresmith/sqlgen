@@ -877,12 +877,13 @@ func isAggregateNullable(aggregate string) bool {
 	case "COUNT":
 		return false
 	case "AVG", "SUM", "MIN", "MAX", "STRING_AGG", "GROUP_CONCAT",
-		"BOOL_AND", "EVERY", "BOOL_OR", "ARRAY_AGG":
-		// ARRAY_AGG is nullable for the same reason MIN/MAX are: an aggregate
-		// over zero rows yields SQL NULL. It also yields NULL for a group the
-		// FILTER clause empties, which is the shape PRD 16.3 recommends for
-		// outer joins. The Go type is unaffected -- a slice conveys NULL as
-		// nil -- but the flag drives the nullable comparator and the manifest.
+		"BOOL_AND", "EVERY", "BOOL_OR", "ARRAY_AGG",
+		"JSON_AGG", "JSONB_AGG", "JSON_ARRAYAGG",
+		"JSON_OBJECT_AGG", "JSONB_OBJECT_AGG", "JSON_OBJECTAGG":
+		// Over zero rows, or a group a FILTER clause empties, these yield SQL
+		// NULL. The Go type is unaffected for ARRAY_AGG and the JSON aggregates
+		// (a slice or types.JSON carries NULL as nil); the flag drives the
+		// nullable comparator, GraphQL nullability and the manifest.
 		return true
 	default:
 		return false
