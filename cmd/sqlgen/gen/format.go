@@ -94,6 +94,12 @@ func importPaths(src []byte, filename string) ([]string, error) {
 // install it must not run in parallel.
 var importDriftObserver func(filename string, added []string)
 
+// importFixObserver is a test seam. When non-nil, formatWithOptions reports
+// every file it runs through goimports' import fixing, so a test can assert
+// that no emitter writes a Go file that skipped it. Production never sets it.
+// Tests that install it must not run in parallel.
+var importFixObserver func(filename string)
+
 // reportImportDrift hands the observer the import paths formatted gained over
 // raw. A file that does not parse reports nothing: imports.Process already
 // succeeded on it, so an unparseable pair is a bug in this check rather than
@@ -222,6 +228,9 @@ func formatWithOptions(raw []byte, version string, filename string, formatOnly b
 		return nil, fmt.Errorf("goimports failed for %s: %w\n\nraw template output:\n%s", filename, err, withHeader)
 	}
 
+	if importFixObserver != nil && !formatOnly {
+		importFixObserver(filename)
+	}
 	if importDriftObserver != nil && !formatOnly {
 		reportImportDrift(filename, withHeader, formatted)
 	}

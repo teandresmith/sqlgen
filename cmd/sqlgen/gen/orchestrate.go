@@ -1334,7 +1334,7 @@ func generateAPIInputTranslatorFile(tmpl *template.Template, apiCtx *APIContext,
 	if err != nil {
 		return "", fmt.Errorf("rendering api input translators: %w", err)
 	}
-	formatted, err := FormatOnly(buildAPIInputTranslateFile(g.Package, apiCtx, body), version, path)
+	formatted, err := Format(buildAPIInputTranslateFile(g.Package, apiCtx, body), version, path)
 	if err != nil {
 		return "", fmt.Errorf("formatting api input translators: %w", err)
 	}
@@ -1385,8 +1385,8 @@ func buildAPIInputTranslateFile(pkg string, apiCtx *APIContext, body string) []b
 // translators reference the sqlgenresolver package: the conflict-target
 // translator and the increment collector both return its INVALID_INPUT error,
 // and the collector builds its IncrementOp values (PRD §26.5.1, §26.5.4).
-// Scoped so a package with no such translator keeps its import block as it
-// was — FormatOnly does not prune an unused import.
+// Scoped so a package with no such translator declares no import it does not
+// use.
 func nestedTranslatorsNeedSqlgenResolver(apiCtx *APIContext) bool {
 	for _, t := range apiCtx.Tables {
 		if n := t.Nested; n != nil && (n.EmitUpsert || n.IncrementOpsFunc != "") {
@@ -1451,7 +1451,7 @@ func generateAPIMiddlewareFile(tmpl *template.Template, apiCtx *APIContext, sqlg
 	if err != nil {
 		return "", fmt.Errorf("rendering api middleware: %w", err)
 	}
-	formatted, err := FormatOnly(buildAPIMiddlewareFile(sqlgenResolverPackageName, apiCtx, body), version, path)
+	formatted, err := Format(buildAPIMiddlewareFile(sqlgenResolverPackageName, apiCtx, body), version, path)
 	if err != nil {
 		return "", fmt.Errorf("formatting api middleware: %w", err)
 	}
@@ -1463,9 +1463,10 @@ func generateAPIMiddlewareFile(tmpl *template.Template, apiCtx *APIContext, sqlg
 
 // buildAPIMiddlewareFile assembles middleware_gen.go with the explicit
 // aliased-import block for the consumer's models package, mirroring
-// buildAPIWalkerFile / buildAPIFilterFile. FormatOnly is used downstream so
-// goimports' module-cache scan does not fire while the consumer's models
-// package may not yet exist on disk during a fresh sqlgen run.
+// buildAPIWalkerFile / buildAPIFilterFile. The import set is complete, so
+// the downstream goimports pass never falls back to a module-cache scan for
+// the consumer's models package, which may not yet exist on disk during a
+// fresh sqlgen run.
 func buildAPIMiddlewareFile(pkg string, apiCtx *APIContext, body string) []byte {
 	var b strings.Builder
 	b.WriteString("package ")
@@ -1508,7 +1509,7 @@ func generateAPITranslatorFiles(tmpl *template.Template, apiCtx *APIContext, g *
 		if err != nil {
 			return nil, fmt.Errorf("rendering api comparator translators: %w", err)
 		}
-		formatted, err := FormatOnly(buildAPIComparatorTranslateFile(g.Package, apiCtx, body), version, comparatorPath)
+		formatted, err := Format(buildAPIComparatorTranslateFile(g.Package, apiCtx, body), version, comparatorPath)
 		if err != nil {
 			return nil, fmt.Errorf("formatting api comparator translators: %w", err)
 		}
@@ -1524,7 +1525,7 @@ func generateAPITranslatorFiles(tmpl *template.Template, apiCtx *APIContext, g *
 		if err != nil {
 			return nil, fmt.Errorf("rendering api sort translators: %w", err)
 		}
-		formatted, err := FormatOnly(buildAPISortTranslateFile(g.Package, apiCtx, body), version, sortPath)
+		formatted, err := Format(buildAPISortTranslateFile(g.Package, apiCtx, body), version, sortPath)
 		if err != nil {
 			return nil, fmt.Errorf("formatting api sort translators: %w", err)
 		}
@@ -1540,7 +1541,7 @@ func generateAPITranslatorFiles(tmpl *template.Template, apiCtx *APIContext, g *
 		if err != nil {
 			return nil, fmt.Errorf("rendering api filter translators: %w", err)
 		}
-		formatted, err := FormatOnly(buildAPIFilterFile(g.Package, apiCtx, body), version, filterPath)
+		formatted, err := Format(buildAPIFilterFile(g.Package, apiCtx, body), version, filterPath)
 		if err != nil {
 			return nil, fmt.Errorf("formatting api filter translators: %w", err)
 		}
@@ -1659,9 +1660,10 @@ func buildAPISortTranslateFile(pkg string, apiCtx *APIContext, body string) []by
 // buildAPIFilterFile assembles filter_translate_gen.go with the same explicit
 // aliased-import pattern used by resolvers_gen.go and field_options_gen.go —
 // the consumer's models package is pinned to cfg.Output.Package even when
-// the import path's last segment differs. FormatOnly skips goimports' module-
-// cache scan since the consumer's models package may not exist during a
-// fresh sqlgen run.
+// the import path's last segment differs. The import set is complete, so
+// the downstream goimports pass never falls back to a module-cache scan for
+// the consumer's models package, which may not exist during a fresh sqlgen
+// run.
 //
 // The filter translator does not import the comparator package directly —
 // every call into a per-family comparator translator (which lives in the
@@ -1712,10 +1714,9 @@ func comparatorTranslatorStdImports(apiCtx *APIContext) []string {
 		// form stops delegating to its base (PRD §26.4 Rule 2 makes them
 		// distinct input types) and inlines the same operand block. Gating on
 		// `!tr.Nullable` here would omit the import for a project whose only
-		// such columns are nullable, and FormatOnly rendering means goimports
-		// never repairs it — a missing import is a compile error in the
-		// consumer's project, and so is an unused one, so this must name
-		// exactly what the emitted bodies reference.
+		// such columns are nullable. goimports would back-fill it, but only
+		// through a full module-cache scan, so this names exactly what the
+		// emitted bodies reference.
 		switch tr.Family {
 		case "Time":
 			// `[]time.Time` + `comparator.Range[time.Time]`.
@@ -1792,10 +1793,10 @@ func hasAnyFilterField(apiCtx *APIContext) bool {
 // The resolvers + walker templates embed their own import blocks (instead of
 // relying on WrapWithPreamble) so they can alias the consumer's package to a
 // name that matches cfg.Output.Package even when the import path's last
-// segment differs. FormatOnly is used afterwards to keep goimports out of
-// the picture — the consumer's package may not exist in the module cache yet
-// during a fresh sqlgen run, which would trip goimports' import-resolution
-// scan.
+// segment differs. The blocks are complete, so the goimports pass afterwards
+// only prunes — the consumer's package may not exist in the module cache yet
+// during a fresh sqlgen run, and a missing import would send goimports into
+// its import-resolution scan.
 func generateAPIResolverFiles(tmpl *template.Template, apiCtx *APIContext, g *config.GraphQLAPIConfig, sqlgenResolverDir, version string) ([]string, error) {
 	_ = g
 	var files []string
@@ -1806,7 +1807,7 @@ func generateAPIResolverFiles(tmpl *template.Template, apiCtx *APIContext, g *co
 	if err != nil {
 		return nil, fmt.Errorf("rendering api resolvers: %w", err)
 	}
-	formatted, err := FormatOnly(buildResolverFile(sqlgenResolverPackageName, apiCtx, body), version, resolversPath)
+	formatted, err := Format(buildResolverFile(sqlgenResolverPackageName, apiCtx, body), version, resolversPath)
 	if err != nil {
 		return nil, fmt.Errorf("formatting api resolvers: %w", err)
 	}
@@ -1821,7 +1822,7 @@ func generateAPIResolverFiles(tmpl *template.Template, apiCtx *APIContext, g *co
 	if err != nil {
 		return nil, fmt.Errorf("rendering api field options: %w", err)
 	}
-	walkerFormatted, err := FormatOnly(buildAPIWalkerFile(sqlgenResolverPackageName, apiCtx, walkerBody), version, walkerPath)
+	walkerFormatted, err := Format(buildAPIWalkerFile(sqlgenResolverPackageName, apiCtx, walkerBody), version, walkerPath)
 	if err != nil {
 		return nil, fmt.Errorf("formatting api field options: %w", err)
 	}
@@ -2059,8 +2060,9 @@ func nestedMutationFieldNames(t APITableContext) []APIRootField {
 
 // buildAPIWalkerFile assembles field_options_gen.go with the explicit aliased
 // import block for the consumer's models package, mirroring buildResolverFile.
-// FormatOnly is used downstream to skip goimports' module-cache scan since
-// the consumer's models package may not yet exist when sqlgen runs.
+// The import set is complete, so the downstream goimports pass never falls
+// back to a module-cache scan for the consumer's models package, which may
+// not yet exist when sqlgen runs.
 func buildAPIWalkerFile(pkg string, apiCtx *APIContext, body string) []byte {
 	var b strings.Builder
 	b.WriteString("package ")
@@ -2082,8 +2084,8 @@ func buildAPIWalkerFile(pkg string, apiCtx *APIContext, body string) []byte {
 // buildResolverFile assembles the complete resolvers_gen.go source: package
 // declaration, an explicit aliased import block (consumer's models package
 // pinned to cfg.Output.Package), and the rendered template body. Imports
-// are scoped to what the rendered body actually references so FormatOnly
-// (no goimports cache scan) leaves a clean file.
+// are scoped to what the rendered body actually references so the goimports
+// pass has nothing to resolve (no module-cache scan).
 //
 // The file emits to <resolver_dir>/sqlgenresolver/resolvers_gen.go
 // with package "sqlgenresolver" and contains Q + M structs plus per-table
