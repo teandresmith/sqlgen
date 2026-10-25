@@ -566,7 +566,7 @@ Optional, AI-friendly structured description of the generated package. Emits JSO
 | `type` | `string` | Yes | Go type name (e.g., `uuid.UUID`, `ksuid.KSUID`). |
 | `import` | `string` | Conditional | Import path for the type. **Required** when `type` names a package sqlgen does not already know — the same rule `column_map.<col>.import` carries ([4.8](#column-overrides)). Omit it for builtins (`string`, `int64`, …), same-package types (`Address`), and built-in literals that resolve their own import (`time.Time`, `json.RawMessage`, `types.JSON`, `net.IP`). A package-qualified `type` with no `import` is a config error, because nothing else would put the package in the generated file's import block. |
 | `zero_value` | `string` | No | Zero value literal. Derived automatically (`Type{}` for structs, `""` for strings, `0` for numbers). Override only when derivation is wrong. |
-| `nullable` | `string` or `NullableOverride` | No | Nullable variant. Shorthand: `"uuid.NullUUID"` (same import as parent). Full form: `{type, import, underlying_field, valid_field, valid_method, valid_invert}`. If omitted, uses `*T` when `use_pointers` is true, or `sql.Null*` when false. |
+| `nullable` | `string` or `NullableOverride` | No | Nullable variant. Shorthand: `"uuid.NullUUID"` (same import as parent). Full form: `{type, import, underlying_field, valid_field, valid_method, valid_invert}`. If omitted, uses `*T` when `use_pointers` is true, or `sql.Null*` when false; for a wrapper-backed built-in integration ([7.4](#74-built-in-type-integrations): `github.com/google/uuid`, `github.com/gofrs/uuid/v5`, `github.com/shopspring/decimal`) it is the integration's wrapper (`uuid.NullUUID`, `decimal.NullDecimal`) under either setting. |
 
 **The named type must cross the driver boundary on its own.** It either implements `sql.Scanner` and `driver.Valuer`, or the driver special-cases it — `database/sql` handles the standard library's `uuid.UUID` in both directions and pgx routes it through `UUIDCodec` ([7.4](#74-built-in-type-integrations)). A type that does neither cannot be named directly; wrap it in a type of your own that implements the two methods and point the override at the wrapper:
 
@@ -603,7 +603,7 @@ sqlgen performs no conversion of its own: the scan target is always the resolved
 | `valid_method` | `string` | No | Method on the wrapper returning a bool — alternative to `valid_field` for wrappers that expose validity via a method (e.g., `IsValid`, `IsPresent`, `IsZero`). Mutually exclusive with `valid_field`. |
 | `valid_invert` | `bool` | No | Negates the `valid_method` result. Use when the method signals *invalidity* — e.g., `time.Time.IsZero()` returns true when the value is empty, so set `valid_invert: true` to interpret it as "not valid." Only meaningful with `valid_method`. |
 
-`underlying_field` powers the FK stringification path used by O2M relationship loaders (the loader unwraps a possibly-null FK value before stringifying it for parent/child bucket lookup). Without it, a FK column resolved to a `Null*` wrapper that lacks `String()` would generate code that fails to compile. Built-in integrations (`uuid.NullUUID` → `UUID`, `decimal.NullDecimal` → `Decimal`, `types.NullDateTime` → `DateTime`) and `database/sql.NullX` types are recognized automatically — users only declare these fields for custom wrappers.
+`underlying_field` powers the FK stringification path used by O2M relationship loaders (the loader unwraps a possibly-null FK value before stringifying it for parent/child bucket lookup). Without it, a FK column resolved to a `Null*` wrapper that lacks `String()` would generate code that fails to compile. Built-in integrations (`uuid.NullUUID` → `UUID`, `decimal.NullDecimal` → `Decimal`, `types.NullDateTime` → `Time`) and `database/sql.NullX` types are recognized automatically — users only declare these fields for custom wrappers.
 
 **Validation:**
 - Setting both `valid_field` and `valid_method` is rejected.
@@ -1836,7 +1836,7 @@ Only steps 3–6 carry a `nullable:` wrapper variant. A nullable column resolved
 
 MySQL column types are written on both schema sources as MySQL 8.0.19+ stores them, and `overrides.types` keys match that form. An integer type has no display width (`int(11)` is `int`), except `tinyint(1)`. A synonym takes its stored form: `bool` and `boolean` are `tinyint(1)`, `integer` is `int`, `numeric` is `decimal`, `real` is `double`, `float4` is `float` and `float8` is `double`. `decimal` keeps its precision and scale (`decimal` is `decimal(10,0)`, `decimal(5)` is `decimal(5,0)`), `float(p)` is `float`, or `double` when `p` is over 24, `char`, `binary` and `bit` keep their length (`char` is `char(1)`), and `year(4)` is `year`. So an `overrides.types` key spelled `boolean`, `integer`, `numeric` or `real` matches no MySQL column; write `tinyint(1)`, `int`, `decimal` or `double`. Every `tinyint(1)` column is `bool`, whether written `BOOLEAN` or `TINYINT(1)`, as MySQL cannot tell them apart; a stored value other than 0 or 1 does not scan into it. `ZEROFILL` makes a numeric type unsigned, and an integer one keeps its width (`int(10) unsigned zerofill` resolves as `int unsigned`, `double unsigned zerofill` as `double`).
 
-A column overridden to `types.DateTime` / `types.NullDateTime` binds as the `time.Time` the value wraps (SQL NULL for an invalid `types.NullDateTime` or a nil `*types.DateTime`), whether it is a written value or a cursor keyset value; its filter operands are `time.Time` already. The driver then writes it as wall time in its DSN `loc` and reads a `DATETIME` back in that `loc`, exactly as it does for a `time.Time` column. The RFC 3339 text `types.DateTime.Value()` writes does not work on MySQL: MySQL rejects the `Z` of a UTC time (`Error 1292`), and moves any other offset to the session time zone, so a `DATETIME` written that way reads back shifted whenever `loc` and the session time zone differ. An `overrides.types` key for a fractional-second column keeps its precision: `datetime(6)` matches a `DATETIME(6)` column and `datetime` does not.
+A column overridden to `types.DateTime` / `types.NullDateTime` binds as the `time.Time` the value wraps (SQL NULL for an invalid `types.NullDateTime` or a nil `*types.DateTime`), whether it is a written value or a cursor keyset value; its filter operands are `time.Time` already. The driver then writes it as wall time in its DSN `loc` and reads a `DATETIME` back in that `loc`, exactly as it does for a `time.Time` column. The RFC 3339 text `types.DateTime.Value()` writes does not work on MySQL: MySQL rejects the `Z` of a UTC time (`Error 1292`), and moves any other offset to the session time zone, so a `DATETIME` written that way reads back shifted whenever `loc` and the session time zone differ. An `overrides.types` key for a fractional-second column keeps its precision: a `datetime(6)` key matches a `DATETIME(6)` column and wins over a bare `datetime` key, which still reaches the column when no `datetime(6)` entry exists, by the modifier-stripped lookup of [7.1](#71-type-resolution-chain).
 
 </details>
 
@@ -1864,7 +1864,7 @@ Controlled by `overrides.use_pointers`:
 - **`true` (default):** Nullable columns use `*T` (e.g., `*string`, `*int32`)
 - **`false`:** Nullable columns use `sql.Null*` types (e.g., `sql.NullString`, `sql.NullInt32`)
 
-Custom nullable types can be specified per SQL type via `overrides.types.<type>.nullable`.
+Custom nullable types can be specified per SQL type via `overrides.types.<type>.nullable`. A wrapper-backed integration's wrapper ([7.4](#74-built-in-type-integrations)) and an explicit `nullable:` apply at either setting.
 
 **`use_pointers` applies only where a `sql.Null*` equivalent exists.** Some Go types have no `database/sql` wrapper to fall back to, so their nullable form is always `*T` regardless of the flag. `uuid.UUID` ([7.4](#74-built-in-type-integrations)) is one of them — the standard library ships no `NullUUID` — alongside `time.Duration` (`interval`) and `net.IPNet` (`cidr`). Setting `overrides.use_pointers: false` does not turn a nullable `uuid` column into a wrapper struct; it stays `*uuid.UUID`, and `IS NULL` is `v != nil`. A consumer who wants the wrapper shape selects a UUID library that ships one, via `overrides.types.uuid` ([7.4](#74-built-in-type-integrations)) — the flag is not the lever for it. This is distinct from reference types (`[]byte`, `net.IP`, `types.JSON`), whose nullable form is the bare type because `nil` is already their zero value.
 
@@ -1883,8 +1883,8 @@ The standard library's `uuid` package is the **default** binding: a `uuid` colum
 | Integration | `import` value | Go type | Zero value | Nullable Go type |
 |-------------|----------------|---------|------------|------------------|
 | **Standard library** (default) | `uuid` | `uuid.UUID` | `uuid.UUID{}` | `*uuid.UUID` — **no null wrapper** |
-| `github.com/google/uuid` | `github.com/google/uuid` | `uuid.UUID` | `uuid.UUID{}` | `*uuid.UUID` (pointers) or `uuid.NullUUID` |
-| `github.com/gofrs/uuid/v5` | `github.com/gofrs/uuid/v5` | `uuid.UUID` | `uuid.Nil` | `*uuid.UUID` (pointers) or `uuid.NullUUID` |
+| `github.com/google/uuid` | `github.com/google/uuid` | `uuid.UUID` | `uuid.UUID{}` | `uuid.NullUUID` |
+| `github.com/gofrs/uuid/v5` | `github.com/gofrs/uuid/v5` | `uuid.UUID` | `uuid.Nil` | `uuid.NullUUID` |
 
 All three match the single SQL type `uuid`, and PostgreSQL is the only dialect that declares one — MySQL and SQLite have no `uuid` SQL type, so no mapping of theirs is affected by the choice.
 
@@ -1898,7 +1898,7 @@ All three match the single SQL type `uuid`, and PostgreSQL is the only dialect t
 
 On the GraphQL surface ([26.4.1](#2641-scalar-marshaling)) a stdlib-bound package declares the `UUID` scalar only: a nullable `uuid` column is a nullable field of scalar `UUID`, no `NullUUID` scalar is declared, and no `MarshalNullUUID` / `UnmarshalNullUUID` pair is emitted. Filter inputs are unaffected — a nullable UUID column takes `NullableIDComparator` under every integration, because comparator selection reads through the wrapper ([7.3](#73-nullable-handling)).
 
-**Alternative integrations.** `github.com/google/uuid` and `github.com/gofrs/uuid/v5` are selected by pointing `overrides.types.uuid.import` at the library. Both ship a `uuid.NullUUID` wrapper, so both offer the wrapper shape for nullable columns — `*uuid.UUID` under `use_pointers: true`, `uuid.NullUUID` under `use_pointers: false`, or `uuid.NullUUID` named explicitly via `nullable:` at either setting. Choosing one is the supported way to keep the wrapper shape, the `NullUUID` GraphQL scalar, and the `.Valid` / `.UUID` field access a consumer may already depend on.
+**Alternative integrations.** `github.com/google/uuid` and `github.com/gofrs/uuid/v5` are selected by pointing `overrides.types.uuid.import` at the library. Both ship a `uuid.NullUUID` wrapper, and the integration supplies it as the nullable variant: a nullable `uuid` column is `uuid.NullUUID` under either `use_pointers` setting, whether `nullable:` names it or is omitted. A `nullable:` that names a pointer (`*uuid.UUID`) gives the pointer form instead. Choosing one is the supported way to keep the wrapper shape, the `NullUUID` GraphQL scalar, and the `.Valid` / `.UUID` field access a consumer may already depend on.
 
 **Three spellings of the zero UUID.** The three integrations agree on the Go type string `uuid.UUID` and disagree on how the zero value is written: google spells it as the composite literal `uuid.UUID{}`, gofrs as the package **variable** `uuid.Nil`, and the standard library as neither — its `Nil` is a **function**, so the literal `uuid.UUID{}` is what the generator must emit. This is why `ZeroValue` is a per-integration field rather than something derived from the type name.
 
@@ -1968,11 +1968,11 @@ overrides:
 
 | SQL Type | Go Type | Nullable Go Type | Zero Value |
 |----------|---------|------------------|------------|
-| `numeric`, `decimal` | `decimal.Decimal` | `*decimal.Decimal` (pointers) or `decimal.NullDecimal` | `decimal.Decimal{}` |
+| `numeric`, `decimal` | `decimal.Decimal` | `decimal.NullDecimal` | `decimal.Decimal{}` |
 
 This integration provides:
 - Arbitrary-precision decimal arithmetic instead of lossy `float64`
-- Correct `NullDecimal` handling when `use_pointers: false`, including the `Decimal` underlying-field unwrap so nullable decimal FK columns stringify correctly in O2M relationship loaders
+- `NullDecimal` as the nullable variant under either `use_pointers` setting (a `nullable:` naming `*decimal.Decimal` gives the pointer form instead), including the `Decimal` underlying-field unwrap so nullable decimal FK columns stringify correctly in O2M relationship loaders
 - Scanner/Valuer interface compliance for database drivers
 
 **If no decimal override is configured**, `numeric`/`decimal` SQL columns map to `float64` / `sql.NullFloat64` (the default).
@@ -2061,7 +2061,7 @@ package types
 // JSON holds a raw JSON document of any shape — object, array, scalar,
 // or null. It is the default Go type for `json` and `jsonb` columns
 // when no typed Go struct is configured. Decode opportunistically with
-// AsMap/AsSlice/Decode, or override the column's go_type to a concrete
+// AsMap/AsSlice/Decode, or override the column's Go type to a concrete
 // struct via overrides.types or per-column override for typed access at
 // the field level.
 type JSON json.RawMessage
@@ -2074,7 +2074,7 @@ type JSON json.RawMessage
 | `(*JSON).Scan(src any)` | `error` | `sql.Scanner`. Accepts `[]byte` or `string`. Stores a defensive copy of the raw bytes (drivers may reuse buffers across rows). SQL `NULL` produces a `nil JSON`. No shape validation. |
 | `JSON.Value()` | `(driver.Value, error)` | `driver.Valuer`. Returns the raw bytes verbatim. `nil` or empty `JSON` returns SQL `NULL`. |
 | `JSON.MarshalJSON()` | `([]byte, error)` | Delegates to `json.RawMessage.MarshalJSON`. `nil` emits `"null"`. |
-| `(*JSON).UnmarshalJSON(data []byte)` | `error` | Delegates to `json.RawMessage.UnmarshalJSON` (validates well-formedness). |
+| `(*JSON).UnmarshalJSON(data []byte)` | `error` | Rejects input that is not well-formed JSON, then delegates to `json.RawMessage.UnmarshalJSON`. |
 | `JSON.MarshalGQL(w io.Writer)` | — | gqlgen `Marshaler`. Writes the raw bytes verbatim; nil/empty writes `"null"`. |
 | `(*JSON).UnmarshalGQL(v any)` | `error` | gqlgen `Unmarshaler`. Accepts any shape gqlgen produces (`map[string]any`, `[]any`, primitives, `nil`) and re-encodes to bytes. Unlike the prior `JSONMap.UnmarshalGQL`, this does **not** reject non-object inputs — shape validation is a resolver-layer concern (see §26.4.1). |
 | `JSON.Decode(v any)` | `error` | Typed-decode escape hatch. Delegates to `json.Unmarshal(j, v)`. Empty `JSON` returns the stdlib's `"unexpected end of JSON input"` error wrapped with context; `"null"` literal nils out the target via standard `encoding/json` behavior. |
@@ -2091,9 +2091,9 @@ type JSON json.RawMessage
 # sqlgen.yml
 tables:
   asset:
-    columns:
+    column_map:
       property_tax_rate:
-        go_type: "[]assettypes.YearValue"
+        type: "[]assettypes.YearValue"
         import: "example.com/assettypes"
 ```
 
