@@ -282,7 +282,7 @@
 
 | ID | Requirement | Tests | Applies to | Matrix cell |
 |---|---|---|---|---|
-| gen.filter.view-target-member | A list relationship whose target is a view gets a relationship-filter member, as every list relationship does |  | all |  |
+| gen.filter.view-target-member | A list relationship whose target is a view gets a relationship-filter member, as every list relationship does | `unit: cmd/sqlgen/gen: TestRelationshipFilters_ViewTargetGetsMember/o2m into a tenanted view`; `unit: cmd/sqlgen/gen: TestRelationshipFilters_ViewTargetGetsMember/m2m into a view with a declared pk`; `example: tenancy: TestRelationshipFilter_ViewTarget` | all |  |
 | gen.filter.comparator-per-column | Each table gets a `{Table}Filter` with one comparator field per column, typed from the column's Go type, the soft-delete column included as a regular comparator (e.g. `DeletedAt *comparator.NullableTime`) | `unit: cmd/sqlgen/gen: TestFilterTemplate_correctComparatorTypes`; `unit: cmd/sqlgen/gen: TestFilterTemplate_softDeleteAsRegularComparator`; `unit: cmd/sqlgen/gen: TestComparatorTypeSelection` | all | |
 | gen.filter.and-conjunctive | `And []*{Table}Filter`: each member's own fields are AND'd and the members are AND'd together | `unit: cmd/sqlgen/gen: TestFilterTemplate_andOrFields`; `unit: cmd/sqlgen/gen: TestFilterTemplate_andOrRecursion` | all | |
 | gen.filter.or-disjunctive | `Or: [A, B]` compiles to one `(A OR B)` group of per-member ANDs, appended only when some member compiled to a condition | `unit: cmd/sqlgen/gen: TestFilterTemplate_andOrRecursion` | all | |
@@ -589,12 +589,13 @@
 | gen.events.metadata-at-hook-entry | Each per-entity hook calls `MetadataFunc` once at hook entry and merges its result into every event's `Metadata`, shallow-cloned per event, with the tenant stamp applied last (§28.3) | `unit: cmd/sqlgen/gen: TestEventHooks_metadataFunc_mergedAtHookEntry` | all | |
 
 ## §29.2 Configuration
-<!-- prd: 29.2 sha256: a1344206c005a867 -->
+<!-- prd: 29.2 sha256: faff110ade35c4f5 -->
 
 | ID | Requirement | Tests | Applies to | Matrix cell |
 |---|---|---|---|---|
+| gen.tenancy.filter-comparator-follows-type | The tenant column's filter comparator follows the resolved tenant Go type, not the SQL type: a `uuid.UUID` tenant filters through `comparator.ID` | `unit: cmd/sqlgen/gen: TestBuildEntityContexts_TenancyTypeReachesTenantFilter`; `example: tenancy: TestIsolation_FilterOnTenantColumn` | all |  |
 | artifacts.model-struct.tenanted | `tenancy.type` resolves the tenant column itself, so the row struct spells the tenant column in the resolved tenant type | `unit: cmd/sqlgen/gen: TestBuildEntityContexts_TenancyTypeReachesTenantColumn` | all | generated-artifacts: model-struct × tenanted |
-| artifacts.filter-struct.tenanted | The filter spells the tenant column through the same resolution as the row struct, CreateInput and PK struct | | all | generated-artifacts: filter-struct × tenanted |
+| artifacts.filter-struct.tenanted | The filter spells the tenant column through the same resolution as the row struct, CreateInput and PK struct | `unit: cmd/sqlgen/gen: TestBuildEntityContexts_TenancyTypeReachesTenantFilter` | all | generated-artifacts: filter-struct × tenanted |
 
 ## §29.4 Generated Behavior
 <!-- prd: 29.4 sha256: 7c35d41d4d647856 -->
@@ -789,4 +790,3 @@ the user's ruling: amend the PRD, which turns the gap into requirement rows, or 
 
 | Gap | Behavior | Tests | Section | Ruling |
 |---|---|---|---|---|
-| gap.gen.tenant-filter-comparator | The tenant column's filter comparator follows its SQL type, not the tenancy type override: on the SQLite tenancy example the struct field is `uuid.UUID` but the filter field is `*comparator.String`. §29.2.4 says the override reaches "the filter" without saying whether that includes the comparator type | | §29.2.4 | amend-prd 2026-10-25 |

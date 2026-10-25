@@ -30,10 +30,11 @@ Requirements of the generated client, proved by the cross-dialect conformance su
 | nil-input.batch-no-statement | `CreateMany`, `UpdateMany`, `UpsertMany`, `SoftDeleteMany`, `RestoreMany` and `HardDeleteMany` send no statement for a nil or empty slice and read nothing back | `example: postgres: TestEmptyBatch_HardDeleteManyUnaffected` | all | |
 
 ## §9.5 Edge Case Behaviors
-<!-- prd: 9.5 sha256: 39cf69aea492fcef -->
+<!-- prd: 9.5 sha256: fd6bd1aa5cc4b821 -->
 
 | ID | Requirement | Tests | Applies to | Matrix cell |
 |---|---|---|---|---|
+| edge.by-key-noop-no-side-effects | A by-key `SoftDelete`, `Restore` or `HardDelete` whose key matches no row records no affected key: no cache invalidation and no event | `unit: cmd/sqlgen/gen: TestDeleteTemplate_byKeyNoOp_recordsNoAffectedPKs/postgres exec`; `unit: cmd/sqlgen/gen: TestDeleteTemplate_byKeyNoOp_recordsNoAffectedPKs/mysql exec`; `unit: cmd/sqlgen/gen: TestDeleteTemplate_byKeyNoOp_recordsNoAffectedPKs/composite pk`; `unit: cmd/sqlgen/gen: TestDeleteTemplate_byKeyNoOp_recordsNoAffectedPKs/tenanted postgres returning`; `unit: cmd/sqlgen/gen: TestDeleteTemplate_byKeyNoOp_recordsNoAffectedPKs/tenanted sqlite returning`; `unit: cmd/sqlgen/gen: TestDeleteTemplate_byKeyNoOp_recordsNoAffectedPKs/tenanted mysql pre-read`; `example: events: TestEvent_MissingKeyPublishesNothing` | all |  |
 | hard-delete-many.not-found | Delete operations are always idempotent: a listed key that does not exist is not an error | `conformance: HardDeleteMany/missing keys are not an error` | all | client-methods: HardDeleteMany × not-found |
 | hard-delete-many.batch-partial | `HardDeleteMany` splits its input into sub-batches of `generation.batch_size`. If any sub-batch fails, the operation returns an error immediately, and previously executed sub-batches within the same call are not rolled back | `conformance: HardDeleteMany/a failed sub-batch keeps the sub-batches before it` | all | |
 | soft-delete-many.batch-split | `SoftDeleteMany` splits its input into sub-batches of `generation.batch_size`, one statement each | `conformance: SoftDeleteMany/splits the keys into sub-batches of the table's batch size` | all | |
@@ -110,4 +111,3 @@ the user's ruling: amend the PRD, which turns the gap into requirement rows, or 
 
 | Gap | Behavior | Tests | Section | Ruling |
 |---|---|---|---|---|
-| gap.by-key-noop-side-effects | A by-key `SoftDelete` or `Restore` whose key matches no row returns `nil, nil` but still records `AffectedPKs`, runs cache invalidation and publishes its event (`templates/table/delete.go.tmpl`); §21 and §28 do not say whether a no-op write fires them | | §9.5, §21.5, §28.6 | amend-prd 2026-10-25 |

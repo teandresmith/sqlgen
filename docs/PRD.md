@@ -3728,6 +3728,8 @@ When an operation targets a PK that does not exist in the database:
 | `SoftDelete` | Returns `nil` (idempotent) | Same rationale as HardDelete. |
 | `Restore` | Returns `nil` (idempotent) | Same rationale — restoring a non-existent row is a no-op. |
 
+A by-key `SoftDelete`, `Restore` or `HardDelete` whose key matches no row records no affected key, so it invalidates no cache entry ([27](#27-caching)) and publishes no event ([28](#28-event-system)). The mutation hooks ([21.5](#215-hook-lifecycle)) still run around it.
+
 **Configuration:** The Update/Increment behavior is configurable globally and per-table via `generation.strict_updates`:
 
 | Value | Behavior |
@@ -14995,7 +14997,7 @@ The tenant column's Go type is resolved in this order (first wins):
 3. **The column's own type resolution** ([7.1](#71-type-resolution-chain)) — `column_map.<col>.type`, then `type_map`, then the type-override map, then the built-in integration. The common path: if `workspace_id` is declared `uuid` in PostgreSQL and `overrides.types.uuid` already points to `uuid.UUID`, no tenancy-specific type config is needed. Resolving the tenant column here rather than separately is what keeps its spelling on the row struct and its spelling in the tenancy context from diverging.
 4. **Schema fallback** — whatever default the parser resolves to (e.g., `int64` for `bigint`, `string` for `text`).
 
-**Steps 1-2 resolve the tenant column itself, not a second type only the tenancy surface sees.** The override reaches the column's own resolution, so the row struct, `CreateInput`, the filter, the PK struct and the `TenancyContext` all spell the tenant one way. This is the same guarantee step 3 states from the other direction, and it is what makes the two spellings agree *by construction* rather than by a validation that compares them afterwards. It also means the import an override carries belongs to a column, and is therefore visible to the one-UUID-library-per-package rule ([7.4](#74-built-in-type-integrations), [4.13](#413-config-validation-rules)) — a rule that reads column bindings cannot see a surface no column owns.
+**Steps 1-2 resolve the tenant column itself, not a second type only the tenancy surface sees.** The override reaches the column's own resolution, so the row struct, `CreateInput`, the filter, the PK struct and the `TenancyContext` all spell the tenant one way. The tenant column's filter comparator follows the resolved tenant Go type, not the SQL type: a `uuid.UUID` tenant filters through `comparator.ID` whatever column type stores it. This is the same guarantee step 3 states from the other direction, and it is what makes the two spellings agree *by construction* rather than by a validation that compares them afterwards. It also means the import an override carries belongs to a column, and is therefore visible to the one-UUID-library-per-package rule ([7.4](#74-built-in-type-integrations), [4.13](#413-config-validation-rules)) — a rule that reads column bindings cannot see a surface no column owns.
 
 **`tenancy.type` is a full `TypeOverride`** ([4.7](#47-overrideconfig)), and every key it accepts applies to the tenant column: `type`, `import`, `zero_value` and the `nullable` variant. It resolves through the same code path an `overrides.types` entry does, so "same shape" is a statement about behavior and not only about YAML. One key is reachable only on some surfaces, which follows from the surfaces rather than from the override:
 
