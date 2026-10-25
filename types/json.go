@@ -4,6 +4,7 @@ package types
 import (
 	"database/sql/driver"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 )
@@ -11,7 +12,7 @@ import (
 // JSON holds a raw JSON document of any shape — object, array, scalar, or
 // null. It is the default Go type for `json` and `jsonb` columns when no
 // typed Go struct is configured. Decode opportunistically with AsMap /
-// AsSlice / Decode, or override the column's go_type to a concrete struct
+// AsSlice / Decode, or override the column's Go type to a concrete struct
 // via overrides.types or per-column override for typed access at the field
 // level.
 //
@@ -66,9 +67,13 @@ func (j JSON) MarshalJSON() ([]byte, error) {
 	return b, nil
 }
 
-// UnmarshalJSON delegates to json.RawMessage.UnmarshalJSON, which validates
-// that the input is well-formed JSON.
+// UnmarshalJSON rejects input that is not well-formed JSON, then delegates
+// to json.RawMessage.UnmarshalJSON. RawMessage copies its input unchecked, so
+// a direct call would otherwise store malformed bytes.
 func (j *JSON) UnmarshalJSON(data []byte) error {
+	if !json.Valid(data) {
+		return errors.New("unmarshal JSON: invalid JSON input")
+	}
 	if err := (*json.RawMessage)(j).UnmarshalJSON(data); err != nil {
 		return fmt.Errorf("unmarshal JSON: %w", err)
 	}

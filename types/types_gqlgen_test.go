@@ -158,6 +158,17 @@ func TestJSON_MarshalUnmarshalJSON_RoundTrip(t *testing.T) {
 	}
 }
 
+func TestJSON_UnmarshalJSON_RejectsMalformedInput(t *testing.T) {
+	for _, in := range []string{`{bad`, `[1,`, `nul`} {
+		t.Run(in, func(t *testing.T) {
+			var j JSON
+			if err := j.UnmarshalJSON([]byte(in)); err == nil {
+				t.Errorf("UnmarshalJSON(%q) error = nil, want an error; stored %q", in, j)
+			}
+		})
+	}
+}
+
 func TestJSON_MarshalGQL_RoundTrip(t *testing.T) {
 	for _, tt := range fourShapes {
 		t.Run(tt.name, func(t *testing.T) {
