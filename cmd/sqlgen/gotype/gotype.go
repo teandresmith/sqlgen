@@ -262,6 +262,7 @@ func NewResolver(dialect config.Dialect, usePointers bool, globalOverrides map[s
 	if globalOverrides == nil {
 		globalOverrides = make(map[string]config.TypeOverride)
 	}
+	globalOverrides = lowerKeys(globalOverrides)
 	r := &Resolver{
 		dialect:         dialect,
 		usePointers:     usePointers,
@@ -720,6 +721,33 @@ func (r *Resolver) widenSumBase(base string) string {
 // type is first looked up qualified with the owner schema: both schema sources
 // write a type in the column's own schema bare, so without this a key written
 // app.status_enum would never reach the app schema's own columns (PRD §7.1).
+// lowerKeys returns m with its keys lower-cased, so an overrides.types key
+// matches whatever its letter case, as SQL types are compared lower-cased.
+// It returns m itself when every key is already lower-case. Two keys that
+// differ only in case are a config error; should both reach here, the
+// lower-case spelling wins.
+func lowerKeys(m map[string]config.TypeOverride) map[string]config.TypeOverride {
+	upper := false
+	for k := range m {
+		if k != strings.ToLower(k) {
+			upper = true
+			break
+		}
+	}
+	if !upper {
+		return m
+	}
+	out := make(map[string]config.TypeOverride, len(m))
+	for _, k := range slices.Sorted(maps.Keys(m)) {
+		lower := strings.ToLower(k)
+		if _, taken := out[lower]; taken && k != lower {
+			continue
+		}
+		out[lower] = m[k]
+	}
+	return out
+}
+
 func (r *Resolver) lookupOverride(m map[string]config.TypeOverride, sqlType string) (config.TypeOverride, string, bool) {
 	keys := lookupKeys(sqlType)
 	if r.ownerSchema != "" && !strings.Contains(sqlType, ".") {
@@ -801,7 +829,7 @@ func (r *Resolver) resolveByTypeSource(sqlType string, nullable bool, tableOverr
 	// different steps of the chain below: the scope's own entries are
 	// overrides, what its integrations contribute for SQL types it did not
 	// spell out is an integration.
-	scopedOverrides, scopedIntegrations := scopeIntegrations(tableOverrides)
+	scopedOverrides, scopedIntegrations := scopeIntegrations(lowerKeys(tableOverrides))
 
 	// Step 2: Table-level overrides.types
 	if override, key, ok := r.lookupOverride(scopedOverrides, sqlType); ok {

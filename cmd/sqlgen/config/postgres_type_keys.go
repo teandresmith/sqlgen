@@ -125,9 +125,32 @@ func validatePostgresTypeKeys(cfg *RootConfig, errs *[]error) {
 	}
 	check := func(scope string, types map[string]TypeOverride) {
 		for _, key := range slices.Sorted(maps.Keys(types)) {
-			if written, ok := PostgresTypeKey(key); ok {
+			if written, ok := PostgresTypeKey(strings.ToLower(key)); ok {
 				*errs = append(*errs, fmt.Errorf("%s.%s: PostgreSQL writes this type as %q; key it %q", scope, key, written, written))
 			}
+		}
+	}
+	check("overrides.types", cfg.Overrides.Types)
+	for _, tableName := range sortedTableKeys(cfg.Tables) {
+		if table := cfg.Tables[tableName]; table.Overrides != nil {
+			check("tables."+tableName+".overrides.types", table.Overrides.Types)
+		}
+	}
+}
+
+// validateTypeKeyCase rejects two keys of one overrides.types scope that
+// differ only in letter case: keys match SQL types case-insensitively, so
+// both would name the same type.
+func validateTypeKeyCase(cfg *RootConfig, errs *[]error) {
+	check := func(scope string, types map[string]TypeOverride) {
+		seen := make(map[string]string, len(types))
+		for _, key := range slices.Sorted(maps.Keys(types)) {
+			lower := strings.ToLower(key)
+			if first, ok := seen[lower]; ok {
+				*errs = append(*errs, fmt.Errorf("%s: keys %q and %q name the same type; keep one", scope, first, key))
+				continue
+			}
+			seen[lower] = key
 		}
 	}
 	check("overrides.types", cfg.Overrides.Types)

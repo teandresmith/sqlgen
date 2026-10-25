@@ -103,3 +103,45 @@ func TestValidatePreParse_PostgresSynonymTypeKey(t *testing.T) {
 		})
 	}
 }
+
+// TestValidatePreParse_TypeKeyLetterCase pins that override keys are read
+// case-insensitively: a synonym in another case is still a synonym, and two
+// keys of one scope that differ only in case are rejected.
+func TestValidatePreParse_TypeKeyLetterCase(t *testing.T) {
+	tests := []struct {
+		name string
+		keys []string
+		want string
+	}{
+		{
+			name: "upper-case synonym",
+			keys: []string{"INT4"},
+			want: `overrides.types.INT4: PostgreSQL writes this type as "integer"; key it "integer"`,
+		},
+		{
+			name: "keys that differ only in case",
+			keys: []string{"NUMERIC", "numeric"},
+			want: `overrides.types: keys "NUMERIC" and "numeric" name the same type; keep one`,
+		},
+		{
+			name: "one upper-case canonical key",
+			keys: []string{"NUMERIC"},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg := validConfig()
+			for _, key := range tt.keys {
+				cfg.Overrides.Types[key] = config.TypeOverride{Type: "int64"}
+			}
+			_, err := config.ValidatePreParse(cfg)
+			got := ""
+			if err != nil {
+				got = err.Error()
+			}
+			if diff := cmp.Diff(tt.want, got); diff != "" {
+				t.Errorf("ValidatePreParse() error mismatch (-want +got):\n%s", diff)
+			}
+		})
+	}
+}

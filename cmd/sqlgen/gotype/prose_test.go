@@ -503,3 +503,33 @@ func TestArrayKeyRetypesWholeColumn(t *testing.T) {
 		t.Errorf("Resolve(text[], nullable) Name = %q, want %q", got.Name, "*ov.Tags")
 	}
 }
+
+// TestOverrideKeysIgnoreCase pins that an overrides.types key matches a
+// column whatever its letter case, at both scopes.
+func TestOverrideKeysIgnoreCase(t *testing.T) {
+	override := config.TypeOverride{Type: "ov.Custom", Import: "example.com/ov"}
+	tests := []struct {
+		name  string
+		key   string
+		table bool
+	}{
+		{"upper-case global key", "NUMERIC", false},
+		{"mixed-case global key", "Numeric", false},
+		{"upper-case table key", "NUMERIC", true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			overrides := map[string]config.TypeOverride{tt.key: override}
+			var global, table map[string]config.TypeOverride
+			if tt.table {
+				table = overrides
+			} else {
+				global = overrides
+			}
+			r := gotype.NewResolver(config.DialectPostgres, true, global)
+			if got := r.Resolve("numeric", false, "c", nil, table); got.Name != "ov.Custom" {
+				t.Errorf("key %q: Resolve(numeric) Name = %q, want %q", tt.key, got.Name, "ov.Custom")
+			}
+		})
+	}
+}
