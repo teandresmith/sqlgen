@@ -4,6 +4,9 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/google/go-cmp/cmp"
+
+	"github.com/teandresmith/sqlgen/cmd/sqlgen/config"
 	"github.com/teandresmith/sqlgen/cmd/sqlgen/gen"
 )
 
@@ -289,4 +292,44 @@ func TestStream_GuardPrecedesHookChain(t *testing.T) {
 	if guard > executor {
 		t.Error("in-transaction guard renders after executeQuery, so a refused Stream would still fire the hook chain")
 	}
+}
+
+// Stream is not an external surface: it yields the server-side scalar set
+// whatever the columns' access roles, so its whole emission is the one an
+// all-public table gets, and every restricted column stays selectable.
+func TestStream_UnaffectedByColumnAccess(t *testing.T) {
+	render := func(t *testing.T, columnMap map[string]config.ColumnOverride) string {
+		t.Helper()
+		in := testInput(accessAPISchema())
+		if columnMap != nil {
+			in.Config.Tables["users"] = config.TableConfig{ColumnMap: columnMap}
+		}
+		tables, err := gen.BuildTableContexts(in, nil)
+		if err != nil {
+			t.Fatalf("BuildTableContexts: %v", err)
+		}
+		if !tables[0].Operations.Stream {
+			t.Fatalf("control: users has Stream off")
+		}
+		return renderTableTemplate(t, loadTableTemplates(t, "stream.go.tmpl"), "table/stream", tables[0])
+	}
+
+	restricted := render(t, map[string]config.ColumnOverride{
+		"created_at":     {Access: config.AccessReadOnly},
+		"new_password":   {Access: config.AccessWriteOnly},
+		"internal_score": {Access: config.AccessHidden},
+		"password_hash":  {Access: config.AccessInternal},
+	})
+	public := render(t, nil)
+
+	if diff := cmp.Diff(public, restricted); diff != "" {
+		t.Errorf("Stream emission changes with access roles (-all public +restricted):\n%s", diff)
+	}
+	mustContainAll(t, restricted,
+		"CreatedAt bool `json:\"created_at\"`",
+		"NewPassword bool `json:\"new_password\"`",
+		"InternalScore bool `json:\"internal_score\"`",
+		"PasswordHash bool `json:\"password_hash\"`",
+		`cols = append(cols, "password_hash")`,
+	)
 }

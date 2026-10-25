@@ -2,6 +2,9 @@ package gen_test
 
 import (
 	"fmt"
+	"go/ast"
+	goparser "go/parser"
+	"go/token"
 	"os"
 	"path/filepath"
 	"strings"
@@ -11,6 +14,7 @@ import (
 	"github.com/google/go-cmp/cmp"
 	"github.com/teandresmith/sqlgen/cmd/sqlgen/config"
 	"github.com/teandresmith/sqlgen/cmd/sqlgen/gen"
+	sqlparser "github.com/teandresmith/sqlgen/parser"
 	"github.com/teandresmith/sqlgen/sql"
 )
 
@@ -530,4 +534,99 @@ func wrapInputForCompile(ctx gen.TableContext, fragments ...string) string {
 		b.WriteString(fragment)
 	}
 	return b.String()
+}
+
+// TestGenerate_CheckConstraintAddsNoInputValidate generates a table whose
+// CHECK constraints the parser carries through, and asserts no generated
+// file declares a Validate method on the table's Create/Update inputs: CHECK
+// enforcement stays with the database.
+func TestGenerate_CheckConstraintAddsNoInputValidate(t *testing.T) {
+	tests := []struct {
+		name    string
+		dialect string
+		driver  string
+	}{
+		{name: "postgres", dialect: "postgres", driver: "pgx"},
+		{name: "mysql", dialect: "mysql", driver: "stdlib"},
+		{name: "sqlite", dialect: "sqlite", driver: "stdlib"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			outDir := t.TempDir()
+			cfgPath := filepath.Join(t.TempDir(), "sqlgen.yml")
+			body := "version: v1\ninput:\n  dialect: " + tt.dialect + "\n  paths:\n    - ./schema.sql\n" +
+				"output:\n  driver: " + tt.driver + "\n  dir: " + outDir + "\n  package: db\n"
+			if err := os.WriteFile(cfgPath, []byte(body), 0o600); err != nil {
+				t.Fatalf("writing config: %v", err)
+			}
+			cfg, err := config.LoadConfig(cfgPath)
+			if err != nil {
+				t.Fatalf("LoadConfig: %v", err)
+			}
+			schema := &sqlparser.Schema{Tables: []sqlparser.Table{{
+				Name: "products",
+				Columns: []sqlparser.Column{
+					{Name: "id", Type: "integer", PrimaryKey: true, AutoIncrement: true},
+					{Name: "price", Type: "integer"},
+					{Name: "stock", Type: "integer", Nullable: true},
+				},
+				Constraints: []sqlparser.Constraint{
+					{Name: "products_price_check", Type: sqlparser.Check, Columns: []string{"price"}, CheckExpression: "price > 0"},
+					{Name: "products_stock_check", Type: sqlparser.Check, Columns: []string{"stock"}, CheckExpression: "stock >= 0"},
+				},
+			}}}
+
+			if _, err := gen.Generate(schema, cfg, "test"); err != nil {
+				t.Fatalf("Generate() error = %v", err)
+			}
+
+			files, err := filepath.Glob(filepath.Join(outDir, "*.go"))
+			if err != nil || len(files) == 0 {
+				t.Fatalf("no generated files in %s (err %v)", outDir, err)
+			}
+			inputs := map[string]bool{"CreateProductInput": true, "UpdateProductInput": true}
+			seenInputs := map[string]bool{}
+			fset := token.NewFileSet()
+			for _, path := range files {
+				f, err := goparser.ParseFile(fset, path, nil, 0)
+				if err != nil {
+					t.Fatalf("parsing %s: %v", path, err)
+				}
+				for _, decl := range f.Decls {
+					switch d := decl.(type) {
+					case *ast.GenDecl:
+						for _, spec := range d.Specs {
+							if ts, ok := spec.(*ast.TypeSpec); ok && inputs[ts.Name.Name] {
+								seenInputs[ts.Name.Name] = true
+							}
+						}
+					case *ast.FuncDecl:
+						if d.Recv == nil || d.Name.Name != "Validate" {
+							continue
+						}
+						if recv := receiverTypeName(d.Recv.List[0].Type); inputs[recv] {
+							t.Errorf("%s declares %s.Validate(); CHECK constraints must not generate client-side validation", filepath.Base(path), recv)
+						}
+					}
+				}
+			}
+			for name := range inputs {
+				if !seenInputs[name] {
+					t.Errorf("generated package has no %s type; the check is vacuous", name)
+				}
+			}
+		})
+	}
+}
+
+func receiverTypeName(expr ast.Expr) string {
+	switch e := expr.(type) {
+	case *ast.StarExpr:
+		return receiverTypeName(e.X)
+	case *ast.Ident:
+		return e.Name
+	case *ast.IndexExpr:
+		return receiverTypeName(e.X)
+	}
+	return ""
 }

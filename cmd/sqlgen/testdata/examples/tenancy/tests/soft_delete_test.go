@@ -2,8 +2,11 @@ package tests
 
 import (
 	"context"
+	"errors"
+	"slices"
 	"testing"
 
+	"github.com/google/go-cmp/cmp"
 	"github.com/teandresmith/sqlgen/comparator"
 
 	models "github.com/teandresmith/sqlgen/cmd/sqlgen/testdata/examples/tenancy/models"
@@ -147,4 +150,176 @@ func TestSoftDelete_SkipTenancyAndIncludeDeletedAreOrthogonal(t *testing.T) {
 			t.Errorf("admin GetMany missing id %d (gotIDs=%v)", want, gotIDs)
 		}
 	}
+}
+
+// articleFixture is one live and one soft-deleted article per tenant, all
+// sharing a title so a *Where filter on it matches every row.
+type articleFixture struct {
+	envA, envB        *testEnv
+	aLive, aDeleted   *models.Article
+	bLive, bDeleted   *models.Article
+	sharedTitle       string
+	sharedTitleFilter *models.ArticleFilter
+}
+
+func newArticleFixture(t *testing.T) articleFixture {
+	t.Helper()
+	resetDB(t)
+	ctx := context.Background()
+	f := articleFixture{
+		envA:        newEnv(t, withResolver(staticResolver(tenantA))),
+		envB:        newEnv(t, withResolver(staticResolver(tenantB))),
+		sharedTitle: "shared",
+	}
+	f.sharedTitleFilter = &models.ArticleFilter{Title: &comparator.String{Eq: &f.sharedTitle}}
+	mk := func(env *testEnv, deleted bool) *models.Article {
+		t.Helper()
+		a, err := env.client.Articles().Create(ctx, &models.CreateArticleInput{Title: f.sharedTitle})
+		if err != nil {
+			t.Fatalf("create article: %v", err)
+		}
+		if deleted {
+			if _, err := env.client.Articles().SoftDelete(ctx, a.ID); err != nil {
+				t.Fatalf("soft-delete article: %v", err)
+			}
+		}
+		return a
+	}
+	f.aLive, f.aDeleted = mk(f.envA, false), mk(f.envA, true)
+	f.bLive, f.bDeleted = mk(f.envB, false), mk(f.envB, true)
+	return f
+}
+
+// isLive reports whether env's tenant still reads id as a live row.
+func isLive(t *testing.T, env *testEnv, id int64) bool {
+	t.Helper()
+	_, err := env.client.Articles().Get(context.Background(), id)
+	switch {
+	case err == nil:
+		return true
+	case errors.Is(err, models.ErrNotFound):
+		return false
+	default:
+		t.Fatalf("Get(%d): %v", id, err)
+		return false
+	}
+}
+
+// noRowReached reports whether a by-key SoftDelete or Restore result shows
+// that no row matched: both are idempotent and return nil, nil.
+func noRowReached(got *models.Article, err error) bool {
+	return got == nil && err == nil
+}
+
+func articleIDs(as []*models.Article) []int64 {
+	ids := make([]int64, 0, len(as))
+	for _, a := range as {
+		ids = append(ids, a.ID)
+	}
+	slices.Sort(ids)
+	return ids
+}
+
+// TestSoftDelete_TenantedGetANDsTenantAndSoftDeleteFilters pins the by-key
+// read on a tenanted soft-delete table: a row is visible only when it belongs
+// to the resolved tenant and is not soft-deleted.
+func TestSoftDelete_TenantedGetANDsTenantAndSoftDeleteFilters(t *testing.T) {
+	f := newArticleFixture(t)
+	ctx := context.Background()
+
+	t.Run("own live row is returned", func(t *testing.T) {
+		got, err := f.envA.client.Articles().Get(ctx, f.aLive.ID)
+		if err != nil {
+			t.Fatalf("Get own live row: %v", err)
+		}
+		if got.ID != f.aLive.ID {
+			t.Errorf("Get own live row: id = %d, want %d", got.ID, f.aLive.ID)
+		}
+	})
+	t.Run("own soft-deleted row is not found", func(t *testing.T) {
+		if _, err := f.envA.client.Articles().Get(ctx, f.aDeleted.ID); !errors.Is(err, models.ErrNotFound) {
+			t.Errorf("Get own soft-deleted row: err = %v, want models.ErrNotFound", err)
+		}
+	})
+	t.Run("another tenant's live row is not found", func(t *testing.T) {
+		if _, err := f.envA.client.Articles().Get(ctx, f.bLive.ID); !errors.Is(err, models.ErrNotFound) {
+			t.Errorf("Get other tenant's live row: err = %v, want models.ErrNotFound", err)
+		}
+	})
+}
+
+// TestSoftDelete_SoftDeleteAndRestoreAreTenantScoped pins that every
+// SoftDelete* and Restore* method takes the tenant filter: a key or filter
+// naming another tenant's row changes nothing, and the *Where forms AND the
+// tenant filter with their own soft-delete scoping. None of them takes a
+// tenant argument; the calls below pass only keys or a filter.
+func TestSoftDelete_SoftDeleteAndRestoreAreTenantScoped(t *testing.T) {
+	ctx := context.Background()
+
+	t.Run("SoftDelete of another tenant's row changes nothing", func(t *testing.T) {
+		f := newArticleFixture(t)
+		got, err := f.envB.client.Articles().SoftDelete(ctx, f.aLive.ID)
+		if !noRowReached(got, err) {
+			t.Errorf("SoftDelete as B of A's row = (%v, %v), want no row", got, err)
+		}
+		if !isLive(t, f.envA, f.aLive.ID) {
+			t.Error("A's row was soft-deleted by tenant B")
+		}
+	})
+	t.Run("SoftDeleteMany of another tenant's rows changes nothing", func(t *testing.T) {
+		f := newArticleFixture(t)
+		got, err := f.envB.client.Articles().SoftDeleteMany(ctx, []int64{f.aLive.ID})
+		if err != nil || len(got) != 0 {
+			t.Errorf("SoftDeleteMany as B of A's row = (%v, %v), want no rows", articleIDs(got), err)
+		}
+		if !isLive(t, f.envA, f.aLive.ID) {
+			t.Error("A's row was soft-deleted by tenant B")
+		}
+	})
+	t.Run("SoftDeleteWhere soft-deletes only the tenant's own live rows", func(t *testing.T) {
+		f := newArticleFixture(t)
+		got, err := f.envA.client.Articles().SoftDeleteWhere(ctx, f.sharedTitleFilter)
+		if err != nil {
+			t.Fatalf("SoftDeleteWhere as A: %v", err)
+		}
+		if diff := cmp.Diff([]int64{f.aLive.ID}, articleIDs(got)); diff != "" {
+			t.Errorf("SoftDeleteWhere as A affected rows (-want +got):\n%s", diff)
+		}
+		if !isLive(t, f.envB, f.bLive.ID) {
+			t.Error("B's live row was soft-deleted by tenant A")
+		}
+	})
+	t.Run("Restore of another tenant's row changes nothing", func(t *testing.T) {
+		f := newArticleFixture(t)
+		got, err := f.envB.client.Articles().Restore(ctx, f.aDeleted.ID)
+		if !noRowReached(got, err) {
+			t.Errorf("Restore as B of A's row = (%v, %v), want no row", got, err)
+		}
+		if isLive(t, f.envA, f.aDeleted.ID) {
+			t.Error("A's soft-deleted row was restored by tenant B")
+		}
+	})
+	t.Run("RestoreMany of another tenant's rows changes nothing", func(t *testing.T) {
+		f := newArticleFixture(t)
+		got, err := f.envB.client.Articles().RestoreMany(ctx, []int64{f.aDeleted.ID})
+		if err != nil || len(got) != 0 {
+			t.Errorf("RestoreMany as B of A's row = (%v, %v), want no rows", articleIDs(got), err)
+		}
+		if isLive(t, f.envA, f.aDeleted.ID) {
+			t.Error("A's soft-deleted row was restored by tenant B")
+		}
+	})
+	t.Run("RestoreWhere restores only the tenant's own soft-deleted rows", func(t *testing.T) {
+		f := newArticleFixture(t)
+		got, err := f.envA.client.Articles().RestoreWhere(ctx, f.sharedTitleFilter)
+		if err != nil {
+			t.Fatalf("RestoreWhere as A: %v", err)
+		}
+		if diff := cmp.Diff([]int64{f.aDeleted.ID}, articleIDs(got)); diff != "" {
+			t.Errorf("RestoreWhere as A affected rows (-want +got):\n%s", diff)
+		}
+		if isLive(t, f.envB, f.bDeleted.ID) {
+			t.Error("B's soft-deleted row was restored by tenant A")
+		}
+	})
 }

@@ -1244,31 +1244,20 @@ func detectPostgresPK(pk ColumnContext) config.PKStrategy {
 	}
 }
 
+// MySQL and SQLite have no uuid SQL type, so a UUID key is classified by its
+// storage type like any other column (PRD §8.6).
 func detectMySQLPK(pk ColumnContext) config.PKStrategy {
-	sqlType := strings.ToLower(pk.SQLType)
-	switch {
-	case pk.AutoIncrement:
+	if pk.AutoIncrement {
 		return config.PKStrategyDB
-	case isUUIDType(sqlType):
-		// MySQL + UUID always defaults to app — no way to retrieve DB-generated UUID.
-		return config.PKStrategyApp
-	default:
-		return config.PKStrategyCaller
 	}
+	return config.PKStrategyCaller
 }
 
 func detectSQLitePK(pk ColumnContext) config.PKStrategy {
-	sqlType := strings.ToLower(pk.SQLType)
-	switch {
-	case pk.AutoIncrement || (isIntegerType(sqlType) && pk.HasDefault):
+	if pk.AutoIncrement || (isIntegerType(strings.ToLower(pk.SQLType)) && pk.HasDefault) {
 		return config.PKStrategyDB
-	case isUUIDType(sqlType) && pk.HasDefault:
-		return config.PKStrategyDB
-	case isUUIDType(sqlType):
-		return config.PKStrategyApp
-	default:
-		return config.PKStrategyCaller
 	}
+	return config.PKStrategyCaller
 }
 
 func isUUIDType(sqlType string) bool {

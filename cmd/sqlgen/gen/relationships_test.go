@@ -741,3 +741,83 @@ func TestRelationships_O2OTargetScanAbsorbsJoinMiss(t *testing.T) {
 		}
 	}
 }
+
+// TestRelationships_PolymorphicChildGetsNoParentDispatch pins that the reverse
+// direction of a sub-categorized polymorphic edge is not generated (PRD
+// §13.7.2): `assets` declares three `filter:` edges into `documents`, and
+// `documents` gains no relationship back, so its client carries nothing that
+// materializes the per-row parent.
+func TestRelationships_PolymorphicChildGetsNoParentDispatch(t *testing.T) {
+	in := testInput(discriminatorSchema())
+	parser.DetectRelationships(in.Schema)
+	in.Config.Tables["assets"] = config.TableConfig{
+		Relationships: []config.TableRelationship{
+			{Name: "PrimaryDocument", Type: "one_to_one", Table: "documents", FK: "entity_id", Filter: "entity_type = 'asset.primary'"},
+			{Name: "Attachments", Type: "one_to_many", Table: "documents", FK: "entity_id", Filter: "entity_type = 'asset.attachment'"},
+			{Name: "Invoices", Type: "one_to_many", Table: "documents", FK: "entity_id", Filter: "entity_type = 'asset.invoice'"},
+		},
+	}
+	tables, err := gen.BuildTableContextsFromSchema(in.Schema, in.Config)
+	if err != nil {
+		t.Fatalf("BuildTableContextsFromSchema() = %v, want nil", err)
+	}
+
+	byName := make(map[string]gen.TableContext, len(tables))
+	for _, tc := range tables {
+		byName[tc.TableName] = tc
+	}
+	// Control: the forward edges exist, so the child's empty set is the rule's
+	// doing rather than a fixture that generated no relationship at all.
+	if n := len(byName["assets"].Relationships); n != 3 {
+		t.Fatalf("assets carries %d relationships, want the 3 declared forward edges", n)
+	}
+	documents := byName["documents"]
+	for _, rel := range documents.Relationships {
+		t.Errorf("documents carries relationship %s → %s; the reverse of a polymorphic edge is not generated", rel.FieldName, rel.TargetTable)
+	}
+	if documents.HasO2ORelationships || documents.HasO2MRelationships {
+		t.Errorf("documents HasO2ORelationships=%v HasO2MRelationships=%v, want neither", documents.HasO2ORelationships, documents.HasO2MRelationships)
+	}
+}
+
+// TestGenerate_O2MIntoCompositePKTable_LoaderFiltersOnFK loads a one-to-many
+// relationship whose target has a composite key: the parent's loader batches
+// the child fetch through the target's filter, keyed on the FK column with
+// every loaded parent key in one IN list.
+func TestGenerate_O2MIntoCompositePKTable_LoaderFiltersOnFK(t *testing.T) {
+	schema := parseDDLForTest(t, config.DialectPostgres, `
+		CREATE TABLE orders (
+			id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+			placed_at timestamptz NOT NULL
+		);
+		CREATE TABLE order_items (
+			order_id uuid NOT NULL REFERENCES orders(id),
+			line_number integer NOT NULL,
+			quantity integer NOT NULL,
+			PRIMARY KEY (order_id, line_number)
+		);
+	`)
+	detectRelationships(schema)
+
+	outDir := t.TempDir()
+	cfg := loadGenerateConfig(t, outDir, config.DialectPostgres, "")
+	if _, err := gen.Generate(schema, cfg, "test"); err != nil {
+		t.Fatalf("Generate() error: %v", err)
+	}
+
+	src := readGenFile(t, outDir, "models_gen.go")
+	if !strings.Contains(src, "type OrderItemPK struct") {
+		t.Fatalf("models_gen.go has no OrderItemPK; the fixture's target is not a composite-key table")
+	}
+	body := extractTopLevelFunc(t, src, "func (c *orderClient) loadRelationships(")
+	for _, want := range []string{
+		"filter := &OrderItemFilter{",
+		"OrderID: &comparator.ID{In: orderIDs}",
+		"c.orderItemClient.GetMany(ctx, &GetOrderItemsInput{",
+		"Filter: filter,",
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("orders loadRelationships missing %q\nfull method:\n%s", want, body)
+		}
+	}
+}

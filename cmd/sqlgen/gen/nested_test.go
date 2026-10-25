@@ -1,9 +1,11 @@
 package gen_test
 
 import (
+	"go/ast"
 	goparser "go/parser"
 	"go/token"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"text/template"
@@ -2317,4 +2319,229 @@ func TestNestedEligibility_HasOneUnscopableCreateIsReported(t *testing.T) {
 		_, err := build(t, true, true, []string{"connect"})
 		wantBindingRefusal(t, err)
 	})
+}
+
+// nestedWithExtraEdge builds the fixture plus extra tables and one extra
+// declared edge on `users`, listing that edge in the allowlist when listed is
+// set. Auto-included, it returns the full pipeline's `users` context; listed,
+// it returns the lint's error, the entry point `sqlgen validate` calls.
+func nestedWithExtraEdge(
+	t *testing.T,
+	tables []parser.Table,
+	rel config.TableRelationship,
+	listed bool,
+) (gen.TableContext, error) {
+	t.Helper()
+	schema := nestedSchema()
+	schema.Tables = append(schema.Tables, tables...)
+	input := testInput(schema)
+	cfg := input.Config
+	cfg.Generation.NestedMutations = &config.NestedMutationsConfig{Enabled: new(true)}
+	tc := config.TableConfig{Relationships: append(nestedUserRelationships(), rel)}
+	if listed {
+		tc.NestedMutations = &config.TableNestedMutationsConfig{
+			Relationships: []config.TableNestedRelationship{{Name: rel.Name}},
+		}
+	}
+	cfg.Tables["users"] = tc
+	if listed {
+		contexts, err := gen.BuildTableContexts(input, nil)
+		if err != nil {
+			t.Fatalf("BuildTableContexts() error: %v", err)
+		}
+		return gen.TableContext{}, gen.ValidateNestedWriteEligibility(contexts, cfg, input.Resolver)
+	}
+	contexts, err := gen.BuildTableContextsFromSchema(input.Schema, cfg)
+	if err != nil {
+		t.Fatalf("BuildTableContextsFromSchema() error: %v", err)
+	}
+	for _, c := range contexts {
+		if c.TableName == "users" {
+			return c, nil
+		}
+	}
+	t.Fatal("no users context")
+	return gen.TableContext{}, nil
+}
+
+// TestNestedEligibility_TargetShapeFailuresAreNotWriteEligible pins the target
+// half of E1 (PRD §9.9.4): the parent's key flows down only into a generated
+// target with a single-column primary key, through a traversed FK the target's
+// create input carries. Each case is a down-flowing O2M otherwise like Events,
+// so the edge's absence is the target's doing. Auto-included, the edge is
+// silently omitted while the rest of `users` keeps its surface; listed by name,
+// it is reported with the reason.
+func TestNestedEligibility_TargetShapeFailuresAreNotWriteEligible(t *testing.T) {
+	tests := []struct {
+		name   string
+		table  parser.Table
+		reason string
+	}{
+		{
+			name: "composite-PK target",
+			table: parser.Table{
+				Name: "slots", Schema: "public",
+				Columns: []parser.Column{
+					{Name: "code", Type: "text", PrimaryKey: true},
+					{Name: "seq", Type: "integer", PrimaryKey: true},
+					{Name: "user_id", Type: "uuid", Nullable: true},
+				},
+			},
+			reason: "the target has a composite primary key",
+		},
+		{
+			name: "generated FK column on the target",
+			table: parser.Table{
+				Name: "slots", Schema: "public",
+				Columns: []parser.Column{
+					{Name: "id", Type: "uuid", PrimaryKey: true},
+					{Name: "owner_id", Type: "uuid", Nullable: true},
+					{Name: "user_id", Type: "uuid", Nullable: true, GeneratedExpr: "owner_id", GeneratedStorage: "STORED"},
+				},
+			},
+			reason: `the traversed FK column "user_id" is absent from the target's create input`,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			rel := config.TableRelationship{Name: "Slots", Type: "one_to_many", Table: "slots", FK: "user_id"}
+			tables := []parser.Table{tt.table}
+
+			users, err := nestedWithExtraEdge(t, tables, rel, false)
+			if err != nil {
+				t.Fatalf("auto-included: error = %v, want nil", err)
+			}
+			names := nestedEdgeNames(users)
+			if slices.Contains(names, "Slots") {
+				t.Errorf("auto-included: Slots is write-eligible (edges: %v)", names)
+			}
+			if !slices.Contains(names, "Events") {
+				t.Errorf("auto-included: edges = %v, want the rest of users' surface kept", names)
+			}
+
+			_, err = nestedWithExtraEdge(t, tables, rel, true)
+			if err == nil {
+				t.Fatal("listed: ValidateNestedWriteEligibility() = nil, want Slots reported")
+			}
+			for _, want := range []string{`"Slots"`, tt.reason, "§9.9.4"} {
+				if !strings.Contains(err.Error(), want) {
+					t.Errorf("listed: error %q does not mention %q", err, want)
+				}
+			}
+		})
+	}
+}
+
+// TestNestedEligibility_M2MIntoOpaqueKeyedTargetIsRefused pins the M2M half of
+// E8 (PRD §9.9.4): the link step dedupes `created ∪ connected` on the target
+// key, so an M2M edge into a `bytea`-keyed target is not write-eligible at all,
+// rather than merely short of `connect` the way the O2M Blobs edge is. The
+// refusal is a generator limitation, so a listed edge reports it.
+func TestNestedEligibility_M2MIntoOpaqueKeyedTargetIsRefused(t *testing.T) {
+	junction := parser.Table{
+		Name: "user_blobs", Schema: "public",
+		Columns: []parser.Column{
+			{Name: "user_id", Type: "uuid", PrimaryKey: true},
+			{Name: "blob_id", Type: "bytea", PrimaryKey: true},
+		},
+	}
+	rel := config.TableRelationship{
+		Name: "LinkedBlobs", Type: "many_to_many", Table: "blobs",
+		Junction: "user_blobs", JunctionLocalFK: "user_id", JunctionReferenceFK: "blob_id",
+	}
+
+	users, err := nestedWithExtraEdge(t, []parser.Table{junction}, rel, false)
+	if err != nil {
+		t.Fatalf("auto-included: error = %v, want nil", err)
+	}
+	names := nestedEdgeNames(users)
+	if slices.Contains(names, "LinkedBlobs") {
+		t.Errorf("auto-included: LinkedBlobs is write-eligible (edges: %v)", names)
+	}
+	if !slices.Contains(names, "Categories") {
+		t.Errorf("auto-included: edges = %v, want the M2M Categories control kept", names)
+	}
+
+	_, err = nestedWithExtraEdge(t, []parser.Table{junction}, rel, true)
+	if err == nil {
+		t.Fatal("listed: ValidateNestedWriteEligibility() = nil, want LinkedBlobs reported")
+	}
+	for _, want := range []string{`relationship "LinkedBlobs" is not write-eligible`, "[]byte", "§9.9.4"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("listed: error %q does not mention %q", err, want)
+		}
+	}
+}
+
+// TestNestedTemplate_WrappersFireNoHookOfTheirOwn pins how nested mutations
+// reach hooks and events: no emitted nested function builds a
+// hook.MutationContext, names a hook.Op, or dispatches through
+// executeMutation, so the wrapper itself fires nothing. Each wrapper writes
+// through the flat method it composes and each edge through the target's
+// client, and those inner calls run their own hook chains.
+func TestNestedTemplate_WrappersFireNoHookOfTheirOwn(t *testing.T) {
+	users := buildNestedContexts(t, nil)["users"]
+	out := renderNested(t, users)
+	file, err := goparser.ParseFile(token.NewFileSet(), "x.go", gen.WrapWithPreamble(users.Package, users.Imports, []byte(out)), 0)
+	if err != nil {
+		t.Fatalf("parsing nested output: %v", err)
+	}
+
+	wrapperInner := map[string]string{
+		"CreateWithRelated": "Create",
+		"UpdateWithRelated": "Update",
+		"UpsertWithRelated": "Upsert",
+	}
+	seenWrappers := map[string]bool{}
+	innerClientWrites := map[string]bool{}
+	for _, decl := range file.Decls {
+		fn, ok := decl.(*ast.FuncDecl)
+		if !ok {
+			continue
+		}
+		selfCalls := map[string]bool{}
+		ast.Inspect(fn, func(n ast.Node) bool {
+			switch x := n.(type) {
+			case *ast.SelectorExpr:
+				if id, ok := x.X.(*ast.Ident); ok && id.Name == "hook" {
+					t.Errorf("%s references hook.%s; a nested wrapper must not dispatch a hook of its own", fn.Name.Name, x.Sel.Name)
+				}
+				if x.Sel.Name == "executeMutation" {
+					t.Errorf("%s calls executeMutation; a nested wrapper must not run the mutation hook chain itself", fn.Name.Name)
+				}
+			case *ast.CallExpr:
+				sel, ok := x.Fun.(*ast.SelectorExpr)
+				if !ok {
+					return true
+				}
+				switch recv := sel.X.(type) {
+				case *ast.Ident: // c.Create(...)
+					if recv.Name == "c" {
+						selfCalls[sel.Sel.Name] = true
+					}
+				case *ast.SelectorExpr: // c.<x>Client.CreateMany(...)
+					if id, ok := recv.X.(*ast.Ident); ok && id.Name == "c" && strings.HasSuffix(recv.Sel.Name, "Client") {
+						innerClientWrites[sel.Sel.Name] = true
+					}
+				}
+			}
+			return true
+		})
+		if inner, ok := wrapperInner[fn.Name.Name]; ok && fn.Recv != nil {
+			seenWrappers[fn.Name.Name] = true
+			if !selfCalls[inner] {
+				t.Errorf("%s does not write its parent through c.%s, the flat method that carries the hook op", fn.Name.Name, inner)
+			}
+		}
+	}
+	for _, name := range []string{"CreateWithRelated", "UpdateWithRelated", "UpsertWithRelated"} {
+		if !seenWrappers[name] {
+			t.Errorf("fixture emitted no %s; the check is vacuous", name)
+		}
+	}
+	for _, write := range []string{"Create", "CreateMany", "UpdateWhere", "UpsertMany", "HardDeleteMany"} {
+		if !innerClientWrites[write] {
+			t.Errorf("no nested edge writes through a target client's %s; inner writes must go through the client methods that fire their own hooks", write)
+		}
+	}
 }

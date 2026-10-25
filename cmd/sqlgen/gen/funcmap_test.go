@@ -2,8 +2,11 @@ package gen_test
 
 import (
 	"fmt"
+	"reflect"
+	"slices"
 	"testing"
 
+	"github.com/google/go-cmp/cmp"
 	"github.com/teandresmith/sqlgen/cmd/sqlgen/config"
 	"github.com/teandresmith/sqlgen/cmd/sqlgen/gen"
 	"github.com/teandresmith/sqlgen/cmd/sqlgen/gotype"
@@ -502,5 +505,191 @@ func TestFuncFKLoadKey_UserDeclaredWrapper(t *testing.T) {
 	gotKey := gen.FKLoadKeyForTest(r, "myapp.NullableString", "r.Slug")
 	if gotKey != "fmt.Sprint(r.Slug.Value)" {
 		t.Errorf("key = %q, want %q", gotKey, "fmt.Sprint(r.Slug.Value)")
+	}
+}
+
+// TestFuncMap_FunctionsArePureAndDeterministic calls every registered
+// template function through reflection with generated arguments. A pure
+// function returns the same result for the same arguments, leaves its
+// arguments as it found them, and returns the same result whatever else
+// ran in between (another dialect's function map, other functions).
+func TestFuncMap_FunctionsArePureAndDeterministic(t *testing.T) {
+	dialects := []sql.Dialect{sql.NewPostgresDialect(), sql.NewMySQLDialect(), sql.NewSQLiteDialect()}
+	fills := []struct {
+		name  string
+		empty bool
+	}{
+		{name: "zero arguments", empty: true},
+		{name: "populated arguments", empty: false},
+	}
+
+	t.Run("the same arguments give the same result", func(t *testing.T) {
+		for _, d := range dialects {
+			fm := gen.FuncMap(d)
+			for _, name := range sortedFuncNames(fm) {
+				for _, f := range fills {
+					first := callTemplateFunc(fm[name], newFuncArgs(fm[name], f.empty))
+					second := callTemplateFunc(fm[name], newFuncArgs(fm[name], f.empty))
+					if diff := cmp.Diff(first, second, cmp.Exporter(func(reflect.Type) bool { return true })); diff != "" {
+						t.Errorf("%s dialect: %s(%s) differs between two calls (-first +second):\n%s", d.Name(), name, f.name, diff)
+					}
+				}
+			}
+		}
+	})
+
+	t.Run("arguments are not modified", func(t *testing.T) {
+		for _, d := range dialects {
+			fm := gen.FuncMap(d)
+			for _, name := range sortedFuncNames(fm) {
+				for _, f := range fills {
+					args := newFuncArgs(fm[name], f.empty)
+					callTemplateFunc(fm[name], args)
+					want := newFuncArgs(fm[name], f.empty)
+					if diff := cmp.Diff(valuesToAny(want), valuesToAny(args), cmp.Exporter(func(reflect.Type) bool { return true })); diff != "" {
+						t.Errorf("%s dialect: %s(%s) modified its arguments (-before +after):\n%s", d.Name(), name, f.name, diff)
+					}
+				}
+			}
+		}
+	})
+
+	t.Run("results do not depend on other function maps or earlier calls", func(t *testing.T) {
+		for i, d := range dialects {
+			fm := gen.FuncMap(d)
+			before := map[string][]any{}
+			for _, name := range sortedFuncNames(fm) {
+				before[name] = callTemplateFunc(fm[name], newFuncArgs(fm[name], false))
+			}
+
+			// Build and exercise every other dialect's map, then a fresh map
+			// for this dialect, and call this dialect's functions again in
+			// reverse order.
+			for j, other := range dialects {
+				if j == i {
+					continue
+				}
+				ofm := gen.FuncMap(other)
+				for _, name := range sortedFuncNames(ofm) {
+					callTemplateFunc(ofm[name], newFuncArgs(ofm[name], false))
+				}
+			}
+			again := gen.FuncMap(d)
+			names := sortedFuncNames(again)
+			slices.Reverse(names)
+			for _, name := range names {
+				after := callTemplateFunc(again[name], newFuncArgs(again[name], false))
+				if diff := cmp.Diff(before[name], after, cmp.Exporter(func(reflect.Type) bool { return true })); diff != "" {
+					t.Errorf("%s dialect: %s result changed after other function maps ran (-before +after):\n%s", d.Name(), name, diff)
+				}
+			}
+		}
+	})
+}
+
+func sortedFuncNames(fm map[string]any) []string {
+	names := make([]string, 0, len(fm))
+	for name := range fm {
+		names = append(names, name)
+	}
+	slices.Sort(names)
+	return names
+}
+
+// callTemplateFunc calls fn with args and returns its results. A panic is
+// returned as a result, so a function that panics must panic the same way
+// every time.
+func callTemplateFunc(fn any, args []reflect.Value) (results []any) {
+	defer func() {
+		if r := recover(); r != nil {
+			results = []any{fmt.Sprintf("panic: %v", r)}
+		}
+	}()
+	v := reflect.ValueOf(fn)
+	if v.Type().IsVariadic() {
+		return valuesToAny(v.CallSlice(args))
+	}
+	return valuesToAny(v.Call(args))
+}
+
+func valuesToAny(vs []reflect.Value) []any {
+	out := make([]any, len(vs))
+	for i, v := range vs {
+		out[i] = v.Interface()
+	}
+	return out
+}
+
+// newFuncArgs builds a fresh, deterministic argument list for fn. empty
+// gives every parameter its zero value; otherwise strings, numbers, bools,
+// slices, maps, pointers and nested struct fields are populated.
+func newFuncArgs(fn any, empty bool) []reflect.Value {
+	ft := reflect.TypeOf(fn)
+	f := &argFiller{}
+	args := make([]reflect.Value, ft.NumIn())
+	for i := range args {
+		v := reflect.New(ft.In(i)).Elem()
+		if !empty {
+			f.fill(v, 0)
+		}
+		args[i] = v
+	}
+	return args
+}
+
+type argFiller struct{ n int }
+
+// fillerStrings is in descending order, so a populated []string arrives
+// unsorted and a function that sorts its argument in place is caught.
+var fillerStrings = []string{"uuid.UUID", "user_id", "string", "sql.NullString", "posts", "int32", "*int64"}
+
+func (f *argFiller) next() int {
+	f.n++
+	return f.n
+}
+
+func (f *argFiller) fill(v reflect.Value, depth int) {
+	if depth > 4 || !v.CanSet() {
+		return
+	}
+	switch v.Kind() {
+	case reflect.String:
+		v.SetString(fillerStrings[f.next()%len(fillerStrings)])
+	case reflect.Bool:
+		v.SetBool(f.next()%2 == 0)
+	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
+		v.SetInt(int64(f.next()%3 + 1))
+	case reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64:
+		v.SetUint([]uint64{1, 2, 3}[f.next()%3])
+	case reflect.Float32, reflect.Float64:
+		v.SetFloat(float64(f.next()))
+	case reflect.Pointer:
+		p := reflect.New(v.Type().Elem())
+		f.fill(p.Elem(), depth+1)
+		v.Set(p)
+	case reflect.Slice:
+		s := reflect.MakeSlice(v.Type(), 2, 2)
+		for i := range 2 {
+			f.fill(s.Index(i), depth+1)
+		}
+		v.Set(s)
+	case reflect.Map:
+		m := reflect.MakeMap(v.Type())
+		k := reflect.New(v.Type().Key()).Elem()
+		e := reflect.New(v.Type().Elem()).Elem()
+		f.fill(k, depth+1)
+		f.fill(e, depth+1)
+		m.SetMapIndex(k, e)
+		v.Set(m)
+	case reflect.Struct:
+		for i := range v.NumField() {
+			f.fill(v.Field(i), depth+1)
+		}
+	case reflect.Interface:
+		if v.NumMethod() == 0 {
+			v.Set(reflect.ValueOf(fillerStrings[f.next()%len(fillerStrings)]))
+		}
+	default:
+		// No registered function takes these kinds; they keep their zero value.
 	}
 }

@@ -304,3 +304,76 @@ func TestGraphQLWalker_AccessProjection(t *testing.T) {
 		}
 	}
 }
+
+// Restricting an FK column hides the raw id while the relationship stays:
+// with `company_id` hidden, `type User` exposes the `companies { }` relationship
+// and no `companyID`, and the walker keeps the relationship case.
+func TestGraphQLSchema_HiddenFKKeepsRelationship(t *testing.T) {
+	build := func(t *testing.T, fkRole string) gen.APITableContext {
+		t.Helper()
+		schema := &parser.Schema{Tables: []parser.Table{
+			{
+				Name: "users",
+				Columns: []parser.Column{
+					{Name: "id", Type: "uuid", PrimaryKey: true},
+					{Name: "email", Type: "text"},
+					{
+						Name: "company_id", Type: "uuid", Nullable: true, Unique: true,
+						FKReference: &parser.FKReference{Table: "companies", Column: "id"},
+					},
+				},
+			},
+			{
+				Name: "companies",
+				Columns: []parser.Column{
+					{Name: "id", Type: "uuid", PrimaryKey: true},
+					{Name: "name", Type: "text"},
+				},
+			},
+		}}
+		in := apiTestInput(t, schema)
+		detectRelationships(in.Schema)
+		in.Config.Tables["users"] = config.TableConfig{
+			ColumnMap: map[string]config.ColumnOverride{"company_id": {Access: fkRole}},
+		}
+		tables, views, err := gen.BuildEntityContextsFromSchema(in.Schema, in.Config)
+		if err != nil {
+			t.Fatalf("BuildEntityContextsFromSchema: %v", err)
+		}
+		apiCtx, err := gen.BuildAPIContext(tables, views, nil, nil, in.Config)
+		if err != nil {
+			t.Fatalf("BuildAPIContext: %v", err)
+		}
+		return apiTableByName(t, apiCtx, "User")
+	}
+
+	if user := block(t, renderAPITableSchema(t, build(t, config.AccessPublic)), "type User"); !strings.Contains(user, "companyID:") || !strings.Contains(user, "companies: Company") {
+		t.Fatalf("control: public FK type User lacks companyID or companies:\n%s", user)
+	}
+
+	at := build(t, config.AccessHidden)
+	user := block(t, renderAPITableSchema(t, at), "type User")
+	if strings.Contains(user, "companyID") {
+		t.Errorf("type User exposes the hidden FK column:\n%s", user)
+	}
+	if !strings.Contains(user, "companies: Company") {
+		t.Errorf("type User lost the relationship object along with its hidden FK:\n%s", user)
+	}
+
+	tmpl := loadAPISchemaTemplate(t)
+	var buf strings.Builder
+	ctx := struct {
+		ModelsPackage string
+		Tables        []gen.APITableContext
+	}{ModelsPackage: "models", Tables: []gen.APITableContext{at}}
+	if err := tmpl.ExecuteTemplate(&buf, "api/field-options", ctx); err != nil {
+		t.Fatalf("rendering api/field-options: %v", err)
+	}
+	walker := buf.String()
+	if !strings.Contains(walker, `case "companies":`) {
+		t.Errorf("walker lost the relationship case for companies\n%s", walker)
+	}
+	if strings.Contains(walker, `case "companyID":`) {
+		t.Errorf("walker has a case for the hidden FK column\n%s", walker)
+	}
+}

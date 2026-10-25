@@ -1,6 +1,8 @@
 package gen_test
 
 import (
+	"os"
+	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
@@ -182,6 +184,95 @@ func TestBuildTableContexts_NoPK_SkippedFromGeneration(t *testing.T) {
 	}
 	if contexts[0].TableName != "users" {
 		t.Errorf("remaining table = %q, want %q (counters should be skipped)", contexts[0].TableName, "users")
+	}
+}
+
+// loadGenerateConfig loads a full generate config for dialect through
+// config.LoadConfig, so every default the CLI would apply is in place. extra
+// is appended verbatim as further top-level YAML.
+func loadGenerateConfig(t *testing.T, outDir string, dialect config.Dialect, extra string) *config.RootConfig {
+	t.Helper()
+	driver := "stdlib"
+	if dialect == config.DialectPostgres {
+		driver = "pgx"
+	}
+	body := `version: v1
+input:
+  dialect: ` + string(dialect) + `
+  paths:
+    - ./schema.sql
+output:
+  driver: ` + driver + `
+  dir: ` + outDir + `
+  package: db
+  layout: single_file
+` + extra
+	cfgPath := filepath.Join(t.TempDir(), "sqlgen.yml")
+	if err := os.WriteFile(cfgPath, []byte(body), 0o600); err != nil {
+		t.Fatalf("writing config: %v", err)
+	}
+	cfg, err := config.LoadConfig(cfgPath)
+	if err != nil {
+		t.Fatalf("LoadConfig: %v", err)
+	}
+	return cfg
+}
+
+// TestGenerate_NoPKTable_NoCacheEntryOrEventHook renders a whole package with
+// caching and events on and checks that a PK-less table reaches neither the
+// cache file nor the event-hooks file, while the keyed table beside it does.
+func TestGenerate_NoPKTable_NoCacheEntryOrEventHook(t *testing.T) {
+	schema := &parser.Schema{
+		Tables: []parser.Table{
+			{
+				Name:   "ledgers",
+				Schema: "public",
+				Columns: []parser.Column{
+					{Name: "name", Type: "text"},
+					{Name: "count", Type: "bigint"},
+				},
+			},
+			{
+				Name:   "users",
+				Schema: "public",
+				Columns: []parser.Column{
+					{Name: "id", Type: "bigint", PrimaryKey: true, AutoIncrement: true},
+					{Name: "email", Type: "text"},
+				},
+			},
+		},
+	}
+	outDir := t.TempDir()
+	cfg := loadGenerateConfig(t, outDir, config.DialectPostgres, `cache:
+  enabled: true
+  ttl: "1h"
+  serializer: json
+  key_prefix: sqlgen
+events:
+  enabled: true
+`)
+
+	if _, err := gen.Generate(schema, cfg, "test"); err != nil {
+		t.Fatalf("Generate() error: %v", err)
+	}
+
+	for _, tt := range []struct {
+		name string
+		file string
+	}{
+		{name: "no cache entry is emitted for the PK-less table", file: "cache_gen.go"},
+		{name: "no event hook is emitted for the PK-less table", file: "event_hooks_gen.go"},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			file := tt.file
+			body := readGenFile(t, outDir, file)
+			if !strings.Contains(body, "TableUsers") {
+				t.Fatalf("%s does not name the keyed users table; fixture is not exercising the file", file)
+			}
+			if lower := strings.ToLower(body); strings.Contains(lower, "ledger") {
+				t.Errorf("%s names the PK-less ledgers table; want it absent", file)
+			}
+		})
 	}
 }
 

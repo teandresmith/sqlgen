@@ -2,6 +2,7 @@ package gen_test
 
 import (
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"text/template"
@@ -914,5 +915,90 @@ func TestCacheTemplate_tenantedWhereOpsStayPerRow(t *testing.T) {
 	// key.
 	if !strings.Contains(out, "_ = c.invalidatePattern(ctx, table, cache.BuildTablePattern(c.prefix, schema, name))") {
 		t.Error("tenant capture-gap fallback does not build its pattern from the bare SQL name")
+	}
+}
+
+// accessCacheTables builds the mixed-role users fixture with caching on. With
+// roles false every column keeps the default `public` role.
+func accessCacheTables(t *testing.T, roles bool) ([]gen.TableContext, *config.RootConfig) {
+	t.Helper()
+	in := apiTestInput(t, accessAPISchema())
+	in.Config.Cache = cacheTestConfig(true).Cache
+	if roles {
+		in.Config.Tables["users"] = config.TableConfig{
+			ColumnMap: map[string]config.ColumnOverride{
+				"email":          {Access: config.AccessPublic},
+				"created_at":     {Access: config.AccessReadOnly},
+				"new_password":   {Access: config.AccessWriteOnly},
+				"internal_score": {Access: config.AccessHidden},
+				"password_hash":  {Access: config.AccessInternal},
+			},
+		}
+	}
+	tables, err := gen.BuildTableContexts(in, nil)
+	if err != nil {
+		t.Fatalf("BuildTableContexts: %v", err)
+	}
+	return tables, in.Config
+}
+
+// The cache stores the canonical Go entity, so `access` never redacts it: a
+// column of every role is part of the cached entity — the full field set
+// hydration fetches before caching, under the entity's unaltered json tag the
+// serializer marshals it by — and the cache layer carries no redaction step.
+func TestCacheTemplate_storesEveryAccessRoleUnredacted(t *testing.T) {
+	tables, cfg := accessCacheTables(t, true)
+	baseline, _ := accessCacheTables(t, false)
+
+	ctx := gen.BuildCacheContext(tables, nil, cfg, "db", "Client")
+	if ctx == nil || len(ctx.CachedTables) != 1 {
+		t.Fatalf("BuildCacheContext cached tables = %v, want exactly users", ctx)
+	}
+	cached := ctx.CachedTables[0]
+	out := executeCacheTemplate(t, ctx)
+	fullOptions := extractTopLevelFunc(t, out, "func fullParentFieldOptionsUser() *UserFieldOptions {")
+
+	columnNamed := func(tcs []gen.TableContext, name string) gen.ColumnContext {
+		t.Helper()
+		for _, c := range tcs[0].Columns {
+			if c.Name == name {
+				return c
+			}
+		}
+		t.Fatalf("users has no column %q", name)
+		return gen.ColumnContext{}
+	}
+
+	tests := []struct {
+		name   string
+		column string
+		role   string
+	}{
+		{name: "public column", column: "email", role: config.AccessPublic},
+		{name: "read_only column", column: "created_at", role: config.AccessReadOnly},
+		{name: "write_only column unredacted", column: "new_password", role: config.AccessWriteOnly},
+		{name: "hidden column", column: "internal_score", role: config.AccessHidden},
+		{name: "internal column unredacted", column: "password_hash", role: config.AccessInternal},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			col := columnNamed(tables, tt.column)
+			if col.Access != tt.role {
+				t.Fatalf("control: %s access = %q, want %q", tt.column, col.Access, tt.role)
+			}
+			if !slices.Contains(cached.ColumnFieldNames, col.FieldName) {
+				t.Errorf("cached entity field set %v is missing %s", cached.ColumnFieldNames, col.FieldName)
+			}
+			if !strings.Contains(fullOptions, col.FieldName+": true,") {
+				t.Errorf("hydration field options do not select %s:\n%s", col.FieldName, fullOptions)
+			}
+			if want := columnNamed(baseline, tt.column).JSONTag; col.JSONTag != want || col.JSONTag == "-" {
+				t.Errorf("%s json tag = %q, want the unaltered %q the cache serializer marshals", tt.column, col.JSONTag, want)
+			}
+		})
+	}
+
+	if !strings.Contains(out, "cache.GetAs[*User](") {
+		t.Errorf("cache read path does not decode the full *User entity\n%s", out)
 	}
 }

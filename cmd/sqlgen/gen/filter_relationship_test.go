@@ -512,3 +512,106 @@ func TestRelationshipFilters_UntenantedFilterOmitsGate(t *testing.T) {
 		}
 	}
 }
+
+// relFilterTablesOn is relFilterTables on a given dialect, with mutate applied
+// to the config before the build.
+func relFilterTablesOn(t *testing.T, dialect config.Dialect, mutate func(*config.RootConfig)) map[string]gen.TableContext {
+	t.Helper()
+	in := testInput(relFilterSchema())
+	in.Config.Input.Dialect = dialect
+	if dialect != config.DialectPostgres {
+		in.Config.Output.Driver = "stdlib"
+	}
+	detectRelationships(in.Schema)
+	if mutate != nil {
+		mutate(in.Config)
+	}
+	tables, err := gen.BuildTableContextsFromSchema(in.Schema, in.Config)
+	if err != nil {
+		t.Fatalf("BuildTableContextsFromSchema(%s): %v", dialect, err)
+	}
+	byName := make(map[string]gen.TableContext, len(tables))
+	for _, tc := range tables {
+		byName[tc.TableName] = tc
+	}
+	return byName
+}
+
+// TestFilterTemplate_SubqueryStructureIsDialectIndependent pins that the
+// relationship-filter subquery has one structure on every dialect (PRD §11.1).
+// The emitted compiler for each shape, O2M and M2M, is the same text on all
+// three; identifiers go through dialect.QuoteIdentifier / FormatTable and
+// values through the placeholder token, which is where the runtime dialect
+// alone supplies the quoting and placeholder style.
+func TestFilterTemplate_SubqueryStructureIsDialectIndependent(t *testing.T) {
+	render := func(dialect config.Dialect) string {
+		return renderRelFilter(t, relFilterTablesOn(t, dialect, nil)["users"])
+	}
+	pg := render(config.DialectPostgres)
+	others := map[config.Dialect]string{
+		config.DialectMySQL:  render(config.DialectMySQL),
+		config.DialectSQLite: render(config.DialectSQLite),
+	}
+	for _, fn := range []string{"userOrdersFilterExists", "userCategoriesFilterExists", "userNotesFilterExists"} {
+		want := nestedExcerpt(pg, fn)
+		if want == pg {
+			t.Fatalf("postgres output declares no %s, so the comparison below is vacuous", fn)
+		}
+		for dialect, out := range others {
+			if diff := cmp.Diff(want, nestedExcerpt(out, fn)); diff != "" {
+				t.Errorf("%s on %s differs from postgres (-postgres +%s):\n%s", fn, dialect, dialect, diff)
+			}
+		}
+	}
+}
+
+// TestFilterTemplate_NilRelationshipMemberContributesNoSQL pins that an unset
+// relationship member compiles to nothing (PRD §11.1): every member's EXISTS
+// is appended only under its own nil guard, and nowhere else.
+func TestFilterTemplate_NilRelationshipMemberContributesNoSQL(t *testing.T) {
+	tables := relFilterTables(t, "")
+	got := renderRelFilter(t, tables["users"])
+	toConditions := nestedExcerpt(got, "ToConditions")
+
+	for _, member := range []string{"Categories", "Notes", "Orders"} {
+		call := "user" + member + "FilterExists(f." + member
+		guarded := "if f." + member + " != nil {\n\t\tconds = append(conds, " + call
+		if !strings.Contains(toConditions, guarded) {
+			t.Errorf("ToConditions does not guard the %s member on nil; want %q in\n%s", member, guarded, toConditions)
+		}
+		if n := strings.Count(got, call); n != 1 {
+			t.Errorf("%s is called %d times, want once, under its nil guard\n---\n%s", call, n, got)
+		}
+	}
+}
+
+// TestRelationshipFilters_ColumnComparatorKeepsItsFieldName pins the collision
+// rule (PRD §11.1): a list relationship whose Go field name a column comparator
+// already takes gets no relationship member, and the column's comparator stays.
+func TestRelationshipFilters_ColumnComparatorKeepsItsFieldName(t *testing.T) {
+	tables := relFilterTablesOn(t, config.DialectPostgres, func(cfg *config.RootConfig) {
+		cfg.Tables["users"] = config.TableConfig{
+			Relationships: []config.TableRelationship{
+				{Name: "Email", Type: "one_to_many", Table: "orders", FK: "user_id"},
+			},
+		}
+	})
+	users := tables["users"]
+
+	if slices.Contains(relFilterNames(users.RelationshipFilters), "Email") {
+		t.Errorf("users relationship filters = %v, want no Email member; the email column owns the name", relFilterNames(users.RelationshipFilters))
+	}
+	// The detected O2M edges are the control: the declared edge's absence is
+	// the collision's doing, not a fixture with no members at all.
+	if !slices.Contains(relFilterNames(users.RelationshipFilters), "Orders") {
+		t.Fatalf("users relationship filters = %v, want the Orders control", relFilterNames(users.RelationshipFilters))
+	}
+
+	got := renderRelFilter(t, users)
+	if !strings.Contains(got, "\tEmail *comparator.") {
+		t.Errorf("UserFilter lost its Email column comparator\n---\n%s", got)
+	}
+	if strings.Contains(got, "Email *OrderFilter") {
+		t.Errorf("UserFilter declares an Email relationship member\n---\n%s", got)
+	}
+}

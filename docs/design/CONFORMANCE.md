@@ -716,6 +716,53 @@ database versions it ran against.
 6. **Seed module by module**, using the FIX origin tally (§1.3) to choose the order: `cli.md`
    (gen, then gotype, naming and the rest), `parser.md`, `client.md` (method by method), then
    `runtime.md`. Each file goes `in-progress` → `complete` on its own.
+
+   **First slice, `cmd/sqlgen/gen`, recorded 2026-10-25:**
+   - **Split first.** The slice would have taken `cli.md` past ruling 7's ~500 rows, so it became
+     `cli/config.md` (the §4.13 rows), `cli/gen.md`, `cli/gotype.md`, `cli/commands.md`
+     (`cmd/sqlgen`, `cli`, `wrapper`) and `cli/manifest.md`, one file per slice. The
+     access-control matrix columns changed to the §32.2 surfaces (`go-client`, `api-in`,
+     `api-out`, `filter`, `sort`, `event-payload`, `cache`, `manifest`); REST, not generated
+     yet, has rows outside the matrix. Generated-artifacts rows are the 12 §8.2 artifacts and the
+     10 §16.4 capabilities §8.2 does not list; §16.4's GraphQL rows wait for the api-generation
+     slice, and the package-wide §8.3 artifacts are rows with no cell. Relationships rows are
+     §13.1's belongs-to, has-one, O2M and M2M plus self, circular and polymorphic (no m2o: §13.1
+     has no such type). The slice also took §22.1, §22.4, §22.5 and §28.9, which `gen` emits.
+   - **Rows seeded: 466** under 38 anchors, 167 of them matrix cells (106 generated-artifacts, 35
+     access-control, 26 relationships), plus **50 `n/a`** (48 generated-artifacts, 2
+     relationships), each citing a PRD section; none needed an `accepted` date. The five
+     `access-control × manifest` cells are left for the manifest slice. Anchors include sections
+     other files own (§9.8, §9.9, §10.3, §13.2, §17.3, §29.x), and rows cite `parser`, `gotype`,
+     `cli`, `sql` and example tests where the behavior lives there (§16.3 is mostly the parser).
+   - **Gaps.** At seeding, 56 rows were `untested`. After the new tests, 19 are: 11 are Phase 32
+     work not yet started (composite-key edges, FKs to a UNIQUE column, the `fk` list form, which
+     the staging guard keeps out of `gen` until 32.4–32.6); 4 are REST; the rest are
+     `go:generate` (needs an end-to-end module), the tenant filter's comparator type (a PRD gap),
+     and three rows split off over-claiming rows in review (an auto-included belongs-to edge, a
+     composite-PK parent keeping its read surface, and the self-edge `ErrNestedVerbConflict`
+     refusal, which is runtime behavior for the client slice).
+   - **Defects: 2 fixed**, each with a fail-first test: JSON view aggregates were generated NOT NULL
+     (§16.3, in the parser), and `Restore` on a missing key returned `ErrNotFound` instead of
+     `nil, nil` (§9.3, §9.5, §9.8.8). Five more findings were Phase 32 sub-items already planned.
+   - **PRD amendments: 7**, six ruled and one following a fix: the header version has no leading `v` (§8.1.5); MySQL and
+     SQLite UUID keys are classified by their storage type (§8.6, §9.8.4; the dead `uuid` arms and
+     their hand-built pins were removed); `ColumnMap()` is not consumed by
+     `BuildColumnsFromFieldOptions` (§12.2); the condition order is not part of the contract
+     (§29.8); only `RestoreWhere` scopes to deleted rows (§9.6, §9.8.8); a composite-PK target's
+     loader filters on the FK column (§8.7); and the §9.8.8 `Restore` example, updated with the fix. **PRD gaps: 25** in
+     `gen.md` (24 new) and 1 more in `client.md`, all open.
+   - **Tests written.** About 50 test functions or table cases over 20 files, by four agents in
+     worktrees and then by hand. The worktrees were created from `main`, not the working branch,
+     so their first runs held on code 35 commits old; two tests failed once merged, because
+     relationship detection now reads FOREIGN KEY constraints. Rebasing the agents fixed it.
+   - **Time.** About 4.5 hours of wall time: 15 minutes to scope, 20 to map with four agents, then
+     defect stops and rulings in four rounds, test-writing agents, two review passes and the gates.
+     The mapping itself was mechanical; the cost was rulings and review.
+   - **For the next slice (gotype):** create worktree agents from the working branch, or check
+     their base before trusting a result; have mapping agents split a requirement at every
+     "and", since review found rows claiming tests that assert only one clause; give each agent
+     the list of planned work (tracker) so planned gaps are not reported as defects; and assign
+     helper names up front, since two agents wrote the same function-extraction helper.
 7. **Skill changes (§6).** `/design`, `/phase` and `/implement` landed with step 2. `/verify` and
    `/close-phase` change during the config pilot (step 3), once there are rows for them to read
    (§9 ruling 14). Done 2026-10-23: `/verify` reads the registry rows for a sub-item's PRD

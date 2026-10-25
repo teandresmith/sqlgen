@@ -832,6 +832,23 @@ func TestCreateTemplate_appStrategy_mysql_knownPK(t *testing.T) {
 	}
 }
 
+func TestCreateTemplate_appStrategy_sqlite_returning(t *testing.T) {
+	ctx := testCreateContext_appStrategyV4()
+	output := executeCreateTemplate(t, ctx, sql.NewSQLiteDialect())
+
+	wantPatterns := []string{
+		"pkValue = uuid.Must(uuid.NewV4())",
+		// insertAndResolveID builds the INSERT with RETURNING on SQLite
+		"id, err := c.insertAndResolveID(ctx, conn, columns, args)",
+		"ReturningColumns:",
+	}
+	for _, want := range wantPatterns {
+		if !strings.Contains(output, want) {
+			t.Errorf("output missing: %q\n\nfull output:\n%s", want, output)
+		}
+	}
+}
+
 // --- Test: Empty FieldOptions short-circuit ---
 
 func TestCreateTemplate_emptyFieldOptions(t *testing.T) {

@@ -342,3 +342,72 @@ func buildListFilterAssets(dialect config.Dialect, compositePK bool, rel config.
 	_, err := gen.BuildTableContextsFromSchema(in.Schema, in.Config)
 	return err
 }
+
+// TestRelationshipFilter_ContentsAreNotCheckedAgainstTheSchema pins that
+// codegen does not validate what a `filter:` means (PRD §13.7, §13.7.4): a
+// predicate naming a column the target lacks, or comparing an enum
+// discriminator to a literal outside the type, generates without error and
+// keeps the edge. Only a filter the dialect cannot parse is a codegen error.
+func TestRelationshipFilter_ContentsAreNotCheckedAgainstTheSchema(t *testing.T) {
+	enumSchema := func() *parser.Schema {
+		schema := discriminatorSchema()
+		schema.Enums = []parser.Enum{{
+			Name: "document_entity_type_enum", Schema: "public",
+			Values: []string{"asset.primary", "asset.attachment", "asset.invoice", "spv"},
+		}}
+		for i := range schema.Tables[1].Columns {
+			if schema.Tables[1].Columns[i].Name == "entity_type" {
+				schema.Tables[1].Columns[i].Type = "document_entity_type_enum"
+			}
+		}
+		return schema
+	}
+
+	tests := []struct {
+		name    string
+		relType string
+		filter  string
+	}{
+		{"o2m naming a column the target lacks", "one_to_many", "no_such_col = 'x'"},
+		{"o2o naming a column the target lacks", "one_to_one", "no_such_col = 'x'"},
+		{"o2m comparing an enum to a literal outside the type", "one_to_many", "entity_type = 'not.a.value'"},
+		{"o2o comparing an enum to a literal outside the type", "one_to_one", "entity_type = 'not.a.value'"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			in := testInput(enumSchema())
+			parser.DetectRelationships(in.Schema)
+			rel := filterRel("Documents", tt.relType)
+			rel.Filter = tt.filter
+			in.Config.Tables["assets"] = config.TableConfig{Relationships: []config.TableRelationship{rel}}
+
+			tables, err := gen.BuildTableContextsFromSchema(in.Schema, in.Config)
+			if err != nil {
+				t.Fatalf("BuildTableContextsFromSchema(filter=%q) = %v, want nil", tt.filter, err)
+			}
+			var kept bool
+			for _, tc := range tables {
+				if tc.TableName == "documents" {
+					// Control: the discriminator really is an enum, so the
+					// literal really is outside a closed type.
+					for _, c := range tc.Columns {
+						if c.Name == "entity_type" && c.GoType != "DocumentEntityTypeEnum" {
+							t.Fatalf("fixture: documents.entity_type resolved to %s, not the enum", c.GoType)
+						}
+					}
+				}
+				if tc.TableName != "assets" {
+					continue
+				}
+				for _, r := range tc.Relationships {
+					if r.FieldName == "Documents" {
+						kept = true
+					}
+				}
+			}
+			if !kept {
+				t.Errorf("assets lost the Documents edge over filter %q, want it generated", tt.filter)
+			}
+		})
+	}
+}
