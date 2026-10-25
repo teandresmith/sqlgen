@@ -382,12 +382,14 @@ func tableOverridesMap(tc config.TableConfig) map[string]config.TypeOverride {
 // `nullable` is only reachable on some paths, which is a property of the
 // surfaces rather than of this function: it cannot apply to a table's tenant
 // column, which is NOT NULL by contract (§29.2.4). A view's may legitimately be
-// nullable (§29.2.5), and that is the one place the variant is consulted.
-func tenantTypeOverrideGoType(override *config.TypeOverride, nullable bool) (gotype.GoType, bool) {
+// nullable (§29.2.5), and that is the one place the variant is consulted —
+// along with usePointers, which picks `sql.Null*` over `*T` for an omitted
+// variant exactly as it does for an `overrides.types` entry.
+func tenantTypeOverrideGoType(override *config.TypeOverride, nullable, usePointers bool) (gotype.GoType, bool) {
 	if override == nil || override.Type == "" {
 		return gotype.GoType{}, false
 	}
-	return gotype.FromOverride(*override, nullable), true
+	return gotype.FromOverride(*override, nullable, usePointers), true
 }
 
 // tableTenantTypeOverride returns the Go type a `tenancy.type` override
@@ -427,7 +429,8 @@ func tableTenantTypeOverride(col *parser.Column, tc config.TableConfig, global *
 	if !tenantColumnMatches(col.Name, config.ResolveTableTenancyEnabled(tc, global), config.ResolveTableTenancyColumn(tc, global)) {
 		return gotype.GoType{}, false
 	}
-	return tenantTypeOverrideGoType(config.ResolveTableTenancyType(tc, global), false)
+	// Not nullable, so use_pointers cannot change the spelling.
+	return tenantTypeOverrideGoType(config.ResolveTableTenancyType(tc, global), false, true)
 }
 
 // viewTenantTypeOverride is the view analogue of tableTenantTypeOverride.
@@ -440,14 +443,14 @@ func tableTenantTypeOverride(col *parser.Column, tc config.TableConfig, global *
 // TenantResolver[T] yields (resolveViewTenantColumnType passes nullable=false
 // for the same reason). Those two facts are not in conflict, and collapsing
 // them would retype a legitimately-nullable view column as non-nullable.
-func viewTenantTypeOverride(col *parser.Column, vc config.ViewConfig, global *config.TenancyConfig) (gotype.GoType, bool) {
+func viewTenantTypeOverride(col *parser.Column, vc config.ViewConfig, global *config.TenancyConfig, usePointers bool) (gotype.GoType, bool) {
 	if !tenancyGloballyOn(global) {
 		return gotype.GoType{}, false
 	}
 	if !tenantColumnMatches(col.Name, config.ResolveViewTenancyEnabled(vc, global), config.ResolveViewTenancyColumn(vc, global)) {
 		return gotype.GoType{}, false
 	}
-	return tenantTypeOverrideGoType(config.ResolveViewTenancyType(vc, global), col.Nullable)
+	return tenantTypeOverrideGoType(config.ResolveViewTenancyType(vc, global), col.Nullable, usePointers)
 }
 
 // tenancyGloballyOn mirrors BuildTenancyContext's own guard, and has to be

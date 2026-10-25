@@ -80,6 +80,18 @@ var (
 	goHWAddr   = typeInfo{name: "net.HardwareAddr", imp: "net", zero: "nil", kind: nullRef, fk: FKStringStringer}
 )
 
+// sqlNullEquivalents maps each Go type that has a database/sql null wrapper to
+// the typeInfo the built-in mappings use for it, so an `overrides.types` entry
+// naming that Go type without a `nullable:` variant takes the same wrapper a
+// built-in column of that type takes under use_pointers false (PRD §4.7, §7.3).
+var sqlNullEquivalents = map[string]typeInfo{
+	goString.name: goString, goInt8.name: goInt8, goInt16.name: goInt16,
+	goInt32.name: goInt32, goInt64.name: goInt64, goUint8.name: goUint8,
+	goUint16.name: goUint16, goUint32.name: goUint32, goUint64.name: goUint64,
+	goFloat32.name: goFloat32, goFloat64.name: goFloat64, goBool.name: goBool,
+	goTime.name: goTime,
+}
+
 // postgresMappings maps PostgreSQL SQL types to Go types.
 var postgresMappings = map[string]typeInfo{
 	// String types
@@ -478,6 +490,12 @@ func registerSchemaType[V any](r *Resolver, m map[string]V, schema, name string,
 	m[name] = value
 }
 
+// UsePointers reports the resolver's `overrides.use_pointers` setting. A nil
+// receiver reports the default, true.
+func (r *Resolver) UsePointers() bool {
+	return r == nil || r.usePointers
+}
+
 // IsEnumGoType reports whether goType is the Go type name of a registered
 // schema enum. Such a type is a named string declared in the generated package,
 // so an untyped string constant is assignable to it. A nil receiver knows no
@@ -781,22 +799,22 @@ func (r *Resolver) resolveByTypeSource(sqlType string, nullable bool, tableOverr
 
 	// Step 2: Table-level overrides.types
 	if override, key, ok := r.lookupOverride(scopedOverrides, sqlType); ok {
-		return FromOverride(override, nullable), overrideSource{key: key, tableScoped: true}
+		return FromOverride(override, nullable, r.usePointers), overrideSource{key: key, tableScoped: true}
 	}
 
 	// Step 3: Global overrides.types
 	if override, key, ok := r.lookupOverride(r.globalOverrides, sqlType); ok {
-		return FromOverride(override, nullable), overrideSource{key: key}
+		return FromOverride(override, nullable, r.usePointers), overrideSource{key: key}
 	}
 
 	// Step 4: Built-in integrations. A table-scoped activation is the more
 	// specific of the two, so it is consulted first; both sit below every
 	// explicit override, per the chain in PRD §7.1.
 	if override, _, ok := r.lookupOverride(scopedIntegrations, sqlType); ok {
-		return FromOverride(override, nullable), overrideSource{}
+		return FromOverride(override, nullable, r.usePointers), overrideSource{}
 	}
 	if override, _, ok := r.lookupOverride(r.integrations, sqlType); ok {
-		return FromOverride(override, nullable), overrideSource{}
+		return FromOverride(override, nullable, r.usePointers), overrideSource{}
 	}
 
 	// Step 4.5: Schema enums, sets, and domains, owner schema first
@@ -951,11 +969,14 @@ func (r *Resolver) goTypeFromInfo(info typeInfo, nullable bool) GoType {
 // instead of aspirational: otherwise a key §4.7 honors could be parsed for
 // `tenancy.type` and quietly dropped.
 //
-// It takes no resolver state, which is why it can be shared: an override names
-// its own type, import and nullable variant outright, and nothing about the
-// dialect, the schema's enums/domains, or the usePointers setting can change
-// what it resolves to.
-func FromOverride(override config.TypeOverride, nullable bool) GoType {
+// It takes no resolver state beyond usePointers, which is why it can be
+// shared: an override names its own type, import and nullable variant, and
+// nothing about the dialect or the schema's enums/domains can change what it
+// resolves to. usePointers matters only for a nullable column whose override
+// names no `nullable:` variant: an omitted variant "uses `*T` when
+// `use_pointers` is true, or `sql.Null*` when false" (PRD §4.7), and only a Go
+// type with a database/sql null equivalent has a `sql.Null*` to take (§7.3).
+func FromOverride(override config.TypeOverride, nullable, usePointers bool) GoType {
 	zero := override.ZeroValue
 	if zero == "" {
 		zero = deriveZeroValue(override.Type)
@@ -993,6 +1014,15 @@ func FromOverride(override config.TypeOverride, nullable bool) GoType {
 	// a malformed `marshalO*ᚖ` wrapper in the gqlgen-emitted code.
 	if isNativelyNilable(override.Type) {
 		gt.ZeroValue = "nil"
+		return gt
+	}
+
+	// use_pointers false: a Go type with a database/sql null wrapper takes
+	// it, exactly as a built-in column of that type does.
+	if info, ok := sqlNullEquivalents[override.Type]; ok && !usePointers {
+		gt.Name = info.null
+		gt.Import = info.nullImp
+		gt.ZeroValue = info.null + "{}"
 		return gt
 	}
 

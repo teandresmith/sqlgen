@@ -251,6 +251,8 @@ func TestBuildEntityContexts_TenancyTypeReachesViewTenantColumn(t *testing.T) {
 	tests := []struct {
 		name           string
 		nullable       bool
+		noPointers     bool
+		sqlType        string
 		viewCfg        *config.ViewConfig
 		wantGoType     string
 		wantImport     string
@@ -280,6 +282,18 @@ func TestBuildEntityContexts_TenancyTypeReachesViewTenantColumn(t *testing.T) {
 			wantContextTyp: "WorkspaceID",
 		},
 		{
+			// An omitted `nullable:` follows use_pointers, as it does for an
+			// overrides.types entry: string has sql.NullString to take.
+			name:           "nullable view tenant column takes the sql null wrapper without pointers",
+			nullable:       true,
+			noPointers:     true,
+			sqlType:        "text",
+			viewCfg:        &config.ViewConfig{Tenancy: &config.TableTenancyConfig{Type: &config.TypeOverride{Type: "string"}}},
+			wantGoType:     "sql.NullString",
+			wantImport:     "database/sql",
+			wantContextTyp: "string",
+		},
+		{
 			name:           "per-view opt-out declines the override",
 			viewCfg:        &config.ViewConfig{Tenancy: &config.TableTenancyConfig{Enabled: new(false)}},
 			wantGoType:     "uuid.UUID",
@@ -293,13 +307,20 @@ func TestBuildEntityContexts_TenancyTypeReachesViewTenantColumn(t *testing.T) {
 			cfg := tenancyTestConfig()
 			cfg.Overrides.Types["uuid"] = uuidGoogle
 			cfg.Tenancy.Type = &workspaceID
+			if tt.noPointers {
+				cfg.Overrides.UsePointers = new(false)
+			}
 			cfg.Views = make(map[string]config.ViewConfig)
 			if tt.viewCfg != nil {
 				cfg.Views["order_stats"] = *tt.viewCfg
 			}
+			sqlType := "uuid"
+			if tt.sqlType != "" {
+				sqlType = tt.sqlType
+			}
 			schema := viewSchema("order_stats",
 				viewCol("id", "uuid", false),
-				viewCol("workspace_id", "uuid", tt.nullable),
+				viewCol("workspace_id", sqlType, tt.nullable),
 			)
 
 			_, views, err := gen.BuildEntityContextsFromSchema(schema, cfg)

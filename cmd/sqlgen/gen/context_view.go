@@ -164,7 +164,7 @@ func buildViewColumns(input *GenerateInput, view *parser.View, viewCfg config.Vi
 		// §29.2.4 order: the tenant column's `tenancy.type` first, then the
 		// column's own resolution (step 3, which for a view is the @type
 		// literal / aggregate / resolver cascade).
-		gt, tenantTyped := viewTenantTypeOverride(&col, viewCfg, input.Config.Tenancy)
+		gt, tenantTyped := viewTenantTypeOverride(&col, viewCfg, input.Config.Tenancy, input.Resolver.UsePointers())
 		if !tenantTyped {
 			gt = viewColumnGoType(input.Resolver.ForSchema(view.Schema), &col, col.Nullable)
 		}
