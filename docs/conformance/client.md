@@ -22,11 +22,12 @@ Requirements of the generated client, proved by the cross-dialect conformance su
 | hard-delete-many.happy-path | `HardDeleteMany(ctx, []pk)` is a batch hard delete: a physical DELETE of the rows whose keys are listed | `conformance: HardDeleteMany/deletes only the listed keys` | all | client-methods: HardDeleteMany × happy-path |
 
 ## §9.4c Nil input handling
-<!-- prd: 9.4c sha256: ed42be05ab92062c -->
+<!-- prd: 9.4c sha256: f8d2c84924befe60 -->
 
 | ID | Requirement | Tests | Applies to | Matrix cell |
 |---|---|---|---|---|
 | hard-delete-many.nil-empty-input | Bulk write variants distinguish the two nils: a nil slice is simply no rows, since nil and empty already mean the same thing, so `HardDeleteMany` with no keys does nothing | `conformance: HardDeleteMany/nil key list deletes nothing`; `conformance: HardDeleteMany/empty key list deletes nothing` | all | client-methods: HardDeleteMany × nil-empty-input |
+| nil-input.batch-no-statement | `CreateMany`, `UpdateMany`, `UpsertMany`, `SoftDeleteMany`, `RestoreMany` and `HardDeleteMany` send no statement for a nil or empty slice and read nothing back | `example: postgres: TestEmptyBatch_HardDeleteManyUnaffected` | all | |
 
 ## §9.5 Edge Case Behaviors
 <!-- prd: 9.5 sha256: 39cf69aea492fcef -->
@@ -109,5 +110,4 @@ the user's ruling: amend the PRD, which turns the gap into requirement rows, or 
 
 | Gap | Behavior | Tests | Section | Ruling |
 |---|---|---|---|---|
-| gap.hard-delete-many.nil-statement | `HardDeleteMany(ctx, nil)` sends no statement and reads nothing back; §9.4c says only that a nil slice is no rows | `example: postgres: TestEmptyBatch_HardDeleteManyUnaffected` | §9.4c | amend-prd 2026-10-25 |
 | gap.by-key-noop-side-effects | A by-key `SoftDelete` or `Restore` whose key matches no row returns `nil, nil` but still records `AffectedPKs`, runs cache invalidation and publishes its event (`templates/table/delete.go.tmpl`); §21 and §28 do not say whether a no-op write fires them | | §9.5, §21.5, §28.6 | amend-prd 2026-10-25 |

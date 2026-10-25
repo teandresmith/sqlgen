@@ -1203,11 +1203,11 @@ The config is validated immediately after loading, before parsing or generation 
 | **Tenant type divergence including a tenanted view** | Error | Every tenanted entity — tables **and** views — must resolve to the same tenant Go type; the package exposes one `TenantResolver[T]`. The aggregated error names every offender. See [29.2.4](#2924-type-resolution). |
 | **Mutation operation named in `views.<name>.api.operations`** | Error | A view is read-only ([16.4](#164-generated-artifacts-views-vs-tables)); only `get`, `paginate`, `connection` are expressible. Silently ignoring a knob the user deliberately turned is worse than rejecting it. |
 | **`views.<name>.api.enabled: true` with global `api.enabled: false`** | Error | Per-view flag is opt-*out* only, matching the `tables.<name>.manifest` precedent — a single entity cannot be opted in without the package-level opt-in. |
-| **`soft_delete_columns` type mismatch** | Error | If a configured soft delete column name matches a table column but the column's SQL type is not compatible (`timestamp`, `bool`, or `integer` — see [4.6](#46-generationconfig)), it is a validation error. Incompatible types include `varchar`, `text`, `uuid`, `json`, etc. |
+| **`soft_delete_columns` type mismatch** | Error | If a configured soft delete column name matches a table column but the column's SQL type is not compatible (`timestamp`, `bool`, or `integer` — see [4.6](#46-generationconfig)), it is a validation error. Incompatible types include `varchar`, `text`, `uuid`, `json`, etc. This rule and the two below check only a table's first matching column, in `soft_delete_columns` priority order, and a column of an incompatible type reports this error only. |
 | **`NOT NULL` `timestamp` soft delete column** | Error | A `timestamp` soft delete column marks a live row with `NULL` ([4.6](#46-generationconfig)), so a `NOT NULL` one can never hold a live row: the default "is not deleted" filter (`IS NULL`) matches nothing and Restore violates the constraint. The error names the column and the table; make the column nullable or soft delete with a `bool` or `integer` column. |
 | **Nullable `bool` / `integer` soft delete column with no `DEFAULT`** | Error | These strategies mark a live row with `FALSE` / `0` ([4.6](#46-generationconfig)), and the default "is not deleted" filter (`= FALSE` / `= 0`) excludes `NULL`, so every row created without the column is hidden: `Create` returns `ErrNotFound` for the row it just inserted. The error names the column and the table; make the column `NOT NULL` or give it `DEFAULT FALSE` / `DEFAULT 0`. `DEFAULT NULL` counts as no default. |
 | **Resolved name collisions** | Error (resolution-level) | If two schema entities — tables, views, enums, SET types, composite types, domain types — resolve to the same Go type name, the same file stem, or the same `hook.TableName` constant, it is a validation error. Singularization is what makes this reachable: `users` and `user`, or `people` and `person`, are different SQL names that land on one `User` / `Person`. Guidance: use `tables.<table>.struct_name` / `views.<view>.struct_name` / `enums.<enum>.struct_name` ([4.11](#411-enum-overrides)) to disambiguate. See [8.5](#85-naming-rules) "Resolved type names and file stems". |
-| **An `enums:` key that matches no enum** | Warning *(schema-level)* | An `enums.<name>` entry is looked up by each schema enum's schema-qualified name, then its bare one ([4.11](#411-enum-overrides)), so a key no enum answers to — a typo, or a MySQL key in the `<table>_<column>_enum` form rather than `<table>__<column>_enum` ([8.3](#83-generated-artifacts--other)) — would do nothing. It warns under `sqlgen validate` and `sqlgen generate`, naming the key; a key naming a MySQL SET type says instead that a SET takes no override. A warning rather than an error, because a schema narrowed by `introspect.schemas` or `introspect.tables` can legitimately leave a key unmatched. |
+| **An `enums:` key that matches no enum** | Warning *(resolution-level — see phase 3 below)* | An `enums.<name>` entry is looked up by each schema enum's schema-qualified name, then its bare one ([4.11](#411-enum-overrides)), so a key no enum answers to — a typo, or a MySQL key in the `<table>_<column>_enum` form rather than `<table>__<column>_enum` ([8.3](#83-generated-artifacts--other)) — would do nothing. It warns under `sqlgen validate` and `sqlgen generate`, naming the key; a key naming a MySQL SET type says instead that a SET takes no override. A warning rather than an error, because a schema narrowed by `introspect.schemas` or `introspect.tables` can legitimately leave a key unmatched. |
 | **A resolved name sqlgen already declares** | Error (resolution-level) | If an entity resolves to a Go type name or a file stem the generated package emits on its own behalf — `Client`, `Connection`, `Edge`, `ErrNotFound`, `sorter_gen.go`, … — it is a validation error. A table named `clients` or `connections` is the shape this catches. See [8.5](#85-naming-rules) "Resolved type names and file stems". |
 | **A nested-mutation name colliding with an entity's** | Error (resolution-level) | The nested-mutation type names ([9.9.5](#995-generated-surface)) key on a **(parent, edge)** pair, so they are injective in no entity's primary name and the two rules above cannot see them. A collision against an entity's Go type name, or against the `Create<T>Input` / `Update<T>Input` a table derives, is an error naming both the relationship and the entity. The claim is structural — it does not consult `nested_mutations.enabled` or the `api.operations` mask, so enabling the feature later never turns a valid config invalid. Guidance: `tables.<table>.struct_name` on either entity — the wrapper names are spelled from the parent's struct name alone, so renaming the parent fixes those; a per-edge name can also be moved by renaming the relationship under `tables.<parent>.relationships`. See [8.5](#85-naming-rules). |
 | **Two claims on one GraphQL type name** | Error (codegen-level) | When the GraphQL surface is generated, two entities resolving to the same GraphQL type name — an enum against a declared scalar, a table against another table, an enum against `PageInfo`, a consumer scalar against a comparator input — is a generation error naming both claimants. Distinct from the Go rule above: the namespaces differ, and a document valid in Go can be invalid in GraphQL (a SQL enum named `duration` gives a legal Go `Duration` beside a `Duration` scalar that gqlparser rejects). Guidance: `enums.<enum>.struct_name`, `tables.<table>.struct_name`, `views.<view>.struct_name`, or rename the `api.graphql.scalars` entry. See [26.4](#graphql-type-name-ownership). |
@@ -1238,7 +1238,7 @@ The config is validated immediately after loading, before parsing or generation 
 | **`nested_mutations.max_depth` is not `1`** | Error | Depth greater than 1 is not implemented in v1 ([9.9](#99-nested-mutations)); `0` disables nothing that `enabled: false` does not already disable. Rejecting is what keeps a future depth from silently meaning depth 1. |
 | **Unknown value in `nested_mutations.operations` or `nested_mutations.verbs`** | Error | Both are closed sets — `{create, update, upsert}` and `{create, connect, disconnect, clear}`. A typo'd verb would otherwise silently narrow the generated surface. |
 | **A `…_with_related` mask key enabled without its base** | Error | In an `api.operations` or `tables.<name>.api.operations` mask, `create_with_related: true` beside `create: false` is rejected, and likewise for update and upsert. The mask conjoins each `…_with_related` key with its masked base ([26.5.1](#2651-exposed-resolver-surface)), so that a mask written to leave a single hand-guarded door into a table does not leave a second, generated one through the nested mutation. The pair would therefore drop the nested mutation from the API with no signal; failing at validate time names the key that is wrong. The Go client is untouched either way: it generates the nested methods whenever `nested_mutations` enables them ([4.6](#46-generationconfig)). |
-| **An edge listed in `tables.<name>.nested_mutations.relationships` is not nestable** | Error *(resolution-level — see phase 3 below)* | A listed edge that fails any eligibility rule ([9.9](#99-nested-mutations)) is a hard error naming the edge and the rule it failed — the user asked for it by name. An **auto-included** edge that fails a rule is silently omitted instead, so one ineligible edge cannot break a build that never asked for it. The same rule rejects a listed name that matches no relationship on the table. |
+| **An edge listed in `tables.<name>.nested_mutations.relationships` is not nestable** | Error *(resolution-level — see phase 3 below)* | A listed edge that fails any eligibility rule ([9.9](#99-nested-mutations)) is a hard error naming the edge and the rule it failed — the user asked for it by name. An **auto-included** edge that fails a rule is silently omitted instead, so one ineligible edge cannot break a build that never asked for it. The same rule rejects a listed name that matches no relationship on the table. `sqlgen validate` reports each such edge once. |
 | **Invalid `api.operations` preset** | Error | If `api.operations`, `tables.<table>.api.operations` or `views.<view>.api.operations` is a string, or carries a `preset`, that doesn't match a known preset (`all`, `read_only`, `append_only`, `no_delete`, `no_hard_delete`), it is a validation error. |
 | **An `operations` key under `generation` or `tables.<table>`** | Error | The client has no per-operation switch; it generates every method the schema allows ([4.6](#46-generationconfig)). The key is rejected with a message that names its path and points at `api.operations`, the only per-operation control: `generation.operations: the Go client generates every method the schema allows; use api.operations to control what the API exposes`. A plain unknown-field error would not say where the control went. |
 | **A client-only key named in an `api.operations` mask** | Error | `get_many`, `update_many`, `exists`, `count`, `increment`, `stream` and `upsert_many` name client methods no API surface calls ([26.5.1](#2651-exposed-resolver-surface)), so naming one in any `api.operations` block is rejected rather than silently ignored. Every mask key names the client method its surface calls. |
@@ -1258,7 +1258,8 @@ The config is validated immediately after loading, before parsing or generation 
 | **`column_map.<col>.name` on a non-existent or excluded column** | Error | The override must name a real column that survives `exclude_columns` — otherwise there is no field to rename and the entry is a silent no-op. See [8.5](#85-naming-rules). |
 | **`column_map.<col>.name` collides with another resolved field name** | Error *(resolution-level — see phase 3 below)* | Two columns, or a column and a relationship, cannot claim the same Go field on the entity struct. Only collisions an override introduces are reported. See [8.5](#85-naming-rules). |
 | **A resolved field name is one the generated code already declares** | Error *(resolution-level — see phase 3 below)* | `Columns`, `ColumnMap`, `HasSelectedColumns`, `And`, `Or`, `ToConditions`, `PKs`, `Input` and `Column` are claimed by generated declarations on the structs a column field lands on, each in the shapes listed in [8.5](#85-naming-rules) "Field Name Resolution". Unlike the collision rule above this one is **not** override-gated — the name is rejected wherever it comes from, including a plain SQL column name and a derived relationship field, because no such name can produce compiling code. View columns are covered too. |
-| **`column_map.<col>.type` is not a Go type expression** | Error | The override is written verbatim into the generated struct, so it must parse as a type — an identifier, a qualified identifier, or a composition of those (`*T`, `[]T`, `map[K]V`). Whether the named type exists is the compiler's verdict; sqlgen never loads consumer packages. See [7.1](#71-type-resolution-chain). |
+| **`column_map.<col>.type` or a `type_map` value is not a Go type expression** | Error | The override is written verbatim into the generated struct, so it must parse as a type — an identifier, a qualified identifier, or a composition of those (`*T`, `[]T`, `[N]T`, `map[K]V`, a generic instantiation such as `pkg.T[A, B]`). An empty `type_map` value is rejected. Whether the named type exists is the compiler's verdict; sqlgen never loads consumer packages. See [7.1](#71-type-resolution-chain). |
+| **A PostgreSQL `overrides.types` key spelled as a synonym** | Error | With `input.dialect: postgres`, a key in `overrides.types` or `tables.<name>.overrides.types` that the parser never writes (`int4`, `bool`, `float8`, `character varying`, `timestamp with time zone`, a `serial` spelling, or one of those as an array) would match no column ([7.2](#72-built-in-type-mappings)). The message names the key and the catalog spelling to write instead. |
 | **`column_map.<col>.type` on a non-existent or excluded column** | Error | The override must name a real column that survives `exclude_columns` — otherwise there is no field to retype and the entry is a silent no-op. See [7.1](#71-type-resolution-chain). |
 | **`column_map.<col>.import` without `type`** | Error | An import path with nothing to import for. See [7.1](#71-type-resolution-chain). |
 | **Package-qualified `column_map.<col>.type` with no `import`** | Error *(resolution-level — see phase 3 below)* | Nothing else would place the package in the generated file's import block. Literals sqlgen already knows (`time.Time`, `json.RawMessage`, …) are exempt — they resolve their own import. See [7.1](#71-type-resolution-chain). |
@@ -1266,14 +1267,14 @@ The config is validated immediately after loading, before parsing or generation 
 | **Two UUID libraries resolved in one generated package** | Error *(resolution-level — see phase 3 below)* | Every UUID import path resolved across the generated package — global `overrides.types.uuid`, table-scoped `overrides.types`, and `column_map.<col>.import` alike — must be the same one. View columns participate too, through the global binding they resolve under ([4.9](#49-viewconfig-per-view)). All three supported integrations bind the file-local package name `uuid` and export a type named `UUID`, so a package resolving two of them emits source that does not compile, and the resolved Go type string `uuid.UUID` cannot say which package is meant ([7.4](#74-built-in-type-integrations)). The error names both import paths, at least one table that selected each, and the remedy: split them across separate `output.dir` packages. Per generated package, not per module — two packages in one module, each with its own library, are legal. |
 | **Invalid `column_map.<col>.access` value** | Error | `access` must be one of `public`, `read_only`, `write_only`, `hidden`, `internal`. Any other value is rejected. See [Section 32](#32-column-access-control). |
 | **`access` on a non-existent or excluded column** | Error | `column_map.<col>.access` must name a real column that survives `exclude_columns`. Classifying an excluded column has no surface to act on and is a config error. |
-| **`access` on a primary-key column outside `{public, read_only}`** | Error | PK columns must stay API-readable (the GraphQL `id` argument, cursor encoding, and relationship targeting all require it). `write_only`, `hidden`, and `internal` on any PK member is rejected. See [32.4](#324-validation). |
+| **`access` on a primary-key column outside `{public, read_only}`** | Error | PK columns must stay API-readable (the GraphQL `id` argument, cursor encoding, and relationship targeting all require it). `write_only`, `hidden`, and `internal` on any PK member is rejected. A column reports at most one `access` error: this rule takes precedence over the cursor-key rule, and the cursor-key rule over required-on-create. See [32.4](#324-validation). |
 | **`access` removes a required-on-create column from API input** | Error | A NOT NULL column with no default that is neither auto-generated nor PK-generated cannot be given a role that drops it from the API create input (`read_only` / `hidden` / `internal`) **while** the create / createMany API op is enabled — the API could never satisfy the INSERT. (`write_only` is allowed; server-side Go `Create` is unaffected either way.) See [32.4](#324-validation). |
 | **`access` removes the filter surface from the soft-delete column** | Warning | Giving the soft-delete column a role that drops its filter (`write_only` / `hidden` / `internal`) removes the §26.5.3 "pass `deletedAt: {}` to include soft-deleted rows" path from the API. Emitted as a warning — it may be intentional. |
 
 Validation runs in three phases:
 1. **Config-level** (before parsing) — driver/dialect mismatch, missing connection, invalid `api.operations` presets, a leftover client `operations` key, client-only keys in an `api.operations` mask, duplicate struct names
 2. **Schema-level** (after parsing) — cursor_keys existence and nullability, soft_delete type mismatch, `NOT NULL` timestamp column and nullable no-`DEFAULT` bool / integer column, struct name collisions from auto-detection, exclude_columns exhaustion, an excluded primary-key column, a foreign key to non-key columns, a manual `fk` list that does not match the referenced primary key
-3. **Resolution-level** (during generation) — the few rules that need the naming or type engine to have run, and so cannot be answered from the config text alone: the `api.operations` over-reach warning (which reads each table's resolved operations), the resolved-field-name rules (collision and reserved name), whether a declared relationship's target generates at all (which needs `exclude_tables` and the primary-key rule applied, and the target's `struct_name` resolved), whether a relationship's link columns survive `exclude_columns`, whether two detected relationships still share a name once exclusions and manual replacements apply, the two rules that ask whether a Go type literal needs an explicit import, and the one-UUID-library-per-package rule, which has to collect the import path every column actually resolved to across the whole package before it can count them. They live in the generator rather than in config validation, and the table above marks them — but `sqlgen validate` still reports them: it builds the table, view and API contexts in memory and discards them, so every phase-3 rule is answered at validate time without loading a template or writing a file.
+3. **Resolution-level** (during generation) — the few rules that need the naming or type engine to have run, and so cannot be answered from the config text alone: the `api.operations` over-reach warning (which reads each table's resolved operations), the unmatched `enums:` key warning, the resolved-field-name rules (collision and reserved name), whether a declared relationship's target generates at all (which needs `exclude_tables` and the primary-key rule applied, and the target's `struct_name` resolved), whether a relationship's link columns survive `exclude_columns`, whether two detected relationships still share a name once exclusions and manual replacements apply, the two rules that ask whether a Go type literal needs an explicit import, and the one-UUID-library-per-package rule, which has to collect the import path every column actually resolved to across the whole package before it can count them. They live in the generator rather than in config validation, and the table above marks them — but `sqlgen validate` still reports them: it builds the table, view and API contexts in memory and discards them, so every phase-3 rule is answered at validate time without loading a template or writing a file.
 
 **Cursor key resolution — fallback semantics.** `cursor_keys` resolution is lenient for inherited values and strict for explicit values. The rationale: explicit configuration is a user assertion that must be honored or flagged; an inherited default should degrade gracefully because the global default cannot know every table's schema shape. Partial matches (some columns present, others missing) always trigger a full fallback — never a subset — because a partial cursor would silently change sort semantics. Resolution rules:
 
@@ -1761,7 +1762,9 @@ Steps 1 and 2 are by **column**; steps 3–6 are by **SQL type**. The two per-co
 
 Only steps 3–6 carry a `nullable:` wrapper variant. A nullable column resolved by step 1 or 2 gets `*T` (or bare `T` when the type is natively nilable). Steps 1 and 2 also resolve a literal as an opaque type: a slice literal (`[]T`) is *not* treated as an array column, so it filters through the scalar comparator rather than `comparator.Slice[T]`. Use `overrides.types` when array semantics matter.
 
-**How steps 3–5 match a SQL type.** The column's SQL type is looked up as written first, then with its modifiers stripped: a `numeric(12,2)` column takes an `overrides.types."numeric(12,2)"` entry when there is one and the `numeric` entry otherwise. A MySQL integer `… unsigned` type with a modifier is looked up as `<base> unsigned`, never as the signed base, so `int(10) unsigned zerofill` takes an `int unsigned` entry. An `… unsigned` type on a non-integer base, MySQL's or SQLite's, is looked up as written, then as `<base> unsigned`, then as the signed base, which has the same Go type: `double unsigned zerofill` takes a `double unsigned` entry, else a `double` one. PostgreSQL types are written without a space inside the modifiers, by the parser and the introspector alike ([5.2](#52-dialect-parsers)), so `"numeric(12,2)"` is the key to write. A column of a table, view, composite type or domain in a schema first tries each of those keys qualified with that schema, then bare: a type in the column's own schema is written bare ("Enum, SET and domain names" below), so an `overrides.types."app.status_enum"` key reaches a `status_enum` column of `app.accounts` as well as an `app.status_enum` column of a table in another schema, and never a same-named type in a third schema. A qualified key wins over the bare one for the same column. A domain's base type is matched as a column of that domain, in the domain's schema, and each link of a domain chain is tried at steps 3–5 before the next: an `overrides.types.email` key reaches a column of a domain defined over the domain `email`.
+**How steps 3–5 match a SQL type.** The column's SQL type is looked up as written first, then with its modifiers stripped: a `numeric(12,2)` column takes an `overrides.types."numeric(12,2)"` entry when there is one and the `numeric` entry otherwise. A MySQL integer `… unsigned` type with a modifier is looked up as `<base> unsigned`, never as the signed base, so `int(10) unsigned zerofill` takes an `int unsigned` entry. An `… unsigned` type on a non-integer base, MySQL's or SQLite's, is looked up as written, then as `<base> unsigned`, then as the signed base, which has the same Go type: `double unsigned zerofill` takes a `double unsigned` entry, else a `double` one. PostgreSQL types are written without a space inside the modifiers, by the parser and the introspector alike ([5.2](#52-dialect-parsers)), so `"numeric(12,2)"` is the key to write. A column of a table, view, composite type or domain in a schema first tries each of those keys qualified with that schema, then bare: a type in the column's own schema is written bare ("Enum, SET and domain names" below), so an `overrides.types."app.status_enum"` key reaches a `status_enum` column of `app.accounts` as well as an `app.status_enum` column of a table in another schema, and never a same-named type in a third schema. A qualified key wins over the bare one for the same column. A domain's base type is matched as a column of that domain, in the domain's schema, and each link of a domain chain is tried at steps 3–5 before the next: an `overrides.types.email` key reaches a column of a domain defined over the domain `email`. Every lookup ignores case: SQL type names, enum, SET and domain names, schema qualifiers and `overrides.types` keys.
+
+**A SQL type no step resolves is a `string`.** A column whose SQL type has no override, integration, enum, SET or domain and no built-in mapping (PostgreSQL `money` or `xml`, say) resolves to `string` (`*string` / `sql.NullString` when nullable), and generation warns, naming the column, its SQL type and the `overrides.types.<sql_type>` key that would type it. The config still generates.
 
 **Enum, SET and domain names.** The parser and the introspector write a column's type the same way: bare when the type is in the column's own schema, schema-qualified when it is in another. A schema-qualified name (`billing.status`) resolves to that schema's type. A bare name (`status`) is looked up first in the schema of the table, view, composite type or domain the column belongs to, and then as a bare name, which answers only while no other schema has a type by that name. So two same-named enums in different schemas never collide: a column whose type is in its own schema resolves to that schema's enum, and a column in any other schema reaches it by its qualified name. A column of an `input.views` annotation-file view ([16.1](#161-annotation-files-file-sourced-views)) copies its source column's type, rewritten the same way for the view's schema, and its source table is found in the schema the `FROM` clause names (an unqualified one in `input.schema`).
 
@@ -1773,7 +1776,7 @@ Only steps 3–6 carry a `nullable:` wrapper variant. A nullable column resolved
 | SQL Type | Go Type | Nullable Go Type |
 |----------|---------|------------------|
 | `text`, `varchar`, `char`, `name` | `string` | `sql.NullString` / `*string` |
-| `int2`, `smallint` | `int16` | `sql.NullInt16` / `*int16` |
+| `int2`, `smallint`, `smallserial` | `int16` | `sql.NullInt16` / `*int16` |
 | `int4`, `integer`, `serial`, `integer GENERATED AS IDENTITY` | `int32` | `sql.NullInt32` / `*int32` |
 | `int8`, `bigint`, `bigserial`, `bigint GENERATED AS IDENTITY` | `int64` | `sql.NullInt64` / `*int64` |
 | `float4`, `real` | `float32` | `sql.NullFloat64` / `*float32` |
@@ -1783,6 +1786,7 @@ Only steps 3–6 carry a `nullable:` wrapper variant. A nullable column resolved
 | `bytea` | `[]byte` | `[]byte` |
 | `timestamp`, `timestamptz` | `time.Time` | `sql.NullTime` / `*time.Time` |
 | `date` | `time.Time` | `sql.NullTime` / `*time.Time` |
+| `time` | `string` | `sql.NullString` / `*string` |
 | `interval` | `time.Duration` | `*time.Duration` |
 | `uuid` | `uuid.UUID` | `*uuid.UUID` |
 | `json`, `jsonb` | `types.JSON` | `types.JSON` (nil = NULL) |
@@ -1800,7 +1804,9 @@ Only steps 3–6 carry a `nullable:` wrapper variant. A nullable column resolved
 | `numeric[]`, `decimal[]` | `[]float64` | `[]float64` |
 | `timestamp[]`, `timestamptz[]` | `[]time.Time` | `[]time.Time` |
 
-**Array type rule:** Any PostgreSQL array type (`T[]`) maps to a Go slice of the base type's **resolved** Go mapping (`[]GoT`) — the base type's built-in mapping, or whatever an `overrides.types.<base>` entry resolves it to. The base type is always resolved in its non-null form, so the element type never carries a `sql.Null*` or pointer shape; nullable array columns use the same slice type (slices are already reference types with a `nil` zero value). `uuid[]` is therefore `[]uuid.UUID` on the default binding and on every UUID integration alike ([7.4](#74-built-in-type-integrations)), all of which spell the Go type `uuid.UUID`; a `numeric` override to `github.com/shopspring/decimal` makes `numeric[]` resolve to `[]decimal.Decimal`. A schema enum's array is the exception: it always resolves to the generated `<Enum>Slice` ([8.3](#83-generated-artifacts--other)), because pgx cannot scan or bind an unregistered enum OID into any other slice, so an `overrides.types.<enum>` entry does not reach it. Retype the array with an `overrides.types."<enum>[]"` key.
+**Array type rule:** Any PostgreSQL array type (`T[]`) maps to a Go slice of the base type's **resolved** Go mapping (`[]GoT`) — the base type's built-in mapping, or whatever an `overrides.types.<base>` entry resolves it to. The base type is always resolved in its non-null form, so the element type never carries a `sql.Null*` or pointer shape; nullable array columns use the same slice type (slices are already reference types with a `nil` zero value). `uuid[]` is therefore `[]uuid.UUID` on the default binding and on every UUID integration alike ([7.4](#74-built-in-type-integrations)), all of which spell the Go type `uuid.UUID`; a `numeric` override to `github.com/shopspring/decimal` makes `numeric[]` resolve to `[]decimal.Decimal`. A schema enum's array is the exception: it always resolves to the generated `<Enum>Slice` ([8.3](#83-generated-artifacts--other)), because pgx cannot scan or bind an unregistered enum OID into any other slice, so an `overrides.types.<enum>` entry does not reach it. Retype the array with an `overrides.types."<enum>[]"` key. A `"<T>[]"` key, for an enum or any other type, retypes the whole column to the entry's type as written, an opaque type rather than an array column, as a per-column override does ([7.1](#71-type-resolution-chain)).
+
+**PostgreSQL column types are written as the catalog spells them**, on both schema sources, and `overrides.types` keys match that form: `smallint`, `integer`, `bigint`, `real`, `double precision`, `boolean`, `char`, `varchar`, `timestamp`, `timestamptz`. `serial`, `bigserial` and `smallserial` columns are written as `integer`, `bigint` and `smallint`, and an identity column as its base type. A key spelled as a synonym the parser never writes (`int4`, `bool`, `float8`, `character varying`) would match no column, so it is a config error naming the key to write instead ([4.13](#413-config-validation-rules)).
 
 </details>
 
@@ -1819,8 +1825,9 @@ Only steps 3–6 carry a `nullable:` wrapper variant. A nullable column resolved
 | `bigint unsigned` | `uint64` | `sql.NullInt64` |
 | `float` | `float32` | `sql.NullFloat64` |
 | `double`, `decimal` | `float64` | `sql.NullFloat64` |
-| `varchar`, `text`, `char`, `enum` | `string` | `sql.NullString` |
-| `set` | `<Table><Column>Set` (named `[]<Table><Column>SetValue` slice) | same (reference type) |
+| `varchar`, `text`, `char`, `enum` (no values recorded) | `string` | `sql.NullString` |
+| `enum` (values in the schema) | `<Table><Column>Enum` ([8.3](#83-generated-artifacts--other)) | `*<Table><Column>Enum` |
+| `set` (values in the schema) | `<Table><Column>Set` (named `[]<Table><Column>SetValue` slice) | same (reference type) |
 | `datetime`, `timestamp` | `time.Time` | `sql.NullTime` |
 | `date` | `time.Time` | `sql.NullTime` |
 | `json` | `types.JSON` | `types.JSON` (nil = NULL) |
@@ -1828,7 +1835,7 @@ Only steps 3–6 carry a `nullable:` wrapper variant. A nullable column resolved
 | `tinyint(1)` (`bool`, `boolean`) | `bool` | `sql.NullBool` |
 | `time` | `string` | `sql.NullString` / `*string` |
 | `year` | `int16` | `sql.NullInt16` / `*int16` |
-| `set` | `string` | `sql.NullString` / `*string` |
+| `set` (no values recorded) | `string` | `sql.NullString` / `*string` |
 | `tinytext`, `mediumtext`, `longtext` | `string` | `sql.NullString` / `*string` |
 | `tinyblob`, `mediumblob`, `longblob` | `[]byte` | `[]byte` |
 | `bit(1)` | `bool` | `sql.NullBool` / `*bool` |
@@ -1846,11 +1853,11 @@ A column overridden to `types.DateTime` / `types.NullDateTime` binds as the `tim
 | SQL Type | Go Type | Nullable Go Type |
 |----------|---------|------------------|
 | `integer`, `int`, `tinyint`, `smallint`, `bigint` | `int64` | `sql.NullInt64` |
-| `text`, `varchar`, `char`, `clob` | `string` | `sql.NullString` |
+| `text`, `varchar`, `char`, `clob`, `time` | `string` | `sql.NullString` |
 | `real`, `float`, `double`, `numeric`, `decimal` | `float64` | `sql.NullFloat64` |
 | `blob` | `[]byte` | `[]byte` |
 | `boolean`, `bool` | `bool` | `sql.NullBool` |
-| `datetime`, `timestamp`, `timestamptz`, `date` | `types.DateTime` | `types.NullDateTime` |
+| `datetime`, `timestamp`, `timestamptz`, `date` | `types.DateTime` | `types.NullDateTime` (either `use_pointers` setting) |
 
 SQLite has no date/time storage class and compares these columns as text, so on SQLite the SQL builders bind every time value in the text SQLite's own `datetime()` and `CURRENT_TIMESTAMP` write: `YYYY-MM-DD HH:MM:SS` in UTC, followed by the fractional seconds the Go time carries, with trailing zeros dropped (`2026-01-01 00:00:00`, `2026-01-01 00:00:00.5`). This covers a `time.Time`, `*time.Time`, `sql.NullTime`, `types.DateTime`, `*types.DateTime` or `types.NullDateTime` argument, whether it is a written value, a filter operand or a cursor keyset value, so all three compare against a row a `DEFAULT (datetime('now'))` wrote. PostgreSQL binds the value unchanged, and MySQL binds a `types.DateTime` as the MySQL Type Mappings above describe. `types.SetOutputLayout` therefore does not affect a SQLite or MySQL statement sqlgen builds.
 
@@ -1864,7 +1871,7 @@ Controlled by `overrides.use_pointers`:
 - **`true` (default):** Nullable columns use `*T` (e.g., `*string`, `*int32`)
 - **`false`:** Nullable columns use `sql.Null*` types (e.g., `sql.NullString`, `sql.NullInt32`)
 
-Custom nullable types can be specified per SQL type via `overrides.types.<type>.nullable`. A wrapper-backed integration's wrapper ([7.4](#74-built-in-type-integrations)) and an explicit `nullable:` apply at either setting.
+Custom nullable types can be specified per SQL type via `overrides.types.<type>.nullable`. A wrapper-backed integration's wrapper ([7.4](#74-built-in-type-integrations)), SQLite's `types.NullDateTime` ([7.2](#72-built-in-type-mappings)) and an explicit `nullable:` apply at either setting.
 
 **`use_pointers` applies only where a `sql.Null*` equivalent exists.** Some Go types have no `database/sql` wrapper to fall back to, so their nullable form is always `*T` regardless of the flag. `uuid.UUID` ([7.4](#74-built-in-type-integrations)) is one of them — the standard library ships no `NullUUID` — alongside `time.Duration` (`interval`) and `net.IPNet` (`cidr`). Setting `overrides.use_pointers: false` does not turn a nullable `uuid` column into a wrapper struct; it stays `*uuid.UUID`, and `IS NULL` is `v != nil`. A consumer who wants the wrapper shape selects a UUID library that ships one, via `overrides.types.uuid` ([7.4](#74-built-in-type-integrations)) — the flag is not the lever for it. This is distinct from reference types (`[]byte`, `net.IP`, `types.JSON`), whose nullable form is the bare type because `nil` is already their zero value.
 
@@ -1916,6 +1923,8 @@ The **value** columns are used where the target is a `uuid.UUID`; the **string**
 2. **What the global `overrides.types` names**, when step 1 found nothing. Detection is by import path, not by key, on the same scope-independent terms as the rest of this section. This step matters because "no column resolved `uuid`-qualified" and "this package uses no UUID library" are different statements: a `uuid` primary key overridden to a Go `string` leaves an explicit `overrides.types` binding with no resolved type to carry it, and the generated PK must still come from the library the consumer named.
 3. **The standard library**, when neither named anything — so a consumer who mentions no UUID library anywhere acquires no module dependency by enabling event IDs.
 
+An import path that names none of the three libraries is a custom override ([7.5](#75-custom-type-overrides)), not an integration: it keeps its own import, and the generating and parse calls are spelled as the standard library's.
+
 **Parsing a UUID from a string.** The GraphQL `UUID` and `NullUUID` scalar unmarshalers ([26.4.1](#2641-scalar-marshaling)) turn a wire string into a `uuid.UUID`, and that call is the **selected integration's** on the same terms as the generating calls above. The three libraries disagree here too, and not on the same axis: the standard library and google both export `Parse`, while gofrs exports **no `Parse` at all** — its string constructor is `FromString`.
 
 | Integration | Parse from string |
@@ -1924,7 +1933,7 @@ The **value** columns are used where the target is a `uuid.UUID`; the **string**
 | `github.com/google/uuid` | `uuid.Parse(s)` |
 | `github.com/gofrs/uuid/v5` | `uuid.FromString(s)` |
 
-All three return `(uuid.UUID, error)`, so only the function name varies and the call site's shape is identical under every integration. The `OrNil` variants gofrs also exports are deliberately not used: an unparseable scalar input is a client error the unmarshaler must report, not silently collapse to the zero UUID.
+All three return `(uuid.UUID, error)`, so only the function name varies and the call site's shape is identical under every integration. The parse call follows the same three steps as the generating calls, so a package that names no library parses with the standard library's `uuid.Parse`. The `OrNil` variants gofrs also exports are deliberately not used: an unparseable scalar input is a client error the unmarshaler must report, not silently collapse to the zero UUID.
 
 **All three integrations provide:**
 - Correct zero values, per the table above
@@ -1992,7 +2001,7 @@ overrides:
 
 The code generator includes built-in knowledge of these popular libraries (via the `gotype/` packages in the CLI module). When a consumer configures one of these types, the generator automatically resolves the full mapping — zero value, nullable variant, scanner/valuer support, FK conversion, and the wrapper's `underlying_field` (the embedded scalar field used by O2M relationship loaders to unwrap a nullable FK before stringifying) — without the consumer needing to specify every field. Consumers can override any field explicitly via `overrides.types` if they need different behavior. Explicit overrides always take precedence over built-in knowledge, **except** for the FK extraction path — built-in wrappers (`uuid.NullUUID`, `decimal.NullDecimal`, `types.NullDateTime`) always use their canonical underlying field and `Valid` guard, so a user who points `nullable.type` at one of those names cannot accidentally redirect the unwrap to the wrong field.
 
-**Integration detection is scope-independent.** An `overrides.types.<sql_type>` entry naming a known library's import path activates that integration and receives the same enrichment wherever it is declared — globally, or under `tables.<table>.overrides.types`. Identical override text selects the same integration and resolves to the same Go type, zero value and nullable variant at both scopes; nesting depth is not part of integration resolution. The claim is about the built-in integrations, which is what this section governs — a wrapper the consumer declares themselves is [7.5](#75-custom-type-overrides)'s mechanism, not this one. A consumer who drops `nullable:` from a table-scoped `github.com/google/uuid` override gets `uuid.NullUUID` back from enrichment exactly as the same edit at global scope does, and a table-scoped override gains the same FK-extraction metadata (`underlying_field`, `valid_field`) as a global one. "Activates" covers the integration's other SQL types as well: a table-scoped `numeric` override naming `github.com/shopspring/decimal` binds that table's `decimal` columns to `decimal.Decimal` too, exactly as the same entry does globally. A table-scoped activation is still an *integration*, so it enters the chain at step 5 of [7.1](#71-type-resolution-chain) — ahead of a global integration, behind any explicit override at either scope. An explicit value the consumer did write is never overwritten at any scope, per the precedence rule above.
+**Integration detection is scope-independent.** An `overrides.types.<sql_type>` entry naming a known library's import path activates that integration and receives the same enrichment wherever it is declared — globally, or under `tables.<table>.overrides.types`. Identical override text selects the same integration and resolves to the same Go type, zero value and nullable variant at both scopes; nesting depth is not part of integration resolution. The claim is about the built-in integrations, which is what this section governs — a wrapper the consumer declares themselves is [7.5](#75-custom-type-overrides)'s mechanism, not this one. A consumer who drops `nullable:` from a table-scoped `github.com/google/uuid` override gets `uuid.NullUUID` back from enrichment exactly as the same edit at global scope does, and a table-scoped override gains the same FK-extraction metadata (`underlying_field`, `valid_field`) as a global one. "Activates" covers the integration's other SQL types as well: a table-scoped `numeric` override naming `github.com/shopspring/decimal` binds that table's `decimal` columns to `decimal.Decimal` too, exactly as the same entry does globally. A table-scoped activation is still an *integration*, so it enters the chain at step 5 of [7.1](#71-type-resolution-chain) — ahead of a global integration, behind any explicit override at either scope. An explicit value the consumer did write is never overwritten at any scope, per the precedence rule above. Enrichment never crosses libraries: an integration fills in only an entry whose `import` names that library or names no import at all, so an entry importing another library is left as written. An entry with no `import` is not a competing claim, and the integration that claims its SQL type enriches it, as it does a sibling SQL type.
 
 These are the only two scopes. A view carries no `overrides` block ([4.9](#49-viewconfig-per-view)), so a view column resolves its type under the global scope alone; per-view type control is a column's `@type` annotation in the view SQL.
 
@@ -2071,16 +2080,16 @@ type JSON json.RawMessage
 
 | Method | Returns | Semantics |
 |--------|---------|-----------|
-| `(*JSON).Scan(src any)` | `error` | `sql.Scanner`. Accepts `[]byte` or `string`. Stores a defensive copy of the raw bytes (drivers may reuse buffers across rows). SQL `NULL` produces a `nil JSON`. No shape validation. |
+| `(*JSON).Scan(src any)` | `error` | `sql.Scanner`. Accepts `[]byte` or `string`. Stores a defensive copy of the raw bytes (drivers may reuse buffers across rows). SQL `NULL`, or a nil `[]byte`, produces a `nil JSON`. Any other source type is an error naming it. No shape validation. |
 | `JSON.Value()` | `(driver.Value, error)` | `driver.Valuer`. Returns the raw bytes verbatim. `nil` or empty `JSON` returns SQL `NULL`. |
-| `JSON.MarshalJSON()` | `([]byte, error)` | Delegates to `json.RawMessage.MarshalJSON`. `nil` emits `"null"`. |
+| `JSON.MarshalJSON()` | `([]byte, error)` | Delegates to `json.RawMessage.MarshalJSON`. `nil` or empty emits `"null"`. |
 | `(*JSON).UnmarshalJSON(data []byte)` | `error` | Rejects input that is not well-formed JSON, then delegates to `json.RawMessage.UnmarshalJSON`. |
 | `JSON.MarshalGQL(w io.Writer)` | — | gqlgen `Marshaler`. Writes the raw bytes verbatim; nil/empty writes `"null"`. |
-| `(*JSON).UnmarshalGQL(v any)` | `error` | gqlgen `Unmarshaler`. Accepts any shape gqlgen produces (`map[string]any`, `[]any`, primitives, `nil`) and re-encodes to bytes. Unlike the prior `JSONMap.UnmarshalGQL`, this does **not** reject non-object inputs — shape validation is a resolver-layer concern (see §26.4.1). |
+| `(*JSON).UnmarshalGQL(v any)` | `error` | gqlgen `Unmarshaler`. Accepts any shape gqlgen produces (`map[string]any`, `[]any`, primitives, `nil`) and re-encodes to bytes; `nil` (a GraphQL `null`) sets a nil `JSON`, which `Value` writes as SQL `NULL`. Unlike the prior `JSONMap.UnmarshalGQL`, this does **not** reject non-object inputs — shape validation is a resolver-layer concern (see §26.4.1). |
 | `JSON.Decode(v any)` | `error` | Typed-decode escape hatch. Delegates to `json.Unmarshal(j, v)`. Empty `JSON` returns the stdlib's `"unexpected end of JSON input"` error wrapped with context; `"null"` literal nils out the target via standard `encoding/json` behavior. |
 | `JSON.AsMap()` | `(map[string]any, error)` | Strict object decode. Returns an error when the value is not a JSON object (probe with `IsObject` to branch without decoding). |
 | `JSON.AsSlice()` | `([]any, error)` | Strict array decode. Returns an error when the value is not a JSON array (probe with `IsArray` to branch without decoding). |
-| `JSON.IsNull()` | `bool` | True when the value is empty (SQL NULL) **or** holds the JSON `null` literal. The two are indistinguishable to most application code; `len(j) == 0` distinguishes them where it matters. |
+| `JSON.IsNull()` | `bool` | True when the value is empty or whitespace-only (SQL NULL) **or** holds the JSON `null` literal, with any surrounding whitespace. The two are indistinguishable to most application code; `len(j) == 0` distinguishes them where it matters. |
 | `JSON.IsObject()` | `bool` | First non-whitespace byte is `{`. Cheap structural probe; does not validate the entire payload. |
 | `JSON.IsArray()` | `bool` | First non-whitespace byte is `[`. Cheap structural probe; does not validate the entire payload. |
 | `JSON.String()` | `string` | Returns `string(j)` so `%v` / `%s` formatting emit the raw JSON document. No truncation. |
@@ -2111,7 +2120,7 @@ The column scans as `PropertyTaxRate []YearValue` directly, no per-read decode. 
 
 **Why not split into `JSONObject` / `JSONArray`?** A jsonb column can hold any JSON value at any time — there is no SQL-level guarantee that the shape is uniform across rows. Splitting at the type level forces every consumer to pick a shape upfront, which is exactly the bug the polymorphic default avoids. Callers that genuinely need shape constraints define a Go struct (or `[]Struct`) and override; that's a stronger guarantee than two narrowly-typed default types.
 
-**`jsonb[]` arrays.** PostgreSQL's `jsonb[]` (a SQL array of jsonb values, distinct from a single jsonb holding a JSON array) resolves to `[]types.JSON`. Each element is independently shape-agnostic and supports the same method surface, so per-element decoding composes cleanly:
+**`jsonb[]` arrays.** PostgreSQL's `jsonb[]` (a SQL array of jsonb values, distinct from a single jsonb holding a JSON array) resolves to `[]types.JSON`, and so does `json[]`. Each element is independently shape-agnostic and supports the same method surface, so per-element decoding composes cleanly:
 
 ```go
 for _, t := range asset.Tags {
@@ -2122,7 +2131,7 @@ for _, t := range asset.Tags {
 }
 ```
 
-`jsonb[]` columns are excluded from the generated filter context: `[]types.JSON` is `[][]byte`, which does not satisfy the comparator package's `comparable` constraint. Schemas needing list-of-JSON semantics use a single `jsonb` column holding a JSON array (`'[{...}, {...}]'::jsonb`) rather than `jsonb[]` — `jsonb[]` is queried with PostgreSQL array operators, while a JSON array inside `jsonb` is queried with JSON operators (`->`, `@>`).
+`json[]` and `jsonb[]` columns are excluded from the generated filter context: `[]types.JSON` is `[][]byte`, which does not satisfy the comparator package's `comparable` constraint. Schemas needing list-of-JSON semantics use a single `jsonb` column holding a JSON array (`'[{...}, {...}]'::jsonb`) rather than `jsonb[]` — `jsonb[]` is queried with PostgreSQL array operators, while a JSON array inside `jsonb` is queried with JSON operators (`->`, `@>`).
 
 **Nullability.** `types.JSON` is a reference type (`json.RawMessage` is `[]byte` underneath), so nullability is conveyed by `nil`. There is no `NullJSON` wrapper — a SQL NULL column scans as `nil JSON`, and `Value()` of a nil/empty `JSON` returns SQL NULL. The gotype resolver classifies it as `nullRef`.
 
@@ -2209,7 +2218,7 @@ After template execution, every generated file passes through:
 
 1. **Header injection** — the generated file header is prepended (see below)
 2. **`goimports`** (`golang.org/x/tools/imports`) — adds missing imports, removes unused imports, formats code
-3. **Write** — output to disk with `0o600` permissions. Output directories are auto-created with `os.MkdirAll` if they do not exist.
+3. **Write** — output to disk with `0o600` permissions; auto-created output directories get `0o755`. Output directories are auto-created with `os.MkdirAll` if they do not exist.
 
 If `goimports` fails, the raw template output is included in the error message for debugging. This catches template bugs early.
 
@@ -2799,10 +2808,10 @@ A consumer who wants a different GraphQL field name has `api.graphql.field_casin
 | `Columns` | `<T>FieldOptions.Columns()`, `Stream<T>FieldOptions.Columns()` | every column; every relationship |
 | `ColumnMap` | `<T>FieldOptions.ColumnMap()` | every column; every relationship |
 | `HasSelectedColumns` | `<T>FieldOptions.HasSelectedColumns()`, `Stream<T>FieldOptions.HasSelectedColumns()` | every column; every relationship |
-| `And` | `<T>Filter.And` | filterable columns |
-| `Or` | `<T>Filter.Or` | filterable columns |
-| `ToConditions` | `<T>Filter.ToConditions()` | filterable columns |
-| `PKs` | `<T>Filter.PKs` | filterable columns on a composite-PK entity |
+| `And` | `<T>Filter.And` | filterable columns; list relationships (O2M / M2M) |
+| `Or` | `<T>Filter.Or` | filterable columns; list relationships (O2M / M2M) |
+| `ToConditions` | `<T>Filter.ToConditions()` | filterable columns; list relationships (O2M / M2M) |
+| `PKs` | `<T>Filter.PKs` | filterable columns and list relationships on a composite-PK entity |
 | `Input` | `Update<T>Item.Input` | the sole PK column of a single-PK table |
 | `Column` | the `<T>IncrementColumn` type, which the per-column `<T>Increment<Field>` constant would redeclare at package scope | increment-eligible columns ([§9.8.9a](#989a-increment)) |
 
@@ -3037,9 +3046,11 @@ The strategy is derived from the PK column's type, default expression, and diale
 | PostgreSQL | UUID | No | `app` | `omittable.Value[T]` | App generates UUID if omitted; caller may override |
 | PostgreSQL | SERIAL/BIGSERIAL | Yes | `db` | Excluded | Sequence-based — caller cannot provide |
 | PostgreSQL | GENERATED AS IDENTITY | Yes | `db` | Excluded | Identity-based — caller cannot provide |
+| PostgreSQL | Any other type | Yes | `db` | `omittable.Value[T]` | DB applies default if omitted; caller may override |
 | MySQL | INT AUTO_INCREMENT | Yes | `db` | Excluded | Sequence-based — caller cannot provide |
-| MySQL | Any other, no default | — | `caller` | Required (bare type) | No auto-generation mechanism |
+| MySQL | Any other, with or without a default | — | `caller` | Required (bare type) | No auto-generation mechanism: without `RETURNING`, a DB default's value cannot be read back |
 | SQLite | INTEGER AUTOINCREMENT | Yes | `db` | Excluded | Sequence-based — caller cannot provide |
+| SQLite | Integer, not AUTOINCREMENT | Yes | `db` | `omittable.Value[T]` | DB applies default if omitted; caller may override |
 
 **UUID keys on MySQL and SQLite.** Neither dialect has a `uuid` SQL type ([7.4](#74-built-in-type-integrations)), so a UUID key is stored under another type (`CHAR(36)`, `BINARY(16)`, `TEXT`, `BLOB`), and detection classifies it by that type like any other column: `caller`, unless it auto-increments. A type override ([7.1](#71-type-resolution-chain)) changes the key's Go type, not its detected strategy. Set `primary_key.strategy: app` to have the generated client mint the key. On MySQL that is the only way to get one without the caller: a DB-generated UUID cannot be read back, since MySQL has no `RETURNING` and `LastInsertId()` covers integer auto-increment only.
 
@@ -3084,12 +3095,14 @@ When the strategy is `app`, the generated code creates a UUID using the version 
 
 #### PK Retrieval After INSERT
 
-| Dialect | Strategy `db` | Strategy `app` |
-|---------|--------------|----------------|
-| PostgreSQL | `RETURNING id` | `RETURNING id` (PK already known, but confirms write) |
-| MySQL (integer) | `LastInsertId()` | N/A |
-| MySQL (other) | N/A | PK known before INSERT — no retrieval needed |
-| SQLite | `RETURNING id` or `LastInsertId()` | `RETURNING id` |
+| Dialect | Strategy `db` | Strategy `app` | Strategy `caller` |
+|---------|--------------|----------------|-------------------|
+| PostgreSQL | `RETURNING id` | `RETURNING id` (PK already known, but confirms write) | `RETURNING id` |
+| MySQL (integer) | `LastInsertId()` | N/A | PK used as supplied — no retrieval |
+| MySQL (other) | N/A | PK known before INSERT — no retrieval needed | PK used as supplied — no retrieval |
+| SQLite | `RETURNING id` or `LastInsertId()` | `RETURNING id` | `RETURNING id` |
+
+A single-column `caller` key is read back through `RETURNING` where the dialect has it, and used as supplied elsewhere. A composite key is always used as supplied.
 
 #### Per-Table Override
 
@@ -3671,7 +3684,7 @@ The rule splits on direction, because "no values supplied" means something coher
 
 `UpdateWhere` takes both a filter and an input, and checks the **input first**: argument validity is a property of the call, while `ErrEmptyFilter` is a safety guard on what the filter compiles to, so `UpdateWhere(ctx, nil, nil)` reports `ErrNilInput`. A non-nil input with an empty filter still returns `ErrEmptyFilter`.
 
-`ErrNilInput` is distinct from `ErrEmptyFilter` (a `*Where` op whose filter compiles to zero conditions) and from the documented no-op of an **empty but non-nil** `Update<T>Input`, which still returns the current entity unchanged. Bulk write variants distinguish the two nils. A nil **slice** is simply no rows: `CreateMany(ctx, nil)` and `UpdateMany(ctx, nil)` do nothing, since nil and empty already mean the same thing there. A nil **element** is the same caller error a nil single-row input is, and returns `ErrNilInput` — skipping it silently would drop a row the caller asked to write. `Update<T>Item.Input` is a pointer, so a zero-valued item carries a nil one and is rejected on the same rule; `[]Update<T>Item{{ID: id}}` is a shape that compiles naturally.
+`ErrNilInput` is distinct from `ErrEmptyFilter` (a `*Where` op whose filter compiles to zero conditions) and from the documented no-op of an **empty but non-nil** `Update<T>Input`, which still returns the current entity unchanged. Bulk write variants distinguish the two nils. A nil **slice** is simply no rows: `CreateMany(ctx, nil)` and `UpdateMany(ctx, nil)` do nothing, since nil and empty already mean the same thing there. Every batch method (`CreateMany`, `UpdateMany`, `UpsertMany`, `SoftDeleteMany`, `RestoreMany` and `HardDeleteMany`) sends no statement for a nil or empty slice and reads nothing back. A nil **element** is the same caller error a nil single-row input is, and returns `ErrNilInput` — skipping it silently would drop a row the caller asked to write. `Update<T>Item.Input` is a pointer, so a zero-valued item carries a nil one and is rejected on the same rule; `[]Update<T>Item{{ID: id}}` is a shape that compiles naturally.
 
 **Why this is stated here rather than left to each operation.** The failure mode is not uniform, and the quietest case is the easiest to miss. Panic recovery ([§21.6](#216-panic-recovery)) turns an unguarded nil dereference into an error rather than a crash, so a read the caller meant as "no criteria" returns `sqlgen: panic in …` instead of rows — and on `Stream` that error arrives only as the iterator's final yield, after zero rows. A rule that only covered the loud panics would leave that one standing.
 
@@ -4522,7 +4535,7 @@ CREATE TABLE product_tags (
 
 **Generated types:**
 
-> **Tag convention:** All generated structs with database-mapped fields carry both `db` and `json` struct tags. The `json` tag value always matches the database column name (e.g., `json:"company_id"` for column `company_id`). This applies to all generated structs with named fields: entity structs, PK structs, input structs (`Create*Input`, `Update*Input`, `UpdateItem`), and any other struct whose fields correspond to database columns. Input structs carry `json` tags so consumers can use them in external APIs (e.g., deserializing HTTP request bodies directly into `CreateProductInput`).
+> **Tag convention:** All generated structs with database-mapped fields carry both `db` and `json` struct tags. The `json` tag value always matches the database column name (e.g., `json:"company_id"` for column `company_id`). A relationship field has no column: it is tagged `db:"-"`, and its `json` tag is the snake_case form of its relationship name (`draft_children` → `json:"draft_children"`). This applies to all generated structs with named fields: entity structs, PK structs, input structs (`Create*Input`, `Update*Input`, `UpdateItem`), and any other struct whose fields correspond to database columns. Input structs carry `json` tags so consumers can use them in external APIs (e.g., deserializing HTTP request bodies directly into `CreateProductInput`).
 
 ```go
 type Company struct {
@@ -7679,7 +7692,7 @@ This table is the normative verb set. Everything else in this section is mechani
 
 **A NOT NULL FK edge is `create`-only.** This is not a special case: `connect` adopts unparented rows and nothing on such an edge is ever unparented, and `disconnect` / `clear` null out a column the schema forbids to be NULL. The generator declining to emit those fields is the schema saying so at compile time.
 
-**A has-one `create` or `connect` first reads the edge for the child the parent already holds.** A has-one edge holds at most one child ([13.1](#131-relationship-types)), but the database refuses a second one only when the FK carries a UNIQUE constraint, and a config-declared edge need not have one. So on either FK nullability both verbs run one **occupancy read** first — `<Target>().GetMany(fk = parent [AND disc], Limit: new(0))`, after `clear` ([9.9.6](#996-execution-order)). A row other than the `connect` target is `ErrAlreadyRelated` naming that child ([9.9.8](#998-error-attribution)); a `connect` naming the child the edge already holds is the same no-op it is on O2M. The read goes through the target's own client, so it sees what the read path sees: a soft-deleted child, or one in another tenant, does not occupy the edge. On a UNIQUE FK the read changes only which error a second child gets — `ErrAlreadyRelated` where the database would have raised a unique violation.
+**A has-one `create` or `connect` first reads the edge for the child the parent already holds.** A has-one edge holds at most one child ([13.1](#131-relationship-types)), but the database refuses a second one only when the FK carries a UNIQUE constraint, and a config-declared edge need not have one. So on either FK nullability both verbs run one **occupancy read** first — `<Target>().GetMany(fk = parent [AND disc], Limit: new(0))`, after `clear` ([9.9.6](#996-execution-order)). A row other than the `connect` target is `ErrAlreadyRelated` naming that child ([9.9.8](#998-error-attribution)); a `connect` naming the child the edge already holds is the same no-op it is on O2M. The read goes through the target's own client, so it sees what the read path sees: a soft-deleted child, or one in another tenant, does not occupy the edge. On a UNIQUE FK the read changes only which error a second child gets — `ErrAlreadyRelated` where the database would have raised a unique violation. A has-one block that sets both `create` and `connect` is refused with `ErrNestedVerbConflict`, attributed to `connect`, before the occupancy read or any other statement on the edge runs.
 
 **The occupancy read is a check, not a guarantee.** It takes no lock. Two concurrent calls on a parent with no child can both pass it, and each writes one child. Only a UNIQUE constraint on the FK makes the edge race-proof: the second write becomes a unique violation ([22.2](#222-constraint-errors)). When the call also sets a parent column, the parent `UPDATE`'s row lock serializes two such calls, so the second call's read sees the first call's child and returns `ErrAlreadyRelated` (measured on PostgreSQL at READ COMMITTED). A nested-only update takes no parent lock, and nothing serializes it. This is accepted rather than closed with a lock: `SELECT … FOR UPDATE` on the parent would cost a statement on every call, and SQLite has no row lock to take.
 
@@ -8499,11 +8512,11 @@ This is what [§11.1](#111-generated-filter-struct)'s relationship filters compi
 
 ### 12.1 FieldOptions Struct
 
-Generated per table. One `bool` field per column, plus one `*{Related}FieldOptions` per relationship.
+Generated per table. One `bool` field per column, plus one `*{Related}FieldOptions` per relationship. Each field carries a `json` tag, its column's or its relationship's; the `{Related}RelationshipOptions` fields are tagged `field_options`, `filter` and `sorts`.
 
 **Behavior:**
 - If `FieldOptions` is `nil` in the query input: SELECT all columns, skip relationships
-- If `FieldOptions` is non-nil: SELECT only columns with `true` fields
+- If `FieldOptions` is non-nil: SELECT only columns with `true` fields. One that selects no column but selects a relationship SELECTs every column
 - If a relationship `FieldOptions` is non-nil: load that relationship
 
 **Example:**
@@ -8600,7 +8613,7 @@ ORDER BY "created_at" DESC
 
 ### 12.2 Column Map
 
-Each `FieldOptions` has a generated `ColumnMap()` method that returns a `map[string]string` of Go field name → SQL column name, covering every column whatever the selection. The generated reads build their column list from `Columns()`, not from this map.
+Each `FieldOptions` has a generated `ColumnMap()` method that returns a `map[string]string` of Go field name → SQL column name, covering every column whatever the selection. Its `Columns()` method returns the SQL column names of the selected columns, sorted alphabetically. The generated reads build their column list from `Columns()`, not from this map.
 
 ---
 
@@ -9209,7 +9222,7 @@ type Sort struct {
 
 ### 15.2 Generated Sorter Helpers
 
-For each table, a **sorter struct** is generated with one method per column. Each method accepts a `sql.SortDirection` and returns a `sql.Sort`, providing type-safe column names and direction values with full IDE autocomplete support.
+For each table, a **sorter struct** is generated with one method per column. Views and materialized views get no sorter; their `GetMany` takes `sql.Sort` values built directly. Each method accepts a `sql.SortDirection` and returns a `sql.Sort`, providing type-safe column names and direction values with full IDE autocomplete support. Sorter structs are emitted in struct-name order, and each struct's methods in SQL column-name order.
 
 ```go
 // ProductSorter provides type-safe sort helpers for the Product entity.
@@ -9411,6 +9424,9 @@ MySQL returns `DECIMAL` for `SUM` over any exact-value integer, signed or unsign
 | Client with DI | Yes | Yes | Yes |
 | Filter struct | Yes | Yes | Yes |
 | FieldOptions | Yes | Yes | Yes |
+| `Get<T>sInput` | Yes | Yes | Yes |
+| Scan function (`scan<T>s`) | Yes | Yes | Yes |
+| `(*<T>Filter) ToConditions` | Yes | Yes | Yes |
 | Get (single) | Yes | Yes (if `@pk` annotated) | Yes (if unique index or `@pk`) |
 | GetMany | Yes | Yes | Yes |
 | Count | Yes | Yes | Yes |
@@ -14752,7 +14768,17 @@ func New(querier database.Querier, opts ...ClientOption) *Client {
 **Per-entity hook pattern:**
 
 ```go
-func newProductEventHook(publisher event.Publisher, config event.Config) hook.MutationHook {
+// buildEventHooks resolves event.Config once and hands the result to every per-entity hook.
+func buildEventHooks(publisher event.Publisher, cfg event.Config) []hook.MutationHook {
+    onError := cfg.ResolveOnError() // OnError, or its default
+    metaFunc := cfg.MetadataFunc
+    return []hook.MutationHook{
+        hook.ForTable(newProductEventHook(publisher, onError, metaFunc), TableProducts),
+        // ... one per event-enabled table ...
+    }
+}
+
+func newProductEventHook(publisher event.Publisher, onError func(ctx context.Context, events []event.Event, err error), metaFunc func(ctx context.Context) map[string]string) hook.MutationHook {
     return func(next hook.MutationHandler) hook.MutationHandler {
         return func(ctx context.Context, mc *hook.MutationContext) (any, error) {
             // Execute the mutation (and all inner hooks)
@@ -14764,7 +14790,18 @@ func newProductEventHook(publisher event.Publisher, config event.Config) hook.Mu
             // Check SkipEvents via CallOptions
             // ...
 
-            // Build events from mc.AffectedPKs (always populated by terminal)
+            // No affected row — publish nothing
+            if len(mc.AffectedPKs) == 0 {
+                return result, nil
+            }
+
+            // Consumer metadata, resolved once at hook entry while ctx is live (28.3)
+            var baseMeta map[string]string
+            if metaFunc != nil {
+                baseMeta = metaFunc(ctx)
+            }
+
+            // Build events from mc.AffectedPKs
             events := make([]event.Event, len(mc.AffectedPKs))
             for i, pk := range mc.AffectedPKs {
                 events[i] = event.Event{
@@ -14773,15 +14810,17 @@ func newProductEventHook(publisher event.Publisher, config event.Config) hook.Mu
                     Schema:    mc.Schema,
                     Action:    mapOpToAction(mc.Op),
                     PK:        pk,
-                    Input:     mc.Input,
+                    Input:     mc.Input, // per-entity input (28.6)
                     Timestamp: time.Now(),
+                    // Shallow-cloned per event; the tenant stamp (29.6) is applied last
+                    Metadata:  mergeEventMetadata(baseMeta, nil),
                 }
             }
 
             // Transaction-aware publishing
             publish := func(ctx context.Context) error {
                 if err := publisher.PublishBatch(ctx, events); err != nil {
-                    config.OnError(ctx, events, err)
+                    onError(ctx, events, err)
                 }
                 return nil
             }
@@ -14797,6 +14836,8 @@ func newProductEventHook(publisher event.Publisher, config event.Config) hook.Mu
     }
 }
 ```
+
+A mutation with no affected row publishes nothing: the hook returns before it builds events, so `PublishBatch` is never called with an empty batch.
 
 **Resulting hook chain:**
 
@@ -15079,6 +15120,7 @@ When a table is detected as tenanted:
 
 - `Get(ctx, pk)` — `SELECT ... FROM t WHERE pk = $1 AND workspace_id = $2`
 - `GetMany(ctx, input)` — appends `AND workspace_id = $N` to the user-composed WHERE
+- `Count(ctx, filter)` — appends the same predicate
 - Field-options-driven column projection (section 12) is unaffected — tenancy adds a filter, doesn't change what's selected.
 - Relationships (section 13) — the generated child-load also gets the tenant filter when the child table is tenanted (29.10).
 - **Views** — a tenanted view's `Get` / `GetMany` / `Count` / `Paginate` / `Connection` take the same predicate on the same rules ([29.2.5](#2925-view-tenancy)). `Refresh` / `RefreshConcurrently` do not.
@@ -16060,9 +16102,9 @@ The per-table field-options walker, filter translator, and sort translator each 
 
 **REST (§26.8).** Output is emitted through a generated projection (not a raw entity marshal — the Go entity's `json` tags are never altered, so cache serialization stays faithful); create/update request DTOs drop non-writable fields; filter/sort DTOs drop non-filterable/sortable fields.
 
-**Events (§28.6 / §28.9).** For a table with ≥1 `write_only` / `internal` column, the generated event hook publishes a **redacted clone** of `Event.Input`: same concrete type (subscribers' type-switch is unchanged), redacted fields cleared (omittable input fields set to unset; required fields zeroed). Emitted via per-table `redact<T>CreateInput` / `redact<T>UpdateInput` helpers — plus, when the table has a redacted **incrementable** column and `Increment` is enabled, a `redact<T>IncrementInput` helper that blanks the delta (`Amount`) while preserving the column selector — invoked only for such tables; tables with no redacted column are byte-unchanged and pay nothing. `Event.PK` is never redacted (PKs cannot be sensitive — §32.4). Redaction here is safe because the event input is a fire-and-forget notification snapshot, not state the server re-consumes.
+**Events (§28.6 / §28.9).** For a table with ≥1 `write_only` / `internal` column, the generated event hook publishes a **redacted clone** of `Event.Input`: same concrete type (subscribers' type-switch is unchanged), redacted fields cleared (omittable input fields set to unset; required fields zeroed). Emitted via per-table `redact<T>CreateInput` / `redact<T>UpdateInput` helpers — plus, when the table has a redacted **incrementable** column and `Increment` is enabled, a `redact<T>IncrementInput` helper that blanks the delta (`Amount`) while preserving the column selector — invoked only for such tables; tables with no redacted column are byte-unchanged and pay nothing. A helper and its switch arm are emitted only when the input type it redacts is generated: the create helper with `Create`, `CreateMany`, `Upsert` or `UpsertMany`, the update helper with `Update`, `UpdateMany` or `UpdateWhere`. `Event.PK` is never redacted (PKs cannot be sensitive — §32.4). Redaction here is safe because the event input is a fire-and-forget notification snapshot, not state the server re-consumes.
 
-The **`*Where` delete / restore ops publish a filter**, not an input struct (§28.6), and by the §32.1 load-bearing principle the Go `<T>Filter` carries every column — including `write_only` / `internal` ones, which have no *API* filter surface but stay filterable server-side. A per-table `redact<T>Filter` helper therefore clears those comparators on the published clone. Unlike the input helpers it **cannot be a shallow copy**: a filter is a graph, so the helper also rebuilds `And` / `Or` with every member redacted — a nested member is otherwise a one-line bypass of the top-level clearing — and replaces each relationship member with the *target's* redacted clone. That makes the helper's emission set the **transitive closure** of "has a redacted filterable column" over the relationship-filter graph (§11.1): a table with no redacted column of its own still needs a helper when its filter can reach one that has. The closure is computed over every table, not only event-enabled ones, since a relationship target's own events may be disabled. The caller's filter is never mutated — each level returns a new value, exactly as the input helpers do.
+The **`*Where` delete / restore ops publish a filter**, not an input struct (§28.6), and by the §32.1 load-bearing principle the Go `<T>Filter` carries every column — including `write_only` / `internal` ones, which have no *API* filter surface but stay filterable server-side. A per-table `redact<T>Filter` helper therefore clears those comparators on the published clone. Unlike the input helpers it **cannot be a shallow copy**: a filter is a graph, so the helper also rebuilds `And` / `Or` with every member redacted — a nested member is otherwise a one-line bypass of the top-level clearing — and replaces each relationship member with the *target's* redacted clone. That makes the helper's emission set the **transitive closure** of "has a redacted filterable column" over the relationship-filter graph (§11.1): a table with no redacted column of its own still needs a helper when its filter can reach one that has. The closure is computed over every table, not only event-enabled ones, since a relationship target's own events may be disabled. A helper is emitted only when something calls it: for a closure member whose own event hook redacts a `*Where` delete or restore op, and for every closure member that one reaches through relationship members. The caller's filter is never mutated — each level returns a new value, exactly as the input helpers do.
 
 **Any table that redacts something** — through either input helper, the increment helper, or filter-closure membership — enumerates every operation in its redaction switch, and its `default` arm **fails closed**: an operation with no arm publishes no payload rather than an un-redacted one, so a later-added op cannot reintroduce the leak by omission. An op whose payload is real but carries nothing to redact on that table (`Increment` when no incrementable column is redacted, say) keeps an explicit pass-through arm, so failing closed never contradicts the §28.6 shape table. On a table that redacts nothing, `default` stays a pass-through — which is what keeps those hooks byte-unchanged and preserves the §28.6 same-pointer guarantee.
 
