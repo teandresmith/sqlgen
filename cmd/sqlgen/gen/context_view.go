@@ -168,6 +168,9 @@ func buildViewColumns(input *GenerateInput, view *parser.View, viewCfg config.Vi
 		if !tenantTyped {
 			gt = viewColumnGoType(input.Resolver.ForSchema(view.Schema), &col, col.Nullable)
 		}
+		if gt.UnmappedSQLType != "" {
+			input.Warnings = append(input.Warnings, unmappedSQLTypeWarning("view column", qualifiedViewOrName(view), col.Name, col.Type, gt))
+		}
 		columns = append(columns, ColumnContext{
 			Name:       col.Name,
 			FieldName:  FieldName(col.Name),

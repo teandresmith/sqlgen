@@ -2416,7 +2416,7 @@ func TestDefaultUUIDBinding(t *testing.T) {
 		for _, dialect := range []config.Dialect{config.DialectMySQL, config.DialectSQLite} {
 			r := gotype.NewResolver(dialect, true, nil)
 			got := r.Resolve("uuid", false, "id", nil, nil)
-			want := gotype.GoType{Name: "string", ZeroValue: `""`}
+			want := gotype.GoType{Name: "string", ZeroValue: `""`, UnmappedSQLType: "uuid"}
 			if diff := cmp.Diff(want, got); diff != "" {
 				t.Errorf("Resolve(uuid) on %s (-want +got):\n%s", dialect, diff)
 			}

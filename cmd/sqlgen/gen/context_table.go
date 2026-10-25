@@ -290,11 +290,12 @@ func buildSingleTableContext(input *GenerateInput, table *parser.Table, collisio
 		return TableContext{}, err
 	}
 
-	columns, pkColumns, err := buildTableColumns(input, table, tableCfg)
+	columns, pkColumns, unmapped, err := buildTableColumns(input, table, tableCfg)
 	if err != nil {
 		return TableContext{}, err
 	}
 
+	input.Warnings = append(input.Warnings, unmapped...)
 	input.Warnings = append(input.Warnings,
 		incrementSQLTypeWarnings(input.Resolver.ForSchema(table.Schema), qualifiedTableOrName(table), tableCfg, columns)...)
 
@@ -313,7 +314,12 @@ func buildSingleTableContext(input *GenerateInput, table *parser.Table, collisio
 	return tc, nil
 }
 
-func buildTableColumns(input *GenerateInput, table *parser.Table, tableCfg config.TableConfig) ([]ColumnContext, []ColumnContext, error) {
+// buildTableColumns builds the contexts of a table's columns and its primary
+// key columns, and returns the warnings for the columns whose SQL type no
+// resolution step mapped. The caller that builds the table's own context
+// raises them; a caller rebuilding another table's columns drops them, so each
+// column warns once.
+func buildTableColumns(input *GenerateInput, table *parser.Table, tableCfg config.TableConfig) ([]ColumnContext, []ColumnContext, []string, error) {
 	var tableOverrides map[string]config.TypeOverride
 	if tableCfg.Overrides != nil {
 		tableOverrides = tableCfg.Overrides.Types
@@ -326,15 +332,19 @@ func buildTableColumns(input *GenerateInput, table *parser.Table, tableCfg confi
 	}
 
 	columns := make([]ColumnContext, 0, len(table.Columns))
+	var unmapped []string
 	for _, col := range table.Columns {
 		if excludeSet[col.Name] {
 			continue
 		}
-		colCtx, err := buildColumnContext(input, table.Schema, &col, tableCfg, tableOverrides)
+		cc, warning, err := buildColumnContext(input, table.Schema, qualifiedTableOrName(table), &col, tableCfg, tableOverrides)
 		if err != nil {
-			return nil, nil, fmt.Errorf("building column %s.%s: %w", qualifiedTableOrName(table), col.Name, err)
+			return nil, nil, nil, fmt.Errorf("building column %s.%s: %w", qualifiedTableOrName(table), col.Name, err)
 		}
-		columns = append(columns, colCtx)
+		columns = append(columns, cc)
+		if warning != "" {
+			unmapped = append(unmapped, warning)
+		}
 	}
 
 	// PK column override (PRD §8.6 — tables.<name>.primary_key.columns):
@@ -363,7 +373,7 @@ func buildTableColumns(input *GenerateInput, table *parser.Table, tableCfg confi
 				pkColumns = append(pkColumns, col)
 			}
 		}
-		return columns, pkColumns, nil
+		return columns, pkColumns, unmapped, nil
 	}
 
 	var pkColumns []ColumnContext
@@ -372,7 +382,7 @@ func buildTableColumns(input *GenerateInput, table *parser.Table, tableCfg confi
 			pkColumns = append(pkColumns, columns[i])
 		}
 	}
-	return columns, pkColumns, nil
+	return columns, pkColumns, unmapped, nil
 }
 
 // detectTableSoftDelete returns the table's soft delete column, or nil when it
@@ -858,6 +868,19 @@ func incrementSQLTypeWarnings(resolver *gotype.Resolver, qualifiedTable string, 
 	return warnings
 }
 
+// unmappedSQLTypeWarning reports a column whose SQL type no resolution step
+// maps, so it fell back to string (PRD §7.1). The fallback stays — it is what
+// lets generation succeed on a type sqlgen has never heard of — but a silent
+// one leaves a geometry or citext column typed string with nothing pointing at
+// the config key that would choose its type. kind is "column" for a table and
+// "view column" for a view.
+func unmappedSQLTypeWarning(kind, qualifiedEntity, column, sqlType string, gt gotype.GoType) string {
+	return fmt.Sprintf(
+		"%s %s.%s has SQL type %q, which no override, integration, enum, SET, domain or built-in mapping resolves, so it is generated as %s; add overrides.types.%s to choose its Go type",
+		kind, qualifiedEntity, column, sqlType, gt.Name, gt.UnmappedSQLType,
+	)
+}
+
 // typeOverrideSource names the config key that produced a column's resolved Go
 // type, so an error can point at the line to edit. The two per-column routes
 // are named exactly. For the by-SQL-type routes the resolver reports the
@@ -1007,14 +1030,20 @@ func collectColumnImports(columns []ColumnContext) []string {
 
 // --- Column building ---
 
-// buildColumnContext builds the context of a column of a table in schema.
-func buildColumnContext(input *GenerateInput, schema string, col *parser.Column, tableCfg config.TableConfig, tableOverrides map[string]config.TypeOverride) (ColumnContext, error) {
+// buildColumnContext builds the context of a column of a table in schema,
+// and the warning to raise when no resolution step mapped its SQL type ("" when
+// one did).
+func buildColumnContext(input *GenerateInput, schema, qualifiedTable string, col *parser.Column, tableCfg config.TableConfig, tableOverrides map[string]config.TypeOverride) (ColumnContext, string, error) {
 	resolver := input.Resolver.ForSchema(schema)
 	gt := resolveColumnGoType(resolver, col, tableCfg, tableOverrides, input.Config.Tenancy)
+	var unmapped string
+	if gt.UnmappedSQLType != "" {
+		unmapped = unmappedSQLTypeWarning("column", qualifiedTable, col.Name, col.Type, gt)
+	}
 
 	accessRole, accessCaps, err := resolveAccess(tableCfg.ColumnMap[col.Name].Access)
 	if err != nil {
-		return ColumnContext{}, err
+		return ColumnContext{}, "", err
 	}
 	fieldName, fieldNameOverridden := resolveColumnFieldName(col.Name, tableCfg)
 
@@ -1061,7 +1090,7 @@ func buildColumnContext(input *GenerateInput, schema string, col *parser.Column,
 		APISortable:        accessCaps.APISortable,
 		EventRedacted:      accessCaps.EventRedacted,
 		ManifestVisibility: accessCaps.ManifestVisibility,
-	}, nil
+	}, unmapped, nil
 }
 
 // --- Doc comment resolution ---
@@ -2625,7 +2654,7 @@ func buildSingleO2ODetail(input *GenerateInput, rel RelationshipContext, parentA
 
 	// Find target table PK
 	var pkCol *ColumnContext
-	targetColumns, targetPKColumns, err := buildTableColumns(input, targetTable, targetCfg)
+	targetColumns, targetPKColumns, _, err := buildTableColumns(input, targetTable, targetCfg)
 	if err != nil {
 		return nil, err
 	}

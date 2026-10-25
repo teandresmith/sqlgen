@@ -22,6 +22,12 @@ type GoType struct {
 	IsSlice       bool           // true for PostgreSQL array types mapped to Go slices
 	SliceElemType string         // element type name for named slices — enum arrays ("UserRole") and MySQL SETs ("UsersPermissionsSetValue")
 	FKConvert     FKStringMethod // how to convert to string for FK comparisons
+	// UnmappedSQLType is set when no resolution step — override, integration,
+	// enum, SET, domain or built-in mapping — maps the column's SQL type, so
+	// it fell back to string. It holds the SQL type that missed, lowercased
+	// and without modifiers (the element type for an array, the base for a
+	// domain): the `overrides.types` key that would map it. Empty otherwise.
+	UnmappedSQLType string
 }
 
 // FKStringMethod indicates how to convert a value to string for FK comparisons.
@@ -877,11 +883,12 @@ func (r *Resolver) resolveByTypeSource(sqlType string, nullable bool, tableOverr
 
 			base, source := r.resolveByTypeSource(baseType, false, tableOverrides)
 			return GoType{
-				Name:      "[]" + base.Name,
-				Import:    base.Import,
-				ZeroValue: "nil",
-				IsSlice:   true,
-				FKConvert: FKStringSprint,
+				Name:            "[]" + base.Name,
+				Import:          base.Import,
+				ZeroValue:       "nil",
+				IsSlice:         true,
+				FKConvert:       FKStringSprint,
+				UnmappedSQLType: base.UnmappedSQLType,
 			}, source
 		}
 	}
@@ -906,8 +913,10 @@ func (r *Resolver) builtinResolve(sqlType string, nullable bool) GoType {
 		return r.goTypeFromInfo(goBytes, nullable)
 	}
 
-	// Unknown type: default to string.
-	return r.goTypeFromInfo(goString, nullable)
+	// Unknown type: default to string, and say so, so the caller can warn.
+	gt := r.goTypeFromInfo(goString, nullable)
+	gt.UnmappedSQLType = stripModifiers(sqlType)
+	return gt
 }
 
 // goTypeFromInfo converts a typeInfo to a GoType, applying nullable handling.
