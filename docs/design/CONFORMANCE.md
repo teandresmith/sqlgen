@@ -755,6 +755,8 @@ database versions it ran against.
      worktrees and then by hand. The worktrees were created from `main`, not the working branch,
      so their first runs held on code 35 commits old; two tests failed once merged, because
      relationship detection now reads FOREIGN KEY constraints. Rebasing the agents fixed it.
+   - **Report.** `make conformance` at `f1e33bc4`: 778 rows, 755 pass, 0 fail, 0 skip, 0 not run,
+     23 untested (19 in `cli/gen.md`, the 4 `fk` list-length rows in `cli/config.md`).
    - **Time.** About 4.5 hours of wall time: 15 minutes to scope, 20 to map with four agents, then
      defect stops and rulings in four rounds, test-writing agents, two review passes and the gates.
      The mapping itself was mechanical; the cost was rulings and review.
