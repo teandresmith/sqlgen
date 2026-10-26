@@ -11,17 +11,26 @@ import (
 // unified client's unexported fields (PRD §8.5 "Reserved Word Handling"): a
 // table whose singular is a Go keyword keeps its exposed struct name, its
 // client field takes the `Val` escape, and the field is still typed by the
-// entity client the package declares.
+// entity's own client, which the package declares. A view is wired into the
+// unified client the same way.
 func TestKeywordTable_UnifiedClientFieldsAreDeclared(t *testing.T) {
 	child := sqlparser.Table{Name: "ranges", Columns: []sqlparser.Column{rwdIDColumn, {Name: "map_id", Type: "bigint"}}}
 	tests := []struct {
 		name   string
 		schema *sqlparser.Schema
-		fields []string
+		fields []ktcField
 	}{
-		{name: "table maps", schema: ktcSchema("maps"), fields: []string{"mapVal"}},
-		{name: "table ranges", schema: ktcSchema("ranges"), fields: []string{"rangeVal"}},
-		{name: "table defaults", schema: ktcSchema("defaults"), fields: []string{"defaultVal"}},
+		{name: "table maps", schema: ktcSchema("maps"), fields: []ktcField{{name: "mapVal", typ: "mapClient"}}},
+		{name: "table ranges", schema: ktcSchema("ranges"), fields: []ktcField{{name: "rangeVal", typ: "rangeClient"}}},
+		{name: "table defaults", schema: ktcSchema("defaults"), fields: []ktcField{{name: "defaultVal", typ: "defaultClient"}}},
+		{
+			name: "view interfaces",
+			schema: &sqlparser.Schema{Views: []sqlparser.View{{
+				Name:    "interfaces",
+				Columns: []sqlparser.Column{{Name: "id", Type: "bigint"}, {Name: "label", Type: "text"}},
+			}}},
+			fields: []ktcField{{name: "interfaceVal", typ: "interfaceClient"}},
+		},
 		{
 			// The entity clients are wired to each other through these fields,
 			// so a loader edge between two keyword tables reaches every
@@ -34,7 +43,7 @@ func TestKeywordTable_UnifiedClientFieldsAreDeclared(t *testing.T) {
 					Key: []sqlparser.KeyPair{{Local: "map_id", Referenced: "id"}},
 				}},
 			},
-			fields: []string{"mapVal", "rangeVal"},
+			fields: []ktcField{{name: "mapVal", typ: "mapClient"}, {name: "rangeVal", typ: "rangeClient"}},
 		},
 	}
 	for _, tt := range tests {
@@ -44,16 +53,25 @@ func TestKeywordTable_UnifiedClientFieldsAreDeclared(t *testing.T) {
 
 			fields := ktcClientFields(t, files)
 			for _, want := range tt.fields {
-				typ, ok := fields[want]
+				typ, ok := fields[want.name]
 				if !ok {
-					t.Fatalf("Client has no field %s; fields = %v", want, fields)
+					t.Fatalf("Client has no field %s; fields = %v", want.name, fields)
+				}
+				if typ != want.typ {
+					t.Errorf("Client.%s has type *%s, want *%s", want.name, typ, want.typ)
 				}
 				if !declared[typ] {
-					t.Errorf("Client.%s has type *%s, which the package does not declare", want, typ)
+					t.Errorf("Client.%s has type *%s, which the package does not declare", want.name, typ)
 				}
 			}
 		})
 	}
+}
+
+// ktcField is one unified Client field and the entity client type it holds.
+type ktcField struct {
+	name string
+	typ  string
 }
 
 // ktcSchema is one keyword-named table with only a key.
