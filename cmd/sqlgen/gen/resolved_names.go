@@ -308,6 +308,7 @@ func collectResolvedNames(ctxs generationContexts) resolvedNames {
 	tables, views, enums, sets, types := ctxs.tables, ctxs.views, ctxs.enums, ctxs.sets, ctxs.types
 
 	var out resolvedNames
+	generated := newTableIndex(tables)
 
 	for _, tc := range tables {
 		ref := tableRef(tc.Schema, tc.TableName)
@@ -318,7 +319,7 @@ func collectResolvedNames(ctxs generationContexts) resolvedNames {
 			claimedName{name: "Create" + tc.StructName + "Input", by: ref},
 			claimedName{name: "Update" + tc.StructName + "Input", by: ref},
 		)
-		for _, n := range nestedSurfaceNames(tc) {
+		for _, n := range nestedSurfaceNames(tc, generated) {
 			nestedBy := nestedSurfaceRef(tc.Schema, tc.TableName)
 			if n.edge != "" {
 				nestedBy = relationshipRef(tc.Schema, tc.TableName, n.edge)
