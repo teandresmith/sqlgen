@@ -257,6 +257,44 @@ func TestCacheTemplate_emitsViewInvalidateSwitch(t *testing.T) {
 	}
 }
 
+// A write that affected no row changed nothing a dependent view reads: like
+// the entity keys, the view patterns are left alone when AffectedPKs is empty.
+func TestCacheTemplate_viewInvalidationSkipsNoOpWrite(t *testing.T) {
+	cfg := cacheTestConfig(true)
+	cfg.Views["product_summary"] = config.ViewConfig{
+		StructName:   "ProductSummary",
+		Cache:        &config.ViewCacheConfig{Enabled: new(true)},
+		InvalidateOn: []string{"products"},
+	}
+	views := []gen.ViewContext{
+		{
+			StructName:        "ProductSummary",
+			ViewName:          "product_summary",
+			TableNameConstant: "TableProductSummaries",
+			Schema:            "public",
+			Columns: []gen.ColumnContext{
+				{Name: "id", FieldName: "ID", GoType: "uuid.UUID", DBTag: "id"},
+			},
+		},
+	}
+	ctx := gen.BuildCacheContext([]gen.TableContext{cacheTestTable()}, views, cfg, "db", "Client")
+	out := executeCacheTemplate(t, ctx)
+
+	start := strings.Index(out, "viewOp := func(ctx context.Context) error {")
+	if start < 0 {
+		t.Fatalf("view invalidation callback not found\n%s", out)
+	}
+	viewOp := out[start:]
+	if end := strings.Index(viewOp, "\n\t}\n"); end >= 0 {
+		viewOp = viewOp[:end]
+	}
+	guard := strings.Index(viewOp, "if len(affected) == 0 {")
+	patterns := strings.Index(viewOp, "c.patternsForSourceTable(table)")
+	if guard < 0 || patterns < 0 || guard > patterns {
+		t.Errorf("view invalidation does not skip a write that affected no row before reading the view patterns\n%s", viewOp)
+	}
+}
+
 func TestCacheTemplate_emitsQueryAndMutationHooks(t *testing.T) {
 	cfg := cacheTestConfig(true)
 	ctx := gen.BuildCacheContext([]gen.TableContext{cacheTestTable()}, nil, cfg, "db", "Client")

@@ -234,3 +234,47 @@ func TestViewInvalidation_NonSourceTableMutationDoesNotFireViewPattern(t *testin
 		t.Errorf("articles mutation fired view pattern: %q (articles is NOT in product_summary.invalidate_on)", got.pattern)
 	}
 }
+
+// TestViewInvalidation_NoOpWriteDoesNotFireViewPattern: a write on a source
+// table that affected no row changed nothing the view reads, so it must not
+// fire the view pattern, just as it evicts no entity key.
+func TestViewInvalidation_NoOpWriteDoesNotFireViewPattern(t *testing.T) {
+	ctx := context.Background()
+	env := newEnv(t)
+	const missing = int64(987654321)
+
+	tests := []struct {
+		name  string
+		write func() error
+	}{
+		{name: "HardDelete of a missing key", write: func() error {
+			return env.client.Products().HardDelete(ctx, missing)
+		}},
+		{name: "HardDeleteMany of missing keys", write: func() error {
+			return env.client.Products().HardDeleteMany(ctx, []int64{missing, missing + 1})
+		}},
+		{name: "UpdateMany of a missing key", write: func() error {
+			_, err := env.client.Products().UpdateMany(ctx, []models.UpdateProductItem{
+				{ID: missing, Input: &models.UpdateProductInput{Name: omittable.Set("gone")}},
+			})
+			return err
+		}},
+		{name: "HardDeleteWhere matching no row", write: func() error {
+			sku := uniqueSku(t, "noop-hdw")
+			return env.client.Products().HardDeleteWhere(ctx, &models.ProductFilter{
+				SKU: &comparator.String{Eq: &sku},
+			})
+		}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			env.backend.reset()
+			if err := tt.write(); err != nil {
+				t.Fatalf("write: %v", err)
+			}
+			if got := viewPatternFor(env, "product_summary"); got != nil {
+				t.Errorf("a write that affected no row fired view pattern %q", got.pattern)
+			}
+		})
+	}
+}

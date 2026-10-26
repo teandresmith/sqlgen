@@ -1169,6 +1169,12 @@ func (c *Cache) dispatchMutation(ctx context.Context, m *hook.MutationContext, r
 	}
 
 	viewOp := func(ctx context.Context) error {
+		// A write that affected no row changed nothing a dependent view
+		// reads, so the views keep their cached entries — the same rule the
+		// entity keys follow above.
+		if len(affected) == 0 {
+			return nil
+		}
 		patterns := c.patternsForSourceTable(table)
 		if len(patterns) == 0 {
 			return nil
