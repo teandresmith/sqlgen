@@ -3,6 +3,7 @@ package tests
 import (
 	"context"
 	"testing"
+	"time"
 	"uuid"
 
 	dbstdlib "github.com/teandresmith/sqlgen/database/stdlib"
@@ -95,10 +96,10 @@ func TestEventTenantStamp_TenantInPKStampsFromPKStruct(t *testing.T) {
 	}
 }
 
-// A batch member the mutation never materialized (missing
-// PK) publishes an event with the "tenant" key entirely absent: soft
-// degrade, never "<nil>" and never "".
-func TestEventTenantStamp_UnmaterializedRowOmitsKey(t *testing.T) {
+// A batch member the mutation never materialized (missing PK) wrote nothing,
+// so it publishes no event at all; the materialized member's event carries
+// its row's tenant.
+func TestEventTenantStamp_UnmaterializedRowPublishesNothing(t *testing.T) {
 	resetDB(t)
 	env := newEnv(t, withResolver(staticResolver(tenantA)), withEvents())
 	ctx := context.Background()
@@ -118,28 +119,18 @@ func TestEventTenantStamp_UnmaterializedRowOmitsKey(t *testing.T) {
 		t.Fatalf("SoftDeleteMany with missing PK: %v", err)
 	}
 
-	events := collector.waitFor(t, 2)
-	for _, e := range events {
-		pk, _ := e.PK.(int64)
-		switch pk {
-		case a.ID:
-			if e.Metadata == nil || e.Metadata["tenant"] != tenantA.String() {
-				t.Errorf("existing row event Metadata[tenant] = %v, want %q", e.Metadata, tenantA.String())
-			}
-		case missingID:
-			if e.Metadata != nil {
-				if v, ok := e.Metadata["tenant"]; ok {
-					t.Errorf("unmaterialized row event Metadata[tenant] = %q, want key absent (soft degrade)", v)
-				}
-			}
-		default:
-			t.Errorf("unexpected event PK %d", pk)
-		}
-		if e.Metadata != nil {
-			if v := e.Metadata["tenant"]; v == "<nil>" || (v == "" && len(e.Metadata) > 0 && hasTenantKey(e)) {
-				t.Errorf("event PK %v: Metadata[tenant] = %q — must never be \"<nil>\" or empty", e.PK, v)
-			}
-		}
+	collector.waitFor(t, 1)
+	// Give a stray event for the missing key time to arrive.
+	time.Sleep(100 * time.Millisecond)
+	events := collector.snapshot()
+	if len(events) != 1 {
+		t.Fatalf("got %d events, want 1 (the missing key wrote nothing): %+v", len(events), events)
+	}
+	if pk, _ := events[0].PK.(int64); pk != a.ID {
+		t.Errorf("event PK = %v, want %d", events[0].PK, a.ID)
+	}
+	if got := events[0].Metadata["tenant"]; got != tenantA.String() {
+		t.Errorf("event Metadata[tenant] = %q, want %q", got, tenantA.String())
 	}
 }
 
@@ -177,11 +168,4 @@ func TestEventTenantStamp_RequiredFalseZeroTenantStampsRowOrg(t *testing.T) {
 	if got := events[0].Metadata["tenant"]; got != tenantA.String() {
 		t.Errorf("required:false zero-tenant event Metadata[tenant] = %q, want %q (row-derived org)", got, tenantA.String())
 	}
-}
-
-// hasTenantKey reports whether the event's metadata map carries a "tenant"
-// entry at all (present-but-empty is the failure shape the guard rejects).
-func hasTenantKey(e event.Event) bool {
-	_, ok := e.Metadata["tenant"]
-	return ok
 }

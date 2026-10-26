@@ -8,6 +8,7 @@ package gen
 
 import (
 	"slices"
+	"strings"
 
 	"github.com/teandresmith/sqlgen/cmd/sqlgen/config"
 	"github.com/teandresmith/sqlgen/cmd/sqlgen/gotype"
@@ -1678,4 +1679,58 @@ func (t TableContext) resolvesTenantDirectly() bool {
 // reads two plain facts every fixture already sets.
 func (t TableContext) O2MLoadUnchunked() bool {
 	return t.Dialect == config.DialectPostgres && t.Driver == config.DriverPgx
+}
+
+// KeySetType is the Go map key type of a set of this table's primary keys:
+// the key type itself, or string when a key column's Go type is not
+// comparable ([]byte, net.IP and the like) and so cannot key a map. A batch
+// write collects the keys its statements wrote into such a set.
+//
+// A method rather than a field for the reason NeedsTenantResolver gives: it
+// reads only the PK columns, and a fixture that forgot a field would emit a
+// map keyed by a slice, which does not compile.
+func (t TableContext) KeySetType() string {
+	if !t.pkComparable() {
+		return "string"
+	}
+	if t.CompositePK {
+		return t.CompositePKStructName
+	}
+	return t.PKColumns[0].GoType
+}
+
+// KeySetKey is the expression that keys expr — a primary-key value — into a
+// set typed by KeySetType: expr itself, or its Go-syntax %#v rendering when
+// the key is not comparable. %#v quotes strings and spells out every byte, so
+// two distinct keys never render alike.
+func (t TableContext) KeySetKey(expr string) string {
+	if !t.pkComparable() {
+		return `fmt.Sprintf("%#v", ` + expr + `)`
+	}
+	return expr
+}
+
+// pkComparable reports whether every primary-key column's Go type is
+// comparable, so the key (or the composite key struct) can key a map.
+func (t TableContext) pkComparable() bool {
+	for _, col := range t.PKColumns {
+		if !goTypeComparable(col.GoType) {
+			return false
+		}
+	}
+	return true
+}
+
+// goTypeComparable reports whether a resolved Go type expression is
+// comparable: not a slice, a map or a func, and not one of the standard
+// library's named slice-backed types a key column resolves to.
+func goTypeComparable(goType string) bool {
+	if strings.HasPrefix(goType, "[]") || strings.HasPrefix(goType, "map[") || strings.HasPrefix(goType, "func(") {
+		return false
+	}
+	switch goType {
+	case "net.IP", "net.IPNet", "net.HardwareAddr", "json.RawMessage":
+		return false
+	}
+	return true
 }

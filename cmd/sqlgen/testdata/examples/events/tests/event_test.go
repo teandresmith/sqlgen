@@ -427,6 +427,17 @@ func TestEvent_MissingKeyPublishesNothing(t *testing.T) {
 		{name: "hard delete", write: func(client *models.Client) error {
 			return client.Products().HardDelete(ctx, missing)
 		}},
+		{name: "soft delete many", write: func(client *models.Client) error {
+			_, err := client.Articles().SoftDeleteMany(ctx, []int64{missing, missing + 1})
+			return err
+		}},
+		{name: "restore many", write: func(client *models.Client) error {
+			_, err := client.Articles().RestoreMany(ctx, []int64{missing, missing + 1})
+			return err
+		}},
+		{name: "hard delete many", write: func(client *models.Client) error {
+			return client.Products().HardDeleteMany(ctx, []int64{missing, missing + 1})
+		}},
 	}
 	for _, tt := range cases {
 		t.Run(tt.name, func(t *testing.T) {
@@ -437,6 +448,75 @@ func TestEvent_MissingKeyPublishesNothing(t *testing.T) {
 			}
 			if events := got.waitStable(); len(events) != 0 {
 				t.Errorf("got %d events, want 0: %+v", len(events), events)
+			}
+		})
+	}
+}
+
+// A batch write listing one existing key and one missing key publishes one
+// event, for the existing key: the missing key wrote nothing.
+func TestEvent_BatchPublishesOnlyWrittenKeys(t *testing.T) {
+	ctx := context.Background()
+	const missing = int64(987654321)
+	cases := []struct {
+		name string
+		// write creates the existing row, subscribes, and writes the batch
+		// over it and missing, returning the existing row's key.
+		write func(t *testing.T, client *models.Client, subscribeNow func()) int64
+	}{
+		{name: "soft delete many", write: func(t *testing.T, client *models.Client, subscribeNow func()) int64 {
+			a, err := client.Articles().Create(ctx, &models.CreateArticleInput{Title: "BW-SD", Author: "bw"})
+			if err != nil {
+				t.Fatalf("Create: %v", err)
+			}
+			t.Cleanup(func() { _ = client.Articles().HardDelete(ctx, a.ID) })
+			subscribeNow()
+			if _, err := client.Articles().SoftDeleteMany(ctx, []int64{missing, a.ID}); err != nil {
+				t.Fatalf("SoftDeleteMany: %v", err)
+			}
+			return a.ID
+		}},
+		{name: "restore many", write: func(t *testing.T, client *models.Client, subscribeNow func()) int64 {
+			a, err := client.Articles().Create(ctx, &models.CreateArticleInput{Title: "BW-RS", Author: "bw"})
+			if err != nil {
+				t.Fatalf("Create: %v", err)
+			}
+			t.Cleanup(func() { _ = client.Articles().HardDelete(ctx, a.ID) })
+			if _, err := client.Articles().SoftDelete(ctx, a.ID); err != nil {
+				t.Fatalf("SoftDelete: %v", err)
+			}
+			subscribeNow()
+			if _, err := client.Articles().RestoreMany(ctx, []int64{missing, a.ID}); err != nil {
+				t.Fatalf("RestoreMany: %v", err)
+			}
+			return a.ID
+		}},
+		{name: "hard delete many", write: func(t *testing.T, client *models.Client, subscribeNow func()) int64 {
+			p, err := client.Products().Create(ctx, &models.CreateProductInput{Name: "BW-HD", SKU: "EV-BW-HD", Price: 1})
+			if err != nil {
+				t.Fatalf("Create: %v", err)
+			}
+			t.Cleanup(func() { _ = client.Products().HardDelete(ctx, p.ID) })
+			subscribeNow()
+			if err := client.Products().HardDeleteMany(ctx, []int64{missing, p.ID}); err != nil {
+				t.Fatalf("HardDeleteMany: %v", err)
+			}
+			return p.ID
+		}},
+	}
+	for _, tt := range cases {
+		t.Run(tt.name, func(t *testing.T) {
+			client, bus := newClientWithBus(t)
+			var c *collector
+			existing := tt.write(t, client, func() {
+				c = subscribe(t, bus, event.SubscribeOptions{})
+			})
+			events := c.waitStable()
+			if len(events) != 1 {
+				t.Fatalf("got %d events, want 1: %+v", len(events), events)
+			}
+			if pk, _ := events[0].PK.(int64); pk != existing {
+				t.Errorf("event PK = %v, want %d", events[0].PK, existing)
 			}
 		})
 	}

@@ -1453,11 +1453,20 @@ func (c *articleClient) SoftDeleteMany(ctx context.Context, ids []int64, opts ..
 			}
 			rows.Close()
 		}
-		m.AffectedPKs = toAnySlice(ids)
-		affectedTenants := make([]any, len(ids))
-		for i, id := range ids {
-			affectedTenants[i] = tenantByPK[id]
+
+		// A listed key whose row this call did not write records no affected
+		// key, so no cache entry is invalidated and no event is published for it.
+		affectedPKs := make([]any, 0, len(ids))
+		affectedTenants := make([]any, 0, len(ids))
+		for _, key := range ids {
+			tenant, ok := tenantByPK[key]
+			if !ok {
+				continue
+			}
+			affectedPKs = append(affectedPKs, key)
+			affectedTenants = append(affectedTenants, tenant)
 		}
+		m.AffectedPKs = affectedPKs
 		m.AffectedTenants = affectedTenants
 
 		// Empty FieldOptions — skip fetch
@@ -1758,11 +1767,20 @@ func (c *articleClient) RestoreMany(ctx context.Context, ids []int64, opts ...fu
 			}
 			rows.Close()
 		}
-		m.AffectedPKs = toAnySlice(ids)
-		affectedTenants := make([]any, len(ids))
-		for i, id := range ids {
-			affectedTenants[i] = tenantByPK[id]
+
+		// A listed key whose row this call did not write records no affected
+		// key, so no cache entry is invalidated and no event is published for it.
+		affectedPKs := make([]any, 0, len(ids))
+		affectedTenants := make([]any, 0, len(ids))
+		for _, key := range ids {
+			tenant, ok := tenantByPK[key]
+			if !ok {
+				continue
+			}
+			affectedPKs = append(affectedPKs, key)
+			affectedTenants = append(affectedTenants, tenant)
 		}
+		m.AffectedPKs = affectedPKs
 		m.AffectedTenants = affectedTenants
 
 		// Empty FieldOptions — skip fetch
@@ -2002,11 +2020,20 @@ func (c *articleClient) HardDeleteMany(ctx context.Context, ids []int64, opts ..
 			}
 			rows.Close()
 		}
-		m.AffectedPKs = toAnySlice(ids)
-		affectedTenants := make([]any, len(ids))
-		for i, id := range ids {
-			affectedTenants[i] = tenantByPK[id]
+
+		// A listed key whose row this call did not write records no affected
+		// key, so no cache entry is invalidated and no event is published for it.
+		affectedPKs := make([]any, 0, len(ids))
+		affectedTenants := make([]any, 0, len(ids))
+		for _, key := range ids {
+			tenant, ok := tenantByPK[key]
+			if !ok {
+				continue
+			}
+			affectedPKs = append(affectedPKs, key)
+			affectedTenants = append(affectedTenants, tenant)
 		}
+		m.AffectedPKs = affectedPKs
 		m.AffectedTenants = affectedTenants
 		return nil, nil
 	})
@@ -4267,20 +4294,49 @@ func (c *auditLogClient) HardDeleteMany(ctx context.Context, ids []int64, opts .
 	}, func(ctx context.Context, m *hook.MutationContext) (any, error) {
 		conn := database.Conn(ctx, c.querier)
 
+		// The keys the sub-batches below write. A listed key that matches no
+		// row stays out of it, so it records no affected key.
+		written := make(map[int64]struct{}, len(ids))
+
 		// One statement per sub-batch of c.batchSize keys. A failing sub-batch
 		// returns at once, and the sub-batches before it stay applied.
 		for start := 0; start < len(ids); start += c.batchSize {
 			end := min(start+c.batchSize, len(ids))
 			hardConds := []sql.Condition{sql.Where(c.dialect.QuoteIdentifier("id")).In(toAnySlice(ids[start:end])...)}
 
+			// RETURNING the key columns names the rows this sub-batch wrote.
 			query, args := sql.BuildHardDelete(c.dialect, c.table, sql.HardDeleteOptions{
-				Conditions: hardConds,
+				Conditions:       hardConds,
+				ReturningColumns: []string{"id"},
 			})
-			if _, err := conn.Exec(ctx, query, args...); err != nil {
+			rows, err := conn.Query(ctx, query, args...)
+			if err != nil {
 				return nil, fmt.Errorf("hard delete audit_logs: %w", err)
 			}
+			for rows.Next() {
+				var rowID int64
+				if err := rows.Scan(&rowID); err != nil {
+					rows.Close()
+					return nil, fmt.Errorf("scan deleted audit_log key: %w", err)
+				}
+				written[rowID] = struct{}{}
+			}
+			if err := rows.Err(); err != nil {
+				rows.Close()
+				return nil, err
+			}
+			rows.Close()
 		}
-		m.AffectedPKs = toAnySlice(ids)
+
+		// A listed key whose row this call did not write records no affected
+		// key, so no cache entry is invalidated and no event is published for it.
+		affectedPKs := make([]any, 0, len(ids))
+		for _, key := range ids {
+			if _, ok := written[key]; ok {
+				affectedPKs = append(affectedPKs, key)
+			}
+		}
+		m.AffectedPKs = affectedPKs
 		return nil, nil
 	})
 	return err
@@ -6636,11 +6692,20 @@ func (c *legacyWidgetClient) HardDeleteMany(ctx context.Context, ids []int64, op
 			}
 			rows.Close()
 		}
-		m.AffectedPKs = toAnySlice(ids)
-		affectedTenants := make([]any, len(ids))
-		for i, id := range ids {
-			affectedTenants[i] = tenantByPK[id]
+
+		// A listed key whose row this call did not write records no affected
+		// key, so no cache entry is invalidated and no event is published for it.
+		affectedPKs := make([]any, 0, len(ids))
+		affectedTenants := make([]any, 0, len(ids))
+		for _, key := range ids {
+			tenant, ok := tenantByPK[key]
+			if !ok {
+				continue
+			}
+			affectedPKs = append(affectedPKs, key)
+			affectedTenants = append(affectedTenants, tenant)
 		}
+		m.AffectedPKs = affectedPKs
 		m.AffectedTenants = affectedTenants
 		return nil, nil
 	})
@@ -9030,6 +9095,10 @@ func (c *orderItemClient) HardDeleteMany(ctx context.Context, pks []OrderItemPK,
 			}
 		}
 
+		// The keys the sub-batches below write. A listed key that matches no
+		// row stays out of it, so it records no affected key.
+		written := make(map[OrderItemPK]struct{}, len(pks))
+
 		// One statement per sub-batch of c.batchSize keys. A failing sub-batch
 		// returns at once, and the sub-batches before it stay applied.
 		for start := 0; start < len(pks); start += c.batchSize {
@@ -9043,14 +9112,39 @@ func (c *orderItemClient) HardDeleteMany(ctx context.Context, pks []OrderItemPK,
 			}
 			hardConds = append(hardConds, scopeConds...)
 
+			// RETURNING the key columns names the rows this sub-batch wrote.
 			query, args := sql.BuildHardDelete(c.dialect, c.table, sql.HardDeleteOptions{
-				Conditions: hardConds,
+				Conditions:       hardConds,
+				ReturningColumns: []string{"workspace_id", "order_id", "product_id"},
 			})
-			if _, err := conn.Exec(ctx, query, args...); err != nil {
+			rows, err := conn.Query(ctx, query, args...)
+			if err != nil {
 				return nil, fmt.Errorf("hard delete order_items: %w", err)
 			}
+			for rows.Next() {
+				var rowPK OrderItemPK
+				if err := rows.Scan(&rowPK.WorkspaceID, &rowPK.OrderID, &rowPK.ProductID); err != nil {
+					rows.Close()
+					return nil, fmt.Errorf("scan deleted order_item key: %w", err)
+				}
+				written[rowPK] = struct{}{}
+			}
+			if err := rows.Err(); err != nil {
+				rows.Close()
+				return nil, err
+			}
+			rows.Close()
 		}
-		m.AffectedPKs = toAnySlice(pks)
+
+		// A listed key whose row this call did not write records no affected
+		// key, so no cache entry is invalidated and no event is published for it.
+		affectedPKs := make([]any, 0, len(pks))
+		for _, key := range pks {
+			if _, ok := written[key]; ok {
+				affectedPKs = append(affectedPKs, key)
+			}
+		}
+		m.AffectedPKs = affectedPKs
 		return nil, nil
 	})
 	return err
@@ -10937,6 +11031,10 @@ func (c *postTagClient) HardDeleteMany(ctx context.Context, pks []PostTagPK, opt
 	}, func(ctx context.Context, m *hook.MutationContext) (any, error) {
 		conn := database.Conn(ctx, c.querier)
 
+		// The keys the sub-batches below write. A listed key that matches no
+		// row stays out of it, so it records no affected key.
+		written := make(map[PostTagPK]struct{}, len(pks))
+
 		// One statement per sub-batch of c.batchSize keys. A failing sub-batch
 		// returns at once, and the sub-batches before it stay applied.
 		for start := 0; start < len(pks); start += c.batchSize {
@@ -10949,14 +11047,39 @@ func (c *postTagClient) HardDeleteMany(ctx context.Context, pks []PostTagPK, opt
 				sql.BuildCompositePKBatchCondition(c.dialect, []string{"post_id", "tag_id"}, pkValues),
 			}
 
+			// RETURNING the key columns names the rows this sub-batch wrote.
 			query, args := sql.BuildHardDelete(c.dialect, c.table, sql.HardDeleteOptions{
-				Conditions: hardConds,
+				Conditions:       hardConds,
+				ReturningColumns: []string{"post_id", "tag_id"},
 			})
-			if _, err := conn.Exec(ctx, query, args...); err != nil {
+			rows, err := conn.Query(ctx, query, args...)
+			if err != nil {
 				return nil, fmt.Errorf("hard delete post_tags: %w", err)
 			}
+			for rows.Next() {
+				var rowPK PostTagPK
+				if err := rows.Scan(&rowPK.PostID, &rowPK.TagID); err != nil {
+					rows.Close()
+					return nil, fmt.Errorf("scan deleted post_tag key: %w", err)
+				}
+				written[rowPK] = struct{}{}
+			}
+			if err := rows.Err(); err != nil {
+				rows.Close()
+				return nil, err
+			}
+			rows.Close()
 		}
-		m.AffectedPKs = toAnySlice(pks)
+
+		// A listed key whose row this call did not write records no affected
+		// key, so no cache entry is invalidated and no event is published for it.
+		affectedPKs := make([]any, 0, len(pks))
+		for _, key := range pks {
+			if _, ok := written[key]; ok {
+				affectedPKs = append(affectedPKs, key)
+			}
+		}
+		m.AffectedPKs = affectedPKs
 		return nil, nil
 	})
 	return err
@@ -13329,11 +13452,20 @@ func (c *postClient) HardDeleteMany(ctx context.Context, ids []int64, opts ...fu
 			}
 			rows.Close()
 		}
-		m.AffectedPKs = toAnySlice(ids)
-		affectedTenants := make([]any, len(ids))
-		for i, id := range ids {
-			affectedTenants[i] = tenantByPK[id]
+
+		// A listed key whose row this call did not write records no affected
+		// key, so no cache entry is invalidated and no event is published for it.
+		affectedPKs := make([]any, 0, len(ids))
+		affectedTenants := make([]any, 0, len(ids))
+		for _, key := range ids {
+			tenant, ok := tenantByPK[key]
+			if !ok {
+				continue
+			}
+			affectedPKs = append(affectedPKs, key)
+			affectedTenants = append(affectedTenants, tenant)
 		}
+		m.AffectedPKs = affectedPKs
 		m.AffectedTenants = affectedTenants
 		return nil, nil
 	})
@@ -16062,11 +16194,20 @@ func (c *productClient) HardDeleteMany(ctx context.Context, ids []int64, opts ..
 			}
 			rows.Close()
 		}
-		m.AffectedPKs = toAnySlice(ids)
-		affectedTenants := make([]any, len(ids))
-		for i, id := range ids {
-			affectedTenants[i] = tenantByPK[id]
+
+		// A listed key whose row this call did not write records no affected
+		// key, so no cache entry is invalidated and no event is published for it.
+		affectedPKs := make([]any, 0, len(ids))
+		affectedTenants := make([]any, 0, len(ids))
+		for _, key := range ids {
+			tenant, ok := tenantByPK[key]
+			if !ok {
+				continue
+			}
+			affectedPKs = append(affectedPKs, key)
+			affectedTenants = append(affectedTenants, tenant)
 		}
+		m.AffectedPKs = affectedPKs
 		m.AffectedTenants = affectedTenants
 		return nil, nil
 	})
@@ -18786,11 +18927,20 @@ func (c *tagLinkClient) HardDeleteMany(ctx context.Context, pks []TagLinkPK, opt
 			}
 			rows.Close()
 		}
-		m.AffectedPKs = toAnySlice(pks)
-		affectedTenants := make([]any, len(pks))
-		for i, pk := range pks {
-			affectedTenants[i] = tenantByPK[pk]
+
+		// A listed key whose row this call did not write records no affected
+		// key, so no cache entry is invalidated and no event is published for it.
+		affectedPKs := make([]any, 0, len(pks))
+		affectedTenants := make([]any, 0, len(pks))
+		for _, key := range pks {
+			tenant, ok := tenantByPK[key]
+			if !ok {
+				continue
+			}
+			affectedPKs = append(affectedPKs, key)
+			affectedTenants = append(affectedTenants, tenant)
 		}
+		m.AffectedPKs = affectedPKs
 		m.AffectedTenants = affectedTenants
 		return nil, nil
 	})
@@ -21684,11 +21834,20 @@ func (c *tagClient) HardDeleteMany(ctx context.Context, ids []int64, opts ...fun
 			}
 			rows.Close()
 		}
-		m.AffectedPKs = toAnySlice(ids)
-		affectedTenants := make([]any, len(ids))
-		for i, id := range ids {
-			affectedTenants[i] = tenantByPK[id]
+
+		// A listed key whose row this call did not write records no affected
+		// key, so no cache entry is invalidated and no event is published for it.
+		affectedPKs := make([]any, 0, len(ids))
+		affectedTenants := make([]any, 0, len(ids))
+		for _, key := range ids {
+			tenant, ok := tenantByPK[key]
+			if !ok {
+				continue
+			}
+			affectedPKs = append(affectedPKs, key)
+			affectedTenants = append(affectedTenants, tenant)
 		}
+		m.AffectedPKs = affectedPKs
 		m.AffectedTenants = affectedTenants
 		return nil, nil
 	})
@@ -24543,11 +24702,20 @@ func (c *userProfileClient) HardDeleteMany(ctx context.Context, ids []int64, opt
 			}
 			rows.Close()
 		}
-		m.AffectedPKs = toAnySlice(ids)
-		affectedTenants := make([]any, len(ids))
-		for i, id := range ids {
-			affectedTenants[i] = tenantByPK[id]
+
+		// A listed key whose row this call did not write records no affected
+		// key, so no cache entry is invalidated and no event is published for it.
+		affectedPKs := make([]any, 0, len(ids))
+		affectedTenants := make([]any, 0, len(ids))
+		for _, key := range ids {
+			tenant, ok := tenantByPK[key]
+			if !ok {
+				continue
+			}
+			affectedPKs = append(affectedPKs, key)
+			affectedTenants = append(affectedTenants, tenant)
 		}
+		m.AffectedPKs = affectedPKs
 		m.AffectedTenants = affectedTenants
 		return nil, nil
 	})
@@ -27638,11 +27806,20 @@ func (c *userClient) HardDeleteMany(ctx context.Context, ids []int64, opts ...fu
 			}
 			rows.Close()
 		}
-		m.AffectedPKs = toAnySlice(ids)
-		affectedTenants := make([]any, len(ids))
-		for i, id := range ids {
-			affectedTenants[i] = tenantByPK[id]
+
+		// A listed key whose row this call did not write records no affected
+		// key, so no cache entry is invalidated and no event is published for it.
+		affectedPKs := make([]any, 0, len(ids))
+		affectedTenants := make([]any, 0, len(ids))
+		for _, key := range ids {
+			tenant, ok := tenantByPK[key]
+			if !ok {
+				continue
+			}
+			affectedPKs = append(affectedPKs, key)
+			affectedTenants = append(affectedTenants, tenant)
 		}
+		m.AffectedPKs = affectedPKs
 		m.AffectedTenants = affectedTenants
 		return nil, nil
 	})
@@ -30382,20 +30559,49 @@ func (c *workspaceClient) HardDeleteMany(ctx context.Context, ids []uuid.UUID, o
 	}, func(ctx context.Context, m *hook.MutationContext) (any, error) {
 		conn := database.Conn(ctx, c.querier)
 
+		// The keys the sub-batches below write. A listed key that matches no
+		// row stays out of it, so it records no affected key.
+		written := make(map[uuid.UUID]struct{}, len(ids))
+
 		// One statement per sub-batch of c.batchSize keys. A failing sub-batch
 		// returns at once, and the sub-batches before it stay applied.
 		for start := 0; start < len(ids); start += c.batchSize {
 			end := min(start+c.batchSize, len(ids))
 			hardConds := []sql.Condition{sql.Where(c.dialect.QuoteIdentifier("id")).In(toAnySlice(ids[start:end])...)}
 
+			// RETURNING the key columns names the rows this sub-batch wrote.
 			query, args := sql.BuildHardDelete(c.dialect, c.table, sql.HardDeleteOptions{
-				Conditions: hardConds,
+				Conditions:       hardConds,
+				ReturningColumns: []string{"id"},
 			})
-			if _, err := conn.Exec(ctx, query, args...); err != nil {
+			rows, err := conn.Query(ctx, query, args...)
+			if err != nil {
 				return nil, fmt.Errorf("hard delete workspaces: %w", err)
 			}
+			for rows.Next() {
+				var rowID uuid.UUID
+				if err := rows.Scan(&rowID); err != nil {
+					rows.Close()
+					return nil, fmt.Errorf("scan deleted workspace key: %w", err)
+				}
+				written[rowID] = struct{}{}
+			}
+			if err := rows.Err(); err != nil {
+				rows.Close()
+				return nil, err
+			}
+			rows.Close()
 		}
-		m.AffectedPKs = toAnySlice(ids)
+
+		// A listed key whose row this call did not write records no affected
+		// key, so no cache entry is invalidated and no event is published for it.
+		affectedPKs := make([]any, 0, len(ids))
+		for _, key := range ids {
+			if _, ok := written[key]; ok {
+				affectedPKs = append(affectedPKs, key)
+			}
+		}
+		m.AffectedPKs = affectedPKs
 		return nil, nil
 	})
 	return err

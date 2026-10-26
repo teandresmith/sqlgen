@@ -3347,3 +3347,53 @@ func TestBuildContexts_StructNameMustBeExported(t *testing.T) {
 		})
 	}
 }
+
+// A key set is keyed by the primary key itself when every key column's Go
+// type is comparable, and by the key's %#v rendering when one is not: a map
+// keyed by a slice does not compile.
+func TestTableContext_KeySet(t *testing.T) {
+	col := func(name, goType string) gen.ColumnContext {
+		return gen.ColumnContext{Name: name, FieldName: name, GoType: goType, PrimaryKey: true}
+	}
+	tests := []struct {
+		name     string
+		ctx      gen.TableContext
+		wantType string
+		wantKey  string
+	}{
+		{
+			name:     "comparable single key",
+			ctx:      gen.TableContext{PKColumns: []gen.ColumnContext{col("ID", "int64")}},
+			wantType: "int64",
+			wantKey:  "id",
+		},
+		{
+			name:     "comparable composite key",
+			ctx:      gen.TableContext{CompositePK: true, CompositePKStructName: "OrderItemPK", PKColumns: []gen.ColumnContext{col("OrderID", "uuid.UUID"), col("Line", "int32")}},
+			wantType: "OrderItemPK",
+			wantKey:  "id",
+		},
+		{
+			name:     "byte slice single key",
+			ctx:      gen.TableContext{PKColumns: []gen.ColumnContext{col("ID", "[]byte")}},
+			wantType: "string",
+			wantKey:  `fmt.Sprintf("%#v", id)`,
+		},
+		{
+			name:     "composite key with a network address column",
+			ctx:      gen.TableContext{CompositePK: true, CompositePKStructName: "HostPK", PKColumns: []gen.ColumnContext{col("Addr", "net.IP"), col("Port", "int32")}},
+			wantType: "string",
+			wantKey:  `fmt.Sprintf("%#v", id)`,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := tt.ctx.KeySetType(); got != tt.wantType {
+				t.Errorf("KeySetType() = %q, want %q", got, tt.wantType)
+			}
+			if got := tt.ctx.KeySetKey("id"); got != tt.wantKey {
+				t.Errorf("KeySetKey(%q) = %q, want %q", "id", got, tt.wantKey)
+			}
+		})
+	}
+}

@@ -982,11 +982,25 @@ func (c *documentClient) SoftDeleteMany(ctx context.Context, ids []int64, opts .
 			return []*Document{}, nil
 		}
 
+		// The keys the sub-batches below write. A listed key that matches no
+		// row stays out of it, so it records no affected key.
+		written := make(map[int64]struct{}, len(ids))
+
 		// One statement per sub-batch of c.batchSize keys. A failing sub-batch
 		// returns at once, and the sub-batches before it stay applied.
 		for start := 0; start < len(ids); start += c.batchSize {
 			end := min(start+c.batchSize, len(ids))
 			delConds := []sql.Condition{sql.Where(c.dialect.QuoteIdentifier("id")).In(toAnySlice(ids[start:end])...)}
+
+			// MySQL has no RETURNING, so a pre-read finds the keys this
+			// sub-batch is about to write.
+			batchKeys, err := c.matchingKeys(ctx, conn, delConds)
+			if err != nil {
+				return nil, fmt.Errorf("soft delete documents: read keys: %w", err)
+			}
+			for key := range batchKeys {
+				written[key] = struct{}{}
+			}
 
 			query, args := sql.BuildSoftDelete(c.dialect, c.table, sql.SoftDeleteOptions{
 				Column:     "deleted_at",
@@ -997,7 +1011,16 @@ func (c *documentClient) SoftDeleteMany(ctx context.Context, ids []int64, opts .
 				return nil, fmt.Errorf("soft delete documents: %w", err)
 			}
 		}
-		m.AffectedPKs = toAnySlice(ids)
+
+		// A listed key whose row this call did not write records no affected
+		// key, so no cache entry is invalidated and no event is published for it.
+		affectedPKs := make([]any, 0, len(ids))
+		for _, key := range ids {
+			if _, ok := written[key]; ok {
+				affectedPKs = append(affectedPKs, key)
+			}
+		}
+		m.AffectedPKs = affectedPKs
 
 		// Empty FieldOptions — skip fetch
 		if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
@@ -1170,11 +1193,25 @@ func (c *documentClient) RestoreMany(ctx context.Context, ids []int64, opts ...f
 			return []*Document{}, nil
 		}
 
+		// The keys the sub-batches below write. A listed key that matches no
+		// row stays out of it, so it records no affected key.
+		written := make(map[int64]struct{}, len(ids))
+
 		// One statement per sub-batch of c.batchSize keys. A failing sub-batch
 		// returns at once, and the sub-batches before it stay applied.
 		for start := 0; start < len(ids); start += c.batchSize {
 			end := min(start+c.batchSize, len(ids))
 			restoreConds := []sql.Condition{sql.Where(c.dialect.QuoteIdentifier("id")).In(toAnySlice(ids[start:end])...)}
+
+			// MySQL has no RETURNING, so a pre-read finds the keys this
+			// sub-batch is about to write.
+			batchKeys, err := c.matchingKeys(ctx, conn, restoreConds)
+			if err != nil {
+				return nil, fmt.Errorf("restore documents: read keys: %w", err)
+			}
+			for key := range batchKeys {
+				written[key] = struct{}{}
+			}
 
 			query, args := sql.BuildUpdate(c.dialect, c.table, sql.UpdateOptions{
 				SetClauses: map[string]any{"deleted_at": nil},
@@ -1184,7 +1221,16 @@ func (c *documentClient) RestoreMany(ctx context.Context, ids []int64, opts ...f
 				return nil, fmt.Errorf("restore documents: %w", err)
 			}
 		}
-		m.AffectedPKs = toAnySlice(ids)
+
+		// A listed key whose row this call did not write records no affected
+		// key, so no cache entry is invalidated and no event is published for it.
+		affectedPKs := make([]any, 0, len(ids))
+		for _, key := range ids {
+			if _, ok := written[key]; ok {
+				affectedPKs = append(affectedPKs, key)
+			}
+		}
+		m.AffectedPKs = affectedPKs
 
 		// Empty FieldOptions — skip fetch
 		if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
@@ -1315,11 +1361,25 @@ func (c *documentClient) HardDeleteMany(ctx context.Context, ids []int64, opts .
 	}, func(ctx context.Context, m *hook.MutationContext) (any, error) {
 		conn := database.Conn(ctx, c.querier)
 
+		// The keys the sub-batches below write. A listed key that matches no
+		// row stays out of it, so it records no affected key.
+		written := make(map[int64]struct{}, len(ids))
+
 		// One statement per sub-batch of c.batchSize keys. A failing sub-batch
 		// returns at once, and the sub-batches before it stay applied.
 		for start := 0; start < len(ids); start += c.batchSize {
 			end := min(start+c.batchSize, len(ids))
 			hardConds := []sql.Condition{sql.Where(c.dialect.QuoteIdentifier("id")).In(toAnySlice(ids[start:end])...)}
+
+			// MySQL has no RETURNING, so a pre-read finds the keys this
+			// sub-batch is about to write.
+			batchKeys, err := c.matchingKeys(ctx, conn, hardConds)
+			if err != nil {
+				return nil, fmt.Errorf("hard delete documents: read keys: %w", err)
+			}
+			for key := range batchKeys {
+				written[key] = struct{}{}
+			}
 
 			query, args := sql.BuildHardDelete(c.dialect, c.table, sql.HardDeleteOptions{
 				Conditions: hardConds,
@@ -1328,7 +1388,16 @@ func (c *documentClient) HardDeleteMany(ctx context.Context, ids []int64, opts .
 				return nil, fmt.Errorf("hard delete documents: %w", err)
 			}
 		}
-		m.AffectedPKs = toAnySlice(ids)
+
+		// A listed key whose row this call did not write records no affected
+		// key, so no cache entry is invalidated and no event is published for it.
+		affectedPKs := make([]any, 0, len(ids))
+		for _, key := range ids {
+			if _, ok := written[key]; ok {
+				affectedPKs = append(affectedPKs, key)
+			}
+		}
+		m.AffectedPKs = affectedPKs
 		return nil, nil
 	})
 	return err
@@ -1371,6 +1440,32 @@ func (c *documentClient) HardDeleteWhere(ctx context.Context, filter *DocumentFi
 		return nil, nil
 	})
 	return err
+}
+
+// matchingKeys returns the set of primary keys of the rows matching conds. On
+// MySQL, which has no RETURNING, a batch write reads it just before its
+// statement to learn which of the listed keys it writes.
+func (c *documentClient) matchingKeys(ctx context.Context, conn database.Querier, conds []sql.Condition) (map[int64]struct{}, error) {
+	query, args := sql.BuildSelect(c.dialect, c.table, sql.SelectOptions{
+		Columns:    []string{"id"},
+		Conditions: conds,
+	})
+
+	rows, err := conn.Query(ctx, query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	keys := make(map[int64]struct{})
+	for rows.Next() {
+		var id int64
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		keys[id] = struct{}{}
+	}
+	return keys, rows.Err()
 }
 
 // DocumentConflictTarget identifies a unique constraint for upsert conflict detection.
@@ -3215,6 +3310,10 @@ func (c *orderItemClient) HardDeleteMany(ctx context.Context, pks []OrderItemPK,
 	}, func(ctx context.Context, m *hook.MutationContext) (any, error) {
 		conn := database.Conn(ctx, c.querier)
 
+		// The keys the sub-batches below write. A listed key that matches no
+		// row stays out of it, so it records no affected key.
+		written := make(map[OrderItemPK]struct{}, len(pks))
+
 		// One statement per sub-batch of c.batchSize keys. A failing sub-batch
 		// returns at once, and the sub-batches before it stay applied.
 		for start := 0; start < len(pks); start += c.batchSize {
@@ -3227,6 +3326,16 @@ func (c *orderItemClient) HardDeleteMany(ctx context.Context, pks []OrderItemPK,
 				sql.BuildCompositePKBatchCondition(c.dialect, []string{"order_id", "product_id"}, pkValues),
 			}
 
+			// MySQL has no RETURNING, so a pre-read finds the keys this
+			// sub-batch is about to write.
+			batchKeys, err := c.matchingKeys(ctx, conn, hardConds)
+			if err != nil {
+				return nil, fmt.Errorf("hard delete order_items: read keys: %w", err)
+			}
+			for key := range batchKeys {
+				written[key] = struct{}{}
+			}
+
 			query, args := sql.BuildHardDelete(c.dialect, c.table, sql.HardDeleteOptions{
 				Conditions: hardConds,
 			})
@@ -3234,7 +3343,16 @@ func (c *orderItemClient) HardDeleteMany(ctx context.Context, pks []OrderItemPK,
 				return nil, fmt.Errorf("hard delete order_items: %w", err)
 			}
 		}
-		m.AffectedPKs = toAnySlice(pks)
+
+		// A listed key whose row this call did not write records no affected
+		// key, so no cache entry is invalidated and no event is published for it.
+		affectedPKs := make([]any, 0, len(pks))
+		for _, key := range pks {
+			if _, ok := written[key]; ok {
+				affectedPKs = append(affectedPKs, key)
+			}
+		}
+		m.AffectedPKs = affectedPKs
 		return nil, nil
 	})
 	return err
@@ -3277,6 +3395,48 @@ func (c *orderItemClient) HardDeleteWhere(ctx context.Context, filter *OrderItem
 		return nil, nil
 	})
 	return err
+}
+
+// matchingKeys returns the set of primary keys of the rows matching conds. On
+// MySQL, which has no RETURNING, a batch write reads it just before its
+// statement to learn which of the listed keys it writes.
+func (c *orderItemClient) matchingKeys(ctx context.Context, conn database.Querier, conds []sql.Condition) (map[OrderItemPK]struct{}, error) {
+	query, args := sql.BuildSelect(c.dialect, c.table, sql.SelectOptions{
+		Columns:    []string{"order_id", "product_id"},
+		Conditions: conds,
+	})
+
+	rows, err := conn.Query(ctx, query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	// BuildSelect emits its column list sorted, which need not match the key's
+	// field order, so each column binds to its field by name.
+	cols, err := rows.Columns()
+	if err != nil {
+		return nil, err
+	}
+
+	keys := make(map[OrderItemPK]struct{})
+	for rows.Next() {
+		var pk OrderItemPK
+		targets := make([]any, len(cols))
+		for i, col := range cols {
+			switch col {
+			case "order_id":
+				targets[i] = &pk.OrderID
+			case "product_id":
+				targets[i] = &pk.ProductID
+			}
+		}
+		if err := rows.Scan(targets...); err != nil {
+			return nil, err
+		}
+		keys[pk] = struct{}{}
+	}
+	return keys, rows.Err()
 }
 
 // OrderItemConflictTarget identifies a unique constraint for upsert conflict detection.
@@ -5192,11 +5352,25 @@ func (c *productClient) HardDeleteMany(ctx context.Context, ids []int64, opts ..
 	}, func(ctx context.Context, m *hook.MutationContext) (any, error) {
 		conn := database.Conn(ctx, c.querier)
 
+		// The keys the sub-batches below write. A listed key that matches no
+		// row stays out of it, so it records no affected key.
+		written := make(map[int64]struct{}, len(ids))
+
 		// One statement per sub-batch of c.batchSize keys. A failing sub-batch
 		// returns at once, and the sub-batches before it stay applied.
 		for start := 0; start < len(ids); start += c.batchSize {
 			end := min(start+c.batchSize, len(ids))
 			hardConds := []sql.Condition{sql.Where(c.dialect.QuoteIdentifier("id")).In(toAnySlice(ids[start:end])...)}
+
+			// MySQL has no RETURNING, so a pre-read finds the keys this
+			// sub-batch is about to write.
+			batchKeys, err := c.matchingKeys(ctx, conn, hardConds)
+			if err != nil {
+				return nil, fmt.Errorf("hard delete products: read keys: %w", err)
+			}
+			for key := range batchKeys {
+				written[key] = struct{}{}
+			}
 
 			query, args := sql.BuildHardDelete(c.dialect, c.table, sql.HardDeleteOptions{
 				Conditions: hardConds,
@@ -5205,7 +5379,16 @@ func (c *productClient) HardDeleteMany(ctx context.Context, ids []int64, opts ..
 				return nil, fmt.Errorf("hard delete products: %w", err)
 			}
 		}
-		m.AffectedPKs = toAnySlice(ids)
+
+		// A listed key whose row this call did not write records no affected
+		// key, so no cache entry is invalidated and no event is published for it.
+		affectedPKs := make([]any, 0, len(ids))
+		for _, key := range ids {
+			if _, ok := written[key]; ok {
+				affectedPKs = append(affectedPKs, key)
+			}
+		}
+		m.AffectedPKs = affectedPKs
 		return nil, nil
 	})
 	return err
@@ -5248,6 +5431,32 @@ func (c *productClient) HardDeleteWhere(ctx context.Context, filter *ProductFilt
 		return nil, nil
 	})
 	return err
+}
+
+// matchingKeys returns the set of primary keys of the rows matching conds. On
+// MySQL, which has no RETURNING, a batch write reads it just before its
+// statement to learn which of the listed keys it writes.
+func (c *productClient) matchingKeys(ctx context.Context, conn database.Querier, conds []sql.Condition) (map[int64]struct{}, error) {
+	query, args := sql.BuildSelect(c.dialect, c.table, sql.SelectOptions{
+		Columns:    []string{"id"},
+		Conditions: conds,
+	})
+
+	rows, err := conn.Query(ctx, query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	keys := make(map[int64]struct{})
+	for rows.Next() {
+		var id int64
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		keys[id] = struct{}{}
+	}
+	return keys, rows.Err()
 }
 
 // ProductConflictTarget identifies a unique constraint for upsert conflict detection.

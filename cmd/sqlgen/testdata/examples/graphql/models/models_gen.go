@@ -808,6 +808,10 @@ func (c *assetDocumentLinkClient) HardDeleteMany(ctx context.Context, pks []Asse
 	}, func(ctx context.Context, m *hook.MutationContext) (any, error) {
 		conn := database.Conn(ctx, c.querier)
 
+		// The keys the sub-batches below write. A listed key that matches no
+		// row stays out of it, so it records no affected key.
+		written := make(map[AssetDocumentLinkPK]struct{}, len(pks))
+
 		// One statement per sub-batch of c.batchSize keys. A failing sub-batch
 		// returns at once, and the sub-batches before it stay applied.
 		for start := 0; start < len(pks); start += c.batchSize {
@@ -820,14 +824,39 @@ func (c *assetDocumentLinkClient) HardDeleteMany(ctx context.Context, pks []Asse
 				sql.BuildCompositePKBatchCondition(c.dialect, []string{"asset_id", "document_id"}, pkValues),
 			}
 
+			// RETURNING the key columns names the rows this sub-batch wrote.
 			query, args := sql.BuildHardDelete(c.dialect, c.table, sql.HardDeleteOptions{
-				Conditions: hardConds,
+				Conditions:       hardConds,
+				ReturningColumns: []string{"asset_id", "document_id"},
 			})
-			if _, err := conn.Exec(ctx, query, args...); err != nil {
+			rows, err := conn.Query(ctx, query, args...)
+			if err != nil {
 				return nil, fmt.Errorf("hard delete asset_document_links: %w", err)
 			}
+			for rows.Next() {
+				var rowPK AssetDocumentLinkPK
+				if err := rows.Scan(&rowPK.AssetID, &rowPK.DocumentID); err != nil {
+					rows.Close()
+					return nil, fmt.Errorf("scan deleted asset_document_link key: %w", err)
+				}
+				written[rowPK] = struct{}{}
+			}
+			if err := rows.Err(); err != nil {
+				rows.Close()
+				return nil, err
+			}
+			rows.Close()
 		}
-		m.AffectedPKs = toAnySlice(pks)
+
+		// A listed key whose row this call did not write records no affected
+		// key, so no cache entry is invalidated and no event is published for it.
+		affectedPKs := make([]any, 0, len(pks))
+		for _, key := range pks {
+			if _, ok := written[key]; ok {
+				affectedPKs = append(affectedPKs, key)
+			}
+		}
+		m.AffectedPKs = affectedPKs
 		return nil, nil
 	})
 	return err
@@ -3235,20 +3264,49 @@ func (c *assetClient) HardDeleteMany(ctx context.Context, ids []uuid.UUID, opts 
 	}, func(ctx context.Context, m *hook.MutationContext) (any, error) {
 		conn := database.Conn(ctx, c.querier)
 
+		// The keys the sub-batches below write. A listed key that matches no
+		// row stays out of it, so it records no affected key.
+		written := make(map[uuid.UUID]struct{}, len(ids))
+
 		// One statement per sub-batch of c.batchSize keys. A failing sub-batch
 		// returns at once, and the sub-batches before it stay applied.
 		for start := 0; start < len(ids); start += c.batchSize {
 			end := min(start+c.batchSize, len(ids))
 			hardConds := []sql.Condition{sql.Where(c.dialect.QuoteIdentifier("id")).In(toAnySlice(ids[start:end])...)}
 
+			// RETURNING the key columns names the rows this sub-batch wrote.
 			query, args := sql.BuildHardDelete(c.dialect, c.table, sql.HardDeleteOptions{
-				Conditions: hardConds,
+				Conditions:       hardConds,
+				ReturningColumns: []string{"id"},
 			})
-			if _, err := conn.Exec(ctx, query, args...); err != nil {
+			rows, err := conn.Query(ctx, query, args...)
+			if err != nil {
 				return nil, fmt.Errorf("hard delete assets: %w", err)
 			}
+			for rows.Next() {
+				var rowID uuid.UUID
+				if err := rows.Scan(&rowID); err != nil {
+					rows.Close()
+					return nil, fmt.Errorf("scan deleted asset key: %w", err)
+				}
+				written[rowID] = struct{}{}
+			}
+			if err := rows.Err(); err != nil {
+				rows.Close()
+				return nil, err
+			}
+			rows.Close()
 		}
-		m.AffectedPKs = toAnySlice(ids)
+
+		// A listed key whose row this call did not write records no affected
+		// key, so no cache entry is invalidated and no event is published for it.
+		affectedPKs := make([]any, 0, len(ids))
+		for _, key := range ids {
+			if _, ok := written[key]; ok {
+				affectedPKs = append(affectedPKs, key)
+			}
+		}
+		m.AffectedPKs = affectedPKs
 		return nil, nil
 	})
 	return err
@@ -6851,20 +6909,49 @@ func (c *categoryClient) HardDeleteMany(ctx context.Context, ids []int64, opts .
 	}, func(ctx context.Context, m *hook.MutationContext) (any, error) {
 		conn := database.Conn(ctx, c.querier)
 
+		// The keys the sub-batches below write. A listed key that matches no
+		// row stays out of it, so it records no affected key.
+		written := make(map[int64]struct{}, len(ids))
+
 		// One statement per sub-batch of c.batchSize keys. A failing sub-batch
 		// returns at once, and the sub-batches before it stay applied.
 		for start := 0; start < len(ids); start += c.batchSize {
 			end := min(start+c.batchSize, len(ids))
 			hardConds := []sql.Condition{sql.Where(c.dialect.QuoteIdentifier("id")).In(toAnySlice(ids[start:end])...)}
 
+			// RETURNING the key columns names the rows this sub-batch wrote.
 			query, args := sql.BuildHardDelete(c.dialect, c.table, sql.HardDeleteOptions{
-				Conditions: hardConds,
+				Conditions:       hardConds,
+				ReturningColumns: []string{"id"},
 			})
-			if _, err := conn.Exec(ctx, query, args...); err != nil {
+			rows, err := conn.Query(ctx, query, args...)
+			if err != nil {
 				return nil, fmt.Errorf("hard delete categories: %w", err)
 			}
+			for rows.Next() {
+				var rowID int64
+				if err := rows.Scan(&rowID); err != nil {
+					rows.Close()
+					return nil, fmt.Errorf("scan deleted category key: %w", err)
+				}
+				written[rowID] = struct{}{}
+			}
+			if err := rows.Err(); err != nil {
+				rows.Close()
+				return nil, err
+			}
+			rows.Close()
 		}
-		m.AffectedPKs = toAnySlice(ids)
+
+		// A listed key whose row this call did not write records no affected
+		// key, so no cache entry is invalidated and no event is published for it.
+		affectedPKs := make([]any, 0, len(ids))
+		for _, key := range ids {
+			if _, ok := written[key]; ok {
+				affectedPKs = append(affectedPKs, key)
+			}
+		}
+		m.AffectedPKs = affectedPKs
 		return nil, nil
 	})
 	return err
@@ -9849,20 +9936,49 @@ func (c *documentClient) HardDeleteMany(ctx context.Context, ids []uuid.UUID, op
 	}, func(ctx context.Context, m *hook.MutationContext) (any, error) {
 		conn := database.Conn(ctx, c.querier)
 
+		// The keys the sub-batches below write. A listed key that matches no
+		// row stays out of it, so it records no affected key.
+		written := make(map[uuid.UUID]struct{}, len(ids))
+
 		// One statement per sub-batch of c.batchSize keys. A failing sub-batch
 		// returns at once, and the sub-batches before it stay applied.
 		for start := 0; start < len(ids); start += c.batchSize {
 			end := min(start+c.batchSize, len(ids))
 			hardConds := []sql.Condition{sql.Where(c.dialect.QuoteIdentifier("id")).In(toAnySlice(ids[start:end])...)}
 
+			// RETURNING the key columns names the rows this sub-batch wrote.
 			query, args := sql.BuildHardDelete(c.dialect, c.table, sql.HardDeleteOptions{
-				Conditions: hardConds,
+				Conditions:       hardConds,
+				ReturningColumns: []string{"id"},
 			})
-			if _, err := conn.Exec(ctx, query, args...); err != nil {
+			rows, err := conn.Query(ctx, query, args...)
+			if err != nil {
 				return nil, fmt.Errorf("hard delete documents: %w", err)
 			}
+			for rows.Next() {
+				var rowID uuid.UUID
+				if err := rows.Scan(&rowID); err != nil {
+					rows.Close()
+					return nil, fmt.Errorf("scan deleted document key: %w", err)
+				}
+				written[rowID] = struct{}{}
+			}
+			if err := rows.Err(); err != nil {
+				rows.Close()
+				return nil, err
+			}
+			rows.Close()
 		}
-		m.AffectedPKs = toAnySlice(ids)
+
+		// A listed key whose row this call did not write records no affected
+		// key, so no cache entry is invalidated and no event is published for it.
+		affectedPKs := make([]any, 0, len(ids))
+		for _, key := range ids {
+			if _, ok := written[key]; ok {
+				affectedPKs = append(affectedPKs, key)
+			}
+		}
+		m.AffectedPKs = affectedPKs
 		return nil, nil
 	})
 	return err
@@ -12841,20 +12957,49 @@ func (c *eventClient) HardDeleteMany(ctx context.Context, ids []uuid.UUID, opts 
 	}, func(ctx context.Context, m *hook.MutationContext) (any, error) {
 		conn := database.Conn(ctx, c.querier)
 
+		// The keys the sub-batches below write. A listed key that matches no
+		// row stays out of it, so it records no affected key.
+		written := make(map[uuid.UUID]struct{}, len(ids))
+
 		// One statement per sub-batch of c.batchSize keys. A failing sub-batch
 		// returns at once, and the sub-batches before it stay applied.
 		for start := 0; start < len(ids); start += c.batchSize {
 			end := min(start+c.batchSize, len(ids))
 			hardConds := []sql.Condition{sql.Where(c.dialect.QuoteIdentifier("id")).In(toAnySlice(ids[start:end])...)}
 
+			// RETURNING the key columns names the rows this sub-batch wrote.
 			query, args := sql.BuildHardDelete(c.dialect, c.table, sql.HardDeleteOptions{
-				Conditions: hardConds,
+				Conditions:       hardConds,
+				ReturningColumns: []string{"id"},
 			})
-			if _, err := conn.Exec(ctx, query, args...); err != nil {
+			rows, err := conn.Query(ctx, query, args...)
+			if err != nil {
 				return nil, fmt.Errorf("hard delete events: %w", err)
 			}
+			for rows.Next() {
+				var rowID uuid.UUID
+				if err := rows.Scan(&rowID); err != nil {
+					rows.Close()
+					return nil, fmt.Errorf("scan deleted event key: %w", err)
+				}
+				written[rowID] = struct{}{}
+			}
+			if err := rows.Err(); err != nil {
+				rows.Close()
+				return nil, err
+			}
+			rows.Close()
 		}
-		m.AffectedPKs = toAnySlice(ids)
+
+		// A listed key whose row this call did not write records no affected
+		// key, so no cache entry is invalidated and no event is published for it.
+		affectedPKs := make([]any, 0, len(ids))
+		for _, key := range ids {
+			if _, ok := written[key]; ok {
+				affectedPKs = append(affectedPKs, key)
+			}
+		}
+		m.AffectedPKs = affectedPKs
 		return nil, nil
 	})
 	return err
@@ -15658,20 +15803,49 @@ func (c *filterProbeClient) HardDeleteMany(ctx context.Context, ids []uuid.UUID,
 	}, func(ctx context.Context, m *hook.MutationContext) (any, error) {
 		conn := database.Conn(ctx, c.querier)
 
+		// The keys the sub-batches below write. A listed key that matches no
+		// row stays out of it, so it records no affected key.
+		written := make(map[uuid.UUID]struct{}, len(ids))
+
 		// One statement per sub-batch of c.batchSize keys. A failing sub-batch
 		// returns at once, and the sub-batches before it stay applied.
 		for start := 0; start < len(ids); start += c.batchSize {
 			end := min(start+c.batchSize, len(ids))
 			hardConds := []sql.Condition{sql.Where(c.dialect.QuoteIdentifier("id")).In(toAnySlice(ids[start:end])...)}
 
+			// RETURNING the key columns names the rows this sub-batch wrote.
 			query, args := sql.BuildHardDelete(c.dialect, c.table, sql.HardDeleteOptions{
-				Conditions: hardConds,
+				Conditions:       hardConds,
+				ReturningColumns: []string{"id"},
 			})
-			if _, err := conn.Exec(ctx, query, args...); err != nil {
+			rows, err := conn.Query(ctx, query, args...)
+			if err != nil {
 				return nil, fmt.Errorf("hard delete filter_probes: %w", err)
 			}
+			for rows.Next() {
+				var rowID uuid.UUID
+				if err := rows.Scan(&rowID); err != nil {
+					rows.Close()
+					return nil, fmt.Errorf("scan deleted filter_probe key: %w", err)
+				}
+				written[rowID] = struct{}{}
+			}
+			if err := rows.Err(); err != nil {
+				rows.Close()
+				return nil, err
+			}
+			rows.Close()
 		}
-		m.AffectedPKs = toAnySlice(ids)
+
+		// A listed key whose row this call did not write records no affected
+		// key, so no cache entry is invalidated and no event is published for it.
+		affectedPKs := make([]any, 0, len(ids))
+		for _, key := range ids {
+			if _, ok := written[key]; ok {
+				affectedPKs = append(affectedPKs, key)
+			}
+		}
+		m.AffectedPKs = affectedPKs
 		return nil, nil
 	})
 	return err
@@ -17813,20 +17987,49 @@ func (c *keyedCodeEntryClient) HardDeleteMany(ctx context.Context, ids []uuid.UU
 	}, func(ctx context.Context, m *hook.MutationContext) (any, error) {
 		conn := database.Conn(ctx, c.querier)
 
+		// The keys the sub-batches below write. A listed key that matches no
+		// row stays out of it, so it records no affected key.
+		written := make(map[uuid.UUID]struct{}, len(ids))
+
 		// One statement per sub-batch of c.batchSize keys. A failing sub-batch
 		// returns at once, and the sub-batches before it stay applied.
 		for start := 0; start < len(ids); start += c.batchSize {
 			end := min(start+c.batchSize, len(ids))
 			hardConds := []sql.Condition{sql.Where(c.dialect.QuoteIdentifier("id")).In(toAnySlice(ids[start:end])...)}
 
+			// RETURNING the key columns names the rows this sub-batch wrote.
 			query, args := sql.BuildHardDelete(c.dialect, c.table, sql.HardDeleteOptions{
-				Conditions: hardConds,
+				Conditions:       hardConds,
+				ReturningColumns: []string{"id"},
 			})
-			if _, err := conn.Exec(ctx, query, args...); err != nil {
+			rows, err := conn.Query(ctx, query, args...)
+			if err != nil {
 				return nil, fmt.Errorf("hard delete keyed_code_entries: %w", err)
 			}
+			for rows.Next() {
+				var rowID uuid.UUID
+				if err := rows.Scan(&rowID); err != nil {
+					rows.Close()
+					return nil, fmt.Errorf("scan deleted keyed_code_entry key: %w", err)
+				}
+				written[rowID] = struct{}{}
+			}
+			if err := rows.Err(); err != nil {
+				rows.Close()
+				return nil, err
+			}
+			rows.Close()
 		}
-		m.AffectedPKs = toAnySlice(ids)
+
+		// A listed key whose row this call did not write records no affected
+		// key, so no cache entry is invalidated and no event is published for it.
+		affectedPKs := make([]any, 0, len(ids))
+		for _, key := range ids {
+			if _, ok := written[key]; ok {
+				affectedPKs = append(affectedPKs, key)
+			}
+		}
+		m.AffectedPKs = affectedPKs
 		return nil, nil
 	})
 	return err
@@ -19947,20 +20150,49 @@ func (c *keyedCodeClient) HardDeleteMany(ctx context.Context, ids []uuid.UUID, o
 	}, func(ctx context.Context, m *hook.MutationContext) (any, error) {
 		conn := database.Conn(ctx, c.querier)
 
+		// The keys the sub-batches below write. A listed key that matches no
+		// row stays out of it, so it records no affected key.
+		written := make(map[uuid.UUID]struct{}, len(ids))
+
 		// One statement per sub-batch of c.batchSize keys. A failing sub-batch
 		// returns at once, and the sub-batches before it stay applied.
 		for start := 0; start < len(ids); start += c.batchSize {
 			end := min(start+c.batchSize, len(ids))
 			hardConds := []sql.Condition{sql.Where(c.dialect.QuoteIdentifier("id")).In(toAnySlice(ids[start:end])...)}
 
+			// RETURNING the key columns names the rows this sub-batch wrote.
 			query, args := sql.BuildHardDelete(c.dialect, c.table, sql.HardDeleteOptions{
-				Conditions: hardConds,
+				Conditions:       hardConds,
+				ReturningColumns: []string{"id"},
 			})
-			if _, err := conn.Exec(ctx, query, args...); err != nil {
+			rows, err := conn.Query(ctx, query, args...)
+			if err != nil {
 				return nil, fmt.Errorf("hard delete keyed_codes: %w", err)
 			}
+			for rows.Next() {
+				var rowID uuid.UUID
+				if err := rows.Scan(&rowID); err != nil {
+					rows.Close()
+					return nil, fmt.Errorf("scan deleted keyed_code key: %w", err)
+				}
+				written[rowID] = struct{}{}
+			}
+			if err := rows.Err(); err != nil {
+				rows.Close()
+				return nil, err
+			}
+			rows.Close()
 		}
-		m.AffectedPKs = toAnySlice(ids)
+
+		// A listed key whose row this call did not write records no affected
+		// key, so no cache entry is invalidated and no event is published for it.
+		affectedPKs := make([]any, 0, len(ids))
+		for _, key := range ids {
+			if _, ok := written[key]; ok {
+				affectedPKs = append(affectedPKs, key)
+			}
+		}
+		m.AffectedPKs = affectedPKs
 		return nil, nil
 	})
 	return err
@@ -22339,20 +22571,49 @@ func (c *maskedLabelClient) HardDeleteMany(ctx context.Context, ids []uuid.UUID,
 	}, func(ctx context.Context, m *hook.MutationContext) (any, error) {
 		conn := database.Conn(ctx, c.querier)
 
+		// The keys the sub-batches below write. A listed key that matches no
+		// row stays out of it, so it records no affected key.
+		written := make(map[uuid.UUID]struct{}, len(ids))
+
 		// One statement per sub-batch of c.batchSize keys. A failing sub-batch
 		// returns at once, and the sub-batches before it stay applied.
 		for start := 0; start < len(ids); start += c.batchSize {
 			end := min(start+c.batchSize, len(ids))
 			hardConds := []sql.Condition{sql.Where(c.dialect.QuoteIdentifier("id")).In(toAnySlice(ids[start:end])...)}
 
+			// RETURNING the key columns names the rows this sub-batch wrote.
 			query, args := sql.BuildHardDelete(c.dialect, c.table, sql.HardDeleteOptions{
-				Conditions: hardConds,
+				Conditions:       hardConds,
+				ReturningColumns: []string{"id"},
 			})
-			if _, err := conn.Exec(ctx, query, args...); err != nil {
+			rows, err := conn.Query(ctx, query, args...)
+			if err != nil {
 				return nil, fmt.Errorf("hard delete masked_labels: %w", err)
 			}
+			for rows.Next() {
+				var rowID uuid.UUID
+				if err := rows.Scan(&rowID); err != nil {
+					rows.Close()
+					return nil, fmt.Errorf("scan deleted masked_label key: %w", err)
+				}
+				written[rowID] = struct{}{}
+			}
+			if err := rows.Err(); err != nil {
+				rows.Close()
+				return nil, err
+			}
+			rows.Close()
 		}
-		m.AffectedPKs = toAnySlice(ids)
+
+		// A listed key whose row this call did not write records no affected
+		// key, so no cache entry is invalidated and no event is published for it.
+		affectedPKs := make([]any, 0, len(ids))
+		for _, key := range ids {
+			if _, ok := written[key]; ok {
+				affectedPKs = append(affectedPKs, key)
+			}
+		}
+		m.AffectedPKs = affectedPKs
 		return nil, nil
 	})
 	return err
@@ -24475,20 +24736,49 @@ func (c *numericWidthClient) HardDeleteMany(ctx context.Context, ids []uuid.UUID
 	}, func(ctx context.Context, m *hook.MutationContext) (any, error) {
 		conn := database.Conn(ctx, c.querier)
 
+		// The keys the sub-batches below write. A listed key that matches no
+		// row stays out of it, so it records no affected key.
+		written := make(map[uuid.UUID]struct{}, len(ids))
+
 		// One statement per sub-batch of c.batchSize keys. A failing sub-batch
 		// returns at once, and the sub-batches before it stay applied.
 		for start := 0; start < len(ids); start += c.batchSize {
 			end := min(start+c.batchSize, len(ids))
 			hardConds := []sql.Condition{sql.Where(c.dialect.QuoteIdentifier("id")).In(toAnySlice(ids[start:end])...)}
 
+			// RETURNING the key columns names the rows this sub-batch wrote.
 			query, args := sql.BuildHardDelete(c.dialect, c.table, sql.HardDeleteOptions{
-				Conditions: hardConds,
+				Conditions:       hardConds,
+				ReturningColumns: []string{"id"},
 			})
-			if _, err := conn.Exec(ctx, query, args...); err != nil {
+			rows, err := conn.Query(ctx, query, args...)
+			if err != nil {
 				return nil, fmt.Errorf("hard delete numeric_widths: %w", err)
 			}
+			for rows.Next() {
+				var rowID uuid.UUID
+				if err := rows.Scan(&rowID); err != nil {
+					rows.Close()
+					return nil, fmt.Errorf("scan deleted numeric_width key: %w", err)
+				}
+				written[rowID] = struct{}{}
+			}
+			if err := rows.Err(); err != nil {
+				rows.Close()
+				return nil, err
+			}
+			rows.Close()
 		}
-		m.AffectedPKs = toAnySlice(ids)
+
+		// A listed key whose row this call did not write records no affected
+		// key, so no cache entry is invalidated and no event is published for it.
+		affectedPKs := make([]any, 0, len(ids))
+		for _, key := range ids {
+			if _, ok := written[key]; ok {
+				affectedPKs = append(affectedPKs, key)
+			}
+		}
+		m.AffectedPKs = affectedPKs
 		return nil, nil
 	})
 	return err
@@ -26913,20 +27203,49 @@ func (c *orderItemClient) HardDeleteMany(ctx context.Context, ids []uuid.UUID, o
 	}, func(ctx context.Context, m *hook.MutationContext) (any, error) {
 		conn := database.Conn(ctx, c.querier)
 
+		// The keys the sub-batches below write. A listed key that matches no
+		// row stays out of it, so it records no affected key.
+		written := make(map[uuid.UUID]struct{}, len(ids))
+
 		// One statement per sub-batch of c.batchSize keys. A failing sub-batch
 		// returns at once, and the sub-batches before it stay applied.
 		for start := 0; start < len(ids); start += c.batchSize {
 			end := min(start+c.batchSize, len(ids))
 			hardConds := []sql.Condition{sql.Where(c.dialect.QuoteIdentifier("id")).In(toAnySlice(ids[start:end])...)}
 
+			// RETURNING the key columns names the rows this sub-batch wrote.
 			query, args := sql.BuildHardDelete(c.dialect, c.table, sql.HardDeleteOptions{
-				Conditions: hardConds,
+				Conditions:       hardConds,
+				ReturningColumns: []string{"id"},
 			})
-			if _, err := conn.Exec(ctx, query, args...); err != nil {
+			rows, err := conn.Query(ctx, query, args...)
+			if err != nil {
 				return nil, fmt.Errorf("hard delete order_items: %w", err)
 			}
+			for rows.Next() {
+				var rowID uuid.UUID
+				if err := rows.Scan(&rowID); err != nil {
+					rows.Close()
+					return nil, fmt.Errorf("scan deleted order_item key: %w", err)
+				}
+				written[rowID] = struct{}{}
+			}
+			if err := rows.Err(); err != nil {
+				rows.Close()
+				return nil, err
+			}
+			rows.Close()
 		}
-		m.AffectedPKs = toAnySlice(ids)
+
+		// A listed key whose row this call did not write records no affected
+		// key, so no cache entry is invalidated and no event is published for it.
+		affectedPKs := make([]any, 0, len(ids))
+		for _, key := range ids {
+			if _, ok := written[key]; ok {
+				affectedPKs = append(affectedPKs, key)
+			}
+		}
+		m.AffectedPKs = affectedPKs
 		return nil, nil
 	})
 	return err
@@ -29472,22 +29791,51 @@ func (c *orderClient) SoftDeleteMany(ctx context.Context, ids []uuid.UUID, opts 
 			idStrings[i] = id.String()
 		}
 
+		// The keys the sub-batches below write. A listed key that matches no
+		// row stays out of it, so it records no affected key.
+		written := make(map[uuid.UUID]struct{}, len(ids))
+
 		// One statement per sub-batch of c.batchSize keys. A failing sub-batch
 		// returns at once, and the sub-batches before it stay applied.
 		for start := 0; start < len(ids); start += c.batchSize {
 			end := min(start+c.batchSize, len(ids))
 			delConds := []sql.Condition{sql.Where(c.dialect.QuoteIdentifier("id")).In(toAnySlice(idStrings[start:end])...)}
 
+			// RETURNING the key columns names the rows this sub-batch wrote.
 			query, args := sql.BuildSoftDelete(c.dialect, c.table, sql.SoftDeleteOptions{
-				Column:     "deleted_at",
-				Type:       sql.SoftDeleteTimestamp,
-				Conditions: delConds,
+				Column:           "deleted_at",
+				Type:             sql.SoftDeleteTimestamp,
+				Conditions:       delConds,
+				ReturningColumns: []string{"id"},
 			})
-			if _, err := conn.Exec(ctx, query, args...); err != nil {
+			rows, err := conn.Query(ctx, query, args...)
+			if err != nil {
 				return nil, fmt.Errorf("soft delete orders: %w", err)
 			}
+			for rows.Next() {
+				var rowID uuid.UUID
+				if err := rows.Scan(&rowID); err != nil {
+					rows.Close()
+					return nil, fmt.Errorf("scan soft deleted order key: %w", err)
+				}
+				written[rowID] = struct{}{}
+			}
+			if err := rows.Err(); err != nil {
+				rows.Close()
+				return nil, err
+			}
+			rows.Close()
 		}
-		m.AffectedPKs = toAnySlice(ids)
+
+		// A listed key whose row this call did not write records no affected
+		// key, so no cache entry is invalidated and no event is published for it.
+		affectedPKs := make([]any, 0, len(ids))
+		for _, key := range ids {
+			if _, ok := written[key]; ok {
+				affectedPKs = append(affectedPKs, key)
+			}
+		}
+		m.AffectedPKs = affectedPKs
 
 		// Empty FieldOptions — skip fetch
 		if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
@@ -29675,21 +30023,50 @@ func (c *orderClient) RestoreMany(ctx context.Context, ids []uuid.UUID, opts ...
 			idStrings[i] = id.String()
 		}
 
+		// The keys the sub-batches below write. A listed key that matches no
+		// row stays out of it, so it records no affected key.
+		written := make(map[uuid.UUID]struct{}, len(ids))
+
 		// One statement per sub-batch of c.batchSize keys. A failing sub-batch
 		// returns at once, and the sub-batches before it stay applied.
 		for start := 0; start < len(ids); start += c.batchSize {
 			end := min(start+c.batchSize, len(ids))
 			restoreConds := []sql.Condition{sql.Where(c.dialect.QuoteIdentifier("id")).In(toAnySlice(idStrings[start:end])...)}
 
+			// RETURNING the key columns names the rows this sub-batch wrote.
 			query, args := sql.BuildUpdate(c.dialect, c.table, sql.UpdateOptions{
-				SetClauses: map[string]any{"deleted_at": nil},
-				Conditions: restoreConds,
+				SetClauses:       map[string]any{"deleted_at": nil},
+				Conditions:       restoreConds,
+				ReturningColumns: []string{"id"},
 			})
-			if _, err := conn.Exec(ctx, query, args...); err != nil {
+			rows, err := conn.Query(ctx, query, args...)
+			if err != nil {
 				return nil, fmt.Errorf("restore orders: %w", err)
 			}
+			for rows.Next() {
+				var rowID uuid.UUID
+				if err := rows.Scan(&rowID); err != nil {
+					rows.Close()
+					return nil, fmt.Errorf("scan restored order key: %w", err)
+				}
+				written[rowID] = struct{}{}
+			}
+			if err := rows.Err(); err != nil {
+				rows.Close()
+				return nil, err
+			}
+			rows.Close()
 		}
-		m.AffectedPKs = toAnySlice(ids)
+
+		// A listed key whose row this call did not write records no affected
+		// key, so no cache entry is invalidated and no event is published for it.
+		affectedPKs := make([]any, 0, len(ids))
+		for _, key := range ids {
+			if _, ok := written[key]; ok {
+				affectedPKs = append(affectedPKs, key)
+			}
+		}
+		m.AffectedPKs = affectedPKs
 
 		// Empty FieldOptions — skip fetch
 		if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
@@ -29829,20 +30206,49 @@ func (c *orderClient) HardDeleteMany(ctx context.Context, ids []uuid.UUID, opts 
 	}, func(ctx context.Context, m *hook.MutationContext) (any, error) {
 		conn := database.Conn(ctx, c.querier)
 
+		// The keys the sub-batches below write. A listed key that matches no
+		// row stays out of it, so it records no affected key.
+		written := make(map[uuid.UUID]struct{}, len(ids))
+
 		// One statement per sub-batch of c.batchSize keys. A failing sub-batch
 		// returns at once, and the sub-batches before it stay applied.
 		for start := 0; start < len(ids); start += c.batchSize {
 			end := min(start+c.batchSize, len(ids))
 			hardConds := []sql.Condition{sql.Where(c.dialect.QuoteIdentifier("id")).In(toAnySlice(ids[start:end])...)}
 
+			// RETURNING the key columns names the rows this sub-batch wrote.
 			query, args := sql.BuildHardDelete(c.dialect, c.table, sql.HardDeleteOptions{
-				Conditions: hardConds,
+				Conditions:       hardConds,
+				ReturningColumns: []string{"id"},
 			})
-			if _, err := conn.Exec(ctx, query, args...); err != nil {
+			rows, err := conn.Query(ctx, query, args...)
+			if err != nil {
 				return nil, fmt.Errorf("hard delete orders: %w", err)
 			}
+			for rows.Next() {
+				var rowID uuid.UUID
+				if err := rows.Scan(&rowID); err != nil {
+					rows.Close()
+					return nil, fmt.Errorf("scan deleted order key: %w", err)
+				}
+				written[rowID] = struct{}{}
+			}
+			if err := rows.Err(); err != nil {
+				rows.Close()
+				return nil, err
+			}
+			rows.Close()
 		}
-		m.AffectedPKs = toAnySlice(ids)
+
+		// A listed key whose row this call did not write records no affected
+		// key, so no cache entry is invalidated and no event is published for it.
+		affectedPKs := make([]any, 0, len(ids))
+		for _, key := range ids {
+			if _, ok := written[key]; ok {
+				affectedPKs = append(affectedPKs, key)
+			}
+		}
+		m.AffectedPKs = affectedPKs
 		return nil, nil
 	})
 	return err
@@ -32797,22 +33203,51 @@ func (c *productClient) SoftDeleteMany(ctx context.Context, ids []uuid.UUID, opt
 			idStrings[i] = id.String()
 		}
 
+		// The keys the sub-batches below write. A listed key that matches no
+		// row stays out of it, so it records no affected key.
+		written := make(map[uuid.UUID]struct{}, len(ids))
+
 		// One statement per sub-batch of c.batchSize keys. A failing sub-batch
 		// returns at once, and the sub-batches before it stay applied.
 		for start := 0; start < len(ids); start += c.batchSize {
 			end := min(start+c.batchSize, len(ids))
 			delConds := []sql.Condition{sql.Where(c.dialect.QuoteIdentifier("id")).In(toAnySlice(idStrings[start:end])...)}
 
+			// RETURNING the key columns names the rows this sub-batch wrote.
 			query, args := sql.BuildSoftDelete(c.dialect, c.table, sql.SoftDeleteOptions{
-				Column:     "deleted_at",
-				Type:       sql.SoftDeleteTimestamp,
-				Conditions: delConds,
+				Column:           "deleted_at",
+				Type:             sql.SoftDeleteTimestamp,
+				Conditions:       delConds,
+				ReturningColumns: []string{"id"},
 			})
-			if _, err := conn.Exec(ctx, query, args...); err != nil {
+			rows, err := conn.Query(ctx, query, args...)
+			if err != nil {
 				return nil, fmt.Errorf("soft delete products: %w", err)
 			}
+			for rows.Next() {
+				var rowID uuid.UUID
+				if err := rows.Scan(&rowID); err != nil {
+					rows.Close()
+					return nil, fmt.Errorf("scan soft deleted product key: %w", err)
+				}
+				written[rowID] = struct{}{}
+			}
+			if err := rows.Err(); err != nil {
+				rows.Close()
+				return nil, err
+			}
+			rows.Close()
 		}
-		m.AffectedPKs = toAnySlice(ids)
+
+		// A listed key whose row this call did not write records no affected
+		// key, so no cache entry is invalidated and no event is published for it.
+		affectedPKs := make([]any, 0, len(ids))
+		for _, key := range ids {
+			if _, ok := written[key]; ok {
+				affectedPKs = append(affectedPKs, key)
+			}
+		}
+		m.AffectedPKs = affectedPKs
 
 		// Empty FieldOptions — skip fetch
 		if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
@@ -33000,21 +33435,50 @@ func (c *productClient) RestoreMany(ctx context.Context, ids []uuid.UUID, opts .
 			idStrings[i] = id.String()
 		}
 
+		// The keys the sub-batches below write. A listed key that matches no
+		// row stays out of it, so it records no affected key.
+		written := make(map[uuid.UUID]struct{}, len(ids))
+
 		// One statement per sub-batch of c.batchSize keys. A failing sub-batch
 		// returns at once, and the sub-batches before it stay applied.
 		for start := 0; start < len(ids); start += c.batchSize {
 			end := min(start+c.batchSize, len(ids))
 			restoreConds := []sql.Condition{sql.Where(c.dialect.QuoteIdentifier("id")).In(toAnySlice(idStrings[start:end])...)}
 
+			// RETURNING the key columns names the rows this sub-batch wrote.
 			query, args := sql.BuildUpdate(c.dialect, c.table, sql.UpdateOptions{
-				SetClauses: map[string]any{"deleted_at": nil},
-				Conditions: restoreConds,
+				SetClauses:       map[string]any{"deleted_at": nil},
+				Conditions:       restoreConds,
+				ReturningColumns: []string{"id"},
 			})
-			if _, err := conn.Exec(ctx, query, args...); err != nil {
+			rows, err := conn.Query(ctx, query, args...)
+			if err != nil {
 				return nil, fmt.Errorf("restore products: %w", err)
 			}
+			for rows.Next() {
+				var rowID uuid.UUID
+				if err := rows.Scan(&rowID); err != nil {
+					rows.Close()
+					return nil, fmt.Errorf("scan restored product key: %w", err)
+				}
+				written[rowID] = struct{}{}
+			}
+			if err := rows.Err(); err != nil {
+				rows.Close()
+				return nil, err
+			}
+			rows.Close()
 		}
-		m.AffectedPKs = toAnySlice(ids)
+
+		// A listed key whose row this call did not write records no affected
+		// key, so no cache entry is invalidated and no event is published for it.
+		affectedPKs := make([]any, 0, len(ids))
+		for _, key := range ids {
+			if _, ok := written[key]; ok {
+				affectedPKs = append(affectedPKs, key)
+			}
+		}
+		m.AffectedPKs = affectedPKs
 
 		// Empty FieldOptions — skip fetch
 		if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
@@ -33154,20 +33618,49 @@ func (c *productClient) HardDeleteMany(ctx context.Context, ids []uuid.UUID, opt
 	}, func(ctx context.Context, m *hook.MutationContext) (any, error) {
 		conn := database.Conn(ctx, c.querier)
 
+		// The keys the sub-batches below write. A listed key that matches no
+		// row stays out of it, so it records no affected key.
+		written := make(map[uuid.UUID]struct{}, len(ids))
+
 		// One statement per sub-batch of c.batchSize keys. A failing sub-batch
 		// returns at once, and the sub-batches before it stay applied.
 		for start := 0; start < len(ids); start += c.batchSize {
 			end := min(start+c.batchSize, len(ids))
 			hardConds := []sql.Condition{sql.Where(c.dialect.QuoteIdentifier("id")).In(toAnySlice(ids[start:end])...)}
 
+			// RETURNING the key columns names the rows this sub-batch wrote.
 			query, args := sql.BuildHardDelete(c.dialect, c.table, sql.HardDeleteOptions{
-				Conditions: hardConds,
+				Conditions:       hardConds,
+				ReturningColumns: []string{"id"},
 			})
-			if _, err := conn.Exec(ctx, query, args...); err != nil {
+			rows, err := conn.Query(ctx, query, args...)
+			if err != nil {
 				return nil, fmt.Errorf("hard delete products: %w", err)
 			}
+			for rows.Next() {
+				var rowID uuid.UUID
+				if err := rows.Scan(&rowID); err != nil {
+					rows.Close()
+					return nil, fmt.Errorf("scan deleted product key: %w", err)
+				}
+				written[rowID] = struct{}{}
+			}
+			if err := rows.Err(); err != nil {
+				rows.Close()
+				return nil, err
+			}
+			rows.Close()
 		}
-		m.AffectedPKs = toAnySlice(ids)
+
+		// A listed key whose row this call did not write records no affected
+		// key, so no cache entry is invalidated and no event is published for it.
+		affectedPKs := make([]any, 0, len(ids))
+		for _, key := range ids {
+			if _, ok := written[key]; ok {
+				affectedPKs = append(affectedPKs, key)
+			}
+		}
+		m.AffectedPKs = affectedPKs
 		return nil, nil
 	})
 	return err
@@ -35910,20 +36403,49 @@ func (c *profileClient) HardDeleteMany(ctx context.Context, ids []uuid.UUID, opt
 	}, func(ctx context.Context, m *hook.MutationContext) (any, error) {
 		conn := database.Conn(ctx, c.querier)
 
+		// The keys the sub-batches below write. A listed key that matches no
+		// row stays out of it, so it records no affected key.
+		written := make(map[uuid.UUID]struct{}, len(ids))
+
 		// One statement per sub-batch of c.batchSize keys. A failing sub-batch
 		// returns at once, and the sub-batches before it stay applied.
 		for start := 0; start < len(ids); start += c.batchSize {
 			end := min(start+c.batchSize, len(ids))
 			hardConds := []sql.Condition{sql.Where(c.dialect.QuoteIdentifier("id")).In(toAnySlice(ids[start:end])...)}
 
+			// RETURNING the key columns names the rows this sub-batch wrote.
 			query, args := sql.BuildHardDelete(c.dialect, c.table, sql.HardDeleteOptions{
-				Conditions: hardConds,
+				Conditions:       hardConds,
+				ReturningColumns: []string{"id"},
 			})
-			if _, err := conn.Exec(ctx, query, args...); err != nil {
+			rows, err := conn.Query(ctx, query, args...)
+			if err != nil {
 				return nil, fmt.Errorf("hard delete profiles: %w", err)
 			}
+			for rows.Next() {
+				var rowID uuid.UUID
+				if err := rows.Scan(&rowID); err != nil {
+					rows.Close()
+					return nil, fmt.Errorf("scan deleted profile key: %w", err)
+				}
+				written[rowID] = struct{}{}
+			}
+			if err := rows.Err(); err != nil {
+				rows.Close()
+				return nil, err
+			}
+			rows.Close()
 		}
-		m.AffectedPKs = toAnySlice(ids)
+
+		// A listed key whose row this call did not write records no affected
+		// key, so no cache entry is invalidated and no event is published for it.
+		affectedPKs := make([]any, 0, len(ids))
+		for _, key := range ids {
+			if _, ok := written[key]; ok {
+				affectedPKs = append(affectedPKs, key)
+			}
+		}
+		m.AffectedPKs = affectedPKs
 		return nil, nil
 	})
 	return err
@@ -38638,20 +39160,49 @@ func (c *scalarProbeClient) HardDeleteMany(ctx context.Context, ids []uuid.UUID,
 	}, func(ctx context.Context, m *hook.MutationContext) (any, error) {
 		conn := database.Conn(ctx, c.querier)
 
+		// The keys the sub-batches below write. A listed key that matches no
+		// row stays out of it, so it records no affected key.
+		written := make(map[uuid.UUID]struct{}, len(ids))
+
 		// One statement per sub-batch of c.batchSize keys. A failing sub-batch
 		// returns at once, and the sub-batches before it stay applied.
 		for start := 0; start < len(ids); start += c.batchSize {
 			end := min(start+c.batchSize, len(ids))
 			hardConds := []sql.Condition{sql.Where(c.dialect.QuoteIdentifier("id")).In(toAnySlice(ids[start:end])...)}
 
+			// RETURNING the key columns names the rows this sub-batch wrote.
 			query, args := sql.BuildHardDelete(c.dialect, c.table, sql.HardDeleteOptions{
-				Conditions: hardConds,
+				Conditions:       hardConds,
+				ReturningColumns: []string{"id"},
 			})
-			if _, err := conn.Exec(ctx, query, args...); err != nil {
+			rows, err := conn.Query(ctx, query, args...)
+			if err != nil {
 				return nil, fmt.Errorf("hard delete scalar_probes: %w", err)
 			}
+			for rows.Next() {
+				var rowID uuid.UUID
+				if err := rows.Scan(&rowID); err != nil {
+					rows.Close()
+					return nil, fmt.Errorf("scan deleted scalar_probe key: %w", err)
+				}
+				written[rowID] = struct{}{}
+			}
+			if err := rows.Err(); err != nil {
+				rows.Close()
+				return nil, err
+			}
+			rows.Close()
 		}
-		m.AffectedPKs = toAnySlice(ids)
+
+		// A listed key whose row this call did not write records no affected
+		// key, so no cache entry is invalidated and no event is published for it.
+		affectedPKs := make([]any, 0, len(ids))
+		for _, key := range ids {
+			if _, ok := written[key]; ok {
+				affectedPKs = append(affectedPKs, key)
+			}
+		}
+		m.AffectedPKs = affectedPKs
 		return nil, nil
 	})
 	return err
@@ -41300,20 +41851,49 @@ func (c *userBadgeClient) HardDeleteMany(ctx context.Context, ids []int64, opts 
 	}, func(ctx context.Context, m *hook.MutationContext) (any, error) {
 		conn := database.Conn(ctx, c.querier)
 
+		// The keys the sub-batches below write. A listed key that matches no
+		// row stays out of it, so it records no affected key.
+		written := make(map[int64]struct{}, len(ids))
+
 		// One statement per sub-batch of c.batchSize keys. A failing sub-batch
 		// returns at once, and the sub-batches before it stay applied.
 		for start := 0; start < len(ids); start += c.batchSize {
 			end := min(start+c.batchSize, len(ids))
 			hardConds := []sql.Condition{sql.Where(c.dialect.QuoteIdentifier("id")).In(toAnySlice(ids[start:end])...)}
 
+			// RETURNING the key columns names the rows this sub-batch wrote.
 			query, args := sql.BuildHardDelete(c.dialect, c.table, sql.HardDeleteOptions{
-				Conditions: hardConds,
+				Conditions:       hardConds,
+				ReturningColumns: []string{"id"},
 			})
-			if _, err := conn.Exec(ctx, query, args...); err != nil {
+			rows, err := conn.Query(ctx, query, args...)
+			if err != nil {
 				return nil, fmt.Errorf("hard delete user_badges: %w", err)
 			}
+			for rows.Next() {
+				var rowID int64
+				if err := rows.Scan(&rowID); err != nil {
+					rows.Close()
+					return nil, fmt.Errorf("scan deleted user_badge key: %w", err)
+				}
+				written[rowID] = struct{}{}
+			}
+			if err := rows.Err(); err != nil {
+				rows.Close()
+				return nil, err
+			}
+			rows.Close()
 		}
-		m.AffectedPKs = toAnySlice(ids)
+
+		// A listed key whose row this call did not write records no affected
+		// key, so no cache entry is invalidated and no event is published for it.
+		affectedPKs := make([]any, 0, len(ids))
+		for _, key := range ids {
+			if _, ok := written[key]; ok {
+				affectedPKs = append(affectedPKs, key)
+			}
+		}
+		m.AffectedPKs = affectedPKs
 		return nil, nil
 	})
 	return err
@@ -43487,6 +44067,10 @@ func (c *userCategoryClient) HardDeleteMany(ctx context.Context, pks []UserCateg
 	}, func(ctx context.Context, m *hook.MutationContext) (any, error) {
 		conn := database.Conn(ctx, c.querier)
 
+		// The keys the sub-batches below write. A listed key that matches no
+		// row stays out of it, so it records no affected key.
+		written := make(map[UserCategoryPK]struct{}, len(pks))
+
 		// One statement per sub-batch of c.batchSize keys. A failing sub-batch
 		// returns at once, and the sub-batches before it stay applied.
 		for start := 0; start < len(pks); start += c.batchSize {
@@ -43499,14 +44083,39 @@ func (c *userCategoryClient) HardDeleteMany(ctx context.Context, pks []UserCateg
 				sql.BuildCompositePKBatchCondition(c.dialect, []string{"user_id", "category_id"}, pkValues),
 			}
 
+			// RETURNING the key columns names the rows this sub-batch wrote.
 			query, args := sql.BuildHardDelete(c.dialect, c.table, sql.HardDeleteOptions{
-				Conditions: hardConds,
+				Conditions:       hardConds,
+				ReturningColumns: []string{"user_id", "category_id"},
 			})
-			if _, err := conn.Exec(ctx, query, args...); err != nil {
+			rows, err := conn.Query(ctx, query, args...)
+			if err != nil {
 				return nil, fmt.Errorf("hard delete user_categories: %w", err)
 			}
+			for rows.Next() {
+				var rowPK UserCategoryPK
+				if err := rows.Scan(&rowPK.UserID, &rowPK.CategoryID); err != nil {
+					rows.Close()
+					return nil, fmt.Errorf("scan deleted user_category key: %w", err)
+				}
+				written[rowPK] = struct{}{}
+			}
+			if err := rows.Err(); err != nil {
+				rows.Close()
+				return nil, err
+			}
+			rows.Close()
 		}
-		m.AffectedPKs = toAnySlice(pks)
+
+		// A listed key whose row this call did not write records no affected
+		// key, so no cache entry is invalidated and no event is published for it.
+		affectedPKs := make([]any, 0, len(pks))
+		for _, key := range pks {
+			if _, ok := written[key]; ok {
+				affectedPKs = append(affectedPKs, key)
+			}
+		}
+		m.AffectedPKs = affectedPKs
 		return nil, nil
 	})
 	return err
@@ -45298,20 +45907,49 @@ func (c *userCredentialClient) HardDeleteMany(ctx context.Context, ids []uuid.UU
 	}, func(ctx context.Context, m *hook.MutationContext) (any, error) {
 		conn := database.Conn(ctx, c.querier)
 
+		// The keys the sub-batches below write. A listed key that matches no
+		// row stays out of it, so it records no affected key.
+		written := make(map[uuid.UUID]struct{}, len(ids))
+
 		// One statement per sub-batch of c.batchSize keys. A failing sub-batch
 		// returns at once, and the sub-batches before it stay applied.
 		for start := 0; start < len(ids); start += c.batchSize {
 			end := min(start+c.batchSize, len(ids))
 			hardConds := []sql.Condition{sql.Where(c.dialect.QuoteIdentifier("user_id")).In(toAnySlice(ids[start:end])...)}
 
+			// RETURNING the key columns names the rows this sub-batch wrote.
 			query, args := sql.BuildHardDelete(c.dialect, c.table, sql.HardDeleteOptions{
-				Conditions: hardConds,
+				Conditions:       hardConds,
+				ReturningColumns: []string{"user_id"},
 			})
-			if _, err := conn.Exec(ctx, query, args...); err != nil {
+			rows, err := conn.Query(ctx, query, args...)
+			if err != nil {
 				return nil, fmt.Errorf("hard delete user_credentials: %w", err)
 			}
+			for rows.Next() {
+				var rowID uuid.UUID
+				if err := rows.Scan(&rowID); err != nil {
+					rows.Close()
+					return nil, fmt.Errorf("scan deleted user_credential key: %w", err)
+				}
+				written[rowID] = struct{}{}
+			}
+			if err := rows.Err(); err != nil {
+				rows.Close()
+				return nil, err
+			}
+			rows.Close()
 		}
-		m.AffectedPKs = toAnySlice(ids)
+
+		// A listed key whose row this call did not write records no affected
+		// key, so no cache entry is invalidated and no event is published for it.
+		affectedPKs := make([]any, 0, len(ids))
+		for _, key := range ids {
+			if _, ok := written[key]; ok {
+				affectedPKs = append(affectedPKs, key)
+			}
+		}
+		m.AffectedPKs = affectedPKs
 		return nil, nil
 	})
 	return err
@@ -47503,20 +48141,49 @@ func (c *userSessionClient) HardDeleteMany(ctx context.Context, ids []uuid.UUID,
 	}, func(ctx context.Context, m *hook.MutationContext) (any, error) {
 		conn := database.Conn(ctx, c.querier)
 
+		// The keys the sub-batches below write. A listed key that matches no
+		// row stays out of it, so it records no affected key.
+		written := make(map[uuid.UUID]struct{}, len(ids))
+
 		// One statement per sub-batch of c.batchSize keys. A failing sub-batch
 		// returns at once, and the sub-batches before it stay applied.
 		for start := 0; start < len(ids); start += c.batchSize {
 			end := min(start+c.batchSize, len(ids))
 			hardConds := []sql.Condition{sql.Where(c.dialect.QuoteIdentifier("id")).In(toAnySlice(ids[start:end])...)}
 
+			// RETURNING the key columns names the rows this sub-batch wrote.
 			query, args := sql.BuildHardDelete(c.dialect, c.table, sql.HardDeleteOptions{
-				Conditions: hardConds,
+				Conditions:       hardConds,
+				ReturningColumns: []string{"id"},
 			})
-			if _, err := conn.Exec(ctx, query, args...); err != nil {
+			rows, err := conn.Query(ctx, query, args...)
+			if err != nil {
 				return nil, fmt.Errorf("hard delete user_sessions: %w", err)
 			}
+			for rows.Next() {
+				var rowID uuid.UUID
+				if err := rows.Scan(&rowID); err != nil {
+					rows.Close()
+					return nil, fmt.Errorf("scan deleted user_session key: %w", err)
+				}
+				written[rowID] = struct{}{}
+			}
+			if err := rows.Err(); err != nil {
+				rows.Close()
+				return nil, err
+			}
+			rows.Close()
 		}
-		m.AffectedPKs = toAnySlice(ids)
+
+		// A listed key whose row this call did not write records no affected
+		// key, so no cache entry is invalidated and no event is published for it.
+		affectedPKs := make([]any, 0, len(ids))
+		for _, key := range ids {
+			if _, ok := written[key]; ok {
+				affectedPKs = append(affectedPKs, key)
+			}
+		}
+		m.AffectedPKs = affectedPKs
 		return nil, nil
 	})
 	return err
@@ -50330,22 +50997,51 @@ func (c *userClient) SoftDeleteMany(ctx context.Context, ids []uuid.UUID, opts .
 			idStrings[i] = id.String()
 		}
 
+		// The keys the sub-batches below write. A listed key that matches no
+		// row stays out of it, so it records no affected key.
+		written := make(map[uuid.UUID]struct{}, len(ids))
+
 		// One statement per sub-batch of c.batchSize keys. A failing sub-batch
 		// returns at once, and the sub-batches before it stay applied.
 		for start := 0; start < len(ids); start += c.batchSize {
 			end := min(start+c.batchSize, len(ids))
 			delConds := []sql.Condition{sql.Where(c.dialect.QuoteIdentifier("id")).In(toAnySlice(idStrings[start:end])...)}
 
+			// RETURNING the key columns names the rows this sub-batch wrote.
 			query, args := sql.BuildSoftDelete(c.dialect, c.table, sql.SoftDeleteOptions{
-				Column:     "deleted_at",
-				Type:       sql.SoftDeleteTimestamp,
-				Conditions: delConds,
+				Column:           "deleted_at",
+				Type:             sql.SoftDeleteTimestamp,
+				Conditions:       delConds,
+				ReturningColumns: []string{"id"},
 			})
-			if _, err := conn.Exec(ctx, query, args...); err != nil {
+			rows, err := conn.Query(ctx, query, args...)
+			if err != nil {
 				return nil, fmt.Errorf("soft delete users: %w", err)
 			}
+			for rows.Next() {
+				var rowID uuid.UUID
+				if err := rows.Scan(&rowID); err != nil {
+					rows.Close()
+					return nil, fmt.Errorf("scan soft deleted user key: %w", err)
+				}
+				written[rowID] = struct{}{}
+			}
+			if err := rows.Err(); err != nil {
+				rows.Close()
+				return nil, err
+			}
+			rows.Close()
 		}
-		m.AffectedPKs = toAnySlice(ids)
+
+		// A listed key whose row this call did not write records no affected
+		// key, so no cache entry is invalidated and no event is published for it.
+		affectedPKs := make([]any, 0, len(ids))
+		for _, key := range ids {
+			if _, ok := written[key]; ok {
+				affectedPKs = append(affectedPKs, key)
+			}
+		}
+		m.AffectedPKs = affectedPKs
 
 		// Empty FieldOptions — skip fetch
 		if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
@@ -50533,21 +51229,50 @@ func (c *userClient) RestoreMany(ctx context.Context, ids []uuid.UUID, opts ...f
 			idStrings[i] = id.String()
 		}
 
+		// The keys the sub-batches below write. A listed key that matches no
+		// row stays out of it, so it records no affected key.
+		written := make(map[uuid.UUID]struct{}, len(ids))
+
 		// One statement per sub-batch of c.batchSize keys. A failing sub-batch
 		// returns at once, and the sub-batches before it stay applied.
 		for start := 0; start < len(ids); start += c.batchSize {
 			end := min(start+c.batchSize, len(ids))
 			restoreConds := []sql.Condition{sql.Where(c.dialect.QuoteIdentifier("id")).In(toAnySlice(idStrings[start:end])...)}
 
+			// RETURNING the key columns names the rows this sub-batch wrote.
 			query, args := sql.BuildUpdate(c.dialect, c.table, sql.UpdateOptions{
-				SetClauses: map[string]any{"deleted_at": nil},
-				Conditions: restoreConds,
+				SetClauses:       map[string]any{"deleted_at": nil},
+				Conditions:       restoreConds,
+				ReturningColumns: []string{"id"},
 			})
-			if _, err := conn.Exec(ctx, query, args...); err != nil {
+			rows, err := conn.Query(ctx, query, args...)
+			if err != nil {
 				return nil, fmt.Errorf("restore users: %w", err)
 			}
+			for rows.Next() {
+				var rowID uuid.UUID
+				if err := rows.Scan(&rowID); err != nil {
+					rows.Close()
+					return nil, fmt.Errorf("scan restored user key: %w", err)
+				}
+				written[rowID] = struct{}{}
+			}
+			if err := rows.Err(); err != nil {
+				rows.Close()
+				return nil, err
+			}
+			rows.Close()
 		}
-		m.AffectedPKs = toAnySlice(ids)
+
+		// A listed key whose row this call did not write records no affected
+		// key, so no cache entry is invalidated and no event is published for it.
+		affectedPKs := make([]any, 0, len(ids))
+		for _, key := range ids {
+			if _, ok := written[key]; ok {
+				affectedPKs = append(affectedPKs, key)
+			}
+		}
+		m.AffectedPKs = affectedPKs
 
 		// Empty FieldOptions — skip fetch
 		if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
@@ -50687,20 +51412,49 @@ func (c *userClient) HardDeleteMany(ctx context.Context, ids []uuid.UUID, opts .
 	}, func(ctx context.Context, m *hook.MutationContext) (any, error) {
 		conn := database.Conn(ctx, c.querier)
 
+		// The keys the sub-batches below write. A listed key that matches no
+		// row stays out of it, so it records no affected key.
+		written := make(map[uuid.UUID]struct{}, len(ids))
+
 		// One statement per sub-batch of c.batchSize keys. A failing sub-batch
 		// returns at once, and the sub-batches before it stay applied.
 		for start := 0; start < len(ids); start += c.batchSize {
 			end := min(start+c.batchSize, len(ids))
 			hardConds := []sql.Condition{sql.Where(c.dialect.QuoteIdentifier("id")).In(toAnySlice(ids[start:end])...)}
 
+			// RETURNING the key columns names the rows this sub-batch wrote.
 			query, args := sql.BuildHardDelete(c.dialect, c.table, sql.HardDeleteOptions{
-				Conditions: hardConds,
+				Conditions:       hardConds,
+				ReturningColumns: []string{"id"},
 			})
-			if _, err := conn.Exec(ctx, query, args...); err != nil {
+			rows, err := conn.Query(ctx, query, args...)
+			if err != nil {
 				return nil, fmt.Errorf("hard delete users: %w", err)
 			}
+			for rows.Next() {
+				var rowID uuid.UUID
+				if err := rows.Scan(&rowID); err != nil {
+					rows.Close()
+					return nil, fmt.Errorf("scan deleted user key: %w", err)
+				}
+				written[rowID] = struct{}{}
+			}
+			if err := rows.Err(); err != nil {
+				rows.Close()
+				return nil, err
+			}
+			rows.Close()
 		}
-		m.AffectedPKs = toAnySlice(ids)
+
+		// A listed key whose row this call did not write records no affected
+		// key, so no cache entry is invalidated and no event is published for it.
+		affectedPKs := make([]any, 0, len(ids))
+		for _, key := range ids {
+			if _, ok := written[key]; ok {
+				affectedPKs = append(affectedPKs, key)
+			}
+		}
+		m.AffectedPKs = affectedPKs
 		return nil, nil
 	})
 	return err
@@ -55903,11 +56657,20 @@ func (c *workspaceNoteClient) HardDeleteMany(ctx context.Context, ids []uuid.UUI
 			}
 			rows.Close()
 		}
-		m.AffectedPKs = toAnySlice(ids)
-		affectedTenants := make([]any, len(ids))
-		for i, id := range ids {
-			affectedTenants[i] = tenantByPK[id]
+
+		// A listed key whose row this call did not write records no affected
+		// key, so no cache entry is invalidated and no event is published for it.
+		affectedPKs := make([]any, 0, len(ids))
+		affectedTenants := make([]any, 0, len(ids))
+		for _, key := range ids {
+			tenant, ok := tenantByPK[key]
+			if !ok {
+				continue
+			}
+			affectedPKs = append(affectedPKs, key)
+			affectedTenants = append(affectedTenants, tenant)
 		}
+		m.AffectedPKs = affectedPKs
 		m.AffectedTenants = affectedTenants
 		return nil, nil
 	})
@@ -59791,6 +60554,10 @@ func (c *workspaceSettingClient) HardDeleteMany(ctx context.Context, pks []Works
 			}
 		}
 
+		// The keys the sub-batches below write. A listed key that matches no
+		// row stays out of it, so it records no affected key.
+		written := make(map[WorkspaceSettingPK]struct{}, len(pks))
+
 		// One statement per sub-batch of c.batchSize keys. A failing sub-batch
 		// returns at once, and the sub-batches before it stay applied.
 		for start := 0; start < len(pks); start += c.batchSize {
@@ -59804,14 +60571,39 @@ func (c *workspaceSettingClient) HardDeleteMany(ctx context.Context, pks []Works
 			}
 			hardConds = append(hardConds, scopeConds...)
 
+			// RETURNING the key columns names the rows this sub-batch wrote.
 			query, args := sql.BuildHardDelete(c.dialect, c.table, sql.HardDeleteOptions{
-				Conditions: hardConds,
+				Conditions:       hardConds,
+				ReturningColumns: []string{"workspace_id", "key"},
 			})
-			if _, err := conn.Exec(ctx, query, args...); err != nil {
+			rows, err := conn.Query(ctx, query, args...)
+			if err != nil {
 				return nil, fmt.Errorf("hard delete workspace_settings: %w", err)
 			}
+			for rows.Next() {
+				var rowPK WorkspaceSettingPK
+				if err := rows.Scan(&rowPK.WorkspaceID, &rowPK.Key); err != nil {
+					rows.Close()
+					return nil, fmt.Errorf("scan deleted workspace_setting key: %w", err)
+				}
+				written[rowPK] = struct{}{}
+			}
+			if err := rows.Err(); err != nil {
+				rows.Close()
+				return nil, err
+			}
+			rows.Close()
 		}
-		m.AffectedPKs = toAnySlice(pks)
+
+		// A listed key whose row this call did not write records no affected
+		// key, so no cache entry is invalidated and no event is published for it.
+		affectedPKs := make([]any, 0, len(pks))
+		for _, key := range pks {
+			if _, ok := written[key]; ok {
+				affectedPKs = append(affectedPKs, key)
+			}
+		}
+		m.AffectedPKs = affectedPKs
 		return nil, nil
 	})
 	return err

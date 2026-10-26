@@ -96,6 +96,10 @@ func (c *orderItemClient) SoftDeleteMany(ctx context.Context, pks []OrderItemPK,
 			return []*OrderItem{}, nil
 		}
 
+		// The keys the sub-batches below write. A listed key that matches no
+		// row stays out of it, so it records no affected key.
+		written := make(map[OrderItemPK]struct{}, len(pks))
+
 		// One statement per sub-batch of c.batchSize keys. A failing sub-batch
 		// returns at once, and the sub-batches before it stay applied.
 		for start := 0; start < len(pks); start += c.batchSize {
@@ -108,16 +112,41 @@ func (c *orderItemClient) SoftDeleteMany(ctx context.Context, pks []OrderItemPK,
 				sql.BuildCompositePKBatchCondition(c.dialect, []string{"order_id", "product_id"}, pkValues),
 			}
 
+			// RETURNING the key columns names the rows this sub-batch wrote.
 			query, args := sql.BuildSoftDelete(c.dialect, c.table, sql.SoftDeleteOptions{
-				Column:     "deleted_at",
-				Type:       sql.SoftDeleteTimestamp,
-				Conditions: delConds,
+				Column:           "deleted_at",
+				Type:             sql.SoftDeleteTimestamp,
+				Conditions:       delConds,
+				ReturningColumns: []string{"order_id", "product_id"},
 			})
-			if _, err := conn.Exec(ctx, query, args...); err != nil {
+			rows, err := conn.Query(ctx, query, args...)
+			if err != nil {
 				return nil, fmt.Errorf("soft delete order_items: %w", err)
 			}
+			for rows.Next() {
+				var rowPK OrderItemPK
+				if err := rows.Scan(&rowPK.OrderID, &rowPK.ProductID); err != nil {
+					rows.Close()
+					return nil, fmt.Errorf("scan soft deleted order_item key: %w", err)
+				}
+				written[rowPK] = struct{}{}
+			}
+			if err := rows.Err(); err != nil {
+				rows.Close()
+				return nil, err
+			}
+			rows.Close()
 		}
-		m.AffectedPKs = toAnySlice(pks)
+
+		// A listed key whose row this call did not write records no affected
+		// key, so no cache entry is invalidated and no event is published for it.
+		affectedPKs := make([]any, 0, len(pks))
+		for _, key := range pks {
+			if _, ok := written[key]; ok {
+				affectedPKs = append(affectedPKs, key)
+			}
+		}
+		m.AffectedPKs = affectedPKs
 
 		// Empty FieldOptions — skip fetch
 		if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
@@ -302,6 +331,10 @@ func (c *orderItemClient) RestoreMany(ctx context.Context, pks []OrderItemPK, op
 			return []*OrderItem{}, nil
 		}
 
+		// The keys the sub-batches below write. A listed key that matches no
+		// row stays out of it, so it records no affected key.
+		written := make(map[OrderItemPK]struct{}, len(pks))
+
 		// One statement per sub-batch of c.batchSize keys. A failing sub-batch
 		// returns at once, and the sub-batches before it stay applied.
 		for start := 0; start < len(pks); start += c.batchSize {
@@ -314,15 +347,40 @@ func (c *orderItemClient) RestoreMany(ctx context.Context, pks []OrderItemPK, op
 				sql.BuildCompositePKBatchCondition(c.dialect, []string{"order_id", "product_id"}, pkValues),
 			}
 
+			// RETURNING the key columns names the rows this sub-batch wrote.
 			query, args := sql.BuildUpdate(c.dialect, c.table, sql.UpdateOptions{
-				SetClauses: map[string]any{"deleted_at": nil},
-				Conditions: restoreConds,
+				SetClauses:       map[string]any{"deleted_at": nil},
+				Conditions:       restoreConds,
+				ReturningColumns: []string{"order_id", "product_id"},
 			})
-			if _, err := conn.Exec(ctx, query, args...); err != nil {
+			rows, err := conn.Query(ctx, query, args...)
+			if err != nil {
 				return nil, fmt.Errorf("restore order_items: %w", err)
 			}
+			for rows.Next() {
+				var rowPK OrderItemPK
+				if err := rows.Scan(&rowPK.OrderID, &rowPK.ProductID); err != nil {
+					rows.Close()
+					return nil, fmt.Errorf("scan restored order_item key: %w", err)
+				}
+				written[rowPK] = struct{}{}
+			}
+			if err := rows.Err(); err != nil {
+				rows.Close()
+				return nil, err
+			}
+			rows.Close()
 		}
-		m.AffectedPKs = toAnySlice(pks)
+
+		// A listed key whose row this call did not write records no affected
+		// key, so no cache entry is invalidated and no event is published for it.
+		affectedPKs := make([]any, 0, len(pks))
+		for _, key := range pks {
+			if _, ok := written[key]; ok {
+				affectedPKs = append(affectedPKs, key)
+			}
+		}
+		m.AffectedPKs = affectedPKs
 
 		// Empty FieldOptions — skip fetch
 		if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
@@ -461,6 +519,10 @@ func (c *orderItemClient) HardDeleteMany(ctx context.Context, pks []OrderItemPK,
 	}, func(ctx context.Context, m *hook.MutationContext) (any, error) {
 		conn := database.Conn(ctx, c.querier)
 
+		// The keys the sub-batches below write. A listed key that matches no
+		// row stays out of it, so it records no affected key.
+		written := make(map[OrderItemPK]struct{}, len(pks))
+
 		// One statement per sub-batch of c.batchSize keys. A failing sub-batch
 		// returns at once, and the sub-batches before it stay applied.
 		for start := 0; start < len(pks); start += c.batchSize {
@@ -473,14 +535,39 @@ func (c *orderItemClient) HardDeleteMany(ctx context.Context, pks []OrderItemPK,
 				sql.BuildCompositePKBatchCondition(c.dialect, []string{"order_id", "product_id"}, pkValues),
 			}
 
+			// RETURNING the key columns names the rows this sub-batch wrote.
 			query, args := sql.BuildHardDelete(c.dialect, c.table, sql.HardDeleteOptions{
-				Conditions: hardConds,
+				Conditions:       hardConds,
+				ReturningColumns: []string{"order_id", "product_id"},
 			})
-			if _, err := conn.Exec(ctx, query, args...); err != nil {
+			rows, err := conn.Query(ctx, query, args...)
+			if err != nil {
 				return nil, fmt.Errorf("hard delete order_items: %w", err)
 			}
+			for rows.Next() {
+				var rowPK OrderItemPK
+				if err := rows.Scan(&rowPK.OrderID, &rowPK.ProductID); err != nil {
+					rows.Close()
+					return nil, fmt.Errorf("scan deleted order_item key: %w", err)
+				}
+				written[rowPK] = struct{}{}
+			}
+			if err := rows.Err(); err != nil {
+				rows.Close()
+				return nil, err
+			}
+			rows.Close()
 		}
-		m.AffectedPKs = toAnySlice(pks)
+
+		// A listed key whose row this call did not write records no affected
+		// key, so no cache entry is invalidated and no event is published for it.
+		affectedPKs := make([]any, 0, len(pks))
+		for _, key := range pks {
+			if _, ok := written[key]; ok {
+				affectedPKs = append(affectedPKs, key)
+			}
+		}
+		m.AffectedPKs = affectedPKs
 		return nil, nil
 	})
 	return err

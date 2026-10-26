@@ -794,6 +794,10 @@ func (c *productTagLabelClient) HardDeleteMany(ctx context.Context, pks []Produc
 	}, func(ctx context.Context, m *hook.MutationContext) (any, error) {
 		conn := database.Conn(ctx, c.querier)
 
+		// The keys the sub-batches below write. A listed key that matches no
+		// row stays out of it, so it records no affected key.
+		written := make(map[ProductTagLabelPK]struct{}, len(pks))
+
 		// One statement per sub-batch of c.batchSize keys. A failing sub-batch
 		// returns at once, and the sub-batches before it stay applied.
 		for start := 0; start < len(pks); start += c.batchSize {
@@ -806,14 +810,39 @@ func (c *productTagLabelClient) HardDeleteMany(ctx context.Context, pks []Produc
 				sql.BuildCompositePKBatchCondition(c.dialect, []string{"product_id", "tag_name", "label"}, pkValues),
 			}
 
+			// RETURNING the key columns names the rows this sub-batch wrote.
 			query, args := sql.BuildHardDelete(c.dialect, c.table, sql.HardDeleteOptions{
-				Conditions: hardConds,
+				Conditions:       hardConds,
+				ReturningColumns: []string{"product_id", "tag_name", "label"},
 			})
-			if _, err := conn.Exec(ctx, query, args...); err != nil {
+			rows, err := conn.Query(ctx, query, args...)
+			if err != nil {
 				return nil, fmt.Errorf("hard delete product_tag_labels: %w", err)
 			}
+			for rows.Next() {
+				var rowPK ProductTagLabelPK
+				if err := rows.Scan(&rowPK.ProductID, &rowPK.TagName, &rowPK.Label); err != nil {
+					rows.Close()
+					return nil, fmt.Errorf("scan deleted product_tag_label key: %w", err)
+				}
+				written[rowPK] = struct{}{}
+			}
+			if err := rows.Err(); err != nil {
+				rows.Close()
+				return nil, err
+			}
+			rows.Close()
 		}
-		m.AffectedPKs = toAnySlice(pks)
+
+		// A listed key whose row this call did not write records no affected
+		// key, so no cache entry is invalidated and no event is published for it.
+		affectedPKs := make([]any, 0, len(pks))
+		for _, key := range pks {
+			if _, ok := written[key]; ok {
+				affectedPKs = append(affectedPKs, key)
+			}
+		}
+		m.AffectedPKs = affectedPKs
 		return nil, nil
 	})
 	return err

@@ -1540,11 +1540,20 @@ func (c *articleClient) SoftDeleteMany(ctx context.Context, ids []int64, opts ..
 				return nil, fmt.Errorf("soft delete articles: %w", err)
 			}
 		}
-		m.AffectedPKs = toAnySlice(ids)
-		affectedTenants := make([]any, len(ids))
-		for i, id := range ids {
-			affectedTenants[i] = tenantByPK[id]
+
+		// A listed key whose row this call did not write records no affected
+		// key, so no cache entry is invalidated and no event is published for it.
+		affectedPKs := make([]any, 0, len(ids))
+		affectedTenants := make([]any, 0, len(ids))
+		for _, key := range ids {
+			tenant, ok := tenantByPK[key]
+			if !ok {
+				continue
+			}
+			affectedPKs = append(affectedPKs, key)
+			affectedTenants = append(affectedTenants, tenant)
 		}
+		m.AffectedPKs = affectedPKs
 		m.AffectedTenants = affectedTenants
 
 		// Empty FieldOptions — skip fetch
@@ -1819,11 +1828,20 @@ func (c *articleClient) RestoreMany(ctx context.Context, ids []int64, opts ...fu
 				return nil, fmt.Errorf("restore articles: %w", err)
 			}
 		}
-		m.AffectedPKs = toAnySlice(ids)
-		affectedTenants := make([]any, len(ids))
-		for i, id := range ids {
-			affectedTenants[i] = tenantByPK[id]
+
+		// A listed key whose row this call did not write records no affected
+		// key, so no cache entry is invalidated and no event is published for it.
+		affectedPKs := make([]any, 0, len(ids))
+		affectedTenants := make([]any, 0, len(ids))
+		for _, key := range ids {
+			tenant, ok := tenantByPK[key]
+			if !ok {
+				continue
+			}
+			affectedPKs = append(affectedPKs, key)
+			affectedTenants = append(affectedTenants, tenant)
 		}
+		m.AffectedPKs = affectedPKs
 		m.AffectedTenants = affectedTenants
 
 		// Empty FieldOptions — skip fetch
@@ -2038,11 +2056,20 @@ func (c *articleClient) HardDeleteMany(ctx context.Context, ids []int64, opts ..
 				return nil, fmt.Errorf("hard delete articles: %w", err)
 			}
 		}
-		m.AffectedPKs = toAnySlice(ids)
-		affectedTenants := make([]any, len(ids))
-		for i, id := range ids {
-			affectedTenants[i] = tenantByPK[id]
+
+		// A listed key whose row this call did not write records no affected
+		// key, so no cache entry is invalidated and no event is published for it.
+		affectedPKs := make([]any, 0, len(ids))
+		affectedTenants := make([]any, 0, len(ids))
+		for _, key := range ids {
+			tenant, ok := tenantByPK[key]
+			if !ok {
+				continue
+			}
+			affectedPKs = append(affectedPKs, key)
+			affectedTenants = append(affectedTenants, tenant)
 		}
+		m.AffectedPKs = affectedPKs
 		m.AffectedTenants = affectedTenants
 		return nil, nil
 	})
@@ -4741,11 +4768,20 @@ func (c *documentClient) HardDeleteMany(ctx context.Context, ids []string, opts 
 				return nil, fmt.Errorf("hard delete documents: %w", err)
 			}
 		}
-		m.AffectedPKs = toAnySlice(ids)
-		affectedTenants := make([]any, len(ids))
-		for i, id := range ids {
-			affectedTenants[i] = tenantByPK[id]
+
+		// A listed key whose row this call did not write records no affected
+		// key, so no cache entry is invalidated and no event is published for it.
+		affectedPKs := make([]any, 0, len(ids))
+		affectedTenants := make([]any, 0, len(ids))
+		for _, key := range ids {
+			tenant, ok := tenantByPK[key]
+			if !ok {
+				continue
+			}
+			affectedPKs = append(affectedPKs, key)
+			affectedTenants = append(affectedTenants, tenant)
 		}
+		m.AffectedPKs = affectedPKs
 		m.AffectedTenants = affectedTenants
 		return nil, nil
 	})
@@ -7130,11 +7166,20 @@ func (c *lineItemClient) HardDeleteMany(ctx context.Context, pks []LineItemPK, o
 				return nil, fmt.Errorf("hard delete line_items: %w", err)
 			}
 		}
-		m.AffectedPKs = toAnySlice(pks)
-		affectedTenants := make([]any, len(pks))
-		for i, pk := range pks {
-			affectedTenants[i] = tenantByPK[pk]
+
+		// A listed key whose row this call did not write records no affected
+		// key, so no cache entry is invalidated and no event is published for it.
+		affectedPKs := make([]any, 0, len(pks))
+		affectedTenants := make([]any, 0, len(pks))
+		for _, key := range pks {
+			tenant, ok := tenantByPK[key]
+			if !ok {
+				continue
+			}
+			affectedPKs = append(affectedPKs, key)
+			affectedTenants = append(affectedTenants, tenant)
 		}
+		m.AffectedPKs = affectedPKs
 		m.AffectedTenants = affectedTenants
 		return nil, nil
 	})

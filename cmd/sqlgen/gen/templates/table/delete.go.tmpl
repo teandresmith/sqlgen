@@ -245,6 +245,11 @@ func (c *{{ $structCamel }}Client) SoftDeleteMany(ctx context.Context, {{ if .Co
 		// invalidation and event stamping rebuild tenant-scoped keys from the
 		// rows themselves.
 		tenantByPK := make(map[{{ if .CompositePK }}{{ .CompositePKStructName }}{{ else }}{{ $pkCol.GoType }}{{ end }}]any, len({{ if .CompositePK }}pks{{ else }}ids{{ end }}))
+{{- else }}
+
+		// The keys the sub-batches below write. A listed key that matches no
+		// row stays out of it, so it records no affected key.
+		written := make(map[{{ .KeySetType }}]struct{}, len({{ if .CompositePK }}pks{{ else }}ids{{ end }}))
 {{- end }}
 
 		// One statement per sub-batch of c.batchSize keys. A failing sub-batch
@@ -314,7 +319,54 @@ func (c *{{ $structCamel }}Client) SoftDeleteMany(ctx context.Context, {{ if .Co
 				return nil, err
 			}
 			rows.Close()
+{{- else if supportsReturning }}
+
+			// RETURNING the key columns names the rows this sub-batch wrote.
+			query, args := sql.BuildSoftDelete(c.dialect, c.table, sql.SoftDeleteOptions{
+				Column: {{ printf "%q" .SoftDelete.Column }},
+				Type: {{ softDeleteTypeConst .SoftDelete.Strategy }},
+				Conditions: delConds,
+				ReturningColumns: []string{ {{- range $i, $col := .PKColumns }}{{ if $i }}, {{ end }}{{ printf "%q" $col.Name }}{{ end -}} },
+			})
+			rows, err := conn.Query(ctx, query, args...)
+			if err != nil {
+				return nil, fmt.Errorf("soft delete {{ .TableName }}: %w", err)
+			}
+			for rows.Next() {
+{{- if .CompositePK }}
+				var rowPK {{ .CompositePKStructName }}
+				if err := rows.Scan({{ range $i, $col := .PKColumns }}{{ if $i }}, {{ end }}&rowPK.{{ $col.FieldName }}{{ end }}); err != nil {
+					rows.Close()
+					return nil, fmt.Errorf("scan soft deleted {{ $singular }} key: %w", err)
+				}
+				written[{{ .KeySetKey "rowPK" }}] = struct{}{}
 {{- else }}
+				var rowID {{ $pkCol.GoType }}
+				if err := rows.Scan(&rowID); err != nil {
+					rows.Close()
+					return nil, fmt.Errorf("scan soft deleted {{ $singular }} key: %w", err)
+				}
+				written[{{ .KeySetKey "rowID" }}] = struct{}{}
+{{- end }}
+			}
+			if err := rows.Err(); err != nil {
+				rows.Close()
+				return nil, err
+			}
+			rows.Close()
+{{- else }}
+{{- if not $captureTenant }}
+
+			// MySQL has no RETURNING, so a pre-read finds the keys this
+			// sub-batch is about to write.
+			batchKeys, err := c.matchingKeys(ctx, conn, delConds)
+			if err != nil {
+				return nil, fmt.Errorf("soft delete {{ .TableName }}: read keys: %w", err)
+			}
+			for key := range batchKeys {
+				written[key] = struct{}{}
+			}
+{{- end }}
 
 			query, args := sql.BuildSoftDelete(c.dialect, c.table, sql.SoftDeleteOptions{
 				Column: {{ printf "%q" .SoftDelete.Column }},
@@ -326,25 +378,7 @@ func (c *{{ $structCamel }}Client) SoftDeleteMany(ctx context.Context, {{ if .Co
 			}
 {{- end }}
 		}
-{{- if .CompositePK }}
-		m.AffectedPKs = toAnySlice(pks)
-{{- else }}
-		m.AffectedPKs = toAnySlice(ids)
-{{- end }}
-{{- if $captureTenant }}
-{{- if .CompositePK }}
-		affectedTenants := make([]any, len(pks))
-		for i, pk := range pks {
-			affectedTenants[i] = tenantByPK[pk]
-		}
-{{- else }}
-		affectedTenants := make([]any, len(ids))
-		for i, id := range ids {
-			affectedTenants[i] = tenantByPK[id]
-		}
-{{- end }}
-		m.AffectedTenants = affectedTenants
-{{- end }}
+{{- template "table/delete-many-affected" . }}
 
 		// Empty FieldOptions — skip fetch
 		if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
@@ -975,6 +1009,11 @@ func (c *{{ $structCamel }}Client) RestoreMany(ctx context.Context, {{ if .Compo
 		// invalidation and event stamping rebuild tenant-scoped keys from the
 		// rows themselves.
 		tenantByPK := make(map[{{ if .CompositePK }}{{ .CompositePKStructName }}{{ else }}{{ $pkCol.GoType }}{{ end }}]any, len({{ if .CompositePK }}pks{{ else }}ids{{ end }}))
+{{- else }}
+
+		// The keys the sub-batches below write. A listed key that matches no
+		// row stays out of it, so it records no affected key.
+		written := make(map[{{ .KeySetType }}]struct{}, len({{ if .CompositePK }}pks{{ else }}ids{{ end }}))
 {{- end }}
 
 		// One statement per sub-batch of c.batchSize keys. A failing sub-batch
@@ -1043,7 +1082,53 @@ func (c *{{ $structCamel }}Client) RestoreMany(ctx context.Context, {{ if .Compo
 				return nil, err
 			}
 			rows.Close()
+{{- else if supportsReturning }}
+
+			// RETURNING the key columns names the rows this sub-batch wrote.
+			query, args := sql.BuildUpdate(c.dialect, c.table, sql.UpdateOptions{
+				SetClauses: map[string]any{ {{- printf "%q" .SoftDelete.Column }}: {{ softDeleteRestoreGoValue .SoftDelete.Strategy }}},
+				Conditions: restoreConds,
+				ReturningColumns: []string{ {{- range $i, $col := .PKColumns }}{{ if $i }}, {{ end }}{{ printf "%q" $col.Name }}{{ end -}} },
+			})
+			rows, err := conn.Query(ctx, query, args...)
+			if err != nil {
+				return nil, fmt.Errorf("restore {{ .TableName }}: %w", err)
+			}
+			for rows.Next() {
+{{- if .CompositePK }}
+				var rowPK {{ .CompositePKStructName }}
+				if err := rows.Scan({{ range $i, $col := .PKColumns }}{{ if $i }}, {{ end }}&rowPK.{{ $col.FieldName }}{{ end }}); err != nil {
+					rows.Close()
+					return nil, fmt.Errorf("scan restored {{ $singular }} key: %w", err)
+				}
+				written[{{ .KeySetKey "rowPK" }}] = struct{}{}
 {{- else }}
+				var rowID {{ $pkCol.GoType }}
+				if err := rows.Scan(&rowID); err != nil {
+					rows.Close()
+					return nil, fmt.Errorf("scan restored {{ $singular }} key: %w", err)
+				}
+				written[{{ .KeySetKey "rowID" }}] = struct{}{}
+{{- end }}
+			}
+			if err := rows.Err(); err != nil {
+				rows.Close()
+				return nil, err
+			}
+			rows.Close()
+{{- else }}
+{{- if not $captureTenant }}
+
+			// MySQL has no RETURNING, so a pre-read finds the keys this
+			// sub-batch is about to write.
+			batchKeys, err := c.matchingKeys(ctx, conn, restoreConds)
+			if err != nil {
+				return nil, fmt.Errorf("restore {{ .TableName }}: read keys: %w", err)
+			}
+			for key := range batchKeys {
+				written[key] = struct{}{}
+			}
+{{- end }}
 
 			query, args := sql.BuildUpdate(c.dialect, c.table, sql.UpdateOptions{
 				SetClauses: map[string]any{ {{- printf "%q" .SoftDelete.Column }}: {{ softDeleteRestoreGoValue .SoftDelete.Strategy }}},
@@ -1054,25 +1139,7 @@ func (c *{{ $structCamel }}Client) RestoreMany(ctx context.Context, {{ if .Compo
 			}
 {{- end }}
 		}
-{{- if .CompositePK }}
-		m.AffectedPKs = toAnySlice(pks)
-{{- else }}
-		m.AffectedPKs = toAnySlice(ids)
-{{- end }}
-{{- if $captureTenant }}
-{{- if .CompositePK }}
-		affectedTenants := make([]any, len(pks))
-		for i, pk := range pks {
-			affectedTenants[i] = tenantByPK[pk]
-		}
-{{- else }}
-		affectedTenants := make([]any, len(ids))
-		for i, id := range ids {
-			affectedTenants[i] = tenantByPK[id]
-		}
-{{- end }}
-		m.AffectedTenants = affectedTenants
-{{- end }}
+{{- template "table/delete-many-affected" . }}
 
 		// Empty FieldOptions — skip fetch
 		if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
@@ -1596,6 +1663,11 @@ func (c *{{ $structCamel }}Client) HardDeleteMany(ctx context.Context, {{ if .Co
 		// invalidation and event stamping rebuild tenant-scoped keys from the
 		// rows themselves.
 		tenantByPK := make(map[{{ if .CompositePK }}{{ .CompositePKStructName }}{{ else }}{{ $pkCol.GoType }}{{ end }}]any, len({{ if .CompositePK }}pks{{ else }}ids{{ end }}))
+{{- else }}
+
+		// The keys the sub-batches below write. A listed key that matches no
+		// row stays out of it, so it records no affected key.
+		written := make(map[{{ .KeySetType }}]struct{}, len({{ if .CompositePK }}pks{{ else }}ids{{ end }}))
 {{- end }}
 
 		// One statement per sub-batch of c.batchSize keys. A failing sub-batch
@@ -1661,7 +1733,52 @@ func (c *{{ $structCamel }}Client) HardDeleteMany(ctx context.Context, {{ if .Co
 				return nil, err
 			}
 			rows.Close()
+{{- else if supportsReturning }}
+
+			// RETURNING the key columns names the rows this sub-batch wrote.
+			query, args := sql.BuildHardDelete(c.dialect, c.table, sql.HardDeleteOptions{
+				Conditions: hardConds,
+				ReturningColumns: []string{ {{- range $i, $col := .PKColumns }}{{ if $i }}, {{ end }}{{ printf "%q" $col.Name }}{{ end -}} },
+			})
+			rows, err := conn.Query(ctx, query, args...)
+			if err != nil {
+				return nil, fmt.Errorf("hard delete {{ .TableName }}: %w", err)
+			}
+			for rows.Next() {
+{{- if .CompositePK }}
+				var rowPK {{ .CompositePKStructName }}
+				if err := rows.Scan({{ range $i, $col := .PKColumns }}{{ if $i }}, {{ end }}&rowPK.{{ $col.FieldName }}{{ end }}); err != nil {
+					rows.Close()
+					return nil, fmt.Errorf("scan deleted {{ $singular }} key: %w", err)
+				}
+				written[{{ .KeySetKey "rowPK" }}] = struct{}{}
 {{- else }}
+				var rowID {{ $pkCol.GoType }}
+				if err := rows.Scan(&rowID); err != nil {
+					rows.Close()
+					return nil, fmt.Errorf("scan deleted {{ $singular }} key: %w", err)
+				}
+				written[{{ .KeySetKey "rowID" }}] = struct{}{}
+{{- end }}
+			}
+			if err := rows.Err(); err != nil {
+				rows.Close()
+				return nil, err
+			}
+			rows.Close()
+{{- else }}
+{{- if not $captureTenant }}
+
+			// MySQL has no RETURNING, so a pre-read finds the keys this
+			// sub-batch is about to write.
+			batchKeys, err := c.matchingKeys(ctx, conn, hardConds)
+			if err != nil {
+				return nil, fmt.Errorf("hard delete {{ .TableName }}: read keys: %w", err)
+			}
+			for key := range batchKeys {
+				written[key] = struct{}{}
+			}
+{{- end }}
 
 			query, args := sql.BuildHardDelete(c.dialect, c.table, sql.HardDeleteOptions{
 				Conditions: hardConds,
@@ -1671,25 +1788,7 @@ func (c *{{ $structCamel }}Client) HardDeleteMany(ctx context.Context, {{ if .Co
 			}
 {{- end }}
 		}
-{{- if .CompositePK }}
-		m.AffectedPKs = toAnySlice(pks)
-{{- else }}
-		m.AffectedPKs = toAnySlice(ids)
-{{- end }}
-{{- if $captureTenant }}
-{{- if .CompositePK }}
-		affectedTenants := make([]any, len(pks))
-		for i, pk := range pks {
-			affectedTenants[i] = tenantByPK[pk]
-		}
-{{- else }}
-		affectedTenants := make([]any, len(ids))
-		for i, id := range ids {
-			affectedTenants[i] = tenantByPK[id]
-		}
-{{- end }}
-		m.AffectedTenants = affectedTenants
-{{- end }}
+{{- template "table/delete-many-affected" . }}
 		return nil, nil
 	})
 	return err
@@ -2070,5 +2169,93 @@ func (c *{{ $structCamel }}Client) collectAffectedPKs(ctx context.Context, conn 
 }
 {{- end }}
 {{- end }}
+{{- end }}
+{{- if and (not (supportsReturning)) (not $captureTenant) (or .Operations.SoftDelete .Operations.Restore .Operations.HardDelete) }}
+
+// matchingKeys returns the set of primary keys of the rows matching conds. On
+// MySQL, which has no RETURNING, a batch write reads it just before its
+// statement to learn which of the listed keys it writes.
+func (c *{{ $structCamel }}Client) matchingKeys(ctx context.Context, conn database.Querier, conds []sql.Condition) (map[{{ .KeySetType }}]struct{}, error) {
+	query, args := sql.BuildSelect(c.dialect, c.table, sql.SelectOptions{
+		Columns:    []string{ {{- range $i, $col := .PKColumns }}{{ if $i }}, {{ end }}{{ printf "%q" $col.Name }}{{ end -}} },
+		Conditions: conds,
+	})
+
+	rows, err := conn.Query(ctx, query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+{{- if .CompositePK }}
+
+	// BuildSelect emits its column list sorted, which need not match the key's
+	// field order, so each column binds to its field by name.
+	cols, err := rows.Columns()
+	if err != nil {
+		return nil, err
+	}
+
+	keys := make(map[{{ .KeySetType }}]struct{})
+	for rows.Next() {
+		var pk {{ .CompositePKStructName }}
+		targets := make([]any, len(cols))
+		for i, col := range cols {
+			switch col {
+{{- range .PKColumns }}
+			case {{ printf "%q" .Name }}:
+				targets[i] = &pk.{{ .FieldName }}
+{{- end }}
+			}
+		}
+		if err := rows.Scan(targets...); err != nil {
+			return nil, err
+		}
+		keys[{{ .KeySetKey "pk" }}] = struct{}{}
+	}
+{{- else }}
+
+	keys := make(map[{{ .KeySetType }}]struct{})
+	for rows.Next() {
+		var id {{ $pkCol.GoType }}
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		keys[{{ .KeySetKey "id" }}] = struct{}{}
+	}
+{{- end }}
+	return keys, rows.Err()
+}
+{{- end }}
+{{- end -}}
+
+{{- /* The affected keys of a by-key batch write: the listed keys a sub-batch
+       wrote, in the order they were listed. A tenant-capturing table knows a
+       key was written when its tenant was captured; every other table keeps
+       the written-key set. */ -}}
+{{- define "table/delete-many-affected" }}
+{{- $keys := "ids" }}{{ if .CompositePK }}{{ $keys = "pks" }}{{ end }}
+
+		// A listed key whose row this call did not write records no affected
+		// key, so no cache entry is invalidated and no event is published for it.
+		affectedPKs := make([]any, 0, len({{ $keys }}))
+{{- if and .Tenancy .Tenancy.Tenanted (not .Tenancy.InPrimaryKey) }}
+		affectedTenants := make([]any, 0, len({{ $keys }}))
+		for _, key := range {{ $keys }} {
+			tenant, ok := tenantByPK[key]
+			if !ok {
+				continue
+			}
+			affectedPKs = append(affectedPKs, key)
+			affectedTenants = append(affectedTenants, tenant)
+		}
+		m.AffectedPKs = affectedPKs
+		m.AffectedTenants = affectedTenants
+{{- else }}
+		for _, key := range {{ $keys }} {
+			if _, ok := written[{{ .KeySetKey "key" }}]; ok {
+				affectedPKs = append(affectedPKs, key)
+			}
+		}
+		m.AffectedPKs = affectedPKs
 {{- end }}
 {{- end -}}
