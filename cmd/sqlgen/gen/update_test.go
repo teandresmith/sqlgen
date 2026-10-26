@@ -780,3 +780,37 @@ func TestUpdateTemplate_updateManyNoOp_recordsOnlyWrittenItems(t *testing.T) {
 		})
 	}
 }
+
+// MySQL counts the rows an UPDATE changed, not the rows it matched, so an
+// Update that sets a column to its current value reports none. On MySQL alone
+// a zero count looks the row up under the conditions the write used before
+// the strict check or the affected-key gate reads it.
+func TestUpdateTemplate_zeroCountLooksUpRowOnMySQL(t *testing.T) {
+	cases := []struct {
+		name    string
+		ctx     gen.TableContext
+		dialect sql.Dialect
+		want    bool
+	}{
+		{name: "mysql", ctx: testUpdateContext_singlePK_mysql(), dialect: sql.NewMySQLDialect(), want: true},
+		{name: "tenanted mysql", ctx: tenantedUpdateContext("mysql", "stdlib"), dialect: sql.NewMySQLDialect(), want: true},
+		{name: "postgres", ctx: testUpdateContext_singlePK_postgres(), dialect: sql.NewPostgresDialect(), want: false},
+	}
+	for _, tt := range cases {
+		t.Run(tt.name, func(t *testing.T) {
+			body := singleRowUpdateBody(t, executeUpdateTemplate(t, tt.ctx, tt.dialect))
+			lookup := strings.Index(body, "found, err := c.rowMatches(ctx, conn, updateConds)")
+			if got := lookup >= 0; got != tt.want {
+				t.Fatalf("row lookup emitted = %v, want %v\n\nmethod:\n%s", got, tt.want, body)
+			}
+			if !tt.want {
+				return
+			}
+			count := strings.Index(body, "matched, err := execResult.RowsAffected()")
+			gate := strings.LastIndex(body, "if matched ")
+			if count < 0 || count > lookup || gate < lookup {
+				t.Errorf("row lookup must sit between the affected-row count and the matched-row gate\n\nmethod:\n%s", body)
+			}
+		})
+	}
+}

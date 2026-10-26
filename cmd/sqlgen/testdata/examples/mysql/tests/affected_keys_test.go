@@ -343,6 +343,93 @@ func TestAffectedKeys_BatchRecordsWrittenKeysInListOrder(t *testing.T) {
 	}
 }
 
+// MySQL's affected-row count counts the rows a statement changed, not the
+// rows it matched, so a write that leaves its row as it was reports none. A
+// strict write must still find the row, and every write records the key of
+// the row it matched, as it does on PostgreSQL and SQLite.
+func TestAffectedKeys_UnchangedRowStillMatches(t *testing.T) {
+	ctx := context.Background()
+	client, affected := affectedPKsRecorder()
+	product := seedAffectedKeysProduct(t, ctx, client, "ak-unchanged-sku")
+
+	user, err := client.Users().Create(ctx, &models.CreateUserInput{Name: "AKUnchanged", Email: "ak-unchanged@example.com"})
+	if err != nil {
+		t.Fatalf("Create user: %v", err)
+	}
+	t.Cleanup(func() { _ = client.Users().HardDelete(ctx, user.ID) })
+	order, err := client.Orders().Create(ctx, &models.CreateOrderInput{UserID: user.ID, Total: 1})
+	if err != nil {
+		t.Fatalf("Create order: %v", err)
+	}
+	t.Cleanup(func() { _ = client.Orders().HardDelete(ctx, order.ID) })
+
+	article, err := client.Articles().Create(ctx, &models.CreateArticleInput{Title: "AKLive", Author: "ak"})
+	if err != nil {
+		t.Fatalf("Create article: %v", err)
+	}
+	t.Cleanup(func() { _ = client.Articles().HardDelete(ctx, article.ID) })
+
+	tag, err := client.Tags().Create(ctx, &models.CreateTagInput{Name: "ak-unchanged-tag"})
+	if err != nil {
+		t.Fatalf("Create tag: %v", err)
+	}
+	t.Cleanup(func() { _ = client.Tags().HardDelete(ctx, tag.ID) })
+
+	cases := []struct {
+		name  string
+		write func() error
+		want  []any
+	}{
+		{name: "strict update to the current value", want: []any{product.ID}, write: func() error {
+			_, err := client.Products().Update(ctx, product.ID, &models.UpdateProductInput{Title: omittable.Set(product.Title)})
+			return err
+		}},
+		{name: "strict increment by zero", want: []any{product.ID}, write: func() error {
+			return client.Products().Increment(ctx, product.ID, models.IncrementInput[models.ProductIncrementColumn]{
+				Column: models.ProductIncrementPrice,
+				Amount: 0,
+			})
+		}},
+		{name: "non-strict update to the current value", want: []any{order.ID}, write: func() error {
+			_, err := client.Orders().Update(ctx, order.ID, &models.UpdateOrderInput{Total: omittable.Set(order.Total)})
+			return err
+		}},
+		{name: "update many item set to the current value", want: []any{order.ID}, write: func() error {
+			_, err := client.Orders().UpdateMany(ctx, []models.UpdateOrderItem{
+				{ID: order.ID, Input: &models.UpdateOrderInput{Total: omittable.Set(order.Total)}},
+			})
+			return err
+		}},
+		{name: "non-strict increment by zero", want: []any{order.ID}, write: func() error {
+			return client.Orders().Increment(ctx, order.ID, models.IncrementInput[models.OrderIncrementColumn]{
+				Column: models.OrderIncrementTotal,
+				Amount: 0,
+			})
+		}},
+		{name: "restore of a live row", want: []any{article.ID}, write: func() error {
+			_, err := client.Articles().Restore(ctx, article.ID)
+			return err
+		}},
+		{name: "soft delete of a soft-deleted row", want: []any{tag.ID}, write: func() error {
+			if _, err := client.Tags().SoftDelete(ctx, tag.ID); err != nil {
+				return err
+			}
+			_, err := client.Tags().SoftDelete(ctx, tag.ID)
+			return err
+		}},
+	}
+	for _, tt := range cases {
+		t.Run(tt.name, func(t *testing.T) {
+			if err := tt.write(); err != nil {
+				t.Fatalf("write: %v", err)
+			}
+			if diff := cmp.Diff(tt.want, affected()); diff != "" {
+				t.Errorf("AffectedPKs (-want +got):\n%s", diff)
+			}
+		})
+	}
+}
+
 // seedAffectedKeysProduct creates a product, and the category it needs, for
 // the life of the test.
 func seedAffectedKeysProduct(t *testing.T, ctx context.Context, client *models.Client, sku string) *models.Product {

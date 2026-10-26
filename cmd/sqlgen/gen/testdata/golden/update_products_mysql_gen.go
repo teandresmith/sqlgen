@@ -69,10 +69,11 @@ func (c *productClient) Update(ctx context.Context, id uuid.UUID, input *UpdateP
 		if _, ok := input.UpdatedAt.Get(); !ok {
 			setClauses["updated_at"] = time.Now()
 		}
+		updateConds := []sql.Condition{sql.Where(c.dialect.QuoteIdentifier("id")).Eq(id)}
 
 		query, args := sql.BuildUpdate(c.dialect, c.table, sql.UpdateOptions{
 			SetClauses: setClauses,
-			Conditions: []sql.Condition{sql.Where(c.dialect.QuoteIdentifier("id")).Eq(id)},
+			Conditions: updateConds,
 		})
 
 		execResult, err := conn.Exec(ctx, query, args...)
@@ -82,6 +83,19 @@ func (c *productClient) Update(ctx context.Context, id uuid.UUID, input *UpdateP
 		matched, err := execResult.RowsAffected()
 		if err != nil {
 			return nil, fmt.Errorf("update product rows affected: %w", err)
+		}
+		// MySQL counts the rows a statement changed, not the rows it
+		// matched, so a row the write leaves as it was reports none. Only
+		// then is the row looked up, to tell a missing row from an
+		// unchanged one.
+		if matched == 0 {
+			found, err := c.rowMatches(ctx, conn, updateConds)
+			if err != nil {
+				return nil, fmt.Errorf("update product: match row: %w", err)
+			}
+			if found {
+				matched = 1
+			}
 		}
 		if matched == 0 {
 			return nil, ErrNotFound
@@ -181,10 +195,11 @@ func (c *productClient) UpdateMany(ctx context.Context, items []UpdateProductIte
 				if _, ok := item.Input.UpdatedAt.Get(); !ok {
 					setClauses["updated_at"] = time.Now()
 				}
+				itemConds := []sql.Condition{sql.Where(c.dialect.QuoteIdentifier("id")).Eq(item.ID)}
 
 				query, args := sql.BuildUpdate(c.dialect, c.table, sql.UpdateOptions{
 					SetClauses: setClauses,
-					Conditions: []sql.Condition{sql.Where(c.dialect.QuoteIdentifier("id")).Eq(item.ID)},
+					Conditions: itemConds,
 				})
 
 				execResult, err := conn.Exec(ctx, query, args...)
@@ -194,6 +209,19 @@ func (c *productClient) UpdateMany(ctx context.Context, items []UpdateProductIte
 				matched, err := execResult.RowsAffected()
 				if err != nil {
 					return nil, fmt.Errorf("update product %v rows affected: %w", item.ID, err)
+				}
+				// MySQL counts the rows a statement changed, not the rows it
+				// matched, so an item that leaves its row as it was reports
+				// none. Only then is the row looked up, to tell a missing row
+				// from an unchanged one.
+				if matched == 0 {
+					found, err := c.rowMatches(ctx, conn, itemConds)
+					if err != nil {
+						return nil, fmt.Errorf("update product %v: match row: %w", item.ID, err)
+					}
+					if found {
+						matched = 1
+					}
 				}
 				if matched > 0 {
 					writtenItems = append(writtenItems, item)

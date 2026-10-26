@@ -483,4 +483,19 @@ func (c *{{ .StructName | toCamelCase }}Client) captureAffectedTenants(ctx conte
 }
 {{- end }}
 {{- end }}
+{{- if and (not (supportsReturning)) (or .Operations.Update .Operations.UpdateMany .Operations.SoftDelete .Operations.Restore (and .Operations.Increment (gt (len .IncrementColumns) 0))) }}
+
+// rowMatches reports whether a row matching conds exists. MySQL counts the
+// rows an UPDATE changed, not the rows it matched, so a by-key write that
+// leaves its row as it was reports none; only then does the write ask, on
+// the same connection, to tell a missing row from an unchanged one.
+func (c *{{ .StructName | toCamelCase }}Client) rowMatches(ctx context.Context, conn database.Querier, conds []sql.Condition) (bool, error) {
+	query, args := sql.BuildExists(c.dialect, c.table, conds)
+	var exists bool
+	if err := conn.QueryRow(ctx, query, args...).Scan(&exists); err != nil {
+		return false, err
+	}
+	return exists, nil
+}
+{{- end }}
 {{- end -}}

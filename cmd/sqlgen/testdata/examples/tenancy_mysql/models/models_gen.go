@@ -336,6 +336,19 @@ func (c *articleClient) captureAffectedTenants(ctx context.Context, conn databas
 	return tenants, rows.Err()
 }
 
+// rowMatches reports whether a row matching conds exists. MySQL counts the
+// rows an UPDATE changed, not the rows it matched, so a by-key write that
+// leaves its row as it was reports none; only then does the write ask, on
+// the same connection, to tell a missing row from an unchanged one.
+func (c *articleClient) rowMatches(ctx context.Context, conn database.Querier, conds []sql.Condition) (bool, error) {
+	query, args := sql.BuildExists(c.dialect, c.table, conds)
+	var exists bool
+	if err := conn.QueryRow(ctx, query, args...).Scan(&exists); err != nil {
+		return false, err
+	}
+	return exists, nil
+}
+
 // articleAllColumns is the column list for full-entity reads, sorted for determinism.
 var articleAllColumns = []string{"deleted_at", "id", "slug", "title", "view_count", "workspace_id"}
 
@@ -1029,6 +1042,19 @@ func (c *articleClient) Update(ctx context.Context, id int64, input *UpdateArtic
 		if err != nil {
 			return nil, fmt.Errorf("update article rows affected: %w", err)
 		}
+		// MySQL counts the rows a statement changed, not the rows it
+		// matched, so a row the write leaves as it was reports none. Only
+		// then is the row looked up, to tell a missing row from an
+		// unchanged one.
+		if matched == 0 {
+			found, err := c.rowMatches(ctx, conn, updateConds)
+			if err != nil {
+				return nil, fmt.Errorf("update article: match row: %w", err)
+			}
+			if found {
+				matched = 1
+			}
+		}
 		if matched == 0 {
 			return nil, ErrNotFound
 		}
@@ -1190,6 +1216,19 @@ func (c *articleClient) UpdateMany(ctx context.Context, items []UpdateArticleIte
 				matched, err := execResult.RowsAffected()
 				if err != nil {
 					return nil, fmt.Errorf("update article %v rows affected: %w", item.ID, err)
+				}
+				// MySQL counts the rows a statement changed, not the rows it
+				// matched, so an item that leaves its row as it was reports
+				// none. Only then is the row looked up, to tell a missing row
+				// from an unchanged one.
+				if matched == 0 {
+					found, err := c.rowMatches(ctx, conn, itemConds)
+					if err != nil {
+						return nil, fmt.Errorf("update article %v: match row: %w", item.ID, err)
+					}
+					if found {
+						matched = 1
+					}
 				}
 				if matched > 0 {
 					writtenItems = append(writtenItems, item)
@@ -1460,6 +1499,19 @@ func (c *articleClient) SoftDelete(ctx context.Context, id int64, opts ...func(*
 		matched, err := execResult.RowsAffected()
 		if err != nil {
 			return nil, fmt.Errorf("soft delete article rows affected: %w", err)
+		}
+		// MySQL counts the rows a statement changed, not the rows it
+		// matched, so a row the write leaves as it was reports none. Only
+		// then is the row looked up, to tell a missing row from an
+		// unchanged one.
+		if matched == 0 {
+			found, err := c.rowMatches(ctx, conn, delConds)
+			if err != nil {
+				return nil, fmt.Errorf("soft delete article: match row: %w", err)
+			}
+			if found {
+				matched = 1
+			}
 		}
 		// A key that matched no row wrote nothing: it records no affected
 		// key, so no cache entry is invalidated and no event is published.
@@ -1757,6 +1809,19 @@ func (c *articleClient) Restore(ctx context.Context, id int64, opts ...func(*Cal
 		matched, err := execResult.RowsAffected()
 		if err != nil {
 			return nil, fmt.Errorf("restore article rows affected: %w", err)
+		}
+		// MySQL counts the rows a statement changed, not the rows it
+		// matched, so a row the write leaves as it was reports none. Only
+		// then is the row looked up, to tell a missing row from an
+		// unchanged one.
+		if matched == 0 {
+			found, err := c.rowMatches(ctx, conn, restoreConds)
+			if err != nil {
+				return nil, fmt.Errorf("restore article: match row: %w", err)
+			}
+			if found {
+				matched = 1
+			}
 		}
 		// A key that matched no row wrote nothing: it records no affected
 		// key, so no cache entry is invalidated and no event is published.
@@ -2780,6 +2845,19 @@ func (c *articleClient) Increment(ctx context.Context, id int64, input Increment
 		matched, err := execResult.RowsAffected()
 		if err != nil {
 			return nil, fmt.Errorf("increment article rows affected: %w", err)
+		}
+		// MySQL counts the rows a statement changed, not the rows it
+		// matched, so an increment that leaves its row as it was (an amount
+		// of zero) reports none. Only then is the row looked up, to tell a
+		// missing row from an unchanged one.
+		if matched == 0 {
+			found, err := c.rowMatches(ctx, conn, incConds)
+			if err != nil {
+				return nil, fmt.Errorf("increment article: match row: %w", err)
+			}
+			if found {
+				matched = 1
+			}
 		}
 		if matched == 0 {
 			return nil, ErrNotFound
@@ -3837,6 +3915,19 @@ func (c *documentClient) captureAffectedTenants(ctx context.Context, conn databa
 	return tenants, rows.Err()
 }
 
+// rowMatches reports whether a row matching conds exists. MySQL counts the
+// rows an UPDATE changed, not the rows it matched, so a by-key write that
+// leaves its row as it was reports none; only then does the write ask, on
+// the same connection, to tell a missing row from an unchanged one.
+func (c *documentClient) rowMatches(ctx context.Context, conn database.Querier, conds []sql.Condition) (bool, error) {
+	query, args := sql.BuildExists(c.dialect, c.table, conds)
+	var exists bool
+	if err := conn.QueryRow(ctx, query, args...).Scan(&exists); err != nil {
+		return false, err
+	}
+	return exists, nil
+}
+
 // documentAllColumns is the column list for full-entity reads, sorted for determinism.
 var documentAllColumns = []string{"doc_key", "label", "workspace_id"}
 
@@ -4426,6 +4517,19 @@ func (c *documentClient) Update(ctx context.Context, id string, input *UpdateDoc
 		if err != nil {
 			return nil, fmt.Errorf("update document rows affected: %w", err)
 		}
+		// MySQL counts the rows a statement changed, not the rows it
+		// matched, so a row the write leaves as it was reports none. Only
+		// then is the row looked up, to tell a missing row from an
+		// unchanged one.
+		if matched == 0 {
+			found, err := c.rowMatches(ctx, conn, updateConds)
+			if err != nil {
+				return nil, fmt.Errorf("update document: match row: %w", err)
+			}
+			if found {
+				matched = 1
+			}
+		}
 		if matched == 0 {
 			return nil, ErrNotFound
 		}
@@ -4578,6 +4682,19 @@ func (c *documentClient) UpdateMany(ctx context.Context, items []UpdateDocumentI
 				matched, err := execResult.RowsAffected()
 				if err != nil {
 					return nil, fmt.Errorf("update document %v rows affected: %w", item.DocKey, err)
+				}
+				// MySQL counts the rows a statement changed, not the rows it
+				// matched, so an item that leaves its row as it was reports
+				// none. Only then is the row looked up, to tell a missing row
+				// from an unchanged one.
+				if matched == 0 {
+					found, err := c.rowMatches(ctx, conn, itemConds)
+					if err != nil {
+						return nil, fmt.Errorf("update document %v: match row: %w", item.DocKey, err)
+					}
+					if found {
+						matched = 1
+					}
 				}
 				if matched > 0 {
 					writtenItems = append(writtenItems, item)
@@ -6301,6 +6418,19 @@ func (c *lineItemClient) captureAffectedTenants(ctx context.Context, conn databa
 	return tenants, rows.Err()
 }
 
+// rowMatches reports whether a row matching conds exists. MySQL counts the
+// rows an UPDATE changed, not the rows it matched, so a by-key write that
+// leaves its row as it was reports none; only then does the write ask, on
+// the same connection, to tell a missing row from an unchanged one.
+func (c *lineItemClient) rowMatches(ctx context.Context, conn database.Querier, conds []sql.Condition) (bool, error) {
+	query, args := sql.BuildExists(c.dialect, c.table, conds)
+	var exists bool
+	if err := conn.QueryRow(ctx, query, args...).Scan(&exists); err != nil {
+		return false, err
+	}
+	return exists, nil
+}
+
 // lineItemAllColumns is the column list for full-entity reads, sorted for determinism.
 var lineItemAllColumns = []string{"order_id", "product_id", "quantity", "workspace_id"}
 
@@ -6891,6 +7021,19 @@ func (c *lineItemClient) Update(ctx context.Context, pk LineItemPK, input *Updat
 		if err != nil {
 			return nil, fmt.Errorf("update line_item rows affected: %w", err)
 		}
+		// MySQL counts the rows a statement changed, not the rows it
+		// matched, so a row the write leaves as it was reports none. Only
+		// then is the row looked up, to tell a missing row from an
+		// unchanged one.
+		if matched == 0 {
+			found, err := c.rowMatches(ctx, conn, updateConds)
+			if err != nil {
+				return nil, fmt.Errorf("update line_item: match row: %w", err)
+			}
+			if found {
+				matched = 1
+			}
+		}
 		if matched == 0 {
 			return nil, ErrNotFound
 		}
@@ -7051,6 +7194,19 @@ func (c *lineItemClient) UpdateMany(ctx context.Context, items []UpdateLineItemI
 				matched, err := execResult.RowsAffected()
 				if err != nil {
 					return nil, fmt.Errorf("update line_item %v rows affected: %w", item.PK, err)
+				}
+				// MySQL counts the rows a statement changed, not the rows it
+				// matched, so an item that leaves its row as it was reports
+				// none. Only then is the row looked up, to tell a missing row
+				// from an unchanged one.
+				if matched == 0 {
+					found, err := c.rowMatches(ctx, conn, itemConds)
+					if err != nil {
+						return nil, fmt.Errorf("update line_item %v: match row: %w", item.PK, err)
+					}
+					if found {
+						matched = 1
+					}
 				}
 				if matched > 0 {
 					writtenItems = append(writtenItems, item)
@@ -7878,6 +8034,19 @@ func (c *lineItemClient) Increment(ctx context.Context, pk LineItemPK, input Inc
 		matched, err := execResult.RowsAffected()
 		if err != nil {
 			return nil, fmt.Errorf("increment line_item rows affected: %w", err)
+		}
+		// MySQL counts the rows a statement changed, not the rows it
+		// matched, so an increment that leaves its row as it was (an amount
+		// of zero) reports none. Only then is the row looked up, to tell a
+		// missing row from an unchanged one.
+		if matched == 0 {
+			found, err := c.rowMatches(ctx, conn, incConds)
+			if err != nil {
+				return nil, fmt.Errorf("increment line_item: match row: %w", err)
+			}
+			if found {
+				matched = 1
+			}
 		}
 		if matched == 0 {
 			return nil, ErrNotFound

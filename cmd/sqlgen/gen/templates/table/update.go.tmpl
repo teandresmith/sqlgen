@@ -157,6 +157,19 @@ func (c *{{ $structCamel }}Client) Update(ctx context.Context, {{ if .CompositeP
 			Conditions: updateConds,
 		})
 {{- end }}
+{{- else if not (supportsReturning) }}
+{{- if .CompositePK }}
+		updateConds := sql.BuildCompositePKConditions(c.dialect,
+			[]string{ {{- range .PKColumns }}{{ printf "%q" .Name }}, {{ end -}} },
+			[]any{ {{- range .PKColumns }}pk.{{ .FieldName }}, {{ end -}} })
+{{- else }}
+		updateConds := []sql.Condition{sql.Where(c.dialect.QuoteIdentifier({{ printf "%q" $pkCol.Name }})).Eq(id)}
+{{- end }}
+
+		query, args := sql.BuildUpdate(c.dialect, c.table, sql.UpdateOptions{
+			SetClauses: setClauses,
+			Conditions: updateConds,
+		})
 {{- else }}
 
 		query, args := sql.BuildUpdate(c.dialect, c.table, sql.UpdateOptions{
@@ -201,6 +214,21 @@ func (c *{{ $structCamel }}Client) Update(ctx context.Context, {{ if .CompositeP
 		matched, err := execResult.RowsAffected()
 		if err != nil {
 			return nil, fmt.Errorf("update {{ $singular }} rows affected: %w", err)
+		}
+{{- end }}
+{{- if not (supportsReturning) }}
+		// MySQL counts the rows a statement changed, not the rows it
+		// matched, so a row the write leaves as it was reports none. Only
+		// then is the row looked up, to tell a missing row from an
+		// unchanged one.
+		if matched == 0 {
+			found, err := c.rowMatches(ctx, conn, updateConds)
+			if err != nil {
+				return nil, fmt.Errorf("update {{ $singular }}: match row: %w", err)
+			}
+			if found {
+				matched = 1
+			}
 		}
 {{- end }}
 {{- if .StrictUpdates }}
@@ -629,6 +657,19 @@ func (c *{{ $structCamel }}Client) UpdateMany(ctx context.Context, items []Updat
 					Conditions: itemConds,
 				})
 {{- end }}
+{{- else if not (supportsReturning) }}
+{{- if .CompositePK }}
+				itemConds := sql.BuildCompositePKConditions(c.dialect,
+					[]string{ {{- range .PKColumns }}{{ printf "%q" .Name }}, {{ end -}} },
+					[]any{ {{- range .PKColumns }}item.PK.{{ .FieldName }}, {{ end -}} })
+{{- else }}
+				itemConds := []sql.Condition{sql.Where(c.dialect.QuoteIdentifier({{ printf "%q" $pkCol.Name }})).Eq(item.{{ $pkCol.FieldName }})}
+{{- end }}
+
+				query, args := sql.BuildUpdate(c.dialect, c.table, sql.UpdateOptions{
+					SetClauses: setClauses,
+					Conditions: itemConds,
+				})
 {{- else }}
 
 				query, args := sql.BuildUpdate(c.dialect, c.table, sql.UpdateOptions{
@@ -673,6 +714,21 @@ func (c *{{ $structCamel }}Client) UpdateMany(ctx context.Context, items []Updat
 				matched, err := execResult.RowsAffected()
 				if err != nil {
 					return nil, fmt.Errorf("update {{ $singular }} %v rows affected: %w", item.{{ if .CompositePK }}PK{{ else }}{{ $pkCol.FieldName }}{{ end }}, err)
+				}
+{{- end }}
+{{- if not (supportsReturning) }}
+				// MySQL counts the rows a statement changed, not the rows it
+				// matched, so an item that leaves its row as it was reports
+				// none. Only then is the row looked up, to tell a missing row
+				// from an unchanged one.
+				if matched == 0 {
+					found, err := c.rowMatches(ctx, conn, itemConds)
+					if err != nil {
+						return nil, fmt.Errorf("update {{ $singular }} %v: match row: %w", item.{{ if .CompositePK }}PK{{ else }}{{ $pkCol.FieldName }}{{ end }}, err)
+					}
+					if found {
+						matched = 1
+					}
 				}
 {{- end }}
 				if matched > 0 {

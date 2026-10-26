@@ -80,6 +80,17 @@ func (c *{{ $structCamel }}Client) Increment(ctx context.Context, {{ if .Composi
 {{- else }}
 		query, args := sql.BuildIncrement(c.dialect, c.table, string(input.Column), input.Amount, incConds)
 {{- end }}
+{{- else if not (supportsReturning) }}
+{{- if .CompositePK }}
+		incConds := sql.BuildCompositePKConditions(c.dialect,
+			[]string{ {{- range .PKColumns }}{{ printf "%q" .Name }}, {{ end -}} },
+			[]any{ {{- range .PKColumns }}pk.{{ .FieldName }}, {{ end -}} })
+{{- else }}
+		incConds := []sql.Condition{
+			sql.Where(c.dialect.QuoteIdentifier({{ printf "%q" $pkCol.Name }})).Eq(id),
+		}
+{{- end }}
+		query, args := sql.BuildIncrement(c.dialect, c.table, string(input.Column), input.Amount, incConds)
 {{- else }}
 {{- if .CompositePK }}
 		query, args := sql.BuildIncrement(c.dialect, c.table, string(input.Column), input.Amount, sql.BuildCompositePKConditions(c.dialect,
@@ -124,6 +135,21 @@ func (c *{{ $structCamel }}Client) Increment(ctx context.Context, {{ if .Composi
 		matched, err := execResult.RowsAffected()
 		if err != nil {
 			return nil, fmt.Errorf("increment {{ $singular }} rows affected: %w", err)
+		}
+{{- end }}
+{{- if not (supportsReturning) }}
+		// MySQL counts the rows a statement changed, not the rows it
+		// matched, so an increment that leaves its row as it was (an amount
+		// of zero) reports none. Only then is the row looked up, to tell a
+		// missing row from an unchanged one.
+		if matched == 0 {
+			found, err := c.rowMatches(ctx, conn, incConds)
+			if err != nil {
+				return nil, fmt.Errorf("increment {{ $singular }}: match row: %w", err)
+			}
+			if found {
+				matched = 1
+			}
 		}
 {{- end }}
 {{- if .StrictUpdates }}

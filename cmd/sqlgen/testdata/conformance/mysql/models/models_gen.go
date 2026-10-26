@@ -196,6 +196,19 @@ func (c *documentClient) executeQuery(ctx context.Context, skipHooks bool, qc *h
 	return hook.BuildQueryChain(c.panicHandler, hooks, fn)(ctx, qc)
 }
 
+// rowMatches reports whether a row matching conds exists. MySQL counts the
+// rows an UPDATE changed, not the rows it matched, so a by-key write that
+// leaves its row as it was reports none; only then does the write ask, on
+// the same connection, to tell a missing row from an unchanged one.
+func (c *documentClient) rowMatches(ctx context.Context, conn database.Querier, conds []sql.Condition) (bool, error) {
+	query, args := sql.BuildExists(c.dialect, c.table, conds)
+	var exists bool
+	if err := conn.QueryRow(ctx, query, args...).Scan(&exists); err != nil {
+		return false, err
+	}
+	return exists, nil
+}
+
 // documentAllColumns is the column list for full-entity reads, sorted for determinism.
 var documentAllColumns = []string{"deleted_at", "id", "title"}
 
@@ -653,10 +666,11 @@ func (c *documentClient) Update(ctx context.Context, id int64, input *UpdateDocu
 				o.LockMode = sql.LockNone
 			})
 		}
+		updateConds := []sql.Condition{sql.Where(c.dialect.QuoteIdentifier("id")).Eq(id)}
 
 		query, args := sql.BuildUpdate(c.dialect, c.table, sql.UpdateOptions{
 			SetClauses: setClauses,
-			Conditions: []sql.Condition{sql.Where(c.dialect.QuoteIdentifier("id")).Eq(id)},
+			Conditions: updateConds,
 		})
 
 		execResult, err := conn.Exec(ctx, query, args...)
@@ -666,6 +680,19 @@ func (c *documentClient) Update(ctx context.Context, id int64, input *UpdateDocu
 		matched, err := execResult.RowsAffected()
 		if err != nil {
 			return nil, fmt.Errorf("update document rows affected: %w", err)
+		}
+		// MySQL counts the rows a statement changed, not the rows it
+		// matched, so a row the write leaves as it was reports none. Only
+		// then is the row looked up, to tell a missing row from an
+		// unchanged one.
+		if matched == 0 {
+			found, err := c.rowMatches(ctx, conn, updateConds)
+			if err != nil {
+				return nil, fmt.Errorf("update document: match row: %w", err)
+			}
+			if found {
+				matched = 1
+			}
 		}
 		if matched == 0 {
 			return nil, ErrNotFound
@@ -748,10 +775,11 @@ func (c *documentClient) UpdateMany(ctx context.Context, items []UpdateDocumentI
 					allIDs = append(allIDs, item.ID)
 					continue
 				}
+				itemConds := []sql.Condition{sql.Where(c.dialect.QuoteIdentifier("id")).Eq(item.ID)}
 
 				query, args := sql.BuildUpdate(c.dialect, c.table, sql.UpdateOptions{
 					SetClauses: setClauses,
-					Conditions: []sql.Condition{sql.Where(c.dialect.QuoteIdentifier("id")).Eq(item.ID)},
+					Conditions: itemConds,
 				})
 
 				execResult, err := conn.Exec(ctx, query, args...)
@@ -761,6 +789,19 @@ func (c *documentClient) UpdateMany(ctx context.Context, items []UpdateDocumentI
 				matched, err := execResult.RowsAffected()
 				if err != nil {
 					return nil, fmt.Errorf("update document %v rows affected: %w", item.ID, err)
+				}
+				// MySQL counts the rows a statement changed, not the rows it
+				// matched, so an item that leaves its row as it was reports
+				// none. Only then is the row looked up, to tell a missing row
+				// from an unchanged one.
+				if matched == 0 {
+					found, err := c.rowMatches(ctx, conn, itemConds)
+					if err != nil {
+						return nil, fmt.Errorf("update document %v: match row: %w", item.ID, err)
+					}
+					if found {
+						matched = 1
+					}
 				}
 				if matched > 0 {
 					writtenItems = append(writtenItems, item)
@@ -930,10 +971,11 @@ func (c *documentClient) SoftDelete(ctx context.Context, id int64, opts ...func(
 		PK: id, CallOptions: options,
 	}, func(ctx context.Context, m *hook.MutationContext) (any, error) {
 		conn := database.Conn(ctx, c.querier)
+		delConds := []sql.Condition{sql.Where(c.dialect.QuoteIdentifier("id")).Eq(id)}
 		query, args := sql.BuildSoftDelete(c.dialect, c.table, sql.SoftDeleteOptions{
 			Column:     "deleted_at",
 			Type:       sql.SoftDeleteTimestamp,
-			Conditions: []sql.Condition{sql.Where(c.dialect.QuoteIdentifier("id")).Eq(id)},
+			Conditions: delConds,
 		})
 
 		execResult, err := conn.Exec(ctx, query, args...)
@@ -943,6 +985,19 @@ func (c *documentClient) SoftDelete(ctx context.Context, id int64, opts ...func(
 		matched, err := execResult.RowsAffected()
 		if err != nil {
 			return nil, fmt.Errorf("soft delete document rows affected: %w", err)
+		}
+		// MySQL counts the rows a statement changed, not the rows it
+		// matched, so a row the write leaves as it was reports none. Only
+		// then is the row looked up, to tell a missing row from an
+		// unchanged one.
+		if matched == 0 {
+			found, err := c.rowMatches(ctx, conn, delConds)
+			if err != nil {
+				return nil, fmt.Errorf("soft delete document: match row: %w", err)
+			}
+			if found {
+				matched = 1
+			}
 		}
 		// A key that matched no row wrote nothing: it records no affected
 		// key, so no cache entry is invalidated and no event is published.
@@ -1142,10 +1197,11 @@ func (c *documentClient) Restore(ctx context.Context, id int64, opts ...func(*Ca
 		PK: id, CallOptions: options,
 	}, func(ctx context.Context, m *hook.MutationContext) (any, error) {
 		conn := database.Conn(ctx, c.querier)
+		restoreConds := []sql.Condition{sql.Where(c.dialect.QuoteIdentifier("id")).Eq(id)}
 
 		query, args := sql.BuildUpdate(c.dialect, c.table, sql.UpdateOptions{
 			SetClauses: map[string]any{"deleted_at": nil},
-			Conditions: []sql.Condition{sql.Where(c.dialect.QuoteIdentifier("id")).Eq(id)},
+			Conditions: restoreConds,
 		})
 
 		execResult, err := conn.Exec(ctx, query, args...)
@@ -1155,6 +1211,19 @@ func (c *documentClient) Restore(ctx context.Context, id int64, opts ...func(*Ca
 		matched, err := execResult.RowsAffected()
 		if err != nil {
 			return nil, fmt.Errorf("restore document rows affected: %w", err)
+		}
+		// MySQL counts the rows a statement changed, not the rows it
+		// matched, so a row the write leaves as it was reports none. Only
+		// then is the row looked up, to tell a missing row from an
+		// unchanged one.
+		if matched == 0 {
+			found, err := c.rowMatches(ctx, conn, restoreConds)
+			if err != nil {
+				return nil, fmt.Errorf("restore document: match row: %w", err)
+			}
+			if found {
+				matched = 1
+			}
 		}
 		// A key that matched no row wrote nothing: it records no affected
 		// key, so no cache entry is invalidated and no event is published.
@@ -2693,6 +2762,19 @@ func (c *orderItemClient) executeQuery(ctx context.Context, skipHooks bool, qc *
 	return hook.BuildQueryChain(c.panicHandler, hooks, fn)(ctx, qc)
 }
 
+// rowMatches reports whether a row matching conds exists. MySQL counts the
+// rows an UPDATE changed, not the rows it matched, so a by-key write that
+// leaves its row as it was reports none; only then does the write ask, on
+// the same connection, to tell a missing row from an unchanged one.
+func (c *orderItemClient) rowMatches(ctx context.Context, conn database.Querier, conds []sql.Condition) (bool, error) {
+	query, args := sql.BuildExists(c.dialect, c.table, conds)
+	var exists bool
+	if err := conn.QueryRow(ctx, query, args...).Scan(&exists); err != nil {
+		return false, err
+	}
+	return exists, nil
+}
+
 // orderItemAllColumns is the column list for full-entity reads, sorted for determinism.
 var orderItemAllColumns = []string{"order_id", "product_id", "quantity"}
 
@@ -3066,12 +3148,13 @@ func (c *orderItemClient) Update(ctx context.Context, pk OrderItemPK, input *Upd
 				o.LockMode = sql.LockNone
 			})
 		}
+		updateConds := sql.BuildCompositePKConditions(c.dialect,
+			[]string{"order_id", "product_id"},
+			[]any{pk.OrderID, pk.ProductID})
 
 		query, args := sql.BuildUpdate(c.dialect, c.table, sql.UpdateOptions{
 			SetClauses: setClauses,
-			Conditions: sql.BuildCompositePKConditions(c.dialect,
-				[]string{"order_id", "product_id"},
-				[]any{pk.OrderID, pk.ProductID}),
+			Conditions: updateConds,
 		})
 
 		execResult, err := conn.Exec(ctx, query, args...)
@@ -3081,6 +3164,19 @@ func (c *orderItemClient) Update(ctx context.Context, pk OrderItemPK, input *Upd
 		matched, err := execResult.RowsAffected()
 		if err != nil {
 			return nil, fmt.Errorf("update order_item rows affected: %w", err)
+		}
+		// MySQL counts the rows a statement changed, not the rows it
+		// matched, so a row the write leaves as it was reports none. Only
+		// then is the row looked up, to tell a missing row from an
+		// unchanged one.
+		if matched == 0 {
+			found, err := c.rowMatches(ctx, conn, updateConds)
+			if err != nil {
+				return nil, fmt.Errorf("update order_item: match row: %w", err)
+			}
+			if found {
+				matched = 1
+			}
 		}
 		if matched == 0 {
 			return nil, ErrNotFound
@@ -3160,12 +3256,13 @@ func (c *orderItemClient) UpdateMany(ctx context.Context, items []UpdateOrderIte
 					allPKs = append(allPKs, item.PK)
 					continue
 				}
+				itemConds := sql.BuildCompositePKConditions(c.dialect,
+					[]string{"order_id", "product_id"},
+					[]any{item.PK.OrderID, item.PK.ProductID})
 
 				query, args := sql.BuildUpdate(c.dialect, c.table, sql.UpdateOptions{
 					SetClauses: setClauses,
-					Conditions: sql.BuildCompositePKConditions(c.dialect,
-						[]string{"order_id", "product_id"},
-						[]any{item.PK.OrderID, item.PK.ProductID}),
+					Conditions: itemConds,
 				})
 
 				execResult, err := conn.Exec(ctx, query, args...)
@@ -3175,6 +3272,19 @@ func (c *orderItemClient) UpdateMany(ctx context.Context, items []UpdateOrderIte
 				matched, err := execResult.RowsAffected()
 				if err != nil {
 					return nil, fmt.Errorf("update order_item %v rows affected: %w", item.PK, err)
+				}
+				// MySQL counts the rows a statement changed, not the rows it
+				// matched, so an item that leaves its row as it was reports
+				// none. Only then is the row looked up, to tell a missing row
+				// from an unchanged one.
+				if matched == 0 {
+					found, err := c.rowMatches(ctx, conn, itemConds)
+					if err != nil {
+						return nil, fmt.Errorf("update order_item %v: match row: %w", item.PK, err)
+					}
+					if found {
+						matched = 1
+					}
 				}
 				if matched > 0 {
 					writtenItems = append(writtenItems, item)
@@ -3762,9 +3872,10 @@ func (c *orderItemClient) Increment(ctx context.Context, pk OrderItemPK, input I
 		PK: pk, Input: input, CallOptions: options,
 	}, func(ctx context.Context, m *hook.MutationContext) (any, error) {
 		conn := database.Conn(ctx, c.querier)
-		query, args := sql.BuildIncrement(c.dialect, c.table, string(input.Column), input.Amount, sql.BuildCompositePKConditions(c.dialect,
+		incConds := sql.BuildCompositePKConditions(c.dialect,
 			[]string{"order_id", "product_id"},
-			[]any{pk.OrderID, pk.ProductID}))
+			[]any{pk.OrderID, pk.ProductID})
+		query, args := sql.BuildIncrement(c.dialect, c.table, string(input.Column), input.Amount, incConds)
 
 		execResult, err := conn.Exec(ctx, query, args...)
 		if err != nil {
@@ -3774,6 +3885,19 @@ func (c *orderItemClient) Increment(ctx context.Context, pk OrderItemPK, input I
 		matched, err := execResult.RowsAffected()
 		if err != nil {
 			return nil, fmt.Errorf("increment order_item rows affected: %w", err)
+		}
+		// MySQL counts the rows a statement changed, not the rows it
+		// matched, so an increment that leaves its row as it was (an amount
+		// of zero) reports none. Only then is the row looked up, to tell a
+		// missing row from an unchanged one.
+		if matched == 0 {
+			found, err := c.rowMatches(ctx, conn, incConds)
+			if err != nil {
+				return nil, fmt.Errorf("increment order_item: match row: %w", err)
+			}
+			if found {
+				matched = 1
+			}
 		}
 		if matched == 0 {
 			return nil, ErrNotFound
@@ -4579,6 +4703,19 @@ func (c *productClient) executeQuery(ctx context.Context, skipHooks bool, qc *ho
 	return hook.BuildQueryChain(c.panicHandler, hooks, fn)(ctx, qc)
 }
 
+// rowMatches reports whether a row matching conds exists. MySQL counts the
+// rows an UPDATE changed, not the rows it matched, so a by-key write that
+// leaves its row as it was reports none; only then does the write ask, on
+// the same connection, to tell a missing row from an unchanged one.
+func (c *productClient) rowMatches(ctx context.Context, conn database.Querier, conds []sql.Condition) (bool, error) {
+	query, args := sql.BuildExists(c.dialect, c.table, conds)
+	var exists bool
+	if err := conn.QueryRow(ctx, query, args...).Scan(&exists); err != nil {
+		return false, err
+	}
+	return exists, nil
+}
+
 // productAllColumns is the column list for full-entity reads, sorted for determinism.
 var productAllColumns = []string{"created_at", "id", "name", "price"}
 
@@ -5144,10 +5281,11 @@ func (c *productClient) Update(ctx context.Context, id int64, input *UpdateProdu
 				o.LockMode = sql.LockNone
 			})
 		}
+		updateConds := []sql.Condition{sql.Where(c.dialect.QuoteIdentifier("id")).Eq(id)}
 
 		query, args := sql.BuildUpdate(c.dialect, c.table, sql.UpdateOptions{
 			SetClauses: setClauses,
-			Conditions: []sql.Condition{sql.Where(c.dialect.QuoteIdentifier("id")).Eq(id)},
+			Conditions: updateConds,
 		})
 
 		execResult, err := conn.Exec(ctx, query, args...)
@@ -5157,6 +5295,19 @@ func (c *productClient) Update(ctx context.Context, id int64, input *UpdateProdu
 		matched, err := execResult.RowsAffected()
 		if err != nil {
 			return nil, fmt.Errorf("update product rows affected: %w", err)
+		}
+		// MySQL counts the rows a statement changed, not the rows it
+		// matched, so a row the write leaves as it was reports none. Only
+		// then is the row looked up, to tell a missing row from an
+		// unchanged one.
+		if matched == 0 {
+			found, err := c.rowMatches(ctx, conn, updateConds)
+			if err != nil {
+				return nil, fmt.Errorf("update product: match row: %w", err)
+			}
+			if found {
+				matched = 1
+			}
 		}
 		if matched == 0 {
 			return nil, ErrNotFound
@@ -5242,10 +5393,11 @@ func (c *productClient) UpdateMany(ctx context.Context, items []UpdateProductIte
 					allIDs = append(allIDs, item.ID)
 					continue
 				}
+				itemConds := []sql.Condition{sql.Where(c.dialect.QuoteIdentifier("id")).Eq(item.ID)}
 
 				query, args := sql.BuildUpdate(c.dialect, c.table, sql.UpdateOptions{
 					SetClauses: setClauses,
-					Conditions: []sql.Condition{sql.Where(c.dialect.QuoteIdentifier("id")).Eq(item.ID)},
+					Conditions: itemConds,
 				})
 
 				execResult, err := conn.Exec(ctx, query, args...)
@@ -5255,6 +5407,19 @@ func (c *productClient) UpdateMany(ctx context.Context, items []UpdateProductIte
 				matched, err := execResult.RowsAffected()
 				if err != nil {
 					return nil, fmt.Errorf("update product %v rows affected: %w", item.ID, err)
+				}
+				// MySQL counts the rows a statement changed, not the rows it
+				// matched, so an item that leaves its row as it was reports
+				// none. Only then is the row looked up, to tell a missing row
+				// from an unchanged one.
+				if matched == 0 {
+					found, err := c.rowMatches(ctx, conn, itemConds)
+					if err != nil {
+						return nil, fmt.Errorf("update product %v: match row: %w", item.ID, err)
+					}
+					if found {
+						matched = 1
+					}
 				}
 				if matched > 0 {
 					writtenItems = append(writtenItems, item)
@@ -5995,9 +6160,10 @@ func (c *productClient) Increment(ctx context.Context, id int64, input Increment
 		PK: id, Input: input, CallOptions: options,
 	}, func(ctx context.Context, m *hook.MutationContext) (any, error) {
 		conn := database.Conn(ctx, c.querier)
-		query, args := sql.BuildIncrement(c.dialect, c.table, string(input.Column), input.Amount, []sql.Condition{
+		incConds := []sql.Condition{
 			sql.Where(c.dialect.QuoteIdentifier("id")).Eq(id),
-		})
+		}
+		query, args := sql.BuildIncrement(c.dialect, c.table, string(input.Column), input.Amount, incConds)
 
 		execResult, err := conn.Exec(ctx, query, args...)
 		if err != nil {
@@ -6007,6 +6173,19 @@ func (c *productClient) Increment(ctx context.Context, id int64, input Increment
 		matched, err := execResult.RowsAffected()
 		if err != nil {
 			return nil, fmt.Errorf("increment product rows affected: %w", err)
+		}
+		// MySQL counts the rows a statement changed, not the rows it
+		// matched, so an increment that leaves its row as it was (an amount
+		// of zero) reports none. Only then is the row looked up, to tell a
+		// missing row from an unchanged one.
+		if matched == 0 {
+			found, err := c.rowMatches(ctx, conn, incConds)
+			if err != nil {
+				return nil, fmt.Errorf("increment product: match row: %w", err)
+			}
+			if found {
+				matched = 1
+			}
 		}
 		if matched == 0 {
 			return nil, ErrNotFound

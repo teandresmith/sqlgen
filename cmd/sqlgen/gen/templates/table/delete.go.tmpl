@@ -87,6 +87,19 @@ func (c *{{ $structCamel }}Client) SoftDelete(ctx context.Context, {{ if .Compos
 			Conditions: delConds,
 		})
 {{- end }}
+{{- else if not (supportsReturning) }}
+{{- if .CompositePK }}
+		delConds := sql.BuildCompositePKConditions(c.dialect,
+			[]string{ {{- range .PKColumns }}{{ printf "%q" .Name }}, {{ end -}} },
+			[]any{ {{- range .PKColumns }}pk.{{ .FieldName }}, {{ end -}} })
+{{- else }}
+		delConds := []sql.Condition{sql.Where(c.dialect.QuoteIdentifier({{ printf "%q" $pkCol.Name }})).Eq(id)}
+{{- end }}
+		query, args := sql.BuildSoftDelete(c.dialect, c.table, sql.SoftDeleteOptions{
+			Column:     {{ printf "%q" .SoftDelete.Column }},
+			Type:       {{ softDeleteTypeConst .SoftDelete.Strategy }},
+			Conditions: delConds,
+		})
 {{- else }}
 {{- if .CompositePK }}
 		query, args := sql.BuildSoftDelete(c.dialect, c.table, sql.SoftDeleteOptions{
@@ -136,6 +149,21 @@ func (c *{{ $structCamel }}Client) SoftDelete(ctx context.Context, {{ if .Compos
 		matched, err := execResult.RowsAffected()
 		if err != nil {
 			return nil, fmt.Errorf("soft delete {{ $singular }} rows affected: %w", err)
+		}
+{{- end }}
+{{- if not (supportsReturning) }}
+		// MySQL counts the rows a statement changed, not the rows it
+		// matched, so a row the write leaves as it was reports none. Only
+		// then is the row looked up, to tell a missing row from an
+		// unchanged one.
+		if matched == 0 {
+			found, err := c.rowMatches(ctx, conn, delConds)
+			if err != nil {
+				return nil, fmt.Errorf("soft delete {{ $singular }}: match row: %w", err)
+			}
+			if found {
+				matched = 1
+			}
 		}
 {{- end }}
 		// A key that matched no row wrote nothing: it records no affected
@@ -870,6 +898,19 @@ func (c *{{ $structCamel }}Client) Restore(ctx context.Context, {{ if .Composite
 			Conditions: restoreConds,
 		})
 {{- end }}
+{{- else if not (supportsReturning) }}
+{{- if .CompositePK }}
+		restoreConds := sql.BuildCompositePKConditions(c.dialect,
+			[]string{ {{- range .PKColumns }}{{ printf "%q" .Name }}, {{ end -}} },
+			[]any{ {{- range .PKColumns }}pk.{{ .FieldName }}, {{ end -}} })
+{{- else }}
+		restoreConds := []sql.Condition{sql.Where(c.dialect.QuoteIdentifier({{ printf "%q" $pkCol.Name }})).Eq(id)}
+{{- end }}
+
+		query, args := sql.BuildUpdate(c.dialect, c.table, sql.UpdateOptions{
+			SetClauses: map[string]any{ {{- printf "%q" .SoftDelete.Column }}: {{ softDeleteRestoreGoValue .SoftDelete.Strategy }}},
+			Conditions: restoreConds,
+		})
 {{- else }}
 
 		query, args := sql.BuildUpdate(c.dialect, c.table, sql.UpdateOptions{
@@ -915,6 +956,21 @@ func (c *{{ $structCamel }}Client) Restore(ctx context.Context, {{ if .Composite
 		matched, err := execResult.RowsAffected()
 		if err != nil {
 			return nil, fmt.Errorf("restore {{ $singular }} rows affected: %w", err)
+		}
+{{- end }}
+{{- if not (supportsReturning) }}
+		// MySQL counts the rows a statement changed, not the rows it
+		// matched, so a row the write leaves as it was reports none. Only
+		// then is the row looked up, to tell a missing row from an
+		// unchanged one.
+		if matched == 0 {
+			found, err := c.rowMatches(ctx, conn, restoreConds)
+			if err != nil {
+				return nil, fmt.Errorf("restore {{ $singular }}: match row: %w", err)
+			}
+			if found {
+				matched = 1
+			}
 		}
 {{- end }}
 		// A key that matched no row wrote nothing: it records no affected
