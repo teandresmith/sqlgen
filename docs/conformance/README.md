@@ -13,6 +13,7 @@ in [`docs/design/CONFORMANCE.md`](../design/CONFORMANCE.md) §3 and §5. `make r
 | [`cli/config.md`](cli/config.md) | CLI: `cmd/sqlgen/config` | unit |
 | [`cli/gen.md`](cli/gen.md) | CLI: `cmd/sqlgen/gen` | unit, golden |
 | [`cli/gotype.md`](cli/gotype.md) | CLI: `cmd/sqlgen/gotype` | unit |
+| [`cli/api.md`](cli/api.md) | CLI: API generation (§26); no package of its own, its rows claim `cmd/sqlgen/gen`, `cli` and example tests | unit, golden, example |
 | [`cli/commands.md`](cli/commands.md) | CLI: `cmd/sqlgen`, `cli`, `wrapper` | unit, integration, golden |
 | [`cli/manifest.md`](cli/manifest.md) | CLI: `cmd/sqlgen/manifest`, `mcp` | unit, integration |
 | [`client.md`](client.md) | The generated client | conformance, example |
@@ -306,20 +307,20 @@ another file also cites is still owned once.
 | §25.2 Scan Overhead | informative |
 | §25.3 Batch Operations | client.md |
 | §25.4 No Implicit Caching | client.md |
-| §26 API Generation | cli/gen.md |
+| §26 API Generation | cli/api.md |
 | §26.1 Purpose | informative |
-| §26.2 Supported Protocols | cli/gen.md |
-| §26.3 Configuration | cli/gen.md |
-| §26.4 GraphQL Schema Generation | cli/gen.md |
-| §26.5 GraphQL Resolver Generation | cli/gen.md |
-| §26.6 Query Complexity & Depth Limiting | cli/gen.md |
-| §26.7 GraphQL Authorization | cli/gen.md |
-| §26.8 REST API (Supplementary) | cli/gen.md |
-| §26.9 Architecture | cli/gen.md |
-| §26.10 Per-Table API Configuration | cli/gen.md |
-| §26.11 Per-Call Options via HTTP Headers | cli/gen.md |
-| §26.12 Known Limitations | cli/gen.md |
-| §26.13 gRPC API Generation | cli/gen.md |
+| §26.2 Supported Protocols | cli/api.md |
+| §26.3 Configuration | cli/api.md |
+| §26.4 GraphQL Schema Generation | cli/api.md |
+| §26.5 GraphQL Resolver Generation | cli/api.md |
+| §26.6 Query Complexity & Depth Limiting | cli/api.md |
+| §26.7 GraphQL Authorization | cli/api.md |
+| §26.8 REST API (Supplementary) | cli/api.md |
+| §26.9 Architecture | cli/api.md |
+| §26.10 Per-Table API Configuration | cli/api.md |
+| §26.11 Per-Call Options via HTTP Headers | cli/api.md |
+| §26.12 Known Limitations | cli/api.md |
+| §26.13 gRPC API Generation | cli/api.md |
 | §27 Caching | runtime.md |
 | §27.1 Overview | informative |
 | §27.2 Configuration | cli/config.md |

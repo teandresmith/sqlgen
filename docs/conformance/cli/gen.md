@@ -6,7 +6,6 @@
 <!-- matrix: generated-artifacts rows=artifact cols=single-pk,composite-pk,no-pk,soft-delete,tenanted,view,materialized-view -->
 <!-- matrix: relationships rows=type cols=struct-field,loader,filter,nested-mutation -->
 <!-- matrix: access-control rows=role cols=go-client,api-in,api-out,filter,sort,event-payload,cache,manifest -->
-<!-- matrix: api-generation rows=element cols=single-pk,composite-pk,no-pk,soft-delete,tenanted,view -->
 
 ## §8.1 Template Engine
 <!-- prd: 8.1 sha256: 6963bac8b0eef6a6 -->
