@@ -20,7 +20,7 @@ func BuildClientContext(tables []TableContext, views []ViewContext, pkg string, 
 		entities = append(entities, EntityClientContext{
 			StructName:    t.StructName,
 			InterfaceName: t.StructName + "Client",
-			FieldName:     toCamelCase(t.StructName),
+			FieldName:     clientFieldName(t.StructName),
 			AccessorName:  entityAccessorName(t.StructName, false),
 			IsView:        false,
 			ClientWires:   entityClientWires(t),
@@ -31,7 +31,7 @@ func BuildClientContext(tables []TableContext, views []ViewContext, pkg string, 
 		entities = append(entities, EntityClientContext{
 			StructName:    v.StructName,
 			InterfaceName: v.StructName + "Client",
-			FieldName:     toCamelCase(v.StructName),
+			FieldName:     clientFieldName(v.StructName),
 			AccessorName:  entityAccessorName(v.StructName, true),
 			IsView:        true,
 		})
@@ -44,7 +44,7 @@ func BuildClientContext(tables []TableContext, views []ViewContext, pkg string, 
 	var nestedSurfaceEntities []string
 	for _, t := range tables {
 		if t.HasNestedSurface {
-			nestedSurfaceEntities = append(nestedSurfaceEntities, toCamelCase(t.StructName))
+			nestedSurfaceEntities = append(nestedSurfaceEntities, clientFieldName(t.StructName))
 		}
 	}
 	slices.Sort(nestedSurfaceEntities)
@@ -125,7 +125,7 @@ func entityClientWires(t TableContext) []ClientWire {
 			return
 		}
 		seen[entityField] = true
-		wires = append(wires, ClientWire{EntityField: entityField, TargetField: toCamelCase(structName)})
+		wires = append(wires, ClientWire{EntityField: entityField, TargetField: clientFieldName(structName)})
 	}
 
 	for _, rel := range t.O2MRelationships {
@@ -138,6 +138,14 @@ func entityClientWires(t TableContext) []ClientWire {
 		add(name)
 	}
 	return wires
+}
+
+// clientFieldName spells the unified client's unexported field for an entity:
+// the camelCase struct name, escaped like any generated local (PRD §8.5), so a
+// table whose singular is a Go keyword (`maps` → `Map`) gets the field `mapVal`
+// rather than `map`. Every reference to the field reads it from here.
+func clientFieldName(structName string) string {
+	return safeGoIdent(toCamelCase(structName))
 }
 
 // entityAccessorName spells the unified client's accessor method for one
@@ -186,7 +194,7 @@ func applyClientTenancy(ctx *ClientContext, tables []TableContext, views []ViewC
 	var tenanted []string
 	for _, t := range tables {
 		if t.NeedsTenantResolver() {
-			tenanted = append(tenanted, toCamelCase(t.StructName))
+			tenanted = append(tenanted, clientFieldName(t.StructName))
 		}
 	}
 	// Tenanted views need the resolver threaded in for the same reason tables
@@ -194,7 +202,7 @@ func applyClientTenancy(ctx *ClientContext, tables []TableContext, views []ViewC
 	// A view has no O2O children, so detection is the whole condition.
 	for _, v := range views {
 		if v.Tenancy != nil && v.Tenancy.Tenanted {
-			tenanted = append(tenanted, toCamelCase(v.StructName))
+			tenanted = append(tenanted, clientFieldName(v.StructName))
 		}
 	}
 	slices.Sort(tenanted)

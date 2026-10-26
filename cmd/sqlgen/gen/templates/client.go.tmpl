@@ -144,7 +144,7 @@ type {{ .ClientName }} struct {
 	mysqlVersion *mysqlVersionCache
 {{- end }}
 {{- range .Entities }}
-	{{ .FieldName }} *{{ .FieldName }}Client
+	{{ .FieldName }} *{{ .StructName | toCamelCase }}Client
 {{- end }}
 }
 

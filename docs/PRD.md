@@ -2950,7 +2950,7 @@ The set is not consumer-configurable. Per-column escapes go through `tables.<tab
 
 #### Reserved Word Handling
 
-Column names whose camelCase form would collide with a Go reserved word are escaped with the suffix `Val` **only when emitted as a local variable in generated code**. Exposed identifiers (struct fields, method names, type names) are not affected — they are PascalCase, and capitalized forms of Go keywords (`Type`, `Range`, `Error`, `Map`) are valid Go identifiers.
+Column names, and the struct names of tables and views, whose camelCase form would collide with a Go reserved word are escaped with the suffix `Val` **only where that form is emitted bare in generated code — as a local variable or an unexported struct field**; an identifier with a static suffix needs no escape. For a table or view the bare form is the unified client's field: a `maps` table gives the struct `Map`, the client type `mapClient` and the `Client` field `mapVal`. Exposed identifiers (struct fields, method names, type names) are not affected — they are PascalCase, and capitalized forms of Go keywords (`Type`, `Range`, `Error`, `Map`) are valid Go identifiers.
 
 A column named `type` (or any column whose lowercase form matches a reserved word) produces an exposed Go field `Type` and a code-internal local variable `typeVal`. The escape is invisible at the public API surface.
 
