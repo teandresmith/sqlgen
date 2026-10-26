@@ -6087,11 +6087,11 @@ func (c *projectClient) Increment(ctx context.Context, id int64, input Increment
 			return nil, fmt.Errorf("increment project %s: %w", input.Column, err)
 		}
 
-		count, err := execResult.RowsAffected()
+		matched, err := execResult.RowsAffected()
 		if err != nil {
 			return nil, fmt.Errorf("increment project rows affected: %w", err)
 		}
-		if count == 0 {
+		if matched == 0 {
 			return nil, ErrNotFound
 		}
 		m.AffectedPKs = []any{id}
@@ -10400,11 +10400,11 @@ func (c *taskClient) Increment(ctx context.Context, id int64, input IncrementInp
 			return nil, fmt.Errorf("increment task %s: %w", input.Column, err)
 		}
 
-		count, err := execResult.RowsAffected()
+		matched, err := execResult.RowsAffected()
 		if err != nil {
 			return nil, fmt.Errorf("increment task rows affected: %w", err)
 		}
-		if count == 0 {
+		if matched == 0 {
 			return nil, ErrNotFound
 		}
 		m.AffectedPKs = []any{id}

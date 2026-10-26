@@ -19,7 +19,10 @@ generation:
       type: timestamp
 
 tables:
-  products: {}
+  products:
+    # Non-strict, so an Increment whose key matches no row returns nil and its
+    # event behavior (none published) is observable.
+    strict_updates: false
   articles:
     # Non-strict, so an Update whose key matches no row returns nil and its
     # event behavior (none published) is observable.

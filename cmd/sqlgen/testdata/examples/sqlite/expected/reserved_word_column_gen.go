@@ -1707,11 +1707,11 @@ func (c *reservedWordColumnClient) Increment(ctx context.Context, id int64, inpu
 			return nil, fmt.Errorf("increment reserved_word_column %s: %w", input.Column, err)
 		}
 
-		count, err := execResult.RowsAffected()
+		matched, err := execResult.RowsAffected()
 		if err != nil {
 			return nil, fmt.Errorf("increment reserved_word_column rows affected: %w", err)
 		}
-		if count == 0 {
+		if matched == 0 {
 			return nil, ErrNotFound
 		}
 		m.AffectedPKs = []any{id}

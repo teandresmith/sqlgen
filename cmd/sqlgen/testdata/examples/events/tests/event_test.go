@@ -453,6 +453,12 @@ func TestEvent_MissingKeyPublishesNothing(t *testing.T) {
 			})
 			return err
 		}},
+		// products is non-strict, so this Increment returns nil.
+		{name: "non-strict increment", write: func(client *models.Client) error {
+			return client.Products().Increment(ctx, missing, models.IncrementInput[models.ProductIncrementColumn]{
+				Column: models.ProductIncrementStock, Amount: 1,
+			})
+		}},
 	}
 	for _, tt := range cases {
 		t.Run(tt.name, func(t *testing.T) {

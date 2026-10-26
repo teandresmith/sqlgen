@@ -1432,11 +1432,11 @@ func (c *orderItemClient) Increment(ctx context.Context, id int64, input Increme
 			return nil, fmt.Errorf("increment order_item %s: %w", input.Column, err)
 		}
 
-		count, err := execResult.RowsAffected()
+		matched, err := execResult.RowsAffected()
 		if err != nil {
 			return nil, fmt.Errorf("increment order_item rows affected: %w", err)
 		}
-		if count == 0 {
+		if matched == 0 {
 			return nil, ErrNotFound
 		}
 		m.AffectedPKs = []any{id}

@@ -1466,11 +1466,11 @@ func (c *invoiceClient) Increment(ctx context.Context, id int64, input Increment
 			return nil, fmt.Errorf("increment invoice %s: %w", input.Column, err)
 		}
 
-		count, err := execResult.RowsAffected()
+		matched, err := execResult.RowsAffected()
 		if err != nil {
 			return nil, fmt.Errorf("increment invoice rows affected: %w", err)
 		}
-		if count == 0 {
+		if matched == 0 {
 			return nil, ErrNotFound
 		}
 		m.AffectedPKs = []any{id}

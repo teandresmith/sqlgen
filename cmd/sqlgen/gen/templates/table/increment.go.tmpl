@@ -92,9 +92,7 @@ func (c *{{ $structCamel }}Client) Increment(ctx context.Context, {{ if .Composi
 			return nil, fmt.Errorf("increment {{ $singular }} %s: %w", input.Column, err)
 		}
 		var capturedTenant any
-{{- if .StrictUpdates }}
 		matched := 0
-{{- end }}
 		for rows.Next() {
 			var rowTenant {{ .Tenancy.GoType }}
 			if err := rows.Scan(&rowTenant); err != nil {
@@ -102,42 +100,42 @@ func (c *{{ $structCamel }}Client) Increment(ctx context.Context, {{ if .Composi
 				return nil, fmt.Errorf("scan incremented {{ $singular }} tenant: %w", err)
 			}
 			capturedTenant = rowTenant
-{{- if .StrictUpdates }}
 			matched++
-{{- end }}
 		}
 		if err := rows.Err(); err != nil {
 			rows.Close()
 			return nil, err
 		}
 		rows.Close()
-{{- if .StrictUpdates }}
-		if matched == 0 {
-			return nil, ErrNotFound
-		}
-{{- end }}
 {{- else }}
 
 		execResult, err := conn.Exec(ctx, query, args...)
 		if err != nil {
 			return nil, fmt.Errorf("increment {{ $singular }} %s: %w", input.Column, err)
 		}
-{{- if .StrictUpdates }}
 
-		count, err := execResult.RowsAffected()
+		matched, err := execResult.RowsAffected()
 		if err != nil {
 			return nil, fmt.Errorf("increment {{ $singular }} rows affected: %w", err)
 		}
-		if count == 0 {
+{{- end }}
+{{- if .StrictUpdates }}
+		if matched == 0 {
 			return nil, ErrNotFound
 		}
-{{- else }}
-		_ = execResult
-{{- end }}
-{{- end }}
 		m.AffectedPKs = []any{ {{ if .CompositePK }}pk{{ else }}id{{ end }} }
 {{- if $captureTenant }}
 		m.AffectedTenants = []any{capturedTenant}
+{{- end }}
+{{- else }}
+		// A key that matched no row wrote nothing: it records no affected
+		// key, so no cache entry is invalidated and no event is published.
+		if matched > 0 {
+			m.AffectedPKs = []any{ {{ if .CompositePK }}pk{{ else }}id{{ end }} }
+{{- if $captureTenant }}
+			m.AffectedTenants = []any{capturedTenant}
+{{- end }}
+		}
 {{- end }}
 		return nil, nil
 	})

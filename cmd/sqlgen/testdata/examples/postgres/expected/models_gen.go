@@ -20362,11 +20362,11 @@ func (c *counterClient) Increment(ctx context.Context, id string, input Incremen
 			return nil, fmt.Errorf("increment counter %s: %w", input.Column, err)
 		}
 
-		count, err := execResult.RowsAffected()
+		matched, err := execResult.RowsAffected()
 		if err != nil {
 			return nil, fmt.Errorf("increment counter rows affected: %w", err)
 		}
-		if count == 0 {
+		if matched == 0 {
 			return nil, ErrNotFound
 		}
 		m.AffectedPKs = []any{id}
@@ -22515,11 +22515,11 @@ func (c *defaultOnlyRowClient) Increment(ctx context.Context, id int64, input In
 			return nil, fmt.Errorf("increment default_only_row %s: %w", input.Column, err)
 		}
 
-		count, err := execResult.RowsAffected()
+		matched, err := execResult.RowsAffected()
 		if err != nil {
 			return nil, fmt.Errorf("increment default_only_row rows affected: %w", err)
 		}
-		if count == 0 {
+		if matched == 0 {
 			return nil, ErrNotFound
 		}
 		m.AffectedPKs = []any{id}
@@ -37023,11 +37023,11 @@ func (c *orderItemClient) Increment(ctx context.Context, id uuid.UUID, input Inc
 			return nil, fmt.Errorf("increment order_item %s: %w", input.Column, err)
 		}
 
-		count, err := execResult.RowsAffected()
+		matched, err := execResult.RowsAffected()
 		if err != nil {
 			return nil, fmt.Errorf("increment order_item rows affected: %w", err)
 		}
-		if count == 0 {
+		if matched == 0 {
 			return nil, ErrNotFound
 		}
 		m.AffectedPKs = []any{id}
@@ -39482,8 +39482,16 @@ func (c *orderClient) Increment(ctx context.Context, id uuid.UUID, input Increme
 		if err != nil {
 			return nil, fmt.Errorf("increment order %s: %w", input.Column, err)
 		}
-		_ = execResult
-		m.AffectedPKs = []any{id}
+
+		matched, err := execResult.RowsAffected()
+		if err != nil {
+			return nil, fmt.Errorf("increment order rows affected: %w", err)
+		}
+		// A key that matched no row wrote nothing: it records no affected
+		// key, so no cache entry is invalidated and no event is published.
+		if matched > 0 {
+			m.AffectedPKs = []any{id}
+		}
 		return nil, nil
 	})
 	return err
@@ -44038,11 +44046,11 @@ func (c *productClient) Increment(ctx context.Context, id uuid.UUID, input Incre
 			return nil, fmt.Errorf("increment product %s: %w", input.Column, err)
 		}
 
-		count, err := execResult.RowsAffected()
+		matched, err := execResult.RowsAffected()
 		if err != nil {
 			return nil, fmt.Errorf("increment product rows affected: %w", err)
 		}
-		if count == 0 {
+		if matched == 0 {
 			return nil, ErrNotFound
 		}
 		m.AffectedPKs = []any{id}
@@ -48859,11 +48867,11 @@ func (c *rateLimitClient) Increment(ctx context.Context, pk RateLimitPK, input I
 			return nil, fmt.Errorf("increment rate_limit %s: %w", input.Column, err)
 		}
 
-		count, err := execResult.RowsAffected()
+		matched, err := execResult.RowsAffected()
 		if err != nil {
 			return nil, fmt.Errorf("increment rate_limit rows affected: %w", err)
 		}
-		if count == 0 {
+		if matched == 0 {
 			return nil, ErrNotFound
 		}
 		m.AffectedPKs = []any{pk}
@@ -51085,11 +51093,11 @@ func (c *sequenceRowClient) Increment(ctx context.Context, id int64, input Incre
 			return nil, fmt.Errorf("increment sequence_row %s: %w", input.Column, err)
 		}
 
-		count, err := execResult.RowsAffected()
+		matched, err := execResult.RowsAffected()
 		if err != nil {
 			return nil, fmt.Errorf("increment sequence_row rows affected: %w", err)
 		}
-		if count == 0 {
+		if matched == 0 {
 			return nil, ErrNotFound
 		}
 		m.AffectedPKs = []any{id}
@@ -63499,11 +63507,11 @@ func (c *warehouseClient) Increment(ctx context.Context, id uuid.UUID, input Inc
 			return nil, fmt.Errorf("increment warehouse %s: %w", input.Column, err)
 		}
 
-		count, err := execResult.RowsAffected()
+		matched, err := execResult.RowsAffected()
 		if err != nil {
 			return nil, fmt.Errorf("increment warehouse rows affected: %w", err)
 		}
-		if count == 0 {
+		if matched == 0 {
 			return nil, ErrNotFound
 		}
 		m.AffectedPKs = []any{id}

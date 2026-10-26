@@ -3781,11 +3781,11 @@ func (c *productClient) Increment(ctx context.Context, id uuid.UUID, input Incre
 			return nil, fmt.Errorf("increment product %s: %w", input.Column, err)
 		}
 
-		count, err := execResult.RowsAffected()
+		matched, err := execResult.RowsAffected()
 		if err != nil {
 			return nil, fmt.Errorf("increment product rows affected: %w", err)
 		}
-		if count == 0 {
+		if matched == 0 {
 			return nil, ErrNotFound
 		}
 		m.AffectedPKs = []any{id}

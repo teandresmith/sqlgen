@@ -1504,11 +1504,11 @@ func (c *accountClient) Increment(ctx context.Context, id int64, input Increment
 			return nil, fmt.Errorf("increment account %s: %w", input.Column, err)
 		}
 
-		count, err := execResult.RowsAffected()
+		matched, err := execResult.RowsAffected()
 		if err != nil {
 			return nil, fmt.Errorf("increment account rows affected: %w", err)
 		}
-		if count == 0 {
+		if matched == 0 {
 			return nil, ErrNotFound
 		}
 		m.AffectedPKs = []any{id}
@@ -6888,7 +6888,6 @@ type ProductClient interface {
 
 	// Update partially updates a product by primary key and returns the updated entity.
 	// Only fields where IsSet() is true are included in the SET clause.
-	// Returns ErrNotFound if the primary key does not exist.
 	Update(ctx context.Context, id int64, input *UpdateProductInput, opts ...func(*CallOptions[ProductFieldOptions])) (*Product, error)
 
 	// UpdateMany updates multiple products and returns the updated entities.
@@ -6906,7 +6905,6 @@ type ProductClient interface {
 	UpsertMany(ctx context.Context, inputs []*CreateProductInput, target ProductConflictTarget, opts ...func(*CallOptions[ProductFieldOptions])) ([]*Product, error)
 
 	// Increment atomically increments or decrements a numeric column on a product.
-	// Returns ErrNotFound if the primary key does not exist.
 	Increment(ctx context.Context, id int64, input IncrementInput[ProductIncrementColumn], opts ...func(*CallOptions[ProductFieldOptions])) error
 
 	// --- Hard Delete Operations ---
@@ -6953,7 +6951,6 @@ type productClient struct {
 	queryLimit    int
 	pageSize      int
 	cursorKeys    []string
-	strictUpdates bool
 	mutationHooks []hook.MutationHook
 	queryHooks    []hook.QueryHook
 	panicHandler  hook.PanicHandler
@@ -6969,7 +6966,6 @@ func newProductClient(querier database.Querier, mutationHooks []hook.MutationHoo
 		queryLimit:    1000,
 		pageSize:      100,
 		cursorKeys:    []string{"id"},
-		strictUpdates: true,
 		mutationHooks: mutationHooks,
 		queryHooks:    queryHooks,
 		panicHandler:  panicHandler,
@@ -7367,7 +7363,6 @@ func (c *productClient) multiInsertAndResolveIDs(ctx context.Context, conn datab
 // Update partially updates a product by primary key and returns the updated entity.
 // Only fields where IsSet() is true are included in the SET clause. If no fields are
 // set, no UPDATE is executed and the current entity is returned unchanged.
-// Returns ErrNotFound if the primary key does not exist (strict_updates is enabled).
 func (c *productClient) Update(ctx context.Context, id int64, input *UpdateProductInput, opts ...func(*CallOptions[ProductFieldOptions])) (*Product, error) {
 	// Nil is a caller error, distinct from an empty-but-non-nil
 	// input — that one is the documented no-op returning the entity unchanged.
@@ -7427,10 +7422,11 @@ func (c *productClient) Update(ctx context.Context, id int64, input *UpdateProdu
 		if err != nil {
 			return nil, fmt.Errorf("update product rows affected: %w", err)
 		}
-		if matched == 0 {
-			return nil, ErrNotFound
+		// A key that matched no row wrote nothing: it records no affected
+		// key, so no cache entry is invalidated and no event is published.
+		if matched > 0 {
+			m.AffectedPKs = []any{id}
 		}
-		m.AffectedPKs = []any{id}
 
 		// Empty FieldOptions — caller doesn't need the result
 		if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
@@ -8302,7 +8298,6 @@ const (
 
 // Increment atomically increments or decrements a numeric column on a product.
 // A negative amount performs a decrement.
-// Returns ErrNotFound if the primary key does not exist.
 func (c *productClient) Increment(ctx context.Context, id int64, input IncrementInput[ProductIncrementColumn], opts ...func(*CallOptions[ProductFieldOptions])) error {
 	options := resolveCallOptions(opts)
 	_, err := c.executeMutation(ctx, options.SkipHooks, &hook.MutationContext{
@@ -8319,14 +8314,15 @@ func (c *productClient) Increment(ctx context.Context, id int64, input Increment
 			return nil, fmt.Errorf("increment product %s: %w", input.Column, err)
 		}
 
-		count, err := execResult.RowsAffected()
+		matched, err := execResult.RowsAffected()
 		if err != nil {
 			return nil, fmt.Errorf("increment product rows affected: %w", err)
 		}
-		if count == 0 {
-			return nil, ErrNotFound
+		// A key that matched no row wrote nothing: it records no affected
+		// key, so no cache entry is invalidated and no event is published.
+		if matched > 0 {
+			m.AffectedPKs = []any{id}
 		}
-		m.AffectedPKs = []any{id}
 		return nil, nil
 	})
 	return err

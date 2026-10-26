@@ -2541,11 +2541,11 @@ func (c *accountClient) Increment(ctx context.Context, id int64, input Increment
 			return nil, fmt.Errorf("increment account %s: %w", input.Column, err)
 		}
 
-		count, err := execResult.RowsAffected()
+		matched, err := execResult.RowsAffected()
 		if err != nil {
 			return nil, fmt.Errorf("increment account rows affected: %w", err)
 		}
-		if count == 0 {
+		if matched == 0 {
 			return nil, ErrNotFound
 		}
 		m.AffectedPKs = []any{id}
@@ -5140,11 +5140,11 @@ func (c *entryClient) Increment(ctx context.Context, id int64, input IncrementIn
 			return nil, fmt.Errorf("increment entry %s: %w", input.Column, err)
 		}
 
-		count, err := execResult.RowsAffected()
+		matched, err := execResult.RowsAffected()
 		if err != nil {
 			return nil, fmt.Errorf("increment entry rows affected: %w", err)
 		}
-		if count == 0 {
+		if matched == 0 {
 			return nil, ErrNotFound
 		}
 		m.AffectedPKs = []any{id}
