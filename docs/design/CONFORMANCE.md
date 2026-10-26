@@ -819,6 +819,94 @@ database versions it ran against.
      `req-check` cannot read, and that Applies-to narrower than `all` needs a PRD basis; and a
      `gen` test that sets `Config.Overrides` must rebuild `input.Resolver`, since `testInput`
      builds its own.
+   **PRD-gap rulings pass, recorded 2026-10-25:**
+   - **Ruled: 56 gaps**, every one open across the registry: 46 `amend-prd`, 6 `drop-pin`, and 4
+     whose behavior the PRD already stated, which became requirement rows the code did not yet
+     meet (an override with no `nullable` under `use_pointers: false`, every bad `cursor_keys`
+     column reported, a view target's relationship-filter member, goimports on the API files).
+   - **Code fixes: 14**, among them PostgreSQL synonym `overrides.types` keys rejected and the
+     keys then matched case-insensitively, the unknown-type `string` fallback warned, list
+     relationships named after filter members rejected, the tenant column filtered by its tenant
+     Go type, and a write matching no row (a by-key delete, restore, update or increment)
+     recording no affected key.
+   - **Review-found defects and regressions**, fixed in the same pass: a MySQL key pre-read
+     scanned its columns in declaration order while `BuildSelect` emits them sorted, so a key not
+     declared in name order failed to scan or recorded its columns swapped; and the written-key
+     fix compared listed keys with `==`, so on MySQL's case-insensitive collation a batch listing
+     `('COLOR','Red')` deleted `('color','red')` and recorded no key. A sub-batch the database
+     matched more rows in now records every listed key, a safe superset.
+   - **Backlog: 12 findings** logged rather than filed.
+   - **Report.** `make conformance` at `6b47b050`: 1350 rows, 1306 pass, 0 fail, 0 skip, 0 not
+     run, 44 untested.
+
+   **Third slice, `naming` (§8.5), recorded 2026-10-26:**
+   - **Matrix shape.** The header did not change. Its 51 rows are the rows of the §8.5 tables:
+     13 acronym examples, 7 field-override surfaces, 9 reserved field names, 3 entity claims, 8
+     reserved-package groups, the 4-row `struct_name` example, the 4 digit-leading sites plus the
+     prose digit-leading-table rule, and the 2-row `field_casing` table. The acronym-source table
+     (three counts) has no row. The user fixed the column meanings: `struct` is a table's or view's
+     struct name, `field` a column's or relationship's Go field, `type-name` the other
+     package-scope claims (enum, SET, composite and domain type names, the `hook.TableName`
+     constant), `file-stem` the `<stem>_gen.go` stem. A PRD row listing several surfaces or
+     carriers is one requirement row per item on the same cell; a list of reserved names stays one
+     row, with a subtest per name. The acronym struct and stem cells assert the singular forms
+     (`ttl_seconds` → `TTLSecond`, `ttl_second`).
+   - **One anchor.** `req-check` keys only numbered headings, so §8.5's six level-4 subsections
+     share the `8.5` anchor (one `###` heading each in `gen.md`), and an edit anywhere in §8.5 trips
+     every row's hash.
+   - **Rows seeded: 311**, 155 of them on 87 matrix cells, plus **117 `n/a`**, each citing §8.5;
+     none needed an `accepted` date. 104 matrix rows are generated from the spec tables of
+     `TestNamingAcronymExamples`, `TestReservedFieldNamesMatrix`, `TestReservedPackageNamesMatrix`
+     and `TestNamingDigitLeadingTable`. Rows cite `gen`, `config`, `cli`, golden and example
+     tests.
+   - **Gaps.** The four mapping agents' drafts had 88 of about 285 rows untested: the acronym
+     struct and stem cells, the reserved-name cells for view columns, many-to-many edges and
+     non-table claimants, the nested claim's structural conditioning, and most of the
+     acronym-set prose. After the new tests, none are.
+   - **Defects: 2 fixed**, each with a fail-first test:
+     1. A one-to-one edge into a view claimed no nested-mutation type names, though §8.5 claims
+        them for an edge whose target is outside the generated set; the name check read the
+        emitters' candidate set, which drops that edge.
+     2. A table whose singular is a Go keyword (`maps` → `Map`) failed to generate: the unified
+        client's unexported field was `map *mapClient`. The field now takes the `Val` escape.
+        Compiling the output for nine keyword-named tables found a second site, the field's type
+        spelled from the escaped field name.
+   - **PRD amendments: 5**, all ruled: an enum collision escapes through `enums.<enum>.struct_name`
+     (§4.11), where §8.5 said no non-table entity had an override; the snake-case GraphQL row type
+     is bound by gqlgen's case-insensitive match, with explicit `gqlgen.yml` entries only on the
+     filter and inputs; the reserved-word escape covers a table's or view's struct name where it
+     is emitted bare, with the fix; the field-override table's "SQL column constants", which
+     named nothing generated, became the `<T>Increment<Field>` values and the `<t>AllColumns` /
+     `<t>ConflictColumns` lists; and inflection reads the acronym set's membership directly for
+     the freeze rule, while casing alone goes through the four helpers. A sixth ruling, dropping
+     "parameters" from the `col` guard, was reversed once review found the resolver helpers' PK
+     parameters: it had rested on an agent's wrong claim that no parameter is spelled from a
+     column. **PRD gaps: 11**, all open,
+     among them the reserved-name error naming its escape hatch, the `shared` GraphQL stem, a SET's
+     second `<Set>Value` claim, and the digit-leading stem's underscore placement. One adjacent
+     finding went to `backlog.md`: the resolver helpers' PK parameters are not escaped, so a PK
+     column named `type` likely emits `type string`.
+   - **Tests written.** 2 matrix tests and the keyword-table test by hand; 9 files by three agents
+     on this branch with assigned helper prefixes (`rfm`/`nfr`, `rpm`/`rnr`/`lsn`, `arr`/`anc`/`rwd`),
+     about 600 subtests in all, and a fourth agent's review fixes. Lint flagged 4 gosec findings in
+     the agents' files; they carry `nolint` reasons now.
+   - **Review.** The slice review found duplicate rows on two cells, the `parameters` clause with
+     no row, three gaps the PRD already states (`xsrfs`, `Fishes`, `Client_IP`, now rows), rows
+     whose tests covered one owner or one carrier of several, and `gqlgen-field-map` rows needing a
+     split; all fixed. The fix commit's keyword-table test used helpers from a test file still
+     untracked, so the gen test package did not compile at `00dfa2e2` until the next commit.
+   - **Report.** `make conformance` at `6a11867a`: 1661 rows, 1617 pass, 0 fail, 0 skip, 0 not
+     run, 44 untested; all 311 §8.5 rows pass.
+   - **Time.** About 2.5 hours of wall time: 10 minutes to scope, 7 to map with four agents, two
+     defect stops with four rounds of rulings, four test-writing agents, five review passes and
+     the gates.
+   - **For the next slice:** a mapping agent's "no such X exists" is a claim, not a measurement, so
+     check it before turning it into a ruling question; commit a fix's test together with any
+     untracked helper file it calls; `req-check` accepts a duplicate `n/a` cell, so dedupe the
+     declarations a generator emits; a parse-only test of generated output misses
+     type errors, so compile a probe before closing a codegen defect; and tell agents who probe
+     the shared tree to keep their probe file compiling, since one agent's broken probe stopped
+     another's `go test`.
 7. **Skill changes (§6).** `/design`, `/phase` and `/implement` landed with step 2. `/verify` and
    `/close-phase` change during the config pilot (step 3), once there are rows for them to read
    (§9 ruling 14). Done 2026-10-23: `/verify` reads the registry rows for a sub-item's PRD
