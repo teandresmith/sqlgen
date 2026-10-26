@@ -5,6 +5,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/teandresmith/sqlgen/hook"
+
 	models "github.com/teandresmith/sqlgen/cmd/sqlgen/testdata/conformance/models"
 )
 
@@ -94,4 +96,19 @@ func assertLiveDocuments(t *testing.T, h *Harness, want int64) {
 	if got != want {
 		t.Errorf("Documents().Count = %d, want %d", got, want)
 	}
+}
+
+// affectedPKsRecorder returns a client on h's querier whose mutation hook
+// records each mutation's AffectedPKs after it runs, and a func that returns
+// the AffectedPKs of the last mutation.
+func affectedPKsRecorder(h *Harness) (*models.Client, func() []any) {
+	var last []any
+	record := func(next hook.MutationHandler) hook.MutationHandler {
+		return func(ctx context.Context, m *hook.MutationContext) (any, error) {
+			res, err := next(ctx, m)
+			last = m.AffectedPKs
+			return res, err
+		}
+	}
+	return models.New(h.Querier, models.WithMutationHook(record)), func() []any { return last }
 }

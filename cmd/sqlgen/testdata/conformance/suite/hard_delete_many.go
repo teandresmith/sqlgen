@@ -147,6 +147,40 @@ func hardDeleteMany(t *testing.T, h *Harness) {
 		assertProductExists(t, h, b.ID, true)
 	})
 
+	t.Run("records only the keys it wrote as affected", func(t *testing.T) {
+		h.Reset(t)
+		a := createProduct(t, h, "a")
+		missing := a.ID + 1000
+		client, affected := affectedPKsRecorder(h)
+		if err := client.Products().HardDeleteMany(ctx, []int64{missing, a.ID}); err != nil {
+			t.Fatalf("HardDeleteMany([missing, a]) error = %v, want nil", err)
+		}
+		if diff := cmp.Diff([]any{a.ID}, affected()); diff != "" {
+			t.Errorf("AffectedPKs of HardDeleteMany([missing, a]) (-want +got):\n%s", diff)
+		}
+		if err := client.Products().HardDeleteMany(ctx, []int64{missing, a.ID}); err != nil {
+			t.Fatalf("HardDeleteMany([missing, a]) again error = %v, want nil", err)
+		}
+		if got := affected(); len(got) != 0 {
+			t.Errorf("AffectedPKs of a HardDeleteMany matching no row = %v, want none", got)
+		}
+	})
+
+	t.Run("records only the composite keys it wrote as affected", func(t *testing.T) {
+		h.Reset(t)
+		p := createProduct(t, h, "p")
+		written := models.OrderItemPK{OrderID: 1, ProductID: p.ID}
+		missing := models.OrderItemPK{OrderID: 2, ProductID: p.ID}
+		createOrderItem(t, h, written)
+		client, affected := affectedPKsRecorder(h)
+		if err := client.OrderItems().HardDeleteMany(ctx, []models.OrderItemPK{missing, written}); err != nil {
+			t.Fatalf("HardDeleteMany([missing, written]) error = %v, want nil", err)
+		}
+		if diff := cmp.Diff([]any{written}, affected()); diff != "" {
+			t.Errorf("AffectedPKs of HardDeleteMany([missing, written]) (-want +got):\n%s", diff)
+		}
+	})
+
 	t.Run("a hook that aborts deletes nothing", func(t *testing.T) {
 		h.Reset(t)
 		a := createProduct(t, h, "a")
