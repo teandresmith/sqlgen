@@ -1007,7 +1007,14 @@ func (c *articleClient) Update(ctx context.Context, id int64, input *UpdateArtic
 		if err != nil {
 			return nil, fmt.Errorf("update article: capture tenant: %w", err)
 		}
-		capturedTenant := tenantByPK[id]
+		// The key conditions match at most one row. Its tenant is read
+		// without a lookup by key: the database matched the row under its
+		// own equality, which a case-insensitive collation makes looser than
+		// Go's ==.
+		var capturedTenant any
+		for _, tenant := range tenantByPK {
+			capturedTenant = tenant
+		}
 
 		query, args := sql.BuildUpdate(c.dialect, c.table, sql.UpdateOptions{
 			SetClauses: setClauses,
@@ -1432,7 +1439,14 @@ func (c *articleClient) SoftDelete(ctx context.Context, id int64, opts ...func(*
 		if err != nil {
 			return nil, fmt.Errorf("soft delete article: capture tenant: %w", err)
 		}
-		capturedTenant := tenantByPK[id]
+		// The key conditions match at most one row. Its tenant is read
+		// without a lookup by key: the database matched the row under its
+		// own equality, which a case-insensitive collation makes looser than
+		// Go's ==.
+		var capturedTenant any
+		for _, tenant := range tenantByPK {
+			capturedTenant = tenant
+		}
 		query, args := sql.BuildSoftDelete(c.dialect, c.table, sql.SoftDeleteOptions{
 			Column:     "deleted_at",
 			Type:       sql.SoftDeleteTimestamp,
@@ -1545,9 +1559,7 @@ func (c *articleClient) SoftDeleteMany(ctx context.Context, ids []int64, opts ..
 			if err != nil {
 				return nil, fmt.Errorf("soft delete articles: capture tenants: %w", err)
 			}
-			for pk, tenant := range batchTenants {
-				tenantByPK[pk] = tenant
-			}
+			c.recordWrittenTenants(tenantByPK, ids[start:end], batchTenants)
 
 			query, args := sql.BuildSoftDelete(c.dialect, c.table, sql.SoftDeleteOptions{
 				Column:     "deleted_at",
@@ -1725,7 +1737,14 @@ func (c *articleClient) Restore(ctx context.Context, id int64, opts ...func(*Cal
 		if err != nil {
 			return nil, fmt.Errorf("restore article: capture tenant: %w", err)
 		}
-		capturedTenant := tenantByPK[id]
+		// The key conditions match at most one row. Its tenant is read
+		// without a lookup by key: the database matched the row under its
+		// own equality, which a case-insensitive collation makes looser than
+		// Go's ==.
+		var capturedTenant any
+		for _, tenant := range tenantByPK {
+			capturedTenant = tenant
+		}
 		query, args := sql.BuildUpdate(c.dialect, c.table, sql.UpdateOptions{
 			SetClauses: map[string]any{"deleted_at": nil},
 			Conditions: restoreConds,
@@ -1834,9 +1853,7 @@ func (c *articleClient) RestoreMany(ctx context.Context, ids []int64, opts ...fu
 			if err != nil {
 				return nil, fmt.Errorf("restore articles: capture tenants: %w", err)
 			}
-			for pk, tenant := range batchTenants {
-				tenantByPK[pk] = tenant
-			}
+			c.recordWrittenTenants(tenantByPK, ids[start:end], batchTenants)
 
 			query, args := sql.BuildUpdate(c.dialect, c.table, sql.UpdateOptions{
 				SetClauses: map[string]any{"deleted_at": nil},
@@ -2000,7 +2017,14 @@ func (c *articleClient) HardDelete(ctx context.Context, id int64, opts ...func(*
 		if err != nil {
 			return nil, fmt.Errorf("hard delete article: capture tenant: %w", err)
 		}
-		capturedTenant := tenantByPK[id]
+		// The key conditions match at most one row. Its tenant is read
+		// without a lookup by key: the database matched the row under its
+		// own equality, which a case-insensitive collation makes looser than
+		// Go's ==.
+		var capturedTenant any
+		for _, tenant := range tenantByPK {
+			capturedTenant = tenant
+		}
 		query, args := sql.BuildHardDelete(c.dialect, c.table, sql.HardDeleteOptions{
 			Conditions: hardConds,
 		})
@@ -2063,9 +2087,7 @@ func (c *articleClient) HardDeleteMany(ctx context.Context, ids []int64, opts ..
 			if err != nil {
 				return nil, fmt.Errorf("hard delete articles: capture tenants: %w", err)
 			}
-			for pk, tenant := range batchTenants {
-				tenantByPK[pk] = tenant
-			}
+			c.recordWrittenTenants(tenantByPK, ids[start:end], batchTenants)
 
 			query, args := sql.BuildHardDelete(c.dialect, c.table, sql.HardDeleteOptions{
 				Conditions: hardConds,
@@ -2142,6 +2164,52 @@ func (c *articleClient) HardDeleteWhere(ctx context.Context, filter *ArticleFilt
 		return nil, nil
 	})
 	return err
+}
+
+// recordWrittenTenants adds to tenantByPK the keys of listed, one sub-batch,
+// that its statement wrote, each with its row's tenant; rowTenants holds the
+// tenant of every row the statement matched, by that row's key. The database
+// matches keys under its own equality — a case-insensitive collation,
+// blank-padded CHAR, a timestamp's stored precision — so a row it matched can
+// carry a key that differs under Go == from every listed key. When it matched
+// more rows than listed keys were found among rowTenants, every key of listed
+// is recorded: a superset, so no written row goes without its cache
+// invalidation and event. A key found under == keeps its own row's tenant;
+// any other takes the tenant the remaining rows share, or none when they
+// carry more than one.
+func (c *articleClient) recordWrittenTenants(tenantByPK map[int64]any, listed []int64, rowTenants map[int64]any) {
+	found := make(map[int64]struct{}, len(rowTenants))
+	for _, key := range listed {
+		if tenant, ok := rowTenants[key]; ok {
+			tenantByPK[key] = tenant
+			found[key] = struct{}{}
+		}
+	}
+	if len(found) == len(rowTenants) {
+		return
+	}
+
+	// The tenant of the rows no listed key found under ==, when they share one.
+	// Tenants compare by their %v form, the form tenant-scoped cache keys use.
+	var shared any
+	for key, tenant := range rowTenants {
+		if _, ok := found[key]; ok {
+			continue
+		}
+		if shared == nil {
+			shared = tenant
+			continue
+		}
+		if fmt.Sprint(shared) != fmt.Sprint(tenant) {
+			shared = nil
+			break
+		}
+	}
+	for _, key := range listed {
+		if _, ok := tenantByPK[key]; !ok {
+			tenantByPK[key] = shared
+		}
+	}
 }
 
 // ArticleConflictTarget identifies a unique constraint for upsert conflict detection.
@@ -2694,7 +2762,14 @@ func (c *articleClient) Increment(ctx context.Context, id int64, input Increment
 		if err != nil {
 			return nil, fmt.Errorf("increment article: capture tenant: %w", err)
 		}
-		capturedTenant := tenantByPK[id]
+		// The key conditions match at most one row. Its tenant is read
+		// without a lookup by key: the database matched the row under its
+		// own equality, which a case-insensitive collation makes looser than
+		// Go's ==.
+		var capturedTenant any
+		for _, tenant := range tenantByPK {
+			capturedTenant = tenant
+		}
 		query, args := sql.BuildIncrement(c.dialect, c.table, string(input.Column), input.Amount, incConds)
 
 		execResult, err := conn.Exec(ctx, query, args...)
@@ -4329,7 +4404,14 @@ func (c *documentClient) Update(ctx context.Context, id string, input *UpdateDoc
 		if err != nil {
 			return nil, fmt.Errorf("update document: capture tenant: %w", err)
 		}
-		capturedTenant := tenantByPK[id]
+		// The key conditions match at most one row. Its tenant is read
+		// without a lookup by key: the database matched the row under its
+		// own equality, which a case-insensitive collation makes looser than
+		// Go's ==.
+		var capturedTenant any
+		for _, tenant := range tenantByPK {
+			capturedTenant = tenant
+		}
 
 		query, args := sql.BuildUpdate(c.dialect, c.table, sql.UpdateOptions{
 			SetClauses: setClauses,
@@ -4730,7 +4812,14 @@ func (c *documentClient) HardDelete(ctx context.Context, id string, opts ...func
 		if err != nil {
 			return nil, fmt.Errorf("hard delete document: capture tenant: %w", err)
 		}
-		capturedTenant := tenantByPK[id]
+		// The key conditions match at most one row. Its tenant is read
+		// without a lookup by key: the database matched the row under its
+		// own equality, which a case-insensitive collation makes looser than
+		// Go's ==.
+		var capturedTenant any
+		for _, tenant := range tenantByPK {
+			capturedTenant = tenant
+		}
 		query, args := sql.BuildHardDelete(c.dialect, c.table, sql.HardDeleteOptions{
 			Conditions: hardConds,
 		})
@@ -4793,9 +4882,7 @@ func (c *documentClient) HardDeleteMany(ctx context.Context, ids []string, opts 
 			if err != nil {
 				return nil, fmt.Errorf("hard delete documents: capture tenants: %w", err)
 			}
-			for pk, tenant := range batchTenants {
-				tenantByPK[pk] = tenant
-			}
+			c.recordWrittenTenants(tenantByPK, ids[start:end], batchTenants)
 
 			query, args := sql.BuildHardDelete(c.dialect, c.table, sql.HardDeleteOptions{
 				Conditions: hardConds,
@@ -4872,6 +4959,52 @@ func (c *documentClient) HardDeleteWhere(ctx context.Context, filter *DocumentFi
 		return nil, nil
 	})
 	return err
+}
+
+// recordWrittenTenants adds to tenantByPK the keys of listed, one sub-batch,
+// that its statement wrote, each with its row's tenant; rowTenants holds the
+// tenant of every row the statement matched, by that row's key. The database
+// matches keys under its own equality — a case-insensitive collation,
+// blank-padded CHAR, a timestamp's stored precision — so a row it matched can
+// carry a key that differs under Go == from every listed key. When it matched
+// more rows than listed keys were found among rowTenants, every key of listed
+// is recorded: a superset, so no written row goes without its cache
+// invalidation and event. A key found under == keeps its own row's tenant;
+// any other takes the tenant the remaining rows share, or none when they
+// carry more than one.
+func (c *documentClient) recordWrittenTenants(tenantByPK map[string]any, listed []string, rowTenants map[string]any) {
+	found := make(map[string]struct{}, len(rowTenants))
+	for _, key := range listed {
+		if tenant, ok := rowTenants[key]; ok {
+			tenantByPK[key] = tenant
+			found[key] = struct{}{}
+		}
+	}
+	if len(found) == len(rowTenants) {
+		return
+	}
+
+	// The tenant of the rows no listed key found under ==, when they share one.
+	// Tenants compare by their %v form, the form tenant-scoped cache keys use.
+	var shared any
+	for key, tenant := range rowTenants {
+		if _, ok := found[key]; ok {
+			continue
+		}
+		if shared == nil {
+			shared = tenant
+			continue
+		}
+		if fmt.Sprint(shared) != fmt.Sprint(tenant) {
+			shared = nil
+			break
+		}
+	}
+	for _, key := range listed {
+		if _, ok := tenantByPK[key]; !ok {
+			tenantByPK[key] = shared
+		}
+	}
 }
 
 // DocumentConflictTarget identifies a unique constraint for upsert conflict detection.
@@ -6736,7 +6869,14 @@ func (c *lineItemClient) Update(ctx context.Context, pk LineItemPK, input *Updat
 		if err != nil {
 			return nil, fmt.Errorf("update line_item: capture tenant: %w", err)
 		}
-		capturedTenant := tenantByPK[pk]
+		// The key conditions match at most one row. Its tenant is read
+		// without a lookup by key: the database matched the row under its
+		// own equality, which a case-insensitive collation makes looser than
+		// Go's ==.
+		var capturedTenant any
+		for _, tenant := range tenantByPK {
+			capturedTenant = tenant
+		}
 
 		query, args := sql.BuildUpdate(c.dialect, c.table, sql.UpdateOptions{
 			SetClauses: setClauses,
@@ -7140,7 +7280,14 @@ func (c *lineItemClient) HardDelete(ctx context.Context, pk LineItemPK, opts ...
 		if err != nil {
 			return nil, fmt.Errorf("hard delete line_item: capture tenant: %w", err)
 		}
-		capturedTenant := tenantByPK[pk]
+		// The key conditions match at most one row. Its tenant is read
+		// without a lookup by key: the database matched the row under its
+		// own equality, which a case-insensitive collation makes looser than
+		// Go's ==.
+		var capturedTenant any
+		for _, tenant := range tenantByPK {
+			capturedTenant = tenant
+		}
 		query, args := sql.BuildHardDelete(c.dialect, c.table, sql.HardDeleteOptions{
 			Conditions: hardConds,
 		})
@@ -7209,9 +7356,7 @@ func (c *lineItemClient) HardDeleteMany(ctx context.Context, pks []LineItemPK, o
 			if err != nil {
 				return nil, fmt.Errorf("hard delete line_items: capture tenants: %w", err)
 			}
-			for pk, tenant := range batchTenants {
-				tenantByPK[pk] = tenant
-			}
+			c.recordWrittenTenants(tenantByPK, pks[start:end], batchTenants)
 
 			query, args := sql.BuildHardDelete(c.dialect, c.table, sql.HardDeleteOptions{
 				Conditions: hardConds,
@@ -7288,6 +7433,52 @@ func (c *lineItemClient) HardDeleteWhere(ctx context.Context, filter *LineItemFi
 		return nil, nil
 	})
 	return err
+}
+
+// recordWrittenTenants adds to tenantByPK the keys of listed, one sub-batch,
+// that its statement wrote, each with its row's tenant; rowTenants holds the
+// tenant of every row the statement matched, by that row's key. The database
+// matches keys under its own equality — a case-insensitive collation,
+// blank-padded CHAR, a timestamp's stored precision — so a row it matched can
+// carry a key that differs under Go == from every listed key. When it matched
+// more rows than listed keys were found among rowTenants, every key of listed
+// is recorded: a superset, so no written row goes without its cache
+// invalidation and event. A key found under == keeps its own row's tenant;
+// any other takes the tenant the remaining rows share, or none when they
+// carry more than one.
+func (c *lineItemClient) recordWrittenTenants(tenantByPK map[LineItemPK]any, listed []LineItemPK, rowTenants map[LineItemPK]any) {
+	found := make(map[LineItemPK]struct{}, len(rowTenants))
+	for _, key := range listed {
+		if tenant, ok := rowTenants[key]; ok {
+			tenantByPK[key] = tenant
+			found[key] = struct{}{}
+		}
+	}
+	if len(found) == len(rowTenants) {
+		return
+	}
+
+	// The tenant of the rows no listed key found under ==, when they share one.
+	// Tenants compare by their %v form, the form tenant-scoped cache keys use.
+	var shared any
+	for key, tenant := range rowTenants {
+		if _, ok := found[key]; ok {
+			continue
+		}
+		if shared == nil {
+			shared = tenant
+			continue
+		}
+		if fmt.Sprint(shared) != fmt.Sprint(tenant) {
+			shared = nil
+			break
+		}
+	}
+	for _, key := range listed {
+		if _, ok := tenantByPK[key]; !ok {
+			tenantByPK[key] = shared
+		}
+	}
 }
 
 // LineItemConflictTarget identifies a unique constraint for upsert conflict detection.
@@ -7669,7 +7860,14 @@ func (c *lineItemClient) Increment(ctx context.Context, pk LineItemPK, input Inc
 		if err != nil {
 			return nil, fmt.Errorf("increment line_item: capture tenant: %w", err)
 		}
-		capturedTenant := tenantByPK[pk]
+		// The key conditions match at most one row. Its tenant is read
+		// without a lookup by key: the database matched the row under its
+		// own equality, which a case-insensitive collation makes looser than
+		// Go's ==.
+		var capturedTenant any
+		for _, tenant := range tenantByPK {
+			capturedTenant = tenant
+		}
 		query, args := sql.BuildIncrement(c.dialect, c.table, string(input.Column), input.Amount, incConds)
 
 		execResult, err := conn.Exec(ctx, query, args...)

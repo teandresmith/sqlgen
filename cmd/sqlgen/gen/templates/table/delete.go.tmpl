@@ -61,7 +61,14 @@ func (c *{{ $structCamel }}Client) SoftDelete(ctx context.Context, {{ if .Compos
 		if err != nil {
 			return nil, fmt.Errorf("soft delete {{ $singular }}: capture tenant: %w", err)
 		}
-		capturedTenant := tenantByPK[{{ if .CompositePK }}pk{{ else }}id{{ end }}]
+		// The key conditions match at most one row. Its tenant is read
+		// without a lookup by key: the database matched the row under its
+		// own equality, which a case-insensitive collation makes looser than
+		// Go's ==.
+		var capturedTenant any
+		for _, tenant := range tenantByPK {
+			capturedTenant = tenant
+		}
 {{- end }}
 {{- if and $captureTenant (supportsReturning) }}
 		// RETURNING the tenant column captures the row's own tenant so cache
@@ -279,9 +286,7 @@ func (c *{{ $structCamel }}Client) SoftDeleteMany(ctx context.Context, {{ if .Co
 			if err != nil {
 				return nil, fmt.Errorf("soft delete {{ .TableName }}: capture tenants: %w", err)
 			}
-			for pk, tenant := range batchTenants {
-				tenantByPK[pk] = tenant
-			}
+			c.recordWrittenTenants(tenantByPK, {{ if .CompositePK }}pks{{ else }}ids{{ end }}[start:end], batchTenants)
 {{- end }}
 {{- if and $captureTenant (supportsReturning) }}
 
@@ -295,6 +300,7 @@ func (c *{{ $structCamel }}Client) SoftDeleteMany(ctx context.Context, {{ if .Co
 			if err != nil {
 				return nil, fmt.Errorf("soft delete {{ .TableName }}: %w", err)
 			}
+			batchTenants := make(map[{{ if .CompositePK }}{{ .CompositePKStructName }}{{ else }}{{ $pkCol.GoType }}{{ end }}]any, end-start)
 			for rows.Next() {
 {{- if .CompositePK }}
 				var rowPK {{ .CompositePKStructName }}
@@ -303,7 +309,7 @@ func (c *{{ $structCamel }}Client) SoftDeleteMany(ctx context.Context, {{ if .Co
 					rows.Close()
 					return nil, fmt.Errorf("scan soft deleted {{ $singular }} tenant: %w", err)
 				}
-				tenantByPK[rowPK] = rowTenant
+				batchTenants[rowPK] = rowTenant
 {{- else }}
 				var rowID {{ $pkCol.GoType }}
 				var rowTenant {{ .Tenancy.GoType }}
@@ -311,7 +317,7 @@ func (c *{{ $structCamel }}Client) SoftDeleteMany(ctx context.Context, {{ if .Co
 					rows.Close()
 					return nil, fmt.Errorf("scan soft deleted {{ $singular }} tenant: %w", err)
 				}
-				tenantByPK[rowID] = rowTenant
+				batchTenants[rowID] = rowTenant
 {{- end }}
 			}
 			if err := rows.Err(); err != nil {
@@ -319,6 +325,7 @@ func (c *{{ $structCamel }}Client) SoftDeleteMany(ctx context.Context, {{ if .Co
 				return nil, err
 			}
 			rows.Close()
+			c.recordWrittenTenants(tenantByPK, {{ if .CompositePK }}pks{{ else }}ids{{ end }}[start:end], batchTenants)
 {{- else if supportsReturning }}
 
 			// RETURNING the key columns names the rows this sub-batch wrote.
@@ -332,6 +339,7 @@ func (c *{{ $structCamel }}Client) SoftDeleteMany(ctx context.Context, {{ if .Co
 			if err != nil {
 				return nil, fmt.Errorf("soft delete {{ .TableName }}: %w", err)
 			}
+			batchKeys := make(map[{{ .KeySetType }}]struct{}, end-start)
 			for rows.Next() {
 {{- if .CompositePK }}
 				var rowPK {{ .CompositePKStructName }}
@@ -339,14 +347,14 @@ func (c *{{ $structCamel }}Client) SoftDeleteMany(ctx context.Context, {{ if .Co
 					rows.Close()
 					return nil, fmt.Errorf("scan soft deleted {{ $singular }} key: %w", err)
 				}
-				written[{{ .KeySetKey "rowPK" }}] = struct{}{}
+				batchKeys[{{ .KeySetKey "rowPK" }}] = struct{}{}
 {{- else }}
 				var rowID {{ $pkCol.GoType }}
 				if err := rows.Scan(&rowID); err != nil {
 					rows.Close()
 					return nil, fmt.Errorf("scan soft deleted {{ $singular }} key: %w", err)
 				}
-				written[{{ .KeySetKey "rowID" }}] = struct{}{}
+				batchKeys[{{ .KeySetKey "rowID" }}] = struct{}{}
 {{- end }}
 			}
 			if err := rows.Err(); err != nil {
@@ -354,6 +362,7 @@ func (c *{{ $structCamel }}Client) SoftDeleteMany(ctx context.Context, {{ if .Co
 				return nil, err
 			}
 			rows.Close()
+			c.recordWrittenKeys(written, {{ if .CompositePK }}pks{{ else }}ids{{ end }}[start:end], batchKeys)
 {{- else }}
 {{- if not $captureTenant }}
 
@@ -363,9 +372,7 @@ func (c *{{ $structCamel }}Client) SoftDeleteMany(ctx context.Context, {{ if .Co
 			if err != nil {
 				return nil, fmt.Errorf("soft delete {{ .TableName }}: read keys: %w", err)
 			}
-			for key := range batchKeys {
-				written[key] = struct{}{}
-			}
+			c.recordWrittenKeys(written, {{ if .CompositePK }}pks{{ else }}ids{{ end }}[start:end], batchKeys)
 {{- end }}
 
 			query, args := sql.BuildSoftDelete(c.dialect, c.table, sql.SoftDeleteOptions{
@@ -839,7 +846,14 @@ func (c *{{ $structCamel }}Client) Restore(ctx context.Context, {{ if .Composite
 		if err != nil {
 			return nil, fmt.Errorf("restore {{ $singular }}: capture tenant: %w", err)
 		}
-		capturedTenant := tenantByPK[{{ if .CompositePK }}pk{{ else }}id{{ end }}]
+		// The key conditions match at most one row. Its tenant is read
+		// without a lookup by key: the database matched the row under its
+		// own equality, which a case-insensitive collation makes looser than
+		// Go's ==.
+		var capturedTenant any
+		for _, tenant := range tenantByPK {
+			capturedTenant = tenant
+		}
 {{- end }}
 {{- if and $captureTenant (supportsReturning) }}
 		// RETURNING the tenant column captures the row's own tenant so cache
@@ -1043,9 +1057,7 @@ func (c *{{ $structCamel }}Client) RestoreMany(ctx context.Context, {{ if .Compo
 			if err != nil {
 				return nil, fmt.Errorf("restore {{ .TableName }}: capture tenants: %w", err)
 			}
-			for pk, tenant := range batchTenants {
-				tenantByPK[pk] = tenant
-			}
+			c.recordWrittenTenants(tenantByPK, {{ if .CompositePK }}pks{{ else }}ids{{ end }}[start:end], batchTenants)
 {{- end }}
 {{- if and $captureTenant (supportsReturning) }}
 
@@ -1058,6 +1070,7 @@ func (c *{{ $structCamel }}Client) RestoreMany(ctx context.Context, {{ if .Compo
 			if err != nil {
 				return nil, fmt.Errorf("restore {{ .TableName }}: %w", err)
 			}
+			batchTenants := make(map[{{ if .CompositePK }}{{ .CompositePKStructName }}{{ else }}{{ $pkCol.GoType }}{{ end }}]any, end-start)
 			for rows.Next() {
 {{- if .CompositePK }}
 				var rowPK {{ .CompositePKStructName }}
@@ -1066,7 +1079,7 @@ func (c *{{ $structCamel }}Client) RestoreMany(ctx context.Context, {{ if .Compo
 					rows.Close()
 					return nil, fmt.Errorf("scan restored {{ $singular }} tenant: %w", err)
 				}
-				tenantByPK[rowPK] = rowTenant
+				batchTenants[rowPK] = rowTenant
 {{- else }}
 				var rowID {{ $pkCol.GoType }}
 				var rowTenant {{ .Tenancy.GoType }}
@@ -1074,7 +1087,7 @@ func (c *{{ $structCamel }}Client) RestoreMany(ctx context.Context, {{ if .Compo
 					rows.Close()
 					return nil, fmt.Errorf("scan restored {{ $singular }} tenant: %w", err)
 				}
-				tenantByPK[rowID] = rowTenant
+				batchTenants[rowID] = rowTenant
 {{- end }}
 			}
 			if err := rows.Err(); err != nil {
@@ -1082,6 +1095,7 @@ func (c *{{ $structCamel }}Client) RestoreMany(ctx context.Context, {{ if .Compo
 				return nil, err
 			}
 			rows.Close()
+			c.recordWrittenTenants(tenantByPK, {{ if .CompositePK }}pks{{ else }}ids{{ end }}[start:end], batchTenants)
 {{- else if supportsReturning }}
 
 			// RETURNING the key columns names the rows this sub-batch wrote.
@@ -1094,6 +1108,7 @@ func (c *{{ $structCamel }}Client) RestoreMany(ctx context.Context, {{ if .Compo
 			if err != nil {
 				return nil, fmt.Errorf("restore {{ .TableName }}: %w", err)
 			}
+			batchKeys := make(map[{{ .KeySetType }}]struct{}, end-start)
 			for rows.Next() {
 {{- if .CompositePK }}
 				var rowPK {{ .CompositePKStructName }}
@@ -1101,14 +1116,14 @@ func (c *{{ $structCamel }}Client) RestoreMany(ctx context.Context, {{ if .Compo
 					rows.Close()
 					return nil, fmt.Errorf("scan restored {{ $singular }} key: %w", err)
 				}
-				written[{{ .KeySetKey "rowPK" }}] = struct{}{}
+				batchKeys[{{ .KeySetKey "rowPK" }}] = struct{}{}
 {{- else }}
 				var rowID {{ $pkCol.GoType }}
 				if err := rows.Scan(&rowID); err != nil {
 					rows.Close()
 					return nil, fmt.Errorf("scan restored {{ $singular }} key: %w", err)
 				}
-				written[{{ .KeySetKey "rowID" }}] = struct{}{}
+				batchKeys[{{ .KeySetKey "rowID" }}] = struct{}{}
 {{- end }}
 			}
 			if err := rows.Err(); err != nil {
@@ -1116,6 +1131,7 @@ func (c *{{ $structCamel }}Client) RestoreMany(ctx context.Context, {{ if .Compo
 				return nil, err
 			}
 			rows.Close()
+			c.recordWrittenKeys(written, {{ if .CompositePK }}pks{{ else }}ids{{ end }}[start:end], batchKeys)
 {{- else }}
 {{- if not $captureTenant }}
 
@@ -1125,9 +1141,7 @@ func (c *{{ $structCamel }}Client) RestoreMany(ctx context.Context, {{ if .Compo
 			if err != nil {
 				return nil, fmt.Errorf("restore {{ .TableName }}: read keys: %w", err)
 			}
-			for key := range batchKeys {
-				written[key] = struct{}{}
-			}
+			c.recordWrittenKeys(written, {{ if .CompositePK }}pks{{ else }}ids{{ end }}[start:end], batchKeys)
 {{- end }}
 
 			query, args := sql.BuildUpdate(c.dialect, c.table, sql.UpdateOptions{
@@ -1550,7 +1564,14 @@ func (c *{{ $structCamel }}Client) HardDelete(ctx context.Context, {{ if .Compos
 		if err != nil {
 			return nil, fmt.Errorf("hard delete {{ $singular }}: capture tenant: %w", err)
 		}
-		capturedTenant := tenantByPK[{{ if .CompositePK }}pk{{ else }}id{{ end }}]
+		// The key conditions match at most one row. Its tenant is read
+		// without a lookup by key: the database matched the row under its
+		// own equality, which a case-insensitive collation makes looser than
+		// Go's ==.
+		var capturedTenant any
+		for _, tenant := range tenantByPK {
+			capturedTenant = tenant
+		}
 {{- end }}
 {{- if and $captureTenant (supportsReturning) }}
 		// RETURNING the tenant column captures the row's own tenant so cache
@@ -1695,9 +1716,7 @@ func (c *{{ $structCamel }}Client) HardDeleteMany(ctx context.Context, {{ if .Co
 			if err != nil {
 				return nil, fmt.Errorf("hard delete {{ .TableName }}: capture tenants: %w", err)
 			}
-			for pk, tenant := range batchTenants {
-				tenantByPK[pk] = tenant
-			}
+			c.recordWrittenTenants(tenantByPK, {{ if .CompositePK }}pks{{ else }}ids{{ end }}[start:end], batchTenants)
 {{- end }}
 {{- if and $captureTenant (supportsReturning) }}
 
@@ -1709,6 +1728,7 @@ func (c *{{ $structCamel }}Client) HardDeleteMany(ctx context.Context, {{ if .Co
 			if err != nil {
 				return nil, fmt.Errorf("hard delete {{ .TableName }}: %w", err)
 			}
+			batchTenants := make(map[{{ if .CompositePK }}{{ .CompositePKStructName }}{{ else }}{{ $pkCol.GoType }}{{ end }}]any, end-start)
 			for rows.Next() {
 {{- if .CompositePK }}
 				var rowPK {{ .CompositePKStructName }}
@@ -1717,7 +1737,7 @@ func (c *{{ $structCamel }}Client) HardDeleteMany(ctx context.Context, {{ if .Co
 					rows.Close()
 					return nil, fmt.Errorf("scan deleted {{ $singular }} tenant: %w", err)
 				}
-				tenantByPK[rowPK] = rowTenant
+				batchTenants[rowPK] = rowTenant
 {{- else }}
 				var rowID {{ $pkCol.GoType }}
 				var rowTenant {{ .Tenancy.GoType }}
@@ -1725,7 +1745,7 @@ func (c *{{ $structCamel }}Client) HardDeleteMany(ctx context.Context, {{ if .Co
 					rows.Close()
 					return nil, fmt.Errorf("scan deleted {{ $singular }} tenant: %w", err)
 				}
-				tenantByPK[rowID] = rowTenant
+				batchTenants[rowID] = rowTenant
 {{- end }}
 			}
 			if err := rows.Err(); err != nil {
@@ -1733,6 +1753,7 @@ func (c *{{ $structCamel }}Client) HardDeleteMany(ctx context.Context, {{ if .Co
 				return nil, err
 			}
 			rows.Close()
+			c.recordWrittenTenants(tenantByPK, {{ if .CompositePK }}pks{{ else }}ids{{ end }}[start:end], batchTenants)
 {{- else if supportsReturning }}
 
 			// RETURNING the key columns names the rows this sub-batch wrote.
@@ -1744,6 +1765,7 @@ func (c *{{ $structCamel }}Client) HardDeleteMany(ctx context.Context, {{ if .Co
 			if err != nil {
 				return nil, fmt.Errorf("hard delete {{ .TableName }}: %w", err)
 			}
+			batchKeys := make(map[{{ .KeySetType }}]struct{}, end-start)
 			for rows.Next() {
 {{- if .CompositePK }}
 				var rowPK {{ .CompositePKStructName }}
@@ -1751,14 +1773,14 @@ func (c *{{ $structCamel }}Client) HardDeleteMany(ctx context.Context, {{ if .Co
 					rows.Close()
 					return nil, fmt.Errorf("scan deleted {{ $singular }} key: %w", err)
 				}
-				written[{{ .KeySetKey "rowPK" }}] = struct{}{}
+				batchKeys[{{ .KeySetKey "rowPK" }}] = struct{}{}
 {{- else }}
 				var rowID {{ $pkCol.GoType }}
 				if err := rows.Scan(&rowID); err != nil {
 					rows.Close()
 					return nil, fmt.Errorf("scan deleted {{ $singular }} key: %w", err)
 				}
-				written[{{ .KeySetKey "rowID" }}] = struct{}{}
+				batchKeys[{{ .KeySetKey "rowID" }}] = struct{}{}
 {{- end }}
 			}
 			if err := rows.Err(); err != nil {
@@ -1766,6 +1788,7 @@ func (c *{{ $structCamel }}Client) HardDeleteMany(ctx context.Context, {{ if .Co
 				return nil, err
 			}
 			rows.Close()
+			c.recordWrittenKeys(written, {{ if .CompositePK }}pks{{ else }}ids{{ end }}[start:end], batchKeys)
 {{- else }}
 {{- if not $captureTenant }}
 
@@ -1775,9 +1798,7 @@ func (c *{{ $structCamel }}Client) HardDeleteMany(ctx context.Context, {{ if .Co
 			if err != nil {
 				return nil, fmt.Errorf("hard delete {{ .TableName }}: read keys: %w", err)
 			}
-			for key := range batchKeys {
-				written[key] = struct{}{}
-			}
+			c.recordWrittenKeys(written, {{ if .CompositePK }}pks{{ else }}ids{{ end }}[start:end], batchKeys)
 {{- end }}
 
 			query, args := sql.BuildHardDelete(c.dialect, c.table, sql.HardDeleteOptions{
@@ -2224,6 +2245,82 @@ func (c *{{ $structCamel }}Client) matchingKeys(ctx context.Context, conn databa
 	}
 {{- end }}
 	return keys, rows.Err()
+}
+{{- end }}
+{{- if and (not $captureTenant) (or .Operations.SoftDelete .Operations.Restore .Operations.HardDelete) }}
+
+// recordWrittenKeys adds to written the keys of listed, one sub-batch, that
+// its statement wrote; rowKeys holds the keys of the rows the statement
+// matched. The database matches keys under its own equality — a
+// case-insensitive collation, blank-padded CHAR, a timestamp's stored
+// precision — so a row it matched can carry a key that differs under Go ==
+// from every listed key. When it matched more rows than listed keys were
+// found among rowKeys, every key of listed is recorded: a superset, so no
+// written row goes without its cache invalidation and event.
+func (c *{{ $structCamel }}Client) recordWrittenKeys(written map[{{ .KeySetType }}]struct{}, listed []{{ if .CompositePK }}{{ .CompositePKStructName }}{{ else }}{{ $pkCol.GoType }}{{ end }}, rowKeys map[{{ .KeySetType }}]struct{}) {
+	found := make(map[{{ .KeySetType }}]struct{}, len(rowKeys))
+	for _, key := range listed {
+		if _, ok := rowKeys[{{ .KeySetKey "key" }}]; ok {
+			found[{{ .KeySetKey "key" }}] = struct{}{}
+		}
+	}
+	if len(found) < len(rowKeys) {
+		for _, key := range listed {
+			written[{{ .KeySetKey "key" }}] = struct{}{}
+		}
+		return
+	}
+	for key := range found {
+		written[key] = struct{}{}
+	}
+}
+{{- end }}
+{{- if and $captureTenant (or .Operations.SoftDelete .Operations.Restore .Operations.HardDelete) }}
+
+// recordWrittenTenants adds to tenantByPK the keys of listed, one sub-batch,
+// that its statement wrote, each with its row's tenant; rowTenants holds the
+// tenant of every row the statement matched, by that row's key. The database
+// matches keys under its own equality — a case-insensitive collation,
+// blank-padded CHAR, a timestamp's stored precision — so a row it matched can
+// carry a key that differs under Go == from every listed key. When it matched
+// more rows than listed keys were found among rowTenants, every key of listed
+// is recorded: a superset, so no written row goes without its cache
+// invalidation and event. A key found under == keeps its own row's tenant;
+// any other takes the tenant the remaining rows share, or none when they
+// carry more than one.
+func (c *{{ $structCamel }}Client) recordWrittenTenants(tenantByPK map[{{ if .CompositePK }}{{ .CompositePKStructName }}{{ else }}{{ $pkCol.GoType }}{{ end }}]any, listed []{{ if .CompositePK }}{{ .CompositePKStructName }}{{ else }}{{ $pkCol.GoType }}{{ end }}, rowTenants map[{{ if .CompositePK }}{{ .CompositePKStructName }}{{ else }}{{ $pkCol.GoType }}{{ end }}]any) {
+	found := make(map[{{ if .CompositePK }}{{ .CompositePKStructName }}{{ else }}{{ $pkCol.GoType }}{{ end }}]struct{}, len(rowTenants))
+	for _, key := range listed {
+		if tenant, ok := rowTenants[key]; ok {
+			tenantByPK[key] = tenant
+			found[key] = struct{}{}
+		}
+	}
+	if len(found) == len(rowTenants) {
+		return
+	}
+
+	// The tenant of the rows no listed key found under ==, when they share one.
+	// Tenants compare by their %v form, the form tenant-scoped cache keys use.
+	var shared any
+	for key, tenant := range rowTenants {
+		if _, ok := found[key]; ok {
+			continue
+		}
+		if shared == nil {
+			shared = tenant
+			continue
+		}
+		if fmt.Sprint(shared) != fmt.Sprint(tenant) {
+			shared = nil
+			break
+		}
+	}
+	for _, key := range listed {
+		if _, ok := tenantByPK[key]; !ok {
+			tenantByPK[key] = shared
+		}
+	}
 }
 {{- end }}
 {{- end -}}

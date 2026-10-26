@@ -810,19 +810,21 @@ func (c *ownerBadgeClient) HardDeleteMany(ctx context.Context, pks []OwnerBadgeP
 			if err != nil {
 				return nil, fmt.Errorf("hard delete owner_badges: %w", err)
 			}
+			batchKeys := make(map[OwnerBadgePK]struct{}, end-start)
 			for rows.Next() {
 				var rowPK OwnerBadgePK
 				if err := rows.Scan(&rowPK.OwnerID, &rowPK.BadgeCode); err != nil {
 					rows.Close()
 					return nil, fmt.Errorf("scan deleted owner_badge key: %w", err)
 				}
-				written[rowPK] = struct{}{}
+				batchKeys[rowPK] = struct{}{}
 			}
 			if err := rows.Err(); err != nil {
 				rows.Close()
 				return nil, err
 			}
 			rows.Close()
+			c.recordWrittenKeys(written, pks[start:end], batchKeys)
 		}
 
 		// A listed key whose row this call did not write records no affected
@@ -882,6 +884,32 @@ func (c *ownerBadgeClient) HardDeleteWhere(ctx context.Context, filter *OwnerBad
 		return nil, nil
 	})
 	return err
+}
+
+// recordWrittenKeys adds to written the keys of listed, one sub-batch, that
+// its statement wrote; rowKeys holds the keys of the rows the statement
+// matched. The database matches keys under its own equality — a
+// case-insensitive collation, blank-padded CHAR, a timestamp's stored
+// precision — so a row it matched can carry a key that differs under Go ==
+// from every listed key. When it matched more rows than listed keys were
+// found among rowKeys, every key of listed is recorded: a superset, so no
+// written row goes without its cache invalidation and event.
+func (c *ownerBadgeClient) recordWrittenKeys(written map[OwnerBadgePK]struct{}, listed []OwnerBadgePK, rowKeys map[OwnerBadgePK]struct{}) {
+	found := make(map[OwnerBadgePK]struct{}, len(rowKeys))
+	for _, key := range listed {
+		if _, ok := rowKeys[key]; ok {
+			found[key] = struct{}{}
+		}
+	}
+	if len(found) < len(rowKeys) {
+		for _, key := range listed {
+			written[key] = struct{}{}
+		}
+		return
+	}
+	for key := range found {
+		written[key] = struct{}{}
+	}
 }
 
 // OwnerBadgeConflictTarget identifies a unique constraint for upsert conflict detection.

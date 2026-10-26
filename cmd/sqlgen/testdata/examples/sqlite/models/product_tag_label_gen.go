@@ -839,19 +839,21 @@ func (c *productTagLabelClient) HardDeleteMany(ctx context.Context, pks []Produc
 			if err != nil {
 				return nil, fmt.Errorf("hard delete product_tag_labels: %w", err)
 			}
+			batchKeys := make(map[ProductTagLabelPK]struct{}, end-start)
 			for rows.Next() {
 				var rowPK ProductTagLabelPK
 				if err := rows.Scan(&rowPK.ProductID, &rowPK.TagName, &rowPK.Label); err != nil {
 					rows.Close()
 					return nil, fmt.Errorf("scan deleted product_tag_label key: %w", err)
 				}
-				written[rowPK] = struct{}{}
+				batchKeys[rowPK] = struct{}{}
 			}
 			if err := rows.Err(); err != nil {
 				rows.Close()
 				return nil, err
 			}
 			rows.Close()
+			c.recordWrittenKeys(written, pks[start:end], batchKeys)
 		}
 
 		// A listed key whose row this call did not write records no affected
@@ -911,6 +913,32 @@ func (c *productTagLabelClient) HardDeleteWhere(ctx context.Context, filter *Pro
 		return nil, nil
 	})
 	return err
+}
+
+// recordWrittenKeys adds to written the keys of listed, one sub-batch, that
+// its statement wrote; rowKeys holds the keys of the rows the statement
+// matched. The database matches keys under its own equality — a
+// case-insensitive collation, blank-padded CHAR, a timestamp's stored
+// precision — so a row it matched can carry a key that differs under Go ==
+// from every listed key. When it matched more rows than listed keys were
+// found among rowKeys, every key of listed is recorded: a superset, so no
+// written row goes without its cache invalidation and event.
+func (c *productTagLabelClient) recordWrittenKeys(written map[ProductTagLabelPK]struct{}, listed []ProductTagLabelPK, rowKeys map[ProductTagLabelPK]struct{}) {
+	found := make(map[ProductTagLabelPK]struct{}, len(rowKeys))
+	for _, key := range listed {
+		if _, ok := rowKeys[key]; ok {
+			found[key] = struct{}{}
+		}
+	}
+	if len(found) < len(rowKeys) {
+		for _, key := range listed {
+			written[key] = struct{}{}
+		}
+		return
+	}
+	for key := range found {
+		written[key] = struct{}{}
+	}
 }
 
 // ProductTagLabelConflictTarget identifies a unique constraint for upsert conflict detection.

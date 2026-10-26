@@ -2,6 +2,7 @@ package tests
 
 import (
 	"context"
+	"errors"
 	"testing"
 
 	"github.com/google/go-cmp/cmp"
@@ -286,4 +287,81 @@ func TestAffectedKeys_UpdateWhereRecordsCompositeKeysByColumn(t *testing.T) {
 	if diff := cmp.Diff([]any{written}, affected()); diff != "" {
 		t.Errorf("AffectedPKs (-want +got):\n%s", diff)
 	}
+}
+
+// MySQL compares string keys under the column's collation, which is
+// case-insensitive by default, so a listed key can delete a row whose key
+// differs from it under Go ==. The batch must still record the key it was
+// given: the row is gone, and its cache entry and event must follow.
+func TestAffectedKeys_BatchRecordsKeysTheDatabaseMatched(t *testing.T) {
+	ctx := context.Background()
+	client, affected := affectedPKsRecorder()
+	product := seedAffectedKeysProduct(t, ctx, client, "ak-collation-sku")
+
+	stored := models.ProductTagLabelPK{ProductID: product.ID, TagName: "color", Label: "red"}
+	if _, err := client.ProductTagLabels().Create(ctx, &models.CreateProductTagLabelInput{
+		ProductID: stored.ProductID, TagName: stored.TagName, Label: stored.Label,
+	}); err != nil {
+		t.Fatalf("Create product_tag_label: %v", err)
+	}
+	t.Cleanup(func() { _ = client.ProductTagLabels().HardDelete(ctx, stored) })
+
+	listed := models.ProductTagLabelPK{ProductID: product.ID, TagName: "COLOR", Label: "Red"}
+	if err := client.ProductTagLabels().HardDeleteMany(ctx, []models.ProductTagLabelPK{listed}); err != nil {
+		t.Fatalf("HardDeleteMany: %v", err)
+	}
+	if _, err := client.ProductTagLabels().Get(ctx, stored); !errors.Is(err, models.ErrNotFound) {
+		t.Fatalf("Get after HardDeleteMany: err = %v, want ErrNotFound", err)
+	}
+	if diff := cmp.Diff([]any{listed}, affected()); diff != "" {
+		t.Errorf("AffectedPKs (-want +got):\n%s", diff)
+	}
+}
+
+// The pre-read returns its keys as a set; the recorded keys follow the order
+// the caller listed them in.
+func TestAffectedKeys_BatchRecordsWrittenKeysInListOrder(t *testing.T) {
+	ctx := context.Background()
+	const missing = int64(987654321)
+	client, affected := affectedPKsRecorder()
+
+	var ids []int64
+	for _, title := range []string{"AKOrder1", "AKOrder2"} {
+		a, err := client.Articles().Create(ctx, &models.CreateArticleInput{Title: title, Author: "ak"})
+		if err != nil {
+			t.Fatalf("Create: %v", err)
+		}
+		t.Cleanup(func() { _ = client.Articles().HardDelete(ctx, a.ID) })
+		ids = append(ids, a.ID)
+	}
+
+	if err := client.Articles().HardDeleteMany(ctx, []int64{ids[1], missing, ids[0]}); err != nil {
+		t.Fatalf("HardDeleteMany: %v", err)
+	}
+	if diff := cmp.Diff([]any{ids[1], ids[0]}, affected()); diff != "" {
+		t.Errorf("AffectedPKs (-want +got):\n%s", diff)
+	}
+}
+
+// seedAffectedKeysProduct creates a product, and the category it needs, for
+// the life of the test.
+func seedAffectedKeysProduct(t *testing.T, ctx context.Context, client *models.Client, sku string) *models.Product {
+	t.Helper()
+	cat, err := client.Categories().Create(ctx, &models.CreateCategoryInput{Name: sku + "-cat"})
+	if err != nil {
+		t.Fatalf("Create category: %v", err)
+	}
+	t.Cleanup(func() { _ = client.Categories().HardDelete(ctx, cat.ID) })
+	product, err := client.Products().Create(ctx, &models.CreateProductInput{
+		Title:      sku + "-product",
+		Price:      1.00,
+		CategoryID: cat.ID,
+		SKU:        sku,
+		Attributes: types.JSON([]byte(`{}`)),
+	})
+	if err != nil {
+		t.Fatalf("Create product: %v", err)
+	}
+	t.Cleanup(func() { _ = client.Products().HardDelete(ctx, product.ID) })
+	return product
 }

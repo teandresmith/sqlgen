@@ -89,7 +89,7 @@ func TestTenantCapture_update_mysqlPreRead(t *testing.T) {
 	wants := []string{
 		// Single-row by-PK pre-read against the same conditions as the UPDATE.
 		"tenantByPK, err := c.captureAffectedTenants(ctx, conn, updateConds)",
-		"capturedTenant := tenantByPK[id]",
+		"for _, tenant := range tenantByPK {",
 		"m.AffectedTenants = []any{capturedTenant}",
 		// UpdateMany: one batched pre-read, IN over every item PK, tenant
 		// filter appended only when tenancy applies.
@@ -272,7 +272,7 @@ func TestTenantCapture_increment_acrossDialects(t *testing.T) {
 		out := renderTenantCapture(t, base("mysql", "stdlib"), "table/increment", sql.NewMySQLDialect())
 		wants := []string{
 			"tenantByPK, err := c.captureAffectedTenants(ctx, conn, incConds)",
-			"capturedTenant := tenantByPK[id]",
+			"for _, tenant := range tenantByPK {",
 			"m.AffectedTenants = []any{capturedTenant}",
 		}
 		for _, want := range wants {

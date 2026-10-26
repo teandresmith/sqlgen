@@ -63,7 +63,14 @@ func (c *{{ $structCamel }}Client) Increment(ctx context.Context, {{ if .Composi
 		if err != nil {
 			return nil, fmt.Errorf("increment {{ $singular }}: capture tenant: %w", err)
 		}
-		capturedTenant := tenantByPK[{{ if .CompositePK }}pk{{ else }}id{{ end }}]
+		// The key conditions match at most one row. Its tenant is read
+		// without a lookup by key: the database matched the row under its
+		// own equality, which a case-insensitive collation makes looser than
+		// Go's ==.
+		var capturedTenant any
+		for _, tenant := range tenantByPK {
+			capturedTenant = tenant
+		}
 {{- end }}
 {{- if and $captureTenant (supportsReturning) }}
 		// RETURNING the tenant column captures the row's own tenant so cache

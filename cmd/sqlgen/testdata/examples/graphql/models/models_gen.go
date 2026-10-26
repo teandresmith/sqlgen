@@ -861,19 +861,21 @@ func (c *assetDocumentLinkClient) HardDeleteMany(ctx context.Context, pks []Asse
 			if err != nil {
 				return nil, fmt.Errorf("hard delete asset_document_links: %w", err)
 			}
+			batchKeys := make(map[AssetDocumentLinkPK]struct{}, end-start)
 			for rows.Next() {
 				var rowPK AssetDocumentLinkPK
 				if err := rows.Scan(&rowPK.AssetID, &rowPK.DocumentID); err != nil {
 					rows.Close()
 					return nil, fmt.Errorf("scan deleted asset_document_link key: %w", err)
 				}
-				written[rowPK] = struct{}{}
+				batchKeys[rowPK] = struct{}{}
 			}
 			if err := rows.Err(); err != nil {
 				rows.Close()
 				return nil, err
 			}
 			rows.Close()
+			c.recordWrittenKeys(written, pks[start:end], batchKeys)
 		}
 
 		// A listed key whose row this call did not write records no affected
@@ -933,6 +935,32 @@ func (c *assetDocumentLinkClient) HardDeleteWhere(ctx context.Context, filter *A
 		return nil, nil
 	})
 	return err
+}
+
+// recordWrittenKeys adds to written the keys of listed, one sub-batch, that
+// its statement wrote; rowKeys holds the keys of the rows the statement
+// matched. The database matches keys under its own equality — a
+// case-insensitive collation, blank-padded CHAR, a timestamp's stored
+// precision — so a row it matched can carry a key that differs under Go ==
+// from every listed key. When it matched more rows than listed keys were
+// found among rowKeys, every key of listed is recorded: a superset, so no
+// written row goes without its cache invalidation and event.
+func (c *assetDocumentLinkClient) recordWrittenKeys(written map[AssetDocumentLinkPK]struct{}, listed []AssetDocumentLinkPK, rowKeys map[AssetDocumentLinkPK]struct{}) {
+	found := make(map[AssetDocumentLinkPK]struct{}, len(rowKeys))
+	for _, key := range listed {
+		if _, ok := rowKeys[key]; ok {
+			found[key] = struct{}{}
+		}
+	}
+	if len(found) < len(rowKeys) {
+		for _, key := range listed {
+			written[key] = struct{}{}
+		}
+		return
+	}
+	for key := range found {
+		written[key] = struct{}{}
+	}
 }
 
 // AssetDocumentLinkConflictTarget identifies a unique constraint for upsert conflict detection.
@@ -3339,19 +3367,21 @@ func (c *assetClient) HardDeleteMany(ctx context.Context, ids []uuid.UUID, opts 
 			if err != nil {
 				return nil, fmt.Errorf("hard delete assets: %w", err)
 			}
+			batchKeys := make(map[uuid.UUID]struct{}, end-start)
 			for rows.Next() {
 				var rowID uuid.UUID
 				if err := rows.Scan(&rowID); err != nil {
 					rows.Close()
 					return nil, fmt.Errorf("scan deleted asset key: %w", err)
 				}
-				written[rowID] = struct{}{}
+				batchKeys[rowID] = struct{}{}
 			}
 			if err := rows.Err(); err != nil {
 				rows.Close()
 				return nil, err
 			}
 			rows.Close()
+			c.recordWrittenKeys(written, ids[start:end], batchKeys)
 		}
 
 		// A listed key whose row this call did not write records no affected
@@ -3410,6 +3440,32 @@ func (c *assetClient) HardDeleteWhere(ctx context.Context, filter *AssetFilter, 
 		return nil, nil
 	})
 	return err
+}
+
+// recordWrittenKeys adds to written the keys of listed, one sub-batch, that
+// its statement wrote; rowKeys holds the keys of the rows the statement
+// matched. The database matches keys under its own equality — a
+// case-insensitive collation, blank-padded CHAR, a timestamp's stored
+// precision — so a row it matched can carry a key that differs under Go ==
+// from every listed key. When it matched more rows than listed keys were
+// found among rowKeys, every key of listed is recorded: a superset, so no
+// written row goes without its cache invalidation and event.
+func (c *assetClient) recordWrittenKeys(written map[uuid.UUID]struct{}, listed []uuid.UUID, rowKeys map[uuid.UUID]struct{}) {
+	found := make(map[uuid.UUID]struct{}, len(rowKeys))
+	for _, key := range listed {
+		if _, ok := rowKeys[key]; ok {
+			found[key] = struct{}{}
+		}
+	}
+	if len(found) < len(rowKeys) {
+		for _, key := range listed {
+			written[key] = struct{}{}
+		}
+		return
+	}
+	for key := range found {
+		written[key] = struct{}{}
+	}
 }
 
 // AssetConflictTarget identifies a unique constraint for upsert conflict detection.
@@ -7012,19 +7068,21 @@ func (c *categoryClient) HardDeleteMany(ctx context.Context, ids []int64, opts .
 			if err != nil {
 				return nil, fmt.Errorf("hard delete categories: %w", err)
 			}
+			batchKeys := make(map[int64]struct{}, end-start)
 			for rows.Next() {
 				var rowID int64
 				if err := rows.Scan(&rowID); err != nil {
 					rows.Close()
 					return nil, fmt.Errorf("scan deleted category key: %w", err)
 				}
-				written[rowID] = struct{}{}
+				batchKeys[rowID] = struct{}{}
 			}
 			if err := rows.Err(); err != nil {
 				rows.Close()
 				return nil, err
 			}
 			rows.Close()
+			c.recordWrittenKeys(written, ids[start:end], batchKeys)
 		}
 
 		// A listed key whose row this call did not write records no affected
@@ -7083,6 +7141,32 @@ func (c *categoryClient) HardDeleteWhere(ctx context.Context, filter *CategoryFi
 		return nil, nil
 	})
 	return err
+}
+
+// recordWrittenKeys adds to written the keys of listed, one sub-batch, that
+// its statement wrote; rowKeys holds the keys of the rows the statement
+// matched. The database matches keys under its own equality — a
+// case-insensitive collation, blank-padded CHAR, a timestamp's stored
+// precision — so a row it matched can carry a key that differs under Go ==
+// from every listed key. When it matched more rows than listed keys were
+// found among rowKeys, every key of listed is recorded: a superset, so no
+// written row goes without its cache invalidation and event.
+func (c *categoryClient) recordWrittenKeys(written map[int64]struct{}, listed []int64, rowKeys map[int64]struct{}) {
+	found := make(map[int64]struct{}, len(rowKeys))
+	for _, key := range listed {
+		if _, ok := rowKeys[key]; ok {
+			found[key] = struct{}{}
+		}
+	}
+	if len(found) < len(rowKeys) {
+		for _, key := range listed {
+			written[key] = struct{}{}
+		}
+		return
+	}
+	for key := range found {
+		written[key] = struct{}{}
+	}
 }
 
 // CategoryConflictTarget identifies a unique constraint for upsert conflict detection.
@@ -10067,19 +10151,21 @@ func (c *documentClient) HardDeleteMany(ctx context.Context, ids []uuid.UUID, op
 			if err != nil {
 				return nil, fmt.Errorf("hard delete documents: %w", err)
 			}
+			batchKeys := make(map[uuid.UUID]struct{}, end-start)
 			for rows.Next() {
 				var rowID uuid.UUID
 				if err := rows.Scan(&rowID); err != nil {
 					rows.Close()
 					return nil, fmt.Errorf("scan deleted document key: %w", err)
 				}
-				written[rowID] = struct{}{}
+				batchKeys[rowID] = struct{}{}
 			}
 			if err := rows.Err(); err != nil {
 				rows.Close()
 				return nil, err
 			}
 			rows.Close()
+			c.recordWrittenKeys(written, ids[start:end], batchKeys)
 		}
 
 		// A listed key whose row this call did not write records no affected
@@ -10138,6 +10224,32 @@ func (c *documentClient) HardDeleteWhere(ctx context.Context, filter *DocumentFi
 		return nil, nil
 	})
 	return err
+}
+
+// recordWrittenKeys adds to written the keys of listed, one sub-batch, that
+// its statement wrote; rowKeys holds the keys of the rows the statement
+// matched. The database matches keys under its own equality — a
+// case-insensitive collation, blank-padded CHAR, a timestamp's stored
+// precision — so a row it matched can carry a key that differs under Go ==
+// from every listed key. When it matched more rows than listed keys were
+// found among rowKeys, every key of listed is recorded: a superset, so no
+// written row goes without its cache invalidation and event.
+func (c *documentClient) recordWrittenKeys(written map[uuid.UUID]struct{}, listed []uuid.UUID, rowKeys map[uuid.UUID]struct{}) {
+	found := make(map[uuid.UUID]struct{}, len(rowKeys))
+	for _, key := range listed {
+		if _, ok := rowKeys[key]; ok {
+			found[key] = struct{}{}
+		}
+	}
+	if len(found) < len(rowKeys) {
+		for _, key := range listed {
+			written[key] = struct{}{}
+		}
+		return
+	}
+	for key := range found {
+		written[key] = struct{}{}
+	}
 }
 
 // DocumentConflictTarget identifies a unique constraint for upsert conflict detection.
@@ -13116,19 +13228,21 @@ func (c *eventClient) HardDeleteMany(ctx context.Context, ids []uuid.UUID, opts 
 			if err != nil {
 				return nil, fmt.Errorf("hard delete events: %w", err)
 			}
+			batchKeys := make(map[uuid.UUID]struct{}, end-start)
 			for rows.Next() {
 				var rowID uuid.UUID
 				if err := rows.Scan(&rowID); err != nil {
 					rows.Close()
 					return nil, fmt.Errorf("scan deleted event key: %w", err)
 				}
-				written[rowID] = struct{}{}
+				batchKeys[rowID] = struct{}{}
 			}
 			if err := rows.Err(); err != nil {
 				rows.Close()
 				return nil, err
 			}
 			rows.Close()
+			c.recordWrittenKeys(written, ids[start:end], batchKeys)
 		}
 
 		// A listed key whose row this call did not write records no affected
@@ -13187,6 +13301,32 @@ func (c *eventClient) HardDeleteWhere(ctx context.Context, filter *EventFilter, 
 		return nil, nil
 	})
 	return err
+}
+
+// recordWrittenKeys adds to written the keys of listed, one sub-batch, that
+// its statement wrote; rowKeys holds the keys of the rows the statement
+// matched. The database matches keys under its own equality — a
+// case-insensitive collation, blank-padded CHAR, a timestamp's stored
+// precision — so a row it matched can carry a key that differs under Go ==
+// from every listed key. When it matched more rows than listed keys were
+// found among rowKeys, every key of listed is recorded: a superset, so no
+// written row goes without its cache invalidation and event.
+func (c *eventClient) recordWrittenKeys(written map[uuid.UUID]struct{}, listed []uuid.UUID, rowKeys map[uuid.UUID]struct{}) {
+	found := make(map[uuid.UUID]struct{}, len(rowKeys))
+	for _, key := range listed {
+		if _, ok := rowKeys[key]; ok {
+			found[key] = struct{}{}
+		}
+	}
+	if len(found) < len(rowKeys) {
+		for _, key := range listed {
+			written[key] = struct{}{}
+		}
+		return
+	}
+	for key := range found {
+		written[key] = struct{}{}
+	}
 }
 
 // EventConflictTarget identifies a unique constraint for upsert conflict detection.
@@ -15990,19 +16130,21 @@ func (c *filterProbeClient) HardDeleteMany(ctx context.Context, ids []uuid.UUID,
 			if err != nil {
 				return nil, fmt.Errorf("hard delete filter_probes: %w", err)
 			}
+			batchKeys := make(map[uuid.UUID]struct{}, end-start)
 			for rows.Next() {
 				var rowID uuid.UUID
 				if err := rows.Scan(&rowID); err != nil {
 					rows.Close()
 					return nil, fmt.Errorf("scan deleted filter_probe key: %w", err)
 				}
-				written[rowID] = struct{}{}
+				batchKeys[rowID] = struct{}{}
 			}
 			if err := rows.Err(); err != nil {
 				rows.Close()
 				return nil, err
 			}
 			rows.Close()
+			c.recordWrittenKeys(written, ids[start:end], batchKeys)
 		}
 
 		// A listed key whose row this call did not write records no affected
@@ -16061,6 +16203,32 @@ func (c *filterProbeClient) HardDeleteWhere(ctx context.Context, filter *FilterP
 		return nil, nil
 	})
 	return err
+}
+
+// recordWrittenKeys adds to written the keys of listed, one sub-batch, that
+// its statement wrote; rowKeys holds the keys of the rows the statement
+// matched. The database matches keys under its own equality — a
+// case-insensitive collation, blank-padded CHAR, a timestamp's stored
+// precision — so a row it matched can carry a key that differs under Go ==
+// from every listed key. When it matched more rows than listed keys were
+// found among rowKeys, every key of listed is recorded: a superset, so no
+// written row goes without its cache invalidation and event.
+func (c *filterProbeClient) recordWrittenKeys(written map[uuid.UUID]struct{}, listed []uuid.UUID, rowKeys map[uuid.UUID]struct{}) {
+	found := make(map[uuid.UUID]struct{}, len(rowKeys))
+	for _, key := range listed {
+		if _, ok := rowKeys[key]; ok {
+			found[key] = struct{}{}
+		}
+	}
+	if len(found) < len(rowKeys) {
+		for _, key := range listed {
+			written[key] = struct{}{}
+		}
+		return
+	}
+	for key := range found {
+		written[key] = struct{}{}
+	}
 }
 
 // FilterProbeConflictTarget identifies a unique constraint for upsert conflict detection.
@@ -18202,19 +18370,21 @@ func (c *keyedCodeEntryClient) HardDeleteMany(ctx context.Context, ids []uuid.UU
 			if err != nil {
 				return nil, fmt.Errorf("hard delete keyed_code_entries: %w", err)
 			}
+			batchKeys := make(map[uuid.UUID]struct{}, end-start)
 			for rows.Next() {
 				var rowID uuid.UUID
 				if err := rows.Scan(&rowID); err != nil {
 					rows.Close()
 					return nil, fmt.Errorf("scan deleted keyed_code_entry key: %w", err)
 				}
-				written[rowID] = struct{}{}
+				batchKeys[rowID] = struct{}{}
 			}
 			if err := rows.Err(); err != nil {
 				rows.Close()
 				return nil, err
 			}
 			rows.Close()
+			c.recordWrittenKeys(written, ids[start:end], batchKeys)
 		}
 
 		// A listed key whose row this call did not write records no affected
@@ -18273,6 +18443,32 @@ func (c *keyedCodeEntryClient) HardDeleteWhere(ctx context.Context, filter *Keye
 		return nil, nil
 	})
 	return err
+}
+
+// recordWrittenKeys adds to written the keys of listed, one sub-batch, that
+// its statement wrote; rowKeys holds the keys of the rows the statement
+// matched. The database matches keys under its own equality — a
+// case-insensitive collation, blank-padded CHAR, a timestamp's stored
+// precision — so a row it matched can carry a key that differs under Go ==
+// from every listed key. When it matched more rows than listed keys were
+// found among rowKeys, every key of listed is recorded: a superset, so no
+// written row goes without its cache invalidation and event.
+func (c *keyedCodeEntryClient) recordWrittenKeys(written map[uuid.UUID]struct{}, listed []uuid.UUID, rowKeys map[uuid.UUID]struct{}) {
+	found := make(map[uuid.UUID]struct{}, len(rowKeys))
+	for _, key := range listed {
+		if _, ok := rowKeys[key]; ok {
+			found[key] = struct{}{}
+		}
+	}
+	if len(found) < len(rowKeys) {
+		for _, key := range listed {
+			written[key] = struct{}{}
+		}
+		return
+	}
+	for key := range found {
+		written[key] = struct{}{}
+	}
 }
 
 // KeyedCodeEntryConflictTarget identifies a unique constraint for upsert conflict detection.
@@ -20393,19 +20589,21 @@ func (c *keyedCodeClient) HardDeleteMany(ctx context.Context, ids []uuid.UUID, o
 			if err != nil {
 				return nil, fmt.Errorf("hard delete keyed_codes: %w", err)
 			}
+			batchKeys := make(map[uuid.UUID]struct{}, end-start)
 			for rows.Next() {
 				var rowID uuid.UUID
 				if err := rows.Scan(&rowID); err != nil {
 					rows.Close()
 					return nil, fmt.Errorf("scan deleted keyed_code key: %w", err)
 				}
-				written[rowID] = struct{}{}
+				batchKeys[rowID] = struct{}{}
 			}
 			if err := rows.Err(); err != nil {
 				rows.Close()
 				return nil, err
 			}
 			rows.Close()
+			c.recordWrittenKeys(written, ids[start:end], batchKeys)
 		}
 
 		// A listed key whose row this call did not write records no affected
@@ -20464,6 +20662,32 @@ func (c *keyedCodeClient) HardDeleteWhere(ctx context.Context, filter *KeyedCode
 		return nil, nil
 	})
 	return err
+}
+
+// recordWrittenKeys adds to written the keys of listed, one sub-batch, that
+// its statement wrote; rowKeys holds the keys of the rows the statement
+// matched. The database matches keys under its own equality — a
+// case-insensitive collation, blank-padded CHAR, a timestamp's stored
+// precision — so a row it matched can carry a key that differs under Go ==
+// from every listed key. When it matched more rows than listed keys were
+// found among rowKeys, every key of listed is recorded: a superset, so no
+// written row goes without its cache invalidation and event.
+func (c *keyedCodeClient) recordWrittenKeys(written map[uuid.UUID]struct{}, listed []uuid.UUID, rowKeys map[uuid.UUID]struct{}) {
+	found := make(map[uuid.UUID]struct{}, len(rowKeys))
+	for _, key := range listed {
+		if _, ok := rowKeys[key]; ok {
+			found[key] = struct{}{}
+		}
+	}
+	if len(found) < len(rowKeys) {
+		for _, key := range listed {
+			written[key] = struct{}{}
+		}
+		return
+	}
+	for key := range found {
+		written[key] = struct{}{}
+	}
 }
 
 // KeyedCodeConflictTarget identifies a unique constraint for upsert conflict detection.
@@ -22842,19 +23066,21 @@ func (c *maskedLabelClient) HardDeleteMany(ctx context.Context, ids []uuid.UUID,
 			if err != nil {
 				return nil, fmt.Errorf("hard delete masked_labels: %w", err)
 			}
+			batchKeys := make(map[uuid.UUID]struct{}, end-start)
 			for rows.Next() {
 				var rowID uuid.UUID
 				if err := rows.Scan(&rowID); err != nil {
 					rows.Close()
 					return nil, fmt.Errorf("scan deleted masked_label key: %w", err)
 				}
-				written[rowID] = struct{}{}
+				batchKeys[rowID] = struct{}{}
 			}
 			if err := rows.Err(); err != nil {
 				rows.Close()
 				return nil, err
 			}
 			rows.Close()
+			c.recordWrittenKeys(written, ids[start:end], batchKeys)
 		}
 
 		// A listed key whose row this call did not write records no affected
@@ -22913,6 +23139,32 @@ func (c *maskedLabelClient) HardDeleteWhere(ctx context.Context, filter *MaskedL
 		return nil, nil
 	})
 	return err
+}
+
+// recordWrittenKeys adds to written the keys of listed, one sub-batch, that
+// its statement wrote; rowKeys holds the keys of the rows the statement
+// matched. The database matches keys under its own equality — a
+// case-insensitive collation, blank-padded CHAR, a timestamp's stored
+// precision — so a row it matched can carry a key that differs under Go ==
+// from every listed key. When it matched more rows than listed keys were
+// found among rowKeys, every key of listed is recorded: a superset, so no
+// written row goes without its cache invalidation and event.
+func (c *maskedLabelClient) recordWrittenKeys(written map[uuid.UUID]struct{}, listed []uuid.UUID, rowKeys map[uuid.UUID]struct{}) {
+	found := make(map[uuid.UUID]struct{}, len(rowKeys))
+	for _, key := range listed {
+		if _, ok := rowKeys[key]; ok {
+			found[key] = struct{}{}
+		}
+	}
+	if len(found) < len(rowKeys) {
+		for _, key := range listed {
+			written[key] = struct{}{}
+		}
+		return
+	}
+	for key := range found {
+		written[key] = struct{}{}
+	}
 }
 
 // MaskedLabelConflictTarget identifies a unique constraint for upsert conflict detection.
@@ -25035,19 +25287,21 @@ func (c *numericWidthClient) HardDeleteMany(ctx context.Context, ids []uuid.UUID
 			if err != nil {
 				return nil, fmt.Errorf("hard delete numeric_widths: %w", err)
 			}
+			batchKeys := make(map[uuid.UUID]struct{}, end-start)
 			for rows.Next() {
 				var rowID uuid.UUID
 				if err := rows.Scan(&rowID); err != nil {
 					rows.Close()
 					return nil, fmt.Errorf("scan deleted numeric_width key: %w", err)
 				}
-				written[rowID] = struct{}{}
+				batchKeys[rowID] = struct{}{}
 			}
 			if err := rows.Err(); err != nil {
 				rows.Close()
 				return nil, err
 			}
 			rows.Close()
+			c.recordWrittenKeys(written, ids[start:end], batchKeys)
 		}
 
 		// A listed key whose row this call did not write records no affected
@@ -25106,6 +25360,32 @@ func (c *numericWidthClient) HardDeleteWhere(ctx context.Context, filter *Numeri
 		return nil, nil
 	})
 	return err
+}
+
+// recordWrittenKeys adds to written the keys of listed, one sub-batch, that
+// its statement wrote; rowKeys holds the keys of the rows the statement
+// matched. The database matches keys under its own equality — a
+// case-insensitive collation, blank-padded CHAR, a timestamp's stored
+// precision — so a row it matched can carry a key that differs under Go ==
+// from every listed key. When it matched more rows than listed keys were
+// found among rowKeys, every key of listed is recorded: a superset, so no
+// written row goes without its cache invalidation and event.
+func (c *numericWidthClient) recordWrittenKeys(written map[uuid.UUID]struct{}, listed []uuid.UUID, rowKeys map[uuid.UUID]struct{}) {
+	found := make(map[uuid.UUID]struct{}, len(rowKeys))
+	for _, key := range listed {
+		if _, ok := rowKeys[key]; ok {
+			found[key] = struct{}{}
+		}
+	}
+	if len(found) < len(rowKeys) {
+		for _, key := range listed {
+			written[key] = struct{}{}
+		}
+		return
+	}
+	for key := range found {
+		written[key] = struct{}{}
+	}
 }
 
 // NumericWidthConflictTarget identifies a unique constraint for upsert conflict detection.
@@ -27530,19 +27810,21 @@ func (c *orderItemClient) HardDeleteMany(ctx context.Context, ids []uuid.UUID, o
 			if err != nil {
 				return nil, fmt.Errorf("hard delete order_items: %w", err)
 			}
+			batchKeys := make(map[uuid.UUID]struct{}, end-start)
 			for rows.Next() {
 				var rowID uuid.UUID
 				if err := rows.Scan(&rowID); err != nil {
 					rows.Close()
 					return nil, fmt.Errorf("scan deleted order_item key: %w", err)
 				}
-				written[rowID] = struct{}{}
+				batchKeys[rowID] = struct{}{}
 			}
 			if err := rows.Err(); err != nil {
 				rows.Close()
 				return nil, err
 			}
 			rows.Close()
+			c.recordWrittenKeys(written, ids[start:end], batchKeys)
 		}
 
 		// A listed key whose row this call did not write records no affected
@@ -27601,6 +27883,32 @@ func (c *orderItemClient) HardDeleteWhere(ctx context.Context, filter *OrderItem
 		return nil, nil
 	})
 	return err
+}
+
+// recordWrittenKeys adds to written the keys of listed, one sub-batch, that
+// its statement wrote; rowKeys holds the keys of the rows the statement
+// matched. The database matches keys under its own equality — a
+// case-insensitive collation, blank-padded CHAR, a timestamp's stored
+// precision — so a row it matched can carry a key that differs under Go ==
+// from every listed key. When it matched more rows than listed keys were
+// found among rowKeys, every key of listed is recorded: a superset, so no
+// written row goes without its cache invalidation and event.
+func (c *orderItemClient) recordWrittenKeys(written map[uuid.UUID]struct{}, listed []uuid.UUID, rowKeys map[uuid.UUID]struct{}) {
+	found := make(map[uuid.UUID]struct{}, len(rowKeys))
+	for _, key := range listed {
+		if _, ok := rowKeys[key]; ok {
+			found[key] = struct{}{}
+		}
+	}
+	if len(found) < len(rowKeys) {
+		for _, key := range listed {
+			written[key] = struct{}{}
+		}
+		return
+	}
+	for key := range found {
+		written[key] = struct{}{}
+	}
 }
 
 // OrderItemConflictTarget identifies a unique constraint for upsert conflict detection.
@@ -30148,19 +30456,21 @@ func (c *orderClient) SoftDeleteMany(ctx context.Context, ids []uuid.UUID, opts 
 			if err != nil {
 				return nil, fmt.Errorf("soft delete orders: %w", err)
 			}
+			batchKeys := make(map[uuid.UUID]struct{}, end-start)
 			for rows.Next() {
 				var rowID uuid.UUID
 				if err := rows.Scan(&rowID); err != nil {
 					rows.Close()
 					return nil, fmt.Errorf("scan soft deleted order key: %w", err)
 				}
-				written[rowID] = struct{}{}
+				batchKeys[rowID] = struct{}{}
 			}
 			if err := rows.Err(); err != nil {
 				rows.Close()
 				return nil, err
 			}
 			rows.Close()
+			c.recordWrittenKeys(written, ids[start:end], batchKeys)
 		}
 
 		// A listed key whose row this call did not write records no affected
@@ -30379,19 +30689,21 @@ func (c *orderClient) RestoreMany(ctx context.Context, ids []uuid.UUID, opts ...
 			if err != nil {
 				return nil, fmt.Errorf("restore orders: %w", err)
 			}
+			batchKeys := make(map[uuid.UUID]struct{}, end-start)
 			for rows.Next() {
 				var rowID uuid.UUID
 				if err := rows.Scan(&rowID); err != nil {
 					rows.Close()
 					return nil, fmt.Errorf("scan restored order key: %w", err)
 				}
-				written[rowID] = struct{}{}
+				batchKeys[rowID] = struct{}{}
 			}
 			if err := rows.Err(); err != nil {
 				rows.Close()
 				return nil, err
 			}
 			rows.Close()
+			c.recordWrittenKeys(written, ids[start:end], batchKeys)
 		}
 
 		// A listed key whose row this call did not write records no affected
@@ -30561,19 +30873,21 @@ func (c *orderClient) HardDeleteMany(ctx context.Context, ids []uuid.UUID, opts 
 			if err != nil {
 				return nil, fmt.Errorf("hard delete orders: %w", err)
 			}
+			batchKeys := make(map[uuid.UUID]struct{}, end-start)
 			for rows.Next() {
 				var rowID uuid.UUID
 				if err := rows.Scan(&rowID); err != nil {
 					rows.Close()
 					return nil, fmt.Errorf("scan deleted order key: %w", err)
 				}
-				written[rowID] = struct{}{}
+				batchKeys[rowID] = struct{}{}
 			}
 			if err := rows.Err(); err != nil {
 				rows.Close()
 				return nil, err
 			}
 			rows.Close()
+			c.recordWrittenKeys(written, ids[start:end], batchKeys)
 		}
 
 		// A listed key whose row this call did not write records no affected
@@ -30632,6 +30946,32 @@ func (c *orderClient) HardDeleteWhere(ctx context.Context, filter *OrderFilter, 
 		return nil, nil
 	})
 	return err
+}
+
+// recordWrittenKeys adds to written the keys of listed, one sub-batch, that
+// its statement wrote; rowKeys holds the keys of the rows the statement
+// matched. The database matches keys under its own equality — a
+// case-insensitive collation, blank-padded CHAR, a timestamp's stored
+// precision — so a row it matched can carry a key that differs under Go ==
+// from every listed key. When it matched more rows than listed keys were
+// found among rowKeys, every key of listed is recorded: a superset, so no
+// written row goes without its cache invalidation and event.
+func (c *orderClient) recordWrittenKeys(written map[uuid.UUID]struct{}, listed []uuid.UUID, rowKeys map[uuid.UUID]struct{}) {
+	found := make(map[uuid.UUID]struct{}, len(rowKeys))
+	for _, key := range listed {
+		if _, ok := rowKeys[key]; ok {
+			found[key] = struct{}{}
+		}
+	}
+	if len(found) < len(rowKeys) {
+		for _, key := range listed {
+			written[key] = struct{}{}
+		}
+		return
+	}
+	for key := range found {
+		written[key] = struct{}{}
+	}
 }
 
 // OrderConflictTarget identifies a unique constraint for upsert conflict detection.
@@ -33588,19 +33928,21 @@ func (c *productClient) SoftDeleteMany(ctx context.Context, ids []uuid.UUID, opt
 			if err != nil {
 				return nil, fmt.Errorf("soft delete products: %w", err)
 			}
+			batchKeys := make(map[uuid.UUID]struct{}, end-start)
 			for rows.Next() {
 				var rowID uuid.UUID
 				if err := rows.Scan(&rowID); err != nil {
 					rows.Close()
 					return nil, fmt.Errorf("scan soft deleted product key: %w", err)
 				}
-				written[rowID] = struct{}{}
+				batchKeys[rowID] = struct{}{}
 			}
 			if err := rows.Err(); err != nil {
 				rows.Close()
 				return nil, err
 			}
 			rows.Close()
+			c.recordWrittenKeys(written, ids[start:end], batchKeys)
 		}
 
 		// A listed key whose row this call did not write records no affected
@@ -33819,19 +34161,21 @@ func (c *productClient) RestoreMany(ctx context.Context, ids []uuid.UUID, opts .
 			if err != nil {
 				return nil, fmt.Errorf("restore products: %w", err)
 			}
+			batchKeys := make(map[uuid.UUID]struct{}, end-start)
 			for rows.Next() {
 				var rowID uuid.UUID
 				if err := rows.Scan(&rowID); err != nil {
 					rows.Close()
 					return nil, fmt.Errorf("scan restored product key: %w", err)
 				}
-				written[rowID] = struct{}{}
+				batchKeys[rowID] = struct{}{}
 			}
 			if err := rows.Err(); err != nil {
 				rows.Close()
 				return nil, err
 			}
 			rows.Close()
+			c.recordWrittenKeys(written, ids[start:end], batchKeys)
 		}
 
 		// A listed key whose row this call did not write records no affected
@@ -34001,19 +34345,21 @@ func (c *productClient) HardDeleteMany(ctx context.Context, ids []uuid.UUID, opt
 			if err != nil {
 				return nil, fmt.Errorf("hard delete products: %w", err)
 			}
+			batchKeys := make(map[uuid.UUID]struct{}, end-start)
 			for rows.Next() {
 				var rowID uuid.UUID
 				if err := rows.Scan(&rowID); err != nil {
 					rows.Close()
 					return nil, fmt.Errorf("scan deleted product key: %w", err)
 				}
-				written[rowID] = struct{}{}
+				batchKeys[rowID] = struct{}{}
 			}
 			if err := rows.Err(); err != nil {
 				rows.Close()
 				return nil, err
 			}
 			rows.Close()
+			c.recordWrittenKeys(written, ids[start:end], batchKeys)
 		}
 
 		// A listed key whose row this call did not write records no affected
@@ -34072,6 +34418,32 @@ func (c *productClient) HardDeleteWhere(ctx context.Context, filter *ProductFilt
 		return nil, nil
 	})
 	return err
+}
+
+// recordWrittenKeys adds to written the keys of listed, one sub-batch, that
+// its statement wrote; rowKeys holds the keys of the rows the statement
+// matched. The database matches keys under its own equality — a
+// case-insensitive collation, blank-padded CHAR, a timestamp's stored
+// precision — so a row it matched can carry a key that differs under Go ==
+// from every listed key. When it matched more rows than listed keys were
+// found among rowKeys, every key of listed is recorded: a superset, so no
+// written row goes without its cache invalidation and event.
+func (c *productClient) recordWrittenKeys(written map[uuid.UUID]struct{}, listed []uuid.UUID, rowKeys map[uuid.UUID]struct{}) {
+	found := make(map[uuid.UUID]struct{}, len(rowKeys))
+	for _, key := range listed {
+		if _, ok := rowKeys[key]; ok {
+			found[key] = struct{}{}
+		}
+	}
+	if len(found) < len(rowKeys) {
+		for _, key := range listed {
+			written[key] = struct{}{}
+		}
+		return
+	}
+	for key := range found {
+		written[key] = struct{}{}
+	}
 }
 
 // ProductConflictTarget identifies a unique constraint for upsert conflict detection.
@@ -36814,19 +37186,21 @@ func (c *profileClient) HardDeleteMany(ctx context.Context, ids []uuid.UUID, opt
 			if err != nil {
 				return nil, fmt.Errorf("hard delete profiles: %w", err)
 			}
+			batchKeys := make(map[uuid.UUID]struct{}, end-start)
 			for rows.Next() {
 				var rowID uuid.UUID
 				if err := rows.Scan(&rowID); err != nil {
 					rows.Close()
 					return nil, fmt.Errorf("scan deleted profile key: %w", err)
 				}
-				written[rowID] = struct{}{}
+				batchKeys[rowID] = struct{}{}
 			}
 			if err := rows.Err(); err != nil {
 				rows.Close()
 				return nil, err
 			}
 			rows.Close()
+			c.recordWrittenKeys(written, ids[start:end], batchKeys)
 		}
 
 		// A listed key whose row this call did not write records no affected
@@ -36885,6 +37259,32 @@ func (c *profileClient) HardDeleteWhere(ctx context.Context, filter *ProfileFilt
 		return nil, nil
 	})
 	return err
+}
+
+// recordWrittenKeys adds to written the keys of listed, one sub-batch, that
+// its statement wrote; rowKeys holds the keys of the rows the statement
+// matched. The database matches keys under its own equality — a
+// case-insensitive collation, blank-padded CHAR, a timestamp's stored
+// precision — so a row it matched can carry a key that differs under Go ==
+// from every listed key. When it matched more rows than listed keys were
+// found among rowKeys, every key of listed is recorded: a superset, so no
+// written row goes without its cache invalidation and event.
+func (c *profileClient) recordWrittenKeys(written map[uuid.UUID]struct{}, listed []uuid.UUID, rowKeys map[uuid.UUID]struct{}) {
+	found := make(map[uuid.UUID]struct{}, len(rowKeys))
+	for _, key := range listed {
+		if _, ok := rowKeys[key]; ok {
+			found[key] = struct{}{}
+		}
+	}
+	if len(found) < len(rowKeys) {
+		for _, key := range listed {
+			written[key] = struct{}{}
+		}
+		return
+	}
+	for key := range found {
+		written[key] = struct{}{}
+	}
 }
 
 // ProfileConflictTarget identifies a unique constraint for upsert conflict detection.
@@ -39599,19 +39999,21 @@ func (c *scalarProbeClient) HardDeleteMany(ctx context.Context, ids []uuid.UUID,
 			if err != nil {
 				return nil, fmt.Errorf("hard delete scalar_probes: %w", err)
 			}
+			batchKeys := make(map[uuid.UUID]struct{}, end-start)
 			for rows.Next() {
 				var rowID uuid.UUID
 				if err := rows.Scan(&rowID); err != nil {
 					rows.Close()
 					return nil, fmt.Errorf("scan deleted scalar_probe key: %w", err)
 				}
-				written[rowID] = struct{}{}
+				batchKeys[rowID] = struct{}{}
 			}
 			if err := rows.Err(); err != nil {
 				rows.Close()
 				return nil, err
 			}
 			rows.Close()
+			c.recordWrittenKeys(written, ids[start:end], batchKeys)
 		}
 
 		// A listed key whose row this call did not write records no affected
@@ -39670,6 +40072,32 @@ func (c *scalarProbeClient) HardDeleteWhere(ctx context.Context, filter *ScalarP
 		return nil, nil
 	})
 	return err
+}
+
+// recordWrittenKeys adds to written the keys of listed, one sub-batch, that
+// its statement wrote; rowKeys holds the keys of the rows the statement
+// matched. The database matches keys under its own equality — a
+// case-insensitive collation, blank-padded CHAR, a timestamp's stored
+// precision — so a row it matched can carry a key that differs under Go ==
+// from every listed key. When it matched more rows than listed keys were
+// found among rowKeys, every key of listed is recorded: a superset, so no
+// written row goes without its cache invalidation and event.
+func (c *scalarProbeClient) recordWrittenKeys(written map[uuid.UUID]struct{}, listed []uuid.UUID, rowKeys map[uuid.UUID]struct{}) {
+	found := make(map[uuid.UUID]struct{}, len(rowKeys))
+	for _, key := range listed {
+		if _, ok := rowKeys[key]; ok {
+			found[key] = struct{}{}
+		}
+	}
+	if len(found) < len(rowKeys) {
+		for _, key := range listed {
+			written[key] = struct{}{}
+		}
+		return
+	}
+	for key := range found {
+		written[key] = struct{}{}
+	}
 }
 
 // ScalarProbeConflictTarget identifies a unique constraint for upsert conflict detection.
@@ -42318,19 +42746,21 @@ func (c *userBadgeClient) HardDeleteMany(ctx context.Context, ids []int64, opts 
 			if err != nil {
 				return nil, fmt.Errorf("hard delete user_badges: %w", err)
 			}
+			batchKeys := make(map[int64]struct{}, end-start)
 			for rows.Next() {
 				var rowID int64
 				if err := rows.Scan(&rowID); err != nil {
 					rows.Close()
 					return nil, fmt.Errorf("scan deleted user_badge key: %w", err)
 				}
-				written[rowID] = struct{}{}
+				batchKeys[rowID] = struct{}{}
 			}
 			if err := rows.Err(); err != nil {
 				rows.Close()
 				return nil, err
 			}
 			rows.Close()
+			c.recordWrittenKeys(written, ids[start:end], batchKeys)
 		}
 
 		// A listed key whose row this call did not write records no affected
@@ -42389,6 +42819,32 @@ func (c *userBadgeClient) HardDeleteWhere(ctx context.Context, filter *UserBadge
 		return nil, nil
 	})
 	return err
+}
+
+// recordWrittenKeys adds to written the keys of listed, one sub-batch, that
+// its statement wrote; rowKeys holds the keys of the rows the statement
+// matched. The database matches keys under its own equality — a
+// case-insensitive collation, blank-padded CHAR, a timestamp's stored
+// precision — so a row it matched can carry a key that differs under Go ==
+// from every listed key. When it matched more rows than listed keys were
+// found among rowKeys, every key of listed is recorded: a superset, so no
+// written row goes without its cache invalidation and event.
+func (c *userBadgeClient) recordWrittenKeys(written map[int64]struct{}, listed []int64, rowKeys map[int64]struct{}) {
+	found := make(map[int64]struct{}, len(rowKeys))
+	for _, key := range listed {
+		if _, ok := rowKeys[key]; ok {
+			found[key] = struct{}{}
+		}
+	}
+	if len(found) < len(rowKeys) {
+		for _, key := range listed {
+			written[key] = struct{}{}
+		}
+		return
+	}
+	for key := range found {
+		written[key] = struct{}{}
+	}
 }
 
 // UserBadgeConflictTarget identifies a unique constraint for upsert conflict detection.
@@ -44568,19 +45024,21 @@ func (c *userCategoryClient) HardDeleteMany(ctx context.Context, pks []UserCateg
 			if err != nil {
 				return nil, fmt.Errorf("hard delete user_categories: %w", err)
 			}
+			batchKeys := make(map[UserCategoryPK]struct{}, end-start)
 			for rows.Next() {
 				var rowPK UserCategoryPK
 				if err := rows.Scan(&rowPK.UserID, &rowPK.CategoryID); err != nil {
 					rows.Close()
 					return nil, fmt.Errorf("scan deleted user_category key: %w", err)
 				}
-				written[rowPK] = struct{}{}
+				batchKeys[rowPK] = struct{}{}
 			}
 			if err := rows.Err(); err != nil {
 				rows.Close()
 				return nil, err
 			}
 			rows.Close()
+			c.recordWrittenKeys(written, pks[start:end], batchKeys)
 		}
 
 		// A listed key whose row this call did not write records no affected
@@ -44640,6 +45098,32 @@ func (c *userCategoryClient) HardDeleteWhere(ctx context.Context, filter *UserCa
 		return nil, nil
 	})
 	return err
+}
+
+// recordWrittenKeys adds to written the keys of listed, one sub-batch, that
+// its statement wrote; rowKeys holds the keys of the rows the statement
+// matched. The database matches keys under its own equality — a
+// case-insensitive collation, blank-padded CHAR, a timestamp's stored
+// precision — so a row it matched can carry a key that differs under Go ==
+// from every listed key. When it matched more rows than listed keys were
+// found among rowKeys, every key of listed is recorded: a superset, so no
+// written row goes without its cache invalidation and event.
+func (c *userCategoryClient) recordWrittenKeys(written map[UserCategoryPK]struct{}, listed []UserCategoryPK, rowKeys map[UserCategoryPK]struct{}) {
+	found := make(map[UserCategoryPK]struct{}, len(rowKeys))
+	for _, key := range listed {
+		if _, ok := rowKeys[key]; ok {
+			found[key] = struct{}{}
+		}
+	}
+	if len(found) < len(rowKeys) {
+		for _, key := range listed {
+			written[key] = struct{}{}
+		}
+		return
+	}
+	for key := range found {
+		written[key] = struct{}{}
+	}
 }
 
 // UserCategoryConflictTarget identifies a unique constraint for upsert conflict detection.
@@ -46430,19 +46914,21 @@ func (c *userCredentialClient) HardDeleteMany(ctx context.Context, ids []uuid.UU
 			if err != nil {
 				return nil, fmt.Errorf("hard delete user_credentials: %w", err)
 			}
+			batchKeys := make(map[uuid.UUID]struct{}, end-start)
 			for rows.Next() {
 				var rowID uuid.UUID
 				if err := rows.Scan(&rowID); err != nil {
 					rows.Close()
 					return nil, fmt.Errorf("scan deleted user_credential key: %w", err)
 				}
-				written[rowID] = struct{}{}
+				batchKeys[rowID] = struct{}{}
 			}
 			if err := rows.Err(); err != nil {
 				rows.Close()
 				return nil, err
 			}
 			rows.Close()
+			c.recordWrittenKeys(written, ids[start:end], batchKeys)
 		}
 
 		// A listed key whose row this call did not write records no affected
@@ -46501,6 +46987,32 @@ func (c *userCredentialClient) HardDeleteWhere(ctx context.Context, filter *User
 		return nil, nil
 	})
 	return err
+}
+
+// recordWrittenKeys adds to written the keys of listed, one sub-batch, that
+// its statement wrote; rowKeys holds the keys of the rows the statement
+// matched. The database matches keys under its own equality — a
+// case-insensitive collation, blank-padded CHAR, a timestamp's stored
+// precision — so a row it matched can carry a key that differs under Go ==
+// from every listed key. When it matched more rows than listed keys were
+// found among rowKeys, every key of listed is recorded: a superset, so no
+// written row goes without its cache invalidation and event.
+func (c *userCredentialClient) recordWrittenKeys(written map[uuid.UUID]struct{}, listed []uuid.UUID, rowKeys map[uuid.UUID]struct{}) {
+	found := make(map[uuid.UUID]struct{}, len(rowKeys))
+	for _, key := range listed {
+		if _, ok := rowKeys[key]; ok {
+			found[key] = struct{}{}
+		}
+	}
+	if len(found) < len(rowKeys) {
+		for _, key := range listed {
+			written[key] = struct{}{}
+		}
+		return
+	}
+	for key := range found {
+		written[key] = struct{}{}
+	}
 }
 
 // UserCredentialConflictTarget identifies a unique constraint for upsert conflict detection.
@@ -48692,19 +49204,21 @@ func (c *userSessionClient) HardDeleteMany(ctx context.Context, ids []uuid.UUID,
 			if err != nil {
 				return nil, fmt.Errorf("hard delete user_sessions: %w", err)
 			}
+			batchKeys := make(map[uuid.UUID]struct{}, end-start)
 			for rows.Next() {
 				var rowID uuid.UUID
 				if err := rows.Scan(&rowID); err != nil {
 					rows.Close()
 					return nil, fmt.Errorf("scan deleted user_session key: %w", err)
 				}
-				written[rowID] = struct{}{}
+				batchKeys[rowID] = struct{}{}
 			}
 			if err := rows.Err(); err != nil {
 				rows.Close()
 				return nil, err
 			}
 			rows.Close()
+			c.recordWrittenKeys(written, ids[start:end], batchKeys)
 		}
 
 		// A listed key whose row this call did not write records no affected
@@ -48763,6 +49277,32 @@ func (c *userSessionClient) HardDeleteWhere(ctx context.Context, filter *UserSes
 		return nil, nil
 	})
 	return err
+}
+
+// recordWrittenKeys adds to written the keys of listed, one sub-batch, that
+// its statement wrote; rowKeys holds the keys of the rows the statement
+// matched. The database matches keys under its own equality — a
+// case-insensitive collation, blank-padded CHAR, a timestamp's stored
+// precision — so a row it matched can carry a key that differs under Go ==
+// from every listed key. When it matched more rows than listed keys were
+// found among rowKeys, every key of listed is recorded: a superset, so no
+// written row goes without its cache invalidation and event.
+func (c *userSessionClient) recordWrittenKeys(written map[uuid.UUID]struct{}, listed []uuid.UUID, rowKeys map[uuid.UUID]struct{}) {
+	found := make(map[uuid.UUID]struct{}, len(rowKeys))
+	for _, key := range listed {
+		if _, ok := rowKeys[key]; ok {
+			found[key] = struct{}{}
+		}
+	}
+	if len(found) < len(rowKeys) {
+		for _, key := range listed {
+			written[key] = struct{}{}
+		}
+		return
+	}
+	for key := range found {
+		written[key] = struct{}{}
+	}
 }
 
 // UserSessionConflictTarget identifies a unique constraint for upsert conflict detection.
@@ -51578,19 +52118,21 @@ func (c *userClient) SoftDeleteMany(ctx context.Context, ids []uuid.UUID, opts .
 			if err != nil {
 				return nil, fmt.Errorf("soft delete users: %w", err)
 			}
+			batchKeys := make(map[uuid.UUID]struct{}, end-start)
 			for rows.Next() {
 				var rowID uuid.UUID
 				if err := rows.Scan(&rowID); err != nil {
 					rows.Close()
 					return nil, fmt.Errorf("scan soft deleted user key: %w", err)
 				}
-				written[rowID] = struct{}{}
+				batchKeys[rowID] = struct{}{}
 			}
 			if err := rows.Err(); err != nil {
 				rows.Close()
 				return nil, err
 			}
 			rows.Close()
+			c.recordWrittenKeys(written, ids[start:end], batchKeys)
 		}
 
 		// A listed key whose row this call did not write records no affected
@@ -51809,19 +52351,21 @@ func (c *userClient) RestoreMany(ctx context.Context, ids []uuid.UUID, opts ...f
 			if err != nil {
 				return nil, fmt.Errorf("restore users: %w", err)
 			}
+			batchKeys := make(map[uuid.UUID]struct{}, end-start)
 			for rows.Next() {
 				var rowID uuid.UUID
 				if err := rows.Scan(&rowID); err != nil {
 					rows.Close()
 					return nil, fmt.Errorf("scan restored user key: %w", err)
 				}
-				written[rowID] = struct{}{}
+				batchKeys[rowID] = struct{}{}
 			}
 			if err := rows.Err(); err != nil {
 				rows.Close()
 				return nil, err
 			}
 			rows.Close()
+			c.recordWrittenKeys(written, ids[start:end], batchKeys)
 		}
 
 		// A listed key whose row this call did not write records no affected
@@ -51991,19 +52535,21 @@ func (c *userClient) HardDeleteMany(ctx context.Context, ids []uuid.UUID, opts .
 			if err != nil {
 				return nil, fmt.Errorf("hard delete users: %w", err)
 			}
+			batchKeys := make(map[uuid.UUID]struct{}, end-start)
 			for rows.Next() {
 				var rowID uuid.UUID
 				if err := rows.Scan(&rowID); err != nil {
 					rows.Close()
 					return nil, fmt.Errorf("scan deleted user key: %w", err)
 				}
-				written[rowID] = struct{}{}
+				batchKeys[rowID] = struct{}{}
 			}
 			if err := rows.Err(); err != nil {
 				rows.Close()
 				return nil, err
 			}
 			rows.Close()
+			c.recordWrittenKeys(written, ids[start:end], batchKeys)
 		}
 
 		// A listed key whose row this call did not write records no affected
@@ -52062,6 +52608,32 @@ func (c *userClient) HardDeleteWhere(ctx context.Context, filter *UserFilter, op
 		return nil, nil
 	})
 	return err
+}
+
+// recordWrittenKeys adds to written the keys of listed, one sub-batch, that
+// its statement wrote; rowKeys holds the keys of the rows the statement
+// matched. The database matches keys under its own equality — a
+// case-insensitive collation, blank-padded CHAR, a timestamp's stored
+// precision — so a row it matched can carry a key that differs under Go ==
+// from every listed key. When it matched more rows than listed keys were
+// found among rowKeys, every key of listed is recorded: a superset, so no
+// written row goes without its cache invalidation and event.
+func (c *userClient) recordWrittenKeys(written map[uuid.UUID]struct{}, listed []uuid.UUID, rowKeys map[uuid.UUID]struct{}) {
+	found := make(map[uuid.UUID]struct{}, len(rowKeys))
+	for _, key := range listed {
+		if _, ok := rowKeys[key]; ok {
+			found[key] = struct{}{}
+		}
+	}
+	if len(found) < len(rowKeys) {
+		for _, key := range listed {
+			written[key] = struct{}{}
+		}
+		return
+	}
+	for key := range found {
+		written[key] = struct{}{}
+	}
 }
 
 // UserConflictTarget identifies a unique constraint for upsert conflict detection.
@@ -57223,6 +57795,7 @@ func (c *workspaceNoteClient) HardDeleteMany(ctx context.Context, ids []uuid.UUI
 			if err != nil {
 				return nil, fmt.Errorf("hard delete workspace_notes: %w", err)
 			}
+			batchTenants := make(map[uuid.UUID]any, end-start)
 			for rows.Next() {
 				var rowID uuid.UUID
 				var rowTenant uuid.UUID
@@ -57230,13 +57803,14 @@ func (c *workspaceNoteClient) HardDeleteMany(ctx context.Context, ids []uuid.UUI
 					rows.Close()
 					return nil, fmt.Errorf("scan deleted workspace_note tenant: %w", err)
 				}
-				tenantByPK[rowID] = rowTenant
+				batchTenants[rowID] = rowTenant
 			}
 			if err := rows.Err(); err != nil {
 				rows.Close()
 				return nil, err
 			}
 			rows.Close()
+			c.recordWrittenTenants(tenantByPK, ids[start:end], batchTenants)
 		}
 
 		// A listed key whose row this call did not write records no affected
@@ -57321,6 +57895,52 @@ func (c *workspaceNoteClient) HardDeleteWhere(ctx context.Context, filter *Works
 		return nil, nil
 	})
 	return err
+}
+
+// recordWrittenTenants adds to tenantByPK the keys of listed, one sub-batch,
+// that its statement wrote, each with its row's tenant; rowTenants holds the
+// tenant of every row the statement matched, by that row's key. The database
+// matches keys under its own equality — a case-insensitive collation,
+// blank-padded CHAR, a timestamp's stored precision — so a row it matched can
+// carry a key that differs under Go == from every listed key. When it matched
+// more rows than listed keys were found among rowTenants, every key of listed
+// is recorded: a superset, so no written row goes without its cache
+// invalidation and event. A key found under == keeps its own row's tenant;
+// any other takes the tenant the remaining rows share, or none when they
+// carry more than one.
+func (c *workspaceNoteClient) recordWrittenTenants(tenantByPK map[uuid.UUID]any, listed []uuid.UUID, rowTenants map[uuid.UUID]any) {
+	found := make(map[uuid.UUID]struct{}, len(rowTenants))
+	for _, key := range listed {
+		if tenant, ok := rowTenants[key]; ok {
+			tenantByPK[key] = tenant
+			found[key] = struct{}{}
+		}
+	}
+	if len(found) == len(rowTenants) {
+		return
+	}
+
+	// The tenant of the rows no listed key found under ==, when they share one.
+	// Tenants compare by their %v form, the form tenant-scoped cache keys use.
+	var shared any
+	for key, tenant := range rowTenants {
+		if _, ok := found[key]; ok {
+			continue
+		}
+		if shared == nil {
+			shared = tenant
+			continue
+		}
+		if fmt.Sprint(shared) != fmt.Sprint(tenant) {
+			shared = nil
+			break
+		}
+	}
+	for _, key := range listed {
+		if _, ok := tenantByPK[key]; !ok {
+			tenantByPK[key] = shared
+		}
+	}
 }
 
 // WorkspaceNoteConflictTarget identifies a unique constraint for upsert conflict detection.
@@ -61189,19 +61809,21 @@ func (c *workspaceSettingClient) HardDeleteMany(ctx context.Context, pks []Works
 			if err != nil {
 				return nil, fmt.Errorf("hard delete workspace_settings: %w", err)
 			}
+			batchKeys := make(map[WorkspaceSettingPK]struct{}, end-start)
 			for rows.Next() {
 				var rowPK WorkspaceSettingPK
 				if err := rows.Scan(&rowPK.WorkspaceID, &rowPK.Key); err != nil {
 					rows.Close()
 					return nil, fmt.Errorf("scan deleted workspace_setting key: %w", err)
 				}
-				written[rowPK] = struct{}{}
+				batchKeys[rowPK] = struct{}{}
 			}
 			if err := rows.Err(); err != nil {
 				rows.Close()
 				return nil, err
 			}
 			rows.Close()
+			c.recordWrittenKeys(written, pks[start:end], batchKeys)
 		}
 
 		// A listed key whose row this call did not write records no affected
@@ -61270,6 +61892,32 @@ func (c *workspaceSettingClient) HardDeleteWhere(ctx context.Context, filter *Wo
 		return nil, nil
 	})
 	return err
+}
+
+// recordWrittenKeys adds to written the keys of listed, one sub-batch, that
+// its statement wrote; rowKeys holds the keys of the rows the statement
+// matched. The database matches keys under its own equality — a
+// case-insensitive collation, blank-padded CHAR, a timestamp's stored
+// precision — so a row it matched can carry a key that differs under Go ==
+// from every listed key. When it matched more rows than listed keys were
+// found among rowKeys, every key of listed is recorded: a superset, so no
+// written row goes without its cache invalidation and event.
+func (c *workspaceSettingClient) recordWrittenKeys(written map[WorkspaceSettingPK]struct{}, listed []WorkspaceSettingPK, rowKeys map[WorkspaceSettingPK]struct{}) {
+	found := make(map[WorkspaceSettingPK]struct{}, len(rowKeys))
+	for _, key := range listed {
+		if _, ok := rowKeys[key]; ok {
+			found[key] = struct{}{}
+		}
+	}
+	if len(found) < len(rowKeys) {
+		for _, key := range listed {
+			written[key] = struct{}{}
+		}
+		return
+	}
+	for key := range found {
+		written[key] = struct{}{}
+	}
 }
 
 // WorkspaceSettingConflictTarget identifies a unique constraint for upsert conflict detection.

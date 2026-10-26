@@ -1454,6 +1454,7 @@ func (c *articleClient) SoftDeleteMany(ctx context.Context, ids []int64, opts ..
 			if err != nil {
 				return nil, fmt.Errorf("soft delete articles: %w", err)
 			}
+			batchTenants := make(map[int64]any, end-start)
 			for rows.Next() {
 				var rowID int64
 				var rowTenant uuid.UUID
@@ -1461,13 +1462,14 @@ func (c *articleClient) SoftDeleteMany(ctx context.Context, ids []int64, opts ..
 					rows.Close()
 					return nil, fmt.Errorf("scan soft deleted article tenant: %w", err)
 				}
-				tenantByPK[rowID] = rowTenant
+				batchTenants[rowID] = rowTenant
 			}
 			if err := rows.Err(); err != nil {
 				rows.Close()
 				return nil, err
 			}
 			rows.Close()
+			c.recordWrittenTenants(tenantByPK, ids[start:end], batchTenants)
 		}
 
 		// A listed key whose row this call did not write records no affected
@@ -1768,6 +1770,7 @@ func (c *articleClient) RestoreMany(ctx context.Context, ids []int64, opts ...fu
 			if err != nil {
 				return nil, fmt.Errorf("restore articles: %w", err)
 			}
+			batchTenants := make(map[int64]any, end-start)
 			for rows.Next() {
 				var rowID int64
 				var rowTenant uuid.UUID
@@ -1775,13 +1778,14 @@ func (c *articleClient) RestoreMany(ctx context.Context, ids []int64, opts ...fu
 					rows.Close()
 					return nil, fmt.Errorf("scan restored article tenant: %w", err)
 				}
-				tenantByPK[rowID] = rowTenant
+				batchTenants[rowID] = rowTenant
 			}
 			if err := rows.Err(); err != nil {
 				rows.Close()
 				return nil, err
 			}
 			rows.Close()
+			c.recordWrittenTenants(tenantByPK, ids[start:end], batchTenants)
 		}
 
 		// A listed key whose row this call did not write records no affected
@@ -2021,6 +2025,7 @@ func (c *articleClient) HardDeleteMany(ctx context.Context, ids []int64, opts ..
 			if err != nil {
 				return nil, fmt.Errorf("hard delete articles: %w", err)
 			}
+			batchTenants := make(map[int64]any, end-start)
 			for rows.Next() {
 				var rowID int64
 				var rowTenant uuid.UUID
@@ -2028,13 +2033,14 @@ func (c *articleClient) HardDeleteMany(ctx context.Context, ids []int64, opts ..
 					rows.Close()
 					return nil, fmt.Errorf("scan deleted article tenant: %w", err)
 				}
-				tenantByPK[rowID] = rowTenant
+				batchTenants[rowID] = rowTenant
 			}
 			if err := rows.Err(); err != nil {
 				rows.Close()
 				return nil, err
 			}
 			rows.Close()
+			c.recordWrittenTenants(tenantByPK, ids[start:end], batchTenants)
 		}
 
 		// A listed key whose row this call did not write records no affected
@@ -2111,6 +2117,52 @@ func (c *articleClient) HardDeleteWhere(ctx context.Context, filter *ArticleFilt
 		return nil, nil
 	})
 	return err
+}
+
+// recordWrittenTenants adds to tenantByPK the keys of listed, one sub-batch,
+// that its statement wrote, each with its row's tenant; rowTenants holds the
+// tenant of every row the statement matched, by that row's key. The database
+// matches keys under its own equality — a case-insensitive collation,
+// blank-padded CHAR, a timestamp's stored precision — so a row it matched can
+// carry a key that differs under Go == from every listed key. When it matched
+// more rows than listed keys were found among rowTenants, every key of listed
+// is recorded: a superset, so no written row goes without its cache
+// invalidation and event. A key found under == keeps its own row's tenant;
+// any other takes the tenant the remaining rows share, or none when they
+// carry more than one.
+func (c *articleClient) recordWrittenTenants(tenantByPK map[int64]any, listed []int64, rowTenants map[int64]any) {
+	found := make(map[int64]struct{}, len(rowTenants))
+	for _, key := range listed {
+		if tenant, ok := rowTenants[key]; ok {
+			tenantByPK[key] = tenant
+			found[key] = struct{}{}
+		}
+	}
+	if len(found) == len(rowTenants) {
+		return
+	}
+
+	// The tenant of the rows no listed key found under ==, when they share one.
+	// Tenants compare by their %v form, the form tenant-scoped cache keys use.
+	var shared any
+	for key, tenant := range rowTenants {
+		if _, ok := found[key]; ok {
+			continue
+		}
+		if shared == nil {
+			shared = tenant
+			continue
+		}
+		if fmt.Sprint(shared) != fmt.Sprint(tenant) {
+			shared = nil
+			break
+		}
+	}
+	for _, key := range listed {
+		if _, ok := tenantByPK[key]; !ok {
+			tenantByPK[key] = shared
+		}
+	}
 }
 
 // ArticleConflictTarget identifies a unique constraint for upsert conflict detection.
@@ -4349,19 +4401,21 @@ func (c *auditLogClient) HardDeleteMany(ctx context.Context, ids []int64, opts .
 			if err != nil {
 				return nil, fmt.Errorf("hard delete audit_logs: %w", err)
 			}
+			batchKeys := make(map[int64]struct{}, end-start)
 			for rows.Next() {
 				var rowID int64
 				if err := rows.Scan(&rowID); err != nil {
 					rows.Close()
 					return nil, fmt.Errorf("scan deleted audit_log key: %w", err)
 				}
-				written[rowID] = struct{}{}
+				batchKeys[rowID] = struct{}{}
 			}
 			if err := rows.Err(); err != nil {
 				rows.Close()
 				return nil, err
 			}
 			rows.Close()
+			c.recordWrittenKeys(written, ids[start:end], batchKeys)
 		}
 
 		// A listed key whose row this call did not write records no affected
@@ -4420,6 +4474,32 @@ func (c *auditLogClient) HardDeleteWhere(ctx context.Context, filter *AuditLogFi
 		return nil, nil
 	})
 	return err
+}
+
+// recordWrittenKeys adds to written the keys of listed, one sub-batch, that
+// its statement wrote; rowKeys holds the keys of the rows the statement
+// matched. The database matches keys under its own equality — a
+// case-insensitive collation, blank-padded CHAR, a timestamp's stored
+// precision — so a row it matched can carry a key that differs under Go ==
+// from every listed key. When it matched more rows than listed keys were
+// found among rowKeys, every key of listed is recorded: a superset, so no
+// written row goes without its cache invalidation and event.
+func (c *auditLogClient) recordWrittenKeys(written map[int64]struct{}, listed []int64, rowKeys map[int64]struct{}) {
+	found := make(map[int64]struct{}, len(rowKeys))
+	for _, key := range listed {
+		if _, ok := rowKeys[key]; ok {
+			found[key] = struct{}{}
+		}
+	}
+	if len(found) < len(rowKeys) {
+		for _, key := range listed {
+			written[key] = struct{}{}
+		}
+		return
+	}
+	for key := range found {
+		written[key] = struct{}{}
+	}
 }
 
 // AuditLogConflictTarget identifies a unique constraint for upsert conflict detection.
@@ -6729,6 +6809,7 @@ func (c *legacyWidgetClient) HardDeleteMany(ctx context.Context, ids []int64, op
 			if err != nil {
 				return nil, fmt.Errorf("hard delete legacy_widgets: %w", err)
 			}
+			batchTenants := make(map[int64]any, end-start)
 			for rows.Next() {
 				var rowID int64
 				var rowTenant uuid.UUID
@@ -6736,13 +6817,14 @@ func (c *legacyWidgetClient) HardDeleteMany(ctx context.Context, ids []int64, op
 					rows.Close()
 					return nil, fmt.Errorf("scan deleted legacy_widget tenant: %w", err)
 				}
-				tenantByPK[rowID] = rowTenant
+				batchTenants[rowID] = rowTenant
 			}
 			if err := rows.Err(); err != nil {
 				rows.Close()
 				return nil, err
 			}
 			rows.Close()
+			c.recordWrittenTenants(tenantByPK, ids[start:end], batchTenants)
 		}
 
 		// A listed key whose row this call did not write records no affected
@@ -6819,6 +6901,52 @@ func (c *legacyWidgetClient) HardDeleteWhere(ctx context.Context, filter *Legacy
 		return nil, nil
 	})
 	return err
+}
+
+// recordWrittenTenants adds to tenantByPK the keys of listed, one sub-batch,
+// that its statement wrote, each with its row's tenant; rowTenants holds the
+// tenant of every row the statement matched, by that row's key. The database
+// matches keys under its own equality — a case-insensitive collation,
+// blank-padded CHAR, a timestamp's stored precision — so a row it matched can
+// carry a key that differs under Go == from every listed key. When it matched
+// more rows than listed keys were found among rowTenants, every key of listed
+// is recorded: a superset, so no written row goes without its cache
+// invalidation and event. A key found under == keeps its own row's tenant;
+// any other takes the tenant the remaining rows share, or none when they
+// carry more than one.
+func (c *legacyWidgetClient) recordWrittenTenants(tenantByPK map[int64]any, listed []int64, rowTenants map[int64]any) {
+	found := make(map[int64]struct{}, len(rowTenants))
+	for _, key := range listed {
+		if tenant, ok := rowTenants[key]; ok {
+			tenantByPK[key] = tenant
+			found[key] = struct{}{}
+		}
+	}
+	if len(found) == len(rowTenants) {
+		return
+	}
+
+	// The tenant of the rows no listed key found under ==, when they share one.
+	// Tenants compare by their %v form, the form tenant-scoped cache keys use.
+	var shared any
+	for key, tenant := range rowTenants {
+		if _, ok := found[key]; ok {
+			continue
+		}
+		if shared == nil {
+			shared = tenant
+			continue
+		}
+		if fmt.Sprint(shared) != fmt.Sprint(tenant) {
+			shared = nil
+			break
+		}
+	}
+	for _, key := range listed {
+		if _, ok := tenantByPK[key]; !ok {
+			tenantByPK[key] = shared
+		}
+	}
 }
 
 // LegacyWidgetConflictTarget identifies a unique constraint for upsert conflict detection.
@@ -9193,19 +9321,21 @@ func (c *orderItemClient) HardDeleteMany(ctx context.Context, pks []OrderItemPK,
 			if err != nil {
 				return nil, fmt.Errorf("hard delete order_items: %w", err)
 			}
+			batchKeys := make(map[OrderItemPK]struct{}, end-start)
 			for rows.Next() {
 				var rowPK OrderItemPK
 				if err := rows.Scan(&rowPK.WorkspaceID, &rowPK.OrderID, &rowPK.ProductID); err != nil {
 					rows.Close()
 					return nil, fmt.Errorf("scan deleted order_item key: %w", err)
 				}
-				written[rowPK] = struct{}{}
+				batchKeys[rowPK] = struct{}{}
 			}
 			if err := rows.Err(); err != nil {
 				rows.Close()
 				return nil, err
 			}
 			rows.Close()
+			c.recordWrittenKeys(written, pks[start:end], batchKeys)
 		}
 
 		// A listed key whose row this call did not write records no affected
@@ -9274,6 +9404,32 @@ func (c *orderItemClient) HardDeleteWhere(ctx context.Context, filter *OrderItem
 		return nil, nil
 	})
 	return err
+}
+
+// recordWrittenKeys adds to written the keys of listed, one sub-batch, that
+// its statement wrote; rowKeys holds the keys of the rows the statement
+// matched. The database matches keys under its own equality — a
+// case-insensitive collation, blank-padded CHAR, a timestamp's stored
+// precision — so a row it matched can carry a key that differs under Go ==
+// from every listed key. When it matched more rows than listed keys were
+// found among rowKeys, every key of listed is recorded: a superset, so no
+// written row goes without its cache invalidation and event.
+func (c *orderItemClient) recordWrittenKeys(written map[OrderItemPK]struct{}, listed []OrderItemPK, rowKeys map[OrderItemPK]struct{}) {
+	found := make(map[OrderItemPK]struct{}, len(rowKeys))
+	for _, key := range listed {
+		if _, ok := rowKeys[key]; ok {
+			found[key] = struct{}{}
+		}
+	}
+	if len(found) < len(rowKeys) {
+		for _, key := range listed {
+			written[key] = struct{}{}
+		}
+		return
+	}
+	for key := range found {
+		written[key] = struct{}{}
+	}
 }
 
 // OrderItemConflictTarget identifies a unique constraint for upsert conflict detection.
@@ -11148,19 +11304,21 @@ func (c *postTagClient) HardDeleteMany(ctx context.Context, pks []PostTagPK, opt
 			if err != nil {
 				return nil, fmt.Errorf("hard delete post_tags: %w", err)
 			}
+			batchKeys := make(map[PostTagPK]struct{}, end-start)
 			for rows.Next() {
 				var rowPK PostTagPK
 				if err := rows.Scan(&rowPK.PostID, &rowPK.TagID); err != nil {
 					rows.Close()
 					return nil, fmt.Errorf("scan deleted post_tag key: %w", err)
 				}
-				written[rowPK] = struct{}{}
+				batchKeys[rowPK] = struct{}{}
 			}
 			if err := rows.Err(); err != nil {
 				rows.Close()
 				return nil, err
 			}
 			rows.Close()
+			c.recordWrittenKeys(written, pks[start:end], batchKeys)
 		}
 
 		// A listed key whose row this call did not write records no affected
@@ -11220,6 +11378,32 @@ func (c *postTagClient) HardDeleteWhere(ctx context.Context, filter *PostTagFilt
 		return nil, nil
 	})
 	return err
+}
+
+// recordWrittenKeys adds to written the keys of listed, one sub-batch, that
+// its statement wrote; rowKeys holds the keys of the rows the statement
+// matched. The database matches keys under its own equality — a
+// case-insensitive collation, blank-padded CHAR, a timestamp's stored
+// precision — so a row it matched can carry a key that differs under Go ==
+// from every listed key. When it matched more rows than listed keys were
+// found among rowKeys, every key of listed is recorded: a superset, so no
+// written row goes without its cache invalidation and event.
+func (c *postTagClient) recordWrittenKeys(written map[PostTagPK]struct{}, listed []PostTagPK, rowKeys map[PostTagPK]struct{}) {
+	found := make(map[PostTagPK]struct{}, len(rowKeys))
+	for _, key := range listed {
+		if _, ok := rowKeys[key]; ok {
+			found[key] = struct{}{}
+		}
+	}
+	if len(found) < len(rowKeys) {
+		for _, key := range listed {
+			written[key] = struct{}{}
+		}
+		return
+	}
+	for key := range found {
+		written[key] = struct{}{}
+	}
 }
 
 // PostTagConflictTarget identifies a unique constraint for upsert conflict detection.
@@ -13545,6 +13729,7 @@ func (c *postClient) HardDeleteMany(ctx context.Context, ids []int64, opts ...fu
 			if err != nil {
 				return nil, fmt.Errorf("hard delete posts: %w", err)
 			}
+			batchTenants := make(map[int64]any, end-start)
 			for rows.Next() {
 				var rowID int64
 				var rowTenant uuid.UUID
@@ -13552,13 +13737,14 @@ func (c *postClient) HardDeleteMany(ctx context.Context, ids []int64, opts ...fu
 					rows.Close()
 					return nil, fmt.Errorf("scan deleted post tenant: %w", err)
 				}
-				tenantByPK[rowID] = rowTenant
+				batchTenants[rowID] = rowTenant
 			}
 			if err := rows.Err(); err != nil {
 				rows.Close()
 				return nil, err
 			}
 			rows.Close()
+			c.recordWrittenTenants(tenantByPK, ids[start:end], batchTenants)
 		}
 
 		// A listed key whose row this call did not write records no affected
@@ -13643,6 +13829,52 @@ func (c *postClient) HardDeleteWhere(ctx context.Context, filter *PostFilter, op
 		return nil, nil
 	})
 	return err
+}
+
+// recordWrittenTenants adds to tenantByPK the keys of listed, one sub-batch,
+// that its statement wrote, each with its row's tenant; rowTenants holds the
+// tenant of every row the statement matched, by that row's key. The database
+// matches keys under its own equality — a case-insensitive collation,
+// blank-padded CHAR, a timestamp's stored precision — so a row it matched can
+// carry a key that differs under Go == from every listed key. When it matched
+// more rows than listed keys were found among rowTenants, every key of listed
+// is recorded: a superset, so no written row goes without its cache
+// invalidation and event. A key found under == keeps its own row's tenant;
+// any other takes the tenant the remaining rows share, or none when they
+// carry more than one.
+func (c *postClient) recordWrittenTenants(tenantByPK map[int64]any, listed []int64, rowTenants map[int64]any) {
+	found := make(map[int64]struct{}, len(rowTenants))
+	for _, key := range listed {
+		if tenant, ok := rowTenants[key]; ok {
+			tenantByPK[key] = tenant
+			found[key] = struct{}{}
+		}
+	}
+	if len(found) == len(rowTenants) {
+		return
+	}
+
+	// The tenant of the rows no listed key found under ==, when they share one.
+	// Tenants compare by their %v form, the form tenant-scoped cache keys use.
+	var shared any
+	for key, tenant := range rowTenants {
+		if _, ok := found[key]; ok {
+			continue
+		}
+		if shared == nil {
+			shared = tenant
+			continue
+		}
+		if fmt.Sprint(shared) != fmt.Sprint(tenant) {
+			shared = nil
+			break
+		}
+	}
+	for _, key := range listed {
+		if _, ok := tenantByPK[key]; !ok {
+			tenantByPK[key] = shared
+		}
+	}
 }
 
 // PostConflictTarget identifies a unique constraint for upsert conflict detection.
@@ -16303,6 +16535,7 @@ func (c *productClient) HardDeleteMany(ctx context.Context, ids []int64, opts ..
 			if err != nil {
 				return nil, fmt.Errorf("hard delete products: %w", err)
 			}
+			batchTenants := make(map[int64]any, end-start)
 			for rows.Next() {
 				var rowID int64
 				var rowTenant uuid.UUID
@@ -16310,13 +16543,14 @@ func (c *productClient) HardDeleteMany(ctx context.Context, ids []int64, opts ..
 					rows.Close()
 					return nil, fmt.Errorf("scan deleted product tenant: %w", err)
 				}
-				tenantByPK[rowID] = rowTenant
+				batchTenants[rowID] = rowTenant
 			}
 			if err := rows.Err(); err != nil {
 				rows.Close()
 				return nil, err
 			}
 			rows.Close()
+			c.recordWrittenTenants(tenantByPK, ids[start:end], batchTenants)
 		}
 
 		// A listed key whose row this call did not write records no affected
@@ -16393,6 +16627,52 @@ func (c *productClient) HardDeleteWhere(ctx context.Context, filter *ProductFilt
 		return nil, nil
 	})
 	return err
+}
+
+// recordWrittenTenants adds to tenantByPK the keys of listed, one sub-batch,
+// that its statement wrote, each with its row's tenant; rowTenants holds the
+// tenant of every row the statement matched, by that row's key. The database
+// matches keys under its own equality — a case-insensitive collation,
+// blank-padded CHAR, a timestamp's stored precision — so a row it matched can
+// carry a key that differs under Go == from every listed key. When it matched
+// more rows than listed keys were found among rowTenants, every key of listed
+// is recorded: a superset, so no written row goes without its cache
+// invalidation and event. A key found under == keeps its own row's tenant;
+// any other takes the tenant the remaining rows share, or none when they
+// carry more than one.
+func (c *productClient) recordWrittenTenants(tenantByPK map[int64]any, listed []int64, rowTenants map[int64]any) {
+	found := make(map[int64]struct{}, len(rowTenants))
+	for _, key := range listed {
+		if tenant, ok := rowTenants[key]; ok {
+			tenantByPK[key] = tenant
+			found[key] = struct{}{}
+		}
+	}
+	if len(found) == len(rowTenants) {
+		return
+	}
+
+	// The tenant of the rows no listed key found under ==, when they share one.
+	// Tenants compare by their %v form, the form tenant-scoped cache keys use.
+	var shared any
+	for key, tenant := range rowTenants {
+		if _, ok := found[key]; ok {
+			continue
+		}
+		if shared == nil {
+			shared = tenant
+			continue
+		}
+		if fmt.Sprint(shared) != fmt.Sprint(tenant) {
+			shared = nil
+			break
+		}
+	}
+	for _, key := range listed {
+		if _, ok := tenantByPK[key]; !ok {
+			tenantByPK[key] = shared
+		}
+	}
 }
 
 // ProductConflictTarget identifies a unique constraint for upsert conflict detection.
@@ -19052,6 +19332,7 @@ func (c *tagLinkClient) HardDeleteMany(ctx context.Context, pks []TagLinkPK, opt
 			if err != nil {
 				return nil, fmt.Errorf("hard delete tag_links: %w", err)
 			}
+			batchTenants := make(map[TagLinkPK]any, end-start)
 			for rows.Next() {
 				var rowPK TagLinkPK
 				var rowTenant uuid.UUID
@@ -19059,13 +19340,14 @@ func (c *tagLinkClient) HardDeleteMany(ctx context.Context, pks []TagLinkPK, opt
 					rows.Close()
 					return nil, fmt.Errorf("scan deleted tag_link tenant: %w", err)
 				}
-				tenantByPK[rowPK] = rowTenant
+				batchTenants[rowPK] = rowTenant
 			}
 			if err := rows.Err(); err != nil {
 				rows.Close()
 				return nil, err
 			}
 			rows.Close()
+			c.recordWrittenTenants(tenantByPK, pks[start:end], batchTenants)
 		}
 
 		// A listed key whose row this call did not write records no affected
@@ -19143,6 +19425,52 @@ func (c *tagLinkClient) HardDeleteWhere(ctx context.Context, filter *TagLinkFilt
 		return nil, nil
 	})
 	return err
+}
+
+// recordWrittenTenants adds to tenantByPK the keys of listed, one sub-batch,
+// that its statement wrote, each with its row's tenant; rowTenants holds the
+// tenant of every row the statement matched, by that row's key. The database
+// matches keys under its own equality — a case-insensitive collation,
+// blank-padded CHAR, a timestamp's stored precision — so a row it matched can
+// carry a key that differs under Go == from every listed key. When it matched
+// more rows than listed keys were found among rowTenants, every key of listed
+// is recorded: a superset, so no written row goes without its cache
+// invalidation and event. A key found under == keeps its own row's tenant;
+// any other takes the tenant the remaining rows share, or none when they
+// carry more than one.
+func (c *tagLinkClient) recordWrittenTenants(tenantByPK map[TagLinkPK]any, listed []TagLinkPK, rowTenants map[TagLinkPK]any) {
+	found := make(map[TagLinkPK]struct{}, len(rowTenants))
+	for _, key := range listed {
+		if tenant, ok := rowTenants[key]; ok {
+			tenantByPK[key] = tenant
+			found[key] = struct{}{}
+		}
+	}
+	if len(found) == len(rowTenants) {
+		return
+	}
+
+	// The tenant of the rows no listed key found under ==, when they share one.
+	// Tenants compare by their %v form, the form tenant-scoped cache keys use.
+	var shared any
+	for key, tenant := range rowTenants {
+		if _, ok := found[key]; ok {
+			continue
+		}
+		if shared == nil {
+			shared = tenant
+			continue
+		}
+		if fmt.Sprint(shared) != fmt.Sprint(tenant) {
+			shared = nil
+			break
+		}
+	}
+	for _, key := range listed {
+		if _, ok := tenantByPK[key]; !ok {
+			tenantByPK[key] = shared
+		}
+	}
 }
 
 // TagLinkConflictTarget identifies a unique constraint for upsert conflict detection.
@@ -21975,6 +22303,7 @@ func (c *tagClient) HardDeleteMany(ctx context.Context, ids []int64, opts ...fun
 			if err != nil {
 				return nil, fmt.Errorf("hard delete tags: %w", err)
 			}
+			batchTenants := make(map[int64]any, end-start)
 			for rows.Next() {
 				var rowID int64
 				var rowTenant uuid.UUID
@@ -21982,13 +22311,14 @@ func (c *tagClient) HardDeleteMany(ctx context.Context, ids []int64, opts ...fun
 					rows.Close()
 					return nil, fmt.Errorf("scan deleted tag tenant: %w", err)
 				}
-				tenantByPK[rowID] = rowTenant
+				batchTenants[rowID] = rowTenant
 			}
 			if err := rows.Err(); err != nil {
 				rows.Close()
 				return nil, err
 			}
 			rows.Close()
+			c.recordWrittenTenants(tenantByPK, ids[start:end], batchTenants)
 		}
 
 		// A listed key whose row this call did not write records no affected
@@ -22073,6 +22403,52 @@ func (c *tagClient) HardDeleteWhere(ctx context.Context, filter *TagFilter, opts
 		return nil, nil
 	})
 	return err
+}
+
+// recordWrittenTenants adds to tenantByPK the keys of listed, one sub-batch,
+// that its statement wrote, each with its row's tenant; rowTenants holds the
+// tenant of every row the statement matched, by that row's key. The database
+// matches keys under its own equality — a case-insensitive collation,
+// blank-padded CHAR, a timestamp's stored precision — so a row it matched can
+// carry a key that differs under Go == from every listed key. When it matched
+// more rows than listed keys were found among rowTenants, every key of listed
+// is recorded: a superset, so no written row goes without its cache
+// invalidation and event. A key found under == keeps its own row's tenant;
+// any other takes the tenant the remaining rows share, or none when they
+// carry more than one.
+func (c *tagClient) recordWrittenTenants(tenantByPK map[int64]any, listed []int64, rowTenants map[int64]any) {
+	found := make(map[int64]struct{}, len(rowTenants))
+	for _, key := range listed {
+		if tenant, ok := rowTenants[key]; ok {
+			tenantByPK[key] = tenant
+			found[key] = struct{}{}
+		}
+	}
+	if len(found) == len(rowTenants) {
+		return
+	}
+
+	// The tenant of the rows no listed key found under ==, when they share one.
+	// Tenants compare by their %v form, the form tenant-scoped cache keys use.
+	var shared any
+	for key, tenant := range rowTenants {
+		if _, ok := found[key]; ok {
+			continue
+		}
+		if shared == nil {
+			shared = tenant
+			continue
+		}
+		if fmt.Sprint(shared) != fmt.Sprint(tenant) {
+			shared = nil
+			break
+		}
+	}
+	for _, key := range listed {
+		if _, ok := tenantByPK[key]; !ok {
+			tenantByPK[key] = shared
+		}
+	}
 }
 
 // TagConflictTarget identifies a unique constraint for upsert conflict detection.
@@ -24859,6 +25235,7 @@ func (c *userProfileClient) HardDeleteMany(ctx context.Context, ids []int64, opt
 			if err != nil {
 				return nil, fmt.Errorf("hard delete user_profiles: %w", err)
 			}
+			batchTenants := make(map[int64]any, end-start)
 			for rows.Next() {
 				var rowID int64
 				var rowTenant uuid.UUID
@@ -24866,13 +25243,14 @@ func (c *userProfileClient) HardDeleteMany(ctx context.Context, ids []int64, opt
 					rows.Close()
 					return nil, fmt.Errorf("scan deleted user_profile tenant: %w", err)
 				}
-				tenantByPK[rowID] = rowTenant
+				batchTenants[rowID] = rowTenant
 			}
 			if err := rows.Err(); err != nil {
 				rows.Close()
 				return nil, err
 			}
 			rows.Close()
+			c.recordWrittenTenants(tenantByPK, ids[start:end], batchTenants)
 		}
 
 		// A listed key whose row this call did not write records no affected
@@ -24949,6 +25327,52 @@ func (c *userProfileClient) HardDeleteWhere(ctx context.Context, filter *UserPro
 		return nil, nil
 	})
 	return err
+}
+
+// recordWrittenTenants adds to tenantByPK the keys of listed, one sub-batch,
+// that its statement wrote, each with its row's tenant; rowTenants holds the
+// tenant of every row the statement matched, by that row's key. The database
+// matches keys under its own equality — a case-insensitive collation,
+// blank-padded CHAR, a timestamp's stored precision — so a row it matched can
+// carry a key that differs under Go == from every listed key. When it matched
+// more rows than listed keys were found among rowTenants, every key of listed
+// is recorded: a superset, so no written row goes without its cache
+// invalidation and event. A key found under == keeps its own row's tenant;
+// any other takes the tenant the remaining rows share, or none when they
+// carry more than one.
+func (c *userProfileClient) recordWrittenTenants(tenantByPK map[int64]any, listed []int64, rowTenants map[int64]any) {
+	found := make(map[int64]struct{}, len(rowTenants))
+	for _, key := range listed {
+		if tenant, ok := rowTenants[key]; ok {
+			tenantByPK[key] = tenant
+			found[key] = struct{}{}
+		}
+	}
+	if len(found) == len(rowTenants) {
+		return
+	}
+
+	// The tenant of the rows no listed key found under ==, when they share one.
+	// Tenants compare by their %v form, the form tenant-scoped cache keys use.
+	var shared any
+	for key, tenant := range rowTenants {
+		if _, ok := found[key]; ok {
+			continue
+		}
+		if shared == nil {
+			shared = tenant
+			continue
+		}
+		if fmt.Sprint(shared) != fmt.Sprint(tenant) {
+			shared = nil
+			break
+		}
+	}
+	for _, key := range listed {
+		if _, ok := tenantByPK[key]; !ok {
+			tenantByPK[key] = shared
+		}
+	}
 }
 
 // UserProfileConflictTarget identifies a unique constraint for upsert conflict detection.
@@ -27979,6 +28403,7 @@ func (c *userClient) HardDeleteMany(ctx context.Context, ids []int64, opts ...fu
 			if err != nil {
 				return nil, fmt.Errorf("hard delete users: %w", err)
 			}
+			batchTenants := make(map[int64]any, end-start)
 			for rows.Next() {
 				var rowID int64
 				var rowTenant uuid.UUID
@@ -27986,13 +28411,14 @@ func (c *userClient) HardDeleteMany(ctx context.Context, ids []int64, opts ...fu
 					rows.Close()
 					return nil, fmt.Errorf("scan deleted user tenant: %w", err)
 				}
-				tenantByPK[rowID] = rowTenant
+				batchTenants[rowID] = rowTenant
 			}
 			if err := rows.Err(); err != nil {
 				rows.Close()
 				return nil, err
 			}
 			rows.Close()
+			c.recordWrittenTenants(tenantByPK, ids[start:end], batchTenants)
 		}
 
 		// A listed key whose row this call did not write records no affected
@@ -28077,6 +28503,52 @@ func (c *userClient) HardDeleteWhere(ctx context.Context, filter *UserFilter, op
 		return nil, nil
 	})
 	return err
+}
+
+// recordWrittenTenants adds to tenantByPK the keys of listed, one sub-batch,
+// that its statement wrote, each with its row's tenant; rowTenants holds the
+// tenant of every row the statement matched, by that row's key. The database
+// matches keys under its own equality — a case-insensitive collation,
+// blank-padded CHAR, a timestamp's stored precision — so a row it matched can
+// carry a key that differs under Go == from every listed key. When it matched
+// more rows than listed keys were found among rowTenants, every key of listed
+// is recorded: a superset, so no written row goes without its cache
+// invalidation and event. A key found under == keeps its own row's tenant;
+// any other takes the tenant the remaining rows share, or none when they
+// carry more than one.
+func (c *userClient) recordWrittenTenants(tenantByPK map[int64]any, listed []int64, rowTenants map[int64]any) {
+	found := make(map[int64]struct{}, len(rowTenants))
+	for _, key := range listed {
+		if tenant, ok := rowTenants[key]; ok {
+			tenantByPK[key] = tenant
+			found[key] = struct{}{}
+		}
+	}
+	if len(found) == len(rowTenants) {
+		return
+	}
+
+	// The tenant of the rows no listed key found under ==, when they share one.
+	// Tenants compare by their %v form, the form tenant-scoped cache keys use.
+	var shared any
+	for key, tenant := range rowTenants {
+		if _, ok := found[key]; ok {
+			continue
+		}
+		if shared == nil {
+			shared = tenant
+			continue
+		}
+		if fmt.Sprint(shared) != fmt.Sprint(tenant) {
+			shared = nil
+			break
+		}
+	}
+	for _, key := range listed {
+		if _, ok := tenantByPK[key]; !ok {
+			tenantByPK[key] = shared
+		}
+	}
 }
 
 // UserConflictTarget identifies a unique constraint for upsert conflict detection.
@@ -30786,19 +31258,21 @@ func (c *workspaceClient) HardDeleteMany(ctx context.Context, ids []uuid.UUID, o
 			if err != nil {
 				return nil, fmt.Errorf("hard delete workspaces: %w", err)
 			}
+			batchKeys := make(map[uuid.UUID]struct{}, end-start)
 			for rows.Next() {
 				var rowID uuid.UUID
 				if err := rows.Scan(&rowID); err != nil {
 					rows.Close()
 					return nil, fmt.Errorf("scan deleted workspace key: %w", err)
 				}
-				written[rowID] = struct{}{}
+				batchKeys[rowID] = struct{}{}
 			}
 			if err := rows.Err(); err != nil {
 				rows.Close()
 				return nil, err
 			}
 			rows.Close()
+			c.recordWrittenKeys(written, ids[start:end], batchKeys)
 		}
 
 		// A listed key whose row this call did not write records no affected
@@ -30865,6 +31339,32 @@ func (c *workspaceClient) HardDeleteWhere(ctx context.Context, filter *Workspace
 		return nil, nil
 	})
 	return err
+}
+
+// recordWrittenKeys adds to written the keys of listed, one sub-batch, that
+// its statement wrote; rowKeys holds the keys of the rows the statement
+// matched. The database matches keys under its own equality — a
+// case-insensitive collation, blank-padded CHAR, a timestamp's stored
+// precision — so a row it matched can carry a key that differs under Go ==
+// from every listed key. When it matched more rows than listed keys were
+// found among rowKeys, every key of listed is recorded: a superset, so no
+// written row goes without its cache invalidation and event.
+func (c *workspaceClient) recordWrittenKeys(written map[uuid.UUID]struct{}, listed []uuid.UUID, rowKeys map[uuid.UUID]struct{}) {
+	found := make(map[uuid.UUID]struct{}, len(rowKeys))
+	for _, key := range listed {
+		if _, ok := rowKeys[key]; ok {
+			found[key] = struct{}{}
+		}
+	}
+	if len(found) < len(rowKeys) {
+		for _, key := range listed {
+			written[key] = struct{}{}
+		}
+		return
+	}
+	for key := range found {
+		written[key] = struct{}{}
+	}
 }
 
 // WorkspaceConflictTarget identifies a unique constraint for upsert conflict detection.

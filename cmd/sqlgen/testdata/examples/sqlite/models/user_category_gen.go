@@ -810,19 +810,21 @@ func (c *userCategoryClient) HardDeleteMany(ctx context.Context, pks []UserCateg
 			if err != nil {
 				return nil, fmt.Errorf("hard delete user_categories: %w", err)
 			}
+			batchKeys := make(map[UserCategoryPK]struct{}, end-start)
 			for rows.Next() {
 				var rowPK UserCategoryPK
 				if err := rows.Scan(&rowPK.UserID, &rowPK.CategoryID); err != nil {
 					rows.Close()
 					return nil, fmt.Errorf("scan deleted user_category key: %w", err)
 				}
-				written[rowPK] = struct{}{}
+				batchKeys[rowPK] = struct{}{}
 			}
 			if err := rows.Err(); err != nil {
 				rows.Close()
 				return nil, err
 			}
 			rows.Close()
+			c.recordWrittenKeys(written, pks[start:end], batchKeys)
 		}
 
 		// A listed key whose row this call did not write records no affected
@@ -882,6 +884,32 @@ func (c *userCategoryClient) HardDeleteWhere(ctx context.Context, filter *UserCa
 		return nil, nil
 	})
 	return err
+}
+
+// recordWrittenKeys adds to written the keys of listed, one sub-batch, that
+// its statement wrote; rowKeys holds the keys of the rows the statement
+// matched. The database matches keys under its own equality — a
+// case-insensitive collation, blank-padded CHAR, a timestamp's stored
+// precision — so a row it matched can carry a key that differs under Go ==
+// from every listed key. When it matched more rows than listed keys were
+// found among rowKeys, every key of listed is recorded: a superset, so no
+// written row goes without its cache invalidation and event.
+func (c *userCategoryClient) recordWrittenKeys(written map[UserCategoryPK]struct{}, listed []UserCategoryPK, rowKeys map[UserCategoryPK]struct{}) {
+	found := make(map[UserCategoryPK]struct{}, len(rowKeys))
+	for _, key := range listed {
+		if _, ok := rowKeys[key]; ok {
+			found[key] = struct{}{}
+		}
+	}
+	if len(found) < len(rowKeys) {
+		for _, key := range listed {
+			written[key] = struct{}{}
+		}
+		return
+	}
+	for key := range found {
+		written[key] = struct{}{}
+	}
 }
 
 // UserCategoryConflictTarget identifies a unique constraint for upsert conflict detection.
