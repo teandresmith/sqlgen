@@ -715,12 +715,6 @@ func (r *Resolver) widenSumBase(base string) string {
 	return base
 }
 
-// lookupOverride searches an override map for a SQL type, trying the exact
-// type first and then falling back to the base type with modifiers stripped
-// (e.g., numeric(10,2) → numeric). For a resolver scoped by ForSchema, a bare
-// type is first looked up qualified with the owner schema: both schema sources
-// write a type in the column's own schema bare, so without this a key written
-// app.status_enum would never reach the app schema's own columns (PRD §7.1).
 // lowerKeys returns m with its keys lower-cased, so an overrides.types key
 // matches whatever its letter case, as SQL types are compared lower-cased.
 // It returns m itself when every key is already lower-case. Two keys that
@@ -748,6 +742,12 @@ func lowerKeys(m map[string]config.TypeOverride) map[string]config.TypeOverride 
 	return out
 }
 
+// lookupOverride searches an override map for a SQL type, trying the exact
+// type first and then falling back to the base type with modifiers stripped
+// (e.g., numeric(10,2) → numeric). For a resolver scoped by ForSchema, a bare
+// type is first looked up qualified with the owner schema: both schema sources
+// write a type in the column's own schema bare, so without this a key written
+// app.status_enum would never reach the app schema's own columns (PRD §7.1).
 func (r *Resolver) lookupOverride(m map[string]config.TypeOverride, sqlType string) (config.TypeOverride, string, bool) {
 	keys := lookupKeys(sqlType)
 	if r.ownerSchema != "" && !strings.Contains(sqlType, ".") {

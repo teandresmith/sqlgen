@@ -109,10 +109,17 @@ func TestValidatePreParse_PostgresSynonymTypeKey(t *testing.T) {
 // keys of one scope that differ only in case are rejected.
 func TestValidatePreParse_TypeKeyLetterCase(t *testing.T) {
 	tests := []struct {
-		name string
-		keys []string
-		want string
+		name  string
+		keys  []string
+		table bool
+		want  string
 	}{
+		{
+			name:  "keys that differ only in case under a table",
+			keys:  []string{"NUMERIC", "numeric"},
+			table: true,
+			want:  `tables.public.users.overrides.types: keys "NUMERIC" and "numeric" name the same type; keep one`,
+		},
 		{
 			name: "upper-case synonym",
 			keys: []string{"INT4"},
@@ -131,8 +138,13 @@ func TestValidatePreParse_TypeKeyLetterCase(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			cfg := validConfig()
+			types := cfg.Overrides.Types
+			if tt.table {
+				types = map[string]config.TypeOverride{}
+				cfg.Tables["public.users"] = config.TableConfig{Overrides: &config.OverrideConfig{Types: types}}
+			}
 			for _, key := range tt.keys {
-				cfg.Overrides.Types[key] = config.TypeOverride{Type: "int64"}
+				types[key] = config.TypeOverride{Type: "int64"}
 			}
 			_, err := config.ValidatePreParse(cfg)
 			got := ""
