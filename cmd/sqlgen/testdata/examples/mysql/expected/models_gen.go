@@ -712,11 +712,11 @@ func (c *articleClient) Update(ctx context.Context, id int64, input *UpdateArtic
 		if err != nil {
 			return nil, fmt.Errorf("update article: %w", err)
 		}
-		count, err := execResult.RowsAffected()
+		matched, err := execResult.RowsAffected()
 		if err != nil {
 			return nil, fmt.Errorf("update article rows affected: %w", err)
 		}
-		if count == 0 {
+		if matched == 0 {
 			return nil, ErrNotFound
 		}
 		m.AffectedPKs = []any{id}
@@ -774,6 +774,11 @@ func (c *articleClient) UpdateMany(ctx context.Context, items []UpdateArticleIte
 			return []*Article{}, nil
 		}
 		var allIDs []int64
+		// The items whose UPDATE matched a row. Only these record an affected
+		// key: an item whose key matches no row, or that sets no field, wrote
+		// nothing, so no cache entry is invalidated and no event is published
+		// for it.
+		var writtenItems []UpdateArticleItem
 		for start := 0; start < len(items); start += c.batchSize {
 			end := min(start+c.batchSize, len(items))
 			batch := items[start:end]
@@ -807,15 +812,30 @@ func (c *articleClient) UpdateMany(ctx context.Context, items []UpdateArticleIte
 					Conditions: []sql.Condition{sql.Where(c.dialect.QuoteIdentifier("id")).Eq(item.ID)},
 				})
 
-				_, err := conn.Exec(ctx, query, args...)
+				execResult, err := conn.Exec(ctx, query, args...)
 				if err != nil {
 					return nil, fmt.Errorf("update article %v: %w", item.ID, err)
+				}
+				matched, err := execResult.RowsAffected()
+				if err != nil {
+					return nil, fmt.Errorf("update article %v rows affected: %w", item.ID, err)
+				}
+				if matched > 0 {
+					writtenItems = append(writtenItems, item)
 				}
 				allIDs = append(allIDs, item.ID)
 			}
 		}
 
-		m.AffectedPKs = toAnySlice(allIDs)
+		affectedPKs := make([]any, len(writtenItems))
+		for i, item := range writtenItems {
+			affectedPKs[i] = item.ID
+		}
+		m.AffectedPKs = affectedPKs
+		// The published input is narrowed to the written items, so it stays
+		// index-aligned with m.AffectedPKs: each event carries the input that
+		// wrote its row.
+		m.Input = writtenItems
 
 		// Empty FieldOptions — skip fetch
 		if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
@@ -3211,11 +3231,11 @@ func (c *assetDocumentLinkClient) Update(ctx context.Context, pk AssetDocumentLi
 		if err != nil {
 			return nil, fmt.Errorf("update asset_document_link: %w", err)
 		}
-		count, err := execResult.RowsAffected()
+		matched, err := execResult.RowsAffected()
 		if err != nil {
 			return nil, fmt.Errorf("update asset_document_link rows affected: %w", err)
 		}
-		if count == 0 {
+		if matched == 0 {
 			return nil, ErrNotFound
 		}
 		m.AffectedPKs = []any{pk}
@@ -3273,6 +3293,11 @@ func (c *assetDocumentLinkClient) UpdateMany(ctx context.Context, items []Update
 			return []*AssetDocumentLink{}, nil
 		}
 		var allPKs []AssetDocumentLinkPK
+		// The items whose UPDATE matched a row. Only these record an affected
+		// key: an item whose key matches no row, or that sets no field, wrote
+		// nothing, so no cache entry is invalidated and no event is published
+		// for it.
+		var writtenItems []UpdateAssetDocumentLinkItem
 		for start := 0; start < len(items); start += c.batchSize {
 			end := min(start+c.batchSize, len(items))
 			batch := items[start:end]
@@ -3293,15 +3318,30 @@ func (c *assetDocumentLinkClient) UpdateMany(ctx context.Context, items []Update
 						[]any{item.PK.AssetID, item.PK.DocumentID}),
 				})
 
-				_, err := conn.Exec(ctx, query, args...)
+				execResult, err := conn.Exec(ctx, query, args...)
 				if err != nil {
 					return nil, fmt.Errorf("update asset_document_link %v: %w", item.PK, err)
+				}
+				matched, err := execResult.RowsAffected()
+				if err != nil {
+					return nil, fmt.Errorf("update asset_document_link %v rows affected: %w", item.PK, err)
+				}
+				if matched > 0 {
+					writtenItems = append(writtenItems, item)
 				}
 				allPKs = append(allPKs, item.PK)
 			}
 		}
 
-		m.AffectedPKs = toAnySlice(allPKs)
+		affectedPKs := make([]any, len(writtenItems))
+		for i, item := range writtenItems {
+			affectedPKs[i] = item.PK
+		}
+		m.AffectedPKs = affectedPKs
+		// The published input is narrowed to the written items, so it stays
+		// index-aligned with m.AffectedPKs: each event carries the input that
+		// wrote its row.
+		m.Input = writtenItems
 
 		// Empty FieldOptions — skip fetch
 		if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
@@ -5677,11 +5717,11 @@ func (c *assetClient) Update(ctx context.Context, id int64, input *UpdateAssetIn
 		if err != nil {
 			return nil, fmt.Errorf("update asset: %w", err)
 		}
-		count, err := execResult.RowsAffected()
+		matched, err := execResult.RowsAffected()
 		if err != nil {
 			return nil, fmt.Errorf("update asset rows affected: %w", err)
 		}
-		if count == 0 {
+		if matched == 0 {
 			return nil, ErrNotFound
 		}
 		m.AffectedPKs = []any{id}
@@ -5739,6 +5779,11 @@ func (c *assetClient) UpdateMany(ctx context.Context, items []UpdateAssetItem, o
 			return []*Asset{}, nil
 		}
 		var allIDs []int64
+		// The items whose UPDATE matched a row. Only these record an affected
+		// key: an item whose key matches no row, or that sets no field, wrote
+		// nothing, so no cache entry is invalidated and no event is published
+		// for it.
+		var writtenItems []UpdateAssetItem
 		for start := 0; start < len(items); start += c.batchSize {
 			end := min(start+c.batchSize, len(items))
 			batch := items[start:end]
@@ -5763,15 +5808,30 @@ func (c *assetClient) UpdateMany(ctx context.Context, items []UpdateAssetItem, o
 					Conditions: []sql.Condition{sql.Where(c.dialect.QuoteIdentifier("id")).Eq(item.ID)},
 				})
 
-				_, err := conn.Exec(ctx, query, args...)
+				execResult, err := conn.Exec(ctx, query, args...)
 				if err != nil {
 					return nil, fmt.Errorf("update asset %v: %w", item.ID, err)
+				}
+				matched, err := execResult.RowsAffected()
+				if err != nil {
+					return nil, fmt.Errorf("update asset %v rows affected: %w", item.ID, err)
+				}
+				if matched > 0 {
+					writtenItems = append(writtenItems, item)
 				}
 				allIDs = append(allIDs, item.ID)
 			}
 		}
 
-		m.AffectedPKs = toAnySlice(allIDs)
+		affectedPKs := make([]any, len(writtenItems))
+		for i, item := range writtenItems {
+			affectedPKs[i] = item.ID
+		}
+		m.AffectedPKs = affectedPKs
+		// The published input is narrowed to the written items, so it stays
+		// index-aligned with m.AffectedPKs: each event carries the input that
+		// wrote its row.
+		m.Input = writtenItems
 
 		// Empty FieldOptions — skip fetch
 		if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
@@ -9189,11 +9249,11 @@ func (c *categoryClient) Update(ctx context.Context, id int32, input *UpdateCate
 		if err != nil {
 			return nil, fmt.Errorf("update category: %w", err)
 		}
-		count, err := execResult.RowsAffected()
+		matched, err := execResult.RowsAffected()
 		if err != nil {
 			return nil, fmt.Errorf("update category rows affected: %w", err)
 		}
-		if count == 0 {
+		if matched == 0 {
 			return nil, ErrNotFound
 		}
 		m.AffectedPKs = []any{id}
@@ -9251,6 +9311,11 @@ func (c *categoryClient) UpdateMany(ctx context.Context, items []UpdateCategoryI
 			return []*Category{}, nil
 		}
 		var allIDs []int32
+		// The items whose UPDATE matched a row. Only these record an affected
+		// key: an item whose key matches no row, or that sets no field, wrote
+		// nothing, so no cache entry is invalidated and no event is published
+		// for it.
+		var writtenItems []UpdateCategoryItem
 		for start := 0; start < len(items); start += c.batchSize {
 			end := min(start+c.batchSize, len(items))
 			batch := items[start:end]
@@ -9275,15 +9340,30 @@ func (c *categoryClient) UpdateMany(ctx context.Context, items []UpdateCategoryI
 					Conditions: []sql.Condition{sql.Where(c.dialect.QuoteIdentifier("id")).Eq(item.ID)},
 				})
 
-				_, err := conn.Exec(ctx, query, args...)
+				execResult, err := conn.Exec(ctx, query, args...)
 				if err != nil {
 					return nil, fmt.Errorf("update category %v: %w", item.ID, err)
+				}
+				matched, err := execResult.RowsAffected()
+				if err != nil {
+					return nil, fmt.Errorf("update category %v rows affected: %w", item.ID, err)
+				}
+				if matched > 0 {
+					writtenItems = append(writtenItems, item)
 				}
 				allIDs = append(allIDs, item.ID)
 			}
 		}
 
-		m.AffectedPKs = toAnySlice(allIDs)
+		affectedPKs := make([]any, len(writtenItems))
+		for i, item := range writtenItems {
+			affectedPKs[i] = item.ID
+		}
+		m.AffectedPKs = affectedPKs
+		// The published input is narrowed to the written items, so it stays
+		// index-aligned with m.AffectedPKs: each event carries the input that
+		// wrote its row.
+		m.Input = writtenItems
 
 		// Empty FieldOptions — skip fetch
 		if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
@@ -11663,11 +11743,11 @@ func (c *defaultOnlyRowClient) Update(ctx context.Context, id int64, input *Upda
 		if err != nil {
 			return nil, fmt.Errorf("update default_only_row: %w", err)
 		}
-		count, err := execResult.RowsAffected()
+		matched, err := execResult.RowsAffected()
 		if err != nil {
 			return nil, fmt.Errorf("update default_only_row rows affected: %w", err)
 		}
-		if count == 0 {
+		if matched == 0 {
 			return nil, ErrNotFound
 		}
 		m.AffectedPKs = []any{id}
@@ -11725,6 +11805,11 @@ func (c *defaultOnlyRowClient) UpdateMany(ctx context.Context, items []UpdateDef
 			return []*DefaultOnlyRow{}, nil
 		}
 		var allIDs []int64
+		// The items whose UPDATE matched a row. Only these record an affected
+		// key: an item whose key matches no row, or that sets no field, wrote
+		// nothing, so no cache entry is invalidated and no event is published
+		// for it.
+		var writtenItems []UpdateDefaultOnlyRowItem
 		for start := 0; start < len(items); start += c.batchSize {
 			end := min(start+c.batchSize, len(items))
 			batch := items[start:end]
@@ -11752,15 +11837,30 @@ func (c *defaultOnlyRowClient) UpdateMany(ctx context.Context, items []UpdateDef
 					Conditions: []sql.Condition{sql.Where(c.dialect.QuoteIdentifier("id")).Eq(item.ID)},
 				})
 
-				_, err := conn.Exec(ctx, query, args...)
+				execResult, err := conn.Exec(ctx, query, args...)
 				if err != nil {
 					return nil, fmt.Errorf("update default_only_row %v: %w", item.ID, err)
+				}
+				matched, err := execResult.RowsAffected()
+				if err != nil {
+					return nil, fmt.Errorf("update default_only_row %v rows affected: %w", item.ID, err)
+				}
+				if matched > 0 {
+					writtenItems = append(writtenItems, item)
 				}
 				allIDs = append(allIDs, item.ID)
 			}
 		}
 
-		m.AffectedPKs = toAnySlice(allIDs)
+		affectedPKs := make([]any, len(writtenItems))
+		for i, item := range writtenItems {
+			affectedPKs[i] = item.ID
+		}
+		m.AffectedPKs = affectedPKs
+		// The published input is narrowed to the written items, so it stays
+		// index-aligned with m.AffectedPKs: each event carries the input that
+		// wrote its row.
+		m.Input = writtenItems
 
 		// Empty FieldOptions — skip fetch
 		if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
@@ -13979,11 +14079,11 @@ func (c *documentClient) Update(ctx context.Context, id int64, input *UpdateDocu
 		if err != nil {
 			return nil, fmt.Errorf("update document: %w", err)
 		}
-		count, err := execResult.RowsAffected()
+		matched, err := execResult.RowsAffected()
 		if err != nil {
 			return nil, fmt.Errorf("update document rows affected: %w", err)
 		}
-		if count == 0 {
+		if matched == 0 {
 			return nil, ErrNotFound
 		}
 		m.AffectedPKs = []any{id}
@@ -14041,6 +14141,11 @@ func (c *documentClient) UpdateMany(ctx context.Context, items []UpdateDocumentI
 			return []*Document{}, nil
 		}
 		var allIDs []int64
+		// The items whose UPDATE matched a row. Only these record an affected
+		// key: an item whose key matches no row, or that sets no field, wrote
+		// nothing, so no cache entry is invalidated and no event is published
+		// for it.
+		var writtenItems []UpdateDocumentItem
 		for start := 0; start < len(items); start += c.batchSize {
 			end := min(start+c.batchSize, len(items))
 			batch := items[start:end]
@@ -14071,15 +14176,30 @@ func (c *documentClient) UpdateMany(ctx context.Context, items []UpdateDocumentI
 					Conditions: []sql.Condition{sql.Where(c.dialect.QuoteIdentifier("id")).Eq(item.ID)},
 				})
 
-				_, err := conn.Exec(ctx, query, args...)
+				execResult, err := conn.Exec(ctx, query, args...)
 				if err != nil {
 					return nil, fmt.Errorf("update document %v: %w", item.ID, err)
+				}
+				matched, err := execResult.RowsAffected()
+				if err != nil {
+					return nil, fmt.Errorf("update document %v rows affected: %w", item.ID, err)
+				}
+				if matched > 0 {
+					writtenItems = append(writtenItems, item)
 				}
 				allIDs = append(allIDs, item.ID)
 			}
 		}
 
-		m.AffectedPKs = toAnySlice(allIDs)
+		affectedPKs := make([]any, len(writtenItems))
+		for i, item := range writtenItems {
+			affectedPKs[i] = item.ID
+		}
+		m.AffectedPKs = affectedPKs
+		// The published input is narrowed to the written items, so it stays
+		// index-aligned with m.AffectedPKs: each event carries the input that
+		// wrote its row.
+		m.Input = writtenItems
 
 		// Empty FieldOptions — skip fetch
 		if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
@@ -16560,11 +16680,11 @@ func (c *keyOnlyRowClient) Update(ctx context.Context, id int64, input *UpdateKe
 		if err != nil {
 			return nil, fmt.Errorf("update key_only_row: %w", err)
 		}
-		count, err := execResult.RowsAffected()
+		matched, err := execResult.RowsAffected()
 		if err != nil {
 			return nil, fmt.Errorf("update key_only_row rows affected: %w", err)
 		}
-		if count == 0 {
+		if matched == 0 {
 			return nil, ErrNotFound
 		}
 		m.AffectedPKs = []any{id}
@@ -16622,6 +16742,11 @@ func (c *keyOnlyRowClient) UpdateMany(ctx context.Context, items []UpdateKeyOnly
 			return []*KeyOnlyRow{}, nil
 		}
 		var allIDs []int64
+		// The items whose UPDATE matched a row. Only these record an affected
+		// key: an item whose key matches no row, or that sets no field, wrote
+		// nothing, so no cache entry is invalidated and no event is published
+		// for it.
+		var writtenItems []UpdateKeyOnlyRowItem
 		for start := 0; start < len(items); start += c.batchSize {
 			end := min(start+c.batchSize, len(items))
 			batch := items[start:end]
@@ -16640,15 +16765,30 @@ func (c *keyOnlyRowClient) UpdateMany(ctx context.Context, items []UpdateKeyOnly
 					Conditions: []sql.Condition{sql.Where(c.dialect.QuoteIdentifier("id")).Eq(item.ID)},
 				})
 
-				_, err := conn.Exec(ctx, query, args...)
+				execResult, err := conn.Exec(ctx, query, args...)
 				if err != nil {
 					return nil, fmt.Errorf("update key_only_row %v: %w", item.ID, err)
+				}
+				matched, err := execResult.RowsAffected()
+				if err != nil {
+					return nil, fmt.Errorf("update key_only_row %v rows affected: %w", item.ID, err)
+				}
+				if matched > 0 {
+					writtenItems = append(writtenItems, item)
 				}
 				allIDs = append(allIDs, item.ID)
 			}
 		}
 
-		m.AffectedPKs = toAnySlice(allIDs)
+		affectedPKs := make([]any, len(writtenItems))
+		for i, item := range writtenItems {
+			affectedPKs[i] = item.ID
+		}
+		m.AffectedPKs = affectedPKs
+		// The published input is narrowed to the written items, so it stays
+		// index-aligned with m.AffectedPKs: each event carries the input that
+		// wrote its row.
+		m.Input = writtenItems
 
 		// Empty FieldOptions — skip fetch
 		if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
@@ -18489,11 +18629,11 @@ func (c *orderItemClient) Update(ctx context.Context, id int64, input *UpdateOrd
 		if err != nil {
 			return nil, fmt.Errorf("update order_item: %w", err)
 		}
-		count, err := execResult.RowsAffected()
+		matched, err := execResult.RowsAffected()
 		if err != nil {
 			return nil, fmt.Errorf("update order_item rows affected: %w", err)
 		}
-		if count == 0 {
+		if matched == 0 {
 			return nil, ErrNotFound
 		}
 		m.AffectedPKs = []any{id}
@@ -18551,6 +18691,11 @@ func (c *orderItemClient) UpdateMany(ctx context.Context, items []UpdateOrderIte
 			return []*OrderItem{}, nil
 		}
 		var allIDs []int64
+		// The items whose UPDATE matched a row. Only these record an affected
+		// key: an item whose key matches no row, or that sets no field, wrote
+		// nothing, so no cache entry is invalidated and no event is published
+		// for it.
+		var writtenItems []UpdateOrderItemItem
 		for start := 0; start < len(items); start += c.batchSize {
 			end := min(start+c.batchSize, len(items))
 			batch := items[start:end]
@@ -18581,15 +18726,30 @@ func (c *orderItemClient) UpdateMany(ctx context.Context, items []UpdateOrderIte
 					Conditions: []sql.Condition{sql.Where(c.dialect.QuoteIdentifier("id")).Eq(item.ID)},
 				})
 
-				_, err := conn.Exec(ctx, query, args...)
+				execResult, err := conn.Exec(ctx, query, args...)
 				if err != nil {
 					return nil, fmt.Errorf("update order_item %v: %w", item.ID, err)
+				}
+				matched, err := execResult.RowsAffected()
+				if err != nil {
+					return nil, fmt.Errorf("update order_item %v rows affected: %w", item.ID, err)
+				}
+				if matched > 0 {
+					writtenItems = append(writtenItems, item)
 				}
 				allIDs = append(allIDs, item.ID)
 			}
 		}
 
-		m.AffectedPKs = toAnySlice(allIDs)
+		affectedPKs := make([]any, len(writtenItems))
+		for i, item := range writtenItems {
+			affectedPKs[i] = item.ID
+		}
+		m.AffectedPKs = affectedPKs
+		// The published input is narrowed to the written items, so it stays
+		// index-aligned with m.AffectedPKs: each event carries the input that
+		// wrote its row.
+		m.Input = writtenItems
 
 		// Empty FieldOptions — skip fetch
 		if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
@@ -20775,8 +20935,15 @@ func (c *orderClient) Update(ctx context.Context, id int64, input *UpdateOrderIn
 		if err != nil {
 			return nil, fmt.Errorf("update order: %w", err)
 		}
-		_ = execResult
-		m.AffectedPKs = []any{id}
+		matched, err := execResult.RowsAffected()
+		if err != nil {
+			return nil, fmt.Errorf("update order rows affected: %w", err)
+		}
+		// A key that matched no row wrote nothing: it records no affected
+		// key, so no cache entry is invalidated and no event is published.
+		if matched > 0 {
+			m.AffectedPKs = []any{id}
+		}
 
 		// Empty FieldOptions — caller doesn't need the result
 		if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
@@ -20831,6 +20998,11 @@ func (c *orderClient) UpdateMany(ctx context.Context, items []UpdateOrderItem, o
 			return []*Order{}, nil
 		}
 		var allIDs []int64
+		// The items whose UPDATE matched a row. Only these record an affected
+		// key: an item whose key matches no row, or that sets no field, wrote
+		// nothing, so no cache entry is invalidated and no event is published
+		// for it.
+		var writtenItems []UpdateOrderItem
 		for start := 0; start < len(items); start += c.batchSize {
 			end := min(start+c.batchSize, len(items))
 			batch := items[start:end]
@@ -20864,15 +21036,30 @@ func (c *orderClient) UpdateMany(ctx context.Context, items []UpdateOrderItem, o
 					Conditions: []sql.Condition{sql.Where(c.dialect.QuoteIdentifier("id")).Eq(item.ID)},
 				})
 
-				_, err := conn.Exec(ctx, query, args...)
+				execResult, err := conn.Exec(ctx, query, args...)
 				if err != nil {
 					return nil, fmt.Errorf("update order %v: %w", item.ID, err)
+				}
+				matched, err := execResult.RowsAffected()
+				if err != nil {
+					return nil, fmt.Errorf("update order %v rows affected: %w", item.ID, err)
+				}
+				if matched > 0 {
+					writtenItems = append(writtenItems, item)
 				}
 				allIDs = append(allIDs, item.ID)
 			}
 		}
 
-		m.AffectedPKs = toAnySlice(allIDs)
+		affectedPKs := make([]any, len(writtenItems))
+		for i, item := range writtenItems {
+			affectedPKs[i] = item.ID
+		}
+		m.AffectedPKs = affectedPKs
+		// The published input is narrowed to the written items, so it stays
+		// index-aligned with m.AffectedPKs: each event carries the input that
+		// wrote its row.
+		m.Input = writtenItems
 
 		// Empty FieldOptions — skip fetch
 		if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
@@ -23259,11 +23446,11 @@ func (c *productTagLabelClient) Update(ctx context.Context, pk ProductTagLabelPK
 		if err != nil {
 			return nil, fmt.Errorf("update product_tag_label: %w", err)
 		}
-		count, err := execResult.RowsAffected()
+		matched, err := execResult.RowsAffected()
 		if err != nil {
 			return nil, fmt.Errorf("update product_tag_label rows affected: %w", err)
 		}
-		if count == 0 {
+		if matched == 0 {
 			return nil, ErrNotFound
 		}
 		m.AffectedPKs = []any{pk}
@@ -23321,6 +23508,11 @@ func (c *productTagLabelClient) UpdateMany(ctx context.Context, items []UpdatePr
 			return []*ProductTagLabel{}, nil
 		}
 		var allPKs []ProductTagLabelPK
+		// The items whose UPDATE matched a row. Only these record an affected
+		// key: an item whose key matches no row, or that sets no field, wrote
+		// nothing, so no cache entry is invalidated and no event is published
+		// for it.
+		var writtenItems []UpdateProductTagLabelItem
 		for start := 0; start < len(items); start += c.batchSize {
 			end := min(start+c.batchSize, len(items))
 			batch := items[start:end]
@@ -23344,15 +23536,30 @@ func (c *productTagLabelClient) UpdateMany(ctx context.Context, items []UpdatePr
 						[]any{item.PK.ProductID, item.PK.TagName, item.PK.Label}),
 				})
 
-				_, err := conn.Exec(ctx, query, args...)
+				execResult, err := conn.Exec(ctx, query, args...)
 				if err != nil {
 					return nil, fmt.Errorf("update product_tag_label %v: %w", item.PK, err)
+				}
+				matched, err := execResult.RowsAffected()
+				if err != nil {
+					return nil, fmt.Errorf("update product_tag_label %v rows affected: %w", item.PK, err)
+				}
+				if matched > 0 {
+					writtenItems = append(writtenItems, item)
 				}
 				allPKs = append(allPKs, item.PK)
 			}
 		}
 
-		m.AffectedPKs = toAnySlice(allPKs)
+		affectedPKs := make([]any, len(writtenItems))
+		for i, item := range writtenItems {
+			affectedPKs[i] = item.PK
+		}
+		m.AffectedPKs = affectedPKs
+		// The published input is narrowed to the written items, so it stays
+		// index-aligned with m.AffectedPKs: each event carries the input that
+		// wrote its row.
+		m.Input = writtenItems
 
 		// Empty FieldOptions — skip fetch
 		if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
@@ -25455,11 +25662,11 @@ func (c *productClient) Update(ctx context.Context, id int64, input *UpdateProdu
 		if err != nil {
 			return nil, fmt.Errorf("update product: %w", err)
 		}
-		count, err := execResult.RowsAffected()
+		matched, err := execResult.RowsAffected()
 		if err != nil {
 			return nil, fmt.Errorf("update product rows affected: %w", err)
 		}
-		if count == 0 {
+		if matched == 0 {
 			return nil, ErrNotFound
 		}
 		m.AffectedPKs = []any{id}
@@ -25517,6 +25724,11 @@ func (c *productClient) UpdateMany(ctx context.Context, items []UpdateProductIte
 			return []*Product{}, nil
 		}
 		var allIDs []int64
+		// The items whose UPDATE matched a row. Only these record an affected
+		// key: an item whose key matches no row, or that sets no field, wrote
+		// nothing, so no cache entry is invalidated and no event is published
+		// for it.
+		var writtenItems []UpdateProductItem
 		for start := 0; start < len(items); start += c.batchSize {
 			end := min(start+c.batchSize, len(items))
 			batch := items[start:end]
@@ -25559,15 +25771,30 @@ func (c *productClient) UpdateMany(ctx context.Context, items []UpdateProductIte
 					Conditions: []sql.Condition{sql.Where(c.dialect.QuoteIdentifier("id")).Eq(item.ID)},
 				})
 
-				_, err := conn.Exec(ctx, query, args...)
+				execResult, err := conn.Exec(ctx, query, args...)
 				if err != nil {
 					return nil, fmt.Errorf("update product %v: %w", item.ID, err)
+				}
+				matched, err := execResult.RowsAffected()
+				if err != nil {
+					return nil, fmt.Errorf("update product %v rows affected: %w", item.ID, err)
+				}
+				if matched > 0 {
+					writtenItems = append(writtenItems, item)
 				}
 				allIDs = append(allIDs, item.ID)
 			}
 		}
 
-		m.AffectedPKs = toAnySlice(allIDs)
+		affectedPKs := make([]any, len(writtenItems))
+		for i, item := range writtenItems {
+			affectedPKs[i] = item.ID
+		}
+		m.AffectedPKs = affectedPKs
+		// The published input is narrowed to the written items, so it stays
+		// index-aligned with m.AffectedPKs: each event carries the input that
+		// wrote its row.
+		m.Input = writtenItems
 
 		// Empty FieldOptions — skip fetch
 		if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
@@ -28249,11 +28476,11 @@ func (c *profileClient) Update(ctx context.Context, id int64, input *UpdateProfi
 		if err != nil {
 			return nil, fmt.Errorf("update profile: %w", err)
 		}
-		count, err := execResult.RowsAffected()
+		matched, err := execResult.RowsAffected()
 		if err != nil {
 			return nil, fmt.Errorf("update profile rows affected: %w", err)
 		}
-		if count == 0 {
+		if matched == 0 {
 			return nil, ErrNotFound
 		}
 		m.AffectedPKs = []any{id}
@@ -28311,6 +28538,11 @@ func (c *profileClient) UpdateMany(ctx context.Context, items []UpdateProfileIte
 			return []*Profile{}, nil
 		}
 		var allIDs []int64
+		// The items whose UPDATE matched a row. Only these record an affected
+		// key: an item whose key matches no row, or that sets no field, wrote
+		// nothing, so no cache entry is invalidated and no event is published
+		// for it.
+		var writtenItems []UpdateProfileItem
 		for start := 0; start < len(items); start += c.batchSize {
 			end := min(start+c.batchSize, len(items))
 			batch := items[start:end]
@@ -28344,15 +28576,30 @@ func (c *profileClient) UpdateMany(ctx context.Context, items []UpdateProfileIte
 					Conditions: []sql.Condition{sql.Where(c.dialect.QuoteIdentifier("id")).Eq(item.ID)},
 				})
 
-				_, err := conn.Exec(ctx, query, args...)
+				execResult, err := conn.Exec(ctx, query, args...)
 				if err != nil {
 					return nil, fmt.Errorf("update profile %v: %w", item.ID, err)
+				}
+				matched, err := execResult.RowsAffected()
+				if err != nil {
+					return nil, fmt.Errorf("update profile %v rows affected: %w", item.ID, err)
+				}
+				if matched > 0 {
+					writtenItems = append(writtenItems, item)
 				}
 				allIDs = append(allIDs, item.ID)
 			}
 		}
 
-		m.AffectedPKs = toAnySlice(allIDs)
+		affectedPKs := make([]any, len(writtenItems))
+		for i, item := range writtenItems {
+			affectedPKs[i] = item.ID
+		}
+		m.AffectedPKs = affectedPKs
+		// The published input is narrowed to the written items, so it stays
+		// index-aligned with m.AffectedPKs: each event carries the input that
+		// wrote its row.
+		m.Input = writtenItems
 
 		// Empty FieldOptions — skip fetch
 		if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
@@ -30726,11 +30973,11 @@ func (c *sluggedRowClient) Update(ctx context.Context, id int64, input *UpdateSl
 		if err != nil {
 			return nil, fmt.Errorf("update slugged_row: %w", err)
 		}
-		count, err := execResult.RowsAffected()
+		matched, err := execResult.RowsAffected()
 		if err != nil {
 			return nil, fmt.Errorf("update slugged_row rows affected: %w", err)
 		}
-		if count == 0 {
+		if matched == 0 {
 			return nil, ErrNotFound
 		}
 		m.AffectedPKs = []any{id}
@@ -30788,6 +31035,11 @@ func (c *sluggedRowClient) UpdateMany(ctx context.Context, items []UpdateSlugged
 			return []*SluggedRow{}, nil
 		}
 		var allIDs []int64
+		// The items whose UPDATE matched a row. Only these record an affected
+		// key: an item whose key matches no row, or that sets no field, wrote
+		// nothing, so no cache entry is invalidated and no event is published
+		// for it.
+		var writtenItems []UpdateSluggedRowItem
 		for start := 0; start < len(items); start += c.batchSize {
 			end := min(start+c.batchSize, len(items))
 			batch := items[start:end]
@@ -30812,15 +31064,30 @@ func (c *sluggedRowClient) UpdateMany(ctx context.Context, items []UpdateSlugged
 					Conditions: []sql.Condition{sql.Where(c.dialect.QuoteIdentifier("id")).Eq(item.ID)},
 				})
 
-				_, err := conn.Exec(ctx, query, args...)
+				execResult, err := conn.Exec(ctx, query, args...)
 				if err != nil {
 					return nil, fmt.Errorf("update slugged_row %v: %w", item.ID, err)
+				}
+				matched, err := execResult.RowsAffected()
+				if err != nil {
+					return nil, fmt.Errorf("update slugged_row %v rows affected: %w", item.ID, err)
+				}
+				if matched > 0 {
+					writtenItems = append(writtenItems, item)
 				}
 				allIDs = append(allIDs, item.ID)
 			}
 		}
 
-		m.AffectedPKs = toAnySlice(allIDs)
+		affectedPKs := make([]any, len(writtenItems))
+		for i, item := range writtenItems {
+			affectedPKs[i] = item.ID
+		}
+		m.AffectedPKs = affectedPKs
+		// The published input is narrowed to the written items, so it stays
+		// index-aligned with m.AffectedPKs: each event carries the input that
+		// wrote its row.
+		m.Input = writtenItems
 
 		// Empty FieldOptions — skip fetch
 		if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
@@ -32778,11 +33045,11 @@ func (c *tagClient) Update(ctx context.Context, id int32, input *UpdateTagInput,
 		if err != nil {
 			return nil, fmt.Errorf("update tag: %w", err)
 		}
-		count, err := execResult.RowsAffected()
+		matched, err := execResult.RowsAffected()
 		if err != nil {
 			return nil, fmt.Errorf("update tag rows affected: %w", err)
 		}
-		if count == 0 {
+		if matched == 0 {
 			return nil, ErrNotFound
 		}
 		m.AffectedPKs = []any{id}
@@ -32840,6 +33107,11 @@ func (c *tagClient) UpdateMany(ctx context.Context, items []UpdateTagItem, opts 
 			return []*Tag{}, nil
 		}
 		var allIDs []int32
+		// The items whose UPDATE matched a row. Only these record an affected
+		// key: an item whose key matches no row, or that sets no field, wrote
+		// nothing, so no cache entry is invalidated and no event is published
+		// for it.
+		var writtenItems []UpdateTagItem
 		for start := 0; start < len(items); start += c.batchSize {
 			end := min(start+c.batchSize, len(items))
 			batch := items[start:end]
@@ -32864,15 +33136,30 @@ func (c *tagClient) UpdateMany(ctx context.Context, items []UpdateTagItem, opts 
 					Conditions: []sql.Condition{sql.Where(c.dialect.QuoteIdentifier("id")).Eq(item.ID)},
 				})
 
-				_, err := conn.Exec(ctx, query, args...)
+				execResult, err := conn.Exec(ctx, query, args...)
 				if err != nil {
 					return nil, fmt.Errorf("update tag %v: %w", item.ID, err)
+				}
+				matched, err := execResult.RowsAffected()
+				if err != nil {
+					return nil, fmt.Errorf("update tag %v rows affected: %w", item.ID, err)
+				}
+				if matched > 0 {
+					writtenItems = append(writtenItems, item)
 				}
 				allIDs = append(allIDs, item.ID)
 			}
 		}
 
-		m.AffectedPKs = toAnySlice(allIDs)
+		affectedPKs := make([]any, len(writtenItems))
+		for i, item := range writtenItems {
+			affectedPKs[i] = item.ID
+		}
+		m.AffectedPKs = affectedPKs
+		// The published input is narrowed to the written items, so it stays
+		// index-aligned with m.AffectedPKs: each event carries the input that
+		// wrote its row.
+		m.Input = writtenItems
 
 		// Empty FieldOptions — skip fetch
 		if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
@@ -35175,11 +35462,11 @@ func (c *userCategoryClient) Update(ctx context.Context, pk UserCategoryPK, inpu
 		if err != nil {
 			return nil, fmt.Errorf("update user_category: %w", err)
 		}
-		count, err := execResult.RowsAffected()
+		matched, err := execResult.RowsAffected()
 		if err != nil {
 			return nil, fmt.Errorf("update user_category rows affected: %w", err)
 		}
-		if count == 0 {
+		if matched == 0 {
 			return nil, ErrNotFound
 		}
 		m.AffectedPKs = []any{pk}
@@ -35237,6 +35524,11 @@ func (c *userCategoryClient) UpdateMany(ctx context.Context, items []UpdateUserC
 			return []*UserCategory{}, nil
 		}
 		var allPKs []UserCategoryPK
+		// The items whose UPDATE matched a row. Only these record an affected
+		// key: an item whose key matches no row, or that sets no field, wrote
+		// nothing, so no cache entry is invalidated and no event is published
+		// for it.
+		var writtenItems []UpdateUserCategoryItem
 		for start := 0; start < len(items); start += c.batchSize {
 			end := min(start+c.batchSize, len(items))
 			batch := items[start:end]
@@ -35260,15 +35552,30 @@ func (c *userCategoryClient) UpdateMany(ctx context.Context, items []UpdateUserC
 						[]any{item.PK.UserID, item.PK.CategoryID}),
 				})
 
-				_, err := conn.Exec(ctx, query, args...)
+				execResult, err := conn.Exec(ctx, query, args...)
 				if err != nil {
 					return nil, fmt.Errorf("update user_category %v: %w", item.PK, err)
+				}
+				matched, err := execResult.RowsAffected()
+				if err != nil {
+					return nil, fmt.Errorf("update user_category %v rows affected: %w", item.PK, err)
+				}
+				if matched > 0 {
+					writtenItems = append(writtenItems, item)
 				}
 				allPKs = append(allPKs, item.PK)
 			}
 		}
 
-		m.AffectedPKs = toAnySlice(allPKs)
+		affectedPKs := make([]any, len(writtenItems))
+		for i, item := range writtenItems {
+			affectedPKs[i] = item.PK
+		}
+		m.AffectedPKs = affectedPKs
+		// The published input is narrowed to the written items, so it stays
+		// index-aligned with m.AffectedPKs: each event carries the input that
+		// wrote its row.
+		m.Input = writtenItems
 
 		// Empty FieldOptions — skip fetch
 		if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
@@ -37277,11 +37584,11 @@ func (c *userEventClient) Update(ctx context.Context, id int64, input *UpdateUse
 		if err != nil {
 			return nil, fmt.Errorf("update user_event: %w", err)
 		}
-		count, err := execResult.RowsAffected()
+		matched, err := execResult.RowsAffected()
 		if err != nil {
 			return nil, fmt.Errorf("update user_event rows affected: %w", err)
 		}
-		if count == 0 {
+		if matched == 0 {
 			return nil, ErrNotFound
 		}
 		m.AffectedPKs = []any{id}
@@ -37339,6 +37646,11 @@ func (c *userEventClient) UpdateMany(ctx context.Context, items []UpdateUserEven
 			return []*UserEvent{}, nil
 		}
 		var allIDs []int64
+		// The items whose UPDATE matched a row. Only these record an affected
+		// key: an item whose key matches no row, or that sets no field, wrote
+		// nothing, so no cache entry is invalidated and no event is published
+		// for it.
+		var writtenItems []UpdateUserEventItem
 		for start := 0; start < len(items); start += c.batchSize {
 			end := min(start+c.batchSize, len(items))
 			batch := items[start:end]
@@ -37363,15 +37675,30 @@ func (c *userEventClient) UpdateMany(ctx context.Context, items []UpdateUserEven
 					Conditions: []sql.Condition{sql.Where(c.dialect.QuoteIdentifier("id")).Eq(item.ID)},
 				})
 
-				_, err := conn.Exec(ctx, query, args...)
+				execResult, err := conn.Exec(ctx, query, args...)
 				if err != nil {
 					return nil, fmt.Errorf("update user_event %v: %w", item.ID, err)
+				}
+				matched, err := execResult.RowsAffected()
+				if err != nil {
+					return nil, fmt.Errorf("update user_event %v rows affected: %w", item.ID, err)
+				}
+				if matched > 0 {
+					writtenItems = append(writtenItems, item)
 				}
 				allIDs = append(allIDs, item.ID)
 			}
 		}
 
-		m.AffectedPKs = toAnySlice(allIDs)
+		affectedPKs := make([]any, len(writtenItems))
+		for i, item := range writtenItems {
+			affectedPKs[i] = item.ID
+		}
+		m.AffectedPKs = affectedPKs
+		// The published input is narrowed to the written items, so it stays
+		// index-aligned with m.AffectedPKs: each event carries the input that
+		// wrote its row.
+		m.Input = writtenItems
 
 		// Empty FieldOptions — skip fetch
 		if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
@@ -39975,11 +40302,11 @@ func (c *userClient) Update(ctx context.Context, id int64, input *UpdateUserInpu
 		if err != nil {
 			return nil, fmt.Errorf("update user: %w", err)
 		}
-		count, err := execResult.RowsAffected()
+		matched, err := execResult.RowsAffected()
 		if err != nil {
 			return nil, fmt.Errorf("update user rows affected: %w", err)
 		}
-		if count == 0 {
+		if matched == 0 {
 			return nil, ErrNotFound
 		}
 		m.AffectedPKs = []any{id}
@@ -40037,6 +40364,11 @@ func (c *userClient) UpdateMany(ctx context.Context, items []UpdateUserItem, opt
 			return []*User{}, nil
 		}
 		var allIDs []int64
+		// The items whose UPDATE matched a row. Only these record an affected
+		// key: an item whose key matches no row, or that sets no field, wrote
+		// nothing, so no cache entry is invalidated and no event is published
+		// for it.
+		var writtenItems []UpdateUserItem
 		for start := 0; start < len(items); start += c.batchSize {
 			end := min(start+c.batchSize, len(items))
 			batch := items[start:end]
@@ -40120,15 +40452,30 @@ func (c *userClient) UpdateMany(ctx context.Context, items []UpdateUserItem, opt
 					Conditions: []sql.Condition{sql.Where(c.dialect.QuoteIdentifier("id")).Eq(item.ID)},
 				})
 
-				_, err := conn.Exec(ctx, query, args...)
+				execResult, err := conn.Exec(ctx, query, args...)
 				if err != nil {
 					return nil, fmt.Errorf("update user %v: %w", item.ID, err)
+				}
+				matched, err := execResult.RowsAffected()
+				if err != nil {
+					return nil, fmt.Errorf("update user %v rows affected: %w", item.ID, err)
+				}
+				if matched > 0 {
+					writtenItems = append(writtenItems, item)
 				}
 				allIDs = append(allIDs, item.ID)
 			}
 		}
 
-		m.AffectedPKs = toAnySlice(allIDs)
+		affectedPKs := make([]any, len(writtenItems))
+		for i, item := range writtenItems {
+			affectedPKs[i] = item.ID
+		}
+		m.AffectedPKs = affectedPKs
+		// The published input is narrowed to the written items, so it stays
+		// index-aligned with m.AffectedPKs: each event carries the input that
+		// wrote its row.
+		m.Input = writtenItems
 
 		// Empty FieldOptions — skip fetch
 		if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
@@ -44210,11 +44557,11 @@ func (c *warehouseClient) Update(ctx context.Context, id int64, input *UpdateWar
 		if err != nil {
 			return nil, fmt.Errorf("update warehouse: %w", err)
 		}
-		count, err := execResult.RowsAffected()
+		matched, err := execResult.RowsAffected()
 		if err != nil {
 			return nil, fmt.Errorf("update warehouse rows affected: %w", err)
 		}
-		if count == 0 {
+		if matched == 0 {
 			return nil, ErrNotFound
 		}
 		m.AffectedPKs = []any{id}
@@ -44272,6 +44619,11 @@ func (c *warehouseClient) UpdateMany(ctx context.Context, items []UpdateWarehous
 			return []*Warehouse{}, nil
 		}
 		var allIDs []int64
+		// The items whose UPDATE matched a row. Only these record an affected
+		// key: an item whose key matches no row, or that sets no field, wrote
+		// nothing, so no cache entry is invalidated and no event is published
+		// for it.
+		var writtenItems []UpdateWarehouseItem
 		for start := 0; start < len(items); start += c.batchSize {
 			end := min(start+c.batchSize, len(items))
 			batch := items[start:end]
@@ -44308,15 +44660,30 @@ func (c *warehouseClient) UpdateMany(ctx context.Context, items []UpdateWarehous
 					Conditions: []sql.Condition{sql.Where(c.dialect.QuoteIdentifier("id")).Eq(item.ID)},
 				})
 
-				_, err := conn.Exec(ctx, query, args...)
+				execResult, err := conn.Exec(ctx, query, args...)
 				if err != nil {
 					return nil, fmt.Errorf("update warehouse %v: %w", item.ID, err)
+				}
+				matched, err := execResult.RowsAffected()
+				if err != nil {
+					return nil, fmt.Errorf("update warehouse %v rows affected: %w", item.ID, err)
+				}
+				if matched > 0 {
+					writtenItems = append(writtenItems, item)
 				}
 				allIDs = append(allIDs, item.ID)
 			}
 		}
 
-		m.AffectedPKs = toAnySlice(allIDs)
+		affectedPKs := make([]any, len(writtenItems))
+		for i, item := range writtenItems {
+			affectedPKs[i] = item.ID
+		}
+		m.AffectedPKs = affectedPKs
+		// The published input is narrowed to the written items, so it stays
+		// index-aligned with m.AffectedPKs: each event carries the input that
+		// wrote its row.
+		m.Input = writtenItems
 
 		// Empty FieldOptions — skip fetch
 		if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {

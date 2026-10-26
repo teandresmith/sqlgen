@@ -724,11 +724,16 @@ func methodBody(t *testing.T, output, name string) string {
 	if start < 0 {
 		t.Fatalf("method %s not found in output:\n%s", name, output)
 	}
-	end := strings.Index(output[start:], "\n}\n")
+	rest := output[start:]
+	end := strings.Index(rest, "\n}\n")
 	if end < 0 {
-		t.Fatalf("method %s has no closing brace", name)
+		// The last declaration in the output may end without a newline.
+		if !strings.HasSuffix(rest, "\n}") {
+			t.Fatalf("method %s has no closing brace", name)
+		}
+		end = len(rest) - len("\n}")
 	}
-	return output[start : start+end]
+	return rest[:end]
 }
 
 // A by-key SoftDelete, Restore or HardDelete whose key matches no row writes

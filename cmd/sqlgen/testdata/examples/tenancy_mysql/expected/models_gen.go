@@ -1018,11 +1018,11 @@ func (c *articleClient) Update(ctx context.Context, id int64, input *UpdateArtic
 		if err != nil {
 			return nil, fmt.Errorf("update article: %w", err)
 		}
-		count, err := execResult.RowsAffected()
+		matched, err := execResult.RowsAffected()
 		if err != nil {
 			return nil, fmt.Errorf("update article rows affected: %w", err)
 		}
-		if count == 0 {
+		if matched == 0 {
 			return nil, ErrNotFound
 		}
 		m.AffectedPKs = []any{id}
@@ -1115,6 +1115,11 @@ func (c *articleClient) UpdateMany(ctx context.Context, items []UpdateArticleIte
 			}
 		}
 		var allIDs []int64
+		// The items whose UPDATE matched a row. Only these record an affected
+		// key: an item whose key matches no row, or that sets no field, wrote
+		// nothing, so no cache entry is invalidated and no event is published
+		// for it.
+		var writtenItems []UpdateArticleItem
 		// MySQL has no RETURNING — one batched pre-read captures every item's
 		// tenant before the per-item UPDATE loop.
 		tenantByPK := make(map[int64]any, len(items))
@@ -1171,20 +1176,33 @@ func (c *articleClient) UpdateMany(ctx context.Context, items []UpdateArticleIte
 					Conditions: itemConds,
 				})
 
-				_, err := conn.Exec(ctx, query, args...)
+				execResult, err := conn.Exec(ctx, query, args...)
 				if err != nil {
 					return nil, fmt.Errorf("update article %v: %w", item.ID, err)
+				}
+				matched, err := execResult.RowsAffected()
+				if err != nil {
+					return nil, fmt.Errorf("update article %v rows affected: %w", item.ID, err)
+				}
+				if matched > 0 {
+					writtenItems = append(writtenItems, item)
 				}
 				allIDs = append(allIDs, item.ID)
 			}
 		}
 
-		m.AffectedPKs = toAnySlice(allIDs)
-		affectedTenants := make([]any, len(allIDs))
-		for i, id := range allIDs {
-			affectedTenants[i] = tenantByPK[id]
+		affectedPKs := make([]any, len(writtenItems))
+		affectedTenants := make([]any, len(writtenItems))
+		for i, item := range writtenItems {
+			affectedPKs[i] = item.ID
+			affectedTenants[i] = tenantByPK[item.ID]
 		}
+		m.AffectedPKs = affectedPKs
 		m.AffectedTenants = affectedTenants
+		// The published input is narrowed to the written items, so it stays
+		// index-aligned with m.AffectedPKs: each event carries the input that
+		// wrote its row.
+		m.Input = writtenItems
 
 		// Empty FieldOptions — skip fetch
 		if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
@@ -4322,11 +4340,11 @@ func (c *documentClient) Update(ctx context.Context, id string, input *UpdateDoc
 		if err != nil {
 			return nil, fmt.Errorf("update document: %w", err)
 		}
-		count, err := execResult.RowsAffected()
+		matched, err := execResult.RowsAffected()
 		if err != nil {
 			return nil, fmt.Errorf("update document rows affected: %w", err)
 		}
-		if count == 0 {
+		if matched == 0 {
 			return nil, ErrNotFound
 		}
 		m.AffectedPKs = []any{id}
@@ -4419,6 +4437,11 @@ func (c *documentClient) UpdateMany(ctx context.Context, items []UpdateDocumentI
 			}
 		}
 		var allIDs []string
+		// The items whose UPDATE matched a row. Only these record an affected
+		// key: an item whose key matches no row, or that sets no field, wrote
+		// nothing, so no cache entry is invalidated and no event is published
+		// for it.
+		var writtenItems []UpdateDocumentItem
 		// MySQL has no RETURNING — one batched pre-read captures every item's
 		// tenant before the per-item UPDATE loop.
 		tenantByPK := make(map[string]any, len(items))
@@ -4466,20 +4489,33 @@ func (c *documentClient) UpdateMany(ctx context.Context, items []UpdateDocumentI
 					Conditions: itemConds,
 				})
 
-				_, err := conn.Exec(ctx, query, args...)
+				execResult, err := conn.Exec(ctx, query, args...)
 				if err != nil {
 					return nil, fmt.Errorf("update document %v: %w", item.DocKey, err)
+				}
+				matched, err := execResult.RowsAffected()
+				if err != nil {
+					return nil, fmt.Errorf("update document %v rows affected: %w", item.DocKey, err)
+				}
+				if matched > 0 {
+					writtenItems = append(writtenItems, item)
 				}
 				allIDs = append(allIDs, item.DocKey)
 			}
 		}
 
-		m.AffectedPKs = toAnySlice(allIDs)
-		affectedTenants := make([]any, len(allIDs))
-		for i, id := range allIDs {
-			affectedTenants[i] = tenantByPK[id]
+		affectedPKs := make([]any, len(writtenItems))
+		affectedTenants := make([]any, len(writtenItems))
+		for i, item := range writtenItems {
+			affectedPKs[i] = item.DocKey
+			affectedTenants[i] = tenantByPK[item.DocKey]
 		}
+		m.AffectedPKs = affectedPKs
 		m.AffectedTenants = affectedTenants
+		// The published input is narrowed to the written items, so it stays
+		// index-aligned with m.AffectedPKs: each event carries the input that
+		// wrote its row.
+		m.Input = writtenItems
 
 		// Empty FieldOptions — skip fetch
 		if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
@@ -6711,11 +6747,11 @@ func (c *lineItemClient) Update(ctx context.Context, pk LineItemPK, input *Updat
 		if err != nil {
 			return nil, fmt.Errorf("update line_item: %w", err)
 		}
-		count, err := execResult.RowsAffected()
+		matched, err := execResult.RowsAffected()
 		if err != nil {
 			return nil, fmt.Errorf("update line_item rows affected: %w", err)
 		}
-		if count == 0 {
+		if matched == 0 {
 			return nil, ErrNotFound
 		}
 		m.AffectedPKs = []any{pk}
@@ -6808,6 +6844,11 @@ func (c *lineItemClient) UpdateMany(ctx context.Context, items []UpdateLineItemI
 			}
 		}
 		var allPKs []LineItemPK
+		// The items whose UPDATE matched a row. Only these record an affected
+		// key: an item whose key matches no row, or that sets no field, wrote
+		// nothing, so no cache entry is invalidated and no event is published
+		// for it.
+		var writtenItems []UpdateLineItemItem
 		// MySQL has no RETURNING — one batched pre-read captures every item's
 		// tenant before the per-item UPDATE loop.
 		tenantByPK := make(map[LineItemPK]any, len(items))
@@ -6863,20 +6904,33 @@ func (c *lineItemClient) UpdateMany(ctx context.Context, items []UpdateLineItemI
 					Conditions: itemConds,
 				})
 
-				_, err := conn.Exec(ctx, query, args...)
+				execResult, err := conn.Exec(ctx, query, args...)
 				if err != nil {
 					return nil, fmt.Errorf("update line_item %v: %w", item.PK, err)
+				}
+				matched, err := execResult.RowsAffected()
+				if err != nil {
+					return nil, fmt.Errorf("update line_item %v rows affected: %w", item.PK, err)
+				}
+				if matched > 0 {
+					writtenItems = append(writtenItems, item)
 				}
 				allPKs = append(allPKs, item.PK)
 			}
 		}
 
-		m.AffectedPKs = toAnySlice(allPKs)
-		affectedTenants := make([]any, len(allPKs))
-		for i, pk := range allPKs {
-			affectedTenants[i] = tenantByPK[pk]
+		affectedPKs := make([]any, len(writtenItems))
+		affectedTenants := make([]any, len(writtenItems))
+		for i, item := range writtenItems {
+			affectedPKs[i] = item.PK
+			affectedTenants[i] = tenantByPK[item.PK]
 		}
+		m.AffectedPKs = affectedPKs
 		m.AffectedTenants = affectedTenants
+		// The published input is narrowed to the written items, so it stays
+		// index-aligned with m.AffectedPKs: each event carries the input that
+		// wrote its row.
+		m.Input = writtenItems
 
 		// Empty FieldOptions — skip fetch
 		if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {

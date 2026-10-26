@@ -170,9 +170,7 @@ func (c *{{ $structCamel }}Client) Update(ctx context.Context, {{ if .CompositeP
 			return nil, fmt.Errorf("update {{ $singular }}: %w", err)
 		}
 		var capturedTenant any
-{{- if .StrictUpdates }}
 		matched := 0
-{{- end }}
 		for rows.Next() {
 			var rowTenant {{ .Tenancy.GoType }}
 			if err := rows.Scan(&rowTenant); err != nil {
@@ -180,41 +178,41 @@ func (c *{{ $structCamel }}Client) Update(ctx context.Context, {{ if .CompositeP
 				return nil, fmt.Errorf("scan updated {{ $singular }} tenant: %w", err)
 			}
 			capturedTenant = rowTenant
-{{- if .StrictUpdates }}
 			matched++
-{{- end }}
 		}
 		if err := rows.Err(); err != nil {
 			rows.Close()
 			return nil, err
 		}
 		rows.Close()
-{{- if .StrictUpdates }}
-		if matched == 0 {
-			return nil, ErrNotFound
-		}
-{{- end }}
 {{- else }}
 
 		execResult, err := conn.Exec(ctx, query, args...)
 		if err != nil {
 			return nil, fmt.Errorf("update {{ $singular }}: %w", err)
 		}
-{{- if .StrictUpdates }}
-		count, err := execResult.RowsAffected()
+		matched, err := execResult.RowsAffected()
 		if err != nil {
 			return nil, fmt.Errorf("update {{ $singular }} rows affected: %w", err)
 		}
-		if count == 0 {
+{{- end }}
+{{- if .StrictUpdates }}
+		if matched == 0 {
 			return nil, ErrNotFound
 		}
-{{- else }}
-		_ = execResult
-{{- end }}
-{{- end }}
 		m.AffectedPKs = []any{ {{ if .CompositePK }}pk{{ else }}id{{ end }} }
 {{- if $captureTenant }}
 		m.AffectedTenants = []any{capturedTenant}
+{{- end }}
+{{- else }}
+		// A key that matched no row wrote nothing: it records no affected
+		// key, so no cache entry is invalidated and no event is published.
+		if matched > 0 {
+			m.AffectedPKs = []any{ {{ if .CompositePK }}pk{{ else }}id{{ end }} }
+{{- if $captureTenant }}
+			m.AffectedTenants = []any{capturedTenant}
+{{- end }}
+		}
 {{- end }}
 
 		// Empty FieldOptions — caller doesn't need the result
@@ -331,6 +329,11 @@ func (c *{{ $structCamel }}Client) UpdateMany(ctx context.Context, items []Updat
 {{- else }}
 		var allIDs []{{ $pkCol.GoType }}
 {{- end }}
+		// The items whose UPDATE matched a row. Only these record an affected
+		// key: an item whose key matches no row, or that sets no field, wrote
+		// nothing, so no cache entry is invalidated and no event is published
+		// for it.
+		var writtenItems []Update{{ .StructName }}Item
 {{- if and $captureTenant (supportsReturning) }}
 		// Per-item RETURNING captures each updated row's tenant; feeds
 		// m.AffectedTenants so cache invalidation and event stamping rebuild
@@ -375,9 +378,7 @@ func (c *{{ $structCamel }}Client) UpdateMany(ctx context.Context, items []Updat
 			pgxBatch := &pgx.Batch{}
 			var batchQueries []string
 			var batchArgs [][]any
-{{- if $captureTenant }}
-			var queuedPKs []{{ if .CompositePK }}{{ .CompositePKStructName }}{{ else }}{{ $pkCol.GoType }}{{ end }}
-{{- end }}
+			var queuedItems []Update{{ .StructName }}Item
 			for _, item := range batch {
 				setClauses := make(map[string]any)
 {{- range .UpdateInputFields }}
@@ -450,9 +451,7 @@ func (c *{{ $structCamel }}Client) UpdateMany(ctx context.Context, items []Updat
 				pgxBatch.Queue(query, args...)
 				batchQueries = append(batchQueries, query)
 				batchArgs = append(batchArgs, args)
-{{- if $captureTenant }}
-				queuedPKs = append(queuedPKs, {{ if .CompositePK }}item.PK{{ else }}item.{{ $pkCol.FieldName }}{{ end }})
-{{- end }}
+				queuedItems = append(queuedItems, item)
 {{- if .CompositePK }}
 				allPKs = append(allPKs, item.PK)
 {{- else }}
@@ -476,6 +475,7 @@ func (c *{{ $structCamel }}Client) UpdateMany(ctx context.Context, items []Updat
 							br.Close()
 							return nil, fmt.Errorf("update {{ .TableName }} batch: %w", err)
 						}
+						matched := 0
 						for rows.Next() {
 							var rowTenant {{ .Tenancy.GoType }}
 							if err := rows.Scan(&rowTenant); err != nil {
@@ -483,13 +483,17 @@ func (c *{{ $structCamel }}Client) UpdateMany(ctx context.Context, items []Updat
 								br.Close()
 								return nil, fmt.Errorf("scan updated {{ $singular }} tenant: %w", err)
 							}
-							tenantByPK[queuedPKs[i]] = rowTenant
+							tenantByPK[queuedItems[i].{{ if .CompositePK }}PK{{ else }}{{ $pkCol.FieldName }}{{ end }}] = rowTenant
+							matched++
 						}
 						if err := rows.Err(); err != nil {
 							br.Close()
 							return nil, fmt.Errorf("update {{ .TableName }} batch: %w", err)
 						}
 						rows.Close()
+						if matched > 0 {
+							writtenItems = append(writtenItems, queuedItems[i])
+						}
 					}
 					if err := br.Close(); err != nil {
 						return nil, fmt.Errorf("close update batch: %w", err)
@@ -500,19 +504,24 @@ func (c *{{ $structCamel }}Client) UpdateMany(ctx context.Context, items []Updat
 						if err != nil {
 							return nil, fmt.Errorf("update {{ .TableName }} batch: %w", err)
 						}
+						matched := 0
 						for rows.Next() {
 							var rowTenant {{ .Tenancy.GoType }}
 							if err := rows.Scan(&rowTenant); err != nil {
 								rows.Close()
 								return nil, fmt.Errorf("scan updated {{ $singular }} tenant: %w", err)
 							}
-							tenantByPK[queuedPKs[i]] = rowTenant
+							tenantByPK[queuedItems[i].{{ if .CompositePK }}PK{{ else }}{{ $pkCol.FieldName }}{{ end }}] = rowTenant
+							matched++
 						}
 						if err := rows.Err(); err != nil {
 							rows.Close()
 							return nil, fmt.Errorf("update {{ .TableName }} batch: %w", err)
 						}
 						rows.Close()
+						if matched > 0 {
+							writtenItems = append(writtenItems, queuedItems[i])
+						}
 					}
 				}
 			}
@@ -524,10 +533,15 @@ func (c *{{ $structCamel }}Client) UpdateMany(ctx context.Context, items []Updat
 					SendBatch(ctx context.Context, b *pgx.Batch) pgx.BatchResults
 				}); ok {
 					br := batcher.SendBatch(ctx, pgxBatch)
-					for range pgxBatch.Len() {
-						if _, err := br.Exec(); err != nil {
+					for i := range pgxBatch.Len() {
+						tag, err := br.Exec()
+						if err != nil {
 							br.Close()
 							return nil, fmt.Errorf("update {{ .TableName }} batch: %w", err)
+						}
+						matched := tag.RowsAffected()
+						if matched > 0 {
+							writtenItems = append(writtenItems, queuedItems[i])
 						}
 					}
 					if err := br.Close(); err != nil {
@@ -535,8 +549,16 @@ func (c *{{ $structCamel }}Client) UpdateMany(ctx context.Context, items []Updat
 					}
 				} else {
 					for i, q := range batchQueries {
-						if _, err := conn.Exec(ctx, q, batchArgs[i]...); err != nil {
+						execResult, err := conn.Exec(ctx, q, batchArgs[i]...)
+						if err != nil {
 							return nil, fmt.Errorf("update {{ .TableName }} batch: %w", err)
+						}
+						matched, err := execResult.RowsAffected()
+						if err != nil {
+							return nil, fmt.Errorf("update {{ .TableName }} batch rows affected: %w", err)
+						}
+						if matched > 0 {
+							writtenItems = append(writtenItems, queuedItems[i])
 						}
 					}
 				}
@@ -620,6 +642,7 @@ func (c *{{ $structCamel }}Client) UpdateMany(ctx context.Context, items []Updat
 				if err != nil {
 					return nil, fmt.Errorf("update {{ $singular }} %v: %w", item.{{ if .CompositePK }}PK{{ else }}{{ $pkCol.FieldName }}{{ end }}, err)
 				}
+				matched := 0
 				for rows.Next() {
 					var rowTenant {{ .Tenancy.GoType }}
 					if err := rows.Scan(&rowTenant); err != nil {
@@ -627,6 +650,7 @@ func (c *{{ $structCamel }}Client) UpdateMany(ctx context.Context, items []Updat
 						return nil, fmt.Errorf("scan updated {{ $singular }} tenant: %w", err)
 					}
 					tenantByPK[{{ if .CompositePK }}item.PK{{ else }}item.{{ $pkCol.FieldName }}{{ end }}] = rowTenant
+					matched++
 				}
 				if err := rows.Err(); err != nil {
 					rows.Close()
@@ -635,11 +659,18 @@ func (c *{{ $structCamel }}Client) UpdateMany(ctx context.Context, items []Updat
 				rows.Close()
 {{- else }}
 
-				_, err := conn.Exec(ctx, query, args...)
+				execResult, err := conn.Exec(ctx, query, args...)
 				if err != nil {
 					return nil, fmt.Errorf("update {{ $singular }} %v: %w", item.{{ if .CompositePK }}PK{{ else }}{{ $pkCol.FieldName }}{{ end }}, err)
 				}
+				matched, err := execResult.RowsAffected()
+				if err != nil {
+					return nil, fmt.Errorf("update {{ $singular }} %v rows affected: %w", item.{{ if .CompositePK }}PK{{ else }}{{ $pkCol.FieldName }}{{ end }}, err)
+				}
 {{- end }}
+				if matched > 0 {
+					writtenItems = append(writtenItems, item)
+				}
 {{- if .CompositePK }}
 				allPKs = append(allPKs, item.PK)
 {{- else }}
@@ -648,27 +679,26 @@ func (c *{{ $structCamel }}Client) UpdateMany(ctx context.Context, items []Updat
 			}
 {{- end }}
 		}
-{{- if .CompositePK }}
 
-		m.AffectedPKs = toAnySlice(allPKs)
-{{- else }}
 
-		m.AffectedPKs = toAnySlice(allIDs)
-{{- end }}
+		affectedPKs := make([]any, len(writtenItems))
 {{- if $captureTenant }}
-{{- if .CompositePK }}
-		affectedTenants := make([]any, len(allPKs))
-		for i, pk := range allPKs {
-			affectedTenants[i] = tenantByPK[pk]
-		}
-{{- else }}
-		affectedTenants := make([]any, len(allIDs))
-		for i, id := range allIDs {
-			affectedTenants[i] = tenantByPK[id]
-		}
+		affectedTenants := make([]any, len(writtenItems))
 {{- end }}
+		for i, item := range writtenItems {
+			affectedPKs[i] = item.{{ if .CompositePK }}PK{{ else }}{{ $pkCol.FieldName }}{{ end }}
+{{- if $captureTenant }}
+			affectedTenants[i] = tenantByPK[item.{{ if .CompositePK }}PK{{ else }}{{ $pkCol.FieldName }}{{ end }}]
+{{- end }}
+		}
+		m.AffectedPKs = affectedPKs
+{{- if $captureTenant }}
 		m.AffectedTenants = affectedTenants
 {{- end }}
+		// The published input is narrowed to the written items, so it stays
+		// index-aligned with m.AffectedPKs: each event carries the input that
+		// wrote its row.
+		m.Input = writtenItems
 
 		// Empty FieldOptions — skip fetch
 		if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {

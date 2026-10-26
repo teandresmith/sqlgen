@@ -8,6 +8,7 @@ import (
 	"text/template"
 
 	"github.com/google/go-cmp/cmp"
+	"github.com/teandresmith/sqlgen/cmd/sqlgen/config"
 	"github.com/teandresmith/sqlgen/cmd/sqlgen/gen"
 	"github.com/teandresmith/sqlgen/cmd/sqlgen/gotype"
 	"github.com/teandresmith/sqlgen/sql"
@@ -228,9 +229,9 @@ func TestUpdateTemplate_strictUpdates(t *testing.T) {
 	output := executeUpdateTemplate(t, ctx, sql.NewPostgresDialect())
 
 	wantPatterns := []string{
-		"count, err := execResult.RowsAffected()",
+		"matched, err := execResult.RowsAffected()",
 		`fmt.Errorf("update product rows affected: %w", err)`,
-		"if count == 0 {",
+		"if matched == 0 {",
 		"return nil, ErrNotFound",
 	}
 	for _, want := range wantPatterns {
@@ -247,9 +248,9 @@ func TestUpdateTemplate_noStrictUpdates(t *testing.T) {
 	if strings.Contains(output, "ErrNotFound") {
 		t.Error("output without strict_updates should not contain ErrNotFound")
 	}
-	// Should discard execResult
-	if !strings.Contains(output, "_ = execResult") {
-		t.Errorf("output without strict_updates should discard execResult\n\nfull output:\n%s", output)
+	// Counts the matched rows to gate the affected key, not to fail.
+	if !strings.Contains(output, "matched, err := execResult.RowsAffected()") {
+		t.Errorf("output without strict_updates should count the matched rows\n\nfull output:\n%s", output)
 	}
 }
 
@@ -664,4 +665,118 @@ func singleRowUpdateBody(t *testing.T, output string) string {
 		return rest[:end]
 	}
 	return rest
+}
+
+// --- Tests: an UPDATE matching no row records no affected key ---
+
+// precedingLine returns the nearest non-blank line before lines[i], trimmed.
+func precedingLine(lines []string, i int) string {
+	for j := i - 1; j >= 0; j-- {
+		if s := strings.TrimSpace(lines[j]); s != "" {
+			return s
+		}
+	}
+	return ""
+}
+
+// tenantedUpdateContext is the tenanted product fixture on the given dialect
+// with Update and UpdateMany enabled.
+func tenantedUpdateContext(dialectName config.Dialect, driver config.Driver) gen.TableContext {
+	tc := tenantedProductContext()
+	tc.Dialect = dialectName
+	tc.Driver = driver
+	tc.Operations = gen.ResolvedOperations{Update: true, UpdateMany: true}
+	if driver == config.DriverPgx {
+		tc.Imports = append(tc.Imports, "github.com/jackc/pgx/v5")
+	}
+	return tc
+}
+
+// A non-strict Update whose key matches no row writes nothing. It must record
+// no affected key, so the cache invalidates nothing and the event hook
+// publishes nothing: the one m.AffectedPKs assignment sits behind the
+// matched-row check. A strict Update returns ErrNotFound before it.
+func TestUpdateTemplate_nonStrictNoOp_recordsNoAffectedPKs(t *testing.T) {
+	nonStrict := func(tc gen.TableContext) gen.TableContext {
+		tc.StrictUpdates = false
+		return tc
+	}
+	cases := []struct {
+		name    string
+		ctx     gen.TableContext
+		dialect sql.Dialect
+	}{
+		{name: "postgres exec", ctx: nonStrict(testUpdateContext_singlePK_postgres()), dialect: sql.NewPostgresDialect()},
+		{name: "mysql exec", ctx: nonStrict(testUpdateContext_singlePK_mysql()), dialect: sql.NewMySQLDialect()},
+		{name: "composite pk", ctx: nonStrict(testUpdateContext_compositePK()), dialect: sql.NewPostgresDialect()},
+		{name: "tenanted postgres returning", ctx: nonStrict(tenantedUpdateContext("postgres", "pgx")), dialect: sql.NewPostgresDialect()},
+		{name: "tenanted sqlite returning", ctx: nonStrict(tenantedUpdateContext("sqlite", "stdlib")), dialect: sql.NewSQLiteDialect()},
+		{name: "tenanted mysql pre-read", ctx: nonStrict(tenantedUpdateContext("mysql", "stdlib")), dialect: sql.NewMySQLDialect()},
+	}
+	for _, tt := range cases {
+		t.Run(tt.name, func(t *testing.T) {
+			body := singleRowUpdateBody(t, executeUpdateTemplate(t, tt.ctx, tt.dialect))
+			lines := strings.Split(body, "\n")
+			assignments := 0
+			for i, line := range lines {
+				if !strings.Contains(line, "m.AffectedPKs =") {
+					continue
+				}
+				assignments++
+				if prev := precedingLine(lines, i); prev != "if matched > 0 {" {
+					t.Errorf("m.AffectedPKs assignment not behind the matched-row check; preceding line %q\n\nmethod:\n%s", prev, body)
+				}
+			}
+			if assignments != 1 {
+				t.Errorf("m.AffectedPKs assignments = %d, want 1\n\nmethod:\n%s", assignments, body)
+			}
+		})
+	}
+}
+
+// An UpdateMany item whose key matches no row writes nothing, and neither does
+// an item with no field set. Neither may reach AffectedPKs: only an item whose
+// UPDATE matched a row is recorded, and the published input is narrowed to
+// those items so each event still carries the input that wrote its row.
+func TestUpdateTemplate_updateManyNoOp_recordsOnlyWrittenItems(t *testing.T) {
+	cases := []struct {
+		name    string
+		ctx     gen.TableContext
+		dialect sql.Dialect
+	}{
+		{name: "postgres pgx batch", ctx: testUpdateContext_singlePK_postgres(), dialect: sql.NewPostgresDialect()},
+		{name: "postgres stdlib", ctx: testUpdateContext_stdlib(), dialect: sql.NewPostgresDialect()},
+		{name: "mysql", ctx: testUpdateContext_singlePK_mysql(), dialect: sql.NewMySQLDialect()},
+		{name: "composite pk pgx batch", ctx: testUpdateContext_compositePK(), dialect: sql.NewPostgresDialect()},
+		{name: "tenanted postgres pgx batch", ctx: tenantedUpdateContext("postgres", "pgx"), dialect: sql.NewPostgresDialect()},
+		{name: "tenanted sqlite returning", ctx: tenantedUpdateContext("sqlite", "stdlib"), dialect: sql.NewSQLiteDialect()},
+		{name: "tenanted mysql pre-read", ctx: tenantedUpdateContext("mysql", "stdlib"), dialect: sql.NewMySQLDialect()},
+	}
+	for _, tt := range cases {
+		t.Run(tt.name, func(t *testing.T) {
+			body := methodBody(t, executeUpdateTemplate(t, tt.ctx, tt.dialect), "UpdateMany")
+			for _, listed := range []string{"m.AffectedPKs = toAnySlice(allIDs)", "m.AffectedPKs = toAnySlice(allPKs)"} {
+				if strings.Contains(body, listed) {
+					t.Errorf("records every listed key (%q)\n\nmethod:\n%s", listed, body)
+				}
+			}
+			lines := strings.Split(body, "\n")
+			appends := 0
+			for i, line := range lines {
+				if !strings.Contains(line, "writtenItems = append(writtenItems, ") {
+					continue
+				}
+				appends++
+				if prev := precedingLine(lines, i); prev != "if matched > 0 {" {
+					t.Errorf("written item recorded outside the matched-row check; preceding line %q\n\nmethod:\n%s", prev, body)
+				}
+			}
+			if appends == 0 {
+				t.Errorf("no written item is recorded\n\nmethod:\n%s", body)
+			}
+			if !strings.Contains(body, "m.Input = writtenItems") {
+				t.Errorf("published input not narrowed to the written items\n\nmethod:\n%s", body)
+			}
+		})
+	}
 }

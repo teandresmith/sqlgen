@@ -645,11 +645,11 @@ func (c *eventClient) Update(ctx context.Context, id uuid.UUID, input *UpdateEve
 		if err != nil {
 			return nil, fmt.Errorf("update event: %w", err)
 		}
-		count, err := execResult.RowsAffected()
+		matched, err := execResult.RowsAffected()
 		if err != nil {
 			return nil, fmt.Errorf("update event rows affected: %w", err)
 		}
-		if count == 0 {
+		if matched == 0 {
 			return nil, ErrNotFound
 		}
 		m.AffectedPKs = []any{id}
@@ -707,6 +707,11 @@ func (c *eventClient) UpdateMany(ctx context.Context, items []UpdateEventItem, o
 			return []*Event{}, nil
 		}
 		var allIDs []uuid.UUID
+		// The items whose UPDATE matched a row. Only these record an affected
+		// key: an item whose key matches no row, or that sets no field, wrote
+		// nothing, so no cache entry is invalidated and no event is published
+		// for it.
+		var writtenItems []UpdateEventItem
 		for start := 0; start < len(items); start += c.batchSize {
 			end := min(start+c.batchSize, len(items))
 			batch := items[start:end]
@@ -715,6 +720,7 @@ func (c *eventClient) UpdateMany(ctx context.Context, items []UpdateEventItem, o
 			pgxBatch := &pgx.Batch{}
 			var batchQueries []string
 			var batchArgs [][]any
+			var queuedItems []UpdateEventItem
 			for _, item := range batch {
 				setClauses := make(map[string]any)
 				if v, ok := item.Input.Name.Get(); ok {
@@ -740,6 +746,7 @@ func (c *eventClient) UpdateMany(ctx context.Context, items []UpdateEventItem, o
 				pgxBatch.Queue(query, args...)
 				batchQueries = append(batchQueries, query)
 				batchArgs = append(batchArgs, args)
+				queuedItems = append(queuedItems, item)
 				allIDs = append(allIDs, item.ID)
 			}
 
@@ -749,10 +756,15 @@ func (c *eventClient) UpdateMany(ctx context.Context, items []UpdateEventItem, o
 					SendBatch(ctx context.Context, b *pgx.Batch) pgx.BatchResults
 				}); ok {
 					br := batcher.SendBatch(ctx, pgxBatch)
-					for range pgxBatch.Len() {
-						if _, err := br.Exec(); err != nil {
+					for i := range pgxBatch.Len() {
+						tag, err := br.Exec()
+						if err != nil {
 							br.Close()
 							return nil, fmt.Errorf("update events batch: %w", err)
+						}
+						matched := tag.RowsAffected()
+						if matched > 0 {
+							writtenItems = append(writtenItems, queuedItems[i])
 						}
 					}
 					if err := br.Close(); err != nil {
@@ -760,15 +772,31 @@ func (c *eventClient) UpdateMany(ctx context.Context, items []UpdateEventItem, o
 					}
 				} else {
 					for i, q := range batchQueries {
-						if _, err := conn.Exec(ctx, q, batchArgs[i]...); err != nil {
+						execResult, err := conn.Exec(ctx, q, batchArgs[i]...)
+						if err != nil {
 							return nil, fmt.Errorf("update events batch: %w", err)
+						}
+						matched, err := execResult.RowsAffected()
+						if err != nil {
+							return nil, fmt.Errorf("update events batch rows affected: %w", err)
+						}
+						if matched > 0 {
+							writtenItems = append(writtenItems, queuedItems[i])
 						}
 					}
 				}
 			}
 		}
 
-		m.AffectedPKs = toAnySlice(allIDs)
+		affectedPKs := make([]any, len(writtenItems))
+		for i, item := range writtenItems {
+			affectedPKs[i] = item.ID
+		}
+		m.AffectedPKs = affectedPKs
+		// The published input is narrowed to the written items, so it stays
+		// index-aligned with m.AffectedPKs: each event carries the input that
+		// wrote its row.
+		m.Input = writtenItems
 
 		// Empty FieldOptions — skip fetch
 		if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
@@ -2944,11 +2972,11 @@ func (c *noteWatcherClient) Update(ctx context.Context, pk NoteWatcherPK, input 
 		if err != nil {
 			return nil, fmt.Errorf("update note_watcher: %w", err)
 		}
-		count, err := execResult.RowsAffected()
+		matched, err := execResult.RowsAffected()
 		if err != nil {
 			return nil, fmt.Errorf("update note_watcher rows affected: %w", err)
 		}
-		if count == 0 {
+		if matched == 0 {
 			return nil, ErrNotFound
 		}
 		m.AffectedPKs = []any{pk}
@@ -3006,6 +3034,11 @@ func (c *noteWatcherClient) UpdateMany(ctx context.Context, items []UpdateNoteWa
 			return []*NoteWatcher{}, nil
 		}
 		var allPKs []NoteWatcherPK
+		// The items whose UPDATE matched a row. Only these record an affected
+		// key: an item whose key matches no row, or that sets no field, wrote
+		// nothing, so no cache entry is invalidated and no event is published
+		// for it.
+		var writtenItems []UpdateNoteWatcherItem
 		for start := 0; start < len(items); start += c.batchSize {
 			end := min(start+c.batchSize, len(items))
 			batch := items[start:end]
@@ -3014,6 +3047,7 @@ func (c *noteWatcherClient) UpdateMany(ctx context.Context, items []UpdateNoteWa
 			pgxBatch := &pgx.Batch{}
 			var batchQueries []string
 			var batchArgs [][]any
+			var queuedItems []UpdateNoteWatcherItem
 			for _, item := range batch {
 				setClauses := make(map[string]any)
 
@@ -3032,6 +3066,7 @@ func (c *noteWatcherClient) UpdateMany(ctx context.Context, items []UpdateNoteWa
 				pgxBatch.Queue(query, args...)
 				batchQueries = append(batchQueries, query)
 				batchArgs = append(batchArgs, args)
+				queuedItems = append(queuedItems, item)
 				allPKs = append(allPKs, item.PK)
 			}
 
@@ -3041,10 +3076,15 @@ func (c *noteWatcherClient) UpdateMany(ctx context.Context, items []UpdateNoteWa
 					SendBatch(ctx context.Context, b *pgx.Batch) pgx.BatchResults
 				}); ok {
 					br := batcher.SendBatch(ctx, pgxBatch)
-					for range pgxBatch.Len() {
-						if _, err := br.Exec(); err != nil {
+					for i := range pgxBatch.Len() {
+						tag, err := br.Exec()
+						if err != nil {
 							br.Close()
 							return nil, fmt.Errorf("update note_watchers batch: %w", err)
+						}
+						matched := tag.RowsAffected()
+						if matched > 0 {
+							writtenItems = append(writtenItems, queuedItems[i])
 						}
 					}
 					if err := br.Close(); err != nil {
@@ -3052,15 +3092,31 @@ func (c *noteWatcherClient) UpdateMany(ctx context.Context, items []UpdateNoteWa
 					}
 				} else {
 					for i, q := range batchQueries {
-						if _, err := conn.Exec(ctx, q, batchArgs[i]...); err != nil {
+						execResult, err := conn.Exec(ctx, q, batchArgs[i]...)
+						if err != nil {
 							return nil, fmt.Errorf("update note_watchers batch: %w", err)
+						}
+						matched, err := execResult.RowsAffected()
+						if err != nil {
+							return nil, fmt.Errorf("update note_watchers batch rows affected: %w", err)
+						}
+						if matched > 0 {
+							writtenItems = append(writtenItems, queuedItems[i])
 						}
 					}
 				}
 			}
 		}
 
-		m.AffectedPKs = toAnySlice(allPKs)
+		affectedPKs := make([]any, len(writtenItems))
+		for i, item := range writtenItems {
+			affectedPKs[i] = item.PK
+		}
+		m.AffectedPKs = affectedPKs
+		// The published input is narrowed to the written items, so it stays
+		// index-aligned with m.AffectedPKs: each event carries the input that
+		// wrote its row.
+		m.Input = writtenItems
 
 		// Empty FieldOptions — skip fetch
 		if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
@@ -4734,11 +4790,11 @@ func (c *auditNoteClient) Update(ctx context.Context, id int64, input *UpdateAud
 		if err != nil {
 			return nil, fmt.Errorf("update note: %w", err)
 		}
-		count, err := execResult.RowsAffected()
+		matched, err := execResult.RowsAffected()
 		if err != nil {
 			return nil, fmt.Errorf("update note rows affected: %w", err)
 		}
-		if count == 0 {
+		if matched == 0 {
 			return nil, ErrNotFound
 		}
 		m.AffectedPKs = []any{id}
@@ -4796,6 +4852,11 @@ func (c *auditNoteClient) UpdateMany(ctx context.Context, items []UpdateAuditNot
 			return []*AuditNote{}, nil
 		}
 		var allIDs []int64
+		// The items whose UPDATE matched a row. Only these record an affected
+		// key: an item whose key matches no row, or that sets no field, wrote
+		// nothing, so no cache entry is invalidated and no event is published
+		// for it.
+		var writtenItems []UpdateAuditNoteItem
 		for start := 0; start < len(items); start += c.batchSize {
 			end := min(start+c.batchSize, len(items))
 			batch := items[start:end]
@@ -4804,6 +4865,7 @@ func (c *auditNoteClient) UpdateMany(ctx context.Context, items []UpdateAuditNot
 			pgxBatch := &pgx.Batch{}
 			var batchQueries []string
 			var batchArgs [][]any
+			var queuedItems []UpdateAuditNoteItem
 			for _, item := range batch {
 				setClauses := make(map[string]any)
 				if v, ok := item.Input.UserID.Get(); ok {
@@ -4829,6 +4891,7 @@ func (c *auditNoteClient) UpdateMany(ctx context.Context, items []UpdateAuditNot
 				pgxBatch.Queue(query, args...)
 				batchQueries = append(batchQueries, query)
 				batchArgs = append(batchArgs, args)
+				queuedItems = append(queuedItems, item)
 				allIDs = append(allIDs, item.ID)
 			}
 
@@ -4838,10 +4901,15 @@ func (c *auditNoteClient) UpdateMany(ctx context.Context, items []UpdateAuditNot
 					SendBatch(ctx context.Context, b *pgx.Batch) pgx.BatchResults
 				}); ok {
 					br := batcher.SendBatch(ctx, pgxBatch)
-					for range pgxBatch.Len() {
-						if _, err := br.Exec(); err != nil {
+					for i := range pgxBatch.Len() {
+						tag, err := br.Exec()
+						if err != nil {
 							br.Close()
 							return nil, fmt.Errorf("update notes batch: %w", err)
+						}
+						matched := tag.RowsAffected()
+						if matched > 0 {
+							writtenItems = append(writtenItems, queuedItems[i])
 						}
 					}
 					if err := br.Close(); err != nil {
@@ -4849,15 +4917,31 @@ func (c *auditNoteClient) UpdateMany(ctx context.Context, items []UpdateAuditNot
 					}
 				} else {
 					for i, q := range batchQueries {
-						if _, err := conn.Exec(ctx, q, batchArgs[i]...); err != nil {
+						execResult, err := conn.Exec(ctx, q, batchArgs[i]...)
+						if err != nil {
 							return nil, fmt.Errorf("update notes batch: %w", err)
+						}
+						matched, err := execResult.RowsAffected()
+						if err != nil {
+							return nil, fmt.Errorf("update notes batch rows affected: %w", err)
+						}
+						if matched > 0 {
+							writtenItems = append(writtenItems, queuedItems[i])
 						}
 					}
 				}
 			}
 		}
 
-		m.AffectedPKs = toAnySlice(allIDs)
+		affectedPKs := make([]any, len(writtenItems))
+		for i, item := range writtenItems {
+			affectedPKs[i] = item.ID
+		}
+		m.AffectedPKs = affectedPKs
+		// The published input is narrowed to the written items, so it stays
+		// index-aligned with m.AffectedPKs: each event carries the input that
+		// wrote its row.
+		m.Input = writtenItems
 
 		// Empty FieldOptions — skip fetch
 		if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
@@ -7070,11 +7154,11 @@ func (c *auditUserClient) Update(ctx context.Context, id uuid.UUID, input *Updat
 		if err != nil {
 			return nil, fmt.Errorf("update user: %w", err)
 		}
-		count, err := execResult.RowsAffected()
+		matched, err := execResult.RowsAffected()
 		if err != nil {
 			return nil, fmt.Errorf("update user rows affected: %w", err)
 		}
-		if count == 0 {
+		if matched == 0 {
 			return nil, ErrNotFound
 		}
 		m.AffectedPKs = []any{id}
@@ -7132,6 +7216,11 @@ func (c *auditUserClient) UpdateMany(ctx context.Context, items []UpdateAuditUse
 			return []*AuditUser{}, nil
 		}
 		var allIDs []uuid.UUID
+		// The items whose UPDATE matched a row. Only these record an affected
+		// key: an item whose key matches no row, or that sets no field, wrote
+		// nothing, so no cache entry is invalidated and no event is published
+		// for it.
+		var writtenItems []UpdateAuditUserItem
 		for start := 0; start < len(items); start += c.batchSize {
 			end := min(start+c.batchSize, len(items))
 			batch := items[start:end]
@@ -7140,6 +7229,7 @@ func (c *auditUserClient) UpdateMany(ctx context.Context, items []UpdateAuditUse
 			pgxBatch := &pgx.Batch{}
 			var batchQueries []string
 			var batchArgs [][]any
+			var queuedItems []UpdateAuditUserItem
 			for _, item := range batch {
 				setClauses := make(map[string]any)
 				if v, ok := item.Input.Action.Get(); ok {
@@ -7168,6 +7258,7 @@ func (c *auditUserClient) UpdateMany(ctx context.Context, items []UpdateAuditUse
 				pgxBatch.Queue(query, args...)
 				batchQueries = append(batchQueries, query)
 				batchArgs = append(batchArgs, args)
+				queuedItems = append(queuedItems, item)
 				allIDs = append(allIDs, item.ID)
 			}
 
@@ -7177,10 +7268,15 @@ func (c *auditUserClient) UpdateMany(ctx context.Context, items []UpdateAuditUse
 					SendBatch(ctx context.Context, b *pgx.Batch) pgx.BatchResults
 				}); ok {
 					br := batcher.SendBatch(ctx, pgxBatch)
-					for range pgxBatch.Len() {
-						if _, err := br.Exec(); err != nil {
+					for i := range pgxBatch.Len() {
+						tag, err := br.Exec()
+						if err != nil {
 							br.Close()
 							return nil, fmt.Errorf("update users batch: %w", err)
+						}
+						matched := tag.RowsAffected()
+						if matched > 0 {
+							writtenItems = append(writtenItems, queuedItems[i])
 						}
 					}
 					if err := br.Close(); err != nil {
@@ -7188,15 +7284,31 @@ func (c *auditUserClient) UpdateMany(ctx context.Context, items []UpdateAuditUse
 					}
 				} else {
 					for i, q := range batchQueries {
-						if _, err := conn.Exec(ctx, q, batchArgs[i]...); err != nil {
+						execResult, err := conn.Exec(ctx, q, batchArgs[i]...)
+						if err != nil {
 							return nil, fmt.Errorf("update users batch: %w", err)
+						}
+						matched, err := execResult.RowsAffected()
+						if err != nil {
+							return nil, fmt.Errorf("update users batch rows affected: %w", err)
+						}
+						if matched > 0 {
+							writtenItems = append(writtenItems, queuedItems[i])
 						}
 					}
 				}
 			}
 		}
 
-		m.AffectedPKs = toAnySlice(allIDs)
+		affectedPKs := make([]any, len(writtenItems))
+		for i, item := range writtenItems {
+			affectedPKs[i] = item.ID
+		}
+		m.AffectedPKs = affectedPKs
+		// The published input is narrowed to the written items, so it stays
+		// index-aligned with m.AffectedPKs: each event carries the input that
+		// wrote its row.
+		m.Input = writtenItems
 
 		// Empty FieldOptions — skip fetch
 		if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
@@ -9275,11 +9387,11 @@ func (c *articleClient) Update(ctx context.Context, id uuid.UUID, input *UpdateA
 		if err != nil {
 			return nil, fmt.Errorf("update article: %w", err)
 		}
-		count, err := execResult.RowsAffected()
+		matched, err := execResult.RowsAffected()
 		if err != nil {
 			return nil, fmt.Errorf("update article rows affected: %w", err)
 		}
-		if count == 0 {
+		if matched == 0 {
 			return nil, ErrNotFound
 		}
 		m.AffectedPKs = []any{id}
@@ -9337,6 +9449,11 @@ func (c *articleClient) UpdateMany(ctx context.Context, items []UpdateArticleIte
 			return []*Article{}, nil
 		}
 		var allIDs []uuid.UUID
+		// The items whose UPDATE matched a row. Only these record an affected
+		// key: an item whose key matches no row, or that sets no field, wrote
+		// nothing, so no cache entry is invalidated and no event is published
+		// for it.
+		var writtenItems []UpdateArticleItem
 		for start := 0; start < len(items); start += c.batchSize {
 			end := min(start+c.batchSize, len(items))
 			batch := items[start:end]
@@ -9345,6 +9462,7 @@ func (c *articleClient) UpdateMany(ctx context.Context, items []UpdateArticleIte
 			pgxBatch := &pgx.Batch{}
 			var batchQueries []string
 			var batchArgs [][]any
+			var queuedItems []UpdateArticleItem
 			for _, item := range batch {
 				setClauses := make(map[string]any)
 				if v, ok := item.Input.Title.Get(); ok {
@@ -9376,6 +9494,7 @@ func (c *articleClient) UpdateMany(ctx context.Context, items []UpdateArticleIte
 				pgxBatch.Queue(query, args...)
 				batchQueries = append(batchQueries, query)
 				batchArgs = append(batchArgs, args)
+				queuedItems = append(queuedItems, item)
 				allIDs = append(allIDs, item.ID)
 			}
 
@@ -9385,10 +9504,15 @@ func (c *articleClient) UpdateMany(ctx context.Context, items []UpdateArticleIte
 					SendBatch(ctx context.Context, b *pgx.Batch) pgx.BatchResults
 				}); ok {
 					br := batcher.SendBatch(ctx, pgxBatch)
-					for range pgxBatch.Len() {
-						if _, err := br.Exec(); err != nil {
+					for i := range pgxBatch.Len() {
+						tag, err := br.Exec()
+						if err != nil {
 							br.Close()
 							return nil, fmt.Errorf("update articles batch: %w", err)
+						}
+						matched := tag.RowsAffected()
+						if matched > 0 {
+							writtenItems = append(writtenItems, queuedItems[i])
 						}
 					}
 					if err := br.Close(); err != nil {
@@ -9396,15 +9520,31 @@ func (c *articleClient) UpdateMany(ctx context.Context, items []UpdateArticleIte
 					}
 				} else {
 					for i, q := range batchQueries {
-						if _, err := conn.Exec(ctx, q, batchArgs[i]...); err != nil {
+						execResult, err := conn.Exec(ctx, q, batchArgs[i]...)
+						if err != nil {
 							return nil, fmt.Errorf("update articles batch: %w", err)
+						}
+						matched, err := execResult.RowsAffected()
+						if err != nil {
+							return nil, fmt.Errorf("update articles batch rows affected: %w", err)
+						}
+						if matched > 0 {
+							writtenItems = append(writtenItems, queuedItems[i])
 						}
 					}
 				}
 			}
 		}
 
-		m.AffectedPKs = toAnySlice(allIDs)
+		affectedPKs := make([]any, len(writtenItems))
+		for i, item := range writtenItems {
+			affectedPKs[i] = item.ID
+		}
+		m.AffectedPKs = affectedPKs
+		// The published input is narrowed to the written items, so it stays
+		// index-aligned with m.AffectedPKs: each event carries the input that
+		// wrote its row.
+		m.Input = writtenItems
 
 		// Empty FieldOptions — skip fetch
 		if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
@@ -11863,11 +12003,11 @@ func (c *assetDocumentLinkClient) Update(ctx context.Context, pk AssetDocumentLi
 		if err != nil {
 			return nil, fmt.Errorf("update asset_document_link: %w", err)
 		}
-		count, err := execResult.RowsAffected()
+		matched, err := execResult.RowsAffected()
 		if err != nil {
 			return nil, fmt.Errorf("update asset_document_link rows affected: %w", err)
 		}
-		if count == 0 {
+		if matched == 0 {
 			return nil, ErrNotFound
 		}
 		m.AffectedPKs = []any{pk}
@@ -11925,6 +12065,11 @@ func (c *assetDocumentLinkClient) UpdateMany(ctx context.Context, items []Update
 			return []*AssetDocumentLink{}, nil
 		}
 		var allPKs []AssetDocumentLinkPK
+		// The items whose UPDATE matched a row. Only these record an affected
+		// key: an item whose key matches no row, or that sets no field, wrote
+		// nothing, so no cache entry is invalidated and no event is published
+		// for it.
+		var writtenItems []UpdateAssetDocumentLinkItem
 		for start := 0; start < len(items); start += c.batchSize {
 			end := min(start+c.batchSize, len(items))
 			batch := items[start:end]
@@ -11933,6 +12078,7 @@ func (c *assetDocumentLinkClient) UpdateMany(ctx context.Context, items []Update
 			pgxBatch := &pgx.Batch{}
 			var batchQueries []string
 			var batchArgs [][]any
+			var queuedItems []UpdateAssetDocumentLinkItem
 			for _, item := range batch {
 				setClauses := make(map[string]any)
 
@@ -11951,6 +12097,7 @@ func (c *assetDocumentLinkClient) UpdateMany(ctx context.Context, items []Update
 				pgxBatch.Queue(query, args...)
 				batchQueries = append(batchQueries, query)
 				batchArgs = append(batchArgs, args)
+				queuedItems = append(queuedItems, item)
 				allPKs = append(allPKs, item.PK)
 			}
 
@@ -11960,10 +12107,15 @@ func (c *assetDocumentLinkClient) UpdateMany(ctx context.Context, items []Update
 					SendBatch(ctx context.Context, b *pgx.Batch) pgx.BatchResults
 				}); ok {
 					br := batcher.SendBatch(ctx, pgxBatch)
-					for range pgxBatch.Len() {
-						if _, err := br.Exec(); err != nil {
+					for i := range pgxBatch.Len() {
+						tag, err := br.Exec()
+						if err != nil {
 							br.Close()
 							return nil, fmt.Errorf("update asset_document_links batch: %w", err)
+						}
+						matched := tag.RowsAffected()
+						if matched > 0 {
+							writtenItems = append(writtenItems, queuedItems[i])
 						}
 					}
 					if err := br.Close(); err != nil {
@@ -11971,15 +12123,31 @@ func (c *assetDocumentLinkClient) UpdateMany(ctx context.Context, items []Update
 					}
 				} else {
 					for i, q := range batchQueries {
-						if _, err := conn.Exec(ctx, q, batchArgs[i]...); err != nil {
+						execResult, err := conn.Exec(ctx, q, batchArgs[i]...)
+						if err != nil {
 							return nil, fmt.Errorf("update asset_document_links batch: %w", err)
+						}
+						matched, err := execResult.RowsAffected()
+						if err != nil {
+							return nil, fmt.Errorf("update asset_document_links batch rows affected: %w", err)
+						}
+						if matched > 0 {
+							writtenItems = append(writtenItems, queuedItems[i])
 						}
 					}
 				}
 			}
 		}
 
-		m.AffectedPKs = toAnySlice(allPKs)
+		affectedPKs := make([]any, len(writtenItems))
+		for i, item := range writtenItems {
+			affectedPKs[i] = item.PK
+		}
+		m.AffectedPKs = affectedPKs
+		// The published input is narrowed to the written items, so it stays
+		// index-aligned with m.AffectedPKs: each event carries the input that
+		// wrote its row.
+		m.Input = writtenItems
 
 		// Empty FieldOptions — skip fetch
 		if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
@@ -14226,11 +14394,11 @@ func (c *assetClient) Update(ctx context.Context, id uuid.UUID, input *UpdateAss
 		if err != nil {
 			return nil, fmt.Errorf("update asset: %w", err)
 		}
-		count, err := execResult.RowsAffected()
+		matched, err := execResult.RowsAffected()
 		if err != nil {
 			return nil, fmt.Errorf("update asset rows affected: %w", err)
 		}
-		if count == 0 {
+		if matched == 0 {
 			return nil, ErrNotFound
 		}
 		m.AffectedPKs = []any{id}
@@ -14288,6 +14456,11 @@ func (c *assetClient) UpdateMany(ctx context.Context, items []UpdateAssetItem, o
 			return []*Asset{}, nil
 		}
 		var allIDs []uuid.UUID
+		// The items whose UPDATE matched a row. Only these record an affected
+		// key: an item whose key matches no row, or that sets no field, wrote
+		// nothing, so no cache entry is invalidated and no event is published
+		// for it.
+		var writtenItems []UpdateAssetItem
 		for start := 0; start < len(items); start += c.batchSize {
 			end := min(start+c.batchSize, len(items))
 			batch := items[start:end]
@@ -14296,6 +14469,7 @@ func (c *assetClient) UpdateMany(ctx context.Context, items []UpdateAssetItem, o
 			pgxBatch := &pgx.Batch{}
 			var batchQueries []string
 			var batchArgs [][]any
+			var queuedItems []UpdateAssetItem
 			for _, item := range batch {
 				setClauses := make(map[string]any)
 				if v, ok := item.Input.Name.Get(); ok {
@@ -14318,6 +14492,7 @@ func (c *assetClient) UpdateMany(ctx context.Context, items []UpdateAssetItem, o
 				pgxBatch.Queue(query, args...)
 				batchQueries = append(batchQueries, query)
 				batchArgs = append(batchArgs, args)
+				queuedItems = append(queuedItems, item)
 				allIDs = append(allIDs, item.ID)
 			}
 
@@ -14327,10 +14502,15 @@ func (c *assetClient) UpdateMany(ctx context.Context, items []UpdateAssetItem, o
 					SendBatch(ctx context.Context, b *pgx.Batch) pgx.BatchResults
 				}); ok {
 					br := batcher.SendBatch(ctx, pgxBatch)
-					for range pgxBatch.Len() {
-						if _, err := br.Exec(); err != nil {
+					for i := range pgxBatch.Len() {
+						tag, err := br.Exec()
+						if err != nil {
 							br.Close()
 							return nil, fmt.Errorf("update assets batch: %w", err)
+						}
+						matched := tag.RowsAffected()
+						if matched > 0 {
+							writtenItems = append(writtenItems, queuedItems[i])
 						}
 					}
 					if err := br.Close(); err != nil {
@@ -14338,15 +14518,31 @@ func (c *assetClient) UpdateMany(ctx context.Context, items []UpdateAssetItem, o
 					}
 				} else {
 					for i, q := range batchQueries {
-						if _, err := conn.Exec(ctx, q, batchArgs[i]...); err != nil {
+						execResult, err := conn.Exec(ctx, q, batchArgs[i]...)
+						if err != nil {
 							return nil, fmt.Errorf("update assets batch: %w", err)
+						}
+						matched, err := execResult.RowsAffected()
+						if err != nil {
+							return nil, fmt.Errorf("update assets batch rows affected: %w", err)
+						}
+						if matched > 0 {
+							writtenItems = append(writtenItems, queuedItems[i])
 						}
 					}
 				}
 			}
 		}
 
-		m.AffectedPKs = toAnySlice(allIDs)
+		affectedPKs := make([]any, len(writtenItems))
+		for i, item := range writtenItems {
+			affectedPKs[i] = item.ID
+		}
+		m.AffectedPKs = affectedPKs
+		// The published input is narrowed to the written items, so it stays
+		// index-aligned with m.AffectedPKs: each event carries the input that
+		// wrote its row.
+		m.Input = writtenItems
 
 		// Empty FieldOptions — skip fetch
 		if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
@@ -16930,11 +17126,11 @@ func (c *categoryClient) Update(ctx context.Context, id uuid.UUID, input *Update
 		if err != nil {
 			return nil, fmt.Errorf("update category: %w", err)
 		}
-		count, err := execResult.RowsAffected()
+		matched, err := execResult.RowsAffected()
 		if err != nil {
 			return nil, fmt.Errorf("update category rows affected: %w", err)
 		}
-		if count == 0 {
+		if matched == 0 {
 			return nil, ErrNotFound
 		}
 		m.AffectedPKs = []any{id}
@@ -16992,6 +17188,11 @@ func (c *categoryClient) UpdateMany(ctx context.Context, items []UpdateCategoryI
 			return []*Category{}, nil
 		}
 		var allIDs []uuid.UUID
+		// The items whose UPDATE matched a row. Only these record an affected
+		// key: an item whose key matches no row, or that sets no field, wrote
+		// nothing, so no cache entry is invalidated and no event is published
+		// for it.
+		var writtenItems []UpdateCategoryItem
 		for start := 0; start < len(items); start += c.batchSize {
 			end := min(start+c.batchSize, len(items))
 			batch := items[start:end]
@@ -17000,6 +17201,7 @@ func (c *categoryClient) UpdateMany(ctx context.Context, items []UpdateCategoryI
 			pgxBatch := &pgx.Batch{}
 			var batchQueries []string
 			var batchArgs [][]any
+			var queuedItems []UpdateCategoryItem
 			for _, item := range batch {
 				setClauses := make(map[string]any)
 				if v, ok := item.Input.Name.Get(); ok {
@@ -17025,6 +17227,7 @@ func (c *categoryClient) UpdateMany(ctx context.Context, items []UpdateCategoryI
 				pgxBatch.Queue(query, args...)
 				batchQueries = append(batchQueries, query)
 				batchArgs = append(batchArgs, args)
+				queuedItems = append(queuedItems, item)
 				allIDs = append(allIDs, item.ID)
 			}
 
@@ -17034,10 +17237,15 @@ func (c *categoryClient) UpdateMany(ctx context.Context, items []UpdateCategoryI
 					SendBatch(ctx context.Context, b *pgx.Batch) pgx.BatchResults
 				}); ok {
 					br := batcher.SendBatch(ctx, pgxBatch)
-					for range pgxBatch.Len() {
-						if _, err := br.Exec(); err != nil {
+					for i := range pgxBatch.Len() {
+						tag, err := br.Exec()
+						if err != nil {
 							br.Close()
 							return nil, fmt.Errorf("update categories batch: %w", err)
+						}
+						matched := tag.RowsAffected()
+						if matched > 0 {
+							writtenItems = append(writtenItems, queuedItems[i])
 						}
 					}
 					if err := br.Close(); err != nil {
@@ -17045,15 +17253,31 @@ func (c *categoryClient) UpdateMany(ctx context.Context, items []UpdateCategoryI
 					}
 				} else {
 					for i, q := range batchQueries {
-						if _, err := conn.Exec(ctx, q, batchArgs[i]...); err != nil {
+						execResult, err := conn.Exec(ctx, q, batchArgs[i]...)
+						if err != nil {
 							return nil, fmt.Errorf("update categories batch: %w", err)
+						}
+						matched, err := execResult.RowsAffected()
+						if err != nil {
+							return nil, fmt.Errorf("update categories batch rows affected: %w", err)
+						}
+						if matched > 0 {
+							writtenItems = append(writtenItems, queuedItems[i])
 						}
 					}
 				}
 			}
 		}
 
-		m.AffectedPKs = toAnySlice(allIDs)
+		affectedPKs := make([]any, len(writtenItems))
+		for i, item := range writtenItems {
+			affectedPKs[i] = item.ID
+		}
+		m.AffectedPKs = affectedPKs
+		// The published input is narrowed to the written items, so it stays
+		// index-aligned with m.AffectedPKs: each event carries the input that
+		// wrote its row.
+		m.Input = writtenItems
 
 		// Empty FieldOptions — skip fetch
 		if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
@@ -19152,11 +19376,11 @@ func (c *counterClient) Update(ctx context.Context, id string, input *UpdateCoun
 		if err != nil {
 			return nil, fmt.Errorf("update counter: %w", err)
 		}
-		count, err := execResult.RowsAffected()
+		matched, err := execResult.RowsAffected()
 		if err != nil {
 			return nil, fmt.Errorf("update counter rows affected: %w", err)
 		}
-		if count == 0 {
+		if matched == 0 {
 			return nil, ErrNotFound
 		}
 		m.AffectedPKs = []any{id}
@@ -19214,6 +19438,11 @@ func (c *counterClient) UpdateMany(ctx context.Context, items []UpdateCounterIte
 			return []*Counter{}, nil
 		}
 		var allIDs []string
+		// The items whose UPDATE matched a row. Only these record an affected
+		// key: an item whose key matches no row, or that sets no field, wrote
+		// nothing, so no cache entry is invalidated and no event is published
+		// for it.
+		var writtenItems []UpdateCounterItem
 		for start := 0; start < len(items); start += c.batchSize {
 			end := min(start+c.batchSize, len(items))
 			batch := items[start:end]
@@ -19222,6 +19451,7 @@ func (c *counterClient) UpdateMany(ctx context.Context, items []UpdateCounterIte
 			pgxBatch := &pgx.Batch{}
 			var batchQueries []string
 			var batchArgs [][]any
+			var queuedItems []UpdateCounterItem
 			for _, item := range batch {
 				setClauses := make(map[string]any)
 				if v, ok := item.Input.Slot.Get(); ok {
@@ -19252,6 +19482,7 @@ func (c *counterClient) UpdateMany(ctx context.Context, items []UpdateCounterIte
 				pgxBatch.Queue(query, args...)
 				batchQueries = append(batchQueries, query)
 				batchArgs = append(batchArgs, args)
+				queuedItems = append(queuedItems, item)
 				allIDs = append(allIDs, item.Key)
 			}
 
@@ -19261,10 +19492,15 @@ func (c *counterClient) UpdateMany(ctx context.Context, items []UpdateCounterIte
 					SendBatch(ctx context.Context, b *pgx.Batch) pgx.BatchResults
 				}); ok {
 					br := batcher.SendBatch(ctx, pgxBatch)
-					for range pgxBatch.Len() {
-						if _, err := br.Exec(); err != nil {
+					for i := range pgxBatch.Len() {
+						tag, err := br.Exec()
+						if err != nil {
 							br.Close()
 							return nil, fmt.Errorf("update counters batch: %w", err)
+						}
+						matched := tag.RowsAffected()
+						if matched > 0 {
+							writtenItems = append(writtenItems, queuedItems[i])
 						}
 					}
 					if err := br.Close(); err != nil {
@@ -19272,15 +19508,31 @@ func (c *counterClient) UpdateMany(ctx context.Context, items []UpdateCounterIte
 					}
 				} else {
 					for i, q := range batchQueries {
-						if _, err := conn.Exec(ctx, q, batchArgs[i]...); err != nil {
+						execResult, err := conn.Exec(ctx, q, batchArgs[i]...)
+						if err != nil {
 							return nil, fmt.Errorf("update counters batch: %w", err)
+						}
+						matched, err := execResult.RowsAffected()
+						if err != nil {
+							return nil, fmt.Errorf("update counters batch rows affected: %w", err)
+						}
+						if matched > 0 {
+							writtenItems = append(writtenItems, queuedItems[i])
 						}
 					}
 				}
 			}
 		}
 
-		m.AffectedPKs = toAnySlice(allIDs)
+		affectedPKs := make([]any, len(writtenItems))
+		for i, item := range writtenItems {
+			affectedPKs[i] = item.Key
+		}
+		m.AffectedPKs = affectedPKs
+		// The published input is narrowed to the written items, so it stays
+		// index-aligned with m.AffectedPKs: each event carries the input that
+		// wrote its row.
+		m.Input = writtenItems
 
 		// Empty FieldOptions — skip fetch
 		if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
@@ -21345,11 +21597,11 @@ func (c *defaultOnlyRowClient) Update(ctx context.Context, id int64, input *Upda
 		if err != nil {
 			return nil, fmt.Errorf("update default_only_row: %w", err)
 		}
-		count, err := execResult.RowsAffected()
+		matched, err := execResult.RowsAffected()
 		if err != nil {
 			return nil, fmt.Errorf("update default_only_row rows affected: %w", err)
 		}
-		if count == 0 {
+		if matched == 0 {
 			return nil, ErrNotFound
 		}
 		m.AffectedPKs = []any{id}
@@ -21407,6 +21659,11 @@ func (c *defaultOnlyRowClient) UpdateMany(ctx context.Context, items []UpdateDef
 			return []*DefaultOnlyRow{}, nil
 		}
 		var allIDs []int64
+		// The items whose UPDATE matched a row. Only these record an affected
+		// key: an item whose key matches no row, or that sets no field, wrote
+		// nothing, so no cache entry is invalidated and no event is published
+		// for it.
+		var writtenItems []UpdateDefaultOnlyRowItem
 		for start := 0; start < len(items); start += c.batchSize {
 			end := min(start+c.batchSize, len(items))
 			batch := items[start:end]
@@ -21415,6 +21672,7 @@ func (c *defaultOnlyRowClient) UpdateMany(ctx context.Context, items []UpdateDef
 			pgxBatch := &pgx.Batch{}
 			var batchQueries []string
 			var batchArgs [][]any
+			var queuedItems []UpdateDefaultOnlyRowItem
 			for _, item := range batch {
 				setClauses := make(map[string]any)
 				if v, ok := item.Input.Label.Get(); ok {
@@ -21440,6 +21698,7 @@ func (c *defaultOnlyRowClient) UpdateMany(ctx context.Context, items []UpdateDef
 				pgxBatch.Queue(query, args...)
 				batchQueries = append(batchQueries, query)
 				batchArgs = append(batchArgs, args)
+				queuedItems = append(queuedItems, item)
 				allIDs = append(allIDs, item.ID)
 			}
 
@@ -21449,10 +21708,15 @@ func (c *defaultOnlyRowClient) UpdateMany(ctx context.Context, items []UpdateDef
 					SendBatch(ctx context.Context, b *pgx.Batch) pgx.BatchResults
 				}); ok {
 					br := batcher.SendBatch(ctx, pgxBatch)
-					for range pgxBatch.Len() {
-						if _, err := br.Exec(); err != nil {
+					for i := range pgxBatch.Len() {
+						tag, err := br.Exec()
+						if err != nil {
 							br.Close()
 							return nil, fmt.Errorf("update default_only_rows batch: %w", err)
+						}
+						matched := tag.RowsAffected()
+						if matched > 0 {
+							writtenItems = append(writtenItems, queuedItems[i])
 						}
 					}
 					if err := br.Close(); err != nil {
@@ -21460,15 +21724,31 @@ func (c *defaultOnlyRowClient) UpdateMany(ctx context.Context, items []UpdateDef
 					}
 				} else {
 					for i, q := range batchQueries {
-						if _, err := conn.Exec(ctx, q, batchArgs[i]...); err != nil {
+						execResult, err := conn.Exec(ctx, q, batchArgs[i]...)
+						if err != nil {
 							return nil, fmt.Errorf("update default_only_rows batch: %w", err)
+						}
+						matched, err := execResult.RowsAffected()
+						if err != nil {
+							return nil, fmt.Errorf("update default_only_rows batch rows affected: %w", err)
+						}
+						if matched > 0 {
+							writtenItems = append(writtenItems, queuedItems[i])
 						}
 					}
 				}
 			}
 		}
 
-		m.AffectedPKs = toAnySlice(allIDs)
+		affectedPKs := make([]any, len(writtenItems))
+		for i, item := range writtenItems {
+			affectedPKs[i] = item.ID
+		}
+		m.AffectedPKs = affectedPKs
+		// The published input is narrowed to the written items, so it stays
+		// index-aligned with m.AffectedPKs: each event carries the input that
+		// wrote its row.
+		m.Input = writtenItems
 
 		// Empty FieldOptions — skip fetch
 		if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
@@ -23654,11 +23934,11 @@ func (c *documentClient) Update(ctx context.Context, id uuid.UUID, input *Update
 		if err != nil {
 			return nil, fmt.Errorf("update document: %w", err)
 		}
-		count, err := execResult.RowsAffected()
+		matched, err := execResult.RowsAffected()
 		if err != nil {
 			return nil, fmt.Errorf("update document rows affected: %w", err)
 		}
-		if count == 0 {
+		if matched == 0 {
 			return nil, ErrNotFound
 		}
 		m.AffectedPKs = []any{id}
@@ -23716,6 +23996,11 @@ func (c *documentClient) UpdateMany(ctx context.Context, items []UpdateDocumentI
 			return []*Document{}, nil
 		}
 		var allIDs []uuid.UUID
+		// The items whose UPDATE matched a row. Only these record an affected
+		// key: an item whose key matches no row, or that sets no field, wrote
+		// nothing, so no cache entry is invalidated and no event is published
+		// for it.
+		var writtenItems []UpdateDocumentItem
 		for start := 0; start < len(items); start += c.batchSize {
 			end := min(start+c.batchSize, len(items))
 			batch := items[start:end]
@@ -23724,6 +24009,7 @@ func (c *documentClient) UpdateMany(ctx context.Context, items []UpdateDocumentI
 			pgxBatch := &pgx.Batch{}
 			var batchQueries []string
 			var batchArgs [][]any
+			var queuedItems []UpdateDocumentItem
 			for _, item := range batch {
 				setClauses := make(map[string]any)
 				if v, ok := item.Input.EntityID.Get(); ok {
@@ -23752,6 +24038,7 @@ func (c *documentClient) UpdateMany(ctx context.Context, items []UpdateDocumentI
 				pgxBatch.Queue(query, args...)
 				batchQueries = append(batchQueries, query)
 				batchArgs = append(batchArgs, args)
+				queuedItems = append(queuedItems, item)
 				allIDs = append(allIDs, item.ID)
 			}
 
@@ -23761,10 +24048,15 @@ func (c *documentClient) UpdateMany(ctx context.Context, items []UpdateDocumentI
 					SendBatch(ctx context.Context, b *pgx.Batch) pgx.BatchResults
 				}); ok {
 					br := batcher.SendBatch(ctx, pgxBatch)
-					for range pgxBatch.Len() {
-						if _, err := br.Exec(); err != nil {
+					for i := range pgxBatch.Len() {
+						tag, err := br.Exec()
+						if err != nil {
 							br.Close()
 							return nil, fmt.Errorf("update documents batch: %w", err)
+						}
+						matched := tag.RowsAffected()
+						if matched > 0 {
+							writtenItems = append(writtenItems, queuedItems[i])
 						}
 					}
 					if err := br.Close(); err != nil {
@@ -23772,15 +24064,31 @@ func (c *documentClient) UpdateMany(ctx context.Context, items []UpdateDocumentI
 					}
 				} else {
 					for i, q := range batchQueries {
-						if _, err := conn.Exec(ctx, q, batchArgs[i]...); err != nil {
+						execResult, err := conn.Exec(ctx, q, batchArgs[i]...)
+						if err != nil {
 							return nil, fmt.Errorf("update documents batch: %w", err)
+						}
+						matched, err := execResult.RowsAffected()
+						if err != nil {
+							return nil, fmt.Errorf("update documents batch rows affected: %w", err)
+						}
+						if matched > 0 {
+							writtenItems = append(writtenItems, queuedItems[i])
 						}
 					}
 				}
 			}
 		}
 
-		m.AffectedPKs = toAnySlice(allIDs)
+		affectedPKs := make([]any, len(writtenItems))
+		for i, item := range writtenItems {
+			affectedPKs[i] = item.ID
+		}
+		m.AffectedPKs = affectedPKs
+		// The published input is narrowed to the written items, so it stays
+		// index-aligned with m.AffectedPKs: each event carries the input that
+		// wrote its row.
+		m.Input = writtenItems
 
 		// Empty FieldOptions — skip fetch
 		if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
@@ -25972,11 +26280,11 @@ func (c *fingerprintClient) Update(ctx context.Context, id []byte, input *Update
 		if err != nil {
 			return nil, fmt.Errorf("update fingerprint: %w", err)
 		}
-		count, err := execResult.RowsAffected()
+		matched, err := execResult.RowsAffected()
 		if err != nil {
 			return nil, fmt.Errorf("update fingerprint rows affected: %w", err)
 		}
-		if count == 0 {
+		if matched == 0 {
 			return nil, ErrNotFound
 		}
 		m.AffectedPKs = []any{id}
@@ -26034,6 +26342,11 @@ func (c *fingerprintClient) UpdateMany(ctx context.Context, items []UpdateFinger
 			return []*Fingerprint{}, nil
 		}
 		var allIDs [][]byte
+		// The items whose UPDATE matched a row. Only these record an affected
+		// key: an item whose key matches no row, or that sets no field, wrote
+		// nothing, so no cache entry is invalidated and no event is published
+		// for it.
+		var writtenItems []UpdateFingerprintItem
 		for start := 0; start < len(items); start += c.batchSize {
 			end := min(start+c.batchSize, len(items))
 			batch := items[start:end]
@@ -26042,6 +26355,7 @@ func (c *fingerprintClient) UpdateMany(ctx context.Context, items []UpdateFinger
 			pgxBatch := &pgx.Batch{}
 			var batchQueries []string
 			var batchArgs [][]any
+			var queuedItems []UpdateFingerprintItem
 			for _, item := range batch {
 				setClauses := make(map[string]any)
 				if v, ok := item.Input.Label.Get(); ok {
@@ -26061,6 +26375,7 @@ func (c *fingerprintClient) UpdateMany(ctx context.Context, items []UpdateFinger
 				pgxBatch.Queue(query, args...)
 				batchQueries = append(batchQueries, query)
 				batchArgs = append(batchArgs, args)
+				queuedItems = append(queuedItems, item)
 				allIDs = append(allIDs, item.Digest)
 			}
 
@@ -26070,10 +26385,15 @@ func (c *fingerprintClient) UpdateMany(ctx context.Context, items []UpdateFinger
 					SendBatch(ctx context.Context, b *pgx.Batch) pgx.BatchResults
 				}); ok {
 					br := batcher.SendBatch(ctx, pgxBatch)
-					for range pgxBatch.Len() {
-						if _, err := br.Exec(); err != nil {
+					for i := range pgxBatch.Len() {
+						tag, err := br.Exec()
+						if err != nil {
 							br.Close()
 							return nil, fmt.Errorf("update fingerprints batch: %w", err)
+						}
+						matched := tag.RowsAffected()
+						if matched > 0 {
+							writtenItems = append(writtenItems, queuedItems[i])
 						}
 					}
 					if err := br.Close(); err != nil {
@@ -26081,15 +26401,31 @@ func (c *fingerprintClient) UpdateMany(ctx context.Context, items []UpdateFinger
 					}
 				} else {
 					for i, q := range batchQueries {
-						if _, err := conn.Exec(ctx, q, batchArgs[i]...); err != nil {
+						execResult, err := conn.Exec(ctx, q, batchArgs[i]...)
+						if err != nil {
 							return nil, fmt.Errorf("update fingerprints batch: %w", err)
+						}
+						matched, err := execResult.RowsAffected()
+						if err != nil {
+							return nil, fmt.Errorf("update fingerprints batch rows affected: %w", err)
+						}
+						if matched > 0 {
+							writtenItems = append(writtenItems, queuedItems[i])
 						}
 					}
 				}
 			}
 		}
 
-		m.AffectedPKs = toAnySlice(allIDs)
+		affectedPKs := make([]any, len(writtenItems))
+		for i, item := range writtenItems {
+			affectedPKs[i] = item.Digest
+		}
+		m.AffectedPKs = affectedPKs
+		// The published input is narrowed to the written items, so it stays
+		// index-aligned with m.AffectedPKs: each event carries the input that
+		// wrote its row.
+		m.Input = writtenItems
 
 		// Empty FieldOptions — skip fetch
 		if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
@@ -27803,11 +28139,11 @@ func (c *hostFingerprintClient) Update(ctx context.Context, pk HostFingerprintPK
 		if err != nil {
 			return nil, fmt.Errorf("update host_fingerprint: %w", err)
 		}
-		count, err := execResult.RowsAffected()
+		matched, err := execResult.RowsAffected()
 		if err != nil {
 			return nil, fmt.Errorf("update host_fingerprint rows affected: %w", err)
 		}
-		if count == 0 {
+		if matched == 0 {
 			return nil, ErrNotFound
 		}
 		m.AffectedPKs = []any{pk}
@@ -27865,6 +28201,11 @@ func (c *hostFingerprintClient) UpdateMany(ctx context.Context, items []UpdateHo
 			return []*HostFingerprint{}, nil
 		}
 		var allPKs []HostFingerprintPK
+		// The items whose UPDATE matched a row. Only these record an affected
+		// key: an item whose key matches no row, or that sets no field, wrote
+		// nothing, so no cache entry is invalidated and no event is published
+		// for it.
+		var writtenItems []UpdateHostFingerprintItem
 		for start := 0; start < len(items); start += c.batchSize {
 			end := min(start+c.batchSize, len(items))
 			batch := items[start:end]
@@ -27873,6 +28214,7 @@ func (c *hostFingerprintClient) UpdateMany(ctx context.Context, items []UpdateHo
 			pgxBatch := &pgx.Batch{}
 			var batchQueries []string
 			var batchArgs [][]any
+			var queuedItems []UpdateHostFingerprintItem
 			for _, item := range batch {
 				setClauses := make(map[string]any)
 
@@ -27891,6 +28233,7 @@ func (c *hostFingerprintClient) UpdateMany(ctx context.Context, items []UpdateHo
 				pgxBatch.Queue(query, args...)
 				batchQueries = append(batchQueries, query)
 				batchArgs = append(batchArgs, args)
+				queuedItems = append(queuedItems, item)
 				allPKs = append(allPKs, item.PK)
 			}
 
@@ -27900,10 +28243,15 @@ func (c *hostFingerprintClient) UpdateMany(ctx context.Context, items []UpdateHo
 					SendBatch(ctx context.Context, b *pgx.Batch) pgx.BatchResults
 				}); ok {
 					br := batcher.SendBatch(ctx, pgxBatch)
-					for range pgxBatch.Len() {
-						if _, err := br.Exec(); err != nil {
+					for i := range pgxBatch.Len() {
+						tag, err := br.Exec()
+						if err != nil {
 							br.Close()
 							return nil, fmt.Errorf("update host_fingerprints batch: %w", err)
+						}
+						matched := tag.RowsAffected()
+						if matched > 0 {
+							writtenItems = append(writtenItems, queuedItems[i])
 						}
 					}
 					if err := br.Close(); err != nil {
@@ -27911,15 +28259,31 @@ func (c *hostFingerprintClient) UpdateMany(ctx context.Context, items []UpdateHo
 					}
 				} else {
 					for i, q := range batchQueries {
-						if _, err := conn.Exec(ctx, q, batchArgs[i]...); err != nil {
+						execResult, err := conn.Exec(ctx, q, batchArgs[i]...)
+						if err != nil {
 							return nil, fmt.Errorf("update host_fingerprints batch: %w", err)
+						}
+						matched, err := execResult.RowsAffected()
+						if err != nil {
+							return nil, fmt.Errorf("update host_fingerprints batch rows affected: %w", err)
+						}
+						if matched > 0 {
+							writtenItems = append(writtenItems, queuedItems[i])
 						}
 					}
 				}
 			}
 		}
 
-		m.AffectedPKs = toAnySlice(allPKs)
+		affectedPKs := make([]any, len(writtenItems))
+		for i, item := range writtenItems {
+			affectedPKs[i] = item.PK
+		}
+		m.AffectedPKs = affectedPKs
+		// The published input is narrowed to the written items, so it stays
+		// index-aligned with m.AffectedPKs: each event carries the input that
+		// wrote its row.
+		m.Input = writtenItems
 
 		// Empty FieldOptions — skip fetch
 		if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
@@ -29726,11 +30090,11 @@ func (c *hostClient) Update(ctx context.Context, id net.IP, input *UpdateHostInp
 		if err != nil {
 			return nil, fmt.Errorf("update host: %w", err)
 		}
-		count, err := execResult.RowsAffected()
+		matched, err := execResult.RowsAffected()
 		if err != nil {
 			return nil, fmt.Errorf("update host rows affected: %w", err)
 		}
-		if count == 0 {
+		if matched == 0 {
 			return nil, ErrNotFound
 		}
 		m.AffectedPKs = []any{id}
@@ -29788,6 +30152,11 @@ func (c *hostClient) UpdateMany(ctx context.Context, items []UpdateHostItem, opt
 			return []*Host{}, nil
 		}
 		var allIDs []net.IP
+		// The items whose UPDATE matched a row. Only these record an affected
+		// key: an item whose key matches no row, or that sets no field, wrote
+		// nothing, so no cache entry is invalidated and no event is published
+		// for it.
+		var writtenItems []UpdateHostItem
 		for start := 0; start < len(items); start += c.batchSize {
 			end := min(start+c.batchSize, len(items))
 			batch := items[start:end]
@@ -29796,6 +30165,7 @@ func (c *hostClient) UpdateMany(ctx context.Context, items []UpdateHostItem, opt
 			pgxBatch := &pgx.Batch{}
 			var batchQueries []string
 			var batchArgs [][]any
+			var queuedItems []UpdateHostItem
 			for _, item := range batch {
 				setClauses := make(map[string]any)
 				if v, ok := item.Input.Label.Get(); ok {
@@ -29815,6 +30185,7 @@ func (c *hostClient) UpdateMany(ctx context.Context, items []UpdateHostItem, opt
 				pgxBatch.Queue(query, args...)
 				batchQueries = append(batchQueries, query)
 				batchArgs = append(batchArgs, args)
+				queuedItems = append(queuedItems, item)
 				allIDs = append(allIDs, item.Addr)
 			}
 
@@ -29824,10 +30195,15 @@ func (c *hostClient) UpdateMany(ctx context.Context, items []UpdateHostItem, opt
 					SendBatch(ctx context.Context, b *pgx.Batch) pgx.BatchResults
 				}); ok {
 					br := batcher.SendBatch(ctx, pgxBatch)
-					for range pgxBatch.Len() {
-						if _, err := br.Exec(); err != nil {
+					for i := range pgxBatch.Len() {
+						tag, err := br.Exec()
+						if err != nil {
 							br.Close()
 							return nil, fmt.Errorf("update hosts batch: %w", err)
+						}
+						matched := tag.RowsAffected()
+						if matched > 0 {
+							writtenItems = append(writtenItems, queuedItems[i])
 						}
 					}
 					if err := br.Close(); err != nil {
@@ -29835,15 +30211,31 @@ func (c *hostClient) UpdateMany(ctx context.Context, items []UpdateHostItem, opt
 					}
 				} else {
 					for i, q := range batchQueries {
-						if _, err := conn.Exec(ctx, q, batchArgs[i]...); err != nil {
+						execResult, err := conn.Exec(ctx, q, batchArgs[i]...)
+						if err != nil {
 							return nil, fmt.Errorf("update hosts batch: %w", err)
+						}
+						matched, err := execResult.RowsAffected()
+						if err != nil {
+							return nil, fmt.Errorf("update hosts batch rows affected: %w", err)
+						}
+						if matched > 0 {
+							writtenItems = append(writtenItems, queuedItems[i])
 						}
 					}
 				}
 			}
 		}
 
-		m.AffectedPKs = toAnySlice(allIDs)
+		affectedPKs := make([]any, len(writtenItems))
+		for i, item := range writtenItems {
+			affectedPKs[i] = item.Addr
+		}
+		m.AffectedPKs = affectedPKs
+		// The published input is narrowed to the written items, so it stays
+		// index-aligned with m.AffectedPKs: each event carries the input that
+		// wrote its row.
+		m.Input = writtenItems
 
 		// Empty FieldOptions — skip fetch
 		if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
@@ -31579,11 +31971,11 @@ func (c *keyOnlyRowClient) Update(ctx context.Context, id int64, input *UpdateKe
 		if err != nil {
 			return nil, fmt.Errorf("update key_only_row: %w", err)
 		}
-		count, err := execResult.RowsAffected()
+		matched, err := execResult.RowsAffected()
 		if err != nil {
 			return nil, fmt.Errorf("update key_only_row rows affected: %w", err)
 		}
-		if count == 0 {
+		if matched == 0 {
 			return nil, ErrNotFound
 		}
 		m.AffectedPKs = []any{id}
@@ -31641,6 +32033,11 @@ func (c *keyOnlyRowClient) UpdateMany(ctx context.Context, items []UpdateKeyOnly
 			return []*KeyOnlyRow{}, nil
 		}
 		var allIDs []int64
+		// The items whose UPDATE matched a row. Only these record an affected
+		// key: an item whose key matches no row, or that sets no field, wrote
+		// nothing, so no cache entry is invalidated and no event is published
+		// for it.
+		var writtenItems []UpdateKeyOnlyRowItem
 		for start := 0; start < len(items); start += c.batchSize {
 			end := min(start+c.batchSize, len(items))
 			batch := items[start:end]
@@ -31649,6 +32046,7 @@ func (c *keyOnlyRowClient) UpdateMany(ctx context.Context, items []UpdateKeyOnly
 			pgxBatch := &pgx.Batch{}
 			var batchQueries []string
 			var batchArgs [][]any
+			var queuedItems []UpdateKeyOnlyRowItem
 			for _, item := range batch {
 				setClauses := make(map[string]any)
 
@@ -31665,6 +32063,7 @@ func (c *keyOnlyRowClient) UpdateMany(ctx context.Context, items []UpdateKeyOnly
 				pgxBatch.Queue(query, args...)
 				batchQueries = append(batchQueries, query)
 				batchArgs = append(batchArgs, args)
+				queuedItems = append(queuedItems, item)
 				allIDs = append(allIDs, item.ID)
 			}
 
@@ -31674,10 +32073,15 @@ func (c *keyOnlyRowClient) UpdateMany(ctx context.Context, items []UpdateKeyOnly
 					SendBatch(ctx context.Context, b *pgx.Batch) pgx.BatchResults
 				}); ok {
 					br := batcher.SendBatch(ctx, pgxBatch)
-					for range pgxBatch.Len() {
-						if _, err := br.Exec(); err != nil {
+					for i := range pgxBatch.Len() {
+						tag, err := br.Exec()
+						if err != nil {
 							br.Close()
 							return nil, fmt.Errorf("update key_only_rows batch: %w", err)
+						}
+						matched := tag.RowsAffected()
+						if matched > 0 {
+							writtenItems = append(writtenItems, queuedItems[i])
 						}
 					}
 					if err := br.Close(); err != nil {
@@ -31685,15 +32089,31 @@ func (c *keyOnlyRowClient) UpdateMany(ctx context.Context, items []UpdateKeyOnly
 					}
 				} else {
 					for i, q := range batchQueries {
-						if _, err := conn.Exec(ctx, q, batchArgs[i]...); err != nil {
+						execResult, err := conn.Exec(ctx, q, batchArgs[i]...)
+						if err != nil {
 							return nil, fmt.Errorf("update key_only_rows batch: %w", err)
+						}
+						matched, err := execResult.RowsAffected()
+						if err != nil {
+							return nil, fmt.Errorf("update key_only_rows batch rows affected: %w", err)
+						}
+						if matched > 0 {
+							writtenItems = append(writtenItems, queuedItems[i])
 						}
 					}
 				}
 			}
 		}
 
-		m.AffectedPKs = toAnySlice(allIDs)
+		affectedPKs := make([]any, len(writtenItems))
+		for i, item := range writtenItems {
+			affectedPKs[i] = item.ID
+		}
+		m.AffectedPKs = affectedPKs
+		// The published input is narrowed to the written items, so it stays
+		// index-aligned with m.AffectedPKs: each event carries the input that
+		// wrote its row.
+		m.Input = writtenItems
 
 		// Empty FieldOptions — skip fetch
 		if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
@@ -33517,11 +33937,11 @@ func (c *publicNoteClient) Update(ctx context.Context, id uuid.UUID, input *Upda
 		if err != nil {
 			return nil, fmt.Errorf("update note: %w", err)
 		}
-		count, err := execResult.RowsAffected()
+		matched, err := execResult.RowsAffected()
 		if err != nil {
 			return nil, fmt.Errorf("update note rows affected: %w", err)
 		}
-		if count == 0 {
+		if matched == 0 {
 			return nil, ErrNotFound
 		}
 		m.AffectedPKs = []any{id}
@@ -33579,6 +33999,11 @@ func (c *publicNoteClient) UpdateMany(ctx context.Context, items []UpdatePublicN
 			return []*PublicNote{}, nil
 		}
 		var allIDs []uuid.UUID
+		// The items whose UPDATE matched a row. Only these record an affected
+		// key: an item whose key matches no row, or that sets no field, wrote
+		// nothing, so no cache entry is invalidated and no event is published
+		// for it.
+		var writtenItems []UpdatePublicNoteItem
 		for start := 0; start < len(items); start += c.batchSize {
 			end := min(start+c.batchSize, len(items))
 			batch := items[start:end]
@@ -33587,6 +34012,7 @@ func (c *publicNoteClient) UpdateMany(ctx context.Context, items []UpdatePublicN
 			pgxBatch := &pgx.Batch{}
 			var batchQueries []string
 			var batchArgs [][]any
+			var queuedItems []UpdatePublicNoteItem
 			for _, item := range batch {
 				setClauses := make(map[string]any)
 				if v, ok := item.Input.UserID.Get(); ok {
@@ -33612,6 +34038,7 @@ func (c *publicNoteClient) UpdateMany(ctx context.Context, items []UpdatePublicN
 				pgxBatch.Queue(query, args...)
 				batchQueries = append(batchQueries, query)
 				batchArgs = append(batchArgs, args)
+				queuedItems = append(queuedItems, item)
 				allIDs = append(allIDs, item.ID)
 			}
 
@@ -33621,10 +34048,15 @@ func (c *publicNoteClient) UpdateMany(ctx context.Context, items []UpdatePublicN
 					SendBatch(ctx context.Context, b *pgx.Batch) pgx.BatchResults
 				}); ok {
 					br := batcher.SendBatch(ctx, pgxBatch)
-					for range pgxBatch.Len() {
-						if _, err := br.Exec(); err != nil {
+					for i := range pgxBatch.Len() {
+						tag, err := br.Exec()
+						if err != nil {
 							br.Close()
 							return nil, fmt.Errorf("update notes batch: %w", err)
+						}
+						matched := tag.RowsAffected()
+						if matched > 0 {
+							writtenItems = append(writtenItems, queuedItems[i])
 						}
 					}
 					if err := br.Close(); err != nil {
@@ -33632,15 +34064,31 @@ func (c *publicNoteClient) UpdateMany(ctx context.Context, items []UpdatePublicN
 					}
 				} else {
 					for i, q := range batchQueries {
-						if _, err := conn.Exec(ctx, q, batchArgs[i]...); err != nil {
+						execResult, err := conn.Exec(ctx, q, batchArgs[i]...)
+						if err != nil {
 							return nil, fmt.Errorf("update notes batch: %w", err)
+						}
+						matched, err := execResult.RowsAffected()
+						if err != nil {
+							return nil, fmt.Errorf("update notes batch rows affected: %w", err)
+						}
+						if matched > 0 {
+							writtenItems = append(writtenItems, queuedItems[i])
 						}
 					}
 				}
 			}
 		}
 
-		m.AffectedPKs = toAnySlice(allIDs)
+		affectedPKs := make([]any, len(writtenItems))
+		for i, item := range writtenItems {
+			affectedPKs[i] = item.ID
+		}
+		m.AffectedPKs = affectedPKs
+		// The published input is narrowed to the written items, so it stays
+		// index-aligned with m.AffectedPKs: each event carries the input that
+		// wrote its row.
+		m.Input = writtenItems
 
 		// Empty FieldOptions — skip fetch
 		if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
@@ -35627,11 +36075,11 @@ func (c *orderItemClient) Update(ctx context.Context, id uuid.UUID, input *Updat
 		if err != nil {
 			return nil, fmt.Errorf("update order_item: %w", err)
 		}
-		count, err := execResult.RowsAffected()
+		matched, err := execResult.RowsAffected()
 		if err != nil {
 			return nil, fmt.Errorf("update order_item rows affected: %w", err)
 		}
-		if count == 0 {
+		if matched == 0 {
 			return nil, ErrNotFound
 		}
 		m.AffectedPKs = []any{id}
@@ -35689,6 +36137,11 @@ func (c *orderItemClient) UpdateMany(ctx context.Context, items []UpdateOrderIte
 			return []*OrderItem{}, nil
 		}
 		var allIDs []uuid.UUID
+		// The items whose UPDATE matched a row. Only these record an affected
+		// key: an item whose key matches no row, or that sets no field, wrote
+		// nothing, so no cache entry is invalidated and no event is published
+		// for it.
+		var writtenItems []UpdateOrderItemItem
 		for start := 0; start < len(items); start += c.batchSize {
 			end := min(start+c.batchSize, len(items))
 			batch := items[start:end]
@@ -35697,6 +36150,7 @@ func (c *orderItemClient) UpdateMany(ctx context.Context, items []UpdateOrderIte
 			pgxBatch := &pgx.Batch{}
 			var batchQueries []string
 			var batchArgs [][]any
+			var queuedItems []UpdateOrderItemItem
 			for _, item := range batch {
 				setClauses := make(map[string]any)
 				if v, ok := item.Input.OrderID.Get(); ok {
@@ -35728,6 +36182,7 @@ func (c *orderItemClient) UpdateMany(ctx context.Context, items []UpdateOrderIte
 				pgxBatch.Queue(query, args...)
 				batchQueries = append(batchQueries, query)
 				batchArgs = append(batchArgs, args)
+				queuedItems = append(queuedItems, item)
 				allIDs = append(allIDs, item.ID)
 			}
 
@@ -35737,10 +36192,15 @@ func (c *orderItemClient) UpdateMany(ctx context.Context, items []UpdateOrderIte
 					SendBatch(ctx context.Context, b *pgx.Batch) pgx.BatchResults
 				}); ok {
 					br := batcher.SendBatch(ctx, pgxBatch)
-					for range pgxBatch.Len() {
-						if _, err := br.Exec(); err != nil {
+					for i := range pgxBatch.Len() {
+						tag, err := br.Exec()
+						if err != nil {
 							br.Close()
 							return nil, fmt.Errorf("update order_items batch: %w", err)
+						}
+						matched := tag.RowsAffected()
+						if matched > 0 {
+							writtenItems = append(writtenItems, queuedItems[i])
 						}
 					}
 					if err := br.Close(); err != nil {
@@ -35748,15 +36208,31 @@ func (c *orderItemClient) UpdateMany(ctx context.Context, items []UpdateOrderIte
 					}
 				} else {
 					for i, q := range batchQueries {
-						if _, err := conn.Exec(ctx, q, batchArgs[i]...); err != nil {
+						execResult, err := conn.Exec(ctx, q, batchArgs[i]...)
+						if err != nil {
 							return nil, fmt.Errorf("update order_items batch: %w", err)
+						}
+						matched, err := execResult.RowsAffected()
+						if err != nil {
+							return nil, fmt.Errorf("update order_items batch rows affected: %w", err)
+						}
+						if matched > 0 {
+							writtenItems = append(writtenItems, queuedItems[i])
 						}
 					}
 				}
 			}
 		}
 
-		m.AffectedPKs = toAnySlice(allIDs)
+		affectedPKs := make([]any, len(writtenItems))
+		for i, item := range writtenItems {
+			affectedPKs[i] = item.ID
+		}
+		m.AffectedPKs = affectedPKs
+		// The published input is narrowed to the written items, so it stays
+		// index-aligned with m.AffectedPKs: each event carries the input that
+		// wrote its row.
+		m.Input = writtenItems
 
 		// Empty FieldOptions — skip fetch
 		if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
@@ -38014,8 +38490,15 @@ func (c *orderClient) Update(ctx context.Context, id uuid.UUID, input *UpdateOrd
 		if err != nil {
 			return nil, fmt.Errorf("update order: %w", err)
 		}
-		_ = execResult
-		m.AffectedPKs = []any{id}
+		matched, err := execResult.RowsAffected()
+		if err != nil {
+			return nil, fmt.Errorf("update order rows affected: %w", err)
+		}
+		// A key that matched no row wrote nothing: it records no affected
+		// key, so no cache entry is invalidated and no event is published.
+		if matched > 0 {
+			m.AffectedPKs = []any{id}
+		}
 
 		// Empty FieldOptions — caller doesn't need the result
 		if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
@@ -38070,6 +38553,11 @@ func (c *orderClient) UpdateMany(ctx context.Context, items []UpdateOrderItem, o
 			return []*Order{}, nil
 		}
 		var allIDs []uuid.UUID
+		// The items whose UPDATE matched a row. Only these record an affected
+		// key: an item whose key matches no row, or that sets no field, wrote
+		// nothing, so no cache entry is invalidated and no event is published
+		// for it.
+		var writtenItems []UpdateOrderItem
 		for start := 0; start < len(items); start += c.batchSize {
 			end := min(start+c.batchSize, len(items))
 			batch := items[start:end]
@@ -38078,6 +38566,7 @@ func (c *orderClient) UpdateMany(ctx context.Context, items []UpdateOrderItem, o
 			pgxBatch := &pgx.Batch{}
 			var batchQueries []string
 			var batchArgs [][]any
+			var queuedItems []UpdateOrderItem
 			for _, item := range batch {
 				setClauses := make(map[string]any)
 				if v, ok := item.Input.UserID.Get(); ok {
@@ -38117,6 +38606,7 @@ func (c *orderClient) UpdateMany(ctx context.Context, items []UpdateOrderItem, o
 				pgxBatch.Queue(query, args...)
 				batchQueries = append(batchQueries, query)
 				batchArgs = append(batchArgs, args)
+				queuedItems = append(queuedItems, item)
 				allIDs = append(allIDs, item.ID)
 			}
 
@@ -38126,10 +38616,15 @@ func (c *orderClient) UpdateMany(ctx context.Context, items []UpdateOrderItem, o
 					SendBatch(ctx context.Context, b *pgx.Batch) pgx.BatchResults
 				}); ok {
 					br := batcher.SendBatch(ctx, pgxBatch)
-					for range pgxBatch.Len() {
-						if _, err := br.Exec(); err != nil {
+					for i := range pgxBatch.Len() {
+						tag, err := br.Exec()
+						if err != nil {
 							br.Close()
 							return nil, fmt.Errorf("update orders batch: %w", err)
+						}
+						matched := tag.RowsAffected()
+						if matched > 0 {
+							writtenItems = append(writtenItems, queuedItems[i])
 						}
 					}
 					if err := br.Close(); err != nil {
@@ -38137,15 +38632,31 @@ func (c *orderClient) UpdateMany(ctx context.Context, items []UpdateOrderItem, o
 					}
 				} else {
 					for i, q := range batchQueries {
-						if _, err := conn.Exec(ctx, q, batchArgs[i]...); err != nil {
+						execResult, err := conn.Exec(ctx, q, batchArgs[i]...)
+						if err != nil {
 							return nil, fmt.Errorf("update orders batch: %w", err)
+						}
+						matched, err := execResult.RowsAffected()
+						if err != nil {
+							return nil, fmt.Errorf("update orders batch rows affected: %w", err)
+						}
+						if matched > 0 {
+							writtenItems = append(writtenItems, queuedItems[i])
 						}
 					}
 				}
 			}
 		}
 
-		m.AffectedPKs = toAnySlice(allIDs)
+		affectedPKs := make([]any, len(writtenItems))
+		for i, item := range writtenItems {
+			affectedPKs[i] = item.ID
+		}
+		m.AffectedPKs = affectedPKs
+		// The published input is narrowed to the written items, so it stays
+		// index-aligned with m.AffectedPKs: each event carries the input that
+		// wrote its row.
+		m.Input = writtenItems
 
 		// Empty FieldOptions — skip fetch
 		if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
@@ -40297,11 +40808,11 @@ func (c *productTagLabelClient) Update(ctx context.Context, pk ProductTagLabelPK
 		if err != nil {
 			return nil, fmt.Errorf("update product_tag_label: %w", err)
 		}
-		count, err := execResult.RowsAffected()
+		matched, err := execResult.RowsAffected()
 		if err != nil {
 			return nil, fmt.Errorf("update product_tag_label rows affected: %w", err)
 		}
-		if count == 0 {
+		if matched == 0 {
 			return nil, ErrNotFound
 		}
 		m.AffectedPKs = []any{pk}
@@ -40359,6 +40870,11 @@ func (c *productTagLabelClient) UpdateMany(ctx context.Context, items []UpdatePr
 			return []*ProductTagLabel{}, nil
 		}
 		var allPKs []ProductTagLabelPK
+		// The items whose UPDATE matched a row. Only these record an affected
+		// key: an item whose key matches no row, or that sets no field, wrote
+		// nothing, so no cache entry is invalidated and no event is published
+		// for it.
+		var writtenItems []UpdateProductTagLabelItem
 		for start := 0; start < len(items); start += c.batchSize {
 			end := min(start+c.batchSize, len(items))
 			batch := items[start:end]
@@ -40367,6 +40883,7 @@ func (c *productTagLabelClient) UpdateMany(ctx context.Context, items []UpdatePr
 			pgxBatch := &pgx.Batch{}
 			var batchQueries []string
 			var batchArgs [][]any
+			var queuedItems []UpdateProductTagLabelItem
 			for _, item := range batch {
 				setClauses := make(map[string]any)
 				if v, ok := item.Input.Description.Get(); ok {
@@ -40388,6 +40905,7 @@ func (c *productTagLabelClient) UpdateMany(ctx context.Context, items []UpdatePr
 				pgxBatch.Queue(query, args...)
 				batchQueries = append(batchQueries, query)
 				batchArgs = append(batchArgs, args)
+				queuedItems = append(queuedItems, item)
 				allPKs = append(allPKs, item.PK)
 			}
 
@@ -40397,10 +40915,15 @@ func (c *productTagLabelClient) UpdateMany(ctx context.Context, items []UpdatePr
 					SendBatch(ctx context.Context, b *pgx.Batch) pgx.BatchResults
 				}); ok {
 					br := batcher.SendBatch(ctx, pgxBatch)
-					for range pgxBatch.Len() {
-						if _, err := br.Exec(); err != nil {
+					for i := range pgxBatch.Len() {
+						tag, err := br.Exec()
+						if err != nil {
 							br.Close()
 							return nil, fmt.Errorf("update product_tag_labels batch: %w", err)
+						}
+						matched := tag.RowsAffected()
+						if matched > 0 {
+							writtenItems = append(writtenItems, queuedItems[i])
 						}
 					}
 					if err := br.Close(); err != nil {
@@ -40408,15 +40931,31 @@ func (c *productTagLabelClient) UpdateMany(ctx context.Context, items []UpdatePr
 					}
 				} else {
 					for i, q := range batchQueries {
-						if _, err := conn.Exec(ctx, q, batchArgs[i]...); err != nil {
+						execResult, err := conn.Exec(ctx, q, batchArgs[i]...)
+						if err != nil {
 							return nil, fmt.Errorf("update product_tag_labels batch: %w", err)
+						}
+						matched, err := execResult.RowsAffected()
+						if err != nil {
+							return nil, fmt.Errorf("update product_tag_labels batch rows affected: %w", err)
+						}
+						if matched > 0 {
+							writtenItems = append(writtenItems, queuedItems[i])
 						}
 					}
 				}
 			}
 		}
 
-		m.AffectedPKs = toAnySlice(allPKs)
+		affectedPKs := make([]any, len(writtenItems))
+		for i, item := range writtenItems {
+			affectedPKs[i] = item.PK
+		}
+		m.AffectedPKs = affectedPKs
+		// The published input is narrowed to the written items, so it stays
+		// index-aligned with m.AffectedPKs: each event carries the input that
+		// wrote its row.
+		m.Input = writtenItems
 
 		// Empty FieldOptions — skip fetch
 		if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
@@ -42451,11 +42990,11 @@ func (c *productClient) Update(ctx context.Context, id uuid.UUID, input *UpdateP
 		if err != nil {
 			return nil, fmt.Errorf("update product: %w", err)
 		}
-		count, err := execResult.RowsAffected()
+		matched, err := execResult.RowsAffected()
 		if err != nil {
 			return nil, fmt.Errorf("update product rows affected: %w", err)
 		}
-		if count == 0 {
+		if matched == 0 {
 			return nil, ErrNotFound
 		}
 		m.AffectedPKs = []any{id}
@@ -42513,6 +43052,11 @@ func (c *productClient) UpdateMany(ctx context.Context, items []UpdateProductIte
 			return []*Product{}, nil
 		}
 		var allIDs []uuid.UUID
+		// The items whose UPDATE matched a row. Only these record an affected
+		// key: an item whose key matches no row, or that sets no field, wrote
+		// nothing, so no cache entry is invalidated and no event is published
+		// for it.
+		var writtenItems []UpdateProductItem
 		for start := 0; start < len(items); start += c.batchSize {
 			end := min(start+c.batchSize, len(items))
 			batch := items[start:end]
@@ -42521,6 +43065,7 @@ func (c *productClient) UpdateMany(ctx context.Context, items []UpdateProductIte
 			pgxBatch := &pgx.Batch{}
 			var batchQueries []string
 			var batchArgs [][]any
+			var queuedItems []UpdateProductItem
 			for _, item := range batch {
 				setClauses := make(map[string]any)
 				if v, ok := item.Input.Name.Get(); ok {
@@ -42572,6 +43117,7 @@ func (c *productClient) UpdateMany(ctx context.Context, items []UpdateProductIte
 				pgxBatch.Queue(query, args...)
 				batchQueries = append(batchQueries, query)
 				batchArgs = append(batchArgs, args)
+				queuedItems = append(queuedItems, item)
 				allIDs = append(allIDs, item.ID)
 			}
 
@@ -42581,10 +43127,15 @@ func (c *productClient) UpdateMany(ctx context.Context, items []UpdateProductIte
 					SendBatch(ctx context.Context, b *pgx.Batch) pgx.BatchResults
 				}); ok {
 					br := batcher.SendBatch(ctx, pgxBatch)
-					for range pgxBatch.Len() {
-						if _, err := br.Exec(); err != nil {
+					for i := range pgxBatch.Len() {
+						tag, err := br.Exec()
+						if err != nil {
 							br.Close()
 							return nil, fmt.Errorf("update products batch: %w", err)
+						}
+						matched := tag.RowsAffected()
+						if matched > 0 {
+							writtenItems = append(writtenItems, queuedItems[i])
 						}
 					}
 					if err := br.Close(); err != nil {
@@ -42592,15 +43143,31 @@ func (c *productClient) UpdateMany(ctx context.Context, items []UpdateProductIte
 					}
 				} else {
 					for i, q := range batchQueries {
-						if _, err := conn.Exec(ctx, q, batchArgs[i]...); err != nil {
+						execResult, err := conn.Exec(ctx, q, batchArgs[i]...)
+						if err != nil {
 							return nil, fmt.Errorf("update products batch: %w", err)
+						}
+						matched, err := execResult.RowsAffected()
+						if err != nil {
+							return nil, fmt.Errorf("update products batch rows affected: %w", err)
+						}
+						if matched > 0 {
+							writtenItems = append(writtenItems, queuedItems[i])
 						}
 					}
 				}
 			}
 		}
 
-		m.AffectedPKs = toAnySlice(allIDs)
+		affectedPKs := make([]any, len(writtenItems))
+		for i, item := range writtenItems {
+			affectedPKs[i] = item.ID
+		}
+		m.AffectedPKs = affectedPKs
+		// The published input is narrowed to the written items, so it stays
+		// index-aligned with m.AffectedPKs: each event carries the input that
+		// wrote its row.
+		m.Input = writtenItems
 
 		// Empty FieldOptions — skip fetch
 		if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
@@ -45093,11 +45660,11 @@ func (c *profileClient) Update(ctx context.Context, id uuid.UUID, input *UpdateP
 		if err != nil {
 			return nil, fmt.Errorf("update profile: %w", err)
 		}
-		count, err := execResult.RowsAffected()
+		matched, err := execResult.RowsAffected()
 		if err != nil {
 			return nil, fmt.Errorf("update profile rows affected: %w", err)
 		}
-		if count == 0 {
+		if matched == 0 {
 			return nil, ErrNotFound
 		}
 		m.AffectedPKs = []any{id}
@@ -45155,6 +45722,11 @@ func (c *profileClient) UpdateMany(ctx context.Context, items []UpdateProfileIte
 			return []*Profile{}, nil
 		}
 		var allIDs []uuid.UUID
+		// The items whose UPDATE matched a row. Only these record an affected
+		// key: an item whose key matches no row, or that sets no field, wrote
+		// nothing, so no cache entry is invalidated and no event is published
+		// for it.
+		var writtenItems []UpdateProfileItem
 		for start := 0; start < len(items); start += c.batchSize {
 			end := min(start+c.batchSize, len(items))
 			batch := items[start:end]
@@ -45163,6 +45735,7 @@ func (c *profileClient) UpdateMany(ctx context.Context, items []UpdateProfileIte
 			pgxBatch := &pgx.Batch{}
 			var batchQueries []string
 			var batchArgs [][]any
+			var queuedItems []UpdateProfileItem
 			for _, item := range batch {
 				setClauses := make(map[string]any)
 				if v, ok := item.Input.UserID.Get(); ok {
@@ -45197,6 +45770,7 @@ func (c *profileClient) UpdateMany(ctx context.Context, items []UpdateProfileIte
 				pgxBatch.Queue(query, args...)
 				batchQueries = append(batchQueries, query)
 				batchArgs = append(batchArgs, args)
+				queuedItems = append(queuedItems, item)
 				allIDs = append(allIDs, item.ID)
 			}
 
@@ -45206,10 +45780,15 @@ func (c *profileClient) UpdateMany(ctx context.Context, items []UpdateProfileIte
 					SendBatch(ctx context.Context, b *pgx.Batch) pgx.BatchResults
 				}); ok {
 					br := batcher.SendBatch(ctx, pgxBatch)
-					for range pgxBatch.Len() {
-						if _, err := br.Exec(); err != nil {
+					for i := range pgxBatch.Len() {
+						tag, err := br.Exec()
+						if err != nil {
 							br.Close()
 							return nil, fmt.Errorf("update profiles batch: %w", err)
+						}
+						matched := tag.RowsAffected()
+						if matched > 0 {
+							writtenItems = append(writtenItems, queuedItems[i])
 						}
 					}
 					if err := br.Close(); err != nil {
@@ -45217,15 +45796,31 @@ func (c *profileClient) UpdateMany(ctx context.Context, items []UpdateProfileIte
 					}
 				} else {
 					for i, q := range batchQueries {
-						if _, err := conn.Exec(ctx, q, batchArgs[i]...); err != nil {
+						execResult, err := conn.Exec(ctx, q, batchArgs[i]...)
+						if err != nil {
 							return nil, fmt.Errorf("update profiles batch: %w", err)
+						}
+						matched, err := execResult.RowsAffected()
+						if err != nil {
+							return nil, fmt.Errorf("update profiles batch rows affected: %w", err)
+						}
+						if matched > 0 {
+							writtenItems = append(writtenItems, queuedItems[i])
 						}
 					}
 				}
 			}
 		}
 
-		m.AffectedPKs = toAnySlice(allIDs)
+		affectedPKs := make([]any, len(writtenItems))
+		for i, item := range writtenItems {
+			affectedPKs[i] = item.ID
+		}
+		m.AffectedPKs = affectedPKs
+		// The published input is narrowed to the written items, so it stays
+		// index-aligned with m.AffectedPKs: each event carries the input that
+		// wrote its row.
+		m.Input = writtenItems
 
 		// Empty FieldOptions — skip fetch
 		if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
@@ -47569,11 +48164,11 @@ func (c *rateLimitClient) Update(ctx context.Context, pk RateLimitPK, input *Upd
 		if err != nil {
 			return nil, fmt.Errorf("update rate_limit: %w", err)
 		}
-		count, err := execResult.RowsAffected()
+		matched, err := execResult.RowsAffected()
 		if err != nil {
 			return nil, fmt.Errorf("update rate_limit rows affected: %w", err)
 		}
-		if count == 0 {
+		if matched == 0 {
 			return nil, ErrNotFound
 		}
 		m.AffectedPKs = []any{pk}
@@ -47631,6 +48226,11 @@ func (c *rateLimitClient) UpdateMany(ctx context.Context, items []UpdateRateLimi
 			return []*RateLimit{}, nil
 		}
 		var allPKs []RateLimitPK
+		// The items whose UPDATE matched a row. Only these record an affected
+		// key: an item whose key matches no row, or that sets no field, wrote
+		// nothing, so no cache entry is invalidated and no event is published
+		// for it.
+		var writtenItems []UpdateRateLimitItem
 		for start := 0; start < len(items); start += c.batchSize {
 			end := min(start+c.batchSize, len(items))
 			batch := items[start:end]
@@ -47639,6 +48239,7 @@ func (c *rateLimitClient) UpdateMany(ctx context.Context, items []UpdateRateLimi
 			pgxBatch := &pgx.Batch{}
 			var batchQueries []string
 			var batchArgs [][]any
+			var queuedItems []UpdateRateLimitItem
 			for _, item := range batch {
 				setClauses := make(map[string]any)
 				if v, ok := item.Input.Count.Get(); ok {
@@ -47668,6 +48269,7 @@ func (c *rateLimitClient) UpdateMany(ctx context.Context, items []UpdateRateLimi
 				pgxBatch.Queue(query, args...)
 				batchQueries = append(batchQueries, query)
 				batchArgs = append(batchArgs, args)
+				queuedItems = append(queuedItems, item)
 				allPKs = append(allPKs, item.PK)
 			}
 
@@ -47677,10 +48279,15 @@ func (c *rateLimitClient) UpdateMany(ctx context.Context, items []UpdateRateLimi
 					SendBatch(ctx context.Context, b *pgx.Batch) pgx.BatchResults
 				}); ok {
 					br := batcher.SendBatch(ctx, pgxBatch)
-					for range pgxBatch.Len() {
-						if _, err := br.Exec(); err != nil {
+					for i := range pgxBatch.Len() {
+						tag, err := br.Exec()
+						if err != nil {
 							br.Close()
 							return nil, fmt.Errorf("update rate_limits batch: %w", err)
+						}
+						matched := tag.RowsAffected()
+						if matched > 0 {
+							writtenItems = append(writtenItems, queuedItems[i])
 						}
 					}
 					if err := br.Close(); err != nil {
@@ -47688,15 +48295,31 @@ func (c *rateLimitClient) UpdateMany(ctx context.Context, items []UpdateRateLimi
 					}
 				} else {
 					for i, q := range batchQueries {
-						if _, err := conn.Exec(ctx, q, batchArgs[i]...); err != nil {
+						execResult, err := conn.Exec(ctx, q, batchArgs[i]...)
+						if err != nil {
 							return nil, fmt.Errorf("update rate_limits batch: %w", err)
+						}
+						matched, err := execResult.RowsAffected()
+						if err != nil {
+							return nil, fmt.Errorf("update rate_limits batch rows affected: %w", err)
+						}
+						if matched > 0 {
+							writtenItems = append(writtenItems, queuedItems[i])
 						}
 					}
 				}
 			}
 		}
 
-		m.AffectedPKs = toAnySlice(allPKs)
+		affectedPKs := make([]any, len(writtenItems))
+		for i, item := range writtenItems {
+			affectedPKs[i] = item.PK
+		}
+		m.AffectedPKs = affectedPKs
+		// The published input is narrowed to the written items, so it stays
+		// index-aligned with m.AffectedPKs: each event carries the input that
+		// wrote its row.
+		m.Input = writtenItems
 
 		// Empty FieldOptions — skip fetch
 		if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
@@ -49509,11 +50132,11 @@ func (c *sequenceRowClient) Update(ctx context.Context, id int64, input *UpdateS
 		if err != nil {
 			return nil, fmt.Errorf("update sequence_row: %w", err)
 		}
-		count, err := execResult.RowsAffected()
+		matched, err := execResult.RowsAffected()
 		if err != nil {
 			return nil, fmt.Errorf("update sequence_row rows affected: %w", err)
 		}
-		if count == 0 {
+		if matched == 0 {
 			return nil, ErrNotFound
 		}
 		m.AffectedPKs = []any{id}
@@ -49571,6 +50194,11 @@ func (c *sequenceRowClient) UpdateMany(ctx context.Context, items []UpdateSequen
 			return []*SequenceRow{}, nil
 		}
 		var allIDs []int64
+		// The items whose UPDATE matched a row. Only these record an affected
+		// key: an item whose key matches no row, or that sets no field, wrote
+		// nothing, so no cache entry is invalidated and no event is published
+		// for it.
+		var writtenItems []UpdateSequenceRowItem
 		for start := 0; start < len(items); start += c.batchSize {
 			end := min(start+c.batchSize, len(items))
 			batch := items[start:end]
@@ -49579,6 +50207,7 @@ func (c *sequenceRowClient) UpdateMany(ctx context.Context, items []UpdateSequen
 			pgxBatch := &pgx.Batch{}
 			var batchQueries []string
 			var batchArgs [][]any
+			var queuedItems []UpdateSequenceRowItem
 			for _, item := range batch {
 				setClauses := make(map[string]any)
 				if v, ok := item.Input.Code.Get(); ok {
@@ -49610,6 +50239,7 @@ func (c *sequenceRowClient) UpdateMany(ctx context.Context, items []UpdateSequen
 				pgxBatch.Queue(query, args...)
 				batchQueries = append(batchQueries, query)
 				batchArgs = append(batchArgs, args)
+				queuedItems = append(queuedItems, item)
 				allIDs = append(allIDs, item.ID)
 			}
 
@@ -49619,10 +50249,15 @@ func (c *sequenceRowClient) UpdateMany(ctx context.Context, items []UpdateSequen
 					SendBatch(ctx context.Context, b *pgx.Batch) pgx.BatchResults
 				}); ok {
 					br := batcher.SendBatch(ctx, pgxBatch)
-					for range pgxBatch.Len() {
-						if _, err := br.Exec(); err != nil {
+					for i := range pgxBatch.Len() {
+						tag, err := br.Exec()
+						if err != nil {
 							br.Close()
 							return nil, fmt.Errorf("update sequence_rows batch: %w", err)
+						}
+						matched := tag.RowsAffected()
+						if matched > 0 {
+							writtenItems = append(writtenItems, queuedItems[i])
 						}
 					}
 					if err := br.Close(); err != nil {
@@ -49630,15 +50265,31 @@ func (c *sequenceRowClient) UpdateMany(ctx context.Context, items []UpdateSequen
 					}
 				} else {
 					for i, q := range batchQueries {
-						if _, err := conn.Exec(ctx, q, batchArgs[i]...); err != nil {
+						execResult, err := conn.Exec(ctx, q, batchArgs[i]...)
+						if err != nil {
 							return nil, fmt.Errorf("update sequence_rows batch: %w", err)
+						}
+						matched, err := execResult.RowsAffected()
+						if err != nil {
+							return nil, fmt.Errorf("update sequence_rows batch rows affected: %w", err)
+						}
+						if matched > 0 {
+							writtenItems = append(writtenItems, queuedItems[i])
 						}
 					}
 				}
 			}
 		}
 
-		m.AffectedPKs = toAnySlice(allIDs)
+		affectedPKs := make([]any, len(writtenItems))
+		for i, item := range writtenItems {
+			affectedPKs[i] = item.ID
+		}
+		m.AffectedPKs = affectedPKs
+		// The published input is narrowed to the written items, so it stays
+		// index-aligned with m.AffectedPKs: each event carries the input that
+		// wrote its row.
+		m.Input = writtenItems
 
 		// Empty FieldOptions — skip fetch
 		if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
@@ -51693,11 +52344,11 @@ func (c *sluggedRowClient) Update(ctx context.Context, id int64, input *UpdateSl
 		if err != nil {
 			return nil, fmt.Errorf("update slugged_row: %w", err)
 		}
-		count, err := execResult.RowsAffected()
+		matched, err := execResult.RowsAffected()
 		if err != nil {
 			return nil, fmt.Errorf("update slugged_row rows affected: %w", err)
 		}
-		if count == 0 {
+		if matched == 0 {
 			return nil, ErrNotFound
 		}
 		m.AffectedPKs = []any{id}
@@ -51755,6 +52406,11 @@ func (c *sluggedRowClient) UpdateMany(ctx context.Context, items []UpdateSlugged
 			return []*SluggedRow{}, nil
 		}
 		var allIDs []int64
+		// The items whose UPDATE matched a row. Only these record an affected
+		// key: an item whose key matches no row, or that sets no field, wrote
+		// nothing, so no cache entry is invalidated and no event is published
+		// for it.
+		var writtenItems []UpdateSluggedRowItem
 		for start := 0; start < len(items); start += c.batchSize {
 			end := min(start+c.batchSize, len(items))
 			batch := items[start:end]
@@ -51763,6 +52419,7 @@ func (c *sluggedRowClient) UpdateMany(ctx context.Context, items []UpdateSlugged
 			pgxBatch := &pgx.Batch{}
 			var batchQueries []string
 			var batchArgs [][]any
+			var queuedItems []UpdateSluggedRowItem
 			for _, item := range batch {
 				setClauses := make(map[string]any)
 				if v, ok := item.Input.Name.Get(); ok {
@@ -51785,6 +52442,7 @@ func (c *sluggedRowClient) UpdateMany(ctx context.Context, items []UpdateSlugged
 				pgxBatch.Queue(query, args...)
 				batchQueries = append(batchQueries, query)
 				batchArgs = append(batchArgs, args)
+				queuedItems = append(queuedItems, item)
 				allIDs = append(allIDs, item.ID)
 			}
 
@@ -51794,10 +52452,15 @@ func (c *sluggedRowClient) UpdateMany(ctx context.Context, items []UpdateSlugged
 					SendBatch(ctx context.Context, b *pgx.Batch) pgx.BatchResults
 				}); ok {
 					br := batcher.SendBatch(ctx, pgxBatch)
-					for range pgxBatch.Len() {
-						if _, err := br.Exec(); err != nil {
+					for i := range pgxBatch.Len() {
+						tag, err := br.Exec()
+						if err != nil {
 							br.Close()
 							return nil, fmt.Errorf("update slugged_rows batch: %w", err)
+						}
+						matched := tag.RowsAffected()
+						if matched > 0 {
+							writtenItems = append(writtenItems, queuedItems[i])
 						}
 					}
 					if err := br.Close(); err != nil {
@@ -51805,15 +52468,31 @@ func (c *sluggedRowClient) UpdateMany(ctx context.Context, items []UpdateSlugged
 					}
 				} else {
 					for i, q := range batchQueries {
-						if _, err := conn.Exec(ctx, q, batchArgs[i]...); err != nil {
+						execResult, err := conn.Exec(ctx, q, batchArgs[i]...)
+						if err != nil {
 							return nil, fmt.Errorf("update slugged_rows batch: %w", err)
+						}
+						matched, err := execResult.RowsAffected()
+						if err != nil {
+							return nil, fmt.Errorf("update slugged_rows batch rows affected: %w", err)
+						}
+						if matched > 0 {
+							writtenItems = append(writtenItems, queuedItems[i])
 						}
 					}
 				}
 			}
 		}
 
-		m.AffectedPKs = toAnySlice(allIDs)
+		affectedPKs := make([]any, len(writtenItems))
+		for i, item := range writtenItems {
+			affectedPKs[i] = item.ID
+		}
+		m.AffectedPKs = affectedPKs
+		// The published input is narrowed to the written items, so it stays
+		// index-aligned with m.AffectedPKs: each event carries the input that
+		// wrote its row.
+		m.Input = writtenItems
 
 		// Empty FieldOptions — skip fetch
 		if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
@@ -53759,11 +54438,11 @@ func (c *tagClient) Update(ctx context.Context, id uuid.UUID, input *UpdateTagIn
 		if err != nil {
 			return nil, fmt.Errorf("update tag: %w", err)
 		}
-		count, err := execResult.RowsAffected()
+		matched, err := execResult.RowsAffected()
 		if err != nil {
 			return nil, fmt.Errorf("update tag rows affected: %w", err)
 		}
-		if count == 0 {
+		if matched == 0 {
 			return nil, ErrNotFound
 		}
 		m.AffectedPKs = []any{id}
@@ -53821,6 +54500,11 @@ func (c *tagClient) UpdateMany(ctx context.Context, items []UpdateTagItem, opts 
 			return []*Tag{}, nil
 		}
 		var allIDs []uuid.UUID
+		// The items whose UPDATE matched a row. Only these record an affected
+		// key: an item whose key matches no row, or that sets no field, wrote
+		// nothing, so no cache entry is invalidated and no event is published
+		// for it.
+		var writtenItems []UpdateTagItem
 		for start := 0; start < len(items); start += c.batchSize {
 			end := min(start+c.batchSize, len(items))
 			batch := items[start:end]
@@ -53829,6 +54513,7 @@ func (c *tagClient) UpdateMany(ctx context.Context, items []UpdateTagItem, opts 
 			pgxBatch := &pgx.Batch{}
 			var batchQueries []string
 			var batchArgs [][]any
+			var queuedItems []UpdateTagItem
 			for _, item := range batch {
 				setClauses := make(map[string]any)
 				if v, ok := item.Input.Name.Get(); ok {
@@ -53851,6 +54536,7 @@ func (c *tagClient) UpdateMany(ctx context.Context, items []UpdateTagItem, opts 
 				pgxBatch.Queue(query, args...)
 				batchQueries = append(batchQueries, query)
 				batchArgs = append(batchArgs, args)
+				queuedItems = append(queuedItems, item)
 				allIDs = append(allIDs, item.ID)
 			}
 
@@ -53860,10 +54546,15 @@ func (c *tagClient) UpdateMany(ctx context.Context, items []UpdateTagItem, opts 
 					SendBatch(ctx context.Context, b *pgx.Batch) pgx.BatchResults
 				}); ok {
 					br := batcher.SendBatch(ctx, pgxBatch)
-					for range pgxBatch.Len() {
-						if _, err := br.Exec(); err != nil {
+					for i := range pgxBatch.Len() {
+						tag, err := br.Exec()
+						if err != nil {
 							br.Close()
 							return nil, fmt.Errorf("update tags batch: %w", err)
+						}
+						matched := tag.RowsAffected()
+						if matched > 0 {
+							writtenItems = append(writtenItems, queuedItems[i])
 						}
 					}
 					if err := br.Close(); err != nil {
@@ -53871,15 +54562,31 @@ func (c *tagClient) UpdateMany(ctx context.Context, items []UpdateTagItem, opts 
 					}
 				} else {
 					for i, q := range batchQueries {
-						if _, err := conn.Exec(ctx, q, batchArgs[i]...); err != nil {
+						execResult, err := conn.Exec(ctx, q, batchArgs[i]...)
+						if err != nil {
 							return nil, fmt.Errorf("update tags batch: %w", err)
+						}
+						matched, err := execResult.RowsAffected()
+						if err != nil {
+							return nil, fmt.Errorf("update tags batch rows affected: %w", err)
+						}
+						if matched > 0 {
+							writtenItems = append(writtenItems, queuedItems[i])
 						}
 					}
 				}
 			}
 		}
 
-		m.AffectedPKs = toAnySlice(allIDs)
+		affectedPKs := make([]any, len(writtenItems))
+		for i, item := range writtenItems {
+			affectedPKs[i] = item.ID
+		}
+		m.AffectedPKs = affectedPKs
+		// The published input is narrowed to the written items, so it stays
+		// index-aligned with m.AffectedPKs: each event carries the input that
+		// wrote its row.
+		m.Input = writtenItems
 
 		// Empty FieldOptions — skip fetch
 		if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
@@ -56230,11 +56937,11 @@ func (c *userCategoryClient) Update(ctx context.Context, pk UserCategoryPK, inpu
 		if err != nil {
 			return nil, fmt.Errorf("update user_category: %w", err)
 		}
-		count, err := execResult.RowsAffected()
+		matched, err := execResult.RowsAffected()
 		if err != nil {
 			return nil, fmt.Errorf("update user_category rows affected: %w", err)
 		}
-		if count == 0 {
+		if matched == 0 {
 			return nil, ErrNotFound
 		}
 		m.AffectedPKs = []any{pk}
@@ -56292,6 +56999,11 @@ func (c *userCategoryClient) UpdateMany(ctx context.Context, items []UpdateUserC
 			return []*UserCategory{}, nil
 		}
 		var allPKs []UserCategoryPK
+		// The items whose UPDATE matched a row. Only these record an affected
+		// key: an item whose key matches no row, or that sets no field, wrote
+		// nothing, so no cache entry is invalidated and no event is published
+		// for it.
+		var writtenItems []UpdateUserCategoryItem
 		for start := 0; start < len(items); start += c.batchSize {
 			end := min(start+c.batchSize, len(items))
 			batch := items[start:end]
@@ -56300,6 +57012,7 @@ func (c *userCategoryClient) UpdateMany(ctx context.Context, items []UpdateUserC
 			pgxBatch := &pgx.Batch{}
 			var batchQueries []string
 			var batchArgs [][]any
+			var queuedItems []UpdateUserCategoryItem
 			for _, item := range batch {
 				setClauses := make(map[string]any)
 
@@ -56318,6 +57031,7 @@ func (c *userCategoryClient) UpdateMany(ctx context.Context, items []UpdateUserC
 				pgxBatch.Queue(query, args...)
 				batchQueries = append(batchQueries, query)
 				batchArgs = append(batchArgs, args)
+				queuedItems = append(queuedItems, item)
 				allPKs = append(allPKs, item.PK)
 			}
 
@@ -56327,10 +57041,15 @@ func (c *userCategoryClient) UpdateMany(ctx context.Context, items []UpdateUserC
 					SendBatch(ctx context.Context, b *pgx.Batch) pgx.BatchResults
 				}); ok {
 					br := batcher.SendBatch(ctx, pgxBatch)
-					for range pgxBatch.Len() {
-						if _, err := br.Exec(); err != nil {
+					for i := range pgxBatch.Len() {
+						tag, err := br.Exec()
+						if err != nil {
 							br.Close()
 							return nil, fmt.Errorf("update user_categories batch: %w", err)
+						}
+						matched := tag.RowsAffected()
+						if matched > 0 {
+							writtenItems = append(writtenItems, queuedItems[i])
 						}
 					}
 					if err := br.Close(); err != nil {
@@ -56338,15 +57057,31 @@ func (c *userCategoryClient) UpdateMany(ctx context.Context, items []UpdateUserC
 					}
 				} else {
 					for i, q := range batchQueries {
-						if _, err := conn.Exec(ctx, q, batchArgs[i]...); err != nil {
+						execResult, err := conn.Exec(ctx, q, batchArgs[i]...)
+						if err != nil {
 							return nil, fmt.Errorf("update user_categories batch: %w", err)
+						}
+						matched, err := execResult.RowsAffected()
+						if err != nil {
+							return nil, fmt.Errorf("update user_categories batch rows affected: %w", err)
+						}
+						if matched > 0 {
+							writtenItems = append(writtenItems, queuedItems[i])
 						}
 					}
 				}
 			}
 		}
 
-		m.AffectedPKs = toAnySlice(allPKs)
+		affectedPKs := make([]any, len(writtenItems))
+		for i, item := range writtenItems {
+			affectedPKs[i] = item.PK
+		}
+		m.AffectedPKs = affectedPKs
+		// The published input is narrowed to the written items, so it stays
+		// index-aligned with m.AffectedPKs: each event carries the input that
+		// wrote its row.
+		m.Input = writtenItems
 
 		// Empty FieldOptions — skip fetch
 		if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
@@ -58662,11 +59397,11 @@ func (c *publicUserClient) Update(ctx context.Context, id uuid.UUID, input *Upda
 		if err != nil {
 			return nil, fmt.Errorf("update user: %w", err)
 		}
-		count, err := execResult.RowsAffected()
+		matched, err := execResult.RowsAffected()
 		if err != nil {
 			return nil, fmt.Errorf("update user rows affected: %w", err)
 		}
-		if count == 0 {
+		if matched == 0 {
 			return nil, ErrNotFound
 		}
 		m.AffectedPKs = []any{id}
@@ -58724,6 +59459,11 @@ func (c *publicUserClient) UpdateMany(ctx context.Context, items []UpdatePublicU
 			return []*PublicUser{}, nil
 		}
 		var allIDs []uuid.UUID
+		// The items whose UPDATE matched a row. Only these record an affected
+		// key: an item whose key matches no row, or that sets no field, wrote
+		// nothing, so no cache entry is invalidated and no event is published
+		// for it.
+		var writtenItems []UpdatePublicUserItem
 		for start := 0; start < len(items); start += c.batchSize {
 			end := min(start+c.batchSize, len(items))
 			batch := items[start:end]
@@ -58732,6 +59472,7 @@ func (c *publicUserClient) UpdateMany(ctx context.Context, items []UpdatePublicU
 			pgxBatch := &pgx.Batch{}
 			var batchQueries []string
 			var batchArgs [][]any
+			var queuedItems []UpdatePublicUserItem
 			for _, item := range batch {
 				setClauses := make(map[string]any)
 				if v, ok := item.Input.Email.Get(); ok {
@@ -58774,6 +59515,7 @@ func (c *publicUserClient) UpdateMany(ctx context.Context, items []UpdatePublicU
 				pgxBatch.Queue(query, args...)
 				batchQueries = append(batchQueries, query)
 				batchArgs = append(batchArgs, args)
+				queuedItems = append(queuedItems, item)
 				allIDs = append(allIDs, item.ID)
 			}
 
@@ -58783,10 +59525,15 @@ func (c *publicUserClient) UpdateMany(ctx context.Context, items []UpdatePublicU
 					SendBatch(ctx context.Context, b *pgx.Batch) pgx.BatchResults
 				}); ok {
 					br := batcher.SendBatch(ctx, pgxBatch)
-					for range pgxBatch.Len() {
-						if _, err := br.Exec(); err != nil {
+					for i := range pgxBatch.Len() {
+						tag, err := br.Exec()
+						if err != nil {
 							br.Close()
 							return nil, fmt.Errorf("update users batch: %w", err)
+						}
+						matched := tag.RowsAffected()
+						if matched > 0 {
+							writtenItems = append(writtenItems, queuedItems[i])
 						}
 					}
 					if err := br.Close(); err != nil {
@@ -58794,15 +59541,31 @@ func (c *publicUserClient) UpdateMany(ctx context.Context, items []UpdatePublicU
 					}
 				} else {
 					for i, q := range batchQueries {
-						if _, err := conn.Exec(ctx, q, batchArgs[i]...); err != nil {
+						execResult, err := conn.Exec(ctx, q, batchArgs[i]...)
+						if err != nil {
 							return nil, fmt.Errorf("update users batch: %w", err)
+						}
+						matched, err := execResult.RowsAffected()
+						if err != nil {
+							return nil, fmt.Errorf("update users batch rows affected: %w", err)
+						}
+						if matched > 0 {
+							writtenItems = append(writtenItems, queuedItems[i])
 						}
 					}
 				}
 			}
 		}
 
-		m.AffectedPKs = toAnySlice(allIDs)
+		affectedPKs := make([]any, len(writtenItems))
+		for i, item := range writtenItems {
+			affectedPKs[i] = item.ID
+		}
+		m.AffectedPKs = affectedPKs
+		// The published input is narrowed to the written items, so it stays
+		// index-aligned with m.AffectedPKs: each event carries the input that
+		// wrote its row.
+		m.Input = writtenItems
 
 		// Empty FieldOptions — skip fetch
 		if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
@@ -61696,11 +62459,11 @@ func (c *warehouseClient) Update(ctx context.Context, id uuid.UUID, input *Updat
 		if err != nil {
 			return nil, fmt.Errorf("update warehouse: %w", err)
 		}
-		count, err := execResult.RowsAffected()
+		matched, err := execResult.RowsAffected()
 		if err != nil {
 			return nil, fmt.Errorf("update warehouse rows affected: %w", err)
 		}
-		if count == 0 {
+		if matched == 0 {
 			return nil, ErrNotFound
 		}
 		m.AffectedPKs = []any{id}
@@ -61758,6 +62521,11 @@ func (c *warehouseClient) UpdateMany(ctx context.Context, items []UpdateWarehous
 			return []*Warehouse{}, nil
 		}
 		var allIDs []uuid.UUID
+		// The items whose UPDATE matched a row. Only these record an affected
+		// key: an item whose key matches no row, or that sets no field, wrote
+		// nothing, so no cache entry is invalidated and no event is published
+		// for it.
+		var writtenItems []UpdateWarehouseItem
 		for start := 0; start < len(items); start += c.batchSize {
 			end := min(start+c.batchSize, len(items))
 			batch := items[start:end]
@@ -61766,6 +62534,7 @@ func (c *warehouseClient) UpdateMany(ctx context.Context, items []UpdateWarehous
 			pgxBatch := &pgx.Batch{}
 			var batchQueries []string
 			var batchArgs [][]any
+			var queuedItems []UpdateWarehouseItem
 			for _, item := range batch {
 				setClauses := make(map[string]any)
 				if v, ok := item.Input.ExternalID.Get(); ok {
@@ -61812,6 +62581,7 @@ func (c *warehouseClient) UpdateMany(ctx context.Context, items []UpdateWarehous
 				pgxBatch.Queue(query, args...)
 				batchQueries = append(batchQueries, query)
 				batchArgs = append(batchArgs, args)
+				queuedItems = append(queuedItems, item)
 				allIDs = append(allIDs, item.ID)
 			}
 
@@ -61821,10 +62591,15 @@ func (c *warehouseClient) UpdateMany(ctx context.Context, items []UpdateWarehous
 					SendBatch(ctx context.Context, b *pgx.Batch) pgx.BatchResults
 				}); ok {
 					br := batcher.SendBatch(ctx, pgxBatch)
-					for range pgxBatch.Len() {
-						if _, err := br.Exec(); err != nil {
+					for i := range pgxBatch.Len() {
+						tag, err := br.Exec()
+						if err != nil {
 							br.Close()
 							return nil, fmt.Errorf("update warehouses batch: %w", err)
+						}
+						matched := tag.RowsAffected()
+						if matched > 0 {
+							writtenItems = append(writtenItems, queuedItems[i])
 						}
 					}
 					if err := br.Close(); err != nil {
@@ -61832,15 +62607,31 @@ func (c *warehouseClient) UpdateMany(ctx context.Context, items []UpdateWarehous
 					}
 				} else {
 					for i, q := range batchQueries {
-						if _, err := conn.Exec(ctx, q, batchArgs[i]...); err != nil {
+						execResult, err := conn.Exec(ctx, q, batchArgs[i]...)
+						if err != nil {
 							return nil, fmt.Errorf("update warehouses batch: %w", err)
+						}
+						matched, err := execResult.RowsAffected()
+						if err != nil {
+							return nil, fmt.Errorf("update warehouses batch rows affected: %w", err)
+						}
+						if matched > 0 {
+							writtenItems = append(writtenItems, queuedItems[i])
 						}
 					}
 				}
 			}
 		}
 
-		m.AffectedPKs = toAnySlice(allIDs)
+		affectedPKs := make([]any, len(writtenItems))
+		for i, item := range writtenItems {
+			affectedPKs[i] = item.ID
+		}
+		m.AffectedPKs = affectedPKs
+		// The published input is narrowed to the written items, so it stays
+		// index-aligned with m.AffectedPKs: each event carries the input that
+		// wrote its row.
+		m.Input = writtenItems
 
 		// Empty FieldOptions — skip fetch
 		if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {

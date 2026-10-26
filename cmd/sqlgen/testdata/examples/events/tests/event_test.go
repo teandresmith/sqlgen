@@ -438,6 +438,21 @@ func TestEvent_MissingKeyPublishesNothing(t *testing.T) {
 		{name: "hard delete many", write: func(client *models.Client) error {
 			return client.Products().HardDeleteMany(ctx, []int64{missing, missing + 1})
 		}},
+		// articles is non-strict, so this Update returns nil. An empty
+		// FieldOptions skips the re-read, which would report the missing row.
+		{name: "non-strict update", write: func(client *models.Client) error {
+			_, err := client.Articles().Update(ctx, missing, &models.UpdateArticleInput{Title: omittable.Set("gone")},
+				func(o *models.CallOptions[models.ArticleFieldOptions]) {
+					o.FieldOptions = &models.ArticleFieldOptions{}
+				})
+			return err
+		}},
+		{name: "update many", write: func(client *models.Client) error {
+			_, err := client.Products().UpdateMany(ctx, []models.UpdateProductItem{
+				{ID: missing, Input: &models.UpdateProductInput{Name: omittable.Set("gone")}},
+			})
+			return err
+		}},
 	}
 	for _, tt := range cases {
 		t.Run(tt.name, func(t *testing.T) {
@@ -503,6 +518,21 @@ func TestEvent_BatchPublishesOnlyWrittenKeys(t *testing.T) {
 			}
 			return p.ID
 		}},
+		{name: "update many", write: func(t *testing.T, client *models.Client, subscribeNow func()) int64 {
+			p, err := client.Products().Create(ctx, &models.CreateProductInput{Name: "BW-UM", SKU: "EV-BW-UM", Price: 1})
+			if err != nil {
+				t.Fatalf("Create: %v", err)
+			}
+			t.Cleanup(func() { _ = client.Products().HardDelete(ctx, p.ID) })
+			subscribeNow()
+			if _, err := client.Products().UpdateMany(ctx, []models.UpdateProductItem{
+				{ID: missing, Input: &models.UpdateProductInput{Name: omittable.Set("gone")}},
+				{ID: p.ID, Input: &models.UpdateProductInput{Name: omittable.Set("BW-UMx")}},
+			}); err != nil {
+				t.Fatalf("UpdateMany: %v", err)
+			}
+			return p.ID
+		}},
 	}
 	for _, tt := range cases {
 		t.Run(tt.name, func(t *testing.T) {
@@ -517,6 +547,10 @@ func TestEvent_BatchPublishesOnlyWrittenKeys(t *testing.T) {
 			}
 			if pk, _ := events[0].PK.(int64); pk != existing {
 				t.Errorf("event PK = %v, want %d", events[0].PK, existing)
+			}
+			// An UpdateMany event carries the item that wrote its row.
+			if item, ok := events[0].Input.(models.UpdateProductItem); ok && item.ID != existing {
+				t.Errorf("event Input item ID = %d, want %d", item.ID, existing)
 			}
 		})
 	}

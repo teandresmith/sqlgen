@@ -547,7 +547,7 @@ func TestTenantCapture_compositeTenantOutsidePK(t *testing.T) {
 	pgUpdate := renderTenantCapture(t, compositeTenantOutsidePKContext("postgres", "pgx"), "table/update", sql.NewPostgresDialect())
 	for _, want := range []string{
 		"tenantByPK := make(map[LineItemPK]any, len(items))",
-		"queuedPKs = append(queuedPKs, item.PK)",
+		"tenantByPK[queuedItems[i].PK] = rowTenant",
 		`"order_id", "product_id", "workspace_id"`,
 	} {
 		if !strings.Contains(pgUpdate, want) {

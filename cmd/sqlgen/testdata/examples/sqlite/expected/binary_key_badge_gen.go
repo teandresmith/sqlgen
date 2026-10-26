@@ -514,11 +514,11 @@ func (c *binaryKeyBadgeClient) Update(ctx context.Context, pk BinaryKeyBadgePK, 
 		if err != nil {
 			return nil, fmt.Errorf("update binary_key_badge: %w", err)
 		}
-		count, err := execResult.RowsAffected()
+		matched, err := execResult.RowsAffected()
 		if err != nil {
 			return nil, fmt.Errorf("update binary_key_badge rows affected: %w", err)
 		}
-		if count == 0 {
+		if matched == 0 {
 			return nil, ErrNotFound
 		}
 		m.AffectedPKs = []any{pk}
@@ -576,6 +576,11 @@ func (c *binaryKeyBadgeClient) UpdateMany(ctx context.Context, items []UpdateBin
 			return []*BinaryKeyBadge{}, nil
 		}
 		var allPKs []BinaryKeyBadgePK
+		// The items whose UPDATE matched a row. Only these record an affected
+		// key: an item whose key matches no row, or that sets no field, wrote
+		// nothing, so no cache entry is invalidated and no event is published
+		// for it.
+		var writtenItems []UpdateBinaryKeyBadgeItem
 		for start := 0; start < len(items); start += c.batchSize {
 			end := min(start+c.batchSize, len(items))
 			batch := items[start:end]
@@ -596,15 +601,30 @@ func (c *binaryKeyBadgeClient) UpdateMany(ctx context.Context, items []UpdateBin
 						[]any{item.PK.BinaryKeyID, item.PK.BadgeCode}),
 				})
 
-				_, err := conn.Exec(ctx, query, args...)
+				execResult, err := conn.Exec(ctx, query, args...)
 				if err != nil {
 					return nil, fmt.Errorf("update binary_key_badge %v: %w", item.PK, err)
+				}
+				matched, err := execResult.RowsAffected()
+				if err != nil {
+					return nil, fmt.Errorf("update binary_key_badge %v rows affected: %w", item.PK, err)
+				}
+				if matched > 0 {
+					writtenItems = append(writtenItems, item)
 				}
 				allPKs = append(allPKs, item.PK)
 			}
 		}
 
-		m.AffectedPKs = toAnySlice(allPKs)
+		affectedPKs := make([]any, len(writtenItems))
+		for i, item := range writtenItems {
+			affectedPKs[i] = item.PK
+		}
+		m.AffectedPKs = affectedPKs
+		// The published input is narrowed to the written items, so it stays
+		// index-aligned with m.AffectedPKs: each event carries the input that
+		// wrote its row.
+		m.Input = writtenItems
 
 		// Empty FieldOptions — skip fetch
 		if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {

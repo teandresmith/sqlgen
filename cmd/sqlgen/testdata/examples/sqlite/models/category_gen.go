@@ -823,11 +823,11 @@ func (c *categoryClient) Update(ctx context.Context, id int64, input *UpdateCate
 		if err != nil {
 			return nil, fmt.Errorf("update category: %w", err)
 		}
-		count, err := execResult.RowsAffected()
+		matched, err := execResult.RowsAffected()
 		if err != nil {
 			return nil, fmt.Errorf("update category rows affected: %w", err)
 		}
-		if count == 0 {
+		if matched == 0 {
 			return nil, ErrNotFound
 		}
 		m.AffectedPKs = []any{id}
@@ -885,6 +885,11 @@ func (c *categoryClient) UpdateMany(ctx context.Context, items []UpdateCategoryI
 			return []*Category{}, nil
 		}
 		var allIDs []int64
+		// The items whose UPDATE matched a row. Only these record an affected
+		// key: an item whose key matches no row, or that sets no field, wrote
+		// nothing, so no cache entry is invalidated and no event is published
+		// for it.
+		var writtenItems []UpdateCategoryItem
 		for start := 0; start < len(items); start += c.batchSize {
 			end := min(start+c.batchSize, len(items))
 			batch := items[start:end]
@@ -909,15 +914,30 @@ func (c *categoryClient) UpdateMany(ctx context.Context, items []UpdateCategoryI
 					Conditions: []sql.Condition{sql.Where(c.dialect.QuoteIdentifier("id")).Eq(item.ID)},
 				})
 
-				_, err := conn.Exec(ctx, query, args...)
+				execResult, err := conn.Exec(ctx, query, args...)
 				if err != nil {
 					return nil, fmt.Errorf("update category %v: %w", item.ID, err)
+				}
+				matched, err := execResult.RowsAffected()
+				if err != nil {
+					return nil, fmt.Errorf("update category %v rows affected: %w", item.ID, err)
+				}
+				if matched > 0 {
+					writtenItems = append(writtenItems, item)
 				}
 				allIDs = append(allIDs, item.ID)
 			}
 		}
 
-		m.AffectedPKs = toAnySlice(allIDs)
+		affectedPKs := make([]any, len(writtenItems))
+		for i, item := range writtenItems {
+			affectedPKs[i] = item.ID
+		}
+		m.AffectedPKs = affectedPKs
+		// The published input is narrowed to the written items, so it stays
+		// index-aligned with m.AffectedPKs: each event carries the input that
+		// wrote its row.
+		m.Input = writtenItems
 
 		// Empty FieldOptions — skip fetch
 		if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {

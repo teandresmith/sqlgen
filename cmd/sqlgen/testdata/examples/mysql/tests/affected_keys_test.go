@@ -8,6 +8,7 @@ import (
 
 	dbstdlib "github.com/teandresmith/sqlgen/database/stdlib"
 	"github.com/teandresmith/sqlgen/hook"
+	"github.com/teandresmith/sqlgen/omittable"
 	"github.com/teandresmith/sqlgen/types"
 
 	models "github.com/teandresmith/sqlgen/cmd/sqlgen/testdata/examples/mysql/models"
@@ -146,4 +147,55 @@ func TestAffectedKeys_CompositeBatchRecordsOnlyWrittenKeys(t *testing.T) {
 	if diff := cmp.Diff([]any{written}, affected()); diff != "" {
 		t.Errorf("AffectedPKs (-want +got):\n%s", diff)
 	}
+}
+
+// orders is non-strict (strict_updates: false), so an Update whose key
+// matches no row returns no error; it must record no affected key either.
+func TestAffectedKeys_UpdateRecordsOnlyWrittenKeys(t *testing.T) {
+	ctx := context.Background()
+	const missing = int64(987654321)
+	client, affected := affectedPKsRecorder()
+
+	user, err := client.Users().Create(ctx, &models.CreateUserInput{Name: "AKUpd", Email: "ak-upd@example.com"})
+	if err != nil {
+		t.Fatalf("Create user: %v", err)
+	}
+	t.Cleanup(func() { _ = client.Users().HardDelete(ctx, user.ID) })
+	order, err := client.Orders().Create(ctx, &models.CreateOrderInput{UserID: user.ID, Total: 1})
+	if err != nil {
+		t.Fatalf("Create order: %v", err)
+	}
+	t.Cleanup(func() { _ = client.Orders().HardDelete(ctx, order.ID) })
+
+	// An empty FieldOptions skips the re-read, which would report the missing row.
+	skipFetch := func(o *models.CallOptions[models.OrderFieldOptions]) { o.FieldOptions = &models.OrderFieldOptions{} }
+
+	t.Run("non-strict update of a missing key", func(t *testing.T) {
+		if _, err := client.Orders().Update(ctx, missing, &models.UpdateOrderInput{Total: omittable.Set(2.0)}, skipFetch); err != nil {
+			t.Fatalf("Update: %v", err)
+		}
+		if got := affected(); len(got) != 0 {
+			t.Errorf("AffectedPKs = %v, want none", got)
+		}
+	})
+	t.Run("non-strict update of an existing key", func(t *testing.T) {
+		if _, err := client.Orders().Update(ctx, order.ID, &models.UpdateOrderInput{Total: omittable.Set(3.0)}, skipFetch); err != nil {
+			t.Fatalf("Update: %v", err)
+		}
+		if diff := cmp.Diff([]any{order.ID}, affected()); diff != "" {
+			t.Errorf("AffectedPKs (-want +got):\n%s", diff)
+		}
+	})
+	t.Run("update many over a missing key, a no-op item and an existing key", func(t *testing.T) {
+		if _, err := client.Orders().UpdateMany(ctx, []models.UpdateOrderItem{
+			{ID: missing, Input: &models.UpdateOrderInput{Total: omittable.Set(4.0)}},
+			{ID: order.ID, Input: &models.UpdateOrderInput{}},
+			{ID: order.ID, Input: &models.UpdateOrderInput{Total: omittable.Set(5.0)}},
+		}); err != nil {
+			t.Fatalf("UpdateMany: %v", err)
+		}
+		if diff := cmp.Diff([]any{order.ID}, affected()); diff != "" {
+			t.Errorf("AffectedPKs (-want +got):\n%s", diff)
+		}
+	})
 }

@@ -1026,6 +1026,11 @@ func (c *articleClient) UpdateMany(ctx context.Context, items []UpdateArticleIte
 			}
 		}
 		var allIDs []int64
+		// The items whose UPDATE matched a row. Only these record an affected
+		// key: an item whose key matches no row, or that sets no field, wrote
+		// nothing, so no cache entry is invalidated and no event is published
+		// for it.
+		var writtenItems []UpdateArticleItem
 		// Per-item RETURNING captures each updated row's tenant; feeds
 		// m.AffectedTenants so cache invalidation and event stamping rebuild
 		// tenant-scoped keys from the rows themselves.
@@ -1076,6 +1081,7 @@ func (c *articleClient) UpdateMany(ctx context.Context, items []UpdateArticleIte
 				if err != nil {
 					return nil, fmt.Errorf("update article %v: %w", item.ID, err)
 				}
+				matched := 0
 				for rows.Next() {
 					var rowTenant uuid.UUID
 					if err := rows.Scan(&rowTenant); err != nil {
@@ -1083,22 +1089,32 @@ func (c *articleClient) UpdateMany(ctx context.Context, items []UpdateArticleIte
 						return nil, fmt.Errorf("scan updated article tenant: %w", err)
 					}
 					tenantByPK[item.ID] = rowTenant
+					matched++
 				}
 				if err := rows.Err(); err != nil {
 					rows.Close()
 					return nil, fmt.Errorf("update article %v: %w", item.ID, err)
 				}
 				rows.Close()
+				if matched > 0 {
+					writtenItems = append(writtenItems, item)
+				}
 				allIDs = append(allIDs, item.ID)
 			}
 		}
 
-		m.AffectedPKs = toAnySlice(allIDs)
-		affectedTenants := make([]any, len(allIDs))
-		for i, id := range allIDs {
-			affectedTenants[i] = tenantByPK[id]
+		affectedPKs := make([]any, len(writtenItems))
+		affectedTenants := make([]any, len(writtenItems))
+		for i, item := range writtenItems {
+			affectedPKs[i] = item.ID
+			affectedTenants[i] = tenantByPK[item.ID]
 		}
+		m.AffectedPKs = affectedPKs
 		m.AffectedTenants = affectedTenants
+		// The published input is narrowed to the written items, so it stays
+		// index-aligned with m.AffectedPKs: each event carries the input that
+		// wrote its row.
+		m.Input = writtenItems
 
 		// Empty FieldOptions — skip fetch
 		if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
@@ -4032,11 +4048,11 @@ func (c *auditLogClient) Update(ctx context.Context, id int64, input *UpdateAudi
 		if err != nil {
 			return nil, fmt.Errorf("update audit_log: %w", err)
 		}
-		count, err := execResult.RowsAffected()
+		matched, err := execResult.RowsAffected()
 		if err != nil {
 			return nil, fmt.Errorf("update audit_log rows affected: %w", err)
 		}
-		if count == 0 {
+		if matched == 0 {
 			return nil, ErrNotFound
 		}
 		m.AffectedPKs = []any{id}
@@ -4094,6 +4110,11 @@ func (c *auditLogClient) UpdateMany(ctx context.Context, items []UpdateAuditLogI
 			return []*AuditLog{}, nil
 		}
 		var allIDs []int64
+		// The items whose UPDATE matched a row. Only these record an affected
+		// key: an item whose key matches no row, or that sets no field, wrote
+		// nothing, so no cache entry is invalidated and no event is published
+		// for it.
+		var writtenItems []UpdateAuditLogItem
 		for start := 0; start < len(items); start += c.batchSize {
 			end := min(start+c.batchSize, len(items))
 			batch := items[start:end]
@@ -4118,15 +4139,30 @@ func (c *auditLogClient) UpdateMany(ctx context.Context, items []UpdateAuditLogI
 					Conditions: []sql.Condition{sql.Where(c.dialect.QuoteIdentifier("id")).Eq(item.ID)},
 				})
 
-				_, err := conn.Exec(ctx, query, args...)
+				execResult, err := conn.Exec(ctx, query, args...)
 				if err != nil {
 					return nil, fmt.Errorf("update audit_log %v: %w", item.ID, err)
+				}
+				matched, err := execResult.RowsAffected()
+				if err != nil {
+					return nil, fmt.Errorf("update audit_log %v rows affected: %w", item.ID, err)
+				}
+				if matched > 0 {
+					writtenItems = append(writtenItems, item)
 				}
 				allIDs = append(allIDs, item.ID)
 			}
 		}
 
-		m.AffectedPKs = toAnySlice(allIDs)
+		affectedPKs := make([]any, len(writtenItems))
+		for i, item := range writtenItems {
+			affectedPKs[i] = item.ID
+		}
+		m.AffectedPKs = affectedPKs
+		// The published input is narrowed to the written items, so it stays
+		// index-aligned with m.AffectedPKs: each event carries the input that
+		// wrote its row.
+		m.Input = writtenItems
 
 		// Empty FieldOptions — skip fetch
 		if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
@@ -6352,6 +6388,11 @@ func (c *legacyWidgetClient) UpdateMany(ctx context.Context, items []UpdateLegac
 			}
 		}
 		var allIDs []int64
+		// The items whose UPDATE matched a row. Only these record an affected
+		// key: an item whose key matches no row, or that sets no field, wrote
+		// nothing, so no cache entry is invalidated and no event is published
+		// for it.
+		var writtenItems []UpdateLegacyWidgetItem
 		// Per-item RETURNING captures each updated row's tenant; feeds
 		// m.AffectedTenants so cache invalidation and event stamping rebuild
 		// tenant-scoped keys from the rows themselves.
@@ -6390,6 +6431,7 @@ func (c *legacyWidgetClient) UpdateMany(ctx context.Context, items []UpdateLegac
 				if err != nil {
 					return nil, fmt.Errorf("update legacy_widget %v: %w", item.ID, err)
 				}
+				matched := 0
 				for rows.Next() {
 					var rowTenant uuid.UUID
 					if err := rows.Scan(&rowTenant); err != nil {
@@ -6397,22 +6439,32 @@ func (c *legacyWidgetClient) UpdateMany(ctx context.Context, items []UpdateLegac
 						return nil, fmt.Errorf("scan updated legacy_widget tenant: %w", err)
 					}
 					tenantByPK[item.ID] = rowTenant
+					matched++
 				}
 				if err := rows.Err(); err != nil {
 					rows.Close()
 					return nil, fmt.Errorf("update legacy_widget %v: %w", item.ID, err)
 				}
 				rows.Close()
+				if matched > 0 {
+					writtenItems = append(writtenItems, item)
+				}
 				allIDs = append(allIDs, item.ID)
 			}
 		}
 
-		m.AffectedPKs = toAnySlice(allIDs)
-		affectedTenants := make([]any, len(allIDs))
-		for i, id := range allIDs {
-			affectedTenants[i] = tenantByPK[id]
+		affectedPKs := make([]any, len(writtenItems))
+		affectedTenants := make([]any, len(writtenItems))
+		for i, item := range writtenItems {
+			affectedPKs[i] = item.ID
+			affectedTenants[i] = tenantByPK[item.ID]
 		}
+		m.AffectedPKs = affectedPKs
 		m.AffectedTenants = affectedTenants
+		// The published input is narrowed to the written items, so it stays
+		// index-aligned with m.AffectedPKs: each event carries the input that
+		// wrote its row.
+		m.Input = writtenItems
 
 		// Empty FieldOptions — skip fetch
 		if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
@@ -8733,11 +8785,11 @@ func (c *orderItemClient) Update(ctx context.Context, pk OrderItemPK, input *Upd
 		if err != nil {
 			return nil, fmt.Errorf("update order_item: %w", err)
 		}
-		count, err := execResult.RowsAffected()
+		matched, err := execResult.RowsAffected()
 		if err != nil {
 			return nil, fmt.Errorf("update order_item rows affected: %w", err)
 		}
-		if count == 0 {
+		if matched == 0 {
 			return nil, ErrNotFound
 		}
 		m.AffectedPKs = []any{pk}
@@ -8832,6 +8884,11 @@ func (c *orderItemClient) UpdateMany(ctx context.Context, items []UpdateOrderIte
 			}
 		}
 		var allPKs []OrderItemPK
+		// The items whose UPDATE matched a row. Only these record an affected
+		// key: an item whose key matches no row, or that sets no field, wrote
+		// nothing, so no cache entry is invalidated and no event is published
+		// for it.
+		var writtenItems []UpdateOrderItemItem
 		for start := 0; start < len(items); start += c.batchSize {
 			end := min(start+c.batchSize, len(items))
 			batch := items[start:end]
@@ -8861,15 +8918,30 @@ func (c *orderItemClient) UpdateMany(ctx context.Context, items []UpdateOrderIte
 					Conditions: itemConds,
 				})
 
-				_, err := conn.Exec(ctx, query, args...)
+				execResult, err := conn.Exec(ctx, query, args...)
 				if err != nil {
 					return nil, fmt.Errorf("update order_item %v: %w", item.PK, err)
+				}
+				matched, err := execResult.RowsAffected()
+				if err != nil {
+					return nil, fmt.Errorf("update order_item %v rows affected: %w", item.PK, err)
+				}
+				if matched > 0 {
+					writtenItems = append(writtenItems, item)
 				}
 				allPKs = append(allPKs, item.PK)
 			}
 		}
 
-		m.AffectedPKs = toAnySlice(allPKs)
+		affectedPKs := make([]any, len(writtenItems))
+		for i, item := range writtenItems {
+			affectedPKs[i] = item.PK
+		}
+		m.AffectedPKs = affectedPKs
+		// The published input is narrowed to the written items, so it stays
+		// index-aligned with m.AffectedPKs: each event carries the input that
+		// wrote its row.
+		m.Input = writtenItems
 
 		// Empty FieldOptions — skip fetch
 		if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
@@ -10780,11 +10852,11 @@ func (c *postTagClient) Update(ctx context.Context, pk PostTagPK, input *UpdateP
 		if err != nil {
 			return nil, fmt.Errorf("update post_tag: %w", err)
 		}
-		count, err := execResult.RowsAffected()
+		matched, err := execResult.RowsAffected()
 		if err != nil {
 			return nil, fmt.Errorf("update post_tag rows affected: %w", err)
 		}
-		if count == 0 {
+		if matched == 0 {
 			return nil, ErrNotFound
 		}
 		m.AffectedPKs = []any{pk}
@@ -10842,6 +10914,11 @@ func (c *postTagClient) UpdateMany(ctx context.Context, items []UpdatePostTagIte
 			return []*PostTag{}, nil
 		}
 		var allPKs []PostTagPK
+		// The items whose UPDATE matched a row. Only these record an affected
+		// key: an item whose key matches no row, or that sets no field, wrote
+		// nothing, so no cache entry is invalidated and no event is published
+		// for it.
+		var writtenItems []UpdatePostTagItem
 		for start := 0; start < len(items); start += c.batchSize {
 			end := min(start+c.batchSize, len(items))
 			batch := items[start:end]
@@ -10862,15 +10939,30 @@ func (c *postTagClient) UpdateMany(ctx context.Context, items []UpdatePostTagIte
 						[]any{item.PK.PostID, item.PK.TagID}),
 				})
 
-				_, err := conn.Exec(ctx, query, args...)
+				execResult, err := conn.Exec(ctx, query, args...)
 				if err != nil {
 					return nil, fmt.Errorf("update post_tag %v: %w", item.PK, err)
+				}
+				matched, err := execResult.RowsAffected()
+				if err != nil {
+					return nil, fmt.Errorf("update post_tag %v rows affected: %w", item.PK, err)
+				}
+				if matched > 0 {
+					writtenItems = append(writtenItems, item)
 				}
 				allPKs = append(allPKs, item.PK)
 			}
 		}
 
-		m.AffectedPKs = toAnySlice(allPKs)
+		affectedPKs := make([]any, len(writtenItems))
+		for i, item := range writtenItems {
+			affectedPKs[i] = item.PK
+		}
+		m.AffectedPKs = affectedPKs
+		// The published input is narrowed to the written items, so it stays
+		// index-aligned with m.AffectedPKs: each event carries the input that
+		// wrote its row.
+		m.Input = writtenItems
 
 		// Empty FieldOptions — skip fetch
 		if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
@@ -13098,6 +13190,11 @@ func (c *postClient) UpdateMany(ctx context.Context, items []UpdatePostItem, opt
 			}
 		}
 		var allIDs []int64
+		// The items whose UPDATE matched a row. Only these record an affected
+		// key: an item whose key matches no row, or that sets no field, wrote
+		// nothing, so no cache entry is invalidated and no event is published
+		// for it.
+		var writtenItems []UpdatePostItem
 		// Per-item RETURNING captures each updated row's tenant; feeds
 		// m.AffectedTenants so cache invalidation and event stamping rebuild
 		// tenant-scoped keys from the rows themselves.
@@ -13139,6 +13236,7 @@ func (c *postClient) UpdateMany(ctx context.Context, items []UpdatePostItem, opt
 				if err != nil {
 					return nil, fmt.Errorf("update post %v: %w", item.ID, err)
 				}
+				matched := 0
 				for rows.Next() {
 					var rowTenant uuid.UUID
 					if err := rows.Scan(&rowTenant); err != nil {
@@ -13146,22 +13244,32 @@ func (c *postClient) UpdateMany(ctx context.Context, items []UpdatePostItem, opt
 						return nil, fmt.Errorf("scan updated post tenant: %w", err)
 					}
 					tenantByPK[item.ID] = rowTenant
+					matched++
 				}
 				if err := rows.Err(); err != nil {
 					rows.Close()
 					return nil, fmt.Errorf("update post %v: %w", item.ID, err)
 				}
 				rows.Close()
+				if matched > 0 {
+					writtenItems = append(writtenItems, item)
+				}
 				allIDs = append(allIDs, item.ID)
 			}
 		}
 
-		m.AffectedPKs = toAnySlice(allIDs)
-		affectedTenants := make([]any, len(allIDs))
-		for i, id := range allIDs {
-			affectedTenants[i] = tenantByPK[id]
+		affectedPKs := make([]any, len(writtenItems))
+		affectedTenants := make([]any, len(writtenItems))
+		for i, item := range writtenItems {
+			affectedPKs[i] = item.ID
+			affectedTenants[i] = tenantByPK[item.ID]
 		}
+		m.AffectedPKs = affectedPKs
 		m.AffectedTenants = affectedTenants
+		// The published input is narrowed to the written items, so it stays
+		// index-aligned with m.AffectedPKs: each event carries the input that
+		// wrote its row.
+		m.Input = writtenItems
 
 		// Empty FieldOptions — skip fetch
 		if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
@@ -15836,6 +15944,11 @@ func (c *productClient) UpdateMany(ctx context.Context, items []UpdateProductIte
 			}
 		}
 		var allIDs []int64
+		// The items whose UPDATE matched a row. Only these record an affected
+		// key: an item whose key matches no row, or that sets no field, wrote
+		// nothing, so no cache entry is invalidated and no event is published
+		// for it.
+		var writtenItems []UpdateProductItem
 		// Per-item RETURNING captures each updated row's tenant; feeds
 		// m.AffectedTenants so cache invalidation and event stamping rebuild
 		// tenant-scoped keys from the rows themselves.
@@ -15883,6 +15996,7 @@ func (c *productClient) UpdateMany(ctx context.Context, items []UpdateProductIte
 				if err != nil {
 					return nil, fmt.Errorf("update product %v: %w", item.ID, err)
 				}
+				matched := 0
 				for rows.Next() {
 					var rowTenant uuid.UUID
 					if err := rows.Scan(&rowTenant); err != nil {
@@ -15890,22 +16004,32 @@ func (c *productClient) UpdateMany(ctx context.Context, items []UpdateProductIte
 						return nil, fmt.Errorf("scan updated product tenant: %w", err)
 					}
 					tenantByPK[item.ID] = rowTenant
+					matched++
 				}
 				if err := rows.Err(); err != nil {
 					rows.Close()
 					return nil, fmt.Errorf("update product %v: %w", item.ID, err)
 				}
 				rows.Close()
+				if matched > 0 {
+					writtenItems = append(writtenItems, item)
+				}
 				allIDs = append(allIDs, item.ID)
 			}
 		}
 
-		m.AffectedPKs = toAnySlice(allIDs)
-		affectedTenants := make([]any, len(allIDs))
-		for i, id := range allIDs {
-			affectedTenants[i] = tenantByPK[id]
+		affectedPKs := make([]any, len(writtenItems))
+		affectedTenants := make([]any, len(writtenItems))
+		for i, item := range writtenItems {
+			affectedPKs[i] = item.ID
+			affectedTenants[i] = tenantByPK[item.ID]
 		}
+		m.AffectedPKs = affectedPKs
 		m.AffectedTenants = affectedTenants
+		// The published input is narrowed to the written items, so it stays
+		// index-aligned with m.AffectedPKs: each event carries the input that
+		// wrote its row.
+		m.Input = writtenItems
 
 		// Empty FieldOptions — skip fetch
 		if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
@@ -18586,6 +18710,11 @@ func (c *tagLinkClient) UpdateMany(ctx context.Context, items []UpdateTagLinkIte
 			}
 		}
 		var allPKs []TagLinkPK
+		// The items whose UPDATE matched a row. Only these record an affected
+		// key: an item whose key matches no row, or that sets no field, wrote
+		// nothing, so no cache entry is invalidated and no event is published
+		// for it.
+		var writtenItems []UpdateTagLinkItem
 		// Per-item RETURNING captures each updated row's tenant; feeds
 		// m.AffectedTenants so cache invalidation and event stamping rebuild
 		// tenant-scoped keys from the rows themselves.
@@ -18623,6 +18752,7 @@ func (c *tagLinkClient) UpdateMany(ctx context.Context, items []UpdateTagLinkIte
 				if err != nil {
 					return nil, fmt.Errorf("update tag_link %v: %w", item.PK, err)
 				}
+				matched := 0
 				for rows.Next() {
 					var rowTenant uuid.UUID
 					if err := rows.Scan(&rowTenant); err != nil {
@@ -18630,22 +18760,32 @@ func (c *tagLinkClient) UpdateMany(ctx context.Context, items []UpdateTagLinkIte
 						return nil, fmt.Errorf("scan updated tag_link tenant: %w", err)
 					}
 					tenantByPK[item.PK] = rowTenant
+					matched++
 				}
 				if err := rows.Err(); err != nil {
 					rows.Close()
 					return nil, fmt.Errorf("update tag_link %v: %w", item.PK, err)
 				}
 				rows.Close()
+				if matched > 0 {
+					writtenItems = append(writtenItems, item)
+				}
 				allPKs = append(allPKs, item.PK)
 			}
 		}
 
-		m.AffectedPKs = toAnySlice(allPKs)
-		affectedTenants := make([]any, len(allPKs))
-		for i, pk := range allPKs {
-			affectedTenants[i] = tenantByPK[pk]
+		affectedPKs := make([]any, len(writtenItems))
+		affectedTenants := make([]any, len(writtenItems))
+		for i, item := range writtenItems {
+			affectedPKs[i] = item.PK
+			affectedTenants[i] = tenantByPK[item.PK]
 		}
+		m.AffectedPKs = affectedPKs
 		m.AffectedTenants = affectedTenants
+		// The published input is narrowed to the written items, so it stays
+		// index-aligned with m.AffectedPKs: each event carries the input that
+		// wrote its row.
+		m.Input = writtenItems
 
 		// Empty FieldOptions — skip fetch
 		if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
@@ -21486,6 +21626,11 @@ func (c *tagClient) UpdateMany(ctx context.Context, items []UpdateTagItem, opts 
 			}
 		}
 		var allIDs []int64
+		// The items whose UPDATE matched a row. Only these record an affected
+		// key: an item whose key matches no row, or that sets no field, wrote
+		// nothing, so no cache entry is invalidated and no event is published
+		// for it.
+		var writtenItems []UpdateTagItem
 		// Per-item RETURNING captures each updated row's tenant; feeds
 		// m.AffectedTenants so cache invalidation and event stamping rebuild
 		// tenant-scoped keys from the rows themselves.
@@ -21524,6 +21669,7 @@ func (c *tagClient) UpdateMany(ctx context.Context, items []UpdateTagItem, opts 
 				if err != nil {
 					return nil, fmt.Errorf("update tag %v: %w", item.ID, err)
 				}
+				matched := 0
 				for rows.Next() {
 					var rowTenant uuid.UUID
 					if err := rows.Scan(&rowTenant); err != nil {
@@ -21531,22 +21677,32 @@ func (c *tagClient) UpdateMany(ctx context.Context, items []UpdateTagItem, opts 
 						return nil, fmt.Errorf("scan updated tag tenant: %w", err)
 					}
 					tenantByPK[item.ID] = rowTenant
+					matched++
 				}
 				if err := rows.Err(); err != nil {
 					rows.Close()
 					return nil, fmt.Errorf("update tag %v: %w", item.ID, err)
 				}
 				rows.Close()
+				if matched > 0 {
+					writtenItems = append(writtenItems, item)
+				}
 				allIDs = append(allIDs, item.ID)
 			}
 		}
 
-		m.AffectedPKs = toAnySlice(allIDs)
-		affectedTenants := make([]any, len(allIDs))
-		for i, id := range allIDs {
-			affectedTenants[i] = tenantByPK[id]
+		affectedPKs := make([]any, len(writtenItems))
+		affectedTenants := make([]any, len(writtenItems))
+		for i, item := range writtenItems {
+			affectedPKs[i] = item.ID
+			affectedTenants[i] = tenantByPK[item.ID]
 		}
+		m.AffectedPKs = affectedPKs
 		m.AffectedTenants = affectedTenants
+		// The published input is narrowed to the written items, so it stays
+		// index-aligned with m.AffectedPKs: each event carries the input that
+		// wrote its row.
+		m.Input = writtenItems
 
 		// Empty FieldOptions — skip fetch
 		if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
@@ -24356,6 +24512,11 @@ func (c *userProfileClient) UpdateMany(ctx context.Context, items []UpdateUserPr
 			}
 		}
 		var allIDs []int64
+		// The items whose UPDATE matched a row. Only these record an affected
+		// key: an item whose key matches no row, or that sets no field, wrote
+		// nothing, so no cache entry is invalidated and no event is published
+		// for it.
+		var writtenItems []UpdateUserProfileItem
 		// Per-item RETURNING captures each updated row's tenant; feeds
 		// m.AffectedTenants so cache invalidation and event stamping rebuild
 		// tenant-scoped keys from the rows themselves.
@@ -24397,6 +24558,7 @@ func (c *userProfileClient) UpdateMany(ctx context.Context, items []UpdateUserPr
 				if err != nil {
 					return nil, fmt.Errorf("update user_profile %v: %w", item.ID, err)
 				}
+				matched := 0
 				for rows.Next() {
 					var rowTenant uuid.UUID
 					if err := rows.Scan(&rowTenant); err != nil {
@@ -24404,22 +24566,32 @@ func (c *userProfileClient) UpdateMany(ctx context.Context, items []UpdateUserPr
 						return nil, fmt.Errorf("scan updated user_profile tenant: %w", err)
 					}
 					tenantByPK[item.ID] = rowTenant
+					matched++
 				}
 				if err := rows.Err(); err != nil {
 					rows.Close()
 					return nil, fmt.Errorf("update user_profile %v: %w", item.ID, err)
 				}
 				rows.Close()
+				if matched > 0 {
+					writtenItems = append(writtenItems, item)
+				}
 				allIDs = append(allIDs, item.ID)
 			}
 		}
 
-		m.AffectedPKs = toAnySlice(allIDs)
-		affectedTenants := make([]any, len(allIDs))
-		for i, id := range allIDs {
-			affectedTenants[i] = tenantByPK[id]
+		affectedPKs := make([]any, len(writtenItems))
+		affectedTenants := make([]any, len(writtenItems))
+		for i, item := range writtenItems {
+			affectedPKs[i] = item.ID
+			affectedTenants[i] = tenantByPK[item.ID]
 		}
+		m.AffectedPKs = affectedPKs
 		m.AffectedTenants = affectedTenants
+		// The published input is narrowed to the written items, so it stays
+		// index-aligned with m.AffectedPKs: each event carries the input that
+		// wrote its row.
+		m.Input = writtenItems
 
 		// Empty FieldOptions — skip fetch
 		if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
@@ -27458,6 +27630,11 @@ func (c *userClient) UpdateMany(ctx context.Context, items []UpdateUserItem, opt
 			}
 		}
 		var allIDs []int64
+		// The items whose UPDATE matched a row. Only these record an affected
+		// key: an item whose key matches no row, or that sets no field, wrote
+		// nothing, so no cache entry is invalidated and no event is published
+		// for it.
+		var writtenItems []UpdateUserItem
 		// Per-item RETURNING captures each updated row's tenant; feeds
 		// m.AffectedTenants so cache invalidation and event stamping rebuild
 		// tenant-scoped keys from the rows themselves.
@@ -27496,6 +27673,7 @@ func (c *userClient) UpdateMany(ctx context.Context, items []UpdateUserItem, opt
 				if err != nil {
 					return nil, fmt.Errorf("update user %v: %w", item.ID, err)
 				}
+				matched := 0
 				for rows.Next() {
 					var rowTenant uuid.UUID
 					if err := rows.Scan(&rowTenant); err != nil {
@@ -27503,22 +27681,32 @@ func (c *userClient) UpdateMany(ctx context.Context, items []UpdateUserItem, opt
 						return nil, fmt.Errorf("scan updated user tenant: %w", err)
 					}
 					tenantByPK[item.ID] = rowTenant
+					matched++
 				}
 				if err := rows.Err(); err != nil {
 					rows.Close()
 					return nil, fmt.Errorf("update user %v: %w", item.ID, err)
 				}
 				rows.Close()
+				if matched > 0 {
+					writtenItems = append(writtenItems, item)
+				}
 				allIDs = append(allIDs, item.ID)
 			}
 		}
 
-		m.AffectedPKs = toAnySlice(allIDs)
-		affectedTenants := make([]any, len(allIDs))
-		for i, id := range allIDs {
-			affectedTenants[i] = tenantByPK[id]
+		affectedPKs := make([]any, len(writtenItems))
+		affectedTenants := make([]any, len(writtenItems))
+		for i, item := range writtenItems {
+			affectedPKs[i] = item.ID
+			affectedTenants[i] = tenantByPK[item.ID]
 		}
+		m.AffectedPKs = affectedPKs
 		m.AffectedTenants = affectedTenants
+		// The published input is narrowed to the written items, so it stays
+		// index-aligned with m.AffectedPKs: each event carries the input that
+		// wrote its row.
+		m.Input = writtenItems
 
 		// Empty FieldOptions — skip fetch
 		if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
@@ -30284,11 +30472,11 @@ func (c *workspaceClient) Update(ctx context.Context, id uuid.UUID, input *Updat
 		if err != nil {
 			return nil, fmt.Errorf("update workspace: %w", err)
 		}
-		count, err := execResult.RowsAffected()
+		matched, err := execResult.RowsAffected()
 		if err != nil {
 			return nil, fmt.Errorf("update workspace rows affected: %w", err)
 		}
-		if count == 0 {
+		if matched == 0 {
 			return nil, ErrNotFound
 		}
 		m.AffectedPKs = []any{id}
@@ -30346,6 +30534,11 @@ func (c *workspaceClient) UpdateMany(ctx context.Context, items []UpdateWorkspac
 			return []*Workspace{}, nil
 		}
 		var allIDs []uuid.UUID
+		// The items whose UPDATE matched a row. Only these record an affected
+		// key: an item whose key matches no row, or that sets no field, wrote
+		// nothing, so no cache entry is invalidated and no event is published
+		// for it.
+		var writtenItems []UpdateWorkspaceItem
 		for start := 0; start < len(items); start += c.batchSize {
 			end := min(start+c.batchSize, len(items))
 			batch := items[start:end]
@@ -30370,15 +30563,30 @@ func (c *workspaceClient) UpdateMany(ctx context.Context, items []UpdateWorkspac
 					Conditions: []sql.Condition{sql.Where(c.dialect.QuoteIdentifier("id")).Eq(item.ID)},
 				})
 
-				_, err := conn.Exec(ctx, query, args...)
+				execResult, err := conn.Exec(ctx, query, args...)
 				if err != nil {
 					return nil, fmt.Errorf("update workspace %v: %w", item.ID, err)
+				}
+				matched, err := execResult.RowsAffected()
+				if err != nil {
+					return nil, fmt.Errorf("update workspace %v rows affected: %w", item.ID, err)
+				}
+				if matched > 0 {
+					writtenItems = append(writtenItems, item)
 				}
 				allIDs = append(allIDs, item.ID)
 			}
 		}
 
-		m.AffectedPKs = toAnySlice(allIDs)
+		affectedPKs := make([]any, len(writtenItems))
+		for i, item := range writtenItems {
+			affectedPKs[i] = item.ID
+		}
+		m.AffectedPKs = affectedPKs
+		// The published input is narrowed to the written items, so it stays
+		// index-aligned with m.AffectedPKs: each event carries the input that
+		// wrote its row.
+		m.Input = writtenItems
 
 		// Empty FieldOptions — skip fetch
 		if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
