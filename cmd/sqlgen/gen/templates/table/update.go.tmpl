@@ -1161,7 +1161,7 @@ func (c *{{ $structCamel }}Client) UpdateWhere(ctx context.Context, filter *{{ .
 // were affected.
 func (c *{{ $structCamel }}Client) collectAffectedIDs(ctx context.Context, conn database.Querier, conds []sql.Condition) ([]{{ if pkIsStringType $pkCol }}string{{ else }}{{ $pkCol.GoType }}{{ end }}, []any, error) {
 	query, args := sql.BuildSelect(c.dialect, c.table, sql.SelectOptions{
-		Columns:    []string{ {{- printf "%q" $pkCol.Name }}, {{ printf "%q" .Tenancy.Column -}} },
+		Columns:    []string{ {{- range $i, $c := .KeyScanColumns true }}{{ if $i }}, {{ end }}{{ printf "%q" $c.Name }}{{ end -}} },
 		Conditions: conds,
 	})
 
@@ -1177,7 +1177,7 @@ func (c *{{ $structCamel }}Client) collectAffectedIDs(ctx context.Context, conn 
 	for rows.Next() {
 		var id {{ $pkCol.GoType }}
 		var rowTenant {{ .Tenancy.GoType }}
-		if err := rows.Scan(&id, &rowTenant); err != nil {
+		if err := rows.Scan({{ range $i, $c := .KeyScanColumns true }}{{ if $i }}, {{ end }}{{ $c.Target }}{{ end }}); err != nil {
 			return nil, nil, err
 		}
 		ids = append(ids, {{ fkToString $pkCol "id" }})
@@ -1189,7 +1189,7 @@ func (c *{{ $structCamel }}Client) collectAffectedIDs(ctx context.Context, conn 
 	for rows.Next() {
 		var id {{ $pkCol.GoType }}
 		var rowTenant {{ .Tenancy.GoType }}
-		if err := rows.Scan(&id, &rowTenant); err != nil {
+		if err := rows.Scan({{ range $i, $c := .KeyScanColumns true }}{{ if $i }}, {{ end }}{{ $c.Target }}{{ end }}); err != nil {
 			return nil, nil, err
 		}
 		ids = append(ids, id)
@@ -1247,7 +1247,7 @@ func (c *{{ $structCamel }}Client) collectAffectedIDs(ctx context.Context, conn 
 // were affected.
 func (c *{{ $structCamel }}Client) collectAffectedPKs(ctx context.Context, conn database.Querier, conds []sql.Condition) ([]{{ .CompositePKStructName }}, []any, error) {
 	query, args := sql.BuildSelect(c.dialect, c.table, sql.SelectOptions{
-		Columns:    []string{ {{- range .PKColumns }}{{ printf "%q" .Name }}, {{ end }}{{ printf "%q" .Tenancy.Column -}} },
+		Columns:    []string{ {{- range $i, $c := .KeyScanColumns true }}{{ if $i }}, {{ end }}{{ printf "%q" $c.Name }}{{ end -}} },
 		Conditions: conds,
 	})
 
@@ -1262,7 +1262,7 @@ func (c *{{ $structCamel }}Client) collectAffectedPKs(ctx context.Context, conn 
 	for rows.Next() {
 		var pk {{ .CompositePKStructName }}
 		var rowTenant {{ .Tenancy.GoType }}
-		if err := rows.Scan({{ range $i, $col := .PKColumns }}{{ if $i }}, {{ end }}&pk.{{ $col.FieldName }}{{ end }}, &rowTenant); err != nil {
+		if err := rows.Scan({{ range $i, $c := .KeyScanColumns true }}{{ if $i }}, {{ end }}{{ $c.Target }}{{ end }}); err != nil {
 			return nil, nil, err
 		}
 		pks = append(pks, pk)
@@ -1276,7 +1276,7 @@ func (c *{{ $structCamel }}Client) collectAffectedPKs(ctx context.Context, conn 
 // Used by Where variants to know which rows were affected.
 func (c *{{ $structCamel }}Client) collectAffectedPKs(ctx context.Context, conn database.Querier, conds []sql.Condition) ([]{{ .CompositePKStructName }}, error) {
 	query, args := sql.BuildSelect(c.dialect, c.table, sql.SelectOptions{
-		Columns:    []string{ {{- range .PKColumns }}{{ printf "%q" .Name }}, {{ end -}} },
+		Columns:    []string{ {{- range $i, $c := .KeyScanColumns false }}{{ if $i }}, {{ end }}{{ printf "%q" $c.Name }}{{ end -}} },
 		Conditions: conds,
 	})
 
@@ -1289,7 +1289,7 @@ func (c *{{ $structCamel }}Client) collectAffectedPKs(ctx context.Context, conn 
 	var pks []{{ .CompositePKStructName }}
 	for rows.Next() {
 		var pk {{ .CompositePKStructName }}
-		if err := rows.Scan({{ range $i, $col := .PKColumns }}{{ if $i }}, {{ end }}&pk.{{ $col.FieldName }}{{ end }}); err != nil {
+		if err := rows.Scan({{ range $i, $c := .KeyScanColumns false }}{{ if $i }}, {{ end }}{{ $c.Target }}{{ end }}); err != nil {
 			return nil, err
 		}
 		pks = append(pks, pk)

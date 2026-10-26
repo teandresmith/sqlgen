@@ -6,6 +6,7 @@ import (
 
 	"github.com/google/go-cmp/cmp"
 
+	"github.com/teandresmith/sqlgen/comparator"
 	dbstdlib "github.com/teandresmith/sqlgen/database/stdlib"
 	"github.com/teandresmith/sqlgen/hook"
 	"github.com/teandresmith/sqlgen/omittable"
@@ -198,4 +199,91 @@ func TestAffectedKeys_UpdateRecordsOnlyWrittenKeys(t *testing.T) {
 			t.Errorf("AffectedPKs (-want +got):\n%s", diff)
 		}
 	})
+}
+
+// A filter-based delete pre-reads the composite keys it will remove; each
+// recorded key carries its own column values, whatever order the pre-read
+// selects the key columns in.
+func TestAffectedKeys_WhereDeleteRecordsCompositeKeysByColumn(t *testing.T) {
+	ctx := context.Background()
+	client, affected := affectedPKsRecorder()
+
+	cat, err := client.Categories().Create(ctx, &models.CreateCategoryInput{Name: "AKWhereCat"})
+	if err != nil {
+		t.Fatalf("Create category: %v", err)
+	}
+	t.Cleanup(func() { _ = client.Categories().HardDelete(ctx, cat.ID) })
+	product, err := client.Products().Create(ctx, &models.CreateProductInput{
+		Title:      "AKWhereProduct",
+		Price:      1.00,
+		CategoryID: cat.ID,
+		SKU:        "ak-where-sku",
+		Attributes: types.JSON([]byte(`{}`)),
+	})
+	if err != nil {
+		t.Fatalf("Create product: %v", err)
+	}
+	t.Cleanup(func() { _ = client.Products().HardDelete(ctx, product.ID) })
+
+	written := models.ProductTagLabelPK{ProductID: product.ID, TagName: "size", Label: "large"}
+	if _, err := client.ProductTagLabels().Create(ctx, &models.CreateProductTagLabelInput{
+		ProductID: written.ProductID, TagName: written.TagName, Label: written.Label,
+	}); err != nil {
+		t.Fatalf("Create product_tag_label: %v", err)
+	}
+	t.Cleanup(func() { _ = client.ProductTagLabels().HardDelete(ctx, written) })
+
+	filter := &models.ProductTagLabelFilter{ProductID: &comparator.Number[int64]{Eq: &product.ID}}
+	if err := client.ProductTagLabels().HardDeleteWhere(ctx, filter); err != nil {
+		t.Fatalf("HardDeleteWhere: %v", err)
+	}
+	if diff := cmp.Diff([]any{written}, affected()); diff != "" {
+		t.Errorf("AffectedPKs (-want +got):\n%s", diff)
+	}
+}
+
+// Key columns that scan into each other's types without error would, bound by
+// position against a reordered pre-read, record each key with its values
+// swapped.
+func TestAffectedKeys_UpdateWhereRecordsCompositeKeysByColumn(t *testing.T) {
+	ctx := context.Background()
+	client, affected := affectedPKsRecorder()
+
+	user, err := client.Users().Create(ctx, &models.CreateUserInput{Name: "AKWhereUpd", Email: "ak-where-upd@example.com"})
+	if err != nil {
+		t.Fatalf("Create user: %v", err)
+	}
+	t.Cleanup(func() { _ = client.Users().HardDelete(ctx, user.ID) })
+	// A key whose two columns hold the same value reads alike either way
+	// round, so the category id must differ from the user id.
+	var cat *models.Category
+	for _, name := range []string{"AKWhereUpdCat1", "AKWhereUpdCat2"} {
+		c, err := client.Categories().Create(ctx, &models.CreateCategoryInput{Name: name})
+		if err != nil {
+			t.Fatalf("Create category: %v", err)
+		}
+		t.Cleanup(func() { _ = client.Categories().HardDelete(ctx, c.ID) })
+		if int64(c.ID) != user.ID {
+			cat = c
+			break
+		}
+	}
+
+	written := models.UserCategoryPK{UserID: user.ID, CategoryID: cat.ID}
+	if _, err := client.UserCategories().Create(ctx, &models.CreateUserCategoryInput{
+		UserID: written.UserID, CategoryID: written.CategoryID,
+	}); err != nil {
+		t.Fatalf("Create user_category: %v", err)
+	}
+	t.Cleanup(func() { _ = client.UserCategories().HardDelete(ctx, written) })
+
+	filter := &models.UserCategoryFilter{UserID: &comparator.Number[int64]{Eq: &user.ID}}
+	if _, err := client.UserCategories().UpdateWhere(ctx, filter, &models.UpdateUserCategoryInput{
+		Slot: omittable.Set(new(int32(7))),
+	}); err != nil {
+		t.Fatalf("UpdateWhere: %v", err)
+	}
+	if diff := cmp.Diff([]any{written}, affected()); diff != "" {
+		t.Errorf("AffectedPKs (-want +got):\n%s", diff)
+	}
 }

@@ -1710,6 +1710,38 @@ func (t TableContext) KeySetKey(expr string) string {
 	return expr
 }
 
+// KeyScanColumn is one column of a key pre-read: the column it selects and
+// the scan target its value lands in.
+type KeyScanColumn struct {
+	Name   string
+	Target string
+}
+
+// KeyScanColumns lists the columns a key pre-read (collectAffectedIDs,
+// collectAffectedPKs) selects, sorted by name, each with its scan target:
+// &pk.<Field> for a composite key, &id for a single-column one, and
+// &rowTenant for the tenant column when withTenant is set. sql.BuildSelect
+// emits its column list sorted, so a helper that ranges this list for both
+// its Columns and its Scan binds every value to its own column.
+//
+// A method rather than a field for the reason KeySetType gives: it reads
+// only the PK columns and the tenancy column.
+func (t TableContext) KeyScanColumns(withTenant bool) []KeyScanColumn {
+	cols := make([]KeyScanColumn, 0, len(t.PKColumns)+1)
+	for _, col := range t.PKColumns {
+		target := "&id"
+		if t.CompositePK {
+			target = "&pk." + col.FieldName
+		}
+		cols = append(cols, KeyScanColumn{Name: col.Name, Target: target})
+	}
+	if withTenant && t.Tenancy != nil {
+		cols = append(cols, KeyScanColumn{Name: t.Tenancy.Column, Target: "&rowTenant"})
+	}
+	slices.SortFunc(cols, func(a, b KeyScanColumn) int { return strings.Compare(a.Name, b.Name) })
+	return cols
+}
+
 // pkComparable reports whether every primary-key column's Go type is
 // comparable, so the key (or the composite key struct) can key a map.
 func (t TableContext) pkComparable() bool {

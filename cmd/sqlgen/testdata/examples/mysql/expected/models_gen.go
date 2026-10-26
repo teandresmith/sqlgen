@@ -23675,7 +23675,7 @@ func (c *productTagLabelClient) UpdateWhere(ctx context.Context, filter *Product
 // Used by Where variants to know which rows were affected.
 func (c *productTagLabelClient) collectAffectedPKs(ctx context.Context, conn database.Querier, conds []sql.Condition) ([]ProductTagLabelPK, error) {
 	query, args := sql.BuildSelect(c.dialect, c.table, sql.SelectOptions{
-		Columns:    []string{"product_id", "tag_name", "label"},
+		Columns:    []string{"label", "product_id", "tag_name"},
 		Conditions: conds,
 	})
 
@@ -23688,7 +23688,7 @@ func (c *productTagLabelClient) collectAffectedPKs(ctx context.Context, conn dat
 	var pks []ProductTagLabelPK
 	for rows.Next() {
 		var pk ProductTagLabelPK
-		if err := rows.Scan(&pk.ProductID, &pk.TagName, &pk.Label); err != nil {
+		if err := rows.Scan(&pk.Label, &pk.ProductID, &pk.TagName); err != nil {
 			return nil, err
 		}
 		pks = append(pks, pk)
@@ -35691,7 +35691,7 @@ func (c *userCategoryClient) UpdateWhere(ctx context.Context, filter *UserCatego
 // Used by Where variants to know which rows were affected.
 func (c *userCategoryClient) collectAffectedPKs(ctx context.Context, conn database.Querier, conds []sql.Condition) ([]UserCategoryPK, error) {
 	query, args := sql.BuildSelect(c.dialect, c.table, sql.SelectOptions{
-		Columns:    []string{"user_id", "category_id"},
+		Columns:    []string{"category_id", "user_id"},
 		Conditions: conds,
 	})
 
@@ -35704,7 +35704,7 @@ func (c *userCategoryClient) collectAffectedPKs(ctx context.Context, conn databa
 	var pks []UserCategoryPK
 	for rows.Next() {
 		var pk UserCategoryPK
-		if err := rows.Scan(&pk.UserID, &pk.CategoryID); err != nil {
+		if err := rows.Scan(&pk.CategoryID, &pk.UserID); err != nil {
 			return nil, err
 		}
 		pks = append(pks, pk)
