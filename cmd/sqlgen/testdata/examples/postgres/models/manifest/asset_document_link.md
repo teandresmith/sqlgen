@@ -59,19 +59,6 @@ postgres:
 SELECT "asset_id", "document_id" FROM "public"."asset_document_links" WHERE <filter> ORDER BY <sort> LIMIT <limit>
 ```
 
-### Count
-
-- Params: `filter *AssetDocumentLinkFilter`
-- Returns: `int64`, `error`
-
-Generated SQL:
-
-postgres:
-
-```sql
-SELECT COUNT(*) FROM "public"."asset_document_links" WHERE <filter>
-```
-
 ### Exists
 
 - Params: `pk AssetDocumentLinkPK`
@@ -96,6 +83,19 @@ postgres:
 
 ```sql
 SELECT EXISTS(SELECT 1 FROM "public"."asset_document_links" WHERE <filter>)
+```
+
+### Count
+
+- Params: `filter *AssetDocumentLinkFilter`
+- Returns: `int64`, `error`
+
+Generated SQL:
+
+postgres:
+
+```sql
+SELECT COUNT(*) FROM "public"."asset_document_links" WHERE <filter>
 ```
 
 ### Paginate
@@ -156,36 +156,6 @@ postgres:
 INSERT INTO "public"."asset_document_links" (<columns>) VALUES <values>
 ```
 
-### Upsert
-
-- Params: `input *CreateAssetDocumentLinkInput`, `target AssetDocumentLinkConflictTarget`
-- Returns: `*AssetDocumentLink`, `error`
-- Errors: `ErrNilInput`, `ErrConstraintViolation`
-- Notes: One method over the generated AssetDocumentLinkConflictTarget enum — the target argument selects the conflict columns at call time.
-
-Generated SQL:
-
-postgres:
-
-```sql
-INSERT INTO "public"."asset_document_links" (<columns>) VALUES (<values>) ON CONFLICT (<conflict_target>) DO UPDATE SET <excluded>
-```
-
-### UpsertMany
-
-- Params: `inputs []*CreateAssetDocumentLinkInput`, `target AssetDocumentLinkConflictTarget`
-- Returns: `[]*AssetDocumentLink`, `error`
-- Errors: `ErrNilInput`, `ErrConstraintViolation`
-- Notes: Batched in generation.batch_size chunks over the same AssetDocumentLinkConflictTarget enum Upsert takes. Inputs resolving to one target are deduped before the statement is built, last occurrence wins. Earlier chunks are not rolled back on a later failure — wrap in a transaction for atomicity.
-
-Generated SQL:
-
-postgres:
-
-```sql
-INSERT INTO "public"."asset_document_links" (<columns>) VALUES <values> ON CONFLICT (<conflict_target>) DO UPDATE SET <excluded>
-```
-
 ### Update
 
 - Params: `pk AssetDocumentLinkPK`, `input *UpdateAssetDocumentLinkInput`
@@ -229,6 +199,36 @@ postgres:
 
 ```sql
 UPDATE "public"."asset_document_links" SET <set> WHERE <filter> RETURNING "asset_id", "document_id"
+```
+
+### Upsert
+
+- Params: `input *CreateAssetDocumentLinkInput`, `target AssetDocumentLinkConflictTarget`
+- Returns: `*AssetDocumentLink`, `error`
+- Errors: `ErrNilInput`, `ErrConstraintViolation`
+- Notes: One method over the generated AssetDocumentLinkConflictTarget enum — the target argument selects the conflict columns at call time.
+
+Generated SQL:
+
+postgres:
+
+```sql
+INSERT INTO "public"."asset_document_links" (<columns>) VALUES (<values>) ON CONFLICT (<conflict_target>) DO UPDATE SET <excluded>
+```
+
+### UpsertMany
+
+- Params: `inputs []*CreateAssetDocumentLinkInput`, `target AssetDocumentLinkConflictTarget`
+- Returns: `[]*AssetDocumentLink`, `error`
+- Errors: `ErrNilInput`, `ErrConstraintViolation`
+- Notes: Batched in generation.batch_size chunks over the same AssetDocumentLinkConflictTarget enum Upsert takes. Inputs resolving to one target are deduped before the statement is built, last occurrence wins. Earlier chunks are not rolled back on a later failure — wrap in a transaction for atomicity.
+
+Generated SQL:
+
+postgres:
+
+```sql
+INSERT INTO "public"."asset_document_links" (<columns>) VALUES <values> ON CONFLICT (<conflict_target>) DO UPDATE SET <excluded>
 ```
 
 ### HardDelete

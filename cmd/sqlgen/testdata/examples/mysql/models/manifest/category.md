@@ -66,19 +66,6 @@ mysql:
 SELECT `description`, `id`, `name` FROM `categories` WHERE <filter> ORDER BY <sort> LIMIT <limit>
 ```
 
-### Count
-
-- Params: `filter *CategoryFilter`
-- Returns: `int64`, `error`
-
-Generated SQL:
-
-mysql:
-
-```sql
-SELECT COUNT(*) FROM `categories` WHERE <filter>
-```
-
 ### Exists
 
 - Params: `id int32`
@@ -103,6 +90,19 @@ mysql:
 
 ```sql
 SELECT EXISTS(SELECT 1 FROM `categories` WHERE <filter>)
+```
+
+### Count
+
+- Params: `filter *CategoryFilter`
+- Returns: `int64`, `error`
+
+Generated SQL:
+
+mysql:
+
+```sql
+SELECT COUNT(*) FROM `categories` WHERE <filter>
 ```
 
 ### Paginate
@@ -163,36 +163,6 @@ mysql:
 INSERT INTO `categories` (<columns>) VALUES <values>
 ```
 
-### Upsert
-
-- Params: `input *CreateCategoryInput`, `target CategoryConflictTarget`
-- Returns: `*Category`, `error`
-- Errors: `ErrNilInput`, `ErrConstraintViolation`
-- Notes: One method over the generated CategoryConflictTarget enum — the target argument selects the conflict columns at call time.
-
-Generated SQL:
-
-mysql:
-
-```sql
-INSERT INTO `categories` (<columns>) VALUES (<values>) ON DUPLICATE KEY UPDATE <excluded>
-```
-
-### UpsertMany
-
-- Params: `inputs []*CreateCategoryInput`, `target CategoryConflictTarget`
-- Returns: `[]*Category`, `error`
-- Errors: `ErrNilInput`, `ErrConstraintViolation`
-- Notes: Batched in generation.batch_size chunks over the same CategoryConflictTarget enum Upsert takes. Inputs resolving to one target are deduped before the statement is built, last occurrence wins. Earlier chunks are not rolled back on a later failure — wrap in a transaction for atomicity.
-
-Generated SQL:
-
-mysql:
-
-```sql
-INSERT INTO `categories` (<columns>) VALUES <values> ON DUPLICATE KEY UPDATE <excluded>
-```
-
 ### Update
 
 - Params: `id int32`, `input *UpdateCategoryInput`
@@ -238,6 +208,57 @@ mysql:
 UPDATE `categories` SET <set> WHERE <filter>
 ```
 
+### Upsert
+
+- Params: `input *CreateCategoryInput`, `target CategoryConflictTarget`
+- Returns: `*Category`, `error`
+- Errors: `ErrNilInput`, `ErrConstraintViolation`
+- Notes: One method over the generated CategoryConflictTarget enum — the target argument selects the conflict columns at call time.
+
+Generated SQL:
+
+mysql:
+
+```sql
+INSERT INTO `categories` (<columns>) VALUES (<values>) ON DUPLICATE KEY UPDATE <excluded>
+```
+
+### UpsertMany
+
+- Params: `inputs []*CreateCategoryInput`, `target CategoryConflictTarget`
+- Returns: `[]*Category`, `error`
+- Errors: `ErrNilInput`, `ErrConstraintViolation`
+- Notes: Batched in generation.batch_size chunks over the same CategoryConflictTarget enum Upsert takes. Inputs resolving to one target are deduped before the statement is built, last occurrence wins. Earlier chunks are not rolled back on a later failure — wrap in a transaction for atomicity.
+
+Generated SQL:
+
+mysql:
+
+```sql
+INSERT INTO `categories` (<columns>) VALUES <values> ON DUPLICATE KEY UPDATE <excluded>
+```
+
+### CreateWithRelated
+
+- Params: `input *CreateCategoryWithRelatedInput`
+- Returns: `*Category`, `error`
+- Errors: `ErrNilInput`, `ErrConstraintViolation`
+- Notes: Writes the parent and its nested rows in one transaction — a SAVEPOINT when ctx already holds one. Issues no statement of its own: it composes Create and, per eligible relationship (Products), the target's and junction's own client methods, so no sql_bodies entry. Each inner call fires its own hooks, events and cache invalidation under its own op; the nested method has none.
+
+### UpdateWithRelated
+
+- Params: `id int32`, `input *UpdateCategoryWithRelatedInput`
+- Returns: `*Category`, `error`
+- Errors: `ErrNilInput`, `ErrNotFound`, `ErrConstraintViolation`
+- Notes: Writes the parent and its nested rows in one transaction — a SAVEPOINT when ctx already holds one. Issues no statement of its own: it composes Update and, per eligible relationship (Products), the target's and junction's own client methods, so no sql_bodies entry. Each inner call fires its own hooks, events and cache invalidation under its own op; the nested method has none.
+
+### UpsertWithRelated
+
+- Params: `input *UpsertCategoryWithRelatedInput`, `target CategoryConflictTarget`
+- Returns: `*Category`, `error`
+- Errors: `ErrNilInput`, `ErrConstraintViolation`
+- Notes: Writes the parent and its nested rows in one transaction — a SAVEPOINT when ctx already holds one. Issues no statement of its own: it composes Upsert and, per eligible relationship (Products), the target's and junction's own client methods, so no sql_bodies entry. Each inner call fires its own hooks, events and cache invalidation under its own op; the nested method has none.
+
 ### HardDelete
 
 - Params: `id int32`
@@ -280,27 +301,6 @@ mysql:
 ```sql
 DELETE FROM `categories` WHERE <filter>
 ```
-
-### CreateWithRelated
-
-- Params: `input *CreateCategoryWithRelatedInput`
-- Returns: `*Category`, `error`
-- Errors: `ErrNilInput`, `ErrConstraintViolation`
-- Notes: Writes the parent and its nested rows in one transaction — a SAVEPOINT when ctx already holds one. Issues no statement of its own: it composes Create and, per eligible relationship (Products), the target's and junction's own client methods, so no sql_bodies entry. Each inner call fires its own hooks, events and cache invalidation under its own op; the nested method has none.
-
-### UpdateWithRelated
-
-- Params: `id int32`, `input *UpdateCategoryWithRelatedInput`
-- Returns: `*Category`, `error`
-- Errors: `ErrNilInput`, `ErrNotFound`, `ErrConstraintViolation`
-- Notes: Writes the parent and its nested rows in one transaction — a SAVEPOINT when ctx already holds one. Issues no statement of its own: it composes Update and, per eligible relationship (Products), the target's and junction's own client methods, so no sql_bodies entry. Each inner call fires its own hooks, events and cache invalidation under its own op; the nested method has none.
-
-### UpsertWithRelated
-
-- Params: `input *UpsertCategoryWithRelatedInput`, `target CategoryConflictTarget`
-- Returns: `*Category`, `error`
-- Errors: `ErrNilInput`, `ErrConstraintViolation`
-- Notes: Writes the parent and its nested rows in one transaction — a SAVEPOINT when ctx already holds one. Issues no statement of its own: it composes Upsert and, per eligible relationship (Products), the target's and junction's own client methods, so no sql_bodies entry. Each inner call fires its own hooks, events and cache invalidation under its own op; the nested method has none.
 
 ## Filter
 

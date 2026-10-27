@@ -62,19 +62,6 @@ sqlite:
 SELECT "code", "label" FROM "badges" WHERE <filter> ORDER BY <sort> LIMIT <limit>
 ```
 
-### Count
-
-- Params: `filter *BadgeFilter`
-- Returns: `int64`, `error`
-
-Generated SQL:
-
-sqlite:
-
-```sql
-SELECT COUNT(*) FROM "badges" WHERE <filter>
-```
-
 ### Exists
 
 - Params: `id string`
@@ -99,6 +86,19 @@ sqlite:
 
 ```sql
 SELECT EXISTS(SELECT 1 FROM "badges" WHERE <filter>)
+```
+
+### Count
+
+- Params: `filter *BadgeFilter`
+- Returns: `int64`, `error`
+
+Generated SQL:
+
+sqlite:
+
+```sql
+SELECT COUNT(*) FROM "badges" WHERE <filter>
 ```
 
 ### Paginate
@@ -159,36 +159,6 @@ sqlite:
 INSERT INTO "badges" (<columns>) VALUES <values> RETURNING "code"
 ```
 
-### Upsert
-
-- Params: `input *CreateBadgeInput`, `target BadgeConflictTarget`
-- Returns: `*Badge`, `error`
-- Errors: `ErrNilInput`, `ErrConstraintViolation`
-- Notes: One method over the generated BadgeConflictTarget enum — the target argument selects the conflict columns at call time.
-
-Generated SQL:
-
-sqlite:
-
-```sql
-INSERT INTO "badges" (<columns>) VALUES (<values>) ON CONFLICT (<conflict_target>) DO UPDATE SET <excluded> RETURNING "code"
-```
-
-### UpsertMany
-
-- Params: `inputs []*CreateBadgeInput`, `target BadgeConflictTarget`
-- Returns: `[]*Badge`, `error`
-- Errors: `ErrNilInput`, `ErrConstraintViolation`
-- Notes: Batched in generation.batch_size chunks over the same BadgeConflictTarget enum Upsert takes. Inputs resolving to one target are deduped before the statement is built, last occurrence wins. Earlier chunks are not rolled back on a later failure — wrap in a transaction for atomicity.
-
-Generated SQL:
-
-sqlite:
-
-```sql
-INSERT INTO "badges" (<columns>) VALUES <values> ON CONFLICT (<conflict_target>) DO UPDATE SET <excluded>
-```
-
 ### Update
 
 - Params: `id string`, `input *UpdateBadgeInput`
@@ -232,6 +202,36 @@ sqlite:
 
 ```sql
 UPDATE "badges" SET <set> WHERE <filter> RETURNING "code"
+```
+
+### Upsert
+
+- Params: `input *CreateBadgeInput`, `target BadgeConflictTarget`
+- Returns: `*Badge`, `error`
+- Errors: `ErrNilInput`, `ErrConstraintViolation`
+- Notes: One method over the generated BadgeConflictTarget enum — the target argument selects the conflict columns at call time.
+
+Generated SQL:
+
+sqlite:
+
+```sql
+INSERT INTO "badges" (<columns>) VALUES (<values>) ON CONFLICT (<conflict_target>) DO UPDATE SET <excluded> RETURNING "code"
+```
+
+### UpsertMany
+
+- Params: `inputs []*CreateBadgeInput`, `target BadgeConflictTarget`
+- Returns: `[]*Badge`, `error`
+- Errors: `ErrNilInput`, `ErrConstraintViolation`
+- Notes: Batched in generation.batch_size chunks over the same BadgeConflictTarget enum Upsert takes. Inputs resolving to one target are deduped before the statement is built, last occurrence wins. Earlier chunks are not rolled back on a later failure — wrap in a transaction for atomicity.
+
+Generated SQL:
+
+sqlite:
+
+```sql
+INSERT INTO "badges" (<columns>) VALUES <values> ON CONFLICT (<conflict_target>) DO UPDATE SET <excluded>
 ```
 
 ### HardDelete

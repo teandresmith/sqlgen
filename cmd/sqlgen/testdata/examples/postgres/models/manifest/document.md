@@ -66,19 +66,6 @@ postgres:
 SELECT "created_at", "entity_id", "entity_type", "id", "name" FROM "public"."documents" WHERE <filter> ORDER BY <sort> LIMIT <limit>
 ```
 
-### Count
-
-- Params: `filter *DocumentFilter`
-- Returns: `int64`, `error`
-
-Generated SQL:
-
-postgres:
-
-```sql
-SELECT COUNT(*) FROM "public"."documents" WHERE <filter>
-```
-
 ### Exists
 
 - Params: `id uuid.UUID`
@@ -103,6 +90,19 @@ postgres:
 
 ```sql
 SELECT EXISTS(SELECT 1 FROM "public"."documents" WHERE <filter>)
+```
+
+### Count
+
+- Params: `filter *DocumentFilter`
+- Returns: `int64`, `error`
+
+Generated SQL:
+
+postgres:
+
+```sql
+SELECT COUNT(*) FROM "public"."documents" WHERE <filter>
 ```
 
 ### Paginate
@@ -163,36 +163,6 @@ postgres:
 INSERT INTO "public"."documents" (<columns>) VALUES <values> RETURNING "id"
 ```
 
-### Upsert
-
-- Params: `input *CreateDocumentInput`, `target DocumentConflictTarget`
-- Returns: `*Document`, `error`
-- Errors: `ErrNilInput`, `ErrConstraintViolation`
-- Notes: One method over the generated DocumentConflictTarget enum — the target argument selects the conflict columns at call time.
-
-Generated SQL:
-
-postgres:
-
-```sql
-INSERT INTO "public"."documents" (<columns>) VALUES (<values>) ON CONFLICT (<conflict_target>) DO UPDATE SET <excluded> RETURNING "id"
-```
-
-### UpsertMany
-
-- Params: `inputs []*CreateDocumentInput`, `target DocumentConflictTarget`
-- Returns: `[]*Document`, `error`
-- Errors: `ErrNilInput`, `ErrConstraintViolation`
-- Notes: Batched in generation.batch_size chunks over the same DocumentConflictTarget enum Upsert takes. Inputs resolving to one target are deduped before the statement is built, last occurrence wins. Earlier chunks are not rolled back on a later failure — wrap in a transaction for atomicity.
-
-Generated SQL:
-
-postgres:
-
-```sql
-INSERT INTO "public"."documents" (<columns>) VALUES <values> ON CONFLICT (<conflict_target>) DO UPDATE SET <excluded>
-```
-
 ### Update
 
 - Params: `id uuid.UUID`, `input *UpdateDocumentInput`
@@ -236,6 +206,36 @@ postgres:
 
 ```sql
 UPDATE "public"."documents" SET <set> WHERE <filter> RETURNING "id"
+```
+
+### Upsert
+
+- Params: `input *CreateDocumentInput`, `target DocumentConflictTarget`
+- Returns: `*Document`, `error`
+- Errors: `ErrNilInput`, `ErrConstraintViolation`
+- Notes: One method over the generated DocumentConflictTarget enum — the target argument selects the conflict columns at call time.
+
+Generated SQL:
+
+postgres:
+
+```sql
+INSERT INTO "public"."documents" (<columns>) VALUES (<values>) ON CONFLICT (<conflict_target>) DO UPDATE SET <excluded> RETURNING "id"
+```
+
+### UpsertMany
+
+- Params: `inputs []*CreateDocumentInput`, `target DocumentConflictTarget`
+- Returns: `[]*Document`, `error`
+- Errors: `ErrNilInput`, `ErrConstraintViolation`
+- Notes: Batched in generation.batch_size chunks over the same DocumentConflictTarget enum Upsert takes. Inputs resolving to one target are deduped before the statement is built, last occurrence wins. Earlier chunks are not rolled back on a later failure — wrap in a transaction for atomicity.
+
+Generated SQL:
+
+postgres:
+
+```sql
+INSERT INTO "public"."documents" (<columns>) VALUES <values> ON CONFLICT (<conflict_target>) DO UPDATE SET <excluded>
 ```
 
 ### HardDelete

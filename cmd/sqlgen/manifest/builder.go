@@ -1668,7 +1668,8 @@ func (ctx methodCtx) filterParam() MethodParam {
 // interface (PRD §9.1, §9.4, §9.4a). Get, GetMany and Count are unconditional —
 // toResolvedOperations pins all three true because the rest of the surface is
 // built on them; everything else follows its resolved flag, which is a schema
-// fact (PRD §4.6).
+// fact (PRD §4.6). The list keeps the interface's declaration order in
+// table/client.go.tmpl (PRD §30.3) — Exists and ExistsWhere come before Count.
 //
 // Earlier revisions advertised FindByID / FindBy<Col> / List / Walk, names
 // taken from a documentation example rather than from the templates. None of
@@ -1690,13 +1691,6 @@ func buildQueryMethods(ctx methodCtx) []Method {
 			Errors:    errs(ctx.filterTenancy()),
 			SQLBodies: ctx.body(sqlGetMany(ctx.in.Config, ctx.tc)),
 		},
-		{
-			Name:      "Count",
-			Params:    []MethodParam{ctx.filterParam()},
-			Returns:   "int64",
-			Errors:    errs(ctx.filterTenancy()),
-			SQLBodies: ctx.body(sqlCount(ctx.in.Config, ctx.tc)),
-		},
 	}
 	if ctx.tc.Operations.Exists {
 		out = append(
@@ -1717,6 +1711,13 @@ func buildQueryMethods(ctx methodCtx) []Method {
 			},
 		)
 	}
+	out = append(out, Method{
+		Name:      "Count",
+		Params:    []MethodParam{ctx.filterParam()},
+		Returns:   "int64",
+		Errors:    errs(ctx.filterTenancy()),
+		SQLBodies: ctx.body(sqlCount(ctx.in.Config, ctx.tc)),
+	})
 	if ctx.tc.Operations.Paginate {
 		out = append(out, Method{
 			Name:    "Paginate",
@@ -1750,7 +1751,9 @@ func buildQueryMethods(ctx methodCtx) []Method {
 
 // buildMutationMethods lists the write half of the generated <Entity>Client
 // interface (PRD §9.2, §9.3), each gated on the same resolved flag as its
-// template — a schema fact (PRD §4.6).
+// template — a schema fact (PRD §4.6). The list keeps the interface's
+// declaration order in table/client.go.tmpl (PRD §30.3): create, update,
+// upsert, the …WithRelated methods, Increment, then the delete families.
 //
 // Constraint failures are one structured *database.ConstraintError unwrapping
 // to ErrConstraintViolation (§22.2) — earlier revisions split it into
@@ -1764,8 +1767,10 @@ func buildQueryMethods(ctx methodCtx) []Method {
 func buildMutationMethods(ctx methodCtx) []Method {
 	out := buildCreateMethods(ctx)
 	out = append(out, buildUpdateMethods(ctx)...)
-	out = append(out, buildDeleteMethods(ctx)...)
+	out = append(out, buildUpsertMethods(ctx)...)
 	out = append(out, buildNestedMethods(ctx)...)
+	out = append(out, buildIncrementMethods(ctx)...)
+	out = append(out, buildDeleteMethods(ctx)...)
 	return out
 }
 
@@ -1903,6 +1908,12 @@ func buildCreateMethods(ctx methodCtx) []Method {
 			SQLBodies: ctx.body(sqlCreateMany(ctx.in.Config, ctx.tc)),
 		})
 	}
+	return out
+}
+
+func buildUpsertMethods(ctx methodCtx) []Method {
+	var out []Method
+	createInput := "*Create" + ctx.entity + "Input"
 	if ctx.tc.Operations.Upsert {
 		out = append(out, Method{
 			Name: "Upsert",
@@ -1969,6 +1980,11 @@ func buildUpdateMethods(ctx methodCtx) []Method {
 			SQLBodies: ctx.body(sqlUpdateWhere(ctx.in.Config, ctx.tc)),
 		})
 	}
+	return out
+}
+
+func buildIncrementMethods(ctx methodCtx) []Method {
+	var out []Method
 	if ctx.tc.Operations.Increment && len(ctx.tc.IncrementColumns) > 0 {
 		out = append(out, Method{
 			Name:      "Increment",

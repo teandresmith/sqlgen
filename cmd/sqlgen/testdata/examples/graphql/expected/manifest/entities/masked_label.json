@@ -35,11 +35,11 @@
       "hydration": "eager",
       "key_pattern": "sqlgen:maskedlabel:{id}",
       "invalidates_on": [
-        "Upsert",
-        "UpsertMany",
         "Update",
         "UpdateMany",
         "UpdateWhere",
+        "Upsert",
+        "UpsertMany",
         "HardDelete",
         "HardDeleteMany",
         "HardDeleteWhere"
@@ -117,20 +117,6 @@
         }
       },
       {
-        "name": "Count",
-        "params": [
-          {
-            "name": "filter",
-            "type": "*MaskedLabelFilter"
-          }
-        ],
-        "returns": "int64",
-        "errors": [],
-        "sql_bodies": {
-          "postgres": "SELECT COUNT(*) FROM \"public\".\"masked_labels\" WHERE <filter>"
-        }
-      },
-      {
         "name": "Exists",
         "params": [
           {
@@ -156,6 +142,20 @@
         "errors": [],
         "sql_bodies": {
           "postgres": "SELECT EXISTS(SELECT 1 FROM \"public\".\"masked_labels\" WHERE <filter>)"
+        }
+      },
+      {
+        "name": "Count",
+        "params": [
+          {
+            "name": "filter",
+            "type": "*MaskedLabelFilter"
+          }
+        ],
+        "returns": "int64",
+        "errors": [],
+        "sql_bodies": {
+          "postgres": "SELECT COUNT(*) FROM \"public\".\"masked_labels\" WHERE <filter>"
         }
       },
       {
@@ -237,50 +237,6 @@
         }
       },
       {
-        "name": "Upsert",
-        "params": [
-          {
-            "name": "input",
-            "type": "*CreateMaskedLabelInput"
-          },
-          {
-            "name": "target",
-            "type": "MaskedLabelConflictTarget"
-          }
-        ],
-        "returns": "*MaskedLabel",
-        "errors": [
-          "ErrNilInput",
-          "ErrConstraintViolation"
-        ],
-        "notes": "One method over the generated MaskedLabelConflictTarget enum — the target argument selects the conflict columns at call time.",
-        "sql_bodies": {
-          "postgres": "INSERT INTO \"public\".\"masked_labels\" (<columns>) VALUES (<values>) ON CONFLICT (<conflict_target>) DO UPDATE SET <excluded> RETURNING \"id\""
-        }
-      },
-      {
-        "name": "UpsertMany",
-        "params": [
-          {
-            "name": "inputs",
-            "type": "[]*CreateMaskedLabelInput"
-          },
-          {
-            "name": "target",
-            "type": "MaskedLabelConflictTarget"
-          }
-        ],
-        "returns": "[]*MaskedLabel",
-        "errors": [
-          "ErrNilInput",
-          "ErrConstraintViolation"
-        ],
-        "notes": "Batched in generation.batch_size chunks over the same MaskedLabelConflictTarget enum Upsert takes. Inputs resolving to one target are deduped before the statement is built, last occurrence wins. Earlier chunks are not rolled back on a later failure — wrap in a transaction for atomicity.",
-        "sql_bodies": {
-          "postgres": "INSERT INTO \"public\".\"masked_labels\" (<columns>) VALUES <values> ON CONFLICT (<conflict_target>) DO UPDATE SET <excluded>"
-        }
-      },
-      {
         "name": "Update",
         "params": [
           {
@@ -342,6 +298,50 @@
         "notes": "Idempotent — returns an empty slice when no row matches. ErrEmptyFilter when the filter produces no conditions.",
         "sql_bodies": {
           "postgres": "UPDATE \"public\".\"masked_labels\" SET <set> WHERE <filter> RETURNING \"id\""
+        }
+      },
+      {
+        "name": "Upsert",
+        "params": [
+          {
+            "name": "input",
+            "type": "*CreateMaskedLabelInput"
+          },
+          {
+            "name": "target",
+            "type": "MaskedLabelConflictTarget"
+          }
+        ],
+        "returns": "*MaskedLabel",
+        "errors": [
+          "ErrNilInput",
+          "ErrConstraintViolation"
+        ],
+        "notes": "One method over the generated MaskedLabelConflictTarget enum — the target argument selects the conflict columns at call time.",
+        "sql_bodies": {
+          "postgres": "INSERT INTO \"public\".\"masked_labels\" (<columns>) VALUES (<values>) ON CONFLICT (<conflict_target>) DO UPDATE SET <excluded> RETURNING \"id\""
+        }
+      },
+      {
+        "name": "UpsertMany",
+        "params": [
+          {
+            "name": "inputs",
+            "type": "[]*CreateMaskedLabelInput"
+          },
+          {
+            "name": "target",
+            "type": "MaskedLabelConflictTarget"
+          }
+        ],
+        "returns": "[]*MaskedLabel",
+        "errors": [
+          "ErrNilInput",
+          "ErrConstraintViolation"
+        ],
+        "notes": "Batched in generation.batch_size chunks over the same MaskedLabelConflictTarget enum Upsert takes. Inputs resolving to one target are deduped before the statement is built, last occurrence wins. Earlier chunks are not rolled back on a later failure — wrap in a transaction for atomicity.",
+        "sql_bodies": {
+          "postgres": "INSERT INTO \"public\".\"masked_labels\" (<columns>) VALUES <values> ON CONFLICT (<conflict_target>) DO UPDATE SET <excluded>"
         }
       },
       {

@@ -60,19 +60,6 @@ postgres:
 SELECT "count", "key", "slot", "updated_at" FROM "public"."counters" WHERE <filter> ORDER BY <sort> LIMIT <limit>
 ```
 
-### Count
-
-- Params: `filter *CounterFilter`
-- Returns: `int64`, `error`
-
-Generated SQL:
-
-postgres:
-
-```sql
-SELECT COUNT(*) FROM "public"."counters" WHERE <filter>
-```
-
 ### Exists
 
 - Params: `id string`
@@ -97,6 +84,19 @@ postgres:
 
 ```sql
 SELECT EXISTS(SELECT 1 FROM "public"."counters" WHERE <filter>)
+```
+
+### Count
+
+- Params: `filter *CounterFilter`
+- Returns: `int64`, `error`
+
+Generated SQL:
+
+postgres:
+
+```sql
+SELECT COUNT(*) FROM "public"."counters" WHERE <filter>
 ```
 
 ### Paginate
@@ -157,36 +157,6 @@ postgres:
 INSERT INTO "public"."counters" (<columns>) VALUES <values> RETURNING "key"
 ```
 
-### Upsert
-
-- Params: `input *CreateCounterInput`, `target CounterConflictTarget`
-- Returns: `*Counter`, `error`
-- Errors: `ErrNilInput`, `ErrConstraintViolation`
-- Notes: One method over the generated CounterConflictTarget enum — the target argument selects the conflict columns at call time.
-
-Generated SQL:
-
-postgres:
-
-```sql
-INSERT INTO "public"."counters" (<columns>) VALUES (<values>) ON CONFLICT (<conflict_target>) DO UPDATE SET <excluded> RETURNING "key"
-```
-
-### UpsertMany
-
-- Params: `inputs []*CreateCounterInput`, `target CounterConflictTarget`
-- Returns: `[]*Counter`, `error`
-- Errors: `ErrNilInput`, `ErrConstraintViolation`
-- Notes: Batched in generation.batch_size chunks over the same CounterConflictTarget enum Upsert takes. Inputs resolving to one target are deduped before the statement is built, last occurrence wins. Earlier chunks are not rolled back on a later failure — wrap in a transaction for atomicity.
-
-Generated SQL:
-
-postgres:
-
-```sql
-INSERT INTO "public"."counters" (<columns>) VALUES <values> ON CONFLICT (<conflict_target>) DO UPDATE SET <excluded>
-```
-
 ### Update
 
 - Params: `id string`, `input *UpdateCounterInput`
@@ -230,6 +200,36 @@ postgres:
 
 ```sql
 UPDATE "public"."counters" SET <set> WHERE <filter> RETURNING "key"
+```
+
+### Upsert
+
+- Params: `input *CreateCounterInput`, `target CounterConflictTarget`
+- Returns: `*Counter`, `error`
+- Errors: `ErrNilInput`, `ErrConstraintViolation`
+- Notes: One method over the generated CounterConflictTarget enum — the target argument selects the conflict columns at call time.
+
+Generated SQL:
+
+postgres:
+
+```sql
+INSERT INTO "public"."counters" (<columns>) VALUES (<values>) ON CONFLICT (<conflict_target>) DO UPDATE SET <excluded> RETURNING "key"
+```
+
+### UpsertMany
+
+- Params: `inputs []*CreateCounterInput`, `target CounterConflictTarget`
+- Returns: `[]*Counter`, `error`
+- Errors: `ErrNilInput`, `ErrConstraintViolation`
+- Notes: Batched in generation.batch_size chunks over the same CounterConflictTarget enum Upsert takes. Inputs resolving to one target are deduped before the statement is built, last occurrence wins. Earlier chunks are not rolled back on a later failure — wrap in a transaction for atomicity.
+
+Generated SQL:
+
+postgres:
+
+```sql
+INSERT INTO "public"."counters" (<columns>) VALUES <values> ON CONFLICT (<conflict_target>) DO UPDATE SET <excluded>
 ```
 
 ### Increment

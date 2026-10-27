@@ -56,19 +56,6 @@ sqlite:
 SELECT "binary_key_id", "id", "label" FROM "binary_key_events" WHERE <filter> ORDER BY <sort> LIMIT <limit>
 ```
 
-### Count
-
-- Params: `filter *BinaryKeyEventFilter`
-- Returns: `int64`, `error`
-
-Generated SQL:
-
-sqlite:
-
-```sql
-SELECT COUNT(*) FROM "binary_key_events" WHERE <filter>
-```
-
 ### Exists
 
 - Params: `id int64`
@@ -93,6 +80,19 @@ sqlite:
 
 ```sql
 SELECT EXISTS(SELECT 1 FROM "binary_key_events" WHERE <filter>)
+```
+
+### Count
+
+- Params: `filter *BinaryKeyEventFilter`
+- Returns: `int64`, `error`
+
+Generated SQL:
+
+sqlite:
+
+```sql
+SELECT COUNT(*) FROM "binary_key_events" WHERE <filter>
 ```
 
 ### Paginate
@@ -153,36 +153,6 @@ sqlite:
 INSERT INTO "binary_key_events" (<columns>) VALUES <values> RETURNING "id"
 ```
 
-### Upsert
-
-- Params: `input *CreateBinaryKeyEventInput`, `target BinaryKeyEventConflictTarget`
-- Returns: `*BinaryKeyEvent`, `error`
-- Errors: `ErrNilInput`, `ErrConstraintViolation`
-- Notes: One method over the generated BinaryKeyEventConflictTarget enum — the target argument selects the conflict columns at call time.
-
-Generated SQL:
-
-sqlite:
-
-```sql
-INSERT INTO "binary_key_events" (<columns>) VALUES (<values>) ON CONFLICT (<conflict_target>) DO UPDATE SET <excluded> RETURNING "id"
-```
-
-### UpsertMany
-
-- Params: `inputs []*CreateBinaryKeyEventInput`, `target BinaryKeyEventConflictTarget`
-- Returns: `[]*BinaryKeyEvent`, `error`
-- Errors: `ErrNilInput`, `ErrConstraintViolation`
-- Notes: Batched in generation.batch_size chunks over the same BinaryKeyEventConflictTarget enum Upsert takes. Inputs resolving to one target are deduped before the statement is built, last occurrence wins. Earlier chunks are not rolled back on a later failure — wrap in a transaction for atomicity.
-
-Generated SQL:
-
-sqlite:
-
-```sql
-INSERT INTO "binary_key_events" (<columns>) VALUES <values> ON CONFLICT (<conflict_target>) DO UPDATE SET <excluded>
-```
-
 ### Update
 
 - Params: `id int64`, `input *UpdateBinaryKeyEventInput`
@@ -226,6 +196,36 @@ sqlite:
 
 ```sql
 UPDATE "binary_key_events" SET <set> WHERE <filter> RETURNING "id"
+```
+
+### Upsert
+
+- Params: `input *CreateBinaryKeyEventInput`, `target BinaryKeyEventConflictTarget`
+- Returns: `*BinaryKeyEvent`, `error`
+- Errors: `ErrNilInput`, `ErrConstraintViolation`
+- Notes: One method over the generated BinaryKeyEventConflictTarget enum — the target argument selects the conflict columns at call time.
+
+Generated SQL:
+
+sqlite:
+
+```sql
+INSERT INTO "binary_key_events" (<columns>) VALUES (<values>) ON CONFLICT (<conflict_target>) DO UPDATE SET <excluded> RETURNING "id"
+```
+
+### UpsertMany
+
+- Params: `inputs []*CreateBinaryKeyEventInput`, `target BinaryKeyEventConflictTarget`
+- Returns: `[]*BinaryKeyEvent`, `error`
+- Errors: `ErrNilInput`, `ErrConstraintViolation`
+- Notes: Batched in generation.batch_size chunks over the same BinaryKeyEventConflictTarget enum Upsert takes. Inputs resolving to one target are deduped before the statement is built, last occurrence wins. Earlier chunks are not rolled back on a later failure — wrap in a transaction for atomicity.
+
+Generated SQL:
+
+sqlite:
+
+```sql
+INSERT INTO "binary_key_events" (<columns>) VALUES <values> ON CONFLICT (<conflict_target>) DO UPDATE SET <excluded>
 ```
 
 ### HardDelete

@@ -64,19 +64,6 @@ postgres:
 SELECT "bigs", "created_at", "id", "ratio", "ratio_n", "ratios", "scores", "scores_n", "small", "small_n", "smalls" FROM "public"."numeric_widths" WHERE <filter> ORDER BY <sort> LIMIT <limit>
 ```
 
-### Count
-
-- Params: `filter *NumericWidthFilter`
-- Returns: `int64`, `error`
-
-Generated SQL:
-
-postgres:
-
-```sql
-SELECT COUNT(*) FROM "public"."numeric_widths" WHERE <filter>
-```
-
 ### Exists
 
 - Params: `id uuid.UUID`
@@ -101,6 +88,19 @@ postgres:
 
 ```sql
 SELECT EXISTS(SELECT 1 FROM "public"."numeric_widths" WHERE <filter>)
+```
+
+### Count
+
+- Params: `filter *NumericWidthFilter`
+- Returns: `int64`, `error`
+
+Generated SQL:
+
+postgres:
+
+```sql
+SELECT COUNT(*) FROM "public"."numeric_widths" WHERE <filter>
 ```
 
 ### Paginate
@@ -161,36 +161,6 @@ postgres:
 INSERT INTO "public"."numeric_widths" (<columns>) VALUES <values> RETURNING "id"
 ```
 
-### Upsert
-
-- Params: `input *CreateNumericWidthInput`, `target NumericWidthConflictTarget`
-- Returns: `*NumericWidth`, `error`
-- Errors: `ErrNilInput`, `ErrConstraintViolation`
-- Notes: One method over the generated NumericWidthConflictTarget enum — the target argument selects the conflict columns at call time.
-
-Generated SQL:
-
-postgres:
-
-```sql
-INSERT INTO "public"."numeric_widths" (<columns>) VALUES (<values>) ON CONFLICT (<conflict_target>) DO UPDATE SET <excluded> RETURNING "id"
-```
-
-### UpsertMany
-
-- Params: `inputs []*CreateNumericWidthInput`, `target NumericWidthConflictTarget`
-- Returns: `[]*NumericWidth`, `error`
-- Errors: `ErrNilInput`, `ErrConstraintViolation`
-- Notes: Batched in generation.batch_size chunks over the same NumericWidthConflictTarget enum Upsert takes. Inputs resolving to one target are deduped before the statement is built, last occurrence wins. Earlier chunks are not rolled back on a later failure — wrap in a transaction for atomicity.
-
-Generated SQL:
-
-postgres:
-
-```sql
-INSERT INTO "public"."numeric_widths" (<columns>) VALUES <values> ON CONFLICT (<conflict_target>) DO UPDATE SET <excluded>
-```
-
 ### Update
 
 - Params: `id uuid.UUID`, `input *UpdateNumericWidthInput`
@@ -234,6 +204,36 @@ postgres:
 
 ```sql
 UPDATE "public"."numeric_widths" SET <set> WHERE <filter> RETURNING "id"
+```
+
+### Upsert
+
+- Params: `input *CreateNumericWidthInput`, `target NumericWidthConflictTarget`
+- Returns: `*NumericWidth`, `error`
+- Errors: `ErrNilInput`, `ErrConstraintViolation`
+- Notes: One method over the generated NumericWidthConflictTarget enum — the target argument selects the conflict columns at call time.
+
+Generated SQL:
+
+postgres:
+
+```sql
+INSERT INTO "public"."numeric_widths" (<columns>) VALUES (<values>) ON CONFLICT (<conflict_target>) DO UPDATE SET <excluded> RETURNING "id"
+```
+
+### UpsertMany
+
+- Params: `inputs []*CreateNumericWidthInput`, `target NumericWidthConflictTarget`
+- Returns: `[]*NumericWidth`, `error`
+- Errors: `ErrNilInput`, `ErrConstraintViolation`
+- Notes: Batched in generation.batch_size chunks over the same NumericWidthConflictTarget enum Upsert takes. Inputs resolving to one target are deduped before the statement is built, last occurrence wins. Earlier chunks are not rolled back on a later failure — wrap in a transaction for atomicity.
+
+Generated SQL:
+
+postgres:
+
+```sql
+INSERT INTO "public"."numeric_widths" (<columns>) VALUES <values> ON CONFLICT (<conflict_target>) DO UPDATE SET <excluded>
 ```
 
 ### Increment

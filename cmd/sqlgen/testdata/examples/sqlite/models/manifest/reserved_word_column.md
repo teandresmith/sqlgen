@@ -64,19 +64,6 @@ sqlite:
 SELECT "ctx", "err", "error", "func", "id", "interface", "len", "make", "map", "new", "type" FROM "reserved_word_columns" WHERE <filter> ORDER BY <sort> LIMIT <limit>
 ```
 
-### Count
-
-- Params: `filter *ReservedWordColumnFilter`
-- Returns: `int64`, `error`
-
-Generated SQL:
-
-sqlite:
-
-```sql
-SELECT COUNT(*) FROM "reserved_word_columns" WHERE <filter>
-```
-
 ### Exists
 
 - Params: `id int64`
@@ -101,6 +88,19 @@ sqlite:
 
 ```sql
 SELECT EXISTS(SELECT 1 FROM "reserved_word_columns" WHERE <filter>)
+```
+
+### Count
+
+- Params: `filter *ReservedWordColumnFilter`
+- Returns: `int64`, `error`
+
+Generated SQL:
+
+sqlite:
+
+```sql
+SELECT COUNT(*) FROM "reserved_word_columns" WHERE <filter>
 ```
 
 ### Paginate
@@ -161,36 +161,6 @@ sqlite:
 INSERT INTO "reserved_word_columns" (<columns>) VALUES <values> RETURNING "id"
 ```
 
-### Upsert
-
-- Params: `input *CreateReservedWordColumnInput`, `target ReservedWordColumnConflictTarget`
-- Returns: `*ReservedWordColumn`, `error`
-- Errors: `ErrNilInput`, `ErrConstraintViolation`
-- Notes: One method over the generated ReservedWordColumnConflictTarget enum — the target argument selects the conflict columns at call time.
-
-Generated SQL:
-
-sqlite:
-
-```sql
-INSERT INTO "reserved_word_columns" (<columns>) VALUES (<values>) ON CONFLICT (<conflict_target>) DO UPDATE SET <excluded> RETURNING "id"
-```
-
-### UpsertMany
-
-- Params: `inputs []*CreateReservedWordColumnInput`, `target ReservedWordColumnConflictTarget`
-- Returns: `[]*ReservedWordColumn`, `error`
-- Errors: `ErrNilInput`, `ErrConstraintViolation`
-- Notes: Batched in generation.batch_size chunks over the same ReservedWordColumnConflictTarget enum Upsert takes. Inputs resolving to one target are deduped before the statement is built, last occurrence wins. Earlier chunks are not rolled back on a later failure — wrap in a transaction for atomicity.
-
-Generated SQL:
-
-sqlite:
-
-```sql
-INSERT INTO "reserved_word_columns" (<columns>) VALUES <values> ON CONFLICT (<conflict_target>) DO UPDATE SET <excluded>
-```
-
 ### Update
 
 - Params: `id int64`, `input *UpdateReservedWordColumnInput`
@@ -234,6 +204,36 @@ sqlite:
 
 ```sql
 UPDATE "reserved_word_columns" SET <set> WHERE <filter> RETURNING "id"
+```
+
+### Upsert
+
+- Params: `input *CreateReservedWordColumnInput`, `target ReservedWordColumnConflictTarget`
+- Returns: `*ReservedWordColumn`, `error`
+- Errors: `ErrNilInput`, `ErrConstraintViolation`
+- Notes: One method over the generated ReservedWordColumnConflictTarget enum — the target argument selects the conflict columns at call time.
+
+Generated SQL:
+
+sqlite:
+
+```sql
+INSERT INTO "reserved_word_columns" (<columns>) VALUES (<values>) ON CONFLICT (<conflict_target>) DO UPDATE SET <excluded> RETURNING "id"
+```
+
+### UpsertMany
+
+- Params: `inputs []*CreateReservedWordColumnInput`, `target ReservedWordColumnConflictTarget`
+- Returns: `[]*ReservedWordColumn`, `error`
+- Errors: `ErrNilInput`, `ErrConstraintViolation`
+- Notes: Batched in generation.batch_size chunks over the same ReservedWordColumnConflictTarget enum Upsert takes. Inputs resolving to one target are deduped before the statement is built, last occurrence wins. Earlier chunks are not rolled back on a later failure — wrap in a transaction for atomicity.
+
+Generated SQL:
+
+sqlite:
+
+```sql
+INSERT INTO "reserved_word_columns" (<columns>) VALUES <values> ON CONFLICT (<conflict_target>) DO UPDATE SET <excluded>
 ```
 
 ### Increment

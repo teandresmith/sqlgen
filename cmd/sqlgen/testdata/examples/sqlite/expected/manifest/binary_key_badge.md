@@ -57,19 +57,6 @@ sqlite:
 SELECT "badge_code", "binary_key_id" FROM "binary_key_badges" WHERE <filter> ORDER BY <sort> LIMIT <limit>
 ```
 
-### Count
-
-- Params: `filter *BinaryKeyBadgeFilter`
-- Returns: `int64`, `error`
-
-Generated SQL:
-
-sqlite:
-
-```sql
-SELECT COUNT(*) FROM "binary_key_badges" WHERE <filter>
-```
-
 ### Exists
 
 - Params: `pk BinaryKeyBadgePK`
@@ -94,6 +81,19 @@ sqlite:
 
 ```sql
 SELECT EXISTS(SELECT 1 FROM "binary_key_badges" WHERE <filter>)
+```
+
+### Count
+
+- Params: `filter *BinaryKeyBadgeFilter`
+- Returns: `int64`, `error`
+
+Generated SQL:
+
+sqlite:
+
+```sql
+SELECT COUNT(*) FROM "binary_key_badges" WHERE <filter>
 ```
 
 ### Paginate
@@ -154,36 +154,6 @@ sqlite:
 INSERT INTO "binary_key_badges" (<columns>) VALUES <values>
 ```
 
-### Upsert
-
-- Params: `input *CreateBinaryKeyBadgeInput`, `target BinaryKeyBadgeConflictTarget`
-- Returns: `*BinaryKeyBadge`, `error`
-- Errors: `ErrNilInput`, `ErrConstraintViolation`
-- Notes: One method over the generated BinaryKeyBadgeConflictTarget enum — the target argument selects the conflict columns at call time.
-
-Generated SQL:
-
-sqlite:
-
-```sql
-INSERT INTO "binary_key_badges" (<columns>) VALUES (<values>) ON CONFLICT (<conflict_target>) DO UPDATE SET <excluded>
-```
-
-### UpsertMany
-
-- Params: `inputs []*CreateBinaryKeyBadgeInput`, `target BinaryKeyBadgeConflictTarget`
-- Returns: `[]*BinaryKeyBadge`, `error`
-- Errors: `ErrNilInput`, `ErrConstraintViolation`
-- Notes: Batched in generation.batch_size chunks over the same BinaryKeyBadgeConflictTarget enum Upsert takes. Inputs resolving to one target are deduped before the statement is built, last occurrence wins. Earlier chunks are not rolled back on a later failure — wrap in a transaction for atomicity.
-
-Generated SQL:
-
-sqlite:
-
-```sql
-INSERT INTO "binary_key_badges" (<columns>) VALUES <values> ON CONFLICT (<conflict_target>) DO UPDATE SET <excluded>
-```
-
 ### Update
 
 - Params: `pk BinaryKeyBadgePK`, `input *UpdateBinaryKeyBadgeInput`
@@ -227,6 +197,36 @@ sqlite:
 
 ```sql
 UPDATE "binary_key_badges" SET <set> WHERE <filter> RETURNING "binary_key_id", "badge_code"
+```
+
+### Upsert
+
+- Params: `input *CreateBinaryKeyBadgeInput`, `target BinaryKeyBadgeConflictTarget`
+- Returns: `*BinaryKeyBadge`, `error`
+- Errors: `ErrNilInput`, `ErrConstraintViolation`
+- Notes: One method over the generated BinaryKeyBadgeConflictTarget enum — the target argument selects the conflict columns at call time.
+
+Generated SQL:
+
+sqlite:
+
+```sql
+INSERT INTO "binary_key_badges" (<columns>) VALUES (<values>) ON CONFLICT (<conflict_target>) DO UPDATE SET <excluded>
+```
+
+### UpsertMany
+
+- Params: `inputs []*CreateBinaryKeyBadgeInput`, `target BinaryKeyBadgeConflictTarget`
+- Returns: `[]*BinaryKeyBadge`, `error`
+- Errors: `ErrNilInput`, `ErrConstraintViolation`
+- Notes: Batched in generation.batch_size chunks over the same BinaryKeyBadgeConflictTarget enum Upsert takes. Inputs resolving to one target are deduped before the statement is built, last occurrence wins. Earlier chunks are not rolled back on a later failure — wrap in a transaction for atomicity.
+
+Generated SQL:
+
+sqlite:
+
+```sql
+INSERT INTO "binary_key_badges" (<columns>) VALUES <values> ON CONFLICT (<conflict_target>) DO UPDATE SET <excluded>
 ```
 
 ### HardDelete

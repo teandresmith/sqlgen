@@ -61,19 +61,6 @@ postgres:
 SELECT "addr", "label" FROM "public"."hosts" WHERE <filter> ORDER BY <sort> LIMIT <limit>
 ```
 
-### Count
-
-- Params: `filter *HostFilter`
-- Returns: `int64`, `error`
-
-Generated SQL:
-
-postgres:
-
-```sql
-SELECT COUNT(*) FROM "public"."hosts" WHERE <filter>
-```
-
 ### Exists
 
 - Params: `id net.IP`
@@ -98,6 +85,19 @@ postgres:
 
 ```sql
 SELECT EXISTS(SELECT 1 FROM "public"."hosts" WHERE <filter>)
+```
+
+### Count
+
+- Params: `filter *HostFilter`
+- Returns: `int64`, `error`
+
+Generated SQL:
+
+postgres:
+
+```sql
+SELECT COUNT(*) FROM "public"."hosts" WHERE <filter>
 ```
 
 ### Paginate
@@ -158,36 +158,6 @@ postgres:
 INSERT INTO "public"."hosts" (<columns>) VALUES <values> RETURNING "addr"
 ```
 
-### Upsert
-
-- Params: `input *CreateHostInput`, `target HostConflictTarget`
-- Returns: `*Host`, `error`
-- Errors: `ErrNilInput`, `ErrConstraintViolation`
-- Notes: One method over the generated HostConflictTarget enum — the target argument selects the conflict columns at call time.
-
-Generated SQL:
-
-postgres:
-
-```sql
-INSERT INTO "public"."hosts" (<columns>) VALUES (<values>) ON CONFLICT (<conflict_target>) DO UPDATE SET <excluded> RETURNING "addr"
-```
-
-### UpsertMany
-
-- Params: `inputs []*CreateHostInput`, `target HostConflictTarget`
-- Returns: `[]*Host`, `error`
-- Errors: `ErrNilInput`, `ErrConstraintViolation`
-- Notes: Batched in generation.batch_size chunks over the same HostConflictTarget enum Upsert takes. Inputs resolving to one target are deduped before the statement is built, last occurrence wins. Earlier chunks are not rolled back on a later failure — wrap in a transaction for atomicity.
-
-Generated SQL:
-
-postgres:
-
-```sql
-INSERT INTO "public"."hosts" (<columns>) VALUES <values> ON CONFLICT (<conflict_target>) DO UPDATE SET <excluded>
-```
-
 ### Update
 
 - Params: `id net.IP`, `input *UpdateHostInput`
@@ -231,6 +201,36 @@ postgres:
 
 ```sql
 UPDATE "public"."hosts" SET <set> WHERE <filter> RETURNING "addr"
+```
+
+### Upsert
+
+- Params: `input *CreateHostInput`, `target HostConflictTarget`
+- Returns: `*Host`, `error`
+- Errors: `ErrNilInput`, `ErrConstraintViolation`
+- Notes: One method over the generated HostConflictTarget enum — the target argument selects the conflict columns at call time.
+
+Generated SQL:
+
+postgres:
+
+```sql
+INSERT INTO "public"."hosts" (<columns>) VALUES (<values>) ON CONFLICT (<conflict_target>) DO UPDATE SET <excluded> RETURNING "addr"
+```
+
+### UpsertMany
+
+- Params: `inputs []*CreateHostInput`, `target HostConflictTarget`
+- Returns: `[]*Host`, `error`
+- Errors: `ErrNilInput`, `ErrConstraintViolation`
+- Notes: Batched in generation.batch_size chunks over the same HostConflictTarget enum Upsert takes. Inputs resolving to one target are deduped before the statement is built, last occurrence wins. Earlier chunks are not rolled back on a later failure — wrap in a transaction for atomicity.
+
+Generated SQL:
+
+postgres:
+
+```sql
+INSERT INTO "public"."hosts" (<columns>) VALUES <values> ON CONFLICT (<conflict_target>) DO UPDATE SET <excluded>
 ```
 
 ### HardDelete

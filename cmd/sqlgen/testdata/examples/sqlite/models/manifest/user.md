@@ -75,19 +75,6 @@ sqlite:
 SELECT "age", "avatar", "balance", "bio", "created_at", "email", "id", "is_active", "login_count", "name", "role", "score", "updated_at" FROM "users" WHERE <filter> ORDER BY <sort> LIMIT <limit>
 ```
 
-### Count
-
-- Params: `filter *UserFilter`
-- Returns: `int64`, `error`
-
-Generated SQL:
-
-sqlite:
-
-```sql
-SELECT COUNT(*) FROM "users" WHERE <filter>
-```
-
 ### Exists
 
 - Params: `id int64`
@@ -112,6 +99,19 @@ sqlite:
 
 ```sql
 SELECT EXISTS(SELECT 1 FROM "users" WHERE <filter>)
+```
+
+### Count
+
+- Params: `filter *UserFilter`
+- Returns: `int64`, `error`
+
+Generated SQL:
+
+sqlite:
+
+```sql
+SELECT COUNT(*) FROM "users" WHERE <filter>
 ```
 
 ### Paginate
@@ -172,36 +172,6 @@ sqlite:
 INSERT INTO "users" (<columns>) VALUES <values> RETURNING "id"
 ```
 
-### Upsert
-
-- Params: `input *CreateUserInput`, `target UserConflictTarget`
-- Returns: `*User`, `error`
-- Errors: `ErrNilInput`, `ErrConstraintViolation`
-- Notes: One method over the generated UserConflictTarget enum — the target argument selects the conflict columns at call time.
-
-Generated SQL:
-
-sqlite:
-
-```sql
-INSERT INTO "users" (<columns>) VALUES (<values>) ON CONFLICT (<conflict_target>) DO UPDATE SET <excluded> RETURNING "id"
-```
-
-### UpsertMany
-
-- Params: `inputs []*CreateUserInput`, `target UserConflictTarget`
-- Returns: `[]*User`, `error`
-- Errors: `ErrNilInput`, `ErrConstraintViolation`
-- Notes: Batched in generation.batch_size chunks over the same UserConflictTarget enum Upsert takes. Inputs resolving to one target are deduped before the statement is built, last occurrence wins. Earlier chunks are not rolled back on a later failure — wrap in a transaction for atomicity.
-
-Generated SQL:
-
-sqlite:
-
-```sql
-INSERT INTO "users" (<columns>) VALUES <values> ON CONFLICT (<conflict_target>) DO UPDATE SET <excluded>
-```
-
 ### Update
 
 - Params: `id int64`, `input *UpdateUserInput`
@@ -245,6 +215,36 @@ sqlite:
 
 ```sql
 UPDATE "users" SET <set> WHERE <filter> RETURNING "id"
+```
+
+### Upsert
+
+- Params: `input *CreateUserInput`, `target UserConflictTarget`
+- Returns: `*User`, `error`
+- Errors: `ErrNilInput`, `ErrConstraintViolation`
+- Notes: One method over the generated UserConflictTarget enum — the target argument selects the conflict columns at call time.
+
+Generated SQL:
+
+sqlite:
+
+```sql
+INSERT INTO "users" (<columns>) VALUES (<values>) ON CONFLICT (<conflict_target>) DO UPDATE SET <excluded> RETURNING "id"
+```
+
+### UpsertMany
+
+- Params: `inputs []*CreateUserInput`, `target UserConflictTarget`
+- Returns: `[]*User`, `error`
+- Errors: `ErrNilInput`, `ErrConstraintViolation`
+- Notes: Batched in generation.batch_size chunks over the same UserConflictTarget enum Upsert takes. Inputs resolving to one target are deduped before the statement is built, last occurrence wins. Earlier chunks are not rolled back on a later failure — wrap in a transaction for atomicity.
+
+Generated SQL:
+
+sqlite:
+
+```sql
+INSERT INTO "users" (<columns>) VALUES <values> ON CONFLICT (<conflict_target>) DO UPDATE SET <excluded>
 ```
 
 ### Increment

@@ -43,11 +43,11 @@
       "hydration": "eager",
       "key_pattern": "sqlgen:category:{id}",
       "invalidates_on": [
-        "Upsert",
-        "UpsertMany",
         "Update",
         "UpdateMany",
         "UpdateWhere",
+        "Upsert",
+        "UpsertMany",
         "HardDelete",
         "HardDeleteMany",
         "HardDeleteWhere"
@@ -170,20 +170,6 @@
         }
       },
       {
-        "name": "Count",
-        "params": [
-          {
-            "name": "filter",
-            "type": "*CategoryFilter"
-          }
-        ],
-        "returns": "int64",
-        "errors": [],
-        "sql_bodies": {
-          "postgres": "SELECT COUNT(*) FROM \"public\".\"categories\" WHERE <filter>"
-        }
-      },
-      {
         "name": "Exists",
         "params": [
           {
@@ -209,6 +195,20 @@
         "errors": [],
         "sql_bodies": {
           "postgres": "SELECT EXISTS(SELECT 1 FROM \"public\".\"categories\" WHERE <filter>)"
+        }
+      },
+      {
+        "name": "Count",
+        "params": [
+          {
+            "name": "filter",
+            "type": "*CategoryFilter"
+          }
+        ],
+        "returns": "int64",
+        "errors": [],
+        "sql_bodies": {
+          "postgres": "SELECT COUNT(*) FROM \"public\".\"categories\" WHERE <filter>"
         }
       },
       {
@@ -290,50 +290,6 @@
         }
       },
       {
-        "name": "Upsert",
-        "params": [
-          {
-            "name": "input",
-            "type": "*CreateCategoryInput"
-          },
-          {
-            "name": "target",
-            "type": "CategoryConflictTarget"
-          }
-        ],
-        "returns": "*Category",
-        "errors": [
-          "ErrNilInput",
-          "ErrConstraintViolation"
-        ],
-        "notes": "One method over the generated CategoryConflictTarget enum — the target argument selects the conflict columns at call time.",
-        "sql_bodies": {
-          "postgres": "INSERT INTO \"public\".\"categories\" (<columns>) VALUES (<values>) ON CONFLICT (<conflict_target>) DO UPDATE SET <excluded> RETURNING \"id\""
-        }
-      },
-      {
-        "name": "UpsertMany",
-        "params": [
-          {
-            "name": "inputs",
-            "type": "[]*CreateCategoryInput"
-          },
-          {
-            "name": "target",
-            "type": "CategoryConflictTarget"
-          }
-        ],
-        "returns": "[]*Category",
-        "errors": [
-          "ErrNilInput",
-          "ErrConstraintViolation"
-        ],
-        "notes": "Batched in generation.batch_size chunks over the same CategoryConflictTarget enum Upsert takes. Inputs resolving to one target are deduped before the statement is built, last occurrence wins. Earlier chunks are not rolled back on a later failure — wrap in a transaction for atomicity.",
-        "sql_bodies": {
-          "postgres": "INSERT INTO \"public\".\"categories\" (<columns>) VALUES <values> ON CONFLICT (<conflict_target>) DO UPDATE SET <excluded>"
-        }
-      },
-      {
         "name": "Update",
         "params": [
           {
@@ -398,50 +354,47 @@
         }
       },
       {
-        "name": "HardDelete",
+        "name": "Upsert",
         "params": [
           {
-            "name": "id",
-            "type": "int64"
-          }
-        ],
-        "returns": "",
-        "errors": [],
-        "notes": "Idempotent — a primary key that does not exist is not an error.",
-        "sql_bodies": {
-          "postgres": "DELETE FROM \"public\".\"categories\" WHERE \"id\" = $1"
-        }
-      },
-      {
-        "name": "HardDeleteMany",
-        "params": [
+            "name": "input",
+            "type": "*CreateCategoryInput"
+          },
           {
-            "name": "ids",
-            "type": "[]int64"
+            "name": "target",
+            "type": "CategoryConflictTarget"
           }
         ],
-        "returns": "",
-        "errors": [],
-        "notes": "Idempotent — primary keys that do not exist are not an error.",
-        "sql_bodies": {
-          "postgres": "DELETE FROM \"public\".\"categories\" WHERE \"id\" IN (<ids>)"
-        }
-      },
-      {
-        "name": "HardDeleteWhere",
-        "params": [
-          {
-            "name": "filter",
-            "type": "*CategoryFilter"
-          }
-        ],
-        "returns": "",
+        "returns": "*Category",
         "errors": [
-          "ErrEmptyFilter"
+          "ErrNilInput",
+          "ErrConstraintViolation"
         ],
-        "notes": "Idempotent — no match is not an error. ErrEmptyFilter when the filter produces no conditions.",
+        "notes": "One method over the generated CategoryConflictTarget enum — the target argument selects the conflict columns at call time.",
         "sql_bodies": {
-          "postgres": "DELETE FROM \"public\".\"categories\" WHERE <filter> RETURNING \"id\""
+          "postgres": "INSERT INTO \"public\".\"categories\" (<columns>) VALUES (<values>) ON CONFLICT (<conflict_target>) DO UPDATE SET <excluded> RETURNING \"id\""
+        }
+      },
+      {
+        "name": "UpsertMany",
+        "params": [
+          {
+            "name": "inputs",
+            "type": "[]*CreateCategoryInput"
+          },
+          {
+            "name": "target",
+            "type": "CategoryConflictTarget"
+          }
+        ],
+        "returns": "[]*Category",
+        "errors": [
+          "ErrNilInput",
+          "ErrConstraintViolation"
+        ],
+        "notes": "Batched in generation.batch_size chunks over the same CategoryConflictTarget enum Upsert takes. Inputs resolving to one target are deduped before the statement is built, last occurrence wins. Earlier chunks are not rolled back on a later failure — wrap in a transaction for atomicity.",
+        "sql_bodies": {
+          "postgres": "INSERT INTO \"public\".\"categories\" (<columns>) VALUES <values> ON CONFLICT (<conflict_target>) DO UPDATE SET <excluded>"
         }
       },
       {
@@ -502,6 +455,53 @@
           "ErrConstraintViolation"
         ],
         "notes": "Writes the parent and its nested rows in one transaction — a SAVEPOINT when ctx already holds one. Issues no statement of its own: it composes Upsert and, per eligible relationship (Products, Users), the target's and junction's own client methods, so no sql_bodies entry. Each inner call fires its own hooks, events and cache invalidation under its own op; the nested method has none."
+      },
+      {
+        "name": "HardDelete",
+        "params": [
+          {
+            "name": "id",
+            "type": "int64"
+          }
+        ],
+        "returns": "",
+        "errors": [],
+        "notes": "Idempotent — a primary key that does not exist is not an error.",
+        "sql_bodies": {
+          "postgres": "DELETE FROM \"public\".\"categories\" WHERE \"id\" = $1"
+        }
+      },
+      {
+        "name": "HardDeleteMany",
+        "params": [
+          {
+            "name": "ids",
+            "type": "[]int64"
+          }
+        ],
+        "returns": "",
+        "errors": [],
+        "notes": "Idempotent — primary keys that do not exist are not an error.",
+        "sql_bodies": {
+          "postgres": "DELETE FROM \"public\".\"categories\" WHERE \"id\" IN (<ids>)"
+        }
+      },
+      {
+        "name": "HardDeleteWhere",
+        "params": [
+          {
+            "name": "filter",
+            "type": "*CategoryFilter"
+          }
+        ],
+        "returns": "",
+        "errors": [
+          "ErrEmptyFilter"
+        ],
+        "notes": "Idempotent — no match is not an error. ErrEmptyFilter when the filter produces no conditions.",
+        "sql_bodies": {
+          "postgres": "DELETE FROM \"public\".\"categories\" WHERE <filter> RETURNING \"id\""
+        }
       }
     ]
   },

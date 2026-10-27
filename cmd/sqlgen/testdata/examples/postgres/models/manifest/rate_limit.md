@@ -61,19 +61,6 @@ postgres:
 SELECT "bucket", "count", "org_id", "updated_at" FROM "public"."rate_limits" WHERE <filter> ORDER BY <sort> LIMIT <limit>
 ```
 
-### Count
-
-- Params: `filter *RateLimitFilter`
-- Returns: `int64`, `error`
-
-Generated SQL:
-
-postgres:
-
-```sql
-SELECT COUNT(*) FROM "public"."rate_limits" WHERE <filter>
-```
-
 ### Exists
 
 - Params: `pk RateLimitPK`
@@ -98,6 +85,19 @@ postgres:
 
 ```sql
 SELECT EXISTS(SELECT 1 FROM "public"."rate_limits" WHERE <filter>)
+```
+
+### Count
+
+- Params: `filter *RateLimitFilter`
+- Returns: `int64`, `error`
+
+Generated SQL:
+
+postgres:
+
+```sql
+SELECT COUNT(*) FROM "public"."rate_limits" WHERE <filter>
 ```
 
 ### Paginate
@@ -158,36 +158,6 @@ postgres:
 INSERT INTO "public"."rate_limits" (<columns>) VALUES <values>
 ```
 
-### Upsert
-
-- Params: `input *CreateRateLimitInput`, `target RateLimitConflictTarget`
-- Returns: `*RateLimit`, `error`
-- Errors: `ErrNilInput`, `ErrConstraintViolation`
-- Notes: One method over the generated RateLimitConflictTarget enum — the target argument selects the conflict columns at call time.
-
-Generated SQL:
-
-postgres:
-
-```sql
-INSERT INTO "public"."rate_limits" (<columns>) VALUES (<values>) ON CONFLICT (<conflict_target>) DO UPDATE SET <excluded>
-```
-
-### UpsertMany
-
-- Params: `inputs []*CreateRateLimitInput`, `target RateLimitConflictTarget`
-- Returns: `[]*RateLimit`, `error`
-- Errors: `ErrNilInput`, `ErrConstraintViolation`
-- Notes: Batched in generation.batch_size chunks over the same RateLimitConflictTarget enum Upsert takes. Inputs resolving to one target are deduped before the statement is built, last occurrence wins. Earlier chunks are not rolled back on a later failure — wrap in a transaction for atomicity.
-
-Generated SQL:
-
-postgres:
-
-```sql
-INSERT INTO "public"."rate_limits" (<columns>) VALUES <values> ON CONFLICT (<conflict_target>) DO UPDATE SET <excluded>
-```
-
 ### Update
 
 - Params: `pk RateLimitPK`, `input *UpdateRateLimitInput`
@@ -231,6 +201,36 @@ postgres:
 
 ```sql
 UPDATE "public"."rate_limits" SET <set> WHERE <filter> RETURNING "org_id", "bucket"
+```
+
+### Upsert
+
+- Params: `input *CreateRateLimitInput`, `target RateLimitConflictTarget`
+- Returns: `*RateLimit`, `error`
+- Errors: `ErrNilInput`, `ErrConstraintViolation`
+- Notes: One method over the generated RateLimitConflictTarget enum — the target argument selects the conflict columns at call time.
+
+Generated SQL:
+
+postgres:
+
+```sql
+INSERT INTO "public"."rate_limits" (<columns>) VALUES (<values>) ON CONFLICT (<conflict_target>) DO UPDATE SET <excluded>
+```
+
+### UpsertMany
+
+- Params: `inputs []*CreateRateLimitInput`, `target RateLimitConflictTarget`
+- Returns: `[]*RateLimit`, `error`
+- Errors: `ErrNilInput`, `ErrConstraintViolation`
+- Notes: Batched in generation.batch_size chunks over the same RateLimitConflictTarget enum Upsert takes. Inputs resolving to one target are deduped before the statement is built, last occurrence wins. Earlier chunks are not rolled back on a later failure — wrap in a transaction for atomicity.
+
+Generated SQL:
+
+postgres:
+
+```sql
+INSERT INTO "public"."rate_limits" (<columns>) VALUES <values> ON CONFLICT (<conflict_target>) DO UPDATE SET <excluded>
 ```
 
 ### Increment

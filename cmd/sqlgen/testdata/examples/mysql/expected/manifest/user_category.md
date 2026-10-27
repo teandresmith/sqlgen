@@ -62,19 +62,6 @@ mysql:
 SELECT `category_id`, `slot`, `user_id` FROM `user_categories` WHERE <filter> ORDER BY <sort> LIMIT <limit>
 ```
 
-### Count
-
-- Params: `filter *UserCategoryFilter`
-- Returns: `int64`, `error`
-
-Generated SQL:
-
-mysql:
-
-```sql
-SELECT COUNT(*) FROM `user_categories` WHERE <filter>
-```
-
 ### Exists
 
 - Params: `pk UserCategoryPK`
@@ -99,6 +86,19 @@ mysql:
 
 ```sql
 SELECT EXISTS(SELECT 1 FROM `user_categories` WHERE <filter>)
+```
+
+### Count
+
+- Params: `filter *UserCategoryFilter`
+- Returns: `int64`, `error`
+
+Generated SQL:
+
+mysql:
+
+```sql
+SELECT COUNT(*) FROM `user_categories` WHERE <filter>
 ```
 
 ### Paginate
@@ -159,36 +159,6 @@ mysql:
 INSERT INTO `user_categories` (<columns>) VALUES <values>
 ```
 
-### Upsert
-
-- Params: `input *CreateUserCategoryInput`, `target UserCategoryConflictTarget`
-- Returns: `*UserCategory`, `error`
-- Errors: `ErrNilInput`, `ErrConstraintViolation`
-- Notes: One method over the generated UserCategoryConflictTarget enum — the target argument selects the conflict columns at call time.
-
-Generated SQL:
-
-mysql:
-
-```sql
-INSERT INTO `user_categories` (<columns>) VALUES (<values>) ON DUPLICATE KEY UPDATE <excluded>
-```
-
-### UpsertMany
-
-- Params: `inputs []*CreateUserCategoryInput`, `target UserCategoryConflictTarget`
-- Returns: `[]*UserCategory`, `error`
-- Errors: `ErrNilInput`, `ErrConstraintViolation`
-- Notes: Batched in generation.batch_size chunks over the same UserCategoryConflictTarget enum Upsert takes. Inputs resolving to one target are deduped before the statement is built, last occurrence wins. Earlier chunks are not rolled back on a later failure — wrap in a transaction for atomicity.
-
-Generated SQL:
-
-mysql:
-
-```sql
-INSERT INTO `user_categories` (<columns>) VALUES <values> ON DUPLICATE KEY UPDATE <excluded>
-```
-
 ### Update
 
 - Params: `pk UserCategoryPK`, `input *UpdateUserCategoryInput`
@@ -232,6 +202,36 @@ mysql:
 
 ```sql
 UPDATE `user_categories` SET <set> WHERE <filter>
+```
+
+### Upsert
+
+- Params: `input *CreateUserCategoryInput`, `target UserCategoryConflictTarget`
+- Returns: `*UserCategory`, `error`
+- Errors: `ErrNilInput`, `ErrConstraintViolation`
+- Notes: One method over the generated UserCategoryConflictTarget enum — the target argument selects the conflict columns at call time.
+
+Generated SQL:
+
+mysql:
+
+```sql
+INSERT INTO `user_categories` (<columns>) VALUES (<values>) ON DUPLICATE KEY UPDATE <excluded>
+```
+
+### UpsertMany
+
+- Params: `inputs []*CreateUserCategoryInput`, `target UserCategoryConflictTarget`
+- Returns: `[]*UserCategory`, `error`
+- Errors: `ErrNilInput`, `ErrConstraintViolation`
+- Notes: Batched in generation.batch_size chunks over the same UserCategoryConflictTarget enum Upsert takes. Inputs resolving to one target are deduped before the statement is built, last occurrence wins. Earlier chunks are not rolled back on a later failure — wrap in a transaction for atomicity.
+
+Generated SQL:
+
+mysql:
+
+```sql
+INSERT INTO `user_categories` (<columns>) VALUES <values> ON DUPLICATE KEY UPDATE <excluded>
 ```
 
 ### Increment

@@ -58,20 +58,6 @@ postgres:
 SELECT "deleted_at", "id", "title", "workspace_id" FROM "public"."articles" WHERE <filter> AND "deleted_at" IS NULL ORDER BY <sort> LIMIT <limit>
 ```
 
-### Count
-
-- Params: `filter *ArticleFilter`
-- Returns: `int64`, `error`
-- Errors: `tenancy.ErrMissing`
-
-Generated SQL:
-
-postgres:
-
-```sql
-SELECT COUNT(*) FROM "public"."articles" WHERE <filter> AND "deleted_at" IS NULL
-```
-
 ### Exists
 
 - Params: `id int64`
@@ -98,6 +84,20 @@ postgres:
 
 ```sql
 SELECT EXISTS(SELECT 1 FROM "public"."articles" WHERE <filter> AND "deleted_at" IS NULL)
+```
+
+### Count
+
+- Params: `filter *ArticleFilter`
+- Returns: `int64`, `error`
+- Errors: `tenancy.ErrMissing`
+
+Generated SQL:
+
+postgres:
+
+```sql
+SELECT COUNT(*) FROM "public"."articles" WHERE <filter> AND "deleted_at" IS NULL
 ```
 
 ### Paginate
@@ -160,36 +160,6 @@ postgres:
 INSERT INTO "public"."articles" (<columns>) VALUES <values> RETURNING "id"
 ```
 
-### Upsert
-
-- Params: `input *CreateArticleInput`, `target ArticleConflictTarget`
-- Returns: `*Article`, `error`
-- Errors: `ErrNilInput`, `ErrConstraintViolation`, `tenancy.ErrMissing`, `tenancy.ErrMismatch`
-- Notes: One method over the generated ArticleConflictTarget enum — the target argument selects the conflict columns at call time.
-
-Generated SQL:
-
-postgres:
-
-```sql
-INSERT INTO "public"."articles" (<columns>) VALUES (<values>) ON CONFLICT (<conflict_target>) DO UPDATE SET <excluded> RETURNING "id"
-```
-
-### UpsertMany
-
-- Params: `inputs []*CreateArticleInput`, `target ArticleConflictTarget`
-- Returns: `[]*Article`, `error`
-- Errors: `ErrNilInput`, `ErrConstraintViolation`, `tenancy.ErrMissing`, `tenancy.ErrMismatch`
-- Notes: Batched in generation.batch_size chunks over the same ArticleConflictTarget enum Upsert takes. Inputs resolving to one target are deduped before the statement is built, last occurrence wins. Earlier chunks are not rolled back on a later failure — wrap in a transaction for atomicity.
-
-Generated SQL:
-
-postgres:
-
-```sql
-INSERT INTO "public"."articles" (<columns>) VALUES <values> ON CONFLICT (<conflict_target>) DO UPDATE SET <excluded>
-```
-
 ### Update
 
 - Params: `id int64`, `input *UpdateArticleInput`
@@ -233,6 +203,36 @@ postgres:
 
 ```sql
 UPDATE "public"."articles" SET <set> WHERE <filter> RETURNING "id"
+```
+
+### Upsert
+
+- Params: `input *CreateArticleInput`, `target ArticleConflictTarget`
+- Returns: `*Article`, `error`
+- Errors: `ErrNilInput`, `ErrConstraintViolation`, `tenancy.ErrMissing`, `tenancy.ErrMismatch`
+- Notes: One method over the generated ArticleConflictTarget enum — the target argument selects the conflict columns at call time.
+
+Generated SQL:
+
+postgres:
+
+```sql
+INSERT INTO "public"."articles" (<columns>) VALUES (<values>) ON CONFLICT (<conflict_target>) DO UPDATE SET <excluded> RETURNING "id"
+```
+
+### UpsertMany
+
+- Params: `inputs []*CreateArticleInput`, `target ArticleConflictTarget`
+- Returns: `[]*Article`, `error`
+- Errors: `ErrNilInput`, `ErrConstraintViolation`, `tenancy.ErrMissing`, `tenancy.ErrMismatch`
+- Notes: Batched in generation.batch_size chunks over the same ArticleConflictTarget enum Upsert takes. Inputs resolving to one target are deduped before the statement is built, last occurrence wins. Earlier chunks are not rolled back on a later failure — wrap in a transaction for atomicity.
+
+Generated SQL:
+
+postgres:
+
+```sql
+INSERT INTO "public"."articles" (<columns>) VALUES <values> ON CONFLICT (<conflict_target>) DO UPDATE SET <excluded>
 ```
 
 ### SoftDelete

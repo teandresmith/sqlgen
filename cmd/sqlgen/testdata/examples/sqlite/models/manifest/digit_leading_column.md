@@ -58,19 +58,6 @@ sqlite:
 SELECT "1st_place", "2010_revenue", "2024_quota", "3d_model_url", "id" FROM "digit_leading_columns" WHERE <filter> ORDER BY <sort> LIMIT <limit>
 ```
 
-### Count
-
-- Params: `filter *DigitLeadingColumnFilter`
-- Returns: `int64`, `error`
-
-Generated SQL:
-
-sqlite:
-
-```sql
-SELECT COUNT(*) FROM "digit_leading_columns" WHERE <filter>
-```
-
 ### Exists
 
 - Params: `id int64`
@@ -95,6 +82,19 @@ sqlite:
 
 ```sql
 SELECT EXISTS(SELECT 1 FROM "digit_leading_columns" WHERE <filter>)
+```
+
+### Count
+
+- Params: `filter *DigitLeadingColumnFilter`
+- Returns: `int64`, `error`
+
+Generated SQL:
+
+sqlite:
+
+```sql
+SELECT COUNT(*) FROM "digit_leading_columns" WHERE <filter>
 ```
 
 ### Paginate
@@ -155,36 +155,6 @@ sqlite:
 INSERT INTO "digit_leading_columns" (<columns>) VALUES <values> RETURNING "id"
 ```
 
-### Upsert
-
-- Params: `input *CreateDigitLeadingColumnInput`, `target DigitLeadingColumnConflictTarget`
-- Returns: `*DigitLeadingColumn`, `error`
-- Errors: `ErrNilInput`, `ErrConstraintViolation`
-- Notes: One method over the generated DigitLeadingColumnConflictTarget enum — the target argument selects the conflict columns at call time.
-
-Generated SQL:
-
-sqlite:
-
-```sql
-INSERT INTO "digit_leading_columns" (<columns>) VALUES (<values>) ON CONFLICT (<conflict_target>) DO UPDATE SET <excluded> RETURNING "id"
-```
-
-### UpsertMany
-
-- Params: `inputs []*CreateDigitLeadingColumnInput`, `target DigitLeadingColumnConflictTarget`
-- Returns: `[]*DigitLeadingColumn`, `error`
-- Errors: `ErrNilInput`, `ErrConstraintViolation`
-- Notes: Batched in generation.batch_size chunks over the same DigitLeadingColumnConflictTarget enum Upsert takes. Inputs resolving to one target are deduped before the statement is built, last occurrence wins. Earlier chunks are not rolled back on a later failure — wrap in a transaction for atomicity.
-
-Generated SQL:
-
-sqlite:
-
-```sql
-INSERT INTO "digit_leading_columns" (<columns>) VALUES <values> ON CONFLICT (<conflict_target>) DO UPDATE SET <excluded>
-```
-
 ### Update
 
 - Params: `id int64`, `input *UpdateDigitLeadingColumnInput`
@@ -228,6 +198,36 @@ sqlite:
 
 ```sql
 UPDATE "digit_leading_columns" SET <set> WHERE <filter> RETURNING "id"
+```
+
+### Upsert
+
+- Params: `input *CreateDigitLeadingColumnInput`, `target DigitLeadingColumnConflictTarget`
+- Returns: `*DigitLeadingColumn`, `error`
+- Errors: `ErrNilInput`, `ErrConstraintViolation`
+- Notes: One method over the generated DigitLeadingColumnConflictTarget enum — the target argument selects the conflict columns at call time.
+
+Generated SQL:
+
+sqlite:
+
+```sql
+INSERT INTO "digit_leading_columns" (<columns>) VALUES (<values>) ON CONFLICT (<conflict_target>) DO UPDATE SET <excluded> RETURNING "id"
+```
+
+### UpsertMany
+
+- Params: `inputs []*CreateDigitLeadingColumnInput`, `target DigitLeadingColumnConflictTarget`
+- Returns: `[]*DigitLeadingColumn`, `error`
+- Errors: `ErrNilInput`, `ErrConstraintViolation`
+- Notes: Batched in generation.batch_size chunks over the same DigitLeadingColumnConflictTarget enum Upsert takes. Inputs resolving to one target are deduped before the statement is built, last occurrence wins. Earlier chunks are not rolled back on a later failure — wrap in a transaction for atomicity.
+
+Generated SQL:
+
+sqlite:
+
+```sql
+INSERT INTO "digit_leading_columns" (<columns>) VALUES <values> ON CONFLICT (<conflict_target>) DO UPDATE SET <excluded>
 ```
 
 ### Increment

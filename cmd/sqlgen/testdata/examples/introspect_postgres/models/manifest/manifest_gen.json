@@ -356,20 +356,6 @@
             }
           },
           {
-            "name": "Count",
-            "params": [
-              {
-                "name": "filter",
-                "type": "*AccountFilter"
-              }
-            ],
-            "returns": "int64",
-            "errors": [],
-            "sql_bodies": {
-              "postgres": "SELECT COUNT(*) FROM \"public\".\"accounts\" WHERE <filter>"
-            }
-          },
-          {
             "name": "Exists",
             "params": [
               {
@@ -395,6 +381,20 @@
             "errors": [],
             "sql_bodies": {
               "postgres": "SELECT EXISTS(SELECT 1 FROM \"public\".\"accounts\" WHERE <filter>)"
+            }
+          },
+          {
+            "name": "Count",
+            "params": [
+              {
+                "name": "filter",
+                "type": "*AccountFilter"
+              }
+            ],
+            "returns": "int64",
+            "errors": [],
+            "sql_bodies": {
+              "postgres": "SELECT COUNT(*) FROM \"public\".\"accounts\" WHERE <filter>"
             }
           },
           {
@@ -476,50 +476,6 @@
             }
           },
           {
-            "name": "Upsert",
-            "params": [
-              {
-                "name": "input",
-                "type": "*CreateAccountInput"
-              },
-              {
-                "name": "target",
-                "type": "AccountConflictTarget"
-              }
-            ],
-            "returns": "*Account",
-            "errors": [
-              "ErrNilInput",
-              "ErrConstraintViolation"
-            ],
-            "notes": "One method over the generated AccountConflictTarget enum — the target argument selects the conflict columns at call time.",
-            "sql_bodies": {
-              "postgres": "INSERT INTO \"public\".\"accounts\" (<columns>) VALUES (<values>) ON CONFLICT (<conflict_target>) DO UPDATE SET <excluded> RETURNING \"id\""
-            }
-          },
-          {
-            "name": "UpsertMany",
-            "params": [
-              {
-                "name": "inputs",
-                "type": "[]*CreateAccountInput"
-              },
-              {
-                "name": "target",
-                "type": "AccountConflictTarget"
-              }
-            ],
-            "returns": "[]*Account",
-            "errors": [
-              "ErrNilInput",
-              "ErrConstraintViolation"
-            ],
-            "notes": "Batched in generation.batch_size chunks over the same AccountConflictTarget enum Upsert takes. Inputs resolving to one target are deduped before the statement is built, last occurrence wins. Earlier chunks are not rolled back on a later failure — wrap in a transaction for atomicity.",
-            "sql_bodies": {
-              "postgres": "INSERT INTO \"public\".\"accounts\" (<columns>) VALUES <values> ON CONFLICT (<conflict_target>) DO UPDATE SET <excluded>"
-            }
-          },
-          {
             "name": "Update",
             "params": [
               {
@@ -581,6 +537,50 @@
             "notes": "Idempotent — returns an empty slice when no row matches. ErrEmptyFilter when the filter produces no conditions.",
             "sql_bodies": {
               "postgres": "UPDATE \"public\".\"accounts\" SET <set> WHERE <filter> RETURNING \"id\""
+            }
+          },
+          {
+            "name": "Upsert",
+            "params": [
+              {
+                "name": "input",
+                "type": "*CreateAccountInput"
+              },
+              {
+                "name": "target",
+                "type": "AccountConflictTarget"
+              }
+            ],
+            "returns": "*Account",
+            "errors": [
+              "ErrNilInput",
+              "ErrConstraintViolation"
+            ],
+            "notes": "One method over the generated AccountConflictTarget enum — the target argument selects the conflict columns at call time.",
+            "sql_bodies": {
+              "postgres": "INSERT INTO \"public\".\"accounts\" (<columns>) VALUES (<values>) ON CONFLICT (<conflict_target>) DO UPDATE SET <excluded> RETURNING \"id\""
+            }
+          },
+          {
+            "name": "UpsertMany",
+            "params": [
+              {
+                "name": "inputs",
+                "type": "[]*CreateAccountInput"
+              },
+              {
+                "name": "target",
+                "type": "AccountConflictTarget"
+              }
+            ],
+            "returns": "[]*Account",
+            "errors": [
+              "ErrNilInput",
+              "ErrConstraintViolation"
+            ],
+            "notes": "Batched in generation.batch_size chunks over the same AccountConflictTarget enum Upsert takes. Inputs resolving to one target are deduped before the statement is built, last occurrence wins. Earlier chunks are not rolled back on a later failure — wrap in a transaction for atomicity.",
+            "sql_bodies": {
+              "postgres": "INSERT INTO \"public\".\"accounts\" (<columns>) VALUES <values> ON CONFLICT (<conflict_target>) DO UPDATE SET <excluded>"
             }
           },
           {
@@ -830,20 +830,6 @@
             }
           },
           {
-            "name": "Count",
-            "params": [
-              {
-                "name": "filter",
-                "type": "*InvoiceFilter"
-              }
-            ],
-            "returns": "int64",
-            "errors": [],
-            "sql_bodies": {
-              "postgres": "SELECT COUNT(*) FROM \"billing\".\"invoices\" WHERE <filter>"
-            }
-          },
-          {
             "name": "Exists",
             "params": [
               {
@@ -869,6 +855,20 @@
             "errors": [],
             "sql_bodies": {
               "postgres": "SELECT EXISTS(SELECT 1 FROM \"billing\".\"invoices\" WHERE <filter>)"
+            }
+          },
+          {
+            "name": "Count",
+            "params": [
+              {
+                "name": "filter",
+                "type": "*InvoiceFilter"
+              }
+            ],
+            "returns": "int64",
+            "errors": [],
+            "sql_bodies": {
+              "postgres": "SELECT COUNT(*) FROM \"billing\".\"invoices\" WHERE <filter>"
             }
           },
           {
@@ -950,50 +950,6 @@
             }
           },
           {
-            "name": "Upsert",
-            "params": [
-              {
-                "name": "input",
-                "type": "*CreateInvoiceInput"
-              },
-              {
-                "name": "target",
-                "type": "InvoiceConflictTarget"
-              }
-            ],
-            "returns": "*Invoice",
-            "errors": [
-              "ErrNilInput",
-              "ErrConstraintViolation"
-            ],
-            "notes": "One method over the generated InvoiceConflictTarget enum — the target argument selects the conflict columns at call time.",
-            "sql_bodies": {
-              "postgres": "INSERT INTO \"billing\".\"invoices\" (<columns>) VALUES (<values>) ON CONFLICT (<conflict_target>) DO UPDATE SET <excluded> RETURNING \"id\""
-            }
-          },
-          {
-            "name": "UpsertMany",
-            "params": [
-              {
-                "name": "inputs",
-                "type": "[]*CreateInvoiceInput"
-              },
-              {
-                "name": "target",
-                "type": "InvoiceConflictTarget"
-              }
-            ],
-            "returns": "[]*Invoice",
-            "errors": [
-              "ErrNilInput",
-              "ErrConstraintViolation"
-            ],
-            "notes": "Batched in generation.batch_size chunks over the same InvoiceConflictTarget enum Upsert takes. Inputs resolving to one target are deduped before the statement is built, last occurrence wins. Earlier chunks are not rolled back on a later failure — wrap in a transaction for atomicity.",
-            "sql_bodies": {
-              "postgres": "INSERT INTO \"billing\".\"invoices\" (<columns>) VALUES <values> ON CONFLICT (<conflict_target>) DO UPDATE SET <excluded>"
-            }
-          },
-          {
             "name": "Update",
             "params": [
               {
@@ -1055,6 +1011,50 @@
             "notes": "Idempotent — returns an empty slice when no row matches. ErrEmptyFilter when the filter produces no conditions.",
             "sql_bodies": {
               "postgres": "UPDATE \"billing\".\"invoices\" SET <set> WHERE <filter> RETURNING \"id\""
+            }
+          },
+          {
+            "name": "Upsert",
+            "params": [
+              {
+                "name": "input",
+                "type": "*CreateInvoiceInput"
+              },
+              {
+                "name": "target",
+                "type": "InvoiceConflictTarget"
+              }
+            ],
+            "returns": "*Invoice",
+            "errors": [
+              "ErrNilInput",
+              "ErrConstraintViolation"
+            ],
+            "notes": "One method over the generated InvoiceConflictTarget enum — the target argument selects the conflict columns at call time.",
+            "sql_bodies": {
+              "postgres": "INSERT INTO \"billing\".\"invoices\" (<columns>) VALUES (<values>) ON CONFLICT (<conflict_target>) DO UPDATE SET <excluded> RETURNING \"id\""
+            }
+          },
+          {
+            "name": "UpsertMany",
+            "params": [
+              {
+                "name": "inputs",
+                "type": "[]*CreateInvoiceInput"
+              },
+              {
+                "name": "target",
+                "type": "InvoiceConflictTarget"
+              }
+            ],
+            "returns": "[]*Invoice",
+            "errors": [
+              "ErrNilInput",
+              "ErrConstraintViolation"
+            ],
+            "notes": "Batched in generation.batch_size chunks over the same InvoiceConflictTarget enum Upsert takes. Inputs resolving to one target are deduped before the statement is built, last occurrence wins. Earlier chunks are not rolled back on a later failure — wrap in a transaction for atomicity.",
+            "sql_bodies": {
+              "postgres": "INSERT INTO \"billing\".\"invoices\" (<columns>) VALUES <values> ON CONFLICT (<conflict_target>) DO UPDATE SET <excluded>"
             }
           },
           {
@@ -1329,20 +1329,6 @@
             }
           },
           {
-            "name": "Count",
-            "params": [
-              {
-                "name": "filter",
-                "type": "*ProjectFilter"
-              }
-            ],
-            "returns": "int64",
-            "errors": [],
-            "sql_bodies": {
-              "postgres": "SELECT COUNT(*) FROM \"public\".\"projects\" WHERE <filter>"
-            }
-          },
-          {
             "name": "Exists",
             "params": [
               {
@@ -1368,6 +1354,20 @@
             "errors": [],
             "sql_bodies": {
               "postgres": "SELECT EXISTS(SELECT 1 FROM \"public\".\"projects\" WHERE <filter>)"
+            }
+          },
+          {
+            "name": "Count",
+            "params": [
+              {
+                "name": "filter",
+                "type": "*ProjectFilter"
+              }
+            ],
+            "returns": "int64",
+            "errors": [],
+            "sql_bodies": {
+              "postgres": "SELECT COUNT(*) FROM \"public\".\"projects\" WHERE <filter>"
             }
           },
           {
@@ -1449,50 +1449,6 @@
             }
           },
           {
-            "name": "Upsert",
-            "params": [
-              {
-                "name": "input",
-                "type": "*CreateProjectInput"
-              },
-              {
-                "name": "target",
-                "type": "ProjectConflictTarget"
-              }
-            ],
-            "returns": "*Project",
-            "errors": [
-              "ErrNilInput",
-              "ErrConstraintViolation"
-            ],
-            "notes": "One method over the generated ProjectConflictTarget enum — the target argument selects the conflict columns at call time.",
-            "sql_bodies": {
-              "postgres": "INSERT INTO \"public\".\"projects\" (<columns>) VALUES (<values>) ON CONFLICT (<conflict_target>) DO UPDATE SET <excluded> RETURNING \"id\""
-            }
-          },
-          {
-            "name": "UpsertMany",
-            "params": [
-              {
-                "name": "inputs",
-                "type": "[]*CreateProjectInput"
-              },
-              {
-                "name": "target",
-                "type": "ProjectConflictTarget"
-              }
-            ],
-            "returns": "[]*Project",
-            "errors": [
-              "ErrNilInput",
-              "ErrConstraintViolation"
-            ],
-            "notes": "Batched in generation.batch_size chunks over the same ProjectConflictTarget enum Upsert takes. Inputs resolving to one target are deduped before the statement is built, last occurrence wins. Earlier chunks are not rolled back on a later failure — wrap in a transaction for atomicity.",
-            "sql_bodies": {
-              "postgres": "INSERT INTO \"public\".\"projects\" (<columns>) VALUES <values> ON CONFLICT (<conflict_target>) DO UPDATE SET <excluded>"
-            }
-          },
-          {
             "name": "Update",
             "params": [
               {
@@ -1554,6 +1510,50 @@
             "notes": "Idempotent — returns an empty slice when no row matches. ErrEmptyFilter when the filter produces no conditions.",
             "sql_bodies": {
               "postgres": "UPDATE \"public\".\"projects\" SET <set> WHERE <filter> RETURNING \"id\""
+            }
+          },
+          {
+            "name": "Upsert",
+            "params": [
+              {
+                "name": "input",
+                "type": "*CreateProjectInput"
+              },
+              {
+                "name": "target",
+                "type": "ProjectConflictTarget"
+              }
+            ],
+            "returns": "*Project",
+            "errors": [
+              "ErrNilInput",
+              "ErrConstraintViolation"
+            ],
+            "notes": "One method over the generated ProjectConflictTarget enum — the target argument selects the conflict columns at call time.",
+            "sql_bodies": {
+              "postgres": "INSERT INTO \"public\".\"projects\" (<columns>) VALUES (<values>) ON CONFLICT (<conflict_target>) DO UPDATE SET <excluded> RETURNING \"id\""
+            }
+          },
+          {
+            "name": "UpsertMany",
+            "params": [
+              {
+                "name": "inputs",
+                "type": "[]*CreateProjectInput"
+              },
+              {
+                "name": "target",
+                "type": "ProjectConflictTarget"
+              }
+            ],
+            "returns": "[]*Project",
+            "errors": [
+              "ErrNilInput",
+              "ErrConstraintViolation"
+            ],
+            "notes": "Batched in generation.batch_size chunks over the same ProjectConflictTarget enum Upsert takes. Inputs resolving to one target are deduped before the statement is built, last occurrence wins. Earlier chunks are not rolled back on a later failure — wrap in a transaction for atomicity.",
+            "sql_bodies": {
+              "postgres": "INSERT INTO \"public\".\"projects\" (<columns>) VALUES <values> ON CONFLICT (<conflict_target>) DO UPDATE SET <excluded>"
             }
           },
           {
@@ -2168,20 +2168,6 @@
             }
           },
           {
-            "name": "Count",
-            "params": [
-              {
-                "name": "filter",
-                "type": "*TaskFilter"
-              }
-            ],
-            "returns": "int64",
-            "errors": [],
-            "sql_bodies": {
-              "postgres": "SELECT COUNT(*) FROM \"public\".\"tasks\" WHERE <filter>"
-            }
-          },
-          {
             "name": "Exists",
             "params": [
               {
@@ -2207,6 +2193,20 @@
             "errors": [],
             "sql_bodies": {
               "postgres": "SELECT EXISTS(SELECT 1 FROM \"public\".\"tasks\" WHERE <filter>)"
+            }
+          },
+          {
+            "name": "Count",
+            "params": [
+              {
+                "name": "filter",
+                "type": "*TaskFilter"
+              }
+            ],
+            "returns": "int64",
+            "errors": [],
+            "sql_bodies": {
+              "postgres": "SELECT COUNT(*) FROM \"public\".\"tasks\" WHERE <filter>"
             }
           },
           {
@@ -2288,50 +2288,6 @@
             }
           },
           {
-            "name": "Upsert",
-            "params": [
-              {
-                "name": "input",
-                "type": "*CreateTaskInput"
-              },
-              {
-                "name": "target",
-                "type": "TaskConflictTarget"
-              }
-            ],
-            "returns": "*Task",
-            "errors": [
-              "ErrNilInput",
-              "ErrConstraintViolation"
-            ],
-            "notes": "One method over the generated TaskConflictTarget enum — the target argument selects the conflict columns at call time.",
-            "sql_bodies": {
-              "postgres": "INSERT INTO \"public\".\"tasks\" (<columns>) VALUES (<values>) ON CONFLICT (<conflict_target>) DO UPDATE SET <excluded> RETURNING \"id\""
-            }
-          },
-          {
-            "name": "UpsertMany",
-            "params": [
-              {
-                "name": "inputs",
-                "type": "[]*CreateTaskInput"
-              },
-              {
-                "name": "target",
-                "type": "TaskConflictTarget"
-              }
-            ],
-            "returns": "[]*Task",
-            "errors": [
-              "ErrNilInput",
-              "ErrConstraintViolation"
-            ],
-            "notes": "Batched in generation.batch_size chunks over the same TaskConflictTarget enum Upsert takes. Inputs resolving to one target are deduped before the statement is built, last occurrence wins. Earlier chunks are not rolled back on a later failure — wrap in a transaction for atomicity.",
-            "sql_bodies": {
-              "postgres": "INSERT INTO \"public\".\"tasks\" (<columns>) VALUES <values> ON CONFLICT (<conflict_target>) DO UPDATE SET <excluded>"
-            }
-          },
-          {
             "name": "Update",
             "params": [
               {
@@ -2393,6 +2349,50 @@
             "notes": "Idempotent — returns an empty slice when no row matches. ErrEmptyFilter when the filter produces no conditions.",
             "sql_bodies": {
               "postgres": "UPDATE \"public\".\"tasks\" SET <set> WHERE <filter> RETURNING \"id\""
+            }
+          },
+          {
+            "name": "Upsert",
+            "params": [
+              {
+                "name": "input",
+                "type": "*CreateTaskInput"
+              },
+              {
+                "name": "target",
+                "type": "TaskConflictTarget"
+              }
+            ],
+            "returns": "*Task",
+            "errors": [
+              "ErrNilInput",
+              "ErrConstraintViolation"
+            ],
+            "notes": "One method over the generated TaskConflictTarget enum — the target argument selects the conflict columns at call time.",
+            "sql_bodies": {
+              "postgres": "INSERT INTO \"public\".\"tasks\" (<columns>) VALUES (<values>) ON CONFLICT (<conflict_target>) DO UPDATE SET <excluded> RETURNING \"id\""
+            }
+          },
+          {
+            "name": "UpsertMany",
+            "params": [
+              {
+                "name": "inputs",
+                "type": "[]*CreateTaskInput"
+              },
+              {
+                "name": "target",
+                "type": "TaskConflictTarget"
+              }
+            ],
+            "returns": "[]*Task",
+            "errors": [
+              "ErrNilInput",
+              "ErrConstraintViolation"
+            ],
+            "notes": "Batched in generation.batch_size chunks over the same TaskConflictTarget enum Upsert takes. Inputs resolving to one target are deduped before the statement is built, last occurrence wins. Earlier chunks are not rolled back on a later failure — wrap in a transaction for atomicity.",
+            "sql_bodies": {
+              "postgres": "INSERT INTO \"public\".\"tasks\" (<columns>) VALUES <values> ON CONFLICT (<conflict_target>) DO UPDATE SET <excluded>"
             }
           },
           {
@@ -2610,20 +2610,6 @@
             }
           },
           {
-            "name": "Count",
-            "params": [
-              {
-                "name": "filter",
-                "type": "*TaskLabelFilter"
-              }
-            ],
-            "returns": "int64",
-            "errors": [],
-            "sql_bodies": {
-              "postgres": "SELECT COUNT(*) FROM \"public\".\"task_labels\" WHERE <filter>"
-            }
-          },
-          {
             "name": "Exists",
             "params": [
               {
@@ -2649,6 +2635,20 @@
             "errors": [],
             "sql_bodies": {
               "postgres": "SELECT EXISTS(SELECT 1 FROM \"public\".\"task_labels\" WHERE <filter>)"
+            }
+          },
+          {
+            "name": "Count",
+            "params": [
+              {
+                "name": "filter",
+                "type": "*TaskLabelFilter"
+              }
+            ],
+            "returns": "int64",
+            "errors": [],
+            "sql_bodies": {
+              "postgres": "SELECT COUNT(*) FROM \"public\".\"task_labels\" WHERE <filter>"
             }
           },
           {
@@ -2730,50 +2730,6 @@
             }
           },
           {
-            "name": "Upsert",
-            "params": [
-              {
-                "name": "input",
-                "type": "*CreateTaskLabelInput"
-              },
-              {
-                "name": "target",
-                "type": "TaskLabelConflictTarget"
-              }
-            ],
-            "returns": "*TaskLabel",
-            "errors": [
-              "ErrNilInput",
-              "ErrConstraintViolation"
-            ],
-            "notes": "One method over the generated TaskLabelConflictTarget enum — the target argument selects the conflict columns at call time.",
-            "sql_bodies": {
-              "postgres": "INSERT INTO \"public\".\"task_labels\" (<columns>) VALUES (<values>) ON CONFLICT (<conflict_target>) DO UPDATE SET <excluded> RETURNING \"id\""
-            }
-          },
-          {
-            "name": "UpsertMany",
-            "params": [
-              {
-                "name": "inputs",
-                "type": "[]*CreateTaskLabelInput"
-              },
-              {
-                "name": "target",
-                "type": "TaskLabelConflictTarget"
-              }
-            ],
-            "returns": "[]*TaskLabel",
-            "errors": [
-              "ErrNilInput",
-              "ErrConstraintViolation"
-            ],
-            "notes": "Batched in generation.batch_size chunks over the same TaskLabelConflictTarget enum Upsert takes. Inputs resolving to one target are deduped before the statement is built, last occurrence wins. Earlier chunks are not rolled back on a later failure — wrap in a transaction for atomicity.",
-            "sql_bodies": {
-              "postgres": "INSERT INTO \"public\".\"task_labels\" (<columns>) VALUES <values> ON CONFLICT (<conflict_target>) DO UPDATE SET <excluded>"
-            }
-          },
-          {
             "name": "Update",
             "params": [
               {
@@ -2835,6 +2791,50 @@
             "notes": "Idempotent — returns an empty slice when no row matches. ErrEmptyFilter when the filter produces no conditions.",
             "sql_bodies": {
               "postgres": "UPDATE \"public\".\"task_labels\" SET <set> WHERE <filter> RETURNING \"id\""
+            }
+          },
+          {
+            "name": "Upsert",
+            "params": [
+              {
+                "name": "input",
+                "type": "*CreateTaskLabelInput"
+              },
+              {
+                "name": "target",
+                "type": "TaskLabelConflictTarget"
+              }
+            ],
+            "returns": "*TaskLabel",
+            "errors": [
+              "ErrNilInput",
+              "ErrConstraintViolation"
+            ],
+            "notes": "One method over the generated TaskLabelConflictTarget enum — the target argument selects the conflict columns at call time.",
+            "sql_bodies": {
+              "postgres": "INSERT INTO \"public\".\"task_labels\" (<columns>) VALUES (<values>) ON CONFLICT (<conflict_target>) DO UPDATE SET <excluded> RETURNING \"id\""
+            }
+          },
+          {
+            "name": "UpsertMany",
+            "params": [
+              {
+                "name": "inputs",
+                "type": "[]*CreateTaskLabelInput"
+              },
+              {
+                "name": "target",
+                "type": "TaskLabelConflictTarget"
+              }
+            ],
+            "returns": "[]*TaskLabel",
+            "errors": [
+              "ErrNilInput",
+              "ErrConstraintViolation"
+            ],
+            "notes": "Batched in generation.batch_size chunks over the same TaskLabelConflictTarget enum Upsert takes. Inputs resolving to one target are deduped before the statement is built, last occurrence wins. Earlier chunks are not rolled back on a later failure — wrap in a transaction for atomicity.",
+            "sql_bodies": {
+              "postgres": "INSERT INTO \"public\".\"task_labels\" (<columns>) VALUES <values> ON CONFLICT (<conflict_target>) DO UPDATE SET <excluded>"
             }
           },
           {

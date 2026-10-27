@@ -35,11 +35,11 @@
       "hydration": "eager",
       "key_pattern": "sqlgen:numericwidth:{id}",
       "invalidates_on": [
-        "Upsert",
-        "UpsertMany",
         "Update",
         "UpdateMany",
         "UpdateWhere",
+        "Upsert",
+        "UpsertMany",
         "Increment",
         "HardDelete",
         "HardDeleteMany",
@@ -227,20 +227,6 @@
         }
       },
       {
-        "name": "Count",
-        "params": [
-          {
-            "name": "filter",
-            "type": "*NumericWidthFilter"
-          }
-        ],
-        "returns": "int64",
-        "errors": [],
-        "sql_bodies": {
-          "postgres": "SELECT COUNT(*) FROM \"public\".\"numeric_widths\" WHERE <filter>"
-        }
-      },
-      {
         "name": "Exists",
         "params": [
           {
@@ -266,6 +252,20 @@
         "errors": [],
         "sql_bodies": {
           "postgres": "SELECT EXISTS(SELECT 1 FROM \"public\".\"numeric_widths\" WHERE <filter>)"
+        }
+      },
+      {
+        "name": "Count",
+        "params": [
+          {
+            "name": "filter",
+            "type": "*NumericWidthFilter"
+          }
+        ],
+        "returns": "int64",
+        "errors": [],
+        "sql_bodies": {
+          "postgres": "SELECT COUNT(*) FROM \"public\".\"numeric_widths\" WHERE <filter>"
         }
       },
       {
@@ -347,50 +347,6 @@
         }
       },
       {
-        "name": "Upsert",
-        "params": [
-          {
-            "name": "input",
-            "type": "*CreateNumericWidthInput"
-          },
-          {
-            "name": "target",
-            "type": "NumericWidthConflictTarget"
-          }
-        ],
-        "returns": "*NumericWidth",
-        "errors": [
-          "ErrNilInput",
-          "ErrConstraintViolation"
-        ],
-        "notes": "One method over the generated NumericWidthConflictTarget enum — the target argument selects the conflict columns at call time.",
-        "sql_bodies": {
-          "postgres": "INSERT INTO \"public\".\"numeric_widths\" (<columns>) VALUES (<values>) ON CONFLICT (<conflict_target>) DO UPDATE SET <excluded> RETURNING \"id\""
-        }
-      },
-      {
-        "name": "UpsertMany",
-        "params": [
-          {
-            "name": "inputs",
-            "type": "[]*CreateNumericWidthInput"
-          },
-          {
-            "name": "target",
-            "type": "NumericWidthConflictTarget"
-          }
-        ],
-        "returns": "[]*NumericWidth",
-        "errors": [
-          "ErrNilInput",
-          "ErrConstraintViolation"
-        ],
-        "notes": "Batched in generation.batch_size chunks over the same NumericWidthConflictTarget enum Upsert takes. Inputs resolving to one target are deduped before the statement is built, last occurrence wins. Earlier chunks are not rolled back on a later failure — wrap in a transaction for atomicity.",
-        "sql_bodies": {
-          "postgres": "INSERT INTO \"public\".\"numeric_widths\" (<columns>) VALUES <values> ON CONFLICT (<conflict_target>) DO UPDATE SET <excluded>"
-        }
-      },
-      {
         "name": "Update",
         "params": [
           {
@@ -452,6 +408,50 @@
         "notes": "Idempotent — returns an empty slice when no row matches. ErrEmptyFilter when the filter produces no conditions.",
         "sql_bodies": {
           "postgres": "UPDATE \"public\".\"numeric_widths\" SET <set> WHERE <filter> RETURNING \"id\""
+        }
+      },
+      {
+        "name": "Upsert",
+        "params": [
+          {
+            "name": "input",
+            "type": "*CreateNumericWidthInput"
+          },
+          {
+            "name": "target",
+            "type": "NumericWidthConflictTarget"
+          }
+        ],
+        "returns": "*NumericWidth",
+        "errors": [
+          "ErrNilInput",
+          "ErrConstraintViolation"
+        ],
+        "notes": "One method over the generated NumericWidthConflictTarget enum — the target argument selects the conflict columns at call time.",
+        "sql_bodies": {
+          "postgres": "INSERT INTO \"public\".\"numeric_widths\" (<columns>) VALUES (<values>) ON CONFLICT (<conflict_target>) DO UPDATE SET <excluded> RETURNING \"id\""
+        }
+      },
+      {
+        "name": "UpsertMany",
+        "params": [
+          {
+            "name": "inputs",
+            "type": "[]*CreateNumericWidthInput"
+          },
+          {
+            "name": "target",
+            "type": "NumericWidthConflictTarget"
+          }
+        ],
+        "returns": "[]*NumericWidth",
+        "errors": [
+          "ErrNilInput",
+          "ErrConstraintViolation"
+        ],
+        "notes": "Batched in generation.batch_size chunks over the same NumericWidthConflictTarget enum Upsert takes. Inputs resolving to one target are deduped before the statement is built, last occurrence wins. Earlier chunks are not rolled back on a later failure — wrap in a transaction for atomicity.",
+        "sql_bodies": {
+          "postgres": "INSERT INTO \"public\".\"numeric_widths\" (<columns>) VALUES <values> ON CONFLICT (<conflict_target>) DO UPDATE SET <excluded>"
         }
       },
       {

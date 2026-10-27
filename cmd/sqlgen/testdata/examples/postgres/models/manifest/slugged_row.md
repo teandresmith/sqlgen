@@ -57,19 +57,6 @@ postgres:
 SELECT "id", "name", "slug" FROM "public"."slugged_rows" WHERE <filter> ORDER BY <sort> LIMIT <limit>
 ```
 
-### Count
-
-- Params: `filter *SluggedRowFilter`
-- Returns: `int64`, `error`
-
-Generated SQL:
-
-postgres:
-
-```sql
-SELECT COUNT(*) FROM "public"."slugged_rows" WHERE <filter>
-```
-
 ### Exists
 
 - Params: `id int64`
@@ -94,6 +81,19 @@ postgres:
 
 ```sql
 SELECT EXISTS(SELECT 1 FROM "public"."slugged_rows" WHERE <filter>)
+```
+
+### Count
+
+- Params: `filter *SluggedRowFilter`
+- Returns: `int64`, `error`
+
+Generated SQL:
+
+postgres:
+
+```sql
+SELECT COUNT(*) FROM "public"."slugged_rows" WHERE <filter>
 ```
 
 ### Paginate
@@ -154,36 +154,6 @@ postgres:
 INSERT INTO "public"."slugged_rows" (<columns>) VALUES <values> RETURNING "id"
 ```
 
-### Upsert
-
-- Params: `input *CreateSluggedRowInput`, `target SluggedRowConflictTarget`
-- Returns: `*SluggedRow`, `error`
-- Errors: `ErrNilInput`, `ErrConstraintViolation`
-- Notes: One method over the generated SluggedRowConflictTarget enum — the target argument selects the conflict columns at call time.
-
-Generated SQL:
-
-postgres:
-
-```sql
-INSERT INTO "public"."slugged_rows" (<columns>) VALUES (<values>) ON CONFLICT (<conflict_target>) DO UPDATE SET <excluded> RETURNING "id"
-```
-
-### UpsertMany
-
-- Params: `inputs []*CreateSluggedRowInput`, `target SluggedRowConflictTarget`
-- Returns: `[]*SluggedRow`, `error`
-- Errors: `ErrNilInput`, `ErrConstraintViolation`
-- Notes: Batched in generation.batch_size chunks over the same SluggedRowConflictTarget enum Upsert takes. Inputs resolving to one target are deduped before the statement is built, last occurrence wins. Earlier chunks are not rolled back on a later failure — wrap in a transaction for atomicity.
-
-Generated SQL:
-
-postgres:
-
-```sql
-INSERT INTO "public"."slugged_rows" (<columns>) VALUES <values> ON CONFLICT (<conflict_target>) DO UPDATE SET <excluded>
-```
-
 ### Update
 
 - Params: `id int64`, `input *UpdateSluggedRowInput`
@@ -227,6 +197,36 @@ postgres:
 
 ```sql
 UPDATE "public"."slugged_rows" SET <set> WHERE <filter> RETURNING "id"
+```
+
+### Upsert
+
+- Params: `input *CreateSluggedRowInput`, `target SluggedRowConflictTarget`
+- Returns: `*SluggedRow`, `error`
+- Errors: `ErrNilInput`, `ErrConstraintViolation`
+- Notes: One method over the generated SluggedRowConflictTarget enum — the target argument selects the conflict columns at call time.
+
+Generated SQL:
+
+postgres:
+
+```sql
+INSERT INTO "public"."slugged_rows" (<columns>) VALUES (<values>) ON CONFLICT (<conflict_target>) DO UPDATE SET <excluded> RETURNING "id"
+```
+
+### UpsertMany
+
+- Params: `inputs []*CreateSluggedRowInput`, `target SluggedRowConflictTarget`
+- Returns: `[]*SluggedRow`, `error`
+- Errors: `ErrNilInput`, `ErrConstraintViolation`
+- Notes: Batched in generation.batch_size chunks over the same SluggedRowConflictTarget enum Upsert takes. Inputs resolving to one target are deduped before the statement is built, last occurrence wins. Earlier chunks are not rolled back on a later failure — wrap in a transaction for atomicity.
+
+Generated SQL:
+
+postgres:
+
+```sql
+INSERT INTO "public"."slugged_rows" (<columns>) VALUES <values> ON CONFLICT (<conflict_target>) DO UPDATE SET <excluded>
 ```
 
 ### HardDelete

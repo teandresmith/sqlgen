@@ -310,20 +310,6 @@
             }
           },
           {
-            "name": "Count",
-            "params": [
-              {
-                "name": "filter",
-                "type": "*ArticleFilter"
-              }
-            ],
-            "returns": "int64",
-            "errors": [],
-            "sql_bodies": {
-              "sqlite": "SELECT COUNT(*) FROM \"articles\" WHERE <filter> AND \"deleted_at\" IS NULL"
-            }
-          },
-          {
             "name": "Exists",
             "params": [
               {
@@ -349,6 +335,20 @@
             "errors": [],
             "sql_bodies": {
               "sqlite": "SELECT EXISTS(SELECT 1 FROM \"articles\" WHERE <filter> AND \"deleted_at\" IS NULL)"
+            }
+          },
+          {
+            "name": "Count",
+            "params": [
+              {
+                "name": "filter",
+                "type": "*ArticleFilter"
+              }
+            ],
+            "returns": "int64",
+            "errors": [],
+            "sql_bodies": {
+              "sqlite": "SELECT COUNT(*) FROM \"articles\" WHERE <filter> AND \"deleted_at\" IS NULL"
             }
           },
           {
@@ -430,50 +430,6 @@
             }
           },
           {
-            "name": "Upsert",
-            "params": [
-              {
-                "name": "input",
-                "type": "*CreateArticleInput"
-              },
-              {
-                "name": "target",
-                "type": "ArticleConflictTarget"
-              }
-            ],
-            "returns": "*Article",
-            "errors": [
-              "ErrNilInput",
-              "ErrConstraintViolation"
-            ],
-            "notes": "One method over the generated ArticleConflictTarget enum — the target argument selects the conflict columns at call time.",
-            "sql_bodies": {
-              "sqlite": "INSERT INTO \"articles\" (<columns>) VALUES (<values>) ON CONFLICT (<conflict_target>) DO UPDATE SET <excluded> RETURNING \"id\""
-            }
-          },
-          {
-            "name": "UpsertMany",
-            "params": [
-              {
-                "name": "inputs",
-                "type": "[]*CreateArticleInput"
-              },
-              {
-                "name": "target",
-                "type": "ArticleConflictTarget"
-              }
-            ],
-            "returns": "[]*Article",
-            "errors": [
-              "ErrNilInput",
-              "ErrConstraintViolation"
-            ],
-            "notes": "Batched in generation.batch_size chunks over the same ArticleConflictTarget enum Upsert takes. Inputs resolving to one target are deduped before the statement is built, last occurrence wins. Earlier chunks are not rolled back on a later failure — wrap in a transaction for atomicity.",
-            "sql_bodies": {
-              "sqlite": "INSERT INTO \"articles\" (<columns>) VALUES <values> ON CONFLICT (<conflict_target>) DO UPDATE SET <excluded>"
-            }
-          },
-          {
             "name": "Update",
             "params": [
               {
@@ -535,6 +491,50 @@
             "notes": "Idempotent — returns an empty slice when no row matches. ErrEmptyFilter when the filter produces no conditions.",
             "sql_bodies": {
               "sqlite": "UPDATE \"articles\" SET <set> WHERE <filter> RETURNING \"id\""
+            }
+          },
+          {
+            "name": "Upsert",
+            "params": [
+              {
+                "name": "input",
+                "type": "*CreateArticleInput"
+              },
+              {
+                "name": "target",
+                "type": "ArticleConflictTarget"
+              }
+            ],
+            "returns": "*Article",
+            "errors": [
+              "ErrNilInput",
+              "ErrConstraintViolation"
+            ],
+            "notes": "One method over the generated ArticleConflictTarget enum — the target argument selects the conflict columns at call time.",
+            "sql_bodies": {
+              "sqlite": "INSERT INTO \"articles\" (<columns>) VALUES (<values>) ON CONFLICT (<conflict_target>) DO UPDATE SET <excluded> RETURNING \"id\""
+            }
+          },
+          {
+            "name": "UpsertMany",
+            "params": [
+              {
+                "name": "inputs",
+                "type": "[]*CreateArticleInput"
+              },
+              {
+                "name": "target",
+                "type": "ArticleConflictTarget"
+              }
+            ],
+            "returns": "[]*Article",
+            "errors": [
+              "ErrNilInput",
+              "ErrConstraintViolation"
+            ],
+            "notes": "Batched in generation.batch_size chunks over the same ArticleConflictTarget enum Upsert takes. Inputs resolving to one target are deduped before the statement is built, last occurrence wins. Earlier chunks are not rolled back on a later failure — wrap in a transaction for atomicity.",
+            "sql_bodies": {
+              "sqlite": "INSERT INTO \"articles\" (<columns>) VALUES <values> ON CONFLICT (<conflict_target>) DO UPDATE SET <excluded>"
             }
           },
           {
@@ -939,20 +939,6 @@
             }
           },
           {
-            "name": "Count",
-            "params": [
-              {
-                "name": "filter",
-                "type": "*AssetFilter"
-              }
-            ],
-            "returns": "int64",
-            "errors": [],
-            "sql_bodies": {
-              "sqlite": "SELECT COUNT(*) FROM \"assets\" WHERE <filter>"
-            }
-          },
-          {
             "name": "Exists",
             "params": [
               {
@@ -978,6 +964,20 @@
             "errors": [],
             "sql_bodies": {
               "sqlite": "SELECT EXISTS(SELECT 1 FROM \"assets\" WHERE <filter>)"
+            }
+          },
+          {
+            "name": "Count",
+            "params": [
+              {
+                "name": "filter",
+                "type": "*AssetFilter"
+              }
+            ],
+            "returns": "int64",
+            "errors": [],
+            "sql_bodies": {
+              "sqlite": "SELECT COUNT(*) FROM \"assets\" WHERE <filter>"
             }
           },
           {
@@ -1059,50 +1059,6 @@
             }
           },
           {
-            "name": "Upsert",
-            "params": [
-              {
-                "name": "input",
-                "type": "*CreateAssetInput"
-              },
-              {
-                "name": "target",
-                "type": "AssetConflictTarget"
-              }
-            ],
-            "returns": "*Asset",
-            "errors": [
-              "ErrNilInput",
-              "ErrConstraintViolation"
-            ],
-            "notes": "One method over the generated AssetConflictTarget enum — the target argument selects the conflict columns at call time.",
-            "sql_bodies": {
-              "sqlite": "INSERT INTO \"assets\" (<columns>) VALUES (<values>) ON CONFLICT (<conflict_target>) DO UPDATE SET <excluded> RETURNING \"id\""
-            }
-          },
-          {
-            "name": "UpsertMany",
-            "params": [
-              {
-                "name": "inputs",
-                "type": "[]*CreateAssetInput"
-              },
-              {
-                "name": "target",
-                "type": "AssetConflictTarget"
-              }
-            ],
-            "returns": "[]*Asset",
-            "errors": [
-              "ErrNilInput",
-              "ErrConstraintViolation"
-            ],
-            "notes": "Batched in generation.batch_size chunks over the same AssetConflictTarget enum Upsert takes. Inputs resolving to one target are deduped before the statement is built, last occurrence wins. Earlier chunks are not rolled back on a later failure — wrap in a transaction for atomicity.",
-            "sql_bodies": {
-              "sqlite": "INSERT INTO \"assets\" (<columns>) VALUES <values> ON CONFLICT (<conflict_target>) DO UPDATE SET <excluded>"
-            }
-          },
-          {
             "name": "Update",
             "params": [
               {
@@ -1164,6 +1120,50 @@
             "notes": "Idempotent — returns an empty slice when no row matches. ErrEmptyFilter when the filter produces no conditions.",
             "sql_bodies": {
               "sqlite": "UPDATE \"assets\" SET <set> WHERE <filter> RETURNING \"id\""
+            }
+          },
+          {
+            "name": "Upsert",
+            "params": [
+              {
+                "name": "input",
+                "type": "*CreateAssetInput"
+              },
+              {
+                "name": "target",
+                "type": "AssetConflictTarget"
+              }
+            ],
+            "returns": "*Asset",
+            "errors": [
+              "ErrNilInput",
+              "ErrConstraintViolation"
+            ],
+            "notes": "One method over the generated AssetConflictTarget enum — the target argument selects the conflict columns at call time.",
+            "sql_bodies": {
+              "sqlite": "INSERT INTO \"assets\" (<columns>) VALUES (<values>) ON CONFLICT (<conflict_target>) DO UPDATE SET <excluded> RETURNING \"id\""
+            }
+          },
+          {
+            "name": "UpsertMany",
+            "params": [
+              {
+                "name": "inputs",
+                "type": "[]*CreateAssetInput"
+              },
+              {
+                "name": "target",
+                "type": "AssetConflictTarget"
+              }
+            ],
+            "returns": "[]*Asset",
+            "errors": [
+              "ErrNilInput",
+              "ErrConstraintViolation"
+            ],
+            "notes": "Batched in generation.batch_size chunks over the same AssetConflictTarget enum Upsert takes. Inputs resolving to one target are deduped before the statement is built, last occurrence wins. Earlier chunks are not rolled back on a later failure — wrap in a transaction for atomicity.",
+            "sql_bodies": {
+              "sqlite": "INSERT INTO \"assets\" (<columns>) VALUES <values> ON CONFLICT (<conflict_target>) DO UPDATE SET <excluded>"
             }
           },
           {
@@ -1360,20 +1360,6 @@
             }
           },
           {
-            "name": "Count",
-            "params": [
-              {
-                "name": "filter",
-                "type": "*AssetDocumentLinkFilter"
-              }
-            ],
-            "returns": "int64",
-            "errors": [],
-            "sql_bodies": {
-              "sqlite": "SELECT COUNT(*) FROM \"asset_document_links\" WHERE <filter>"
-            }
-          },
-          {
             "name": "Exists",
             "params": [
               {
@@ -1399,6 +1385,20 @@
             "errors": [],
             "sql_bodies": {
               "sqlite": "SELECT EXISTS(SELECT 1 FROM \"asset_document_links\" WHERE <filter>)"
+            }
+          },
+          {
+            "name": "Count",
+            "params": [
+              {
+                "name": "filter",
+                "type": "*AssetDocumentLinkFilter"
+              }
+            ],
+            "returns": "int64",
+            "errors": [],
+            "sql_bodies": {
+              "sqlite": "SELECT COUNT(*) FROM \"asset_document_links\" WHERE <filter>"
             }
           },
           {
@@ -1480,50 +1480,6 @@
             }
           },
           {
-            "name": "Upsert",
-            "params": [
-              {
-                "name": "input",
-                "type": "*CreateAssetDocumentLinkInput"
-              },
-              {
-                "name": "target",
-                "type": "AssetDocumentLinkConflictTarget"
-              }
-            ],
-            "returns": "*AssetDocumentLink",
-            "errors": [
-              "ErrNilInput",
-              "ErrConstraintViolation"
-            ],
-            "notes": "One method over the generated AssetDocumentLinkConflictTarget enum — the target argument selects the conflict columns at call time.",
-            "sql_bodies": {
-              "sqlite": "INSERT INTO \"asset_document_links\" (<columns>) VALUES (<values>) ON CONFLICT (<conflict_target>) DO UPDATE SET <excluded>"
-            }
-          },
-          {
-            "name": "UpsertMany",
-            "params": [
-              {
-                "name": "inputs",
-                "type": "[]*CreateAssetDocumentLinkInput"
-              },
-              {
-                "name": "target",
-                "type": "AssetDocumentLinkConflictTarget"
-              }
-            ],
-            "returns": "[]*AssetDocumentLink",
-            "errors": [
-              "ErrNilInput",
-              "ErrConstraintViolation"
-            ],
-            "notes": "Batched in generation.batch_size chunks over the same AssetDocumentLinkConflictTarget enum Upsert takes. Inputs resolving to one target are deduped before the statement is built, last occurrence wins. Earlier chunks are not rolled back on a later failure — wrap in a transaction for atomicity.",
-            "sql_bodies": {
-              "sqlite": "INSERT INTO \"asset_document_links\" (<columns>) VALUES <values> ON CONFLICT (<conflict_target>) DO UPDATE SET <excluded>"
-            }
-          },
-          {
             "name": "Update",
             "params": [
               {
@@ -1585,6 +1541,50 @@
             "notes": "Idempotent — returns an empty slice when no row matches. ErrEmptyFilter when the filter produces no conditions.",
             "sql_bodies": {
               "sqlite": "UPDATE \"asset_document_links\" SET <set> WHERE <filter> RETURNING \"asset_id\", \"document_id\""
+            }
+          },
+          {
+            "name": "Upsert",
+            "params": [
+              {
+                "name": "input",
+                "type": "*CreateAssetDocumentLinkInput"
+              },
+              {
+                "name": "target",
+                "type": "AssetDocumentLinkConflictTarget"
+              }
+            ],
+            "returns": "*AssetDocumentLink",
+            "errors": [
+              "ErrNilInput",
+              "ErrConstraintViolation"
+            ],
+            "notes": "One method over the generated AssetDocumentLinkConflictTarget enum — the target argument selects the conflict columns at call time.",
+            "sql_bodies": {
+              "sqlite": "INSERT INTO \"asset_document_links\" (<columns>) VALUES (<values>) ON CONFLICT (<conflict_target>) DO UPDATE SET <excluded>"
+            }
+          },
+          {
+            "name": "UpsertMany",
+            "params": [
+              {
+                "name": "inputs",
+                "type": "[]*CreateAssetDocumentLinkInput"
+              },
+              {
+                "name": "target",
+                "type": "AssetDocumentLinkConflictTarget"
+              }
+            ],
+            "returns": "[]*AssetDocumentLink",
+            "errors": [
+              "ErrNilInput",
+              "ErrConstraintViolation"
+            ],
+            "notes": "Batched in generation.batch_size chunks over the same AssetDocumentLinkConflictTarget enum Upsert takes. Inputs resolving to one target are deduped before the statement is built, last occurrence wins. Earlier chunks are not rolled back on a later failure — wrap in a transaction for atomicity.",
+            "sql_bodies": {
+              "sqlite": "INSERT INTO \"asset_document_links\" (<columns>) VALUES <values> ON CONFLICT (<conflict_target>) DO UPDATE SET <excluded>"
             }
           },
           {
@@ -1790,20 +1790,6 @@
             }
           },
           {
-            "name": "Count",
-            "params": [
-              {
-                "name": "filter",
-                "type": "*BadgeFilter"
-              }
-            ],
-            "returns": "int64",
-            "errors": [],
-            "sql_bodies": {
-              "sqlite": "SELECT COUNT(*) FROM \"badges\" WHERE <filter>"
-            }
-          },
-          {
             "name": "Exists",
             "params": [
               {
@@ -1829,6 +1815,20 @@
             "errors": [],
             "sql_bodies": {
               "sqlite": "SELECT EXISTS(SELECT 1 FROM \"badges\" WHERE <filter>)"
+            }
+          },
+          {
+            "name": "Count",
+            "params": [
+              {
+                "name": "filter",
+                "type": "*BadgeFilter"
+              }
+            ],
+            "returns": "int64",
+            "errors": [],
+            "sql_bodies": {
+              "sqlite": "SELECT COUNT(*) FROM \"badges\" WHERE <filter>"
             }
           },
           {
@@ -1910,50 +1910,6 @@
             }
           },
           {
-            "name": "Upsert",
-            "params": [
-              {
-                "name": "input",
-                "type": "*CreateBadgeInput"
-              },
-              {
-                "name": "target",
-                "type": "BadgeConflictTarget"
-              }
-            ],
-            "returns": "*Badge",
-            "errors": [
-              "ErrNilInput",
-              "ErrConstraintViolation"
-            ],
-            "notes": "One method over the generated BadgeConflictTarget enum — the target argument selects the conflict columns at call time.",
-            "sql_bodies": {
-              "sqlite": "INSERT INTO \"badges\" (<columns>) VALUES (<values>) ON CONFLICT (<conflict_target>) DO UPDATE SET <excluded> RETURNING \"code\""
-            }
-          },
-          {
-            "name": "UpsertMany",
-            "params": [
-              {
-                "name": "inputs",
-                "type": "[]*CreateBadgeInput"
-              },
-              {
-                "name": "target",
-                "type": "BadgeConflictTarget"
-              }
-            ],
-            "returns": "[]*Badge",
-            "errors": [
-              "ErrNilInput",
-              "ErrConstraintViolation"
-            ],
-            "notes": "Batched in generation.batch_size chunks over the same BadgeConflictTarget enum Upsert takes. Inputs resolving to one target are deduped before the statement is built, last occurrence wins. Earlier chunks are not rolled back on a later failure — wrap in a transaction for atomicity.",
-            "sql_bodies": {
-              "sqlite": "INSERT INTO \"badges\" (<columns>) VALUES <values> ON CONFLICT (<conflict_target>) DO UPDATE SET <excluded>"
-            }
-          },
-          {
             "name": "Update",
             "params": [
               {
@@ -2015,6 +1971,50 @@
             "notes": "Idempotent — returns an empty slice when no row matches. ErrEmptyFilter when the filter produces no conditions.",
             "sql_bodies": {
               "sqlite": "UPDATE \"badges\" SET <set> WHERE <filter> RETURNING \"code\""
+            }
+          },
+          {
+            "name": "Upsert",
+            "params": [
+              {
+                "name": "input",
+                "type": "*CreateBadgeInput"
+              },
+              {
+                "name": "target",
+                "type": "BadgeConflictTarget"
+              }
+            ],
+            "returns": "*Badge",
+            "errors": [
+              "ErrNilInput",
+              "ErrConstraintViolation"
+            ],
+            "notes": "One method over the generated BadgeConflictTarget enum — the target argument selects the conflict columns at call time.",
+            "sql_bodies": {
+              "sqlite": "INSERT INTO \"badges\" (<columns>) VALUES (<values>) ON CONFLICT (<conflict_target>) DO UPDATE SET <excluded> RETURNING \"code\""
+            }
+          },
+          {
+            "name": "UpsertMany",
+            "params": [
+              {
+                "name": "inputs",
+                "type": "[]*CreateBadgeInput"
+              },
+              {
+                "name": "target",
+                "type": "BadgeConflictTarget"
+              }
+            ],
+            "returns": "[]*Badge",
+            "errors": [
+              "ErrNilInput",
+              "ErrConstraintViolation"
+            ],
+            "notes": "Batched in generation.batch_size chunks over the same BadgeConflictTarget enum Upsert takes. Inputs resolving to one target are deduped before the statement is built, last occurrence wins. Earlier chunks are not rolled back on a later failure — wrap in a transaction for atomicity.",
+            "sql_bodies": {
+              "sqlite": "INSERT INTO \"badges\" (<columns>) VALUES <values> ON CONFLICT (<conflict_target>) DO UPDATE SET <excluded>"
             }
           },
           {
@@ -2241,20 +2241,6 @@
             }
           },
           {
-            "name": "Count",
-            "params": [
-              {
-                "name": "filter",
-                "type": "*BinaryKeyFilter"
-              }
-            ],
-            "returns": "int64",
-            "errors": [],
-            "sql_bodies": {
-              "sqlite": "SELECT COUNT(*) FROM \"binary_keys\" WHERE <filter>"
-            }
-          },
-          {
             "name": "Exists",
             "params": [
               {
@@ -2280,6 +2266,20 @@
             "errors": [],
             "sql_bodies": {
               "sqlite": "SELECT EXISTS(SELECT 1 FROM \"binary_keys\" WHERE <filter>)"
+            }
+          },
+          {
+            "name": "Count",
+            "params": [
+              {
+                "name": "filter",
+                "type": "*BinaryKeyFilter"
+              }
+            ],
+            "returns": "int64",
+            "errors": [],
+            "sql_bodies": {
+              "sqlite": "SELECT COUNT(*) FROM \"binary_keys\" WHERE <filter>"
             }
           },
           {
@@ -2361,50 +2361,6 @@
             }
           },
           {
-            "name": "Upsert",
-            "params": [
-              {
-                "name": "input",
-                "type": "*CreateBinaryKeyInput"
-              },
-              {
-                "name": "target",
-                "type": "BinaryKeyConflictTarget"
-              }
-            ],
-            "returns": "*BinaryKey",
-            "errors": [
-              "ErrNilInput",
-              "ErrConstraintViolation"
-            ],
-            "notes": "One method over the generated BinaryKeyConflictTarget enum — the target argument selects the conflict columns at call time.",
-            "sql_bodies": {
-              "sqlite": "INSERT INTO \"binary_keys\" (<columns>) VALUES (<values>) ON CONFLICT (<conflict_target>) DO UPDATE SET <excluded> RETURNING \"id\""
-            }
-          },
-          {
-            "name": "UpsertMany",
-            "params": [
-              {
-                "name": "inputs",
-                "type": "[]*CreateBinaryKeyInput"
-              },
-              {
-                "name": "target",
-                "type": "BinaryKeyConflictTarget"
-              }
-            ],
-            "returns": "[]*BinaryKey",
-            "errors": [
-              "ErrNilInput",
-              "ErrConstraintViolation"
-            ],
-            "notes": "Batched in generation.batch_size chunks over the same BinaryKeyConflictTarget enum Upsert takes. Inputs resolving to one target are deduped before the statement is built, last occurrence wins. Earlier chunks are not rolled back on a later failure — wrap in a transaction for atomicity.",
-            "sql_bodies": {
-              "sqlite": "INSERT INTO \"binary_keys\" (<columns>) VALUES <values> ON CONFLICT (<conflict_target>) DO UPDATE SET <excluded>"
-            }
-          },
-          {
             "name": "Update",
             "params": [
               {
@@ -2466,6 +2422,50 @@
             "notes": "Idempotent — returns an empty slice when no row matches. ErrEmptyFilter when the filter produces no conditions.",
             "sql_bodies": {
               "sqlite": "UPDATE \"binary_keys\" SET <set> WHERE <filter> RETURNING \"id\""
+            }
+          },
+          {
+            "name": "Upsert",
+            "params": [
+              {
+                "name": "input",
+                "type": "*CreateBinaryKeyInput"
+              },
+              {
+                "name": "target",
+                "type": "BinaryKeyConflictTarget"
+              }
+            ],
+            "returns": "*BinaryKey",
+            "errors": [
+              "ErrNilInput",
+              "ErrConstraintViolation"
+            ],
+            "notes": "One method over the generated BinaryKeyConflictTarget enum — the target argument selects the conflict columns at call time.",
+            "sql_bodies": {
+              "sqlite": "INSERT INTO \"binary_keys\" (<columns>) VALUES (<values>) ON CONFLICT (<conflict_target>) DO UPDATE SET <excluded> RETURNING \"id\""
+            }
+          },
+          {
+            "name": "UpsertMany",
+            "params": [
+              {
+                "name": "inputs",
+                "type": "[]*CreateBinaryKeyInput"
+              },
+              {
+                "name": "target",
+                "type": "BinaryKeyConflictTarget"
+              }
+            ],
+            "returns": "[]*BinaryKey",
+            "errors": [
+              "ErrNilInput",
+              "ErrConstraintViolation"
+            ],
+            "notes": "Batched in generation.batch_size chunks over the same BinaryKeyConflictTarget enum Upsert takes. Inputs resolving to one target are deduped before the statement is built, last occurrence wins. Earlier chunks are not rolled back on a later failure — wrap in a transaction for atomicity.",
+            "sql_bodies": {
+              "sqlite": "INSERT INTO \"binary_keys\" (<columns>) VALUES <values> ON CONFLICT (<conflict_target>) DO UPDATE SET <excluded>"
             }
           },
           {
@@ -2662,20 +2662,6 @@
             }
           },
           {
-            "name": "Count",
-            "params": [
-              {
-                "name": "filter",
-                "type": "*BinaryKeyBadgeFilter"
-              }
-            ],
-            "returns": "int64",
-            "errors": [],
-            "sql_bodies": {
-              "sqlite": "SELECT COUNT(*) FROM \"binary_key_badges\" WHERE <filter>"
-            }
-          },
-          {
             "name": "Exists",
             "params": [
               {
@@ -2701,6 +2687,20 @@
             "errors": [],
             "sql_bodies": {
               "sqlite": "SELECT EXISTS(SELECT 1 FROM \"binary_key_badges\" WHERE <filter>)"
+            }
+          },
+          {
+            "name": "Count",
+            "params": [
+              {
+                "name": "filter",
+                "type": "*BinaryKeyBadgeFilter"
+              }
+            ],
+            "returns": "int64",
+            "errors": [],
+            "sql_bodies": {
+              "sqlite": "SELECT COUNT(*) FROM \"binary_key_badges\" WHERE <filter>"
             }
           },
           {
@@ -2782,50 +2782,6 @@
             }
           },
           {
-            "name": "Upsert",
-            "params": [
-              {
-                "name": "input",
-                "type": "*CreateBinaryKeyBadgeInput"
-              },
-              {
-                "name": "target",
-                "type": "BinaryKeyBadgeConflictTarget"
-              }
-            ],
-            "returns": "*BinaryKeyBadge",
-            "errors": [
-              "ErrNilInput",
-              "ErrConstraintViolation"
-            ],
-            "notes": "One method over the generated BinaryKeyBadgeConflictTarget enum — the target argument selects the conflict columns at call time.",
-            "sql_bodies": {
-              "sqlite": "INSERT INTO \"binary_key_badges\" (<columns>) VALUES (<values>) ON CONFLICT (<conflict_target>) DO UPDATE SET <excluded>"
-            }
-          },
-          {
-            "name": "UpsertMany",
-            "params": [
-              {
-                "name": "inputs",
-                "type": "[]*CreateBinaryKeyBadgeInput"
-              },
-              {
-                "name": "target",
-                "type": "BinaryKeyBadgeConflictTarget"
-              }
-            ],
-            "returns": "[]*BinaryKeyBadge",
-            "errors": [
-              "ErrNilInput",
-              "ErrConstraintViolation"
-            ],
-            "notes": "Batched in generation.batch_size chunks over the same BinaryKeyBadgeConflictTarget enum Upsert takes. Inputs resolving to one target are deduped before the statement is built, last occurrence wins. Earlier chunks are not rolled back on a later failure — wrap in a transaction for atomicity.",
-            "sql_bodies": {
-              "sqlite": "INSERT INTO \"binary_key_badges\" (<columns>) VALUES <values> ON CONFLICT (<conflict_target>) DO UPDATE SET <excluded>"
-            }
-          },
-          {
             "name": "Update",
             "params": [
               {
@@ -2887,6 +2843,50 @@
             "notes": "Idempotent — returns an empty slice when no row matches. ErrEmptyFilter when the filter produces no conditions.",
             "sql_bodies": {
               "sqlite": "UPDATE \"binary_key_badges\" SET <set> WHERE <filter> RETURNING \"binary_key_id\", \"badge_code\""
+            }
+          },
+          {
+            "name": "Upsert",
+            "params": [
+              {
+                "name": "input",
+                "type": "*CreateBinaryKeyBadgeInput"
+              },
+              {
+                "name": "target",
+                "type": "BinaryKeyBadgeConflictTarget"
+              }
+            ],
+            "returns": "*BinaryKeyBadge",
+            "errors": [
+              "ErrNilInput",
+              "ErrConstraintViolation"
+            ],
+            "notes": "One method over the generated BinaryKeyBadgeConflictTarget enum — the target argument selects the conflict columns at call time.",
+            "sql_bodies": {
+              "sqlite": "INSERT INTO \"binary_key_badges\" (<columns>) VALUES (<values>) ON CONFLICT (<conflict_target>) DO UPDATE SET <excluded>"
+            }
+          },
+          {
+            "name": "UpsertMany",
+            "params": [
+              {
+                "name": "inputs",
+                "type": "[]*CreateBinaryKeyBadgeInput"
+              },
+              {
+                "name": "target",
+                "type": "BinaryKeyBadgeConflictTarget"
+              }
+            ],
+            "returns": "[]*BinaryKeyBadge",
+            "errors": [
+              "ErrNilInput",
+              "ErrConstraintViolation"
+            ],
+            "notes": "Batched in generation.batch_size chunks over the same BinaryKeyBadgeConflictTarget enum Upsert takes. Inputs resolving to one target are deduped before the statement is built, last occurrence wins. Earlier chunks are not rolled back on a later failure — wrap in a transaction for atomicity.",
+            "sql_bodies": {
+              "sqlite": "INSERT INTO \"binary_key_badges\" (<columns>) VALUES <values> ON CONFLICT (<conflict_target>) DO UPDATE SET <excluded>"
             }
           },
           {
@@ -3083,20 +3083,6 @@
             }
           },
           {
-            "name": "Count",
-            "params": [
-              {
-                "name": "filter",
-                "type": "*BinaryKeyEventFilter"
-              }
-            ],
-            "returns": "int64",
-            "errors": [],
-            "sql_bodies": {
-              "sqlite": "SELECT COUNT(*) FROM \"binary_key_events\" WHERE <filter>"
-            }
-          },
-          {
             "name": "Exists",
             "params": [
               {
@@ -3122,6 +3108,20 @@
             "errors": [],
             "sql_bodies": {
               "sqlite": "SELECT EXISTS(SELECT 1 FROM \"binary_key_events\" WHERE <filter>)"
+            }
+          },
+          {
+            "name": "Count",
+            "params": [
+              {
+                "name": "filter",
+                "type": "*BinaryKeyEventFilter"
+              }
+            ],
+            "returns": "int64",
+            "errors": [],
+            "sql_bodies": {
+              "sqlite": "SELECT COUNT(*) FROM \"binary_key_events\" WHERE <filter>"
             }
           },
           {
@@ -3203,50 +3203,6 @@
             }
           },
           {
-            "name": "Upsert",
-            "params": [
-              {
-                "name": "input",
-                "type": "*CreateBinaryKeyEventInput"
-              },
-              {
-                "name": "target",
-                "type": "BinaryKeyEventConflictTarget"
-              }
-            ],
-            "returns": "*BinaryKeyEvent",
-            "errors": [
-              "ErrNilInput",
-              "ErrConstraintViolation"
-            ],
-            "notes": "One method over the generated BinaryKeyEventConflictTarget enum — the target argument selects the conflict columns at call time.",
-            "sql_bodies": {
-              "sqlite": "INSERT INTO \"binary_key_events\" (<columns>) VALUES (<values>) ON CONFLICT (<conflict_target>) DO UPDATE SET <excluded> RETURNING \"id\""
-            }
-          },
-          {
-            "name": "UpsertMany",
-            "params": [
-              {
-                "name": "inputs",
-                "type": "[]*CreateBinaryKeyEventInput"
-              },
-              {
-                "name": "target",
-                "type": "BinaryKeyEventConflictTarget"
-              }
-            ],
-            "returns": "[]*BinaryKeyEvent",
-            "errors": [
-              "ErrNilInput",
-              "ErrConstraintViolation"
-            ],
-            "notes": "Batched in generation.batch_size chunks over the same BinaryKeyEventConflictTarget enum Upsert takes. Inputs resolving to one target are deduped before the statement is built, last occurrence wins. Earlier chunks are not rolled back on a later failure — wrap in a transaction for atomicity.",
-            "sql_bodies": {
-              "sqlite": "INSERT INTO \"binary_key_events\" (<columns>) VALUES <values> ON CONFLICT (<conflict_target>) DO UPDATE SET <excluded>"
-            }
-          },
-          {
             "name": "Update",
             "params": [
               {
@@ -3308,6 +3264,50 @@
             "notes": "Idempotent — returns an empty slice when no row matches. ErrEmptyFilter when the filter produces no conditions.",
             "sql_bodies": {
               "sqlite": "UPDATE \"binary_key_events\" SET <set> WHERE <filter> RETURNING \"id\""
+            }
+          },
+          {
+            "name": "Upsert",
+            "params": [
+              {
+                "name": "input",
+                "type": "*CreateBinaryKeyEventInput"
+              },
+              {
+                "name": "target",
+                "type": "BinaryKeyEventConflictTarget"
+              }
+            ],
+            "returns": "*BinaryKeyEvent",
+            "errors": [
+              "ErrNilInput",
+              "ErrConstraintViolation"
+            ],
+            "notes": "One method over the generated BinaryKeyEventConflictTarget enum — the target argument selects the conflict columns at call time.",
+            "sql_bodies": {
+              "sqlite": "INSERT INTO \"binary_key_events\" (<columns>) VALUES (<values>) ON CONFLICT (<conflict_target>) DO UPDATE SET <excluded> RETURNING \"id\""
+            }
+          },
+          {
+            "name": "UpsertMany",
+            "params": [
+              {
+                "name": "inputs",
+                "type": "[]*CreateBinaryKeyEventInput"
+              },
+              {
+                "name": "target",
+                "type": "BinaryKeyEventConflictTarget"
+              }
+            ],
+            "returns": "[]*BinaryKeyEvent",
+            "errors": [
+              "ErrNilInput",
+              "ErrConstraintViolation"
+            ],
+            "notes": "Batched in generation.batch_size chunks over the same BinaryKeyEventConflictTarget enum Upsert takes. Inputs resolving to one target are deduped before the statement is built, last occurrence wins. Earlier chunks are not rolled back on a later failure — wrap in a transaction for atomicity.",
+            "sql_bodies": {
+              "sqlite": "INSERT INTO \"binary_key_events\" (<columns>) VALUES <values> ON CONFLICT (<conflict_target>) DO UPDATE SET <excluded>"
             }
           },
           {
@@ -3537,20 +3537,6 @@
             }
           },
           {
-            "name": "Count",
-            "params": [
-              {
-                "name": "filter",
-                "type": "*CategoryFilter"
-              }
-            ],
-            "returns": "int64",
-            "errors": [],
-            "sql_bodies": {
-              "sqlite": "SELECT COUNT(*) FROM \"categories\" WHERE <filter>"
-            }
-          },
-          {
             "name": "Exists",
             "params": [
               {
@@ -3576,6 +3562,20 @@
             "errors": [],
             "sql_bodies": {
               "sqlite": "SELECT EXISTS(SELECT 1 FROM \"categories\" WHERE <filter>)"
+            }
+          },
+          {
+            "name": "Count",
+            "params": [
+              {
+                "name": "filter",
+                "type": "*CategoryFilter"
+              }
+            ],
+            "returns": "int64",
+            "errors": [],
+            "sql_bodies": {
+              "sqlite": "SELECT COUNT(*) FROM \"categories\" WHERE <filter>"
             }
           },
           {
@@ -3657,50 +3657,6 @@
             }
           },
           {
-            "name": "Upsert",
-            "params": [
-              {
-                "name": "input",
-                "type": "*CreateCategoryInput"
-              },
-              {
-                "name": "target",
-                "type": "CategoryConflictTarget"
-              }
-            ],
-            "returns": "*Category",
-            "errors": [
-              "ErrNilInput",
-              "ErrConstraintViolation"
-            ],
-            "notes": "One method over the generated CategoryConflictTarget enum — the target argument selects the conflict columns at call time.",
-            "sql_bodies": {
-              "sqlite": "INSERT INTO \"categories\" (<columns>) VALUES (<values>) ON CONFLICT (<conflict_target>) DO UPDATE SET <excluded> RETURNING \"id\""
-            }
-          },
-          {
-            "name": "UpsertMany",
-            "params": [
-              {
-                "name": "inputs",
-                "type": "[]*CreateCategoryInput"
-              },
-              {
-                "name": "target",
-                "type": "CategoryConflictTarget"
-              }
-            ],
-            "returns": "[]*Category",
-            "errors": [
-              "ErrNilInput",
-              "ErrConstraintViolation"
-            ],
-            "notes": "Batched in generation.batch_size chunks over the same CategoryConflictTarget enum Upsert takes. Inputs resolving to one target are deduped before the statement is built, last occurrence wins. Earlier chunks are not rolled back on a later failure — wrap in a transaction for atomicity.",
-            "sql_bodies": {
-              "sqlite": "INSERT INTO \"categories\" (<columns>) VALUES <values> ON CONFLICT (<conflict_target>) DO UPDATE SET <excluded>"
-            }
-          },
-          {
             "name": "Update",
             "params": [
               {
@@ -3762,6 +3718,50 @@
             "notes": "Idempotent — returns an empty slice when no row matches. ErrEmptyFilter when the filter produces no conditions.",
             "sql_bodies": {
               "sqlite": "UPDATE \"categories\" SET <set> WHERE <filter> RETURNING \"id\""
+            }
+          },
+          {
+            "name": "Upsert",
+            "params": [
+              {
+                "name": "input",
+                "type": "*CreateCategoryInput"
+              },
+              {
+                "name": "target",
+                "type": "CategoryConflictTarget"
+              }
+            ],
+            "returns": "*Category",
+            "errors": [
+              "ErrNilInput",
+              "ErrConstraintViolation"
+            ],
+            "notes": "One method over the generated CategoryConflictTarget enum — the target argument selects the conflict columns at call time.",
+            "sql_bodies": {
+              "sqlite": "INSERT INTO \"categories\" (<columns>) VALUES (<values>) ON CONFLICT (<conflict_target>) DO UPDATE SET <excluded> RETURNING \"id\""
+            }
+          },
+          {
+            "name": "UpsertMany",
+            "params": [
+              {
+                "name": "inputs",
+                "type": "[]*CreateCategoryInput"
+              },
+              {
+                "name": "target",
+                "type": "CategoryConflictTarget"
+              }
+            ],
+            "returns": "[]*Category",
+            "errors": [
+              "ErrNilInput",
+              "ErrConstraintViolation"
+            ],
+            "notes": "Batched in generation.batch_size chunks over the same CategoryConflictTarget enum Upsert takes. Inputs resolving to one target are deduped before the statement is built, last occurrence wins. Earlier chunks are not rolled back on a later failure — wrap in a transaction for atomicity.",
+            "sql_bodies": {
+              "sqlite": "INSERT INTO \"categories\" (<columns>) VALUES <values> ON CONFLICT (<conflict_target>) DO UPDATE SET <excluded>"
             }
           },
           {
@@ -4197,20 +4197,6 @@
             }
           },
           {
-            "name": "Count",
-            "params": [
-              {
-                "name": "filter",
-                "type": "*DigitLeadingColumnFilter"
-              }
-            ],
-            "returns": "int64",
-            "errors": [],
-            "sql_bodies": {
-              "sqlite": "SELECT COUNT(*) FROM \"digit_leading_columns\" WHERE <filter>"
-            }
-          },
-          {
             "name": "Exists",
             "params": [
               {
@@ -4236,6 +4222,20 @@
             "errors": [],
             "sql_bodies": {
               "sqlite": "SELECT EXISTS(SELECT 1 FROM \"digit_leading_columns\" WHERE <filter>)"
+            }
+          },
+          {
+            "name": "Count",
+            "params": [
+              {
+                "name": "filter",
+                "type": "*DigitLeadingColumnFilter"
+              }
+            ],
+            "returns": "int64",
+            "errors": [],
+            "sql_bodies": {
+              "sqlite": "SELECT COUNT(*) FROM \"digit_leading_columns\" WHERE <filter>"
             }
           },
           {
@@ -4317,50 +4317,6 @@
             }
           },
           {
-            "name": "Upsert",
-            "params": [
-              {
-                "name": "input",
-                "type": "*CreateDigitLeadingColumnInput"
-              },
-              {
-                "name": "target",
-                "type": "DigitLeadingColumnConflictTarget"
-              }
-            ],
-            "returns": "*DigitLeadingColumn",
-            "errors": [
-              "ErrNilInput",
-              "ErrConstraintViolation"
-            ],
-            "notes": "One method over the generated DigitLeadingColumnConflictTarget enum — the target argument selects the conflict columns at call time.",
-            "sql_bodies": {
-              "sqlite": "INSERT INTO \"digit_leading_columns\" (<columns>) VALUES (<values>) ON CONFLICT (<conflict_target>) DO UPDATE SET <excluded> RETURNING \"id\""
-            }
-          },
-          {
-            "name": "UpsertMany",
-            "params": [
-              {
-                "name": "inputs",
-                "type": "[]*CreateDigitLeadingColumnInput"
-              },
-              {
-                "name": "target",
-                "type": "DigitLeadingColumnConflictTarget"
-              }
-            ],
-            "returns": "[]*DigitLeadingColumn",
-            "errors": [
-              "ErrNilInput",
-              "ErrConstraintViolation"
-            ],
-            "notes": "Batched in generation.batch_size chunks over the same DigitLeadingColumnConflictTarget enum Upsert takes. Inputs resolving to one target are deduped before the statement is built, last occurrence wins. Earlier chunks are not rolled back on a later failure — wrap in a transaction for atomicity.",
-            "sql_bodies": {
-              "sqlite": "INSERT INTO \"digit_leading_columns\" (<columns>) VALUES <values> ON CONFLICT (<conflict_target>) DO UPDATE SET <excluded>"
-            }
-          },
-          {
             "name": "Update",
             "params": [
               {
@@ -4422,6 +4378,50 @@
             "notes": "Idempotent — returns an empty slice when no row matches. ErrEmptyFilter when the filter produces no conditions.",
             "sql_bodies": {
               "sqlite": "UPDATE \"digit_leading_columns\" SET <set> WHERE <filter> RETURNING \"id\""
+            }
+          },
+          {
+            "name": "Upsert",
+            "params": [
+              {
+                "name": "input",
+                "type": "*CreateDigitLeadingColumnInput"
+              },
+              {
+                "name": "target",
+                "type": "DigitLeadingColumnConflictTarget"
+              }
+            ],
+            "returns": "*DigitLeadingColumn",
+            "errors": [
+              "ErrNilInput",
+              "ErrConstraintViolation"
+            ],
+            "notes": "One method over the generated DigitLeadingColumnConflictTarget enum — the target argument selects the conflict columns at call time.",
+            "sql_bodies": {
+              "sqlite": "INSERT INTO \"digit_leading_columns\" (<columns>) VALUES (<values>) ON CONFLICT (<conflict_target>) DO UPDATE SET <excluded> RETURNING \"id\""
+            }
+          },
+          {
+            "name": "UpsertMany",
+            "params": [
+              {
+                "name": "inputs",
+                "type": "[]*CreateDigitLeadingColumnInput"
+              },
+              {
+                "name": "target",
+                "type": "DigitLeadingColumnConflictTarget"
+              }
+            ],
+            "returns": "[]*DigitLeadingColumn",
+            "errors": [
+              "ErrNilInput",
+              "ErrConstraintViolation"
+            ],
+            "notes": "Batched in generation.batch_size chunks over the same DigitLeadingColumnConflictTarget enum Upsert takes. Inputs resolving to one target are deduped before the statement is built, last occurrence wins. Earlier chunks are not rolled back on a later failure — wrap in a transaction for atomicity.",
+            "sql_bodies": {
+              "sqlite": "INSERT INTO \"digit_leading_columns\" (<columns>) VALUES <values> ON CONFLICT (<conflict_target>) DO UPDATE SET <excluded>"
             }
           },
           {
@@ -4689,20 +4689,6 @@
             }
           },
           {
-            "name": "Count",
-            "params": [
-              {
-                "name": "filter",
-                "type": "*DocumentFilter"
-              }
-            ],
-            "returns": "int64",
-            "errors": [],
-            "sql_bodies": {
-              "sqlite": "SELECT COUNT(*) FROM \"documents\" WHERE <filter>"
-            }
-          },
-          {
             "name": "Exists",
             "params": [
               {
@@ -4728,6 +4714,20 @@
             "errors": [],
             "sql_bodies": {
               "sqlite": "SELECT EXISTS(SELECT 1 FROM \"documents\" WHERE <filter>)"
+            }
+          },
+          {
+            "name": "Count",
+            "params": [
+              {
+                "name": "filter",
+                "type": "*DocumentFilter"
+              }
+            ],
+            "returns": "int64",
+            "errors": [],
+            "sql_bodies": {
+              "sqlite": "SELECT COUNT(*) FROM \"documents\" WHERE <filter>"
             }
           },
           {
@@ -4809,50 +4809,6 @@
             }
           },
           {
-            "name": "Upsert",
-            "params": [
-              {
-                "name": "input",
-                "type": "*CreateDocumentInput"
-              },
-              {
-                "name": "target",
-                "type": "DocumentConflictTarget"
-              }
-            ],
-            "returns": "*Document",
-            "errors": [
-              "ErrNilInput",
-              "ErrConstraintViolation"
-            ],
-            "notes": "One method over the generated DocumentConflictTarget enum — the target argument selects the conflict columns at call time.",
-            "sql_bodies": {
-              "sqlite": "INSERT INTO \"documents\" (<columns>) VALUES (<values>) ON CONFLICT (<conflict_target>) DO UPDATE SET <excluded> RETURNING \"id\""
-            }
-          },
-          {
-            "name": "UpsertMany",
-            "params": [
-              {
-                "name": "inputs",
-                "type": "[]*CreateDocumentInput"
-              },
-              {
-                "name": "target",
-                "type": "DocumentConflictTarget"
-              }
-            ],
-            "returns": "[]*Document",
-            "errors": [
-              "ErrNilInput",
-              "ErrConstraintViolation"
-            ],
-            "notes": "Batched in generation.batch_size chunks over the same DocumentConflictTarget enum Upsert takes. Inputs resolving to one target are deduped before the statement is built, last occurrence wins. Earlier chunks are not rolled back on a later failure — wrap in a transaction for atomicity.",
-            "sql_bodies": {
-              "sqlite": "INSERT INTO \"documents\" (<columns>) VALUES <values> ON CONFLICT (<conflict_target>) DO UPDATE SET <excluded>"
-            }
-          },
-          {
             "name": "Update",
             "params": [
               {
@@ -4914,6 +4870,50 @@
             "notes": "Idempotent — returns an empty slice when no row matches. ErrEmptyFilter when the filter produces no conditions.",
             "sql_bodies": {
               "sqlite": "UPDATE \"documents\" SET <set> WHERE <filter> RETURNING \"id\""
+            }
+          },
+          {
+            "name": "Upsert",
+            "params": [
+              {
+                "name": "input",
+                "type": "*CreateDocumentInput"
+              },
+              {
+                "name": "target",
+                "type": "DocumentConflictTarget"
+              }
+            ],
+            "returns": "*Document",
+            "errors": [
+              "ErrNilInput",
+              "ErrConstraintViolation"
+            ],
+            "notes": "One method over the generated DocumentConflictTarget enum — the target argument selects the conflict columns at call time.",
+            "sql_bodies": {
+              "sqlite": "INSERT INTO \"documents\" (<columns>) VALUES (<values>) ON CONFLICT (<conflict_target>) DO UPDATE SET <excluded> RETURNING \"id\""
+            }
+          },
+          {
+            "name": "UpsertMany",
+            "params": [
+              {
+                "name": "inputs",
+                "type": "[]*CreateDocumentInput"
+              },
+              {
+                "name": "target",
+                "type": "DocumentConflictTarget"
+              }
+            ],
+            "returns": "[]*Document",
+            "errors": [
+              "ErrNilInput",
+              "ErrConstraintViolation"
+            ],
+            "notes": "Batched in generation.batch_size chunks over the same DocumentConflictTarget enum Upsert takes. Inputs resolving to one target are deduped before the statement is built, last occurrence wins. Earlier chunks are not rolled back on a later failure — wrap in a transaction for atomicity.",
+            "sql_bodies": {
+              "sqlite": "INSERT INTO \"documents\" (<columns>) VALUES <values> ON CONFLICT (<conflict_target>) DO UPDATE SET <excluded>"
             }
           },
           {
@@ -5103,20 +5103,6 @@
             }
           },
           {
-            "name": "Count",
-            "params": [
-              {
-                "name": "filter",
-                "type": "*KeyOnlyRowFilter"
-              }
-            ],
-            "returns": "int64",
-            "errors": [],
-            "sql_bodies": {
-              "sqlite": "SELECT COUNT(*) FROM \"key_only_rows\" WHERE <filter>"
-            }
-          },
-          {
             "name": "Exists",
             "params": [
               {
@@ -5142,6 +5128,20 @@
             "errors": [],
             "sql_bodies": {
               "sqlite": "SELECT EXISTS(SELECT 1 FROM \"key_only_rows\" WHERE <filter>)"
+            }
+          },
+          {
+            "name": "Count",
+            "params": [
+              {
+                "name": "filter",
+                "type": "*KeyOnlyRowFilter"
+              }
+            ],
+            "returns": "int64",
+            "errors": [],
+            "sql_bodies": {
+              "sqlite": "SELECT COUNT(*) FROM \"key_only_rows\" WHERE <filter>"
             }
           },
           {
@@ -5223,50 +5223,6 @@
             }
           },
           {
-            "name": "Upsert",
-            "params": [
-              {
-                "name": "input",
-                "type": "*CreateKeyOnlyRowInput"
-              },
-              {
-                "name": "target",
-                "type": "KeyOnlyRowConflictTarget"
-              }
-            ],
-            "returns": "*KeyOnlyRow",
-            "errors": [
-              "ErrNilInput",
-              "ErrConstraintViolation"
-            ],
-            "notes": "One method over the generated KeyOnlyRowConflictTarget enum — the target argument selects the conflict columns at call time.",
-            "sql_bodies": {
-              "sqlite": "INSERT INTO \"key_only_rows\" (<columns>) VALUES (<values>) ON CONFLICT (<conflict_target>) DO UPDATE SET <excluded> RETURNING \"id\""
-            }
-          },
-          {
-            "name": "UpsertMany",
-            "params": [
-              {
-                "name": "inputs",
-                "type": "[]*CreateKeyOnlyRowInput"
-              },
-              {
-                "name": "target",
-                "type": "KeyOnlyRowConflictTarget"
-              }
-            ],
-            "returns": "[]*KeyOnlyRow",
-            "errors": [
-              "ErrNilInput",
-              "ErrConstraintViolation"
-            ],
-            "notes": "Batched in generation.batch_size chunks over the same KeyOnlyRowConflictTarget enum Upsert takes. Inputs resolving to one target are deduped before the statement is built, last occurrence wins. Earlier chunks are not rolled back on a later failure — wrap in a transaction for atomicity.",
-            "sql_bodies": {
-              "sqlite": "INSERT INTO \"key_only_rows\" (<columns>) VALUES <values> ON CONFLICT (<conflict_target>) DO UPDATE SET <excluded>"
-            }
-          },
-          {
             "name": "Update",
             "params": [
               {
@@ -5328,6 +5284,50 @@
             "notes": "Idempotent — returns an empty slice when no row matches. ErrEmptyFilter when the filter produces no conditions.",
             "sql_bodies": {
               "sqlite": "UPDATE \"key_only_rows\" SET <set> WHERE <filter> RETURNING \"id\""
+            }
+          },
+          {
+            "name": "Upsert",
+            "params": [
+              {
+                "name": "input",
+                "type": "*CreateKeyOnlyRowInput"
+              },
+              {
+                "name": "target",
+                "type": "KeyOnlyRowConflictTarget"
+              }
+            ],
+            "returns": "*KeyOnlyRow",
+            "errors": [
+              "ErrNilInput",
+              "ErrConstraintViolation"
+            ],
+            "notes": "One method over the generated KeyOnlyRowConflictTarget enum — the target argument selects the conflict columns at call time.",
+            "sql_bodies": {
+              "sqlite": "INSERT INTO \"key_only_rows\" (<columns>) VALUES (<values>) ON CONFLICT (<conflict_target>) DO UPDATE SET <excluded> RETURNING \"id\""
+            }
+          },
+          {
+            "name": "UpsertMany",
+            "params": [
+              {
+                "name": "inputs",
+                "type": "[]*CreateKeyOnlyRowInput"
+              },
+              {
+                "name": "target",
+                "type": "KeyOnlyRowConflictTarget"
+              }
+            ],
+            "returns": "[]*KeyOnlyRow",
+            "errors": [
+              "ErrNilInput",
+              "ErrConstraintViolation"
+            ],
+            "notes": "Batched in generation.batch_size chunks over the same KeyOnlyRowConflictTarget enum Upsert takes. Inputs resolving to one target are deduped before the statement is built, last occurrence wins. Earlier chunks are not rolled back on a later failure — wrap in a transaction for atomicity.",
+            "sql_bodies": {
+              "sqlite": "INSERT INTO \"key_only_rows\" (<columns>) VALUES <values> ON CONFLICT (<conflict_target>) DO UPDATE SET <excluded>"
             }
           },
           {
@@ -5568,20 +5568,6 @@
             }
           },
           {
-            "name": "Count",
-            "params": [
-              {
-                "name": "filter",
-                "type": "*OrderFilter"
-              }
-            ],
-            "returns": "int64",
-            "errors": [],
-            "sql_bodies": {
-              "sqlite": "SELECT COUNT(*) FROM \"orders\" WHERE <filter>"
-            }
-          },
-          {
             "name": "Exists",
             "params": [
               {
@@ -5607,6 +5593,20 @@
             "errors": [],
             "sql_bodies": {
               "sqlite": "SELECT EXISTS(SELECT 1 FROM \"orders\" WHERE <filter>)"
+            }
+          },
+          {
+            "name": "Count",
+            "params": [
+              {
+                "name": "filter",
+                "type": "*OrderFilter"
+              }
+            ],
+            "returns": "int64",
+            "errors": [],
+            "sql_bodies": {
+              "sqlite": "SELECT COUNT(*) FROM \"orders\" WHERE <filter>"
             }
           },
           {
@@ -5688,50 +5688,6 @@
             }
           },
           {
-            "name": "Upsert",
-            "params": [
-              {
-                "name": "input",
-                "type": "*CreateOrderInput"
-              },
-              {
-                "name": "target",
-                "type": "OrderConflictTarget"
-              }
-            ],
-            "returns": "*Order",
-            "errors": [
-              "ErrNilInput",
-              "ErrConstraintViolation"
-            ],
-            "notes": "One method over the generated OrderConflictTarget enum — the target argument selects the conflict columns at call time.",
-            "sql_bodies": {
-              "sqlite": "INSERT INTO \"orders\" (<columns>) VALUES (<values>) ON CONFLICT (<conflict_target>) DO UPDATE SET <excluded> RETURNING \"id\""
-            }
-          },
-          {
-            "name": "UpsertMany",
-            "params": [
-              {
-                "name": "inputs",
-                "type": "[]*CreateOrderInput"
-              },
-              {
-                "name": "target",
-                "type": "OrderConflictTarget"
-              }
-            ],
-            "returns": "[]*Order",
-            "errors": [
-              "ErrNilInput",
-              "ErrConstraintViolation"
-            ],
-            "notes": "Batched in generation.batch_size chunks over the same OrderConflictTarget enum Upsert takes. Inputs resolving to one target are deduped before the statement is built, last occurrence wins. Earlier chunks are not rolled back on a later failure — wrap in a transaction for atomicity.",
-            "sql_bodies": {
-              "sqlite": "INSERT INTO \"orders\" (<columns>) VALUES <values> ON CONFLICT (<conflict_target>) DO UPDATE SET <excluded>"
-            }
-          },
-          {
             "name": "Update",
             "params": [
               {
@@ -5792,6 +5748,50 @@
             "notes": "Idempotent — returns an empty slice when no row matches. ErrEmptyFilter when the filter produces no conditions.",
             "sql_bodies": {
               "sqlite": "UPDATE \"orders\" SET <set> WHERE <filter> RETURNING \"id\""
+            }
+          },
+          {
+            "name": "Upsert",
+            "params": [
+              {
+                "name": "input",
+                "type": "*CreateOrderInput"
+              },
+              {
+                "name": "target",
+                "type": "OrderConflictTarget"
+              }
+            ],
+            "returns": "*Order",
+            "errors": [
+              "ErrNilInput",
+              "ErrConstraintViolation"
+            ],
+            "notes": "One method over the generated OrderConflictTarget enum — the target argument selects the conflict columns at call time.",
+            "sql_bodies": {
+              "sqlite": "INSERT INTO \"orders\" (<columns>) VALUES (<values>) ON CONFLICT (<conflict_target>) DO UPDATE SET <excluded> RETURNING \"id\""
+            }
+          },
+          {
+            "name": "UpsertMany",
+            "params": [
+              {
+                "name": "inputs",
+                "type": "[]*CreateOrderInput"
+              },
+              {
+                "name": "target",
+                "type": "OrderConflictTarget"
+              }
+            ],
+            "returns": "[]*Order",
+            "errors": [
+              "ErrNilInput",
+              "ErrConstraintViolation"
+            ],
+            "notes": "Batched in generation.batch_size chunks over the same OrderConflictTarget enum Upsert takes. Inputs resolving to one target are deduped before the statement is built, last occurrence wins. Earlier chunks are not rolled back on a later failure — wrap in a transaction for atomicity.",
+            "sql_bodies": {
+              "sqlite": "INSERT INTO \"orders\" (<columns>) VALUES <values> ON CONFLICT (<conflict_target>) DO UPDATE SET <excluded>"
             }
           },
           {
@@ -6060,20 +6060,6 @@
             }
           },
           {
-            "name": "Count",
-            "params": [
-              {
-                "name": "filter",
-                "type": "*OrderItemFilter"
-              }
-            ],
-            "returns": "int64",
-            "errors": [],
-            "sql_bodies": {
-              "sqlite": "SELECT COUNT(*) FROM \"order_items\" WHERE <filter>"
-            }
-          },
-          {
             "name": "Exists",
             "params": [
               {
@@ -6099,6 +6085,20 @@
             "errors": [],
             "sql_bodies": {
               "sqlite": "SELECT EXISTS(SELECT 1 FROM \"order_items\" WHERE <filter>)"
+            }
+          },
+          {
+            "name": "Count",
+            "params": [
+              {
+                "name": "filter",
+                "type": "*OrderItemFilter"
+              }
+            ],
+            "returns": "int64",
+            "errors": [],
+            "sql_bodies": {
+              "sqlite": "SELECT COUNT(*) FROM \"order_items\" WHERE <filter>"
             }
           },
           {
@@ -6180,50 +6180,6 @@
             }
           },
           {
-            "name": "Upsert",
-            "params": [
-              {
-                "name": "input",
-                "type": "*CreateOrderItemInput"
-              },
-              {
-                "name": "target",
-                "type": "OrderItemConflictTarget"
-              }
-            ],
-            "returns": "*OrderItem",
-            "errors": [
-              "ErrNilInput",
-              "ErrConstraintViolation"
-            ],
-            "notes": "One method over the generated OrderItemConflictTarget enum — the target argument selects the conflict columns at call time.",
-            "sql_bodies": {
-              "sqlite": "INSERT INTO \"order_items\" (<columns>) VALUES (<values>) ON CONFLICT (<conflict_target>) DO UPDATE SET <excluded> RETURNING \"id\""
-            }
-          },
-          {
-            "name": "UpsertMany",
-            "params": [
-              {
-                "name": "inputs",
-                "type": "[]*CreateOrderItemInput"
-              },
-              {
-                "name": "target",
-                "type": "OrderItemConflictTarget"
-              }
-            ],
-            "returns": "[]*OrderItem",
-            "errors": [
-              "ErrNilInput",
-              "ErrConstraintViolation"
-            ],
-            "notes": "Batched in generation.batch_size chunks over the same OrderItemConflictTarget enum Upsert takes. Inputs resolving to one target are deduped before the statement is built, last occurrence wins. Earlier chunks are not rolled back on a later failure — wrap in a transaction for atomicity.",
-            "sql_bodies": {
-              "sqlite": "INSERT INTO \"order_items\" (<columns>) VALUES <values> ON CONFLICT (<conflict_target>) DO UPDATE SET <excluded>"
-            }
-          },
-          {
             "name": "Update",
             "params": [
               {
@@ -6285,6 +6241,50 @@
             "notes": "Idempotent — returns an empty slice when no row matches. ErrEmptyFilter when the filter produces no conditions.",
             "sql_bodies": {
               "sqlite": "UPDATE \"order_items\" SET <set> WHERE <filter> RETURNING \"id\""
+            }
+          },
+          {
+            "name": "Upsert",
+            "params": [
+              {
+                "name": "input",
+                "type": "*CreateOrderItemInput"
+              },
+              {
+                "name": "target",
+                "type": "OrderItemConflictTarget"
+              }
+            ],
+            "returns": "*OrderItem",
+            "errors": [
+              "ErrNilInput",
+              "ErrConstraintViolation"
+            ],
+            "notes": "One method over the generated OrderItemConflictTarget enum — the target argument selects the conflict columns at call time.",
+            "sql_bodies": {
+              "sqlite": "INSERT INTO \"order_items\" (<columns>) VALUES (<values>) ON CONFLICT (<conflict_target>) DO UPDATE SET <excluded> RETURNING \"id\""
+            }
+          },
+          {
+            "name": "UpsertMany",
+            "params": [
+              {
+                "name": "inputs",
+                "type": "[]*CreateOrderItemInput"
+              },
+              {
+                "name": "target",
+                "type": "OrderItemConflictTarget"
+              }
+            ],
+            "returns": "[]*OrderItem",
+            "errors": [
+              "ErrNilInput",
+              "ErrConstraintViolation"
+            ],
+            "notes": "Batched in generation.batch_size chunks over the same OrderItemConflictTarget enum Upsert takes. Inputs resolving to one target are deduped before the statement is built, last occurrence wins. Earlier chunks are not rolled back on a later failure — wrap in a transaction for atomicity.",
+            "sql_bodies": {
+              "sqlite": "INSERT INTO \"order_items\" (<columns>) VALUES <values> ON CONFLICT (<conflict_target>) DO UPDATE SET <excluded>"
             }
           },
           {
@@ -6526,20 +6526,6 @@
             }
           },
           {
-            "name": "Count",
-            "params": [
-              {
-                "name": "filter",
-                "type": "*OwnerFilter"
-              }
-            ],
-            "returns": "int64",
-            "errors": [],
-            "sql_bodies": {
-              "sqlite": "SELECT COUNT(*) FROM \"owners\" WHERE <filter>"
-            }
-          },
-          {
             "name": "Exists",
             "params": [
               {
@@ -6565,6 +6551,20 @@
             "errors": [],
             "sql_bodies": {
               "sqlite": "SELECT EXISTS(SELECT 1 FROM \"owners\" WHERE <filter>)"
+            }
+          },
+          {
+            "name": "Count",
+            "params": [
+              {
+                "name": "filter",
+                "type": "*OwnerFilter"
+              }
+            ],
+            "returns": "int64",
+            "errors": [],
+            "sql_bodies": {
+              "sqlite": "SELECT COUNT(*) FROM \"owners\" WHERE <filter>"
             }
           },
           {
@@ -6646,50 +6646,6 @@
             }
           },
           {
-            "name": "Upsert",
-            "params": [
-              {
-                "name": "input",
-                "type": "*CreateOwnerInput"
-              },
-              {
-                "name": "target",
-                "type": "OwnerConflictTarget"
-              }
-            ],
-            "returns": "*Owner",
-            "errors": [
-              "ErrNilInput",
-              "ErrConstraintViolation"
-            ],
-            "notes": "One method over the generated OwnerConflictTarget enum — the target argument selects the conflict columns at call time.",
-            "sql_bodies": {
-              "sqlite": "INSERT INTO \"owners\" (<columns>) VALUES (<values>) ON CONFLICT (<conflict_target>) DO UPDATE SET <excluded> RETURNING \"owner_key\""
-            }
-          },
-          {
-            "name": "UpsertMany",
-            "params": [
-              {
-                "name": "inputs",
-                "type": "[]*CreateOwnerInput"
-              },
-              {
-                "name": "target",
-                "type": "OwnerConflictTarget"
-              }
-            ],
-            "returns": "[]*Owner",
-            "errors": [
-              "ErrNilInput",
-              "ErrConstraintViolation"
-            ],
-            "notes": "Batched in generation.batch_size chunks over the same OwnerConflictTarget enum Upsert takes. Inputs resolving to one target are deduped before the statement is built, last occurrence wins. Earlier chunks are not rolled back on a later failure — wrap in a transaction for atomicity.",
-            "sql_bodies": {
-              "sqlite": "INSERT INTO \"owners\" (<columns>) VALUES <values> ON CONFLICT (<conflict_target>) DO UPDATE SET <excluded>"
-            }
-          },
-          {
             "name": "Update",
             "params": [
               {
@@ -6751,6 +6707,50 @@
             "notes": "Idempotent — returns an empty slice when no row matches. ErrEmptyFilter when the filter produces no conditions.",
             "sql_bodies": {
               "sqlite": "UPDATE \"owners\" SET <set> WHERE <filter> RETURNING \"owner_key\""
+            }
+          },
+          {
+            "name": "Upsert",
+            "params": [
+              {
+                "name": "input",
+                "type": "*CreateOwnerInput"
+              },
+              {
+                "name": "target",
+                "type": "OwnerConflictTarget"
+              }
+            ],
+            "returns": "*Owner",
+            "errors": [
+              "ErrNilInput",
+              "ErrConstraintViolation"
+            ],
+            "notes": "One method over the generated OwnerConflictTarget enum — the target argument selects the conflict columns at call time.",
+            "sql_bodies": {
+              "sqlite": "INSERT INTO \"owners\" (<columns>) VALUES (<values>) ON CONFLICT (<conflict_target>) DO UPDATE SET <excluded> RETURNING \"owner_key\""
+            }
+          },
+          {
+            "name": "UpsertMany",
+            "params": [
+              {
+                "name": "inputs",
+                "type": "[]*CreateOwnerInput"
+              },
+              {
+                "name": "target",
+                "type": "OwnerConflictTarget"
+              }
+            ],
+            "returns": "[]*Owner",
+            "errors": [
+              "ErrNilInput",
+              "ErrConstraintViolation"
+            ],
+            "notes": "Batched in generation.batch_size chunks over the same OwnerConflictTarget enum Upsert takes. Inputs resolving to one target are deduped before the statement is built, last occurrence wins. Earlier chunks are not rolled back on a later failure — wrap in a transaction for atomicity.",
+            "sql_bodies": {
+              "sqlite": "INSERT INTO \"owners\" (<columns>) VALUES <values> ON CONFLICT (<conflict_target>) DO UPDATE SET <excluded>"
             }
           },
           {
@@ -6942,20 +6942,6 @@
             }
           },
           {
-            "name": "Count",
-            "params": [
-              {
-                "name": "filter",
-                "type": "*OwnerBadgeFilter"
-              }
-            ],
-            "returns": "int64",
-            "errors": [],
-            "sql_bodies": {
-              "sqlite": "SELECT COUNT(*) FROM \"owner_badges\" WHERE <filter>"
-            }
-          },
-          {
             "name": "Exists",
             "params": [
               {
@@ -6981,6 +6967,20 @@
             "errors": [],
             "sql_bodies": {
               "sqlite": "SELECT EXISTS(SELECT 1 FROM \"owner_badges\" WHERE <filter>)"
+            }
+          },
+          {
+            "name": "Count",
+            "params": [
+              {
+                "name": "filter",
+                "type": "*OwnerBadgeFilter"
+              }
+            ],
+            "returns": "int64",
+            "errors": [],
+            "sql_bodies": {
+              "sqlite": "SELECT COUNT(*) FROM \"owner_badges\" WHERE <filter>"
             }
           },
           {
@@ -7062,50 +7062,6 @@
             }
           },
           {
-            "name": "Upsert",
-            "params": [
-              {
-                "name": "input",
-                "type": "*CreateOwnerBadgeInput"
-              },
-              {
-                "name": "target",
-                "type": "OwnerBadgeConflictTarget"
-              }
-            ],
-            "returns": "*OwnerBadge",
-            "errors": [
-              "ErrNilInput",
-              "ErrConstraintViolation"
-            ],
-            "notes": "One method over the generated OwnerBadgeConflictTarget enum — the target argument selects the conflict columns at call time.",
-            "sql_bodies": {
-              "sqlite": "INSERT INTO \"owner_badges\" (<columns>) VALUES (<values>) ON CONFLICT (<conflict_target>) DO UPDATE SET <excluded>"
-            }
-          },
-          {
-            "name": "UpsertMany",
-            "params": [
-              {
-                "name": "inputs",
-                "type": "[]*CreateOwnerBadgeInput"
-              },
-              {
-                "name": "target",
-                "type": "OwnerBadgeConflictTarget"
-              }
-            ],
-            "returns": "[]*OwnerBadge",
-            "errors": [
-              "ErrNilInput",
-              "ErrConstraintViolation"
-            ],
-            "notes": "Batched in generation.batch_size chunks over the same OwnerBadgeConflictTarget enum Upsert takes. Inputs resolving to one target are deduped before the statement is built, last occurrence wins. Earlier chunks are not rolled back on a later failure — wrap in a transaction for atomicity.",
-            "sql_bodies": {
-              "sqlite": "INSERT INTO \"owner_badges\" (<columns>) VALUES <values> ON CONFLICT (<conflict_target>) DO UPDATE SET <excluded>"
-            }
-          },
-          {
             "name": "Update",
             "params": [
               {
@@ -7167,6 +7123,50 @@
             "notes": "Idempotent — returns an empty slice when no row matches. ErrEmptyFilter when the filter produces no conditions.",
             "sql_bodies": {
               "sqlite": "UPDATE \"owner_badges\" SET <set> WHERE <filter> RETURNING \"owner_id\", \"badge_code\""
+            }
+          },
+          {
+            "name": "Upsert",
+            "params": [
+              {
+                "name": "input",
+                "type": "*CreateOwnerBadgeInput"
+              },
+              {
+                "name": "target",
+                "type": "OwnerBadgeConflictTarget"
+              }
+            ],
+            "returns": "*OwnerBadge",
+            "errors": [
+              "ErrNilInput",
+              "ErrConstraintViolation"
+            ],
+            "notes": "One method over the generated OwnerBadgeConflictTarget enum — the target argument selects the conflict columns at call time.",
+            "sql_bodies": {
+              "sqlite": "INSERT INTO \"owner_badges\" (<columns>) VALUES (<values>) ON CONFLICT (<conflict_target>) DO UPDATE SET <excluded>"
+            }
+          },
+          {
+            "name": "UpsertMany",
+            "params": [
+              {
+                "name": "inputs",
+                "type": "[]*CreateOwnerBadgeInput"
+              },
+              {
+                "name": "target",
+                "type": "OwnerBadgeConflictTarget"
+              }
+            ],
+            "returns": "[]*OwnerBadge",
+            "errors": [
+              "ErrNilInput",
+              "ErrConstraintViolation"
+            ],
+            "notes": "Batched in generation.batch_size chunks over the same OwnerBadgeConflictTarget enum Upsert takes. Inputs resolving to one target are deduped before the statement is built, last occurrence wins. Earlier chunks are not rolled back on a later failure — wrap in a transaction for atomicity.",
+            "sql_bodies": {
+              "sqlite": "INSERT INTO \"owner_badges\" (<columns>) VALUES <values> ON CONFLICT (<conflict_target>) DO UPDATE SET <excluded>"
             }
           },
           {
@@ -7381,20 +7381,6 @@
             }
           },
           {
-            "name": "Count",
-            "params": [
-              {
-                "name": "filter",
-                "type": "*OwnerProfileFilter"
-              }
-            ],
-            "returns": "int64",
-            "errors": [],
-            "sql_bodies": {
-              "sqlite": "SELECT COUNT(*) FROM \"owner_profiles\" WHERE <filter>"
-            }
-          },
-          {
             "name": "Exists",
             "params": [
               {
@@ -7420,6 +7406,20 @@
             "errors": [],
             "sql_bodies": {
               "sqlite": "SELECT EXISTS(SELECT 1 FROM \"owner_profiles\" WHERE <filter>)"
+            }
+          },
+          {
+            "name": "Count",
+            "params": [
+              {
+                "name": "filter",
+                "type": "*OwnerProfileFilter"
+              }
+            ],
+            "returns": "int64",
+            "errors": [],
+            "sql_bodies": {
+              "sqlite": "SELECT COUNT(*) FROM \"owner_profiles\" WHERE <filter>"
             }
           },
           {
@@ -7501,50 +7501,6 @@
             }
           },
           {
-            "name": "Upsert",
-            "params": [
-              {
-                "name": "input",
-                "type": "*CreateOwnerProfileInput"
-              },
-              {
-                "name": "target",
-                "type": "OwnerProfileConflictTarget"
-              }
-            ],
-            "returns": "*OwnerProfile",
-            "errors": [
-              "ErrNilInput",
-              "ErrConstraintViolation"
-            ],
-            "notes": "One method over the generated OwnerProfileConflictTarget enum — the target argument selects the conflict columns at call time.",
-            "sql_bodies": {
-              "sqlite": "INSERT INTO \"owner_profiles\" (<columns>) VALUES (<values>) ON CONFLICT (<conflict_target>) DO UPDATE SET <excluded> RETURNING \"id\""
-            }
-          },
-          {
-            "name": "UpsertMany",
-            "params": [
-              {
-                "name": "inputs",
-                "type": "[]*CreateOwnerProfileInput"
-              },
-              {
-                "name": "target",
-                "type": "OwnerProfileConflictTarget"
-              }
-            ],
-            "returns": "[]*OwnerProfile",
-            "errors": [
-              "ErrNilInput",
-              "ErrConstraintViolation"
-            ],
-            "notes": "Batched in generation.batch_size chunks over the same OwnerProfileConflictTarget enum Upsert takes. Inputs resolving to one target are deduped before the statement is built, last occurrence wins. Earlier chunks are not rolled back on a later failure — wrap in a transaction for atomicity.",
-            "sql_bodies": {
-              "sqlite": "INSERT INTO \"owner_profiles\" (<columns>) VALUES <values> ON CONFLICT (<conflict_target>) DO UPDATE SET <excluded>"
-            }
-          },
-          {
             "name": "Update",
             "params": [
               {
@@ -7606,6 +7562,50 @@
             "notes": "Idempotent — returns an empty slice when no row matches. ErrEmptyFilter when the filter produces no conditions.",
             "sql_bodies": {
               "sqlite": "UPDATE \"owner_profiles\" SET <set> WHERE <filter> RETURNING \"id\""
+            }
+          },
+          {
+            "name": "Upsert",
+            "params": [
+              {
+                "name": "input",
+                "type": "*CreateOwnerProfileInput"
+              },
+              {
+                "name": "target",
+                "type": "OwnerProfileConflictTarget"
+              }
+            ],
+            "returns": "*OwnerProfile",
+            "errors": [
+              "ErrNilInput",
+              "ErrConstraintViolation"
+            ],
+            "notes": "One method over the generated OwnerProfileConflictTarget enum — the target argument selects the conflict columns at call time.",
+            "sql_bodies": {
+              "sqlite": "INSERT INTO \"owner_profiles\" (<columns>) VALUES (<values>) ON CONFLICT (<conflict_target>) DO UPDATE SET <excluded> RETURNING \"id\""
+            }
+          },
+          {
+            "name": "UpsertMany",
+            "params": [
+              {
+                "name": "inputs",
+                "type": "[]*CreateOwnerProfileInput"
+              },
+              {
+                "name": "target",
+                "type": "OwnerProfileConflictTarget"
+              }
+            ],
+            "returns": "[]*OwnerProfile",
+            "errors": [
+              "ErrNilInput",
+              "ErrConstraintViolation"
+            ],
+            "notes": "Batched in generation.batch_size chunks over the same OwnerProfileConflictTarget enum Upsert takes. Inputs resolving to one target are deduped before the statement is built, last occurrence wins. Earlier chunks are not rolled back on a later failure — wrap in a transaction for atomicity.",
+            "sql_bodies": {
+              "sqlite": "INSERT INTO \"owner_profiles\" (<columns>) VALUES <values> ON CONFLICT (<conflict_target>) DO UPDATE SET <excluded>"
             }
           },
           {
@@ -7893,20 +7893,6 @@
             }
           },
           {
-            "name": "Count",
-            "params": [
-              {
-                "name": "filter",
-                "type": "*ProductFilter"
-              }
-            ],
-            "returns": "int64",
-            "errors": [],
-            "sql_bodies": {
-              "sqlite": "SELECT COUNT(*) FROM \"products\" WHERE <filter>"
-            }
-          },
-          {
             "name": "Exists",
             "params": [
               {
@@ -7932,6 +7918,20 @@
             "errors": [],
             "sql_bodies": {
               "sqlite": "SELECT EXISTS(SELECT 1 FROM \"products\" WHERE <filter>)"
+            }
+          },
+          {
+            "name": "Count",
+            "params": [
+              {
+                "name": "filter",
+                "type": "*ProductFilter"
+              }
+            ],
+            "returns": "int64",
+            "errors": [],
+            "sql_bodies": {
+              "sqlite": "SELECT COUNT(*) FROM \"products\" WHERE <filter>"
             }
           },
           {
@@ -8013,50 +8013,6 @@
             }
           },
           {
-            "name": "Upsert",
-            "params": [
-              {
-                "name": "input",
-                "type": "*CreateProductInput"
-              },
-              {
-                "name": "target",
-                "type": "ProductConflictTarget"
-              }
-            ],
-            "returns": "*Product",
-            "errors": [
-              "ErrNilInput",
-              "ErrConstraintViolation"
-            ],
-            "notes": "One method over the generated ProductConflictTarget enum — the target argument selects the conflict columns at call time.",
-            "sql_bodies": {
-              "sqlite": "INSERT INTO \"products\" (<columns>) VALUES (<values>) ON CONFLICT (<conflict_target>) DO UPDATE SET <excluded> RETURNING \"id\""
-            }
-          },
-          {
-            "name": "UpsertMany",
-            "params": [
-              {
-                "name": "inputs",
-                "type": "[]*CreateProductInput"
-              },
-              {
-                "name": "target",
-                "type": "ProductConflictTarget"
-              }
-            ],
-            "returns": "[]*Product",
-            "errors": [
-              "ErrNilInput",
-              "ErrConstraintViolation"
-            ],
-            "notes": "Batched in generation.batch_size chunks over the same ProductConflictTarget enum Upsert takes. Inputs resolving to one target are deduped before the statement is built, last occurrence wins. Earlier chunks are not rolled back on a later failure — wrap in a transaction for atomicity.",
-            "sql_bodies": {
-              "sqlite": "INSERT INTO \"products\" (<columns>) VALUES <values> ON CONFLICT (<conflict_target>) DO UPDATE SET <excluded>"
-            }
-          },
-          {
             "name": "Update",
             "params": [
               {
@@ -8118,6 +8074,50 @@
             "notes": "Idempotent — returns an empty slice when no row matches. ErrEmptyFilter when the filter produces no conditions.",
             "sql_bodies": {
               "sqlite": "UPDATE \"products\" SET <set> WHERE <filter> RETURNING \"id\""
+            }
+          },
+          {
+            "name": "Upsert",
+            "params": [
+              {
+                "name": "input",
+                "type": "*CreateProductInput"
+              },
+              {
+                "name": "target",
+                "type": "ProductConflictTarget"
+              }
+            ],
+            "returns": "*Product",
+            "errors": [
+              "ErrNilInput",
+              "ErrConstraintViolation"
+            ],
+            "notes": "One method over the generated ProductConflictTarget enum — the target argument selects the conflict columns at call time.",
+            "sql_bodies": {
+              "sqlite": "INSERT INTO \"products\" (<columns>) VALUES (<values>) ON CONFLICT (<conflict_target>) DO UPDATE SET <excluded> RETURNING \"id\""
+            }
+          },
+          {
+            "name": "UpsertMany",
+            "params": [
+              {
+                "name": "inputs",
+                "type": "[]*CreateProductInput"
+              },
+              {
+                "name": "target",
+                "type": "ProductConflictTarget"
+              }
+            ],
+            "returns": "[]*Product",
+            "errors": [
+              "ErrNilInput",
+              "ErrConstraintViolation"
+            ],
+            "notes": "Batched in generation.batch_size chunks over the same ProductConflictTarget enum Upsert takes. Inputs resolving to one target are deduped before the statement is built, last occurrence wins. Earlier chunks are not rolled back on a later failure — wrap in a transaction for atomicity.",
+            "sql_bodies": {
+              "sqlite": "INSERT INTO \"products\" (<columns>) VALUES <values> ON CONFLICT (<conflict_target>) DO UPDATE SET <excluded>"
             }
           },
           {
@@ -8599,20 +8599,6 @@
             }
           },
           {
-            "name": "Count",
-            "params": [
-              {
-                "name": "filter",
-                "type": "*ProductTagLabelFilter"
-              }
-            ],
-            "returns": "int64",
-            "errors": [],
-            "sql_bodies": {
-              "sqlite": "SELECT COUNT(*) FROM \"product_tag_labels\" WHERE <filter>"
-            }
-          },
-          {
             "name": "Exists",
             "params": [
               {
@@ -8638,6 +8624,20 @@
             "errors": [],
             "sql_bodies": {
               "sqlite": "SELECT EXISTS(SELECT 1 FROM \"product_tag_labels\" WHERE <filter>)"
+            }
+          },
+          {
+            "name": "Count",
+            "params": [
+              {
+                "name": "filter",
+                "type": "*ProductTagLabelFilter"
+              }
+            ],
+            "returns": "int64",
+            "errors": [],
+            "sql_bodies": {
+              "sqlite": "SELECT COUNT(*) FROM \"product_tag_labels\" WHERE <filter>"
             }
           },
           {
@@ -8719,50 +8719,6 @@
             }
           },
           {
-            "name": "Upsert",
-            "params": [
-              {
-                "name": "input",
-                "type": "*CreateProductTagLabelInput"
-              },
-              {
-                "name": "target",
-                "type": "ProductTagLabelConflictTarget"
-              }
-            ],
-            "returns": "*ProductTagLabel",
-            "errors": [
-              "ErrNilInput",
-              "ErrConstraintViolation"
-            ],
-            "notes": "One method over the generated ProductTagLabelConflictTarget enum — the target argument selects the conflict columns at call time.",
-            "sql_bodies": {
-              "sqlite": "INSERT INTO \"product_tag_labels\" (<columns>) VALUES (<values>) ON CONFLICT (<conflict_target>) DO UPDATE SET <excluded>"
-            }
-          },
-          {
-            "name": "UpsertMany",
-            "params": [
-              {
-                "name": "inputs",
-                "type": "[]*CreateProductTagLabelInput"
-              },
-              {
-                "name": "target",
-                "type": "ProductTagLabelConflictTarget"
-              }
-            ],
-            "returns": "[]*ProductTagLabel",
-            "errors": [
-              "ErrNilInput",
-              "ErrConstraintViolation"
-            ],
-            "notes": "Batched in generation.batch_size chunks over the same ProductTagLabelConflictTarget enum Upsert takes. Inputs resolving to one target are deduped before the statement is built, last occurrence wins. Earlier chunks are not rolled back on a later failure — wrap in a transaction for atomicity.",
-            "sql_bodies": {
-              "sqlite": "INSERT INTO \"product_tag_labels\" (<columns>) VALUES <values> ON CONFLICT (<conflict_target>) DO UPDATE SET <excluded>"
-            }
-          },
-          {
             "name": "Update",
             "params": [
               {
@@ -8824,6 +8780,50 @@
             "notes": "Idempotent — returns an empty slice when no row matches. ErrEmptyFilter when the filter produces no conditions.",
             "sql_bodies": {
               "sqlite": "UPDATE \"product_tag_labels\" SET <set> WHERE <filter> RETURNING \"product_id\", \"tag_name\", \"label\""
+            }
+          },
+          {
+            "name": "Upsert",
+            "params": [
+              {
+                "name": "input",
+                "type": "*CreateProductTagLabelInput"
+              },
+              {
+                "name": "target",
+                "type": "ProductTagLabelConflictTarget"
+              }
+            ],
+            "returns": "*ProductTagLabel",
+            "errors": [
+              "ErrNilInput",
+              "ErrConstraintViolation"
+            ],
+            "notes": "One method over the generated ProductTagLabelConflictTarget enum — the target argument selects the conflict columns at call time.",
+            "sql_bodies": {
+              "sqlite": "INSERT INTO \"product_tag_labels\" (<columns>) VALUES (<values>) ON CONFLICT (<conflict_target>) DO UPDATE SET <excluded>"
+            }
+          },
+          {
+            "name": "UpsertMany",
+            "params": [
+              {
+                "name": "inputs",
+                "type": "[]*CreateProductTagLabelInput"
+              },
+              {
+                "name": "target",
+                "type": "ProductTagLabelConflictTarget"
+              }
+            ],
+            "returns": "[]*ProductTagLabel",
+            "errors": [
+              "ErrNilInput",
+              "ErrConstraintViolation"
+            ],
+            "notes": "Batched in generation.batch_size chunks over the same ProductTagLabelConflictTarget enum Upsert takes. Inputs resolving to one target are deduped before the statement is built, last occurrence wins. Earlier chunks are not rolled back on a later failure — wrap in a transaction for atomicity.",
+            "sql_bodies": {
+              "sqlite": "INSERT INTO \"product_tag_labels\" (<columns>) VALUES <values> ON CONFLICT (<conflict_target>) DO UPDATE SET <excluded>"
             }
           },
           {
@@ -9072,20 +9072,6 @@
             }
           },
           {
-            "name": "Count",
-            "params": [
-              {
-                "name": "filter",
-                "type": "*ProfileFilter"
-              }
-            ],
-            "returns": "int64",
-            "errors": [],
-            "sql_bodies": {
-              "sqlite": "SELECT COUNT(*) FROM \"profiles\" WHERE <filter>"
-            }
-          },
-          {
             "name": "Exists",
             "params": [
               {
@@ -9111,6 +9097,20 @@
             "errors": [],
             "sql_bodies": {
               "sqlite": "SELECT EXISTS(SELECT 1 FROM \"profiles\" WHERE <filter>)"
+            }
+          },
+          {
+            "name": "Count",
+            "params": [
+              {
+                "name": "filter",
+                "type": "*ProfileFilter"
+              }
+            ],
+            "returns": "int64",
+            "errors": [],
+            "sql_bodies": {
+              "sqlite": "SELECT COUNT(*) FROM \"profiles\" WHERE <filter>"
             }
           },
           {
@@ -9192,50 +9192,6 @@
             }
           },
           {
-            "name": "Upsert",
-            "params": [
-              {
-                "name": "input",
-                "type": "*CreateProfileInput"
-              },
-              {
-                "name": "target",
-                "type": "ProfileConflictTarget"
-              }
-            ],
-            "returns": "*Profile",
-            "errors": [
-              "ErrNilInput",
-              "ErrConstraintViolation"
-            ],
-            "notes": "One method over the generated ProfileConflictTarget enum — the target argument selects the conflict columns at call time.",
-            "sql_bodies": {
-              "sqlite": "INSERT INTO \"profiles\" (<columns>) VALUES (<values>) ON CONFLICT (<conflict_target>) DO UPDATE SET <excluded> RETURNING \"id\""
-            }
-          },
-          {
-            "name": "UpsertMany",
-            "params": [
-              {
-                "name": "inputs",
-                "type": "[]*CreateProfileInput"
-              },
-              {
-                "name": "target",
-                "type": "ProfileConflictTarget"
-              }
-            ],
-            "returns": "[]*Profile",
-            "errors": [
-              "ErrNilInput",
-              "ErrConstraintViolation"
-            ],
-            "notes": "Batched in generation.batch_size chunks over the same ProfileConflictTarget enum Upsert takes. Inputs resolving to one target are deduped before the statement is built, last occurrence wins. Earlier chunks are not rolled back on a later failure — wrap in a transaction for atomicity.",
-            "sql_bodies": {
-              "sqlite": "INSERT INTO \"profiles\" (<columns>) VALUES <values> ON CONFLICT (<conflict_target>) DO UPDATE SET <excluded>"
-            }
-          },
-          {
             "name": "Update",
             "params": [
               {
@@ -9297,6 +9253,50 @@
             "notes": "Idempotent — returns an empty slice when no row matches. ErrEmptyFilter when the filter produces no conditions.",
             "sql_bodies": {
               "sqlite": "UPDATE \"profiles\" SET <set> WHERE <filter> RETURNING \"id\""
+            }
+          },
+          {
+            "name": "Upsert",
+            "params": [
+              {
+                "name": "input",
+                "type": "*CreateProfileInput"
+              },
+              {
+                "name": "target",
+                "type": "ProfileConflictTarget"
+              }
+            ],
+            "returns": "*Profile",
+            "errors": [
+              "ErrNilInput",
+              "ErrConstraintViolation"
+            ],
+            "notes": "One method over the generated ProfileConflictTarget enum — the target argument selects the conflict columns at call time.",
+            "sql_bodies": {
+              "sqlite": "INSERT INTO \"profiles\" (<columns>) VALUES (<values>) ON CONFLICT (<conflict_target>) DO UPDATE SET <excluded> RETURNING \"id\""
+            }
+          },
+          {
+            "name": "UpsertMany",
+            "params": [
+              {
+                "name": "inputs",
+                "type": "[]*CreateProfileInput"
+              },
+              {
+                "name": "target",
+                "type": "ProfileConflictTarget"
+              }
+            ],
+            "returns": "[]*Profile",
+            "errors": [
+              "ErrNilInput",
+              "ErrConstraintViolation"
+            ],
+            "notes": "Batched in generation.batch_size chunks over the same ProfileConflictTarget enum Upsert takes. Inputs resolving to one target are deduped before the statement is built, last occurrence wins. Earlier chunks are not rolled back on a later failure — wrap in a transaction for atomicity.",
+            "sql_bodies": {
+              "sqlite": "INSERT INTO \"profiles\" (<columns>) VALUES <values> ON CONFLICT (<conflict_target>) DO UPDATE SET <excluded>"
             }
           },
           {
@@ -9616,20 +9616,6 @@
             }
           },
           {
-            "name": "Count",
-            "params": [
-              {
-                "name": "filter",
-                "type": "*ReservedWordColumnFilter"
-              }
-            ],
-            "returns": "int64",
-            "errors": [],
-            "sql_bodies": {
-              "sqlite": "SELECT COUNT(*) FROM \"reserved_word_columns\" WHERE <filter>"
-            }
-          },
-          {
             "name": "Exists",
             "params": [
               {
@@ -9655,6 +9641,20 @@
             "errors": [],
             "sql_bodies": {
               "sqlite": "SELECT EXISTS(SELECT 1 FROM \"reserved_word_columns\" WHERE <filter>)"
+            }
+          },
+          {
+            "name": "Count",
+            "params": [
+              {
+                "name": "filter",
+                "type": "*ReservedWordColumnFilter"
+              }
+            ],
+            "returns": "int64",
+            "errors": [],
+            "sql_bodies": {
+              "sqlite": "SELECT COUNT(*) FROM \"reserved_word_columns\" WHERE <filter>"
             }
           },
           {
@@ -9736,50 +9736,6 @@
             }
           },
           {
-            "name": "Upsert",
-            "params": [
-              {
-                "name": "input",
-                "type": "*CreateReservedWordColumnInput"
-              },
-              {
-                "name": "target",
-                "type": "ReservedWordColumnConflictTarget"
-              }
-            ],
-            "returns": "*ReservedWordColumn",
-            "errors": [
-              "ErrNilInput",
-              "ErrConstraintViolation"
-            ],
-            "notes": "One method over the generated ReservedWordColumnConflictTarget enum — the target argument selects the conflict columns at call time.",
-            "sql_bodies": {
-              "sqlite": "INSERT INTO \"reserved_word_columns\" (<columns>) VALUES (<values>) ON CONFLICT (<conflict_target>) DO UPDATE SET <excluded> RETURNING \"id\""
-            }
-          },
-          {
-            "name": "UpsertMany",
-            "params": [
-              {
-                "name": "inputs",
-                "type": "[]*CreateReservedWordColumnInput"
-              },
-              {
-                "name": "target",
-                "type": "ReservedWordColumnConflictTarget"
-              }
-            ],
-            "returns": "[]*ReservedWordColumn",
-            "errors": [
-              "ErrNilInput",
-              "ErrConstraintViolation"
-            ],
-            "notes": "Batched in generation.batch_size chunks over the same ReservedWordColumnConflictTarget enum Upsert takes. Inputs resolving to one target are deduped before the statement is built, last occurrence wins. Earlier chunks are not rolled back on a later failure — wrap in a transaction for atomicity.",
-            "sql_bodies": {
-              "sqlite": "INSERT INTO \"reserved_word_columns\" (<columns>) VALUES <values> ON CONFLICT (<conflict_target>) DO UPDATE SET <excluded>"
-            }
-          },
-          {
             "name": "Update",
             "params": [
               {
@@ -9841,6 +9797,50 @@
             "notes": "Idempotent — returns an empty slice when no row matches. ErrEmptyFilter when the filter produces no conditions.",
             "sql_bodies": {
               "sqlite": "UPDATE \"reserved_word_columns\" SET <set> WHERE <filter> RETURNING \"id\""
+            }
+          },
+          {
+            "name": "Upsert",
+            "params": [
+              {
+                "name": "input",
+                "type": "*CreateReservedWordColumnInput"
+              },
+              {
+                "name": "target",
+                "type": "ReservedWordColumnConflictTarget"
+              }
+            ],
+            "returns": "*ReservedWordColumn",
+            "errors": [
+              "ErrNilInput",
+              "ErrConstraintViolation"
+            ],
+            "notes": "One method over the generated ReservedWordColumnConflictTarget enum — the target argument selects the conflict columns at call time.",
+            "sql_bodies": {
+              "sqlite": "INSERT INTO \"reserved_word_columns\" (<columns>) VALUES (<values>) ON CONFLICT (<conflict_target>) DO UPDATE SET <excluded> RETURNING \"id\""
+            }
+          },
+          {
+            "name": "UpsertMany",
+            "params": [
+              {
+                "name": "inputs",
+                "type": "[]*CreateReservedWordColumnInput"
+              },
+              {
+                "name": "target",
+                "type": "ReservedWordColumnConflictTarget"
+              }
+            ],
+            "returns": "[]*ReservedWordColumn",
+            "errors": [
+              "ErrNilInput",
+              "ErrConstraintViolation"
+            ],
+            "notes": "Batched in generation.batch_size chunks over the same ReservedWordColumnConflictTarget enum Upsert takes. Inputs resolving to one target are deduped before the statement is built, last occurrence wins. Earlier chunks are not rolled back on a later failure — wrap in a transaction for atomicity.",
+            "sql_bodies": {
+              "sqlite": "INSERT INTO \"reserved_word_columns\" (<columns>) VALUES <values> ON CONFLICT (<conflict_target>) DO UPDATE SET <excluded>"
             }
           },
           {
@@ -10116,20 +10116,6 @@
             }
           },
           {
-            "name": "Count",
-            "params": [
-              {
-                "name": "filter",
-                "type": "*SluggedRowFilter"
-              }
-            ],
-            "returns": "int64",
-            "errors": [],
-            "sql_bodies": {
-              "sqlite": "SELECT COUNT(*) FROM \"slugged_rows\" WHERE <filter>"
-            }
-          },
-          {
             "name": "Exists",
             "params": [
               {
@@ -10155,6 +10141,20 @@
             "errors": [],
             "sql_bodies": {
               "sqlite": "SELECT EXISTS(SELECT 1 FROM \"slugged_rows\" WHERE <filter>)"
+            }
+          },
+          {
+            "name": "Count",
+            "params": [
+              {
+                "name": "filter",
+                "type": "*SluggedRowFilter"
+              }
+            ],
+            "returns": "int64",
+            "errors": [],
+            "sql_bodies": {
+              "sqlite": "SELECT COUNT(*) FROM \"slugged_rows\" WHERE <filter>"
             }
           },
           {
@@ -10236,50 +10236,6 @@
             }
           },
           {
-            "name": "Upsert",
-            "params": [
-              {
-                "name": "input",
-                "type": "*CreateSluggedRowInput"
-              },
-              {
-                "name": "target",
-                "type": "SluggedRowConflictTarget"
-              }
-            ],
-            "returns": "*SluggedRow",
-            "errors": [
-              "ErrNilInput",
-              "ErrConstraintViolation"
-            ],
-            "notes": "One method over the generated SluggedRowConflictTarget enum — the target argument selects the conflict columns at call time.",
-            "sql_bodies": {
-              "sqlite": "INSERT INTO \"slugged_rows\" (<columns>) VALUES (<values>) ON CONFLICT (<conflict_target>) DO UPDATE SET <excluded> RETURNING \"id\""
-            }
-          },
-          {
-            "name": "UpsertMany",
-            "params": [
-              {
-                "name": "inputs",
-                "type": "[]*CreateSluggedRowInput"
-              },
-              {
-                "name": "target",
-                "type": "SluggedRowConflictTarget"
-              }
-            ],
-            "returns": "[]*SluggedRow",
-            "errors": [
-              "ErrNilInput",
-              "ErrConstraintViolation"
-            ],
-            "notes": "Batched in generation.batch_size chunks over the same SluggedRowConflictTarget enum Upsert takes. Inputs resolving to one target are deduped before the statement is built, last occurrence wins. Earlier chunks are not rolled back on a later failure — wrap in a transaction for atomicity.",
-            "sql_bodies": {
-              "sqlite": "INSERT INTO \"slugged_rows\" (<columns>) VALUES <values> ON CONFLICT (<conflict_target>) DO UPDATE SET <excluded>"
-            }
-          },
-          {
             "name": "Update",
             "params": [
               {
@@ -10341,6 +10297,50 @@
             "notes": "Idempotent — returns an empty slice when no row matches. ErrEmptyFilter when the filter produces no conditions.",
             "sql_bodies": {
               "sqlite": "UPDATE \"slugged_rows\" SET <set> WHERE <filter> RETURNING \"id\""
+            }
+          },
+          {
+            "name": "Upsert",
+            "params": [
+              {
+                "name": "input",
+                "type": "*CreateSluggedRowInput"
+              },
+              {
+                "name": "target",
+                "type": "SluggedRowConflictTarget"
+              }
+            ],
+            "returns": "*SluggedRow",
+            "errors": [
+              "ErrNilInput",
+              "ErrConstraintViolation"
+            ],
+            "notes": "One method over the generated SluggedRowConflictTarget enum — the target argument selects the conflict columns at call time.",
+            "sql_bodies": {
+              "sqlite": "INSERT INTO \"slugged_rows\" (<columns>) VALUES (<values>) ON CONFLICT (<conflict_target>) DO UPDATE SET <excluded> RETURNING \"id\""
+            }
+          },
+          {
+            "name": "UpsertMany",
+            "params": [
+              {
+                "name": "inputs",
+                "type": "[]*CreateSluggedRowInput"
+              },
+              {
+                "name": "target",
+                "type": "SluggedRowConflictTarget"
+              }
+            ],
+            "returns": "[]*SluggedRow",
+            "errors": [
+              "ErrNilInput",
+              "ErrConstraintViolation"
+            ],
+            "notes": "Batched in generation.batch_size chunks over the same SluggedRowConflictTarget enum Upsert takes. Inputs resolving to one target are deduped before the statement is built, last occurrence wins. Earlier chunks are not rolled back on a later failure — wrap in a transaction for atomicity.",
+            "sql_bodies": {
+              "sqlite": "INSERT INTO \"slugged_rows\" (<columns>) VALUES <values> ON CONFLICT (<conflict_target>) DO UPDATE SET <excluded>"
             }
           },
           {
@@ -10555,20 +10555,6 @@
             }
           },
           {
-            "name": "Count",
-            "params": [
-              {
-                "name": "filter",
-                "type": "*TagFilter"
-              }
-            ],
-            "returns": "int64",
-            "errors": [],
-            "sql_bodies": {
-              "sqlite": "SELECT COUNT(*) FROM \"tags\" WHERE <filter> AND \"is_deleted\" = FALSE"
-            }
-          },
-          {
             "name": "Exists",
             "params": [
               {
@@ -10594,6 +10580,20 @@
             "errors": [],
             "sql_bodies": {
               "sqlite": "SELECT EXISTS(SELECT 1 FROM \"tags\" WHERE <filter> AND \"is_deleted\" = FALSE)"
+            }
+          },
+          {
+            "name": "Count",
+            "params": [
+              {
+                "name": "filter",
+                "type": "*TagFilter"
+              }
+            ],
+            "returns": "int64",
+            "errors": [],
+            "sql_bodies": {
+              "sqlite": "SELECT COUNT(*) FROM \"tags\" WHERE <filter> AND \"is_deleted\" = FALSE"
             }
           },
           {
@@ -10675,50 +10675,6 @@
             }
           },
           {
-            "name": "Upsert",
-            "params": [
-              {
-                "name": "input",
-                "type": "*CreateTagInput"
-              },
-              {
-                "name": "target",
-                "type": "TagConflictTarget"
-              }
-            ],
-            "returns": "*Tag",
-            "errors": [
-              "ErrNilInput",
-              "ErrConstraintViolation"
-            ],
-            "notes": "One method over the generated TagConflictTarget enum — the target argument selects the conflict columns at call time.",
-            "sql_bodies": {
-              "sqlite": "INSERT INTO \"tags\" (<columns>) VALUES (<values>) ON CONFLICT (<conflict_target>) DO UPDATE SET <excluded> RETURNING \"id\""
-            }
-          },
-          {
-            "name": "UpsertMany",
-            "params": [
-              {
-                "name": "inputs",
-                "type": "[]*CreateTagInput"
-              },
-              {
-                "name": "target",
-                "type": "TagConflictTarget"
-              }
-            ],
-            "returns": "[]*Tag",
-            "errors": [
-              "ErrNilInput",
-              "ErrConstraintViolation"
-            ],
-            "notes": "Batched in generation.batch_size chunks over the same TagConflictTarget enum Upsert takes. Inputs resolving to one target are deduped before the statement is built, last occurrence wins. Earlier chunks are not rolled back on a later failure — wrap in a transaction for atomicity.",
-            "sql_bodies": {
-              "sqlite": "INSERT INTO \"tags\" (<columns>) VALUES <values> ON CONFLICT (<conflict_target>) DO UPDATE SET <excluded>"
-            }
-          },
-          {
             "name": "Update",
             "params": [
               {
@@ -10780,6 +10736,50 @@
             "notes": "Idempotent — returns an empty slice when no row matches. ErrEmptyFilter when the filter produces no conditions.",
             "sql_bodies": {
               "sqlite": "UPDATE \"tags\" SET <set> WHERE <filter> RETURNING \"id\""
+            }
+          },
+          {
+            "name": "Upsert",
+            "params": [
+              {
+                "name": "input",
+                "type": "*CreateTagInput"
+              },
+              {
+                "name": "target",
+                "type": "TagConflictTarget"
+              }
+            ],
+            "returns": "*Tag",
+            "errors": [
+              "ErrNilInput",
+              "ErrConstraintViolation"
+            ],
+            "notes": "One method over the generated TagConflictTarget enum — the target argument selects the conflict columns at call time.",
+            "sql_bodies": {
+              "sqlite": "INSERT INTO \"tags\" (<columns>) VALUES (<values>) ON CONFLICT (<conflict_target>) DO UPDATE SET <excluded> RETURNING \"id\""
+            }
+          },
+          {
+            "name": "UpsertMany",
+            "params": [
+              {
+                "name": "inputs",
+                "type": "[]*CreateTagInput"
+              },
+              {
+                "name": "target",
+                "type": "TagConflictTarget"
+              }
+            ],
+            "returns": "[]*Tag",
+            "errors": [
+              "ErrNilInput",
+              "ErrConstraintViolation"
+            ],
+            "notes": "Batched in generation.batch_size chunks over the same TagConflictTarget enum Upsert takes. Inputs resolving to one target are deduped before the statement is built, last occurrence wins. Earlier chunks are not rolled back on a later failure — wrap in a transaction for atomicity.",
+            "sql_bodies": {
+              "sqlite": "INSERT INTO \"tags\" (<columns>) VALUES <values> ON CONFLICT (<conflict_target>) DO UPDATE SET <excluded>"
             }
           },
           {
@@ -11237,20 +11237,6 @@
             }
           },
           {
-            "name": "Count",
-            "params": [
-              {
-                "name": "filter",
-                "type": "*UserFilter"
-              }
-            ],
-            "returns": "int64",
-            "errors": [],
-            "sql_bodies": {
-              "sqlite": "SELECT COUNT(*) FROM \"users\" WHERE <filter>"
-            }
-          },
-          {
             "name": "Exists",
             "params": [
               {
@@ -11276,6 +11262,20 @@
             "errors": [],
             "sql_bodies": {
               "sqlite": "SELECT EXISTS(SELECT 1 FROM \"users\" WHERE <filter>)"
+            }
+          },
+          {
+            "name": "Count",
+            "params": [
+              {
+                "name": "filter",
+                "type": "*UserFilter"
+              }
+            ],
+            "returns": "int64",
+            "errors": [],
+            "sql_bodies": {
+              "sqlite": "SELECT COUNT(*) FROM \"users\" WHERE <filter>"
             }
           },
           {
@@ -11357,50 +11357,6 @@
             }
           },
           {
-            "name": "Upsert",
-            "params": [
-              {
-                "name": "input",
-                "type": "*CreateUserInput"
-              },
-              {
-                "name": "target",
-                "type": "UserConflictTarget"
-              }
-            ],
-            "returns": "*User",
-            "errors": [
-              "ErrNilInput",
-              "ErrConstraintViolation"
-            ],
-            "notes": "One method over the generated UserConflictTarget enum — the target argument selects the conflict columns at call time.",
-            "sql_bodies": {
-              "sqlite": "INSERT INTO \"users\" (<columns>) VALUES (<values>) ON CONFLICT (<conflict_target>) DO UPDATE SET <excluded> RETURNING \"id\""
-            }
-          },
-          {
-            "name": "UpsertMany",
-            "params": [
-              {
-                "name": "inputs",
-                "type": "[]*CreateUserInput"
-              },
-              {
-                "name": "target",
-                "type": "UserConflictTarget"
-              }
-            ],
-            "returns": "[]*User",
-            "errors": [
-              "ErrNilInput",
-              "ErrConstraintViolation"
-            ],
-            "notes": "Batched in generation.batch_size chunks over the same UserConflictTarget enum Upsert takes. Inputs resolving to one target are deduped before the statement is built, last occurrence wins. Earlier chunks are not rolled back on a later failure — wrap in a transaction for atomicity.",
-            "sql_bodies": {
-              "sqlite": "INSERT INTO \"users\" (<columns>) VALUES <values> ON CONFLICT (<conflict_target>) DO UPDATE SET <excluded>"
-            }
-          },
-          {
             "name": "Update",
             "params": [
               {
@@ -11462,6 +11418,50 @@
             "notes": "Idempotent — returns an empty slice when no row matches. ErrEmptyFilter when the filter produces no conditions.",
             "sql_bodies": {
               "sqlite": "UPDATE \"users\" SET <set> WHERE <filter> RETURNING \"id\""
+            }
+          },
+          {
+            "name": "Upsert",
+            "params": [
+              {
+                "name": "input",
+                "type": "*CreateUserInput"
+              },
+              {
+                "name": "target",
+                "type": "UserConflictTarget"
+              }
+            ],
+            "returns": "*User",
+            "errors": [
+              "ErrNilInput",
+              "ErrConstraintViolation"
+            ],
+            "notes": "One method over the generated UserConflictTarget enum — the target argument selects the conflict columns at call time.",
+            "sql_bodies": {
+              "sqlite": "INSERT INTO \"users\" (<columns>) VALUES (<values>) ON CONFLICT (<conflict_target>) DO UPDATE SET <excluded> RETURNING \"id\""
+            }
+          },
+          {
+            "name": "UpsertMany",
+            "params": [
+              {
+                "name": "inputs",
+                "type": "[]*CreateUserInput"
+              },
+              {
+                "name": "target",
+                "type": "UserConflictTarget"
+              }
+            ],
+            "returns": "[]*User",
+            "errors": [
+              "ErrNilInput",
+              "ErrConstraintViolation"
+            ],
+            "notes": "Batched in generation.batch_size chunks over the same UserConflictTarget enum Upsert takes. Inputs resolving to one target are deduped before the statement is built, last occurrence wins. Earlier chunks are not rolled back on a later failure — wrap in a transaction for atomicity.",
+            "sql_bodies": {
+              "sqlite": "INSERT INTO \"users\" (<columns>) VALUES <values> ON CONFLICT (<conflict_target>) DO UPDATE SET <excluded>"
             }
           },
           {
@@ -11729,20 +11729,6 @@
             }
           },
           {
-            "name": "Count",
-            "params": [
-              {
-                "name": "filter",
-                "type": "*UserCategoryFilter"
-              }
-            ],
-            "returns": "int64",
-            "errors": [],
-            "sql_bodies": {
-              "sqlite": "SELECT COUNT(*) FROM \"user_categories\" WHERE <filter>"
-            }
-          },
-          {
             "name": "Exists",
             "params": [
               {
@@ -11768,6 +11754,20 @@
             "errors": [],
             "sql_bodies": {
               "sqlite": "SELECT EXISTS(SELECT 1 FROM \"user_categories\" WHERE <filter>)"
+            }
+          },
+          {
+            "name": "Count",
+            "params": [
+              {
+                "name": "filter",
+                "type": "*UserCategoryFilter"
+              }
+            ],
+            "returns": "int64",
+            "errors": [],
+            "sql_bodies": {
+              "sqlite": "SELECT COUNT(*) FROM \"user_categories\" WHERE <filter>"
             }
           },
           {
@@ -11849,50 +11849,6 @@
             }
           },
           {
-            "name": "Upsert",
-            "params": [
-              {
-                "name": "input",
-                "type": "*CreateUserCategoryInput"
-              },
-              {
-                "name": "target",
-                "type": "UserCategoryConflictTarget"
-              }
-            ],
-            "returns": "*UserCategory",
-            "errors": [
-              "ErrNilInput",
-              "ErrConstraintViolation"
-            ],
-            "notes": "One method over the generated UserCategoryConflictTarget enum — the target argument selects the conflict columns at call time.",
-            "sql_bodies": {
-              "sqlite": "INSERT INTO \"user_categories\" (<columns>) VALUES (<values>) ON CONFLICT (<conflict_target>) DO UPDATE SET <excluded>"
-            }
-          },
-          {
-            "name": "UpsertMany",
-            "params": [
-              {
-                "name": "inputs",
-                "type": "[]*CreateUserCategoryInput"
-              },
-              {
-                "name": "target",
-                "type": "UserCategoryConflictTarget"
-              }
-            ],
-            "returns": "[]*UserCategory",
-            "errors": [
-              "ErrNilInput",
-              "ErrConstraintViolation"
-            ],
-            "notes": "Batched in generation.batch_size chunks over the same UserCategoryConflictTarget enum Upsert takes. Inputs resolving to one target are deduped before the statement is built, last occurrence wins. Earlier chunks are not rolled back on a later failure — wrap in a transaction for atomicity.",
-            "sql_bodies": {
-              "sqlite": "INSERT INTO \"user_categories\" (<columns>) VALUES <values> ON CONFLICT (<conflict_target>) DO UPDATE SET <excluded>"
-            }
-          },
-          {
             "name": "Update",
             "params": [
               {
@@ -11954,6 +11910,50 @@
             "notes": "Idempotent — returns an empty slice when no row matches. ErrEmptyFilter when the filter produces no conditions.",
             "sql_bodies": {
               "sqlite": "UPDATE \"user_categories\" SET <set> WHERE <filter> RETURNING \"user_id\", \"category_id\""
+            }
+          },
+          {
+            "name": "Upsert",
+            "params": [
+              {
+                "name": "input",
+                "type": "*CreateUserCategoryInput"
+              },
+              {
+                "name": "target",
+                "type": "UserCategoryConflictTarget"
+              }
+            ],
+            "returns": "*UserCategory",
+            "errors": [
+              "ErrNilInput",
+              "ErrConstraintViolation"
+            ],
+            "notes": "One method over the generated UserCategoryConflictTarget enum — the target argument selects the conflict columns at call time.",
+            "sql_bodies": {
+              "sqlite": "INSERT INTO \"user_categories\" (<columns>) VALUES (<values>) ON CONFLICT (<conflict_target>) DO UPDATE SET <excluded>"
+            }
+          },
+          {
+            "name": "UpsertMany",
+            "params": [
+              {
+                "name": "inputs",
+                "type": "[]*CreateUserCategoryInput"
+              },
+              {
+                "name": "target",
+                "type": "UserCategoryConflictTarget"
+              }
+            ],
+            "returns": "[]*UserCategory",
+            "errors": [
+              "ErrNilInput",
+              "ErrConstraintViolation"
+            ],
+            "notes": "Batched in generation.batch_size chunks over the same UserCategoryConflictTarget enum Upsert takes. Inputs resolving to one target are deduped before the statement is built, last occurrence wins. Earlier chunks are not rolled back on a later failure — wrap in a transaction for atomicity.",
+            "sql_bodies": {
+              "sqlite": "INSERT INTO \"user_categories\" (<columns>) VALUES <values> ON CONFLICT (<conflict_target>) DO UPDATE SET <excluded>"
             }
           },
           {
@@ -12193,20 +12193,6 @@
             }
           },
           {
-            "name": "Count",
-            "params": [
-              {
-                "name": "filter",
-                "type": "*WarehouseFilter"
-              }
-            ],
-            "returns": "int64",
-            "errors": [],
-            "sql_bodies": {
-              "sqlite": "SELECT COUNT(*) FROM \"warehouses\" WHERE <filter>"
-            }
-          },
-          {
             "name": "Exists",
             "params": [
               {
@@ -12232,6 +12218,20 @@
             "errors": [],
             "sql_bodies": {
               "sqlite": "SELECT EXISTS(SELECT 1 FROM \"warehouses\" WHERE <filter>)"
+            }
+          },
+          {
+            "name": "Count",
+            "params": [
+              {
+                "name": "filter",
+                "type": "*WarehouseFilter"
+              }
+            ],
+            "returns": "int64",
+            "errors": [],
+            "sql_bodies": {
+              "sqlite": "SELECT COUNT(*) FROM \"warehouses\" WHERE <filter>"
             }
           },
           {
@@ -12313,50 +12313,6 @@
             }
           },
           {
-            "name": "Upsert",
-            "params": [
-              {
-                "name": "input",
-                "type": "*CreateWarehouseInput"
-              },
-              {
-                "name": "target",
-                "type": "WarehouseConflictTarget"
-              }
-            ],
-            "returns": "*Warehouse",
-            "errors": [
-              "ErrNilInput",
-              "ErrConstraintViolation"
-            ],
-            "notes": "One method over the generated WarehouseConflictTarget enum — the target argument selects the conflict columns at call time.",
-            "sql_bodies": {
-              "sqlite": "INSERT INTO \"warehouses\" (<columns>) VALUES (<values>) ON CONFLICT (<conflict_target>) DO UPDATE SET <excluded> RETURNING \"id\""
-            }
-          },
-          {
-            "name": "UpsertMany",
-            "params": [
-              {
-                "name": "inputs",
-                "type": "[]*CreateWarehouseInput"
-              },
-              {
-                "name": "target",
-                "type": "WarehouseConflictTarget"
-              }
-            ],
-            "returns": "[]*Warehouse",
-            "errors": [
-              "ErrNilInput",
-              "ErrConstraintViolation"
-            ],
-            "notes": "Batched in generation.batch_size chunks over the same WarehouseConflictTarget enum Upsert takes. Inputs resolving to one target are deduped before the statement is built, last occurrence wins. Earlier chunks are not rolled back on a later failure — wrap in a transaction for atomicity.",
-            "sql_bodies": {
-              "sqlite": "INSERT INTO \"warehouses\" (<columns>) VALUES <values> ON CONFLICT (<conflict_target>) DO UPDATE SET <excluded>"
-            }
-          },
-          {
             "name": "Update",
             "params": [
               {
@@ -12418,6 +12374,50 @@
             "notes": "Idempotent — returns an empty slice when no row matches. ErrEmptyFilter when the filter produces no conditions.",
             "sql_bodies": {
               "sqlite": "UPDATE \"warehouses\" SET <set> WHERE <filter> RETURNING \"id\""
+            }
+          },
+          {
+            "name": "Upsert",
+            "params": [
+              {
+                "name": "input",
+                "type": "*CreateWarehouseInput"
+              },
+              {
+                "name": "target",
+                "type": "WarehouseConflictTarget"
+              }
+            ],
+            "returns": "*Warehouse",
+            "errors": [
+              "ErrNilInput",
+              "ErrConstraintViolation"
+            ],
+            "notes": "One method over the generated WarehouseConflictTarget enum — the target argument selects the conflict columns at call time.",
+            "sql_bodies": {
+              "sqlite": "INSERT INTO \"warehouses\" (<columns>) VALUES (<values>) ON CONFLICT (<conflict_target>) DO UPDATE SET <excluded> RETURNING \"id\""
+            }
+          },
+          {
+            "name": "UpsertMany",
+            "params": [
+              {
+                "name": "inputs",
+                "type": "[]*CreateWarehouseInput"
+              },
+              {
+                "name": "target",
+                "type": "WarehouseConflictTarget"
+              }
+            ],
+            "returns": "[]*Warehouse",
+            "errors": [
+              "ErrNilInput",
+              "ErrConstraintViolation"
+            ],
+            "notes": "Batched in generation.batch_size chunks over the same WarehouseConflictTarget enum Upsert takes. Inputs resolving to one target are deduped before the statement is built, last occurrence wins. Earlier chunks are not rolled back on a later failure — wrap in a transaction for atomicity.",
+            "sql_bodies": {
+              "sqlite": "INSERT INTO \"warehouses\" (<columns>) VALUES <values> ON CONFLICT (<conflict_target>) DO UPDATE SET <excluded>"
             }
           },
           {

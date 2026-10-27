@@ -35,11 +35,11 @@
       "hydration": "eager",
       "key_pattern": "sqlgen:workspacenote:{id}",
       "invalidates_on": [
-        "Upsert",
-        "UpsertMany",
         "Update",
         "UpdateMany",
         "UpdateWhere",
+        "Upsert",
+        "UpsertMany",
         "Increment",
         "HardDelete",
         "HardDeleteMany",
@@ -222,22 +222,6 @@
         }
       },
       {
-        "name": "Count",
-        "params": [
-          {
-            "name": "filter",
-            "type": "*WorkspaceNoteFilter"
-          }
-        ],
-        "returns": "int64",
-        "errors": [
-          "tenancy.ErrMissing"
-        ],
-        "sql_bodies": {
-          "postgres": "SELECT COUNT(*) FROM \"public\".\"workspace_notes\" WHERE <filter>"
-        }
-      },
-      {
         "name": "Exists",
         "params": [
           {
@@ -267,6 +251,22 @@
         ],
         "sql_bodies": {
           "postgres": "SELECT EXISTS(SELECT 1 FROM \"public\".\"workspace_notes\" WHERE <filter>)"
+        }
+      },
+      {
+        "name": "Count",
+        "params": [
+          {
+            "name": "filter",
+            "type": "*WorkspaceNoteFilter"
+          }
+        ],
+        "returns": "int64",
+        "errors": [
+          "tenancy.ErrMissing"
+        ],
+        "sql_bodies": {
+          "postgres": "SELECT COUNT(*) FROM \"public\".\"workspace_notes\" WHERE <filter>"
         }
       },
       {
@@ -357,54 +357,6 @@
         }
       },
       {
-        "name": "Upsert",
-        "params": [
-          {
-            "name": "input",
-            "type": "*CreateWorkspaceNoteInput"
-          },
-          {
-            "name": "target",
-            "type": "WorkspaceNoteConflictTarget"
-          }
-        ],
-        "returns": "*WorkspaceNote",
-        "errors": [
-          "ErrNilInput",
-          "ErrConstraintViolation",
-          "tenancy.ErrMissing",
-          "tenancy.ErrMismatch"
-        ],
-        "notes": "One method over the generated WorkspaceNoteConflictTarget enum — the target argument selects the conflict columns at call time.",
-        "sql_bodies": {
-          "postgres": "INSERT INTO \"public\".\"workspace_notes\" (<columns>) VALUES (<values>) ON CONFLICT (<conflict_target>) DO UPDATE SET <excluded> RETURNING \"id\""
-        }
-      },
-      {
-        "name": "UpsertMany",
-        "params": [
-          {
-            "name": "inputs",
-            "type": "[]*CreateWorkspaceNoteInput"
-          },
-          {
-            "name": "target",
-            "type": "WorkspaceNoteConflictTarget"
-          }
-        ],
-        "returns": "[]*WorkspaceNote",
-        "errors": [
-          "ErrNilInput",
-          "ErrConstraintViolation",
-          "tenancy.ErrMissing",
-          "tenancy.ErrMismatch"
-        ],
-        "notes": "Batched in generation.batch_size chunks over the same WorkspaceNoteConflictTarget enum Upsert takes. Inputs resolving to one target are deduped before the statement is built, last occurrence wins. Earlier chunks are not rolled back on a later failure — wrap in a transaction for atomicity.",
-        "sql_bodies": {
-          "postgres": "INSERT INTO \"public\".\"workspace_notes\" (<columns>) VALUES <values> ON CONFLICT (<conflict_target>) DO UPDATE SET <excluded>"
-        }
-      },
-      {
         "name": "Update",
         "params": [
           {
@@ -473,6 +425,122 @@
         "sql_bodies": {
           "postgres": "UPDATE \"public\".\"workspace_notes\" SET <set> WHERE <filter> RETURNING \"id\""
         }
+      },
+      {
+        "name": "Upsert",
+        "params": [
+          {
+            "name": "input",
+            "type": "*CreateWorkspaceNoteInput"
+          },
+          {
+            "name": "target",
+            "type": "WorkspaceNoteConflictTarget"
+          }
+        ],
+        "returns": "*WorkspaceNote",
+        "errors": [
+          "ErrNilInput",
+          "ErrConstraintViolation",
+          "tenancy.ErrMissing",
+          "tenancy.ErrMismatch"
+        ],
+        "notes": "One method over the generated WorkspaceNoteConflictTarget enum — the target argument selects the conflict columns at call time.",
+        "sql_bodies": {
+          "postgres": "INSERT INTO \"public\".\"workspace_notes\" (<columns>) VALUES (<values>) ON CONFLICT (<conflict_target>) DO UPDATE SET <excluded> RETURNING \"id\""
+        }
+      },
+      {
+        "name": "UpsertMany",
+        "params": [
+          {
+            "name": "inputs",
+            "type": "[]*CreateWorkspaceNoteInput"
+          },
+          {
+            "name": "target",
+            "type": "WorkspaceNoteConflictTarget"
+          }
+        ],
+        "returns": "[]*WorkspaceNote",
+        "errors": [
+          "ErrNilInput",
+          "ErrConstraintViolation",
+          "tenancy.ErrMissing",
+          "tenancy.ErrMismatch"
+        ],
+        "notes": "Batched in generation.batch_size chunks over the same WorkspaceNoteConflictTarget enum Upsert takes. Inputs resolving to one target are deduped before the statement is built, last occurrence wins. Earlier chunks are not rolled back on a later failure — wrap in a transaction for atomicity.",
+        "sql_bodies": {
+          "postgres": "INSERT INTO \"public\".\"workspace_notes\" (<columns>) VALUES <values> ON CONFLICT (<conflict_target>) DO UPDATE SET <excluded>"
+        }
+      },
+      {
+        "name": "CreateWithRelated",
+        "params": [
+          {
+            "name": "input",
+            "type": "*CreateWorkspaceNoteWithRelatedInput"
+          }
+        ],
+        "returns": "*WorkspaceNote",
+        "errors": [
+          "ErrNilInput",
+          "ErrNotFound",
+          "ErrAlreadyRelated",
+          "ErrNestedVerbConflict",
+          "ErrConstraintViolation",
+          "tenancy.ErrMissing",
+          "tenancy.ErrMismatch"
+        ],
+        "notes": "Writes the parent and its nested rows in one transaction — a SAVEPOINT when ctx already holds one. Issues no statement of its own: it composes Create and, per eligible relationship (Children, DraftChildren), the target's and junction's own client methods, so no sql_bodies entry. Each inner call fires its own hooks, events and cache invalidation under its own op; the nested method has none."
+      },
+      {
+        "name": "UpdateWithRelated",
+        "params": [
+          {
+            "name": "id",
+            "type": "uuid.UUID"
+          },
+          {
+            "name": "input",
+            "type": "*UpdateWorkspaceNoteWithRelatedInput"
+          }
+        ],
+        "returns": "*WorkspaceNote",
+        "errors": [
+          "ErrNilInput",
+          "ErrNotFound",
+          "ErrAlreadyRelated",
+          "ErrNestedVerbConflict",
+          "ErrConstraintViolation",
+          "tenancy.ErrMissing",
+          "tenancy.ErrMismatch"
+        ],
+        "notes": "Writes the parent and its nested rows in one transaction — a SAVEPOINT when ctx already holds one. Issues no statement of its own: it composes Update and, per eligible relationship (Children, DraftChildren), the target's and junction's own client methods, so no sql_bodies entry. Each inner call fires its own hooks, events and cache invalidation under its own op; the nested method has none."
+      },
+      {
+        "name": "UpsertWithRelated",
+        "params": [
+          {
+            "name": "input",
+            "type": "*UpsertWorkspaceNoteWithRelatedInput"
+          },
+          {
+            "name": "target",
+            "type": "WorkspaceNoteConflictTarget"
+          }
+        ],
+        "returns": "*WorkspaceNote",
+        "errors": [
+          "ErrNilInput",
+          "ErrNotFound",
+          "ErrAlreadyRelated",
+          "ErrNestedVerbConflict",
+          "ErrConstraintViolation",
+          "tenancy.ErrMissing",
+          "tenancy.ErrMismatch"
+        ],
+        "notes": "Writes the parent and its nested rows in one transaction — a SAVEPOINT when ctx already holds one. Issues no statement of its own: it composes Upsert and, per eligible relationship (Children, DraftChildren), the target's and junction's own client methods, so no sql_bodies entry. Each inner call fires its own hooks, events and cache invalidation under its own op; the nested method has none."
       },
       {
         "name": "Increment",
@@ -547,74 +615,6 @@
         "sql_bodies": {
           "postgres": "DELETE FROM \"public\".\"workspace_notes\" WHERE <filter> RETURNING \"id\""
         }
-      },
-      {
-        "name": "CreateWithRelated",
-        "params": [
-          {
-            "name": "input",
-            "type": "*CreateWorkspaceNoteWithRelatedInput"
-          }
-        ],
-        "returns": "*WorkspaceNote",
-        "errors": [
-          "ErrNilInput",
-          "ErrNotFound",
-          "ErrAlreadyRelated",
-          "ErrNestedVerbConflict",
-          "ErrConstraintViolation",
-          "tenancy.ErrMissing",
-          "tenancy.ErrMismatch"
-        ],
-        "notes": "Writes the parent and its nested rows in one transaction — a SAVEPOINT when ctx already holds one. Issues no statement of its own: it composes Create and, per eligible relationship (Children, DraftChildren), the target's and junction's own client methods, so no sql_bodies entry. Each inner call fires its own hooks, events and cache invalidation under its own op; the nested method has none."
-      },
-      {
-        "name": "UpdateWithRelated",
-        "params": [
-          {
-            "name": "id",
-            "type": "uuid.UUID"
-          },
-          {
-            "name": "input",
-            "type": "*UpdateWorkspaceNoteWithRelatedInput"
-          }
-        ],
-        "returns": "*WorkspaceNote",
-        "errors": [
-          "ErrNilInput",
-          "ErrNotFound",
-          "ErrAlreadyRelated",
-          "ErrNestedVerbConflict",
-          "ErrConstraintViolation",
-          "tenancy.ErrMissing",
-          "tenancy.ErrMismatch"
-        ],
-        "notes": "Writes the parent and its nested rows in one transaction — a SAVEPOINT when ctx already holds one. Issues no statement of its own: it composes Update and, per eligible relationship (Children, DraftChildren), the target's and junction's own client methods, so no sql_bodies entry. Each inner call fires its own hooks, events and cache invalidation under its own op; the nested method has none."
-      },
-      {
-        "name": "UpsertWithRelated",
-        "params": [
-          {
-            "name": "input",
-            "type": "*UpsertWorkspaceNoteWithRelatedInput"
-          },
-          {
-            "name": "target",
-            "type": "WorkspaceNoteConflictTarget"
-          }
-        ],
-        "returns": "*WorkspaceNote",
-        "errors": [
-          "ErrNilInput",
-          "ErrNotFound",
-          "ErrAlreadyRelated",
-          "ErrNestedVerbConflict",
-          "ErrConstraintViolation",
-          "tenancy.ErrMissing",
-          "tenancy.ErrMismatch"
-        ],
-        "notes": "Writes the parent and its nested rows in one transaction — a SAVEPOINT when ctx already holds one. Issues no statement of its own: it composes Upsert and, per eligible relationship (Children, DraftChildren), the target's and junction's own client methods, so no sql_bodies entry. Each inner call fires its own hooks, events and cache invalidation under its own op; the nested method has none."
       }
     ]
   },

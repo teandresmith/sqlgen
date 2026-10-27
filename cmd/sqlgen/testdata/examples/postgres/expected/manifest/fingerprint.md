@@ -61,19 +61,6 @@ postgres:
 SELECT "digest", "label" FROM "public"."fingerprints" WHERE <filter> ORDER BY <sort> LIMIT <limit>
 ```
 
-### Count
-
-- Params: `filter *FingerprintFilter`
-- Returns: `int64`, `error`
-
-Generated SQL:
-
-postgres:
-
-```sql
-SELECT COUNT(*) FROM "public"."fingerprints" WHERE <filter>
-```
-
 ### Exists
 
 - Params: `id []byte`
@@ -98,6 +85,19 @@ postgres:
 
 ```sql
 SELECT EXISTS(SELECT 1 FROM "public"."fingerprints" WHERE <filter>)
+```
+
+### Count
+
+- Params: `filter *FingerprintFilter`
+- Returns: `int64`, `error`
+
+Generated SQL:
+
+postgres:
+
+```sql
+SELECT COUNT(*) FROM "public"."fingerprints" WHERE <filter>
 ```
 
 ### Paginate
@@ -158,36 +158,6 @@ postgres:
 INSERT INTO "public"."fingerprints" (<columns>) VALUES <values> RETURNING "digest"
 ```
 
-### Upsert
-
-- Params: `input *CreateFingerprintInput`, `target FingerprintConflictTarget`
-- Returns: `*Fingerprint`, `error`
-- Errors: `ErrNilInput`, `ErrConstraintViolation`
-- Notes: One method over the generated FingerprintConflictTarget enum — the target argument selects the conflict columns at call time.
-
-Generated SQL:
-
-postgres:
-
-```sql
-INSERT INTO "public"."fingerprints" (<columns>) VALUES (<values>) ON CONFLICT (<conflict_target>) DO UPDATE SET <excluded> RETURNING "digest"
-```
-
-### UpsertMany
-
-- Params: `inputs []*CreateFingerprintInput`, `target FingerprintConflictTarget`
-- Returns: `[]*Fingerprint`, `error`
-- Errors: `ErrNilInput`, `ErrConstraintViolation`
-- Notes: Batched in generation.batch_size chunks over the same FingerprintConflictTarget enum Upsert takes. Inputs resolving to one target are deduped before the statement is built, last occurrence wins. Earlier chunks are not rolled back on a later failure — wrap in a transaction for atomicity.
-
-Generated SQL:
-
-postgres:
-
-```sql
-INSERT INTO "public"."fingerprints" (<columns>) VALUES <values> ON CONFLICT (<conflict_target>) DO UPDATE SET <excluded>
-```
-
 ### Update
 
 - Params: `id []byte`, `input *UpdateFingerprintInput`
@@ -231,6 +201,36 @@ postgres:
 
 ```sql
 UPDATE "public"."fingerprints" SET <set> WHERE <filter> RETURNING "digest"
+```
+
+### Upsert
+
+- Params: `input *CreateFingerprintInput`, `target FingerprintConflictTarget`
+- Returns: `*Fingerprint`, `error`
+- Errors: `ErrNilInput`, `ErrConstraintViolation`
+- Notes: One method over the generated FingerprintConflictTarget enum — the target argument selects the conflict columns at call time.
+
+Generated SQL:
+
+postgres:
+
+```sql
+INSERT INTO "public"."fingerprints" (<columns>) VALUES (<values>) ON CONFLICT (<conflict_target>) DO UPDATE SET <excluded> RETURNING "digest"
+```
+
+### UpsertMany
+
+- Params: `inputs []*CreateFingerprintInput`, `target FingerprintConflictTarget`
+- Returns: `[]*Fingerprint`, `error`
+- Errors: `ErrNilInput`, `ErrConstraintViolation`
+- Notes: Batched in generation.batch_size chunks over the same FingerprintConflictTarget enum Upsert takes. Inputs resolving to one target are deduped before the statement is built, last occurrence wins. Earlier chunks are not rolled back on a later failure — wrap in a transaction for atomicity.
+
+Generated SQL:
+
+postgres:
+
+```sql
+INSERT INTO "public"."fingerprints" (<columns>) VALUES <values> ON CONFLICT (<conflict_target>) DO UPDATE SET <excluded>
 ```
 
 ### HardDelete

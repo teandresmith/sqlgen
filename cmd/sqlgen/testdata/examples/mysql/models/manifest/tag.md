@@ -59,19 +59,6 @@ mysql:
 SELECT `id`, `is_deleted`, `name` FROM `tags` WHERE <filter> AND `is_deleted` = FALSE ORDER BY <sort> LIMIT <limit>
 ```
 
-### Count
-
-- Params: `filter *TagFilter`
-- Returns: `int64`, `error`
-
-Generated SQL:
-
-mysql:
-
-```sql
-SELECT COUNT(*) FROM `tags` WHERE <filter> AND `is_deleted` = FALSE
-```
-
 ### Exists
 
 - Params: `id int32`
@@ -96,6 +83,19 @@ mysql:
 
 ```sql
 SELECT EXISTS(SELECT 1 FROM `tags` WHERE <filter> AND `is_deleted` = FALSE)
+```
+
+### Count
+
+- Params: `filter *TagFilter`
+- Returns: `int64`, `error`
+
+Generated SQL:
+
+mysql:
+
+```sql
+SELECT COUNT(*) FROM `tags` WHERE <filter> AND `is_deleted` = FALSE
 ```
 
 ### Paginate
@@ -156,36 +156,6 @@ mysql:
 INSERT INTO `tags` (<columns>) VALUES <values>
 ```
 
-### Upsert
-
-- Params: `input *CreateTagInput`, `target TagConflictTarget`
-- Returns: `*Tag`, `error`
-- Errors: `ErrNilInput`, `ErrConstraintViolation`
-- Notes: One method over the generated TagConflictTarget enum — the target argument selects the conflict columns at call time.
-
-Generated SQL:
-
-mysql:
-
-```sql
-INSERT INTO `tags` (<columns>) VALUES (<values>) ON DUPLICATE KEY UPDATE <excluded>
-```
-
-### UpsertMany
-
-- Params: `inputs []*CreateTagInput`, `target TagConflictTarget`
-- Returns: `[]*Tag`, `error`
-- Errors: `ErrNilInput`, `ErrConstraintViolation`
-- Notes: Batched in generation.batch_size chunks over the same TagConflictTarget enum Upsert takes. Inputs resolving to one target are deduped before the statement is built, last occurrence wins. Earlier chunks are not rolled back on a later failure — wrap in a transaction for atomicity.
-
-Generated SQL:
-
-mysql:
-
-```sql
-INSERT INTO `tags` (<columns>) VALUES <values> ON DUPLICATE KEY UPDATE <excluded>
-```
-
 ### Update
 
 - Params: `id int32`, `input *UpdateTagInput`
@@ -229,6 +199,36 @@ mysql:
 
 ```sql
 UPDATE `tags` SET <set> WHERE <filter>
+```
+
+### Upsert
+
+- Params: `input *CreateTagInput`, `target TagConflictTarget`
+- Returns: `*Tag`, `error`
+- Errors: `ErrNilInput`, `ErrConstraintViolation`
+- Notes: One method over the generated TagConflictTarget enum — the target argument selects the conflict columns at call time.
+
+Generated SQL:
+
+mysql:
+
+```sql
+INSERT INTO `tags` (<columns>) VALUES (<values>) ON DUPLICATE KEY UPDATE <excluded>
+```
+
+### UpsertMany
+
+- Params: `inputs []*CreateTagInput`, `target TagConflictTarget`
+- Returns: `[]*Tag`, `error`
+- Errors: `ErrNilInput`, `ErrConstraintViolation`
+- Notes: Batched in generation.batch_size chunks over the same TagConflictTarget enum Upsert takes. Inputs resolving to one target are deduped before the statement is built, last occurrence wins. Earlier chunks are not rolled back on a later failure — wrap in a transaction for atomicity.
+
+Generated SQL:
+
+mysql:
+
+```sql
+INSERT INTO `tags` (<columns>) VALUES <values> ON DUPLICATE KEY UPDATE <excluded>
 ```
 
 ### SoftDelete

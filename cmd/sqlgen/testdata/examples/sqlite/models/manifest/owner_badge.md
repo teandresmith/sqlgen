@@ -57,19 +57,6 @@ sqlite:
 SELECT "badge_code", "owner_id" FROM "owner_badges" WHERE <filter> ORDER BY <sort> LIMIT <limit>
 ```
 
-### Count
-
-- Params: `filter *OwnerBadgeFilter`
-- Returns: `int64`, `error`
-
-Generated SQL:
-
-sqlite:
-
-```sql
-SELECT COUNT(*) FROM "owner_badges" WHERE <filter>
-```
-
 ### Exists
 
 - Params: `pk OwnerBadgePK`
@@ -94,6 +81,19 @@ sqlite:
 
 ```sql
 SELECT EXISTS(SELECT 1 FROM "owner_badges" WHERE <filter>)
+```
+
+### Count
+
+- Params: `filter *OwnerBadgeFilter`
+- Returns: `int64`, `error`
+
+Generated SQL:
+
+sqlite:
+
+```sql
+SELECT COUNT(*) FROM "owner_badges" WHERE <filter>
 ```
 
 ### Paginate
@@ -154,36 +154,6 @@ sqlite:
 INSERT INTO "owner_badges" (<columns>) VALUES <values>
 ```
 
-### Upsert
-
-- Params: `input *CreateOwnerBadgeInput`, `target OwnerBadgeConflictTarget`
-- Returns: `*OwnerBadge`, `error`
-- Errors: `ErrNilInput`, `ErrConstraintViolation`
-- Notes: One method over the generated OwnerBadgeConflictTarget enum — the target argument selects the conflict columns at call time.
-
-Generated SQL:
-
-sqlite:
-
-```sql
-INSERT INTO "owner_badges" (<columns>) VALUES (<values>) ON CONFLICT (<conflict_target>) DO UPDATE SET <excluded>
-```
-
-### UpsertMany
-
-- Params: `inputs []*CreateOwnerBadgeInput`, `target OwnerBadgeConflictTarget`
-- Returns: `[]*OwnerBadge`, `error`
-- Errors: `ErrNilInput`, `ErrConstraintViolation`
-- Notes: Batched in generation.batch_size chunks over the same OwnerBadgeConflictTarget enum Upsert takes. Inputs resolving to one target are deduped before the statement is built, last occurrence wins. Earlier chunks are not rolled back on a later failure — wrap in a transaction for atomicity.
-
-Generated SQL:
-
-sqlite:
-
-```sql
-INSERT INTO "owner_badges" (<columns>) VALUES <values> ON CONFLICT (<conflict_target>) DO UPDATE SET <excluded>
-```
-
 ### Update
 
 - Params: `pk OwnerBadgePK`, `input *UpdateOwnerBadgeInput`
@@ -227,6 +197,36 @@ sqlite:
 
 ```sql
 UPDATE "owner_badges" SET <set> WHERE <filter> RETURNING "owner_id", "badge_code"
+```
+
+### Upsert
+
+- Params: `input *CreateOwnerBadgeInput`, `target OwnerBadgeConflictTarget`
+- Returns: `*OwnerBadge`, `error`
+- Errors: `ErrNilInput`, `ErrConstraintViolation`
+- Notes: One method over the generated OwnerBadgeConflictTarget enum — the target argument selects the conflict columns at call time.
+
+Generated SQL:
+
+sqlite:
+
+```sql
+INSERT INTO "owner_badges" (<columns>) VALUES (<values>) ON CONFLICT (<conflict_target>) DO UPDATE SET <excluded>
+```
+
+### UpsertMany
+
+- Params: `inputs []*CreateOwnerBadgeInput`, `target OwnerBadgeConflictTarget`
+- Returns: `[]*OwnerBadge`, `error`
+- Errors: `ErrNilInput`, `ErrConstraintViolation`
+- Notes: Batched in generation.batch_size chunks over the same OwnerBadgeConflictTarget enum Upsert takes. Inputs resolving to one target are deduped before the statement is built, last occurrence wins. Earlier chunks are not rolled back on a later failure — wrap in a transaction for atomicity.
+
+Generated SQL:
+
+sqlite:
+
+```sql
+INSERT INTO "owner_badges" (<columns>) VALUES <values> ON CONFLICT (<conflict_target>) DO UPDATE SET <excluded>
 ```
 
 ### HardDelete

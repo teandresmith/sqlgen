@@ -14,23 +14,31 @@ import (
 	"github.com/teandresmith/sqlgen/parser"
 )
 
-// TestResolveManifestTimestamp pins the --manifest-timestamp resolution
-// (deferred from 18.3): an explicit flag value is used verbatim (pinning
-// generated_at for deterministic manifest output), and an unset flag falls back
-// to a valid RFC3339 UTC timestamp.
+// TestResolveManifestTimestamp pins the --manifest-timestamp resolution: an
+// explicit RFC3339 value is used verbatim (pinning generated_at for
+// deterministic manifest output), an unset flag falls back to a valid RFC3339
+// UTC timestamp, and anything else is a *usageError.
 func TestResolveManifestTimestamp(t *testing.T) {
 	const fixed = "2026-07-09T12:34:56Z"
-	if got := resolveManifestTimestamp(fixed); got != fixed {
-		t.Errorf("resolveManifestTimestamp(%q) = %q, want verbatim", fixed, got)
+	if got, err := resolveManifestTimestamp(fixed); err != nil || got != fixed {
+		t.Errorf("resolveManifestTimestamp(%q) = %q, %v; want verbatim, nil", fixed, got, err)
 	}
 
-	got := resolveManifestTimestamp("")
+	got, err := resolveManifestTimestamp("")
+	if err != nil {
+		t.Fatalf("resolveManifestTimestamp(\"\") error: %v", err)
+	}
 	parsed, err := time.Parse(time.RFC3339, got)
 	if err != nil {
 		t.Fatalf("fallback timestamp %q is not RFC3339: %v", got, err)
 	}
 	if loc := parsed.Location(); loc != time.UTC {
 		t.Errorf("fallback timestamp %q is not UTC (location %v)", got, loc)
+	}
+
+	_, err = resolveManifestTimestamp("2026-07-09")
+	if _, ok := errors.AsType[*usageError](err); !ok {
+		t.Errorf("resolveManifestTimestamp(%q) error = %v, want *usageError", "2026-07-09", err)
 	}
 }
 

@@ -64,19 +64,6 @@ postgres:
 SELECT "created_at", "external_id", "last_login_at", "provider", "user_id" FROM "public"."user_credentials" WHERE <filter> ORDER BY <sort> LIMIT <limit>
 ```
 
-### Count
-
-- Params: `filter *UserCredentialFilter`
-- Returns: `int64`, `error`
-
-Generated SQL:
-
-postgres:
-
-```sql
-SELECT COUNT(*) FROM "public"."user_credentials" WHERE <filter>
-```
-
 ### Exists
 
 - Params: `id uuid.UUID`
@@ -101,6 +88,19 @@ postgres:
 
 ```sql
 SELECT EXISTS(SELECT 1 FROM "public"."user_credentials" WHERE <filter>)
+```
+
+### Count
+
+- Params: `filter *UserCredentialFilter`
+- Returns: `int64`, `error`
+
+Generated SQL:
+
+postgres:
+
+```sql
+SELECT COUNT(*) FROM "public"."user_credentials" WHERE <filter>
 ```
 
 ### Paginate
@@ -161,36 +161,6 @@ postgres:
 INSERT INTO "public"."user_credentials" (<columns>) VALUES <values> RETURNING "user_id"
 ```
 
-### Upsert
-
-- Params: `input *CreateUserCredentialInput`, `target UserCredentialConflictTarget`
-- Returns: `*UserCredential`, `error`
-- Errors: `ErrNilInput`, `ErrConstraintViolation`
-- Notes: One method over the generated UserCredentialConflictTarget enum — the target argument selects the conflict columns at call time.
-
-Generated SQL:
-
-postgres:
-
-```sql
-INSERT INTO "public"."user_credentials" (<columns>) VALUES (<values>) ON CONFLICT (<conflict_target>) DO UPDATE SET <excluded> RETURNING "user_id"
-```
-
-### UpsertMany
-
-- Params: `inputs []*CreateUserCredentialInput`, `target UserCredentialConflictTarget`
-- Returns: `[]*UserCredential`, `error`
-- Errors: `ErrNilInput`, `ErrConstraintViolation`
-- Notes: Batched in generation.batch_size chunks over the same UserCredentialConflictTarget enum Upsert takes. Inputs resolving to one target are deduped before the statement is built, last occurrence wins. Earlier chunks are not rolled back on a later failure — wrap in a transaction for atomicity.
-
-Generated SQL:
-
-postgres:
-
-```sql
-INSERT INTO "public"."user_credentials" (<columns>) VALUES <values> ON CONFLICT (<conflict_target>) DO UPDATE SET <excluded>
-```
-
 ### Update
 
 - Params: `id uuid.UUID`, `input *UpdateUserCredentialInput`
@@ -234,6 +204,36 @@ postgres:
 
 ```sql
 UPDATE "public"."user_credentials" SET <set> WHERE <filter> RETURNING "user_id"
+```
+
+### Upsert
+
+- Params: `input *CreateUserCredentialInput`, `target UserCredentialConflictTarget`
+- Returns: `*UserCredential`, `error`
+- Errors: `ErrNilInput`, `ErrConstraintViolation`
+- Notes: One method over the generated UserCredentialConflictTarget enum — the target argument selects the conflict columns at call time.
+
+Generated SQL:
+
+postgres:
+
+```sql
+INSERT INTO "public"."user_credentials" (<columns>) VALUES (<values>) ON CONFLICT (<conflict_target>) DO UPDATE SET <excluded> RETURNING "user_id"
+```
+
+### UpsertMany
+
+- Params: `inputs []*CreateUserCredentialInput`, `target UserCredentialConflictTarget`
+- Returns: `[]*UserCredential`, `error`
+- Errors: `ErrNilInput`, `ErrConstraintViolation`
+- Notes: Batched in generation.batch_size chunks over the same UserCredentialConflictTarget enum Upsert takes. Inputs resolving to one target are deduped before the statement is built, last occurrence wins. Earlier chunks are not rolled back on a later failure — wrap in a transaction for atomicity.
+
+Generated SQL:
+
+postgres:
+
+```sql
+INSERT INTO "public"."user_credentials" (<columns>) VALUES <values> ON CONFLICT (<conflict_target>) DO UPDATE SET <excluded>
 ```
 
 ### HardDelete

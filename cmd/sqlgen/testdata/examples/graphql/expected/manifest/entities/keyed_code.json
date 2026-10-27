@@ -35,11 +35,11 @@
       "hydration": "eager",
       "key_pattern": "sqlgen:keyedcode:{id}",
       "invalidates_on": [
-        "Upsert",
-        "UpsertMany",
         "Update",
         "UpdateMany",
         "UpdateWhere",
+        "Upsert",
+        "UpsertMany",
         "HardDelete",
         "HardDeleteMany",
         "HardDeleteWhere"
@@ -137,20 +137,6 @@
         }
       },
       {
-        "name": "Count",
-        "params": [
-          {
-            "name": "filter",
-            "type": "*KeyedCodeFilter"
-          }
-        ],
-        "returns": "int64",
-        "errors": [],
-        "sql_bodies": {
-          "postgres": "SELECT COUNT(*) FROM \"public\".\"keyed_codes\" WHERE <filter>"
-        }
-      },
-      {
         "name": "Exists",
         "params": [
           {
@@ -176,6 +162,20 @@
         "errors": [],
         "sql_bodies": {
           "postgres": "SELECT EXISTS(SELECT 1 FROM \"public\".\"keyed_codes\" WHERE <filter>)"
+        }
+      },
+      {
+        "name": "Count",
+        "params": [
+          {
+            "name": "filter",
+            "type": "*KeyedCodeFilter"
+          }
+        ],
+        "returns": "int64",
+        "errors": [],
+        "sql_bodies": {
+          "postgres": "SELECT COUNT(*) FROM \"public\".\"keyed_codes\" WHERE <filter>"
         }
       },
       {
@@ -257,50 +257,6 @@
         }
       },
       {
-        "name": "Upsert",
-        "params": [
-          {
-            "name": "input",
-            "type": "*CreateKeyedCodeInput"
-          },
-          {
-            "name": "target",
-            "type": "KeyedCodeConflictTarget"
-          }
-        ],
-        "returns": "*KeyedCode",
-        "errors": [
-          "ErrNilInput",
-          "ErrConstraintViolation"
-        ],
-        "notes": "One method over the generated KeyedCodeConflictTarget enum — the target argument selects the conflict columns at call time.",
-        "sql_bodies": {
-          "postgres": "INSERT INTO \"public\".\"keyed_codes\" (<columns>) VALUES (<values>) ON CONFLICT (<conflict_target>) DO UPDATE SET <excluded> RETURNING \"id\""
-        }
-      },
-      {
-        "name": "UpsertMany",
-        "params": [
-          {
-            "name": "inputs",
-            "type": "[]*CreateKeyedCodeInput"
-          },
-          {
-            "name": "target",
-            "type": "KeyedCodeConflictTarget"
-          }
-        ],
-        "returns": "[]*KeyedCode",
-        "errors": [
-          "ErrNilInput",
-          "ErrConstraintViolation"
-        ],
-        "notes": "Batched in generation.batch_size chunks over the same KeyedCodeConflictTarget enum Upsert takes. Inputs resolving to one target are deduped before the statement is built, last occurrence wins. Earlier chunks are not rolled back on a later failure — wrap in a transaction for atomicity.",
-        "sql_bodies": {
-          "postgres": "INSERT INTO \"public\".\"keyed_codes\" (<columns>) VALUES <values> ON CONFLICT (<conflict_target>) DO UPDATE SET <excluded>"
-        }
-      },
-      {
         "name": "Update",
         "params": [
           {
@@ -365,50 +321,47 @@
         }
       },
       {
-        "name": "HardDelete",
+        "name": "Upsert",
         "params": [
           {
-            "name": "id",
-            "type": "uuid.UUID"
-          }
-        ],
-        "returns": "",
-        "errors": [],
-        "notes": "Idempotent — a primary key that does not exist is not an error.",
-        "sql_bodies": {
-          "postgres": "DELETE FROM \"public\".\"keyed_codes\" WHERE \"id\" = $1"
-        }
-      },
-      {
-        "name": "HardDeleteMany",
-        "params": [
+            "name": "input",
+            "type": "*CreateKeyedCodeInput"
+          },
           {
-            "name": "ids",
-            "type": "[]uuid.UUID"
+            "name": "target",
+            "type": "KeyedCodeConflictTarget"
           }
         ],
-        "returns": "",
-        "errors": [],
-        "notes": "Idempotent — primary keys that do not exist are not an error.",
-        "sql_bodies": {
-          "postgres": "DELETE FROM \"public\".\"keyed_codes\" WHERE \"id\" IN (<ids>)"
-        }
-      },
-      {
-        "name": "HardDeleteWhere",
-        "params": [
-          {
-            "name": "filter",
-            "type": "*KeyedCodeFilter"
-          }
-        ],
-        "returns": "",
+        "returns": "*KeyedCode",
         "errors": [
-          "ErrEmptyFilter"
+          "ErrNilInput",
+          "ErrConstraintViolation"
         ],
-        "notes": "Idempotent — no match is not an error. ErrEmptyFilter when the filter produces no conditions.",
+        "notes": "One method over the generated KeyedCodeConflictTarget enum — the target argument selects the conflict columns at call time.",
         "sql_bodies": {
-          "postgres": "DELETE FROM \"public\".\"keyed_codes\" WHERE <filter> RETURNING \"id\""
+          "postgres": "INSERT INTO \"public\".\"keyed_codes\" (<columns>) VALUES (<values>) ON CONFLICT (<conflict_target>) DO UPDATE SET <excluded> RETURNING \"id\""
+        }
+      },
+      {
+        "name": "UpsertMany",
+        "params": [
+          {
+            "name": "inputs",
+            "type": "[]*CreateKeyedCodeInput"
+          },
+          {
+            "name": "target",
+            "type": "KeyedCodeConflictTarget"
+          }
+        ],
+        "returns": "[]*KeyedCode",
+        "errors": [
+          "ErrNilInput",
+          "ErrConstraintViolation"
+        ],
+        "notes": "Batched in generation.batch_size chunks over the same KeyedCodeConflictTarget enum Upsert takes. Inputs resolving to one target are deduped before the statement is built, last occurrence wins. Earlier chunks are not rolled back on a later failure — wrap in a transaction for atomicity.",
+        "sql_bodies": {
+          "postgres": "INSERT INTO \"public\".\"keyed_codes\" (<columns>) VALUES <values> ON CONFLICT (<conflict_target>) DO UPDATE SET <excluded>"
         }
       },
       {
@@ -464,6 +417,53 @@
           "ErrConstraintViolation"
         ],
         "notes": "Writes the parent and its nested rows in one transaction — a SAVEPOINT when ctx already holds one. Issues no statement of its own: it composes Upsert and, per eligible relationship (Entries), the target's and junction's own client methods, so no sql_bodies entry. Each inner call fires its own hooks, events and cache invalidation under its own op; the nested method has none."
+      },
+      {
+        "name": "HardDelete",
+        "params": [
+          {
+            "name": "id",
+            "type": "uuid.UUID"
+          }
+        ],
+        "returns": "",
+        "errors": [],
+        "notes": "Idempotent — a primary key that does not exist is not an error.",
+        "sql_bodies": {
+          "postgres": "DELETE FROM \"public\".\"keyed_codes\" WHERE \"id\" = $1"
+        }
+      },
+      {
+        "name": "HardDeleteMany",
+        "params": [
+          {
+            "name": "ids",
+            "type": "[]uuid.UUID"
+          }
+        ],
+        "returns": "",
+        "errors": [],
+        "notes": "Idempotent — primary keys that do not exist are not an error.",
+        "sql_bodies": {
+          "postgres": "DELETE FROM \"public\".\"keyed_codes\" WHERE \"id\" IN (<ids>)"
+        }
+      },
+      {
+        "name": "HardDeleteWhere",
+        "params": [
+          {
+            "name": "filter",
+            "type": "*KeyedCodeFilter"
+          }
+        ],
+        "returns": "",
+        "errors": [
+          "ErrEmptyFilter"
+        ],
+        "notes": "Idempotent — no match is not an error. ErrEmptyFilter when the filter produces no conditions.",
+        "sql_bodies": {
+          "postgres": "DELETE FROM \"public\".\"keyed_codes\" WHERE <filter> RETURNING \"id\""
+        }
       }
     ]
   },

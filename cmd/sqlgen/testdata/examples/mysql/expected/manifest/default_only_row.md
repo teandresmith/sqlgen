@@ -57,19 +57,6 @@ mysql:
 SELECT `active`, `hits`, `id`, `label` FROM `default_only_rows` WHERE <filter> ORDER BY <sort> LIMIT <limit>
 ```
 
-### Count
-
-- Params: `filter *DefaultOnlyRowFilter`
-- Returns: `int64`, `error`
-
-Generated SQL:
-
-mysql:
-
-```sql
-SELECT COUNT(*) FROM `default_only_rows` WHERE <filter>
-```
-
 ### Exists
 
 - Params: `id int64`
@@ -94,6 +81,19 @@ mysql:
 
 ```sql
 SELECT EXISTS(SELECT 1 FROM `default_only_rows` WHERE <filter>)
+```
+
+### Count
+
+- Params: `filter *DefaultOnlyRowFilter`
+- Returns: `int64`, `error`
+
+Generated SQL:
+
+mysql:
+
+```sql
+SELECT COUNT(*) FROM `default_only_rows` WHERE <filter>
 ```
 
 ### Paginate
@@ -154,36 +154,6 @@ mysql:
 INSERT INTO `default_only_rows` (<columns>) VALUES <values>
 ```
 
-### Upsert
-
-- Params: `input *CreateDefaultOnlyRowInput`, `target DefaultOnlyRowConflictTarget`
-- Returns: `*DefaultOnlyRow`, `error`
-- Errors: `ErrNilInput`, `ErrConstraintViolation`
-- Notes: One method over the generated DefaultOnlyRowConflictTarget enum — the target argument selects the conflict columns at call time.
-
-Generated SQL:
-
-mysql:
-
-```sql
-INSERT INTO `default_only_rows` (<columns>) VALUES (<values>) ON DUPLICATE KEY UPDATE <excluded>
-```
-
-### UpsertMany
-
-- Params: `inputs []*CreateDefaultOnlyRowInput`, `target DefaultOnlyRowConflictTarget`
-- Returns: `[]*DefaultOnlyRow`, `error`
-- Errors: `ErrNilInput`, `ErrConstraintViolation`
-- Notes: Batched in generation.batch_size chunks over the same DefaultOnlyRowConflictTarget enum Upsert takes. Inputs resolving to one target are deduped before the statement is built, last occurrence wins. Earlier chunks are not rolled back on a later failure — wrap in a transaction for atomicity.
-
-Generated SQL:
-
-mysql:
-
-```sql
-INSERT INTO `default_only_rows` (<columns>) VALUES <values> ON DUPLICATE KEY UPDATE <excluded>
-```
-
 ### Update
 
 - Params: `id int64`, `input *UpdateDefaultOnlyRowInput`
@@ -227,6 +197,36 @@ mysql:
 
 ```sql
 UPDATE `default_only_rows` SET <set> WHERE <filter>
+```
+
+### Upsert
+
+- Params: `input *CreateDefaultOnlyRowInput`, `target DefaultOnlyRowConflictTarget`
+- Returns: `*DefaultOnlyRow`, `error`
+- Errors: `ErrNilInput`, `ErrConstraintViolation`
+- Notes: One method over the generated DefaultOnlyRowConflictTarget enum — the target argument selects the conflict columns at call time.
+
+Generated SQL:
+
+mysql:
+
+```sql
+INSERT INTO `default_only_rows` (<columns>) VALUES (<values>) ON DUPLICATE KEY UPDATE <excluded>
+```
+
+### UpsertMany
+
+- Params: `inputs []*CreateDefaultOnlyRowInput`, `target DefaultOnlyRowConflictTarget`
+- Returns: `[]*DefaultOnlyRow`, `error`
+- Errors: `ErrNilInput`, `ErrConstraintViolation`
+- Notes: Batched in generation.batch_size chunks over the same DefaultOnlyRowConflictTarget enum Upsert takes. Inputs resolving to one target are deduped before the statement is built, last occurrence wins. Earlier chunks are not rolled back on a later failure — wrap in a transaction for atomicity.
+
+Generated SQL:
+
+mysql:
+
+```sql
+INSERT INTO `default_only_rows` (<columns>) VALUES <values> ON DUPLICATE KEY UPDATE <excluded>
 ```
 
 ### Increment

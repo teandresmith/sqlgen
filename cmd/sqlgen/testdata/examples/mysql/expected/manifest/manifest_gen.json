@@ -301,20 +301,6 @@
             }
           },
           {
-            "name": "Count",
-            "params": [
-              {
-                "name": "filter",
-                "type": "*ArticleFilter"
-              }
-            ],
-            "returns": "int64",
-            "errors": [],
-            "sql_bodies": {
-              "mysql": "SELECT COUNT(*) FROM `articles` WHERE <filter> AND `deleted_at` IS NULL"
-            }
-          },
-          {
             "name": "Exists",
             "params": [
               {
@@ -340,6 +326,20 @@
             "errors": [],
             "sql_bodies": {
               "mysql": "SELECT EXISTS(SELECT 1 FROM `articles` WHERE <filter> AND `deleted_at` IS NULL)"
+            }
+          },
+          {
+            "name": "Count",
+            "params": [
+              {
+                "name": "filter",
+                "type": "*ArticleFilter"
+              }
+            ],
+            "returns": "int64",
+            "errors": [],
+            "sql_bodies": {
+              "mysql": "SELECT COUNT(*) FROM `articles` WHERE <filter> AND `deleted_at` IS NULL"
             }
           },
           {
@@ -421,50 +421,6 @@
             }
           },
           {
-            "name": "Upsert",
-            "params": [
-              {
-                "name": "input",
-                "type": "*CreateArticleInput"
-              },
-              {
-                "name": "target",
-                "type": "ArticleConflictTarget"
-              }
-            ],
-            "returns": "*Article",
-            "errors": [
-              "ErrNilInput",
-              "ErrConstraintViolation"
-            ],
-            "notes": "One method over the generated ArticleConflictTarget enum — the target argument selects the conflict columns at call time.",
-            "sql_bodies": {
-              "mysql": "INSERT INTO `articles` (<columns>) VALUES (<values>) ON DUPLICATE KEY UPDATE <excluded>"
-            }
-          },
-          {
-            "name": "UpsertMany",
-            "params": [
-              {
-                "name": "inputs",
-                "type": "[]*CreateArticleInput"
-              },
-              {
-                "name": "target",
-                "type": "ArticleConflictTarget"
-              }
-            ],
-            "returns": "[]*Article",
-            "errors": [
-              "ErrNilInput",
-              "ErrConstraintViolation"
-            ],
-            "notes": "Batched in generation.batch_size chunks over the same ArticleConflictTarget enum Upsert takes. Inputs resolving to one target are deduped before the statement is built, last occurrence wins. Earlier chunks are not rolled back on a later failure — wrap in a transaction for atomicity.",
-            "sql_bodies": {
-              "mysql": "INSERT INTO `articles` (<columns>) VALUES <values> ON DUPLICATE KEY UPDATE <excluded>"
-            }
-          },
-          {
             "name": "Update",
             "params": [
               {
@@ -526,6 +482,50 @@
             "notes": "Idempotent — returns an empty slice when no row matches. ErrEmptyFilter when the filter produces no conditions.",
             "sql_bodies": {
               "mysql": "UPDATE `articles` SET <set> WHERE <filter>"
+            }
+          },
+          {
+            "name": "Upsert",
+            "params": [
+              {
+                "name": "input",
+                "type": "*CreateArticleInput"
+              },
+              {
+                "name": "target",
+                "type": "ArticleConflictTarget"
+              }
+            ],
+            "returns": "*Article",
+            "errors": [
+              "ErrNilInput",
+              "ErrConstraintViolation"
+            ],
+            "notes": "One method over the generated ArticleConflictTarget enum — the target argument selects the conflict columns at call time.",
+            "sql_bodies": {
+              "mysql": "INSERT INTO `articles` (<columns>) VALUES (<values>) ON DUPLICATE KEY UPDATE <excluded>"
+            }
+          },
+          {
+            "name": "UpsertMany",
+            "params": [
+              {
+                "name": "inputs",
+                "type": "[]*CreateArticleInput"
+              },
+              {
+                "name": "target",
+                "type": "ArticleConflictTarget"
+              }
+            ],
+            "returns": "[]*Article",
+            "errors": [
+              "ErrNilInput",
+              "ErrConstraintViolation"
+            ],
+            "notes": "Batched in generation.batch_size chunks over the same ArticleConflictTarget enum Upsert takes. Inputs resolving to one target are deduped before the statement is built, last occurrence wins. Earlier chunks are not rolled back on a later failure — wrap in a transaction for atomicity.",
+            "sql_bodies": {
+              "mysql": "INSERT INTO `articles` (<columns>) VALUES <values> ON DUPLICATE KEY UPDATE <excluded>"
             }
           },
           {
@@ -910,20 +910,6 @@
             }
           },
           {
-            "name": "Count",
-            "params": [
-              {
-                "name": "filter",
-                "type": "*AssetFilter"
-              }
-            ],
-            "returns": "int64",
-            "errors": [],
-            "sql_bodies": {
-              "mysql": "SELECT COUNT(*) FROM `assets` WHERE <filter>"
-            }
-          },
-          {
             "name": "Exists",
             "params": [
               {
@@ -949,6 +935,20 @@
             "errors": [],
             "sql_bodies": {
               "mysql": "SELECT EXISTS(SELECT 1 FROM `assets` WHERE <filter>)"
+            }
+          },
+          {
+            "name": "Count",
+            "params": [
+              {
+                "name": "filter",
+                "type": "*AssetFilter"
+              }
+            ],
+            "returns": "int64",
+            "errors": [],
+            "sql_bodies": {
+              "mysql": "SELECT COUNT(*) FROM `assets` WHERE <filter>"
             }
           },
           {
@@ -1030,50 +1030,6 @@
             }
           },
           {
-            "name": "Upsert",
-            "params": [
-              {
-                "name": "input",
-                "type": "*CreateAssetInput"
-              },
-              {
-                "name": "target",
-                "type": "AssetConflictTarget"
-              }
-            ],
-            "returns": "*Asset",
-            "errors": [
-              "ErrNilInput",
-              "ErrConstraintViolation"
-            ],
-            "notes": "One method over the generated AssetConflictTarget enum — the target argument selects the conflict columns at call time.",
-            "sql_bodies": {
-              "mysql": "INSERT INTO `assets` (<columns>) VALUES (<values>) ON DUPLICATE KEY UPDATE <excluded>"
-            }
-          },
-          {
-            "name": "UpsertMany",
-            "params": [
-              {
-                "name": "inputs",
-                "type": "[]*CreateAssetInput"
-              },
-              {
-                "name": "target",
-                "type": "AssetConflictTarget"
-              }
-            ],
-            "returns": "[]*Asset",
-            "errors": [
-              "ErrNilInput",
-              "ErrConstraintViolation"
-            ],
-            "notes": "Batched in generation.batch_size chunks over the same AssetConflictTarget enum Upsert takes. Inputs resolving to one target are deduped before the statement is built, last occurrence wins. Earlier chunks are not rolled back on a later failure — wrap in a transaction for atomicity.",
-            "sql_bodies": {
-              "mysql": "INSERT INTO `assets` (<columns>) VALUES <values> ON DUPLICATE KEY UPDATE <excluded>"
-            }
-          },
-          {
             "name": "Update",
             "params": [
               {
@@ -1138,50 +1094,47 @@
             }
           },
           {
-            "name": "HardDelete",
+            "name": "Upsert",
             "params": [
               {
-                "name": "id",
-                "type": "int64"
-              }
-            ],
-            "returns": "",
-            "errors": [],
-            "notes": "Idempotent — a primary key that does not exist is not an error.",
-            "sql_bodies": {
-              "mysql": "DELETE FROM `assets` WHERE `id` = ?"
-            }
-          },
-          {
-            "name": "HardDeleteMany",
-            "params": [
+                "name": "input",
+                "type": "*CreateAssetInput"
+              },
               {
-                "name": "ids",
-                "type": "[]int64"
+                "name": "target",
+                "type": "AssetConflictTarget"
               }
             ],
-            "returns": "",
-            "errors": [],
-            "notes": "Idempotent — primary keys that do not exist are not an error.",
-            "sql_bodies": {
-              "mysql": "DELETE FROM `assets` WHERE `id` IN (<ids>)"
-            }
-          },
-          {
-            "name": "HardDeleteWhere",
-            "params": [
-              {
-                "name": "filter",
-                "type": "*AssetFilter"
-              }
-            ],
-            "returns": "",
+            "returns": "*Asset",
             "errors": [
-              "ErrEmptyFilter"
+              "ErrNilInput",
+              "ErrConstraintViolation"
             ],
-            "notes": "Idempotent — no match is not an error. ErrEmptyFilter when the filter produces no conditions.",
+            "notes": "One method over the generated AssetConflictTarget enum — the target argument selects the conflict columns at call time.",
             "sql_bodies": {
-              "mysql": "DELETE FROM `assets` WHERE <filter>"
+              "mysql": "INSERT INTO `assets` (<columns>) VALUES (<values>) ON DUPLICATE KEY UPDATE <excluded>"
+            }
+          },
+          {
+            "name": "UpsertMany",
+            "params": [
+              {
+                "name": "inputs",
+                "type": "[]*CreateAssetInput"
+              },
+              {
+                "name": "target",
+                "type": "AssetConflictTarget"
+              }
+            ],
+            "returns": "[]*Asset",
+            "errors": [
+              "ErrNilInput",
+              "ErrConstraintViolation"
+            ],
+            "notes": "Batched in generation.batch_size chunks over the same AssetConflictTarget enum Upsert takes. Inputs resolving to one target are deduped before the statement is built, last occurrence wins. Earlier chunks are not rolled back on a later failure — wrap in a transaction for atomicity.",
+            "sql_bodies": {
+              "mysql": "INSERT INTO `assets` (<columns>) VALUES <values> ON DUPLICATE KEY UPDATE <excluded>"
             }
           },
           {
@@ -1242,6 +1195,53 @@
               "ErrConstraintViolation"
             ],
             "notes": "Writes the parent and its nested rows in one transaction — a SAVEPOINT when ctx already holds one. Issues no statement of its own: it composes Upsert and, per eligible relationship (Attachments, Documents, Invoices, PrimaryDocument), the target's and junction's own client methods, so no sql_bodies entry. Each inner call fires its own hooks, events and cache invalidation under its own op; the nested method has none."
+          },
+          {
+            "name": "HardDelete",
+            "params": [
+              {
+                "name": "id",
+                "type": "int64"
+              }
+            ],
+            "returns": "",
+            "errors": [],
+            "notes": "Idempotent — a primary key that does not exist is not an error.",
+            "sql_bodies": {
+              "mysql": "DELETE FROM `assets` WHERE `id` = ?"
+            }
+          },
+          {
+            "name": "HardDeleteMany",
+            "params": [
+              {
+                "name": "ids",
+                "type": "[]int64"
+              }
+            ],
+            "returns": "",
+            "errors": [],
+            "notes": "Idempotent — primary keys that do not exist are not an error.",
+            "sql_bodies": {
+              "mysql": "DELETE FROM `assets` WHERE `id` IN (<ids>)"
+            }
+          },
+          {
+            "name": "HardDeleteWhere",
+            "params": [
+              {
+                "name": "filter",
+                "type": "*AssetFilter"
+              }
+            ],
+            "returns": "",
+            "errors": [
+              "ErrEmptyFilter"
+            ],
+            "notes": "Idempotent — no match is not an error. ErrEmptyFilter when the filter produces no conditions.",
+            "sql_bodies": {
+              "mysql": "DELETE FROM `assets` WHERE <filter>"
+            }
           }
         ]
       },
@@ -1398,20 +1398,6 @@
             }
           },
           {
-            "name": "Count",
-            "params": [
-              {
-                "name": "filter",
-                "type": "*AssetDocumentLinkFilter"
-              }
-            ],
-            "returns": "int64",
-            "errors": [],
-            "sql_bodies": {
-              "mysql": "SELECT COUNT(*) FROM `asset_document_links` WHERE <filter>"
-            }
-          },
-          {
             "name": "Exists",
             "params": [
               {
@@ -1437,6 +1423,20 @@
             "errors": [],
             "sql_bodies": {
               "mysql": "SELECT EXISTS(SELECT 1 FROM `asset_document_links` WHERE <filter>)"
+            }
+          },
+          {
+            "name": "Count",
+            "params": [
+              {
+                "name": "filter",
+                "type": "*AssetDocumentLinkFilter"
+              }
+            ],
+            "returns": "int64",
+            "errors": [],
+            "sql_bodies": {
+              "mysql": "SELECT COUNT(*) FROM `asset_document_links` WHERE <filter>"
             }
           },
           {
@@ -1518,50 +1518,6 @@
             }
           },
           {
-            "name": "Upsert",
-            "params": [
-              {
-                "name": "input",
-                "type": "*CreateAssetDocumentLinkInput"
-              },
-              {
-                "name": "target",
-                "type": "AssetDocumentLinkConflictTarget"
-              }
-            ],
-            "returns": "*AssetDocumentLink",
-            "errors": [
-              "ErrNilInput",
-              "ErrConstraintViolation"
-            ],
-            "notes": "One method over the generated AssetDocumentLinkConflictTarget enum — the target argument selects the conflict columns at call time.",
-            "sql_bodies": {
-              "mysql": "INSERT INTO `asset_document_links` (<columns>) VALUES (<values>) ON DUPLICATE KEY UPDATE <excluded>"
-            }
-          },
-          {
-            "name": "UpsertMany",
-            "params": [
-              {
-                "name": "inputs",
-                "type": "[]*CreateAssetDocumentLinkInput"
-              },
-              {
-                "name": "target",
-                "type": "AssetDocumentLinkConflictTarget"
-              }
-            ],
-            "returns": "[]*AssetDocumentLink",
-            "errors": [
-              "ErrNilInput",
-              "ErrConstraintViolation"
-            ],
-            "notes": "Batched in generation.batch_size chunks over the same AssetDocumentLinkConflictTarget enum Upsert takes. Inputs resolving to one target are deduped before the statement is built, last occurrence wins. Earlier chunks are not rolled back on a later failure — wrap in a transaction for atomicity.",
-            "sql_bodies": {
-              "mysql": "INSERT INTO `asset_document_links` (<columns>) VALUES <values> ON DUPLICATE KEY UPDATE <excluded>"
-            }
-          },
-          {
             "name": "Update",
             "params": [
               {
@@ -1623,6 +1579,50 @@
             "notes": "Idempotent — returns an empty slice when no row matches. ErrEmptyFilter when the filter produces no conditions.",
             "sql_bodies": {
               "mysql": "UPDATE `asset_document_links` SET <set> WHERE <filter>"
+            }
+          },
+          {
+            "name": "Upsert",
+            "params": [
+              {
+                "name": "input",
+                "type": "*CreateAssetDocumentLinkInput"
+              },
+              {
+                "name": "target",
+                "type": "AssetDocumentLinkConflictTarget"
+              }
+            ],
+            "returns": "*AssetDocumentLink",
+            "errors": [
+              "ErrNilInput",
+              "ErrConstraintViolation"
+            ],
+            "notes": "One method over the generated AssetDocumentLinkConflictTarget enum — the target argument selects the conflict columns at call time.",
+            "sql_bodies": {
+              "mysql": "INSERT INTO `asset_document_links` (<columns>) VALUES (<values>) ON DUPLICATE KEY UPDATE <excluded>"
+            }
+          },
+          {
+            "name": "UpsertMany",
+            "params": [
+              {
+                "name": "inputs",
+                "type": "[]*CreateAssetDocumentLinkInput"
+              },
+              {
+                "name": "target",
+                "type": "AssetDocumentLinkConflictTarget"
+              }
+            ],
+            "returns": "[]*AssetDocumentLink",
+            "errors": [
+              "ErrNilInput",
+              "ErrConstraintViolation"
+            ],
+            "notes": "Batched in generation.batch_size chunks over the same AssetDocumentLinkConflictTarget enum Upsert takes. Inputs resolving to one target are deduped before the statement is built, last occurrence wins. Earlier chunks are not rolled back on a later failure — wrap in a transaction for atomicity.",
+            "sql_bodies": {
+              "mysql": "INSERT INTO `asset_document_links` (<columns>) VALUES <values> ON DUPLICATE KEY UPDATE <excluded>"
             }
           },
           {
@@ -1847,20 +1847,6 @@
             }
           },
           {
-            "name": "Count",
-            "params": [
-              {
-                "name": "filter",
-                "type": "*CategoryFilter"
-              }
-            ],
-            "returns": "int64",
-            "errors": [],
-            "sql_bodies": {
-              "mysql": "SELECT COUNT(*) FROM `categories` WHERE <filter>"
-            }
-          },
-          {
             "name": "Exists",
             "params": [
               {
@@ -1886,6 +1872,20 @@
             "errors": [],
             "sql_bodies": {
               "mysql": "SELECT EXISTS(SELECT 1 FROM `categories` WHERE <filter>)"
+            }
+          },
+          {
+            "name": "Count",
+            "params": [
+              {
+                "name": "filter",
+                "type": "*CategoryFilter"
+              }
+            ],
+            "returns": "int64",
+            "errors": [],
+            "sql_bodies": {
+              "mysql": "SELECT COUNT(*) FROM `categories` WHERE <filter>"
             }
           },
           {
@@ -1967,50 +1967,6 @@
             }
           },
           {
-            "name": "Upsert",
-            "params": [
-              {
-                "name": "input",
-                "type": "*CreateCategoryInput"
-              },
-              {
-                "name": "target",
-                "type": "CategoryConflictTarget"
-              }
-            ],
-            "returns": "*Category",
-            "errors": [
-              "ErrNilInput",
-              "ErrConstraintViolation"
-            ],
-            "notes": "One method over the generated CategoryConflictTarget enum — the target argument selects the conflict columns at call time.",
-            "sql_bodies": {
-              "mysql": "INSERT INTO `categories` (<columns>) VALUES (<values>) ON DUPLICATE KEY UPDATE <excluded>"
-            }
-          },
-          {
-            "name": "UpsertMany",
-            "params": [
-              {
-                "name": "inputs",
-                "type": "[]*CreateCategoryInput"
-              },
-              {
-                "name": "target",
-                "type": "CategoryConflictTarget"
-              }
-            ],
-            "returns": "[]*Category",
-            "errors": [
-              "ErrNilInput",
-              "ErrConstraintViolation"
-            ],
-            "notes": "Batched in generation.batch_size chunks over the same CategoryConflictTarget enum Upsert takes. Inputs resolving to one target are deduped before the statement is built, last occurrence wins. Earlier chunks are not rolled back on a later failure — wrap in a transaction for atomicity.",
-            "sql_bodies": {
-              "mysql": "INSERT INTO `categories` (<columns>) VALUES <values> ON DUPLICATE KEY UPDATE <excluded>"
-            }
-          },
-          {
             "name": "Update",
             "params": [
               {
@@ -2075,50 +2031,47 @@
             }
           },
           {
-            "name": "HardDelete",
+            "name": "Upsert",
             "params": [
               {
-                "name": "id",
-                "type": "int32"
-              }
-            ],
-            "returns": "",
-            "errors": [],
-            "notes": "Idempotent — a primary key that does not exist is not an error.",
-            "sql_bodies": {
-              "mysql": "DELETE FROM `categories` WHERE `id` = ?"
-            }
-          },
-          {
-            "name": "HardDeleteMany",
-            "params": [
+                "name": "input",
+                "type": "*CreateCategoryInput"
+              },
               {
-                "name": "ids",
-                "type": "[]int32"
+                "name": "target",
+                "type": "CategoryConflictTarget"
               }
             ],
-            "returns": "",
-            "errors": [],
-            "notes": "Idempotent — primary keys that do not exist are not an error.",
-            "sql_bodies": {
-              "mysql": "DELETE FROM `categories` WHERE `id` IN (<ids>)"
-            }
-          },
-          {
-            "name": "HardDeleteWhere",
-            "params": [
-              {
-                "name": "filter",
-                "type": "*CategoryFilter"
-              }
-            ],
-            "returns": "",
+            "returns": "*Category",
             "errors": [
-              "ErrEmptyFilter"
+              "ErrNilInput",
+              "ErrConstraintViolation"
             ],
-            "notes": "Idempotent — no match is not an error. ErrEmptyFilter when the filter produces no conditions.",
+            "notes": "One method over the generated CategoryConflictTarget enum — the target argument selects the conflict columns at call time.",
             "sql_bodies": {
-              "mysql": "DELETE FROM `categories` WHERE <filter>"
+              "mysql": "INSERT INTO `categories` (<columns>) VALUES (<values>) ON DUPLICATE KEY UPDATE <excluded>"
+            }
+          },
+          {
+            "name": "UpsertMany",
+            "params": [
+              {
+                "name": "inputs",
+                "type": "[]*CreateCategoryInput"
+              },
+              {
+                "name": "target",
+                "type": "CategoryConflictTarget"
+              }
+            ],
+            "returns": "[]*Category",
+            "errors": [
+              "ErrNilInput",
+              "ErrConstraintViolation"
+            ],
+            "notes": "Batched in generation.batch_size chunks over the same CategoryConflictTarget enum Upsert takes. Inputs resolving to one target are deduped before the statement is built, last occurrence wins. Earlier chunks are not rolled back on a later failure — wrap in a transaction for atomicity.",
+            "sql_bodies": {
+              "mysql": "INSERT INTO `categories` (<columns>) VALUES <values> ON DUPLICATE KEY UPDATE <excluded>"
             }
           },
           {
@@ -2174,6 +2127,53 @@
               "ErrConstraintViolation"
             ],
             "notes": "Writes the parent and its nested rows in one transaction — a SAVEPOINT when ctx already holds one. Issues no statement of its own: it composes Upsert and, per eligible relationship (Products), the target's and junction's own client methods, so no sql_bodies entry. Each inner call fires its own hooks, events and cache invalidation under its own op; the nested method has none."
+          },
+          {
+            "name": "HardDelete",
+            "params": [
+              {
+                "name": "id",
+                "type": "int32"
+              }
+            ],
+            "returns": "",
+            "errors": [],
+            "notes": "Idempotent — a primary key that does not exist is not an error.",
+            "sql_bodies": {
+              "mysql": "DELETE FROM `categories` WHERE `id` = ?"
+            }
+          },
+          {
+            "name": "HardDeleteMany",
+            "params": [
+              {
+                "name": "ids",
+                "type": "[]int32"
+              }
+            ],
+            "returns": "",
+            "errors": [],
+            "notes": "Idempotent — primary keys that do not exist are not an error.",
+            "sql_bodies": {
+              "mysql": "DELETE FROM `categories` WHERE `id` IN (<ids>)"
+            }
+          },
+          {
+            "name": "HardDeleteWhere",
+            "params": [
+              {
+                "name": "filter",
+                "type": "*CategoryFilter"
+              }
+            ],
+            "returns": "",
+            "errors": [
+              "ErrEmptyFilter"
+            ],
+            "notes": "Idempotent — no match is not an error. ErrEmptyFilter when the filter produces no conditions.",
+            "sql_bodies": {
+              "mysql": "DELETE FROM `categories` WHERE <filter>"
+            }
           }
         ]
       },
@@ -2564,20 +2564,6 @@
             }
           },
           {
-            "name": "Count",
-            "params": [
-              {
-                "name": "filter",
-                "type": "*DefaultOnlyRowFilter"
-              }
-            ],
-            "returns": "int64",
-            "errors": [],
-            "sql_bodies": {
-              "mysql": "SELECT COUNT(*) FROM `default_only_rows` WHERE <filter>"
-            }
-          },
-          {
             "name": "Exists",
             "params": [
               {
@@ -2603,6 +2589,20 @@
             "errors": [],
             "sql_bodies": {
               "mysql": "SELECT EXISTS(SELECT 1 FROM `default_only_rows` WHERE <filter>)"
+            }
+          },
+          {
+            "name": "Count",
+            "params": [
+              {
+                "name": "filter",
+                "type": "*DefaultOnlyRowFilter"
+              }
+            ],
+            "returns": "int64",
+            "errors": [],
+            "sql_bodies": {
+              "mysql": "SELECT COUNT(*) FROM `default_only_rows` WHERE <filter>"
             }
           },
           {
@@ -2684,50 +2684,6 @@
             }
           },
           {
-            "name": "Upsert",
-            "params": [
-              {
-                "name": "input",
-                "type": "*CreateDefaultOnlyRowInput"
-              },
-              {
-                "name": "target",
-                "type": "DefaultOnlyRowConflictTarget"
-              }
-            ],
-            "returns": "*DefaultOnlyRow",
-            "errors": [
-              "ErrNilInput",
-              "ErrConstraintViolation"
-            ],
-            "notes": "One method over the generated DefaultOnlyRowConflictTarget enum — the target argument selects the conflict columns at call time.",
-            "sql_bodies": {
-              "mysql": "INSERT INTO `default_only_rows` (<columns>) VALUES (<values>) ON DUPLICATE KEY UPDATE <excluded>"
-            }
-          },
-          {
-            "name": "UpsertMany",
-            "params": [
-              {
-                "name": "inputs",
-                "type": "[]*CreateDefaultOnlyRowInput"
-              },
-              {
-                "name": "target",
-                "type": "DefaultOnlyRowConflictTarget"
-              }
-            ],
-            "returns": "[]*DefaultOnlyRow",
-            "errors": [
-              "ErrNilInput",
-              "ErrConstraintViolation"
-            ],
-            "notes": "Batched in generation.batch_size chunks over the same DefaultOnlyRowConflictTarget enum Upsert takes. Inputs resolving to one target are deduped before the statement is built, last occurrence wins. Earlier chunks are not rolled back on a later failure — wrap in a transaction for atomicity.",
-            "sql_bodies": {
-              "mysql": "INSERT INTO `default_only_rows` (<columns>) VALUES <values> ON DUPLICATE KEY UPDATE <excluded>"
-            }
-          },
-          {
             "name": "Update",
             "params": [
               {
@@ -2789,6 +2745,50 @@
             "notes": "Idempotent — returns an empty slice when no row matches. ErrEmptyFilter when the filter produces no conditions.",
             "sql_bodies": {
               "mysql": "UPDATE `default_only_rows` SET <set> WHERE <filter>"
+            }
+          },
+          {
+            "name": "Upsert",
+            "params": [
+              {
+                "name": "input",
+                "type": "*CreateDefaultOnlyRowInput"
+              },
+              {
+                "name": "target",
+                "type": "DefaultOnlyRowConflictTarget"
+              }
+            ],
+            "returns": "*DefaultOnlyRow",
+            "errors": [
+              "ErrNilInput",
+              "ErrConstraintViolation"
+            ],
+            "notes": "One method over the generated DefaultOnlyRowConflictTarget enum — the target argument selects the conflict columns at call time.",
+            "sql_bodies": {
+              "mysql": "INSERT INTO `default_only_rows` (<columns>) VALUES (<values>) ON DUPLICATE KEY UPDATE <excluded>"
+            }
+          },
+          {
+            "name": "UpsertMany",
+            "params": [
+              {
+                "name": "inputs",
+                "type": "[]*CreateDefaultOnlyRowInput"
+              },
+              {
+                "name": "target",
+                "type": "DefaultOnlyRowConflictTarget"
+              }
+            ],
+            "returns": "[]*DefaultOnlyRow",
+            "errors": [
+              "ErrNilInput",
+              "ErrConstraintViolation"
+            ],
+            "notes": "Batched in generation.batch_size chunks over the same DefaultOnlyRowConflictTarget enum Upsert takes. Inputs resolving to one target are deduped before the statement is built, last occurrence wins. Earlier chunks are not rolled back on a later failure — wrap in a transaction for atomicity.",
+            "sql_bodies": {
+              "mysql": "INSERT INTO `default_only_rows` (<columns>) VALUES <values> ON DUPLICATE KEY UPDATE <excluded>"
             }
           },
           {
@@ -3051,20 +3051,6 @@
             }
           },
           {
-            "name": "Count",
-            "params": [
-              {
-                "name": "filter",
-                "type": "*DocumentFilter"
-              }
-            ],
-            "returns": "int64",
-            "errors": [],
-            "sql_bodies": {
-              "mysql": "SELECT COUNT(*) FROM `documents` WHERE <filter>"
-            }
-          },
-          {
             "name": "Exists",
             "params": [
               {
@@ -3090,6 +3076,20 @@
             "errors": [],
             "sql_bodies": {
               "mysql": "SELECT EXISTS(SELECT 1 FROM `documents` WHERE <filter>)"
+            }
+          },
+          {
+            "name": "Count",
+            "params": [
+              {
+                "name": "filter",
+                "type": "*DocumentFilter"
+              }
+            ],
+            "returns": "int64",
+            "errors": [],
+            "sql_bodies": {
+              "mysql": "SELECT COUNT(*) FROM `documents` WHERE <filter>"
             }
           },
           {
@@ -3171,50 +3171,6 @@
             }
           },
           {
-            "name": "Upsert",
-            "params": [
-              {
-                "name": "input",
-                "type": "*CreateDocumentInput"
-              },
-              {
-                "name": "target",
-                "type": "DocumentConflictTarget"
-              }
-            ],
-            "returns": "*Document",
-            "errors": [
-              "ErrNilInput",
-              "ErrConstraintViolation"
-            ],
-            "notes": "One method over the generated DocumentConflictTarget enum — the target argument selects the conflict columns at call time.",
-            "sql_bodies": {
-              "mysql": "INSERT INTO `documents` (<columns>) VALUES (<values>) ON DUPLICATE KEY UPDATE <excluded>"
-            }
-          },
-          {
-            "name": "UpsertMany",
-            "params": [
-              {
-                "name": "inputs",
-                "type": "[]*CreateDocumentInput"
-              },
-              {
-                "name": "target",
-                "type": "DocumentConflictTarget"
-              }
-            ],
-            "returns": "[]*Document",
-            "errors": [
-              "ErrNilInput",
-              "ErrConstraintViolation"
-            ],
-            "notes": "Batched in generation.batch_size chunks over the same DocumentConflictTarget enum Upsert takes. Inputs resolving to one target are deduped before the statement is built, last occurrence wins. Earlier chunks are not rolled back on a later failure — wrap in a transaction for atomicity.",
-            "sql_bodies": {
-              "mysql": "INSERT INTO `documents` (<columns>) VALUES <values> ON DUPLICATE KEY UPDATE <excluded>"
-            }
-          },
-          {
             "name": "Update",
             "params": [
               {
@@ -3279,50 +3235,47 @@
             }
           },
           {
-            "name": "HardDelete",
+            "name": "Upsert",
             "params": [
               {
-                "name": "id",
-                "type": "int64"
-              }
-            ],
-            "returns": "",
-            "errors": [],
-            "notes": "Idempotent — a primary key that does not exist is not an error.",
-            "sql_bodies": {
-              "mysql": "DELETE FROM `documents` WHERE `id` = ?"
-            }
-          },
-          {
-            "name": "HardDeleteMany",
-            "params": [
+                "name": "input",
+                "type": "*CreateDocumentInput"
+              },
               {
-                "name": "ids",
-                "type": "[]int64"
+                "name": "target",
+                "type": "DocumentConflictTarget"
               }
             ],
-            "returns": "",
-            "errors": [],
-            "notes": "Idempotent — primary keys that do not exist are not an error.",
-            "sql_bodies": {
-              "mysql": "DELETE FROM `documents` WHERE `id` IN (<ids>)"
-            }
-          },
-          {
-            "name": "HardDeleteWhere",
-            "params": [
-              {
-                "name": "filter",
-                "type": "*DocumentFilter"
-              }
-            ],
-            "returns": "",
+            "returns": "*Document",
             "errors": [
-              "ErrEmptyFilter"
+              "ErrNilInput",
+              "ErrConstraintViolation"
             ],
-            "notes": "Idempotent — no match is not an error. ErrEmptyFilter when the filter produces no conditions.",
+            "notes": "One method over the generated DocumentConflictTarget enum — the target argument selects the conflict columns at call time.",
             "sql_bodies": {
-              "mysql": "DELETE FROM `documents` WHERE <filter>"
+              "mysql": "INSERT INTO `documents` (<columns>) VALUES (<values>) ON DUPLICATE KEY UPDATE <excluded>"
+            }
+          },
+          {
+            "name": "UpsertMany",
+            "params": [
+              {
+                "name": "inputs",
+                "type": "[]*CreateDocumentInput"
+              },
+              {
+                "name": "target",
+                "type": "DocumentConflictTarget"
+              }
+            ],
+            "returns": "[]*Document",
+            "errors": [
+              "ErrNilInput",
+              "ErrConstraintViolation"
+            ],
+            "notes": "Batched in generation.batch_size chunks over the same DocumentConflictTarget enum Upsert takes. Inputs resolving to one target are deduped before the statement is built, last occurrence wins. Earlier chunks are not rolled back on a later failure — wrap in a transaction for atomicity.",
+            "sql_bodies": {
+              "mysql": "INSERT INTO `documents` (<columns>) VALUES <values> ON DUPLICATE KEY UPDATE <excluded>"
             }
           },
           {
@@ -3383,6 +3336,53 @@
               "ErrConstraintViolation"
             ],
             "notes": "Writes the parent and its nested rows in one transaction — a SAVEPOINT when ctx already holds one. Issues no statement of its own: it composes Upsert and, per eligible relationship (Assets), the target's and junction's own client methods, so no sql_bodies entry. Each inner call fires its own hooks, events and cache invalidation under its own op; the nested method has none."
+          },
+          {
+            "name": "HardDelete",
+            "params": [
+              {
+                "name": "id",
+                "type": "int64"
+              }
+            ],
+            "returns": "",
+            "errors": [],
+            "notes": "Idempotent — a primary key that does not exist is not an error.",
+            "sql_bodies": {
+              "mysql": "DELETE FROM `documents` WHERE `id` = ?"
+            }
+          },
+          {
+            "name": "HardDeleteMany",
+            "params": [
+              {
+                "name": "ids",
+                "type": "[]int64"
+              }
+            ],
+            "returns": "",
+            "errors": [],
+            "notes": "Idempotent — primary keys that do not exist are not an error.",
+            "sql_bodies": {
+              "mysql": "DELETE FROM `documents` WHERE `id` IN (<ids>)"
+            }
+          },
+          {
+            "name": "HardDeleteWhere",
+            "params": [
+              {
+                "name": "filter",
+                "type": "*DocumentFilter"
+              }
+            ],
+            "returns": "",
+            "errors": [
+              "ErrEmptyFilter"
+            ],
+            "notes": "Idempotent — no match is not an error. ErrEmptyFilter when the filter produces no conditions.",
+            "sql_bodies": {
+              "mysql": "DELETE FROM `documents` WHERE <filter>"
+            }
           }
         ]
       },
@@ -3524,20 +3524,6 @@
             }
           },
           {
-            "name": "Count",
-            "params": [
-              {
-                "name": "filter",
-                "type": "*KeyOnlyRowFilter"
-              }
-            ],
-            "returns": "int64",
-            "errors": [],
-            "sql_bodies": {
-              "mysql": "SELECT COUNT(*) FROM `key_only_rows` WHERE <filter>"
-            }
-          },
-          {
             "name": "Exists",
             "params": [
               {
@@ -3563,6 +3549,20 @@
             "errors": [],
             "sql_bodies": {
               "mysql": "SELECT EXISTS(SELECT 1 FROM `key_only_rows` WHERE <filter>)"
+            }
+          },
+          {
+            "name": "Count",
+            "params": [
+              {
+                "name": "filter",
+                "type": "*KeyOnlyRowFilter"
+              }
+            ],
+            "returns": "int64",
+            "errors": [],
+            "sql_bodies": {
+              "mysql": "SELECT COUNT(*) FROM `key_only_rows` WHERE <filter>"
             }
           },
           {
@@ -3644,50 +3644,6 @@
             }
           },
           {
-            "name": "Upsert",
-            "params": [
-              {
-                "name": "input",
-                "type": "*CreateKeyOnlyRowInput"
-              },
-              {
-                "name": "target",
-                "type": "KeyOnlyRowConflictTarget"
-              }
-            ],
-            "returns": "*KeyOnlyRow",
-            "errors": [
-              "ErrNilInput",
-              "ErrConstraintViolation"
-            ],
-            "notes": "One method over the generated KeyOnlyRowConflictTarget enum — the target argument selects the conflict columns at call time.",
-            "sql_bodies": {
-              "mysql": "INSERT INTO `key_only_rows` (<columns>) VALUES (<values>) ON DUPLICATE KEY UPDATE <excluded>"
-            }
-          },
-          {
-            "name": "UpsertMany",
-            "params": [
-              {
-                "name": "inputs",
-                "type": "[]*CreateKeyOnlyRowInput"
-              },
-              {
-                "name": "target",
-                "type": "KeyOnlyRowConflictTarget"
-              }
-            ],
-            "returns": "[]*KeyOnlyRow",
-            "errors": [
-              "ErrNilInput",
-              "ErrConstraintViolation"
-            ],
-            "notes": "Batched in generation.batch_size chunks over the same KeyOnlyRowConflictTarget enum Upsert takes. Inputs resolving to one target are deduped before the statement is built, last occurrence wins. Earlier chunks are not rolled back on a later failure — wrap in a transaction for atomicity.",
-            "sql_bodies": {
-              "mysql": "INSERT INTO `key_only_rows` (<columns>) VALUES <values> ON DUPLICATE KEY UPDATE <excluded>"
-            }
-          },
-          {
             "name": "Update",
             "params": [
               {
@@ -3749,6 +3705,50 @@
             "notes": "Idempotent — returns an empty slice when no row matches. ErrEmptyFilter when the filter produces no conditions.",
             "sql_bodies": {
               "mysql": "UPDATE `key_only_rows` SET <set> WHERE <filter>"
+            }
+          },
+          {
+            "name": "Upsert",
+            "params": [
+              {
+                "name": "input",
+                "type": "*CreateKeyOnlyRowInput"
+              },
+              {
+                "name": "target",
+                "type": "KeyOnlyRowConflictTarget"
+              }
+            ],
+            "returns": "*KeyOnlyRow",
+            "errors": [
+              "ErrNilInput",
+              "ErrConstraintViolation"
+            ],
+            "notes": "One method over the generated KeyOnlyRowConflictTarget enum — the target argument selects the conflict columns at call time.",
+            "sql_bodies": {
+              "mysql": "INSERT INTO `key_only_rows` (<columns>) VALUES (<values>) ON DUPLICATE KEY UPDATE <excluded>"
+            }
+          },
+          {
+            "name": "UpsertMany",
+            "params": [
+              {
+                "name": "inputs",
+                "type": "[]*CreateKeyOnlyRowInput"
+              },
+              {
+                "name": "target",
+                "type": "KeyOnlyRowConflictTarget"
+              }
+            ],
+            "returns": "[]*KeyOnlyRow",
+            "errors": [
+              "ErrNilInput",
+              "ErrConstraintViolation"
+            ],
+            "notes": "Batched in generation.batch_size chunks over the same KeyOnlyRowConflictTarget enum Upsert takes. Inputs resolving to one target are deduped before the statement is built, last occurrence wins. Earlier chunks are not rolled back on a later failure — wrap in a transaction for atomicity.",
+            "sql_bodies": {
+              "mysql": "INSERT INTO `key_only_rows` (<columns>) VALUES <values> ON DUPLICATE KEY UPDATE <excluded>"
             }
           },
           {
@@ -3995,20 +3995,6 @@
             }
           },
           {
-            "name": "Count",
-            "params": [
-              {
-                "name": "filter",
-                "type": "*OrderFilter"
-              }
-            ],
-            "returns": "int64",
-            "errors": [],
-            "sql_bodies": {
-              "mysql": "SELECT COUNT(*) FROM `orders` WHERE <filter>"
-            }
-          },
-          {
             "name": "Exists",
             "params": [
               {
@@ -4034,6 +4020,20 @@
             "errors": [],
             "sql_bodies": {
               "mysql": "SELECT EXISTS(SELECT 1 FROM `orders` WHERE <filter>)"
+            }
+          },
+          {
+            "name": "Count",
+            "params": [
+              {
+                "name": "filter",
+                "type": "*OrderFilter"
+              }
+            ],
+            "returns": "int64",
+            "errors": [],
+            "sql_bodies": {
+              "mysql": "SELECT COUNT(*) FROM `orders` WHERE <filter>"
             }
           },
           {
@@ -4115,50 +4115,6 @@
             }
           },
           {
-            "name": "Upsert",
-            "params": [
-              {
-                "name": "input",
-                "type": "*CreateOrderInput"
-              },
-              {
-                "name": "target",
-                "type": "OrderConflictTarget"
-              }
-            ],
-            "returns": "*Order",
-            "errors": [
-              "ErrNilInput",
-              "ErrConstraintViolation"
-            ],
-            "notes": "One method over the generated OrderConflictTarget enum — the target argument selects the conflict columns at call time.",
-            "sql_bodies": {
-              "mysql": "INSERT INTO `orders` (<columns>) VALUES (<values>) ON DUPLICATE KEY UPDATE <excluded>"
-            }
-          },
-          {
-            "name": "UpsertMany",
-            "params": [
-              {
-                "name": "inputs",
-                "type": "[]*CreateOrderInput"
-              },
-              {
-                "name": "target",
-                "type": "OrderConflictTarget"
-              }
-            ],
-            "returns": "[]*Order",
-            "errors": [
-              "ErrNilInput",
-              "ErrConstraintViolation"
-            ],
-            "notes": "Batched in generation.batch_size chunks over the same OrderConflictTarget enum Upsert takes. Inputs resolving to one target are deduped before the statement is built, last occurrence wins. Earlier chunks are not rolled back on a later failure — wrap in a transaction for atomicity.",
-            "sql_bodies": {
-              "mysql": "INSERT INTO `orders` (<columns>) VALUES <values> ON DUPLICATE KEY UPDATE <excluded>"
-            }
-          },
-          {
             "name": "Update",
             "params": [
               {
@@ -4220,6 +4176,103 @@
             "sql_bodies": {
               "mysql": "UPDATE `orders` SET <set> WHERE <filter>"
             }
+          },
+          {
+            "name": "Upsert",
+            "params": [
+              {
+                "name": "input",
+                "type": "*CreateOrderInput"
+              },
+              {
+                "name": "target",
+                "type": "OrderConflictTarget"
+              }
+            ],
+            "returns": "*Order",
+            "errors": [
+              "ErrNilInput",
+              "ErrConstraintViolation"
+            ],
+            "notes": "One method over the generated OrderConflictTarget enum — the target argument selects the conflict columns at call time.",
+            "sql_bodies": {
+              "mysql": "INSERT INTO `orders` (<columns>) VALUES (<values>) ON DUPLICATE KEY UPDATE <excluded>"
+            }
+          },
+          {
+            "name": "UpsertMany",
+            "params": [
+              {
+                "name": "inputs",
+                "type": "[]*CreateOrderInput"
+              },
+              {
+                "name": "target",
+                "type": "OrderConflictTarget"
+              }
+            ],
+            "returns": "[]*Order",
+            "errors": [
+              "ErrNilInput",
+              "ErrConstraintViolation"
+            ],
+            "notes": "Batched in generation.batch_size chunks over the same OrderConflictTarget enum Upsert takes. Inputs resolving to one target are deduped before the statement is built, last occurrence wins. Earlier chunks are not rolled back on a later failure — wrap in a transaction for atomicity.",
+            "sql_bodies": {
+              "mysql": "INSERT INTO `orders` (<columns>) VALUES <values> ON DUPLICATE KEY UPDATE <excluded>"
+            }
+          },
+          {
+            "name": "CreateWithRelated",
+            "params": [
+              {
+                "name": "input",
+                "type": "*CreateOrderWithRelatedInput"
+              }
+            ],
+            "returns": "*Order",
+            "errors": [
+              "ErrNilInput",
+              "ErrConstraintViolation"
+            ],
+            "notes": "Writes the parent and its nested rows in one transaction — a SAVEPOINT when ctx already holds one. Issues no statement of its own: it composes Create and, per eligible relationship (OrderItems), the target's and junction's own client methods, so no sql_bodies entry. Each inner call fires its own hooks, events and cache invalidation under its own op; the nested method has none."
+          },
+          {
+            "name": "UpdateWithRelated",
+            "params": [
+              {
+                "name": "id",
+                "type": "int64"
+              },
+              {
+                "name": "input",
+                "type": "*UpdateOrderWithRelatedInput"
+              }
+            ],
+            "returns": "*Order",
+            "errors": [
+              "ErrNilInput",
+              "ErrConstraintViolation"
+            ],
+            "notes": "Writes the parent and its nested rows in one transaction — a SAVEPOINT when ctx already holds one. Issues no statement of its own: it composes Update and, per eligible relationship (OrderItems), the target's and junction's own client methods, so no sql_bodies entry. Each inner call fires its own hooks, events and cache invalidation under its own op; the nested method has none."
+          },
+          {
+            "name": "UpsertWithRelated",
+            "params": [
+              {
+                "name": "input",
+                "type": "*UpsertOrderWithRelatedInput"
+              },
+              {
+                "name": "target",
+                "type": "OrderConflictTarget"
+              }
+            ],
+            "returns": "*Order",
+            "errors": [
+              "ErrNilInput",
+              "ErrConstraintViolation"
+            ],
+            "notes": "Writes the parent and its nested rows in one transaction — a SAVEPOINT when ctx already holds one. Issues no statement of its own: it composes Upsert and, per eligible relationship (OrderItems), the target's and junction's own client methods, so no sql_bodies entry. Each inner call fires its own hooks, events and cache invalidation under its own op; the nested method has none."
           },
           {
             "name": "Increment",
@@ -4286,59 +4339,6 @@
             "sql_bodies": {
               "mysql": "DELETE FROM `orders` WHERE <filter>"
             }
-          },
-          {
-            "name": "CreateWithRelated",
-            "params": [
-              {
-                "name": "input",
-                "type": "*CreateOrderWithRelatedInput"
-              }
-            ],
-            "returns": "*Order",
-            "errors": [
-              "ErrNilInput",
-              "ErrConstraintViolation"
-            ],
-            "notes": "Writes the parent and its nested rows in one transaction — a SAVEPOINT when ctx already holds one. Issues no statement of its own: it composes Create and, per eligible relationship (OrderItems), the target's and junction's own client methods, so no sql_bodies entry. Each inner call fires its own hooks, events and cache invalidation under its own op; the nested method has none."
-          },
-          {
-            "name": "UpdateWithRelated",
-            "params": [
-              {
-                "name": "id",
-                "type": "int64"
-              },
-              {
-                "name": "input",
-                "type": "*UpdateOrderWithRelatedInput"
-              }
-            ],
-            "returns": "*Order",
-            "errors": [
-              "ErrNilInput",
-              "ErrConstraintViolation"
-            ],
-            "notes": "Writes the parent and its nested rows in one transaction — a SAVEPOINT when ctx already holds one. Issues no statement of its own: it composes Update and, per eligible relationship (OrderItems), the target's and junction's own client methods, so no sql_bodies entry. Each inner call fires its own hooks, events and cache invalidation under its own op; the nested method has none."
-          },
-          {
-            "name": "UpsertWithRelated",
-            "params": [
-              {
-                "name": "input",
-                "type": "*UpsertOrderWithRelatedInput"
-              },
-              {
-                "name": "target",
-                "type": "OrderConflictTarget"
-              }
-            ],
-            "returns": "*Order",
-            "errors": [
-              "ErrNilInput",
-              "ErrConstraintViolation"
-            ],
-            "notes": "Writes the parent and its nested rows in one transaction — a SAVEPOINT when ctx already holds one. Issues no statement of its own: it composes Upsert and, per eligible relationship (OrderItems), the target's and junction's own client methods, so no sql_bodies entry. Each inner call fires its own hooks, events and cache invalidation under its own op; the nested method has none."
           }
         ]
       },
@@ -4548,20 +4548,6 @@
             }
           },
           {
-            "name": "Count",
-            "params": [
-              {
-                "name": "filter",
-                "type": "*OrderItemFilter"
-              }
-            ],
-            "returns": "int64",
-            "errors": [],
-            "sql_bodies": {
-              "mysql": "SELECT COUNT(*) FROM `order_items` WHERE <filter>"
-            }
-          },
-          {
             "name": "Exists",
             "params": [
               {
@@ -4587,6 +4573,20 @@
             "errors": [],
             "sql_bodies": {
               "mysql": "SELECT EXISTS(SELECT 1 FROM `order_items` WHERE <filter>)"
+            }
+          },
+          {
+            "name": "Count",
+            "params": [
+              {
+                "name": "filter",
+                "type": "*OrderItemFilter"
+              }
+            ],
+            "returns": "int64",
+            "errors": [],
+            "sql_bodies": {
+              "mysql": "SELECT COUNT(*) FROM `order_items` WHERE <filter>"
             }
           },
           {
@@ -4668,50 +4668,6 @@
             }
           },
           {
-            "name": "Upsert",
-            "params": [
-              {
-                "name": "input",
-                "type": "*CreateOrderItemInput"
-              },
-              {
-                "name": "target",
-                "type": "OrderItemConflictTarget"
-              }
-            ],
-            "returns": "*OrderItem",
-            "errors": [
-              "ErrNilInput",
-              "ErrConstraintViolation"
-            ],
-            "notes": "One method over the generated OrderItemConflictTarget enum — the target argument selects the conflict columns at call time.",
-            "sql_bodies": {
-              "mysql": "INSERT INTO `order_items` (<columns>) VALUES (<values>) ON DUPLICATE KEY UPDATE <excluded>"
-            }
-          },
-          {
-            "name": "UpsertMany",
-            "params": [
-              {
-                "name": "inputs",
-                "type": "[]*CreateOrderItemInput"
-              },
-              {
-                "name": "target",
-                "type": "OrderItemConflictTarget"
-              }
-            ],
-            "returns": "[]*OrderItem",
-            "errors": [
-              "ErrNilInput",
-              "ErrConstraintViolation"
-            ],
-            "notes": "Batched in generation.batch_size chunks over the same OrderItemConflictTarget enum Upsert takes. Inputs resolving to one target are deduped before the statement is built, last occurrence wins. Earlier chunks are not rolled back on a later failure — wrap in a transaction for atomicity.",
-            "sql_bodies": {
-              "mysql": "INSERT INTO `order_items` (<columns>) VALUES <values> ON DUPLICATE KEY UPDATE <excluded>"
-            }
-          },
-          {
             "name": "Update",
             "params": [
               {
@@ -4773,6 +4729,50 @@
             "notes": "Idempotent — returns an empty slice when no row matches. ErrEmptyFilter when the filter produces no conditions.",
             "sql_bodies": {
               "mysql": "UPDATE `order_items` SET <set> WHERE <filter>"
+            }
+          },
+          {
+            "name": "Upsert",
+            "params": [
+              {
+                "name": "input",
+                "type": "*CreateOrderItemInput"
+              },
+              {
+                "name": "target",
+                "type": "OrderItemConflictTarget"
+              }
+            ],
+            "returns": "*OrderItem",
+            "errors": [
+              "ErrNilInput",
+              "ErrConstraintViolation"
+            ],
+            "notes": "One method over the generated OrderItemConflictTarget enum — the target argument selects the conflict columns at call time.",
+            "sql_bodies": {
+              "mysql": "INSERT INTO `order_items` (<columns>) VALUES (<values>) ON DUPLICATE KEY UPDATE <excluded>"
+            }
+          },
+          {
+            "name": "UpsertMany",
+            "params": [
+              {
+                "name": "inputs",
+                "type": "[]*CreateOrderItemInput"
+              },
+              {
+                "name": "target",
+                "type": "OrderItemConflictTarget"
+              }
+            ],
+            "returns": "[]*OrderItem",
+            "errors": [
+              "ErrNilInput",
+              "ErrConstraintViolation"
+            ],
+            "notes": "Batched in generation.batch_size chunks over the same OrderItemConflictTarget enum Upsert takes. Inputs resolving to one target are deduped before the statement is built, last occurrence wins. Earlier chunks are not rolled back on a later failure — wrap in a transaction for atomicity.",
+            "sql_bodies": {
+              "mysql": "INSERT INTO `order_items` (<columns>) VALUES <values> ON DUPLICATE KEY UPDATE <excluded>"
             }
           },
           {
@@ -5110,20 +5110,6 @@
             }
           },
           {
-            "name": "Count",
-            "params": [
-              {
-                "name": "filter",
-                "type": "*ProductFilter"
-              }
-            ],
-            "returns": "int64",
-            "errors": [],
-            "sql_bodies": {
-              "mysql": "SELECT COUNT(*) FROM `products` WHERE <filter>"
-            }
-          },
-          {
             "name": "Exists",
             "params": [
               {
@@ -5149,6 +5135,20 @@
             "errors": [],
             "sql_bodies": {
               "mysql": "SELECT EXISTS(SELECT 1 FROM `products` WHERE <filter>)"
+            }
+          },
+          {
+            "name": "Count",
+            "params": [
+              {
+                "name": "filter",
+                "type": "*ProductFilter"
+              }
+            ],
+            "returns": "int64",
+            "errors": [],
+            "sql_bodies": {
+              "mysql": "SELECT COUNT(*) FROM `products` WHERE <filter>"
             }
           },
           {
@@ -5230,50 +5230,6 @@
             }
           },
           {
-            "name": "Upsert",
-            "params": [
-              {
-                "name": "input",
-                "type": "*CreateProductInput"
-              },
-              {
-                "name": "target",
-                "type": "ProductConflictTarget"
-              }
-            ],
-            "returns": "*Product",
-            "errors": [
-              "ErrNilInput",
-              "ErrConstraintViolation"
-            ],
-            "notes": "One method over the generated ProductConflictTarget enum — the target argument selects the conflict columns at call time.",
-            "sql_bodies": {
-              "mysql": "INSERT INTO `products` (<columns>) VALUES (<values>) ON DUPLICATE KEY UPDATE <excluded>"
-            }
-          },
-          {
-            "name": "UpsertMany",
-            "params": [
-              {
-                "name": "inputs",
-                "type": "[]*CreateProductInput"
-              },
-              {
-                "name": "target",
-                "type": "ProductConflictTarget"
-              }
-            ],
-            "returns": "[]*Product",
-            "errors": [
-              "ErrNilInput",
-              "ErrConstraintViolation"
-            ],
-            "notes": "Batched in generation.batch_size chunks over the same ProductConflictTarget enum Upsert takes. Inputs resolving to one target are deduped before the statement is built, last occurrence wins. Earlier chunks are not rolled back on a later failure — wrap in a transaction for atomicity.",
-            "sql_bodies": {
-              "mysql": "INSERT INTO `products` (<columns>) VALUES <values> ON DUPLICATE KEY UPDATE <excluded>"
-            }
-          },
-          {
             "name": "Update",
             "params": [
               {
@@ -5336,6 +5292,104 @@
             "sql_bodies": {
               "mysql": "UPDATE `products` SET <set> WHERE <filter>"
             }
+          },
+          {
+            "name": "Upsert",
+            "params": [
+              {
+                "name": "input",
+                "type": "*CreateProductInput"
+              },
+              {
+                "name": "target",
+                "type": "ProductConflictTarget"
+              }
+            ],
+            "returns": "*Product",
+            "errors": [
+              "ErrNilInput",
+              "ErrConstraintViolation"
+            ],
+            "notes": "One method over the generated ProductConflictTarget enum — the target argument selects the conflict columns at call time.",
+            "sql_bodies": {
+              "mysql": "INSERT INTO `products` (<columns>) VALUES (<values>) ON DUPLICATE KEY UPDATE <excluded>"
+            }
+          },
+          {
+            "name": "UpsertMany",
+            "params": [
+              {
+                "name": "inputs",
+                "type": "[]*CreateProductInput"
+              },
+              {
+                "name": "target",
+                "type": "ProductConflictTarget"
+              }
+            ],
+            "returns": "[]*Product",
+            "errors": [
+              "ErrNilInput",
+              "ErrConstraintViolation"
+            ],
+            "notes": "Batched in generation.batch_size chunks over the same ProductConflictTarget enum Upsert takes. Inputs resolving to one target are deduped before the statement is built, last occurrence wins. Earlier chunks are not rolled back on a later failure — wrap in a transaction for atomicity.",
+            "sql_bodies": {
+              "mysql": "INSERT INTO `products` (<columns>) VALUES <values> ON DUPLICATE KEY UPDATE <excluded>"
+            }
+          },
+          {
+            "name": "CreateWithRelated",
+            "params": [
+              {
+                "name": "input",
+                "type": "*CreateProductWithRelatedInput"
+              }
+            ],
+            "returns": "*Product",
+            "errors": [
+              "ErrNilInput",
+              "ErrConstraintViolation"
+            ],
+            "notes": "Writes the parent and its nested rows in one transaction — a SAVEPOINT when ctx already holds one. Issues no statement of its own: it composes Create and, per eligible relationship (OrderItems), the target's and junction's own client methods, so no sql_bodies entry. Each inner call fires its own hooks, events and cache invalidation under its own op; the nested method has none."
+          },
+          {
+            "name": "UpdateWithRelated",
+            "params": [
+              {
+                "name": "id",
+                "type": "int64"
+              },
+              {
+                "name": "input",
+                "type": "*UpdateProductWithRelatedInput"
+              }
+            ],
+            "returns": "*Product",
+            "errors": [
+              "ErrNilInput",
+              "ErrNotFound",
+              "ErrConstraintViolation"
+            ],
+            "notes": "Writes the parent and its nested rows in one transaction — a SAVEPOINT when ctx already holds one. Issues no statement of its own: it composes Update and, per eligible relationship (OrderItems), the target's and junction's own client methods, so no sql_bodies entry. Each inner call fires its own hooks, events and cache invalidation under its own op; the nested method has none."
+          },
+          {
+            "name": "UpsertWithRelated",
+            "params": [
+              {
+                "name": "input",
+                "type": "*UpsertProductWithRelatedInput"
+              },
+              {
+                "name": "target",
+                "type": "ProductConflictTarget"
+              }
+            ],
+            "returns": "*Product",
+            "errors": [
+              "ErrNilInput",
+              "ErrConstraintViolation"
+            ],
+            "notes": "Writes the parent and its nested rows in one transaction — a SAVEPOINT when ctx already holds one. Issues no statement of its own: it composes Upsert and, per eligible relationship (OrderItems), the target's and junction's own client methods, so no sql_bodies entry. Each inner call fires its own hooks, events and cache invalidation under its own op; the nested method has none."
           },
           {
             "name": "Increment",
@@ -5404,60 +5458,6 @@
             "sql_bodies": {
               "mysql": "DELETE FROM `products` WHERE <filter>"
             }
-          },
-          {
-            "name": "CreateWithRelated",
-            "params": [
-              {
-                "name": "input",
-                "type": "*CreateProductWithRelatedInput"
-              }
-            ],
-            "returns": "*Product",
-            "errors": [
-              "ErrNilInput",
-              "ErrConstraintViolation"
-            ],
-            "notes": "Writes the parent and its nested rows in one transaction — a SAVEPOINT when ctx already holds one. Issues no statement of its own: it composes Create and, per eligible relationship (OrderItems), the target's and junction's own client methods, so no sql_bodies entry. Each inner call fires its own hooks, events and cache invalidation under its own op; the nested method has none."
-          },
-          {
-            "name": "UpdateWithRelated",
-            "params": [
-              {
-                "name": "id",
-                "type": "int64"
-              },
-              {
-                "name": "input",
-                "type": "*UpdateProductWithRelatedInput"
-              }
-            ],
-            "returns": "*Product",
-            "errors": [
-              "ErrNilInput",
-              "ErrNotFound",
-              "ErrConstraintViolation"
-            ],
-            "notes": "Writes the parent and its nested rows in one transaction — a SAVEPOINT when ctx already holds one. Issues no statement of its own: it composes Update and, per eligible relationship (OrderItems), the target's and junction's own client methods, so no sql_bodies entry. Each inner call fires its own hooks, events and cache invalidation under its own op; the nested method has none."
-          },
-          {
-            "name": "UpsertWithRelated",
-            "params": [
-              {
-                "name": "input",
-                "type": "*UpsertProductWithRelatedInput"
-              },
-              {
-                "name": "target",
-                "type": "ProductConflictTarget"
-              }
-            ],
-            "returns": "*Product",
-            "errors": [
-              "ErrNilInput",
-              "ErrConstraintViolation"
-            ],
-            "notes": "Writes the parent and its nested rows in one transaction — a SAVEPOINT when ctx already holds one. Issues no statement of its own: it composes Upsert and, per eligible relationship (OrderItems), the target's and junction's own client methods, so no sql_bodies entry. Each inner call fires its own hooks, events and cache invalidation under its own op; the nested method has none."
           }
         ]
       },
@@ -5875,20 +5875,6 @@
             }
           },
           {
-            "name": "Count",
-            "params": [
-              {
-                "name": "filter",
-                "type": "*ProductTagLabelFilter"
-              }
-            ],
-            "returns": "int64",
-            "errors": [],
-            "sql_bodies": {
-              "mysql": "SELECT COUNT(*) FROM `product_tag_labels` WHERE <filter>"
-            }
-          },
-          {
             "name": "Exists",
             "params": [
               {
@@ -5914,6 +5900,20 @@
             "errors": [],
             "sql_bodies": {
               "mysql": "SELECT EXISTS(SELECT 1 FROM `product_tag_labels` WHERE <filter>)"
+            }
+          },
+          {
+            "name": "Count",
+            "params": [
+              {
+                "name": "filter",
+                "type": "*ProductTagLabelFilter"
+              }
+            ],
+            "returns": "int64",
+            "errors": [],
+            "sql_bodies": {
+              "mysql": "SELECT COUNT(*) FROM `product_tag_labels` WHERE <filter>"
             }
           },
           {
@@ -5995,50 +5995,6 @@
             }
           },
           {
-            "name": "Upsert",
-            "params": [
-              {
-                "name": "input",
-                "type": "*CreateProductTagLabelInput"
-              },
-              {
-                "name": "target",
-                "type": "ProductTagLabelConflictTarget"
-              }
-            ],
-            "returns": "*ProductTagLabel",
-            "errors": [
-              "ErrNilInput",
-              "ErrConstraintViolation"
-            ],
-            "notes": "One method over the generated ProductTagLabelConflictTarget enum — the target argument selects the conflict columns at call time.",
-            "sql_bodies": {
-              "mysql": "INSERT INTO `product_tag_labels` (<columns>) VALUES (<values>) ON DUPLICATE KEY UPDATE <excluded>"
-            }
-          },
-          {
-            "name": "UpsertMany",
-            "params": [
-              {
-                "name": "inputs",
-                "type": "[]*CreateProductTagLabelInput"
-              },
-              {
-                "name": "target",
-                "type": "ProductTagLabelConflictTarget"
-              }
-            ],
-            "returns": "[]*ProductTagLabel",
-            "errors": [
-              "ErrNilInput",
-              "ErrConstraintViolation"
-            ],
-            "notes": "Batched in generation.batch_size chunks over the same ProductTagLabelConflictTarget enum Upsert takes. Inputs resolving to one target are deduped before the statement is built, last occurrence wins. Earlier chunks are not rolled back on a later failure — wrap in a transaction for atomicity.",
-            "sql_bodies": {
-              "mysql": "INSERT INTO `product_tag_labels` (<columns>) VALUES <values> ON DUPLICATE KEY UPDATE <excluded>"
-            }
-          },
-          {
             "name": "Update",
             "params": [
               {
@@ -6100,6 +6056,50 @@
             "notes": "Idempotent — returns an empty slice when no row matches. ErrEmptyFilter when the filter produces no conditions.",
             "sql_bodies": {
               "mysql": "UPDATE `product_tag_labels` SET <set> WHERE <filter>"
+            }
+          },
+          {
+            "name": "Upsert",
+            "params": [
+              {
+                "name": "input",
+                "type": "*CreateProductTagLabelInput"
+              },
+              {
+                "name": "target",
+                "type": "ProductTagLabelConflictTarget"
+              }
+            ],
+            "returns": "*ProductTagLabel",
+            "errors": [
+              "ErrNilInput",
+              "ErrConstraintViolation"
+            ],
+            "notes": "One method over the generated ProductTagLabelConflictTarget enum — the target argument selects the conflict columns at call time.",
+            "sql_bodies": {
+              "mysql": "INSERT INTO `product_tag_labels` (<columns>) VALUES (<values>) ON DUPLICATE KEY UPDATE <excluded>"
+            }
+          },
+          {
+            "name": "UpsertMany",
+            "params": [
+              {
+                "name": "inputs",
+                "type": "[]*CreateProductTagLabelInput"
+              },
+              {
+                "name": "target",
+                "type": "ProductTagLabelConflictTarget"
+              }
+            ],
+            "returns": "[]*ProductTagLabel",
+            "errors": [
+              "ErrNilInput",
+              "ErrConstraintViolation"
+            ],
+            "notes": "Batched in generation.batch_size chunks over the same ProductTagLabelConflictTarget enum Upsert takes. Inputs resolving to one target are deduped before the statement is built, last occurrence wins. Earlier chunks are not rolled back on a later failure — wrap in a transaction for atomicity.",
+            "sql_bodies": {
+              "mysql": "INSERT INTO `product_tag_labels` (<columns>) VALUES <values> ON DUPLICATE KEY UPDATE <excluded>"
             }
           },
           {
@@ -6359,20 +6359,6 @@
             }
           },
           {
-            "name": "Count",
-            "params": [
-              {
-                "name": "filter",
-                "type": "*ProfileFilter"
-              }
-            ],
-            "returns": "int64",
-            "errors": [],
-            "sql_bodies": {
-              "mysql": "SELECT COUNT(*) FROM `profiles` WHERE <filter>"
-            }
-          },
-          {
             "name": "Exists",
             "params": [
               {
@@ -6398,6 +6384,20 @@
             "errors": [],
             "sql_bodies": {
               "mysql": "SELECT EXISTS(SELECT 1 FROM `profiles` WHERE <filter>)"
+            }
+          },
+          {
+            "name": "Count",
+            "params": [
+              {
+                "name": "filter",
+                "type": "*ProfileFilter"
+              }
+            ],
+            "returns": "int64",
+            "errors": [],
+            "sql_bodies": {
+              "mysql": "SELECT COUNT(*) FROM `profiles` WHERE <filter>"
             }
           },
           {
@@ -6479,50 +6479,6 @@
             }
           },
           {
-            "name": "Upsert",
-            "params": [
-              {
-                "name": "input",
-                "type": "*CreateProfileInput"
-              },
-              {
-                "name": "target",
-                "type": "ProfileConflictTarget"
-              }
-            ],
-            "returns": "*Profile",
-            "errors": [
-              "ErrNilInput",
-              "ErrConstraintViolation"
-            ],
-            "notes": "One method over the generated ProfileConflictTarget enum — the target argument selects the conflict columns at call time.",
-            "sql_bodies": {
-              "mysql": "INSERT INTO `profiles` (<columns>) VALUES (<values>) ON DUPLICATE KEY UPDATE <excluded>"
-            }
-          },
-          {
-            "name": "UpsertMany",
-            "params": [
-              {
-                "name": "inputs",
-                "type": "[]*CreateProfileInput"
-              },
-              {
-                "name": "target",
-                "type": "ProfileConflictTarget"
-              }
-            ],
-            "returns": "[]*Profile",
-            "errors": [
-              "ErrNilInput",
-              "ErrConstraintViolation"
-            ],
-            "notes": "Batched in generation.batch_size chunks over the same ProfileConflictTarget enum Upsert takes. Inputs resolving to one target are deduped before the statement is built, last occurrence wins. Earlier chunks are not rolled back on a later failure — wrap in a transaction for atomicity.",
-            "sql_bodies": {
-              "mysql": "INSERT INTO `profiles` (<columns>) VALUES <values> ON DUPLICATE KEY UPDATE <excluded>"
-            }
-          },
-          {
             "name": "Update",
             "params": [
               {
@@ -6584,6 +6540,50 @@
             "notes": "Idempotent — returns an empty slice when no row matches. ErrEmptyFilter when the filter produces no conditions.",
             "sql_bodies": {
               "mysql": "UPDATE `profiles` SET <set> WHERE <filter>"
+            }
+          },
+          {
+            "name": "Upsert",
+            "params": [
+              {
+                "name": "input",
+                "type": "*CreateProfileInput"
+              },
+              {
+                "name": "target",
+                "type": "ProfileConflictTarget"
+              }
+            ],
+            "returns": "*Profile",
+            "errors": [
+              "ErrNilInput",
+              "ErrConstraintViolation"
+            ],
+            "notes": "One method over the generated ProfileConflictTarget enum — the target argument selects the conflict columns at call time.",
+            "sql_bodies": {
+              "mysql": "INSERT INTO `profiles` (<columns>) VALUES (<values>) ON DUPLICATE KEY UPDATE <excluded>"
+            }
+          },
+          {
+            "name": "UpsertMany",
+            "params": [
+              {
+                "name": "inputs",
+                "type": "[]*CreateProfileInput"
+              },
+              {
+                "name": "target",
+                "type": "ProfileConflictTarget"
+              }
+            ],
+            "returns": "[]*Profile",
+            "errors": [
+              "ErrNilInput",
+              "ErrConstraintViolation"
+            ],
+            "notes": "Batched in generation.batch_size chunks over the same ProfileConflictTarget enum Upsert takes. Inputs resolving to one target are deduped before the statement is built, last occurrence wins. Earlier chunks are not rolled back on a later failure — wrap in a transaction for atomicity.",
+            "sql_bodies": {
+              "mysql": "INSERT INTO `profiles` (<columns>) VALUES <values> ON DUPLICATE KEY UPDATE <excluded>"
             }
           },
           {
@@ -6813,20 +6813,6 @@
             }
           },
           {
-            "name": "Count",
-            "params": [
-              {
-                "name": "filter",
-                "type": "*SluggedRowFilter"
-              }
-            ],
-            "returns": "int64",
-            "errors": [],
-            "sql_bodies": {
-              "mysql": "SELECT COUNT(*) FROM `slugged_rows` WHERE <filter>"
-            }
-          },
-          {
             "name": "Exists",
             "params": [
               {
@@ -6852,6 +6838,20 @@
             "errors": [],
             "sql_bodies": {
               "mysql": "SELECT EXISTS(SELECT 1 FROM `slugged_rows` WHERE <filter>)"
+            }
+          },
+          {
+            "name": "Count",
+            "params": [
+              {
+                "name": "filter",
+                "type": "*SluggedRowFilter"
+              }
+            ],
+            "returns": "int64",
+            "errors": [],
+            "sql_bodies": {
+              "mysql": "SELECT COUNT(*) FROM `slugged_rows` WHERE <filter>"
             }
           },
           {
@@ -6933,50 +6933,6 @@
             }
           },
           {
-            "name": "Upsert",
-            "params": [
-              {
-                "name": "input",
-                "type": "*CreateSluggedRowInput"
-              },
-              {
-                "name": "target",
-                "type": "SluggedRowConflictTarget"
-              }
-            ],
-            "returns": "*SluggedRow",
-            "errors": [
-              "ErrNilInput",
-              "ErrConstraintViolation"
-            ],
-            "notes": "One method over the generated SluggedRowConflictTarget enum — the target argument selects the conflict columns at call time.",
-            "sql_bodies": {
-              "mysql": "INSERT INTO `slugged_rows` (<columns>) VALUES (<values>) ON DUPLICATE KEY UPDATE <excluded>"
-            }
-          },
-          {
-            "name": "UpsertMany",
-            "params": [
-              {
-                "name": "inputs",
-                "type": "[]*CreateSluggedRowInput"
-              },
-              {
-                "name": "target",
-                "type": "SluggedRowConflictTarget"
-              }
-            ],
-            "returns": "[]*SluggedRow",
-            "errors": [
-              "ErrNilInput",
-              "ErrConstraintViolation"
-            ],
-            "notes": "Batched in generation.batch_size chunks over the same SluggedRowConflictTarget enum Upsert takes. Inputs resolving to one target are deduped before the statement is built, last occurrence wins. Earlier chunks are not rolled back on a later failure — wrap in a transaction for atomicity.",
-            "sql_bodies": {
-              "mysql": "INSERT INTO `slugged_rows` (<columns>) VALUES <values> ON DUPLICATE KEY UPDATE <excluded>"
-            }
-          },
-          {
             "name": "Update",
             "params": [
               {
@@ -7038,6 +6994,50 @@
             "notes": "Idempotent — returns an empty slice when no row matches. ErrEmptyFilter when the filter produces no conditions.",
             "sql_bodies": {
               "mysql": "UPDATE `slugged_rows` SET <set> WHERE <filter>"
+            }
+          },
+          {
+            "name": "Upsert",
+            "params": [
+              {
+                "name": "input",
+                "type": "*CreateSluggedRowInput"
+              },
+              {
+                "name": "target",
+                "type": "SluggedRowConflictTarget"
+              }
+            ],
+            "returns": "*SluggedRow",
+            "errors": [
+              "ErrNilInput",
+              "ErrConstraintViolation"
+            ],
+            "notes": "One method over the generated SluggedRowConflictTarget enum — the target argument selects the conflict columns at call time.",
+            "sql_bodies": {
+              "mysql": "INSERT INTO `slugged_rows` (<columns>) VALUES (<values>) ON DUPLICATE KEY UPDATE <excluded>"
+            }
+          },
+          {
+            "name": "UpsertMany",
+            "params": [
+              {
+                "name": "inputs",
+                "type": "[]*CreateSluggedRowInput"
+              },
+              {
+                "name": "target",
+                "type": "SluggedRowConflictTarget"
+              }
+            ],
+            "returns": "[]*SluggedRow",
+            "errors": [
+              "ErrNilInput",
+              "ErrConstraintViolation"
+            ],
+            "notes": "Batched in generation.batch_size chunks over the same SluggedRowConflictTarget enum Upsert takes. Inputs resolving to one target are deduped before the statement is built, last occurrence wins. Earlier chunks are not rolled back on a later failure — wrap in a transaction for atomicity.",
+            "sql_bodies": {
+              "mysql": "INSERT INTO `slugged_rows` (<columns>) VALUES <values> ON DUPLICATE KEY UPDATE <excluded>"
             }
           },
           {
@@ -7252,20 +7252,6 @@
             }
           },
           {
-            "name": "Count",
-            "params": [
-              {
-                "name": "filter",
-                "type": "*TagFilter"
-              }
-            ],
-            "returns": "int64",
-            "errors": [],
-            "sql_bodies": {
-              "mysql": "SELECT COUNT(*) FROM `tags` WHERE <filter> AND `is_deleted` = FALSE"
-            }
-          },
-          {
             "name": "Exists",
             "params": [
               {
@@ -7291,6 +7277,20 @@
             "errors": [],
             "sql_bodies": {
               "mysql": "SELECT EXISTS(SELECT 1 FROM `tags` WHERE <filter> AND `is_deleted` = FALSE)"
+            }
+          },
+          {
+            "name": "Count",
+            "params": [
+              {
+                "name": "filter",
+                "type": "*TagFilter"
+              }
+            ],
+            "returns": "int64",
+            "errors": [],
+            "sql_bodies": {
+              "mysql": "SELECT COUNT(*) FROM `tags` WHERE <filter> AND `is_deleted` = FALSE"
             }
           },
           {
@@ -7372,50 +7372,6 @@
             }
           },
           {
-            "name": "Upsert",
-            "params": [
-              {
-                "name": "input",
-                "type": "*CreateTagInput"
-              },
-              {
-                "name": "target",
-                "type": "TagConflictTarget"
-              }
-            ],
-            "returns": "*Tag",
-            "errors": [
-              "ErrNilInput",
-              "ErrConstraintViolation"
-            ],
-            "notes": "One method over the generated TagConflictTarget enum — the target argument selects the conflict columns at call time.",
-            "sql_bodies": {
-              "mysql": "INSERT INTO `tags` (<columns>) VALUES (<values>) ON DUPLICATE KEY UPDATE <excluded>"
-            }
-          },
-          {
-            "name": "UpsertMany",
-            "params": [
-              {
-                "name": "inputs",
-                "type": "[]*CreateTagInput"
-              },
-              {
-                "name": "target",
-                "type": "TagConflictTarget"
-              }
-            ],
-            "returns": "[]*Tag",
-            "errors": [
-              "ErrNilInput",
-              "ErrConstraintViolation"
-            ],
-            "notes": "Batched in generation.batch_size chunks over the same TagConflictTarget enum Upsert takes. Inputs resolving to one target are deduped before the statement is built, last occurrence wins. Earlier chunks are not rolled back on a later failure — wrap in a transaction for atomicity.",
-            "sql_bodies": {
-              "mysql": "INSERT INTO `tags` (<columns>) VALUES <values> ON DUPLICATE KEY UPDATE <excluded>"
-            }
-          },
-          {
             "name": "Update",
             "params": [
               {
@@ -7477,6 +7433,50 @@
             "notes": "Idempotent — returns an empty slice when no row matches. ErrEmptyFilter when the filter produces no conditions.",
             "sql_bodies": {
               "mysql": "UPDATE `tags` SET <set> WHERE <filter>"
+            }
+          },
+          {
+            "name": "Upsert",
+            "params": [
+              {
+                "name": "input",
+                "type": "*CreateTagInput"
+              },
+              {
+                "name": "target",
+                "type": "TagConflictTarget"
+              }
+            ],
+            "returns": "*Tag",
+            "errors": [
+              "ErrNilInput",
+              "ErrConstraintViolation"
+            ],
+            "notes": "One method over the generated TagConflictTarget enum — the target argument selects the conflict columns at call time.",
+            "sql_bodies": {
+              "mysql": "INSERT INTO `tags` (<columns>) VALUES (<values>) ON DUPLICATE KEY UPDATE <excluded>"
+            }
+          },
+          {
+            "name": "UpsertMany",
+            "params": [
+              {
+                "name": "inputs",
+                "type": "[]*CreateTagInput"
+              },
+              {
+                "name": "target",
+                "type": "TagConflictTarget"
+              }
+            ],
+            "returns": "[]*Tag",
+            "errors": [
+              "ErrNilInput",
+              "ErrConstraintViolation"
+            ],
+            "notes": "Batched in generation.batch_size chunks over the same TagConflictTarget enum Upsert takes. Inputs resolving to one target are deduped before the statement is built, last occurrence wins. Earlier chunks are not rolled back on a later failure — wrap in a transaction for atomicity.",
+            "sql_bodies": {
+              "mysql": "INSERT INTO `tags` (<columns>) VALUES <values> ON DUPLICATE KEY UPDATE <excluded>"
             }
           },
           {
@@ -8031,20 +8031,6 @@
             }
           },
           {
-            "name": "Count",
-            "params": [
-              {
-                "name": "filter",
-                "type": "*UserFilter"
-              }
-            ],
-            "returns": "int64",
-            "errors": [],
-            "sql_bodies": {
-              "mysql": "SELECT COUNT(*) FROM `users` WHERE <filter>"
-            }
-          },
-          {
             "name": "Exists",
             "params": [
               {
@@ -8070,6 +8056,20 @@
             "errors": [],
             "sql_bodies": {
               "mysql": "SELECT EXISTS(SELECT 1 FROM `users` WHERE <filter>)"
+            }
+          },
+          {
+            "name": "Count",
+            "params": [
+              {
+                "name": "filter",
+                "type": "*UserFilter"
+              }
+            ],
+            "returns": "int64",
+            "errors": [],
+            "sql_bodies": {
+              "mysql": "SELECT COUNT(*) FROM `users` WHERE <filter>"
             }
           },
           {
@@ -8151,50 +8151,6 @@
             }
           },
           {
-            "name": "Upsert",
-            "params": [
-              {
-                "name": "input",
-                "type": "*CreateUserInput"
-              },
-              {
-                "name": "target",
-                "type": "UserConflictTarget"
-              }
-            ],
-            "returns": "*User",
-            "errors": [
-              "ErrNilInput",
-              "ErrConstraintViolation"
-            ],
-            "notes": "One method over the generated UserConflictTarget enum — the target argument selects the conflict columns at call time.",
-            "sql_bodies": {
-              "mysql": "INSERT INTO `users` (<columns>) VALUES (<values>) ON DUPLICATE KEY UPDATE <excluded>"
-            }
-          },
-          {
-            "name": "UpsertMany",
-            "params": [
-              {
-                "name": "inputs",
-                "type": "[]*CreateUserInput"
-              },
-              {
-                "name": "target",
-                "type": "UserConflictTarget"
-              }
-            ],
-            "returns": "[]*User",
-            "errors": [
-              "ErrNilInput",
-              "ErrConstraintViolation"
-            ],
-            "notes": "Batched in generation.batch_size chunks over the same UserConflictTarget enum Upsert takes. Inputs resolving to one target are deduped before the statement is built, last occurrence wins. Earlier chunks are not rolled back on a later failure — wrap in a transaction for atomicity.",
-            "sql_bodies": {
-              "mysql": "INSERT INTO `users` (<columns>) VALUES <values> ON DUPLICATE KEY UPDATE <excluded>"
-            }
-          },
-          {
             "name": "Update",
             "params": [
               {
@@ -8257,6 +8213,112 @@
             "sql_bodies": {
               "mysql": "UPDATE `users` SET <set> WHERE <filter>"
             }
+          },
+          {
+            "name": "Upsert",
+            "params": [
+              {
+                "name": "input",
+                "type": "*CreateUserInput"
+              },
+              {
+                "name": "target",
+                "type": "UserConflictTarget"
+              }
+            ],
+            "returns": "*User",
+            "errors": [
+              "ErrNilInput",
+              "ErrConstraintViolation"
+            ],
+            "notes": "One method over the generated UserConflictTarget enum — the target argument selects the conflict columns at call time.",
+            "sql_bodies": {
+              "mysql": "INSERT INTO `users` (<columns>) VALUES (<values>) ON DUPLICATE KEY UPDATE <excluded>"
+            }
+          },
+          {
+            "name": "UpsertMany",
+            "params": [
+              {
+                "name": "inputs",
+                "type": "[]*CreateUserInput"
+              },
+              {
+                "name": "target",
+                "type": "UserConflictTarget"
+              }
+            ],
+            "returns": "[]*User",
+            "errors": [
+              "ErrNilInput",
+              "ErrConstraintViolation"
+            ],
+            "notes": "Batched in generation.batch_size chunks over the same UserConflictTarget enum Upsert takes. Inputs resolving to one target are deduped before the statement is built, last occurrence wins. Earlier chunks are not rolled back on a later failure — wrap in a transaction for atomicity.",
+            "sql_bodies": {
+              "mysql": "INSERT INTO `users` (<columns>) VALUES <values> ON DUPLICATE KEY UPDATE <excluded>"
+            }
+          },
+          {
+            "name": "CreateWithRelated",
+            "params": [
+              {
+                "name": "input",
+                "type": "*CreateUserWithRelatedInput"
+              }
+            ],
+            "returns": "*User",
+            "errors": [
+              "ErrNilInput",
+              "ErrNotFound",
+              "ErrAlreadyRelated",
+              "ErrNestedVerbConflict",
+              "ErrConstraintViolation"
+            ],
+            "notes": "Writes the parent and its nested rows in one transaction — a SAVEPOINT when ctx already holds one. Issues no statement of its own: it composes Create and, per eligible relationship (Orders, Profile, UserEvents), the target's and junction's own client methods, so no sql_bodies entry. Each inner call fires its own hooks, events and cache invalidation under its own op; the nested method has none."
+          },
+          {
+            "name": "UpdateWithRelated",
+            "params": [
+              {
+                "name": "id",
+                "type": "int64"
+              },
+              {
+                "name": "input",
+                "type": "*UpdateUserWithRelatedInput"
+              }
+            ],
+            "returns": "*User",
+            "errors": [
+              "ErrNilInput",
+              "ErrNotFound",
+              "ErrAlreadyRelated",
+              "ErrNestedVerbConflict",
+              "ErrConstraintViolation"
+            ],
+            "notes": "Writes the parent and its nested rows in one transaction — a SAVEPOINT when ctx already holds one. Issues no statement of its own: it composes Update and, per eligible relationship (Orders, Profile, UserEvents), the target's and junction's own client methods, so no sql_bodies entry. Each inner call fires its own hooks, events and cache invalidation under its own op; the nested method has none."
+          },
+          {
+            "name": "UpsertWithRelated",
+            "params": [
+              {
+                "name": "input",
+                "type": "*UpsertUserWithRelatedInput"
+              },
+              {
+                "name": "target",
+                "type": "UserConflictTarget"
+              }
+            ],
+            "returns": "*User",
+            "errors": [
+              "ErrNilInput",
+              "ErrNotFound",
+              "ErrAlreadyRelated",
+              "ErrNestedVerbConflict",
+              "ErrConstraintViolation"
+            ],
+            "notes": "Writes the parent and its nested rows in one transaction — a SAVEPOINT when ctx already holds one. Issues no statement of its own: it composes Upsert and, per eligible relationship (Orders, Profile, UserEvents), the target's and junction's own client methods, so no sql_bodies entry. Each inner call fires its own hooks, events and cache invalidation under its own op; the nested method has none."
           },
           {
             "name": "Increment",
@@ -8325,68 +8387,6 @@
             "sql_bodies": {
               "mysql": "DELETE FROM `users` WHERE <filter>"
             }
-          },
-          {
-            "name": "CreateWithRelated",
-            "params": [
-              {
-                "name": "input",
-                "type": "*CreateUserWithRelatedInput"
-              }
-            ],
-            "returns": "*User",
-            "errors": [
-              "ErrNilInput",
-              "ErrNotFound",
-              "ErrAlreadyRelated",
-              "ErrNestedVerbConflict",
-              "ErrConstraintViolation"
-            ],
-            "notes": "Writes the parent and its nested rows in one transaction — a SAVEPOINT when ctx already holds one. Issues no statement of its own: it composes Create and, per eligible relationship (Orders, Profile, UserEvents), the target's and junction's own client methods, so no sql_bodies entry. Each inner call fires its own hooks, events and cache invalidation under its own op; the nested method has none."
-          },
-          {
-            "name": "UpdateWithRelated",
-            "params": [
-              {
-                "name": "id",
-                "type": "int64"
-              },
-              {
-                "name": "input",
-                "type": "*UpdateUserWithRelatedInput"
-              }
-            ],
-            "returns": "*User",
-            "errors": [
-              "ErrNilInput",
-              "ErrNotFound",
-              "ErrAlreadyRelated",
-              "ErrNestedVerbConflict",
-              "ErrConstraintViolation"
-            ],
-            "notes": "Writes the parent and its nested rows in one transaction — a SAVEPOINT when ctx already holds one. Issues no statement of its own: it composes Update and, per eligible relationship (Orders, Profile, UserEvents), the target's and junction's own client methods, so no sql_bodies entry. Each inner call fires its own hooks, events and cache invalidation under its own op; the nested method has none."
-          },
-          {
-            "name": "UpsertWithRelated",
-            "params": [
-              {
-                "name": "input",
-                "type": "*UpsertUserWithRelatedInput"
-              },
-              {
-                "name": "target",
-                "type": "UserConflictTarget"
-              }
-            ],
-            "returns": "*User",
-            "errors": [
-              "ErrNilInput",
-              "ErrNotFound",
-              "ErrAlreadyRelated",
-              "ErrNestedVerbConflict",
-              "ErrConstraintViolation"
-            ],
-            "notes": "Writes the parent and its nested rows in one transaction — a SAVEPOINT when ctx already holds one. Issues no statement of its own: it composes Upsert and, per eligible relationship (Orders, Profile, UserEvents), the target's and junction's own client methods, so no sql_bodies entry. Each inner call fires its own hooks, events and cache invalidation under its own op; the nested method has none."
           }
         ]
       },
@@ -8653,20 +8653,6 @@
             }
           },
           {
-            "name": "Count",
-            "params": [
-              {
-                "name": "filter",
-                "type": "*UserCategoryFilter"
-              }
-            ],
-            "returns": "int64",
-            "errors": [],
-            "sql_bodies": {
-              "mysql": "SELECT COUNT(*) FROM `user_categories` WHERE <filter>"
-            }
-          },
-          {
             "name": "Exists",
             "params": [
               {
@@ -8692,6 +8678,20 @@
             "errors": [],
             "sql_bodies": {
               "mysql": "SELECT EXISTS(SELECT 1 FROM `user_categories` WHERE <filter>)"
+            }
+          },
+          {
+            "name": "Count",
+            "params": [
+              {
+                "name": "filter",
+                "type": "*UserCategoryFilter"
+              }
+            ],
+            "returns": "int64",
+            "errors": [],
+            "sql_bodies": {
+              "mysql": "SELECT COUNT(*) FROM `user_categories` WHERE <filter>"
             }
           },
           {
@@ -8773,50 +8773,6 @@
             }
           },
           {
-            "name": "Upsert",
-            "params": [
-              {
-                "name": "input",
-                "type": "*CreateUserCategoryInput"
-              },
-              {
-                "name": "target",
-                "type": "UserCategoryConflictTarget"
-              }
-            ],
-            "returns": "*UserCategory",
-            "errors": [
-              "ErrNilInput",
-              "ErrConstraintViolation"
-            ],
-            "notes": "One method over the generated UserCategoryConflictTarget enum — the target argument selects the conflict columns at call time.",
-            "sql_bodies": {
-              "mysql": "INSERT INTO `user_categories` (<columns>) VALUES (<values>) ON DUPLICATE KEY UPDATE <excluded>"
-            }
-          },
-          {
-            "name": "UpsertMany",
-            "params": [
-              {
-                "name": "inputs",
-                "type": "[]*CreateUserCategoryInput"
-              },
-              {
-                "name": "target",
-                "type": "UserCategoryConflictTarget"
-              }
-            ],
-            "returns": "[]*UserCategory",
-            "errors": [
-              "ErrNilInput",
-              "ErrConstraintViolation"
-            ],
-            "notes": "Batched in generation.batch_size chunks over the same UserCategoryConflictTarget enum Upsert takes. Inputs resolving to one target are deduped before the statement is built, last occurrence wins. Earlier chunks are not rolled back on a later failure — wrap in a transaction for atomicity.",
-            "sql_bodies": {
-              "mysql": "INSERT INTO `user_categories` (<columns>) VALUES <values> ON DUPLICATE KEY UPDATE <excluded>"
-            }
-          },
-          {
             "name": "Update",
             "params": [
               {
@@ -8878,6 +8834,50 @@
             "notes": "Idempotent — returns an empty slice when no row matches. ErrEmptyFilter when the filter produces no conditions.",
             "sql_bodies": {
               "mysql": "UPDATE `user_categories` SET <set> WHERE <filter>"
+            }
+          },
+          {
+            "name": "Upsert",
+            "params": [
+              {
+                "name": "input",
+                "type": "*CreateUserCategoryInput"
+              },
+              {
+                "name": "target",
+                "type": "UserCategoryConflictTarget"
+              }
+            ],
+            "returns": "*UserCategory",
+            "errors": [
+              "ErrNilInput",
+              "ErrConstraintViolation"
+            ],
+            "notes": "One method over the generated UserCategoryConflictTarget enum — the target argument selects the conflict columns at call time.",
+            "sql_bodies": {
+              "mysql": "INSERT INTO `user_categories` (<columns>) VALUES (<values>) ON DUPLICATE KEY UPDATE <excluded>"
+            }
+          },
+          {
+            "name": "UpsertMany",
+            "params": [
+              {
+                "name": "inputs",
+                "type": "[]*CreateUserCategoryInput"
+              },
+              {
+                "name": "target",
+                "type": "UserCategoryConflictTarget"
+              }
+            ],
+            "returns": "[]*UserCategory",
+            "errors": [
+              "ErrNilInput",
+              "ErrConstraintViolation"
+            ],
+            "notes": "Batched in generation.batch_size chunks over the same UserCategoryConflictTarget enum Upsert takes. Inputs resolving to one target are deduped before the statement is built, last occurrence wins. Earlier chunks are not rolled back on a later failure — wrap in a transaction for atomicity.",
+            "sql_bodies": {
+              "mysql": "INSERT INTO `user_categories` (<columns>) VALUES <values> ON DUPLICATE KEY UPDATE <excluded>"
             }
           },
           {
@@ -9108,20 +9108,6 @@
             }
           },
           {
-            "name": "Count",
-            "params": [
-              {
-                "name": "filter",
-                "type": "*UserEventFilter"
-              }
-            ],
-            "returns": "int64",
-            "errors": [],
-            "sql_bodies": {
-              "mysql": "SELECT COUNT(*) FROM `user_events` WHERE <filter>"
-            }
-          },
-          {
             "name": "Exists",
             "params": [
               {
@@ -9147,6 +9133,20 @@
             "errors": [],
             "sql_bodies": {
               "mysql": "SELECT EXISTS(SELECT 1 FROM `user_events` WHERE <filter>)"
+            }
+          },
+          {
+            "name": "Count",
+            "params": [
+              {
+                "name": "filter",
+                "type": "*UserEventFilter"
+              }
+            ],
+            "returns": "int64",
+            "errors": [],
+            "sql_bodies": {
+              "mysql": "SELECT COUNT(*) FROM `user_events` WHERE <filter>"
             }
           },
           {
@@ -9228,50 +9228,6 @@
             }
           },
           {
-            "name": "Upsert",
-            "params": [
-              {
-                "name": "input",
-                "type": "*CreateUserEventInput"
-              },
-              {
-                "name": "target",
-                "type": "UserEventConflictTarget"
-              }
-            ],
-            "returns": "*UserEvent",
-            "errors": [
-              "ErrNilInput",
-              "ErrConstraintViolation"
-            ],
-            "notes": "One method over the generated UserEventConflictTarget enum — the target argument selects the conflict columns at call time.",
-            "sql_bodies": {
-              "mysql": "INSERT INTO `user_events` (<columns>) VALUES (<values>) ON DUPLICATE KEY UPDATE <excluded>"
-            }
-          },
-          {
-            "name": "UpsertMany",
-            "params": [
-              {
-                "name": "inputs",
-                "type": "[]*CreateUserEventInput"
-              },
-              {
-                "name": "target",
-                "type": "UserEventConflictTarget"
-              }
-            ],
-            "returns": "[]*UserEvent",
-            "errors": [
-              "ErrNilInput",
-              "ErrConstraintViolation"
-            ],
-            "notes": "Batched in generation.batch_size chunks over the same UserEventConflictTarget enum Upsert takes. Inputs resolving to one target are deduped before the statement is built, last occurrence wins. Earlier chunks are not rolled back on a later failure — wrap in a transaction for atomicity.",
-            "sql_bodies": {
-              "mysql": "INSERT INTO `user_events` (<columns>) VALUES <values> ON DUPLICATE KEY UPDATE <excluded>"
-            }
-          },
-          {
             "name": "Update",
             "params": [
               {
@@ -9333,6 +9289,50 @@
             "notes": "Idempotent — returns an empty slice when no row matches. ErrEmptyFilter when the filter produces no conditions.",
             "sql_bodies": {
               "mysql": "UPDATE `user_events` SET <set> WHERE <filter>"
+            }
+          },
+          {
+            "name": "Upsert",
+            "params": [
+              {
+                "name": "input",
+                "type": "*CreateUserEventInput"
+              },
+              {
+                "name": "target",
+                "type": "UserEventConflictTarget"
+              }
+            ],
+            "returns": "*UserEvent",
+            "errors": [
+              "ErrNilInput",
+              "ErrConstraintViolation"
+            ],
+            "notes": "One method over the generated UserEventConflictTarget enum — the target argument selects the conflict columns at call time.",
+            "sql_bodies": {
+              "mysql": "INSERT INTO `user_events` (<columns>) VALUES (<values>) ON DUPLICATE KEY UPDATE <excluded>"
+            }
+          },
+          {
+            "name": "UpsertMany",
+            "params": [
+              {
+                "name": "inputs",
+                "type": "[]*CreateUserEventInput"
+              },
+              {
+                "name": "target",
+                "type": "UserEventConflictTarget"
+              }
+            ],
+            "returns": "[]*UserEvent",
+            "errors": [
+              "ErrNilInput",
+              "ErrConstraintViolation"
+            ],
+            "notes": "Batched in generation.batch_size chunks over the same UserEventConflictTarget enum Upsert takes. Inputs resolving to one target are deduped before the statement is built, last occurrence wins. Earlier chunks are not rolled back on a later failure — wrap in a transaction for atomicity.",
+            "sql_bodies": {
+              "mysql": "INSERT INTO `user_events` (<columns>) VALUES <values> ON DUPLICATE KEY UPDATE <excluded>"
             }
           },
           {
@@ -9580,20 +9580,6 @@
             }
           },
           {
-            "name": "Count",
-            "params": [
-              {
-                "name": "filter",
-                "type": "*WarehouseFilter"
-              }
-            ],
-            "returns": "int64",
-            "errors": [],
-            "sql_bodies": {
-              "mysql": "SELECT COUNT(*) FROM `warehouses` WHERE <filter>"
-            }
-          },
-          {
             "name": "Exists",
             "params": [
               {
@@ -9619,6 +9605,20 @@
             "errors": [],
             "sql_bodies": {
               "mysql": "SELECT EXISTS(SELECT 1 FROM `warehouses` WHERE <filter>)"
+            }
+          },
+          {
+            "name": "Count",
+            "params": [
+              {
+                "name": "filter",
+                "type": "*WarehouseFilter"
+              }
+            ],
+            "returns": "int64",
+            "errors": [],
+            "sql_bodies": {
+              "mysql": "SELECT COUNT(*) FROM `warehouses` WHERE <filter>"
             }
           },
           {
@@ -9700,50 +9700,6 @@
             }
           },
           {
-            "name": "Upsert",
-            "params": [
-              {
-                "name": "input",
-                "type": "*CreateWarehouseInput"
-              },
-              {
-                "name": "target",
-                "type": "WarehouseConflictTarget"
-              }
-            ],
-            "returns": "*Warehouse",
-            "errors": [
-              "ErrNilInput",
-              "ErrConstraintViolation"
-            ],
-            "notes": "One method over the generated WarehouseConflictTarget enum — the target argument selects the conflict columns at call time.",
-            "sql_bodies": {
-              "mysql": "INSERT INTO `warehouses` (<columns>) VALUES (<values>) ON DUPLICATE KEY UPDATE <excluded>"
-            }
-          },
-          {
-            "name": "UpsertMany",
-            "params": [
-              {
-                "name": "inputs",
-                "type": "[]*CreateWarehouseInput"
-              },
-              {
-                "name": "target",
-                "type": "WarehouseConflictTarget"
-              }
-            ],
-            "returns": "[]*Warehouse",
-            "errors": [
-              "ErrNilInput",
-              "ErrConstraintViolation"
-            ],
-            "notes": "Batched in generation.batch_size chunks over the same WarehouseConflictTarget enum Upsert takes. Inputs resolving to one target are deduped before the statement is built, last occurrence wins. Earlier chunks are not rolled back on a later failure — wrap in a transaction for atomicity.",
-            "sql_bodies": {
-              "mysql": "INSERT INTO `warehouses` (<columns>) VALUES <values> ON DUPLICATE KEY UPDATE <excluded>"
-            }
-          },
-          {
             "name": "Update",
             "params": [
               {
@@ -9805,6 +9761,50 @@
             "notes": "Idempotent — returns an empty slice when no row matches. ErrEmptyFilter when the filter produces no conditions.",
             "sql_bodies": {
               "mysql": "UPDATE `warehouses` SET <set> WHERE <filter>"
+            }
+          },
+          {
+            "name": "Upsert",
+            "params": [
+              {
+                "name": "input",
+                "type": "*CreateWarehouseInput"
+              },
+              {
+                "name": "target",
+                "type": "WarehouseConflictTarget"
+              }
+            ],
+            "returns": "*Warehouse",
+            "errors": [
+              "ErrNilInput",
+              "ErrConstraintViolation"
+            ],
+            "notes": "One method over the generated WarehouseConflictTarget enum — the target argument selects the conflict columns at call time.",
+            "sql_bodies": {
+              "mysql": "INSERT INTO `warehouses` (<columns>) VALUES (<values>) ON DUPLICATE KEY UPDATE <excluded>"
+            }
+          },
+          {
+            "name": "UpsertMany",
+            "params": [
+              {
+                "name": "inputs",
+                "type": "[]*CreateWarehouseInput"
+              },
+              {
+                "name": "target",
+                "type": "WarehouseConflictTarget"
+              }
+            ],
+            "returns": "[]*Warehouse",
+            "errors": [
+              "ErrNilInput",
+              "ErrConstraintViolation"
+            ],
+            "notes": "Batched in generation.batch_size chunks over the same WarehouseConflictTarget enum Upsert takes. Inputs resolving to one target are deduped before the statement is built, last occurrence wins. Earlier chunks are not rolled back on a later failure — wrap in a transaction for atomicity.",
+            "sql_bodies": {
+              "mysql": "INSERT INTO `warehouses` (<columns>) VALUES <values> ON DUPLICATE KEY UPDATE <excluded>"
             }
           },
           {

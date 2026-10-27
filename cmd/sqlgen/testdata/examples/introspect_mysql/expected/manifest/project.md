@@ -67,19 +67,6 @@ mysql:
 SELECT `account_id`, `id`, `name`, `slug`, `summary`, `tags` FROM `projects` WHERE <filter> ORDER BY <sort> LIMIT <limit>
 ```
 
-### Count
-
-- Params: `filter *ProjectFilter`
-- Returns: `int64`, `error`
-
-Generated SQL:
-
-mysql:
-
-```sql
-SELECT COUNT(*) FROM `projects` WHERE <filter>
-```
-
 ### Exists
 
 - Params: `id uint64`
@@ -104,6 +91,19 @@ mysql:
 
 ```sql
 SELECT EXISTS(SELECT 1 FROM `projects` WHERE <filter>)
+```
+
+### Count
+
+- Params: `filter *ProjectFilter`
+- Returns: `int64`, `error`
+
+Generated SQL:
+
+mysql:
+
+```sql
+SELECT COUNT(*) FROM `projects` WHERE <filter>
 ```
 
 ### Paginate
@@ -164,36 +164,6 @@ mysql:
 INSERT INTO `projects` (<columns>) VALUES <values>
 ```
 
-### Upsert
-
-- Params: `input *CreateProjectInput`, `target ProjectConflictTarget`
-- Returns: `*Project`, `error`
-- Errors: `ErrNilInput`, `ErrConstraintViolation`
-- Notes: One method over the generated ProjectConflictTarget enum — the target argument selects the conflict columns at call time.
-
-Generated SQL:
-
-mysql:
-
-```sql
-INSERT INTO `projects` (<columns>) VALUES (<values>) ON DUPLICATE KEY UPDATE <excluded>
-```
-
-### UpsertMany
-
-- Params: `inputs []*CreateProjectInput`, `target ProjectConflictTarget`
-- Returns: `[]*Project`, `error`
-- Errors: `ErrNilInput`, `ErrConstraintViolation`
-- Notes: Batched in generation.batch_size chunks over the same ProjectConflictTarget enum Upsert takes. Inputs resolving to one target are deduped before the statement is built, last occurrence wins. Earlier chunks are not rolled back on a later failure — wrap in a transaction for atomicity.
-
-Generated SQL:
-
-mysql:
-
-```sql
-INSERT INTO `projects` (<columns>) VALUES <values> ON DUPLICATE KEY UPDATE <excluded>
-```
-
 ### Update
 
 - Params: `id uint64`, `input *UpdateProjectInput`
@@ -237,6 +207,36 @@ mysql:
 
 ```sql
 UPDATE `projects` SET <set> WHERE <filter>
+```
+
+### Upsert
+
+- Params: `input *CreateProjectInput`, `target ProjectConflictTarget`
+- Returns: `*Project`, `error`
+- Errors: `ErrNilInput`, `ErrConstraintViolation`
+- Notes: One method over the generated ProjectConflictTarget enum — the target argument selects the conflict columns at call time.
+
+Generated SQL:
+
+mysql:
+
+```sql
+INSERT INTO `projects` (<columns>) VALUES (<values>) ON DUPLICATE KEY UPDATE <excluded>
+```
+
+### UpsertMany
+
+- Params: `inputs []*CreateProjectInput`, `target ProjectConflictTarget`
+- Returns: `[]*Project`, `error`
+- Errors: `ErrNilInput`, `ErrConstraintViolation`
+- Notes: Batched in generation.batch_size chunks over the same ProjectConflictTarget enum Upsert takes. Inputs resolving to one target are deduped before the statement is built, last occurrence wins. Earlier chunks are not rolled back on a later failure — wrap in a transaction for atomicity.
+
+Generated SQL:
+
+mysql:
+
+```sql
+INSERT INTO `projects` (<columns>) VALUES <values> ON DUPLICATE KEY UPDATE <excluded>
 ```
 
 ### HardDelete

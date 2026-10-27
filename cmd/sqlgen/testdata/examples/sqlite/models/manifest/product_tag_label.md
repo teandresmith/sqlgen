@@ -60,19 +60,6 @@ sqlite:
 SELECT "description", "label", "product_id", "tag_name" FROM "product_tag_labels" WHERE <filter> ORDER BY <sort> LIMIT <limit>
 ```
 
-### Count
-
-- Params: `filter *ProductTagLabelFilter`
-- Returns: `int64`, `error`
-
-Generated SQL:
-
-sqlite:
-
-```sql
-SELECT COUNT(*) FROM "product_tag_labels" WHERE <filter>
-```
-
 ### Exists
 
 - Params: `pk ProductTagLabelPK`
@@ -97,6 +84,19 @@ sqlite:
 
 ```sql
 SELECT EXISTS(SELECT 1 FROM "product_tag_labels" WHERE <filter>)
+```
+
+### Count
+
+- Params: `filter *ProductTagLabelFilter`
+- Returns: `int64`, `error`
+
+Generated SQL:
+
+sqlite:
+
+```sql
+SELECT COUNT(*) FROM "product_tag_labels" WHERE <filter>
 ```
 
 ### Paginate
@@ -157,36 +157,6 @@ sqlite:
 INSERT INTO "product_tag_labels" (<columns>) VALUES <values>
 ```
 
-### Upsert
-
-- Params: `input *CreateProductTagLabelInput`, `target ProductTagLabelConflictTarget`
-- Returns: `*ProductTagLabel`, `error`
-- Errors: `ErrNilInput`, `ErrConstraintViolation`
-- Notes: One method over the generated ProductTagLabelConflictTarget enum — the target argument selects the conflict columns at call time.
-
-Generated SQL:
-
-sqlite:
-
-```sql
-INSERT INTO "product_tag_labels" (<columns>) VALUES (<values>) ON CONFLICT (<conflict_target>) DO UPDATE SET <excluded>
-```
-
-### UpsertMany
-
-- Params: `inputs []*CreateProductTagLabelInput`, `target ProductTagLabelConflictTarget`
-- Returns: `[]*ProductTagLabel`, `error`
-- Errors: `ErrNilInput`, `ErrConstraintViolation`
-- Notes: Batched in generation.batch_size chunks over the same ProductTagLabelConflictTarget enum Upsert takes. Inputs resolving to one target are deduped before the statement is built, last occurrence wins. Earlier chunks are not rolled back on a later failure — wrap in a transaction for atomicity.
-
-Generated SQL:
-
-sqlite:
-
-```sql
-INSERT INTO "product_tag_labels" (<columns>) VALUES <values> ON CONFLICT (<conflict_target>) DO UPDATE SET <excluded>
-```
-
 ### Update
 
 - Params: `pk ProductTagLabelPK`, `input *UpdateProductTagLabelInput`
@@ -230,6 +200,36 @@ sqlite:
 
 ```sql
 UPDATE "product_tag_labels" SET <set> WHERE <filter> RETURNING "product_id", "tag_name", "label"
+```
+
+### Upsert
+
+- Params: `input *CreateProductTagLabelInput`, `target ProductTagLabelConflictTarget`
+- Returns: `*ProductTagLabel`, `error`
+- Errors: `ErrNilInput`, `ErrConstraintViolation`
+- Notes: One method over the generated ProductTagLabelConflictTarget enum — the target argument selects the conflict columns at call time.
+
+Generated SQL:
+
+sqlite:
+
+```sql
+INSERT INTO "product_tag_labels" (<columns>) VALUES (<values>) ON CONFLICT (<conflict_target>) DO UPDATE SET <excluded>
+```
+
+### UpsertMany
+
+- Params: `inputs []*CreateProductTagLabelInput`, `target ProductTagLabelConflictTarget`
+- Returns: `[]*ProductTagLabel`, `error`
+- Errors: `ErrNilInput`, `ErrConstraintViolation`
+- Notes: Batched in generation.batch_size chunks over the same ProductTagLabelConflictTarget enum Upsert takes. Inputs resolving to one target are deduped before the statement is built, last occurrence wins. Earlier chunks are not rolled back on a later failure — wrap in a transaction for atomicity.
+
+Generated SQL:
+
+sqlite:
+
+```sql
+INSERT INTO "product_tag_labels" (<columns>) VALUES <values> ON CONFLICT (<conflict_target>) DO UPDATE SET <excluded>
 ```
 
 ### HardDelete

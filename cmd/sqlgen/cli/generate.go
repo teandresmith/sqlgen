@@ -23,6 +23,13 @@ func makeGenerateRunE(flags *cliFlags) func(*cobra.Command, []string) error {
 		out := cmd.OutOrStdout()
 		errOut := cmd.ErrOrStderr()
 
+		// 0. Check the flags no later step can recover from, before anything
+		// is read or written.
+		manifestTimestamp, err := resolveManifestTimestamp(flags.manifestTimestamp)
+		if err != nil {
+			return err
+		}
+
 		// 1. Load config.
 		cfg, err := loadConfig(flags, errOut)
 		if err != nil {
@@ -106,7 +113,7 @@ func makeGenerateRunE(flags *cliFlags) func(*cobra.Command, []string) error {
 			API:       result.API,
 			UUID:      result.UUID,
 			Version:   Version,
-			Timestamp: resolveManifestTimestamp(flags.manifestTimestamp),
+			Timestamp: manifestTimestamp,
 		})
 		if err != nil {
 			// manifestResult still carries whatever the sweep removed before it
@@ -159,13 +166,19 @@ func printDeleted(errOut io.Writer, deleted []string, quiet bool) {
 
 // resolveManifestTimestamp returns the --manifest-timestamp flag value verbatim
 // when set (pinning generated_at for byte-deterministic manifest output, PRD
-// §30.3 Determinism), otherwise the current UTC time in RFC3339. The value only
-// reaches the manifest when manifest.enabled is true; it is inert otherwise.
-func resolveManifestTimestamp(flag string) string {
-	if flag != "" {
-		return flag
+// §30.3 Determinism), otherwise the current UTC time in RFC3339. generated_at
+// is an RFC3339 timestamp (§30.4), so a set value that does not parse as one is
+// a usage error (exit 2) rather than a manifest that breaks its own schema. The
+// check runs whether or not manifest.enabled is true: the flag is wrong either
+// way.
+func resolveManifestTimestamp(flag string) (string, error) {
+	if flag == "" {
+		return time.Now().UTC().Format(time.RFC3339), nil
 	}
-	return time.Now().UTC().Format(time.RFC3339)
+	if _, err := time.Parse(time.RFC3339, flag); err != nil {
+		return "", &usageError{err: fmt.Errorf("invalid --manifest-timestamp %q: want an RFC3339 timestamp such as 2026-07-09T12:34:56Z", flag)}
+	}
+	return flag, nil
 }
 
 // printManifestWarnings surfaces the user-owned-file warnings returned by the

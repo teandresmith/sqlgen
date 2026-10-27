@@ -57,19 +57,6 @@ postgres:
 SELECT "fingerprint_digest", "host_addr" FROM "public"."host_fingerprints" WHERE <filter> ORDER BY <sort> LIMIT <limit>
 ```
 
-### Count
-
-- Params: `filter *HostFingerprintFilter`
-- Returns: `int64`, `error`
-
-Generated SQL:
-
-postgres:
-
-```sql
-SELECT COUNT(*) FROM "public"."host_fingerprints" WHERE <filter>
-```
-
 ### Exists
 
 - Params: `pk HostFingerprintPK`
@@ -94,6 +81,19 @@ postgres:
 
 ```sql
 SELECT EXISTS(SELECT 1 FROM "public"."host_fingerprints" WHERE <filter>)
+```
+
+### Count
+
+- Params: `filter *HostFingerprintFilter`
+- Returns: `int64`, `error`
+
+Generated SQL:
+
+postgres:
+
+```sql
+SELECT COUNT(*) FROM "public"."host_fingerprints" WHERE <filter>
 ```
 
 ### Paginate
@@ -154,36 +154,6 @@ postgres:
 INSERT INTO "public"."host_fingerprints" (<columns>) VALUES <values>
 ```
 
-### Upsert
-
-- Params: `input *CreateHostFingerprintInput`, `target HostFingerprintConflictTarget`
-- Returns: `*HostFingerprint`, `error`
-- Errors: `ErrNilInput`, `ErrConstraintViolation`
-- Notes: One method over the generated HostFingerprintConflictTarget enum — the target argument selects the conflict columns at call time.
-
-Generated SQL:
-
-postgres:
-
-```sql
-INSERT INTO "public"."host_fingerprints" (<columns>) VALUES (<values>) ON CONFLICT (<conflict_target>) DO UPDATE SET <excluded>
-```
-
-### UpsertMany
-
-- Params: `inputs []*CreateHostFingerprintInput`, `target HostFingerprintConflictTarget`
-- Returns: `[]*HostFingerprint`, `error`
-- Errors: `ErrNilInput`, `ErrConstraintViolation`
-- Notes: Batched in generation.batch_size chunks over the same HostFingerprintConflictTarget enum Upsert takes. Inputs resolving to one target are deduped before the statement is built, last occurrence wins. Earlier chunks are not rolled back on a later failure — wrap in a transaction for atomicity.
-
-Generated SQL:
-
-postgres:
-
-```sql
-INSERT INTO "public"."host_fingerprints" (<columns>) VALUES <values> ON CONFLICT (<conflict_target>) DO UPDATE SET <excluded>
-```
-
 ### Update
 
 - Params: `pk HostFingerprintPK`, `input *UpdateHostFingerprintInput`
@@ -227,6 +197,36 @@ postgres:
 
 ```sql
 UPDATE "public"."host_fingerprints" SET <set> WHERE <filter> RETURNING "host_addr", "fingerprint_digest"
+```
+
+### Upsert
+
+- Params: `input *CreateHostFingerprintInput`, `target HostFingerprintConflictTarget`
+- Returns: `*HostFingerprint`, `error`
+- Errors: `ErrNilInput`, `ErrConstraintViolation`
+- Notes: One method over the generated HostFingerprintConflictTarget enum — the target argument selects the conflict columns at call time.
+
+Generated SQL:
+
+postgres:
+
+```sql
+INSERT INTO "public"."host_fingerprints" (<columns>) VALUES (<values>) ON CONFLICT (<conflict_target>) DO UPDATE SET <excluded>
+```
+
+### UpsertMany
+
+- Params: `inputs []*CreateHostFingerprintInput`, `target HostFingerprintConflictTarget`
+- Returns: `[]*HostFingerprint`, `error`
+- Errors: `ErrNilInput`, `ErrConstraintViolation`
+- Notes: Batched in generation.batch_size chunks over the same HostFingerprintConflictTarget enum Upsert takes. Inputs resolving to one target are deduped before the statement is built, last occurrence wins. Earlier chunks are not rolled back on a later failure — wrap in a transaction for atomicity.
+
+Generated SQL:
+
+postgres:
+
+```sql
+INSERT INTO "public"."host_fingerprints" (<columns>) VALUES <values> ON CONFLICT (<conflict_target>) DO UPDATE SET <excluded>
 ```
 
 ### HardDelete

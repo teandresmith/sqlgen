@@ -70,19 +70,6 @@ postgres:
 SELECT "created_at", "declared_categories", "id", "name", "primary_category" FROM "public"."assets" WHERE <filter> ORDER BY <sort> LIMIT <limit>
 ```
 
-### Count
-
-- Params: `filter *AssetFilter`
-- Returns: `int64`, `error`
-
-Generated SQL:
-
-postgres:
-
-```sql
-SELECT COUNT(*) FROM "public"."assets" WHERE <filter>
-```
-
 ### Exists
 
 - Params: `id uuid.UUID`
@@ -107,6 +94,19 @@ postgres:
 
 ```sql
 SELECT EXISTS(SELECT 1 FROM "public"."assets" WHERE <filter>)
+```
+
+### Count
+
+- Params: `filter *AssetFilter`
+- Returns: `int64`, `error`
+
+Generated SQL:
+
+postgres:
+
+```sql
+SELECT COUNT(*) FROM "public"."assets" WHERE <filter>
 ```
 
 ### Paginate
@@ -167,36 +167,6 @@ postgres:
 INSERT INTO "public"."assets" (<columns>) VALUES <values> RETURNING "id"
 ```
 
-### Upsert
-
-- Params: `input *CreateAssetInput`, `target AssetConflictTarget`
-- Returns: `*Asset`, `error`
-- Errors: `ErrNilInput`, `ErrConstraintViolation`
-- Notes: One method over the generated AssetConflictTarget enum — the target argument selects the conflict columns at call time.
-
-Generated SQL:
-
-postgres:
-
-```sql
-INSERT INTO "public"."assets" (<columns>) VALUES (<values>) ON CONFLICT (<conflict_target>) DO UPDATE SET <excluded> RETURNING "id"
-```
-
-### UpsertMany
-
-- Params: `inputs []*CreateAssetInput`, `target AssetConflictTarget`
-- Returns: `[]*Asset`, `error`
-- Errors: `ErrNilInput`, `ErrConstraintViolation`
-- Notes: Batched in generation.batch_size chunks over the same AssetConflictTarget enum Upsert takes. Inputs resolving to one target are deduped before the statement is built, last occurrence wins. Earlier chunks are not rolled back on a later failure — wrap in a transaction for atomicity.
-
-Generated SQL:
-
-postgres:
-
-```sql
-INSERT INTO "public"."assets" (<columns>) VALUES <values> ON CONFLICT (<conflict_target>) DO UPDATE SET <excluded>
-```
-
 ### Update
 
 - Params: `id uuid.UUID`, `input *UpdateAssetInput`
@@ -242,6 +212,57 @@ postgres:
 UPDATE "public"."assets" SET <set> WHERE <filter> RETURNING "id"
 ```
 
+### Upsert
+
+- Params: `input *CreateAssetInput`, `target AssetConflictTarget`
+- Returns: `*Asset`, `error`
+- Errors: `ErrNilInput`, `ErrConstraintViolation`
+- Notes: One method over the generated AssetConflictTarget enum — the target argument selects the conflict columns at call time.
+
+Generated SQL:
+
+postgres:
+
+```sql
+INSERT INTO "public"."assets" (<columns>) VALUES (<values>) ON CONFLICT (<conflict_target>) DO UPDATE SET <excluded> RETURNING "id"
+```
+
+### UpsertMany
+
+- Params: `inputs []*CreateAssetInput`, `target AssetConflictTarget`
+- Returns: `[]*Asset`, `error`
+- Errors: `ErrNilInput`, `ErrConstraintViolation`
+- Notes: Batched in generation.batch_size chunks over the same AssetConflictTarget enum Upsert takes. Inputs resolving to one target are deduped before the statement is built, last occurrence wins. Earlier chunks are not rolled back on a later failure — wrap in a transaction for atomicity.
+
+Generated SQL:
+
+postgres:
+
+```sql
+INSERT INTO "public"."assets" (<columns>) VALUES <values> ON CONFLICT (<conflict_target>) DO UPDATE SET <excluded>
+```
+
+### CreateWithRelated
+
+- Params: `input *CreateAssetWithRelatedInput`
+- Returns: `*Asset`, `error`
+- Errors: `ErrNilInput`, `ErrNotFound`, `ErrNestedVerbConflict`, `ErrConstraintViolation`
+- Notes: Writes the parent and its nested rows in one transaction — a SAVEPOINT when ctx already holds one. Issues no statement of its own: it composes Create and, per eligible relationship (Attachments, Documents, Invoices, PrimaryDocument), the target's and junction's own client methods, so no sql_bodies entry. Each inner call fires its own hooks, events and cache invalidation under its own op; the nested method has none.
+
+### UpdateWithRelated
+
+- Params: `id uuid.UUID`, `input *UpdateAssetWithRelatedInput`
+- Returns: `*Asset`, `error`
+- Errors: `ErrNilInput`, `ErrNotFound`, `ErrNestedVerbConflict`, `ErrConstraintViolation`
+- Notes: Writes the parent and its nested rows in one transaction — a SAVEPOINT when ctx already holds one. Issues no statement of its own: it composes Update and, per eligible relationship (Attachments, Documents, Invoices, PrimaryDocument), the target's and junction's own client methods, so no sql_bodies entry. Each inner call fires its own hooks, events and cache invalidation under its own op; the nested method has none.
+
+### UpsertWithRelated
+
+- Params: `input *UpsertAssetWithRelatedInput`, `target AssetConflictTarget`
+- Returns: `*Asset`, `error`
+- Errors: `ErrNilInput`, `ErrNotFound`, `ErrNestedVerbConflict`, `ErrConstraintViolation`
+- Notes: Writes the parent and its nested rows in one transaction — a SAVEPOINT when ctx already holds one. Issues no statement of its own: it composes Upsert and, per eligible relationship (Attachments, Documents, Invoices, PrimaryDocument), the target's and junction's own client methods, so no sql_bodies entry. Each inner call fires its own hooks, events and cache invalidation under its own op; the nested method has none.
+
 ### HardDelete
 
 - Params: `id uuid.UUID`
@@ -284,27 +305,6 @@ postgres:
 ```sql
 DELETE FROM "public"."assets" WHERE <filter> RETURNING "id"
 ```
-
-### CreateWithRelated
-
-- Params: `input *CreateAssetWithRelatedInput`
-- Returns: `*Asset`, `error`
-- Errors: `ErrNilInput`, `ErrNotFound`, `ErrNestedVerbConflict`, `ErrConstraintViolation`
-- Notes: Writes the parent and its nested rows in one transaction — a SAVEPOINT when ctx already holds one. Issues no statement of its own: it composes Create and, per eligible relationship (Attachments, Documents, Invoices, PrimaryDocument), the target's and junction's own client methods, so no sql_bodies entry. Each inner call fires its own hooks, events and cache invalidation under its own op; the nested method has none.
-
-### UpdateWithRelated
-
-- Params: `id uuid.UUID`, `input *UpdateAssetWithRelatedInput`
-- Returns: `*Asset`, `error`
-- Errors: `ErrNilInput`, `ErrNotFound`, `ErrNestedVerbConflict`, `ErrConstraintViolation`
-- Notes: Writes the parent and its nested rows in one transaction — a SAVEPOINT when ctx already holds one. Issues no statement of its own: it composes Update and, per eligible relationship (Attachments, Documents, Invoices, PrimaryDocument), the target's and junction's own client methods, so no sql_bodies entry. Each inner call fires its own hooks, events and cache invalidation under its own op; the nested method has none.
-
-### UpsertWithRelated
-
-- Params: `input *UpsertAssetWithRelatedInput`, `target AssetConflictTarget`
-- Returns: `*Asset`, `error`
-- Errors: `ErrNilInput`, `ErrNotFound`, `ErrNestedVerbConflict`, `ErrConstraintViolation`
-- Notes: Writes the parent and its nested rows in one transaction — a SAVEPOINT when ctx already holds one. Issues no statement of its own: it composes Upsert and, per eligible relationship (Attachments, Documents, Invoices, PrimaryDocument), the target's and junction's own client methods, so no sql_bodies entry. Each inner call fires its own hooks, events and cache invalidation under its own op; the nested method has none.
 
 ## Filter
 

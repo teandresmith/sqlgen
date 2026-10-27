@@ -62,19 +62,6 @@ sqlite:
 SELECT "name", "owner_key" FROM "owners" WHERE <filter> ORDER BY <sort> LIMIT <limit>
 ```
 
-### Count
-
-- Params: `filter *OwnerFilter`
-- Returns: `int64`, `error`
-
-Generated SQL:
-
-sqlite:
-
-```sql
-SELECT COUNT(*) FROM "owners" WHERE <filter>
-```
-
 ### Exists
 
 - Params: `id int64`
@@ -99,6 +86,19 @@ sqlite:
 
 ```sql
 SELECT EXISTS(SELECT 1 FROM "owners" WHERE <filter>)
+```
+
+### Count
+
+- Params: `filter *OwnerFilter`
+- Returns: `int64`, `error`
+
+Generated SQL:
+
+sqlite:
+
+```sql
+SELECT COUNT(*) FROM "owners" WHERE <filter>
 ```
 
 ### Paginate
@@ -159,36 +159,6 @@ sqlite:
 INSERT INTO "owners" (<columns>) VALUES <values> RETURNING "owner_key"
 ```
 
-### Upsert
-
-- Params: `input *CreateOwnerInput`, `target OwnerConflictTarget`
-- Returns: `*Owner`, `error`
-- Errors: `ErrNilInput`, `ErrConstraintViolation`
-- Notes: One method over the generated OwnerConflictTarget enum — the target argument selects the conflict columns at call time.
-
-Generated SQL:
-
-sqlite:
-
-```sql
-INSERT INTO "owners" (<columns>) VALUES (<values>) ON CONFLICT (<conflict_target>) DO UPDATE SET <excluded> RETURNING "owner_key"
-```
-
-### UpsertMany
-
-- Params: `inputs []*CreateOwnerInput`, `target OwnerConflictTarget`
-- Returns: `[]*Owner`, `error`
-- Errors: `ErrNilInput`, `ErrConstraintViolation`
-- Notes: Batched in generation.batch_size chunks over the same OwnerConflictTarget enum Upsert takes. Inputs resolving to one target are deduped before the statement is built, last occurrence wins. Earlier chunks are not rolled back on a later failure — wrap in a transaction for atomicity.
-
-Generated SQL:
-
-sqlite:
-
-```sql
-INSERT INTO "owners" (<columns>) VALUES <values> ON CONFLICT (<conflict_target>) DO UPDATE SET <excluded>
-```
-
 ### Update
 
 - Params: `id int64`, `input *UpdateOwnerInput`
@@ -232,6 +202,36 @@ sqlite:
 
 ```sql
 UPDATE "owners" SET <set> WHERE <filter> RETURNING "owner_key"
+```
+
+### Upsert
+
+- Params: `input *CreateOwnerInput`, `target OwnerConflictTarget`
+- Returns: `*Owner`, `error`
+- Errors: `ErrNilInput`, `ErrConstraintViolation`
+- Notes: One method over the generated OwnerConflictTarget enum — the target argument selects the conflict columns at call time.
+
+Generated SQL:
+
+sqlite:
+
+```sql
+INSERT INTO "owners" (<columns>) VALUES (<values>) ON CONFLICT (<conflict_target>) DO UPDATE SET <excluded> RETURNING "owner_key"
+```
+
+### UpsertMany
+
+- Params: `inputs []*CreateOwnerInput`, `target OwnerConflictTarget`
+- Returns: `[]*Owner`, `error`
+- Errors: `ErrNilInput`, `ErrConstraintViolation`
+- Notes: Batched in generation.batch_size chunks over the same OwnerConflictTarget enum Upsert takes. Inputs resolving to one target are deduped before the statement is built, last occurrence wins. Earlier chunks are not rolled back on a later failure — wrap in a transaction for atomicity.
+
+Generated SQL:
+
+sqlite:
+
+```sql
+INSERT INTO "owners" (<columns>) VALUES <values> ON CONFLICT (<conflict_target>) DO UPDATE SET <excluded>
 ```
 
 ### HardDelete

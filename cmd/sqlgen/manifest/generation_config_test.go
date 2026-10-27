@@ -188,7 +188,7 @@ func TestBuild_FeaturesCacheFollowsPerTableResolution(t *testing.T) {
 			users:  &config.TableCacheConfig{Enabled: new(true)},
 			wantUsers: &manifest.CacheFeature{
 				TTLSeconds: 60, Hydration: "eager", KeyPattern: "models:user:{id}",
-				InvalidatesOn: []string{"Upsert", "UpsertMany", "Update", "UpdateMany", "UpdateWhere", "HardDelete", "HardDeleteMany", "HardDeleteWhere"},
+				InvalidatesOn: []string{"Update", "UpdateMany", "UpdateWhere", "Upsert", "UpsertMany", "HardDelete", "HardDeleteMany", "HardDeleteWhere"},
 			},
 			wantPosts: false,
 		},
@@ -198,7 +198,7 @@ func TestBuild_FeaturesCacheFollowsPerTableResolution(t *testing.T) {
 			users:  &config.TableCacheConfig{Enabled: new(true), TTL: new("30s")},
 			wantUsers: &manifest.CacheFeature{
 				TTLSeconds: 30, Hydration: "eager", KeyPattern: "sqlgen:user:{id}",
-				InvalidatesOn: []string{"Upsert", "UpsertMany", "Update", "UpdateMany", "UpdateWhere", "HardDelete", "HardDeleteMany", "HardDeleteWhere"},
+				InvalidatesOn: []string{"Update", "UpdateMany", "UpdateWhere", "Upsert", "UpsertMany", "HardDelete", "HardDeleteMany", "HardDeleteWhere"},
 			},
 			wantPosts: false,
 		},

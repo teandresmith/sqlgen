@@ -66,19 +66,6 @@ mysql:
 SELECT `created_at`, `entity_id`, `entity_type`, `id`, `name` FROM `documents` WHERE <filter> ORDER BY <sort> LIMIT <limit>
 ```
 
-### Count
-
-- Params: `filter *DocumentFilter`
-- Returns: `int64`, `error`
-
-Generated SQL:
-
-mysql:
-
-```sql
-SELECT COUNT(*) FROM `documents` WHERE <filter>
-```
-
 ### Exists
 
 - Params: `id int64`
@@ -103,6 +90,19 @@ mysql:
 
 ```sql
 SELECT EXISTS(SELECT 1 FROM `documents` WHERE <filter>)
+```
+
+### Count
+
+- Params: `filter *DocumentFilter`
+- Returns: `int64`, `error`
+
+Generated SQL:
+
+mysql:
+
+```sql
+SELECT COUNT(*) FROM `documents` WHERE <filter>
 ```
 
 ### Paginate
@@ -163,36 +163,6 @@ mysql:
 INSERT INTO `documents` (<columns>) VALUES <values>
 ```
 
-### Upsert
-
-- Params: `input *CreateDocumentInput`, `target DocumentConflictTarget`
-- Returns: `*Document`, `error`
-- Errors: `ErrNilInput`, `ErrConstraintViolation`
-- Notes: One method over the generated DocumentConflictTarget enum — the target argument selects the conflict columns at call time.
-
-Generated SQL:
-
-mysql:
-
-```sql
-INSERT INTO `documents` (<columns>) VALUES (<values>) ON DUPLICATE KEY UPDATE <excluded>
-```
-
-### UpsertMany
-
-- Params: `inputs []*CreateDocumentInput`, `target DocumentConflictTarget`
-- Returns: `[]*Document`, `error`
-- Errors: `ErrNilInput`, `ErrConstraintViolation`
-- Notes: Batched in generation.batch_size chunks over the same DocumentConflictTarget enum Upsert takes. Inputs resolving to one target are deduped before the statement is built, last occurrence wins. Earlier chunks are not rolled back on a later failure — wrap in a transaction for atomicity.
-
-Generated SQL:
-
-mysql:
-
-```sql
-INSERT INTO `documents` (<columns>) VALUES <values> ON DUPLICATE KEY UPDATE <excluded>
-```
-
 ### Update
 
 - Params: `id int64`, `input *UpdateDocumentInput`
@@ -238,6 +208,57 @@ mysql:
 UPDATE `documents` SET <set> WHERE <filter>
 ```
 
+### Upsert
+
+- Params: `input *CreateDocumentInput`, `target DocumentConflictTarget`
+- Returns: `*Document`, `error`
+- Errors: `ErrNilInput`, `ErrConstraintViolation`
+- Notes: One method over the generated DocumentConflictTarget enum — the target argument selects the conflict columns at call time.
+
+Generated SQL:
+
+mysql:
+
+```sql
+INSERT INTO `documents` (<columns>) VALUES (<values>) ON DUPLICATE KEY UPDATE <excluded>
+```
+
+### UpsertMany
+
+- Params: `inputs []*CreateDocumentInput`, `target DocumentConflictTarget`
+- Returns: `[]*Document`, `error`
+- Errors: `ErrNilInput`, `ErrConstraintViolation`
+- Notes: Batched in generation.batch_size chunks over the same DocumentConflictTarget enum Upsert takes. Inputs resolving to one target are deduped before the statement is built, last occurrence wins. Earlier chunks are not rolled back on a later failure — wrap in a transaction for atomicity.
+
+Generated SQL:
+
+mysql:
+
+```sql
+INSERT INTO `documents` (<columns>) VALUES <values> ON DUPLICATE KEY UPDATE <excluded>
+```
+
+### CreateWithRelated
+
+- Params: `input *CreateDocumentWithRelatedInput`
+- Returns: `*Document`, `error`
+- Errors: `ErrNilInput`, `ErrNotFound`, `ErrNestedVerbConflict`, `ErrConstraintViolation`
+- Notes: Writes the parent and its nested rows in one transaction — a SAVEPOINT when ctx already holds one. Issues no statement of its own: it composes Create and, per eligible relationship (Assets), the target's and junction's own client methods, so no sql_bodies entry. Each inner call fires its own hooks, events and cache invalidation under its own op; the nested method has none.
+
+### UpdateWithRelated
+
+- Params: `id int64`, `input *UpdateDocumentWithRelatedInput`
+- Returns: `*Document`, `error`
+- Errors: `ErrNilInput`, `ErrNotFound`, `ErrNestedVerbConflict`, `ErrConstraintViolation`
+- Notes: Writes the parent and its nested rows in one transaction — a SAVEPOINT when ctx already holds one. Issues no statement of its own: it composes Update and, per eligible relationship (Assets), the target's and junction's own client methods, so no sql_bodies entry. Each inner call fires its own hooks, events and cache invalidation under its own op; the nested method has none.
+
+### UpsertWithRelated
+
+- Params: `input *UpsertDocumentWithRelatedInput`, `target DocumentConflictTarget`
+- Returns: `*Document`, `error`
+- Errors: `ErrNilInput`, `ErrNotFound`, `ErrNestedVerbConflict`, `ErrConstraintViolation`
+- Notes: Writes the parent and its nested rows in one transaction — a SAVEPOINT when ctx already holds one. Issues no statement of its own: it composes Upsert and, per eligible relationship (Assets), the target's and junction's own client methods, so no sql_bodies entry. Each inner call fires its own hooks, events and cache invalidation under its own op; the nested method has none.
+
 ### HardDelete
 
 - Params: `id int64`
@@ -280,27 +301,6 @@ mysql:
 ```sql
 DELETE FROM `documents` WHERE <filter>
 ```
-
-### CreateWithRelated
-
-- Params: `input *CreateDocumentWithRelatedInput`
-- Returns: `*Document`, `error`
-- Errors: `ErrNilInput`, `ErrNotFound`, `ErrNestedVerbConflict`, `ErrConstraintViolation`
-- Notes: Writes the parent and its nested rows in one transaction — a SAVEPOINT when ctx already holds one. Issues no statement of its own: it composes Create and, per eligible relationship (Assets), the target's and junction's own client methods, so no sql_bodies entry. Each inner call fires its own hooks, events and cache invalidation under its own op; the nested method has none.
-
-### UpdateWithRelated
-
-- Params: `id int64`, `input *UpdateDocumentWithRelatedInput`
-- Returns: `*Document`, `error`
-- Errors: `ErrNilInput`, `ErrNotFound`, `ErrNestedVerbConflict`, `ErrConstraintViolation`
-- Notes: Writes the parent and its nested rows in one transaction — a SAVEPOINT when ctx already holds one. Issues no statement of its own: it composes Update and, per eligible relationship (Assets), the target's and junction's own client methods, so no sql_bodies entry. Each inner call fires its own hooks, events and cache invalidation under its own op; the nested method has none.
-
-### UpsertWithRelated
-
-- Params: `input *UpsertDocumentWithRelatedInput`, `target DocumentConflictTarget`
-- Returns: `*Document`, `error`
-- Errors: `ErrNilInput`, `ErrNotFound`, `ErrNestedVerbConflict`, `ErrConstraintViolation`
-- Notes: Writes the parent and its nested rows in one transaction — a SAVEPOINT when ctx already holds one. Issues no statement of its own: it composes Upsert and, per eligible relationship (Assets), the target's and junction's own client methods, so no sql_bodies entry. Each inner call fires its own hooks, events and cache invalidation under its own op; the nested method has none.
 
 ## Filter
 

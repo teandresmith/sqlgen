@@ -77,19 +77,6 @@ postgres:
 SELECT "created_at", "deleted_at", "email", "id", "internal_score", "ip_addr", "is_active", "last_login_at", "metadata", "name", "new_password", "password_hash", "updated_at" FROM "public"."users" WHERE <filter> AND "deleted_at" IS NULL ORDER BY <sort> LIMIT <limit>
 ```
 
-### Count
-
-- Params: `filter *UserFilter`
-- Returns: `int64`, `error`
-
-Generated SQL:
-
-postgres:
-
-```sql
-SELECT COUNT(*) FROM "public"."users" WHERE <filter> AND "deleted_at" IS NULL
-```
-
 ### Exists
 
 - Params: `id uuid.UUID`
@@ -114,6 +101,19 @@ postgres:
 
 ```sql
 SELECT EXISTS(SELECT 1 FROM "public"."users" WHERE <filter> AND "deleted_at" IS NULL)
+```
+
+### Count
+
+- Params: `filter *UserFilter`
+- Returns: `int64`, `error`
+
+Generated SQL:
+
+postgres:
+
+```sql
+SELECT COUNT(*) FROM "public"."users" WHERE <filter> AND "deleted_at" IS NULL
 ```
 
 ### Paginate
@@ -174,36 +174,6 @@ postgres:
 INSERT INTO "public"."users" (<columns>) VALUES <values> RETURNING "id"
 ```
 
-### Upsert
-
-- Params: `input *CreateUserInput`, `target UserConflictTarget`
-- Returns: `*User`, `error`
-- Errors: `ErrNilInput`, `ErrConstraintViolation`
-- Notes: One method over the generated UserConflictTarget enum — the target argument selects the conflict columns at call time.
-
-Generated SQL:
-
-postgres:
-
-```sql
-INSERT INTO "public"."users" (<columns>) VALUES (<values>) ON CONFLICT (<conflict_target>) DO UPDATE SET <excluded> RETURNING "id"
-```
-
-### UpsertMany
-
-- Params: `inputs []*CreateUserInput`, `target UserConflictTarget`
-- Returns: `[]*User`, `error`
-- Errors: `ErrNilInput`, `ErrConstraintViolation`
-- Notes: Batched in generation.batch_size chunks over the same UserConflictTarget enum Upsert takes. Inputs resolving to one target are deduped before the statement is built, last occurrence wins. Earlier chunks are not rolled back on a later failure — wrap in a transaction for atomicity.
-
-Generated SQL:
-
-postgres:
-
-```sql
-INSERT INTO "public"."users" (<columns>) VALUES <values> ON CONFLICT (<conflict_target>) DO UPDATE SET <excluded>
-```
-
 ### Update
 
 - Params: `id uuid.UUID`, `input *UpdateUserInput`
@@ -248,6 +218,57 @@ postgres:
 ```sql
 UPDATE "public"."users" SET <set> WHERE <filter> RETURNING "id"
 ```
+
+### Upsert
+
+- Params: `input *CreateUserInput`, `target UserConflictTarget`
+- Returns: `*User`, `error`
+- Errors: `ErrNilInput`, `ErrConstraintViolation`
+- Notes: One method over the generated UserConflictTarget enum — the target argument selects the conflict columns at call time.
+
+Generated SQL:
+
+postgres:
+
+```sql
+INSERT INTO "public"."users" (<columns>) VALUES (<values>) ON CONFLICT (<conflict_target>) DO UPDATE SET <excluded> RETURNING "id"
+```
+
+### UpsertMany
+
+- Params: `inputs []*CreateUserInput`, `target UserConflictTarget`
+- Returns: `[]*User`, `error`
+- Errors: `ErrNilInput`, `ErrConstraintViolation`
+- Notes: Batched in generation.batch_size chunks over the same UserConflictTarget enum Upsert takes. Inputs resolving to one target are deduped before the statement is built, last occurrence wins. Earlier chunks are not rolled back on a later failure — wrap in a transaction for atomicity.
+
+Generated SQL:
+
+postgres:
+
+```sql
+INSERT INTO "public"."users" (<columns>) VALUES <values> ON CONFLICT (<conflict_target>) DO UPDATE SET <excluded>
+```
+
+### CreateWithRelated
+
+- Params: `input *CreateUserWithRelatedInput`
+- Returns: `*User`, `error`
+- Errors: `ErrNilInput`, `ErrNotFound`, `ErrAlreadyRelated`, `ErrNestedVerbConflict`, `ErrConstraintViolation`
+- Notes: Writes the parent and its nested rows in one transaction — a SAVEPOINT when ctx already holds one. Issues no statement of its own: it composes Create and, per eligible relationship (Badge, Categories, Events, Orders, UserSessions), the target's and junction's own client methods, so no sql_bodies entry. Each inner call fires its own hooks, events and cache invalidation under its own op; the nested method has none.
+
+### UpdateWithRelated
+
+- Params: `id uuid.UUID`, `input *UpdateUserWithRelatedInput`
+- Returns: `*User`, `error`
+- Errors: `ErrNilInput`, `ErrNotFound`, `ErrAlreadyRelated`, `ErrNestedVerbConflict`, `ErrConstraintViolation`
+- Notes: Writes the parent and its nested rows in one transaction — a SAVEPOINT when ctx already holds one. Issues no statement of its own: it composes Update and, per eligible relationship (Badge, Categories, Events, Orders, UserSessions), the target's and junction's own client methods, so no sql_bodies entry. Each inner call fires its own hooks, events and cache invalidation under its own op; the nested method has none.
+
+### UpsertWithRelated
+
+- Params: `input *UpsertUserWithRelatedInput`, `target UserConflictTarget`
+- Returns: `*User`, `error`
+- Errors: `ErrNilInput`, `ErrNotFound`, `ErrAlreadyRelated`, `ErrNestedVerbConflict`, `ErrConstraintViolation`
+- Notes: Writes the parent and its nested rows in one transaction — a SAVEPOINT when ctx already holds one. Issues no statement of its own: it composes Upsert and, per eligible relationship (Badge, Categories, Events, Orders, UserSessions), the target's and junction's own client methods, so no sql_bodies entry. Each inner call fires its own hooks, events and cache invalidation under its own op; the nested method has none.
 
 ### Increment
 
@@ -392,27 +413,6 @@ postgres:
 ```sql
 DELETE FROM "public"."users" WHERE <filter> RETURNING "id"
 ```
-
-### CreateWithRelated
-
-- Params: `input *CreateUserWithRelatedInput`
-- Returns: `*User`, `error`
-- Errors: `ErrNilInput`, `ErrNotFound`, `ErrAlreadyRelated`, `ErrNestedVerbConflict`, `ErrConstraintViolation`
-- Notes: Writes the parent and its nested rows in one transaction — a SAVEPOINT when ctx already holds one. Issues no statement of its own: it composes Create and, per eligible relationship (Badge, Categories, Events, Orders, UserSessions), the target's and junction's own client methods, so no sql_bodies entry. Each inner call fires its own hooks, events and cache invalidation under its own op; the nested method has none.
-
-### UpdateWithRelated
-
-- Params: `id uuid.UUID`, `input *UpdateUserWithRelatedInput`
-- Returns: `*User`, `error`
-- Errors: `ErrNilInput`, `ErrNotFound`, `ErrAlreadyRelated`, `ErrNestedVerbConflict`, `ErrConstraintViolation`
-- Notes: Writes the parent and its nested rows in one transaction — a SAVEPOINT when ctx already holds one. Issues no statement of its own: it composes Update and, per eligible relationship (Badge, Categories, Events, Orders, UserSessions), the target's and junction's own client methods, so no sql_bodies entry. Each inner call fires its own hooks, events and cache invalidation under its own op; the nested method has none.
-
-### UpsertWithRelated
-
-- Params: `input *UpsertUserWithRelatedInput`, `target UserConflictTarget`
-- Returns: `*User`, `error`
-- Errors: `ErrNilInput`, `ErrNotFound`, `ErrAlreadyRelated`, `ErrNestedVerbConflict`, `ErrConstraintViolation`
-- Notes: Writes the parent and its nested rows in one transaction — a SAVEPOINT when ctx already holds one. Issues no statement of its own: it composes Upsert and, per eligible relationship (Badge, Categories, Events, Orders, UserSessions), the target's and junction's own client methods, so no sql_bodies entry. Each inner call fires its own hooks, events and cache invalidation under its own op; the nested method has none.
 
 ## Filter
 

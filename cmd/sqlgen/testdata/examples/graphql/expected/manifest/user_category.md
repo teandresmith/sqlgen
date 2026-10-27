@@ -57,19 +57,6 @@ postgres:
 SELECT "category_id", "user_id" FROM "public"."user_categories" WHERE <filter> ORDER BY <sort> LIMIT <limit>
 ```
 
-### Count
-
-- Params: `filter *UserCategoryFilter`
-- Returns: `int64`, `error`
-
-Generated SQL:
-
-postgres:
-
-```sql
-SELECT COUNT(*) FROM "public"."user_categories" WHERE <filter>
-```
-
 ### Exists
 
 - Params: `pk UserCategoryPK`
@@ -94,6 +81,19 @@ postgres:
 
 ```sql
 SELECT EXISTS(SELECT 1 FROM "public"."user_categories" WHERE <filter>)
+```
+
+### Count
+
+- Params: `filter *UserCategoryFilter`
+- Returns: `int64`, `error`
+
+Generated SQL:
+
+postgres:
+
+```sql
+SELECT COUNT(*) FROM "public"."user_categories" WHERE <filter>
 ```
 
 ### Paginate
@@ -154,36 +154,6 @@ postgres:
 INSERT INTO "public"."user_categories" (<columns>) VALUES <values>
 ```
 
-### Upsert
-
-- Params: `input *CreateUserCategoryInput`, `target UserCategoryConflictTarget`
-- Returns: `*UserCategory`, `error`
-- Errors: `ErrNilInput`, `ErrConstraintViolation`
-- Notes: One method over the generated UserCategoryConflictTarget enum — the target argument selects the conflict columns at call time.
-
-Generated SQL:
-
-postgres:
-
-```sql
-INSERT INTO "public"."user_categories" (<columns>) VALUES (<values>) ON CONFLICT (<conflict_target>) DO UPDATE SET <excluded>
-```
-
-### UpsertMany
-
-- Params: `inputs []*CreateUserCategoryInput`, `target UserCategoryConflictTarget`
-- Returns: `[]*UserCategory`, `error`
-- Errors: `ErrNilInput`, `ErrConstraintViolation`
-- Notes: Batched in generation.batch_size chunks over the same UserCategoryConflictTarget enum Upsert takes. Inputs resolving to one target are deduped before the statement is built, last occurrence wins. Earlier chunks are not rolled back on a later failure — wrap in a transaction for atomicity.
-
-Generated SQL:
-
-postgres:
-
-```sql
-INSERT INTO "public"."user_categories" (<columns>) VALUES <values> ON CONFLICT (<conflict_target>) DO UPDATE SET <excluded>
-```
-
 ### Update
 
 - Params: `pk UserCategoryPK`, `input *UpdateUserCategoryInput`
@@ -227,6 +197,36 @@ postgres:
 
 ```sql
 UPDATE "public"."user_categories" SET <set> WHERE <filter> RETURNING "user_id", "category_id"
+```
+
+### Upsert
+
+- Params: `input *CreateUserCategoryInput`, `target UserCategoryConflictTarget`
+- Returns: `*UserCategory`, `error`
+- Errors: `ErrNilInput`, `ErrConstraintViolation`
+- Notes: One method over the generated UserCategoryConflictTarget enum — the target argument selects the conflict columns at call time.
+
+Generated SQL:
+
+postgres:
+
+```sql
+INSERT INTO "public"."user_categories" (<columns>) VALUES (<values>) ON CONFLICT (<conflict_target>) DO UPDATE SET <excluded>
+```
+
+### UpsertMany
+
+- Params: `inputs []*CreateUserCategoryInput`, `target UserCategoryConflictTarget`
+- Returns: `[]*UserCategory`, `error`
+- Errors: `ErrNilInput`, `ErrConstraintViolation`
+- Notes: Batched in generation.batch_size chunks over the same UserCategoryConflictTarget enum Upsert takes. Inputs resolving to one target are deduped before the statement is built, last occurrence wins. Earlier chunks are not rolled back on a later failure — wrap in a transaction for atomicity.
+
+Generated SQL:
+
+postgres:
+
+```sql
+INSERT INTO "public"."user_categories" (<columns>) VALUES <values> ON CONFLICT (<conflict_target>) DO UPDATE SET <excluded>
 ```
 
 ### HardDelete

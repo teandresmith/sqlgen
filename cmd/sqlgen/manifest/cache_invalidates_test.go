@@ -30,7 +30,7 @@ func TestBuild_CacheInvalidatesOnNamesEntityMutations(t *testing.T) {
 				{Name: "id", Type: "uuid", PrimaryKey: true},
 				{Name: "email", Type: "text"},
 			}},
-			want: []string{"Upsert", "UpsertMany", "Update", "UpdateMany", "UpdateWhere", "HardDelete", "HardDeleteMany", "HardDeleteWhere"},
+			want: []string{"Update", "UpdateMany", "UpdateWhere", "Upsert", "UpsertMany", "HardDelete", "HardDeleteMany", "HardDeleteWhere"},
 		},
 		{
 			name: "soft-delete table with an integer column",
@@ -41,7 +41,7 @@ func TestBuild_CacheInvalidatesOnNamesEntityMutations(t *testing.T) {
 				{Name: "deleted_at", Type: "timestamptz", Nullable: true},
 			}},
 			want: []string{
-				"Upsert", "UpsertMany", "Update", "UpdateMany", "UpdateWhere", "Increment",
+				"Update", "UpdateMany", "UpdateWhere", "Upsert", "UpsertMany", "Increment",
 				"SoftDelete", "SoftDeleteMany", "SoftDeleteWhere", "Restore", "RestoreMany", "RestoreWhere",
 				"HardDelete", "HardDeleteMany", "HardDeleteWhere",
 			},

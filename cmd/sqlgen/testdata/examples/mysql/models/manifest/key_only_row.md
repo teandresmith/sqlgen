@@ -54,19 +54,6 @@ mysql:
 SELECT `id` FROM `key_only_rows` WHERE <filter> ORDER BY <sort> LIMIT <limit>
 ```
 
-### Count
-
-- Params: `filter *KeyOnlyRowFilter`
-- Returns: `int64`, `error`
-
-Generated SQL:
-
-mysql:
-
-```sql
-SELECT COUNT(*) FROM `key_only_rows` WHERE <filter>
-```
-
 ### Exists
 
 - Params: `id int64`
@@ -91,6 +78,19 @@ mysql:
 
 ```sql
 SELECT EXISTS(SELECT 1 FROM `key_only_rows` WHERE <filter>)
+```
+
+### Count
+
+- Params: `filter *KeyOnlyRowFilter`
+- Returns: `int64`, `error`
+
+Generated SQL:
+
+mysql:
+
+```sql
+SELECT COUNT(*) FROM `key_only_rows` WHERE <filter>
 ```
 
 ### Paginate
@@ -151,36 +151,6 @@ mysql:
 INSERT INTO `key_only_rows` (<columns>) VALUES <values>
 ```
 
-### Upsert
-
-- Params: `input *CreateKeyOnlyRowInput`, `target KeyOnlyRowConflictTarget`
-- Returns: `*KeyOnlyRow`, `error`
-- Errors: `ErrNilInput`, `ErrConstraintViolation`
-- Notes: One method over the generated KeyOnlyRowConflictTarget enum — the target argument selects the conflict columns at call time.
-
-Generated SQL:
-
-mysql:
-
-```sql
-INSERT INTO `key_only_rows` (<columns>) VALUES (<values>) ON DUPLICATE KEY UPDATE <excluded>
-```
-
-### UpsertMany
-
-- Params: `inputs []*CreateKeyOnlyRowInput`, `target KeyOnlyRowConflictTarget`
-- Returns: `[]*KeyOnlyRow`, `error`
-- Errors: `ErrNilInput`, `ErrConstraintViolation`
-- Notes: Batched in generation.batch_size chunks over the same KeyOnlyRowConflictTarget enum Upsert takes. Inputs resolving to one target are deduped before the statement is built, last occurrence wins. Earlier chunks are not rolled back on a later failure — wrap in a transaction for atomicity.
-
-Generated SQL:
-
-mysql:
-
-```sql
-INSERT INTO `key_only_rows` (<columns>) VALUES <values> ON DUPLICATE KEY UPDATE <excluded>
-```
-
 ### Update
 
 - Params: `id int64`, `input *UpdateKeyOnlyRowInput`
@@ -224,6 +194,36 @@ mysql:
 
 ```sql
 UPDATE `key_only_rows` SET <set> WHERE <filter>
+```
+
+### Upsert
+
+- Params: `input *CreateKeyOnlyRowInput`, `target KeyOnlyRowConflictTarget`
+- Returns: `*KeyOnlyRow`, `error`
+- Errors: `ErrNilInput`, `ErrConstraintViolation`
+- Notes: One method over the generated KeyOnlyRowConflictTarget enum — the target argument selects the conflict columns at call time.
+
+Generated SQL:
+
+mysql:
+
+```sql
+INSERT INTO `key_only_rows` (<columns>) VALUES (<values>) ON DUPLICATE KEY UPDATE <excluded>
+```
+
+### UpsertMany
+
+- Params: `inputs []*CreateKeyOnlyRowInput`, `target KeyOnlyRowConflictTarget`
+- Returns: `[]*KeyOnlyRow`, `error`
+- Errors: `ErrNilInput`, `ErrConstraintViolation`
+- Notes: Batched in generation.batch_size chunks over the same KeyOnlyRowConflictTarget enum Upsert takes. Inputs resolving to one target are deduped before the statement is built, last occurrence wins. Earlier chunks are not rolled back on a later failure — wrap in a transaction for atomicity.
+
+Generated SQL:
+
+mysql:
+
+```sql
+INSERT INTO `key_only_rows` (<columns>) VALUES <values> ON DUPLICATE KEY UPDATE <excluded>
 ```
 
 ### HardDelete

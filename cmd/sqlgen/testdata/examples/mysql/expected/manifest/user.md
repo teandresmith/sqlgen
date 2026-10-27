@@ -86,19 +86,6 @@ mysql:
 SELECT `age`, `avatar`, `balance`, `big_unsigned`, `bio`, `birth_date`, `created_at`, `email`, `id`, `is_active`, `last_login`, `login_count`, `medium_val`, `metadata`, `name`, `permissions`, `rating`, `role`, `score`, `tiny_flag`, `updated_at` FROM `users` WHERE <filter> ORDER BY <sort> LIMIT <limit>
 ```
 
-### Count
-
-- Params: `filter *UserFilter`
-- Returns: `int64`, `error`
-
-Generated SQL:
-
-mysql:
-
-```sql
-SELECT COUNT(*) FROM `users` WHERE <filter>
-```
-
 ### Exists
 
 - Params: `id int64`
@@ -123,6 +110,19 @@ mysql:
 
 ```sql
 SELECT EXISTS(SELECT 1 FROM `users` WHERE <filter>)
+```
+
+### Count
+
+- Params: `filter *UserFilter`
+- Returns: `int64`, `error`
+
+Generated SQL:
+
+mysql:
+
+```sql
+SELECT COUNT(*) FROM `users` WHERE <filter>
 ```
 
 ### Paginate
@@ -183,36 +183,6 @@ mysql:
 INSERT INTO `users` (<columns>) VALUES <values>
 ```
 
-### Upsert
-
-- Params: `input *CreateUserInput`, `target UserConflictTarget`
-- Returns: `*User`, `error`
-- Errors: `ErrNilInput`, `ErrConstraintViolation`
-- Notes: One method over the generated UserConflictTarget enum — the target argument selects the conflict columns at call time.
-
-Generated SQL:
-
-mysql:
-
-```sql
-INSERT INTO `users` (<columns>) VALUES (<values>) ON DUPLICATE KEY UPDATE <excluded>
-```
-
-### UpsertMany
-
-- Params: `inputs []*CreateUserInput`, `target UserConflictTarget`
-- Returns: `[]*User`, `error`
-- Errors: `ErrNilInput`, `ErrConstraintViolation`
-- Notes: Batched in generation.batch_size chunks over the same UserConflictTarget enum Upsert takes. Inputs resolving to one target are deduped before the statement is built, last occurrence wins. Earlier chunks are not rolled back on a later failure — wrap in a transaction for atomicity.
-
-Generated SQL:
-
-mysql:
-
-```sql
-INSERT INTO `users` (<columns>) VALUES <values> ON DUPLICATE KEY UPDATE <excluded>
-```
-
 ### Update
 
 - Params: `id int64`, `input *UpdateUserInput`
@@ -257,6 +227,57 @@ mysql:
 ```sql
 UPDATE `users` SET <set> WHERE <filter>
 ```
+
+### Upsert
+
+- Params: `input *CreateUserInput`, `target UserConflictTarget`
+- Returns: `*User`, `error`
+- Errors: `ErrNilInput`, `ErrConstraintViolation`
+- Notes: One method over the generated UserConflictTarget enum — the target argument selects the conflict columns at call time.
+
+Generated SQL:
+
+mysql:
+
+```sql
+INSERT INTO `users` (<columns>) VALUES (<values>) ON DUPLICATE KEY UPDATE <excluded>
+```
+
+### UpsertMany
+
+- Params: `inputs []*CreateUserInput`, `target UserConflictTarget`
+- Returns: `[]*User`, `error`
+- Errors: `ErrNilInput`, `ErrConstraintViolation`
+- Notes: Batched in generation.batch_size chunks over the same UserConflictTarget enum Upsert takes. Inputs resolving to one target are deduped before the statement is built, last occurrence wins. Earlier chunks are not rolled back on a later failure — wrap in a transaction for atomicity.
+
+Generated SQL:
+
+mysql:
+
+```sql
+INSERT INTO `users` (<columns>) VALUES <values> ON DUPLICATE KEY UPDATE <excluded>
+```
+
+### CreateWithRelated
+
+- Params: `input *CreateUserWithRelatedInput`
+- Returns: `*User`, `error`
+- Errors: `ErrNilInput`, `ErrNotFound`, `ErrAlreadyRelated`, `ErrNestedVerbConflict`, `ErrConstraintViolation`
+- Notes: Writes the parent and its nested rows in one transaction — a SAVEPOINT when ctx already holds one. Issues no statement of its own: it composes Create and, per eligible relationship (Orders, Profile, UserEvents), the target's and junction's own client methods, so no sql_bodies entry. Each inner call fires its own hooks, events and cache invalidation under its own op; the nested method has none.
+
+### UpdateWithRelated
+
+- Params: `id int64`, `input *UpdateUserWithRelatedInput`
+- Returns: `*User`, `error`
+- Errors: `ErrNilInput`, `ErrNotFound`, `ErrAlreadyRelated`, `ErrNestedVerbConflict`, `ErrConstraintViolation`
+- Notes: Writes the parent and its nested rows in one transaction — a SAVEPOINT when ctx already holds one. Issues no statement of its own: it composes Update and, per eligible relationship (Orders, Profile, UserEvents), the target's and junction's own client methods, so no sql_bodies entry. Each inner call fires its own hooks, events and cache invalidation under its own op; the nested method has none.
+
+### UpsertWithRelated
+
+- Params: `input *UpsertUserWithRelatedInput`, `target UserConflictTarget`
+- Returns: `*User`, `error`
+- Errors: `ErrNilInput`, `ErrNotFound`, `ErrAlreadyRelated`, `ErrNestedVerbConflict`, `ErrConstraintViolation`
+- Notes: Writes the parent and its nested rows in one transaction — a SAVEPOINT when ctx already holds one. Issues no statement of its own: it composes Upsert and, per eligible relationship (Orders, Profile, UserEvents), the target's and junction's own client methods, so no sql_bodies entry. Each inner call fires its own hooks, events and cache invalidation under its own op; the nested method has none.
 
 ### Increment
 
@@ -315,27 +336,6 @@ mysql:
 ```sql
 DELETE FROM `users` WHERE <filter>
 ```
-
-### CreateWithRelated
-
-- Params: `input *CreateUserWithRelatedInput`
-- Returns: `*User`, `error`
-- Errors: `ErrNilInput`, `ErrNotFound`, `ErrAlreadyRelated`, `ErrNestedVerbConflict`, `ErrConstraintViolation`
-- Notes: Writes the parent and its nested rows in one transaction — a SAVEPOINT when ctx already holds one. Issues no statement of its own: it composes Create and, per eligible relationship (Orders, Profile, UserEvents), the target's and junction's own client methods, so no sql_bodies entry. Each inner call fires its own hooks, events and cache invalidation under its own op; the nested method has none.
-
-### UpdateWithRelated
-
-- Params: `id int64`, `input *UpdateUserWithRelatedInput`
-- Returns: `*User`, `error`
-- Errors: `ErrNilInput`, `ErrNotFound`, `ErrAlreadyRelated`, `ErrNestedVerbConflict`, `ErrConstraintViolation`
-- Notes: Writes the parent and its nested rows in one transaction — a SAVEPOINT when ctx already holds one. Issues no statement of its own: it composes Update and, per eligible relationship (Orders, Profile, UserEvents), the target's and junction's own client methods, so no sql_bodies entry. Each inner call fires its own hooks, events and cache invalidation under its own op; the nested method has none.
-
-### UpsertWithRelated
-
-- Params: `input *UpsertUserWithRelatedInput`, `target UserConflictTarget`
-- Returns: `*User`, `error`
-- Errors: `ErrNilInput`, `ErrNotFound`, `ErrAlreadyRelated`, `ErrNestedVerbConflict`, `ErrConstraintViolation`
-- Notes: Writes the parent and its nested rows in one transaction — a SAVEPOINT when ctx already holds one. Issues no statement of its own: it composes Upsert and, per eligible relationship (Orders, Profile, UserEvents), the target's and junction's own client methods, so no sql_bodies entry. Each inner call fires its own hooks, events and cache invalidation under its own op; the nested method has none.
 
 ## Filter
 

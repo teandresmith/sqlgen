@@ -73,19 +73,6 @@ postgres:
 SELECT "allowed_roles", "created_at", "external_id", "id", "name", "nullable_price", "nullable_ref", "price", "region", "related_ids", "tag_ids" FROM "public"."warehouses" WHERE <filter> ORDER BY <sort> LIMIT <limit>
 ```
 
-### Count
-
-- Params: `filter *WarehouseFilter`
-- Returns: `int64`, `error`
-
-Generated SQL:
-
-postgres:
-
-```sql
-SELECT COUNT(*) FROM "public"."warehouses" WHERE <filter>
-```
-
 ### Exists
 
 - Params: `id uuid.UUID`
@@ -110,6 +97,19 @@ postgres:
 
 ```sql
 SELECT EXISTS(SELECT 1 FROM "public"."warehouses" WHERE <filter>)
+```
+
+### Count
+
+- Params: `filter *WarehouseFilter`
+- Returns: `int64`, `error`
+
+Generated SQL:
+
+postgres:
+
+```sql
+SELECT COUNT(*) FROM "public"."warehouses" WHERE <filter>
 ```
 
 ### Paginate
@@ -170,36 +170,6 @@ postgres:
 INSERT INTO "public"."warehouses" (<columns>) VALUES <values> RETURNING "id"
 ```
 
-### Upsert
-
-- Params: `input *CreateWarehouseInput`, `target WarehouseConflictTarget`
-- Returns: `*Warehouse`, `error`
-- Errors: `ErrNilInput`, `ErrConstraintViolation`
-- Notes: One method over the generated WarehouseConflictTarget enum — the target argument selects the conflict columns at call time.
-
-Generated SQL:
-
-postgres:
-
-```sql
-INSERT INTO "public"."warehouses" (<columns>) VALUES (<values>) ON CONFLICT (<conflict_target>) DO UPDATE SET <excluded> RETURNING "id"
-```
-
-### UpsertMany
-
-- Params: `inputs []*CreateWarehouseInput`, `target WarehouseConflictTarget`
-- Returns: `[]*Warehouse`, `error`
-- Errors: `ErrNilInput`, `ErrConstraintViolation`
-- Notes: Batched in generation.batch_size chunks over the same WarehouseConflictTarget enum Upsert takes. Inputs resolving to one target are deduped before the statement is built, last occurrence wins. Earlier chunks are not rolled back on a later failure — wrap in a transaction for atomicity.
-
-Generated SQL:
-
-postgres:
-
-```sql
-INSERT INTO "public"."warehouses" (<columns>) VALUES <values> ON CONFLICT (<conflict_target>) DO UPDATE SET <excluded>
-```
-
 ### Update
 
 - Params: `id uuid.UUID`, `input *UpdateWarehouseInput`
@@ -243,6 +213,36 @@ postgres:
 
 ```sql
 UPDATE "public"."warehouses" SET <set> WHERE <filter> RETURNING "id"
+```
+
+### Upsert
+
+- Params: `input *CreateWarehouseInput`, `target WarehouseConflictTarget`
+- Returns: `*Warehouse`, `error`
+- Errors: `ErrNilInput`, `ErrConstraintViolation`
+- Notes: One method over the generated WarehouseConflictTarget enum — the target argument selects the conflict columns at call time.
+
+Generated SQL:
+
+postgres:
+
+```sql
+INSERT INTO "public"."warehouses" (<columns>) VALUES (<values>) ON CONFLICT (<conflict_target>) DO UPDATE SET <excluded> RETURNING "id"
+```
+
+### UpsertMany
+
+- Params: `inputs []*CreateWarehouseInput`, `target WarehouseConflictTarget`
+- Returns: `[]*Warehouse`, `error`
+- Errors: `ErrNilInput`, `ErrConstraintViolation`
+- Notes: Batched in generation.batch_size chunks over the same WarehouseConflictTarget enum Upsert takes. Inputs resolving to one target are deduped before the statement is built, last occurrence wins. Earlier chunks are not rolled back on a later failure — wrap in a transaction for atomicity.
+
+Generated SQL:
+
+postgres:
+
+```sql
+INSERT INTO "public"."warehouses" (<columns>) VALUES <values> ON CONFLICT (<conflict_target>) DO UPDATE SET <excluded>
 ```
 
 ### Increment
