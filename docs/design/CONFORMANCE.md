@@ -998,6 +998,96 @@ database versions it ran against.
      package runs only under `make check-examples`, so prefer the example's `tests` package; and
      a mapping agent's suspected defect is cheaper to confirm with a fail-first test before the
      ruling than after, which is what made nine rulings quick.
+
+   **Fifth slice, CLI commands (§23) and the rest of §26, recorded 2026-10-27:**
+   - **Scope.** §23.1–§23.10 into `cli/commands.md`, and §26.8 REST, §26.11 HTTP headers and
+     §26.13 gRPC, the sections the GraphQL slice left. REST is deferred (IMPLEMENTATION_ORDER
+     Appendix D.1) and gRPC is future work, so their 47 rows record the PRD's promises as
+     untested planned work; §26.11's GraphQL half is generated and has tests.
+   - **Placement first.** `cli/api.md` was already at 608 rows, so the three sections went to a
+     new `cli/api-http.md` with no package line and no matrix (REST already sat outside the
+     `api-generation` matrix, and the middleware is package-wide). Nothing moved out of `api.md`.
+   - **Matrix shape.** The header did not change. Its 12 rows are the 11 §23.1 commands plus bare
+     `sqlgen`; the user fixed the columns: `success` is the command's §23 job (exit 0, or `diff`'s
+     exit 1 on changes), `config-error` exit 2, `schema-error` exit 3, `generation-error` exit 1.
+     Exit 4 has no column, so its rows carry no cell. The 48 cells are 33 rows and 15 `n/a`
+     (init, completion, the manifest commands and `mcp serve`, which read no config or schema),
+     each citing a PRD section; none needed an `accepted` date. `manifest` and `mcp serve` rows
+     hold only what §23.1 says; §30.8 and §31 wait for the manifest slice.
+   - **Anchors.** 13: §23.1–§23.10 in `commands.md`, §26.8, §26.11 and §26.13 in `api-http.md`.
+     §23 needs no anchor of its own, since its descendants are owned.
+   - **Rows seeded: 308**, 229 in `commands.md` (37 on matrix cells) and 79 in `api-http.md`.
+     Four mapping agents (commands, flags and discovery; init, completion and diff; lint, stale
+     cleanup, exit codes and watch; §26.8 / §26.11 / §26.13) drafted them in about 8 minutes.
+     The cli tests that back sections other files own became rows there: §4.3 and §4.14 anchors in
+     `config.md`, a §16 anchor and a §10.3 row in `gen.md`, a §9.5 row in `client.md`.
+   - **Gaps.** At seeding, about 60 of 223 `commands.md` rows were untested. Two read-only claim
+     checks then flagged 37 rows across both files, most resting on tests that did not assert the
+     clause: early returns on a
+     generation error, `err != nil` where an exit code was promised, substring checks for an exact
+     format, and a stale-sweep fixture without sqlgen's header that would survive under either
+     layout. Four test-writing agents (flags, init, completion, diff and exits; lint; stale
+     cleanup and watch; the §26.11 headers in the graphql example) filled them. One `commands.md`
+     row stays untested: a template failure cannot be reached without editing the embedded
+     templates. In `api-http.md`, 4 rows stay untested besides the planned 47: the REST half, the
+     shared header convention, panic recovery under `X-Skip-Hooks`, and where the `SkipHooks`
+     implication is enforced (over HTTP the whole hook chain is dropped, so it is not observable).
+   - **Unclaimed.** The orphan check will apply to `commands.md` once it is `complete`. An agent
+     classified the 84 tests no row claimed: 10 backed existing `commands.md` rows, 15 backed rows in
+     other files, 22 are `unclaimed` (17 superseded or vacuous tests, 4 E2E harness tests, one
+     wrapper-internal test), 9 pinned unstated behavior and became PRD gaps, and 29 back
+     `parser.md` and `manifest.md` sections and wait for those slices; they are the only orphans
+     left. `TestGenerate_CompositeKeyEdgeIsOmitted` is listed as unclaimed: it is the staging guard
+     for the planned composite-key edges.
+   - **Defects: 8 fixed**, each with a fail-first test:
+     1. `--config` had no file completion, so shells offered every file instead of .yml / .yaml.
+     2. No flag value completed; `lint --fail-on` now offers error, warning and info.
+     3. init took any character device as a TTY, so `sqlgen init </dev/null` prompted.
+     4. `graphql init` with no config exited 2 and printed nothing.
+     5. `-q` let the gqlgen subprocess's stdout and the merge warnings through.
+     6. Lint's rebuilt call spelled `[]*User` as `*[]User`, and kept package qualifiers.
+     7. Relationship loads dropped `SkipHooks`, `SkipCache` and `SkipEvents` (§9.6), so
+        `X-Skip-Hooks` still ran query hooks on related rows. Copying the options naively would
+        have inherited the `SkipHooks` that `Get`, `Connection` and write read-backs force on their
+        inner `GetMany`, skipping every child hook, authorization included; the generated
+        `CallOptions` carries an unexported caller record instead, which `Get` restores when a
+        hook replaces its options. `LockMode` stays off relationship loads, by ruling.
+     8. With the usage-error ruling: errors outside the exit-code paths exited 1 and printed nothing
+        (`SilenceErrors`); unknown subcommands under `graphql`, `manifest` and `mcp` printed help
+        and exited 0; leaf commands accepted and dropped extra arguments. `validate` now exits 1
+        on a resolution-level error, as `generate` and `lint` do.
+   - **PRD amendments: 13**, all ruled: §23.10 names `mcp serve`'s manifest reload as the one
+     file-watching behavior; §4.13's exit 2 covers the config phases and resolution-level errors
+     exit 1 (§8.1's test list follows); §23.9 gains usage errors exiting 2, every failure printing
+     its error, `diff`'s exit 1 as a result, and "a table defined twice" for the undefined
+     "ambiguous table names" (an ambiguous config key is a §5.5 config error); §23.7 shows the
+     real output, one finding per mismatching type argument, and `--paths` replacing
+     `output.dir`; §23.2 verbose prints counts; §23.6 drops empty summary categories and says
+     `N files`; §23.1 `manifest validate` reads no config; §9.6 and §9.6a say relationship loads
+     take the caller's toggles but no `LockMode`. **PRD gaps: 26** in `commands.md`, all open.
+     One adjacent finding went to `backlog.md`: a locked read that JOIN-loads an o2o edge likely
+     fails on PostgreSQL (`FOR UPDATE` on the nullable side of an outer join).
+   - **Tests written.** 11 new cli test files, 1 gen file and 1 graphql example file, 55 test
+     functions with their table cases, by two fix agents, four test-writing agents with assigned helper
+     prefixes (`tfl`, `tln`, `tst`, `thd`) and by hand. Golden churn from the loader fix: 78
+     regenerated files.
+   - **Review.** Two claim-check passes and one sqlgen-reviewer pass. The reviewer found the
+     accept-and-drop arguments, the caller record lost when a hook replaces `CallOptions`, and
+     generic type arguments keeping their qualifiers, all fixed; and four doc nits, applied.
+   - **Report.** `make conformance` at `8712940c`: 2842 rows, 2735 pass, 0 fail, 0 skip, 0 not
+     run, 107 untested (51 in `cli/api-http.md`, 47 of them planned REST and gRPC; 28 in
+     `cli/gen.md`, 11 in `cli/api.md`, 7 each in `cli/config.md` and `cli/gotype.md`, 2 in
+     `client.md`, 1 in `cli/commands.md`); 228 of the 229 `commands.md` rows pass.
+   - **Time.** About 5 hours of wall time: 20 minutes to place and scope, 8 to map with four
+     agents, six rounds of rulings (21 questions), two fix agents, four test-writing agents,
+     three verification and review passes, and the gates.
+   - **For the next slice:** an agent's claim that a test "covers X" was wrong for about one row
+     in six here, mostly through early returns and substring checks, so run a read-only claim
+     check on every drafted row before writing tests, not after; give the claim checker the
+     defect shapes (early return, `err != nil` for an exit code, substring for a format, a fixture
+     that passes either way); a fix that copies options through internal hops needs the hops
+     enumerated first, since forced internal toggles look like the caller's; and a cobra leaf
+     command needs an `Args` check, since one without it accepts and drops extra arguments.
 7. **Skill changes (§6).** `/design`, `/phase` and `/implement` landed with step 2. `/verify` and
    `/close-phase` change during the config pilot (step 3), once there are rows for them to read
    (§9 ruling 14). Done 2026-10-23: `/verify` reads the registry rows for a sub-item's PRD

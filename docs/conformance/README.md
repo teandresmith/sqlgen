@@ -13,7 +13,8 @@ in [`docs/design/CONFORMANCE.md`](../design/CONFORMANCE.md) §3 and §5. `make r
 | [`cli/config.md`](cli/config.md) | CLI: `cmd/sqlgen/config` | unit |
 | [`cli/gen.md`](cli/gen.md) | CLI: `cmd/sqlgen/gen` | unit, golden |
 | [`cli/gotype.md`](cli/gotype.md) | CLI: `cmd/sqlgen/gotype` | unit |
-| [`cli/api.md`](cli/api.md) | CLI: API generation (§26.5–§26.13 and the `api-generation` matrix); no package of its own, its rows claim `cmd/sqlgen/gen`, `cli`, `wrapper` and example tests | unit, golden, example |
+| [`cli/api.md`](cli/api.md) | CLI: API generation (§26.5–§26.12 except §26.8 and §26.11, and the `api-generation` matrix); no package of its own, its rows claim `cmd/sqlgen/gen`, `cli`, `wrapper` and example tests | unit, golden, example |
+| [`cli/api-http.md`](cli/api-http.md) | CLI: API generation, REST, HTTP headers and gRPC (§26.8, §26.11, §26.13); no package of its own | unit, golden, example |
 | [`cli/api-schema.md`](cli/api-schema.md) | CLI: API generation, GraphQL schema (§26–§26.4.1); no package of its own | unit, golden, example |
 | [`cli/commands.md`](cli/commands.md) | CLI: `cmd/sqlgen`, `cli`, `wrapper` | unit, integration, golden |
 | [`cli/manifest.md`](cli/manifest.md) | CLI: `cmd/sqlgen/manifest`, `mcp` | unit, integration |
@@ -316,12 +317,12 @@ another file also cites is still owned once.
 | §26.5 GraphQL Resolver Generation | cli/api.md |
 | §26.6 Query Complexity & Depth Limiting | cli/api.md |
 | §26.7 GraphQL Authorization | cli/api.md |
-| §26.8 REST API (Supplementary) | cli/api.md |
+| §26.8 REST API (Supplementary) | cli/api-http.md |
 | §26.9 Architecture | cli/api.md |
 | §26.10 Per-Table API Configuration | cli/api.md |
-| §26.11 Per-Call Options via HTTP Headers | cli/api.md |
+| §26.11 Per-Call Options via HTTP Headers | cli/api-http.md |
 | §26.12 Known Limitations | cli/api.md |
-| §26.13 gRPC API Generation | cli/api.md |
+| §26.13 gRPC API Generation | cli/api-http.md |
 | §27 Caching | runtime.md |
 | §27.1 Overview | informative |
 | §27.2 Configuration | cli/config.md |
