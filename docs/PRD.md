@@ -12177,10 +12177,8 @@ The SQL schema maps directly to a GraphQL schema:
 | Enum type | GraphQL enum | Values always `SCREAMING_SNAKE_CASE` |
 | PostgreSQL enum array — Go `<Enum>Slice` | `[<Enum>!]!` | Elements bind to the bare enum; the named slice carries `MarshalGQL` / `UnmarshalGQL` so gqlgen binds the column's own Go type without a resolver stub |
 | MySQL `SET` column — Go `<Table><Column>Set` | `[<Table><Column>SetValue!]!` | Same projection as an enum array: the GraphQL enum is named after the **value** type and each element binds to it, while the named slice is the column's Go type. Nullable SETs are reference types, so only the outer list loses its `!`. Filtering stays `StringComparator` ([§11.2](#112-comparator-types)) — the column is stored as comma-separated text. |
-| Composite type | Object type | |
 | Domain type | Underlying scalar | (e.g., `email_address` → `String`) |
-| O2O / M2O relationship — NOT NULL FK | `Type!` | Single object reference |
-| O2O / M2O relationship — nullable FK | `Type` | Single object reference |
+| O2O / M2O relationship | `Type` | Single object reference, nullable whatever the FK's nullability: the loaded relationship can be absent even over a NOT NULL FK (a relationship the walker did not select is nil, [§26.5.2](#2652-field-selection-translation--the-central-mechanism)), and a `Type!` field resolving nil fails the whole response |
 | O2M relationship | `[Type!]!` | Flat list, no per-relationship pagination args; the bulk-IN loader populates the full set |
 | M2M relationship | `[Type!]!` | Same as O2M |
 | `id` (PK) — Go `uuid.UUID` | `UUID!` | sqlgen-generated external marshalers (see §26.4.1) |
@@ -12212,7 +12210,7 @@ The SQL schema maps directly to a GraphQL schema:
 | Offset pagination (root) | `<Type>ListResult { items, totalCount, offset, limit, hasMore }` envelope | Distinct from `[T!]!` so relationships and root-list shapes don't collide; `totalCount` removes the need for a separate count resolver; `hasMore` mirrors the runtime `PaginateResult[T].HasMore` (§14.1) so clients paginate without recomputing `offset + limit < totalCount` |
 | `api.operations` mask (e.g. `read_only`) / `api.enabled: false` | Excludes Mutations or whole type | Global or per-table |
 
-**A relationship field exists only when its target is on the API.** The four relationship rows above apply to an edge whose target is itself exposed. The target may be a table or, through a declared relationship, a view. When the target is hidden (`api.enabled: false` on the table or view, [§26.10](#2610-per-table-api-configuration); or, for a table, every column dropped by [§32.2](#322-roles)), the parent's object type omits the field. It also omits the walker case ([§26.5.2](#2652-field-selection-translation--the-central-mechanism)), the filter member ([§26.5.3](#2653-filter--sort--pagination-translation)) and the nested member ([§9.9.4](#994-eligibility-rules) **E7**). Kept, the field would name a type the schema never declares, and gqlgen would reject the whole document. It drops silently, like E7, because there is no config error to report: `exclude_relationships` is the only way to remove an edge, and it removes the edge from the Go client too. The Go client keeps the edge: `api` gates the API, never the client.
+**A relationship field exists only when its target is on the API.** The three relationship rows above apply to an edge whose target is itself exposed. The target may be a table or, through a declared relationship, a view. When the target is hidden (`api.enabled: false` on the table or view, [§26.10](#2610-per-table-api-configuration); or, for a table, every column dropped by [§32.2](#322-roles)), the parent's object type omits the field. It also omits the walker case ([§26.5.2](#2652-field-selection-translation--the-central-mechanism)), the filter member ([§26.5.3](#2653-filter--sort--pagination-translation)) and the nested member ([§9.9.4](#994-eligibility-rules) **E7**). Kept, the field would name a type the schema never declares, and gqlgen would reject the whole document. It drops silently, like E7, because there is no config error to report: `exclude_relationships` is the only way to remove an edge, and it removes the edge from the Go client too. The Go client keeps the edge: `api` gates the API, never the client.
 
 Field naming follows `api.graphql.field_casing` — accepted values `camel_case` (default) or `snake_case`. Type names always PascalCase, Query/Mutation root names always camelCase, Enum values always SCREAMING_SNAKE_CASE (a value derived from a digit-leading column name carries [§8.5](#85-naming-rules)'s `col_` guard — `2010_revenue` → `COL_2010_REVENUE`).
 
@@ -12374,8 +12372,8 @@ input UpdateProductInput {
   stock_inc: Int
   stock_dec: Int
   price:     Decimal
-  price_inc: Decimal
-  price_dec: Decimal
+  price_inc: Int
+  price_dec: Int
 }
 
 input ProductSort {
@@ -12421,7 +12419,7 @@ input CreateUserCredentialInput {
   userID:     UUID!
   provider:   String!
   externalID: String!
-  createdAt:  Time!
+  createdAt:  Time     # NOT NULL DEFAULT CURRENT_TIMESTAMP: omittable in Go, so optional
 }
 ```
 
@@ -12852,7 +12850,7 @@ Union is the whole of the correct answer here rather than a lossy merge, and bot
 
 The coalesce unions at the `[]graphql.CollectedField` level — collecting each alias's own selections and appending the results — rather than by concatenating the underlying `ast.SelectionSet`s. That is a correctness requirement, not a style choice: gqlgen keys its per-request `CollectFields` cache on the *address and length* of the selection set it is passed, and a slice synthesized by the walker is not retained by that cache, so a later allocation of the same length could land on the recycled address and take a stale hit. Every cache key must stay on memory gqlgen itself holds.
 
-**Walker-completeness lint (codegen-time).** Every **API-readable** column, and every relationship into an API-exposed entity (table or view), MUST have a corresponding case in the generated walker. Every access-restricted column ([§32.3](#323-per-surface-behavior)), and every relationship into a hidden entity ([§26.4](#264-graphql-schema-generation)), MUST NOT. Codegen fails if either direction is violated over the exposed set. This catches the walker's only failure mode (a missing case ⇒ silently nil in the response) at generate time. Combined with a per-table generated unit test that builds a deeply-nested GraphQL query touching every relationship and asserts the produced `FieldOptions` tree, the recursive walker is the regression guard for the §25.1 query-count contract.
+**Walker-completeness lint (codegen-time).** Every **API-readable** column, and every relationship into an API-exposed entity (table or view), MUST have a corresponding case in the generated walker. Every access-restricted column ([§32.3](#323-per-surface-behavior)), and every relationship into a hidden entity ([§26.4](#264-graphql-schema-generation)), MUST NOT. Codegen fails if either direction is violated over the exposed set. This catches the walker's only failure mode (a missing case ⇒ silently nil in the response) at generate time. Combined with sqlgen's own tests — the generator's walker tests, which pin a recursing case for every relationship, and the GraphQL example's nested queries, which pin the response and the §25.1 query count — the recursive walker is the regression guard for that contract. sqlgen emits no test files into the consumer's packages.
 
 **Selected ⇒ available, unselected ⇒ nil.** If a relationship is selected at runtime but the walker did not produce a corresponding `FieldOptions` entry (impossible if the lint above passes), the field resolver returns nil — it does **not** lazy-load. This fails fast.
 
@@ -12954,7 +12952,7 @@ The omittable distinction is important: GraphQL "null" and "omitted" are disting
 
 **Increment / Decrement as input operators.** `Increment` and `Decrement` are not exposed as separate root mutations (see §26.5.1 for rationale). Instead, the generated `UpdateProductInput` carries paired `_inc` / `_dec` fields for every numeric column the schema defines.
 
-The operator pair is part of the increment surface, not a separate feature: it dispatches to the client's generated `Increment` method and the `<Table>IncrementColumn` enum, which exist only when the table has an incrementable column ([4.6 Operations](#operations)); column-level eligibility is the same test, see [8.2](#82-generated-artifacts-per-table). `increment` has no `api.operations` key: the operators sit on `Update<Table>Input`, which is emitted whenever the mask leaves an update mutation (`update` or `update_where`). Following the Hasura / Prisma convention, the client sets at most one of `<field>`, `<field>_inc`, `<field>_dec` per column per request.
+The operator pair is part of the increment surface, not a separate feature: it dispatches to the client's generated `Increment` method and the `<Table>IncrementColumn` enum, which exist only when the table has an incrementable column ([4.6 Operations](#operations)); column-level eligibility is the same test, see [8.2](#82-generated-artifacts-per-table). `increment` has no `api.operations` key: the operators sit on `Update<Table>Input`, which is emitted whenever the mask leaves an update mutation (`update` or `update_where`). Every operator is typed `Int`, whatever the column's own GraphQL type (`price_inc: Int` on a `Decimal` column): the client's `Increment` takes an integer amount, so a delta is always a whole number. Following the Hasura / Prisma convention, the client sets at most one of `<field>`, `<field>_inc`, `<field>_dec` per column per request.
 
 ```graphql
 input UpdateProductInput {
@@ -12964,8 +12962,8 @@ input UpdateProductInput {
   stock_inc: Int
   stock_dec: Int
   price:     Decimal
-  price_inc: Decimal
-  price_dec: Decimal
+  price_inc: Int
+  price_dec: Int
 }
 ```
 
@@ -13011,7 +13009,7 @@ func (r *queryResolver) Product(ctx context.Context, id string) (*<pkg>.Product,
 sqlgen seeds those bodies on the first run and rewrites any `panic("not implemented")` stub gqlgen emits for a newly-managed field on subsequent runs ([§26.5.6](#2656-module-boundary--wrapper-subcommand)). The delegation target carries the whole implementation:
 
 ```go
-// graph/sqlgenresolver/queries_gen.go — sqlgen-owned
+// graph/sqlgenresolver/resolvers_gen.go — sqlgen-owned
 func (r *Q) Product(ctx context.Context, id string) (*<pkg>.Product, error) {
     fo := productFieldOptionsFromContext(ctx)
     return r.client.Products.Get(ctx, id, func(o *<pkg>.CallOptions[<pkg>.ProductFieldOptions]) {
@@ -13068,7 +13066,7 @@ func (r *productResolver) Company(ctx context.Context, p *<pkg>.Product) (*<pkg>
 
 #### 26.5.5 Error Mapping
 
-A single `mapErrorToGQL(err error) error` helper in `graph/errors_gen.go` wraps every resolver return. Field paths are filled by gqlgen automatically.
+A single `mapErrorToGQL(err error) error` helper in `graph/sqlgenresolver/errors_gen.go` wraps every resolver return. Field paths are filled by gqlgen automatically.
 
 | Runtime Error | GraphQL Error | `extensions.code` |
 |---------------|---------------|-------------------|
@@ -13119,7 +13117,7 @@ Two escape hatches exist for consumers who split the phases — a CI pipeline th
 
 1. Consumer runs `sqlgen graphql gen` directly, or runs `sqlgen generate` with `api.graphql.enabled: true`; the latter chains into this flow inline.
 2. Wrapper reads `gqlgen_config` (consumer-owned `gqlgen.yml`) into a YAML AST, including `resolver.layout`, which decides the destination shape for step 4.
-3. Wrapper merges sqlgen-owned entries: `models:` for managed tables (including the per-table `<T>Connection` / `<T>Edge` / `<T>ListResult` envelope bindings + the shared `PageInfo` binding — see "Envelope binding" below), `schema:` glob for `graph/*.graphqls`, a binding for every scalar the generated schema actually declares (whether it came from a column's Go type or from an `api.graphql.scalars` entry a column resolves to — a declared scalar no column uses is left to the consumer's own `gqlgen.yml`), and a `fieldName` entry for every Go identifier sqlgen's generated code references on a gqlgen-generated type (see "Go field naming" below). Consumer-authored keys win on collision — per field for `fields:` entries — with the one documented exception listed under "sqlgen-owned keys".
+3. Wrapper merges sqlgen-owned entries: `models:` for managed tables (including the per-table `<T>Connection` / `<T>Edge` / `<T>ListResult` envelope bindings + the shared `PageInfo` binding — see "Envelope binding" below), `schema:` glob for `graph/*.graphqls`, a binding for every scalar the generated schema actually declares (whether it came from a column's Go type or from an `api.graphql.scalars` entry a column resolves to — a declared scalar no column uses is left to the consumer's own `gqlgen.yml`), and a `fieldName` entry for every Go identifier sqlgen's generated code references on a gqlgen-generated type (see "Go field naming" below). Consumer-authored keys win on collision — per field for `fields:` entries — with the documented exceptions listed under "sqlgen-owned keys".
 4. **Seed step.** Wrapper writes the delegating resolver files, **only where they are absent**: one `graph/<schema>.resolvers.go` per managed `*_gen.graphqls` under `resolver.layout: follow-schema`, or the single `graph/resolver.go` under `single-file`. Existing files are left untouched — they are gqlgen-owned after the first run.
 5. Wrapper writes the merged config to a temp file and runs the gqlgen binary against it via `os/exec`.
 6. **Panic-stub rewrite.** Wrapper replaces each `panic("not implemented")` stub gqlgen emitted for a sqlgen-managed field with the delegation into `sqlgenresolver/`. This is what keeps a newly-added table or column reaching a working resolver without the consumer editing a file gqlgen owns. Stubs for fields sqlgen does not manage are left alone. A managed field that is still a stub afterwards — gqlgen named its resolver differently from sqlgen — fails generation (see "Root resolver names are checked, not stated" below).
@@ -13147,13 +13145,14 @@ A `fields:` entry does **not** bind the type — gqlgen treats a type as consume
 
 **Bound types are the one exception.** A bound type — the row struct, the connection envelope — normally needs no entry: gqlgen resolves its fields by comparing the name it derives from the GraphQL field against the consumer's struct, case-insensitively and ignoring underscores (`codegen/field.go`'s `findBindTarget`, `equalFieldName`), and that name is the one sqlgen generated. The premise holds only while the Go field is derived from the column. A `column_map.<column>.name` override ([§8.5](#85-naming-rules) "Field Name Resolution") breaks the match — GraphQL `ipAddr` looks for `IpAddr` and never finds `ClientIP` — so the **row type receives a `fieldName` entry for each renamed column, and for no other field**. gqlgen honours the override for bound types too: it directs the bind search rather than replacing a generated name.
 
-**Precedence.** `model:` bindings follow the consumer-wins rule: if the consumer declared the type at all, sqlgen leaves the binding alone. `fields:` entries merge **per field**, so sqlgen can name the fields of a type the consumer configured for an unrelated reason (a directive, a forced resolver) without discarding their work; an explicit `fieldName` in the consumer's file is never overwritten.
+**Precedence.** `model:` bindings follow the consumer-wins rule: if the consumer declared the type at all, sqlgen leaves the binding alone. `fields:` entries merge **per field**, so sqlgen can name the fields of a type the consumer configured for an unrelated reason (a directive, a forced resolver) without discarding their work; an explicit `fieldName` in the consumer's file is never overwritten (the `omittable` key below is the one per-field exception).
 
-**sqlgen-owned keys (exception to consumer-wins).** One key is **overwritten** in the merged temp config even when the consumer declares it:
+**sqlgen-owned keys (exception to consumer-wins).** Two keys are **overwritten** in the merged temp config even when the consumer declares it:
 
 | Key | Condition | Why consumer-wins is wrong here |
 |-----|-----------|--------------------------------|
 | `skip_validation` | `resolver.layout: single-file` | gqlgen's post-generate `go build` runs against a Resolver struct it has just wiped, before sqlgen's post-subprocess merge can restore the `Client` / `Q` / `M` fields |
+| `models.Update<T>Input.fields.<field>.omittable` | the field is over a nullable column | the generated update translator reads the field as `graphql.Omittable[T]` to tell an explicit `null` from an omitted field ([§26.5.4](#2654-mutation-translation)), so a consumer's `omittable: false` would leave it uncompilable |
 
 The override exists only in the temp config; the on-disk `gqlgen.yml` is never modified.
 
@@ -13190,17 +13189,21 @@ This binding is only sound because the runtime `Connection[T] / Edge[T] / Pagina
 |------|-----------|:--------------------:|:---------------------:|
 | `graph/*_gen.graphqls` | sqlgen | Yes — one this run did not write fails generation rather than being deleted ([§23.8](#238-stale-file-cleanup)) | No (`*_gen.*` files are managed) |
 | `graph/*.graphqls` (custom) | — | — | Yes — sqlgen merges adjacent custom schema |
-| `graph/sqlgenresolver/queries_gen.go` | sqlgen | Yes | No — the `*Q` query implementations (§26.5.4) |
-| `graph/sqlgenresolver/mutations_gen.go` | sqlgen | Yes | No — the `*M` mutation implementations (§26.5.4) |
+| `graph/sqlgenresolver/resolvers_gen.go` | sqlgen | Yes | No — the `*Q` query and `*M` mutation implementations (§26.5.4) |
 | `graph/sqlgenresolver/field_options_gen.go` | sqlgen | Yes | No — per-entity selection walker (§26.5.2) |
 | `graph/sqlgenresolver/connection_walker_gen.go` | sqlgen | Yes | No — shared `unwrapConnectionAndWalk` (§26.5.2) |
 | `graph/<schema>.resolvers.go` (follow-schema) or `graph/resolver.go` (single-file) | sqlgen seeds, gqlgen owns | Seeded only if absent; managed-field stubs rewritten each run | Yes — consumer-authored resolvers for unmanaged fields are preserved |
-| `graph/filter_translate_gen.go` | sqlgen | Yes | No |
-| `graph/middleware_gen.go` | sqlgen | Yes | No |
+| `graph/filter_translate_gen.go` | sqlgen | Yes | No — per-entity filter translators (§26.5.3) |
+| `graph/comparator_translate_gen.go` | sqlgen | Yes | No — shared comparator translators (§26.5.3) |
+| `graph/sort_translate_gen.go` | sqlgen | Yes | No — per-entity sort translators (§26.5.3) |
+| `graph/input_translate_gen.go` | sqlgen | Yes | No — create / update input translators (§26.5.4) |
+| `graph/sqlgenresolver/middleware_gen.go` | sqlgen | Yes | No — HTTP header call options (§26.11) |
 | `graph/scalars_gen.go` | sqlgen | Yes | No — external `MarshalX`/`UnmarshalX` for category-4 scalars (see §26.4.1) |
-| `graph/errors_gen.go` | sqlgen | Yes | No — `mapErrorToGQL` (see §26.5.5) |
+| `graph/sqlgenresolver/errors_gen.go` | sqlgen | Yes | No — `mapErrorToGQL` (see §26.5.5) |
+| `graph/sqlgenresolver/limits_gen.go` | sqlgen | Yes | No — `MaxQueryDepth` / `MaxQueryComplexity` and `ApplyQueryLimits` (see §26.6) |
 | `graph/generated_gen.go` | gqlgen (via wrapper) | After each wrapper run | No (gqlgen-managed) |
-| `gqlgen.yml` | consumer | No (one-shot scaffold via `sqlgen graphql init` if missing) | Yes — fully consumer-owned; sqlgen never reads or writes the on-disk file outside the one-shot init |
+| `graph/model/models_gen.go` | gqlgen (via wrapper) | After each wrapper run | No (gqlgen-managed) — the input types gqlgen generates (`<T>Filter`, `Create<T>Input`, comparators) |
+| `gqlgen.yml` | consumer | No (one-shot scaffold via `sqlgen graphql init` if missing) | Yes — fully consumer-owned; the wrapper reads it on every run to merge sqlgen's entries into a temp config (step 2), and never writes the on-disk file outside the one-shot init |
 | `graph/server.go` | sqlgen (one-shot) | **Only if missing** | Yes — entry-point bootstrapping |
 
 #### 26.5.7 Why No Dataloader for Generated Code
@@ -13217,7 +13220,7 @@ A dataloader batches per-item fetches across sibling resolvers in the same tick.
 
 **Documented contract:** "sqlgen-generated resolvers issue `1 + count(O2M selected) + 2 * count(M2M selected)` queries per request while each relationship's parent set fits one chunk of keys; a larger parent set adds one query per extra chunk to each chunked step." Same as §25.1, which gives the chunk sizes and the full formula. The count never depends on the number of children.
 
-If the recursive walker has a bug and a relationship goes un-prefetched, the child resolver returns nil — it does **not** lazy-load. This fails fast and is caught by the per-table walker test (§26.5.2).
+If the recursive walker has a bug and a relationship goes un-prefetched, the child resolver returns nil — it does **not** lazy-load. This fails fast and is caught by sqlgen's walker tests and the example's nested-query tests (§26.5.2).
 
 #### 26.5.8 GraphQL Output Directories
 
@@ -13267,7 +13270,8 @@ GraphQL queries can be deeply nested, which could overload the database:
 **Protections:**
 - `api.graphql.max_depth` — rejects queries exceeding the configured nesting depth (default: 5)
 - `gqlgen` complexity calculation — each relationship field adds to query complexity; queries exceeding the limit are rejected before execution
-- These are generated as `gqlgen` server configuration, not custom middleware
+- These are generated as `gqlgen` server configuration, not custom middleware: the regenerated `graph/sqlgenresolver/limits_gen.go` carries the two configured values and `ApplyQueryLimits(*handler.Server)`, which installs gqlgen's `FixedComplexityLimit` and a depth extension. The one-shot `graph/server.go` ([§26.5.6](#2656-module-boundary--wrapper-subcommand)) calls it, so a later edit to either value reaches an existing server on the next run.
+- **Depth** counts relationship fields only: the root field is depth 0 and each relationship field on the path adds one, while connection and list wrappers (`edges`, `node`, `pageInfo`, `items`) and scalar fields add nothing — the example above is depth 3. A query deeper than `max_depth` is rejected before execution.
 
 ### 26.7 GraphQL Authorization
 
@@ -13405,7 +13409,7 @@ The API layer translates HTTP headers into `CallOptions` (Section 9.6) before pa
 
 **Generated middleware (GraphQL):**
 
-For the GraphQL API the generator emits two pieces in `graph/middleware_gen.go`:
+For the GraphQL API the generator emits two pieces in `graph/sqlgenresolver/middleware_gen.go`:
 
 1. `WithCallOptionsMiddleware(next http.Handler) http.Handler` — wraps the gqlgen handler at server-bootstrap time. It reads the supported headers off the inbound request and stashes a per-request `httpCallOptions{SkipCache, SkipEvents, SkipHooks bool}` flag struct under an unexported `callOptionsKey` context key.
 2. `callOptionsFromHTTP[FO any](ctx context.Context) []func(*CallOptions[FO])` — read side called by every generated resolver. It pulls the flag struct back out of the context and projects each truthy flag into a typed setter for the per-table `CallOptions[<Table>FieldOptions]` the resolver passes to the client.
