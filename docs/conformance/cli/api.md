@@ -6,7 +6,7 @@
 API generation (§26) is emitted by `cmd/sqlgen/gen`, whose orphan check stays with [`gen.md`](gen.md), so this file lists no package of its own. Its rows claim `gen`, `cli`, golden and example tests. It holds the `api-generation` matrix and §26.5–§26.12; the schema sections (§26–§26.4.1 and §16.4's GraphQL rows) are in [`api-schema.md`](api-schema.md).
 
 ## §26.4 GraphQL Schema Generation
-<!-- prd: 26.4 sha256: d1de26a34b42c387 -->
+<!-- prd: 26.4 sha256: 45c59c494b3a2b7b -->
 
 The `api-generation` matrix rows for §26.4; its other rows are in [`api-schema.md`](api-schema.md).
 
@@ -14,7 +14,7 @@ The `api-generation` matrix rows for §26.4; its other rows are in [`api-schema.
 |---|---|---|---|---|
 | api.object-type.single-pk | A table gets a PascalCase object type (`type Product`) | `unit: cmd/sqlgen/gen: TestGraphQLSchema_emitsExpectedTypesPerTable` | all | api-generation: object-type × single-pk |
 | api.object-type.composite-pk | A composite-PK table gets an object type | `golden: graphql` | all | api-generation: object-type × composite-pk |
-| api.object-type.no-pk | A no-PK table emits no GraphQL type, query or mutation | | all | api-generation: object-type × no-pk |
+| api.object-type.no-pk | A no-PK table emits no GraphQL type, query or mutation | `unit: cmd/sqlgen/gen: TestGraphQLSchema_noPKTableHasNoSurface` | all | api-generation: object-type × no-pk |
 | api.object-type.soft-delete | A soft-delete table gets an object type | `unit: cmd/sqlgen/gen: TestApiEnabledFalseExcludesType`; `golden: graphql` | all | api-generation: object-type × soft-delete |
 | api.object-type.tenanted | A tenanted table gets an object type | `golden: graphql` | all | api-generation: object-type × tenanted |
 | api.object-type.view | A view gets an object type | `unit: cmd/sqlgen/gen: TestAPIViewSchema_emitsReadOnlySurface`; `unit: cmd/sqlgen/gen: TestAPIViewSchema_declaresExactlySevenNames` | all | api-generation: object-type × view |
@@ -62,7 +62,7 @@ The `api-generation` matrix rows for §26.4; its other rows are in [`api-schema.
 | api.relationship-filter-member.view | A view's `<V>Filter` carries no relationship member | `unit: cmd/sqlgen/gen: TestAPIFilterRelationships_ViewsCarryNone` | all | api-generation: relationship-filter-member × view |
 
 ## §26.5 GraphQL Resolver Generation
-<!-- prd: 26.5 sha256: 98841b8388960cf0 -->
+<!-- prd: 26.5 sha256: af8ca3275a28d4d3 -->
 
 | ID | Requirement | Tests | Applies to | Matrix cell |
 |---|---|---|---|---|
@@ -70,10 +70,10 @@ The `api-generation` matrix rows for §26.4; its other rows are in [`api-schema.
 | api.resolver.translate-call-output | A resolver translates its inputs, makes one unified-client call, and returns the client's output | `unit: cmd/sqlgen/gen: TestResolvers_PKArgUsesGqlgenDefaultBinding`; `unit: cmd/sqlgen/gen: TestSeeds_DelegateToQM` | all | |
 | api.resolver.selection-to-fieldoptions | A resolver turns the GraphQL field selection into the client's `FieldOptions` and passes it on the client call | `golden: graphql`; `example: graphql: TestQueryCount_NestedRelationships` | all | |
 | api.resolver.query-count-batched | A request issues `1 + count(O2M selected) + 2 * count(M2M selected)` queries while each parent set fits one chunk of keys | `example: graphql: TestQueryCount_SingleTable`; `example: graphql: TestQueryCount_NestedRelationships` | all | |
-| api.resolver.query-count-chunk | Each extra chunk past the first adds one query to each chunked step | | all | |
+| api.resolver.query-count-chunk | Each extra chunk past the first adds one query to each chunked step | `example: graphql: TestSurfacePromises_ChunkedParentSetAddsOneQueryPerChunk` | all | |
 
 ## §26.5.1 Exposed Resolver Surface
-<!-- prd: 26.5.1 sha256: 1667e02ef77d73f0 -->
+<!-- prd: 26.5.1 sha256: e455d819f94788ef -->
 
 | ID | Requirement | Tests | Applies to | Matrix cell |
 |---|---|---|---|---|
@@ -93,7 +93,7 @@ The `api-generation` matrix rows for §26.4; its other rows are in [`api-schema.
 | api.surface.upsert-needs-a-target | No `upsert<T>` is emitted on a table with no PK and no unique constraint | `unit: cmd/sqlgen/gen: TestResolvers_UpsertRequiresPKOrUnique` | all | |
 | api.surface.hard-delete-backed | `delete<T>` / `hardDelete<T>` call `HardDelete`; `softDelete<T>` calls `SoftDelete`; `restore<T>` calls `Restore` | `unit: cmd/sqlgen/gen: TestResolvers_PKArgUsesGqlgenDefaultBinding` | all | |
 | api.surface.views-read-only | A view's surface is the read-only subset: object type, envelopes, filter / sort inputs and the three queries, never a mutation | `unit: cmd/sqlgen/gen: TestAPIViewSchema_emitsReadOnlySurface`; `example: graphql: TestViewSchema_NoMutationsAndNoRefresh`; `example: graphql: TestViewSchema_ServesTheReadSet/WorkspaceNoteSummary` | all | |
-| api.surface.views-excluded-table | The `Excluded` table applies to views unchanged | | all | |
+| api.surface.views-excluded-table | The `Excluded` table applies to views unchanged | `unit: cmd/sqlgen/gen: TestAPIViewSurface_ExcludedMethodsGetNoRootField` | all | |
 | api.get-query.single-pk | A single-PK table gets `<table>(id): <T>` | `unit: cmd/sqlgen/gen: TestGraphQLSchema_emitsExpectedTypesPerTable`; `example: graphql: TestCuratedSurface_Category/GetByPK` | all | api-generation: get-query × single-pk |
 | api.get-query.composite-pk | A composite-PK table gets `<table>(<pk1>, <pk2>, …): <T>` with one argument per PK column | `unit: cmd/sqlgen/gen: TestGraphQLSchema_CompositePK_EmitsAllPKArgs`; `unit: cmd/sqlgen/gen: TestResolvers_CompositePK_EmitsCompositeSignatures`; `example: graphql: TestCompositePKCreate_AllPKJunction` | all | api-generation: get-query × composite-pk |
 | api.get-query.soft-delete | A soft-delete table gets `<table>(id): <T>` | `unit: cmd/sqlgen/gen: TestOperationsPreset_NoDelete`; `example: graphql: TestCuratedSurface_User/GetByPK` | all | api-generation: get-query × soft-delete |
@@ -137,7 +137,7 @@ The `api-generation` matrix rows for §26.4; its other rows are in [`api-schema.
 | api.delete.single-pk | A table with no soft-delete column gets `delete<T>(id): Boolean!` backed by `HardDelete` | `unit: cmd/sqlgen/gen: TestResolvers_DeleteNamingRules_HardOnly`; `example: graphql: TestCuratedSurface_Category/Delete` | all | api-generation: delete × single-pk |
 | api.delete.composite-pk | A composite-PK table gets `delete<T>(<pk1>, <pk2>, …): Boolean!` | `unit: cmd/sqlgen/gen: TestAPIOperationsMask_PerTable`; `golden: graphql` | all | api-generation: delete × composite-pk |
 | api.delete.soft-delete | On a soft-delete table, keeping `soft_delete` and masking `hard_delete` gives `delete<T>(id): <T>` (nullable) backed by `SoftDelete` | `unit: cmd/sqlgen/gen: TestResolvers_DeleteNamingRules_SoftOnly`; `unit: cmd/sqlgen/gen: TestOperationsPreset_NoHardDelete` | all | api-generation: delete × soft-delete |
-| api.delete.soft-delete-hard-only | On a soft-delete table, keeping `hard_delete` and masking `soft_delete` gives `delete<T>(id): Boolean!` | | all | api-generation: delete × soft-delete |
+| api.delete.soft-delete-hard-only | On a soft-delete table, keeping `hard_delete` and masking `soft_delete` gives `delete<T>(id): Boolean!` | `unit: cmd/sqlgen/gen: TestAPIDeleteNaming_SoftDeleteTableHardOnly` | all | api-generation: delete × soft-delete |
 | api.delete.soft-delete-both-no-bare | With both delete variants on, no bare `delete<T>` is generated | `unit: cmd/sqlgen/gen: TestResolvers_DeleteNamingRules_Both` | all | api-generation: delete × soft-delete |
 | api.delete.tenanted | A tenanted table with no soft-delete column gets `delete<T>(id): Boolean!` | `golden: graphql` | all | api-generation: delete × tenanted |
 | api.delete.view | A view gets no `delete<V>` | `unit: cmd/sqlgen/gen: TestAPIViewSchema_emitsReadOnlySurface`; `example: graphql: TestViewSchema_NoMutationsAndNoRefresh` | all | api-generation: delete × view |
@@ -145,14 +145,14 @@ The `api-generation` matrix rows for §26.4; its other rows are in [`api-schema.
 | api.hard-soft-delete-pair.composite-pk | A composite-PK table with a soft-delete column gets `hardDelete<T>(<pk…>): Boolean!` and `softDelete<T>(<pk…>): <T>`, one argument per PK column | | all | api-generation: hard-soft-delete-pair × composite-pk |
 | api.hard-soft-delete-pair.soft-delete-hard | With both variants on, a soft-delete table gets `hardDelete<T>(id): Boolean!` backed by `HardDelete` | `unit: cmd/sqlgen/gen: TestResolvers_DeleteNamingRules_Both`; `example: graphql: TestCuratedSurface_User/HardDelete` | all | api-generation: hard-soft-delete-pair × soft-delete |
 | api.hard-soft-delete-pair.soft-delete-soft | With both variants on, a soft-delete table gets `softDelete<T>(id): <T>` (nullable) backed by `SoftDelete` | `unit: cmd/sqlgen/gen: TestResolvers_DeleteNamingRules_Both`; `example: graphql: TestCuratedSurface_User/SoftDelete` | all | api-generation: hard-soft-delete-pair × soft-delete |
-| api.hard-soft-delete-pair.tenanted | A tenanted table with a soft-delete column gets the `hardDelete<T>` / `softDelete<T>` pair | | all | api-generation: hard-soft-delete-pair × tenanted |
+| api.hard-soft-delete-pair.tenanted | A tenanted table with a soft-delete column gets the `hardDelete<T>` / `softDelete<T>` pair | `unit: cmd/sqlgen/gen: TestAPIDeleteVariants_TenantedSoftDeleteTable/hard delete returns Boolean`; `unit: cmd/sqlgen/gen: TestAPIDeleteVariants_TenantedSoftDeleteTable/soft delete returns the nullable row`; `unit: cmd/sqlgen/gen: TestAPIDeleteVariants_TenantedSoftDeleteTable/no bare delete` | all | api-generation: hard-soft-delete-pair × tenanted |
 | api.hard-soft-delete-pair.view | A view gets neither `hardDelete<V>` nor `softDelete<V>` | `unit: cmd/sqlgen/gen: TestAPIViewSchema_emitsReadOnlySurface`; `example: graphql: TestViewSchema_NoMutationsAndNoRefresh` | all | api-generation: hard-soft-delete-pair × view |
 | api.restore.single-pk | A table with no soft-delete column gets no `restore<T>`, even under a mask that names `restore: true` | `unit: cmd/sqlgen/gen: TestResolvers_SoftDeleteRequiresSoftDeleteColumn`; `unit: cmd/sqlgen/gen: TestAPIOperationsMask_CannotExceedClient` | all | api-generation: restore × single-pk |
 | api.restore.composite-pk | A composite-PK table with a soft-delete column gets `restore<T>(<pk…>): <T>` | | all | api-generation: restore × composite-pk |
 | api.restore.soft-delete | A soft-delete table gets `restore<T>(id): <T>` (nullable) backed by `Restore` | `unit: cmd/sqlgen/gen: TestResolvers_DeleteNamingRules_Both`; `example: graphql: TestCuratedSurface_User/Restore` | all | api-generation: restore × soft-delete |
 | api.restore.soft-only-mask | With `hard_delete` masked, `restore<T>` is still emitted while `restore` survives the mask | `unit: cmd/sqlgen/gen: TestResolvers_DeleteNamingRules_SoftOnly`; `unit: cmd/sqlgen/gen: TestOperationsPreset_NoHardDelete` | all | |
 | api.restore.masked | Masking `restore` removes `restore<T>` | `unit: cmd/sqlgen/gen: TestOperationsPreset_NoDelete` | all | |
-| api.restore.tenanted | A tenanted table with a soft-delete column gets `restore<T>` | | all | api-generation: restore × tenanted |
+| api.restore.tenanted | A tenanted table with a soft-delete column gets `restore<T>` | `unit: cmd/sqlgen/gen: TestAPIDeleteVariants_TenantedSoftDeleteTable/restore returns the nullable row` | all | api-generation: restore × tenanted |
 | api.restore.view | A view gets no `restore<V>` | `unit: cmd/sqlgen/gen: TestAPIViewSchema_emitsReadOnlySurface`; `example: graphql: TestViewSchema_NoMutationsAndNoRefresh` | all | api-generation: restore × view |
 | api.create-with-related.single-pk | A single-PK table with an eligible edge, the `create` family on and `create_with_related` + `create` on the mask gets `create<T>WithRelated(input): <T>!` | `unit: cmd/sqlgen/gen: TestAPINestedSchema_FlatSurfaceIsByteIdentical`; `golden: graphql` | all | api-generation: create-with-related × single-pk |
 | api.create-with-related.composite-pk | A composite-PK parent with an eligible edge gets `create<T>WithRelated` | | all | api-generation: create-with-related × composite-pk |
@@ -176,10 +176,10 @@ The `api-generation` matrix rows for §26.4; its other rows are in [`api-schema.
 |---|---|---|---|---|
 | api.excluded.exists-count-getmany-find | `Exists`, `Count`, `GetMany` and `Find` get no root resolver | `unit: cmd/sqlgen/gen: TestResolvers_CuratedSurface_NoExcludedMethods` | all | |
 | api.excluded.get-null-when-missing | `<table>(id)` returns null when the row is missing | `example: graphql: TestCuratedSurface_User/GetByPK` | all | |
-| api.excluded.count-via-list-limit-zero | `<table>List(filter, limit: 0).totalCount` counts with no rows | | all | |
+| api.excluded.count-via-total-count-only | `<table>List(filter) { totalCount }` counts with no rows, in one `COUNT` | `example: graphql: TestSurfacePromises_TotalCountOnlyListIsOneCount` | all | |
 | api.excluded.update-many | No batch-of-items update mutation is generated: `update<T>s` takes `(filter, input)` | `unit: cmd/sqlgen/gen: TestResolvers_MutationResultNullability/UpdateProducts returns []*Product`; `unit: cmd/sqlgen/gen: TestAPIOperationsMask_UpdateTsFollowsUpdateWhere/no mask keeps the mutation` | all | |
-| api.excluded.upsert-many | No batch-upsert mutation is generated | | all | |
-| api.excluded.tx-primitives | No transaction or savepoint primitive reaches the GraphQL surface | | all | |
+| api.excluded.upsert-many | No batch-upsert mutation is generated | `unit: cmd/sqlgen/gen: TestAPIExcluded_NoBatchUpsertMutation` | all | |
+| api.excluded.tx-primitives | No transaction or savepoint primitive reaches the GraphQL surface | `unit: cmd/sqlgen/gen: TestAPIExcluded_NoTransactionPrimitive` | all | |
 | api.excluded.restore-without-soft-delete | `Restore` is not generated without a soft-delete column | `unit: cmd/sqlgen/gen: TestResolvers_SoftDeleteRequiresSoftDeleteColumn` | all | |
 | api.excluded.relationship-pagination-args | Relationship fields take no pagination arguments and emit as `[Type!]!` | `unit: cmd/sqlgen/gen: TestWalker_SubCategorizedRelationships` | all | |
 
@@ -191,9 +191,9 @@ The `api-generation` matrix rows for §26.4; its other rows are in [`api-schema.
 | api.nullability.create-update-upsert | `create<T>`, `update<T>` and `upsert<T>` return non-null `<T>!` | `unit: cmd/sqlgen/gen: TestGraphQLSchema_emitsExpectedTypesPerTable`; `unit: cmd/sqlgen/gen: TestAPIFlatUpsert_RequiresThePKConflictTarget/schema-declared key`; `golden: graphql` | all | |
 | api.nullability.batch | `create<T>s` and `update<T>s` return `[<T>!]!` | `golden: graphql` | all | |
 | api.nullability.soft-delete-restore-nullable | `softDelete<T>` and `restore<T>` return nullable `<T>` | `unit: cmd/sqlgen/gen: TestOperationsPreset_NoHardDelete`; `golden: graphql` | all | |
-| api.nullability.soft-delete-null-on-missing | A soft delete or restore of a missing row returns null rather than an error | | all | |
+| api.nullability.soft-delete-null-on-missing | A soft delete or restore of a missing row returns null rather than an error | `example: graphql: TestSurfacePromises_SoftDeleteAndRestoreOfMissingRowReturnNull` | all | |
 | api.nullability.hard-delete-boolean | Hard delete returns `Boolean!`, `true` when a row was deleted | `unit: cmd/sqlgen/gen: TestResolvers_MutationResultNullability/HardDeleteProduct returns bool`; `example: graphql: TestCuratedSurface_User/HardDelete` | all | |
-| api.nullability.hard-delete-false-on-missing | Hard delete of a missing row returns `false` | | all | |
+| api.nullability.hard-delete-true-when-no-error | Hard delete returns `true` once the delete ran without error, also for a row that did not exist | `example: graphql: TestSurfacePromises_HardDeleteMissingRowReturnsTrue` | all | |
 | api.nullability.go-signatures | The resolver seeds return `*<T>` for single-row mutations, `[]*<T>` for the two batch mutations and `bool` for hard delete | `unit: cmd/sqlgen/gen: TestResolvers_MutationResultNullability` | all | |
 
 ### Narrowing the API surface: `api.operations`
@@ -227,11 +227,11 @@ The `api-generation` matrix rows for §26.4; its other rows are in [`api-schema.
 | api.mask.flat-upsert-no-conflict-pk-warns | An explicit per-table `upsert: true` on a table with a unique target but no `<T>ConflictPK` omits `upsert<T>` and warns, naming the table | `unit: cmd/sqlgen/gen: TestAPIFlatUpsert_WarnsOnAnExplicitMask/explicit upsert, app-enforced key, UNIQUE column` | all | |
 | api.mask.upsert-one-warning | A table with no conflict target at all gets only the over-reach warning for `upsert`, never both | `unit: cmd/sqlgen/gen: TestAPIFlatUpsert_WarnsOnAnExplicitMask/explicit upsert, app-enforced key, no conflict target at all` | all | |
 | api.mask.reads-maskable | Masking `get`, `paginate` or `connection` hides the matching query | `unit: cmd/sqlgen/gen: TestAPIOperationsMask_ListFollowsPaginate/API paginate off masks the list query`; `unit: cmd/sqlgen/gen: TestAPISchema_allReadsMaskedOpensNoQueryBlock/table`; `unit: cmd/sqlgen/gen: TestBuildAPIContext_viewOperationsMaskIsSubtractive` | all | |
-| api.mask.reads-client-kept | A masked read's client method stays generated | | all | |
+| api.mask.reads-client-kept | A masked read's client method stays generated | `unit: cmd/sqlgen/gen: TestAPIMask_MaskedReadsKeepClientMethods` | all | |
 | api.mask.client-only-keys-error | Naming `get_many`, `update_many`, `exists`, `count`, `increment`, `stream` or `upsert_many` in any `api.operations` block is a hard error, at both the global and per-table level | `unit: cmd/sqlgen/config: TestValidateAPIOperations_ClientOnlyRejected` | all | |
 | api.mask.client-only-names-gate | The error for `get_many` / `update_many` names `paginate` / `update_where` as the gating key | `unit: cmd/sqlgen/config: TestValidateAPIOperations_ClientOnlyRejected` | all | |
 | api.mask.set-mask-update-many-off | Whenever a mask is set, the masked set's `UpdateMany` is off | `unit: cmd/sqlgen/gen: TestAPIOperationsMask_UpdateWhereAloneCarriesTheUpdateSurface/masking update_where too takes the update surface` | all | |
-| api.mask.set-mask-get-many-off | Whenever a mask is set, the masked set's `GetMany` is off | | all | |
+| api.mask.set-mask-get-many-off | Whenever a mask is set, the masked set's `GetMany` is off | `unit: cmd/sqlgen/gen: TestAPIMask_SetMaskTurnsGetManyOff` | all | |
 | api.mask.update-where-alone | `update_where` alone keeps `update<T>s` and everything it needs (update input, translator, Mutation block, root field) | `unit: cmd/sqlgen/gen: TestAPIOperationsMask_UpdateWhereAloneCarriesTheUpdateSurface/generated files`; `unit: cmd/sqlgen/gen: TestAPIOperationsMask_UpdateWhereAloneCarriesTheUpdateSurface/stub-rewriter root field` | all | |
 | api.mask.create-input-follows | Masking every create-class mutation removes `Create<T>Input` | `unit: cmd/sqlgen/gen: TestAPIOperationsMask_PerTable` | all | |
 | api.mask.update-input-follows | Masking every update-class mutation removes `Update<T>Input` | `unit: cmd/sqlgen/gen: TestAPIOperationsMask_UpdateWhereAloneCarriesTheUpdateSurface/masking update_where too takes the update surface` | all | |
@@ -253,12 +253,13 @@ The `api-generation` matrix rows for §26.4; its other rows are in [`api-schema.
 | api.nested.no-pk-target-required-arg | With no primary-key target the `conflictTarget` argument is required (no default) | `unit: cmd/sqlgen/gen: TestAPIFlatUpsert_RequiresThePKConflictTarget/app-enforced key, UNIQUE column`; `golden: graphql` | all | |
 | api.nested.no-target-omits-upsert | A table the access projection leaves with no conflict target gets no `upsert<T>WithRelated` | `unit: cmd/sqlgen/gen: TestAPINested_ConflictTargetsProjectAccess/read_only, app-enforced key`; `unit: cmd/sqlgen/gen: TestAPIFlatUpsert_RequiresThePKConflictTarget/upsert-only mask, app-enforced key, read_only UNIQUE column` | all | |
 | api.nested.no-conflict-pk-nested-stays | A table with no `<T>ConflictPK` has no `upsert<T>` but keeps `upsert<T>WithRelated` while a unique target is left | `unit: cmd/sqlgen/gen: TestAPIFlatUpsert_RequiresThePKConflictTarget/app-enforced key, UNIQUE column`; `golden: graphql` | all | |
-| api.nested.mysql-target-update-columns | On MySQL the `conflictTarget` argument shapes only the update half's column list; any unique violation takes the update branch | | mysql | |
+| api.nested.mysql-target-update-columns | On MySQL the nested upsert statement takes `ON DUPLICATE KEY UPDATE` with the `conflictTarget` shaping only the update half's column list | `unit: cmd/sqlgen/gen: TestAPINested_MySQLConflictTargetShapesOnlyTheUpdateList` | mysql | |
+| api.nested.mysql-any-unique-takes-update | On MySQL any unique violation takes the nested upsert's update branch, whichever target was named | | mysql | |
 | api.nested.unwritten-target-conflict | A call that leaves a column of the named target unwritten (the default `PK` on a generated key) carries no conflict clause and returns `CONFLICT` | `example: graphql: TestGraphQLNested_UpsertTakesAConflictTarget` | all | |
 | api.nested.wrapper-member-names | A wrapper holds the flat input under the table's own name and one member per edge named like the object type's relationship field | `unit: cmd/sqlgen/gen: TestAPINestedSchema_EachShapeProjects`; `unit: cmd/sqlgen/gen: TestAPIGoFieldOverrides_NestedInputs`; `example: graphql: TestGraphQLNested_VerbsAreTheSchemaNotARuntimeCheck/CreateAssetWithRelatedInput` | all | api-generation: nested-inputs × soft-delete |
 | api.nested.update-flat-nullable | On `Update<T>WithRelatedInput` the flat member is nullable | `unit: cmd/sqlgen/gen: TestAPINestedSchema_EachShapeProjects` | all | |
 | api.nested.update-nested-only | An update that sets only nested members leaves the parent's columns untouched | `example: graphql: TestGraphQLNested_UpdateOnlyTouchesNestedRows` | all | |
-| api.nested.update-nested-only-no-statement | An update that omits the flat member issues no parent `UPDATE` | | all | |
+| api.nested.update-nested-only-no-statement | An update that omits the flat member issues no parent `UPDATE` | `example: graphql: TestSurfacePromises_NestedUpdateWithoutFlatMemberIssuesNoParentUpdate` | all | |
 | api.nested.verb-list | A list-shaped verb takes a list of non-null elements (`create: [X!]`, `connect: [ID!]`) | `unit: cmd/sqlgen/gen: TestAPINestedSchema_EachShapeProjects` | all | |
 | api.nested.has-one-single | A has-one verb takes one value (`create: X`, `connect: ID`) | `unit: cmd/sqlgen/gen: TestAPINestedSchema_EachShapeProjects`; `example: graphql: TestGraphQLNested_HasOneIntKeyRelinks` | all | |
 | api.nested.child-drops-fk | A nested child input omits the traversed FK | `unit: cmd/sqlgen/gen: TestAPINestedSchema_EachShapeProjects` | all | |
@@ -267,7 +268,7 @@ The `api-generation` matrix rows for §26.4; its other rows are in [`api-schema.
 | api.nested.empty-child-no-create | A nested child input left with no field is not declared; the edge's GraphQL blocks carry no `create` and the Go surface keeps the verb | `unit: cmd/sqlgen/gen: TestAPINested_EmptyChildInputCarriesNoCreate`; `unit: cmd/sqlgen/gen: TestAPINested_UnmaskedProjectionIsTheGoSurface` | all | |
 | api.nested.mask-conjoins-base | On the masked set each `…_with_related` implies its base: masking `create` removes `create<T>WithRelated` (likewise update, upsert) | `unit: cmd/sqlgen/gen: TestAPINested_ParentMaskConjoinsTheBase/create off`; `unit: cmd/sqlgen/gen: TestAPINested_ParentMaskConjoinsTheBase/update off`; `unit: cmd/sqlgen/gen: TestAPINested_ParentMaskConjoinsTheBase/upsert off`; `unit: cmd/sqlgen/gen: TestAPINested_ParentMaskConjoinsTheBase/read-only` | all | |
 | api.nested.mask-own-key | Masking `create_with_related` removes `create<T>WithRelated` and keeps the other two | `unit: cmd/sqlgen/gen: TestAPINested_ParentMaskConjoinsTheBase/create_with_related off` | all | |
-| api.nested.suppressed-flat-input | A family whose flat input is suppressed (no API-writable column) is not emitted | | all | |
+| api.nested.suppressed-flat-input | A family whose flat input is suppressed (no API-writable column) is not emitted | `unit: cmd/sqlgen/gen: TestAPINested_SuppressedFlatInputFamilyNotEmitted` | all | |
 | api.nested.mask-not-emitted-flat | The requirement is on the masked operation: with no `<T>ConflictPK`, `upsert<T>WithRelated` survives without `upsert<T>` while `upsert` stays on the mask | `unit: cmd/sqlgen/gen: TestAPIFlatUpsert_RequiresThePKConflictTarget/upsert-only mask, app-enforced key, UNIQUE column` | all | |
 | api.nested.with-related-beside-masked-base-error | `…_with_related: true` beside its base set `false` in one mask is a config error naming the key, at the global and per-table level | `unit: cmd/sqlgen/config: TestValidateNestedMutations_APIMaskWithRelatedNeedsBase` | all | |
 | api.nested.update-inc-own-tx | When `update<T>WithRelated` sets an `_inc` / `_dec` operator, `UpdateWithRelated`, the increments and the read-back run in one transaction | `unit: cmd/sqlgen/gen: TestAPINestedTemplates_IncrementBranch`; `example: graphql: TestGraphQLNested_IncrementsShareTheTransaction/the increment and the nested create both land` | all | |
@@ -305,7 +306,7 @@ The `api-generation` matrix rows for §26.4; its other rows are in [`api-schema.
 | api.walker.alias-union | Every walker loop runs over a coalesced view where each field name appears once, carrying the union of every alias's sub-selections | `unit: cmd/sqlgen/gen: TestWalker_FragmentAndDirectiveCoverage`; `unit: cmd/sqlgen/gen: TestWalker_ConnectionUnwrap`; `unit: cmd/sqlgen/testdata/examples/graphql/models/graph/sqlgenresolver: TestCoalesceAliases/two aliases of one relationship union their selections`; `unit: cmd/sqlgen/testdata/examples/graphql/models/graph/sqlgenresolver: TestCoalesceAliases/three aliases union in first-appearance order` | all | |
 | api.walker.alias-union-runtime | Two aliases of one envelope key, relationship or column each render their own selection correctly | `example: graphql: TestAliases_ConnectionEdges`; `example: graphql: TestAliases_ConnectionEdgesThreeWay`; `example: graphql: TestAliases_ConnectionNode`; `example: graphql: TestAliases_ListResultItems`; `example: graphql: TestAliases_Relationship`; `example: graphql: TestAliases_PlainColumns`; `example: graphql: TestAliases_OneToOneRelationship` | all | |
 | api.walker.alias-union-no-extra-query | Two aliases of one O2M relationship still cost `1 + 1` queries | `example: graphql: TestAliases_RelationshipCostsOneQuery` | all | |
-| api.walker.alias-row-identity-once | Row identity is evaluated once against the unioned result | | all | |
+| api.walker.alias-row-identity-once | Row identity is evaluated once against the unioned result | `unit: cmd/sqlgen/testdata/examples/graphql/models/graph/sqlgenresolver: TestRowIdentity_EvaluatedOnceOverTheAliasUnion` | all | |
 | api.walker.coalesce-no-cache-write | The coalesce never writes into a slice gqlgen's `CollectFields` cache holds | `unit: cmd/sqlgen/testdata/examples/graphql/models/graph/sqlgenresolver: TestCoalesceAliases_DoesNotAppendIntoGqlgensCache`; `unit: cmd/sqlgen/gen: TestWalker_ConnectionUnwrap` | all | |
 | api.walker.lint-readable-column | Codegen fails when an API-readable column has no walker case, naming the entity and column | `unit: cmd/sqlgen/gen: TestWalker_CompletenessLint_NegativeTest`; `unit: cmd/sqlgen/gen: TestValidateAPIWalkerCompleteness_Access/readable column missing fails`; `unit: cmd/sqlgen/gen: TestValidateAPIWalkerCompleteness_view` | all | |
 | api.walker.lint-exposed-relationship | Codegen fails when a relationship into an exposed entity has no case | `unit: cmd/sqlgen/gen: TestWalker_CompletenessLint_NegativeTest`; `unit: cmd/sqlgen/gen: TestWalker_CompletenessLint_Relationships/exposed without case` | all | |
@@ -314,9 +315,9 @@ The `api-generation` matrix rows for §26.4; its other rows are in [`api-schema.
 | api.walker.lint-holds-in-artifact | Every field of every generated object type has a walker case in the shipped artifact | `example: graphql: TestWalkerCompleteness_AllFieldsCovered`; `example: graphql: TestWalkerCompletenessLint_ErrorMessageFormat` | all | |
 | api.walker.tests-pin-recursing-cases | sqlgen's walker tests pin a recursing case for every relationship | `unit: cmd/sqlgen/gen: TestWalker_DeeplyNestedFixtureQuery` | all | |
 | api.walker.example-pins-nested-count | The GraphQL example's nested queries pin the response and the query count | `example: graphql: TestQueryCount_NestedRelationships` | all | |
-| api.walker.no-generated-tests | sqlgen emits no test files into the consumer's packages | | all | |
+| api.walker.no-generated-tests | sqlgen emits no test files into the consumer's packages | `unit: cmd/sqlgen/gen: TestGenerate_EmitsNoTestFiles` | all | |
 | api.walker.unselected-nil | A relationship absent from the selection stays nil on the produced `FieldOptions` | `unit: cmd/sqlgen/gen: TestWalker_UnselectedRelationshipReturnsNil` | all | |
-| api.walker.no-lazy-load | A selected relationship with no `FieldOptions` entry resolves to nil and is never lazy-loaded | | all | |
+| api.walker.no-lazy-load | A selected relationship with no `FieldOptions` entry resolves to nil and is never lazy-loaded | `example: graphql: TestSurfacePromises_UnprefetchedRelationshipResolvesNilWithoutLoading` | all | |
 | api.walker.required-columns-by-client | Columns the read derives (cursor keys, relationship keys, O2O NULL detection) are unioned in by the client method, so a narrowed request still gets what it asked for | `example: graphql: TestRequiredColumns_TableCursorWithoutSelectingKey`; `example: graphql: TestRequiredColumns_ViewCursorWithoutSelectingKey`; `example: graphql: TestRequiredColumns_O2MWithoutParentPK`; `example: graphql: TestRequiredColumns_O2OWithoutChildPK`; `example: graphql: TestRequiredColumns_M2MWithoutChildPK`; `example: graphql: TestRequiredColumns_CompositeCursorKeysWithoutSelectingThem` | all | |
 | api.walker.row-identity-guard | A selection set that names no column projects the entity's row-identity columns and nothing else | `unit: cmd/sqlgen/gen: TestRowIdentity_CollectedProjectsRowIdentity`; `unit: cmd/sqlgen/gen: TestRowIdentity_EveryAPIEntityCarriesRowIdentity` | all | |
 | api.walker.row-identity-pk | A table's row identity is its primary key, every column of a composite one | `unit: cmd/sqlgen/gen: TestRowIdentity_CollectedProjectsRowIdentity`; `unit: cmd/sqlgen/gen: TestRowIdentity_CompositePKProjectsEveryKeyColumn` | all | |
@@ -379,7 +380,7 @@ The `api-generation` matrix rows for §26.4; its other rows are in [`api-schema.
 | api.filter.relationship-hidden-target-api-disabled | A relationship whose target has `api.enabled: false` emits no filter member | `unit: cmd/sqlgen/gen: TestAPIFilterRelationships_APIDisabledTargetDropped` | all | |
 | api.filter.relationship-hidden-target-unreadable | A relationship whose target has every column dropped by §32.2 emits no filter member | `unit: cmd/sqlgen/gen: TestAPIFilterRelationships_UnreadableTargetDropped` | all | |
 | api.filter.relationship-hidden-target-object-field | The object type drops its relationship field into an API-excluded target | `example: graphql: TestAPIHiddenTarget_SchemaNamesItNowhere/User` | all | |
-| api.filter.relationship-hidden-target-object-field-unreadable | The object type drops its relationship field into a target whose every column §32.2 drops | | all | |
+| api.filter.relationship-hidden-target-object-field-unreadable | The object type drops its relationship field into a target whose every column §32.2 drops | `unit: cmd/sqlgen/gen: TestAPIObjectType_DropsRelationshipIntoUnreadableTarget` | all | |
 | api.filter.relationship-composite-pk-parent | A relationship filter member is emitted and translated for a composite-PK parent | | all | |
 | api.filter.relationship-composite-fk-edge | A relationship filter member is emitted and translated for a multi-pair (composite) FK edge | | all | |
 
@@ -404,22 +405,22 @@ The `api-generation` matrix rows for §26.4; its other rows are in [`api-schema.
 | api.lint.relationship-half-rendered | The generator hard-errors on a relationship member that renders only one of its two halves | `unit: cmd/sqlgen/gen: TestAPIFilterCompleteness_RelationshipMemberHalfRendered` | all | |
 | api.lint.relationship-not-on-model | The generator hard-errors on a relationship member assigning a member the model `<T>Filter` does not have | `unit: cmd/sqlgen/gen: TestAPIFilterCompleteness_RelationshipMemberNotOnModelFilter` | all | |
 | api.lint.relationship-collides-column | The generator hard-errors on a relationship member whose GraphQL name collides with a column field in the same input | `unit: cmd/sqlgen/gen: TestAPIFilterCompleteness_RelationshipMemberCollidesWithColumn` | all | |
-| api.lint.built-context | The lint runs on the built context before any template is rendered | | all | |
-| api.lint.covers-validate | The lint also runs under `sqlgen validate` | | all | |
+| api.lint.built-context | The lint runs on the built context before any template is rendered | `unit: cmd/sqlgen/gen: TestAPILint_RunsOnTheBuiltContext` | all | |
+| api.lint.covers-validate | `sqlgen validate` builds the same API context the completeness lint runs in | `unit: cmd/sqlgen/gen: TestValidateGeneration_BuildsTheLintedAPIContext` | all | |
 | api.lint.views-same-functions | Views are linted by the same two functions as tables, with no view-specific arm | `unit: cmd/sqlgen/gen: TestAPILintCompleteness_ViewRoutesThroughTheSameLints` | all | |
 | api.lint.absent-from-both-passes | A column that is filterable on neither side passes the lint because it is absent from both, with no exemption arm | `unit: cmd/sqlgen/gen: TestAPILintCompleteness_NonFilterableColumnPasses`; `unit: cmd/sqlgen/gen: TestAPILintCompleteness_AccessRestrictedColumnPasses`; `unit: cmd/sqlgen/gen: TestAPILintCompleteness_BuiltContextsPassBothLints` | all | |
 | api.filter.nonfilterable-json-array | A `json[]` / `jsonb[]` column is filterable on neither side | `unit: cmd/sqlgen/gen: TestSliceJSONComparator_jsonArrayIsFilterableOnNeitherSide`; `unit: cmd/sqlgen/gen: TestFilterProjection_perGoType/jsonb_array`; `unit: cmd/sqlgen/gen: TestAPILintCompleteness_BuiltContextsPassBothLints` | postgres | |
 | api.filter.nonfilterable-sqlite-json | A `types.JSON` column under `input.dialect: sqlite` is filterable on neither side | `unit: cmd/sqlgen/gen: TestJSONComparator_sqliteModelSideNonFilterable` | sqlite | |
 | api.filter.nonfilterable-access-role | A column whose access role drops the filter surface is filterable on neither side | `unit: cmd/sqlgen/gen: TestAPILintCompleteness_AccessRestrictedColumnPasses`; `unit: cmd/sqlgen/gen: TestEnumComparator_hiddenColumnEmitsNothing` | all | |
 | api.filter.nonfilterable-no-projection-graphql | A column with no sound GraphQL projection (an enum-like Go type that is not a schema enum, or an array element outside the measured set) is dropped from the GraphQL filter input and translator | `unit: cmd/sqlgen/gen: TestEnumComparator_nonSchemaEnumDropsFilterField`; `unit: cmd/sqlgen/gen: TestFilterProjection_perGoType/timestamp_array`; `unit: cmd/sqlgen/gen: TestDecimalComparator_narrowsOnlyTheStringFamily/historic_prices` | all | |
-| api.filter.nonfilterable-no-projection-go-kept | A column with no sound GraphQL projection keeps its member on the Go `<T>Filter` struct | | all | |
+| api.filter.nonfilterable-no-projection-go-kept | A column with no sound GraphQL projection keeps its member on the Go `<T>Filter` struct | `unit: cmd/sqlgen/gen: TestAPIFilter_NoProjectionColumnKeepsGoFilterMember` | all | |
 
 ### Soft-delete inclusion
 
 | ID | Requirement | Tests | Applies to | Matrix cell |
 |---|---|---|---|---|
 | api.filter.soft-delete-column-regular | The soft-delete column appears in the filter input as a regular comparator field, nullable under the timestamp strategy (`deletedAt: NullableTimeComparator`) | `unit: cmd/sqlgen/gen: TestFilterTranslator_DeletedAtIsRegularFilterField`; `golden: graphql` | all | |
-| api.filter.soft-delete-empty-comparator-includes | Passing `deletedAt: {}` returns soft-deleted rows | | all | |
+| api.filter.soft-delete-empty-comparator-includes | Passing `deletedAt: {}` returns soft-deleted rows | `example: graphql: TestSurfacePromises_EmptyDeletedAtComparatorIncludesSoftDeleted` | all | |
 | api.filter.no-include-deleted-flag | No `includeDeleted` flag is generated on the GraphQL surface or in the translator | `unit: cmd/sqlgen/gen: TestFilterTranslator_DeletedAtIsRegularFilterField`; `unit: cmd/sqlgen/gen: TestFilterTranslator_NoSoftDeleteWorksUnchanged` | all | |
 | api.filter.no-include-deleted-model | The model `<Table>Filter` struct has no `IncludeDeleted` field | `unit: cmd/sqlgen/gen: TestFilterTemplate_softDeleteAsRegularComparator` | all | |
 
@@ -451,7 +452,7 @@ The `api-generation` matrix rows for §26.4; its other rows are in [`api-schema.
 | api.pagination.list-sort | `<table>List` `sort` is translated by `translate<T>Sort` and assigned into `PaginateInput.Sort` before `Paginate` is called | `example: graphql: TestCuratedSurface_User/List`; `example: graphql: TestCuratedSurface_Category/List`; `golden: graphql` | all | |
 
 ## §26.5.4 Mutation Translation
-<!-- prd: 26.5.4 sha256: eb11689880ddacee -->
+<!-- prd: 26.5.4 sha256: 1a8f4f83f7714edf -->
 
 ### Create / Update inputs
 
@@ -488,16 +489,16 @@ The `api-generation` matrix rows for §26.4; its other rows are in [`api-schema.
 |---|---|---|---|---|
 | api.inc-dec.plan-set-first | The update resolver runs `Update(id, set)` before any increment | `unit: cmd/sqlgen/gen: TestResolvers_IncDec_DispatchOrder` | all | |
 | api.inc-dec.plan-set-only-if-present | `Update` is issued only when at least one set field is present | `golden: graphql` | all | |
-| api.inc-dec.plan-inc-then-dec | All `_inc` entries are applied before all `_dec` entries | | all | |
-| api.inc-dec.plan-same-client | Update, increments and decrements run on the same client instance | `golden: graphql` | all | |
+| api.inc-dec.plan-signed-increment | Each operator is an `Increment` on its column, a `_dec` carrying a negative delta | `unit: cmd/sqlgen/gen: TestResolvers_IncDec_DispatchOrder`; `example: graphql: TestUpdateOperators_EveryAdvertisedIncrementIsApplied` | all | |
+| api.inc-dec.plan-same-client | Update and the increments run on the same client instance | `golden: graphql` | all | |
 
 ### Validation rules
 
 | ID | Requirement | Tests | Applies to | Matrix cell |
 |---|---|---|---|---|
-| api.inc-dec.codegen-rejects-set-inc | Codegen rejects an input that mixes `_set` and `_inc` for the same column | | all | |
 | api.inc-dec.runtime-set-inc-invalid | At runtime, `<field>` and `<field>_inc` together return a `gqlerror` with `extensions.code = INVALID_INPUT` | `unit: cmd/sqlgen/gen: TestResolvers_IncDec_RuntimeConflictGuards` | all | |
 | api.inc-dec.runtime-inc-dec-invalid | At runtime, `<field>_inc` and `<field>_dec` together return `INVALID_INPUT` | `unit: cmd/sqlgen/gen: TestResolvers_IncDec_RuntimeConflictGuards` | all | |
+| api.inc-dec.runtime-set-dec-invalid | `<field>` and `<field>_dec` together return `INVALID_INPUT`, on the single-row, bulk and nested update paths | `unit: cmd/sqlgen/gen: TestResolvers_IncDec_RuntimeConflictGuards`; `example: graphql: TestUpdatePairing_SetAndDecrementIsInvalidInput`; `example: graphql: TestBulkUpdateOperators_PairingIsInvalidInput/set and decrement on one column` | all | |
 
 ### Bulk inputs
 
@@ -553,7 +554,7 @@ The `api-generation` matrix rows for §26.4; its other rows are in [`api-schema.
 | api.errors.constraint-errors-as | Constraint violations are matched by a single `errors.As` extraction of `*database.ConstraintError` | `unit: cmd/sqlgen/gen: TestMapErrorToGQL_WrappedErrorsCaught` | all | |
 | api.errors.constraint-type-switch | The mapper dispatches the extracted `*database.ConstraintError` with a `switch ce.Type` over `ConstraintUnique` / `ConstraintForeignKey` / `ConstraintCheck` / `ConstraintNotNull` | `unit: cmd/sqlgen/gen: TestMapErrorToGQL_WrappedErrorsCaught` | all | |
 | api.errors.no-direct-equality | The generated mapper uses no direct equality (`err == database.…`) | `unit: cmd/sqlgen/gen: TestMapErrorToGQL_WrappedErrorsCaught` | all | |
-| api.errors.no-constraint-sentinel-aliases | The runtime has no `ErrUniqueViolation` / `ErrForeignKeyViolation` / `ErrCheckViolation` / `ErrNotNullViolation` aliases | | all | |
+| api.errors.no-constraint-sentinel-aliases | The runtime has no `ErrUniqueViolation` / `ErrForeignKeyViolation` / `ErrCheckViolation` / `ErrNotNullViolation` aliases | `unit: cmd/sqlgen/gen: TestRuntimeErrors_NoConstraintSentinelAliases` | all | |
 | api.errors.nested-sentinels-errors-is | `ErrAlreadyRelated` and `ErrNestedVerbConflict` are matched via `errors.Is`, so the `*database.NestedMutationError` that carries them is absorbed | `unit: cmd/sqlgen/gen: TestMapErrorToGQL_WrappedErrorsCaught`; `example: graphql: TestGraphQLNested_ErrorCodesAndPath` | all | |
 | api.errors.connect-miss-not-found | A nested `connect` visibility miss maps to `NOT_FOUND` | `unit: cmd/sqlgen/gen: TestMapErrorToGQL_NestedVisibilityMissStaysNotFound`; `example: graphql: TestGraphQLNested_ErrorCodesAndPath/an O2M target that is not visible is NOT_FOUND`; `example: graphql: TestGraphQLNested_ErrorCodesAndPath/an M2M target that is not visible is NOT_FOUND` | all | |
 | api.errors.connect-miss-never-bad-reference | A nested `connect` visibility miss never maps to `BAD_REFERENCE` | `unit: cmd/sqlgen/gen: TestMapErrorToGQL_NestedVisibilityMissStaysNotFound` | all | |
@@ -567,8 +568,8 @@ The `api-generation` matrix rows for §26.4; its other rows are in [`api-schema.
 
 | ID | Requirement | Tests | Applies to | Matrix cell |
 |---|---|---|---|---|
-| api.module.runtime-no-gqlgen | The sqlgen runtime module (`./`) does not depend on gqlgen | | all | |
-| api.module.parser-no-gqlgen | `parser/` does not depend on gqlgen | | all | |
+| api.module.runtime-no-gqlgen | The sqlgen runtime module (`./`) does not depend on gqlgen | `unit: cmd/sqlgen/gen: TestAPIModuleBoundary_NoGqlgenDependency/runtime module` | all | |
+| api.module.parser-no-gqlgen | `parser/` does not depend on gqlgen | `unit: cmd/sqlgen/gen: TestAPIModuleBoundary_NoGqlgenDependency/parser module` | all | |
 | api.module.cmd-no-gqlgen | `cmd/sqlgen` does not import gqlgen | `unit: cmd/sqlgen/wrapper: TestNoGqlgenDependency` | all | |
 | api.module.subprocess | The `sqlgen graphql gen` wrapper invokes the gqlgen binary as a subprocess | `unit: cmd/sqlgen/wrapper: TestGen_TempFileCleanupOnSuccess`; `unit: cmd/sqlgen/wrapper: TestGen_GoRunInheritsModMode`; `example: graphql: TestWrapperLayered_PreservesConsumerEntries` | all | |
 | api.module.subprocess-go-run | The gqlgen binary is resolved from the consumer module via `go run github.com/99designs/gqlgen` | `unit: cmd/sqlgen/wrapper: TestSplitBin` | all | |
@@ -581,11 +582,11 @@ The `api-generation` matrix rows for §26.4; its other rows are in [`api-schema.
 | api.wrapper.no-graphql-env | `SQLGEN_NO_GRAPHQL=1` is equivalent to `--no-graphql` | `unit: cmd/sqlgen/cli: TestShouldChainGraphQLGen/SQLGEN_NO_GRAPHQL=1 honored`; `unit: cmd/sqlgen/cli: TestGenerate_ChainedGraphQL_EnvVar` | all | |
 | api.wrapper.preflight-missing-fails | When `gqlgen.yml` is missing at `api.graphql.gqlgen_config`, `sqlgen generate` fails fast | `unit: cmd/sqlgen/cli: TestGenerate_ChainedGraphQL_MissingGqlgenYml` | all | |
 | api.wrapper.preflight-points-at-init | The pre-flight error points at `sqlgen graphql init` | `unit: cmd/sqlgen/cli: TestGenerate_ChainedGraphQL_MissingGqlgenYml` | all | |
-| api.wrapper.preflight-no-auto-init | `sqlgen generate` does not scaffold a `gqlgen.yml` as a side effect | | all | |
-| api.wrapper.failure-no-rollback | When the gqlgen subprocess fails, the sqlgen-side files emitted earlier in the run stay on disk | | all | |
+| api.wrapper.preflight-no-auto-init | `sqlgen generate` does not scaffold a `gqlgen.yml` as a side effect | `unit: cmd/sqlgen/cli: TestGenerate_ChainedGraphQL_PreflightDoesNotScaffold/default path stays absent`; `unit: cmd/sqlgen/cli: TestGenerate_ChainedGraphQL_PreflightDoesNotScaffold/mistyped configured path stays absent` | all | |
+| api.wrapper.failure-no-rollback | When the gqlgen subprocess fails, the sqlgen-side files emitted earlier in the run stay on disk | `unit: cmd/sqlgen/cli: TestGenerate_ChainedGraphQL_SubprocessFailureKeepsArtifacts` | all | |
 | api.wrapper.failure-subprocess-message | A gqlgen subprocess failure prints `Error: gqlgen subprocess failed: <details>; sqlgen-side artifacts emitted at <output.dir>` | `unit: cmd/sqlgen/cli: TestGenerate_ChainedGraphQL_WrapperErrorLabel/gqlgen binary fails` | all | |
 | api.wrapper.failure-wrapper-label | A failure in the wrapper's own steps keeps the artifacts-emitted suffix but carries the `gqlgen wrapper` label | `unit: cmd/sqlgen/cli: TestGenerate_ChainedGraphQL_WrapperErrorLabel/single-file resolver block without filename` | all | |
-| api.wrapper.failure-unbound-own-error | An unbound root resolver name prints its own error rather than the subprocess or wrapper label | | all | |
+| api.wrapper.failure-unbound-own-error | An unbound root resolver name prints its own error rather than the subprocess or wrapper label | `unit: cmd/sqlgen/cli: TestGenerate_ChainedGraphQL_UnboundRootFieldOwnError/prints its own error` | all | |
 | api.wrapper.step2-reads-layout | The wrapper reads the consumer `gqlgen.yml`, including `resolver.layout` | `unit: cmd/sqlgen/wrapper: TestParseResolverLayout` | all | |
 | api.wrapper.step3-models-tables | Step 3 merges `models:` bindings for managed tables | `unit: cmd/sqlgen/cli: TestBuildMergeInput_SignatureParity_RowStructsAndScalars`; `unit: cmd/sqlgen/wrapper: TestMerge_LayeredOnExistingMergesSqlgenEntries` | all | |
 | api.wrapper.step3-schema-glob | Step 3 merges the schema glob | `unit: cmd/sqlgen/wrapper: TestMerge_LayeredOnExistingMergesSqlgenEntries`; `example: graphql: TestWrapperLayered_PreservesConsumerEntries` | all | |
@@ -612,7 +613,7 @@ The `api-generation` matrix rows for §26.4; its other rows are in [`api-schema.
 | api.wrapper.root-no-fieldname | sqlgen emits no `fieldName` entry on `Query` / `Mutation` root fields | `unit: cmd/sqlgen/gen: TestAPIGoFieldOverrides_CoversEveryReferencedName` | all | |
 | api.wrapper.root-seeds-sqlgen-spelling | The seeds declare sqlgen's own root resolver spelling (`Product`, `CreateProduct`, …) | `unit: cmd/sqlgen/gen: TestSeeds_DelegateToQM`; `unit: cmd/sqlgen/gen: TestAPIGoFieldOverrides_RootFieldPairsStayInStep` | all | |
 | api.wrapper.root-stub-fails | Once gqlgen and the stub rewriter have run, generation fails if any sqlgen-managed root field is still a stub | `unit: cmd/sqlgen/wrapper: TestGen_failsOnManagedRootStub`; `unit: cmd/sqlgen/wrapper: TestCheckManagedRootStubs/follow-schema stubs gqlgen re-cased`; `unit: cmd/sqlgen/wrapper: TestCheckManagedRootStubs/single-file bare stub` | all | |
-| api.wrapper.root-stub-exit-1 | The unbound-root-field failure exits `1` | | all | |
+| api.wrapper.root-stub-exit-1 | The unbound-root-field failure exits `1` | `unit: cmd/sqlgen/cli: TestGenerate_ChainedGraphQL_UnboundRootFieldOwnError/exits 1` | all | |
 | api.wrapper.root-stub-names-entity | The error names the table or view | `unit: cmd/sqlgen/wrapper: TestUnboundRootFieldsError_namesEntityAndRemedy`; `unit: cmd/sqlgen/cli: TestManagedFieldOwners` | all | |
 | api.wrapper.root-stub-names-spellings | The error names both spellings | `unit: cmd/sqlgen/wrapper: TestUnboundRootFieldsError_namesEntityAndRemedy`; `unit: cmd/sqlgen/wrapper: TestCheckManagedRootStubs` | all | |
 | api.wrapper.root-stub-names-file | The error names the resolver file | `unit: cmd/sqlgen/wrapper: TestUnboundRootFieldsError_namesEntityAndRemedy`; `unit: cmd/sqlgen/wrapper: TestCheckManagedRootStubs` | all | |
@@ -624,8 +625,8 @@ The `api-generation` matrix rows for §26.4; its other rows are in [`api-schema.
 | api.wrapper.precedence-fields-per-field | `fields:` entries merge per field, so sqlgen names fields on a type the consumer configured | `unit: cmd/sqlgen/wrapper: TestMerge_ModelFieldsConsumerFieldWins`; `unit: cmd/sqlgen/wrapper: TestMerge_ModelFieldsCoexistWithModelBinding`; `unit: cmd/sqlgen/wrapper: TestMerge_ModelFieldsConsumerTypeWins` | all | |
 | api.wrapper.precedence-fieldname-not-overwritten | An explicit `fieldName` in the consumer's file is never overwritten | `unit: cmd/sqlgen/wrapper: TestMerge_ModelFieldsConsumerFieldWins` | all | |
 | api.wrapper.skip-validation-forced | Under `resolver.layout: single-file`, `skip_validation` is set in the merged temp config | `example: graphql: TestWrapperLayout_CrossLayoutCompiles/single-file` | all | |
-| api.wrapper.skip-validation-overrides-consumer | The `skip_validation` override applies even when the consumer declares the key | | all | |
-| api.wrapper.skip-validation-temp-only | The `skip_validation` override exists only in the temp config; the on-disk `gqlgen.yml` is never modified | | all | |
+| api.wrapper.skip-validation-overrides-consumer | The `skip_validation` override applies even when the consumer declares the key | `unit: cmd/sqlgen/wrapper: TestGen_SkipValidationOverride/single-file overrides a consumer skip_validation false` | all | |
+| api.wrapper.skip-validation-temp-only | The `skip_validation` override exists only in the temp config; the on-disk `gqlgen.yml` is never modified | `unit: cmd/sqlgen/wrapper: TestGen_SkipValidationOverride/single-file overrides a consumer skip_validation false`; `unit: cmd/sqlgen/wrapper: TestGen_SkipValidationOverride/single-file sets skip_validation the consumer left out` | all | |
 | api.wrapper.omittable-owned | sqlgen's `omittable` key on a managed nullable update-input field overrides the consumer's value in the merged temp config, while the consumer's other per-field keys still win and the on-disk file is unchanged | `unit: cmd/sqlgen/wrapper: TestMerge_ModelFieldsSqlgenOmittableOverridesConsumer` | all | |
 | api.wrapper.envelope-pageinfo-binding | The shared `PageInfo` binds directly to `<models-pkg>.PageInfo` | `unit: cmd/sqlgen/cli: TestBuildMergeInput_EnvelopeBinding`; `example: graphql: TestWrapperLayered_PreservesConsumerEntries` | all | |
 | api.wrapper.envelope-no-bracket-path | No `model:` path uses the bracketed generic instantiation form (`<pkg>.Connection[<pkg>.<T>]`) | `unit: cmd/sqlgen/cli: TestBuildMergeInput_EnvelopeBinding` | all | |
@@ -686,12 +687,12 @@ The `api-generation` matrix rows for §26.4; its other rows are in [`api-schema.
 | ID | Requirement | Tests | Applies to | Matrix cell |
 |---|---|---|---|---|
 | api.dataloader.get-one-query | `product(id) { name }` is one `Get` | `example: graphql: TestQueryCount_SingleTable` | all | |
-| api.dataloader.o2o-joined | `product(id) { company { name } }` is one `Get` with the O2O joined | | all | |
+| api.dataloader.o2o-joined | `product(id) { company { name } }` is one `Get` with the O2O joined | `example: graphql: TestSurfacePromises_O2OSelectionIsOneQuery` | all | |
 | api.dataloader.batched-in | Each selected O2M costs one batched `IN`, each M2M two, independent of depth | `example: graphql: TestQueryCount_NestedRelationships` | all | |
-| api.dataloader.mutation-result-fieldoptions | A mutation's result relationships load through the same `FieldOptions` read the mutation chains internally | | all | |
-| api.dataloader.count-independent-of-children | The query count never depends on the number of children | | all | |
-| api.dataloader.chunked | A parent set larger than one chunk adds one query per extra chunk to each chunked step | | all | |
-| api.dataloader.fail-fast | An un-prefetched relationship resolves to nil instead of lazy-loading | | all | |
+| api.dataloader.mutation-result-fieldoptions | A mutation's result relationships load through the same `FieldOptions` read the mutation chains internally | `example: graphql: TestSurfacePromises_MutationResultLoadsRelationshipsThroughFieldOptions` | all | |
+| api.dataloader.count-independent-of-children | The query count never depends on the number of children | `example: graphql: TestSurfacePromises_QueryCountIndependentOfChildren` | all | |
+| api.dataloader.chunked | A parent set larger than one chunk adds one query per extra chunk to each chunked step | `example: graphql: TestSurfacePromises_ChunkedParentSetAddsOneQueryPerChunk` | all | |
+| api.dataloader.fail-fast | An un-prefetched relationship resolves to nil instead of lazy-loading | `example: graphql: TestSurfacePromises_UnprefetchedRelationshipResolvesNilWithoutLoading` | all | |
 
 ## §26.5.8 GraphQL Output Directories
 <!-- prd: 26.5.8 sha256: 0f4007472e41b0cd -->
@@ -704,7 +705,7 @@ The `api-generation` matrix rows for §26.4; its other rows are in [`api-schema.
 | api.dirs.custom | `schema_dir: api/graph` resolves to `<root>/api/graph` | `unit: cmd/sqlgen/gen: TestResolveGraphDir/custom` | all | |
 | api.dirs.default | When unset, `schema_dir` / `resolver_dir` default to `<output.dir>/graph` | `unit: cmd/sqlgen/config: TestLoadConfig_GraphDirsRootRelativeDefault/unset defaults to <output.dir>/graph`; `unit: cmd/sqlgen/config: TestLoadConfig_GraphDirsRootRelativeDefault/unset with nested output.dir`; `unit: cmd/sqlgen/config: TestLoadConfig_GraphDirsRootRelativeDefault/unset with root output.dir` | all | |
 | api.dirs.explicit-verbatim | Explicit values are taken verbatim as root-relative paths | `unit: cmd/sqlgen/config: TestLoadConfig_GraphDirsRootRelativeDefault/explicit top-level taken verbatim`; `unit: cmd/sqlgen/config: TestLoadConfig_GraphDirsRootRelativeDefault/explicit nested taken verbatim` | all | |
-| api.dirs.no-mode-flag | There is no separate "layered" / "placement" mode flag; topology follows from the resolved path alone | | all | |
+| api.dirs.no-mode-flag | There is no separate "layered" / "placement" mode flag; topology follows from the resolved path alone | `unit: cmd/sqlgen/config: TestLoadConfig_GraphTopologyHasNoModeFlag` | all | |
 | api.dirs.import-path | The graph package's import path is `JoinModulePath(module, resolver_dir)`, with no `output.dir` prefix | `unit: cmd/sqlgen/gen: TestGraphImportPaths_RootRelative` | all | |
 | api.dirs.imports-models-by-module-path | The graph package imports the models package by its full module path, so moving graph does not break the dependency | `unit: cmd/sqlgen/gen: TestGraphImportPaths_RootRelative`; `example: graphql_top_level: TestTopLevelGraphWiring` | all | |
 | api.dirs.disabled-no-validation | With `api.graphql.enabled: false`, no `api.graphql.*` field is validated | `unit: cmd/sqlgen/config: TestValidatePreParse_APIGraphQLDisabledIsInert/disabled ignores invalid field_casing` | all | |
@@ -721,7 +722,7 @@ The `api-generation` matrix rows for §26.4; its other rows are in [`api-schema.
 | api.complexity.depth-counts-relationships | Depth counts relationship fields only: connection and list wrappers and scalar fields add none | `unit: cmd/sqlgen/gen: TestGenerate_GraphQLQueryLimits/relationship fields are the ones that count toward depth`; `example: graphql: TestQueryLimits/a query at max_depth and within max_complexity passes` | all | |
 | api.complexity.max-depth-default | `api.graphql.max_depth` defaults to 5 | `unit: cmd/sqlgen/gen: TestGenerate_GraphQLQueryLimits/defaults are depth 5 and complexity 1000 when unset` | all | |
 | api.complexity.max-complexity-default | `api.graphql.max_complexity` defaults to 1000 | `unit: cmd/sqlgen/gen: TestGenerate_GraphQLQueryLimits/defaults are depth 5 and complexity 1000 when unset` | all | |
-| api.complexity.relationship-adds | Each relationship field adds to the gqlgen query complexity | | all | |
+| api.complexity.relationship-adds | Each relationship field adds to the gqlgen query complexity | `example: graphql: TestQueryComplexity_RelationshipFieldAdds` | all | |
 | api.complexity.limit-rejects | A query exceeding the complexity limit is rejected before execution | `example: graphql: TestQueryLimits/complexity past max_complexity is rejected` | all | |
 | api.complexity.server-config | The depth and complexity protections are generated as gqlgen server configuration (`ApplyQueryLimits` on the `*handler.Server`), not custom middleware | `unit: cmd/sqlgen/gen: TestGenerate_GraphQLServerCarriesQueryLimits`; `golden: graphql` | all | |
 | api.complexity.limits-file-regenerated | `limits_gen.go` carries the configured values and is regenerated each run, so a later edit reaches an existing server | `unit: cmd/sqlgen/gen: TestGenerate_GraphQLQueryLimits/the limits file is regenerated with new values on a second run` | all | |
@@ -770,18 +771,18 @@ The `api-generation` matrix rows for §26.4; its other rows are in [`api-schema.
 |---|---|---|---|---|
 | api.limits.no-auth | The generated API has no built-in authentication or authorization | `golden: graphql` | all | |
 | api.limits.no-row-security | The generated layer does not enforce row-level security beyond tenancy | | all | |
-| api.limits.all-fields-returned | The generated resolvers return every field the schema exposes, with no field-level security | | all | |
+| api.limits.all-fields-returned | The generated resolvers return every field the schema exposes, with no field-level security | `example: graphql: TestGeneratedResolvers_ReturnEveryExposedField` | all | |
 | api.limits.no-subscription-type | The generated schema has no `Subscription` type (only `Query` and `Mutation`) | `golden: graphql` | all | |
 | api.limits.no-websocket | `graph/server.go` has no WebSocket transport | `golden: graphql` | all | |
 | api.limits.no-subscription-resolver | No subscription resolver is generated | `golden: graphql` | all | |
 | api.limits.no-relationship-field-args | Relationship fields carry no filter / sort arguments | `unit: cmd/sqlgen/gen: TestAPIObjectType_APIDisabledTargetDropped` | all | |
-| api.limits.no-aggregate-predicates | No aggregate relationship predicates (`count: { gt: 3 }`) are generated | | all | |
+| api.limits.no-aggregate-predicates | No aggregate relationship predicates (`count: { gt: 3 }`) are generated | `unit: cmd/sqlgen/gen: TestAPIRelationshipFilter_NoAggregatePredicates` | all | |
 | api.limits.opaque-array-no-filter | An array column whose element binds to a custom scalar gets no `<Elem>SliceComparator` and no `<T>Filter` field | `unit: cmd/sqlgen/gen: TestSliceComparator_customScalarElementKeepsFallback` | postgres | |
 | api.limits.enum-like-no-filter | A column whose Go type is unqualified PascalCase but not a schema enum gets no `<Enum>Comparator` and no `<T>Filter` field | `unit: cmd/sqlgen/gen: TestEnumComparator_nonSchemaEnumDropsFilterField` | all | |
 | api.limits.no-projection-no-translator | Such a column is absent from the filter translator | `unit: cmd/sqlgen/gen: TestSliceComparator_customScalarElementKeepsFallback`; `unit: cmd/sqlgen/gen: TestEnumComparator_nonSchemaEnumDropsFilterField` | all | |
 | api.limits.no-projection-keeps-object-field | Such a column keeps its object-type field | `unit: cmd/sqlgen/gen: TestEnumComparator_nonSchemaEnumDropsFilterField` | all | |
 | api.limits.no-projection-keeps-sort | Such a column keeps its sort-enum value | `unit: cmd/sqlgen/gen: TestEnumComparator_nonSchemaEnumDropsFilterField` | all | |
-| api.limits.no-projection-keeps-go-filter | Such a column keeps its member on the Go `<T>Filter` struct | | all | |
+| api.limits.no-projection-keeps-go-filter | Such a column keeps its member on the Go `<T>Filter` struct | `unit: cmd/sqlgen/gen: TestFilterProjection_DroppedColumnKeepsGoFilterMember` | all | |
 | api.limits.slice-family-spec-elements | The slice comparator family is emitted only for the spec built-ins (`String`, `ID`, `Int`, `Float`, `Boolean`) and bound GraphQL enums | `unit: cmd/sqlgen/gen: TestSliceComparator_oneInputPerElementType`; `unit: cmd/sqlgen/gen: TestSliceComparator_customScalarElementKeepsFallback` | postgres | |
 | api.limits.nested-no-delete-verb | Nested mutations have no `delete` verb | `example: graphql: TestGraphQLNested_VerbsAreTheSchemaNotARuntimeCheck` | all | |
 | api.limits.nested-no-belongs-to | Belongs-to nesting is not generated | `unit: cmd/sqlgen/gen: TestNestedEligibility_ListedShapeFailureIsReported/belongs-to edge` | all | |
@@ -793,7 +794,7 @@ The `api-generation` matrix rows for §26.4; its other rows are in [`api-schema.
 | api.limits.nested-no-m2m-discriminator | A discriminated M2M edge is not write-eligible | `unit: cmd/sqlgen/gen: TestNestedEligibility_M2MDiscriminatorIsNotWriteEligible` | all | |
 | api.limits.nested-no-payload-junction | An M2M junction carrying any payload column is not write-eligible | `unit: cmd/sqlgen/gen: TestNestedEligibility_JunctionPayloadColumnIsIneligible` | all | |
 | api.limits.self-connect-depth-zero | A nested `connect` on a self-referential edge naming the parent's own id is refused | `example: graphql: TestCreateWithRelated_SelfConnectRefused`; `example: graphql: TestUpdateWithRelated_SelfReferenceIsRefused` | all | |
-| api.limits.self-connect-no-ring | Connecting a row to one of its own ancestors is not detected | | all | |
+| api.limits.self-connect-no-ring | Connecting a row to one of its own ancestors is not detected | `example: graphql: TestUpdateWithRelated_AncestorRingNotDetected` | all | |
 | api.limits.upsert-nested-conflict-target | `upsert<Table>WithRelated` takes a `conflictTarget` argument | `unit: cmd/sqlgen/gen: TestAPIFlatUpsert_RequiresThePKConflictTarget/schema-declared key`; `example: graphql: TestGraphQLNested_UpsertTakesAConflictTarget` | all | |
 | api.limits.upsert-flat-pk-only | `upsert<Table>` is PK-only, with no `conflictTarget` argument | `unit: cmd/sqlgen/gen: TestAPIFlatUpsert_RequiresThePKConflictTarget/schema-declared key` | all | |
 | api.limits.struct-name-required | A table or view whose root field gqlgen spells differently from sqlgen fails generation with an error naming the entity and its `struct_name` key | `unit: cmd/sqlgen/wrapper: TestUnboundRootFieldsError_namesEntityAndRemedy`; `unit: cmd/sqlgen/wrapper: TestGen_failsOnManagedRootStub` | all | |
