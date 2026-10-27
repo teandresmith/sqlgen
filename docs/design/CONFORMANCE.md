@@ -1173,7 +1173,7 @@ database versions it ran against.
      method-order test that guarded nothing. The CLI slice's lesson held: an agent's "this test
      covers X" was wrong for 1 row in 11 here, down from 1 in 6, because the checkers ran before
      any test was written.
-   - **Report.** `make conformance` at `<commit>`: 3588 rows, 3456 pass, 0 fail, 0 skip, 0 not
+   - **Report.** `make conformance` at `446a9834`: 3588 rows, 3456 pass, 0 fail, 0 skip, 0 not
      run, 132 untested (51 in `cli/api-http.md`, 27 in `cli/gen.md`, 16 in `cli/manifest.md`,
      11 in `cli/api.md`, 10 in `cli/mcp.md`, 7 each in `cli/config.md` and `cli/gotype.md`, 2 in
      `client.md`, 1 in `cli/commands.md`).
