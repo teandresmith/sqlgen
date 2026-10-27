@@ -13,7 +13,8 @@ in [`docs/design/CONFORMANCE.md`](../design/CONFORMANCE.md) §3 and §5. `make r
 | [`cli/config.md`](cli/config.md) | CLI: `cmd/sqlgen/config` | unit |
 | [`cli/gen.md`](cli/gen.md) | CLI: `cmd/sqlgen/gen` | unit, golden |
 | [`cli/gotype.md`](cli/gotype.md) | CLI: `cmd/sqlgen/gotype` | unit |
-| [`cli/api.md`](cli/api.md) | CLI: API generation (§26); no package of its own, its rows claim `cmd/sqlgen/gen`, `cli` and example tests | unit, golden, example |
+| [`cli/api.md`](cli/api.md) | CLI: API generation (§26.5–§26.13 and the `api-generation` matrix); no package of its own, its rows claim `cmd/sqlgen/gen`, `cli`, `wrapper` and example tests | unit, golden, example |
+| [`cli/api-schema.md`](cli/api-schema.md) | CLI: API generation, GraphQL schema (§26–§26.4.1); no package of its own | unit, golden, example |
 | [`cli/commands.md`](cli/commands.md) | CLI: `cmd/sqlgen`, `cli`, `wrapper` | unit, integration, golden |
 | [`cli/manifest.md`](cli/manifest.md) | CLI: `cmd/sqlgen/manifest`, `mcp` | unit, integration |
 | [`client.md`](client.md) | The generated client | conformance, example |
@@ -309,9 +310,9 @@ another file also cites is still owned once.
 | §25.4 No Implicit Caching | client.md |
 | §26 API Generation | cli/api.md |
 | §26.1 Purpose | informative |
-| §26.2 Supported Protocols | cli/api.md |
-| §26.3 Configuration | cli/api.md |
-| §26.4 GraphQL Schema Generation | cli/api.md |
+| §26.2 Supported Protocols | cli/api-schema.md |
+| §26.3 Configuration | cli/api-schema.md |
+| §26.4 GraphQL Schema Generation | cli/api-schema.md |
 | §26.5 GraphQL Resolver Generation | cli/api.md |
 | §26.6 Query Complexity & Depth Limiting | cli/api.md |
 | §26.7 GraphQL Authorization | cli/api.md |

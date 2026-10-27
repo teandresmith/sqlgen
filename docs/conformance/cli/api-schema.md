@@ -1,0 +1,342 @@
+# CLI Requirements: API Generation — GraphQL Schema
+
+<!-- seeding: in-progress -->
+
+The GraphQL schema sections of API generation (§26–§26.4.1, and §16.4's GraphQL rows), emitted by `cmd/sqlgen/gen`, whose orphan check stays with [`gen.md`](gen.md), so this file lists no package of its own. The `api-generation` matrix and its rows for these sections are in [`api.md`](api.md).
+
+## §26 API Generation
+<!-- prd: 26 sha256: 1215aac3496aa546 -->
+
+| ID | Requirement | Tests | Applies to | Matrix cell |
+|---|---|---|---|---|
+| api.intro.resolvers-call-unified-client | Generated resolvers reach data through the unified client's entity accessors (`q.Client.<Entities>().<Method>(…)`) | `unit: cmd/sqlgen/gen: TestResolvers_CompositePK_EmitsCompositeSignatures`; `unit: cmd/sqlgen/gen: TestSeeds_DelegateToQM` | all | |
+| api.intro.no-own-db-access | The API layer adds no database access of its own: no generated graph-package file opens a connection, builds SQL or touches a `Querier` directly | | all | |
+| api.intro.inherits-cache | A GraphQL read goes through the client's cache unchanged (miss then hit on the same query) | `example: graphql: TestCache_BaselineHit` | all | |
+| api.intro.inherits-tenancy | A GraphQL read is tenant-scoped by the client underneath it, with no tenancy logic in the API layer | `example: graphql: TestTenancy_SameTenantFilter`; `example: graphql: TestViewTenancy_ListIsScoped` | all | |
+| api.intro.inherits-hooks | A GraphQL mutation runs the client's hooks unchanged | | all | |
+| api.intro.inherits-events | A GraphQL mutation publishes the client's events unchanged | | all | |
+
+## §26.2 Supported Protocols
+<!-- prd: 26.2 sha256: c52a5b8bdccdd28f -->
+
+| ID | Requirement | Tests | Applies to | Matrix cell |
+|---|---|---|---|---|
+| api.protocols.graphql-schema-files | With `api.graphql.enabled`, generation emits the GraphQL schema as `.graphqls` files (one `<stem>_gen.graphqls` per exposed entity plus `shared_gen.graphqls`) | `golden: graphql`; `unit: cmd/sqlgen/gen: TestCheckAPISchemaOrphans` | all | |
+| api.protocols.graphql-gqlgen-resolvers | With `api.graphql.enabled`, generation emits gqlgen resolver implementations (resolver helpers plus seed delegations gqlgen's resolvergen keeps) | `unit: cmd/sqlgen/gen: TestResolvers_QMShape_NoQueryResolverMethods`; `unit: cmd/sqlgen/gen: TestSeeds_DelegateToQM`; `golden: graphql` | all | |
+
+## §26.3 Configuration
+<!-- prd: 26.3 sha256: 7f99bc45f58863cb -->
+
+| ID | Requirement | Tests | Applies to | Matrix cell |
+|---|---|---|---|---|
+| api.config.graphql-disabled-emits-nothing | With `api.graphql.enabled` false, no GraphQL surface is generated (no context, no graph dir), even when `schema_dir` / `resolver_dir` are set | `unit: cmd/sqlgen/gen: TestBuildAPIContext_DisabledIsInert` | all | |
+| api.config.api-enabled-default-false | `api.enabled` defaults to `false` | | all | |
+| api.config.graphql-enabled-default-false | `api.graphql.enabled` defaults to `false` | | all | |
+| api.config.schema-dir-default | `api.graphql.schema_dir` defaults to `<output.dir>/graph`, root-relative | `unit: cmd/sqlgen/config: TestLoadConfig_GraphDirsRootRelativeDefault/unset defaults to <output.dir>/graph`; `unit: cmd/sqlgen/config: TestLoadConfig_GraphDirsRootRelativeDefault/unset with nested output.dir`; `unit: cmd/sqlgen/config: TestLoadConfig_GraphDirsRootRelativeDefault/unset with root output.dir` | all | |
+| api.config.schema-dir-explicit | An explicit `api.graphql.schema_dir` is taken verbatim as a root-relative path | `unit: cmd/sqlgen/config: TestLoadConfig_GraphDirsRootRelativeDefault/explicit top-level taken verbatim`; `unit: cmd/sqlgen/config: TestLoadConfig_GraphDirsRootRelativeDefault/explicit nested taken verbatim` | all | |
+| api.config.resolver-dir-default | `api.graphql.resolver_dir` defaults to `<output.dir>/graph` with the same resolution as `schema_dir` | `unit: cmd/sqlgen/config: TestLoadConfig_GraphDirsRootRelativeDefault/unset defaults to <output.dir>/graph`; `unit: cmd/sqlgen/config: TestLoadConfig_GraphDirsRootRelativeDefault/unset with nested output.dir` | all | |
+| api.config.package-derived | `api.graphql.package` defaults to a name derived from `resolver_dir` | | all | |
+| api.config.max-depth-default | `api.graphql.max_depth` defaults to `5` | `unit: cmd/sqlgen/gen: TestGenerate_GraphQLQueryLimits/defaults are depth 5 and complexity 1000 when unset` | all | |
+| api.config.max-complexity-default | `api.graphql.max_complexity` defaults to `1000` | `unit: cmd/sqlgen/gen: TestGenerate_GraphQLQueryLimits/defaults are depth 5 and complexity 1000 when unset` | all | |
+| api.config.field-casing-default | `api.graphql.field_casing` defaults to `camel_case` | | all | |
+| api.config.field-casing-invalid | A `field_casing` other than `camel_case` / `snake_case` is a config error naming `field_casing` | `unit: cmd/sqlgen/gen: TestValidateAPIConfig_rejectsBadFieldCasing`; `unit: cmd/sqlgen/config: TestValidatePreParse_APIGraphQLDisabledIsInert/enabled rejects invalid field_casing`; `unit: cmd/sqlgen/config: TestSchemaV1_rejectsKnownMistakes/invalid graphql field casing` | all | |
+| api.config.gqlgen-config-default | `api.graphql.gqlgen_config` defaults to `./gqlgen.yml` | | all | |
+| api.config.gqlgen-config-not-modified | The wrapper merges sqlgen entries into a temp config; the on-disk `gqlgen.yml` is never modified | `unit: cmd/sqlgen/wrapper: TestGen_TempFileCleanupOnSuccess`; `unit: cmd/sqlgen/wrapper: TestMerge_LayeredOnExistingMergesSqlgenEntries` | all | |
+| api.config.gqlgen-bin-default | `api.graphql.gqlgen_bin` defaults to `go run github.com/99designs/gqlgen` | | all | |
+| api.config.scalars-registry-go-type-rejected | An `api.graphql.scalars` entry whose `go_type` the built-in registry already binds is a config error | `unit: cmd/sqlgen/config: TestValidatePreParse_ScalarBinding/go_type owned by the built-in registry`; `unit: cmd/sqlgen/config: TestValidatePreParse_ScalarBinding/go_type owned by the registry via a Null wrapper`; `unit: cmd/sqlgen/config: TestValidatePreParse_ScalarBinding/go_type owned by the registry as a stdlib type`; `unit: cmd/sqlgen/config: TestValidatePreParse_ScalarBinding/go_type owned by the registry through a v2+ module path` | all | |
+| api.config.scalars-registry-name-rejected | An `api.graphql.scalars` key naming a scalar the registry already uses is a config error | `unit: cmd/sqlgen/config: TestValidatePreParse_ScalarBinding/scalar name owned by the built-in registry`; `unit: cmd/sqlgen/config: TestValidatePreParse_ScalarBinding/scalar name owned by a Null wrapper` | all | |
+| api.config.scalars-invalid-name | An `api.graphql.scalars` key that is not a valid GraphQL name is a config error | `unit: cmd/sqlgen/config: TestValidatePreParse_ScalarBinding/scalar name that is not a GraphQL identifier` | all | |
+| api.config.scalars-shared-go-type | Two `api.graphql.scalars` entries sharing one `go_type` are a config error | `unit: cmd/sqlgen/config: TestValidatePreParse_ScalarGoTypeUniqueness/two names on one go type`; `unit: cmd/sqlgen/config: TestValidatePreParse_ScalarGoTypeUniqueness/collision reported against the sorted-later name regardless of map order` | all | |
+| api.config.scalars-marshaling-required | Each scalar entry declares `marshaling: builtin \| method \| external`; a missing or unrecognized value is a config error | `unit: cmd/sqlgen/config: TestValidatePreParse_ScalarBinding/missing marshaling`; `unit: cmd/sqlgen/config: TestValidatePreParse_ScalarBinding/unrecognized marshaling`; `unit: cmd/sqlgen/gen: TestValidateAPIConfig_rejectsScalarWithoutMarshaling` | all | |
+| api.config.scalars-no-marshaler-body | sqlgen emits no marshaler body for an `api.graphql.scalars` entry | `unit: cmd/sqlgen/gen: TestConsumerScalars_declaredInSchemaButNotEmitted` | all | |
+| api.config.scalars-wires-declaration | sqlgen emits the `scalar` declaration for a consumer scalar a column resolves to | `unit: cmd/sqlgen/gen: TestConsumerScalars_declaredInSchemaButNotEmitted`; `unit: cmd/sqlgen/gen: TestConsumerScalars_reachTheSchemaFieldType` | all | |
+| api.config.scalars-wires-binding | sqlgen merges the gqlgen `models:` binding for a consumer scalar | `unit: cmd/sqlgen/cli: TestBuildMergeInput_ConsumerScalarBindings` | all | |
+| api.config.scalars-merged-only-when-used | Only consumer scalars some column resolves to are merged into the gqlgen config | `unit: cmd/sqlgen/cli: TestBuildMergeInput_UndeclaredScalarGetsNoEntry` | all | |
+| api.config.scalars-consumer-wins | A consumer-defined `gqlgen.yml` entry wins over sqlgen's on a key collision | `unit: cmd/sqlgen/wrapper: TestMerge_ConsumerWinsOnScalarCollision`; `unit: cmd/sqlgen/wrapper: TestMerge_ConsumerWinsOnModelCollision` | all | |
+| api.config.scalar-go-type-required | `go_type` is required unless `marshaling` is `builtin` | `unit: cmd/sqlgen/config: TestValidatePreParse_ScalarBinding/method without go_type`; `unit: cmd/sqlgen/config: TestValidatePreParse_ScalarBinding/builtin needs no go_type` | all | |
+| api.config.scalar-go-type-split-last-dot | `go_type` splits into import path and type name at the last `.`, so a package path containing dots resolves | `unit: cmd/sqlgen/config: TestSplitGoType/package path containing dots still splits at the last one`; `unit: cmd/sqlgen/config: TestSplitGoType/stdlib nested path`; `unit: cmd/sqlgen/config: TestSplitGoType/module path` | all | |
+| api.config.marshaler-package-required-external | `marshaler_package` is required when `marshaling` is `external` | `unit: cmd/sqlgen/config: TestValidatePreParse_ScalarBinding/external without marshaler_package` | all | |
+| api.config.marshaler-package-rejected-otherwise | `marshaler_package` is rejected for `method` and `builtin` | `unit: cmd/sqlgen/config: TestValidatePreParse_ScalarBinding/marshaler_package on method`; `unit: cmd/sqlgen/config: TestValidatePreParse_ScalarBinding/marshaler_package on builtin` | all | |
+| api.config.marshaler-package-anchor | An `external` scalar's `models:` entry is the discovery anchor `<marshaler_package>.<Scalar>` | `unit: cmd/sqlgen/cli: TestBuildMergeInput_ConsumerScalarBindings/external anchors on marshaler_package`; `unit: cmd/sqlgen/gen: TestConsumerScalars_carryTheMarshalerPackage/external carries the package` | all | |
+| api.config.wrapper-validates-merged | The wrapper validates that the merged gqlgen config is well formed before invoking gqlgen | | all | |
+
+### GraphQL Field Casing
+
+| ID | Requirement | Tests | Applies to | Matrix cell |
+|---|---|---|---|---|
+| api.casing.camel-fields | Under `camel_case`, emitted field names are camelCase | `unit: cmd/sqlgen/gen: TestGraphQLSchema_respectsFieldCasing/camel_case` | all | |
+| api.casing.snake-fields | Under `snake_case`, emitted field names keep the SQL column spelling | `unit: cmd/sqlgen/gen: TestGraphQLSchema_respectsFieldCasing/snake_case` | all | |
+| api.casing.type-names-pascal | Type names are PascalCase under both casings | | all | |
+| api.casing.root-names-camel | Query and Mutation root field names are camelCase under both casings | | all | |
+| api.casing.enum-values-screaming | Enum values are SCREAMING_SNAKE_CASE under both casings | `unit: cmd/sqlgen/gen: TestGraphQLSchema_digitLeadingColumns/camel_case`; `unit: cmd/sqlgen/gen: TestGraphQLSchema_digitLeadingColumns/snake_case` | all | |
+| api.casing.enum-values-digit-guard | An enum value derived from a digit-leading column name takes §8.5's `col_` guard (`COL_2010_REVENUE`) | `unit: cmd/sqlgen/gen: TestGraphQLSchema_digitLeadingColumns/camel_case`; `unit: cmd/sqlgen/gen: TestGraphQLSchema_digitLeadingColumns/snake_case`; `unit: cmd/sqlgen/gen: TestSortProjection_digitLeadingColumn` | all | |
+| api.casing.argument-names | Argument names follow `field_casing` (`productId` / `product_id`) | | all | |
+| api.casing.walker-matches | The generated `fieldOptionsFromCollected` walkers match the configured casing | | all | |
+
+## §26.4 GraphQL Schema Generation
+<!-- prd: 26.4 sha256: d1de26a34b42c387 -->
+
+| ID | Requirement | Tests | Applies to | Matrix cell |
+|---|---|---|---|---|
+| api.map.column-field | Each API-readable column is a field on the object type | `unit: cmd/sqlgen/gen: TestGraphQLSchema_emitsExpectedTypesPerTable` | all | |
+| api.map.not-null-bang | A `NOT NULL` column's field is `Type!` | `unit: cmd/sqlgen/gen: TestGraphQLSchema_emitsExpectedTypesPerTable` | all | |
+| api.map.nullable-no-bang | A nullable column's field is `Type` | `unit: cmd/sqlgen/gen: TestGraphQLSchema_emitsExpectedTypesPerTable`; `unit: cmd/sqlgen/gen: TestMapColumnToGraphQL_NullVariantSkipsBangSuffix` | all | |
+| api.map.enum-type | A schema enum type is a GraphQL enum | `unit: cmd/sqlgen/gen: TestEnumComparator_schemaEmission`; `golden: graphql` | all | |
+| api.map.enum-values-screaming | A GraphQL enum's values are SCREAMING_SNAKE_CASE | `golden: graphql` | all | |
+| api.map.enum-array | A PostgreSQL enum array column (Go `<Enum>Slice`) is `[<Enum>!]!` | `golden: graphql` | postgres | |
+| api.map.mysql-set | A MySQL SET column (Go `<Table><Column>Set`) is `[<Table><Column>SetValue!]!`, a nullable SET dropping only the outer `!` | `unit: cmd/sqlgen/gen: TestScalarBinding_setColumnProjectsEnumList` | mysql | |
+| api.map.mysql-set-filter | A MySQL SET column filters through `StringComparator` | `unit: cmd/sqlgen/gen: TestEnumComparator_setColumnKeepsStringComparator` | mysql | |
+| api.map.domain-type | A column of a domain type takes its underlying scalar (`email_address` → `String`) | | postgres | |
+| api.map.to-one-nullable-whatever-fk | An O2O / M2O relationship field is a nullable `Type`, also over a NOT NULL FK | `unit: cmd/sqlgen/gen: TestMapRelationshipToGraphQL_NoGoTypeSniff/o2o nullable even when FK column is non-null`; `golden: graphql` | all | |
+| api.map.to-one-nullable-fk | An O2O / M2O relationship over a nullable FK is `Type` | `unit: cmd/sqlgen/gen: TestMapRelationshipToGraphQL_NoGoTypeSniff/o2o nullable regardless of bare GoType` | all | |
+| api.map.o2m-list | An O2M relationship is `[Type!]!` with no pagination arguments | `unit: cmd/sqlgen/gen: TestMapRelationshipToGraphQL_NoGoTypeSniff/o2m ignores bare GoType`; `golden: graphql` | all | |
+| api.map.m2m-list | An M2M relationship is `[Type!]!` | `unit: cmd/sqlgen/gen: TestMapRelationshipToGraphQL_NoGoTypeSniff/m2m ignores pointer GoType`; `unit: cmd/sqlgen/gen: TestAPIObjectType_APIDisabledTargetDropped` | all | |
+| api.map.pk-uuid | A PK resolving to `uuid.UUID` is `UUID!` | `unit: cmd/sqlgen/gen: TestGraphQLSchema_PKByGoType/uuid_default_uuid_scalar` | all | |
+| api.map.pk-string | A PK resolving to Go `string` is `ID!` | `unit: cmd/sqlgen/gen: TestGraphQLSchema_PKByGoType/text_string_pk` | all | |
+| api.map.pk-int | A PK resolving to Go `int` / `int64` (any integer width) is `Int!` | `unit: cmd/sqlgen/gen: TestGraphQLSchema_PKByGoType/bigint_int64_pk`; `unit: cmd/sqlgen/gen: TestGraphQLSchema_PKByGoType/integer_int32_pk` | all | |
+| api.map.datetime | A `types.DateTime` column is `DateTime!` | `unit: cmd/sqlgen/gen: TestMapColumnToGraphQL_NullVariantSkipsBangSuffix`; `example: graphql: TestScalars/DateTime` | all | |
+| api.map.null-datetime | A `types.NullDateTime` column is `NullDateTime` | `unit: cmd/sqlgen/gen: TestMapColumnToGraphQL_NullVariantSkipsBangSuffix`; `example: graphql: TestScalars/NullDateTime` | all | |
+| api.map.time | A `time.Time` column is the gqlgen-bundled `Time` | `unit: cmd/sqlgen/gen: TestGraphQLSchema_emitsExpectedTypesPerTable`; `example: graphql: TestScalars/Time` | all | |
+| api.map.uuid-non-pk | A non-PK `uuid.UUID` column is `UUID!` | `unit: cmd/sqlgen/gen: TestConsumerScalars_registryStillWins`; `golden: graphql` | all | |
+| api.map.uuid-pointer | A non-PK `*uuid.UUID` column is a nullable `UUID` with no paired Null scalar | `golden: graphql`; `example: graphql: TestScalars/NullableUUID` | all | |
+| api.map.null-uuid | A `uuid.NullUUID` column is `NullUUID` | `unit: cmd/sqlgen/gen: TestMapColumnToGraphQL_NullVariantSkipsBangSuffix`; `golden: graphql_null_wrappers` | all | |
+| api.map.uuid-retyped-string | A uuid column retyped to Go `string` is `String` / `String!` by nullability | | all | |
+| api.map.decimal | A `decimal.Decimal` column is `Decimal!` | `unit: cmd/sqlgen/gen: TestMapColumnToGraphQL_NullVariantSkipsBangSuffix`; `example: graphql: TestScalars/Decimal` | all | |
+| api.map.null-decimal | A `decimal.NullDecimal` column is `NullDecimal` | `unit: cmd/sqlgen/gen: TestMapColumnToGraphQL_NullVariantSkipsBangSuffix`; `example: graphql: TestScalars/NullDecimal` | all | |
+| api.map.numeric-float | A `numeric` / `decimal` column on the default `float64` binding is `Float` / `Float!` | `unit: cmd/sqlgen/gen: TestGraphQLSchema_emitsExpectedTypesPerTable` | all | |
+| api.map.json | A `types.JSON` column is `JSON`, declared as `scalar JSON` on first use | `unit: cmd/sqlgen/gen: TestGraphQLSchema_emitsExpectedTypesPerTable`; `unit: cmd/sqlgen/gen: TestGraphQLSchema_dedupesScalarDeclarations`; `example: graphql: TestScalars/JSON_userMetadata` | all | |
+| api.map.json-raw-message | A column overridden to `json.RawMessage` binds the same `JSON` scalar through sqlgen-generated passthrough external marshalers | `unit: cmd/sqlgen/cli: TestBuildMergeInput_JSONRawMessageOverride` | all | |
+| api.map.bytes | A binary column (`[]byte`: `bytea`, `blob`, `binary`, `varbinary`, …) is `Bytes` | `unit: cmd/sqlgen/gen: TestInputTranslate_BinaryAndNetworkColumns`; `unit: cmd/sqlgen/gen: TestScalarBinding_everyBuiltInGoTypeResolves` | all | |
+| api.map.bytes-wire | `Bytes` travels as standard-encoding base64 and round-trips exactly | `example: graphql: TestBuiltInScalarProbes/shapeA_set` | all | |
+| api.map.duration | An `interval` (`time.Duration`) column is `Duration` | `unit: cmd/sqlgen/gen: TestInputTranslate_BinaryAndNetworkColumns` | all | |
+| api.map.duration-wire | `Duration` travels as a Go duration string (`"1h30m0s"`) | `example: graphql: TestBuiltInScalarProbes/shapeA_set` | all | |
+| api.map.ip | An `inet` (`net.IP`) column is `IP` | `unit: cmd/sqlgen/gen: TestInputTranslate_BinaryAndNetworkColumns` | postgres | |
+| api.map.ip-nil-empty | A nil `net.IP` marshals as `""`, never `"<nil>"` | | postgres | |
+| api.map.cidr | A `cidr` (`net.IPNet`) column is `CIDR`, parsed by `net.ParseCIDR` | `unit: cmd/sqlgen/gen: TestInputTranslate_BinaryAndNetworkColumns`; `example: graphql: TestBuiltInScalarProbes/shapeA_set` | postgres | |
+| api.map.macaddr | A `macaddr` (`net.HardwareAddr`) column is `MacAddr`, parsed by `net.ParseMAC` | `unit: cmd/sqlgen/gen: TestInputTranslate_BinaryAndNetworkColumns`; `example: graphql: TestBuiltInScalarProbes/shapeA_set` | postgres | |
+| api.map.sql-null-wrappers | Under `use_pointers: false` a nullable `sql.NullX` column is the paired `NullString` / `NullBool` / `NullInt16` / `NullInt32` / `NullInt64` / `NullFloat64` / `NullTime` | `unit: cmd/sqlgen/gen: TestInputTranslate_SQLNullWrappers`; `example: graphql: TestBuiltInScalarProbes/shapeB_set`; `example: graphql: TestBuiltInScalarProbes/shapeB_null` | all | |
+| api.map.operations-mask-mutations | An `api.operations` mask (e.g. `read_only`) excludes the Mutation fields, per table | `unit: cmd/sqlgen/gen: TestGraphQLSchema_excludesDisabledOperations/api.operations: read_only excludes mutations`; `unit: cmd/sqlgen/gen: TestOperationsPreset_ReadOnly` | all | |
+| api.map.operations-mask-global | An `api.operations` mask applies globally as well as per table | `unit: cmd/sqlgen/gen: TestAPIOperationsMask_GlobalAndPresetAndOverride` | all | |
+| api.map.api-disabled-whole-type | `api.enabled: false` on a table excludes its whole type: object type, envelopes, inputs, queries and mutations | `unit: cmd/sqlgen/gen: TestApiEnabledFalseExcludesType`; `unit: cmd/sqlgen/gen: TestGraphQLSchema_excludesDisabledOperations/api.enabled false on table` | all | |
+| api.create-input.required-mirrors-go | A required Go `Create<T>Input` field is `Type!` in the GraphQL create input | `unit: cmd/sqlgen/gen: TestGraphQLCreateInput_DefaultedColumnIsOptional` | all | |
+| api.create-input.omittable-optional | An omittable Go `Create<T>Input` field (a NOT NULL column with a default) is optional in the GraphQL create input | `unit: cmd/sqlgen/gen: TestGraphQLCreateInput_DefaultedColumnIsOptional`; `example: graphql: TestCreateInputDefaults_OmittedDefaultedColumnTakesTheDefault` | all | |
+| api.create-input.supplied-kept | A supplied value for a defaulted column is written | `example: graphql: TestCreateInputDefaults_SuppliedDefaultedColumnKeepsItsValue` | all | |
+| api.update-input.all-optional | Every `Update<T>Input` field is optional, mirroring the all-omittable Go `Update<T>Input` | `golden: graphql` | all | |
+| api.relexpose.object-field-hidden-table | A relationship whose target table is `api.enabled: false` has no field on the parent's object type | `unit: cmd/sqlgen/gen: TestAPIObjectType_APIDisabledTargetDropped`; `example: graphql: TestAPIHiddenTarget_SchemaNamesItNowhere` | all | |
+| api.relexpose.object-field-hidden-view | A relationship whose target view is `api.enabled: false` has no field; an exposed view target keeps it | `unit: cmd/sqlgen/gen: TestAPIObjectType_APIDisabledViewTargetDropped` | all | |
+| api.relexpose.object-field-unreadable-table | A relationship whose target table has every column dropped by §32.2 has no field on the parent's object type | | all | |
+| api.relexpose.walker-case | A hidden target's relationship has no walker case | `unit: cmd/sqlgen/gen: TestAPIObjectType_APIDisabledTargetDropped` | all | |
+| api.relexpose.filter-member | A hidden or unreadable target's relationship has no filter member | `unit: cmd/sqlgen/gen: TestAPIFilterRelationships_APIDisabledTargetDropped`; `unit: cmd/sqlgen/gen: TestAPIFilterRelationships_UnreadableTargetDropped` | all | |
+| api.relexpose.nested-member | A hidden target's relationship has no nested-mutation member (E7) | `unit: cmd/sqlgen/gen: TestAPINested_HiddenTargetGetsNoMember`; `example: graphql: TestAPIHiddenTarget_SchemaNamesItNowhere` | all | |
+| api.relexpose.drops-silently | Dropping a hidden target's relationship from the API is silent: generation succeeds with no error | `unit: cmd/sqlgen/gen: TestAPIObjectType_APIDisabledTargetDropped`; `unit: cmd/sqlgen/gen: TestAPIFilterRelationships_APIDisabledTargetDropped` | all | |
+| api.relexpose.go-client-keeps-edge | The Go client keeps an edge whose target is hidden from the API | `unit: cmd/sqlgen/gen: TestAPIObjectType_APIDisabledTargetDropped`; `example: graphql: TestAPIHiddenTarget_GoClientKeepsTheEdge` | all | |
+| api.example.connection-no-sort-arg | The connection query takes `filter, first, after, last, before` and no `sort` argument | `golden: graphql` | all | |
+| api.example.list-sort-arg | The offset list query takes `filter, sort: [<T>Sort!], limit, offset` and returns `<T>ListResult!` | `golden: graphql`; `example: graphql: TestCuratedSurface_User/List` | all | |
+| api.example.get-nullable | The by-PK query returns a nullable object (null when the row is missing) | `golden: graphql`; `example: graphql: TestCuratedSurface_User/GetByPK` | all | |
+| api.example.no-count-query | No separate `<t>Count` query is generated; `totalCount` lives on the envelopes | `unit: cmd/sqlgen/gen: TestResolvers_CuratedSurface_NoExcludedMethods` | all | |
+| api.example.shared-fixed-types | The shared schema declares `PageInfo` and `enum SortDirection { ASC DESC }` once for the project | `golden: graphql` | all | |
+| api.example.page-info-shape | `PageInfo` carries `hasNextPage`, `hasPreviousPage`, `startCursor`, `endCursor` | `example: graphql: TestResponseShape_PageInfo` | all | |
+| api.example.no-include-deleted | No `<T>Filter` carries an `includeDeleted` flag; passing any soft-delete comparator includes deleted rows | `unit: cmd/sqlgen/gen: TestFilterTranslator_DeletedAtIsRegularFilterField` | all | |
+| api.example.ops-follow-client | Which queries and mutations a table gets is decided by the client methods the schema gives it, narrowed by `api.operations` | `unit: cmd/sqlgen/gen: TestAPIOperationsMask_CannotExceedClient`; `unit: cmd/sqlgen/gen: TestAPIOperationsMask_PerTable` | all | |
+
+### PK columns in the create input
+
+| ID | Requirement | Tests | Applies to | Matrix cell |
+|---|---|---|---|---|
+| api.create-pk.db-strategy-excluded | A `db`-strategy PK (serial / auto-increment / DB default) is not in `Create<T>Input` | `golden: graphql` | all | |
+| api.create-pk.app-strategy-excluded | An `app`-strategy PK (server-minted UUID) is not in `Create<T>Input` | `unit: cmd/sqlgen/gen: TestAPIFieldInCreateInput_ByPKStrategy`; `unit: cmd/sqlgen/gen: TestGraphQLSchema_CompositePKCreateInput/single surrogate PK is unchanged`; `unit: cmd/sqlgen/gen: TestCreateInputTranslator_KeepsCallerPKs` | all | |
+| api.create-pk.caller-required | A `caller`-strategy PK is a required `Type!` field of `Create<T>Input` | `unit: cmd/sqlgen/gen: TestAPIFieldInCreateInput_ByPKStrategy`; `unit: cmd/sqlgen/gen: TestGraphQLSchema_CompositePKCreateInput/junction with a payload column` | all | |
+| api.create-pk.caller-translated | The input translator copies caller-strategy PK values through to the client | `unit: cmd/sqlgen/gen: TestCreateInputTranslator_KeepsCallerPKs`; `example: graphql: TestCompositePKCreate_AllPKJunction` | all | |
+| api.create-pk.composite-is-caller | Every column of a composite PK is in `Create<T>Input` | `unit: cmd/sqlgen/gen: TestAPIFieldInCreateInput_ByPKStrategy`; `unit: cmd/sqlgen/gen: TestGraphQLSchema_CompositePKCreateInput/all-PK junction` | all | |
+| api.create-pk.fk-pk-is-caller | A single-column PK that is also an FK is caller-strategy: a required field of `Create<T>Input` | `example: graphql: TestFKPrimaryKeyInputShape`; `example: graphql: TestFKPrimaryKeyCreate_NamesParentRow` | all | |
+| api.create-pk.go-input-wider | The Go `Create<T>Input` carries an `app`-strategy PK as an omittable field while the GraphQL input omits it | `golden: graphql` | all | |
+| api.update-pk.every-pk-excluded | `Update<T>Input` excludes every PK column regardless of strategy | `unit: cmd/sqlgen/gen: TestCreateInputTranslator_KeepsCallerPKs`; `unit: cmd/sqlgen/gen: TestGraphQLSchema_CompositePKCreateInput/junction with a payload column`; `example: graphql: TestFKPrimaryKeyInputShape` | all | |
+| api.all-pk.create-no-update | An all-PK table has a create input and no update input | `unit: cmd/sqlgen/gen: TestHasCreateInput_AllPKJunction/task_labels`; `unit: cmd/sqlgen/gen: TestGraphQLSchema_CompositePKCreateInput/all-PK junction` | all | |
+| api.all-pk.create-upsert-no-update | An all-PK table emits `create<T>` and `upsert<T>` and no `update<T>` / `update<T>s` | `unit: cmd/sqlgen/gen: TestGraphQLSchema_CompositePKCreateInput/all-PK junction` | all | |
+| api.all-pk.create-many | An all-PK table emits `create<T>s` | `golden: graphql` | all | |
+| api.empty-input.no-empty-block | `Create<T>Input` / `Update<T>Input` are emitted only when they hold at least one field | `unit: cmd/sqlgen/gen: TestHasCreateInput_AllPKJunction/task_labels`; `unit: cmd/sqlgen/gen: TestTenantColumn_OnlyWritableColumnSuppressesUpdateSurface` | all | |
+| api.empty-input.mutations-follow | A suppressed input takes its mutations with it | `unit: cmd/sqlgen/gen: TestGraphQLSchema_CompositePKCreateInput/all-PK junction`; `unit: cmd/sqlgen/gen: TestTenantColumn_OnlyWritableColumnSuppressesUpdateSurface` | all | |
+| api.empty-input.surrogate-only | A table whose only column is a server-generated surrogate PK gets no create surface | `unit: cmd/sqlgen/gen: TestAPISchema_allReadsMaskedOpensNoQueryBlock/key-only table with reads and deletes off` | all | |
+| api.empty-input.access-dropped | A table whose every writable column is dropped by a §32.2 role gets no create surface | | all | |
+| api.all-pk-upsert.do-nothing | An upsert on an all-PK table degrades to `ON CONFLICT (...) DO NOTHING`, an idempotent "ensure this link exists" | `example: graphql: TestCompositePKCreate_AllPKJunctionUpsertIsIdempotent` | postgres | |
+| api.all-pk-upsert.do-nothing-sqlite | On SQLite an upsert on an all-PK table degrades to `ON CONFLICT (...) DO NOTHING` | | sqlite | |
+| api.all-pk-upsert.mysql-self-assign | On MySQL an upsert on an all-PK table degrades to a no-op self-assignment | | mysql | |
+
+### Comparator input projection
+
+| ID | Requirement | Tests | Applies to | Matrix cell |
+|---|---|---|---|---|
+| api.cmp.every-family-projected | Every §11.2 comparator family has a GraphQL input carrying each non-`Custom` operator of the Go comparator, and nothing the Go side cannot receive | `unit: cmd/sqlgen/gen: TestComparatorFamilies_projectEveryGoOperator`; `unit: cmd/sqlgen/gen: TestComparatorFamilies_translatorCopiesEveryOperator` | all | |
+| api.cmp.custom-never-projected | The `Custom` field of every comparator is never projected | `unit: cmd/sqlgen/gen: TestComparatorFamilies_projectEveryGoOperator` | all | |
+| api.cmp.enum-monomorphized | An enum column's comparator is monomorphized per enum, its operands typed with the bound GraphQL enum | `unit: cmd/sqlgen/gen: TestEnumComparator_schemaEmission`; `example: graphql: TestEnumComparator_RejectsUnknownMember` | all | |
+| api.cmp.enum-operators | `<EnumName>Comparator` carries `eq neq in nin` | `unit: cmd/sqlgen/gen: TestEnumComparator_schemaEmission`; `unit: cmd/sqlgen/gen: TestEnumComparator_disambiguatesAgainstFixedFamilies`; `example: graphql: TestEnumComparator_NarrowsOverHTTP` | all | |
+| api.cmp.slice-monomorphized | A slice column's comparator is `<Elem>SliceComparator`, operands typed `[<Elem>!]` | `unit: cmd/sqlgen/gen: TestSliceComparator_oneInputPerElementType`; `unit: cmd/sqlgen/gen: TestEnumComparator_arrayColumnIsNotMonomorphized` | postgres | |
+| api.cmp.slice-operators | `<Elem>SliceComparator` carries `containsAny containsAll containedBy isEmpty`, `isEmpty` typed `Boolean` | `unit: cmd/sqlgen/gen: TestComparatorFamilies_projectEveryGoOperator/Slice/String`; `unit: cmd/sqlgen/gen: TestComparatorFamilies_projectEveryGoOperator/Slice/Int`; `unit: cmd/sqlgen/gen: TestSliceComparator_isEmptyIsAPredicate`; `example: graphql: TestSliceComparator_NarrowsOverHTTP` | postgres | |
+| api.cmp.opaque-monomorphized | An `Opaque[T]` column's comparator takes the scalar its own field declares (`Bytes`, `IP`, `CIDR`, `MacAddr`) | `unit: cmd/sqlgen/gen: TestOpaqueComparatorBindings_matchRegistryAndPredicate`; `unit: cmd/sqlgen/gen: TestFilterProjection_perGoType/bytea`; `unit: cmd/sqlgen/gen: TestFilterProjection_perGoType/inet`; `unit: cmd/sqlgen/gen: TestFilterProjection_perGoType/cidr`; `unit: cmd/sqlgen/gen: TestFilterProjection_perGoType/macaddr` | all | |
+| api.cmp.opaque-operators | The opaque comparators carry `eq neq gt gte lt lte in nin` and no text operator | `unit: cmd/sqlgen/gen: TestComparatorFamilies_projectEveryGoOperator/Opaque/Bytes`; `unit: cmd/sqlgen/gen: TestComparatorFamilies_projectEveryGoOperator/Opaque/IP`; `unit: cmd/sqlgen/gen: TestComparatorFamilies_projectEveryGoOperator/Opaque/CIDR`; `unit: cmd/sqlgen/gen: TestComparatorFamilies_projectEveryGoOperator/Opaque/MacAddr` | all | |
+| api.cmp.opaque-roundtrip | A value read back from an opaque field filters on that same value | `example: graphql: TestScalarProbeFilters/Bytes/eq_roundtrips_the_wire_form`; `example: graphql: TestScalarProbeFilters/IP/eq`; `example: graphql: TestScalarProbeFilters/CIDR/eq`; `example: graphql: TestScalarProbeFilters/MacAddr/eq` | postgres | |
+| api.cmp.numeric-collapses | Every Go numeric width projects onto one unmonomorphized `NumericComparator` with `Float` operands | `unit: cmd/sqlgen/gen: TestFilterProjection_perGoType/integer`; `unit: cmd/sqlgen/gen: TestFilterProjection_perGoType/nullable_bigint`; `unit: cmd/sqlgen/gen: TestFilterProjection_perGoType/numeric_float` | all | |
+| api.cmp.numeric-operators | `NumericComparator` carries `eq neq gt gte lt lte in nin between nbetween` | `unit: cmd/sqlgen/gen: TestComparatorFamilies_projectEveryGoOperator/Number` | all | |
+| api.cmp.duration-own-input | A `time.Duration` column takes its own `DurationComparator` with `Duration` operands | `unit: cmd/sqlgen/gen: TestComparatorFamilies_projectEveryGoOperator/Number/Duration`; `unit: cmd/sqlgen/gen: TestFilterProjection_perGoType/interval` | all | |
+| api.cmp.duration-range | `DurationComparator`'s `between` / `nbetween` name a `DurationRange` declared once alongside the family | `unit: cmd/sqlgen/gen: TestComparatorFamilies_projectEveryGoOperator/Number/Duration`; `example: graphql: TestScalarProbeFilters/Duration/between` | all | |
+| api.cmp.duration-interval-native | Duration filtering compares intervals, not text or nanosecond counts | `example: graphql: TestScalarProbeFilters/Duration/ordered_compares_as_interval`; `example: graphql: TestScalarProbeFilters/Duration/eq_is_not_string_equality` | postgres | |
+| api.cmp.string-operators | `StringComparator` carries `eq neq gt gte lt lte contains startsWith endsWith like nlike in nin` | `unit: cmd/sqlgen/gen: TestComparatorFamilies_projectEveryGoOperator/String` | all | |
+| api.cmp.id-operators | `IDComparator` carries `eq neq gt gte lt lte in nin` | `unit: cmd/sqlgen/gen: TestComparatorFamilies_projectEveryGoOperator/ID` | all | |
+| api.cmp.bool-operators | `BooleanComparator` carries `eq neq` | `unit: cmd/sqlgen/gen: TestComparatorFamilies_projectEveryGoOperator/Bool` | all | |
+| api.cmp.time-operators | `TimeComparator` carries `eq neq gt gte lt lte in nin between nbetween` with `Time` operands | `unit: cmd/sqlgen/gen: TestComparatorFamilies_projectEveryGoOperator/Time` | all | |
+| api.cmp.json-operators | `JSONComparator` carries `contains hasKey`, `contains` typed `JSON` | `unit: cmd/sqlgen/gen: TestComparatorFamilies_projectEveryGoOperator/JSON`; `unit: cmd/sqlgen/gen: TestJSONComparator_documentOperandsUseTheJSONScalar`; `example: graphql: TestJSONComparator_NarrowsOverHTTP` | postgres, mysql | |
+| api.cmp.jsonb-operators | `JSONBComparator` carries `hasKey hasAnyKey hasAllKeys contains containedBy pathExists` | `unit: cmd/sqlgen/gen: TestComparatorFamilies_projectEveryGoOperator/JSONB`; `example: graphql: TestJSONBComparator_NarrowsOverHTTP` | postgres | |
+| api.cmp.nullable-twin | A nullable column references `Nullable<X>Comparator`, a NOT NULL column `<X>Comparator`; the twin adds `isNull: Boolean` and nothing else | `unit: cmd/sqlgen/gen: TestComparatorFamilies_nullableTwin`; `unit: cmd/sqlgen/gen: TestEnumComparator_schemaEmission` | all | |
+| api.cmp.is-null-semantics | `isNull: true` selects `IS NULL`, `false` selects `IS NOT NULL` | `example: graphql: TestNullableComparator_IsNullOverHTTP`; `example: graphql: TestNullableEnumComparator_OverHTTP` | all | |
+| api.cmp.is-null-rejected-on-not-null | `isNull` on a NOT NULL column's comparator is a schema rejection | `example: graphql: TestFilterComparator_SchemaRejectsBadOperands` | all | |
+| api.cmp.emitted-only-when-referenced | A comparator input, base form and nullable twin alike, is emitted only when some column references it | `unit: cmd/sqlgen/gen: TestComparatorFamilies_emittedOnlyWhenReferenced`; `unit: cmd/sqlgen/gen: TestSharedSchema_comparatorFamiliesAreUsageDerived` | all | |
+| api.cmp.operand-scalars-declared | Every scalar an emitted comparator's operands name is declared | `unit: cmd/sqlgen/gen: TestComparatorFamilies_operandScalarsAreDeclared/time operands with no time.Time column`; `unit: cmd/sqlgen/gen: TestComparatorFamilies_operandScalarsAreDeclared/decimal operands with only a nullable decimal column`; `unit: cmd/sqlgen/gen: TestJSONComparator_documentOperandsUseTheJSONScalar` | all | |
+| api.cmp.range-declared-once | A range input (`NumericRange`, `TimeRange`) is declared exactly once alongside whichever form of its family is emitted | `unit: cmd/sqlgen/gen: TestSharedSchema_comparatorFamiliesAreUsageDerived` | all | |
+| api.cmp.enum-suffix-on-fixed-collision | An enum PascalCasing to `Duration`, `Time`, `Numeric`, `Decimal`, `IP` or `CIDR` takes `<EnumName>EnumComparator`, its twin `Nullable<EnumName>EnumComparator` and translator `translate<EnumName>EnumComparator` | `unit: cmd/sqlgen/gen: TestEnumComparator_disambiguatesAgainstFixedFamilies`; `unit: cmd/sqlgen/gen: TestEnumComparator_disambiguatedFamilyCoexistsWithShipped` | all | |
+| api.cmp.enum-suffix-only-on-collision | An enum whose comparator name collides with no fixed family keeps `<EnumName>Comparator` | `unit: cmd/sqlgen/gen: TestEnumComparator_uncollidedNameIsUnchanged` | all | |
+| api.cmp.enum-suffix-surviving-collision | A collision surviving disambiguation (`duration` beside `duration_enum`) is a generation error, not a second suffix | `unit: cmd/sqlgen/gen: TestGraphQLTypeNames_collisionsAreGenerationErrors/two enums on one comparator input` | all | |
+| api.cmp.dialect-gating-postgres-only | `JSONBComparator`, `<Elem>SliceComparator`, `IPComparator`, `CIDRComparator` and `MacAddrComparator` are emitted only under `input.dialect: postgres` | `unit: cmd/sqlgen/gen: TestJSONComparator_dialectGating`; `unit: cmd/sqlgen/gen: TestSliceComparator_dialectGating` | postgres | |
+| api.cmp.mysql-jsonb-fallback | On MySQL a `jsonb` column falls back to `JSONComparator` | `unit: cmd/sqlgen/gen: TestJSONComparator_dialectGating` | mysql | |
+| api.cmp.sqlite-json-non-filterable | On SQLite a `json` / `jsonb` column is filterable on neither side | `unit: cmd/sqlgen/gen: TestJSONComparator_dialectGating`; `unit: cmd/sqlgen/gen: TestJSONComparator_sqliteModelSideNonFilterable` | sqlite | |
+| api.cmp.bytes-all-dialects | `BytesComparator` is emitted on all dialects | | all | |
+| api.cmp.duration-ungated | `DurationComparator` is ungated: a `time.Duration` column reached through `type_map` / `overrides.types` gets it on any dialect | | all | |
+| api.cmp.sharing | One input type per (family, GraphQL operand type, nullability) across the project | `unit: cmd/sqlgen/gen: TestEnumComparator_oneInputPerEnum`; `unit: cmd/sqlgen/gen: TestSliceComparator_oneInputPerElementType` | all | |
+| api.cmp.decimal | A decimal column filters through `DecimalComparator` (`eq neq gt gte lt lte in nin`) with `Decimal` operands, numerically correct | `unit: cmd/sqlgen/gen: TestDecimalComparator_routing`; `unit: cmd/sqlgen/gen: TestDecimalComparator_narrowsOnlyTheStringFamily`; `example: graphql: TestDecimalComparator_OverHTTP` | all | |
+| api.cmp.non-filterable-json-array | A `json[]` / `jsonb[]` column has no field in the GraphQL filter input, no translator entry and no model filter field | `unit: cmd/sqlgen/gen: TestSliceJSONComparator_jsonArrayIsFilterableOnNeitherSide`; `unit: cmd/sqlgen/gen: TestFilterProjection_perGoType/jsonb_array` | postgres | |
+| api.cmp.non-filterable-lint | The completeness lint holds the model and GraphQL filter sides in agreement on non-filterable columns | `unit: cmd/sqlgen/gen: TestAPILintCompleteness_NonFilterableColumnPasses`; `unit: cmd/sqlgen/gen: TestAPIFilterCompleteness_FilterableColumnWithoutInputType` | all | |
+
+### GraphQL type name ownership
+
+| ID | Requirement | Tests | Applies to | Matrix cell |
+|---|---|---|---|---|
+| api.names.collision-error | Two claims on one GraphQL type name are a generation error naming both claimants, the contested name and the remedy | `unit: cmd/sqlgen/gen: TestGraphQLTypeNames_collisionsAreGenerationErrors/enum against a declared scalar`; `unit: cmd/sqlgen/gen: TestGraphQLTypeNames_collisionsAreGenerationErrors/table against a GraphQL-only structural type`; `unit: cmd/sqlgen/gen: TestGraphQLTypeNames_collisionsAreGenerationErrors/table against an emitted comparator input` | all | |
+| api.names.view-claims | A view claims its GraphQL type names and collides with tables and scalars like a table does | `unit: cmd/sqlgen/gen: TestBuildAPIContext_viewClaimsItsGraphQLTypeNames/view against table`; `unit: cmd/sqlgen/gen: TestBuildAPIContext_viewClaimsItsGraphQLTypeNames/view against a scalar in use offers the views: escape` | all | |
+| api.names.claim-set-matches-emission | Every name an entity declares is in the owned set, and every claimed name is emitted | `unit: cmd/sqlgen/gen: TestAPIViewSchema_emissionMatchesTheClaimSet`; `unit: cmd/sqlgen/gen: TestAPINestedSchema_EveryEmittedTypeIsClaimed` | all | |
+| api.names.spec-built-ins-owned | The spec built-ins (`String`, `Int`, `Float`, `Boolean`, `ID`) are owned names | `unit: cmd/sqlgen/gen: TestSliceComparator_specScalarNamesAreReserved` | all | |
+| api.names.remedy-enum-struct-name | `enums.<name>.struct_name` resolves a collision, moving the GraphQL enum, comparator input and translator type parameter together | `unit: cmd/sqlgen/gen: TestEnumStructNameOverride_resolvesCollision` | all | |
+| api.names.remedy-exclude-entity | Excluding the entity from the API resolves a collision | | all | |
+| api.names.graphql-only | The ownership check runs only when the GraphQL surface is generated | `unit: cmd/sqlgen/gen: TestBuildAPIContext_DisabledIsInert` | all | |
+
+### Views on the GraphQL surface
+
+| ID | Requirement | Tests | Applies to | Matrix cell |
+|---|---|---|---|---|
+| api.views.closed-set | An API-enabled view declares exactly its object type, three envelopes, `<V>Filter`, `<V>Sort` and `<V>SortField` | `unit: cmd/sqlgen/gen: TestAPIViewSchema_declaresExactlySevenNames`; `example: graphql: TestViewSchema_ServesTheReadSet/WorkspaceNoteSummary` | all | |
+| api.views.get-needs-pk | `Query.<view>(pk…)` is emitted only when the view has a resolved PK (`@pk`) | `unit: cmd/sqlgen/gen: TestBuildAPIContext_viewGatesByPKAndConnection/pk and cursor key present`; `unit: cmd/sqlgen/gen: TestBuildAPIContext_viewGatesByPKAndConnection/no @pk drops the by-pk query but keeps the connection` | all | |
+| api.views.matview-get-unique-index | A materialized view with a qualifying unique index gets `Query.<view>(pk…)` | `example: graphql: TestMaterializedView_ReadSurface/by pk` | postgres | |
+| api.views.connection-needs-cursor-keys | `Query.<views>(filter, first, after, last, before)` is emitted only when `cursor_keys` resolves for the view | `unit: cmd/sqlgen/gen: TestBuildAPIContext_viewGatesByPKAndConnection/cursor keys unresolvable drops the connection only`; `unit: cmd/sqlgen/gen: TestBuildAPIContext_viewGatesByPKAndConnection/pk and cursor key present` | all | |
+| api.views.list-always | `Query.<view>List(filter, sort, limit, offset)` is always emitted | `unit: cmd/sqlgen/gen: TestBuildAPIContext_viewGatesByPKAndConnection/neither leaves the list query as the whole surface` | all | |
+| api.views.walker-translators-bindings | A view gets a field-selection walker, filter / sort translators and envelope bindings | `unit: cmd/sqlgen/gen: TestViewWalker_ColumnsOnly`; `unit: cmd/sqlgen/gen: TestAPILintCompleteness_ViewRoutesThroughTheSameLints`; `unit: cmd/sqlgen/cli: TestBuildMergeInput_ViewBindings` | all | |
+| api.views.never-mutation | A view never gets a Mutation field | `unit: cmd/sqlgen/gen: TestAPIViewSchema_emitsReadOnlySurface`; `unit: cmd/sqlgen/gen: TestHasAnyMutation_isFalseForEveryViewShape`; `unit: cmd/sqlgen/gen: TestValidateAPIViewReadOnly`; `example: graphql: TestViewSchema_NoMutationsAndNoRefresh` | all | |
+| api.views.one-query | A view read is exactly one query | `example: graphql: TestViewQueryCount` | all | |
+| api.views.matview-identical | A materialized view emits the identical surface a regular view does | `unit: cmd/sqlgen/gen: TestAPIViewSchema_materializedIsIdentical`; `example: graphql: TestViewSchema_ServesTheReadSet/CategoryPriceTotal` | postgres | |
+| api.views.refresh-never-in-schema | `Refresh` / `RefreshConcurrently` appear nowhere in the schema | `unit: cmd/sqlgen/gen: TestAPIViewSchema_materializedIsIdentical`; `example: graphql: TestViewSchema_NoMutationsAndNoRefresh` | postgres | |
+| api.views.api-enabled-false | `views.<name>.api.enabled: false` excludes the view entirely | `unit: cmd/sqlgen/gen: TestBuildAPIContext_viewAPIEnabledFalseExcludesEntirely`; `unit: cmd/sqlgen/config: TestResolveViewAPIEnabled` | all | |
+| api.views.operations-subtractive | `views.<name>.api.operations` narrows the read keys (`get`, `paginate`, `connection`) subtractively | `unit: cmd/sqlgen/gen: TestBuildAPIContext_viewOperationsMaskIsSubtractive`; `unit: cmd/sqlgen/config: TestValidateViewAPIOperations_ReadOpsAccepted`; `unit: cmd/sqlgen/config: TestResolveViewAPIOperationsMask` | all | |
+| api.views.operations-mutation-error | Naming a mutation operation in `views.<name>.api.operations` is a config error | `unit: cmd/sqlgen/config: TestValidateViewAPIOperations_MutationRejected` | all | |
+| api.views.tenancy-inherited | A tenanted view's queries are tenant-scoped by the client underneath the resolver | `example: graphql: TestViewTenancy_ByPKIsScoped`; `example: graphql: TestViewTenancy_ConnectionIsScoped`; `example: graphql: TestViewTenancy_ListIsScoped` | all | |
+| api.views.unbound-column-rejected | A view column whose Go type has no GraphQL binding (`any`, `[]any` from an unrecognised aggregate) is a generation error | `unit: cmd/sqlgen/gen: TestBuildAPIContext_viewColumnWithNoGraphQLBindingIsRejected/unrecognised aggregate falls back to any`; `unit: cmd/sqlgen/gen: TestBuildAPIContext_viewColumnWithNoGraphQLBindingIsRejected/ARRAY_AGG falls back to a slice of any` | all | |
+
+## §26.4.1 Scalar Marshaling
+<!-- prd: 26.4.1 sha256: 0f2309cb8d34e450 -->
+
+| ID | Requirement | Tests | Applies to | Matrix cell |
+|---|---|---|---|---|
+| api.scalar.bundled-models-pin | For a gqlgen-bundled scalar sqlgen writes no marshaler body and merges a `models:` entry pinning it to the bundled marshaler for the declared `go_type` (`Int64` + `int64` → `graphql.Int64`, `Time` + `time.Time` → `graphql.Time`) | `unit: cmd/sqlgen/cli: TestBuildMergeInput_BuiltinScalarPinsTheBundledMarshaler/consumer-declared bundled scalar`; `unit: cmd/sqlgen/cli: TestBuildMergeInput_BuiltinScalarPinsTheBundledMarshaler/registry-owned bundled scalar`; `unit: cmd/sqlgen/gen: TestScalarBinding_bundledRegistryEntriesPinAGqlgenMarshaler` | all | |
+| api.scalar.bundled-int64-roundtrip | A column routed onto the bundled `Int64` scalar compiles and round-trips | `unit: cmd/sqlgen/gen: TestScalarBinding_int64ScalarSuppressesSelfConversion`; `example: graphql_null_wrappers: TestBundledScalarInt64RoundTrip`; `example: graphql_null_wrappers: TestBundledScalarInt64IsDeclaredInSchema` | all | |
+| api.scalar.builtin-name-must-be-bundled | `marshaling: builtin` on a scalar name gqlgen does not bundle is a config error | `unit: cmd/sqlgen/config: TestValidatePreParse_ScalarBinding/builtin naming a go_type on a scalar gqlgen does not bundle` | all | |
+| api.scalar.builtin-go-type-must-be-carried | `marshaling: builtin` with a `go_type` the bundled marshaler does not carry is a config error | `unit: cmd/sqlgen/config: TestValidatePreParse_ScalarBinding/builtin on a bundled scalar its marshaler cannot carry` | all | |
+| api.scalar.builtin-bare-legal | A `marshaling: builtin` entry with no `go_type` is legal | `unit: cmd/sqlgen/config: TestValidatePreParse_ScalarBinding/builtin needs no go_type`; `unit: cmd/sqlgen/config: TestValidatePreParse_ScalarGoTypeUniqueness/a go_type-less builtin entry never collides` | all | |
+| api.scalar.builtin-bare-not-warned | A bare `marshaling: builtin` entry is not reported by the unresolved-declaration warning | `unit: cmd/sqlgen/gen: TestUnusedScalarWarnings_skipsGoTypeLessBuiltin` | all | |
+| api.scalar.builtin-bare-inert | A bare `marshaling: builtin` entry reaches no column, declares no `scalar` and emits no `models:` entry | | all | |
+| api.scalar.method-binding | A `method` scalar binds its Go type in `models:` so gqlgen calls its `MarshalGQL` / `UnmarshalGQL` | `unit: cmd/sqlgen/cli: TestBuildMergeInput_ConsumerScalarBindings/method binds to the go type` | all | |
+| api.scalar.runtime-types-method | `types.JSON`, `types.DateTime` and `types.NullDateTime` implement `MarshalGQL(io.Writer)` / `UnmarshalGQL(any) error` | `unit: types: TestJSON_MarshalGQL_RoundTrip`; `unit: types: TestDateTime_MarshalGQL_RoundTrip`; `unit: types: TestNullDateTime_MarshalGQL`; `unit: types: TestNullDateTime_UnmarshalGQL` | all | |
+| api.scalar.runtime-stdlib-only | The runtime types' GraphQL methods use only stdlib; the runtime module imports no gqlgen | | all | |
+| api.scalar.json-any-shape | `types.JSON.UnmarshalGQL` accepts any JSON shape (object, array, scalar, null) | `unit: types: TestJSON_UnmarshalGQL_AcceptsAnyShape` | all | |
+| api.scalar.declared-once | A scalar a column resolves to is declared once (`scalar X`), however many columns use it | `unit: cmd/sqlgen/gen: TestGraphQLSchema_dedupesScalarDeclarations` | all | |
+| api.scalar.runtime-models-merged | The wrapper merges a `models:` entry binding each runtime-type scalar to the runtime type | `unit: cmd/sqlgen/cli: TestBuildMergeInput_ScalarBindings`; `unit: cmd/sqlgen/cli: TestBuildMergeInput_SignatureParity_RowStructsAndScalars` | all | |
+| api.scalar.runtime-no-external | No `MarshalX` / `UnmarshalX` is emitted into `scalars_gen.go` for the runtime method types | `unit: cmd/sqlgen/gen: TestScalarsGen_emitsCategory4Marshalers` | all | |
+| api.scalar.null-pair-separate | The non-null variant and the Null wrapper are two separate scalars (`UUID`/`NullUUID`, `Decimal`/`NullDecimal`, `DateTime`/`NullDateTime`) | `unit: cmd/sqlgen/gen: TestScalarsGen_RegistersNullPairs` | all | |
+| api.scalar.null-pair-binding | The non-null variant binds the bare Go type and the Null variant binds the wrapper struct | `unit: cmd/sqlgen/gen: TestScalarsGen_RegistersNullPairs`; `unit: cmd/sqlgen/gen: TestMapColumnToGraphQL_NullVariantSkipsBangSuffix` | all | |
+| api.scalar.spec-partner-only-null-registered | For the `database/sql.NullX` family only the Null member is registered; its non-null partner is a spec built-in or `Time` | `unit: cmd/sqlgen/gen: TestInputTranslate_SQLNullWrappers`; `unit: cmd/sqlgen/gen: TestScalarBinding_nullWrappersDelegateCoercion` | all | |
+| api.scalar.null-int-range-checked | Unmarshaling a `NullInt16` / `NullInt32` range-checks the value instead of truncating | `unit: cmd/sqlgen/gen: TestScalarBinding_nullWrappersDelegateCoercion` | all | |
+| api.scalar.schema-rule-non-null | A column resolving to a registry non-null entry is `<Scalar>!` | `unit: cmd/sqlgen/gen: TestMapColumnToGraphQL_NullVariantSkipsBangSuffix` | all | |
+| api.scalar.schema-rule-null-wrapper | A column resolving to a Null wrapper entry is `<NullScalar>` with no `!` | `unit: cmd/sqlgen/gen: TestMapColumnToGraphQL_NullVariantSkipsBangSuffix` | all | |
+| api.scalar.wire-format-invariant | Both members of a pair share one wire format: a primitive, or `null` for an invalid wrapper; `Valid` never appears on the wire | `example: graphql_null_wrappers: TestNullWrappersRoundTripValues`; `example: graphql_null_wrappers: TestNullWrappersMarshalNull`; `example: graphql: TestBuiltInScalarProbes/shapeB_set`; `example: graphql: TestBuiltInScalarProbes/shapeB_null` | all | |
+| api.scalar.null-unmarshal-collapse | The Null scalar's unmarshaler maps `nil` to `wrapper{Valid: false}` and a value to `wrapper{…, Valid: true}` | `example: graphql_null_wrappers: TestNullWrappersRoundTripValues`; `example: graphql: TestScalars/NullDecimal` | all | |
+| api.scalar.null-marshal-null | The Null scalar's marshaler is the one place `!Valid` becomes GraphQL `null` | `unit: cmd/sqlgen/gen: TestMarshalNullUUID_EmitsPairedFunctions`; `example: graphql_null_wrappers: TestNullWrappersMarshalNull` | all | |
+| api.scalar.uuid-external | `UUID` binds `uuid.UUID` through sqlgen-generated external marshalers, under every UUID integration | `unit: cmd/sqlgen/gen: TestScalarsGen_emitsCategory4Marshalers`; `unit: cmd/sqlgen/gen: TestScalarsTemplate_UUIDParseFuncAlwaysNamed` | all | |
+| api.scalar.uuid-parse-per-integration | The UUID unmarshaler uses the selected integration's string constructor (`uuid.Parse`; gofrs `uuid.FromString`) | `unit: cmd/sqlgen/gen: TestScalarsTemplate_UUIDParseFuncAlwaysNamed/stdlib`; `unit: cmd/sqlgen/gen: TestScalarsTemplate_UUIDParseFuncAlwaysNamed/google`; `unit: cmd/sqlgen/gen: TestScalarsTemplate_UUIDParseFuncAlwaysNamed/gofrs` | all | |
+| api.scalar.uuid-no-nil-shim | `MarshalUUID` writes the string unconditionally, with no `uuid.Nil` → `null` shim | `unit: cmd/sqlgen/gen: TestMarshalUUID_NoNilShim` | all | |
+| api.scalar.decimal-external | `Decimal` / `NullDecimal` bind through sqlgen-generated external marshalers (`String()` / `decimal.NewFromString`) | `unit: cmd/sqlgen/gen: TestScalarsGen_emitsCategory4Marshalers`; `unit: cmd/sqlgen/gen: TestMarshalNullUUID_EmitsPairedFunctions`; `example: graphql: TestScalars/Decimal` | all | |
+| api.scalar.null-uuid-wrapper-integrations-only | `NullUUID` is registered only under a wrapper-backed UUID integration (google, gofrs) | `unit: cmd/sqlgen/gen: TestMarshalNullUUID_OmittedWhenNotInScope`; `golden: graphql`; `golden: graphql_null_wrappers` | all | |
+| api.scalar.stdlib-nullable-uuid-pointer | Under the stdlib UUID integration a nullable uuid column is a nullable `UUID` field; `NullUUID` is never declared and no `MarshalNullUUID` is emitted | `golden: graphql` | all | |
+| api.scalar.nullable-uuid-filter | A nullable uuid column filters through `NullableIDComparator` under every integration | `golden: graphql`; `golden: graphql_null_wrappers` | all | |
+| api.scalar.ip-normalizes-ipv4 | `UnmarshalIP` collapses an IPv4 address to its 4-byte form and leaves a genuine IPv6 address untouched | `example: graphql: TestIPScalarNormalizesIPv4` | postgres | |
+| api.scalar.ip-normalize-filter | IPv4 normalization applies to `IPComparator` operands as well as writes | `example: graphql: TestScalarProbeFilters/IP/in_mixes_v4_and_v6` | postgres | |
+| api.scalar.width-generated-conversion | A generated input position for a narrower numeric width is bridged by a plain conversion in the input translator | `unit: cmd/sqlgen/gen: TestInputTranslate_Float32ColumnsAreCast`; `unit: cmd/sqlgen/gen: TestInputTranslate_NullableSizedIntGoesThroughALocal` | all | |
+| api.scalar.width-anchors | sqlgen appends marshaler anchors to the `Int` / `Float` `models:` lists for every width an exposed column resolves to, gqlgen's own entries restated first | `unit: cmd/sqlgen/cli: TestBuildMergeInput_NumericWidthAnchors`; `unit: cmd/sqlgen/cli: TestBuildMergeInput_UnsignedAnchors`; `unit: cmd/sqlgen/gen: TestScalarBinding_everyReadableGoTypeBindsOrAnchors`; `example: graphql: TestNumericWidths` | all | |
+| api.scalar.width-anchors-only-when-needed | No anchors are written when no narrowed width is in use, and the schema is unchanged either way | `unit: cmd/sqlgen/cli: TestBuildMergeInput_NoAnchorsLeavesSpecScalarsAlone` | all | |
+| api.scalar.width-overflow | An integer width anchored on a gqlgen marshaler inherits gqlgen's overflow errors | `example: graphql: TestNumericWidths_OverflowIsRejected` | all | |
+| api.scalar.float32-pair | sqlgen emits the one `float32` marshaler pair into `scalars_gen.go` | `unit: cmd/sqlgen/gen: TestNumericWidthScalarsFileCompilesWithoutCategory4Scalars`; `unit: cmd/sqlgen/gen: TestScalarBinding_numericArrayAnchorsItsElementWidth` | all | |
+| api.scalar.array-dictates-input-type | A numeric array column's generated input field Go type is dictated through `models.<Input>.fields.<field>.type` | `unit: cmd/sqlgen/gen: TestScalarBinding_numericArrayDictatesItsInputGoType`; `unit: cmd/sqlgen/wrapper: TestMerge_ModelFieldsWritesDictatedGoType` | postgres | |
+| api.scalar.consumer-scalar-field-type | A column bound to a consumer scalar takes that scalar as its field type, nullable when the column is | `unit: cmd/sqlgen/gen: TestConsumerScalars_reachTheSchemaFieldType`; `example: graphql: TestScalars/IPAddrViaConsumerDeclaredScalar` | all | |
+| api.scalar.consumer-match-import | A consumer scalar matches a column on import path and type name together | `unit: cmd/sqlgen/gen: TestConsumerScalars_matchOnImportNotJustTypeName` | all | |
+| api.scalar.registry-still-wins | A registry Go type keeps its registry scalar beside consumer declarations | `unit: cmd/sqlgen/gen: TestConsumerScalars_registryStillWins`; `unit: cmd/sqlgen/cli: TestBuildMergeInput_RegistryScalarKeepsResolverAnchor` | all | |
+| api.scalar.registry-mirror | The config-side registry mirror matches the gen-side registry, so every registry Go type is undeclarable | `unit: cmd/sqlgen/gen: TestBuiltInScalarGoTypesMatchRegistry` | all | |
+| api.scalar.spec-names-reserved | Declaring a spec built-in name (`String`, `Int`, `Float`, `Boolean`, `ID`) is a config error | `unit: cmd/sqlgen/config: TestValidatePreParse_ScalarBinding/scalar name shadowing a GraphQL spec built-in` | all | |
+| api.scalar.bundled-names-not-reserved | gqlgen's other bundled scalars (`Int64`, `Map`, `Upload`, `Any`) may be declared with `marshaling: builtin` | `unit: cmd/sqlgen/config: TestValidatePreParse_ScalarBinding/gqlgen-bundled name that is not reserved`; `unit: cmd/sqlgen/config: TestValidatePreParse_ScalarBinding/builtin on the package-qualified Upload key` | all | |
+| api.scalar.unbound-go-type-error | An API-visible column whose Go type has no binding is a generation error naming the column, the Go type and both remedies | `unit: cmd/sqlgen/gen: TestScalarBinding_unboundTypeIsRejected`; `unit: cmd/sqlgen/gen: TestConsumerScalars_undeclaredTypeIsRejected` | all | |
+| api.scalar.every-builtin-type-binds | Every Go type the dialect tables produce, at both `use_pointers` settings, has a binding gqlgen can reach | `unit: cmd/sqlgen/gen: TestScalarBinding_everyBuiltInGoTypeResolves`; `unit: cmd/sqlgen/gen: TestScalarBinding_registryDrivesEveryDerivedTable` | all | |
+| api.scalar.hidden-column-exempt | A column dropped from every API surface by its §32.2 role (`hidden` / `internal`) needs no binding | `unit: cmd/sqlgen/gen: TestConsumerScalars_undeclaredTypeAllowedWhenColumnIsHidden` | all | |
+| api.scalar.unused-declaration-warns | A declared scalar no API-exposed column resolves to produces a generation warning naming the entry and its `go_type` | `unit: cmd/sqlgen/gen: TestUnusedScalarWarnings/hidden columns leave a legitimate declaration unused`; `unit: cmd/sqlgen/gen: TestUnusedScalarWarnings/internal columns leave a legitimate declaration unused` | all | |
+| api.scalar.unused-from-generate-validate | The unresolved-declaration warning fires from `generate` and `validate`, not from `graphql gen` | | all | |
+| api.scalar.typo-go-type-errors | A mistyped `go_type` leaves its column unbound and fails generation rather than warning | `unit: cmd/sqlgen/gen: TestUnusedScalarWarnings/typoed go_type is rejected`; `unit: cmd/sqlgen/gen: TestUnusedScalarWarnings/go_type from an undeclared package is rejected` | all | |
+| api.scalar.consumer-nullability-pointer | A consumer scalar has no Null-variant pairing; a nullable column bound to one is a nullable field | `unit: cmd/sqlgen/gen: TestConsumerScalars_reachTheSchemaFieldType/external scalar on a nullable column` | all | |
+| api.scalar.null-variant-auto-registered | A Null-variant entry is registered automatically when a column resolves to an `overrides.types.<sql>.nullable` wrapper type | `unit: cmd/sqlgen/gen: TestScalarsGen_RegistersNullPairs` | all | |
+| api.scalar.scalars-gen-file-contents | `scalars_gen.go` holds the external marshalers for every category-4 registry scalar in use, both members of a registered Null pair included | `unit: cmd/sqlgen/gen: TestScalarsGen_emitsCategory4Marshalers`; `unit: cmd/sqlgen/gen: TestMarshalNullUUID_EmitsPairedFunctions`; `unit: cmd/sqlgen/gen: TestScalarBinding_everyMarshalerBodyHasItsImports` | all | |
+| api.scalar.scalars-gen-omits-unused-null | `scalars_gen.go` carries no Null-variant pair when no column of the wrapper type is in scope | `unit: cmd/sqlgen/gen: TestMarshalNullUUID_OmittedWhenNotInScope` | all | |
+| api.scalar.scalars-gen-not-emitted | `scalars_gen.go` is not emitted when every scalar is category 1–3 or consumer-declared (and no width pair is needed) | | all | |
+| api.scalar.discovery-anchor | Registry category-4 bindings use the discovery-anchor pattern `<resolver package>.<Scalar>`, with no Go type alias | `unit: cmd/sqlgen/cli: TestBuildMergeInput_ScalarBindings`; `unit: cmd/sqlgen/cli: TestBuildMergeInput_RegistryScalarKeepsResolverAnchor` | all | |
+| api.scalar.detection-requires-marshaling | An unknown type in `api.graphql.scalars` without a `marshaling` mode is a codegen error, reported deterministically | `unit: cmd/sqlgen/gen: TestScalarsGen_rejectsUnknownScalarsWithoutMarshalingMode`; `unit: cmd/sqlgen/gen: TestConsumerScalars_reportsMissingMarshalingDeterministically` | all | |
+
+## §16.4 Generated Artifacts (Views vs Tables)
+<!-- prd: 16.4 sha256: bf3de67d9722ba06 -->
+
+These rows cite §16.4, which `gen.md` owns; the orchestrator files them there or cites the section
+from `api.md`.
+
+| ID | Requirement | Tests | Applies to | Matrix cell |
+|---|---|---|---|---|
+| api.views-tables.read-surface-table | A table gets the GraphQL read surface when `api.graphql.enabled` | `unit: cmd/sqlgen/gen: TestGraphQLSchema_emitsExpectedTypesPerTable` | all | |
+| api.views-tables.read-surface-view | A view gets a read-only GraphQL read surface | `unit: cmd/sqlgen/gen: TestAPIViewSchema_emitsReadOnlySurface`; `example: graphql: TestViewSchema_ServesTheReadSet/WorkspaceNoteSummary` | all | |
+| api.views-tables.read-surface-matview | A materialized view gets a read-only GraphQL read surface | `example: graphql: TestMaterializedView_ReadSurface/by pk`; `example: graphql: TestMaterializedView_ReadSurface/list`; `example: graphql: TestMaterializedView_ReadSurface/connection` | postgres | |
+| api.views-tables.mutations-table | A table gets GraphQL mutations | `unit: cmd/sqlgen/gen: TestGraphQLSchema_emitsExpectedTypesPerTable` | all | |
+| api.views-tables.no-mutations-view | A view gets no GraphQL mutation | `unit: cmd/sqlgen/gen: TestAPIViewSchema_emitsReadOnlySurface`; `example: graphql: TestViewSchema_NoMutationsAndNoRefresh` | all | |
+| api.views-tables.no-mutations-matview | A materialized view gets no GraphQL mutation | `example: graphql: TestViewSchema_NoMutationsAndNoRefresh` | postgres | |
+| api.views-tables.projection-up-to-three-queries | A view's projection carries up to three Query fields (by-PK, connection, list) and never a mutation | `unit: cmd/sqlgen/gen: TestBuildAPIContext_viewGatesByPKAndConnection`; `unit: cmd/sqlgen/gen: TestBuildAPIContext_viewIsAFirstClassEntry` | all | |
+| api.views-tables.tenant-view-scoped | A view carrying the tenant column has its GraphQL reads scoped like a table's | `example: graphql: TestViewTenancy_ByPKIsScoped`; `example: graphql: TestViewTenancy_MissingHeaderIsUnauthenticated` | all | |
+| api.views-tables.refresh-go-only | `Refresh` / `RefreshConcurrently` never reach the API | `unit: cmd/sqlgen/gen: TestAPIViewSchema_materializedIsIdentical`; `example: graphql: TestMaterializedView_ReadSurface/refresh is reachable on the Go client` | postgres | |
+
+## PRD gaps
+
+Behavior the code has, most of it pinned by tests, that no PRD text states. Each gap waits for
+the user's ruling: amend the PRD, which turns the gap into requirement rows, or drop the pins.
+
+| Gap | Behavior | Tests | Section | Ruling |
+|---|---|---|---|---|
+| gap.api.filter-omits-pk-columns | Every primary-key column (a single PK, every member of a composite PK, an FK that is a PK member) is left out of the GraphQL `<T>Filter`, and the composite `<T>Filter.PKs` is not projected, though the Go `<T>Filter` carries them; §26.4 says the input "mirrors the generated `XFilter` Go struct" | `unit: cmd/sqlgen/gen: TestFilterTranslator_SkipsPKAndUnsupportedComparators` | §26.4 | |
+| gap.api.to-one-filter-no-member | A to-one (O2O) relationship contributes no member to `<T>Filter`; only list relationships do. §26.4's row says "Relationship (as a filter)" without the restriction | `unit: cmd/sqlgen/gen: TestAPIFilterRelationships_MemberPerListRelationship` | §26.4 | |
+| gap.api.output-package-gqlmodel-alias | With GraphQL enabled, `output.package` equal to the sqlgen-controlled `gqlmodel` import alias is a config error | `unit: cmd/sqlgen/config: TestValidatePreParse_GqlgenAliasCollision/graphql enabled with colliding package`; `unit: cmd/sqlgen/config: TestValidatePreParse_GqlgenAliasCollision/graphql disabled — collision check skipped` | §26.3 | |
+| gap.api.disabled-graphql-skips-validation | With `api.enabled` or `api.graphql.enabled` false, `api.graphql.*` fields (field_casing, scalars) are not validated | `unit: cmd/sqlgen/config: TestValidatePreParse_APIGraphQLDisabledIsInert/disabled ignores invalid field_casing`; `unit: cmd/sqlgen/config: TestValidatePreParse_ScalarBindingDisabledIsInert` | §26.3 | |
+| gap.api.scalar-errors-sorted | Scalar-binding config errors are reported in sorted order | `unit: cmd/sqlgen/config: TestValidatePreParse_ScalarBindingErrorsAreSorted` | §26.3 | |
+| gap.api.builtin-interface-any-spelling | `marshaling: builtin` accepts `interface{}` as a spelling of `any`, alone or inside a composite type | `unit: cmd/sqlgen/config: TestValidatePreParse_ScalarBinding/builtin accepts the interface{} spelling of any`; `unit: cmd/sqlgen/config: TestValidatePreParse_ScalarBinding/builtin accepts the interface{} spelling inside a composite` | §26.4.1 | |
+| gap.api.method-go-type-qualified | `marshaling: method` requires a package-qualified `go_type` | `unit: cmd/sqlgen/config: TestValidatePreParse_ScalarBinding/method with unqualified go_type` | §26.3 | |
+| gap.api.set-not-offered-enums-override | A GraphQL name collision with a MySQL SET does not offer `enums.<set>.struct_name` as a remedy, and a SET claims no comparator input | `unit: cmd/sqlgen/gen: TestGraphQLTypeNames_setIsNotOfferedTheEnumsOverride` | §26.4 | |
+| gap.api.view-description-noun | The fallback object-type description names the entity kind ("… corresponds to the product_summary view.") | `unit: cmd/sqlgen/gen: TestAPIViewSchema_emitsReadOnlySurface` | §26.4 | |
+| gap.api.all-reads-masked-no-query-block | An entity with every read masked off opens no `extend type Query` block and gets no resolver seed when it has no root field left | `unit: cmd/sqlgen/gen: TestAPISchema_allReadsMaskedOpensNoQueryBlock/table`; `unit: cmd/sqlgen/gen: TestAPISchema_allReadsMaskedOpensNoQueryBlock/view` | §26.4 | |
+| gap.api.view-singular-accessor | A view's resolver calls the singular client accessor (`ProductSummary()`), a table's the plural | `unit: cmd/sqlgen/gen: TestBuildAPIContext_viewIsAFirstClassEntry` | §26.4 | |
+| gap.api.adding-view-leaves-tables | Adding a view leaves every table's API output byte-identical | `unit: cmd/sqlgen/gen: TestBuildAPIContext_addingAViewLeavesTableOutputIdentical` | §26.4 | |
+| gap.api.unspellable-anchor-warns | When the resolver import path is unresolvable, a needed width anchor is skipped with a warning | `unit: cmd/sqlgen/cli: TestBuildMergeInput_UnspellableAnchorWarns` | §26.4.1 | |
+| gap.api.external-skipped-unresolvable | Registry category-4 `models:` entries (and envelope bindings) are skipped, not written malformed, when the module path is unknown | `unit: cmd/sqlgen/cli: TestBuildMergeInput_ExternalSkippedWhenResolverPathUnresolvable`; `unit: cmd/sqlgen/cli: TestBuildMergeInput_EnvelopeBinding_SkippedWhenModuleUnknown` | §26.4.1 | |
+| gap.api.gqlgen-bin-empty-rejected | The wrapper rejects an empty `gqlgen_bin` | `unit: cmd/sqlgen/wrapper: TestGen_RejectsEmptyGqlgenBin` | §26.3 | |

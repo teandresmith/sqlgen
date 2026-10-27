@@ -79,7 +79,7 @@ generated client:
 |---|---|---|
 | `runtime.md` | `sql/`, `comparator/`, `omittable/`, `database/` and drivers, `cache/`, `tenancy/`, `event/`, `hook/`, `types/`, `manifest/` | §10, §11, §14, §15, §18, §19, §21, §22, §24, §27, §28, §29 (runtime), App. A, App. B |
 | `parser.md` | `parser/` and its dialect and `introspect` packages | §5, §6 |
-| `cli/` | `cmd/sqlgen/`, split by slice (§7 step 6): `config.md` (`config`), `gen.md` (`gen`), `gotype.md` (`gotype`), `api.md` (§26, rows over `gen`), `commands.md` (`cmd/sqlgen`, `cli`, `wrapper`), `manifest.md` (`manifest`, `mcp`) | §4, §7, §8, §12, §13, §16, §23, §26, §30, §31, §32 |
+| `cli/` | `cmd/sqlgen/`, split by slice (§7 step 6): `config.md` (`config`), `gen.md` (`gen`), `gotype.md` (`gotype`), `api.md` and `api-schema.md` (§26, rows over `gen`), `commands.md` (`cmd/sqlgen`, `cli`, `wrapper`), `manifest.md` (`manifest`, `mcp`) | §4, §7, §8, §12, §13, §16, §23, §26, §30, §31, §32 |
 | `client.md` | The generated client, through the §4 suite | §9, §17, §20, §25, §29 (generated behavior) |
 
 Each test home stays where it is best placed:
